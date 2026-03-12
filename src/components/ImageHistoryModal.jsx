@@ -144,7 +144,7 @@ export default function ImageHistoryModal({
           <div className="current-image-section">
             <h4>{t('imageHistory.currentImage')}</h4>
             <div className="current-image-preview">
-              <img src={currentImage} alt="Current" />
+              <img src={currentImage} alt={t('imageHistory.currentImage')} />
               <span className="current-badge">{t('imageHistory.currentBadge')}</span>
             </div>
           </div>

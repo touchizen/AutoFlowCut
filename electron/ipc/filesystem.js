@@ -85,6 +85,7 @@ async function fileToDataUrl(filePath) {
     webp: 'image/webp',
     mp3: 'audio/mpeg',
     mp4: 'video/mp4',
+    webm: 'video/webm',
     wav: 'audio/wav',
     ogg: 'audio/ogg'
   }
@@ -112,7 +113,54 @@ async function pathExists(p) {
 /**
  * Register all filesystem-related IPC handlers on the given ipcMain instance.
  */
+// ============================================================
+// Config file for persisting work folder across sessions
+// Stored in app's userData directory (survives localStorage loss)
+// ============================================================
+function getConfigPath() {
+  return path.join(app.getPath('userData'), 'work-folder-config.json')
+}
+
+async function readWorkFolderConfig() {
+  try {
+    const configPath = getConfigPath()
+    const text = await fs.readFile(configPath, 'utf-8')
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
+}
+
+async function writeWorkFolderConfig(workFolderPath, workFolderName) {
+  try {
+    const configPath = getConfigPath()
+    await fs.writeFile(configPath, JSON.stringify({ path: workFolderPath, name: workFolderName }, null, 2), 'utf-8')
+    console.log('[FS] Work folder config saved:', workFolderPath)
+  } catch (e) {
+    console.warn('[FS] Failed to save work folder config:', e.message)
+  }
+}
+
 export function registerFilesystemIPC(ipcMain) {
+
+  // ----------------------------------------------------------
+  // -1. fs:get-saved-work-folder — config 파일에서 저장된 작업폴더 읽기
+  // ----------------------------------------------------------
+  ipcMain.handle('fs:get-saved-work-folder', async () => {
+    const config = await readWorkFolderConfig()
+    if (config?.path) {
+      return { success: true, path: config.path, name: config.name || path.basename(config.path) }
+    }
+    return { success: false, error: 'No saved work folder' }
+  })
+
+  // ----------------------------------------------------------
+  // -0. fs:save-work-folder — 작업폴더를 config 파일에 영속 저장
+  // ----------------------------------------------------------
+  ipcMain.handle('fs:save-work-folder', async (_event, { workFolderPath, workFolderName }) => {
+    await writeWorkFolderConfig(workFolderPath, workFolderName)
+    return { success: true }
+  })
 
   // ----------------------------------------------------------
   // 0. fs:get-default-work-folder — 기본 작업 폴더 경로 반환 + 생성
@@ -273,8 +321,8 @@ export function registerFilesystemIPC(ipcMain) {
       const safeName = String(name).replace(/[^a-zA-Z0-9\uAC00-\uD7A3_-]/g, '_')
       const resourceDir = path.join(workFolder, project, resourceType)
 
-      // Try common image extensions
-      for (const ext of ['png', 'jpg', 'jpeg', 'webp', 'gif']) {
+      // Try common image + video extensions
+      for (const ext of ['png', 'jpg', 'jpeg', 'webp', 'gif', 'mp4', 'webm']) {
         const filePath = path.join(resourceDir, `${safeName}.${ext}`)
         if (await pathExists(filePath)) {
           const dataUrl = await fileToDataUrl(filePath)
@@ -319,16 +367,16 @@ export function registerFilesystemIPC(ipcMain) {
       }
 
       const prefix = baseName.replace(/\.[^/.]+$/, '') // strip extension if present
-      const imageExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.gif']
+      const mediaExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.mp4', '.webm']
       const entries = await fs.readdir(historyDir)
 
       const histories = []
 
       for (const entry of entries) {
         const lowerEntry = entry.toLowerCase()
-        const isImage = imageExtensions.some(ext => lowerEntry.endsWith(ext))
+        const isMedia = mediaExtensions.some(ext => lowerEntry.endsWith(ext))
 
-        if (!isImage) continue
+        if (!isMedia) continue
         if (!entry.startsWith(prefix + '_')) continue
 
         const filePath = path.join(historyDir, entry)
@@ -378,7 +426,7 @@ export function registerFilesystemIPC(ipcMain) {
       // Try to read matching metadata JSON
       let metadata = null
       try {
-        const metaFilename = historyFilename.replace(/\.(png|jpg|jpeg|webp|gif)$/i, '.json')
+        const metaFilename = historyFilename.replace(/\.(png|jpg|jpeg|webp|gif|mp4|webm)$/i, '.json')
         const metaPath = path.join(historyDir, metaFilename)
         if (await pathExists(metaPath)) {
           const metaText = await fs.readFile(metaPath, 'utf-8')
@@ -448,7 +496,7 @@ export function registerFilesystemIPC(ipcMain) {
 
       // Also try to delete matching metadata JSON
       try {
-        const metaFilename = historyFilename.replace(/\.(png|jpg|jpeg|webp|gif)$/i, '.json')
+        const metaFilename = historyFilename.replace(/\.(png|jpg|jpeg|webp|gif|mp4|webm)$/i, '.json')
         const metaPath = path.join(historyDir, metaFilename)
         if (await pathExists(metaPath)) {
           await fs.unlink(metaPath)

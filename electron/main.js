@@ -1,5 +1,6 @@
 import { app, BrowserWindow, WebContentsView, ipcMain, shell } from 'electron'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import dotenv from 'dotenv'
 import { registerFilesystemIPC } from './ipc/filesystem.js'
@@ -55,7 +56,8 @@ let layoutMode = 'split-left' // 'split-left' | 'split-right' | 'split-top' | 's
 let splitRatio = 0.5   // 0.2 ~ 0.8
 let modalVisible = false // 모달이 열려있으면 Flow 뷰를 숨김 (네이티브 뷰는 CSS z-index로 가릴 수 없음)
 let capturedProjectId = null // Flow 네트워크에서 자동 캡처된 projectId
-let pendingGeneration = null // DOM-triggered generation 응답 캡처용 Promise resolver
+let pendingGeneration = null // DOM-triggered generation 응답 캡처용 Promise resolver (이미지)
+let pendingVideoGeneration = null // DOM-triggered video generation 응답 캡처용 Promise resolver
 let pendingReferenceImages = null // CDP Fetch 인터셉션용 레퍼런스 이미지 (mediaId 배열)
 let enterToolClicked = false // Enter tool 버튼 클릭 완료 플래그 (무한루프 방지)
 let consentClicked = false   // 동의 버튼 클릭 완료 플래그 (무한루프 방지)
@@ -181,6 +183,35 @@ async function sessionFetch(url, options = {}) {
     }
   }
   return fetch(url, options)
+}
+
+/**
+ * Flow 페이지 컨텍스트 안에서 fetch 실행
+ * reCAPTCHA 토큰의 origin과 API 요청 origin을 일치시키기 위해 필수
+ * (main process의 sessionFetch는 origin이 달라 reCAPTCHA 검증 실패)
+ */
+async function flowPageFetch(url, { method = 'POST', headers = {}, body } = {}) {
+  if (!flowView) throw new Error('Flow view not ready')
+
+  // AutoFlow과 동일: fetch.call(window, ...) 패턴
+  const result = await flowView.webContents.executeJavaScript(`
+    (async function() {
+      try {
+        const _fetch = window.__afNativeFetch || window.__autoFlowNativeFetch || window.fetch;
+        const resp = await _fetch.call(window, ${JSON.stringify(url)}, {
+          method: ${JSON.stringify(method)},
+          headers: ${JSON.stringify(headers)},
+          body: ${JSON.stringify(body)}
+        });
+        const text = await resp.text().catch(() => '');
+        return { ok: resp.ok, status: resp.status, text };
+      } catch (e) {
+        return { ok: false, status: 0, text: e.message };
+      }
+    })()
+  `)
+
+  return result
 }
 
 /**
@@ -383,7 +414,8 @@ function createWindow() {
   flowView = new WebContentsView({
     webPreferences: {
       partition: 'persist:flow',
-      contextIsolation: true
+      contextIsolation: true,
+      webSecurity: false,  // 비디오 API를 페이지 컨텍스트에서 호출할 때 CORS 허용
     }
   })
   mainWindow.contentView.addChildView(flowView)
@@ -776,6 +808,20 @@ function createWindow() {
         }
       }
 
+      // 비디오 API 요청 실패 처리
+      if (method === 'Network.loadingFailed' && pendingVideoGeneration) {
+        const reqUrl = requestUrlMap[params.requestId] || ''
+        const failMethod = requestMethodMap[params.requestId] || ''
+        if (reqUrl.includes('batchAsyncGenerateVideo') && failMethod !== 'OPTIONS') {
+          const reqSentAt = requestSentTimeMap[params.requestId] || 0
+          if (pendingVideoGeneration.setAt && reqSentAt < pendingVideoGeneration.setAt) return
+          console.error('[Flow API] [VideoCapture] Video API request FAILED:', params.errorText)
+          const saved = pendingVideoGeneration
+          pendingVideoGeneration = null
+          saved.resolve({ error: true, message: params.errorText || 'Video API request failed' })
+        }
+      }
+
       // 응답 body 가져오기 (projectId 추출 + DOM 생성 결과 캡처)
       if (method === 'Network.loadingFinished' && params.requestId) {
         const reqUrl = requestUrlMap[params.requestId] || ''
@@ -838,6 +884,33 @@ function createWindow() {
                   if (saved.collectionTimer) clearTimeout(saved.collectionTimer)
                   saved.resolve({ error: false, responses: saved.responses })
                 }
+              }
+            })
+        }
+        // 비디오 API 응답 캡처 (DOM-triggered video generation)
+        else if (pendingVideoGeneration && reqUrl.includes('batchAsyncGenerateVideo') && reqMethod !== 'OPTIONS') {
+          const reqSentAt = requestSentTimeMap[params.requestId] || 0
+          if (pendingVideoGeneration.setAt && reqSentAt < pendingVideoGeneration.setAt) {
+            console.log('[Flow API] [VideoCapture] Skipping STALE video response')
+            return
+          }
+          console.log('[Flow API] [VideoCapture] ✅ ACCEPTED video API response, HTTP', httpStatus)
+
+          flowView.webContents.debugger.sendCommand('Network.getResponseBody', { requestId: params.requestId })
+            .then(result => {
+              if (result?.body && pendingVideoGeneration) {
+                console.log('[Flow API] [VideoCapture] Video response body captured, length:', result.body.length)
+                const saved = pendingVideoGeneration
+                pendingVideoGeneration = null
+                saved.resolve({ error: httpStatus >= 400, body: result.body, status: httpStatus })
+              }
+            })
+            .catch(err => {
+              console.warn('[Flow API] [VideoCapture] getResponseBody failed:', err.message)
+              if (pendingVideoGeneration) {
+                const saved = pendingVideoGeneration
+                pendingVideoGeneration = null
+                saved.resolve({ error: true, message: err.message })
               }
             })
         }
@@ -958,6 +1031,12 @@ ipcMain.handle('app:set-modal-visible', (event, { visible }) => {
 // Open external URL
 ipcMain.handle('app:open-external', (event, { url }) => {
   shell.openExternal(url)
+  return { success: true }
+})
+
+// Reveal file in Finder / Explorer
+ipcMain.handle('app:show-in-folder', (event, { filePath }) => {
+  shell.showItemInFolder(filePath)
   return { success: true }
 })
 
@@ -1191,6 +1270,14 @@ ipcMain.handle('flow:generate-image', async (event, {
       } catch (e) {
         console.warn('[Flow API] Token auto-extraction failed:', e.message)
       }
+    }
+
+    // 0.8. 이미지 모드 + 배치 x2 설정
+    const modeResult = await configureFlowMode('IMAGE', 2)
+    if (modeResult.success) {
+      console.log('[Flow API] Image mode configured:', modeResult.method, 'batch:', modeResult.batch)
+    } else {
+      console.warn('[Flow API] Image mode config failed (continuing anyway):', modeResult.error)
     }
 
     // 0.9. CDP Fetch 인터셉션 설정 (레퍼런스 이미지 주입용)
@@ -1747,6 +1834,433 @@ ipcMain.handle('flow:fetch-media', async (event, { token, mediaId }) => {
   }
 })
 
+// 비디오 URL 직접 다운로드 (status 응답에서 추출한 fifeUri/url)
+ipcMain.handle('flow:download-video-url', async (event, { url, token }) => {
+  if (!url) return { success: false, error: 'No URL' }
+
+  try {
+    console.log('[Flow VideoDownload] Fetching:', url.substring(0, 80))
+    const headers = {}
+    if (token) headers['Authorization'] = `Bearer ${token}`
+
+    const res = await sessionFetch(url, { headers })
+    if (!res.ok) {
+      return { success: false, error: `HTTP ${res.status}` }
+    }
+
+    const buffer = await res.arrayBuffer()
+    const contentType = res.headers?.get?.('content-type') || 'video/mp4'
+    const base64 = `data:${contentType};base64,${Buffer.from(buffer).toString('base64')}`
+    console.log('[Flow VideoDownload] ✅ Downloaded, size:', buffer.byteLength, 'type:', contentType)
+    return { success: true, base64 }
+  } catch (e) {
+    console.error('[Flow VideoDownload] Error:', e.message)
+    return { success: false, error: e.message }
+  }
+})
+
+// DOM-based video download — AutoFlow downloadVideoAtResolution 방식
+// 1. CDP Page.setDownloadBehavior → temp 디렉토리로 자동 저장
+// 2. <video> 요소를 mediaId로 찾기 → hover → three-dot → download → 해상도 선택
+// 3. temp 파일 읽기 → base64 반환
+ipcMain.handle('flow:dom-download-video', async (event, { mediaId, resolution = '720p' }) => {
+  if (!flowView) return { success: false, error: 'Flow view not ready' }
+  if (!mediaId) return { success: false, error: 'No mediaId' }
+
+  console.log('[Flow DOMDownload] Starting DOM download — mediaId:', mediaId?.substring(0, 30), 'resolution:', resolution)
+
+  try {
+    const fs = await import('node:fs')
+    const os = await import('node:os')
+
+    // Step 1: CDP로 다운로드 경로 설정 (save dialog 스킵)
+    const tempDir = path.join(os.tmpdir(), `flow-dl-${Date.now()}`)
+    fs.mkdirSync(tempDir, { recursive: true })
+    console.log('[Flow DOMDownload] Download dir:', tempDir)
+
+    try {
+      await flowView.webContents.debugger.sendCommand('Page.setDownloadBehavior', {
+        behavior: 'allow',
+        downloadPath: tempDir
+      })
+      console.log('[Flow DOMDownload] CDP Page.setDownloadBehavior set')
+    } catch (cdpErr) {
+      console.warn('[Flow DOMDownload] CDP setDownloadBehavior failed:', cdpErr.message, '— trying Browser domain')
+      try {
+        await flowView.webContents.debugger.sendCommand('Browser.setDownloadBehavior', {
+          behavior: 'allow',
+          downloadPath: tempDir,
+          eventsEnabled: true
+        })
+        console.log('[Flow DOMDownload] CDP Browser.setDownloadBehavior set')
+      } catch (cdpErr2) {
+        console.warn('[Flow DOMDownload] Browser.setDownloadBehavior also failed:', cdpErr2.message)
+      }
+    }
+
+    // Step 2: DOM 자동화 — AutoFlow downloadVideoAtResolution 패턴
+    const domResult = await flowView.webContents.executeJavaScript(`
+      (async function() {
+        const LOG = (msg) => console.log('[DOMDownload] ' + msg)
+        const mediaId = ${JSON.stringify(mediaId)}
+        const resolution = ${JSON.stringify(resolution)}
+
+        // --- Helper: pointerClick (Radix UI 호환) ---
+        function pointerClick(el) {
+          if (!el) return
+          const rect = el.getBoundingClientRect()
+          const x = rect.left + rect.width / 2
+          const y = rect.top + rect.height / 2
+          const pOpts = { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse', isPrimary: true }
+          el.dispatchEvent(new PointerEvent('pointerdown', pOpts))
+          el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 }))
+          el.dispatchEvent(new PointerEvent('pointerup', pOpts))
+          el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 }))
+          el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 }))
+        }
+
+        // --- Helper: waitForMenu ---
+        async function waitForMenu(ms = 2000) {
+          const t0 = Date.now()
+          while (Date.now() - t0 < ms) {
+            const m = document.querySelector("[data-radix-menu-content][data-state='open'], [role='menu'][data-state='open']")
+            if (m) return m
+            await new Promise(r => setTimeout(r, 80))
+          }
+          return null
+        }
+
+        // --- Helper: closeMenus ---
+        async function closeMenus() {
+          for (let i = 0; i < 3; i++) {
+            if (!document.querySelector("[data-radix-menu-content][data-state='open'], [role='menu'][data-state='open']")) break
+            document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true, cancelable: true, composed: true }))
+            await new Promise(r => setTimeout(r, 150))
+          }
+        }
+
+        // --- Helper: ICON_SEL ---
+        const ICON_SEL = "i, .material-symbols, .material-symbols-outlined, .google-symbols, [class*='material-symbols']"
+
+        // --- Helper: findVideoElement ---
+        function findVideoElement(uuid) {
+          if (!uuid) return null
+          for (const el of document.querySelectorAll('video[src], video source[src]')) {
+            const src = el.getAttribute('src') || ''
+            const resolved = el.src || ''
+            if (uuid && (src.includes(uuid) || resolved.includes(uuid))) {
+              return el.tagName === 'SOURCE' ? el.closest('video') : el
+            }
+          }
+          // fallback: 가장 최근 비디오 (마지막 <video>)
+          const allVideos = document.querySelectorAll('video[src]')
+          if (allVideos.length > 0) {
+            LOG('UUID match failed, using last video element as fallback')
+            return allVideos[allVideos.length - 1]
+          }
+          return null
+        }
+
+        // --- Helper: findTileWithOverlay ---
+        function findTileWithOverlay(mediaEl) {
+          if (!mediaEl) return null
+          let node = mediaEl.parentElement
+          for (let i = 0; i < 10 && node; i++) {
+            if (Array.from(node.querySelectorAll(ICON_SEL)).some(icon => {
+              const t = (icon.textContent || '').trim().toLowerCase()
+              return t === 'more_vert' || t === 'more_horiz'
+            })) return node
+            node = node.parentElement
+          }
+          return null
+        }
+
+        // --- Helper: findThreeDots ---
+        function findThreeDots(scope) {
+          if (!scope) return null
+          for (const icon of scope.querySelectorAll(ICON_SEL)) {
+            const t = (icon.textContent || '').trim().toLowerCase()
+            if (t === 'more_vert' || t === 'more_horiz')
+              return icon.closest('button') || icon.parentElement
+          }
+          return null
+        }
+
+        // --- Helper: findMenuItem ---
+        function findMenuItem(menu, iconText) {
+          if (!menu) return null
+          const needle = iconText.toLowerCase()
+          for (const item of menu.querySelectorAll("[role='menuitem']")) {
+            for (const icon of item.querySelectorAll(ICON_SEL))
+              if ((icon.textContent || '').trim().toLowerCase() === needle) return item
+            if ((item.textContent || '').trim().toLowerCase().startsWith(needle)) return item
+          }
+          return null
+        }
+
+        // --- Helper: unhover ---
+        function unhover(el) {
+          if (!el) return
+          el.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }))
+          el.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }))
+          let node = el.parentElement
+          for (let i = 0; i < 4 && node; i++) {
+            node.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }))
+            node.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }))
+            node = node.parentElement
+          }
+        }
+
+        try {
+          // 1. 비디오 요소 찾기
+          LOG('Finding video element for: ' + mediaId.substring(0, 30))
+          let targetVideo = findVideoElement(mediaId)
+          if (!targetVideo) {
+            return { success: false, error: 'Video element not found on page' }
+          }
+          LOG('Found target video element, src: ' + (targetVideo.getAttribute('src') || '').substring(0, 60))
+
+          // 2. Hover — 오버레이 표시
+          targetVideo.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+          targetVideo.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+          let hoverNode = targetVideo.parentElement
+          for (let i = 0; i < 4 && hoverNode; i++) {
+            hoverNode.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+            hoverNode.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+            hoverNode = hoverNode.parentElement
+          }
+          await new Promise(r => setTimeout(r, 500))
+
+          // 3. Tile 찾기 (more_vert 포함)
+          const tile = findTileWithOverlay(targetVideo)
+          if (!tile) {
+            unhover(targetVideo)
+            return { success: false, error: 'Overlay tile not found after hover' }
+          }
+
+          // 4. Three-dots 버튼 클릭
+          const threeDotsBtn = findThreeDots(tile)
+          if (!threeDotsBtn) {
+            unhover(targetVideo)
+            return { success: false, error: 'Three-dots button not found in tile' }
+          }
+          LOG('Clicking three-dots button')
+          pointerClick(threeDotsBtn)
+          await new Promise(r => setTimeout(r, 300))
+
+          // 5. 메뉴 대기 (재시도 1회)
+          let menu = await waitForMenu(2000)
+          if (!menu) {
+            pointerClick(threeDotsBtn)
+            menu = await waitForMenu(2000)
+          }
+          if (!menu) {
+            unhover(targetVideo)
+            return { success: false, error: 'Context menu did not open' }
+          }
+          LOG('Context menu opened')
+
+          // 6. "download" 메뉴 아이템 찾기 (아이콘 텍스트로 — 언어 독립)
+          const downloadItem = findMenuItem(menu, 'download')
+          if (!downloadItem) {
+            const items = Array.from(menu.querySelectorAll("[role='menuitem']")).map(i => i.textContent?.trim())
+            LOG('Download item not found. Items: ' + JSON.stringify(items))
+            await closeMenus()
+            unhover(targetVideo)
+            return { success: false, error: 'Download menu item not found. Items: ' + items.join(', ') }
+          }
+          LOG('Hovering Download menu item to open submenu')
+
+          // 7. Download 호버 → 서브메뉴 열기
+          const dlRect = downloadItem.getBoundingClientRect()
+          const dlX = dlRect.left + dlRect.width / 2
+          const dlY = dlRect.top + dlRect.height / 2
+          const hoverOpts = { bubbles: true, cancelable: true, clientX: dlX, clientY: dlY, pointerId: 1, pointerType: 'mouse', isPrimary: true }
+
+          downloadItem.focus?.()
+          downloadItem.setAttribute?.('data-highlighted', '')
+          downloadItem.dispatchEvent(new PointerEvent('pointerenter', { ...hoverOpts, composed: true }))
+          downloadItem.dispatchEvent(new PointerEvent('pointermove', { ...hoverOpts, composed: true }))
+          downloadItem.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, clientX: dlX, clientY: dlY }))
+          downloadItem.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, clientX: dlX, clientY: dlY }))
+          downloadItem.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: dlX, clientY: dlY }))
+          await new Promise(r => setTimeout(r, 400))
+
+          // 8. 서브메뉴 대기 (jitter 포함)
+          let submenu = null
+          for (let attempt = 0; attempt < 20; attempt++) {
+            const openMenus = document.querySelectorAll("[data-radix-menu-content][data-state='open'], [role='menu'][data-state='open']")
+            if (openMenus.length >= 2) {
+              submenu = openMenus[openMenus.length - 1]
+              break
+            }
+            if (attempt % 3 === 2) {
+              const jX = dlX + (attempt % 2 === 0 ? 2 : -2)
+              const jY = dlY + (attempt % 2 === 0 ? 1 : -1)
+              const jOpts = { ...hoverOpts, clientX: jX, clientY: jY }
+              downloadItem.dispatchEvent(new PointerEvent('pointermove', { ...jOpts, composed: true }))
+              downloadItem.dispatchEvent(new PointerEvent('pointerenter', { ...jOpts, composed: true }))
+              downloadItem.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, clientX: jX, clientY: jY }))
+              downloadItem.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: jX, clientY: jY }))
+            }
+            await new Promise(r => setTimeout(r, 200))
+          }
+
+          // 9. 해상도 선택
+          const resMap = { '270p': '270p', '720p': '720p', '1080p': '1080p', '4k': '4K' }
+          const targetRes = resMap[String(resolution).toLowerCase()] || '720p'
+
+          if (submenu) {
+            LOG('Submenu opened! Looking for resolution: ' + targetRes)
+            const submenuItems = Array.from(submenu.querySelectorAll("[role='menuitem']"))
+            LOG('Submenu items: ' + submenuItems.map(i => i.textContent?.trim()).join(', '))
+            let resOption = null
+            for (const item of submenuItems) {
+              if ((item.textContent || '').trim().includes(targetRes)) {
+                resOption = item
+                break
+              }
+            }
+            if (resOption) {
+              pointerClick(resOption)
+              LOG('✅ Clicked resolution: ' + targetRes)
+              await closeMenus()
+              unhover(targetVideo)
+              return { success: true, resolution: targetRes }
+            }
+          }
+
+          // 10. 서브메뉴 안 열리면 click + keyboard fallback
+          if (!submenu) {
+            LOG('Submenu did not open, trying click + keyboard fallback')
+            pointerClick(downloadItem)
+            await new Promise(r => setTimeout(r, 400))
+            downloadItem.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
+            await new Promise(r => setTimeout(r, 400))
+
+            for (const item of document.querySelectorAll("[role='menuitem']")) {
+              if ((item.textContent || '').trim().includes(targetRes)) {
+                pointerClick(item)
+                LOG('✅ Clicked resolution (keyboard fallback): ' + targetRes)
+                await closeMenus()
+                unhover(targetVideo)
+                return { success: true, resolution: targetRes }
+              }
+            }
+          }
+
+          // 11. 해상도 옵션 없으면 직접 다운로드 클릭 (서브메뉴 없는 경우)
+          LOG('No resolution submenu, clicking download directly')
+          pointerClick(downloadItem)
+          await closeMenus()
+          unhover(targetVideo)
+          return { success: true, resolution: 'default' }
+
+        } catch (e) {
+          try { await closeMenus() } catch {}
+          return { success: false, error: e.message }
+        }
+      })()
+    `)
+
+    console.log('[Flow DOMDownload] DOM automation result:', JSON.stringify(domResult))
+
+    if (!domResult.success) {
+      // 다운로드 디렉토리 정리
+      try { fs.rmSync(tempDir, { recursive: true, force: true }) } catch {}
+      return { success: false, error: `DOM: ${domResult.error}` }
+    }
+
+    // Step 3: temp 디렉토리에서 다운로드 파일 대기 (폴링)
+    console.log('[Flow DOMDownload] Waiting for download file in:', tempDir)
+    let downloadedFile = null
+    const maxWait = 120000 // 2분 (업스케일에 시간 걸릴 수 있음)
+    const pollInterval = 1000
+    const startTime = Date.now()
+
+    while (Date.now() - startTime < maxWait) {
+      await new Promise(r => setTimeout(r, pollInterval))
+
+      try {
+        const files = fs.readdirSync(tempDir)
+          .filter(f => !f.endsWith('.crdownload') && !f.endsWith('.tmp') && !f.startsWith('.'))
+
+        if (files.length > 0) {
+          const filePath = path.join(tempDir, files[0])
+          const stats = fs.statSync(filePath)
+
+          // 파일 크기가 변하지 않으면 완료 (1초 대기 후 재확인)
+          await new Promise(r => setTimeout(r, 1000))
+          const stats2 = fs.statSync(filePath)
+
+          if (stats.size === stats2.size && stats.size > 0) {
+            downloadedFile = filePath
+            console.log('[Flow DOMDownload] File ready:', files[0], 'size:', stats.size)
+            break
+          }
+        }
+      } catch (pollErr) {
+        // 디렉토리 아직 비어있음 — 계속 대기
+      }
+    }
+
+    // CDP 다운로드 설정 해제
+    try {
+      await flowView.webContents.debugger.sendCommand('Page.setDownloadBehavior', {
+        behavior: 'default'
+      })
+    } catch {}
+
+    // "닫기" 버튼 클릭 — 업스케일링 완료 토스트 닫기
+    try {
+      await flowView.webContents.executeJavaScript(`
+        (function() {
+          // 토스트/스낵바에서 "닫기" 또는 "Close" 버튼 찾기
+          const buttons = Array.from(document.querySelectorAll('button'))
+          for (const btn of buttons) {
+            const text = (btn.textContent || '').trim()
+            if (text === '닫기' || text === 'Close' || text === '닫 기') {
+              console.log('[DOMDownload] Clicking close button: ' + text)
+              btn.click()
+              break
+            }
+          }
+        })()
+      `)
+      console.log('[Flow DOMDownload] Dismissed upscale toast')
+    } catch (dismissErr) {
+      console.warn('[Flow DOMDownload] Toast dismiss failed (non-critical):', dismissErr.message)
+    }
+
+    if (!downloadedFile) {
+      // 디렉토리 정리
+      try { fs.rmSync(tempDir, { recursive: true, force: true }) } catch {}
+      return { success: false, error: 'Download timeout — no file appeared in temp dir' }
+    }
+
+    // Step 4: 파일 읽기 → base64
+    try {
+      const data = fs.readFileSync(downloadedFile)
+      const ext = path.extname(downloadedFile).toLowerCase()
+      const mimeType = ext === '.webm' ? 'video/webm' : 'video/mp4'
+      const base64 = `data:${mimeType};base64,${data.toString('base64')}`
+      console.log('[Flow DOMDownload] ✅ Success! size:', data.length, 'type:', mimeType)
+
+      // 정리
+      try { fs.rmSync(tempDir, { recursive: true, force: true }) } catch {}
+
+      return { success: true, base64 }
+    } catch (readErr) {
+      try { fs.rmSync(tempDir, { recursive: true, force: true }) } catch {}
+      return { success: false, error: `File read error: ${readErr.message}` }
+    }
+
+  } catch (e) {
+    console.error('[Flow DOMDownload] Error:', e.message)
+    return { success: false, error: e.message }
+  }
+})
+
 // Upload image to Flow
 ipcMain.handle('flow:upload-reference', async (event, { token, base64, projectId }) => {
   if (!token) return { success: false, error: 'No token' }
@@ -1824,146 +2338,648 @@ ipcMain.handle('flow:validate-token', async (event, { token }) => {
   }
 })
 
-// === Video Generation IPC Handlers ===
+// === Video Generation IPC Handlers (DOM 자동화 — 이미지와 동일한 접근법) ===
+// Flow 페이지가 자체적으로 reCAPTCHA를 처리하므로 DOM 자동화가 가장 안정적
 
-// Text-to-Video generation
+/**
+ * 비디오 응답에서 generation ID (UUID) 추출 헬퍼
+ */
+function extractVideoGenerationId(data) {
+  const isUuid = (v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v || '').trim())
+  // media[].name (video entries)
+  if (Array.isArray(data?.media)) {
+    for (const m of data.media) {
+      if ((m?.video || /video/i.test(String(m?.mediaMetadata?.mediaType || ''))) && isUuid(m?.name)) {
+        return m.name
+      }
+    }
+  }
+  // workflows[].metadata.primaryMediaId
+  if (Array.isArray(data?.workflows)) {
+    for (const w of data.workflows) {
+      if (isUuid(w?.metadata?.primaryMediaId)) return w.metadata.primaryMediaId
+    }
+  }
+  // Legacy fallbacks
+  return data?.asyncVideoGenerationOperations?.[0]?.operationId
+    || data?.responses?.[0]?.generationId
+    || null
+}
+
+/**
+ * Flow 페이지를 비디오 모드로 전환
+ * AutoFlow와 동일한 CSS selector 사용 (로케일 무관):
+ *   - SETTINGS_BUTTON:  button[aria-haspopup='menu']:has(div[data-type='button-overlay'])
+ *   - MODE_VIDEO:       button[role='tab'][id*='-trigger-VIDEO']
+ *   - SETTINGS_MENU:    [role='menu'][data-state='open']
+ */
+async function configureFlowMode(targetMode = 'VIDEO', batchCount = 1) {
+  if (!flowView) return { success: false, error: 'No flowView' }
+
+  // AutoFlow 동일 CSS selectors (텍스트 비교 없음 — 모든 로케일에서 동작)
+  const modeKey = targetMode === 'IMAGE' ? 'IMAGE' : 'VIDEO'
+  const SEL = {
+    SETTINGS_BTN: "button[aria-haspopup='menu']:has(div[data-type='button-overlay'])",
+    MODE_TAB: `button[role='tab'][id*='-trigger-${modeKey}']:not([id*='FRAMES']):not([id*='REFERENCES'])`,
+    SETTINGS_MENU: "[role='menu'][data-state='open'], [data-radix-menu-content][data-state='open'], [role='menu']",
+  }
+  const batchLabel = `x${Math.max(1, Math.min(4, batchCount))}`
+
+  const maxAttempts = 5
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      const result = await flowView.webContents.executeJavaScript(`
+        (async function() {
+          const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+          const isVisible = (el) => {
+            if (!el || !el.isConnected) return false;
+            const r = el.getBoundingClientRect?.();
+            return !!r && r.width > 2 && r.height > 2;
+          };
+          const escapeMenu = () => {
+            try { document.body.dispatchEvent(new KeyboardEvent('keydown', {
+              key: 'Escape', keyCode: 27, bubbles: true, cancelable: true, composed: true
+            })); } catch {}
+          };
+          // AutoFlow afHumanClick 동일: 전체 이벤트 시퀀스 (Radix UI는 pointerdown+mousedown 필요)
+          const humanClick = (el) => {
+            if (!el) return false;
+            try {
+              const rect = el.getBoundingClientRect();
+              const x = rect.left + Math.max(6, Math.min(rect.width - 6, rect.width * 0.5));
+              const y = rect.top + Math.max(6, Math.min(rect.height - 6, rect.height * 0.5));
+              const common = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y };
+              try {
+                el.dispatchEvent(new PointerEvent('pointerover', common));
+                el.dispatchEvent(new PointerEvent('pointermove', common));
+                const pDown = new PointerEvent('pointerdown', common);
+                el.dispatchEvent(pDown);
+              } catch {}
+              el.dispatchEvent(new MouseEvent('mouseover', common));
+              el.dispatchEvent(new MouseEvent('mousemove', common));
+              el.dispatchEvent(new MouseEvent('mousedown', common));
+              el.dispatchEvent(new FocusEvent('focus', { bubbles: true }));
+              try { el.dispatchEvent(new PointerEvent('pointerup', common)); } catch {}
+              el.dispatchEvent(new MouseEvent('mouseup', common));
+              el.dispatchEvent(new MouseEvent('click', common));
+              return true;
+            } catch { try { el.click(); return true; } catch { return false; } }
+          };
+
+          // Step 0: 열려있는 메뉴 닫기
+          if (document.querySelector("[role='menu']")) { escapeMenu(); await sleep(200); }
+
+          // Step 1: 세팅 드롭다운 버튼 찾기 (AutoFlow SETTINGS_BUTTON_SELECTOR 동일)
+          const settingsBtns = Array.from(document.querySelectorAll("${SEL.SETTINGS_BTN}")).filter(isVisible);
+          if (!settingsBtns.length) {
+            return { ok: false, error: 'settings_btn_not_found' };
+          }
+
+          // 여러 개면 프롬프트 에디터에 가장 가까운 것 선택
+          const compose = document.querySelector("[data-slate-editor='true']");
+          let settingsBtn = settingsBtns[0];
+          if (settingsBtns.length > 1 && compose) {
+            const cr = compose.getBoundingClientRect();
+            settingsBtn = settingsBtns.reduce((best, btn) => {
+              const r = btn.getBoundingClientRect();
+              const d = Math.hypot(r.left - cr.left, r.top - cr.bottom);
+              const bd = Math.hypot(best.getBoundingClientRect().left - cr.left, best.getBoundingClientRect().top - cr.bottom);
+              return d < bd ? btn : best;
+            });
+          }
+
+          // Step 2: 드롭다운 클릭 → 메뉴 대기
+          humanClick(settingsBtn);
+          let menu = null;
+          for (let i = 0; i < 20; i++) {
+            await sleep(80);
+            const allMenus = Array.from(document.querySelectorAll("[role='menu']"))
+              .filter(m => { const r = m.getBoundingClientRect?.(); return r && r.width > 12 && r.height > 12; });
+            menu = allMenus.find(m => m.querySelectorAll("[role='tab']").length >= 2) || null;
+            if (menu) break;
+            if (i >= 15 && allMenus.length > 0) { menu = allMenus[0]; break; }
+          }
+          if (!menu) {
+            escapeMenu();
+            return { ok: false, error: 'menu_not_opened' };
+          }
+
+          // Step 3: 모드 탭 찾기 + 필요하면 클릭
+          let modeTab = menu.querySelector("${SEL.MODE_TAB}") || document.querySelector("${SEL.MODE_TAB}");
+          let modeMethod = 'already_active';
+          if (modeTab && isVisible(modeTab)) {
+            const isActive = modeTab.getAttribute('aria-selected') === 'true'
+              || modeTab.getAttribute('data-state') === 'active';
+            if (!isActive) {
+              humanClick(modeTab);
+              await sleep(300);
+              modeMethod = 'switched';
+            }
+          } else {
+            escapeMenu(); await sleep(150);
+            return { ok: false, error: 'mode_tab_not_found', target: '${modeKey}' };
+          }
+
+          // Step 4: 배치 개수 선택 (x1, x2, x3, x4 — 로케일 무관)
+          const targetBatch = '${batchLabel}';
+          let batchMethod = 'not_found';
+          // 메뉴 안의 모든 버튼에서 textContent로 xN 매칭
+          const allBtns = Array.from(menu.querySelectorAll('button')).filter(isVisible);
+          const batchBtn = allBtns.find(btn => {
+            const txt = btn.textContent.trim();
+            return txt === targetBatch;
+          });
+          if (batchBtn) {
+            const isActive = batchBtn.getAttribute('data-state') === 'active'
+              || batchBtn.getAttribute('data-state') === 'on'
+              || batchBtn.getAttribute('aria-selected') === 'true'
+              || batchBtn.getAttribute('aria-pressed') === 'true'
+              || batchBtn.classList.contains('active');
+            if (isActive) {
+              batchMethod = 'already_set';
+            } else {
+              humanClick(batchBtn);
+              await sleep(200);
+              batchMethod = 'clicked';
+            }
+          }
+
+          // Step 5: 메뉴 닫기
+          if (document.querySelector("[role='menu']")) { escapeMenu(); await sleep(200); }
+
+          return { ok: true, method: modeMethod, batch: batchMethod, tabId: modeTab?.id };
+        })()
+      `)
+
+      if (result?.ok) {
+        console.log(`[Flow Mode] Configured: mode=${targetMode}, batch=${batchLabel}`, result.method, result.batch, result.tabId || '')
+        await new Promise(r => setTimeout(r, 500)) // UI 전환 안정화 대기
+        return { success: true, method: result.method, batch: result.batch }
+      }
+
+      console.warn(`[Flow Mode] Attempt ${attempt + 1}/${maxAttempts} failed:`, result?.error)
+
+      // 마지막 시도에서 실패하면 진단 저장
+      if (attempt === maxAttempts - 1) {
+        try {
+          const fs = await import('node:fs')
+          fs.writeFileSync('/tmp/flow-video-dom-diag.json', JSON.stringify(result, null, 2))
+          console.log('[Flow Video] Last failure saved to /tmp/flow-video-dom-diag.json')
+        } catch {}
+      }
+
+      await new Promise(r => setTimeout(r, 400 + attempt * 200))
+    } catch (e) {
+      console.warn(`[Flow Video] Attempt ${attempt + 1} error:`, e.message)
+      await new Promise(r => setTimeout(r, 400))
+    }
+  }
+
+  return { success: false, error: `Mode ${targetMode} not set after ${maxAttempts} attempts` }
+}
+
+// 하위 호환 래퍼
+async function switchFlowToVideoMode() {
+  return configureFlowMode('VIDEO', 1)
+}
+
+// Text-to-Video generation (DOM 자동화 — 페이지가 reCAPTCHA 자체 처리)
 ipcMain.handle('flow:generate-video-t2v', async (event, {
   token, prompt, projectId, model, aspectRatio, duration
 }) => {
-  if (!token) return { success: false, error: 'No token' }
   if (!prompt) return { success: false, error: 'No prompt' }
+  if (!flowView) return { success: false, error: 'Flow view not ready' }
 
-  const body = {
-    clientContext: {
-      projectId: projectId || '',
-      tool: 'PINHOLE',
-      sessionId: ';' + Date.now()
-    },
-    requests: [{
-      prompt: { text: prompt },
-      videoModelName: model || 'veo2_fast',
-      videoAspectRatio: aspectRatio || 'VIDEO_ASPECT_RATIO_LANDSCAPE',
-      duration: `${duration || 8}s`,
-    }]
-  }
+  console.log('[Flow Video T2V] Starting DOM-triggered video generation:', prompt?.substring(0, 50))
 
   try {
-    const response = await sessionFetch(VIDEO_T2V_URL, {
-      method: 'POST',
-      headers: { ...API_HEADERS, 'Authorization': `Bearer ${token}` },
-      body: JSON.stringify(body)
-    })
-
-    if (!response.ok) {
-      const text = await response.text()
-      return { success: false, error: `HTTP ${response.status}: ${text.substring(0, 200)}` }
+    // 0. Flow 프로젝트 페이지 확인
+    const currentUrl = flowView.webContents.getURL()
+    if (!currentUrl.includes('/project/') && !currentUrl.includes('/tools/flow/')) {
+      return { success: false, error: 'Not on Flow project page. Please open a Flow project first.' }
     }
 
-    const text = await response.text()
-    const data = parseFlowResponse(text)
-    const generationId = data?.asyncVideoGenerationOperations?.[0]?.operationId
-      || data?.responses?.[0]?.generationId
+    // 1. 비디오 모드로 전환
+    const modeResult = await switchFlowToVideoMode()
+    if (!modeResult.success) {
+      return { success: false, error: modeResult.error || 'Failed to switch to video mode' }
+    }
+    console.log('[Flow Video T2V] Video mode active:', modeResult.method)
+
+    // 2. 프롬프트 입력 (이미지와 동일한 Slate 에디터 사용)
+    const promptBounds = flowView.getBounds()
+    const promptWasHidden = (promptBounds.width === 0 || promptBounds.height === 0)
+    if (promptWasHidden) {
+      const { width, height } = mainWindow.getContentBounds()
+      flowView.setBounds({ x: width + 5000, y: 0, width, height })
+      await new Promise(r => setTimeout(r, 300))
+    }
+
+    const promptResult = await flowView.webContents.executeJavaScript(`
+      (async function() {
+        const promptText = ${JSON.stringify(prompt)};
+        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+        // Slate editor 찾기
+        let editor = document.querySelector("[data-slate-editor='true']");
+        if (!editor) editor = document.querySelector("div[role='textbox'][contenteditable='true']:not(#af-bot-panel *)");
+        if (!editor) editor = document.querySelector('[contenteditable="true"]:not([aria-hidden])');
+
+        if (!editor) return { success: false, error: 'Editor not found' };
+
+        const isSlate = !!(editor.matches?.("[data-slate-editor='true']") || editor.querySelector?.("[data-slate-node]"));
+
+        // Slate React API로 프롬프트 주입
+        let injected = false;
+        if (isSlate) {
+          try {
+            const reactKeys = Object.keys(editor).filter(k => k.startsWith('__react'));
+            let slateEditor = null;
+            for (const key of reactKeys) {
+              const stack = [editor[key]];
+              const visited = new Set();
+              let guard = 0;
+              while (stack.length > 0 && guard < 5000) {
+                const node = stack.pop(); guard++;
+                if (!node || typeof node !== 'object' || visited.has(node)) continue;
+                visited.add(node);
+                const candidate = node?.memoizedProps?.node || node?.memoizedProps?.editor
+                  || node?.pendingProps?.node || node?.pendingProps?.editor
+                  || node?.stateNode?.editor || node?.editor;
+                if (candidate && typeof candidate.apply === 'function') { slateEditor = candidate; break; }
+                if (node.child) stack.push(node.child);
+                if (node.sibling) stack.push(node.sibling);
+                if (node.return) stack.push(node.return);
+                if (node.alternate) stack.push(node.alternate);
+              }
+              if (slateEditor) break;
+            }
+            if (slateEditor) {
+              try {
+                const existingText = slateEditor.children?.[0]?.children?.[0]?.text || '';
+                if (existingText) slateEditor.apply({ type: 'remove_text', path: [0, 0], offset: 0, text: existingText });
+              } catch {}
+              slateEditor.apply({ type: 'insert_text', path: [0, 0], offset: 0, text: promptText });
+              if (typeof slateEditor.onChange === 'function') slateEditor.onChange();
+              editor.dispatchEvent(new Event('input', { bubbles: true }));
+              await sleep(200);
+              const modelText = (slateEditor.children?.[0]?.children?.[0]?.text || '').trim();
+              if (modelText && modelText.includes(promptText.slice(0, 40))) injected = true;
+            }
+          } catch {}
+        }
+
+        // Fallback: execCommand
+        if (!injected) {
+          try {
+            editor.focus(); editor.click(); await sleep(100);
+            if (isSlate) {
+              const sel = window.getSelection(); const range = document.createRange();
+              const stringNodes = Array.from(editor.querySelectorAll('[data-slate-string]'))
+                .map(n => n.firstChild).filter(n => n && n.nodeType === Node.TEXT_NODE);
+              if (stringNodes.length > 0) {
+                range.setStart(stringNodes[0], 0);
+                const last = stringNodes[stringNodes.length - 1];
+                range.setEnd(last, (last.textContent || '').length);
+              } else {
+                const zeroNode = Array.from(editor.querySelectorAll('[data-slate-zero-width]'))
+                  .map(n => n.firstChild).find(n => n && n.nodeType === Node.TEXT_NODE);
+                if (zeroNode) { range.setStart(zeroNode, 0); range.setEnd(zeroNode, (zeroNode.textContent || '').length); }
+                else range.selectNodeContents(editor);
+              }
+              sel.removeAllRanges(); sel.addRange(range);
+            } else {
+              document.execCommand('selectAll', false, null);
+            }
+            document.execCommand('delete', false, null); await sleep(50);
+            try { editor.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: promptText })); } catch {}
+            const inserted = document.execCommand('insertText', false, promptText);
+            if (inserted) { injected = true; }
+          } catch {}
+        }
+
+        if (!injected) return { success: false, error: 'Prompt injection failed' };
+        await sleep(500);
+        return { success: true };
+      })()
+    `)
+
+    if (promptWasHidden) {
+      flowView.setBounds(promptBounds)
+      await new Promise(r => setTimeout(r, 200))
+    }
+
+    if (!promptResult?.success) {
+      return { success: false, error: promptResult?.error || 'Prompt injection failed' }
+    }
+    console.log('[Flow Video T2V] Prompt injected successfully')
+
+    // 3. CDP 비디오 응답 캡처 Promise 설정
+    let resolveVideo = null
+    let videoTimeout = null
+    const videoResponsePromise = new Promise((resolve) => {
+      videoTimeout = setTimeout(() => {
+        if (pendingVideoGeneration) {
+          pendingVideoGeneration = null
+          resolve({ error: true, message: 'Video response timeout (30s)' })
+        }
+      }, 30000) // 비디오 제출은 이미지보다 빠름 (초기 응답만 캡처)
+      resolveVideo = resolve
+    })
+
+    // 4. Generate 버튼 Trusted Click
+    const generateBtnSelector = `(function() {
+      try {
+        const xr = document.evaluate("//button[.//i[text()='arrow_forward']]",
+          document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+        if (xr.singleNodeValue && !xr.singleNodeValue.disabled) return xr.singleNodeValue;
+      } catch {}
+      for (const b of document.querySelectorAll('button')) {
+        for (const icon of b.querySelectorAll('i')) {
+          if (icon.textContent.trim() === 'arrow_forward' && !b.disabled) return b;
+        }
+      }
+      return null;
+    })()`
+
+    const clickResult = await trustedClickOnFlowView(generateBtnSelector)
+    console.log('[Flow Video T2V] Trusted click result:', clickResult)
+
+    if (!clickResult?.success) {
+      clearTimeout(videoTimeout)
+      return { success: false, error: clickResult?.error || 'Failed to click Generate button' }
+    }
+
+    // ★ 클릭 직후 pendingVideoGeneration 설정
+    const videoSetAt = Date.now() / 1000 - 2
+    pendingVideoGeneration = {
+      setAt: videoSetAt,
+      resolve: (result) => {
+        clearTimeout(videoTimeout)
+        resolveVideo(result)
+      }
+    }
+    console.log('[Flow Video T2V] pendingVideoGeneration set, waiting for CDP capture...')
+
+    // 5. 비디오 API 응답 대기
+    const netResult = await videoResponsePromise
+
+    if (netResult.error) {
+      console.warn('[Flow Video T2V] Video API failed:', netResult.message || `HTTP ${netResult.status}`)
+      return { success: false, error: netResult.message || `HTTP ${netResult.status}: Video generation failed` }
+    }
+
+    // 6. 응답에서 generation ID 추출
+    const data = parseFlowResponse(netResult.body)
+    const generationId = extractVideoGenerationId(data)
 
     if (generationId) {
+      console.log('[Flow Video T2V] Generation ID:', generationId)
       return { success: true, generationId }
     }
 
-    return { success: false, error: 'No generation ID returned' }
+    return { success: false, error: `No generation ID. Response keys: ${Object.keys(data || {}).join(',')}` }
   } catch (e) {
+    console.error('[Flow Video T2V] Error:', e.message)
     return { success: false, error: e.message }
   }
 })
 
-// Image-to-Video generation
+// Image-to-Video generation (DOM 자동화)
+// I2V는 비디오 모드에서 시작 이미지가 필요하므로, 직접 API 호출을 페이지 컨텍스트에서 실행
+// (Flow 페이지 UI에서 이미지 업로드 + I2V 모드 전환이 복잡하므로 인젝션 방식 사용)
 ipcMain.handle('flow:generate-video-i2v', async (event, {
   token, prompt, startImageMediaId, projectId, model, aspectRatio, duration
 }) => {
   if (!token) return { success: false, error: 'No token' }
+  if (!startImageMediaId) return { success: false, error: 'No start image mediaId' }
+  if (!flowView) return { success: false, error: 'Flow view not ready' }
 
-  const body = {
-    clientContext: {
-      projectId: projectId || '',
-      tool: 'PINHOLE',
-      sessionId: ';' + Date.now()
-    },
-    requests: [{
-      prompt: { text: prompt || '' },
-      videoModelName: model || 'veo2_fast',
-      videoAspectRatio: aspectRatio || 'VIDEO_ASPECT_RATIO_LANDSCAPE',
-      duration: `${duration || 8}s`,
-      startImage: { mediaGenerationId: startImageMediaId },
-    }]
-  }
+  console.log('[Flow Video I2V] Starting page-context video generation, mediaId:', startImageMediaId?.substring(0, 8))
 
+  // I2V model
+  const apiModelKey = String(model || '').toLowerCase().includes('quality')
+    ? 'veo_3_1_i2v_quality_ultra_relaxed'
+    : 'veo_3_1_i2v_s_fast_ultra_relaxed'
+
+  const batchId = randomUUID()
+  const pid = projectId || capturedProjectId || ''
+  const apiAspect = aspectRatio || 'VIDEO_ASPECT_RATIO_LANDSCAPE'
+
+  // I2V는 AutoFlow와 동일하게 페이지 컨텍스트에서 직접 fetch 실행
+  // credentials: "include"와 mode: "cors" 포함 (AutoFlow I2V 패턴)
+  // 페이지가 reCAPTCHA를 자체적으로 로드하므로 grecaptcha.enterprise.execute가 유효
   try {
-    const response = await sessionFetch(VIDEO_I2V_URL, {
-      method: 'POST',
-      headers: { ...API_HEADERS, 'Authorization': `Bearer ${token}` },
-      body: JSON.stringify(body)
-    })
+    const result = await flowView.webContents.executeJavaScript(`
+      (async function() {
+        try {
+          // 1. reCAPTCHA 토큰 획득 (페이지 컨텍스트 — origin 일치)
+          let recaptchaToken = '';
+          try {
+            const g = window.grecaptcha;
+            if (g?.enterprise?.execute) {
+              recaptchaToken = String(await g.enterprise.execute(
+                '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV',
+                { action: 'generate' }
+              ) || '').trim();
+            }
+          } catch {}
 
-    if (!response.ok) {
-      const text = await response.text()
-      return { success: false, error: `HTTP ${response.status}: ${text.substring(0, 200)}` }
+          // 2. 액세스 토큰 획득 (세션 API에서)
+          let accessToken = ${JSON.stringify(token)};
+          if (!accessToken) {
+            try {
+              const sessResp = await fetch('${SESSION_URL}');
+              if (sessResp.ok) {
+                const sessText = await sessResp.text();
+                const sessData = JSON.parse(sessText.replace(/^\\)\\]\\}',?\\s*/, '').trim());
+                accessToken = sessData?.access_token || sessData?.accessToken || '';
+              }
+            } catch {}
+          }
+          if (!accessToken) return { ok: false, error: 'no_access_token' };
+
+          // 3. API 요청 본문
+          const body = {
+            mediaGenerationContext: { batchId: ${JSON.stringify(batchId)} },
+            clientContext: {
+              projectId: ${JSON.stringify(pid)},
+              tool: 'PINHOLE',
+              userPaygateTier: 'PAYGATE_TIER_TWO',
+              sessionId: ';' + Date.now(),
+              ...(recaptchaToken ? {
+                recaptchaContext: {
+                  token: recaptchaToken,
+                  applicationType: 'RECAPTCHA_APPLICATION_TYPE_WEB'
+                }
+              } : {})
+            },
+            requests: [{
+              aspectRatio: ${JSON.stringify(apiAspect)},
+              seed: Math.floor(Math.random() * 2147483647),
+              textInput: { structuredPrompt: { parts: [{ text: ${JSON.stringify(prompt || '')} }] } },
+              videoModelKey: ${JSON.stringify(apiModelKey)},
+              metadata: {},
+              startImage: { mediaId: ${JSON.stringify(startImageMediaId)} }
+            }],
+            useV2ModelConfig: true
+          };
+
+          // 4. fetch 실행 (페이지 컨텍스트 — credentials: include로 쿠키 포함)
+          const resp = await fetch('${VIDEO_I2V_URL}', {
+            method: 'POST',
+            mode: 'cors',
+            credentials: 'include',
+            headers: { authorization: 'Bearer ' + accessToken },
+            body: JSON.stringify(body)
+          });
+          const text = await resp.text().catch(() => '');
+          return { ok: resp.ok, status: resp.status, text };
+        } catch (e) {
+          return { ok: false, status: 0, error: e.message };
+        }
+      })()
+    `)
+
+    if (!result.ok) {
+      console.error('[Flow Video I2V] HTTP', result.status, (result.text || result.error || '').substring(0, 200))
+      return { success: false, error: `HTTP ${result.status}: ${(result.text || result.error || '').substring(0, 200)}` }
     }
 
-    const text = await response.text()
-    const data = parseFlowResponse(text)
-    const generationId = data?.asyncVideoGenerationOperations?.[0]?.operationId
-      || data?.responses?.[0]?.generationId
+    const data = parseFlowResponse(result.text)
+    const generationId = extractVideoGenerationId(data)
 
     if (generationId) {
+      console.log('[Flow Video I2V] Generation ID:', generationId)
       return { success: true, generationId }
     }
 
-    return { success: false, error: 'No generation ID returned' }
+    return { success: false, error: `No generation ID. Response keys: ${Object.keys(data || {}).join(',')}` }
   } catch (e) {
+    console.error('[Flow Video I2V] Error:', e.message)
     return { success: false, error: e.message }
   }
 })
 
-// Check video generation status
+// Check video generation status (페이지 컨텍스트에서 실행 — origin 일치)
 ipcMain.handle('flow:check-video-status', async (event, { token, generationIds, projectId }) => {
   if (!token) return { success: false, error: 'No token' }
+  if (!flowView) return { success: false, error: 'Flow view not ready' }
 
-  const body = {
-    clientContext: {
-      projectId: projectId || '',
-      tool: 'PINHOLE',
-      sessionId: ';' + Date.now()
-    },
-    requests: generationIds.map(id => ({ operationId: id }))
-  }
+  const pid = projectId || capturedProjectId || ''
 
   try {
-    const response = await sessionFetch(VIDEO_STATUS_URL, {
-      method: 'POST',
-      headers: { ...API_HEADERS, 'Authorization': `Bearer ${token}` },
-      body: JSON.stringify(body)
-    })
+    // 페이지 컨텍스트에서 fetch 실행 (AutoFlow 동일 바디 구조)
+    // AutoFlow: { media: [{ name: "<genId>", projectId: "<pid>" }] }
+    const result = await flowView.webContents.executeJavaScript(`
+      (async function() {
+        try {
+          const ids = ${JSON.stringify(generationIds)};
+          const pid = ${JSON.stringify(pid)};
+          const media = ids.map(name => pid ? { name, projectId: pid } : { name });
+          const body = { media };
+          const resp = await fetch('${VIDEO_STATUS_URL}', {
+            method: 'POST',
+            mode: 'cors',
+            credentials: 'include',
+            headers: { authorization: 'Bearer ' + ${JSON.stringify(token)} },
+            body: JSON.stringify(body)
+          });
+          const text = await resp.text().catch(() => '');
+          return { ok: resp.ok, status: resp.status, text };
+        } catch (e) {
+          return { ok: false, status: 0, text: e.message };
+        }
+      })()
+    `)
 
-    if (!response.ok) {
-      const text = await response.text()
-      return { success: false, error: `HTTP ${response.status}: ${text.substring(0, 200)}` }
+    console.log('[Flow VideoStatus] HTTP', result.status, 'body length:', result.text?.length || 0)
+
+    if (!result.ok) {
+      console.warn('[Flow VideoStatus] Error:', result.text?.substring(0, 300))
+      return { success: false, error: `HTTP ${result.status}: ${(result.text || '').substring(0, 200)}` }
     }
 
-    const text = await response.text()
-    const data = parseFlowResponse(text)
+    const data = parseFlowResponse(result.text)
+    console.log('[Flow VideoStatus] Parsed keys:', data ? Object.keys(data).join(',') : 'null')
 
-    const results = data?.responses || data?.asyncVideoGenerationOperations || []
-    const statuses = results.map(r => {
-      const done = r.done || r.status === 'COMPLETE' || r.state === 'COMPLETE'
-      const failed = r.error || r.status === 'FAILED' || r.state === 'FAILED'
-      const mediaId = r.result?.mediaGenerationId || r.mediaGenerationId || r.name
-      const progress = r.progress || r.metadata?.progress
+    // AutoFlow 형식: media[].mediaMetadata.mediaStatus.mediaGenerationStatus
+    const statuses = []
 
-      if (failed) return { status: 'failed', error: r.error?.message || 'Generation failed' }
-      if (done && mediaId) return { status: 'complete', mediaId }
-      return { status: 'pending', progress }
-    })
+    // 방법 1: media[] 배열 (최신 API 응답 형식)
+    if (Array.isArray(data?.media)) {
+      for (const m of data.media) {
+        const genStatus = m?.mediaMetadata?.mediaStatus?.mediaGenerationStatus || ''
+        const mediaId = m?.name
+        console.log('[Flow VideoStatus] media status:', genStatus, 'mediaId:', mediaId?.substring(0, 30))
+        if (genStatus === 'MEDIA_GENERATION_STATUS_SUCCESSFUL') {
+          // 전체 media 객체 구조 디버깅
+          const findUrls = (obj, path = '') => {
+            if (!obj || typeof obj !== 'object') return []
+            const urls = []
+            for (const [k, v] of Object.entries(obj)) {
+              if (typeof v === 'string' && (v.startsWith('http') || v.includes('googleapis') || v.includes('google'))) {
+                urls.push({ path: path + '.' + k, url: v.substring(0, 150) })
+              } else if (typeof v === 'object' && v !== null) {
+                urls.push(...findUrls(v, path + '.' + k))
+              }
+            }
+            return urls
+          }
+          const allUrls = findUrls(m, 'media')
+          console.log('[Flow VideoStatus] ✅ URLs in response:', JSON.stringify(allUrls))
+          console.log('[Flow VideoStatus] ✅ mediaMetadata keys:', JSON.stringify(Object.keys(m?.mediaMetadata || {})))
 
+          // AutoFlow: 비디오 URL은 status 응답에서 직접 추출
+          const meta = m?.mediaMetadata
+          const videoUrl = meta?.videoData?.generatedVideo?.fifeUri
+            || meta?.videoData?.generatedVideo?.url
+            || meta?.videoData?.fifeUri
+            || meta?.videoData?.url
+            || meta?.imageData?.fifeUri
+            || meta?.imageData?.url
+            || m?.mediaData?.url
+            || m?.generatedMedia?.url
+            || m?.thumbnailUrl
+            || m?.url
+            || null
+          console.log('[Flow VideoStatus] ✅ Complete! videoUrl:', videoUrl?.substring(0, 80))
+          statuses.push({ status: 'complete', mediaId, videoUrl })
+        } else if (genStatus.includes('FAILED') || genStatus.includes('ERROR')) {
+          statuses.push({ status: 'failed', error: genStatus })
+        } else {
+          statuses.push({ status: 'pending', progress: null })
+        }
+      }
+    }
+
+    // 방법 2: responses[] / asyncVideoGenerationOperations[] (레거시)
+    if (statuses.length === 0) {
+      const results = data?.responses || data?.asyncVideoGenerationOperations || []
+      console.log('[Flow VideoStatus] Legacy path, results count:', results.length)
+      for (const r of results) {
+        console.log('[Flow VideoStatus] Response item keys:', Object.keys(r).join(','),
+          'done:', r.done, 'status:', r.status, 'state:', r.state)
+        const done = r.done || r.status === 'COMPLETE' || r.state === 'COMPLETE'
+        const failed = r.error || r.status === 'FAILED' || r.state === 'FAILED'
+        const mediaId = r.result?.mediaGenerationId || r.mediaGenerationId || r.name
+        const progress = r.progress || r.metadata?.progress
+
+        if (failed) statuses.push({ status: 'failed', error: r.error?.message || 'Generation failed' })
+        else if (done && mediaId) statuses.push({ status: 'complete', mediaId })
+        else statuses.push({ status: 'pending', progress })
+      }
+    }
+
+    // 아무 statuses도 못 뽑았으면 raw data 로깅
+    if (statuses.length === 0) {
+      console.warn('[Flow VideoStatus] No statuses parsed! Raw data (first 500):', JSON.stringify(data)?.substring(0, 500))
+    }
+
+    console.log('[Flow VideoStatus] Final statuses:', JSON.stringify(statuses))
     return { success: true, statuses }
   } catch (e) {
+    console.error('[Flow VideoStatus] Exception:', e.message)
     return { success: false, error: e.message }
   }
 })

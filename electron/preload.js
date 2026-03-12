@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 contextBridge.exposeInMainWorld('electronAPI', {
   // App
   openExternal: (url) => ipcRenderer.invoke('app:open-external', { url }),
+  showInFolder: (filePath) => ipcRenderer.invoke('app:show-in-folder', { filePath }),
   onFlowStatus: (callback) => ipcRenderer.on('flow-status', (_, data) => callback(data)),
 
   // Layout
@@ -24,9 +25,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   generateVideoT2V: (params) => ipcRenderer.invoke('flow:generate-video-t2v', params),
   generateVideoI2V: (params) => ipcRenderer.invoke('flow:generate-video-i2v', params),
   checkVideoStatus: (params) => ipcRenderer.invoke('flow:check-video-status', params),
+  downloadVideoUrl: (params) => ipcRenderer.invoke('flow:download-video-url', params),
+  domDownloadVideo: (params) => ipcRenderer.invoke('flow:dom-download-video', params),
 
   // File System
   getDefaultWorkFolder: () => ipcRenderer.invoke('fs:get-default-work-folder'),
+  getSavedWorkFolder: () => ipcRenderer.invoke('fs:get-saved-work-folder'),
+  saveWorkFolder: (params) => ipcRenderer.invoke('fs:save-work-folder', params),
   selectWorkFolder: () => ipcRenderer.invoke('fs:select-work-folder'),
   checkFolderExists: (params) => ipcRenderer.invoke('fs:check-folder-exists', params),
   listProjects: (params) => ipcRenderer.invoke('fs:list-projects', params),

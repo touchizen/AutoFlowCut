@@ -69,7 +69,7 @@ export function UserMenu({ onLoginClick, onUpgradeClick }) {
 
   const getStatusBadge = () => {
     if (subscription.status === 'active') {
-      return <span className="user-badge user-badge--pro">PRO</span>
+      return <span className="user-badge user-badge--pro">{t('subscription.proBadge')}</span>
     }
     if (subscription.status === 'trial') {
       return <span className="user-badge user-badge--trial">{t('subscription.trial')}</span>

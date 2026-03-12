@@ -49,6 +49,11 @@ export const fileSystemAPI = {
       localStorage.setItem('workFolderPath', result.path)
       localStorage.setItem('workFolderName', result.name)
 
+      // config 파일에도 영속 저장 (localStorage 유실 대비)
+      try {
+        await window.electronAPI.saveWorkFolder({ workFolderPath: result.path, workFolderName: result.name })
+      } catch {}
+
       return {
         success: true,
         name: result.name,
@@ -113,23 +118,43 @@ export const fileSystemAPI = {
   },
 
   /**
-   * Ensure permission — workFolder가 없으면 기본 폴더 자동 설정 후 체크.
+   * Ensure permission — workFolder가 없으면:
+   * 1. main process config 파일에서 복원 시도
+   * 2. 없으면 기본 폴더 자동 설정
    * 기본 경로: Mac ~/Documents/flow2capcut, Windows Documents\flow2capcut
    */
   async ensurePermission() {
     const existing = localStorage.getItem('workFolderPath')
     if (!existing) {
-      // 기본 작업 폴더 자동 설정
+      // 1단계: main process config 파일에서 이전 설정 복원
+      try {
+        const saved = await window.electronAPI.getSavedWorkFolder()
+        if (saved?.success && saved.path) {
+          localStorage.setItem('workFolderPath', saved.path)
+          localStorage.setItem('workFolderName', saved.name || '')
+          console.log('[FileSystem] Restored work folder from config:', saved.path)
+          return this.checkPermission()
+        }
+      } catch (e) {
+        console.warn('[FileSystem] Config restore failed:', e.message)
+      }
+
+      // 2단계: config도 없으면 기본 폴더 자동 설정
       try {
         const result = await window.electronAPI.getDefaultWorkFolder()
         if (result?.success) {
           localStorage.setItem('workFolderPath', result.path)
           localStorage.setItem('workFolderName', result.name)
+          // 기본 폴더도 config에 저장
+          try { await window.electronAPI.saveWorkFolder({ workFolderPath: result.path, workFolderName: result.name }) } catch {}
           console.log('[FileSystem] Default work folder set:', result.path)
         }
       } catch (e) {
         console.warn('[FileSystem] Failed to set default work folder:', e.message)
       }
+    } else {
+      // localStorage에 있으면 config 파일에도 동기화 (최초 1회)
+      try { await window.electronAPI.saveWorkFolder({ workFolderPath: existing, workFolderName: localStorage.getItem('workFolderName') || '' }) } catch {}
     }
     return this.checkPermission()
   },

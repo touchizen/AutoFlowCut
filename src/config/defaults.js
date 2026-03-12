@@ -59,10 +59,10 @@ export const DEFAULTS = {
       { value: 'GEM_PIX_2', label: 'Nano Banana 2 (Default)' },
       { value: 'IMAGEN_4', label: 'Imagen 4' },
     ],
-    // 비디오 모델
+    // 비디오 모델 (v2 API model keys)
     videoModels: [
-      { value: 'veo2_fast', label: 'Veo 2 Fast' },
-      { value: 'veo3_quality', label: 'Veo 3 Quality' },
+      { value: 'veo_3_1_t2v_fast_ultra_relaxed', label: 'Veo 3.1 Fast' },
+      { value: 'veo_3_1_t2v_quality_ultra_relaxed', label: 'Veo 3.1 Quality' },
     ],
   },
 

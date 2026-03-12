@@ -14,6 +14,7 @@ export default {
     authenticated: '인증됨',
     checking: '확인 중...',
     language: '언어',
+    menu: '메뉴',
   },
   
   // 시작 화면
@@ -29,11 +30,54 @@ export default {
   // 탭
   tabs: {
     text: '프롬프트',
+    videoText: '비디오',
+    frameToVideo: 'F→V',
+    refToVideo: 'R→V',
     list: '씬목록',
     import: '가져오기',
     references: '레퍼런스',
   },
-  
+
+  // Frame to Video 패널
+  frameToVideo: {
+    title: 'Frame to Video',
+    description: '이미지 씬을 선택하여 비디오를 생성합니다',
+    startImage: '시작 이미지',
+    endImage: '끝 이미지',
+    prompt: '프롬프트',
+    status: '상태',
+    noEndImage: '— 없음',
+    addRow: '+ 행 추가',
+    removeRow: '행 삭제',
+    noScenesWithMedia: '먼저 이미지를 생성하세요 (mediaId 필요)',
+    generate: '비디오 생성',
+    waiting: '대기',
+    generating: '생성중',
+    complete: '완료',
+    error: '에러',
+    promptPlaceholder: '비디오 프롬프트...',
+  },
+
+  // Refs to Video 패널
+  refToVideo: {
+    title: 'References to Video',
+    description: '레퍼런스를 조합하여 비디오를 생성합니다',
+    references: '레퍼런스 (최대 3개)',
+    prompt: '프롬프트',
+    status: '상태',
+    addRow: '+ 행 추가',
+    removeRow: '행 삭제',
+    noRefsWithMedia: '먼저 레퍼런스를 업로드하세요 (mediaId 필요)',
+    selectRefs: '레퍼런스 선택...',
+    maxRefs: '최대 3개까지 선택 가능',
+    generate: '비디오 생성',
+    waiting: '대기',
+    generating: '생성중',
+    complete: '완료',
+    error: '에러',
+    promptPlaceholder: '비디오 프롬프트...',
+  },
+
   // 프롬프트 입력
   prompt: {
     placeholder: `프롬프트를 입력하세요 (줄바꿈으로 구분)
@@ -44,6 +88,12 @@ The queen enters the throne room gracefully
 The king and queen discuss important matters`,
     count: '{count}개 프롬프트',
     tip: 'Tip: 각 줄이 하나의 씬이 됩니다',
+    videoPlaceholder: `비디오 프롬프트를 입력하세요 (줄바꿈으로 구분)
+
+예시:
+A drone shot slowly rising over a misty mountain forest at sunrise
+A cat jumping from shelf to shelf in a cozy bookstore, slow motion
+Ocean waves crashing against a lighthouse during a dramatic storm`,
   },
   
   // 씬 목록
@@ -110,6 +160,7 @@ The king and queen discuss important matters`,
     pause: '일시정지',
     resume: '재개',
     stop: '중지',
+    close: '닫기',
     retryErrors: '에러 재시도',
     retryOne: '재시도',
     exportCapcut: 'CapCut 내보내기',
@@ -149,6 +200,8 @@ The king and queen discuss important matters`,
     empty: '프롬프트를 입력하고 생성을 시작하세요',
     prompt: '프롬프트',
     image: '이미지',
+    video: '비디오',
+    videoPreview: '비디오 미리보기',
     status: '상태',
   },
   
@@ -374,6 +427,7 @@ The king and queen discuss important matters`,
     manageSubscription: '구독 관리',
     loadingPortal: '로딩...',
     logout: '로그아웃',
+    proBadge: 'PRO',
   },
 
   // 로그인 모달
@@ -530,5 +584,35 @@ The king and queen discuss important matters`,
     sceneGenerateFailed: '생성 실패: {error}',
     sceneGenerateError: '생성 오류: {error}',
     projectRenamed: '프로젝트 이름이 변경되었습니다.',
+    copied: '복사됨!',
+  },
+
+  // 비디오 선택
+  videoSelection: {
+    selectAll: '전체 선택',
+    noneSelected: '선택된 항목이 없습니다. 최소 1개 이상 선택해주세요.',
+    selectedCount: '선택됨',
+  },
+
+  // 비디오 상세 모달
+  videoDetail: {
+    info: '정보',
+    path: '경로',
+  },
+
+  // 상세 공통
+  detail: {
+    history: '📜 기록',
+  },
+
+  // Video Automation
+  videoAutomation: {
+    requesting: '비디오 생성 요청 중...',
+    polling: '비디오 생성 대기 중...',
+    generating: '비디오 생성 중',
+    downloading: '비디오 다운로드 중...',
+    done: '비디오 생성 완료!',
+    noItems: '생성할 항목이 없습니다.',
+    stopped: '비디오 생성이 중지되었습니다.',
   },
 }

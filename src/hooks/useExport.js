@@ -17,6 +17,9 @@ import useI18n from './useI18n'
 export function useExport({
   settings,
   scenes,
+  videoScenes = [],
+  framePairs = [],
+  refPairs = [],
   openSettings,
   isAuthenticated,
   subscription,
@@ -88,7 +91,37 @@ export function useExport({
           subtitle: s.subtitle || '',
           title: s.title || ''
         })),
-        videos: [] // 비디오는 없음
+        videos: [
+          // T2V 비디오 (videoScenes)
+          ...videoScenes
+            .filter(vs => (vs.status === 'done' || vs.status === 'complete') && vs.video)
+            .map(vs => ({
+              id: vs.id,
+              video_path: vs.video,
+              prompt: vs.prompt || '',
+              source: 't2v',
+            })),
+          // F→V 비디오 (framePairs)
+          ...framePairs
+            .filter(p => p.status === 'complete' && p.base64)
+            .map(p => ({
+              id: p.id,
+              video_path: p.base64,
+              from_scene: p.startSceneId || null,
+              to_scene: p.endSceneId || null,
+              prompt: p.prompt || '',
+              source: 'i2v',
+            })),
+          // R→V 비디오 (refPairs)
+          ...refPairs
+            .filter(p => p.status === 'complete' && p.base64)
+            .map(p => ({
+              id: p.id,
+              video_path: p.base64,
+              prompt: p.prompt || '',
+              source: 'r2v',
+            })),
+        ]
       }
 
       console.log('[Export] settings.aspectRatio:', settings.aspectRatio, '→ format:', project.format)

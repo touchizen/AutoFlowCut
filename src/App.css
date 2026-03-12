@@ -137,15 +137,30 @@ html, body {
 /* Tabs */
 .tabs-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin-bottom: 12px;
   flex-shrink: 0;
 }
 
-.tabs {
+/* 고정 탭 (프롬프트, 가져오기) — 텍스트 포함, 줄어들지 않음 */
+.tab-fixed {
+  flex-shrink: 0;
+}
+
+/* 왼쪽 그룹: 생성 탭 (프롬프트, 비디오, F→V, R→V) */
+.tabs-left {
   display: flex;
   gap: 4px;
+  align-items: center;
+}
+
+/* 오른쪽 그룹: 관리 탭 (씬목록, Ref, 가져오기) */
+.tabs-right {
+  display: flex;
+  gap: 4px;
+  align-items: center;
 }
 
 .tab {
@@ -158,6 +173,14 @@ html, body {
   font-size: 0.9rem;
   font-weight: 600;
   transition: all 0.2s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* 아이콘만 표시하는 탭 — 컴팩트 */
+.tab.tab-icon {
+  padding: 8px 12px;
+  font-size: 1rem;
 }
 
 .tab.active {
@@ -166,9 +189,9 @@ html, body {
   border-bottom-color: var(--bg-secondary);
 }
 
-.tabs-actions {
-  display: flex;
-  gap: 8px;
+/* 탭 텍스트 라벨 — 좁으면 숨김 */
+.tab-label {
+  display: inline;
 }
 
 .btn-icon {
@@ -252,8 +275,243 @@ html, body {
 }
 
 /* ============================================
+   Video Panel (FrameToVideo / RefToVideo)
+   ============================================ */
+
+.video-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+}
+
+.video-panel-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.video-panel-header {
+  flex-shrink: 0;
+}
+
+.video-panel-description {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  margin: 0;
+}
+
+/* Mapping Table */
+.video-mapping-table {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mapping-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--border-radius);
+  background: var(--bg-secondary);
+}
+
+.mapping-row.mapping-header {
+  background: transparent;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 4px 8px;
+}
+
+.mapping-col {
+  flex-shrink: 0;
+}
+
+.col-num {
+  width: 24px;
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.col-image {
+  width: 140px;
+}
+
+.col-refs {
+  width: 240px;
+}
+
+.col-prompt {
+  flex: 1;
+  min-width: 0;
+}
+
+.col-prompt input {
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-color);
+  color: var(--text-color);
+  font-size: 0.82rem;
+}
+
+.col-status {
+  width: 80px;
+  font-size: 0.78rem;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.col-action {
+  width: 28px;
+}
+
+/* Scene Select with Thumbnail */
+.scene-select-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.scene-select-wrapper select {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-color);
+  color: var(--text-color);
+  font-size: 0.78rem;
+}
+
+.scene-thumb {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+/* Reference Chips */
+.ref-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.ref-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.ref-chip.selected {
+  background: var(--primary-color);
+  color: #fff;
+}
+
+.ref-chip-thumb {
+  width: 16px;
+  height: 16px;
+  object-fit: cover;
+  border-radius: 2px;
+}
+
+.ref-chip-remove {
+  font-size: 0.65rem;
+  opacity: 0.7;
+  margin-left: 2px;
+}
+
+.ref-chip:hover .ref-chip-remove {
+  opacity: 1;
+}
+
+.ref-add-select {
+  padding: 2px 6px;
+  border: 1px dashed var(--border-color);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  min-width: 100px;
+}
+
+/* Add Row / Remove Buttons */
+.btn-add-row {
+  align-self: flex-start;
+  padding: 6px 14px;
+  border: 1px dashed var(--border-color);
+  border-radius: var(--border-radius);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.82rem;
+  transition: all 0.2s;
+}
+
+.btn-add-row:hover:not(:disabled) {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+}
+
+.btn-remove {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+
+.btn-remove:hover:not(:disabled) {
+  background: var(--error-color);
+  color: #fff;
+}
+
+/* ============================================
    Responsive Main Panel - Container Queries
    ============================================ */
+
+/* < 550px: 중간 탭 아이콘만 표시 */
+@container main-panel (max-width: 549px) {
+  .tab {
+    padding: 6px 10px;
+    font-size: 0.8rem;
+  }
+  .tab-label {
+    display: none;
+  }
+  .tab.tab-icon {
+    padding: 6px 10px;
+  }
+  .col-image { width: 110px; }
+  .col-refs { width: 180px; }
+}
 
 /* < 450px: config-row 줄바꿈, 버튼 텍스트 축소, 탭 축소 */
 @container main-panel (max-width: 449px) {
@@ -286,8 +544,8 @@ html, body {
     font-size: 0.85rem;
   }
   .tab {
-    padding: 6px 10px;
-    font-size: 0.8rem;
+    padding: 5px 8px;
+    font-size: 0.75rem;
   }
   .btn-icon {
     padding: 5px 8px;
@@ -296,6 +554,9 @@ html, body {
   .tabs-header {
     margin-bottom: 8px;
   }
+  .col-image { width: 90px; }
+  .col-refs { width: 150px; }
+  .col-status { width: 60px; font-size: 0.72rem; }
 }
 
 /* < 350px: 버튼 더 축소, 탭 더 축소 */
@@ -323,10 +584,11 @@ html, body {
     padding: 4px 6px;
     font-size: 0.72rem;
   }
-  .tabs {
+  .tabs-left,
+  .tabs-right {
     gap: 2px;
   }
-  .tabs-actions {
+  .tabs-header {
     gap: 4px;
   }
 }
@@ -602,6 +864,21 @@ html, body {
   to { transform: rotate(360deg); }
 }
 
+/* Stopwatch icon */
+.stopwatch-icon {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.stopwatch-hand {
+  animation: stopwatch-tick 60s linear infinite;
+}
+
+@keyframes stopwatch-tick {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .status {
   padding: 4px 8px;
   border-radius: 4px;
@@ -620,6 +897,14 @@ html, body {
 
 .retry-btn:hover {
   background: rgba(245, 101, 101, 0.3);
+}
+
+.error-detail {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--text-muted, #999);
+  margin-top: 2px;
+  word-break: break-all;
 }
 
 /* ============================================
@@ -907,4 +1192,92 @@ html, body {
 [data-tooltip-top]:hover::before {
   opacity: 1;
   visibility: visible;
+}
+
+/* === SelectablePromptList (Video tab checkbox selection) === */
+.selectable-prompt-list {
+  border: 1px solid var(--border-color, #333);
+  border-radius: 6px;
+  margin: 8px 0;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.selectable-prompt-list .select-header {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-color, #333);
+  background: var(--bg-secondary, #1a1a2e);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+}
+
+.selectable-prompt-list .select-header label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.selectable-prompt-list .select-count {
+  margin-left: auto;
+  color: var(--text-muted, #888);
+  font-size: 0.8rem;
+}
+
+.selectable-prompt-list .select-items {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.selectable-prompt-list .select-items li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border-color, #222);
+  font-size: 0.82rem;
+  transition: opacity 0.2s;
+}
+
+.selectable-prompt-list .select-items li:last-child {
+  border-bottom: none;
+}
+
+.selectable-prompt-list .select-items li.deselected {
+  opacity: 0.4;
+}
+
+.selectable-prompt-list .item-num {
+  color: var(--text-muted, #888);
+  min-width: 20px;
+  text-align: right;
+  font-size: 0.75rem;
+}
+
+.selectable-prompt-list .item-prompt {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selectable-prompt-list .item-status {
+  font-size: 0.85rem;
+}
+
+/* Checkbox column for FrameToVideo / RefToVideo tables */
+.col-check {
+  width: 32px;
+  text-align: center;
+}
+
+.col-check input[type="checkbox"] {
+  cursor: pointer;
 }

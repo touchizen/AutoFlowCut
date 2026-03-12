@@ -129,6 +129,59 @@ export function useFlowAPI() {
     }
   }, [getAccessToken])
 
+  /**
+   * Text to Video 생성 요청
+   * @returns {{ success, generationId }} 비동기 operationId
+   */
+  const generateVideoT2V = useCallback(async (prompt, model, aspectRatio, duration) => {
+    const token = await getAccessToken()
+    if (!token) return { success: false, error: 'No access token' }
+
+    try {
+      return await window.electronAPI.generateVideoT2V({
+        token, prompt, projectId, model, aspectRatio, duration
+      })
+    } catch (error) {
+      return { success: false, error: error.message }
+    }
+  }, [getAccessToken, projectId])
+
+  /**
+   * Image to Video (Frame to Video) 생성 요청
+   * @param {string} startImageMediaId - 시작 이미지의 mediaId
+   * @returns {{ success, generationId }}
+   */
+  const generateVideoI2V = useCallback(async (prompt, startImageMediaId, model, aspectRatio, duration) => {
+    const token = await getAccessToken()
+    if (!token) return { success: false, error: 'No access token' }
+
+    try {
+      return await window.electronAPI.generateVideoI2V({
+        token, prompt, startImageMediaId, projectId, model, aspectRatio, duration
+      })
+    } catch (error) {
+      return { success: false, error: error.message }
+    }
+  }, [getAccessToken, projectId])
+
+  /**
+   * 비디오 생성 상태 폴링
+   * @param {string[]} generationIds - operationId 배열
+   * @returns {{ success, statuses: [{ status, mediaId?, error?, progress? }] }}
+   */
+  const checkVideoStatus = useCallback(async (generationIds) => {
+    const token = await getAccessToken()
+    if (!token) return { success: false, error: 'No access token' }
+
+    try {
+      return await window.electronAPI.checkVideoStatus({
+        token, generationIds, projectId
+      })
+    } catch (error) {
+      return { success: false, error: error.message }
+    }
+  }, [getAccessToken, projectId])
+
   return {
     accessToken,
     projectId,
@@ -136,6 +189,9 @@ export function useFlowAPI() {
     generateImageDOM,
     uploadReference,
     fetchMedia,
+    generateVideoT2V,
+    generateVideoI2V,
+    checkVideoStatus,
     setStopRequested
   }
 }

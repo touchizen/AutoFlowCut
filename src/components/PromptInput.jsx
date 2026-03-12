@@ -5,7 +5,7 @@
 import { useState, useEffect } from 'react'
 import { useI18n } from '../hooks/useI18n'
 
-export default function PromptInput({ value, onChange, disabled }) {
+export default function PromptInput({ value, onChange, disabled, placeholder }) {
   const { t } = useI18n()
   const [text, setText] = useState(value || '')
 
@@ -28,7 +28,7 @@ export default function PromptInput({ value, onChange, disabled }) {
         className="prompt-textarea"
         value={text}
         onChange={handleChange}
-        placeholder={t('prompt.placeholder')}
+        placeholder={placeholder || t('prompt.placeholder')}
         disabled={disabled}
       />
 

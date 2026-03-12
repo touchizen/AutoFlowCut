@@ -52,7 +52,56 @@ async function loadProjectWithImages(projectName) {
   const withMediaId = scenesWithImages.filter(s => s.mediaId).length
   console.log(`[ProjectData] ✅ Loaded: ${withImages}/${sceneCount} images, ${withSubtitles}/${sceneCount} subtitles, ${withMediaId}/${sceneCount} mediaIds`)
 
-  return { scenes: scenesWithImages, references: refsWithImages }
+  // videoScenes 비디오 파일에서 로드
+  const videoScenesWithMedia = await Promise.all(
+    (result.data.videoScenes || []).map(async (vs) => {
+      if (vs.id && !vs.video) {
+        const vidResult = await fileSystemAPI.readResource(projectName, 'videos', vs.id)
+        if (vidResult.success) {
+          return { ...vs, video: vidResult.data }
+        }
+      }
+      return vs
+    })
+  )
+
+  // framePairs 비디오 파일 로드
+  const framePairsWithMedia = await Promise.all(
+    (result.data.framePairs || []).map(async (fp) => {
+      if (fp.id && !fp.base64 && fp.status === 'complete') {
+        const vidResult = await fileSystemAPI.readResource(projectName, 'videos', fp.id)
+        if (vidResult.success) {
+          return { ...fp, base64: vidResult.data }
+        }
+      }
+      return fp
+    })
+  )
+
+  // refPairs 비디오 파일 로드
+  const refPairsWithMedia = await Promise.all(
+    (result.data.refPairs || []).map(async (rp) => {
+      if (rp.id && !rp.base64 && rp.status === 'complete') {
+        const vidResult = await fileSystemAPI.readResource(projectName, 'videos', rp.id)
+        if (vidResult.success) {
+          return { ...rp, base64: vidResult.data }
+        }
+      }
+      return rp
+    })
+  )
+
+  // 복원 시 'generating' 상태 리셋 → 'pending' (중단된 생성은 재시작 불가)
+  const resetGenerating = (item) =>
+    item.status === 'generating' ? { ...item, status: 'pending', generatingStartedAt: undefined } : item
+
+  return {
+    scenes: scenesWithImages.map(resetGenerating),
+    references: refsWithImages,
+    videoScenes: videoScenesWithMedia.map(resetGenerating),
+    framePairs: framePairsWithMedia.map(resetGenerating),
+    refPairs: refPairsWithMedia.map(resetGenerating),
+  }
 }
 
 /**
@@ -60,7 +109,7 @@ async function loadProjectWithImages(projectName) {
  * - 이미지 데이터(base64)는 제외하고 메타데이터만 저장
  * - 이미지는 이미 별도 파일로 저장됨 (images/, references/)
  */
-async function saveCurrentProject(settings, scenes, references) {
+async function saveCurrentProject(settings, scenes, references, videoScenes = [], framePairs = [], refPairs = []) {
   if (!settings.projectName || settings.saveMode !== 'folder') return
   const exists = await fileSystemAPI.projectExists(settings.projectName)
   if (!exists) return
@@ -71,14 +120,33 @@ async function saveCurrentProject(settings, scenes, references) {
   // references에서 data(base64) 제외
   const refsWithoutData = references.map(({ data, ...rest }) => rest)
 
+  // videoScenes에서 video(base64) 제외
+  const videoScenesWithoutMedia = videoScenes.map(({ video, ...rest }) => rest)
+
+  // framePairs에서 base64 제외
+  const framePairsWithoutMedia = framePairs.map(({ base64, ...rest }) => rest)
+
+  // refPairs에서 base64 제외
+  const refPairsWithoutMedia = refPairs.map(({ base64, ...rest }) => rest)
+
   await fileSystemAPI.saveProjectData(settings.projectName, {
     scenes: scenesWithoutImages,
     references: refsWithoutData,
+    videoScenes: videoScenesWithoutMedia,
+    framePairs: framePairsWithoutMedia,
+    refPairs: refPairsWithoutMedia,
     settings: { aspectRatio: settings.aspectRatio, defaultDuration: settings.defaultDuration }
   })
 }
 
-export function useProjectData({ settings, setSettings, scenes, references, setScenes, setReferences, openSettings }) {
+export function useProjectData({
+  settings, setSettings,
+  scenes, references, setScenes, setReferences,
+  videoScenes, setVideoScenes,
+  framePairs, setFramePairs,
+  refPairs, setRefPairs,
+  openSettings
+}) {
   // Pending save 추가 (no-op in desktop — permission is always available)
   const addPendingSave = () => {}
 
@@ -109,6 +177,9 @@ export function useProjectData({ settings, setSettings, scenes, references, setS
       if (loaded) {
         setScenes(loaded.scenes)
         setReferences(loaded.references)
+        setVideoScenes?.(loaded.videoScenes || [])
+        setFramePairs?.(loaded.framePairs || [])
+        setRefPairs?.(loaded.refPairs || [])
         setSettings(s => ({ ...s, projectName: prevProjectName }))
         console.log('[App] Auto-restore complete:', prevProjectName,
           `(${loaded.scenes.filter(s => s.image).length} images, ${loaded.scenes.filter(s => s.subtitle).length} subtitles)`)
@@ -131,7 +202,7 @@ export function useProjectData({ settings, setSettings, scenes, references, setS
     if (newProjectName === settings.projectName) return
 
     // 1. 현재 프로젝트 데이터 저장
-    await saveCurrentProject(settings, scenes, references)
+    await saveCurrentProject(settings, scenes, references, videoScenes, framePairs, refPairs)
 
     // 2. 새 프로젝트 데이터 로드
     const newExists = await fileSystemAPI.projectExists(newProjectName)
@@ -140,17 +211,26 @@ export function useProjectData({ settings, setSettings, scenes, references, setS
       if (loaded) {
         setScenes(loaded.scenes)
         setReferences(loaded.references)
+        setVideoScenes?.(loaded.videoScenes || [])
+        setFramePairs?.(loaded.framePairs || [])
+        setRefPairs?.(loaded.refPairs || [])
         console.log('[App] Project loaded:', newProjectName)
       } else {
         // 폴더는 있지만 데이터 없음 (새로 만든 빈 프로젝트)
         setScenes([])
         setReferences([])
+        setVideoScenes?.([])
+        setFramePairs?.([])
+        setRefPairs?.([])
         console.log('[App] Empty project:', newProjectName)
       }
     } else {
       // 프로젝트 폴더 자체가 없음
       setScenes([])
       setReferences([])
+      setVideoScenes?.([])
+      setFramePairs?.([])
+      setRefPairs?.([])
       console.log('[App] New project created:', newProjectName)
     }
 
@@ -161,7 +241,7 @@ export function useProjectData({ settings, setSettings, scenes, references, setS
   return {
     addPendingSave,
     handleProjectChange,
-    saveCurrentProject: () => saveCurrentProject(settings, scenes, references),
+    saveCurrentProject: () => saveCurrentProject(settings, scenes, references, videoScenes, framePairs, refPairs),
     isRestoringRef  // auto-save 가드용
   }
 }

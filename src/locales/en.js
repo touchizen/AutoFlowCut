@@ -14,6 +14,7 @@ export default {
     authenticated: 'Authenticated',
     checking: 'Checking...',
     language: 'Language',
+    menu: 'Menu',
   },
   
   // Welcome screen
@@ -29,11 +30,54 @@ export default {
   // Tabs
   tabs: {
     text: 'Prompts',
+    videoText: 'Video',
+    frameToVideo: 'F→V',
+    refToVideo: 'R→V',
     list: 'Scenes',
     import: 'Import',
     references: 'References',
   },
-  
+
+  // Frame to Video panel
+  frameToVideo: {
+    title: 'Frame to Video',
+    description: 'Select image scenes to generate videos',
+    startImage: 'Start Image',
+    endImage: 'End Image',
+    prompt: 'Prompt',
+    status: 'Status',
+    noEndImage: '— None',
+    addRow: '+ Add Row',
+    removeRow: 'Remove',
+    noScenesWithMedia: 'Generate images first (mediaId required)',
+    generate: 'Generate Video',
+    waiting: 'Waiting',
+    generating: 'Generating',
+    complete: 'Complete',
+    error: 'Error',
+    promptPlaceholder: 'Video prompt...',
+  },
+
+  // Refs to Video panel
+  refToVideo: {
+    title: 'References to Video',
+    description: 'Combine references to generate videos',
+    references: 'References (max 3)',
+    prompt: 'Prompt',
+    status: 'Status',
+    addRow: '+ Add Row',
+    removeRow: 'Remove',
+    noRefsWithMedia: 'Upload references first (mediaId required)',
+    selectRefs: 'Select references...',
+    maxRefs: 'Up to 3 references',
+    generate: 'Generate Video',
+    waiting: 'Waiting',
+    generating: 'Generating',
+    complete: 'Complete',
+    error: 'Error',
+    promptPlaceholder: 'Video prompt...',
+  },
+
   // Prompt input
   prompt: {
     placeholder: `Enter prompts (one per line)
@@ -44,6 +88,12 @@ The queen enters the throne room gracefully
 The king and queen discuss important matters`,
     count: '{count} prompts',
     tip: 'Tip: Each line becomes a scene',
+    videoPlaceholder: `Enter video prompts (one per line)
+
+Example:
+A drone shot slowly rising over a misty mountain forest at sunrise
+A cat jumping from shelf to shelf in a cozy bookstore, slow motion
+Ocean waves crashing against a lighthouse during a dramatic storm`,
   },
   
   // Scene list
@@ -110,6 +160,7 @@ The king and queen discuss important matters`,
     pause: 'Pause',
     resume: 'Resume',
     stop: 'Stop',
+    close: 'Close',
     retryErrors: 'Retry Errors',
     retryOne: 'Retry',
     exportCapcut: 'CapCut Export',
@@ -149,6 +200,8 @@ The king and queen discuss important matters`,
     empty: 'Enter prompts and start generation',
     prompt: 'Prompt',
     image: 'Image',
+    video: 'Video',
+    videoPreview: 'Video Preview',
     status: 'Status',
   },
   
@@ -374,6 +427,7 @@ The king and queen discuss important matters`,
     manageSubscription: 'Manage Subscription',
     loadingPortal: 'Loading...',
     logout: 'Logout',
+    proBadge: 'PRO',
   },
 
   // Auth Modal
@@ -530,5 +584,35 @@ The king and queen discuss important matters`,
     sceneGenerateFailed: 'Generation failed: {error}',
     sceneGenerateError: 'Generation error: {error}',
     projectRenamed: 'Project renamed successfully.',
+    copied: 'Copied!',
+  },
+
+  // Video Selection
+  videoSelection: {
+    selectAll: 'Select All',
+    noneSelected: 'No items selected. Please select at least one item to generate.',
+    selectedCount: 'Selected',
+  },
+
+  // Video Detail Modal
+  videoDetail: {
+    info: 'Info',
+    path: 'Path',
+  },
+
+  // Detail common
+  detail: {
+    history: '📜 History',
+  },
+
+  // Video Automation
+  videoAutomation: {
+    requesting: 'Requesting video generation...',
+    polling: 'Waiting for video generation...',
+    generating: 'Generating video',
+    downloading: 'Downloading video...',
+    done: 'Video generation complete!',
+    noItems: 'No items to generate.',
+    stopped: 'Video generation stopped.',
   },
 }

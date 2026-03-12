@@ -127,7 +127,7 @@ export default function Header({
         <button
           className="hamburger-btn"
           onClick={() => setShowDrawer(true)}
-          data-tooltip="Menu"
+          data-tooltip={t('header.menu')}
         >
           <span className="hamburger-icon">☰</span>
         </button>
