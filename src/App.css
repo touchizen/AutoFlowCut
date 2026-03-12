@@ -281,7 +281,7 @@ html, body {
   .action-buttons {
     gap: 6px;
   }
-  .btn-primary, .btn-secondary, .btn-danger, .btn-warning, .btn-success {
+  .btn-primary, .btn-secondary, .btn-danger, .btn-warning, .btn-success, .btn-upgrade {
     padding: 10px 12px;
     font-size: 0.85rem;
   }
@@ -300,7 +300,7 @@ html, body {
 
 /* < 350px: 버튼 더 축소, 탭 더 축소 */
 @container main-panel (max-width: 349px) {
-  .btn-primary, .btn-secondary, .btn-danger, .btn-warning, .btn-success {
+  .btn-primary, .btn-secondary, .btn-danger, .btn-warning, .btn-success, .btn-upgrade {
     padding: 8px 8px;
     font-size: 0.8rem;
   }
@@ -371,7 +371,7 @@ html, body {
   flex-shrink: 0;
 }
 
-.btn-primary, .btn-secondary, .btn-danger, .btn-warning {
+.btn-primary, .btn-secondary, .btn-danger, .btn-warning, .btn-upgrade {
   flex: 1;
   padding: 12px 20px;
   border: none;
@@ -380,6 +380,23 @@ html, body {
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
+}
+
+.btn-upgrade {
+  background: linear-gradient(135deg, #8b5cf6, #6366f1);
+  color: white;
+  animation: upgrade-pulse 2s ease-in-out infinite;
+}
+
+.btn-upgrade:hover {
+  background: linear-gradient(135deg, #7c3aed, #4f46e5);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.4);
+}
+
+@keyframes upgrade-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.3); }
+  50% { box-shadow: 0 0 0 6px rgba(139, 92, 246, 0); }
 }
 
 .btn-primary {

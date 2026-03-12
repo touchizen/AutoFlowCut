@@ -266,6 +266,10 @@ function App() {
         onNewProject={() => openSettings('storage')}
         saveMode={settings.saveMode}
         onLoginClick={() => setShowAuthModal(true)}
+        onUpgradeClick={() => {
+          setPaywallReason('upgrade')
+          setShowPaywallModal(true)
+        }}
         disabled={isRunning || generatingRefs.length > 0}
       />
 
@@ -372,6 +376,19 @@ function App() {
 
         {/* 액션 버튼 */}
         <div className="action-buttons">
+          {/* expired 상태: 생성 시작 전에 업그레이드 버튼 표시 */}
+          {subscription?.status === 'expired' && !isRunning && (
+            <button
+              className="btn-upgrade"
+              onClick={() => {
+                setPaywallReason('upgrade')
+                setShowPaywallModal(true)
+              }}
+            >
+              {t('subscription.upgradeToPro')}
+            </button>
+          )}
+
           {/* 생성 완료 후 설정된 완료율 이상 성공 시 버튼 2개로 분할 */}
           {(() => {
             const doneCount = scenes.filter(s => s.image || s.imagePath).length

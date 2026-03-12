@@ -17,8 +17,9 @@ const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 
 // Desktop app OAuth client (Google Cloud Console에서 생성)
-const OAUTH_CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID || ''
-const OAUTH_CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET || ''
+// dotenv.config() 이후에 읽어야 하므로 getter 사용
+const getOAuthClientId = () => process.env.GOOGLE_OAUTH_CLIENT_ID || ''
+const getOAuthClientSecret = () => process.env.GOOGLE_OAUTH_CLIENT_SECRET || ''
 const OAUTH_REDIRECT_URI = 'http://localhost'
 
 /**
@@ -36,9 +37,9 @@ export function registerAuthIPC(ipcMain, getFlowView) {
   // ----------------------------------------------------------
   ipcMain.handle('auth:google-sign-in', async () => {
     try {
-      const idToken = await openOAuthPopup()
-      if (idToken) {
-        return { success: true, idToken }
+      const result = await openOAuthPopup()
+      if (result && result.idToken) {
+        return { success: true, idToken: result.idToken, accessToken: result.accessToken }
       }
       return { success: false, error: 'OAuth cancelled or failed' }
     } catch (e) {
@@ -62,7 +63,7 @@ export function registerAuthIPC(ipcMain, getFlowView) {
 function openOAuthPopup() {
   return new Promise((resolve, reject) => {
     const authUrl = new URL(GOOGLE_AUTH_URL)
-    authUrl.searchParams.set('client_id', OAUTH_CLIENT_ID)
+    authUrl.searchParams.set('client_id', getOAuthClientId())
     authUrl.searchParams.set('redirect_uri', OAUTH_REDIRECT_URI)
     authUrl.searchParams.set('response_type', 'code')
     authUrl.searchParams.set('scope', 'openid email profile')
@@ -135,8 +136,8 @@ async function handleRedirect(url, popup, resolve) {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         code,
-        client_id: OAUTH_CLIENT_ID,
-        client_secret: OAUTH_CLIENT_SECRET,
+        client_id: getOAuthClientId(),
+        client_secret: getOAuthClientSecret(),
         redirect_uri: OAUTH_REDIRECT_URI,
         grant_type: 'authorization_code'
       })
@@ -153,12 +154,13 @@ async function handleRedirect(url, popup, resolve) {
 
     const tokenData = await tokenResponse.json()
     const idToken = tokenData.id_token
+    const accessToken = tokenData.access_token
 
     if (idToken) {
-      console.log('[Auth] Successfully obtained id_token')
+      console.log('[Auth] Successfully obtained id_token + access_token')
       popup.removeAllListeners('closed')
       popup.close()
-      resolve(idToken)
+      resolve({ idToken, accessToken })
     } else {
       console.error('[Auth] No id_token in response')
       popup.removeAllListeners('closed')

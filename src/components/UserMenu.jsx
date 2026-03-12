@@ -10,7 +10,7 @@ import { createPortalSession } from '../firebase/functions'
 import { useI18n } from '../hooks/useI18n'
 import './UserMenu.css'
 
-export function UserMenu({ onLoginClick }) {
+export function UserMenu({ onLoginClick, onUpgradeClick }) {
   const { t } = useI18n()
   const { user, isAuthenticated, subscription, logout, loading } = useAuth()
   const [isOpen, setIsOpen] = useState(false)
@@ -131,6 +131,15 @@ export function UserMenu({ onLoginClick }) {
           </div>
 
           <div className="user-menu-actions">
+            {(subscription.status === 'trial' || subscription.status === 'expired') && onUpgradeClick && (
+              <button
+                className="user-menu-item user-menu-item--upgrade"
+                onClick={() => { setIsOpen(false); onUpgradeClick() }}
+              >
+                <span className="menu-icon">⭐</span>
+                <span>{t('subscription.upgrade')}</span>
+              </button>
+            )}
             {subscription.status === 'active' && (
               <button
                 className="user-menu-item"

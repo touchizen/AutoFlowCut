@@ -365,6 +365,7 @@ The king and queen discuss important matters`,
   subscription: {
     expired: '체험 기간이 만료되었습니다',
     upgrade: '업그레이드',
+    upgradeToPro: '⭐ Pro로 업그레이드',
     trial: '체험판',
     expiredBadge: '만료됨',
     proActive: 'Pro 구독 중',

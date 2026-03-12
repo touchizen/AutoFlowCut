@@ -21,6 +21,7 @@ export default function Header({
   onNewProject,
   saveMode,
   onLoginClick,
+  onUpgradeClick,
   disabled = false  // 생성 중일 때 프로젝트 전환 비활성화
 }) {
   const { t, lang, changeLang, languages } = useI18n()
@@ -221,7 +222,7 @@ export default function Header({
         </button>
 
         {/* 사용자 메뉴 (Firebase 인증) */}
-        <UserMenu onLoginClick={onLoginClick} />
+        <UserMenu onLoginClick={onLoginClick} onUpgradeClick={onUpgradeClick} />
       </div>
     </header>
 

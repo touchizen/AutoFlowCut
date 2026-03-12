@@ -11,6 +11,7 @@
 import {
   signInWithCredential,
   GoogleAuthProvider,
+  updateProfile,
   signOut as firebaseSignOut,
   onAuthStateChanged
 } from 'firebase/auth'
@@ -30,11 +31,31 @@ export async function signInWithGoogle() {
       throw new Error(result.error || 'Google sign-in was cancelled')
     }
 
-    // id_token으로 Firebase credential 생성 → 로그인
-    const credential = GoogleAuthProvider.credential(result.idToken)
+    // id_token + access_token으로 Firebase credential 생성 → 로그인
+    const credential = GoogleAuthProvider.credential(result.idToken, result.accessToken)
     const userCredential = await signInWithCredential(auth, credential)
+    const user = userCredential.user
 
-    console.log('[Auth] Google sign-in successful:', userCredential.user.email)
+    // 기존 유저는 프로필이 업데이트 안 될 수 있으므로, access_token으로 직접 가져와서 보정
+    if (result.accessToken && (!user.displayName || !user.photoURL)) {
+      try {
+        const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+          headers: { Authorization: `Bearer ${result.accessToken}` }
+        })
+        const profile = await res.json()
+        await updateProfile(user, {
+          displayName: profile.name || user.displayName,
+          photoURL: profile.picture || user.photoURL
+        })
+        // reload해서 auth state listener에 반영
+        await user.reload()
+        console.log('[Auth] Profile updated:', profile.name, profile.picture)
+      } catch (e) {
+        console.warn('[Auth] Profile update failed (non-critical):', e.message)
+      }
+    }
+
+    console.log('[Auth] Google sign-in successful:', user.email, user.displayName)
     return userCredential
   } catch (error) {
     console.error('[Auth] Google sign-in failed:', error)

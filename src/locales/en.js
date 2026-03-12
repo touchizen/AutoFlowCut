@@ -365,6 +365,7 @@ The king and queen discuss important matters`,
   subscription: {
     expired: 'Trial period has expired',
     upgrade: 'Upgrade',
+    upgradeToPro: '⭐ Upgrade to Pro',
     trial: 'Trial',
     expiredBadge: 'Expired',
     proActive: 'Pro Subscription',
