@@ -8,14 +8,12 @@ import { useI18n } from '../hooks/useI18n'
 import { TIMING } from '../config/defaults'
 import Modal from './Modal'
 import StorageTab from './settings/StorageTab'
-import GenerationTab from './settings/GenerationTab'
 import SceneTab from './settings/SceneTab'
 import DisplayTab from './settings/DisplayTab'
 import './SettingsModal.css'
 
 const TABS = [
   { id: 'storage', icon: '💾', labelKey: 'settings.tabStorage' },
-  { id: 'generation', icon: '🎨', labelKey: 'settings.tabGeneration' },
   { id: 'scene', icon: '🎬', labelKey: 'settings.tabScene' },
   { id: 'display', icon: '🖥️', labelKey: 'settings.tabDisplay' }
 ]
@@ -114,14 +112,6 @@ export default function SettingsModal({ settings, onSave, onClose, initialTab = 
             onSelectFolder={handleSelectFolder}
             onProjectChange={onProjectChange}
             highlight={highlight}
-            t={t}
-          />
-        )}
-
-        {activeTab === 'generation' && (
-          <GenerationTab
-            localSettings={localSettings}
-            setLocalSettings={setLocalSettings}
             t={t}
           />
         )}

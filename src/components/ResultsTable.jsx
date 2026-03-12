@@ -73,7 +73,7 @@ export default function ResultsTable({ scenes, onRetry, aspectRatio = '16:9', on
               
               <td className="col-status">
                 {scene.status === 'pending' && <span className="status pending">⏳ {t('status.pending')}</span>}
-                {scene.status === 'generating' && <span className="status generating">⚙️ {t('status.generating')}</span>}
+                {scene.status === 'generating' && <span className="status generating"><span className="spinner">⚙️</span> {t('status.generating')}</span>}
                 {scene.status === 'done' && <span className="status done">✅ {t('status.done')}</span>}
                 {scene.status === 'error' && (
                   <button 
