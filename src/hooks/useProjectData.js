@@ -2,7 +2,7 @@
  * useProjectData - 프로젝트 데이터 관리 (저장/로드/전환/복원)
  */
 
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { fileSystemAPI } from './useFileSystem'
 
 /**
@@ -12,12 +12,20 @@ async function loadProjectWithImages(projectName) {
   const result = await fileSystemAPI.loadProjectData(projectName)
   if (!result.success || !result.data) return null
 
+  const sceneCount = (result.data.scenes || []).length
+  const refCount = (result.data.references || []).length
+  console.log(`[ProjectData] Loading ${sceneCount} scenes, ${refCount} refs from project.json`)
+
   // scenes 이미지 파일에서 로드
   const scenesWithImages = await Promise.all(
     (result.data.scenes || []).map(async (scene) => {
       if (scene.id && !scene.image) {
         const imgResult = await fileSystemAPI.readImage(projectName, scene.id)
-        if (imgResult.success) return { ...scene, image: imgResult.data }
+        if (imgResult.success) {
+          return { ...scene, image: imgResult.data }
+        } else {
+          console.warn(`[ProjectData] ❌ Image NOT found for ${scene.id}:`, imgResult.error)
+        }
       }
       return scene
     })
@@ -28,11 +36,21 @@ async function loadProjectWithImages(projectName) {
     (result.data.references || []).map(async (ref) => {
       if (ref.name && !ref.data) {
         const imgResult = await fileSystemAPI.readReference(projectName, ref.name)
-        if (imgResult.success) return { ...ref, data: imgResult.data }
+        if (imgResult.success) {
+          return { ...ref, data: imgResult.data }
+        } else {
+          console.warn(`[ProjectData] ❌ Ref image NOT found for ${ref.name}:`, imgResult.error)
+        }
       }
       return ref
     })
   )
+
+  // 진단 로그
+  const withImages = scenesWithImages.filter(s => s.image).length
+  const withSubtitles = scenesWithImages.filter(s => s.subtitle).length
+  const withMediaId = scenesWithImages.filter(s => s.mediaId).length
+  console.log(`[ProjectData] ✅ Loaded: ${withImages}/${sceneCount} images, ${withSubtitles}/${sceneCount} subtitles, ${withMediaId}/${sceneCount} mediaIds`)
 
   return { scenes: scenesWithImages, references: refsWithImages }
 }
@@ -64,6 +82,9 @@ export function useProjectData({ settings, setSettings, scenes, references, setS
   // Pending save 추가 (no-op in desktop — permission is always available)
   const addPendingSave = () => {}
 
+  // 복원 진행 중 플래그 — auto-save가 복원 중에 project.json을 덮어쓰는 것을 방지
+  const isRestoringRef = useRef(false)
+
   // 마운트 시 자동 복원: 폴더가 설정되어 있으면 이전 프로젝트 로드
   useEffect(() => {
     const tryAutoRestore = async () => {
@@ -74,23 +95,35 @@ export function useProjectData({ settings, setSettings, scenes, references, setS
       const prevProjectName = parsed.projectName
       if (!prevProjectName) return
 
-      const permResult = await fileSystemAPI.checkPermission()
+      // ensurePermission: workFolderPath가 null이면 기본 폴더(~/Documents/flow2capcut) 자동 설정
+      const permResult = await fileSystemAPI.ensurePermission()
       if (!permResult.success) return
 
       const exists = await fileSystemAPI.projectExists(prevProjectName)
       if (!exists) return
 
+      // 복원 시작 — auto-save 차단
+      isRestoringRef.current = true
       console.log('[App] Auto-restore: loading project:', prevProjectName)
       const loaded = await loadProjectWithImages(prevProjectName)
       if (loaded) {
         setScenes(loaded.scenes)
         setReferences(loaded.references)
         setSettings(s => ({ ...s, projectName: prevProjectName }))
-        console.log('[App] Auto-restore complete:', prevProjectName)
+        console.log('[App] Auto-restore complete:', prevProjectName,
+          `(${loaded.scenes.filter(s => s.image).length} images, ${loaded.scenes.filter(s => s.subtitle).length} subtitles)`)
       }
+      // 복원 완료 — auto-save 허용 (약간의 딜레이로 불필요한 auto-save 방지)
+      setTimeout(() => {
+        isRestoringRef.current = false
+        console.log('[App] Auto-restore flag cleared, auto-save now allowed')
+      }, 500)
     }
 
-    tryAutoRestore().catch(e => console.warn('[App] Auto-restore failed:', e))
+    tryAutoRestore().catch(e => {
+      console.warn('[App] Auto-restore failed:', e)
+      isRestoringRef.current = false
+    })
   }, [])
 
   // 프로젝트 전환 핸들러
@@ -128,6 +161,7 @@ export function useProjectData({ settings, setSettings, scenes, references, setS
   return {
     addPendingSave,
     handleProjectChange,
-    saveCurrentProject: () => saveCurrentProject(settings, scenes, references)
+    saveCurrentProject: () => saveCurrentProject(settings, scenes, references),
+    isRestoringRef  // auto-save 가드용
   }
 }

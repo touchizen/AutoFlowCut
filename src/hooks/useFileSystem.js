@@ -287,9 +287,10 @@ export const fileSystemAPI = {
 
   /**
    * Save an image (saveResource wrapper).
+   * @param {Object|null} metadata - 메타데이터 (prompt, mediaId 등) → history/*.json으로 저장
    */
-  async saveImage(projectName, sceneId, imageData, engine = 'flow', options = {}) {
-    return this.saveResource(projectName, RESOURCE.SCENES, sceneId, imageData, engine, null, options)
+  async saveImage(projectName, sceneId, imageData, engine = 'flow', metadata = null, options = {}) {
+    return this.saveResource(projectName, RESOURCE.SCENES, sceneId, imageData, engine, metadata, options)
   },
 
   /**
@@ -318,15 +319,28 @@ export const fileSystemAPI = {
    * @param {string} projectName - 프로젝트명
    * @param {string} resourceType - RESOURCE.SCENES | RESOURCE.REFERENCES
    * @param {string} name - scene id 또는 reference name
-   * @param {Array} images - result.images 배열 전체
+   * @param {Array} imageObjects - [{ base64, mediaId }] 또는 [base64string] (backward compat)
+   * @param {string} prompt - 프롬프트 (metadata에 포함)
    * @param {string} tag - 로그 태그 (e.g. 'Automation', 'Scene', 'Reference')
    */
-  async saveExtraToHistory(projectName, resourceType, name, images, tag = 'Extra') {
-    if (!images || images.length <= 1) return
-    console.log(`[${tag}] ${images.length - 1} extra images → saving to history only`)
-    for (let i = 1; i < images.length; i++) {
+  async saveExtraToHistory(projectName, resourceType, name, imageObjects, prompt = null, tag = 'Extra') {
+    if (!imageObjects || imageObjects.length <= 1) return
+    console.log(`[${tag}] ${imageObjects.length - 1} extra images → saving to history only`)
+    for (let i = 1; i < imageObjects.length; i++) {
       try {
-        await this.saveResource(projectName, resourceType, name, images[i], `flow-alt${i}`, null, { historyOnly: true })
+        const img = imageObjects[i]
+        const base64 = (typeof img === 'string') ? img : (img.base64 || img)
+        const mediaId = (typeof img === 'object') ? (img.mediaId || null) : null
+
+        // alt 이미지에도 metadata 저장 (mediaId 보존)
+        const metadata = (mediaId || prompt) ? {
+          prompt: prompt || null,
+          mediaId,
+          model: 'flow',
+          timestamp: Date.now()
+        } : null
+
+        await this.saveResource(projectName, resourceType, name, base64, `flow-alt${i}`, metadata, { historyOnly: true })
       } catch (e) {
         console.warn(`[${tag}] Failed to save extra image #${i + 1} to history:`, e)
       }
@@ -343,9 +357,7 @@ export const fileSystemAPI = {
   async readResource(projectName, resourceType, name) {
     try {
       const workFolder = localStorage.getItem('workFolderPath')
-      if (!workFolder) {
-        return { success: false, error: 'not_set' }
-      }
+      if (!workFolder) return { success: false, error: 'not_set' }
 
       return await window.electronAPI.readResource({
         workFolder,

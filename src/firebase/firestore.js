@@ -155,7 +155,19 @@ export function calculateTrialStatus(appData) {
     const startDate = toDate(trialStartDate)
     const now = new Date()
 
-    const daysPassed = startDate ? Math.floor((now - startDate) / (1000 * 60 * 60 * 24)) : 0
+    if (!startDate) {
+      // 체험 시작일이 없으면 아직 시작 안함 — 카운팅 전
+      return {
+        isActive: true,
+        canExport: true,
+        exportsRemaining: 5,
+        daysRemaining: 7,
+        isExpired: false,
+        status: 'trial'
+      }
+    }
+
+    const daysPassed = Math.floor((now - startDate) / (1000 * 60 * 60 * 24))
     const daysRemaining = Math.max(0, 7 - daysPassed)
     const exportsRemaining = Math.max(0, 5 - exportCount)
 

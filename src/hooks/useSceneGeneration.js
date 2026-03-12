@@ -43,7 +43,10 @@ export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, open
       const result = await flowAPI.generateImageDOM(scene.prompt, matchedRefs)
 
       if (result.success && result.images?.length > 0) {
-        const imageData = result.images[0]
+        // images는 [{ base64, mediaId }] 객체 배열
+        const firstImage = result.images[0]
+        const imageData = firstImage.base64 || firstImage  // backward compat
+        const mediaId = firstImage.mediaId || null
 
         // 이미지 크기 추출
         let imageSize = null
@@ -57,19 +60,27 @@ export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, open
         let imagePath = null
         if (settings.saveMode === 'folder') {
           const projectName = settings.projectName || generateProjectName()
-          const saveResult = await fileSystemAPI.saveImage(projectName, sceneId, imageData, 'flow')
+          // metadata: prompt + mediaId → history/*.json에 저장
+          const metadata = {
+            prompt: scene.prompt,
+            mediaId,
+            model: 'flow',
+            timestamp: Date.now()
+          }
+          const saveResult = await fileSystemAPI.saveImage(projectName, sceneId, imageData, 'flow', metadata)
           if (saveResult.success) {
             imagePath = saveResult.path
             console.log('[Scene] Saved to:', imagePath)
           }
 
-          // 여분 이미지(2장 이상 생성된 경우) → History에만 저장
-          await fileSystemAPI.saveExtraToHistory(projectName, RESOURCE.SCENES, sceneId, result.images, 'Scene')
+          // 여분 이미지(2장 이상 생성된 경우) → History에만 저장 (mediaId 포함)
+          await fileSystemAPI.saveExtraToHistory(projectName, RESOURCE.SCENES, sceneId, result.images, scene.prompt, 'Scene')
         }
 
         scenesHook.updateScene(sceneId, {
           image: imageData,
           imagePath,
+          mediaId,
           image_size: imageSize,
           status: 'done'
         })

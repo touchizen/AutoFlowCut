@@ -100,7 +100,10 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     }
     
     if (result.success && result.images?.length > 0) {
-      const imageData = result.images[0]
+      // images는 [{ base64, mediaId }] 객체 배열
+      const firstImage = result.images[0]
+      const imageData = firstImage.base64 || firstImage  // backward compat: string fallback
+      const mediaId = firstImage.mediaId || null
 
       // 이미지 크기 추출
       let imageSize = null
@@ -112,21 +115,30 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
 
       // 저장 모드에 따라 처리
       if (saveMode === 'folder') {
-        const saveResult = await fileSystemAPI.saveImage(projectName, scene.id, imageData)
+        // metadata: prompt + mediaId → history/*.json에 저장
+        const metadata = {
+          prompt: scene.prompt,
+          mediaId,
+          model: 'flow',
+          timestamp: Date.now()
+        }
+        const saveResult = await fileSystemAPI.saveImage(projectName, scene.id, imageData, 'flow', metadata)
 
         updateScene(scene.id, {
           status: 'done',
           image: imageData,
           imagePath: saveResult.success ? saveResult.path : null,
+          mediaId,
           image_size: imageSize
         })
 
-        // 여분 이미지(2장 이상 생성된 경우) → History에만 저장
-        await fileSystemAPI.saveExtraToHistory(projectName, RESOURCE.SCENES, scene.id, result.images, 'Automation')
+        // 여분 이미지(2장 이상 생성된 경우) → History에만 저장 (mediaId 포함)
+        await fileSystemAPI.saveExtraToHistory(projectName, RESOURCE.SCENES, scene.id, result.images, scene.prompt, 'Automation')
       } else {
         updateScene(scene.id, {
           status: 'done',
           image: imageData,
+          mediaId,
           image_size: imageSize
         })
       }
@@ -150,10 +162,12 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
           // 재시도 (DOM 모드 + 레퍼런스)
           const retryResult = await generateImageDOM(scene.prompt, matchedRefs)
           if (retryResult.success && retryResult.images?.length > 0) {
-            // 성공 시 다시 저장 로직으로
+            // 성공 시 다시 저장 로직으로 (images는 [{ base64, mediaId }])
+            const retryImg = retryResult.images[0]
             updateScene(scene.id, {
               status: 'done',
-              image: retryResult.images[0]
+              image: retryImg.base64 || retryImg,
+              mediaId: retryImg.mediaId || null
             })
             return retryResult
           }
@@ -271,8 +285,9 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     
     const total = targetScenes.length
     if (total === 0) {
-      toast.info(t('toast.allScenesGenerated'))
-      setStatus('ready')
+      toast.warning(t('toast.allScenesGenerated'))
+      setStatus('done')
+      setStatusMessage(`✅ ${t('toast.allScenesGenerated')}`)
       setIsRunning(false)
       return
     }

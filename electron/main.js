@@ -8,6 +8,24 @@ import { registerCapcutIPC } from './ipc/capcut.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
+// === Safe console logger (prevents EPIPE crash when stdout pipe is broken) ===
+const _origLog = console.log
+const _origWarn = console.warn
+const _origError = console.error
+console.log = (...args) => { try { _origLog(...args) } catch {} }
+console.warn = (...args) => { try { _origWarn(...args) } catch {} }
+console.error = (...args) => { try { _origError(...args) } catch {} }
+
+// === Uncaught Exception Handler (prevent EPIPE dialog) ===
+process.on('uncaughtException', (err) => {
+  if (err?.code === 'EPIPE' || err?.message?.includes('EPIPE')) {
+    // Silently ignore EPIPE — stdout pipe is broken (expected when restarting dev server)
+    return
+  }
+  // For other errors, log but don't crash
+  try { _origError('[Main] Uncaught exception:', err) } catch {}
+})
+
 // Load .env from project root
 dotenv.config({ path: path.join(__dirname, '..', '.env') })
 
@@ -231,22 +249,25 @@ function extractMediaIds(data) {
 }
 
 /**
- * 응답에서 fifeUrl 추출 (batchGenerateImages media[] 구조)
+ * 응답에서 fifeUrl + mediaId 추출 (batchGenerateImages media[] 구조)
  * fifeUrl은 Google Storage 직접 URL — redirect 없이 바로 다운로드 가능
+ * Returns: [{ fifeUrl, mediaId }]
  */
 function extractFifeUrls(data) {
-  const urls = []
+  const results = []
   if (data.media) {
     for (const item of data.media) {
       const fifeUrl = item?.image?.generatedImage?.fifeUrl
-      if (fifeUrl) urls.push(fifeUrl)
+      const mediaId = item?.name || null
+      if (fifeUrl) results.push({ fifeUrl, mediaId })
     }
   }
-  return urls
+  return results
 }
 
 /**
- * 응답에서 base64 이미지 추출 (fallback)
+ * 응답에서 base64 이미지 + mediaId 추출 (fallback)
+ * Returns: [{ base64, mediaId }]
  */
 function extractBase64Images(data) {
   const images = []
@@ -255,7 +276,10 @@ function extractBase64Images(data) {
       if (resp.generatedImages) {
         for (const img of resp.generatedImages) {
           if (img.encodedImage) {
-            images.push(`data:image/png;base64,${img.encodedImage}`)
+            images.push({
+              base64: `data:image/png;base64,${img.encodedImage}`,
+              mediaId: img.mediaGenerationId || img.name || null
+            })
           }
         }
       }
@@ -266,7 +290,10 @@ function extractBase64Images(data) {
       if (panel.generatedImages) {
         for (const img of panel.generatedImages) {
           if (img.encodedImage) {
-            images.push(`data:image/png;base64,${img.encodedImage}`)
+            images.push({
+              base64: `data:image/png;base64,${img.encodedImage}`,
+              mediaId: img.mediaGenerationId || img.name || null
+            })
           }
         }
       }
@@ -727,7 +754,8 @@ function createWindow() {
           // Stale 응답 필터링
           const reqSentAt = requestSentTimeMap[params.requestId] || 0
           if (pendingGeneration.setAt && reqSentAt < pendingGeneration.setAt) {
-            console.log('[Flow API] [NetCapture] Skipping STALE batchGenerateImages failure')
+            console.log('[Flow API] [NetCapture] Skipping STALE batchGenerateImages failure',
+              '(reqSentAt:', reqSentAt.toFixed(3), ', setAt:', pendingGeneration.setAt.toFixed(3), ')')
             return
           }
           pendingGeneration.responses.push({ error: true, message: params.errorText || 'Network request failed' })
@@ -760,10 +788,14 @@ function createWindow() {
           // Stale 응답 필터링: pendingGeneration 설정 이전에 시작된 요청은 무시
           const reqSentAt = requestSentTimeMap[params.requestId] || 0
           if (pendingGeneration.setAt && reqSentAt < pendingGeneration.setAt) {
-            console.log('[Flow API] [NetCapture] Skipping STALE batchGenerateImages response (req started',
-              ((pendingGeneration.setAt - reqSentAt) * 1000).toFixed(0), 'ms before pendingGeneration)')
+            console.log('[Flow API] [NetCapture] Skipping STALE batchGenerateImages response',
+              '(reqSentAt:', reqSentAt.toFixed(3), ', setAt:', pendingGeneration.setAt.toFixed(3),
+              ', diff:', ((pendingGeneration.setAt - reqSentAt) * 1000).toFixed(0), 'ms)')
             return
           }
+          console.log('[Flow API] [NetCapture] ✅ ACCEPTED batchGenerateImages response',
+            '(reqSentAt:', reqSentAt.toFixed(3), ', setAt:', pendingGeneration.setAt.toFixed(3),
+            ', diff:', ((reqSentAt - pendingGeneration.setAt) * 1000).toFixed(0), 'ms after)')
 
           flowView.webContents.debugger.sendCommand('Network.getResponseBody', { requestId: params.requestId })
             .then(result => {
@@ -877,6 +909,7 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
+
 }
 
 // === IPC Handlers ===
@@ -1490,11 +1523,27 @@ ipcMain.handle('flow:generate-image', async (event, {
       return { success: false, error: clickResult?.error || 'Failed to click Generate button' }
     }
 
-    // ★ Generate 버튼 클릭 성공 직후에 pendingGeneration 설정!
-    //   이제부터 CDP loadingFinished 핸들러가 batchGenerateImages 응답을 캡처한다.
-    //   프롬프트 주입 중의 자동생성 응답은 pendingGeneration이 null이므로 무시됨. ✅
+    // ★ Generate 버튼 클릭 성공 직후 즉시 pendingGeneration 설정!
+    //   버튼 클릭이 batchGenerateImages 요청을 트리거하므로,
+    //   expectedImageCount 감지 전에 먼저 설정해야 CDP 핸들러가 응답을 캡처할 수 있다.
+    //   2초 버퍼: 클릭과 네트워크 요청 사이의 wallTime 차이를 보정
+    const generationSetAt = Date.now() / 1000 - 2  // 2초 전부터 유효 (stale 필터 보정)
+    pendingGeneration = {
+      setAt: generationSetAt,
+      expectedCount: 1,              // 기본값 1, 아래에서 업데이트
+      responses: [],
+      collectionTimer: null,
+      resolve: (result) => {
+        clearTimeout(generationTimeout)
+        if (pendingGeneration?.collectionTimer) clearTimeout(pendingGeneration.collectionTimer)
+        resolveGeneration(result)
+      }
+    }
+    console.log('[Flow API] [DOM+Net] pendingGeneration set IMMEDIATELY after click (setAt:',
+      generationSetAt.toFixed(3), ')')
 
     // 예상 이미지 개수 감지 (x1/x2/x3/x4 선택 버튼에서)
+    // pendingGeneration 설정 후에 실행 → expectedCount만 업데이트
     let expectedImageCount = 1
     try {
       expectedImageCount = await flowView.webContents.executeJavaScript(`
@@ -1540,21 +1589,12 @@ ipcMain.handle('flow:generate-image', async (event, {
       expectedImageCount = 1
     }
 
-    const generationSetAt = Date.now() / 1000  // wallTime과 동일한 단위 (초)
-    pendingGeneration = {
-      setAt: generationSetAt,
-      expectedCount: expectedImageCount,
-      responses: [],        // 수집된 응답들 (성공/실패 모두)
-      collectionTimer: null, // 5초 대기 타이머
-      resolve: (result) => {
-        clearTimeout(generationTimeout)
-        if (pendingGeneration?.collectionTimer) clearTimeout(pendingGeneration.collectionTimer)
-        resolveGeneration(result)
-      }
+    // expectedCount 업데이트 (pendingGeneration이 이미 설정된 상태)
+    if (pendingGeneration) {
+      pendingGeneration.expectedCount = expectedImageCount
     }
-    console.log('[Flow API] [DOM+Net] pendingGeneration set AFTER button click (setAt:',
-      generationSetAt.toFixed(3), ', expectedCount:', expectedImageCount, ')')
-    console.log('[Flow API] [DOM+Net] Prompt sent, waiting for', expectedImageCount, 'API response(s)...')
+    console.log('[Flow API] [DOM+Net] expectedCount updated to', expectedImageCount,
+      ', waiting for API response(s)...')
 
     // 4. 네트워크 응답 대기
     const netResult = await responsePromise
@@ -1585,7 +1625,7 @@ ipcMain.handle('flow:generate-image', async (event, {
                 } catch { return null; }
               })()
             `)
-            if (base64) return { success: true, images: [base64] }
+            if (base64) return { success: true, images: [{ base64, mediaId: null }] }
           }
         } catch {}
       }
@@ -1598,6 +1638,7 @@ ipcMain.handle('flow:generate-image', async (event, {
     console.log('[Flow API] [DOM+Net] Parsing', successResponses.length, 'successful responses (' +
       failedCount, 'failed)')
 
+    // allImages: [{ base64, mediaId }] — mediaId 보존을 위해 객체 배열
     const allImages = []
     const allErrors = []
 
@@ -1614,25 +1655,28 @@ ipcMain.handle('flow:generate-image', async (event, {
         continue
       }
 
-      // base64 이미지 직접 추출
+      // base64 이미지 직접 추출 → [{ base64, mediaId }]
       const base64Images = extractBase64Images(data)
       if (base64Images.length > 0) {
         allImages.push(...base64Images)
         continue
       }
 
-      // fifeUrl 직접 다운로드 시도 (가장 빠름)
-      const fifeUrls = extractFifeUrls(data)
-      if (fifeUrls.length > 0) {
-        console.log('[Flow API] Got fifeUrls from response:', fifeUrls.length)
-        for (const url of fifeUrls) {
+      // fifeUrl 직접 다운로드 시도 (가장 빠름) → [{ fifeUrl, mediaId }]
+      const fifeResults = extractFifeUrls(data)
+      if (fifeResults.length > 0) {
+        console.log('[Flow API] Got fifeUrls from response:', fifeResults.length)
+        for (const { fifeUrl, mediaId } of fifeResults) {
           try {
-            const res = await sessionFetch(url)
+            const res = await sessionFetch(fifeUrl)
             if (!res.ok) throw new Error(`fifeUrl fetch HTTP ${res.status}`)
             const buffer = await res.arrayBuffer()
-            const base64 = Buffer.from(buffer).toString('base64')
+            const base64Raw = Buffer.from(buffer).toString('base64')
             const contentType = res.headers.get('content-type') || 'image/png'
-            allImages.push(`data:${contentType};base64,${base64}`)
+            allImages.push({
+              base64: `data:${contentType};base64,${base64Raw}`,
+              mediaId
+            })
           } catch (fifeErr) {
             console.warn('[Flow API] fifeUrl fetch failed:', fifeErr.message)
             allErrors.push(fifeErr.message)
@@ -1648,7 +1692,7 @@ ipcMain.handle('flow:generate-image', async (event, {
         for (const id of mediaIds) {
           try {
             const base64 = await fetchMediaAsBase64(token, id)
-            allImages.push(base64)
+            allImages.push({ base64, mediaId: id })
           } catch (fetchErr) {
             console.warn('[Flow API] mediaId fetch failed:', fetchErr.message)
             allErrors.push(fetchErr.message)

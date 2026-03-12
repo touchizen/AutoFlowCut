@@ -120,7 +120,7 @@ function App() {
   const { isRunning, isPaused, isStopping, progress, status, statusMessage, start, togglePause, stop, retryErrors } = automation
 
   // Project Data 관리
-  const { addPendingSave, handleProjectChange, saveCurrentProject } = useProjectData({
+  const { addPendingSave, handleProjectChange, saveCurrentProject, isRestoringRef } = useProjectData({
     settings, setSettings, scenes, references, setScenes, setReferences, openSettings
   })
 
@@ -146,11 +146,14 @@ function App() {
     }
   })
 
-  // Auto-save project data when scenes/references change (생성 중 아닐 때만)
+  // Auto-save project data when scenes/references change (생성 중 또는 복원 중 아닐 때만)
   useEffect(() => {
     if (generatingRefs.length > 0 || isRunning) return
+    if (isRestoringRef?.current) return  // ← 복원 중에는 auto-save 스킵 (project.json 오염 방지)
+    if (scenes.length === 0 && references.length === 0) return  // ← 빈 데이터로 덮어쓰기 방지
     if (settings.saveMode === 'folder' && settings.projectName) {
       const timer = setTimeout(async () => {
+        if (isRestoringRef?.current) return  // ← 타이머 실행 시점에도 재확인
         await saveCurrentProject()
         console.log('[App] Auto-saved project data')
       }, TIMING.AUTO_SAVE_DEBOUNCE)
@@ -168,10 +171,25 @@ function App() {
     localStorage.setItem('flow2capcut_bottomPanelHeight', String(bottomPanelHeight))
   }, [bottomPanelHeight])
 
-  // Load saved prompts
+  // Load saved prompts — 프로젝트가 있으면 auto-restore가 처리하므로 스킵
   useEffect(() => {
+    // 작업 폴더 + 프로젝트가 모두 설정되어 있으면 auto-restore가 scenes를 로드함
+    // savedPrompts를 parseFromText하면 이미지/자막 없는 text-only scenes로 덮어쓰게 됨
+    const workFolder = localStorage.getItem('workFolderPath')
+    const settingsSaved = localStorage.getItem('flow2capcut_settings')
+    if (workFolder && settingsSaved) {
+      try {
+        const parsed = JSON.parse(settingsSaved)
+        if (parsed.projectName && parsed.saveMode === 'folder') {
+          console.log('[App] Skipping savedPrompts load — auto-restore will handle scenes for project:', parsed.projectName)
+          return
+        }
+      } catch (e) { /* ignore */ }
+    }
+
     const saved = localStorage.getItem('flow2capcut_savedPrompts')
     if (saved) {
+      console.log('[App] Loading savedPrompts from localStorage (no project folder configured)')
       parseFromText(saved, settings.defaultDuration)
     }
   }, [])
@@ -231,6 +249,13 @@ function App() {
     if (isRunning) {
       togglePause()
     } else {
+      // 모든 씬이 이미 생성된 경우 먼저 체크 (권한 체크 전에!)
+      const hasUngenerated = scenes.some(s => !s.image && !s.imagePath)
+      if (!hasUngenerated && scenes.length > 0) {
+        toast.warning(t('toast.allScenesGenerated'))
+        return
+      }
+
       // 폴더 설정 확인만 (권한은 저장 시 체크)
       const folderCheck = await checkFolderPermission(settings, openSettings, t)
       if (!folderCheck.ok) return

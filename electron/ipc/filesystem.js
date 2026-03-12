@@ -282,6 +282,7 @@ export function registerFilesystemIPC(ipcMain) {
         }
       }
 
+      console.warn(`[FS] read-resource: not found ${safeName}.* in ${resourceDir}`)
       return { success: false, error: 'File not found' }
     } catch (error) {
       return { success: false, error: error.message }

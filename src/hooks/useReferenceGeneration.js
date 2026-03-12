@@ -40,7 +40,9 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       const result = await flowAPI.generateImageDOM(ref.prompt)
 
       if (result.success && result.images?.length > 0) {
-        const imageData = result.images[0]
+        // images는 [{ base64, mediaId }] 객체 배열
+        const firstImage = result.images[0]
+        const imageData = firstImage.base64 || firstImage  // backward compat
         // data URL prefix 보장 (img src 표시용)
         const displayUrl = imageData.startsWith('data:') ? imageData : `data:image/png;base64,${imageData}`
 
@@ -110,8 +112,8 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
             filePath = null
           }
 
-          // 여분 이미지(2장 이상 생성된 경우) → History에만 저장
-          await fileSystemAPI.saveExtraToHistory(projectName, RESOURCE.REFERENCES, refName, result.images, 'Reference')
+          // 여분 이미지(2장 이상 생성된 경우) → History에만 저장 (mediaId 포함)
+          await fileSystemAPI.saveExtraToHistory(projectName, RESOURCE.REFERENCES, refName, result.images, ref.prompt, 'Reference')
         }
 
         // 레퍼런스 업데이트 (함수형 업데이트로 최신 상태 사용)
