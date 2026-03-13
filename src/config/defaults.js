@@ -1,5 +1,5 @@
 /**
- * AutoCraft Studio (Flow2CapCut) - Default Configuration
+ * AutoFlowCut - Default Configuration
  */
 
 export const DEFAULTS = {

@@ -9,7 +9,7 @@ import './SideDrawer.css'
 
 // 앱 아이콘 컴포넌트 (One Click 마우스)
 const AppIcon = ({ size = 32 }) => (
-  <img src="/assets/icon128.png" alt="AutoCraft Studio" width={size} height={size} style={{ borderRadius: '6px' }} />
+  <img src="/assets/icon128.png" alt="AutoFlowCut" width={size} height={size} style={{ borderRadius: '6px' }} />
 )
 
 // Vite에서 주입되는 버전 (vite.config.js의 define 참조)
@@ -155,7 +155,7 @@ export function SideDrawer({ isOpen, onClose }) {
           <div className="drawer-logo">
             <AppIcon size={32} />
             <div className="drawer-logo-text">
-              <h2>AutoCraft Studio</h2>
+              <h2>AutoFlowCut</h2>
               <span className="drawer-version">v{APP_VERSION}{BUILD_TIME ? ` (${BUILD_TIME})` : ''}</span>
             </div>
           </div>

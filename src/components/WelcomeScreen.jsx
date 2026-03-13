@@ -97,7 +97,7 @@ export default function WelcomeScreen({ getAccessToken, onReady }) {
   return (
     <div className="welcome-screen">
       <div className="welcome-content">
-        <img src="/assets/icon128.png" alt="AutoCraft Studio" className="welcome-logo" />
+        <img src="/assets/icon128.png" alt="AutoFlowCut" className="welcome-logo" />
         <h1>{t('welcome.title')}</h1>
         <p className="welcome-desc">
           {t('welcome.description').split('\n').map((line, i) => (

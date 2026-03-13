@@ -4,7 +4,7 @@
 
 export default {
   // 앱 이름
-  appName: 'AutoCraft Studio',
+  appName: 'AutoFlowCut',
   
   // 헤더
   header: {
@@ -20,7 +20,7 @@ export default {
   
   // 시작 화면
   welcome: {
-    title: 'AutoCraft Studio',
+    title: 'AutoFlowCut',
     description: 'Flow AI로 이미지/비디오를 생성하고\nCapCut 프로젝트로 내보내세요',
     openFlow: 'Flow 열기',
     waitingLogin: '로그인 대기 중...',
@@ -456,7 +456,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
 
   // 로그인 모달
   auth: {
-    title: 'AutoCraft Studio',
+    title: 'AutoFlowCut',
     subtitle: '로그인하고 무료 체험을 시작하세요',
     feature1: 'CapCut 프로젝트 내보내기',
     feature2: '무료 체험: 5회 또는 7일',

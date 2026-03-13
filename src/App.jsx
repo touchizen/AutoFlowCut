@@ -1,5 +1,5 @@
 /**
- * Flow2CapCut - Main App (AutoCraft Studio)
+ * AutoFlowCut - Main App
  */
 
 import { useState, useEffect } from 'react'

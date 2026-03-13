@@ -4,7 +4,7 @@
 
 export default {
   // App name
-  appName: 'AutoCraft Studio',
+  appName: 'AutoFlowCut',
   
   // Header
   header: {
@@ -20,7 +20,7 @@ export default {
   
   // Welcome screen
   welcome: {
-    title: 'AutoCraft Studio',
+    title: 'AutoFlowCut',
     description: 'Generate images & videos with Flow AI\nand export to CapCut projects',
     openFlow: 'Open Flow',
     waitingLogin: 'Waiting for login...',
@@ -456,7 +456,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
 
   // Auth Modal
   auth: {
-    title: 'AutoCraft Studio',
+    title: 'AutoFlowCut',
     subtitle: 'Login and start your free trial',
     feature1: 'Export to CapCut project',
     feature2: 'Free trial: 5 exports or 7 days',

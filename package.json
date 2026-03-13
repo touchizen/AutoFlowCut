@@ -1,7 +1,7 @@
 {
-  "name": "flow2capcut-desktop",
-  "version": "0.1.0",
-  "description": "AutoCraft Studio - Automate AI video creation from Google Flow to CapCut projects",
+  "name": "autoflowcut",
+  "version": "0.9.0",
+  "description": "AutoFlowCut - Automate AI video creation from Google Flow to CapCut projects",
   "main": "dist-electron/main.js",
   "type": "module",
   "scripts": {
@@ -50,7 +50,7 @@
   },
   "build": {
     "appId": "com.touchizen.flow2capcut",
-    "productName": "AutoCraft Studio",
+    "productName": "AutoFlowCut",
     "directories": {
       "output": "release"
     },
@@ -82,15 +82,15 @@
       ]
     },
     "appx": {
-      "identityName": "6129CF9F.AutoCraftStudio",
+      "identityName": "6129CF9F.AutoFlowCut",
       "publisher": "CN=5939ADED-0FF9-4D26-A5D6-928AE9B2B6BC",
       "publisherDisplayName": "Touchizen",
       "languages": [
         "en-US",
         "ko-KR"
       ],
-      "applicationId": "AutoCraftStudio",
-      "displayName": "AutoCraft Studio"
+      "applicationId": "AutoFlowCut",
+      "displayName": "AutoFlowCut"
     },
     "nsis": {
       "oneClick": false,
