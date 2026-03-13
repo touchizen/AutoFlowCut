@@ -1,8 +1,10 @@
+<img src="assets/icon.png" width="80" align="left" alt="AutoFlowCut icon" />
+
 # AutoFlowCut
 
 AI-powered video creation tool — Generate images & videos with Google Flow AI, then export to CapCut projects automatically.
 
-[한국어 README](README.ko.md)
+🇺🇸 English | [🇰🇷 한국어](README.ko.md)
 
 ## What is AutoFlowCut?
 

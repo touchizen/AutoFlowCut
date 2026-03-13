@@ -1,8 +1,10 @@
+<img src="assets/icon.png" width="80" align="left" alt="AutoFlowCut icon" />
+
 # AutoFlowCut
 
 AI 기반 영상 제작 도구 — Google Flow AI로 이미지/비디오 생성 후 CapCut 프로젝트로 자동 내보내기
 
-[English README](README.md)
+[🇺🇸 English](README.md) | 🇰🇷 한국어
 
 ## AutoFlowCut이란?
 
