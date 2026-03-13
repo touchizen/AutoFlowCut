@@ -371,12 +371,7 @@ function App() {
 
     switch (activeTab) {
       case 'text': {
-        // 이미지 생성 (기존)
-        const hasUngenerated = scenes.some(s => !s.image && !s.imagePath)
-        if (!hasUngenerated && scenes.length > 0) {
-          toast.warning(t('toast.allScenesGenerated'))
-          return
-        }
+        // 이미지 생성 — 대상 판단은 start() 내부에서 처리
         start({
           projectName,
           saveMode: settings.saveMode,
