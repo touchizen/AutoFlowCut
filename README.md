@@ -2,7 +2,7 @@
 
 # AutoFlowCut
 
-AI-powered video creation tool — Generate images & videos with Google Flow AI, then export to CapCut projects automatically.
+Bulk AI image & video generation tool — Auto-generate hundreds of images with Google Flow AI, then export to CapCut projects in one click.
 
 🇺🇸 English | [🇰🇷 한국어](README.ko.md)
 
@@ -19,7 +19,7 @@ No more manual dragging of hundreds of images into your editor.
 ## Features
 
 - **Google Flow AI Integration** — Text-to-Image, Text-to-Video (T2V), Image-to-Video (I2V)
-- **Batch Generation** — Generate all scene images/videos in one go
+- **Bulk Auto-Generation** — Generate hundreds of images/videos at once with a single click
 - **Scene Management** — Add, edit, reorder scenes with subtitles and prompts
 - **CapCut Export** — Automatically creates a CapCut draft project with images, videos, and subtitles
 - **Project Save/Restore** — Save your work and resume later

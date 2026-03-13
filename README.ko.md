@@ -2,7 +2,7 @@
 
 # AutoFlowCut
 
-AI 기반 영상 제작 도구 — Google Flow AI로 이미지/비디오 생성 후 CapCut 프로젝트로 자동 내보내기
+대량 이미지 자동 생성 도구 — Google Flow AI로 수백 장의 이미지/비디오를 한 번에 생성하고 CapCut 프로젝트로 원클릭 내보내기
 
 [🇺🇸 English](README.md) | 🇰🇷 한국어
 
@@ -19,7 +19,7 @@ AutoFlowCut은 숏폼 영상 제작을 자동화하는 데스크톱 앱입니다
 ## 주요 기능
 
 - **Google Flow AI 연동** — Text-to-Image, Text-to-Video (T2V), Image-to-Video (I2V)
-- **일괄 생성** — 모든 씬의 이미지/비디오를 한 번에 생성
+- **대량 자동 생성** — 수백 장의 이미지/비디오를 클릭 한 번으로 자동 생성
 - **씬 관리** — 자막, 프롬프트로 씬 추가/편집/정렬
 - **CapCut 내보내기** — 이미지, 비디오, 자막이 포함된 CapCut 프로젝트 자동 생성
 - **프로젝트 저장/복원** — 작업 저장 후 나중에 이어서 작업
