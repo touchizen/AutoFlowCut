@@ -1,4 +1,4 @@
-<img src="assets/icon.png?v=2" width="80" align="left" alt="AutoFlowCut icon" />
+<img src="assets/icon.png?v=20260313" width="80" align="left" alt="AutoFlowCut icon" />
 
 # AutoFlowCut
 
