@@ -141,6 +141,15 @@ function App() {
   const { scenes, references, parseFromText, parseFromCSV, parseFromSRT, parseReferencesFromCSV, updateReferences, setScenes, setReferences } = scenesHook
   const { isRunning, isPaused, isStopping, progress, status, statusMessage, start, togglePause, stop, retryErrors } = automation
 
+  // 씬이 복원되어 WelcomeScreen이 스킵될 때도 자동으로 인증 체크
+  useEffect(() => {
+    if (scenes.length > 0 && !authReady) {
+      flowAPI.getAccessToken(false, true).then(token => {
+        if (token) setAuthReady(true)
+      }).catch(() => {})
+    }
+  }, [scenes.length, authReady])
+
   // Project Data 관리
   const { addPendingSave, handleProjectChange, saveCurrentProject, isRestoringRef } = useProjectData({
     settings, setSettings, scenes, references, setScenes, setReferences,
