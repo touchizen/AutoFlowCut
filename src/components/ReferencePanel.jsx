@@ -81,8 +81,8 @@ export default function ReferencePanel({
   
   const ratioClass = getRatioClass(aspectRatio)
   
-  // 생성 가능한 레퍼런스 (프롬프트 있고, 이미지 없음)
-  const generatableRefs = references.filter(r => r.prompt && !r.data && !r.filePath)
+  // 생성 가능한 레퍼런스 (프롬프트 있고, 이미지 없음, 스타일 제외)
+  const generatableRefs = references.filter(r => r.prompt && !r.data && !r.filePath && r.type !== 'style')
   const isGenerating = generatingRefs.length > 0
 
   const handleClearAll = () => {

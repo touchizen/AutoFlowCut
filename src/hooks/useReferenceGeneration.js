@@ -209,7 +209,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
   // Handle reference image generation (일괄)
   const handleGenerateAllRefs = async () => {
     const generatableIndices = references
-      .map((ref, index) => (ref.prompt && !ref.data && !ref.filePath) ? index : -1)
+      .map((ref, index) => (ref.prompt && !ref.data && !ref.filePath && ref.type !== 'style') ? index : -1)
       .filter(i => i !== -1)
 
     if (generatableIndices.length === 0) {
