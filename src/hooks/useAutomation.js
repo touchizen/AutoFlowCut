@@ -228,7 +228,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
    * 비동기 배치 실행 (fire-and-forget + 폴링 수집)
    */
   const runConcurrentQueue = async (targetScenes, options, total) => {
-    const { projectName, saveMode, imageBatchCount, imageUpscale } = options
+    const { projectName, saveMode, imageBatchCount, imageUpscale, selectedStyleRefId } = options
     completedCountRef.current = 0
     const pendingQueue = [] // { generationId, scene, submittedAt }
     let consecutiveErrors = 0
@@ -357,7 +357,6 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
           }
         } else if (selectedStyleRefId.startsWith('preset:')) {
           const presetId = selectedStyleRefId.replace('preset:', '')
-          const { STYLE_PRESETS } = require('../config/stylePresets')
           const preset = STYLE_PRESETS?.styles?.find(s => s.id === presetId)
           if (preset?.prompt_en) {
             styledPrompt = `${scene.prompt}, ${preset.prompt_en}`
@@ -366,6 +365,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       }
 
       // 비동기 제출
+      console.log('[Automation] Scene', scene.id, '→ prompt:', styledPrompt.substring(0, 80) + '...', '| style:', selectedStyleRefId || 'none', '| refs:', matchedRefs.length)
       const submitResult = await submitGenerationDOM(styledPrompt, matchedRefs, { batchCount: imageBatchCount })
       if (submitResult.success && submitResult.generationId) {
         pendingQueue.push({ generationId: submitResult.generationId, scene, submittedAt: Date.now() })
@@ -583,6 +583,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       saveMode,
       imageBatchCount,
       imageUpscale,
+      selectedStyleRefId,
     }, total)
     
     // 완료
