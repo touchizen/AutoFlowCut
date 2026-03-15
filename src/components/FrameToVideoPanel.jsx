@@ -316,12 +316,12 @@ export default function FrameToVideoPanel({ scenes, videoScenes = [], framePairs
       <div className="video-mapping-table">
         {/* 테이블 헤더 */}
         <div className="mapping-row mapping-header">
-          <th className="col-check"><input
+          <span className="col-check"><input
             type="checkbox"
             checked={framePairs.length > 0 && framePairs.every(p => p.selected !== false)}
             onChange={toggleSelectAll}
             disabled={disabled}
-          /></th>
+          /></span>
           <span className="mapping-col col-num">#</span>
           <span className="mapping-col col-image">{t('frameToVideo.startImage')}</span>
           <span className="mapping-col col-image">{t('frameToVideo.endImage')}</span>
@@ -343,12 +343,12 @@ export default function FrameToVideoPanel({ scenes, videoScenes = [], framePairs
         {/* 매핑 행들 */}
         {framePairs.map((pair, index) => (
           <div key={pair.id} className="mapping-row">
-            <td className="col-check"><input
+            <span className="col-check"><input
               type="checkbox"
               checked={pair.selected !== false}
               onChange={() => toggleSelect(pair.id)}
               disabled={disabled}
-            /></td>
+            /></span>
             <span className="mapping-col col-num">{index + 1}</span>
 
             {/* Start Image 드롭다운 */}

@@ -307,8 +307,7 @@ export default function ResultsTable({
                   />
                 ) : (
                   <div className="prompt-preview" title={item.prompt}>
-                    {(item.prompt || '').substring(0, 50)}
-                    {(item.prompt || '').length > 50 && '...'}
+                    {item.prompt || ''}
                   </div>
                 )}
               </td>
