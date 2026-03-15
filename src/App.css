@@ -1043,6 +1043,30 @@ html, body {
   to { transform: rotate(360deg); }
 }
 
+/* Infinity loader — 빛이 ∞ 경로를 따라 이동 + 춤추듯 흔들림 */
+.infinity-loader {
+  opacity: 0.9;
+  animation: infinity-dance 3s ease-in-out infinite;
+}
+
+.infinity-light {
+  animation: infinity-dash 2s linear infinite;
+}
+
+@keyframes infinity-dash {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -92; }
+}
+
+@keyframes infinity-dance {
+  0%   { transform: perspective(80px) rotateX(0deg) rotateY(0deg) rotate(-6deg); }
+  20%  { transform: perspective(80px) rotateX(15deg) rotateY(-10deg) rotate(4deg); }
+  40%  { transform: perspective(80px) rotateX(-10deg) rotateY(15deg) rotate(-3deg); }
+  60%  { transform: perspective(80px) rotateX(12deg) rotateY(-8deg) rotate(5deg); }
+  80%  { transform: perspective(80px) rotateX(-8deg) rotateY(12deg) rotate(-4deg); }
+  100% { transform: perspective(80px) rotateX(0deg) rotateY(0deg) rotate(-6deg); }
+}
+
 /* Stopwatch icon */
 .stopwatch-icon {
   display: inline-block;

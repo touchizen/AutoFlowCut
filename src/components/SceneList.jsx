@@ -11,6 +11,7 @@ import { UI } from '../config/defaults'
 import SceneDetailModal from './SceneDetailModal'
 import VideoDetailModal from './VideoDetailModal'
 import TagBatchModal from './TagBatchModal'
+import InfinityLoader from './InfinityLoader'
 import './SceneList.css'
 
 /**
@@ -348,7 +349,11 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
               onClick={() => onShowDetail(scene)}
               title={t('headerExtra.clickToDetail')}
             >
-              <span className={`status-icon ${scene.status === 'generating' ? 'spinner' : ''}`}>{statusIcon}</span>
+              {scene.status === 'generating' ? (
+                <InfinityLoader size={36} />
+              ) : (
+                <span className="status-icon">{statusIcon}</span>
+              )}
             </div>
           )}
         </div>

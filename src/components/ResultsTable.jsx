@@ -7,6 +7,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useI18n } from '../hooks/useI18n'
 import { getRatioClass, resolveImageSrc, hasImageData } from '../utils/formatters'
+import InfinityLoader from './InfinityLoader'
 
 /** 초시계 아이콘 — 초침이 실시간 회전 */
 function StopwatchIcon({ size = 18 }) {
@@ -288,7 +289,7 @@ export default function ResultsTable({
                     </>
                   ) : item.status === 'generating' ? (
                     <div className="generating-indicator">
-                      <span className="spinner">⚙️</span>
+                      <InfinityLoader />
                     </div>
                   ) : (
                     <div className="empty-cell">-</div>
