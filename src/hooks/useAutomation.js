@@ -79,8 +79,16 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
         matchedRefs.map(r => r.mediaId?.substring(0, 12)).join(', '))
     }
 
-    // 스타일 프롬프트 합치기
+    // 스타일 프롬프트 합치기 (태그 매칭 자동 + selectedStyleRefId 수동)
     let styledPrompt = scene.prompt
+
+    // 1. 태그 매칭으로 스타일 레퍼런스가 있으면 자동 적용
+    const matchedStyleRef = allMatched.find(r => r.type === 'style' && r.prompt)
+    if (matchedStyleRef) {
+      styledPrompt = `${scene.prompt}, ${matchedStyleRef.prompt}`
+    }
+
+    // 2. selectedStyleRefId가 명시적으로 있으면 덮어쓰기
     if (selectedStyleRefId) {
       if (selectedStyleRefId.startsWith('ref:')) {
         const refId = selectedStyleRefId.replace('ref:', '')
@@ -342,16 +350,26 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
         console.log('[Automation] Scene', scene.id, '→ injecting', matchedRefs.length, 'refs')
       }
 
-      // 스타일 프롬프트 합치기
+      // 스타일 프롬프트 합치기 (태그 매칭 자동 + selectedStyleRefId 수동)
       let styledPrompt = scene.prompt
+      let appliedStyle = 'none'
+
+      // 1. 태그 매칭으로 스타일 레퍼런스가 있으면 자동 적용
+      const matchedStyleRef = allMatched.find(r => r.type === 'style' && r.prompt)
+      if (matchedStyleRef) {
+        styledPrompt = `${scene.prompt}, ${matchedStyleRef.prompt}`
+        appliedStyle = `auto:${matchedStyleRef.name || matchedStyleRef.id}`
+      }
+
+      // 2. selectedStyleRefId가 명시적으로 있으면 덮어쓰기
       if (selectedStyleRefId) {
         if (selectedStyleRefId.startsWith('ref:')) {
           const refId = selectedStyleRefId.replace('ref:', '')
           const styleRef = references.find(r => r.id == refId && r.type === 'style')
           if (styleRef?.prompt) {
             styledPrompt = `${scene.prompt}, ${styleRef.prompt}`
+            appliedStyle = `ref:${styleRef.name || refId}`
           }
-          // 스타일 이미지도 레퍼런스로 주입
           if (styleRef?.mediaId && !matchedRefs.some(r => r.mediaId === styleRef.mediaId)) {
             matchedRefs.push({ category: styleRef.category || 'style', mediaId: styleRef.mediaId, caption: styleRef.caption || '' })
           }
@@ -360,12 +378,13 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
           const preset = STYLE_PRESETS?.styles?.find(s => s.id === presetId)
           if (preset?.prompt_en) {
             styledPrompt = `${scene.prompt}, ${preset.prompt_en}`
+            appliedStyle = `preset:${presetId}`
           }
         }
       }
 
       // 비동기 제출
-      console.log('[Automation] Scene', scene.id, '→ prompt:', styledPrompt.substring(0, 80) + '...', '| style:', selectedStyleRefId || 'none', '| refs:', matchedRefs.length)
+      console.log('[Automation] Scene', scene.id, '→ prompt:', styledPrompt.substring(0, 80) + '...', '| style:', appliedStyle, '| refs:', matchedRefs.length)
       const submitResult = await submitGenerationDOM(styledPrompt, matchedRefs, { batchCount: imageBatchCount })
       if (submitResult.success && submitResult.generationId) {
         pendingQueue.push({ generationId: submitResult.generationId, scene, submittedAt: Date.now() })
