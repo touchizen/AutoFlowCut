@@ -72,15 +72,19 @@ export default function ResultsTable({
 }) {
   const { t } = useI18n()
   const [hoverPreview, setHoverPreview] = useState(null)
-  const generatingRowRef = useRef(null)
+  const rowRefs = useRef({})
 
-  // 생성 중인 행으로 자동 스크롤
-  const generatingId = (items || scenes || []).find(item => item.status === 'generating')?.id
+  // 생성 중인 행으로 자동 스크롤 (status 변경 감지)
+  const dataArr = items || scenes || []
+  const generatingIds = dataArr.filter(item => item.status === 'generating').map(item => item.id)
+  const generatingKey = generatingIds.join(',')
   useEffect(() => {
-    if (generatingId && generatingRowRef.current) {
-      generatingRowRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    // 마지막 generating 행으로 스크롤
+    const lastId = generatingIds[generatingIds.length - 1]
+    if (lastId && rowRefs.current[lastId]) {
+      rowRefs.current[lastId].scrollIntoView({ behavior: 'smooth', block: 'nearest' })
     }
-  }, [generatingId])
+  }, [generatingKey])
 
   // backward compat: accept `scenes` as fallback for `items`
   const data = items || scenes || []
@@ -252,7 +256,7 @@ export default function ResultsTable({
         </thead>
         <tbody>
           {data.map((item, index) => (
-            <tr key={item.id} ref={item.status === 'generating' ? generatingRowRef : null} className={`status-${item.status} ${selectable && item.selected === false ? 'deselected' : ''}`}>
+            <tr key={item.id} ref={el => { if (el) rowRefs.current[item.id] = el }} className={`status-${item.status} ${selectable && item.selected === false ? 'deselected' : ''}`}>
               {selectable && (
                 <td className="col-check">
                   <input
