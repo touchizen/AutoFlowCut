@@ -137,7 +137,7 @@ export default function ResultsTable({
           className="result-thumbnail"
           onMouseEnter={(e) => {
             const rect = e.currentTarget.getBoundingClientRect()
-            setHoverPreview({ src: itemImgSrc, x: rect.right + 8, y: rect.top })
+            setHoverPreview({ src: e.currentTarget.src, x: rect.right + 8, y: rect.top })
           }}
           onMouseLeave={() => setHoverPreview(null)}
         />
@@ -330,7 +330,7 @@ export default function ResultsTable({
             top: Math.max(0, Math.min(hoverPreview.y, window.innerHeight - 400))
           }}
         >
-          <img src={hoverPreview.src} alt="preview" />
+          <img src={hoverPreview.src} alt="preview" decoding="sync" />
         </div>,
         document.body
       )}

@@ -86,5 +86,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Auth
   googleSignIn: () => ipcRenderer.invoke('auth:google-sign-in'),
-  googleSignOut: () => ipcRenderer.invoke('auth:google-sign-out')
+  googleSignOut: () => ipcRenderer.invoke('auth:google-sign-out'),
+
+  // MCP HTTP Server
+  startMcpHttp: (params) => ipcRenderer.invoke('mcp:start-http', params),
+  stopMcpHttp: () => ipcRenderer.invoke('mcp:stop-http'),
+  onMcpUpdate: (callback) => {
+    const handler = (_, data) => callback(data)
+    ipcRenderer.on('mcp-update', handler)
+    return () => ipcRenderer.removeListener('mcp-update', handler)
+  }
 })

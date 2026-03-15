@@ -10,12 +10,14 @@ import Modal from './Modal'
 import StorageTab from './settings/StorageTab'
 import SceneTab from './settings/SceneTab'
 import DisplayTab from './settings/DisplayTab'
+import McpTab from './settings/McpTab'
 import './SettingsModal.css'
 
 const TABS = [
   { id: 'storage', icon: '💾', labelKey: 'settings.tabStorage' },
   { id: 'scene', icon: '🎬', labelKey: 'settings.tabScene' },
-  { id: 'display', icon: '🖥️', labelKey: 'settings.tabDisplay' }
+  { id: 'display', icon: '🖥️', labelKey: 'settings.tabDisplay' },
+  { id: 'mcp', icon: '🔌', labelKey: 'settings.tabMcp' }
 ]
 
 export default function SettingsModal({ settings, onSave, onClose, initialTab = null, onProjectChange }) {
@@ -126,6 +128,14 @@ export default function SettingsModal({ settings, onSave, onClose, initialTab = 
 
         {activeTab === 'display' && (
           <DisplayTab
+            localSettings={localSettings}
+            setLocalSettings={setLocalSettings}
+            t={t}
+          />
+        )}
+
+        {activeTab === 'mcp' && (
+          <McpTab
             localSettings={localSettings}
             setLocalSettings={setLocalSettings}
             t={t}

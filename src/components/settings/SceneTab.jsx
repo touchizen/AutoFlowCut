@@ -120,6 +120,7 @@ export default function SceneTab({ localSettings, setLocalSettings, t }) {
           <span className="setting-sublabel">{t('settings.videoResolutionHint')}</span>
         </div>
       </div>
+
     </div>
   )
 }

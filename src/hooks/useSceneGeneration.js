@@ -49,7 +49,7 @@ export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, open
         const mediaId = firstImage.mediaId || null
 
         // 이미지 업스케일 (설정에 따라)
-        const upscaleRes = settings.imageUpscale || '2k'
+        const upscaleRes = settings.imageUpscale || 'off'
         if (upscaleRes !== 'off' && mediaId) {
           try {
             console.log('[Scene] Upscaling image to', upscaleRes, '...')

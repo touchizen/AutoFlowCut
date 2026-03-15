@@ -67,8 +67,11 @@ function App() {
       concurrency: DEFAULTS.generation.concurrency,
       exportThreshold: UI.EXPORT_THRESHOLD,     // 내보내기 버튼 표시 완료율 (%)
       imageBatchCount: 1,     // 이미지 배치 카운트 (x1~x4)
+      imageUpscale: 'off',   // 이미지 업스케일 해상도 ('off' | '2k' | '4k')
       videoBatchCount: 1,     // 비디오 배치 카운트 (x1~x4)
-      videoResolution: '1080p' // 비디오 다운로드 해상도
+      videoResolution: '1080p', // 비디오 다운로드 해상도
+      mcpHttpEnabled: false,  // MCP HTTP 서버 활성화
+      mcpHttpPort: 3210       // MCP HTTP 서버 포트
     }
     if (saved) {
       const parsed = JSON.parse(saved)
@@ -275,6 +278,70 @@ function App() {
     localStorage.setItem('flow2capcut_settings', JSON.stringify(settings))
   }, [settings])
 
+  // MCP HTTP 서버 시작/중지
+  useEffect(() => {
+    if (settings.mcpHttpEnabled) {
+      window.electronAPI?.startMcpHttp?.({ port: settings.mcpHttpPort || 3210 })
+    } else {
+      window.electronAPI?.stopMcpHttp?.()
+    }
+  }, [settings.mcpHttpEnabled, settings.mcpHttpPort])
+
+  // MCP HTTP GET 요청을 위한 글로벌 접근자 등록
+  useEffect(() => {
+    window.__mcpGetReferences = () => references.map(({ data, ...rest }) => rest)
+    window.__mcpGetScenes = () => scenes.map(({ image, videoT2V, videoI2V, ...rest }) => rest)
+    window.__mcpGenerateRef = (index) => handleGenerateRef(index).catch(e => ({ success: false, error: e.message }))
+    window.__mcpGenerateScene = (sceneId) => handleGenerateScene(sceneId)
+    window.__mcpSetStyle = (styleId) => { setSelectedStyleRefId(styleId); return styleId }
+    window.__mcpGetStyle = () => selectedStyleRefId
+    return () => {
+      delete window.__mcpGetReferences
+      delete window.__mcpGetScenes
+      delete window.__mcpGenerateRef
+      delete window.__mcpGenerateScene
+      delete window.__mcpSetStyle
+      delete window.__mcpGetStyle
+    }
+  }, [references, scenes, handleGenerateRef, handleGenerateScene, selectedStyleRefId])
+
+  // MCP HTTP 서버에서 오는 데이터 업데이트 수신
+  useEffect(() => {
+    const cleanup = window.electronAPI?.onMcpUpdate?.((data) => {
+      if (data.type === 'update-references') {
+        setReferences(data.references)
+        console.log('[MCP] References updated via HTTP:', data.references.length)
+      } else if (data.type === 'update-reference') {
+        setReferences(prev => prev.map((ref, i) => i === data.index ? { ...prev[i], ...data.fields } : ref))
+        console.log('[MCP] Reference', data.index, 'updated via HTTP')
+      } else if (data.type === 'update-scenes') {
+        setScenes(data.scenes)
+        console.log('[MCP] Scenes updated via HTTP:', data.scenes.length)
+      } else if (data.type === 'update-scene') {
+        setScenes(prev => prev.map((s, i) => i === data.index ? { ...prev[i], ...data.fields } : s))
+        console.log('[MCP] Scene', data.index, 'updated via HTTP')
+      } else if (data.type === 'generate-reference') {
+        console.log('[MCP] Generate reference requested:', data.index, 'style:', data.styleId)
+        if (data.styleId && window.__mcpSetStyle) {
+          window.__mcpSetStyle(data.styleId)
+          setTimeout(() => window.__mcpGenerateRef?.(data.index), 500)
+        } else {
+          window.__mcpGenerateRef?.(data.index)
+        }
+      } else if (data.type === 'generate-scene') {
+        console.log('[MCP] Generate scene requested:', data.sceneId)
+        window.__mcpGenerateScene?.(data.sceneId)
+      } else if (data.type === 'start-batch') {
+        console.log('[MCP] Batch generation start requested')
+        window.__mcpStartBatch?.()
+      } else if (data.type === 'reload-project') {
+        // 프로젝트 전체 리로드 트리거
+        console.log('[MCP] Project reload requested')
+      }
+    })
+    return cleanup
+  }, [])
+
   // Save bottom panel height
   useEffect(() => {
     localStorage.setItem('flow2capcut_bottomPanelHeight', String(bottomPanelHeight))
@@ -396,7 +463,7 @@ function App() {
           saveMode: settings.saveMode,
           concurrency: settings.concurrency || 2,
           imageBatchCount: settings.imageBatchCount || 1,
-          imageUpscale: settings.imageUpscale || '2k',
+          imageUpscale: settings.imageUpscale || 'off',
           selectedStyleRefId,
         }
 
@@ -545,6 +612,32 @@ function App() {
     if (isRunning) stop()
     if (videoAutomation.isRunning) videoAutomation.stop()
   }
+
+  // MCP: handleStart/handleStop/batchStatus 글로벌 등록 (정의 이후에 등록해야 함)
+  useEffect(() => {
+    window.__mcpStartBatch = () => handleStart()
+    window.__mcpStopBatch = () => handleStop()
+    window.__mcpBatchStatus = () => {
+      const total = scenes.length
+      const done = scenes.filter(s => s.image || s.imagePath).length
+      const pending = scenes.filter(s => s.status === 'pending').length
+      const generating = scenes.filter(s => s.status === 'generating').length
+      const error = scenes.filter(s => s.status === 'error').length
+      return {
+        isRunning: isRunning || videoAutomation.isRunning,
+        isPaused: isPaused || videoAutomation.isPaused,
+        progress: isRunning ? progress : videoAutomation.progress,
+        total, done, pending, generating, error,
+        status: isRunning ? status : videoAutomation.status,
+        statusMessage: isRunning ? statusMessage : videoAutomation.statusMessage
+      }
+    }
+    return () => {
+      delete window.__mcpStartBatch
+      delete window.__mcpStopBatch
+      delete window.__mcpBatchStatus
+    }
+  }, [handleStart, handleStop, scenes, isRunning, isPaused, progress, status, statusMessage, videoAutomation])
 
   // 어느 자동화든 실행 중이면 true
   const anyRunning = isRunning || videoAutomation.isRunning

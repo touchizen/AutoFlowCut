@@ -255,6 +255,8 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     tabGeneration: 'Generation',
     tabScene: 'Scene',
     tabDisplay: 'Display',
+    tabMcp: 'MCP',
+    mcpApiDocsHint: 'View API documentation in Swagger UI',
     
     // Image save
     imageSave: 'Image Save',
@@ -315,6 +317,12 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     videoDownloadSettings: 'Video Download',
     videoResolution: 'Download Resolution',
     videoResolutionHint: 'Upscale resolution for video download (default: 1080p)',
+
+    // MCP HTTP Server
+    mcpHttpSettings: 'MCP Integration',
+    mcpHttpEnabled: 'HTTP Server',
+    mcpHttpPort: 'Port Number',
+    mcpHttpHint: 'Allow external MCP servers to directly modify references and scene data.',
 
     // Display layout
     layoutMode: 'Layout',

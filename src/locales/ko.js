@@ -255,6 +255,8 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     tabGeneration: '생성',
     tabScene: '씬',
     tabDisplay: '화면',
+    tabMcp: 'MCP',
+    mcpApiDocsHint: 'Swagger UI에서 API 문서를 확인할 수 있습니다',
     
     // 이미지 저장
     imageSave: '이미지 저장',
@@ -315,6 +317,12 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     videoDownloadSettings: '비디오 다운로드',
     videoResolution: '다운로드 해상도',
     videoResolutionHint: '비디오 다운로드 시 upscale 해상도 (기본: 1080p)',
+
+    // MCP HTTP 서버
+    mcpHttpSettings: 'MCP 연동',
+    mcpHttpEnabled: 'HTTP 서버',
+    mcpHttpPort: '포트 번호',
+    mcpHttpHint: '외부 MCP 서버에서 레퍼런스/씬 데이터를 직접 수정할 수 있습니다.',
 
     // 화면 레이아웃
     layoutMode: '레이아웃',

@@ -121,7 +121,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
         let imageData = firstImage.base64 || firstImage  // backward compat
 
         // 이미지 업스케일 (설정에 따라, style 카드 제외)
-        const upscaleRes = settings.imageUpscale || '2k'
+        const upscaleRes = settings.imageUpscale || 'off'
         const origMediaId = firstImage.mediaId || null
         if (upscaleRes !== 'off' && origMediaId && ref.type !== 'style') {
           try {
@@ -267,7 +267,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     let imageData = firstImage.base64 || firstImage
 
     // 업스케일 (style 카드 제외)
-    const upscaleRes = settings.imageUpscale || '2k'
+    const upscaleRes = settings.imageUpscale || 'off'
     const origMediaId = firstImage.mediaId || null
     if (upscaleRes !== 'off' && origMediaId && ref.type !== 'style') {
       try {

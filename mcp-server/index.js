@@ -1,0 +1,950 @@
+#!/usr/bin/env node
+
+/**
+ * Flow2CapCut MCP Server
+ *
+ * stdio 기반 MCP 서버 — Claude Code에서 CSV 씬 관리, 이미지 리뷰, 프롬프트 수정 가능.
+ * 향후 Electron 메인 프로세스 내장으로 재생성 트리거도 지원 예정.
+ */
+
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js';
+import fs from 'fs';
+import path from 'path';
+import http from 'http';
+
+// ── HTTP 헬퍼 (Flow2CapCut 앱 통신) ──────────────────────────
+
+function appFetch(port, method, pathname, body = null) {
+  return new Promise((resolve, reject) => {
+    const options = {
+      hostname: '127.0.0.1',
+      port: port || 3210,
+      path: pathname,
+      method,
+      headers: { 'Content-Type': 'application/json' },
+    };
+    const req = http.request(options, (res) => {
+      let data = '';
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => {
+        try {
+          resolve({ status: res.statusCode, data: JSON.parse(data) });
+        } catch {
+          resolve({ status: res.statusCode, data });
+        }
+      });
+    });
+    req.on('error', (err) => reject(err));
+    if (body) req.write(JSON.stringify(body));
+    req.end();
+  });
+}
+
+// ── CSV 파싱/직렬화 ────────────────────────────────────────────
+
+function parseCSV(text) {
+  const rows = [];
+  let fields = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') {
+      if (inQuotes && text[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === ',' && !inQuotes) {
+      fields.push(current);
+      current = '';
+    } else if ((ch === '\n' || ch === '\r') && !inQuotes) {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      fields.push(current);
+      current = '';
+      if (fields.length > 0) {
+        rows.push(fields);
+        fields = [];
+      }
+    } else {
+      current += ch;
+    }
+  }
+  // last field
+  fields.push(current);
+  if (fields.some(f => f.length > 0)) {
+    rows.push(fields);
+  }
+  return rows;
+}
+
+function loadCSV(csvPath) {
+  let text = fs.readFileSync(csvPath, 'utf-8');
+  // BOM 제거
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+  const rows = parseCSV(text);
+  if (rows.length === 0) return { headers: [], scenes: [] };
+  const headers = rows[0];
+  const scenes = rows.slice(1).map((row, idx) => {
+    const obj = {};
+    headers.forEach((h, i) => {
+      obj[h] = row[i] || '';
+    });
+    obj._rowIndex = idx + 1; // 1-based (scene number)
+    return obj;
+  });
+  return { headers, scenes };
+}
+
+function escapeCSVField(val) {
+  if (val == null) return '';
+  const s = String(val);
+  if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+function saveCSV(csvPath, headers, scenes) {
+  const lines = [headers.map(escapeCSVField).join(',')];
+  for (const scene of scenes) {
+    const row = headers.map(h => escapeCSVField(scene[h] || ''));
+    lines.push(row.join(','));
+  }
+  fs.writeFileSync(csvPath, lines.join('\n') + '\n', 'utf-8');
+}
+
+// ── 상태 ──────────────────────────────────────────────────────
+
+let csvPath = '';
+let imageDirPath = '';
+let headers = [];
+let scenes = [];
+let projectJsonPath = '';
+let projectData = null;
+
+function ensureLoaded() {
+  if (scenes.length === 0) {
+    throw new Error('CSV가 로드되지 않았습니다. load_csv 도구를 먼저 호출하세요.');
+  }
+}
+
+function loadProjectJson(projectDir) {
+  const pjPath = path.join(projectDir, 'project.json');
+  if (fs.existsSync(pjPath)) {
+    projectJsonPath = pjPath;
+    projectData = JSON.parse(fs.readFileSync(pjPath, 'utf-8'));
+    return true;
+  }
+  return false;
+}
+
+function saveProjectJson() {
+  if (!projectJsonPath || !projectData) {
+    throw new Error('project.json이 로드되지 않았습니다.');
+  }
+  // 백업
+  const backupPath = projectJsonPath.replace(/\.json$/, `_backup_${Date.now()}.json`);
+  fs.copyFileSync(projectJsonPath, backupPath);
+  fs.writeFileSync(projectJsonPath, JSON.stringify(projectData, null, 2), 'utf-8');
+}
+
+function ensureProjectLoaded() {
+  if (!projectData) {
+    throw new Error('project.json이 로드되지 않았습니다. load_csv에서 image_dir을 지정하세요.');
+  }
+}
+
+// ── MCP 서버 ──────────────────────────────────────────────────
+
+const server = new Server(
+  { name: 'flow2capcut', version: '1.0.0' },
+  { capabilities: { tools: {}, resources: {} } }
+);
+
+// ── Tools ─────────────────────────────────────────────────────
+
+server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  tools: [
+    {
+      name: 'load_csv',
+      description: 'CSV 파일과 이미지 디렉토리를 로드합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          csv_path: { type: 'string', description: 'CSV 파일 절대 경로' },
+          image_dir: { type: 'string', description: '이미지 디렉토리 절대 경로 (scene_{N}.jpg)' },
+        },
+        required: ['csv_path'],
+      },
+    },
+    {
+      name: 'list_scenes',
+      description: '씬 목록을 조회합니다. 범위 지정 가능.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          from: { type: 'number', description: '시작 씬 번호 (1-based)' },
+          to: { type: 'number', description: '끝 씬 번호 (1-based, inclusive)' },
+          fields: {
+            type: 'array',
+            items: { type: 'string' },
+            description: '반환할 필드 목록 (기본: prompt, subtitle, characters)',
+          },
+        },
+      },
+    },
+    {
+      name: 'get_scene',
+      description: '특정 씬의 상세 정보를 반환합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          scene_number: { type: 'number', description: '씬 번호 (1-based)' },
+        },
+        required: ['scene_number'],
+      },
+    },
+    {
+      name: 'get_scene_image',
+      description: '씬 이미지의 절대 경로를 반환하고 존재 여부를 확인합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          scene_number: { type: 'number', description: '씬 번호' },
+        },
+        required: ['scene_number'],
+      },
+    },
+    {
+      name: 'list_problem_scenes',
+      description: '문제 씬 목록을 카테고리별로 반환합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          category: {
+            type: 'string',
+            enum: ['realistic', 'missing', 'mismatch', 'all'],
+            description: '문제 유형 (realistic=실사, missing=누락, mismatch=불일치, all=전체)',
+          },
+        },
+        required: ['category'],
+      },
+    },
+    {
+      name: 'update_prompt',
+      description: '특정 씬의 영문 프롬프트를 수정합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          scene_number: { type: 'number', description: '씬 번호' },
+          prompt: { type: 'string', description: '새 영문 프롬프트' },
+        },
+        required: ['scene_number', 'prompt'],
+      },
+    },
+    {
+      name: 'batch_update_prompts',
+      description: '여러 씬의 프롬프트를 일괄 수정합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          updates: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                scene_number: { type: 'number' },
+                prompt: { type: 'string' },
+              },
+              required: ['scene_number', 'prompt'],
+            },
+            description: '씬 번호와 프롬프트 쌍의 배열',
+          },
+        },
+        required: ['updates'],
+      },
+    },
+    {
+      name: 'save_csv',
+      description: '수정된 CSV를 파일에 저장합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          output_path: {
+            type: 'string',
+            description: '저장할 경로 (미지정 시 원본 덮어쓰기)',
+          },
+        },
+      },
+    },
+    {
+      name: 'search_scenes',
+      description: '프롬프트나 자막에서 키워드로 씬을 검색합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          keyword: { type: 'string', description: '검색 키워드' },
+          field: {
+            type: 'string',
+            enum: ['prompt', 'subtitle', 'characters', 'all'],
+            description: '검색 대상 필드 (기본: all)',
+          },
+        },
+        required: ['keyword'],
+      },
+    },
+    {
+      name: 'get_stats',
+      description: '전체 씬 통계 (총 수, 문제 씬 수 등)를 반환합니다.',
+      inputSchema: { type: 'object', properties: {} },
+    },
+    {
+      name: 'update_field',
+      description: '씬의 임의 필드를 수정합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          scene_number: { type: 'number', description: '씬 번호' },
+          field: { type: 'string', description: '필드명 (예: characters, scene_tag)' },
+          value: { type: 'string', description: '새 값' },
+        },
+        required: ['scene_number', 'field', 'value'],
+      },
+    },
+    {
+      name: 'list_references',
+      description: 'project.json의 레퍼런스 이미지 목록을 반환합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          type: {
+            type: 'string',
+            enum: ['character', 'scene', 'all'],
+            description: '레퍼런스 유형 필터 (기본: all)',
+          },
+        },
+      },
+    },
+    {
+      name: 'get_reference',
+      description: '특정 레퍼런스의 상세 정보를 반환합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: '레퍼런스 이름 (예: 곽주사, storehouse)' },
+        },
+        required: ['name'],
+      },
+    },
+    {
+      name: 'update_reference_prompt',
+      description: '레퍼런스의 프롬프트를 수정하고 project.json에 저장합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: '레퍼런스 이름' },
+          prompt: { type: 'string', description: '새 프롬프트' },
+        },
+        required: ['name', 'prompt'],
+      },
+    },
+    // ── HTTP 기반 앱 직접 제어 도구 ──
+    {
+      name: 'app_status',
+      description: 'Flow2CapCut 앱의 HTTP 서버 상태를 확인합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
+        },
+      },
+    },
+    {
+      name: 'app_get_references',
+      description: '실행 중인 Flow2CapCut 앱에서 현재 레퍼런스 목록을 가져옵니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
+        },
+      },
+    },
+    {
+      name: 'app_update_reference',
+      description: '실행 중인 Flow2CapCut 앱의 레퍼런스를 직접 수정합니다. (project.json 우회, 앱 상태 직접 변경)',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
+          index: { type: 'number', description: '레퍼런스 인덱스 (0부터)' },
+          fields: {
+            type: 'object',
+            description: '수정할 필드 (prompt, name, type 등)',
+          },
+        },
+        required: ['index', 'fields'],
+      },
+    },
+    {
+      name: 'app_get_scenes',
+      description: '실행 중인 Flow2CapCut 앱에서 현재 씬 목록을 가져옵니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
+        },
+      },
+    },
+    {
+      name: 'app_update_scene',
+      description: '실행 중인 Flow2CapCut 앱의 특정 씬을 직접 수정합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
+          index: { type: 'number', description: '씬 인덱스 (0부터)' },
+          fields: {
+            type: 'object',
+            description: '수정할 필드 (subtitle, status 등)',
+          },
+        },
+        required: ['index', 'fields'],
+      },
+    },
+    {
+      name: 'app_generate_reference',
+      description: '실행 중인 Flow2CapCut 앱에서 레퍼런스 이미지를 생성합니다. (프롬프트 기반 Flow API 이미지 생성 트리거). styleId를 지정하면 해당 스타일을 적용합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
+          index: { type: 'number', description: '레퍼런스 인덱스 (0부터)' },
+          styleId: { type: 'string', description: '스타일 ID (예: "ref:1773499846144" 또는 "preset:xxx"). 생략하면 현재 선택된 스타일 사용.' },
+        },
+        required: ['index'],
+      },
+    },
+    {
+      name: 'app_generate_scene',
+      description: '실행 중인 Flow2CapCut 앱에서 특정 씬의 이미지를 생성합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
+          sceneId: { type: 'string', description: '씬 ID (예: "scene_1")' },
+        },
+        required: ['sceneId'],
+      },
+    },
+    {
+      name: 'app_start_batch',
+      description: '실행 중인 Flow2CapCut 앱에서 일괄 생성(생성 시작 버튼)을 트리거합니다. pending 상태인 씬들의 이미지를 자동 생성합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
+        },
+      },
+    },
+    {
+      name: 'app_batch_status',
+      description: '현재 배치 생성 진행 상태를 조회합니다. isRunning, progress, done/pending/generating/error 카운트를 반환합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
+        },
+      },
+    },
+    {
+      name: 'app_wait_batch',
+      description: '배치 생성이 완료될 때까지 대기합니다. 주기적으로 상태를 폴링하여 isRunning이 false가 되면 최종 결과를 반환합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
+          interval: { type: 'number', description: '폴링 간격 (ms, 기본: 3000)' },
+          timeout: { type: 'number', description: '최대 대기 시간 (ms, 기본: 600000 = 10분)' },
+        },
+      },
+    },
+  ],
+}));
+
+// ── 문제 씬 DB ────────────────────────────────────────────────
+
+const PROBLEM_SCENES = {
+  realistic: [
+    2, 7, 8, 12, 13, 15, 16, 19, 21, 24, 25,
+    28, 33, 45, 46, 49, 52, 71, 87, 101, 103, 104, 105, 106, 109,
+    115, 120, 121, 127, 128, 133, 136, 144, 148, 152, 154,
+  ],
+  missing: [187, 208, 314, 315],
+  mismatch: [
+    // 씬 1~25
+    11, 13, 20, 23,
+    // 씬 26~215
+    32, 38, 39, 59, 68, 69, 76, 99, 107, 114, 124, 125, 126, 127,
+    130, 134, 147, 162, 165, 179, 205, 207, 210, 214,
+    // 씬 216~344
+    218, 219, 227, 229, 233, 235, 236, 237, 240, 241, 242, 246, 247,
+    249, 250, 252, 253, 260, 270, 274, 278, 282, 290, 291, 302, 319, 335,
+  ],
+};
+
+// ── Tool 핸들러 ───────────────────────────────────────────────
+
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const { name, arguments: args } = request.params;
+
+  try {
+    switch (name) {
+      case 'load_csv': {
+        csvPath = args.csv_path;
+        imageDirPath = args.image_dir || '';
+        const data = loadCSV(csvPath);
+        headers = data.headers;
+        scenes = data.scenes;
+        // project.json 자동 로드 (이미지 디렉토리 기준으로 2단계 상위)
+        let projectLoaded = false;
+        if (imageDirPath) {
+          const projectDir = path.resolve(imageDirPath, '..', '..');
+          projectLoaded = loadProjectJson(projectDir);
+        }
+        return {
+          content: [{
+            type: 'text',
+            text: `CSV 로드 완료: ${scenes.length}개 씬, 필드: ${headers.join(', ')}` +
+              (imageDirPath ? `\n이미지 경로: ${imageDirPath}` : '') +
+              (projectLoaded ? `\nproject.json 로드 완료 (레퍼런스 ${projectData.references?.length || 0}개)` : ''),
+          }],
+        };
+      }
+
+      case 'list_scenes': {
+        ensureLoaded();
+        const from = (args.from || 1) - 1;
+        const to = args.to || scenes.length;
+        const fields = args.fields || ['prompt', 'subtitle', 'characters'];
+        const slice = scenes.slice(from, to);
+        const result = slice.map(s => {
+          const obj = { scene: s._rowIndex };
+          fields.forEach(f => { obj[f] = s[f]; });
+          return obj;
+        });
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          }],
+        };
+      }
+
+      case 'get_scene': {
+        ensureLoaded();
+        const idx = args.scene_number - 1;
+        if (idx < 0 || idx >= scenes.length) {
+          throw new Error(`씬 ${args.scene_number}이 범위를 벗어났습니다 (1~${scenes.length})`);
+        }
+        const scene = { ...scenes[idx] };
+        delete scene._rowIndex;
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ scene_number: args.scene_number, ...scene }, null, 2),
+          }],
+        };
+      }
+
+      case 'get_scene_image': {
+        const num = args.scene_number;
+        const imgPath = imageDirPath
+          ? path.join(imageDirPath, `scene_${num}.jpg`)
+          : '';
+        const exists = imgPath ? fs.existsSync(imgPath) : false;
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ scene_number: num, path: imgPath, exists }),
+          }],
+        };
+      }
+
+      case 'list_problem_scenes': {
+        const cat = args.category || 'all';
+        let result;
+        if (cat === 'all') {
+          result = {
+            realistic: PROBLEM_SCENES.realistic,
+            missing: PROBLEM_SCENES.missing,
+            mismatch: PROBLEM_SCENES.mismatch,
+            total: PROBLEM_SCENES.realistic.length + PROBLEM_SCENES.missing.length + PROBLEM_SCENES.mismatch.length,
+          };
+        } else {
+          result = {
+            [cat]: PROBLEM_SCENES[cat],
+            count: PROBLEM_SCENES[cat]?.length || 0,
+          };
+        }
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      case 'update_prompt': {
+        ensureLoaded();
+        const idx = args.scene_number - 1;
+        if (idx < 0 || idx >= scenes.length) {
+          throw new Error(`씬 ${args.scene_number} 범위 초과`);
+        }
+        const old = scenes[idx].prompt;
+        scenes[idx].prompt = args.prompt;
+        return {
+          content: [{
+            type: 'text',
+            text: `씬 ${args.scene_number} 프롬프트 수정 완료.\n이전: ${old}\n이후: ${args.prompt}`,
+          }],
+        };
+      }
+
+      case 'batch_update_prompts': {
+        ensureLoaded();
+        const results = [];
+        for (const u of args.updates) {
+          const idx = u.scene_number - 1;
+          if (idx < 0 || idx >= scenes.length) {
+            results.push({ scene: u.scene_number, error: '범위 초과' });
+            continue;
+          }
+          scenes[idx].prompt = u.prompt;
+          results.push({ scene: u.scene_number, status: 'updated' });
+        }
+        return {
+          content: [{
+            type: 'text',
+            text: `${results.filter(r => r.status === 'updated').length}/${args.updates.length}개 수정 완료\n` +
+              JSON.stringify(results, null, 2),
+          }],
+        };
+      }
+
+      case 'save_csv': {
+        ensureLoaded();
+        const outPath = args.output_path || csvPath;
+        // 백업
+        if (fs.existsSync(outPath)) {
+          const backupPath = outPath.replace(/\.csv$/, `_backup_${Date.now()}.csv`);
+          fs.copyFileSync(outPath, backupPath);
+        }
+        saveCSV(outPath, headers, scenes);
+        return {
+          content: [{
+            type: 'text',
+            text: `CSV 저장 완료: ${outPath} (${scenes.length}개 씬)`,
+          }],
+        };
+      }
+
+      case 'search_scenes': {
+        ensureLoaded();
+        const kw = args.keyword.toLowerCase();
+        const field = args.field || 'all';
+        const matches = scenes.filter(s => {
+          if (field === 'all') {
+            return (s.prompt || '').toLowerCase().includes(kw) ||
+              (s.subtitle || '').toLowerCase().includes(kw) ||
+              (s.characters || '').toLowerCase().includes(kw);
+          }
+          return (s[field] || '').toLowerCase().includes(kw);
+        }).map(s => ({
+          scene: s._rowIndex,
+          prompt: s.prompt?.substring(0, 80) + '...',
+          subtitle: s.subtitle?.substring(0, 40) + '...',
+          characters: s.characters,
+        }));
+        return {
+          content: [{
+            type: 'text',
+            text: `${matches.length}개 결과:\n${JSON.stringify(matches, null, 2)}`,
+          }],
+        };
+      }
+
+      case 'get_stats': {
+        ensureLoaded();
+        const totalProblems = PROBLEM_SCENES.realistic.length +
+          PROBLEM_SCENES.missing.length +
+          PROBLEM_SCENES.mismatch.length;
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              total_scenes: scenes.length,
+              total_problems: totalProblems,
+              problem_rate: (totalProblems / scenes.length * 100).toFixed(1) + '%',
+              realistic: PROBLEM_SCENES.realistic.length,
+              missing: PROBLEM_SCENES.missing.length,
+              mismatch: PROBLEM_SCENES.mismatch.length,
+              ok_scenes: scenes.length - totalProblems,
+            }, null, 2),
+          }],
+        };
+      }
+
+      case 'update_field': {
+        ensureLoaded();
+        const idx = args.scene_number - 1;
+        if (idx < 0 || idx >= scenes.length) {
+          throw new Error(`씬 ${args.scene_number} 범위 초과`);
+        }
+        if (!headers.includes(args.field)) {
+          throw new Error(`필드 '${args.field}'가 존재하지 않습니다. 가능한 필드: ${headers.join(', ')}`);
+        }
+        const old = scenes[idx][args.field];
+        scenes[idx][args.field] = args.value;
+        return {
+          content: [{
+            type: 'text',
+            text: `씬 ${args.scene_number}.${args.field} 수정 완료.\n이전: ${old}\n이후: ${args.value}`,
+          }],
+        };
+      }
+
+      case 'list_references': {
+        ensureProjectLoaded();
+        const refs = projectData.references || [];
+        const typeFilter = args.type || 'all';
+        const filtered = typeFilter === 'all'
+          ? refs
+          : refs.filter(r => r.type === typeFilter);
+        const result = filtered.map(r => ({
+          name: r.name,
+          type: r.type,
+          category: r.category,
+          prompt: r.prompt?.substring(0, 100) + (r.prompt?.length > 100 ? '...' : ''),
+          hasImage: !!(r.filePath && fs.existsSync(r.filePath)),
+          hasMediaId: !!r.mediaId,
+        }));
+        return {
+          content: [{
+            type: 'text',
+            text: `${filtered.length}개 레퍼런스:\n${JSON.stringify(result, null, 2)}`,
+          }],
+        };
+      }
+
+      case 'get_reference': {
+        ensureProjectLoaded();
+        const refs = projectData.references || [];
+        const ref = refs.find(r => r.name === args.name);
+        if (!ref) {
+          throw new Error(`레퍼런스 '${args.name}'을 찾을 수 없습니다. 가능한 이름: ${refs.map(r => r.name).join(', ')}`);
+        }
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify(ref, null, 2),
+          }],
+        };
+      }
+
+      case 'update_reference_prompt': {
+        ensureProjectLoaded();
+        const refs = projectData.references || [];
+        const ref = refs.find(r => r.name === args.name);
+        if (!ref) {
+          throw new Error(`레퍼런스 '${args.name}'을 찾을 수 없습니다.`);
+        }
+        const oldPrompt = ref.prompt;
+        ref.prompt = args.prompt;
+        // mediaId 초기화 — 프롬프트가 바뀌었으므로 재생성 필요
+        ref.mediaId = '';
+        saveProjectJson();
+        return {
+          content: [{
+            type: 'text',
+            text: `레퍼런스 '${args.name}' 프롬프트 수정 완료.\n이전: ${oldPrompt}\n이후: ${args.prompt}\nmediaId 초기화됨 (재생성 필요)`,
+          }],
+        };
+      }
+
+      // ── HTTP 기반 앱 직접 제어 ──
+
+      case 'app_status': {
+        const port = args.port || 3210;
+        const res = await appFetch(port, 'GET', '/api/status');
+        return {
+          content: [{ type: 'text', text: JSON.stringify(res.data, null, 2) }],
+        };
+      }
+
+      case 'app_get_references': {
+        const port = args.port || 3210;
+        const res = await appFetch(port, 'GET', '/api/references');
+        const refs = Array.isArray(res.data) ? res.data : [];
+        const summary = refs.map((r, i) =>
+          `[${i}] ${r.name || '(이름없음)'} | type: ${r.type || '-'} | prompt: ${(r.prompt || '').substring(0, 80)}${r.prompt?.length > 80 ? '...' : ''} | mediaId: ${r.mediaId ? '✅' : '❌'}`
+        ).join('\n');
+        return {
+          content: [{ type: 'text', text: `레퍼런스 ${refs.length}개:\n${summary}` }],
+        };
+      }
+
+      case 'app_update_reference': {
+        const port = args.port || 3210;
+        const res = await appFetch(port, 'POST', '/api/update', {
+          type: 'update-reference',
+          index: args.index,
+          fields: args.fields,
+        });
+        return {
+          content: [{ type: 'text', text: `레퍼런스 [${args.index}] 수정 완료: ${JSON.stringify(args.fields)}` }],
+        };
+      }
+
+      case 'app_get_scenes': {
+        const port = args.port || 3210;
+        const res = await appFetch(port, 'GET', '/api/scenes');
+        const allScenes = Array.isArray(res.data) ? res.data : [];
+        const total = allScenes.length;
+        const complete = allScenes.filter(s => s.status === 'complete' || s.status === 'done').length;
+        const pending = allScenes.filter(s => s.status === 'pending' || !s.status).length;
+        return {
+          content: [{ type: 'text', text: `씬 ${total}개: 완료 ${complete}, 대기 ${pending}, 기타 ${total - complete - pending}` }],
+        };
+      }
+
+      case 'app_update_scene': {
+        const port = args.port || 3210;
+        const res = await appFetch(port, 'POST', '/api/update', {
+          type: 'update-scene',
+          index: args.index,
+          fields: args.fields,
+        });
+        return {
+          content: [{ type: 'text', text: `씬 [${args.index}] 수정 완료: ${JSON.stringify(args.fields)}` }],
+        };
+      }
+
+      case 'app_generate_reference': {
+        const port = args.port || 3210;
+        const body = { index: args.index };
+        if (args.styleId) body.styleId = args.styleId;
+        const res = await appFetch(port, 'POST', '/api/generate-reference', body);
+        return {
+          content: [{ type: 'text', text: `레퍼런스 [${args.index}] 생성 요청 완료: ${JSON.stringify(res.data)}` }],
+        };
+      }
+
+      case 'app_generate_scene': {
+        const port = args.port || 3210;
+        const res = await appFetch(port, 'POST', '/api/generate-scene', {
+          sceneId: args.sceneId,
+        });
+        return {
+          content: [{ type: 'text', text: `씬 [${args.sceneId}] 생성 요청 완료: ${JSON.stringify(res.data)}` }],
+        };
+      }
+
+      case 'app_start_batch': {
+        const port = args.port || 3210;
+        const res = await appFetch(port, 'POST', '/api/start-batch');
+        return {
+          content: [{ type: 'text', text: `일괄 생성 시작: ${JSON.stringify(res.data)}` }],
+        };
+      }
+
+      case 'app_batch_status': {
+        const port = args.port || 3210;
+        const res = await appFetch(port, 'GET', '/api/batch-status');
+        return {
+          content: [{ type: 'text', text: JSON.stringify(res.data, null, 2) }],
+        };
+      }
+
+      case 'app_wait_batch': {
+        const port = args.port || 3210;
+        const interval = args.interval || 3000;
+        const timeout = args.timeout || 600000;
+        const startTime = Date.now();
+
+        while (true) {
+          const res = await appFetch(port, 'GET', '/api/batch-status');
+          const st = res.data;
+
+          if (!st.isRunning) {
+            return {
+              content: [{ type: 'text', text: `배치 생성 완료!\n${JSON.stringify(st, null, 2)}` }],
+            };
+          }
+
+          if (Date.now() - startTime > timeout) {
+            return {
+              content: [{ type: 'text', text: `타임아웃 (${timeout / 1000}초). 현재 상태:\n${JSON.stringify(st, null, 2)}` }],
+            };
+          }
+
+          await new Promise(r => setTimeout(r, interval));
+        }
+      }
+
+      default:
+        throw new Error(`알 수 없는 도구: ${name}`);
+    }
+  } catch (err) {
+    return {
+      content: [{ type: 'text', text: `오류: ${err.message}` }],
+      isError: true,
+    };
+  }
+});
+
+// ── Resources ─────────────────────────────────────────────────
+
+server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+  resources: csvPath ? [{
+    uri: `file://${csvPath}`,
+    name: path.basename(csvPath),
+    description: 'EP10 씬 CSV 파일',
+    mimeType: 'text/csv',
+  }] : [],
+}));
+
+server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  const uri = request.params.uri;
+  if (uri.startsWith('file://')) {
+    const filePath = uri.slice(7);
+    const content = fs.readFileSync(filePath, 'utf-8');
+    return {
+      contents: [{
+        uri,
+        mimeType: 'text/csv',
+        text: content,
+      }],
+    };
+  }
+  throw new Error(`지원하지 않는 URI: ${uri}`);
+});
+
+// ── 서버 시작 ─────────────────────────────────────────────────
+
+async function main() {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  console.error('Flow2CapCut MCP Server 시작됨 (stdio)');
+}
+
+main().catch(err => {
+  console.error('MCP 서버 시작 실패:', err);
+  process.exit(1);
+});

@@ -1,4 +1,5 @@
 import { app, BrowserWindow, WebContentsView, ipcMain, shell, protocol, net } from 'electron'
+import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import dotenv from 'dotenv'
@@ -9,6 +10,7 @@ import { registerFlowAPIIPC } from './ipc/flow-api.js'
 import { registerVideoIPC } from './ipc/video.js'
 import { registerDomIPC } from './ipc/dom.js'
 import { createSharedHelpers } from './ipc/shared.js'
+import { openApiSpec, getSwaggerHtml } from './api-docs.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -62,6 +64,7 @@ let splitRatio = 0.5   // 0.2 ~ 0.8
 let modalVisible = false // 모달이 열려있으면 Flow 뷰를 숨김 (네이티브 뷰는 CSS z-index로 가릴 수 없음)
 let capturedProjectId = null // Flow 네트워크에서 자동 캡처된 projectId
 let pendingGeneration = null // DOM-triggered generation 응답 캡처용 Promise resolver (이미지) — 동기 모드
+let mcpHttpServer = null // MCP HTTP 서버 인스턴스
 const pendingGenerations = new Map() // 비동기 모드용 다중 생성 추적 (key: generationId)
 let pendingVideoGeneration = null // DOM-triggered video generation 응답 캡처용 Promise resolver
 let pendingReferenceImages = null // CDP Fetch 인터셉션용 레퍼런스 이미지 (mediaId 배열)
@@ -938,6 +941,216 @@ ipcMain.handle('app:open-external', (event, { url }) => {
 // Reveal file in Finder / Explorer
 ipcMain.handle('app:show-in-folder', (event, { filePath }) => {
   shell.showItemInFolder(filePath)
+  return { success: true }
+})
+
+// === MCP HTTP Server ===
+function startMcpHttpServer(port) {
+  if (mcpHttpServer) {
+    mcpHttpServer.close()
+    mcpHttpServer = null
+  }
+
+  mcpHttpServer = http.createServer((req, res) => {
+    // CORS: localhost만 허용
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS')
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+    res.setHeader('Content-Type', 'application/json')
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(200)
+      res.end()
+      return
+    }
+
+    // body 파싱
+    let body = ''
+    req.on('data', chunk => { body += chunk })
+    req.on('end', async () => {
+      try {
+        const url = new URL(req.url, `http://localhost:${port}`)
+        const pathname = url.pathname
+
+        // GET /api/docs — Swagger UI
+        if (req.method === 'GET' && pathname === '/api/docs') {
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+          res.end(getSwaggerHtml(port))
+          return
+        }
+
+        // GET /api/openapi.json — OpenAPI 스펙
+        if (req.method === 'GET' && pathname === '/api/openapi.json') {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify(openApiSpec))
+          return
+        }
+
+        // GET /api/status — 서버 상태 확인
+        if (req.method === 'GET' && pathname === '/api/status') {
+          res.writeHead(200)
+          res.end(JSON.stringify({ status: 'ok', app: 'Flow2CapCut' }))
+          return
+        }
+
+        // GET /api/references — 현재 레퍼런스 목록 요청 (renderer에서 가져옴)
+        if (req.method === 'GET' && pathname === '/api/references') {
+          if (mainWindow) {
+            mainWindow.webContents.executeJavaScript(
+              `JSON.stringify(window.__mcpGetReferences?.() || [])`
+            ).then(result => {
+              res.writeHead(200)
+              res.end(result)
+            }).catch(err => {
+              res.writeHead(500)
+              res.end(JSON.stringify({ error: err.message }))
+            })
+          } else {
+            res.writeHead(503)
+            res.end(JSON.stringify({ error: 'App not ready' }))
+          }
+          return
+        }
+
+        // GET /api/scenes — 현재 씬 목록 요청
+        if (req.method === 'GET' && pathname === '/api/scenes') {
+          if (mainWindow) {
+            mainWindow.webContents.executeJavaScript(
+              `JSON.stringify(window.__mcpGetScenes?.() || [])`
+            ).then(result => {
+              res.writeHead(200)
+              res.end(result)
+            }).catch(err => {
+              res.writeHead(500)
+              res.end(JSON.stringify({ error: err.message }))
+            })
+          } else {
+            res.writeHead(503)
+            res.end(JSON.stringify({ error: 'App not ready' }))
+          }
+          return
+        }
+
+        // POST /api/update — 데이터 업데이트 (renderer로 전달)
+        if (req.method === 'POST' && pathname === '/api/update') {
+          const data = JSON.parse(body)
+          if (mainWindow) {
+            mainWindow.webContents.send('mcp-update', data)
+            res.writeHead(200)
+            res.end(JSON.stringify({ success: true }))
+          } else {
+            res.writeHead(503)
+            res.end(JSON.stringify({ error: 'App not ready' }))
+          }
+          return
+        }
+
+        // POST /api/generate-reference — 레퍼런스 이미지 생성 트리거 (fire-and-forget)
+        if (req.method === 'POST' && pathname === '/api/generate-reference') {
+          const data = JSON.parse(body)
+          const idx = data.index
+          const styleId = data.styleId || null
+          if (mainWindow && typeof idx === 'number') {
+            // IPC 방식: renderer에 생성 요청 전달
+            mainWindow.webContents.send('mcp-update', {
+              type: 'generate-reference',
+              index: idx,
+              styleId: styleId
+            })
+            res.writeHead(200)
+            res.end(JSON.stringify({ success: true, message: `Reference ${idx} generation triggered` }))
+          } else {
+            res.writeHead(400)
+            res.end(JSON.stringify({ error: 'index required (number)' }))
+          }
+          return
+        }
+
+        // POST /api/generate-scene — 씬 이미지 생성 트리거
+        if (req.method === 'POST' && pathname === '/api/generate-scene') {
+          const data = JSON.parse(body)
+          const sceneId = data.sceneId
+          if (mainWindow && sceneId) {
+            mainWindow.webContents.send('mcp-update', {
+              type: 'generate-scene',
+              sceneId: sceneId
+            })
+            res.writeHead(200)
+            res.end(JSON.stringify({ success: true, message: `Scene ${sceneId} generation triggered` }))
+          } else {
+            res.writeHead(400)
+            res.end(JSON.stringify({ error: 'sceneId required' }))
+          }
+          return
+        }
+
+        // GET /api/batch-status — 배치 생성 진행 상태
+        if (req.method === 'GET' && pathname === '/api/batch-status') {
+          if (mainWindow) {
+            mainWindow.webContents.executeJavaScript(
+              `JSON.stringify(window.__mcpBatchStatus?.() || {})`
+            ).then(result => {
+              res.writeHead(200)
+              res.end(result)
+            }).catch(err => {
+              res.writeHead(500)
+              res.end(JSON.stringify({ error: err.message }))
+            })
+          } else {
+            res.writeHead(503)
+            res.end(JSON.stringify({ error: 'App not ready' }))
+          }
+          return
+        }
+
+        // POST /api/start-batch — 일괄 생성 시작
+        if (req.method === 'POST' && pathname === '/api/start-batch') {
+          if (mainWindow) {
+            mainWindow.webContents.send('mcp-update', { type: 'start-batch' })
+            res.writeHead(200)
+            res.end(JSON.stringify({ success: true, message: 'Batch generation started' }))
+          } else {
+            res.writeHead(503)
+            res.end(JSON.stringify({ error: 'App not ready' }))
+          }
+          return
+        }
+
+        // 404
+        res.writeHead(404)
+        res.end(JSON.stringify({ error: 'Not found' }))
+      } catch (err) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: err.message }))
+      }
+    })
+  })
+
+  mcpHttpServer.on('error', (err) => {
+    console.error('[MCP HTTP] Server error:', err.message)
+  })
+
+  mcpHttpServer.listen(port, '127.0.0.1', () => {
+    console.log(`[MCP HTTP] Server started on http://127.0.0.1:${port}`)
+  })
+}
+
+function stopMcpHttpServer() {
+  if (mcpHttpServer) {
+    mcpHttpServer.close(() => {
+      console.log('[MCP HTTP] Server stopped')
+    })
+    mcpHttpServer = null
+  }
+}
+
+ipcMain.handle('mcp:start-http', (event, { port }) => {
+  startMcpHttpServer(port || 3210)
+  return { success: true, port }
+})
+
+ipcMain.handle('mcp:stop-http', () => {
+  stopMcpHttpServer()
   return { success: true }
 })
 

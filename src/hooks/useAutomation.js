@@ -135,7 +135,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       const mediaId = firstImage.mediaId || null
 
       // 이미지 업스케일 (설정에 따라)
-      const upscaleRes = imageUpscale || '2k'
+      const upscaleRes = imageUpscale || 'off'
       if (upscaleRes !== 'off' && mediaId) {
         try {
           console.log('[Automation] Upscaling image to', upscaleRes, '...')
@@ -253,7 +253,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
         const mediaId = firstImage.mediaId || null
 
         // 업스케일
-        const upscaleRes = imageUpscale || '2k'
+        const upscaleRes = imageUpscale || 'off'
         if (upscaleRes !== 'off' && mediaId) {
           try {
             console.log('[Automation] Upscaling image to', upscaleRes, '...')
@@ -450,7 +450,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       saveMode = 'folder',
       sceneIndices = null,
       imageBatchCount = 1,
-      imageUpscale = '2k',
+      imageUpscale = 'off',
       selectedStyleRefId = null
     } = options
 
@@ -467,11 +467,10 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     setIsPaused(false)
     setStatus('running')
     
-    // 대상 씬 결정 (이미지가 없는 씬만)
-    // status가 done이어도 실제 이미지(image 또는 imagePath)가 없으면 생성 대상
+    // 대상 씬 결정: 이미지 없는 씬 + pending/error 상태 씬 (재생성 대상)
     const targetScenes = sceneIndices
       ? sceneIndices.map(i => scenes[i]).filter(Boolean)
-      : scenes.filter(s => !s.image && !s.imagePath)
+      : scenes.filter(s => !s.image && !s.imagePath || s.status === 'pending' || s.status === 'error')
     
     const total = targetScenes.length
     if (total === 0) {
