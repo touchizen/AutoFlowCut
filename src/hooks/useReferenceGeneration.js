@@ -49,10 +49,19 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       // 스타일 주입 (style 카드 자체 생성 시에는 제외)
       const styleRefImages = []
       let styledPrompt = ref.prompt
-      if (ref.type !== 'style' && selectedStyleRefId) {
-        if (selectedStyleRefId.startsWith('ref:')) {
+      // selectedStyleRefId 없으면 등록된 style 카드 자동 탐색
+      let effectiveStyleId = selectedStyleRefId
+      if (!effectiveStyleId && ref.type !== 'style') {
+        const autoStyle = references.find(r => r.type === 'style' && r.mediaId)
+        if (autoStyle) {
+          effectiveStyleId = `ref:${autoStyle.id}`
+          console.log('[StyleRef] Auto-detected style card:', autoStyle.name, autoStyle.id)
+        }
+      }
+      if (ref.type !== 'style' && effectiveStyleId) {
+        if (effectiveStyleId.startsWith('ref:')) {
           // 업로드된 스타일 레퍼런스
-          const refId = selectedStyleRefId.replace('ref:', '')
+          const refId = effectiveStyleId.replace('ref:', '')
           const styleRef = references.find(r => r.id == refId && r.type === 'style')
           if (styleRef) {
             // mediaId가 있으면 이미지 레퍼런스로 전달
@@ -64,8 +73,8 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
               styledPrompt = `${ref.prompt}, ${styleRef.prompt}`
             }
           }
-        } else if (selectedStyleRefId.startsWith('preset:')) {
-          const presetId = selectedStyleRefId.replace('preset:', '')
+        } else if (effectiveStyleId.startsWith('preset:')) {
+          const presetId = effectiveStyleId.replace('preset:', '')
           const preset = STYLE_PRESETS?.styles?.find(s => s.id === presetId)
 
           // 썸네일이 있으면 이미지 스타일 레퍼런스로 업로드 (캐시 활용)
@@ -408,12 +417,21 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     }
 
     // 스타일 레퍼런스 준비 (공통)
+    // selectedStyleRefId 없으면 등록된 style 카드 자동 탐색
+    let batchEffectiveStyleId = selectedStyleRefId
+    if (!batchEffectiveStyleId) {
+      const autoStyle = references.find(r => r.type === 'style' && r.mediaId)
+      if (autoStyle) {
+        batchEffectiveStyleId = `ref:${autoStyle.id}`
+        console.log('[StyleRef] Batch auto-detected style card:', autoStyle.name, autoStyle.id)
+      }
+    }
     const prepareStyleRefs = (ref) => {
       const styleRefImages = []
       let styledPrompt = ref.prompt
-      if (ref.type !== 'style' && selectedStyleRefId) {
-        if (selectedStyleRefId.startsWith('ref:')) {
-          const refId = selectedStyleRefId.replace('ref:', '')
+      if (ref.type !== 'style' && batchEffectiveStyleId) {
+        if (batchEffectiveStyleId.startsWith('ref:')) {
+          const refId = batchEffectiveStyleId.replace('ref:', '')
           const styleRef = references.find(r => r.id == refId && r.type === 'style')
           if (styleRef) {
             if (styleRef.mediaId) {
@@ -423,8 +441,8 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
               styledPrompt = `${ref.prompt}, ${styleRef.prompt}`
             }
           }
-        } else if (selectedStyleRefId.startsWith('preset:')) {
-          const presetId = selectedStyleRefId.replace('preset:', '')
+        } else if (batchEffectiveStyleId.startsWith('preset:')) {
+          const presetId = batchEffectiveStyleId.replace('preset:', '')
           const preset = STYLE_PRESETS?.styles?.find(s => s.id === presetId)
           if (styleThumbnails?.[presetId] && presetMediaCache.current[presetId]) {
             styleRefImages.push({ category: 'style', mediaId: presetMediaCache.current[presetId], caption: preset?.prompt_en || '' })
@@ -438,8 +456,8 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     }
 
     // 프리셋 썸네일 사전 업로드 (배치 전에 한 번만)
-    if (selectedStyleRefId?.startsWith('preset:')) {
-      const presetId = selectedStyleRefId.replace('preset:', '')
+    if (batchEffectiveStyleId?.startsWith('preset:')) {
+      const presetId = batchEffectiveStyleId.replace('preset:', '')
       if (styleThumbnails?.[presetId] && !presetMediaCache.current[presetId]) {
         const thumbData = styleThumbnails[presetId]
         let cleanBase64 = null
