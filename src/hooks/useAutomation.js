@@ -48,7 +48,15 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
    * 단일 씬 처리
    */
   const processScene = async (scene, options) => {
-    const { projectName, saveMode, imageBatchCount, imageUpscale, selectedStyleRefId = null } = options
+    let { projectName, saveMode, imageBatchCount, imageUpscale, selectedStyleRefId = null } = options
+
+    // selectedStyleRefId 없으면 등록된 style 카드 자동 탐색
+    if (!selectedStyleRefId) {
+      const autoStyle = references.find(r => r.type === 'style' && r.mediaId)
+      if (autoStyle) {
+        selectedStyleRefId = `ref:${autoStyle.id}`
+      }
+    }
 
     // 일시정지 대기
     while (pausedRef.current && !stopRequestedRef.current) {
@@ -236,7 +244,15 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
    * 비동기 배치 실행 (fire-and-forget + 폴링 수집)
    */
   const runConcurrentQueue = async (targetScenes, options, total) => {
-    const { projectName, saveMode, imageBatchCount, imageUpscale, selectedStyleRefId } = options
+    let { projectName, saveMode, imageBatchCount, imageUpscale, selectedStyleRefId } = options
+    // selectedStyleRefId 없으면 등록된 style 카드 자동 탐색
+    if (!selectedStyleRefId) {
+      const autoStyle = references.find(r => r.type === 'style' && r.mediaId)
+      if (autoStyle) {
+        selectedStyleRefId = `ref:${autoStyle.id}`
+        console.log('[Automation] Auto-detected style card:', autoStyle.name, autoStyle.id)
+      }
+    }
     completedCountRef.current = 0
     const pendingQueue = [] // { generationId, scene, submittedAt }
     let consecutiveErrors = 0
