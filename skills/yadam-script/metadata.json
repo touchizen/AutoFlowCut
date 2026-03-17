@@ -1,0 +1,20 @@
+{
+  "name": "yadam-script",
+  "description": "유튜브 야담 채널용 대본을 11단계 워크플로우로 작성하는 스킬",
+  "version": "0.9.0",
+  "variables": {
+    "HOME": {
+      "description": "사용자 홈 디렉토리",
+      "required": false,
+      "default": "auto",
+      "example": "/Users/tuxxon"
+    },
+    "PROJECT": {
+      "description": "프로젝트 루트 경로 (에피소드 story/, new_prompt/ 등이 있는 디렉토리)",
+      "required": true,
+      "example": "/Users/tuxxon/premiere-workspace/무한야담"
+    }
+  },
+  "tags": ["야담", "시나리오", "대본", "유튜브", "TTS", "Flow2CapCut"],
+  "author": "tuxxon"
+}

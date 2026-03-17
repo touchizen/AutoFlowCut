@@ -18,6 +18,7 @@ import {
 import fs from 'fs';
 import path from 'path';
 import http from 'http';
+import os from 'os';
 
 // ── HTTP 헬퍼 (Flow2CapCut 앱 통신) ──────────────────────────
 
@@ -172,8 +173,18 @@ const server = new Server(
   { capabilities: { tools: {}, resources: {} } }
 );
 
-// ── Docs 경로 ────────────────────────────────────────────────
+// ── Docs / Skills 경로 ───────────────────────────────────────
 const DOCS_DIR = path.resolve(new URL('.', import.meta.url).pathname, '..', 'docs');
+const SKILLS_REPO_DIR = path.resolve(new URL('.', import.meta.url).pathname, '..', 'skills');
+const SKILLS_INSTALL_DIR = path.join(os.homedir(), '.claude', 'skills');
+
+// ── 템플릿 변수 치환 ─────────────────────────────────────────
+function substituteVariables(text, variables) {
+  return text.replace(/\{\{(\w+)\}\}/g, (match, varName) => {
+    if (varName in variables) return variables[varName];
+    return match; // 미해결 변수는 그대로 유지
+  });
+}
 
 // ── Tools ─────────────────────────────────────────────────────
 
@@ -501,6 +512,47 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           interval: { type: 'number', description: '폴링 간격 (ms, 기본: 3000)' },
           timeout: { type: 'number', description: '최대 대기 시간 (ms, 기본: 600000 = 10분)' },
         },
+      },
+    },
+    // ── 스킬 관리 도구 ──
+    {
+      name: 'install_skill',
+      description: '스킬을 설치합니다. 템플릿 변수를 치환하여 ~/.claude/skills/에 복사합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: '스킬 이름 (예: yadam-script)' },
+          variables: {
+            type: 'object',
+            description: '템플릿 변수 값 (예: {"PROJECT": "/path/to/project"})',
+          },
+        },
+        required: ['name'],
+      },
+    },
+    {
+      name: 'list_skills',
+      description: '사용 가능한 스킬과 설치된 스킬 목록을 반환합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          filter: {
+            type: 'string',
+            enum: ['available', 'installed', 'all'],
+            description: '필터 (기본: all)',
+          },
+        },
+      },
+    },
+    {
+      name: 'uninstall_skill',
+      description: '설치된 스킬을 제거합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: '제거할 스킬 이름' },
+        },
+        required: ['name'],
       },
     },
     // ── 오디오 리뷰 도구 ──
@@ -986,6 +1038,203 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
           await new Promise(r => setTimeout(r, interval));
         }
+      }
+
+      // ── 스킬 관리 핸들러 ──
+
+      case 'install_skill': {
+        const skillName = args.name;
+        const skillDir = path.join(SKILLS_REPO_DIR, skillName);
+
+        if (!fs.existsSync(skillDir)) {
+          // 사용 가능한 스킬 목록 표시
+          const available = fs.existsSync(SKILLS_REPO_DIR)
+            ? fs.readdirSync(SKILLS_REPO_DIR).filter(d =>
+                fs.existsSync(path.join(SKILLS_REPO_DIR, d, 'SKILL.md'))
+              )
+            : [];
+          throw new Error(`스킬 '${skillName}'을 찾을 수 없습니다. 사용 가능: ${available.join(', ') || '(없음)'}`);
+        }
+
+        const skillMdPath = path.join(skillDir, 'SKILL.md');
+        if (!fs.existsSync(skillMdPath)) {
+          throw new Error(`스킬 디렉토리에 SKILL.md가 없습니다: ${skillDir}`);
+        }
+
+        // metadata.json 읽기 (없으면 빈 객체)
+        const metaPath = path.join(skillDir, 'metadata.json');
+        let metadata = {};
+        if (fs.existsSync(metaPath)) {
+          metadata = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+        }
+
+        // 변수 해석
+        const resolvedVars = { HOME: os.homedir(), ...(args.variables || {}) };
+
+        // 필수 변수 체크
+        if (metadata.variables) {
+          for (const [varName, varDef] of Object.entries(metadata.variables)) {
+            if (varDef.required && !(varName in resolvedVars)) {
+              throw new Error(
+                `필수 변수 '${varName}'이 제공되지 않았습니다.\n` +
+                `설명: ${varDef.description}\n` +
+                `예: ${varDef.example}`
+              );
+            }
+          }
+        }
+
+        // SKILL.md 읽고 변수 치환
+        let skillContent = fs.readFileSync(skillMdPath, 'utf-8');
+        skillContent = substituteVariables(skillContent, resolvedVars);
+
+        // 설치 디렉토리 생성 및 복사
+        const installDir = path.join(SKILLS_INSTALL_DIR, skillName);
+        fs.mkdirSync(installDir, { recursive: true });
+        fs.writeFileSync(path.join(installDir, 'SKILL.md'), skillContent, 'utf-8');
+
+        // metadata.json도 복사 (설치된 변수 정보 포함)
+        const installMeta = {
+          ...metadata,
+          installedAt: new Date().toISOString(),
+          resolvedVariables: resolvedVars,
+        };
+        fs.writeFileSync(path.join(installDir, 'metadata.json'), JSON.stringify(installMeta, null, 2), 'utf-8');
+
+        const varSummary = Object.entries(resolvedVars)
+          .map(([k, v]) => `  ${k} = ${v}`)
+          .join('\n');
+
+        return {
+          content: [{
+            type: 'text',
+            text: `✅ 스킬 '${skillName}' 설치 완료!\n` +
+              `경로: ${installDir}\n` +
+              `버전: ${metadata.version || '(없음)'}\n` +
+              `변수:\n${varSummary}`,
+          }],
+        };
+      }
+
+      case 'list_skills': {
+        const filter = args.filter || 'all';
+        const results = [];
+
+        // 레포에서 사용 가능한 스킬 스캔
+        const repoSkills = {};
+        if (fs.existsSync(SKILLS_REPO_DIR)) {
+          for (const dir of fs.readdirSync(SKILLS_REPO_DIR)) {
+            const skillMd = path.join(SKILLS_REPO_DIR, dir, 'SKILL.md');
+            if (fs.existsSync(skillMd)) {
+              const metaPath = path.join(SKILLS_REPO_DIR, dir, 'metadata.json');
+              let meta = { name: dir };
+              if (fs.existsSync(metaPath)) {
+                meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+              }
+              repoSkills[dir] = meta;
+            }
+          }
+        }
+
+        // 설치된 스킬 스캔
+        const installedSkills = {};
+        if (fs.existsSync(SKILLS_INSTALL_DIR)) {
+          for (const dir of fs.readdirSync(SKILLS_INSTALL_DIR)) {
+            const skillMd = path.join(SKILLS_INSTALL_DIR, dir, 'SKILL.md');
+            if (fs.existsSync(skillMd)) {
+              const metaPath = path.join(SKILLS_INSTALL_DIR, dir, 'metadata.json');
+              let meta = { name: dir };
+              if (fs.existsSync(metaPath)) {
+                meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+              }
+              installedSkills[dir] = meta;
+            }
+          }
+        }
+
+        // 결과 조합
+        const allNames = new Set([...Object.keys(repoSkills), ...Object.keys(installedSkills)]);
+
+        for (const name of allNames) {
+          const inRepo = name in repoSkills;
+          const installed = name in installedSkills;
+          const repoMeta = repoSkills[name] || {};
+          const installMeta = installedSkills[name] || {};
+
+          let status;
+          if (installed && inRepo) {
+            const repoVer = repoMeta.version || '0.0.0';
+            const installVer = installMeta.version || '0.0.0';
+            status = repoVer !== installVer ? `설치됨 (업데이트 가능: ${repoVer})` : '설치됨';
+          } else if (installed) {
+            status = '설치됨 (레포에 없음)';
+          } else {
+            status = '미설치';
+          }
+
+          if (filter === 'available' && installed) continue;
+          if (filter === 'installed' && !installed) continue;
+
+          const meta = installed ? installMeta : repoMeta;
+          const entry = {
+            name,
+            status,
+            version: meta.version || '-',
+            description: meta.description || '-',
+          };
+
+          if (installed && installMeta.resolvedVariables) {
+            entry.variables = installMeta.resolvedVariables;
+          }
+          if (!installed && repoMeta.variables) {
+            entry.requiredVariables = Object.entries(repoMeta.variables)
+              .filter(([, v]) => v.required)
+              .map(([k, v]) => `${k}: ${v.description} (예: ${v.example})`)
+              .join(', ');
+          }
+
+          results.push(entry);
+        }
+
+        const installed = Object.keys(installedSkills).length;
+        const available = Object.keys(repoSkills).length;
+
+        return {
+          content: [{
+            type: 'text',
+            text: `스킬 목록 (레포: ${available}개, 설치: ${installed}개):\n\n` +
+              results.map(r => {
+                let line = `[${r.status}] ${r.name} v${r.version}\n  ${r.description}`;
+                if (r.variables) {
+                  line += `\n  변수: ${Object.entries(r.variables).map(([k, v]) => `${k}=${v}`).join(', ')}`;
+                }
+                if (r.requiredVariables) {
+                  line += `\n  필수 변수: ${r.requiredVariables}`;
+                }
+                return line;
+              }).join('\n\n'),
+          }],
+        };
+      }
+
+      case 'uninstall_skill': {
+        const skillName = args.name;
+        const installDir = path.join(SKILLS_INSTALL_DIR, skillName);
+
+        if (!fs.existsSync(installDir)) {
+          throw new Error(
+            `스킬 '${skillName}'이 설치되어 있지 않습니다. list_skills로 설치된 스킬을 확인하세요.`
+          );
+        }
+
+        fs.rmSync(installDir, { recursive: true, force: true });
+
+        return {
+          content: [{
+            type: 'text',
+            text: `✅ 스킬 '${skillName}' 제거 완료.\n경로: ${installDir}`,
+          }],
+        };
       }
 
       // ── 오디오 리뷰 핸들러 ──
