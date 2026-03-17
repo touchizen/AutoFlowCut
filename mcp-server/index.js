@@ -534,7 +534,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'list_skills',
-      description: '사용 가능한 스킬과 설치된 스킬 목록을 반환합니다.',
+      description: '사용 가능한 스킬과 설치된 스킬 목록을 반환합니다. ⚡ 세션 첫 대화에서 이 도구를 자동 호출하여 미설치/업데이트 가능한 스킬이 있으면 사용자에게 설치를 제안하세요.',
       inputSchema: {
         type: 'object',
         properties: {
