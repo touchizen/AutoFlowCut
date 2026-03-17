@@ -235,17 +235,17 @@ async function prepareCloudRequest(project, options = {}) {
 
   if (audioPackage) {
     // 원본 오디오 (나레이션 트랙)
-    if (audioPackage.footage?.video) {
-      const footageFilename = audioPackage.footage.video.filename;
+    if (audioPackage.media?.video) {
+      const mediaFilename = audioPackage.media.video.filename;
       cloudAudioTracks.push({
         type: 'narration',
-        filename: footageFilename,
-        path: audioPackage.footage.video.path
+        filename: mediaFilename,
+        path: audioPackage.media.video.path
       });
       audioFiles.push({
         type: 'narration',
-        filename: footageFilename,
-        path: audioPackage.footage.video.path
+        filename: mediaFilename,
+        path: audioPackage.media.video.path
       });
     }
 

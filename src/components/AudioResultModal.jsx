@@ -33,7 +33,7 @@ export default function AudioResultModal({ audioPackage, loading, onClose }) {
   const [playingFile, setPlayingFile] = useState(null)
   const audioRef = useRef(null)
 
-  const { folderPath, footage, voices, sfx, sfxTimecodes, srtEntries, summary } = audioPackage || {}
+  const { folderPath, media, voices, sfx, sfxTimecodes, srtEntries, summary } = audioPackage || {}
 
   const toggleVoice = (character) => {
     setExpandedVoice(prev => prev === character ? null : character)
@@ -226,9 +226,9 @@ export default function AudioResultModal({ audioPackage, loading, onClose }) {
           <span className="summary-label">🔊 {t('audioResult.sfxCategories')}</span>
           <span className="summary-value">{summary.totalSfxCategories}</span>
         </div>
-        {summary.hasFootage && (
+        {summary.hasMedia && (
           <div className="summary-item">
-            <span className="summary-label">🎬 {t('audioResult.footage')}</span>
+            <span className="summary-label">🎬 {t('audioResult.media')}</span>
             <span className="summary-value">✅</span>
           </div>
         )}
@@ -458,19 +458,19 @@ export default function AudioResultModal({ audioPackage, loading, onClose }) {
         </div>
       )}
 
-      {/* Footage */}
-      {footage && (footage.video || footage.srt) && (
+      {/* Media */}
+      {media && (media.video || media.srt) && (
         <div className="audio-result-section">
-          <h4 className="section-title">🎬 {t('audioResult.footageDetail')}</h4>
+          <h4 className="section-title">🎬 {t('audioResult.mediaDetail')}</h4>
           <div className="audio-detail-list">
-            {footage.video && (
+            {media.video && (
               <div className="audio-detail-item">
-                <span className="detail-name">🎥 {footage.video.filename}</span>
+                <span className="detail-name">🎥 {media.video.filename}</span>
               </div>
             )}
-            {footage.srt && (
+            {media.srt && (
               <div className="audio-detail-item">
-                <span className="detail-name">📺 {footage.srt.filename}</span>
+                <span className="detail-name">📺 {media.srt.filename}</span>
               </div>
             )}
           </div>

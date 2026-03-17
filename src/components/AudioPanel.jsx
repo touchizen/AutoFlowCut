@@ -46,7 +46,7 @@ export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, o
     )
   }
 
-  const { folderPath, footage, voices, sfx, sfxTimecodes, summary } = audioPackage
+  const { folderPath, media, voices, sfx, sfxTimecodes, summary } = audioPackage
 
   // --- Shared logic (from AudioResultModal) ---
 
@@ -322,9 +322,9 @@ export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, o
             <span className="summary-label">🔊 {t('audioResult.sfxCategories')}</span>
             <span className="summary-value">{summary.totalSfxCategories}</span>
           </div>
-          {summary.hasFootage && (
+          {summary.hasMedia && (
             <div className="summary-item">
-              <span className="summary-label">🎬 {t('audioResult.footage')}</span>
+              <span className="summary-label">🎬 {t('audioResult.media')}</span>
               <span className="summary-value">✅</span>
             </div>
           )}
@@ -559,13 +559,13 @@ export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, o
         </div>
       )}
 
-      {/* Footage */}
-      {footage && (footage.video || footage.srt) && (
+      {/* Media */}
+      {media && (media.video || media.srt) && (
         <div className="audio-result-section">
-          <h4 className="section-title">🎬 {t('audioResult.footageDetail')}</h4>
+          <h4 className="section-title">🎬 {t('audioResult.mediaDetail')}</h4>
           <div className="audio-detail-list">
-            {footage.video && <div className="audio-detail-item"><span className="detail-name">🎥 {footage.video.filename}</span></div>}
-            {footage.srt && <div className="audio-detail-item"><span className="detail-name">📺 {footage.srt.filename}</span></div>}
+            {media.video && <div className="audio-detail-item"><span className="detail-name">🎥 {media.video.filename}</span></div>}
+            {media.srt && <div className="audio-detail-item"><span className="detail-name">📺 {media.srt.filename}</span></div>}
           </div>
         </div>
       )}

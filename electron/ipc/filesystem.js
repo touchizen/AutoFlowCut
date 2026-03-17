@@ -838,9 +838,10 @@ export function registerFilesystemIPC(ipcMain) {
   // 23. fs:scan-audio-package — 오디오 패키지 폴더 스캔
   //
   // 폴더 선택 다이얼로그 → 하위 구조 스캔:
-  //   footage/  → 원본 영상/오디오 + SRT
+  //   media/  → 원본 영상/오디오 + SRT
+  //   media/sfx/ → SFX 파일 (플랫 구조, 파일명 타임코드)
   //   voice_samples/ → 인물별 음성 (타임코드 파일명)
-  //   voice_samples/sfx/ → 음향효과 파일
+  //   voice_samples/sfx/ → 음향효과 파일 (카테고리별 하위 폴더)
   //   음향효과_추출.md → SFX 타임코드 매핑
   // ----------------------------------------------------------
   ipcMain.handle('fs:scan-audio-package', async () => {
@@ -857,26 +858,53 @@ export function registerFilesystemIPC(ipcMain) {
 
       const folderPath = result.filePaths[0]
 
-      // 1. footage/ 스캔
-      const footageDir = path.join(folderPath, 'footage')
-      let footage = { video: null, srt: null }
-      if (await pathExists(footageDir)) {
-        const files = await fs.readdir(footageDir)
+      // 1. media/ 스캔
+      const mediaDir = path.join(folderPath, 'media')
+      let media = { video: null, srt: null }
+      if (await pathExists(mediaDir)) {
+        const files = await fs.readdir(mediaDir)
         for (const f of files) {
           const ext = path.extname(f).toLowerCase()
-          if (['.mp4', '.wav', '.mp3', '.m4a'].includes(ext) && !footage.video) {
-            footage.video = { path: path.join(footageDir, f), filename: f }
+          if (['.mp4', '.wav', '.mp3', '.m4a'].includes(ext) && !media.video) {
+            media.video = { path: path.join(mediaDir, f), filename: f }
           }
-          if (ext === '.srt' && !footage.srt) {
-            footage.srt = { path: path.join(footageDir, f), filename: f }
+          if (ext === '.srt' && !media.srt) {
+            media.srt = { path: path.join(mediaDir, f), filename: f }
           }
+        }
+      }
+
+      // 1-b. media/sfx/ 스캔 (플랫 구조 — 타임코드 포함 SFX 파일)
+      const mediaSfxDir = path.join(mediaDir, 'sfx')
+      const mediaSfxFiles = []
+      if (await pathExists(mediaSfxDir)) {
+        const sfxFiles = await fs.readdir(mediaSfxDir)
+        for (const f of sfxFiles) {
+          if (!/\.(mp3|wav|m4a)$/i.test(f)) continue
+          const name = f.replace(/\.\w+$/, '')
+          const parts = name.split('_')
+          const timecodeStr = parts[parts.length - 1]
+          let timecodeMs = null
+
+          if (timecodeStr && /^\d{4}$/.test(timecodeStr)) {
+            const mm = parseInt(timecodeStr.slice(0, 2), 10)
+            const ss = parseInt(timecodeStr.slice(2, 4), 10)
+            timecodeMs = (mm * 60 + ss) * 1000
+          } else if (timecodeStr && /^\d{6}$/.test(timecodeStr)) {
+            const hh = parseInt(timecodeStr.slice(0, 2), 10)
+            const mm = parseInt(timecodeStr.slice(2, 4), 10)
+            const ss = parseInt(timecodeStr.slice(4, 6), 10)
+            timecodeMs = (hh * 3600 + mm * 60 + ss) * 1000
+          }
+
+          mediaSfxFiles.push({ path: path.join(mediaSfxDir, f), filename: f, timecodeMs })
         }
       }
 
       // SRT 내용 읽기
       let srtContent = null
-      if (footage.srt) {
-        srtContent = await fs.readFile(footage.srt.path, 'utf-8')
+      if (media.srt) {
+        srtContent = await fs.readFile(media.srt.path, 'utf-8')
       }
 
       // 2. voice_samples/ 스캔
@@ -990,10 +1018,18 @@ export function registerFilesystemIPC(ipcMain) {
         }
       }
 
+      // media/sfx/ 플랫 파일을 sfxCategories에 합치기
+      if (mediaSfxFiles.length > 0) {
+        sfxCategories.push({
+          category: '_media',
+          files: mediaSfxFiles
+        })
+      }
+
       return {
         success: true,
         folderPath,
-        footage,
+        media,
         srtContent,
         voices,
         sfx: sfxCategories,
@@ -1003,7 +1039,7 @@ export function registerFilesystemIPC(ipcMain) {
           totalVoiceFiles: voices.reduce((sum, v) => sum + v.files.length, 0),
           totalSfxCategories: sfxCategories.length,
           hasSrt: !!srtContent,
-          hasFootage: !!footage.video,
+          hasMedia: !!media.video,
           hasSfxTimecodes: !!sfxMdContent
         }
       }
@@ -1021,25 +1057,52 @@ export function registerFilesystemIPC(ipcMain) {
         return { success: false, error: 'Invalid folder path' }
       }
 
-      // 1. footage/ 스캔
-      const footageDir = path.join(folderPath, 'footage')
-      let footage = { video: null, srt: null }
-      if (await pathExists(footageDir)) {
-        const files = await fs.readdir(footageDir)
+      // 1. media/ 스캔
+      const mediaDir = path.join(folderPath, 'media')
+      let media = { video: null, srt: null }
+      if (await pathExists(mediaDir)) {
+        const files = await fs.readdir(mediaDir)
         for (const f of files) {
           const ext = path.extname(f).toLowerCase()
-          if (['.mp4', '.wav', '.mp3', '.m4a'].includes(ext) && !footage.video) {
-            footage.video = { path: path.join(footageDir, f), filename: f }
+          if (['.mp4', '.wav', '.mp3', '.m4a'].includes(ext) && !media.video) {
+            media.video = { path: path.join(mediaDir, f), filename: f }
           }
-          if (ext === '.srt' && !footage.srt) {
-            footage.srt = { path: path.join(footageDir, f), filename: f }
+          if (ext === '.srt' && !media.srt) {
+            media.srt = { path: path.join(mediaDir, f), filename: f }
           }
         }
       }
 
+      // 1-b. media/sfx/ 스캔 (플랫 구조 — 타임코드 포함 SFX 파일)
+      const mediaSfxDir = path.join(mediaDir, 'sfx')
+      const mediaSfxFiles = []
+      if (await pathExists(mediaSfxDir)) {
+        const sfxFiles = await fs.readdir(mediaSfxDir)
+        for (const f of sfxFiles) {
+          if (!/\.(mp3|wav|m4a)$/i.test(f)) continue
+          const name = f.replace(/\.\w+$/, '')
+          const parts = name.split('_')
+          const timecodeStr = parts[parts.length - 1]
+          let timecodeMs = null
+
+          if (timecodeStr && /^\d{4}$/.test(timecodeStr)) {
+            const mm = parseInt(timecodeStr.slice(0, 2), 10)
+            const ss = parseInt(timecodeStr.slice(2, 4), 10)
+            timecodeMs = (mm * 60 + ss) * 1000
+          } else if (timecodeStr && /^\d{6}$/.test(timecodeStr)) {
+            const hh = parseInt(timecodeStr.slice(0, 2), 10)
+            const mm = parseInt(timecodeStr.slice(2, 4), 10)
+            const ss = parseInt(timecodeStr.slice(4, 6), 10)
+            timecodeMs = (hh * 3600 + mm * 60 + ss) * 1000
+          }
+
+          mediaSfxFiles.push({ path: path.join(mediaSfxDir, f), filename: f, timecodeMs })
+        }
+      }
+
       let srtContent = null
-      if (footage.srt) {
-        srtContent = await fs.readFile(footage.srt.path, 'utf-8')
+      if (media.srt) {
+        srtContent = await fs.readFile(media.srt.path, 'utf-8')
       }
 
       // 2. voice_samples/ 스캔
@@ -1127,6 +1190,14 @@ export function registerFilesystemIPC(ipcMain) {
         }
       }
 
+      // media/sfx/ 플랫 파일을 sfxCategories에 합치기
+      if (mediaSfxFiles.length > 0) {
+        sfxCategories.push({
+          category: '_media',
+          files: mediaSfxFiles
+        })
+      }
+
       // 3. 음향효과_추출.md 읽기
       let sfxMdContent = null
       const sfxMdCandidates = ['음향효과_추출.md', 'sfx_timecodes.md']
@@ -1141,7 +1212,7 @@ export function registerFilesystemIPC(ipcMain) {
       return {
         success: true,
         folderPath,
-        footage,
+        media,
         srtContent,
         voices,
         sfx: sfxCategories,
@@ -1151,7 +1222,7 @@ export function registerFilesystemIPC(ipcMain) {
           totalVoiceFiles: voices.reduce((sum, v) => sum + v.files.length, 0),
           totalSfxCategories: sfxCategories.length,
           hasSrt: !!srtContent,
-          hasFootage: !!footage.video,
+          hasMedia: !!media.video,
           hasSfxTimecodes: !!sfxMdContent
         }
       }

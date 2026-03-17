@@ -115,7 +115,7 @@ export function useAudioImport(t) {
       // 오디오 패키지 구성
       const pkg = {
         folderPath: result.folderPath,
-        footage: result.footage,
+        media: result.media,
         voices: result.voices,
         sfx: result.sfx,
         sfxTimecodes,
@@ -158,7 +158,7 @@ export function useAudioImport(t) {
 
       const pkg = {
         folderPath: result.folderPath,
-        footage: result.footage,
+        media: result.media,
         voices: result.voices,
         sfx: result.sfx,
         sfxTimecodes,
@@ -220,7 +220,7 @@ export function useAudioImport(t) {
 
       const pkg = {
         folderPath: rescan.folderPath,
-        footage: rescan.footage,
+        media: rescan.media,
         voices: rescan.voices,
         sfx: rescan.sfx,
         sfxTimecodes,

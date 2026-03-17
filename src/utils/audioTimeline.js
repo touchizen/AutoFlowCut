@@ -253,7 +253,7 @@ export function buildAudioTracks(audioPackage, srtEntries) {
   }))
 
   return {
-    footage: audioPackage.footage,
+    media: audioPackage.media,
     cutSegments,
     voiceTrack: voiceTrackItems,
     sfxTrack: sfxTrackItems,

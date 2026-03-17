@@ -20,11 +20,21 @@ async function loadProjectWithImages(projectName) {
   const isAbsolutePath = (p) => p && (p.startsWith('/') || /^[A-Z]:\\/i.test(p))
   const scenesWithPaths = await Promise.all(
     (result.data.scenes || []).map(async (scene) => {
-      // imagePath가 없거나 상대 경로이면 절대 경로 재확인
-      if (scene.id && !isAbsolutePath(scene.imagePath)) {
-        const pathResult = await fileSystemAPI.getResourcePath(projectName, 'scenes', scene.id)
-        if (pathResult.success) {
-          return { ...scene, image: null, imagePath: pathResult.path, status: 'done' }
+      // 1. imagePath가 없거나 상대 경로 → 현재 프로젝트 폴더에서 경로 확인
+      // 2. imagePath가 절대 경로지만 파일이 없을 수도 있음 → 현재 프로젝트 폴더에서 재탐색
+      if (scene.id) {
+        const needsRemap = !isAbsolutePath(scene.imagePath)
+        if (needsRemap) {
+          const pathResult = await fileSystemAPI.getResourcePath(projectName, 'scenes', scene.id)
+          if (pathResult.success) {
+            return { ...scene, image: null, imagePath: pathResult.path, status: 'done' }
+          }
+        } else if (scene.imagePath) {
+          // 절대 경로가 현재 프로젝트 폴더 밖을 가리키면 리맵
+          const pathResult = await fileSystemAPI.getResourcePath(projectName, 'scenes', scene.id)
+          if (pathResult.success) {
+            return { ...scene, image: null, imagePath: pathResult.path, status: scene.status === 'error' ? 'error' : 'done' }
+          }
         }
       }
       // 이미지가 있으면 status를 done으로 보정
@@ -38,8 +48,8 @@ async function loadProjectWithImages(projectName) {
   // references: 절대 파일 경로 확보 (base64 로드 안 함 — 메모리 최적화)
   const refsWithPaths = await Promise.all(
     (result.data.references || []).map(async (ref) => {
-      // filePath가 없거나 상대 경로이면 절대 경로 재확인
-      if (ref.name && !isAbsolutePath(ref.filePath)) {
+      if (ref.name) {
+        // 항상 현재 프로젝트 폴더 기준으로 경로 재확인
         const pathResult = await fileSystemAPI.getResourcePath(projectName, 'references', ref.name)
         if (pathResult.success) {
           return { ...ref, data: null, filePath: pathResult.path }
