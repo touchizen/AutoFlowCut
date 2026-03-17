@@ -172,10 +172,33 @@ const server = new Server(
   { capabilities: { tools: {}, resources: {} } }
 );
 
+// ── Docs 경로 ────────────────────────────────────────────────
+const DOCS_DIR = path.resolve(new URL('.', import.meta.url).pathname, '..', 'docs');
+
 // ── Tools ─────────────────────────────────────────────────────
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
+    {
+      name: 'get_schema',
+      description: 'CSV/SRT/Audio 스키마 문서를 반환합니다. Flow2CapCut에서 사용하는 데이터 구조를 확인할 때 사용합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          type: {
+            type: 'string',
+            enum: ['scenes', 'references', 'srt', 'audio', 'prompt-image', 'prompt-video', 'all'],
+            description: '스키마 유형 (scenes=씬CSV, references=레퍼런스CSV, srt=자막, audio=오디오/SFX, prompt-image=이미지 프롬프트, prompt-video=비디오 프롬프트, all=전체 목록)',
+          },
+          lang: {
+            type: 'string',
+            enum: ['ko', 'en'],
+            description: '언어 (기본: ko)',
+          },
+        },
+        required: ['type'],
+      },
+    },
     {
       name: 'load_csv',
       description: 'CSV 파일과 미디어 디렉토리를 로드합니다.',
@@ -537,6 +560,43 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   try {
     switch (name) {
+      case 'get_schema': {
+        const schemaMap = {
+          scenes: 'csv-scenes-schema',
+          references: 'csv-references-schema',
+          srt: 'srt-schema',
+          audio: 'audio-schema',
+          'prompt-image': 'prompt-image',
+          'prompt-video': 'prompt-video',
+        };
+        const lang = args.lang || 'ko';
+        const suffix = lang === 'en' ? '_en' : '';
+
+        if (args.type === 'all') {
+          const list = Object.entries(schemaMap).map(([key, file]) => {
+            const filePath = path.join(DOCS_DIR, `${file}${suffix}.md`);
+            const exists = fs.existsSync(filePath);
+            return `- ${key}: ${file}${suffix}.md ${exists ? '✅' : '❌'}`;
+          });
+          return {
+            content: [{ type: 'text', text: `사용 가능한 스키마 문서:\n${list.join('\n')}\n\n예제 파일: docs/examples/` }],
+          };
+        }
+
+        const baseName = schemaMap[args.type];
+        if (!baseName) {
+          throw new Error(`알 수 없는 스키마 유형: ${args.type}. 가능: ${Object.keys(schemaMap).join(', ')}, all`);
+        }
+        const filePath = path.join(DOCS_DIR, `${baseName}${suffix}.md`);
+        if (!fs.existsSync(filePath)) {
+          throw new Error(`스키마 파일이 없습니다: ${filePath}`);
+        }
+        const content = fs.readFileSync(filePath, 'utf-8');
+        return {
+          content: [{ type: 'text', text: content }],
+        };
+      }
+
       case 'load_csv': {
         csvPath = args.csv_path;
         imageDirPath = args.image_dir || '';
