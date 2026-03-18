@@ -2,17 +2,18 @@
  * useSceneGeneration - 씬 이미지 재생성 (상세 모달에서 개별)
  */
 
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { RESOURCE } from '../config/defaults'
 import { fileSystemAPI } from './useFileSystem'
 import { generateProjectName, getImageSizeFromBase64 } from '../utils/formatters'
 import { checkFolderPermission, checkAuthToken } from '../utils/guards'
 import { toast } from '../components/Toast'
 
-export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, openSettings, setSelectedScene, t }) {
+export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, openSettings, setSelectedScene, t, generationQueue }) {
   const [generatingSceneId, setGeneratingSceneId] = useState(null)
 
-  const handleGenerateScene = async (sceneId) => {
+  // 핵심 생성 로직
+  const _executeSceneGeneration = useCallback(async (sceneId) => {
     const scene = scenes.find(s => s.id === sceneId)
     if (!scene?.prompt) {
       toast.warning(t('toast.noPrompt'))
@@ -113,7 +114,24 @@ export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, open
     }
 
     setGeneratingSceneId(null)
-  }
+  }, [settings, scenes, scenesHook, flowAPI, openSettings, setSelectedScene, t])
+
+  // 큐를 통한 생성
+  const handleGenerateScene = useCallback(async (sceneId) => {
+    if (!generationQueue) {
+      return _executeSceneGeneration(sceneId)
+    }
+
+    try {
+      await generationQueue.enqueue({
+        type: 'scene',
+        label: `Scene #${sceneId}`,
+        execute: () => _executeSceneGeneration(sceneId)
+      })
+    } catch (err) {
+      console.warn('[SceneGen] Queue rejected:', err.message)
+    }
+  }, [generationQueue, _executeSceneGeneration])
 
   return {
     generatingSceneId,

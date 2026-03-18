@@ -758,4 +758,9 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     cancel: '취소 (수정하기)',
     proceedAnyway: '그냥 진행',
   },
+
+  // 생성 큐
+  queue: {
+    full: '생성 큐가 가득 찼습니다 (200개)',
+  },
 }

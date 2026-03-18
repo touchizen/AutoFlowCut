@@ -12,7 +12,7 @@ import { toast } from '../components/Toast'
 // 1~3초 랜덤 딜레이
 const randomDelay = () => new Promise(r => setTimeout(r, 1000 + Math.random() * 2000))
 
-export function useReferenceGeneration({ settings, references, setReferences, flowAPI, addPendingSave, openSettings, pendingSavesCount = 0, t, selectedStyleRefId, styleThumbnails }) {
+export function useReferenceGeneration({ settings, references, setReferences, flowAPI, addPendingSave, openSettings, pendingSavesCount = 0, t, selectedStyleRefId, styleThumbnails, generationQueue }) {
   const [generatingRefs, setGeneratingRefs] = useState([])
   const [stoppingRefs, setStoppingRefs] = useState(false)
   const [preparingRefs, setPreparingRefs] = useState(false)  // 배치 준비 중 (권한/토큰/썸네일 업로드)
@@ -25,11 +25,11 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     setStoppingRefs(true)
   }, [])
 
-  // Handle reference image generation (개별)
+  // 핵심 생성 로직 (개별)
   // @param {number} index - 레퍼런스 인덱스
   // @param {boolean} skipPermissionCheck - 배치 모드에서 권한 체크 스킵
   // @returns {{ success: boolean, authError?: boolean }} 생성 결과
-  const handleGenerateRef = async (index, skipPermissionCheck = false, overrideStyleId = null) => {
+  const _executeGenerateRef = async (index, skipPermissionCheck = false, overrideStyleId = null) => {
     const ref = references[index]
     if (!ref?.prompt) {
       toast.warning(t('toast.noPrompt'))
@@ -359,7 +359,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
 
   // Handle reference image generation (일괄 — 비동기 fire-and-forget 방식)
   // AutoFlow 패턴: 제출 → 7~15초 대기 → 다음 제출, 결과는 별도 수집
-  const handleGenerateAllRefs = async (overrideStyleId = null) => {
+  const _executeBatchRefs = async (overrideStyleId = null) => {
     const generatableIndices = references
       .map((ref, index) => (ref.prompt && !ref.data && !ref.filePath && ref.type !== 'style') ? index : -1)
       .filter(i => i !== -1)
@@ -570,6 +570,41 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     if (hasPendingSaves) {
       toast.info(t('toast.batchCompleteNeedPermission'))
       openSettings('storage')
+    }
+  }
+
+  // 큐를 통한 개별 생성
+  const handleGenerateRef = async (index, skipPermissionCheck = false, overrideStyleId = null) => {
+    // 배치 내부 호출(skipPermissionCheck=true)이면 직접 실행
+    if (skipPermissionCheck || !generationQueue) {
+      return _executeGenerateRef(index, skipPermissionCheck, overrideStyleId)
+    }
+    // 개별 호출이면 큐에 enqueue
+    try {
+      return await generationQueue.enqueue({
+        type: 'reference',
+        label: `Ref #${index + 1}`,
+        execute: () => _executeGenerateRef(index, false, overrideStyleId)
+      })
+    } catch (err) {
+      console.warn('[RefGen] Queue rejected:', err.message)
+      return { success: false }
+    }
+  }
+
+  // 큐를 통한 배치 생성
+  const handleGenerateAllRefs = async (overrideStyleId = null) => {
+    if (!generationQueue) {
+      return _executeBatchRefs(overrideStyleId)
+    }
+    try {
+      await generationQueue.enqueue({
+        type: 'reference_batch',
+        label: 'Batch References',
+        execute: () => _executeBatchRefs(overrideStyleId)
+      })
+    } catch (err) {
+      console.warn('[RefGen] Batch queue rejected:', err.message)
     }
   }
 

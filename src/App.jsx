@@ -14,6 +14,7 @@ import { useProjectData } from './hooks/useProjectData'
 import { useReferenceGeneration } from './hooks/useReferenceGeneration'
 import { useStyleThumbnails } from './hooks/useStyleThumbnails'
 import { useSceneGeneration } from './hooks/useSceneGeneration'
+import { useGenerationQueue } from './hooks/useGenerationQueue'
 import { useExport } from './hooks/useExport'
 import { useAudioImport } from './hooks/useAudioImport'
 import { generateProjectName } from './utils/formatters'
@@ -50,6 +51,7 @@ import { useAuth } from './contexts/AuthContext'
 function App() {
   const { t } = useI18n()
   const { isAuthenticated, subscription } = useAuth()
+  const generationQueue = useGenerationQueue({ t, showToast: (msg, type) => type === 'error' ? toast.error(msg) : toast.info(msg) })
 
   // Auth/Payment Modals
   const [showAuthModal, setShowAuthModal] = useState(false)
@@ -160,7 +162,7 @@ function App() {
     setAuthReady(false)
     flowAPI.clearTokenCache()  // 캐시된 만료 토큰 제거 → 재로그인 후 새 토큰 획득
     toast.error(t('status.authErrorStopped'))
-  })
+  }, generationQueue)
   const videoScenesHook = useVideoScenes()
   const { videoScenes, setVideoScenes } = videoScenesHook
 
@@ -189,12 +191,12 @@ function App() {
 
   // Reference 생성
   const { generatingRefs, stoppingRefs, preparingRefs, handleGenerateRef, handleGenerateAllRefs, stopGenerateAllRefs } = useReferenceGeneration({
-    settings, references, setReferences, flowAPI, addPendingSave, openSettings, t, selectedStyleRefId, styleThumbnails
+    settings, references, setReferences, flowAPI, addPendingSave, openSettings, t, selectedStyleRefId, styleThumbnails, generationQueue
   })
 
   // Scene 재생성
   const { generatingSceneId, handleGenerateScene } = useSceneGeneration({
-    settings, scenes, scenesHook, flowAPI, openSettings, setSelectedScene, t
+    settings, scenes, scenesHook, flowAPI, openSettings, setSelectedScene, t, generationQueue
   })
 
   // Audio Import

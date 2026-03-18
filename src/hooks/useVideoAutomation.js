@@ -20,7 +20,7 @@ const randomSleep = (min, max) =>
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 
-export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null) {
+export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null, generationQueue = null) {
   const [isRunning, setIsRunning] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
   const [progress, setProgress] = useState({ current: 0, total: 0, percent: 0, errorCount: 0, startedAt: null })
@@ -376,13 +376,29 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
     setStatusMessage(t('status.stopping'))
   }, [t])
 
+  // 큐를 통한 시작
+  const startQueued = useCallback(async (options = {}) => {
+    if (!generationQueue) {
+      return start(options)
+    }
+    try {
+      await generationQueue.enqueue({
+        type: 'video_batch',
+        label: 'Video Automation',
+        execute: () => start(options)
+      })
+    } catch (err) {
+      console.warn('[VideoGen] Queue rejected:', err.message)
+    }
+  }, [generationQueue, start])
+
   return {
     isRunning,
     isPaused,
     progress,
     status,
     statusMessage,
-    start,
+    start: startQueued,
     togglePause,
     stop
   }
