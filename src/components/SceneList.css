@@ -143,6 +143,12 @@
   background: var(--bg-color);
   color: var(--text-color);
   font-size: 0.8rem;
+  -moz-appearance: textfield;
+}
+.duration-input::-webkit-outer-spin-button,
+.duration-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 .scene-table textarea {
