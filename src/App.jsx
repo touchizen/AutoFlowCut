@@ -2,7 +2,7 @@
  * AutoFlowCut - Main App
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { DEFAULTS, UI, TIMING } from './config/defaults'
 import { useFlowAPI } from './hooks/useFlowAPI'
 import { useScenes } from './hooks/useScenes'
@@ -44,6 +44,7 @@ import TagValidationModal from './components/TagValidationModal'
 import AudioResultModal from './components/AudioResultModal'
 import AudioPanel from './components/AudioPanel'
 import { SubscriptionBanner } from './components/SubscriptionBanner'
+import Modal from './components/Modal'
 import { useAuth } from './contexts/AuthContext'
 
 function App() {
@@ -54,6 +55,9 @@ function App() {
   const [showAuthModal, setShowAuthModal] = useState(false)
   const [showPaywallModal, setShowPaywallModal] = useState(false)
   const [paywallReason, setPaywallReason] = useState('trial_expired')
+
+  // Flow Login Expired Modal
+  const [showLoginExpiredModal, setShowLoginExpiredModal] = useState(false)
 
   // Tag Validation Modal
   const [tagValidationErrors, setTagValidationErrors] = useState(null)
@@ -88,6 +92,13 @@ function App() {
     }
     return defaults
   })
+
+  // Flow 로그인 만료 이벤트 수신
+  useEffect(() => {
+    const handler = () => setShowLoginExpiredModal(true)
+    window.addEventListener('flow-login-expired', handler)
+    return () => window.removeEventListener('flow-login-expired', handler)
+  }, [])
 
   // DOM 모드: 레이아웃이 'tab'이면 split으로 보정 (Flow UI가 보여야 함)
   useEffect(() => {
@@ -1158,6 +1169,20 @@ function App() {
         onClose={() => setShowPaywallModal(false)}
         reason={paywallReason}
       />
+
+      {/* Flow Login Expired Modal */}
+      <Modal
+        isOpen={showLoginExpiredModal}
+        onClose={() => setShowLoginExpiredModal(false)}
+        title={t('toast.flowLoginExpiredTitle')}
+        footer={
+          <button className="btn btn-primary" onClick={() => setShowLoginExpiredModal(false)}>
+            {t('export.confirm') || '확인'}
+          </button>
+        }
+      >
+        <p>{t('toast.flowLoginExpiredMessage')}</p>
+      </Modal>
 
       {tagValidationErrors && (
         <TagValidationModal
