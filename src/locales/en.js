@@ -759,8 +759,4 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     proceedAnyway: 'Proceed Anyway',
   },
 
-  // Generation Queue
-  queue: {
-    full: 'Generation queue is full (5)',
-  },
 }

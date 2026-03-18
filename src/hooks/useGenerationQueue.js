@@ -1,9 +1,7 @@
 // src/hooks/useGenerationQueue.js
 import { useState, useRef, useCallback } from 'react'
 
-const MAX_QUEUE_SIZE = 5
-
-export function useGenerationQueue({ t, showToast } = {}) {
+export function useGenerationQueue() {
   const [queueSize, setQueueSize] = useState(0)
   const [runningItem, setRunningItem] = useState(null)
   const queueRef = useRef([])
@@ -38,13 +36,6 @@ export function useGenerationQueue({ t, showToast } = {}) {
 
   const enqueue = useCallback(({ type, label, execute }) => {
     return new Promise((resolve, reject) => {
-      if (queueRef.current.length >= MAX_QUEUE_SIZE) {
-        const msg = t?.('queue.full') || `Generation queue is full (${MAX_QUEUE_SIZE})`
-        showToast?.(msg, 'error')
-        reject(new Error(msg))
-        return
-      }
-
       const item = {
         id: `${type}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         type, label, execute, resolve, reject,
@@ -55,7 +46,7 @@ export function useGenerationQueue({ t, showToast } = {}) {
       setQueueSize(queueRef.current.length)
       processNext()
     })
-  }, [processNext, t, showToast])
+  }, [processNext])
 
   const clearQueue = useCallback((type) => {
     if (type) {

@@ -51,7 +51,7 @@ import { useAuth } from './contexts/AuthContext'
 function App() {
   const { t } = useI18n()
   const { isAuthenticated, subscription } = useAuth()
-  const generationQueue = useGenerationQueue({ t, showToast: (msg, type) => type === 'error' ? toast.error(msg) : toast.info(msg) })
+  const generationQueue = useGenerationQueue()
 
   // Auth/Payment Modals
   const [showAuthModal, setShowAuthModal] = useState(false)
