@@ -1,7 +1,7 @@
 // src/hooks/useGenerationQueue.js
 import { useState, useRef, useCallback } from 'react'
 
-const MAX_QUEUE_SIZE = 200
+const MAX_QUEUE_SIZE = 5
 
 export function useGenerationQueue({ t, showToast } = {}) {
   const [queueSize, setQueueSize] = useState(0)
