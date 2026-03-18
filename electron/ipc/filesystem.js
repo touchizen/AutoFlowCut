@@ -874,6 +874,12 @@ export function registerFilesystemIPC(ipcMain) {
         }
       }
 
+      // 1-a. 음성 mp3 duration 측정 (ffprobe)
+      if (media.video) {
+        const durationMs = await getAudioDurationMs(media.video.path)
+        if (durationMs) media.video.durationMs = durationMs
+      }
+
       // 1-b. media/sfx/ 스캔 (플랫 구조 — 타임코드 포함 SFX 파일)
       const mediaSfxDir = path.join(mediaDir, 'sfx')
       const mediaSfxFiles = []
@@ -1072,6 +1078,12 @@ export function registerFilesystemIPC(ipcMain) {
             media.srt = { path: path.join(mediaDir, f), filename: f }
           }
         }
+      }
+
+      // 1-a. 음성 mp3 duration 측정 (ffprobe)
+      if (media.video) {
+        const durationMs = await getAudioDurationMs(media.video.path)
+        if (durationMs) media.video.durationMs = durationMs
       }
 
       // 1-b. media/sfx/ 스캔 (플랫 구조 — 타임코드 포함 SFX 파일)

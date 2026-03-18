@@ -309,6 +309,9 @@ async function prepareCloudRequest(project, options = {}) {
       subtitleOption,
       subtitleFontSize,
       srtEntries: audioPackage?.srtEntries || null,
+      audioDurationSec: audioPackage?.media?.video?.durationMs
+        ? audioPackage.media.video.durationMs / 1000
+        : null,
       scenes: cloudScenes,
       videoOverlays: cloudVideoOverlays.length > 0 ? cloudVideoOverlays : undefined,
       sfxItems: cloudSfxItems,
