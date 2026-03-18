@@ -11,7 +11,7 @@ import { getTimestamp, generateProjectName, getImageSizeFromBase64 } from '../ut
 import { toast } from '../components/Toast'
 import { resetDOMSession, requestStopDOM } from '../utils/flowDOMClient'
 
-export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings = null, addPendingSave = null, t = (key) => key, onAuthError = null) {
+export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings = null, addPendingSave = null, t = (key) => key, onAuthError = null, generationQueue = null) {
   const [isRunning, setIsRunning] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
@@ -697,6 +697,22 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     await start({ ...options, sceneIndices: errorIndices })
   }, [scenes, start])
   
+  // 큐를 통한 시작
+  const startQueued = useCallback(async (options = {}) => {
+    if (!generationQueue) {
+      return start(options)
+    }
+    try {
+      await generationQueue.enqueue({
+        type: 'scene_batch',
+        label: 'Batch Scene Generation',
+        execute: () => start(options)
+      })
+    } catch (err) {
+      console.warn('[Automation] Queue rejected:', err.message)
+    }
+  }, [generationQueue, start])
+
   return {
     isRunning,
     isPaused,
@@ -704,7 +720,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     progress,
     status,
     statusMessage,
-    start,
+    start: startQueued,
     togglePause,
     stop,
     retryScene,

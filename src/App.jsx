@@ -155,7 +155,8 @@ function App() {
       setAuthReady(false)
       flowAPI.clearTokenCache()  // 캐시된 만료 토큰 제거
       toast.error(t('status.authErrorStopped'), TIMING.AUTH_ERROR_TOAST)
-    }
+    },
+    generationQueue
   )
 
   const videoAutomation = useVideoAutomation(flowAPI, t, () => {
