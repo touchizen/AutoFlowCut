@@ -1038,6 +1038,7 @@ export function registerFilesystemIPC(ipcMain) {
           characters: voices.map(v => v.character),
           totalVoiceFiles: voices.reduce((sum, v) => sum + v.files.length, 0),
           totalSfxCategories: sfxCategories.length,
+          totalSfxFiles: sfxCategories.reduce((sum, c) => sum + c.files.length, 0),
           hasSrt: !!srtContent,
           hasMedia: !!media.video,
           hasSfxTimecodes: !!sfxMdContent
@@ -1221,6 +1222,7 @@ export function registerFilesystemIPC(ipcMain) {
           characters: voices.map(v => v.character),
           totalVoiceFiles: voices.reduce((sum, v) => sum + v.files.length, 0),
           totalSfxCategories: sfxCategories.length,
+          totalSfxFiles: sfxCategories.reduce((sum, c) => sum + c.files.length, 0),
           hasSrt: !!srtContent,
           hasMedia: !!media.video,
           hasSfxTimecodes: !!sfxMdContent

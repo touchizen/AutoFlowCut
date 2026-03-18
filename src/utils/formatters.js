@@ -356,3 +356,21 @@ export function hasImageData(item) {
 export function generateRandomSeed() {
   return String(Math.floor(Math.random() * 2147483647))
 }
+
+/**
+ * 경과 시간 포맷 (초 → "mm:ss" 또는 "hh:mm:ss")
+ */
+export function formatElapsed(seconds) {
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = seconds % 60
+  if (h > 0) return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+}
+
+/**
+ * 경과 시간 포맷 (밀리초 → "mm:ss" 또는 "hh:mm:ss")
+ */
+export function formatElapsedMs(ms) {
+  return formatElapsed(Math.floor(ms / 1000))
+}

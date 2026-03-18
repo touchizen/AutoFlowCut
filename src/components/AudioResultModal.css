@@ -81,6 +81,13 @@
   color: var(--text-primary);
 }
 
+.summary-hint {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--text-secondary, #888);
+  opacity: 0.8;
+}
+
 /* Characters List (펼침) */
 .characters-list {
   display: flex;

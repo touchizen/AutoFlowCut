@@ -387,9 +387,23 @@ function App() {
       } else if (data.type === 'update-reference') {
         setReferences(prev => prev.map((ref, i) => i === data.index ? { ...prev[i], ...data.fields } : ref))
         console.log('[MCP] Reference', data.index, 'updated via HTTP')
+      } else if (data.type === 'remove-reference') {
+        setReferences(prev => prev.filter((_, i) => i !== data.index))
+        console.log('[MCP] Reference', data.index, 'removed via HTTP')
+      } else if (data.type === 'clear-reference-image') {
+        setReferences(prev => prev.map((ref, i) => i === data.index ? { ...ref, data: null, filePath: null, mediaId: null, caption: null, dataStorage: null } : ref))
+        console.log('[MCP] Reference', data.index, 'image cleared via HTTP')
+      } else if (data.type === 'clear-all-reference-images') {
+        setReferences(prev => prev.map(ref => ({ ...ref, data: null, filePath: null, mediaId: null, caption: null, dataStorage: null })))
+        console.log('[MCP] All reference images cleared via HTTP')
       } else if (data.type === 'update-scenes') {
-        setScenes(data.scenes)
-        console.log('[MCP] Scenes updated via HTTP:', data.scenes.length)
+        const scenesWithIds = (data.scenes || []).map((s, i) => ({
+          ...s,
+          id: s.id || `scene_${i + 1}`,
+          status: s.status || 'pending',
+        }))
+        setScenes(scenesWithIds)
+        console.log('[MCP] Scenes updated via HTTP:', scenesWithIds.length)
       } else if (data.type === 'update-scene') {
         setScenes(prev => prev.map((s, i) => i === data.index ? { ...prev[i], ...data.fields } : s))
         console.log('[MCP] Scene', data.index, 'updated via HTTP')
@@ -530,7 +544,7 @@ function App() {
   }
 
   // Handle start — 활성 탭에 따라 이미지/비디오 생성 모드 분기
-  const handleStart = async () => {
+  const handleStart = async (overrideStyleId = null) => {
     // 이미 실행 중이면 무시 (중지는 별도 버튼)
     if (isRunning || videoAutomation.isRunning) return
 
@@ -574,7 +588,7 @@ function App() {
           concurrency: settings.concurrency || 2,
           imageBatchCount: settings.imageBatchCount || 1,
           imageUpscale: settings.imageUpscale || 'off',
-          selectedStyleRefId,
+          selectedStyleRefId: overrideStyleId || selectedStyleRefId,
         }
 
         const errors = collectTagErrors(scenes, scenesHook.references)
@@ -719,16 +733,14 @@ function App() {
   // MCP: handleStart/handleStop/batchStatus 글로벌 등록 (정의 이후에 등록해야 함)
   useEffect(() => {
     window.__mcpStartBatch = (styleId) => {
-      if (styleId) {
-        setSelectedStyleRefId(`preset:${styleId}`)
-      }
-      setTimeout(() => handleStart(), 100)
+      const fullId = styleId ? `preset:${styleId}` : null
+      if (fullId) setSelectedStyleRefId(fullId)
+      handleStart(fullId)
     }
     window.__mcpStartRefBatch = (styleId) => {
-      if (styleId) {
-        setSelectedStyleRefId(`preset:${styleId}`)
-      }
-      setTimeout(() => handleGenerateAllRefs(), 100)
+      const fullId = styleId ? `preset:${styleId}` : null
+      if (fullId) setSelectedStyleRefId(fullId)
+      handleGenerateAllRefs(fullId)
     }
     window.__mcpStopBatch = () => handleStop()
     window.__mcpBatchStatus = () => {
@@ -845,7 +857,7 @@ function App() {
               disabled={!audioPackage}
             >
               🎵 <span className="tab-label">{t('audioTab.title') || '오디오'}</span>
-              {audioPackage && <span className="tab-count"> ({audioPackage.summary?.totalVoiceFiles || 0})</span>}
+              {audioPackage && <span className="tab-count"> ({(audioPackage.summary?.totalVoiceFiles || 0) + (audioPackage.summary?.totalSfxFiles || 0)})</span>}
             </button>
             <button
               className={`tab tab-icon ${showReferences ? 'active' : ''}`}
@@ -957,6 +969,7 @@ function App() {
               onBulkReview={saveBulkReviews}
               onRefresh={refreshReviews}
               srtEntries={audioPackage?.srtEntries}
+              scenes={scenes}
             />
           )}
         </div>
@@ -1047,6 +1060,7 @@ function App() {
           progress={currentProgress}
           status={currentStatus}
           message={currentStatusMessage}
+          scenes={scenes}
         />
 
         {activeTab === 'text' && (

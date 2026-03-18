@@ -482,6 +482,40 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'app_remove_reference',
+      description: '실행 중인 Flow2CapCut 앱에서 레퍼런스 카드를 삭제합니다. (UI의 "카드 제거" 버튼과 동일)',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
+          index: { type: 'number', description: '삭제할 레퍼런스 인덱스 (0부터)' },
+        },
+        required: ['index'],
+      },
+    },
+    {
+      name: 'app_clear_reference_image',
+      description: '실행 중인 Flow2CapCut 앱에서 레퍼런스의 이미지만 제거합니다. (카드는 유지, UI의 "이미지만 제거" 버튼과 동일)',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
+          index: { type: 'number', description: '이미지를 제거할 레퍼런스 인덱스 (0부터)' },
+        },
+        required: ['index'],
+      },
+    },
+    {
+      name: 'app_clear_all_reference_images',
+      description: '실행 중인 Flow2CapCut 앱에서 모든 레퍼런스의 이미지를 일괄 제거합니다. (카드는 유지, 프롬프트/이름은 보존)',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
+        },
+      },
+    },
+    {
       name: 'app_get_scenes',
       description: '실행 중인 Flow2CapCut 앱에서 현재 씬 목록을 가져옵니다.',
       inputSchema: {
@@ -772,6 +806,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           const projectDir = path.resolve(imageDirPath, '..', '..');
           projectLoaded = loadProjectJson(projectDir);
         }
+
+        // 앱에 update-scenes 전달
+        const port = args.port || 3210;
+        try {
+          await appFetch(port, 'POST', '/api/update', { type: 'update-scenes', scenes: scenes });
+        } catch { /* 앱 미실행 시 무시 */ }
+
         const modeLabel = sceneMode === 'video' ? '비디오' : '이미지';
         return {
           content: [{
@@ -1108,6 +1149,38 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      case 'app_remove_reference': {
+        const port = args.port || 3210;
+        await appFetch(port, 'POST', '/api/update', {
+          type: 'remove-reference',
+          index: args.index,
+        });
+        return {
+          content: [{ type: 'text', text: `레퍼런스 [${args.index}] 카드 삭제 완료` }],
+        };
+      }
+
+      case 'app_clear_reference_image': {
+        const port = args.port || 3210;
+        await appFetch(port, 'POST', '/api/update', {
+          type: 'clear-reference-image',
+          index: args.index,
+        });
+        return {
+          content: [{ type: 'text', text: `레퍼런스 [${args.index}] 이미지 제거 완료 (카드 유지)` }],
+        };
+      }
+
+      case 'app_clear_all_reference_images': {
+        const port = args.port || 3210;
+        await appFetch(port, 'POST', '/api/update', {
+          type: 'clear-all-reference-images',
+        });
+        return {
+          content: [{ type: 'text', text: '모든 레퍼런스 이미지 일괄 제거 완료 (카드/프롬프트는 유지)' }],
+        };
+      }
+
       case 'app_get_scenes': {
         const port = args.port || 3210;
         const res = await appFetch(port, 'GET', '/api/scenes');
@@ -1180,23 +1253,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'app_wait_batch': {
         const port = args.port || 3210;
-        const interval = args.interval || 3000;
+        const interval = args.interval || 5000;
         const timeout = args.timeout || 600000;
         const startTime = Date.now();
 
         while (true) {
           const res = await appFetch(port, 'GET', '/api/batch-status');
           const st = res.data;
+          const elapsed = Math.floor((Date.now() - startTime) / 1000);
+          const mm = String(Math.floor(elapsed / 60)).padStart(2, '0');
+          const ss = String(elapsed % 60).padStart(2, '0');
 
           if (!st.isRunning) {
             return {
-              content: [{ type: 'text', text: `배치 생성 완료!\n${JSON.stringify(st, null, 2)}` }],
+              content: [{ type: 'text', text: `배치 완료 [${mm}:${ss}] done:${st.done} error:${st.error} total:${st.total}` }],
             };
           }
 
           if (Date.now() - startTime > timeout) {
             return {
-              content: [{ type: 'text', text: `타임아웃 (${timeout / 1000}초). 현재 상태:\n${JSON.stringify(st, null, 2)}` }],
+              content: [{ type: 'text', text: `타임아웃 [${mm}:${ss}] done:${st.done} error:${st.error} total:${st.total}` }],
             };
           }
 

@@ -15,7 +15,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
   const [isRunning, setIsRunning] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
-  const [progress, setProgress] = useState({ current: 0, total: 0, percent: 0 })
+  const [progress, setProgress] = useState({ current: 0, total: 0, percent: 0, errorCount: 0, startedAt: null, endedAt: null })
   const [status, setStatus] = useState('ready')
   const [statusMessage, setStatusMessage] = useState('')
 
@@ -29,6 +29,8 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
   const stopRequestedRef = useRef(false)
   const pausedRef = useRef(false)
   const completedCountRef = useRef(0)
+  const errorCountRef = useRef(0)
+  const batchStartedAtRef = useRef(null)
   
   const { generateImageDOM, submitGenerationDOM, checkGeneration, collectGeneration, clearGenerations, uploadReference, getAccessToken } = flowAPI
   const { scenes, references, updateScene, getMatchingReferences } = scenesHook
@@ -38,7 +40,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     if (isRunning) return
     const hasAnyImage = scenes.some(s => s.image || s.imagePath)
     if (!hasAnyImage && (status === 'done' || status === 'stopped' || status === 'error')) {
-      setProgress({ current: 0, total: 0, percent: 0 })
+      setProgress({ current: 0, total: 0, percent: 0, errorCount: 0, startedAt: null, endedAt: null })
       setStatus('ready')
       setStatusMessage(t('status.ready'))
     }
@@ -254,11 +256,12 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       }
     }
     completedCountRef.current = 0
+    errorCountRef.current = 0
     const pendingQueue = [] // { generationId, scene, submittedAt }
     let consecutiveErrors = 0
 
     const updateProgressMsg = (current) => {
-      setProgress({ current, total, percent: Math.round((current / total) * 100) })
+      setProgress({ current, total, percent: Math.round((current / total) * 100), errorCount: errorCountRef.current, startedAt: batchStartedAtRef.current, endedAt: null })
     }
 
     // 비동기 결과 후처리 (업스케일 + 저장)
@@ -321,6 +324,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
         if (elapsed > ITEM_TIMEOUT) {
           console.warn('[Automation] Scene', item.scene.id, 'timed out after', Math.round(elapsed / 1000), 's')
           updateScene(item.scene.id, { status: 'error', error: 'Generation timeout' })
+          errorCountRef.current++
           completedCountRef.current++
           updateProgressMsg(completedCountRef.current)
           continue
@@ -331,6 +335,9 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
             const result = await collectGeneration(item.generationId)
             console.log('[Automation] Collected scene', item.scene.id, ':', result.success, result.images?.length || 0, 'images')
             await processAsyncResult(item.scene, result)
+            if (!result.success || !result.images?.length) {
+              errorCountRef.current++
+            }
             completedCountRef.current++
             updateProgressMsg(completedCountRef.current)
           } else {
@@ -409,6 +416,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       } else {
         console.error('[Automation] Submit failed for scene', scene.id, ':', submitResult.error)
         updateScene(scene.id, { status: 'error', error: submitResult.error })
+        errorCountRef.current++
         completedCountRef.current++
         updateProgressMsg(completedCountRef.current)
         consecutiveErrors++
@@ -439,7 +447,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     // Phase 2: 남은 결과 전부 수집 (3초 간격, 최대 3분)
     const pollStart = Date.now()
     while (pendingQueue.length > 0 && !stopRequestedRef.current && (Date.now() - pollStart < 180000)) {
-      setStatusMessage(t('status.collectingResults') || `Collecting results... (${pendingQueue.length} remaining)`)
+      setStatusMessage(t('status.collectingResults', { remaining: pendingQueue.length }))
       await collectCompleted()
       if (pendingQueue.length > 0) {
         await new Promise(r => setTimeout(r, 3000))
@@ -449,6 +457,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     // 미수집 처리
     for (const item of pendingQueue) {
       updateScene(item.scene.id, { status: 'error', error: 'Timeout or stopped' })
+      errorCountRef.current++
       completedCountRef.current++
     }
     updateProgressMsg(completedCountRef.current)
@@ -496,8 +505,8 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       setIsRunning(false)
       return
     }
-    setProgress({ current: 0, total, percent: 0 })
-    
+    setProgress({ current: 0, total, percent: 0, errorCount: 0, startedAt: null, endedAt: null })
+
     // 폴더 저장 모드일 때 폴더 존재 확인
     if (saveMode === 'folder') {
       setStatusMessage(t('status.checkingFolder'))
@@ -533,7 +542,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     if (refsToUpload.length > 0) {
       setStatus('uploading')
       let uploadedCount = 0
-      setProgress({ current: 0, total: refsToUpload.length, percent: 0 })
+      setProgress({ current: 0, total: refsToUpload.length, percent: 0, errorCount: 0, startedAt: null, endedAt: null })
       setStatusMessage(t('status.uploadingRefs', { current: 0, total: refsToUpload.length }))
 
       const MAX_CONCURRENT = 5
@@ -588,7 +597,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
               completedCount++
               uploadedCount = completedCount
               const percent = Math.round((uploadedCount / refsToUpload.length) * 100)
-              setProgress({ current: uploadedCount, total: refsToUpload.length, percent })
+              setProgress({ current: uploadedCount, total: refsToUpload.length, percent, errorCount: 0, startedAt: batchStartedAtRef.current, endedAt: null })
               setStatusMessage(t('status.uploadingRefs', { current: uploadedCount, total: refsToUpload.length }))
               if (completedCount >= refsToUpload.length || stopRequestedRef.current) {
                 resolve()
@@ -610,8 +619,9 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     }
     
     // 씬 처리 (DOM 모드 — 반드시 순차)
+    batchStartedAtRef.current = Date.now()
     setStatus('running')
-    setProgress({ current: 0, total, percent: 0 })
+    setProgress({ current: 0, total, percent: 0, errorCount: 0, startedAt: batchStartedAtRef.current, endedAt: null })
     await runConcurrentQueue(targetScenes, {
       projectName,
       saveMode,
@@ -624,13 +634,20 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     setIsRunning(false)
     setIsPaused(false)
     setIsStopping(false)
+    setProgress(prev => ({ ...prev, endedAt: Date.now() }))
+
+    const doneCount = completedCountRef.current - errorCountRef.current
+    const errCount = errorCountRef.current
+    const summary = errCount > 0
+      ? `✅ ${doneCount}  ❌ ${errCount}`
+      : `✅ ${doneCount}`
 
     if (stopRequestedRef.current) {
       setStatus('stopped')
-      setStatusMessage(t('status.stopped'))
+      setStatusMessage(`${t('status.stopped')} — ${summary}`)
     } else {
       setStatus('done')
-      setStatusMessage(t('status.done'))
+      setStatusMessage(`${t('status.done')} — ${summary}`)
     }
 
   }, [isRunning, scenes, references, generateImageDOM, submitGenerationDOM, checkGeneration, collectGeneration, clearGenerations, uploadReference, getAccessToken, updateScene, getMatchingReferences, t, onOpenSettings])

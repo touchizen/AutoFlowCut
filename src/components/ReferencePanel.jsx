@@ -6,7 +6,8 @@ import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { REFERENCE_TYPES } from '../config/defaults'
 import { useI18n } from '../hooks/useI18n'
-import { getRatioClass } from '../utils/formatters'
+import { useElapsedTimer } from '../hooks/useElapsedTimer'
+import { getRatioClass, formatElapsedMs } from '../utils/formatters'
 import ReferenceCard from './ReferenceCard'
 import ReferenceDetailModal from './ReferenceDetailModal'
 import StylePicker from './StylePicker'
@@ -41,11 +42,13 @@ export default function ReferencePanel({
   const [showBatchWizard, setShowBatchWizard] = useState(false)
   const [batchTotal, setBatchTotal] = useState(0)
   const [batchStartedAt, setBatchStartedAt] = useState(null)
-  const [batchElapsed, setBatchElapsed] = useState(0)
 
   // 생성 가능한 레퍼런스 (프롬프트 있고, 이미지 없음, 스타일 제외)
   const generatableRefs = references.filter(r => r.prompt && !r.data && !r.filePath && r.type !== 'style')
   const isGenerating = generatingRefs.length > 0
+
+  const batchElapsedSec = useElapsedTimer(batchStartedAt)
+  const batchElapsed = batchElapsedSec * 1000 // ms 호환
 
   // 위저드 열릴 때 Flow 네이티브 뷰 숨기기
   useEffect(() => {
@@ -54,24 +57,15 @@ export default function ReferencePanel({
     return () => window.electronAPI?.setModalVisible?.({ visible: false })
   }, [showBatchWizard])
 
-  // 일괄생성 시작/종료 감지 + 경과 시간 타이머
+  // 일괄생성 시작/종료 감지
   useEffect(() => {
     if (isGenerating && !batchStartedAt) {
       setBatchTotal(generatableRefs.length + generatingRefs.length)
       setBatchStartedAt(Date.now())
-      setBatchElapsed(0)
     } else if (!isGenerating && batchStartedAt) {
       setBatchStartedAt(null)
     }
   }, [isGenerating])
-
-  useEffect(() => {
-    if (!batchStartedAt) return
-    const timer = setInterval(() => {
-      setBatchElapsed(Date.now() - batchStartedAt)
-    }, 1000)
-    return () => clearInterval(timer)
-  }, [batchStartedAt])
 
   // 스타일 레퍼런스 목록 (업로드된 Style 카드)
   const styleRefs = references.filter(r => r.type === 'style')
@@ -142,7 +136,7 @@ export default function ReferencePanel({
                 </div>
                 <span className="ref-batch-text">
                   {batchTotal - generatableRefs.length}/{batchTotal}
-                  {batchElapsed > 0 && ` · ${Math.floor(batchElapsed / 60000)}:${String(Math.floor((batchElapsed / 1000) % 60)).padStart(2, '0')}`}
+                  {batchElapsed > 0 && ` · ${formatElapsedMs(batchElapsed)}`}
                 </span>
               </div>
             )}

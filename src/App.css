@@ -951,6 +951,9 @@ html, body {
 .status-bar.warning .status-message { color: var(--warning-color); }
 .status-bar.error .status-message { color: var(--error-color); }
 
+.progress-text .error-count { color: #ef4444; font-weight: 600; }
+.progress-text .elapsed-time { color: var(--text-tertiary, #888); margin-left: 4px; }
+
 /* Results Table */
 .results-table-container {
   flex: 1;

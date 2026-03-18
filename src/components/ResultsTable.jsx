@@ -6,7 +6,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useI18n } from '../hooks/useI18n'
-import { getRatioClass, resolveImageSrc, hasImageData } from '../utils/formatters'
+import { useElapsedTimer } from '../hooks/useElapsedTimer'
+import { getRatioClass, resolveImageSrc, hasImageData, formatElapsed } from '../utils/formatters'
 import InfinityLoader from './InfinityLoader'
 
 /** 초시계 아이콘 — 초침이 실시간 회전 */
@@ -38,22 +39,8 @@ function StopwatchIcon({ size = 18 }) {
 
 /** 경과 시간 표시 (1초마다 업데이트) */
 function ElapsedTime({ startedAt }) {
-  const [elapsed, setElapsed] = useState(() =>
-    startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0
-  )
-
-  useEffect(() => {
-    if (!startedAt) return
-    setElapsed(Math.floor((Date.now() - startedAt) / 1000))
-    const timer = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startedAt) / 1000))
-    }, 1000)
-    return () => clearInterval(timer)
-  }, [startedAt])
-
-  const min = Math.floor(elapsed / 60)
-  const sec = elapsed % 60
-  return <span>{min > 0 ? `${min}분 ${sec}초` : `${sec}초`}</span>
+  const elapsed = useElapsedTimer(startedAt)
+  return <span>{formatElapsed(elapsed)}</span>
 }
 
 export default function ResultsTable({
@@ -102,8 +89,6 @@ export default function ResultsTable({
   const isPairType = mediaType === 'frame-pair'
 
   // done statuses: 'done' (image automation) or 'complete' (video automation) both count
-  const doneCount = data.filter(s => s.status === 'done' || s.status === 'complete').length
-  const errorCount = data.filter(s => s.status === 'error').length
   const selectedCount = selectable ? data.filter(s => s.selected !== false).length : 0
   const allSelected = selectable && data.length > 0 && data.every(s => s.selected !== false)
 
@@ -230,11 +215,11 @@ export default function ResultsTable({
 
   return (
     <div className="results-table-container">
-      <div className="results-summary">
-        {selectable && <span>☑ {selectedCount}/{data.length}</span>}
-        <span>✅ {doneCount}</span>
-        {errorCount > 0 && <span className="error-count">❌ {errorCount}</span>}
-      </div>
+      {selectable && (
+        <div className="results-summary">
+          <span>☑ {selectedCount}/{data.length}</span>
+        </div>
+      )}
 
       <table className="results-table">
         <thead>

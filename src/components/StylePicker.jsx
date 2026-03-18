@@ -2,19 +2,12 @@
  * StylePicker - 썸네일 그리드 기반 스타일 프리셋 선택기
  */
 
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo } from 'react'
 import { STYLE_PRESETS } from '../config/defaults'
-import { resolveImageSrc, hasImageData } from '../utils/formatters'
+import { resolveImageSrc, hasImageData, formatElapsedMs } from '../utils/formatters'
 import { toFileUrl } from '../hooks/useStyleThumbnails'
+import { useElapsedTimer } from '../hooks/useElapsedTimer'
 import './StylePicker.css'
-
-// 경과 시간 포맷 (mm:ss)
-function formatElapsed(ms) {
-  const sec = Math.floor(ms / 1000)
-  const m = Math.floor(sec / 60)
-  const s = sec % 60
-  return `${m}:${String(s).padStart(2, '0')}`
-}
 
 const ALL_CATEGORY = '__all__'
 
@@ -34,22 +27,11 @@ export default function StylePicker({
 }) {
   const [activeCategory, setActiveCategory] = useState(ALL_CATEGORY)
   const [searchQuery, setSearchQuery] = useState('')
-  const [elapsed, setElapsed] = useState(0)
   const [previewStyle, setPreviewStyle] = useState(null)  // 더블클릭 미리보기
   const [hoverPreview, setHoverPreview] = useState(null)  // 호버 풍선 { style, thumb, x, y }
 
-  // 생성 중 경과 시간 타이머
-  useEffect(() => {
-    if (!generating || !progress.startedAt) {
-      setElapsed(0)
-      return
-    }
-    setElapsed(Date.now() - progress.startedAt)
-    const timer = setInterval(() => {
-      setElapsed(Date.now() - progress.startedAt)
-    }, 1000)
-    return () => clearInterval(timer)
-  }, [generating, progress.startedAt])
+  const elapsedSec = useElapsedTimer(generating && progress.startedAt ? progress.startedAt : null)
+  const elapsed = elapsedSec * 1000 // ms로 변환 (기존 formatElapsedMs 호환)
 
   const categories = STYLE_PRESETS?.categories || []
   const allStyles = STYLE_PRESETS?.styles || []
@@ -214,7 +196,7 @@ export default function StylePicker({
             </div>
             <span className="sp-progress-text">
               {t('reference.thumbnailProgress', { current: progress.current, total: progress.total })}
-              {elapsed > 0 && <span className="sp-elapsed"> {formatElapsed(elapsed)}</span>}
+              {elapsed > 0 && <span className="sp-elapsed"> {formatElapsedMs(elapsed)}</span>}
             </span>
             <button className={`sp-btn-stop ${stopping ? 'stopping' : ''}`} onClick={onStopGenerating} disabled={stopping}>
               {stopping ? `⏳ ${t('reference.stopping')}...` : t('reference.stop')}

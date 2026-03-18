@@ -15,7 +15,8 @@
  */
 
 import { useMemo, useEffect, useRef, useState, useCallback } from 'react'
-import { resolveImageSrc } from '../utils/formatters'
+import { resolveImageSrc, formatElapsed } from '../utils/formatters'
+import { useElapsedTimer } from '../hooks/useElapsedTimer'
 
 /** 초시계 아이콘 — 초침이 실시간 회전 */
 function StopwatchIcon({ size = 16 }) {
@@ -41,20 +42,8 @@ function StopwatchIcon({ size = 16 }) {
 
 /** 경과 시간 표시 (1초마다 업데이트) */
 function ElapsedTime({ startedAt }) {
-  const [elapsed, setElapsed] = useState(() =>
-    startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0
-  )
-  useEffect(() => {
-    if (!startedAt) return
-    setElapsed(Math.floor((Date.now() - startedAt) / 1000))
-    const timer = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startedAt) / 1000))
-    }, 1000)
-    return () => clearInterval(timer)
-  }, [startedAt])
-  const min = Math.floor(elapsed / 60)
-  const sec = elapsed % 60
-  return <span>{min > 0 ? `${min}분 ${sec}초` : `${sec}초`}</span>
+  const elapsed = useElapsedTimer(startedAt)
+  return <span>{formatElapsed(elapsed)}</span>
 }
 
 // 갤러리 ID prefix

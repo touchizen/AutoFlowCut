@@ -224,7 +224,7 @@ export default function AudioResultModal({ audioPackage, loading, onClose }) {
         </div>
         <div className="summary-item">
           <span className="summary-label">🔊 {t('audioResult.sfxCategories')}</span>
-          <span className="summary-value">{summary.totalSfxCategories}</span>
+          <span className="summary-value">{summary.totalSfxCategories}{summary.totalSfxFiles > 0 && ` (${summary.totalSfxFiles}${t('audioResult.files')})`}</span>
         </div>
         {summary.hasMedia && (
           <div className="summary-item">

@@ -7,6 +7,7 @@ import { useState, useMemo, useRef, useCallback } from 'react'
 import { useI18n } from '../hooks/useI18n'
 import { findSrtSegment } from '../utils/audioTimeline'
 import AudioFlagPopover from './AudioFlagPopover'
+import Modal from './Modal'
 import './AudioPanel.css'
 
 /** ms → MM:SS or HH:MM:SS */
@@ -23,7 +24,28 @@ function formatTimecode(ms) {
 const VOICE_SORT_OPTIONS = ['character', 'timecode', 'count']
 const SFX_SORT_OPTIONS = ['category', 'name', 'timecode']
 
-export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, onBulkReview, onRefresh, srtEntries }) {
+/** 타임코드(ms)에 해당하는 씬을 찾는다 (시간 기반 → SRT 자막 기반 fallback) */
+function findSceneAtTime(scenes, timecodeMs, srtEntries) {
+  if (!scenes?.length || timecodeMs == null) return null
+  // 1차: start_time/end_time 기반
+  const timeSec = timecodeMs / 1000
+  const byTime = scenes.find(s => {
+    const start = parseFloat(s.start_time)
+    const end = parseFloat(s.end_time)
+    if (isNaN(start) || isNaN(end)) return false
+    return timeSec >= start && timeSec < end
+  })
+  if (byTime) return byTime
+  // 2차: SRT 자막 → 씬 subtitle 매칭
+  if (!srtEntries?.length) return null
+  const srt = findSrtSegment(srtEntries, timecodeMs)
+  if (!srt?.text) return null
+  const srtText = srt.text.trim()
+  return scenes.find(s => s.subtitle && s.subtitle.includes(srtText)) ||
+    scenes.find(s => s.subtitle && srtText.includes(s.subtitle)) || null
+}
+
+export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, onBulkReview, onRefresh, srtEntries, scenes }) {
   const { t } = useI18n()
   const [subTab, setSubTab] = useState('summary')
   const [voiceSortBy, setVoiceSortBy] = useState('character')
@@ -34,6 +56,8 @@ export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, o
   const [playingFile, setPlayingFile] = useState(null)
   const [flagTarget, setFlagTarget] = useState(null)
   const [refreshTooltip, setRefreshTooltip] = useState(null)
+  const [selectedItem, setSelectedItem] = useState(null)
+  const [hoverTooltip, setHoverTooltip] = useState(null)
   const audioRef = useRef(null)
 
   // Empty state
@@ -312,15 +336,23 @@ export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, o
               <span className="expand-icon">{showCharacters ? '▼' : '▶'}</span>
               👤 {t('audioResult.characters')}
             </span>
-            <span className="summary-value">{summary.characters.length}</span>
+            <span className="summary-value">
+              {summary.characters.length === 0 && summary.hasMedia
+                ? <span className="summary-hint">{t('audioResult.voicesInMedia')}</span>
+                : summary.characters.length}
+            </span>
           </div>
           <div className="summary-item">
             <span className="summary-label">🎙️ {t('audioResult.voiceFiles')}</span>
-            <span className="summary-value">{summary.totalVoiceFiles}</span>
+            <span className="summary-value">
+              {summary.totalVoiceFiles === 0 && summary.hasMedia
+                ? <span className="summary-hint">{t('audioResult.voicesInMedia')}</span>
+                : summary.totalVoiceFiles}
+            </span>
           </div>
           <div className="summary-item">
             <span className="summary-label">🔊 {t('audioResult.sfxCategories')}</span>
-            <span className="summary-value">{summary.totalSfxCategories}</span>
+            <span className="summary-value">{summary.totalSfxCategories}{summary.totalSfxFiles > 0 && ` (${summary.totalSfxFiles}${t('audioResult.files')})`}</span>
           </div>
           {summary.hasMedia && (
             <div className="summary-item">
@@ -591,13 +623,17 @@ export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, o
           <span className="vt-col-char">{t('audioResult.thCharacter')}</span>
           <span className="vt-col-file">{t('audioResult.thFile')}</span>
           <span className="vt-col-srt">{t('audioTab.srtMatch') || '자막'}</span>
+          <span className="vt-col-scene">{t('audioTab.sceneContent') || '씬'}</span>
           <span className="vt-col-flag"></span>
         </div>
         <div className="voice-table-body">
           {timelineItems.map((item, i) => {
             const srtMatch = item.timecodeMs != null ? findSrtSegment(srtEntries || [], item.timecodeMs) : null
+            const matchedScene = findSceneAtTime(scenes, item.timecodeMs, srtEntries)
             return (
-              <div key={i} className={`voice-table-row${isFileFlagged(item.path) ? ' flagged-row' : ''}`}>
+              <div key={i} className={`voice-table-row${isFileFlagged(item.path) ? ' flagged-row' : ''}${selectedItem?.path === item.path ? ' selected-row' : ''}`}
+                onClick={() => setSelectedItem({ ...item, srtMatch, matchedScene })}
+                style={{ cursor: 'pointer' }}>
                 <span className="vt-col-play">{renderPlayBtn(item.path)}</span>
                 <span className="vt-col-time file-timecode">{formatTimecode(item.timecodeMs)}</span>
                 <span className="vt-col-type">
@@ -605,9 +641,13 @@ export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, o
                     {item.type === 'voice' ? '🎤' : '🔊'}
                   </span>
                 </span>
-                <span className="vt-col-char">{item.label}</span>
+                <span className="vt-col-char">{item.type === 'sfx' ? 'SFX' : item.label}</span>
                 <span className="vt-col-file file-name">{item.filename}</span>
                 <span className="vt-col-srt srt-match-text">{srtMatch?.text || ''}</span>
+                <span className="vt-col-scene scene-match-text"
+                  onMouseEnter={e => matchedScene && setHoverTooltip({ scene: matchedScene, x: e.clientX, y: e.clientY })}
+                  onMouseLeave={() => setHoverTooltip(null)}
+                >{matchedScene?.subtitle || matchedScene?.prompt_ko || ''}</span>
                 <span className="vt-col-flag">{renderFlagBtn(item.path, item.filename)}</span>
               </div>
             )
@@ -682,6 +722,73 @@ export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, o
           }}
           onClose={() => setFlagTarget(null)}
         />
+      )}
+
+      {/* Audio Detail Modal */}
+      <Modal
+        isOpen={!!selectedItem}
+        onClose={() => setSelectedItem(null)}
+        title={selectedItem ? `${selectedItem.type === 'voice' ? '🎤' : '🔊'} ${formatTimecode(selectedItem.timecodeMs)} — ${selectedItem.filename}` : ''}
+        className="audio-detail-modal"
+      >
+        {selectedItem && (
+          <>
+            {/* 씬 이미지 */}
+            {selectedItem.matchedScene?.imagePath && (
+              <img className="audio-detail-hero" src={`file://${selectedItem.matchedScene.imagePath}`} alt="" />
+            )}
+
+            {/* 오디오 재생 */}
+            <div className="audio-detail-play-row">
+              {renderPlayBtn(selectedItem.path)}
+              <span className="audio-detail-filename">{selectedItem.filename}</span>
+            </div>
+
+            {/* 자막 */}
+            {selectedItem.srtMatch?.text && (
+              <div className="audio-detail-card">
+                <div className="audio-detail-card-label">📝 자막</div>
+                <div className="audio-detail-card-text">{selectedItem.srtMatch.text}</div>
+              </div>
+            )}
+
+            {/* 씬 정보 */}
+            {selectedItem.matchedScene && (
+              <div className="audio-detail-card">
+                <div className="audio-detail-card-label">🎬 씬</div>
+                {selectedItem.matchedScene.prompt_ko && (
+                  <div className="audio-detail-card-title">{selectedItem.matchedScene.prompt_ko}</div>
+                )}
+                {selectedItem.matchedScene.subtitle && (
+                  <div className="audio-detail-card-text">{selectedItem.matchedScene.subtitle}</div>
+                )}
+                {selectedItem.matchedScene.characters && (
+                  <div className="audio-detail-card-meta">👤 {selectedItem.matchedScene.characters}</div>
+                )}
+              </div>
+            )}
+
+            {/* 부적합 마크 */}
+            {isFileFlagged(selectedItem.path) && (
+              <div className="audio-detail-card audio-detail-card-flagged">
+                <div className="audio-detail-card-label">⚠️ 부적합</div>
+                <div className="audio-detail-card-text">{audioReviews?.[getRelativePath(selectedItem.path)]?.reason || ''}</div>
+              </div>
+            )}
+          </>
+        )}
+      </Modal>
+
+      {/* Scene hover tooltip */}
+      {hoverTooltip && (
+        <div className="scene-hover-tooltip" style={{ left: hoverTooltip.x + 12, top: hoverTooltip.y - 8 }}>
+          {hoverTooltip.scene.imagePath && (
+            <img className="scene-hover-img" src={`file://${hoverTooltip.scene.imagePath}`} alt="" />
+          )}
+          {hoverTooltip.scene.prompt_ko && <div className="scene-hover-prompt">{hoverTooltip.scene.prompt_ko}</div>}
+          {hoverTooltip.scene.subtitle && <div className="scene-hover-sub">{hoverTooltip.scene.subtitle}</div>}
+          {hoverTooltip.scene.characters && <div className="scene-hover-chars">👤 {hoverTooltip.scene.characters}</div>}
+        </div>
       )}
 
       {/* Custom refresh tooltip */}

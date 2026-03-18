@@ -29,7 +29,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
   // @param {number} index - 레퍼런스 인덱스
   // @param {boolean} skipPermissionCheck - 배치 모드에서 권한 체크 스킵
   // @returns {{ success: boolean, authError?: boolean }} 생성 결과
-  const handleGenerateRef = async (index, skipPermissionCheck = false) => {
+  const handleGenerateRef = async (index, skipPermissionCheck = false, overrideStyleId = null) => {
     const ref = references[index]
     if (!ref?.prompt) {
       toast.warning(t('toast.noPrompt'))
@@ -49,8 +49,9 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       // 스타일 주입 (style 카드 자체 생성 시에는 제외)
       const styleRefImages = []
       let styledPrompt = ref.prompt
+      // MCP에서 styleId가 전달된 경우 우선 적용
       // selectedStyleRefId 없으면 등록된 style 카드 자동 탐색
-      let effectiveStyleId = selectedStyleRefId
+      let effectiveStyleId = overrideStyleId || selectedStyleRefId
       if (!effectiveStyleId && ref.type !== 'style') {
         const autoStyle = references.find(r => r.type === 'style' && r.mediaId)
         if (autoStyle) {
@@ -358,7 +359,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
 
   // Handle reference image generation (일괄 — 비동기 fire-and-forget 방식)
   // AutoFlow 패턴: 제출 → 7~15초 대기 → 다음 제출, 결과는 별도 수집
-  const handleGenerateAllRefs = async () => {
+  const handleGenerateAllRefs = async (overrideStyleId = null) => {
     const generatableIndices = references
       .map((ref, index) => (ref.prompt && !ref.data && !ref.filePath && ref.type !== 'style') ? index : -1)
       .filter(i => i !== -1)
@@ -417,8 +418,9 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     }
 
     // 스타일 레퍼런스 준비 (공통)
+    // MCP에서 styleId가 전달된 경우 우선 적용 (React state 비동기 반영 대응)
     // selectedStyleRefId 없으면 등록된 style 카드 자동 탐색
-    let batchEffectiveStyleId = selectedStyleRefId
+    let batchEffectiveStyleId = overrideStyleId || selectedStyleRefId
     if (!batchEffectiveStyleId) {
       const autoStyle = references.find(r => r.type === 'style' && r.mediaId)
       if (autoStyle) {

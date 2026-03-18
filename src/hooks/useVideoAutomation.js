@@ -23,7 +23,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null) {
   const [isRunning, setIsRunning] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
-  const [progress, setProgress] = useState({ current: 0, total: 0, percent: 0 })
+  const [progress, setProgress] = useState({ current: 0, total: 0, percent: 0, errorCount: 0, startedAt: null })
   const [status, setStatus] = useState('ready')
   const [statusMessage, setStatusMessage] = useState('')
 
@@ -203,7 +203,9 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
       return
     }
 
-    setProgress({ current: 0, total, percent: 0 })
+    const batchStartedAt = Date.now()
+    setProgress({ current: 0, total, percent: 0, errorCount: 0, startedAt: batchStartedAt })
+    let videoErrorCount = 0
 
     // ═══════════════════════════════════════════
     // Phase 1: 순차 제출 (7~15초 간격, 완료 안 기다림)
@@ -232,6 +234,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
           onAuthError?.()
         }
         onItemUpdate?.(item.id, 'error', { error: genResult.error })
+        videoErrorCount++
         console.warn(`[VideoAutomation] ❌ Submit failed ${i + 1}/${total}:`, genResult.error)
       }
 
@@ -270,7 +273,9 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
       setProgress({
         current: doneCount + completedCount,
         total,
-        percent: Math.round(((doneCount + completedCount) / total) * 100)
+        percent: Math.round(((doneCount + completedCount) / total) * 100),
+        errorCount: videoErrorCount,
+        startedAt: batchStartedAt
       })
 
       // 배치 상태 체크 — genIds 순서와 statuses 순서가 동일 (인덱스 매칭)
@@ -341,7 +346,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
     // ═══════════════════════════════════════════
     setIsRunning(false)
     setIsPaused(false)
-    setProgress({ current: total, total, percent: 100 })
+    setProgress({ current: total, total, percent: 100, errorCount: videoErrorCount, startedAt: batchStartedAt })
 
     if (stopRequestedRef.current) {
       setStatus('stopped')
