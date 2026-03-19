@@ -279,6 +279,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           csv_path: { type: 'string', description: 'CSV 파일 절대 경로' },
           image_dir: { type: 'string', description: '이미지/비디오 디렉토리 절대 경로' },
           mode: { type: 'string', enum: ['image', 'video'], description: '모드 (기본: image)', default: 'image' },
+          force: { type: 'boolean', description: '기존 이미지 매핑 무시하고 강제 로드 (기본: false)', default: false },
         },
         required: ['csv_path'],
       },
@@ -779,24 +780,45 @@ const STYLE_PRESETS_PATH = path.resolve(new URL('.', import.meta.url).pathname, 
 
 // ── 문제 씬 DB ────────────────────────────────────────────────
 
-const PROBLEM_SCENES = {
-  realistic: [
-    2, 7, 8, 12, 13, 15, 16, 19, 21, 24, 25,
-    28, 33, 45, 46, 49, 52, 71, 87, 101, 103, 104, 105, 106, 109,
-    115, 120, 121, 127, 128, 133, 136, 144, 148, 152, 154,
-  ],
-  missing: [187, 208, 314, 315],
-  mismatch: [
-    // 씬 1~25
-    11, 13, 20, 23,
-    // 씬 26~215
-    32, 38, 39, 59, 68, 69, 76, 99, 107, 114, 124, 125, 126, 127,
-    130, 134, 147, 162, 165, 179, 205, 207, 210, 214,
-    // 씬 216~344
-    218, 219, 227, 229, 233, 235, 236, 237, 240, 241, 242, 246, 247,
-    249, 250, 252, 253, 260, 270, 274, 278, 282, 290, 291, 302, 319, 335,
-  ],
-};
+// 동적으로 문제 씬 감지 — CSV 데이터 + 이미지 파일 기반
+function detectProblemScenes() {
+  const result = { realistic: [], missing: [], mismatch: [] };
+  if (!scenes || scenes.length === 0) return result;
+
+  // 레퍼런스 name 목록 (characters 매칭용)
+  const refNames = new Set();
+  if (projectData && projectData.references) {
+    projectData.references.forEach(r => {
+      if (r.name && r.type === 'character') refNames.add(r.name.toLowerCase());
+    });
+  }
+
+  scenes.forEach((s, idx) => {
+    const sceneNum = idx + 1;
+    const prompt = (s.prompt || '').toLowerCase();
+
+    // missing: 이미지 파일 없음
+    if (imageDirPath) {
+      const imgPath = path.join(imageDirPath, 'scenes', `scene_${sceneNum}.jpg`);
+      if (!fs.existsSync(imgPath)) {
+        result.missing.push(sceneNum);
+      }
+    }
+
+    // mismatch: characters 필드의 캐릭터가 프롬프트에 없음
+    if (s.characters && refNames.size > 0) {
+      const chars = s.characters.split(',').map(c => c.trim().toLowerCase());
+      for (const ch of chars) {
+        if (ch && !prompt.includes(ch) && refNames.has(ch)) {
+          result.mismatch.push(sceneNum);
+          break;
+        }
+      }
+    }
+  });
+
+  return result;
+}
 
 // ── Tool 핸들러 ───────────────────────────────────────────────
 
@@ -843,6 +865,31 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'load_csv': {
+        // 기존 이미지 매핑 보호: force 없이 이미지가 있는 프로젝트에 재로드 차단
+        if (!args.force) {
+          let checkDir = args.image_dir || '';
+          if (!checkDir) {
+            try {
+              const res = await appFetch(args.port || 3210, 'GET', '/api/current-project');
+              if (res && res.data && res.data.projectDir) checkDir = res.data.projectDir;
+            } catch { /* 무시 */ }
+          }
+          if (checkDir) {
+            const checkPj = path.join(checkDir, 'project.json');
+            if (fs.existsSync(checkPj)) {
+              try {
+                const pj = JSON.parse(fs.readFileSync(checkPj, 'utf-8'));
+                const hasImages = (pj.scenes || []).some(s => s.mediaId || s.imagePath);
+                if (hasImages) {
+                  return {
+                    content: [{ type: 'text', text: '❌ 차단: 프로젝트에 이미 생성된 이미지가 있습니다. 이미지 매핑이 손실될 수 있으므로 load_csv를 거부합니다.\n강제로 로드하려면 force: true 매개변수를 추가하세요.' }],
+                  };
+                }
+              } catch { /* 무시 */ }
+            }
+          }
+        }
+
         csvPath = args.csv_path;
         imageDirPath = args.image_dir || '';
         sceneMode = args.mode || 'image';
@@ -898,11 +945,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         // scenes CSV
         scenes = data.scenes;
-        // project.json 자동 로드 (미디어 디렉토리 기준으로 2단계 상위)
+        // project.json 자동 로드 (image_dir이 프로젝트 루트)
         let projectLoaded = false;
         if (imageDirPath) {
-          const projectDir = path.resolve(imageDirPath, '..', '..');
-          projectLoaded = loadProjectJson(projectDir);
+          projectLoaded = loadProjectJson(imageDirPath);
         }
 
         // 기존 이미지 매핑 보존: 씬 갯수가 같을 때만 project.json에서 mediaId/imagePath/status 병합
@@ -1000,19 +1046,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'list_problem_scenes': {
+        ensureLoaded();
         const cat = args.category || 'all';
+        const problems = detectProblemScenes();
         let result;
         if (cat === 'all') {
           result = {
-            realistic: PROBLEM_SCENES.realistic,
-            missing: PROBLEM_SCENES.missing,
-            mismatch: PROBLEM_SCENES.mismatch,
-            total: PROBLEM_SCENES.realistic.length + PROBLEM_SCENES.missing.length + PROBLEM_SCENES.mismatch.length,
+            missing: problems.missing,
+            mismatch: problems.mismatch,
+            total: problems.missing.length + problems.mismatch.length,
           };
         } else {
           result = {
-            [cat]: PROBLEM_SCENES[cat],
-            count: PROBLEM_SCENES[cat]?.length || 0,
+            [cat]: problems[cat] || [],
+            count: (problems[cat] || []).length,
           };
         }
         return {
@@ -1101,9 +1148,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'get_stats': {
         ensureLoaded();
-        const totalProblems = PROBLEM_SCENES.realistic.length +
-          PROBLEM_SCENES.missing.length +
-          PROBLEM_SCENES.mismatch.length;
+        const problems = detectProblemScenes();
+        const totalProblems = problems.missing.length + problems.mismatch.length;
         return {
           content: [{
             type: 'text',
@@ -1111,9 +1157,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               total_scenes: scenes.length,
               total_problems: totalProblems,
               problem_rate: (totalProblems / scenes.length * 100).toFixed(1) + '%',
-              realistic: PROBLEM_SCENES.realistic.length,
-              missing: PROBLEM_SCENES.missing.length,
-              mismatch: PROBLEM_SCENES.mismatch.length,
+              missing: problems.missing.length,
+              mismatch: problems.mismatch.length,
               ok_scenes: scenes.length - totalProblems,
             }, null, 2),
           }],
