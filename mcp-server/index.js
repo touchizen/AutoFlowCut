@@ -198,6 +198,7 @@ const STEP_GATES = {
   'audio_import_narration': ['R09_narration_qa'],
   'audio_import_voice': ['R09_voice_qa'],
   'audio_import_sfx': ['R09_sfx_qa'],
+  'export_capcut': ['R11_audio_import'],
 };
 
 function loadProjectJson(projectDir) {
@@ -684,6 +685,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           reviewer: { type: 'string', description: '검토자 (예: "subagent")' },
         },
         required: ['step', 'result', 'reviewer'],
+      },
+    },
+    {
+      name: 'export_capcut',
+      description: 'CapCut 프로젝트로 내보냅니다. 오디오 임포트(R11_audio_import) 완료 후에만 실행 가능합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
+        },
       },
     },
     {
@@ -1429,6 +1440,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const res = await appFetch(port, 'POST', '/api/start-ref-batch', body);
         return {
           content: [{ type: 'text', text: `레퍼런스 일괄 생성 시작: ${JSON.stringify(res.data)}` }],
+        };
+      }
+
+      case 'export_capcut': {
+        const port = args.port || 3210;
+        const gateReqs = STEP_GATES['export_capcut'] || [];
+        for (const req of gateReqs) {
+          if (!(await isStepDone(req, port))) {
+            return {
+              content: [{ type: 'text', text: `❌ 게이트 차단: "${req}" 단계가 완료되지 않았습니다. 오디오 임포트를 먼저 완료하고 mark_step_done으로 기록하세요.` }],
+            };
+          }
+        }
+        const res = await appFetch(port, 'POST', '/api/export-capcut');
+        return {
+          content: [{ type: 'text', text: `CapCut 내보내기 완료: ${JSON.stringify(res.data)}` }],
         };
       }
 
