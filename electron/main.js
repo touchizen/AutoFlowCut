@@ -994,6 +994,28 @@ function startMcpHttpServer(port) {
           return
         }
 
+        // GET /api/current-project — 현재 열린 프로젝트 경로 반환
+        if (req.method === 'GET' && pathname === '/api/current-project') {
+          try {
+            const result = await mainWindow.webContents.executeJavaScript(`
+              (() => {
+                const settings = JSON.parse(localStorage.getItem('flow2capcut_settings') || '{}')
+                const workFolder = localStorage.getItem('workFolderPath') || ''
+                return { projectName: settings.projectName || '', workFolder }
+              })()
+            `)
+            const projectDir = (result.workFolder && result.projectName)
+              ? path.join(result.workFolder, result.projectName)
+              : ''
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ projectName: result.projectName, projectDir }))
+          } catch (err) {
+            res.writeHead(500)
+            res.end(JSON.stringify({ error: err.message }))
+          }
+          return
+        }
+
         // GET /api/references — 현재 레퍼런스 목록 요청 (renderer에서 가져옴)
         if (req.method === 'GET' && pathname === '/api/references') {
           if (mainWindow) {

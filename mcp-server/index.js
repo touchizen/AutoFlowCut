@@ -142,6 +142,59 @@ function ensureLoaded() {
   }
 }
 
+// ── R_progress.json 게이트 시스템 ─────────────────────────────
+let progressFilePath = '';
+
+async function findProgressFile(port = 3210) {
+  // 1. 캐시된 경로
+  if (progressFilePath && fs.existsSync(progressFilePath)) return progressFilePath;
+  // 2. CSV/project.json 기반
+  if (projectJsonPath) {
+    const p = path.join(path.dirname(projectJsonPath), 'R_progress.json');
+    progressFilePath = p;
+    return p;
+  }
+  if (csvPath) {
+    const p = path.join(path.dirname(csvPath), 'R_progress.json');
+    progressFilePath = p;
+    return p;
+  }
+  // 3. 앱 HTTP API에서 현재 프로젝트 경로 가져오기
+  try {
+    const res = await appFetch(port, 'GET', '/api/current-project');
+    if (res && res.data && res.data.projectDir) {
+      const p = path.join(res.data.projectDir, 'R_progress.json');
+      progressFilePath = p;
+      return p;
+    }
+  } catch (e) { /* 앱 미실행 시 무시 */ }
+  return null;
+}
+
+async function readProgress(port = 3210) {
+  const p = await findProgressFile(port);
+  if (!p || !fs.existsSync(p)) return {};
+  return JSON.parse(fs.readFileSync(p, 'utf-8'));
+}
+
+async function writeProgress(data, port = 3210) {
+  const p = await findProgressFile(port);
+  if (!p) throw new Error('R_progress.json 경로를 찾을 수 없습니다. 앱에서 프로젝트를 열거나 CSV를 먼저 로드하세요.');
+  fs.writeFileSync(p, JSON.stringify(data, null, 2), 'utf-8');
+}
+
+async function isStepDone(stepId, port = 3210) {
+  const progress = await readProgress(port);
+  const step = progress[stepId];
+  return step && step.result === 'pass';
+}
+
+// 게이트 정의: 다음 단계 → 선행 조건
+const STEP_GATES = {
+  'app_start_ref_batch': ['R10-3_references_review'],
+  'app_start_scene_batch': ['R10-3_scenes_review'],
+};
+
 function loadProjectJson(projectDir) {
   const pjPath = path.join(projectDir, 'project.json');
   if (fs.existsSync(pjPath)) {
@@ -600,14 +653,39 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'app_wait_batch',
-      description: '배치 생성이 완료될 때까지 대기합니다. 주기적으로 상태를 폴링하여 isRunning이 false가 되면 최종 결과를 반환합니다.',
+      description: '배치 생성이 완료될 때까지 대기합니다. 주기적으로 상태를 폴링하여 isRunning이 false가 되면 최종 결과를 반환합니다. type으로 씬/레퍼런스 배치를 구분합니다.',
       inputSchema: {
         type: 'object',
         properties: {
           port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
+          type: { type: 'string', enum: ['scene', 'ref'], description: '배치 타입: scene(기본) 또는 ref(레퍼런스)' },
           interval: { type: 'number', description: '폴링 간격 (ms, 기본: 3000)' },
           timeout: { type: 'number', description: '최대 대기 시간 (ms, 기본: 600000 = 10분)' },
         },
+      },
+    },
+    // ── 워크플로우 게이트 도구 ──
+    {
+      name: 'mark_step_done',
+      description: '워크플로우 단계의 검토 결과를 R_progress.json에 기록합니다. subagent가 검토 완료 시 호출합니다. result가 "pass"일 때만 다음 단계 게이트가 열립니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          step: { type: 'string', description: '단계 ID (예: "R10-3_scenes_review", "R10-3_references_review")' },
+          round: { type: 'number', description: '검토 라운드 번호 (1~5)' },
+          result: { type: 'string', enum: ['pass', 'fail'], description: 'pass=검토 통과, fail=수정 필요' },
+          issues_found: { type: 'number', description: '발견된 문제 수' },
+          reviewer: { type: 'string', description: '검토자 (예: "subagent")' },
+        },
+        required: ['step', 'result', 'reviewer'],
+      },
+    },
+    {
+      name: 'get_progress',
+      description: '현재 R_progress.json의 워크플로우 진행 상태를 조회합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {},
       },
     },
     // ── 스킬 관리 도구 ──
@@ -1226,7 +1304,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'app_start_scene_batch': {
+        // 게이트 체크
         const port = args.port || 3210;
+        const gateReqs = STEP_GATES['app_start_scene_batch'] || [];
+        for (const req of gateReqs) {
+          if (!(await isStepDone(req, port))) {
+            return {
+              content: [{ type: 'text', text: `❌ 게이트 차단: "${req}" 단계가 완료되지 않았습니다. 검토를 먼저 완료하고 mark_step_done으로 기록하세요.` }],
+            };
+          }
+        }
         const body = args.styleId ? { styleId: args.styleId } : null;
         const res = await appFetch(port, 'POST', '/api/start-scene-batch', body);
         return {
@@ -1235,7 +1322,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'app_start_ref_batch': {
+        // 게이트 체크
         const port = args.port || 3210;
+        const gateReqs = STEP_GATES['app_start_ref_batch'] || [];
+        for (const req of gateReqs) {
+          if (!(await isStepDone(req, port))) {
+            return {
+              content: [{ type: 'text', text: `❌ 게이트 차단: "${req}" 단계가 완료되지 않았습니다. 검토를 먼저 완료하고 mark_step_done으로 기록하세요.` }],
+            };
+          }
+        }
         const body = args.styleId ? { styleId: args.styleId } : null;
         const res = await appFetch(port, 'POST', '/api/start-ref-batch', body);
         return {
@@ -1253,6 +1349,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'app_wait_batch': {
         const port = args.port || 3210;
+        const batchType = args.type || 'scene';
         const interval = args.interval || 5000;
         const timeout = args.timeout || 600000;
         const startTime = Date.now();
@@ -1264,20 +1361,89 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           const mm = String(Math.floor(elapsed / 60)).padStart(2, '0');
           const ss = String(elapsed % 60).padStart(2, '0');
 
-          if (!st.isRunning) {
-            return {
-              content: [{ type: 'text', text: `배치 완료 [${mm}:${ss}] done:${st.done} error:${st.error} total:${st.total}` }],
-            };
+          if (batchType === 'ref') {
+            const ref = st.ref || {};
+            if (!ref.isRunning) {
+              return {
+                content: [{ type: 'text', text: `레퍼런스 배치 완료 [${mm}:${ss}] done:${ref.done || 0}/${ref.total || 0} generating:${ref.generating || 0} pending:${ref.pending || 0}` }],
+              };
+            }
+          } else {
+            if (!st.isRunning) {
+              return {
+                content: [{ type: 'text', text: `배치 완료 [${mm}:${ss}] done:${st.done} error:${st.error} total:${st.total}` }],
+              };
+            }
           }
 
           if (Date.now() - startTime > timeout) {
+            const label = batchType === 'ref' ? '레퍼런스 ' : '';
             return {
-              content: [{ type: 'text', text: `타임아웃 [${mm}:${ss}] done:${st.done} error:${st.error} total:${st.total}` }],
+              content: [{ type: 'text', text: `${label}타임아웃 [${mm}:${ss}]` }],
             };
           }
 
           await new Promise(r => setTimeout(r, interval));
         }
+      }
+
+      // ── 워크플로우 게이트 핸들러 ──
+
+      case 'mark_step_done': {
+        const { step, round, result, issues_found, reviewer } = args;
+        const port = args.port || 3210;
+        if (!step || !result || !reviewer) {
+          throw new Error('step, result, reviewer는 필수 매개변수입니다.');
+        }
+        const progress = await readProgress(port);
+        progress[step] = {
+          result,
+          round: round || 1,
+          issues_found: issues_found || 0,
+          reviewer,
+          completed_at: new Date().toISOString(),
+        };
+        await writeProgress(progress, port);
+        const emoji = result === 'pass' ? '✅' : '⚠️';
+        let msg = `${emoji} ${step}: ${result} (round ${round || 1}, issues: ${issues_found || 0}, by ${reviewer})`;
+
+        // pass일 때 다음 단계 가이드 자동 반환
+        if (result === 'pass') {
+          const NEXT_STEP_GUIDE = {
+            'R10-3_references_review': `\n\n📋 다음 단계: 레퍼런스 이미지 생성 + QA (11-2a/b)\n` +
+              `1. app_start_ref_batch({ styleId }) → 레퍼런스 일괄 생성\n` +
+              `2. 생성 완료 후 레퍼런스 이미지 QA:\n` +
+              `   - Read 도구로 references/ 폴더의 이미지를 직접 확인\n` +
+              `   - 캐릭터: 나이, 성별, 복장, 인상이 대본과 일치하는지\n` +
+              `   - 장소: 시대, 분위기가 대본과 일치하는지\n` +
+              `   🔴 수정 시 잘못된 카드만 개별 삭제/재생성. 절대 전체 삭제 금지`,
+            'R10-3_scenes_review': `\n\n📋 다음 단계: 씬 이미지 일괄 생성 + QA (11-2a/b)\n` +
+              `1. app_start_scene_batch({ styleId }) → 씬 일괄 생성\n` +
+              `2. 생성 완료 후 씬 이미지 전수검사 (최대 5라운드):\n` +
+              `   - Read 도구로 images/ 폴더의 이미지를 10장씩 확인\n` +
+              `   - 체크: 이미지 누락, 스타일 불일치, 캐릭터 복장, 인물 수, 감정, 배경, 소품, 시대\n` +
+              `   - 문제 발견 시 프롬프트 수정 → 개별 재생성`,
+          };
+          const guide = NEXT_STEP_GUIDE[step];
+          if (guide) msg += guide;
+        }
+
+        return {
+          content: [{ type: 'text', text: msg }],
+        };
+      }
+
+      case 'get_progress': {
+        const port = args.port || 3210;
+        const progress = await readProgress(port);
+        if (Object.keys(progress).length === 0) {
+          return {
+            content: [{ type: 'text', text: 'R_progress.json이 없거나 비어있습니다. 아직 완료된 단계가 없습니다.' }],
+          };
+        }
+        return {
+          content: [{ type: 'text', text: JSON.stringify(progress, null, 2) }],
+        };
       }
 
       // ── 스킬 관리 핸들러 ──
