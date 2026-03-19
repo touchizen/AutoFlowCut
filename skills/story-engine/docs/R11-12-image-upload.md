@@ -223,8 +223,10 @@ print(f'CSV saved: {len(data)} scenes')
    | 10 | 복장 | 소은 혼례복급 화려함 | 소박한 흰저고리로 수정 |
 
 4. 사용자에게 문제 목록 보고 → 승인 받은 후:
+   - 🔴 **디스크에서 이미지 파일을 직접 삭제(rm)하지 않는다** — pending으로 바꾸면 앱이 기존 이미지를 history/로 자동 이동
    - app_update_scene({ index, fields: { prompt: "수정 프롬프트", status: "pending" } })
    - app_start_scene_batch({ styleId }) → pending 씬만 재생성
+   - 🔴 **batch_update_prompts(CSV 메모리)만 수정하면 앱에 반영 안 됨** — 반드시 app_update_scene으로 앱에 프롬프트 전달
 
 5. 재생성 완료 후 해당 씬만 재확인 (다시 Read로 이미지 열기)
 6. 라운드 반복 (최대 5회)
