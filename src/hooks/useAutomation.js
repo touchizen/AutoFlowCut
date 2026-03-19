@@ -132,6 +132,9 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
 
       if (result.success) break
 
+      // 타임아웃/쿼터 에러는 재시도해도 소용없으므로 즉시 중단
+      if (result.error?.includes('timeout') || result.error?.includes('quota')) break
+
       retries++
       if (retries <= maxRetries && !stopRequestedRef.current) {
         await new Promise(r => setTimeout(r, 2000))
@@ -672,7 +675,11 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     setStatusMessage(t('status.stopping'))
     // DOM 모드 폴링 루프도 즉시 중단
     requestStopDOM()
-  }, [t])
+    // 큐에 남은 작업 즉시 제거 (불필요한 API 요청 방지)
+    if (generationQueue?.clearQueue) {
+      generationQueue.clearQueue()
+    }
+  }, [t, generationQueue])
   
   /**
    * 특정 씬 재시도

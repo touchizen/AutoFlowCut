@@ -217,16 +217,20 @@ export async function generateImageDOM(prompt, referenceImages = [], { batchCoun
     // referenceImages → CDP Fetch 인터셉션으로 batchGenerateImages 요청에 주입
     console.log('[DOM] Calling flow:generate-image IPC for prompt:', prompt?.substring(0, 40),
       referenceImages.length > 0 ? `(+${referenceImages.length} refs)` : '')
-    const result = await window.electronAPI.generateImage({
-      prompt,
-      aspectRatio: null,  // DOM mode에서는 UI 드롭다운으로 이미 설정됨
-      token: null,        // main.js에서 Flow 페이지의 세션으로 자동 추출
-      model: null,
-      projectId: null,
-      seed: null,
-      referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
-      batchCount: batchCount || undefined
-    })
+    const GENERATE_TIMEOUT_MS = 180000 // 3분 타임아웃
+    const result = await Promise.race([
+      window.electronAPI.generateImage({
+        prompt,
+        aspectRatio: null,  // DOM mode에서는 UI 드롭다운으로 이미 설정됨
+        token: null,        // main.js에서 Flow 페이지의 세션으로 자동 추출
+        model: null,
+        projectId: null,
+        seed: null,
+        referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
+        batchCount: batchCount || undefined
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Generation timeout (180s)')), GENERATE_TIMEOUT_MS))
+    ])
 
     console.log('[DOM] flow:generate-image result:', result?.success,
       'images:', result?.images?.length || 0,
