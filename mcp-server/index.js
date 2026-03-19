@@ -905,6 +905,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           projectLoaded = loadProjectJson(projectDir);
         }
 
+        // 기존 이미지 매핑 보존: 씬 갯수가 같을 때만 project.json에서 mediaId/imagePath/status 병합
+        if (imageDirPath) {
+          const pjPath = path.join(imageDirPath, 'project.json');
+          if (fs.existsSync(pjPath)) {
+            try {
+              const pj = JSON.parse(fs.readFileSync(pjPath, 'utf-8'));
+              const existingScenes = pj.scenes || [];
+              if (existingScenes.length === scenes.length) {
+                // 씬 갯수 동일 → 인덱스 기반 매핑 보존
+                existingScenes.forEach((existing, i) => {
+                  if (existing.mediaId) scenes[i].mediaId = existing.mediaId;
+                  if (existing.imagePath) scenes[i].imagePath = existing.imagePath;
+                  if (existing.status === 'done') scenes[i].status = 'done';
+                });
+              }
+              // 씬 갯수 다르면 매핑 초기화 (이미지 재생성 필요)
+            } catch { /* project.json 파싱 실패 시 무시 */ }
+          }
+        }
+
         // 앱에 update-scenes 전달
         const port = args.port || 3210;
         try {

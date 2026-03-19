@@ -1,4 +1,4 @@
-import { app, BrowserWindow, WebContentsView, ipcMain, shell, protocol, net } from 'electron'
+import { app, BrowserWindow, WebContentsView, ipcMain, shell, protocol, net, powerSaveBlocker } from 'electron'
 import http from 'node:http'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -72,6 +72,7 @@ let pendingReferenceImages = null // CDP Fetch 인터셉션용 레퍼런스 이�
 let pendingI2VInjection = null // CDP Fetch 인터셉션용 I2V startImage 주입 데이터
 let enterToolClicked = false // Enter tool 버튼 클릭 완료 플래그 (무한루프 방지)
 let consentClicked = false   // 동의 버튼 클릭 완료 플래그 (무한루프 방지)
+let powerSaveBlockerId = null // 화면 꺼짐/절전 방지 blocker ID
 
 // === Shared helpers (trustedClick, fetch, parse, extract, configureFlowMode) ===
 const helpers = createSharedHelpers({
@@ -132,6 +133,9 @@ function createWindow() {
       webSecurity: false  // 로컬 file:// 이미지 로드 허용
     }
   })
+
+  // 화면 꺼짐/절전 방지 기본 ON
+  powerSaveBlockerId = powerSaveBlocker.start('prevent-display-sleep')
 
   // Create Flow WebContentsView with persistent session
   flowView = new WebContentsView({
@@ -931,6 +935,25 @@ ipcMain.handle('app:set-modal-visible', (event, { visible }) => {
   modalVisible = visible
   updateBounds()
   return { success: true }
+})
+
+// 화면 꺼짐/절전 방지
+ipcMain.handle('app:set-prevent-sleep', (event, { enabled }) => {
+  if (enabled) {
+    if (powerSaveBlockerId === null || !powerSaveBlocker.isStarted(powerSaveBlockerId)) {
+      powerSaveBlockerId = powerSaveBlocker.start('prevent-display-sleep')
+    }
+  } else {
+    if (powerSaveBlockerId !== null && powerSaveBlocker.isStarted(powerSaveBlockerId)) {
+      powerSaveBlocker.stop(powerSaveBlockerId)
+      powerSaveBlockerId = null
+    }
+  }
+  return { success: true, enabled }
+})
+
+ipcMain.handle('app:get-prevent-sleep', () => {
+  return { enabled: powerSaveBlockerId !== null && powerSaveBlocker.isStarted(powerSaveBlockerId) }
 })
 
 // Open external URL

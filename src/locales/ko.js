@@ -335,6 +335,10 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     layoutSplitBottom: 'Flow 하단',
     splitRatio: 'Flow 비율',
     layoutDomHint: 'DOM 모드에서는 Flow 화면이 필요하여 탭 모드를 사용할 수 없습니다.',
+    preventSleep: '화면 꺼짐 방지',
+    preventSleepOn: '활성화됨',
+    preventSleepOff: '비활성화됨',
+    preventSleepHint: '이미지 생성 중 맥 화면이 꺼지지 않도록 방지합니다.',
   },
   
   // Import 모달

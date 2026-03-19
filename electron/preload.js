@@ -90,6 +90,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   googleSignIn: () => ipcRenderer.invoke('auth:google-sign-in'),
   googleSignOut: () => ipcRenderer.invoke('auth:google-sign-out'),
 
+  // Power Save
+  setPreventSleep: (params) => ipcRenderer.invoke('app:set-prevent-sleep', params),
+  getPreventSleep: () => ipcRenderer.invoke('app:get-prevent-sleep'),
+
   // MCP HTTP Server
   startMcpHttp: (params) => ipcRenderer.invoke('mcp:start-http', params),
   stopMcpHttp: () => ipcRenderer.invoke('mcp:stop-http'),

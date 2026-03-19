@@ -335,6 +335,10 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     layoutSplitBottom: 'Flow Bottom',
     splitRatio: 'Flow Ratio',
     layoutDomHint: 'Tab mode is not available in DOM mode because Flow view is required.',
+    preventSleep: 'Prevent Sleep',
+    preventSleepOn: 'Enabled',
+    preventSleepOff: 'Disabled',
+    preventSleepHint: 'Prevents Mac from sleeping during image generation.',
   },
   
   // Import modal
