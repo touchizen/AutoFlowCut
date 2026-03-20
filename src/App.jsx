@@ -618,6 +618,7 @@ function App() {
             videoScenesHook.updateVideoScene(id, {
               status: newStatus,
               ...(newStatus === 'generating' ? { generatingStartedAt: Date.now() } : {}),
+              ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: Date.now() } : {}),
               ...(result?.base64 ? { video: result.base64 } : {}),
               ...(result?.mediaId ? { mediaId: result.mediaId } : {}),
               ...(result?.videoPath ? { videoPath: result.videoPath } : {}),
@@ -679,6 +680,7 @@ function App() {
                 p.id === id ? {
                   ...p, status: newStatus,
                   ...(newStatus === 'generating' ? { generatingStartedAt: Date.now() } : {}),
+                  ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: Date.now() } : {}),
                   ...(result?.base64 ? { video: result.base64, base64: result.base64 } : {}),
                   ...(result?.mediaId ? { mediaId: result.mediaId } : {}),
                   ...(result?.generationId ? { generationId: result.generationId } : {}),

@@ -1047,7 +1047,7 @@ export function registerFilesystemIPC(ipcMain) {
           totalSfxFiles: sfxCategories.reduce((sum, c) => sum + c.files.length, 0),
           hasSrt: !!srtContent,
           hasMedia: !!media.video,
-          hasSfxTimecodes: !!sfxMdContent
+          hasSfxTimecodes: !!sfxMdContent || mediaSfxFiles.some(f => f.timecodeMs != null)
         }
       }
     } catch (error) {
@@ -1237,7 +1237,7 @@ export function registerFilesystemIPC(ipcMain) {
           totalSfxFiles: sfxCategories.reduce((sum, c) => sum + c.files.length, 0),
           hasSrt: !!srtContent,
           hasMedia: !!media.video,
-          hasSfxTimecodes: !!sfxMdContent
+          hasSfxTimecodes: !!sfxMdContent || mediaSfxFiles.some(f => f.timecodeMs != null)
         }
       }
     } catch (error) {

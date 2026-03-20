@@ -37,9 +37,9 @@ function StopwatchIcon({ size = 18 }) {
   )
 }
 
-/** 경과 시간 표시 (1초마다 업데이트) */
-function ElapsedTime({ startedAt }) {
-  const elapsed = useElapsedTimer(startedAt)
+/** 경과 시간 표시 (1초마다 업데이트, endedAt 있으면 멈춤) */
+function ElapsedTime({ startedAt, endedAt }) {
+  const elapsed = useElapsedTimer(startedAt, endedAt)
   return <span>{formatElapsed(elapsed)}</span>
 }
 
@@ -180,7 +180,7 @@ export default function ResultsTable({
     if (status === 'generating') {
       return (
         <span className="status generating">
-          <StopwatchIcon size={16} /> <ElapsedTime startedAt={item.generatingStartedAt} />
+          <StopwatchIcon size={16} /> <ElapsedTime startedAt={item.generatingStartedAt} endedAt={item.generatingEndedAt} />
         </span>
       )
     }

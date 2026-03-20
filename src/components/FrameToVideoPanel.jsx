@@ -40,9 +40,9 @@ function StopwatchIcon({ size = 16 }) {
   )
 }
 
-/** 경과 시간 표시 (1초마다 업데이트) */
-function ElapsedTime({ startedAt }) {
-  const elapsed = useElapsedTimer(startedAt)
+/** 경과 시간 표시 (1초마다 업데이트, endedAt 있으면 멈춤) */
+function ElapsedTime({ startedAt, endedAt }) {
+  const elapsed = useElapsedTimer(startedAt, endedAt)
   return <span>{formatElapsed(elapsed)}</span>
 }
 
@@ -413,7 +413,7 @@ export default function FrameToVideoPanel({ scenes, videoScenes = [], framePairs
             <span className="mapping-col col-status">
               {pair.status === 'generating' ? (
                 <span className="status generating">
-                  <StopwatchIcon size={16} /> <ElapsedTime startedAt={pair.generatingStartedAt} />
+                  <StopwatchIcon size={16} /> <ElapsedTime startedAt={pair.generatingStartedAt} endedAt={pair.generatingEndedAt} />
                 </span>
               ) : (
                 <span className={`status ${pair.status || 'waiting'}`}>

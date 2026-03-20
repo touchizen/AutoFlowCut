@@ -753,6 +753,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     done: '비디오 생성 완료!',
     noItems: '생성할 항목이 없습니다.',
     stopped: '비디오 생성이 중지되었습니다.',
+    complete: '완료',
   },
 
   // 태그 검증 모달

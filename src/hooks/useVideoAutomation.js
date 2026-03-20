@@ -346,7 +346,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
     // ═══════════════════════════════════════════
     setIsRunning(false)
     setIsPaused(false)
-    setProgress({ current: total, total, percent: 100, errorCount: videoErrorCount, startedAt: batchStartedAt })
+    setProgress({ current: total, total, percent: 100, errorCount: videoErrorCount, startedAt: batchStartedAt, endedAt: Date.now() })
 
     if (stopRequestedRef.current) {
       setStatus('stopped')
