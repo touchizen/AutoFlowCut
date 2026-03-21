@@ -125,6 +125,13 @@ export function useAudioImport(t) {
       }
 
       setAudioPackage(pkg)
+      // 프로젝트별 audioFolderPath 저장
+      const projectName = localStorage.getItem('flow2capcut_settings') ? JSON.parse(localStorage.getItem('flow2capcut_settings')).projectName : null
+      if (projectName) {
+        const audioMap = JSON.parse(localStorage.getItem('audioFolderPaths') || '{}')
+        audioMap[projectName] = result.folderPath
+        localStorage.setItem('audioFolderPaths', JSON.stringify(audioMap))
+      }
       localStorage.setItem('audioFolderPath', result.folderPath)
       await loadReviews(result.folderPath)
 
@@ -167,6 +174,13 @@ export function useAudioImport(t) {
         summary: result.summary
       }
       setAudioPackage(pkg)
+      // 프로젝트별 audioFolderPath 저장
+      const projectName = localStorage.getItem('flow2capcut_settings') ? JSON.parse(localStorage.getItem('flow2capcut_settings')).projectName : null
+      if (projectName) {
+        const audioMap = JSON.parse(localStorage.getItem('audioFolderPaths') || '{}')
+        audioMap[projectName] = result.folderPath
+        localStorage.setItem('audioFolderPaths', JSON.stringify(audioMap))
+      }
       localStorage.setItem('audioFolderPath', result.folderPath)
       await loadReviews(result.folderPath)
       const tracks = buildAudioTracks(pkg, srtEntries)
@@ -198,6 +212,28 @@ export function useAudioImport(t) {
     setAudioPackage(null)
     setAudioTracks(null)
   }, [])
+
+  /**
+   * 프로젝트 전환 시 해당 프로젝트의 오디오 복원
+   */
+  const switchAudioForProject = useCallback(async (newProjectName) => {
+    // 현재 오디오 클리어
+    setAudioPackage(null)
+    setAudioTracks(null)
+
+    // 새 프로젝트의 audioFolderPath 찾기
+    const audioMap = JSON.parse(localStorage.getItem('audioFolderPaths') || '{}')
+    const savedPath = audioMap[newProjectName]
+
+    if (savedPath && window.electronAPI?.rescanAudioPackage) {
+      console.log('[AudioImport] Restoring audio for project:', newProjectName, savedPath)
+      localStorage.setItem('audioFolderPath', savedPath)
+      await importByPath(savedPath)
+    } else {
+      localStorage.removeItem('audioFolderPath')
+      console.log('[AudioImport] No audio for project:', newProjectName)
+    }
+  }, [importByPath])
 
   /**
    * 폴더 재스캔 + 리뷰 자동 정리

@@ -61,17 +61,7 @@ export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, o
   const [hoverTooltip, setHoverTooltip] = useState(null)
   const audioRef = useRef(null)
 
-  // Empty state
-  if (!audioPackage) {
-    return (
-      <div className="audio-panel-empty">
-        <div className="audio-panel-empty-icon">🎵</div>
-        <p>{t('audioTab.importFirst') || '오디오 패키지를 먼저 가져오세요'}</p>
-      </div>
-    )
-  }
-
-  const { folderPath, media, voices, sfx, sfxTimecodes, summary } = audioPackage
+  const { folderPath, media, voices, sfx, sfxTimecodes, summary } = audioPackage || {}
 
   // --- Shared logic (from AudioResultModal) ---
 
@@ -676,6 +666,15 @@ export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, o
   )
 
   // --- Main render ---
+
+  if (!audioPackage) {
+    return (
+      <div className="audio-panel-empty">
+        <div className="audio-panel-empty-icon">🎵</div>
+        <p>{t('audioTab.importFirst') || '오디오 패키지를 먼저 가져오세요'}</p>
+      </div>
+    )
+  }
 
   return (
     <div className="audio-panel">

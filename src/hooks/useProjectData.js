@@ -151,6 +151,7 @@ async function loadProjectWithImages(projectName) {
     references: refsWithPaths,
     videoScenes: finalVideoScenes,
     framePairs: finalFramePairs,
+    audioFolderPath: result.data.audioFolderPath || null,
   }
 }
 
@@ -176,12 +177,16 @@ async function saveCurrentProject(settings, scenes, references, videoScenes = []
   // framePairs에서 base64 제외
   const framePairsWithoutMedia = framePairs.map(({ base64, ...rest }) => rest)
 
+  // audioFolderPath를 project.json에 저장 (프로젝트별 오디오 경로 보존)
+  const audioFolderPath = localStorage.getItem('audioFolderPath') || null
+
   await fileSystemAPI.saveProjectData(settings.projectName, {
     scenes: scenesWithoutImages,
     references: refsWithoutData,
     videoScenes: videoScenesWithoutMedia,
     framePairs: framePairsWithoutMedia,
-    settings: { aspectRatio: settings.aspectRatio, defaultDuration: settings.defaultDuration }
+    settings: { aspectRatio: settings.aspectRatio, defaultDuration: settings.defaultDuration },
+    audioFolderPath
   })
 }
 
@@ -190,7 +195,8 @@ export function useProjectData({
   scenes, references, setScenes, setReferences,
   videoScenes, setVideoScenes,
   framePairs, setFramePairs,
-  openSettings
+  openSettings,
+  onAudioSwitch
 }) {
   // Pending save 추가 (no-op in desktop — permission is always available)
   const addPendingSave = () => {}
@@ -249,6 +255,7 @@ export function useProjectData({
     await saveCurrentProject(settings, scenes, references, videoScenes, framePairs)
 
     // 2. 새 프로젝트 데이터 로드
+    let audioPath = null
     const newExists = await fileSystemAPI.projectExists(newProjectName)
     if (newExists) {
       const loaded = await loadProjectWithImages(newProjectName)
@@ -257,9 +264,9 @@ export function useProjectData({
         setReferences(loaded.references)
         setVideoScenes?.(loaded.videoScenes || [])
         setFramePairs?.(loaded.framePairs || [])
+        audioPath = loaded.audioFolderPath
         console.log('[App] Project loaded:', newProjectName)
       } else {
-        // 폴더는 있지만 데이터 없음 (새로 만든 빈 프로젝트)
         setScenes([])
         setReferences([])
         setVideoScenes?.([])
@@ -267,16 +274,19 @@ export function useProjectData({
         console.log('[App] Empty project:', newProjectName)
       }
     } else {
-      // 프로젝트 폴더 자체가 없음
       setScenes([])
       setReferences([])
       setVideoScenes?.([])
       setFramePairs?.([])
-      setRefPairs?.([])
       console.log('[App] New project created:', newProjectName)
     }
 
-    // 3. 프로젝트명 업데이트
+    // 3. 오디오 복원 (project.json의 audioFolderPath 사용)
+    if (onAudioSwitch) {
+      onAudioSwitch(audioPath)
+    }
+
+    // 4. 프로젝트명 업데이트
     setSettings(s => ({ ...s, projectName: newProjectName }))
   }
 
