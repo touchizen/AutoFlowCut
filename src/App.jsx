@@ -202,6 +202,13 @@ function App() {
   // Audio Import
   const { audioPackage, audioTracks, importing: audioImporting, importAudioPackage, importByPath, clearAudioPackage, audioReviews, saveReview, saveBulkReviews, refreshReviews } = useAudioImport(t)
 
+  // 프로젝트 전환 시 오디오 상태도 초기화
+  const handleProjectChangeWithAudioReset = async (name) => {
+    clearAudioPackage()
+    localStorage.removeItem('audioFolderPath')
+    return handleProjectChange(name)
+  }
+
   const handleImportAudio = async () => {
     setShowAudioResult(true)
     const result = await importAudioPackage()
@@ -313,7 +320,7 @@ function App() {
 
   // MCP HTTP GET 요청을 위한 글로벌 접근자 등록
   useEffect(() => {
-    window.__mcpOpenProject = (name) => handleProjectChange(name)
+    window.__mcpOpenProject = (name) => handleProjectChangeWithAudioReset(name)
     window.__mcpGetReferences = () => references.map(({ data, ...rest }) => rest)
     window.__mcpGetScenes = () => scenes.map(({ image, videoT2V, videoI2V, ...rest }) => rest)
     window.__mcpGenerateRef = (index) => handleGenerateRef(index).catch(e => ({ success: false, error: e.message }))
@@ -795,7 +802,7 @@ function App() {
         getAccessToken={flowAPI.getAccessToken}
         authReady={authReady}
         projectName={settings.projectName}
-        onProjectChange={handleProjectChange}
+        onProjectChange={handleProjectChangeWithAudioReset}
         onNewProject={() => openSettings('storage')}
         saveMode={settings.saveMode}
         onLoginClick={() => setShowAuthModal(true)}
@@ -1148,7 +1155,7 @@ function App() {
         <SettingsModal
           settings={settings}
           initialTab={settingsTab}
-          onProjectChange={handleProjectChange}
+          onProjectChange={handleProjectChangeWithAudioReset}
           onSave={(newSettings) => {
             setSettings(newSettings)
             setShowSettings(false)
