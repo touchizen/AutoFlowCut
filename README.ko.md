@@ -6,6 +6,8 @@
 
 [🇺🇸 English](README.md) | 🇰🇷 한국어
 
+[![후원하기](https://img.shields.io/badge/💖_후원하기-GitHub_Sponsors-ea4aaa?style=for-the-badge)](https://github.com/sponsors/tuxxon)
+
 ## AutoFlowCut이란?
 
 AutoFlowCut은 숏폼 영상 제작을 자동화하는 데스크톱 앱입니다:
