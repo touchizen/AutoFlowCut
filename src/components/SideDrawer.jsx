@@ -135,6 +135,18 @@ export function SideDrawer({ isOpen, onClose }) {
       label: t('drawer.feedback'),
       url: 'https://discord.gg/DTMMs8TZDN',
       description: t('drawer.feedbackDesc')
+    },
+    {
+      icon: '💖',
+      label: t('drawer.sponsor'),
+      url: 'https://github.com/sponsors/tuxxon',
+      description: t('drawer.sponsorDesc')
+    },
+    {
+      icon: '📦',
+      label: t('drawer.sourceCode'),
+      url: 'https://github.com/touchizen/AutoFlowCut',
+      description: t('drawer.sourceCodeDesc')
     }
   ]
 
