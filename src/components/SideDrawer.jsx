@@ -6,10 +6,11 @@ import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useI18n } from '../hooks/useI18n'
 import './SideDrawer.css'
+import appIconUrl from '/assets/icon128.png'
 
 // 앱 아이콘 컴포넌트 (One Click 마우스)
 const AppIcon = ({ size = 32 }) => (
-  <img src="/assets/icon128.png" alt="AutoFlowCut" width={size} height={size} style={{ borderRadius: '6px' }} />
+  <img src={appIconUrl} alt="AutoFlowCut" width={size} height={size} style={{ borderRadius: '6px' }} />
 )
 
 // Vite에서 주입되는 버전 (vite.config.js의 define 참조)
@@ -62,7 +63,7 @@ function PortalTooltip({ text, position }) {
 // 가이드 URL 생성 (언어별)
 const getGuideUrl = (lang) => {
   const langCode = lang === 'ko' ? 'ko' : lang === 'ja' ? 'ja' : lang === 'de' ? 'de' : 'en'
-  return `https://touchizen.com/guide/${langCode}/flow2capcut`
+  return `https://touchizen.com/guide/${langCode}/autoflowcut`
 }
 
 export function SideDrawer({ isOpen, onClose }) {

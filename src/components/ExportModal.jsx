@@ -466,7 +466,7 @@ export const ExportModal = ({ isOpen, onClose, onExport, projectName, loading, e
               <h4 style={{ margin: 0 }}>📊 {t('exportModal.importGuide')}</h4>
               <button
                 type="button"
-                onClick={() => window.open('https://touchizen.github.io/guide/ko/flow2capcut/capcut-export.html', '_blank')}
+                onClick={() => window.open('https://touchizen.github.io/guide/ko/autoflowcut/capcut-export.html', '_blank')}
                 style={{
                   padding: '4px 10px',
                   fontSize: '0.8em',
