@@ -158,6 +158,32 @@ function createWindow() {
       loggedIn: url.includes('labs.google/fx')
     })
 
+    // 랜딩 페이지: "Create with Flow" 버튼 자동 클릭
+    if (url.includes('labs.google')) {
+      try {
+        await new Promise(r => setTimeout(r, 1500))
+        const landingResult = await flowView.webContents.executeJavaScript(`
+          (function() {
+            const links = document.querySelectorAll('a, button, [role="button"]');
+            for (const el of links) {
+              const text = (el.textContent || '').trim().toLowerCase();
+              if (text.includes('create with flow') || text.includes('flow로 만들기') || text.includes('flow 시작')) {
+                el.click();
+                return 'landing_clicked: ' + text.substring(0, 40);
+              }
+            }
+            return null;
+          })()
+        `)
+        if (landingResult) {
+          console.log('[Flow] Auto-click landing:', landingResult)
+          return // 페이지 전환 후 did-finish-load에서 다시 처리
+        }
+      } catch (e) {
+        console.warn('[Flow] Landing auto-click error:', e.message)
+      }
+    }
+
     // Flow 페이지 로드 후: 동의 버튼 자동 클릭 → projectId 추출
     if (url.includes('labs.google/fx')) {
       // 0단계: 동의/약관 버튼 자동 클릭 (Google Labs 초기 동의 화면 처리)
@@ -336,7 +362,7 @@ function createWindow() {
               // 방법 4: 텍스트 버튼
               for (const b of allButtons) {
                 const text = b.textContent.trim().toLowerCase();
-                if (['start', '시작', 'enter', 'new', '새로 만들기', '새 프로젝트', '새프로젝트'].some(k => text.includes(k))) {
+                if (['start', '시작', 'enter', 'new', 'create', '새로 만들기', '새 프로젝트', '새프로젝트', '만들기'].some(k => text.includes(k))) {
                   b.click(); return 'text_' + text.substring(0, 30);
                 }
               }
