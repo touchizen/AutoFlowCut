@@ -442,6 +442,9 @@ function createWindow() {
   })
   flowView.webContents.on('did-navigate', (event, url) => {
     console.log('[Flow] did-navigate:', url)
+    mainWindow.webContents.send('flow-status', {
+      loaded: true, url, loggedIn: url.includes('labs.google/fx')
+    })
     const pidMatch = url.match(/\/project\/([a-f0-9-]{36})/)
     if (pidMatch) {
       capturedProjectId = pidMatch[1]
@@ -451,6 +454,9 @@ function createWindow() {
   // SPA pushState/replaceState 내비게이션 캡처 (Flow는 SPA)
   flowView.webContents.on('did-navigate-in-page', (event, url) => {
     console.log('[Flow] did-navigate-in-page:', url)
+    mainWindow.webContents.send('flow-status', {
+      loaded: true, url, loggedIn: url.includes('labs.google/fx')
+    })
     const pidMatch = url.match(/\/project\/([a-f0-9-]{36})/)
     if (pidMatch && !capturedProjectId) {
       capturedProjectId = pidMatch[1]
