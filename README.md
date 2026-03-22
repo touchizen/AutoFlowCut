@@ -6,6 +6,8 @@ Bulk AI image & video generation tool — Auto-generate hundreds of images with 
 
 🇺🇸 English | [🇰🇷 한국어](README.ko.md)
 
+[![Sponsor](https://img.shields.io/badge/💖_Sponsor-GitHub_Sponsors-ea4aaa?style=for-the-badge)](https://github.com/sponsors/tuxxon)
+
 ## What is AutoFlowCut?
 
 AutoFlowCut is a desktop application that streamlines short-form video production:
