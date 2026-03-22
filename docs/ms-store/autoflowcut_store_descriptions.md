@@ -77,7 +77,7 @@ AutoFlowCut is completely free and open source.
 
 - All features included — no paywalls, no subscriptions
 - Google Flow AI usage is free during the experimental phase
-- Source code available on GitHub: github.com/touchizen/flow2capcut
+- Source code available on GitHub: github.com/touchizen/AutoFlowCut
 
 
 📋 REQUIREMENTS
@@ -96,7 +96,7 @@ This app runs entirely on your local machine. All AI generation is handled by Go
 💬 SUPPORT
 
 Questions or feedback? Contact us at gordon.ahn@touchizen.com
-GitHub Issues: github.com/touchizen/flow2capcut/issues
+GitHub Issues: github.com/touchizen/AutoFlowCut/issues
 
 Made by Touchizen — touchizen.com
 
@@ -105,7 +105,7 @@ Disclaimer: This app is an independent product developed by Touchizen and is not
 
 ### What's New
 ```
-v0.9.0 — First Public Release
+v0.9.1 — First Public Release
 
 All-in-one desktop app for AI video creators. Powered by Google Flow AI.
 
@@ -202,7 +202,7 @@ AutoFlowCut은 완전 무료 오픈소스입니다.
 
 - 모든 기능 포함 — 유료 기능 없음, 구독 없음
 - Google Flow AI 사용은 실험 단계에서 무료
-- 소스 코드: github.com/touchizen/flow2capcut
+- 소스 코드: github.com/touchizen/AutoFlowCut
 
 
 📋 필요 사항
@@ -221,7 +221,7 @@ AutoFlowCut은 완전 무료 오픈소스입니다.
 💬 지원
 
 질문이나 피드백은 gordon.ahn@touchizen.com으로 문의해주세요.
-GitHub Issues: github.com/touchizen/flow2capcut/issues
+GitHub Issues: github.com/touchizen/AutoFlowCut/issues
 
 Touchizen 제작 — touchizen.com
 
@@ -230,7 +230,7 @@ Touchizen 제작 — touchizen.com
 
 ### What's New (새로운 기능)
 ```
-v0.9.0 — 첫 공개 릴리즈
+v0.9.1 — 첫 공개 릴리즈
 
 AI 영상 크리에이터를 위한 올인원 데스크톱 앱. Google Flow AI 기반.
 
@@ -279,7 +279,7 @@ AutoFlowCutはAI動画制作の全プロセスを自動化します。Google Flo
 - 100%無料＆オープンソース
 
 💰 完全無料・オープンソース
-すべての機能が無料で利用可能。GitHub: github.com/touchizen/flow2capcut
+すべての機能が無料で利用可能。GitHub: github.com/touchizen/AutoFlowCut
 
 📋 必要環境: Googleアカウント、CapCutデスクトップアプリ、インターネット接続、Windows 10以降
 
@@ -288,7 +288,7 @@ AutoFlowCutはAI動画制作の全プロセスを自動化します。Google Flo
 
 ### What's New
 ```
-v0.9.0 — 初回パブリックリリース
+v0.9.1 — 初回パブリックリリース
 - 一括AI画像生成（リファレンスベースの視覚的一貫性）
 - T2V（テキストから動画）生成
 - I2V（画像から動画）生成
@@ -327,7 +327,7 @@ AutoFlowCut automatisiert die gesamte KI-Videoproduktion — von der Google Flow
 - 100% kostenlos & Open Source
 
 💰 Vollständig kostenlos und Open Source
-Alle Funktionen inklusive. GitHub: github.com/touchizen/flow2capcut
+Alle Funktionen inklusive. GitHub: github.com/touchizen/AutoFlowCut
 
 📋 Voraussetzungen: Google-Konto, CapCut Desktop-App, Internetverbindung, Windows 10+
 
@@ -336,7 +336,7 @@ Alle Funktionen inklusive. GitHub: github.com/touchizen/flow2capcut
 
 ### What's New
 ```
-v0.9.0 — Erste öffentliche Veröffentlichung
+v0.9.1 — Erste öffentliche Veröffentlichung
 - Stapelweise KI-Bildgenerierung mit visueller Konsistenz
 - T2V (Text-to-Video) Generierung
 - I2V (Image-to-Video) Generierung
