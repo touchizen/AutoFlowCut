@@ -18,8 +18,11 @@ const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 
 // Desktop app OAuth client (Google Cloud Console에서 생성)
 // dotenv.config() 이후에 읽어야 하므로 getter 사용
-const getOAuthClientId = () => process.env.GOOGLE_OAUTH_CLIENT_ID || ''
-const getOAuthClientSecret = () => process.env.GOOGLE_OAUTH_CLIENT_SECRET || ''
+// Desktop app OAuth credentials (public by design — see https://developers.google.com/identity/protocols/oauth2/native-app)
+const DEFAULT_CLIENT_ID = '906175994283-1e8l4ktrq08amkmbi7gh22452lc31vr2.apps.googleusercontent.com'
+const DEFAULT_CLIENT_SECRET = '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'
+const getOAuthClientId = () => process.env.GOOGLE_OAUTH_CLIENT_ID || DEFAULT_CLIENT_ID
+const getOAuthClientSecret = () => process.env.GOOGLE_OAUTH_CLIENT_SECRET || DEFAULT_CLIENT_SECRET
 const OAUTH_REDIRECT_URI = 'http://localhost'
 
 /**
