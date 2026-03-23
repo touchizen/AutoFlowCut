@@ -393,18 +393,18 @@ export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, o
 
       {/* Review guide */}
       <div className="audio-guide">
-        <div className="audio-guide-title">💡 오디오 검수 가이드 <span className="audio-guide-badge">Powered by AI</span></div>
+        <div className="audio-guide-title">💡 {t('audioTab.guideTitle')} <span className="audio-guide-badge">{t('audioTab.guideBadge')}</span></div>
         <ol className="audio-guide-steps">
-          <li>▶️ 재생하여 자막/장면과 적합한지 확인</li>
-          <li>⚠️ 부적합 파일에 마크 + 사유 입력 (예: "초인종 소리, 시대 안 맞음")</li>
+          <li>▶️ {t('audioTab.guideStep1')}</li>
+          <li>⚠️ {t('audioTab.guideStep2')}</li>
           <li>
-            <strong>AI 연동 설정</strong> (최초 1회)<br/>
-            <a href="https://docs.anthropic.com/en/docs/claude-code" target="_blank" rel="noreferrer">Claude Code</a> 설치 후, 프로젝트 폴더에서 아래 명령어 실행:<br/>
-            <code>claude mcp add flow2capcut node mcp-server/index.js</code><br/>
-            <span className="audio-guide-note">* MCP(Model Context Protocol)는 AI가 앱 데이터를 읽을 수 있게 해주는 연결 방식입니다</span>
+            <strong>{t('audioTab.guideStep3Title')}</strong> ({t('audioTab.guideStep3Once')})<br/>
+            <a href="https://docs.anthropic.com/en/docs/claude-code" target="_blank" rel="noreferrer">Claude Code</a> {t('audioTab.guideStep3Desc')}<br/>
+            <code>claude mcp add autoflowcut node mcp-server/index.js</code><br/>
+            <span className="audio-guide-note">* {t('audioTab.guideStep3Note')}</span>
           </li>
-          <li>Claude Code에서 <code>"부적합 오디오 확인해줘"</code> 라고 요청</li>
-          <li>AI가 마크된 파일과 사유를 분석하여 대체 파일을 추천합니다</li>
+          <li>{t('audioTab.guideStep4')}</li>
+          <li>{t('audioTab.guideStep5')}</li>
         </ol>
       </div>
 
@@ -648,18 +648,18 @@ export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, o
 
       {/* Review guide */}
       <div className="audio-guide">
-        <div className="audio-guide-title">💡 오디오 검수 가이드 <span className="audio-guide-badge">Powered by AI</span></div>
+        <div className="audio-guide-title">💡 {t('audioTab.guideTitle')} <span className="audio-guide-badge">{t('audioTab.guideBadge')}</span></div>
         <ol className="audio-guide-steps">
-          <li>▶️ 재생하여 자막/장면과 적합한지 확인</li>
-          <li>⚠️ 부적합 파일에 마크 + 사유 입력 (예: "초인종 소리, 시대 안 맞음")</li>
+          <li>▶️ {t('audioTab.guideStep1')}</li>
+          <li>⚠️ {t('audioTab.guideStep2')}</li>
           <li>
-            <strong>AI 연동 설정</strong> (최초 1회)<br/>
-            <a href="https://docs.anthropic.com/en/docs/claude-code" target="_blank" rel="noreferrer">Claude Code</a> 설치 후, 프로젝트 폴더에서 아래 명령어 실행:<br/>
-            <code>claude mcp add flow2capcut node mcp-server/index.js</code><br/>
-            <span className="audio-guide-note">* MCP(Model Context Protocol)는 AI가 앱 데이터를 읽을 수 있게 해주는 연결 방식입니다</span>
+            <strong>{t('audioTab.guideStep3Title')}</strong> ({t('audioTab.guideStep3Once')})<br/>
+            <a href="https://docs.anthropic.com/en/docs/claude-code" target="_blank" rel="noreferrer">Claude Code</a> {t('audioTab.guideStep3Desc')}<br/>
+            <code>claude mcp add autoflowcut node mcp-server/index.js</code><br/>
+            <span className="audio-guide-note">* {t('audioTab.guideStep3Note')}</span>
           </li>
-          <li>Claude Code에서 <code>"부적합 오디오 확인해줘"</code> 라고 요청</li>
-          <li>AI가 마크된 파일과 사유를 분석하여 대체 파일을 추천합니다</li>
+          <li>{t('audioTab.guideStep4')}</li>
+          <li>{t('audioTab.guideStep5')}</li>
         </ol>
       </div>
     </div>
@@ -771,7 +771,7 @@ export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, o
             {/* 부적합 마크 */}
             {isFileFlagged(selectedItem.path) && (
               <div className="audio-detail-card audio-detail-card-flagged">
-                <div className="audio-detail-card-label">⚠️ 부적합</div>
+                <div className="audio-detail-card-label">⚠️ {t('audioTab.flagged')}</div>
                 <div className="audio-detail-card-text">{audioReviews?.[getRelativePath(selectedItem.path)]?.reason || ''}</div>
               </div>
             )}
