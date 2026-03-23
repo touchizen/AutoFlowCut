@@ -61,6 +61,11 @@
       "assets/**/*",
       "!assets/icon.iconset"
     ],
+    "extraResources": [
+      { "from": "mcp-server", "to": "mcp-server" },
+      { "from": "docs", "to": "docs" },
+      { "from": "skills", "to": "skills" }
+    ],
     "afterSign": "scripts/notarize.cjs",
     "mac": {
       "icon": "assets/icon.icns",

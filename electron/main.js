@@ -1450,12 +1450,25 @@ function startMcpHttpServer(port) {
               res.end(JSON.stringify({ error: `Project "${projectName}" not found` }))
               return
             }
-            await fs.rm(projectDir, { recursive: true, force: true })
+            await fs.rm(projectDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 500 })
             res.writeHead(200)
             res.end(JSON.stringify({ success: true, deleted: projectName }))
           } catch (err) {
-            res.writeHead(500)
-            res.end(JSON.stringify({ error: err.message }))
+            // Windows EPERM fallback (OneDrive 등 파일 잠금 시)
+            if (process.platform === 'win32' && err.code === 'EPERM') {
+              try {
+                const { execSync } = require('child_process')
+                execSync(`rmdir /s /q "${projectDir}"`, { windowsHide: true })
+                res.writeHead(200)
+                res.end(JSON.stringify({ success: true, deleted: projectName }))
+              } catch (fallbackErr) {
+                res.writeHead(500)
+                res.end(JSON.stringify({ error: fallbackErr.message }))
+              }
+            } else {
+              res.writeHead(500)
+              res.end(JSON.stringify({ error: err.message }))
+            }
           }
           return
         }

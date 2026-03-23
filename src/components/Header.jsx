@@ -165,6 +165,8 @@ export default function Header({
           onNewProject()
         }
       }
+    } else {
+      alert(`삭제 실패: ${result.error || 'Unknown error'}`)
     }
     setDeleteTarget(null)
     setShowProjectDropdown(false)

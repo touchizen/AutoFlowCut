@@ -21,6 +21,7 @@ import fs from 'fs';
 import path from 'path';
 import http from 'http';
 import os from 'os';
+import { fileURLToPath } from 'url';
 
 // ── HTTP 헬퍼 (Flow2CapCut 앱 통신) ──────────────────────────
 
@@ -234,9 +235,24 @@ const server = new Server(
   { capabilities: { tools: {}, resources: {}, prompts: {} } }
 );
 
-// ── Docs / Skills 경로 ───────────────────────────────────────
-const DOCS_DIR = path.resolve(new URL('.', import.meta.url).pathname, '..', 'docs');
-const SKILLS_REPO_DIR = path.resolve(new URL('.', import.meta.url).pathname, '..', 'skills');
+// ── Docs / Skills / Style 경로 (개발 + 배포 대응) ─────────────
+const __mcp_filename = fileURLToPath(import.meta.url);
+const __mcp_dirname = path.dirname(__mcp_filename);
+
+// 개발: mcp-server/../docs  |  배포: resources/docs
+function resolveResource(...segments) {
+  const devPath = path.join(__mcp_dirname, '..', ...segments);
+  if (fs.existsSync(devPath)) return devPath;
+  // 배포 환경: extraResources → process.resourcesPath
+  if (process.resourcesPath) {
+    const pkgPath = path.join(process.resourcesPath, ...segments);
+    if (fs.existsSync(pkgPath)) return pkgPath;
+  }
+  return devPath; // 못 찾으면 개발 경로 반환 (에러는 호출부에서 처리)
+}
+
+const DOCS_DIR = resolveResource('docs');
+const SKILLS_REPO_DIR = resolveResource('skills');
 const SKILLS_INSTALL_DIR = path.join(os.homedir(), '.claude', 'skills');
 
 // ── 템플릿 변수 치환 ─────────────────────────────────────────
@@ -786,8 +802,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   ],
 }));
 
-// ── 스타일 프리셋 경로 ──────────────────────────────────────────
-const STYLE_PRESETS_PATH = path.resolve(new URL('.', import.meta.url).pathname, '..', 'src', 'config', 'style_presets.json');
+// ── 스타일 프리셋 경로 (개발: src/config, 배포: dist/ 내 번들) ──
+const STYLE_PRESETS_PATH = resolveResource('src', 'config', 'style_presets.json');
 
 // ── 문제 씬 DB ────────────────────────────────────────────────
 

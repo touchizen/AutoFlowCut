@@ -13,7 +13,22 @@ import time
 import requests
 
 # === 설정 ===
-API_KEY = "sk_a3fcfbe4d316bd3d135f8d9016424904247c2a8c87eb346d"
+def _load_api_key():
+    """Load API key from ~/.elevenlabs/credentials or env var"""
+    key = os.environ.get("ELEVENLABS_API_KEY")
+    if key:
+        return key
+    cred_paths = [
+        os.path.expanduser("~/.elevenlabs/credentials"),
+        os.path.join(os.path.expanduser("~"), ".elevenlabs", "credentials"),
+    ]
+    for p in cred_paths:
+        if os.path.exists(p):
+            with open(p) as f:
+                return f.read().strip()
+    raise RuntimeError("ElevenLabs API key not found. Set ELEVENLABS_API_KEY env var or create ~/.elevenlabs/credentials")
+
+API_KEY = _load_api_key()
 MODEL = "eleven_multilingual_v2"
 BASE_URL = "https://api.elevenlabs.io/v1/text-to-speech"
 

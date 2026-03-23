@@ -741,10 +741,20 @@ export function registerFilesystemIPC(ipcMain) {
         return { success: false, error: 'Project not found' }
       }
 
-      await fs.rm(projectPath, { recursive: true, force: true })
+      await fs.rm(projectPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 500 })
 
       return { success: true }
     } catch (error) {
+      // Windows EPERM fallback (OneDrive 등 파일 잠금 시)
+      if (process.platform === 'win32' && error.code === 'EPERM') {
+        try {
+          const { execSync } = require('child_process')
+          execSync(`rmdir /s /q "${path.join(workFolder, project)}"`, { windowsHide: true })
+          return { success: true }
+        } catch (fallbackErr) {
+          return { success: false, error: fallbackErr.message }
+        }
+      }
       return { success: false, error: error.message }
     }
   })
