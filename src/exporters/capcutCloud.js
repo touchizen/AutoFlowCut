@@ -177,19 +177,22 @@ async function prepareCloudRequest(project, options = {}) {
       fallback
     });
 
-    // 영상 오버레이 (있으면, 씬 뒤쪽에 배치)
+    // 영상 오버레이 (있으면 배치: 영상이 짧으면 씬 뒤쪽, 영상이 길면 처음부터 씬 길이만큼 자름)
     const videoPath = scene.video_path;
     const videoDuration = scene.video_duration || 0;
-    if (videoPath && videoDuration > 0 && videoDuration < sceneDuration) {
+    if (videoPath && videoDuration > 0) {
       const videoFilename = getFilename(videoPath, sceneId, 'video');
-      const videoStartMs = cumulativeTime + (sceneDuration - videoDuration) * 1000;
+      const clipDuration = Math.min(videoDuration, sceneDuration); // 씬 길이 초과 시 자름
+      const videoStartMs = videoDuration < sceneDuration
+        ? cumulativeTime + (sceneDuration - videoDuration) * 1000  // 영상이 짧으면 뒤쪽 배치
+        : cumulativeTime;  // 영상이 길면 처음부터 시작
 
       cloudVideoOverlays.push({
         sceneId,
         filename: videoFilename,
         width: imgWidth,  // 영상도 동일 캔버스
         height: imgHeight,
-        durationMs: videoDuration * 1000,
+        durationMs: clipDuration * 1000,
         startMs: videoStartMs
       });
 
