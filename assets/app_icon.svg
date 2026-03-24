@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 52 52">
+  <defs>
+    <style>
+      .st0 { fill: #ff3b3b; }
+      .st1 { fill: #444; stroke: #fff; }
+      .st1, .st2 { stroke-width: 1.5px; }
+      .st3, .st2 { fill: none; stroke: #333; }
+      .st4 { fill: #fff; stroke: #999; }
+      .st5 { fill: #555; }
+      .st6 { fill: gold; stroke: #e8a800; stroke-linejoin: round; stroke-width: .8px; }
+    </style>
+  </defs>
+  <g transform="rotate(-45, 26, 26)">
+    <g transform="translate(8, 0)">
+      <path class="st1" d="M18,2C9.16,2,2,9.16,2,18v16c0,8.84,7.16,16,16,16s16-7.16,16-16v-16c0-8.84-7.16-16-16-16Z"/>
+      <path class="st0" d="M18,2c8.1,0,15.26,7.16,15.26,16v8h-15.26V2Z"/>
+      <path class="st0" d="M18,26H2.74v-8C2.74,9.16,9.9,2,18,2v24Z"/>
+      <line class="st2" x1="18" y1="2" x2="18" y2="26"/>
+      <line class="st3" x1="2.74" y1="26" x2="33.26" y2="26"/>
+      <path class="st4" d="M18,6h0c1.38,0,2.5,1.12,2.5,2.5v11c0,1.38-1.12,2.5-2.5,2.5h0c-1.38,0-2.5-1.12-2.5-2.5v-11c0-1.38,1.12-2.5,2.5-2.5Z"/>
+      <path class="st6" d="M18.5,28l-5,10h4l-3,10,8-12h-4l3-8h-3Z"/>
+    </g>
+  </g>
+</svg>
