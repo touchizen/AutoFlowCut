@@ -19,13 +19,17 @@
 
 .app-content-split {
   height: 100%;
-  overflow-y: auto;
+  overflow: hidden;
   background: #1a1a2e;
 }
 
 .app-content-split .app-root {
   padding-top: 0;
   height: 100%;
+}
+
+.app-content-split .app {
+  height: calc(100% - 4px);
 }
 
 /* Resizer */
