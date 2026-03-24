@@ -11,3 +11,4 @@ client_secret_*.json
 AutoFlow_10.7.58/
 AutoFlow_10.7.58_pretty/
 AutoFlow_10.7.58.zip
+package-lock.json

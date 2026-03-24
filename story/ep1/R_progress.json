@@ -1,0 +1,107 @@
+{
+  "episode": 1,
+  "title": "Words I Never Said",
+  "genre": "dark-history",
+  "language": "English",
+  "duration": "~20 minutes",
+  "steps": {
+    "R1_diagnosis": {
+      "status": "pass",
+      "completed_at": "2026-03-23",
+      "notes": "Logline, characters, core theme defined"
+    },
+    "R2_factcheck": {
+      "status": "skip",
+      "notes": "Creative fiction — no historical fact check needed"
+    },
+    "R3_synopsis": {
+      "status": "pass",
+      "completed_at": "2026-03-23",
+      "notes": "20-chapter framework + foreshadowing tracker"
+    },
+    "R4_preflight": {
+      "status": "pass",
+      "completed_at": "2026-03-23",
+      "notes": "All checks passed. 2 minor fixes applied (heart monitor SFX, George foreshadowing)"
+    },
+    "R5_writing": {
+      "status": "pass",
+      "completed_at": "2026-03-23",
+      "notes": "Full script written: Act I → II → III → IV → Hook"
+    },
+    "R6_review": {
+      "status": "pass",
+      "completed_at": "2026-03-23",
+      "rounds": 2,
+      "round1": {
+        "score": 8,
+        "verdict": "REVISE",
+        "fixes": [
+          "Duration 10min → 20min",
+          "Ch.6: added failed search leads",
+          "Ch.15: added George handwriting justification",
+          "Ch.11: summary → dramatized scenes",
+          "Removed cliché ending, added Eleanor death detail, renamed spoiler titles"
+        ]
+      },
+      "round2": {
+        "score": 8.7,
+        "verdict": "PASS",
+        "suggested_improvements_applied": [
+          "Ch.7: George stationed at same field hospital — explicit mention added",
+          "Ch.13: Sophie's inner conflict + near-exit scene added"
+        ]
+      },
+      "round3": {
+        "score": 8.8,
+        "verdict": "PASS",
+        "fixes": []
+      }
+    },
+    "R7_finalize": {
+      "status": "pass",
+      "completed_at": "2026-03-23",
+      "notes": "User confirmed. Script finalized at Round 3 (8.8/10)"
+    },
+    "R8_production": {
+      "status": "pass",
+      "completed_at": "2026-03-23",
+      "notes": "narration.txt + dialogs.json extracted. SFX excluded per user request."
+    },
+    "R8.5_review": {
+      "status": "pass",
+      "completed_at": "2026-03-23",
+      "notes": "Subagent verified all 131 narration lines + 58 dialogue lines match script. PASS."
+    },
+    "R9_tts_sfx": {
+      "status": "pending",
+      "notes": "ElevenLabs TTS pending. SFX excluded."
+    },
+    "R10-3_references_review": {
+      "status": "pass",
+      "completed_at": "2026-03-23",
+      "rounds": 2,
+      "notes": "Round 1: REVISE (14 fixes). Round 2: PASS."
+    },
+    "R10-3_scenes_review": {
+      "status": "pass",
+      "completed_at": "2026-03-23",
+      "rounds": 2,
+      "notes": "Round 1: REVISE (14 fixes). Round 2: PASS."
+    }
+  },
+  "R10-3_scenes_review": {
+    "result": "pass",
+    "round": 3,
+    "issues_found": 0,
+    "reviewer": "subagent",
+    "completed_at": "2026-03-23T08:42:42.639Z"
+  },
+  "R10-3_references_review": {
+    "result": "pass",
+    "round": 2,
+    "issues_found": 0,
+    "reviewer": "subagent",
+    "completed_at": "2026-03-23T08:56:14.809Z"
+  }
+}

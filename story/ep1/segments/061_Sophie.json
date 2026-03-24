@@ -1,0 +1,23 @@
+{
+  "characters": [
+    "W",
+    "h",
+    "a",
+    "t",
+    "?"
+  ],
+  "character_start_times_seconds": [
+    0,
+    0.093,
+    0.163,
+    0.209,
+    0.29
+  ],
+  "character_end_times_seconds": [
+    0.093,
+    0.163,
+    0.209,
+    0.29,
+    0.557
+  ]
+}

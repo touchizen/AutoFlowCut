@@ -1,0 +1,566 @@
+[
+  {
+    "idx": 0,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "In the autumn of 1994, a woman opened a dead man's pocket watch and found a letter inside."
+  },
+  {
+    "idx": 1,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "It had been written fifty years earlier, on the night before D-Day. The words were beautiful. The penmanship was elegant. And the last two lines were smudged beyond reading."
+  },
+  {
+    "idx": 2,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "The soldier survived the war. He came home. He married someone else. He never sent the letter."
+  },
+  {
+    "idx": 3,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "Why would a man carry a love letter for fifty years and never mail it?"
+  },
+  {
+    "idx": 4,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "This is \"Words I Never Said.\""
+  },
+  {
+    "idx": 5,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "On a gray October morning, Sophie Bennett stood at her grandfather's grave and realized she had never really known him."
+  },
+  {
+    "idx": 6,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "Thomas Bennett. Eighty years old. A carpenter. A quiet man who built things with his hands and kept everything else locked inside his chest."
+  },
+  {
+    "idx": 7,
+    "type": "dialogue",
+    "character": "Richard",
+    "text": "He didn't want a fuss. Said just put him in the ground next to your grandmother."
+  },
+  {
+    "idx": 8,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "After the service, Richard handed Sophie a key. \"Someone has to sort through his things. I can't do it.\""
+  },
+  {
+    "idx": 9,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "Sophie took the key. She had things she'd never said to him either — visits she'd skipped, calls she'd cut short. Maybe that's why the key felt so heavy."
+  },
+  {
+    "idx": 10,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "Tom's attic smelled of sawdust and decades. In a cigar box tucked behind Army blankets — a pocket watch."
+  },
+  {
+    "idx": 11,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "Brass, worn smooth by years of handling. On the back, two sets of initials: T.B. & E.P. Thomas Bennett — and someone who was not her grandmother."
+  },
+  {
+    "idx": 12,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "Sophie pressed the clasp. Behind the back plate, folded so thin it had molded to the metal, was a single sheet of paper. A letter. Yellow with age."
+  },
+  {
+    "idx": 13,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "The handwriting was elegant. Almost too elegant."
+  },
+  {
+    "idx": 14,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "\"My dearest Eleanor. I am writing this by candlelight in a tent that leaks when it rains. Tomorrow we cross the Channel. I don't know what waits for us on the other side.\""
+  },
+  {
+    "idx": 15,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "The letter spoke of walks along the English coast. Of a promise made under stars. But the last two lines were ruined — the ink smeared beyond reading."
+  },
+  {
+    "idx": 16,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "Sophie called her father."
+  },
+  {
+    "idx": 17,
+    "type": "dialogue",
+    "character": "Sophie",
+    "text": "Dad, who is Eleanor Parish?"
+  },
+  {
+    "idx": 18,
+    "type": "dialogue",
+    "character": "Richard",
+    "text": "Put it back. Don't mention that name again."
+  },
+  {
+    "idx": 19,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "He hung up. And Sophie knew this letter was the reason her grandfather had been quiet all his life."
+  },
+  {
+    "idx": 20,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "Sophie drove to her father's house. Richard sat in the dark, a glass of whiskey untouched."
+  },
+  {
+    "idx": 21,
+    "type": "dialogue",
+    "character": "Sophie",
+    "text": "His last words, Dad. What were Grandpa's last words?"
+  },
+  {
+    "idx": 22,
+    "type": "dialogue",
+    "character": "Richard",
+    "text": "He said... 'Tell her I'm sorry.'"
+  },
+  {
+    "idx": 23,
+    "type": "dialogue",
+    "character": "Sophie",
+    "text": "Tell who?"
+  },
+  {
+    "idx": 24,
+    "type": "dialogue",
+    "character": "Richard",
+    "text": "Her name was Eleanor Parish. A British nurse. He met her in England before D-Day. That's all he ever told me."
+  },
+  {
+    "idx": 25,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "Sophie held the watch in her pocket. The ticking felt like a heartbeat — patient, waiting."
+  },
+  {
+    "idx": 26,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "She was going to find Eleanor Parish. She was going to deliver the words her grandfather never said."
+  },
+  {
+    "idx": 27,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "Before flying to England, Sophie tracked down George Whitfield — eighty-seven years old, Tom's closest friend from the war."
+  },
+  {
+    "idx": 28,
+    "type": "dialogue",
+    "character": "George",
+    "text": "Tommy Bennett. My God. Those two — Tommy and Eleanor — they were the only beautiful thing in that whole ugly war."
+  },
+  {
+    "idx": 29,
+    "type": "dialogue",
+    "character": "Sophie",
+    "text": "What happened to them?"
+  },
+  {
+    "idx": 30,
+    "type": "dialogue",
+    "character": "George",
+    "text": "D-Day happened."
+  },
+  {
+    "idx": 31,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "Then George said something Sophie filed away without understanding."
+  },
+  {
+    "idx": 32,
+    "type": "dialogue",
+    "character": "George",
+    "text": "Your grandfather couldn't write worth a damn. Hands made for plows, not pens. I used to write his letters home for him."
+  },
+  {
+    "idx": 33,
+    "type": "dialogue",
+    "character": "George",
+    "text": "The night before D-Day, Tom asked Eleanor to marry him. She said yes. The next morning, the boats left for Normandy. That was the last time he saw her."
+  },
+  {
+    "idx": 34,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "In England, Sophie hit a wall. The British Red Cross had no record of an Eleanor Parish. Three weeks of calls, two dead-end leads, one Eleanor Parish in Surrey who turned out to be a dentist born in 1955."
+  },
+  {
+    "idx": 35,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "Then a clerk mentioned the bombing records. June 7, 1944 — a Luftwaffe strike on a field hospital. The casualty list included \"E. Parish.\""
+  },
+  {
+    "idx": 36,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "She found the grave. Knelt down. Brushed away the moss."
+  },
+  {
+    "idx": 37,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "\"Edith Parish. 1921–1944.\""
+  },
+  {
+    "idx": 38,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "Edith. Not Eleanor."
+  },
+  {
+    "idx": 39,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "A different woman. A different nurse. The same initial. Eleanor had survived."
+  },
+  {
+    "idx": 40,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "At the British Red Cross archives, Sophie found the second mistake. Eleanor's file contained a note: \"Informed that PFC Thomas Bennett was killed in action at Omaha Beach.\""
+  },
+  {
+    "idx": 41,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "Killed in action. Except Tom hadn't died. He'd been wounded and survived."
+  },
+  {
+    "idx": 42,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "Two clerical errors. Two single letters. In the chaos of the largest military operation in history, two people who loved each other spent fifty years believing the other was dead."
+  },
+  {
+    "idx": 43,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "Sophie sat in that archive and wept."
+  },
+  {
+    "idx": 44,
+    "type": "dialogue",
+    "character": "Sophie",
+    "text": "Dad. Eleanor is alive. She's been alive this whole time."
+  },
+  {
+    "idx": 45,
+    "type": "dialogue",
+    "character": "Richard",
+    "text": "I know."
+  },
+  {
+    "idx": 46,
+    "type": "dialogue",
+    "character": "Sophie",
+    "text": "What?"
+  },
+  {
+    "idx": 47,
+    "type": "dialogue",
+    "character": "Richard",
+    "text": "He found out. About ten years ago. A buddy sent him an article. Eleanor Parish — alive, living in England."
+  },
+  {
+    "idx": 48,
+    "type": "dialogue",
+    "character": "Sophie",
+    "text": "And he didn't go to her?"
+  },
+  {
+    "idx": 49,
+    "type": "dialogue",
+    "character": "Richard",
+    "text": "Your grandmother was still alive. He loved her too. Not the same way — but he loved her. He couldn't break her heart to mend his own."
+  },
+  {
+    "idx": 50,
+    "type": "dialogue",
+    "character": "Richard",
+    "text": "He carried that knowledge for ten years. Knowing she was out there. Knowing he couldn't go. That's what finally made him quiet."
+  },
+  {
+    "idx": 51,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "Sophie looked at the watch. The ticking sounded different now. Not patient. Urgent."
+  },
+  {
+    "idx": 52,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "The cottage was small. Stone walls covered in ivy. A garden loved for decades. Sophie walked up the path, her heart in her throat."
+  },
+  {
+    "idx": 53,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "The door opened. Eleanor Parish. Seventy years old. White hair pinned back. Eyes the color of the English Channel."
+  },
+  {
+    "idx": 54,
+    "type": "dialogue",
+    "character": "Eleanor",
+    "text": "Can I help you, dear?"
+  },
+  {
+    "idx": 55,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "Over Eleanor's shoulder, on the wall, Sophie saw a photograph. A young American soldier. The same photograph from the attic. Fifty years on her wall."
+  },
+  {
+    "idx": 56,
+    "type": "dialogue",
+    "character": "Sophie",
+    "text": "My name is Sophie Bennett. I'm Tom's granddaughter."
+  },
+  {
+    "idx": 57,
+    "type": "dialogue",
+    "character": "Eleanor",
+    "text": "Oh my God. You have his eyes."
+  },
+  {
+    "idx": 58,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "Sophie placed the letter on the table. Eleanor unfolded it with the gentleness of someone handling a living thing."
+  },
+  {
+    "idx": 59,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "She read the first lines. Tears tracked down her cheeks. Then she stopped."
+  },
+  {
+    "idx": 60,
+    "type": "dialogue",
+    "character": "Eleanor",
+    "text": "This isn't Tom's handwriting."
+  },
+  {
+    "idx": 61,
+    "type": "dialogue",
+    "character": "Sophie",
+    "text": "What?"
+  },
+  {
+    "idx": 62,
+    "type": "dialogue",
+    "character": "Eleanor",
+    "text": "Tom's handwriting was terrible — big, crooked letters. This is beautiful. But it's not his."
+  },
+  {
+    "idx": 63,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "Eleanor closed her eyes. A memory surfaced — supply crates in the field hospital, labeled in elegant copperplate."
+  },
+  {
+    "idx": 64,
+    "type": "dialogue",
+    "character": "Eleanor",
+    "text": "George Whitfield. He wrote Tom's letters for him."
+  },
+  {
+    "idx": 65,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "Eleanor smiled through her tears."
+  },
+  {
+    "idx": 66,
+    "type": "dialogue",
+    "character": "Eleanor",
+    "text": "Tom couldn't write. He could build anything with his hands, but words defeated him. So he spoke the words, and George wrote them down. Every word in this letter came from Tom's mouth."
+  },
+  {
+    "idx": 67,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "Eleanor picked up a magnifying glass. Her hands trembled over the bottom of the letter."
+  },
+  {
+    "idx": 68,
+    "type": "dialogue",
+    "character": "Eleanor",
+    "text": "But this part — the last two lines — this IS Tom's handwriting."
+  },
+  {
+    "idx": 69,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "She read aloud, each word pulled from the blur of fifty-year-old ink."
+  },
+  {
+    "idx": 70,
+    "type": "dialogue",
+    "character": "Eleanor",
+    "text": "I can't write pretty words. But I love you is all I know. — Tom"
+  },
+  {
+    "idx": 71,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "That was what the ink had hidden for half a century. Not George's poetry. Just Tom. Raw, honest Tom. Saying the only thing that mattered in the only way he knew how."
+  },
+  {
+    "idx": 72,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "He never sent it. Because when he woke in the hospital, they told him Eleanor was dead. And you don't mail a letter to a ghost. So he folded it into his watch and carried it against his chest for fifty years."
+  },
+  {
+    "idx": 73,
+    "type": "dialogue",
+    "character": "Sophie",
+    "text": "Eleanor... would you have wanted to hear his voice?"
+  },
+  {
+    "idx": 74,
+    "type": "dialogue",
+    "character": "Eleanor",
+    "text": "I've rehearsed what I would say to that man every night for fifty years."
+  },
+  {
+    "idx": 75,
+    "type": "dialogue",
+    "character": "Sophie",
+    "text": "He passed away three weeks ago."
+  },
+  {
+    "idx": 76,
+    "type": "dialogue",
+    "character": "Eleanor",
+    "text": "Fifty years I waited. And I was three weeks too late."
+  },
+  {
+    "idx": 77,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "She touched the photograph on the wall with her fingertips."
+  },
+  {
+    "idx": 78,
+    "type": "dialogue",
+    "character": "Eleanor",
+    "text": "Every night, I said goodnight to this photograph. I told myself he could hear me."
+  },
+  {
+    "idx": 79,
+    "type": "dialogue",
+    "character": "Sophie",
+    "text": "It wasn't foolish."
+  },
+  {
+    "idx": 80,
+    "type": "dialogue",
+    "character": "Eleanor",
+    "text": "No. I suppose it wasn't."
+  },
+  {
+    "idx": 81,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "Eleanor crossed the Atlantic for the first time at seventy. She stood at Tom's grave, the pocket watch in her hands."
+  },
+  {
+    "idx": 82,
+    "type": "dialogue",
+    "character": "Eleanor",
+    "text": "I got your letter, Tom. It only took fifty years. And that last line — in your terrible, beautiful handwriting — that's the finest thing anyone has ever written to me."
+  },
+  {
+    "idx": 83,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "She laughed. A small, clear laugh, like a bell."
+  },
+  {
+    "idx": 84,
+    "type": "dialogue",
+    "character": "Eleanor",
+    "text": "You owe me a kitchen, Thomas Bennett. A kitchen big enough to dance in."
+  },
+  {
+    "idx": 85,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "That evening, Eleanor handed Sophie a sealed envelope. Yellowed. Never opened."
+  },
+  {
+    "idx": 86,
+    "type": "dialogue",
+    "character": "Eleanor",
+    "text": "I wrote this on June 5th, 1944. The same night he wrote his. I was going to give it to him when he came back."
+  },
+  {
+    "idx": 87,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "Inside, in careful handwriting:"
+  },
+  {
+    "idx": 88,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "\"Come back to me, Thomas Bennett. I don't care if it takes a week or a year. I'll be waiting. I'll always be waiting.\""
+  },
+  {
+    "idx": 89,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "Two letters. Written on the same night. Kept for fifty years. Never sent. Never received. And yet, somehow, they found each other."
+  },
+  {
+    "idx": 90,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "Eleanor passed away the following spring. In her cottage. The watch in one hand, Tom's letter in the other, his photograph on the wall — the young soldier, still smiling."
+  },
+  {
+    "idx": 91,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "Inside the watch now were two letters. Folded together. Finally together."
+  },
+  {
+    "idx": 92,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "I used to wonder why I flew across an ocean for a man I barely visited when he was alive. Now I know. I was delivering the words he never said — and learning to say my own before it was too late."
+  },
+  {
+    "idx": 93,
+    "type": "narration",
+    "character": "Narrator",
+    "text": "My grandfather couldn't write pretty words. But he loved her. And she waited. And in the end, the letter found its way."
+  }
+]
