@@ -18,7 +18,7 @@
     "dist:test:mac": "vite build --mode development && electron-builder --mac",
     "dist:test:win": "vite build --mode development && electron-builder --win",
     "dist:win:nsis": "vite build --mode production && electron-builder --win nsis",
-    "dist:win:appx": "vite build --mode production && electron-builder --win appx",
+    "dist:win:appx": "vite build --mode production && scripts\\buildappx.bat",
     "dist:win:all": "vite build --mode production && electron-builder --win",
     "test": "vitest",
     "test:run": "vitest run",
@@ -62,9 +62,19 @@
       "!assets/icon.iconset"
     ],
     "extraResources": [
-      { "from": "mcp-server", "to": "mcp-server" },
-      { "from": "docs", "to": "docs" },
-      { "from": "skills", "to": "skills" }
+      {
+        "from": "mcp-server",
+        "to": "mcp-server"
+      },
+      {
+        "from": "docs",
+        "to": "docs",
+        "filter": ["csv-*.md", "srt-*.md", "audio-*.md", "prompt-*.md"]
+      },
+      {
+        "from": "skills",
+        "to": "skills"
+      }
     ],
     "afterSign": "scripts/notarize.cjs",
     "mac": {
