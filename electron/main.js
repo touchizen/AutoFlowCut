@@ -152,11 +152,27 @@ function createWindow() {
   flowView.webContents.on('did-finish-load', async () => {
     const url = flowView.webContents.getURL()
     console.log('[Flow] did-finish-load:', url)
+    // 지역 제한("Flow is not available in your country yet") 감지
+    let unavailable = false
+    if (url.includes('labs.google')) {
+      try {
+        unavailable = await flowView.webContents.executeJavaScript(`
+          !!(document.body?.innerText?.includes('not available in your country'))
+        `)
+      } catch (_) {}
+    }
+
     mainWindow.webContents.send('flow-status', {
       loaded: true,
       url,
-      loggedIn: url.includes('labs.google/fx')
+      loggedIn: url.includes('labs.google/fx'),
+      unavailable
     })
+
+    if (unavailable) {
+      console.log('[Flow] Region unavailable detected — skipping auto-actions')
+      return
+    }
 
     // 랜딩 페이지: "Create with Flow" 버튼 자동 클릭
     if (url.includes('labs.google')) {

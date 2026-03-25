@@ -14,6 +14,7 @@ export default {
     authenticated: 'Authenticated',
     checking: 'Checking...',
     waitingLogin: 'Waiting for login...',
+    unavailable: 'Region not supported',
     language: 'Language',
     menu: 'Menu',
   },
@@ -25,6 +26,8 @@ export default {
     openFlow: 'Open Flow',
     waitingLogin: 'Waiting for login...',
     loginHint: 'Login in Flow to continue automatically',
+    unavailable: 'Flow is not available in your region',
+    unavailableHint: 'Google Flow AI is currently available in limited regions only. Please use a VPN to connect from a supported country (e.g., United States), then relaunch the app.',
     checking: 'Checking authentication...',
   },
   

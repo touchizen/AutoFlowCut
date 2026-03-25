@@ -14,6 +14,7 @@ export default {
     authenticated: '인증됨',
     checking: '확인 중...',
     waitingLogin: '로그인 대기 중...',
+    unavailable: '지원되지 않는 지역',
     language: '언어',
     menu: '메뉴',
   },
@@ -25,6 +26,8 @@ export default {
     openFlow: 'Flow 열기',
     waitingLogin: '로그인 대기 중...',
     loginHint: 'Flow에서 로그인하면 자동으로 진입합니다',
+    unavailable: '이 지역에서는 Flow를 사용할 수 없습니다',
+    unavailableHint: 'Google Flow AI는 현재 제한된 지역에서만 사용 가능합니다. VPN으로 지원 국가(예: 미국)에 연결한 후 앱을 다시 실행해주세요.',
     checking: '인증 확인 중...',
   },
   

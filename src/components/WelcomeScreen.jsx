@@ -12,12 +12,21 @@ import appIconUrl from '/assets/icon128.png'
 
 export default function WelcomeScreen({ getAccessToken, onReady }) {
   const { t } = useI18n()
-  const [authStatus, setAuthStatus] = useState('checking') // 'checking' | 'authenticated' | 'unauthenticated' | 'waiting'
+  const [authStatus, setAuthStatus] = useState('checking') // 'checking' | 'authenticated' | 'unauthenticated' | 'waiting' | 'unavailable'
   const pollingRef = useRef(null)
-  
+
   useEffect(() => {
     checkAuth(true) // quickCheck 모드
-    
+
+    // Flow 지역 제한 감지
+    const handleFlowStatus = (data) => {
+      if (data?.unavailable) {
+        setAuthStatus('unavailable')
+        stopPolling()
+      }
+    }
+    window.electronAPI?.onFlowStatus?.(handleFlowStatus)
+
     // cleanup
     return () => {
       if (pollingRef.current) {
@@ -107,7 +116,11 @@ export default function WelcomeScreen({ getAccessToken, onReady }) {
         </p>
         
         <div className="welcome-auth">
-          {authStatus === 'waiting' ? (
+          {authStatus === 'unavailable' ? (
+            <button className="btn-flow unavailable" disabled>
+              🌍 {t('welcome.unavailable')}
+            </button>
+          ) : authStatus === 'waiting' ? (
             <button className="btn-flow waiting" disabled>
               ⏳ {t('welcome.waitingLogin')}
             </button>
@@ -117,7 +130,12 @@ export default function WelcomeScreen({ getAccessToken, onReady }) {
             </button>
           )}
         </div>
-        
+
+        {authStatus === 'unavailable' && (
+          <div className="welcome-hint unavailable-hint">
+            ⚠️ {t('welcome.unavailableHint')}
+          </div>
+        )}
         {authStatus === 'waiting' && (
           <div className="welcome-hint">
             💡 {t('welcome.loginHint')}

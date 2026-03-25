@@ -79,6 +79,18 @@
   cursor: wait;
 }
 
+.btn-flow.unavailable {
+  background: #b44;
+  cursor: not-allowed;
+}
+
+.unavailable-hint {
+  color: #e8a040 !important;
+  opacity: 1 !important;
+  max-width: 400px;
+  line-height: 1.5;
+}
+
 .btn-flow:hover {
   background: #3182ce;
   transform: translateY(-1px);

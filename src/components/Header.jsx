@@ -44,8 +44,15 @@ export default function Header({
     }
   }, [authReady])
 
-  // 컴포넌트 언마운트 시 폴링 정리
+  // Flow 지역 제한 감지
   useEffect(() => {
+    const handleFlowStatus = (data) => {
+      if (data?.unavailable) {
+        setAuthStatus('unavailable')
+        stopPolling()
+      }
+    }
+    window.electronAPI?.onFlowStatus?.(handleFlowStatus)
     return () => stopPolling()
   }, [])
   
@@ -242,6 +249,11 @@ export default function Header({
           )}
           {authStatus === 'authenticated' && (
             <span className="auth-badge authenticated" data-tooltip={t('header.authenticated')} onClick={checkAuth}>🟢</span>
+          )}
+          {authStatus === 'unavailable' && (
+            <span className="auth-badge unavailable" data-tooltip={t('header.unavailable')}>
+              🌍 {t('header.unavailable')}
+            </span>
           )}
           {authStatus === 'waiting' && (
             <span className="auth-badge waiting" data-tooltip={t('header.waitingLogin')}>

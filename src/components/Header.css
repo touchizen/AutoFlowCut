@@ -76,6 +76,12 @@
   opacity: 0.8;
 }
 
+.auth-badge.unavailable {
+  color: #e8a040;
+  font-size: 0.8rem;
+  cursor: default;
+}
+
 .auth-btn {
   display: flex;
   align-items: center;
