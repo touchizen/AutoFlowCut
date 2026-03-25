@@ -1,10 +1,10 @@
-# Flow2CapCut MCP Server
+# AutoFlowCut MCP Server
 
-Flow2CapCut 앱을 Claude Code에서 제어하기 위한 MCP(Model Context Protocol) 서버.
+AutoFlowCut 앱을 Claude Code에서 제어하기 위한 MCP(Model Context Protocol) 서버.
 
 ## 개요
 
-stdio 기반 MCP 서버로, 두 가지 채널을 통해 Flow2CapCut을 제어합니다:
+stdio 기반 MCP 서버로, 두 가지 채널을 통해 AutoFlowCut을 제어합니다:
 
 1. **CSV 직접 관리** — CSV 파일을 읽고/수정하고/저장
 2. **HTTP 앱 제어** — 실행 중인 앱의 React 상태를 직접 조작 (포트 3210)
@@ -23,7 +23,7 @@ npm install
 #### 방법 A: 글로벌 설정 (모든 프로젝트에서 사용) — 권장
 
 ```bash
-claude mcp add --scope user --transport stdio flow2capcut -- node /path/to/Flow2CapCut/mcp-server/index.js
+claude mcp add --scope user --transport stdio flow2capcut -- node /path/to/AutoFlowCut/mcp-server/index.js
 ```
 
 `~/.claude.json`의 `mcpServers`에 저장됩니다.
@@ -37,7 +37,7 @@ claude mcp add --scope user --transport stdio flow2capcut -- node /path/to/Flow2
   "mcpServers": {
     "flow2capcut": {
       "command": "node",
-      "args": ["/path/to/Flow2CapCut/mcp-server/index.js"]
+      "args": ["/path/to/AutoFlowCut/mcp-server/index.js"]
     }
   }
 }
@@ -63,7 +63,7 @@ claude mcp list
 
 ### 3. 앱 설정
 
-Flow2CapCut 앱 > 설정 > MCP HTTP 서버 > **ON** (포트: 3210)
+AutoFlowCut 앱 > 설정 > MCP HTTP 서버 > **ON** (포트: 3210)
 
 ## 아키텍처
 

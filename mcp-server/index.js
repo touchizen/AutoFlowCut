@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Flow2CapCut MCP Server
+ * AutoFlowCut MCP Server
  *
  * stdio 기반 MCP 서버 — Claude Code에서 CSV 씬 관리, 이미지 리뷰, 프롬프트 수정 가능.
  * 향후 Electron 메인 프로세스 내장으로 재생성 트리거도 지원 예정.
@@ -23,7 +23,7 @@ import http from 'http';
 import os from 'os';
 import { fileURLToPath } from 'url';
 
-// ── HTTP 헬퍼 (Flow2CapCut 앱 통신) ──────────────────────────
+// ── HTTP 헬퍼 (AutoFlowCut 앱 통신) ──────────────────────────
 
 function appFetch(port, method, pathname, body = null) {
   return new Promise((resolve, reject) => {
@@ -269,7 +269,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: 'get_schema',
-      description: 'CSV/SRT/Audio 스키마 문서를 반환합니다. Flow2CapCut에서 사용하는 데이터 구조를 확인할 때 사용합니다.',
+      description: 'CSV/SRT/Audio 스키마 문서를 반환합니다. AutoFlowCut에서 사용하는 데이터 구조를 확인할 때 사용합니다.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -475,7 +475,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     // ── 프로젝트 관리 도구 ──
     {
       name: 'app_list_projects',
-      description: 'Flow2CapCut 작업 폴더의 프로젝트 목록을 조회합니다.',
+      description: 'AutoFlowCut 작업 폴더의 프로젝트 목록을 조회합니다.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -523,7 +523,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     // ── HTTP 기반 앱 직접 제어 도구 ──
     {
       name: 'app_status',
-      description: 'Flow2CapCut 앱의 HTTP 서버 상태를 확인합니다.',
+      description: 'AutoFlowCut 앱의 HTTP 서버 상태를 확인합니다.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -533,7 +533,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'app_get_references',
-      description: '실행 중인 Flow2CapCut 앱에서 현재 레퍼런스 목록을 가져옵니다.',
+      description: '실행 중인 AutoFlowCut 앱에서 현재 레퍼런스 목록을 가져옵니다.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -543,7 +543,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'app_update_reference',
-      description: '실행 중인 Flow2CapCut 앱의 레퍼런스를 직접 수정합니다. (project.json 우회, 앱 상태 직접 변경)',
+      description: '실행 중인 AutoFlowCut 앱의 레퍼런스를 직접 수정합니다. (project.json 우회, 앱 상태 직접 변경)',
       inputSchema: {
         type: 'object',
         properties: {
@@ -559,7 +559,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'app_remove_reference',
-      description: '실행 중인 Flow2CapCut 앱에서 레퍼런스 카드를 삭제합니다. (UI의 "카드 제거" 버튼과 동일)',
+      description: '실행 중인 AutoFlowCut 앱에서 레퍼런스 카드를 삭제합니다. (UI의 "카드 제거" 버튼과 동일)',
       inputSchema: {
         type: 'object',
         properties: {
@@ -571,7 +571,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'app_clear_reference_image',
-      description: '실행 중인 Flow2CapCut 앱에서 레퍼런스의 이미지만 제거합니다. (카드는 유지, UI의 "이미지만 제거" 버튼과 동일)',
+      description: '실행 중인 AutoFlowCut 앱에서 레퍼런스의 이미지만 제거합니다. (카드는 유지, UI의 "이미지만 제거" 버튼과 동일)',
       inputSchema: {
         type: 'object',
         properties: {
@@ -583,7 +583,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'app_clear_all_reference_images',
-      description: '실행 중인 Flow2CapCut 앱에서 모든 레퍼런스의 이미지를 일괄 제거합니다. (카드는 유지, 프롬프트/이름은 보존)',
+      description: '실행 중인 AutoFlowCut 앱에서 모든 레퍼런스의 이미지를 일괄 제거합니다. (카드는 유지, 프롬프트/이름은 보존)',
       inputSchema: {
         type: 'object',
         properties: {
@@ -593,7 +593,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'app_get_scenes',
-      description: '실행 중인 Flow2CapCut 앱에서 현재 씬 목록을 가져옵니다.',
+      description: '실행 중인 AutoFlowCut 앱에서 현재 씬 목록을 가져옵니다.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -603,7 +603,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'app_update_scene',
-      description: '실행 중인 Flow2CapCut 앱의 특정 씬을 직접 수정합니다.',
+      description: '실행 중인 AutoFlowCut 앱의 특정 씬을 직접 수정합니다.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -619,7 +619,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'app_generate_reference',
-      description: '실행 중인 Flow2CapCut 앱에서 레퍼런스 이미지를 생성합니다. (프롬프트 기반 Flow API 이미지 생성 트리거). styleId를 지정하면 해당 스타일을 적용합니다.',
+      description: '실행 중인 AutoFlowCut 앱에서 레퍼런스 이미지를 생성합니다. (프롬프트 기반 Flow API 이미지 생성 트리거). styleId를 지정하면 해당 스타일을 적용합니다.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -632,7 +632,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'app_generate_scene',
-      description: '실행 중인 Flow2CapCut 앱에서 특정 씬의 이미지를 생성합니다.',
+      description: '실행 중인 AutoFlowCut 앱에서 특정 씬의 이미지를 생성합니다.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -644,7 +644,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'app_start_scene_batch',
-      description: '실행 중인 Flow2CapCut 앱에서 씬 일괄 생성(생성 시작 버튼)을 트리거합니다. pending 상태인 씬들의 이미지를 자동 생성합니다.',
+      description: '실행 중인 AutoFlowCut 앱에서 씬 일괄 생성(생성 시작 버튼)을 트리거합니다. pending 상태인 씬들의 이미지를 자동 생성합니다.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -655,7 +655,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'app_start_ref_batch',
-      description: '실행 중인 Flow2CapCut 앱에서 레퍼런스 일괄 생성을 트리거합니다. 모든 레퍼런스의 이미지를 자동 생성합니다.',
+      description: '실행 중인 AutoFlowCut 앱에서 레퍼런스 일괄 생성을 트리거합니다. 모든 레퍼런스의 이미지를 자동 생성합니다.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -1936,7 +1936,7 @@ server.setRequestHandler(ListPromptsRequestSchema, async () => ({
   prompts: [
     {
       name: 'setup',
-      description: 'Flow2CapCut 스킬 설치 상태를 확인하고 미설치 스킬을 안내합니다. MCP 연동 후 처음 사용할 때 실행하세요.',
+      description: 'AutoFlowCut 스킬 설치 상태를 확인하고 미설치 스킬을 안내합니다. MCP 연동 후 처음 사용할 때 실행하세요.',
     },
   ],
 }));
@@ -1984,7 +1984,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
     const outdated = skillStatus.filter(s => s.installed && s.needsUpdate);
     const upToDate = skillStatus.filter(s => s.installed && !s.needsUpdate);
 
-    let message = '# Flow2CapCut 스킬 설정\n\n';
+    let message = '# AutoFlowCut 스킬 설정\n\n';
 
     if (notInstalled.length === 0 && outdated.length === 0) {
       message += '✅ 모든 스킬이 최신 상태입니다!\n\n';
@@ -2073,7 +2073,7 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Flow2CapCut MCP Server 시작됨 (stdio)');
+  console.error('AutoFlowCut MCP Server 시작됨 (stdio)');
 }
 
 main().catch(err => {

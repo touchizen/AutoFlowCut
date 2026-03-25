@@ -1,14 +1,14 @@
 /**
- * Flow2CapCut API Documentation
+ * AutoFlowCut API Documentation
  * OpenAPI 3.0 spec + Swagger UI HTML
  */
 
 export const openApiSpec = {
   openapi: '3.0.3',
   info: {
-    title: 'Flow2CapCut API',
+    title: 'AutoFlowCut API',
     version: '1.0.0',
-    description: `Flow2CapCut Electron 앱의 HTTP API입니다.
+    description: `AutoFlowCut Electron 앱의 HTTP API입니다.
 
 MCP(Model Context Protocol) 서버를 통해 Claude Code에서 제어하거나, 직접 HTTP 호출로 사용할 수 있습니다.
 
@@ -16,12 +16,12 @@ MCP(Model Context Protocol) 서버를 통해 Claude Code에서 제어하거나, 
 
 ### 1. 앱 설정
 
-Flow2CapCut 앱 > **설정** > **MCP HTTP 서버** > **ON** (포트: 3210)
+AutoFlowCut 앱 > **설정** > **MCP HTTP 서버** > **ON** (포트: 3210)
 
 ### 2. MCP 서버 설치
 
 \`\`\`bash
-cd /path/to/Flow2CapCut/mcp-server
+cd /path/to/AutoFlowCut/mcp-server
 npm install
 \`\`\`
 
@@ -30,7 +30,7 @@ npm install
 #### 글로벌 설정 (모든 프로젝트에서 사용) — 권장
 
 \`\`\`bash
-claude mcp add --scope user --transport stdio flow2capcut -- node /path/to/Flow2CapCut/mcp-server/index.js
+claude mcp add --scope user --transport stdio flow2capcut -- node /path/to/AutoFlowCut/mcp-server/index.js
 \`\`\`
 
 \`~/.claude.json\`의 \`mcpServers\`에 저장됩니다.
@@ -44,7 +44,7 @@ claude mcp add --scope user --transport stdio flow2capcut -- node /path/to/Flow2
   "mcpServers": {
     "flow2capcut": {
       "command": "node",
-      "args": ["/path/to/Flow2CapCut/mcp-server/index.js"]
+      "args": ["/path/to/AutoFlowCut/mcp-server/index.js"]
     }
   }
 }
@@ -152,7 +152,7 @@ curl http://127.0.0.1:3210/api/batch-status
 `,
   },
   servers: [
-    { url: 'http://127.0.0.1:3210', description: 'Local Flow2CapCut' },
+    { url: 'http://127.0.0.1:3210', description: 'Local AutoFlowCut' },
   ],
   tags: [
     { name: '프로젝트', description: '프로젝트 생성/목록/수정/삭제' },
@@ -297,7 +297,7 @@ curl http://127.0.0.1:3210/api/batch-status
                   type: 'object',
                   properties: {
                     status: { type: 'string', example: 'ok' },
-                    app: { type: 'string', example: 'Flow2CapCut' },
+                    app: { type: 'string', example: 'AutoFlowCut' },
                   },
                 },
               },
@@ -557,7 +557,7 @@ export function getSwaggerHtml(port) {
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-  <title>Flow2CapCut API Docs</title>
+  <title>AutoFlowCut API Docs</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css">
   <style>
     body { margin: 0; background: #fafafa; }

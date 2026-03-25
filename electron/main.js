@@ -1061,7 +1061,7 @@ function startMcpHttpServer(port) {
         // GET /api/status — 서버 상태 확인
         if (req.method === 'GET' && pathname === '/api/status') {
           res.writeHead(200)
-          res.end(JSON.stringify({ status: 'ok', app: 'Flow2CapCut' }))
+          res.end(JSON.stringify({ status: 'ok', app: 'AutoFlowCut' }))
           return
         }
 
