@@ -21,6 +21,7 @@ export default function WelcomeScreen({ getAccessToken, onReady }) {
     // Flow 지역 제한 감지
     const handleFlowStatus = (data) => {
       if (data?.unavailable) {
+        unavailableRef.current = true
         setAuthStatus('unavailable')
         stopPolling()
       }
@@ -35,7 +36,10 @@ export default function WelcomeScreen({ getAccessToken, onReady }) {
     }
   }, [])
   
+  const unavailableRef = useRef(false)
+
   const checkAuth = async (quickCheck = false) => {
+    if (unavailableRef.current) return // 지역 제한 시 인증 체크 중단
     setAuthStatus('checking')
     try {
       const token = await getAccessToken(false, quickCheck)
@@ -48,10 +52,10 @@ export default function WelcomeScreen({ getAccessToken, onReady }) {
         }, 1000)
         onReady?.()
       } else {
-        setAuthStatus('unauthenticated')
+        if (!unavailableRef.current) setAuthStatus('unauthenticated')
       }
     } catch (e) {
-      setAuthStatus('unauthenticated')
+      if (!unavailableRef.current) setAuthStatus('unauthenticated')
     }
   }
   

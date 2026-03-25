@@ -149,18 +149,22 @@ function createWindow() {
 
   // Load Flow
   flowView.webContents.loadURL(FLOW_URL)
+
+  // 지역 제한 조기 감지 (did-navigate는 did-finish-load보다 먼저 발생)
+  flowView.webContents.on('did-navigate', (_, url) => {
+    if (url.includes('unsupported-country')) {
+      console.log('[Flow] Region unavailable detected early (did-navigate)')
+      mainWindow.webContents.send('flow-status', {
+        loaded: true, url, loggedIn: false, unavailable: true
+      })
+    }
+  })
+
   flowView.webContents.on('did-finish-load', async () => {
     const url = flowView.webContents.getURL()
     console.log('[Flow] did-finish-load:', url)
-    // 지역 제한("Flow is not available in your country yet") 감지
-    let unavailable = false
-    if (url.includes('labs.google')) {
-      try {
-        unavailable = await flowView.webContents.executeJavaScript(`
-          !!(document.body?.innerText?.includes('not available in your country'))
-        `)
-      } catch (_) {}
-    }
+    // 지역 제한 감지 (URL 기반 — localization 무관)
+    const unavailable = url.includes('unsupported-country')
 
     mainWindow.webContents.send('flow-status', {
       loaded: true,
