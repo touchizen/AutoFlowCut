@@ -24,6 +24,13 @@ export default function WelcomeScreen({ getAccessToken, onReady }) {
         unavailableRef.current = true
         setAuthStatus('unavailable')
         stopPolling()
+      } else if (data?.authenticated) {
+        setAuthStatus('authenticated')
+        stopPolling()
+        setTimeout(() => {
+          window.electronAPI?.switchTab?.('app')
+        }, 1000)
+        onReady?.()
       }
     }
     window.electronAPI?.onFlowStatus?.(handleFlowStatus)

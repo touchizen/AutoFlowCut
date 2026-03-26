@@ -268,6 +268,10 @@ function createWindow() {
           capturedProjectId = pidMatch[1]
           enterToolClicked = true // 이미 프로젝트 안에 있으므로 다시 클릭 불필요
           console.log('[Flow API] ProjectId from URL:', capturedProjectId)
+          mainWindow.webContents.send('flow-status', {
+            authenticated: true,
+            url
+          })
           return
         }
 
@@ -296,6 +300,10 @@ function createWindow() {
           return
         }
         console.log('[Flow API] User logged in, token length:', token.length)
+        mainWindow.webContents.send('flow-status', {
+          authenticated: true,
+          url: flowView.webContents.getURL()
+        })
 
         // 3단계: 잠시 대기 — Flow SPA가 자동으로 프로젝트로 리다이렉트할 수 있음
         await new Promise(r => setTimeout(r, 2000))
@@ -478,9 +486,15 @@ function createWindow() {
       loaded: true, url, loggedIn: url.includes('labs.google/fx')
     })
     const pidMatch = url.match(/\/project\/([a-f0-9-]{36})/)
-    if (pidMatch && !capturedProjectId) {
-      capturedProjectId = pidMatch[1]
-      console.log('[Flow API] ProjectId from SPA navigation:', capturedProjectId)
+    if (pidMatch) {
+      if (!capturedProjectId) {
+        capturedProjectId = pidMatch[1]
+        console.log('[Flow API] ProjectId from SPA navigation:', capturedProjectId)
+      }
+      mainWindow.webContents.send('flow-status', {
+        authenticated: true,
+        url
+      })
     }
   })
 
