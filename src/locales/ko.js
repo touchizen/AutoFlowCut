@@ -711,7 +711,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
   exportModalExtra: {
     pathRequired: '내보내기 경로가 필요합니다.',
     autoDetected: '자동 감지됨',
-    capcutNotInstalled: 'CapCut이 설치되어 있지 않습니다. 다운로드하시겠습니까?',
+    capcutNotInstalled: 'CapCut이 설치되어 있지 않습니다. Microsoft Store에서 설치하시겠습니까?',
   },
 
   // CapCut Cloud
