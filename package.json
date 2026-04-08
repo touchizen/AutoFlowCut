@@ -1,6 +1,6 @@
 {
   "name": "autoflowcut",
-  "version": "0.9.2.2",
+  "version": "0.9.3",
   "description": "AutoFlowCut - Automate AI video creation from Google Flow to CapCut projects",
   "main": "dist-electron/main.js",
   "type": "module",
@@ -17,8 +17,8 @@
     "dist:test": "vite build --mode development && electron-builder",
     "dist:test:mac": "vite build --mode development && electron-builder --mac",
     "dist:test:win": "vite build --mode development && electron-builder --win",
-    "dist:win:nsis": "vite build --mode production && electron-builder --win nsis",
-    "dist:win:appx": "vite build --mode production && scripts\\buildappx.bat",
+    "dist:win:nsis": "set VITE_BUILD_TARGET=nsis&& vite build --mode production && electron-builder --win nsis",
+    "dist:win:appx": "set VITE_BUILD_TARGET=appx&& vite build --mode production && scripts\\buildappx.bat",
     "dist:win:all": "vite build --mode production && electron-builder --win",
     "test": "vitest",
     "test:run": "vitest run",

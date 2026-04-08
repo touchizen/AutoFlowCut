@@ -43,7 +43,8 @@ export default defineConfig(({ mode }) => {
     // renderer (React) — production에서 console/debugger 제거
     esbuild: isProduction ? { drop: ['console', 'debugger'] } : {},
     define: {
-      '__APP_VERSION__': JSON.stringify(process.env.npm_package_version || '0.1.0')
+      '__APP_VERSION__': JSON.stringify(process.env.npm_package_version || '0.1.0'),
+      '__BUILD_TARGET__': JSON.stringify(process.env.VITE_BUILD_TARGET || 'nsis')
     }
   }
 })

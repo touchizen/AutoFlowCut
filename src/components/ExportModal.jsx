@@ -161,7 +161,10 @@ export const ExportModal = ({ isOpen, onClose, onExport, projectName, loading, e
         if (!result.installed) {
           const wantDownload = window.confirm(t('exportModalExtra.capcutNotInstalled'))
           if (wantDownload) {
-            window.electronAPI.openExternal('https://www.capcut.com/download')
+            const url = __BUILD_TARGET__ === 'appx'
+              ? 'ms-windows-store://pdp/?ProductId=XP9KN75RRB9NHS'
+              : 'https://www.capcut.com/download'
+            window.electronAPI.openExternal(url)
           }
           return
         }
