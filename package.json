@@ -84,6 +84,7 @@
         "dmg",
         "zip"
       ],
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}",
       "category": "public.app-category.video",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
@@ -129,9 +130,6 @@
       ],
       "category": "Video",
       "artifactName": "${productName}-${version}-linux-${arch}.${ext}"
-    },
-    "dmg": {
-      "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
     }
   }
 }
