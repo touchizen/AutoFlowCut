@@ -1,0 +1,13 @@
+{
+  "name": "story-engine",
+  "version": "2.0.0",
+  "description": "YouTube story channel 8-wave automated pipeline (yadam / dark-history)",
+  "dependencies": ["story-new", "story-execute", "story-next"],
+  "variables": {
+    "PROJECT": {
+      "required": false,
+      "description": "Project working directory (auto-detected from AutoFlowCut work folder)",
+      "example": "/Users/tuxxon/premiere-workspace/무한야담"
+    }
+  }
+}

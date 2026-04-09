@@ -1,7 +1,10 @@
 import { app, BrowserWindow, WebContentsView, ipcMain, shell, protocol, net, powerSaveBlocker } from 'electron'
 import http from 'node:http'
 import fs from 'node:fs/promises'
+import fsSync from 'node:fs'
 import path from 'node:path'
+import os from 'node:os'
+import { execSync as execSyncRaw } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import dotenv from 'dotenv'
 import { registerFilesystemIPC } from './ipc/filesystem.js'
@@ -1613,6 +1616,66 @@ protocol.registerSchemesAsPrivileged([{
   privileges: { bypassCSP: true, stream: true, supportFetchAPI: true, standard: true, secure: true }
 }])
 
+// === Auto Setup Skills (Claude Code integration) ===
+function copyDirSync(src, dest) {
+  if (!fsSync.existsSync(src)) return
+  fsSync.mkdirSync(dest, { recursive: true })
+  for (const entry of fsSync.readdirSync(src, { withFileTypes: true })) {
+    const srcPath = path.join(src, entry.name)
+    const destPath = path.join(dest, entry.name)
+    if (entry.isDirectory()) {
+      copyDirSync(srcPath, destPath)
+    } else {
+      fsSync.copyFileSync(srcPath, destPath)
+    }
+  }
+}
+
+function autoSetupSkills() {
+  // Claude Code 존재 확인
+  try {
+    execSyncRaw('claude --version', { stdio: 'pipe', timeout: 5000 })
+  } catch {
+    return // Claude Code 없음 → 스킬 설치 불필요
+  }
+
+  const skillsSource = path.join(process.resourcesPath, 'skills')
+  const skillsDest = path.join(os.homedir(), '.claude', 'skills')
+  const markerFile = path.join(skillsDest, '.autoflowcut-installed')
+
+  // 이미 설치되었고 버전이 같으면 스킵
+  if (fsSync.existsSync(markerFile)) {
+    try {
+      const marker = JSON.parse(fsSync.readFileSync(markerFile, 'utf-8'))
+      if (marker.version === app.getVersion()) return
+    } catch { /* 마커 파일 손상 → 재설치 */ }
+  }
+
+  // 스킬 4개 복사
+  fsSync.mkdirSync(skillsDest, { recursive: true })
+  for (const skill of ['story-engine', 'story-new', 'story-execute', 'story-next']) {
+    const src = path.join(skillsSource, skill)
+    if (fsSync.existsSync(src)) {
+      copyDirSync(src, path.join(skillsDest, skill))
+    }
+  }
+
+  // MCP 서버 등록
+  const mcpPath = path.join(process.resourcesPath, 'mcp-server', 'index.js')
+  try {
+    execSyncRaw(`claude mcp add --scope user --transport stdio autoflowcut -- node "${mcpPath}"`, {
+      stdio: 'pipe', timeout: 10000
+    })
+  } catch { /* Claude CLI 실패 시 무시 — 사용자가 수동 등록 가능 */ }
+
+  // 마커 파일 (버전 포함)
+  fsSync.writeFileSync(markerFile, JSON.stringify({
+    version: app.getVersion(),
+    installedAt: new Date().toISOString()
+  }))
+  console.log('[AutoFlowCut] Skills installed to ~/.claude/skills/')
+}
+
 // === App Lifecycle ===
 app.whenReady().then(() => {
   // local-resource:// 프로토콜 핸들러 등록
@@ -1626,6 +1689,10 @@ app.whenReady().then(() => {
     }
     return net.fetch(`file://${filePath}`)
   })
+
+  // Claude Code 스킬 자동 설치 (앱 시작 시)
+  try { autoSetupSkills() } catch (e) { console.warn('[AutoFlowCut] Skill setup failed:', e.message) }
+
   createWindow()
 })
 

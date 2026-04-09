@@ -20,6 +20,7 @@
     "dist:win:nsis": "set VITE_BUILD_TARGET=nsis&& vite build --mode production && electron-builder --win nsis",
     "dist:win:appx": "set VITE_BUILD_TARGET=appx&& vite build --mode production && scripts\\buildappx.bat",
     "dist:win:all": "vite build --mode production && electron-builder --win",
+    "dist:linux": "vite build --mode production && electron-builder --linux",
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage"
@@ -91,6 +92,12 @@
     },
     "win": {
       "icon": "assets/icon.png",
+      "signtoolOptions": {
+        "certificateSha1": "778FF11A7D92ABBB2DF9998ABDFB6F1200E0C0DF",
+        "timeStampServer": "http://time.certum.pl",
+        "rfc3161TimeStampServer": "http://time.certum.pl",
+        "publisherName": "Open Source Developer Gook Whan Ahn"
+      },
       "target": [
         "nsis",
         "zip",
@@ -111,7 +118,20 @@
     "nsis": {
       "oneClick": false,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "${productName}-${version}-win-${arch}-Setup.${ext}"
+    },
+    "linux": {
+      "icon": "assets/icon.png",
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Video",
+      "artifactName": "${productName}-${version}-linux-${arch}.${ext}"
+    },
+    "dmg": {
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
     }
   }
 }

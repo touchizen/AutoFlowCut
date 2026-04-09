@@ -143,7 +143,7 @@ function ensureLoaded() {
   }
 }
 
-// ── R_progress.json 게이트 시스템 ─────────────────────────────
+// ── W_progress.json 진행 기록 (게이트 비활성화 — STATE.md가 메인) ──
 let progressFilePath = '';
 
 async function findProgressFile(port = 3210) {
@@ -151,12 +151,12 @@ async function findProgressFile(port = 3210) {
   if (progressFilePath && fs.existsSync(progressFilePath)) return progressFilePath;
   // 2. CSV/project.json 기반
   if (projectJsonPath) {
-    const p = path.join(path.dirname(projectJsonPath), 'R_progress.json');
+    const p = path.join(path.dirname(projectJsonPath), 'W_progress.json');
     progressFilePath = p;
     return p;
   }
   if (csvPath) {
-    const p = path.join(path.dirname(csvPath), 'R_progress.json');
+    const p = path.join(path.dirname(csvPath), 'W_progress.json');
     progressFilePath = p;
     return p;
   }
@@ -164,7 +164,7 @@ async function findProgressFile(port = 3210) {
   try {
     const res = await appFetch(port, 'GET', '/api/current-project');
     if (res && res.data && res.data.projectDir) {
-      const p = path.join(res.data.projectDir, 'R_progress.json');
+      const p = path.join(res.data.projectDir, 'W_progress.json');
       progressFilePath = p;
       return p;
     }
@@ -180,7 +180,7 @@ async function readProgress(port = 3210) {
 
 async function writeProgress(data, port = 3210) {
   const p = await findProgressFile(port);
-  if (!p) throw new Error('R_progress.json 경로를 찾을 수 없습니다. 앱에서 프로젝트를 열거나 CSV를 먼저 로드하세요.');
+  if (!p) throw new Error('W_progress.json 경로를 찾을 수 없습니다. 앱에서 프로젝트를 열거나 CSV를 먼저 로드하세요.');
   fs.writeFileSync(p, JSON.stringify(data, null, 2), 'utf-8');
 }
 
@@ -191,16 +191,9 @@ async function isStepDone(stepId, port = 3210) {
 }
 
 // 게이트 정의: 다음 단계 → 선행 조건
-const STEP_GATES = {
-  'app_start_ref_batch': ['R10-3_references_review'],
-  'app_start_scene_batch': ['R10-3_scenes_review'],
-  'load_csv_references': ['R10-3_references_review'],
-  'load_csv_scenes': ['R10-3_scenes_review'],
-  'audio_import_narration': ['R09_narration_qa'],
-  'audio_import_voice': ['R09_voice_qa'],
-  'audio_import_sfx': ['R09_sfx_qa'],
-  'export_capcut': ['R11_audio_import'],
-};
+// Gate system disabled — workflow orchestrator manages flow via STATE.md
+// Kept as empty object for backward compatibility (gate check code still references it)
+const STEP_GATES = {};
 
 function loadProjectJson(projectDir) {
   const pjPath = path.join(projectDir, 'project.json');
@@ -690,11 +683,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     // ── 워크플로우 게이트 도구 ──
     {
       name: 'mark_step_done',
-      description: '워크플로우 단계의 검토 결과를 R_progress.json에 기록합니다. subagent가 검토 완료 시 호출합니다. result가 "pass"일 때만 다음 단계 게이트가 열립니다.',
+      description: '워크플로우 단계의 검토 결과를 W_progress.json에 기록합니다 (로그 전용 — 게이트 아님). 오케스트레이터가 Wave 완료 시 호출합니다.',
       inputSchema: {
         type: 'object',
         properties: {
-          step: { type: 'string', description: '단계 ID (예: "R10-3_scenes_review", "R10-3_references_review")' },
+          step: { type: 'string', description: '단계 ID (예: "W1_analysis", "W3_review", "W6_scenes_review")' },
           round: { type: 'number', description: '검토 라운드 번호 (1~5)' },
           result: { type: 'string', enum: ['pass', 'fail'], description: 'pass=검토 통과, fail=수정 필요' },
           issues_found: { type: 'number', description: '발견된 문제 수' },
@@ -705,7 +698,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'export_capcut',
-      description: 'CapCut 프로젝트로 내보냅니다. 오디오 임포트(R11_audio_import) 완료 후에만 실행 가능합니다.',
+      description: 'CapCut 프로젝트로 내보냅니다. 오디오 임포트 완료 후 실행합니다.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -715,7 +708,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'get_progress',
-      description: '현재 R_progress.json의 워크플로우 진행 상태를 조회합니다.',
+      description: '현재 W_progress.json의 워크플로우 진행 상태를 조회합니다.',
       inputSchema: {
         type: 'object',
         properties: {},
@@ -1554,51 +1547,33 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             catch { return `⚠️ 문서를 찾을 수 없음: ${filePath}\n🔴 반드시 Read 도구로 직접 읽어라.`; }
           };
 
+          // W(Wave) 기반 다음 단계 가이드 (로그 전용 — 게이트 아님)
           const NEXT_STEP_GUIDE = {
-            // R1→R2: 같은 문서 그룹, 간단 안내
-            'R1_diagnosis': `\n\n📋 다음: R2 팩트체크\n역사적 사실 검증 + 시대고증 확인.`,
-            'R2_factcheck': `\n\n📋 다음: R3 시놉시스\n🔴 반드시 읽어라:\n` +
-              `- meta-prompts/yadam/야담_시놉시스_작성_지침.md\n\n` +
-              loadDoc(path.join(metaPromptsDir, '야담_시놉시스_작성_지침.md')),
-            // R3→R4: 문서 그룹 전환 (R01-03 → R04-07)
-            'R3_synopsis': `\n\n📋 다음: R4 프리플라이트\n🔴 참조 문서 자동 로드:\n\n` +
-              loadDoc(path.join(skillDocsDir, 'R04-07-writing.md')) + `\n\n` +
-              `🔴 프리플라이트 상세:\n` +
-              loadDoc(path.join(metaPromptsDir, '야담_프리플라이트.md')),
-            // R4→R5: 대본 작성 시작
-            'R4_preflight': `\n\n📋 다음: R5 대본 작성 (기→승→전→결→훅 순서)\n🔴 반드시 읽어라:\n\n` +
-              `--- 야담_시나리오_작성_지침 ---\n` +
-              loadDoc(path.join(metaPromptsDir, '야담_시나리오_작성_지침.md')) + `\n\n` +
-              `--- 야담_서술기법_가이드 ---\n` +
-              loadDoc(path.join(metaPromptsDir, '야담_서술기법_가이드.md')) + `\n\n` +
-              `--- 야담_서스펜스_기법 ---\n` +
-              loadDoc(path.join(metaPromptsDir, '야담_서스펜스_기법.md')),
-            // R5→R6: 검토
-            'R5_writing': `\n\n📋 다음: R6 검토 후 수정\nsubagent 반복 검토, 최대 5라운드. 수정사항 없을 때까지.`,
-            // R6→R7: 대본 확정
-            'R6_review': `\n\n📋 다음: R7 대본 확정\n🛑 사용자 확인 필수. 대본을 확정할지 물어봐라.`,
-            // R7→R8: 문서 그룹 전환 (R04-07 → R08-09)
-            'R7_finalize': `\n\n📋 다음: R8 프로덕션 추출\n🔴 참조 문서 자동 로드:\n\n` +
-              loadDoc(path.join(skillDocsDir, 'R08-09-production.md')),
-            // R8→R8.5: 추출 검토
-            'R8_production': `\n\n📋 다음: R8.5 프로덕션 추출 검토\nsubagent가 대본 원문과 추출 파일을 대조. 최대 5라운드.`,
-            // R8.5→R9: TTS/SFX
-            'R8.5_review': `\n\n📋 다음: R9 TTS/SFX 생성\nElevenLabs mp3+SRT 동시 생성. 자막 수동 분리 필수.`,
-            // R9→R10: 문서 그룹 전환 (R08-09 → R10)
-            'R9_tts_sfx': `\n\n📋 다음: R10 스토리보드 CSV\n🔴 참조 문서 자동 로드:\n\n` +
-              loadDoc(path.join(skillDocsDir, 'R10-storyboard.md')),
-            // R10-3→R11: 문서 그룹 전환 (R10 → R11-12)
-            'R10-3_references_review': `\n\n📋 다음: 레퍼런스 이미지 생성 + QA\n` +
-              `1. app_start_ref_batch({ styleId }) → 일괄 생성\n` +
-              `2. 생성 완료 후 QA: Read 도구로 이미지 직접 확인\n` +
-              `   🔴 수정 시 잘못된 카드만 개별 삭제/재생성. 절대 전체 삭제 금지\n\n` +
-              `🔴 참조 문서 자동 로드:\n\n` +
-              loadDoc(path.join(skillDocsDir, 'R11-12-image-upload.md')),
-            'R10-3_scenes_review': `\n\n📋 다음: 씬 이미지 일괄 생성 + QA\n` +
-              `1. app_start_scene_batch({ styleId }) → 일괄 생성\n` +
-              `2. 전수검사 (최대 5라운드): Read 도구로 10장씩 확인\n` +
-              `   체크: 누락, 스타일, 복장, 인물 수, 감정, 배경, 소품, 시대\n` +
-              `   문제 시 프롬프트 수정 → 개별 재생성`,
+            // W1 내부 단계
+            'W1_analysis': `\n\n📋 W1 완료 → W2 시놉시스 + 프리플라이트`,
+            'W1_factcheck': `\n\n📋 W1 팩트체크 완료.`,
+            'W1_research': `\n\n📋 W1 자료수집 완료 → W2 시놉시스로 진행.`,
+            // W2
+            'W2_synopsis': `\n\n📋 W2 시놉시스 완료 → 프리플라이트 체크.`,
+            'W2_preflight': `\n\n📋 W2 완료 → W3 대본 작성.`,
+            // W3
+            'W3_writing': `\n\n📋 W3 대본 작성 완료 → 검토 루프.`,
+            'W3_review': `\n\n📋 W3 검토 완료 → 🛑 사용자 대본 확정 필요.`,
+            'W3_finalize': `\n\n📋 W3 확정 → W4 프로덕션 추출.`,
+            // W4
+            'W4_production': `\n\n📋 W4 추출 완료 → 검증 루프.`,
+            'W4_review': `\n\n📋 W4 완료 → W5 TTS/SFX.`,
+            // W5
+            'W5_tts_sfx': `\n\n📋 W5 TTS/SFX 완료 → 타임코드 검증.`,
+            'W5_timecode_qa': `\n\n📋 W5 완료 → W6 스토리보드 CSV.`,
+            // W6
+            'W6_references_review': `\n\n📋 W6 레퍼런스 CSV 검토 완료.`,
+            'W6_scenes_review': `\n\n📋 W6 완료 → W7 이미지 생성.`,
+            // W7
+            'W7_image_qa': `\n\n📋 W7 이미지 QA 완료 → 오디오 임포트 + CapCut 내보내기.`,
+            'W7_complete': `\n\n📋 W7 완료 → W8 업로드 정보.`,
+            // W8
+            'W8_upload': `\n\n📋 W8 완료. 전체 파이프라인 종료.`,
           };
           const guide = NEXT_STEP_GUIDE[step];
           if (guide) msg += guide;
@@ -1614,7 +1589,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const progress = await readProgress(port);
         if (Object.keys(progress).length === 0) {
           return {
-            content: [{ type: 'text', text: 'R_progress.json이 없거나 비어있습니다. 아직 완료된 단계가 없습니다.' }],
+            content: [{ type: 'text', text: 'W_progress.json이 없거나 비어있습니다. 아직 완료된 단계가 없습니다.' }],
           };
         }
         return {
@@ -1683,9 +1658,36 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
         fs.writeFileSync(path.join(installDir, 'metadata.json'), JSON.stringify(installMeta, null, 2), 'utf-8');
 
+        // dependencies 자동 설치
+        const deps = metadata.dependencies || [];
+        const installedDeps = [];
+        for (const depName of deps) {
+          const depDir = path.join(SKILLS_REPO_DIR, depName);
+          if (fs.existsSync(path.join(depDir, 'SKILL.md'))) {
+            const depInstallDir = path.join(SKILLS_INSTALL_DIR, depName);
+            fs.mkdirSync(depInstallDir, { recursive: true });
+            // SKILL.md 복사 (변수 치환 적용)
+            let depContent = fs.readFileSync(path.join(depDir, 'SKILL.md'), 'utf-8');
+            depContent = substituteVariables(depContent, resolvedVars);
+            fs.writeFileSync(path.join(depInstallDir, 'SKILL.md'), depContent, 'utf-8');
+            // metadata.json 복사
+            const depMetaPath = path.join(depDir, 'metadata.json');
+            if (fs.existsSync(depMetaPath)) {
+              const depMeta = JSON.parse(fs.readFileSync(depMetaPath, 'utf-8'));
+              fs.writeFileSync(path.join(depInstallDir, 'metadata.json'), JSON.stringify({
+                ...depMeta, installedAt: new Date().toISOString(), resolvedVariables: resolvedVars,
+              }, null, 2), 'utf-8');
+            }
+            installedDeps.push(depName);
+          }
+        }
+
         const varSummary = Object.entries(resolvedVars)
           .map(([k, v]) => `  ${k} = ${v}`)
           .join('\n');
+        const depMsg = installedDeps.length > 0
+          ? `\n의존 스킬: ${installedDeps.join(', ')} (자동 설치)`
+          : '';
 
         return {
           content: [{
@@ -1693,7 +1695,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             text: `✅ 스킬 '${skillName}' 설치 완료!\n` +
               `경로: ${installDir}\n` +
               `버전: ${metadata.version || '(없음)'}\n` +
-              `변수:\n${varSummary}`,
+              `변수:\n${varSummary}${depMsg}`,
           }],
         };
       }
