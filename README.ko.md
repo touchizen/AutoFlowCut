@@ -26,13 +26,18 @@ AutoFlowCut은 숏폼 영상 제작을 자동화하는 데스크톱 앱입니다
 - **CapCut 내보내기** — 이미지, 비디오, 자막이 포함된 CapCut 프로젝트 자동 생성
 - **프로젝트 저장/복원** — 작업 저장 후 나중에 이어서 작업
 - **매칭 태그** — 씬 간 일관된 캐릭터/스타일 유지
+- **Story Engine v2** — Claude Code 연동 8-Wave 자동 파이프라인 (대본 → TTS → 이미지 → CapCut)
+  - `/story-new` — 에피소드 초기화 + 주제 논의
+  - `/story-execute` — W1~W8 자동 실행 (서브에이전트 + 리뷰 루프)
+  - `/story-next` — 중단 후 재개
 
 ## 다운로드
 
 | 플랫폼 | 다운로드 |
 |--------|----------|
-| macOS (Apple Silicon) | [AutoFlowCut-0.9.0-arm64.dmg](https://github.com/touchizen/AutoFlowCut/releases/latest) |
-| Windows | [Microsoft Store](https://apps.microsoft.com/detail/9p2d9g1f4j7q) |
+| macOS (Apple Silicon) | [GitHub Releases](https://github.com/touchizen/AutoFlowCut/releases/latest) |
+| Windows (설치 파일) | [GitHub Releases](https://github.com/touchizen/AutoFlowCut/releases/latest) |
+| Windows (MS Store) | [Microsoft Store](https://apps.microsoft.com/detail/6129CF9F.AutoFlowCut) |
 
 ## 시작하기
 

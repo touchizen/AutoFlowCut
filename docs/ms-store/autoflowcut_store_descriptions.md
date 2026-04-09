@@ -73,7 +73,13 @@ AutoFlowCut includes a built-in MCP (Model Context Protocol) server that connect
 - Trigger image/video generation from Claude Code
 - Review and fix problem scenes automatically
 - Install custom skills for specialized workflows (e.g., story scripting)
-- Workflow gate system ensures steps are completed in the correct order
+- Workflow state tracking via STATE.md for reliable progress management
+
+Story Engine v2 — 8-Wave automated pipeline for story-driven video production:
+- /story-new — Initialize episode, select genre (yadam/dark-history), discuss topic
+- /story-execute — Run W1~W8 automatically (story design, synopsis, writing, TTS/SFX, storyboard, images, CapCut export)
+- /story-next — Resume from where you left off
+- Built-in review loops (max 5 rounds per wave, auto-advance on 0 issues)
 
 Enable the HTTP API (port 3210) in Settings to allow external tools to interact with your project.
 
@@ -121,23 +127,18 @@ Disclaimer: This app is an independent product developed by Touchizen and is not
 
 ### What's New
 ```
-v0.9.1 — First Public Release
+v0.9.4 — Story Engine v2 + Code Signing
 
-All-in-one desktop app for AI video creators. Powered by Google Flow AI.
-
-- Batch AI image generation with reference-based visual consistency
-- T2V (Text-to-Video) generation for dynamic scenes
-- I2V (Image-to-Video) generation from scene images
-- Per-scene media selection (image / T2V / I2V)
-- One-click CapCut project export (timeline, subtitles, Ken Burns animations)
-- TXT / CSV / SRT import support
-- Auto tag matching for character, background, and style control
-- 80+ style presets (anime, watercolor, cinematic, etc.)
-- Built-in MCP server for Claude Code integration
-- Custom skill installation for specialized workflows
-- HTTP API (port 3210) for external tool automation
-- 100% free & open source
-- English & Korean support
+- Story Engine v2: 8-Wave automated pipeline (script → TTS → storyboard → images → CapCut)
+- New skills: /story-new, /story-execute, /story-next for fully automated story production
+- Auto skill install on first app launch (when Claude Code is detected)
+- Windows code signing with Certum OV certificate
+- Linux support (AppImage, deb)
+- Consistent artifact naming (product-version-os-arch)
+- Install_skill now supports dependency auto-installation
+- Workflow state management via STATE.md (replaces gate system)
+- Review loops: max 5 rounds per wave, auto-advance on 0 issues
+- 87 style presets (updated from 80+)
 ```
 
 ### Keywords
@@ -218,7 +219,13 @@ AutoFlowCut에는 Claude Code와 직접 연결되는 내장 MCP(Model Context Pr
 - Claude Code에서 이미지/비디오 생성 트리거
 - 문제 씬을 자동으로 검토하고 수정
 - 전문 워크플로우용 커스텀 스킬 설치 (예: 스토리 대본 작성)
-- 워크플로우 게이트 시스템으로 작업 순서를 보장
+- STATE.md 기반 워크플로우 상태 관리로 안정적인 진행 추적
+
+Story Engine v2 — 스토리 기반 영상 제작을 위한 8-Wave 자동 파이프라인:
+- /story-new — 에피소드 초기화, 장르 선택 (야담/다크 히스토리), 주제 논의
+- /story-execute — W1~W8 자동 실행 (스토리 설계, 시놉시스, 대본, TTS/SFX, 스토리보드, 이미지, CapCut 내보내기)
+- /story-next — 중단한 곳에서 이어서 실행
+- 내장 리뷰 루프 (Wave당 최대 5회, 문제 0이면 자동 다음 진행)
 
 설정에서 HTTP API(포트 3210)를 활성화하면 외부 도구에서도 프로젝트에 접근할 수 있습니다.
 
@@ -266,23 +273,18 @@ Touchizen 제작 — touchizen.com
 
 ### What's New (새로운 기능)
 ```
-v0.9.1 — 첫 공개 릴리즈
+v0.9.4 — Story Engine v2 + 코드 서명
 
-AI 영상 크리에이터를 위한 올인원 데스크톱 앱. Google Flow AI 기반.
-
-- 레퍼런스 기반 일괄 AI 이미지 생성
-- T2V (텍스트→비디오) 생성
-- I2V (이미지→비디오) 생성
-- 씬별 미디어 선택 (이미지 / T2V / I2V)
-- 원클릭 CapCut 프로젝트 내보내기 (타임라인, 자막, Ken Burns 애니메이션)
-- TXT / CSV / SRT 가져오기 지원
-- 자동 태그 매칭 (캐릭터, 배경, 스타일)
-- 80종 이상 스타일 프리셋 (애니메이션, 수채화, 시네마틱 등)
-- 내장 MCP 서버로 Claude Code 연동
-- 커스텀 스킬 설치 및 워크플로우 자동화
-- HTTP API (포트 3210) 외부 도구 연동
-- 100% 무료 & 오픈소스
-- 한국어 / 영어 지원
+- Story Engine v2: 8-Wave 자동 파이프라인 (대본 → TTS → 스토리보드 → 이미지 → CapCut)
+- 새 스킬: /story-new, /story-execute, /story-next로 스토리 영상 완전 자동화
+- 앱 첫 실행 시 Claude Code 감지 → 스킬 자동 설치
+- Windows 코드 서명 (Certum OV 인증서)
+- Linux 지원 (AppImage, deb)
+- 통일된 파일명 규칙 (제품명-버전-OS-아키텍쳐)
+- install_skill 의존성 자동 설치 지원
+- STATE.md 기반 워크플로우 상태 관리 (게이트 시스템 대체)
+- 리뷰 루프: Wave당 최대 5회, 문제 0이면 즉시 다음 진행
+- 87가지 스타일 프리셋 (80종에서 업데이트)
 ```
 
 ### Keywords (한국어)
