@@ -93,6 +93,7 @@
     },
     "win": {
       "icon": "assets/icon.png",
+      "artifactName": "${productName}-${version}-win-${arch}.${ext}",
       "signtoolOptions": {
         "certificateSha1": "778FF11A7D92ABBB2DF9998ABDFB6F1200E0C0DF",
         "timeStampServer": "http://time.certum.pl",
