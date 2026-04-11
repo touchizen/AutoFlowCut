@@ -10,6 +10,7 @@
     "build": "vite build",
     "build:prod": "vite build --mode production",
     "preview": "vite preview",
+    "make-ico": "node scripts/make-ico.cjs",
     "pack": "vite build && electron-builder --dir",
     "dist": "vite build --mode production && electron-builder",
     "dist:mac": "vite build --mode production && electron-builder --mac",
@@ -92,7 +93,7 @@
       "entitlementsInherit": "entitlements.mac.plist"
     },
     "win": {
-      "icon": "assets/icon.png",
+      "icon": "assets/icon.ico",
       "artifactName": "${productName}-${version}-win-${arch}.${ext}",
       "signtoolOptions": {
         "certificateSha1": "778FF11A7D92ABBB2DF9998ABDFB6F1200E0C0DF",
@@ -115,7 +116,8 @@
         "ko-KR"
       ],
       "applicationId": "AutoFlowCut",
-      "displayName": "AutoFlowCut"
+      "displayName": "AutoFlowCut",
+      "backgroundColor": "transparent"
     },
     "nsis": {
       "oneClick": false,
