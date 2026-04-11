@@ -72,6 +72,7 @@ let mcpHttpServer = null // MCP HTTP 서버 인스턴스
 const pendingGenerations = new Map() // 비동기 모드용 다중 생성 추적 (key: generationId)
 let pendingVideoGeneration = null // DOM-triggered video generation 응답 캡처용 Promise resolver
 let pendingReferenceImages = null // CDP Fetch 인터셉션용 레퍼런스 이미지 (mediaId 배열)
+let pendingSeedValue = null // CDP Fetch 인터셉션용 seed 값 (숫자, null = 랜덤 유지)
 let pendingI2VInjection = null // CDP Fetch 인터셉션용 I2V startImage 주입 데이터
 let enterToolClicked = false // Enter tool 버튼 클릭 완료 플래그 (무한루프 방지)
 let consentClicked = false   // 동의 버튼 클릭 완료 플래그 (무한루프 방지)
@@ -515,12 +516,14 @@ function createWindow() {
       // CDP Fetch 도메인: 나가는 요청을 가로채서 body 수정 후 계속 전송
       if (method === 'Fetch.requestPaused') {
         const reqUrl = params.request?.url || ''
-        // Case 1: 레퍼런스 이미지 주입 (이미지 생성)
-        if (pendingReferenceImages && pendingReferenceImages.length > 0 && reqUrl.includes('batchGenerateImages')) {
+        // Case 1: batchGenerateImages — 레퍼런스 주입 + seed 주입
+        if (reqUrl.includes('batchGenerateImages')) {
           try {
             const body = JSON.parse(params.request.postData || '{}')
-            // requests[] 배열의 각 요청에 imageInputs 추가
-            if (body.requests) {
+            let modified = false
+
+            // 레퍼런스 이미지 주입
+            if (pendingReferenceImages && pendingReferenceImages.length > 0 && body.requests) {
               for (const req of body.requests) {
                 if (!req.imageInputs) req.imageInputs = []
                 for (const ref of pendingReferenceImages) {
@@ -530,17 +533,33 @@ function createWindow() {
                   })
                 }
               }
+              console.log('[Flow API] [Fetch] Injected', pendingReferenceImages.length, 'references')
+              pendingReferenceImages = null
+              modified = true
             }
-            const modifiedPostData = Buffer.from(JSON.stringify(body)).toString('base64')
-            flowView.webContents.debugger.sendCommand('Fetch.continueRequest', {
-              requestId: params.requestId,
-              postData: modifiedPostData
-            })
-            console.log('[Flow API] [Fetch] Injected', pendingReferenceImages.length,
-              'references into batchGenerateImages request')
-            pendingReferenceImages = null  // 한 번만 주입 (다음 요청은 그대로 통과)
+
+            // Seed 주입 (pendingSeedValue가 숫자면 모든 요청에 적용)
+            if (pendingSeedValue != null && body.requests) {
+              for (const req of body.requests) {
+                req.seed = pendingSeedValue
+              }
+              console.log('[Flow API] [Fetch] Injected seed:', pendingSeedValue, 'into', body.requests.length, 'requests')
+              modified = true
+            }
+
+            if (modified) {
+              const modifiedPostData = Buffer.from(JSON.stringify(body)).toString('base64')
+              flowView.webContents.debugger.sendCommand('Fetch.continueRequest', {
+                requestId: params.requestId,
+                postData: modifiedPostData
+              })
+            } else {
+              flowView.webContents.debugger.sendCommand('Fetch.continueRequest', {
+                requestId: params.requestId
+              })
+            }
           } catch (e) {
-            console.error('[Flow API] [Fetch] Reference injection error:', e.message)
+            console.error('[Flow API] [Fetch] batchGenerateImages injection error:', e.message)
             flowView.webContents.debugger.sendCommand('Fetch.continueRequest', {
               requestId: params.requestId
             })
@@ -1569,6 +1588,8 @@ const flowAPIDeps = {
   pendingGenerations,  // 비동기 모드용 Map (직접 참조)
   getPendingReferenceImages: () => pendingReferenceImages,
   setPendingReferenceImages: (v) => { pendingReferenceImages = v },
+  getPendingSeedValue: () => pendingSeedValue,
+  setPendingSeedValue: (v) => { pendingSeedValue = v },
   getEnterToolClicked: () => enterToolClicked,
   setEnterToolClicked: (v) => { enterToolClicked = v },
   SESSION_URL, TOKEN_INFO_URL, FLOW_URL, MEDIA_REDIRECT_URL, UPLOAD_URL,

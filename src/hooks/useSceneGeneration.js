@@ -41,7 +41,11 @@ export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, open
           caption: r.caption || ''
         }))
 
-      const result = await flowAPI.generateImageDOM(scene.prompt, matchedRefs, { batchCount: settings.imageBatchCount })
+      // seedLocked && seedNo 가 숫자일 때만 고정 seed, 그 외엔 Flow 자체 랜덤
+      const seed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
+        ? settings.seedNo
+        : null
+      const result = await flowAPI.generateImageDOM(scene.prompt, matchedRefs, { batchCount: settings.imageBatchCount, seed })
 
       if (result.success && result.images?.length > 0) {
         // images는 [{ base64, mediaId }] 객체 배열

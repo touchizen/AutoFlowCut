@@ -9,9 +9,11 @@ import ko from '../locales/ko'
 import en from '../locales/en'
 
 // 지원 언어
+// name: 언어 코드 (EN / KO) — 텍스트
+// country: ISO 3166-1 alpha-2 (소문자) — flag-icons CSS 클래스용 (fi-us, fi-kr)
 export const LANGUAGES = {
-  ko: { code: 'ko', name: '🇰🇷', strings: ko },
-  en: { code: 'en', name: '🇺🇸', strings: en },
+  ko: { code: 'ko', name: 'KO', country: 'kr', strings: ko },
+  en: { code: 'en', name: 'EN', country: 'us', strings: en },
 }
 
 // 기본 언어
@@ -129,7 +131,7 @@ export function I18nProvider({ children }) {
     lang,
     changeLang,
     t,
-    languages: Object.values(LANGUAGES).map(l => ({ code: l.code, name: l.name })),
+    languages: Object.values(LANGUAGES).map(l => ({ code: l.code, name: l.name, country: l.country })),
   }
   
   return (

@@ -143,19 +143,20 @@ export function requestStopDOM() {
  * 비동기 제출 — 프롬프트만 제출하고 즉시 반환 (fire-and-forget)
  * @returns {{ success, generationId }} generationId로 나중에 결과 조회
  */
-export async function submitGenerationDOM(prompt, referenceImages = [], { batchCount } = {}) {
+export async function submitGenerationDOM(prompt, referenceImages = [], { batchCount, seed } = {}) {
   try {
     await ensureFlowProject(false)
     if (stopRequested) return { success: false, error: 'Stopped by user' }
 
-    console.log('[DOM] Calling flow:generate-image (asyncMode) for prompt:', prompt?.substring(0, 40))
+    console.log('[DOM] Calling flow:generate-image (asyncMode) for prompt:', prompt?.substring(0, 40),
+      seed != null ? `seed:${seed}` : 'seed:random')
     const result = await window.electronAPI.generateImage({
       prompt,
       aspectRatio: null,
       token: null,
       model: null,
       projectId: null,
-      seed: null,
+      seed: (typeof seed === 'number' && Number.isFinite(seed)) ? seed : null,
       referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
       batchCount: batchCount || undefined,
       asyncMode: true
@@ -204,7 +205,7 @@ export async function clearGenerations() {
 /**
  * DOM 방식으로 이미지 생성 (동기 — 기존 메인 엔트리)
  */
-export async function generateImageDOM(prompt, referenceImages = [], { batchCount } = {}) {
+export async function generateImageDOM(prompt, referenceImages = [], { batchCount, seed } = {}) {
   try {
     // 프로젝트 초기화: 현재 URL 확인 후 필요시 생성
     await ensureFlowProject(false)
@@ -215,8 +216,10 @@ export async function generateImageDOM(prompt, referenceImages = [], { batchCoun
     // CDP 네트워크 캡처로 이미지를 직접 가져옴 (blob 폴링 불필요)
     // token: null → main.js에서 자동 추출
     // referenceImages → CDP Fetch 인터셉션으로 batchGenerateImages 요청에 주입
+    // seed → 숫자면 고정 seed 주입, null/undefined면 Flow 자체 랜덤 seed
     console.log('[DOM] Calling flow:generate-image IPC for prompt:', prompt?.substring(0, 40),
-      referenceImages.length > 0 ? `(+${referenceImages.length} refs)` : '')
+      referenceImages.length > 0 ? `(+${referenceImages.length} refs)` : '',
+      seed != null ? `seed:${seed}` : 'seed:random')
     const GENERATE_TIMEOUT_MS = 180000 // 3분 타임아웃
     const result = await Promise.race([
       window.electronAPI.generateImage({
@@ -225,7 +228,7 @@ export async function generateImageDOM(prompt, referenceImages = [], { batchCoun
         token: null,        // main.js에서 Flow 페이지의 세션으로 자동 추출
         model: null,
         projectId: null,
-        seed: null,
+        seed: (typeof seed === 'number' && Number.isFinite(seed)) ? seed : null,
         referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
         batchCount: batchCount || undefined
       }),

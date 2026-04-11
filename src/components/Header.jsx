@@ -3,13 +3,76 @@
  */
 
 import { useState, useEffect, useRef } from 'react'
-import { useI18n } from '../hooks/useI18n'
+import { useI18n, LANGUAGES } from '../hooks/useI18n'
 import { TIMING } from '../config/defaults'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { UserMenu } from './UserMenu'
 import { SideDrawer } from './SideDrawer'
 import Modal from './Modal'
 import './Header.css'
+
+/**
+ * FlagIcon — flag-icons CSS 라이브러리 클래스 사용
+ * Vite가 node_modules/flag-icons/flags 의 SVG 자산을 번들링
+ */
+function FlagIcon({ country, className = 'lang-flag' }) {
+  if (!country) return <span className={className} />
+  return <span className={`fi fi-${country} ${className}`} aria-hidden="true" />
+}
+
+/**
+ * LanguagePicker — 커스텀 언어 드롭다운 (인라인 SVG 국기 + 언어코드)
+ */
+function LanguagePicker({ current, languages, onChange, tooltip }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const currentLang = languages.find((l) => l.code === current) || languages[0]
+
+  return (
+    <div className="lang-picker" ref={ref} data-tooltip={tooltip}>
+      <button
+        type="button"
+        className="lang-picker-button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label={tooltip}
+      >
+        <FlagIcon country={currentLang.country} />
+        <span className="lang-code">{currentLang.name}</span>
+        <svg className="lang-arrow" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
+        </svg>
+      </button>
+      {open && (
+        <div className="lang-picker-menu">
+          {languages.map((l) => (
+            <button
+              type="button"
+              key={l.code}
+              className={`lang-picker-item ${l.code === current ? 'active' : ''}`}
+              onClick={() => {
+                onChange(l.code)
+                setOpen(false)
+              }}
+            >
+              <FlagIcon country={l.country} />
+              <span className="lang-code">{l.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function Header({
   onSettings,
@@ -269,17 +332,14 @@ export default function Header({
       </div>
       
       <div className="header-right">
-        {/* 언어 선택 */}
-        <select
-          className="lang-selector"
-          value={lang}
-          onChange={(e) => changeLang(e.target.value)}
-          data-tooltip={t('header.language')}
-        >
-          {languages.map(l => (
-            <option key={l.code} value={l.code}>{l.name}</option>
-          ))}
-        </select>
+        {/* 언어 선택 (커스텀 드롭다운 — flag-icons SVG + 언어코드) */}
+        <LanguagePicker
+          current={lang}
+          languages={languages}
+          onChange={changeLang}
+          tooltip={t('header.language')}
+        />
+
 
         <button
           className="btn-export"

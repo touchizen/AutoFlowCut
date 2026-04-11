@@ -22,6 +22,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     getPendingGeneration, setPendingGeneration,
     pendingGenerations,
     getPendingReferenceImages, setPendingReferenceImages,
+    getPendingSeedValue, setPendingSeedValue,
     getEnterToolClicked, setEnterToolClicked,
     SESSION_URL, TOKEN_INFO_URL, FLOW_URL, MEDIA_REDIRECT_URL, UPLOAD_URL,
     API_HEADERS, GENERATE_URL, BASE_API_URL,
@@ -124,10 +125,13 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     token, prompt, aspectRatio, seed, model, projectId, referenceImages, batchCount,
     asyncMode  // true: 제출만 하고 즉시 반환 (비동기 배치용)
   }) => {
-    console.log('[Flow API] generate-image:', { prompt: prompt?.substring(0, 50), model, aspectRatio })
+    console.log('[Flow API] generate-image:', { prompt: prompt?.substring(0, 50), model, aspectRatio, seed: (seed ?? 'random') })
     if (!prompt) return { success: false, error: 'No prompt' }
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }
+
+    // Seed: 숫자면 CDP Fetch 인터셉션에서 사용, null이면 Flow 자체 랜덤 seed 유지
+    setPendingSeedValue(typeof seed === 'number' && Number.isFinite(seed) ? seed : null)
 
     // === DOM 자동화 + 네트워크 응답 인터셉트 ===
     // 페이지가 자체적으로 reCAPTCHA를 처리하므로 가장 안정적인 방법
@@ -270,21 +274,22 @@ export function registerFlowAPIIPC(ipcMain, deps) {
         console.warn('[Flow API] Image mode config failed (continuing anyway):', modeResult.error)
       }
 
-      // 0.9. CDP Fetch 인터셉션 설정 (레퍼런스 이미지 주입용)
-      //   batchGenerateImages 요청을 가로채서 imageInputs에 레퍼런스 mediaId를 추가
+      // 0.9. CDP Fetch 인터셉션 설정 (레퍼런스 이미지 주입 + seed 테스트)
+      //   batchGenerateImages 요청을 가로채서 imageInputs / seed 수정
+      //   [SEED TEST] 항상 활성화 — main.js에서 body 로깅 + seed:12345 주입
       if (referenceImages && referenceImages.length > 0) {
         setPendingReferenceImages(referenceImages)
-        try {
-          await flowView.webContents.debugger.sendCommand('Fetch.enable', {
-            patterns: [{ urlPattern: '*batchGenerateImages*', requestStage: 'Request' }]
-          })
-          cdpFetchEnabled = true
-          console.log('[Flow API] [Fetch] Interception enabled for', referenceImages.length, 'references:',
-            referenceImages.map(r => r.mediaId?.substring(0, 8)).join(', '))
-        } catch (e) {
-          console.warn('[Flow API] [Fetch] Fetch.enable failed:', e.message)
-          setPendingReferenceImages(null)
-        }
+      }
+      try {
+        await flowView.webContents.debugger.sendCommand('Fetch.enable', {
+          patterns: [{ urlPattern: '*batchGenerateImages*', requestStage: 'Request' }]
+        })
+        cdpFetchEnabled = true
+        console.log('[Flow API] [Fetch] Interception enabled (refs:',
+          (referenceImages?.length || 0), ', seedTestMode: true)')
+      } catch (e) {
+        console.warn('[Flow API] [Fetch] Fetch.enable failed:', e.message)
+        setPendingReferenceImages(null)
       }
 
       // 1. 네트워크 응답 캡처 Promise 설정 (동기 모드만)

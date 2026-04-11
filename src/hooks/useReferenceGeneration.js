@@ -123,7 +123,10 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
         }
       }
 
-      const result = await flowAPI.generateImageDOM(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount })
+      const refSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
+        ? settings.seedNo
+        : null
+      const result = await flowAPI.generateImageDOM(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: refSeed })
 
       if (result.success && result.images?.length > 0) {
         // images는 [{ base64, mediaId }] 객체 배열
@@ -514,8 +517,11 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       // 생성 중 표시
       setGeneratingRefs(prev => [...prev, index])
 
-      // 비동기 제출
-      const submitResult = await flowAPI.submitGenerationDOM(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount })
+      // 비동기 제출 (seedLocked 면 고정 seed)
+      const batchSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
+        ? settings.seedNo
+        : null
+      const submitResult = await flowAPI.submitGenerationDOM(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: batchSeed })
 
       if (submitResult?.success && submitResult.generationId) {
         pendingQueue.push({ generationId: submitResult.generationId, index, ref })

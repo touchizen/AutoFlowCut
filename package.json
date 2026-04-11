@@ -33,6 +33,7 @@
     "@modelcontextprotocol/sdk": "^1.27.1",
     "dotenv": "^17.3.1",
     "firebase": "^12.9.0",
+    "flag-icons": "^7.5.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
@@ -71,7 +72,12 @@
       {
         "from": "docs",
         "to": "docs",
-        "filter": ["csv-*.md", "srt-*.md", "audio-*.md", "prompt-*.md"]
+        "filter": [
+          "csv-*.md",
+          "srt-*.md",
+          "audio-*.md",
+          "prompt-*.md"
+        ]
       },
       {
         "from": "skills",

@@ -69,6 +69,7 @@ function App() {
   // Settings
   const [settings, setSettings] = useState(() => {
     const saved = localStorage.getItem('flow2capcut_settings')
+    const randomSeed = () => Math.floor(Math.random() * 1000000)
     const defaults = {
       defaultDuration: DEFAULTS.scene.duration,
       projectName: DEFAULTS.project.defaultName,
@@ -80,6 +81,8 @@ function App() {
       videoBatchCount: 1,     // 비디오 배치 카운트 (x1~x4)
       videoResolution: '1080p', // 비디오 다운로드 해상도
       requireStyle: false,    // 스타일 선택 필수 여부
+      seedNo: randomSeed(),   // 고정 seed 값 (number) — 기본값: 랜덤 생성
+      seedLocked: true,       // seed 잠금 여부 — 기본값: ON (표시된 seed 사용)
       mcpHttpEnabled: false,  // MCP HTTP 서버 활성화
       mcpHttpPort: 3210       // MCP HTTP 서버 포트
     }
@@ -88,9 +91,11 @@ function App() {
       // Electron은 로컬 앱이므로 프로젝트명 유지 (리로드 후에도 마지막 프로젝트 복원)
       // 이전 버전 호환: 불필요한 설정 제거
       delete parsed.method
-      delete parsed.seed
-      delete parsed.seedLocked
       delete parsed.aspectRatio
+      // seedNo 가 없거나 유효하지 않으면 랜덤으로 초기화
+      if (typeof parsed.seedNo !== 'number' || !Number.isFinite(parsed.seedNo)) {
+        parsed.seedNo = randomSeed()
+      }
       return { ...defaults, ...parsed }
     }
     return defaults
@@ -606,6 +611,10 @@ function App() {
           return
         }
 
+        // seedLocked && seedNo 가 숫자일 때만 고정 seed 사용, 그 외엔 Flow 랜덤
+        const effectiveSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
+          ? settings.seedNo
+          : null
         const startOptions = {
           projectName,
           saveMode: settings.saveMode,
@@ -613,6 +622,7 @@ function App() {
           imageBatchCount: settings.imageBatchCount || 1,
           imageUpscale: settings.imageUpscale || 'off',
           selectedStyleRefId: effectiveStyleId,
+          seed: effectiveSeed,
         }
 
         const errors = collectTagErrors(scenes, scenesHook.references)
@@ -955,6 +965,14 @@ function App() {
               value={scenes.map(s => s.prompt).join('\n')}
               onChange={handleTextChange}
               disabled={anyRunning}
+              seedNo={settings.seedNo}
+              seedLocked={settings.seedLocked}
+              onSeedChange={(v) => setSettings(s => ({ ...s, seedNo: v }))}
+              onSeedLockToggle={() => setSettings(s => ({ ...s, seedLocked: !s.seedLocked }))}
+              onSeedRandom={() => {
+                const n = Math.floor(Math.random() * 1000000)
+                setSettings(s => ({ ...s, seedNo: n, seedLocked: true }))
+              }}
             />
           )}
           {activeTab === 'video-text' && (

@@ -50,7 +50,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
    * 단일 씬 처리
    */
   const processScene = async (scene, options) => {
-    let { projectName, saveMode, imageBatchCount, imageUpscale, selectedStyleRefId = null } = options
+    let { projectName, saveMode, imageBatchCount, imageUpscale, selectedStyleRefId = null, seed = null } = options
     if (selectedStyleRefId != null && typeof selectedStyleRefId !== 'string') selectedStyleRefId = String(selectedStyleRefId)
 
     // selectedStyleRefId 없으면 등록된 style 카드 자동 탐색
@@ -129,7 +129,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       if (stopRequestedRef.current && retries === 0) return
       if (stopRequestedRef.current && retries > 0) break  // 재시도 중이면 루프 탈출 → 이전 결과 처리
 
-      result = await generateImageDOM(styledPrompt, matchedRefs, { batchCount: imageBatchCount })
+      result = await generateImageDOM(styledPrompt, matchedRefs, { batchCount: imageBatchCount, seed })
 
       if (result.success) break
 
@@ -220,7 +220,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
         if (newToken) {
           console.log('[Automation] Token refreshed, retrying scene:', scene.id)
           // 재시도 (DOM 모드 + 레퍼런스)
-          const retryResult = await generateImageDOM(scene.prompt, matchedRefs, { batchCount: imageBatchCount })
+          const retryResult = await generateImageDOM(scene.prompt, matchedRefs, { batchCount: imageBatchCount, seed })
           if (retryResult.success && retryResult.images?.length > 0) {
             // 성공 시 다시 저장 로직으로 (images는 [{ base64, mediaId }])
             const retryImg = retryResult.images[0]
@@ -250,7 +250,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
    * 비동기 배치 실행 (fire-and-forget + 폴링 수집)
    */
   const runConcurrentQueue = async (targetScenes, options, total) => {
-    let { projectName, saveMode, imageBatchCount, imageUpscale, selectedStyleRefId } = options
+    let { projectName, saveMode, imageBatchCount, imageUpscale, selectedStyleRefId, seed = null } = options
     if (selectedStyleRefId != null && typeof selectedStyleRefId !== 'string') selectedStyleRefId = String(selectedStyleRefId)
     // selectedStyleRefId 없으면 등록된 style 카드 자동 탐색
     if (!selectedStyleRefId) {
@@ -413,7 +413,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
 
       // 비동기 제출
       console.log('[Automation] Scene', scene.id, '→ prompt:', styledPrompt.substring(0, 80) + '...', '| style:', appliedStyle, '| refs:', matchedRefs.length)
-      const submitResult = await submitGenerationDOM(styledPrompt, matchedRefs, { batchCount: imageBatchCount })
+      const submitResult = await submitGenerationDOM(styledPrompt, matchedRefs, { batchCount: imageBatchCount, seed })
       if (submitResult.success && submitResult.generationId) {
         pendingQueue.push({ generationId: submitResult.generationId, scene, submittedAt: Date.now() })
         consecutiveErrors = 0
@@ -481,7 +481,8 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       sceneIndices = null,
       imageBatchCount = 1,
       imageUpscale = 'off',
-      selectedStyleRefId: _selectedStyleRefId = null
+      selectedStyleRefId: _selectedStyleRefId = null,
+      seed = null
     } = options
     const selectedStyleRefId = (_selectedStyleRefId != null && typeof _selectedStyleRefId !== 'string') ? String(_selectedStyleRefId) : _selectedStyleRefId
 
@@ -634,6 +635,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       imageBatchCount,
       imageUpscale,
       selectedStyleRefId,
+      seed,
     }, total)
     
     // 완료
