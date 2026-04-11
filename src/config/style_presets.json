@@ -1,6 +1,6 @@
 {
-  "version": "1.0",
-  "total_count": 87,
+  "version": "1.2",
+  "total_count": 95,
   "categories": [
     {
       "id": "animation",
@@ -160,6 +160,62 @@
       "name_en": "Claymation",
       "category": "animation",
       "prompt_en": "Claymation stop-motion style, clay figures, handmade feel"
+    },
+    {
+      "id": "dreamworks",
+      "name_ko": "드림웍스",
+      "name_en": "DreamWorks",
+      "category": "animation",
+      "prompt_en": "DreamWorks Animation style, 3D CG cartoon, exaggerated expressions, cinematic lighting, Shrek Kung Fu Panda look, rich textures, dynamic poses, Western animated feature film"
+    },
+    {
+      "id": "illumination",
+      "name_ko": "일루미네이션",
+      "name_en": "Illumination",
+      "category": "animation",
+      "prompt_en": "Illumination Entertainment style, rounded 3D characters, bright colors, Minions Despicable Me look, simple shapes, family-friendly, soft gradients, cheerful cartoon"
+    },
+    {
+      "id": "disney-classic-2d",
+      "name_ko": "클래식 디즈니 2D",
+      "name_en": "Classic Disney 2D",
+      "category": "animation",
+      "prompt_en": "Classic Disney 2D animation style, hand-drawn cel animation, Lion King Aladdin Beauty and the Beast era, painted backgrounds, expressive line art, golden age animation, warm color palette"
+    },
+    {
+      "id": "looney-tunes",
+      "name_ko": "루니 툰",
+      "name_en": "Looney Tunes",
+      "category": "animation",
+      "prompt_en": "Looney Tunes classic cartoon style, Bugs Bunny era, bold black outlines, flat cel shading, rubber-hose limbs, exaggerated slapstick, Warner Bros Hanna-Barbera vintage cartoon, limited color palette"
+    },
+    {
+      "id": "cartoon-network",
+      "name_ko": "카툰 네트워크",
+      "name_en": "Cartoon Network",
+      "category": "animation",
+      "prompt_en": "Cartoon Network style, Adventure Time Regular Show Steven Universe look, flat colors, noodle limbs, quirky character design, bold simple shapes, Western indie TV cartoon"
+    },
+    {
+      "id": "rick-and-morty",
+      "name_ko": "릭 앤 모티",
+      "name_en": "Rick and Morty",
+      "category": "animation",
+      "prompt_en": "Rick and Morty adult swim style, Justin Roiland drawing, wobbly lines, flat shading, sci-fi absurdist cartoon, simple eyes with small pupils, Western adult animated comedy"
+    },
+    {
+      "id": "samurai-jack",
+      "name_ko": "사무라이 잭",
+      "name_en": "Samurai Jack",
+      "category": "animation",
+      "prompt_en": "Samurai Jack Genndy Tartakovsky style, minimalist geometric shapes, angular character design, cinematic composition, limited palette, strong silhouettes, stylized Western action cartoon"
+    },
+    {
+      "id": "south-park",
+      "name_ko": "사우스 파크",
+      "name_en": "South Park",
+      "category": "animation",
+      "prompt_en": "South Park cutout paper style, flat 2D construction paper look, simple geometric shapes, Trey Parker style, basic facial features, pastel colors, Western TV comedy cartoon"
     },
     {
       "id": "photorealistic",

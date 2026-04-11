@@ -566,6 +566,7 @@
   overflow-y: auto;
   flex: 1;
   min-height: 0;
+  scrollbar-gutter: stable;
 }
 
 .batch-wizard-row {
@@ -593,6 +594,10 @@
   padding: 8px;
   background: rgba(79, 70, 229, 0.08);
   border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
 }
 
 .batch-wizard-footer {

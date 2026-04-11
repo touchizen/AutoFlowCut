@@ -14,6 +14,8 @@ const THUMBNAIL_PROMPT_PREFIX = 'A serene landscape with mountains and a river'
 const randomDelay = () => new Promise(r => setTimeout(r, 1000 + Math.random() * 2000))
 
 // 번들된 썸네일 fallback 로드 (public/style-thumbnails/) — blob URL 사용
+// Vite dev server가 missing 파일에 SPA fallback(index.html)을 반환하므로
+// Content-Type 을 반드시 검증해서 실제 이미지만 허용
 async function loadBundledThumbnails(existingIds = []) {
   const allStyles = STYLE_PRESETS?.styles || []
   const missingStyles = allStyles.filter(s => !existingIds.includes(s.id))
@@ -24,10 +26,13 @@ async function loadBundledThumbnails(existingIds = []) {
     missingStyles.map(async (style) => {
       try {
         const res = await fetch(`./style-thumbnails/${style.id}.png`)
-        if (res.ok) {
-          const blob = await res.blob()
-          bundled[style.id] = URL.createObjectURL(blob)
-        }
+        if (!res.ok) return
+        const contentType = res.headers.get('content-type') || ''
+        // 이미지가 아니면 (e.g., SPA fallback HTML) 무시
+        if (!contentType.startsWith('image/')) return
+        const blob = await res.blob()
+        if (blob.size === 0) return
+        bundled[style.id] = URL.createObjectURL(blob)
       } catch {}
     })
   )
