@@ -5,9 +5,12 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { DEFAULTS, RESOURCE, STYLE_PRESETS } from '../config/defaults'
+import { DEFAULTS, RESOURCE } from '../config/defaults'
+import { findAutoStyle, resolveSceneStyle } from '../services/styleService'
 import { fileSystemAPI } from './useFileSystem'
 import { getTimestamp, generateProjectName, getImageSizeFromBase64 } from '../utils/formatters'
+import { cleanBase64 as stripBase64Prefix } from '../utils/urls'
+import { tryUpscaleImage } from '../utils/imageProcessing'
 import { toast } from '../components/Toast'
 import { resetDOMSession, requestStopDOM } from '../utils/flowDOMClient'
 
@@ -54,12 +57,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     if (selectedStyleRefId != null && typeof selectedStyleRefId !== 'string') selectedStyleRefId = String(selectedStyleRefId)
 
     // selectedStyleRefId 없으면 등록된 style 카드 자동 탐색
-    if (!selectedStyleRefId) {
-      const autoStyle = references.find(r => r.type === 'style' && r.mediaId)
-      if (autoStyle) {
-        selectedStyleRefId = `ref:${autoStyle.id}`
-      }
-    }
+    if (!selectedStyleRefId) selectedStyleRefId = findAutoStyle(references)
 
     // 일시정지 대기
     while (pausedRef.current && !stopRequestedRef.current) {
@@ -91,33 +89,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     }
 
     // 스타일 프롬프트 합치기 (태그 매칭 자동 + selectedStyleRefId 수동)
-    let styledPrompt = scene.prompt
-
-    // 1. 태그 매칭으로 스타일 레퍼런스가 있으면 자동 적용
-    const matchedStyleRef = allMatched.find(r => r.type === 'style' && r.prompt)
-    if (matchedStyleRef) {
-      styledPrompt = `${scene.prompt}, ${matchedStyleRef.prompt}`
-    }
-
-    // 2. selectedStyleRefId가 명시적으로 있으면 덮어쓰기
-    if (selectedStyleRefId) {
-      if (selectedStyleRefId.startsWith('ref:')) {
-        const refId = selectedStyleRefId.replace('ref:', '')
-        const styleRef = references.find(r => r.id == refId && r.type === 'style')
-        if (styleRef?.prompt) {
-          styledPrompt = `${scene.prompt}, ${styleRef.prompt}`
-        }
-        if (styleRef?.mediaId && !matchedRefs.some(r => r.mediaId === styleRef.mediaId)) {
-          matchedRefs.push({ category: styleRef.category || 'style', mediaId: styleRef.mediaId, caption: styleRef.caption || '' })
-        }
-      } else if (selectedStyleRefId.startsWith('preset:')) {
-        const presetId = selectedStyleRefId.replace('preset:', '')
-        const preset = STYLE_PRESETS?.styles?.find(s => s.id === presetId)
-        if (preset?.prompt_en) {
-          styledPrompt = `${scene.prompt}, ${preset.prompt_en}`
-        }
-      }
-    }
+    const { styledPrompt } = resolveSceneStyle(scene.prompt, allMatched, selectedStyleRefId, references, matchedRefs)
 
     // 이미지 생성 (재시도 포함) — DOM 모드 + CDP 레퍼런스 주입
     let result
@@ -149,21 +121,8 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       const mediaId = firstImage.mediaId || null
 
       // 이미지 업스케일 (설정에 따라)
-      const upscaleRes = imageUpscale || 'off'
-      if (upscaleRes !== 'off' && mediaId) {
-        try {
-          console.log('[Automation] Upscaling image to', upscaleRes, '...')
-          const upResult = await flowAPI.upscaleImage(mediaId, upscaleRes)
-          if (upResult.success && upResult.data) {
-            imageData = upResult.data
-            console.log('[Automation] Upscale success')
-          } else {
-            console.warn('[Automation] Upscale failed, using original:', upResult.error)
-          }
-        } catch (e) {
-          console.warn('[Automation] Upscale error, using original:', e.message)
-        }
-      }
+      const upscaled = await tryUpscaleImage(flowAPI, mediaId, imageUpscale || 'off', '[Automation]')
+      if (upscaled) imageData = upscaled
 
       // 이미지 크기 추출
       let imageSize = null
@@ -253,13 +212,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     let { projectName, saveMode, imageBatchCount, imageUpscale, selectedStyleRefId, seed = null } = options
     if (selectedStyleRefId != null && typeof selectedStyleRefId !== 'string') selectedStyleRefId = String(selectedStyleRefId)
     // selectedStyleRefId 없으면 등록된 style 카드 자동 탐색
-    if (!selectedStyleRefId) {
-      const autoStyle = references.find(r => r.type === 'style' && r.mediaId)
-      if (autoStyle) {
-        selectedStyleRefId = `ref:${autoStyle.id}`
-        console.log('[Automation] Auto-detected style card:', autoStyle.name, autoStyle.id)
-      }
-    }
+    if (!selectedStyleRefId) selectedStyleRefId = findAutoStyle(references)
     completedCountRef.current = 0
     errorCountRef.current = 0
     const pendingQueue = [] // { generationId, scene, submittedAt }
@@ -277,21 +230,8 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
         const mediaId = firstImage.mediaId || null
 
         // 업스케일
-        const upscaleRes = imageUpscale || 'off'
-        if (upscaleRes !== 'off' && mediaId) {
-          try {
-            console.log('[Automation] Upscaling image to', upscaleRes, '...')
-            const upResult = await flowAPI.upscaleImage(mediaId, upscaleRes)
-            if (upResult.success && upResult.data) {
-              imageData = upResult.data
-              console.log('[Automation] Upscale success')
-            } else {
-              console.warn('[Automation] Upscale failed, using original:', upResult.error)
-            }
-          } catch (e) {
-            console.warn('[Automation] Upscale error, using original:', e.message)
-          }
-        }
+        const upscaled = await tryUpscaleImage(flowAPI, mediaId, imageUpscale || 'off', '[Automation]')
+        if (upscaled) imageData = upscaled
 
         // 이미지 크기 추출
         let imageSize = null
@@ -379,37 +319,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       }
 
       // 스타일 프롬프트 합치기 (태그 매칭 자동 + selectedStyleRefId 수동)
-      let styledPrompt = scene.prompt
-      let appliedStyle = 'none'
-
-      // 1. 태그 매칭으로 스타일 레퍼런스가 있으면 자동 적용
-      const matchedStyleRef = allMatched.find(r => r.type === 'style' && r.prompt)
-      if (matchedStyleRef) {
-        styledPrompt = `${scene.prompt}, ${matchedStyleRef.prompt}`
-        appliedStyle = `auto:${matchedStyleRef.name || matchedStyleRef.id}`
-      }
-
-      // 2. selectedStyleRefId가 명시적으로 있으면 덮어쓰기
-      if (selectedStyleRefId) {
-        if (selectedStyleRefId.startsWith('ref:')) {
-          const refId = selectedStyleRefId.replace('ref:', '')
-          const styleRef = references.find(r => r.id == refId && r.type === 'style')
-          if (styleRef?.prompt) {
-            styledPrompt = `${scene.prompt}, ${styleRef.prompt}`
-            appliedStyle = `ref:${styleRef.name || refId}`
-          }
-          if (styleRef?.mediaId && !matchedRefs.some(r => r.mediaId === styleRef.mediaId)) {
-            matchedRefs.push({ category: styleRef.category || 'style', mediaId: styleRef.mediaId, caption: styleRef.caption || '' })
-          }
-        } else if (selectedStyleRefId.startsWith('preset:')) {
-          const presetId = selectedStyleRefId.replace('preset:', '')
-          const preset = STYLE_PRESETS?.styles?.find(s => s.id === presetId)
-          if (preset?.prompt_en) {
-            styledPrompt = `${scene.prompt}, ${preset.prompt_en}`
-            appliedStyle = `preset:${presetId}`
-          }
-        }
-      }
+      const { styledPrompt, appliedStyle } = resolveSceneStyle(scene.prompt, allMatched, selectedStyleRefId, references, matchedRefs)
 
       // 비동기 제출
       console.log('[Automation] Scene', scene.id, '→ prompt:', styledPrompt.substring(0, 80) + '...', '| style:', appliedStyle, '| refs:', matchedRefs.length)
@@ -567,9 +477,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
           console.warn('Reference data not available:', ref.name, { data: !!ref.data, filePath: ref.filePath, imagePath: ref.imagePath, pathToRead })
           return
         }
-        if (base64Data.startsWith('data:')) {
-          base64Data = base64Data.split(',')[1]
-        }
+        base64Data = stripBase64Prefix(base64Data)
 
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
           const result = await uploadReference(base64Data, ref.category)

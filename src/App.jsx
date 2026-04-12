@@ -17,6 +17,10 @@ import { useSceneGeneration } from './hooks/useSceneGeneration'
 import { useGenerationQueue } from './hooks/useGenerationQueue'
 import { useExport } from './hooks/useExport'
 import { useAudioImport } from './hooks/useAudioImport'
+import { useAppSettings } from './hooks/useAppSettings'
+import { useAutoSave } from './hooks/useAutoSave'
+import { useFlowEvents } from './hooks/useFlowEvents'
+import { useMcpServer } from './hooks/useMcpServer'
 import { generateProjectName } from './utils/formatters'
 import { detectFileType, detectCSVType, parseCSVToScenes, parseSRTToScenes } from './utils/parsers'
 import { checkFolderPermission } from './utils/guards'
@@ -66,60 +70,11 @@ function App() {
   const [tagValidationErrors, setTagValidationErrors] = useState(null)
   const [pendingStartOptions, setPendingStartOptions] = useState(null)
 
-  // Settings
-  const [settings, setSettings] = useState(() => {
-    const saved = localStorage.getItem('autoflowcut_settings')
-    const randomSeed = () => Math.floor(Math.random() * 1000000)
-    const defaults = {
-      defaultDuration: DEFAULTS.scene.duration,
-      projectName: DEFAULTS.project.defaultName,
-      saveMode: 'folder',      // 'folder' | 'none'
-      concurrency: DEFAULTS.generation.concurrency,
-      exportThreshold: UI.EXPORT_THRESHOLD,     // 내보내기 버튼 표시 완료율 (%)
-      imageBatchCount: 1,     // 이미지 배치 카운트 (x1~x4)
-      imageUpscale: 'off',   // 이미지 업스케일 해상도 ('off' | '2k' | '4k')
-      videoBatchCount: 1,     // 비디오 배치 카운트 (x1~x4)
-      videoResolution: '1080p', // 비디오 다운로드 해상도
-      requireStyle: false,    // 스타일 선택 필수 여부
-      seedNo: randomSeed(),   // 고정 seed 값 (number) — 기본값: 랜덤 생성
-      seedLocked: true,       // seed 잠금 여부 — 기본값: ON (표시된 seed 사용)
-      mcpHttpEnabled: false,  // MCP HTTP 서버 활성화
-      mcpHttpPort: 3210       // MCP HTTP 서버 포트
-    }
-    if (saved) {
-      const parsed = JSON.parse(saved)
-      // Electron은 로컬 앱이므로 프로젝트명 유지 (리로드 후에도 마지막 프로젝트 복원)
-      // 이전 버전 호환: 불필요한 설정 제거
-      delete parsed.method
-      delete parsed.aspectRatio
-      // seedNo 가 없거나 유효하지 않으면 랜덤으로 초기화
-      if (typeof parsed.seedNo !== 'number' || !Number.isFinite(parsed.seedNo)) {
-        parsed.seedNo = randomSeed()
-      }
-      return { ...defaults, ...parsed }
-    }
-    return defaults
-  })
+  // Settings (초기화 + localStorage 동기화)
+  const { settings, setSettings, updateSetting } = useAppSettings()
 
-  // Flow 로그인 만료 이벤트 수신
-  useEffect(() => {
-    const handler = () => setShowLoginExpiredModal(true)
-    window.addEventListener('flow-login-expired', handler)
-    return () => window.removeEventListener('flow-login-expired', handler)
-  }, [])
-
-  // DOM 모드: 레이아웃이 'tab'이면 split으로 보정 (Flow UI가 보여야 함)
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem('layoutSettings')
-      const layout = saved ? JSON.parse(saved) : {}
-      if (!layout.mode || layout.mode === 'tab') {
-        const splitLayout = { mode: 'split-left', ratio: 0.5 }
-        localStorage.setItem('layoutSettings', JSON.stringify(splitLayout))
-        window.electronAPI?.setLayout?.(splitLayout)
-      }
-    } catch (e) { /* ignore */ }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  // Flow 이벤트 (로그인 만료, 레이아웃 보정)
+  useFlowEvents({ onLoginExpired: () => setShowLoginExpiredModal(true) })
 
   // UI State
   const [activeTab, setActiveTab] = useState('text') // 'text' | 'video-text' | 'frame-to-video' | 'list' | 'audio'
@@ -303,160 +258,12 @@ function App() {
     }
   }
 
-  // Auto-save project data when scenes/references/videoScenes/framePairs change (생성 중 또는 복원 중 아닐 때만)
-  useEffect(() => {
-    if (generatingRefs.length > 0 || isRunning) return
-    if (isRestoringRef?.current) return  // ← 복원 중에는 auto-save 스킵 (project.json 오염 방지)
-    if (scenes.length === 0 && references.length === 0 && videoScenes.length === 0) return  // ← 빈 데이터로 덮어쓰기 방지
-    if (settings.saveMode === 'folder' && settings.projectName) {
-      const timer = setTimeout(async () => {
-        if (isRestoringRef?.current) return  // ← 타이머 실행 시점에도 재확인
-        await saveCurrentProject()
-        console.log('[App] Auto-saved project data')
-      }, TIMING.AUTO_SAVE_DEBOUNCE)
-      return () => clearTimeout(timer)
-    }
-  }, [scenes, references, videoScenes, framePairs, settings.projectName, settings.saveMode, generatingRefs.length, isRunning])
-
-  // Save settings
-  useEffect(() => {
-    localStorage.setItem('autoflowcut_settings', JSON.stringify(settings))
-  }, [settings])
-
-  // MCP HTTP 서버 시작/중지
-  useEffect(() => {
-    if (settings.mcpHttpEnabled) {
-      window.electronAPI?.startMcpHttp?.({ port: settings.mcpHttpPort || 3210 })
-    } else {
-      window.electronAPI?.stopMcpHttp?.()
-    }
-  }, [settings.mcpHttpEnabled, settings.mcpHttpPort])
-
-  // MCP HTTP GET 요청을 위한 글로벌 접근자 등록
-  useEffect(() => {
-    window.__mcpOpenProject = (name) => handleProjectChange(name)
-    window.__mcpGetReferences = () => references.map(({ data, ...rest }) => rest)
-    window.__mcpGetScenes = () => scenes.map(({ image, videoT2V, videoI2V, ...rest }) => rest)
-    window.__mcpGenerateRef = (index) => handleGenerateRef(index).catch(e => ({ success: false, error: e.message }))
-    window.__mcpGenerateScene = (sceneId) => handleGenerateScene(sceneId)
-    window.__mcpSetStyle = (styleId) => { setSelectedStyleRefId(styleId); return styleId }
-    window.__mcpGetStyle = () => selectedStyleRefId
-    window.__mcpRefreshAudioReviews = () => refreshReviews()
-    window.__mcpGetAudioReviews = () => audioReviews
-    window.__mcpImportAudio = async (folderPath) => {
-      const pkg = await importByPath(folderPath)
-      if (!pkg) return { success: false, error: 'Failed to import audio' }
-      return { success: true, summary: pkg.summary }
-    }
-    window.__mcpExportCapcut = async (options = {}) => {
-      try {
-        // 0. audioPackage가 없으면 자동 로드
-        if (!audioPackage && options.audioFolderPath) {
-          const pkg = await importByPath(options.audioFolderPath)
-          if (!pkg) console.warn('[MCP Export] Audio import failed, continuing without audio')
-        }
-        // 1. CapCut 경로 자동 감지
-        let capcutProjectNumber = options.capcutProjectNumber
-        if (!capcutProjectNumber) {
-          const pathResult = await window.electronAPI?.detectCapcutPath?.()
-          if (!pathResult?.success) return { success: false, error: 'CapCut path not detected' }
-          const numResult = await window.electronAPI?.getNextProjectNumber?.({ basePath: pathResult.basePath })
-          if (!numResult?.success) return { success: false, error: 'Cannot determine project number' }
-          const info = await window.electronAPI?.getSystemInfo?.()
-          const sep = info?.platform === 'darwin' ? '/' : '\\'
-          capcutProjectNumber = `${pathResult.basePath}${sep}${numResult.folderName}`
-        }
-        // 2. 저장된 export 설정 읽기
-        let saved = {}
-        try { saved = JSON.parse(localStorage.getItem('exportSettings') || '{}') } catch {}
-        const exportOptions = {
-          capcutProjectNumber,
-          scaleMode: options.scaleMode || saved.scaleMode || 'none',
-          kenBurns: options.kenBurns ?? saved.kenBurns ?? true,
-          kenBurnsMode: options.kenBurnsMode || saved.kenBurnsMode || 'random',
-          kenBurnsCycle: options.kenBurnsCycle || saved.kenBurnsCycle || 5,
-          kenBurnsScaleMin: (options.kenBurnsScaleMin || saved.kenBurnsScaleMin || 100) / 100,
-          kenBurnsScaleMax: (options.kenBurnsScaleMax || saved.kenBurnsScaleMax || 130) / 100,
-          subtitleOption: options.subtitleOption || (saved.includeSubtitle !== false ? 'ko' : 'none'),
-          subtitleFontSize: options.subtitleFontSize || saved.subtitleFontSize || 8
-        }
-        // 3. handleExportConfirm 호출
-        await handleExportConfirm(exportOptions)
-        return { success: true, path: capcutProjectNumber }
-      } catch (e) {
-        return { success: false, error: e.message }
-      }
-    }
-    return () => {
-      delete window.__mcpGetReferences
-      delete window.__mcpGetScenes
-      delete window.__mcpGenerateRef
-      delete window.__mcpGenerateScene
-      delete window.__mcpSetStyle
-      delete window.__mcpGetStyle
-      delete window.__mcpRefreshAudioReviews
-      delete window.__mcpGetAudioReviews
-      delete window.__mcpImportAudio
-      delete window.__mcpExportCapcut
-    }
-  }, [references, scenes, handleGenerateRef, handleGenerateScene, selectedStyleRefId, refreshReviews, audioReviews, handleExportConfirm, importByPath, audioPackage])
-
-  // MCP HTTP 서버에서 오는 데이터 업데이트 수신
-  useEffect(() => {
-    const cleanup = window.electronAPI?.onMcpUpdate?.((data) => {
-      if (data.type === 'update-references') {
-        setReferences(data.references)
-        console.log('[MCP] References updated via HTTP:', data.references.length)
-      } else if (data.type === 'update-reference') {
-        setReferences(prev => prev.map((ref, i) => i === data.index ? { ...prev[i], ...data.fields } : ref))
-        console.log('[MCP] Reference', data.index, 'updated via HTTP')
-      } else if (data.type === 'remove-reference') {
-        setReferences(prev => prev.filter((_, i) => i !== data.index))
-        console.log('[MCP] Reference', data.index, 'removed via HTTP')
-      } else if (data.type === 'clear-reference-image') {
-        setReferences(prev => prev.map((ref, i) => i === data.index ? { ...ref, data: null, filePath: null, mediaId: null, caption: null, dataStorage: null } : ref))
-        console.log('[MCP] Reference', data.index, 'image cleared via HTTP')
-      } else if (data.type === 'clear-all-reference-images') {
-        setReferences(prev => prev.map(ref => ({ ...ref, data: null, filePath: null, mediaId: null, caption: null, dataStorage: null })))
-        console.log('[MCP] All reference images cleared via HTTP')
-      } else if (data.type === 'update-scenes') {
-        const scenesWithIds = (data.scenes || []).map((s, i) => ({
-          ...s,
-          id: s.id || `scene_${i + 1}`,
-          status: s.status || 'pending',
-        }))
-        setScenes(scenesWithIds)
-        console.log('[MCP] Scenes updated via HTTP:', scenesWithIds.length)
-      } else if (data.type === 'update-scene') {
-        setScenes(prev => prev.map((s, i) => i === data.index ? { ...prev[i], ...data.fields } : s))
-        console.log('[MCP] Scene', data.index, 'updated via HTTP')
-      } else if (data.type === 'generate-reference') {
-        console.log('[MCP] Generate reference requested:', data.index, 'style:', data.styleId)
-        if (data.styleId && window.__mcpSetStyle) {
-          window.__mcpSetStyle(data.styleId)
-          setTimeout(() => window.__mcpGenerateRef?.(data.index), 500)
-        } else {
-          window.__mcpGenerateRef?.(data.index)
-        }
-      } else if (data.type === 'generate-scene') {
-        console.log('[MCP] Generate scene requested:', data.sceneId)
-        window.__mcpGenerateScene?.(data.sceneId)
-      } else if (data.type === 'open-project') {
-        console.log('[MCP] Open project requested:', data.projectName)
-        window.__mcpOpenProject?.(data.projectName)
-      } else if (data.type === 'start-scene-batch') {
-        console.log('[MCP] Scene batch generation start requested, styleId:', data.styleId)
-        window.__mcpStartBatch?.(data.styleId)
-      } else if (data.type === 'start-ref-batch') {
-        console.log('[MCP] Reference batch generation start requested, styleId:', data.styleId)
-        window.__mcpStartRefBatch?.(data.styleId)
-      } else if (data.type === 'reload-project') {
-        // 프로젝트 전체 리로드 트리거
-        console.log('[MCP] Project reload requested')
-      }
-    })
-    return cleanup
-  }, [])
+  // Auto-save project data (debounce)
+  useAutoSave({
+    scenes, references, videoScenes, framePairs,
+    settings, generatingRefsCount: generatingRefs.length,
+    isRunning, isRestoringRef, saveCurrentProject
+  })
 
   // Save bottom panel height
   useEffect(() => {
@@ -766,50 +573,20 @@ function App() {
     if (videoAutomation.isRunning) videoAutomation.stop()
   }
 
-  // MCP: handleStart/handleStop/batchStatus 글로벌 등록 (정의 이후에 등록해야 함)
-  useEffect(() => {
-    window.__mcpStartBatch = (styleId) => {
-      const fullId = styleId ? `preset:${styleId}` : null
-      if (fullId) setSelectedStyleRefId(fullId)
-      handleStart(fullId)
-    }
-    window.__mcpStartRefBatch = (styleId) => {
-      const fullId = styleId ? `preset:${styleId}` : null
-      if (fullId) setSelectedStyleRefId(fullId)
-      handleGenerateAllRefs(fullId)
-    }
-    window.__mcpStopBatch = () => handleStop()
-    window.__mcpBatchStatus = () => {
-      const total = scenes.length
-      const done = scenes.filter(s => s.image || s.imagePath).length
-      const pending = scenes.filter(s => s.status === 'pending').length
-      const generating = scenes.filter(s => s.status === 'generating').length
-      const error = scenes.filter(s => s.status === 'error').length
-
-      // 레퍼런스 배치 상태
-      const refTotal = references.filter(r => r.type !== 'style').length
-      const refDone = references.filter(r => r.type !== 'style' && r.mediaId).length
-      const refGenerating = generatingRefs.length
-      const refPending = refTotal - refDone - refGenerating
-      const refIsRunning = generatingRefs.length > 0
-
-      return {
-        isRunning: isRunning || videoAutomation.isRunning || refIsRunning,
-        isPaused: isPaused || videoAutomation.isPaused,
-        progress: isRunning ? progress : videoAutomation.progress,
-        total, done, pending, generating, error,
-        status: isRunning ? status : videoAutomation.status,
-        statusMessage: isRunning ? statusMessage : videoAutomation.statusMessage,
-        ref: { total: refTotal, done: refDone, generating: refGenerating, pending: refPending, isRunning: refIsRunning }
-      }
-    }
-    return () => {
-      delete window.__mcpStartBatch
-      delete window.__mcpStartRefBatch
-      delete window.__mcpStopBatch
-      delete window.__mcpBatchStatus
-    }
-  }, [handleStart, handleStop, handleGenerateAllRefs, scenes, references, generatingRefs, isRunning, isPaused, progress, status, statusMessage, videoAutomation])
+  // MCP HTTP 서버 (시작/중지, 글로벌 접근자, 업데이트 수신, 배치 핸들러)
+  useMcpServer({
+    settings,
+    scenes, setScenes,
+    references, setReferences,
+    handleGenerateRef, handleGenerateScene,
+    handleGenerateAllRefs, handleStart, handleStop,
+    handleProjectChange, handleExportConfirm,
+    selectedStyleRefId, setSelectedStyleRefId,
+    refreshReviews, audioReviews,
+    importByPath, audioPackage,
+    automationState: { isRunning, isPaused, progress, status, statusMessage },
+    videoAutomation, generatingRefs
+  })
 
   // 어느 자동화든 실행 중이면 true
   const anyRunning = isRunning || videoAutomation.isRunning

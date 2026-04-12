@@ -10,6 +10,7 @@ import { createPortal } from 'react-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { createCheckoutSession, getPricing } from '../firebase/functions'
 import { useI18n } from '../hooks/useI18n'
+import { useModalVisibility } from '../hooks/useModalVisibility'
 import './PaywallModal.css'
 
 export function PaywallModal({ isOpen, onClose, reason = 'trial_expired' }) {
@@ -37,13 +38,7 @@ export function PaywallModal({ isOpen, onClose, reason = 'trial_expired' }) {
   }, [isOpen])
 
   // 모달 열릴 때 Flow 뷰 숨기기
-  useEffect(() => {
-    if (!isOpen) return
-    window.electronAPI?.setModalVisible?.({ visible: true })
-    return () => {
-      window.electronAPI?.setModalVisible?.({ visible: false })
-    }
-  }, [isOpen])
+  useModalVisibility(isOpen)
 
   if (!isOpen) return null
 

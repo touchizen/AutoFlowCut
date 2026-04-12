@@ -2,10 +2,11 @@
  * AuthModal - 로그인 모달
  */
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useI18n } from '../hooks/useI18n'
+import { useModalVisibility } from '../hooks/useModalVisibility'
 import './AuthModal.css'
 
 export function AuthModal({ isOpen, onClose }) {
@@ -14,13 +15,7 @@ export function AuthModal({ isOpen, onClose }) {
   const [localError, setLocalError] = useState(null)
 
   // 모달 열릴 때 Flow 뷰 숨기기
-  useEffect(() => {
-    if (!isOpen) return
-    window.electronAPI?.setModalVisible?.({ visible: true })
-    return () => {
-      window.electronAPI?.setModalVisible?.({ visible: false })
-    }
-  }, [isOpen])
+  useModalVisibility(isOpen)
 
   if (!isOpen) return null
 

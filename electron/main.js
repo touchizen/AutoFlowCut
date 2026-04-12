@@ -14,6 +14,7 @@ import { registerFlowAPIIPC } from './ipc/flow-api.js'
 import { registerVideoIPC } from './ipc/video.js'
 import { registerDomIPC } from './ipc/dom.js'
 import { createSharedHelpers } from './ipc/shared.js'
+import { updateBounds, registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible } from './ipc/layout.js'
 import { openApiSpec, getSwaggerHtml } from './api-docs.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -63,9 +64,7 @@ const API_HEADERS = {
 
 let mainWindow = null
 let flowView = null
-let layoutMode = 'split-left' // 'split-left' | 'split-right' | 'split-top' | 'split-bottom'
-let splitRatio = 0.5   // 0.2 ~ 0.8
-let modalVisible = false // 모달이 열려있으면 Flow 뷰를 숨김 (네이티브 뷰는 CSS z-index로 가릴 수 없음)
+// layoutMode, splitRatio, modalVisible, powerSaveBlockerId → ipc/layout.js로 이동
 let capturedProjectId = null // Flow 네트워크에서 자동 캡처된 projectId
 let pendingGeneration = null // DOM-triggered generation 응답 캡처용 Promise resolver (이미지) — 동기 모드
 let mcpHttpServer = null // MCP HTTP 서버 인스턴스
@@ -76,7 +75,6 @@ let pendingSeedValue = null // CDP Fetch 인터셉션용 seed 값 (숫자, null 
 let pendingI2VInjection = null // CDP Fetch 인터셉션용 I2V startImage 주입 데이터
 let enterToolClicked = false // Enter tool 버튼 클릭 완료 플래그 (무한루프 방지)
 let consentClicked = false   // 동의 버튼 클릭 완료 플래그 (무한루프 방지)
-let powerSaveBlockerId = null // 화면 꺼짐/절전 방지 blocker ID
 
 // === Shared helpers (trustedClick, fetch, parse, extract, configureFlowMode) ===
 const helpers = createSharedHelpers({
@@ -92,37 +90,7 @@ const {
   fetchMediaAsBase64, configureFlowMode, switchFlowToVideoMode,
 } = helpers
 
-// Update Flow view bounds based on layout mode
-function updateBounds() {
-  if (!mainWindow || !flowView) return
-
-  // 모달이 열려있으면 Flow 뷰를 숨김 (WebContentsView는 네이티브 레이어라 CSS로 가릴 수 없음)
-  if (modalVisible) {
-    flowView.setBounds({ x: 0, y: 0, width: 0, height: 0 })
-    return
-  }
-
-  const { width, height } = mainWindow.getContentBounds()
-  const GAP = 3  // 리사이저 바 절반 (6px / 2) — Flow 뷰와 App 사이 gap
-
-  if (layoutMode === 'split-left') {
-    // Flow 왼쪽, App 오른쪽
-    const splitPos = Math.round(width * splitRatio)
-    flowView.setBounds({ x: 0, y: 0, width: splitPos - GAP, height })
-  } else if (layoutMode === 'split-right') {
-    // Flow 오른쪽, App 왼쪽
-    const splitPos = Math.round(width * splitRatio)
-    flowView.setBounds({ x: width - splitPos + GAP, y: 0, width: splitPos - GAP, height })
-  } else if (layoutMode === 'split-top') {
-    // Flow 상단, App 하단
-    const splitPos = Math.round(height * splitRatio)
-    flowView.setBounds({ x: 0, y: 0, width, height: splitPos - GAP })
-  } else if (layoutMode === 'split-bottom') {
-    // Flow 하단, App 상단
-    const splitPos = Math.round(height * splitRatio)
-    flowView.setBounds({ x: 0, y: height - splitPos + GAP, width, height: splitPos - GAP })
-  }
-}
+// updateBounds → ipc/layout.js로 이동 (import로 사용)
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -138,8 +106,10 @@ function createWindow() {
     }
   })
 
-  // 화면 꺼짐/절전 방지 기본 ON
-  powerSaveBlockerId = powerSaveBlocker.start('prevent-display-sleep')
+  // 화면 꺼짐/절전 방지 기본 ON (layout 모듈에서 관리하므로 IPC로 초기화)
+  // registerLayoutIPC 등록 후 자동으로 IPC 핸들러가 처리하지만,
+  // createWindow 시점에서 바로 켜야 하므로 직접 호출
+  powerSaveBlocker.start('prevent-display-sleep')
 
   // Create Flow WebContentsView with persistent session
   flowView = new WebContentsView({
@@ -966,7 +936,7 @@ function createWindow() {
   mainWindow.on('resize', updateBounds)
 
   // Split 레이아웃 적용
-  updateBounds()
+  updateBounds(mainWindow, flowView)
 
   // Open DevTools in development (detached so it doesn't cover WebContentsView)
   if (process.env.VITE_DEV_SERVER_URL) {
@@ -993,68 +963,8 @@ registerAuthIPC(ipcMain, () => flowView)
 // CapCut IPC (path detection, project writing, app launch)
 registerCapcutIPC(ipcMain)
 
-// Tab switching
-// Layout mode
-ipcMain.handle('app:set-layout', (event, { mode, ratio }) => {
-  layoutMode = mode || 'split-left'
-  if (ratio !== undefined) splitRatio = Math.max(0.2, Math.min(0.8, ratio))
-  updateBounds()
-  if (mainWindow) {
-    mainWindow.webContents.send('layout-changed', { mode: layoutMode, splitRatio })
-  }
-  return { success: true, mode: layoutMode, splitRatio }
-})
-
-// Split ratio update (drag) — renderer에서 계산된 ratio를 직접 받음
-ipcMain.handle('app:update-split', (event, { ratio }) => {
-  if (!mainWindow) return
-  splitRatio = Math.max(0.2, Math.min(0.8, ratio))
-  updateBounds()
-  return { success: true, splitRatio }
-})
-
-// Get current layout
-ipcMain.handle('app:get-layout', () => {
-  return { mode: layoutMode, splitRatio }
-})
-
-// Modal visibility — Flow 뷰를 일시적으로 숨기거나 복원
-ipcMain.handle('app:set-modal-visible', (event, { visible }) => {
-  modalVisible = visible
-  updateBounds()
-  return { success: true }
-})
-
-// 화면 꺼짐/절전 방지
-ipcMain.handle('app:set-prevent-sleep', (event, { enabled }) => {
-  if (enabled) {
-    if (powerSaveBlockerId === null || !powerSaveBlocker.isStarted(powerSaveBlockerId)) {
-      powerSaveBlockerId = powerSaveBlocker.start('prevent-display-sleep')
-    }
-  } else {
-    if (powerSaveBlockerId !== null && powerSaveBlocker.isStarted(powerSaveBlockerId)) {
-      powerSaveBlocker.stop(powerSaveBlockerId)
-      powerSaveBlockerId = null
-    }
-  }
-  return { success: true, enabled }
-})
-
-ipcMain.handle('app:get-prevent-sleep', () => {
-  return { enabled: powerSaveBlockerId !== null && powerSaveBlocker.isStarted(powerSaveBlockerId) }
-})
-
-// Open external URL
-ipcMain.handle('app:open-external', (event, { url }) => {
-  shell.openExternal(url)
-  return { success: true }
-})
-
-// Reveal file in Finder / Explorer
-ipcMain.handle('app:show-in-folder', (event, { filePath }) => {
-  shell.showItemInFolder(filePath)
-  return { success: true }
-})
+// Layout, modal, sleep, open-external, show-in-folder IPC
+registerLayoutIPC(ipcMain, () => mainWindow, () => flowView)
 
 // === MCP HTTP Server ===
 function startMcpHttpServer(port) {

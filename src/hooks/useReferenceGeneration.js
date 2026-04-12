@@ -7,6 +7,8 @@ import { RESOURCE, STYLE_PRESETS } from '../config/defaults'
 import { fileSystemAPI } from './useFileSystem'
 import { generateProjectName } from '../utils/formatters'
 import { checkFolderPermission, checkAuthToken } from '../utils/guards'
+import { cleanBase64, toDataURL } from '../utils/urls'
+import { tryUpscaleImage, extractThumbnailBase64 } from '../utils/imageProcessing'
 import { toast } from '../components/Toast'
 
 // 1~3초 랜덤 딜레이
@@ -82,25 +84,10 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
           if (styleThumbnails?.[presetId]) {
             let mediaId = presetMediaCache.current[presetId]
             if (!mediaId) {
-              const thumbData = styleThumbnails[presetId]
-              let cleanBase64 = null
-              // filePath인 경우 파일에서 읽기 (메모리 최적화)
-              if (thumbData.startsWith('/') || /^[A-Z]:\\/i.test(thumbData)) {
+              const thumbBase64 = await extractThumbnailBase64(styleThumbnails[presetId], fileSystemAPI, '[StyleRef]')
+              if (thumbBase64) {
                 try {
-                  const fileResult = await fileSystemAPI.readFileByPath(thumbData)
-                  if (fileResult.success) {
-                    cleanBase64 = fileResult.data?.split(',')[1] || fileResult.data
-                  }
-                } catch (e) {
-                  console.warn('[StyleRef] Failed to read thumbnail file:', e)
-                }
-              } else {
-                // data URL 또는 blob URL fallback
-                cleanBase64 = thumbData.split(',')[1] || thumbData
-              }
-              if (cleanBase64) {
-                try {
-                  const uploadResult = await flowAPI.uploadReference(cleanBase64, 'style')
+                  const uploadResult = await flowAPI.uploadReference(thumbBase64, 'style')
                   if (uploadResult.success) {
                     mediaId = uploadResult.mediaId
                     presetMediaCache.current[presetId] = mediaId
@@ -134,33 +121,22 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
         let imageData = firstImage.base64 || firstImage  // backward compat
 
         // 이미지 업스케일 (설정에 따라, style 카드 제외)
-        const upscaleRes = settings.imageUpscale || 'off'
         const origMediaId = firstImage.mediaId || null
-        if (upscaleRes !== 'off' && origMediaId && ref.type !== 'style') {
-          try {
-            console.log('[Reference] Upscaling image to', upscaleRes, '...')
-            const upResult = await flowAPI.upscaleImage(origMediaId, upscaleRes)
-            if (upResult.success && upResult.data) {
-              imageData = upResult.data
-              console.log('[Reference] Upscale success')
-            } else {
-              console.warn('[Reference] Upscale failed, using original:', upResult.error)
-            }
-          } catch (e) {
-            console.warn('[Reference] Upscale error, using original:', e.message)
-          }
+        if (ref.type !== 'style') {
+          const upscaled = await tryUpscaleImage(flowAPI, origMediaId, settings.imageUpscale || 'off', '[Reference]')
+          if (upscaled) imageData = upscaled
         }
 
         // data URL prefix 보장 (img src 표시용)
-        const displayUrl = imageData.startsWith('data:') ? imageData : `data:image/png;base64,${imageData}`
+        const displayUrl = toDataURL(imageData)
 
         // 먼저 Flow에 업로드하여 mediaId + caption 받기
-        const cleanBase64 = imageData.split(',')[1] || imageData
+        const base64ForUpload = cleanBase64(imageData)
         let mediaId = null
         let caption = null
-        console.log('[Reference] Uploading to Flow for mediaId...', { category: ref.category, base64Len: cleanBase64.length })
+        console.log('[Reference] Uploading to Flow for mediaId...', { category: ref.category, base64Len: base64ForUpload.length })
         try {
-          const uploadResult = await flowAPI.uploadReference(cleanBase64, ref.category)
+          const uploadResult = await flowAPI.uploadReference(base64ForUpload, ref.category)
           console.log('[Reference] Upload result:', uploadResult)
           if (uploadResult.success) {
             mediaId = uploadResult.mediaId
@@ -280,31 +256,20 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     let imageData = firstImage.base64 || firstImage
 
     // 업스케일 (style 카드 제외)
-    const upscaleRes = settings.imageUpscale || 'off'
     const origMediaId = firstImage.mediaId || null
-    if (upscaleRes !== 'off' && origMediaId && ref.type !== 'style') {
-      try {
-        console.log('[AsyncRef] Upscaling image to', upscaleRes, '...')
-        const upResult = await flowAPI.upscaleImage(origMediaId, upscaleRes)
-        if (upResult.success && upResult.data) {
-          imageData = upResult.data
-          console.log('[AsyncRef] Upscale success')
-        } else {
-          console.warn('[AsyncRef] Upscale failed, using original:', upResult.error)
-        }
-      } catch (e) {
-        console.warn('[AsyncRef] Upscale error, using original:', e.message)
-      }
+    if (ref.type !== 'style') {
+      const upscaled = await tryUpscaleImage(flowAPI, origMediaId, settings.imageUpscale || 'off', '[AsyncRef]')
+      if (upscaled) imageData = upscaled
     }
 
-    const displayUrl = imageData.startsWith('data:') ? imageData : `data:image/png;base64,${imageData}`
+    const displayUrl = toDataURL(imageData)
 
     // Flow에 업로드 → mediaId + caption
-    const cleanBase64 = imageData.split(',')[1] || imageData
+    const base64ForUpload = cleanBase64(imageData)
     let mediaId = null
     let caption = null
     try {
-      const uploadResult = await flowAPI.uploadReference(cleanBase64, ref.category)
+      const uploadResult = await flowAPI.uploadReference(base64ForUpload, ref.category)
       if (uploadResult.success) {
         mediaId = uploadResult.mediaId
         caption = uploadResult.caption
@@ -467,24 +432,10 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     if (batchEffectiveStyleId?.startsWith('preset:')) {
       const presetId = batchEffectiveStyleId.replace('preset:', '')
       if (styleThumbnails?.[presetId] && !presetMediaCache.current[presetId]) {
-        const thumbData = styleThumbnails[presetId]
-        let cleanBase64 = null
-        // filePath인 경우 파일에서 읽기
-        if (thumbData.startsWith('/') || /^[A-Z]:\\/i.test(thumbData)) {
+        const thumbBase64 = await extractThumbnailBase64(styleThumbnails[presetId], fileSystemAPI, '[GenerateAllRefs]')
+        if (thumbBase64) {
           try {
-            const fileResult = await fileSystemAPI.readFileByPath(thumbData)
-            if (fileResult.success) {
-              cleanBase64 = fileResult.data?.split(',')[1] || fileResult.data
-            }
-          } catch (e) {
-            console.warn('[GenerateAllRefs] Failed to read thumbnail file:', e)
-          }
-        } else {
-          cleanBase64 = thumbData.split(',')[1] || thumbData
-        }
-        if (cleanBase64) {
-          try {
-            const uploadResult = await flowAPI.uploadReference(cleanBase64, 'style')
+            const uploadResult = await flowAPI.uploadReference(thumbBase64, 'style')
             if (uploadResult.success) {
               presetMediaCache.current[presetId] = uploadResult.mediaId
               console.log('[GenerateAllRefs] Preset thumbnail pre-uploaded, mediaId:', uploadResult.mediaId)

@@ -7,6 +7,7 @@ import { RESOURCE } from '../config/defaults'
 import { fileSystemAPI } from './useFileSystem'
 import { generateProjectName, getImageSizeFromBase64 } from '../utils/formatters'
 import { checkFolderPermission, checkAuthToken } from '../utils/guards'
+import { tryUpscaleImage } from '../utils/imageProcessing'
 import { toast } from '../components/Toast'
 
 export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, openSettings, setSelectedScene, t, generationQueue }) {
@@ -54,21 +55,8 @@ export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, open
         const mediaId = firstImage.mediaId || null
 
         // 이미지 업스케일 (설정에 따라)
-        const upscaleRes = settings.imageUpscale || 'off'
-        if (upscaleRes !== 'off' && mediaId) {
-          try {
-            console.log('[Scene] Upscaling image to', upscaleRes, '...')
-            const upResult = await flowAPI.upscaleImage(mediaId, upscaleRes)
-            if (upResult.success && upResult.data) {
-              imageData = upResult.data
-              console.log('[Scene] Upscale success')
-            } else {
-              console.warn('[Scene] Upscale failed, using original:', upResult.error)
-            }
-          } catch (e) {
-            console.warn('[Scene] Upscale error, using original:', e.message)
-          }
-        }
+        const upscaled = await tryUpscaleImage(flowAPI, mediaId, settings.imageUpscale || 'off', '[Scene]')
+        if (upscaled) imageData = upscaled
 
         // 이미지 크기 추출
         let imageSize = null

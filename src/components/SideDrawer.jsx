@@ -2,9 +2,10 @@
  * SideDrawer - 사이드 메뉴 드로워
  */
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useI18n } from '../hooks/useI18n'
+import { useModalVisibility } from '../hooks/useModalVisibility'
 import './SideDrawer.css'
 import appIconUrl from '/assets/icon128.png'
 
@@ -71,13 +72,7 @@ export function SideDrawer({ isOpen, onClose }) {
   const [tooltip, setTooltip] = useState({ text: null, position: null })
 
   // 드로워 열릴 때 Flow 뷰 숨기기
-  useEffect(() => {
-    if (!isOpen) return
-    window.electronAPI?.setModalVisible?.({ visible: true })
-    return () => {
-      window.electronAPI?.setModalVisible?.({ visible: false })
-    }
-  }, [isOpen])
+  useModalVisibility(isOpen)
 
   if (!isOpen) return null
 

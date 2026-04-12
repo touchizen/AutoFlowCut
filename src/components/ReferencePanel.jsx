@@ -7,6 +7,7 @@ import { createPortal } from 'react-dom'
 import { REFERENCE_TYPES } from '../config/defaults'
 import { useI18n } from '../hooks/useI18n'
 import { useElapsedTimer } from '../hooks/useElapsedTimer'
+import { useModalVisibility } from '../hooks/useModalVisibility'
 import { getRatioClass, formatElapsedMs } from '../utils/formatters'
 import ReferenceCard from './ReferenceCard'
 import ReferenceDetailModal from './ReferenceDetailModal'
@@ -51,11 +52,7 @@ export default function ReferencePanel({
   const batchElapsed = batchElapsedSec * 1000 // ms 호환
 
   // 위저드 열릴 때 Flow 네이티브 뷰 숨기기
-  useEffect(() => {
-    if (!showBatchWizard) return
-    window.electronAPI?.setModalVisible?.({ visible: true })
-    return () => window.electronAPI?.setModalVisible?.({ visible: false })
-  }, [showBatchWizard])
+  useModalVisibility(showBatchWizard)
 
   // 일괄생성 시작/종료 감지
   useEffect(() => {

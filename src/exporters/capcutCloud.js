@@ -8,6 +8,7 @@
 
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { fileSystemAPI } from '../hooks/useFileSystem';
+import { cleanBase64 as stripBase64Prefix } from '../utils/urls';
 
 /**
  * base64 데이터에서 이미지 크기 추출
@@ -387,6 +388,19 @@ async function callGenerateCapcutJson(requestData) {
 async function collectMediaFiles(mediaFiles, sfxFiles, audioFiles = []) {
   const collected = [];
 
+  // 파일 경로에서 base64 데이터 읽기 (공통 헬퍼)
+  const readFileBase64 = async (path, label) => {
+    try {
+      const result = await fileSystemAPI.readFileByPath(path);
+      if (result.success && result.data) {
+        return stripBase64Prefix(result.data);
+      }
+    } catch (e) {
+      console.warn(`[CapCut Cloud] ${label} file read failed: ${path}`, e);
+    }
+    return null;
+  };
+
   // 이미지/비디오 수집
   for (const media of mediaFiles) {
     if (media.path) {
@@ -395,31 +409,16 @@ async function collectMediaFiles(mediaFiles, sfxFiles, audioFiles = []) {
       console.log('[CapCut Cloud] Processing media:', media.sceneId);
 
       if (media.path.startsWith('data:')) {
-        base64Data = media.path.split(',')[1];
+        base64Data = stripBase64Prefix(media.path);
       } else if (isFilePath(media.path)) {
-        // 파일 시스템에서 읽기
-        try {
-          const result = await fileSystemAPI.readFileByPath(media.path);
-          if (result.success && result.data) {
-            base64Data = result.data.startsWith('data:')
-              ? result.data.split(',')[1]
-              : result.data;
-          }
-        } catch (e) {
-          console.warn(`[CapCut Cloud] File read failed: ${media.path}`, e);
-        }
+        base64Data = await readFileBase64(media.path, 'Media');
 
         // 실패 시 권한 요청 후 재시도
         if (!base64Data) {
           try {
             const permission = await fileSystemAPI.ensurePermission();
             if (permission.hasPermission) {
-              const retryResult = await fileSystemAPI.readFileByPath(media.path);
-              if (retryResult.success && retryResult.data) {
-                base64Data = retryResult.data.startsWith('data:')
-                  ? retryResult.data.split(',')[1]
-                  : retryResult.data;
-              }
+              base64Data = await readFileBase64(media.path, 'Media retry');
             }
           } catch (e) {
             console.warn('[CapCut Cloud] Permission request failed:', e);
@@ -429,9 +428,7 @@ async function collectMediaFiles(mediaFiles, sfxFiles, audioFiles = []) {
         // fallback 사용
         if (!base64Data && media.fallback) {
           console.log('[CapCut Cloud] Using fallback for:', media.sceneId);
-          base64Data = media.fallback.startsWith('data:')
-            ? media.fallback.split(',')[1]
-            : media.fallback;
+          base64Data = stripBase64Prefix(media.fallback);
         }
       } else if (media.path.startsWith('/9j/') || media.path.startsWith('iVBOR') ||
                  media.path.startsWith('AAAA') || media.path.startsWith('//u')) {
@@ -450,16 +447,9 @@ async function collectMediaFiles(mediaFiles, sfxFiles, audioFiles = []) {
       let base64Data = null;
 
       if (sfx.path.startsWith('data:')) {
-        base64Data = sfx.path.split(',')[1];
+        base64Data = stripBase64Prefix(sfx.path);
       } else if (isFilePath(sfx.path)) {
-        try {
-          const result = await fileSystemAPI.readFileByPath(sfx.path);
-          if (result.success && result.data) {
-            base64Data = result.data;
-          }
-        } catch (e) {
-          console.warn(`[CapCut Cloud] Failed to read sfx file: ${sfx.path}`, e);
-        }
+        base64Data = await readFileBase64(sfx.path, 'SFX');
       } else if (sfx.path.startsWith('//u') || sfx.path.startsWith('SUQ')) {
         base64Data = sfx.path;
       }
@@ -480,9 +470,7 @@ async function collectMediaFiles(mediaFiles, sfxFiles, audioFiles = []) {
       try {
         const result = await window.electronAPI.readFileAbsolute({ filePath: audio.path });
         if (result.success && result.data) {
-          base64Data = result.data.startsWith('data:')
-            ? result.data.split(',')[1]
-            : result.data;
+          base64Data = stripBase64Prefix(result.data);
         }
       } catch (e) {
         console.warn(`[CapCut Cloud] Audio file read failed: ${audio.path}`, e);

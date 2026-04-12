@@ -5,8 +5,8 @@
  * 모달 열릴 때 Flow WebContentsView를 숨김 (네이티브 레이어는 CSS z-index로 가릴 수 없음).
  */
 
-import { useEffect } from 'react'
 import { createPortal } from 'react-dom'
+import { useModalVisibility } from '../hooks/useModalVisibility'
 
 export default function Modal({
   isOpen = true,
@@ -17,13 +17,7 @@ export default function Modal({
   footer
 }) {
   // 모달 열릴 때 Flow 뷰 숨기기, 닫힐 때 복원
-  useEffect(() => {
-    if (!isOpen) return
-    window.electronAPI?.setModalVisible?.({ visible: true })
-    return () => {
-      window.electronAPI?.setModalVisible?.({ visible: false })
-    }
-  }, [isOpen])
+  useModalVisibility(isOpen)
 
   if (!isOpen) return null
 

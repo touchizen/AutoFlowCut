@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { useI18n } from '../hooks/useI18n'
 import { useAuth } from '../contexts/AuthContext'
 import { useExportSettings } from '../hooks/useExportSettings'
+import { useModalVisibility } from '../hooks/useModalVisibility'
 import { formatExpiryDate } from '../utils/formatters'
 import './ExportModal.css'
 
@@ -137,13 +138,7 @@ export const ExportModal = ({ isOpen, onClose, onExport, projectName, loading, e
   }, [selectedOS])
 
   // 모달 열릴 때 Flow 뷰 숨기기 (네이티브 레이어는 CSS z-index로 가릴 수 없음)
-  useEffect(() => {
-    if (!isOpen) return
-    window.electronAPI?.setModalVisible?.({ visible: true })
-    return () => {
-      window.electronAPI?.setModalVisible?.({ visible: false })
-    }
-  }, [isOpen])
+  useModalVisibility(isOpen)
 
   if (!isOpen) return null
 
