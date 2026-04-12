@@ -75,6 +75,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openCapcut: () => ipcRenderer.invoke('capcut:open-app'),
   saveSrtFile: (params) => ipcRenderer.invoke('capcut:save-srt-file', params),
   getSystemInfo: () => ipcRenderer.invoke('capcut:get-system-info'),
+  getVolumePath: () => ipcRenderer.invoke('capcut:get-volume-path'),
 
   // Flow DOM Mode
   domNavigate: (params) => ipcRenderer.invoke('flow:dom-navigate', params),

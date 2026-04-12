@@ -390,4 +390,24 @@ export function registerCapcutIPC(ipcMain) {
       return { success: false, error: error.message }
     }
   })
+
+  // ----------------------------------------------------------
+  // 8. capcut:get-volume-path
+  //
+  // macOS: Get the root volume mount path (e.g., /Volumes/Macintosh HD)
+  // CapCut requires volume-prefixed paths for uncached file resolution.
+  // ----------------------------------------------------------
+  ipcMain.handle('capcut:get-volume-path', async () => {
+    try {
+      if (process.platform !== 'darwin') {
+        return { success: true, volumePath: '' }
+      }
+      const { stdout } = await execPromise('diskutil info / | grep "Volume Name"')
+      const match = stdout.match(/Volume Name:\s+(.+)/)
+      const volumeName = match ? match[1].trim() : 'Macintosh HD'
+      return { success: true, volumePath: `/Volumes/${volumeName}` }
+    } catch {
+      return { success: true, volumePath: '/Volumes/Macintosh HD' }
+    }
+  })
 }

@@ -528,11 +528,12 @@ export async function exportCapcutPackageCloud(project, options = {}) {
   let draftInfoStr = typeof draftInfo === 'string' ? draftInfo : JSON.stringify(draftInfo);
   let draftMetaStr = typeof draftMetaInfo === 'string' ? draftMetaInfo : JSON.stringify(draftMetaInfo);
 
-  // macOS: CapCut은 캐시에 없는 파일을 로드할 때 /Volumes/Macintosh HD 볼륨 경로 필요
-  const isMac = /Mac/.test(navigator.platform || '');
+  // macOS: CapCut은 캐시에 없는 파일을 로드할 때 볼륨 경로 필요 (e.g., /Volumes/Macintosh HD)
+  const volumeResult = await window.electronAPI.getVolumePath();
+  const volumePrefix = volumeResult?.volumePath || '';
   const toVolumePath = (p) => {
-    if (!isMac || p.startsWith('/Volumes/')) return p;
-    return `/Volumes/Macintosh HD${p}`;
+    if (!volumePrefix || p.startsWith('/Volumes/')) return p;
+    return `${volumePrefix}${p}`;
   };
 
   for (const [filename, absolutePath] of Object.entries(pathMap)) {
