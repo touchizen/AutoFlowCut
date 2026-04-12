@@ -7,10 +7,10 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { DEFAULTS, RESOURCE } from '../config/defaults'
 import { findAutoStyle, resolveSceneStyle } from '../services/styleService'
+import { finalizeGeneratedImage } from '../services/imageFinalize'
 import { fileSystemAPI } from './useFileSystem'
-import { getTimestamp, generateProjectName, getImageSizeFromBase64 } from '../utils/formatters'
+import { getTimestamp, generateProjectName } from '../utils/formatters'
 import { cleanBase64 as stripBase64Prefix } from '../utils/urls'
-import { tryUpscaleImage } from '../utils/imageProcessing'
 import { toast } from '../components/Toast'
 import { resetDOMSession, requestStopDOM } from '../utils/flowDOMClient'
 
@@ -114,58 +114,16 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       }
     }
     
-    if (result.success && result.images?.length > 0) {
-      // images는 [{ base64, mediaId }] 객체 배열
-      const firstImage = result.images[0]
-      let imageData = firstImage.base64 || firstImage  // backward compat: string fallback
-      const mediaId = firstImage.mediaId || null
+    const { sceneUpdate } = await finalizeGeneratedImage({
+      result, flowAPI,
+      upscaleRes: imageUpscale || 'off',
+      saveMode, projectName,
+      sceneId: scene.id, prompt: scene.prompt,
+      logPrefix: '[Automation]'
+    })
+    updateScene(scene.id, sceneUpdate)
 
-      // 이미지 업스케일 (설정에 따라)
-      const upscaled = await tryUpscaleImage(flowAPI, mediaId, imageUpscale || 'off', '[Automation]')
-      if (upscaled) imageData = upscaled
-
-      // 이미지 크기 추출
-      let imageSize = null
-      try {
-        imageSize = await getImageSizeFromBase64(imageData)
-      } catch (e) {
-        console.warn('[Automation] Failed to get image size:', e)
-      }
-
-      // 저장 모드에 따라 처리
-      if (saveMode === 'folder') {
-        // metadata: prompt + mediaId → history/*.json에 저장
-        const metadata = {
-          prompt: scene.prompt,
-          mediaId,
-          model: 'flow',
-          timestamp: Date.now()
-        }
-        const saveResult = await fileSystemAPI.saveImage(projectName, scene.id, imageData, 'flow', metadata)
-
-        updateScene(scene.id, {
-          status: 'done',
-          image: saveResult.success ? null : imageData,  // 파일 저장 성공 시 메모리 해제
-          imagePath: saveResult.success ? saveResult.path : null,
-          mediaId,
-          image_size: imageSize
-        })
-
-        // 여분 이미지(2장 이상 생성된 경우) → History에만 저장 (mediaId 포함)
-        await fileSystemAPI.saveExtraToHistory(projectName, RESOURCE.SCENES, scene.id, result.images, scene.prompt, 'Automation')
-      } else {
-        updateScene(scene.id, {
-          status: 'done',
-          image: imageData,
-          mediaId,
-          image_size: imageSize
-        })
-      }
-    } else {
-      updateScene(scene.id, {
-        status: 'error',
-        error: result.error
-      })
+    if (!result.success || !result.images?.length) {
 
       // 인증 관련 에러 체크 - 토큰 갱신 시도 후 재시도
       const errorMsg = result.error || ''
@@ -224,38 +182,15 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
 
     // 비동기 결과 후처리 (업스케일 + 저장)
     const processAsyncResult = async (scene, result) => {
-      if (result.success && result.images?.length > 0) {
-        const firstImage = result.images[0]
-        let imageData = firstImage.base64 || firstImage
-        const mediaId = firstImage.mediaId || null
-
-        // 업스케일
-        const upscaled = await tryUpscaleImage(flowAPI, mediaId, imageUpscale || 'off', '[Automation]')
-        if (upscaled) imageData = upscaled
-
-        // 이미지 크기 추출
-        let imageSize = null
-        try { imageSize = await getImageSizeFromBase64(imageData) } catch (e) { /* ignore */ }
-
-        // 저장
-        if (saveMode === 'folder') {
-          const metadata = { prompt: scene.prompt, mediaId, model: 'flow', timestamp: Date.now() }
-          const saveResult = await fileSystemAPI.saveImage(projectName, scene.id, imageData, 'flow', metadata)
-          updateScene(scene.id, {
-            status: 'done',
-            image: saveResult.success ? null : imageData,
-            imagePath: saveResult.success ? saveResult.path : null,
-            mediaId, image_size: imageSize
-          })
-          await fileSystemAPI.saveExtraToHistory(projectName, RESOURCE.SCENES, scene.id, result.images, scene.prompt, 'Automation')
-        } else {
-          updateScene(scene.id, { status: 'done', image: imageData, mediaId, image_size: imageSize })
-        }
-        return true
-      } else {
-        updateScene(scene.id, { status: 'error', error: result.error || 'No images' })
-        return false
-      }
+      const { success, sceneUpdate } = await finalizeGeneratedImage({
+        result, flowAPI,
+        upscaleRes: imageUpscale || 'off',
+        saveMode, projectName,
+        sceneId: scene.id, prompt: scene.prompt,
+        logPrefix: '[Automation]'
+      })
+      updateScene(scene.id, sceneUpdate)
+      return success
     }
 
     // 완료된 결과 수집

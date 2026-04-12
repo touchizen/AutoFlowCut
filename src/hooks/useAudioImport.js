@@ -81,9 +81,11 @@ export function useAudioImport(t) {
   }, [getReviewPath, updateReviews])
 
   /**
-   * 스캔 결과 → 패키지 구성 + localStorage 저장 + 리뷰 로드 + 트랙 생성 (공통 헬퍼)
+   * 스캔 결과 → 패키지 구성 + localStorage 저장 + 트랙 생성 (공통 헬퍼)
+   * @param {object} result - 스캔 결과
+   * @param {{ skipReviews?: boolean }} options - skipReviews: true이면 리뷰 로드 생략 (refreshReviews에서 별도 처리)
    */
-  const _processScanResult = async (result) => {
+  const _processScanResult = async (result, { skipReviews = false } = {}) => {
     let srtEntries = []
     if (result.srtContent) srtEntries = parseSRT(result.srtContent)
     let sfxTimecodes = []
@@ -111,7 +113,7 @@ export function useAudioImport(t) {
     }
     localStorage.setItem('audioFolderPath', result.folderPath)
 
-    await loadReviews(result.folderPath)
+    if (!skipReviews) await loadReviews(result.folderPath)
     const tracks = buildAudioTracks(pkg, srtEntries)
     setAudioTracks(tracks)
 
@@ -196,30 +198,10 @@ export function useAudioImport(t) {
     const folderPath = audioPackage?.folderPath
     if (!folderPath) return
 
-    // 1. 폴더 재스캔 (다이얼로그 없이)
+    // 1. 폴더 재스캔 (다이얼로그 없이) → 패키지/트랙 업데이트 (리뷰는 아래서 별도 처리)
     const rescan = await window.electronAPI?.rescanAudioPackage?.({ folderPath })
     if (rescan?.success) {
-      // SRT/SFX 파싱
-      let srtEntries = []
-      if (rescan.srtContent) srtEntries = parseSRT(rescan.srtContent)
-      let sfxTimecodes = []
-      if (rescan.sfxMdContent) sfxTimecodes = parseSfxTimecodes(rescan.sfxMdContent)
-
-      const pkg = {
-        folderPath: rescan.folderPath,
-        media: rescan.media,
-        voices: rescan.voices,
-        sfx: rescan.sfx,
-        sfxTimecodes,
-        srtEntries,
-        srtContent: rescan.srtContent || null,
-        summary: rescan.summary
-      }
-      setAudioPackage(pkg)
-
-      const tracks = buildAudioTracks(pkg, srtEntries)
-      setAudioTracks(tracks)
-
+      await _processScanResult(rescan, { skipReviews: true })
       console.log('[AudioRefresh] rescan done:', rescan.summary)
 
       // 2. 타임코드가 있는 SFX 원본 베이스네임 수집

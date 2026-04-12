@@ -3,11 +3,8 @@
  */
 
 import { useState, useCallback } from 'react'
-import { RESOURCE } from '../config/defaults'
-import { fileSystemAPI } from './useFileSystem'
-import { generateProjectName, getImageSizeFromBase64 } from '../utils/formatters'
 import { checkFolderPermission, checkAuthToken } from '../utils/guards'
-import { tryUpscaleImage } from '../utils/imageProcessing'
+import { finalizeGeneratedImage } from '../services/imageFinalize'
 import { toast } from '../components/Toast'
 
 export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, openSettings, setSelectedScene, t, generationQueue }) {
@@ -48,56 +45,19 @@ export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, open
         : null
       const result = await flowAPI.generateImageDOM(scene.prompt, matchedRefs, { batchCount: settings.imageBatchCount, seed })
 
-      if (result.success && result.images?.length > 0) {
-        // images는 [{ base64, mediaId }] 객체 배열
-        const firstImage = result.images[0]
-        let imageData = firstImage.base64 || firstImage  // backward compat
-        const mediaId = firstImage.mediaId || null
-
-        // 이미지 업스케일 (설정에 따라)
-        const upscaled = await tryUpscaleImage(flowAPI, mediaId, settings.imageUpscale || 'off', '[Scene]')
-        if (upscaled) imageData = upscaled
-
-        // 이미지 크기 추출
-        let imageSize = null
-        try {
-          imageSize = await getImageSizeFromBase64(imageData)
-        } catch (e) {
-          console.warn('[Scene] Failed to get image size:', e)
-        }
-
-        // 파일 저장 (폴더 모드일 때)
-        let imagePath = null
-        if (settings.saveMode === 'folder') {
-          const projectName = settings.projectName || generateProjectName()
-          // metadata: prompt + mediaId → history/*.json에 저장
-          const metadata = {
-            prompt: scene.prompt,
-            mediaId,
-            model: 'flow',
-            timestamp: Date.now()
-          }
-          const saveResult = await fileSystemAPI.saveImage(projectName, sceneId, imageData, 'flow', metadata)
-          if (saveResult.success) {
-            imagePath = saveResult.path
-            console.log('[Scene] Saved to:', imagePath)
-          }
-
-          // 여분 이미지(2장 이상 생성된 경우) → History에만 저장 (mediaId 포함)
-          await fileSystemAPI.saveExtraToHistory(projectName, RESOURCE.SCENES, sceneId, result.images, scene.prompt, 'Scene')
-        }
-
-        scenesHook.updateScene(sceneId, {
-          image: imagePath ? null : imageData,  // 파일 저장 성공 시 메모리 해제
-          imagePath,
-          mediaId,
-          image_size: imageSize,
-          status: 'done'
-        })
+      const { success, sceneUpdate } = await finalizeGeneratedImage({
+        result, flowAPI,
+        upscaleRes: settings.imageUpscale || 'off',
+        saveMode: settings.saveMode,
+        projectName: settings.projectName,
+        sceneId, prompt: scene.prompt,
+        logPrefix: '[Scene]'
+      })
+      scenesHook.updateScene(sceneId, sceneUpdate)
+      if (success) {
         toast.success(t('toast.sceneGenerateSuccess', { sceneId }))
       } else {
-        scenesHook.updateScene(sceneId, { status: 'error' })
-        toast.error(t('toast.sceneGenerateFailed', { error: result.error || 'Unknown error' }))
+        toast.error(t('toast.sceneGenerateFailed', { error: sceneUpdate.error || 'Unknown error' }))
       }
     } catch (error) {
       console.error('Scene generation error:', error)
