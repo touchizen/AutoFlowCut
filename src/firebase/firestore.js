@@ -14,10 +14,7 @@ import {
   onSnapshot,
   serverTimestamp
 } from 'firebase/firestore'
-import { db } from './config'
-
-// 앱 ID (이 프로젝트용)
-const APP_ID = 'autoflowcut'
+import { db, APP_ID } from './config'
 
 /**
  * 사용자 문서 가져오기

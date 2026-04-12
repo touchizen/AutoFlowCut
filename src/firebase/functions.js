@@ -5,10 +5,7 @@
  */
 
 import { httpsCallable } from 'firebase/functions'
-import { functions } from './config'
-
-// 앱 ID (이 프로젝트용)
-const APP_ID = 'flow2capcut'
+import { functions, APP_ID } from './config'
 
 /**
  * OS 감지 (navigator.userAgentData 우선, fallback: userAgent 파싱)
