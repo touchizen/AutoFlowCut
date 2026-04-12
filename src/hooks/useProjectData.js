@@ -207,14 +207,14 @@ export function useProjectData({
   // 마운트 시 자동 복원: 폴더가 설정되어 있으면 이전 프로젝트 로드
   useEffect(() => {
     const tryAutoRestore = async () => {
-      const saved = localStorage.getItem('flow2capcut_settings')
+      const saved = localStorage.getItem('autoflowcut_settings')
       if (!saved) return
 
       const parsed = JSON.parse(saved)
       const prevProjectName = parsed.projectName
       if (!prevProjectName) return
 
-      // ensurePermission: workFolderPath가 null이면 기본 폴더(~/Documents/flow2capcut) 자동 설정
+      // ensurePermission: workFolderPath가 null이면 기본 폴더(~/Documents/AutoFlowCut) 자동 설정
       const permResult = await fileSystemAPI.ensurePermission()
       if (!permResult.success) return
 

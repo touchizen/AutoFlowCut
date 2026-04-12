@@ -1,10 +1,10 @@
 {
-  "name": "flow2capcut-mcp",
+  "name": "autoflowcut-mcp",
   "version": "1.0.0",
   "type": "module",
   "main": "index.js",
   "bin": {
-    "flow2capcut-mcp": "./index.js"
+    "autoflowcut-mcp": "./index.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0"

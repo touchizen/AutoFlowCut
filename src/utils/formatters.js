@@ -231,10 +231,10 @@ export function formatPercent(value, decimals = 0) {
 
 /**
  * 기본 프로젝트명 생성
- * @param {string} prefix - 접두사 (기본: 'flow2capcut')
- * @returns {string} "flow2capcut_1706348400000" 형식
+ * @param {string} prefix - 접두사 (기본: 'autoflowcut')
+ * @returns {string} "autoflowcut_1706348400000" 형식
  */
-export function generateProjectName(prefix = 'flow2capcut') {
+export function generateProjectName(prefix = 'autoflowcut') {
   return `${prefix}_${Date.now()}`
 }
 

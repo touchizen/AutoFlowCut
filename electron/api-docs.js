@@ -30,7 +30,7 @@ npm install
 #### 글로벌 설정 (모든 프로젝트에서 사용) — 권장
 
 \`\`\`bash
-claude mcp add --scope user --transport stdio flow2capcut -- node /path/to/AutoFlowCut/mcp-server/index.js
+claude mcp add --scope user --transport stdio autoflowcut -- node /path/to/AutoFlowCut/mcp-server/index.js
 \`\`\`
 
 \`~/.claude.json\`의 \`mcpServers\`에 저장됩니다.
@@ -42,7 +42,7 @@ claude mcp add --scope user --transport stdio flow2capcut -- node /path/to/AutoF
 \`\`\`json
 {
   "mcpServers": {
-    "flow2capcut": {
+    "autoflowcut": {
       "command": "node",
       "args": ["/path/to/AutoFlowCut/mcp-server/index.js"]
     }

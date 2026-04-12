@@ -229,12 +229,8 @@ async function prepareCloudRequest(project, options = {}) {
     }
   });
 
-  // mediaPathBase 설정
-  let mediaPathBase = 'media';
-  if (capcutProjectNumber) {
-    const cleanPath = capcutProjectNumber.replace(/[/\\]+$/, '');
-    mediaPathBase = `${cleanPath}/media`;
-  }
+  // mediaPathBase — 항상 'media'로 고정 (데스크톱 모드: 클라이언트에서 절대경로로 치환)
+  const mediaPathBase = 'media';
 
   // OS 감지 (Windows vs macOS)
   const detectedOS = (() => {
@@ -307,6 +303,18 @@ async function prepareCloudRequest(project, options = {}) {
     }
   }
 
+  // filename → absolutePath 매핑 생성 (데스크톱 모드: 절대경로 치환용)
+  const pathMap = {};
+  for (const m of mediaFiles) {
+    if (m.path && isFilePath(m.path)) pathMap[m.filename] = m.path;
+  }
+  for (const s of sfxFiles) {
+    if (s.path && isFilePath(s.path)) pathMap[s.filename] = s.path;
+  }
+  for (const a of audioFiles) {
+    if (a.path && isFilePath(a.path)) pathMap[a.filename] = a.path;
+  }
+
   return {
     cloudRequest: {
       projectName: project.name || 'Untitled',
@@ -336,7 +344,8 @@ async function prepareCloudRequest(project, options = {}) {
     },
     mediaFiles,
     sfxFiles,
-    audioFiles
+    audioFiles,
+    pathMap
   };
 }
 
@@ -508,17 +517,33 @@ export async function exportCapcutPackageCloud(project, options = {}) {
   console.log('[CapCut Cloud] Target path:', targetPath);
 
   // 1. Cloud Functions용 요청 데이터 준비
-  const { cloudRequest, mediaFiles, sfxFiles, audioFiles } = await prepareCloudRequest(project, options);
+  const { cloudRequest, pathMap } = await prepareCloudRequest(project, options);
 
   // 2. Cloud Functions 호출하여 JSON 생성
-  const { draftInfo, draftMetaInfo } = await callGenerateCapcutJson(cloudRequest);
+  let { draftInfo, draftMetaInfo } = await callGenerateCapcutJson(cloudRequest);
 
-  // 3. 미디어 파일을 base64 데이터로 수집 (오디오 포함)
-  console.log('[CapCut Cloud] Collecting media files...');
-  const collectedMediaFiles = await collectMediaFiles(mediaFiles, sfxFiles, audioFiles);
-  console.log(`[CapCut Cloud] Collected ${collectedMediaFiles.length} media files (incl. ${audioFiles.length} audio)`);
+  // 3. 데스크톱 모드: 미디어 복사 없이 절대경로 치환
+  //    GCF가 생성한 JSON 내 "mediaPathBase/filename" → 실제 절대경로로 교체
+  const mediaBase = cloudRequest.mediaPathBase;
+  let draftInfoStr = typeof draftInfo === 'string' ? draftInfo : JSON.stringify(draftInfo);
+  let draftMetaStr = typeof draftMetaInfo === 'string' ? draftMetaInfo : JSON.stringify(draftMetaInfo);
 
-  // 4. SRT 자막 파일 수집
+  // macOS: CapCut은 캐시에 없는 파일을 로드할 때 /Volumes/Macintosh HD 볼륨 경로 필요
+  const isMac = /Mac/.test(navigator.platform || '');
+  const toVolumePath = (p) => {
+    if (!isMac || p.startsWith('/Volumes/')) return p;
+    return `/Volumes/Macintosh HD${p}`;
+  };
+
+  for (const [filename, absolutePath] of Object.entries(pathMap)) {
+    const relativePath = `${mediaBase}/${filename}`;
+    const fullPath = toVolumePath(absolutePath);
+    draftInfoStr = draftInfoStr.split(relativePath).join(fullPath);
+    draftMetaStr = draftMetaStr.split(relativePath).join(fullPath);
+  }
+  console.log(`[CapCut Cloud] Replaced ${Object.keys(pathMap).length} media paths with absolute paths`);
+
+  // 4. SRT 자막 파일 → 작업폴더에 저장 후 절대경로로 JSON 치환
   const { subtitleOption = 'both', audioPackage } = options;
   const { generateSRT } = await import('./capcut.js');
   const srtFiles = [];
@@ -542,14 +567,34 @@ export async function exportCapcutPackageCloud(project, options = {}) {
     }
   }
 
-  // 5. Electron IPC를 통해 디스크에 직접 쓰기
-  console.log('[CapCut Cloud] Writing project to disk via IPC...');
+  // SRT를 작업폴더에 저장하고 절대경로를 pathMap에 추가
+  if (srtFiles.length > 0) {
+    const workFolder = localStorage.getItem('workFolderPath');
+    if (workFolder) {
+      for (const srt of srtFiles) {
+        const srtAbsPath = await window.electronAPI.writeSrtToWorkFolder({
+          workFolder, filename: srt.filename, content: srt.content
+        });
+        if (srtAbsPath?.success) {
+          // JSON 내 SRT 상대경로도 절대경로로 치환
+          const srtRelative = `${mediaBase}/${srt.filename}`;
+          const srtFullPath = toVolumePath(srtAbsPath.filePath);
+          draftInfoStr = draftInfoStr.split(srtRelative).join(srtFullPath);
+          draftMetaStr = draftMetaStr.split(srtRelative).join(srtFullPath);
+          // draft_meta_info의 file_Path도 치환
+          draftMetaStr = draftMetaStr.split(`./media/${srt.filename}`).join(srtFullPath);
+          console.log(`[CapCut Cloud] SRT saved: ${srtAbsPath.filePath}`);
+        }
+      }
+    }
+  }
+
+  // 5. Electron IPC를 통해 JSON만 디스크에 쓰기 (media 폴더 없음)
+  console.log('[CapCut Cloud] Writing JSON-only project to disk via IPC...');
   const result = await window.electronAPI.writeCapcutProject({
     targetPath,
-    draftInfo,
-    draftMetaInfo,
-    mediaFiles: collectedMediaFiles,
-    srtFiles
+    draftInfo: draftInfoStr,
+    draftMetaInfo: draftMetaStr
   });
 
   console.log('[CapCut Cloud] Project written successfully to:', targetPath);

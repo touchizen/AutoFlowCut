@@ -71,6 +71,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkCapcutInstalled: () => ipcRenderer.invoke('capcut:check-installed'),
   getNextProjectNumber: (params) => ipcRenderer.invoke('capcut:next-number', params),
   writeCapcutProject: (params) => ipcRenderer.invoke('capcut:write-project', params),
+  writeSrtToWorkFolder: (params) => ipcRenderer.invoke('capcut:write-srt-to-workfolder', params),
   openCapcut: () => ipcRenderer.invoke('capcut:open-app'),
   saveSrtFile: (params) => ipcRenderer.invoke('capcut:save-srt-file', params),
   getSystemInfo: () => ipcRenderer.invoke('capcut:get-system-info'),

@@ -126,7 +126,7 @@ export function useAudioImport(t) {
 
       setAudioPackage(pkg)
       // 프로젝트별 audioFolderPath 저장
-      const projectName = localStorage.getItem('flow2capcut_settings') ? JSON.parse(localStorage.getItem('flow2capcut_settings')).projectName : null
+      const projectName = localStorage.getItem('autoflowcut_settings') ? JSON.parse(localStorage.getItem('autoflowcut_settings')).projectName : null
       if (projectName) {
         const audioMap = JSON.parse(localStorage.getItem('audioFolderPaths') || '{}')
         audioMap[projectName] = result.folderPath
@@ -175,7 +175,7 @@ export function useAudioImport(t) {
       }
       setAudioPackage(pkg)
       // 프로젝트별 audioFolderPath 저장
-      const projectName = localStorage.getItem('flow2capcut_settings') ? JSON.parse(localStorage.getItem('flow2capcut_settings')).projectName : null
+      const projectName = localStorage.getItem('autoflowcut_settings') ? JSON.parse(localStorage.getItem('autoflowcut_settings')).projectName : null
       if (projectName) {
         const audioMap = JSON.parse(localStorage.getItem('audioFolderPaths') || '{}')
         audioMap[projectName] = result.folderPath

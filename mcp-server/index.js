@@ -224,7 +224,7 @@ function ensureProjectLoaded() {
 // ── MCP 서버 ──────────────────────────────────────────────────
 
 const server = new Server(
-  { name: 'flow2capcut', version: '1.0.0' },
+  { name: 'autoflowcut', version: '1.0.0' },
   { capabilities: { tools: {}, resources: {}, prompts: {} } }
 );
 

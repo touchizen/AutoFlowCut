@@ -1110,7 +1110,7 @@ function startMcpHttpServer(port) {
           try {
             const result = await mainWindow.webContents.executeJavaScript(`
               (() => {
-                const settings = JSON.parse(localStorage.getItem('flow2capcut_settings') || '{}')
+                const settings = JSON.parse(localStorage.getItem('autoflowcut_settings') || '{}')
                 const workFolder = localStorage.getItem('workFolderPath') || ''
                 return { projectName: settings.projectName || '', workFolder }
               })()

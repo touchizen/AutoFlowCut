@@ -68,7 +68,7 @@ function App() {
 
   // Settings
   const [settings, setSettings] = useState(() => {
-    const saved = localStorage.getItem('flow2capcut_settings')
+    const saved = localStorage.getItem('autoflowcut_settings')
     const randomSeed = () => Math.floor(Math.random() * 1000000)
     const defaults = {
       defaultDuration: DEFAULTS.scene.duration,
@@ -138,7 +138,7 @@ function App() {
   const [showStylePicker, setShowStylePicker] = useState(false) // 스타일 선택 모달
   const [selectedVideo, setSelectedVideo] = useState(null) // 비디오 상세 모달용
   const [bottomPanelHeight, setBottomPanelHeight] = useState(() => {
-    const saved = localStorage.getItem('flow2capcut_bottomPanelHeight')
+    const saved = localStorage.getItem('autoflowcut_bottomPanelHeight')
     return saved ? parseInt(saved, 10) : UI.DEFAULT_BOTTOM_PANEL_HEIGHT // 기본 높이
   })
 
@@ -320,7 +320,7 @@ function App() {
 
   // Save settings
   useEffect(() => {
-    localStorage.setItem('flow2capcut_settings', JSON.stringify(settings))
+    localStorage.setItem('autoflowcut_settings', JSON.stringify(settings))
   }, [settings])
 
   // MCP HTTP 서버 시작/중지
@@ -460,7 +460,7 @@ function App() {
 
   // Save bottom panel height
   useEffect(() => {
-    localStorage.setItem('flow2capcut_bottomPanelHeight', String(bottomPanelHeight))
+    localStorage.setItem('autoflowcut_bottomPanelHeight', String(bottomPanelHeight))
   }, [bottomPanelHeight])
 
   // Load saved prompts — 프로젝트가 있으면 auto-restore가 처리하므로 스킵
@@ -468,7 +468,7 @@ function App() {
     // 작업 폴더 + 프로젝트가 모두 설정되어 있으면 auto-restore가 scenes를 로드함
     // savedPrompts를 parseFromText하면 이미지/자막 없는 text-only scenes로 덮어쓰게 됨
     const workFolder = localStorage.getItem('workFolderPath')
-    const settingsSaved = localStorage.getItem('flow2capcut_settings')
+    const settingsSaved = localStorage.getItem('autoflowcut_settings')
     if (workFolder && settingsSaved) {
       try {
         const parsed = JSON.parse(settingsSaved)
@@ -479,14 +479,14 @@ function App() {
       } catch (e) { /* ignore */ }
     }
 
-    const saved = localStorage.getItem('flow2capcut_savedPrompts')
+    const saved = localStorage.getItem('autoflowcut_savedPrompts')
     if (saved) {
       console.log('[App] Loading savedPrompts from localStorage (no project folder configured)')
       parseFromText(saved, settings.defaultDuration)
     }
 
     // Video prompts도 localStorage에서 복원
-    const savedVideo = localStorage.getItem('flow2capcut_savedVideoPrompts')
+    const savedVideo = localStorage.getItem('autoflowcut_savedVideoPrompts')
     if (savedVideo) {
       console.log('[App] Loading savedVideoPrompts from localStorage')
       videoScenesHook.parseFromText(savedVideo, settings.defaultDuration)
@@ -496,13 +496,13 @@ function App() {
   // Handle text input change
   const handleTextChange = (text) => {
     parseFromText(text, settings.defaultDuration)
-    localStorage.setItem('flow2capcut_savedPrompts', text)
+    localStorage.setItem('autoflowcut_savedPrompts', text)
   }
 
   // Handle video text input change (T2V 독립 프롬프트)
   const handleVideoTextChange = (text) => {
     videoScenesHook.parseFromText(text, settings.defaultDuration)
-    localStorage.setItem('flow2capcut_savedVideoPrompts', text)
+    localStorage.setItem('autoflowcut_savedVideoPrompts', text)
   }
 
   // 새 프로젝트 생성 핸들러 (설정창 열기)

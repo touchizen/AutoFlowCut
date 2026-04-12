@@ -17,7 +17,7 @@ import {
 import { db } from './config'
 
 // 앱 ID (이 프로젝트용)
-const APP_ID = 'flow2capcut'
+const APP_ID = 'autoflowcut'
 
 /**
  * 사용자 문서 가져오기
@@ -44,7 +44,7 @@ export async function getUserDoc(userId) {
 /**
  * 앱별 구독 문서 가져오기
  * @param {string} userId - Firebase Auth UID
- * @param {string} appId - 앱 ID (기본: flow2capcut)
+ * @param {string} appId - 앱 ID (기본: autoflowcut)
  * @returns {Promise<Object|null>}
  */
 export async function getAppDoc(userId, appId = APP_ID) {
@@ -69,7 +69,7 @@ export async function getAppDoc(userId, appId = APP_ID) {
  * @param {string} userId - Firebase Auth UID
  * @param {function} onData - 데이터 콜백
  * @param {function} onError - 에러 콜백
- * @param {string} appId - 앱 ID (기본: flow2capcut)
+ * @param {string} appId - 앱 ID (기본: autoflowcut)
  * @returns {function} - 구독 해제 함수
  */
 export function subscribeToAppDoc(userId, onData, onError, appId = APP_ID) {

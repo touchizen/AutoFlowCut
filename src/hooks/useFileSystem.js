@@ -121,7 +121,7 @@ export const fileSystemAPI = {
    * Ensure permission — workFolder가 없으면:
    * 1. main process config 파일에서 복원 시도
    * 2. 없으면 기본 폴더 자동 설정
-   * 기본 경로: Mac ~/Documents/flow2capcut, Windows Documents\flow2capcut
+   * 기본 경로: Mac ~/Documents/AutoFlowCut, Windows Documents\AutoFlowCut
    */
   async ensurePermission() {
     const existing = localStorage.getItem('workFolderPath')

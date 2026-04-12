@@ -20,7 +20,6 @@ import path from 'path'
 import { exec } from 'child_process'
 import os from 'os'
 import { dialog } from 'electron'
-import { randomUUID } from 'crypto'
 
 // ============================================================
 // Helper Functions
@@ -222,93 +221,49 @@ export function registerCapcutIPC(ipcMain) {
   // draft_meta_info.json, media files, and SRT files.
   // ----------------------------------------------------------
   ipcMain.handle('capcut:write-project', async (_event, {
-    targetPath, draftInfo, draftMetaInfo, mediaFiles, srtFiles
+    targetPath, draftInfo, draftMetaInfo
   }) => {
     try {
-      let fileCount = 0
-
-      // Create project directory and media subdirectory
-      const mediaDir = path.join(targetPath, 'media')
-      await fs.mkdir(mediaDir, { recursive: true })
+      // Create project directory (JSON only, no media subfolder)
+      await fs.mkdir(targetPath, { recursive: true })
 
       // Write draft_info.json (main project data)
-      const draftInfoPath = path.join(targetPath, 'draft_info.json')
       const draftInfoContent = typeof draftInfo === 'string'
         ? draftInfo
         : JSON.stringify(draftInfo, null, 2)
-      await fs.writeFile(draftInfoPath, draftInfoContent, 'utf-8')
-      fileCount++
+      await fs.writeFile(path.join(targetPath, 'draft_info.json'), draftInfoContent, 'utf-8')
 
       // Write draft_meta_info.json (metadata)
-      const draftMetaInfoPath = path.join(targetPath, 'draft_meta_info.json')
       const draftMetaInfoContent = typeof draftMetaInfo === 'string'
         ? draftMetaInfo
         : JSON.stringify(draftMetaInfo, null, 2)
-      await fs.writeFile(draftMetaInfoPath, draftMetaInfoContent, 'utf-8')
-      fileCount++
+      await fs.writeFile(path.join(targetPath, 'draft_meta_info.json'), draftMetaInfoContent, 'utf-8')
 
-      // Write boilerplate files that CapCut expects
-      const draftAgencyInfoPath = path.join(targetPath, 'draft_agency_info.json')
-      await fs.writeFile(draftAgencyInfoPath, '{}', 'utf-8')
-      fileCount++
+      // Write boilerplate file that CapCut expects
+      await fs.writeFile(path.join(targetPath, 'draft_agency_info.json'), '{}', 'utf-8')
 
-      // Write media files (base64 → binary)
-      if (Array.isArray(mediaFiles)) {
-        for (const file of mediaFiles) {
-          const filePath = path.join(mediaDir, file.filename)
-          const buffer = base64ToBuffer(file.base64Data)
-          await fs.writeFile(filePath, buffer)
-          fileCount++
-        }
-      }
-
-      // Write SRT subtitle files (text content) and register in draft_meta_info
-      if (Array.isArray(srtFiles)) {
-        // Parse draftMetaInfo to add SRT references
-        let metaObj = typeof draftMetaInfo === 'string'
-          ? JSON.parse(draftMetaInfo)
-          : draftMetaInfo
-        const type2Group = metaObj.draft_materials?.find(g => g.type === 2)
-
-        for (const file of srtFiles) {
-          const filePath = path.join(mediaDir, file.filename)
-          await fs.writeFile(filePath, file.content, 'utf-8')
-          fileCount++
-
-          // Register SRT in draft_meta_info type=2
-          if (type2Group) {
-            type2Group.value.push({
-              ai_group_type: '',
-              create_time: 0,
-              duration: 0,
-              enter_from: 0,
-              extra_info: file.filename,
-              file_Path: `./media/${file.filename}`,
-              height: 0,
-              id: randomUUID().toUpperCase(),
-              import_time: Math.floor(Date.now() / 1000),
-              import_time_ms: -1,
-              item_source: 1,
-              md5: '',
-              metetype: 'none',
-              roughcut_time_range: { duration: -1, start: -1 },
-              sub_time_range: { duration: -1, start: -1 },
-              type: 2,
-              width: 0
-            })
-          }
-        }
-
-        // Re-write draft_meta_info.json with SRT references
-        if (type2Group && srtFiles.length > 0) {
-          const updatedMeta = JSON.stringify(metaObj, null, 2)
-          await fs.writeFile(path.join(targetPath, 'draft_meta_info.json'), updatedMeta, 'utf-8')
-        }
-      }
-
-      return { success: true, targetPath, fileCount }
+      return { success: true, targetPath, fileCount: 3 }
     } catch (error) {
       return { success: false, targetPath, fileCount: 0, error: error.message }
+    }
+  })
+
+  // ----------------------------------------------------------
+  // 3.5. capcut:write-srt-to-workfolder
+  //
+  // Write SRT file to the work folder and return its absolute path.
+  // Used by desktop absolute-path mode to avoid media/ subfolder.
+  // ----------------------------------------------------------
+  ipcMain.handle('capcut:write-srt-to-workfolder', async (_event, {
+    workFolder, filename, content
+  }) => {
+    try {
+      await fs.mkdir(workFolder, { recursive: true })
+      const filePath = path.join(workFolder, filename)
+      await fs.writeFile(filePath, content, 'utf-8')
+      return { success: true, filePath }
+    } catch (error) {
+      return { success: false, error: error.message }
     }
   })
 
