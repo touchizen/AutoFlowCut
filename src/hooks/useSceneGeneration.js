@@ -3,7 +3,7 @@
  */
 
 import { useState, useCallback } from 'react'
-import { RESOURCE } from '../config/defaults'
+import { RESOURCE, STYLE_PRESETS } from '../config/defaults'
 import { fileSystemAPI } from './useFileSystem'
 import { generateProjectName, getImageSizeFromBase64 } from '../utils/formatters'
 import { checkFolderPermission, checkAuthToken } from '../utils/guards'
@@ -41,11 +41,22 @@ export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, open
           caption: r.caption || ''
         }))
 
+      // 스타일 프리셋 프롬프트 합치기
+      let styledPrompt = scene.prompt
+      if (scene.style_tag) {
+        const tag = scene.style_tag
+        const preset = STYLE_PRESETS?.styles?.find(s => s.id === tag || s.name_ko === tag || s.name_en === tag)
+        if (preset?.prompt_en) {
+          styledPrompt = `${scene.prompt}, ${preset.prompt_en}`
+          console.log('[SceneGen] Applied style preset:', preset.id, '→', preset.prompt_en)
+        }
+      }
+
       // seedLocked && seedNo 가 숫자일 때만 고정 seed, 그 외엔 Flow 자체 랜덤
       const seed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
         ? settings.seedNo
         : null
-      const result = await flowAPI.generateImageDOM(scene.prompt, matchedRefs, { batchCount: settings.imageBatchCount, seed })
+      const result = await flowAPI.generateImageDOM(styledPrompt, matchedRefs, { batchCount: settings.imageBatchCount, seed })
 
       if (result.success && result.images?.length > 0) {
         // images는 [{ base64, mediaId }] 객체 배열

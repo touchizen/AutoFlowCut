@@ -382,11 +382,21 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       let styledPrompt = scene.prompt
       let appliedStyle = 'none'
 
-      // 1. 태그 매칭으로 스타일 레퍼런스가 있으면 자동 적용
+      // 1a. 태그 매칭으로 스타일 레퍼런스가 있으면 자동 적용
       const matchedStyleRef = allMatched.find(r => r.type === 'style' && r.prompt)
       if (matchedStyleRef) {
         styledPrompt = `${scene.prompt}, ${matchedStyleRef.prompt}`
         appliedStyle = `auto:${matchedStyleRef.name || matchedStyleRef.id}`
+      }
+
+      // 1b. 매칭 레퍼런스 없으면 스타일 프리셋에서 찾기
+      if (appliedStyle === 'none' && scene.style_tag) {
+        const tag = scene.style_tag
+        const preset = STYLE_PRESETS?.styles?.find(s => s.id === tag || s.name_ko === tag || s.name_en === tag)
+        if (preset?.prompt_en) {
+          styledPrompt = `${scene.prompt}, ${preset.prompt_en}`
+          appliedStyle = `preset:${preset.id}`
+        }
       }
 
       // 2. selectedStyleRefId가 명시적으로 있으면 덮어쓰기

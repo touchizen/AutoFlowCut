@@ -1142,10 +1142,18 @@ function App() {
           <ResultsTable
             items={scenes}
             mediaType="image"
-            onRetry={(id) => automation.retryScene(id, {
-              projectName: settings.projectName || generateProjectName(),
-              saveMode: settings.saveMode
-            })}
+            onRetry={(id) => {
+              const effectiveSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
+                ? settings.seedNo : null
+              automation.retryScene(id, {
+                projectName: settings.projectName || generateProjectName(),
+                saveMode: settings.saveMode,
+                imageBatchCount: settings.imageBatchCount || 1,
+                imageUpscale: settings.imageUpscale || 'off',
+                selectedStyleRefId,
+                seed: effectiveSeed,
+              })
+            }}
             onShowDetail={(scene) => setSelectedScene(scene)}
             onClearMedia={(id) => scenesHook.updateScene(id, { image: null, imagePath: null, filePath: null, data: null, status: 'pending' })}
           />
@@ -1170,10 +1178,18 @@ function App() {
           <ResultsTable
             items={scenes}
             mediaType="image"
-            onRetry={(id) => automation.retryScene(id, {
-              projectName: settings.projectName || generateProjectName(),
-              saveMode: settings.saveMode
-            })}
+            onRetry={(id) => {
+              const effectiveSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
+                ? settings.seedNo : null
+              automation.retryScene(id, {
+                projectName: settings.projectName || generateProjectName(),
+                saveMode: settings.saveMode,
+                imageBatchCount: settings.imageBatchCount || 1,
+                imageUpscale: settings.imageUpscale || 'off',
+                selectedStyleRefId,
+                seed: effectiveSeed,
+              })
+            }}
             onShowDetail={(scene) => setSelectedScene(scene)}
             onClearMedia={(id) => scenesHook.updateScene(id, { image: null, imagePath: null, filePath: null, data: null, status: 'pending' })}
           />

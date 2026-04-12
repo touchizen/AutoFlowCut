@@ -7,6 +7,7 @@ import { fileSystemAPI } from '../hooks/useFileSystem'
 import { formatTime, getRatioClass, resolveImageSrc, hasImageData } from '../utils/formatters'
 import { STYLE_PRESETS, UI, RESOURCE } from '../config/defaults'
 import { toast } from './Toast'
+import { useI18n } from '../hooks/useI18n'
 import Modal from './Modal'
 import './SceneDetailModal.css'
 
@@ -25,7 +26,9 @@ export default function SceneDetailModal({
   const [shouldReloadHistory, setShouldReloadHistory] = useState(0)
   const [imageSize, setImageSize] = useState(null)
   const [showStyleDropdown, setShowStyleDropdown] = useState(false)
-  
+  const { lang } = useI18n()
+  const isKo = lang === 'ko'
+
   // scene prop이 변경되면 editData 업데이트 (재생성 완료 시)
   useEffect(() => {
     setEditData(prev => ({
@@ -298,7 +301,13 @@ export default function SceneDetailModal({
                 className="style-dropdown-btn"
                 onClick={() => setShowStyleDropdown(!showStyleDropdown)}
               >
-                <span>{editData.style_tag || t('sceneDetail.styleSelect')}</span>
+                <span>{(() => {
+                  if (!editData.style_tag) return t('sceneDetail.styleSelect')
+                  const tag = editData.style_tag
+                  const preset = STYLE_PRESETS.styles.find(s => s.id === tag || s.name_ko === tag || s.name_en === tag)
+                  if (preset) return isKo ? preset.name_ko : preset.name_en
+                  return editData.style_tag
+                })()}</span>
                 <span className="dropdown-arrow">{showStyleDropdown ? '▲' : '▼'}</span>
               </button>
               
@@ -318,7 +327,7 @@ export default function SceneDetailModal({
                   {STYLE_PRESETS.categories.map(cat => (
                     <div key={cat.id} className="style-category">
                       <div className="style-category-header">
-                        {cat.icon} {cat.name_ko}
+                        {cat.icon} {isKo ? cat.name_ko : cat.name_en}
                       </div>
                       <div className="style-category-items">
                         {STYLE_PRESETS.styles
@@ -326,14 +335,14 @@ export default function SceneDetailModal({
                           .map(style => (
                             <div
                               key={style.id}
-                              className={`style-option ${editData.style_tag === style.name_ko ? 'selected' : ''}`}
+                              className={`style-option ${editData.style_tag === style.id ? 'selected' : ''}`}
                               onClick={() => {
-                                setEditData({ ...editData, style_tag: style.name_ko })
+                                setEditData({ ...editData, style_tag: style.id })
                                 setShowStyleDropdown(false)
                               }}
                             >
-                              {style.name_ko}
-                              <span className="style-option-en">{style.name_en}</span>
+                              {isKo ? style.name_ko : style.name_en}
+                              <span className="style-option-en">{isKo ? style.name_en : style.name_ko}</span>
                             </div>
                           ))
                         }
