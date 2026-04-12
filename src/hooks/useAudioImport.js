@@ -81,6 +81,44 @@ export function useAudioImport(t) {
   }, [getReviewPath, updateReviews])
 
   /**
+   * 스캔 결과 → 패키지 구성 + localStorage 저장 + 리뷰 로드 + 트랙 생성 (공통 헬퍼)
+   */
+  const _processScanResult = async (result) => {
+    let srtEntries = []
+    if (result.srtContent) srtEntries = parseSRT(result.srtContent)
+    let sfxTimecodes = []
+    if (result.sfxMdContent) sfxTimecodes = parseSfxTimecodes(result.sfxMdContent)
+
+    const pkg = {
+      folderPath: result.folderPath,
+      media: result.media,
+      voices: result.voices,
+      sfx: result.sfx,
+      sfxTimecodes,
+      srtEntries,
+      srtContent: result.srtContent || null,
+      summary: result.summary
+    }
+
+    setAudioPackage(pkg)
+
+    // 프로젝트별 audioFolderPath 저장
+    const projectName = localStorage.getItem('autoflowcut_settings') ? JSON.parse(localStorage.getItem('autoflowcut_settings')).projectName : null
+    if (projectName) {
+      const audioMap = JSON.parse(localStorage.getItem('audioFolderPaths') || '{}')
+      audioMap[projectName] = result.folderPath
+      localStorage.setItem('audioFolderPaths', JSON.stringify(audioMap))
+    }
+    localStorage.setItem('audioFolderPath', result.folderPath)
+
+    await loadReviews(result.folderPath)
+    const tracks = buildAudioTracks(pkg, srtEntries)
+    setAudioTracks(tracks)
+
+    return pkg
+  }
+
+  /**
    * 오디오 패키지 폴더 선택 및 스캔
    */
   const importAudioPackage = useCallback(async () => {
@@ -100,46 +138,7 @@ export function useAudioImport(t) {
         return null
       }
 
-      // SRT 파싱
-      let srtEntries = []
-      if (result.srtContent) {
-        srtEntries = parseSRT(result.srtContent)
-      }
-
-      // SFX 타임코드 파싱
-      let sfxTimecodes = []
-      if (result.sfxMdContent) {
-        sfxTimecodes = parseSfxTimecodes(result.sfxMdContent)
-      }
-
-      // 오디오 패키지 구성
-      const pkg = {
-        folderPath: result.folderPath,
-        media: result.media,
-        voices: result.voices,
-        sfx: result.sfx,
-        sfxTimecodes,
-        srtEntries,
-        srtContent: result.srtContent || null,
-        summary: result.summary
-      }
-
-      setAudioPackage(pkg)
-      // 프로젝트별 audioFolderPath 저장
-      const projectName = localStorage.getItem('autoflowcut_settings') ? JSON.parse(localStorage.getItem('autoflowcut_settings')).projectName : null
-      if (projectName) {
-        const audioMap = JSON.parse(localStorage.getItem('audioFolderPaths') || '{}')
-        audioMap[projectName] = result.folderPath
-        localStorage.setItem('audioFolderPaths', JSON.stringify(audioMap))
-      }
-      localStorage.setItem('audioFolderPath', result.folderPath)
-      await loadReviews(result.folderPath)
-
-      // 트랙 데이터 생성
-      const tracks = buildAudioTracks(pkg, srtEntries)
-      setAudioTracks(tracks)
-
-      return pkg
+      return await _processScanResult(result)
     } catch (error) {
       console.error('[AudioImport] Error:', error)
       toast.error(t('audioImport.scanFailed').replace('{error}', error.message))
@@ -158,33 +157,7 @@ export function useAudioImport(t) {
       const result = await window.electronAPI.rescanAudioPackage({ folderPath })
       if (!result?.success) return null
 
-      let srtEntries = []
-      if (result.srtContent) srtEntries = parseSRT(result.srtContent)
-      let sfxTimecodes = []
-      if (result.sfxMdContent) sfxTimecodes = parseSfxTimecodes(result.sfxMdContent)
-
-      const pkg = {
-        folderPath: result.folderPath,
-        media: result.media,
-        voices: result.voices,
-        sfx: result.sfx,
-        sfxTimecodes,
-        srtEntries,
-        srtContent: result.srtContent || null,
-        summary: result.summary
-      }
-      setAudioPackage(pkg)
-      // 프로젝트별 audioFolderPath 저장
-      const projectName = localStorage.getItem('autoflowcut_settings') ? JSON.parse(localStorage.getItem('autoflowcut_settings')).projectName : null
-      if (projectName) {
-        const audioMap = JSON.parse(localStorage.getItem('audioFolderPaths') || '{}')
-        audioMap[projectName] = result.folderPath
-        localStorage.setItem('audioFolderPaths', JSON.stringify(audioMap))
-      }
-      localStorage.setItem('audioFolderPath', result.folderPath)
-      await loadReviews(result.folderPath)
-      const tracks = buildAudioTracks(pkg, srtEntries)
-      setAudioTracks(tracks)
+      const pkg = await _processScanResult(result)
       console.log('[AudioImport] importByPath done:', folderPath, result.summary)
       return pkg
     } catch (e) {
@@ -212,28 +185,6 @@ export function useAudioImport(t) {
     setAudioPackage(null)
     setAudioTracks(null)
   }, [])
-
-  /**
-   * 프로젝트 전환 시 해당 프로젝트의 오디오 복원
-   */
-  const switchAudioForProject = useCallback(async (newProjectName) => {
-    // 현재 오디오 클리어
-    setAudioPackage(null)
-    setAudioTracks(null)
-
-    // 새 프로젝트의 audioFolderPath 찾기
-    const audioMap = JSON.parse(localStorage.getItem('audioFolderPaths') || '{}')
-    const savedPath = audioMap[newProjectName]
-
-    if (savedPath && window.electronAPI?.rescanAudioPackage) {
-      console.log('[AudioImport] Restoring audio for project:', newProjectName, savedPath)
-      localStorage.setItem('audioFolderPath', savedPath)
-      await importByPath(savedPath)
-    } else {
-      localStorage.removeItem('audioFolderPath')
-      console.log('[AudioImport] No audio for project:', newProjectName)
-    }
-  }, [importByPath])
 
   /**
    * 폴더 재스캔 + 리뷰 자동 정리

@@ -102,31 +102,40 @@ export function useScenes() {
   }, [])
   
   /**
+   * ID 재정렬 + 시간 재계산 (공통)
+   */
+  const reindexScenes = (scenes) => {
+    let currentTime = 0
+    return scenes.map((scene, idx) => {
+      const updated = {
+        ...scene,
+        id: `scene_${idx + 1}`,
+        startTime: currentTime,
+        endTime: currentTime + scene.duration
+      }
+      currentTime = updated.endTime
+      return updated
+    })
+  }
+
+  /**
    * 씬 삭제
    */
   const deleteScene = useCallback((sceneId) => {
-    setScenes(prev => {
-      const filtered = prev.filter(s => s.id !== sceneId)
-      // ID 재정렬
-      return filtered.map((scene, idx) => ({
-        ...scene,
-        id: `scene_${idx + 1}`
-      }))
-    })
+    setScenes(prev => reindexScenes(prev.filter(s => s.id !== sceneId)))
   }, [])
-  
+
   /**
    * 씬 추가
    */
   const addScene = useCallback((afterIndex = -1) => {
     setScenes(prev => {
       const insertIndex = afterIndex === -1 ? prev.length : afterIndex + 1
-      
-      // 새 씬의 시작 시간 계산
+
       const prevScene = prev[insertIndex - 1]
       const startTime = prevScene ? prevScene.endTime : 0
       const duration = DEFAULTS.scene.duration
-      
+
       const newScene = {
         id: `scene_${insertIndex + 1}`,
         startTime,
@@ -140,48 +149,24 @@ export function useScenes() {
         status: 'pending',
         image: null
       }
-      
+
       const newScenes = [...prev]
       newScenes.splice(insertIndex, 0, newScene)
-      
-      // ID 재정렬 및 시간 재계산
-      let currentTime = 0
-      return newScenes.map((scene, idx) => {
-        const updated = {
-          ...scene,
-          id: `scene_${idx + 1}`,
-          startTime: currentTime,
-          endTime: currentTime + scene.duration
-        }
-        currentTime = updated.endTime
-        return updated
-      })
+      return reindexScenes(newScenes)
     })
   }, [])
-  
+
   /**
    * 씬 순서 변경
    */
   const moveScene = useCallback((fromIndex, toIndex) => {
     setScenes(prev => {
       if (fromIndex === toIndex) return prev
-      
+
       const newScenes = [...prev]
       const [moved] = newScenes.splice(fromIndex, 1)
       newScenes.splice(toIndex, 0, moved)
-      
-      // ID 재정렬 및 시간 재계산
-      let currentTime = 0
-      return newScenes.map((scene, idx) => {
-        const updated = {
-          ...scene,
-          id: `scene_${idx + 1}`,
-          startTime: currentTime,
-          endTime: currentTime + scene.duration
-        }
-        currentTime = updated.endTime
-        return updated
-      })
+      return reindexScenes(newScenes)
     })
   }, [])
   

@@ -4,6 +4,7 @@
 
 import { useEffect, useRef } from 'react'
 import { fileSystemAPI } from './useFileSystem'
+import { syncVideosIntoScenes } from '../services/mediaSync'
 
 /**
  * 프로젝트 데이터 로드 + 이미지 파일 복원 (공통 헬퍼)
@@ -124,27 +125,7 @@ async function loadProjectWithImages(projectName) {
   const finalVideoScenes = videoScenesWithMedia.map(resetGenerating)
   const finalFramePairs = framePairsWithMedia.map(resetGenerating)
 
-  for (const vs of finalVideoScenes) {
-    if ((vs.status === 'complete' || vs.status === 'done') && vs.video) {
-      const sceneId = vs.id.replace('vscene_', 'scene_')
-      const scene = finalScenes.find(s => s.id === sceneId)
-      if (scene && !scene.videoT2V) {
-        scene.videoT2V = vs.video
-        scene.videoT2VPath = vs.videoPath || null
-        console.log(`[ProjectData] Synced T2V video → ${sceneId}`)
-      }
-    }
-  }
-  for (const fp of finalFramePairs) {
-    if ((fp.status === 'complete' || fp.status === 'done') && fp.base64 && fp.startSceneId && !fp.startSceneId.startsWith('gallery::')) {
-      const scene = finalScenes.find(s => s.id === fp.startSceneId)
-      if (scene && !scene.videoI2V) {
-        scene.videoI2V = fp.base64
-        scene.videoI2VPath = fp.videoPath || null
-        console.log(`[ProjectData] Synced I2V video → ${fp.startSceneId}`)
-      }
-    }
-  }
+  syncVideosIntoScenes(finalScenes, finalVideoScenes, finalFramePairs, '[ProjectData]')
 
   return {
     scenes: finalScenes,

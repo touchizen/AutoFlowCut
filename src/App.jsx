@@ -21,6 +21,7 @@ import { useAppSettings } from './hooks/useAppSettings'
 import { useAutoSave } from './hooks/useAutoSave'
 import { useFlowEvents } from './hooks/useFlowEvents'
 import { useMcpServer } from './hooks/useMcpServer'
+import { syncVideosIntoScenes } from './services/mediaSync'
 import { generateProjectName } from './utils/formatters'
 import { detectFileType, detectCSVType, parseCSVToScenes, parseSRTToScenes } from './utils/parsers'
 import { checkFolderPermission } from './utils/guards'
@@ -201,43 +202,22 @@ function App() {
 
   // ── 완성된 비디오 → 씬에 자동 동기화 (세션 내 기존 비디오 반영) ──
   useEffect(() => {
-    if (!scenes?.length) return
-    let synced = false
-
-    // T2V: vscene_N → scene_N
-    if (videoScenes?.length) {
-      for (const vs of videoScenes) {
-        if ((vs.status === 'complete' || vs.status === 'done') && vs.video) {
-          const sceneId = vs.id.replace('vscene_', 'scene_')
-          const scene = scenes.find(s => s.id === sceneId)
-          if (scene && !scene.videoT2V) {
-            scenesHook.updateScene(sceneId, {
-              videoT2V: vs.video,
-              videoT2VPath: vs.videoPath || null,
-            })
-            synced = true
-          }
+    // scenes 배열의 복사본을 만들어 sync 후 변경된 씬만 업데이트
+    const scenesCopy = scenes.map(s => ({ ...s }))
+    const synced = syncVideosIntoScenes(scenesCopy, videoScenes, framePairs, '[App]')
+    if (synced) {
+      // 변경된 씬만 개별 업데이트
+      for (let i = 0; i < scenesCopy.length; i++) {
+        const orig = scenes[i]
+        const copy = scenesCopy[i]
+        if (copy.videoT2V !== orig.videoT2V || copy.videoI2V !== orig.videoI2V) {
+          scenesHook.updateScene(copy.id, {
+            videoT2V: copy.videoT2V, videoT2VPath: copy.videoT2VPath,
+            videoI2V: copy.videoI2V, videoI2VPath: copy.videoI2VPath,
+          })
         }
       }
     }
-
-    // I2V: framePair.startSceneId → scene
-    if (framePairs?.length) {
-      for (const fp of framePairs) {
-        if ((fp.status === 'complete' || fp.status === 'done') && fp.base64 && fp.startSceneId && !fp.startSceneId.startsWith('gallery::')) {
-          const scene = scenes.find(s => s.id === fp.startSceneId)
-          if (scene && !scene.videoI2V) {
-            scenesHook.updateScene(fp.startSceneId, {
-              videoI2V: fp.base64,
-              videoI2VPath: fp.videoPath || null,
-            })
-            synced = true
-          }
-        }
-      }
-    }
-
-    if (synced) console.log('[App] Synced existing videos → scenes')
   }, [videoScenes, framePairs])
 
   // Gallery 로드
