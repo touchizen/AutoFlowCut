@@ -520,8 +520,10 @@ export function createSharedHelpers(ctx) {
         if (attempt === maxAttempts - 1) {
           try {
             const fs = await import('node:fs')
-            fs.writeFileSync('/tmp/flow-video-dom-diag.json', JSON.stringify(result, null, 2))
-            console.log('[Flow Video] Last failure saved to /tmp/flow-video-dom-diag.json')
+            const os = await import('node:os')
+            const diagPath = `${os.tmpdir()}/flow-video-dom-diag.json`
+            fs.writeFileSync(diagPath, JSON.stringify(result, null, 2))
+            console.log(`[Flow Video] Last failure saved to ${diagPath}`)
           } catch {}
         }
 

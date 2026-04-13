@@ -558,13 +558,14 @@ export async function exportCapcutPackageCloud(project, options = {}) {
     }
   }
 
-  // SRT를 작업폴더에 저장하고 절대경로를 pathMap에 추가
+  // SRT를 프로젝트 폴더에 저장하고 절대경로를 pathMap에 추가
   if (srtFiles.length > 0) {
     const workFolder = localStorage.getItem('workFolderPath');
     if (workFolder) {
+      const projectFolder = `${workFolder}/${name}`;
       for (const srt of srtFiles) {
         const srtAbsPath = await window.electronAPI.writeSrtToWorkFolder({
-          workFolder, filename: srt.filename, content: srt.content
+          workFolder: projectFolder, filename: srt.filename, content: srt.content
         });
         if (srtAbsPath?.success) {
           // JSON 내 SRT 상대경로도 절대경로로 치환 (백슬래시 이스케이프)
