@@ -4,6 +4,7 @@
 
 import { useState, useCallback } from 'react'
 import { checkFolderPermission, checkAuthToken } from '../utils/guards'
+import { resolveSceneStyle } from '../services/styleService'
 import { finalizeGeneratedImage } from '../services/imageFinalize'
 import { toast } from '../components/Toast'
 
@@ -39,11 +40,14 @@ export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, open
           caption: r.caption || ''
         }))
 
+      // 스타일 프롬프트 합치기 (style_tag 프리셋 fallback)
+      const { styledPrompt } = resolveSceneStyle(scene.prompt, [], null, [], matchedRefs, scene.style_tag)
+
       // seedLocked && seedNo 가 숫자일 때만 고정 seed, 그 외엔 Flow 자체 랜덤
       const seed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
         ? settings.seedNo
         : null
-      const result = await flowAPI.generateImageDOM(scene.prompt, matchedRefs, { batchCount: settings.imageBatchCount, seed })
+      const result = await flowAPI.generateImageDOM(styledPrompt, matchedRefs, { batchCount: settings.imageBatchCount, seed })
 
       const { success, sceneUpdate } = await finalizeGeneratedImage({
         result, flowAPI,

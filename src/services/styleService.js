@@ -61,17 +61,27 @@ export function applyStyle(prompt, styleId, references, existingMatchedRefs = []
  * @param {string|null} selectedStyleRefId - 수동 선택된 스타일 ID
  * @param {Array} references - 레퍼런스 배열
  * @param {Array} matchedRefs - 이미 수집된 매칭 레퍼런스 (mutated)
+ * @param {string} [styleTag] - 씬의 style_tag (프리셋 fallback용)
  * @returns {{ styledPrompt: string, appliedStyle: string }}
  */
-export function resolveSceneStyle(prompt, allMatched, selectedStyleRefId, references, matchedRefs) {
+export function resolveSceneStyle(prompt, allMatched, selectedStyleRefId, references, matchedRefs, styleTag = '') {
   let styledPrompt = prompt
   let appliedStyle = 'none'
 
-  // 1. 태그 매칭으로 스타일 레퍼런스가 있으면 자동 적용
+  // 1a. 태그 매칭으로 스타일 레퍼런스가 있으면 자동 적용
   const matchedStyleRef = allMatched.find(r => r.type === 'style' && r.prompt)
   if (matchedStyleRef) {
     styledPrompt = `${prompt}, ${matchedStyleRef.prompt}`
     appliedStyle = `auto:${matchedStyleRef.name || matchedStyleRef.id}`
+  }
+
+  // 1b. 매칭 레퍼런스 없으면 style_tag로 프리셋에서 찾기
+  if (appliedStyle === 'none' && styleTag) {
+    const preset = STYLE_PRESETS?.styles?.find(s => s.id === styleTag || s.name_ko === styleTag || s.name_en === styleTag)
+    if (preset?.prompt_en) {
+      styledPrompt = `${prompt}, ${preset.prompt_en}`
+      appliedStyle = `preset:${preset.id}`
+    }
   }
 
   // 2. selectedStyleRefId가 명시적으로 있으면 덮어쓰기

@@ -278,7 +278,7 @@ POST /api/generate         — 이미지 생성 트리거
 ## 다운로드
 
 - **macOS / Windows**: [GitHub Releases](https://github.com/touchizen/AutoFlowCut/releases)
-- **Windows (MS Store)**: Microsoft Store에서 "AutoFlowCut" 검색
+- **Windows (MS Store)**: [Microsoft Store](https://apps.microsoft.com/detail/9N38G1SCG12J)
 
 ## 링크
 
