@@ -769,6 +769,7 @@ function App() {
               onGenerate={handleGenerateScene}
               generatingSceneId={generatingSceneId}
               references={references}
+              styleThumbnails={styleThumbnails}
             />
           )}
           {activeTab === 'audio' && (

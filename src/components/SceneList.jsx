@@ -378,7 +378,8 @@ export default function SceneList({
   projectName,
   onGenerate,
   generatingSceneId,
-  references = []
+  references = [],
+  styleThumbnails = {}
 }) {
   const { t } = useI18n()
   const [detailModal, setDetailModal] = useState({ open: false, scene: null })
@@ -564,6 +565,7 @@ export default function SceneList({
           references={references}
           onApply={handleTagBatchApply}
           onClose={() => setTagBatchModal(null)}
+          styleThumbnails={styleThumbnails}
           t={t}
         />
       )}

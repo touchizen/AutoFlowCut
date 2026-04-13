@@ -570,6 +570,37 @@
 .tag-batch-modal {
   max-width: 480px;
 }
+.tag-batch-modal-wide {
+  max-width: 720px;
+}
+
+.tag-batch-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.tag-batch-divider::before,
+.tag-batch-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.tag-batch-style-picker {
+  max-height: 360px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  margin-bottom: 12px;
+}
+.tag-batch-style-picker .sp-footer {
+  display: none;
+}
 
 .tag-batch-list {
   display: flex;
