@@ -163,10 +163,10 @@
   position: relative;
 }
 
-/* Scene Detail Modal - 히스토리 썸네일 정사각형 */
+/* Scene Detail Modal - 히스토리 썸네일 */
 .scene-detail-modal .ref-detail-history .history-item {
-  width: 54px;
-  height: 54px;
+  width: 60px;
+  height: auto;
   border-radius: 4px;
   overflow: hidden;
   cursor: pointer;
@@ -185,10 +185,11 @@
   box-shadow: 0 0 0 2px rgba(72, 187, 120, 0.3);
 }
 
-.scene-detail-modal .ref-detail-history .history-item img {
+.scene-detail-modal .ref-detail-history .history-item img,
+.scene-detail-modal .ref-detail-history .history-item video {
   width: 100%;
-  height: 100%;
-  object-fit: cover;
+  height: auto;
+  display: block;
 }
 
 .scene-detail-modal .ref-detail-history .history-info {
