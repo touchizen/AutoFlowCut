@@ -155,8 +155,8 @@ async function saveCurrentProject(settings, scenes, references, videoScenes = []
   // videoScenes에서 video(base64) 제외
   const videoScenesWithoutMedia = videoScenes.map(({ video, ...rest }) => rest)
 
-  // framePairs에서 base64 제외
-  const framePairsWithoutMedia = framePairs.map(({ base64, ...rest }) => rest)
+  // framePairs에서 base64/video 제외
+  const framePairsWithoutMedia = framePairs.map(({ base64, video, ...rest }) => rest)
 
   // audioFolderPath를 project.json에 저장 (프로젝트별 오디오 경로 보존)
   const audioFolderPath = localStorage.getItem('audioFolderPath') || null
