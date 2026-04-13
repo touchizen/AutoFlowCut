@@ -119,7 +119,8 @@ function App() {
       flowAPI.clearTokenCache()  // 캐시된 만료 토큰 제거
       toast.error(t('status.authErrorStopped'), TIMING.AUTH_ERROR_TOAST)
     },
-    generationQueue
+    generationQueue,
+    () => saveCurrentProject()
   )
 
   const videoAutomation = useVideoAutomation(flowAPI, t, () => {
@@ -144,7 +145,7 @@ function App() {
 
   // Project Data 관리
   const audioSwitchRef = useRef()
-  const { addPendingSave, handleProjectChange, saveCurrentProject, isRestoringRef } = useProjectData({
+  const { addPendingSave, handleProjectChange, saveCurrentProject, isRestoringRef, projectLoading } = useProjectData({
     settings, setSettings, scenes, references, setScenes, setReferences,
     videoScenes, setVideoScenes,
     framePairs, setFramePairs,
@@ -577,6 +578,12 @@ function App() {
 
   return (
     <div className="app">
+      {projectLoading && (
+        <div className="project-loading-overlay">
+          <div className="project-loading-spinner" />
+          <span>Loading project...</span>
+        </div>
+      )}
       <Header
         onSettings={() => openSettings()}
         onExport={handleExportClick}

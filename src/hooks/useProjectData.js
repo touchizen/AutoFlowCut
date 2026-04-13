@@ -2,7 +2,7 @@
  * useProjectData - 프로젝트 데이터 관리 (저장/로드/전환/복원)
  */
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { fileSystemAPI } from './useFileSystem'
 import { syncVideosIntoScenes } from '../services/mediaSync'
 
@@ -59,6 +59,31 @@ async function loadProjectWithImages(projectName) {
       return ref
     })
   )
+
+  // mediaId 누락 씬 복구 (history 메타데이터에서 병렬 조회)
+  const missingMediaIdScenes = scenesWithPaths.filter(s => s.id && !s.mediaId && (s.image || s.imagePath))
+  if (missingMediaIdScenes.length > 0) {
+    const results = await Promise.all(missingMediaIdScenes.map(async (scene) => {
+      try {
+        const histResult = await fileSystemAPI.getHistory(projectName, 'scenes', scene.id)
+        if (histResult.success && histResult.histories?.length > 0) {
+          const imageHist = histResult.histories.find(h => /\.(jpg|jpeg|png|webp|gif)$/i.test(h.filename))
+          if (imageHist) {
+            const metaResult = await fileSystemAPI.readHistoryFile(projectName, 'scenes', imageHist.filename)
+            if (metaResult.success && metaResult.metadata?.mediaId) {
+              scene.mediaId = metaResult.metadata.mediaId
+              return true
+            }
+          }
+        }
+      } catch (e) { /* ignore */ }
+      return false
+    }))
+    const recovered = results.filter(Boolean).length
+    if (recovered > 0) {
+      console.log(`[ProjectData] 🔧 Recovered ${recovered}/${missingMediaIdScenes.length} missing mediaIds from history`)
+    }
+  }
 
   // 진단 로그
   const withImages = scenesWithPaths.filter(s => s.image || s.imagePath).length
@@ -184,6 +209,7 @@ export function useProjectData({
 
   // 복원 진행 중 플래그 — auto-save가 복원 중에 project.json을 덮어쓰는 것을 방지
   const isRestoringRef = useRef(false)
+  const [projectLoading, setProjectLoading] = useState(false)
 
   // 마운트 시 자동 복원: 폴더가 설정되어 있으면 이전 프로젝트 로드
   useEffect(() => {
@@ -232,6 +258,8 @@ export function useProjectData({
   const handleProjectChange = async (newProjectName) => {
     if (newProjectName === settings.projectName) return
 
+    isRestoringRef.current = true
+    setProjectLoading(true)
     // 1. 현재 프로젝트 데이터 저장
     await saveCurrentProject(settings, scenes, references, videoScenes, framePairs)
 
@@ -269,12 +297,15 @@ export function useProjectData({
 
     // 4. 프로젝트명 업데이트
     setSettings(s => ({ ...s, projectName: newProjectName }))
+    isRestoringRef.current = false
+    setProjectLoading(false)
   }
 
   return {
     addPendingSave,
     handleProjectChange,
     saveCurrentProject: () => saveCurrentProject(settings, scenes, references, videoScenes, framePairs),
-    isRestoringRef  // auto-save 가드용
+    isRestoringRef,  // auto-save 가드용
+    projectLoading   // 로딩 오버레이용
   }
 }

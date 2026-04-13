@@ -14,7 +14,7 @@ import { cleanBase64 as stripBase64Prefix } from '../utils/urls'
 import { toast } from '../components/Toast'
 import { resetDOMSession, requestStopDOM } from '../utils/flowDOMClient'
 
-export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings = null, addPendingSave = null, t = (key) => key, onAuthError = null, generationQueue = null) {
+export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings = null, addPendingSave = null, t = (key) => key, onAuthError = null, generationQueue = null, onComplete = null) {
   const [isRunning, setIsRunning] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
@@ -481,7 +481,10 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       seed,
     }, total)
     
-    // 완료
+    // 완료 — 즉시 저장 (auto-save debounce 전에 프로젝트 전환/종료 방지)
+    if (onComplete) {
+      try { await onComplete() } catch (e) { console.warn('[Automation] onComplete error:', e.message) }
+    }
     setIsRunning(false)
     setIsPaused(false)
     setIsStopping(false)
