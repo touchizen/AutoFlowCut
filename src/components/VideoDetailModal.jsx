@@ -38,7 +38,11 @@ export default function VideoDetailModal({
     if (!projectName || !video.id) return
 
     const loadHistory = async () => {
-      const result = await fileSystemAPI.getHistory(projectName, 'videos', video.id)
+      // videoPath에서 실제 파일명(i2v_N 등) 추출, 없으면 video.id 사용
+      const baseName = video.videoPath
+        ? video.videoPath.split(/[/\\]/).pop().replace(/\.[^.]+$/, '')
+        : video.id
+      const result = await fileSystemAPI.getHistory(projectName, 'videos', baseName)
       if (result.success && result.histories?.length > 0) {
         const historiesWithData = await Promise.all(
           result.histories.map(async (hist) => {
@@ -61,9 +65,17 @@ export default function VideoDetailModal({
     loadHistory()
   }, [projectName, video.id, video.video])
 
+  // 비디오 소스: base64 데이터 또는 파일 경로
+  const resolveVideoSrc = (data) => {
+    if (!data) return null
+    if (data.startsWith('data:')) return data
+    if (data.startsWith('/')) return `file://${data}`
+    if (/^[A-Z]:\\/i.test(data)) return `file:///${data.replace(/\\/g, '/')}`
+    return `data:video/mp4;base64,${data}`
+  }
   const videoSrc = activeVideo
-    ? (activeVideo.startsWith('data:') ? activeVideo : `data:video/mp4;base64,${activeVideo}`)
-    : null
+    ? resolveVideoSrc(activeVideo)
+    : (video.videoPath ? resolveVideoSrc(video.videoPath) : null)
 
   // base64 데이터에서 파일 사이즈 추정
   const getFileSize = () => {

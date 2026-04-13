@@ -937,7 +937,7 @@ function App() {
           />
         )}
         {activeTab === 'frame-to-video' && (
-          <ResultsTable items={framePairs} mediaType="frame-pair" onShowDetail={(item) => setSelectedVideo(item)} onClearMedia={(id) => setFramePairs(prev => prev.map(fp => fp.id === id ? { ...fp, base64: null, status: 'pending' } : fp))} />
+          <ResultsTable items={framePairs} mediaType="frame-pair" onShowDetail={(item) => setSelectedVideo(item)} onClearMedia={(id) => setFramePairs(prev => prev.map(fp => fp.id === id ? { ...fp, base64: null, videoPath: null, status: 'pending' } : fp))} />
         )}
         {activeTab === 'list' && (
           <ResultsTable

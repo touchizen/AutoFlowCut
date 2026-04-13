@@ -125,7 +125,15 @@ async function loadProjectWithImages(projectName) {
   // framePairs 비디오 파일 로드 (새 명명 i2v_N 우선, 기존 fp_N 폴백)
   const framePairsWithMedia = await Promise.all(
     (result.data.framePairs || []).map(async (fp) => {
+      // videoPath가 있으면 status를 complete로 보정
+      if (fp.videoPath && fp.status !== 'complete') {
+        fp = { ...fp, status: 'complete' }
+      }
       if (fp.id && !fp.base64 && fp.status === 'complete') {
+        // videoPath가 이미 있으면 base64 로드 불필요 (파일 경로로 직접 재생)
+        if (fp.videoPath) {
+          return fp
+        }
         // 새 명명 규칙 (videoSaveId = i2v_N) 우선
         const primaryId = fp.videoSaveId || fp.id
         const vidResult = await fileSystemAPI.readResource(projectName, 'videos', primaryId)

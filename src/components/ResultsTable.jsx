@@ -105,7 +105,7 @@ export default function ResultsTable({
   const hasMedia = (item) => {
     if (mediaType === 'image') return hasImageData(item)
     if (mediaType === 'video') return !!item.video
-    if (isPairType) return !!item.base64
+    if (isPairType) return !!(item.base64 || item.videoPath)
     return false
   }
 
@@ -144,8 +144,14 @@ export default function ResultsTable({
       )
     }
 
-    if (isPairType && item.base64) {
-      const videoSrc = item.base64.startsWith('data:') ? item.base64 : `data:video/mp4;base64,${item.base64}`
+    if (isPairType && (item.base64 || item.videoPath)) {
+      let videoSrc
+      if (item.base64) {
+        videoSrc = item.base64.startsWith('data:') ? item.base64 : `data:video/mp4;base64,${item.base64}`
+      } else if (item.videoPath) {
+        const p = item.videoPath
+        videoSrc = p.startsWith('/') ? `file://${p}` : /^[A-Z]:\\/i.test(p) ? `file:///${p.replace(/\\/g, '/')}` : p
+      }
       return (
         <>
           <video
@@ -272,7 +278,7 @@ export default function ResultsTable({
                       {onClearMedia && !disabled && (
                         <button
                           className="btn-clear-media"
-                          onClick={(e) => { e.stopPropagation(); onClearMedia(item.id) }}
+                          onClick={(e) => { e.stopPropagation(); if (window.confirm(t('results.confirmClear') || 'Remove this media?')) onClearMedia(item.id) }}
                           title={t('results.clearMedia') || '미디어 제거'}
                         >✕</button>
                       )}

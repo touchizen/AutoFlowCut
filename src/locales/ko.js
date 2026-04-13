@@ -253,6 +253,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     videoPreview: '비디오 미리보기',
     status: '상태',
     clearMedia: '미디어 제거',
+    confirmClear: '이 미디어를 제거하시겠습니까?',
   },
 
   // 설정

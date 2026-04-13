@@ -334,25 +334,37 @@
 
 /* 히스토리 열 */
 .ref-detail-history {
-  width: 70px;
+  width: 80px;
   display: flex;
   flex-direction: column;
   gap: 8px;
   border-left: 1px solid var(--border-color);
-  padding-left: 16px;
+  padding-left: 12px;
   min-height: 0;
 }
 
-.ref-detail-history .history-header {
+.ref-detail-history .history-header,
+.ref-detail-history .history-title {
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--text-secondary);
   text-align: center;
 }
 
+.ref-detail-history .history-scroll {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .ref-detail-history .history-list {
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 6px;
   flex: 1;
   min-height: 0;
