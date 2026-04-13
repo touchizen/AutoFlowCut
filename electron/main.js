@@ -933,7 +933,7 @@ function createWindow() {
   )
 
   // Handle window resize — update view bounds
-  mainWindow.on('resize', updateBounds)
+  mainWindow.on('resize', () => updateBounds(mainWindow, flowView))
 
   // Split 레이아웃 적용
   updateBounds(mainWindow, flowView)
