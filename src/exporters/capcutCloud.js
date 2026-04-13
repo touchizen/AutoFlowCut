@@ -527,8 +527,10 @@ export async function exportCapcutPackageCloud(project, options = {}) {
   for (const [filename, absolutePath] of Object.entries(pathMap)) {
     const relativePath = `${mediaBase}/${filename}`;
     const fullPath = toVolumePath(absolutePath);
-    draftInfoStr = draftInfoStr.split(relativePath).join(fullPath);
-    draftMetaStr = draftMetaStr.split(relativePath).join(fullPath);
+    // JSON 문자열 내부이므로 백슬래시를 이스케이프해야 함 (Windows 경로)
+    const jsonSafePath = fullPath.replace(/\\/g, '\\\\');
+    draftInfoStr = draftInfoStr.split(relativePath).join(jsonSafePath);
+    draftMetaStr = draftMetaStr.split(relativePath).join(jsonSafePath);
   }
   console.log(`[CapCut Cloud] Replaced ${Object.keys(pathMap).length} media paths with absolute paths`);
 
@@ -565,13 +567,14 @@ export async function exportCapcutPackageCloud(project, options = {}) {
           workFolder, filename: srt.filename, content: srt.content
         });
         if (srtAbsPath?.success) {
-          // JSON 내 SRT 상대경로도 절대경로로 치환
+          // JSON 내 SRT 상대경로도 절대경로로 치환 (백슬래시 이스케이프)
           const srtRelative = `${mediaBase}/${srt.filename}`;
           const srtFullPath = toVolumePath(srtAbsPath.filePath);
-          draftInfoStr = draftInfoStr.split(srtRelative).join(srtFullPath);
-          draftMetaStr = draftMetaStr.split(srtRelative).join(srtFullPath);
+          const srtJsonSafePath = srtFullPath.replace(/\\/g, '\\\\');
+          draftInfoStr = draftInfoStr.split(srtRelative).join(srtJsonSafePath);
+          draftMetaStr = draftMetaStr.split(srtRelative).join(srtJsonSafePath);
           // draft_meta_info의 file_Path도 치환
-          draftMetaStr = draftMetaStr.split(`./media/${srt.filename}`).join(srtFullPath);
+          draftMetaStr = draftMetaStr.split(`./media/${srt.filename}`).join(srtJsonSafePath);
           console.log(`[CapCut Cloud] SRT saved: ${srtAbsPath.filePath}`);
         }
       }
