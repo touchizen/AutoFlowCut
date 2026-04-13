@@ -55,7 +55,7 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
   // 미디어 개수 (선택 UI 필요 여부)
   const hasImage = hasImageData(scene)
   const imgSrc = resolveImageSrc(scene)
-  const mediaCount = [hasImage, scene.videoT2V, scene.videoI2V].filter(Boolean).length
+  const mediaCount = [hasImage, scene.videoT2V || scene.videoT2VPath, scene.videoI2V || scene.videoI2VPath].filter(Boolean).length
 
   // 매칭 상태 아이콘 (클릭 가능 — 태그 선택 모달 열기)
   const MatchIndicator = ({ match, tagType }) => {
@@ -81,10 +81,16 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
     )
   }
 
-  // 비디오 src 생성 헬퍼
-  const toVideoSrc = (data) => {
-    if (!data) return ''
-    return data.startsWith('data:') ? data : `data:video/mp4;base64,${data}`
+  // 비디오 src 생성 헬퍼 (base64 또는 파일 경로)
+  const toVideoSrc = (data, filePath) => {
+    if (data) {
+      return data.startsWith('data:') ? data : `data:video/mp4;base64,${data}`
+    }
+    if (filePath) {
+      if (filePath.startsWith('/')) return `file://${filePath}`
+      if (/^[A-Z]:\\/i.test(filePath)) return `file:///${filePath.replace(/\\/g, '/')}`
+    }
+    return ''
   }
 
   // 비디오 duration 감지 (Promise) — base64 데이터에서 즉시 감지
@@ -284,13 +290,13 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
               })}
               title={`T2V${activeMedia === 't2v' ? ' ✓' : ''} — ${t('sceneList.dblClickToView') || 'Double-click to view'}`}
             >
-              <video src={toVideoSrc(scene.videoT2V)} muted preload="metadata" onLoadedMetadata={(e) => handleVideoMetadata(e, 't2v')} />
+              <video src={toVideoSrc(scene.videoT2V, scene.videoT2VPath)} muted preload="metadata" onLoadedMetadata={(e) => handleVideoMetadata(e, 't2v')} />
               <div className="play-button-overlay mini">▶</div>
               {mediaCount > 1 && <span className="media-label">T2V</span>}
             </div>
           )}
           {/* I2V 비디오 */}
-          {scene.videoI2V && (
+          {(scene.videoI2V || scene.videoI2VPath) && (
             <div
               className={`media-thumb ${isSelected('i2v')} clickable`}
               onClick={(e) => {
@@ -316,7 +322,7 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
               })}
               title={`I2V${activeMedia === 'i2v' ? ' ✓' : ''} — ${t('sceneList.dblClickToView') || 'Double-click to view'}`}
             >
-              <video src={toVideoSrc(scene.videoI2V)} muted preload="metadata" onLoadedMetadata={(e) => handleVideoMetadata(e, 'i2v')} />
+              <video src={toVideoSrc(scene.videoI2V, scene.videoI2VPath)} muted preload="metadata" onLoadedMetadata={(e) => handleVideoMetadata(e, 'i2v')} />
               <div className="play-button-overlay mini">▶</div>
               {mediaCount > 1 && <span className="media-label">I2V</span>}
             </div>

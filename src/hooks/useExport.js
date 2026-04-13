@@ -19,16 +19,16 @@ import useI18n from './useI18n'
  */
 function resolveExportMedia(scene) {
   const choice = scene.exportMedia || 'auto'
-  if (choice === 'i2v' && scene.videoI2V)
+  if (choice === 'i2v' && (scene.videoI2V || scene.videoI2VPath))
     return { type: 'video', data: scene.videoI2V, path: scene.videoI2VPath }
-  if (choice === 't2v' && scene.videoT2V)
+  if (choice === 't2v' && (scene.videoT2V || scene.videoT2VPath))
     return { type: 'video', data: scene.videoT2V, path: scene.videoT2VPath }
   if (choice === 'image')
     return { type: 'image', data: scene.image, path: scene.imagePath }
   // auto: I2V > T2V > image
-  if (scene.videoI2V)
+  if (scene.videoI2V || scene.videoI2VPath)
     return { type: 'video', data: scene.videoI2V, path: scene.videoI2VPath }
-  if (scene.videoT2V)
+  if (scene.videoT2V || scene.videoT2VPath)
     return { type: 'video', data: scene.videoT2V, path: scene.videoT2VPath }
   return { type: 'image', data: scene.image, path: scene.imagePath }
 }
@@ -128,19 +128,19 @@ export function useExport({
         videos: [
           // T2V 비디오 (videoScenes)
           ...videoScenes
-            .filter(vs => (vs.status === 'done' || vs.status === 'complete') && vs.video)
+            .filter(vs => (vs.status === 'done' || vs.status === 'complete') && (vs.video || vs.videoPath))
             .map(vs => ({
               id: vs.id,
-              video_path: vs.video,
+              video_path: vs.videoPath || vs.video,
               prompt: vs.prompt || '',
               source: 't2v',
             })),
           // F→V 비디오 (framePairs)
           ...framePairs
-            .filter(p => p.status === 'complete' && p.base64)
+            .filter(p => p.status === 'complete' && (p.base64 || p.videoPath))
             .map(p => ({
               id: p.id,
-              video_path: p.base64,
+              video_path: p.videoPath || p.base64,
               from_scene: p.startSceneId || null,
               to_scene: p.endSceneId || null,
               prompt: p.prompt || '',
