@@ -20,9 +20,9 @@ export default function McpTab({ localSettings, setLocalSettings, t }) {
     const result = await window.electronAPI.skillsList()
     if (result.success) {
       setSkills(result.skills)
-      // 설치된 스킬은 기본 체크
+      // 기본값: 모두 체크 (사용자가 필요 없으면 uncheck)
       const initial = {}
-      result.skills.forEach(s => { initial[s.name] = s.installed })
+      result.skills.forEach(s => { initial[s.name] = true })
       setSelectedSkills(initial)
     }
   }
@@ -45,23 +45,24 @@ export default function McpTab({ localSettings, setLocalSettings, t }) {
       return
     }
 
-    // 선택된 스킬 설치
+    // 선택된 스킬 설치 + uncheck된 설치 스킬 제거
     const toInstall = skills.filter(s => selectedSkills[s.name] && !s.installed).map(s => s.name)
+    const toRemove = skills.filter(s => !selectedSkills[s.name] && s.installed).map(s => s.name)
     let skillMsg = ''
     if (toInstall.length > 0) {
-      const skillResult = await window.electronAPI.skillsInstall({
-        names: toInstall,
-        variables: {},
-      })
-      if (skillResult.success) {
-        skillMsg = ` + ${skillResult.installed.length} skills`
-      } else {
-        toast.error(t('settings.skillsInstallFailed', { error: skillResult.error }))
+      const skillResult = await window.electronAPI.skillsInstall({ names: toInstall, variables: {} })
+      if (skillResult.success) skillMsg += ` +${skillResult.installed.length}`
+      else toast.error(t('settings.skillsInstallFailed', { error: skillResult.error }))
+    }
+    if (toRemove.length > 0) {
+      for (const name of toRemove) {
+        await window.electronAPI.skillsUninstall({ name })
       }
+      skillMsg += ` -${toRemove.length}`
     }
 
     setBusy(false)
-    toast.success(t('settings.mcpRegisterSuccess') + skillMsg)
+    toast.success(t('settings.mcpRegisterSuccess') + (skillMsg ? ` (skills: ${skillMsg.trim()})` : ''))
     refreshStatus()
     refreshSkills()
   }
@@ -107,26 +108,43 @@ export default function McpTab({ localSettings, setLocalSettings, t }) {
           <div className="setting-row">
             <label className="setting-label">{t('settings.mcpSkills')}</label>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              {skills.map(skill => (
-                <label key={skill.name} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={!!selectedSkills[skill.name]}
-                    onChange={(e) => setSelectedSkills(s => ({ ...s, [skill.name]: e.target.checked }))}
-                    disabled={busy}
-                    style={{ marginTop: '3px' }}
-                  />
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ fontWeight: 600 }}>{skill.name}</span>
-                      {skill.installed && <span style={{ color: '#10b981', fontSize: '11px' }}>✓ {t('settings.mcpSkillInstalled')}</span>}
+              {skills.map(skill => {
+                const checked = !!selectedSkills[skill.name]
+                let statusText, statusColor
+                if (skill.installed && checked) {
+                  statusText = `✓ ${t('settings.mcpSkillInstalled')}`
+                  statusColor = '#10b981'
+                } else if (skill.installed && !checked) {
+                  statusText = `⚠ ${t('settings.mcpSkillWillRemove')}`
+                  statusColor = '#f59e0b'
+                } else if (!skill.installed && checked) {
+                  statusText = `＋ ${t('settings.mcpSkillWillInstall')}`
+                  statusColor = '#3b82f6'
+                } else {
+                  statusText = `− ${t('settings.mcpSkillNotInstalled')}`
+                  statusColor = '#888'
+                }
+                return (
+                  <label key={skill.name} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) => setSelectedSkills(s => ({ ...s, [skill.name]: e.target.checked }))}
+                      disabled={busy}
+                      style={{ marginTop: '3px' }}
+                    />
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontWeight: 600 }}>{skill.name}</span>
+                        <span style={{ color: statusColor, fontSize: '11px' }}>{statusText}</span>
+                      </div>
+                      {skill.description && (
+                        <span style={{ fontSize: '11px', color: '#888' }}>{skill.description}</span>
+                      )}
                     </div>
-                    {skill.description && (
-                      <span style={{ fontSize: '11px', color: '#888' }}>{skill.description}</span>
-                    )}
-                  </div>
-                </label>
-              ))}
+                  </label>
+                )
+              })}
             </div>
             <span className="setting-sublabel">{t('settings.mcpSkillsHint')}</span>
           </div>
