@@ -2,6 +2,51 @@
 
 이 문서는 story-engine 스킬의 W1(성공요인 분석, 팩트체크, 자료수집) 단계 가이드입니다.
 
+## 환경 사전점검 (시작 전 필수)
+
+W1 작업 시작 전에 파이프라인 전체를 완료할 수 있는 환경인지 확인한다. 여기서 막히면 W1~W4를 낭비한다.
+
+### 필수 항목
+
+| # | 항목 | 확인 방법 | 실패 시 |
+|---|------|----------|---------|
+| 1 | **AutoFlowCut 앱 실행** | `app_status` MCP 호출 (localhost:3210) | 앱 실행 안내 |
+| 2 | **작업 폴더 설정** | `app_list_projects` 응답 확인 | 앱 설정에서 폴더 지정 안내 |
+| 3 | **Claude Code MCP 연결** | `mcp__autoflowcut__*` 도구 접근 가능 | MCP 등록/재시작 안내 |
+
+### 선택 항목 (없으면 특정 Wave 불가)
+
+| # | 항목 | 용도 | 확인 경로 | 없을 때 대안 |
+|---|------|------|----------|-------------|
+| 4 | **ElevenLabs API** | W5 음성/SFX 생성 | `~/.elevenlabs/credentials` | Vrew 수동 / Google AI Studio / W5 스킵 |
+| 5 | **Typecast API** | W5 대사 TTS (감정별) | `~/.typecast/credentials` | ElevenLabs 캐릭터 보이스 분리로 대체 |
+| 6 | **Google Flow 로그인** | W7 이미지/영상 생성 | AutoFlowCut 앱 내 Flow 탭 로그인 상태 | CapCut에서 수동 이미지 삽입 |
+
+### 체크 결과 보고
+
+사전점검 결과를 사용자에게 표로 제시하고, **선택 항목 중 누락된 것이 있으면 사용자에게 선택지를 물어본다.**
+
+```
+환경 확인 결과:
+✅ AutoFlowCut 앱 실행 중
+✅ 작업 폴더 설정됨
+✅ MCP 연결됨
+⚠️ ElevenLabs credentials 없음 → W5 음성/SFX 생성 불가
+✅ Google Flow 로그인됨
+
+ElevenLabs 없이 진행 방법:
+1. W1~W4까지만 진행, W5는 Vrew로 수동 처리
+2. 무료 계정 만들고 credentials 저장 후 계속 (elevenlabs.io 10분 무료)
+3. W5를 완전히 스킵하고 CapCut에서 오디오 수동 처리
+4. 작업 취소
+
+어떻게 하시겠습니까?
+```
+
+**사용자 응답 전에는 W1 본 작업을 시작하지 않는다.**
+
+---
+
 ## 분기
 
 | 경로 | 트리거 | 내용 |

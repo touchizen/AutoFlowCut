@@ -20,7 +20,7 @@ For each wave from current to target:
 ```
 ┌─ Read STATE.md → determine wave N
 │
-├─ Load wave reference doc: docs/W{N}-*.md
+├─ Load wave reference doc: docs/{lang}/W{N}-*.md (lang=ko for yadam, lang=en for dark-history)
 │
 ├─ Spawn subagent for W{N}:
 │   - Type: general-purpose
@@ -55,7 +55,7 @@ For each wave from current to target:
 
 Each subagent receives:
 1. Episode context (genre, topic, decisions from STATE.md)
-2. Wave reference doc (docs/W{N}-*.md)
+2. Wave reference doc (docs/{lang}/W{N}-*.md (lang=ko for yadam, lang=en for dark-history))
 3. Meta-prompts (for W2, W3): meta-prompts/{genre}/*.md
 4. Previous wave summaries (for context continuity)
 5. File paths for all episode artifacts created so far

@@ -57,16 +57,22 @@ description: "YouTube story channel script writing skill with 8-wave automated p
 
 ## 참조 문서
 
+문서는 언어별로 분리되어 있다. **장르에 따라 자동 선택**:
+- **yadam** (야담/민담/조선시대) → `docs/ko/`
+- **dark-history** (Western dark history/gothic/folklore) → `docs/en/`
+
+이하 표에서 `{lang}`은 `ko` 또는 `en`이다 (yadam=ko, dark-history=en).
+
 | Wave | 문서 |
 |------|------|
-| W1 | `docs/W1-story-design.md` |
-| W2 | `docs/W2-synopsis.md` + `meta-prompts/{genre}/synopsis_guidelines.md` + `meta-prompts/{genre}/preflight.md` |
-| W3 | `docs/W3-writing.md` + `meta-prompts/{genre}/screenplay_guidelines.md` + narrative + suspense |
-| W4 | `docs/W4-production.md` |
-| W5 | `docs/W5-tts-sfx.md` |
-| W6 | `docs/W6-storyboard.md` |
-| W7 | `docs/W7-image-upload.md` |
-| W8 | `docs/W8-upload-info.md` |
+| W1 | `docs/{lang}/W1-story-design.md` |
+| W2 | `docs/{lang}/W2-synopsis.md` + `meta-prompts/{genre}/synopsis_guidelines.md` + `meta-prompts/{genre}/preflight.md` |
+| W3 | `docs/{lang}/W3-writing.md` + `meta-prompts/{genre}/screenplay_guidelines.md` + narrative + suspense |
+| W4 | `docs/{lang}/W4-production.md` |
+| W5 | `docs/{lang}/W5-tts-sfx.md` |
+| W6 | `docs/{lang}/W6-storyboard.md` |
+| W7 | `docs/{lang}/W7-image-upload.md` |
+| W8 | `docs/{lang}/W8-upload-info.md` |
 
 ## AutoFlowCut MCP 도구
 
