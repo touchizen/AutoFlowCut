@@ -10,6 +10,7 @@ import dotenv from 'dotenv'
 import { registerFilesystemIPC } from './ipc/filesystem.js'
 import { registerAuthIPC } from './ipc/auth.js'
 import { registerCapcutIPC } from './ipc/capcut.js'
+import { registerMcpIPC } from './ipc/mcp.js'
 import { registerFlowAPIIPC } from './ipc/flow-api.js'
 import { registerVideoIPC } from './ipc/video.js'
 import { registerDomIPC } from './ipc/dom.js'
@@ -962,6 +963,9 @@ registerAuthIPC(ipcMain, () => flowView)
 
 // CapCut IPC (path detection, project writing, app launch)
 registerCapcutIPC(ipcMain)
+
+// MCP IPC (Claude Code MCP server registration)
+registerMcpIPC(ipcMain)
 
 // Layout, modal, sleep, open-external, show-in-folder IPC
 registerLayoutIPC(ipcMain, () => mainWindow, () => flowView)

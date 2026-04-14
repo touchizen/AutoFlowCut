@@ -1542,9 +1542,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         let skillContent = fs.readFileSync(skillMdPath, 'utf-8');
         skillContent = substituteVariables(skillContent, resolvedVars);
 
-        // 설치 디렉토리 생성 및 복사
+        // 설치 디렉토리 생성 및 전체 복사 (하위 폴더 포함)
         const installDir = path.join(SKILLS_INSTALL_DIR, skillName);
-        fs.mkdirSync(installDir, { recursive: true });
+        const copyDirRecursive = (src, dest) => {
+          fs.mkdirSync(dest, { recursive: true });
+          for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+            const srcPath = path.join(src, entry.name);
+            const destPath = path.join(dest, entry.name);
+            if (entry.isDirectory()) {
+              copyDirRecursive(srcPath, destPath);
+            } else if (entry.name !== 'SKILL.md' && entry.name !== 'metadata.json') {
+              // SKILL.md와 metadata.json은 별도 처리 (변수 치환/메타 추가)
+              fs.copyFileSync(srcPath, destPath);
+            }
+          }
+        };
+        copyDirRecursive(skillDir, installDir);
+
+        // SKILL.md는 변수 치환 후 저장
         fs.writeFileSync(path.join(installDir, 'SKILL.md'), skillContent, 'utf-8');
 
         // metadata.json도 복사 (설치된 변수 정보 포함)

@@ -77,6 +77,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSystemInfo: () => ipcRenderer.invoke('capcut:get-system-info'),
   getVolumePath: () => ipcRenderer.invoke('capcut:get-volume-path'),
 
+  // MCP (Claude Code integration)
+  mcpStatus: () => ipcRenderer.invoke('mcp:status'),
+  mcpRegister: () => ipcRenderer.invoke('mcp:register'),
+  mcpUnregister: () => ipcRenderer.invoke('mcp:unregister'),
+  skillsList: () => ipcRenderer.invoke('skills:list'),
+  skillsInstall: (params) => ipcRenderer.invoke('skills:install', params),
+  skillsUninstall: (params) => ipcRenderer.invoke('skills:uninstall', params),
+
   // Flow DOM Mode
   domNavigate: (params) => ipcRenderer.invoke('flow:dom-navigate', params),
   domGetUrl: () => ipcRenderer.invoke('flow:dom-get-url'),
