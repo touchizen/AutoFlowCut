@@ -193,6 +193,12 @@ print(f'CSV saved: {len(data)} scenes')
 
 After all image generation completes, run quality review against script / scenes / prompts.
 
+**Progress notification (required):** The subagent MUST ping the app during QA so the top-strip banner updates.
+- At the start of each round: `mcp__autoflowcut__app_notify_qa({ kind, state: 'start', total, round })`
+- Every 10 items checked: `mcp__autoflowcut__app_notify_qa({ kind, state: 'progress', current, total, round, issues })`
+- When the round concludes: `mcp__autoflowcut__app_notify_qa({ kind, state: 'done', current: total, total, round, issues })`
+- `kind` is `'ref'` for reference QA and `'scene'` for scene QA.
+
 **Reference QA:**
 ```
 1. app_get_references → list all references

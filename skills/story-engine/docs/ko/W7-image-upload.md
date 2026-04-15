@@ -192,6 +192,12 @@ print(f'CSV saved: {len(data)} scenes')
 
 모든 이미지 생성 완료 후, 대본/씬/프롬프트 대비 품질 검수를 수행한다.
 
+**진행 상황 알림 (필수):** 서브에이전트는 QA 진행을 앱에 알려야 한다. 상단 스트립 배너가 업데이트된다.
+- 각 라운드 시작 시: `mcp__autoflowcut__app_notify_qa({ kind, state: 'start', total, round })`
+- 10개 확인마다: `mcp__autoflowcut__app_notify_qa({ kind, state: 'progress', current, total, round, issues })`
+- 라운드 종료 시: `mcp__autoflowcut__app_notify_qa({ kind, state: 'done', current: total, total, round, issues })`
+- `kind`는 레퍼런스 QA에서는 `'ref'`, 씬 QA에서는 `'scene'`.
+
 **레퍼런스 QA:**
 ```
 1. app_get_references → 전체 레퍼런스 목록 확인

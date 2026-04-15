@@ -824,6 +824,11 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     complete: '완료',
   },
 
+  qa: {
+    ref: '레퍼런스',
+    scene: '씬',
+  },
+
   // 태그 검증 모달
   tagValidation: {
     title: '⚠️ 태그 매칭 경고',

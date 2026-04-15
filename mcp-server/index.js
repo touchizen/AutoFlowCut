@@ -575,6 +575,23 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'app_notify_qa',
+      description: 'QA 검수 진행 상황을 앱에 알립니다. 상단 스트립 배너가 업데이트됩니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['ref', 'scene'], description: '검수 대상 — 레퍼런스 또는 씬' },
+          current: { type: 'number', description: '현재까지 확인한 개수' },
+          total: { type: 'number', description: '전체 대상 개수' },
+          round: { type: 'number', description: '검수 라운드 (기본 1)' },
+          issues: { type: 'number', description: '이번 라운드에서 발견된 이슈 누계' },
+          state: { type: 'string', enum: ['start', 'progress', 'done'], description: 'QA 단계' },
+          port: { type: 'number' },
+        },
+        required: ['kind', 'state'],
+      },
+    },
+    {
       name: 'get_progress',
       description: '현재 W_progress.json의 워크플로우 진행 상태를 조회합니다.',
       inputSchema: {
@@ -1293,6 +1310,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return {
           content: [{ type: 'text', text: `CapCut 내보내기 완료: ${JSON.stringify(res.data)}` }],
         };
+      }
+
+      case 'app_notify_qa': {
+        const port = args.port || 3210;
+        const body = {
+          kind: args.kind,
+          state: args.state,
+          current: args.current ?? 0,
+          total: args.total ?? 0,
+          round: args.round ?? 1,
+          issues: args.issues ?? 0,
+        };
+        await appFetch(port, 'POST', '/api/notify-qa', body);
+        return { content: [{ type: 'text', text: `QA 알림 전송: ${JSON.stringify(body)}` }] };
       }
 
       case 'app_batch_status': {

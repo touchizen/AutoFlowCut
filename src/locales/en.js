@@ -824,6 +824,11 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     complete: 'complete',
   },
 
+  qa: {
+    ref: 'Reference',
+    scene: 'Scene',
+  },
+
   // Tag Validation Modal
   tagValidation: {
     title: '⚠️ Tag Match Warning',

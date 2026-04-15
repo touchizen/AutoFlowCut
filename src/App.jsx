@@ -48,6 +48,7 @@ import { AuthModal } from './components/AuthModal'
 import { PaywallModal } from './components/PaywallModal'
 import TagValidationModal from './components/TagValidationModal'
 import AudioResultModal from './components/AudioResultModal'
+import QAProgressBanner from './components/QAProgressBanner'
 import AudioPanel from './components/AudioPanel'
 import { SubscriptionBanner } from './components/SubscriptionBanner'
 import StylePicker from './components/StylePicker'
@@ -578,6 +579,7 @@ function App() {
 
   return (
     <div className="app">
+      <QAProgressBanner />
       {projectLoading && (
         <div className="project-loading-overlay">
           <div className="project-loading-spinner" />

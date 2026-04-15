@@ -1,0 +1,24 @@
+.qa-progress-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  background: #0b61ff;
+  color: white;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  animation: qa-slide-down 0.2s ease-out;
+}
+.qa-progress-banner.done { background: #12a150; }
+.qa-icon { font-size: 1rem; }
+@keyframes qa-slide-down {
+  from { transform: translateY(-100%); }
+  to { transform: translateY(0); }
+}

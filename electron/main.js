@@ -1169,6 +1169,21 @@ function startMcpHttpServer(port) {
           return
         }
 
+        // POST /api/notify-qa — QA 진행 상황 알림 (상단 배너 업데이트)
+        if (req.method === 'POST' && pathname === '/api/notify-qa') {
+          if (mainWindow) {
+            let payload = {}
+            try { payload = JSON.parse(body) } catch {}
+            mainWindow.webContents.send('mcp-update', { type: 'qa-progress', ...payload })
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ ok: true }))
+          } else {
+            res.writeHead(503)
+            res.end(JSON.stringify({ error: 'App not ready' }))
+          }
+          return
+        }
+
         // POST /api/start-ref-batch — 레퍼런스 일괄 생성 시작
         if (req.method === 'POST' && pathname === '/api/start-ref-batch') {
           if (mainWindow) {

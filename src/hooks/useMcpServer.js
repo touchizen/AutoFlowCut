@@ -195,6 +195,9 @@ export function useMcpServer({
         window.__mcpStartRefBatch?.(data.styleId)
       } else if (data.type === 'reload-project') {
         console.log('[MCP] Project reload requested')
+      } else if (data.type === 'qa-progress') {
+        window.__qaProgressUpdate?.(data)
+        console.log('[MCP] QA progress:', data)
       }
     })
     return cleanup
