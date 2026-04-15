@@ -44,6 +44,12 @@ description: "YouTube story channel script writing skill with 8-wave automated p
 - 5 rounds exceeded → escalate to user.
 - W1 (research) and W8 (upload info) are exceptions with no review loop.
 
+## 리뷰 원칙 (W2–W7)
+- 모든 서브스텝은 리뷰 루프를 실행한다: 서브에이전트 자가검토 → 이슈 목록 → 수정.
+- 최대 5회. 0 이슈 시 즉시 진행.
+- 5회 초과 시 사용자에게 에스컬레이션.
+- W1(리서치)과 W8(업로드 정보)은 리뷰 루프 없는 예외 단계이다.
+
 ## 핵심 원칙
 
 > **궁금증 + 기대감 = 몰입감. 몰입감이 최상위 성공 지표.**
