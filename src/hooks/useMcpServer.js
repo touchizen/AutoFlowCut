@@ -128,8 +128,28 @@ export function useMcpServer({
   useEffect(() => {
     const cleanup = window.electronAPI?.onMcpUpdate?.((data) => {
       if (data.type === 'update-references') {
-        setReferences(data.references)
-        console.log('[MCP] References updated via HTTP:', data.references.length)
+        // Merge CSV/API data over existing in-memory refs by name so that
+        // runtime fields (data, filePath, mediaId, dataStorage, caption,
+        // status, errorMessage) survive a CSV reload. Without this merge,
+        // load_csv during W6/W7 wipes generated-image pointers and the
+        // batch filter treats every ref as regeneratable → full regen.
+        setReferences(prev => {
+          const byName = new Map(prev.map(r => [r.name, r]))
+          return (data.references || []).map(incoming => {
+            const existing = incoming.name ? byName.get(incoming.name) : null
+            if (!existing) return incoming
+            return {
+              ...incoming,                      // CSV-authoritative: prompt, type, category, caption(if in CSV)
+              data: existing.data,              // preserve runtime-generated image payload
+              filePath: existing.filePath,      // preserve saved image path
+              mediaId: existing.mediaId,        // preserve uploaded Flow mediaId
+              dataStorage: existing.dataStorage,
+              status: existing.status,          // preserve generation status
+              errorMessage: existing.errorMessage,
+            }
+          })
+        })
+        console.log('[MCP] References merged via HTTP:', data.references.length)
       } else if (data.type === 'update-reference') {
         setReferences(prev => prev.map((ref, i) => i === data.index ? { ...prev[i], ...data.fields } : ref))
         console.log('[MCP] Reference', data.index, 'updated via HTTP')
