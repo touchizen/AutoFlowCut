@@ -16,6 +16,7 @@ const AppIcon = ({ size = 32 }) => (
 
 // Vite에서 주입되는 버전 (vite.config.js의 define 참조)
 const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.0.0'
+const BUILD_NUMBER = typeof __BUILD_NUMBER__ !== 'undefined' ? __BUILD_NUMBER__ : 0
 const BUILD_TIME = typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : ''
 
 // YouTube 아이콘 SVG 컴포넌트
@@ -164,7 +165,7 @@ export function SideDrawer({ isOpen, onClose }) {
             <AppIcon size={32} />
             <div className="drawer-logo-text">
               <h2>AutoFlowCut</h2>
-              <span className="drawer-version">v{APP_VERSION}{BUILD_TIME ? ` (${BUILD_TIME})` : ''}</span>
+              <span className="drawer-version">v{APP_VERSION}{BUILD_NUMBER ? ` (${BUILD_NUMBER})` : ''}{BUILD_TIME ? ` · ${BUILD_TIME}` : ''}</span>
             </div>
           </div>
           <button className="drawer-close" onClick={onClose}>

@@ -2,6 +2,13 @@ import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import electron from 'vite-plugin-electron/simple'
 import renderer from 'vite-plugin-electron-renderer'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, resolve } from 'node:path'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const pkg = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf8'))
+const BUILD_NUMBER = Number(pkg.buildNumber ?? 0)
 
 export default defineConfig(({ mode }) => {
   // 환경변수 로드 (mode에 따라 .env 또는 .env.production)
@@ -43,7 +50,8 @@ export default defineConfig(({ mode }) => {
     // renderer (React) — production에서 console/debugger 제거
     esbuild: isProduction ? { drop: ['console', 'debugger'] } : {},
     define: {
-      '__APP_VERSION__': JSON.stringify(process.env.npm_package_version || '0.1.0'),
+      '__APP_VERSION__': JSON.stringify(process.env.npm_package_version || pkg.version || '0.1.0'),
+      '__BUILD_NUMBER__': JSON.stringify(BUILD_NUMBER),
       '__BUILD_TARGET__': JSON.stringify(process.env.VITE_BUILD_TARGET || 'nsis')
     }
   }

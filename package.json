@@ -134,7 +134,7 @@
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "${productName}-${version}-win-${arch}-Setup.${ext}"
+      "artifactName": "${productName}-${version}.${buildNumber}-win-${arch}-Setup.${ext}"
     },
     "linux": {
       "icon": "assets/icon.png",
