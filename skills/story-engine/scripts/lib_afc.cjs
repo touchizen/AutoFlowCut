@@ -1,0 +1,130 @@
+// Helper library for W5 TTS/SFX pipeline (Node.js).
+// Used by draft_subtitles.js, generate_tts.js, build_srt.js, merge_audio.js,
+// generate_sfx.js, fix_sfx_timecodes.js, validate_sfx.js.
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+const https = require('https');
+const { spawnSync } = require('child_process');
+
+function readApiKey() {
+  const home = process.env.HOME || process.env.USERPROFILE;
+  const p = path.join(home, '.elevenlabs', 'credentials');
+  return fs.readFileSync(p, 'utf8').trim();
+}
+
+function httpsRequest({ method = 'GET', host = 'api.elevenlabs.io', pathUrl, headers = {}, body = null, timeoutMs = 180000 }) {
+  return new Promise((resolve, reject) => {
+    const opts = { method, host, path: pathUrl, headers: { ...headers } };
+    if (body) opts.headers['Content-Length'] = Buffer.byteLength(body);
+    const req = https.request(opts, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        const buf = Buffer.concat(chunks);
+        resolve({ statusCode: res.statusCode, headers: res.headers, buffer: buf });
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(timeoutMs, () => {
+      req.destroy(new Error(`Timeout after ${timeoutMs}ms`));
+    });
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
+// Split narration text into paragraph-level segments, then further split long
+// paragraphs at sentence boundaries to stay under maxChars (ElevenLabs request
+// limit). Preserves order. Returns [{index, text}]
+function splitNarration(raw, maxChars = 2500) {
+  const paragraphs = raw
+    .split(/\r?\n\s*\r?\n/)
+    .map((p) => p.replace(/\s+/g, ' ').trim())
+    .filter((p) => p.length > 0);
+
+  const segments = [];
+  for (const para of paragraphs) {
+    if (para.length <= maxChars) {
+      segments.push(para);
+      continue;
+    }
+    // Split at sentence boundaries
+    const sentences = para.match(/[^.!?]+[.!?]+["')\]]*\s*|[^.!?]+$/g) || [para];
+    let cur = '';
+    for (const s of sentences) {
+      if ((cur + s).length > maxChars && cur) {
+        segments.push(cur.trim());
+        cur = s;
+      } else {
+        cur += s;
+      }
+    }
+    if (cur.trim()) segments.push(cur.trim());
+  }
+  return segments.map((text, i) => ({ index: i, text }));
+}
+
+// Inject inline phonetic hints for tricky Gaelic/French terms so ElevenLabs
+// pronounces them intelligibly with eleven_multilingual_v2. These substitutions
+// are applied ONLY to the TTS input, never to the displayed subtitle text.
+function applyPronunciationHints(text) {
+  const pairs = [
+    [/Eilean\s+M[oò]r/gi, 'Ellan More'],
+    [/Eilean/gi, 'Ellan'],
+    [/daoine\s+s[ií]th/gi, 'doon-yuh shee'],
+    [/Clanranald/gi, 'Clan Ranald'],
+    [/le\s+cafard\s+des\s+gardiens\s+de\s+phare/gi, 'luh kah-far day gar-dyen duh far'],
+    [/Breasclete/gi, 'Brays-kleet'],
+    [/Flannan/gi, 'Flan-an'],
+    [/Hesperus/gi, 'Hess-per-us'],
+    [/Bernera/gi, 'Ber-ne-ra'],
+  ];
+  let out = text;
+  for (const [re, rep] of pairs) out = out.replace(re, rep);
+  return out;
+}
+
+function ffprobeDuration(mp3Path) {
+  const r = spawnSync('ffprobe', ['-v', 'quiet', '-show_entries', 'format=duration', '-of', 'csv=p=0', mp3Path], { encoding: 'utf8' });
+  if (r.status !== 0) throw new Error(`ffprobe failed for ${mp3Path}: ${r.stderr}`);
+  return parseFloat(r.stdout.trim());
+}
+
+function fmtTimestamp(sec) {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  const ms = Math.floor((sec - Math.floor(sec)) * 1000);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
+}
+
+function fmtMMSS(sec) {
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return `${String(m).padStart(2, '0')}${String(s).padStart(2, '0')}`;
+}
+
+function fmtHHMMSS(sec) {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.round(sec % 60);
+  return `${String(h).padStart(2, '0')}${String(m).padStart(2, '0')}${String(s).padStart(2, '0')}`;
+}
+
+async function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+module.exports = {
+  readApiKey,
+  httpsRequest,
+  splitNarration,
+  applyPronunciationHints,
+  ffprobeDuration,
+  fmtTimestamp,
+  fmtMMSS,
+  fmtHHMMSS,
+  sleep,
+};

@@ -66,6 +66,7 @@
       "assets/**/*",
       "!assets/icon.iconset"
     ],
+    "afterPack": "./scripts/afterPack.cjs",
     "extraResources": [
       {
         "from": "mcp-server",
