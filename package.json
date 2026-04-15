@@ -1,7 +1,7 @@
 {
   "name": "autoflowcut",
   "version": "0.9.4",
-  "buildNumber": 160,
+  "buildNumber": 161,
   "description": "AutoFlowCut - Automate AI video creation from Google Flow to CapCut projects",
   "main": "dist-electron/main.js",
   "type": "module",
@@ -59,6 +59,7 @@
   "build": {
     "appId": "com.touchizen.flow2capcut",
     "productName": "AutoFlowCut",
+    "forceCodeSigning": true,
     "directories": {
       "output": "release"
     },
