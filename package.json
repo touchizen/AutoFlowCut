@@ -89,6 +89,11 @@
       {
         "from": "skills",
         "to": "skills"
+      },
+      {
+        "from": "src/config",
+        "to": "src/config",
+        "filter": ["*.json"]
       }
     ],
     "afterSign": "scripts/notarize.cjs",
