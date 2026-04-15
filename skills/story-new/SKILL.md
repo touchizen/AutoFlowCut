@@ -7,10 +7,12 @@ argument-hint: "[episode-number] [--genre yadam|dark-history]"
 <objective>
 Initialize a new episode through topic discussion and context gathering.
 
-**Creates:**
-- `{PROJECT_DIR}/story/ep{number}/` — episode directory
+**Creates (all paths resolved at runtime — see Step 0 of the workflow):**
+- `{PROJECT_DIR}/ep{number}_{slug}/_story_source/` — episode directory (inside AutoFlowCut work folder, never inside source repo)
 - `STATE.md` — workflow state (current wave, decisions)
 - `W_progress.json` — progress log for external tools
+
+**{PROJECT_DIR} resolution**: Call `mcp__autoflowcut__app_list_projects` — the `작업폴더:` line in its output is the work folder. Never fall back to cwd or to the source-code repo.
 
 **After this command:** Automatically chains to `/story-execute`.
 </objective>

@@ -123,6 +123,6 @@ After completing all checks:
 
 | Status | Action |
 |--------|--------|
-| All checks pass | Call `mark_step_done(step="R4_preflight", result="pass")` |
-| Issues found | List all issues, do NOT call mark_step_done |
+| All checks pass | Record in `W_progress.json` (waves.W2.preflight_result = "pass") and write `05_preflight.md` |
+| Issues found | List all issues in `05_preflight.md`; do NOT mark W2 done |
 | Critical issues | Return to R3 (Synopsis) for structural revision |

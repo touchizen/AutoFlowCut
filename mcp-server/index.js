@@ -75,22 +75,9 @@ async function readProgress(port = 3210) {
   return JSON.parse(fs.readFileSync(p, 'utf-8'));
 }
 
-async function writeProgress(data, port = 3210) {
-  const p = await findProgressFile(port);
-  if (!p) throw new Error('W_progress.json 경로를 찾을 수 없습니다. 앱에서 프로젝트를 열거나 CSV를 먼저 로드하세요.');
-  fs.writeFileSync(p, JSON.stringify(data, null, 2), 'utf-8');
-}
-
-async function isStepDone(stepId, port = 3210) {
-  const progress = await readProgress(port);
-  const step = progress[stepId];
-  return step && step.result === 'pass';
-}
-
-// 게이트 정의: 다음 단계 → 선행 조건
-// Gate system disabled — workflow orchestrator manages flow via STATE.md
-// Kept as empty object for backward compatibility (gate check code still references it)
-const STEP_GATES = {};
+// Workflow state is managed by subagents via direct file I/O on STATE.md + W_progress.json.
+// No MCP tool writes to W_progress.json anymore; no gate system.
+// readProgress() above is retained for the read-only `get_progress` MCP tool.
 
 function loadProjectJson(projectDir) {
   const pjPath = path.join(projectDir, 'project.json');
@@ -577,22 +564,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
       },
     },
-    // ── 워크플로우 게이트 도구 ──
-    {
-      name: 'mark_step_done',
-      description: '워크플로우 단계의 검토 결과를 W_progress.json에 기록합니다 (로그 전용 — 게이트 아님). 오케스트레이터가 Wave 완료 시 호출합니다.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          step: { type: 'string', description: '단계 ID (예: "W1_analysis", "W3_review", "W6_scenes_review")' },
-          round: { type: 'number', description: '검토 라운드 번호 (1~5)' },
-          result: { type: 'string', enum: ['pass', 'fail'], description: 'pass=검토 통과, fail=수정 필요' },
-          issues_found: { type: 'number', description: '발견된 문제 수' },
-          reviewer: { type: 'string', description: '검토자 (예: "subagent")' },
-        },
-        required: ['step', 'result', 'reviewer'],
-      },
-    },
     {
       name: 'export_capcut',
       description: 'CapCut 프로젝트로 내보냅니다. 오디오 임포트 완료 후 실행합니다.',
@@ -816,21 +787,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // references CSV 자동 감지: name+type+prompt 있고 scene_tag 없으면 references
         const lowerHeaders = headers.map(h => h.toLowerCase());
         const isReferencesCSV = lowerHeaders.includes('name') && lowerHeaders.includes('type') && lowerHeaders.includes('prompt') && !lowerHeaders.includes('scene_tag');
-
-        // 게이트 체크 (최초 로드는 통과)
-        const port_csv = args.port || 3210;
-        const progress_csv = await readProgress(port_csv);
-        if (Object.keys(progress_csv).length > 0) {
-          const gateKey = isReferencesCSV ? 'load_csv_references' : 'load_csv_scenes';
-          const gateReqs = STEP_GATES[gateKey] || [];
-          for (const req of gateReqs) {
-            if (!(await isStepDone(req, port_csv))) {
-              return {
-                content: [{ type: 'text', text: `❌ 게이트 차단: "${req}" 단계가 완료되지 않았습니다. 검토를 먼저 완료하고 mark_step_done으로 기록하세요.\n(최초 로드 시에는 게이트가 적용되지 않습니다)` }],
-              };
-            }
-          }
-        }
 
         if (isReferencesCSV) {
           // references CSV → 앱의 레퍼런스로 전달
@@ -1314,16 +1270,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'app_start_scene_batch': {
-        // 게이트 체크
         const port = args.port || 3210;
-        const gateReqs = STEP_GATES['app_start_scene_batch'] || [];
-        for (const req of gateReqs) {
-          if (!(await isStepDone(req, port))) {
-            return {
-              content: [{ type: 'text', text: `❌ 게이트 차단: "${req}" 단계가 완료되지 않았습니다. 검토를 먼저 완료하고 mark_step_done으로 기록하세요.` }],
-            };
-          }
-        }
         const body = args.styleId ? { styleId: args.styleId } : null;
         const res = await appFetch(port, 'POST', '/api/start-scene-batch', body);
         return {
@@ -1332,16 +1279,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'app_start_ref_batch': {
-        // 게이트 체크
         const port = args.port || 3210;
-        const gateReqs = STEP_GATES['app_start_ref_batch'] || [];
-        for (const req of gateReqs) {
-          if (!(await isStepDone(req, port))) {
-            return {
-              content: [{ type: 'text', text: `❌ 게이트 차단: "${req}" 단계가 완료되지 않았습니다. 검토를 먼저 완료하고 mark_step_done으로 기록하세요.` }],
-            };
-          }
-        }
         const body = args.styleId ? { styleId: args.styleId } : null;
         const res = await appFetch(port, 'POST', '/api/start-ref-batch', body);
         return {
@@ -1351,14 +1289,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'export_capcut': {
         const port = args.port || 3210;
-        const gateReqs = STEP_GATES['export_capcut'] || [];
-        for (const req of gateReqs) {
-          if (!(await isStepDone(req, port))) {
-            return {
-              content: [{ type: 'text', text: `❌ 게이트 차단: "${req}" 단계가 완료되지 않았습니다. 오디오 임포트를 먼저 완료하고 mark_step_done으로 기록하세요.` }],
-            };
-          }
-        }
         const res = await appFetch(port, 'POST', '/api/export-capcut');
         return {
           content: [{ type: 'text', text: `CapCut 내보내기 완료: ${JSON.stringify(res.data)}` }],
@@ -1411,74 +1341,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
           await new Promise(r => setTimeout(r, interval));
         }
-      }
-
-      // ── 워크플로우 게이트 핸들러 ──
-
-      case 'mark_step_done': {
-        const { step, round, result, issues_found, reviewer } = args;
-        const port = args.port || 3210;
-        if (!step || !result || !reviewer) {
-          throw new Error('step, result, reviewer는 필수 매개변수입니다.');
-        }
-        const progress = await readProgress(port);
-        progress[step] = {
-          result,
-          round: round || 1,
-          issues_found: issues_found || 0,
-          reviewer,
-          completed_at: new Date().toISOString(),
-        };
-        await writeProgress(progress, port);
-        const emoji = result === 'pass' ? '✅' : '⚠️';
-        let msg = `${emoji} ${step}: ${result} (round ${round || 1}, issues: ${issues_found || 0}, by ${reviewer})`;
-
-        // pass일 때 다음 단계 가이드 자동 반환 + 참조 문서 자동 로드
-        if (result === 'pass') {
-          const skillDocsDir = path.join(os.homedir(), '.claude', 'skills', 'story-engine', 'docs');
-          const metaPromptsDir = path.join(os.homedir(), '.claude', 'skills', 'story-engine', 'meta-prompts', 'yadam');
-
-          // 참조 문서 읽기 헬퍼 (없으면 경로 안내)
-          const loadDoc = (filePath) => {
-            try { return fs.readFileSync(filePath, 'utf-8'); }
-            catch { return `⚠️ 문서를 찾을 수 없음: ${filePath}\n🔴 반드시 Read 도구로 직접 읽어라.`; }
-          };
-
-          // W(Wave) 기반 다음 단계 가이드 (로그 전용 — 게이트 아님)
-          const NEXT_STEP_GUIDE = {
-            // W1 내부 단계
-            'W1_analysis': `\n\n📋 W1 완료 → W2 시놉시스 + 프리플라이트`,
-            'W1_factcheck': `\n\n📋 W1 팩트체크 완료.`,
-            'W1_research': `\n\n📋 W1 자료수집 완료 → W2 시놉시스로 진행.`,
-            // W2
-            'W2_synopsis': `\n\n📋 W2 시놉시스 완료 → 프리플라이트 체크.`,
-            'W2_preflight': `\n\n📋 W2 완료 → W3 대본 작성.`,
-            // W3
-            'W3_writing': `\n\n📋 W3 대본 작성 완료 → 검토 루프.`,
-            'W3_review': `\n\n📋 W3 검토 완료 → 🛑 사용자 대본 확정 필요.`,
-            'W3_finalize': `\n\n📋 W3 확정 → W4 프로덕션 추출.`,
-            // W4
-            'W4_production': `\n\n📋 W4 추출 완료 → 검증 루프.`,
-            'W4_review': `\n\n📋 W4 완료 → W5 TTS/SFX.`,
-            // W5
-            'W5_tts_sfx': `\n\n📋 W5 TTS/SFX 완료 → 타임코드 검증.`,
-            'W5_timecode_qa': `\n\n📋 W5 완료 → W6 스토리보드 CSV.`,
-            // W6
-            'W6_references_review': `\n\n📋 W6 레퍼런스 CSV 검토 완료.`,
-            'W6_scenes_review': `\n\n📋 W6 완료 → W7 이미지 생성.`,
-            // W7
-            'W7_image_qa': `\n\n📋 W7 이미지 QA 완료 → 오디오 임포트 + CapCut 내보내기.`,
-            'W7_complete': `\n\n📋 W7 완료 → W8 업로드 정보.`,
-            // W8
-            'W8_upload': `\n\n📋 W8 완료. 전체 파이프라인 종료.`,
-          };
-          const guide = NEXT_STEP_GUIDE[step];
-          if (guide) msg += guide;
-        }
-
-        return {
-          content: [{ type: 'text', text: msg }],
-        };
       }
 
       case 'get_progress': {
