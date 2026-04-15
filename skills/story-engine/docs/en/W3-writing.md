@@ -59,17 +59,17 @@ ep{number}/
 └── 11_upload_info.json
 ```
 
-### Word count distribution (target: 6,000 – 12,000 words, ~18–36 min at ~333 wpm TTS)
+### Word count distribution (target: 2,000 – 3,000 words, ~13–20 min at ~150 wpm narration)
 
-| Section | Word count (9,000 baseline) | Ratio |
+| Section | Word count (2,500 baseline) | Ratio |
 |---------|------------------------------|-------|
-| 【Setup】 Introduction | 1,350 | 15% |
-| 【Rising】 Development | 2,700 | 30% |
-| 【Crisis】 Crisis / twist | 3,150 | 35% |
-| 【Resolution】 Ending | 1,800 | 20% |
-| **Total** | **9,000** (midpoint) | 100% |
+| 【Setup】 Introduction | 375 | 15% |
+| 【Rising】 Development | 750 | 30% |
+| 【Crisis】 Crisis / twist | 875 | 35% |
+| 【Resolution】 Ending | 500 | 20% |
+| **Total** | **2,500** (midpoint) | 100% |
 
-> **Note**: Below 6,000 words the story feels thin; above 12,000 attention is hard to hold. **You may go outside this range only if immersion is still sustained.**
+> **Note**: Below 2,000 words the story feels thin; above 3,000 the video runs long and YouTube retention drops. **You may go outside this range only if immersion is still sustained.**
 >
 > Word count check: `wc -w` (English word count, not character count)
 
@@ -376,7 +376,7 @@ Self-review → subagent review → revise — **repeat until there are no more 
 
 **Structure:**
 - [ ] All foreshadowing paid off?
-- [ ] Total word count within 6,000–12,000? (may exceed when immersion is sustained)
+- [ ] Total word count within 2,000–3,000? (may exceed when immersion is sustained)
 - [ ] No period/historical errors?
 - [ ] No banned items (anachronisms, modern brands, ellipsis overuse, etc.)?
 

@@ -44,7 +44,9 @@ Override with `--genre` flag.
 Use AskUserQuestion to gather:
 1. Story topic/theme
 2. Reference material (URLs, text, videos) -- optional
-3. Target length (default: 10,000자 / 28분)
+3. Target length — default depends on genre:
+   - yadam (Korean): 10,000자 / ~28 min
+   - dark-history (English): 2,500 words / ~17 min
 4. Special requirements
 
 **Step 5: Initialize STATE.md**

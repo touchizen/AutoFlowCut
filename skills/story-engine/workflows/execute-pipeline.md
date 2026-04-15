@@ -76,7 +76,9 @@ Each subagent receives:
 **W3 subagent prompt includes:**
 - Screenplay guidelines + narrative + suspense (meta-prompts/{genre}/*.md)
 - Writing order: Hook → Act I → II → III → IV
-- Character count targets (8,000~12,000자)
+- Length targets — depends on genre:
+  - yadam (Korean): 8,000~12,000자
+  - dark-history (English): 2,000~3,000 words
 - Review loop: self-review + subagent review (max 5 rounds, target 9.5)
 - Output: {title}_기.md, {title}_승.md, {title}_전.md, {title}_결.md, 07_검토.md
 
