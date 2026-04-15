@@ -41,12 +41,17 @@ export default function ReferencePanel({
   const [collapsed, setCollapsed] = useState(false)
   const [detailIndex, setDetailIndex] = useState(null)
   const [showBatchWizard, setShowBatchWizard] = useState(false)
-  const [batchTotal, setBatchTotal] = useState(0)
   const [batchStartedAt, setBatchStartedAt] = useState(null)
 
   // 생성 가능한 레퍼런스 (프롬프트 있고, 이미지 없음, 스타일 제외)
   const generatableRefs = references.filter(r => r.prompt && !r.data && !r.filePath && r.type !== 'style')
   const isGenerating = generatingRefs.length > 0
+
+  // 진행률은 누적 기준 — 스타일 제외 · 프롬프트 있는 전체 중 완료된 개수.
+  // 배치를 여러 번 나눠 돌려도 "N/total"이 일관되게 표시된다.
+  const eligibleRefs = references.filter(r => r.prompt && r.type !== 'style')
+  const totalEligible = eligibleRefs.length
+  const doneCount = eligibleRefs.filter(r => r.data || r.filePath).length
 
   const batchElapsedSec = useElapsedTimer(batchStartedAt)
   const batchElapsed = batchElapsedSec * 1000 // ms 호환
@@ -54,10 +59,9 @@ export default function ReferencePanel({
   // 위저드 열릴 때 Flow 네이티브 뷰 숨기기
   useModalVisibility(showBatchWizard)
 
-  // 일괄생성 시작/종료 감지
+  // 일괄생성 시작/종료 감지 — 경과 시간 타이머용
   useEffect(() => {
     if (isGenerating && !batchStartedAt) {
-      setBatchTotal(generatableRefs.length + generatingRefs.length)
       setBatchStartedAt(Date.now())
     } else if (!isGenerating && batchStartedAt) {
       setBatchStartedAt(null)
@@ -128,11 +132,11 @@ export default function ReferencePanel({
                 <div className="ref-batch-bar">
                   <div
                     className="ref-batch-fill"
-                    style={{ width: `${batchTotal > 0 ? ((batchTotal - generatableRefs.length) / batchTotal) * 100 : 0}%` }}
+                    style={{ width: `${totalEligible > 0 ? (doneCount / totalEligible) * 100 : 0}%` }}
                   />
                 </div>
                 <span className="ref-batch-text">
-                  {batchTotal - generatableRefs.length}/{batchTotal}
+                  {doneCount}/{totalEligible}
                   {batchElapsed > 0 && ` · ${formatElapsedMs(batchElapsed)}`}
                 </span>
               </div>
