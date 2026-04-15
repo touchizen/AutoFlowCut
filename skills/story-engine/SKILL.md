@@ -38,6 +38,12 @@ description: "YouTube story channel script writing skill with 8-wave automated p
 
 `--genre yadam` 또는 `--genre dark-history`로 오버라이드 가능.
 
+## Review discipline (W2–W7)
+- Every substep runs a review loop: subagent self-review → list issues → revise.
+- Max 5 rounds. 0 issues → proceed immediately.
+- 5 rounds exceeded → escalate to user.
+- W1 (research) and W8 (upload info) are exceptions with no review loop.
+
 ## 핵심 원칙
 
 > **궁금증 + 기대감 = 몰입감. 몰입감이 최상위 성공 지표.**

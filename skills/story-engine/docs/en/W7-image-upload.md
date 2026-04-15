@@ -30,6 +30,8 @@ Project management tools:
 - `app_rename_project` — rename project
 - `app_delete_project` — delete project (irreversible)
 
+**Review (substep 7-0)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 7-1. 5 rounds exceeded → escalate to user.
+
 ### 7-1. Reference image generation (AutoFlowCut)
 
 **Explain the current situation to the user:**
@@ -90,6 +92,8 @@ AutoFlowCut MCP: app_wait_batch → wait for completion
 4. AutoFlowCut MCP: app_wait_batch → wait for completion
 ```
 
+**Review (substep 7-1)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 7-2. 5 rounds exceeded → escalate to user.
+
 ### 7-2. Per-scene image generation (AutoFlowCut)
 
 ```
@@ -104,6 +108,8 @@ AutoFlowCut MCP: app_wait_batch → wait for completion
 - `load_csv` auto-passes scene data to the app (`update-scenes` IPC)
 - After loading, use `app_get_scenes` to confirm the app received the scenes
 - After generation, use `list_problem_scenes` to find problematic scenes and fix prompts
+
+**Review (substep 7-2)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 7-2a. 5 rounds exceeded → escalate to user.
 
 ### 7-2a. Fixing and regenerating error scenes
 
@@ -181,6 +187,8 @@ print(f'CSV saved: {len(data)} scenes')
 2. Sync the CSV file with the export script above
 3. CSV path: `{project directory}/ep{number}_scenes.csv`
 
+**Review (substep 7-2a)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 7-2b. 5 rounds exceeded → escalate to user.
+
 ### 7-2b. Full image QA (references + scenes)
 
 After all image generation completes, run quality review against script / scenes / prompts.
@@ -240,6 +248,8 @@ ALL images must be eyeballed. No sampling — 100% coverage required.
 
 QA requires eyeballing images (Read tool to open the file). Do NOT judge from metadata alone.
 Character clothing baseline comes from the script's character setup (references.csv).
+
+**Review (substep 7-2b)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 7-2c. 5 rounds exceeded → escalate to user.
 
 ### 7-2c. Audio import (narration + SFX)
 
@@ -304,6 +314,8 @@ curl -s -X POST http://localhost:3210/api/audio-refresh \
 2. Flag problematic → regenerate → unflag
 3. State tracked in `.audio_review.json`
 
+**Review (substep 7-2c)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 7-2d. 5 rounds exceeded → escalate to user.
+
 ### 7-2d. CapCut export
 
 After image QA + audio import complete, export to CapCut.
@@ -324,6 +336,8 @@ curl -s -X POST http://localhost:3210/api/export-capcut \
 - Check image placement, audio sync, subtitle position
 - If issues, fix in-app and re-export
 
+**Review (substep 7-2d)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 7-3. 5 rounds exceeded → escalate to user.
+
 ### 7-3. Video generation (optional)
 
 Add motion to scene images to produce video clips (Image-to-Video, Google Flow API).
@@ -338,7 +352,9 @@ If editing directly in CapCut, this step can be skipped.
 - If user wants to handle it themselves → skip
 - Export similarly — run only after user confirmation
 
+**Review (substep 7-3)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to the next Wave. 5 rounds exceeded → escalate to user.
+
 ---
 
-## Review loop
-Up to 5 rounds. If 0 issues, proceed immediately to the next Wave. If 5 rounds are exceeded, escalate to the user.
+## Wave review summary
+Each substep above enforces max-5-round review with auto-advance on 0 issues. Wave 7 completes when the last substep's review passes. Escalate to user if any substep exceeds 5 rounds.

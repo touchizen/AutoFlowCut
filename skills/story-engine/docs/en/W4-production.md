@@ -16,11 +16,22 @@ This document is the W4 (production extraction + review) stage guide for the sto
 
 **Run only after the script has been confirmed through W3 review.** Extracting before the script is locked causes rework on every revision.
 
-1. **Narration extraction** → `narration_{part}.txt` — pure narration text (dialogue and stage directions removed)
-2. **Per-character dialogue extraction** → `dialogs_{part}.json` — character name, line, emotion, order
-3. **SFX extraction** → `08_sfx_list.md` — list of sound-effect beats (with English prompts)
+### 4-1. Narration extraction
+**Narration extraction** → `narration_{part}.txt` — pure narration text (dialogue and stage directions removed)
 
-### Extraction review (subagent, max 5 rounds)
+**Review (substep 4-1)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 4-2. 5 rounds exceeded → escalate to user.
+
+### 4-2. Per-character dialogue extraction
+**Per-character dialogue extraction** → `dialogs_{part}.json` — character name, line, emotion, order
+
+**Review (substep 4-2)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 4-3. 5 rounds exceeded → escalate to user.
+
+### 4-3. SFX extraction
+**SFX extraction** → `08_sfx_list.md` — list of sound-effect beats (with English prompts)
+
+**Review (substep 4-3)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to the next Wave. 5 rounds exceeded → escalate to user.
+
+### Extraction review method (subagent, max 5 rounds per substep)
 
 - The subagent **reads the script files and extraction files directly with the Read tool** and cross-checks
 - **No program / code cross-check**: must use the Read tool and visual inspection
@@ -40,5 +51,5 @@ This document is the W4 (production extraction + review) stage guide for the sto
 
 ---
 
-## Review loop
-Up to 5 rounds. If 0 issues, proceed immediately to the next Wave. If 5 rounds are exceeded, escalate to the user.
+## Wave review summary
+Each substep above enforces max-5-round review with auto-advance on 0 issues. Wave 4 completes when the last substep's review passes. Escalate to user if any substep exceeds 5 rounds.

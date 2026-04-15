@@ -69,6 +69,8 @@ The SRT MUST be **split by hand, by meaning units** — not by code. Auto-splitt
 
 **Output:** `segments_{part}/{idx:03d}_{character}.mp3` + `.json` + `final_{part}.srt`
 
+**Review (substep 5-1)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 5-2. 5 rounds exceeded → escalate to user.
+
 ---
 
 ## 5-2. SFX generation
@@ -135,6 +137,8 @@ media/sfx/                        ← final (full timeline)
 
 **Output:** `sfx/{filename}_{per-part timecode}.mp3` → after merge: `media/sfx/{filename}_{full timecode}.mp3`
 
+**Review (substep 5-2)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 5-3. 5 rounds exceeded → escalate to user.
+
 ---
 
 ## 5-3. Full-audio merge + SFX timecode conversion
@@ -174,6 +178,8 @@ ffmpeg -y -f concat -safe 0 -i merge_all.txt -c copy media/final_full.mp3
 - `media/final_full.srt` — full subtitles (offsets applied)
 - `media/sfx/*.mp3` — SFX (MMSS timecodes on the full timeline)
 
+**Review (substep 5-3)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 5-4. 5 rounds exceeded → escalate to user.
+
 ---
 
 ## 5-4. SFX timecode validation (required before audio import)
@@ -202,7 +208,9 @@ ffmpeg -y -f concat -safe 0 -i merge_all.txt -c copy media/final_full.mp3
 - step: `W05_sfx_timecode_qa`
 - Record after validation passes
 
+**Review (substep 5-4)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to the next Wave. 5 rounds exceeded → escalate to user.
+
 ---
 
-## Review loop
-Up to 5 rounds. If 0 issues, proceed immediately to the next Wave. If 5 rounds are exceeded, escalate to the user.
+## Wave review summary
+Each substep above enforces max-5-round review with auto-advance on 0 issues. Wave 5 completes when the last substep's review passes. Escalate to user if any substep exceeds 5 rounds.

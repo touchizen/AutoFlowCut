@@ -56,6 +56,8 @@ Define all characters / places / style references that appear in the script.
 - Time-of-day variants: `churchyard`, `churchyard_fog`, `churchyard_night`
 - End with `no modern elements`
 
+**Review (substep 6-1)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 6-2. 5 rounds exceeded → escalate to user.
+
 ### 6-2. Scene CSV (`{title}_scenes.csv`)
 
 | Column | Required | Description |
@@ -96,6 +98,8 @@ rising: ffprobe(final_setup.mp3) cumulative
 crisis: setup + rising
 resolution: setup + rising + crisis
 ```
+
+**Review (substep 6-2)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 6-3. 5 rounds exceeded → escalate to user.
 
 ### 6-3. Storyboard CSV review (subagent, max 5 rounds)
 
@@ -183,7 +187,9 @@ print(f'Scene sum: {total:.1f}s ({total/60:.1f}min)')
 
 **Output files**: `references.csv`, `{title}_scenes.csv`
 
+**Review (substep 6-3)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to the next Wave. 5 rounds exceeded → escalate to user.
+
 ---
 
-## Review loop
-Up to 5 rounds. If 0 issues, proceed immediately to the next Wave. If 5 rounds are exceeded, escalate to the user.
+## Wave review summary
+Each substep above enforces max-5-round review with auto-advance on 0 issues. Wave 6 completes when the last substep's review passes. Escalate to user if any substep exceeds 5 rounds.

@@ -410,6 +410,8 @@ mcp__gemini-cli__ask-gemini
 
 **Output file**: `07_review.md` (self-review + external feedback integrated)
 
+**Review (substep 3-1)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to the next Wave (after user confirmation below). 5 rounds exceeded → escalate to user.
+
 ---
 
 ## User confirmation required
@@ -418,5 +420,5 @@ After W3 completes, the user must confirm the script before proceeding to W4.
 
 ---
 
-## Review loop
-Up to 5 rounds. If 0 issues, proceed immediately to the next Wave. If 5 rounds are exceeded, escalate to the user.
+## Wave review summary
+Each substep above enforces max-5-round review with auto-advance on 0 issues. Wave 3 completes when the last substep's review passes. Escalate to user if any substep exceeds 5 rounds.

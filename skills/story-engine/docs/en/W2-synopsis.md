@@ -65,6 +65,8 @@ Write a synopsis based on the 20-chapter framework.
 
 **Output file**: `04_synopsis.md`
 
+**Review (substep 2-1)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 2-2. 5 rounds exceeded → escalate to user.
+
 ---
 
 ## Preflight check
@@ -103,7 +105,9 @@ If it passes, proceed to W3. If issues are found, revise the synopsis and re-run
 
 **Output file**: `05_preflight.md`
 
+**Review (substep 2-2)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to the next Wave. 5 rounds exceeded → escalate to user.
+
 ---
 
-## Review loop
-Up to 5 rounds. If 0 issues, proceed immediately to the next Wave. If 5 rounds are exceeded, escalate to the user.
+## Wave review summary
+Each substep above enforces max-5-round review with auto-advance on 0 issues. Wave 2 completes when the last substep's review passes. Escalate to user if any substep exceeds 5 rounds.
