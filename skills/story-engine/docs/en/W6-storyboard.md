@@ -2,6 +2,22 @@
 
 This document is the W6 (storyboard CSV creation + review) stage guide for the story-engine skill — dark-history genre.
 
+> ## 🚫 W6 scope — HARD RULES
+>
+> W6 produces **CSV files only**. It writes prompt text; it does **NOT** generate images.
+>
+> **FORBIDDEN in W6** — do not call any of these MCP tools or HTTP endpoints during W6:
+> - `mcp__autoflowcut__app_start_ref_batch` / `POST /api/start-ref-batch`
+> - `mcp__autoflowcut__app_start_scene_batch` / `POST /api/start-scene-batch`
+> - `mcp__autoflowcut__app_generate_reference` / `POST /api/generate-reference`
+> - `mcp__autoflowcut__app_generate_scene` / `POST /api/generate-scene`
+>
+> Actual image generation is the exclusive responsibility of **W7**. If W6 kicks off image batches it burns Flow API credits against an unreviewed CSV and corrupts the "CSV review → image generation" boundary.
+>
+> **Allowed in W6**: `get_schema`, `load_csv`, `list_scenes`, `list_references`, `save_csv`, `update_prompt`, `update_reference_prompt`, `update_field`, and file I/O.
+>
+> If W6 completes CSV generation + review and there are no remaining issues, **STOP and hand off to W7**. Do not proactively start image generation "since it's ready".
+
 **Reference scripts** (`~/workspace/AutoFlowCut/scripts/`):
 
 | Script | Purpose |

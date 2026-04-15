@@ -2,6 +2,22 @@
 
 이 문서는 story-engine 스킬의 W6(스토리보드 CSV 생성 + 검토) 단계 가이드입니다.
 
+> ## 🚫 W6 범위 — 절대 규칙
+>
+> W6는 **CSV 파일만** 만든다. 프롬프트 텍스트까지만 작성하고, **이미지 생성은 하지 않는다.**
+>
+> **W6에서 금지** — 아래 MCP 도구/HTTP 엔드포인트를 W6 중에 호출하면 안 된다:
+> - `mcp__autoflowcut__app_start_ref_batch` / `POST /api/start-ref-batch`
+> - `mcp__autoflowcut__app_start_scene_batch` / `POST /api/start-scene-batch`
+> - `mcp__autoflowcut__app_generate_reference` / `POST /api/generate-reference`
+> - `mcp__autoflowcut__app_generate_scene` / `POST /api/generate-scene`
+>
+> 실제 이미지 생성은 **W7의 단독 책임**이다. W6에서 배치를 돌리면 검토되지 않은 CSV에 Flow API 크레딧을 소모하게 되고, "CSV 검토 → 이미지 생성" 경계가 무너진다.
+>
+> **W6에서 허용**: `get_schema`, `load_csv`, `list_scenes`, `list_references`, `save_csv`, `update_prompt`, `update_reference_prompt`, `update_field`, 그리고 파일 I/O.
+>
+> W6가 CSV 생성 + 검토를 마치고 이슈가 없으면, **그 자리에서 멈추고 W7로 넘긴다.** "CSV 준비됐으니" 이미지 생성을 선제적으로 시작하지 말 것.
+
 **참고 스크립트** (`~/workspace/AutoFlowCut/scripts/`):
 
 | 스크립트 | 용도 |
