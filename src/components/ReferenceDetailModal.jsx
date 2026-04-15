@@ -194,6 +194,27 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
       <div className="ref-detail-layout">
         <div className="ref-detail-main">
           <>
+            {/* Status indicator */}
+            {editData.status && (
+              <div className={`ref-status-line status-${editData.status}`} style={{ fontSize: '0.8rem', marginBottom: '8px', color: editData.status === 'error' ? '#e5484d' : 'var(--text-secondary)' }}>
+                <strong>{t('reference.status.label') || 'Status'}:</strong>{' '}
+                {t(`reference.status.${editData.status}`) || editData.status}
+                {editData.status === 'error' && editData.errorMessage && (
+                  <> — {editData.errorMessage}</>
+                )}
+                {editData.status === 'error' && onGenerate && !isStyle && (
+                  <button
+                    type="button"
+                    className="btn-warning"
+                    style={{ marginLeft: '8px', padding: '2px 8px', fontSize: '0.75rem' }}
+                    onClick={handleRegenerate}
+                    disabled={isGenerating}
+                  >
+                    🔄 {t('reference.retry') || (isKo ? '다시 시도' : 'Retry')}
+                  </button>
+                )}
+              </div>
+            )}
             <input {...imageUpload.getInputProps()} />
 
             <div

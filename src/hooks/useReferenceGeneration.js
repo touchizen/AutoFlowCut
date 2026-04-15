@@ -43,9 +43,14 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       const folderCheck = await checkFolderPermission(settings, openSettings, t)
       if (!folderCheck.ok) return { success: false, permissionError: folderCheck.permissionError }
     }
-    if (!(await checkAuthToken(flowAPI, t))) return { success: false, authError: true }
+    if (!(await checkAuthToken(flowAPI, t))) {
+      setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: 'Auth required' } : r))
+      return { success: false, authError: true }
+    }
 
     setGeneratingRefs(prev => [...prev, index])
+    // Mark status as generating + clear prior errorMessage
+    setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'generating', errorMessage: null } : r))
 
     try {
       // 스타일 주입 (style 카드 자체 생성 시에는 제외)
@@ -209,7 +214,9 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
                 filePath: filePath,
                 dataStorage: filePath ? 'file' : 'base64',
                 mediaId,
-                caption
+                caption,
+                status: 'done',
+                errorMessage: null
               }
             : r
         ))
@@ -222,6 +229,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
         const isServerError = errorMsg.includes('500') || errorMsg.includes('502') || errorMsg.includes('503') || errorMsg.includes('server')
         toast.error(t('toast.generateFailed', { error: result.error || 'Unknown error' }))
         setGeneratingRefs(prev => prev.filter(i => i !== index))
+        setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: result.error || 'Generation failed' } : r))
         return { success: false, authError: isAuthError, serverError: isServerError }
       }
     } catch (error) {
@@ -231,10 +239,12 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       const isServerError = errorMsg.includes('500') || errorMsg.includes('502') || errorMsg.includes('503') || errorMsg.includes('server')
       toast.error(t('toast.generateError', { error: error.message }))
       setGeneratingRefs(prev => prev.filter(i => i !== index))
+      setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: error.message || 'Generation error' } : r))
       return { success: false, authError: isAuthError, serverError: isServerError }
     }
 
     setGeneratingRefs(prev => prev.filter(i => i !== index))
+    setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: 'Unknown failure' } : r))
     return { success: false }
   }
 
@@ -248,6 +258,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       const isServerError = errorMsg.includes('500') || errorMsg.includes('502') || errorMsg.includes('503')
       toast.error(t('toast.generateFailed', { error: result.error || 'Unknown error' }))
       setGeneratingRefs(prev => prev.filter(i => i !== index))
+      setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: result.error || 'Generation failed' } : r))
       return { success: false, authError: isAuthError, serverError: isServerError }
     }
 
@@ -321,7 +332,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     // 레퍼런스 업데이트
     setReferences(prev => prev.map((r, i) =>
       i === index
-        ? { ...r, data: savedDataUrl, filePath, dataStorage: filePath ? 'file' : 'base64', mediaId, caption }
+        ? { ...r, data: savedDataUrl, filePath, dataStorage: filePath ? 'file' : 'base64', mediaId, caption, status: 'done', errorMessage: null }
         : r
     ))
     setGeneratingRefs(prev => prev.filter(i => i !== index))
@@ -332,7 +343,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
   // AutoFlow 패턴: 제출 → 7~15초 대기 → 다음 제출, 결과는 별도 수집
   const _executeBatchRefs = async (overrideStyleId = null) => {
     const generatableIndices = references
-      .map((ref, index) => (ref.prompt && !ref.data && !ref.filePath && ref.type !== 'style') ? index : -1)
+      .map((ref, index) => (ref.prompt && !ref.data && !ref.filePath && ref.type !== 'style' && ref.status !== 'done') ? index : -1)
       .filter(i => i !== -1)
 
     if (generatableIndices.length === 0) {
@@ -467,6 +478,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
 
       // 생성 중 표시
       setGeneratingRefs(prev => [...prev, index])
+      setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'generating', errorMessage: null } : r))
 
       // 비동기 제출 (seedLocked 면 고정 seed)
       const batchSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
@@ -481,6 +493,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       } else {
         console.warn('[GenerateAllRefs] Submit failed for index:', index, submitResult?.error)
         setGeneratingRefs(prev => prev.filter(i => i !== index))
+        setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: submitResult?.error || 'Submit failed' } : r))
         submitFailCount++
 
         // 연속 3회 실패 시 중단
@@ -518,6 +531,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       console.warn('[GenerateAllRefs] Timed out waiting for', pendingQueue.length, 'generations')
       for (const pending of pendingQueue) {
         setGeneratingRefs(prev => prev.filter(i => i !== pending.index))
+        setReferences(prev => prev.map((r, i) => i === pending.index ? { ...r, status: 'error', errorMessage: 'Timed out' } : r))
       }
     }
 

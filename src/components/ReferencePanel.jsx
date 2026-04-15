@@ -52,6 +52,7 @@ export default function ReferencePanel({
   const eligibleRefs = references.filter(r => r.prompt && r.type !== 'style')
   const totalEligible = eligibleRefs.length
   const doneCount = eligibleRefs.filter(r => r.data || r.filePath).length
+  const errorCount = eligibleRefs.filter(r => r.status === 'error').length
 
   const batchElapsedSec = useElapsedTimer(batchStartedAt)
   const batchElapsed = batchElapsedSec * 1000 // ms 호환
@@ -87,7 +88,9 @@ export default function ReferencePanel({
       prompt: '',
       data: null,
       mediaId: null,
-      caption: ''
+      caption: '',
+      status: 'pending',
+      errorMessage: null
     }])
   }
   
@@ -138,6 +141,7 @@ export default function ReferencePanel({
                 <span className="ref-batch-text">
                   {doneCount}/{totalEligible}
                   {batchElapsed > 0 && ` · ${formatElapsedMs(batchElapsed)}`}
+                  {errorCount > 0 && (isKo ? ` · 실패 ${errorCount}` : ` · ${errorCount} failed`)}
                 </span>
               </div>
             )}

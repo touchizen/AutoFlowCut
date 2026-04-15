@@ -105,7 +105,7 @@ export default function ReferenceCard({
   const refImgSrc = resolveImageSrc(reference)
 
   return (
-    <div ref={cardRef} className={`reference-card ${hasRefImage ? 'has-image' : ''} ${isBusy ? 'uploading' : ''} ${isDragOver ? 'drag-over' : ''} ${ratioClass}`}>
+    <div ref={cardRef} className={`reference-card status-${reference.status || 'pending'} ${hasRefImage ? 'has-image' : ''} ${isBusy ? 'uploading' : ''} ${isDragOver ? 'drag-over' : ''} ${ratioClass}`}>
       <input 
         type="file"
         ref={fileInputRef}

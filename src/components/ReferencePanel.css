@@ -246,6 +246,11 @@
   border-color: var(--success-color);
 }
 
+.reference-card.status-error {
+  border: 1px solid #e5484d;
+  box-shadow: 0 0 0 1px rgba(229, 72, 77, 0.15) inset;
+}
+
 .reference-card.uploading {
   opacity: 0.85;
   animation: gold-glow-card 1.5s ease-in-out infinite;

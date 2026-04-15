@@ -53,10 +53,11 @@ async function loadProjectWithImages(projectName) {
         // 항상 현재 프로젝트 폴더 기준으로 경로 재확인
         const pathResult = await fileSystemAPI.getResourcePath(projectName, 'references', ref.name)
         if (pathResult.success) {
-          return { ...ref, data: null, filePath: pathResult.path }
+          return { ...ref, data: null, filePath: pathResult.path, status: 'done', errorMessage: null }
         }
       }
-      return ref
+      // No file resolved — preserve prior status/errorMessage; default to 'pending'
+      return { ...ref, status: ref.status || 'pending', errorMessage: ref.errorMessage || null }
     })
   )
 
