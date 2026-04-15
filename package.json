@@ -1,7 +1,7 @@
 {
   "name": "autoflowcut",
   "version": "0.9.4",
-  "buildNumber": 158,
+  "buildNumber": 160,
   "description": "AutoFlowCut - Automate AI video creation from Google Flow to CapCut projects",
   "main": "dist-electron/main.js",
   "type": "module",
@@ -69,6 +69,7 @@
       "!assets/icon.iconset"
     ],
     "afterPack": "./scripts/afterPack.cjs",
+    "afterAllArtifactBuild": "./scripts/afterAllArtifactBuild.cjs",
     "extraResources": [
       {
         "from": "mcp-server",
@@ -134,7 +135,7 @@
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "${productName}-${version}.${buildNumber}-win-${arch}-Setup.${ext}"
+      "artifactName": "${productName}-${version}-win-${arch}-Setup.${ext}"
     },
     "linux": {
       "icon": "assets/icon.png",
