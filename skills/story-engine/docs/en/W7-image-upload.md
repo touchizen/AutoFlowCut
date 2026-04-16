@@ -8,25 +8,36 @@ This document is the W7 (image/video generation + QA + CapCut export) stage guid
 
 **Run only after W6 (storyboard CSV) is complete.**
 
-### 7-0. Project creation (AutoFlowCut)
+### 7-0. Project setup (AutoFlowCut)
 
-Create an AutoFlowCut project before loading the CSV.
+**Pre-check (MANDATORY — run BEFORE loading CSV or generating any images):**
+
+1. `app_open_project({ name })` — switch the app to the target project
+2. Verify: call `GET /api/current-project` (or read the `app_open_project` response) and confirm the current project name matches the target
+3. If mismatch or 404 → STOP. Do NOT load CSV or start any batch. Report to user.
+
+> **Why:** `load_csv` and all generation calls operate on whatever project is currently active in the app UI. Without this pre-check, artifacts land in the wrong project (e.g., `Untitled`).
+
+**Project creation (if needed):**
 
 1. Check existing projects
 2. Propose a project name to the user and get confirmation:
    - Suggested format: `{channel}_ep{number}` (e.g., `darkhistory_ep10`)
    - If an existing project exists, ask whether to reuse it
-3. On user confirmation, create the project
+3. On user confirmation, create or open the project
 
 ```
 AutoFlowCut MCP: app_list_projects → check existing projects
 Ask user: "Shall I create the AutoFlowCut project as '{channel}_ep{number}'?"
-AutoFlowCut MCP: app_create_project({ name: "confirmed_name" }) → create
+AutoFlowCut MCP: app_create_project({ name: "confirmed_name" }) → create (auto-switches)
+  — OR —
+AutoFlowCut MCP: app_open_project({ name: "existing_name" }) → switch to existing project
 ```
 
 Project management tools:
 - `app_list_projects` — list projects
-- `app_create_project` — create project (auto-generates directory + project.json)
+- `app_create_project` — create project (auto-generates directory + project.json + switches to it)
+- `app_open_project` — switch to an existing project (MANDATORY before CSV load)
 - `app_rename_project` — rename project
 - `app_delete_project` — delete project (irreversible)
 

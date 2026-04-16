@@ -105,7 +105,8 @@ Each subagent receives:
 - **HARD RULE**: W6 must NOT generate images. Forbidden calls: `app_start_ref_batch`, `app_start_scene_batch`, `app_generate_reference`, `app_generate_scene`, and their HTTP equivalents. Image generation belongs exclusively to W7. If the subagent even considers kicking off a batch "since the CSV is ready", that is a spec violation — STOP and hand off to W7.
 
 **W7 subagent prompt includes:**
-- AutoFlowCut project creation
+- **MANDATORY pre-check**: `app_open_project({ name })` to switch to target project BEFORE loading CSV or generating. Verify current project matches. If mismatch → STOP.
+- AutoFlowCut project creation (or open existing)
 - Style selection (list_styles MCP)
 - Reference image batch generation
 - Scene image batch generation

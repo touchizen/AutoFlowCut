@@ -397,6 +397,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['name'],
       },
     },
+    {
+      name: 'app_open_project',
+      description: '기존 프로젝트를 열어 활성화합니다. 앱의 현재 프로젝트를 전환합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
+          name: { type: 'string', description: '열 프로젝트 이름' },
+        },
+        required: ['name'],
+      },
+    },
     // ── HTTP 기반 앱 직접 제어 도구 ──
     {
       name: 'app_status',
@@ -1172,6 +1184,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const res = await appFetch(port, 'DELETE', '/api/projects', { name: args.name });
         if (res.status === 200) {
           return { content: [{ type: 'text', text: `프로젝트 삭제 완료: ${args.name}` }] };
+        }
+        return { content: [{ type: 'text', text: `오류 (${res.status}): ${res.data?.error || JSON.stringify(res.data)}` }] };
+      }
+
+      case 'app_open_project': {
+        const port = args.port || 3210;
+        const res = await appFetch(port, 'PATCH', '/api/current-project', { name: args.name });
+        if (res.status === 200) {
+          return { content: [{ type: 'text', text: `프로젝트 전환 완료: ${args.name}\n경로: ${res.data.projectDir}` }] };
         }
         return { content: [{ type: 'text', text: `오류 (${res.status}): ${res.data?.error || JSON.stringify(res.data)}` }] };
       }

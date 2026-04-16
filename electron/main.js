@@ -1041,6 +1041,48 @@ function startMcpHttpServer(port) {
           return
         }
 
+        // PATCH /api/current-project — 기존 프로젝트로 전환
+        if (req.method === 'PATCH' && pathname === '/api/current-project') {
+          try {
+            const configPath = path.join(app.getPath('userData'), 'work-folder-config.json')
+            let workFolder
+            try {
+              const config = JSON.parse(await fs.readFile(configPath, 'utf-8'))
+              workFolder = config.path
+            } catch {
+              res.writeHead(400, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ error: 'No work folder configured.' }))
+              return
+            }
+            const data = JSON.parse(body)
+            const projectName = data.name
+            if (!projectName) {
+              res.writeHead(400, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ error: 'name required' }))
+              return
+            }
+            const projectDir = path.join(workFolder, projectName)
+            // 프로젝트 존재 확인
+            try {
+              await fs.access(projectDir)
+            } catch {
+              res.writeHead(404, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ error: `Project "${projectName}" not found` }))
+              return
+            }
+            // 앱에 프로젝트 오픈 알림 (renderer가 있으면)
+            if (mainWindow) {
+              mainWindow.webContents.send('mcp-update', { type: 'open-project', projectName, workFolder })
+            }
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ success: true, projectDir, projectName }))
+          } catch (err) {
+            res.writeHead(500, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ error: err.message }))
+          }
+          return
+        }
+
         // GET /api/references — 현재 레퍼런스 목록 요청 (renderer에서 가져옴)
         if (req.method === 'GET' && pathname === '/api/references') {
           if (mainWindow) {
