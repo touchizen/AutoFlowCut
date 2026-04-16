@@ -66,9 +66,10 @@ function getPlatformInfo() {
   }
 }
 
-// 함수 환경 (test/prod) - 환경변수로 제어
-// VITE_FUNCTION_ENV=prod 이면 _prod, 아니면 _test
-export const FUNCTION_SUFFIX = import.meta.env.VITE_FUNCTION_ENV === 'prod' ? '_prod' : '_test'
+// 함수 환경 (test/prod) — Vite가 빌드 시점에 __FUNCTION_SUFFIX__를
+// "_prod" 또는 "_test" 리터럴로 상수 치환한다 (vite.config.js의 define 참조).
+// 이렇게 해야 쓰이지 않는 분기의 문자열이 최종 번들에 남지 않음.
+export const FUNCTION_SUFFIX = __FUNCTION_SUFFIX__
 
 console.log(`[Functions] Using ${FUNCTION_SUFFIX} functions`)
 

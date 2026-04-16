@@ -1,7 +1,7 @@
 {
   "name": "autoflowcut",
   "version": "0.9.4",
-  "buildNumber": 161,
+  "buildNumber": 174,
   "description": "AutoFlowCut - Automate AI video creation from Google Flow to CapCut projects",
   "main": "dist-electron/main.js",
   "type": "module",
@@ -21,11 +21,11 @@
     "dist:test:win": "vite build --mode development && electron-builder --win",
     "mcp:install": "cd mcp-server && npm install --omit=dev",
     "bump:build": "node scripts/bump-build.cjs",
-    "dist:win:nsis": "npm run bump:build && npm run mcp:install && set VITE_BUILD_TARGET=nsis&& vite build --mode production && electron-builder --win nsis",
-    "dist:win:appx": "npm run mcp:install && set VITE_BUILD_TARGET=appx&& vite build --mode production && scripts\\buildappx.bat",
-    "dist:win:all": "npm run mcp:install && vite build --mode production && electron-builder --win",
-    "dist:linux": "npm run mcp:install && vite build --mode production && electron-builder --linux",
-    "dist:mac:prod": "npm run mcp:install && vite build --mode production && electron-builder --mac",
+    "dist:win:nsis": "npm run bump:build && npm run mcp:install && set VITE_BUILD_TARGET=nsis&& set VITE_FUNCTION_ENV=prod&& vite build --mode production && electron-builder --win nsis",
+    "dist:win:appx": "npm run mcp:install && set VITE_BUILD_TARGET=appx&& set VITE_FUNCTION_ENV=prod&& vite build --mode production && scripts\\buildappx.bat",
+    "dist:win:all": "npm run mcp:install && set VITE_FUNCTION_ENV=prod&& vite build --mode production && electron-builder --win",
+    "dist:linux": "npm run mcp:install && VITE_FUNCTION_ENV=prod vite build --mode production && electron-builder --linux",
+    "dist:mac:prod": "npm run mcp:install && VITE_FUNCTION_ENV=prod vite build --mode production && electron-builder --mac",
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage"
@@ -93,7 +93,9 @@
       {
         "from": "src/config",
         "to": "src/config",
-        "filter": ["*.json"]
+        "filter": [
+          "*.json"
+        ]
       }
     ],
     "afterSign": "scripts/notarize.cjs",

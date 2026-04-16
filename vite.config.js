@@ -52,7 +52,13 @@ export default defineConfig(({ mode }) => {
     define: {
       '__APP_VERSION__': JSON.stringify(process.env.npm_package_version || pkg.version || '0.1.0'),
       '__BUILD_NUMBER__': JSON.stringify(BUILD_NUMBER),
-      '__BUILD_TARGET__': JSON.stringify(process.env.VITE_BUILD_TARGET || 'nsis')
+      '__BUILD_TARGET__': JSON.stringify(process.env.VITE_BUILD_TARGET || 'nsis'),
+      // Compile-time constant — replaces `__FUNCTION_SUFFIX__` in source with
+      // the resolved "_prod" or "_test" string. Keeps the unused branch out
+      // of the production bundle entirely, so a grep for "_test" on a prod
+      // build finds nothing (vs. leaving an if/else in code where the dead
+      // branch's string literal would still land in the output).
+      '__FUNCTION_SUFFIX__': JSON.stringify(functionEnv === 'prod' ? '_prod' : '_test')
     }
   }
 })
