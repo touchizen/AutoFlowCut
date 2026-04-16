@@ -29,20 +29,25 @@ For each wave from current to target:
 │
 ├─ Subagent executes:
 │   - Performs wave work
-│   - Runs review loop (max 5 rounds, exit on 0 issues)
-│   - Writes W{N}_SUMMARY.md
-│   - Returns completion signal
+│   - Runs review loop (max 5 rounds per substep, exit on 0 issues,
+│     escalate on round 5) — see "Mandatory completion checklist" below
+│   - Writes W{N}_SUMMARY.md with required sections
+│   - Writes/updates W_progress.json waves.W{N} with required fields
+│   - Writes/updates STATE.md wave status row
+│   - Returns completion signal including numeric review_rounds_used
 │
-├─ Orchestrator verifies:
-│   - W{N}_SUMMARY.md exists
-│   - No unresolved issues
+├─ Orchestrator verifies (FAIL = retry subagent once; still FAIL = escalate):
+│   - W{N}_SUMMARY.md exists AND contains non-empty "Review rounds" section
+│   - W_progress.json waves.W{N}.status === 'done'
+│   - W_progress.json waves.W{N}.review_rounds_used is a number (≥1)
+│   - W_progress.json waves.W{N}.issues_found is a number (≥0)
+│   - W_progress.json waves.W{N}.completed_at is an ISO timestamp
+│   - W_progress.json waves.W{N}.deliverables is a non-empty array
+│   - No unresolved issues flagged in the summary
 │
-├─ Update STATE.md:
-│   - Wave N → "done"
-│   - Current Wave → N+1
-│
-├─ Update W_progress.json:
-│   - Wave N status, completed_at, review_rounds, issues_found
+├─ Orchestrator sanity-checks STATE.md + W_progress.json consistency:
+│   - STATE.md wave row "done" ↔ W_progress.json status 'done'
+│   - If mismatched → fix and warn
 │
 ├─ Special gate check:
 │   - After W3: 🛑 AskUserQuestion "대본을 확정하시겠습니까?"
@@ -120,6 +125,39 @@ Each subagent receives:
 - YouTube title/description/tags generation
 - Thumbnail text suggestions
 - Output: 11_업로드정보.json
+
+---
+
+**Mandatory completion checklist (applies to W1–W8, no exceptions)**
+
+Every Wave subagent MUST, as its final action before returning:
+
+1. **Write `W{N}_SUMMARY.md`** with at minimum these sections:
+   - `## Deliverables` — full list of produced files (relative paths under `_story_source/`)
+   - `## Review rounds` — numbered log, one row per round: round number, result (pass/fail), issues found, fixes applied. Even if only 1 round, log it.
+   - `## Issues found` — final unresolved issues count. `0` if clean.
+   - `## Open questions for W{N+1}` — handoff notes; empty section is allowed but the heading must exist.
+
+2. **Update `W_progress.json`**. Merge (do NOT replace) the existing JSON; set `waves.W{N}` to:
+   ```json
+   {
+     "status": "done",
+     "completed_at": "<ISO-8601 timestamp>",
+     "review_rounds_used": <number ≥ 1>,
+     "issues_found": <number ≥ 0>,
+     "deliverables": ["<path1>", "<path2>", ...],
+     "...any wave-specific metadata..."
+   }
+   ```
+   The numeric `review_rounds_used` and `issues_found` fields are REQUIRED. Do not omit; do not leave as `null`/`"?"`/string.
+
+3. **Update `STATE.md`**: set the `W{N}` row's Status column to `done` and the Summary column to a one-liner (e.g., `Synopsis + preflight — 1 round, passed, 2026-04-16`).
+
+4. **Return report** (the completion signal that closes the subagent) MUST include the numeric fields `review_rounds_used` and `issues_found` so the orchestrator can verify without re-reading the JSON.
+
+If the subagent exits without satisfying items 1–4, the orchestrator treats the wave as incomplete and retries.
+
+---
 
 **Step 4: Completion**
 
