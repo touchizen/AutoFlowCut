@@ -17,14 +17,40 @@ Generate narration and per-character dialogue from the extracted script using TT
 | **ElevenLabs** | `https://api.elevenlabs.io/v1/text-to-speech` | `~/.elevenlabs/credentials` | Multilingual, custom voices, automatic SRT generation |
 | **Typecast** | `https://api.typecast.ai/v1/text-to-speech` | `~/.typecast/credentials` | Emotion parameters (normal/happy/sad/angry); Korean-strong |
 | **Vrew** | Local app (manual) | — | AI subtitles + editor, free credits |
-| **Google AI Studio** | TBD | TBD | For reference; to be integrated later |
+| **Google AI Studio** | `https://generativelanguage.googleapis.com/v1beta/models` | `~/.google-ai-studio/credentials` | Gemini TTS; to be integrated later |
 
 > Current default: **ElevenLabs** (narration + per-character voice separation supported)
 > Switch providers on user request.
 
-**Narration voice setting:**
-- Voice IDs and per-character mappings are maintained in memory (`tts_settings.md`)
+---
+
+## 5-0. Character voice assignment (MANDATORY before 5-1)
+
+**Run this step BEFORE any TTS generation if the script contains character dialogue.**
+
+1. **Extract unique characters** from `dialogs_{part}.json` (all parts combined). De-duplicate by character name.
+2. **Load existing mappings** from memory (`tts_settings.md`). Separate characters into:
+   - **Mapped**: already has a voice ID assigned
+   - **Unmapped**: new character — voice ID missing
+3. **If any unmapped characters exist → STOP and ask the user.** Use `AskUserQuestion` with:
+   - Character name + short personality hint from the script (age, role, tone)
+   - 3–4 recommended voice options from ElevenLabs voice library matching the character (gender, age range, style)
+   - "Let me choose manually" option — user provides a voice ID
+4. **Apply choices** — write the new mappings back to `tts_settings.md` with format:
+   ```
+   narrator: nucVFUFVgPmKHjgXNbJ7   # Aaron — deep documentary
+   Reverend: oR4uPy4PQZyMPPPpXrX5   # stern middle-aged male
+   Mercy:    EXAVITQu4vr4xnSDxMaL   # young female
+   ```
+5. **Confirm with user** — show the full mapping table before proceeding to 5-1.
+
+**Narration voice setting (applies to mono-narrator scripts too):**
 - Dark-history narration: prefer grave, slow, slightly gravelly voices with clean diction
+- If no `narrator` entry exists in `tts_settings.md`, ask the user in the same AskUserQuestion call as above.
+
+---
+
+## 5-1. TTS voice generation (continued)
 
 **mp3 + SRT generated together (required):**
 

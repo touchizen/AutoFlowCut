@@ -21,6 +21,7 @@ W1 작업 시작 전에 파이프라인 전체를 완료할 수 있는 환경인
 | 4 | **ElevenLabs API** | W5 음성/SFX 생성 | `~/.elevenlabs/credentials` | Vrew 수동 / Google AI Studio / W5 스킵 |
 | 5 | **Typecast API** | W5 대사 TTS (감정별) | `~/.typecast/credentials` | ElevenLabs 캐릭터 보이스 분리로 대체 |
 | 6 | **Google Flow 로그인** | W7 이미지/영상 생성 | AutoFlowCut 앱 내 Flow 탭 로그인 상태 | CapCut에서 수동 이미지 삽입 |
+| 7 | **Google AI Studio API** | W5 Gemini TTS (연동 예정) | `~/.google-ai-studio/credentials` | ElevenLabs 또는 Typecast로 대체 |
 
 ### 체크 결과 보고
 

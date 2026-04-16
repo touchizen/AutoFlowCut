@@ -88,6 +88,7 @@ Each subagent receives:
 - Output: narration_{part}.txt, dialogs_{part}.json, 08_sfx_목록.md
 
 **W5 subagent prompt includes:**
+- **MANDATORY W5-0 character voice assignment** (BEFORE TTS): extract unique characters from `dialogs_*.json`, diff against `tts_settings.md`; if any unmapped characters or missing narrator → AskUserQuestion with 3–4 voice recommendations, then persist to `tts_settings.md`
 - TTS generation (ElevenLabs with-timestamps)
 - SRT generation (manual subtitle splitting)
 - SFX generation + timecode assignment

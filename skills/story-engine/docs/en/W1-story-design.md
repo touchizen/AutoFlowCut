@@ -21,6 +21,7 @@ Before starting W1, verify the environment is capable of completing the full pip
 | 4 | **ElevenLabs API** | W5 TTS / SFX generation | `~/.elevenlabs/credentials` | Vrew manual / Google AI Studio / skip W5 |
 | 5 | **Typecast API** | W5 dialogue TTS (emotion-tagged) | `~/.typecast/credentials` | Replace with ElevenLabs per-character voice split |
 | 6 | **Google Flow login** | W7 image / video generation | Flow tab login state in the AutoFlowCut app | Insert images manually in CapCut |
+| 7 | **Google AI Studio API** | W5 Gemini TTS (to be integrated) | `~/.google-ai-studio/credentials` | Use ElevenLabs or Typecast instead |
 
 ### Reporting the result
 
