@@ -21,6 +21,8 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
   const [saveFailedOnce, setSaveFailedOnce] = useState(false)  // 배치 중 저장 실패 알림 1회만
   const stopRequestedRef = useRef(false)
   const presetMediaCache = useRef({})  // 프리셋 썸네일 → Flow mediaId 캐시
+  const referencesRef = useRef(references)
+  referencesRef.current = references  // 매 렌더마다 최신 상태 반영
 
   const stopGenerateAllRefs = useCallback(() => {
     stopRequestedRef.current = true
@@ -342,7 +344,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
   // Handle reference image generation (일괄 — 비동기 fire-and-forget 방식)
   // AutoFlow 패턴: 제출 → 7~15초 대기 → 다음 제출, 결과는 별도 수집
   const _executeBatchRefs = async (overrideStyleId = null) => {
-    const generatableIndices = references
+    const generatableIndices = referencesRef.current
       .map((ref, index) => (ref.prompt && !ref.data && !ref.filePath && ref.type !== 'style' && ref.status !== 'done') ? index : -1)
       .filter(i => i !== -1)
 
@@ -404,7 +406,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     // selectedStyleRefId 없으면 등록된 style 카드 자동 탐색
     let batchEffectiveStyleId = overrideStyleId || selectedStyleRefId
     if (!batchEffectiveStyleId) {
-      const autoStyle = references.find(r => r.type === 'style' && r.mediaId)
+      const autoStyle = referencesRef.current.find(r => r.type === 'style' && r.mediaId)
       if (autoStyle) {
         batchEffectiveStyleId = `ref:${autoStyle.id}`
         console.log('[StyleRef] Batch auto-detected style card:', autoStyle.name, autoStyle.id)
@@ -416,7 +418,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       if (ref.type !== 'style' && batchEffectiveStyleId) {
         if (batchEffectiveStyleId.startsWith('ref:')) {
           const refId = batchEffectiveStyleId.replace('ref:', '')
-          const styleRef = references.find(r => r.id == refId && r.type === 'style')
+          const styleRef = referencesRef.current.find(r => r.id == refId && r.type === 'style')
           if (styleRef) {
             if (styleRef.mediaId) {
               styleRefImages.push({ category: styleRef.category, mediaId: styleRef.mediaId, caption: styleRef.caption || '' })
@@ -470,44 +472,60 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
         break
       }
 
-      // 이전 결과 수집 (완료된 것만)
-      await collectCompleted()
+      try {
+        // 이전 결과 수집 (완료된 것만)
+        await collectCompleted()
 
-      const ref = references[index]
-      const { styledPrompt, styleRefImages } = prepareStyleRefs(ref)
+        const ref = referencesRef.current[index]
+        if (!ref) {
+          console.warn('[GenerateAllRefs] Ref not found at index:', index, '— skipping')
+          continue
+        }
+        const { styledPrompt, styleRefImages } = prepareStyleRefs(ref)
 
-      // 생성 중 표시
-      setGeneratingRefs(prev => [...prev, index])
-      setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'generating', errorMessage: null } : r))
+        // 생성 중 표시
+        setGeneratingRefs(prev => [...prev, index])
+        setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'generating', errorMessage: null } : r))
 
-      // 비동기 제출 (seedLocked 면 고정 seed)
-      const batchSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
-        ? settings.seedNo
-        : null
-      const submitResult = await flowAPI.submitGenerationDOM(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: batchSeed })
+        // 비동기 제출 (seedLocked 면 고정 seed)
+        const batchSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
+          ? settings.seedNo
+          : null
+        const submitResult = await flowAPI.submitGenerationDOM(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: batchSeed })
 
-      if (submitResult?.success && submitResult.generationId) {
-        pendingQueue.push({ generationId: submitResult.generationId, index, ref })
-        console.log('[GenerateAllRefs] Submitted index:', index, 'gen:', submitResult.generationId)
-        submitFailCount = 0
-      } else {
-        console.warn('[GenerateAllRefs] Submit failed for index:', index, submitResult?.error)
+        if (submitResult?.success && submitResult.generationId) {
+          pendingQueue.push({ generationId: submitResult.generationId, index, ref })
+          console.log('[GenerateAllRefs] Submitted index:', index, 'gen:', submitResult.generationId)
+          submitFailCount = 0
+        } else {
+          console.warn('[GenerateAllRefs] Submit failed for index:', index, submitResult?.error)
+          setGeneratingRefs(prev => prev.filter(i => i !== index))
+          setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: submitResult?.error || 'Submit failed' } : r))
+          submitFailCount++
+
+          // 연속 3회 실패 시 중단
+          if (submitFailCount >= 3) {
+            toast.error(t('toast.serverErrorPersist'))
+            break
+          }
+        }
+
+        // AutoFlow 스타일 대기 (7~15초) — 마지막이 아닐 때만
+        if (index !== generatableIndices[generatableIndices.length - 1]) {
+          const delay = 7000 + Math.random() * 8000
+          console.log('[GenerateAllRefs] Waiting', Math.round(delay / 1000), 's before next submit...')
+          await new Promise(r => setTimeout(r, delay))
+        }
+      } catch (err) {
+        console.error('[GenerateAllRefs] Error processing index:', index, err)
         setGeneratingRefs(prev => prev.filter(i => i !== index))
-        setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: submitResult?.error || 'Submit failed' } : r))
+        setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: err.message || 'Unexpected error' } : r))
         submitFailCount++
-
-        // 연속 3회 실패 시 중단
         if (submitFailCount >= 3) {
+          console.error('[GenerateAllRefs] 3 consecutive errors — aborting batch')
           toast.error(t('toast.serverErrorPersist'))
           break
         }
-      }
-
-      // AutoFlow 스타일 대기 (7~15초) — 마지막이 아닐 때만
-      if (index !== generatableIndices[generatableIndices.length - 1]) {
-        const delay = 7000 + Math.random() * 8000
-        console.log('[GenerateAllRefs] Waiting', Math.round(delay / 1000), 's before next submit...')
-        await new Promise(r => setTimeout(r, delay))
       }
     }
 
