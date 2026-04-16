@@ -29,10 +29,160 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     setStoppingRefs(true)
   }, [])
 
-  // 핵심 생성 로직 (개별)
-  // @param {number} index - 레퍼런스 인덱스
-  // @param {boolean} skipPermissionCheck - 배치 모드에서 권한 체크 스킵
-  // @returns {{ success: boolean, authError?: boolean }} 생성 결과
+  // ─── 공통: 스타일 레퍼런스 준비 ───
+  // 개별 생성과 배치 생성 모두에서 사용. 프리셋 썸네일은 캐시 miss 시 자동 업로드.
+  const _prepareStyleRefs = async (ref, effectiveStyleId, logPrefix = '[StyleRef]') => {
+    const styleRefImages = []
+    let styledPrompt = ref.prompt
+
+    if (ref.type === 'style' || !effectiveStyleId) {
+      return { styledPrompt, styleRefImages }
+    }
+
+    if (effectiveStyleId.startsWith('ref:')) {
+      const refId = effectiveStyleId.replace('ref:', '')
+      const styleRef = referencesRef.current.find(r => r.id == refId && r.type === 'style')
+      if (styleRef) {
+        if (styleRef.mediaId) {
+          styleRefImages.push({ category: styleRef.category, mediaId: styleRef.mediaId, caption: styleRef.caption || '' })
+        }
+        if (styleRef.prompt) {
+          styledPrompt = `${ref.prompt}, ${styleRef.prompt}`
+        }
+      }
+    } else if (effectiveStyleId.startsWith('preset:')) {
+      const presetId = effectiveStyleId.replace('preset:', '')
+      const preset = STYLE_PRESETS?.styles?.find(s => s.id === presetId)
+
+      // 썸네일: 캐시 hit → 사용, miss → 업로드 후 캐시
+      if (styleThumbnails?.[presetId]) {
+        let mediaId = presetMediaCache.current[presetId]
+        if (!mediaId) {
+          const thumbBase64 = await extractThumbnailBase64(styleThumbnails[presetId], fileSystemAPI, logPrefix)
+          if (thumbBase64) {
+            try {
+              const uploadResult = await flowAPI.uploadReference(thumbBase64, 'style')
+              if (uploadResult.success) {
+                mediaId = uploadResult.mediaId
+                presetMediaCache.current[presetId] = mediaId
+                console.log(logPrefix, 'Preset thumbnail uploaded, mediaId:', mediaId)
+              }
+            } catch (e) {
+              console.warn(logPrefix, 'Preset thumbnail upload failed:', e)
+            }
+          }
+        }
+        if (mediaId) {
+          styleRefImages.push({ category: 'style', mediaId, caption: preset?.prompt_en || '' })
+        }
+      }
+
+      if (preset?.prompt_en) {
+        styledPrompt = `${ref.prompt}, ${preset.prompt_en}`
+      }
+    }
+
+    return { styledPrompt, styleRefImages }
+  }
+
+  // ─── 공통: 이미지 후처리 (업스케일 → 업로드 → 저장 → 상태 업데이트) ───
+  // 개별 생성과 배치 비동기 수집 모두에서 사용.
+  const _processAndSaveImage = async (images, index, ref, logPrefix = '[Ref]') => {
+    const firstImage = images[0]
+    let imageData = firstImage.base64 || firstImage
+
+    // 업스케일 (style 카드 제외)
+    const origMediaId = firstImage.mediaId || null
+    if (ref.type !== 'style') {
+      const upscaled = await tryUpscaleImage(flowAPI, origMediaId, settings.imageUpscale || 'off', logPrefix)
+      if (upscaled) imageData = upscaled
+    }
+
+    const displayUrl = toDataURL(imageData)
+
+    // Flow에 업로드 → mediaId + caption
+    const base64ForUpload = cleanBase64(imageData)
+    let mediaId = null
+    let caption = null
+    console.log(logPrefix, 'Uploading to Flow for mediaId...', { category: ref.category, base64Len: base64ForUpload.length })
+    try {
+      const uploadResult = await flowAPI.uploadReference(base64ForUpload, ref.category)
+      console.log(logPrefix, 'Upload result:', uploadResult)
+      if (uploadResult.success) {
+        mediaId = uploadResult.mediaId
+        caption = uploadResult.caption
+      }
+    } catch (uploadErr) {
+      console.error(logPrefix, 'Upload failed:', uploadErr)
+    }
+
+    // 파일 저장 (폴더 모드)
+    let filePath = null
+    let savedDataUrl = displayUrl
+    if (settings.saveMode === 'folder') {
+      const projectName = settings.projectName || generateProjectName()
+      const refName = ref.name || `ref_${index + 1}`
+      const metadata = { mediaId, caption, category: ref.category }
+      const permission = await fileSystemAPI.ensurePermission()
+      console.log(logPrefix, 'Permission:', permission, 'projectName:', projectName, 'refName:', refName)
+
+      let saveResult = { success: false }
+      if (permission.hasPermission) {
+        saveResult = await fileSystemAPI.saveReference(projectName, refName, imageData, 'flow', metadata)
+          .catch(e => ({ success: false, error: e.message }))
+      }
+      console.log(logPrefix, 'saveResult:', saveResult.success, saveResult.error || '')
+
+      if (saveResult.success) {
+        filePath = saveResult.path
+        savedDataUrl = saveResult.dataUrl || displayUrl
+        console.log(logPrefix, 'Saved to:', filePath)
+      } else {
+        console.warn(logPrefix, 'Save failed:', saveResult.error, '- keeping in memory and continuing...')
+        if (!saveFailedOnce) {
+          setSaveFailedOnce(true)
+          toast.warning(t('toast.permissionReleasedMemory'))
+        }
+        addPendingSave(async () => {
+          const pendingSave = await fileSystemAPI.saveReference(projectName, refName, imageData, 'flow', metadata)
+          if (pendingSave.success) {
+            console.log(logPrefix, 'Pending save succeeded:', pendingSave.path)
+            setReferences(prev => prev.map((r, i) =>
+              i === index ? { ...r, filePath: pendingSave.path, dataStorage: 'file' } : r
+            ))
+          }
+          return pendingSave
+        })
+        filePath = null
+      }
+
+      await fileSystemAPI.saveExtraToHistory(projectName, RESOURCE.REFERENCES, refName, images, ref.prompt, 'Reference')
+    }
+
+    // 레퍼런스 상태 업데이트
+    setReferences(prev => prev.map((r, i) =>
+      i === index
+        ? { ...r, data: savedDataUrl, filePath, dataStorage: filePath ? 'file' : 'base64', mediaId, caption, status: 'done', errorMessage: null }
+        : r
+    ))
+    setGeneratingRefs(prev => prev.filter(i => i !== index))
+    return { success: true, savedToMemory: filePath === null && settings.saveMode === 'folder' }
+  }
+
+  // ─── 공통: effectiveStyleId 결정 ───
+  const _resolveEffectiveStyleId = (overrideStyleId) => {
+    let effectiveStyleId = overrideStyleId || selectedStyleRefId
+    if (!effectiveStyleId) {
+      const autoStyle = referencesRef.current.find(r => r.type === 'style' && r.mediaId)
+      if (autoStyle) {
+        effectiveStyleId = `ref:${autoStyle.id}`
+        console.log('[StyleRef] Auto-detected style card:', autoStyle.name, autoStyle.id)
+      }
+    }
+    return effectiveStyleId
+  }
+
+  // ─── 핵심 생성 로직 (개별) ───
   const _executeGenerateRef = async (index, skipPermissionCheck = false, overrideStyleId = null) => {
     const ref = references[index]
     if (!ref?.prompt) {
@@ -40,7 +190,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       return { success: false }
     }
 
-    // 폴더 설정 + 토큰 확인 (배치 모드에서는 권한 체크 스킵 - 저장 실패 시 메모리 보관)
+    // 폴더 설정 + 토큰 확인 (배치 모드에서는 권한 체크 스킵)
     if (!skipPermissionCheck) {
       const folderCheck = await checkFolderPermission(settings, openSettings, t)
       if (!folderCheck.ok) return { success: false, permissionError: folderCheck.permissionError }
@@ -51,71 +201,12 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     }
 
     setGeneratingRefs(prev => [...prev, index])
-    // Mark status as generating + clear prior errorMessage
     setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'generating', errorMessage: null } : r))
 
     try {
-      // 스타일 주입 (style 카드 자체 생성 시에는 제외)
-      const styleRefImages = []
-      let styledPrompt = ref.prompt
-      // MCP에서 styleId가 전달된 경우 우선 적용
-      // selectedStyleRefId 없으면 등록된 style 카드 자동 탐색
-      let effectiveStyleId = overrideStyleId || selectedStyleRefId
-      if (!effectiveStyleId && ref.type !== 'style') {
-        const autoStyle = references.find(r => r.type === 'style' && r.mediaId)
-        if (autoStyle) {
-          effectiveStyleId = `ref:${autoStyle.id}`
-          console.log('[StyleRef] Auto-detected style card:', autoStyle.name, autoStyle.id)
-        }
-      }
-      if (ref.type !== 'style' && effectiveStyleId) {
-        if (effectiveStyleId.startsWith('ref:')) {
-          // 업로드된 스타일 레퍼런스
-          const refId = effectiveStyleId.replace('ref:', '')
-          const styleRef = references.find(r => r.id == refId && r.type === 'style')
-          if (styleRef) {
-            // mediaId가 있으면 이미지 레퍼런스로 전달
-            if (styleRef.mediaId) {
-              styleRefImages.push({ category: styleRef.category, mediaId: styleRef.mediaId, caption: styleRef.caption || '' })
-            }
-            // 스타일 프롬프트를 생성 프롬프트에 합침
-            if (styleRef.prompt) {
-              styledPrompt = `${ref.prompt}, ${styleRef.prompt}`
-            }
-          }
-        } else if (effectiveStyleId.startsWith('preset:')) {
-          const presetId = effectiveStyleId.replace('preset:', '')
-          const preset = STYLE_PRESETS?.styles?.find(s => s.id === presetId)
-
-          // 썸네일이 있으면 이미지 스타일 레퍼런스로 업로드 (캐시 활용)
-          if (styleThumbnails?.[presetId]) {
-            let mediaId = presetMediaCache.current[presetId]
-            if (!mediaId) {
-              const thumbBase64 = await extractThumbnailBase64(styleThumbnails[presetId], fileSystemAPI, '[StyleRef]')
-              if (thumbBase64) {
-                try {
-                  const uploadResult = await flowAPI.uploadReference(thumbBase64, 'style')
-                  if (uploadResult.success) {
-                    mediaId = uploadResult.mediaId
-                    presetMediaCache.current[presetId] = mediaId
-                    console.log('[StyleRef] Preset thumbnail uploaded, mediaId:', mediaId)
-                  }
-                } catch (e) {
-                  console.warn('[StyleRef] Preset thumbnail upload failed:', e)
-                }
-              }
-            }
-            if (mediaId) {
-              styleRefImages.push({ category: 'style', mediaId, caption: preset?.prompt_en || '' })
-            }
-          }
-
-          // 프롬프트에도 스타일 텍스트 추가 (이미지 + 텍스트 이중 보강)
-          if (preset?.prompt_en) {
-            styledPrompt = `${ref.prompt}, ${preset.prompt_en}`
-          }
-        }
-      }
+      // 스타일 준비 (공통 함수)
+      const effectiveStyleId = _resolveEffectiveStyleId(overrideStyleId)
+      const { styledPrompt, styleRefImages } = await _prepareStyleRefs(ref, effectiveStyleId, '[Reference]')
 
       const refSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
         ? settings.seedNo
@@ -123,109 +214,8 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       const result = await flowAPI.generateImageDOM(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: refSeed })
 
       if (result.success && result.images?.length > 0) {
-        // images는 [{ base64, mediaId }] 객체 배열
-        const firstImage = result.images[0]
-        let imageData = firstImage.base64 || firstImage  // backward compat
-
-        // 이미지 업스케일 (설정에 따라, style 카드 제외)
-        const origMediaId = firstImage.mediaId || null
-        if (ref.type !== 'style') {
-          const upscaled = await tryUpscaleImage(flowAPI, origMediaId, settings.imageUpscale || 'off', '[Reference]')
-          if (upscaled) imageData = upscaled
-        }
-
-        // data URL prefix 보장 (img src 표시용)
-        const displayUrl = toDataURL(imageData)
-
-        // 먼저 Flow에 업로드하여 mediaId + caption 받기
-        const base64ForUpload = cleanBase64(imageData)
-        let mediaId = null
-        let caption = null
-        console.log('[Reference] Uploading to Flow for mediaId...', { category: ref.category, base64Len: base64ForUpload.length })
-        try {
-          const uploadResult = await flowAPI.uploadReference(base64ForUpload, ref.category)
-          console.log('[Reference] Upload result:', uploadResult)
-          if (uploadResult.success) {
-            mediaId = uploadResult.mediaId
-            caption = uploadResult.caption
-          }
-        } catch (uploadErr) {
-          console.error('[Reference] Upload failed:', uploadErr)
-        }
-
-        // 파일 시스템에 저장 (폴더 모드일 때) - metadata 포함
-        let filePath = null
-        let savedDataUrl = displayUrl  // 화면 표시용 data URL
-        if (settings.saveMode === 'folder') {
-          const projectName = settings.projectName || generateProjectName()
-          const refName = ref.name || `ref_${index + 1}`
-          const metadata = { mediaId, caption, category: ref.category }
-
-          // 저장 전 권한 확인 (씬과 동일하게)
-          const permission = await fileSystemAPI.ensurePermission()
-
-          let saveResult = { success: false }
-          if (permission.hasPermission) {
-            saveResult = await fileSystemAPI.saveReference(projectName, refName, imageData, 'flow', metadata)
-              .catch(e => ({ success: false, error: e.message }))
-          }
-
-          if (saveResult.success) {
-            filePath = saveResult.path
-            savedDataUrl = saveResult.dataUrl || displayUrl
-            console.log('[Reference] Saved to:', filePath)
-          } else {
-            // 저장 실패 - 메모리에 보관하고 pending에 추가 후 계속 진행
-            console.warn('[Reference] Save failed:', saveResult.error, '- keeping in memory and continuing...')
-
-            // 첫 실패 시에만 토스트 표시
-            if (!saveFailedOnce) {
-              setSaveFailedOnce(true)
-              toast.warning(t('toast.permissionReleasedMemory'))
-            }
-
-            // pendingSaves에 추가 (나중에 일괄 저장)
-            addPendingSave(async () => {
-              const pendingSave = await fileSystemAPI.saveReference(projectName, refName, imageData, 'flow', metadata)
-              if (pendingSave.success) {
-                console.log('[Reference] Pending save succeeded:', pendingSave.path)
-                // 저장 성공 시 레퍼런스 업데이트
-                setReferences(prev => prev.map((r, i) =>
-                  i === index
-                    ? { ...r, filePath: pendingSave.path, dataStorage: 'file' }
-                    : r
-                ))
-              }
-              return pendingSave
-            })
-
-            // filePath는 null로 유지 (메모리 저장)
-            filePath = null
-          }
-
-          // 여분 이미지(2장 이상 생성된 경우) → History에만 저장 (mediaId 포함)
-          await fileSystemAPI.saveExtraToHistory(projectName, RESOURCE.REFERENCES, refName, result.images, ref.prompt, 'Reference')
-        }
-
-        // 레퍼런스 업데이트 (함수형 업데이트로 최신 상태 사용)
-        setReferences(prev => prev.map((r, i) =>
-          i === index
-            ? {
-                ...r,
-                data: savedDataUrl,
-                filePath: filePath,
-                dataStorage: filePath ? 'file' : 'base64',
-                mediaId,
-                caption,
-                status: 'done',
-                errorMessage: null
-              }
-            : r
-        ))
-        setGeneratingRefs(prev => prev.filter(i => i !== index))
-        return { success: true, savedToMemory: filePath === null && settings.saveMode === 'folder' }
+        return await _processAndSaveImage(result.images, index, ref, '[Reference]')
       } else if (!result.success) {
-        // 에러 유형 체크
         const errorMsg = result.error || ''
         const isAuthError = errorMsg.includes('401') || errorMsg.includes('auth') || errorMsg.includes('token') || errorMsg.includes('login')
         const isServerError = errorMsg.includes('500') || errorMsg.includes('502') || errorMsg.includes('503') || errorMsg.includes('server')
@@ -250,7 +240,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     return { success: false }
   }
 
-  // ─── 비동기 결과 수집 + 후처리 (업스케일, 업로드, 저장) ───
+  // ─── 비동기 결과 수집 + 후처리 (배치용) ───
   const processAsyncResult = async (generationId, index, ref) => {
     const result = await flowAPI.collectGeneration(generationId)
 
@@ -264,84 +254,10 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       return { success: false, authError: isAuthError, serverError: isServerError }
     }
 
-    // 이미지 후처리 (handleGenerateRef과 동일)
-    const firstImage = result.images[0]
-    let imageData = firstImage.base64 || firstImage
-
-    // 업스케일 (style 카드 제외)
-    const origMediaId = firstImage.mediaId || null
-    if (ref.type !== 'style') {
-      const upscaled = await tryUpscaleImage(flowAPI, origMediaId, settings.imageUpscale || 'off', '[AsyncRef]')
-      if (upscaled) imageData = upscaled
-    }
-
-    const displayUrl = toDataURL(imageData)
-
-    // Flow에 업로드 → mediaId + caption
-    const base64ForUpload = cleanBase64(imageData)
-    let mediaId = null
-    let caption = null
-    try {
-      const uploadResult = await flowAPI.uploadReference(base64ForUpload, ref.category)
-      if (uploadResult.success) {
-        mediaId = uploadResult.mediaId
-        caption = uploadResult.caption
-      }
-    } catch (uploadErr) {
-      console.error('[AsyncRef] Upload failed:', uploadErr)
-    }
-
-    // 파일 저장 (폴더 모드)
-    let filePath = null
-    let savedDataUrl = displayUrl
-    console.log('[AsyncRef] Save check:', { saveMode: settings.saveMode, projectName: settings.projectName })
-    if (settings.saveMode === 'folder') {
-      const projectName = settings.projectName || generateProjectName()
-      const refName = ref.name || `ref_${index + 1}`
-      const metadata = { mediaId, caption, category: ref.category }
-      const permission = await fileSystemAPI.ensurePermission()
-      console.log('[AsyncRef] Permission:', permission, 'projectName:', projectName, 'refName:', refName)
-
-      let saveResult = { success: false }
-      if (permission.hasPermission) {
-        saveResult = await fileSystemAPI.saveReference(projectName, refName, imageData, 'flow', metadata)
-          .catch(e => ({ success: false, error: e.message }))
-      }
-      console.log('[AsyncRef] saveResult:', saveResult.success, saveResult.error || '')
-
-      if (saveResult.success) {
-        filePath = saveResult.path
-        savedDataUrl = saveResult.dataUrl || displayUrl
-      } else {
-        if (!saveFailedOnce) {
-          setSaveFailedOnce(true)
-          toast.warning(t('toast.permissionReleasedMemory'))
-        }
-        addPendingSave(async () => {
-          const pendingSave = await fileSystemAPI.saveReference(projectName, refName, imageData, 'flow', metadata)
-          if (pendingSave.success) {
-            setReferences(prev => prev.map((r, i) =>
-              i === index ? { ...r, filePath: pendingSave.path, dataStorage: 'file' } : r
-            ))
-          }
-          return pendingSave
-        })
-      }
-
-      await fileSystemAPI.saveExtraToHistory(projectName, RESOURCE.REFERENCES, refName, result.images, ref.prompt, 'Reference')
-    }
-
-    // 레퍼런스 업데이트
-    setReferences(prev => prev.map((r, i) =>
-      i === index
-        ? { ...r, data: savedDataUrl, filePath, dataStorage: filePath ? 'file' : 'base64', mediaId, caption, status: 'done', errorMessage: null }
-        : r
-    ))
-    setGeneratingRefs(prev => prev.filter(i => i !== index))
-    return { success: true, savedToMemory: filePath === null && settings.saveMode === 'folder' }
+    return await _processAndSaveImage(result.images, index, ref, '[AsyncRef]')
   }
 
-  // Handle reference image generation (일괄 — 비동기 fire-and-forget 방식)
+  // ─── 배치 생성 (비동기 fire-and-forget 방식) ───
   // AutoFlow 패턴: 제출 → 7~15초 대기 → 다음 제출, 결과는 별도 수집
   const _executeBatchRefs = async (overrideStyleId = null) => {
     const generatableIndices = referencesRef.current
@@ -356,7 +272,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     // 배치 시작 - 플래그 리셋
     stopRequestedRef.current = false
     setStoppingRefs(false)
-    setPreparingRefs(true)  // 즉시 "준비중" 표시
+    setPreparingRefs(true)
     let hasPendingSaves = false
     setSaveFailedOnce(false)
 
@@ -381,7 +297,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     if (!(await checkAuthToken(flowAPI, t))) { setPreparingRefs(false); return }
 
     // 비동기 대기열
-    const pendingQueue = []  // [{ generationId, index, ref }]
+    const pendingQueue = []
 
     // 완료된 결과 수집 + 후처리
     const collectCompleted = async () => {
@@ -401,67 +317,11 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       }
     }
 
-    // 스타일 레퍼런스 준비 (공통)
-    // MCP에서 styleId가 전달된 경우 우선 적용 (React state 비동기 반영 대응)
-    // selectedStyleRefId 없으면 등록된 style 카드 자동 탐색
-    let batchEffectiveStyleId = overrideStyleId || selectedStyleRefId
-    if (!batchEffectiveStyleId) {
-      const autoStyle = referencesRef.current.find(r => r.type === 'style' && r.mediaId)
-      if (autoStyle) {
-        batchEffectiveStyleId = `ref:${autoStyle.id}`
-        console.log('[StyleRef] Batch auto-detected style card:', autoStyle.name, autoStyle.id)
-      }
-    }
-    const prepareStyleRefs = (ref) => {
-      const styleRefImages = []
-      let styledPrompt = ref.prompt
-      if (ref.type !== 'style' && batchEffectiveStyleId) {
-        if (batchEffectiveStyleId.startsWith('ref:')) {
-          const refId = batchEffectiveStyleId.replace('ref:', '')
-          const styleRef = referencesRef.current.find(r => r.id == refId && r.type === 'style')
-          if (styleRef) {
-            if (styleRef.mediaId) {
-              styleRefImages.push({ category: styleRef.category, mediaId: styleRef.mediaId, caption: styleRef.caption || '' })
-            }
-            if (styleRef.prompt) {
-              styledPrompt = `${ref.prompt}, ${styleRef.prompt}`
-            }
-          }
-        } else if (batchEffectiveStyleId.startsWith('preset:')) {
-          const presetId = batchEffectiveStyleId.replace('preset:', '')
-          const preset = STYLE_PRESETS?.styles?.find(s => s.id === presetId)
-          if (styleThumbnails?.[presetId] && presetMediaCache.current[presetId]) {
-            styleRefImages.push({ category: 'style', mediaId: presetMediaCache.current[presetId], caption: preset?.prompt_en || '' })
-          }
-          if (preset?.prompt_en) {
-            styledPrompt = `${ref.prompt}, ${preset.prompt_en}`
-          }
-        }
-      }
-      return { styledPrompt, styleRefImages }
-    }
-
-    // 프리셋 썸네일 사전 업로드 (배치 전에 한 번만)
-    if (batchEffectiveStyleId?.startsWith('preset:')) {
-      const presetId = batchEffectiveStyleId.replace('preset:', '')
-      if (styleThumbnails?.[presetId] && !presetMediaCache.current[presetId]) {
-        const thumbBase64 = await extractThumbnailBase64(styleThumbnails[presetId], fileSystemAPI, '[GenerateAllRefs]')
-        if (thumbBase64) {
-          try {
-            const uploadResult = await flowAPI.uploadReference(thumbBase64, 'style')
-            if (uploadResult.success) {
-              presetMediaCache.current[presetId] = uploadResult.mediaId
-              console.log('[GenerateAllRefs] Preset thumbnail pre-uploaded, mediaId:', uploadResult.mediaId)
-            }
-          } catch (e) {
-            console.warn('[GenerateAllRefs] Preset thumbnail upload failed:', e)
-          }
-        }
-      }
-    }
+    // 스타일 결정 (공통 함수)
+    const batchEffectiveStyleId = _resolveEffectiveStyleId(overrideStyleId)
 
     // ─── Phase 1: 비동기 제출 (fire-and-forget) ───
-    setPreparingRefs(false)  // 준비 완료 → 생성 중으로 전환
+    setPreparingRefs(false)
     console.log('[GenerateAllRefs] Starting async batch for', generatableIndices.length, 'refs')
     let submitFailCount = 0
 
@@ -473,7 +333,6 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       }
 
       try {
-        // 이전 결과 수집 (완료된 것만)
         await collectCompleted()
 
         const ref = referencesRef.current[index]
@@ -481,13 +340,11 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
           console.warn('[GenerateAllRefs] Ref not found at index:', index, '— skipping')
           continue
         }
-        const { styledPrompt, styleRefImages } = prepareStyleRefs(ref)
+        const { styledPrompt, styleRefImages } = await _prepareStyleRefs(ref, batchEffectiveStyleId, '[GenerateAllRefs]')
 
-        // 생성 중 표시
         setGeneratingRefs(prev => [...prev, index])
         setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'generating', errorMessage: null } : r))
 
-        // 비동기 제출 (seedLocked 면 고정 seed)
         const batchSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
           ? settings.seedNo
           : null
@@ -503,7 +360,6 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
           setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: submitResult?.error || 'Submit failed' } : r))
           submitFailCount++
 
-          // 연속 3회 실패 시 중단
           if (submitFailCount >= 3) {
             toast.error(t('toast.serverErrorPersist'))
             break
@@ -531,7 +387,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
 
     // ─── Phase 2: 남은 결과 전부 수집 (폴링) ───
     console.log('[GenerateAllRefs] All submitted. Waiting for', pendingQueue.length, 'remaining results...')
-    const maxWait = 180000  // 최대 3분 대기
+    const maxWait = 180000
     const pollStart = Date.now()
 
     while (pendingQueue.length > 0 && Date.now() - pollStart < maxWait) {
@@ -540,7 +396,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
         toast.info(t('toast.batchStopped'))
         break
       }
-      await new Promise(r => setTimeout(r, 3000))  // 3초 간격 폴링
+      await new Promise(r => setTimeout(r, 3000))
       await collectCompleted()
     }
 
@@ -553,7 +409,6 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       }
     }
 
-    // 일괄 정리
     await flowAPI.clearGenerations()
 
     console.log('[GenerateAllRefs] Batch completed, hasPendingSaves:', hasPendingSaves)
@@ -567,11 +422,9 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
 
   // 큐를 통한 개별 생성
   const handleGenerateRef = async (index, skipPermissionCheck = false, overrideStyleId = null) => {
-    // 배치 내부 호출(skipPermissionCheck=true)이면 직접 실행
     if (skipPermissionCheck || !generationQueue) {
       return _executeGenerateRef(index, skipPermissionCheck, overrideStyleId)
     }
-    // 개별 호출이면 큐에 enqueue
     try {
       return await generationQueue.enqueue({
         type: 'reference',
