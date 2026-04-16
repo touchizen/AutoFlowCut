@@ -1,5 +1,8 @@
 .qa-progress-banner {
-  position: fixed;
+  /* .app (parent) is position: relative, so `absolute` pins the banner to
+     the actual app content area. When Shell is in split-mode this is the
+     right half only, not the full viewport. */
+  position: absolute;
   top: 0;
   left: 0;
   right: 0;
