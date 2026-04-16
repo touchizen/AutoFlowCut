@@ -389,7 +389,7 @@ ep{번호}/
 
 **Codex MCP:**
 ```
-cwd: "/Users/tuxxon/premiere-workspace/무한야담/story/ep{번호}"
+cwd: "{작업폴더}/ep{번호}_{slug}/_story_source"
 ```
 - 텍스트를 인라인으로 붙여넣지 말고, 반드시 cwd로 디렉토리 경로를 전달
 - 평가 요청: 몰입감/감동/재미 각 10점 + 궁금증 유지 구간 분석

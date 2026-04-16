@@ -296,7 +296,7 @@ done
 ```bash
 curl -s -X POST http://localhost:3210/api/audio-import \
   -H "Content-Type: application/json" \
-  -d '{"folderPath": "/Users/tuxxon/premiere-workspace/무한야담/story/ep{번호}"}'
+  -d '{"folderPath": "{작업폴더}/ep{번호}_{slug}"}'
 ```
 
 **임포트 후 확인:**
@@ -307,7 +307,7 @@ curl -s http://localhost:3210/api/audio-reviews
 # 오디오 리뷰 새로고침 (폴더 재스캔 + 자동 언플래그)
 curl -s -X POST http://localhost:3210/api/audio-refresh \
   -H "Content-Type: application/json" \
-  -d '{"folderPath": "/Users/tuxxon/premiere-workspace/무한야담/story/ep{번호}"}'
+  -d '{"folderPath": "{작업폴더}/ep{번호}_{slug}"}'
 ```
 
 **MCP 도구로 오디오 검수:**
