@@ -28,8 +28,8 @@ const firebaseConfig = {
 // Firebase 초기화
 const app = initializeApp(firebaseConfig)
 
-// 앱 ID (Firestore 경로에 사용 — 프로젝트 rename 전 ID를 유지해야 기존 데이터와 호환)
-export const APP_ID = 'flow2capcut'
+// 앱 ID (Firestore 경로에 사용 — GCF APP_VARIANTS 키와 일치)
+export const APP_ID = 'autoflowcut'
 
 // Firebase 서비스 인스턴스
 export const auth = getAuth(app)

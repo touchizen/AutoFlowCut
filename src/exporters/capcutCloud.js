@@ -9,6 +9,7 @@
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { fileSystemAPI } from '../hooks/useFileSystem';
 import { cleanBase64 as stripBase64Prefix } from '../utils/urls';
+import { APP_ID } from '../firebase/config';
 
 /**
  * base64 데이터에서 이미지 크기 추출
@@ -367,7 +368,7 @@ async function callGenerateCapcutJson(requestData) {
 
   console.log(`[CapCut Cloud] Calling generateCapcutJson${FUNCTION_SUFFIX} with`, sanitized.scenes.length, 'scenes');
 
-  const result = await generateCapcutJson(sanitized);
+  const result = await generateCapcutJson({ ...sanitized, appId: APP_ID });
 
   console.log('[CapCut Cloud] Received response:', {
     totalDuration: result.data.totalDuration,

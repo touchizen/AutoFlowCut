@@ -11,7 +11,6 @@ import { useState } from 'react'
 import { fileSystemAPI } from './useFileSystem'
 import { generateProjectName } from '../utils/formatters'
 import { toast } from '../components/Toast'
-import { incrementExportCount } from '../firebase/functions'
 import useI18n from './useI18n'
 
 /**
@@ -196,10 +195,8 @@ export function useExport({
       await new Promise(r => setTimeout(r, 1500))
       setShowExportModal(false)
 
-      // 내보내기 카운트 증가 (fire and forget)
-      incrementExportCount().catch(countError => {
-        console.warn('[Export] Failed to increment export count:', countError)
-      })
+      // V2 GCF(generateCapcutJson_*)가 quota 검증 + exportCount 증가를 원자적으로 처리하므로
+      // 별도 incrementExportCount 호출 불필요
     } catch (error) {
       toast.error(t('toast.exportFailed', { error: error.message }))
     } finally {
