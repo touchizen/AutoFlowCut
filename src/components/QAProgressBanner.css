@@ -4,24 +4,71 @@
   left: 0;
   right: 0;
   z-index: 9999;
-  height: 32px;
+  height: 48px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   padding: 0 16px;
-  font-size: 0.85rem;
+  font-size: 0.95rem;
   font-weight: 500;
-  background: rgba(11, 97, 255, 0.78);
+  background: rgba(11, 97, 255, 0.55);
   color: white;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
-  backdrop-filter: blur(8px) saturate(140%);
-  -webkit-backdrop-filter: blur(8px) saturate(140%);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(10px) saturate(160%);
+  -webkit-backdrop-filter: blur(10px) saturate(160%);
   border-bottom: 1px solid rgba(255, 255, 255, 0.18);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
   animation: qa-slide-down 0.2s ease-out;
+  overflow: hidden;
 }
-.qa-progress-banner.done { background: rgba(18, 161, 80, 0.78); }
-.qa-icon { font-size: 1rem; }
+.qa-progress-banner.done { background: rgba(18, 161, 80, 0.55); }
+
+.qa-progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: rgba(255, 255, 255, 0.16);
+  pointer-events: none;
+  transition: width 0.4s ease;
+}
+
+.qa-icon {
+  font-size: 1.15rem;
+  position: relative;
+  z-index: 1;
+}
+
+.qa-label {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.qa-close {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+  line-height: 1;
+  padding: 0;
+  margin-left: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.05s ease;
+}
+.qa-close:hover { background: rgba(255, 255, 255, 0.24); }
+.qa-close:active { transform: scale(0.94); }
+
 @keyframes qa-slide-down {
   from { transform: translateY(-100%); }
   to { transform: translateY(0); }
