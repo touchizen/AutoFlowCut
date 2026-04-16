@@ -163,13 +163,32 @@ export function useMcpServer({
         setReferences(prev => prev.map(ref => ({ ...ref, data: null, filePath: null, mediaId: null, caption: null, dataStorage: null })))
         console.log('[MCP] All reference images cleared via HTTP')
       } else if (data.type === 'update-scenes') {
-        const scenesWithIds = (data.scenes || []).map((s, i) => ({
-          ...s,
-          id: s.id || `scene_${i + 1}`,
-          status: s.status || 'pending',
-        }))
-        setScenes(scenesWithIds)
-        console.log('[MCP] Scenes updated via HTTP:', scenesWithIds.length)
+        // Merge incoming CSV/API rows over existing in-memory scenes by id so
+        // runtime fields (image, imagePath, status, mediaId, generatingStartedAt)
+        // survive a CSV reload. Without this merge, load_csv during W6/W7 wipes
+        // generated-image pointers and a subsequent batch treats every scene as
+        // pending → full regeneration of an entire episode (ep4 sat-fire).
+        setScenes(prev => {
+          const byId = new Map(prev.map(s => [s.id, s]))
+          return (data.scenes || []).map((incoming, i) => {
+            const id = incoming.id || `scene_${i + 1}`
+            const existing = byId.get(id)
+            if (!existing) {
+              return { ...incoming, id, status: incoming.status || 'pending' }
+            }
+            return {
+              ...incoming,                             // CSV-authoritative: prompt, subtitle, characters, scene_tag, etc.
+              id,
+              image: existing.image,                   // preserve in-memory image payload (if any)
+              imagePath: existing.imagePath,           // preserve saved image path
+              status: existing.status || incoming.status || 'pending',
+              mediaId: existing.mediaId,
+              generatingStartedAt: existing.generatingStartedAt,
+              image_size: existing.image_size,
+            }
+          })
+        })
+        console.log('[MCP] Scenes merged via HTTP:', (data.scenes || []).length)
       } else if (data.type === 'update-scene') {
         setScenes(prev => prev.map((s, i) => i === data.index ? { ...prev[i], ...data.fields } : s))
         console.log('[MCP] Scene', data.index, 'updated via HTTP')

@@ -8,6 +8,12 @@ export default function QAProgressBanner() {
 
   useEffect(() => {
     window.__qaProgressUpdate = (data) => {
+      // Reject malformed payloads (e.g. accidental notify_qa with total=0):
+      // a banner with "(0/0)" is noise, not signal. Only show when total > 0
+      // OR explicit done state (so 'done' stays visible for the 4s fade).
+      if (!data || (typeof data.total === 'number' && data.total <= 0 && data.state !== 'done')) {
+        return
+      }
       setState(data)
       if (data.state === 'done') {
         setTimeout(() => setState(null), 4000)
