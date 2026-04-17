@@ -1377,12 +1377,15 @@ export function registerFlowAPIIPC(ipcMain, deps) {
         const ext = path.extname(downloadedFile).toLowerCase()
         const mimeType = ext === '.webm' ? 'video/webm' : 'video/mp4'
         const base64 = `data:${mimeType};base64,${data.toString('base64')}`
-        console.log('[Flow DOMDownload] Success! size:', data.length, 'type:', mimeType)
+        console.log('[Flow DOMDownload] Success! size:', data.length, 'type:', mimeType, 'resolution:', domResult?.resolution)
 
         // 정리
         try { fs.rmSync(tempDir, { recursive: true, force: true }) } catch {}
 
-        return { success: true, base64 }
+        // domResult.resolution은 Step 2의 DOM 자동화가 실제 클릭한 해상도
+        // ("720p"/"1080p"/"4K" — submenu에서 선택 성공) 또는 "default" (submenu 못 열림).
+        // 상위 호출자가 요청 해상도와 비교해서 upscale 필요 여부 판단하게 그대로 전달.
+        return { success: true, base64, resolution: domResult?.resolution || 'default' }
       } catch (readErr) {
         try { fs.rmSync(tempDir, { recursive: true, force: true }) } catch {}
         return { success: false, error: `File read error: ${readErr.message}` }

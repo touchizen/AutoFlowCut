@@ -52,15 +52,19 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
   }
 
   // ─── Phase 3 Helper: 다운로드 + 저장 ───
-  // DOM 다운로드 우선 (Flow UI가 upscale/reCAPTCHA 자체 처리)
-  // 다운로드 우선순위: DOM (upscale 포함) → videoUrl 직접 → fetchMedia
+  // DOM 다운로드 우선 (Flow UI가 해상도 선택 시 upscale/reCAPTCHA 자체 처리)
+  // 다운로드 우선순위: DOM (해상도 선택 포함) → videoUrl 직접 → fetchMedia
+  //
+  // Note: upscaleVideo API 직접 호출 경로는 시도했다가 제거 — Flow가
+  //   reCAPTCHA evaluation을 거부(403 PERMISSION_DENIED)해 실용적이지 않다.
+  //   DOM 경로가 Flow UI의 자체 reCAPTCHA + upscale을 태우므로 충분하다.
+  //   DOM 반환값의 resolution 필드(720p/1080p/4K/default)로 실제 다운로드
+  //   해상도를 확인할 수 있다.
   const downloadAndSaveVideo = async (mediaId, videoUrl, item, options, setStatusMsg) => {
     const { projectName, saveMode, videoResolution = '1080p' } = options
     let mediaResult
 
-    // ─── 다운로드 ───
-    // 방법 1: DOM 다운로드 (Flow UI의 hover→3dot→download→해상도 선택)
-    // Flow 페이지가 reCAPTCHA 및 upscale을 자체 처리하므로 가장 안정적
+    // ─── 1. DOM 다운로드 (hover → 3-dot → download → 해상도 선택) ───
     if (window.electronAPI?.domDownloadVideo) {
       try {
         console.log('[VideoAutomation] [1/3] DOM download — mediaId:', mediaId?.substring(0, 20), 'resolution:', videoResolution)
@@ -69,7 +73,11 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
           mediaId, resolution: videoResolution
         })
         if (mediaResult?.success) {
-          console.log('[VideoAutomation] ✅ DOM download success')
+          const actualRes = mediaResult.resolution || 'unknown'
+          console.log('[VideoAutomation] ✅ DOM download success (resolution:', actualRes, ')')
+          if (actualRes === 'default') {
+            console.warn('[VideoAutomation] ⚠️ Flow UI의 해상도 서브메뉴가 열리지 않아 원본 해상도로 저장됨. 요청:', videoResolution)
+          }
         } else {
           console.warn('[VideoAutomation] DOM download failed:', mediaResult?.error)
         }
@@ -78,7 +86,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
       }
     }
 
-    // 방법 2: videoUrl 직접 다운로드 (DOM에서 비디오 안 보일 때 — 원본 해상도)
+    // ─── 2. videoUrl 직접 다운로드 (DOM 실패 시 — 원본 해상도) ───
     if (!mediaResult?.success && videoUrl) {
       try {
         console.log('[VideoAutomation] [2/3] Direct URL download:', videoUrl?.substring(0, 80))
@@ -95,7 +103,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
       }
     }
 
-    // 방법 3: fetchMedia (getMediaUrlRedirect — 원본 해상도)
+    // ─── 3. fetchMedia fallback ───
     if (!mediaResult?.success) {
       try {
         console.log('[VideoAutomation] [3/3] fetchMedia for mediaId:', mediaId?.substring(0, 20))
