@@ -57,7 +57,7 @@ export default {
     noScenesWithMedia: '먼저 이미지를 생성하세요 (mediaId 필요)',
     generate: '비디오 생성',
     waiting: '대기',
-    pending: '복구 중',
+    pending: '복구대기',
     generating: '생성중',
     complete: '완료',
     error: '에러',

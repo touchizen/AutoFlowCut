@@ -57,7 +57,7 @@ export default {
     noScenesWithMedia: 'Generate images first (mediaId required)',
     generate: 'Generate Video',
     waiting: 'Waiting',
-    pending: 'Recovering',
+    pending: 'Pending recovery',
     generating: 'Generating',
     complete: 'Complete',
     error: 'Error',
