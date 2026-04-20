@@ -370,7 +370,7 @@ function App() {
    */
   const handleVideoRetry = useCallback((item) => {
     if (!item) return
-    if (anyRunning) {
+    if (isRunning || videoAutomation.isRunning) {
       toast.warning(t('videoAutomation.busy') || 'Generation already running')
       return
     }
@@ -444,7 +444,7 @@ function App() {
     // Slow path: no generationId/mediaId — reset to pending; user clicks Start Generation to regenerate
     onUpdate(item.id, 'pending', { error: null })
     toast.info(t('videoAutomation.needsRegen') || 'Reset — click Start Generation to retry')
-  }, [anyRunning, settings, flowAPI, framePairs, scenesHook, videoScenesHook, t])
+  }, [isRunning, videoAutomation.isRunning, settings, flowAPI, framePairs, scenesHook, videoScenesHook, t])
 
   const handleStart = async (overrideStyleId = null) => {
     // 이미 실행 중이면 무시 (중지는 별도 버튼)
