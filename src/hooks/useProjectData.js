@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { fileSystemAPI } from './useFileSystem'
 import { syncVideosIntoScenes } from '../services/mediaSync'
+import { recoverInFlightVideos } from '../services/videoRecovery'
 
 /**
  * 프로젝트 데이터 로드 + 이미지 파일 복원 (공통 헬퍼)
@@ -216,8 +217,39 @@ export function useProjectData({
   videoScenes, setVideoScenes,
   framePairs, setFramePairs,
   openSettings,
-  onAudioSwitch
+  onAudioSwitch,
+  flowAPI = null,
 }) {
+  // 복구 콜백 — framePairs state에 patch를 병합
+  const applyFramePairPatch = (id, patch) => {
+    if (!setFramePairs) return
+    setFramePairs(prev => prev.map(fp => fp.id === id ? { ...fp, ...patch } : fp))
+  }
+
+  // 로드 직후 in-flight 비디오 복구 트리거 (flowAPI 필요)
+  const triggerVideoRecovery = async (loadedFramePairs, projectName) => {
+    if (!flowAPI || !loadedFramePairs?.length) return
+    const hasInFlight = loadedFramePairs.some(fp =>
+      fp.generationId && !fp.videoPath && (fp.status === 'generating' || fp.status === 'pending')
+    )
+    if (!hasInFlight) return
+    try {
+      await recoverInFlightVideos({
+        framePairs: loadedFramePairs,
+        projectName,
+        saveMode: settings?.saveMode || 'folder',
+        videoResolution: settings?.videoResolution || '1080p',
+        checkVideoStatus: flowAPI.checkVideoStatus,
+        fetchMedia: flowAPI.fetchMedia,
+        getAccessToken: flowAPI.getAccessToken,
+        onFramePairUpdate: applyFramePairPatch,
+        logPrefix: '[ProjectData]',
+      })
+    } catch (e) {
+      console.warn('[ProjectData] Video recovery failed:', e.message)
+    }
+  }
+
   // Pending save 추가 (no-op in desktop — permission is always available)
   const addPendingSave = () => {}
 
@@ -254,6 +286,8 @@ export function useProjectData({
         setSettings(s => ({ ...s, projectName: prevProjectName }))
         console.log('[App] Auto-restore complete:', prevProjectName,
           `(${loaded.scenes.filter(s => s.image || s.imagePath).length} images, ${loaded.scenes.filter(s => s.subtitle).length} subtitles)`)
+        // In-flight 비디오 복구 (generationId 있지만 videoPath 없는 framePair들)
+        triggerVideoRecovery(loaded.framePairs, prevProjectName)
       }
       // 복원 완료 — auto-save 허용 (약간의 딜레이로 불필요한 auto-save 방지)
       setTimeout(() => {
@@ -289,6 +323,8 @@ export function useProjectData({
         setFramePairs?.(loaded.framePairs || [])
         audioPath = loaded.audioFolderPath
         console.log('[App] Project loaded:', newProjectName)
+        // In-flight 비디오 복구 (generationId 있지만 videoPath 없는 framePair들)
+        triggerVideoRecovery(loaded.framePairs, newProjectName)
       } else {
         setScenes([])
         setReferences([])

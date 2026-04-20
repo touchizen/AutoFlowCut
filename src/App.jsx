@@ -151,7 +151,8 @@ function App() {
     videoScenes, setVideoScenes,
     framePairs, setFramePairs,
     openSettings,
-    onAudioSwitch: (audioPath) => audioSwitchRef.current?.(audioPath)
+    onAudioSwitch: (audioPath) => audioSwitchRef.current?.(audioPath),
+    flowAPI,
   })
 
   // Style Thumbnails
@@ -442,6 +443,7 @@ function App() {
               ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: Date.now() } : {}),
               ...(result?.base64 ? { video: result.base64 } : {}),
               ...(result?.mediaId ? { mediaId: result.mediaId } : {}),
+              ...(result?.generationId ? { generationId: result.generationId } : {}),
               ...(result?.videoPath ? { videoPath: result.videoPath } : {}),
               ...(result?.videoSaveId ? { videoSaveId: result.videoSaveId } : {}),
               ...(result?.error ? { error: result.error } : {}),

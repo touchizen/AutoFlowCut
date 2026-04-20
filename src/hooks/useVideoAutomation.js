@@ -235,6 +235,8 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
 
       if (genResult.success && genResult.generationId) {
         submissions.push({ itemId: item.id, generationId: genResult.generationId })
+        // Persist generationId into item state immediately (survives app-kill → reload → recovery)
+        onItemUpdate?.(item.id, 'generating', { generationId: genResult.generationId })
         console.log(`[VideoAutomation] ✅ Submitted ${i + 1}/${total}: ${genResult.generationId.substring(0, 16)}...`)
       } else {
         // 401 인증 에러 감지
