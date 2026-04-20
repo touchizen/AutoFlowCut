@@ -18,7 +18,7 @@ export function syncVideosIntoScenes(scenes, videoScenes, framePairs, logPrefix 
   if (!scenes?.length) return false
   let synced = false
 
-  // T2V: vscene_N → scene_N (path만 동기화)
+  // T2V: vscene_N → scene_N (path + duration 동기화)
   if (videoScenes?.length) {
     for (const vs of videoScenes) {
       if ((vs.status === 'complete' || vs.status === 'done') && (vs.video || vs.videoPath)) {
@@ -26,6 +26,7 @@ export function syncVideosIntoScenes(scenes, videoScenes, framePairs, logPrefix 
         const scene = scenes.find(s => s.id === sceneId)
         if (scene && !scene.videoT2VPath) {
           scene.videoT2VPath = vs.videoPath || null
+          if (vs.duration && !scene.videoT2VDuration) scene.videoT2VDuration = vs.duration
           console.log(`${logPrefix} Synced T2V video → ${sceneId}`)
           synced = true
         }
@@ -33,13 +34,14 @@ export function syncVideosIntoScenes(scenes, videoScenes, framePairs, logPrefix 
     }
   }
 
-  // I2V: framePair.startSceneId → scene (path만 동기화)
+  // I2V: framePair.startSceneId → scene (path + duration 동기화)
   if (framePairs?.length) {
     for (const fp of framePairs) {
       if ((fp.status === 'complete' || fp.status === 'done') && (fp.base64 || fp.videoPath) && fp.startSceneId && !fp.startSceneId.startsWith('gallery::')) {
         const scene = scenes.find(s => s.id === fp.startSceneId)
         if (scene && !scene.videoI2VPath) {
           scene.videoI2VPath = fp.videoPath || null
+          if (fp.duration && !scene.videoI2VDuration) scene.videoI2VDuration = fp.duration
           console.log(`${logPrefix} Synced I2V video → ${fp.startSceneId}`)
           synced = true
         }

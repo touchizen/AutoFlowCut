@@ -103,7 +103,10 @@ export function useExport({
           const sceneDuration = s.duration || settings.defaultDuration || 3
           const video = resolveExportMedia(s)
           const hasVideo = video.type === 'video' && (video.path || video.data)
-          const videoDuration = hasVideo ? (s.videoT2VDuration || s.videoI2VDuration || 0) : 0
+          // Fallback chain: explicit video duration → scene duration (typical 3s default).
+          // Protects against onLoadedMetadata race — user clicks Export before SceneList mounts
+          // the <video> element that would normally populate video{T2V,I2V}Duration.
+          const videoDuration = hasVideo ? (s.videoT2VDuration || s.videoI2VDuration || sceneDuration || 0) : 0
 
           return {
             id: s.id,

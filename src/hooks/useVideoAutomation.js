@@ -387,7 +387,9 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
             if (dlResult.success && dlResult.base64) {
               onItemUpdate?.(itemId, 'complete', {
                 ...dlResult,
-                generationId: submission.generationId
+                generationId: submission.generationId,
+                duration,
+                mode,
               })
               completedCount++
               console.log(`[VideoAutomation] ✅ Downloaded & saved: ${itemId}`)
