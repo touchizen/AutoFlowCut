@@ -185,6 +185,7 @@ export async function recoverInFlightVideos({
               mediaId: statusInfo.mediaId,
               videoPath: dlResult.videoPath || null,
               videoSaveId: dlResult.videoSaveId || fp.videoSaveId || null,
+              ...(fp.duration ? { duration: fp.duration } : {}),
               generatingEndedAt: Date.now(),
             })
             recovered++
@@ -323,6 +324,7 @@ export async function retryVideoDownload({
       videoPath: dl.videoPath || null,
       videoSaveId: dl.videoSaveId || item.videoSaveId || null,
       generationId: item.generationId,
+      ...(item.duration ? { duration: item.duration } : {}),
       generatingEndedAt: Date.now(),
     })
     return { success: true }

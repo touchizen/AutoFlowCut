@@ -391,6 +391,7 @@ function App() {
             ...(result?.generationId ? { generationId: result.generationId } : {}),
             ...(result?.videoPath ? { videoPath: result.videoPath } : {}),
             ...(result?.videoSaveId ? { videoSaveId: result.videoSaveId } : {}),
+            ...(result?.duration ? { duration: result.duration } : {}),
             ...(result?.error ? { error: result.error } : {}),
           } : p
         ))
@@ -400,6 +401,7 @@ function App() {
             scenesHook.updateScene(fp.startSceneId, {
               videoI2V: result.base64,
               videoI2VPath: result.videoPath || null,
+              ...(result?.duration ? { videoI2VDuration: result.duration } : {}),
             })
           }
         }
@@ -413,6 +415,7 @@ function App() {
           ...(result?.generationId ? { generationId: result.generationId } : {}),
           ...(result?.videoPath ? { videoPath: result.videoPath } : {}),
           ...(result?.videoSaveId ? { videoSaveId: result.videoSaveId } : {}),
+          ...(result?.duration ? { duration: result.duration } : {}),
           ...(result?.error ? { error: result.error } : {}),
         })
         if (newStatus === 'complete' && result?.base64) {
@@ -420,6 +423,7 @@ function App() {
           scenesHook.updateScene(sceneId, {
             videoT2V: result.base64,
             videoT2VPath: result.videoPath || null,
+            ...(result?.duration ? { videoT2VDuration: result.duration } : {}),
           })
         }
       }
