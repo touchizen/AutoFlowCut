@@ -48,6 +48,7 @@ export default function ResultsTable({
   scenes,
   mediaType = 'image',
   onRetry,
+  onVideoRetry,             // (item) => void — 비디오 전용 재시도 (다운로드 우선)
   aspectRatio = '16:9',
   onShowDetail,
   // ── 선택/편집 props ──
@@ -205,6 +206,22 @@ export default function ResultsTable({
             title={item.error || t('actions.retryOne')}
           >
             🔄 {t('actions.retryOne')}
+          </button>
+        )
+      }
+      // video / frame-pair — download-only retry when generationId+mediaId known
+      if (isVideoType && onVideoRetry) {
+        const canDownloadOnly = !!(item.generationId && item.mediaId)
+        const label = canDownloadOnly
+          ? (t('actions.retryDownload') || 'Retry download')
+          : t('actions.retryOne')
+        return (
+          <button
+            className="status error retry-btn"
+            onClick={() => onVideoRetry(item)}
+            title={item.error || label}
+          >
+            🔄 {label}
           </button>
         )
       }

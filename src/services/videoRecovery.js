@@ -214,3 +214,121 @@ export async function recoverInFlightVideos({
   console.log(`${logPrefix} 🎬 Recovered ${recovered}/${total} in-flight videos${expired > 0 ? ` (${expired} expired/failed)` : ''}`)
   return { recovered, total, expired }
 }
+
+/**
+ * 단일 아이템 다운로드 재시도 — 이미 서버엔 영상이 있지만 로컬 다운로드만 실패한 경우.
+ *
+ * Flow:
+ *   1. checkVideoStatus([item.generationId]) 로 서버 상태 확인
+ *      → complete + videoUrl 얻음
+ *      → 404 / expired 면 onUpdate(id, 'error', { error: 'Generation expired …' })
+ *   2. downloadAndSaveVideo() 3-tier fallback
+ *      → success → onUpdate(id, 'complete', { base64, videoPath, videoSaveId, mediaId, generationId })
+ *      → fail    → onUpdate(id, 'error', { error })
+ *
+ * 호출측은 quota 소비 없이 재다운로드만 수행한다.
+ *
+ * @param {object}   args
+ * @param {object}   args.item       — { id, generationId, mediaId, videoSaveId? }
+ * @param {object}   args.flowAPI    — { checkVideoStatus, fetchMedia, getAccessToken }
+ * @param {function} args.onUpdate   — (id, status, patch) => void
+ * @param {string}   [args.projectName]
+ * @param {string}   [args.saveMode]       ('folder' | 'memory')
+ * @param {string}   [args.videoResolution] ('1080p' | '720p' | ...)
+ * @returns {Promise<{ success: boolean, error?: string }>}
+ */
+export async function retryVideoDownload({
+  item,
+  flowAPI,
+  onUpdate,
+  projectName = '',
+  saveMode = 'folder',
+  videoResolution = '1080p',
+}) {
+  if (!item?.generationId) {
+    const error = 'Cannot retry: missing generationId'
+    onUpdate?.(item.id, 'error', { error })
+    return { success: false, error }
+  }
+  if (!flowAPI?.checkVideoStatus) {
+    const error = 'Cannot retry: flowAPI.checkVideoStatus unavailable'
+    onUpdate?.(item.id, 'error', { error })
+    return { success: false, error }
+  }
+
+  onUpdate?.(item.id, 'generating', { generatingStartedAt: Date.now() })
+
+  // ─── 1. 서버 상태 확인 ───
+  let statusResult
+  try {
+    statusResult = await flowAPI.checkVideoStatus([item.generationId])
+  } catch (e) {
+    const err = String(e?.message || e)
+    const isExpired = err.includes('404') || err.includes('NOT_FOUND') || err.toLowerCase().includes('expired')
+    const msg = isExpired
+      ? 'Generation expired — please regenerate'
+      : `Status check failed: ${err}`
+    onUpdate?.(item.id, 'error', { error: msg, generatingEndedAt: Date.now() })
+    return { success: false, error: msg }
+  }
+
+  if (!statusResult?.success || !Array.isArray(statusResult.statuses)) {
+    const err = String(statusResult?.error || 'Unknown status error')
+    const isExpired = err.includes('404') || err.includes('NOT_FOUND') || err.toLowerCase().includes('expired')
+    const msg = isExpired
+      ? 'Generation expired — please regenerate'
+      : `Status check failed: ${err}`
+    onUpdate?.(item.id, 'error', { error: msg, generatingEndedAt: Date.now() })
+    return { success: false, error: msg }
+  }
+
+  const statusInfo = statusResult.statuses[0]
+  if (!statusInfo) {
+    const msg = 'Generation expired — please regenerate'
+    onUpdate?.(item.id, 'error', { error: msg, generatingEndedAt: Date.now() })
+    return { success: false, error: msg }
+  }
+
+  if (statusInfo.status === 'failed') {
+    const msg = statusInfo.error || 'Video generation failed'
+    onUpdate?.(item.id, 'error', { error: msg, generatingEndedAt: Date.now() })
+    return { success: false, error: msg }
+  }
+
+  if (statusInfo.status !== 'complete' || !statusInfo.mediaId) {
+    // still processing — leave as generating
+    const msg = `Video still ${statusInfo.status || 'processing'} on server — try again later`
+    onUpdate?.(item.id, 'error', { error: msg, generatingEndedAt: Date.now() })
+    return { success: false, error: msg }
+  }
+
+  // ─── 2. 다운로드 + 저장 ───
+  const mediaId = statusInfo.mediaId || item.mediaId
+  const dl = await downloadAndSaveVideo({
+    mediaId,
+    videoUrl: statusInfo.videoUrl,
+    item,
+    projectName,
+    saveMode,
+    videoResolution,
+    fetchMedia: flowAPI.fetchMedia,
+    getAccessToken: flowAPI.getAccessToken,
+  })
+
+  if (dl.success && dl.base64) {
+    onUpdate?.(item.id, 'complete', {
+      base64: dl.base64,
+      video: dl.base64,
+      mediaId,
+      videoPath: dl.videoPath || null,
+      videoSaveId: dl.videoSaveId || item.videoSaveId || null,
+      generationId: item.generationId,
+      generatingEndedAt: Date.now(),
+    })
+    return { success: true }
+  }
+
+  const msg = dl.error || 'Download failed'
+  onUpdate?.(item.id, 'error', { error: msg, generatingEndedAt: Date.now() })
+  return { success: false, error: msg }
+}

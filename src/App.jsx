@@ -22,6 +22,7 @@ import { useAutoSave } from './hooks/useAutoSave'
 import { useFlowEvents } from './hooks/useFlowEvents'
 import { useMcpServer } from './hooks/useMcpServer'
 import { syncVideosIntoScenes } from './services/mediaSync'
+import { retryVideoDownload } from './services/videoRecovery'
 import { generateProjectName } from './utils/formatters'
 import { detectFileType, detectCSVType, parseCSVToScenes, parseSRTToScenes } from './utils/parsers'
 import { checkFolderPermission } from './utils/guards'
@@ -357,6 +358,94 @@ function App() {
   }
 
   // Handle start — 활성 탭에 따라 이미지/비디오 생성 모드 분기
+  /**
+   * handleVideoRetry — video 단일 아이템 재시도
+   *
+   * generationId + mediaId 둘 다 있으면: 서버는 영상을 가지고 있고 로컬 다운로드만
+   * 실패한 상황이므로 download-only 경로(videoRecovery.retryVideoDownload)로 재시도
+   * 하여 quota 소비 없이 복구한다.
+   *
+   * 둘 중 하나라도 없으면: full 재생성이 필요하므로 해당 아이템 상태를 pending으로 되돌린 뒤
+   * 사용자가 "Start Generation" 버튼으로 일괄 재생성할 수 있게 둔다.
+   */
+  const handleVideoRetry = useCallback((item) => {
+    if (!item) return
+    if (anyRunning) {
+      toast.warning(t('videoAutomation.busy') || 'Generation already running')
+      return
+    }
+
+    // 타입 판별: framePair는 pair.id가 fp_*, videoScene은 vscene_*
+    const isFramePair = typeof item.id === 'string' && item.id.startsWith('fp_')
+    const projectName = settings.projectName || generateProjectName()
+
+    const onUpdate = (id, newStatus, result = {}) => {
+      if (isFramePair) {
+        setFramePairs(prev => prev.map(p =>
+          p.id === id ? {
+            ...p, status: newStatus,
+            ...(newStatus === 'generating' && result?.generatingStartedAt ? { generatingStartedAt: result.generatingStartedAt } : {}),
+            ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: result?.generatingEndedAt || Date.now() } : {}),
+            ...(result?.base64 ? { video: result.base64, base64: result.base64 } : {}),
+            ...(result?.mediaId ? { mediaId: result.mediaId } : {}),
+            ...(result?.generationId ? { generationId: result.generationId } : {}),
+            ...(result?.videoPath ? { videoPath: result.videoPath } : {}),
+            ...(result?.videoSaveId ? { videoSaveId: result.videoSaveId } : {}),
+            ...(result?.error ? { error: result.error } : {}),
+          } : p
+        ))
+        if (newStatus === 'complete' && result?.base64) {
+          const fp = framePairs.find(p => p.id === id)
+          if (fp?.startSceneId && !fp.startSceneId.startsWith('gallery::')) {
+            scenesHook.updateScene(fp.startSceneId, {
+              videoI2V: result.base64,
+              videoI2VPath: result.videoPath || null,
+            })
+          }
+        }
+      } else {
+        videoScenesHook.updateVideoScene(id, {
+          status: newStatus,
+          ...(newStatus === 'generating' && result?.generatingStartedAt ? { generatingStartedAt: result.generatingStartedAt } : {}),
+          ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: result?.generatingEndedAt || Date.now() } : {}),
+          ...(result?.base64 ? { video: result.base64 } : {}),
+          ...(result?.mediaId ? { mediaId: result.mediaId } : {}),
+          ...(result?.generationId ? { generationId: result.generationId } : {}),
+          ...(result?.videoPath ? { videoPath: result.videoPath } : {}),
+          ...(result?.videoSaveId ? { videoSaveId: result.videoSaveId } : {}),
+          ...(result?.error ? { error: result.error } : {}),
+        })
+        if (newStatus === 'complete' && result?.base64) {
+          const sceneId = id.replace('vscene_', 'scene_')
+          scenesHook.updateScene(sceneId, {
+            videoT2V: result.base64,
+            videoT2VPath: result.videoPath || null,
+          })
+        }
+      }
+    }
+
+    // Fast path: download-only
+    if (item.generationId && item.mediaId) {
+      retryVideoDownload({
+        item,
+        flowAPI,
+        onUpdate,
+        projectName,
+        saveMode: settings.saveMode || 'folder',
+        videoResolution: settings.videoResolution || '1080p',
+      }).catch(err => {
+        console.error('[handleVideoRetry] Unexpected error:', err)
+        onUpdate(item.id, 'error', { error: String(err?.message || err) })
+      })
+      return
+    }
+
+    // Slow path: no generationId/mediaId — reset to pending; user clicks Start Generation to regenerate
+    onUpdate(item.id, 'pending', { error: null })
+    toast.info(t('videoAutomation.needsRegen') || 'Reset — click Start Generation to retry')
+  }, [anyRunning, settings, flowAPI, framePairs, scenesHook, videoScenesHook, t])
+
   const handleStart = async (overrideStyleId = null) => {
     // 이미 실행 중이면 무시 (중지는 별도 버튼)
     if (isRunning || videoAutomation.isRunning) return
@@ -760,6 +849,7 @@ function App() {
               promptSource={ftvPromptSource}
               onPromptSourceChange={setFtvPromptSource}
               onShowSceneDetail={(scene) => setSelectedScene(scene)}
+              onVideoRetry={handleVideoRetry}
               disabled={anyRunning}
               t={t}
               galleryItems={galleryItems}
@@ -932,6 +1022,7 @@ function App() {
             items={videoScenes}
             mediaType="video"
             onShowDetail={(item) => setSelectedVideo(item)}
+            onVideoRetry={handleVideoRetry}
             selectable={true}
             onToggle={videoScenesHook.toggleSelect}
             onToggleAll={videoScenesHook.toggleSelectAll}
@@ -941,7 +1032,7 @@ function App() {
           />
         )}
         {activeTab === 'frame-to-video' && (
-          <ResultsTable items={framePairs} mediaType="frame-pair" onShowDetail={(item) => setSelectedVideo(item)} onClearMedia={(id) => setFramePairs(prev => prev.map(fp => fp.id === id ? { ...fp, base64: null, videoPath: null, status: 'pending' } : fp))} />
+          <ResultsTable items={framePairs} mediaType="frame-pair" onShowDetail={(item) => setSelectedVideo(item)} onVideoRetry={handleVideoRetry} onClearMedia={(id) => setFramePairs(prev => prev.map(fp => fp.id === id ? { ...fp, base64: null, videoPath: null, status: 'pending' } : fp))} />
         )}
         {activeTab === 'list' && (
           <ResultsTable

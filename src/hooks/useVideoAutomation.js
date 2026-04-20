@@ -13,6 +13,7 @@ import { useState, useCallback, useRef } from 'react'
 import { TIMING } from '../config/defaults'
 import { fileSystemAPI } from './useFileSystem'
 import { toast } from '../components/Toast'
+import { retryVideoDownload } from '../services/videoRecovery'
 
 // 유틸: 랜덤 대기
 const randomSleep = (min, max) =>
@@ -177,7 +178,8 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
     setIsPaused(false)
     setStatus('running')
 
-    // 처리할 아이템 목록 구성
+    // 처리할 아이템 목록 구성 — status/generationId/mediaId/videoPath 보존
+    // (download-only fast path 분류에 필요)
     let items = []
     switch (mode) {
       case 't2v':
@@ -187,6 +189,10 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
             id: s.id,
             prompt: s.prompt,
             videoSaveId: `t2v_${s.id.replace('vscene_', '')}`,
+            status: s.status,
+            generationId: s.generationId,
+            mediaId: s.mediaId,
+            videoPath: s.videoPath,
           }))
         break
       case 'i2v':
@@ -199,6 +205,10 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
             endMediaId: p._endMediaId || null,
             startSceneId: p.startSceneId,
             videoSaveId: `i2v_${p.id.replace('fp_', '')}`,
+            status: p.status,
+            generationId: p.generationId,
+            mediaId: p.mediaId,
+            videoPath: p.videoPath,
           }))
         break
     }
@@ -211,9 +221,69 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
       return
     }
 
+    // ═══════════════════════════════════════════
+    // Phase 0: 분류 — download-only fast path vs. 전체 재생성
+    // ═══════════════════════════════════════════
+    // error 상태 + generationId + mediaId + videoPath 없음 → 서버엔 비디오가 있으나
+    //   로컬 저장만 실패한 케이스. quota 소비 없이 재다운로드만 시도.
+    const downloadOnly = items.filter(it =>
+      it.status === 'error' && it.generationId && it.mediaId && !it.videoPath
+    )
+    const downloadOnlyIds = new Set(downloadOnly.map(it => it.id))
+    const freshGen = items.filter(it => !downloadOnlyIds.has(it.id))
+
     const batchStartedAt = Date.now()
     setProgress({ current: 0, total, percent: 0, errorCount: 0, startedAt: batchStartedAt })
     let videoErrorCount = 0
+    let redownloadedCount = 0
+
+    // ═══════════════════════════════════════════
+    // Phase 0 실행: download-only (parallel, capped at 5 concurrent)
+    // ═══════════════════════════════════════════
+    if (downloadOnly.length > 0) {
+      setStatusMessage(`⚡ Re-downloading ${downloadOnly.length} server-succeeded videos...`)
+      console.log(`[VideoAutomation] Phase 0: download-only for ${downloadOnly.length} items`)
+
+      const CONCURRENCY = 5
+      for (let i = 0; i < downloadOnly.length; i += CONCURRENCY) {
+        if (stopRequestedRef.current) break
+        await waitIfPaused()
+        const chunk = downloadOnly.slice(i, i + CONCURRENCY)
+        const results = await Promise.all(chunk.map(it => retryVideoDownload({
+          item: it,
+          flowAPI: { checkVideoStatus, fetchMedia, getAccessToken },
+          onUpdate: (id, newStatus, patch) => onItemUpdate?.(id, newStatus, patch),
+          projectName,
+          saveMode,
+          videoResolution,
+        }).catch(err => ({ success: false, error: String(err?.message || err) }))))
+
+        for (const r of results) {
+          if (r?.success) redownloadedCount++
+          else videoErrorCount++
+        }
+      }
+
+      console.log(`[VideoAutomation] Phase 0 done: ${redownloadedCount}/${downloadOnly.length} re-downloaded`)
+    }
+
+    // freshGen이 없으면 여기서 종료
+    if (freshGen.length === 0) {
+      setIsRunning(false)
+      setIsPaused(false)
+      setProgress({ current: total, total, percent: 100, errorCount: videoErrorCount, startedAt: batchStartedAt, endedAt: Date.now() })
+      if (stopRequestedRef.current) {
+        setStatus('stopped')
+        setStatusMessage(t('status.stopped'))
+      } else {
+        setStatus('done')
+        setStatusMessage(`✅ ${t('videoAutomation.done')} — ${redownloadedCount} re-downloaded`)
+      }
+      return
+    }
+
+    // freshGen 아이템들만 남은 파이프라인에서 처리하도록 items 재할당
+    items = freshGen
 
     // ═══════════════════════════════════════════
     // Phase 1: 순차 제출 (7~15초 간격, 완료 안 기다림)
@@ -277,13 +347,14 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
       if (stopRequestedRef.current) break
       await waitIfPaused()
 
-      // 진행률 표시
+      // 진행률 표시 (redownloadedCount 를 함께 반영)
       const doneCount = submissions.length - pending.size
-      setStatusMessage(`⏳ ${t('videoAutomation.polling') || 'Polling'} ${submissions.length} videos (${doneCount + completedCount} ${t('videoAutomation.complete') || 'complete'})`)
+      const overallDone = doneCount + completedCount + redownloadedCount
+      setStatusMessage(`⏳ ${t('videoAutomation.polling') || 'Polling'} ${submissions.length} videos (${overallDone} ${t('videoAutomation.complete') || 'complete'})`)
       setProgress({
-        current: doneCount + completedCount,
+        current: overallDone,
         total,
-        percent: Math.round(((doneCount + completedCount) / total) * 100),
+        percent: Math.round((overallDone / total) * 100),
         errorCount: videoErrorCount,
         startedAt: batchStartedAt
       })
@@ -363,7 +434,11 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
       setStatusMessage(t('status.stopped'))
     } else {
       setStatus('done')
-      setStatusMessage(`✅ ${t('videoAutomation.done')}`)
+      const parts = []
+      if (completedCount > 0) parts.push(`${completedCount} regenerated`)
+      if (redownloadedCount > 0) parts.push(`${redownloadedCount} re-downloaded`)
+      const tail = parts.length > 0 ? ` — ${parts.join(', ')}` : ''
+      setStatusMessage(`✅ ${t('videoAutomation.done')}${tail}`)
     }
   }, [isRunning, generateVideoT2V, generateVideoI2V, checkVideoStatus, upscaleVideo, fetchMedia, getAccessToken, t])
 

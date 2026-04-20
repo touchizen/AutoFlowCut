@@ -176,7 +176,7 @@ let nextPairId = 1
 
 export { GALLERY_PREFIX }
 
-export default function FrameToVideoPanel({ scenes, videoScenes = [], framePairs, onUpdate, promptSource = 'image', onPromptSourceChange, onShowSceneDetail, disabled, t, galleryItems, galleryLoading, onLoadGallery }) {
+export default function FrameToVideoPanel({ scenes, videoScenes = [], framePairs, onUpdate, promptSource = 'image', onPromptSourceChange, onShowSceneDetail, onVideoRetry, disabled, t, galleryItems, galleryLoading, onLoadGallery }) {
 
   // mediaId 있는 씬만 드롭다운에 표시
   const availableScenes = useMemo(
@@ -415,6 +415,23 @@ export default function FrameToVideoPanel({ scenes, videoScenes = [], framePairs
               {pair.status === 'generating' ? (
                 <span className="status generating">
                   <StopwatchIcon size={16} /> <ElapsedTime startedAt={pair.generatingStartedAt} endedAt={pair.generatingEndedAt} />
+                </span>
+              ) : pair.status === 'error' ? (
+                <span className="status error-wrap">
+                  <span className="status error" title={pair.error}>
+                    {STATUS_ICONS.error} {t(`frameToVideo.${pair.status}`)}
+                  </span>
+                  {onVideoRetry && !disabled && (
+                    <button
+                      type="button"
+                      className="retry-btn-inline"
+                      onClick={() => onVideoRetry(pair)}
+                      title={pair.error || t('actions.retryDownload') || 'Retry download'}
+                      style={{ marginLeft: '6px', padding: '2px 6px', border: '1px solid #888', borderRadius: '3px', background: 'transparent', cursor: 'pointer' }}
+                    >
+                      🔄
+                    </button>
+                  )}
                 </span>
               ) : (
                 <span className={`status ${pair.status || 'waiting'}`}>
