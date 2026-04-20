@@ -166,6 +166,7 @@ function SceneSelect({
 
 const STATUS_ICONS = {
   waiting: '⏳',
+  pending: '🔄',
   generating: '⚙️',
   complete: '✅',
   error: '❌',
