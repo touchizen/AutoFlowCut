@@ -816,6 +816,9 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
   // Video Automation
   videoAutomation: {
     requesting: 'Requesting video generation...',
+    submitting: 'Submitting',
+    waitingNext: 'Waiting before next submission',
+    allFailed: 'All submissions failed',
     polling: 'Waiting for video generation...',
     generating: 'Generating video',
     downloading: 'Downloading video...',
