@@ -9,7 +9,7 @@ import { DEFAULTS, RESOURCE } from '../config/defaults'
 import { findAutoStyle, resolveSceneStyle } from '../services/styleService'
 import { finalizeGeneratedImage } from '../services/imageFinalize'
 import { fileSystemAPI } from './useFileSystem'
-import { getTimestamp, generateProjectName } from '../utils/formatters'
+import { getTimestamp } from '../utils/formatters'
 import { cleanBase64 as stripBase64Prefix } from '../utils/urls'
 import { toast } from '../components/Toast'
 import { resetDOMSession, requestStopDOM } from '../utils/flowDOMClient'
@@ -320,8 +320,14 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
    * 자동화 시작
    */
   const start = useCallback(async (options = {}) => {
+    // projectName은 호출자(App.jsx의 ensureProjectName)가 항상 넘겨야 한다.
+    // 누락 시엔 새 autoflowcut_<ts> 폴더를 만들지 않고 'Untitled'로 폴백해
+    // 고아 폴더 생성을 차단한다(호출자 버그는 console.warn으로 드러냄).
+    if (!options.projectName) {
+      console.warn('[useAutomation] start() called without projectName — falling back to "Untitled"')
+    }
     const {
-      projectName = generateProjectName(),
+      projectName = 'Untitled',
       saveMode = 'folder',
       sceneIndices = null,
       imageBatchCount = 1,

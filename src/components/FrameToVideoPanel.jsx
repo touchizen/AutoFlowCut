@@ -172,7 +172,16 @@ const STATUS_ICONS = {
   error: '❌',
 }
 
-let nextPairId = 1
+// 기존 페어들에서 사용 중인 최대 fp_N을 찾아 다음 ID 반환
+// 모듈 스코프 카운터를 쓰면 프로젝트 전환/리로드 시 기존 저장된 ID와 충돌(중복 key)하므로
+// 항상 현재 framePairs를 기준으로 재계산한다.
+const getNextPairId = (pairs) => {
+  const maxId = (pairs || []).reduce((max, p) => {
+    const n = parseInt(String(p?.id || '').replace('fp_', ''), 10)
+    return Number.isFinite(n) && n > max ? n : max
+  }, 0)
+  return maxId + 1
+}
 
 export { GALLERY_PREFIX }
 
@@ -184,35 +193,61 @@ export default function FrameToVideoPanel({ scenes, videoScenes = [], framePairs
     [scenes]
   )
 
+  // 마운트 시점에 기존 저장된 framePairs에 중복 ID가 있으면 정제.
+  // 과거 버그(모듈 카운터 고아)로 저장된 프로젝트 데이터를 자동 복구한다.
+  useEffect(() => {
+    const ids = framePairs.map(p => p?.id)
+    if (ids.length === new Set(ids.filter(Boolean)).size && ids.every(Boolean)) return
+    console.warn('[FrameToVideoPanel] duplicate/empty framePair IDs detected — reassigning')
+    let counter = getNextPairId(framePairs)
+    const seen = new Set()
+    const fixed = framePairs.map(p => {
+      if (p?.id && !seen.has(p.id)) {
+        seen.add(p.id)
+        return p
+      }
+      let newId
+      do { newId = `fp_${counter++}` } while (seen.has(newId))
+      seen.add(newId)
+      return { ...p, id: newId }
+    })
+    onUpdate(fixed)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // 새로운 이미지 씬이 생기면 자동으로 프레임 페어 추가 (unselected)
+  // strict-mode 이중 실행에도 안전하도록 함수형 setter + 중복 ID 가드 사용
   const prevAvailableCountRef = useRef(availableScenes.length)
   useEffect(() => {
-    const usedStart = new Set(framePairs.map(p => p.startSceneId))
-    const unusedScenes = availableScenes.filter(s => !usedStart.has(s.id))
+    onUpdate(prev => {
+      const usedStart = new Set(prev.map(p => p.startSceneId))
+      const unusedScenes = availableScenes.filter(s => !usedStart.has(s.id))
 
-    if (unusedScenes.length === 0) {
-      prevAvailableCountRef.current = availableScenes.length
-      return
-    }
+      if (unusedScenes.length === 0) return prev
 
-    // 마운트 시 또는 새 이미지 씬 추가됐을 때만 실행
-    const newPairs = unusedScenes.map((scene) => {
-      const globalIdx = availableScenes.indexOf(scene)
-      const nextScene = globalIdx >= 0 ? availableScenes[globalIdx + 1] : null
-      return {
-        id: `fp_${nextPairId++}`,
-        startSceneId: scene.id,
-        endSceneId: nextScene?.id || '',
-        prompt: scene.prompt || '',
-        videoPrompt: '',
-        customPrompt: '',
-        status: 'waiting',
-        selected: false,
-      }
+      const existingIds = new Set(prev.map(p => p.id))
+      let nextId = getNextPairId(prev)
+      const newPairs = unusedScenes.map((scene) => {
+        let id
+        do { id = `fp_${nextId++}` } while (existingIds.has(id))
+        existingIds.add(id)
+        const globalIdx = availableScenes.indexOf(scene)
+        const nextScene = globalIdx >= 0 ? availableScenes[globalIdx + 1] : null
+        return {
+          id,
+          startSceneId: scene.id,
+          endSceneId: nextScene?.id || '',
+          prompt: scene.prompt || '',
+          videoPrompt: '',
+          customPrompt: '',
+          status: 'waiting',
+          selected: false,
+        }
+      })
+      return [...prev, ...newPairs]
     })
-
-    onUpdate([...framePairs, ...newPairs])
     prevAvailableCountRef.current = availableScenes.length
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [availableScenes.length]) // 이미지 씬 수가 바뀔 때만
 
   const toggleSelect = (id) => {
@@ -244,7 +279,7 @@ export default function FrameToVideoPanel({ scenes, videoScenes = [], framePairs
     onUpdate([
       ...framePairs,
       {
-        id: `fp_${nextPairId++}`,
+        id: `fp_${getNextPairId(framePairs)}`,
         startSceneId: nextStartId,
         endSceneId: nextEnd?.id || '',
         prompt: nextStart?.prompt || '',
@@ -262,11 +297,12 @@ export default function FrameToVideoPanel({ scenes, videoScenes = [], framePairs
 
     if (unusedScenes.length === 0) return
 
+    let nextId = getNextPairId(framePairs)
     const newPairs = unusedScenes.map((scene, i) => {
       const globalIdx = availableScenes.indexOf(scene)
       const nextScene = globalIdx >= 0 ? availableScenes[globalIdx + 1] : null
       return {
-        id: `fp_${nextPairId++}`,
+        id: `fp_${nextId++}`,
         startSceneId: scene.id,
         endSceneId: nextScene?.id || '',
         prompt: scene.prompt || '',

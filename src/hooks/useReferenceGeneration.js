@@ -5,7 +5,6 @@
 import { useState, useRef, useCallback } from 'react'
 import { RESOURCE, STYLE_PRESETS } from '../config/defaults'
 import { fileSystemAPI } from './useFileSystem'
-import { generateProjectName } from '../utils/formatters'
 import { checkFolderPermission, checkAuthToken } from '../utils/guards'
 import { cleanBase64, toDataURL } from '../utils/urls'
 import { tryUpscaleImage, extractThumbnailBase64 } from '../utils/imageProcessing'
@@ -120,7 +119,12 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     let filePath = null
     let savedDataUrl = displayUrl
     if (settings.saveMode === 'folder') {
-      const projectName = settings.projectName || generateProjectName()
+      // projectName 누락 방지: 호출 전에 App.jsx의 ensureProjectName()로 settings.projectName이
+      // 채워져 있어야 한다. 여기서는 방어적 폴백만 수행('Untitled'), 새 타임스탬프 폴더는 만들지 않음.
+      if (!settings.projectName) {
+        console.warn('[useReferenceGeneration] settings.projectName missing — falling back to "Untitled"')
+      }
+      const projectName = settings.projectName || 'Untitled'
       const refName = ref.name || `ref_${index + 1}`
       const metadata = { mediaId, caption, category: ref.category }
       const permission = await fileSystemAPI.ensurePermission()

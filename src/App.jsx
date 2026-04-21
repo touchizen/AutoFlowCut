@@ -23,7 +23,6 @@ import { useFlowEvents } from './hooks/useFlowEvents'
 import { useMcpServer } from './hooks/useMcpServer'
 import { syncVideosIntoScenes } from './services/mediaSync'
 import { retryVideoDownload } from './services/videoRecovery'
-import { generateProjectName } from './utils/formatters'
 import { detectFileType, detectCSVType, parseCSVToScenes, parseSRTToScenes } from './utils/parsers'
 import { checkFolderPermission } from './utils/guards'
 import { collectTagErrors } from './utils/tagMatch'
@@ -74,7 +73,7 @@ function App() {
   const [pendingStartOptions, setPendingStartOptions] = useState(null)
 
   // Settings (초기화 + localStorage 동기화)
-  const { settings, setSettings, updateSetting } = useAppSettings()
+  const { settings, setSettings, updateSetting, ensureProjectName } = useAppSettings()
 
   // Flow 이벤트 (로그인 만료, 레이아웃 보정)
   useFlowEvents({ onLoginExpired: () => setShowLoginExpiredModal(true) })
@@ -377,7 +376,7 @@ function App() {
 
     // 타입 판별: framePair는 pair.id가 fp_*, videoScene은 vscene_*
     const isFramePair = typeof item.id === 'string' && item.id.startsWith('fp_')
-    const projectName = settings.projectName || generateProjectName()
+    const projectName = ensureProjectName()
 
     const onUpdate = (id, newStatus, result = {}) => {
       if (isFramePair) {
@@ -482,7 +481,7 @@ function App() {
       window.electronAPI?.setLayout?.({ mode: 'split-left', ratio: 0.5 })
     }
 
-    const projectName = settings.projectName || generateProjectName()
+    const projectName = ensureProjectName()
 
     switch (activeTab) {
       case 'text':
@@ -874,7 +873,7 @@ function App() {
               onClearAll={scenesHook.clearScenes}
               defaultDuration={settings.defaultDuration}
               disabled={anyRunning}
-              projectName={settings.projectName || generateProjectName()}
+              projectName={ensureProjectName()}
               onGenerate={handleGenerateScene}
               generatingSceneId={generatingSceneId}
               references={references}
@@ -1013,7 +1012,7 @@ function App() {
               const effectiveSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
                 ? settings.seedNo : null
               automation.retryScene(id, {
-                projectName: settings.projectName || generateProjectName(),
+                projectName: ensureProjectName(),
                 saveMode: settings.saveMode,
                 imageBatchCount: settings.imageBatchCount || 1,
                 imageUpscale: settings.imageUpscale || 'off',
@@ -1050,7 +1049,7 @@ function App() {
               const effectiveSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
                 ? settings.seedNo : null
               automation.retryScene(id, {
-                projectName: settings.projectName || generateProjectName(),
+                projectName: ensureProjectName(),
                 saveMode: settings.saveMode,
                 imageBatchCount: settings.imageBatchCount || 1,
                 imageUpscale: settings.imageUpscale || 'off',
@@ -1075,7 +1074,7 @@ function App() {
           onGenerate={handleGenerateScene}
           isGenerating={generatingSceneId === selectedScene.id}
           t={t}
-          projectName={settings.projectName || generateProjectName()}
+          projectName={ensureProjectName()}
         />
       )}
 
@@ -1085,7 +1084,7 @@ function App() {
           video={selectedVideo}
           onClose={() => setSelectedVideo(null)}
           t={t}
-          projectName={settings.projectName || generateProjectName()}
+          projectName={ensureProjectName()}
         />
       )}
 
@@ -1119,7 +1118,7 @@ function App() {
         isOpen={showExportModal}
         onClose={() => setShowExportModal(false)}
         onExport={handleExportConfirm}
-        projectName={settings.projectName || generateProjectName()}
+        projectName={ensureProjectName()}
         loading={exporting}
         exportPhase={exportPhase}
         hasSubtitles={scenes.some(s => s.subtitle && s.subtitle.trim())}

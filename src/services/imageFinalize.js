@@ -7,7 +7,7 @@
 
 import { RESOURCE } from '../config/defaults'
 import { fileSystemAPI } from '../hooks/useFileSystem'
-import { getImageSizeFromBase64, generateProjectName } from '../utils/formatters'
+import { getImageSizeFromBase64 } from '../utils/formatters'
 import { tryUpscaleImage } from '../utils/imageProcessing'
 
 /**
@@ -49,7 +49,12 @@ export async function finalizeGeneratedImage({
   // 저장
   let imagePath = null
   if (saveMode === 'folder') {
-    const name = projectName || generateProjectName()
+    // projectName은 호출자(useAutomation/useSceneGeneration)가 넘겨야 한다.
+    // 누락 시엔 고아 autoflowcut_<ts> 폴더 대신 'Untitled'로 폴백.
+    if (!projectName) {
+      console.warn(`${logPrefix} projectName missing — falling back to "Untitled"`)
+    }
+    const name = projectName || 'Untitled'
     const metadata = { prompt, mediaId, model: 'flow', timestamp: Date.now() }
     const saveResult = await fileSystemAPI.saveImage(name, sceneId, imageData, 'flow', metadata)
     if (saveResult.success) {

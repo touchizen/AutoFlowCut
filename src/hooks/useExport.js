@@ -9,7 +9,6 @@
 
 import { useState } from 'react'
 import { fileSystemAPI } from './useFileSystem'
-import { generateProjectName } from '../utils/formatters'
 import { toast } from '../components/Toast'
 import useI18n from './useI18n'
 
@@ -96,8 +95,11 @@ export function useExport({
 
       // capcut.js가 기대하는 project 구조로 변환
       // 이미지 트랙(기본) + 영상 트랙(선택) 분리 구조
+      if (!settings.projectName) {
+        console.warn('[useExport] settings.projectName missing — falling back to "Untitled"')
+      }
       const project = {
-        name: settings.projectName || generateProjectName(),
+        name: settings.projectName || 'Untitled',
         format: settings.aspectRatio === '9:16' ? 'short' : 'landscape',
         scenes: validScenes.map(s => {
           const sceneDuration = s.duration || settings.defaultDuration || 3
