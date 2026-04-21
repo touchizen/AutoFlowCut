@@ -293,8 +293,6 @@ POST /api/generate         — 이미지 생성 트리거
 
 MIT License
 
-**Author:** Gookwhan Ahn (gordon.ahn@gmail.com)
-
 ---
 
 *면책: 이 앱은 Touchizen에서 독립적으로 개발한 제품으로, Google 또는 ByteDance(CapCut)와 제휴·후원·인증 관계가 없습니다.*

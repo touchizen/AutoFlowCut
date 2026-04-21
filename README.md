@@ -293,8 +293,6 @@ POST /api/generate         — Trigger image generation
 
 MIT License
 
-**Author:** Gookwhan Ahn (gordon.ahn@gmail.com)
-
 ---
 
 *Disclaimer: This app is an independent product developed by Touchizen and is not affiliated with, endorsed by, or sponsored by Google or ByteDance (CapCut).*
