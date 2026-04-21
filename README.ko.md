@@ -285,7 +285,7 @@ POST /api/generate         — 이미지 생성 트리거
 ## 링크
 
 - **홈페이지**: [touchizen.com](https://touchizen.com)
-- **YouTube**: [@touchizen](https://youtube.com/@touchizen)
+- **Youtube**: [@터치즌](https://youtube.com/@터치즌)
 - **Discord**: [touchizen](https://discord.gg/DTMMs8TZDN)
 - **문의**: gordon.ahn@touchizen.com
 
