@@ -553,28 +553,44 @@ export function registerFilesystemIPC(ipcMain) {
     try {
       const resourceDir = path.join(workFolder, project, resourceType)
       const historyDir = path.join(resourceDir, 'history')
-      const currentPath = path.join(resourceDir, currentFilename)
       const historyPath = path.join(historyDir, historyFilename)
 
       if (!(await pathExists(historyPath))) {
         return { success: false, error: 'History file not found' }
       }
 
-      // Back up the current file to history as "before-restore"
-      if (await pathExists(currentPath)) {
-        const ext = path.extname(currentFilename).slice(1)
-        const baseName = path.basename(currentFilename, `.${ext}`)
-        const timestamp = getTimestamp()
-        const backupFilename = `${baseName}_${timestamp}_before-restore.${ext}`
-        const backupPath = path.join(historyDir, backupFilename)
-        await fs.mkdir(historyDir, { recursive: true })
-        await fs.copyFile(currentPath, backupPath)
+      // 대상 확장자는 히스토리 파일의 확장자를 따른다.
+      // (caller가 .png를 넘겨도 히스토리가 .jpg면 .jpg로 저장 — 내용-확장자 불일치 방지)
+      const historyExt = path.extname(historyFilename).slice(1).toLowerCase()
+      const callerExt = path.extname(currentFilename).slice(1)
+      const baseName = path.basename(currentFilename, callerExt ? `.${callerExt}` : '')
+      const targetFilename = `${baseName}.${historyExt}`
+      const currentPath = path.join(resourceDir, targetFilename)
+
+      await fs.mkdir(historyDir, { recursive: true })
+
+      // Back up any existing files with the same basename (regardless of extension)
+      // Then remove them so only one canonical file remains after restore.
+      const KNOWN_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'gif']
+      for (const ext of KNOWN_EXTS) {
+        const candidate = path.join(resourceDir, `${baseName}.${ext}`)
+        if (await pathExists(candidate)) {
+          const timestamp = getTimestamp()
+          const backupFilename = `${baseName}_${timestamp}_before-restore.${ext}`
+          const backupPath = path.join(historyDir, backupFilename)
+          await fs.copyFile(candidate, backupPath)
+          if (ext !== historyExt) {
+            // Remove stale file with different extension to avoid leaving
+            // scene_1.png next to a fresh scene_1.jpg (would confuse getResourcePath).
+            await fs.unlink(candidate)
+          }
+        }
       }
 
-      // Copy history file to the current location
+      // Copy history file to the canonical location
       await fs.copyFile(historyPath, currentPath)
 
-      return { success: true }
+      return { success: true, path: currentPath, filename: targetFilename }
     } catch (error) {
       return { success: false, error: error.message }
     }

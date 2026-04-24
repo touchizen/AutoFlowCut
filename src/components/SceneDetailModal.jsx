@@ -66,13 +66,40 @@ export default function SceneDetailModal({
     loadHistory()
   }, [projectName, scene.id, shouldReloadHistory])
   
-  // 히스토리 이미지 선택
-  const handleRestoreHistory = (historyItem) => {
-    setEditData(prev => ({
-      ...prev,
-      image: historyItem.data,
-      imagePath: null  // 히스토리에서 복원 시 새 파일로 간주
-    }))
+  // 히스토리 이미지 선택 — 디스크의 씬 파일을 히스토리 파일로 덮어쓰고 imagePath를 세팅.
+  // imagePath를 null로 두면 export 시 base64 fallback 브랜치를 타서 CapCut에
+  // "media/image_scene_N.jpg" placeholder 경로가 박히고 → Media Not Found 발생.
+  const handleRestoreHistory = async (historyItem) => {
+    if (!projectName || !scene.id) {
+      toast.error(t('imageHistory.restoreFailed') || 'Restore failed')
+      return
+    }
+    try {
+      const histExt = historyItem.filename?.match(/\.(png|jpg|jpeg|webp|gif)$/i)?.[1]?.toLowerCase() || 'png'
+      const currentFilename = `${scene.id}.${histExt}`
+
+      const result = await fileSystemAPI.restoreFromHistory(
+        projectName,
+        RESOURCE.SCENES,
+        currentFilename,
+        historyItem.filename
+      )
+
+      if (!result.success) {
+        toast.error(t('imageHistory.restoreFailed') || result.error || 'Restore failed')
+        return
+      }
+
+      setEditData(prev => ({
+        ...prev,
+        image: historyItem.data,
+        imagePath: result.path || prev.imagePath,
+        status: 'done',
+      }))
+    } catch (err) {
+      console.error('[SceneDetail] Restore history failed:', err)
+      toast.error(err.message)
+    }
   }
   
   // 저장
