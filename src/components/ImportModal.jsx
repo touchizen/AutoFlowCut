@@ -28,9 +28,9 @@ export default function ImportModal({ onImport, onImportAudio, onClose }) {
       description: t('import.textDesc'),
       accept: '.txt',
       hint: t('import.textHint'),
-      guideUrl: `${guideBaseUrl}/#plain-text`,
+      guideUrl: `${guideBaseUrl}/import-guide.html#plain-text`,
       sampleUrl: `${guideBaseUrl}/samples/sample-prompts.txt`,
-      aiPromptUrl: `${guideBaseUrl}/#ai-csv-prompt`
+      aiPromptUrl: `${guideBaseUrl}/import-guide.html#ai-text-prompt`
     },
     {
       id: 'csv',
@@ -39,9 +39,9 @@ export default function ImportModal({ onImport, onImportAudio, onClose }) {
       description: t('import.csvDesc'),
       accept: '.csv',
       hint: 'prompt, subtitle, characters, scene_tag, style_tag, duration',
-      guideUrl: `${guideBaseUrl}/#scene-csv`,
+      guideUrl: `${guideBaseUrl}/import-guide.html#scene-csv`,
       sampleUrl: `${guideBaseUrl}/samples/sample-scenes.csv`,
-      aiPromptUrl: `${guideBaseUrl}/#ai-csv-prompt`
+      aiPromptUrl: `${guideBaseUrl}/import-guide.html#ai-csv-prompt`
     },
     {
       id: 'reference',
@@ -50,9 +50,9 @@ export default function ImportModal({ onImport, onImportAudio, onClose }) {
       description: t('import.refDesc'),
       accept: '.csv',
       hint: 'name, type, prompt',
-      guideUrl: `${guideBaseUrl}/#reference-csv`,
+      guideUrl: `${guideBaseUrl}/import-guide.html#reference-csv`,
       sampleUrl: `${guideBaseUrl}/samples/sample-references.csv`,
-      aiPromptUrl: `${guideBaseUrl}/#ai-csv-prompt`
+      aiPromptUrl: `${guideBaseUrl}/import-guide.html#ai-csv-prompt`
     },
     {
       id: 'srt',
@@ -61,9 +61,9 @@ export default function ImportModal({ onImport, onImportAudio, onClose }) {
       description: t('import.srtDesc'),
       accept: '.srt',
       hint: t('import.srtHint'),
-      guideUrl: `${guideBaseUrl}/#srt-subtitle`,
+      guideUrl: `${guideBaseUrl}/import-guide.html#srt-subtitle`,
       sampleUrl: `${guideBaseUrl}/samples/sample-subtitles.srt`,
-      aiPromptUrl: `${guideBaseUrl}/#tts-srt`
+      aiPromptUrl: `${guideBaseUrl}/import-guide.html#tts-srt`
     }
   ]
 
