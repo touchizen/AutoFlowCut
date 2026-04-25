@@ -22,6 +22,10 @@ For each wave from current to target:
 │
 ├─ Load wave reference doc: docs/{lang}/W{N}-*.md (lang=ko for yadam, lang=en for dark-history)
 │
+├─ ▶ PRINT WAVE-START BANNER (see "Wave banners" section below)
+│   - Banner language follows genre: yadam → KO, dark-history → EN
+│   - Print to chat output BEFORE spawning the subagent
+│
 ├─ Predecessor input contract (applies for N ≥ 2):
 │   For each predecessor wave M ∈ [1..N-1]:
 │     - W_progress.json waves.W{M}.status MUST === 'done'.
@@ -60,12 +64,141 @@ For each wave from current to target:
 │   - STATE.md wave row "done" ↔ W_progress.json status 'done'
 │   - If mismatched → fix and warn
 │
+├─ ▶ PRINT WAVE-DONE BANNER (see "Wave banners" section below)
+│   - Banner language follows genre: yadam → KO, dark-history → EN
+│   - Print AFTER verification + sanity-check pass
+│
 ├─ Special gate check:
 │   - After W3: 🛑 AskUserQuestion "대본을 확정하시겠습니까?"
 │   - User must confirm before W4
 │
 └─ Next wave
 ```
+
+---
+
+**Wave banners** (orchestrator emits to chat between every wave; do NOT skip)
+
+The orchestrator MUST print one START banner before spawning each wave's subagent
+and one DONE banner after the completion checks pass. Banners give the user a
+visible heartbeat across the long pipeline. **Use the banner text verbatim** — do
+not reword. Pick the language block that matches the genre (yadam=ko, dark-history=en).
+
+**Wave name table** (use these exact labels in the banner)
+
+| Wave | KO (yadam)                                   | EN (dark-history)                          |
+|------|----------------------------------------------|--------------------------------------------|
+| W1   | 스토리 디자인 (분석/팩트체크/자료수집)        | Story design (analysis/fact-check/research) |
+| W2   | 시놉시스 + 프리플라이트                       | Synopsis + preflight                        |
+| W3   | 대본 작성 + 리뷰                              | Script writing + review                     |
+| W4   | 프로덕션 (나레이션/대사/SFX 추출)             | Production (narration/dialogue/SFX)         |
+| W5   | TTS + SFX + SRT 자막                          | TTS + SFX + SRT subtitles                   |
+| W6   | 스토리보드 CSV                                | Storyboard CSV                              |
+| W7   | 이미지 생성 + CapCut 내보내기                 | Image generation + CapCut export            |
+| W8   | 업로드 정보 (제목/설명/태그)                   | Upload info (title/description/tags)        |
+
+**Wave I/O contract** (canonical inputs/outputs per wave — banner auto-fills from this)
+
+This table is the single source of truth for what each wave reads and writes.
+The orchestrator MUST consult this table to populate the "입력 / Inputs" and
+"출력 예정 / Outputs" lines of the START banner. The DONE banner's "실제 출력
+/ Actual outputs" line is populated by listing files in the episode directory
+that match the output patterns AND were touched within the wave's runtime.
+
+Notation:
+- `{title}` = episode title slug from STATE.md
+- `{part}` = `1`/`2` for split episodes; absent for single-part
+- Trailing `/` denotes a directory
+- `(none)` means the wave has no predecessor file inputs (W1 only)
+
+| Wave | Inputs (filenames)                                                                                | Outputs (filenames)                                                                                          |
+|------|--------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------|
+| W1   | (none) — only `STATE.md` (topic)                                                                  | `01_분석.md`, `02_팩트체크.md`, `03_자료수집.md`                                                              |
+| W2   | `01_분석.md`, `02_팩트체크.md`, `03_자료수집.md`                                                   | `04_시놉시스.md`, `05_프리플라이트.md`                                                                        |
+| W3   | `04_시놉시스.md`, `05_프리플라이트.md`, `02_팩트체크.md`                                            | `{title}_기.md`, `{title}_승.md`, `{title}_전.md`, `{title}_결.md`, `07_검토.md`                              |
+| W4   | `{title}_기.md`, `{title}_승.md`, `{title}_전.md`, `{title}_결.md`                                 | `narration_{part}.txt`, `dialogs_{part}.json`, `08_sfx_목록.md`                                              |
+| W5   | `narration_{part}.txt`, `dialogs_{part}.json`, `08_sfx_목록.md`, `tts_settings.md`                  | `segments/`, `final_{part}.mp3`, `final_{part}.srt`, `media/`, `tts_settings.md` (updated)                   |
+| W6   | `final_{part}.srt`, `narration_{part}.txt`, `{title}_*.md` (script), `08_sfx_목록.md`              | `references.csv`, `{title}_scenes.csv`                                                                       |
+| W7   | `references.csv`, `{title}_scenes.csv`, `final_{part}.mp3`, `final_{part}.srt`                     | AutoFlowCut images (in workspace), CapCut project (`{title}` draft folder)                                   |
+| W8   | `04_시놉시스.md`, `{title}_*.md` (script), `{title}_scenes.csv`                                   | `11_업로드정보.json`                                                                                          |
+
+Fallback: if a wave reference doc (`docs/{lang}/W{N}-*.md`) lists additional or
+different files, the wave doc takes precedence — log a warning and use the doc's
+list. The table above is the default contract.
+
+**Banner truncation rule**: if the inputs or outputs list contains more than 5
+filenames, show the first 4 and append `…외 N개` (KO) / `…+N more` (EN), where
+N is the remaining count. Directories count as one item.
+
+**START banner — KO (yadam)**
+```
+══════════════════════════════════════════════════════════
+ STORY ENGINE ▸ Wave {N}/8 ▸ {KO 단계명}
+══════════════════════════════════════════════════════════
+ 시작 시각  : {YYYY-MM-DD HH:MM}
+ 이전 단계  : {W{N-1} 한 줄 요약 — N=1이면 "(없음)"}
+ 이번 단계  : {wave reference doc의 1-line 목적 요약}
+ 입력       : {Wave I/O 표의 Inputs — 파일명만, 5개 초과 시 truncation}
+ 출력 예정  : {Wave I/O 표의 Outputs — 파일명만, 5개 초과 시 truncation}
+══════════════════════════════════════════════════════════
+```
+
+**START banner — EN (dark-history)**
+```
+══════════════════════════════════════════════════════════
+ STORY ENGINE ▸ Wave {N}/8 ▸ {EN step name}
+══════════════════════════════════════════════════════════
+ Started   : {YYYY-MM-DD HH:MM}
+ Previous  : {W{N-1} one-line summary — "(none)" when N=1}
+ This step : {one-line purpose pulled from wave reference doc}
+ Inputs    : {Wave I/O table Inputs — filenames only, truncate >5}
+ Outputs   : {Wave I/O table Outputs — filenames only, truncate >5}
+══════════════════════════════════════════════════════════
+```
+
+**DONE banner — KO (yadam)**
+```
+──────────────────────────────────────────────────────────
+ ✓ Wave {N}/8 완료 — {review_rounds_used} round,
+   issues {issues_found}, 소요 {duration}
+   실제 출력  : {디스크에 실제 생성된 파일명 — 5개 초과 시 truncation}
+──────────────────────────────────────────────────────────
+```
+
+**DONE banner — EN (dark-history)**
+```
+──────────────────────────────────────────────────────────
+ ✓ Wave {N}/8 done — {review_rounds_used} round(s),
+   {issues_found} issue(s), took {duration}
+   Actual    : {actual filenames created on disk — truncate >5}
+──────────────────────────────────────────────────────────
+```
+
+**Failure / escalation banner** (replace the DONE banner if the wave fails after retry)
+```
+──────────────────────────────────────────────────────────
+ ✗ Wave {N}/8 ESCALATE — {reason}
+   누락 출력 / Missing : {expected outputs that were NOT produced}
+   참고 / See          : {paths to logs / SUMMARY.md / W_progress.json}
+──────────────────────────────────────────────────────────
+```
+
+Format rules:
+- Box-drawing characters: `══` for START (heavy), `──` for DONE (light). Width ~58 cols.
+- All time values use the user's local timezone in `YYYY-MM-DD HH:MM` format.
+- `{duration}` is computed as `completed_at - started_at`, formatted as `Hh Mm Ss` /
+  `H시간 M분 S초`. Drop zero leading units (e.g. `2분 13초`, `2m 13s`).
+- File lists: filenames only (no paths). Comma-separated. Apply 5-item truncation rule.
+- The DONE banner's "실제 출력 / Actual" list is computed by `listdir(episode_dir)`
+  filtered to files matching the wave's expected output patterns AND with mtime
+  ≥ wave start time. If a file pattern is fulfilled by multiple files (e.g.
+  `{title}_*.md` matches 4 files), all of them are listed individually.
+- If "실제 출력" diverges from "출력 예정" (missing or extra files), the
+  orchestrator logs a one-line warning before the DONE banner:
+  `⚠ 출력 불일치: 예정 X개 / 실제 Y개 — {missing/extra 파일명}`
+- Banners are plain text in the chat — do NOT wrap in code fences when printed
+  during execution (the fences shown above are for this spec doc only).
+- If genre cannot be determined from STATE.md, default to KO.
 
 **Step 3: Wave-specific subagent prompts**
 
