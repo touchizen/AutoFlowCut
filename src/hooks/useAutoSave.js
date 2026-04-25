@@ -14,6 +14,7 @@ import { TIMING } from '../config/defaults'
  * @param {Array} params.references
  * @param {Array} params.videoScenes
  * @param {Array} params.framePairs
+ * @param {string|null} [params.selectedStyleRefId] - 현재 선택된 스타일 (변경 시 자동 저장)
  * @param {object} params.settings - { saveMode, projectName }
  * @param {number} params.generatingRefsCount - 생성 중인 레퍼런스 수
  * @param {boolean} params.isRunning - 자동화 실행 중 여부
@@ -22,6 +23,7 @@ import { TIMING } from '../config/defaults'
  */
 export function useAutoSave({
   scenes, references, videoScenes, framePairs,
+  selectedStyleRefId = null,
   settings, generatingRefsCount, isRunning,
   isRestoringRef, saveCurrentProject
 }) {
@@ -37,5 +39,5 @@ export function useAutoSave({
       }, TIMING.AUTO_SAVE_DEBOUNCE)
       return () => clearTimeout(timer)
     }
-  }, [scenes, references, videoScenes, framePairs, settings.projectName, settings.saveMode, generatingRefsCount, isRunning])
+  }, [scenes, references, videoScenes, framePairs, selectedStyleRefId, settings.projectName, settings.saveMode, generatingRefsCount, isRunning])
 }

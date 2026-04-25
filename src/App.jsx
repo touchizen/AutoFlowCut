@@ -151,6 +151,7 @@ function App() {
     settings, setSettings, scenes, references, setScenes, setReferences,
     videoScenes, setVideoScenes,
     framePairs, setFramePairs,
+    selectedStyleRefId, setSelectedStyleRefId,
     openSettings,
     onAudioSwitch: (audioPath) => audioSwitchRef.current?.(audioPath),
     flowAPI,
@@ -245,6 +246,7 @@ function App() {
   // Auto-save project data (debounce)
   useAutoSave({
     scenes, references, videoScenes, framePairs,
+    selectedStyleRefId,
     settings, generatingRefsCount: generatingRefs.length,
     isRunning, isRestoringRef, saveCurrentProject
   })

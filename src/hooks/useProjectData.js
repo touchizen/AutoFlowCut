@@ -173,6 +173,7 @@ async function loadProjectWithImages(projectName) {
     videoScenes: finalVideoScenes,
     framePairs: finalFramePairs,
     audioFolderPath: result.data.audioFolderPath || null,
+    selectedStyleRefId: result.data.selectedStyleRefId || null,
   }
 }
 
@@ -181,7 +182,7 @@ async function loadProjectWithImages(projectName) {
  * - 이미지 데이터(base64)는 제외하고 메타데이터만 저장
  * - 이미지는 이미 별도 파일로 저장됨 (images/, references/)
  */
-async function saveCurrentProject(settings, scenes, references, videoScenes = [], framePairs = []) {
+async function saveCurrentProject(settings, scenes, references, videoScenes = [], framePairs = [], selectedStyleRefId = null) {
   if (!settings.projectName || settings.saveMode !== 'folder') return
   const exists = await fileSystemAPI.projectExists(settings.projectName)
   if (!exists) return
@@ -207,7 +208,8 @@ async function saveCurrentProject(settings, scenes, references, videoScenes = []
     videoScenes: videoScenesWithoutMedia,
     framePairs: framePairsWithoutMedia,
     settings: { aspectRatio: settings.aspectRatio, defaultDuration: settings.defaultDuration },
-    audioFolderPath
+    audioFolderPath,
+    selectedStyleRefId
   })
 }
 
@@ -216,6 +218,7 @@ export function useProjectData({
   scenes, references, setScenes, setReferences,
   videoScenes, setVideoScenes,
   framePairs, setFramePairs,
+  selectedStyleRefId = null, setSelectedStyleRefId = null,
   openSettings,
   onAudioSwitch,
   flowAPI = null,
@@ -283,6 +286,7 @@ export function useProjectData({
         setReferences(loaded.references)
         setVideoScenes?.(loaded.videoScenes || [])
         setFramePairs?.(loaded.framePairs || [])
+        setSelectedStyleRefId?.(loaded.selectedStyleRefId || null)
         setSettings(s => ({ ...s, projectName: prevProjectName }))
         console.log('[App] Auto-restore complete:', prevProjectName,
           `(${loaded.scenes.filter(s => s.image || s.imagePath).length} images, ${loaded.scenes.filter(s => s.subtitle).length} subtitles)`)
@@ -309,7 +313,7 @@ export function useProjectData({
     isRestoringRef.current = true
     setProjectLoading(true)
     // 1. 현재 프로젝트 데이터 저장
-    await saveCurrentProject(settings, scenes, references, videoScenes, framePairs)
+    await saveCurrentProject(settings, scenes, references, videoScenes, framePairs, selectedStyleRefId)
 
     // 2. 새 프로젝트 데이터 로드
     let audioPath = null
@@ -321,6 +325,7 @@ export function useProjectData({
         setReferences(loaded.references)
         setVideoScenes?.(loaded.videoScenes || [])
         setFramePairs?.(loaded.framePairs || [])
+        setSelectedStyleRefId?.(loaded.selectedStyleRefId || null)
         audioPath = loaded.audioFolderPath
         console.log('[App] Project loaded:', newProjectName)
         // In-flight 비디오 복구 (generationId 있지만 videoPath 없는 framePair들)
@@ -330,6 +335,7 @@ export function useProjectData({
         setReferences([])
         setVideoScenes?.([])
         setFramePairs?.([])
+        setSelectedStyleRefId?.(null)
         console.log('[App] Empty project:', newProjectName)
       }
     } else {
@@ -337,6 +343,7 @@ export function useProjectData({
       setReferences([])
       setVideoScenes?.([])
       setFramePairs?.([])
+      setSelectedStyleRefId?.(null)
       console.log('[App] New project created:', newProjectName)
     }
 
@@ -354,7 +361,7 @@ export function useProjectData({
   return {
     addPendingSave,
     handleProjectChange,
-    saveCurrentProject: () => saveCurrentProject(settings, scenes, references, videoScenes, framePairs),
+    saveCurrentProject: () => saveCurrentProject(settings, scenes, references, videoScenes, framePairs, selectedStyleRefId),
     isRestoringRef,  // auto-save 가드용
     projectLoading   // 로딩 오버레이용
   }
