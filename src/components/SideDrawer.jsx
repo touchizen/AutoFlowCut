@@ -68,6 +68,14 @@ const getGuideUrl = (lang) => {
   return `https://touchizen.com/guide/${langCode}/autoflowcut`
 }
 
+// YouTube 채널 URL (한국어는 @터치즌, 그 외는 @touchizen)
+// 한글 그대로 둬서 툴팁에 가독성 있게 표시 — 브라우저/shell.openExternal이 열 때 자동 인코딩.
+const getYouTubeUrl = (lang) => {
+  return lang === 'ko'
+    ? 'https://youtube.com/@터치즌'
+    : 'https://youtube.com/@touchizen'
+}
+
 export function SideDrawer({ isOpen, onClose }) {
   const { t, lang } = useI18n()
   const [tooltip, setTooltip] = useState({ text: null, position: null })
@@ -105,7 +113,7 @@ export function SideDrawer({ isOpen, onClose }) {
     {
       icon: <YouTubeIcon />,
       label: t('drawer.youtube'),
-      url: 'https://youtube.com/@touchizen',
+      url: getYouTubeUrl(lang),
       description: t('drawer.youtubeDesc')
     },
     {
