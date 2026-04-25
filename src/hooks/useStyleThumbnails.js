@@ -15,7 +15,25 @@ const randomDelay = () => new Promise(r => setTimeout(r, 1000 + Math.random() * 
 
 // 번들된 썸네일 fallback 로드 (public/style-thumbnails/) — blob URL 사용
 // Vite dev server가 missing 파일에 SPA fallback(index.html)을 반환하므로
-// Content-Type 을 반드시 검증해서 실제 이미지만 허용
+// Content-Type 을 반드시 검증해서 실제 이미지만 허용.
+// 확장자는 jpg → png → webp 순으로 시도 (실제 포맷 다양성 대응)
+const BUNDLED_THUMB_EXTS = ['jpg', 'png', 'webp']
+
+async function fetchFirstAvailable(id) {
+  for (const ext of BUNDLED_THUMB_EXTS) {
+    try {
+      const res = await fetch(`./style-thumbnails/${id}.${ext}`)
+      if (!res.ok) continue
+      const contentType = res.headers.get('content-type') || ''
+      if (!contentType.startsWith('image/')) continue
+      const blob = await res.blob()
+      if (blob.size === 0) continue
+      return blob
+    } catch {}
+  }
+  return null
+}
+
 async function loadBundledThumbnails(existingIds = []) {
   const allStyles = STYLE_PRESETS?.styles || []
   const missingStyles = allStyles.filter(s => !existingIds.includes(s.id))
@@ -24,16 +42,8 @@ async function loadBundledThumbnails(existingIds = []) {
   const bundled = {}
   await Promise.all(
     missingStyles.map(async (style) => {
-      try {
-        const res = await fetch(`./style-thumbnails/${style.id}.png`)
-        if (!res.ok) return
-        const contentType = res.headers.get('content-type') || ''
-        // 이미지가 아니면 (e.g., SPA fallback HTML) 무시
-        if (!contentType.startsWith('image/')) return
-        const blob = await res.blob()
-        if (blob.size === 0) return
-        bundled[style.id] = URL.createObjectURL(blob)
-      } catch {}
+      const blob = await fetchFirstAvailable(style.id)
+      if (blob) bundled[style.id] = URL.createObjectURL(blob)
     })
   )
   if (Object.keys(bundled).length > 0) {

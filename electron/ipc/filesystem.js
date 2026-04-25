@@ -776,18 +776,45 @@ export function registerFilesystemIPC(ipcMain) {
   })
 
   // ----------------------------------------------------------
+  // Style thumbnail helpers
+  //   다양한 이미지 포맷(jpg/png/webp)을 실제 데이터에 맞춰 저장/로드
+  // ----------------------------------------------------------
+  const THUMB_EXT_REGEX = /\.(png|jpg|jpeg|webp)$/i
+  const THUMB_FILE_REGEX = /^(.+)\.(png|jpg|jpeg|webp)$/i
+
+  // ----------------------------------------------------------
   // 19. fs:save-style-thumbnail — 스타일 프리셋 썸네일 저장 (전역 캐시)
-  //     저장 위치: {userData}/style-thumbnails/{presetId}.png
+  //     저장 위치: {userData}/style-thumbnails/{presetId}.{실제포맷}
+  //     base64 prefix(data:image/jpeg;base64,...)에서 포맷 자동 추출
   // ----------------------------------------------------------
   ipcMain.handle('fs:save-style-thumbnail', async (_event, { presetId, data }) => {
     try {
       const thumbDir = path.join(app.getPath('userData'), 'style-thumbnails')
       await fs.mkdir(thumbDir, { recursive: true })
 
+      // base64 prefix에서 실제 포맷 추출 (image/jpeg → jpg)
+      const match = data.match(/^data:image\/(\w+);base64,/)
+      const rawExt = match?.[1]?.toLowerCase() || 'png'
+      const ext = rawExt === 'jpeg' ? 'jpg' : rawExt
+
       // base64 데이터에서 prefix 제거
       const base64Data = data.replace(/^data:image\/\w+;base64,/, '')
       const buffer = Buffer.from(base64Data, 'base64')
-      const filePath = path.join(thumbDir, `${presetId}.png`)
+
+      // 동일 presetId의 기존 파일(다른 확장자) 정리 — 잔재 방지
+      try {
+        const existing = await fs.readdir(thumbDir)
+        await Promise.all(
+          existing
+            .filter(f => {
+              const m = f.match(THUMB_FILE_REGEX)
+              return m && m[1] === presetId
+            })
+            .map(f => fs.unlink(path.join(thumbDir, f)).catch(() => {}))
+        )
+      } catch {}
+
+      const filePath = path.join(thumbDir, `${presetId}.${ext}`)
       await fs.writeFile(filePath, buffer)
 
       return { success: true, path: filePath }
@@ -799,6 +826,7 @@ export function registerFilesystemIPC(ipcMain) {
   // ----------------------------------------------------------
   // 20. fs:load-style-thumbnails — 저장된 모든 썸네일 경로 로드
   //     반환: { [presetId]: filePath } (메모리 절약: base64 대신 파일 경로)
+  //     png/jpg/jpeg/webp 모두 인식
   // ----------------------------------------------------------
   ipcMain.handle('fs:load-style-thumbnails', async () => {
     try {
@@ -813,8 +841,9 @@ export function registerFilesystemIPC(ipcMain) {
       const thumbnails = {}
 
       for (const file of files) {
-        if (!file.endsWith('.png')) continue
-        const presetId = file.replace('.png', '')
+        const m = file.match(THUMB_FILE_REGEX)
+        if (!m) continue
+        const presetId = m[1]
         thumbnails[presetId] = path.join(thumbDir, file)
       }
 
@@ -826,7 +855,7 @@ export function registerFilesystemIPC(ipcMain) {
 
   // ----------------------------------------------------------
   // 21. fs:check-style-thumbnails — 썸네일 존재 여부 확인
-  //     반환: 존재하는 presetId 배열
+  //     반환: 존재하는 presetId 배열 (png/jpg/jpeg/webp 모두)
   // ----------------------------------------------------------
   ipcMain.handle('fs:check-style-thumbnails', async () => {
     try {
@@ -838,8 +867,8 @@ export function registerFilesystemIPC(ipcMain) {
 
       const files = await fs.readdir(thumbDir)
       const ids = files
-        .filter(f => f.endsWith('.png'))
-        .map(f => f.replace('.png', ''))
+        .map(f => f.match(THUMB_FILE_REGEX)?.[1])
+        .filter(Boolean)
 
       return { success: true, ids }
     } catch (error) {
@@ -849,11 +878,22 @@ export function registerFilesystemIPC(ipcMain) {
 
   // ----------------------------------------------------------
   // 22. fs:delete-style-thumbnail — 개별 썸네일 삭제
+  //     해당 presetId의 모든 확장자(png/jpg/jpeg/webp) 변형을 삭제
   // ----------------------------------------------------------
   ipcMain.handle('fs:delete-style-thumbnail', async (_event, { presetId }) => {
     try {
-      const filePath = path.join(app.getPath('userData'), 'style-thumbnails', `${presetId}.png`)
-      await fs.unlink(filePath)
+      const thumbDir = path.join(app.getPath('userData'), 'style-thumbnails')
+      const files = await fs.readdir(thumbDir).catch(() => [])
+      const targets = files.filter(f => {
+        const m = f.match(THUMB_FILE_REGEX)
+        return m && m[1] === presetId
+      })
+
+      if (targets.length === 0) {
+        return { success: false, error: 'thumbnail not found' }
+      }
+
+      await Promise.all(targets.map(f => fs.unlink(path.join(thumbDir, f))))
       return { success: true }
     } catch (error) {
       return { success: false, error: error.message }
