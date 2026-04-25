@@ -386,7 +386,7 @@ function App() {
         setFramePairs(prev => prev.map(p =>
           p.id === id ? {
             ...p, status: newStatus,
-            ...(newStatus === 'generating' && result?.generatingStartedAt ? { generatingStartedAt: result.generatingStartedAt } : {}),
+            ...(newStatus === 'generating' && result?.generatingStartedAt ? { generatingStartedAt: result.generatingStartedAt, generatingEndedAt: null } : {}),
             ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: result?.generatingEndedAt || Date.now() } : {}),
             ...(result?.base64 ? { video: result.base64, base64: result.base64 } : {}),
             ...(result?.mediaId ? { mediaId: result.mediaId } : {}),
@@ -410,7 +410,7 @@ function App() {
       } else {
         videoScenesHook.updateVideoScene(id, {
           status: newStatus,
-          ...(newStatus === 'generating' && result?.generatingStartedAt ? { generatingStartedAt: result.generatingStartedAt } : {}),
+          ...(newStatus === 'generating' && result?.generatingStartedAt ? { generatingStartedAt: result.generatingStartedAt, generatingEndedAt: null } : {}),
           ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: result?.generatingEndedAt || Date.now() } : {}),
           ...(result?.base64 ? { video: result.base64 } : {}),
           ...(result?.mediaId ? { mediaId: result.mediaId } : {}),
@@ -545,7 +545,7 @@ function App() {
           onItemUpdate: (id, newStatus, result) => {
             videoScenesHook.updateVideoScene(id, {
               status: newStatus,
-              ...(newStatus === 'generating' ? { generatingStartedAt: Date.now() } : {}),
+              ...(newStatus === 'generating' ? { generatingStartedAt: Date.now(), generatingEndedAt: null } : {}),
               ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: Date.now() } : {}),
               ...(result?.base64 ? { video: result.base64 } : {}),
               ...(result?.mediaId ? { mediaId: result.mediaId } : {}),
@@ -557,10 +557,11 @@ function App() {
             })
 
             // ── T2V 완료 → 번호 매칭으로 씬에 videoT2V 동기화 ──
-            if (newStatus === 'complete' && result?.base64) {
+            // base64 또는 videoPath 중 하나라도 있으면 sync (DOM 다운로드 시 path만 있을 수 있음)
+            if (newStatus === 'complete' && (result?.base64 || result?.videoPath)) {
               const sceneId = id.replace('vscene_', 'scene_')
               scenesHook.updateScene(sceneId, {
-                videoT2V: result.base64,
+                ...(result?.base64 ? { videoT2V: result.base64 } : {}),
                 videoT2VPath: result.videoPath || null,
                 ...(result?.duration ? { videoT2VDuration: result.duration } : {}),
               })
@@ -610,7 +611,7 @@ function App() {
               const updated = prev.map(p =>
                 p.id === id ? {
                   ...p, status: newStatus,
-                  ...(newStatus === 'generating' ? { generatingStartedAt: Date.now() } : {}),
+                  ...(newStatus === 'generating' ? { generatingStartedAt: Date.now(), generatingEndedAt: null } : {}),
                   ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: Date.now() } : {}),
                   ...(result?.base64 ? { video: result.base64, base64: result.base64 } : {}),
                   ...(result?.mediaId ? { mediaId: result.mediaId } : {}),

@@ -264,7 +264,7 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
             </div>
           )}
           {/* T2V 비디오 */}
-          {scene.videoT2V && (
+          {(scene.videoT2V || scene.videoT2VPath) && (
             <div
               className={`media-thumb ${isSelected('t2v')} clickable`}
               onClick={(e) => {
