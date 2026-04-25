@@ -16,10 +16,13 @@ export default function VideoDetailModal({
   onClose,
   t,
   projectName,
+  onUpdate,       // (videoId, patch) => void — 부모 state 업데이트 (history 복원 후 저장)
 }) {
   const [histories, setHistories] = useState([])
   const [activeVideo, setActiveVideo] = useState(video.video || null)
+  const [activeVideoPath, setActiveVideoPath] = useState(video.videoPath || null)
   const [videoSize, setVideoSize] = useState(null)
+  const [dirty, setDirty] = useState(false)
 
   // video prop 변경 시 업데이트 (실제로 바뀔 때만 리셋)
   useEffect(() => {
@@ -31,7 +34,54 @@ export default function VideoDetailModal({
       }
       return prev
     })
-  }, [video.video])
+    setActiveVideoPath(video.videoPath || null)
+    setDirty(false)
+  }, [video.video, video.videoPath])
+
+  // History에서 비디오 복원 — 파일 시스템 복원 + state 업데이트 (저장 시 부모 반영)
+  const handleRestoreHistory = async (historyItem) => {
+    if (!projectName || !video.id) {
+      toast.error(t('imageHistory.restoreFailed') || 'Restore failed')
+      return
+    }
+    try {
+      // 비디오 ID prefix 제거하여 base 파일명 결정 (vscene_X, fp_X, t2v_X, i2v_X 등)
+      const baseId = video.id.replace(/^(vscene_|fp_|t2v_|i2v_)/, '')
+      // 기존 videoPath의 확장자를 유지하거나, 없으면 history 파일 확장자 사용
+      const histExt = historyItem.filename?.match(/\.(mp4|webm|mov|m4v)$/i)?.[1]?.toLowerCase() || 'mp4'
+      // 비디오 ID prefix 보존하여 currentFilename 생성 (vscene_X.mp4, t2v_X.mp4 등)
+      const prefix = video.id.match(/^(vscene_|fp_|t2v_|i2v_)/)?.[1] || ''
+      const currentFilename = `${prefix}${baseId}.${histExt}`
+
+      const result = await fileSystemAPI.restoreFromHistory(
+        projectName,
+        'videos',
+        currentFilename,
+        historyItem.filename
+      )
+
+      if (!result.success) {
+        toast.error(t('imageHistory.restoreFailed') || result.error || 'Restore failed')
+        return
+      }
+
+      setActiveVideo(historyItem.data)
+      setActiveVideoPath(result.path || null)
+      setVideoSize(null)
+      setDirty(true)
+    } catch (err) {
+      console.error('[VideoDetail] Restore history failed:', err)
+      toast.error(err.message)
+    }
+  }
+
+  // 저장 — 부모 state에 반영 후 닫기
+  const handleSave = () => {
+    if (typeof onUpdate === 'function') {
+      onUpdate(video.id, { video: activeVideo, videoPath: activeVideoPath })
+    }
+    onClose()
+  }
 
   // 히스토리 로드 + 비디오 데이터 없으면 최신 히스토리에서 자동 로드
   useEffect(() => {
@@ -112,6 +162,16 @@ export default function VideoDetailModal({
           <button className="btn btn-secondary" onClick={onClose}>
             {t('actions.close') || 'Close'}
           </button>
+          {typeof onUpdate === 'function' && (
+            <button
+              className="btn btn-primary"
+              onClick={handleSave}
+              disabled={!dirty}
+              title={dirty ? '' : (t('detail.noChanges') || 'No changes')}
+            >
+              💾 {t('actions.save') || 'Save'}
+            </button>
+          )}
         </div>
       }
     >
@@ -245,7 +305,7 @@ export default function VideoDetailModal({
                   <div
                     key={idx}
                     className={`history-item${isActive ? ' selected' : ''}`}
-                    onClick={() => setActiveVideo(hist.data)}
+                    onClick={() => handleRestoreHistory(hist)}
                     title={hist.timestamp || hist.filename}
                   >
                     <video

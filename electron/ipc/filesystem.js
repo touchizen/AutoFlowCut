@@ -571,7 +571,7 @@ export function registerFilesystemIPC(ipcMain) {
 
       // Back up any existing files with the same basename (regardless of extension)
       // Then remove them so only one canonical file remains after restore.
-      const KNOWN_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'gif']
+      const KNOWN_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'mp4', 'webm', 'mov', 'm4v']
       for (const ext of KNOWN_EXTS) {
         const candidate = path.join(resourceDir, `${baseName}.${ext}`)
         if (await pathExists(candidate)) {

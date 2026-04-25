@@ -1128,6 +1128,49 @@ function App() {
           onClose={() => setSelectedVideo(null)}
           t={t}
           projectName={ensureProjectName()}
+          onUpdate={(videoId, patch) => {
+            // ID prefix로 source 분기:
+            //   vscene_X → videoScenes (T2V 결과 테이블)
+            //   fp_X     → framePairs (F2V 결과 테이블)
+            //   t2v_X    → scenes.videoT2V/videoT2VPath (SceneList의 T2V 미디어)
+            //   i2v_X    → scenes.videoI2V/videoI2VPath (SceneList의 I2V 미디어)
+            if (videoId.startsWith('vscene_')) {
+              videoScenesHook.updateVideoScene(videoId, {
+                video: patch.video,
+                videoPath: patch.videoPath,
+              })
+              // 매칭되는 image scene에도 동기화
+              const sceneId = videoId.replace('vscene_', 'scene_')
+              scenesHook.updateScene(sceneId, {
+                ...(patch.video ? { videoT2V: patch.video } : {}),
+                videoT2VPath: patch.videoPath || null,
+              })
+            } else if (videoId.startsWith('fp_')) {
+              setFramePairs(prev => prev.map(p =>
+                p.id === videoId ? { ...p, video: patch.video, base64: patch.video, videoPath: patch.videoPath } : p
+              ))
+              // 매칭 image scene의 videoI2V 동기화 — startSceneId 기준
+              const fp = framePairs.find(p => p.id === videoId)
+              if (fp?.startSceneId && !fp.startSceneId.startsWith('gallery::')) {
+                scenesHook.updateScene(fp.startSceneId, {
+                  ...(patch.video ? { videoI2V: patch.video } : {}),
+                  videoI2VPath: patch.videoPath || null,
+                })
+              }
+            } else if (videoId.startsWith('t2v_')) {
+              const sceneId = `scene_${videoId.replace('t2v_', '')}`
+              scenesHook.updateScene(sceneId, {
+                ...(patch.video ? { videoT2V: patch.video } : {}),
+                videoT2VPath: patch.videoPath || null,
+              })
+            } else if (videoId.startsWith('i2v_')) {
+              const sceneId = `scene_${videoId.replace('i2v_', '')}`
+              scenesHook.updateScene(sceneId, {
+                ...(patch.video ? { videoI2V: patch.video } : {}),
+                videoI2VPath: patch.videoPath || null,
+              })
+            }
+          }}
         />
       )}
 
