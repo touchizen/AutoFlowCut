@@ -23,7 +23,7 @@ import { useFlowEvents } from './hooks/useFlowEvents'
 import { useMcpServer } from './hooks/useMcpServer'
 import { syncVideosIntoScenes } from './services/mediaSync'
 import { retryVideoDownload } from './services/videoRecovery'
-import { findAutoStyle, resolveSceneStyle } from './services/styleService'
+import { findAutoStyle, applyStyle } from './services/styleService'
 import { detectFileType, detectCSVType, parseCSVToScenes, parseSRTToScenes } from './utils/parsers'
 import { checkFolderPermission } from './utils/guards'
 import { collectTagErrors } from './utils/tagMatch'
@@ -525,24 +525,13 @@ function App() {
         // Text to Video — 선택된 videoScenes만 실행 (선택 검증은 상단에서 처리)
         const selectedVideoScenes = videoScenes.filter(s => s.selected !== false)
 
-        // T2V는 텍스트 기반이므로 이미지 탭과 동일한 스타일 합성 적용
+        // T2V는 video scene의 자체 prompt만 사용 — image scene과는 독립.
+        // 스타일(selectedStyleRefId)만 추가로 prefix해서 적용.
         // (I2V는 이미지가 source라 별도 처리 — frame-to-video 케이스에서 미적용)
         const effectiveStyleId = overrideStyleId || selectedStyleRefId || findAutoStyle(scenesHook.references)
         const styledVideoScenes = selectedVideoScenes.map(vs => {
-          const sceneId = vs.id.replace('vscene_', 'scene_')
-          const sourceScene = scenes.find(s => s.id === sceneId) || null
-          const allMatched = sourceScene && scenesHook.getMatchingReferences
-            ? scenesHook.getMatchingReferences(sourceScene)
-            : []
           const matchedRefs = []
-          const { styledPrompt } = resolveSceneStyle(
-            vs.prompt,
-            allMatched,
-            effectiveStyleId,
-            scenesHook.references,
-            matchedRefs,
-            sourceScene?.style_tag || ''
-          )
+          const { styledPrompt } = applyStyle(vs.prompt, effectiveStyleId, scenesHook.references, matchedRefs)
           return { ...vs, prompt: styledPrompt }
         })
 
