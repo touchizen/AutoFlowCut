@@ -185,7 +185,20 @@ const getNextPairId = (pairs) => {
 
 export { GALLERY_PREFIX }
 
-export default function FrameToVideoPanel({ scenes, videoScenes = [], framePairs, onUpdate, promptSource = 'image', onPromptSourceChange, onShowSceneDetail, onVideoRetry, disabled, t, galleryItems, galleryLoading, onLoadGallery }) {
+export default function FrameToVideoPanel({
+  scenes, videoScenes = [], framePairs, onUpdate, promptSource = 'image', onPromptSourceChange,
+  onShowSceneDetail, onVideoRetry, disabled, t, galleryItems, galleryLoading, onLoadGallery,
+  seedNo = null, seedLocked = false, onSeedChange, onSeedLockToggle, onSeedRandom,
+}) {
+  const showSeedUI = typeof onSeedChange === 'function'
+  const handleSeedInputChange = (e) => {
+    const raw = e.target.value
+    if (raw === '') return onSeedChange?.(null)
+    const cleaned = raw.replace(/[^0-9]/g, '')
+    if (cleaned === '') return onSeedChange?.(null)
+    const num = parseInt(cleaned, 10)
+    if (Number.isFinite(num)) onSeedChange?.(num)
+  }
 
   // mediaId 있는 씬만 드롭다운에 표시
   const availableScenes = useMemo(
@@ -491,7 +504,7 @@ export default function FrameToVideoPanel({ scenes, videoScenes = [], framePairs
         ))}
       </div>
 
-      {/* 행 추가 + 자동 배치 버튼 */}
+      {/* 행 추가 + 자동 배치 버튼 + Seed 컨트롤 (오른쪽) */}
       <div className="video-panel-actions">
         <button
           className="btn-add-row"
@@ -508,6 +521,41 @@ export default function FrameToVideoPanel({ scenes, videoScenes = [], framePairs
         >
           {t('frameToVideo.autoBatch')}
         </button>
+        {showSeedUI && (
+          <div className="seed-control" style={{ marginLeft: 'auto' }} title={t('prompt.seedTitle') || 'Seed (locked = reuse same video)'}>
+            <span className="seed-label">Seed</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              className="seed-input"
+              value={seedNo ?? ''}
+              onChange={handleSeedInputChange}
+              placeholder={t('prompt.seedRandom') || 'random'}
+              disabled={disabled}
+              maxLength={12}
+            />
+            <button
+              type="button"
+              className="seed-btn seed-dice"
+              onClick={() => onSeedRandom?.()}
+              disabled={disabled}
+              title={t('prompt.seedDice') || 'New random seed + lock'}
+            >
+              🎲
+            </button>
+            <button
+              type="button"
+              className={`seed-btn seed-lock ${seedLocked ? 'locked' : ''}`}
+              onClick={() => onSeedLockToggle?.()}
+              disabled={disabled}
+              title={seedLocked
+                ? (t('prompt.seedUnlock') || 'Unlock (use random each time)')
+                : (t('prompt.seedLock') || 'Lock (reuse this seed)')}
+            >
+              {seedLocked ? '🔒' : '🔓'}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

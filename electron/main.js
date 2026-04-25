@@ -536,6 +536,33 @@ function createWindow() {
             })
           }
         }
+        // Case 1.5: T2V seed 주입 (Flow가 자동 랜덤 seed 채우는 자리에 사용자 seed 덮어쓰기)
+        //           batchAsyncGenerateVideoText만 매칭 (I2V는 별도 endpoint이며 아래 Case 2에서 처리)
+        else if (pendingSeedValue != null && reqUrl.includes('batchAsyncGenerateVideoText') && (params.request?.method || '') !== 'OPTIONS') {
+          try {
+            const body = JSON.parse(params.request.postData || '{}')
+            if (body.requests) {
+              for (const req of body.requests) {
+                req.seed = pendingSeedValue
+              }
+              console.log('[Flow Video] [Fetch] Injected seed:', pendingSeedValue, 'into', body.requests.length, 'video requests')
+              const modifiedPostData = Buffer.from(JSON.stringify(body)).toString('base64')
+              flowView.webContents.debugger.sendCommand('Fetch.continueRequest', {
+                requestId: params.requestId,
+                postData: modifiedPostData
+              })
+            } else {
+              flowView.webContents.debugger.sendCommand('Fetch.continueRequest', {
+                requestId: params.requestId
+              })
+            }
+          } catch (e) {
+            console.error('[Flow Video] [Fetch] T2V seed injection error:', e.message)
+            flowView.webContents.debugger.sendCommand('Fetch.continueRequest', {
+              requestId: params.requestId
+            })
+          }
+        }
         // Case 2: I2V startImage 주입 (T2V 요청을 I2V로 변환)
         else if (pendingI2VInjection && reqUrl.includes('batchAsyncGenerateVideo')) {
           const reqMethod = params.request?.method || ''
@@ -589,8 +616,13 @@ function createWindow() {
                       cropCoordinates: defaultCrop
                     }
                   }
+                  // Seed 주입 (사용자 지정 시 덮어쓰기, 아니면 Flow 자동 seed 유지)
+                  if (pendingSeedValue != null) {
+                    req.seed = pendingSeedValue
+                  }
                   console.log('[Flow Video I2V] [Fetch] Model:', originalModel, '→', req.videoModelKey,
-                    '| injecting startImage' + (hasEndImage ? ' + endImage' : ''))
+                    '| injecting startImage' + (hasEndImage ? ' + endImage' : '') +
+                    (pendingSeedValue != null ? ` | seed: ${pendingSeedValue}` : ''))
                 }
               }
               const modifiedPostData = Buffer.from(JSON.stringify(body)).toString('base64')
@@ -643,6 +675,10 @@ function createWindow() {
             console.log('[Flow Video DEBUG] startImage:', JSON.stringify(req0.startImage || null))
             console.log('[Flow Video DEBUG] endImage:', JSON.stringify(req0.endImage || null))
             console.log('[Flow Video DEBUG] paygateTier:', sentBody?.clientContext?.userPaygateTier)
+            // [SEED PROBE] Flow 비디오 API가 seed 필드를 받는지 확인용 — 전체 schema dump
+            console.log('[Flow Video DEBUG] req[0] keys:', Object.keys(req0))
+            console.log('[Flow Video DEBUG] seed value:', req0.seed)
+            console.log('[Flow Video DEBUG] FULL BODY:', JSON.stringify(sentBody, null, 2))
           } catch {}
         }
       }
@@ -1585,6 +1621,7 @@ const videoDeps = {
   setPendingVideoGeneration: (v) => { pendingVideoGeneration = v },
   getPendingI2VInjection: () => pendingI2VInjection,
   setPendingI2VInjection: (v) => { pendingI2VInjection = v },
+  setPendingSeedValue: (v) => { pendingSeedValue = v },
   SESSION_URL, VIDEO_T2V_URL, VIDEO_I2V_URL, VIDEO_I2V_START_END_URL, VIDEO_STATUS_URL, VIDEO_UPSCALE_URL,
   API_HEADERS, FLOW_URL,
 }

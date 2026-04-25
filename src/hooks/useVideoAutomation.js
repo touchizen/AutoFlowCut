@@ -35,17 +35,17 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
 
   // ─── Phase 1 Helper: 비디오 제출 (DOM 조작) ───
   const submitVideoItem = async (item, mode, options) => {
-    const { videoModel, aspectRatio, duration, videoBatchCount = 1 } = options
+    const { videoModel, aspectRatio, duration, videoBatchCount = 1, seed = null } = options
     const prompt = item.prompt || ''
 
     switch (mode) {
       case 't2v':
-        return await generateVideoT2V(prompt, videoModel, aspectRatio, duration, videoBatchCount)
+        return await generateVideoT2V(prompt, videoModel, aspectRatio, duration, videoBatchCount, seed)
       case 'i2v': {
         if (!item.startMediaId) {
           return { success: false, error: 'No start image mediaId' }
         }
-        return await generateVideoI2V(prompt, item.startMediaId, item.endMediaId || null, videoModel, aspectRatio, duration)
+        return await generateVideoI2V(prompt, item.startMediaId, item.endMediaId || null, videoModel, aspectRatio, duration, seed)
       }
       default:
         return { success: false, error: `Unknown mode: ${mode}` }
@@ -160,6 +160,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
       duration = 8,
       videoResolution = '1080p',
       videoBatchCount = 1,
+      seed = null,
       onItemUpdate
     } = options
 
@@ -300,7 +301,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
       onItemUpdate?.(item.id, 'generating')
 
       const genResult = await submitVideoItem(item, mode, {
-        videoModel, aspectRatio, duration, videoBatchCount
+        videoModel, aspectRatio, duration, videoBatchCount, seed
       })
 
       if (genResult.success && genResult.generationId) {

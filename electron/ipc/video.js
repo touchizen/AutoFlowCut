@@ -18,6 +18,7 @@ export function registerVideoIPC(ipcMain, deps) {
     getCapturedProjectId, setCapturedProjectId,
     getPendingVideoGeneration, setPendingVideoGeneration,
     getPendingI2VInjection, setPendingI2VInjection,
+    setPendingSeedValue,
     SESSION_URL, VIDEO_T2V_URL, VIDEO_I2V_URL, VIDEO_I2V_START_END_URL, VIDEO_STATUS_URL, VIDEO_UPSCALE_URL,
     API_HEADERS, FLOW_URL,
   } = deps
@@ -47,14 +48,35 @@ export function registerVideoIPC(ipcMain, deps) {
 
   // Text-to-Video generation (DOM 자동화 — 페이지가 reCAPTCHA 자체 처리)
   ipcMain.handle('flow:generate-video-t2v', async (event, {
-    token, prompt, projectId, model, aspectRatio, duration, videoBatchCount
+    token, prompt, projectId, model, aspectRatio, duration, videoBatchCount, seed
   }) => {
     const flowView = getFlowView()
     const mainWindow = getMainWindow()
     if (!prompt) return { success: false, error: 'No prompt' }
     if (!flowView) return { success: false, error: 'Flow view not ready' }
 
-    console.log('[Flow Video T2V] Starting DOM-triggered video generation:', prompt?.substring(0, 50))
+    // Seed: 숫자면 CDP Fetch 인터셉션이 batchAsyncGenerateVideoText 요청에 주입,
+    //       null/undefined면 Flow 자체 랜덤 seed 유지
+    const hasUserSeed = typeof seed === 'number' && Number.isFinite(seed)
+    setPendingSeedValue?.(hasUserSeed ? seed : null)
+
+    // CDP Fetch 도메인이 image용 패턴만 등록돼 있을 수 있으므로,
+    // 사용자 seed 지정 시 video text 패턴으로 등록 (없으면 inject 안 됨)
+    if (hasUserSeed) {
+      try {
+        await flowView.webContents.debugger.sendCommand('Fetch.enable', {
+          patterns: [
+            { urlPattern: '*batchGenerateImages*', requestStage: 'Request' },
+            { urlPattern: '*batchAsyncGenerateVideoText*', requestStage: 'Request' }
+          ]
+        })
+        console.log('[Flow Video T2V] [Fetch] Enabled with video text pattern for seed inject')
+      } catch (e) {
+        console.warn('[Flow Video T2V] [Fetch] Fetch.enable failed:', e.message)
+      }
+    }
+
+    console.log('[Flow Video T2V] Starting DOM-triggered video generation:', prompt?.substring(0, 50), hasUserSeed ? `(seed: ${seed})` : '(seed: random)')
 
     try {
       // 0. Flow 프로젝트 페이지 확인
@@ -254,16 +276,22 @@ export function registerVideoIPC(ipcMain, deps) {
   // T2V와 동일한 DOM 흐름: 프롬프트 주입 → Generate 클릭 → CDP 응답 캡처
   // 차이점: CDP Fetch로 나가는 T2V 요청을 가로채서 startImage 주입 + URL을 I2V 엔드포인트로 변경
   ipcMain.handle('flow:generate-video-i2v', async (event, {
-    token, prompt, startImageMediaId, endImageMediaId, projectId, model, aspectRatio, duration, videoBatchCount
+    token, prompt, startImageMediaId, endImageMediaId, projectId, model, aspectRatio, duration, videoBatchCount, seed
   }) => {
     const flowView = getFlowView()
     const mainWindow = getMainWindow()
     if (!startImageMediaId) return { success: false, error: 'No start image mediaId' }
     if (!flowView) return { success: false, error: 'Flow view not ready' }
 
+    // Seed: 숫자면 CDP Fetch 인터셉션이 batchAsyncGenerateVideoStartImage 등에 주입,
+    //       null/undefined면 Flow 자체 랜덤 seed 유지
+    const hasUserSeed = typeof seed === 'number' && Number.isFinite(seed)
+    setPendingSeedValue?.(hasUserSeed ? seed : null)
+
     const hasEndImage = !!endImageMediaId
     console.log('[Flow Video I2V] Starting DOM-triggered I2V generation, start:', startImageMediaId?.substring(0, 8),
-      hasEndImage ? ', end: ' + endImageMediaId?.substring(0, 8) : '(start only)')
+      hasEndImage ? ', end: ' + endImageMediaId?.substring(0, 8) : '(start only)',
+      hasUserSeed ? `(seed: ${seed})` : '(seed: random)')
 
     let cdpFetchEnabled = false
 

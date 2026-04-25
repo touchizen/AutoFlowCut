@@ -535,9 +535,15 @@ function App() {
           return { ...vs, prompt: styledPrompt }
         })
 
+        // seed: 이미지와 동일한 정책 — locked + 숫자일 때만 고정 seed
+        const effectiveVideoSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
+          ? settings.seedNo
+          : null
+
         videoAutomation.start({
           mode: 't2v',
           scenes: styledVideoScenes,
+          seed: effectiveVideoSeed,
           projectName,
           saveMode: settings.saveMode,
           videoResolution: settings.videoResolution || '1080p',
@@ -599,6 +605,11 @@ function App() {
             _endMediaId: endIsGallery ? p.endSceneId.slice(GALLERY_PFX.length) : (endScene?.mediaId || null),
           }
         })
+        // seed: 이미지/T2V와 동일한 정책 — locked + 숫자일 때만 고정 seed
+        const effectiveI2VSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
+          ? settings.seedNo
+          : null
+
         videoAutomation.start({
           mode: 'i2v',
           framePairs: resolvedPairs,
@@ -606,6 +617,7 @@ function App() {
           saveMode: settings.saveMode,
           videoResolution: settings.videoResolution || '1080p',
           videoBatchCount: settings.videoBatchCount || 1,
+          seed: effectiveI2VSeed,
           onItemUpdate: (id, newStatus, result) => {
             setFramePairs(prev => {
               const updated = prev.map(p =>
@@ -860,6 +872,14 @@ function App() {
               onChange={handleVideoTextChange}
               disabled={anyRunning}
               placeholder={t('prompt.videoPlaceholder')}
+              seedNo={settings.seedNo}
+              seedLocked={settings.seedLocked}
+              onSeedChange={(v) => setSettings(s => ({ ...s, seedNo: v }))}
+              onSeedLockToggle={() => setSettings(s => ({ ...s, seedLocked: !s.seedLocked }))}
+              onSeedRandom={() => {
+                const n = Math.floor(Math.random() * 1000000)
+                setSettings(s => ({ ...s, seedNo: n, seedLocked: true }))
+              }}
             />
           )}
           {activeTab === 'frame-to-video' && (
@@ -877,6 +897,14 @@ function App() {
               galleryItems={galleryItems}
               galleryLoading={galleryLoading}
               onLoadGallery={loadGallery}
+              seedNo={settings.seedNo}
+              seedLocked={settings.seedLocked}
+              onSeedChange={(v) => setSettings(s => ({ ...s, seedNo: v }))}
+              onSeedLockToggle={() => setSettings(s => ({ ...s, seedLocked: !s.seedLocked }))}
+              onSeedRandom={() => {
+                const n = Math.floor(Math.random() * 1000000)
+                setSettings(s => ({ ...s, seedNo: n, seedLocked: true }))
+              }}
             />
           )}
           {activeTab === 'list' && (
