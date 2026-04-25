@@ -158,13 +158,13 @@ export default function VideoDetailModal({
       title={`${t('results.video') || 'Video'} — ${video.id || ''}`}
       className={`scene-detail-modal ref-detail-modal${hasHistory ? ' has-history' : ''}`}
       footer={
-        <div className="modal-actions">
-          <button className="btn btn-secondary" onClick={onClose}>
-            {t('actions.close') || 'Close'}
+        <>
+          <button className="btn-secondary" onClick={onClose}>
+            {t('actions.cancel') || 'Cancel'}
           </button>
           {typeof onUpdate === 'function' && (
             <button
-              className="btn btn-primary"
+              className="btn-primary"
               onClick={handleSave}
               disabled={!dirty}
               title={dirty ? '' : (t('detail.noChanges') || 'No changes')}
@@ -172,7 +172,7 @@ export default function VideoDetailModal({
               💾 {t('actions.save') || 'Save'}
             </button>
           )}
-        </div>
+        </>
       }
     >
       <div className="ref-detail-layout">
