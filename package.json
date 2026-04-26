@@ -36,6 +36,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
     "dotenv": "^17.3.1",
+    "electron-updater": "^6.8.3",
     "firebase": "^12.9.0",
     "flag-icons": "^7.5.0",
     "react": "^18.3.1",
@@ -63,6 +64,13 @@
     "directories": {
       "output": "release"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "touchizen",
+        "repo": "AutoFlowCut"
+      }
+    ],
     "files": [
       "dist/**/*",
       "dist-electron/**/*",

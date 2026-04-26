@@ -17,8 +17,15 @@ import { registerDomIPC } from './ipc/dom.js'
 import { createSharedHelpers } from './ipc/shared.js'
 import { updateBounds, registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible } from './ipc/layout.js'
 import { openApiSpec, getSwaggerHtml } from './api-docs.js'
+import { setupAppMenuAndUpdater } from './updater.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+// Force the display name so dev-mode submenu items ("About …", "Quit …", etc.)
+// match the productName from electron-builder. Has no effect on the bold app
+// title in macOS menu bar (that comes from the Electron binary's Info.plist
+// in dev; the packaged build sets it correctly).
+app.setName('AutoFlowCut')
 
 // === Safe console logger (prevents EPIPE crash when stdout pipe is broken) ===
 const _origLog = console.log
@@ -1721,6 +1728,9 @@ app.whenReady().then(() => {
 
   // Claude Code 스킬 자동 설치 (앱 시작 시)
   try { autoSetupSkills() } catch (e) { console.warn('[AutoFlowCut] Skill setup failed:', e.message) }
+
+  // Native menu + auto-updater (skips dev mode and AppX builds)
+  try { setupAppMenuAndUpdater() } catch (e) { console.warn('[AutoFlowCut] Updater setup failed:', e.message) }
 
   createWindow()
 })
