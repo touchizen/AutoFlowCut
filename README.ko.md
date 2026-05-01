@@ -2,6 +2,14 @@
 
 <kbd>[🇺🇸 English](README.md)</kbd> <kbd>🇰🇷 한국어</kbd>
 
+<p align="center">
+  <a href="https://youtu.be/mYnfgqvCkME">
+    <img src="https://img.youtube.com/vi/mYnfgqvCkME/maxresdefault.jpg" alt="AutoFlowCut 소개 영상" width="720">
+  </a>
+  <br>
+  <em>▶ 클릭해서 영상 보기 (1분 만에 AI 영상 만들기)</em>
+</p>
+
 Google Flow AI로 이미지/비디오를 **대량 생성**하고, CapCut 영상 프로젝트로 원클릭 내보내기하는 데스크톱 앱.
 
 [![Release](https://img.shields.io/github/v/release/touchizen/AutoFlowCut)](https://github.com/touchizen/AutoFlowCut/releases)

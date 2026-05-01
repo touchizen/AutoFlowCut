@@ -2,6 +2,14 @@
 
 <kbd>🇺🇸 English</kbd> <kbd>[🇰🇷 한국어](README.ko.md)</kbd>
 
+<p align="center">
+  <a href="https://youtu.be/mYnfgqvCkME">
+    <img src="https://img.youtube.com/vi/mYnfgqvCkME/maxresdefault.jpg" alt="AutoFlowCut Demo" width="720">
+  </a>
+  <br>
+  <em>▶ Watch the demo (Make AI videos in 1 minute)</em>
+</p>
+
 A desktop app that **mass-generates** images and videos with Google Flow AI and exports them to CapCut projects in one click.
 
 [![Release](https://img.shields.io/github/v/release/touchizen/AutoFlowCut)](https://github.com/touchizen/AutoFlowCut/releases)
