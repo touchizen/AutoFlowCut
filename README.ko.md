@@ -4,13 +4,7 @@
 
 <p align="center">
   <a href="https://youtu.be/mYnfgqvCkME">
-    <img src="https://img.youtube.com/vi/mYnfgqvCkME/maxresdefault.jpg" alt="AutoFlowCut 소개 영상" width="720">
-  </a>
-</p>
-
-<p align="center">
-  <a href="https://youtu.be/mYnfgqvCkME">
-    <img src="https://img.shields.io/badge/▶_YouTube에서_재생-FF0000?style=for-the-badge&logo=youtube&logoColor=white" alt="YouTube에서 재생">
+    <img src="docs/youtube-thumb.png" alt="AutoFlowCut 소개 영상 - 클릭해서 재생" width="720">
   </a>
 </p>
 
