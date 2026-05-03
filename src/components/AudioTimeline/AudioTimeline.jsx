@@ -321,22 +321,29 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   }
 
   // ── 키보드 (스페이스 = 글로벌 재생/멈춤, Esc = 처음으로) ──
+  // 리스너는 마운트 시 한 번만 붙임. togglePlay/stopAll은 매 렌더 새로 만들어지므로
+  // ref로 최신 참조를 들고 있다가 핸들러에서 ref.current로 호출
+  // (deps에 playheadMs를 넣으면 RAF로 매 프레임 add/remove → perf 낭비 + 키 입력 누락 가능)
+  const togglePlayRef = useRef(togglePlay)
+  const stopAllRef = useRef(stopAll)
+  useEffect(() => { togglePlayRef.current = togglePlay; stopAllRef.current = stopAll })
+
   useEffect(() => {
     const onKey = (e) => {
       const tag = (e.target?.tagName || '').toLowerCase()
       if (tag === 'input' || tag === 'textarea' || e.target?.isContentEditable) return
       if (e.code === 'Space') {
         e.preventDefault()
-        togglePlay()
+        togglePlayRef.current?.()
       } else if (e.code === 'Escape') {
-        stopAll()
+        stopAllRef.current?.()
         setPlayheadMs(0)
         if (scrollRef.current) scrollRef.current.scrollLeft = 0
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [playheadMs, playableClips])
+  }, [])
 
   // 컴포넌트 unmount 시 audio 정리
   useEffect(() => () => stopAll(), [])
