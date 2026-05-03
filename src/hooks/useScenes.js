@@ -40,6 +40,8 @@ export function useScenes() {
   const setScenes = useCallback((valueOrFn) => {
     _setScenes(prev => {
       const next = typeof valueOrFn === 'function' ? valueOrFn(prev) : valueOrFn
+      // 동일 reference 반환 시 정규화 스킵 (no-op 최적화)
+      if (next === prev) return prev
       return Array.isArray(next) ? next.map(normalizeScene) : next
     })
   }, [])

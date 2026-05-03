@@ -93,11 +93,12 @@ describe('StatusBar', () => {
   })
 
   describe('진행률 계산', () => {
+    // 진행률 텍스트는 isActive(running/uploading) 상태일 때만 표시됨
     it('0% 진행률', () => {
       render(
         <StatusBar
           progress={{ current: 0, total: 100, percent: 0 }}
-          status="ready"
+          status="running"
           message=""
         />
       )
@@ -109,7 +110,7 @@ describe('StatusBar', () => {
       render(
         <StatusBar
           progress={{ current: 100, total: 100, percent: 100 }}
-          status="done"
+          status="running"
           message=""
         />
       )

@@ -20,7 +20,8 @@ vi.mock('firebase/functions', () => ({
 vi.mock('../../src/firebase/config', () => ({
   functions: {},
   auth: {},
-  db: {}
+  db: {},
+  APP_ID: 'autoflowcut'
 }))
 
 /**
@@ -54,35 +55,12 @@ function resetFunctionMocks() {
   mockHttpsCallable.mockReset()
 }
 
+// FUNCTION_SUFFIX는 빌드 시점 상수(__FUNCTION_SUFFIX__)로 치환되므로
+// 런타임 env 전환 테스트는 불가능. vitest.config.js에서 '_test'로 고정됨.
 describe('FUNCTION_SUFFIX', () => {
-  const originalEnv = { ...import.meta.env }
-
-  afterEach(() => {
-    vi.resetModules()
-    Object.keys(import.meta.env).forEach(key => {
-      if (!(key in originalEnv)) delete import.meta.env[key]
-    })
-    Object.assign(import.meta.env, originalEnv)
-  })
-
-  describe('환경변수에 따른 suffix 결정', () => {
-    it('VITE_FUNCTION_ENV가 "test"일 때 _test suffix 사용', async () => {
-      import.meta.env.VITE_FUNCTION_ENV = 'test'
-      const { FUNCTION_SUFFIX } = await import('../../src/firebase/functions.js')
-      expect(FUNCTION_SUFFIX).toBe('_test')
-    })
-
-    it('VITE_FUNCTION_ENV가 "prod"일 때 _prod suffix 사용', async () => {
-      import.meta.env.VITE_FUNCTION_ENV = 'prod'
-      const { FUNCTION_SUFFIX } = await import('../../src/firebase/functions.js')
-      expect(FUNCTION_SUFFIX).toBe('_prod')
-    })
-
-    it('VITE_FUNCTION_ENV가 없을 때 _test suffix 사용 (기본값)', async () => {
-      delete import.meta.env.VITE_FUNCTION_ENV
-      const { FUNCTION_SUFFIX } = await import('../../src/firebase/functions.js')
-      expect(FUNCTION_SUFFIX).toBe('_test')
-    })
+  it('테스트 환경에서는 _test suffix 사용', async () => {
+    const { FUNCTION_SUFFIX } = await import('../../src/firebase/functions.js')
+    expect(FUNCTION_SUFFIX).toBe('_test')
   })
 })
 
@@ -234,29 +212,3 @@ describe('Cloud Functions 호출', () => {
   })
 })
 
-describe('Prod 환경 함수 호출', () => {
-  let mocks
-
-  beforeEach(() => {
-    mocks = setupFunctionMocks('_prod')
-    import.meta.env.VITE_FUNCTION_ENV = 'prod'
-  })
-
-  afterEach(() => {
-    resetFunctionMocks()
-    vi.resetModules()
-  })
-
-  it('VITE_FUNCTION_ENV=prod일 때 _prod 함수 호출', async () => {
-    mocks.getAppStatus.mockResolvedValue({
-      data: { status: 'active', unlimited: true }
-    })
-
-    const { getAppStatus, FUNCTION_SUFFIX } = await import('../../src/firebase/functions.js')
-    expect(FUNCTION_SUFFIX).toBe('_prod')
-
-    await getAppStatus()
-
-    expect(mockHttpsCallable).toHaveBeenCalledWith(expect.anything(), 'getAppStatus_prod')
-  })
-})

@@ -4,8 +4,6 @@
 import { describe, it, expect } from 'vitest'
 import {
   DEFAULTS,
-  ASPECT_RATIOS,
-  getApiAspectRatio,
   REFERENCE_TYPES,
   UI,
   TIMING,
@@ -21,87 +19,41 @@ describe('DEFAULTS', () => {
     expect(DEFAULTS.project.defaultName).toBe('Untitled')
   })
 
-  it('has scene section with expected defaults', () => {
+  it('has scene section with default duration', () => {
     expect(DEFAULTS.scene).toBeDefined()
     expect(DEFAULTS.scene.duration).toBe(3)
-    expect(DEFAULTS.scene.aspectRatio).toBe('16:9')
   })
 
   it('has generation section', () => {
     expect(DEFAULTS.generation).toBeDefined()
-    expect(DEFAULTS.generation.method).toBe('api')
-    expect(DEFAULTS.generation.imageCount).toBe(1)
     expect(DEFAULTS.generation.retryCount).toBe(2)
     expect(DEFAULTS.generation.concurrency).toBe(1)
     expect(typeof DEFAULTS.generation.delayMin).toBe('number')
     expect(typeof DEFAULTS.generation.delayMax).toBe('number')
   })
 
-  it('has api section with endpoints', () => {
+  it('has api section with Flow endpoints', () => {
     expect(DEFAULTS.api).toBeDefined()
     expect(DEFAULTS.api.endpoints).toBeDefined()
-    expect(DEFAULTS.api.endpoints.generate).toContain('googleapis.com')
+    expect(DEFAULTS.api.endpoints.generateImage).toContain('flowMedia')
     expect(DEFAULTS.api.endpoints.session).toContain('labs.google')
   })
 
   it('has api payload section', () => {
     expect(DEFAULTS.api.payload).toBeDefined()
-    expect(DEFAULTS.api.payload.tool_name).toBe('BACKBONE')
-    expect(DEFAULTS.api.payload.model_default).toBe('IMAGEN_3_5')
+    expect(DEFAULTS.api.payload.tool).toBe('PINHOLE')
+  })
+
+  it('has model lists', () => {
+    expect(Array.isArray(DEFAULTS.api.imageModels)).toBe(true)
+    expect(Array.isArray(DEFAULTS.api.videoModels)).toBe(true)
   })
 
   it('has selectors section for DOM mode', () => {
     expect(DEFAULTS.selectors).toBeDefined()
     expect(DEFAULTS.selectors.create_project_btn).toBeTruthy()
     expect(DEFAULTS.selectors.generate_btn).toBeTruthy()
-    expect(DEFAULTS.selectors.prompt_textarea).toBeTruthy()
-  })
-})
-
-// ============================================================
-// ASPECT_RATIOS
-// ============================================================
-describe('ASPECT_RATIOS', () => {
-  it('is an array with 3 entries', () => {
-    expect(Array.isArray(ASPECT_RATIOS)).toBe(true)
-    expect(ASPECT_RATIOS).toHaveLength(3)
-  })
-
-  it('includes portrait, landscape, square', () => {
-    const values = ASPECT_RATIOS.map(r => r.value)
-    expect(values).toContain('9:16')
-    expect(values).toContain('16:9')
-    expect(values).toContain('1:1')
-  })
-
-  it('each entry has value, label, apiValue', () => {
-    for (const ratio of ASPECT_RATIOS) {
-      expect(ratio).toHaveProperty('value')
-      expect(ratio).toHaveProperty('label')
-      expect(ratio).toHaveProperty('apiValue')
-    }
-  })
-})
-
-// ============================================================
-// getApiAspectRatio
-// ============================================================
-describe('getApiAspectRatio', () => {
-  it('maps 16:9 to landscape', () => {
-    expect(getApiAspectRatio('16:9')).toBe('IMAGE_ASPECT_RATIO_LANDSCAPE')
-  })
-
-  it('maps 9:16 to portrait', () => {
-    expect(getApiAspectRatio('9:16')).toBe('IMAGE_ASPECT_RATIO_PORTRAIT')
-  })
-
-  it('maps 1:1 to square', () => {
-    expect(getApiAspectRatio('1:1')).toBe('IMAGE_ASPECT_RATIO_SQUARE')
-  })
-
-  it('defaults to landscape for unknown', () => {
-    expect(getApiAspectRatio('4:3')).toBe('IMAGE_ASPECT_RATIO_LANDSCAPE')
-    expect(getApiAspectRatio(undefined)).toBe('IMAGE_ASPECT_RATIO_LANDSCAPE')
+    expect(DEFAULTS.selectors.prompt_contenteditable).toBeTruthy()
   })
 })
 
@@ -163,7 +115,7 @@ describe('UI', () => {
 // TIMING constants
 // ============================================================
 describe('TIMING', () => {
-  it('has all timing constants', () => {
+  it('has core timing constants', () => {
     expect(TIMING.AUTO_SAVE_DEBOUNCE).toBe(1000)
     expect(TIMING.AUTH_CHECK_DELAY).toBe(3000)
     expect(TIMING.AUTH_POLL_INTERVAL).toBe(2000)
@@ -186,7 +138,6 @@ describe('TIMING', () => {
 describe('STYLE_PRESETS', () => {
   it('is defined and non-empty', () => {
     expect(STYLE_PRESETS).toBeDefined()
-    // It's imported from JSON, should be an array or object
     expect(STYLE_PRESETS).toBeTruthy()
   })
 })
