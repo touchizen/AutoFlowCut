@@ -25,6 +25,11 @@ const PREVIEW_H_MIN = 80
 const PREVIEW_H_MAX = 800
 const PREVIEW_H_DEFAULT = 240
 const PREVIEW_H_KEY = 'autoflowcut.audioTimeline.previewHeight'
+const TRACK_H_MIN = 32
+const TRACK_H_MAX = 240
+const SUB_TRACK_H_MIN = 24
+const SUB_TRACK_H_MAX = 120
+const TRACK_HEIGHTS_KEY = 'autoflowcut.audioTimeline.trackHeights'
 
 function formatTC(ms) {
   if (!isFinite(ms) || ms == null) return '0:00'
@@ -59,6 +64,67 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
     } catch {}
     return PREVIEW_H_DEFAULT
   })
+  // 트랙별 사용자 지정 높이 (오버라이드, 미설정 시 기본값 사용)
+  const [trackHeights, setTrackHeights] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(TRACK_HEIGHTS_KEY))
+      if (saved && typeof saved === 'object') return saved
+    } catch {}
+    return {}
+  })
+  const persistTrackHeights = (next) => {
+    try { localStorage.setItem(TRACK_HEIGHTS_KEY, JSON.stringify(next)) } catch {}
+  }
+  const getTrackHeight = (track) => {
+    if (track.isFileItem) return FILE_ROW_H
+    const override = trackHeights[track.id]
+    if (override) return override
+    return track.isSubTrack ? SUB_TRACK_H : TRACK_H
+  }
+  const startTrackResize = (e, track) => {
+    if (e.button !== 0 || track.isFileItem) return
+    e.preventDefault()
+    e.stopPropagation()
+    const startY = e.clientY
+    const startH = getTrackHeight(track)
+    const min = track.isSubTrack ? SUB_TRACK_H_MIN : TRACK_H_MIN
+    const max = track.isSubTrack ? SUB_TRACK_H_MAX : TRACK_H_MAX
+    document.body.style.cursor = 'row-resize'
+    document.body.style.userSelect = 'none'
+    let nextH = startH
+    const onMove = (mv) => {
+      nextH = Math.max(min, Math.min(max, startH + (mv.clientY - startY)))
+      setTrackHeights(prev => ({ ...prev, [track.id]: nextH }))
+    }
+    const onUp = () => {
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      setTrackHeights(prev => {
+        const next = { ...prev, [track.id]: nextH }
+        persistTrackHeights(next)
+        return next
+      })
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+  const resetTrackHeight = (track) => {
+    setTrackHeights(prev => {
+      const next = { ...prev }
+      delete next[track.id]
+      persistTrackHeights(next)
+      return next
+    })
+  }
+  // 헤더 버튼 툴팁 (label / desc / hotkey)
+  const [btnTooltip, setBtnTooltip] = useState(null) // { x, y, label, desc, hotkey } | null
+  const showBtnTooltip = (e, info) => {
+    const r = e.currentTarget.getBoundingClientRect()
+    setBtnTooltip({ x: r.left + r.width / 2, y: r.bottom + 6, ...info })
+  }
+  const hideBtnTooltip = () => setBtnTooltip(null)
   const [playingClipIds, setPlayingClipIds] = useState(new Set()) // 현재 재생 중인 클립 (단독 또는 글로벌)
   const [isGlobalPlaying, setIsGlobalPlaying] = useState(false)
   const [hoverScene, setHoverScene] = useState(null) // { x, y, scene }
@@ -495,14 +561,24 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
           <button
             className={`atl-play-btn${isGlobalPlaying ? ' atl-playing' : ''}`}
             onClick={togglePlay}
-            title={isGlobalPlaying ? t('audioTimeline.pause') : t('audioTimeline.play')}
+            onMouseEnter={(e) => showBtnTooltip(e, {
+              label: isGlobalPlaying ? t('audioTimeline.pauseLabel') : t('audioTimeline.playLabel'),
+              desc: isGlobalPlaying ? t('audioTimeline.pauseDesc') : t('audioTimeline.playDesc'),
+              hotkey: 'Space',
+            })}
+            onMouseLeave={hideBtnTooltip}
           >
             {isGlobalPlaying ? '⏸' : '▶'}
           </button>
           <button
             className="atl-stop-btn"
             onClick={() => { stopAll(); setPlayheadMs(0); if (scrollRef.current) scrollRef.current.scrollLeft = 0 }}
-            title={t('audioTimeline.stop')}
+            onMouseEnter={(e) => showBtnTooltip(e, {
+              label: t('audioTimeline.stopLabel'),
+              desc: t('audioTimeline.stopDesc'),
+              hotkey: 'Esc',
+            })}
+            onMouseLeave={hideBtnTooltip}
           >
             ⏹
           </button>
@@ -513,22 +589,50 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
           </span>
           <label
             className="atl-kb-toggle"
-            title={t('audioTimeline.kenBurns')}
             onClick={(e) => {
               // 실제 토글 X — 클릭만 받아서 안내 토스트 표시
               e.preventDefault()
               toast.info(t('audioTimeline.kenBurnsToast'))
             }}
+            onMouseEnter={(e) => showBtnTooltip(e, {
+              label: t('audioTimeline.kenBurnsLabel'),
+              desc: t('audioTimeline.kenBurnsDesc'),
+            })}
+            onMouseLeave={hideBtnTooltip}
           >
             <input type="checkbox" checked={false} readOnly tabIndex={-1} />
             <span>{t('audioTimeline.kenBurns')}</span>
           </label>
         </div>
         <div className="atl-zoom">
-          <button onClick={() => setZoomClamped(zoom / 1.4)}>−</button>
+          <button
+            onClick={() => setZoomClamped(zoom / 1.4)}
+            onMouseEnter={(e) => showBtnTooltip(e, {
+              label: t('audioTimeline.zoomOutLabel'),
+              desc: t('audioTimeline.zoomOutDesc'),
+              hotkey: t('audioTimeline.zoomWheelHint'),
+            })}
+            onMouseLeave={hideBtnTooltip}
+          >−</button>
           <span className="atl-zoom-val">{Math.round(zoom * 100)}%</span>
-          <button onClick={() => setZoomClamped(zoom * 1.4)}>+</button>
-          <button className="atl-zoom-fit" onClick={() => setZoom(1)} title={t('audioTimeline.zoomReset') || '100%'}>⊡</button>
+          <button
+            onClick={() => setZoomClamped(zoom * 1.4)}
+            onMouseEnter={(e) => showBtnTooltip(e, {
+              label: t('audioTimeline.zoomInLabel'),
+              desc: t('audioTimeline.zoomInDesc'),
+              hotkey: t('audioTimeline.zoomWheelHint'),
+            })}
+            onMouseLeave={hideBtnTooltip}
+          >+</button>
+          <button
+            className="atl-zoom-fit"
+            onClick={() => setZoom(1)}
+            onMouseEnter={(e) => showBtnTooltip(e, {
+              label: t('audioTimeline.zoomResetLabel'),
+              desc: t('audioTimeline.zoomResetDesc'),
+            })}
+            onMouseLeave={hideBtnTooltip}
+          >⊡</button>
         </div>
       </div>
 
@@ -564,7 +668,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
                 className={`atl-label ${track.isSubTrack ? 'atl-label-sub' : ''}${clickable ? ' atl-label-clickable' : ''}`}
                 style={{
                   color: track.color,
-                  height: track.isSubTrack ? SUB_TRACK_H : TRACK_H,
+                  height: getTrackHeight(track),
                 }}
                 onClick={onClick}
               >
@@ -581,6 +685,14 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
                 {track.isSubGroup && (
                   <span className="atl-file-count">{track.fileCount}</span>
                 )}
+                {/* 트랙 높이 조절 핸들 (드래그=조절, 더블클릭=기본값 복귀) */}
+                <div
+                  className="atl-track-resize"
+                  onPointerDown={(e) => startTrackResize(e, track)}
+                  onDoubleClick={(e) => { e.stopPropagation(); resetTrackHeight(track) }}
+                  onClick={(e) => e.stopPropagation()}
+                  title="드래그=높이 조절 · 더블클릭=기본값"
+                />
               </div>
             )
           })}
@@ -607,6 +719,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
                   key={`${track.id}-${i}`}
                   track={track}
                   width={totalWidth}
+                  height={getTrackHeight(track)}
                   pxPerMs={pxPerMs}
                   renderClips={renderClips}
                   onClipClick={onClipClick}
@@ -621,6 +734,22 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
           <Playhead positionPx={playheadMs * pxPerMs} totalHeight={visibleTracks.length} />
         </div>
       </div>
+
+      {/* 헤더 버튼 hover 툴팁 (label + desc + hotkey) */}
+      {btnTooltip && (
+        <div
+          className="atl-btn-tooltip"
+          style={{ left: btnTooltip.x, top: btnTooltip.y }}
+        >
+          <div className="atl-btn-tooltip-label">{btnTooltip.label}</div>
+          {btnTooltip.desc && <div className="atl-btn-tooltip-desc">{btnTooltip.desc}</div>}
+          {btnTooltip.hotkey && (
+            <div className="atl-btn-tooltip-hotkey">
+              {t('audioTimeline.hotkey')}: <kbd>{btnTooltip.hotkey}</kbd>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 씬 hover 툴팁 */}
       {hoverScene && (() => {
@@ -666,8 +795,8 @@ function TimeRuler({ totalMs, pxPerMs, width }) {
 }
 
 // ── TrackLane ──
-function TrackLane({ track, width, pxPerMs, renderClips = true, onClipClick, onClipDrag, totalDurationMs, playingClipIds, onSceneHover }) {
-  const h = track.isSubTrack ? SUB_TRACK_H : TRACK_H
+function TrackLane({ track, width, height, pxPerMs, renderClips = true, onClipClick, onClipDrag, totalDurationMs, playingClipIds, onSceneHover }) {
+  const h = height ?? (track.isSubTrack ? SUB_TRACK_H : TRACK_H)
   return (
     <div className="atl-lane" style={{ height: h, width }}>
       {renderClips && (track.clips || []).map(clip => (

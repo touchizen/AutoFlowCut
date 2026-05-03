@@ -1,19 +1,14 @@
 /**
  * AudioPanel — 클립 클릭 → 상세 모달 분기 회귀 테스트
  *
- * 핵심 회귀 시나리오:
- *  - 이미지/자막 클립 클릭 시 오디오 상세 모달이 열리면 안 됨
- *    (내부 로직: AudioPanel onClipSelect에서 if (!clip.audioPath) return)
- *  - 모달의 씬 이미지는 imagePath / image_path / filePath 모두 지원해야 함
- *
- * AudioPanel 모달 DOM 동작은 비동기 useEffect(playAudio)와 얽혀있어
- * 여기선 onClipSelect로 흘러가는 clip 데이터 contract만 검증한다.
- * (AudioPanel의 if (!audioPath) return 분기는 코드 자체가 단순 조건이라
- *  이 contract만 보장되면 안전)
+ * 두 층으로 검증:
+ *  1) Contract: AudioTimeline의 onClipSelect가 클립 타입별로 올바른 데이터(audioPath 유무) 전달
+ *  2) Integration: 실제 AudioPanel을 렌더해 비오디오 클릭 시 모달이 진짜 안 열리는지 확인
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render as rtlRender, fireEvent } from '@testing-library/react'
+import { render as rtlRender, fireEvent, waitFor, act } from '@testing-library/react'
 import AudioTimeline from '../../src/components/AudioTimeline/AudioTimeline'
+import AudioPanel from '../../src/components/AudioPanel'
 import { I18nProvider } from '../../src/hooks/useI18n'
 
 const render = (ui, options) => rtlRender(<I18nProvider>{ui}</I18nProvider>, options)
@@ -111,5 +106,59 @@ describe('onClipSelect contract — 클립 타입별 audioPath 유무', () => {
     expect(onClipSelect).toHaveBeenCalled()
     const clip = onClipSelect.mock.calls[0][0]
     expect(clip.audioPath).toBeTruthy()      // ★ 핵심
+  })
+})
+
+describe('AudioPanel integration — 실제 모달 DOM 동작', () => {
+  const baseProps = {
+    audioPackage,
+    audioReviews: {},
+    onSaveReview: vi.fn(),
+    onBulkReview: vi.fn(),
+    onRefresh: vi.fn(),
+    onSaveTimecodeOverride: vi.fn(),
+  }
+
+  // Modal은 createPortal로 document.body에 렌더되므로 document.body로 쿼리
+  const queryModal = () => document.body.querySelector('.audio-detail-modal')
+
+  it('이미지 클립 클릭 후에도 audio-detail-modal이 DOM에 없음', async () => {
+    const { container } = render(
+      <AudioPanel {...baseProps} scenes={scenes} srtEntries={srtEntries} />
+    )
+    // 모달이 처음엔 없음
+    expect(queryModal()).toBeNull()
+
+    const imageClips = container.querySelectorAll('.atl-clip-block')
+    expect(imageClips.length).toBeGreaterThan(0)
+    clickClip(imageClips[0])
+
+    await new Promise(r => setTimeout(r, 50))
+    expect(queryModal()).toBeNull()
+  })
+
+  it('자막 클립 클릭 후에도 audio-detail-modal이 DOM에 없음', async () => {
+    const { container } = render(
+      <AudioPanel {...baseProps} scenes={scenes} srtEntries={srtEntries} />
+    )
+    const textClips = container.querySelectorAll('.atl-clip-text')
+    expect(textClips.length).toBeGreaterThan(0)
+    clickClip(textClips[0])
+
+    await new Promise(r => setTimeout(r, 50))
+    expect(queryModal()).toBeNull()
+  })
+
+  it('Audio 클립 클릭 시 audio-detail-modal이 DOM에 나타남', async () => {
+    const { container } = render(
+      <AudioPanel {...baseProps} scenes={scenes} srtEntries={srtEntries} />
+    )
+    const audioClips = container.querySelectorAll('.atl-clip-audio')
+    expect(audioClips.length).toBeGreaterThan(0)
+    await act(async () => {
+      clickClip(audioClips[0])
+      await new Promise(r => setTimeout(r, 50))
+    })
+    expect(queryModal()).toBeInTheDocument()
   })
 })

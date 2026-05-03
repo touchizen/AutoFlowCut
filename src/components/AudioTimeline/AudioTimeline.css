@@ -254,6 +254,24 @@
   border-bottom: 1px solid #2a2a2a;
   flex-shrink: 0;
   gap: 6px;
+  position: relative;
+}
+
+/* 트랙 높이 조절 핸들 (라벨 행 하단 바) */
+.atl-track-resize {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -2px;
+  height: 4px;
+  cursor: row-resize;
+  z-index: 4;
+}
+.atl-track-resize:hover {
+  background: #4a4a4a;
+}
+.atl-track-resize:active {
+  background: #6a6a6a;
 }
 .atl-label-sub {
   font-size: 11px;
@@ -486,6 +504,53 @@
   width: 2px;
   background: #ff3b3b;
   box-shadow: 0 0 6px rgba(255, 59, 59, 0.6);
+}
+
+/* ── 헤더 버튼 hover 툴팁 (label + desc + hotkey) ── */
+/* 밝은 배경 + 어두운 글자로 콘트라스트 ↑ */
+.atl-btn-tooltip {
+  position: fixed;
+  z-index: 1100;
+  background: #f5f5f5;
+  color: #1a1a1a;
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  padding: 8px 12px;
+  max-width: 280px;
+  pointer-events: none;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  transform: translateX(-50%);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.atl-btn-tooltip-label {
+  font-weight: 700;
+  color: #1976d2;
+  margin-bottom: 4px;
+  font-size: 13px;
+}
+.atl-btn-tooltip-desc {
+  color: #333;
+}
+.atl-btn-tooltip-hotkey {
+  color: #555;
+  font-size: 11px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid #e0e0e0;
+}
+.atl-btn-tooltip-hotkey kbd {
+  display: inline-block;
+  background: #e8e8e8;
+  border: 1px solid #b8b8b8;
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-family: 'JetBrains Mono', 'Menlo', 'Consolas', monospace;
+  font-size: 10px;
+  color: #1a1a1a;
+  margin-left: 4px;
+  font-weight: 600;
 }
 
 /* ── 씬 호버 툴팁 ── */

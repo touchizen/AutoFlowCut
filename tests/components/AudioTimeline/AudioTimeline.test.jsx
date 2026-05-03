@@ -159,12 +159,14 @@ describe('AudioTimeline', () => {
     })
 
     it('줌 100% 리셋 버튼이 동작', () => {
-      render(<AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />)
+      const { container } = render(
+        <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />
+      )
       // 먼저 줌 변경
       fireEvent.click(screen.getByText('+'))
       fireEvent.click(screen.getByText('+'))
-      // 리셋
-      fireEvent.click(screen.getByTitle('100%'))
+      // 리셋 (zoom-fit 버튼 = ⊡)
+      fireEvent.click(container.querySelector('.atl-zoom-fit'))
       expect(screen.getByText('100%')).toBeInTheDocument()
     })
   })
