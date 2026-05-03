@@ -30,6 +30,33 @@ export default function PromptInput({
     onChange(newText)     // 부모에 전달 (파싱 + 씬 생성)
   }
 
+  // 엑셀/시트에서 복사한 탭 구분 데이터를 줄바꿈으로 정규화하여 붙여넣기
+  // (각 줄 = 한 씬 규칙을 유지)
+  const handlePaste = (e) => {
+    const pasted = e.clipboardData?.getData('text')
+    if (!pasted) return
+
+    const normalized = pasted
+      .replace(/\r\n?/g, '\n')   // CRLF/CR → LF
+      .replace(/\t+/g, '\n')     // 탭(들) → 줄바꿈
+
+    if (normalized === pasted) return // 변환할 게 없으면 기본 동작
+
+    e.preventDefault()
+    const target = e.target
+    const start = target.selectionStart
+    const end = target.selectionEnd
+    const newText = text.slice(0, start) + normalized + text.slice(end)
+    setText(newText)
+    onChange(newText)
+
+    // 커서를 붙여넣은 텍스트 끝으로 이동
+    requestAnimationFrame(() => {
+      const pos = start + normalized.length
+      target.setSelectionRange(pos, pos)
+    })
+  }
+
   const lineCount = text.split('\n').filter(l => l.trim()).length
 
   // seed 핸들러: 빈 값 허용, 숫자만 입력
@@ -56,6 +83,7 @@ export default function PromptInput({
         className="prompt-textarea"
         value={text}
         onChange={handleChange}
+        onPaste={handlePaste}
         placeholder={placeholder || t('prompt.placeholder')}
         disabled={disabled}
       />
