@@ -5,7 +5,7 @@
  * 인터랙션: 클릭 재생 / 스크럽 / 줌 / 가로 스크롤 / 그룹 펼치기
  */
 
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react'
 import { useAudioTimeline } from './useAudioTimeline'
 import { useI18n } from '../../hooks/useI18n'
 import { findSrtSegment } from '../../utils/audioTimeline'
@@ -75,10 +75,57 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   const pxPerMs = (PX_PER_SEC_BASE * zoom) / 1000
   const totalWidth = Math.max(800, data.totalDurationMs * pxPerMs)
 
-  // ── 줌 ──
+  // ── 줌 (playhead 위치를 앵커로 유지) ──
+  // setter는 click 시점의 scroll 위치만 기록하고, 실제 scroll 보정은
+  // useEffect에서 zoom commit 후 안전하게 처리
+  const lastAppliedZoomRef = useRef(zoom)
+  const playheadAnchorRef = useRef(null) // { screenX, visible } | null
+
   const setZoomClamped = useCallback((next) => {
-    setZoom(Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, next)))
-  }, [])
+    const clamped = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, next))
+    if (clamped === zoom) return
+
+    const scrollEl = scrollRef.current
+    if (scrollEl) {
+      const oldPxPerMs = (PX_PER_SEC_BASE * zoom) / 1000
+      const playheadOldX = playheadMs * oldPxPerMs
+      const screenX = playheadOldX - scrollEl.scrollLeft
+      const visible = screenX >= 0 && screenX <= scrollEl.clientWidth
+      playheadAnchorRef.current = { screenX, visible }
+    }
+
+    setZoom(clamped)
+  }, [zoom, playheadMs])
+
+  // useLayoutEffect: DOM commit 직후, paint 전에 sync로 실행 → totalWidth 새 값 보장
+  // playheadMs는 deps에서 제외 (재생 중 매 프레임 실행되는 거 방지 → zoom 변경 시에만 실행)
+  useLayoutEffect(() => {
+    if (zoom === lastAppliedZoomRef.current) return
+    lastAppliedZoomRef.current = zoom
+
+    const scrollEl = scrollRef.current
+    if (!scrollEl || !data) return
+
+    const anchor = playheadAnchorRef.current
+    const newPxPerMs = (PX_PER_SEC_BASE * zoom) / 1000
+    const playheadNewX = playheadMs * newPxPerMs
+    const cw = scrollEl.clientWidth
+    const maxScroll = Math.max(0, scrollEl.scrollWidth - cw)
+
+    let target
+    if (!anchor) {
+      target = playheadNewX - cw / 2
+    } else {
+      target = anchor.visible
+        ? playheadNewX - anchor.screenX
+        : playheadNewX - cw / 2
+      playheadAnchorRef.current = null
+    }
+
+    // 새 totalWidth 기준으로 클램프 (playhead가 끝 근처면 보이도록 보장)
+    scrollEl.scrollLeft = Math.max(0, Math.min(maxScroll, target))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoom, data])
 
   // ── 휠 (Cmd/Ctrl+휠 = 줌, 일반 휠 = 가로 스크롤) ──
   const handleWheel = useCallback((e) => {
@@ -137,6 +184,10 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   const previewHeightRef = useRef(previewHeight)
   useEffect(() => { previewHeightRef.current = previewHeight }, [previewHeight])
 
+  // pxPerMs를 ref로 — RAF tick / setTimeout 콜백이 stale closure로 옛 값 쓰는 거 방지
+  const pxPerMsRef = useRef(pxPerMs)
+  useEffect(() => { pxPerMsRef.current = pxPerMs }, [pxPerMs])
+
   // sub-track (캐릭터/카테고리) 파일 목록 펼치기/접기
   const toggleSubExpand = (subId) => {
     setExpandedSubTracks(prev => {
@@ -151,7 +202,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
     setPlayheadMs(clip.startMs)
     const scrollEl = scrollRef.current
     if (scrollEl && data) {
-      const targetX = clip.startMs * (PX_PER_SEC_BASE * zoom) / 1000
+      const targetX = clip.startMs * pxPerMsRef.current
       scrollEl.scrollLeft = Math.max(0, targetX - scrollEl.clientWidth / 2)
     }
   }
@@ -246,9 +297,10 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
 
       // 페이지-플립 스크롤: playhead가 우측 끝에 닿는 순간
       // 그 시점을 UI 좌측 시작점으로 옮김 (화면 밖으로 사라지지 않게)
+      // pxPerMs는 ref로 읽어야 — 재생 중 줌 변경 시에도 새 값 반영
       const scrollEl = scrollRef.current
       if (scrollEl) {
-        const playheadPx = cur * pxPerMs
+        const playheadPx = cur * pxPerMsRef.current
         const viewportRight = scrollEl.scrollLeft + scrollEl.clientWidth
         if (playheadPx >= viewportRight) {
           scrollEl.scrollLeft = playheadPx
