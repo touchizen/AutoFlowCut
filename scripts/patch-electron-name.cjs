@@ -35,10 +35,27 @@ if (!fs.existsSync(appDir)) {
 try {
   const plistPath = path.join(appDir, 'Contents', 'Info.plist')
 
+  // package.json에서 version + buildNumber 읽기 (About 패널 표시용)
+  let APP_VERSION = ''
+  let BUILD_NUMBER = ''
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'))
+    APP_VERSION = String(pkg.version || '')
+    BUILD_NUMBER = pkg.buildNumber != null ? String(pkg.buildNumber) : ''
+  } catch {}
+
   // 1. Info.plist 수정 (PlistBuddy 사용 — Electron의 binary plist도 OK)
   execSync(`/usr/libexec/PlistBuddy -c "Set :CFBundleName ${APP_NAME}" "${plistPath}"`)
   execSync(`/usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName ${APP_NAME}" "${plistPath}"`)
   execSync(`/usr/libexec/PlistBuddy -c "Set :CFBundleExecutable ${APP_NAME}" "${plistPath}"`)
+  // macOS About 패널이 자동으로 "버전 X.Y.Z (BUILD)" 형식으로 보여주려면
+  // CFBundleShortVersionString = X.Y.Z, CFBundleVersion = BUILD 로 분리되어야 함
+  if (APP_VERSION) {
+    execSync(`/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${APP_VERSION}" "${plistPath}"`)
+  }
+  if (BUILD_NUMBER) {
+    execSync(`/usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_NUMBER}" "${plistPath}"`)
+  }
 
   // 2. 실행 바이너리 이름 변경 (Electron → AutoFlowCut)
   const oldBin = path.join(appDir, 'Contents', 'MacOS', 'Electron')

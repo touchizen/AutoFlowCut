@@ -34,14 +34,30 @@ const __dirname_main = path.dirname(__filename_main)
 const APP_ICON_PATH = path.join(__dirname_main, '..', 'assets', 'icon.icns')
 const HAS_APP_ICON = fsSync.existsSync(APP_ICON_PATH)
 
+// package.json에서 buildNumber 읽기 (dev/prod 모두 동일)
+let BUILD_NUMBER = ''
+try {
+  const pkgPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'app.asar', 'package.json')
+    : path.join(__dirname_main, '..', 'package.json')
+  if (fsSync.existsSync(pkgPath)) {
+    const pkg = JSON.parse(fsSync.readFileSync(pkgPath, 'utf-8'))
+    if (pkg.buildNumber != null) BUILD_NUMBER = String(pkg.buildNumber)
+  }
+} catch (e) {
+  console.warn('[AutoFlowCut] buildNumber read failed:', e.message)
+}
+
 if (process.platform === 'darwin') {
+  const verStr = BUILD_NUMBER
+    ? `${app.getVersion()} (Build ${BUILD_NUMBER})`
+    : app.getVersion()
+  console.log('[AutoFlowCut] About →', verStr, '/ isPackaged:', app.isPackaged)
   app.setAboutPanelOptions({
     applicationName: 'AutoFlowCut',
-    applicationVersion: app.getVersion(),
-    version: '',
+    applicationVersion: verStr,
     copyright: '© Touchizen',
     credits: 'AutoFlowCut — Google Flow → CapCut automation',
-    // iconPath는 Linux 전용 — macOS는 dock 아이콘을 About 패널 아이콘으로 자동 사용
   })
 }
 
