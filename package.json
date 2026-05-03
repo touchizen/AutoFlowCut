@@ -1,11 +1,14 @@
 {
   "name": "autoflowcut",
   "version": "0.9.6",
-  "buildNumber": 214,
+  "buildNumber": 215,
   "description": "AutoFlowCut - Automate AI video creation from Google Flow to CapCut projects",
   "main": "dist-electron/main.js",
   "type": "module",
   "scripts": {
+    "patch-electron-name": "node scripts/patch-electron-name.cjs",
+    "postinstall": "node scripts/patch-electron-name.cjs",
+    "predev": "node scripts/patch-electron-name.cjs",
     "dev": "vite",
     "dev:prod": "vite --mode production",
     "build": "vite build",

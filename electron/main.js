@@ -27,6 +27,24 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // in dev; the packaged build sets it correctly).
 app.setName('AutoFlowCut')
 
+// macOS About 패널 + Dock 아이콘
+// (app.dock은 whenReady 이후에만 사용 가능 → 아래로 옮김)
+const __filename_main = fileURLToPath(import.meta.url)
+const __dirname_main = path.dirname(__filename_main)
+const APP_ICON_PATH = path.join(__dirname_main, '..', 'assets', 'icon.icns')
+const HAS_APP_ICON = fsSync.existsSync(APP_ICON_PATH)
+
+if (process.platform === 'darwin') {
+  app.setAboutPanelOptions({
+    applicationName: 'AutoFlowCut',
+    applicationVersion: app.getVersion(),
+    version: '',
+    copyright: '© Touchizen',
+    credits: 'AutoFlowCut — Google Flow → CapCut automation',
+    // iconPath는 Linux 전용 — macOS는 dock 아이콘을 About 패널 아이콘으로 자동 사용
+  })
+}
+
 // === Safe console logger (prevents EPIPE crash when stdout pipe is broken) ===
 const _origLog = console.log
 const _origWarn = console.warn
@@ -104,7 +122,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 900,
-    title: 'AutoFlowCut',
+    title: `AutoFlowCut v${app.getVersion()}`,
     icon: path.join(__dirname, '..', 'assets', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
@@ -1714,6 +1732,11 @@ function autoSetupSkills() {
 
 // === App Lifecycle ===
 app.whenReady().then(() => {
+  // Dock 아이콘 (macOS, dev/prod 둘 다) — whenReady 이후에만 app.dock 사용 가능
+  if (process.platform === 'darwin' && HAS_APP_ICON && app.dock) {
+    try { app.dock.setIcon(APP_ICON_PATH) } catch (e) { console.warn('[AutoFlowCut] dock.setIcon failed:', e.message) }
+  }
+
   // local-resource:// 프로토콜 핸들러 등록
   protocol.handle('local-resource', (request) => {
     // URL: local-resource://host/absolute/path/to/file
