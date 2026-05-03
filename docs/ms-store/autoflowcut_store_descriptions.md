@@ -1,4 +1,4 @@
-# AutoFlowCut — Microsoft Store Listing (v0.9.4)
+# AutoFlowCut — Microsoft Store Listing (v0.9.5)
 
 ---
 
@@ -151,21 +151,16 @@ Disclaimer: This app is an independent product developed by Touchizen and is not
 
 ### What's New
 ```
-v0.9.4 — Story Engine v2 + Smarter Pipeline
+v0.9.5 — Auto-Update + Seed Reproducibility
 
-- Story Engine v2: 8-Wave automated pipeline (script → TTS → storyboard → images → CapCut)
-- New skills: /story-new, /story-execute, /story-next for fully automated story production
-- Auto skill install on first app launch (when Claude Code is detected)
-- Auto audio/SFX placement on CapCut timeline (timecoded filenames)
-- Smart video retry — re-downloads when server succeeds but client fails
-- Live progress banner — real-time generation status across the entire app
-- 7-day free trial with 5 exports; Pro $4.99/mo or $39.99/yr (unlimited)
-- 87 style presets (updated from 80+)
-- STATE.md-based workflow tracking (replaces gate system)
-- Review loops: max 5 rounds per wave, auto-advance on 0 issues
-- Improved video duration handling and export reliability
-- Windows code signing with Certum OV certificate
-- Linux support (AppImage, deb)
+- Auto-Update: built-in update checker via GitHub Releases. New "Check for Updates…" menu (Help on Windows, app menu on macOS). Microsoft Store builds use Store updates.
+- T2V / I2V Seed support — reproducible video outputs with deterministic seeds.
+- Selected style now applies to T2V prompts; choice persisted per project.
+- Smarter retry (A+C) — when the server succeeds but download fails, only the download is retried (no re-generation, no wasted credits).
+- In-flight video recovery — generations resume safely after project reload.
+- Story Engine: per-wave START / DONE banners with explicit I/O contract.
+- Side Drawer: YouTube link follows the UI language.
+- Many fixes: thumbnail format auto-detection, history image persistence, dedup of fingerprint folders, Video Detail layout, i18n labels.
 ```
 
 ### Keywords
@@ -324,21 +319,16 @@ Touchizen 제작 — touchizen.com
 
 ### What's New (새로운 기능)
 ```
-v0.9.4 — Story Engine v2 + 스마트 파이프라인
+v0.9.5 — 자동 업데이트 + 시드 재현성
 
-- Story Engine v2: 8-Wave 자동 파이프라인 (대본 → TTS → 스토리보드 → 이미지 → CapCut)
-- 새 스킬: /story-new, /story-execute, /story-next로 스토리 영상 완전 자동화
-- 앱 첫 실행 시 Claude Code 감지 → 스킬 자동 설치
-- 오디오/SFX 자동 배치 — 타임코드 파일명으로 CapCut 타임라인에 자동 정렬
-- 스마트 비디오 재시도 — 서버 성공·클라 실패 시 재다운로드만 수행
-- 실시간 진행 배너 — 앱 전체에서 생성 상태 표시
-- 7일 무료 체험 + 5회 무료 내보내기, Pro $4.99/월 또는 $39.99/년 (무제한)
-- 87가지 스타일 프리셋 (80종에서 업데이트)
-- STATE.md 기반 워크플로우 상태 관리 (게이트 시스템 대체)
-- 리뷰 루프: Wave당 최대 5회, 문제 0이면 즉시 다음 진행
-- 영상 duration 처리 및 내보내기 안정성 개선
-- Windows 코드 서명 (Certum OV 인증서)
-- Linux 지원 (AppImage, deb)
+- 자동 업데이트: GitHub Releases 기반 업데이트 체커 내장. "업데이트 확인…" 메뉴 추가 (Windows 도움말, macOS 앱 메뉴). Microsoft Store 버전은 Store에서 자동 처리.
+- T2V / I2V 시드(seed) 지원 — 동일 결과 재현 가능.
+- 선택한 스타일이 T2V 프롬프트에도 적용. 프로젝트별 선택 저장.
+- 더 똑똑한 재시도 (A+C) — 서버 성공·다운로드 실패 시 재생성 없이 다운로드만 재시도 (크레딧·시간 절약).
+- 진행 중 영상 복구 — 프로젝트 재로드 후에도 자동으로 이어서 진행.
+- Story Engine: Wave별 START / DONE 배너 + 명시적 I/O 계약.
+- 사이드 드로어: YouTube 링크가 UI 언어에 따라 변경.
+- 다수 수정: 썸네일 형식 자동 감지, 히스토리 이미지 디스크 저장, 중복 폴더 방지, 영상 상세 레이아웃, i18n 라벨.
 ```
 
 ### Keywords (한국어)
@@ -405,21 +395,16 @@ AutoFlowCutはAI動画制作の全プロセスを自動化します。Google Flo
 
 ### What's New
 ```
-v0.9.4 — Story Engine v2 + スマートパイプライン
+v0.9.5 — 自動アップデート + シード再現性
 
-- Story Engine v2: 8-Wave自動パイプライン（スクリプト → TTS → ストーリーボード → 画像 → CapCut）
-- 新スキル: /story-new, /story-execute, /story-next で完全自動化
-- 初回起動時にClaude Code検出 → スキル自動インストール
-- 音声/SFX自動配置（タイムコード付きファイル名）
-- スマート動画リトライ — サーバー成功・クライアント失敗時に再ダウンロードのみ
-- リアルタイム進捗バナー
-- 7日間無料トライアル + 5回無料エクスポート、Pro $4.99/月 または $39.99/年
-- 87種類のスタイルプリセット（80種類から更新）
-- STATE.mdベースのワークフロー管理
-- レビューループ: Waveあたり最大5回、問題0で即次へ
-- 動画duration処理とエクスポート信頼性の改善
-- Windowsコード署名（Certum OV証明書）
-- Linuxサポート（AppImage, deb）
+- 自動アップデート: GitHub Releasesから新バージョンを取得する内蔵チェッカー。「アップデートを確認…」メニュー追加（Windows: ヘルプ、macOS: アプリメニュー）。Microsoft Store版はStoreで自動処理。
+- T2V / I2V シード対応 — 同一結果を再現可能。
+- 選択スタイルをT2Vプロンプトにも適用、プロジェクトごとに保存。
+- スマートリトライ（A+C）— サーバー成功・ダウンロード失敗時は再ダウンロードのみ実行（クレジット節約）。
+- 進行中動画の復元 — プロジェクト再読み込み後も自動で継続。
+- Story Engine: WaveごとにSTART / DONEバナー + 明示的なI/Oコントラクト。
+- サイドドロワー: YouTubeリンクがUI言語に追従。
+- 多数の修正: サムネイル形式の自動検出、履歴画像のディスク保存、重複フォルダ防止、動画詳細レイアウト、i18nラベル。
 ```
 
 ---
@@ -481,21 +466,16 @@ Der integrierte MCP-Server (Model Context Protocol) verbindet sich direkt mit Cl
 
 ### What's New
 ```
-v0.9.4 — Story Engine v2 + Smartere Pipeline
+v0.9.5 — Auto-Update + Seed-Reproduzierbarkeit
 
-- Story Engine v2: 8-Wave automatisierte Pipeline (Skript → TTS → Storyboard → Bilder → CapCut)
-- Neue Skills: /story-new, /story-execute, /story-next für vollautomatisierte Story-Produktion
-- Auto-Skill-Installation beim ersten Start (wenn Claude Code erkannt wird)
-- Auto-Audio/SFX-Platzierung (Timecode-Dateinamen)
-- Smart Video Retry — bei Server-Erfolg/Download-Fehler nur erneuter Download
-- Live-Fortschrittsbanner
-- 7-Tage-Testversion mit 5 Exporten, Pro 4,99 $/Monat oder 39,99 $/Jahr
-- 87 Stil-Presets (von 80+ aktualisiert)
-- STATE.md-basiertes Workflow-Tracking
-- Review-Loops: max. 5 Runden pro Wave, Auto-Advance bei 0 Issues
-- Verbesserte Video-Duration-Behandlung und Export-Zuverlässigkeit
-- Windows Code Signing (Certum OV-Zertifikat)
-- Linux-Unterstützung (AppImage, deb)
+- Auto-Update: Integrierter Update-Checker via GitHub Releases. Neuer Menüpunkt „Auf Updates prüfen…" (Windows: Hilfe, macOS: App-Menü). Microsoft Store nutzt Store-Updates.
+- T2V / I2V Seed-Unterstützung — reproduzierbare Video-Ausgaben mit deterministischen Seeds.
+- Ausgewählter Stil gilt nun auch für T2V-Prompts, projektweise gespeichert.
+- Smarter Retry (A+C) — bei Server-Erfolg/Download-Fehler nur erneuter Download (keine Neugenerierung, keine verschwendeten Credits).
+- In-Flight Video Recovery — Generierungen laufen nach Projekt-Reload sicher weiter.
+- Story Engine: START / DONE-Banner pro Wave mit explizitem I/O-Vertrag.
+- Side Drawer: YouTube-Link folgt der UI-Sprache.
+- Zahlreiche Fixes: Thumbnail-Formaterkennung, Historie-Bildpersistenz, Dedup-Fingerprint-Ordner, Video-Detail-Layout, i18n-Labels.
 ```
 
 ---
