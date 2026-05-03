@@ -12,7 +12,7 @@ export {
 } from './auth'
 export {
   getUserDoc,
-  subscribeToUserDoc,
+  getAppDoc,
   calculateTrialStatus,
   toDate
 } from './firestore'

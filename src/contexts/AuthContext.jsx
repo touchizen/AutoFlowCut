@@ -12,7 +12,7 @@ import {
   initializeUser
 } from '../firebase'
 import {
-  subscribeToUserDoc,
+  getAppDoc,
   calculateTrialStatus
 } from '../firebase/firestore'
 
@@ -67,29 +67,24 @@ export function AuthProvider({ children }) {
     return () => unsubscribe()
   }, [])
 
-  // Firestore 사용자 데이터 구독
+  // Firestore 사용자 데이터 1회 fetch (실시간 리스너 X — read 비용 절감)
+  // 변경이 필요한 시점(결제, export 후)엔 refreshSubscription()으로 명시적 재조회
+  const fetchUserData = useCallback(async (uid) => {
+    try {
+      const data = await getAppDoc(uid)
+      setUserData(data)
+      const trialStatus = calculateTrialStatus(data)
+      setSubscription(trialStatus)
+    } catch (err) {
+      console.error('[AuthContext] Firestore error:', err)
+      setError(err.message)
+    }
+  }, [])
+
   useEffect(() => {
-    if (!user) return
-
-    const unsubscribe = subscribeToUserDoc(
-      user.uid,
-      (data) => {
-        console.log('[AuthContext] User data updated:', data)
-        setUserData(data)
-
-        // data가 null이어도 calculateTrialStatus가 기본 trial 상태를 반환
-        const trialStatus = calculateTrialStatus(data)
-        console.log('[AuthContext] Subscription status:', trialStatus)
-        setSubscription(trialStatus)
-      },
-      (err) => {
-        console.error('[AuthContext] Firestore error:', err)
-        setError(err.message)
-      }
-    )
-
-    return () => unsubscribe()
-  }, [user])
+    if (!user?.uid) return
+    fetchUserData(user.uid)
+  }, [user?.uid, fetchUserData])
 
   // Google 로그인
   const login = useCallback(async () => {
@@ -135,13 +130,12 @@ export function AuthProvider({ children }) {
     setError(null)
   }, [])
 
-  // 구독 정보 새로고침
-  const refreshSubscription = useCallback(() => {
-    if (userData) {
-      const trialStatus = calculateTrialStatus(userData)
-      setSubscription(trialStatus)
+  // 구독 정보 새로고침 (서버에서 재조회)
+  const refreshSubscription = useCallback(async () => {
+    if (user?.uid) {
+      await fetchUserData(user.uid)
     }
-  }, [userData])
+  }, [user?.uid, fetchUserData])
 
   const value = {
     // 상태

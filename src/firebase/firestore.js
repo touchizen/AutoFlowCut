@@ -8,12 +8,7 @@
  * - apps/{userId}/subscriptions/{appId} - 앱별 구독 정보
  */
 
-import {
-  doc,
-  getDoc,
-  onSnapshot,
-  serverTimestamp
-} from 'firebase/firestore'
+import { doc, getDoc } from 'firebase/firestore'
 import { db, APP_ID } from './config'
 
 /**
@@ -59,51 +54,6 @@ export async function getAppDoc(userId, appId = APP_ID) {
     console.error('[Firestore] Failed to get app doc:', error)
     throw error
   }
-}
-
-/**
- * 앱별 구독 문서 실시간 구독
- * @param {string} userId - Firebase Auth UID
- * @param {function} onData - 데이터 콜백
- * @param {function} onError - 에러 콜백
- * @param {string} appId - 앱 ID (기본: autoflowcut)
- * @returns {function} - 구독 해제 함수
- */
-export function subscribeToAppDoc(userId, onData, onError, appId = APP_ID) {
-  if (!userId) {
-    onData(null)
-    return () => {}
-  }
-
-  const appRef = doc(db, 'apps', userId, 'subscriptions', appId)
-
-  return onSnapshot(
-    appRef,
-    (snapshot) => {
-      if (snapshot.exists()) {
-        onData({ id: snapshot.id, ...snapshot.data() })
-      } else {
-        onData(null)
-      }
-    },
-    (error) => {
-      // QUIC 프로토콜 에러는 자동 재연결되므로 무시
-      if (error?.code === 'unavailable' || error?.message?.includes('QUIC')) {
-        return
-      }
-      console.error('[Firestore] App subscription error:', error)
-      if (onError) onError(error)
-    }
-  )
-}
-
-/**
- * 사용자 문서 실시간 구독 (하위 호환용)
- * @deprecated 앱별 구독은 subscribeToAppDoc 사용
- */
-export function subscribeToUserDoc(userId, onData, onError) {
-  // 앱 문서를 구독하도록 변경
-  return subscribeToAppDoc(userId, onData, onError)
 }
 
 /**
