@@ -171,7 +171,7 @@ function App() {
   })
 
   // Audio Import
-  const { audioPackage, audioTracks, importing: audioImporting, importAudioPackage, importByPath, clearAudioPackage, audioReviews, saveReview, saveBulkReviews, refreshReviews } = useAudioImport(t)
+  const { audioPackage, audioTracks, importing: audioImporting, importAudioPackage, importByPath, clearAudioPackage, audioReviews, saveReview, saveBulkReviews, refreshReviews, saveTimecodeOverride } = useAudioImport(t)
 
   const handleImportAudio = async () => {
     setShowAudioResult(true)
@@ -930,6 +930,7 @@ function App() {
               onSaveReview={saveReview}
               onBulkReview={saveBulkReviews}
               onRefresh={refreshReviews}
+              onSaveTimecodeOverride={saveTimecodeOverride}
               srtEntries={audioPackage?.srtEntries}
               scenes={scenes}
             />

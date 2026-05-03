@@ -509,6 +509,22 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     guideStep5: 'AI가 마크된 파일과 사유를 분석하여 대체 파일을 추천합니다',
   },
 
+  // 오디오 타임라인
+  audioTimeline: {
+    title: '오디오 타임라인',
+    trackImage: '이미지',
+    trackSubtitle: '자막',
+    trackNarration: '나레이션',
+    trackVoice: '음성',
+    trackSfx: '효과음',
+    play: '재생 (Space)',
+    pause: '일시정지 (Space)',
+    stop: '정지 / 처음으로 (Esc)',
+    zoomReset: '100%',
+    kenBurns: 'Ken Burns 효과',
+    kenBurnsToast: 'Ken Burns 효과는 CapCut 내보내기 시점에 적용됩니다. 내보내기 모달의 Ken Burns 옵션을 켜고 내보내세요.',
+  },
+
   // 기록
   history: {
     title: '기록',

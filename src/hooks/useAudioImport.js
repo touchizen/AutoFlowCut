@@ -64,6 +64,88 @@ export function useAudioImport(t) {
     console.log('[AudioReview] save:', reviewPath, writeResult, Object.keys(updated).length, 'entries')
   }, [getReviewPath, updateReviews])
 
+  // ── 오디오 timecode override (.audio_overrides.json) ──
+  // 사용자가 타임라인에서 클립을 드래그하면 파일은 그대로 두고 보정값만 저장
+  const getOverridePath = useCallback((folderPath) => {
+    if (!folderPath) return null
+    return `${folderPath}/.audio_overrides.json`
+  }, [])
+
+  const loadOverrides = useCallback(async (folderPath) => {
+    const overridePath = getOverridePath(folderPath)
+    if (!overridePath) return {}
+    try {
+      const result = await window.electronAPI?.readFileAbsolute({ filePath: overridePath })
+      if (result?.success && result.data) {
+        const base64 = result.data.split(',')[1]
+        const json = new TextDecoder().decode(Uint8Array.from(atob(base64), c => c.charCodeAt(0)))
+        return JSON.parse(json) || {}
+      }
+    } catch (e) {
+      console.warn('[AudioOverride] load error:', e)
+    }
+    return {}
+  }, [getOverridePath])
+
+  // pkg 내 voices/sfx 파일에 override timecodeMs 적용
+  const applyOverrides = (pkg, overrides) => {
+    if (!pkg || !overrides || Object.keys(overrides).length === 0) return pkg
+    const apply = (rel, file) => {
+      const o = overrides[rel]
+      if (o?.timecodeMs != null) file.timecodeMs = o.timecodeMs
+    }
+    for (const v of (pkg.voices || [])) {
+      for (const f of v.files) {
+        const rel = f.path.replace(pkg.folderPath + '/', '')
+        apply(rel, f)
+      }
+    }
+    for (const cat of (pkg.sfx || [])) {
+      for (const f of cat.files) {
+        const rel = f.path.replace(pkg.folderPath + '/', '')
+        apply(rel, f)
+      }
+    }
+    return pkg
+  }
+
+  // 클립 timecode 보정 저장 (드래그 후 호출)
+  const saveTimecodeOverride = useCallback(async (relativePath, timecodeMs) => {
+    const folderPath = audioPackage?.folderPath
+    const overridePath = getOverridePath(folderPath)
+    if (!overridePath || !relativePath) return
+
+    const overrides = await loadOverrides(folderPath)
+    overrides[relativePath] = {
+      ...overrides[relativePath],
+      timecodeMs: Math.max(0, Math.round(timecodeMs)),
+      modifiedAt: new Date().toISOString(),
+    }
+
+    await window.electronAPI?.writeFileAbsolute({
+      filePath: overridePath,
+      content: JSON.stringify(overrides, null, 2)
+    })
+
+    // in-memory pkg 업데이트 → 즉시 반영
+    setAudioPackage(prev => {
+      if (!prev) return prev
+      const next = { ...prev, voices: [...(prev.voices || [])], sfx: [...(prev.sfx || [])] }
+      // voices 깊은 복사 (file 객체 변경 위해)
+      next.voices = next.voices.map(v => ({
+        ...v,
+        files: v.files.map(f => ({ ...f }))
+      }))
+      next.sfx = next.sfx.map(c => ({
+        ...c,
+        files: c.files.map(f => ({ ...f }))
+      }))
+      return applyOverrides(next, overrides)
+    })
+
+    console.log('[AudioOverride] saved:', relativePath, '→', timecodeMs)
+  }, [audioPackage?.folderPath, getOverridePath, loadOverrides])
+
   const saveBulkReviews = useCallback(async (folderPath, entries) => {
     const reviewPath = getReviewPath(folderPath)
     if (!reviewPath) return
@@ -101,6 +183,10 @@ export function useAudioImport(t) {
       srtContent: result.srtContent || null,
       summary: result.summary
     }
+
+    // .audio_overrides.json 적용 (드래그로 보정한 timecode)
+    const overrides = await loadOverrides(result.folderPath)
+    applyOverrides(pkg, overrides)
 
     setAudioPackage(pkg)
 
@@ -269,6 +355,7 @@ export function useAudioImport(t) {
     saveReview,
     saveBulkReviews,
     loadReviews,
-    refreshReviews
+    refreshReviews,
+    saveTimecodeOverride
   }
 }

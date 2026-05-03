@@ -509,6 +509,22 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     guideStep5: 'AI analyzes flagged files and reasons, then recommends replacements',
   },
 
+  // Audio Timeline
+  audioTimeline: {
+    title: 'Audio Timeline',
+    trackImage: 'Image',
+    trackSubtitle: 'Subtitle',
+    trackNarration: 'Narration',
+    trackVoice: 'Voice',
+    trackSfx: 'SFX',
+    play: 'Play (Space)',
+    pause: 'Pause (Space)',
+    stop: 'Stop / Reset (Esc)',
+    zoomReset: '100%',
+    kenBurns: 'Ken Burns Effect',
+    kenBurnsToast: 'Ken Burns effect is applied at CapCut Export time. Enable the Ken Burns option in the Export modal and export.',
+  },
+
   // History
   history: {
     title: 'History',

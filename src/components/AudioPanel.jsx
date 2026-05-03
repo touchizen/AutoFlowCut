@@ -3,12 +3,14 @@
  * 요약 뷰 (AudioResultModal 레이아웃 재활용) + 타임라인 뷰
  */
 
-import { useState, useMemo, useRef, useCallback } from 'react'
+import { useState, useMemo, useRef, useCallback, useEffect } from 'react'
 import { useI18n } from '../hooks/useI18n'
 import { findSrtSegment } from '../utils/audioTimeline'
 import { parseTimeToSeconds } from '../utils/parsers'
 import AudioFlagPopover from './AudioFlagPopover'
 import Modal from './Modal'
+import AudioTimeline from './AudioTimeline/AudioTimeline'
+import RealWaveform from './RealWaveform'
 import './AudioPanel.css'
 
 /** ms → MM:SS or HH:MM:SS */
@@ -46,15 +48,16 @@ function findSceneAtTime(scenes, timecodeMs, srtEntries) {
     scenes.find(s => s.subtitle && srtText.includes(s.subtitle)) || null
 }
 
-export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, onBulkReview, onRefresh, srtEntries, scenes }) {
+export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, onBulkReview, onRefresh, onSaveTimecodeOverride, srtEntries, scenes }) {
   const { t } = useI18n()
-  const [subTab, setSubTab] = useState('summary')
+  const [subTab, setSubTab] = useState('timeline')
   const [voiceSortBy, setVoiceSortBy] = useState('character')
   const [sfxSortBy, setSfxSortBy] = useState('category')
   const [expandedVoice, setExpandedVoice] = useState(null)
   const [expandedSfx, setExpandedSfx] = useState(null)
   const [showCharacters, setShowCharacters] = useState(false)
   const [playingFile, setPlayingFile] = useState(null)
+  const [playProgress, setPlayProgress] = useState(0) // 0~1, 모달 waveform 표시용
   const [flagTarget, setFlagTarget] = useState(null)
   const [refreshTooltip, setRefreshTooltip] = useState(null)
   const [selectedItem, setSelectedItem] = useState(null)
@@ -65,31 +68,52 @@ export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, o
 
   // --- Shared logic (from AudioResultModal) ---
 
-  const handlePlay = async (filePath, e) => {
-    e?.stopPropagation()
-    if (playingFile === filePath) {
-      audioRef.current?.pause()
-      audioRef.current = null
-      setPlayingFile(null)
-      return
-    }
+  // 실제 audio 재생 (toggle 없음 — 항상 새로 시작)
+  const playAudio = async (filePath) => {
     if (audioRef.current) {
       audioRef.current.pause()
       audioRef.current = null
     }
+    setPlayingFile(null)
+    setPlayProgress(0)
     try {
       const result = await window.electronAPI?.readFileAbsolute({ filePath })
       if (!result?.success) return
       const audio = new Audio(result.data)
-      audio.onended = () => { setPlayingFile(null); audioRef.current = null }
+      audio.ontimeupdate = () => {
+        if (audio.duration > 0) setPlayProgress(audio.currentTime / audio.duration)
+      }
+      audio.onended = () => {
+        setPlayingFile(null); setPlayProgress(0); audioRef.current = null
+      }
       audioRef.current = audio
       setPlayingFile(filePath)
       await audio.play()
     } catch (err) {
       console.error('[AudioPanel] Play error:', err)
-      setPlayingFile(null)
     }
   }
+
+  const stopAudio = () => {
+    audioRef.current?.pause()
+    audioRef.current = null
+    setPlayingFile(null)
+    setPlayProgress(0)
+  }
+
+  // ▶ 버튼 클릭 (toggle: 같은 파일이면 멈춤, 아니면 새로 재생)
+  const handlePlay = async (filePath, e) => {
+    e?.stopPropagation()
+    if (playingFile === filePath) { stopAudio(); return }
+    await playAudio(filePath)
+  }
+
+  // 모달이 열리면 자동 재생, 닫히면 정지
+  useEffect(() => {
+    if (selectedItem?.path) playAudio(selectedItem.path)
+    else stopAudio()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedItem?.path])
 
   const getRelativePath = (filePath) => {
     if (!folderPath || !filePath) return filePath
@@ -254,39 +278,6 @@ export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, o
   }, [sfx, sfxSortBy, sfxTimecodes])
 
   // --- Timeline view data ---
-
-  const timelineItems = useMemo(() => {
-    const items = []
-    if (voices) {
-      for (const v of voices) {
-        for (const f of v.files) {
-          items.push({
-            type: 'voice', timecodeMs: f.timecodeMs,
-            label: v.character, filename: f.filename, path: f.path
-          })
-        }
-      }
-    }
-    if (sfx) {
-      for (const cat of sfx) {
-        for (const f of cat.files) {
-          // 타임코드 복사본이 있는 원본은 타임라인에서 숨김
-          if (f.timecodeMs == null) {
-            const baseName = f.filename.replace(/\.\w+$/, '')
-            const rel = getRelativePath(f.path)
-            const dir = rel.replace(/\/[^/]+$/, '')
-            if (sfxWithTimecodeBaseNames.has(`${dir}/${baseName}`)) continue
-          }
-          items.push({
-            type: 'sfx', timecodeMs: f.timecodeMs || null,
-            label: cat.category, filename: f.filename, path: f.path
-          })
-        }
-      }
-    }
-    items.sort((a, b) => (a.timecodeMs ?? Infinity) - (b.timecodeMs ?? Infinity))
-    return items
-  }, [voices, sfx, sfxWithTimecodeBaseNames, folderPath])
 
   // --- Play/Flag button renderer ---
 
@@ -595,76 +586,6 @@ export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, o
     </>
   )
 
-  // --- Timeline View ---
-
-  const renderTimeline = () => (
-    <div className="audio-timeline">
-      {noTimecodeFiles.length > 0 && (
-        <div className="bulk-flag-bar">
-          <button className="btn btn-sm btn-warning" onClick={handleBulkFlagNoTimecode}>
-            ⚠️ 타임코드 없는 파일 일괄 마크 ({noTimecodeFiles.length}개)
-          </button>
-        </div>
-      )}
-      <div className="voice-table">
-        <div className="voice-table-header">
-          <span className="vt-col-play"></span>
-          <span className="vt-col-time">{t('audioResult.thTime')}</span>
-          <span className="vt-col-type">{t('audioTab.typeVoice') || '타입'}</span>
-          <span className="vt-col-char">{t('audioResult.thCharacter')}</span>
-          <span className="vt-col-file">{t('audioResult.thFile')}</span>
-          <span className="vt-col-srt">{t('audioTab.srtMatch') || '자막'}</span>
-          <span className="vt-col-scene">{t('audioTab.sceneContent') || '씬'}</span>
-          <span className="vt-col-flag"></span>
-        </div>
-        <div className="voice-table-body">
-          {timelineItems.map((item, i) => {
-            const srtMatch = item.timecodeMs != null ? findSrtSegment(srtEntries || [], item.timecodeMs) : null
-            const matchedScene = findSceneAtTime(scenes, item.timecodeMs, srtEntries)
-            return (
-              <div key={i} className={`voice-table-row${isFileFlagged(item.path) ? ' flagged-row' : ''}${selectedItem?.path === item.path ? ' selected-row' : ''}`}
-                onClick={() => setSelectedItem({ ...item, srtMatch, matchedScene })}
-                style={{ cursor: 'pointer' }}>
-                <span className="vt-col-play">{renderPlayBtn(item.path)}</span>
-                <span className="vt-col-time file-timecode">{formatTimecode(item.timecodeMs)}</span>
-                <span className="vt-col-type">
-                  <span className={`type-badge type-${item.type}`}>
-                    {item.type === 'voice' ? '🎤' : '🔊'}
-                  </span>
-                </span>
-                <span className="vt-col-char">{item.type === 'sfx' ? 'SFX' : item.label}</span>
-                <span className="vt-col-file file-name">{item.filename}</span>
-                <span className="vt-col-srt srt-match-text">{srtMatch?.text || ''}</span>
-                <span className="vt-col-scene scene-match-text"
-                  onMouseEnter={e => matchedScene && setHoverTooltip({ scene: matchedScene, x: e.clientX, y: e.clientY })}
-                  onMouseLeave={() => setHoverTooltip(null)}
-                >{matchedScene?.subtitle || matchedScene?.prompt_ko || ''}</span>
-                <span className="vt-col-flag">{renderFlagBtn(item.path, item.filename)}</span>
-              </div>
-            )
-          })}
-        </div>
-      </div>
-
-      {/* Review guide */}
-      <div className="audio-guide">
-        <div className="audio-guide-title">💡 {t('audioTab.guideTitle')} <span className="audio-guide-badge">{t('audioTab.guideBadge')}</span></div>
-        <ol className="audio-guide-steps">
-          <li>▶️ {t('audioTab.guideStep1')}</li>
-          <li>⚠️ {t('audioTab.guideStep2')}</li>
-          <li>
-            <strong>{t('audioTab.guideStep3Title')}</strong> ({t('audioTab.guideStep3Once')})<br/>
-            <a href="https://docs.anthropic.com/en/docs/claude-code" target="_blank" rel="noreferrer">Claude Code</a> {t('audioTab.guideStep3Desc')}<br/>
-            <code>claude mcp add autoflowcut node mcp-server/index.js</code><br/>
-            <span className="audio-guide-note">* {t('audioTab.guideStep3Note')}</span>
-          </li>
-          <li>{t('audioTab.guideStep4')}</li>
-          <li>{t('audioTab.guideStep5')}</li>
-        </ol>
-      </div>
-    </div>
-  )
-
   // --- Main render ---
 
   if (!audioPackage) {
@@ -679,13 +600,13 @@ export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, o
   return (
     <div className="audio-panel">
       <div className="audio-sub-tabs">
-        <button className={`sub-tab-btn${subTab === 'summary' ? ' active' : ''}`}
-          onClick={() => setSubTab('summary')}>
-          📊 {t('audioTab.summary') || '요약'}
-        </button>
         <button className={`sub-tab-btn${subTab === 'timeline' ? ' active' : ''}`}
           onClick={() => setSubTab('timeline')}>
           ⏱️ {t('audioTab.timeline') || '타임라인'}
+        </button>
+        <button className={`sub-tab-btn${subTab === 'summary' ? ' active' : ''}`}
+          onClick={() => setSubTab('summary')}>
+          📊 {t('audioTab.summary') || '요약'}
         </button>
         {onRefresh && (
           <span className="refresh-btn-wrapper">
@@ -705,7 +626,26 @@ export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, o
       </div>
 
       <div className="audio-panel-content">
-        {subTab === 'summary' ? renderSummary() : renderTimeline()}
+        {subTab === 'timeline' ? (
+          <AudioTimeline
+            audioPackage={audioPackage}
+            scenes={scenes}
+            srtEntries={srtEntries}
+            onSaveTimecodeOverride={onSaveTimecodeOverride}
+            onClipSelect={(clip) => {
+              const matchedScene = findSceneAtTime(scenes, clip.startMs, srtEntries)
+              const srtMatch = clip.startMs != null ? findSrtSegment(srtEntries || [], clip.startMs) : null
+              setSelectedItem({
+                type: clip.type || 'voice',
+                timecodeMs: clip.startMs,
+                filename: clip.filename || '',
+                path: clip.audioPath || clip.imagePath || '',
+                matchedScene,
+                srtMatch,
+              })
+            }}
+          />
+        ) : renderSummary()}
       </div>
 
       {flagTarget && (
@@ -743,6 +683,14 @@ export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, o
               {renderPlayBtn(selectedItem.path)}
               <span className="audio-detail-filename">{selectedItem.filename}</span>
             </div>
+
+            {/* 진짜 파형 (재생 진행도 표시) */}
+            <RealWaveform
+              filePath={selectedItem.path}
+              color={selectedItem.type === 'voice' ? '#BA68C8' : '#FFB74D'}
+              height={80}
+              progress={playingFile === selectedItem.path ? playProgress : 0}
+            />
 
             {/* 자막 */}
             {selectedItem.srtMatch?.text && (

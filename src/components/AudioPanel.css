@@ -166,6 +166,43 @@
   font-size: 12px;
   color: var(--text-secondary, #888);
 }
+
+/* RealWaveform — 모달 내 진짜 파형 + 재생 진행도 표시 */
+.real-waveform {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 6px;
+  padding: 8px;
+  margin-bottom: 12px;
+  position: relative;
+  box-sizing: border-box;
+}
+.real-waveform-bar {
+  flex: 1;
+  border-radius: 1px;
+  min-width: 1px;
+  transition: opacity 0.05s linear;
+}
+.real-waveform-bar.played {
+  filter: brightness(1.2);
+}
+.real-waveform-loading,
+.real-waveform-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 6px;
+  font-size: 12px;
+  color: #888;
+  margin-bottom: 12px;
+}
+.real-waveform-error {
+  color: #c97070;
+}
 .audio-detail-card {
   background: rgba(255,255,255,0.04);
   border-radius: 8px;
