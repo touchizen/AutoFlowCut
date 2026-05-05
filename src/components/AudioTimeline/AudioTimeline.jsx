@@ -147,10 +147,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   const playStartMsRef = useRef(0)   // 재생 시작 시 playhead 위치 (ms)
   const isGlobalPlayingRef = useRef(false)
 
-  if (!data) return null
-
   const pxPerMs = (PX_PER_SEC_BASE * zoom) / 1000
-  const totalWidth = Math.max(800, data.totalDurationMs * pxPerMs)
 
   // ── 줌 (playhead 위치를 앵커로 유지) ──
   // setter는 click 시점의 scroll 위치만 기록하고, 실제 scroll 보정은
@@ -478,6 +475,9 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
     const xInContent = (clientX - rect.left) + scrollEl.scrollLeft
     return Math.max(0, Math.min(data.totalDurationMs, xInContent / pxPerMs))
   }, [data?.totalDurationMs, pxPerMs])
+
+  if (!data) return null
+  const totalWidth = Math.max(800, data.totalDurationMs * pxPerMs)
 
   const startScrub = (e) => {
     if (e.button !== 0) return

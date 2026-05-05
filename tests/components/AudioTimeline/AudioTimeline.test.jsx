@@ -278,4 +278,81 @@ describe('AudioTimeline', () => {
       expect(playhead.style.left).toBe('0px')
     })
   })
+
+  // Regression: 프로젝트 전환 시 useAudioTimeline이 잠깐 null을 반환할 때
+  // early return이 hook 호출 사이에 있으면 "Rendered fewer/more hooks" 에러 발생
+  describe('프로젝트 전환 (hook 순서 안정성)', () => {
+    const collectHookErrors = (spy) =>
+      spy.mock.calls.filter(args =>
+        args.some(a => typeof a === 'string' && /Rendered (more|fewer) hooks/.test(a))
+      )
+
+    it('데이터 있음 → null → 다시 있음 순서로 rerender해도 hook 에러 없음', () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      try {
+        const { rerender } = rtlRender(
+          <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />,
+          { wrapper: I18nProvider }
+        )
+        expect(() => {
+          rerender(<AudioTimeline audioPackage={null} scenes={[]} srtEntries={[]} />)
+        }).not.toThrow()
+        expect(() => {
+          rerender(<AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />)
+        }).not.toThrow()
+        // 새 프로젝트 정상 렌더 확인
+        expect(screen.getByText('Audio Timeline')).toBeInTheDocument()
+        expect(collectHookErrors(errorSpy)).toEqual([])
+      } finally {
+        errorSpy.mockRestore()
+      }
+    })
+
+    it('null로 마운트 → 데이터 주입 시 hook 에러 없음', () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      try {
+        const { rerender, container } = rtlRender(
+          <AudioTimeline audioPackage={null} scenes={[]} srtEntries={[]} />,
+          { wrapper: I18nProvider }
+        )
+        expect(container.firstChild).toBeNull()
+        expect(() => {
+          rerender(<AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />)
+        }).not.toThrow()
+        expect(screen.getByText('Audio Timeline')).toBeInTheDocument()
+        expect(collectHookErrors(errorSpy)).toEqual([])
+      } finally {
+        errorSpy.mockRestore()
+      }
+    })
+
+    it('다른 audioPackage로 교체해도 hook 에러 없음', () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      try {
+        const audioPackage2 = {
+          folderPath: '/audio2',
+          media: {
+            video: { path: '/audio2/n.mp3', filename: 'n.mp3', durationMs: 30000 },
+          },
+          voices: [
+            {
+              character: '주연',
+              files: [{ filename: 'j_01.mp3', path: '/audio2/주연/j_01.mp3', timecodeMs: 500, durationMs: 1500 }],
+            },
+          ],
+          sfx: [],
+        }
+        const { rerender } = rtlRender(
+          <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />,
+          { wrapper: I18nProvider }
+        )
+        expect(() => {
+          rerender(<AudioTimeline audioPackage={audioPackage2} scenes={[]} srtEntries={[]} />)
+        }).not.toThrow()
+        expect(collectHookErrors(errorSpy)).toEqual([])
+      } finally {
+        errorSpy.mockRestore()
+      }
+    })
+  })
 })
