@@ -49,16 +49,19 @@ function cleanStaleOutputs(outDir) {
   }
 }
 
-async function convert(srcDir, outDir, label) {
+// Validate source dir & file count. Pure (no destination mutation).
+function validateSource({ srcDir, label }) {
   if (!fs.existsSync(srcDir)) {
     throw new Error(`[${label}] source dir not found: ${srcDir}`);
   }
-  // Validate source FIRST — throwing must not have already deleted prior outputs.
   const files = listOrdered(srcDir);
   if (files.length !== EXPECTED_FILES) {
     throw new Error(`[${label}] expected ${EXPECTED_FILES} files, got ${files.length} in ${srcDir}`);
   }
-  // Now safe to mutate destination.
+  return files;
+}
+
+async function convert({ srcDir, outDir, label, files }) {
   fs.mkdirSync(outDir, { recursive: true });
   cleanStaleOutputs(outDir);
   for (let i = 0; i < files.length; i++) {
@@ -77,16 +80,19 @@ async function convert(srcDir, outDir, label) {
 
 async function main() {
   console.log(`Output dir: ${landingDest}`);
-  await convert(
-    path.join(here, 'en', 'captioned'),
-    path.join(landingDest, 'en'),
-    'EN'
-  );
-  await convert(
-    path.join(here, 'ko', 'captioned'),
-    path.join(landingDest, 'ko'),
-    'KO'
-  );
+  const jobs = [
+    { srcDir: path.join(here, 'en', 'captioned'), outDir: path.join(landingDest, 'en'), label: 'EN' },
+    { srcDir: path.join(here, 'ko', 'captioned'), outDir: path.join(landingDest, 'ko'), label: 'KO' },
+  ];
+  // Validate ALL locales first — failure here leaves every destination untouched.
+  // (Within-locale validation alone could leave EN converted while KO fails.)
+  for (const j of jobs) {
+    j.files = validateSource(j);
+  }
+  // All sources OK — convert in order.
+  for (const j of jobs) {
+    await convert(j);
+  }
   console.log('\nDone.');
 }
 
