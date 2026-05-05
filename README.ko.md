@@ -42,8 +42,14 @@ AutoFlowCut은 AI 영상 제작 전 과정을 자동화합니다. Google Flow AI
 ### 오디오/SFX 통합
 - **오디오 패키지 임포트** — 나레이션, 보이스, SFX 파일 자동 인식
 - **SRT 타임코드 매칭** — 자막 타이밍 기반 오디오 배치
-- **멀티 트랙 타임라인** — 오디오 트랙 분리 (나레이션/보이스/SFX)
-- **오디오 리뷰 시스템** — 부적합 오디오 마킹 및 교체
+- **멀티 트랙 타임라인** — 이미지/자막/나레이션/보이스/SFX 트랙 + 가로 줌, 스크럽, 플레이헤드
+- **그룹 펼치기** — 보이스/SFX는 캐릭터·카테고리별로 접고 펼쳐서 개별 파일 row 확인
+- **파일 row 미니 마커** — 각 파일 row에 클립 위치 컬러바 → 스크롤해도 시간 컨텍스트 유지
+- **드래그로 타임코드 보정** — 보이스/SFX 클립을 드래그해 시작 시점 조정. 원본 파일은 건드리지 않고 `.audio_overrides.json`에 보정값만 저장
+- **트랙/라벨 크기 조절** — 트랙 높이, 라벨 컬럼 너비 드래그로 조절 (localStorage 저장)
+- **프리뷰 패널** — 현재 플레이헤드 위치의 씬 이미지 + SRT 자막 표시
+- **키보드 단축키** — `Space` 재생/정지, `Esc` 정지 + 처음으로
+- **오디오 리뷰 시스템** — 부적합 오디오에 사유 표시 + 일괄 정리
 
 ### MCP 서버 (Claude Code 연동)
 - **내장 MCP 서버** — Claude Code에서 직접 씬/레퍼런스/프롬프트 편집
@@ -171,6 +177,8 @@ AutoFlowCut/
 │   ├── story-execute/          # /story-execute W1~W8 자동 실행
 │   └── story-next/             # /story-next 재개
 ├── docs/                       # 문서 (스키마, 스토어 설명 등)
+├── tests/                      # Vitest 단위/통합 테스트 (src/ 구조 미러링)
+├── scripts/                    # 빌드 헬퍼 (electron 이름 패치, 빌드 번호 bump 등)
 ├── assets/                     # 앱 아이콘 (icon.icns, icon.png)
 ├── public/                     # 정적 에셋 (스타일 썸네일)
 ├── vite.config.js
@@ -231,6 +239,16 @@ npm run pack
 > **Windows 코드 서명**: SimplySign Desktop이 연결된 상태에서 빌드하면 자동 서명됩니다 (Certum OV 인증서).
 
 빌드 결과물은 `release/` 디렉토리에 생성됩니다.
+
+### 테스트
+
+```bash
+npm test              # watch 모드
+npm run test:run      # 1회 실행
+npm run test:coverage # 커버리지 리포트
+```
+
+테스트 파일은 `tests/` 디렉토리 안에 있고 `src/` 구조를 미러링합니다 (Vitest + jsdom + @testing-library/react).
 
 ### 환경 분리 (test / prod)
 

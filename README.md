@@ -36,8 +36,14 @@ AutoFlowCut automates the entire AI video production pipeline. Generate images a
 ### Audio / SFX Integration
 - **Audio package import** — Automatic detection of narration, voice, and SFX files.
 - **SRT timecode matching** — Audio placement aligned to subtitle timing.
-- **Multi-track timeline** — Separate audio tracks (narration / voice / SFX).
-- **Audio review system** — Flag unsuitable audio and replace it.
+- **Multi-track timeline** — Image / subtitle / narration / voice / SFX tracks with horizontal zoom, scrub, and playhead.
+- **Expandable groups** — Voice / SFX collapse by character / category; expand sub-tracks to see individual file rows.
+- **File row mini-markers** — Each file row shows a colored bar at its clip's position so timing context is preserved when scrolling.
+- **Drag-to-adjust timecode** — Drag any voice / SFX clip to nudge its timing; persisted to `.audio_overrides.json` without touching original files.
+- **Resizable lanes** — Per-track height and label-column width are draggable, persisted to localStorage.
+- **Preview panel** — Current playhead position shows the matched scene image + SRT subtitle.
+- **Keyboard shortcuts** — `Space` play/pause, `Esc` stop and rewind.
+- **Audio review system** — Flag unsuitable audio with reason and bulk-clean tracks.
 
 ### MCP Server (Claude Code integration)
 - **Built-in MCP server** — Edit scenes / references / prompts directly from Claude Code.
@@ -165,6 +171,8 @@ AutoFlowCut/
 │   ├── story-execute/          # /story-execute W1–W8 auto-runner
 │   └── story-next/             # /story-next resume
 ├── docs/                       # Documentation (schemas, store descriptions, ...)
+├── tests/                      # Vitest unit + integration tests (mirrors src/)
+├── scripts/                    # Build helpers (electron name patch, build-number bump, ...)
 ├── assets/                     # App icons (icon.icns, icon.png)
 ├── public/                     # Static assets (style thumbnails)
 ├── vite.config.js
@@ -225,6 +233,16 @@ npm run pack
 > **Windows code signing**: If SimplySign Desktop is connected during build, the binary is signed automatically (Certum OV certificate).
 
 Build artifacts are written to the `release/` directory.
+
+### Test
+
+```bash
+npm test              # Watch mode
+npm run test:run      # One-shot run
+npm run test:coverage # Coverage report
+```
+
+Tests live in `tests/` and mirror the `src/` directory layout (Vitest + jsdom + @testing-library/react).
 
 ### Environment Separation (test / prod)
 
