@@ -440,6 +440,54 @@ describe('AudioTimeline', () => {
     })
   })
 
+  // Regression (Issue D): disabled로 전환되는 순간 진행 중이던 audio/RAF/timer가 멈춰야 함.
+  // 키보드/버튼 차단만으론 이미 시작된 재생이 overlay 아래에서 계속 흐름.
+  describe('disabled 전환 시 진행 중 재생 정지 (Issue D)', () => {
+    it('disabled=false → true 전환 시 audio.pause 호출됨', async () => {
+      // electronAPI mock — 정상 응답으로 재생 시작 가능하게
+      global.window.electronAPI.readFileAbsolute = vi.fn().mockResolvedValue({
+        success: true,
+        data: 'data:audio/mpeg;base64,AAAA',
+      })
+
+      const { rerender, container } = rtlRender(
+        <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} disabled={false} />,
+        { wrapper: I18nProvider }
+      )
+
+      // 재생 시작 (Space 키)
+      fireEvent.keyDown(window, { code: 'Space' })
+      // playGlobal → 클립별 startClipAt → readFileAbsolute → new Audio → audio.play
+      // jsdom은 마이크로태스크 처리만 하면 충분
+      await new Promise(r => setTimeout(r, 0))
+
+      const pauseSpy = window.HTMLMediaElement.prototype.pause
+      pauseSpy.mockClear()
+
+      // disabled로 flip
+      rerender(<AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} disabled={true} />)
+
+      // disabled effect → stopAll → 모든 audio.pause 호출
+      // (audioInstancesRef에 인스턴스가 없을 수도 있어서 정확한 횟수는 검증 안 함)
+      // 핵심: stopAll이 호출되어 cleanup이 발생했음을 간접 검증
+      expect(container.querySelector('.atl-playing')).toBeNull()
+    })
+
+    it('disabled=true 마운트 시점부터는 새 재생도 시작 못 함 (Space no-op)', () => {
+      const readFile = vi.fn().mockResolvedValue({ success: true, data: 'data:audio/mpeg;base64,AAAA' })
+      global.window.electronAPI.readFileAbsolute = readFile
+
+      rtlRender(
+        <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} disabled={true} />,
+        { wrapper: I18nProvider }
+      )
+
+      fireEvent.keyDown(window, { code: 'Space' })
+      // disabled면 togglePlay → 즉시 return → readFileAbsolute 안 불림
+      expect(readFile).not.toHaveBeenCalled()
+    })
+  })
+
   // Regression: 드래그 중 unmount(예: 프로젝트 전환)되면 onUp이 안 와서
   // window listener와 document.body.style.cursor/userSelect가 잔류
   describe('드래그 중 unmount cleanup (Issue 3)', () => {

@@ -483,6 +483,8 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
   audioTab: {
     title: '오디오',
     importFirst: '오디오 패키지를 먼저 가져오세요',
+    loading: '오디오 패키지를 가져오는 중...',
+    rendering: '타임라인을 그리는 중...',
     summary: '요약',
     timeline: '타임라인',
     flagFile: '부적합 마크',

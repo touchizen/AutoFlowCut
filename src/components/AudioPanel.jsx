@@ -3,7 +3,7 @@
  * 요약 뷰 (AudioResultModal 레이아웃 재활용) + 타임라인 뷰
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useDeferredValue } from 'react'
 import { useI18n } from '../hooks/useI18n'
 import { useAudioPlayback } from '../hooks/useAudioPlayback'
 import { findSrtSegment } from '../utils/audioTimeline'
@@ -49,13 +49,23 @@ function findSceneAtTime(scenes, timecodeMs, srtEntries) {
     scenes.find(s => s.subtitle && srtText.includes(s.subtitle)) || null
 }
 
-export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, onBulkReview, onRefresh, onSaveTimecodeOverride, srtEntries, scenes }) {
+export default function AudioPanel({ audioPackage, audioReviews, loading = false, onSaveReview, onBulkReview, onRefresh, onSaveTimecodeOverride, srtEntries, scenes }) {
   const { t } = useI18n()
   const [subTab, setSubTab] = useState('timeline')
   const [flagTarget, setFlagTarget] = useState(null)
   const [refreshTooltip, setRefreshTooltip] = useState(null)
   const [selectedItem, setSelectedItem] = useState(null)
   const [hoverTooltip, setHoverTooltip] = useState(null)
+
+  // 큰 프로젝트 전환 시 timeline 렌더가 동기로 메인 스레드를 막음 → useDeferredValue로 background에 양보.
+  // 새 데이터가 commit될 때까지 deferred는 이전 값을 유지 → 그동안 isStale=true로 spinner overlay.
+  const deferredAudioPackage = useDeferredValue(audioPackage)
+  const deferredScenes = useDeferredValue(scenes)
+  const deferredSrtEntries = useDeferredValue(srtEntries)
+  const isStale =
+    deferredAudioPackage !== audioPackage ||
+    deferredScenes !== scenes ||
+    deferredSrtEntries !== srtEntries
 
   const { folderPath } = audioPackage || {}
 
@@ -98,6 +108,16 @@ export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, o
 
   // --- Main render ---
 
+  // 데이터 없는데 로딩 중 → 가져오는 중 spinner 화면 (자동 로드 / import 진행 중)
+  if (!audioPackage && loading) {
+    return (
+      <div className="audio-panel-empty">
+        <div className="audio-spinner" role="status" aria-label={t('audioTab.loading') || '오디오 로딩 중'} />
+        <p>{t('audioTab.loading') || '오디오 패키지를 가져오는 중...'}</p>
+      </div>
+    )
+  }
+
   if (!audioPackage) {
     return (
       <div className="audio-panel-empty">
@@ -121,8 +141,10 @@ export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, o
         {onRefresh && (
           <span className="refresh-btn-wrapper">
             <button
-              className="sub-tab-refresh-btn"
-              onClick={onRefresh}
+              className={`sub-tab-refresh-btn${(loading || isStale) ? ' is-loading' : ''}`}
+              onClick={() => { if (loading || isStale) return; onRefresh() }}
+              disabled={loading || isStale}
+              aria-busy={loading || isStale}
               onMouseEnter={(e) => {
                 const rect = e.currentTarget.getBoundingClientRect()
                 setRefreshTooltip({ x: rect.left + rect.width / 2, y: rect.top })
@@ -138,9 +160,10 @@ export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, o
       <div className="audio-panel-content">
         {subTab === 'timeline' ? (
           <AudioTimeline
-            audioPackage={audioPackage}
-            scenes={scenes}
-            srtEntries={srtEntries}
+            audioPackage={deferredAudioPackage}
+            scenes={deferredScenes}
+            srtEntries={deferredSrtEntries}
+            disabled={loading || isStale}
             onSaveTimecodeOverride={onSaveTimecodeOverride}
             onClipSelect={(clip) => {
               // 오디오 클립(narration/voice/sfx)만 상세 모달 표시
@@ -171,6 +194,16 @@ export default function AudioPanel({ audioPackage, audioReviews, onSaveReview, o
             getFileReview={getFileReview}
             onFlagClick={handleFlag}
           />
+        )}
+
+        {/* loading: import/refresh 비동기 진행 중. isStale: 새 데이터 commit 전 deferred render 중. */}
+        {(loading || isStale) && (
+          <div className="audio-panel-loading-overlay" role="status" aria-live="polite">
+            <div className="audio-spinner" />
+            <p>{loading
+              ? (t('audioTab.loading') || '오디오 패키지를 가져오는 중...')
+              : (t('audioTab.rendering') || '타임라인을 그리는 중...')}</p>
+          </div>
         )}
       </div>
 

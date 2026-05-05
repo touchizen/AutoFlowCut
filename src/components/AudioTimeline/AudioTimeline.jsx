@@ -31,7 +31,7 @@ function formatTC(ms) {
   return formatDuration(ms / 1000)
 }
 
-export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClipSelect, onSaveTimecodeOverride }) {
+export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClipSelect, onSaveTimecodeOverride, disabled = false }) {
   const { t } = useI18n()
   const data = useAudioTimeline(audioPackage, scenes, srtEntries)
   const [zoom, setZoom] = useState(1)
@@ -432,7 +432,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   }
 
   const togglePlay = () => {
-    if (!data) return
+    if (!data || disabled) return
     if (isGlobalPlayingRef.current || audioInstancesRef.current.size > 0) {
       stopAll()
     } else {
@@ -446,10 +446,18 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   // (deps에 playheadMs를 넣으면 RAF로 매 프레임 add/remove → perf 낭비 + 키 입력 누락 가능)
   const togglePlayRef = useRef(togglePlay)
   const stopAllRef = useRef(stopAll)
-  useEffect(() => { togglePlayRef.current = togglePlay; stopAllRef.current = stopAll })
+  // disabled를 ref로 들고 핸들러에서 매번 검사 — keydown effect는 마운트 1회 등록이라 prop 변경 시 재생성 안 됨.
+  const disabledRef = useRef(disabled)
+  useEffect(() => {
+    togglePlayRef.current = togglePlay
+    stopAllRef.current = stopAll
+    disabledRef.current = disabled
+  })
 
   useEffect(() => {
     const onKey = (e) => {
+      // disabled (loading/refresh overlay 중) — 단축키도 막아야 deferred timeline에 의도치 않은 재생/정지가 안 일어남
+      if (disabledRef.current) return
       const tag = (e.target?.tagName || '').toLowerCase()
       if (tag === 'input' || tag === 'textarea' || e.target?.isContentEditable) return
       if (e.code === 'Space') {
@@ -472,6 +480,13 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
     activeDragCleanupRef.current?.()
     activeDragCleanupRef.current = null
   }, [])
+
+  // disabled로 전환되는 순간 — 진행 중이던 audio/RAF/scheduled timer 정리.
+  // 키보드/버튼 차단만으론 이미 시작된 재생이 overlay 아래에서 계속 흐름.
+  // ref로 호출해야 stopAll의 최신 클로저 잡음 (deps에 stopAll 넣으면 매 렌더 effect 재실행).
+  useEffect(() => {
+    if (disabled) stopAllRef.current?.()
+  }, [disabled])
 
   // ── 스크럽 (Remotion 패턴: 타임라인 영역 전체 pointerdown + window pointermove) ──
   const isDraggingRef = useRef(false)
@@ -635,6 +650,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
           <button
             className={`atl-play-btn${isGlobalPlaying ? ' atl-playing' : ''}`}
             onClick={togglePlay}
+            disabled={disabled}
             onMouseEnter={(e) => showBtnTooltip(e, {
               label: isGlobalPlaying ? t('audioTimeline.pauseLabel') : t('audioTimeline.playLabel'),
               desc: isGlobalPlaying ? t('audioTimeline.pauseDesc') : t('audioTimeline.playDesc'),
@@ -646,7 +662,8 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
           </button>
           <button
             className="atl-stop-btn"
-            onClick={() => { stopAll(); setPlayheadMs(0); if (scrollRef.current) scrollRef.current.scrollLeft = 0 }}
+            onClick={() => { if (disabled) return; stopAll(); setPlayheadMs(0); if (scrollRef.current) scrollRef.current.scrollLeft = 0 }}
+            disabled={disabled}
             onMouseEnter={(e) => showBtnTooltip(e, {
               label: t('audioTimeline.stopLabel'),
               desc: t('audioTimeline.stopDesc'),

@@ -171,7 +171,7 @@ function App() {
   })
 
   // Audio Import
-  const { audioPackage, audioTracks, importing: audioImporting, importAudioPackage, importByPath, clearAudioPackage, audioReviews, saveReview, saveBulkReviews, refreshReviews, saveTimecodeOverride } = useAudioImport(t)
+  const { audioPackage, audioTracks, importing: audioImporting, audioLoading, importAudioPackage, importByPath, clearAudioPackage, audioReviews, saveReview, saveBulkReviews, refreshReviews, saveTimecodeOverride } = useAudioImport(t)
 
   const handleImportAudio = async () => {
     setShowAudioResult(true)
@@ -927,6 +927,7 @@ function App() {
             <AudioPanel
               audioPackage={audioPackage}
               audioReviews={audioReviews}
+              loading={audioLoading}
               onSaveReview={saveReview}
               onBulkReview={saveBulkReviews}
               onRefresh={refreshReviews}
