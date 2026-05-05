@@ -5,7 +5,7 @@
 A desktop app that **mass-generates** images and videos with Google Flow AI and exports them to CapCut projects in one click.
 
 [![Release](https://img.shields.io/github/v/release/touchizen/AutoFlowCut)](https://github.com/touchizen/AutoFlowCut/releases)
-[![License](https://img.shields.io/badge/license-UNLICENSED-red)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 ## Overview
 
@@ -59,7 +59,7 @@ AutoFlowCut automates the entire AI video production pipeline. Generate images a
 | Category | Technology |
 |----------|-----------|
 | **Frontend** | React 18 + Vite 6 |
-| **Desktop** | Electron 34 |
+| **Desktop** | Electron 36 |
 | **AI Engine** | Google Flow AI (labs.google/fx) |
 | **Backend** | Firebase (Auth, Firestore, Cloud Functions) |
 | **MCP** | @modelcontextprotocol/sdk |
@@ -110,7 +110,7 @@ Phase 3: Download   → Download + save completed videos sequentially
 ## Project Structure
 
 ```
-Flow2CapCut/
+AutoFlowCut/
 ├── electron/                    # Electron main process
 │   ├── main.js                 # Main process + WebContentsView management
 │   ├── preload.js              # Context bridge (window.electronAPI)

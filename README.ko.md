@@ -11,7 +11,7 @@
 Google Flow AI로 이미지/비디오를 **대량 생성**하고, CapCut 영상 프로젝트로 원클릭 내보내기하는 데스크톱 앱.
 
 [![Release](https://img.shields.io/github/v/release/touchizen/AutoFlowCut)](https://github.com/touchizen/AutoFlowCut/releases)
-[![License](https://img.shields.io/badge/license-UNLICENSED-red)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 ## 개요
 
@@ -65,7 +65,7 @@ AutoFlowCut은 AI 영상 제작 전 과정을 자동화합니다. Google Flow AI
 | 카테고리 | 기술 |
 |----------|------|
 | **Frontend** | React 18 + Vite 6 |
-| **Desktop** | Electron 34 |
+| **Desktop** | Electron 36 |
 | **AI Engine** | Google Flow AI (labs.google/fx) |
 | **Backend** | Firebase (Auth, Firestore, Cloud Functions) |
 | **MCP** | @modelcontextprotocol/sdk |
@@ -116,7 +116,7 @@ Phase 3: Download   → 완료된 비디오를 순차 다운로드 + 저장
 ## 프로젝트 구조
 
 ```
-Flow2CapCut/
+AutoFlowCut/
 ├── electron/                    # Electron 메인 프로세스
 │   ├── main.js                 # 메인 프로세스 + WebContentsView 관리
 │   ├── preload.js              # Context bridge (window.electronAPI)

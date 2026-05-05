@@ -34,7 +34,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "author": "Touchizen",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "private": true,
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
