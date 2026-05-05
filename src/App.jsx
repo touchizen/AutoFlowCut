@@ -79,6 +79,12 @@ function App() {
   // applies=false면 Stop 버튼 표시 안 함 (frame-to-video처럼 스타일 무관 모드).
   const [runningStyle, setRunningStyle] = useState({ styleId: null, applies: false })
 
+  // scene/video batch가 큐에 enqueue된 후 실제 실행 시작 전까지 true.
+  // 이 사이에 사용자가 Start 또 누르면 runningStyle이 덮어써져서 Stop 라벨이
+  // 실제 실행 중인 job과 어긋날 수 있으므로 Start 버튼을 비활성화해 차단한다.
+  // (.finally로 작업 완료 시 자동 클리어 — 성공/에러/큐 클리어 모두 커버.)
+  const [hasPendingBatch, setHasPendingBatch] = useState(false)
+
   // Settings (초기화 + localStorage 동기화)
   const { settings, setSettings, updateSetting, ensureProjectName } = useAppSettings()
 
@@ -472,8 +478,8 @@ function App() {
   }, [isRunning, videoAutomation.isRunning, settings, flowAPI, framePairs, scenesHook, videoScenesHook, t])
 
   const handleStart = async (overrideStyleId = null) => {
-    // 이미 실행 중이면 무시 (중지는 별도 버튼)
-    if (isRunning || videoAutomation.isRunning) return
+    // 이미 실행 중이거나 큐에 batch가 대기 중이면 무시 (중지는 별도 버튼)
+    if (isRunning || videoAutomation.isRunning || hasPendingBatch) return
 
     // 선택 검증 (폴더 확인보다 먼저)
     if (activeTab === 'video-text') {
@@ -538,7 +544,8 @@ function App() {
 
         // Stop 버튼이 현재 돌고 있는 스타일을 표시할 수 있도록 시작 시점 snapshot
         setRunningStyle({ styleId: effectiveStyleId, applies: true })
-        start(startOptions)
+        setHasPendingBatch(true)
+        start(startOptions).finally(() => setHasPendingBatch(false))
         break
       }
 
@@ -563,6 +570,7 @@ function App() {
 
         // Stop 버튼이 현재 실행 중인 스타일을 표시할 수 있도록 snapshot
         setRunningStyle({ styleId: effectiveStyleId, applies: true })
+        setHasPendingBatch(true)
 
         videoAutomation.start({
           mode: 't2v',
@@ -597,7 +605,7 @@ function App() {
               })
             }
           },
-        })
+        }).finally(() => setHasPendingBatch(false))
         break
       }
 
@@ -636,6 +644,7 @@ function App() {
 
         // I2V는 스타일 무관 — Stop 버튼에 표시 안 함
         setRunningStyle({ styleId: null, applies: false })
+        setHasPendingBatch(true)
 
         videoAutomation.start({
           mode: 'i2v',
@@ -678,7 +687,7 @@ function App() {
               return updated
             })
           },
-        })
+        }).finally(() => setHasPendingBatch(false))
         break
       }
 
@@ -694,7 +703,8 @@ function App() {
     if (pendingStartOptions) {
       // 시작 시점 snapshot — 사용자가 modal 띄운 사이 스타일 변경해도 startOptions에 들어간 게 진실
       setRunningStyle({ styleId: pendingStartOptions.selectedStyleRefId, applies: true })
-      start(pendingStartOptions)
+      setHasPendingBatch(true)
+      start(pendingStartOptions).finally(() => setHasPendingBatch(false))
       setPendingStartOptions(null)
     }
   }
@@ -1042,7 +1052,8 @@ function App() {
                     disabled={
                       ((activeTab === 'text' || activeTab === 'list') && scenes.length === 0) ||
                       (activeTab === 'video-text' && videoScenes.length === 0) ||
-                      (activeTab === 'frame-to-video' && framePairs.length === 0)
+                      (activeTab === 'frame-to-video' && framePairs.length === 0) ||
+                      hasPendingBatch
                     }
                   >
                     {startStyleApplies
