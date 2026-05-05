@@ -73,6 +73,12 @@ function App() {
   const [tagValidationErrors, setTagValidationErrors] = useState(null)
   const [pendingStartOptions, setPendingStartOptions] = useState(null)
 
+  // 실제 실행 중인 자동화의 스타일 snapshot — Stop 버튼이 표시함.
+  // selectedStyleRefId / activeTab은 사용자가 실행 중에 변경할 수 있어서
+  // Stop 버튼이 그걸 그대로 읽으면 "지금 돌고 있는 게 어떤 스타일인지" 표시 못 함.
+  // applies=false면 Stop 버튼 표시 안 함 (frame-to-video처럼 스타일 무관 모드).
+  const [runningStyle, setRunningStyle] = useState({ styleId: null, applies: false })
+
   // Settings (초기화 + localStorage 동기화)
   const { settings, setSettings, updateSetting, ensureProjectName } = useAppSettings()
 
@@ -144,6 +150,13 @@ function App() {
       }).catch(() => {})
     }
   }, [scenes.length, authReady])
+
+  // 자동화가 둘 다 끝나면 Stop 버튼용 running snapshot 정리
+  useEffect(() => {
+    if (!isRunning && !videoAutomation.isRunning) {
+      setRunningStyle(prev => prev.applies || prev.styleId ? { styleId: null, applies: false } : prev)
+    }
+  }, [isRunning, videoAutomation.isRunning])
 
   // Project Data 관리
   const audioSwitchRef = useRef()
@@ -517,6 +530,8 @@ function App() {
           return
         }
 
+        // Stop 버튼이 현재 돌고 있는 스타일을 표시할 수 있도록 시작 시점 snapshot
+        setRunningStyle({ styleId: effectiveStyleId, applies: true })
         start(startOptions)
         break
       }
@@ -539,6 +554,9 @@ function App() {
         const effectiveVideoSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
           ? settings.seedNo
           : null
+
+        // Stop 버튼이 현재 실행 중인 스타일을 표시할 수 있도록 snapshot
+        setRunningStyle({ styleId: effectiveStyleId, applies: true })
 
         videoAutomation.start({
           mode: 't2v',
@@ -610,6 +628,9 @@ function App() {
           ? settings.seedNo
           : null
 
+        // I2V는 스타일 무관 — Stop 버튼에 표시 안 함
+        setRunningStyle({ styleId: null, applies: false })
+
         videoAutomation.start({
           mode: 'i2v',
           framePairs: resolvedPairs,
@@ -665,6 +686,8 @@ function App() {
   const handleTagValidationProceed = () => {
     setTagValidationErrors(null)
     if (pendingStartOptions) {
+      // 시작 시점 snapshot — 사용자가 modal 띄운 사이 스타일 변경해도 startOptions에 들어간 게 진실
+      setRunningStyle({ styleId: pendingStartOptions.selectedStyleRefId, applies: true })
       start(pendingStartOptions)
       setPendingStartOptions(null)
     }
@@ -966,23 +989,27 @@ function App() {
             const requiredCount = Math.ceil(scenes.length * threshold / 100)
             const canExport = hasScenes && hasRun && !anyRunning && doneCount >= requiredCount
 
-            // 선택된 스타일 라벨 — Start 버튼에서 클릭 가능, Stop 버튼에서는 read-only로 표시.
-            const styleLabel = (() => {
-              if (!selectedStyleRefId) return t('actions.styleNone')
-              if (selectedStyleRefId.startsWith('ref:')) {
-                const refId = selectedStyleRefId.replace('ref:', '')
+            // 스타일 ID → 표시 라벨 변환 (Start: 현재 선택값 / Stop: 실행 중 snapshot)
+            const computeStyleLabel = (id) => {
+              if (!id) return t('actions.styleNone')
+              if (id.startsWith('ref:')) {
+                const refId = id.replace('ref:', '')
                 const ref = references.find(r => String(r.id) === refId && r.type === 'style')
                 return ref?.name || refId
               }
-              if (selectedStyleRefId.startsWith('preset:')) {
-                const presetId = selectedStyleRefId.replace('preset:', '')
+              if (id.startsWith('preset:')) {
+                const presetId = id.replace('preset:', '')
                 const preset = STYLE_PRESETS?.styles?.find(s => s.id === presetId)
                 const isKo = t('common.cancel') === '취소'
                 return isKo ? (preset?.name_ko || presetId) : (preset?.name_en || presetId)
               }
-              return selectedStyleRefId
-            })()
-            const styleApplies = activeTab === 'text' || activeTab === 'list' || activeTab === 'video-text'
+              return id
+            }
+            const startStyleLabel = computeStyleLabel(selectedStyleRefId)
+            const startStyleApplies = activeTab === 'text' || activeTab === 'list' || activeTab === 'video-text'
+            // Stop 버튼은 실행 시작 시 snapshot한 runningStyle 기준 — 사용자가 실행 중에 탭/스타일 바꿔도 영향 X
+            const stopStyleLabel = computeStyleLabel(runningStyle.styleId)
+            const stopStyleApplies = runningStyle.applies
 
             return (
               <>
@@ -993,11 +1020,11 @@ function App() {
                     disabled={isStopping}
                   >
                     {isStopping ? `⏳ ${t('status.stopping')}` : `⏹️ ${t('actions.stop')}`}
-                    {styleApplies && (
+                    {stopStyleApplies && (
                       <>
                         {' ▸ '}
-                        <span className="btn-style-display" title={t('actions.styleSelected') || styleLabel}>
-                          🎨 {styleLabel}
+                        <span className="btn-style-display" title={stopStyleLabel}>
+                          🎨 {stopStyleLabel}
                         </span>
                       </>
                     )}
@@ -1012,12 +1039,12 @@ function App() {
                       (activeTab === 'frame-to-video' && framePairs.length === 0)
                     }
                   >
-                    {styleApplies
+                    {startStyleApplies
                       ? <>
                           {activeTab === 'video-text' ? '🎬' : '✨'} {t('actions.start')}
                           ▸
                           <span className="btn-style-link" onClick={(e) => { e.stopPropagation(); setShowStylePicker(true) }}>
-                            🎨 {styleLabel}
+                            🎨 {startStyleLabel}
                           </span>
                         </>
                       : `🎬 ${t('actions.start')}`}
