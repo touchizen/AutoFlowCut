@@ -379,6 +379,24 @@
 .atl-lane-file {
   background: rgba(0, 0, 0, 0.15);
   border-bottom: 1px solid #232323;
+  position: relative; /* mini-clip 절대 위치 기준 */
+}
+
+/* file row 안의 mini-clip 마커 — 22px 행에서 시간 위치를 시각화 */
+.atl-file-mini-clip {
+  position: absolute;
+  top: 50%;
+  height: 6px;
+  margin-top: -3px;
+  border-radius: 2px;
+  cursor: pointer;
+  opacity: 0.85;
+  transition: height 0.12s ease-out, margin-top 0.12s ease-out, opacity 0.12s ease-out;
+}
+.atl-file-mini-clip:hover {
+  height: 12px;
+  margin-top: -6px;
+  opacity: 1;
 }
 .atl-label-name {
   white-space: nowrap;

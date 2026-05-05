@@ -134,6 +134,54 @@ describe('AudioTimeline', () => {
       expect(screen.queryByText('소은')).not.toBeInTheDocument()
     })
 
+    it('sub-track 펼치면 각 file row의 lane에 mini-clip 마커가 표시됨', () => {
+      const { container } = render(
+        <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />
+      )
+      // Voice → 소은(2개 파일) 펼치기
+      fireEvent.click(screen.getByText('Voice'))
+      fireEvent.click(screen.getByText('소은'))
+
+      // 파일별 mini-clip 마커가 lane에 그려져야 함
+      const markers = container.querySelectorAll('.atl-file-mini-clip')
+      expect(markers.length).toBe(2) // s_01.mp3 + s_02.mp3
+
+      // 마커 위치 — 시작 시간(timecodeMs) × pxPerMs 기반 left 적용
+      // s_01 timecodeMs=1000, s_02=5000. zoom 100% → pxPerMs=0.04 → left 40, 200
+      const lefts = Array.from(markers).map(m => parseFloat(m.style.left))
+      expect(lefts[0]).toBeCloseTo(40, 0)  // 1000 * 0.04
+      expect(lefts[1]).toBeCloseTo(200, 0) // 5000 * 0.04
+    })
+
+    it('mini-clip 클릭 시 onClipSelect 호출 + playhead 이동', () => {
+      const onClipSelect = vi.fn()
+      const { container } = render(
+        <AudioTimeline
+          audioPackage={audioPackage}
+          scenes={scenes}
+          srtEntries={srtEntries}
+          onClipSelect={onClipSelect}
+        />
+      )
+      fireEvent.click(screen.getByText('Voice'))
+      fireEvent.click(screen.getByText('소은'))
+
+      const markers = container.querySelectorAll('.atl-file-mini-clip')
+      expect(markers.length).toBeGreaterThan(0)
+
+      // pointerdown으로 클릭 (스크럽 트리거 차단되어야 함 — stopPropagation)
+      fireEvent.pointerDown(markers[0], { button: 0, clientX: 50 })
+
+      expect(onClipSelect).toHaveBeenCalledTimes(1)
+      const clip = onClipSelect.mock.calls[0][0]
+      expect(clip.audioPath).toBe('/audio/소은/s_01.mp3')
+      expect(clip.startMs).toBe(1000)
+
+      // playhead가 클립 시작 위치로 이동
+      const playhead = container.querySelector('.atl-playhead')
+      expect(playhead.style.left).toBe('40px')
+    })
+
     it('SFX도 펼치면 카테고리가 나타남', () => {
       render(<AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />)
       fireEvent.click(screen.getByText('SFX'))

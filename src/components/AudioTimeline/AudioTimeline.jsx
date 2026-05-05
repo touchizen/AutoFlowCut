@@ -815,12 +815,29 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
             {visibleTracks.map((track, i) => {
               // 파일 항목은 lane 없이 작은 빈 row (vertical 정렬)
               if (track.isFileItem) {
+                // sub-track 펼친 상태에서 file row의 lane은 비어있어 시간 위치 컨텍스트가 사라짐.
+                // 컬러바 mini-clip을 표시해서 각 row가 자기 위치를 self-explain하게 함.
+                const clip = track.clip
+                const left = clip.startMs * pxPerMs
+                const width = Math.max(2, (clip.endMs - clip.startMs) * pxPerMs)
                 return (
                   <div
                     key={`${track.id}-${i}`}
                     className="atl-lane atl-lane-file"
                     style={{ width: totalWidth, height: FILE_ROW_H }}
-                  />
+                  >
+                    <div
+                      className="atl-file-mini-clip"
+                      style={{ left, width, backgroundColor: track.color }}
+                      onPointerDown={(e) => {
+                        if (e.button !== 0) return
+                        e.stopPropagation() // 스크럽 트리거 차단
+                        jumpToClip(clip)
+                        if (clip.audioPath) onClipSelect?.(clip)
+                      }}
+                      title={clip.filename}
+                    />
+                  </div>
                 )
               }
               // 그룹이 펼쳐진 상태면 group lane엔 클립 안 그림 (sub-track에만 표시)
