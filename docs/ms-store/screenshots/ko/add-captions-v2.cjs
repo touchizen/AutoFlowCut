@@ -9,14 +9,14 @@ const CAPTION_HEIGHT = 120;
 const screenshots = [
   { file: '스크린샷 2026-04-22-1.png', caption: '원클릭 CapCut 내보내기 — 씬이 바로 편집 가능한 영상 프로젝트로' },
   { file: '스크린샷 2026-04-22-2.png', caption: '타임라인 기반 오디오 & 비디오 미리보기' },
+  { file: 'Screenshot 2026-05-03 220159.png', caption: '멀티 트랙 오디오 타임라인 — 나레이션, 대사, 효과음, 자막을 한 번에' },
   { file: '스크린샷 2026-04-22-3.png', caption: '자막, 타임코드, 미디어를 한 화면에서 씬 관리' },
   { file: '스크린샷 2026-04-22-4.png', caption: 'AI 기반 배치 영상 생성 — F2V로 모든 씬을 영상으로' },
   { file: '스크린샷 2026-04-22-5.png', caption: '레퍼런스 이미지로 캐릭터 비주얼 일관성 유지' },
-  { file: '스크린샷 2026-04-22-6.png', caption: 'MCP 서버 연동 — Claude AI로 워크플로우 자동화' },
   { file: '스크린샷 2026-04-22-7.png', caption: 'AI 생성 이미지와 프롬프트를 한눈에 확인' },
   { file: '스크린샷 2026-04-22-8.png', caption: '생성된 모든 이미지와 영상이 내 PC에 자동 저장' },
   { file: '스크린샷 2026-04-22-9.png', caption: 'Claude AI가 씬 생성부터 CapCut 내보내기까지 자동화' },
-  { file: '스크린샷 2026-04-22-10.png', caption: '80가지 이상의 아트 스타일 프리셋 제공' },
+  { file: '스크린샷 2026-04-22-10.png', caption: '87가지 아트 스타일 프리셋 제공' },
 ];
 
 function splitToLines(text, fontSize, maxWidth) {

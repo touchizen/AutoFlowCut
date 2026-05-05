@@ -10,14 +10,14 @@ const STROKE_WIDTH = 4;
 const screenshots = [
   { file: '스크린샷 2026-03-23 213908.png', caption: 'One-click export to CapCut — your scenes become a ready-to-edit video project' },
   { file: '스크린샷 2026-03-24 101534.png', caption: 'Built-in audio & video preview with timeline for precise editing' },
+  { file: 'Screenshot 2026-05-03 215005.png', caption: 'Multi-track audio timeline — narration, dialogue, SFX, and subtitles in sync' },
   { file: '스크린샷 2026-03-23 232121.png', caption: 'Manage scenes with subtitles, timecodes, and media in one unified view' },
   { file: '스크린샷 2026-03-23 232156.png', caption: 'AI-powered batch video generation — bring every scene to life with F2V' },
   { file: '스크린샷 2026-03-23 232229.png', caption: 'Reference image system for consistent character visuals across scenes' },
   { file: '스크린샷 2026-03-23 232246.png', caption: 'All generated images and videos are auto-saved to your PC' },
   { file: '스크린샷 2026-03-23 232825.png', caption: 'Full scene overview with AI-generated images and detailed prompts' },
-  { file: '스크린샷 2026-03-24 094442.png', caption: 'MCP server integration — connect Claude AI for automated workflows' },
   { file: '스크린샷 2026-03-24 095609.png', caption: 'Claude AI assistant automates scene creation and CapCut export' },
-  { file: '스크린샷 2026-03-24 095828.png', caption: '80+ art style presets — from animation to cinematic photography' },
+  { file: '스크린샷 2026-03-24 095828.png', caption: '87 art style presets — from animation to cinematic photography' },
 ];
 
 function splitToLines(text, fontSize, maxWidth) {
