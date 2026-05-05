@@ -182,6 +182,33 @@ describe('AudioTimeline', () => {
       expect(playhead.style.left).toBe('40px')
     })
 
+    it('SFX sub-track 펼쳐도 file row에 mini-clip 마커 표시 (Voice와 동일 동작)', () => {
+      const onClipSelect = vi.fn()
+      const { container } = render(
+        <AudioTimeline
+          audioPackage={audioPackage}
+          scenes={scenes}
+          srtEntries={srtEntries}
+          onClipSelect={onClipSelect}
+        />
+      )
+      // SFX → 01_주판 펼치기
+      fireEvent.click(screen.getByText('SFX'))
+      fireEvent.click(screen.getByText('01_주판'))
+
+      // file row mini-clip 1개 (sfx 카테고리 a.mp3 timecodeMs=2000)
+      const markers = container.querySelectorAll('.atl-file-mini-clip')
+      expect(markers.length).toBe(1)
+      expect(parseFloat(markers[0].style.left)).toBeCloseTo(80, 0) // 2000 * 0.04
+
+      // 클릭하면 sfx clip이 onClipSelect로 들어와야 함
+      fireEvent.pointerDown(markers[0], { button: 0, clientX: 100 })
+      expect(onClipSelect).toHaveBeenCalledTimes(1)
+      const clip = onClipSelect.mock.calls[0][0]
+      expect(clip.audioPath).toBe('/sfx/a.mp3')
+      expect(clip.type).toBe('sfx')
+    })
+
     it('SFX도 펼치면 카테고리가 나타남', () => {
       render(<AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />)
       fireEvent.click(screen.getByText('SFX'))
