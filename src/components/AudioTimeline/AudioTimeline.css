@@ -440,6 +440,13 @@
   white-space: nowrap;
 }
 
+/* ── Scroll content wrapper (Playhead의 containing block) ── */
+/* position: relative라 Playhead의 top/bottom이 viewport가 아닌
+   ruler+tracks 전체 높이 기준이 됨 → 세로 스크롤해도 playhead가 끝까지 닿음 */
+.atl-content {
+  position: relative;
+}
+
 /* ── Track lane ── */
 .atl-tracks {
   position: relative;

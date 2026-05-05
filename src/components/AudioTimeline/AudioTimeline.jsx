@@ -481,6 +481,14 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
 
   const startScrub = (e) => {
     if (e.button !== 0) return
+    // 스크롤바 클릭은 무시 — 안 그러면 playhead가 스크롤바 위치(우측 끝/하단)로 점프해서 사라짐
+    // clientWidth/clientHeight는 스크롤바를 제외한 영역, rect는 포함이라 차이로 감지
+    const scrollEl = scrollRef.current
+    if (scrollEl) {
+      const rect = scrollEl.getBoundingClientRect()
+      if (e.clientX > rect.left + scrollEl.clientWidth) return  // 세로 스크롤바
+      if (e.clientY > rect.top + scrollEl.clientHeight) return  // 가로 스크롤바
+    }
     e.preventDefault()
     stopAll() // 스크럽 시 재생 중지
     isDraggingRef.current = true
@@ -770,6 +778,9 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
         />
 
         <div className="atl-scroll" ref={scrollRef} onPointerDown={startScrub} onScroll={onMainScroll}>
+          {/* wrapper: Playhead의 containing block을 viewport가 아닌 content 전체 높이로 만듦
+              (이게 없으면 세로 스크롤 시 playhead가 viewport 밖 영역까지 못 닿음) */}
+          <div className="atl-content" style={{ width: totalWidth }}>
           <TimeRuler totalMs={data.totalDurationMs} pxPerMs={pxPerMs} width={totalWidth} />
           <div className="atl-tracks" style={{ width: totalWidth }}>
             {visibleTracks.map((track, i) => {
@@ -803,6 +814,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
             })}
           </div>
           <Playhead positionPx={playheadMs * pxPerMs} totalHeight={visibleTracks.length} />
+          </div>
         </div>
       </div>
 
