@@ -966,6 +966,24 @@ function App() {
             const requiredCount = Math.ceil(scenes.length * threshold / 100)
             const canExport = hasScenes && hasRun && !anyRunning && doneCount >= requiredCount
 
+            // 선택된 스타일 라벨 — Start 버튼에서 클릭 가능, Stop 버튼에서는 read-only로 표시.
+            const styleLabel = (() => {
+              if (!selectedStyleRefId) return t('actions.styleNone')
+              if (selectedStyleRefId.startsWith('ref:')) {
+                const refId = selectedStyleRefId.replace('ref:', '')
+                const ref = references.find(r => String(r.id) === refId && r.type === 'style')
+                return ref?.name || refId
+              }
+              if (selectedStyleRefId.startsWith('preset:')) {
+                const presetId = selectedStyleRefId.replace('preset:', '')
+                const preset = STYLE_PRESETS?.styles?.find(s => s.id === presetId)
+                const isKo = t('common.cancel') === '취소'
+                return isKo ? (preset?.name_ko || presetId) : (preset?.name_en || presetId)
+              }
+              return selectedStyleRefId
+            })()
+            const styleApplies = activeTab === 'text' || activeTab === 'list' || activeTab === 'video-text'
+
             return (
               <>
                 {anyRunning ? (
@@ -975,6 +993,14 @@ function App() {
                     disabled={isStopping}
                   >
                     {isStopping ? `⏳ ${t('status.stopping')}` : `⏹️ ${t('actions.stop')}`}
+                    {styleApplies && (
+                      <>
+                        {' ▸ '}
+                        <span className="btn-style-display" title={t('actions.styleSelected') || styleLabel}>
+                          🎨 {styleLabel}
+                        </span>
+                      </>
+                    )}
                   </button>
                 ) : (
                   <button
@@ -986,26 +1012,12 @@ function App() {
                       (activeTab === 'frame-to-video' && framePairs.length === 0)
                     }
                   >
-                    {(activeTab === 'text' || activeTab === 'list' || activeTab === 'video-text')
+                    {styleApplies
                       ? <>
                           {activeTab === 'video-text' ? '🎬' : '✨'} {t('actions.start')}
                           ▸
                           <span className="btn-style-link" onClick={(e) => { e.stopPropagation(); setShowStylePicker(true) }}>
-                            🎨 {(() => {
-                              if (!selectedStyleRefId) return t('actions.styleNone')
-                              if (selectedStyleRefId.startsWith('ref:')) {
-                                const refId = selectedStyleRefId.replace('ref:', '')
-                                const ref = references.find(r => String(r.id) === refId && r.type === 'style')
-                                return ref?.name || refId
-                              }
-                              if (selectedStyleRefId.startsWith('preset:')) {
-                                const presetId = selectedStyleRefId.replace('preset:', '')
-                                const preset = STYLE_PRESETS?.styles?.find(s => s.id === presetId)
-                                const isKo = t('common.cancel') === '취소'
-                                return isKo ? (preset?.name_ko || presetId) : (preset?.name_en || presetId)
-                              }
-                              return selectedStyleRefId
-                            })()}
+                            🎨 {styleLabel}
                           </span>
                         </>
                       : `🎬 ${t('actions.start')}`}

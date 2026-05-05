@@ -1373,6 +1373,14 @@ html, body {
   opacity: 1;
 }
 
+/* Stop 버튼 내 스타일 표시 (read-only — 클릭/언더라인 없음) */
+.btn-style-display {
+  font-size: 0.8em;
+  opacity: 0.75;
+  margin-left: 4px;
+  cursor: default;
+}
+
 /* StylePicker 모달 */
 .style-picker-modal {
   max-width: 800px;
