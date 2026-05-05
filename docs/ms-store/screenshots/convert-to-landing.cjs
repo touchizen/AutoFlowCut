@@ -53,12 +53,14 @@ async function convert(srcDir, outDir, label) {
   if (!fs.existsSync(srcDir)) {
     throw new Error(`[${label}] source dir not found: ${srcDir}`);
   }
-  fs.mkdirSync(outDir, { recursive: true });
-  cleanStaleOutputs(outDir);
+  // Validate source FIRST — throwing must not have already deleted prior outputs.
   const files = listOrdered(srcDir);
   if (files.length !== EXPECTED_FILES) {
     throw new Error(`[${label}] expected ${EXPECTED_FILES} files, got ${files.length} in ${srcDir}`);
   }
+  // Now safe to mutate destination.
+  fs.mkdirSync(outDir, { recursive: true });
+  cleanStaleOutputs(outDir);
   for (let i = 0; i < files.length; i++) {
     const src = path.join(srcDir, files[i]);
     const out = path.join(outDir, `ss_${String(i + 1).padStart(2, '0')}.jpg`);
