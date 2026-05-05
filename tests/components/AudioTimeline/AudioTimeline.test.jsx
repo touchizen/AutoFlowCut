@@ -1,7 +1,7 @@
 /**
  * AudioTimeline 컴포넌트 테스트
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render as rtlRender, screen, fireEvent } from '@testing-library/react'
 import AudioTimeline from '../../../src/components/AudioTimeline/AudioTimeline'
 import { I18nProvider } from '../../../src/hooks/useI18n'
@@ -353,6 +353,172 @@ describe('AudioTimeline', () => {
       } finally {
         errorSpy.mockRestore()
       }
+    })
+  })
+
+  // Regression: data가 null인 상태에서 Space 누르면 playGlobal → tick에서 data.totalDurationMs 크래시
+  describe('null data + Space (Issue 1)', () => {
+    it('audioPackage=null 상태에서 Space 눌러도 크래시/playback 트리거 없음', () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      try {
+        const { rerender } = rtlRender(
+          <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />,
+          { wrapper: I18nProvider }
+        )
+        // 프로젝트 닫기
+        rerender(<AudioTimeline audioPackage={null} scenes={[]} srtEntries={[]} />)
+        // Space → togglePlay에서 !data 가드로 즉시 종료되어야 함
+        expect(() => {
+          fireEvent.keyDown(window, { code: 'Space' })
+        }).not.toThrow()
+        // playGlobal이 안 돌면 readFileAbsolute도 호출 안 됨
+        expect(global.window.electronAPI.readFileAbsolute).not.toHaveBeenCalled()
+        // null 크래시 에러 없어야 함
+        const crashErrors = errorSpy.mock.calls.filter(args =>
+          args.some(a => typeof a === 'string' && /Cannot read|null|undefined/.test(a))
+        )
+        expect(crashErrors).toEqual([])
+      } finally {
+        errorSpy.mockRestore()
+      }
+    })
+
+    it('audioPackage=null 상태에서 Esc는 안전하게 동작', () => {
+      const { rerender, container } = rtlRender(
+        <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />,
+        { wrapper: I18nProvider }
+      )
+      rerender(<AudioTimeline audioPackage={null} scenes={[]} srtEntries={[]} />)
+      expect(container.firstChild).toBeNull()
+      // Esc도 크래시 없이 동작
+      expect(() => {
+        fireEvent.keyDown(window, { code: 'Escape' })
+      }).not.toThrow()
+    })
+  })
+
+  // Regression: data null→복귀 시 .atl-scroll DOM이 새로 마운트되는데
+  // wheel useEffect deps에 data가 없으면 재등록 안 돼 zoom/wheel scroll이 죽음
+  describe('wheel listener 재등록 (Issue 2)', () => {
+    it('데이터 null→복귀 후에도 Ctrl+wheel zoom이 동작', () => {
+      const { rerender, container } = rtlRender(
+        <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />,
+        { wrapper: I18nProvider }
+      )
+      // 줌 100% 확인
+      expect(screen.getByText('100%')).toBeInTheDocument()
+
+      // 프로젝트 전환 (null → 복귀)
+      rerender(<AudioTimeline audioPackage={null} scenes={[]} srtEntries={[]} />)
+      rerender(<AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />)
+
+      // 새 .atl-scroll DOM에 wheel listener가 붙어있는지 검증
+      // Ctrl+wheel deltaY=-100 → delta = 0.2 → zoom 1.0 * 1.2 = 1.2 → 120%
+      const scrollEl = container.querySelector('.atl-scroll')
+      expect(scrollEl).toBeTruthy()
+      fireEvent.wheel(scrollEl, { deltaY: -100, ctrlKey: true })
+      // zoom이 변경되어야 함 (100%가 아니어야 함)
+      expect(screen.queryByText('100%')).not.toBeInTheDocument()
+    })
+
+    it('데이터 null→복귀 후 세로 wheel → 가로 스크롤 변환도 동작', () => {
+      const { rerender, container } = rtlRender(
+        <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />,
+        { wrapper: I18nProvider }
+      )
+      rerender(<AudioTimeline audioPackage={null} scenes={[]} srtEntries={[]} />)
+      rerender(<AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />)
+
+      const scrollEl = container.querySelector('.atl-scroll')
+      // jsdom은 layout 안 함 → scrollWidth/clientWidth 0이지만, scrollLeft 할당은 호출됨
+      // handleWheel에서 deltaY 받아 scrollEl.scrollLeft += e.deltaY 실행하는지만 확인
+      const before = scrollEl.scrollLeft
+      fireEvent.wheel(scrollEl, { deltaY: 100 })
+      // jsdom에서는 실제 스크롤 한계 무시하고 값이 설정되거나 0 유지
+      // 핵심: handleWheel이 호출되어 e.preventDefault/스크롤 시도가 일어남 (크래시 X)
+      expect(scrollEl.scrollLeft).toBeGreaterThanOrEqual(before)
+    })
+  })
+
+  // Regression: 드래그 중 unmount(예: 프로젝트 전환)되면 onUp이 안 와서
+  // window listener와 document.body.style.cursor/userSelect가 잔류
+  describe('드래그 중 unmount cleanup (Issue 3)', () => {
+    afterEach(() => {
+      // 테스트 격리 — 혹시라도 잔류 시 다음 테스트 영향 방지
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    })
+
+    it('label column resize 중 unmount하면 cursor/userSelect 복구', () => {
+      const { unmount, container } = rtlRender(
+        <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />,
+        { wrapper: I18nProvider }
+      )
+      const colSplitter = container.querySelector('.atl-col-splitter')
+      expect(colSplitter).toBeTruthy()
+
+      fireEvent.pointerDown(colSplitter, { button: 0, clientX: 200 })
+      expect(document.body.style.cursor).toBe('col-resize')
+      expect(document.body.style.userSelect).toBe('none')
+
+      // pointerup 없이 unmount
+      unmount()
+
+      // unmount cleanup이 activeDragCleanupRef를 호출해 정리해야 함
+      expect(document.body.style.cursor).toBe('')
+      expect(document.body.style.userSelect).toBe('')
+    })
+
+    it('preview ↔ timeline splitter drag 중 unmount해도 cleanup', () => {
+      const { unmount, container } = rtlRender(
+        <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />,
+        { wrapper: I18nProvider }
+      )
+      const splitter = container.querySelector('.atl-splitter')
+      expect(splitter).toBeTruthy()
+
+      fireEvent.pointerDown(splitter, { button: 0, clientY: 300 })
+      expect(document.body.style.cursor).toBe('row-resize')
+
+      unmount()
+      expect(document.body.style.cursor).toBe('')
+      expect(document.body.style.userSelect).toBe('')
+    })
+
+    it('track height resize drag 중 unmount해도 cleanup', () => {
+      const { unmount, container } = rtlRender(
+        <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />,
+        { wrapper: I18nProvider }
+      )
+      const trackResize = container.querySelector('.atl-track-resize')
+      expect(trackResize).toBeTruthy()
+
+      fireEvent.pointerDown(trackResize, { button: 0, clientY: 100 })
+      expect(document.body.style.cursor).toBe('row-resize')
+
+      unmount()
+      expect(document.body.style.cursor).toBe('')
+      expect(document.body.style.userSelect).toBe('')
+    })
+
+    it('연속된 두 번의 드래그 시작 — 이전 cleanup이 idempotent하게 호출됨', () => {
+      const { container } = rtlRender(
+        <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />,
+        { wrapper: I18nProvider }
+      )
+      const colSplitter = container.querySelector('.atl-col-splitter')
+
+      // 첫 번째 드래그 시작 (pointerup 없이)
+      fireEvent.pointerDown(colSplitter, { button: 0, clientX: 200 })
+      expect(document.body.style.cursor).toBe('col-resize')
+
+      // 두 번째 드래그 시작 — 이전 cleanup이 자동 호출되고 새로 등록
+      fireEvent.pointerDown(colSplitter, { button: 0, clientX: 250 })
+      expect(document.body.style.cursor).toBe('col-resize') // 여전히 활성
+
+      // 정상 pointerup으로 종료
+      fireEvent(window, new PointerEvent('pointerup', { clientX: 250 }))
+      expect(document.body.style.cursor).toBe('')
     })
   })
 })

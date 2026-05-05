@@ -8,49 +8,27 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react'
 import { useAudioTimeline } from './useAudioTimeline'
 import { useI18n } from '../../hooks/useI18n'
-import { findSrtSegment } from '../../utils/audioTimeline'
-import { parseTimeToSeconds } from '../../utils/parsers'
+import { formatDuration } from '../../utils/formatters'
 import { toast } from '../Toast'
+import TimeRuler from './TimeRuler'
+import TrackLane from './TrackLane'
+import PreviewPanel from './PreviewPanel'
+import Playhead from './Playhead'
+import {
+  LABEL_W_DEFAULT, LABEL_W_MIN, LABEL_W_MAX, LABEL_W_KEY,
+  TRACK_H, SUB_TRACK_H, FILE_ROW_H, RULER_H,
+  PX_PER_SEC_BASE, ZOOM_MIN, ZOOM_MAX,
+  PREVIEW_H_MIN, PREVIEW_H_MAX, PREVIEW_H_DEFAULT, PREVIEW_H_KEY,
+  TRACK_H_MIN, TRACK_H_MAX, SUB_TRACK_H_MIN, SUB_TRACK_H_MAX, TRACK_HEIGHTS_KEY,
+  TRACK_LABEL_KEYS,
+} from './constants'
 import './AudioTimeline.css'
 
-const LABEL_W_DEFAULT = 140
-const LABEL_W_MIN = 80
-const LABEL_W_MAX = 400
-const LABEL_W_KEY = 'autoflowcut.audioTimeline.labelW'
-const TRACK_H = 64
-const SUB_TRACK_H = 36
-const FILE_ROW_H = 22
-const RULER_H = 32
-const PX_PER_SEC_BASE = 40 // 100% 줌 기준
-const ZOOM_MIN = 0.1
-const ZOOM_MAX = 10
-const PREVIEW_H_MIN = 80
-const PREVIEW_H_MAX = 800
-const PREVIEW_H_DEFAULT = 240
-const PREVIEW_H_KEY = 'autoflowcut.audioTimeline.previewHeight'
-const TRACK_H_MIN = 32
-const TRACK_H_MAX = 240
-const SUB_TRACK_H_MIN = 24
-const SUB_TRACK_H_MAX = 120
-const TRACK_HEIGHTS_KEY = 'autoflowcut.audioTimeline.trackHeights'
-
+// utils/formatters의 formatDuration(seconds)와 표시 규칙이 동일.
+// 여기선 ms-friendly + 비유한값 가드를 추가한 thin wrapper로 둠 (시간 포맷 단일 출처 유지).
 function formatTC(ms) {
   if (!isFinite(ms) || ms == null) return '0:00'
-  const s = Math.floor(ms / 1000)
-  const hh = Math.floor(s / 3600)
-  const mm = Math.floor((s % 3600) / 60)
-  const ss = s % 60
-  const pad = (n) => String(n).padStart(2, '0')
-  return hh > 0 ? `${hh}:${pad(mm)}:${pad(ss)}` : `${mm}:${pad(ss)}`
-}
-
-// 트랙 ID → i18n key 매핑 (sub-track은 user data라 매핑 X)
-const TRACK_LABEL_KEYS = {
-  image: 'audioTimeline.trackImage',
-  subtitle: 'audioTimeline.trackSubtitle',
-  narration: 'audioTimeline.trackNarration',
-  voice: 'audioTimeline.trackVoice',
-  sfx: 'audioTimeline.trackSfx',
+  return formatDuration(ms / 1000)
 }
 
 export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClipSelect, onSaveTimecodeOverride }) {
@@ -96,6 +74,8 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
     if (e.button !== 0 || track.isFileItem) return
     e.preventDefault()
     e.stopPropagation()
+    // 이전 드래그가 살아있다면 먼저 정리 (cursor reset이 아래 cursor 세팅을 덮지 않도록 순서 중요)
+    activeDragCleanupRef.current?.()
     const startY = e.clientY
     const startH = getTrackHeight(track)
     const min = track.isSubTrack ? SUB_TRACK_H_MIN : TRACK_H_MIN
@@ -107,17 +87,22 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
       nextH = Math.max(min, Math.min(max, startH + (mv.clientY - startY)))
       setTrackHeights(prev => ({ ...prev, [track.id]: nextH }))
     }
-    const onUp = () => {
+    const cleanup = () => {
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      activeDragCleanupRef.current = null
+    }
+    const onUp = () => {
+      cleanup()
       setTrackHeights(prev => {
         const next = { ...prev, [track.id]: nextH }
         persistTrackHeights(next)
         return next
       })
     }
+    activeDragCleanupRef.current = cleanup
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
   }
@@ -146,6 +131,9 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   const playStartTimeRef = useRef(0) // performance.now() 시점
   const playStartMsRef = useRef(0)   // 재생 시작 시 playhead 위치 (ms)
   const isGlobalPlayingRef = useRef(false)
+  // 활성 드래그 cleanup. pointerup 정상 종료 시 / 컴포넌트 unmount 시 모두 호출됨 (idempotent).
+  // 드래그 중 프로젝트 전환 등으로 onUp이 안 와도 listener/cursor 잔류 방지.
+  const activeDragCleanupRef = useRef(null)
 
   const pxPerMs = (PX_PER_SEC_BASE * zoom) / 1000
 
@@ -219,7 +207,8 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
     if (!el) return
     el.addEventListener('wheel', handleWheel, { passive: false })
     return () => el.removeEventListener('wheel', handleWheel)
-  }, [handleWheel])
+    // data를 deps에 둬야 — null → 데이터 복귀 시 .atl-scroll DOM이 새로 마운트되므로 리스너 재등록 필요
+  }, [handleWheel, data])
 
   // ── 트랙 펼치기/접기 ──
   const toggleExpand = (trackId) => {
@@ -234,6 +223,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   const startSplitterDrag = (e) => {
     if (e.button !== 0) return
     e.preventDefault()
+    activeDragCleanupRef.current?.()
     const startY = e.clientY
     const startH = previewHeight
     document.body.style.cursor = 'row-resize'
@@ -244,14 +234,19 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
       const next = Math.max(PREVIEW_H_MIN, Math.min(PREVIEW_H_MAX, startH + dy))
       setPreviewHeight(next)
     }
-    const onUp = () => {
+    const cleanup = () => {
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      activeDragCleanupRef.current = null
+    }
+    const onUp = () => {
+      cleanup()
       // 최종 값 저장
       try { localStorage.setItem(PREVIEW_H_KEY, String(previewHeightRef.current)) } catch {}
     }
+    activeDragCleanupRef.current = cleanup
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
   }
@@ -264,6 +259,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   const startColResize = (e) => {
     if (e.button !== 0) return
     e.preventDefault()
+    activeDragCleanupRef.current?.()
     const startX = e.clientX
     const startW = labelW
     document.body.style.cursor = 'col-resize'
@@ -273,13 +269,18 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
       const next = Math.max(LABEL_W_MIN, Math.min(LABEL_W_MAX, startW + dx))
       setLabelW(next)
     }
-    const onUp = () => {
+    const cleanup = () => {
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      activeDragCleanupRef.current = null
+    }
+    const onUp = () => {
+      cleanup()
       try { localStorage.setItem(LABEL_W_KEY, String(labelWRef.current)) } catch {}
     }
+    activeDragCleanupRef.current = cleanup
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
   }
@@ -382,6 +383,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
 
   // 글로벌 재생: playhead 위치부터 모든 트랙 동시 재생
   const playGlobal = () => {
+    if (!data) return
     stopAll()
     isGlobalPlayingRef.current = true
     setIsGlobalPlaying(true)
@@ -430,6 +432,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   }
 
   const togglePlay = () => {
+    if (!data) return
     if (isGlobalPlayingRef.current || audioInstancesRef.current.size > 0) {
       stopAll()
     } else {
@@ -462,8 +465,13 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  // 컴포넌트 unmount 시 audio 정리
-  useEffect(() => () => stopAll(), [])
+  // 컴포넌트 unmount 시 audio + 활성 드래그 정리
+  // 드래그 중 unmount되면 onUp이 안 와서 listener/cursor 잔류 → 여기서 cleanup 강제 실행
+  useEffect(() => () => {
+    stopAll()
+    activeDragCleanupRef.current?.()
+    activeDragCleanupRef.current = null
+  }, [])
 
   // ── 스크럽 (Remotion 패턴: 타임라인 영역 전체 pointerdown + window pointermove) ──
   const isDraggingRef = useRef(false)
@@ -491,6 +499,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
     }
     e.preventDefault()
     stopAll() // 스크럽 시 재생 중지
+    activeDragCleanupRef.current?.()
     isDraggingRef.current = true
     document.body.style.userSelect = 'none'
     setPlayheadMs(computeMsFromClientX(e.clientX))
@@ -535,13 +544,16 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
       setPlayheadMs(computeMsFromClientX(mv.clientX))
       ensureEdgeScroll()
     }
-    const onUp = () => {
+    const cleanup = () => {
       isDraggingRef.current = false
       stopEdgeScroll()
       document.body.style.userSelect = ''
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      activeDragCleanupRef.current = null
     }
+    const onUp = () => { cleanup() }
+    activeDragCleanupRef.current = cleanup
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
   }
@@ -844,218 +856,6 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
           </div>
         )
       })()}
-    </div>
-  )
-}
-
-// ── TimeRuler ──
-function TimeRuler({ totalMs, pxPerMs, width }) {
-  // 줌에 따라 major tick 간격 자동 결정
-  const pxPerSec = pxPerMs * 1000
-  let majorSec = 60
-  if (pxPerSec > 200) majorSec = 1
-  else if (pxPerSec > 80) majorSec = 5
-  else if (pxPerSec > 30) majorSec = 10
-  else if (pxPerSec > 10) majorSec = 30
-  else majorSec = 60
-
-  const totalSec = totalMs / 1000
-  const ticks = []
-  for (let s = 0; s <= totalSec; s += majorSec) {
-    ticks.push({ sec: s, x: s * 1000 * pxPerMs })
-  }
-
-  return (
-    <div className="atl-ruler" style={{ width, height: RULER_H }}>
-      {ticks.map(t => (
-        <div key={t.sec} className="atl-ruler-tick" style={{ left: t.x }}>
-          <div className="atl-ruler-line" />
-          <div className="atl-ruler-label">{formatTC(t.sec * 1000)}</div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-// ── TrackLane ──
-function TrackLane({ track, width, height, pxPerMs, renderClips = true, onClipClick, onClipDrag, totalDurationMs, playingClipIds, onSceneHover }) {
-  const h = height ?? (track.isSubTrack ? SUB_TRACK_H : TRACK_H)
-  return (
-    <div className="atl-lane" style={{ height: h, width }}>
-      {renderClips && (track.clips || []).map(clip => (
-        <Clip
-          key={clip.id}
-          clip={clip}
-          variant={track.variant}
-          pxPerMs={pxPerMs}
-          height={h}
-          onClickClip={onClipClick}
-          onDragClip={onClipDrag}
-          totalDurationMs={totalDurationMs}
-          isPlaying={playingClipIds?.has(clip.id)}
-          onSceneHover={onSceneHover}
-        />
-      ))}
-    </div>
-  )
-}
-
-// ── Clip (click vs drag 자동 구분, draggable이면 드래그로 timecode 보정) ──
-function Clip({ clip, variant, pxPerMs, height, onClickClip, onDragClip, totalDurationMs, isPlaying, onSceneHover }) {
-  const [dragOffsetMs, setDragOffsetMs] = useState(null)
-  const isDragging = dragOffsetMs !== null
-
-  const visualStartMs = clip.startMs + (dragOffsetMs || 0)
-  const left = visualStartMs * pxPerMs
-  const width = Math.max(2, (clip.endMs - clip.startMs) * pxPerMs)
-  const style = {
-    left,
-    width,
-    top: 4,
-    bottom: 4,
-    background: variant === 'text'
-      ? `${clip.color}26`
-      : `linear-gradient(180deg, ${clip.color}, ${clip.color}88)`,
-    border: variant === 'text' ? `1px solid ${clip.color}` : `1px solid ${clip.color}AA`,
-    cursor: clip.draggable ? (isDragging ? 'grabbing' : 'grab') : 'pointer',
-    opacity: isDragging ? 0.7 : 1,
-    zIndex: isDragging ? 10 : undefined,
-  }
-
-  const onMouseEnter = (e) => {
-    if (clip.sceneRef && variant === 'block') {
-      onSceneHover?.({ x: e.clientX, y: e.clientY, scene: clip.sceneRef })
-    }
-  }
-  const onMouseLeave = () => onSceneHover?.(null)
-
-  const onPointerDown = (e) => {
-    if (e.button !== 0) return
-    e.stopPropagation() // 스크럽 트리거 차단
-    const startX = e.clientX
-    let lastDx = 0
-    let didDrag = false
-
-    const onMove = (mv) => {
-      const dx = mv.clientX - startX
-      lastDx = dx
-      if (Math.abs(dx) > 4) {
-        didDrag = true
-        if (clip.draggable) {
-          // 좌측 0 이하로 못 가게 클램프
-          const newStart = Math.max(0, Math.min((totalDurationMs || Infinity), clip.startMs + dx / pxPerMs))
-          setDragOffsetMs(newStart - clip.startMs)
-        }
-      }
-    }
-    const onUp = () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      if (didDrag && clip.draggable) {
-        const newStart = Math.max(0, Math.min((totalDurationMs || Infinity), clip.startMs + lastDx / pxPerMs))
-        onDragClip?.(clip, newStart)
-        setDragOffsetMs(null)
-      } else {
-        // 클릭으로 처리
-        setDragOffsetMs(null)
-        onClickClip?.(clip)
-      }
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-  }
-
-  return (
-    <div
-      className={`atl-clip atl-clip-${variant}${isPlaying ? ' atl-clip-playing' : ''}${isDragging ? ' atl-clip-dragging' : ''}`}
-      style={style}
-      onPointerDown={onPointerDown}
-      onMouseEnter={onMouseEnter}
-      onMouseLeave={onMouseLeave}
-      title={clip.filename || clip.label || ''}
-    >
-      {variant === 'block' && clip.imagePath && (
-        <img className="atl-clip-img" src={`file://${clip.imagePath}`} alt="" />
-      )}
-      {variant === 'text' && (
-        <span className="atl-clip-text" style={{ color: clip.color }}>{clip.label}</span>
-      )}
-      {variant === 'audio' && width > 30 && (
-        <Waveform color="#fff" />
-      )}
-    </div>
-  )
-}
-
-// ── Waveform (합성, Phase 1) ──
-function Waveform({ color }) {
-  const bars = useMemo(() => Array.from({ length: 32 }, (_, i) => {
-    const h = 35 + Math.sin(i * 0.55) * 22 + Math.cos(i * 1.3) * 10 + Math.sin(i * 0.27) * 8
-    return Math.max(18, Math.min(95, h))
-  }), [])
-  return (
-    <div className="atl-waveform">
-      {bars.map((h, i) => (
-        <div key={i} style={{ height: `${h}%`, backgroundColor: color, opacity: 0.7 }} />
-      ))}
-    </div>
-  )
-}
-
-// ── PreviewPanel — 현재 playhead 위치의 씬 이미지 + 자막 ──
-function PreviewPanel({ playheadMs, scenes, srtEntries, height = 240 }) {
-  // 시간 기준 씬 매칭 (camelCase / snake_case 둘 다 지원)
-  const scene = useMemo(() => {
-    if (!scenes?.length) return null
-    const timeSec = playheadMs / 1000
-    return scenes.find(s => {
-      const startRaw = s.startTime ?? s.start_time
-      const endRaw = s.endTime ?? s.end_time
-      const start = typeof startRaw === 'number' ? startRaw : parseTimeToSeconds(startRaw)
-      const end = typeof endRaw === 'number' ? endRaw : parseTimeToSeconds(endRaw)
-      if (isNaN(start) || isNaN(end)) return false
-      return timeSec >= start && timeSec < end
-    }) || null
-  }, [scenes, playheadMs])
-
-  // SRT 자막 — 정확히 그 시점에 표시되는 것만
-  const srt = useMemo(() => {
-    if (!srtEntries?.length) return null
-    return srtEntries.find(e => playheadMs >= e.startMs && playheadMs <= e.endMs) || null
-  }, [srtEntries, playheadMs])
-
-  const imgPath = scene?.imagePath || scene?.image_path || scene?.filePath
-  const subtitleText = srt?.text || ''
-
-  return (
-    <div className="atl-preview" style={{ height }}>
-      <div className="atl-preview-stage">
-        {imgPath ? (
-          <img className="atl-preview-img" src={`file://${imgPath}`} alt="" />
-        ) : (
-          <div className="atl-preview-empty">— 씬 없음 —</div>
-        )}
-        {subtitleText && (
-          <div className="atl-preview-subtitle">{subtitleText}</div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ── Playhead ──
-function Playhead({ positionPx, totalHeight }) {
-  return (
-    <div
-      className="atl-playhead"
-      style={{
-        left: positionPx,
-        top: 0,
-        bottom: 0,
-      }}
-    >
-      <div className="atl-playhead-handle" />
-      <div className="atl-playhead-line" />
     </div>
   )
 }
