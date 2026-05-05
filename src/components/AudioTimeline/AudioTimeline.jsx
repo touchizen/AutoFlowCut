@@ -13,7 +13,10 @@ import { parseTimeToSeconds } from '../../utils/parsers'
 import { toast } from '../Toast'
 import './AudioTimeline.css'
 
-const LABEL_W = 140
+const LABEL_W_DEFAULT = 140
+const LABEL_W_MIN = 80
+const LABEL_W_MAX = 400
+const LABEL_W_KEY = 'autoflowcut.audioTimeline.labelW'
 const TRACK_H = 64
 const SUB_TRACK_H = 36
 const FILE_ROW_H = 22
@@ -57,6 +60,14 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   const [playheadMs, setPlayheadMs] = useState(0)
   const [expandedTracks, setExpandedTracks] = useState(new Set())
   const [expandedSubTracks, setExpandedSubTracks] = useState(new Set())
+  const [labelW, setLabelW] = useState(() => {
+    try {
+      const saved = parseInt(localStorage.getItem(LABEL_W_KEY), 10)
+      if (Number.isFinite(saved) && saved >= LABEL_W_MIN && saved <= LABEL_W_MAX) return saved
+    } catch {}
+    return LABEL_W_DEFAULT
+  })
+  const [labelsScrollY, setLabelsScrollY] = useState(0)
   const [previewHeight, setPreviewHeight] = useState(() => {
     try {
       const saved = parseInt(localStorage.getItem(PREVIEW_H_KEY), 10)
@@ -249,6 +260,49 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   }
   const previewHeightRef = useRef(previewHeight)
   useEffect(() => { previewHeightRef.current = previewHeight }, [previewHeight])
+
+  // ── 좌측 라벨 컬럼 폭 조절 (drag) ──
+  const labelWRef = useRef(labelW)
+  useEffect(() => { labelWRef.current = labelW }, [labelW])
+  const startColResize = (e) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    const startX = e.clientX
+    const startW = labelW
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    const onMove = (mv) => {
+      const dx = mv.clientX - startX
+      const next = Math.max(LABEL_W_MIN, Math.min(LABEL_W_MAX, startW + dx))
+      setLabelW(next)
+    }
+    const onUp = () => {
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      try { localStorage.setItem(LABEL_W_KEY, String(labelWRef.current)) } catch {}
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+  const resetLabelW = () => {
+    setLabelW(LABEL_W_DEFAULT)
+    try { localStorage.setItem(LABEL_W_KEY, String(LABEL_W_DEFAULT)) } catch {}
+  }
+  // 좌측 라벨 col에서 휠 → 우측 메인 스크롤로 위임 (세로만, Cmd/Ctrl+휠은 우측에서 줌 처리하므로 제외)
+  const onLabelsWheel = (e) => {
+    if (e.ctrlKey || e.metaKey) return
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop += e.deltaY
+    }
+  }
+  // 우측 메인 스크롤 → 좌측 라벨 transform translateY로 sync
+  const onMainScroll = () => {
+    if (scrollRef.current) {
+      setLabelsScrollY(scrollRef.current.scrollTop)
+    }
+  }
 
   // pxPerMs를 ref로 — RAF tick / setTimeout 콜백이 stale closure로 옛 값 쓰는 거 방지
   const pxPerMsRef = useRef(pxPerMs)
@@ -638,8 +692,16 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
 
       {/* Body — 좌측 라벨 (sticky) + 우측 lane (가로 스크롤) */}
       <div className="atl-body">
-        <div className="atl-labels-col" style={{ width: LABEL_W }}>
+        <div
+          className="atl-labels-col"
+          style={{ width: labelW }}
+          onWheel={onLabelsWheel}
+        >
           <div className="atl-label-spacer" style={{ height: RULER_H }} />
+          <div
+            className="atl-labels-scroll"
+            style={{ transform: `translateY(${-labelsScrollY}px)` }}
+          >
           {visibleTracks.map((track, i) => {
             // 파일 항목 row (라벨만, lane 없음)
             if (track.isFileItem) {
@@ -696,9 +758,18 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
               </div>
             )
           })}
+          </div>
         </div>
 
-        <div className="atl-scroll" ref={scrollRef} onPointerDown={startScrub}>
+        {/* 좌측 라벨 ↔ 타임라인 splitter (드래그=폭 조절 / 더블클릭=기본값) */}
+        <div
+          className="atl-col-splitter"
+          onPointerDown={startColResize}
+          onDoubleClick={resetLabelW}
+          title="드래그=폭 조절 · 더블클릭=기본값"
+        />
+
+        <div className="atl-scroll" ref={scrollRef} onPointerDown={startScrub} onScroll={onMainScroll}>
           <TimeRuler totalMs={data.totalDurationMs} pxPerMs={pxPerMs} width={totalWidth} />
           <div className="atl-tracks" style={{ width: totalWidth }}>
             {visibleTracks.map((track, i) => {

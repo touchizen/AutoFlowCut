@@ -234,15 +234,52 @@
 .atl-labels-col {
   flex-shrink: 0;
   background: #1f1f1f;
-  border-right: 1px solid #3a3a3a;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  position: relative;
 }
 .atl-label-spacer {
   background: #262626;
   border-bottom: 1px solid #3a3a3a;
   flex-shrink: 0;
+  position: relative;
+  z-index: 2;
+}
+/* 우측 메인 스크롤과 sync되는 inner wrapper (transform translateY로 이동) */
+.atl-labels-scroll {
+  display: flex;
+  flex-direction: column;
+  will-change: transform;
+}
+
+/* 좌측 라벨 ↔ 타임라인 splitter (col-resize) */
+.atl-col-splitter {
+  flex-shrink: 0;
+  width: 6px;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+  z-index: 6;
+}
+.atl-col-splitter::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: #3a3a3a;
+  transform: translateX(-50%);
+}
+.atl-col-splitter:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.atl-col-splitter:hover::before {
+  background: #5a5a5a;
+}
+.atl-col-splitter:active::before {
+  background: #888;
 }
 .atl-label {
   display: flex;
