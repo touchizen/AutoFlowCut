@@ -151,11 +151,17 @@ function App() {
     }
   }, [scenes.length, authReady])
 
-  // 자동화가 둘 다 끝나면 Stop 버튼용 running snapshot 정리
+  // 자동화가 끝나면 Stop 버튼용 running snapshot 정리.
+  // Transition-based: 실행 → 종료 전이일 때만 clear. 큐로 대기 중일 때는 deps가 변하지 않아
+  // effect 자체가 재실행되지 않지만, 만에 하나 다른 state가 deps에 끼어드는 미래 변경에도
+  // wasRunningRef 가드 덕에 stale 시점에 잘못 clear하지 않는다.
+  const wasRunningRef = useRef(false)
   useEffect(() => {
-    if (!isRunning && !videoAutomation.isRunning) {
+    const running = isRunning || videoAutomation.isRunning
+    if (wasRunningRef.current && !running) {
       setRunningStyle(prev => prev.applies || prev.styleId ? { styleId: null, applies: false } : prev)
     }
+    wasRunningRef.current = running
   }, [isRunning, videoAutomation.isRunning])
 
   // Project Data 관리
