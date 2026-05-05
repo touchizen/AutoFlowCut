@@ -477,15 +477,21 @@ export function createSharedHelpers(ctx) {
               return { ok: false, error: 'mode_tab_not_found', target: '${modeKey}' };
             }
 
-            // Step 4: 배치 개수 선택 (x1, x2, x3, x4 — 로케일 무관)
-            const targetBatch = '${batchLabel}';
+            // Step 4: 배치 개수 선택
+            // Flow UI는 첫 버튼만 '1x', 나머지는 'x2/x3/x4' 로 비대칭 — textContent 매칭 깨짐.
+            // class 'flow_tab_slider_trigger' + id 끝의 '-trigger-N' 으로 잡는다 (radix prefix 동적).
+            const targetN = ${Math.max(1, Math.min(4, batchCount))};
             let batchMethod = 'not_found';
-            // 메뉴 안의 모든 버튼에서 textContent로 xN 매칭
-            const allBtns = Array.from(menu.querySelectorAll('button')).filter(isVisible);
-            const batchBtn = allBtns.find(btn => {
-              const txt = btn.textContent.trim();
-              return txt === targetBatch;
-            });
+            const tabBtns = Array.from(menu.querySelectorAll('button.flow_tab_slider_trigger')).filter(isVisible);
+            let batchBtn = tabBtns.find(b => b.id.endsWith('-trigger-' + targetN));
+            // Fallback: Flow가 클래스를 바꾸면 textContent로 한 번 더 시도 ('x1' / '1x' / '1' 모두 허용)
+            if (!batchBtn) {
+              const allBtns = Array.from(menu.querySelectorAll('button')).filter(isVisible);
+              batchBtn = allBtns.find(b => {
+                const txt = b.textContent.trim().toLowerCase();
+                return txt === 'x' + targetN || txt === targetN + 'x' || txt === String(targetN);
+              });
+            }
             if (batchBtn) {
               const isActive = batchBtn.getAttribute('data-state') === 'active'
                 || batchBtn.getAttribute('data-state') === 'on'
