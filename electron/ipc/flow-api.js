@@ -1076,21 +1076,74 @@ export function registerFlowAPIIPC(ipcMain, deps) {
           const ICON_SEL = "i, .material-symbols, .material-symbols-outlined, .google-symbols, [class*='material-symbols']"
 
           // --- Helper: findVideoElement ---
-          function findVideoElement(uuid) {
+          // strict 매칭(1~3순위)은 mediaId 가 DOM 어딘가에 박혀 있어야 함.
+          // allowFallback=true 면 4순위로 "마지막 video" 를 반환하는데,
+          // 배치 처리 중엔 이전 생성물이 갤러리에 남아있을 수 있어 위험하다.
+          // 폴링 헬퍼(waitForVideoElement)에서는 반드시 false 로 호출해 잘못된
+          // 영상이 선택되지 않도록 한다.
+          function findVideoElement(uuid, opts) {
+            const allowFallback = opts && opts.allowFallback !== undefined ? opts.allowFallback : true
             if (!uuid) return null
+
+            // 1순위: <video src> 또는 <source src> 에 UUID 포함
             for (const el of document.querySelectorAll('video[src], video source[src]')) {
               const src = el.getAttribute('src') || ''
               const resolved = el.src || ''
-              if (uuid && (src.includes(uuid) || resolved.includes(uuid))) {
+              if (src.includes(uuid) || resolved.includes(uuid)) {
                 return el.tagName === 'SOURCE' ? el.closest('video') : el
               }
             }
-            // fallback: 가장 최근 비디오 (마지막 <video>)
-            const allVideos = document.querySelectorAll('video[src]')
-            if (allVideos.length > 0) {
-              LOG('UUID match failed, using last video element as fallback')
-              return allVideos[allVideos.length - 1]
+
+            // 2순위: <video poster> 에 UUID 포함 (T2V 갤러리는 보통 poster만 먼저 로드됨)
+            for (const el of document.querySelectorAll('video[poster]')) {
+              const poster = el.getAttribute('poster') || ''
+              if (poster.includes(uuid)) {
+                return el
+              }
             }
+
+            // 3순위: data-* 속성에 UUID 가 박힌 컨테이너 → 그 안의 video
+            // (Flow UI 가 data-id, data-media-id 등으로 타일을 표시하는 케이스)
+            for (const el of document.querySelectorAll(
+              '[data-id*="' + uuid + '"], [data-media-id*="' + uuid + '"], [data-name*="' + uuid + '"]'
+            )) {
+              const v = el.tagName === 'VIDEO' ? el : (el.querySelector('video') || el.closest('video'))
+              if (v) return v
+            }
+
+            // 4순위(fallback): 마지막 <video> — 명시적으로 허용한 호출자만 사용.
+            // 배치 컨텍스트에선 절대 쓰면 안 됨(이전 생성물이 잡힐 수 있음).
+            if (allowFallback) {
+              const allVideos = document.querySelectorAll('video[src], video[poster]')
+              if (allVideos.length > 0) {
+                LOG('UUID match failed across all selectors, using last video element as fallback')
+                return allVideos[allVideos.length - 1]
+              }
+            }
+            return null
+          }
+
+          // --- Helper: waitForVideoElement (폴링, strict-only) ---
+          // T2V 결과는 generation-status complete 직후 DOM에 즉시 추가되지 않는 경우가
+          // 있어, 최대 15초까지 폴링하며 대기한다. 발견되면 즉시 반환.
+          // ⚠️ fallback 비활성화: 배치 처리 중 갤러리에 이전 생성물이 남아있을 때
+          //    fallback이 활성화되면 첫 폴링에 잘못된 영상이 즉시 잡혀 폴링 의미가
+          //    사라지고 silent data corruption 이 발생한다(원래 영상 자리에 다른 영상
+          //    저장됨). 폴링 후에도 못 찾으면 null 반환 → 상위 폴백(direct URL,
+          //    fetchMedia)이 처리하도록 한다.
+          async function waitForVideoElement(uuid, maxMs = 15000, intervalMs = 500) {
+            const t0 = Date.now()
+            let attempt = 0
+            while (Date.now() - t0 < maxMs) {
+              const v = findVideoElement(uuid, { allowFallback: false })
+              if (v) {
+                if (attempt > 0) LOG('Video element appeared after ' + (Date.now() - t0) + 'ms')
+                return v
+              }
+              attempt++
+              await new Promise(r => setTimeout(r, intervalMs))
+            }
+            LOG('waitForVideoElement timeout after ' + maxMs + 'ms (strict match only, no fallback)')
             return null
           }
 
@@ -1145,11 +1198,12 @@ export function registerFlowAPIIPC(ipcMain, deps) {
           }
 
           try {
-            // 1. 비디오 요소 찾기
+            // 1. 비디오 요소 찾기 — 폴링 (T2V 결과는 status complete 직후 DOM에 즉시
+            //    추가되지 않는 경우가 있어, 최대 15초 대기)
             LOG('Finding video element for: ' + mediaId.substring(0, 30))
-            let targetVideo = findVideoElement(mediaId)
+            let targetVideo = await waitForVideoElement(mediaId, 15000, 500)
             if (!targetVideo) {
-              return { success: false, error: 'Video element not found on page' }
+              return { success: false, error: 'Video element not found on page (15s timeout)' }
             }
             LOG('Found target video element, src: ' + (targetVideo.getAttribute('src') || '').substring(0, 60))
 
