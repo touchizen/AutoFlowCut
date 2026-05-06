@@ -7,23 +7,13 @@ import { createPortal } from 'react-dom'
 import { useI18n } from '../hooks/useI18n'
 import { formatTime, getRatioClass, resolveImageSrc, hasImageData } from '../utils/formatters'
 import { checkTagMatch } from '../utils/tagMatch'
+import { resolveExportMediaChoice } from '../utils/sceneMedia'
 import { UI } from '../config/defaults'
 import SceneDetailModal from './SceneDetailModal'
 import VideoDetailModal from './VideoDetailModal'
 import TagBatchModal from './TagBatchModal'
 import InfinityLoader from './InfinityLoader'
 import './SceneList.css'
-
-/**
- * Export 미디어 결정: auto → I2V > T2V > image
- */
-function resolveExportMedia(scene) {
-  const choice = scene.exportMedia || 'auto'
-  if (choice !== 'auto') return choice
-  if (scene.videoI2V) return 'i2v'
-  if (scene.videoT2V) return 't2v'
-  return 'image'
-}
 
 function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, onShowDetail, onShowVideoDetail, references, onOpenTag }) {
   const rowRef = useRef(null)
@@ -48,8 +38,8 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
   const sceneMatch = checkTagMatch(scene.scene_tag, references, 'scene')
   const styleMatch = checkTagMatch(scene.style_tag, references, 'style')
 
-  // 현재 export 미디어 결정
-  const activeMedia = resolveExportMedia(scene)
+  // 현재 export 미디어 결정 (useExport 와 동일 로직 — 시각이 실제 export 결과를 정확히 반영)
+  const activeMedia = resolveExportMediaChoice(scene)
   const isSelected = (type) => activeMedia === type ? 'selected' : ''
 
   // 미디어 개수 (선택 UI 필요 여부)

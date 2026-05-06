@@ -11,22 +11,18 @@ import { useState } from 'react'
 import { fileSystemAPI } from './useFileSystem'
 import { toast } from '../components/Toast'
 import useI18n from './useI18n'
+import { resolveExportMediaChoice, hasExportableMedia, getExportFilePaths } from '../utils/sceneMedia'
 
 /**
- * Export 미디어 결정: 사용자 선택 > auto (I2V > T2V > image)
+ * Export 미디어를 실제 data/path 와 함께 반환.
+ * choice 결정은 SceneList 와 공용 utility 에 위임하여 시각/실제 export 의
+ * 일관성을 보장한다.
  */
 function resolveExportMedia(scene) {
-  const choice = scene.exportMedia || 'auto'
-  if (choice === 'i2v' && (scene.videoI2V || scene.videoI2VPath))
+  const choice = resolveExportMediaChoice(scene)
+  if (choice === 'i2v')
     return { type: 'video', data: scene.videoI2V, path: scene.videoI2VPath }
-  if (choice === 't2v' && (scene.videoT2V || scene.videoT2VPath))
-    return { type: 'video', data: scene.videoT2V, path: scene.videoT2VPath }
-  if (choice === 'image')
-    return { type: 'image', data: scene.image, path: scene.imagePath }
-  // auto: I2V > T2V > image
-  if (scene.videoI2V || scene.videoI2VPath)
-    return { type: 'video', data: scene.videoI2V, path: scene.videoI2VPath }
-  if (scene.videoT2V || scene.videoT2VPath)
+  if (choice === 't2v')
     return { type: 'video', data: scene.videoT2V, path: scene.videoT2VPath }
   return { type: 'image', data: scene.image, path: scene.imagePath }
 }
@@ -50,7 +46,7 @@ export function useExport({
 
   // Handle export button click - open modal
   const handleExportClick = () => {
-    const validScenes = scenes.filter(s => s.image || s.imagePath || s.videoT2V || s.videoI2V)
+    const validScenes = scenes.filter(hasExportableMedia)
     if (validScenes.length === 0) {
       toast.warning(t('toast.noGeneratedImages'))
       return
@@ -73,10 +69,12 @@ export function useExport({
 
   // Handle export confirm from modal
   const handleExportConfirm = async ({ capcutProjectNumber, scaleMode, kenBurns, kenBurnsMode, kenBurnsCycle, kenBurnsScaleMin, kenBurnsScaleMax, subtitleOption, subtitleFontSize }) => {
-    const validScenes = scenes.filter(s => s.image || s.imagePath || s.videoT2V || s.videoI2V)
+    const validScenes = scenes.filter(hasExportableMedia)
 
-    // 파일 경로가 있는 씬이 있으면 권한 확인
-    const hasFilePaths = validScenes.some(s => s.imagePath && !s.imagePath.startsWith('data:'))
+    // 디스크 read 권한이 필요한 파일 경로가 하나라도 있으면 사전에 권한 확인.
+    // image / video(T2V/I2V) path 모두 포함 — 영상만 path-backed 인 케이스에서
+    // 권한 누락이 exporter 내부 에러로 빠지는 것을 방지.
+    const hasFilePaths = validScenes.some(s => getExportFilePaths(s).length > 0)
     if (hasFilePaths) {
       const permission = await fileSystemAPI.ensurePermission()
       if (!permission.hasPermission) {
