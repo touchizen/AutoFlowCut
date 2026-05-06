@@ -9,6 +9,7 @@ import { useState, useEffect } from 'react'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { toast } from './Toast'
 import Modal from './Modal'
+import ErrorSection from './ErrorSection'
 import './SceneDetailModal.css'   // 공통 스타일 재사용
 
 export default function VideoDetailModal({
@@ -292,6 +293,9 @@ export default function VideoDetailModal({
               )}
             </div>
           </div>
+
+          {/* 에러 정보 (생성 실패 시에만 노출) */}
+          <ErrorSection error={video.error} />
         </div>
 
         {/* History Column */}
