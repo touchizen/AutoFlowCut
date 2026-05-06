@@ -721,6 +721,11 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     copyFailed: '복사 실패',
   },
 
+  // 에러 정보 섹션 (상세 모달 하단)
+  errorSection: {
+    title: '에러 정보',
+  },
+
   // 씬 상세 모달
   sceneDetail: {
     cancel: '취소',

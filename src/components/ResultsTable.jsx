@@ -228,7 +228,6 @@ export default function ResultsTable({
       return (
         <span className="status error" title={item.error}>
           ❌{t('status.error') || '오류'}
-          {item.error && <span className="error-detail">{item.error.substring(0, 80)}</span>}
         </span>
       )
     }
@@ -321,6 +320,11 @@ export default function ResultsTable({
                 ) : (
                   <div className="prompt-preview" title={item.prompt}>
                     {item.prompt || ''}
+                  </div>
+                )}
+                {item.status === 'error' && item.error && (
+                  <div className="prompt-error" title={String(item.error)}>
+                    {String(item.error)}
                   </div>
                 )}
               </td>

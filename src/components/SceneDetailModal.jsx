@@ -9,6 +9,7 @@ import { STYLE_PRESETS, UI, RESOURCE } from '../config/defaults'
 import { toast } from './Toast'
 import { useI18n } from '../hooks/useI18n'
 import Modal from './Modal'
+import ErrorSection from './ErrorSection'
 import './SceneDetailModal.css'
 
 export default function SceneDetailModal({ 
@@ -380,8 +381,11 @@ export default function SceneDetailModal({
               )}
             </div>
           </div>
+
+          {/* 에러 정보 (생성 실패 시에만 노출) */}
+          <ErrorSection error={scene.error} />
         </div>
-        
+
         {/* 오른쪽: 히스토리 */}
         {histories.length > 0 && (
           <div className="ref-detail-history">

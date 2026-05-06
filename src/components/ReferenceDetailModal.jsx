@@ -10,6 +10,7 @@ import { fileSystemAPI } from '../hooks/useFileSystem'
 import { toast } from './Toast'
 import Modal from './Modal'
 import StylePicker from './StylePicker'
+import ErrorSection from './ErrorSection'
 
 export default function ReferenceDetailModal({ reference, index, onUpdate, onUpload, onClose, onGenerate, isGenerating, t, isKo, projectName, thumbnails = {} }) {
   const [editData, setEditData] = useState({ ...reference })
@@ -194,14 +195,11 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
       <div className="ref-detail-layout">
         <div className="ref-detail-main">
           <>
-            {/* Status indicator */}
+            {/* Status indicator (에러 메시지는 모달 하단 ErrorSection에서 노출) */}
             {editData.status && (
               <div className={`ref-status-line status-${editData.status}`} style={{ fontSize: '0.8rem', marginBottom: '8px', color: editData.status === 'error' ? '#e5484d' : 'var(--text-secondary)' }}>
                 <strong>{t('reference.status.label') || 'Status'}:</strong>{' '}
                 {t(`reference.status.${editData.status}`) || editData.status}
-                {editData.status === 'error' && editData.errorMessage && (
-                  <> — {editData.errorMessage}</>
-                )}
                 {editData.status === 'error' && onGenerate && !isStyle && (
                   <button
                     type="button"
@@ -361,6 +359,9 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
               </div>
             )}
           </div>
+
+          {/* 에러 정보 (생성 실패 시에만 노출) */}
+          <ErrorSection error={editData.errorMessage || editData.error} />
         </div>
 
         {/* 오른쪽: 히스토리 */}
