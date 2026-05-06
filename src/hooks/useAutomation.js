@@ -305,10 +305,18 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     }
 
     // 미수집 처리
+    // 사용자 중단(stop) vs 진짜 타임아웃을 구분한다.
+    //   - 중단: pending으로 되돌려 재실행 가능하게 + error 카운트 증가 안 함
+    //   - 타임아웃: error로 마킹 + 카운트 증가
+    const userStopped = stopRequestedRef.current
     for (const item of pendingQueue) {
-      updateScene(item.scene.id, { status: 'error', error: 'Timeout or stopped' })
-      errorCountRef.current++
-      completedCountRef.current++
+      if (userStopped) {
+        updateScene(item.scene.id, { status: 'pending', error: null })
+      } else {
+        updateScene(item.scene.id, { status: 'error', error: 'Generation timeout' })
+        errorCountRef.current++
+        completedCountRef.current++
+      }
     }
     updateProgressMsg(completedCountRef.current)
 

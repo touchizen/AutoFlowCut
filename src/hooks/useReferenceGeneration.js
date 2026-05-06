@@ -405,11 +405,24 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     }
 
     // 미수집 항목 정리
+    // 사용자 중단(stop) vs. 진짜 타임아웃은 다른 사건이다.
+    //   - 중단: pending 상태로 되돌려 재실행 가능하게 (errorMessage 비움)
+    //   - 타임아웃: error 상태로 마킹 (사용자가 무엇이 실패했는지 인지)
     if (pendingQueue.length > 0) {
-      console.warn('[GenerateAllRefs] Timed out waiting for', pendingQueue.length, 'generations')
+      const userStopped = stopRequestedRef.current
+      if (userStopped) {
+        console.log('[GenerateAllRefs] User stopped — reverting', pendingQueue.length, 'pending generations to idle')
+      } else {
+        console.warn('[GenerateAllRefs] Timed out waiting for', pendingQueue.length, 'generations')
+      }
       for (const pending of pendingQueue) {
         setGeneratingRefs(prev => prev.filter(i => i !== pending.index))
-        setReferences(prev => prev.map((r, i) => i === pending.index ? { ...r, status: 'error', errorMessage: 'Timed out' } : r))
+        setReferences(prev => prev.map((r, i) => {
+          if (i !== pending.index) return r
+          return userStopped
+            ? { ...r, status: 'pending', errorMessage: null }
+            : { ...r, status: 'error', errorMessage: 'Timed out' }
+        }))
       }
     }
 
