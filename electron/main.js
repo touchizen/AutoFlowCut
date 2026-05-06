@@ -18,6 +18,7 @@ import { createSharedHelpers } from './ipc/shared.js'
 import { updateBounds, registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible } from './ipc/layout.js'
 import { openApiSpec, getSwaggerHtml } from './api-docs.js'
 import { setupAppMenuAndUpdater } from './updater.js'
+import { selectCdpCase } from './video-cdp-dispatch.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -524,12 +525,27 @@ function createWindow() {
     const requestSentTimeMap = {} // requestId → 요청 시작 시간 (stale 응답 필터링용)
 
     flowView.webContents.debugger.on('message', (event, method, params) => {
-      // ========== Fetch.requestPaused — 레퍼런스 이미지 주입 ==========
-      // CDP Fetch 도메인: 나가는 요청을 가로채서 body 수정 후 계속 전송
+      // ========== Fetch.requestPaused — outgoing 요청 가로채서 주입 ==========
+      // 분기 결정은 selectCdpCase()로 위임 (단위 테스트 가능). 우선순위 규칙은
+      // electron/video-cdp-dispatch.js 의 JSDoc 참조 — 특히 i2v는 t2v-seed보다
+      // 반드시 먼저 매치되어야 한다(54b3293 회귀 사고).
       if (method === 'Fetch.requestPaused') {
         const reqUrl = params.request?.url || ''
-        // Case 1: batchGenerateImages — 레퍼런스 주입 + seed 주입
-        if (reqUrl.includes('batchGenerateImages')) {
+        const reqMethod = params.request?.method || ''
+        const continueRequest = (extra) =>
+          flowView.webContents.debugger.sendCommand('Fetch.continueRequest', {
+            requestId: params.requestId,
+            ...(extra || {})
+          })
+        const cdpCase = selectCdpCase({
+          reqUrl,
+          reqMethod,
+          pendingSeedValue,
+          pendingI2VInjection,
+        })
+
+        if (cdpCase === 'image-batch') {
+          // 이미지 생성 — 레퍼런스 + seed 가용한 만큼 주입
           try {
             const body = JSON.parse(params.request.postData || '{}')
             let modified = false
@@ -561,58 +577,22 @@ function createWindow() {
 
             if (modified) {
               const modifiedPostData = Buffer.from(JSON.stringify(body)).toString('base64')
-              flowView.webContents.debugger.sendCommand('Fetch.continueRequest', {
-                requestId: params.requestId,
-                postData: modifiedPostData
-              })
+              continueRequest({ postData: modifiedPostData })
             } else {
-              flowView.webContents.debugger.sendCommand('Fetch.continueRequest', {
-                requestId: params.requestId
-              })
+              continueRequest()
             }
           } catch (e) {
             console.error('[Flow API] [Fetch] batchGenerateImages injection error:', e.message)
-            flowView.webContents.debugger.sendCommand('Fetch.continueRequest', {
-              requestId: params.requestId
-            })
+            continueRequest()
           }
         }
-        // Case 1.5: T2V seed 주입 (Flow가 자동 랜덤 seed 채우는 자리에 사용자 seed 덮어쓰기)
-        //           batchAsyncGenerateVideoText만 매칭 (I2V는 별도 endpoint이며 아래 Case 2에서 처리)
-        else if (pendingSeedValue != null && reqUrl.includes('batchAsyncGenerateVideoText') && (params.request?.method || '') !== 'OPTIONS') {
-          try {
-            const body = JSON.parse(params.request.postData || '{}')
-            if (body.requests) {
-              for (const req of body.requests) {
-                req.seed = pendingSeedValue
-              }
-              console.log('[Flow Video] [Fetch] Injected seed:', pendingSeedValue, 'into', body.requests.length, 'video requests')
-              const modifiedPostData = Buffer.from(JSON.stringify(body)).toString('base64')
-              flowView.webContents.debugger.sendCommand('Fetch.continueRequest', {
-                requestId: params.requestId,
-                postData: modifiedPostData
-              })
-            } else {
-              flowView.webContents.debugger.sendCommand('Fetch.continueRequest', {
-                requestId: params.requestId
-              })
-            }
-          } catch (e) {
-            console.error('[Flow Video] [Fetch] T2V seed injection error:', e.message)
-            flowView.webContents.debugger.sendCommand('Fetch.continueRequest', {
-              requestId: params.requestId
-            })
-          }
-        }
-        // Case 2: I2V startImage 주입 (T2V 요청을 I2V로 변환)
-        else if (pendingI2VInjection && reqUrl.includes('batchAsyncGenerateVideo')) {
-          const reqMethod = params.request?.method || ''
-          // OPTIONS 프리플라이트는 수정 없이 통과 (pendingI2VInjection 유지)
+        else if (cdpCase === 'i2v') {
+          // I2V startImage 주입 (T2V 요청을 I2V로 변환). seed가 함께 잠겨 있어도
+          // 이 케이스가 우선이라 t2v-seed에 가로채지지 않는다.
+          // OPTIONS 프리플라이트는 수정 없이 통과 (pendingI2VInjection 유지 — POST에서 소비)
           if (reqMethod === 'OPTIONS') {
             console.log('[Flow Video I2V] [Fetch] OPTIONS preflight — pass through')
-            flowView.webContents.debugger.sendCommand('Fetch.continueRequest', {
-              requestId: params.requestId
-            })
+            continueRequest()
           } else {
             try {
               const body = JSON.parse(params.request.postData || '{}')
@@ -671,11 +651,7 @@ function createWindow() {
               const targetUrl = hasEndImage
                 ? pendingI2VInjection.i2vStartEndUrl   // batchAsyncGenerateVideoStartAndEndImage
                 : pendingI2VInjection.i2vUrl            // batchAsyncGenerateVideoStartImage
-              flowView.webContents.debugger.sendCommand('Fetch.continueRequest', {
-                requestId: params.requestId,
-                url: targetUrl,
-                postData: modifiedPostData
-              })
+              continueRequest({ url: targetUrl, postData: modifiedPostData })
               console.log('[Flow Video I2V] [Fetch] Injected startImage (' +
                 pendingI2VInjection.startImageMediaId?.substring(0, 8) + ')' +
                 (hasEndImage ? ' + endImage (' + pendingI2VInjection.endImageMediaId?.substring(0, 8) + ')' : '') +
@@ -684,16 +660,32 @@ function createWindow() {
               pendingI2VInjection = null  // 한 번만 주입 (POST에서만 소비)
             } catch (e) {
               console.error('[Flow Video I2V] [Fetch] Injection error:', e.message)
-              flowView.webContents.debugger.sendCommand('Fetch.continueRequest', {
-                requestId: params.requestId
-              })
+              continueRequest()
             }
           }
-        } else {
-          // 대상이 아닌 요청 → 수정 없이 통과
-          flowView.webContents.debugger.sendCommand('Fetch.continueRequest', {
-            requestId: params.requestId
-          })
+        }
+        else if (cdpCase === 't2v-seed') {
+          // T2V seed 덮어쓰기 (Flow가 자동 랜덤 seed 채우는 자리). I2V 모드 아닐 때만.
+          try {
+            const body = JSON.parse(params.request.postData || '{}')
+            if (body.requests) {
+              for (const req of body.requests) {
+                req.seed = pendingSeedValue
+              }
+              console.log('[Flow Video] [Fetch] Injected seed:', pendingSeedValue, 'into', body.requests.length, 'video requests')
+              const modifiedPostData = Buffer.from(JSON.stringify(body)).toString('base64')
+              continueRequest({ postData: modifiedPostData })
+            } else {
+              continueRequest()
+            }
+          } catch (e) {
+            console.error('[Flow Video] [Fetch] T2V seed injection error:', e.message)
+            continueRequest()
+          }
+        }
+        else {
+          // pass-through — 대상이 아닌 요청은 수정 없이 통과
+          continueRequest()
         }
         return  // Fetch 이벤트는 여기서 처리 완료
       }

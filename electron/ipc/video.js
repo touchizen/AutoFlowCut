@@ -61,7 +61,9 @@ export function registerVideoIPC(ipcMain, deps) {
     setPendingSeedValue?.(hasUserSeed ? seed : null)
 
     // CDP Fetch 도메인이 image용 패턴만 등록돼 있을 수 있으므로,
-    // 사용자 seed 지정 시 video text 패턴으로 등록 (없으면 inject 안 됨)
+    // 사용자 seed 지정 시 video text 패턴으로 등록 (없으면 inject 안 됨).
+    // I2V 핸들러와 동일한 패턴으로 finally에서 정리한다.
+    let cdpFetchEnabled = false
     if (hasUserSeed) {
       try {
         await flowView.webContents.debugger.sendCommand('Fetch.enable', {
@@ -70,6 +72,7 @@ export function registerVideoIPC(ipcMain, deps) {
             { urlPattern: '*batchAsyncGenerateVideoText*', requestStage: 'Request' }
           ]
         })
+        cdpFetchEnabled = true
         console.log('[Flow Video T2V] [Fetch] Enabled with video text pattern for seed inject')
       } catch (e) {
         console.warn('[Flow Video T2V] [Fetch] Fetch.enable failed:', e.message)
@@ -269,6 +272,16 @@ export function registerVideoIPC(ipcMain, deps) {
     } catch (e) {
       console.error('[Flow Video T2V] Error:', e.message)
       return { success: false, error: e.message }
+    } finally {
+      // CDP Fetch 인터셉션 + seed 정리 (I2V 핸들러와 동일 패턴, 항상 실행)
+      // pendingSeedValue를 비워야 다음 비-자동화 Flow 요청에 stale seed가 새지 않음.
+      setPendingSeedValue?.(null)
+      if (cdpFetchEnabled) {
+        try {
+          await flowView.webContents.debugger.sendCommand('Fetch.disable')
+          console.log('[Flow Video T2V] CDP Fetch interception disabled')
+        } catch {}
+      }
     }
   })
 
@@ -507,7 +520,11 @@ export function registerVideoIPC(ipcMain, deps) {
       console.error('[Flow Video I2V] Error:', e.message)
       return { success: false, error: e.message }
     } finally {
-      // CDP Fetch 인터셉션 비활성화 (항상 정리)
+      // pendingSeedValue는 핸들러 진입 시 unconditionally set되므로(line 302),
+      // 여기서도 unconditionally 정리 — Fetch.enable 성공 여부와 무관.
+      // 안 하면 다음 수동 Flow 요청에 stale seed가 새어나갈 수 있음.
+      setPendingSeedValue?.(null)
+      // CDP Fetch + I2V injection 정리 (Fetch.enable 성공한 경로만)
       if (cdpFetchEnabled) {
         setPendingI2VInjection(null)
         try {
