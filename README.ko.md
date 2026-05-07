@@ -11,7 +11,7 @@
 Google Flow AI로 이미지/비디오를 **대량 생성**하고, CapCut 영상 프로젝트로 원클릭 내보내기하는 데스크톱 앱.
 
 [![Release](https://img.shields.io/github/v/release/touchizen/AutoFlowCut)](https://github.com/touchizen/AutoFlowCut/releases)
-[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL%20v3-blue)](LICENSE)
 
 ## 개요
 
@@ -315,7 +315,16 @@ POST /api/generate         — 이미지 생성 트리거
 
 ## 라이선스
 
-MIT License
+Copyright (C) 2026 Touchizen
+
+본 프로그램은 자유 소프트웨어입니다. **GNU Affero General Public License v3**
+조건에 따라 자유롭게 사용·수정·재배포할 수 있습니다. 전체 라이선스 텍스트는
+[LICENSE](LICENSE) 파일을 참고하세요.
+
+> **요약**: 자유롭게 사용·수정·자가 호스팅 가능. 단, 수정본을 배포하거나 수정본으로
+> 네트워크 서비스를 운영하는 경우, 변경 사항도 AGPL v3 로 공개해야 합니다.
+
+기여는 동일한 AGPL v3 라이선스로 받습니다 — [CONTRIBUTING.md](CONTRIBUTING.md) 참고.
 
 ---
 

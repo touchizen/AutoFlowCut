@@ -5,7 +5,7 @@
 A desktop app that **mass-generates** images and videos with Google Flow AI and exports them to CapCut projects in one click.
 
 [![Release](https://img.shields.io/github/v/release/touchizen/AutoFlowCut)](https://github.com/touchizen/AutoFlowCut/releases)
-[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL%20v3-blue)](LICENSE)
 
 ## Overview
 
@@ -309,7 +309,18 @@ POST /api/generate         — Trigger image generation
 
 ## License
 
-MIT License
+Copyright (C) 2026 Touchizen
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the **GNU Affero General Public License v3** as published by the
+Free Software Foundation. See [LICENSE](LICENSE) for the full text.
+
+> **What this means**: you are free to use, modify, and self-host AutoFlowCut.
+> If you distribute a modified version — including running it as a hosted
+> network service — your changes must also be released under AGPL v3.
+
+Contributions are accepted under the same AGPL v3 license — see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
