@@ -14,7 +14,7 @@ import { TIMING } from '../config/defaults'
 import { fileSystemAPI } from './useFileSystem'
 import { toast } from '../components/Toast'
 import { retryVideoDownload } from '../services/videoRecovery'
-import { pickVideoMetadata } from '../utils/videoMetadata'
+import { pickVideoMetadata, buildVideoMetaPatch } from '../utils/videoMetadata'
 
 // 유틸: 랜덤 대기
 const randomSleep = (min, max) =>
@@ -448,10 +448,12 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
             console.log(`[VideoAutomation] ✅ Complete: ${statusInfo.mediaId.substring(0, 20)} → downloading...`)
             setStatusMessage(`📥 ${t('videoAutomation.downloading') || 'Downloading'} — ${statusInfo.mediaId.substring(0, 16)}...`)
 
+            // item 을 한 번만 lookup — downloadAndSaveVideo 와 실패 patch 가 공유 (메타 우선순위 일관성).
+            const item = items.find(i => i.id === itemId)
             const dlResult = await downloadAndSaveVideo(
               statusInfo.mediaId,
               statusInfo.videoUrl,
-              items.find(i => i.id === itemId),
+              item,
               { projectName, saveMode, videoResolution, aspectRatio, seed, videoModel },
               setStatusMessage
             )
@@ -473,14 +475,15 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
               // download 자체가 실패하면 dlResult.mediaId 가 비어있을 수 있으므로 statusInfo.mediaId 폴백.
               // (서버는 이미 생성 완료를 알렸으니 mediaId 는 이 시점에 항상 알려져 있음 — 새 생성 회피)
               const retryMediaId = dlResult.mediaId || statusInfo.mediaId
+              // 메타 보존 — buildVideoMetaPatch 가 item 의 원래 model/seed 를 우선 stamp.
+              // 이전 구현은 항상 현재 옵션(seed, videoModel)을 stamp 해서, in-flight resume 항목의
+              // 원래 메타가 한 번의 실패로 덮였다 (history metadata 어긋남).
               onItemUpdate?.(itemId, 'error', {
                 error: errMsg,
                 ...(retryMediaId ? { mediaId: retryMediaId } : {}),
                 ...(dlResult.videoSaveId ? { videoSaveId: dlResult.videoSaveId } : {}),
                 generationId: submission.generationId,
-                // 메타 보존 — recovery / retry 가 동일 model/seed 로 저장하도록.
-                ...(seed != null ? { seed } : {}),
-                ...(videoModel ? { model: videoModel } : {}),
+                ...buildVideoMetaPatch(item, { seed, videoModel }),
               })
               console.warn(`[VideoAutomation] ❌ Download failed: ${itemId}`, errMsg)
             }
@@ -489,10 +492,11 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
           } else if (statusInfo.status === 'failed') {
             // 서버 generation 자체 실패 — download-only retry 는 의미 없지만, 사용자가
             // 같은 model/seed 로 수동 재시도할 수 있게 메타 보존.
+            // (download 실패 경로와 동일한 우선순위 — item 의 원래 메타 우선.)
+            const item = items.find(i => i.id === itemId)
             onItemUpdate?.(itemId, 'error', {
               error: statusInfo.error || 'Video generation failed',
-              ...(seed != null ? { seed } : {}),
-              ...(videoModel ? { model: videoModel } : {}),
+              ...buildVideoMetaPatch(item, { seed, videoModel }),
             })
             pending.delete(itemId)
             console.warn(`[VideoAutomation] ❌ Generation failed: ${submission.generationId.substring(0, 16)}`)

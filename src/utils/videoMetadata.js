@@ -24,3 +24,27 @@ export function pickVideoMetadata(item, options) {
     seed: item?.seed ?? options?.seed ?? null,
   }
 }
+
+/**
+ * 비디오 아이템 상태 patch 에 들어갈 model/seed 단편을 만든다.
+ *
+ * `pickVideoMetadata` 와 동일한 우선순위로 결정하되, 값이 없을 때 키 자체를 빼서
+ * 호출자(setState) 가 기존 state 의 해당 키를 보존할 수 있도록 한다.
+ * (값을 그대로 넣으면 setState 가 seed: null / model: undefined 로 덮어 써서
+ *  in-flight resume 항목이 갖고 있던 원래 메타를 잃는다.)
+ *
+ * 사용처: useVideoAutomation 의 download 실패 / generation 실패 patch.
+ *   - 이전 구현은 patch 에 항상 start() 의 현재 seed/videoModel 을 넣어서,
+ *     resume 항목의 model/seed 가 한 번의 실패로 덮였다.
+ *
+ * @param {Object|null|undefined} item
+ * @param {Object|null|undefined} options
+ * @returns {{ model?: string, seed?: number }}
+ */
+export function buildVideoMetaPatch(item, options) {
+  const { model, seed } = pickVideoMetadata(item, options)
+  return {
+    ...(seed != null ? { seed } : {}),
+    ...(model ? { model } : {}),
+  }
+}

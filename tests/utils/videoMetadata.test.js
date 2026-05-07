@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { pickVideoMetadata } from '../../src/utils/videoMetadata'
+import { pickVideoMetadata, buildVideoMetaPatch } from '../../src/utils/videoMetadata'
 
 describe('pickVideoMetadata — model 우선순위', () => {
   it('item.model 이 있으면 options.videoModel 보다 우선', () => {
@@ -110,5 +110,74 @@ describe('pickVideoMetadata — model 과 seed 조합', () => {
   it('대표 케이스 3: 어디에도 없음 — 폴백', () => {
     const result = pickVideoMetadata({}, {})
     expect(result).toEqual({ model: 'flow-video', seed: null })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// buildVideoMetaPatch — error/incomplete state patch 단편 생성
+//
+// 회귀 방지 — useVideoAutomation 의 download 실패 / generation 실패 patch 가
+//   start() 의 현재 옵션 (seed, videoModel) 을 그대로 stamp 하던 버그.
+//   in-flight resume 항목이 원래 갖고 있던 model/seed 가 한 번의 실패로 덮여,
+//   이후 download-only retry 가 잘못된 history metadata 를 저장하던 문제.
+//
+// helper 의 책임:
+//   - pickVideoMetadata 와 같은 우선순위로 model/seed 결정
+//   - state patch 의미상 "값이 없으면 키 자체를 빼서" 기존 state 를 보존
+// ─────────────────────────────────────────────────────────────────────────────
+describe('buildVideoMetaPatch — meta-preserving state patch', () => {
+  it('item 에 model/seed 가 있으면 그대로 patch 에 담는다 (회귀 방지)', () => {
+    // 핵심 케이스: in-flight resume 후 다운로드 실패 시 — item 의 원래 model/seed 가
+    // 현재 UI 옵션(다른 모델/seed) 으로 덮이면 안 됨.
+    const patch = buildVideoMetaPatch(
+      { model: 'veo-3.1-fast', seed: 12345 },
+      { videoModel: 'veo-3.1-quality', seed: 99 }
+    )
+    expect(patch).toEqual({ model: 'veo-3.1-fast', seed: 12345 })
+  })
+
+  it('item 에 model/seed 가 없으면 options 의 값을 사용', () => {
+    const patch = buildVideoMetaPatch(
+      { /* no meta */ },
+      { videoModel: 'veo-3.1-quality', seed: 99 }
+    )
+    expect(patch).toEqual({ model: 'veo-3.1-quality', seed: 99 })
+  })
+
+  it('item 자체가 undefined 일 때도 throw 없이 options 사용 (items.find() 미스 케이스)', () => {
+    // useVideoAutomation 의 items.find(...) 가 itemId 못 찾으면 undefined 반환.
+    const patch = buildVideoMetaPatch(undefined, {
+      videoModel: 'veo-3.1-quality',
+      seed: 99,
+    })
+    expect(patch).toEqual({ model: 'veo-3.1-quality', seed: 99 })
+  })
+
+  it('item.seed = 0 도 보존 (?? semantics — || 였으면 99 로 덮였을 것)', () => {
+    const patch = buildVideoMetaPatch({ seed: 0 }, { seed: 99 })
+    expect(patch.seed).toBe(0)
+  })
+
+  it('seed 가 null 이면 patch 에서 seed 키를 빼서 기존 state 보존', () => {
+    // patch 에 seed 가 들어가면 setState 가 seed: null 로 덮어 씀 → 기존 seed 유실.
+    // patch 단편에는 키 자체가 없어야 한다.
+    const patch = buildVideoMetaPatch({}, {})
+    expect(patch).not.toHaveProperty('seed')
+  })
+
+  it('item 의 seed 만 있고 model 은 없는 경우 — model 은 options/fallback 사용', () => {
+    const patch = buildVideoMetaPatch(
+      { seed: 7 },
+      { videoModel: 'veo-3.1-quality' }
+    )
+    expect(patch).toEqual({ model: 'veo-3.1-quality', seed: 7 })
+  })
+
+  it('item 의 model 만 있고 seed 는 없는 경우', () => {
+    const patch = buildVideoMetaPatch(
+      { model: 'veo-3.1-fast' },
+      { videoModel: 'veo-3.1-quality', seed: 99 }
+    )
+    expect(patch).toEqual({ model: 'veo-3.1-fast', seed: 99 })
   })
 })
