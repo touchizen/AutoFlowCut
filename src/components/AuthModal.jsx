@@ -7,6 +7,7 @@ import { createPortal } from 'react-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useI18n } from '../hooks/useI18n'
 import { useModalVisibility } from '../hooks/useModalVisibility'
+import appIconUrl from '/assets/icon128.png'
 import './AuthModal.css'
 
 export function AuthModal({ isOpen, onClose }) {
@@ -40,7 +41,7 @@ export function AuthModal({ isOpen, onClose }) {
         </button>
 
         <div className="auth-modal-header">
-          <div className="auth-modal-logo">F2C</div>
+          <img className="auth-modal-logo" src={appIconUrl} alt="AutoFlowCut" />
           <h2>{t('auth.title')}</h2>
           <p>{t('auth.subtitle')}</p>
         </div>

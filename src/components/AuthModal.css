@@ -51,15 +51,10 @@
 .auth-modal-logo {
   width: 64px;
   height: 64px;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
   border-radius: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 24px;
-  font-weight: bold;
-  color: #fff;
+  display: block;
   margin: 0 auto 16px;
+  object-fit: cover;
 }
 
 .auth-modal-header h2 {
