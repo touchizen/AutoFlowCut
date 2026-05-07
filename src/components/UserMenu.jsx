@@ -8,7 +8,20 @@ import { useState, useRef, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { createPortalSession } from '../firebase/functions'
 import { useI18n } from '../hooks/useI18n'
+import { useCachedAvatar } from '../hooks/useCachedAvatar'
 import './UserMenu.css'
+
+/**
+ * Google 프로필 사진 URL 의 size 파라미터를 원하는 크기로 리라이트.
+ * 형식: `https://lh3.googleusercontent.com/a/<token>=s<size>-c`
+ *   - s 뒤 숫자만 바꿔주면 됨. 패턴 매칭 실패 시 원본 그대로 반환 (안전).
+ * 작은 이미지 = 로드 빠름 + Google CDN 429 throttle 도 덜 걸림.
+ */
+function resizeGoogleAvatarUrl(url, size) {
+  if (!url || typeof url !== 'string') return url
+  // =s<digits>-c 또는 =s<digits> 패턴이면 size 만 교체
+  return url.replace(/=s\d+(-c)?$/, `=s${size}-c`)
+}
 
 export function UserMenu({ onLoginClick, onUpgradeClick }) {
   const { t } = useI18n()
@@ -16,6 +29,18 @@ export function UserMenu({ onLoginClick, onUpgradeClick }) {
   const [isOpen, setIsOpen] = useState(false)
   const [portalLoading, setPortalLoading] = useState(false)
   const menuRef = useRef(null)
+
+  // photoURL 을 24h base64 로 localStorage 캐시하여 표시.
+  // 첫 로드 후엔 Google CDN 안 때림 → 429 원천 차단.
+  // onImageError: <img> 디코드 실패 시 캐시 invalidate + placeholder 폴백 (정상 이미지만 캐시 유지).
+  const normalizedPhotoUrl = user?.photoURL
+    ? resizeGoogleAvatarUrl(user.photoURL, 64)
+    : null
+  const {
+    src: cachedAvatarSrc,
+    failed: avatarFetchFailed,
+    onImageError: handleAvatarError
+  } = useCachedAvatar(normalizedPhotoUrl)
 
   // 외부 클릭 시 메뉴 닫기
   useEffect(() => {
@@ -86,11 +111,16 @@ export function UserMenu({ onLoginClick, onUpgradeClick }) {
         className="user-menu-trigger"
         onClick={() => setIsOpen(!isOpen)}
       >
-        {user.photoURL ? (
+        {cachedAvatarSrc && !avatarFetchFailed ? (
           <img
-            src={user.photoURL}
+            // useCachedAvatar 가 24h localStorage 에 base64 로 보관 → 캐시 hit 시 네트워크 X.
+            // fetch 단계에서 content-type/size 검증을 통과한 경우만 캐시되지만,
+            // 캐시 데이터 손상 / 브라우저 디코드 실패 등 극단 케이스 폴백용으로 onError 유지.
+            // (onError → 캐시 invalidate + placeholder, 다음 mount 에 재시도)
+            src={cachedAvatarSrc}
             alt={user.displayName || 'User'}
             className="user-avatar"
+            onError={handleAvatarError}
           />
         ) : (
           <div className="user-avatar-placeholder">
