@@ -200,6 +200,57 @@ Format rules:
   during execution (the fences shown above are for this spec doc only).
 - If genre cannot be determined from STATE.md, default to KO.
 
+**Intra-wave sub-step reporting** (orchestrator, mandatory)
+
+Wave START/DONE banners alone are not enough. The orchestrator MUST also emit
+status lines at every internal sub-step transition within a wave. The user must
+always be able to see what is currently happening, not just "we're inside W5
+somewhere".
+
+**Sub-step decomposition table** (canonical — orchestrator and wave subagents MUST
+follow this granularity; wave docs may add finer breakdowns but never remove these):
+
+| Wave | Sub-steps                                                                                          |
+|------|---------------------------------------------------------------------------------------------------|
+| W1   | W1-0 read-docs, W1-1 fact-check, W1-2 research, W1-3 summarize                                    |
+| W2   | W2-0 read-inputs, W2-1 synopsis-draft, W2-2 preflight, W2-3..N preflight-revise (per round)        |
+| W3   | W3-0 read-inputs, W3-1..4 part-write × 4, W3-5 self-review, W3-6 external-review, W3-7 polish     |
+| W4   | W4-0 read-inputs, W4-1..4 narration-extract × 4, W4-5 dialogue-extract, W4-6 SFX-list, W4-7 audit |
+| W5   | W5-0 voice-pick, W5-1 narration-TTS, W5-2 dialogue-TTS, W5-3 SRT, W5-4 SFX (batched), W5-5 merge   |
+| W6   | W6-0 schema-load, W6-1 references-CSV, W6-2..5 scenes-CSV × parts, W6-6 gap-validate               |
+| W7   | W7-0 project-open, W7-1 style-pick, W7-2 ref-batch, W7-3..N scene-batches, W7-4 QA, W7-5 CapCut    |
+| W8   | W8-0 title-desc-tags, W8-1 thumbnail-text                                                          |
+
+**For each sub-step the orchestrator MUST:**
+1. ▸ START line BEFORE the work begins: `▸ Starting W{N}-{S} <name>…` (one line, plain text)
+2. (do the work — typically a single foreground `Agent` call, 1–3 min target, OR inline orchestrator work)
+3. ✅ DONE line AFTER the work completes: `✅ W{N}-{S} <name> done (mm:ss). Next: W{N}-{S+1} <next>.`
+
+**Hard rules:**
+- If a sub-step itself runs >3 min (e.g. W5-4 SFX with 55 cues), it MUST split into
+  batches of 10–15 calls, with one status line per batch:
+  `▸ W5-4 SFX batch 2/4 (cues 16–30)…` then `✅ W5-4 SFX batch 2/4 done (M:SS), N/N succeeded.`
+- Silence longer than 3 minutes without a status line is a violation. Default to
+  over-reporting; verbosity is recoverable, silence is not.
+- The orchestrator emits these lines DIRECTLY to the user (chat), not to logs.
+- **Subagent invocations MUST be bracketed with announcements** (no silent `Agent` calls):
+  - Before: `▸ Spawning <type> subagent for <task> (est. <X> min, prompt ~<N> tokens)…`
+  - After:  `✅ <task> subagent returned in <mm:ss>. Result: <one-line>.`
+  - SendMessage: `▸ Sending message to agent <id> (<reason>)…` then `✅ Agent <id> response in <mm:ss>.`
+  This applies to wave subagents, external review subagents, and any other `Agent`
+  tool call. The Agent tool's wait window is the single largest source of "I don't
+  know what's happening" — make it the single most-narrated moment instead.
+
+**Wave subagent prompts (Step 3) MUST include this instruction explicitly:**
+> "At every sub-step transition, emit a one-line status: `▸ Starting <name>…`
+> when starting and `✅ <name> done (mm:ss). Next: <next>.` when finishing.
+> Sub-steps follow the wave's row in the sub-step decomposition table in
+> `workflows/execute-pipeline.md`. Long sub-steps (>3 min) split into batches
+> with one status line per batch."
+
+When the orchestrator runs a wave inline (instead of spawning a subagent), the
+orchestrator itself emits these lines as it transitions between sub-steps.
+
 **Step 3: Wave-specific subagent prompts**
 
 Each subagent receives:
@@ -370,6 +421,88 @@ Every Wave subagent MUST, as its final action before returning:
 If the subagent exits without satisfying items 1–4, the orchestrator treats the wave as incomplete and retries.
 
 ---
+
+**Subagent audit protocol** (orchestrator verification — mandatory, applies to every `Agent` return)
+
+Subagent self-reports are NOT trusted by default. After every `Agent` return, the
+orchestrator MUST verify the report against disk reality before proceeding to the
+next wave or sub-step. This protocol is the safety net that prevents subagents
+from doing invisible work (file writes, API calls, side effects).
+
+### Required fields in every subagent return JSON
+
+In addition to the wave-specific fields (`wave`, `status`, `review_rounds_used`,
+`issues_found`, `deliverables`, etc.), every subagent return MUST include:
+
+```json
+{
+  "disk_changes": {
+    "created":  ["_story_source/foo.txt", "..."],
+    "modified": ["_story_source/STATE.md", "_story_source/W_progress.json"],
+    "deleted":  []
+  },
+  "bash_commands": [
+    "mkdir -p segments",
+    "ffmpeg -i input.mp3 -af loudnorm output.mp3"
+  ],
+  "external_api_calls": [
+    {"method": "GET",  "url": "https://api.elevenlabs.io/v1/voices",                    "status": 200},
+    {"method": "POST", "url": "https://api.elevenlabs.io/v1/text-to-speech/<voice_id>", "status": 200}
+  ]
+}
+```
+
+Rules:
+- `bash_commands`: literal command strings only — strip env values, credentials, body content.
+- `external_api_calls`: method, URL, and status only — never bodies or auth headers.
+- `disk_changes`: paths relative to episode dir.
+- A subagent that omits these fields is treated as a failed wave — retry once with the audit instruction reinforced; second failure = escalate.
+
+### Orchestrator verification steps (run after every `Agent` return)
+
+1. **Before spawning** the subagent, record `wave_start_ts = <ISO timestamp>`.
+2. **After return**, list actual disk changes under the episode directory:
+   ```bash
+   find {episode_dir} -newer {wave_start_ts} -not -path '*/.git/*'
+   ```
+   (PowerShell equivalent: `Get-ChildItem -Recurse | Where-Object { $_.LastWriteTime -gt $wave_start_ts }`)
+3. **Cross-check actual vs declared** (`disk_changes.created` ∪ `disk_changes.modified`):
+   - Any actual file NOT in declared list → **undeclared change**.
+   - Any declared `created` entry missing from disk → **declared-but-absent**.
+4. **Cross-check declared deliverables**: every entry in the subagent's `deliverables`
+   array MUST exist on disk. Missing = wave failure → retry once.
+5. **Cross-check API boundary**: if the wave brief explicitly forbade an API
+   surface (W4 forbids audio gen; W6 forbids image gen), scan `external_api_calls`
+   for hits on those surfaces. Any hit = **boundary violation**.
+6. **On any violation**, the orchestrator MUST:
+   - Print `▸ ⚠ Subagent contract violation: <details>` to the user.
+   - Pause the pipeline (do NOT advance to the next wave or sub-step).
+   - Surface options: continue (accept the change), rollback (delete undeclared
+     files), or escalate (full pipeline halt for human review).
+
+### Hard rules
+
+- The verification step is NOT optional. Subagents have demonstrated the ability
+  to "go beyond" their brief — TTS, image gen, file creation outside deliverables.
+  Once a subagent has done this, the only remediation is detection on return.
+- Subagent prohibitions explicitly enumerated in the wave brief MUST be enforced
+  by both the subagent (self-restraint) AND the orchestrator (post-return audit).
+- The orchestrator's audit log lives in `STATE.md` under a `## Subagent audit log`
+  section, with one entry per `Agent` call (timestamp, wave, declared deliverables,
+  actual disk changes, violations).
+
+### Wave subagent prompts MUST include this instruction
+
+Every `Step 3` wave subagent prompt MUST embed the following block verbatim:
+
+> "**Audit obligations.** Your return JSON MUST include `disk_changes` (created/
+> modified/deleted), `bash_commands` (literal command strings, no env values), and
+> `external_api_calls` (method/URL/status, no bodies). Do NOT create files outside
+> your declared `deliverables`. Do NOT call any API surface this brief did not
+> explicitly authorize. If a code path requires a forbidden action, return
+> `escalation_required: true` and STOP. The orchestrator will verify your audit
+> block against disk reality after you return — undeclared changes are a contract
+> violation."
 
 **Step 4: Completion**
 
