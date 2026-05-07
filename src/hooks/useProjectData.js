@@ -8,9 +8,19 @@ import { syncVideosIntoScenes } from '../services/mediaSync'
 import { recoverInFlightVideos } from '../services/videoRecovery'
 
 /**
- * 프로젝트 데이터 로드 + 이미지 파일 복원 (공통 헬퍼)
+ * 프로젝트 데이터 로드 + 모든 리소스 경로/파일 복원 (공통 헬퍼).
+ *
+ * 처리 대상:
+ *   - scenes      : imagePath 를 현재 프로젝트의 scenes/ 로 리맵, mediaId 누락 복구
+ *   - references  : filePath 를 현재 프로젝트의 references/ 로 리맵
+ *   - videoScenes : videoPath 를 현재 프로젝트의 videos/ 로 리맵 + 필요 시 base64 로드
+ *   - framePairs  : videoPath 를 현재 프로젝트의 videos/ 로 리맵 + 필요 시 base64 로드
+ *   - scenes 의 derived 필드(videoT2VPath/videoI2VPath)는 syncVideosIntoScenes 가 재채움
+ *
+ * 폴더 rename(예: Untitled → untitled.old4) 후에도 모든 절대경로가 현재 폴더 기준으로
+ * 재산출되도록 한다.
  */
-async function loadProjectWithImages(projectName) {
+async function loadProjectWithResources(projectName) {
   const result = await fileSystemAPI.loadProjectData(projectName)
   if (!result.success || !result.data) return null
 
@@ -98,61 +108,99 @@ async function loadProjectWithImages(projectName) {
   const withMediaId = scenesWithPaths.filter(s => s.mediaId).length
   console.log(`[ProjectData] ✅ Loaded: ${withImages}/${sceneCount} images (path-only), ${withSubtitles}/${sceneCount} subtitles, ${withMediaId}/${sceneCount} mediaIds`)
 
+  // 비디오 파일 경로를 현재 프로젝트 폴더 기준으로 리맵.
+  // 폴더 rename(예: Untitled → untitled.old4) 후 project.json 의 절대경로가
+  // 옛 폴더를 가리켜 ERR_FILE_NOT_FOUND 가 나는 회귀를 잡는다.
+  // 항상 현재 프로젝트의 videos/ 에서 재탐색하므로 rename 무관.
+  // file 없으면 null 반환 — 호출자가 stale path 를 비우거나 재로드 결정.
+  const remapVideoPath = async (item) => {
+    const primaryId = item.videoSaveId || item.id
+    if (!primaryId) return null
+    const result = await fileSystemAPI.getResourcePath(projectName, 'videos', primaryId)
+    if (result.success) return result.path
+    // 폴백: videoSaveId 가 있었다면 기존 ID(vscene_N / fp_N)로도 시도
+    if (item.videoSaveId && item.id !== item.videoSaveId) {
+      const fb = await fileSystemAPI.getResourcePath(projectName, 'videos', item.id)
+      if (fb.success) return fb.path
+    }
+    return null
+  }
+
   // videoScenes 비디오 파일에서 로드 (새 명명 t2v_N 우선, 기존 vscene_N 폴백)
   const videoScenesWithMedia = await Promise.all(
     (result.data.videoScenes || []).map(async (vs) => {
-      if (vs.id && !vs.video) {
+      // videoPath 를 현재 프로젝트 폴더 기준으로 항상 재산출 (folder rename 회귀 차단)
+      const remapped = await remapVideoPath(vs)
+      let next = { ...vs }
+      if (remapped) {
+        next.videoPath = remapped
+      } else if (vs.videoPath) {
+        // 저장된 path 가 현재 프로젝트에 없음 — stale 이므로 비움
+        next = { ...next, videoPath: null }
+      }
+
+      if (next.id && !next.video) {
         // 새 명명 규칙 (videoSaveId = t2v_N) 우선
-        const primaryId = vs.videoSaveId || vs.id
+        const primaryId = next.videoSaveId || next.id
         const vidResult = await fileSystemAPI.readResource(projectName, 'videos', primaryId)
         if (vidResult.success) {
-          return { ...vs, video: vidResult.data }
+          return { ...next, video: vidResult.data }
         }
         // 폴백: videoSaveId가 있었다면 기존 ID(vscene_N)로도 시도
-        if (vs.videoSaveId) {
-          const fallback = await fileSystemAPI.readResource(projectName, 'videos', vs.id)
+        if (next.videoSaveId) {
+          const fallback = await fileSystemAPI.readResource(projectName, 'videos', next.id)
           if (fallback.success) {
-            return { ...vs, video: fallback.data }
+            return { ...next, video: fallback.data }
           }
         }
         // 파일 삭제됨 → complete 상태 리셋
-        if (vs.status === 'complete') {
-          return { ...vs, status: 'waiting', video: undefined }
+        if (next.status === 'complete') {
+          return { ...next, status: 'waiting', video: undefined, videoPath: null }
         }
       }
-      return vs
+      return next
     })
   )
 
   // framePairs 비디오 파일 로드 (새 명명 i2v_N 우선, 기존 fp_N 폴백)
   const framePairsWithMedia = await Promise.all(
     (result.data.framePairs || []).map(async (fp) => {
-      // videoPath가 있으면 status를 complete로 보정
-      if (fp.videoPath && fp.status !== 'complete') {
-        fp = { ...fp, status: 'complete' }
+      // videoPath 를 현재 프로젝트 폴더 기준으로 항상 재산출 (folder rename 회귀 차단)
+      const remapped = await remapVideoPath(fp)
+      let next = { ...fp }
+      if (remapped) {
+        next.videoPath = remapped
+      } else if (fp.videoPath) {
+        // 저장된 path 가 현재 프로젝트에 없음 — stale, 비워서 base64 로드/리셋 경로로 빠지게 함
+        next = { ...next, videoPath: null }
       }
-      if (fp.id && !fp.base64 && fp.status === 'complete') {
+
+      // videoPath가 있으면 status를 complete로 보정
+      if (next.videoPath && next.status !== 'complete') {
+        next = { ...next, status: 'complete' }
+      }
+      if (next.id && !next.base64 && next.status === 'complete') {
         // videoPath가 이미 있으면 base64 로드 불필요 (파일 경로로 직접 재생)
-        if (fp.videoPath) {
-          return fp
+        if (next.videoPath) {
+          return next
         }
         // 새 명명 규칙 (videoSaveId = i2v_N) 우선
-        const primaryId = fp.videoSaveId || fp.id
+        const primaryId = next.videoSaveId || next.id
         const vidResult = await fileSystemAPI.readResource(projectName, 'videos', primaryId)
         if (vidResult.success) {
-          return { ...fp, base64: vidResult.data }
+          return { ...next, base64: vidResult.data }
         }
         // 폴백: videoSaveId가 있었다면 기존 ID(fp_N)로도 시도
-        if (fp.videoSaveId) {
-          const fallback = await fileSystemAPI.readResource(projectName, 'videos', fp.id)
+        if (next.videoSaveId) {
+          const fallback = await fileSystemAPI.readResource(projectName, 'videos', next.id)
           if (fallback.success) {
-            return { ...fp, base64: fallback.data }
+            return { ...next, base64: fallback.data }
           }
         }
         // 파일 삭제됨 → status 리셋
-        return { ...fp, status: 'waiting', base64: undefined, video: undefined }
+        return { ...next, status: 'waiting', base64: undefined, video: undefined, videoPath: null }
       }
-      return fp
+      return next
     })
   )
 
@@ -161,7 +209,13 @@ async function loadProjectWithImages(projectName) {
     item.status === 'generating' ? { ...item, status: 'pending', generatingStartedAt: undefined } : item
 
   // ── 완성된 비디오 → 씬에 동기화 (videoT2V / videoI2V) ──
-  const finalScenes = scenesWithPaths.map(resetGenerating)
+  // scene-level videoT2VPath/videoI2VPath 는 폴더 rename 시 stale 가능성 — 비우고
+  // syncVideosIntoScenes 에서 re-mapped videoScenes/framePairs 의 videoPath 로 재채움.
+  const finalScenes = scenesWithPaths.map(s => ({
+    ...resetGenerating(s),
+    videoT2VPath: null,
+    videoI2VPath: null
+  }))
   const finalVideoScenes = videoScenesWithMedia.map(resetGenerating)
   const finalFramePairs = framePairsWithMedia.map(resetGenerating)
 
@@ -280,7 +334,7 @@ export function useProjectData({
       // 복원 시작 — auto-save 차단
       isRestoringRef.current = true
       console.log('[App] Auto-restore: loading project:', prevProjectName)
-      const loaded = await loadProjectWithImages(prevProjectName)
+      const loaded = await loadProjectWithResources(prevProjectName)
       if (loaded) {
         setScenes(loaded.scenes)
         setReferences(loaded.references)
@@ -319,7 +373,7 @@ export function useProjectData({
     let audioPath = null
     const newExists = await fileSystemAPI.projectExists(newProjectName)
     if (newExists) {
-      const loaded = await loadProjectWithImages(newProjectName)
+      const loaded = await loadProjectWithResources(newProjectName)
       if (loaded) {
         setScenes(loaded.scenes)
         setReferences(loaded.references)
