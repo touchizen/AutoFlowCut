@@ -422,6 +422,82 @@ If the subagent exits without satisfying items 1–4, the orchestrator treats th
 
 ---
 
+**Subagent heartbeat protocol** (subagent self-reports DURING execution — mandatory)
+
+Wave subagents are not a black box. During execution, every wave subagent MUST
+append a one-line heartbeat to `_story_source/_progress.log` at every sub-step
+transition. This is the only way the orchestrator (and the user) can see what
+the subagent is doing WHILE the `Agent` call is in flight, before it returns.
+
+### Heartbeat line format
+
+Append-only, one line per event, ISO-8601 UTC timestamp:
+
+```
+<ISO-8601 UTC> <wave-label> <event>: <description> [<optional metrics>]
+```
+
+Where:
+- `<wave-label>` = `W1`..`W8`, or a child label like `W3-EXT` (external review),
+  `W5-1` (sub-step), etc.
+- `<event>` ∈ { `START`, `END`, `API`, `SPAWN`, `WRITE`, `ERROR`, `WAIT` }.
+- `<description>` is short and specific (no credentials, no secrets).
+- Metrics in `[brackets]` optional: took N s, N words, N issues, status code.
+
+### Examples
+
+```
+2026-05-08T20:34:11Z W3 START: writing part 2 (Act II)
+2026-05-08T20:34:14Z W3 WRITE: Three_Wives_part2_rising.md
+2026-05-08T20:35:42Z W3 END:   writing part 2 [took 1:31, 463 words]
+2026-05-08T20:35:43Z W3 START: self-review round 1
+2026-05-08T20:36:55Z W3 END:   self-review round 1 [3 issues, 1:12]
+2026-05-08T20:36:56Z W3 SPAWN: external review subagent
+2026-05-08T20:36:58Z W3-EXT START: reading 4 part files
+2026-05-08T20:38:01Z W5 API:   POST /v1/text-to-speech/<voice_id> [200, 4.2s]
+```
+
+### Mandatory triggers (subagent emits a heartbeat WHENEVER)
+
+1. Starting or ending a logical sub-step
+2. Just before every external API call (status logged on return)
+3. Just before writing/modifying/deleting a file (final path logged on success)
+4. Entering or exiting a review round
+5. Just before spawning a child `Agent` subagent
+6. On error, retry, or wait state (e.g. polling a batch)
+
+### Orchestrator polling
+
+- For subagents expected to run **> 3 min**, the orchestrator MUST spawn with
+  `run_in_background: true` and poll `_progress.log` every 30–60 s, forwarding
+  new lines to the user as `📡 [<wave-label>]: <line>`.
+- For subagents expected **< 3 min**, foreground is OK; the orchestrator reads
+  `_progress.log` once after the call returns and forwards the heartbeat as
+  part of the post-return audit.
+- Track last-forwarded byte offset to avoid duplicates.
+
+### Wave subagent prompts MUST include this instruction (verbatim)
+
+> "**Heartbeat self-report.** During execution, append one line per sub-step
+> transition to `_story_source/_progress.log`. Format: `<ISO-8601 UTC>
+> <wave-label> <event>: <description> [<metrics>]`. Events: START, END, API,
+> SPAWN, WRITE, ERROR, WAIT. Emit on: sub-step start/end, just before every
+> external API call, just before every file write, entering/exiting review
+> rounds, just before spawning a child Agent, on errors/retries/wait states.
+> The orchestrator polls this file and forwards new lines to the user.
+> Heartbeat is mandatory — silent execution = contract violation."
+
+### Hard rules
+
+- A subagent that runs > 3 min without writing a heartbeat is treated as a
+  contract violation — orchestrator escalates immediately, even if final
+  output looks fine.
+- Heartbeat lines must NOT contain credentials, API keys, response bodies,
+  or env values — `<description>` is short and human-readable only.
+- The heartbeat file is append-only; never truncate or overwrite.
+
+---
+
 **Subagent audit protocol** (orchestrator verification — mandatory, applies to every `Agent` return)
 
 Subagent self-reports are NOT trusted by default. After every `Agent` return, the

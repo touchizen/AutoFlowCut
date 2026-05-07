@@ -66,6 +66,7 @@ description: "YouTube story channel script writing skill with 8-wave automated p
   - **AFTER every `Agent` tool call returns:** `✅ <task> subagent returned in <mm:ss>. Result: <one-line summary>.`
   - **For `SendMessage` to an existing agent:** `▸ Sending message to agent <id> (<reason>)…` then `✅ Agent <id> response in <mm:ss>.`
   - The user MUST NEVER see a silent `Agent` or `SendMessage` tool call. These are the exact moments where multi-minute silence happens — bracket every one with announcements.
+- **Subagents must self-report during execution (heartbeat).** Every wave subagent MUST append a one-line heartbeat to `_story_source/_progress.log` at every sub-step transition. Format: `<ISO-8601 UTC> <wave-label> <event>: <description> [<metrics>]`. Events: `START`, `END`, `API`, `SPAWN`, `WRITE`, `ERROR`, `WAIT`. Triggers: sub-step start/end, before every external API call, before every file write, entering/exiting review rounds, before spawning child agents, on errors/retries. The orchestrator polls this file (every 30–60 s for `run_in_background: true` calls; once after return for foreground) and forwards new lines to the user as `📡 [<wave>]: <line>`. See `workflows/execute-pipeline.md` "Subagent heartbeat protocol" for full spec.
 - **Default to over-reporting.** Silence is the failure mode; verbosity is recoverable.
 
 ## 진행 상황 보고 원칙 (오케스트레이터 — Wave 및 서브스텝 단위 공통)
@@ -84,6 +85,7 @@ description: "YouTube story channel script writing skill with 8-wave automated p
   - **모든 `Agent` 호출 반환 후:** `✅ <태스크명> 서브에이전트 반환 (<mm:ss>). 결과: <한 줄 요약>.`
   - **기존 에이전트에 `SendMessage`:** `▸ 에이전트 <id>에 메시지 송신 (<이유>)…` 그리고 `✅ 에이전트 <id> 응답 (<mm:ss>).`
   - `Agent`나 `SendMessage` 호출이 조용히 일어나면 절대 안 됨 — 다분 침묵이 발생하는 정확한 지점이므로 매번 알림으로 감싸기.
+- **서브에이전트는 실행 중 자가 보고 필수 (하트비트).** 모든 Wave 서브에이전트는 `_story_source/_progress.log`에 서브스텝 전환마다 1줄 append 필수. 형식: `<ISO-8601 UTC> <wave-label> <event>: <설명> [<메트릭>]`. 이벤트: `START`, `END`, `API`, `SPAWN`, `WRITE`, `ERROR`, `WAIT`. 트리거: 서브스텝 시작/종료, 외부 API 호출 전, 파일 쓰기 전, 리뷰 라운드 진입/종료, 자식 에이전트 스폰 전, 에러/재시도 시. 오케스트레이터는 이 파일을 폴링(`run_in_background: true` 시 30~60초마다, foreground 시 반환 후 1회)하고 새 줄을 사용자에게 `📡 [<wave>]: <줄>` 형식으로 전달. 전체 스펙은 `workflows/execute-pipeline.md` "Subagent heartbeat protocol" 참조.
 - **과보고가 디폴트.** 침묵이 실패 모드, 장황함은 복구 가능.
 
 ## Subagent transparency contract (orchestrator MUST verify, never trust blindly)
@@ -200,3 +202,4 @@ Rules: command strings only (no env values, no credentials, no body content); UR
 | "한 번에 큰 서브에이전트로" | 3분 초과 = 청크 분할, 서브스텝 단위 보고 |
 | "서브에이전트가 솔직히 다 말했겠지" | self-report 신뢰 금지 — `disk_changes` 디스크 대조 필수 |
 | "deliverables에 없지만 도와주려고" | over-reach = 계약 위반 — 즉시 escalation, 진행 금지 |
+| "Subagent 안에서 일어나는 건 어차피 안 보여도 어쩔 수 없음" | `_progress.log` 하트비트 + 오케스트레이터 폴링 필수 |
