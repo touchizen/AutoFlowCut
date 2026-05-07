@@ -8,21 +8,37 @@
  * - apps/{userId}/subscriptions/{appId} - 앱별 구독 정보
  */
 
-import { doc, getDoc } from 'firebase/firestore'
+import { doc, getDoc, getDocFromServer } from 'firebase/firestore'
 import { db, APP_ID } from './config'
 import { computeQuotaState, MONTHLY_QUOTA, BONUS_GRANT } from '../utils/quotaCalc'
 
 /**
+ * 단일 문서를 source 에 따라 server-only 또는 default(server-then-cache)로 읽는다.
+ *
+ * Firebase JS SDK 는 iOS/Android 처럼 `getDoc(ref, { source })` 옵션을 받지 않으므로
+ * 함수 자체를 갈아끼워야 한다. 이 헬퍼는 `source` 의도를 호출부에서 명시하기 위한 wrapper.
+ *
+ *   - 'default' : online 이면 server, offline 이면 cache fallback (Firebase 기본 동작)
+ *   - 'server'  : server 강제 조회. offline 이면 throw — 호출자가 catch 해야 함.
+ *                 export 직후처럼 "방금 서버에 쓴 값을 다시 읽고 싶다" 는 시나리오에 사용.
+ */
+async function readDoc(ref, source) {
+  return source === 'server' ? getDocFromServer(ref) : getDoc(ref)
+}
+
+/**
  * 사용자 문서 가져오기
  * @param {string} userId - Firebase Auth UID
+ * @param {Object} [options]
+ * @param {'default'|'server'} [options.source='default'] - 'server' 시 cache fallback 없이 서버 강제 조회
  * @returns {Promise<Object|null>}
  */
-export async function getUserDoc(userId) {
+export async function getUserDoc(userId, { source = 'default' } = {}) {
   if (!userId) return null
 
   try {
     const userRef = doc(db, 'users', userId)
-    const userSnap = await getDoc(userRef)
+    const userSnap = await readDoc(userRef, source)
 
     if (userSnap.exists()) {
       return { id: userSnap.id, ...userSnap.data() }
@@ -36,16 +52,23 @@ export async function getUserDoc(userId) {
 
 /**
  * 앱별 구독 문서 가져오기
+ *
+ * Source semantics:
+ *   - 'default' (mount/login fetch): 일반 조회. online 이면 server, offline 이면 cache.
+ *   - 'server'  (export 후 refresh):  cache fallback 없이 server 강제. quota/exportCount 정확성 보장.
+ *
  * @param {string} userId - Firebase Auth UID
- * @param {string} appId - 앱 ID (기본: autoflowcut)
+ * @param {Object} [options]
+ * @param {'default'|'server'} [options.source='default']
+ * @param {string} [options.appId=APP_ID] - 앱 ID (기본: autoflowcut)
  * @returns {Promise<Object|null>}
  */
-export async function getAppDoc(userId, appId = APP_ID) {
+export async function getAppDoc(userId, { source = 'default', appId = APP_ID } = {}) {
   if (!userId) return null
 
   try {
     const appRef = doc(db, 'apps', userId, 'subscriptions', appId)
-    const appSnap = await getDoc(appRef)
+    const appSnap = await readDoc(appRef, source)
 
     if (appSnap.exists()) {
       return { id: appSnap.id, ...appSnap.data() }

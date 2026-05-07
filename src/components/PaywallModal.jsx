@@ -24,9 +24,22 @@ export function PaywallModal({ isOpen, onClose, reason = 'trial_expired' }) {
     { priceId: null, amount: 39.99, currency: 'USD', interval: 'year', productName: 'Pro Yearly' }
   ])
 
-  // 가격 정보 로드
+  // 실제 paywall 을 그릴지 여부 — useModalVisibility 보다 먼저 계산해야 한다.
+  // 'loading'/'error' 인 상태에서 isOpen 만 true 로 useModalVisibility 를 켜면
+  // Flow WebContentsView 는 숨겨지는데 모달은 return null 로 안 그려져서
+  // X 버튼/오버레이가 없어 사용자가 닫을 길이 없고 Flow 뷰가 영구 숨김 상태로 갇힌다.
+  //
+  // Defense in depth — useExport gateway 가 'loading'/'error' 에선 paywall 을 안 띄우지만,
+  // 다른 경로로 onPaywallRequired 가 호출돼도 0/0 garbage 메시지가 새지 않게 차단.
+  //   - 'loading': fresh 해진 뒤 다시 트리거되어야 정확한 메시지 노출됨
+  //   - 'error':   재시도/에러 토스트 경로로 처리되어야 함 (paywall 이 아님)
+  const blockedBySubscriptionState =
+    subscription?.status === 'loading' || subscription?.status === 'error'
+  const shouldShowPaywall = isOpen && !blockedBySubscriptionState
+
+  // 가격 정보 로드 — 실제로 모달을 그릴 때만 필요
   useEffect(() => {
-    if (isOpen) {
+    if (shouldShowPaywall) {
       getPricing()
         .then(data => {
           if (data?.prices) {
@@ -35,12 +48,13 @@ export function PaywallModal({ isOpen, onClose, reason = 'trial_expired' }) {
         })
         .catch(console.error)
     }
-  }, [isOpen])
+  }, [shouldShowPaywall])
 
-  // 모달 열릴 때 Flow 뷰 숨기기
-  useModalVisibility(isOpen)
+  // 모달 열릴 때 Flow 뷰 숨기기 — shouldShowPaywall 로 게이트해서
+  // 'loading'/'error' 윈도우에 Flow 뷰가 숨겨진 채 모달 UI 가 비어버리는 stuck 상태 방지
+  useModalVisibility(shouldShowPaywall)
 
-  if (!isOpen) return null
+  if (!shouldShowPaywall) return null
 
   const selectedPrice = prices.find(p => p.interval === selectedInterval) || prices[0]
   const monthlyPrice = prices.find(p => p.interval === 'month')

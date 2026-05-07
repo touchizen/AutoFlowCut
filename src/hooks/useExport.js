@@ -36,6 +36,7 @@ export function useExport({
   audioPackage = null,
   isAuthenticated,
   subscription,
+  refreshSubscription,
   onLoginRequired,
   onPaywallRequired
 }) {
@@ -55,6 +56,29 @@ export function useExport({
     // 인증 체크
     if (!isAuthenticated) {
       onLoginRequired?.()
+      return
+    }
+
+    // 구독 상태 로딩 중이면 — onAuthChange→fetchUserData 사이의 짧은 윈도우 — 무음 차단.
+    // 이전 사용자의 canExport: true 가 새 사용자에게 새는 것을 막기 위해 AuthContext 가
+    // 전환 직후 status='loading' 으로 잠궈둔 상태이며, 곧 갱신되므로 paywall 을 띄우면 오해를 부른다.
+    if (subscription?.status === 'loading') {
+      return
+    }
+
+    // 구독 정보 조회 실패(terminal) — 사용자에게 알리고 재시도 트리거.
+    // paywall 을 띄우면 "체험 만료" 처럼 오해를 부르므로 별도 처리.
+    //
+    // refreshSubscription 은 fetchUserData 의 throw 를 그대로 전파하므로
+    // 재시도 또한 실패할 수 있다. fire-and-forget 시 unhandled promise rejection 발생 가능 → 항상 catch.
+    // (refreshSubscription?.().catch() 는 호출 결과 undefined 에 .catch 를 시도해 TypeError — guard 필요)
+    if (subscription?.status === 'error') {
+      toast.error(t('toast.subscriptionLoadFailed'))
+      if (refreshSubscription) {
+        Promise.resolve(refreshSubscription()).catch(refreshError => {
+          console.warn('[Export] Retry refreshSubscription failed:', refreshError)
+        })
+      }
       return
     }
 
@@ -198,8 +222,16 @@ export function useExport({
       await new Promise(r => setTimeout(r, 1500))
       setShowExportModal(false)
 
-      // V2 GCF(generateCapcutJson_*)가 quota 검증 + exportCount 증가를 원자적으로 처리하므로
-      // 별도 incrementExportCount 호출 불필요
+      // V2 GCF(generateCapcutJson_*)가 quota 검증 + exportCount 증가를 원자적으로 처리하지만,
+      // 클라이언트 subscription 캐시는 별개이므로 명시적으로 재조회해야 다음 export 가드가 정확해진다.
+      // (refreshSubscription 미주입 시 — 테스트 등 — 무시)
+      if (refreshSubscription) {
+        try {
+          await refreshSubscription()
+        } catch (refreshError) {
+          console.warn('[Export] Failed to refresh subscription after export:', refreshError)
+        }
+      }
     } catch (error) {
       toast.error(t('toast.exportFailed', { error: error.message }))
     } finally {

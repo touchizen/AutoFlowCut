@@ -8,7 +8,6 @@ export const mockCallableFunction = vi.fn()
 export function setupFunctionMocks(overrides = {}) {
   const defaults = {
     initializeUser: { success: true },
-    incrementExportCount: { success: true },
     getAppStatus: { status: 'active' },
     getPricing: { plans: [] },
     createCheckoutSession: { url: 'https://checkout.stripe.com/test' },
@@ -34,7 +33,6 @@ export function resetFunctionMocks() {
 
 // Mock firebase/functions module
 vi.mock('../../src/firebase/functions', () => ({
-  incrementExportCount: vi.fn().mockResolvedValue({ success: true }),
   getAppStatus: vi.fn().mockResolvedValue({ status: 'active' }),
   exportCapcutPackageCloud: vi.fn().mockResolvedValue({ success: true })
 }))

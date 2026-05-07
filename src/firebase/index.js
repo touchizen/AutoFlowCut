@@ -17,7 +17,6 @@ export {
   toDate
 } from './firestore'
 export {
-  incrementExportCount,
   createCheckoutSession,
   createPortalSession,
   initializeUser

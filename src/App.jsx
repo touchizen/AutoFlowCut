@@ -58,7 +58,7 @@ import { useAuth } from './contexts/AuthContext'
 
 function App() {
   const { t } = useI18n()
-  const { isAuthenticated, subscription } = useAuth()
+  const { isAuthenticated, subscription, refreshSubscription } = useAuth()
   const generationQueue = useGenerationQueue()
 
   // Auth/Payment Modals
@@ -223,6 +223,7 @@ function App() {
     audioPackage,
     isAuthenticated,
     subscription,
+    refreshSubscription,
     onLoginRequired: () => setShowAuthModal(true),
     onPaywallRequired: (reason) => {
       setPaywallReason(reason)

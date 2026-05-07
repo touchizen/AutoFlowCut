@@ -93,22 +93,6 @@ export async function initializeUser() {
 }
 
 /**
- * 내보내기 카운트 증가 (서버 측에서 처리)
- * @returns {Promise<Object>} - 업데이트된 카운트 정보
- */
-export async function incrementExportCount() {
-  try {
-    const incrementFn = httpsCallable(functions, `incrementExportCount${FUNCTION_SUFFIX}`)
-    const result = await incrementFn({ appId: APP_ID })
-    console.log('[Functions] Export count incremented:', result.data)
-    return result.data
-  } catch (error) {
-    console.error('[Functions] incrementExportCount failed:', error)
-    throw error
-  }
-}
-
-/**
  * 앱별 구독 상태 조회
  * @returns {Promise<Object>} - { status, exportCount, exportsRemaining, daysRemaining }
  */

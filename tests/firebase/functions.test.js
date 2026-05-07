@@ -31,7 +31,6 @@ function setupFunctionMocks(suffix = '_test') {
   const mocks = {}
   const functionNames = [
     'initializeUser',
-    'incrementExportCount',
     'getAppStatus',
     'getPricing',
     'createCheckoutSession',
@@ -97,29 +96,6 @@ describe('Cloud Functions 호출', () => {
       const result = await initializeUser()
 
       expect(result).toBeNull()
-    })
-  })
-
-  describe('incrementExportCount', () => {
-    it('incrementExportCount_test 함수를 호출해야 함', async () => {
-      mocks.incrementExportCount.mockResolvedValue({
-        data: { exportCount: 1, status: 'trial' }
-      })
-
-      const { incrementExportCount } = await import('../../src/firebase/functions.js')
-      const result = await incrementExportCount()
-
-      expect(mockHttpsCallable).toHaveBeenCalledWith(expect.anything(), 'incrementExportCount_test')
-      expect(result).toEqual({ exportCount: 1, status: 'trial' })
-    })
-
-    it('체험판 한도 초과 시 에러 발생', async () => {
-      mocks.incrementExportCount.mockRejectedValue(
-        new Error('무료 체험 횟수(5회)를 모두 사용했습니다.')
-      )
-
-      const { incrementExportCount } = await import('../../src/firebase/functions.js')
-      await expect(incrementExportCount()).rejects.toThrow('무료 체험 횟수')
     })
   })
 

@@ -215,7 +215,9 @@ export const ExportModal = ({ isOpen, onClose, onExport, projectName, loading, e
         <div className="export-modal-header">
           <div className="header-title-wrap">
             <h2>📦 {t('exportModal.title')}</h2>
-            {isAuthenticated && subscription.status !== 'active' && (
+            {/* 'loading' 상태에서 0/0 garbage 가 새는 걸 막기 위해 trial/expired 만 명시.
+                useExport gateway 가 loading 윈도우엔 모달을 안 열지만, defense in depth. */}
+            {isAuthenticated && (subscription.status === 'trial' || subscription.status === 'expired') && (
               <span className="header-trial-badge">
                 🎁 {t('exportModal.trialBadge', { exports: subscription.exportsRemaining, days: subscription.daysRemaining })}
               </span>
@@ -499,7 +501,8 @@ export const ExportModal = ({ isOpen, onClose, onExport, projectName, loading, e
           <div className="export-actions">
             {/* 왼쪽: 구독 정보 및 업그레이드 버튼 */}
             <div className="export-actions-left">
-              {isAuthenticated && subscription.status !== 'active' && (
+              {/* 'loading' 윈도우엔 upgrade 버튼도 노출 금지 — 다른 사용자 권한 잔상 차단 */}
+              {isAuthenticated && (subscription.status === 'trial' || subscription.status === 'expired') && (
               <button
                 className="export-btn export-btn-upgrade"
                 onClick={onUpgradeClick}
