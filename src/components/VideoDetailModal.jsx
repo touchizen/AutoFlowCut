@@ -10,6 +10,9 @@ import { fileSystemAPI } from '../hooks/useFileSystem'
 import { toast } from './Toast'
 import Modal from './Modal'
 import ErrorSection from './ErrorSection'
+import MediaMetaBar from './MediaMetaBar'
+import { fetchLatestHistoryMeta, estimateBase64FileSize } from '../utils/mediaMeta'
+import { resolveVideoSrc, ensureBase64DataUrl } from '../utils/videoSrc'
 import './SceneDetailModal.css'   // 공통 스타일 재사용
 
 export default function VideoDetailModal({
@@ -24,6 +27,11 @@ export default function VideoDetailModal({
   const [activeVideoPath, setActiveVideoPath] = useState(video.videoPath || null)
   const [videoSize, setVideoSize] = useState(null)
   const [dirty, setDirty] = useState(false)
+  // 신규 생성은 video.seed/generatedAt 으로 들어오지만, 구버전은 비어있음 → history 메타에서 backfill
+  const [backfilledMeta, setBackfilledMeta] = useState({ seed: null, generatedAt: null, model: null })
+  // 사용자가 history 항목을 복원 선택했을 때 그 항목의 메타.
+  // null 이면 현재 video prop 의 메타(seed/generatedAt/model) 사용 — 즉 "복원 안 함" 상태.
+  const [activeMeta, setActiveMeta] = useState(null)
 
   // video prop 변경 시 업데이트 (실제로 바뀔 때만 리셋)
   useEffect(() => {
@@ -36,6 +44,7 @@ export default function VideoDetailModal({
       return prev
     })
     setActiveVideoPath(video.videoPath || null)
+    setActiveMeta(null)  // prop 갱신 = 부모 상태가 권위 — 로컬 복원 메타 리셋
     setDirty(false)
   }, [video.video, video.videoPath])
 
@@ -46,13 +55,22 @@ export default function VideoDetailModal({
       return
     }
     try {
-      // 비디오 ID prefix 제거하여 base 파일명 결정 (vscene_X, fp_X, t2v_X, i2v_X 등)
-      const baseId = video.id.replace(/^(vscene_|fp_|t2v_|i2v_)/, '')
-      // 기존 videoPath의 확장자를 유지하거나, 없으면 history 파일 확장자 사용
+      // 기존 videoPath 의 확장자를 유지하거나, 없으면 history 파일 확장자 사용
       const histExt = historyItem.filename?.match(/\.(mp4|webm|mov|m4v)$/i)?.[1]?.toLowerCase() || 'mp4'
-      // 비디오 ID prefix 보존하여 currentFilename 생성 (vscene_X.mp4, t2v_X.mp4 등)
-      const prefix = video.id.match(/^(vscene_|fp_|t2v_|i2v_)/)?.[1] || ''
-      const currentFilename = `${prefix}${baseId}.${histExt}`
+      // canonical 파일명 우선순위:
+      //   1. video.videoSaveId — 저장 시 사용된 canonical 식별자 (t2v_N / i2v_N)
+      //   2. video.videoPath basename — videoSaveId 누락 시 현재 파일 위치
+      //   3. video.id 자체 (legacy)
+      // ResultsTable 의 vscene_X / fp_X 로 모달이 열려도 실제 디스크 파일은 t2v_X / i2v_X 이므로
+      // videoSaveId 우선해야 한다. 빠뜨리면 vscene_X.mp4 로 복원되고 t2v_X.mp4 (canonical)
+      // 가 그대로 남아 → 다음 로드 시 remapVideoPath 가 옛 t2v_X 로 되돌림.
+      let baseFilename = null
+      if (video.videoSaveId) {
+        baseFilename = video.videoSaveId
+      } else if (video.videoPath) {
+        baseFilename = video.videoPath.split(/[/\\]/).pop()?.replace(/\.[^.]+$/, '') || null
+      }
+      const currentFilename = `${baseFilename || video.id}.${histExt}`
 
       const result = await fileSystemAPI.restoreFromHistory(
         projectName,
@@ -69,6 +87,15 @@ export default function VideoDetailModal({
       setActiveVideo(historyItem.data)
       setActiveVideoPath(result.path || null)
       setVideoSize(null)
+      // 복원한 history 항목의 metadata(seed/timestamp/model)를 별도 state 로 보존.
+      // 사용자가 저장하면 부모로 함께 흘려보내야 project.json 의 stale 메타가 갱신됨.
+      const meta = historyItem.metadata || {}
+      setActiveMeta({
+        seed: meta.seed ?? null,
+        generatedAt: typeof meta.timestamp === 'number' ? meta.timestamp : null,
+        model: meta.model ?? null,
+        mediaId: meta.mediaId ?? null,
+      })
       setDirty(true)
     } catch (err) {
       console.error('[VideoDetail] Restore history failed:', err)
@@ -76,13 +103,44 @@ export default function VideoDetailModal({
     }
   }
 
-  // 저장 — 부모 state에 반영 후 닫기
+  // 저장 — 부모 state 에 반영 후 닫기. 복원한 history 가 있으면 메타도 함께 패치.
   const handleSave = () => {
     if (typeof onUpdate === 'function') {
-      onUpdate(video.id, { video: activeVideo, videoPath: activeVideoPath })
+      const patch = { video: activeVideo, videoPath: activeVideoPath }
+      if (activeMeta) {
+        // 복원 시 받은 메타를 그대로 — null 이면 명시적으로 null 넣어 stale 값 제거.
+        patch.seed = activeMeta.seed
+        patch.generatedAt = activeMeta.generatedAt
+        patch.model = activeMeta.model
+        if (activeMeta.mediaId) patch.mediaId = activeMeta.mediaId
+      }
+      onUpdate(video.id, patch)
     }
     onClose()
   }
+
+  // video state 에 seed/generatedAt 가 없으면 history metadata 에서 backfill (구버전 호환).
+  // generatingEndedAt 은 비디오 생성 완료 시각이라 timestamp 폴백으로 활용.
+  useEffect(() => {
+    let cancelled = false
+    const need = (video.seed == null) || (video.generatedAt == null && video.generatingEndedAt == null) || (video.model == null)
+    if (!need || !projectName || !video.id) {
+      setBackfilledMeta({ seed: null, generatedAt: null, model: null })
+      return
+    }
+    const baseName = video.videoSaveId || (video.videoPath
+      ? video.videoPath.split(/[/\\]/).pop().replace(/\.[^.]+$/, '')
+      : video.id)
+    fetchLatestHistoryMeta(projectName, 'videos', baseName).then(meta => {
+      if (cancelled) return
+      setBackfilledMeta({
+        seed: meta.seed ?? null,
+        generatedAt: meta.generatedAt ?? null,
+        model: meta.model ?? null
+      })
+    })
+    return () => { cancelled = true }
+  }, [projectName, video.id, video.seed, video.generatedAt, video.generatingEndedAt, video.videoSaveId, video.videoPath, video.model])
 
   // 히스토리 로드 + 비디오 데이터 없으면 최신 히스토리에서 자동 로드
   useEffect(() => {
@@ -116,27 +174,11 @@ export default function VideoDetailModal({
     loadHistory()
   }, [projectName, video.id, video.video])
 
-  // 비디오 소스: base64 데이터 또는 파일 경로
-  const resolveVideoSrc = (data) => {
-    if (!data) return null
-    if (data.startsWith('data:')) return data
-    if (data.startsWith('/')) return `file://${data}`
-    if (/^[A-Z]:\\/i.test(data)) return `file:///${data.replace(/\\/g, '/')}`
-    return `data:video/mp4;base64,${data}`
-  }
-  const videoSrc = activeVideo
-    ? resolveVideoSrc(activeVideo)
-    : (video.videoPath ? resolveVideoSrc(video.videoPath) : null)
+  // 비디오 소스: base64 (메모리) 우선, 없으면 file path — 공용 유틸로 통합.
+  const videoSrc = resolveVideoSrc(activeVideo, activeVideoPath || video.videoPath)
 
-  // base64 데이터에서 파일 사이즈 추정
-  const getFileSize = () => {
-    if (!activeVideo) return null
-    const b64 = activeVideo.replace(/^data:[^;]+;base64,/, '')
-    const bytes = Math.round(b64.length * 0.75)
-    if (bytes > 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-    if (bytes > 1024) return `${Math.round(bytes / 1024)} KB`
-    return `${bytes} B`
-  }
+  // base64 데이터에서 파일 사이즈 추정 — 공통 유틸 재사용
+  const getFileSize = () => estimateBase64FileSize(activeVideo)
 
   const copyToClipboard = (text) => {
     navigator.clipboard.writeText(text)
@@ -222,20 +264,26 @@ export default function VideoDetailModal({
             )}
           </div>
 
-          {/* Resolution + Duration + File Size */}
-          {videoSize && (
-            <div className="video-info-bar">
-              <span className="resolution">{videoSize.width} × {videoSize.height}</span>
-              <span className="dot-sep">·</span>
-              <span>{videoSize.duration}s</span>
-              {videoSize.fileSize && (
-                <>
-                  <span className="dot-sep">·</span>
-                  <span>{videoSize.fileSize}</span>
-                </>
-              )}
-            </div>
-          )}
+          {/* 1줄 메타: 해상도 · 재생시간 · 파일크기 · seed · 생성일시 + ▼ 토글로 모델.
+              activeMeta 가 set 됐다는 건 사용자가 history 항목을 복원했다는 뜻 —
+              그 항목에 메타가 비어있어도(null) 명시적 의도이므로 video/backfill fall-through 금지.
+              저장 patch 도 activeMeta 의 null 을 그대로 보내므로 UI/저장값 일치. */}
+          <MediaMetaBar
+            width={videoSize?.width}
+            height={videoSize?.height}
+            duration={videoSize?.duration}
+            fileSize={videoSize?.fileSize}
+            seed={activeMeta ? activeMeta.seed : (video.seed ?? backfilledMeta.seed)}
+            generatedAt={
+              activeMeta
+                ? activeMeta.generatedAt
+                : (video.generatedAt
+                    ?? backfilledMeta.generatedAt
+                    ?? video.generatingEndedAt)
+            }
+            model={activeMeta ? activeMeta.model : (video.model ?? backfilledMeta.model)}
+            t={t}
+          />
 
           {/* Prompt */}
           <div className="form-group">
@@ -313,7 +361,7 @@ export default function VideoDetailModal({
                     title={hist.timestamp || hist.filename}
                   >
                     <video
-                      src={hist.data?.startsWith('data:') ? hist.data : `data:video/mp4;base64,${hist.data}`}
+                      src={ensureBase64DataUrl(hist.data)}
                       muted
                       preload="metadata"
                       className="history-thumb-video"

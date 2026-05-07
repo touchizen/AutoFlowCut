@@ -85,7 +85,9 @@ async function loadProjectWithResources(projectName) {
           if (histResult.success && histResult.histories?.length > 0) {
             const imageHist = histResult.histories.find(h => /\.(jpg|jpeg|png|webp|gif)$/i.test(h.filename))
             if (imageHist) {
-              const metaResult = await fileSystemAPI.readHistoryFile(projectName, 'scenes', imageHist.filename)
+              // metadata-only API — readHistoryFile 은 이미지 본문을 base64 로도 읽어
+              // 대량 프로젝트에서 IPC/메모리 부담. mediaId 만 필요하므로 .json 사이드카만.
+              const metaResult = await fileSystemAPI.readHistoryMetadata(projectName, 'scenes', imageHist.filename)
               if (metaResult.success && metaResult.metadata?.mediaId) {
                 scene.mediaId = metaResult.metadata.mediaId
                 return true
@@ -126,7 +128,8 @@ async function loadProjectWithResources(projectName) {
     return null
   }
 
-  // videoScenes 비디오 파일에서 로드 (새 명명 t2v_N 우선, 기존 vscene_N 폴백)
+  // videoScenes 비디오 파일에서 로드 (새 명명 t2v_N 우선, 기존 vscene_N 폴백).
+  // path 가 복구되면 path-only 로 유지 (framePairs 와 일관 + 큰 base64 IPC 부담 회피).
   const videoScenesWithMedia = await Promise.all(
     (result.data.videoScenes || []).map(async (vs) => {
       // videoPath 를 현재 프로젝트 폴더 기준으로 항상 재산출 (folder rename 회귀 차단)
@@ -138,6 +141,10 @@ async function loadProjectWithResources(projectName) {
         // 저장된 path 가 현재 프로젝트에 없음 — stale 이므로 비움
         next = { ...next, videoPath: null }
       }
+
+      // path 복구 성공 — base64 재로드 불필요 (path-only 로 재생/export 가능).
+      // 메모리 절감 + folder rename 후에도 일관된 동작.
+      if (next.videoPath) return next
 
       if (next.id && !next.video) {
         // 새 명명 규칙 (videoSaveId = t2v_N) 우선
@@ -153,9 +160,9 @@ async function loadProjectWithResources(projectName) {
             return { ...next, video: fallback.data }
           }
         }
-        // 파일 삭제됨 → complete 상태 리셋
+        // 파일 삭제됨 → 'pending' 으로 내려 사용자가 재시도 가능 (UI 가 'waiting' 모름).
         if (next.status === 'complete') {
-          return { ...next, status: 'waiting', video: undefined, videoPath: null }
+          return { ...next, status: 'pending', video: undefined, videoPath: null }
         }
       }
       return next
@@ -197,8 +204,8 @@ async function loadProjectWithResources(projectName) {
             return { ...next, base64: fallback.data }
           }
         }
-        // 파일 삭제됨 → status 리셋
-        return { ...next, status: 'waiting', base64: undefined, video: undefined, videoPath: null }
+        // 파일 삭제됨 → 'pending' 으로 내려 사용자가 재시도 가능 (UI 가 'waiting' 모름)
+        return { ...next, status: 'pending', base64: undefined, video: undefined, videoPath: null }
       }
       return next
     })
@@ -209,16 +216,40 @@ async function loadProjectWithResources(projectName) {
     item.status === 'generating' ? { ...item, status: 'pending', generatingStartedAt: undefined } : item
 
   // ── 완성된 비디오 → 씬에 동기화 (videoT2V / videoI2V) ──
-  // scene-level videoT2VPath/videoI2VPath 는 폴더 rename 시 stale 가능성 — 비우고
-  // syncVideosIntoScenes 에서 re-mapped videoScenes/framePairs 의 videoPath 로 재채움.
-  const finalScenes = scenesWithPaths.map(s => ({
-    ...resetGenerating(s),
-    videoT2VPath: null,
-    videoI2VPath: null
+  // 우선순위:
+  //   1. videoScenes/framePairs 의 (re-mapped) videoPath 가 있으면 그걸로 sync 가 채움
+  //   2. 그렇게 채워지지 않은 scene 은 stale 한 옛 videoT2VPath/videoI2VPath 가 남아있을 수 있는데
+  //      basename 으로 현재 프로젝트 videos/ 에서 재탐색 → 매칭되면 fresh path 로 갱신
+  //   3. 매칭도 실패하면 stale path 는 비워서 export 가 옛 폴더를 가리키지 않게 함
+  // (이전엔 무조건 null 로 비웠는데, videoScenes/framePairs 가 누락된 구버전 project.json 에서
+  //  파일은 멀쩡한데 path 만 사라지는 데이터 손실 회귀가 발생했다.)
+  const remapByBasename = async (absPath) => {
+    if (!absPath || typeof absPath !== 'string') return null
+    const base = absPath.split(/[/\\]/).pop()?.replace(/\.[^.]+$/, '') // strip ext
+    if (!base) return null
+    const r = await fileSystemAPI.getResourcePath(projectName, 'videos', base)
+    return r?.success ? r.path : null
+  }
+
+  const scenesWithVideoPaths = await Promise.all(scenesWithPaths.map(async (s) => {
+    let next = { ...s }
+    // T2V — videoScenes 에서 채워질 거면 일단 그대로, 아니면 basename 으로 자체 remap
+    if (next.videoT2VPath) {
+      const remapped = await remapByBasename(next.videoT2VPath)
+      next.videoT2VPath = remapped // null 이면 stale 이라 비움 (옛 폴더 가리키는 path 차단)
+    }
+    if (next.videoI2VPath) {
+      const remapped = await remapByBasename(next.videoI2VPath)
+      next.videoI2VPath = remapped
+    }
+    return next
   }))
+
+  const finalScenes = scenesWithVideoPaths.map(resetGenerating)
   const finalVideoScenes = videoScenesWithMedia.map(resetGenerating)
   const finalFramePairs = framePairsWithMedia.map(resetGenerating)
 
+  // sync 는 "scene 에 path 가 없을 때만" 채우므로, 위에서 자체 remap 성공한 path 는 그대로 유지.
   syncVideosIntoScenes(finalScenes, finalVideoScenes, finalFramePairs, '[ProjectData]')
 
   return {
@@ -283,25 +314,54 @@ export function useProjectData({
     setFramePairs(prev => prev.map(fp => fp.id === id ? { ...fp, ...patch } : fp))
   }
 
-  // 로드 직후 in-flight 비디오 복구 트리거 (flowAPI 필요)
-  const triggerVideoRecovery = async (loadedFramePairs, projectName) => {
-    if (!flowAPI || !loadedFramePairs?.length) return
-    const hasInFlight = loadedFramePairs.some(fp =>
+  // videoScenes (T2V) state 업데이트 헬퍼 — recovery 가 patch 를 던지면 적용.
+  const applyVideoScenePatch = (id, patch) => {
+    if (!setVideoScenes) return
+    setVideoScenes(prev => prev.map(vs => vs.id === id ? { ...vs, ...patch } : vs))
+  }
+
+  // 로드 직후 in-flight 비디오 복구 트리거 (flowAPI 필요).
+  // T2V (videoScenes) + I2V (framePairs) 둘 다 같은 recoverInFlightVideos 경로를 타게 한다.
+  // 분리하던 시절엔 T2V 가 영원히 'generating' 으로 남아 다음 start() 에서 fresh 생성 되어
+  // quota 재소비 + 옛 generationId 폐기 회귀 발생.
+  const triggerVideoRecovery = async (loadedVideoScenes, loadedFramePairs, projectName) => {
+    if (!flowAPI) return
+
+    const t2vInFlight = (loadedVideoScenes || []).some(vs =>
+      vs.generationId && !vs.videoPath && (vs.status === 'generating' || vs.status === 'pending')
+    )
+    const i2vInFlight = (loadedFramePairs || []).some(fp =>
       fp.generationId && !fp.videoPath && (fp.status === 'generating' || fp.status === 'pending')
     )
-    if (!hasInFlight) return
+    if (!t2vInFlight && !i2vInFlight) return
+
+    const commonOpts = {
+      projectName,
+      saveMode: settings?.saveMode || 'folder',
+      videoResolution: settings?.videoResolution || '1080p',
+      checkVideoStatus: flowAPI.checkVideoStatus,
+      fetchMedia: flowAPI.fetchMedia,
+      getAccessToken: flowAPI.getAccessToken,
+      logPrefix: '[ProjectData]',
+    }
+
     try {
-      await recoverInFlightVideos({
-        framePairs: loadedFramePairs,
-        projectName,
-        saveMode: settings?.saveMode || 'folder',
-        videoResolution: settings?.videoResolution || '1080p',
-        checkVideoStatus: flowAPI.checkVideoStatus,
-        fetchMedia: flowAPI.fetchMedia,
-        getAccessToken: flowAPI.getAccessToken,
-        onFramePairUpdate: applyFramePairPatch,
-        logPrefix: '[ProjectData]',
-      })
+      // T2V — videoScenes 항목 형식이지만 recoverInFlightVideos 의 framePairs 인터페이스 재사용
+      // (둘 다 generationId/mediaId/videoPath/status 같은 동일 shape 의 in-flight item)
+      if (t2vInFlight) {
+        await recoverInFlightVideos({
+          ...commonOpts,
+          framePairs: loadedVideoScenes,  // T2V items 도 동일 shape — 재사용
+          onFramePairUpdate: applyVideoScenePatch,
+        })
+      }
+      if (i2vInFlight) {
+        await recoverInFlightVideos({
+          ...commonOpts,
+          framePairs: loadedFramePairs,
+          onFramePairUpdate: applyFramePairPatch,
+        })
+      }
     } catch (e) {
       console.warn('[ProjectData] Video recovery failed:', e.message)
     }
@@ -344,8 +404,8 @@ export function useProjectData({
         setSettings(s => ({ ...s, projectName: prevProjectName }))
         console.log('[App] Auto-restore complete:', prevProjectName,
           `(${loaded.scenes.filter(s => s.image || s.imagePath).length} images, ${loaded.scenes.filter(s => s.subtitle).length} subtitles)`)
-        // In-flight 비디오 복구 (generationId 있지만 videoPath 없는 framePair들)
-        triggerVideoRecovery(loaded.framePairs, prevProjectName)
+        // In-flight 비디오 복구 (T2V videoScenes + I2V framePairs 둘 다 동일 경로로)
+        triggerVideoRecovery(loaded.videoScenes, loaded.framePairs, prevProjectName)
       }
       // 복원 완료 — auto-save 허용 (약간의 딜레이로 불필요한 auto-save 방지)
       setTimeout(() => {
@@ -382,8 +442,8 @@ export function useProjectData({
         setSelectedStyleRefId?.(loaded.selectedStyleRefId || null)
         audioPath = loaded.audioFolderPath
         console.log('[App] Project loaded:', newProjectName)
-        // In-flight 비디오 복구 (generationId 있지만 videoPath 없는 framePair들)
-        triggerVideoRecovery(loaded.framePairs, newProjectName)
+        // In-flight 비디오 복구 (T2V videoScenes + I2V framePairs 둘 다 동일 경로로)
+        triggerVideoRecovery(loaded.videoScenes, loaded.framePairs, newProjectName)
       } else {
         setScenes([])
         setReferences([])

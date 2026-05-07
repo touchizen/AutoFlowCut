@@ -340,9 +340,10 @@ export const fileSystemAPI = {
 
   /**
    * Save a video (saveResource wrapper).
+   * metadata 가 주어지면 history 폴더에 함께 JSON 으로 보관 (seed/timestamp 등 추적용).
    */
-  async saveVideo(projectName, videoId, videoData, engine = 'kling') {
-    return this.saveResource(projectName, 'videos', videoId, videoData, engine)
+  async saveVideo(projectName, videoId, videoData, engine = 'kling', metadata = null) {
+    return this.saveResource(projectName, 'videos', videoId, videoData, engine, metadata)
   },
 
   /**
@@ -361,24 +362,33 @@ export const fileSystemAPI = {
    * @param {string} prompt - 프롬프트 (metadata에 포함)
    * @param {string} tag - 로그 태그 (e.g. 'Automation', 'Scene', 'Reference')
    */
-  async saveExtraToHistory(projectName, resourceType, name, imageObjects, prompt = null, tag = 'Extra') {
+  async saveExtraToHistory(projectName, resourceType, name, imageObjects, prompt = null, tag = 'Extra', defaults = {}) {
     if (!imageObjects || imageObjects.length <= 1) return
     console.log(`[${tag}] ${imageObjects.length - 1} extra images → saving to history only`)
+    // defaults: { model, seed } — main image 와 동일한 메타 규칙을 alt 에도 적용.
+    // 이미지 객체 자체에 model/seed 가 있으면 우선 (응답 schema 가 per-image 값을 줄 수 있음).
+    const defaultModel = defaults?.model || 'flow'
+    const defaultSeed = defaults?.seed ?? null
     for (let i = 1; i < imageObjects.length; i++) {
       try {
         const img = imageObjects[i]
         const base64 = (typeof img === 'string') ? img : (img.base64 || img)
         const mediaId = (typeof img === 'object') ? (img.mediaId || null) : null
+        const altModel = (typeof img === 'object' ? img.model : null) ?? defaultModel
+        const altSeed = (typeof img === 'object' ? img.seed : null) ?? defaultSeed
 
-        // alt 이미지에도 metadata 저장 (mediaId 보존)
-        const metadata = (mediaId || prompt) ? {
+        // alt 이미지에도 metadata 저장 — main image 와 동일 schema 로 SceneDetailModal 의
+        // history 복원이 일관된 seed/model 표시.
+        const metadata = (mediaId || prompt || altSeed != null) ? {
           prompt: prompt || null,
           mediaId,
-          model: 'flow',
-          timestamp: Date.now()
+          model: altModel,
+          timestamp: Date.now(),
+          seed: altSeed,
         } : null
 
-        await this.saveResource(projectName, resourceType, name, base64, `flow-alt${i}`, metadata, { historyOnly: true })
+        // engine 인자도 main 과 같은 model 식별자 — flow-altN 에서 alt 표시는 history 파일명에만 (i 인덱스).
+        await this.saveResource(projectName, resourceType, name, base64, `${altModel}-alt${i}`, metadata, { historyOnly: true })
       } catch (e) {
         console.warn(`[${tag}] Failed to save extra image #${i + 1} to history:`, e)
       }
@@ -531,6 +541,33 @@ export const fileSystemAPI = {
       }
 
       return await window.electronAPI.readHistoryFile({
+        workFolder,
+        project: projectName,
+        resourceType,
+        historyFilename
+      })
+    } catch (error) {
+      return { success: false, error: error.message }
+    }
+  },
+
+  /**
+   * Read only the metadata sidecar (.json) for a history entry — skips the binary.
+   * Used for backfill flows that need seed/timestamp/model without paying the cost
+   * of base64-encoding a multi-MB video file.
+   */
+  async readHistoryMetadata(projectName, resourceType, historyFilename) {
+    try {
+      const workFolder = localStorage.getItem('workFolderPath')
+      if (!workFolder) return { success: false, error: 'not_set' }
+      // Defensive — older Electron preload may not expose the new IPC; fall back to full read.
+      if (typeof window.electronAPI?.readHistoryMetadata !== 'function') {
+        const full = await this.readHistoryFile(projectName, resourceType, historyFilename)
+        return full?.success
+          ? { success: true, metadata: full.metadata || null }
+          : { success: false, error: full?.error || 'not_available' }
+      }
+      return await window.electronAPI.readHistoryMetadata({
         workFolder,
         project: projectName,
         resourceType,

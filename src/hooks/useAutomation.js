@@ -119,6 +119,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       upscaleRes: imageUpscale || 'off',
       saveMode, projectName,
       sceneId: scene.id, prompt: scene.prompt,
+      seed,
       logPrefix: '[Automation]'
     })
     updateScene(scene.id, sceneUpdate)
@@ -187,6 +188,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
         upscaleRes: imageUpscale || 'off',
         saveMode, projectName,
         sceneId: scene.id, prompt: scene.prompt,
+        seed,
         logPrefix: '[Automation]'
       })
       updateScene(scene.id, sceneUpdate)

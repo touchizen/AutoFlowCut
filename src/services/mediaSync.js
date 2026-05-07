@@ -18,33 +18,46 @@ export function syncVideosIntoScenes(scenes, videoScenes, framePairs, logPrefix 
   if (!scenes?.length) return false
   let synced = false
 
-  // T2V: vscene_N → scene_N (path + duration 동기화)
+  // T2V: vscene_N → scene_N (path + duration 동기화).
+  // 이전엔 "scene path 비어있을 때만" 채웠으나, recovery / regen 후 source path 가 바뀌어도
+  // scene 에 옛 path 가 남아 있으면 동기화 skip → SceneList/export 가 옛 비디오 사용.
+  // derived 필드 의미상 source 가 권위 — source path 가 있으면 다른 값일 때 overwrite.
   if (videoScenes?.length) {
     for (const vs of videoScenes) {
       if ((vs.status === 'complete' || vs.status === 'done') && (vs.video || vs.videoPath)) {
         const sceneId = vs.id.replace('vscene_', 'scene_')
         const scene = scenes.find(s => s.id === sceneId)
-        if (scene && !scene.videoT2VPath) {
-          scene.videoT2VPath = vs.videoPath || null
-          if (vs.duration && !scene.videoT2VDuration) scene.videoT2VDuration = vs.duration
-          console.log(`${logPrefix} Synced T2V video → ${sceneId}`)
+        if (!scene) continue
+        const newPath = vs.videoPath || null
+        if (scene.videoT2VPath !== newPath) {
+          scene.videoT2VPath = newPath
           synced = true
         }
+        if (vs.duration && scene.videoT2VDuration !== vs.duration) {
+          scene.videoT2VDuration = vs.duration
+          synced = true
+        }
+        if (synced) console.log(`${logPrefix} Synced T2V video → ${sceneId}`)
       }
     }
   }
 
-  // I2V: framePair.startSceneId → scene (path + duration 동기화)
+  // I2V: framePair.startSceneId → scene (path + duration 동기화) — 동일한 overwrite 정책.
   if (framePairs?.length) {
     for (const fp of framePairs) {
       if ((fp.status === 'complete' || fp.status === 'done') && (fp.base64 || fp.videoPath) && fp.startSceneId && !fp.startSceneId.startsWith('gallery::')) {
         const scene = scenes.find(s => s.id === fp.startSceneId)
-        if (scene && !scene.videoI2VPath) {
-          scene.videoI2VPath = fp.videoPath || null
-          if (fp.duration && !scene.videoI2VDuration) scene.videoI2VDuration = fp.duration
-          console.log(`${logPrefix} Synced I2V video → ${fp.startSceneId}`)
+        if (!scene) continue
+        const newPath = fp.videoPath || null
+        if (scene.videoI2VPath !== newPath) {
+          scene.videoI2VPath = newPath
           synced = true
         }
+        if (fp.duration && scene.videoI2VDuration !== fp.duration) {
+          scene.videoI2VDuration = fp.duration
+          synced = true
+        }
+        if (synced) console.log(`${logPrefix} Synced I2V video → ${fp.startSceneId}`)
       }
     }
   }

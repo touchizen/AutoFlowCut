@@ -54,6 +54,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteProject: (params) => ipcRenderer.invoke('fs:delete-project', params),
   getHistory: (params) => ipcRenderer.invoke('fs:get-history', params),
   readHistoryFile: (params) => ipcRenderer.invoke('fs:read-history-file', params),
+  readHistoryMetadata: (params) => ipcRenderer.invoke('fs:read-history-metadata', params),
   restoreFromHistory: (params) => ipcRenderer.invoke('fs:restore-from-history', params),
   saveToHistory: (params) => ipcRenderer.invoke('fs:save-to-history', params),
   deleteHistory: (params) => ipcRenderer.invoke('fs:delete-history', params),

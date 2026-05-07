@@ -10,6 +10,8 @@ import { toast } from './Toast'
 import { useI18n } from '../hooks/useI18n'
 import Modal from './Modal'
 import ErrorSection from './ErrorSection'
+import MediaMetaBar from './MediaMetaBar'
+import { fetchLatestHistoryMeta } from '../utils/mediaMeta'
 import './SceneDetailModal.css'
 
 export default function SceneDetailModal({ 
@@ -27,25 +29,41 @@ export default function SceneDetailModal({
   const [shouldReloadHistory, setShouldReloadHistory] = useState(0)
   const [imageSize, setImageSize] = useState(null)
   const [showStyleDropdown, setShowStyleDropdown] = useState(false)
+  // 신규 생성은 scene.seed/generatedAt 으로 들어오지만, 구버전은 비어있음 → history 메타에서 backfill
+  const [backfilledMeta, setBackfilledMeta] = useState({ seed: null, generatedAt: null, model: null })
+  // 사용자가 history 를 복원했을 때의 메타 (null = 복원 안 함, 객체 = 복원함 + 그 항목의 메타).
+  // 복원했지만 메타가 비어 있으면 명시적 null 을 그대로 노출 — backfilledMeta 로 fallback 하면
+  // 이전 history 의 stale 메타가 다시 보이고 저장값(null)과 어긋난다.
+  const [restoredMeta, setRestoredMeta] = useState(null)
   const { lang } = useI18n()
   const isKo = lang === 'ko'
 
-  // scene prop이 변경되면 editData 업데이트 (재생성 완료 시)
+  // scene prop이 변경되면 editData 업데이트 (재생성 완료 시).
+  // image/imagePath/status 외에 메타 필드(seed, generatedAt, model, image_size, mediaId)도
+  // 같이 동기화 — 빠뜨리면 부모는 새 메타로 갱신됐는데 모달은 이전 seed/model 표시,
+  // 사용자가 저장 시 stale editData 가 새 메타를 덮어쓰는 회귀 발생.
   useEffect(() => {
     setEditData(prev => ({
       ...prev,
       image: scene.image,
       imagePath: scene.imagePath,
       status: scene.status,
+      seed: scene.seed,
+      generatedAt: scene.generatedAt,
+      model: scene.model,
+      image_size: scene.image_size,
+      mediaId: scene.mediaId,
     }))
+    // 부모 prop 갱신 = scene 권위 — 로컬 복원 메타 리셋
+    setRestoredMeta(null)
     // 히스토리 재로드 트리거
     setShouldReloadHistory(n => n + 1)
-  }, [scene.image, scene.imagePath, scene.status])
+  }, [scene.image, scene.imagePath, scene.status, scene.seed, scene.generatedAt, scene.model, scene.image_size, scene.mediaId])
   
-  // 히스토리 로드
+  // 히스토리 로드 — metadata(seed/timestamp/model)도 함께 보존하여 복원 시 활용.
   const loadHistory = async () => {
     if (!projectName || !scene.id) return
-    
+
     const result = await fileSystemAPI.getHistory(projectName, RESOURCE.SCENES, scene.id)
     if (result.success && result.histories?.length > 0) {
       const historiesWithData = await Promise.all(
@@ -53,7 +71,8 @@ export default function SceneDetailModal({
           const fileResult = await fileSystemAPI.readHistoryFile(projectName, RESOURCE.SCENES, hist.filename)
           return {
             ...hist,
-            data: fileResult.success ? fileResult.data : null
+            data: fileResult.success ? fileResult.data : null,
+            metadata: fileResult.metadata || null,
           }
         })
       )
@@ -66,7 +85,26 @@ export default function SceneDetailModal({
   useEffect(() => {
     loadHistory()
   }, [projectName, scene.id, shouldReloadHistory])
-  
+
+  // scene state 에 seed/generatedAt 가 없으면 history metadata 에서 backfill (구버전 호환)
+  useEffect(() => {
+    let cancelled = false
+    const need = (scene.seed == null) || (scene.generatedAt == null) || (scene.model == null)
+    if (!need || !projectName || !scene.id) {
+      setBackfilledMeta({ seed: null, generatedAt: null, model: null })
+      return
+    }
+    fetchLatestHistoryMeta(projectName, RESOURCE.SCENES, scene.id).then(meta => {
+      if (cancelled) return
+      setBackfilledMeta({
+        seed: meta.seed ?? null,
+        generatedAt: meta.generatedAt ?? null,
+        model: meta.model ?? null
+      })
+    })
+    return () => { cancelled = true }
+  }, [projectName, scene.id, scene.seed, scene.generatedAt, scene.model])
+
   // 히스토리 이미지 선택 — 디스크의 씬 파일을 히스토리 파일로 덮어쓰고 imagePath를 세팅.
   // imagePath를 null로 두면 export 시 base64 fallback 브랜치를 타서 CapCut에
   // "media/image_scene_N.jpg" placeholder 경로가 박히고 → Media Not Found 발생.
@@ -91,12 +129,29 @@ export default function SceneDetailModal({
         return
       }
 
+      // 복원한 history 항목의 메타(seed/timestamp/model)도 editData 에 반영.
+      // 빠뜨리면 모달 표시 + 저장 시 project.json 에 직전 생성의 stale 메타가 남는다.
+      const meta = historyItem.metadata || {}
+      const restoredSeed = meta.seed ?? null
+      const restoredAt = typeof meta.timestamp === 'number' ? meta.timestamp : null
+      const restoredModel = meta.model ?? null
       setEditData(prev => ({
         ...prev,
         image: historyItem.data,
         imagePath: result.path || prev.imagePath,
         status: 'done',
+        seed: restoredSeed,
+        generatedAt: restoredAt,
+        model: restoredModel,
+        ...(meta.mediaId ? { mediaId: meta.mediaId } : {}),
       }))
+      // restoredMeta 가 set 됐다는 건 "사용자가 history 복원했음" — 렌더 시 backfill 폴백 차단.
+      // null 도 명시적 의도 (해당 history 에 메타 없음) → MediaMetaBar 에 그대로 노출.
+      setRestoredMeta({
+        seed: restoredSeed,
+        generatedAt: restoredAt,
+        model: restoredModel,
+      })
     } catch (err) {
       console.error('[SceneDetail] Restore history failed:', err)
       toast.error(err.message)
@@ -189,14 +244,22 @@ export default function SceneDetailModal({
             )}
           </div>
 
-          {/* 이미지 크기 */}
-          {imageSize && (
-            <div className="ref-detail-status">
-              <span className="status-badge success">
-                {imageSize.width} × {imageSize.height}
-              </span>
-            </div>
-          )}
+          {/* 1줄 메타: 사이즈 · seed · 생성일시 + ▼ 토글로 모델.
+              restoredMeta 가 set 됐다는 건 사용자가 history 복원했다는 뜻 — 그 항목 메타가
+              비어 있어도(null) 명시적 의도이므로 backfilled 로 fallthrough 금지.
+              저장값(editData.seed=null)과 UI 표시가 일치. */}
+          <MediaMetaBar
+            width={imageSize?.width || editData.image_size?.width}
+            height={imageSize?.height || editData.image_size?.height}
+            seed={restoredMeta ? restoredMeta.seed : (editData.seed ?? backfilledMeta.seed)}
+            generatedAt={
+              restoredMeta
+                ? restoredMeta.generatedAt
+                : (editData.generatedAt ?? backfilledMeta.generatedAt)
+            }
+            model={restoredMeta ? restoredMeta.model : (editData.model ?? backfilledMeta.model)}
+            t={t}
+          />
           
           {/* 프롬프트 */}
           <div className="form-group">

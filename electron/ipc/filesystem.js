@@ -509,6 +509,33 @@ export function registerFilesystemIPC(ipcMain) {
   })
 
   // ----------------------------------------------------------
+  // 9a. fs:read-history-metadata — JSON 사이드카만 읽음 (이미지/비디오 본문 X)
+  // ----------------------------------------------------------
+  // backfill 용도 (상세 모달이 seed/timestamp/model 만 필요한 경우).
+  // 비디오 history 는 파일이 수십 MB → fileToDataUrl 호출 시 IPC/메모리 부담 큼.
+  // 이 IPC 는 .json 사이드카만 읽어 즉시 반환.
+  ipcMain.handle('fs:read-history-metadata', async (_event, {
+    workFolder, project, resourceType, historyFilename
+  }) => {
+    try {
+      const historyDir = path.join(workFolder, project, resourceType, 'history')
+      const metaFilename = historyFilename.replace(/\.(png|jpg|jpeg|webp|gif|mp4|webm)$/i, '.json')
+      const metaPath = path.join(historyDir, metaFilename)
+
+      if (!(await pathExists(metaPath))) {
+        return { success: true, metadata: null }
+      }
+
+      const metaText = await fs.readFile(metaPath, 'utf-8')
+      const metadata = JSON.parse(metaText)
+      return { success: true, metadata }
+    } catch (error) {
+      // 파싱 실패 등 — 메타 없는 것으로 처리 (앱 안 깨짐)
+      return { success: true, metadata: null }
+    }
+  })
+
+  // ----------------------------------------------------------
   // 9. fs:read-history-file
   // ----------------------------------------------------------
   ipcMain.handle('fs:read-history-file', async (_event, {

@@ -836,6 +836,18 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     sceneGenerateError: 'Generation error: {error}',
     projectRenamed: 'Project renamed successfully.',
     copied: 'Copied!',
+    copyFailed: 'Copy failed',
+  },
+
+  // Detail modal meta-info display (size · seed · generated time · model)
+  mediaMeta: {
+    justNow: 'just now',
+    minAgo: 'm ago',
+    hrAgo: 'h ago',
+    dayAgo: 'd ago',
+    copySeed: 'Copy seed',
+    showDetails: 'Details',
+    hideDetails: 'Hide',
   },
 
   // Video Selection

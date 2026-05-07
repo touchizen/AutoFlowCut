@@ -235,6 +235,91 @@
   color: var(--border-color);
 }
 
+/* MediaMetaBar — 옵션 B 한 줄 메타 표시 + expand 토글 */
+.media-meta-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 0;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  font-family: monospace;
+}
+
+.media-meta-bar .meta-primary,
+.media-meta-bar .meta-secondary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.media-meta-bar .meta-secondary {
+  padding-top: 2px;
+  border-top: 1px dashed var(--border-color);
+  margin-top: 2px;
+}
+
+.media-meta-bar .meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.media-meta-bar .meta-resolution {
+  color: var(--success-color, #48bb78);
+}
+
+.media-meta-bar .meta-sep {
+  color: var(--border-color);
+}
+
+.media-meta-bar .meta-seed {
+  background: transparent;
+  border: 1px dashed var(--border-color);
+  border-radius: 4px;
+  padding: 1px 6px;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  transition: all 0.15s;
+}
+
+.media-meta-bar .meta-seed:hover {
+  border-style: solid;
+  background: rgba(139, 92, 246, 0.08);
+  color: #a78bfa;
+}
+
+.media-meta-bar .meta-time {
+  cursor: help;
+}
+
+.media-meta-bar .meta-toggle {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0 4px;
+  font-size: 0.7rem;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+
+.media-meta-bar .meta-toggle:hover {
+  opacity: 1;
+}
+
+.media-meta-bar .meta-model-version {
+  opacity: 0.7;
+  margin-left: 2px;
+}
+
+.media-meta-bar .meta-time {
+  cursor: help;
+}
+
 .video-detail-prompt {
   padding: 8px 12px;
   background: var(--bg-tertiary, #2a2a3a);

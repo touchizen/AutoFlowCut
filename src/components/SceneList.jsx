@@ -8,6 +8,7 @@ import { useI18n } from '../hooks/useI18n'
 import { formatTime, getRatioClass, resolveImageSrc, hasImageData } from '../utils/formatters'
 import { checkTagMatch } from '../utils/tagMatch'
 import { resolveExportMediaChoice } from '../utils/sceneMedia'
+import { resolveVideoSrc, ensureBase64DataUrl } from '../utils/videoSrc'
 import { UI } from '../config/defaults'
 import SceneDetailModal from './SceneDetailModal'
 import VideoDetailModal from './VideoDetailModal'
@@ -71,17 +72,8 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
     )
   }
 
-  // 비디오 src 생성 헬퍼 (base64 또는 파일 경로)
-  const toVideoSrc = (data, filePath) => {
-    if (data) {
-      return data.startsWith('data:') ? data : `data:video/mp4;base64,${data}`
-    }
-    if (filePath) {
-      if (filePath.startsWith('/')) return `file://${filePath}`
-      if (/^[A-Z]:\\/i.test(filePath)) return `file:///${filePath.replace(/\\/g, '/')}`
-    }
-    return ''
-  }
+  // 비디오 src 생성 헬퍼 — 공용 utils/videoSrc 로 통합 (cache busting/Windows 경로/data URL 일관 처리)
+  const toVideoSrc = (data, filePath) => resolveVideoSrc(data, filePath) || ''
 
   // 비디오 duration 감지 (Promise) — base64 데이터에서 즉시 감지
   const detectVideoDuration = (videoData) => {
@@ -96,7 +88,7 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
         vid.src = ''
       }
       vid.onerror = () => resolve(null)
-      vid.src = videoData.startsWith('data:') ? videoData : `data:video/mp4;base64,${videoData}`
+      vid.src = ensureBase64DataUrl(videoData) || ''
       setTimeout(() => resolve(null), 3000) // 3초 타임아웃
     })
   }

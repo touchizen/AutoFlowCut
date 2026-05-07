@@ -14,6 +14,7 @@ import { TIMING } from '../config/defaults'
 import { fileSystemAPI } from './useFileSystem'
 import { toast } from '../components/Toast'
 import { retryVideoDownload } from '../services/videoRecovery'
+import { pickVideoMetadata } from '../utils/videoMetadata'
 
 // 유틸: 랜덤 대기
 const randomSleep = (min, max) =>
@@ -123,10 +124,41 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
 
     // 파일 저장 — videoSaveId 우선 (t2v_N / i2v_N), 없으면 기존 item.id (vscene_N / fp_N)
     let videoPath = null
+    let saveError = null
+    const generatedAt = Date.now()
+    // 모델/seed 우선순위 결정 — 자세한 동작은 utils/videoMetadata 참고.
+    // 핵심: in-flight resume 시 item 의 메타가 현재 options 보다 우선해야 history/모달 메타가 실제와 일치.
+    const { model: modelId, seed: seedValue } = pickVideoMetadata(item, options)
     if (saveMode === 'folder' && projectName) {
       const videoId = item.videoSaveId || item.id || `video_${Date.now()}`
-      const saveResult = await fileSystemAPI.saveVideo(projectName, videoId, mediaResult.base64, 'flow')
-      videoPath = saveResult?.path || null
+      // 상세 모달이 표시할 seed/timestamp/model 을 history 메타에 같이 기록
+      const metadata = {
+        prompt: item.prompt || null,
+        mediaId,
+        model: modelId,
+        timestamp: generatedAt,
+        seed: seedValue,
+      }
+      const saveResult = await fileSystemAPI.saveVideo(projectName, videoId, mediaResult.base64, modelId, metadata)
+      if (saveResult?.success) {
+        videoPath = saveResult.path || null
+      } else {
+        // 저장 실패 — saveCurrentProject 가 base64 를 strip 하므로 path 없이 두면 다음 로드 시 유실.
+        // 호출자에게 명시적 에러 전달 → UI 가 재시도/재다운로드 결정 가능.
+        saveError = saveResult?.error || 'Video save failed'
+        console.error('[VideoAutomation] saveVideo failed:', saveError)
+      }
+    }
+
+    // folder 모드 + 저장 실패 → success: false 로 surface (다운로드는 됐지만 영속화 실패).
+    if (saveMode === 'folder' && saveError) {
+      return {
+        success: false,
+        error: `Save failed: ${saveError}`,
+        // 호출자가 재시도 가능하도록 mediaId 는 노출 (downloadAndSaveVideo 만 다시 시도 가능)
+        mediaId,
+        videoSaveId: item.videoSaveId || null,
+      }
     }
 
     return {
@@ -135,6 +167,9 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
       mediaId,
       videoPath,
       videoSaveId: item.videoSaveId || null,
+      seed: seedValue,
+      generatedAt,
+      model: modelId,
     }
   }
 
@@ -180,7 +215,16 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
     setStatus('running')
 
     // 처리할 아이템 목록 구성 — status/generationId/mediaId/videoPath 보존
-    // (download-only fast path 분류에 필요)
+    // (download-only fast path 분류에 필요).
+    // seed/model 도 보존 — error 상태에서 retry 가 retryVideoDownload → downloadAndSaveVideo
+    // 로 흘러갈 때 item.model/seed 가 비면 'flow-video' 폴백되어 메타 일관성이 깨진다.
+    // 호출자가 새 seed/videoModel 을 plumb 하는 일반 경로는 그대로 그 값이 우선.
+    // in-flight 항목 분류용: status='generating' + generationId set + 미완료 (no mediaId/videoPath).
+    // recovery 가 서버 상태 확인 후 'generating' 으로 표시한 항목 — 재제출(quota 중복) 안 함.
+    // 대신 Phase 2 polling 에 직접 합류시켜 서버가 complete 되면 다운로드만 수행.
+    const isInFlightItem = (it) =>
+      it.status === 'generating' && it.generationId && !it.mediaId && !it.videoPath
+
     let items = []
     switch (mode) {
       case 't2v':
@@ -194,6 +238,8 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
             generationId: s.generationId,
             mediaId: s.mediaId,
             videoPath: s.videoPath,
+            seed: s.seed ?? seed ?? null,
+            model: s.model || videoModel || null,
           }))
         break
       case 'i2v':
@@ -210,6 +256,8 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
             generationId: p.generationId,
             mediaId: p.mediaId,
             videoPath: p.videoPath,
+            seed: p.seed ?? seed ?? null,
+            model: p.model || videoModel || null,
           }))
         break
     }
@@ -223,15 +271,21 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
     }
 
     // ═══════════════════════════════════════════
-    // Phase 0: 분류 — download-only fast path vs. 전체 재생성
+    // Phase 0: 분류 — download-only / in-flight / fresh
     // ═══════════════════════════════════════════
-    // error 상태 + generationId + mediaId + videoPath 없음 → 서버엔 비디오가 있으나
-    //   로컬 저장만 실패한 케이스. quota 소비 없이 재다운로드만 시도.
+    // 1. downloadOnly: error + generationId + mediaId + !videoPath
+    //    → 서버엔 비디오가 있으나 로컬 저장만 실패. quota 소비 없이 재다운로드만 시도.
+    // 2. inFlight: 'generating' + generationId + !mediaId + !videoPath
+    //    → 이전 세션에서 제출만 됐고 결과 못 받음 (recovery 가 status 확인 후 'generating' 유지).
+    //      재제출 없이 Phase 2 polling 에 합류 → 서버가 complete 되면 다운로드만.
+    // 3. freshGen: 그 외 — 새 generation 제출 필요.
     const downloadOnly = items.filter(it =>
       it.status === 'error' && it.generationId && it.mediaId && !it.videoPath
     )
     const downloadOnlyIds = new Set(downloadOnly.map(it => it.id))
-    const freshGen = items.filter(it => !downloadOnlyIds.has(it.id))
+    const inFlight = items.filter(it => !downloadOnlyIds.has(it.id) && isInFlightItem(it))
+    const inFlightIds = new Set(inFlight.map(it => it.id))
+    const freshGen = items.filter(it => !downloadOnlyIds.has(it.id) && !inFlightIds.has(it.id))
 
     const batchStartedAt = Date.now()
     setProgress({ current: 0, total, percent: 0, errorCount: 0, startedAt: batchStartedAt })
@@ -268,8 +322,8 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
       console.log(`[VideoAutomation] Phase 0 done: ${redownloadedCount}/${downloadOnly.length} re-downloaded`)
     }
 
-    // freshGen이 없으면 여기서 종료
-    if (freshGen.length === 0) {
+    // freshGen 도 없고 inFlight 도 없으면 종료 (downloadOnly 는 Phase 0 에서 끝남)
+    if (freshGen.length === 0 && inFlight.length === 0) {
       setIsRunning(false)
       setIsPaused(false)
       setProgress({ current: total, total, percent: 100, errorCount: videoErrorCount, startedAt: batchStartedAt, endedAt: Date.now() })
@@ -283,21 +337,22 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
       return
     }
 
-    // freshGen 아이템들만 남은 파이프라인에서 처리하도록 items 재할당
-    items = freshGen
+    // items 는 재할당하지 않음 — Phase 2 의 items.find(...) 가 inFlight + freshGen 모두 lookup 가능해야 함.
 
     // ═══════════════════════════════════════════
     // Phase 1: 순차 제출 (7~15초 간격, 완료 안 기다림)
+    //   - freshGen 만 제출 (inFlight 는 이미 generationId 가 있어 제출 X)
+    //   - submissions 에는 inFlight 도 함께 pre-seed → Phase 2 에서 같이 polling
     // ═══════════════════════════════════════════
-    const submissions = [] // { itemId, generationId }
+    const submissions = inFlight.map(it => ({ itemId: it.id, generationId: it.generationId }))
     let completedCount = 0
 
-    for (let i = 0; i < items.length; i++) {
+    for (let i = 0; i < freshGen.length; i++) {
       if (stopRequestedRef.current) break
       await waitIfPaused()
 
-      const item = items[i]
-      setStatusMessage(`📤 ${t('videoAutomation.submitting') || 'Submitting'} ${i + 1}/${total} — "${(item.prompt || '').substring(0, 30)}..."`)
+      const item = freshGen[i]
+      setStatusMessage(`📤 ${t('videoAutomation.submitting') || 'Submitting'} ${i + 1}/${freshGen.length} — "${(item.prompt || '').substring(0, 30)}..."`)
       onItemUpdate?.(item.id, 'generating')
 
       const genResult = await submitVideoItem(item, mode, {
@@ -306,8 +361,24 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
 
       if (genResult.success && genResult.generationId) {
         submissions.push({ itemId: item.id, generationId: genResult.generationId })
-        // Persist generationId into item state immediately (survives app-kill → reload → recovery)
-        onItemUpdate?.(item.id, 'generating', { generationId: genResult.generationId })
+        // Persist generationId + 메타(seed/model) 를 즉시 state 에 박는다.
+        // app-kill → reload → recovery 시 videoRecovery 가 item.model/seed 를 읽어
+        // 동일한 모델/seed 로 저장하도록. 누락하면 recovery 가 'flow-video' 로 폴백.
+        onItemUpdate?.(item.id, 'generating', {
+          generationId: genResult.generationId,
+          ...(seed != null ? { seed } : {}),
+          ...(videoModel ? { model: videoModel } : {}),
+          // canonical 식별자 — recovery/retry 가 file 위치 매칭에 사용 (videoSaveId 없으면 vscene_/fp_ 폴백되어 파일명 갈라짐)
+          ...(item.videoSaveId ? { videoSaveId: item.videoSaveId } : {}),
+          // 새 generation 제출 — 이전 complete 의 path/mediaId/video 명시적 제거.
+          // 빠뜨리면 (1) recovery 후보 필터(!fp.videoPath)에 안 걸리고, (2) UI 가 옛 비디오 표시,
+          // (3) 새 비디오 다운로드 실패 시 옛 path 가 그대로 남아 export 까지 옛 파일 사용.
+          videoPath: null,
+          mediaId: null,
+          video: null,
+          base64: null,
+          generatedAt: null,
+        })
         console.log(`[VideoAutomation] ✅ Submitted ${i + 1}/${total}: ${genResult.generationId.substring(0, 16)}...`)
       } else {
         // 401 인증 에러 감지
@@ -320,7 +391,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
       }
 
       // 다음 제출 전 랜덤 대기 (마지막 아이템 제외)
-      if (i < items.length - 1 && !stopRequestedRef.current) {
+      if (i < freshGen.length - 1 && !stopRequestedRef.current) {
         const waitMs = Math.floor(Math.random() * (TIMING.VIDEO_SUBMIT_MAX_DELAY - TIMING.VIDEO_SUBMIT_MIN_DELAY + 1)) + TIMING.VIDEO_SUBMIT_MIN_DELAY
         setStatusMessage(`⏱️ ${t('videoAutomation.waitingNext') || 'Waiting'} ${Math.round(waitMs / 1000)}s...`)
         await sleep(waitMs)
@@ -328,14 +399,14 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
     }
 
     if (submissions.length === 0) {
-      // 모든 제출 실패
+      // 모든 제출 실패 + in-flight 도 없음
       setIsRunning(false)
       setStatus('done')
       setStatusMessage(`❌ ${t('videoAutomation.allFailed') || 'All submissions failed'}`)
       return
     }
 
-    console.log(`[VideoAutomation] Phase 1 done: ${submissions.length}/${total} submitted`)
+    console.log(`[VideoAutomation] Phase 1 done: ${submissions.length} pending poll (${freshGen.length} fresh + ${inFlight.length} in-flight)`)
 
     // ═══════════════════════════════════════════
     // Phase 2: 일괄 폴링 + Phase 3: 완료 즉시 다운로드
@@ -381,7 +452,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
               statusInfo.mediaId,
               statusInfo.videoUrl,
               items.find(i => i.id === itemId),
-              { projectName, saveMode, videoResolution, aspectRatio },
+              { projectName, saveMode, videoResolution, aspectRatio, seed, videoModel },
               setStatusMessage
             )
 
@@ -398,13 +469,31 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
               const errMsg = !dlResult.success
                 ? (dlResult.error || 'Download failed')
                 : 'Download succeeded but no video data returned'
-              onItemUpdate?.(itemId, 'error', { error: errMsg })
+              // download/save 실패 시에도 retry 경로(download-only)에 필요한 generationId+mediaId 를 박는다.
+              // download 자체가 실패하면 dlResult.mediaId 가 비어있을 수 있으므로 statusInfo.mediaId 폴백.
+              // (서버는 이미 생성 완료를 알렸으니 mediaId 는 이 시점에 항상 알려져 있음 — 새 생성 회피)
+              const retryMediaId = dlResult.mediaId || statusInfo.mediaId
+              onItemUpdate?.(itemId, 'error', {
+                error: errMsg,
+                ...(retryMediaId ? { mediaId: retryMediaId } : {}),
+                ...(dlResult.videoSaveId ? { videoSaveId: dlResult.videoSaveId } : {}),
+                generationId: submission.generationId,
+                // 메타 보존 — recovery / retry 가 동일 model/seed 로 저장하도록.
+                ...(seed != null ? { seed } : {}),
+                ...(videoModel ? { model: videoModel } : {}),
+              })
               console.warn(`[VideoAutomation] ❌ Download failed: ${itemId}`, errMsg)
             }
             pending.delete(itemId)
 
           } else if (statusInfo.status === 'failed') {
-            onItemUpdate?.(itemId, 'error', { error: statusInfo.error || 'Video generation failed' })
+            // 서버 generation 자체 실패 — download-only retry 는 의미 없지만, 사용자가
+            // 같은 model/seed 로 수동 재시도할 수 있게 메타 보존.
+            onItemUpdate?.(itemId, 'error', {
+              error: statusInfo.error || 'Video generation failed',
+              ...(seed != null ? { seed } : {}),
+              ...(videoModel ? { model: videoModel } : {}),
+            })
             pending.delete(itemId)
             console.warn(`[VideoAutomation] ❌ Generation failed: ${submission.generationId.substring(0, 16)}`)
           }

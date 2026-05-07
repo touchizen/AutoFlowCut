@@ -237,14 +237,25 @@ function App() {
     const scenesCopy = scenes.map(s => ({ ...s }))
     const synced = syncVideosIntoScenes(scenesCopy, videoScenes, framePairs, '[App]')
     if (synced) {
-      // 변경된 씬만 개별 업데이트
+      // 변경된 씬만 개별 업데이트.
+      // base64(videoT2V/videoI2V) 외에 path/duration 도 비교 — recovery / path-only 로드 시
+      // base64 가 비어 있고 path 만 새로 채워지는 경우 base64 비교만으로는 변경 감지 안 됨.
       for (let i = 0; i < scenesCopy.length; i++) {
         const orig = scenes[i]
         const copy = scenesCopy[i]
-        if (copy.videoT2V !== orig.videoT2V || copy.videoI2V !== orig.videoI2V) {
+        const changed =
+          copy.videoT2V !== orig.videoT2V ||
+          copy.videoI2V !== orig.videoI2V ||
+          copy.videoT2VPath !== orig.videoT2VPath ||
+          copy.videoI2VPath !== orig.videoI2VPath ||
+          copy.videoT2VDuration !== orig.videoT2VDuration ||
+          copy.videoI2VDuration !== orig.videoI2VDuration
+        if (changed) {
           scenesHook.updateScene(copy.id, {
             videoT2V: copy.videoT2V, videoT2VPath: copy.videoT2VPath,
             videoI2V: copy.videoI2V, videoI2VPath: copy.videoI2VPath,
+            ...(copy.videoT2VDuration !== orig.videoT2VDuration ? { videoT2VDuration: copy.videoT2VDuration } : {}),
+            ...(copy.videoI2VDuration !== orig.videoI2VDuration ? { videoI2VDuration: copy.videoI2VDuration } : {}),
           })
         }
       }
@@ -420,6 +431,9 @@ function App() {
             ...(result?.videoPath ? { videoPath: result.videoPath } : {}),
             ...(result?.videoSaveId ? { videoSaveId: result.videoSaveId } : {}),
             ...(result?.duration ? { duration: result.duration } : {}),
+            ...(result?.seed != null ? { seed: result.seed } : {}),
+            ...(result?.generatedAt ? { generatedAt: result.generatedAt } : {}),
+            ...(result?.model ? { model: result.model } : {}),
             ...(result?.error ? { error: result.error } : {}),
           } : p
         ))
@@ -444,6 +458,9 @@ function App() {
           ...(result?.videoPath ? { videoPath: result.videoPath } : {}),
           ...(result?.videoSaveId ? { videoSaveId: result.videoSaveId } : {}),
           ...(result?.duration ? { duration: result.duration } : {}),
+          ...(result?.seed != null ? { seed: result.seed } : {}),
+          ...(result?.generatedAt ? { generatedAt: result.generatedAt } : {}),
+          ...(result?.model ? { model: result.model } : {}),
           ...(result?.error ? { error: result.error } : {}),
         })
         if (newStatus === 'complete' && result?.base64) {
@@ -582,16 +599,22 @@ function App() {
           videoResolution: settings.videoResolution || '1080p',
           videoBatchCount: settings.videoBatchCount || 1,
           onItemUpdate: (id, newStatus, result) => {
+            // 명시적 null 도 통과시켜야 하는 필드(video/videoPath/mediaId/generatedAt 등)는
+            // `'X' in result` 체크 — useVideoAutomation 의 새 generation 제출 시 이전 complete
+            // 메타를 의도적으로 null 로 지우기 때문 (regen 후 recovery 후보에 포함되도록).
             videoScenesHook.updateVideoScene(id, {
               status: newStatus,
               ...(newStatus === 'generating' ? { generatingStartedAt: Date.now(), generatingEndedAt: null } : {}),
               ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: Date.now() } : {}),
-              ...(result?.base64 ? { video: result.base64 } : {}),
-              ...(result?.mediaId ? { mediaId: result.mediaId } : {}),
+              ...(result && 'base64' in result ? { video: result.base64 } : {}),
+              ...(result && 'mediaId' in result ? { mediaId: result.mediaId } : {}),
               ...(result?.generationId ? { generationId: result.generationId } : {}),
-              ...(result?.videoPath ? { videoPath: result.videoPath } : {}),
+              ...(result && 'videoPath' in result ? { videoPath: result.videoPath } : {}),
               ...(result?.videoSaveId ? { videoSaveId: result.videoSaveId } : {}),
               ...(result?.duration ? { duration: result.duration } : {}),
+              ...(result?.seed != null ? { seed: result.seed } : {}),
+              ...(result && 'generatedAt' in result ? { generatedAt: result.generatedAt } : {}),
+              ...(result?.model ? { model: result.model } : {}),
               ...(result?.error ? { error: result.error } : {}),
             })
 
@@ -603,6 +626,16 @@ function App() {
                 ...(result?.base64 ? { videoT2V: result.base64 } : {}),
                 videoT2VPath: result.videoPath || null,
                 ...(result?.duration ? { videoT2VDuration: result.duration } : {}),
+              })
+            }
+            // 새 generation 제출 — scene-level derived 비디오 메타도 함께 클리어.
+            // 빠뜨리면 export/SceneList 가 옛 videoT2V/Path/Duration 으로 옛 비디오를 계속 사용.
+            if (newStatus === 'generating' && result && 'videoPath' in result) {
+              const sceneId = id.replace('vscene_', 'scene_')
+              scenesHook.updateScene(sceneId, {
+                videoT2V: null,
+                videoT2VPath: null,
+                videoT2VDuration: null,
               })
             }
           },
@@ -662,12 +695,17 @@ function App() {
                   ...p, status: newStatus,
                   ...(newStatus === 'generating' ? { generatingStartedAt: Date.now(), generatingEndedAt: null } : {}),
                   ...(newStatus === 'complete' || newStatus === 'error' ? { generatingEndedAt: Date.now() } : {}),
-                  ...(result?.base64 ? { video: result.base64, base64: result.base64 } : {}),
-                  ...(result?.mediaId ? { mediaId: result.mediaId } : {}),
+                  // 'X' in result — useVideoAutomation 의 새 generation 제출 시 옛 complete 메타를
+                  // 의도적으로 null 로 지우는 흐름 지원 (regen 후 recovery 후보 포함되도록).
+                  ...(result && 'base64' in result ? { video: result.base64, base64: result.base64 } : {}),
+                  ...(result && 'mediaId' in result ? { mediaId: result.mediaId } : {}),
                   ...(result?.generationId ? { generationId: result.generationId } : {}),
-                  ...(result?.videoPath ? { videoPath: result.videoPath } : {}),
+                  ...(result && 'videoPath' in result ? { videoPath: result.videoPath } : {}),
                   ...(result?.videoSaveId ? { videoSaveId: result.videoSaveId } : {}),
                   ...(result?.duration ? { duration: result.duration } : {}),
+                  ...(result?.seed != null ? { seed: result.seed } : {}),
+                  ...(result && 'generatedAt' in result ? { generatedAt: result.generatedAt } : {}),
+                  ...(result?.model ? { model: result.model } : {}),
                   ...(result?.error ? { error: result.error } : {}),
                 } : p
               )
@@ -681,6 +719,17 @@ function App() {
                     videoI2V: result.base64,
                     videoI2VPath: result.videoPath || null,
                     ...(result?.duration ? { videoI2VDuration: result.duration } : {}),
+                  })
+                }
+              }
+              // 새 generation 제출 — scene-level derived 비디오 메타도 클리어.
+              if (newStatus === 'generating' && result && 'videoPath' in result) {
+                const fp = prev.find(p => p.id === id)
+                if (fp?.startSceneId && !fp.startSceneId.startsWith('gallery::')) {
+                  scenesHook.updateScene(fp.startSceneId, {
+                    videoI2V: null,
+                    videoI2VPath: null,
+                    videoI2VDuration: null,
                   })
                 }
               }
@@ -1188,6 +1237,15 @@ function App() {
           t={t}
           projectName={ensureProjectName()}
           onUpdate={(videoId, patch) => {
+            // VideoDetailModal 의 history 복원 patch 에는 video/videoPath 외에
+            // seed/generatedAt/model/mediaId 도 포함될 수 있음 (메타 변경 보존).
+            // 'seed' in patch 로 명시적 null 도 보존 (history 메타가 빈 경우 stale 값 제거).
+            const metaPatch = {}
+            if ('seed' in patch) metaPatch.seed = patch.seed
+            if ('generatedAt' in patch) metaPatch.generatedAt = patch.generatedAt
+            if ('model' in patch) metaPatch.model = patch.model
+            if ('mediaId' in patch) metaPatch.mediaId = patch.mediaId
+
             // ID prefix로 source 분기:
             //   vscene_X → videoScenes (T2V 결과 테이블)
             //   fp_X     → framePairs (F2V 결과 테이블)
@@ -1197,8 +1255,9 @@ function App() {
               videoScenesHook.updateVideoScene(videoId, {
                 video: patch.video,
                 videoPath: patch.videoPath,
+                ...metaPatch,
               })
-              // 매칭되는 image scene에도 동기화
+              // 매칭되는 image scene에도 동기화 (메타는 videoScenes 가 source-of-truth — scene 엔 시각용 필드만)
               const sceneId = videoId.replace('vscene_', 'scene_')
               scenesHook.updateScene(sceneId, {
                 ...(patch.video ? { videoT2V: patch.video } : {}),
@@ -1206,7 +1265,9 @@ function App() {
               })
             } else if (videoId.startsWith('fp_')) {
               setFramePairs(prev => prev.map(p =>
-                p.id === videoId ? { ...p, video: patch.video, base64: patch.video, videoPath: patch.videoPath } : p
+                p.id === videoId
+                  ? { ...p, video: patch.video, base64: patch.video, videoPath: patch.videoPath, ...metaPatch }
+                  : p
               ))
               // 매칭 image scene의 videoI2V 동기화 — startSceneId 기준
               const fp = framePairs.find(p => p.id === videoId)
@@ -1217,17 +1278,28 @@ function App() {
                 })
               }
             } else if (videoId.startsWith('t2v_')) {
+              // synthetic id — scene 에는 비디오 데이터/path 만 sync (이미지 메타 슬롯 보호).
+              // scene.seed/generatedAt/model 은 IMAGE 메타로 SceneDetailModal 이 사용하므로
+              // video metaPatch 로 덮어쓰면 안 됨. video 메타는 source-of-truth 인 vscene_X 에만.
               const sceneId = `scene_${videoId.replace('t2v_', '')}`
               scenesHook.updateScene(sceneId, {
                 ...(patch.video ? { videoT2V: patch.video } : {}),
                 videoT2VPath: patch.videoPath || null,
               })
+              const vsceneId = `vscene_${videoId.replace('t2v_', '')}`
+              videoScenesHook.updateVideoScene(vsceneId, metaPatch)
             } else if (videoId.startsWith('i2v_')) {
+              // synthetic id — scene 에는 비디오 데이터/path 만 sync (이미지 메타 슬롯 보호).
+              // video 메타는 source-of-truth 인 fp_X 에만 반영.
               const sceneId = `scene_${videoId.replace('i2v_', '')}`
               scenesHook.updateScene(sceneId, {
                 ...(patch.video ? { videoI2V: patch.video } : {}),
                 videoI2VPath: patch.videoPath || null,
               })
+              const fpId = `fp_${videoId.replace('i2v_', '')}`
+              setFramePairs(prev => prev.map(p =>
+                p.id === fpId ? { ...p, ...metaPatch } : p
+              ))
             }
           }}
         />

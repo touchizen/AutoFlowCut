@@ -71,15 +71,48 @@ export async function downloadAndSaveVideo({
   }
 
   if (!mediaResult?.success) {
-    return { success: false, error: `Media download failed: ${mediaResult?.error || 'All methods failed'}` }
+    return { success: false, error: `Media download failed: ${mediaResult?.error || 'All methods failed'}`, mediaId }
   }
 
-  // 파일 저장
+  // 파일 저장 — useVideoAutomation 와 동일한 metadata 규칙(seed/timestamp/model) +
+  // 저장 실패 surfacing. 미적용 시 saveCurrentProject 가 base64 를 strip 한 뒤 path 가 비어
+  // 다음 로드에서 데이터 유실 가능.
   let videoPath = null
+  let saveError = null
+  const generatedAt = Date.now()
+  // 모델 ID 우선순위:
+  //   1. item.model — 이전 complete 시 저장된 실제 모델 식별자 (project.json 에서 복원됨)
+  //   2. item.videoModel — 호출자가 직접 plumb 해준 경우
+  //   3. 'flow-video' — 둘 다 없으면 generic 폴백
+  // seed 도 item.seed 우선 (이전 생성 시 저장된 값 보존).
+  const modelId = item?.model || item?.videoModel || 'flow-video'
+  const seedValue = item?.seed ?? null
   if (saveMode === 'folder' && projectName) {
     const videoId = item.videoSaveId || item.id || `video_${Date.now()}`
-    const saveResult = await fileSystemAPI.saveVideo(projectName, videoId, mediaResult.base64, 'flow')
-    videoPath = saveResult?.path || null
+    const metadata = {
+      prompt: item?.prompt || null,
+      mediaId,
+      model: modelId,
+      timestamp: generatedAt,
+      seed: seedValue,
+    }
+    const saveResult = await fileSystemAPI.saveVideo(projectName, videoId, mediaResult.base64, modelId, metadata)
+    if (saveResult?.success) {
+      videoPath = saveResult.path || null
+    } else {
+      saveError = saveResult?.error || 'Video save failed'
+      console.error('[VideoRecovery] saveVideo failed:', saveError)
+    }
+  }
+
+  // folder 모드 + save 실패 → success: false 로 surface (mediaId 보존해서 다음 retry 가능)
+  if (saveMode === 'folder' && saveError) {
+    return {
+      success: false,
+      error: `Save failed: ${saveError}`,
+      mediaId,
+      videoSaveId: item.videoSaveId || null,
+    }
   }
 
   return {
@@ -88,6 +121,9 @@ export async function downloadAndSaveVideo({
     mediaId,
     videoPath,
     videoSaveId: item.videoSaveId || null,
+    seed: seedValue,
+    generatedAt,
+    model: modelId,
   }
 }
 
@@ -186,14 +222,23 @@ export async function recoverInFlightVideos({
               videoPath: dlResult.videoPath || null,
               videoSaveId: dlResult.videoSaveId || fp.videoSaveId || null,
               ...(fp.duration ? { duration: fp.duration } : {}),
+              ...(dlResult.seed != null ? { seed: dlResult.seed } : {}),
+              ...(dlResult.generatedAt ? { generatedAt: dlResult.generatedAt } : {}),
+              ...(dlResult.model ? { model: dlResult.model } : {}),
               generatingEndedAt: Date.now(),
             })
             recovered++
             console.log(`${logPrefix} Recovered ${fp.id} → ${statusInfo.mediaId.substring(0, 16)}`)
           } else {
+            // 저장 실패 시에도 retry 식별자 + 메타 보존 (download-only retry 경로 유효 +
+            // 다음 성공 시점에 동일 모델/seed 로 저장되도록).
             onFramePairUpdate(fp.id, {
               status: 'error',
               error: dlResult.error || 'Download failed after recovery',
+              ...(dlResult.mediaId ? { mediaId: dlResult.mediaId } : { mediaId: statusInfo.mediaId }),
+              ...(dlResult.videoSaveId ? { videoSaveId: dlResult.videoSaveId } : {}),
+              ...(dlResult.seed != null ? { seed: dlResult.seed } : {}),
+              ...(dlResult.model ? { model: dlResult.model } : {}),
               generatingEndedAt: Date.now(),
             })
           }
@@ -207,8 +252,14 @@ export async function recoverInFlightVideos({
           generatingEndedAt: Date.now(),
         })
         expired++
+      } else {
+        // 'pending' / 'processing' — 서버에 살아있음. auto-restore 에서 'generating' 이
+        // 'pending' 으로 떨어졌으니, 'generating' 으로 되돌려 다음 start() 가 재제출(quota 낭비) 안 함.
+        // 다음 폴링/사용자 액션에서 status 다시 체크.
+        onFramePairUpdate(fp.id, {
+          status: 'generating',
+        })
       }
-      // 'pending'/'processing' → 그대로 둠 (auto-restore에서 pending 리셋 안 건드리면 generating 유지)
     }
   }
 
@@ -325,12 +376,25 @@ export async function retryVideoDownload({
       videoSaveId: dl.videoSaveId || item.videoSaveId || null,
       generationId: item.generationId,
       ...(item.duration ? { duration: item.duration } : {}),
+      ...(dl.seed != null ? { seed: dl.seed } : {}),
+      ...(dl.generatedAt ? { generatedAt: dl.generatedAt } : {}),
+      ...(dl.model ? { model: dl.model } : {}),
       generatingEndedAt: Date.now(),
     })
     return { success: true }
   }
 
+  // 실패 시에도 retry 식별자 + 메타 보존 — 다음 retry 가 download-only 경로 탈 수 있게 +
+  // 다음 성공 시점에 동일 모델/seed 로 저장되도록.
   const msg = dl.error || 'Download failed'
-  onUpdate?.(item.id, 'error', { error: msg, generatingEndedAt: Date.now() })
+  onUpdate?.(item.id, 'error', {
+    error: msg,
+    mediaId: dl.mediaId || mediaId,
+    videoSaveId: dl.videoSaveId || item.videoSaveId || null,
+    generationId: item.generationId,
+    ...(item?.seed != null ? { seed: item.seed } : {}),
+    ...(item?.model ? { model: item.model } : {}),
+    generatingEndedAt: Date.now(),
+  })
   return { success: false, error: msg }
 }

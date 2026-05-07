@@ -8,6 +8,7 @@ import { createPortal } from 'react-dom'
 import { useI18n } from '../hooks/useI18n'
 import { useElapsedTimer } from '../hooks/useElapsedTimer'
 import { getRatioClass, resolveImageSrc, hasImageData, formatElapsed } from '../utils/formatters'
+import { resolveVideoSrc } from '../utils/videoSrc'
 import InfinityLoader from './InfinityLoader'
 
 /** 초시계 아이콘 — 초침이 실시간 회전 */
@@ -105,7 +106,8 @@ export default function ResultsTable({
    */
   const hasMedia = (item) => {
     if (mediaType === 'image') return hasImageData(item)
-    if (mediaType === 'video') return !!item.video
+    // T2V 비디오 — base64(item.video) 또는 file path 둘 다 인정 (path-only 로드 지원)
+    if (mediaType === 'video') return !!(item.video || item.videoPath)
     if (isPairType) return !!(item.base64 || item.videoPath)
     return false
   }
@@ -130,8 +132,10 @@ export default function ResultsTable({
       )
     }
 
-    if (mediaType === 'video' && item.video) {
-      const videoSrc = item.video.startsWith('data:') ? item.video : `data:video/mp4;base64,${item.video}`
+    if (mediaType === 'video' && (item.video || item.videoPath)) {
+      // 공용 utils/videoSrc — base64 우선, 없으면 file path (T2V path-only 모드 지원).
+      // useProjectData 가 T2V 도 path-only 로 로드하므로 item.video 가 비어도 path 만으로 재생 가능.
+      const videoSrc = resolveVideoSrc(item.video, item.videoPath)
       return (
         <>
           <video
@@ -146,13 +150,7 @@ export default function ResultsTable({
     }
 
     if (isPairType && (item.base64 || item.videoPath)) {
-      let videoSrc
-      if (item.base64) {
-        videoSrc = item.base64.startsWith('data:') ? item.base64 : `data:video/mp4;base64,${item.base64}`
-      } else if (item.videoPath) {
-        const p = item.videoPath
-        videoSrc = p.startsWith('/') ? `file://${p}` : /^[A-Z]:\\/i.test(p) ? `file:///${p.replace(/\\/g, '/')}` : p
-      }
+      const videoSrc = resolveVideoSrc(item.base64, item.videoPath)
       return (
         <>
           <video

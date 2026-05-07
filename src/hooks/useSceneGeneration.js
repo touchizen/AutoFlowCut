@@ -55,6 +55,7 @@ export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, open
         saveMode: settings.saveMode,
         projectName: settings.projectName,
         sceneId, prompt: scene.prompt,
+        seed,
         logPrefix: '[Scene]'
       })
       scenesHook.updateScene(sceneId, sceneUpdate)

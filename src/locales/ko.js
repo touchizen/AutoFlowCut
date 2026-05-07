@@ -836,6 +836,18 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     sceneGenerateError: '생성 오류: {error}',
     projectRenamed: '프로젝트 이름이 변경되었습니다.',
     copied: '복사됨!',
+    copyFailed: '복사 실패',
+  },
+
+  // 상세 모달의 메타 정보 표시 (사이즈 · seed · 생성일시 · 모델)
+  mediaMeta: {
+    justNow: '방금 전',
+    minAgo: '분 전',
+    hrAgo: '시간 전',
+    dayAgo: '일 전',
+    copySeed: 'Seed 복사',
+    showDetails: '자세히',
+    hideDetails: '접기',
   },
 
   // 비디오 선택
