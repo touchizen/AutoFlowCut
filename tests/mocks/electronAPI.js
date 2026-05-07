@@ -47,9 +47,11 @@ export function resetElectronAPI() {
   })
 }
 
-// Install on window
-Object.defineProperty(window, 'electronAPI', {
-  value: mockElectronAPI,
-  writable: true,
-  configurable: true
-})
+// Install on window — node-env tests skip this (no DOM, no electronAPI usage).
+if (typeof window !== 'undefined') {
+  Object.defineProperty(window, 'electronAPI', {
+    value: mockElectronAPI,
+    writable: true,
+    configurable: true
+  })
+}

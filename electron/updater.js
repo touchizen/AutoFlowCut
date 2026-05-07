@@ -8,22 +8,56 @@ const { autoUpdater } = electronUpdater
 const isAppx = process.platform === 'win32' && !!process.windowsStore
 
 let manualCheckInProgress = false
-let updateAvailable = false
+let updateDownloadInProgress = false
 let updateDownloaded = false
+let updaterConfigured = false
 
 function log(...args) {
   try { console.log('[Updater]', ...args) } catch {}
 }
 
 function configureAutoUpdater() {
-  // Don't auto-download; we want to confirm via dialog when ready.
-  autoUpdater.autoDownload = true
+  // Idempotent — listeners must be registered exactly once. Without this guard,
+  // each manualCheck() re-attaches handlers and update-downloaded fires the
+  // restart dialog (and quitAndInstall) once per accumulated listener.
+  if (updaterConfigured) return
+  updaterConfigured = true
+
+  // No auto-download — confirm via dialog before pulling the NSIS/DMG payload.
+  // User confirmation triggers autoUpdater.downloadUpdate().
+  autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = true
 
   autoUpdater.on('checking-for-update', () => log('checking…'))
   autoUpdater.on('update-available', (info) => {
-    updateAvailable = true
     log('available:', info?.version)
+    manualCheckInProgress = false
+    if (updateDownloadInProgress || updateDownloaded) return
+    dialog
+      .showMessageBox({
+        type: 'question',
+        title: 'AutoFlowCut 업데이트',
+        message: `새 버전 ${info?.version}이(가) 있습니다.`,
+        detail: `현재 버전: ${app.getVersion()}\n\n지금 다운로드하시겠습니까?`,
+        buttons: ['지금 다운로드', '나중에'],
+        defaultId: 0,
+        cancelId: 1,
+      })
+      .then(({ response }) => {
+        if (response !== 0) return
+        updateDownloadInProgress = true
+        autoUpdater.downloadUpdate().catch((err) => {
+          updateDownloadInProgress = false
+          log('download failed:', err?.message || err)
+          dialog.showMessageBox({
+            type: 'error',
+            title: 'AutoFlowCut',
+            message: '업데이트 다운로드에 실패했습니다.',
+            detail: String(err?.message || err),
+            buttons: ['확인'],
+          })
+        })
+      })
   })
   autoUpdater.on('update-not-available', (info) => {
     log('not available (current is latest):', info?.version)
@@ -56,6 +90,7 @@ function configureAutoUpdater() {
   })
   autoUpdater.on('update-downloaded', (info) => {
     updateDownloaded = true
+    updateDownloadInProgress = false
     manualCheckInProgress = false
     log('downloaded:', info?.version)
     dialog
