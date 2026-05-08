@@ -28,17 +28,24 @@ Locate the source episode:
 
 Read these artifacts (some may be absent — handle gracefully). **Filenames vary by genre:**
 
-| Artifact | yadam (Korean) | dark-history / bespoke (English) | Glob fallback |
-|----------|----------------|----------------------------------|---------------|
-| State | `STATE.md` | `STATE.md` | `STATE.md` |
-| Synopsis | `04_시놉시스.md` | `04_synopsis.md` | `04_*.md` |
-| Fact-check | `02_팩트체크.md` | `02_factcheck.md` | `02_*.md` (skip if `02_*.md` is `02_factcheck.md` AND bespoke) |
-| Research | `03_자료수집.md` | `03_research.md` | `03_*.md` |
-| Script parts | `{title}_기.md`, `_승.md`, `_전.md`, `_결.md` | `{title}_part1_setup.md`, `_part2_rising.md`, `_part3_crisis.md`, `_part4_resolution.md` | `*_*.md` matching script title |
-| Meta supplement | (n/a) | `_meta_supplement.md` (bespoke only) | — |
-| Bespoke synthesis | (n/a) | `04_success_synthesis.md` (bespoke only) | — |
+| Artifact | yadam (Korean) | dark-history / bespoke (English) | Resolution rule |
+|----------|----------------|----------------------------------|-----------------|
+| State | `STATE.md` | `STATE.md` | exact filename, all genres |
+| Synopsis | `04_시놉시스.md` | `04_synopsis.md` | **exact filename match** per genre. Do NOT glob `04_*.md` — bespoke also has `04_success_synthesis.md` (a different artifact). |
+| Fact-check | `02_팩트체크.md` | `02_factcheck.md` | exact filename per genre. **All three genres including bespoke emit fact-check** — never skip. |
+| Research | `03_자료수집.md` | `03_research.md` | exact filename per genre. All genres emit research. |
+| Script parts | `{title}_기.md`, `_승.md`, `_전.md`, `_결.md` | `{title}_part1_setup.md`, `_part2_rising.md`, `_part3_crisis.md`, `_part4_resolution.md` | per-genre filename pattern; match against the actual ep title slug |
+| Meta supplement | (n/a) | `_meta_supplement.md` (bespoke only) | bespoke-only; absence is a genre signal that genre is NOT bespoke |
+| Bespoke synthesis | (n/a) | `04_success_synthesis.md` (bespoke only) | bespoke-only; **distinct from `04_synopsis.md`** (do not confuse) |
+| Bespoke ref analysis | (n/a) | `01_references_analysis.md` (bespoke only) | bespoke-only |
 
-Implementation: Glob `_story_source/*.md` and use prefix matching (`02_`, `03_`, `04_`) with the `STATE.md` Genre field as the canonical hint. The actual file content (English vs Korean header) is the source of truth.
+**Implementation rule** — use **exact filename match keyed by genre** (read STATE.md "Genre:" line first), NOT prefix glob:
+
+- yadam → `02_팩트체크.md` / `03_자료수집.md` / `04_시놉시스.md`
+- dark-history → `02_factcheck.md` / `03_research.md` / `04_synopsis.md`
+- bespoke → `02_factcheck.md` / `03_research.md` / `04_synopsis.md` (+ optional bespoke-only files)
+
+If genre is unknown after `STATE.md` read → AskUserQuestion (Step 2 below). Do NOT auto-glob a wrong file.
 
 **Genre detection:**
 - Read `STATE.md` "Genre:" line. Use that.
