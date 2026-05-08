@@ -26,17 +26,36 @@ Locate the source episode:
 - If episode number: `{PROJECT_DIR}/ep{N}_{slug}/_story_source/`
 - If file path: read the draft directly; ask user for ep number to assign
 
-Read these artifacts (some may be absent — handle gracefully):
-- `STATE.md` — genre, decisions, target length, original topic
-- `04_synopsis.md` — original synopsis (if exists)
-- Script parts: `Three_Wives_part*.md`, `{title}_기.md`/`승/전/결.md`, etc.
-- `02_factcheck.md` — fact-check (REUSE; do NOT re-run W1-1)
-- `03_research.md` — research (REUSE; do NOT re-run W1-2)
-- `_meta_supplement.md` — bespoke supplement (if bespoke)
+Read these artifacts (some may be absent — handle gracefully). **Filenames vary by genre:**
+
+| Artifact | yadam (Korean) | dark-history / bespoke (English) | Glob fallback |
+|----------|----------------|----------------------------------|---------------|
+| State | `STATE.md` | `STATE.md` | `STATE.md` |
+| Synopsis | `04_시놉시스.md` | `04_synopsis.md` | `04_*.md` |
+| Fact-check | `02_팩트체크.md` | `02_factcheck.md` | `02_*.md` (skip if `02_*.md` is `02_factcheck.md` AND bespoke) |
+| Research | `03_자료수집.md` | `03_research.md` | `03_*.md` |
+| Script parts | `{title}_기.md`, `_승.md`, `_전.md`, `_결.md` | `{title}_part1_setup.md`, `_part2_rising.md`, `_part3_crisis.md`, `_part4_resolution.md` | `*_*.md` matching script title |
+| Meta supplement | (n/a) | `_meta_supplement.md` (bespoke only) | — |
+| Bespoke synthesis | (n/a) | `04_success_synthesis.md` (bespoke only) | — |
+
+Implementation: Glob `_story_source/*.md` and use prefix matching (`02_`, `03_`, `04_`) with the `STATE.md` Genre field as the canonical hint. The actual file content (English vs Korean header) is the source of truth.
 
 **Genre detection:**
 - Read `STATE.md` "Genre:" line. Use that.
-- If absent or ambiguous: AskUserQuestion. Do NOT guess silently.
+- If absent or ambiguous: `AskUserQuestion`. Do NOT guess silently.
+
+**Per-genre meta-prompt loading** (used by W1-Rw-1 diagnosis):
+
+| Genre | Meta-prompt files |
+|-------|-------------------|
+| **yadam** | `meta-prompts/yadam/야담_시놉시스_작성_지침.md`, `야담_프리플라이트.md`, `야담_시나리오_작성_지침.md`, `야담_서술기법_가이드.md`, `야담_서스펜스_기법.md` |
+| **dark-history** | `meta-prompts/dark-history/synopsis_guidelines.md`, `preflight.md`, `screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md` |
+| **bespoke** | Same English filenames as dark-history (`meta-prompts/bespoke/`) PLUS `_story_source/_meta_supplement.md` (per-episode supplement) |
+
+The W1-Rw-1 diagnosis subagent applies the **engagement E0–E3 lens** (curiosity / expectation / engagement curve / drop-off zones) which is genre-agnostic in concept but lives in:
+- `meta-prompts/dark-history/narrative_techniques.md` § "Review dimensions" (English) — works for dark-history + bespoke
+- `meta-prompts/bespoke/narrative_techniques.md` § "10. Review dimensions" (English) — primary source
+- For yadam: the same E0–E3 lens applies conceptually; the subagent adapts the universal lens to yadam's `야담_서스펜스_기법.md` "궁금증과 긴장 유지 기법" framing.
 
 **Step 3: W1-Rw — engagement diagnosis (subagent)**
 
@@ -44,12 +63,13 @@ Spawn a subagent (`general-purpose`) to apply the engagement principle
 (curiosity + expectation = 몰입도; see SKILL.md 핵심 원칙) to the original
 script.
 
-The subagent reads:
-- All script part files
-- The genre's meta-prompts (`meta-prompts/{genre}/*.md`)
-- For bespoke: `_meta_supplement.md`
-- `meta-prompts/{genre}/narrative_techniques.md` § "10. Review dimensions"
-  (E0–E3 engagement criteria, C1–C10 craft criteria)
+The subagent reads (genre-conditional):
+- All script part files (per the filename table in Step 2)
+- The genre's meta-prompts:
+  - **yadam**: `야담_시놉시스_작성_지침.md`, `야담_시나리오_작성_지침.md`, `야담_서술기법_가이드.md`, `야담_서스펜스_기법.md`
+  - **dark-history / bespoke**: `synopsis_guidelines.md`, `screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md`
+- For bespoke additionally: `_story_source/_meta_supplement.md`
+- The engagement E0–E3 lens from `meta-prompts/bespoke/narrative_techniques.md` § "10. Review dimensions" (canonical source for the engagement-primary review framework). For yadam, adapt the universal lens to `야담_서스펜스_기법.md` "궁금증과 긴장 유지 기법" framing.
 
 The subagent produces `_story_source/01_improvement_diagnosis.md`:
 
@@ -147,15 +167,43 @@ Update the new STATE.md:
 Do NOT copy generated assets (audio, images) — those regenerate for changed
 scenes only. The `_story_source/` folder copy is sufficient input.
 
-**Step 6: Run wave subset**
+**Step 6: Run wave subset (scope state via `_rewrite_scope.json`, NOT a CLI flag)**
 
-Per the chosen scope, invoke `/story-execute --from W{N} --scope <scope>`:
+`/story-execute` only accepts `--from` / `--to`. To pass rewrite-mode scope information to wave subagents, write `_story_source/_rewrite_scope.json` BEFORE invoking `/story-execute`:
 
-- **Polish**: skip W1 entirely (no fact-check/research needed); skip W2 (synopsis intact); start W3 with the targeted drop-off zones
-- **Restructure**: skip W1 fact-check/research; W2 partial (regenerate synopsis for the affected act only); W3 partial (rewrite that act)
-- **Full rewrite**: skip W1 fact-check/research IF topic same; otherwise full W1; then W2/W3 from scratch
+```json
+{
+  "mode": "rewrite",
+  "scope": "polish" | "restructure" | "full" | "custom",
+  "diagnosis_ref": "_story_source/01_improvement_diagnosis.md",
+  "original_ep": "ep03_greenbrier_ghost",
+  "affected": {
+    "acts": ["II"] ,
+    "parts": ["part2", "part3"],
+    "scenes": [12, 13, 14, 17],
+    "drop_off_zones": [
+      {"part": "part2", "paragraphs": [5, 6, 7], "fix": "plant a specific question; current paragraphs answer nothing"},
+      {"part": "part3", "paragraphs": [12, 13, 14], "fix": "stoke anticipation toward ch.16 reveal"}
+    ]
+  }
+}
+```
 
-The orchestrator's wave subagents read the diagnosis (`01_improvement_diagnosis.md`) as input and apply the documented fixes.
+Then invoke `/story-execute` with the appropriate starting wave (no `--scope` flag — wave subagents detect rewrite mode by presence of `_rewrite_scope.json`):
+
+| Scope | Invocation | Wave subagent behavior |
+|-------|------------|------------------------|
+| **Polish** | `/story-execute --from W3` | W3: rewrite ONLY paragraphs in `affected.drop_off_zones`. W4–W9: process ONLY parts in `affected.parts`. W2 skipped (synopsis intact). W1 skipped. |
+| **Restructure** | `/story-execute --from W2` | W2: regenerate synopsis ONLY for `affected.acts`. W3: rewrite ONLY that act. W4–W9: process affected parts. |
+| **Full rewrite** | `/story-execute --from W2` (or `--from W1` if topic shifts) | Full waves; affected scope = "all" — `_rewrite_scope.json` lets subagents distinguish "fresh content" (use original W1 artifacts) from "fully new". |
+| **Custom** | Per user spec; `_rewrite_scope.json` lists exact paragraphs/beats. | Subagents process ONLY listed items. |
+
+**Wave subagents in rewrite mode MUST:**
+1. Check for `_story_source/_rewrite_scope.json` at start.
+2. If present, scope work to `affected.*` lists (do NOT regenerate unaffected parts).
+3. If absent, behave as a normal /story-new full wave.
+4. Read `01_improvement_diagnosis.md` for the documented fix recommendations.
+5. In their return JSON, include `rewrite_scope_applied: true` and list which `affected.*` items they touched.
 
 **Step 7: User sign-off after W3 of new content**
 

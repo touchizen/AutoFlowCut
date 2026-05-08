@@ -513,6 +513,52 @@ parallel.
 
 ---
 
+**Rewrite-mode scope file** (`_rewrite_scope.json` — used by `/story-rewrite`)
+
+When `/story-rewrite` invokes `/story-execute`, it writes `_story_source/_rewrite_scope.json` to communicate scope information that doesn't fit in `--from` / `--to` flags. Every wave subagent (W2–W9) MUST check for this file and adjust scope.
+
+**File schema:**
+```json
+{
+  "mode": "rewrite",
+  "scope": "polish" | "restructure" | "full" | "custom",
+  "diagnosis_ref": "_story_source/01_improvement_diagnosis.md",
+  "original_ep": "ep{N}_{slug}",
+  "affected": {
+    "acts": ["II"],
+    "parts": ["part2", "part3"],
+    "scenes": [12, 13, 14, 17],
+    "drop_off_zones": [
+      {"part": "part2", "paragraphs": [5, 6, 7], "fix": "<recommendation>"}
+    ]
+  }
+}
+```
+
+**Wave subagent contract — when `_rewrite_scope.json` is present:**
+
+1. Read `_rewrite_scope.json` at startup (alongside the standard inputs).
+2. Read `_story_source/01_improvement_diagnosis.md` for the documented fix recommendations.
+3. Scope work to `affected.*` lists ONLY:
+   - W2 (synopsis): regenerate synopsis ONLY for `affected.acts`. Other acts inherit from original synopsis.
+   - W3 (script): rewrite ONLY paragraphs in `affected.drop_off_zones` (polish) OR ONLY parts in `affected.parts` (restructure). Other parts inherit from original.
+   - W4 (extract): re-extract narration/dialogue/SFX ONLY for parts in `affected.parts`.
+   - W5 (TTS/SFX): regenerate TTS ONLY for new segments in `affected.parts`. Reuse original audio for unaffected parts.
+   - W6 (CSV): update scenes.csv rows for `affected.scenes` ONLY. Other rows preserved.
+   - W7 (images): re-image ONLY scenes in `affected.scenes`. Other images reused.
+   - W8 (assembly): re-import + re-export to pick up changed audio/images. Affected scope info in commit message.
+   - W9 (upload info): re-evaluate title/thumbnail ONLY if structural change (restructure / full); skip for polish.
+4. Return JSON includes `rewrite_scope_applied: true` and `affected_processed: [<list of items touched>]`.
+5. Do NOT regenerate `affected.*` items that don't match the wave (e.g., W4 ignores `affected.acts` since W4 deals with parts, not acts).
+
+**When `_rewrite_scope.json` is absent**: subagent behaves as a normal /story-new full wave (no scope filtering).
+
+**Wave subagent prompts MUST embed this instruction**:
+
+> "**Rewrite-mode scope detection:** check for `_story_source/_rewrite_scope.json` at startup. If present, this is a /story-rewrite invocation — read the file + `01_improvement_diagnosis.md`, scope your work to `affected.*` lists, and return `rewrite_scope_applied: true` + `affected_processed`. If absent, behave as a normal full-wave /story-new run."
+
+---
+
 **Subagent heartbeat protocol** (subagent self-reports DURING execution — mandatory)
 
 Wave subagents are not a black box. During execution, every wave subagent MUST
