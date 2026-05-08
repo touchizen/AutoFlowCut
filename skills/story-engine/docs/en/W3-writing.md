@@ -76,8 +76,7 @@ ep{number}/
 ├── sfx/                    ← SFX originals (per-part MMSS timecodes)
 ├── generate_tts.py         ← TTS generator (with-timestamps)
 ├── generate_srt.py         ← SRT generator (from manual subtitle split)
-├── generate_sfx.py         ← SFX generator (with timecodes)
-├── sfx_timecodes.py        ← SFX timecode mapping reference
+├── sfx_manifest.json       ← SFX manifest (built in W5-2 from SRT-anchor lookup; filenames include _MMSS)
 ├── media/                  ← Final production output
 │   ├── final_full.mp3      ← Full merged audio (setup+rising+crisis+resolution)
 │   ├── final_full.srt      ← Full merged subtitles (with offsets applied)

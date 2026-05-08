@@ -1,6 +1,6 @@
 // Helper library for W5 TTS/SFX pipeline (Node.js).
-// Used by draft_subtitles.js, generate_tts.js, build_srt.js, merge_audio.js,
-// generate_sfx.js, fix_sfx_timecodes.js, validate_sfx.js.
+// Used by draft_subtitles.cjs, generate_tts.cjs, build_srt.cjs, merge_audio.cjs,
+// generate_sfx.cjs.
 'use strict';
 
 const fs = require('fs');

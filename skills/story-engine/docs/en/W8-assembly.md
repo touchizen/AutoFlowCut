@@ -13,17 +13,19 @@ W7 was the expensive wave (Google Flow credits). W8 is the free / low-cost assem
 W5-4 could not depend on `scenes.csv` (a W6 output), so it only ran mechanic validation (collision / range / per-part offset). This step performs the scenes.csv-based scene-match validation — the natural moment is right before audio import.
 
 ```python
-# 1. Read per-scene start_time / end_time / parent_scene from scenes.csv
-# 2. Map "position" in 08_sfx_list.md (W4 SFX list) → parent_scene
-# 3. Parse timecodes (MMSS / HHMMSS) from media/sfx/ filenames
-# 4. Verify each SFX timecode falls within [scene.start_time, scene.end_time]
-# 5. On mismatch → fix_sfx_timecodes.py → re-validate → loop until pass
+# 1. Parse timecodes (MMSS / HHMMSS) from media/sfx/ filenames
+# 2. Read per-scene start_time / end_time from scenes.csv
+# 3. Verify each SFX timecode falls within some scene's [start_time, end_time]
+#    → any SFX that doesn't land in any scene = orphan SFX (fail)
+# 4. (Cross-check) Look up each anchor narration from 08_sfx_list.md in media/final_full.srt
+#    → verify the scene containing that SRT span matches the scene found via the SFX timecode
+# 5. On mismatch → fix anchor / placement / offset in 08_sfx_list.md → re-run W5-2
 ```
 
 **Validation items:**
-- SFX timecode ∈ [mapped scene's start_time, end_time] (±0.5s tolerance)
-- No SFX falls outside any scene boundary
-- Every `media/sfx/*.mp3` file is mapped to a scene (no orphan SFX)
+- Each SFX timecode ∈ some scene's [start_time, end_time] in scenes.csv (±0.5s tolerance)
+- No orphan SFX (every `media/sfx/*.mp3` falls within a scene)
+- (Cross-check) Scene found via anchor narration ↔ scene found via SFX timecode must match
 
 **STATE.md update:**
 - step: `W08_sfx_scene_match_qa`

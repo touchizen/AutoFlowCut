@@ -8,7 +8,7 @@
 |----------|------|
 | `generate_tts_elevenlabs.py` | ElevenLabs TTS (나레이션+대사, with-timestamps → mp3+SRT) |
 | `generate_tts_typecast.py` | Typecast TTS (인물별 대사, 파일명에 타임코드 자동 부여) |
-| `generate_sfx.py` | ElevenLabs Sound Generation (SFX 음향효과 생성) |
+| `generate_sfx.cjs` | ElevenLabs Sound Generation (SFX 음향효과 생성, 스킬 번들 — `skills/story-engine/scripts/`) |
 
 ---
 
@@ -28,6 +28,25 @@
 
 ### 4-3. SFX 추출
 **SFX 추출** → `08_sfx_목록.md` — 음향효과 필요 구간 목록 (영문 프롬프트 포함)
+
+**`08_sfx_목록.md` 포맷 (SRT 앵커 기반):**
+
+| # | 파트 | 파일명 | 앵커 나레이션 | 배치 | 오프셋(초) | 영문 프롬프트 | 길이(초) |
+|---|------|--------|-------------|------|-----------|-------------|---------|
+| 1 | 기 | 01_주판_구슬_튕기기 | "주판알이 튕기며" | concurrent | 0 | Wooden abacus beads clicking gently | 3 |
+| 2 | 기 | 02_문_삐걱 | "문이 열리고" | before | 0.5 | Creaking wooden door slowly opening | 2 |
+| 3 | 승 | 03_빗소리 | "빗소리가 들렸다" | concurrent | 0 | Heavy rain on tiled rooftop | 4 |
+
+**컬럼 설명:**
+- **앵커 나레이션**: W5에서 SRT를 검색할 때 쓰는 기준 텍스트
+  - 단일 SRT 엔트리 안에 **완전히 포함**되는 **짧고 고유한 문구** (3~10어절 권장)
+  - 대본에 동일/유사 표현이 반복되는 구간은 더 구별되는 문구 선택
+  - **0건 또는 2건 이상 매칭 → 즉시 에스컬레이션** (추정 배치 금지)
+- **배치**: `before` / `concurrent` / `after`
+  - `before N초`: 앵커 나레이션 SRT_start 기준 N초 **앞**에 배치 (분위기 선제 조성)
+  - `concurrent`: SRT_start와 동시 (나레이션과 같이 시작)
+  - `after N초`: 앵커 나레이션 SRT_end 기준 N초 **뒤**에 배치 (여운/강조)
+- **오프셋(초)**: `before`/`after` 시 이동량. `concurrent`는 0 고정
 
 **리뷰 (서브스텝 4-3)** — 서브에이전트 자가검토 → 이슈 목록 → 수정. 최대 5회. 0 이슈 시 다음 Wave로 즉시 진행. 5회 초과 시 사용자에게 에스컬레이션.
 

@@ -86,8 +86,7 @@ ep{번호}/                    ← yadam 기준
 ├── sfx/                     ← SFX 원본 (파트별 MMSS 타임코드)
 ├── generate_tts.py          ← TTS 생성 스크립트 (with-timestamps)
 ├── generate_srt.py          ← SRT 생성 스크립트 (수동 자막 기반)
-├── generate_sfx.py          ← SFX 생성 스크립트 (타임코드 포함)
-├── sfx_timecodes.py         ← SFX 타임코드 매핑 참조
+├── sfx_manifest.json        ← SFX manifest (W5-2에서 SRT 앵커 검색 결과로 생성, 파일명에 _MMSS 포함)
 ├── media/                   ← 최종 프로덕션 산출물
 │   ├── final_full.mp3       ← 전체 병합 오디오 (기+승+전+결)
 │   ├── final_full.srt       ← 전체 병합 자막 (오프셋 적용)
