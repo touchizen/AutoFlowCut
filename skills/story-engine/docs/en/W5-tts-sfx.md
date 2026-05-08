@@ -84,17 +84,31 @@ The choice routes 5-0 voice recommendations:
 
 **Principle:** mp3 + baseline SRT both fall out of the **automatic TTS step**. Meaning-unit splitting is an **optional refinement** the user applies on top of the baseline.
 
+> **Script path (used by every 5-1 substep):**
+>
+> Every 5-1a~f command invokes a script from the **installed skill bundle**. To work regardless of cwd, set an absolute path once and reuse:
+>
+> ```bash
+> # macOS / Linux / Windows (Git Bash)
+> SCRIPT_DIR="$HOME/.claude/skills/story-engine/scripts"
+>
+> # Windows (PowerShell)
+> # $SCRIPT_DIR = "$env:USERPROFILE\.claude\skills\story-engine\scripts"
+> ```
+>
+> All commands below take the form `node "$SCRIPT_DIR/<script>.cjs" ...`. The repo-relative path `skills/story-engine/scripts/` only works in dev mode and breaks in installed environments — do NOT use it.
+
 ### 5-1a. Narration TTS — pick a provider (ElevenLabs or Typecast)
 
 **ElevenLabs:**
 ```bash
-node skills/story-engine/scripts/generate_tts_elevenlabs.cjs \
+node "$SCRIPT_DIR/generate_tts_elevenlabs.cjs" \
   ep{N}/narration_{part}.txt  ep{N}/segments_{part}/  <narrator_voice_id>
 ```
 
 **Typecast:**
 ```bash
-node skills/story-engine/scripts/generate_tts_typecast.cjs narration \
+node "$SCRIPT_DIR/generate_tts_typecast.cjs" narration \
   ep{N}/narration_{part}.txt  ep{N}/segments_{part}/  <narrator_voice_id>
 ```
 
@@ -104,7 +118,7 @@ node skills/story-engine/scripts/generate_tts_typecast.cjs narration \
 
 ### 5-1b. Auto-draft baseline subtitles
 ```bash
-node skills/story-engine/scripts/draft_subtitles.cjs \
+node "$SCRIPT_DIR/draft_subtitles.cjs" \
   ep{N}/segments_{part}/  ep{N}/subtitles_{part}.txt
 ```
 **Outputs:** `subtitles_{part}.txt` (each subtitle ≤ 42 chars, split at sentence/clause boundaries)
@@ -112,7 +126,7 @@ node skills/story-engine/scripts/draft_subtitles.cjs \
 
 ### 5-1c. Build baseline SRT (+ timeline JSON)
 ```bash
-node skills/story-engine/scripts/build_srt.cjs \
+node "$SCRIPT_DIR/build_srt.cjs" \
   ep{N}/segments_{part}/  ep{N}/subtitles_{part}.txt  ep{N}/final_{part}.srt \
   ep{N}/timeline_{part}.json     # ← 4th arg REQUIRED (W6 input)
 ```
@@ -127,14 +141,14 @@ node skills/story-engine/scripts/build_srt.cjs \
 
 ### 5-1e. Merge segment mp3s → per-part mp3
 ```bash
-node skills/story-engine/scripts/merge_audio.cjs \
+node "$SCRIPT_DIR/merge_audio.cjs" \
   ep{N}/segments_{part}/  ep{N}/final_{part}.mp3
 ```
 **Outputs:** `final_{part}.mp3` (ffmpeg concat driven by `segments_{part}/index.json`)
 
 ### 5-1f. Per-character dialogue TTS (Typecast — only when dialogue exists)
 ```bash
-node skills/story-engine/scripts/generate_tts_typecast.cjs dialogue \
+node "$SCRIPT_DIR/generate_tts_typecast.cjs" dialogue \
   ep{N}/dialogs_{part}.json  ep{N}/voices/  ep{N}/tts_settings.md  \
   ep{N}/segments_{part}/      # ← 4th arg: segments dir from 5-1a
 ```
@@ -200,7 +214,7 @@ Look up each SFX cue's **anchor narration** (from W4's `08_sfx_list.md`) in `fin
    [{"num":1,"part":"setup","filename":"01_bell_toll_0030","prompt":"...","duration":3}]
    ```
    - `filename` already contains the in-part `_MMSS` timecode → `generate_sfx.cjs` uses it as-is
-   - `node skills/story-engine/scripts/generate_sfx.cjs manifest.json sfx/`
+   - `node "$SCRIPT_DIR/generate_sfx.cjs" manifest.json sfx/`
 
 **Unmatched anchor handling:**
 - 0 matches or 2+ matches → fix the anchor in W4's `08_sfx_list.md` to a shorter, more unique phrase, then re-run (do NOT guess a position)
