@@ -1,6 +1,8 @@
-# W8: Upload Info
+# W9: Upload Info
 
-This document is the W8 (YouTube upload info generation) stage guide for the story-engine skill — dark-history genre.
+This document is the W9 (YouTube upload info generation) stage guide for the story-engine skill — dark-history genre.
+
+(Previously W8 — renumbered when W7 was split and W8 became Assembly.)
 
 ---
 

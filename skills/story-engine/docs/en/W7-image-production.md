@@ -1,10 +1,14 @@
-# W7: Image / Video + QA + CapCut
+# W7: Image production (ref + scene + QA)
 
-This document is the W7 (image/video generation + QA + CapCut export) stage guide for the story-engine skill — dark-history genre.
+This document is the W7 (image production) stage guide for the story-engine skill — dark-history genre.
+
+W7 covers **image generation** and **image QA only**. Audio import / CapCut export / video generation are now W8 (Assembly) — these used to live in W7 but were split out for responsibility clarity.
+
+W7 is the expensive wave (Google Flow credits × 150–250 scenes). A mandatory user-signoff gate sits at the end of W7, so the user decides whether to advance to assembly after reviewing images.
 
 ---
 
-## Image / video generation
+## Image production
 
 **Run only after W6 (storyboard CSV) is complete.**
 
@@ -243,15 +247,29 @@ ALL images must be eyeballed. No sampling — 100% coverage required.
    curl http://localhost:3210/api/scenes → imagePath list
    Open images directly with the Read tool (10 at a time)
 
-2. Inspection checklist (applied to every scene):
+2. **Inspection checklist — batch QA × 2 parallel** (8 items, 4-4 grouping)
+
+   8 items in one subagent = sloppy coverage across hundreds of scenes. **Spawn 2 groups in parallel** (Visual / Content).
+
+   Each group writes to: `_story_source/07_image_review_group1.md`, `_group2.md`.
+
+   **[Group 1 — Visual accuracy] (4 items, visual realism)**
    - Missing image: no imagePath or file doesn't exist
    - Style mismatch: photorealistic image mixed in (should match chosen style)
+   - Background mismatch: interior/exterior, day/night differs from script
+   - Period mismatch: modern elements (glass windows, electric lights) leaked in
+
+   **[Group 2 — Content fidelity] (4 items, script-content match)**
    - Character clothing consistency: same character but different clothing
    - Character count mismatch: script says 2 but there are 3; should be solo but two
    - Emotion mismatch: sad scene but subject is smiling; tense scene but subject is calm
-   - Background mismatch: interior/exterior, day/night differs from script
    - Props mismatch: key props (ledger, candle, letter, etc.) missing
-   - Period mismatch: modern elements (glass windows, electric lights) leaked in
+
+   **Orchestrator spawns 2 subagents concurrently** (one message, 2 `Agent` calls):
+   - Each group writes ONLY its own review file
+   - Do NOT touch STATE.md / W_progress.json — orchestrator merges
+   - Both groups pass 0 issues → 7-2b advances → enter 7-3 user gate
+   - **Image regeneration is sequential** — handled in 7-2a separately. Parallel QA is read-only inspection only.
 
 3. Summarize problems as a table:
    | Scene | Type | Detail | Fix |
@@ -282,6 +300,35 @@ QA requires eyeballing images (Read tool to open the file). Do NOT judge from me
 Character clothing baseline comes from the script's character setup (references.csv).
 
 **Review (substep 7-2b)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 7-2c. 5 rounds exceeded → escalate to user.
+
+### 7-3. 🛑 User sign-off gate (REQUIRED before W8 assembly)
+
+After 7-0 through 7-2b pass, image production is complete. **Stop and get user confirmation here.**
+
+```
+🛑 AskUserQuestion: "Image QA complete. Proceed to assembly (W8)?"
+   - "Yes — start W8 assembly" → advance to W8
+   - "I want to redo some images" → return to 7-2a / 7-2b (regen + re-QA)
+   - "Pause for me to review manually" → pause pipeline, resume via /story-next
+```
+
+**Why this gate exists:**
+- Image generation is the expensive wave (Google Flow credits). W8 (assembly) is free. The cost gap maps to a wave boundary.
+- If images are not satisfactory, fix them BEFORE assembly, not after.
+- A natural break-point where the user inspects work and decides.
+
+After the gate passes, hand off to W8 (`docs/{lang}/W8-assembly.md`).
+
+**Review (substep 7-3)** — no separate review loop; the user sign-off IS the review.
+
+---
+
+## Wave review summary
+Substeps 7-0 through 7-2b enforce max-5-round review (auto-advance on 0 issues). When the last substep (7-2b image QA, batch × 2 parallel) passes, control enters 7-3 (user gate). User approval completes Wave 7 and hands off to W8.
+
+<!-- Old 7-2c (audio import), 7-2d (CapCut export), 7-3 (video) moved to W8-assembly.md.
+
+ARCHIVED CONTENT (kept for reference; do not execute from W7):
 
 ### 7-2c. Audio import (narration + SFX)
 
@@ -413,5 +460,5 @@ If editing directly in CapCut, this step can be skipped.
 
 ---
 
-## Wave review summary
-Each substep above enforces max-5-round review with auto-advance on 0 issues. Wave 7 completes when the last substep's review passes. Escalate to user if any substep exceeds 5 rounds.
+END ARCHIVED — see W8-assembly.md for active versions of these substeps -->
+

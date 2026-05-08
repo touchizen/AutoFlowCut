@@ -69,8 +69,11 @@ For each wave from current to target:
 │   - Print AFTER verification + sanity-check pass
 │
 ├─ Special gate check:
-│   - After W3: 🛑 AskUserQuestion "대본을 확정하시겠습니까?"
-│   - User must confirm before W4
+│   - After W3: 🛑 AskUserQuestion "대본을 확정하시겠습니까? / Confirm script?"
+│     User must confirm before W4.
+│   - After W7: 🛑 AskUserQuestion "이미지 검수 끝났어요. 어셈블리(W8)로 진행할까요? / Image QA complete. Proceed to assembly (W8)?"
+│     User must confirm before W8 (W7 image gen burns Google Flow credits;
+│     W8 assembly is free, but the user may want to redo images first).
 │
 └─ Next wave
 ```
@@ -94,8 +97,9 @@ not reword. Pick the language block that matches the genre (yadam=ko, dark-histo
 | W4   | 프로덕션 (나레이션/대사/SFX 추출)             | Production (narration/dialogue/SFX)         |
 | W5   | TTS + SFX + SRT 자막                          | TTS + SFX + SRT subtitles                   |
 | W6   | 스토리보드 CSV                                | Storyboard CSV                              |
-| W7   | 이미지 생성 + CapCut 내보내기                 | Image generation + CapCut export            |
-| W8   | 업로드 정보 (제목/설명/태그)                   | Upload info (title/description/tags)        |
+| W7   | 이미지 프로덕션 (ref + 씬 + QA)              | Image production (ref + scene + QA)         |
+| W8   | 어셈블리 (오디오 임포트 + CapCut + 영상)     | Assembly (audio import + CapCut + video)    |
+| W9   | 업로드 정보 (제목/설명/태그)                   | Upload info (title/description/tags)        |
 
 **Wave I/O contract** (canonical inputs/outputs per wave — banner auto-fills from this)
 
@@ -118,9 +122,10 @@ Notation:
 | W3   | `04_시놉시스.md`, `05_프리플라이트.md`, `02_팩트체크.md`                                            | `{title}_기.md`, `{title}_승.md`, `{title}_전.md`, `{title}_결.md`, `07_검토.md`                              |
 | W4   | `{title}_기.md`, `{title}_승.md`, `{title}_전.md`, `{title}_결.md`                                 | `narration_{part}.txt`, `dialogs_{part}.json`, `08_sfx_목록.md`                                              |
 | W5   | `narration_{part}.txt`, `dialogs_{part}.json`, `08_sfx_목록.md`, `tts_settings.md`                  | `segments/`, `final_{part}.mp3`, `final_{part}.srt`, `media/`, `tts_settings.md` (updated)                   |
-| W6   | `final_{part}.srt`, `narration_{part}.txt`, `{title}_*.md` (script), `08_sfx_목록.md`              | `references.csv`, `{title}_scenes.csv`                                                                       |
-| W7   | `references.csv`, `{title}_scenes.csv`, `final_{part}.mp3`, `final_{part}.srt`                     | AutoFlowCut images (in workspace), CapCut project (`{title}` draft folder)                                   |
-| W8   | `04_시놉시스.md`, `{title}_*.md` (script), `{title}_scenes.csv`                                   | `11_업로드정보.json`                                                                                          |
+| W6   | `final_{part}.srt`, `narration_{part}.txt`, `{title}_*.md` (script), `08_sfx_목록.md`              | `references.csv`, `{title}_scenes.csv`, `06_review_group{A,B,C}.md` (batch QA)                                |
+| W7   | `references.csv`, `{title}_scenes.csv` (read-only — for ref/scene prompts)                         | AutoFlowCut images (refs + scenes in workspace), `07_image_review_group{A,B}.md` (batch QA)                  |
+| W8   | `references.csv`, `{title}_scenes.csv`, `final_{part}.mp3`, `final_{part}.srt`, `media/sfx/`, AutoFlowCut images (from W7) | CapCut project (`{title}` draft folder), `08_sfx_scene_match_qa.md`, optional video clips         |
+| W9   | `04_시놉시스.md`, `{title}_*.md` (script), `{title}_scenes.csv`                                   | `11_업로드정보.json`                                                                                          |
 
 Fallback: if a wave reference doc (`docs/{lang}/W{N}-*.md`) lists additional or
 different files, the wave doc takes precedence — log a warning and use the doc's
@@ -217,9 +222,10 @@ follow this granularity; wave docs may add finer breakdowns but never remove the
 | W3   | W3-0 read-inputs, W3-1..4 part-write × 4, W3-5 self-review, W3-6 external-review, W3-7 polish     |
 | W4   | W4-0 read-inputs, W4-1..4 narration-extract × 4, W4-5 dialogue-extract, W4-6 SFX-list, W4-7 audit |
 | W5   | W5-0 voice-pick, W5-1 TTS (narration + dialogue + SRT), W5-2 SFX (batched), W5-3 merge, W5-4 mechanic-QA |
-| W6   | W6-1 references-CSV (character + scene only), W6-2 scenes-CSV, W6-3 review (gap/coverage/duration) |
-| W7   | W7-0 project-setup, W7-1 ref-batch (incl. style-pick + type:style row), W7-2 scene-batch, W7-2a error-fix, W7-2b image-QA, W7-2c audio-import (incl. SFX scene-match), W7-2d CapCut-export, W7-3 video (optional) |
-| W8   | W8-0 title-desc-tags, W8-1 thumbnail-text                                                          |
+| W6   | W6-1 references-CSV (character + scene only), W6-2 scenes-CSV, W6-3a/b/c **batch QA × 3 parallel** (Completeness / Reference integrity / Timing structure) |
+| W7   | W7-0 project-setup, W7-1 ref-batch (incl. style-pick + type:style row), W7-2 scene-batch, W7-2a error-fix, W7-2b-1/2 **image-QA batch × 2 parallel** (Visual / Content) → 🛑 user sign-off |
+| W8   | W8-0 SFX scene-match QA (moved from old W7 7-2c), W8-1 audio-import, W8-2 CapCut-export, W8-3 video (optional, requires user confirm) |
+| W9   | W9-0 title-desc-tags, W9-1 thumbnail-text                                                          |
 
 **For each sub-step the orchestrator MUST:**
 1. ▸ START line BEFORE the work begins: `▸ Starting W{N}-{S} <name>…` (one line, plain text)
@@ -419,6 +425,77 @@ Every Wave subagent MUST, as its final action before returning:
 4. **Return report** (the completion signal that closes the subagent) MUST include the numeric fields `review_rounds_used` and `issues_found` so the orchestrator can verify without re-reading the JSON.
 
 If the subagent exits without satisfying items 1–4, the orchestrator treats the wave as incomplete and retries.
+
+---
+
+**Batch QA execution protocol** (orchestrator runs N parallel subagents for grouped checklists)
+
+When a wave doc marks a section as `batch QA × N parallel`, the orchestrator
+spawns N `Agent` subagents in a single message (concurrent execution). The
+SKILL.md "Batch QA discipline" section defines the policy; this section
+defines the orchestrator's execution.
+
+### When to use batch QA
+
+A wave doc enables batch QA when its review section has > 5 check items grouped
+into N labeled groups (typically `[Group A]`, `[Group B]`, ...). Examples:
+- W6 6-3: 10 items → 3 groups (Completeness / Reference integrity / Timing structure)
+- W7 7-2b: 8 items → 2 groups (Visual / Content)
+
+### Spawn pattern (one message, multiple Agent calls)
+
+```
+<single orchestrator message>
+  Agent({ description: "W6-3 Group A QA", subagent_type: "general-purpose", prompt: <focused brief A> })
+  Agent({ description: "W6-3 Group B QA", subagent_type: "general-purpose", prompt: <focused brief B> })
+  Agent({ description: "W6-3 Group C QA", subagent_type: "general-purpose", prompt: <focused brief C> })
+</single message — all 3 run concurrently>
+```
+
+The orchestrator MUST emit one `▸ Spawning batch QA: 3 subagents in parallel
+(Group A/B/C)…` line before, and one `✅ Batch QA returned: A=<X>m, B=<X>m,
+C=<X>m, total wall-clock <X>m` line after.
+
+### Per-group focused brief (mandatory contents)
+
+Every batch-QA subagent prompt MUST include:
+
+1. **Group label and item list** — only that group's items, nothing else.
+2. **Read-only inputs** — paths to CSVs / scripts / SRTs the group needs.
+3. **Exclusive output path** — `_story_source/{wave}_review_group{X}.md` (do
+   NOT share output files between groups).
+4. **Heartbeat prefix** — explicit instruction: "Every `_progress.log` line
+   you write MUST start with `[Group {X}]`."
+5. **Shared-state prohibition** — explicit: "Do NOT touch `STATE.md` or
+   `W_progress.json`. The orchestrator will merge after all groups return."
+6. **Audit obligations** — same as any subagent: `disk_changes`,
+   `bash_commands`, `external_api_calls` in the return JSON.
+
+### Orchestrator post-batch merge (mandatory)
+
+After all N groups return:
+
+1. Verify each group's `disk_changes` against actual mtime-newer files.
+2. Read all `{wave}_review_group{X}.md` files → consolidate into one summary.
+3. Total issue count = sum across groups.
+4. Update `STATE.md` (single writer) and `W_progress.json` (single writer).
+5. If ANY group exceeded its 5-round cap → escalate (the whole wave fails).
+6. If 0 unresolved issues across all groups → wave passes.
+
+### Concurrency cap
+
+- Recommended N parallel: **3** (sweet spot for token cost vs wall-clock gain).
+- Maximum useful N: **5** (beyond 5, throughput plateaus; cost scales N×).
+- Rule of thumb: if a wave needs > 5 groups, the wave's QA is itself bloated —
+  rethink the wave structure, do not just add more parallelism.
+
+### Sequential fallback rule
+
+If any group must call an external API that has rate limits or app-state
+mutation (TTS, image gen via AutoFlowCut/Google Flow, audio import IPC), that
+group runs sequentially OR the API work is extracted out of QA. Read-only QA
+groups (CSV/script/SRT inspection, image file inspection via Read tool) stay
+parallel.
 
 ---
 

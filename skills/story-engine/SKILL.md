@@ -5,17 +5,17 @@ description: "YouTube story channel script writing skill with 8-wave automated p
 
 # Story Engine v2
 
-8-Wave 자동 파이프라인으로 YouTube 스토리 채널 대본을 작성하고, TTS/SFX 생성, 이미지 생성, CapCut 내보내기까지 자동화한다.
+9-Wave 자동 파이프라인으로 YouTube 스토리 채널 대본을 작성하고, TTS/SFX 생성, 이미지 생성, 어셈블리(오디오 임포트/CapCut), 업로드 정보까지 자동화한다.
 
 ## 스킬 구조
 
 | 스킬 | 역할 | 트리거 |
 |------|------|--------|
 | `/story-new` | 에피소드 초기화 + 주제 논의 | "새 에피소드", "start ep5" |
-| `/story-execute` | W1~W8 자동 파이프라인 | "파이프라인 실행", "execute" |
+| `/story-execute` | W1~W9 자동 파이프라인 | "파이프라인 실행", "execute" |
 | `/story-next` | 중단 후 재개 | "이어서 해줘", "continue" |
 
-## 8-Wave 파이프라인
+## 9-Wave 파이프라인
 
 | Wave | 내용 | 리뷰 |
 |------|------|------|
@@ -24,10 +24,12 @@ description: "YouTube story channel script writing skill with 8-wave automated p
 | **W3** | 대본 작성 + 검토 | 최대 5회 (목표 9.5점) |
 | | 🛑 **사용자 확인** | |
 | **W4** | 프로덕션 추출 + 검증 | 최대 5회 |
-| **W5** | TTS/SFX + 타임코드 검증 | 리뷰 |
-| **W6** | 스토리보드 CSV + 검토 | 최대 5회 |
-| **W7** | 이미지/영상 + QA + CapCut | 최대 5회 |
-| **W8** | 업로드 정보 | — |
+| **W5** | TTS/SFX + mechanic 타임코드 검증 | 리뷰 |
+| **W6** | 스토리보드 CSV + 검토 (batch QA, 3그룹 병렬) | 최대 5회 |
+| **W7** | 이미지 프로덕션 (ref + 씬 + 에러 fix + image QA, batch QA) | 최대 5회 |
+| | 🛑 **사용자 확인** | |
+| **W8** | 어셈블리 (SFX 씬 매칭 + 오디오 임포트 + CapCut export + 영상 선택) | 최대 5회 |
+| **W9** | 업로드 정보 (제목/설명/태그/썸네일) | — |
 
 ## 장르
 
@@ -44,11 +46,35 @@ description: "YouTube story channel script writing skill with 8-wave automated p
 - 5 rounds exceeded → escalate to user.
 - W1 (research) and W8 (upload info) are exceptions with no review loop.
 
-## 리뷰 원칙 (W2–W7)
+## 리뷰 원칙 (W2–W8)
 - 모든 서브스텝은 리뷰 루프를 실행한다: 서브에이전트 자가검토 → 이슈 목록 → 수정.
 - 최대 5회. 0 이슈 시 즉시 진행.
 - 5회 초과 시 사용자에게 에스컬레이션.
-- W1(리서치)과 W8(업로드 정보)은 리뷰 루프 없는 예외 단계이다.
+- W1(리서치)과 W9(업로드 정보)은 리뷰 루프 없는 예외 단계이다.
+
+## Batch QA discipline (parallel subagent reviewers, checklist > 5 items)
+
+When a review checklist exceeds 5 items, a single subagent skims rather than audits. Split into focused groups and spawn ONE subagent per group, in parallel.
+
+- **Group size**: 3–4 items per group (target 3, max 4). Lightweight automated checks (scripts) may group up to 4.
+- **Parallelism**: spawn all groups in a single message with multiple `Agent` tool uses → concurrent execution.
+- **Recommended concurrency**: 3 (sweet spot). Max useful: 5. Beyond 5 = diminishing returns; token cost still scales N×.
+- **Each subagent receives**: only its group's items + the read-only inputs it needs + an exclusive output file path (e.g., `{wave}_review_group{X}.md`).
+- **Subagent prohibitions during batch**: do NOT touch `STATE.md`, `W_progress.json`, or any other shared state. The orchestrator merges all group results AFTER every subagent returns.
+- **Heartbeat prefix**: every `_progress.log` line written by a batch subagent MUST be prefixed with `[Group {X}]` to allow interleaved-line forwarding without ambiguity.
+- **Sequential fallback**: if a group must call external APIs (TTS, image gen, app-state mutation), run that group sequentially or extract the API work out of QA. Read-only QA stays parallel.
+
+## Batch QA 원칙 (병렬 서브에이전트 리뷰어, 체크리스트 > 5 항목)
+
+체크리스트가 5개를 넘기면 한 서브에이전트는 형식적 통과만 함. focused 그룹으로 쪼개서 그룹마다 별도 서브에이전트를 **병렬로** 호출한다.
+
+- **그룹 크기**: 3~4 항목 (목표 3, 최대 4). 자동 스크립트로 실행되는 가벼운 항목은 4개까지 묶어도 됨.
+- **병렬성**: 한 메시지에 여러 `Agent` 호출을 동시에 보내면 동시 실행됨.
+- **권장 동시 N**: 3 (sweet spot). 최대 유용 N: 5. 5 넘으면 한계 효용 빠르게 감소, 토큰 비용은 N배 그대로.
+- **각 서브에이전트가 받는 것**: 자기 그룹 항목만 + 필요한 read-only 입력만 + 전용 출력 파일 경로 (`{wave}_review_group{X}.md`).
+- **batch 중 서브에이전트 금지**: `STATE.md`, `W_progress.json`, 기타 공유 상태 절대 안 건드림. 오케스트레이터가 모든 그룹 반환 후 1회 합산 update.
+- **하트비트 prefix**: batch 서브에이전트가 `_progress.log`에 쓰는 모든 라인은 `[Group {X}]` prefix 필수 (interleaved 라인 forwarding 시 모호성 제거).
+- **Sequential 폴백**: 외부 API 호출 (TTS, 이미지 생성, 앱 상태 변경) 필요한 그룹은 sequential로. read-only QA만 병렬 유지.
 
 ## Progress reporting discipline (orchestrator — wave AND sub-step level)
 
@@ -176,8 +202,9 @@ Rules: command strings only (no env values, no credentials, no body content); UR
 | W4 | `docs/{lang}/W4-production.md` |
 | W5 | `docs/{lang}/W5-tts-sfx.md` |
 | W6 | `docs/{lang}/W6-storyboard.md` |
-| W7 | `docs/{lang}/W7-image-upload.md` |
-| W8 | `docs/{lang}/W8-upload-info.md` |
+| W7 | `docs/{lang}/W7-image-production.md` (이미지 프로덕션 — ref + 씬 + QA) |
+| W8 | `docs/{lang}/W8-assembly.md` (어셈블리 — SFX 씬 매칭 + 오디오 임포트 + CapCut export + 영상) |
+| W9 | `docs/{lang}/W9-upload-info.md` (업로드 정보) |
 
 ## AutoFlowCut MCP 도구
 

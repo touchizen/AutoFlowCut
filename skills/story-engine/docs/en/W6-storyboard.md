@@ -143,17 +143,33 @@ The subagent **reads the generated references.csv and scenes.csv directly with t
 4. Is period detail accurate (clothing, architecture, props)?
 5. Are required keywords (`solo, single person`, `no modern clothing`, `no modern elements`) included?
 
-**scenes.csv review criteria:**
+**scenes.csv review — batch QA × 3 parallel** (10 items, 3-3-4 grouping)
+
+A single subagent given 10 items will skim and check off rather than truly audit. Split into 3 focused groups and **spawn in parallel** (see SKILL.md "Batch QA discipline").
+
+Each group writes to a unique review file: `_story_source/06_review_groupA.md`, `_groupB.md`, `_groupC.md`.
+
+**[Group A — Completeness] (3 items, read-only: script / SRT / scenes.csv)**
 1. Are ALL scenes in the script included? (no misses)
 2. Does each `subtitle` match the SRT / script?
-3. Do `start_time`/`end_time` match the timeline JSON?
 4. Do `characters` match the actual characters in that scene?
+
+**[Group B — Reference integrity] (3 items, read-only: scenes.csv / references.csv / timeline JSON)**
+3. Do `start_time`/`end_time` match the timeline JSON?
 5. Does `scene_tag` exactly match a place name in references.csv?
-6. Does no scene exceed 15 seconds?
 7. Does the English prompt accurately describe the scene's mood and action?
+
+**[Group C — Timing structure] (4 items, automated scripts — lightweight)**
+6. Does no scene exceed 15 seconds?
 8. **Gap check**: Is scene N's `end_time` == scene N+1's `start_time`? A gap > 0.5 s is an error.
 9. **Coverage check**: First scene `start_time`=0, last scene `end_time`=total audio duration (`ffprobe`)?
-10. **Duration sum check**: Sum of all scene durations == total audio duration? (if there are gaps, sum < audio length)
+10. **Duration sum check**: Sum of all scene durations == total audio duration?
+
+**Orchestrator spawns 3 subagents concurrently** (one message, 3 `Agent` calls):
+- Each group writes ONLY its own review file (06_review_group{A,B,C}.md)
+- Do NOT touch STATE.md / W_progress.json — orchestrator merges after all return
+- All groups must pass 0 issues → 6-3 advances
+- Any group exceeds 5 rounds → entire wave escalates
 
 **Required validation immediately after scene CSV creation (auto-run):**
 
