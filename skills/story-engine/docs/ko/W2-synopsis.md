@@ -19,7 +19,7 @@
 
 > SKILL.md 핵심 원칙: **궁금증 + 기대감 = 몰입도. 모든 wave의 최상위 평가 기준.**
 
-W2 시놉시스는 다음 질문에 답해야 한다 (preflight Section 0 참조):
+W2 시놉시스는 다음 질문에 답해야 한다 (이 4개는 genre-agnostic 보편 기준 — `SKILL.md` 핵심 원칙에서 도출. bespoke 장르는 `meta-prompts/bespoke/preflight.md` § "★ Section 0 — Engagement (PRIMARY)"에 동일 기준이 5개 항목으로 expanded되어 있음. yadam / dark-history는 별도 Section 0 없이 본 lens 4개를 직접 적용):
 
 - **매 챕터가 궁금증 유지 OR 기대감 누적 둘 중 하나에 기여하는가?** 둘 다 안 하는 챕터 = 구조 dead weight, cut or merge.
 - **궁금증 / 기대감 둘 다 ch.15까지 살아있는가?** 한쪽만 작동하면 시청자 이탈.

@@ -19,7 +19,7 @@ This document is the W2 (synopsis writing + preflight check) stage guide for the
 
 > `SKILL.md` 핵심 원칙: **Curiosity + Expectation = Engagement. The top-level evaluation criterion across every wave.**
 
-The W2 synopsis must answer (see preflight Section 0):
+The W2 synopsis must answer the following four questions (genre-agnostic universal criteria, derived from `SKILL.md` 핵심 원칙. **Bespoke** has the same criteria expanded into 5 explicit items in `meta-prompts/bespoke/preflight.md` § "★ Section 0 — Engagement (PRIMARY)". **yadam** and **dark-history** do NOT have a separate Section 0 — they apply these 4 lens questions directly during W2 review):
 
 - **Does every chapter contribute to curiosity OR expectation?** Chapters that do neither = structural dead weight; cut or merge.
 - **Are BOTH engines alive through ch.15?** If only one drives Acts I–II, the audience disengages — curiosity-only collapses on reveal; expectation-only is predictable.

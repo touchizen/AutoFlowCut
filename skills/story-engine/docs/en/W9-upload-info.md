@@ -6,6 +6,26 @@ This document is the W9 (YouTube upload info generation) stage guide for the sto
 
 ---
 
+## ★ W9 primary review lens — Curiosity/Expectation promise
+
+> `SKILL.md` 핵심 원칙: **Curiosity + Expectation = Engagement. The top-level evaluation criterion across every wave.**
+
+W9 is the wave that **makes a promise to the viewer**. Title / thumbnail / description / first 30 seconds must all throw the same promise consistently — only then does the click convert into retention.
+
+### W9 review (4 mandatory items)
+
+**P1. Does the title plant a specific curiosity promise?** — Is the implicit "this video will answer ___" promise concrete? Generic copy ("A medieval mystery") promises nothing. A concrete fact + mystery hint ("In 1692, Every Child in Hartford Parish Had the Same Nightmare. One Week Later, They Were All Gone.") IS a promise.
+
+**P2. Does the thumbnail text reinforce the title or open a complementary angle?** — Repeating the title verbatim wastes the thumbnail. The thumbnail should carry an emotion / visual promise the title can't.
+
+**P3. Does the first 30 seconds deliver on the promise?** — The curiosity the title planted MUST be activated explicitly inside the first 30 seconds (the relevant cold open begins; the relevant question is named). Promise / first-30s mismatch = immediate exit.
+
+**P4. No bait** — If the title/thumbnail makes a stronger promise than the video delivers (a reveal in the thumbnail that doesn't appear; "shocking ending" promised, conventional ending delivered) → trust destroyed + channel-level retention curve broken. **YouTube's algorithm rewards bait short-term but tanks the channel long-term.** Reject.
+
+→ After W9 output, run a self-check on these 4 items and recommend a user confirmation.
+
+---
+
 ## YouTube upload info
 
 ### Title writing formula
