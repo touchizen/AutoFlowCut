@@ -137,20 +137,37 @@ Works especially well for true-crime / history. Less natural for fiction.
 
 ## 10. Review dimensions (W3 self-review + external review)
 
-For W3 review, score the script on:
+The primary review lens is **Engagement (curiosity + expectation = engagement)**. The W3 reviewer reads the script as a viewer would — paragraph by paragraph — and asks: "does this make me want to keep reading?"
 
-A. **Hook strength** — does the first 60s earn the next 9 minutes?
-B. **Reveal landing** — does ch.16 feel inevitable AND surprising?
-C. **Ambiguity / emotional core preserved** — is the central emotional or thematic question still alive at the final frame?
-D. **Period / setting voice** — vocabulary accuracy, anachronism count
-E. **Tension oscillation** — does it pulse?
-F. **Pacing across acts** — does each act earn its word budget?
-G. **Foreshadow setup → payoff** — all seeds traceable in prose?
-H. **Word-budget compliance** — within the band agreed in the synopsis
-I. **Voice integrity** — does the narrator (and any character with direct dialogue) maintain register?
-J. **Adherence to the per-episode supplement** — does the script follow the supplement's tone, vocabulary, and avoid list?
+### Engagement (primary — overrides craft on conflict)
 
-Average ≥ 9.5 = pass. Below 9.5 = revise.
+**E0. Curiosity maintenance** — does each scene/paragraph keep the audience asking "what happens next?" or "what does this mean?" If 3+ consecutive paragraphs answer no question and pose no new one, that's a drop-off zone.
+
+**E1. Expectation accumulation** — does each scene plant or stoke a specific anticipation that earns a later payoff? Vague atmospheric build-up that pays nothing later = wasted space.
+
+**E2. Engagement curve match** — does the prose-level pacing track the synopsis's chapter-by-chapter engagement curve? Local peaks land where the synopsis says they should.
+
+**E3. No drop-off zones** — list explicitly: any beat (paragraph, sentence, dialogue exchange) where a viewer would mentally check out. These get prose-level rewrites, not editorial trims.
+
+### Craft dimensions (subordinate — pass these without engagement passing = still revise)
+
+C1. **Hook strength** — does the first 60s earn the next 9 minutes?
+C2. **Reveal landing** — does ch.16 feel inevitable AND surprising?
+C3. **Ambiguity / emotional core preserved** — is the central thematic question still alive at the final frame?
+C4. **Period / setting voice** — vocabulary accuracy, anachronism count
+C5. **Tension oscillation** — does it pulse rather than rise monotonically?
+C6. **Pacing across acts** — does each act earn its word budget?
+C7. **Foreshadow setup → payoff** — all seeds traceable in prose?
+C8. **Word-budget compliance** — within the band agreed in the synopsis
+C9. **Voice integrity** — does the narrator (and any character with direct dialogue) maintain register?
+C10. **Adherence to the per-episode supplement** — does the script follow the supplement's tone, vocabulary, and avoid list?
+
+### Pass criteria
+
+- Engagement (E0–E3): **all four MUST pass**. Even one failure = revise (drop-off zones get rewritten).
+- Craft (C1–C10): average ≥ 9.5 = pass; below 9.5 = revise.
+
+If craft scores high but engagement fails: still revise. Craft never compensates for engagement collapse.
 
 ---
 

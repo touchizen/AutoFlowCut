@@ -14,6 +14,22 @@ This document is the W3 (script writing + review) stage guide for the story-engi
 
 ---
 
+## ★ Primary review lens — Viewer retention
+
+> `SKILL.md` 핵심 원칙: **Curiosity + Expectation = Engagement. The top-level evaluation criterion.**
+
+W3 review evaluates not "is this interesting?" but **"does this make the viewer keep watching paragraph by paragraph?"** (Detailed review dimensions live in `meta-prompts/{genre}/narrative_techniques.md` § Review dimensions — E0–E3 (engagement) is primary; C1–C10 (craft) is subordinate.)
+
+Engagement primary (4 items, E0–E3):
+- **E0. Curiosity maintenance** — does each paragraph keep the audience asking "what next?" / "what does this mean?" If 3+ paragraphs answer no question and pose no new one, that's a drop-off zone.
+- **E1. Expectation accumulation** — does each paragraph plant or stoke a specific anticipation? Atmospheric build-up without later payoff = wasted space.
+- **E2. Engagement curve match** — does paragraph-level pacing track the synopsis's chapter curve?
+- **E3. No drop-off zones** — explicitly list any beat where a viewer would mentally check out → these get prose rewrites, not editorial trims.
+
+Craft score ≥ 9.5 with even one E-failure = revise. Craft never compensates for engagement collapse.
+
+---
+
 ## Script writing
 
 **You MUST read `screenplay_guidelines.md`, `narrative_technique.md`, and `suspense_technique.md` before starting.**

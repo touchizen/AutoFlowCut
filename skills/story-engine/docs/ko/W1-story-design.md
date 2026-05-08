@@ -144,7 +144,17 @@ WebSearch로 주제 관련 자료를 수집한다. (자동 실행)
 
 **W1-0. References 로드**
 - `_references/` 폴더에 사용자 제공 자료 저장 (URL은 `WebFetch`로 transcript 추출, 추출 실패 시 사용자에게 transcript 직접 요청)
-- 메타데이터: 출처 / 길이 / 사용자 라벨
+- **메타데이터** (`_references/index.json`):
+  - `id`, `source` (URL 또는 "pasted"), `transcript_file`
+  - `views`, `published_at`, `channel_size` (구독자 수), `view_subscriber_ratio`
+  - `title`, `thumbnail_text` (썸네일 텍스트, 알면)
+  - `length_words`, `length_minutes`
+  - `user_label` (선택: tone-match, structure-match, topic-adjacent, audience-match)
+- **Reference 선정 기준** — "고조회수"는 proxy일 뿐. 진짜 평가 기준은 **그 영상이 시청자 궁금증/기대감을 잘 유지했는가** (SKILL.md 핵심 원칙 참조). 다음 중 하나 이상 만족 시 채택:
+  - 시청자 댓글에 "끝까지 보게 됨", "몰입했다" 같은 retention 신호
+  - 채널 크기 대비 viral 지표 (view/subscriber ratio ≥ 5)
+  - 절대 조회수 100K+ (반드시 retention 신호 동반)
+  → 절대 조회수 낮아도 retention 강한 영상 OK; 조회수 높지만 thumbnail bait 영상은 거부 (메커니즘이 약해서 학습할 가치 적음)
 
 **W1-1. Per-reference 성공요인 분석**
 - 각 reference를 [리라이팅] 경로의 분석 항목으로 점검 (훅, 스토리 구조, 감정 설계, 궁금증 유지, 캐릭터, 언어 스타일, 클로징)
@@ -156,13 +166,21 @@ WebSearch로 주제 관련 자료를 수집한다. (자동 실행)
 **W1-3. 주제 자료수집** (= [신규] 2번)
 - **출력**: `03_research.md`
 
-**W1-4. Cross-script 성공패턴 합성**
-- W1-1의 분석들을 묶어 추출:
-  - **공통점** — 모든 reference에서 반복된 패턴 (핵심 성공 공식)
-  - **차별점** — reference별 고유한 강점 (영감 풀)
-  - **트로프** — 장르 관습
-  - **피해야 할 것** — reference에서 안 통했거나 사용자 라벨이 제외한 요소
-- **출력**: `04_success_synthesis.md`
+**W1-4. Cross-script 몰입도 메커니즘 합성**
+
+W1-1의 분석들을 **몰입도 4 면**으로 분해 (SKILL.md 핵심 원칙: 궁금증 + 기대감 = 몰입도):
+
+1. **궁금증 발생 메커니즘** — reference들이 어떻게 시청자에게 "what happened?" / "what does this mean?" 질문을 던지는가 (정보 withholding 패턴, hook 구조, 미스터리 setup, 첫 60초 promise)
+2. **기대감 누적 메커니즘** — reference들이 어떻게 시청자에게 "this is going to pay off" 신호를 누적하는가 (떡밥 cadence, 미니 cliffhanger, escalation 패턴, payoff 약속)
+3. **궁금증 ↔ 기대감 인터플레이** — 두 엔진이 어떻게 서로를 보완 / 교대 / 증폭하는가 (한 reveal이 새 미스터리를 여는 패턴, 한 미스터리가 새 expectation을 stoke하는 패턴)
+4. **몰입도 곡선** — 시간 대비 몰입도 변화 (cold open peak, 중반 dip 방지, ch.16 climax, 결말 held quiet) — reference별 곡선 비교 + 공통 패턴 추출
+
+**보조 추출 (4 면을 받쳐주는):**
+- **공통 트로프** — 장르 관습 (위 4면을 어떻게 표현하는가의 visible 패턴)
+- **차별점** — reference별 unique 무브 (영감 풀, 이 에피소드에 적용 가능한 구체 callout)
+- **피해야 할 것** — reference 중 retention이 약해진 부분 (있다면) 또는 사용자 라벨이 제외한 요소
+
+**출력**: `04_success_synthesis.md` (4 메커니즘 섹션 + 보조 3개)
 
 **W1-5. 메타프롬프트 시너시스**
 - W1-3 (research) + W1-4 (cross-synthesis) → `_meta_supplement.md` 작성

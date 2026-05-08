@@ -1,5 +1,17 @@
 # Suspense Techniques — Dark History Scripts
 
+## Engagement principle (universal — applies to every technique below)
+
+> **Curiosity + Expectation = Engagement.** Engagement is the top-level success metric for every script in this skill (see `SKILL.md` 핵심 원칙).
+
+Curiosity ("what happened?" / "what does this mean?") drives the click. Expectation ("when will the payoff land?" / "this is going to matter") drives the watch-through. Both must be alive and oscillating through the entire script — never just one. Views, CTR, retention, subscriber growth are all downstream proxies of this single mechanism.
+
+The techniques in this catalog are TOOLS for maintaining curiosity + expectation. Every choice you make in the script should answer: "is this raising curiosity or expectation, or paying one off in a way that opens the next?"
+
+If a beat does neither — cut or rewrite. The audience does not give a script the benefit of the doubt; engagement is constant work.
+
+---
+
 ## Core Suspense Principles
 
 ### Alfred Hitchcock's Bomb Theory

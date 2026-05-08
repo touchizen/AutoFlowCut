@@ -145,7 +145,17 @@ When the user provides a reference (URL, transcript, video), analyze it.
 
 **W1-0. Load references**
 - Save user-provided material under `_references/` (URLs → fetch transcript via `WebFetch`; if extraction fails, ask user for transcript)
-- Metadata: source / length / user label
+- **Metadata** (`_references/index.json`):
+  - `id`, `source` (URL or "pasted"), `transcript_file`
+  - `views`, `published_at`, `channel_size` (subscriber count), `view_subscriber_ratio`
+  - `title`, `thumbnail_text` (text overlay on the thumbnail, if known)
+  - `length_words`, `length_minutes`
+  - `user_label` (optional: tone-match, structure-match, topic-adjacent, audience-match)
+- **Reference selection criterion** — "high view count" is a proxy only. The real selection bar is **whether the video successfully maintained viewer curiosity + expectation** (the engagement principle — see `SKILL.md` 핵심 원칙). Pick references that satisfy at least one:
+  - Comment-section retention signals ("watched all the way through", "couldn't stop watching")
+  - Channel-size-relative viral indicator (view/subscriber ratio ≥ 5)
+  - Absolute views ≥ 100K (must be paired with retention signals — high-view bait videos do NOT qualify)
+  → A low-view video with strong engagement is preferred over a high-view bait video. The point is to learn the mechanism, not the headline metric.
 
 **W1-1. Per-reference success-factor analysis**
 - Apply the [Rewrite] analysis items to each reference (hook, story structure, emotional design, curiosity, characters, language style, closing)
@@ -157,13 +167,21 @@ When the user provides a reference (URL, transcript, video), analyze it.
 **W1-3. Topic research** (same as [New] §2)
 - **Output**: `03_research.md`
 
-**W1-4. Cross-script success-pattern synthesis**
-- Aggregate W1-1 analyses to surface:
-  - **Common patterns** — repeated across all references (core success formula)
-  - **Differentiators** — unique strengths per reference (inspiration pool)
-  - **Tropes** — genre conventions
-  - **Avoid list** — what didn't work, or what user labels excluded
-- **Output**: `04_success_synthesis.md`
+**W1-4. Cross-script engagement-mechanism synthesis**
+
+Decompose the W1-1 analyses across **4 engagement faces** (the engagement principle — curiosity + expectation = engagement; see `SKILL.md` 핵심 원칙):
+
+1. **Curiosity generation mechanism** — how do the references prompt the audience to ask "what happened?" / "what does this mean?" (information-withholding patterns, hook structure, mystery setup, first-60-second promise)
+2. **Expectation accumulation mechanism** — how do the references stoke the "this is going to pay off" anticipation (foreshadow cadence, mini-cliffhangers, escalation, payoff promises)
+3. **Curiosity ↔ Expectation interplay** — how do the two engines complement / alternate / amplify each other (a reveal opens a new mystery; a mystery stokes a new expectation)
+4. **Engagement curve** — engagement-over-time shape (cold-open peak, mid-section dip prevention, ch.16 climax, held-quiet close) — compare per-reference curves and extract common shapes
+
+**Supporting extraction (props for the 4 faces):**
+- **Common tropes** — genre conventions (the visible patterns in how the 4 faces are expressed)
+- **Differentiators** — unique moves per reference (inspiration pool, concrete callouts to apply to this episode)
+- **Avoid list** — beats where retention faltered (if any) OR what user labels excluded
+
+**Output**: `04_success_synthesis.md` (4 engagement-mechanism sections + 3 supporting)
 
 **W1-5. Meta-prompt synthesis**
 - W1-3 (research) + W1-4 (cross-synthesis) → write `_meta_supplement.md`

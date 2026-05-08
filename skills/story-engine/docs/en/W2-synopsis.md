@@ -15,6 +15,21 @@ This document is the W2 (synopsis writing + preflight check) stage guide for the
 
 ---
 
+## ★ Primary review lens — Engagement
+
+> `SKILL.md` 핵심 원칙: **Curiosity + Expectation = Engagement. The top-level evaluation criterion across every wave.**
+
+The W2 synopsis must answer (see preflight Section 0):
+
+- **Does every chapter contribute to curiosity OR expectation?** Chapters that do neither = structural dead weight; cut or merge.
+- **Are BOTH engines alive through ch.15?** If only one drives Acts I–II, the audience disengages — curiosity-only collapses on reveal; expectation-only is predictable.
+- **Does the ch.16 reveal close some curiosity AND open new expectation?** Pure closure is weaker than a reveal that seeds the next anticipation (thematic question, final image).
+- **Does the first 60 seconds plant a specific curiosity promise?** Mood / generic context alone does not earn the click.
+
+The 20-chapter framework is a tool; the review is by the engagement curve.
+
+---
+
 ## Synopsis writing
 
 **You MUST read `synopsis_guidelines.md` before starting.**

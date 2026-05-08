@@ -6,6 +6,24 @@ The checklist is **universal** — applies regardless of genre. The per-episode 
 
 ---
 
+## ★ Section 0 — Engagement (PRIMARY — overrides everything below if conflict)
+
+This is THE top-level success criterion (see `SKILL.md` 핵심 원칙). Failure on any item here = structural rework required, not patch.
+
+**E1. Engagement curve explicit** — The synopsis includes an explicit per-chapter table labeling each chapter as raising curiosity / accumulating expectation / paying off / both / neither. Chapters tagged "neither" are structural dead weight.
+
+**E2. Every chapter contributes to one or both engines** — Each chapter raises curiosity, accumulates expectation, or pays off one of them. No chapter that does none.
+
+**E3. Both engines alive through ch.15** — Neither curiosity nor expectation dies before the climax. (If only curiosity drives Acts I–II, audience disengages once they get the answer. If only expectation drives, they predict the ending.)
+
+**E4. Ch.16 reveal closes some curiosity AND opens new expectation** — The climax collapses one set of mysteries but seeds the thematic question / final image / "what does this mean?" expectation that carries the audience through Acts IV.
+
+**E5. Cold open plants specific curiosity** — Chapter 1 within its first 60 s plants a concrete, named question — not generic mood/context. The audience must know what they are about to wonder about.
+
+**Round result for Section 0**: PASS (all 5) | REVISE ({N} fails — structural).
+
+---
+
 ## A. Structural integrity (5 items)
 
 1. **20 chapters present** (or the agreed length-adjusted count from `synopsis_guidelines.md` §1).

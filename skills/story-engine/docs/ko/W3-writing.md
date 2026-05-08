@@ -14,6 +14,22 @@
 
 ---
 
+## ★ 대본 primary review lens — 시청자 retention
+
+> SKILL.md 핵심 원칙: **궁금증 + 기대감 = 몰입도. 모든 wave의 최상위 평가 기준.**
+
+W3 대본 검토는 "재미있는가"가 아니라 **"시청자가 다음 단락으로 넘어가게 만드는가"**로 한다. (자세한 review dimension은 `meta-prompts/{genre}/narrative_techniques.md` § Review dimensions 참조 — 그곳의 E0~E3 (engagement) 가 primary, C1~C10 (craft) 는 subordinate.)
+
+Engagement primary 4 항목 (E0~E3):
+- **E0. 궁금증 유지** — 매 단락이 시청자에게 "다음에 뭐?" / "이건 뭐?" 질문을 던지는가. 3 단락 연속 질문 없으면 drop-off zone.
+- **E1. 기대감 누적** — 매 단락이 구체적 예측을 심거나 키우는가. 분위기만 깔고 payoff 없으면 wasted space.
+- **E2. 몰입도 곡선 일치** — 단락 단위 페이싱이 시놉시스 챕터 곡선과 맞는가.
+- **E3. Drop-off zone 없음** — 시청자가 정신적으로 떠날 만한 beat 명시 식별 → 재작성 (편집 trim 아님).
+
+Craft 점수가 9.5 넘어도 E0~E3 한 항목이라도 fail이면 revise. Craft가 engagement 부족을 보상하지 않는다.
+
+---
+
 ## 대본(시나리오) 작성
 
 **`야담_시나리오_작성_지침.md`, `야담_서술기법_가이드.md`, `야담_서스펜스_기법.md`를 반드시 읽고 시작한다.**
