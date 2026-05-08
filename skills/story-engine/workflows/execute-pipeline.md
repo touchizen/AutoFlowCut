@@ -140,8 +140,8 @@ Notation:
 | W2   | `01_분석.md`, `02_팩트체크.md`, `03_자료수집.md`               | `04_시놉시스.md`, `05_프리플라이트.md` |
 | W3   | `04_시놉시스.md`, `05_프리플라이트.md`, `02_팩트체크.md`       | `{title}_기.md`, `{title}_승.md`, `{title}_전.md`, `{title}_결.md`, `07_검토.md` |
 | W4   | `{title}_기.md`, `{title}_승.md`, `{title}_전.md`, `{title}_결.md`                                 | `narration_{part}.txt`, `dialogs_{part}.json`, `08_sfx_목록.md`                                              |
-| W5   | `narration_{part}.txt`, `dialogs_{part}.json`, `08_sfx_목록.md`, `tts_settings.md`                  | `segments/`, `final_{part}.mp3`, `final_{part}.srt`, `media/`, `tts_settings.md` (updated)                   |
-| W6   | `final_{part}.srt`, `narration_{part}.txt`, `{title}_*.md` (script), `08_sfx_목록.md`              | `references.csv`, `{title}_scenes.csv`, `06_review_group{A,B,C}.md` (batch QA)                                |
+| W5   | `narration_{part}.txt`, `dialogs_{part}.json` (with `after_paragraph`), `08_sfx_목록.md`, `tts_settings.md`                  | `segments_{part}/` (with `index.json` carrying `paragraph_idx`), `subtitles_{part}.txt`, `final_{part}.mp3`, `final_{part}.srt`, **`timeline_{part}.json`**, `voices/` (when dialogue), `media/`, `tts_settings.md` (updated)                   |
+| W6   | `final_{part}.srt`, **`timeline_{part}.json`**, `narration_{part}.txt`, `{title}_*.md` (script), `08_sfx_목록.md`              | `references.csv`, `{title}_scenes.csv`, `06_review_group{A,B,C}.md` (batch QA)                                |
 | W7   | `references.csv`, `{title}_scenes.csv` (read-only — for ref/scene prompts)                         | AutoFlowCut images (refs + scenes in workspace), `07_image_review_group{A,B}.md` (batch QA)                  |
 | W8   | `references.csv`, `{title}_scenes.csv`, `final_{part}.mp3`, `final_{part}.srt`, `media/sfx/`, AutoFlowCut images (from W7) | CapCut project (`{title}` draft folder), `08_sfx_scene_match_qa.md`, optional video clips         |
 | W9   | `04_시놉시스.md`, `{title}_*.md` (script), `{title}_scenes.csv`                                   | `11_업로드정보.json`                                                                                          |
@@ -241,7 +241,7 @@ follow this granularity; wave docs may add finer breakdowns but never remove the
 | W2   | W2-0 read-inputs, W2-1 synopsis-draft, W2-2 preflight, W2-3..N preflight-revise (per round)        |
 | W3   | W3-0 read-inputs, W3-1..4 part-write × 4, W3-5 self-review, W3-6 external-review, W3-7 polish     |
 | W4   | W4-0 read-inputs, W4-1..4 narration-extract × 4, W4-5 dialogue-extract, W4-6 SFX-list, W4-7 audit |
-| W5   | W5-0 voice-pick, W5-1 TTS (narration + dialogue + SRT), W5-2 SFX (batched), W5-3 merge, W5-4 mechanic-QA |
+| W5   | W5-0-prep provider-pick, W5-0-assign voice-assign, W5-1a narration-TTS, W5-1b draft-subs, W5-1c build-SRT+timeline, W5-1d user-review (optional), W5-1e merge-segments, W5-1f dialogue-TTS (when dialogue), W5-2 SFX (batched), W5-3 4-part merge, W5-4 mechanic-QA |
 | W6   | W6-1 references-CSV (character + scene only), W6-2 scenes-CSV, W6-3a/b/c **batch QA × 3 parallel** (Completeness / Reference integrity / Timing structure) |
 | W7   | W7-0 project-setup, W7-1 ref-batch (incl. style-pick + type:style row), W7-2 scene-batch, W7-2a error-fix, W7-2b-1/2 **image-QA batch × 2 parallel** (Visual / Content) → 🛑 user sign-off |
 | W8   | W8-0 SFX scene-match QA (moved from old W7 7-2c), W8-1 audio-import, W8-2 CapCut-export, W8-3 video (optional, requires user confirm) |
@@ -343,21 +343,29 @@ Each subagent receives:
   - **bespoke**: `narration_{part}.txt`, `dialogs_{part}.json`, `08_sfx_list.md` (English filenames, aligned with dark-history; content in {lang})
 
 **W5 subagent prompt includes:**
-- **MANDATORY W5-0 character voice assignment** (BEFORE TTS): extract unique characters from `dialogs_*.json`, diff against `tts_settings.md`; if any unmapped characters or missing narrator → AskUserQuestion with 3–4 voice recommendations, then persist to `tts_settings.md`
-- TTS generation (ElevenLabs with-timestamps)
-- SRT generation (manual subtitle splitting)
-- SFX generation + timecode assignment
-- Audio merge (ffmpeg concat)
-- Timecode validation
-- Output: segments/, final_{part}.mp3, final_{part}.srt, media/
+- **MANDATORY W5-0 provider selection + voice assignment** (BEFORE TTS):
+  - 5-0-prep: ask user separately for narration provider (ElevenLabs / Typecast / Vrew-import) and dialogue provider (Typecast / 없음). Bundled dialogue script is **Typecast-only** — every character voice_id MUST be `tc_*`.
+  - 5-0-assign: extract unique characters from `dialogs_*.json`, diff against `tts_settings.md`; if any unmapped characters or missing narrator → AskUserQuestion with 3–4 voice recommendations from the chosen provider's library, persist to `tts_settings.md`.
+- **W5-1 (5 sub-steps, each invokes a bundled `.cjs` script):**
+  - 5-1a narration TTS — `generate_tts_elevenlabs.cjs` OR `generate_tts_typecast.cjs narration` (provider chosen in 5-0-prep). Outputs `segments_{part}/seg_NNN.mp3` + `seg_NNN.json` (alignment) + `index.json` (with `paragraph_idx` for each segment).
+  - 5-1b auto-draft baseline subtitles — `draft_subtitles.cjs` produces `subtitles_{part}.txt`. Manual splitting is OPTIONAL refinement (5-1d), not the default; users edit only if baseline cuts are awkward.
+  - 5-1c build SRT + timeline — `build_srt.cjs <segmentsDir> <subtitlesFile> <outSrt> <timelineJson>` (4th arg REQUIRED — `timeline_{part}.json` is consumed by W6).
+  - 5-1d user review of baseline (optional refinement loop) → re-run 5-1c if subtitles edited.
+  - 5-1e per-part merge — `merge_audio.cjs` produces `final_{part}.mp3`.
+  - 5-1f dialogue TTS (only when dialogue exists) — `generate_tts_typecast.cjs dialogue <dialogsJson> <outDir> <ttsSettings> <segmentsDir>`. The 4th arg `segmentsDir` lets the script resolve each dialog's `_HHMMSS` from `after_paragraph` + `index.json`'s `paragraph_idx`. **Consecutive dialogues sharing one `after_paragraph` are auto-stacked** (previous dialog end + 0.2s gap) so they never collide. Without `start` AND without `after_paragraph` the script throws — silent `00:00:00` collisions are blocked.
+- W5-2 SFX — `generate_sfx.cjs` driven by SRT-anchor manifest (anchor narration + placement + offset → in-part timecode).
+- W5-3 4-part merge (ffmpeg concat) → `media/final_full.mp3` + `media/final_full.srt`; SFX in-part timecodes converted to full-timeline `media/sfx/*_MMSS.mp3`.
+- W5-4 mechanic timecode validation (collision / per-part range / full range / per-part offset).
+- Outputs: `segments_{part}/`, `subtitles_{part}.txt`, `final_{part}.mp3`, `final_{part}.srt`, **`timeline_{part}.json`**, `voices/` (when dialogue), `media/`.
 
 **W6 subagent prompt includes:**
-- CSV schema (get_schema MCP tool)
+- **No external scripts** — `scenes.csv` is built directly via AutoFlowCut MCP tools (`get_schema`, `load_csv`, `update_field`, `save_csv`) using W5's `final_{part}.srt` + `timeline_{part}.json` as inputs.
+- CSV schema (`get_schema` MCP tool)
 - References CSV + scenes CSV creation
 - SRT-based scene splitting (15sec rule)
 - Review loop: CSV vs script vs SRT cross-check (max 5)
-- Gap/coverage validation scripts
-- Output: references.csv, {title}_scenes.csv
+- Gap/coverage checks performed by the subagent reading the CSV/SRT directly (not via .py)
+- Output: `references.csv`, `{title}_scenes.csv`, `06_review_group{A,B,C}.md`
 - **HARD RULE**: W6 must NOT generate images. Forbidden calls: `app_start_ref_batch`, `app_start_scene_batch`, `app_generate_reference`, `app_generate_scene`, and their HTTP equivalents. Image generation belongs exclusively to W7. If the subagent even considers kicking off a batch "since the CSV is ready", that is a spec violation — STOP and hand off to W7.
 
 **W7 subagent prompt includes:**

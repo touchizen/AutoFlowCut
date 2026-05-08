@@ -18,12 +18,7 @@ This document is the W6 (storyboard CSV creation + review) stage guide for the s
 >
 > If W6 completes CSV generation + review and there are no remaining issues, **STOP and hand off to W7**. Do not proactively start image generation "since it's ready".
 
-**Reference scripts** (`~/workspace/AutoFlowCut/scripts/`):
-
-| Script | Purpose |
-|--------|---------|
-| `generate_scenes_csv.py` | Parse SRT → define scene boundaries → generate scenes.csv (auto-validates 15-second rule) |
-| `merge_scenes.py` | Merge per-part scenes CSVs into one |
+> **W6 invokes no external scripts.** `scenes.csv` is built directly via **AutoFlowCut MCP tools** (`get_schema`, `load_csv`, `update_field`, `save_csv`) using W5's `final_{part}.srt` + `timeline_{part}.json` as inputs.
 
 ---
 

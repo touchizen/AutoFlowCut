@@ -9,7 +9,31 @@ import sys
 import time
 import requests
 
-API_KEY = "sk_a3fcfbe4d316bd3d135f8d9016424904247c2a8c87eb346d"
+def _load_api_key():
+    """Load ElevenLabs API key from env var or ~/.elevenlabs/credentials.
+
+    Supports dotenv format (`ELEVENLABS_API_KEY=sk_...`) or a single-line key file.
+    Hardcoding the key in source is forbidden — it leaks via git.
+    """
+    key = os.environ.get("ELEVENLABS_API_KEY")
+    if key:
+        return key.strip()
+    cred_path = os.path.expanduser("~/.elevenlabs/credentials")
+    if os.path.exists(cred_path):
+        with open(cred_path) as f:
+            raw = f.read()
+        m = re.search(r"^\s*ELEVENLABS_API_KEY\s*=\s*([^\s\r\n]+)", raw, re.MULTILINE)
+        if m:
+            return m.group(1)
+        return raw.strip()
+    raise RuntimeError(
+        "ElevenLabs API key not found. "
+        "Set ELEVENLABS_API_KEY env var, or write `ELEVENLABS_API_KEY=sk_...` to "
+        "~/.elevenlabs/credentials."
+    )
+
+
+API_KEY = _load_api_key()
 BASE_URL = "https://api.elevenlabs.io/v1/sound-generation"
 
 BASEDIR = "/Users/tuxxon/premiere-workspace/무한야담/story/ep10"

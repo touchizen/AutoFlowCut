@@ -18,12 +18,7 @@
 >
 > W6가 CSV 생성 + 검토를 마치고 이슈가 없으면, **그 자리에서 멈추고 W7로 넘긴다.** "CSV 준비됐으니" 이미지 생성을 선제적으로 시작하지 말 것.
 
-**참고 스크립트** (`~/workspace/AutoFlowCut/scripts/`):
-
-| 스크립트 | 용도 |
-|----------|------|
-| `generate_scenes_csv.py` | SRT 파싱 → 씬 경계 정의 → scenes.csv 생성 (15초 룰 자동 검증) |
-| `merge_scenes.py` | 파트별 scenes CSV를 하나로 병합 |
+> **W6는 외부 스크립트를 호출하지 않는다.** scenes.csv는 W5의 `final_{파트}.srt` + `timeline_{파트}.json`을 입력으로 **AutoFlowCut MCP 도구**(`get_schema`, `load_csv`, `update_field`, `save_csv`)로 직접 작성한다.
 
 ---
 

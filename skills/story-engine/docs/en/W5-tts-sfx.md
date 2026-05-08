@@ -12,15 +12,20 @@ Generate narration and per-character dialogue from the extracted script using TT
 
 **TTS provider options** (user selects):
 
-| Provider | API | Credentials | Notes |
-|----------|-----|-------------|-------|
-| **ElevenLabs** | `https://api.elevenlabs.io/v1/text-to-speech` | `~/.elevenlabs/credentials` | Multilingual, custom voices, automatic SRT generation |
-| **Typecast** | `https://api.typecast.ai/v1/text-to-speech` | `~/.typecast/credentials` | Emotion parameters (normal/happy/sad/angry); Korean-strong |
-| **Vrew** | Local app (manual) | — | AI subtitles + editor, free credits |
-| **Google AI Studio** | `https://generativelanguage.googleapis.com/v1beta/models` | `~/.google-ai-studio/credentials` | Gemini TTS; to be integrated later |
+| Provider | Bundled script | Modes | Credentials | Notes |
+|----------|---------------|-------|-------------|-------|
+| **ElevenLabs** | `generate_tts_elevenlabs.cjs` | narration | `~/.elevenlabs/credentials` | Multilingual; with-timestamps alignment |
+| **Typecast** | `generate_tts_typecast.cjs` | narration + dialogue | `~/.typecast/credentials` | Korean-strong; with-timestamps alignment; emotion params (normal/happy/sad/angry) |
+| **Vrew** | (none — local app, manual) | — | — | AI subtitles + editor; free credits |
+| **Google AI Studio** | (none — TBD) | — | `~/.google-ai-studio/credentials` | Gemini TTS |
 
-> Current default: **ElevenLabs** (narration + per-character voice separation supported)
-> Switch providers on user request.
+**Supported combos** (unified alignment shape — downstream is provider-agnostic):
+- **EL only**: 5-1a EL narration → no dialogue
+- **EL + TC**: 5-1a EL narration → 5-1f TC dialogue
+- **TC only (narration + dialogue)**: 5-1a TC narration → 5-1f TC dialogue
+- **Vrew narration + TC dialogue**: user imports Vrew mp3+srt as `final_{part}.mp3` / `.srt` → 5-1f TC dialogue. No segments dir, so each dialog must carry an explicit `start` in dialogs.json (`after_paragraph` cannot be auto-resolved).
+
+> **Unsupported**: "TC dialogue-only (no narration)" — there is no master timeline source for W6+ (scenes.csv / SRT matching can't anchor). If you really need it, the user must author a master `final_{part}.mp3/.srt` externally and feed it in, then run 5-1f.
 
 ---
 
@@ -28,21 +33,46 @@ Generate narration and per-character dialogue from the extracted script using TT
 
 **Run this step BEFORE any TTS generation if the script contains character dialogue.**
 
+### 5-0-prep. Provider selection (do this first)
+
+Use `AskUserQuestion` to settle the two tracks separately:
+
+1. **Narration provider**: ElevenLabs / Typecast / Vrew (external import)
+2. **Dialogue provider**: Typecast / (no dialogue)
+   - The bundle currently ships a **Typecast-only dialogue script** (`generate_tts_typecast.cjs dialogue`). There is no bundled ElevenLabs dialogue path.
+   - If you picked Typecast in #1, dialogue uses the same provider naturally. If you picked ElevenLabs in #1, dialogue falls back to Typecast — or rewrite the script so it has no dialogue.
+
+The choice routes 5-0 voice recommendations:
+| Provider | voice ID format | Recommendation source |
+|----------|-----------------|----------------------|
+| ElevenLabs | 22-char alphanumeric (e.g. `nucVFUFVgPmKHjgXNbJ7`) | ElevenLabs voice library + `/v1/voices` API |
+| Typecast | `tc_` prefix (e.g. `tc_6800a387534948f191cc952b`) | Typecast `/v1/voices` API |
+
+> **No mixing**: feeding a Typecast voice_id to the ElevenLabs script returns 401 (and vice versa). Match provider exactly.
+
+### 5-0-assign. Per-character voice assignment
+
 1. **Extract unique characters** from `dialogs_{part}.json` (all parts combined). De-duplicate by character name.
 2. **Load existing mappings** from memory (`tts_settings.md`). Separate characters into:
    - **Mapped**: already has a voice ID assigned
    - **Unmapped**: new character — voice ID missing
 3. **If any unmapped characters exist → STOP and ask the user.** Use `AskUserQuestion` with:
    - Character name + short personality hint from the script (age, role, tone)
-   - 3–4 recommended voice options from ElevenLabs voice library matching the character (gender, age range, style)
+   - 3–4 recommended voices from **the provider chosen in 5-0-prep** (gender, age range, style)
    - "Let me choose manually" option — user provides a voice ID
-4. **Apply choices** — write the new mappings back to `tts_settings.md` with format:
+4. **Apply choices** — write the new mappings back to `tts_settings.md`. `narrator` may be either EL or TC, but **every character (dialogue) entry MUST be Typecast (`tc_*`)** because the bundled dialogue script is Typecast-only — non-`tc_` IDs are rejected before any API call:
    ```
-   narrator: nucVFUFVgPmKHjgXNbJ7   # Aaron — deep documentary
-   Reverend: oR4uPy4PQZyMPPPpXrX5   # stern middle-aged male
-   Mercy:    EXAVITQu4vr4xnSDxMaL   # young female
+   # narrator option A (ElevenLabs):
+   narrator: nucVFUFVgPmKHjgXNbJ7          # Aaron — deep documentary
+
+   # narrator option B (Typecast):
+   # narrator: tc_6800a387534948f191cc952b # Taewoo — grave, deliberate
+
+   # Characters (all tc_*):
+   Reverend: tc_6731b3ac075b04a944644234   # stern middle-aged male
+   Mercy:    tc_677f2aa4a854ddffa0ebda89   # young female
    ```
-5. **Confirm with user** — show the full mapping table before proceeding to 5-1.
+5. **Confirm with user** — show the full mapping table including each entry's provider before proceeding to 5-1.
 
 **Narration voice setting (applies to mono-narrator scripts too):**
 - Dark-history narration: prefer grave, slow, slightly gravelly voices with clean diction
@@ -50,50 +80,80 @@ Generate narration and per-character dialogue from the extracted script using TT
 
 ---
 
-## 5-1. TTS voice generation
+## 5-1. TTS voice generation (5-step: narration is automatic, only meaning-unit refinement is manual)
 
-**mp3 + SRT generated together (required):**
+**Principle:** mp3 + baseline SRT both fall out of the **automatic TTS step**. Meaning-unit splitting is an **optional refinement** the user applies on top of the baseline.
 
-When using ElevenLabs TTS, mp3 and SRT MUST be generated **at the same time**.
+### 5-1a. Narration TTS — pick a provider (ElevenLabs or Typecast)
 
-- **API endpoint**: `https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/with-timestamps`
-- The response contains audio (base64) + character-/word-level timestamps
-- Timestamps are used to build a per-segment SRT
-- The SRT is the basis for SFX timecode calculation
-
-**Never generate only mp3 and skip the SRT.** Without an SRT, SFX timecodes cannot be calculated precisely.
-
-**Fallback (if only mp3 exists):**
-- Measure each segment mp3 duration with ffprobe and accumulate to compute timecodes → build SRT
-- `ffprobe -v quiet -show_entries format=duration -of csv=p=0 {mp3}`
-
-**Manual subtitle splitting (required):**
-
-The SRT MUST be **split by hand, by meaning units** — not by code. Auto-splitting breaks on meaningless boundaries and lowers quality.
-
-1. Write `subtitles_{part}.txt` manually
-2. Format: `[segmentNumber|type:character] subtitle1|subtitle2|subtitle3`
-3. Use `|` as the delimiter; keep each subtitle ≤ 42 chars (English subtitle norm)
-4. `generate_srt.py` takes this file + the timestamp JSON → SRT
-
-```
-# Example (subtitles_setup.txt)
-[000|N] In the winter of sixteen ninety-two,|a letter arrived at Hartford parish|that no one would ever forget.
-[001|D:Reverend] Read it again, boy.|Read it slowly.
+**ElevenLabs:**
+```bash
+node skills/story-engine/scripts/generate_tts_elevenlabs.cjs \
+  ep{N}/narration_{part}.txt  ep{N}/segments_{part}/  <narrator_voice_id>
 ```
 
-- N = narration, D:CharacterName = dialogue
-- Segment number matches the file index in `segments_{part}/`
+**Typecast:**
+```bash
+node skills/story-engine/scripts/generate_tts_typecast.cjs narration \
+  ep{N}/narration_{part}.txt  ep{N}/segments_{part}/  <narrator_voice_id>
+```
 
-**Generated files:**
-- `segments_{part}/` — per-segment mp3 + JSON timestamps
-- `segments_{part}.json` — segment metadata
-- `subtitles_{part}.txt` — manual-subtitle-split source
-- `timeline_{part}.json` — per-segment start/end times (cumulative)
-- `final_{part}.mp3` — ffmpeg concat merge
-- `final_{part}.srt` — meaning-unit subtitles (from manual split)
+**Outputs (identical for both providers):** `segments_{part}/seg_NNN.mp3` + `seg_NNN.json` (character-level alignment, ElevenLabs-compatible shape) + `index.json`
 
-**Output:** `segments_{part}/{idx:03d}_{character}.mp3` + `.json` + `final_{part}.srt`
+> Both providers emit a unified alignment format, so 5-1b onward runs identically regardless of provider.
+
+### 5-1b. Auto-draft baseline subtitles
+```bash
+node skills/story-engine/scripts/draft_subtitles.cjs \
+  ep{N}/segments_{part}/  ep{N}/subtitles_{part}.txt
+```
+**Outputs:** `subtitles_{part}.txt` (each subtitle ≤ 42 chars, split at sentence/clause boundaries)
+**Format:** `[NNN|N] subtitle1|subtitle2|subtitle3` (N = narration, D:CharacterName = dialogue)
+
+### 5-1c. Build baseline SRT (+ timeline JSON)
+```bash
+node skills/story-engine/scripts/build_srt.cjs \
+  ep{N}/segments_{part}/  ep{N}/subtitles_{part}.txt  ep{N}/final_{part}.srt \
+  ep{N}/timeline_{part}.json     # ← 4th arg REQUIRED (W6 input)
+```
+**Outputs:** `final_{part}.srt` (alignment-accurate timecodes) + `timeline_{part}.json` (per-segment cumulative start/end times — consumed by W6 to build scenes.csv)
+
+### 5-1d. User review (optional refinement)
+- Read the baseline SRT and check whether the cuts respect meaning units
+- Looks good → continue
+- Needs adjustment → edit `subtitles_{part}.txt` by hand (merge or split chunks with `|`) → re-run 5-1c
+
+> **Auto-split chooses clause boundaries but doesn't know your emphasis.** Touch only when something reads wrong; otherwise keep the baseline.
+
+### 5-1e. Merge segment mp3s → per-part mp3
+```bash
+node skills/story-engine/scripts/merge_audio.cjs \
+  ep{N}/segments_{part}/  ep{N}/final_{part}.mp3
+```
+**Outputs:** `final_{part}.mp3` (ffmpeg concat driven by `segments_{part}/index.json`)
+
+### 5-1f. Per-character dialogue TTS (Typecast — only when dialogue exists)
+```bash
+node skills/story-engine/scripts/generate_tts_typecast.cjs dialogue \
+  ep{N}/dialogs_{part}.json  ep{N}/voices/  ep{N}/tts_settings.md  \
+  ep{N}/segments_{part}/      # ← 4th arg: segments dir from 5-1a
+```
+**Outputs:** `voices/{order:03d}_{character}_{HHMMSS}.mp3` + `result.json`
+- The `_HHMMSS` in the filename is each line's start time (used for auto-placement in W8)
+- start resolution (inside the script):
+  1. Explicit `start` in `dialogs.json` (SRT-format string) — used as-is
+  2. `after_paragraph` in `dialogs.json` + `paragraph_idx` lookup in `segments_{part}/index.json` → cumulative ffprobe duration + 0.3s gap → start
+  3. Neither → **throws** (no silent `00:00:00` collisions)
+- Emotion is auto-mapped from each dialog's `emotion` field (normal/happy/sad/angry)
+- Vrew case (no segments dir): populate `start` for every dialog in `dialogs.json` and omit the 4th arg
+
+**Final outputs (per part):**
+- `segments_{part}/` — narration segment mp3s + alignment + index.json (with `paragraph_idx`)
+- `subtitles_{part}.txt` — baseline (or refined) subtitle-split spec
+- `final_{part}.mp3` — per-part merged audio
+- `final_{part}.srt` — per-part SRT (alignment-accurate)
+- **`timeline_{part}.json`** — per-segment cumulative start/end (input for W6 scenes.csv — W6 will block without it)
+- `voices/` — per-character dialogue mp3s (optional, only if dialogue exists)
 
 **Review (substep 5-1)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 5-2. 5 rounds exceeded → escalate to user.
 
@@ -140,7 +200,7 @@ Look up each SFX cue's **anchor narration** (from W4's `08_sfx_list.md`) in `fin
    [{"num":1,"part":"setup","filename":"01_bell_toll_0030","prompt":"...","duration":3}]
    ```
    - `filename` already contains the in-part `_MMSS` timecode → `generate_sfx.cjs` uses it as-is
-   - `node generate_sfx.cjs manifest.json sfx/`
+   - `node skills/story-engine/scripts/generate_sfx.cjs manifest.json sfx/`
 
 **Unmatched anchor handling:**
 - 0 matches or 2+ matches → fix the anchor in W4's `08_sfx_list.md` to a shorter, more unique phrase, then re-run (do NOT guess a position)

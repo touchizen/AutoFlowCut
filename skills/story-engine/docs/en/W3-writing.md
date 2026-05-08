@@ -74,9 +74,8 @@ ep{number}/
 ├── final_{part}.mp3        ← Part-merged audio
 ├── final_{part}.srt        ← Part-merged subtitles (meaning units)
 ├── sfx/                    ← SFX originals (per-part MMSS timecodes)
-├── generate_tts.py         ← TTS generator (with-timestamps)
-├── generate_srt.py         ← SRT generator (from manual subtitle split)
 ├── sfx_manifest.json       ← SFX manifest (built in W5-2 from SRT-anchor lookup; filenames include _MMSS)
+│   (TTS/SRT/SFX scripts live in the skill bundle, not the episode dir: skills/story-engine/scripts/*.cjs)
 ├── media/                  ← Final production output
 │   ├── final_full.mp3      ← Full merged audio (setup+rising+crisis+resolution)
 │   ├── final_full.srt      ← Full merged subtitles (with offsets applied)

@@ -2,13 +2,16 @@
 
 This document is the W4 (production extraction + review) stage guide for the story-engine skill — dark-history genre.
 
-**Reference scripts** (`~/workspace/AutoFlowCut/scripts/`):
+**Bundled scripts** (`skills/story-engine/scripts/` — invoked from W5; W4 is text extraction only):
 
 | Script | Purpose |
 |--------|---------|
-| `generate_tts_elevenlabs.py` | ElevenLabs TTS (narration + dialogue, with-timestamps → mp3 + SRT) |
-| `generate_tts_typecast.py` | Typecast TTS (per-character dialogue, auto-timecoded filenames) |
-| `generate_sfx.cjs` | ElevenLabs Sound Generation (SFX, skill-bundled — `skills/story-engine/scripts/`) |
+| `generate_tts_elevenlabs.cjs` | ElevenLabs TTS narration (with-timestamps → mp3 + alignment JSON) |
+| `generate_tts_typecast.cjs` | Typecast TTS — `narration` mode (narration) or `dialogue` mode (per-character lines). Both return with-timestamps alignment. |
+| `draft_subtitles.cjs` | Auto-draft baseline `subtitles_{part}.txt` (refine into meaning units afterward) |
+| `build_srt.cjs` | alignment + `subtitles_{part}.txt` → `final_{part}.srt` |
+| `merge_audio.cjs` | Concat one part's segment mp3s → `final_{part}.mp3` (W5-1e). Full 4-part merge into `final_full.*` is a separate ffmpeg step in W5-3. |
+| `generate_sfx.cjs` | ElevenLabs Sound Generation (SFX, manifest-driven) |
 
 ---
 
@@ -22,7 +25,22 @@ This document is the W4 (production extraction + review) stage guide for the sto
 **Review (substep 4-1)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 4-2. 5 rounds exceeded → escalate to user.
 
 ### 4-2. Per-character dialogue extraction
-**Per-character dialogue extraction** → `dialogs_{part}.json` — character name, line, emotion, order
+**Per-character dialogue extraction** → `dialogs_{part}.json`
+
+**Required fields per entry:**
+| Field | Type | Notes |
+|-------|------|-------|
+| `order` | int | Per-part dialogue order (starts at 1; used as `{order:03d}` filename prefix) |
+| `character` | string | Character name (key into the W5-0 voice map) |
+| `line` | string | Dialogue text |
+| `emotion` | string | Emotion label (e.g. "desperate", "stern") — Typecast's `EMOTION_MAP` auto-routes to normal/happy/sad/angry |
+| **`after_paragraph`** | **int** | **0-based index of the narration paragraph that immediately precedes this line** (in `narration_{part}.txt`). W5-1f matches it against `segments_{part}/index.json`'s `paragraph_idx` to derive the timecode. |
+
+> **`after_paragraph` is mandatory.** Without it, W5-1f cannot derive the `_HHMMSS` filename and would risk silent `00:00:00` collisions — the script throws instead. While parsing the script.md, keep a narration-paragraph counter and record the index for each dialogue.
+>
+> **Consecutive dialogues are OK** — multiple dialogues sharing one `after_paragraph` are auto-stacked by W5-1f in `order` sequence (previous dialog end + 0.2s gap), so they never collide. The first dialog in a group uses narration end + 0.3s; each subsequent dialog uses previous dialog end + 0.2s.
+
+**(Optional)** `start` field — if narration was produced externally (Vrew, etc.) and you already know each line's SRT-format start time, set it here. Takes precedence over `after_paragraph`.
 
 **Review (substep 4-2)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 4-3. 5 rounds exceeded → escalate to user.
 

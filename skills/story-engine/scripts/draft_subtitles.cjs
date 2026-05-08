@@ -1,6 +1,7 @@
 // draft_subtitles.cjs — auto-draft meaning-unit subtitle splits.
 // Usage: node draft_subtitles.cjs <segmentsDir> <outFile>
-// The segmentsDir must contain index.json written by generate_tts.cjs.
+// The segmentsDir must contain index.json written by either narration TTS script
+// (generate_tts_elevenlabs.cjs OR generate_tts_typecast.cjs narration mode).
 // Output format (per W5 doc):
 //   [NNN|N] chunk1|chunk2|chunk3
 // Each chunk <= 42 chars, split at clause/sentence boundaries (;:,— . ! ? or
