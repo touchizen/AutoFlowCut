@@ -14,6 +14,7 @@ description: "YouTube story channel script writing skill with 9-wave automated p
 | `/story-new` | 에피소드 초기화 + 주제 논의 | "새 에피소드", "start ep5" |
 | `/story-execute` | W1~W9 자동 파이프라인 | "파이프라인 실행", "execute" |
 | `/story-next` | 중단 후 재개 | "이어서 해줘", "continue" |
+| `/story-rewrite` | 기존 에피소드 개선 (몰입도 진단 → fork → 개선판) | "rewrite my", "ep03 개선", "다시 써줘" |
 
 ## 9-Wave 파이프라인
 
