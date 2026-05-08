@@ -86,17 +86,17 @@ The choice routes 5-0 voice recommendations:
 
 > **Script path (used by every 5-1 substep):**
 >
-> Every 5-1a~f command invokes a script from the **installed skill bundle**. To work regardless of cwd, set an absolute path once and reuse:
+> Every 5-1a~f command invokes a script from the **installed skill bundle**. To work regardless of cwd, set an absolute path once. Pick the line that matches **your shell** — every 5-1 command after that is identical.
 >
-> ```bash
-> # macOS / Linux / Windows (Git Bash)
-> SCRIPT_DIR="$HOME/.claude/skills/story-engine/scripts"
+> | Shell | SCRIPT_DIR setup | Reference in commands |
+> |-------|------------------|----------------------|
+> | **bash** (macOS / Linux / Windows Git Bash / WSL) | `SCRIPT_DIR="$HOME/.claude/skills/story-engine/scripts"` | `"$SCRIPT_DIR/..."` |
+> | **PowerShell** (Windows) | `$SCRIPT_DIR = "$HOME/.claude/skills/story-engine/scripts"` | `"$SCRIPT_DIR/..."` (same as bash — PowerShell also expands `$VAR` and accepts forward slashes) |
+> | **cmd.exe** (Windows) | `set SCRIPT_DIR=%USERPROFILE%\.claude\skills\story-engine\scripts` | `"%SCRIPT_DIR%\..."` (backslash + `%VAR%`) |
 >
-> # Windows (PowerShell)
-> # $SCRIPT_DIR = "$env:USERPROFILE\.claude\skills\story-engine\scripts"
-> ```
+> The 5-1 commands below are written in bash/PowerShell form. **cmd.exe users only**: substitute `$SCRIPT_DIR` → `%SCRIPT_DIR%` and `/` → `\`. Node.js on Windows accepts forward-slash paths, so PowerShell users need no extra conversion.
 >
-> All commands below take the form `node "$SCRIPT_DIR/<script>.cjs" ...`. The repo-relative path `skills/story-engine/scripts/` only works in dev mode and breaks in installed environments — do NOT use it.
+> The repo-relative path `skills/story-engine/scripts/` only works in dev mode and breaks in installed environments — do NOT use it.
 
 ### 5-1a. Narration TTS — pick a provider (ElevenLabs or Typecast)
 
