@@ -340,7 +340,7 @@ Each subagent receives:
 - Output (per-genre filename):
   - **yadam**: `narration_{part}.txt`, `dialogs_{part}.json`, `08_sfx_목록.md`
   - **dark-history**: `narration_{part}.txt`, `dialogs_{part}.json`, `08_sfx_list.md`
-  - **bespoke**: `narration_{part}.txt`, `dialogs_{part}.json`, `09_sfx_list.md` (W3 review file already at 07/08 in bespoke; SFX list shifts to 09 to avoid collision; or use next-free number)
+  - **bespoke**: `narration_{part}.txt`, `dialogs_{part}.json`, `08_sfx_list.md` (English filenames, aligned with dark-history; content in {lang})
 
 **W5 subagent prompt includes:**
 - **MANDATORY W5-0 character voice assignment** (BEFORE TTS): extract unique characters from `dialogs_*.json`, diff against `tts_settings.md`; if any unmapped characters or missing narrator → AskUserQuestion with 3–4 voice recommendations, then persist to `tts_settings.md`
