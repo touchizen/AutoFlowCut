@@ -84,9 +84,9 @@ The choice routes 5-0 voice recommendations:
 
 **Principle:** mp3 + baseline SRT both fall out of the **automatic TTS step**. Meaning-unit splitting is an **optional refinement** the user applies on top of the baseline.
 
-> **Script path (used by every 5-1 substep):**
+> **Script path (used by every W5 script step — 5-1a~f + 5-2 SFX):**
 >
-> Every 5-1a~f command invokes a script from the **installed skill bundle**. To work regardless of cwd, set an absolute path once. Pick the line that matches **your shell** — every 5-1 command after that is identical.
+> Every bundled script invoked in W5 (5-1a~f for TTS / subtitles / merge, plus 5-2 for SFX) is called via an absolute path into the **installed skill bundle**, so it works regardless of cwd. Pick the line that matches **your shell** — every command in W5 then reuses it.
 >
 > | Shell | SCRIPT_DIR setup | Reference in commands |
 > |-------|------------------|----------------------|
@@ -94,7 +94,11 @@ The choice routes 5-0 voice recommendations:
 > | **PowerShell** (Windows) | `$SCRIPT_DIR = "$HOME/.claude/skills/story-engine/scripts"` | `"$SCRIPT_DIR/..."` (same as bash — PowerShell also expands `$VAR` and accepts forward slashes) |
 > | **cmd.exe** (Windows) | `set SCRIPT_DIR=%USERPROFILE%\.claude\skills\story-engine\scripts` | `"%SCRIPT_DIR%\..."` (backslash + `%VAR%`) |
 >
-> The 5-1 commands below are written in bash/PowerShell form. **cmd.exe users only**: substitute `$SCRIPT_DIR` → `%SCRIPT_DIR%` and `/` → `\`. Node.js on Windows accepts forward-slash paths, so PowerShell users need no extra conversion.
+> Every W5 command below is written as a **single-line invocation** (sidesteps the per-shell line-continuation difference).
+> - **bash / PowerShell**: paste as-is
+> - **cmd.exe**: substitute `$SCRIPT_DIR` → `%SCRIPT_DIR%` and `/` → `\` first, then paste
+>
+> If you want to break a long command for readability, the per-shell continuation chars are: bash/Git Bash `\` · PowerShell backtick (`` ` ``) · cmd `^`. They don't cross-translate, so the doc keeps everything on one line.
 >
 > The repo-relative path `skills/story-engine/scripts/` only works in dev mode and breaks in installed environments — do NOT use it.
 
@@ -102,14 +106,12 @@ The choice routes 5-0 voice recommendations:
 
 **ElevenLabs:**
 ```bash
-node "$SCRIPT_DIR/generate_tts_elevenlabs.cjs" \
-  ep{N}/narration_{part}.txt  ep{N}/segments_{part}/  <narrator_voice_id>
+node "$SCRIPT_DIR/generate_tts_elevenlabs.cjs" ep{N}/narration_{part}.txt ep{N}/segments_{part}/ <narrator_voice_id>
 ```
 
 **Typecast:**
 ```bash
-node "$SCRIPT_DIR/generate_tts_typecast.cjs" narration \
-  ep{N}/narration_{part}.txt  ep{N}/segments_{part}/  <narrator_voice_id>
+node "$SCRIPT_DIR/generate_tts_typecast.cjs" narration ep{N}/narration_{part}.txt ep{N}/segments_{part}/ <narrator_voice_id>
 ```
 
 **Outputs (identical for both providers):** `segments_{part}/seg_NNN.mp3` + `seg_NNN.json` (character-level alignment, ElevenLabs-compatible shape) + `index.json`
@@ -118,19 +120,18 @@ node "$SCRIPT_DIR/generate_tts_typecast.cjs" narration \
 
 ### 5-1b. Auto-draft baseline subtitles
 ```bash
-node "$SCRIPT_DIR/draft_subtitles.cjs" \
-  ep{N}/segments_{part}/  ep{N}/subtitles_{part}.txt
+node "$SCRIPT_DIR/draft_subtitles.cjs" ep{N}/segments_{part}/ ep{N}/subtitles_{part}.txt
 ```
 **Outputs:** `subtitles_{part}.txt` (each subtitle ≤ 42 chars, split at sentence/clause boundaries)
 **Format:** `[NNN|N] subtitle1|subtitle2|subtitle3` (N = narration, D:CharacterName = dialogue)
 
 ### 5-1c. Build baseline SRT (+ timeline JSON)
 ```bash
-node "$SCRIPT_DIR/build_srt.cjs" \
-  ep{N}/segments_{part}/  ep{N}/subtitles_{part}.txt  ep{N}/final_{part}.srt \
-  ep{N}/timeline_{part}.json     # ← 4th arg REQUIRED (W6 input)
+node "$SCRIPT_DIR/build_srt.cjs" ep{N}/segments_{part}/ ep{N}/subtitles_{part}.txt ep{N}/final_{part}.srt ep{N}/timeline_{part}.json
 ```
-**Outputs:** `final_{part}.srt` (alignment-accurate timecodes) + `timeline_{part}.json` (per-segment cumulative start/end times — consumed by W6 to build scenes.csv)
+**4th arg `timeline_{part}.json` REQUIRED** — input for W6's scenes.csv builder. W6 will block without it.
+
+**Outputs:** `final_{part}.srt` (alignment-accurate timecodes) + `timeline_{part}.json` (per-segment cumulative start/end times — consumed by W6).
 
 ### 5-1d. User review (optional refinement)
 - Read the baseline SRT and check whether the cuts respect meaning units
@@ -141,17 +142,16 @@ node "$SCRIPT_DIR/build_srt.cjs" \
 
 ### 5-1e. Merge segment mp3s → per-part mp3
 ```bash
-node "$SCRIPT_DIR/merge_audio.cjs" \
-  ep{N}/segments_{part}/  ep{N}/final_{part}.mp3
+node "$SCRIPT_DIR/merge_audio.cjs" ep{N}/segments_{part}/ ep{N}/final_{part}.mp3
 ```
 **Outputs:** `final_{part}.mp3` (ffmpeg concat driven by `segments_{part}/index.json`)
 
 ### 5-1f. Per-character dialogue TTS (Typecast — only when dialogue exists)
 ```bash
-node "$SCRIPT_DIR/generate_tts_typecast.cjs" dialogue \
-  ep{N}/dialogs_{part}.json  ep{N}/voices/  ep{N}/tts_settings.md  \
-  ep{N}/segments_{part}/      # ← 4th arg: segments dir from 5-1a
+node "$SCRIPT_DIR/generate_tts_typecast.cjs" dialogue ep{N}/dialogs_{part}.json ep{N}/voices/ ep{N}/tts_settings.md ep{N}/segments_{part}/
 ```
+**4th arg `ep{N}/segments_{part}/`** — segments dir from 5-1a. Required for `after_paragraph` → start auto-derivation. Without it, every dialog must carry an explicit `start` field in dialogs.json.
+
 **Outputs:** `voices/{order:03d}_{character}_{HHMMSS}.mp3` + `result.json`
 - The `_HHMMSS` in the filename is each line's start time (used for auto-placement in W8)
 - start resolution (inside the script):
