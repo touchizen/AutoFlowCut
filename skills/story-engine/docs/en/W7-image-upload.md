@@ -68,6 +68,21 @@ AutoFlowCut MCP: app_start_ref_batch({ styleId: "gothic-illustration" }) → aut
 - Passing `styleId` also auto-selects it in the app's style picker UI
 - If called without `styleId`, uses the currently selected style in the app
 
+**After styleId is locked (REQUIRED): write the `type: style` row in `references.csv`**
+
+W6 only writes character/scene rows. The `type: style` row is the exclusive responsibility of W7 (see W6 doc 6-1). Right after the user confirms a styleId, write a matching English prompt to a type:style row.
+
+```
+# Example: styleId="gothic-illustration"
+AutoFlowCut MCP: update_reference_prompt({
+  name: "gothic-illustration",
+  type: "style",
+  prompt: "Gothic illustration style, heavy chiaroscuro, dramatic candlelight, period detail, no modern elements"
+})
+```
+
+This row drives style consistency across all character/scene prompts. Without it, image style becomes arbitrary.
+
 **Path B — User drives it in-app:** the user opens Ref → Batch → pick style → Start themselves
 ```
 AutoFlowCut MCP: app_batch_status → check status
@@ -272,6 +287,31 @@ Character clothing baseline comes from the script's character setup (references.
 
 After image QA, import the W5-generated audio files into AutoFlowCut.
 When you later export to CapCut, narration / SFX will auto-land on the timeline.
+
+**Pre-import SFX scene-match validation (REQUIRED — moved from W5):**
+
+W5-4 cannot run validation that depends on `scenes.csv` (a W6 output). The scene-match check runs here, immediately before audio import.
+
+```python
+# 1. Read per-scene start_time / end_time / parent_scene from scenes.csv
+# 2. Map "position" in the W4 SFX list (08_sfx_list.md) → parent_scene
+# 3. Parse timecodes (MMSS / HHMMSS) from media/sfx/ filenames
+# 4. Verify each SFX timecode falls within [scene.start_time, scene.end_time]
+# 5. On mismatch → fix_sfx_timecodes.py → re-validate → loop until pass
+```
+
+**Validation items:**
+- SFX timecode ∈ [mapped scene's start_time, end_time] (±0.5s tolerance)
+- No SFX falls outside any scene boundary
+- Every `media/sfx/*.mp3` file is mapped to a scene (no orphan SFX)
+
+**STATE.md update:**
+- step: `W07_sfx_scene_match_qa`
+- Record after scene-match validation passes
+
+Only proceed to the import procedure below once this validation passes.
+
+---
 
 **Import targets (episode folder):**
 ```

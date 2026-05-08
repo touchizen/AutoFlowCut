@@ -49,16 +49,19 @@ AutoFlowCut MCP: get_schema({ type: "prompt-image" }) → prompt-writing guide
 
 ### 6-1. Reference CSV (`references.csv`)
 
-Define all characters / places / style references that appear in the script.
+**Only characters (`character`) and places (`scene`) are written here. The `type: style` row is NOT created in W6 — it is the exclusive responsibility of W7.**
 
-**Before writing the style reference, ASK the user which art style to use:**
-- Ask: "What art style should the images use? e.g., painterly medieval, gothic illustration, oil-painting realism, ink-and-wash, etched engraving, watercolor, cinematic live-action, Tim Burton-esque, German Expressionist."
-- Author the `type: style` reference's prompt according to the user's chosen style.
+> **Style ownership split:** Asking the user "which art style?", calling `list_styles`, picking a `styleId`, and writing the `type: style` row all happen in **W7 7-1**. Do NOT ask the user about style in W6 — repeating the same question across two waves is confusing.
+
+**`type` values written in W6:**
+- `character` — characters
+- `scene` — places
+- ~~`style`~~ — **added in W7 7-1** (after user picks a `styleId`, W7 inserts the type:style row via `update_reference_prompt` MCP)
 
 | Column | Description |
 |--------|-------------|
 | `name` | Reference name (character name, place name) |
-| `type` | `character` / `scene` / `style` |
+| `type` | `character` / `scene` (W6 scope) |
 | `prompt` | English image-generation prompt |
 
 **Character writing rules:**

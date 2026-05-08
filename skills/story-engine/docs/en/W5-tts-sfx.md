@@ -6,9 +6,9 @@ Uses the narration / dialogue / SFX data extracted in W4 to generate audio.
 
 ---
 
-## 5-1. TTS voice generation
+## TTS provider options (overview)
 
-Generate narration and per-character dialogue from the extracted script using TTS.
+Generate narration and per-character dialogue from the extracted script using TTS. The table below is an overview of provider options; the actual execution order is **5-0 → 5-1**.
 
 **TTS provider options** (user selects):
 
@@ -24,7 +24,7 @@ Generate narration and per-character dialogue from the extracted script using TT
 
 ---
 
-## 5-0. Character voice assignment (MANDATORY before 5-1)
+## 5-0. Character voice assignment (MANDATORY before any TTS call)
 
 **Run this step BEFORE any TTS generation if the script contains character dialogue.**
 
@@ -50,7 +50,7 @@ Generate narration and per-character dialogue from the extracted script using TT
 
 ---
 
-## 5-1. TTS voice generation (continued)
+## 5-1. TTS voice generation
 
 **mp3 + SRT generated together (required):**
 
@@ -208,31 +208,33 @@ ffmpeg -y -f concat -safe 0 -i merge_all.txt -c copy media/final_full.mp3
 
 ---
 
-## 5-4. SFX timecode validation (required before audio import)
+## 5-4. SFX timecode mechanic validation (W5 internal consistency only)
 
-**Run before audio import in W7. No exceptions.**
+**Only the checks possible at W5 are performed here — the "scene match" check depends on `scenes.csv` (a W6 output), so it is moved out and runs at the start of W7 7-2c (audio import).**
 
-**Validation items:**
-1. **Scene match** — Each SFX file's timecode must match the actual `start_time` of the scene listed in the "position" of `08_sfx_list.md`
-2. **Collision** — If 3 or more SFX pile onto the same timecode, fail (CapCut track explosion)
-3. **Range** — Timecode must not exceed the total audio length
-4. **Per-part offset** — `sfx/` original per-part timecode + part offset = `media/sfx/` full timecode
+**Items checked in W5-4 (do NOT require scenes.csv):**
+1. **Collision** — If 3 or more SFX pile onto the same timecode, fail (CapCut track explosion)
+2. **Range** — Timecode must not exceed the total audio length (`final_full.mp3`)
+3. **Per-part offset** — `sfx/` original per-part timecode + part offset = `media/sfx/` full timecode (consistency of the W5-3 conversion)
 
-**Validation script:**
+**Validation script (example):**
 ```python
-# Read per-scene start_time from scenes.csv
-# Map "position" in 08_sfx_list.md → parent_scene
-# Compare with timecodes in media/sfx/ filenames
-# On mismatch, re-map with fix_sfx_timecodes.py
+# Parse timecode from media/sfx/ filenames (last _MMSS / _HHMMSS suffix)
+# 1. Collision: if ≥3 SFX within ±1s of the same timecode → fail
+# 2. Range: ffprobe(media/final_full.mp3) length must be > every timecode → fail otherwise
+# 3. Offset: for each sfx/ file, (part_offset + in-part timecode) MUST equal media/sfx/ timecode
 ```
 
 **On validation fail:**
-- Run `fix_sfx_timecodes.py` to remap timecodes
+- Run `fix_sfx_timecodes.py` to remap timecodes (mechanic part)
 - Re-validate after remap → loop until pass
+
+**Moved to W7 (for reference):**
+- **Scene match** — Each SFX file's timecode must equal the actual `start_time` of the corresponding scene in `scenes.csv`. `scenes.csv` is a W6 output, so this check cannot run in W5. → See W7 doc `7-2c` "Pre-import SFX scene-match validation".
 
 **STATE.md update:**
 - step: `W05_sfx_timecode_qa`
-- Record after validation passes
+- Record after mechanic validation passes (scene-match recorded separately in W7)
 
 **Review (substep 5-4)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to the next Wave. 5 rounds exceeded → escalate to user.
 

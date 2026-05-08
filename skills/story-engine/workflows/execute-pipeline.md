@@ -216,9 +216,9 @@ follow this granularity; wave docs may add finer breakdowns but never remove the
 | W2   | W2-0 read-inputs, W2-1 synopsis-draft, W2-2 preflight, W2-3..N preflight-revise (per round)        |
 | W3   | W3-0 read-inputs, W3-1..4 part-write × 4, W3-5 self-review, W3-6 external-review, W3-7 polish     |
 | W4   | W4-0 read-inputs, W4-1..4 narration-extract × 4, W4-5 dialogue-extract, W4-6 SFX-list, W4-7 audit |
-| W5   | W5-0 voice-pick, W5-1 narration-TTS, W5-2 dialogue-TTS, W5-3 SRT, W5-4 SFX (batched), W5-5 merge   |
-| W6   | W6-0 schema-load, W6-1 references-CSV, W6-2..5 scenes-CSV × parts, W6-6 gap-validate               |
-| W7   | W7-0 project-open, W7-1 style-pick, W7-2 ref-batch, W7-3..N scene-batches, W7-4 QA, W7-5 CapCut    |
+| W5   | W5-0 voice-pick, W5-1 TTS (narration + dialogue + SRT), W5-2 SFX (batched), W5-3 merge, W5-4 mechanic-QA |
+| W6   | W6-1 references-CSV (character + scene only), W6-2 scenes-CSV, W6-3 review (gap/coverage/duration) |
+| W7   | W7-0 project-setup, W7-1 ref-batch (incl. style-pick + type:style row), W7-2 scene-batch, W7-2a error-fix, W7-2b image-QA, W7-2c audio-import (incl. SFX scene-match), W7-2d CapCut-export, W7-3 video (optional) |
 | W8   | W8-0 title-desc-tags, W8-1 thumbnail-text                                                          |
 
 **For each sub-step the orchestrator MUST:**
