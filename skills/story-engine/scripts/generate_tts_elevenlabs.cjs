@@ -1,5 +1,5 @@
-// generate_tts.js — ElevenLabs with-timestamps TTS for one narration part.
-// Usage: node generate_tts.js <narrationPath> <outDir> <voiceId>
+// generate_tts_elevenlabs.cjs — ElevenLabs with-timestamps TTS for one narration part.
+// Usage: node generate_tts_elevenlabs.cjs <narrationPath> <outDir> <voiceId>
 // Produces: outDir/seg_NNN.mp3, outDir/seg_NNN.json (alignment), outDir/index.json
 'use strict';
 
@@ -46,7 +46,7 @@ async function generateOne(voiceId, apiKey, text, outMp3, outJson) {
 async function main() {
   const [, , narrationPath, outDir, voiceId] = process.argv;
   if (!narrationPath || !outDir || !voiceId) {
-    console.error('usage: node generate_tts.js <narrationPath> <outDir> <voiceId>');
+    console.error('usage: node generate_tts_elevenlabs.cjs <narrationPath> <outDir> <voiceId>');
     process.exit(2);
   }
   fs.mkdirSync(outDir, { recursive: true });
@@ -62,7 +62,7 @@ async function main() {
     const mp3 = path.join(outDir, `${name}.mp3`);
     const json = path.join(outDir, `${name}.json`);
     if (existing.has(`${name}.mp3`) && existing.has(`${name}.json`)) {
-      index.push({ index: seg.index, text: seg.text, mp3: `${name}.mp3`, json: `${name}.json`, skipped: true });
+      index.push({ index: seg.index, text: seg.text, mp3: `${name}.mp3`, json: `${name}.json`, paragraph_idx: seg.paragraph_idx, skipped: true });
       continue;
     }
     let attempt = 0;
@@ -84,7 +84,7 @@ async function main() {
         await sleep(backoff);
       }
     }
-    index.push({ index: seg.index, text: seg.text, mp3: `${name}.mp3`, json: `${name}.json` });
+    index.push({ index: seg.index, text: seg.text, mp3: `${name}.mp3`, json: `${name}.json`, paragraph_idx: seg.paragraph_idx });
     await sleep(200);
   }
   fs.writeFileSync(path.join(outDir, 'index.json'), JSON.stringify(index, null, 2));
