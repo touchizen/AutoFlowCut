@@ -29,7 +29,8 @@ For each wave from current to target:
 │   For bespoke, ALSO load `_story_source/_meta_supplement.md` (W1-5 output)
 │
 ├─ ▶ PRINT WAVE-START BANNER (see "Wave banners" section below)
-│   - Banner language follows genre: yadam → KO, dark-history → EN
+│   - Banner language follows the resolved {lang} (yadam → ko; dark-history → en;
+│     bespoke → auto-detected from references/topic, see Step 2 box diagram)
 │   - Print to chat output BEFORE spawning the subagent
 │
 ├─ Predecessor input contract (applies for N ≥ 2):
@@ -71,7 +72,8 @@ For each wave from current to target:
 │   - If mismatched → fix and warn
 │
 ├─ ▶ PRINT WAVE-DONE BANNER (see "Wave banners" section below)
-│   - Banner language follows genre: yadam → KO, dark-history → EN
+│   - Banner language follows the resolved {lang} (yadam → ko; dark-history → en;
+│     bespoke → auto-detected from references/topic, see Step 2 box diagram)
 │   - Print AFTER verification + sanity-check pass
 │
 ├─ Special gate check:
@@ -91,7 +93,10 @@ For each wave from current to target:
 The orchestrator MUST print one START banner before spawning each wave's subagent
 and one DONE banner after the completion checks pass. Banners give the user a
 visible heartbeat across the long pipeline. **Use the banner text verbatim** — do
-not reword. Pick the language block that matches the genre (yadam=ko, dark-history=en).
+not reword. Pick the language block that matches the resolved `{lang}`:
+- yadam → `ko`
+- dark-history → `en`
+- bespoke → auto-detected from user references/topic at episode init (Korean refs → `ko`, English refs → `en`); user override possible via STATE.md
 
 **Wave name table** (use these exact labels in the banner)
 
