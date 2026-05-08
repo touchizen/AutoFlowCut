@@ -4,6 +4,13 @@
 
 (이전엔 W8이었으나, W7 split으로 W8이 어셈블리에 할당되면서 W9로 renumber됨.)
 
+> **📋 출력 파일명 — genre별로 다름**
+> - **yadam**: `11_업로드정보.json`
+> - **dark-history**: `11_upload_info.json`
+> - **bespoke**: `11_upload_info.json` (English filename, content in `STATE.md` "Output language:" 필드)
+>
+> 본 문서 본문의 출력 파일명은 yadam 기준이며, 다른 장르는 위 매핑으로 substitute. 자세한 filename convention: `workflows/execute-pipeline.md` § "Filename convention varies by genre".
+
 ---
 
 ## ★ W9 primary review lens — 궁금증/기대감 promise

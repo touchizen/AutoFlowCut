@@ -28,22 +28,30 @@ Locate the source episode:
 
 Read these artifacts (some may be absent — handle gracefully). **Filenames vary by genre:**
 
-| Artifact | yadam (Korean) | dark-history / bespoke (English) | Resolution rule |
-|----------|----------------|----------------------------------|-----------------|
-| State | `STATE.md` | `STATE.md` | exact filename, all genres |
-| Synopsis | `04_시놉시스.md` | `04_synopsis.md` | **exact filename match** per genre. Do NOT glob `04_*.md` — bespoke also has `04_success_synthesis.md` (a different artifact). |
-| Fact-check | `02_팩트체크.md` | `02_factcheck.md` | exact filename per genre. **All three genres including bespoke emit fact-check** — never skip. |
-| Research | `03_자료수집.md` | `03_research.md` | exact filename per genre. All genres emit research. |
-| Script parts | `{title}_기.md`, `_승.md`, `_전.md`, `_결.md` | `{title}_part1_setup.md`, `_part2_rising.md`, `_part3_crisis.md`, `_part4_resolution.md` | per-genre filename pattern; match against the actual ep title slug |
-| Meta supplement | (n/a) | `_meta_supplement.md` (bespoke only) | bespoke-only; absence is a genre signal that genre is NOT bespoke |
-| Bespoke synthesis | (n/a) | `04_success_synthesis.md` (bespoke only) | bespoke-only; **distinct from `04_synopsis.md`** (do not confuse) |
-| Bespoke ref analysis | (n/a) | `01_references_analysis.md` (bespoke only) | bespoke-only |
+| Artifact | yadam (Korean output) | dark-history (English output) | bespoke (any output language) | Resolution rule |
+|----------|------------------------|-------------------------------|-------------------------------|-----------------|
+| State | `STATE.md` | `STATE.md` | `STATE.md` | exact filename, all genres |
+| Synopsis | `04_시놉시스.md` | `04_synopsis.md` | `04_synopsis.md` | exact filename match per genre. Do NOT glob `04_*.md` — bespoke also has `04_success_synthesis.md`. |
+| Fact-check | `02_팩트체크.md` | `02_factcheck.md` | `02_factcheck.md` | exact filename per genre. All three genres including bespoke emit fact-check — never skip. |
+| Research | `03_자료수집.md` | `03_research.md` | `03_research.md` | exact filename per genre. |
+| Script parts | `{title}_기.md`, `_승.md`, `_전.md`, `_결.md` | `{title}_part1_setup.md`, `_part2_rising.md`, `_part3_crisis.md`, `_part4_resolution.md` | `{title}_part1_setup.md`, `_part2_rising.md`, `_part3_crisis.md`, `_part4_resolution.md` (English filenames regardless of output language) | per-genre filename pattern |
+| Meta supplement | (n/a) | (n/a) | `_meta_supplement.md` | bespoke-only; absence = genre is NOT bespoke |
+| Bespoke synthesis | (n/a) | (n/a) | `04_success_synthesis.md` | bespoke-only; distinct from `04_synopsis.md` |
+| Bespoke ref analysis | (n/a) | (n/a) | `01_references_analysis.md` | bespoke-only |
 
-**Implementation rule** — use **exact filename match keyed by genre** (read STATE.md "Genre:" line first), NOT prefix glob:
+**Design choice — Bespoke uses English filenames regardless of output language**
 
-- yadam → `02_팩트체크.md` / `03_자료수집.md` / `04_시놉시스.md`
-- dark-history → `02_factcheck.md` / `03_research.md` / `04_synopsis.md`
-- bespoke → `02_factcheck.md` / `03_research.md` / `04_synopsis.md` (+ optional bespoke-only files)
+Bespoke artifacts are named in English (`04_synopsis.md`, `02_factcheck.md`, `Three_Wives_part1_setup.md`, etc.) regardless of whether the output language is Korean or English. The Korean content lives INSIDE the files; the filenames stay ASCII-safe for shell-tool compatibility and cross-language stability.
+
+This is intentional and contrasts with **yadam**, which uses Korean filenames (`04_시놉시스.md` etc.) because yadam is locked to Korean output and has its own established convention. **dark-history** uses English filenames (lock to English).
+
+**Bespoke output language affects file CONTENT, not file NAMES.**
+
+**Implementation rule** — exact filename match keyed by genre + (for bespoke) output language for inside-file content interpretation:
+
+- yadam → `02_팩트체크.md` / `03_자료수집.md` / `04_시놉시스.md` (Korean filenames + Korean content)
+- dark-history → `02_factcheck.md` / `03_research.md` / `04_synopsis.md` (English filenames + English content)
+- bespoke → `02_factcheck.md` / `03_research.md` / `04_synopsis.md` (English filenames; content in `STATE.md` "Output language:" — `ko` or `en`) + optional bespoke-only files
 
 If genre is unknown after `STATE.md` read → AskUserQuestion (Step 2 below). Do NOT auto-glob a wrong file.
 
@@ -57,11 +65,11 @@ If genre is unknown after `STATE.md` read → AskUserQuestion (Step 2 below). Do
 |-------|-------------------|
 | **yadam** | `meta-prompts/yadam/야담_시놉시스_작성_지침.md`, `야담_프리플라이트.md`, `야담_시나리오_작성_지침.md`, `야담_서술기법_가이드.md`, `야담_서스펜스_기법.md` |
 | **dark-history** | `meta-prompts/dark-history/synopsis_guidelines.md`, `preflight.md`, `screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md` |
-| **bespoke** | Same English filenames as dark-history (`meta-prompts/bespoke/`) PLUS `_story_source/_meta_supplement.md` (per-episode supplement) |
+| **bespoke** | `meta-prompts/bespoke/{lang}/synopsis_guidelines.md`, `preflight.md`, `screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md` (lang = `ko` or `en` per STATE.md output language) PLUS `_story_source/_meta_supplement.md` (per-episode supplement) |
 
 The W1-Rw-1 diagnosis subagent applies the **engagement E0–E3 lens** (curiosity / expectation / engagement curve / drop-off zones) which is genre-agnostic in concept but lives in:
-- `meta-prompts/dark-history/narrative_techniques.md` § "Review dimensions" (English) — works for dark-history + bespoke
-- `meta-prompts/bespoke/narrative_techniques.md` § "10. Review dimensions" (English) — primary source
+- `meta-prompts/bespoke/{lang}/narrative_techniques.md` § "10. Review dimensions" (English) / "10. 리뷰 차원" (Korean) — **primary source** for the engagement-primary review framework. `{lang}` = `en` or `ko` per the source episode's output language.
+- `meta-prompts/dark-history/narrative_techniques.md` § "Review dimensions" — equivalent for dark-history-genre rewrites.
 - For yadam: the same E0–E3 lens applies conceptually; the subagent adapts the universal lens to yadam's `야담_서스펜스_기법.md` "궁금증과 긴장 유지 기법" framing.
 
 **Step 3: W1-Rw — engagement diagnosis (subagent)**
@@ -74,9 +82,10 @@ The subagent reads (genre-conditional):
 - All script part files (per the filename table in Step 2)
 - The genre's meta-prompts:
   - **yadam**: `야담_시놉시스_작성_지침.md`, `야담_시나리오_작성_지침.md`, `야담_서술기법_가이드.md`, `야담_서스펜스_기법.md`
-  - **dark-history / bespoke**: `synopsis_guidelines.md`, `screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md`
+  - **dark-history**: `meta-prompts/dark-history/synopsis_guidelines.md`, `screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md`
+  - **bespoke**: `meta-prompts/bespoke/{lang}/synopsis_guidelines.md`, `screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md` — `{lang}` per STATE.md output language (`ko` or `en`)
 - For bespoke additionally: `_story_source/_meta_supplement.md`
-- The engagement E0–E3 lens from `meta-prompts/bespoke/narrative_techniques.md` § "10. Review dimensions" (canonical source for the engagement-primary review framework). For yadam, adapt the universal lens to `야담_서스펜스_기법.md` "궁금증과 긴장 유지 기법" framing.
+- The engagement E0–E3 lens from `meta-prompts/bespoke/{lang}/narrative_techniques.md` § "Review dimensions" (or "리뷰 차원" in Korean) — canonical source for the engagement-primary review framework. For yadam, adapt the universal lens to `야담_서스펜스_기법.md` "궁금증과 긴장 유지 기법" framing.
 
 The subagent produces `_story_source/01_improvement_diagnosis.md`:
 

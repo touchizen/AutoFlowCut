@@ -30,13 +30,18 @@ mkdir -p "{PROJECT_DIR}/ep{number}_{slug}/_story_source"
 
 `{slug}` is a short lowercase identifier of the topic (e.g. `eilean_mor`). All subsequent file paths in this workflow that reference the episode directory should use `{PROJECT_DIR}/ep{number}_{slug}/_story_source/`.
 
-**Step 3: Genre detection**
+**Step 3: Genre detection + Output language resolution**
 
-| Trigger | Genre | Meta-Prompts |
-|---------|-------|--------------|
-| 한국어 + 야담/민담/조선/설화/전설 키워드 | yadam | `meta-prompts/yadam/` |
-| English + dark/gothic/medieval/witch/folklore/colonial 키워드 | dark-history | `meta-prompts/dark-history/` |
-| 어느 장르도 키워드가 명확하지 않음 (또는 `--genre bespoke`) | **bespoke** | `meta-prompts/bespoke/` + per-episode `_meta_supplement.md` (W1-5에서 생성) |
+| Trigger | Genre | Output language | Meta-Prompts |
+|---------|-------|-----------------|--------------|
+| 한국어 + 야담/민담/조선/설화/전설 키워드 | yadam | `ko` (locked) | `meta-prompts/yadam/` (Korean filenames: 야담_*.md) |
+| English + dark/gothic/medieval/witch/folklore/colonial 키워드 | dark-history | `en` (locked) | `meta-prompts/dark-history/` (English filenames) |
+| 어느 장르도 키워드가 명확하지 않음 (또는 `--genre bespoke`) | **bespoke** | `ko` or `en` (auto-detect from references/topic; ask user if ambiguous) | `meta-prompts/bespoke/{output_lang}/` (subfolder per output language: `ko/` for Korean, `en/` for English) + per-episode `_meta_supplement.md` (W1-5에서 생성) |
+
+**Output language resolution at /story-new time** (write to STATE.md "Output language:" field):
+- yadam → `ko`
+- dark-history → `en`
+- bespoke → detect from references (transcript language) and/or topic (한국어 vs English). If ambiguous OR mixed → AskUserQuestion. **Do NOT proceed without resolved value.** This field is used by execute-pipeline / rewrite-episode to pick `bespoke/{lang}/` subfolder.
 
 Override with `--genre` flag.
 
@@ -96,6 +101,7 @@ Write to `{PROJECT_DIR}/ep{number}_{slug}/_story_source/STATE.md`:
 ## Decisions
 - Topic: {topic}
 - Genre: {genre}
+- Output language: {output_lang}  # ko (yadam locked, or bespoke + Korean refs/topic) | en (dark-history locked, or bespoke + English)
 - Target length: {length}
 - References: {references or "none"}{if bespoke: " (3~5 reference scripts in _references/)"}
 ```

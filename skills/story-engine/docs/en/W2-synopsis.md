@@ -4,12 +4,15 @@ This document is the W2 (synopsis writing + preflight check) stage guide for the
 
 ## Reference documents (must read at this stage)
 
-**Per-genre meta-prompts (`{genre}` = `yadam` / `dark-history` / `bespoke`):**
+**Per-genre meta-prompts:**
 
-| Step | Document |
-|------|----------|
-| Synopsis | `meta-prompts/{genre}/synopsis_guidelines.md` |
-| Preflight | `meta-prompts/{genre}/preflight.md` |
+| Genre | Synopsis guide | Preflight |
+|-------|----------------|-----------|
+| yadam | `meta-prompts/yadam/야담_시놉시스_작성_지침.md` | `meta-prompts/yadam/야담_프리플라이트.md` |
+| dark-history | `meta-prompts/dark-history/synopsis_guidelines.md` | `meta-prompts/dark-history/preflight.md` |
+| Bespoke | `meta-prompts/bespoke/{lang}/synopsis_guidelines.md` | `meta-prompts/bespoke/{lang}/preflight.md` |
+
+**Bespoke `{lang}` resolution**: when `STATE.md` genre is `bespoke`, the output language (`ko` or `en`) is auto-detected from references / topic (Korean → `ko`, English → `en`). See SKILL.md 참조 문서 table. User override possible via STATE.md.
 
 **Bespoke genre additional REQUIRED read**: `_story_source/_meta_supplement.md` (per-episode supplement authored at W1-5 from the user's 3–5 reference scripts). Read alongside the universal base — **supplement WINS on conflicts**.
 
@@ -19,7 +22,7 @@ This document is the W2 (synopsis writing + preflight check) stage guide for the
 
 > `SKILL.md` 핵심 원칙: **Curiosity + Expectation = Engagement. The top-level evaluation criterion across every wave.**
 
-The W2 synopsis must answer the following four questions (genre-agnostic universal criteria, derived from `SKILL.md` 핵심 원칙. **Bespoke** has the same criteria expanded into 5 explicit items in `meta-prompts/bespoke/preflight.md` § "★ Section 0 — Engagement (PRIMARY)". **yadam** and **dark-history** do NOT have a separate Section 0 — they apply these 4 lens questions directly during W2 review):
+The W2 synopsis must answer the following four questions (genre-agnostic universal criteria, derived from `SKILL.md` 핵심 원칙. **Bespoke** has the same criteria expanded into 5 explicit items in `meta-prompts/bespoke/{lang}/preflight.md` § "★ Section 0 — Engagement (PRIMARY)" / "★ 섹션 0 — 몰입도 (PRIMARY)". **yadam** and **dark-history** do NOT have a separate Section 0 — they apply these 4 lens questions directly during W2 review):
 
 - **Does every chapter contribute to curiosity OR expectation?** Chapters that do neither = structural dead weight; cut or merge.
 - **Are BOTH engines alive through ch.15?** If only one drives Acts I–II, the audience disengages — curiosity-only collapses on reveal; expectation-only is predictable.
@@ -32,7 +35,10 @@ The 20-chapter framework is a tool; the review is by the engagement curve.
 
 ## Synopsis writing
 
-**You MUST read `synopsis_guidelines.md` before starting.**
+**You MUST read the selected genre's synopsis guidelines before starting** (see "Reference documents" table above):
+- **yadam**: `meta-prompts/yadam/야담_시놉시스_작성_지침.md`
+- **dark-history**: `meta-prompts/dark-history/synopsis_guidelines.md`
+- **Bespoke**: `meta-prompts/bespoke/{lang}/synopsis_guidelines.md` + `_story_source/_meta_supplement.md`
 
 Write a synopsis based on the 20-chapter framework.
 
@@ -90,7 +96,10 @@ Write a synopsis based on the 20-chapter framework.
 
 ## Preflight check
 
-**You MUST read `preflight.md` and inspect the synopsis against it.**
+**You MUST read the selected genre's preflight checklist and inspect the synopsis against it** (see "Reference documents" table above):
+- **yadam**: `meta-prompts/yadam/야담_프리플라이트.md`
+- **dark-history**: `meta-prompts/dark-history/preflight.md`
+- **Bespoke**: `meta-prompts/bespoke/{lang}/preflight.md` (Section 0 Engagement is bespoke-only)
 
 ### Absolute prohibitions
 

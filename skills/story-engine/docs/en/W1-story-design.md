@@ -133,7 +133,7 @@ When the user provides a reference (URL, transcript, video), analyze it.
 
 ## [Bespoke] Path
 
-**Bespoke genre only** — analyzes 3–5 user-provided successful scripts to synthesize a per-episode meta-prompt (`_meta_supplement.md`). W2/W3 read the universal `meta-prompts/bespoke/` files alongside this supplement.
+**Bespoke genre only** (Korean docs/UI: 맞춤형) — analyzes 3–5 user-provided successful scripts to synthesize a per-episode meta-prompt (`_meta_supplement.md`). W2/W3 read the universal `meta-prompts/bespoke/{lang}/` files (Korean output → `ko/`, English output → `en/`) alongside this supplement.
 
 ### Prerequisite
 

@@ -2,13 +2,25 @@
 
 이 문서는 story-engine 스킬의 W3(대본 작성 + 검토) 단계 가이드입니다.
 
+> **📋 출력 파일명 — genre별로 다름**
+> 본 문서 본문의 파일 구조 / 출력 파일명은 yadam (한국어) 기준으로 표기되어 있습니다. 다른 장르는 아래 매핑으로 substitute:
+> - **yadam**: `{title}_기.md` / `_승.md` / `_전.md` / `_결.md` / `07_검토.md`
+> - **dark-history**: `{title}_part1_setup.md` / `_part2_rising.md` / `_part3_crisis.md` / `_part4_resolution.md` / `07_review.md`
+> - **bespoke**: same English form as dark-history (`{title}_part1_setup.md` 등, `07_review.md`); content in `STATE.md` "Output language:" 필드
+>
+> 자세한 filename convention: `workflows/execute-pipeline.md` § "Filename convention varies by genre".
+
 ## 참조 문서 (해당 단계에서 반드시 읽을 것)
 
-**장르별 메타프롬프트 (`{genre}` = `yadam` / `dark-history` / `bespoke`):**
+**장르별 메타프롬프트 (대본 작성용 3개 파일):**
 
-| 단계 | 읽어야 할 문서 |
-|------|--------------|
-| 대본 작성 | `meta-prompts/{genre}/screenplay_guidelines.md`, `meta-prompts/{genre}/narrative_techniques.md`, `meta-prompts/{genre}/suspense_techniques.md` (yadam은 `야담_시나리오_작성_지침.md`, `야담_서술기법_가이드.md`, `야담_서스펜스_기법.md`) |
+| 장르 | 시나리오 / 서술 / 서스펜스 |
+|------|------------------------|
+| yadam | `meta-prompts/yadam/야담_시나리오_작성_지침.md`, `야담_서술기법_가이드.md`, `야담_서스펜스_기법.md` |
+| dark-history | `meta-prompts/dark-history/screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md` |
+| 맞춤형 (bespoke) | `meta-prompts/bespoke/{lang}/screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md` |
+
+**Bespoke의 `{lang}`**: STATE.md genre가 `bespoke`이면 출력 언어 (`ko` 또는 `en`) 자동 감지.
 
 **Bespoke 장르 추가 필수 read**: `_story_source/_meta_supplement.md` — universal base와 함께 read, **충돌 시 supplement 우선**. supplement에서 길이 / 톤 / 어휘 / 벤치마크 callout이 명시됨.
 
@@ -18,7 +30,7 @@
 
 > SKILL.md 핵심 원칙: **궁금증 + 기대감 = 몰입도. 모든 wave의 최상위 평가 기준.**
 
-W3 대본 검토는 "재미있는가"가 아니라 **"시청자가 다음 단락으로 넘어가게 만드는가"**로 한다. (자세한 review dimension은 `meta-prompts/{genre}/narrative_techniques.md` § Review dimensions 참조 — 그곳의 E0~E3 (engagement) 가 primary, C1~C10 (craft) 는 subordinate.)
+W3 대본 검토는 "재미있는가"가 아니라 **"시청자가 다음 단락으로 넘어가게 만드는가"**로 한다. (자세한 review dimension 참조: yadam은 `meta-prompts/yadam/야담_서술기법_가이드.md`, dark-history는 `meta-prompts/dark-history/narrative_techniques.md`, bespoke는 `meta-prompts/bespoke/{lang}/narrative_techniques.md` — 모두 § Review dimensions / 리뷰 차원 참조. E0~E3 (engagement)가 primary, C1~C10 (craft)는 subordinate.)
 
 Engagement primary 4 항목 (E0~E3):
 - **E0. 궁금증 유지** — 매 단락이 시청자에게 "다음에 뭐?" / "이건 뭐?" 질문을 던지는가. 3 단락 연속 질문 없으면 drop-off zone.
@@ -32,9 +44,14 @@ Craft 점수가 9.5 넘어도 E0~E3 한 항목이라도 fail이면 revise. Craft
 
 ## 대본(시나리오) 작성
 
-**`야담_시나리오_작성_지침.md`, `야담_서술기법_가이드.md`, `야담_서스펜스_기법.md`를 반드시 읽고 시작한다.**
+**선택된 장르의 대본 작성 가이드라인 3개를 반드시 읽고 시작한다** (위 "참조 문서" 표 참조):
+- **yadam**: `meta-prompts/yadam/야담_시나리오_작성_지침.md`, `야담_서술기법_가이드.md`, `야담_서스펜스_기법.md`
+- **dark-history**: `meta-prompts/dark-history/screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md`
+- **bespoke (맞춤형)**: `meta-prompts/bespoke/{lang}/screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md` + `_story_source/_meta_supplement.md`
 
-시놉시스를 바탕으로 **훅 + 기승전결 4파트를 모두 작성한 다음, 검토 단계에서 통합 검토**한다.
+`{lang}`은 STATE.md의 "Output language:" 필드 (`ko` 또는 `en`)에서 해석.
+
+시놉시스를 바탕으로 **훅 + 4파트를 모두 작성한 다음, 검토 단계에서 통합 검토**한다 (yadam은 기승전결, dark-history / bespoke는 setup / rising / crisis / resolution 또는 등가 4-act 구조).
 
 ### 작성 순서
 
@@ -44,8 +61,10 @@ Craft 점수가 9.5 넘어도 E0~E3 한 항목이라도 fail이면 revise. Craft
 
 ### 파일 구조
 
+**filename은 genre별로 다름** (yadam은 한국어 / dark-history + bespoke는 영문). 아래는 yadam 기준:
+
 ```
-ep{번호}/
+ep{번호}/                    ← yadam 기준
 ├── 01_분석.md
 ├── 02_팩트체크.md
 ├── 03_자료수집.md

@@ -36,9 +36,9 @@ description: "YouTube story channel script writing skill with 9-wave automated p
 
 | 트리거 | 장르 | 메타프롬프트 |
 |--------|------|-------------|
-| 한국어 + 야담/민담/조선/설화/전설 키워드 | **yadam** (야담) | `meta-prompts/yadam/` |
-| English + dark/gothic/medieval/witch/folklore/colonial 키워드 | **dark-history** | `meta-prompts/dark-history/` |
-| 어느 장르도 명확하지 않음 (또는 `--genre bespoke`) | **bespoke** (맞춤형) | `meta-prompts/bespoke/` (universal base) + 에피소드별 `_meta_supplement.md` (W1-5에서 user reference 3~5개로 합성) |
+| 한국어 + 야담/민담/조선/설화/전설 키워드 | **yadam** (야담) | `meta-prompts/yadam/` (한국어 5개 파일) |
+| English + dark/gothic/medieval/witch/folklore/colonial 키워드 | **dark-history** | `meta-prompts/dark-history/` (영문 5개 파일) |
+| 어느 장르도 명확하지 않음 (또는 `--genre bespoke`) | **bespoke** (맞춤형) | `meta-prompts/bespoke/{lang}/` (한국어 출력 시 `ko/`, 영문 출력 시 `en/` — 각 5개) + 에피소드별 `_story_source/_meta_supplement.md` (W1-5에서 user reference 3~5개로 합성). `{lang}`은 `STATE.md` "Output language:" 필드에서 해석. |
 
 `--genre yadam`, `--genre dark-history`, 또는 `--genre bespoke`로 오버라이드 가능.
 
@@ -211,19 +211,21 @@ Rules: command strings only (no env values, no credentials, no body content); UR
 
 문서는 언어별로 분리되어 있다. **장르 + 출력 언어에 따라 자동 선택**:
 
-| 장르 | `{lang}` | `{genre}` (meta-prompts 폴더) |
-|------|---------|-------------------------------|
-| **yadam** (야담/민담/조선시대) | `ko` | `yadam` |
-| **dark-history** (Western dark history/gothic/folklore) | `en` | `dark-history` |
-| **bespoke** (어떤 주제든) | reference + 주제 언어 자동 감지 (Korean refs → `ko`, English refs → `en`; 사용자 override 가능) | `bespoke` |
+| 장르 | `{lang}` | meta-prompts 경로 |
+|------|---------|-------------------|
+| **yadam** (야담/민담/조선시대) | `ko` | `meta-prompts/yadam/` (한국어 5개 파일) |
+| **dark-history** (Western dark history/gothic/folklore) | `en` | `meta-prompts/dark-history/` (영문 5개 파일) |
+| **맞춤형 (Bespoke)** (어떤 주제든) | reference + 주제 언어 자동 감지 (Korean refs → `ko`, English refs → `en`; 사용자 override 가능) | `meta-prompts/bespoke/{lang}/` — **subfolder per language**: `bespoke/ko/` (한국어 5개) + `bespoke/en/` (영문 5개) |
+
+**Bespoke 표시 규약**: 한국어 doc/UI는 "맞춤형" (또는 "맞춤형 (Bespoke)"), 영문 doc/UI는 "Bespoke". 코드/플래그는 동일하게 `bespoke`.
 
 **Bespoke 추가 read 필수**: `_story_source/_meta_supplement.md` (W1-5에서 생성된 에피소드 전용 supplement) — W2, W3, (조건부 W6/W9) 서브에이전트 프롬프트에 자동 포함.
 
 | Wave | 문서 |
 |------|------|
 | W1 | `docs/{lang}/W1-story-design.md` |
-| W2 | `docs/{lang}/W2-synopsis.md` + `meta-prompts/{genre}/synopsis_guidelines.md` + `meta-prompts/{genre}/preflight.md` |
-| W3 | `docs/{lang}/W3-writing.md` + `meta-prompts/{genre}/screenplay_guidelines.md` + narrative + suspense |
+| W2 | `docs/{lang}/W2-synopsis.md` + 메타프롬프트:<br>• yadam: `meta-prompts/yadam/야담_시놉시스_작성_지침.md` + `야담_프리플라이트.md`<br>• dark-history: `meta-prompts/dark-history/synopsis_guidelines.md` + `preflight.md`<br>• bespoke: `meta-prompts/bespoke/{lang}/synopsis_guidelines.md` + `preflight.md` + `_story_source/_meta_supplement.md` |
+| W3 | `docs/{lang}/W3-writing.md` + 메타프롬프트:<br>• yadam: `meta-prompts/yadam/야담_시나리오_작성_지침.md` + `야담_서술기법_가이드.md` + `야담_서스펜스_기법.md`<br>• dark-history: `meta-prompts/dark-history/screenplay_guidelines.md` + `narrative_techniques.md` + `suspense_techniques.md`<br>• bespoke: `meta-prompts/bespoke/{lang}/screenplay_guidelines.md` + `narrative_techniques.md` + `suspense_techniques.md` + `_story_source/_meta_supplement.md` |
 | W4 | `docs/{lang}/W4-production.md` |
 | W5 | `docs/{lang}/W5-tts-sfx.md` |
 | W6 | `docs/{lang}/W6-storyboard.md` |

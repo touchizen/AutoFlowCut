@@ -6,10 +6,13 @@
 
 **장르별 메타프롬프트 (`{genre}` = `yadam` / `dark-history` / `bespoke`):**
 
-| 단계 | 읽어야 할 문서 |
-|------|--------------|
-| 시놉시스 | `meta-prompts/{genre}/synopsis_guidelines.md` (yadam은 `야담_시놉시스_작성_지침.md`) |
-| 프리플라이트 | `meta-prompts/{genre}/preflight.md` (yadam은 `야담_프리플라이트.md`) |
+| 장르 | 시놉시스 가이드 | 프리플라이트 |
+|------|----------------|-------------|
+| yadam | `meta-prompts/yadam/야담_시놉시스_작성_지침.md` | `meta-prompts/yadam/야담_프리플라이트.md` |
+| dark-history | `meta-prompts/dark-history/synopsis_guidelines.md` | `meta-prompts/dark-history/preflight.md` |
+| 맞춤형 (bespoke) | `meta-prompts/bespoke/{lang}/synopsis_guidelines.md` | `meta-prompts/bespoke/{lang}/preflight.md` |
+
+**Bespoke의 `{lang}`**: STATE.md genre가 `bespoke`이면 출력 언어 (`ko` 또는 `en`) 자동 감지. Korean refs/주제 → `ko`, English → `en`. SKILL.md 참조 문서 표 참조.
 
 **Bespoke 장르 추가 필수 read**: `_story_source/_meta_supplement.md` (W1-5에서 생성된 이 에피소드 전용 보완) — universal base와 함께 read, **충돌 시 supplement 우선**.
 
@@ -19,7 +22,7 @@
 
 > SKILL.md 핵심 원칙: **궁금증 + 기대감 = 몰입도. 모든 wave의 최상위 평가 기준.**
 
-W2 시놉시스는 다음 질문에 답해야 한다 (이 4개는 genre-agnostic 보편 기준 — `SKILL.md` 핵심 원칙에서 도출. bespoke 장르는 `meta-prompts/bespoke/preflight.md` § "★ Section 0 — Engagement (PRIMARY)"에 동일 기준이 5개 항목으로 expanded되어 있음. yadam / dark-history는 별도 Section 0 없이 본 lens 4개를 직접 적용):
+W2 시놉시스는 다음 질문에 답해야 한다 (이 4개는 genre-agnostic 보편 기준 — `SKILL.md` 핵심 원칙에서 도출. bespoke 장르는 `meta-prompts/bespoke/{lang}/preflight.md` § "★ Section 0 — Engagement (PRIMARY)" / "섹션 0 — 몰입도" 에 동일 기준이 5개 항목으로 expanded되어 있음. yadam / dark-history는 별도 Section 0 없이 본 lens 4개를 직접 적용):
 
 - **매 챕터가 궁금증 유지 OR 기대감 누적 둘 중 하나에 기여하는가?** 둘 다 안 하는 챕터 = 구조 dead weight, cut or merge.
 - **궁금증 / 기대감 둘 다 ch.15까지 살아있는가?** 한쪽만 작동하면 시청자 이탈.
@@ -32,9 +35,14 @@ W2 시놉시스는 다음 질문에 답해야 한다 (이 4개는 genre-agnostic
 
 ## 시놉시스 작성
 
-**`야담_시놉시스_작성_지침.md`를 반드시 읽고 시작한다.**
+**선택된 장르의 시놉시스 가이드라인을 반드시 읽고 시작한다** (위 "참조 문서" 표 참조):
+- **yadam**: `meta-prompts/yadam/야담_시놉시스_작성_지침.md`
+- **dark-history**: `meta-prompts/dark-history/synopsis_guidelines.md`
+- **bespoke (맞춤형)**: `meta-prompts/bespoke/{lang}/synopsis_guidelines.md` + `_story_source/_meta_supplement.md`
 
-20챕터 프레임워크에 따라 시놉시스를 작성한다.
+`{lang}`은 STATE.md의 "Output language:" 필드 (`ko` 또는 `en`)에서 해석.
+
+20챕터 프레임워크에 따라 시놉시스를 작성한다 (이 framework는 모든 장르에 동일하게 적용).
 
 ### 20챕터 구조
 
@@ -82,7 +90,10 @@ W2 시놉시스는 다음 질문에 답해야 한다 (이 4개는 genre-agnostic
 - **반전 갭 설계**: 진범을 시청자가 가장 신뢰하는 인물로 위장 → 폭로 시 갭 극대화. 반전 전까지 신뢰를 쌓는 장면을 충분히 배치
 - **시네마틱 포인트**: 슬로모션, 병렬 편집 등 핵심 장면 설계
 
-**출력 파일**: `04_시놉시스.md`
+**출력 파일** (genre별):
+- **yadam**: `04_시놉시스.md`
+- **dark-history**: `04_synopsis.md`
+- **bespoke (맞춤형)**: `04_synopsis.md` (영문 filename, 내용은 STATE.md "Output language:" — `ko` 또는 `en`)
 
 **리뷰 (서브스텝 2-1)** — 서브에이전트 자가검토 → 이슈 목록 → 수정. 최대 5회. 0 이슈 시 다음 서브스텝(2-2)으로 즉시 진행. 5회 초과 시 사용자에게 에스컬레이션.
 
@@ -90,7 +101,10 @@ W2 시놉시스는 다음 질문에 답해야 한다 (이 4개는 genre-agnostic
 
 ## 프리플라이트 체크
 
-**`야담_프리플라이트.md`를 반드시 읽고 시놉시스를 점검한다.**
+**선택된 장르의 프리플라이트 체크리스트를 반드시 읽고 시놉시스를 점검한다** (위 "참조 문서" 표 참조):
+- **yadam**: `meta-prompts/yadam/야담_프리플라이트.md`
+- **dark-history**: `meta-prompts/dark-history/preflight.md`
+- **bespoke (맞춤형)**: `meta-prompts/bespoke/{lang}/preflight.md` (Section 0 Engagement이 bespoke 전용)
 
 ### 절대 금지 확인
 
@@ -122,7 +136,10 @@ W2 시놉시스는 다음 질문에 답해야 한다 (이 4개는 genre-agnostic
 
 통과하면 W3로 진행. 문제 발견 시 시놉시스를 수정하고 프리플라이트를 다시 실행한다.
 
-**출력 파일**: `05_프리플라이트.md`
+**출력 파일** (genre별):
+- **yadam**: `05_프리플라이트.md`
+- **dark-history**: `05_preflight.md`
+- **bespoke (맞춤형)**: `05_preflight.md` (영문 filename, 내용은 {lang})
 
 **리뷰 (서브스텝 2-2)** — 서브에이전트 자가검토 → 이슈 목록 → 수정. 최대 5회. 0 이슈 시 다음 Wave로 즉시 진행. 5회 초과 시 사용자에게 에스컬레이션.
 

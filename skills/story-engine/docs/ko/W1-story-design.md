@@ -2,6 +2,14 @@
 
 이 문서는 story-engine 스킬의 W1(성공요인 분석, 팩트체크, 자료수집) 단계 가이드입니다.
 
+> **📋 출력 파일명 — genre별로 다름**
+> 본 문서 본문의 출력 파일명은 yadam (한국어 filename) 기준으로 표기되어 있습니다. 다른 장르는 아래 매핑으로 substitute:
+> - **yadam**: `01_분석.md` / `02_팩트체크.md` / `03_자료수집.md` (Korean filenames as shown)
+> - **dark-history**: `01_analysis.md` / `02_factcheck.md` / `03_research.md`
+> - **bespoke**: `01_references_analysis.md` / `02_factcheck.md` / `03_research.md` / `04_success_synthesis.md` / `_meta_supplement.md` (English filenames regardless of output language; content in `STATE.md` "Output language:" 필드)
+>
+> 자세한 filename convention: `workflows/execute-pipeline.md` § "Filename convention varies by genre".
+
 ## 환경 사전점검 (시작 전 필수)
 
 W1 작업 시작 전에 파이프라인 전체를 완료할 수 있는 환경인지 확인한다. 여기서 막히면 W1~W4를 낭비한다.
@@ -132,7 +140,7 @@ WebSearch로 주제 관련 자료를 수집한다. (자동 실행)
 
 ## [Bespoke] 경로
 
-**Bespoke 장르 전용** — 사용자가 제공한 3~5개 성공 대본을 분석해 이 에피소드 전용 메타프롬프트(`_meta_supplement.md`)를 합성한다. W2/W3는 universal `meta-prompts/bespoke/`와 이 supplement를 함께 read하여 작성한다.
+**맞춤형 (Bespoke) 장르 전용** — 사용자가 제공한 3~5개 성공 대본을 분석해 이 에피소드 전용 메타프롬프트(`_meta_supplement.md`)를 합성한다. W2/W3는 universal `meta-prompts/bespoke/{lang}/` (한국어 출력 시 `ko/`, 영문 출력 시 `en/`)와 이 supplement를 함께 read하여 작성한다.
 
 ### 사전 조건
 

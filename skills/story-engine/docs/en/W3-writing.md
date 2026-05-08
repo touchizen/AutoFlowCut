@@ -4,11 +4,15 @@ This document is the W3 (script writing + review) stage guide for the story-engi
 
 ## Reference documents (must read at this stage)
 
-**Per-genre meta-prompts (`{genre}` = `yadam` / `dark-history` / `bespoke`):**
+**Per-genre meta-prompts (3 files for script writing):**
 
-| Step | Document |
-|------|----------|
-| Script writing | `meta-prompts/{genre}/screenplay_guidelines.md`, `meta-prompts/{genre}/narrative_techniques.md`, `meta-prompts/{genre}/suspense_techniques.md` |
+| Genre | Screenplay / narrative / suspense |
+|-------|-----------------------------------|
+| yadam | `meta-prompts/yadam/야담_시나리오_작성_지침.md`, `야담_서술기법_가이드.md`, `야담_서스펜스_기법.md` |
+| dark-history | `meta-prompts/dark-history/screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md` |
+| Bespoke | `meta-prompts/bespoke/{lang}/screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md` |
+
+**Bespoke `{lang}` resolution**: when `STATE.md` genre is `bespoke`, the output language (`ko` or `en`) is auto-detected. See SKILL.md 참조 문서 table.
 
 **Bespoke genre additional REQUIRED read**: `_story_source/_meta_supplement.md` — read alongside the universal base; **supplement WINS on conflicts**. The supplement specifies the per-episode length target, voice register, vocabulary, and benchmark callouts derived from the user's 3–5 reference scripts.
 
@@ -18,7 +22,7 @@ This document is the W3 (script writing + review) stage guide for the story-engi
 
 > `SKILL.md` 핵심 원칙: **Curiosity + Expectation = Engagement. The top-level evaluation criterion.**
 
-W3 review evaluates not "is this interesting?" but **"does this make the viewer keep watching paragraph by paragraph?"** (Detailed review dimensions live in `meta-prompts/{genre}/narrative_techniques.md` § Review dimensions — E0–E3 (engagement) is primary; C1–C10 (craft) is subordinate.)
+W3 review evaluates not "is this interesting?" but **"does this make the viewer keep watching paragraph by paragraph?"** (Detailed review dimensions: yadam in `meta-prompts/yadam/야담_서술기법_가이드.md`, dark-history in `meta-prompts/dark-history/narrative_techniques.md`, bespoke in `meta-prompts/bespoke/{lang}/narrative_techniques.md` — all § Review dimensions. E0–E3 (engagement) is primary; C1–C10 (craft) is subordinate.)
 
 Engagement primary (4 items, E0–E3):
 - **E0. Curiosity maintenance** — does each paragraph keep the audience asking "what next?" / "what does this mean?" If 3+ paragraphs answer no question and pose no new one, that's a drop-off zone.
@@ -32,7 +36,12 @@ Craft score ≥ 9.5 with even one E-failure = revise. Craft never compensates fo
 
 ## Script writing
 
-**You MUST read `screenplay_guidelines.md`, `narrative_technique.md`, and `suspense_technique.md` before starting.**
+**You MUST read the selected genre's 3 script-writing guidelines before starting** (see the "Reference documents" table above):
+- **yadam**: `meta-prompts/yadam/야담_시나리오_작성_지침.md`, `야담_서술기법_가이드.md`, `야담_서스펜스_기법.md`
+- **dark-history**: `meta-prompts/dark-history/screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md`
+- **Bespoke**: `meta-prompts/bespoke/{lang}/screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md` + `_story_source/_meta_supplement.md`
+
+(Filename typo note: the canonical filenames are `narrative_techniques.md` and `suspense_techniques.md` — plural, not singular.)
 
 Based on the synopsis, **write the hook + all four parts (Setup / Rising / Crisis / Resolution) first, then do integrated review**.
 

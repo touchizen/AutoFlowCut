@@ -126,11 +126,19 @@ Notation:
 - Trailing `/` denotes a directory
 - `(none)` means the wave has no predecessor file inputs (W1 only)
 
-| Wave | Inputs (filenames)                                                                                | Outputs (filenames)                                                                                          |
-|------|--------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------|
-| W1   | (none) — only `STATE.md` (topic)                                                                  | `01_분석.md`, `02_팩트체크.md`, `03_자료수집.md`                                                              |
-| W2   | `01_분석.md`, `02_팩트체크.md`, `03_자료수집.md`                                                   | `04_시놉시스.md`, `05_프리플라이트.md`                                                                        |
-| W3   | `04_시놉시스.md`, `05_프리플라이트.md`, `02_팩트체크.md`                                            | `{title}_기.md`, `{title}_승.md`, `{title}_전.md`, `{title}_결.md`, `07_검토.md`                              |
+**Filename convention varies by genre** (the table below shows the canonical yadam Korean form; substitute per genre):
+
+| Genre | Filename style | Example (W1 fact-check) |
+|-------|----------------|-------------------------|
+| **yadam** | Korean filenames | `02_팩트체크.md`, `04_시놉시스.md`, `{title}_기.md` |
+| **dark-history** | English filenames | `02_factcheck.md`, `04_synopsis.md`, `{title}_part1_setup.md` |
+| **bespoke** (any output language) | English filenames | `02_factcheck.md`, `04_synopsis.md`, `{title}_part1_setup.md` (content inside files in resolved {lang}; filenames stay ASCII-safe) |
+
+| Wave | Inputs (filenames — yadam form shown; substitute per genre) | Outputs (filenames — yadam form shown; substitute per genre) |
+|------|--------------------------------------------------------------|---------------------------------------------------------------|
+| W1   | (none) — only `STATE.md` (topic)                              | `01_분석.md`, `02_팩트체크.md`, `03_자료수집.md` (bespoke also: `01_references_analysis.md`, `04_success_synthesis.md`, `_meta_supplement.md`) |
+| W2   | `01_분석.md`, `02_팩트체크.md`, `03_자료수집.md`               | `04_시놉시스.md`, `05_프리플라이트.md` |
+| W3   | `04_시놉시스.md`, `05_프리플라이트.md`, `02_팩트체크.md`       | `{title}_기.md`, `{title}_승.md`, `{title}_전.md`, `{title}_결.md`, `07_검토.md` |
 | W4   | `{title}_기.md`, `{title}_승.md`, `{title}_전.md`, `{title}_결.md`                                 | `narration_{part}.txt`, `dialogs_{part}.json`, `08_sfx_목록.md`                                              |
 | W5   | `narration_{part}.txt`, `dialogs_{part}.json`, `08_sfx_목록.md`, `tts_settings.md`                  | `segments/`, `final_{part}.mp3`, `final_{part}.srt`, `media/`, `tts_settings.md` (updated)                   |
 | W6   | `final_{part}.srt`, `narration_{part}.txt`, `{title}_*.md` (script), `08_sfx_목록.md`              | `references.csv`, `{title}_scenes.csv`, `06_review_group{A,B,C}.md` (batch QA)                                |
@@ -273,8 +281,14 @@ orchestrator itself emits these lines as it transitions between sub-steps.
 
 Each subagent receives:
 1. Episode context (genre, topic, decisions from STATE.md)
-2. Wave reference doc (docs/{lang}/W{N}-*.md (lang=ko for yadam, lang=en for dark-history))
-3. Meta-prompts (for W2, W3): meta-prompts/{genre}/*.md
+2. Wave reference doc (docs/{lang}/W{N}-*.md):
+   - `lang=ko` for yadam
+   - `lang=en` for dark-history
+   - `lang=auto-detected` for bespoke (Korean references/topic → `ko`, English → `en`)
+3. Meta-prompts (for W2, W3):
+   - **yadam**: `meta-prompts/yadam/*.md` (Korean filenames: 야담_*.md)
+   - **dark-history**: `meta-prompts/dark-history/*.md`
+   - **bespoke**: `meta-prompts/bespoke/{lang}/*.md` (subfolder per output language) PLUS `_story_source/_meta_supplement.md`
 4. Previous wave summaries (for context continuity)
 5. File paths for all episode artifacts created so far
 
@@ -282,17 +296,32 @@ Each subagent receives:
 - Branch detection: new vs rewrite
 - Reference analysis instructions (if rewrite)
 - Fact-check + research instructions (if new)
-- Output: 01_분석.md, 02_팩트체크.md, 03_자료수집.md
+- Output (per-genre filename — see "Filename convention varies by genre" note above):
+  - **yadam**: `01_분석.md`, `02_팩트체크.md`, `03_자료수집.md`
+  - **dark-history**: `01_analysis.md`, `02_factcheck.md`, `03_research.md`
+  - **bespoke**: `01_references_analysis.md`, `02_factcheck.md`, `03_research.md`, `04_success_synthesis.md`, `_meta_supplement.md` (English filenames regardless of output language)
 
 **W2 subagent prompt includes:**
-- Synopsis writing guidelines (meta-prompts/{genre}/synopsis_guidelines.md)
-- Preflight checklist (meta-prompts/{genre}/preflight.md)
+- Synopsis writing guidelines:
+  - **yadam**: `meta-prompts/yadam/야담_시놉시스_작성_지침.md`
+  - **dark-history**: `meta-prompts/dark-history/synopsis_guidelines.md`
+  - **bespoke**: `meta-prompts/bespoke/{lang}/synopsis_guidelines.md` PLUS `_story_source/_meta_supplement.md`
+- Preflight checklist:
+  - **yadam**: `meta-prompts/yadam/야담_프리플라이트.md`
+  - **dark-history**: `meta-prompts/dark-history/preflight.md`
+  - **bespoke**: `meta-prompts/bespoke/{lang}/preflight.md` (Section 0 Engagement is bespoke-only)
 - 20-chapter framework
 - Review loop: preflight fail → revise synopsis → re-check (max 5)
-- Output: 04_시놉시스.md, 05_프리플라이트.md
+- Output (per-genre filename):
+  - **yadam**: `04_시놉시스.md`, `05_프리플라이트.md`
+  - **dark-history**: `04_synopsis.md`, `05_preflight.md`
+  - **bespoke**: `04_synopsis.md`, `05_preflight.md` (English filenames, content in {lang})
 
 **W3 subagent prompt includes:**
-- Screenplay guidelines + narrative + suspense (`meta-prompts/{genre}/*.md`)
+- Screenplay guidelines + narrative + suspense:
+  - **yadam**: `meta-prompts/yadam/야담_시나리오_작성_지침.md`, `야담_서술기법_가이드.md`, `야담_서스펜스_기법.md`
+  - **dark-history**: `meta-prompts/dark-history/screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md`
+  - **bespoke**: `meta-prompts/bespoke/{lang}/screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md` PLUS `_story_source/_meta_supplement.md`
 - For **bespoke**: ALSO read `_story_source/_meta_supplement.md` (W1-5 per-episode supplement) — supplement OVERRIDES universal base on conflicts; universal base is the fallback
 - Writing order: Hook → Act I → II → III → IV
 - Length targets — depends on genre:
@@ -300,12 +329,18 @@ Each subagent receives:
   - **dark-history** (English): 2,000~3,000 words
   - **bespoke**: derived from `_meta_supplement.md` § "Length target" (W1-5 sets this from user preference + reference scripts' average length); default fallback if missing: 1,500–2,500 words / ~10–17 min
 - Review loop: self-review + subagent review (max 5 rounds, target 9.5)
-- Output: `{title}_기.md`, `{title}_승.md`, `{title}_전.md`, `{title}_결.md`, `07_검토.md`
+- Output (per-genre filename):
+  - **yadam**: `{title}_기.md`, `{title}_승.md`, `{title}_전.md`, `{title}_결.md`, `07_검토.md`
+  - **dark-history**: `{title}_part1_setup.md`, `{title}_part2_rising.md`, `{title}_part3_crisis.md`, `{title}_part4_resolution.md`, `07_review.md`
+  - **bespoke**: same English form as dark-history (`{title}_part1_setup.md` etc., `07_review.md`); content in {lang}
 
 **W4 subagent prompt includes:**
 - Narration/dialogue/SFX extraction rules
 - Review loop: subagent cross-checks extraction vs script (max 5)
-- Output: narration_{part}.txt, dialogs_{part}.json, 08_sfx_목록.md
+- Output (per-genre filename):
+  - **yadam**: `narration_{part}.txt`, `dialogs_{part}.json`, `08_sfx_목록.md`
+  - **dark-history**: `narration_{part}.txt`, `dialogs_{part}.json`, `08_sfx_list.md`
+  - **bespoke**: `narration_{part}.txt`, `dialogs_{part}.json`, `09_sfx_list.md` (W3 review file already at 07/08 in bespoke; SFX list shifts to 09 to avoid collision; or use next-free number)
 
 **W5 subagent prompt includes:**
 - **MANDATORY W5-0 character voice assignment** (BEFORE TTS): extract unique characters from `dialogs_*.json`, diff against `tts_settings.md`; if any unmapped characters or missing narrator → AskUserQuestion with 3–4 voice recommendations, then persist to `tts_settings.md`
@@ -339,7 +374,10 @@ Each subagent receives:
 **W8 subagent prompt includes:**
 - YouTube title/description/tags generation
 - Thumbnail text suggestions
-- Output: 11_업로드정보.json
+- Output (per-genre filename):
+  - **yadam**: `11_업로드정보.json`
+  - **dark-history**: `11_upload_info.json`
+  - **bespoke**: `11_upload_info.json` (English filename, content in {lang})
 
 ---
 
