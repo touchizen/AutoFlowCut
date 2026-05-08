@@ -1,11 +1,11 @@
 ---
 name: story-execute
-description: "Execute the 8-wave story pipeline automatically. W1(story design) → W2(synopsis) → W3(writing+review) → 🛑user confirm → W4(production) → W5(TTS/SFX) → W6(storyboard CSV) → W7(images+CapCut) → W8(upload info). Each wave runs as a subagent with fresh context. Review loops max 5 rounds. Trigger: 'execute story', 'run pipeline', '파이프라인 실행', '자동 실행'"
+description: "Execute the 9-wave story pipeline automatically. W1(story design) → W2(synopsis) → W3(writing+review) → 🛑user confirm → W4(production extract) → W5(TTS/SFX) → W6(storyboard CSV, batch QA × 3) → W7(image production, batch QA × 2) → 🛑user confirm → W8(assembly: SFX scene-match + audio import + CapCut + optional video) → W9(upload info). Each wave runs as a subagent with fresh context. Review loops max 5 rounds. Genres: yadam / dark-history / bespoke. Trigger: 'execute story', 'run pipeline', '파이프라인 실행', '자동 실행'"
 argument-hint: "[--from W{N}] [--to W{N}]"
 ---
 
 <objective>
-Execute the story pipeline from W1 to W8 using wave-based subagent execution.
+Execute the story pipeline from W1 to W9 using wave-based subagent execution.
 
 Each wave:
 - Runs as a subagent (fresh context)
@@ -13,11 +13,13 @@ Each wave:
 - Writes W{N}_SUMMARY.md on completion
 - Updates STATE.md + W_progress.json
 
-**Manual gate:** W3 completion requires user confirmation before W4.
+**Manual gates (2 total):**
+- W3 completion → user confirms script before W4 (production extract)
+- W7 completion → user confirms image QA before W8 (assembly)
 
 **Flags:**
 - `--from W{N}` — start from wave N (default: next incomplete wave from STATE.md)
-- `--to W{N}` — stop after wave N (default: W8)
+- `--to W{N}` — stop after wave N (default: W9)
 </objective>
 
 <execution_context>
@@ -34,5 +36,5 @@ STATE.md tracks current position for resume capability.
 
 <process>
 Execute the pipeline workflow from @skills/story-engine/workflows/execute-pipeline.md end-to-end.
-Preserve all workflow gates (review loops, user confirmation at W3, state updates).
+Preserve all workflow gates (review loops, user confirmation at W3 and W7, state updates).
 </process>

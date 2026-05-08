@@ -1,6 +1,6 @@
 ---
 name: story-engine
-description: "YouTube story channel script writing skill with 8-wave automated pipeline. Supports two genres: (1) yadam — Korean historical tales (야담, 민담, 설화, 조선시대) in Korean, (2) dark-history — Western dark history, medieval mystery, gothic tales, true crime, folklore in English. Trigger on: 'write a script', 'new episode', 'create storyboard', 'start ep5', '야담 대본 써줘', '새 에피소드 만들어줘', '스토리보드 작성해줘', 'ep11 시작하자', 'rewrite', 'redesign', '리라이팅', '리디자인'. Auto-detects genre by user language (Korean→yadam, English→dark-history) or explicit genre flag."
+description: "YouTube story channel script writing skill with 9-wave automated pipeline (with manual user gates after W3 script and W7 image production). Supports three genres: (1) yadam — Korean historical tales (야담, 민담, 설화, 조선시대) in Korean, (2) dark-history — Western dark history, medieval mystery, gothic tales, true crime, folklore in English, (3) bespoke — universal genre with per-episode meta-prompts synthesized from user-provided 3–5 successful reference scripts (any topic, any audience language). Trigger on: 'write a script', 'new episode', 'create storyboard', 'start ep5', '야담 대본 써줘', '새 에피소드 만들어줘', '스토리보드 작성해줘', 'ep11 시작하자', 'rewrite', 'redesign', '리라이팅', '리디자인'. Auto-detects genre by user language + topic keywords (Korean + 야담/민담/조선/설화/전설 keywords → yadam; English + dark/gothic/medieval/witch/folklore/colonial keywords → dark-history; otherwise → bespoke). Override via `--genre yadam|dark-history|bespoke`."
 ---
 
 # Story Engine v2
@@ -193,11 +193,15 @@ Rules: command strings only (no env values, no credentials, no body content); UR
 
 ## 참조 문서
 
-문서는 언어별로 분리되어 있다. **장르에 따라 자동 선택**:
-- **yadam** (야담/민담/조선시대) → `docs/ko/`
-- **dark-history** (Western dark history/gothic/folklore) → `docs/en/`
+문서는 언어별로 분리되어 있다. **장르 + 출력 언어에 따라 자동 선택**:
 
-이하 표에서 `{lang}`은 `ko` 또는 `en`이다 (yadam=ko, dark-history=en).
+| 장르 | `{lang}` | `{genre}` (meta-prompts 폴더) |
+|------|---------|-------------------------------|
+| **yadam** (야담/민담/조선시대) | `ko` | `yadam` |
+| **dark-history** (Western dark history/gothic/folklore) | `en` | `dark-history` |
+| **bespoke** (어떤 주제든) | reference + 주제 언어 자동 감지 (Korean refs → `ko`, English refs → `en`; 사용자 override 가능) | `bespoke` |
+
+**Bespoke 추가 read 필수**: `_story_source/_meta_supplement.md` (W1-5에서 생성된 에피소드 전용 supplement) — W2, W3, (조건부 W6/W9) 서브에이전트 프롬프트에 자동 포함.
 
 | Wave | 문서 |
 |------|------|

@@ -4,9 +4,13 @@
 
 ## 참조 문서 (해당 단계에서 반드시 읽을 것)
 
+**장르별 메타프롬프트 (`{genre}` = `yadam` / `dark-history` / `bespoke`):**
+
 | 단계 | 읽어야 할 문서 |
 |------|--------------|
-| 대본 작성 | `meta-prompts/yadam/야담_시나리오_작성_지침.md`, `meta-prompts/yadam/야담_서술기법_가이드.md`, `meta-prompts/yadam/야담_서스펜스_기법.md` |
+| 대본 작성 | `meta-prompts/{genre}/screenplay_guidelines.md`, `meta-prompts/{genre}/narrative_techniques.md`, `meta-prompts/{genre}/suspense_techniques.md` (yadam은 `야담_시나리오_작성_지침.md`, `야담_서술기법_가이드.md`, `야담_서스펜스_기법.md`) |
+
+**Bespoke 장르 추가 필수 read**: `_story_source/_meta_supplement.md` — universal base와 함께 read, **충돌 시 supplement 우선**. supplement에서 길이 / 톤 / 어휘 / 벤치마크 callout이 명시됨.
 
 ---
 

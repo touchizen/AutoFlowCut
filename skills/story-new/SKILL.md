@@ -1,7 +1,7 @@
 ---
 name: story-new
-description: "Initialize a new story episode. Creates episode directory, detects genre (yadam/dark-history), discusses topic with user, initializes STATE.md. Auto-chains to /story-execute. Trigger: 'new episode', 'start ep5', '새 에피소드', '야담 대본 써줘', 'write a script about...'"
-argument-hint: "[episode-number] [--genre yadam|dark-history]"
+description: "Initialize a new story episode. Creates episode directory, detects genre (yadam / dark-history / bespoke), discusses topic with user (and gathers 3–5 reference scripts if bespoke), initializes STATE.md. Auto-chains to /story-execute. Trigger: 'new episode', 'start ep5', '새 에피소드', '야담 대본 써줘', 'write a script about...'"
+argument-hint: "[episode-number] [--genre yadam|dark-history|bespoke]"
 ---
 
 <objective>
@@ -26,9 +26,12 @@ Initialize a new episode through topic discussion and context gathering.
 Episode: $ARGUMENTS
 
 **Genre Detection:**
-- Korean input → yadam (야담)
-- English input → dark-history
-- Override: `--genre yadam` or `--genre dark-history`
+- Korean + 야담/민담/조선/설화/전설 keywords → yadam (야담)
+- English + dark/gothic/medieval/witch/folklore/colonial keywords → dark-history
+- Otherwise → bespoke (universal genre with per-episode meta-prompt synthesis from user-provided 3–5 reference scripts)
+- Override: `--genre yadam`, `--genre dark-history`, or `--genre bespoke`
+
+**Bespoke additional input:** when bespoke is the genre, the workflow asks the user for 3–5 successful reference scripts (URLs / pasted text / local files) at Step 4 (Topic discussion). < 3 references = escalation.
 </context>
 
 <process>

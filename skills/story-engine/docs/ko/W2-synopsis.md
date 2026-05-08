@@ -4,10 +4,14 @@
 
 ## 참조 문서 (해당 단계에서 반드시 읽을 것)
 
+**장르별 메타프롬프트 (`{genre}` = `yadam` / `dark-history` / `bespoke`):**
+
 | 단계 | 읽어야 할 문서 |
 |------|--------------|
-| 시놉시스 | `meta-prompts/yadam/야담_시놉시스_작성_지침.md` |
-| 프리플라이트 | `meta-prompts/yadam/야담_프리플라이트.md` |
+| 시놉시스 | `meta-prompts/{genre}/synopsis_guidelines.md` (yadam은 `야담_시놉시스_작성_지침.md`) |
+| 프리플라이트 | `meta-prompts/{genre}/preflight.md` (yadam은 `야담_프리플라이트.md`) |
+
+**Bespoke 장르 추가 필수 read**: `_story_source/_meta_supplement.md` (W1-5에서 생성된 이 에피소드 전용 보완) — universal base와 함께 read, **충돌 시 supplement 우선**.
 
 ---
 

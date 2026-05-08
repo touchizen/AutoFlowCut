@@ -4,10 +4,14 @@ This document is the W2 (synopsis writing + preflight check) stage guide for the
 
 ## Reference documents (must read at this stage)
 
+**Per-genre meta-prompts (`{genre}` = `yadam` / `dark-history` / `bespoke`):**
+
 | Step | Document |
 |------|----------|
-| Synopsis | `meta-prompts/dark-history/synopsis_guidelines.md` |
-| Preflight | `meta-prompts/dark-history/preflight.md` |
+| Synopsis | `meta-prompts/{genre}/synopsis_guidelines.md` |
+| Preflight | `meta-prompts/{genre}/preflight.md` |
+
+**Bespoke genre additional REQUIRED read**: `_story_source/_meta_supplement.md` (per-episode supplement authored at W1-5 from the user's 3–5 reference scripts). Read alongside the universal base — **supplement WINS on conflicts**.
 
 ---
 

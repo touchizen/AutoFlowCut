@@ -1,6 +1,7 @@
 <purpose>
-Orchestrate the 8-wave story pipeline. Each wave runs as a subagent with fresh context.
-The orchestrator stays lean: read STATE.md, determine next wave, spawn subagent, collect result, update state.
+Orchestrate the 9-wave story pipeline (with manual user gates after W3 and W7).
+Each wave runs as a subagent with fresh context. The orchestrator stays lean:
+read STATE.md, determine next wave, spawn subagent, collect result, update state.
 </purpose>
 
 <process>
@@ -11,7 +12,7 @@ Determine current wave from STATE.md status table.
 
 Parse $ARGUMENTS for:
 - `--from W{N}` -- override start wave
-- `--to W{N}` -- override end wave (default: W8)
+- `--to W{N}` -- override end wave (default: W9)
 
 **Step 2: Wave execution loop**
 
@@ -20,7 +21,12 @@ For each wave from current to target:
 ```
 ┌─ Read STATE.md → determine wave N
 │
-├─ Load wave reference doc: docs/{lang}/W{N}-*.md (lang=ko for yadam, lang=en for dark-history)
+├─ Load wave reference doc: docs/{lang}/W{N}-*.md
+│   - lang=ko for yadam
+│   - lang=en for dark-history
+│   - lang=auto-detect for bespoke (Korean references/topic → ko, English → en;
+│     user can override via STATE.md or AskUserQuestion)
+│   For bespoke, ALSO load `_story_source/_meta_supplement.md` (W1-5 output)
 │
 ├─ ▶ PRINT WAVE-START BANNER (see "Wave banners" section below)
 │   - Banner language follows genre: yadam → KO, dark-history → EN
@@ -281,13 +287,15 @@ Each subagent receives:
 - Output: 04_시놉시스.md, 05_프리플라이트.md
 
 **W3 subagent prompt includes:**
-- Screenplay guidelines + narrative + suspense (meta-prompts/{genre}/*.md)
+- Screenplay guidelines + narrative + suspense (`meta-prompts/{genre}/*.md`)
+- For **bespoke**: ALSO read `_story_source/_meta_supplement.md` (W1-5 per-episode supplement) — supplement OVERRIDES universal base on conflicts; universal base is the fallback
 - Writing order: Hook → Act I → II → III → IV
 - Length targets — depends on genre:
-  - yadam (Korean): 8,000~12,000자
-  - dark-history (English): 2,000~3,000 words
+  - **yadam** (Korean): 8,000~12,000자
+  - **dark-history** (English): 2,000~3,000 words
+  - **bespoke**: derived from `_meta_supplement.md` § "Length target" (W1-5 sets this from user preference + reference scripts' average length); default fallback if missing: 1,500–2,500 words / ~10–17 min
 - Review loop: self-review + subagent review (max 5 rounds, target 9.5)
-- Output: {title}_기.md, {title}_승.md, {title}_전.md, {title}_결.md, 07_검토.md
+- Output: `{title}_기.md`, `{title}_승.md`, `{title}_전.md`, `{title}_결.md`, `07_검토.md`
 
 **W4 subagent prompt includes:**
 - Narration/dialogue/SFX extraction rules

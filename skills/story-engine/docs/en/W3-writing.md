@@ -4,9 +4,13 @@ This document is the W3 (script writing + review) stage guide for the story-engi
 
 ## Reference documents (must read at this stage)
 
+**Per-genre meta-prompts (`{genre}` = `yadam` / `dark-history` / `bespoke`):**
+
 | Step | Document |
 |------|----------|
-| Script writing | `meta-prompts/dark-history/screenplay_guidelines.md`, `meta-prompts/dark-history/narrative_technique.md`, `meta-prompts/dark-history/suspense_technique.md` |
+| Script writing | `meta-prompts/{genre}/screenplay_guidelines.md`, `meta-prompts/{genre}/narrative_techniques.md`, `meta-prompts/{genre}/suspense_techniques.md` |
+
+**Bespoke genre additional REQUIRED read**: `_story_source/_meta_supplement.md` — read alongside the universal base; **supplement WINS on conflicts**. The supplement specifies the per-episode length target, voice register, vocabulary, and benchmark callouts derived from the user's 3–5 reference scripts.
 
 ---
 
