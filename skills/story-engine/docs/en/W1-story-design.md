@@ -50,10 +50,11 @@ Which would you like?
 
 ## Branches
 
-| Path | Trigger | Content |
-|------|---------|---------|
-| **New** | "new episode", "write a script", "start ep5" | Topic → fact-check → research |
-| **Rewrite** | "rewrite", "redesign" | Reference analysis → success factors → improvements |
+| Path | Trigger | Genre | Content |
+|------|---------|-------|---------|
+| **New** | "new episode", "write a script" + dark-history keywords | dark-history | Topic → fact-check → research |
+| **Rewrite** | "rewrite", "redesign" | yadam / dark-history | Reference analysis → success factors → improvements |
+| **Bespoke** | `--genre bespoke` or no other genre fits | bespoke | User-provided 3–5 references → meta-prompt synthesis → fact-check → research |
 
 ---
 
@@ -127,6 +128,56 @@ When the user provides a reference (URL, transcript, video), analyze it.
 ```
 
 **Output file**: `01_analysis.md`
+
+---
+
+## [Bespoke] Path
+
+**Bespoke genre only** — analyzes 3–5 user-provided successful scripts to synthesize a per-episode meta-prompt (`_meta_supplement.md`). W2/W3 read the universal `meta-prompts/bespoke/` files alongside this supplement.
+
+### Prerequisite
+
+- `/story-new` REQUIRES **3–5 successful reference scripts** (URLs / pasted text / local files)
+- ≤ 2 references → escalation (Bespoke cannot proceed; offer switch to yadam/dark-history, or request more references)
+- Optional per-reference user labels: `tone-match`, `structure-match`, `topic-adjacent`, `audience-match`
+
+### Substeps
+
+**W1-0. Load references**
+- Save user-provided material under `_references/` (URLs → fetch transcript via `WebFetch`; if extraction fails, ask user for transcript)
+- Metadata: source / length / user label
+
+**W1-1. Per-reference success-factor analysis**
+- Apply the [Rewrite] analysis items to each reference (hook, story structure, emotional design, curiosity, characters, language style, closing)
+- **Output**: `01_references_analysis.md` (3–5 sections, one per reference)
+
+**W1-2. Topic fact-check** (same as [New] §1)
+- **Output**: `02_factcheck.md`
+
+**W1-3. Topic research** (same as [New] §2)
+- **Output**: `03_research.md`
+
+**W1-4. Cross-script success-pattern synthesis**
+- Aggregate W1-1 analyses to surface:
+  - **Common patterns** — repeated across all references (core success formula)
+  - **Differentiators** — unique strengths per reference (inspiration pool)
+  - **Tropes** — genre conventions
+  - **Avoid list** — what didn't work, or what user labels excluded
+- **Output**: `04_success_synthesis.md`
+
+**W1-5. Meta-prompt synthesis**
+- W1-3 (research) + W1-4 (cross-synthesis) → write `_meta_supplement.md`
+- Supplement sections:
+  - `## Tone / voice register`
+  - `## Period / setting vocabulary`
+  - `## Reference success factors` (summary of W1-4)
+  - `## Avoid list`
+  - `## Benchmark callouts` (specific moves from W1-1 references — "apply ref-2's hook style to ch.1")
+- **Output**: `_meta_supplement.md` (W2/W3 MUST read this)
+
+### Review
+
+W1-0 through W1-3 have no review loop. **W1-5 output (`_meta_supplement.md`) is recommended for user confirmation** (not a hard gate like W3; W2 synopsis sign-off may be sufficient).
 
 ---
 

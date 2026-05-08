@@ -33,12 +33,15 @@ description: "YouTube story channel script writing skill with 8-wave automated p
 
 ## 장르
 
-| 입력 언어 | 장르 | 메타프롬프트 |
-|-----------|------|-------------|
-| 한국어 | **yadam** (야담) | `meta-prompts/yadam/` |
-| English | **dark-history** | `meta-prompts/dark-history/` |
+| 트리거 | 장르 | 메타프롬프트 |
+|--------|------|-------------|
+| 한국어 + 야담/민담/조선/설화/전설 키워드 | **yadam** (야담) | `meta-prompts/yadam/` |
+| English + dark/gothic/medieval/witch/folklore/colonial 키워드 | **dark-history** | `meta-prompts/dark-history/` |
+| 어느 장르도 명확하지 않음 (또는 `--genre bespoke`) | **bespoke** (맞춤형) | `meta-prompts/bespoke/` (universal base) + 에피소드별 `_meta_supplement.md` (W1-5에서 user reference 3~5개로 합성) |
 
-`--genre yadam` 또는 `--genre dark-history`로 오버라이드 가능.
+`--genre yadam`, `--genre dark-history`, 또는 `--genre bespoke`로 오버라이드 가능.
+
+**Bespoke 장르 추가 요건:** `/story-new` 시 사용자에게 **3~5개 성공 대본 reference**를 받아야 함 (URL / 텍스트 / 로컬 파일). reference가 ≤ 2개 → escalation (다른 장르로 전환 권장).
 
 ## Review discipline (W2–W7)
 - Every substep runs a review loop: subagent self-review → list issues → revise.

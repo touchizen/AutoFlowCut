@@ -217,7 +217,8 @@ follow this granularity; wave docs may add finer breakdowns but never remove the
 
 | Wave | Sub-steps                                                                                          |
 |------|---------------------------------------------------------------------------------------------------|
-| W1   | W1-0 read-docs, W1-1 fact-check, W1-2 research, W1-3 summarize                                    |
+| W1 (yadam / dark-history) | W1-0 read-docs, W1-1 fact-check, W1-2 research, W1-3 summarize                          |
+| W1 (bespoke) | W1-0 load-references (3–5), W1-1 per-reference analysis, W1-2 fact-check, W1-3 research, W1-4 cross-script synthesis, W1-5 meta-prompt synthesis (`_meta_supplement.md`) |
 | W2   | W2-0 read-inputs, W2-1 synopsis-draft, W2-2 preflight, W2-3..N preflight-revise (per round)        |
 | W3   | W3-0 read-inputs, W3-1..4 part-write × 4, W3-5 self-review, W3-6 external-review, W3-7 polish     |
 | W4   | W4-0 read-inputs, W4-1..4 narration-extract × 4, W4-5 dialogue-extract, W4-6 SFX-list, W4-7 audit |

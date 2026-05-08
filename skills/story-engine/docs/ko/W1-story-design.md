@@ -50,10 +50,11 @@ ElevenLabs 없이 진행 방법:
 
 ## 분기
 
-| 경로 | 트리거 | 내용 |
-|------|--------|------|
-| **신규** | "새 에피소드", "대본 써줘" | 주제 → 팩트체크 → 자료수집 |
-| **리라이팅** | "리라이팅", "rewrite", "리디자인" | 기존 분석 → 성공요인 → 개선점 |
+| 경로 | 트리거 | 장르 | 내용 |
+|------|--------|------|------|
+| **신규** | "새 에피소드" + 야담/민담 키워드 | yadam | 주제 → 팩트체크 → 자료수집 |
+| **리라이팅** | "리라이팅", "rewrite" | yadam / dark-history | 기존 분석 → 성공요인 → 개선점 |
+| **Bespoke** | `--genre bespoke` 또는 어떤 장르도 안 맞을 때 | bespoke | 사용자 제공 3~5 reference 분석 → 메타프롬프트 합성 → 팩트체크 → 자료수집 |
 
 ---
 
@@ -126,6 +127,56 @@ WebSearch로 주제 관련 자료를 수집한다. (자동 실행)
 ```
 
 **출력 파일**: `01_분석.md`
+
+---
+
+## [Bespoke] 경로
+
+**Bespoke 장르 전용** — 사용자가 제공한 3~5개 성공 대본을 분석해 이 에피소드 전용 메타프롬프트(`_meta_supplement.md`)를 합성한다. W2/W3는 universal `meta-prompts/bespoke/`와 이 supplement를 함께 read하여 작성한다.
+
+### 사전 조건
+
+- `/story-new` 시 **3~5개 성공 대본 reference 필수** (URL / 텍스트 / 로컬 파일)
+- Reference가 2개 이하 → escalation (Bespoke 진행 불가; yadam/dark-history로 전환 또는 reference 추가 요청)
+- 각 reference에 사용자 라벨 옵션 (선택): `tone-match`, `structure-match`, `topic-adjacent`, `audience-match`
+
+### 서브스텝
+
+**W1-0. References 로드**
+- `_references/` 폴더에 사용자 제공 자료 저장 (URL은 `WebFetch`로 transcript 추출, 추출 실패 시 사용자에게 transcript 직접 요청)
+- 메타데이터: 출처 / 길이 / 사용자 라벨
+
+**W1-1. Per-reference 성공요인 분석**
+- 각 reference를 [리라이팅] 경로의 분석 항목으로 점검 (훅, 스토리 구조, 감정 설계, 궁금증 유지, 캐릭터, 언어 스타일, 클로징)
+- **출력**: `01_references_analysis.md` (3~5 섹션, reference별)
+
+**W1-2. 주제 팩트체크** (= [신규] 1번)
+- **출력**: `02_factcheck.md`
+
+**W1-3. 주제 자료수집** (= [신규] 2번)
+- **출력**: `03_research.md`
+
+**W1-4. Cross-script 성공패턴 합성**
+- W1-1의 분석들을 묶어 추출:
+  - **공통점** — 모든 reference에서 반복된 패턴 (핵심 성공 공식)
+  - **차별점** — reference별 고유한 강점 (영감 풀)
+  - **트로프** — 장르 관습
+  - **피해야 할 것** — reference에서 안 통했거나 사용자 라벨이 제외한 요소
+- **출력**: `04_success_synthesis.md`
+
+**W1-5. 메타프롬프트 시너시스**
+- W1-3 (research) + W1-4 (cross-synthesis) → `_meta_supplement.md` 작성
+- Supplement 섹션:
+  - `## 톤 / 보이스 레지스터`
+  - `## 시대 / 공간 어휘 리스트`
+  - `## Reference 성공요인` (W1-4 합성 결과 요약)
+  - `## 피해야 할 것 (avoid list)`
+  - `## 벤치마크 callout` (W1-1 reference의 구체 무브 — "ref-2의 hook을 이 에피소드 ch.1에 적용" 등)
+- **출력**: `_meta_supplement.md` (W2/W3가 read 필수)
+
+### 리뷰
+
+W1-0 ~ W1-3 리뷰 루프 없음. **W1-5 출력 (`_meta_supplement.md`)은 사용자에게 보여주고 확인받는 것을 권장** (W3 reveal-lock 처럼 하드 게이트는 아님; W2가 supplement 따라 시놉시스 만든 후 사용자 확인하는 것으로 충분할 수도 있음).
 
 ---
 
