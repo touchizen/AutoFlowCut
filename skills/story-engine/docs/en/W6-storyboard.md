@@ -159,11 +159,14 @@ Each group writes to a unique review file: `_story_source/06_review_groupA.md`, 
 5. Does `scene_tag` exactly match a place name in references.csv?
 7. Does the English prompt accurately describe the scene's mood and action?
 
-**[Group C — Timing structure] (4 items, automated scripts — lightweight)**
-6. Does no scene exceed 15 seconds?
-8. **Gap check**: Is scene N's `end_time` == scene N+1's `start_time`? A gap > 0.5 s is an error.
-9. **Coverage check**: First scene `start_time`=0, last scene `end_time`=total audio duration (`ffprobe`)?
-10. **Duration sum check**: Sum of all scene durations == total audio duration?
+**[Group C — Timing structure] (4 items, subagent reads scenes.csv directly)**
+
+⚠ **Group C uses the same subagent + Read pattern as Groups A and B.** The Python pre-check scripts at the end of 6-2 (gap / coverage / duration) are a SEPARATE automated sanity check — NOT a substitute for this QA. "Script passed, so OK" is forbidden — the subagent must read the CSV directly and visually verify.
+
+6. Does no scene exceed 15 seconds? (subagent inspects every row's duration column)
+8. **Gap check**: Is scene N's `end_time` == scene N+1's `start_time`? > 0.5 s = error (subagent compares adjacent row pairs directly)
+9. **Coverage check**: First scene `start_time`=0, last scene `end_time`=total audio duration. (Subagent may consult ffprobe output but makes the call itself)
+10. **Duration sum check**: Sum of all scene durations == total audio duration (subagent computes the sum directly or cross-checks an aggregate against the CSV)
 
 **Orchestrator spawns 3 subagents concurrently** (one message, 3 `Agent` calls):
 - Each group writes ONLY its own review file (06_review_group{A,B,C}.md)

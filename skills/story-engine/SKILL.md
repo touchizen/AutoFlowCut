@@ -56,7 +56,8 @@ description: "YouTube story channel script writing skill with 8-wave automated p
 
 When a review checklist exceeds 5 items, a single subagent skims rather than audits. Split into focused groups and spawn ONE subagent per group, in parallel.
 
-- **Group size**: 3–4 items per group (target 3, max 4). Lightweight automated checks (scripts) may group up to 4.
+- **Group size**: 3–4 items per group (target 3, max 4).
+- **QA is subagent + Read tool, NOT scripts.** Even if a scene/CSV check could in principle be automated by a Python script, the QA step itself is performed by a subagent reading the artifacts via the Read tool and reporting findings. Pre-check scripts (running BEFORE QA as a fast sanity gate) are allowed and separate; they do not replace subagent inspection. "Script passed, so QA passes" is forbidden.
 - **Parallelism**: spawn all groups in a single message with multiple `Agent` tool uses → concurrent execution.
 - **Recommended concurrency**: 3 (sweet spot). Max useful: 5. Beyond 5 = diminishing returns; token cost still scales N×.
 - **Each subagent receives**: only its group's items + the read-only inputs it needs + an exclusive output file path (e.g., `{wave}_review_group{X}.md`).
@@ -68,7 +69,8 @@ When a review checklist exceeds 5 items, a single subagent skims rather than aud
 
 체크리스트가 5개를 넘기면 한 서브에이전트는 형식적 통과만 함. focused 그룹으로 쪼개서 그룹마다 별도 서브에이전트를 **병렬로** 호출한다.
 
-- **그룹 크기**: 3~4 항목 (목표 3, 최대 4). 자동 스크립트로 실행되는 가벼운 항목은 4개까지 묶어도 됨.
+- **그룹 크기**: 3~4 항목 (목표 3, 최대 4).
+- **QA는 subagent + Read 도구, 스크립트 아님.** 어떤 검사 항목이 Python 스크립트로 자동화 가능하더라도, QA 자체는 subagent가 Read 도구로 산출물을 직접 읽고 점검한다. Pre-check 스크립트 (QA 직전에 빠른 sanity gate로 돌리는 자동 검사)는 허용되고 별개이다 — subagent 점검을 대체할 수 없음. "스크립트 통과했으니 QA 통과"는 금지.
 - **병렬성**: 한 메시지에 여러 `Agent` 호출을 동시에 보내면 동시 실행됨.
 - **권장 동시 N**: 3 (sweet spot). 최대 유용 N: 5. 5 넘으면 한계 효용 빠르게 감소, 토큰 비용은 N배 그대로.
 - **각 서브에이전트가 받는 것**: 자기 그룹 항목만 + 필요한 read-only 입력만 + 전용 출력 파일 경로 (`{wave}_review_group{X}.md`).
