@@ -1145,6 +1145,10 @@ function App() {
                 retryErrors({
                   projectName: ensureProjectName(),
                   saveMode: settings.saveMode,
+                  // concurrency 는 현재 useAutomation.start() 가 destructure 하지
+                  // 않는 dead field 지만, 정상 시작(line 549) 옵션과의 symmetry 를
+                  // 유지해 미래에 실제 구현될 때 retryErrors 만 누락되는 회귀를 차단.
+                  concurrency: settings.concurrency || 2,
                   imageBatchCount: settings.imageBatchCount || 1,
                   imageUpscale: settings.imageUpscale || 'off',
                   selectedStyleRefId,

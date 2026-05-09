@@ -454,14 +454,14 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
    * 호출자가 React SyntheticEvent(onClick={retryErrors})를 그대로 넘기면 options
    * 자리가 이벤트 객체가 되어 projectName 이 누락 → start() 가 'Untitled' 폴백 →
    * 새 이미지 저장이 잘못된 프로젝트로 가는 데이터 손실 회귀가 발생한다.
-   * 가드: SyntheticEvent 흔적이 있으면 options 으로 무시하고, projectName 이
-   * 비었으면 명시적으로 escalate (start() 가 폴백 경고를 출력).
+   * 가드: SyntheticEvent 흔적이 보이면 options 을 비우는 대신 **즉시 return**.
+   * (비우기만 하고 start() 로 넘기면 그 안에서 'Untitled' 폴백을 타게 되어
+   *  같은 데이터 손실 경로가 살아있게 됨 — 절반-방어가 됨.)
    */
   const retryErrors = useCallback(async (options = {}) => {
-    // SyntheticEvent 누수 가드 — preventDefault 가 있으면 옵션으로 사용 금지
     if (options && typeof options.preventDefault === 'function') {
-      console.warn('[useAutomation] retryErrors called with SyntheticEvent — caller bug, ignoring options')
-      options = {}
+      console.warn('[useAutomation] retryErrors called with SyntheticEvent — caller must pass an options object with projectName. Aborting.')
+      return
     }
     const errorIndices = scenes
       .map((s, i) => s.status === 'error' ? i : -1)
