@@ -108,4 +108,49 @@ describe('ResultsTable — 에러 표시', () => {
       wrap(<ResultsTable items={items} mediaType="image" onRetry={vi.fn()} />)
     }).not.toThrow()
   })
+
+  describe('errorKind (codified, i18n-translated)', () => {
+    // i18n contract: project.json stores only the stable `errorKind` code; the
+    // localized message is generated at display time via t(). ResultsTable must
+    // honor this — without these tests the prompt-error inline display breaks
+    // for missing-image scenes (error: null + errorKind: 'image-missing').
+
+    it('errorKind="image-missing" + error=null 인 경우에도 .prompt-error 노출 (regression)', () => {
+      // The exact ep6_babo_yeonggam scene_105 / scene_124 shape after the load
+      // healed the data. Pre-fix, this rendered nothing because the inline
+      // display only checked item.error (truthy string).
+      const items = [baseItem({ status: 'error', error: null, errorKind: 'image-missing' })]
+      const { container } = wrap(
+        <ResultsTable items={items} mediaType="image" onRetry={vi.fn()} />
+      )
+      const inline = container.querySelector('.prompt-error')
+      expect(inline).toBeInTheDocument()
+      // I18nProvider defaults to en (DEFAULT_LANG) — expect the English message
+      expect(inline.textContent).toBe('Image file not found — please regenerate')
+    })
+
+    it('errorKind 가 free-form error 보다 우선 (translated message wins)', () => {
+      // Stale Korean error string left over from a prior load — errorKind
+      // takes priority so the user sees a freshly-translated message.
+      const items = [baseItem({
+        status: 'error',
+        error: '이미지 파일을 찾을 수 없습니다 — 재생성이 필요합니다',
+        errorKind: 'image-missing',
+      })]
+      const { container } = wrap(
+        <ResultsTable items={items} mediaType="image" onRetry={vi.fn()} />
+      )
+      const inline = container.querySelector('.prompt-error')
+      expect(inline.textContent).toBe('Image file not found — please regenerate')
+    })
+
+    it('Retry 버튼 title 속성에도 번역된 errorKind 메시지 노출', () => {
+      const items = [baseItem({ status: 'error', error: null, errorKind: 'image-missing' })]
+      const { container } = wrap(
+        <ResultsTable items={items} mediaType="image" onRetry={vi.fn()} />
+      )
+      const retryBtn = container.querySelector('.status.error.retry-btn')
+      expect(retryBtn.getAttribute('title')).toBe('Image file not found — please regenerate')
+    })
+  })
 })

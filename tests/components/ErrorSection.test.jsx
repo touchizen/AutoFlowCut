@@ -87,6 +87,42 @@ describe('ErrorSection', () => {
     })
   })
 
+  describe('errorKind (codified, i18n-translated)', () => {
+    it('errorKind 가 주어지면 t(`errorSection.kind.<kind>`) 로 번역된 메시지 표시', () => {
+      // 'image-missing' 키는 en/ko 양쪽 모두 errorSection.kind 에 등록돼 있음.
+      // 기본 로케일이 en (DEFAULT_LANG) 이므로 영어 메시지가 노출되는지 확인.
+      const { container } = wrap(<ErrorSection errorKind="image-missing" />)
+      const body = container.querySelector('.error-section-body')
+      expect(body).toBeInTheDocument()
+      expect(body.textContent).toBe('Image file not found — please regenerate')
+    })
+
+    it('errorKind 가 free-form error 보다 우선 (번역된 메시지가 사용자 화면에 정확)', () => {
+      // 사용자가 언어를 바꿨거나 stale 메시지가 남은 경우에도 errorKind 가 있으면
+      // 번역된 메시지로 덮어쓴다. 데이터 언어 독립성의 핵심 보장.
+      const { container } = wrap(
+        <ErrorSection error="이미지 파일을 찾을 수 없습니다 — 재생성이 필요합니다" errorKind="image-missing" />,
+      )
+      const body = container.querySelector('.error-section-body')
+      expect(body.textContent).toBe('Image file not found — please regenerate')
+    })
+
+    it('errorKind 도 error 도 없으면 렌더링 안 함', () => {
+      const { container } = wrap(<ErrorSection />)
+      expect(container.querySelector('.error-section')).not.toBeInTheDocument()
+    })
+
+    it('Copy 시 번역된 메시지를 클립보드로 보냄 (raw kind 코드 X)', async () => {
+      wrap(<ErrorSection errorKind="image-missing" />)
+      fireEvent.click(screen.getByRole('button'))
+      await waitFor(() => {
+        expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+          'Image file not found — please regenerate',
+        )
+      })
+    })
+  })
+
   describe('Copy 동작', () => {
     it('Copy 버튼 클릭 시 navigator.clipboard.writeText 호출', async () => {
       wrap(<ErrorSection error="abc 123 error" />)

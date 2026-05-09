@@ -724,6 +724,12 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
   // 에러 정보 섹션 (상세 모달 하단)
   errorSection: {
     title: '에러 정보',
+    // 코드화된 에러 메시지 — scene/reference 의 `errorKind` 값으로 조회.
+    // project.json 에는 kind 만 저장하고 표시 시점에 현재 로케일로 변환하므로
+    // 데이터는 언어 독립이고 언어 전환 시 자동으로 다시 번역된다.
+    kind: {
+      'image-missing': '이미지 파일을 찾을 수 없습니다 — 재생성이 필요합니다',
+    },
   },
 
   // 씬 상세 모달

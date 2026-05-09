@@ -724,6 +724,12 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
   // Error info section (bottom of detail modals)
   errorSection: {
     title: 'Error details',
+    // Codified error messages — looked up by scene/reference `errorKind`.
+    // Storing only the kind in project.json keeps data language-independent;
+    // the message is resolved at display time via the user's current locale.
+    kind: {
+      'image-missing': 'Image file not found — please regenerate',
+    },
   },
 
   // Scene detail modal

@@ -361,7 +361,7 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
           </div>
 
           {/* 에러 정보 (생성 실패 시에만 노출) */}
-          <ErrorSection error={editData.errorMessage || editData.error} />
+          <ErrorSection error={editData.errorMessage || editData.error} errorKind={editData.errorKind} />
         </div>
 
         {/* 오른쪽: 히스토리 */}

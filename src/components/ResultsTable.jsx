@@ -9,6 +9,7 @@ import { useI18n } from '../hooks/useI18n'
 import { useElapsedTimer } from '../hooks/useElapsedTimer'
 import { getRatioClass, resolveImageSrc, hasImageData, formatElapsed } from '../utils/formatters'
 import { resolveVideoSrc } from '../utils/videoSrc'
+import { resolveDisplayError } from '../utils/errorDisplay'
 import InfinityLoader from './InfinityLoader'
 
 /** 초시계 아이콘 — 초침이 실시간 회전 */
@@ -173,10 +174,17 @@ export default function ResultsTable({
   const isDone = (status) => status === 'done' || status === 'complete'
 
   /**
+   * Resolve the displayable error message for an item via the shared util —
+   * keeps i18n / unknown-kind fallback policy aligned with ErrorSection.
+   */
+  const getDisplayError = (item) => resolveDisplayError(t, item.errorKind, item.error)
+
+  /**
    * Render the status cell for a given item
    */
   const renderStatus = (item) => {
     const { status } = item
+    const errorMessage = getDisplayError(item)
 
     if (status === 'pending') {
       return <span className="status pending">⏳ {t('status.pending')}</span>
@@ -201,7 +209,7 @@ export default function ResultsTable({
           <button
             className="status error retry-btn"
             onClick={() => onRetry(item.id)}
-            title={item.error || t('actions.retryOne')}
+            title={errorMessage || t('actions.retryOne')}
           >
             🔄 {t('actions.retryOne')}
           </button>
@@ -217,14 +225,14 @@ export default function ResultsTable({
           <button
             className="status error retry-btn"
             onClick={() => onVideoRetry(item)}
-            title={item.error || label}
+            title={errorMessage || label}
           >
             🔄 {label}
           </button>
         )
       }
       return (
-        <span className="status error" title={item.error}>
+        <span className="status error" title={errorMessage}>
           ❌{t('status.error') || '오류'}
         </span>
       )
@@ -320,9 +328,9 @@ export default function ResultsTable({
                     {item.prompt || ''}
                   </div>
                 )}
-                {item.status === 'error' && item.error && (
-                  <div className="prompt-error" title={String(item.error)}>
-                    {String(item.error)}
+                {item.status === 'error' && getDisplayError(item) && (
+                  <div className="prompt-error" title={String(getDisplayError(item))}>
+                    {String(getDisplayError(item))}
                   </div>
                 )}
               </td>

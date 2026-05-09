@@ -446,7 +446,7 @@ export default function SceneDetailModal({
           </div>
 
           {/* 에러 정보 (생성 실패 시에만 노출) */}
-          <ErrorSection error={scene.error} />
+          <ErrorSection error={scene.error} errorKind={scene.errorKind} />
         </div>
 
         {/* 오른쪽: 히스토리 */}
