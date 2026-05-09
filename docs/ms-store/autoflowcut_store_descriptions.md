@@ -1,4 +1,4 @@
-# AutoFlowCut — Microsoft Store Listing (v0.9.6)
+# AutoFlowCut — Microsoft Store Listing (v0.9.7)
 
 ---
 
@@ -121,7 +121,8 @@ Enable the HTTP API (port 3210) in Settings to allow external tools to interact 
 AutoFlowCut is free and open source.
 
 - All features are free — CapCut Export is the only paid feature
-- 7-day free trial with 5 free exports — try before you buy
+- 5 free CapCut exports every month — refreshes monthly, no time limit
+- 5 signup bonus credits when you create an account
 - Pro: $4.99/month or $39.99/year (unlimited exports)
 - Google Flow AI usage is free during the experimental phase
 - Source code available on GitHub: github.com/touchizen/AutoFlowCut
@@ -152,14 +153,18 @@ Disclaimer: This app is an independent product developed by Touchizen and is not
 
 ### What's New
 ```
-v0.9.6 — Multi-Track Audio Timeline + Polished Audio Workflow
+v0.9.7 — Quota Refresh, Inline Errors, and macOS Install Fix
 
-- AudioTimeline: new Remotion-style multi-track preview with resizable tracks, rich tooltips, and a playhead that stays visible across zoom changes.
-- Audio workflow refactor: AudioPanel split into a cleaner AudioSummary + detail modal, with a dedicated playback hook fixing several regressions.
-- Prompt paste: tab and CRLF line breaks are normalized to newlines automatically, so pasted scene lists land cleanly.
-- Faster Firestore reads: onSnapshot replaced with one-shot getDoc to cut latency and reduce read costs.
-- Branding polish: AutoFlowCut name/icon/version now show in dev mode; About panel shows the build number.
-- Test suite fully repaired (35 failures → 0) after the whisk→flow migration.
+- New quota model: monthly 5 free CapCut exports + 5 signup bonus credits.
+- Stop button now shows the currently-running style name (no more guessing which style is queued).
+- Inline error display under the prompt and inside detail modals — see what failed without opening dev tools.
+- Generation button blocks double-queueing of scene/video batches when a job is already running.
+- Project folder rename no longer breaks video playback (paths auto-remap on load).
+- I2V keyframes are preserved when the seed is locked.
+- AudioTimeline polish: playhead stability across zoom, drag cleanup, project-switch crash fix, mini-clip markers in file rows.
+- Updater: auto-download is now gated behind a confirmation dialog.
+- macOS DMG: properly notarized + stapled and Hangul filenames are NFD-normalized — fixes the "AutoFlowCut is damaged" Gatekeeper warning.
+- License: switched from MIT to GNU AGPL v3 (CONTRIBUTING.md added).
 ```
 
 ### Keywords
@@ -288,7 +293,8 @@ Claude Code에서 사용 가능한 Story Engine v2 명령:
 AutoFlowCut은 무료 오픈소스입니다.
 
 - 모든 기능 무료 — CapCut 내보내기만 유료
-- 7일 무료 체험 + 5회 무료 내보내기 — 결제 전 충분히 시험
+- 매월 5회 무료 CapCut 내보내기 — 매달 갱신, 기간 제한 없음
+- 가입 보너스 5회 — 계정 생성 시 추가 크레딧 지급
 - Pro: $4.99/월 또는 $39.99/년 (무제한 내보내기)
 - Google Flow AI 사용은 실험 단계에서 무료
 - 소스 코드: github.com/touchizen/AutoFlowCut
@@ -319,14 +325,18 @@ Touchizen 제작 — touchizen.com
 
 ### What's New (새로운 기능)
 ```
-v0.9.6 — 멀티 트랙 오디오 타임라인 + 오디오 워크플로우 개선
+v0.9.7 — 쿼터 모델 개편 + 인라인 에러 표시 + macOS 설치 이슈 수정
 
-- AudioTimeline: Remotion 스타일의 멀티 트랙 미리보기 — 트랙 크기 조절, 풍부한 툴팁, 줌 변경 후에도 항상 보이는 플레이헤드.
-- 오디오 워크플로우 리팩토링: AudioPanel을 AudioSummary + 상세 모달로 분리. 전용 재생 훅 도입으로 여러 회귀 수정.
-- 프롬프트 붙여넣기: 탭과 CRLF가 자동으로 개행으로 정규화 — 씬 리스트 붙여넣기가 깔끔하게 처리.
-- 더 빠른 Firestore 조회: onSnapshot을 일회성 getDoc로 교체하여 지연 시간 단축 및 읽기 비용 절감.
-- 브랜딩 개선: 개발 모드에서 AutoFlowCut 이름/아이콘/버전 표시. 정보 패널에 빌드 번호 표시.
-- 테스트 스위트 완전 복구 (35건 실패 → 0건) — whisk→flow 마이그레이션 이후.
+- 새로운 쿼터 모델: 월 5회 무료 CapCut 내보내기 + 가입 보너스 5회.
+- 정지 버튼에 현재 실행 중인 스타일 이름 표시 — 어떤 스타일이 실행 중인지 한눈에.
+- 인라인 에러 표시: 프롬프트 아래 + 상세 모달 안에서 실패 원인을 바로 확인 가능.
+- 씬/비디오 배치 작업이 실행 중일 때 중복 큐잉 차단.
+- 프로젝트 폴더 이름을 바꿔도 비디오 404 발생 안 함 — 로드 시 경로 자동 재매핑.
+- 시드 잠금 시 I2V 키프레임 보존.
+- AudioTimeline 안정화: 줌 변경 시 플레이헤드 안정성, 드래그 정리, 프로젝트 전환 크래시 수정, 파일 행 미니 클립 마커 추가.
+- 업데이터: 자동 다운로드 시작 전 확인 대화상자 게이트 추가.
+- macOS DMG: 정식 notarize + staple 및 한글 파일명 NFD 정규화 — "AutoFlowCut가 손상되었습니다" 경고 해결.
+- 라이선스: MIT → GNU AGPL v3 변경 (CONTRIBUTING.md 추가).
 ```
 
 ### Keywords (한국어)
@@ -382,7 +392,8 @@ AutoFlowCutはAI動画制作の全プロセスを自動化します。Google Flo
 
 💰 価格
 - 全機能無料 — CapCutエクスポートのみ有料
-- 7日間無料トライアル + 5回無料エクスポート
+- 毎月5回の無料CapCutエクスポート — 月次リフレッシュ、期間制限なし
+- 登録ボーナス5回 — アカウント作成時に追加クレジット
 - Pro: $4.99/月 または $39.99/年（無制限）
 - ソースコード: github.com/touchizen/AutoFlowCut
 
@@ -394,14 +405,18 @@ AutoFlowCutはAI動画制作の全プロセスを自動化します。Google Flo
 
 ### What's New
 ```
-v0.9.6 — マルチトラック・オーディオタイムライン + オーディオワークフロー改善
+v0.9.7 — クォータモデル刷新 + インラインエラー表示 + macOSインストール問題修正
 
-- AudioTimeline: Remotionスタイルのマルチトラック・プレビュー — トラックサイズ変更、リッチツールチップ、ズーム変更後も常に見えるプレイヘッド。
-- オーディオワークフロー再構築: AudioPanelをAudioSummary + 詳細モーダルに分割。専用の再生フック導入で複数の不具合を修正。
-- プロンプト貼り付け: タブとCRLF改行が自動で改行に正規化され、シーンリストの貼り付けがクリーンに。
-- Firestore読み込み高速化: onSnapshotを一度きりのgetDocに置き換え、レイテンシ短縮と読み込みコスト削減。
-- ブランディング改善: 開発モードでAutoFlowCut名/アイコン/バージョン表示。Aboutパネルにビルド番号表示。
-- テストスイート完全修復（35件失敗 → 0件）— whisk→flow移行後。
+- 新しいクォータモデル：月5回の無料CapCutエクスポート + 登録ボーナス5回。
+- 停止ボタンに実行中のスタイル名を表示 — 何が実行中か一目で確認可能。
+- インラインエラー表示：プロンプト下と詳細モーダル内で失敗原因を即時確認。
+- シーン/動画バッチが実行中のときの重複キューイングをブロック。
+- プロジェクトフォルダ名を変更しても動画404が発生しません — 読み込み時にパスを自動再マッピング。
+- シードロック時のI2Vキーフレームを保持。
+- AudioTimeline改善：ズーム変更時のプレイヘッド安定性、ドラッグクリーンアップ、プロジェクト切り替えクラッシュ修正、ファイル行のミニクリップマーカー追加。
+- アップデーター：自動ダウンロード開始前に確認ダイアログを追加。
+- macOS DMG：正式にnotarize + staple + ハングルファイル名をNFD正規化 —「AutoFlowCutが破損しています」警告を解決。
+- ライセンス：MIT → GNU AGPL v3に変更（CONTRIBUTING.md追加）。
 ```
 
 ---
@@ -452,7 +467,8 @@ Der integrierte MCP-Server (Model Context Protocol) verbindet sich direkt mit Cl
 
 💰 Preise
 - Alle Funktionen kostenlos — nur CapCut-Export ist kostenpflichtig
-- 7-Tage-Testversion mit 5 kostenlosen Exporten
+- 5 kostenlose CapCut-Exporte pro Monat — monatliche Erneuerung, keine Zeitbeschränkung
+- 5 Bonus-Credits bei Anmeldung — zusätzliches Guthaben bei Kontoerstellung
 - Pro: 4,99 $/Monat oder 39,99 $/Jahr (unbegrenzt)
 - Quellcode: github.com/touchizen/AutoFlowCut
 
@@ -464,14 +480,18 @@ Der integrierte MCP-Server (Model Context Protocol) verbindet sich direkt mit Cl
 
 ### What's New
 ```
-v0.9.6 — Multi-Track-Audio-Timeline + verbesserter Audio-Workflow
+v0.9.7 — Neues Kontingentmodell, Inline-Fehler und macOS-Installationsfix
 
-- AudioTimeline: neue Remotion-Stil Multi-Track-Vorschau mit größenanpassbaren Tracks, Rich-Tooltips und einem Playhead, der bei Zoom-Änderungen sichtbar bleibt.
-- Audio-Workflow-Refactor: AudioPanel in saubereres AudioSummary + Detail-Modal aufgeteilt, mit dediziertem Playback-Hook, der mehrere Regressionen behebt.
-- Prompt-Einfügen: Tabs und CRLF-Zeilenumbrüche werden automatisch zu Newlines normalisiert, damit eingefügte Szenenlisten sauber landen.
-- Schnellere Firestore-Abfragen: onSnapshot durch einmaliges getDoc ersetzt — geringere Latenz und reduzierte Lese-Kosten.
-- Branding-Politur: AutoFlowCut Name/Icon/Version werden im Dev-Modus angezeigt; About-Panel zeigt die Build-Nummer.
-- Test-Suite vollständig repariert (35 Fehler → 0) nach der whisk→flow-Migration.
+- Neues Kontingentmodell: 5 kostenlose CapCut-Exporte pro Monat + 5 Bonus-Credits bei Anmeldung.
+- Stop-Button zeigt jetzt den Namen des aktuell laufenden Stils — kein Rätselraten mehr, welcher Stil läuft.
+- Inline-Fehleranzeige unter dem Prompt und in Detail-Modals — Fehlerursachen sofort sichtbar.
+- Doppelte Warteschlangen für Szenen-/Video-Batches werden blockiert, wenn ein Job bereits läuft.
+- Umbenennen des Projektordners verursacht keine Video-404-Fehler mehr — Pfade werden beim Laden automatisch neu gemappt.
+- I2V-Keyframes bleiben bei gesperrtem Seed erhalten.
+- AudioTimeline-Politur: Playhead-Stabilität bei Zoom-Änderungen, Drag-Cleanup, Projekt-Wechsel-Crash behoben, Mini-Clip-Marker in Datei-Zeilen.
+- Updater: Auto-Download wird jetzt durch einen Bestätigungsdialog kontrolliert.
+- macOS DMG: korrekt notarisiert + stapled und Hangul-Dateinamen NFD-normalisiert — behebt die „AutoFlowCut ist beschädigt"-Warnung.
+- Lizenz: MIT → GNU AGPL v3 (mit CONTRIBUTING.md).
 ```
 
 ---
