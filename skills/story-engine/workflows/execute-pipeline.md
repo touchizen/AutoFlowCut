@@ -460,7 +460,10 @@ When detected, the orchestrator MUST run backfill **before** spawning W{N}'s sub
 5. **User-confirm gate for critical waves** (W3 script, W7 images):
    When backfill targets W3 or W7, the orchestrator MUST call AskUserQuestion:
    "Wave W{M} 기록이 비어있어요. (a) backfill로 진행, (b) 새로 다시 실행, (c) 중단?"
-   Other waves (W2/W4/W5/W6/W8) backfill silently and the audit metadata logs it.
+   Other waves (**W1, W2, W4, W5, W6, W8**) backfill silently and the audit
+   metadata logs it. (W1 = research artifacts; reconstructible from disk.
+   W9 is never a predecessor of any other wave, so its backfill is not
+   triggered through this protocol.)
 
 6. **Final summary warns about backfilled waves** at the end of `/story-execute`:
    List every wave with `backfilled: true` so the user knows audit gaps exist.

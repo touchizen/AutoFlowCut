@@ -49,8 +49,8 @@ Apply the same pre-spawn protocol that `/story-execute` uses for a single wave:
    - **Backfill override (manual mode):** if a predecessor M is detected as
      "artifact-complete but bookkeeping-empty" (per execute-pipeline.md
      "Backfill protocol"), `/story-step` deviates from `/story-execute`:
-     - For non-critical waves (W2/W4/W5/W6/W8): backfill silently and
-       proceed — same as `/story-execute`.
+     - For non-critical waves (**W1, W2, W4, W5, W6, W8**): backfill
+       silently and proceed — same as `/story-execute`.
      - For critical waves (**W3 script, W7 images**): the
        `/story-execute` flow calls `AskUserQuestion`
        (execute-pipeline.md "Backfill protocol" #5). `/story-step`
