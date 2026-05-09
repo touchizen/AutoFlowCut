@@ -55,10 +55,12 @@ AutoFlowCut은 AI 영상 제작 전 과정을 자동화합니다. Google Flow AI
 - **내장 MCP 서버** — Claude Code에서 직접 씬/레퍼런스/프롬프트 편집
 - **HTTP API 브릿지** — 외부 도구 연동 (포트 3210)
 - **스킬 시스템** — Claude Code 스킬 설치/관리, 앱 첫 실행 시 자동 설치
-- **Story Engine v2** — 8-Wave 자동 파이프라인으로 대본부터 CapCut 내보내기까지 전자동
+- **Story Engine v2** — 9-Wave 자동 파이프라인으로 대본부터 CapCut 내보내기까지 전자동
   - `/story-new` → 에피소드 초기화 + 주제 논의
-  - `/story-execute` → W1~W8 자동 실행 (서브에이전트 + 리뷰 루프)
-  - `/story-next` → 중단 후 재개
+  - `/story-execute` → W1~W9 자동 실행 (서브에이전트 + 리뷰 루프, W3/W7 사용자 게이트 2개)
+  - `/story-step` → 다음 한 웨이브만 실행 후 종료. 수동 모드 — 웨이브 내부 질문 없음. 사용자가 결과물 보고 다음 호출 시점 결정
+  - `/story-next` → 중단 후 재개 (`/story-execute` 위임)
+  - `/story-rewrite` → 기존 에피소드 개선 (몰입도 진단 → fork → 부분 웨이브 재실행)
 
 ### 기타
 - **듀얼 뷰 레이아웃** — 탭 / 좌우분할 / 상하분할 모드
@@ -172,10 +174,12 @@ AutoFlowCut/
 │   └── index.js                # 씬/레퍼런스/스타일/오디오/스킬 도구
 │
 ├── skills/                     # Claude Code 스킬
-│   ├── story-engine/           # Story Engine v2 (8-Wave 파이프라인)
+│   ├── story-engine/           # Story Engine v2 (9-Wave 파이프라인)
 │   ├── story-new/              # /story-new 에피소드 초기화
-│   ├── story-execute/          # /story-execute W1~W8 자동 실행
-│   └── story-next/             # /story-next 재개
+│   ├── story-execute/          # /story-execute W1~W9 자동 실행
+│   ├── story-next/             # /story-next 재개
+│   ├── story-step/             # /story-step 단일 웨이브 수동 실행
+│   └── story-rewrite/          # /story-rewrite 에피소드 개선
 ├── docs/                       # 문서 (스키마, 스토어 설명 등)
 ├── tests/                      # Vitest 단위/통합 테스트 (src/ 구조 미러링)
 ├── scripts/                    # 빌드 헬퍼 (electron 이름 패치, 빌드 번호 bump 등)

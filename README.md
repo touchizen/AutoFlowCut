@@ -49,10 +49,12 @@ AutoFlowCut automates the entire AI video production pipeline. Generate images a
 - **Built-in MCP server** — Edit scenes / references / prompts directly from Claude Code.
 - **HTTP API bridge** — Integrate with external tools (port 3210).
 - **Skill system** — Install and manage Claude Code skills; auto-installed on the app's first run.
-- **Story Engine v2** — End-to-end 8-wave pipeline from script to CapCut export.
+- **Story Engine v2** — End-to-end 9-wave pipeline from script to CapCut export.
   - `/story-new` → Initialize an episode + discuss the topic.
-  - `/story-execute` → Run W1–W8 automatically (sub-agents + review loops).
-  - `/story-next` → Resume after interruption.
+  - `/story-execute` → Run W1–W9 automatically (sub-agents + review loops, two user gates at W3/W7).
+  - `/story-step` → Run the next single wave only and exit. Manual mode — no in-wave prompts; the user reviews each wave's deliverables and re-invokes for the next.
+  - `/story-next` → Resume after interruption (delegates to `/story-execute`).
+  - `/story-rewrite` → Improve an existing episode (engagement-gap diagnosis → fork → partial wave re-run).
 
 ### Miscellaneous
 - **Dual-view layouts** — Tab / horizontal-split / vertical-split modes.
@@ -166,10 +168,12 @@ AutoFlowCut/
 │   └── index.js                # Scene / reference / style / audio / skill tools
 │
 ├── skills/                     # Claude Code skills
-│   ├── story-engine/           # Story Engine v2 (8-wave pipeline)
+│   ├── story-engine/           # Story Engine v2 (9-wave pipeline)
 │   ├── story-new/              # /story-new episode init
-│   ├── story-execute/          # /story-execute W1–W8 auto-runner
-│   └── story-next/             # /story-next resume
+│   ├── story-execute/          # /story-execute W1–W9 auto-runner
+│   ├── story-next/             # /story-next resume
+│   ├── story-step/             # /story-step single-wave manual runner
+│   └── story-rewrite/          # /story-rewrite episode improvement
 ├── docs/                       # Documentation (schemas, store descriptions, ...)
 ├── tests/                      # Vitest unit + integration tests (mirrors src/)
 ├── scripts/                    # Build helpers (electron name patch, build-number bump, ...)
