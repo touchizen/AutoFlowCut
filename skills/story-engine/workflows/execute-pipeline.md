@@ -63,11 +63,17 @@ For each wave from current to target:
 │   - W_progress.json waves.W{N}.status === 'done'
 │   - W_progress.json waves.W{N}.review_rounds_used is a number (≥1)
 │   - W_progress.json waves.W{N}.issues_found is a number (≥0)
-│   - W_progress.json waves.W{N}.started_at is an ISO timestamp (orchestrator-set)
+│   - W_progress.json waves.W{N}.started_at is an ISO timestamp
+│     (orchestrator-set pre-spawn — see "Orchestrator verification steps" #1)
 │   - W_progress.json waves.W{N}.completed_at is an ISO timestamp
-│   - W_progress.json waves.W{N}.duration_seconds is a number (orchestrator-computed)
 │   - W_progress.json waves.W{N}.deliverables is a non-empty array
 │   - No unresolved issues flagged in the summary
+│
+│   NOTE: `duration_seconds` is NOT a precondition here. It is computed by the
+│   orchestrator AFTER the above checks (and audit checks 2–5 in
+│   "Orchestrator verification steps" below) all pass — see step #6 there.
+│   A wave with `duration_seconds` missing at this point is normal; a wave
+│   with `duration_seconds` missing AFTER step #6 ran is the contract failure.
 │
 ├─ Orchestrator sanity-checks STATE.md + W_progress.json consistency:
 │   - STATE.md wave row "done" ↔ W_progress.json status 'done'

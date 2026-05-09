@@ -1713,9 +1713,10 @@ function autoSetupSkills() {
     } catch { /* 마커 파일 손상 → 재설치 */ }
   }
 
-  // 스킬 4개 복사
+  // 스킬 6개 복사 (engine + 5 slash commands)
+  // 추가 시 skills/story-engine/metadata.json dependencies 와도 동기화할 것.
   fsSync.mkdirSync(skillsDest, { recursive: true })
-  for (const skill of ['story-engine', 'story-new', 'story-execute', 'story-next']) {
+  for (const skill of ['story-engine', 'story-new', 'story-execute', 'story-next', 'story-step', 'story-rewrite']) {
     const src = path.join(skillsSource, skill)
     if (fsSync.existsSync(src)) {
       copyDirSync(src, path.join(skillsDest, skill))
