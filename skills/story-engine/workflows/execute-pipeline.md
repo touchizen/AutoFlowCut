@@ -64,7 +64,10 @@ For each wave from current to target:
 │   - W_progress.json waves.W{N}.review_rounds_used is a number (≥1)
 │   - W_progress.json waves.W{N}.issues_found is a number (≥0)
 │   - W_progress.json waves.W{N}.started_at is an ISO timestamp
-│     (orchestrator-set pre-spawn — see "Orchestrator verification steps" #1)
+│     (orchestrator-set pre-spawn — see "Orchestrator verification steps" #1).
+│     EXEMPTION: backfilled waves carry `started_at: null` legitimately
+│     (see "Backfill protocol" #3) — verifier accepts null IFF
+│     `waves.W{N}.backfilled === true`.
 │   - W_progress.json waves.W{N}.completed_at is an ISO timestamp
 │   - W_progress.json waves.W{N}.deliverables is a non-empty array
 │   - No unresolved issues flagged in the summary

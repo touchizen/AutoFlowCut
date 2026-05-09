@@ -44,9 +44,27 @@ Call this the **target wave**.
 Apply the same pre-spawn protocol that `/story-execute` uses for a single wave:
 
 1. **Predecessor input contract** — for every M ∈ [1..N-1]:
-   - `waves.W{M}.status === 'done'` (else escalate per execute-pipeline.md
-     "Backfill protocol").
+   - `waves.W{M}.status === 'done'`.
    - `W{M}_SUMMARY.md` exists.
+   - **Backfill override (manual mode):** if a predecessor M is detected as
+     "artifact-complete but bookkeeping-empty" (per execute-pipeline.md
+     "Backfill protocol"), `/story-step` deviates from `/story-execute`:
+     - For non-critical waves (W2/W4/W5/W6/W8): backfill silently and
+       proceed — same as `/story-execute`.
+     - For critical waves (**W3 script, W7 images**): the
+       `/story-execute` flow calls `AskUserQuestion`
+       (execute-pipeline.md "Backfill protocol" #5). `/story-step`
+       MUST NOT — manual mode forbids any prompt. Instead, **refuse to
+       proceed and exit** with a printed message:
+       ```
+       ⚠ /story-step cannot proceed: predecessor wave W{M} bookkeeping is
+         missing. Manual mode does not auto-backfill critical waves
+         (W3/W7) because they affect script/image integrity.
+         Run `/story-execute --from W{M} --to W{M}` to re-execute, OR
+         run `/story-next` once to trigger the interactive backfill gate.
+       ```
+       The orchestrator exits cleanly (no error, no retry, no prompt). The
+       user picks the next move.
 2. **Resolve language** ({lang}) per execute-pipeline.md Step 2 box diagram
    (yadam → ko, dark-history → en, bespoke → auto-detect).
 3. **Print WAVE-START banner** (same format as `/story-execute`; banner
@@ -146,8 +164,11 @@ user's next `/story-step` invocation will pick up at W{N+1} via Step 2.
   and emits an `AskUserQuestion`), treat it as a contract violation and
   escalate per execute-pipeline.md audit rules.
 - All other protocols from `execute-pipeline.md` apply verbatim: predecessor
-  contract, banners, heartbeat polling, disk audit, timing fields, backfill
-  for missing predecessor records.
+  contract, banners, heartbeat polling, disk audit, timing fields, and
+  backfill for missing predecessor records — **with one exception**: for
+  W3/W7 backfill, `/story-step` refuses-and-exits instead of running the
+  interactive backfill gate at execute-pipeline.md "Backfill protocol" #5
+  (manual mode forbids `AskUserQuestion`; see Step 3 #1 above).
 - If the target wave fails after retry (review > 5 rounds, contract
   violation, escalation), print the escalation and exit. Do NOT prompt the
   user mid-wave; the user will see the escalation in chat and decide their
