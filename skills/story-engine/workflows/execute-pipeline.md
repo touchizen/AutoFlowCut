@@ -63,7 +63,9 @@ For each wave from current to target:
 │   - W_progress.json waves.W{N}.status === 'done'
 │   - W_progress.json waves.W{N}.review_rounds_used is a number (≥1)
 │   - W_progress.json waves.W{N}.issues_found is a number (≥0)
+│   - W_progress.json waves.W{N}.started_at is an ISO timestamp (orchestrator-set)
 │   - W_progress.json waves.W{N}.completed_at is an ISO timestamp
+│   - W_progress.json waves.W{N}.duration_seconds is a number (orchestrator-computed)
 │   - W_progress.json waves.W{N}.deliverables is a non-empty array
 │   - No unresolved issues flagged in the summary
 │
@@ -413,7 +415,9 @@ When detected, the orchestrator MUST run backfill **before** spawning W{N}'s sub
    "waves": {
      "W{M}": {
        "status": "done",
+       "started_at": null,
        "completed_at": "<mtime ISO>",
+       "duration_seconds": null,
        "review_rounds_used": null,
        "issues_found": 0,
        "deliverables": [...],
@@ -424,6 +428,7 @@ When detected, the orchestrator MUST run backfill **before** spawning W{N}'s sub
      }
    }
    ```
+   `started_at` and `duration_seconds` are unrecoverable for backfilled waves — the original session's spawn time was not logged. Set both to `null`; do not invent values from filesystem metadata (file mtime ≠ wave start time).
 
 4. **Stub a SUMMARY.md if missing** at `_story_source/W{M}_SUMMARY.md`:
    ```markdown
@@ -467,7 +472,7 @@ Every Wave subagent MUST, as its final action before returning:
    - `## Issues found` — final unresolved issues count. `0` if clean.
    - `## Open questions for W{N+1}` — handoff notes; empty section is allowed but the heading must exist.
 
-2. **Update `W_progress.json`**. Merge (do NOT replace) the existing JSON; set `waves.W{N}` to:
+2. **Update `W_progress.json`**. Merge (do NOT replace) the existing JSON AND merge within `waves.W{N}` (do NOT clobber orchestrator-set fields like `started_at`). Set the subagent-owned fields of `waves.W{N}` to:
    ```json
    {
      "status": "done",
@@ -479,6 +484,25 @@ Every Wave subagent MUST, as its final action before returning:
    }
    ```
    The numeric `review_rounds_used` and `issues_found` fields are REQUIRED. Do not omit; do not leave as `null`/`"?"`/string.
+
+   **Field ownership:**
+   - `started_at` — written by **orchestrator** before spawn. Subagent MUST NOT write or overwrite this field.
+   - `duration_seconds` — written by **orchestrator** after subagent return (computed as `completed_at − started_at`).
+   - All other fields (`status`, `completed_at`, `review_rounds_used`, `issues_found`, `deliverables`, wave-specific metadata) — written by subagent.
+
+   The full canonical `waves.W{N}` shape after a successful wave run is therefore:
+   ```json
+   {
+     "status": "done",
+     "started_at": "<ISO-8601, orchestrator-set>",
+     "completed_at": "<ISO-8601, subagent-set>",
+     "duration_seconds": <number, orchestrator-computed>,
+     "review_rounds_used": <number ≥ 1>,
+     "issues_found": <number ≥ 0>,
+     "deliverables": [...],
+     "...wave-specific metadata..."
+   }
+   ```
 
 3. **Update `STATE.md`**: set the `W{N}` row's Status column to `done` and the Summary column to a one-liner (e.g., `Synopsis + preflight — 1 round, passed, 2026-04-16`).
 
@@ -719,7 +743,7 @@ Rules:
 
 ### Orchestrator verification steps (run after every `Agent` return)
 
-1. **Before spawning** the subagent, record `wave_start_ts = <ISO timestamp>`.
+1. **Before spawning** the subagent, record `wave_start_ts = <ISO timestamp>`. The orchestrator MUST also pre-write `waves.W{N}` in `W_progress.json` with `{ "status": "running", "started_at": "<wave_start_ts>" }` (merge — do not clobber other waves). The subagent will later merge its own fields (status, completed_at, …) into the same entry; the `started_at` field MUST survive.
 2. **After return**, list actual disk changes under the episode directory:
    ```bash
    find {episode_dir} -newer {wave_start_ts} -not -path '*/.git/*'
@@ -733,7 +757,12 @@ Rules:
 5. **Cross-check API boundary**: if the wave brief explicitly forbade an API
    surface (W4 forbids audio gen; W6 forbids image gen), scan `external_api_calls`
    for hits on those surfaces. Any hit = **boundary violation**.
-6. **On any violation**, the orchestrator MUST:
+6. **Compute and write `duration_seconds`** (only when verification passes — checks 2–5 all clean):
+   - Parse `waves.W{N}.started_at` and `waves.W{N}.completed_at` as ISO-8601 timestamps.
+   - `duration_seconds = round(completed_at − started_at)` (integer seconds, ≥ 0).
+   - Merge into `waves.W{N}.duration_seconds` in `W_progress.json` (preserving all other fields).
+   - On parse failure (either timestamp missing/malformed): write `duration_seconds: null` and log a one-line warning; do NOT fail the wave on this alone.
+7. **On any violation** from checks 2–5, the orchestrator MUST:
    - Print `▸ ⚠ Subagent contract violation: <details>` to the user.
    - Pause the pipeline (do NOT advance to the next wave or sub-step).
    - Surface options: continue (accept the change), rollback (delete undeclared
@@ -775,6 +804,39 @@ After all waves complete:
 ◆ All 8 waves completed
 ◆ CapCut project exported
 ◆ Upload info ready
+
+ Wave timing
+   W1  {duration}    W4  {duration}    W7  {duration}
+   W2  {duration}    W5  {duration}    W8  {duration}
+   W3  {duration}    W6  {duration}    W9  {duration}
+   ────────────────────────────────────────────────
+   Total {sum}    Wall-clock {wall}
+```
+
+**Wave timing summary (mandatory at end of `/story-execute`)**
+
+The orchestrator MUST emit a per-wave duration table at completion, populated from
+`W_progress.json` `waves.W{N}.duration_seconds` for each wave that ran in this run:
+
+- Read `waves.W{N}.duration_seconds` for every W{N} that has `status === 'done'`
+  AND was executed in this invocation (not pre-existing from earlier sessions).
+- Format each duration with `format_duration(seconds)`:
+  - `< 60s` → `Ns` (e.g. `42s`)
+  - `< 3600s` → `Mm Ss` (e.g. `5m 20s`)
+  - `≥ 3600s` → `Hh Mm Ss` (e.g. `1h 12m 04s`)
+- `Total` = sum of all `duration_seconds` (subagent CPU time).
+- `Wall-clock` = `last completed_at − first started_at` across the run (includes
+  inter-wave orchestration + user gate wait time at W3/W7).
+- For any wave with `duration_seconds: null` (backfilled or parse-failed), display
+  `—` and append a one-line note: `Note: W{N} timing unavailable (backfilled).`
+- For waves that did NOT run in this invocation (e.g. `--from W4` skipped W1–W3),
+  display `(skipped)` instead of a duration.
+
+The same table SHOULD also be emitted at the end of `/story-step` (single-wave
+runner) — but limited to the one wave that ran:
+```
+ Wave timing
+   W{N}  {duration}    (Total = Wall-clock for single-wave runs)
 ```
 
 Update STATE.md final status.
