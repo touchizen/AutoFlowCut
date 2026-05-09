@@ -1,8 +1,9 @@
 /**
  * ImageFinalize — 이미지 생성 후처리 (업스케일 + 크기 추출 + 저장 + 상태 갱신)
  *
- * useSceneGeneration, useAutomation(processScene, processAsyncResult)에서
- * 동일한 후처리 로직이 3곳에 중복되어 있었으므로 하나로 통합.
+ * 사용처:
+ *   - useSceneGeneration  : 단일 씬 동기 생성
+ *   - useAutomation       : 비동기 batch (collectCompleted) — processAsyncSceneResult 경유
  */
 
 import { RESOURCE } from '../config/defaults'
@@ -40,7 +41,16 @@ export async function finalizeGeneratedImage({
   seed = null, model = 'flow', logPrefix = '[Finalize]'
 }) {
   if (!result.success || !result.images?.length) {
-    return { success: false, sceneUpdate: { status: 'error', error: result.error || 'No images' } }
+    // merge update 에서 stale errorKind (예: image-missing) 가 새 free-form 실패 메시지보다
+    // 우선 표시되는 것을 막기 위해 명시적으로 비운다 — 모든 실패 경로 동일.
+    return {
+      success: false,
+      sceneUpdate: {
+        status: 'error',
+        error: result.error || 'No images',
+        errorKind: null,
+      },
+    }
   }
 
   const firstImage = result.images[0]
@@ -106,6 +116,7 @@ export async function finalizeGeneratedImage({
       sceneUpdate: {
         status: 'error',
         error: `Image save failed: ${saveError}`,
+        errorKind: null,    // stale image-missing kind 가 free-form 메시지를 가리지 않도록 클리어
         // 메모리 표시는 유지 (사용자가 재시도 결정 가능)
         image: imageData,
         mediaId,
@@ -121,6 +132,10 @@ export async function finalizeGeneratedImage({
     success: true,
     sceneUpdate: {
       status: 'done',
+      // updateScene 은 merge 방식이라 prior error/errorKind (예: image-missing 마커)가
+      // 그대로 남으면 ErrorSection/ResultsTable 이 계속 에러 메시지를 띄운다 — 명시 클리어.
+      error: null,
+      errorKind: null,
       image: imagePath ? null : imageData,
       imagePath: imagePath || null,
       mediaId,
@@ -130,4 +145,35 @@ export async function finalizeGeneratedImage({
       model: effectiveModel
     }
   }
+}
+
+/**
+ * 비동기 결과 후처리 — finalize 호출 + scene 업데이트 + finalize 성공값 반환.
+ *
+ * useAutomation 의 collect 루프가 batch errorCount 를 정확히 집계하려면 finalize
+ * 의 success 값 (이미지 받았어도 save 실패 시 false)을 그대로 사용해야 한다 —
+ * `result.success` 만 보면 디스크 저장 실패 씬이 성공으로 잘못 카운트되는 회귀.
+ *
+ * 별도 export 함수로 분리한 이유는 hook 내부 closure 로 두면 직접 단위 테스트가 어려워서.
+ * 동일 로직을 hook 에 두 번 인라인하지 않게 하는 효과도 있다.
+ *
+ * @returns {Promise<boolean>}  finalize 의 success 값 (= updateScene 직후 caller 가 카운터를
+ *                              증감하는 데 쓰는 단일 진실 공급원)
+ */
+export async function processAsyncSceneResult({
+  scene, result,
+  flowAPI, imageUpscale, saveMode, projectName, seed,
+  updateScene,
+  logPrefix = '[Automation]',
+}) {
+  const { success, sceneUpdate } = await finalizeGeneratedImage({
+    result, flowAPI,
+    upscaleRes: imageUpscale || 'off',
+    saveMode, projectName,
+    sceneId: scene.id, prompt: scene.prompt,
+    seed,
+    logPrefix,
+  })
+  updateScene(scene.id, sceneUpdate)
+  return success
 }

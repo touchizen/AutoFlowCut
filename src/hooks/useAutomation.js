@@ -5,9 +5,8 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { DEFAULTS, RESOURCE } from '../config/defaults'
 import { findAutoStyle, resolveSceneStyle } from '../services/styleService'
-import { finalizeGeneratedImage } from '../services/imageFinalize'
+import { processAsyncSceneResult } from '../services/imageFinalize'
 import { fileSystemAPI } from './useFileSystem'
 import { getTimestamp } from '../utils/formatters'
 import { cleanBase64 as stripBase64Prefix } from '../utils/urls'
@@ -35,7 +34,9 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
   const errorCountRef = useRef(0)
   const batchStartedAtRef = useRef(null)
   
-  const { generateImageDOM, submitGenerationDOM, checkGeneration, collectGeneration, clearGenerations, uploadReference, getAccessToken } = flowAPI
+  // generateImageDOM 은 dead processScene 제거와 함께 호출 사이트가 사라져서 destructuring 에서도 제외.
+  // 단일 씬 동기 호출이 필요해지면 flowAPI.generateImageDOM 으로 직접 접근.
+  const { submitGenerationDOM, checkGeneration, collectGeneration, clearGenerations, uploadReference, getAccessToken } = flowAPI
   const { scenes, references, updateScene, getMatchingReferences } = scenesHook
 
   // 씬이 모두 삭제되거나, 생성된 이미지가 없는 상태로 돌아가면 progress/status 리셋
@@ -49,120 +50,11 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     }
   }, [scenes, isRunning])
 
-  /**
-   * 단일 씬 처리
-   */
-  const processScene = async (scene, options) => {
-    let { projectName, saveMode, imageBatchCount, imageUpscale, selectedStyleRefId = null, seed = null } = options
-    if (selectedStyleRefId != null && typeof selectedStyleRefId !== 'string') selectedStyleRefId = String(selectedStyleRefId)
-
-    // selectedStyleRefId 없으면 등록된 style 카드 자동 탐색
-    if (!selectedStyleRefId) selectedStyleRefId = findAutoStyle(references)
-
-    // 일시정지 대기
-    while (pausedRef.current && !stopRequestedRef.current) {
-      await new Promise(r => setTimeout(r, 500))
-    }
-
-    if (stopRequestedRef.current) return
-
-    updateScene(scene.id, { status: 'generating', generatingStartedAt: Date.now() })
-
-    // 매칭되는 레퍼런스 찾기 (태그 기반)
-    const allMatched = getMatchingReferences(scene)
-    const matchedRefs = allMatched
-      .filter(r => r.mediaId)
-      .map(r => ({
-        category: r.category,
-        mediaId: r.mediaId,
-        caption: r.caption || ''
-      }))
-    // 디버그: 매칭 결과 상세 로깅
-    if (allMatched.length > 0) {
-      console.log('[Automation] Scene', scene.id, '→', allMatched.length, 'tag-matched,',
-        matchedRefs.length, 'with mediaId.',
-        'Missing mediaId:', allMatched.filter(r => !r.mediaId).map(r => r.name).join(', ') || 'none')
-    }
-    if (matchedRefs.length > 0) {
-      console.log('[Automation] Scene', scene.id, '→ injecting', matchedRefs.length, 'refs:',
-        matchedRefs.map(r => r.mediaId?.substring(0, 12)).join(', '))
-    }
-
-    // 스타일 프롬프트 합치기 (태그 매칭 자동 + selectedStyleRefId 수동)
-    const { styledPrompt } = resolveSceneStyle(scene.prompt, allMatched, selectedStyleRefId, references, matchedRefs)
-
-    // 이미지 생성 (재시도 포함) — DOM 모드 + CDP 레퍼런스 주입
-    let result
-    let retries = 0
-    const maxRetries = DEFAULTS.generation.retryCount
-
-    while (retries <= maxRetries) {
-      // 생성 시작 전에만 중지 체크 (생성 완료 후에는 이미지를 저장해야 하므로)
-      if (stopRequestedRef.current && retries === 0) return
-      if (stopRequestedRef.current && retries > 0) break  // 재시도 중이면 루프 탈출 → 이전 결과 처리
-
-      result = await generateImageDOM(styledPrompt, matchedRefs, { batchCount: imageBatchCount, seed })
-
-      if (result.success) break
-
-      // 타임아웃/쿼터 에러는 재시도해도 소용없으므로 즉시 중단
-      if (result.error?.includes('timeout') || result.error?.includes('quota')) break
-
-      retries++
-      if (retries <= maxRetries && !stopRequestedRef.current) {
-        await new Promise(r => setTimeout(r, 2000))
-      }
-    }
-    
-    const { sceneUpdate } = await finalizeGeneratedImage({
-      result, flowAPI,
-      upscaleRes: imageUpscale || 'off',
-      saveMode, projectName,
-      sceneId: scene.id, prompt: scene.prompt,
-      seed,
-      logPrefix: '[Automation]'
-    })
-    updateScene(scene.id, sceneUpdate)
-
-    if (!result.success || !result.images?.length) {
-
-      // 인증 관련 에러 체크 - 토큰 갱신 시도 후 재시도
-      const errorMsg = result.error || ''
-      const isAuthError = errorMsg.includes('401') || errorMsg.includes('auth') || errorMsg.includes('token') || errorMsg.includes('login') || errorMsg.includes('Unauthorized')
-      if (isAuthError) {
-        console.log('[Automation] Auth error detected, trying to refresh token...')
-        setStatusMessage(`🔄 ${t('toast.tokenRefreshing')}`)
-
-        // 토큰 갱신 시도 (forceRefresh)
-        const newToken = await getAccessToken(true)
-        if (newToken) {
-          console.log('[Automation] Token refreshed, retrying scene:', scene.id)
-          // 재시도 (DOM 모드 + 레퍼런스)
-          const retryResult = await generateImageDOM(scene.prompt, matchedRefs, { batchCount: imageBatchCount, seed })
-          if (retryResult.success && retryResult.images?.length > 0) {
-            // 성공 시 다시 저장 로직으로 (images는 [{ base64, mediaId }])
-            const retryImg = retryResult.images[0]
-            updateScene(scene.id, {
-              status: 'done',
-              image: retryImg.base64 || retryImg,
-              mediaId: retryImg.mediaId || null
-            })
-            return retryResult
-          }
-        }
-
-        // 재시도도 실패 - 중단
-        console.log('[Automation] Auth retry failed, stopping. Calling onAuthError.')
-        stopRequestedRef.current = true
-        setStatusMessage(`❌ ${t('status.authErrorStopped')}`)
-        setStatus('error')
-        onAuthError?.()
-        return { ...result, authError: true }
-      }
-    }
-
-    return result
-  }
+  // (NOTE) 단일 씬 동기 처리 헬퍼 (`processScene`) 는 dead code 였어서 제거.
+  // 활성 경로는 비동기 batch 인 runAutomation + collectCompleted 만 사용.
+  // 미래에 동기 단일 처리가 다시 필요해지면 processAsyncSceneResult() 에 retry 정책을
+  // 얹어서 재구현할 것 — finalize 의 success 값이 caller 에 그대로 전달돼야
+  // batch errorCount 와 같은 통계가 정확히 집계된다.
   
   /**
    * 비동기 배치 실행 (fire-and-forget + 폴링 수집)
@@ -181,19 +73,13 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       setProgress({ current, total, percent: Math.round((current / total) * 100), errorCount: errorCountRef.current, startedAt: batchStartedAtRef.current, endedAt: null })
     }
 
-    // 비동기 결과 후처리 (업스케일 + 저장)
-    const processAsyncResult = async (scene, result) => {
-      const { success, sceneUpdate } = await finalizeGeneratedImage({
-        result, flowAPI,
-        upscaleRes: imageUpscale || 'off',
-        saveMode, projectName,
-        sceneId: scene.id, prompt: scene.prompt,
-        seed,
-        logPrefix: '[Automation]'
-      })
-      updateScene(scene.id, sceneUpdate)
-      return success
-    }
+    // 비동기 결과 후처리 (업스케일 + 저장) — 단위 테스트 가능한 standalone 헬퍼로 위임.
+    const processAsyncResult = (scene, result) => processAsyncSceneResult({
+      scene, result,
+      flowAPI, imageUpscale, saveMode, projectName, seed,
+      updateScene,
+      logPrefix: '[Automation]',
+    })
 
     // 완료된 결과 수집
     const ITEM_TIMEOUT = 120000 // 개별 아이템 2분 타임아웃
@@ -205,7 +91,8 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
         const elapsed = Date.now() - item.submittedAt
         if (elapsed > ITEM_TIMEOUT) {
           console.warn('[Automation] Scene', item.scene.id, 'timed out after', Math.round(elapsed / 1000), 's')
-          updateScene(item.scene.id, { status: 'error', error: 'Generation timeout' })
+          // errorKind 명시 클리어 — prior image-missing 마커가 새 timeout 메시지를 가리지 않도록.
+          updateScene(item.scene.id, { status: 'error', error: 'Generation timeout', errorKind: null })
           errorCountRef.current++
           completedCountRef.current++
           updateProgressMsg(completedCountRef.current)
@@ -216,8 +103,10 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
           if (st.completed) {
             const result = await collectGeneration(item.generationId)
             console.log('[Automation] Collected scene', item.scene.id, ':', result.success, result.images?.length || 0, 'images')
-            await processAsyncResult(item.scene, result)
-            if (!result.success || !result.images?.length) {
+            // processAsyncResult 의 반환값은 finalize success (이미지 받았어도 디스크 저장 실패 시 false).
+            // result.success 만 보면 save 실패 씬이 배치 요약에서 성공으로 잘못 집계되는 회귀.
+            const finalizeOk = await processAsyncResult(item.scene, result)
+            if (!finalizeOk) {
               errorCountRef.current++
             }
             completedCountRef.current++
@@ -267,7 +156,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
         console.log('[Automation] Submitted scene', scene.id, '→', submitResult.generationId)
       } else {
         console.error('[Automation] Submit failed for scene', scene.id, ':', submitResult.error)
-        updateScene(scene.id, { status: 'error', error: submitResult.error })
+        updateScene(scene.id, { status: 'error', error: submitResult.error, errorKind: null })
         errorCountRef.current++
         completedCountRef.current++
         updateProgressMsg(completedCountRef.current)
@@ -313,9 +202,10 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     const userStopped = stopRequestedRef.current
     for (const item of pendingQueue) {
       if (userStopped) {
-        updateScene(item.scene.id, { status: 'pending', error: null })
+        // 사용자 중단으로 재시도 가능 상태 — 모든 에러 흔적 클리어 (image-missing 마커 포함).
+        updateScene(item.scene.id, { status: 'pending', error: null, errorKind: null })
       } else {
-        updateScene(item.scene.id, { status: 'error', error: 'Generation timeout' })
+        updateScene(item.scene.id, { status: 'error', error: 'Generation timeout', errorKind: null })
         errorCountRef.current++
         completedCountRef.current++
       }
@@ -520,7 +410,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       setStatusMessage(`${t('status.done')} — ${summary}`)
     }
 
-  }, [isRunning, scenes, references, generateImageDOM, submitGenerationDOM, checkGeneration, collectGeneration, clearGenerations, uploadReference, getAccessToken, updateScene, getMatchingReferences, t, onOpenSettings])
+  }, [isRunning, scenes, references, submitGenerationDOM, checkGeneration, collectGeneration, clearGenerations, uploadReference, getAccessToken, updateScene, getMatchingReferences, t, onOpenSettings])
   
   /**
    * 일시정지/재개

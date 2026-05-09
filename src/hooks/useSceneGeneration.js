@@ -66,8 +66,17 @@ export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, open
       }
     } catch (error) {
       console.error('Scene generation error:', error)
-      scenesHook.updateScene(sceneId, { status: 'error' })
-      toast.error(t('toast.sceneGenerateError', { error: error.message }))
+      // prior errorKind (예: image-missing) 가 남아 잘못된 메시지가 노출되지 않도록 명시 초기화하고
+      // 이번 catch 의 실제 메시지를 free-form error 로 surface.
+      // string/null rejection 등 비-Error throw 도 안전하게 처리해야 한다 — 직접 .message 접근하면
+      // secondary throw 가 나서 finally 자리 (setGeneratingSceneId) 까지 도달 못 하는 회귀.
+      const errorMessage = error?.message || String(error)
+      scenesHook.updateScene(sceneId, {
+        status: 'error',
+        errorKind: null,
+        error: errorMessage,
+      })
+      toast.error(t('toast.sceneGenerateError', { error: errorMessage }))
     }
 
     setGeneratingSceneId(null)
