@@ -363,6 +363,281 @@ describe('useReferenceGeneration 로직', () => {
       })
     })
 
+    describe('collectCompleted 병렬 후처리', () => {
+      // 같은 폴링 창에서 여러 ref 가 동시에 완료된 경우, 후처리(upscale + uploadReference +
+      // save + history)는 서로 독립이므로 Promise.all 로 병렬 실행한다. 단일 항목에는 효과
+      // 없고 다중 클러스터 완료 시 wall-clock 단축. 의미적으론 변경 없음 (결과·순서·API
+      // 호출 횟수 모두 동일).
+
+      // collectCompleted 의 핵심 알고리즘 재현
+      // (Phase 1: status 순차 식별 / Phase 2: 후처리 병렬 / Phase 3: 성공 항목만 splice).
+      // 후처리에서 throw 한 항목은 큐에 남겨 Phase 2 타임아웃 cleanup 으로 위임 — 직렬
+      // 구현이 제공하던 안전망 (regression 방지) 보존.
+      const collectCompletedAlgo = async ({ pendingQueue, checkGeneration, processAsyncResult }) => {
+        let hasPendingSaves = false
+        const completed = []
+        for (let i = pendingQueue.length - 1; i >= 0; i--) {
+          const pending = pendingQueue[i]
+          try {
+            const status = await checkGeneration(pending.generationId)
+            if (status?.success && status.completed) {
+              completed.push(pending)
+            }
+          } catch { /* ignore */ }
+        }
+        const succeeded = new Set()
+        await Promise.all(completed.map(async (pending) => {
+          try {
+            const r = await processAsyncResult(pending.generationId, pending.index, pending.ref)
+            if (r?.savedToMemory) hasPendingSaves = true
+            succeeded.add(pending)
+          } catch { /* leave in queue */ }
+        }))
+        if (succeeded.size > 0) {
+          for (let i = pendingQueue.length - 1; i >= 0; i--) {
+            if (succeeded.has(pendingQueue[i])) pendingQueue.splice(i, 1)
+          }
+        }
+        return { hasPendingSaves, processedCount: completed.length, succeededCount: succeeded.size }
+      }
+
+      it('다중 완료 항목을 병렬로 후처리 (wall-clock = max, not sum)', async () => {
+        const POST_PROCESS_MS = 80
+        const checkGeneration = vi.fn().mockResolvedValue({ success: true, completed: true })
+        const processAsyncResult = vi.fn().mockImplementation(
+          () => new Promise(resolve => setTimeout(() => resolve({ success: true, savedToMemory: false }), POST_PROCESS_MS))
+        )
+        const pendingQueue = [
+          { generationId: 'g1', index: 0, ref: { name: 'a' } },
+          { generationId: 'g2', index: 1, ref: { name: 'b' } },
+          { generationId: 'g3', index: 2, ref: { name: 'c' } },
+        ]
+
+        const start = Date.now()
+        const { processedCount } = await collectCompletedAlgo({ pendingQueue, checkGeneration, processAsyncResult })
+        const elapsed = Date.now() - start
+
+        expect(processedCount).toBe(3)
+        expect(processAsyncResult).toHaveBeenCalledTimes(3)
+        // sequential = 240ms. parallel = ~80ms. 절반(120ms) 이하면 병렬 동작 확정 — 시스템
+        // 변동에 견디는 보수적 임계값.
+        expect(elapsed).toBeLessThan(POST_PROCESS_MS * 1.5)
+        expect(pendingQueue).toHaveLength(0)
+      })
+
+      it('한 항목 후처리 실패 시 나머지는 처리 + 실패 항목은 큐에 유지 (Phase 2 cleanup 위임)', async () => {
+        // 직렬 구현은 processAsyncResult 가 throw 하면 splice 가 도달 못 해서 큐에 남았다.
+        // 병렬 구현은 succeeded set 으로 같은 안전망 유지 — Phase 2 타임아웃이 정리.
+        const checkGeneration = vi.fn().mockResolvedValue({ success: true, completed: true })
+        const processAsyncResult = vi.fn().mockImplementation((genId) => {
+          if (genId === 'g2') return Promise.reject(new Error('boom'))
+          return Promise.resolve({ success: true, savedToMemory: false })
+        })
+        const pendingQueue = [
+          { generationId: 'g1', index: 0, ref: {} },
+          { generationId: 'g2', index: 1, ref: {} },
+          { generationId: 'g3', index: 2, ref: {} },
+        ]
+
+        const { processedCount, succeededCount } = await collectCompletedAlgo({ pendingQueue, checkGeneration, processAsyncResult })
+
+        expect(processedCount).toBe(3)            // 3개 모두 후처리 시도
+        expect(succeededCount).toBe(2)            // g1, g3 만 성공
+        expect(processAsyncResult).toHaveBeenCalledTimes(3)
+        expect(pendingQueue).toHaveLength(1)      // g2 (실패) 는 큐에 남음
+        expect(pendingQueue[0].generationId).toBe('g2')
+      })
+
+      it('hasPendingSaves OR-merge: 하나라도 savedToMemory=true 면 true', async () => {
+        const checkGeneration = vi.fn().mockResolvedValue({ success: true, completed: true })
+        const processAsyncResult = vi.fn()
+          .mockResolvedValueOnce({ success: true, savedToMemory: false })
+          .mockResolvedValueOnce({ success: true, savedToMemory: true })
+          .mockResolvedValueOnce({ success: true, savedToMemory: false })
+        const pendingQueue = [
+          { generationId: 'g1', index: 0, ref: {} },
+          { generationId: 'g2', index: 1, ref: {} },
+          { generationId: 'g3', index: 2, ref: {} },
+        ]
+
+        const { hasPendingSaves } = await collectCompletedAlgo({ pendingQueue, checkGeneration, processAsyncResult })
+
+        expect(hasPendingSaves).toBe(true)
+      })
+
+      it('checkGeneration 실패 항목은 큐에 유지 (재시도 가능)', async () => {
+        const checkGeneration = vi.fn().mockImplementation((genId) => {
+          if (genId === 'g2') return Promise.reject(new Error('network'))
+          return Promise.resolve({ success: true, completed: true })
+        })
+        const processAsyncResult = vi.fn().mockResolvedValue({ success: true })
+        const pendingQueue = [
+          { generationId: 'g1', index: 0, ref: {} },
+          { generationId: 'g2', index: 1, ref: {} },
+          { generationId: 'g3', index: 2, ref: {} },
+        ]
+
+        const { processedCount } = await collectCompletedAlgo({ pendingQueue, checkGeneration, processAsyncResult })
+
+        expect(processedCount).toBe(2) // g1, g3 만 처리
+        expect(pendingQueue).toHaveLength(1) // g2 는 큐에 남음
+        expect(pendingQueue[0].generationId).toBe('g2')
+      })
+
+      it('완료 항목 0개일 때 processAsyncResult 호출 안 함', async () => {
+        const checkGeneration = vi.fn().mockResolvedValue({ success: true, completed: false })
+        const processAsyncResult = vi.fn()
+        const pendingQueue = [
+          { generationId: 'g1', index: 0, ref: {} },
+          { generationId: 'g2', index: 1, ref: {} },
+        ]
+
+        const { processedCount } = await collectCompletedAlgo({ pendingQueue, checkGeneration, processAsyncResult })
+
+        expect(processedCount).toBe(0)
+        expect(processAsyncResult).not.toHaveBeenCalled()
+        expect(pendingQueue).toHaveLength(2) // 모두 큐에 남음
+      })
+    })
+
+    describe('mapWithConcurrency (Flow 429 보호)', () => {
+      // 후처리에서 N개 동시 완료 시 uploadReference 가 무제한 동시 호출되면 Flow rate-limit
+      // (429) 위험. useAutomation 의 자동 업로드 경로와 동일한 동시성 5 제한.
+      const mapWithConcurrencyAlgo = async (items, mapper, concurrency = 5) => {
+        if (items.length === 0) return []
+        const results = new Array(items.length)
+        let cursor = 0
+        const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+          while (true) {
+            const myIdx = cursor++
+            if (myIdx >= items.length) return
+            results[myIdx] = await mapper(items[myIdx], myIdx)
+          }
+        })
+        await Promise.all(workers)
+        return results
+      }
+
+      it('동시 활성 worker 가 concurrency 를 초과하지 않음', async () => {
+        let active = 0
+        let maxActive = 0
+        const mapper = async () => {
+          active++
+          maxActive = Math.max(maxActive, active)
+          await new Promise(r => setTimeout(r, 30))
+          active--
+        }
+        const items = Array.from({ length: 12 }, (_, i) => i)
+
+        await mapWithConcurrencyAlgo(items, mapper, 5)
+
+        expect(maxActive).toBeLessThanOrEqual(5)
+        expect(maxActive).toBeGreaterThanOrEqual(2) // 12개니까 최소 2개는 동시 — 진짜 병렬 검증
+      })
+
+      it('빈 배열은 빈 배열 반환', async () => {
+        const mapper = vi.fn()
+        const result = await mapWithConcurrencyAlgo([], mapper, 5)
+        expect(result).toEqual([])
+        expect(mapper).not.toHaveBeenCalled()
+      })
+
+      it('결과 순서 보존 (인덱스 매핑 정확)', async () => {
+        const mapper = async (item) => item * 2
+        const result = await mapWithConcurrencyAlgo([1, 2, 3, 4, 5], mapper, 2)
+        expect(result).toEqual([2, 4, 6, 8, 10])
+      })
+
+      it('items.length < concurrency 일 때도 정상 동작', async () => {
+        const mapper = vi.fn().mockResolvedValue('ok')
+        const result = await mapWithConcurrencyAlgo(['a', 'b'], mapper, 5)
+        expect(result).toEqual(['ok', 'ok'])
+        expect(mapper).toHaveBeenCalledTimes(2)
+      })
+    })
+
+    describe('uploadReferenceWithRetry (429 backoff)', () => {
+      // useAutomation 의 자동 업로드 경로와 동일 패턴: MAX_RETRIES=2, exponential backoff,
+      // 429 만 retry, 비-429 실패는 즉시 반환.
+      const uploadReferenceWithRetryAlgo = async (flowAPI, base64, category) => {
+        const MAX_RETRIES = 2
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+          try {
+            const result = await flowAPI.uploadReference(base64, category)
+            if (result.success) return result
+            if (result.error?.includes('429') && attempt < MAX_RETRIES) {
+              await new Promise(r => setTimeout(r, 0)) // 테스트에선 즉시 retry
+              continue
+            }
+            return result
+          } catch (e) {
+            if (attempt < MAX_RETRIES && /429|rate/i.test(e?.message || '')) {
+              await new Promise(r => setTimeout(r, 0))
+              continue
+            }
+            return { success: false, error: e?.message || String(e) }
+          }
+        }
+        return { success: false, error: 'uploadReference exhausted retries' }
+      }
+
+      it('성공 시 즉시 반환 (retry 없음)', async () => {
+        const uploadReference = vi.fn().mockResolvedValue({ success: true, mediaId: 'm1' })
+        const flowAPI = { uploadReference }
+
+        const result = await uploadReferenceWithRetryAlgo(flowAPI, 'base64', 'character')
+
+        expect(result).toEqual({ success: true, mediaId: 'm1' })
+        expect(uploadReference).toHaveBeenCalledTimes(1)
+      })
+
+      it('429 시 backoff 후 재시도, 두 번째에 성공', async () => {
+        const uploadReference = vi.fn()
+          .mockResolvedValueOnce({ success: false, error: 'HTTP 429 rate limit' })
+          .mockResolvedValueOnce({ success: true, mediaId: 'm1' })
+        const flowAPI = { uploadReference }
+
+        const result = await uploadReferenceWithRetryAlgo(flowAPI, 'base64', 'character')
+
+        expect(result.success).toBe(true)
+        expect(result.mediaId).toBe('m1')
+        expect(uploadReference).toHaveBeenCalledTimes(2)
+      })
+
+      it('429 가 MAX_RETRIES 까지 지속 → 실패 반환', async () => {
+        const uploadReference = vi.fn().mockResolvedValue({ success: false, error: '429 too many requests' })
+        const flowAPI = { uploadReference }
+
+        const result = await uploadReferenceWithRetryAlgo(flowAPI, 'base64', 'character')
+
+        expect(result.success).toBe(false)
+        expect(uploadReference).toHaveBeenCalledTimes(3) // initial + 2 retries
+      })
+
+      it('비-429 실패는 즉시 반환 (retry 없음)', async () => {
+        const uploadReference = vi.fn().mockResolvedValue({ success: false, error: 'invalid token' })
+        const flowAPI = { uploadReference }
+
+        const result = await uploadReferenceWithRetryAlgo(flowAPI, 'base64', 'character')
+
+        expect(result.success).toBe(false)
+        expect(result.error).toBe('invalid token')
+        expect(uploadReference).toHaveBeenCalledTimes(1) // 한 번만
+      })
+
+      it('throw 시 429 메시지면 retry, 아니면 즉시 실패', async () => {
+        const uploadReference1 = vi.fn().mockRejectedValue(new Error('Got 429 from Flow'))
+        const result1 = await uploadReferenceWithRetryAlgo({ uploadReference: uploadReference1 }, 'b', 'c')
+        expect(uploadReference1).toHaveBeenCalledTimes(3) // 429 keyword → retry to MAX
+        expect(result1.success).toBe(false)
+
+        const uploadReference2 = vi.fn().mockRejectedValue(new Error('network down'))
+        const result2 = await uploadReferenceWithRetryAlgo({ uploadReference: uploadReference2 }, 'b', 'c')
+        expect(uploadReference2).toHaveBeenCalledTimes(1) // 비-429 → 즉시 실패
+        expect(result2.success).toBe(false)
+      })
+    })
+
     describe('인증 에러 복구', () => {
       it('authError 시 토큰 갱신 시도', async () => {
         mockGetAccessToken.mockResolvedValue('new_token')

@@ -282,13 +282,16 @@ export async function loadProjectWithResources(projectName) {
   const finalScenes = scenesWithVideoPaths.map(resetGenerating)
   const finalVideoScenes = videoScenesWithMedia.map(resetGenerating)
   const finalFramePairs = framePairsWithMedia.map(resetGenerating)
+  // references 도 동일 처리 — 배치 중 앱 종료/크래시 시 'generating' 으로 박힌 ref 가
+  // 영구 그 상태로 남는 것을 방지. 'pending' 으로 내려 사용자가 재시도 가능하게.
+  const finalReferences = refsWithPaths.map(resetGenerating)
 
   // sync 는 "scene 에 path 가 없을 때만" 채우므로, 위에서 자체 remap 성공한 path 는 그대로 유지.
   syncVideosIntoScenes(finalScenes, finalVideoScenes, finalFramePairs, '[ProjectData]')
 
   return {
     scenes: finalScenes,
-    references: refsWithPaths,
+    references: finalReferences,
     videoScenes: finalVideoScenes,
     framePairs: finalFramePairs,
     audioFolderPath: result.data.audioFolderPath || null,

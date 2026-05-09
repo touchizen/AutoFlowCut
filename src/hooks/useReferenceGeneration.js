@@ -13,6 +13,50 @@ import { toast } from '../components/Toast'
 // 1~3초 랜덤 딜레이
 const randomDelay = () => new Promise(r => setTimeout(r, 1000 + Math.random() * 2000))
 
+// 동시성 제한 매핑 — useAutomation 의 슬라이딩 윈도우 (MAX_CONCURRENT=5) 와 같은 의도.
+// Promise.all 을 그대로 쓰면 한 폴링 창에 N 개가 동시에 Flow 를 두드려 429 risk.
+async function mapWithConcurrency(items, mapper, concurrency = 5) {
+  if (items.length === 0) return []
+  const results = new Array(items.length)
+  let cursor = 0
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (true) {
+      const myIdx = cursor++
+      if (myIdx >= items.length) return
+      results[myIdx] = await mapper(items[myIdx], myIdx)
+    }
+  })
+  await Promise.all(workers)
+  return results
+}
+
+// uploadReference 429 retry — useAutomation.js 의 보호와 동일 패턴. 각 호출이 자체적으로
+// rate-limit 을 견디게 함. 비-429 실패는 즉시 반환 (백오프 무의미).
+async function uploadReferenceWithRetry(flowAPI, base64, category, logPrefix) {
+  const MAX_RETRIES = 2
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const result = await flowAPI.uploadReference(base64, category)
+      if (result.success) return result
+      if (result.error?.includes('429') && attempt < MAX_RETRIES) {
+        const backoff = (attempt + 1) * 2000 + Math.random() * 1000
+        console.warn(`${logPrefix} uploadReference 429 — retry in ${Math.round(backoff)}ms (attempt ${attempt + 1}/${MAX_RETRIES})`)
+        await new Promise(r => setTimeout(r, backoff))
+        continue
+      }
+      return result
+    } catch (e) {
+      if (attempt < MAX_RETRIES && /429|rate/i.test(e?.message || '')) {
+        const backoff = (attempt + 1) * 2000 + Math.random() * 1000
+        await new Promise(r => setTimeout(r, backoff))
+        continue
+      }
+      return { success: false, error: e?.message || String(e) }
+    }
+  }
+  return { success: false, error: 'uploadReference exhausted retries' }
+}
+
 export function useReferenceGeneration({ settings, references, setReferences, flowAPI, addPendingSave, openSettings, pendingSavesCount = 0, t, selectedStyleRefId, styleThumbnails, generationQueue }) {
   const [generatingRefs, setGeneratingRefs] = useState([])
   const [stoppingRefs, setStoppingRefs] = useState(false)
@@ -99,20 +143,20 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
 
     const displayUrl = toDataURL(imageData)
 
-    // Flow에 업로드 → mediaId + caption
+    // Flow에 업로드 → mediaId + caption.
+    // 429 retry 포함 (병렬 후처리 도입 후 동시 호출 시 rate-limit 보호; useAutomation 의
+    // 자동 업로드 경로와 동일 패턴: MAX_RETRIES=2 + exponential backoff + jitter).
     const base64ForUpload = cleanBase64(imageData)
     let mediaId = null
     let caption = null
     console.log(logPrefix, 'Uploading to Flow for mediaId...', { category: ref.category, base64Len: base64ForUpload.length })
-    try {
-      const uploadResult = await flowAPI.uploadReference(base64ForUpload, ref.category)
-      console.log(logPrefix, 'Upload result:', uploadResult)
-      if (uploadResult.success) {
-        mediaId = uploadResult.mediaId
-        caption = uploadResult.caption
-      }
-    } catch (uploadErr) {
-      console.error(logPrefix, 'Upload failed:', uploadErr)
+    const uploadResult = await uploadReferenceWithRetry(flowAPI, base64ForUpload, ref.category, logPrefix)
+    console.log(logPrefix, 'Upload result:', uploadResult)
+    if (uploadResult.success) {
+      mediaId = uploadResult.mediaId
+      caption = uploadResult.caption
+    } else {
+      console.error(logPrefix, 'Upload failed (after retries):', uploadResult.error)
     }
 
     // 파일 저장 (폴더 모드)
@@ -205,7 +249,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     }
 
     setGeneratingRefs(prev => [...prev, index])
-    setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'generating', errorMessage: null } : r))
+    setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'generating', errorMessage: null, generatingStartedAt: Date.now(), generatingEndedAt: null } : r))
 
     try {
       // 스타일 준비 (공통 함수)
@@ -304,19 +348,61 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     const pendingQueue = []
 
     // 완료된 결과 수집 + 후처리
+    //
+    // 세 단계로 동작 — splice 타이밍에 주의:
+    //   1) 상태 확인 (sequential) — checkGeneration 은 가벼운 HTTP. 병렬로 묶으면
+    //      Flow 측 rate limit 위험이 있어 그대로 순차. 큐에서 아직 제거하지 않음.
+    //   2) 후처리 (parallel) — 같은 폴링 창에 N개가 완료된 경우, 각 항목의 후처리
+    //      (upscale → uploadReference → save → history → setReferences) 는 서로
+    //      독립적이라 Promise.all 로 동시 실행.
+    //   3) 성공 항목만 큐에서 제거 — 후처리 throw 한 항목은 큐에 남겨둬서 Phase 2
+    //      타임아웃 cleanup 이 'error' 또는 'pending' 으로 정리하도록 함. (이전 직렬
+    //      구현이 제공하던 안전망: processAsyncResult 가 throw 하면 splice 도달 못
+    //      해서 큐에 남는 동작과 의미적으로 동일.)
+    //
+    //  setReferences/setGeneratingRefs 는 함수형 업데이트라 race-safe.
+    //  hasPendingSaves 는 OR 누적이라 race-safe.
+    //  단일 항목 완료 시엔 병렬 효과 없음 — 다중 클러스터 완료 시 wall-clock 단축.
     const collectCompleted = async () => {
+      // Phase 1: 완료된 항목 식별 (큐에서 아직 제거하지 않음)
+      const completed = []
       for (let i = pendingQueue.length - 1; i >= 0; i--) {
         const pending = pendingQueue[i]
         try {
           const status = await flowAPI.checkGeneration(pending.generationId)
           if (status?.success && status.completed) {
-            console.log('[GenerateAllRefs] Collecting completed gen:', pending.generationId, 'index:', pending.index)
-            const result = await processAsyncResult(pending.generationId, pending.index, pending.ref)
-            if (result?.savedToMemory) hasPendingSaves = true
-            pendingQueue.splice(i, 1)
+            completed.push(pending)
           }
         } catch (e) {
           console.warn('[GenerateAllRefs] Check failed for gen:', pending.generationId, e.message)
+        }
+      }
+
+      if (completed.length === 0) return
+      if (completed.length > 1) {
+        console.log('[GenerateAllRefs] Processing', completed.length, 'completed in parallel')
+      }
+
+      // Phase 2: 후처리 — 동시성 5 제한 (useAutomation 자동 업로드 경로와 동일 한계).
+      // 무제한 Promise.all 시 같은 폴링 창에 N개 완료된 ref 가 모두 동시에 Flow 를 두드려
+      // 429 rate-limit risk. 성공한 항목만 succeeded set 에 등록 — 실패는 큐에 남겨
+      // Phase 2 타임아웃 cleanup 으로 위임 (직렬 구현 안전망 보존).
+      const succeeded = new Set()
+      await mapWithConcurrency(completed, async (pending) => {
+        try {
+          console.log('[GenerateAllRefs] Collecting completed gen:', pending.generationId, 'index:', pending.index)
+          const result = await processAsyncResult(pending.generationId, pending.index, pending.ref)
+          if (result?.savedToMemory) hasPendingSaves = true
+          succeeded.add(pending)
+        } catch (e) {
+          console.error('[GenerateAllRefs] Post-processing failed for gen:', pending.generationId, e?.message || e)
+        }
+      }, 5)
+
+      // Phase 3: 성공한 항목만 큐에서 제거 (역순 splice 로 인덱스 안정성 유지)
+      if (succeeded.size > 0) {
+        for (let i = pendingQueue.length - 1; i >= 0; i--) {
+          if (succeeded.has(pendingQueue[i])) pendingQueue.splice(i, 1)
         }
       }
     }
@@ -347,7 +433,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
         const { styledPrompt, styleRefImages } = await _prepareStyleRefs(ref, batchEffectiveStyleId, '[GenerateAllRefs]')
 
         setGeneratingRefs(prev => [...prev, index])
-        setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'generating', errorMessage: null } : r))
+        setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'generating', errorMessage: null, generatingStartedAt: Date.now(), generatingEndedAt: null } : r))
 
         const batchSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
           ? settings.seedNo

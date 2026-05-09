@@ -5,7 +5,36 @@
 import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { REFERENCE_TYPES } from '../config/defaults'
-import { getRatioClass, resolveImageSrc, hasImageData } from '../utils/formatters'
+import { getRatioClass, resolveImageSrc, hasImageData, formatElapsed } from '../utils/formatters'
+import { useElapsedTimer } from '../hooks/useElapsedTimer'
+
+// 초시계 아이콘 — ResultsTable / FrameToVideoPanel 과 동일 스타일
+function StopwatchIcon({ size = 16 }) {
+  const r = size / 2
+  const cx = r, cy = r
+  const handLen = r * 0.6
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="stopwatch-icon">
+      <circle cx={cx} cy={cy} r={r - 1.5} fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <line x1={cx} y1={cy - r + 1.5} x2={cx} y2={cy - r + 3.5} stroke="currentColor" strokeWidth="1.2" />
+      <rect x={cx - 1} y={0} width={2} height={2} rx={0.5} fill="currentColor" />
+      <line
+        className="stopwatch-hand"
+        x1={cx} y1={cy}
+        x2={cx} y2={cy - handLen}
+        stroke="var(--accent, #3b82f6)" strokeWidth="1.5" strokeLinecap="round"
+        style={{ transformOrigin: `${cx}px ${cy}px` }}
+      />
+      <circle cx={cx} cy={cy} r={1.2} fill="var(--accent, #3b82f6)" />
+    </svg>
+  )
+}
+
+// 경과 시간 — generatingStartedAt 가 있으면 1초마다 업데이트, generatingEndedAt 있으면 멈춤
+function ElapsedTime({ startedAt, endedAt }) {
+  const elapsed = useElapsedTimer(startedAt, endedAt)
+  return <span>{formatElapsed(elapsed)}</span>
+}
 
 export default function ReferenceCard({
   reference,
@@ -170,8 +199,17 @@ export default function ReferenceCard({
       >
         {isBusy ? (
           <div className="ref-uploading">
-            <span className="spinner">⏳</span>
-            <span>{isGenerating ? t('reference.generating') : t('reference.uploading')}</span>
+            {isGenerating ? (
+              <>
+                <StopwatchIcon size={16} />
+                <span><ElapsedTime startedAt={reference.generatingStartedAt} endedAt={reference.generatingEndedAt} /></span>
+              </>
+            ) : (
+              <>
+                <span className="spinner">⏳</span>
+                <span>{t('reference.uploading')}</span>
+              </>
+            )}
           </div>
         ) : hasRefImage ? (
           <img
