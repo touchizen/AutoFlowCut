@@ -1,7 +1,7 @@
 {
   "name": "autoflowcut",
   "version": "0.9.7",
-  "buildNumber": 219,
+  "buildNumber": 278,
   "description": "AutoFlowCut - Automate AI video creation from Google Flow to CapCut projects",
   "main": "dist-electron/main.js",
   "type": "module",
@@ -109,6 +109,7 @@
       }
     ],
     "afterSign": "scripts/notarize.cjs",
+    "afterAllArtifactBuild": "scripts/notarize-dmg.cjs",
     "mac": {
       "icon": "assets/icon.icns",
       "target": [
