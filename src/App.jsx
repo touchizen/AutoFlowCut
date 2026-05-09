@@ -1132,7 +1132,26 @@ function App() {
           })()}
 
           {!anyRunning && scenes.some(s => s.status === 'error') && (
-            <button className="btn-secondary" onClick={retryErrors}>
+            <button
+              className="btn-secondary"
+              onClick={() => {
+                // ⚠️ 직접 바인딩(`onClick={retryErrors}`) 시 React SyntheticEvent 가
+                //    options 인자로 들어가서 projectName 누락 → start() 가 'Untitled' 로
+                //    폴백 → 모든 저장이 다른 프로젝트로 잘못 가는 데이터 손실 회귀.
+                //    개별 재시도(onRetry, line ~1162) 와 동일한 옵션 명시 패턴 적용.
+                const effectiveSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
+                  ? settings.seedNo
+                  : null
+                retryErrors({
+                  projectName: ensureProjectName(),
+                  saveMode: settings.saveMode,
+                  imageBatchCount: settings.imageBatchCount || 1,
+                  imageUpscale: settings.imageUpscale || 'off',
+                  selectedStyleRefId,
+                  seed: effectiveSeed,
+                })
+              }}
+            >
               🔄 {t('actions.retryErrors')}
             </button>
           )}
