@@ -168,7 +168,7 @@ N is the remaining count. Directories count as one item.
 **START banner — KO (yadam)**
 ```
 ══════════════════════════════════════════════════════════
- STORY ENGINE ▸ Wave {N}/8 ▸ {KO 단계명}
+ STORY ENGINE ▸ Wave {N}/9 ▸ {KO 단계명}
 ══════════════════════════════════════════════════════════
  시작 시각  : {YYYY-MM-DD HH:MM}
  이전 단계  : {W{N-1} 한 줄 요약 — N=1이면 "(없음)"}
@@ -181,7 +181,7 @@ N is the remaining count. Directories count as one item.
 **START banner — EN (dark-history)**
 ```
 ══════════════════════════════════════════════════════════
- STORY ENGINE ▸ Wave {N}/8 ▸ {EN step name}
+ STORY ENGINE ▸ Wave {N}/9 ▸ {EN step name}
 ══════════════════════════════════════════════════════════
  Started   : {YYYY-MM-DD HH:MM}
  Previous  : {W{N-1} one-line summary — "(none)" when N=1}
@@ -194,7 +194,7 @@ N is the remaining count. Directories count as one item.
 **DONE banner — KO (yadam)**
 ```
 ──────────────────────────────────────────────────────────
- ✓ Wave {N}/8 완료 — {review_rounds_used} round,
+ ✓ Wave {N}/9 완료 — {review_rounds_used} round,
    issues {issues_found}, 소요 {duration}
    실제 출력  : {디스크에 실제 생성된 파일명 — 5개 초과 시 truncation}
 ──────────────────────────────────────────────────────────
@@ -203,7 +203,7 @@ N is the remaining count. Directories count as one item.
 **DONE banner — EN (dark-history)**
 ```
 ──────────────────────────────────────────────────────────
- ✓ Wave {N}/8 done — {review_rounds_used} round(s),
+ ✓ Wave {N}/9 done — {review_rounds_used} round(s),
    {issues_found} issue(s), took {duration}
    Actual    : {actual filenames created on disk — truncate >5}
 ──────────────────────────────────────────────────────────
@@ -212,7 +212,7 @@ N is the remaining count. Directories count as one item.
 **Failure / escalation banner** (replace the DONE banner if the wave fails after retry)
 ```
 ──────────────────────────────────────────────────────────
- ✗ Wave {N}/8 ESCALATE — {reason}
+ ✗ Wave {N}/9 ESCALATE — {reason}
    누락 출력 / Missing : {expected outputs that were NOT produced}
    참고 / See          : {paths to logs / SUMMARY.md / W_progress.json}
 ──────────────────────────────────────────────────────────
@@ -471,9 +471,13 @@ pipeline progression but flagged for human review.
 
 ---
 
-**Mandatory completion checklist (applies to W1–W8, no exceptions)**
+**Mandatory completion checklist (applies to W1–W9, no exceptions)**
 
-Every Wave subagent MUST, as its final action before returning:
+Every Wave subagent MUST, as its final action before returning. Note:
+review-exempt waves (W1 research, W9 upload-info — see SKILL.md "Review
+discipline") still satisfy this checklist; their `review_rounds_used` is
+the count of self-check passes performed (minimum `1` — one self-review
+counts as one round, even when no formal review loop runs).
 
 1. **Write `W{N}_SUMMARY.md`** with at minimum these sections:
    - `## Deliverables` — full list of produced files (relative paths under `_story_source/`)
@@ -810,7 +814,7 @@ After all waves complete:
  STORY ENGINE ► Episode {number} COMPLETE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-◆ All 8 waves completed
+◆ All 9 waves completed
 ◆ CapCut project exported
 ◆ Upload info ready
 

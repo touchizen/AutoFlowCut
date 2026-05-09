@@ -45,11 +45,11 @@ description: "YouTube story channel script writing skill with 9-wave automated p
 
 **Bespoke 장르 추가 요건:** `/story-new` 시 사용자에게 **3~5개 성공 대본 reference**를 받아야 함 (URL / 텍스트 / 로컬 파일). reference가 ≤ 2개 → escalation (다른 장르로 전환 권장).
 
-## Review discipline (W2–W7)
+## Review discipline (W2–W8)
 - Every substep runs a review loop: subagent self-review → list issues → revise.
 - Max 5 rounds. 0 issues → proceed immediately.
 - 5 rounds exceeded → escalate to user.
-- W1 (research) and W8 (upload info) are exceptions with no review loop.
+- W1 (research) and W9 (upload info) are exceptions with no review loop.
 
 ## 리뷰 원칙 (W2–W8)
 - 모든 서브스텝은 리뷰 루프를 실행한다: 서브에이전트 자가검토 → 이슈 목록 → 수정.
