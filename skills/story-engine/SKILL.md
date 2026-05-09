@@ -12,8 +12,9 @@ description: "YouTube story channel script writing skill with 9-wave automated p
 | 스킬 | 역할 | 트리거 |
 |------|------|--------|
 | `/story-new` | 에피소드 초기화 + 주제 논의 | "새 에피소드", "start ep5" |
-| `/story-execute` | W1~W9 자동 파이프라인 | "파이프라인 실행", "execute" |
-| `/story-next` | 중단 후 재개 | "이어서 해줘", "continue" |
+| `/story-execute` | **자동** — W1~W9 끝까지 (W3/W7 사용자 게이트 포함) | "파이프라인 실행", "execute" |
+| `/story-next` | 자동 재개 (`/story-execute --from W{N}` 위임) | "이어서 해줘", "continue" |
+| `/story-step` | **수동** — 다음 한 웨이브만 실행 후 종료. 내부 질문 없음, 게이트 없음. 사용자가 결과물 보고 다시 호출하면 다음 웨이브로 | "한 단계만", "step", "한 웨이브" |
 | `/story-rewrite` | 기존 에피소드 개선 (몰입도 진단 → fork → 개선판) | "rewrite my", "ep03 개선", "다시 써줘" |
 
 ## 9-Wave 파이프라인

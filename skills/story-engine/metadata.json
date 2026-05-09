@@ -1,8 +1,8 @@
 {
   "name": "story-engine",
-  "version": "2.2.0",
-  "description": "YouTube story channel 9-wave automated pipeline (yadam / dark-history / bespoke). Engagement (curiosity + expectation = 몰입도) is the all-wave evaluation anchor. /story-rewrite skill enables existing-draft improvement with engagement-gap diagnosis and partial wave re-run.",
-  "dependencies": ["story-new", "story-execute", "story-next", "story-rewrite"],
+  "version": "2.3.0",
+  "description": "YouTube story channel 9-wave automated pipeline (yadam / dark-history / bespoke). Engagement (curiosity + expectation = 몰입도) is the all-wave evaluation anchor. /story-rewrite skill enables existing-draft improvement with engagement-gap diagnosis and partial wave re-run. /story-step skill runs a single wave at a time for manual review between waves.",
+  "dependencies": ["story-new", "story-execute", "story-next", "story-step", "story-rewrite"],
   "variables": {
     "PROJECT": {
       "required": false,
@@ -11,6 +11,7 @@
     }
   },
   "changelog": {
+    "2.3.0": "Add /story-step skill: manual single-wave runner. No in-wave AskUserQuestion, no W3/W7 hard gates, no auto-advance. User reviews deliverables and re-invokes for next wave. Add per-wave timing tracking to W_progress.json (started_at + duration_seconds, orchestrator-managed) with end-of-pipeline timing summary table.",
     "2.2.0": "9-wave pipeline (W7 split into image-production + assembly; new W9 upload). Bespoke 3rd genre (universal + reference-driven meta-prompts). Engagement principle elevated to all-wave anchor. /story-rewrite skill added.",
     "2.1.0": "Fix: PROJECT_DIR must resolve from AutoFlowCut MCP work folder, never cwd/source repo. Reference docs must use installed $SKILL_DIR path, not source repo path."
   }
