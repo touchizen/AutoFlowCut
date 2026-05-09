@@ -20,7 +20,7 @@ import { recoverInFlightVideos } from '../services/videoRecovery'
  * 폴더 rename(예: Untitled → untitled.old4) 후에도 모든 절대경로가 현재 폴더 기준으로
  * 재산출되도록 한다.
  */
-async function loadProjectWithResources(projectName) {
+export async function loadProjectWithResources(projectName) {
   const result = await fileSystemAPI.loadProjectData(projectName)
   if (!result.success || !result.data) return null
 
@@ -28,30 +28,64 @@ async function loadProjectWithResources(projectName) {
   const refCount = (result.data.references || []).length
   console.log(`[ProjectData] Loading ${sceneCount} scenes, ${refCount} refs from project.json`)
 
-  // scenes: 절대 파일 경로 확보 (base64 로드 안 함 — 메모리 최적화)
-  const isAbsolutePath = (p) => p && (p.startsWith('/') || /^[A-Z]:\\/i.test(p))
+  // scenes: 항상 현재 프로젝트의 scenes/ 에서 파일을 재탐색 (절대경로/상대경로/cross-project 단일 처리).
+  // - 파일 발견 → 현재 프로젝트의 path 로 갱신, status 정상화 (folder rename · cross-project leak 모두 자가 치유)
+  // - 파일 못 찾음 + 이전에 imagePath 있었음 → stale path (다른 프로젝트 가리키거나 디스크에서 삭제됨)
+  //   stale path 비우고 status='error' + errorKind='image-missing' → ErrorSection 으로 재생성 유도
+  // - 파일 못 찾음 + base64(scene.image)만 있음 → legacy 데이터, 그대로 유지 (base64 로 렌더링 가능)
+  // - 파일 못 찾음 + status==='done' 이지만 image/imagePath 둘 다 없음 → 데이터 손상,
+  //   missing-image 에러로 다운그레이드 (false-Done 방지)
+  // - 그 외 → pending
+  //
+  // i18n 디자인: 코드화된 에러는 errorKind (stable code) 만 저장하고 사람이 보는 메시지는
+  // ErrorSection 이 표시 시점에 t(`errorSection.kind.${errorKind}`) 로 변환한다. 이 함수는
+  // 메시지 문자열을 일절 set 하지 않으므로 project.json 은 언어 독립이고 사용자가 언어를
+  // 전환해도 stale 메시지가 남지 않는다. (free-form generation 에러는 별개 — scene.error 에 그대로 보존)
+  const ERROR_KIND_IMAGE_MISSING = 'image-missing'
   const scenesWithPaths = await Promise.all(
     (result.data.scenes || []).map(async (scene) => {
-      // 1. imagePath가 없거나 상대 경로 → 현재 프로젝트 폴더에서 경로 확인
-      // 2. imagePath가 절대 경로지만 파일이 없을 수도 있음 → 현재 프로젝트 폴더에서 재탐색
       if (scene.id) {
-        const needsRemap = !isAbsolutePath(scene.imagePath)
-        if (needsRemap) {
-          const pathResult = await fileSystemAPI.getResourcePath(projectName, 'scenes', scene.id)
-          if (pathResult.success) {
-            return { ...scene, image: null, imagePath: pathResult.path, status: 'done' }
-          }
-        } else if (scene.imagePath) {
-          // 절대 경로가 현재 프로젝트 폴더 밖을 가리키면 리맵
-          const pathResult = await fileSystemAPI.getResourcePath(projectName, 'scenes', scene.id)
-          if (pathResult.success) {
-            return { ...scene, image: null, imagePath: pathResult.path, status: scene.status === 'error' ? 'error' : 'done' }
+        const pathResult = await fileSystemAPI.getResourcePath(projectName, 'scenes', scene.id)
+        if (pathResult.success) {
+          // 파일 찾음 — 현재 프로젝트의 path 로 갱신.
+          // 이전 status==='error' 가 missing-image 사유였다면 (errorKind==='image-missing') 복구되었으므로 'done' 으로 올림.
+          // 그 외 'error' 는 generation 실패 등 다른 사유 — 보존해 사용자가 재생성 트리거할 수 있게 함.
+          const wasMissingImageError = scene.status === 'error' && scene.errorKind === ERROR_KIND_IMAGE_MISSING
+          const preserveError = scene.status === 'error' && !wasMissingImageError
+          return {
+            ...scene,
+            image: null,
+            imagePath: pathResult.path,
+            status: preserveError ? 'error' : 'done',
+            error: preserveError ? (scene.error ?? null) : null,
+            errorKind: preserveError ? (scene.errorKind ?? null) : null,
           }
         }
-      }
-      // 이미지가 있으면 status를 done으로 보정
-      if (scene.image || scene.imagePath) {
-        return { ...scene, status: scene.status === 'error' ? 'error' : 'done' }
+        // 파일 못 찾음 — missing-image 에러를 set 해야 하는 케이스를 하나로 모아 처리.
+        const isMissingImageCase =
+          // a) 저장된 path 가 있는데 현재 프로젝트엔 파일 없음 (cross-project leak / 디스크 삭제)
+          scene.imagePath ||
+          // b) 이전 로드에서 이미 missing-image 로 분류돼 path 가 비워져 있는 stale 상태
+          (scene.status === 'error' && scene.errorKind === ERROR_KIND_IMAGE_MISSING) ||
+          // c) status==='done' 인데 image/imagePath 둘 다 없는 데이터 손상 (false-Done)
+          (scene.status === 'done' && !scene.image)
+
+        if (isMissingImageCase) {
+          // errorKind 만 set — error 문자열은 ErrorSection 이 t() 로 표시 시점에 생성한다.
+          // 기존에 한국어/영어 메시지가 scene.error 에 남아있을 수 있으므로 명시적으로 null 로 초기화.
+          return {
+            ...scene,
+            image: null,
+            imagePath: null,
+            status: 'error',
+            error: null,
+            errorKind: ERROR_KIND_IMAGE_MISSING,
+          }
+        }
+        // imagePath 는 없는데 base64 image 만 있는 legacy 케이스 — 그대로 유지
+        if (scene.image) {
+          return { ...scene, status: scene.status === 'error' ? 'error' : 'done' }
+        }
       }
       return { ...scene, status: scene.status || 'pending' }
     })
