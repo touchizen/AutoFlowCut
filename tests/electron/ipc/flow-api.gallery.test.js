@@ -8,8 +8,9 @@
  *   - project.searchUserProjects → flat {projectId, title, ...} list
  *   - project.getProjectContents → media + workflows
  *   - filter: every image (uploaded + generated), no videos
- *   - mediaId resolved via plain ?name=<uuid> redirect endpoint, then
- *     ses.fetch auto-follows to CDN, body → base64 data URL
+ *   - mediaId resolved via plain ?name=<uuid> redirect endpoint;
+ *     net.request reads the 307 Location header and returns the signed
+ *     CDN URL (must be on *.googleusercontent.com, https only)
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
