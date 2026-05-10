@@ -321,21 +321,24 @@ function App() {
   // 특정 프로젝트의 갤러리 항목을 가져오고 App의 galleryItems에 merge.
   // 이렇게 해야 사용자가 그 항목을 picker에서 선택했을 때 트리거 라벨/썸네일이
   // 정상 렌더된다 (gallerySelected 조회는 galleryItems에서만 함).
+  // 특정 프로젝트의 이미지 목록을 가져옴. 결과는 *App 전역 state에 저장하지 않는다* —
+  // 메모리 폭증 방지(이미지 base64는 무거움). 사용자가 dropdown 안에서 한 항목을 실제로
+  // 픽할 때만 onPickArchiveImage 콜백이 그 한 개를 galleryItems에 추가한다.
   const fetchProjectGallery = async (projectId) => {
     try {
-      const result = await flowAPI.fetchGallery(projectId)
-      if (result?.success) {
-        const serverItems = result.items || []
-        setGalleryItems(prev => {
-          const seen = new Set(prev.map(it => it.mediaId))
-          const newOnes = serverItems.filter(it => !seen.has(it.mediaId))
-          return newOnes.length ? [...newOnes, ...prev] : prev
-        })
-      }
-      return result
+      return await flowAPI.fetchGallery(projectId)
     } catch (e) {
       return { success: false, error: e.message, items: [] }
     }
+  }
+
+  // archive에서 사용자가 실제로 픽한 한 항목만 galleryItems에 합침 — 트리거 라벨/썸네일 렌더용.
+  const addArchiveItem = (item) => {
+    if (!item?.mediaId) return
+    setGalleryItems(prev => {
+      if (prev.some(it => it.mediaId === item.mediaId)) return prev
+      return [{ ...item, archive: true }, ...prev]
+    })
   }
 
   // Flow 프로젝트(날짜) 목록 — 두 번째 단계 진입점
@@ -1057,6 +1060,7 @@ function App() {
               onUploadFromDisk={handleUploadGalleryImage}
               onListFlowProjects={listFlowProjectsHandler}
               onFetchProjectGallery={fetchProjectGallery}
+              onPickArchiveImage={addArchiveItem}
               seedNo={settings.seedNo}
               seedLocked={settings.seedLocked}
               onSeedChange={(v) => setSettings(s => ({ ...s, seedNo: v }))}

@@ -17,6 +17,7 @@
 import { useMemo, useEffect, useRef, useState, useCallback } from 'react'
 import { resolveImageSrc, formatElapsed } from '../utils/formatters'
 import { useElapsedTimer } from '../hooks/useElapsedTimer'
+import useFlowArchiveBrowser from '../hooks/useFlowArchiveBrowser'
 
 /** 초시계 아이콘 — 초침이 실시간 회전 */
 function StopwatchIcon({ size = 16 }) {
@@ -55,61 +56,33 @@ function SceneSelect({
   value, onChange, placeholder, disabled: selectDisabled,
   options, getLabel, onThumbClick,
   galleryItems, galleryLoading, onLoadGallery, onUploadFromDisk,
-  onListFlowProjects, onFetchProjectGallery
+  onListFlowProjects, onFetchProjectGallery, onPickArchiveImage,
 }) {
   const [open, setOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
-  const [view, setView] = useState('main')
-  const [dateProjects, setDateProjects] = useState([])
-  const [dateLoading, setDateLoading] = useState(false)
-  const [selectedDate, setSelectedDate] = useState(null) // {projectId, title}
-  const [dateMedia, setDateMedia] = useState([])
-  const [dateMediaLoading, setDateMediaLoading] = useState(false)
+  const [archiveOpen, setArchiveOpen] = useState(false) // 'main' vs archive view
+  const archive = useFlowArchiveBrowser({ onListFlowProjects, onFetchProjectGallery })
   const fileInputRef = useRef(null)
   const ref = useRef(null)
 
-  // 드롭다운 닫히면 view 리셋 (다음에 열 때 main으로 돌아감)
+  // 드롭다운 닫히면 archive view 리셋 (다음에 열 때 main으로 돌아감)
   useEffect(() => {
     if (!open) {
-      setView('main')
-      setSelectedDate(null)
-      setDateMedia([])
+      setArchiveOpen(false)
+      archive.reset()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
-  const enterDatesView = async () => {
+  const enterDatesView = () => {
     if (!onListFlowProjects || selectDisabled) return
-    setView('dates')
-    if (dateProjects.length === 0) {
-      setDateLoading(true)
-      try {
-        const result = await onListFlowProjects()
-        if (result?.success) setDateProjects(result.items || [])
-        else console.warn('[SceneSelect] list projects failed:', result?.error)
-      } catch (e) {
-        console.error('[SceneSelect] list projects error:', e)
-      } finally {
-        setDateLoading(false)
-      }
-    }
+    setArchiveOpen(true)
+    archive.openDates()
   }
 
-  const pickDate = async (project) => {
+  const pickDate = (project) => {
     if (selectDisabled) return
-    setSelectedDate(project)
-    setView('media')
-    setDateMedia([])
-    if (!onFetchProjectGallery) return
-    setDateMediaLoading(true)
-    try {
-      const result = await onFetchProjectGallery(project.projectId)
-      if (result?.success) setDateMedia(result.items || [])
-      else console.warn('[SceneSelect] fetch project gallery failed:', result?.error)
-    } catch (e) {
-      console.error('[SceneSelect] fetch project gallery error:', e)
-    } finally {
-      setDateMediaLoading(false)
-    }
+    archive.pickProject(project)
   }
 
   const handleFileChosen = async (e) => {
@@ -173,7 +146,7 @@ function SceneSelect({
         <span className="scene-dropdown-label">{selectedLabel}</span>
         <span className="scene-dropdown-arrow">{open ? '▴' : '▾'}</span>
       </div>
-      {open && view === 'main' && (
+      {open && !archiveOpen && (
         <div className="scene-dropdown-menu">
           {/* None 옵션 */}
           <div
@@ -268,29 +241,29 @@ function SceneSelect({
         </div>
       )}
 
-      {open && view === 'dates' && (
+      {open && archiveOpen && archive.view === 'dates' && (
         <div className="scene-dropdown-menu">
           <div
             className="scene-dropdown-item gallery-back-btn"
-            onClick={(e) => { e.stopPropagation(); setView('main') }}
+            onClick={(e) => { e.stopPropagation(); setArchiveOpen(false); archive.reset() }}
           >
             <span className="scene-dropdown-empty-thumb" />
             <span className="scene-dropdown-item-label">← Back</span>
           </div>
           <div className="scene-dropdown-divider">📅 Flow Archive</div>
-          {dateLoading && (
+          {archive.projectsLoading && (
             <div className="scene-dropdown-item gallery-loading">
               <span className="scene-dropdown-empty-thumb" />
               <span className="scene-dropdown-item-label">⏳ Loading projects...</span>
             </div>
           )}
-          {!dateLoading && dateProjects.length === 0 && (
+          {!archive.projectsLoading && archive.projects.length === 0 && (
             <div className="scene-dropdown-item gallery-loading">
               <span className="scene-dropdown-empty-thumb" />
               <span className="scene-dropdown-item-label">No projects found</span>
             </div>
           )}
-          {dateProjects.map(p => (
+          {archive.projects.map(p => (
             <div
               key={`proj_${p.projectId}`}
               className="scene-dropdown-item"
@@ -303,34 +276,35 @@ function SceneSelect({
         </div>
       )}
 
-      {open && view === 'media' && (
+      {open && archiveOpen && archive.view === 'media' && (
         <div className="scene-dropdown-menu">
           <div
             className="scene-dropdown-item gallery-back-btn"
-            onClick={(e) => { e.stopPropagation(); setView('dates') }}
+            onClick={(e) => { e.stopPropagation(); archive.backToDates() }}
           >
             <span className="scene-dropdown-empty-thumb" />
-            <span className="scene-dropdown-item-label">← {selectedDate?.title || 'Dates'}</span>
+            <span className="scene-dropdown-item-label">← {archive.selectedProject?.title || 'Dates'}</span>
           </div>
-          <div className="scene-dropdown-divider">🖼 Uploads</div>
-          {dateMediaLoading && (
+          <div className="scene-dropdown-divider">🖼 Images</div>
+          {archive.mediaLoading && (
             <div className="scene-dropdown-item gallery-loading">
               <span className="scene-dropdown-empty-thumb" />
               <span className="scene-dropdown-item-label">⏳ Loading images...</span>
             </div>
           )}
-          {!dateMediaLoading && dateMedia.length === 0 && (
+          {!archive.mediaLoading && archive.media.length === 0 && (
             <div className="scene-dropdown-item gallery-loading">
               <span className="scene-dropdown-empty-thumb" />
-              <span className="scene-dropdown-item-label">No uploaded images</span>
+              <span className="scene-dropdown-item-label">No images</span>
             </div>
           )}
-          {dateMedia.map(item => (
+          {archive.media.map(item => (
             <div
               key={`dmedia_${item.mediaId}`}
               className={`scene-dropdown-item gallery-item${value === GALLERY_PREFIX + item.mediaId ? ' selected' : ''}`}
               onClick={() => {
                 if (selectDisabled) return
+                onPickArchiveImage?.(item)
                 onChange(GALLERY_PREFIX + item.mediaId)
                 setOpen(false)
               }}
@@ -347,7 +321,8 @@ function SceneSelect({
   )
 }
 
-// 빈 패널에서 디스크 이미지로 첫 페어를 시작할 때 쓰는 미니 업로드 CTA
+// 빈 패널에서 외부 이미지(디스크 / Flow archive)로 첫 페어를 시작하는 CTA.
+// onAdded(item) — item: { mediaId, url?, displayName? } (disk 업로드 시 url 없음)
 function EmptyStateUpload({
   onUploadFromDisk, onAdded, disabled = false,
   onListFlowProjects, onFetchProjectGallery,
@@ -355,12 +330,7 @@ function EmptyStateUpload({
   const inputRef = useRef(null)
   const [busy, setBusy] = useState(false)
   const [browseOpen, setBrowseOpen] = useState(false)
-  const [view, setView] = useState('dates') // 'dates' | 'media'
-  const [projects, setProjects] = useState([])
-  const [projectsLoading, setProjectsLoading] = useState(false)
-  const [selectedProject, setSelectedProject] = useState(null)
-  const [media, setMedia] = useState([])
-  const [mediaLoading, setMediaLoading] = useState(false)
+  const archive = useFlowArchiveBrowser({ onListFlowProjects, onFetchProjectGallery })
 
   const handleChange = async (e) => {
     const file = e.target.files?.[0]
@@ -370,7 +340,7 @@ function EmptyStateUpload({
     try {
       const result = await onUploadFromDisk(file)
       if (result?.success && result.mediaId) {
-        onAdded(result.mediaId)
+        onAdded({ mediaId: result.mediaId })
       } else {
         console.warn('[EmptyStateUpload] upload failed:', result?.error)
       }
@@ -381,40 +351,15 @@ function EmptyStateUpload({
     }
   }
 
-  const openArchive = async () => {
+  const openArchive = () => {
     if (disabled || !onListFlowProjects) return
     setBrowseOpen(true)
-    setView('dates')
-    setSelectedProject(null)
-    setMedia([])
-    if (projects.length === 0) {
-      setProjectsLoading(true)
-      try {
-        const result = await onListFlowProjects()
-        if (result?.success) setProjects(result.items || [])
-      } catch (e) {
-        console.error('[EmptyStateUpload] list projects error:', e)
-      } finally {
-        setProjectsLoading(false)
-      }
-    }
+    archive.openDates()
   }
 
-  const pickDate = async (project) => {
-    if (disabled) return
-    setSelectedProject(project)
-    setView('media')
-    setMedia([])
-    if (!onFetchProjectGallery) return
-    setMediaLoading(true)
-    try {
-      const result = await onFetchProjectGallery(project.projectId)
-      if (result?.success) setMedia(result.items || [])
-    } catch (e) {
-      console.error('[EmptyStateUpload] fetch project gallery error:', e)
-    } finally {
-      setMediaLoading(false)
-    }
+  const cancelArchive = () => {
+    setBrowseOpen(false)
+    archive.reset()
   }
 
   return (
@@ -449,39 +394,35 @@ function EmptyStateUpload({
         </button>
       )}
 
-      {browseOpen && view === 'dates' && (
+      {browseOpen && archive.view === 'dates' && (
         <div className="empty-archive-list">
-          <button
-            className="empty-archive-back"
-            onClick={() => setBrowseOpen(false)}
-          >← Cancel</button>
-          {projectsLoading && <div>⏳ Loading projects...</div>}
-          {!projectsLoading && projects.length === 0 && <div>No projects found</div>}
-          {projects.map(p => (
+          <button className="empty-archive-back" onClick={cancelArchive}>← Cancel</button>
+          {archive.projectsLoading && <div>⏳ Loading projects...</div>}
+          {!archive.projectsLoading && archive.projects.length === 0 && <div>No projects found</div>}
+          {archive.projects.map(p => (
             <button
               key={p.projectId}
               className="empty-archive-date"
               disabled={disabled}
-              onClick={() => pickDate(p)}
+              onClick={() => archive.pickProject(p)}
             >{p.title}</button>
           ))}
         </div>
       )}
 
-      {browseOpen && view === 'media' && (
+      {browseOpen && archive.view === 'media' && (
         <div className="empty-archive-list">
-          <button
-            className="empty-archive-back"
-            onClick={() => setView('dates')}
-          >← {selectedProject?.title || 'Dates'}</button>
-          {mediaLoading && <div>⏳ Loading images...</div>}
-          {!mediaLoading && media.length === 0 && <div>No uploaded images</div>}
-          {media.map(item => (
+          <button className="empty-archive-back" onClick={archive.backToDates}>
+            ← {archive.selectedProject?.title || 'Dates'}
+          </button>
+          {archive.mediaLoading && <div>⏳ Loading images...</div>}
+          {!archive.mediaLoading && archive.media.length === 0 && <div>No images</div>}
+          {archive.media.map(item => (
             <button
               key={item.mediaId}
               className="empty-archive-image"
               disabled={disabled}
-              onClick={() => { if (!disabled) onAdded(item.mediaId) }}
+              onClick={() => { if (!disabled) onAdded(item) }}
             >
               {item.url && <img src={item.url} alt="" style={{ width: 32, height: 32, objectFit: 'cover', marginRight: 6 }} />}
               {item.displayName || item.mediaId.substring(0, 16) + '...'}
@@ -517,7 +458,7 @@ export { GALLERY_PREFIX }
 export default function FrameToVideoPanel({
   scenes, videoScenes = [], framePairs, onUpdate, promptSource = 'image', onPromptSourceChange,
   onShowSceneDetail, onVideoRetry, disabled, t, galleryItems, galleryLoading, onLoadGallery,
-  onUploadFromDisk, onListFlowProjects, onFetchProjectGallery,
+  onUploadFromDisk, onListFlowProjects, onFetchProjectGallery, onPickArchiveImage,
   seedNo = null, seedLocked = false, onSeedChange, onSeedLockToggle, onSeedRandom,
 }) {
   const showSeedUI = typeof onSeedChange === 'function'
@@ -678,10 +619,12 @@ export default function FrameToVideoPanel({
             onListFlowProjects={onListFlowProjects}
             onFetchProjectGallery={onFetchProjectGallery}
             disabled={disabled}
-            onAdded={(mediaId) => {
+            onAdded={(item) => {
+              // archive에서 픽한 항목이면 galleryItems에도 추가 (트리거 라벨 렌더용)
+              if (item.url && onPickArchiveImage) onPickArchiveImage(item)
               onUpdate([{
                 id: `fp_${getNextPairId([])}`,
-                startSceneId: GALLERY_PREFIX + mediaId,
+                startSceneId: GALLERY_PREFIX + item.mediaId,
                 endSceneId: '',
                 prompt: '',
                 videoPrompt: '',
@@ -759,6 +702,7 @@ export default function FrameToVideoPanel({
                 onUploadFromDisk={onUploadFromDisk}
                 onListFlowProjects={onListFlowProjects}
                 onFetchProjectGallery={onFetchProjectGallery}
+                onPickArchiveImage={onPickArchiveImage}
               />
             </div>
 
@@ -781,6 +725,7 @@ export default function FrameToVideoPanel({
                 onUploadFromDisk={onUploadFromDisk}
                 onListFlowProjects={onListFlowProjects}
                 onFetchProjectGallery={onFetchProjectGallery}
+                onPickArchiveImage={onPickArchiveImage}
               />
             </div>
 

@@ -124,6 +124,49 @@ describe('FrameToVideoPanel — Flow Archive 2-stage navigation', () => {
     })
   })
 
+  it('picking an archive image calls onPickArchiveImage with the full item, not just mediaId', async () => {
+    const onPickArchiveImage = vi.fn()
+    const onUpdate = vi.fn()
+    const onListFlowProjects = vi.fn().mockResolvedValue({
+      success: true,
+      items: [{ projectId: 'proj-A', title: 'Mar 11 - 14:53' }],
+    })
+    const onFetchProjectGallery = vi.fn().mockResolvedValue({
+      success: true,
+      items: [{ mediaId: 'm-2', url: 'data:img;b', displayName: 'two.png' }],
+    })
+    render(
+      <FrameToVideoPanel
+        scenes={baseScenes}
+        videoScenes={[]}
+        framePairs={[basePair]}
+        onUpdate={onUpdate}
+        onShowSceneDetail={() => {}}
+        onVideoRetry={() => {}}
+        disabled={false}
+        t={t}
+        galleryItems={[]}
+        galleryLoading={false}
+        onLoadGallery={() => {}}
+        onUploadFromDisk={vi.fn()}
+        onListFlowProjects={onListFlowProjects}
+        onFetchProjectGallery={onFetchProjectGallery}
+        onPickArchiveImage={onPickArchiveImage}
+      />
+    )
+    fireEvent.click(document.querySelectorAll('.scene-dropdown-trigger')[0])
+    fireEvent.click(screen.getAllByText(/Browse Flow Archive/i)[0])
+    await waitFor(() => expect(onListFlowProjects).toHaveBeenCalled())
+    fireEvent.click(screen.getByText('Mar 11 - 14:53'))
+    await waitFor(() => expect(onFetchProjectGallery).toHaveBeenCalled())
+    fireEvent.click(await screen.findByText('two.png'))
+
+    await waitFor(() => expect(onPickArchiveImage).toHaveBeenCalledTimes(1))
+    expect(onPickArchiveImage).toHaveBeenCalledWith(
+      expect.objectContaining({ mediaId: 'm-2', url: 'data:img;b', displayName: 'two.png' })
+    )
+  })
+
   it('Back button returns from media view to dates view', async () => {
     const { onFetchProjectGallery, onListFlowProjects } = renderPanel()
     fireEvent.click(document.querySelectorAll('.scene-dropdown-trigger')[0])

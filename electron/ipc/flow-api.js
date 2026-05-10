@@ -1571,10 +1571,11 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     }
   })
 
-  // ─── Fetch Gallery (Project Media — uploaded images) ─────────────
+  // ─── Fetch Gallery (Project Images — uploads + generated) ─────────
   // Flow archive 뷰가 호출하는 project.getProjectContents 사용.
   // flow.projectInitialData 와 달리 사용자가 Flow UI로 직접 업로드한
-  // 이미지(image.userUploadedImage)까지 모두 반환한다.
+  // 이미지(image.userUploadedImage)와 생성 이미지(image.generatedImage)
+  // 모두 반환한다. 비디오는 제외.
   ipcMain.handle('flow:fetch-gallery', async (event, { token, projectId }) => {
     try {
       if (!projectId) {
@@ -1620,7 +1621,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       console.log(`[Gallery] Found ${media.length} media items, ${workflows.length} workflows`)
 
       // 모든 이미지 (업로드 + 생성). 비디오는 제외.
-      const uploaded = media.filter(m => m?.image && !m?.video)
+      const images = media.filter(m => m?.image && !m?.video)
 
       // media.getMediaUrlRedirect 는 ?name=<uuid> 만 받고 307로 CDN URL을 돌려준다.
       // 브라우저 fetch + redirect:'manual' 은 opaqueredirect (status=0, Location 못 읽음)
@@ -1638,13 +1639,14 @@ export function registerFlowAPIIPC(ipcMain, deps) {
         return `data:${ct};base64,${Buffer.from(buf).toString('base64')}`
       }
 
-      const items = await Promise.all(uploaded.map(async (m) => {
+      // 작은 동시성 풀 — 한 번에 N개만 redirect+CDN을 받아 base64 변환한다.
+      // 무제한 Promise.all 은 이미지 많은 프로젝트에서 동시 fetch 폭주 + 메모리 스파이크 야기.
+      const MEDIA_RESOLVE_CONCURRENCY = 6
+      const resolveItem = async (m) => {
         const mediaId = m.name || m.mediaId || m.id || ''
         if (!mediaId) return null
-
         const wf = workflowMap.get(String(m.workflowId || ''))
         const displayName = wf?.metadata?.displayName || ''
-
         try {
           const cdnUrl = await resolveMediaUrl(mediaId)
           if (!cdnUrl) {
@@ -1656,10 +1658,16 @@ export function registerFlowAPIIPC(ipcMain, deps) {
           console.warn('[Gallery] resolve url failed for', mediaId.substring(0, 8), e.message)
           return null
         }
-      }))
+      }
+      const results = []
+      for (let i = 0; i < images.length; i += MEDIA_RESOLVE_CONCURRENCY) {
+        const slice = images.slice(i, i + MEDIA_RESOLVE_CONCURRENCY)
+        const batch = await Promise.all(slice.map(resolveItem))
+        results.push(...batch)
+      }
 
-      const filtered = items.filter(Boolean)
-      console.log(`[Gallery] ${filtered.length} image items extracted (uploaded only)`)
+      const filtered = results.filter(Boolean)
+      console.log(`[Gallery] ${filtered.length} image items extracted`)
       return { success: true, items: filtered }
     } catch (e) {
       console.error('[Gallery] Error:', e.message)
