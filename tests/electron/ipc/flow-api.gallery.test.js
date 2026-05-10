@@ -15,11 +15,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // Configurable per test: redirect handler picks a URL based on the request URL.
+// Default returns a URL on lh3.googleusercontent.com (allowed host).
 let redirectHandler = (url) => {
   const m = url.match(/[?&]name=([^&]+)/)
-  return `https://cdn.fake/${decodeURIComponent(m?.[1] || 'x')}.jpg?Expires=1`
+  return `https://lh3.googleusercontent.com/${decodeURIComponent(m?.[1] || 'x')}.jpg?Expires=1`
 }
 let redirectFailHandler = null // fn(url) => Error to fire instead, or null
+let resolveDelayMs = 0 // delay before firing redirect — used to test concurrency
+let activeCount = 0
+let peakActive = 0
 
 vi.mock('electron', () => ({
   net: {
@@ -29,11 +33,16 @@ vi.mock('electron', () => ({
         setHeader: vi.fn(),
         on: vi.fn((evt, fn) => { handlers[evt] = fn }),
         end: vi.fn(() => {
-          setImmediate(() => {
+          activeCount++
+          if (activeCount > peakActive) peakActive = activeCount
+          const fire = () => {
+            activeCount--
             const fail = redirectFailHandler && redirectFailHandler(url)
             if (fail) handlers.error?.(fail)
             else handlers.redirect?.(307, 'GET', redirectHandler(url))
-          })
+          }
+          if (resolveDelayMs > 0) setTimeout(fire, resolveDelayMs)
+          else setImmediate(fire)
         }),
         abort: vi.fn(),
       }
@@ -41,6 +50,12 @@ vi.mock('electron', () => ({
     }),
   },
 }))
+
+beforeEach(() => {
+  resolveDelayMs = 0
+  activeCount = 0
+  peakActive = 0
+})
 
 const { registerFlowAPIIPC } = await import('../../../electron/ipc/flow-api.js')
 
@@ -208,7 +223,7 @@ describe('flow:fetch-gallery', () => {
     redirectFailHandler = null
     redirectHandler = (url) => {
       const m = url.match(/[?&]name=([^&]+)/)
-      return `https://cdn.fake/${decodeURIComponent(m?.[1] || 'x')}.jpg?Expires=1`
+      return `https://lh3.googleusercontent.com/${decodeURIComponent(m?.[1] || 'x')}.jpg?Expires=1`
     }
   })
 
@@ -222,7 +237,7 @@ describe('flow:fetch-gallery', () => {
     expect(out.success).toBe(true)
     expect(out.items.map(i => i.mediaId).sort()).toEqual(['gen-uuid-1', 'up-uuid-2'])
     for (const it of out.items) {
-      expect(it.url).toMatch(/^https:\/\/cdn\.fake\//)
+      expect(it.url).toMatch(/^https:\/\/lh3\.googleusercontent\.com\//)
       expect(it.url).not.toMatch(/^data:/)
     }
   })
@@ -251,7 +266,7 @@ describe('flow:fetch-gallery', () => {
     redirectHandler = (url) => {
       seenUrls.push(url)
       const m = url.match(/[?&]name=([^&]+)/)
-      return `https://cdn.fake/${decodeURIComponent(m?.[1] || 'x')}.jpg`
+      return `https://lh3.googleusercontent.com/${decodeURIComponent(m?.[1] || 'x')}.jpg`
     }
     const ipc = makeIpcMain()
     registerFlowAPIIPC(ipc, buildDeps({ sessionFetch: mockSessionFetch() }))
@@ -263,6 +278,51 @@ describe('flow:fetch-gallery', () => {
       expect(u).toMatch(/\?name=[a-z0-9-]+$/i)
       expect(u).not.toContain('?input=')
     }
+  })
+
+  it('drops items whose redirect points to a non-Google host', async () => {
+    redirectHandler = (url) => {
+      // pretend auth expired and we get redirected to an attacker site
+      if (url.includes('gen-uuid-1')) return 'https://evil.example.com/login.png'
+      const m = url.match(/[?&]name=([^&]+)/)
+      return `https://lh3.googleusercontent.com/${decodeURIComponent(m?.[1] || 'x')}.jpg`
+    }
+    const ipc = makeIpcMain()
+    registerFlowAPIIPC(ipc, buildDeps({ sessionFetch: mockSessionFetch() }))
+    const out = await ipc.invoke('flow:fetch-gallery', { token: 'tok', projectId: 'pid' })
+    expect(out.items.map(i => i.mediaId)).toEqual(['up-uuid-2'])
+  })
+
+  it('drops items whose redirect uses http (not https)', async () => {
+    redirectHandler = (url) => {
+      if (url.includes('up-uuid-2')) return 'http://lh3.googleusercontent.com/foo.jpg'
+      const m = url.match(/[?&]name=([^&]+)/)
+      return `https://lh3.googleusercontent.com/${decodeURIComponent(m?.[1] || 'x')}.jpg`
+    }
+    const ipc = makeIpcMain()
+    registerFlowAPIIPC(ipc, buildDeps({ sessionFetch: mockSessionFetch() }))
+    const out = await ipc.invoke('flow:fetch-gallery', { token: 'tok', projectId: 'pid' })
+    expect(out.items.map(i => i.mediaId)).toEqual(['gen-uuid-1'])
+  })
+
+  it('caps concurrent media URL resolution at 6', async () => {
+    // 25 image items so we'd see >6 active without the cap
+    const manyImages = Array.from({ length: 25 }, (_, i) => ({
+      name: `m-${i}`,
+      workflowId: `wf-${i}`,
+      image: { generatedImage: {}, dimensions: { width: 1, height: 1 } },
+    }))
+    const projectContents = {
+      result: { data: { json: { result: { media: manyImages, workflows: [] } } } },
+    }
+    resolveDelayMs = 25 // hold each fetch open long enough for backlog to form
+    const sessionFetch = mockSessionFetch({ projectContents })
+    const ipc = makeIpcMain()
+    registerFlowAPIIPC(ipc, buildDeps({ sessionFetch }))
+
+    await ipc.invoke('flow:fetch-gallery', { token: 'tok', projectId: 'pid' })
+    expect(peakActive).toBeGreaterThan(0)
+    expect(peakActive).toBeLessThanOrEqual(6)
   })
 
   it('falls back to captured projectId when none is passed', async () => {

@@ -1634,6 +1634,20 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       // 'redirect' 이벤트로 Location URL 을 직접 넘겨주므로 거기서 잡는다.
       const flowView = getFlowView()
       const flowSession = flowView?.webContents?.session
+
+      // redirect URL이 실제 Google 미디어 CDN인지 확인. 인증/에러 페이지 redirect를
+      // 이미지 URL 처럼 renderer 에 흘려보내는 사고 방지.
+      const isAllowedMediaHost = (urlStr) => {
+        try {
+          const u = new URL(urlStr)
+          if (u.protocol !== 'https:') return false
+          return /(^|\.)(googleusercontent\.com|googleapis\.com|gstatic\.com|google\.com)$/i
+            .test(u.hostname)
+        } catch {
+          return false
+        }
+      }
+
       const resolveMediaUrl = (mediaId) => new Promise((resolve, reject) => {
         const url = `${MEDIA_REDIRECT_URL}?name=${encodeURIComponent(mediaId)}`
         const req = net.request({
@@ -1648,6 +1662,10 @@ export function registerFlowAPIIPC(ipcMain, deps) {
         const settle = (fn, val) => { if (!settled) { settled = true; fn(val) } }
         req.on('redirect', (_status, _method, redirectUrl) => {
           req.abort()
+          if (!isAllowedMediaHost(redirectUrl)) {
+            settle(reject, new Error('redirect host not allowed'))
+            return
+          }
           settle(resolve, redirectUrl)
         })
         req.on('response', (response) => {
