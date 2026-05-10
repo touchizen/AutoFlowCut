@@ -156,7 +156,7 @@ export function createSharedHelpers(ctx) {
    * reCAPTCHA 토큰의 origin과 API 요청 origin을 일치시키기 위해 필수
    * (main process의 sessionFetch는 origin이 달라 reCAPTCHA 검증 실패)
    */
-  async function flowPageFetch(url, { method = 'POST', headers = {}, body } = {}) {
+  async function flowPageFetch(url, { method = 'POST', headers = {}, body, redirect } = {}) {
     const flowView = getFlowView()
     if (!flowView) throw new Error('Flow view not ready')
 
@@ -165,13 +165,25 @@ export function createSharedHelpers(ctx) {
       (async function() {
         try {
           const _fetch = window.__afNativeFetch || window.__autoFlowNativeFetch || window.fetch;
-          const resp = await _fetch.call(window, ${JSON.stringify(url)}, {
+          const init = {
             method: ${JSON.stringify(method)},
             headers: ${JSON.stringify(headers)},
             body: ${JSON.stringify(body)}
-          });
-          const text = await resp.text().catch(() => '');
-          return { ok: resp.ok, status: resp.status, text };
+          };
+          ${redirect ? `init.redirect = ${JSON.stringify(redirect)};` : ''}
+          const resp = await _fetch.call(window, ${JSON.stringify(url)}, init);
+          // redirect:'manual' 모드면 본문 읽기 의미 없음
+          let text = '';
+          try { text = await resp.text(); } catch (_) {}
+          return {
+            ok: resp.ok,
+            status: resp.status,
+            type: resp.type,
+            url: resp.url,
+            redirected: resp.redirected,
+            location: (resp.headers && resp.headers.get) ? (resp.headers.get('location') || '') : '',
+            text
+          };
         } catch (e) {
           return { ok: false, status: 0, text: e.message };
         }

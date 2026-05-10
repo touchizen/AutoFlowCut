@@ -1619,26 +1619,31 @@ export function registerFlowAPIIPC(ipcMain, deps) {
 
       console.log(`[Gallery] Found ${media.length} media items, ${workflows.length} workflows`)
 
-      // 사용자가 업로드한 이미지만 추출 (image.userUploadedImage 있는 항목)
-      const uploaded = media.filter(m => m?.image?.userUploadedImage && !m?.video)
+      // 모든 이미지 (업로드 + 생성). 비디오는 제외.
+      const uploaded = media.filter(m => m?.image && !m?.video)
 
       // 응답에 fifeUrl이 없으므로 media.getMediaUrlRedirect로 mediaId별 CDN URL 해소.
-      // ⚠️ 이 endpoint는 tRPC 표준 ?input={...} 가 아니라 plain ?name=<uuid> 형식.
-      // (Flow webview Network 캡쳐로 확인 — mediaUrlType 등 추가 파라미터 없음)
-      // ses.fetch는 redirect:'manual'를 거부하므로(Redirect was cancelled) 자동 follow
-      // 시키고, 따라간 후 response.url 에서 최종 CDN URL을 꺼낸다.
+      // 이 endpoint는 tRPC 표준 ?input={...} 가 아니라 plain ?name=<uuid> 형식이고
+      // 307로 CDN URL을 돌려준다. ses.fetch는 redirect:'manual'을 거부해서 Node fetch
+      // 폴백 시 401(쿠키 없음) — 그래서 Flow webview 안에서 직접 fetch 실행한다.
+      // 브라우저 fetch는 redirect:'manual' 지원 + 자동으로 Flow 세션 쿠키 적용.
       const resolveMediaUrl = async (mediaId) => {
         const url = `${MEDIA_REDIRECT_URL}?name=${encodeURIComponent(mediaId)}`
-        const resp = await sessionFetch(url, {
+        const r = await flowPageFetch(url, {
+          method: 'GET',
           headers: { 'Authorization': `Bearer ${token}` },
+          redirect: 'manual',
         })
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-        // ses.fetch가 자동으로 307→200까지 follow한 경우 resp.url이 최종 CDN URL
-        if (resp.url && resp.url !== url) return resp.url
-        // follow 안 된 환경(Node fetch fallback 등)이면 응답 본문에서 추출
-        const text = await resp.text().catch(() => '')
-        const data = parseFlowResponse(text)
-        return data?.result?.data?.json?.url || data?.result?.data?.json?.redirectUrl || null
+        if (r?.location) return r.location
+        // follow된 경우 최종 url
+        if (r?.redirected && r?.url && r.url !== url) return r.url
+        // 어쩌다 200 + JSON 본문일 경우
+        if (r?.ok && r?.text) {
+          const data = parseFlowResponse(r.text)
+          const j = data?.result?.data?.json
+          if (j?.url || j?.redirectUrl) return j.url || j.redirectUrl
+        }
+        throw new Error(`status=${r?.status} loc=${r?.location ? 'y' : 'n'} red=${r?.redirected ? 'y' : 'n'}`)
       }
 
       const items = await Promise.all(uploaded.map(async (m) => {
