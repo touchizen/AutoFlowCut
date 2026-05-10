@@ -219,6 +219,33 @@ describe('FrameToVideoPanel — Flow Archive 2-stage navigation', () => {
     expect(pairs[0].startSceneId).toBe('gallery::mx-1')
   })
 
+  it('empty state hides disk-upload button when onUploadFromDisk is not provided', async () => {
+    const onListFlowProjects = vi.fn().mockResolvedValue({
+      success: true,
+      items: [{ projectId: 'p1', title: 'Mar 11 - 14:53' }],
+    })
+    render(
+      <FrameToVideoPanel
+        scenes={[]}
+        videoScenes={[]}
+        framePairs={[]}
+        onUpdate={vi.fn()}
+        onShowSceneDetail={() => {}}
+        onVideoRetry={() => {}}
+        disabled={false}
+        t={t}
+        galleryItems={[]}
+        galleryLoading={false}
+        onLoadGallery={() => {}}
+        // intentionally no onUploadFromDisk
+        onListFlowProjects={onListFlowProjects}
+        onFetchProjectGallery={vi.fn().mockResolvedValue({ success: true, items: [] })}
+      />
+    )
+    expect(screen.queryByText(/Upload image from disk/i)).toBeNull()
+    expect(screen.getByText(/Browse Flow Archive/i)).toBeTruthy()
+  })
+
   it('closing and reopening the dropdown resets to main view', async () => {
     const { onListFlowProjects } = renderPanel()
     const trigger = document.querySelectorAll('.scene-dropdown-trigger')[0]

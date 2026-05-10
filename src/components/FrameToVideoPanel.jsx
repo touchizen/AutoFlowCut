@@ -365,7 +365,7 @@ function EmptyStateUpload({
   const handleChange = async (e) => {
     const file = e.target.files?.[0]
     e.target.value = ''
-    if (!file || disabled) return
+    if (!file || disabled || !onUploadFromDisk) return
     setBusy(true)
     try {
       const result = await onUploadFromDisk(file)
@@ -419,20 +419,24 @@ function EmptyStateUpload({
 
   return (
     <div className="video-panel-empty-upload">
-      <button
-        className="btn-upload-from-disk"
-        disabled={busy || disabled}
-        onClick={() => { if (!disabled) inputRef.current?.click() }}
-      >
-        {busy ? '⏳ Uploading...' : '📁 Upload image from disk'}
-      </button>
-      <input
-        ref={inputRef}
-        type="file"
-        accept="image/*"
-        style={{ display: 'none' }}
-        onChange={handleChange}
-      />
+      {onUploadFromDisk && (
+        <>
+          <button
+            className="btn-upload-from-disk"
+            disabled={busy || disabled}
+            onClick={() => { if (!disabled) inputRef.current?.click() }}
+          >
+            {busy ? '⏳ Uploading...' : '📁 Upload image from disk'}
+          </button>
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/*"
+            style={{ display: 'none' }}
+            onChange={handleChange}
+          />
+        </>
+      )}
 
       {onListFlowProjects && !browseOpen && (
         <button
