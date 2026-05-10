@@ -292,12 +292,13 @@ function App() {
     }
   }
 
-  // Gallery 로드
-  const loadGallery = async () => {
+  // Gallery 로드 (특정 projectId가 주어지면 그 프로젝트의 업로드 반환,
+  // 없으면 현재 캡쳐된 projectId — App 전역 갤러리 state에 merge한다)
+  const loadGallery = async (specificProjectId) => {
     if (galleryLoading) return
     setGalleryLoading(true)
     try {
-      const result = await flowAPI.fetchGallery()
+      const result = await flowAPI.fetchGallery(specificProjectId)
       if (result.success) {
         // 로컬 업로드 항목(local:true) 보존 + 서버 결과 merge.
         // 서버가 같은 mediaId를 이미 반환하면 서버 버전 우선.
@@ -314,6 +315,36 @@ function App() {
       console.error('[Gallery] Error:', e)
     } finally {
       setGalleryLoading(false)
+    }
+  }
+
+  // 특정 프로젝트의 갤러리 항목을 가져오고 App의 galleryItems에 merge.
+  // 이렇게 해야 사용자가 그 항목을 picker에서 선택했을 때 트리거 라벨/썸네일이
+  // 정상 렌더된다 (gallerySelected 조회는 galleryItems에서만 함).
+  const fetchProjectGallery = async (projectId) => {
+    try {
+      const result = await flowAPI.fetchGallery(projectId)
+      if (result?.success) {
+        const serverItems = result.items || []
+        setGalleryItems(prev => {
+          const seen = new Set(prev.map(it => it.mediaId))
+          const newOnes = serverItems.filter(it => !seen.has(it.mediaId))
+          return newOnes.length ? [...newOnes, ...prev] : prev
+        })
+      }
+      return result
+    } catch (e) {
+      return { success: false, error: e.message, items: [] }
+    }
+  }
+
+  // Flow 프로젝트(날짜) 목록 — 두 번째 단계 진입점
+  const listFlowProjectsHandler = async () => {
+    try {
+      const result = await flowAPI.listFlowProjects(20)
+      return result
+    } catch (e) {
+      return { success: false, error: e.message, items: [] }
     }
   }
 
@@ -1024,6 +1055,8 @@ function App() {
               galleryLoading={galleryLoading}
               onLoadGallery={loadGallery}
               onUploadFromDisk={handleUploadGalleryImage}
+              onListFlowProjects={listFlowProjectsHandler}
+              onFetchProjectGallery={fetchProjectGallery}
               seedNo={settings.seedNo}
               seedLocked={settings.seedLocked}
               onSeedChange={(v) => setSettings(s => ({ ...s, seedNo: v }))}

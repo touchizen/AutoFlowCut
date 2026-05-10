@@ -50,15 +50,66 @@ function ElapsedTime({ startedAt, endedAt }) {
 const GALLERY_PREFIX = 'gallery::'
 
 // 커스텀 드롭다운 — 썸네일 + 레이블 + 갤러리
+// view 상태: 'main' (기본), 'dates' (Flow 프로젝트=날짜 목록), 'media' (선택한 날짜의 업로드)
 function SceneSelect({
   value, onChange, placeholder, disabled: selectDisabled,
   options, getLabel, onThumbClick,
-  galleryItems, galleryLoading, onLoadGallery, onUploadFromDisk
+  galleryItems, galleryLoading, onLoadGallery, onUploadFromDisk,
+  onListFlowProjects, onFetchProjectGallery
 }) {
   const [open, setOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [view, setView] = useState('main')
+  const [dateProjects, setDateProjects] = useState([])
+  const [dateLoading, setDateLoading] = useState(false)
+  const [selectedDate, setSelectedDate] = useState(null) // {projectId, title}
+  const [dateMedia, setDateMedia] = useState([])
+  const [dateMediaLoading, setDateMediaLoading] = useState(false)
   const fileInputRef = useRef(null)
   const ref = useRef(null)
+
+  // 드롭다운 닫히면 view 리셋 (다음에 열 때 main으로 돌아감)
+  useEffect(() => {
+    if (!open) {
+      setView('main')
+      setSelectedDate(null)
+      setDateMedia([])
+    }
+  }, [open])
+
+  const enterDatesView = async () => {
+    if (!onListFlowProjects) return
+    setView('dates')
+    if (dateProjects.length === 0) {
+      setDateLoading(true)
+      try {
+        const result = await onListFlowProjects()
+        if (result?.success) setDateProjects(result.items || [])
+        else console.warn('[SceneSelect] list projects failed:', result?.error)
+      } catch (e) {
+        console.error('[SceneSelect] list projects error:', e)
+      } finally {
+        setDateLoading(false)
+      }
+    }
+  }
+
+  const pickDate = async (project) => {
+    setSelectedDate(project)
+    setView('media')
+    setDateMedia([])
+    if (!onFetchProjectGallery) return
+    setDateMediaLoading(true)
+    try {
+      const result = await onFetchProjectGallery(project.projectId)
+      if (result?.success) setDateMedia(result.items || [])
+      else console.warn('[SceneSelect] fetch project gallery failed:', result?.error)
+    } catch (e) {
+      console.error('[SceneSelect] fetch project gallery error:', e)
+    } finally {
+      setDateMediaLoading(false)
+    }
+  }
 
   const handleFileChosen = async (e) => {
     const file = e.target.files?.[0]
@@ -121,7 +172,7 @@ function SceneSelect({
         <span className="scene-dropdown-label">{selectedLabel}</span>
         <span className="scene-dropdown-arrow">{open ? '▴' : '▾'}</span>
       </div>
-      {open && (
+      {open && view === 'main' && (
         <div className="scene-dropdown-menu">
           {/* None 옵션 */}
           <div
@@ -177,7 +228,17 @@ function SceneSelect({
               onClick={(e) => { e.stopPropagation(); onLoadGallery() }}
             >
               <span className="scene-dropdown-empty-thumb" />
-              <span className="scene-dropdown-item-label">📂 Load Gallery</span>
+              <span className="scene-dropdown-item-label">📂 Load Current Project</span>
+            </div>
+          )}
+
+          {onListFlowProjects && (
+            <div
+              className="scene-dropdown-item gallery-load-btn"
+              onClick={(e) => { e.stopPropagation(); enterDatesView() }}
+            >
+              <span className="scene-dropdown-empty-thumb" />
+              <span className="scene-dropdown-item-label">📅 Browse Flow Archive</span>
             </div>
           )}
 
@@ -203,6 +264,78 @@ function SceneSelect({
               />
             </div>
           )}
+        </div>
+      )}
+
+      {open && view === 'dates' && (
+        <div className="scene-dropdown-menu">
+          <div
+            className="scene-dropdown-item gallery-back-btn"
+            onClick={(e) => { e.stopPropagation(); setView('main') }}
+          >
+            <span className="scene-dropdown-empty-thumb" />
+            <span className="scene-dropdown-item-label">← Back</span>
+          </div>
+          <div className="scene-dropdown-divider">📅 Flow Archive</div>
+          {dateLoading && (
+            <div className="scene-dropdown-item gallery-loading">
+              <span className="scene-dropdown-empty-thumb" />
+              <span className="scene-dropdown-item-label">⏳ Loading projects...</span>
+            </div>
+          )}
+          {!dateLoading && dateProjects.length === 0 && (
+            <div className="scene-dropdown-item gallery-loading">
+              <span className="scene-dropdown-empty-thumb" />
+              <span className="scene-dropdown-item-label">No projects found</span>
+            </div>
+          )}
+          {dateProjects.map(p => (
+            <div
+              key={`proj_${p.projectId}`}
+              className="scene-dropdown-item"
+              onClick={(e) => { e.stopPropagation(); pickDate(p) }}
+            >
+              <span className="scene-dropdown-empty-thumb" />
+              <span className="scene-dropdown-item-label">{p.title}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {open && view === 'media' && (
+        <div className="scene-dropdown-menu">
+          <div
+            className="scene-dropdown-item gallery-back-btn"
+            onClick={(e) => { e.stopPropagation(); setView('dates') }}
+          >
+            <span className="scene-dropdown-empty-thumb" />
+            <span className="scene-dropdown-item-label">← {selectedDate?.title || 'Dates'}</span>
+          </div>
+          <div className="scene-dropdown-divider">🖼 Uploads</div>
+          {dateMediaLoading && (
+            <div className="scene-dropdown-item gallery-loading">
+              <span className="scene-dropdown-empty-thumb" />
+              <span className="scene-dropdown-item-label">⏳ Loading images...</span>
+            </div>
+          )}
+          {!dateMediaLoading && dateMedia.length === 0 && (
+            <div className="scene-dropdown-item gallery-loading">
+              <span className="scene-dropdown-empty-thumb" />
+              <span className="scene-dropdown-item-label">No uploaded images</span>
+            </div>
+          )}
+          {dateMedia.map(item => (
+            <div
+              key={`dmedia_${item.mediaId}`}
+              className={`scene-dropdown-item gallery-item${value === GALLERY_PREFIX + item.mediaId ? ' selected' : ''}`}
+              onClick={() => { onChange(GALLERY_PREFIX + item.mediaId); setOpen(false) }}
+            >
+              <img src={item.url} alt="" className="scene-dropdown-thumb" />
+              <span className="scene-dropdown-item-label">
+                {item.displayName || (item.mediaId.substring(0, 20) + '...')}
+              </span>
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -275,7 +408,7 @@ export { GALLERY_PREFIX }
 export default function FrameToVideoPanel({
   scenes, videoScenes = [], framePairs, onUpdate, promptSource = 'image', onPromptSourceChange,
   onShowSceneDetail, onVideoRetry, disabled, t, galleryItems, galleryLoading, onLoadGallery,
-  onUploadFromDisk,
+  onUploadFromDisk, onListFlowProjects, onFetchProjectGallery,
   seedNo = null, seedLocked = false, onSeedChange, onSeedLockToggle, onSeedRandom,
 }) {
   const showSeedUI = typeof onSeedChange === 'function'
@@ -513,6 +646,8 @@ export default function FrameToVideoPanel({
                 galleryLoading={galleryLoading}
                 onLoadGallery={onLoadGallery}
                 onUploadFromDisk={onUploadFromDisk}
+                onListFlowProjects={onListFlowProjects}
+                onFetchProjectGallery={onFetchProjectGallery}
               />
             </div>
 
@@ -533,6 +668,8 @@ export default function FrameToVideoPanel({
                 galleryLoading={galleryLoading}
                 onLoadGallery={onLoadGallery}
                 onUploadFromDisk={onUploadFromDisk}
+                onListFlowProjects={onListFlowProjects}
+                onFetchProjectGallery={onFetchProjectGallery}
               />
             </div>
 

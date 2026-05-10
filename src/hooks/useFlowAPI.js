@@ -252,16 +252,34 @@ export function useFlowAPI() {
    * 갤러리 (프로젝트 미디어) 조회
    * @returns {{ success, items: [{ mediaId, url }] }}
    */
-  const fetchGallery = useCallback(async () => {
+  const fetchGallery = useCallback(async (specificProjectId) => {
     const token = await getAccessToken()
     if (!token) return { success: false, error: 'No access token', items: [] }
 
     try {
-      return await window.electronAPI.fetchGallery({ token, projectId })
+      return await window.electronAPI.fetchGallery({
+        token,
+        projectId: specificProjectId || projectId
+      })
     } catch (error) {
       return { success: false, error: error.message, items: [] }
     }
   }, [getAccessToken, projectId])
+
+  /**
+   * 사용자의 Flow 프로젝트(=날짜 세션) 목록 조회
+   * @returns {{ success, items: [{ projectId, title, thumbnailMediaKey, creationTime }] }}
+   */
+  const listFlowProjects = useCallback(async (pageSize = 20) => {
+    const token = await getAccessToken()
+    if (!token) return { success: false, error: 'No access token', items: [] }
+
+    try {
+      return await window.electronAPI.listFlowProjects({ token, pageSize })
+    } catch (error) {
+      return { success: false, error: error.message, items: [] }
+    }
+  }, [getAccessToken])
 
   /**
    * 토큰 캐시 초기화 (401 에러 시 호출)
@@ -292,6 +310,7 @@ export function useFlowAPI() {
     upscaleVideo,
     upscaleImage,
     fetchGallery,
+    listFlowProjects,
     setStopRequested
   }
 }

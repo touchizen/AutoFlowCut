@@ -1529,6 +1529,48 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     }
   })
 
+  // ─── List User Projects (Flow archive — date list) ─────────────
+  // 사용자의 Flow 프로젝트(=날짜별 세션) 목록을 가져온다.
+  // 응답: result.data.json.result.projects[] → {projectId, projectInfo, creationTime}
+  ipcMain.handle('flow:list-projects', async (event, { token, pageSize = 20 } = {}) => {
+    try {
+      const input = JSON.stringify({ json: { pageSize, toolName: 'PINHOLE' } })
+      const url = `https://labs.google/fx/api/trpc/project.searchUserProjects?input=${encodeURIComponent(input)}`
+
+      console.log('[Projects] Fetching project list, pageSize:', pageSize)
+      const resp = await sessionFetch(url, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        }
+      })
+
+      if (!resp.ok) {
+        return { success: false, error: `List projects HTTP ${resp.status}`, items: [] }
+      }
+
+      const text = await resp.text()
+      const data = parseFlowResponse(text)
+      const projects =
+        data?.result?.data?.json?.result?.projects ||
+        data?.result?.data?.result?.projects ||
+        []
+
+      const items = projects.map(p => ({
+        projectId: p.projectId || '',
+        title: p.projectInfo?.projectTitle || p.projectId || '',
+        thumbnailMediaKey: p.projectInfo?.thumbnailMediaKey || null,
+        creationTime: p.creationTime || '',
+      })).filter(p => p.projectId)
+
+      console.log(`[Projects] ${items.length} projects extracted`)
+      return { success: true, items }
+    } catch (e) {
+      console.error('[Projects] Error:', e.message)
+      return { success: false, error: e.message, items: [] }
+    }
+  })
+
   // ─── Fetch Gallery (Project Media — uploaded images) ─────────────
   // Flow archive 뷰가 호출하는 project.getProjectContents 사용.
   // flow.projectInitialData 와 달리 사용자가 Flow UI로 직접 업로드한

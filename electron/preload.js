@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   upscaleVideo: (params) => ipcRenderer.invoke('flow:upscale-video', params),
   upscaleImage: (params) => ipcRenderer.invoke('flow:upscale-image', params),
   fetchGallery: (params) => ipcRenderer.invoke('flow:fetch-gallery', params),
+  listFlowProjects: (params) => ipcRenderer.invoke('flow:list-projects', params),
 
   // File System
   getDefaultWorkFolder: () => ipcRenderer.invoke('fs:get-default-work-folder'),
