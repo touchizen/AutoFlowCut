@@ -310,6 +310,31 @@ describe('flow:fetch-gallery', () => {
     expect(out.items.map(i => i.mediaId)).toEqual(['up-uuid-2'])
   })
 
+  it('allows redirects to flow-content.google (Flow CDN on .google TLD)', async () => {
+    redirectHandler = (url) => {
+      const m = url.match(/[?&]name=([^&]+)/)
+      return `https://flow-content.google/media/${decodeURIComponent(m?.[1] || 'x')}?Expires=1`
+    }
+    const ipc = makeIpcMain()
+    registerFlowAPIIPC(ipc, buildDeps({ sessionFetch: mockSessionFetch() }))
+    const out = await ipc.invoke('flow:fetch-gallery', { token: 'tok', projectId: 'pid' })
+    expect(out.success).toBe(true)
+    expect(out.items.map(i => i.mediaId).sort()).toEqual(['gen-uuid-1', 'up-uuid-2'])
+  })
+
+  it('allows redirects to googleapis.com hosts (Flow signed media URLs)', async () => {
+    redirectHandler = (url) => {
+      const m = url.match(/[?&]name=([^&]+)/)
+      return `https://aisandbox-pa.googleapis.com/v1/media/${decodeURIComponent(m?.[1] || 'x')}?Expires=1`
+    }
+    const ipc = makeIpcMain()
+    registerFlowAPIIPC(ipc, buildDeps({ sessionFetch: mockSessionFetch() }))
+    const out = await ipc.invoke('flow:fetch-gallery', { token: 'tok', projectId: 'pid' })
+    expect(out.success).toBe(true)
+    // Both image media items should resolve (videos still excluded by filter)
+    expect(out.items.map(i => i.mediaId).sort()).toEqual(['gen-uuid-1', 'up-uuid-2'])
+  })
+
   it('drops items whose redirect uses http (not https)', async () => {
     redirectHandler = (url) => {
       if (url.includes('up-uuid-2')) return 'http://lh3.googleusercontent.com/foo.jpg'

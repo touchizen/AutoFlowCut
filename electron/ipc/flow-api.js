@@ -1637,13 +1637,21 @@ export function registerFlowAPIIPC(ipcMain, deps) {
 
       // redirect URL이 실제 Google 미디어 CDN인지 확인. 인증/에러 페이지 redirect를
       // 이미지 URL 처럼 renderer 에 흘려보내는 사고 방지.
-      // *.google.com은 의도적으로 제외 — accounts.google.com 등 로그인 페이지가
-      // 이미지 URL 행세를 할 수 있음. *.googleusercontent.com 만 (lh3.* 등 CDN).
+      // 허용:
+      //   - *.googleusercontent.com (lh3.* 등 일반 Google 사용자 콘텐츠 CDN)
+      //   - *.googleapis.com         (Flow API 도메인의 서명 미디어 URL)
+      //   - flow-content.google      (Flow 전용 미디어 CDN — `.google` TLD)
+      // 의도적 제외: *.google.com — accounts.google.com 같은 로그인 페이지가
+      //              이미지 URL 행세를 할 수 있음.
       const isAllowedMediaHost = (urlStr) => {
         try {
           const u = new URL(urlStr)
           if (u.protocol !== 'https:') return false
-          return /(^|\.)googleusercontent\.com$/i.test(u.hostname)
+          const h = u.hostname.toLowerCase()
+          if (/(^|\.)googleusercontent\.com$/.test(h)) return true
+          if (/(^|\.)googleapis\.com$/.test(h)) return true
+          if (h === 'flow-content.google' || /(^|\.)flow-content\.google$/.test(h)) return true
+          return false
         } catch {
           return false
         }
