@@ -6,6 +6,7 @@
  */
 
 import path from 'node:path'
+import { net } from 'electron'
 
 /**
  * Register all Flow API IPC handlers.
@@ -1624,20 +1625,39 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       const images = media.filter(m => m?.image && !m?.video)
 
       // media.getMediaUrlRedirect 는 ?name=<uuid> 만 받고 307로 CDN URL을 돌려준다.
-      // 브라우저 fetch + redirect:'manual' 은 opaqueredirect (status=0, Location 못 읽음)
-      // 으로 막히고, ses.fetch + redirect:'manual' 은 cancel 됨.
-      // → ses.fetch 자동 follow로 두고 이미지 바이트를 base64 data URL 로 변환.
-      //   ses.fetch는 Flow 세션 쿠키를 들고 다니므로 인증 OK.
-      const resolveMediaUrl = async (mediaId) => {
+      // 메모리 폭증 방지: 이미지 바이트를 가져오지 않고 redirect Location 만 추출해
+      // 서명 CDN URL을 그대로 renderer 에 반환한다. (signed Expires 토큰이 있어
+      // 인증 없이 <img src> 로 바로 렌더 가능.)
+      //
+      // ses.fetch / 브라우저 fetch 는 redirect:'manual'을 못 잡거나 opaque로 가려서
+      // Location 을 못 읽는다. Electron 의 net.request 는 Flow 세션 쿠키를 그대로 쓰면서
+      // 'redirect' 이벤트로 Location URL 을 직접 넘겨주므로 거기서 잡는다.
+      const flowView = getFlowView()
+      const flowSession = flowView?.webContents?.session
+      const resolveMediaUrl = (mediaId) => new Promise((resolve, reject) => {
         const url = `${MEDIA_REDIRECT_URL}?name=${encodeURIComponent(mediaId)}`
-        const resp = await sessionFetch(url, {
-          headers: { 'Authorization': `Bearer ${token}` },
+        const req = net.request({
+          method: 'GET',
+          url,
+          session: flowSession,
+          useSessionCookies: true,
+          redirect: 'manual',
         })
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-        const buf = await resp.arrayBuffer()
-        const ct = resp.headers?.get?.('content-type') || 'image/jpeg'
-        return `data:${ct};base64,${Buffer.from(buf).toString('base64')}`
-      }
+        req.setHeader('Authorization', `Bearer ${token}`)
+        let settled = false
+        const settle = (fn, val) => { if (!settled) { settled = true; fn(val) } }
+        req.on('redirect', (_status, _method, redirectUrl) => {
+          req.abort()
+          settle(resolve, redirectUrl)
+        })
+        req.on('response', (response) => {
+          // redirect:'manual'인데 200이 떨어졌다면 (인증 만료 → HTML 등) 실패 처리.
+          settle(reject, new Error(`unexpected status ${response.statusCode}`))
+          response.on('data', () => {})
+        })
+        req.on('error', (err) => settle(reject, err))
+        req.end()
+      })
 
       // 작은 동시성 풀 — 한 번에 N개만 redirect+CDN을 받아 base64 변환한다.
       // 무제한 Promise.all 은 이미지 많은 프로젝트에서 동시 fetch 폭주 + 메모리 스파이크 야기.

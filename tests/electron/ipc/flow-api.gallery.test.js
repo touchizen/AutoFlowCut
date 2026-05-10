@@ -13,7 +13,36 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { registerFlowAPIIPC } from '../../../electron/ipc/flow-api.js'
+
+// Configurable per test: redirect handler picks a URL based on the request URL.
+let redirectHandler = (url) => {
+  const m = url.match(/[?&]name=([^&]+)/)
+  return `https://cdn.fake/${decodeURIComponent(m?.[1] || 'x')}.jpg?Expires=1`
+}
+let redirectFailHandler = null // fn(url) => Error to fire instead, or null
+
+vi.mock('electron', () => ({
+  net: {
+    request: vi.fn(({ url }) => {
+      const handlers = {}
+      const req = {
+        setHeader: vi.fn(),
+        on: vi.fn((evt, fn) => { handlers[evt] = fn }),
+        end: vi.fn(() => {
+          setImmediate(() => {
+            const fail = redirectFailHandler && redirectFailHandler(url)
+            if (fail) handlers.error?.(fail)
+            else handlers.redirect?.(307, 'GET', redirectHandler(url))
+          })
+        }),
+        abort: vi.fn(),
+      }
+      return req
+    }),
+  },
+}))
+
+const { registerFlowAPIIPC } = await import('../../../electron/ipc/flow-api.js')
 
 function makeIpcMain() {
   const handlers = new Map()
@@ -86,8 +115,8 @@ const PROJECTS_RESP = {
   },
 }
 
-function mockSessionFetch({ projectContents, listProjects, mediaResolver }) {
-  return vi.fn(async (url, opts) => {
+function mockSessionFetch({ projectContents, listProjects } = {}) {
+  return vi.fn(async (url) => {
     if (url.includes('project.searchUserProjects')) {
       return {
         ok: true,
@@ -102,19 +131,13 @@ function mockSessionFetch({ projectContents, listProjects, mediaResolver }) {
         text: async () => JSON.stringify(projectContents ?? RESP_JSON),
       }
     }
-    if (url.includes('media.getMediaUrlRedirect')) {
-      // mediaId pulled from ?name=<uuid>
-      const m = url.match(/[?&]name=([^&]+)/)
-      const mediaId = decodeURIComponent(m?.[1] || '')
-      return mediaResolver(mediaId)
-    }
     throw new Error('unexpected url ' + url)
   })
 }
 
 function buildDeps(overrides = {}) {
   return {
-    getFlowView: () => null,
+    getFlowView: () => ({ webContents: { session: { fake: true } } }),
     getMainWindow: () => null,
     trustedClickOnFlowView: vi.fn(),
     sessionFetch: vi.fn(),
@@ -181,16 +204,17 @@ describe('flow:list-projects', () => {
 })
 
 describe('flow:fetch-gallery', () => {
-  it('returns every image (uploaded + generated) and skips videos', async () => {
+  beforeEach(() => {
+    redirectFailHandler = null
+    redirectHandler = (url) => {
+      const m = url.match(/[?&]name=([^&]+)/)
+      return `https://cdn.fake/${decodeURIComponent(m?.[1] || 'x')}.jpg?Expires=1`
+    }
+  })
+
+  it('returns every image (uploaded + generated) as signed CDN URLs, skips videos', async () => {
     const ipc = makeIpcMain()
-    const sessionFetch = mockSessionFetch({
-      mediaResolver: async (id) => ({
-        ok: true,
-        status: 200,
-        headers: { get: (h) => h.toLowerCase() === 'content-type' ? 'image/jpeg' : null },
-        arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
-      }),
-    })
+    const sessionFetch = mockSessionFetch()
     const deps = buildDeps({ sessionFetch })
     registerFlowAPIIPC(ipc, deps)
 
@@ -198,21 +222,14 @@ describe('flow:fetch-gallery', () => {
     expect(out.success).toBe(true)
     expect(out.items.map(i => i.mediaId).sort()).toEqual(['gen-uuid-1', 'up-uuid-2'])
     for (const it of out.items) {
-      expect(it.url.startsWith('data:image/jpeg;base64,')).toBe(true)
+      expect(it.url).toMatch(/^https:\/\/cdn\.fake\//)
+      expect(it.url).not.toMatch(/^data:/)
     }
   })
 
   it('attaches workflow displayName to each item', async () => {
     const ipc = makeIpcMain()
-    const sessionFetch = mockSessionFetch({
-      mediaResolver: async () => ({
-        ok: true,
-        status: 200,
-        headers: { get: () => 'image/png' },
-        arrayBuffer: async () => new Uint8Array([1]).buffer,
-      }),
-    })
-    registerFlowAPIIPC(ipc, buildDeps({ sessionFetch }))
+    registerFlowAPIIPC(ipc, buildDeps({ sessionFetch: mockSessionFetch() }))
 
     const out = await ipc.invoke('flow:fetch-gallery', { token: 'tok', projectId: 'pid' })
     const byId = Object.fromEntries(out.items.map(i => [i.mediaId, i.displayName]))
@@ -221,42 +238,28 @@ describe('flow:fetch-gallery', () => {
   })
 
   it('drops only the items whose redirect resolution fails', async () => {
+    redirectFailHandler = (url) => url.includes('gen-uuid-1') ? new Error('boom') : null
     const ipc = makeIpcMain()
-    const sessionFetch = mockSessionFetch({
-      mediaResolver: async (id) => {
-        if (id === 'gen-uuid-1') return { ok: false, status: 401 }
-        return {
-          ok: true,
-          status: 200,
-          headers: { get: () => 'image/jpeg' },
-          arrayBuffer: async () => new Uint8Array([9]).buffer,
-        }
-      },
-    })
-    registerFlowAPIIPC(ipc, buildDeps({ sessionFetch }))
+    registerFlowAPIIPC(ipc, buildDeps({ sessionFetch: mockSessionFetch() }))
 
     const out = await ipc.invoke('flow:fetch-gallery', { token: 'tok', projectId: 'pid' })
     expect(out.items.map(i => i.mediaId)).toEqual(['up-uuid-2'])
   })
 
   it('uses ?name=<uuid> plain query for the redirect endpoint (not tRPC ?input=)', async () => {
+    const seenUrls = []
+    redirectHandler = (url) => {
+      seenUrls.push(url)
+      const m = url.match(/[?&]name=([^&]+)/)
+      return `https://cdn.fake/${decodeURIComponent(m?.[1] || 'x')}.jpg`
+    }
     const ipc = makeIpcMain()
-    const sessionFetch = mockSessionFetch({
-      mediaResolver: async () => ({
-        ok: true,
-        status: 200,
-        headers: { get: () => 'image/jpeg' },
-        arrayBuffer: async () => new Uint8Array([0]).buffer,
-      }),
-    })
-    registerFlowAPIIPC(ipc, buildDeps({ sessionFetch }))
+    registerFlowAPIIPC(ipc, buildDeps({ sessionFetch: mockSessionFetch() }))
 
     await ipc.invoke('flow:fetch-gallery', { token: 'tok', projectId: 'pid' })
 
-    const redirectCalls = sessionFetch.mock.calls
-      .filter(([u]) => u.includes('media.getMediaUrlRedirect'))
-    expect(redirectCalls.length).toBeGreaterThan(0)
-    for (const [u] of redirectCalls) {
+    expect(seenUrls.length).toBeGreaterThan(0)
+    for (const u of seenUrls) {
       expect(u).toMatch(/\?name=[a-z0-9-]+$/i)
       expect(u).not.toContain('?input=')
     }
@@ -264,14 +267,7 @@ describe('flow:fetch-gallery', () => {
 
   it('falls back to captured projectId when none is passed', async () => {
     const ipc = makeIpcMain()
-    const sessionFetch = mockSessionFetch({
-      mediaResolver: async () => ({
-        ok: true,
-        status: 200,
-        headers: { get: () => 'image/jpeg' },
-        arrayBuffer: async () => new Uint8Array([0]).buffer,
-      }),
-    })
+    const sessionFetch = mockSessionFetch()
     registerFlowAPIIPC(ipc, buildDeps({ sessionFetch }))
 
     await ipc.invoke('flow:fetch-gallery', { token: 'tok' /* no projectId */ })

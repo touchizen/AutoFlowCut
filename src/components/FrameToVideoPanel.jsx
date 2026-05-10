@@ -17,7 +17,7 @@
 import { useMemo, useEffect, useRef, useState, useCallback } from 'react'
 import { resolveImageSrc, formatElapsed } from '../utils/formatters'
 import { useElapsedTimer } from '../hooks/useElapsedTimer'
-import useFlowArchiveBrowser from '../hooks/useFlowArchiveBrowser'
+import useFlowArchiveBrowser, { ARCHIVE_LABELS } from '../hooks/useFlowArchiveBrowser'
 
 /** 초시계 아이콘 — 초침이 실시간 회전 */
 function StopwatchIcon({ size = 16 }) {
@@ -212,7 +212,7 @@ function SceneSelect({
               onClick={(e) => { e.stopPropagation(); enterDatesView() }}
             >
               <span className="scene-dropdown-empty-thumb" />
-              <span className="scene-dropdown-item-label">📅 Browse Flow Archive</span>
+              <span className="scene-dropdown-item-label">{ARCHIVE_LABELS.browse}</span>
             </div>
           )}
 
@@ -248,19 +248,19 @@ function SceneSelect({
             onClick={(e) => { e.stopPropagation(); setArchiveOpen(false); archive.reset() }}
           >
             <span className="scene-dropdown-empty-thumb" />
-            <span className="scene-dropdown-item-label">← Back</span>
+            <span className="scene-dropdown-item-label">{ARCHIVE_LABELS.back}</span>
           </div>
-          <div className="scene-dropdown-divider">📅 Flow Archive</div>
+          <div className="scene-dropdown-divider">{ARCHIVE_LABELS.archiveHeader}</div>
           {archive.projectsLoading && (
             <div className="scene-dropdown-item gallery-loading">
               <span className="scene-dropdown-empty-thumb" />
-              <span className="scene-dropdown-item-label">⏳ Loading projects...</span>
+              <span className="scene-dropdown-item-label">{ARCHIVE_LABELS.loadingProjects}</span>
             </div>
           )}
           {!archive.projectsLoading && archive.projects.length === 0 && (
             <div className="scene-dropdown-item gallery-loading">
               <span className="scene-dropdown-empty-thumb" />
-              <span className="scene-dropdown-item-label">No projects found</span>
+              <span className="scene-dropdown-item-label">{ARCHIVE_LABELS.noProjects}</span>
             </div>
           )}
           {archive.projects.map(p => (
@@ -285,17 +285,17 @@ function SceneSelect({
             <span className="scene-dropdown-empty-thumb" />
             <span className="scene-dropdown-item-label">← {archive.selectedProject?.title || 'Dates'}</span>
           </div>
-          <div className="scene-dropdown-divider">🖼 Images</div>
+          <div className="scene-dropdown-divider">{ARCHIVE_LABELS.imagesHeader}</div>
           {archive.mediaLoading && (
             <div className="scene-dropdown-item gallery-loading">
               <span className="scene-dropdown-empty-thumb" />
-              <span className="scene-dropdown-item-label">⏳ Loading images...</span>
+              <span className="scene-dropdown-item-label">{ARCHIVE_LABELS.loadingImages}</span>
             </div>
           )}
           {!archive.mediaLoading && archive.media.length === 0 && (
             <div className="scene-dropdown-item gallery-loading">
               <span className="scene-dropdown-empty-thumb" />
-              <span className="scene-dropdown-item-label">No images</span>
+              <span className="scene-dropdown-item-label">{ARCHIVE_LABELS.noImages}</span>
             </div>
           )}
           {archive.media.map(item => (
@@ -390,15 +390,15 @@ function EmptyStateUpload({
           onClick={openArchive}
           style={{ marginLeft: 8 }}
         >
-          📅 Browse Flow Archive
+          {ARCHIVE_LABELS.browse}
         </button>
       )}
 
       {browseOpen && archive.view === 'dates' && (
         <div className="empty-archive-list">
-          <button className="empty-archive-back" onClick={cancelArchive}>← Cancel</button>
-          {archive.projectsLoading && <div>⏳ Loading projects...</div>}
-          {!archive.projectsLoading && archive.projects.length === 0 && <div>No projects found</div>}
+          <button className="empty-archive-back" onClick={cancelArchive}>{ARCHIVE_LABELS.cancel}</button>
+          {archive.projectsLoading && <div>{ARCHIVE_LABELS.loadingProjects}</div>}
+          {!archive.projectsLoading && archive.projects.length === 0 && <div>{ARCHIVE_LABELS.noProjects}</div>}
           {archive.projects.map(p => (
             <button
               key={p.projectId}
@@ -415,8 +415,8 @@ function EmptyStateUpload({
           <button className="empty-archive-back" onClick={archive.backToDates}>
             ← {archive.selectedProject?.title || 'Dates'}
           </button>
-          {archive.mediaLoading && <div>⏳ Loading images...</div>}
-          {!archive.mediaLoading && archive.media.length === 0 && <div>No images</div>}
+          {archive.mediaLoading && <div>{ARCHIVE_LABELS.loadingImages}</div>}
+          {!archive.mediaLoading && archive.media.length === 0 && <div>{ARCHIVE_LABELS.noImages}</div>}
           {archive.media.map(item => (
             <button
               key={item.mediaId}

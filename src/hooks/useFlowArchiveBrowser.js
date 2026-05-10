@@ -16,6 +16,19 @@
 
 import { useCallback, useState } from 'react'
 
+// Shared UI strings — keep dropdown and empty-state labels in sync.
+export const ARCHIVE_LABELS = {
+  browse: '📅 Browse Flow Archive',
+  loadingProjects: '⏳ Loading projects...',
+  noProjects: 'No projects found',
+  loadingImages: '⏳ Loading images...',
+  noImages: 'No images',
+  imagesHeader: '🖼 Images',
+  archiveHeader: '📅 Flow Archive',
+  back: '← Back',
+  cancel: '← Cancel',
+}
+
 export default function useFlowArchiveBrowser({ onListFlowProjects, onFetchProjectGallery }) {
   const [view, setView] = useState('idle') // 'idle' | 'dates' | 'media'
   const [projects, setProjects] = useState([])
