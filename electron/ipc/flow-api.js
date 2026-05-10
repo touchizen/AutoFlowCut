@@ -1637,17 +1637,19 @@ export function registerFlowAPIIPC(ipcMain, deps) {
 
       // redirect URL이 실제 Google 미디어 CDN인지 확인. 인증/에러 페이지 redirect를
       // 이미지 URL 처럼 renderer 에 흘려보내는 사고 방지.
+      // *.google.com은 의도적으로 제외 — accounts.google.com 등 로그인 페이지가
+      // 이미지 URL 행세를 할 수 있음. *.googleusercontent.com 만 (lh3.* 등 CDN).
       const isAllowedMediaHost = (urlStr) => {
         try {
           const u = new URL(urlStr)
           if (u.protocol !== 'https:') return false
-          return /(^|\.)(googleusercontent\.com|googleapis\.com|gstatic\.com|google\.com)$/i
-            .test(u.hostname)
+          return /(^|\.)googleusercontent\.com$/i.test(u.hostname)
         } catch {
           return false
         }
       }
 
+      const RESOLVE_TIMEOUT_MS = 10_000
       const resolveMediaUrl = (mediaId) => new Promise((resolve, reject) => {
         const url = `${MEDIA_REDIRECT_URL}?name=${encodeURIComponent(mediaId)}`
         const req = net.request({
@@ -1659,7 +1661,18 @@ export function registerFlowAPIIPC(ipcMain, deps) {
         })
         req.setHeader('Authorization', `Bearer ${token}`)
         let settled = false
-        const settle = (fn, val) => { if (!settled) { settled = true; fn(val) } }
+        const settle = (fn, val) => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          fn(val)
+        }
+        // 응답이 영영 안 올 경우 전체 갤러리 fetch 가 멈추는 걸 방지.
+        // 개별 fetch 가 timeout 되면 drop 가드가 처리한다.
+        const timer = setTimeout(() => {
+          try { req.abort() } catch (_) {}
+          settle(reject, new Error('timeout'))
+        }, RESOLVE_TIMEOUT_MS)
         req.on('redirect', (_status, _method, redirectUrl) => {
           req.abort()
           if (!isAllowedMediaHost(redirectUrl)) {
@@ -1677,8 +1690,8 @@ export function registerFlowAPIIPC(ipcMain, deps) {
         req.end()
       })
 
-      // 작은 동시성 풀 — 한 번에 N개만 redirect+CDN을 받아 base64 변환한다.
-      // 무제한 Promise.all 은 이미지 많은 프로젝트에서 동시 fetch 폭주 + 메모리 스파이크 야기.
+      // 작은 동시성 풀 — 한 번에 N개만 redirect 해소를 진행한다.
+      // 무제한 Promise.all 은 이미지 많은 프로젝트에서 net.request 폭주 + 소켓 고갈 야기.
       const MEDIA_RESOLVE_CONCURRENCY = 6
       const resolveItem = async (m) => {
         const mediaId = m.name || m.mediaId || m.id || ''

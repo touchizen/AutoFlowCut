@@ -22,6 +22,7 @@ let redirectHandler = (url) => {
 }
 let redirectFailHandler = null // fn(url) => Error to fire instead, or null
 let resolveDelayMs = 0 // delay before firing redirect — used to test concurrency
+let stalls = false // when true, request never fires any event (used for timeout test)
 let activeCount = 0
 let peakActive = 0
 
@@ -35,6 +36,7 @@ vi.mock('electron', () => ({
         end: vi.fn(() => {
           activeCount++
           if (activeCount > peakActive) peakActive = activeCount
+          if (stalls) return // never settle — exercise the timeout path
           const fire = () => {
             activeCount--
             const fail = redirectFailHandler && redirectFailHandler(url)
@@ -53,6 +55,7 @@ vi.mock('electron', () => ({
 
 beforeEach(() => {
   resolveDelayMs = 0
+  stalls = false
   activeCount = 0
   peakActive = 0
 })
@@ -293,6 +296,19 @@ describe('flow:fetch-gallery', () => {
     expect(out.items.map(i => i.mediaId)).toEqual(['up-uuid-2'])
   })
 
+  it('drops items whose redirect points to accounts.google.com (login redirect)', async () => {
+    redirectHandler = (url) => {
+      // simulate session-expired login redirect
+      if (url.includes('gen-uuid-1')) return 'https://accounts.google.com/ServiceLogin?continue=...'
+      const m = url.match(/[?&]name=([^&]+)/)
+      return `https://lh3.googleusercontent.com/${decodeURIComponent(m?.[1] || 'x')}.jpg`
+    }
+    const ipc = makeIpcMain()
+    registerFlowAPIIPC(ipc, buildDeps({ sessionFetch: mockSessionFetch() }))
+    const out = await ipc.invoke('flow:fetch-gallery', { token: 'tok', projectId: 'pid' })
+    expect(out.items.map(i => i.mediaId)).toEqual(['up-uuid-2'])
+  })
+
   it('drops items whose redirect uses http (not https)', async () => {
     redirectHandler = (url) => {
       if (url.includes('up-uuid-2')) return 'http://lh3.googleusercontent.com/foo.jpg'
@@ -303,6 +319,22 @@ describe('flow:fetch-gallery', () => {
     registerFlowAPIIPC(ipc, buildDeps({ sessionFetch: mockSessionFetch() }))
     const out = await ipc.invoke('flow:fetch-gallery', { token: 'tok', projectId: 'pid' })
     expect(out.items.map(i => i.mediaId)).toEqual(['gen-uuid-1'])
+  })
+
+  it('drops items whose redirect request stalls past the timeout', async () => {
+    stalls = true
+    vi.useFakeTimers()
+    const ipc = makeIpcMain()
+    registerFlowAPIIPC(ipc, buildDeps({ sessionFetch: mockSessionFetch() }))
+
+    const promise = ipc.invoke('flow:fetch-gallery', { token: 'tok', projectId: 'pid' })
+    // Advance past the 10s timeout; fake-timer-async lets microtasks run between ticks
+    await vi.advanceTimersByTimeAsync(11_000)
+    const out = await promise
+    vi.useRealTimers()
+
+    expect(out.success).toBe(true)
+    expect(out.items).toEqual([]) // every item dropped via timeout
   })
 
   it('caps concurrent media URL resolution at 6', async () => {
