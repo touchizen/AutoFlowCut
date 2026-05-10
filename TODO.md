@@ -79,6 +79,13 @@ IPC 핸들러는 main.js에 이미 추가됨. UI/Hook 작업 필요.
 
 ---
 
+### Tech Debt / Cleanup (다음 사이클)
+
+- [ ] **테스트 인프라**: Node 18 + jsdom 27 ESM 충돌로 `npm run test:run` 풀 스위트가 깨짐 (`@exodus/bytes/encoding-lite.js` ERR_REQUIRE_ESM). `.nvmrc`/`engines`로 Node 20+ 강제하거나 jsdom 다운그레이드 — 풀 스위트 그린 복구 필요.
+- [ ] **`uploadReference(base64, category)` cleanup**: `category` 인자가 IPC payload까지 전달되지 않고 로그용으로만 쓰임 ([useFlowAPI.js:124](src/hooks/useFlowAPI.js:124), [flow-api.js:1455](electron/ipc/flow-api.js:1455)). Flow `/flow/uploadImage` 스펙상 category를 안 받으니, 시그니처에서 빼거나(권장) 정말 필요하면 IPC body에 추가. 현재 호출처: reference 업로드(`'style'`), F2V 디스크 업로드(`'frame'`).
+
+---
+
 ## 리스크 & 주의사항
 
 | 항목 | 설명 | 대응 |
