@@ -96,7 +96,7 @@ function SceneSelect({
 
   const selected = isGalleryValue ? null : options.find(s => s.id === value)
   const selectedLabel = gallerySelected
-    ? `📂 ${galleryMediaId.substring(0, 16)}...`
+    ? `📂 ${gallerySelected.displayName || (galleryMediaId.substring(0, 16) + '...')}`
     : selected ? getLabel(selected) : (placeholder || '—')
   const selectedThumb = gallerySelected?.url || (selected ? resolveImageSrc(selected) : null)
 
@@ -160,7 +160,7 @@ function SceneSelect({
               onClick={() => { onChange(GALLERY_PREFIX + item.mediaId); setOpen(false) }}
             >
               <img src={item.url} alt="" className="scene-dropdown-thumb" />
-              <span className="scene-dropdown-item-label">{item.mediaId.substring(0, 20)}...</span>
+              <span className="scene-dropdown-item-label">{item.displayName || (item.mediaId.substring(0, 20) + '...')}</span>
             </div>
           ))}
 

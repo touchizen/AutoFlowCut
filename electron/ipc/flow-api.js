@@ -1529,11 +1529,13 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     }
   })
 
-  // ─── Fetch Gallery (Project Media) ────────────────────────────
+  // ─── Fetch Gallery (Project Media — uploaded images) ─────────────
+  // Flow archive 뷰가 호출하는 project.getProjectContents 사용.
+  // flow.projectInitialData 와 달리 사용자가 Flow UI로 직접 업로드한
+  // 이미지(image.userUploadedImage)까지 모두 반환한다.
   ipcMain.handle('flow:fetch-gallery', async (event, { token, projectId }) => {
     try {
       if (!projectId) {
-        // 캡처된 projectId 사용
         projectId = getCapturedProjectId?.()
       }
       if (!projectId) {
@@ -1541,9 +1543,9 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       }
 
       const input = JSON.stringify({ json: { projectId } })
-      const url = `https://labs.google/fx/api/trpc/flow.projectInitialData?input=${encodeURIComponent(input)}`
+      const url = `https://labs.google/fx/api/trpc/project.getProjectContents?input=${encodeURIComponent(input)}`
 
-      console.log('[Gallery] Fetching project media for:', projectId.substring(0, 12) + '...')
+      console.log('[Gallery] Fetching project contents for:', projectId.substring(0, 12) + '...')
       const resp = await sessionFetch(url, {
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -1558,30 +1560,46 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       const text = await resp.text()
       const data = parseFlowResponse(text)
 
-      // tRPC 응답 구조: result.data.json.projectContents.media[]
-      // 또는: result.data.projectContents.media[]
-      const projectContents =
-        data?.result?.data?.json?.projectContents ||
-        data?.result?.data?.projectContents ||
+      // 응답: result.data.json.result.{media[], workflows[], externalReferenceMedia[]}
+      const root =
+        data?.result?.data?.json?.result ||
+        data?.result?.data?.result ||
         {}
-      const media = Array.isArray(projectContents.media) ? projectContents.media : []
+      const media = Array.isArray(root.media) ? root.media : []
+      const workflows = Array.isArray(root.workflows) ? root.workflows : []
 
-      console.log(`[Gallery] Found ${media.length} media items`)
+      // workflowId → workflow.metadata.displayName 매핑 (원본 파일명 표시용)
+      const workflowMap = new Map()
+      for (const wf of workflows) {
+        const wfId = String(wf?.name || wf?.workflowId || '')
+        if (wfId) workflowMap.set(wfId, wf)
+      }
 
-      // 이미지 미디어만 추출 (fifeUrl 있는 것)
-      const items = media
-        .map(m => {
-          const mediaId = m.name || m.mediaId || m.id || ''
-          const fifeUrl =
-            m.image?.generatedImage?.fifeUrl ||
-            m.image?.uploadedImage?.fifeUrl ||
-            null
-          return { mediaId, url: fifeUrl }
-        })
-        .filter(m => m.url && m.mediaId)
+      console.log(`[Gallery] Found ${media.length} media items, ${workflows.length} workflows`)
 
-      console.log(`[Gallery] ${items.length} image items extracted`)
-      return { success: true, items }
+      // 사용자가 업로드한 이미지만 추출 (image.userUploadedImage 있는 항목)
+      const uploaded = media.filter(m => m?.image?.userUploadedImage && !m?.video)
+
+      // 응답에 fifeUrl이 없으므로 mediaId별로 media.getMediaUrlRedirect 병렬 해소
+      const items = await Promise.all(uploaded.map(async (m) => {
+        const mediaId = m.name || m.mediaId || m.id || ''
+        if (!mediaId) return null
+
+        const wf = workflowMap.get(String(m.workflowId || ''))
+        const displayName = wf?.metadata?.displayName || ''
+
+        try {
+          const dataUrl = await fetchMediaAsBase64(token, mediaId)
+          return { mediaId, url: dataUrl, displayName }
+        } catch (e) {
+          console.warn('[Gallery] resolve url failed for', mediaId.substring(0, 8), e.message)
+          return null
+        }
+      }))
+
+      const filtered = items.filter(Boolean)
+      console.log(`[Gallery] ${filtered.length} image items extracted (uploaded only)`)
+      return { success: true, items: filtered }
     } catch (e) {
       console.error('[Gallery] Error:', e.message)
       return { success: false, error: e.message, items: [] }
