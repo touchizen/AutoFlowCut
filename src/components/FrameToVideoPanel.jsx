@@ -78,7 +78,7 @@ function SceneSelect({
   }, [open])
 
   const enterDatesView = async () => {
-    if (!onListFlowProjects) return
+    if (!onListFlowProjects || selectDisabled) return
     setView('dates')
     if (dateProjects.length === 0) {
       setDateLoading(true)
@@ -95,6 +95,7 @@ function SceneSelect({
   }
 
   const pickDate = async (project) => {
+    if (selectDisabled) return
     setSelectedDate(project)
     setView('media')
     setDateMedia([])
@@ -328,7 +329,11 @@ function SceneSelect({
             <div
               key={`dmedia_${item.mediaId}`}
               className={`scene-dropdown-item gallery-item${value === GALLERY_PREFIX + item.mediaId ? ' selected' : ''}`}
-              onClick={() => { onChange(GALLERY_PREFIX + item.mediaId); setOpen(false) }}
+              onClick={() => {
+                if (selectDisabled) return
+                onChange(GALLERY_PREFIX + item.mediaId)
+                setOpen(false)
+              }}
             >
               <img src={item.url} alt="" className="scene-dropdown-thumb" />
               <span className="scene-dropdown-item-label">
@@ -343,9 +348,20 @@ function SceneSelect({
 }
 
 // 빈 패널에서 디스크 이미지로 첫 페어를 시작할 때 쓰는 미니 업로드 CTA
-function EmptyStateUpload({ onUploadFromDisk, onAdded, disabled = false }) {
+function EmptyStateUpload({
+  onUploadFromDisk, onAdded, disabled = false,
+  onListFlowProjects, onFetchProjectGallery,
+}) {
   const inputRef = useRef(null)
   const [busy, setBusy] = useState(false)
+  const [browseOpen, setBrowseOpen] = useState(false)
+  const [view, setView] = useState('dates') // 'dates' | 'media'
+  const [projects, setProjects] = useState([])
+  const [projectsLoading, setProjectsLoading] = useState(false)
+  const [selectedProject, setSelectedProject] = useState(null)
+  const [media, setMedia] = useState([])
+  const [mediaLoading, setMediaLoading] = useState(false)
+
   const handleChange = async (e) => {
     const file = e.target.files?.[0]
     e.target.value = ''
@@ -364,6 +380,43 @@ function EmptyStateUpload({ onUploadFromDisk, onAdded, disabled = false }) {
       setBusy(false)
     }
   }
+
+  const openArchive = async () => {
+    if (disabled || !onListFlowProjects) return
+    setBrowseOpen(true)
+    setView('dates')
+    setSelectedProject(null)
+    setMedia([])
+    if (projects.length === 0) {
+      setProjectsLoading(true)
+      try {
+        const result = await onListFlowProjects()
+        if (result?.success) setProjects(result.items || [])
+      } catch (e) {
+        console.error('[EmptyStateUpload] list projects error:', e)
+      } finally {
+        setProjectsLoading(false)
+      }
+    }
+  }
+
+  const pickDate = async (project) => {
+    if (disabled) return
+    setSelectedProject(project)
+    setView('media')
+    setMedia([])
+    if (!onFetchProjectGallery) return
+    setMediaLoading(true)
+    try {
+      const result = await onFetchProjectGallery(project.projectId)
+      if (result?.success) setMedia(result.items || [])
+    } catch (e) {
+      console.error('[EmptyStateUpload] fetch project gallery error:', e)
+    } finally {
+      setMediaLoading(false)
+    }
+  }
+
   return (
     <div className="video-panel-empty-upload">
       <button
@@ -380,6 +433,58 @@ function EmptyStateUpload({ onUploadFromDisk, onAdded, disabled = false }) {
         style={{ display: 'none' }}
         onChange={handleChange}
       />
+
+      {onListFlowProjects && !browseOpen && (
+        <button
+          className="btn-upload-from-disk"
+          disabled={disabled}
+          onClick={openArchive}
+          style={{ marginLeft: 8 }}
+        >
+          📅 Browse Flow Archive
+        </button>
+      )}
+
+      {browseOpen && view === 'dates' && (
+        <div className="empty-archive-list">
+          <button
+            className="empty-archive-back"
+            onClick={() => setBrowseOpen(false)}
+          >← Cancel</button>
+          {projectsLoading && <div>⏳ Loading projects...</div>}
+          {!projectsLoading && projects.length === 0 && <div>No projects found</div>}
+          {projects.map(p => (
+            <button
+              key={p.projectId}
+              className="empty-archive-date"
+              disabled={disabled}
+              onClick={() => pickDate(p)}
+            >{p.title}</button>
+          ))}
+        </div>
+      )}
+
+      {browseOpen && view === 'media' && (
+        <div className="empty-archive-list">
+          <button
+            className="empty-archive-back"
+            onClick={() => setView('dates')}
+          >← {selectedProject?.title || 'Dates'}</button>
+          {mediaLoading && <div>⏳ Loading images...</div>}
+          {!mediaLoading && media.length === 0 && <div>No uploaded images</div>}
+          {media.map(item => (
+            <button
+              key={item.mediaId}
+              className="empty-archive-image"
+              disabled={disabled}
+              onClick={() => { if (!disabled) onAdded(item.mediaId) }}
+            >
+              {item.url && <img src={item.url} alt="" style={{ width: 32, height: 32, objectFit: 'cover', marginRight: 6 }} />}
+              {item.displayName || item.mediaId.substring(0, 16) + '...'}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -563,9 +668,11 @@ export default function FrameToVideoPanel({
     return (
       <div className="video-panel-empty">
         <p>🎞️ {t('frameToVideo.noScenesWithMedia')}</p>
-        {onUploadFromDisk && (
+        {(onUploadFromDisk || onListFlowProjects) && (
           <EmptyStateUpload
             onUploadFromDisk={onUploadFromDisk}
+            onListFlowProjects={onListFlowProjects}
+            onFetchProjectGallery={onFetchProjectGallery}
             disabled={disabled}
             onAdded={(mediaId) => {
               onUpdate([{
