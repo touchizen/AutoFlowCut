@@ -83,6 +83,8 @@ IPC 핸들러는 main.js에 이미 추가됨. UI/Hook 작업 필요.
 
 - [ ] **테스트 인프라**: Node 18 + jsdom 27 ESM 충돌로 `npm run test:run` 풀 스위트가 깨짐 (`@exodus/bytes/encoding-lite.js` ERR_REQUIRE_ESM). `.nvmrc`/`engines`로 Node 20+ 강제하거나 jsdom 다운그레이드 — 풀 스위트 그린 복구 필요.
 - [ ] **`uploadReference(base64, category)` cleanup**: `category` 인자가 IPC payload까지 전달되지 않고 로그용으로만 쓰임 ([useFlowAPI.js:124](src/hooks/useFlowAPI.js:124), [flow-api.js:1455](electron/ipc/flow-api.js:1455)). Flow `/flow/uploadImage` 스펙상 category를 안 받으니, 시그니처에서 빼거나(권장) 정말 필요하면 IPC body에 추가. 현재 호출처: reference 업로드(`'style'`), F2V 디스크 업로드(`'frame'`).
+- [ ] **Gallery: Flow archive 뷰 미디어 포함**: 사용자가 Flow webview UI로 직접 업로드한 이미지(`/project/<id>/archive` 날짜별 뷰)가 우리 Gallery 드롭다운에 안 뜸. 현재 `fetchGallery` ([flow-api.js:1564](electron/ipc/flow-api.js:1564))는 `projectInitialData.projectContents.media[]`만 읽는데, archive 업로드는 다른 namespace에 들어가는 듯. Flow archive 뷰가 호출하는 API endpoint를 DevTools Network에서 캡쳐해서 추가 fetch + merge 필요.
+- [ ] **Gallery refresh 버튼**: [FrameToVideoPanel.jsx:174](src/components/FrameToVideoPanel.jsx:174) 현재 `galleryItems`가 비어 있을 때만 `📂 Load Gallery` 버튼 노출. 1개라도 로드되면 다시 fetch할 UI가 없어서 stale 상태. 항목 유무와 무관하게 "🔄 Refresh Gallery" 항상 노출 (또는 드롭다운 open 시 stale > 30s면 자동 refresh).
 
 ---
 
