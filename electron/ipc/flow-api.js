@@ -1622,28 +1622,20 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       // 모든 이미지 (업로드 + 생성). 비디오는 제외.
       const uploaded = media.filter(m => m?.image && !m?.video)
 
-      // 응답에 fifeUrl이 없으므로 media.getMediaUrlRedirect로 mediaId별 CDN URL 해소.
-      // 이 endpoint는 tRPC 표준 ?input={...} 가 아니라 plain ?name=<uuid> 형식이고
-      // 307로 CDN URL을 돌려준다. ses.fetch는 redirect:'manual'을 거부해서 Node fetch
-      // 폴백 시 401(쿠키 없음) — 그래서 Flow webview 안에서 직접 fetch 실행한다.
-      // 브라우저 fetch는 redirect:'manual' 지원 + 자동으로 Flow 세션 쿠키 적용.
+      // media.getMediaUrlRedirect 는 ?name=<uuid> 만 받고 307로 CDN URL을 돌려준다.
+      // 브라우저 fetch + redirect:'manual' 은 opaqueredirect (status=0, Location 못 읽음)
+      // 으로 막히고, ses.fetch + redirect:'manual' 은 cancel 됨.
+      // → ses.fetch 자동 follow로 두고 이미지 바이트를 base64 data URL 로 변환.
+      //   ses.fetch는 Flow 세션 쿠키를 들고 다니므로 인증 OK.
       const resolveMediaUrl = async (mediaId) => {
         const url = `${MEDIA_REDIRECT_URL}?name=${encodeURIComponent(mediaId)}`
-        const r = await flowPageFetch(url, {
-          method: 'GET',
+        const resp = await sessionFetch(url, {
           headers: { 'Authorization': `Bearer ${token}` },
-          redirect: 'manual',
         })
-        if (r?.location) return r.location
-        // follow된 경우 최종 url
-        if (r?.redirected && r?.url && r.url !== url) return r.url
-        // 어쩌다 200 + JSON 본문일 경우
-        if (r?.ok && r?.text) {
-          const data = parseFlowResponse(r.text)
-          const j = data?.result?.data?.json
-          if (j?.url || j?.redirectUrl) return j.url || j.redirectUrl
-        }
-        throw new Error(`status=${r?.status} loc=${r?.location ? 'y' : 'n'} red=${r?.redirected ? 'y' : 'n'}`)
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+        const buf = await resp.arrayBuffer()
+        const ct = resp.headers?.get?.('content-type') || 'image/jpeg'
+        return `data:${ct};base64,${Buffer.from(buf).toString('base64')}`
       }
 
       const items = await Promise.all(uploaded.map(async (m) => {
