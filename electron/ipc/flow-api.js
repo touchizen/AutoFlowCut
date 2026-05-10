@@ -1676,6 +1676,12 @@ export function registerFlowAPIIPC(ipcMain, deps) {
         req.on('redirect', (_status, _method, redirectUrl) => {
           req.abort()
           if (!isAllowedMediaHost(redirectUrl)) {
+            try {
+              const host = new URL(redirectUrl).hostname
+              console.warn('[Gallery] redirect host blocked:', host)
+            } catch {
+              console.warn('[Gallery] redirect URL malformed')
+            }
             settle(reject, new Error('redirect host not allowed'))
             return
           }
