@@ -262,6 +262,36 @@ function App() {
     }
   }, [videoScenes, framePairs])
 
+  // 로컬 파일 → Flow uploadImage → galleryItems 에 추가
+  // F2V Start/End Image 드롭다운에서 "📁 Upload from disk" 로 호출됨
+  const handleUploadGalleryImage = async (file) => {
+    if (!file) return { success: false, error: 'No file' }
+    try {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result)
+        reader.onerror = () => reject(reader.error || new Error('FileReader failed'))
+        reader.readAsDataURL(file)
+      })
+      const base64 = String(dataUrl).split(',')[1] || ''
+      if (!base64) return { success: false, error: 'Empty file' }
+
+      const result = await flowAPI.uploadReference(base64, 'frame')
+      if (!result?.success || !result.mediaId) {
+        return { success: false, error: result?.error || 'Upload failed' }
+      }
+
+      setGalleryItems(prev => {
+        if (prev.some(it => it.mediaId === result.mediaId)) return prev
+        return [{ mediaId: result.mediaId, url: dataUrl, local: true }, ...prev]
+      })
+      return { success: true, mediaId: result.mediaId, url: dataUrl }
+    } catch (e) {
+      console.error('[Gallery] upload from disk failed:', e)
+      return { success: false, error: e.message }
+    }
+  }
+
   // Gallery 로드
   const loadGallery = async () => {
     if (galleryLoading) return
@@ -269,7 +299,14 @@ function App() {
     try {
       const result = await flowAPI.fetchGallery()
       if (result.success) {
-        setGalleryItems(result.items || [])
+        // 로컬 업로드 항목(local:true) 보존 + 서버 결과 merge.
+        // 서버가 같은 mediaId를 이미 반환하면 서버 버전 우선.
+        const serverItems = result.items || []
+        setGalleryItems(prev => {
+          const serverIds = new Set(serverItems.map(it => it.mediaId))
+          const localOnly = prev.filter(it => it.local && !serverIds.has(it.mediaId))
+          return [...localOnly, ...serverItems]
+        })
       } else {
         console.warn('[Gallery] Load failed:', result.error)
       }
@@ -986,6 +1023,7 @@ function App() {
               galleryItems={galleryItems}
               galleryLoading={galleryLoading}
               onLoadGallery={loadGallery}
+              onUploadFromDisk={handleUploadGalleryImage}
               seedNo={settings.seedNo}
               seedLocked={settings.seedLocked}
               onSeedChange={(v) => setSettings(s => ({ ...s, seedNo: v }))}

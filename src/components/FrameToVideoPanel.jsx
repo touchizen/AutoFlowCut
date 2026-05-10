@@ -53,10 +53,32 @@ const GALLERY_PREFIX = 'gallery::'
 function SceneSelect({
   value, onChange, placeholder, disabled: selectDisabled,
   options, getLabel, onThumbClick,
-  galleryItems, galleryLoading, onLoadGallery
+  galleryItems, galleryLoading, onLoadGallery, onUploadFromDisk
 }) {
   const [open, setOpen] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const fileInputRef = useRef(null)
   const ref = useRef(null)
+
+  const handleFileChosen = async (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // allow re-selecting same file
+    if (!file || !onUploadFromDisk || selectDisabled) return
+    setUploading(true)
+    try {
+      const result = await onUploadFromDisk(file)
+      if (result?.success && result.mediaId) {
+        onChange(GALLERY_PREFIX + result.mediaId)
+        setOpen(false)
+      } else {
+        console.warn('[SceneSelect] upload failed:', result?.error)
+      }
+    } catch (err) {
+      console.error('[SceneSelect] upload error:', err)
+    } finally {
+      setUploading(false)
+    }
+  }
 
   // 외부 클릭 시 닫기
   useEffect(() => {
@@ -158,8 +180,73 @@ function SceneSelect({
               <span className="scene-dropdown-item-label">📂 Load Gallery</span>
             </div>
           )}
+
+          {onUploadFromDisk && (
+            <div
+              className="scene-dropdown-item gallery-upload-btn"
+              onClick={(e) => {
+                e.stopPropagation()
+                if (selectDisabled || uploading) return
+                fileInputRef.current?.click()
+              }}
+            >
+              <span className="scene-dropdown-empty-thumb" />
+              <span className="scene-dropdown-item-label">
+                {uploading ? '⏳ Uploading...' : '📁 Upload from disk'}
+              </span>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                style={{ display: 'none' }}
+                onChange={handleFileChosen}
+              />
+            </div>
+          )}
         </div>
       )}
+    </div>
+  )
+}
+
+// 빈 패널에서 디스크 이미지로 첫 페어를 시작할 때 쓰는 미니 업로드 CTA
+function EmptyStateUpload({ onUploadFromDisk, onAdded, disabled = false }) {
+  const inputRef = useRef(null)
+  const [busy, setBusy] = useState(false)
+  const handleChange = async (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file || disabled) return
+    setBusy(true)
+    try {
+      const result = await onUploadFromDisk(file)
+      if (result?.success && result.mediaId) {
+        onAdded(result.mediaId)
+      } else {
+        console.warn('[EmptyStateUpload] upload failed:', result?.error)
+      }
+    } catch (err) {
+      console.error('[EmptyStateUpload] upload error:', err)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="video-panel-empty-upload">
+      <button
+        className="btn-upload-from-disk"
+        disabled={busy || disabled}
+        onClick={() => { if (!disabled) inputRef.current?.click() }}
+      >
+        {busy ? '⏳ Uploading...' : '📁 Upload image from disk'}
+      </button>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        style={{ display: 'none' }}
+        onChange={handleChange}
+      />
     </div>
   )
 }
@@ -188,6 +275,7 @@ export { GALLERY_PREFIX }
 export default function FrameToVideoPanel({
   scenes, videoScenes = [], framePairs, onUpdate, promptSource = 'image', onPromptSourceChange,
   onShowSceneDetail, onVideoRetry, disabled, t, galleryItems, galleryLoading, onLoadGallery,
+  onUploadFromDisk,
   seedNo = null, seedLocked = false, onSeedChange, onSeedLockToggle, onSeedRandom,
 }) {
   const showSeedUI = typeof onSeedChange === 'function'
@@ -338,10 +426,28 @@ export default function FrameToVideoPanel({
     return `#${idx} ${scene.prompt?.substring(0, 25) || scene.id}`
   }
 
-  if (availableScenes.length === 0) {
+  if (availableScenes.length === 0 && framePairs.length === 0) {
     return (
       <div className="video-panel-empty">
         <p>🎞️ {t('frameToVideo.noScenesWithMedia')}</p>
+        {onUploadFromDisk && (
+          <EmptyStateUpload
+            onUploadFromDisk={onUploadFromDisk}
+            disabled={disabled}
+            onAdded={(mediaId) => {
+              onUpdate([{
+                id: `fp_${getNextPairId([])}`,
+                startSceneId: GALLERY_PREFIX + mediaId,
+                endSceneId: '',
+                prompt: '',
+                videoPrompt: '',
+                customPrompt: '',
+                status: 'waiting',
+                selected: true,
+              }])
+            }}
+          />
+        )}
       </div>
     )
   }
@@ -406,6 +512,7 @@ export default function FrameToVideoPanel({
                 galleryItems={galleryItems}
                 galleryLoading={galleryLoading}
                 onLoadGallery={onLoadGallery}
+                onUploadFromDisk={onUploadFromDisk}
               />
             </div>
 
@@ -425,6 +532,7 @@ export default function FrameToVideoPanel({
                 galleryItems={galleryItems}
                 galleryLoading={galleryLoading}
                 onLoadGallery={onLoadGallery}
+                onUploadFromDisk={onUploadFromDisk}
               />
             </div>
 
