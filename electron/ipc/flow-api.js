@@ -1622,7 +1622,26 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       // 사용자가 업로드한 이미지만 추출 (image.userUploadedImage 있는 항목)
       const uploaded = media.filter(m => m?.image?.userUploadedImage && !m?.video)
 
-      // 응답에 fifeUrl이 없으므로 mediaId별로 media.getMediaUrlRedirect 병렬 해소
+      // 응답에 fifeUrl이 없으므로 media.getMediaUrlRedirect로 mediaId별 CDN URL 해소.
+      // ⚠️ 이 endpoint는 tRPC 표준 ?input={...} 가 아니라 ?name=<uuid>&mediaUrlType=...
+      // 형식의 query param을 받는다 (AutoFlow extension sidepanel.js:25141 참고).
+      const resolveMediaUrl = async (mediaId) => {
+        const url = `${MEDIA_REDIRECT_URL}?name=${encodeURIComponent(mediaId)}&mediaUrlType=MEDIA_URL_TYPE_UNSPECIFIED`
+        const resp = await sessionFetch(url, {
+          headers: { 'Authorization': `Bearer ${token}` },
+          redirect: 'manual',
+        })
+        // 보통 307 + Location 으로 CDN URL을 돌려줌. follow-mode면 응답에 JSON {url|redirectUrl}.
+        const loc = resp.headers?.get?.('location')
+        if (loc) return loc
+        if (resp.ok) {
+          const text = await resp.text()
+          const data = parseFlowResponse(text)
+          return data?.result?.data?.json?.url || data?.result?.data?.json?.redirectUrl || data?.url || null
+        }
+        throw new Error(`HTTP ${resp.status}`)
+      }
+
       const items = await Promise.all(uploaded.map(async (m) => {
         const mediaId = m.name || m.mediaId || m.id || ''
         if (!mediaId) return null
@@ -1631,8 +1650,12 @@ export function registerFlowAPIIPC(ipcMain, deps) {
         const displayName = wf?.metadata?.displayName || ''
 
         try {
-          const dataUrl = await fetchMediaAsBase64(token, mediaId)
-          return { mediaId, url: dataUrl, displayName }
+          const cdnUrl = await resolveMediaUrl(mediaId)
+          if (!cdnUrl) {
+            console.warn('[Gallery] no URL resolved for', mediaId.substring(0, 8))
+            return null
+          }
+          return { mediaId, url: cdnUrl, displayName }
         } catch (e) {
           console.warn('[Gallery] resolve url failed for', mediaId.substring(0, 8), e.message)
           return null
