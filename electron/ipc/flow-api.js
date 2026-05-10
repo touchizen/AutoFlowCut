@@ -1623,23 +1623,22 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       const uploaded = media.filter(m => m?.image?.userUploadedImage && !m?.video)
 
       // 응답에 fifeUrl이 없으므로 media.getMediaUrlRedirect로 mediaId별 CDN URL 해소.
-      // ⚠️ 이 endpoint는 tRPC 표준 ?input={...} 가 아니라 ?name=<uuid>&mediaUrlType=...
-      // 형식의 query param을 받는다 (AutoFlow extension sidepanel.js:25141 참고).
+      // ⚠️ 이 endpoint는 tRPC 표준 ?input={...} 가 아니라 plain ?name=<uuid> 형식.
+      // (Flow webview Network 캡쳐로 확인 — mediaUrlType 등 추가 파라미터 없음)
+      // ses.fetch는 redirect:'manual'를 거부하므로(Redirect was cancelled) 자동 follow
+      // 시키고, 따라간 후 response.url 에서 최종 CDN URL을 꺼낸다.
       const resolveMediaUrl = async (mediaId) => {
-        const url = `${MEDIA_REDIRECT_URL}?name=${encodeURIComponent(mediaId)}&mediaUrlType=MEDIA_URL_TYPE_UNSPECIFIED`
+        const url = `${MEDIA_REDIRECT_URL}?name=${encodeURIComponent(mediaId)}`
         const resp = await sessionFetch(url, {
           headers: { 'Authorization': `Bearer ${token}` },
-          redirect: 'manual',
         })
-        // 보통 307 + Location 으로 CDN URL을 돌려줌. follow-mode면 응답에 JSON {url|redirectUrl}.
-        const loc = resp.headers?.get?.('location')
-        if (loc) return loc
-        if (resp.ok) {
-          const text = await resp.text()
-          const data = parseFlowResponse(text)
-          return data?.result?.data?.json?.url || data?.result?.data?.json?.redirectUrl || data?.url || null
-        }
-        throw new Error(`HTTP ${resp.status}`)
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+        // ses.fetch가 자동으로 307→200까지 follow한 경우 resp.url이 최종 CDN URL
+        if (resp.url && resp.url !== url) return resp.url
+        // follow 안 된 환경(Node fetch fallback 등)이면 응답 본문에서 추출
+        const text = await resp.text().catch(() => '')
+        const data = parseFlowResponse(text)
+        return data?.result?.data?.json?.url || data?.result?.data?.json?.redirectUrl || null
       }
 
       const items = await Promise.all(uploaded.map(async (m) => {
