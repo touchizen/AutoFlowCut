@@ -14,6 +14,12 @@ This document is the W3 (script writing + review) stage guide for the story-engi
 
 **Bespoke `{lang}` resolution**: when `STATE.md` genre is `bespoke`, the output language (`ko` or `en`) is auto-detected. See SKILL.md 참조 문서 table.
 
+**Output filenames** (5 script files + 1 review per genre):
+- **yadam**: `{title}_기.md`, `_승.md`, `_전.md`, `_결.md`, `{title}_hook.md`, `07_검토.md`
+- **dark-history**: `{title}_part1_setup.md`, `_part2_rising.md`, `_part3_crisis.md`, `_part4_resolution.md`, `{title}_hook.md`, `07_review.md`
+- **bespoke**: same English form as dark-history (`{title}_part1_setup.md`, etc., `{title}_hook.md`, `07_review.md`); content in the language `STATE.md` "Output language:" specifies
+- `{title}_hook.md` is **universal ASCII across all genres**. Hook is written LAST, ~20s duration (universal rules: [`meta-prompts/_common/hook_principles.md`](../../meta-prompts/_common/hook_principles.md)).
+
 **Bespoke genre additional REQUIRED read**: `_story_source/_meta_supplement.md` — read alongside the universal base; **supplement WINS on conflicts**. The supplement specifies the per-episode length target, voice register, vocabulary, and benchmark callouts derived from the user's 3–5 reference scripts.
 
 ---

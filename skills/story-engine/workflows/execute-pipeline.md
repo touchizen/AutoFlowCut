@@ -133,10 +133,16 @@ that match the output patterns AND were touched within the wave's runtime.
 
 Notation:
 - `{title}` = episode title slug from STATE.md
-- `{part}` = `hook` / `1` / `2` / `3` / `4` — `hook` is the cold-open at t=0 on
-  the full timeline; `1..4` are the four narrative parts (Setup / Rising /
-  Crisis / Resolution) that follow it in order. Some Wave I/O lines list
-  `{part}` to cover all 5 values uniformly.
+- `{part}` ranges over **5 values** — the universal cold-open `hook` plus the
+  four narrative parts whose names depend on genre:
+  - **yadam**: `hook | 기 | 승 | 전 | 결`
+  - **dark-history**: `hook | setup | rising | crisis | resolution`
+  - **bespoke**: `hook | setup | rising | crisis | resolution` (English ASCII —
+    same as dark-history regardless of output language)
+  The string `hook` is **universal across all genres** (ASCII, lowercase). For
+  any wave that emits files like `final_{part}.mp3`, the {part} value substitutes
+  literally — so yadam produces `final_기.mp3`, dark-history produces
+  `final_setup.mp3`, both produce `final_hook.mp3`.
 - Trailing `/` denotes a directory
 - `(none)` means the wave has no predecessor file inputs (W1 only)
 

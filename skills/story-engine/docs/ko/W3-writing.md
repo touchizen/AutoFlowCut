@@ -3,10 +3,11 @@
 이 문서는 story-engine 스킬의 W3(대본 작성 + 검토) 단계 가이드입니다.
 
 > **📋 출력 파일명 — genre별로 다름**
-> 본 문서 본문의 파일 구조 / 출력 파일명은 yadam (한국어) 기준으로 표기되어 있습니다. 다른 장르는 아래 매핑으로 substitute:
-> - **yadam**: `{title}_기.md` / `_승.md` / `_전.md` / `_결.md` / `07_검토.md`
-> - **dark-history**: `{title}_part1_setup.md` / `_part2_rising.md` / `_part3_crisis.md` / `_part4_resolution.md` / `07_review.md`
-> - **bespoke**: same English form as dark-history (`{title}_part1_setup.md` 등, `07_review.md`); content in `STATE.md` "Output language:" 필드
+> 본 문서 본문의 파일 구조 / 출력 파일명은 yadam (한국어) 기준으로 표기되어 있습니다. 다른 장르는 아래 매핑으로 substitute (모두 5개 스크립트 + 1개 리뷰 = 6개 파일):
+> - **yadam**: `{title}_기.md` / `_승.md` / `_전.md` / `_결.md` / `{title}_hook.md` / `07_검토.md`
+> - **dark-history**: `{title}_part1_setup.md` / `_part2_rising.md` / `_part3_crisis.md` / `_part4_resolution.md` / `{title}_hook.md` / `07_review.md`
+> - **bespoke**: same English form as dark-history (`{title}_part1_setup.md` 등, `{title}_hook.md`, `07_review.md`); content in `STATE.md` "Output language:" 필드
+> - `{title}_hook.md`는 **모든 장르 공통 ASCII 파일명** — Hook은 마지막에 작성, 약 20초 분량 (자세한 규칙은 [`meta-prompts/_common/hook_principles.md`](../../meta-prompts/_common/hook_principles.md))
 >
 > 자세한 filename convention: `workflows/execute-pipeline.md` § "Filename convention varies by genre".
 

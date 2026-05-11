@@ -35,6 +35,7 @@ Read these artifacts (some may be absent — handle gracefully). **Filenames var
 | Fact-check | `02_팩트체크.md` | `02_factcheck.md` | `02_factcheck.md` | exact filename per genre. All three genres including bespoke emit fact-check — never skip. |
 | Research | `03_자료수집.md` | `03_research.md` | `03_research.md` | exact filename per genre. |
 | Script parts | `{title}_기.md`, `_승.md`, `_전.md`, `_결.md` | `{title}_part1_setup.md`, `_part2_rising.md`, `_part3_crisis.md`, `_part4_resolution.md` | `{title}_part1_setup.md`, `_part2_rising.md`, `_part3_crisis.md`, `_part4_resolution.md` (English filenames regardless of output language) | per-genre filename pattern |
+| Hook (schema v2+) | `{title}_hook.md` | `{title}_hook.md` | `{title}_hook.md` | universal ASCII filename. **schema: v1 episodes do not have this file** — diagnosis skips it and notes "schema=v1, hook lives inside part1". |
 | Meta supplement | (n/a) | (n/a) | `_meta_supplement.md` | bespoke-only; absence = genre is NOT bespoke |
 | Bespoke synthesis | (n/a) | (n/a) | `04_success_synthesis.md` | bespoke-only; distinct from `04_synopsis.md` |
 | Bespoke ref analysis | (n/a) | (n/a) | `01_references_analysis.md` | bespoke-only |
@@ -79,7 +80,8 @@ Spawn a subagent (`general-purpose`) to apply the engagement principle
 script.
 
 The subagent reads (genre-conditional):
-- All script part files (per the filename table in Step 2)
+- All script part files (per the filename table in Step 2) — **including `{title}_hook.md` when STATE.md `Schema: v2`**. For schema v1 (no separate hook file), the hook content lives at the very top of part1 and must be diagnosed in place.
+- The universal hook principles: `meta-prompts/_common/hook_principles.md` — engagement diagnosis MUST evaluate the hook against the 5-element checklist regardless of schema version.
 - The genre's meta-prompts:
   - **yadam**: `야담_시놉시스_작성_지침.md`, `야담_시나리오_작성_지침.md`, `야담_서술기법_가이드.md`, `야담_서스펜스_기법.md`
   - **dark-history**: `meta-prompts/dark-history/synopsis_guidelines.md`, `screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md`
