@@ -253,8 +253,12 @@ orchestrator MUST have already completed ALL of the following, in order:
    and similar audits will flag.
 3. **`▸ Starting W{N}-0 <name>…`** — the first sub-step status line is emitted
    immediately after the START banner.
+4. **`W_progress.json` pre-written** — `waves.W{N} = { "status": "running",
+   "started_at": "<wave_start_ts>" }` is merged into `W_progress.json` (see
+   "Orchestrator verification steps" below). The same `wave_start_ts` value
+   reused across items 2 and 4 for consistency.
 
-If the orchestrator catches itself about to call `Agent` and any of the three
+If the orchestrator catches itself about to call `Agent` and any of the four
 above is missing, it MUST stop, emit the missing pieces retroactively (with a
 short `(retroactive)` tag if helpful), and THEN proceed with the Agent call.
 "Just continue, the user will figure it out" is not acceptable — the cost of
@@ -264,6 +268,23 @@ Symmetric DONE rule: after the wave's Agent call returns, the orchestrator MUST
 emit (a) `✅ W{N}-{last} done …` final sub-step line, (b) the DONE banner
 (`──`), and (c) append `wave_completed: W{N} @ {ISO-8601}` to STATE.md, in that
 order, before moving to W{N+1}.
+
+**Audit-line preservation rule (orchestrator post-return check)**
+
+Subagents update STATE.md (the `W{N}` row's Status column — see "subagent
+finalize protocol" below) and may rewrite the file from stale in-memory content,
+inadvertently dropping the `wave_started:` / `wave_completed:` audit lines this
+checklist appends. After every Agent return, the orchestrator MUST:
+
+1. Re-read STATE.md.
+2. Confirm `wave_started: W{N} @ …` is still present. If absent, re-append it
+   with the original `wave_start_ts` value (treat as `(retroactive)`).
+3. After emitting the DONE banner, confirm `wave_completed: W{N} @ …` is the
+   most recent matching line for this wave.
+
+Subagent prompts MUST include the directive: *"STATE.md contains audit lines
+(`wave_started:` / `wave_completed:`) that you DID NOT write — preserve them
+verbatim when editing the file. Only mutate your own `W{N}` row."*
 
 **Intra-wave sub-step reporting** (orchestrator, mandatory)
 
@@ -556,7 +577,7 @@ counts as one round, even when no formal review loop runs).
    }
    ```
 
-3. **Update `STATE.md`**: set the `W{N}` row's Status column to `done` and the Summary column to a one-liner (e.g., `Synopsis + preflight — 1 round, passed, 2026-04-16`).
+3. **Update `STATE.md`**: set the `W{N}` row's Status column to `done` and the Summary column to a one-liner (e.g., `Synopsis + preflight — 1 round, passed, 2026-04-16`). **Preserve all audit lines** (`wave_started:` / `wave_completed:` appended by the orchestrator) verbatim — they are not yours to edit. Only mutate your own `W{N}` row.
 
 4. **Return report** (the completion signal that closes the subagent) MUST include the numeric fields `review_rounds_used` and `issues_found` so the orchestrator can verify without re-reading the JSON.
 
@@ -795,7 +816,7 @@ Rules:
 
 ### Orchestrator verification steps (run after every `Agent` return)
 
-1. **Before spawning** the subagent, record `wave_start_ts = <ISO timestamp>`. The orchestrator MUST also pre-write `waves.W{N}` in `W_progress.json` with `{ "status": "running", "started_at": "<wave_start_ts>" }` (merge — do not clobber other waves). The subagent will later merge its own fields (status, completed_at, …) into the same entry; the `started_at` field MUST survive.
+1. **Before spawning** the subagent, record `wave_start_ts = <ISO timestamp>`. The orchestrator MUST also pre-write `waves.W{N}` in `W_progress.json` with `{ "status": "running", "started_at": "<wave_start_ts>" }` (merge — do not clobber other waves). The subagent will later merge its own fields (status, completed_at, …) into the same entry; the `started_at` field MUST survive. *(This is item 4 of the "Wave entry compliance — pre-spawn checklist" above; the same `wave_start_ts` value flows through STATE.md's `wave_started:` line and this `W_progress.json` entry.)*
 2. **After return**, list actual disk changes under the episode directory:
    ```bash
    find {episode_dir} -newer {wave_start_ts} -not -path '*/.git/*'
