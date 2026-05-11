@@ -66,9 +66,9 @@ Craft 점수가 9.5 넘어도 E0~E3 한 항목이라도 fail이면 revise. Craft
 immersion)이 가장 강력한지는 전체 arc를 다 본 다음에야 판단 가능. 훅을 먼저
 쓰면 "옛날 옛적에…" 같은 평범한 도입부가 되기 쉬움.
 
-**Hook은 별도 파일** — `{title}_hook.md`. `{title}_기.md` / `{title}_setup.md`
-안에 hook 내용을 중복으로 적지 않는다 — part1은 hook 이후의 본격적인
-내러티브로 시작. Hook을 분리하면 작가는 hook만 단독으로 반복 다듬기 가능
+**Hook은 별도 파일** — `{title}_hook.md`. `{title}_기.md` (yadam) /
+`{title}_part1_setup.md` (dark-history / bespoke) 안에 hook 내용을 중복으로
+적지 않는다 — part1은 hook 이후의 본격적인 내러티브로 시작. Hook을 분리하면 작가는 hook만 단독으로 반복 다듬기 가능
 (다른 part 재생성 없이 hook A/B 테스트), 리뷰어는 영상 전체 retention의 핵심
 변수인 첫 30초에 집중 가능.
 
