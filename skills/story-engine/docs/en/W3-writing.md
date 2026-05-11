@@ -93,7 +93,6 @@ are READ-ONLY for W3. Downstream artifacts (`segments_{part}/`,
 produced by W4–W8 and **not** by W3 — for the full episode tree across all
 waves, see `workflows/execute-pipeline.md` § Wave I/O contract (the
 single source of truth).
-```
 
 ### Word count distribution (target: 2,000 – 3,000 words, ~13–20 min at ~150 wpm narration)
 
