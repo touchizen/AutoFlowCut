@@ -260,13 +260,17 @@ media/sfx/                        ← final (full timeline)
 
 ---
 
-## 5-3. Full-audio merge + SFX timecode conversion
+## 5-3. Full-audio merge + SFX timecode conversion (5-part)
 
-Merge the four parts' `final_{part}.mp3` and `final_{part}.srt` into `media/`. Convert SFX files from per-part to full-timeline timecodes and save to `media/sfx/`.
+Merge the **five parts**' `final_{part}.mp3` and `final_{part}.srt` into
+`media/`. Merge order is `hook → 1 → 2 → 3 → 4` (hook leads the full timeline
+at offset 0). Convert SFX files from per-part to full-timeline timecodes and
+save to `media/sfx/`.
 
 **mp3 merge:**
 ```bash
 # merge_all.txt
+file 'final_hook.mp3'
 file 'final_setup.mp3'
 file 'final_rising.mp3'
 file 'final_crisis.mp3'
@@ -277,23 +281,24 @@ ffmpeg -y -f concat -safe 0 -i merge_all.txt -c copy media/final_full.mp3
 
 **SRT merge:**
 - Add each preceding part's cumulative length as offset to each part's SRT timecodes
-- Measure each `final_{part}.mp3` length with `ffprobe` to compute offsets
+- Measure each `final_{part}.mp3` length with `ffprobe` to compute offsets (hook first)
 - Renumber subtitles from 1 continuously
 
 **Full SFX timecode conversion:**
 - Measure each part's `final_{part}.mp3` length with ffprobe → compute per-part offsets
+- Hook part's offset is `0` (it starts the full timeline)
 - Convert per-part timecodes in `sfx/` originals to full-timeline timecodes
 - Save converted files to `media/sfx/`
 
 ```bash
-# Example per-part offsets (ep10)
-# setup: 0s, rising: 395s (6:35), crisis: 776s (12:56), resolution: 1379s (22:59)
+# Example per-part offsets (ep10 with hook = 22s)
+# hook: 0s, setup: 22s (0:22), rising: 417s (6:57), crisis: 798s (13:18), resolution: 1401s (23:21)
 # sfx/13_marketplace_0201.mp3 (rising 2:01 = 121s)
-# → media/sfx/13_marketplace_0836.mp3 (395 + 121 = 516s = 8:36)
+# → media/sfx/13_marketplace_0858.mp3 (417 + 121 = 538s = 8:58)
 ```
 
 **Final output:**
-- `media/final_full.mp3` — full audio (setup + rising + crisis + resolution concatenated)
+- `media/final_full.mp3` — full audio (hook + setup + rising + crisis + resolution concatenated)
 - `media/final_full.srt` — full subtitles (offsets applied)
 - `media/sfx/*.mp3` — SFX (MMSS timecodes on the full timeline)
 

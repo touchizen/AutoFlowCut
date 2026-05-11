@@ -51,13 +51,27 @@ Craft 점수가 9.5 넘어도 E0~E3 한 항목이라도 fail이면 revise. Craft
 
 `{lang}`은 STATE.md의 "Output language:" 필드 (`ko` 또는 `en`)에서 해석.
 
-시놉시스를 바탕으로 **훅 + 4파트를 모두 작성한 다음, 검토 단계에서 통합 검토**한다 (yadam은 기승전결, dark-history / bespoke는 setup / rising / crisis / resolution 또는 등가 4-act 구조).
+시놉시스를 바탕으로 **4파트(기/승/전/결 또는 setup/rising/crisis/resolution)를 먼저 작성**한 다음, **전체 흐름을 본 상태에서 Hook을 마지막에 작성**하고, 그 후 통합 검토한다.
 
 ### 작성 순서
 
 ```
-훅(오프닝) → 기 → 승 → 전 → 결 → (모두 완성 후) 검토
+기 → 승 → 전 → 결 → 훅(마지막) → (모두 완성 후) 검토
 ```
+
+**Hook을 마지막에 쓰는 이유** — 콜드 오픈의 유일한 목적은 첫 20–30초 안에
+시청자의 궁금증/기대감을 즉시 점화하는 것. 어떤 hook 유형(Act III에서
+가져온 flash-forward / mystery opening / provocative statement / sensory
+immersion)이 가장 강력한지는 전체 arc를 다 본 다음에야 판단 가능. 훅을 먼저
+쓰면 "옛날 옛적에…" 같은 평범한 도입부가 되기 쉬움.
+
+**Hook은 별도 파일** — `{title}_hook.md`. `{title}_기.md` / `{title}_setup.md`
+안에 hook 내용을 중복으로 적지 않는다 — part1은 hook 이후의 본격적인
+내러티브로 시작. Hook을 분리하면 작가는 hook만 단독으로 반복 다듬기 가능
+(다른 part 재생성 없이 hook A/B 테스트), 리뷰어는 영상 전체 retention의 핵심
+변수인 첫 30초에 집중 가능.
+
+**Hook 길이 타깃**: 약 20초 분량의 나레이션 (80–130자 한국어 / 50–80 단어 영어).
 
 ### 파일 구조
 
@@ -70,10 +84,11 @@ ep{번호}/                    ← yadam 기준
 ├── 03_자료수집.md
 ├── 04_시놉시스.md
 ├── 05_프리플라이트.md
-├── {제목}_기.md           ← 도입부
+├── {제목}_기.md           ← 도입부 (hook 이후)
 ├── {제목}_승.md           ← 전개부
 ├── {제목}_전.md           ← 위기/반전
 ├── {제목}_결.md           ← 결말
+├── {제목}_hook.md         ← 콜드 오픈 (약 20초, 마지막에 작성)
 ├── 07_검토.md
 ├── references.csv          ← 인물/장소/스타일 레퍼런스
 ├── {제목}_scenes.csv       ← 씬별 데이터 (프롬프트, 자막, 타임코드)

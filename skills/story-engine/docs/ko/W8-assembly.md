@@ -46,8 +46,8 @@ W5에서 생성한 오디오 파일을 AutoFlowCut에 임포트한다.
 ```
 ep{번호}/
 └── media/
-    ├── 영상.mp3              ← 전체 나레이션 오디오 (또는 final_full.mp3)
-    ├── 영상.srt              ← 전체 자막 (또는 final_full.srt)
+    ├── 영상.mp3              ← 전체 나레이션 오디오 (또는 final_full.mp3 — hook + 기 + 승 + 전 + 결 순서로 병합, hook이 t=0 에서 시작)
+    ├── 영상.srt              ← 전체 자막 (또는 final_full.srt — 오프셋 적용; hook 자막이 첫 블록)
     ├── voices/               ← 인물별 대사 TTS (캐릭터별 서브폴더 필수)
     │   ├── 머슴/
     │   │   ├── 003_머슴_000109.mp3

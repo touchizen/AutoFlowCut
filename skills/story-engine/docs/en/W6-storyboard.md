@@ -105,13 +105,16 @@ AutoFlowCut MCP: get_schema({ type: "prompt-image" }) → prompt-writing guide
 - Distinguish dialogue-centered scenes from description-centered scenes
 - Average ~10 s per scene (for a 28-minute video, ~150–250 scenes)
 
-**Full-timeline part offset calculation:**
+**Full-timeline part offset calculation (5-part):**
 ```
-setup: 0
-rising: ffprobe(final_setup.mp3) cumulative
-crisis: setup + rising
-resolution: setup + rising + crisis
+hook:       0
+setup:      ffprobe(final_hook.mp3)
+rising:     setup + ffprobe(final_setup.mp3)
+crisis:     rising + ffprobe(final_rising.mp3)
+resolution: crisis + ffprobe(final_crisis.mp3)
 ```
+
+The hook's scenes appear FIRST in `scenes.csv` (anchored at full-timeline t=0..hook_duration). Part 1 (Setup) scenes follow with offset = hook_duration, and so on. Read `timeline_hook.json` alongside `timeline_{1..4}.json` when computing scene boundaries.
 
 **Review (substep 6-2)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 6-3. 5 rounds exceeded → escalate to user.
 

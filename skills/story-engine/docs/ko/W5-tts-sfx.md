@@ -260,14 +260,16 @@ media/sfx/                    ← 최종 (전체 기준)
 
 ---
 
-## 5-3. 전체 오디오 병합 + SFX 타임코드 변환
+## 5-3. 전체 오디오 병합 + SFX 타임코드 변환 (5파트)
 
-4파트의 `final_{파트}.mp3`와 `final_{파트}.srt`를 하나로 병합하여 `media/`에 저장한다.
+**5파트**의 `final_{파트}.mp3`와 `final_{파트}.srt`를 하나로 병합하여 `media/`에 저장한다.
+병합 순서는 `hook → 1 → 2 → 3 → 4` (hook이 full timeline의 offset 0 에서 시작).
 SFX 파일은 파트별 타임코드에서 전체 타임라인 기준으로 변환하여 `media/sfx/`에 저장한다.
 
 **mp3 병합:**
 ```bash
 # merge_all.txt
+file 'final_hook.mp3'
 file 'final_기.mp3'
 file 'final_승.mp3'
 file 'final_전.mp3'
@@ -278,23 +280,24 @@ ffmpeg -y -f concat -safe 0 -i merge_all.txt -c copy media/final_full.mp3
 
 **SRT 병합:**
 - 각 파트의 SRT 타임코드에 앞 파트들의 누적 길이를 오프셋으로 더한다
-- `ffprobe`로 각 `final_{파트}.mp3` 길이를 측정하여 오프셋 계산
+- `ffprobe`로 각 `final_{파트}.mp3` 길이를 측정하여 오프셋 계산 (hook 먼저)
 - 자막 번호를 1부터 연속으로 재부여
 
 **SFX 전체 타임코드 변환:**
 - 각 파트의 `final_{파트}.mp3` 길이를 ffprobe로 측정 → 파트별 오프셋 계산
+- Hook 파트의 오프셋은 `0` (full timeline 시작)
 - `sfx/` 원본 파일의 파트별 타임코드를 전체 타임라인 기준으로 변환
 - 변환된 파일을 `media/sfx/`에 저장
 
 ```bash
-# 파트 오프셋 예시 (ep10)
-# 기: 0초, 승: 395초(6:35), 전: 776초(12:56), 결: 1379초(22:59)
+# 파트 오프셋 예시 (ep10, hook = 22초)
+# hook: 0초, 기: 22초(0:22), 승: 417초(6:57), 전: 798초(13:18), 결: 1401초(23:21)
 # sfx/13_시장_소리_0201.mp3 (승 2:01 = 121초)
-# → media/sfx/13_시장_소리_0836.mp3 (395 + 121 = 516초 = 8:36)
+# → media/sfx/13_시장_소리_0858.mp3 (417 + 121 = 538초 = 8:58)
 ```
 
 **최종 출력:**
-- `media/final_full.mp3` — 전체 오디오 (기+승+전+결 연속)
+- `media/final_full.mp3` — 전체 오디오 (hook+기+승+전+결 연속)
 - `media/final_full.srt` — 전체 자막 (오프셋 적용된 타임코드)
 - `media/sfx/*.mp3` — SFX (전체 타임라인 기준 MMSS 타임코드)
 

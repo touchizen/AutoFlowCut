@@ -32,6 +32,15 @@ The Hook (cold open) is written LAST because:
 - You need to know the full story to choose the right hook
 - It sets viewer expectations that must be fulfilled
 
+**The Hook lives in its own file**: `{title}_hook.md`. Do NOT duplicate hook
+content inside `{title}_part1_setup.md` — part1 begins with the POST-hook
+narrative (the viewer has just seen the hook and is now landing in the world
+of the story). Keeping the hook isolated lets the writer iterate it
+independently (different opening variants without rewriting part1) and
+focuses reviewers on the single most-leveraged 30 seconds.
+
+**Hook duration target**: ~20s of narration (50–80 words).
+
 ---
 
 ## Narration Techniques

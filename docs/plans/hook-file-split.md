@@ -1,6 +1,6 @@
 # Phase Plan — Split Hook into a Standalone W3 Output
 
-**Status**: planned (not started)
+**Status**: Phase 1 (spec) in review — implementation phases (W4 scripts, W5 merge, W6 timeline, W8 import order) pending separate work
 **Owner**: TBD
 **Estimated effort**: 1–2 working days end-to-end (planning included)
 **Risk level**: Medium — cascades through W3 → W8

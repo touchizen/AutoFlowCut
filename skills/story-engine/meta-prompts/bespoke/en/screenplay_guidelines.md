@@ -66,9 +66,17 @@ Whichever register: NO breaks in voice mid-script. The supplement may pin a spec
 - Within a chapter, sentence/paragraph structure is the writer's call.
 - Compressed chapters (synopsis hand-off may permit "9+10 → one beat") follow the synopsis's compression notes.
 
-## 9. The hook (first 60 seconds)
+## 9. The hook (first 20–30 seconds — separate file)
 
-The first chapter MUST do five things in its opening 60 seconds (~150 words):
+The Hook lives in `{title}_hook.md`, a separate file from the 4 narrative parts.
+It is **written LAST** (after Setup / Rising / Crisis / Resolution are complete)
+so the writer can pick the strongest curiosity/anticipation lever with the full
+arc in view. Hook content is NOT duplicated inside `{title}_part1_setup.md` —
+part1 begins with the post-hook narrative.
+
+**Hook duration target**: ~20s of narration (50–80 words EN / 80–130자 KO).
+
+The Hook MUST do five things in its opening (~20 seconds, ~50–80 words):
 
 1. **Time anchor** — date or period
 2. **Place anchor** — geographic or institutional

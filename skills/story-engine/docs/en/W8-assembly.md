@@ -46,8 +46,8 @@ After import, narration / SFX will auto-land on the timeline when you export to 
 ```
 ep{number}/
 └── media/
-    ├── final_full.mp3           ← full narration audio
-    ├── final_full.srt           ← full subtitles
+    ├── final_full.mp3           ← full narration audio (hook + setup + rising + crisis + resolution merged in that order; hook starts at t=0)
+    ├── final_full.srt           ← full subtitles (offsets applied — hook subtitles are the first block)
     ├── voices/                  ← per-character dialogue TTS (per-character subfolders required)
     │   ├── Reverend/
     │   │   ├── 003_Reverend_000109.mp3

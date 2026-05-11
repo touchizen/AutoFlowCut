@@ -133,29 +133,37 @@ that match the output patterns AND were touched within the wave's runtime.
 
 Notation:
 - `{title}` = episode title slug from STATE.md
-- `{part}` = `1`/`2` for split episodes; absent for single-part
+- `{part}` = `hook` / `1` / `2` / `3` / `4` — `hook` is the cold-open at t=0 on
+  the full timeline; `1..4` are the four narrative parts (Setup / Rising /
+  Crisis / Resolution) that follow it in order. Some Wave I/O lines list
+  `{part}` to cover all 5 values uniformly.
 - Trailing `/` denotes a directory
 - `(none)` means the wave has no predecessor file inputs (W1 only)
 
+**Schema versioning** — episodes carry a `schema: v2` field in `STATE.md` from
+this release onward (hook-as-separate-file). Older episodes (4-part output) are
+`schema: v1`; the pipeline branches on this field for backwards compatibility
+when resuming an old episode.
+
 **Filename convention varies by genre** (the table below shows the canonical yadam Korean form; substitute per genre):
 
-| Genre | Filename style | Example (W1 fact-check) |
-|-------|----------------|-------------------------|
-| **yadam** | Korean filenames | `02_팩트체크.md`, `04_시놉시스.md`, `{title}_기.md` |
-| **dark-history** | English filenames | `02_factcheck.md`, `04_synopsis.md`, `{title}_part1_setup.md` |
-| **bespoke** (any output language) | English filenames | `02_factcheck.md`, `04_synopsis.md`, `{title}_part1_setup.md` (content inside files in resolved {lang}; filenames stay ASCII-safe) |
+| Genre | Filename style | Example (W1 fact-check) | Hook file |
+|-------|----------------|-------------------------|-----------|
+| **yadam** | Korean filenames | `02_팩트체크.md`, `04_시놉시스.md`, `{title}_기.md` | `{title}_hook.md` (ASCII — hook is universal) |
+| **dark-history** | English filenames | `02_factcheck.md`, `04_synopsis.md`, `{title}_part1_setup.md` | `{title}_hook.md` |
+| **bespoke** (any output language) | English filenames | `02_factcheck.md`, `04_synopsis.md`, `{title}_part1_setup.md` (content inside files in resolved {lang}; filenames stay ASCII-safe) | `{title}_hook.md` |
 
 | Wave | Inputs (filenames — yadam form shown; substitute per genre) | Outputs (filenames — yadam form shown; substitute per genre) |
 |------|--------------------------------------------------------------|---------------------------------------------------------------|
 | W1   | (none) — only `STATE.md` (topic)                              | `01_분석.md`, `02_팩트체크.md`, `03_자료수집.md` (bespoke also: `01_references_analysis.md`, `04_success_synthesis.md`, `_meta_supplement.md`) |
 | W2   | `01_분석.md`, `02_팩트체크.md`, `03_자료수집.md`               | `04_시놉시스.md`, `05_프리플라이트.md` |
-| W3   | `04_시놉시스.md`, `05_프리플라이트.md`, `02_팩트체크.md`       | `{title}_기.md`, `{title}_승.md`, `{title}_전.md`, `{title}_결.md`, `07_검토.md` |
-| W4   | `{title}_기.md`, `{title}_승.md`, `{title}_전.md`, `{title}_결.md`                                 | `narration_{part}.txt`, `dialogs_{part}.json`, `08_sfx_목록.md`                                              |
-| W5   | `narration_{part}.txt`, `dialogs_{part}.json` (with `after_paragraph`), `08_sfx_목록.md`, `tts_settings.md`                  | `segments_{part}/` (with `index.json` carrying `paragraph_idx`), `subtitles_{part}.txt`, `final_{part}.mp3`, `final_{part}.srt`, **`timeline_{part}.json`**, `voices/` (when dialogue), `media/`, `tts_settings.md` (updated)                   |
-| W6   | `final_{part}.srt`, **`timeline_{part}.json`**, `narration_{part}.txt`, `{title}_*.md` (script), `08_sfx_목록.md`              | `references.csv`, `{title}_scenes.csv`, `06_review_group{A,B,C}.md` (batch QA)                                |
+| W3   | `04_시놉시스.md`, `05_프리플라이트.md`, `02_팩트체크.md`       | `{title}_기.md`, `{title}_승.md`, `{title}_전.md`, `{title}_결.md`, **`{title}_hook.md`** (cold open, written LAST), `07_검토.md` |
+| W4   | `{title}_기.md`, `{title}_승.md`, `{title}_전.md`, `{title}_결.md`, **`{title}_hook.md`**                                 | `narration_{part}.txt` (part ∈ {hook,1,2,3,4}), `dialogs_{part}.json`, `08_sfx_목록.md`                                              |
+| W5   | `narration_{part}.txt`, `dialogs_{part}.json` (with `after_paragraph`), `08_sfx_목록.md`, `tts_settings.md`                  | `segments_{part}/` (with `index.json` carrying `paragraph_idx`), `subtitles_{part}.txt`, `final_{part}.mp3`, `final_{part}.srt`, **`timeline_{part}.json`**, `voices/` (when dialogue), `media/`, `tts_settings.md` (updated). The hook part is rendered identically to 1..4; the only difference is W5-3 merge order. |
+| W6   | `final_{part}.srt`, **`timeline_{part}.json`**, `narration_{part}.txt`, `{title}_*.md` (script — including `{title}_hook.md`), `08_sfx_목록.md`              | `references.csv`, `{title}_scenes.csv` (hook scenes first, full-timeline offsets), `06_review_group{A,B,C}.md` (batch QA)                                |
 | W7   | `references.csv`, `{title}_scenes.csv` (read-only — for ref/scene prompts)                         | AutoFlowCut images (refs + scenes in workspace), `07_image_review_group{A,B}.md` (batch QA)                  |
-| W8   | `references.csv`, `{title}_scenes.csv`, `final_{part}.mp3`, `final_{part}.srt`, `media/sfx/`, AutoFlowCut images (from W7) | CapCut project (`{title}` draft folder), `08_sfx_scene_match_qa.md`, optional video clips         |
-| W9   | `04_시놉시스.md`, `{title}_*.md` (script), `{title}_scenes.csv`                                   | `11_업로드정보.json`                                                                                          |
+| W8   | `references.csv`, `{title}_scenes.csv`, `final_{part}.mp3`, `final_{part}.srt`, `media/sfx/`, AutoFlowCut images (from W7) | CapCut project (`{title}` draft folder) — hook segment first on timeline; `08_sfx_scene_match_qa.md`, optional video clips         |
+| W9   | `04_시놉시스.md`, `{title}_*.md` (script — including `{title}_hook.md`), `{title}_scenes.csv`                                   | `11_업로드정보.json`                                                                                          |
 
 Fallback: if a wave reference doc (`docs/{lang}/W{N}-*.md`) lists additional or
 different files, the wave doc takes precedence — log a warning and use the doc's
@@ -301,9 +309,9 @@ follow this granularity; wave docs may add finer breakdowns but never remove the
 | W1 (yadam / dark-history) | W1-0 read-docs, W1-1 fact-check, W1-2 research, W1-3 summarize                          |
 | W1 (bespoke) | W1-0 load-references (3–5), W1-1 per-reference analysis, W1-2 fact-check, W1-3 research, W1-4 cross-script synthesis, W1-5 meta-prompt synthesis (`_meta_supplement.md`) |
 | W2   | W2-0 read-inputs, W2-1 synopsis-draft, W2-2 preflight, W2-3..N preflight-revise (per round)        |
-| W3   | W3-0 read-inputs, W3-1..4 part-write × 4, W3-5 self-review, W3-6 external-review, W3-7 polish     |
-| W4   | W4-0 read-inputs, W4-1..4 narration-extract × 4, W4-5 dialogue-extract, W4-6 SFX-list, W4-7 audit |
-| W5   | W5-0-prep provider-pick, W5-0-assign voice-assign, W5-1a narration-TTS, W5-1b draft-subs, W5-1c build-SRT+timeline, W5-1d user-review (optional), W5-1e merge-segments, W5-1f dialogue-TTS (when dialogue), W5-2 SFX (batched), W5-3 4-part merge, W5-4 mechanic-QA |
+| W3   | W3-0 read-inputs, W3-1..4 part-write × 4, **W3-5 hook-write (LAST — full story in view)**, W3-6 self-review, W3-7 external-review, W3-8 polish     |
+| W4   | W4-0 read-inputs, W4-1..4 narration-extract × 4, **W4-1h narration-extract hook**, W4-5 dialogue-extract (all 5 parts), W4-6 SFX-list (all 5 parts), W4-7 audit |
+| W5   | W5-0-prep provider-pick, W5-0-assign voice-assign, W5-1a narration-TTS (parts hook+1..4), W5-1b draft-subs, W5-1c build-SRT+timeline, W5-1d user-review (optional), W5-1e merge-segments, W5-1f dialogue-TTS (when dialogue), W5-2 SFX (batched), **W5-3 5-part merge (hook + 1..4)**, W5-4 mechanic-QA |
 | W6   | W6-1 references-CSV (character + scene only), W6-2 scenes-CSV, W6-3a/b/c **batch QA × 3 parallel** (Completeness / Reference integrity / Timing structure) |
 | W7   | W7-0 project-setup, W7-1 ref-batch (incl. style-pick + type:style row), W7-2 scene-batch, W7-2a error-fix, W7-2b-1/2 **image-QA batch × 2 parallel** (Visual / Content) → 🛑 user sign-off |
 | W8   | W8-0 SFX scene-match QA (moved from old W7 7-2c), W8-1 audio-import, W8-2 CapCut-export, W8-3 video (optional, requires user confirm) |
@@ -391,16 +399,18 @@ Each subagent receives:
   - **dark-history**: `meta-prompts/dark-history/screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md`
   - **bespoke**: `meta-prompts/bespoke/{lang}/screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md` PLUS `_story_source/_meta_supplement.md`
 - For **bespoke**: ALSO read `_story_source/_meta_supplement.md` (W1-5 per-episode supplement) — supplement OVERRIDES universal base on conflicts; universal base is the fallback
-- Writing order: Hook → Act I → II → III → IV
-- Length targets — depends on genre:
+- **Writing order**: `Setup → Rising → Crisis → Resolution → Hook (LAST, separate file) → Review`. The Hook (cold open) is written **last** — the writer must see the entire arc to pick the strongest curiosity/anticipation lever (flash-forward / mystery / provocative / sensory). Drafting hook first tends to produce generic "Long ago…" openings.
+- **Hook file**: `{title}_hook.md` (universal — ASCII filename across all genres). Contains ONLY the cold-open content (~20s of narration). Hook narrative is NOT duplicated inside `{title}_part1_setup.md` / `{title}_기.md` — those start with the post-hook narrative.
+- **Hook duration target**: 20s ± 5s of narration (≈ 50–80 words EN / 80–130자 KO). Synopsis stage may set explicit target per episode.
+- Length targets (full episode — hook + 4 parts combined) — depends on genre:
   - **yadam** (Korean): 8,000~12,000자
   - **dark-history** (English): 2,000~3,000 words
   - **bespoke**: derived from `_meta_supplement.md` § "Length target" (W1-5 sets this from user preference + reference scripts' average length); default fallback if missing: 1,500–2,500 words / ~10–17 min
 - Review loop: self-review + subagent review (max 5 rounds, target 9.5)
-- Output (per-genre filename):
-  - **yadam**: `{title}_기.md`, `{title}_승.md`, `{title}_전.md`, `{title}_결.md`, `07_검토.md`
-  - **dark-history**: `{title}_part1_setup.md`, `{title}_part2_rising.md`, `{title}_part3_crisis.md`, `{title}_part4_resolution.md`, `07_review.md`
-  - **bespoke**: same English form as dark-history (`{title}_part1_setup.md` etc., `07_review.md`); content in {lang}
+- Output (per-genre filename — 5 script files + 1 review):
+  - **yadam**: `{title}_기.md`, `{title}_승.md`, `{title}_전.md`, `{title}_결.md`, `{title}_hook.md`, `07_검토.md`
+  - **dark-history**: `{title}_part1_setup.md`, `{title}_part2_rising.md`, `{title}_part3_crisis.md`, `{title}_part4_resolution.md`, `{title}_hook.md`, `07_review.md`
+  - **bespoke**: same English form as dark-history (`{title}_part1_setup.md` etc., `{title}_hook.md`, `07_review.md`); content in {lang}
 
 **W4 subagent prompt includes:**
 - Narration/dialogue/SFX extraction rules
@@ -421,10 +431,10 @@ Each subagent receives:
   - 5-1d user review of baseline (optional refinement loop) → re-run 5-1c if subtitles edited.
   - 5-1e per-part merge — `merge_audio.cjs` produces `final_{part}.mp3`.
   - 5-1f dialogue TTS (only when dialogue exists) — `generate_tts_typecast.cjs dialogue <dialogsJson> <outDir> <ttsSettings> <segmentsDir>`. The 4th arg `segmentsDir` lets the script resolve each dialog's `_HHMMSS` from `after_paragraph` + `index.json`'s `paragraph_idx`. **Consecutive dialogues sharing one `after_paragraph` are auto-stacked** (previous dialog end + 0.2s gap) so they never collide. Without `start` AND without `after_paragraph` the script throws — silent `00:00:00` collisions are blocked.
-- W5-2 SFX — `generate_sfx.cjs` driven by SRT-anchor manifest (anchor narration + placement + offset → in-part timecode).
-- W5-3 4-part merge (ffmpeg concat) → `media/final_full.mp3` + `media/final_full.srt`; SFX in-part timecodes converted to full-timeline `media/sfx/*_MMSS.mp3`.
-- W5-4 mechanic timecode validation (collision / per-part range / full range / per-part offset).
-- Outputs: `segments_{part}/`, `subtitles_{part}.txt`, `final_{part}.mp3`, `final_{part}.srt`, **`timeline_{part}.json`**, `voices/` (when dialogue), `media/`.
+- W5-2 SFX — `generate_sfx.cjs` driven by SRT-anchor manifest (anchor narration + placement + offset → in-part timecode). Applies to all 5 parts (hook + 1..4).
+- **W5-3 5-part merge** (ffmpeg concat) → `media/final_full.mp3` + `media/final_full.srt`. Merge order: `hook → 1 → 2 → 3 → 4`. SFX in-part timecodes converted to full-timeline `media/sfx/*_MMSS.mp3`; the hook's offset is `0` (it leads the full track), part 1's offset = `duration(hook)`, part 2 = `duration(hook) + duration(part1)`, etc.
+- W5-4 mechanic timecode validation (collision / per-part range / full range / per-part offset) — runs against all 5 parts.
+- Outputs (per part ∈ {hook,1,2,3,4}): `segments_{part}/`, `subtitles_{part}.txt`, `final_{part}.mp3`, `final_{part}.srt`, **`timeline_{part}.json`**; plus `voices/` (when dialogue), `media/`.
 
 **W6 subagent prompt includes:**
 - **No external scripts** — `scenes.csv` is built directly via AutoFlowCut MCP tools (`get_schema`, `load_csv`, `update_field`, `save_csv`) using W5's `final_{part}.srt` + `timeline_{part}.json` as inputs.
