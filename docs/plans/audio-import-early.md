@@ -79,10 +79,12 @@ Done:
 5. This plan + TODO backlog entry.
 
 **Verification**: spec re-read; no active "W5-3a" instructions or
-`/api/audio-reviews`-based skip logic remain. Two historical mentions
-of "W5-3a" are retained intentionally — the correction-history summary
-at the top of this file, and the explicit "why we DON'T use audio-reviews
-for verification" rationale block in W8-1.
+`/api/audio-reviews`-based skip logic remain anywhere under
+`skills/story-engine/`. The only remaining "W5-3a" mention lives in this
+file's own correction-history summary at the top (intentional —
+documents the rename). The W8-1 rationale block explains why
+`/api/audio-reviews` is NOT used for verification; it doesn't reference
+the W5-3a name.
 
 ---
 
