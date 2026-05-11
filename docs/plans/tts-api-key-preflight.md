@@ -17,15 +17,20 @@ scripts:
 | Typecast (TTS) | `TYPECAST_API_KEY` | `~/.typecast/credentials` | ✅ |
 | Google AI Studio (Gemini TTS) | `GOOGLE_AI_STUDIO_API_KEY` (proposed) | `~/.google-ai-studio/credentials` | ❌ (W5 doc says "TBD") |
 
-If a key is missing, the failure happens **in the middle of W5**, after the
-user has spent W1–W4 worth of work, and surfaces as `ENOENT` (no
-credentials file) or `401 invalid api_key` (file present but stale/wrong).
-The recovery is to abort W5, set the key, and re-run — wasting 5–10 minutes
-of pipeline state and leaving partially-generated segments behind.
+**Two distinct failure modes today:**
 
-A **preflight check** at episode start catches every needed key BEFORE any
-expensive work begins, so the user can paste/fix once and the pipeline runs
-clean.
+1. **First-time setup (key never registered).** Brand-new user runs
+   `/story-engine`, picks ElevenLabs at W5-0-prep, hits W5-1a → `ENOENT
+   ~/.elevenlabs/credentials`. No guidance on where to get a key, what
+   format to put it in, or how to register without leaving the chat.
+2. **Stale / expired / wrong key.** File or env var exists, but the value
+   no longer authenticates → `401 invalid api_key` in W5-1a. Same loss
+   of W1-W4 state.
+
+A **preflight check** at episode start catches both modes BEFORE any
+expensive work begins. For mode (1) — first-time setup — the prompt must
+also tell the user **where to obtain the key** and **let them register it
+without leaving the workflow**.
 
 ---
 
@@ -59,17 +64,34 @@ W5-0-prep step:
   2. Compute required-keys set from the answers
   3. For each provider in the set:
        a. Try to load the key via `readApiKey(provider)` (env → file)
-       b. If found → validate with a cheap GET call:
+       b. Classify the result:
+            - **Found + validates** → continue
+            - **Not found** (no env var, no file) → first-time setup path
+            - **Found but 401/403** → stale/invalid key path
+       c. Validation (when key is found): cheap GET
             - ElevenLabs: GET /v1/voices  (returns 200 if key valid)
             - Typecast:   GET /v1/voices  (returns 200 if key valid)
             - Gemini:     GET https://generativelanguage.googleapis.com/v1beta/models?key=...
-       c. If load fails OR validation returns 401/403:
-            AskUserQuestion with three options:
-              i.   "Paste the key now" → free-text input → persist to
-                   `~/.<provider>/credentials` (dotenv format) → re-validate
-              ii.  "Open the credentials file manually" → print the
-                   expected path, pause, retry validation when user resumes
-              iii. "Switch provider" → back to step 1
+       d. **First-time setup path** (key was never registered):
+            AskUserQuestion options:
+              i.   "I have a key — paste it now" → free-text input →
+                   persist to `~/.<provider>/credentials` → validate → continue
+              ii.  "Show me where to get a key" → print provider's signup URL
+                   + console screenshot of where to find the key, then loop
+                   back to (i) when the user has it
+              iii. "Switch to a different provider" → back to step 1
+              iv.  "I'll set it up myself, retry later" → print the expected
+                   credentials file path, pause; on resume re-run step 3a
+            Each option includes a one-line "credentials live at
+            ~/.<provider>/credentials in dotenv format (`<ENVNAME>=...`),
+            mode 0600" reminder so the manual path is unambiguous.
+       e. **Stale/invalid key path** (key found, validation 401/403):
+            Same remediation menu, but the chat opener clarifies the key
+            is present but rejected:
+              `⚠ Typecast key at ~/.typecast/credentials returned 401.
+               Likely expired or wrong account.`
+            Options i–iv as above; option (i)'s paste handler REPLACES the
+            line in the existing credentials file (does not duplicate).
   4. Once every required key is present + validates → proceed to W5-0-assign
 
 User-facing chat lines:
@@ -103,6 +125,57 @@ User-facing chat lines:
 - Caching validation results (each W5-0-prep re-validates; cheap GETs)
 - Resetting / revoking a stored key from inside the pipeline
 
+### Forward-compatibility: "other providers"
+
+The built-in set covers EN-friendly providers (ElevenLabs, Gemini) and
+the most common KO provider (Typecast). For other markets / languages,
+users may want to register their own TTS provider. The preflight loop
+SHOULD accommodate this without code changes per-provider:
+
+**v1 — generic "other" entry in AskUserQuestion:**
+
+When the user picks "Other / 직접 등록" in the W5-0-prep narration or
+dialogue question, prompt for:
+- Provider key name (lowercase ASCII, used as the `~/.<key>/credentials` dir)
+- Display name (used in chat banners)
+- API key value
+- Validation URL (cheap GET that returns 200 on a valid key) — optional;
+  if blank, skip validation and let the actual TTS call surface failure
+
+The pasted key is persisted to `~/.<provider>/credentials` (same dotenv
+format) and noted in `tts_settings.md` as `narrator_provider: other:<name>`.
+The TTS execution itself still requires user-supplied scripts at this point
+(see "v2" below).
+
+**v2 — first-class provider plug-ins (separate plan):**
+
+A registry under `skills/story-engine/providers/<name>/` with three files:
+- `meta.json` — display name, env var name, credentials dir, supported modes (`narration` / `dialogue`)
+- `validate.sh` (or `.cjs`) — cheap GET-or-equivalent that exits 0/non-zero
+- `tts.cjs` — script invoked from W5-1a / W5-1f with `(textPath, outDir, voiceId)` contract; outputs the unified alignment shape used downstream
+
+This is the path to real KO / JP / CN / EU regional support without
+hard-coding each provider into `lib_afc.cjs`.
+
+**Candidate regional providers (for v2 registry priority):**
+
+| Region | Provider | Strength | API |
+|--------|----------|----------|-----|
+| KO | 네이버 클로바 (Clova) | Korean-native, free tier | `https://naveropenapi.apigw.ntruss.com/tts-premium/v1/tts` |
+| KO | Supertone | High-quality Korean character voices | proprietary |
+| JP | VOICEVOX | Free open-source, character voices | local server |
+| JP | COEIROINK | Free open-source | local server |
+| JP | Coefont | Commercial high-quality Japanese | `https://api.coefont.cloud/v2/text2speech` |
+| CN | ByteDance Volcano (火山引擎) | Mandarin-native | `https://openspeech.bytedance.com/` |
+| CN | Aliyun NLS | Mandarin-native, scale | `https://nls-meta.cn-shanghai.aliyuncs.com/` |
+| Global | OpenAI TTS | Multilingual, fast | `https://api.openai.com/v1/audio/speech` |
+| Global | Azure Speech | Multilingual, neural voices | `https://*.tts.speech.microsoft.com/` |
+| Global | Amazon Polly | Multilingual | AWS SDK |
+
+The v2 plan can land any of these as registry entries without changing the
+W5 spec, and bespoke-genre episodes in a language not well covered by the
+default trio (EL/TC/Gemini) get clean regional support.
+
 ---
 
 ## Cascade map
@@ -121,14 +194,19 @@ User-facing chat lines:
 
 ## Provider-specific validation endpoints
 
-| Provider | Method | URL | Required header | Success | Failure (bad key) |
-|----------|--------|-----|-----------------|---------|-------------------|
-| ElevenLabs | GET | `https://api.elevenlabs.io/v1/voices` | `xi-api-key: <key>` | 200 + voice list | 401 |
-| Typecast | GET | `https://api.typecast.ai/v1/voices` | `x-api-key: <key>` | 200 + voice list | 401 |
-| Google AI Studio (Gemini) | GET | `https://generativelanguage.googleapis.com/v1beta/models?key=<key>` | (no header; key in URL) | 200 + model list | 400 / 403 |
+| Provider | Method | URL | Required header | Success | Failure (bad key) | Signup URL (shown in first-time setup) |
+|----------|--------|-----|-----------------|---------|-------------------|----------------------------------------|
+| ElevenLabs | GET | `https://api.elevenlabs.io/v1/voices` | `xi-api-key: <key>` | 200 + voice list | 401 | `https://elevenlabs.io/app/speech-synthesis/api-keys` |
+| Typecast | GET | `https://api.typecast.ai/v1/voices` | `x-api-key: <key>` | 200 + voice list | 401 | `https://app.typecast.ai/api-keys` |
+| Google AI Studio (Gemini) | GET | `https://generativelanguage.googleapis.com/v1beta/models?key=<key>` | (no header; key in URL) | 200 + model list | 400 / 403 | `https://aistudio.google.com/app/apikey` |
 
 All three are read-only and free (no usage charge for `GET /voices` or
 `GET /models`). Validation takes < 1 second per provider.
+
+The signup URL is surfaced via the "Show me where to get a key" option in
+the first-time-setup path. The orchestrator prints the URL as plain text
+(user clicks if their terminal supports it); no auto-open to avoid hijacking
+the user's browser.
 
 ---
 
