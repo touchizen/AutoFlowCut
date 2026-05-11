@@ -306,53 +306,13 @@ ffmpeg -y -f concat -safe 0 -i merge_all.txt -c copy media/final_full.mp3
 - `media/final_full.srt` — full subtitles (offsets applied)
 - `media/sfx/*.mp3` — SFX (MMSS timecodes on the full timeline)
 
-**Review (substep 5-3)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 5-3a. 5 rounds exceeded → escalate to user.
-
----
-
-## 5-3a. Early audio import (best-effort)
-
-As soon as `media/final_full.mp3`, `media/final_full.srt`, and `media/sfx/`
-exist, import the episode folder into the AutoFlowCut app so the user can
-preview and flag TTS quality in the Audio tab **while W6 (CSV) and W7 (image
-generation) run** — W7 is the slowest wave, so the audio-review window
-overlaps it.
-
-**API call (single POST):**
-```bash
-curl -s -X POST http://localhost:3210/api/audio-import \
-  -H "Content-Type: application/json" \
-  -d '{"folderPath": "/path/to/project/story/ep{number}"}'
-```
-
-**Voices folder reorganization** (if dialogue present) — same logic as W8-1:
-```bash
-cd ep{number}/media/voices && for f in *.mp3; do
-  char=$(echo "$f" | sed 's/^[0-9]*_\([^_]*\)_.*/\1/')
-  mkdir -p "$char"
-  mv "$f" "$char/"
-done
-```
-
-**Best-effort semantics:**
-- App offline / network error / non-2xx response → log a one-line warning and continue. Do NOT block the wave or retry. W8-1 will fall back to a first-time import if the early import never landed.
-- Successful import → emit ONE chat line to the user:
-  `🎧 Audio imported — review in the AutoFlowCut Audio tab while W6/W7 run.`
-
-**Why best-effort, not mandatory:** the in-app audio review is an
-optimization (parallel feedback), not a correctness requirement. The
-pipeline still produces correct outputs even if no user review ever
-happens. W8-1 has full first-time-import fallback for episodes where
-W5-3a couldn't run.
-
-**No new file artifacts.** The import side effect lives in the app's
-state (`.audio_review.json` is written by the app, not by W5).
+**Review (substep 5-3)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 5-4. 5 rounds exceeded → escalate to user.
 
 ---
 
 ## 5-4. SFX timecode mechanic validation (W5 internal consistency only)
 
-**Only the checks possible at W5 are performed here — the "scene match" check depends on `scenes.csv` (a W6 output), so it is moved out and runs at the start of W8 8-0 (pre-audio-import) — see `docs/{lang}/W8-assembly.md`.**
+**Only the checks possible at W5 are performed here — the "scene match" check depends on `scenes.csv` (a W6 output), so it is moved out and runs at the start of W8 8-0 (before CapCut export / verify-import) — see `docs/{lang}/W8-assembly.md`.**
 
 **Items checked in W5-4 (do NOT require scenes.csv):**
 1. **Collision** — If 3 or more SFX pile onto the same timecode, fail (CapCut track explosion)
@@ -381,7 +341,53 @@ state (`.audio_review.json` is written by the app, not by W5).
 - step: `W05_sfx_timecode_qa`
 - Record after mechanic validation passes (scene-match recorded separately in W8)
 
-**Review (substep 5-4)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to the next Wave. 5 rounds exceeded → escalate to user.
+**Review (substep 5-4)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 5-5. 5 rounds exceeded → escalate to user.
+
+---
+
+## 5-5. Audio import (best-effort, post-mechanic-QA)
+
+Runs **only after W5-4 mechanic QA passes**. Importing earlier risks the user
+listening to audio with broken timecodes / out-of-range SFX; importing after
+W5-4 guarantees the user reviews a mechanically-clean audio package while
+W6 (CSV) and W7 (image generation) run in parallel.
+
+**Voices folder reorganization** (if dialogue present) — must happen
+before the API call so character subfolders are created:
+```bash
+cd ep{number}/media/voices && for f in *.mp3; do
+  char=$(echo "$f" | sed 's/^[0-9]*_\([^_]*\)_.*/\1/')
+  mkdir -p "$char"
+  mv "$f" "$char/"
+done
+```
+
+**API call (single POST):**
+```bash
+curl -s -X POST http://localhost:3210/api/audio-import \
+  -H "Content-Type: application/json" \
+  -d '{"folderPath": "/path/to/project/story/ep{number}"}'
+```
+
+**Best-effort semantics:**
+- App offline / network error / non-2xx → log a one-line warning and continue. Do NOT block the wave or retry. W8-1 issues the same POST idempotently as the safety net.
+- Successful import → emit ONE chat line to the user:
+  `🎧 Audio imported — review in the AutoFlowCut Audio tab while W6/W7 run.`
+
+**Why best-effort, not mandatory:** the in-app audio review is an
+optimization (parallel feedback). The pipeline still produces correct
+outputs even if no user review ever happens. W8-1 re-imports
+idempotently regardless of whether W5-5 succeeded.
+
+**Re-import on regeneration:** if the user flags audio in the Audio tab
+during W6/W7 and triggers regeneration of any segment, W5-5 (or W8-1's
+idempotent import) MUST be re-run after the regenerated output lands so
+the app reflects the latest audio package.
+
+**No new file artifacts.** The import side effect lives in the app's state
+(`.audio_review.json` is written by the app, not by W5).
+
+**Review (substep 5-5)** — pass-through: this is a side-effect step, not a content step. No review loop; either succeeded (continue) or warned (continue, W8-1 covers).
 
 ---
 

@@ -305,51 +305,13 @@ ffmpeg -y -f concat -safe 0 -i merge_all.txt -c copy media/final_full.mp3
 - `media/final_full.srt` — 전체 자막 (오프셋 적용된 타임코드)
 - `media/sfx/*.mp3` — SFX (전체 타임라인 기준 MMSS 타임코드)
 
-**리뷰 (서브스텝 5-3)** — 서브에이전트 자가검토 → 이슈 목록 → 수정. 최대 5회. 0 이슈 시 다음 서브스텝(5-3a)으로 즉시 진행. 5회 초과 시 사용자에게 에스컬레이션.
-
----
-
-## 5-3a. 조기 audio 임포트 (best-effort)
-
-`media/final_full.mp3`, `media/final_full.srt`, `media/sfx/`가 생성되는
-즉시 에피소드 폴더를 AutoFlowCut 앱에 임포트한다. 그러면 **W6 (CSV) 및
-W7 (이미지 생성)이 돌아가는 동안** 사용자가 Audio 탭에서 TTS 품질을 미리
-듣고 플래그 달 수 있다 — W7이 가장 느린 wave 이므로 오디오 검토 윈도우와
-겹친다.
-
-**API 호출 (단일 POST):**
-```bash
-curl -s -X POST http://localhost:3210/api/audio-import \
-  -H "Content-Type: application/json" \
-  -d '{"folderPath": "/path/to/project/story/ep{번호}"}'
-```
-
-**voices 폴더 정리** (대사 존재 시) — W8-1과 동일 로직:
-```bash
-cd ep{번호}/media/voices && for f in *.mp3; do
-  char=$(echo "$f" | sed 's/^[0-9]*_\([^_]*\)_.*/\1/')
-  mkdir -p "$char"
-  mv "$f" "$char/"
-done
-```
-
-**Best-effort 시맨틱:**
-- 앱 오프라인 / 네트워크 에러 / non-2xx → 한 줄 warning 로그 후 진행. wave 차단/재시도 안 함. W8-1이 first-time import 폴백으로 처리.
-- 성공 시 사용자에게 ONE 줄 chat:
-  `🎧 오디오 임포트 완료 — W6/W7 진행 중 AutoFlowCut Audio 탭에서 검토하세요.`
-
-**Best-effort인 이유:** 앱 내 audio 리뷰는 최적화(병렬 피드백)이지 정합성
-요구사항이 아니다. 사용자 리뷰가 없어도 파이프라인은 정상 산출. W5-3a가
-못 돌면 W8-1이 first-time-import로 대신함.
-
-**새 파일 산출물 없음.** 임포트 부수효과는 앱 상태에 존재
-(`.audio_review.json`은 앱이 쓰고 W5가 쓰지 않음).
+**리뷰 (서브스텝 5-3)** — 서브에이전트 자가검토 → 이슈 목록 → 수정. 최대 5회. 0 이슈 시 다음 서브스텝(5-4)으로 즉시 진행. 5회 초과 시 사용자에게 에스컬레이션.
 
 ---
 
 ## 5-4. SFX 타임코드 mechanic 검증 (W5 내부 일관성)
 
-**W5 단계에서 검증 가능한 것만 수행한다 — `scenes.csv` (W6 산출물)에 의존하는 "씬 매칭 검증"은 본 단계에서 제외하고 W8 8-0 (오디오 임포트 전) 도입부에서 실행한다 (`docs/{lang}/W8-assembly.md`).**
+**W5 단계에서 검증 가능한 것만 수행한다 — `scenes.csv` (W6 산출물)에 의존하는 "씬 매칭 검증"은 본 단계에서 제외하고 W8 8-0 (CapCut export / 8-1 verify-import 전) 도입부에서 실행한다 (`docs/{lang}/W8-assembly.md`).**
 
 **W5-4에서 검증할 항목 (scenes.csv 불필요):**
 1. **겹침 검증** — 같은 타임코드에 3개 이상 몰려있으면 실패 (CapCut에서 트랙 폭발)
@@ -378,7 +340,49 @@ done
 - step: `W05_sfx_timecode_qa`
 - mechanic 검증 통과 후 기록 (씬 매칭은 W8에서 별도 기록)
 
-**리뷰 (서브스텝 5-4)** — 서브에이전트 자가검토 → 이슈 목록 → 수정. 최대 5회. 0 이슈 시 다음 Wave로 즉시 진행. 5회 초과 시 사용자에게 에스컬레이션.
+**리뷰 (서브스텝 5-4)** — 서브에이전트 자가검토 → 이슈 목록 → 수정. 최대 5회. 0 이슈 시 다음 서브스텝(5-5)으로 즉시 진행. 5회 초과 시 사용자에게 에스컬레이션.
+
+---
+
+## 5-5. 오디오 임포트 (best-effort, mechanic-QA 통과 후)
+
+**W5-4 mechanic QA가 통과한 후에만** 실행한다. 그 전에 임포트하면 사용자가
+타임코드 깨진/SFX 범위 초과된 오디오를 듣게 된다. W5-4 통과 후 임포트하면
+사용자는 mechanic-clean한 패키지를 W6/W7 도는 동안 병렬로 검토할 수 있다.
+
+**voices 폴더 정리** (대사 존재 시) — API 호출 전 캐릭터별 서브폴더 생성:
+```bash
+cd ep{번호}/media/voices && for f in *.mp3; do
+  char=$(echo "$f" | sed 's/^[0-9]*_\([^_]*\)_.*/\1/')
+  mkdir -p "$char"
+  mv "$f" "$char/"
+done
+```
+
+**API 호출 (단일 POST):**
+```bash
+curl -s -X POST http://localhost:3210/api/audio-import \
+  -H "Content-Type: application/json" \
+  -d '{"folderPath": "/path/to/project/story/ep{번호}"}'
+```
+
+**Best-effort 시맨틱:**
+- 앱 오프라인 / 네트워크 에러 / non-2xx → 한 줄 warning 로그 후 진행. wave 차단/재시도 안 함. W8-1이 동일 POST를 idempotent하게 한 번 더 호출하는 안전망 역할.
+- 성공 시 사용자에게 ONE 줄 chat:
+  `🎧 오디오 임포트 완료 — W6/W7 진행 중 AutoFlowCut Audio 탭에서 검토하세요.`
+
+**Best-effort인 이유:** 앱 내 audio 리뷰는 최적화(병렬 피드백)이지 정합성
+요구사항이 아니다. 사용자 리뷰가 없어도 파이프라인은 정상 산출. W8-1이
+idempotent하게 재임포트한다.
+
+**재임포트 트리거:** 사용자가 W6/W7 중 Audio 탭에서 어느 세그먼트에 플래그
+달고 재생성하면, 재생성된 산출물이 디스크에 떨어진 후 W5-5(또는 W8-1의
+idempotent 임포트)를 다시 실행해 앱이 최신 패키지를 반영하도록 한다.
+
+**새 파일 산출물 없음.** 임포트 부수효과는 앱 상태에 존재
+(`.audio_review.json`은 앱이 쓰고 W5가 쓰지 않음).
+
+**리뷰 (서브스텝 5-5)** — 패스스루: 부수효과 단계라 콘텐츠 리뷰 없음. 성공(진행) 또는 warning(진행, W8-1이 커버) 둘 중 하나.
 
 ---
 

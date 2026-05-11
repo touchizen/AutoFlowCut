@@ -1,6 +1,12 @@
 # Phase Plan — Move Audio Import from W8 to End of W5
 
-**Status**: in implementation (this session)
+**Status**: implemented + review-corrected (this session)
+
+**Review correction summary (post-implementation)**:
+- W5-3a renamed to **W5-5** and moved AFTER W5-4 mechanic QA. Importing before W5-4 risked the user reviewing audio with broken timecodes / out-of-range SFX.
+- W8-1 verification logic via `/api/audio-reviews` was REMOVED. That GET returns the app's currently-loaded reviews regardless of folder, so non-empty data could be leftover from a different episode. W8-1 now calls `/api/audio-import` idempotently for the explicit episode folder path — the only reliable way to guarantee the app is on this episode's audio package before CapCut export.
+- "pre-audio-import" wording on W8-0 changed to "before W8-1 re-import / W8-2 CapCut export" since audio is normally already imported by W5-5.
+- Top-level role descriptions (SKILL.md, W7 docs, execute-pipeline.md wave roles table) updated: W5 includes "initial audio import (best-effort)"; W8 is "SFX scene-match + idempotent audio re-import + CapCut + video".
 **Estimated effort**: ~30 min (docs only, no script changes)
 **Risk level**: Low — additive sub-step, W8 keeps backwards-compat fallback
 

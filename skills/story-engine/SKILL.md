@@ -26,11 +26,11 @@ description: "YouTube story channel script writing skill with 9-wave automated p
 | **W3** | 대본 작성 + 검토 | 최대 5회 (목표 9.5점) |
 | | 🛑 **사용자 확인** | |
 | **W4** | 프로덕션 추출 + 검증 | 최대 5회 |
-| **W5** | TTS/SFX + mechanic 타임코드 검증 | 리뷰 |
+| **W5** | TTS/SFX + mechanic 타임코드 검증 + 1차 audio import (W5-5, best-effort) | 리뷰 |
 | **W6** | 스토리보드 CSV + 검토 (batch QA, 3그룹 병렬) | 최대 5회 |
 | **W7** | 이미지 프로덕션 (ref + 씬 + 에러 fix + image QA, batch QA) | 최대 5회 |
 | | 🛑 **사용자 확인** | |
-| **W8** | 어셈블리 (SFX 씬 매칭 + 오디오 임포트 + CapCut export + 영상 선택) | 최대 5회 |
+| **W8** | 어셈블리 (SFX 씬 매칭 + audio import idempotent 재호출/안전망 + CapCut export + 영상 선택) | 최대 5회 |
 | **W9** | 업로드 정보 (제목/설명/태그/썸네일) | — |
 
 ## 장르
@@ -231,7 +231,7 @@ Rules: command strings only (no env values, no credentials, no body content); UR
 | W5 | `docs/{lang}/W5-tts-sfx.md` |
 | W6 | `docs/{lang}/W6-storyboard.md` |
 | W7 | `docs/{lang}/W7-image-production.md` (이미지 프로덕션 — ref + 씬 + QA) |
-| W8 | `docs/{lang}/W8-assembly.md` (어셈블리 — SFX 씬 매칭 + 오디오 임포트 + CapCut export + 영상) |
+| W8 | `docs/{lang}/W8-assembly.md` (어셈블리 — SFX 씬 매칭 + audio import idempotent 재호출 + CapCut export + 영상; 1차 import는 W5-5) |
 | W9 | `docs/{lang}/W9-upload-info.md` (업로드 정보) |
 
 ## AutoFlowCut MCP 도구

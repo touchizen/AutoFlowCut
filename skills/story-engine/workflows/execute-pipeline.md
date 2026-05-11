@@ -117,10 +117,10 @@ not reword. Pick the language block that matches the resolved `{lang}`:
 | W2   | 시놉시스 + 프리플라이트                       | Synopsis + preflight                        |
 | W3   | 대본 작성 + 리뷰                              | Script writing + review                     |
 | W4   | 프로덕션 (나레이션/대사/SFX 추출)             | Production (narration/dialogue/SFX)         |
-| W5   | TTS + SFX + SRT 자막                          | TTS + SFX + SRT subtitles                   |
+| W5   | TTS + SFX + SRT 자막 + mechanic QA + 1차 audio import (W5-5, best-effort) | TTS + SFX + SRT subtitles + mechanic QA + initial audio import (W5-5, best-effort) |
 | W6   | 스토리보드 CSV                                | Storyboard CSV                              |
 | W7   | 이미지 프로덕션 (ref + 씬 + QA)              | Image production (ref + scene + QA)         |
-| W8   | 어셈블리 (오디오 임포트 + CapCut + 영상)     | Assembly (audio import + CapCut + video)    |
+| W8   | 어셈블리 (SFX 씬 매칭 + audio idempotent 재임포트 + CapCut + 영상) | Assembly (SFX scene-match + idempotent audio re-import + CapCut + video) |
 | W9   | 업로드 정보 (제목/설명/태그)                   | Upload info (title/description/tags)        |
 
 **Wave I/O contract** (canonical inputs/outputs per wave — banner auto-fills from this)
@@ -333,10 +333,10 @@ follow this granularity; wave docs may add finer breakdowns but never remove the
 | W2   | W2-0 read-inputs, W2-1 synopsis-draft, W2-2 preflight, W2-3..N preflight-revise (per round)        |
 | W3   | W3-0 read-inputs, W3-1..4 part-write × 4, **W3-5 hook-write (LAST — full story in view)**, W3-6 self-review, W3-7 external-review, W3-8 polish     |
 | W4   | W4-0 read-inputs, W4-1..4 narration-extract × 4, **W4-1h narration-extract hook**, W4-5 dialogue-extract (all 5 parts), W4-6 SFX-list (all 5 parts), W4-7 audit |
-| W5   | W5-0-prep provider-pick, W5-0-assign voice-assign, W5-1a narration-TTS (all 5 parts), W5-1b draft-subs, W5-1c build-SRT+timeline, W5-1d user-review (optional), W5-1e merge-segments, W5-1f dialogue-TTS (when dialogue), W5-2 SFX (batched), **W5-3 5-part merge (hook + 4 narrative parts)**, **W5-3a audio-import (early — best-effort; user can review in Audio tab while W6/W7 run)**, W5-4 mechanic-QA |
+| W5   | W5-0-prep provider-pick, W5-0-assign voice-assign, W5-1a narration-TTS (all 5 parts), W5-1b draft-subs, W5-1c build-SRT+timeline, W5-1d user-review (optional), W5-1e merge-segments, W5-1f dialogue-TTS (when dialogue), W5-2 SFX (batched), **W5-3 5-part merge (hook + 4 narrative parts)**, W5-4 mechanic-QA, **W5-5 audio-import (best-effort; user can review in Audio tab while W6/W7 run)** |
 | W6   | W6-1 references-CSV (character + scene only), W6-2 scenes-CSV, W6-3a/b/c **batch QA × 3 parallel** (Completeness / Reference integrity / Timing structure) |
 | W7   | W7-0 project-setup, W7-1 ref-batch (incl. style-pick + type:style row), W7-2 scene-batch, W7-2a error-fix, W7-2b-1/2 **image-QA batch × 2 parallel** (Visual / Content) → 🛑 user sign-off |
-| W8   | W8-0 SFX scene-match QA (moved from old W7 7-2c), **W8-1 audio-import verify** (read `/api/audio-reviews`; if empty / no previous import — fallback to first-time import), W8-2 CapCut-export, W8-3 video (optional, requires user confirm) |
+| W8   | W8-0 SFX scene-match QA (moved from old W7 7-2c), **W8-1 audio-import (idempotent re-import — safety net for W5-5)**, W8-2 CapCut-export, W8-3 video (optional, requires user confirm) |
 | W9   | W9-0 title-desc-tags, W9-1 thumbnail-text                                                          |
 
 **For each sub-step the orchestrator MUST:**
@@ -460,9 +460,9 @@ Each subagent receives:
   - **yadam**: `hook → 기 → 승 → 전 → 결`
   - **dark-history & bespoke**: `hook → setup → rising → crisis → resolution`
   SFX in-part timecodes are converted to full-timeline `media/sfx/*_MMSS.mp3`. The hook's offset is `0` (it leads the full track); each subsequent part's offset is the running sum of preceding `final_{part}.mp3` durations.
-- **W5-3a audio-import (early — best-effort)** — immediately after `media/final_full.mp3` and `media/sfx/` exist, POST the episode folder to `http://localhost:3210/api/audio-import` so the user can preview/flag TTS in the app's Audio tab during W6 / W7. Failure (app offline, network) is logged as a warning and does NOT block the wave — W8-1 will fall back to first-time import. Single user-facing chat line: `🎧 Audio imported — review in the AutoFlowCut Audio tab while W6/W7 run.`
-- W5-4 mechanic timecode validation (collision / per-part range / full range / per-part offset) — runs against all 5 parts. Runs in parallel with the user's optional in-app audio review.
-- Outputs (per part, using the genre-specific {part} keys defined in Notation — yadam `hook|기|승|전|결`, dark-history & bespoke `hook|setup|rising|crisis|resolution`): `segments_{part}/`, `subtitles_{part}.txt`, `final_{part}.mp3`, `final_{part}.srt`, **`timeline_{part}.json`**; plus `voices/` (when dialogue), `media/`. No new file artifacts from W5-3a — the import side effect lives in the AutoFlowCut app (`.audio_review.json` in the episode dir is touched by the app).
+- W5-4 mechanic timecode validation (collision / per-part range / full range / per-part offset) — runs against all 5 parts. **Must pass before W5-5 import** so the user never reviews audio with broken timecodes / SFX placements. If W5-4 fails and timecodes/audio are regenerated, W5-5 runs against the corrected output.
+- **W5-5 audio-import (best-effort)** — only after W5-4 passes, POST the episode folder to `http://localhost:3210/api/audio-import` so the user can preview/flag TTS in the app's Audio tab during W6 / W7. Failure (app offline, network) is logged as a warning and does NOT block the wave — W8-1 calls the same import endpoint idempotently as the safety net. Single user-facing chat line: `🎧 Audio imported — review in the AutoFlowCut Audio tab while W6/W7 run.`
+- Outputs (per part, using the genre-specific {part} keys defined in Notation — yadam `hook|기|승|전|결`, dark-history & bespoke `hook|setup|rising|crisis|resolution`): `segments_{part}/`, `subtitles_{part}.txt`, `final_{part}.mp3`, `final_{part}.srt`, **`timeline_{part}.json`**; plus `voices/` (when dialogue), `media/`. No new file artifacts from W5-5 — the import side effect lives in the AutoFlowCut app (`.audio_review.json` in the episode dir is touched by the app).
 
 **W6 subagent prompt includes:**
 - **No external scripts** — `scenes.csv` is built directly via AutoFlowCut MCP tools (`get_schema`, `load_csv`, `update_field`, `save_csv`) using W5's `final_{part}.srt` + `timeline_{part}.json` as inputs.

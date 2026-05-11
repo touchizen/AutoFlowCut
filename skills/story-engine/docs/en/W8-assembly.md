@@ -8,9 +8,9 @@ W7 was the expensive wave (Google Flow credits). W8 is the free / low-cost assem
 
 ---
 
-## 8-0. SFX scene-match validation (REQUIRED before audio import)
+## 8-0. SFX scene-match validation (REQUIRED before W8-1 re-import / W8-2 export)
 
-W5-4 could not depend on `scenes.csv` (a W6 output), so it only ran mechanic validation (collision / range / per-part offset). This step performs the scenes.csv-based scene-match validation — the natural moment is right before audio import.
+W5-4 could not depend on `scenes.csv` (a W6 output), so it only ran mechanic validation (collision / range / per-part offset). This step performs the scenes.csv-based scene-match validation — the natural moment is right before W8-1's idempotent re-import and W8-2's CapCut export, since any scene-match failure may require regenerating SFX and therefore a fresh re-import.
 
 ```python
 # 1. Parse timecodes (MMSS / HHMMSS) from media/sfx/ filenames
@@ -37,23 +37,28 @@ Only proceed to 8-1 import once this validation passes.
 
 ---
 
-## 8-1. Audio import — verify (or first-time import as fallback)
+## 8-1. Audio import — idempotent re-import (safety net for W5-5)
 
-In the current pipeline, **audio is normally imported at W5-3a** (right after
-W5-3 produces `media/final_full.mp3` + `media/sfx/`) so the user can review
-TTS in the Audio tab during W6/W7. By the time W8 starts, audio is usually
-already imported and possibly already reviewed/flagged.
+In the current pipeline, **audio is imported at W5-5** (after W5-4 mechanic
+QA passes). W5-5 is best-effort — the app may have been offline, or the user
+may have switched to another episode in the meantime. **W8-1 issues the same
+import POST idempotently** so the app is guaranteed to be looking at THIS
+episode's audio package before CapCut export runs.
+
+⚠ **Why not just check `/api/audio-reviews`?** That GET returns the app's
+currently-loaded reviews regardless of folder; a non-empty result might be
+leftover state from a previous episode. The only reliable way to ensure the
+app is on this episode's package is to call `/api/audio-import` with the
+explicit folder path.
 
 **W8-1 protocol:**
 
-1. **Check existing import state** — read `/api/audio-reviews` for the episode folder.
-   - If the response is non-empty (any audio review entries exist, flagged or not) → audio was already imported; **skip to step 3**.
-   - If the response is empty AND `media/final_full.mp3` exists on disk → audio files are present but never imported (W5-3a was skipped, failed, or the episode was generated before the W5-3a spec). Proceed to **first-time import (step 2)**.
-   - If `media/final_full.mp3` is missing → escalate; W5 did not complete.
-2. **First-time import (fallback only)** — POST as below; this is the original W8-1 logic.
-3. **Refresh + flag handling** — POST to `/api/audio-refresh` to rescan and auto-unflag any regenerated files. Any remaining flagged entries surface in the W8-1 review report.
+1. **Precondition** — `media/final_full.mp3` MUST exist on disk. Missing → escalate; W5 did not complete.
+2. **Voices folder reorganization** (if dialogue present, and not already reorganized by W5-5) — idempotent shell loop that creates per-character subfolders. Re-running on already-organized voices is a no-op.
+3. **Import POST** — call `/api/audio-import` with the episode folder path. The app loads (or re-loads, if same path) the audio package.
+4. **Refresh + flag handling** — POST `/api/audio-refresh` to rescan and auto-unflag any regenerated files. Any remaining flagged entries surface in the W8-1 review report.
 
-After import (or verification), narration / SFX will auto-land on the timeline when you export to CapCut.
+After step 3, the app is guaranteed to be on THIS episode's audio, regardless of whether W5-5 ran successfully.
 
 **Import targets (episode folder):**
 ```
