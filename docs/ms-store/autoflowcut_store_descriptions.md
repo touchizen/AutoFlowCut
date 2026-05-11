@@ -1,4 +1,4 @@
-# AutoFlowCut — Microsoft Store Listing (v0.9.7)
+# AutoFlowCut — Microsoft Store Listing (v0.9.8)
 
 ---
 
@@ -156,18 +156,18 @@ Disclaimer: This app is an independent product developed by Touchizen and is not
 
 ### What's New
 ```
-v0.9.7 — Quota Refresh, Inline Errors, and macOS Install Fix
+v0.9.8 — Flow Archive Gallery, Disk Upload for F2V, Faster Reference Batches
 
-- New quota model: monthly 5 free CapCut exports + 5 signup bonus credits.
-- Stop button now shows the currently-running style name (no more guessing which style is queued).
-- Inline error display under the prompt and inside detail modals — see what failed without opening dev tools.
-- Generation button blocks double-queueing of scene/video batches when a job is already running.
-- Project folder rename no longer breaks video playback (paths auto-remap on load).
-- I2V keyframes are preserved when the seed is locked.
-- AudioTimeline polish: playhead stability across zoom, drag cleanup, project-switch crash fix, mini-clip markers in file rows.
-- Updater: auto-download is now gated behind a confirmation dialog.
-- macOS DMG: properly notarized + stapled and Hangul filenames are NFD-normalized — fixes the "AutoFlowCut is damaged" Gatekeeper warning.
-- License: switched from MIT to GNU AGPL v3 (CONTRIBUTING.md added).
+- New: Flow Archive Gallery — browse images previously generated in Google Flow and pick them directly from the F2V dropdown.
+- New: upload local images from disk for F2V (Frame-to-Video) generation — no need to pre-generate.
+- Reference batches are faster: post-processing runs in parallel + elapsed time is shown live.
+- Story Engine: new `/story-step` skill runs one wave at a time (manual mode, no in-wave prompts).
+- Story Engine: per-wave timing is tracked in `W_progress.json` for analysis and resume.
+- Codified error display — errors now have stable kinds with i18n-translated messages (EN/KR/JA/DE).
+- Fix: cross-project image leaks on project load — images from other projects no longer bleed in; missing images are now flagged in the scene list.
+- Fix: when switching projects during a batch, retry-error results were saved to the wrong project.
+- Fix: image generation now clears stale error state on retry and surfaces disk-save failures.
+- Gallery polish: tighter redirect allowlist, request timeout, signed CDN URL handling, label dedupe.
 ```
 
 ### Keywords
@@ -331,18 +331,18 @@ Touchizen 제작 — touchizen.com
 
 ### What's New (새로운 기능)
 ```
-v0.9.7 — 쿼터 모델 개편 + 인라인 에러 표시 + macOS 설치 이슈 수정
+v0.9.8 — Flow 보관함 갤러리 + 로컬 이미지 업로드 + 레퍼런스 배치 속도 개선
 
-- 새로운 쿼터 모델: 월 5회 무료 CapCut 내보내기 + 가입 보너스 5회.
-- 정지 버튼에 현재 실행 중인 스타일 이름 표시 — 어떤 스타일이 실행 중인지 한눈에.
-- 인라인 에러 표시: 프롬프트 아래 + 상세 모달 안에서 실패 원인을 바로 확인 가능.
-- 씬/비디오 배치 작업이 실행 중일 때 중복 큐잉 차단.
-- 프로젝트 폴더 이름을 바꿔도 비디오 404 발생 안 함 — 로드 시 경로 자동 재매핑.
-- 시드 잠금 시 I2V 키프레임 보존.
-- AudioTimeline 안정화: 줌 변경 시 플레이헤드 안정성, 드래그 정리, 프로젝트 전환 크래시 수정, 파일 행 미니 클립 마커 추가.
-- 업데이터: 자동 다운로드 시작 전 확인 대화상자 게이트 추가.
-- macOS DMG: 정식 notarize + staple 및 한글 파일명 NFD 정규화 — "AutoFlowCut가 손상되었습니다" 경고 해결.
-- 라이선스: MIT → GNU AGPL v3 변경 (CONTRIBUTING.md 추가).
+- 신규: Flow 보관함 갤러리 — Google Flow에서 이전에 생성한 이미지를 F2V 드롭다운에서 바로 탐색·선택.
+- 신규: F2V(Frame-to-Video) 생성용 로컬 이미지 디스크 업로드 — 미리 생성할 필요 없이 바로 사용.
+- 레퍼런스 배치 속도 개선: 후처리 병렬화 + 경과 시간 실시간 표시.
+- Story Engine: `/story-step` 스킬 추가 — 한 웨이브씩만 수동 실행 (웨이브 내부 질문 없음).
+- Story Engine: 웨이브별 소요 시간을 `W_progress.json`에 기록.
+- 에러 표시 코드화 — errorKind 도입 + i18n 번역 메시지 (영/한/일/독).
+- 수정: 프로젝트 로드 시 다른 프로젝트의 이미지가 섞이던 버그 + 누락 이미지를 씬 목록에 표시.
+- 수정: 배치 중 프로젝트 전환 시 retry 결과가 잘못된 프로젝트에 저장되던 문제.
+- 수정: 이미지 재생성 시 이전 에러 상태가 남아있던 문제 + 디스크 저장 실패가 보이지 않던 문제.
+- 갤러리 안정화: 리다이렉트 허용 호스트 강화, 요청 타임아웃, 서명된 CDN URL 처리, 라벨 중복 제거.
 ```
 
 ### Keywords (한국어)
@@ -411,18 +411,18 @@ AutoFlowCutはAI動画制作の全プロセスを自動化します。Google Flo
 
 ### What's New
 ```
-v0.9.7 — クォータモデル刷新 + インラインエラー表示 + macOSインストール問題修正
+v0.9.8 — Flow アーカイブ ギャラリー + ローカル画像アップロード + リファレンスバッチの高速化
 
-- 新しいクォータモデル：月5回の無料CapCutエクスポート + 登録ボーナス5回。
-- 停止ボタンに実行中のスタイル名を表示 — 何が実行中か一目で確認可能。
-- インラインエラー表示：プロンプト下と詳細モーダル内で失敗原因を即時確認。
-- シーン/動画バッチが実行中のときの重複キューイングをブロック。
-- プロジェクトフォルダ名を変更しても動画404が発生しません — 読み込み時にパスを自動再マッピング。
-- シードロック時のI2Vキーフレームを保持。
-- AudioTimeline改善：ズーム変更時のプレイヘッド安定性、ドラッグクリーンアップ、プロジェクト切り替えクラッシュ修正、ファイル行のミニクリップマーカー追加。
-- アップデーター：自動ダウンロード開始前に確認ダイアログを追加。
-- macOS DMG：正式にnotarize + staple + ハングルファイル名をNFD正規化 —「AutoFlowCutが破損しています」警告を解決。
-- ライセンス：MIT → GNU AGPL v3に変更（CONTRIBUTING.md追加）。
+- 新機能：Flow アーカイブ ギャラリー — Google Flow で過去に生成した画像を F2V ドロップダウンから直接ブラウズ・選択。
+- 新機能：F2V（Frame-to-Video）生成用にローカル画像をディスクからアップロード — 事前生成不要。
+- リファレンスバッチの高速化：後処理を並列化 + 経過時間をリアルタイム表示。
+- Story Engine：新スキル `/story-step` — 1ウェーブのみ手動実行（ウェーブ内の質問なし）。
+- Story Engine：ウェーブごとの所要時間を `W_progress.json` に記録。
+- エラー表示のコード化 — errorKind 導入 + 多言語化メッセージ（英・韓・日・独）。
+- 修正：プロジェクト読み込み時に他プロジェクトの画像が混入する不具合 + 欠落画像をシーン一覧で表示。
+- 修正：バッチ中にプロジェクトを切り替えると retry 結果が誤ったプロジェクトに保存される問題。
+- 修正：画像再生成時に古いエラー状態が残る問題 + ディスク保存失敗が表示されない問題。
+- ギャラリー安定化：リダイレクト許可ホスト強化、リクエストタイムアウト、署名済み CDN URL 対応、ラベル重複除去。
 ```
 
 ---
@@ -486,18 +486,18 @@ Der integrierte MCP-Server (Model Context Protocol) verbindet sich direkt mit Cl
 
 ### What's New
 ```
-v0.9.7 — Neues Kontingentmodell, Inline-Fehler und macOS-Installationsfix
+v0.9.8 — Flow-Archiv-Galerie + Lokaler Bild-Upload + Schnellere Referenz-Batches
 
-- Neues Kontingentmodell: 5 kostenlose CapCut-Exporte pro Monat + 5 Bonus-Credits bei Anmeldung.
-- Stop-Button zeigt jetzt den Namen des aktuell laufenden Stils — kein Rätselraten mehr, welcher Stil läuft.
-- Inline-Fehleranzeige unter dem Prompt und in Detail-Modals — Fehlerursachen sofort sichtbar.
-- Doppelte Warteschlangen für Szenen-/Video-Batches werden blockiert, wenn ein Job bereits läuft.
-- Umbenennen des Projektordners verursacht keine Video-404-Fehler mehr — Pfade werden beim Laden automatisch neu gemappt.
-- I2V-Keyframes bleiben bei gesperrtem Seed erhalten.
-- AudioTimeline-Politur: Playhead-Stabilität bei Zoom-Änderungen, Drag-Cleanup, Projekt-Wechsel-Crash behoben, Mini-Clip-Marker in Datei-Zeilen.
-- Updater: Auto-Download wird jetzt durch einen Bestätigungsdialog kontrolliert.
-- macOS DMG: korrekt notarisiert + stapled und Hangul-Dateinamen NFD-normalisiert — behebt die „AutoFlowCut ist beschädigt"-Warnung.
-- Lizenz: MIT → GNU AGPL v3 (mit CONTRIBUTING.md).
+- Neu: Flow-Archiv-Galerie — zuvor in Google Flow generierte Bilder direkt aus dem F2V-Dropdown durchsuchen und auswählen.
+- Neu: Lokale Bilder von der Festplatte für die F2V-Generierung (Frame-to-Video) hochladen — keine Vorgenerierung nötig.
+- Schnellere Referenz-Batches: Nachbearbeitung läuft jetzt parallel + Live-Anzeige der verstrichenen Zeit.
+- Story Engine: Neuer Skill `/story-step` — führt nur eine Wave manuell aus (keine Rückfragen innerhalb der Wave).
+- Story Engine: Wave-spezifische Laufzeiten werden in `W_progress.json` getrackt.
+- Kodifizierte Fehleranzeige — errorKind eingeführt + i18n-übersetzte Meldungen (EN/KR/JA/DE).
+- Fix: Bild-Leaks zwischen Projekten beim Laden — Bilder anderer Projekte erscheinen nicht mehr; fehlende Bilder werden in der Szenenliste markiert.
+- Fix: Bei Projektwechsel während eines Batches wurden Retry-Ergebnisse im falschen Projekt gespeichert.
+- Fix: Bildgenerierung — alter Fehlerzustand wird bei Wiederholung gelöscht; Disk-Save-Fehler werden jetzt angezeigt.
+- Galerie-Politur: Redirect-Allowlist gehärtet, Request-Timeout, signierte CDN-URL-Behandlung, Label-Deduplizierung.
 ```
 
 ---
