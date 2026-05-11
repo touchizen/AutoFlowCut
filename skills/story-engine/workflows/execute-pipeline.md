@@ -394,11 +394,13 @@ Each subagent receives:
   - **bespoke**: `04_synopsis.md`, `05_preflight.md` (English filenames, content in {lang})
 
 **W3 subagent prompt includes:**
-- Screenplay guidelines + narrative + suspense:
+- **Common principles** (universal, always loaded): `meta-prompts/_common/hook_principles.md` (hook last, separate file, duration, 5-element checklist, pipeline contract)
+- Screenplay guidelines + narrative + suspense (genre-specific overrides on top of `_common/*`):
   - **yadam**: `meta-prompts/yadam/야담_시나리오_작성_지침.md`, `야담_서술기법_가이드.md`, `야담_서스펜스_기법.md`
   - **dark-history**: `meta-prompts/dark-history/screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md`
   - **bespoke**: `meta-prompts/bespoke/{lang}/screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md` PLUS `_story_source/_meta_supplement.md`
-- For **bespoke**: ALSO read `_story_source/_meta_supplement.md` (W1-5 per-episode supplement) — supplement OVERRIDES universal base on conflicts; universal base is the fallback
+- Conflict resolution order (lowest to highest precedence): `_common/*` → genre base → bespoke `_meta_supplement.md`. The episode supplement always wins.
+- For **bespoke**: ALSO read `_story_source/_meta_supplement.md` (W1-5 per-episode supplement)
 - **Writing order**: `Setup → Rising → Crisis → Resolution → Hook (LAST, separate file) → Review`. The Hook (cold open) is written **last** — the writer must see the entire arc to pick the strongest curiosity/anticipation lever (flash-forward / mystery / provocative / sensory). Drafting hook first tends to produce generic "Long ago…" openings.
 - **Hook file**: `{title}_hook.md` (universal — ASCII filename across all genres). Contains ONLY the cold-open content (~20s of narration). Hook narrative is NOT duplicated inside `{title}_part1_setup.md` / `{title}_기.md` — those start with the post-hook narrative.
 - **Hook duration target**: 20s ± 5s of narration (≈ 50–80 words EN / 80–130자 KO). Synopsis stage may set explicit target per episode.

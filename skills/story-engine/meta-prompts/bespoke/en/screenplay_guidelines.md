@@ -68,26 +68,18 @@ Whichever register: NO breaks in voice mid-script. The supplement may pin a spec
 
 ## 9. The hook (first 20–30 seconds — separate file)
 
-The Hook lives in `{title}_hook.md`, a separate file from the 4 narrative parts.
-It is **written LAST** (after Setup / Rising / Crisis / Resolution are complete)
-so the writer can pick the strongest curiosity/anticipation lever with the full
-arc in view. Hook content is NOT duplicated inside `{title}_part1_setup.md` —
-part1 begins with the post-hook narrative.
+Universal hook rules — writing order (LAST), separate `{title}_hook.md` file,
+duration target, 5-element checklist, pipeline contract — live in
+[`../../_common/hook_principles.md`](../../_common/hook_principles.md). Read
+that file alongside this guide.
 
-**Hook duration target**: ~20s of narration (50–80 words EN / 80–130자 KO).
-
-The Hook MUST do five things in its opening (~20 seconds, ~50–80 words):
-
-1. **Time anchor** — date or period
-2. **Place anchor** — geographic or institutional
-3. **A single concrete image** that the audience cannot un-see
-4. **A planted question** (often via a withheld detail — Chekhov's bomb)
-5. **A signal that this is going to matter** — stakes promised, not yet delivered
-
-Avoid:
-- Telling the audience what they're about to hear ("Today we'll tell you the story of…")
-- Generic context ("In a small town…", "Once upon a time…")
-- Pre-spoiling the twist
+Bespoke-specific hook considerations:
+- The hook style MUST match the reference scripts' opening style derived in
+  W1-5 (`_story_source/_meta_supplement.md` § "Hook patterns"). If references
+  favor a particular hook type, prefer it.
+- For audience languages other than English/Korean, recalculate the 20-second
+  word budget — Japanese typically lands at 100–150 mora-units, Spanish at
+  ~70–100 words, etc. Source the per-language calibration from the supplement.
 
 ## 10. The closing (final 30 seconds)
 
