@@ -311,7 +311,7 @@ ffmpeg -y -f concat -safe 0 -i merge_all.txt -c copy media/final_full.mp3
 
 ## 5-4. SFX 타임코드 mechanic 검증 (W5 내부 일관성)
 
-**W5 단계에서 검증 가능한 것만 수행한다 — `scenes.csv` (W6 산출물)에 의존하는 "씬 매칭 검증"은 본 단계에서 제외하고 W8 8-0 (CapCut export / 8-1 verify-import 전) 도입부에서 실행한다 (`docs/{lang}/W8-assembly.md`).**
+**W5 단계에서 검증 가능한 것만 수행한다 — `scenes.csv` (W6 산출물)에 의존하는 "씬 매칭 검증"은 본 단계에서 제외하고 W8 8-0 (W8-1 idempotent 재임포트 / W8-2 CapCut export 전) 도입부에서 실행한다 (`docs/{lang}/W8-assembly.md`).**
 
 **W5-4에서 검증할 항목 (scenes.csv 불필요):**
 1. **겹침 검증** — 같은 타임코드에 3개 이상 몰려있으면 실패 (CapCut에서 트랙 폭발)

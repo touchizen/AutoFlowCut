@@ -312,7 +312,7 @@ ffmpeg -y -f concat -safe 0 -i merge_all.txt -c copy media/final_full.mp3
 
 ## 5-4. SFX timecode mechanic validation (W5 internal consistency only)
 
-**Only the checks possible at W5 are performed here — the "scene match" check depends on `scenes.csv` (a W6 output), so it is moved out and runs at the start of W8 8-0 (before CapCut export / verify-import) — see `docs/{lang}/W8-assembly.md`.**
+**Only the checks possible at W5 are performed here — the "scene match" check depends on `scenes.csv` (a W6 output), so it is moved out and runs at the start of W8 8-0 (before W8-1 idempotent re-import / W8-2 CapCut export) — see `docs/{lang}/W8-assembly.md`.**
 
 **Items checked in W5-4 (do NOT require scenes.csv):**
 1. **Collision** — If 3 or more SFX pile onto the same timecode, fail (CapCut track explosion)

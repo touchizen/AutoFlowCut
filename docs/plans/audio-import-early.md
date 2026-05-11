@@ -50,7 +50,6 @@ Single trigger at **W5-5**, immediately after W5-4 passes.
 ### Out of scope
 - Changing the import API itself
 - Changing audio-review data format (`.audio_review.json`)
-- voices/ folder reorganization logic (stays as-is)
 
 ---
 
