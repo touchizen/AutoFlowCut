@@ -86,6 +86,7 @@ IPC 핸들러는 main.js에 이미 추가됨. UI/Hook 작업 필요.
 - [ ] **Gallery: Flow archive 뷰 미디어 포함**: 사용자가 Flow webview UI로 직접 업로드한 이미지(`/project/<id>/archive` 날짜별 뷰)가 우리 Gallery 드롭다운에 안 뜸. 현재 `fetchGallery` ([flow-api.js:1564](electron/ipc/flow-api.js:1564))는 `projectInitialData.projectContents.media[]`만 읽는데, archive 업로드는 다른 namespace에 들어가는 듯. Flow archive 뷰가 호출하는 API endpoint를 DevTools Network에서 캡쳐해서 추가 fetch + merge 필요.
 - [ ] **Gallery refresh 버튼**: [FrameToVideoPanel.jsx:174](src/components/FrameToVideoPanel.jsx:174) 현재 `galleryItems`가 비어 있을 때만 `📂 Load Gallery` 버튼 노출. 1개라도 로드되면 다시 fetch할 UI가 없어서 stale 상태. 항목 유무와 무관하게 "🔄 Refresh Gallery" 항상 노출 (또는 드롭다운 open 시 stale > 30s면 자동 refresh).
 - [ ] **story-engine: Hook을 별도 W3 출력 파일로 분리**: 현재 hook이 `part1_setup.md` 안에 묻혀 있어서 (a) writer가 hook craft를 본편 narrative와 같은 head-space에서 처리 → 평범한 도입부 양산, (b) hook만 A/B 테스트/재생성 불가, (c) 리뷰 시 hook이 약점일 때 발견하기 어려움. 5번째 W3 출력 `{title}_hook.md` 추가 + W4~W8 cascade. 상세 계획: [docs/plans/hook-file-split.md](docs/plans/hook-file-split.md). Estimated 1-2일.
+- [x] **story-engine: Audio import를 W8 → W5-3a로 이동**: 기존 W8-1에서야 오디오 임포트되어 사용자가 W7(최장 wave) 끝난 다음에야 TTS 검토 가능했음. W5-3 5-part merge 직후로 옮겨서 W6/W7 도는 동안 Audio 탭에서 병렬 검토. W8-1은 verification + 폴백 first-time 임포트로 단순화. 상세 계획: [docs/plans/audio-import-early.md](docs/plans/audio-import-early.md). Done (docs-only).
 
 ---
 

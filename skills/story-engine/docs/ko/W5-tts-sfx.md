@@ -305,7 +305,45 @@ ffmpeg -y -f concat -safe 0 -i merge_all.txt -c copy media/final_full.mp3
 - `media/final_full.srt` — 전체 자막 (오프셋 적용된 타임코드)
 - `media/sfx/*.mp3` — SFX (전체 타임라인 기준 MMSS 타임코드)
 
-**리뷰 (서브스텝 5-3)** — 서브에이전트 자가검토 → 이슈 목록 → 수정. 최대 5회. 0 이슈 시 다음 서브스텝(5-4)으로 즉시 진행. 5회 초과 시 사용자에게 에스컬레이션.
+**리뷰 (서브스텝 5-3)** — 서브에이전트 자가검토 → 이슈 목록 → 수정. 최대 5회. 0 이슈 시 다음 서브스텝(5-3a)으로 즉시 진행. 5회 초과 시 사용자에게 에스컬레이션.
+
+---
+
+## 5-3a. 조기 audio 임포트 (best-effort)
+
+`media/final_full.mp3`, `media/final_full.srt`, `media/sfx/`가 생성되는
+즉시 에피소드 폴더를 AutoFlowCut 앱에 임포트한다. 그러면 **W6 (CSV) 및
+W7 (이미지 생성)이 돌아가는 동안** 사용자가 Audio 탭에서 TTS 품질을 미리
+듣고 플래그 달 수 있다 — W7이 가장 느린 wave 이므로 오디오 검토 윈도우와
+겹친다.
+
+**API 호출 (단일 POST):**
+```bash
+curl -s -X POST http://localhost:3210/api/audio-import \
+  -H "Content-Type: application/json" \
+  -d '{"folderPath": "/path/to/project/story/ep{번호}"}'
+```
+
+**voices 폴더 정리** (대사 존재 시) — W8-1과 동일 로직:
+```bash
+cd ep{번호}/media/voices && for f in *.mp3; do
+  char=$(echo "$f" | sed 's/^[0-9]*_\([^_]*\)_.*/\1/')
+  mkdir -p "$char"
+  mv "$f" "$char/"
+done
+```
+
+**Best-effort 시맨틱:**
+- 앱 오프라인 / 네트워크 에러 / non-2xx → 한 줄 warning 로그 후 진행. wave 차단/재시도 안 함. W8-1이 first-time import 폴백으로 처리.
+- 성공 시 사용자에게 ONE 줄 chat:
+  `🎧 오디오 임포트 완료 — W6/W7 진행 중 AutoFlowCut Audio 탭에서 검토하세요.`
+
+**Best-effort인 이유:** 앱 내 audio 리뷰는 최적화(병렬 피드백)이지 정합성
+요구사항이 아니다. 사용자 리뷰가 없어도 파이프라인은 정상 산출. W5-3a가
+못 돌면 W8-1이 first-time-import로 대신함.
+
+**새 파일 산출물 없음.** 임포트 부수효과는 앱 상태에 존재
+(`.audio_review.json`은 앱이 쓰고 W5가 쓰지 않음).
 
 ---
 

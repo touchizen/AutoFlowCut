@@ -37,10 +37,23 @@ Only proceed to 8-1 import once this validation passes.
 
 ---
 
-## 8-1. Audio import (narration + SFX)
+## 8-1. Audio import — verify (or first-time import as fallback)
 
-Import the W5-generated audio files into AutoFlowCut.
-After import, narration / SFX will auto-land on the timeline when you export to CapCut.
+In the current pipeline, **audio is normally imported at W5-3a** (right after
+W5-3 produces `media/final_full.mp3` + `media/sfx/`) so the user can review
+TTS in the Audio tab during W6/W7. By the time W8 starts, audio is usually
+already imported and possibly already reviewed/flagged.
+
+**W8-1 protocol:**
+
+1. **Check existing import state** — read `/api/audio-reviews` for the episode folder.
+   - If the response is non-empty (any audio review entries exist, flagged or not) → audio was already imported; **skip to step 3**.
+   - If the response is empty AND `media/final_full.mp3` exists on disk → audio files are present but never imported (W5-3a was skipped, failed, or the episode was generated before the W5-3a spec). Proceed to **first-time import (step 2)**.
+   - If `media/final_full.mp3` is missing → escalate; W5 did not complete.
+2. **First-time import (fallback only)** — POST as below; this is the original W8-1 logic.
+3. **Refresh + flag handling** — POST to `/api/audio-refresh` to rescan and auto-unflag any regenerated files. Any remaining flagged entries surface in the W8-1 review report.
+
+After import (or verification), narration / SFX will auto-land on the timeline when you export to CapCut.
 
 **Import targets (episode folder):**
 ```
