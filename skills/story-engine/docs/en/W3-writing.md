@@ -100,7 +100,7 @@ ep{number}/
 ├── sfx_manifest.json       ← SFX manifest (built in W5-2 from SRT-anchor lookup; filenames include _MMSS)
 │   (TTS/SRT/SFX scripts live in the skill bundle, not the episode dir: skills/story-engine/scripts/*.cjs)
 ├── media/                  ← Final production output
-│   ├── final_full.mp3      ← Full merged audio (setup+rising+crisis+resolution)
+│   ├── final_full.mp3      ← Full merged audio (hook+setup+rising+crisis+resolution)
 │   ├── final_full.srt      ← Full merged subtitles (with offsets applied)
 │   └── sfx/                ← SFX (MMSS on the full timeline)
 │       ├── 01_bell_toll_0030.mp3

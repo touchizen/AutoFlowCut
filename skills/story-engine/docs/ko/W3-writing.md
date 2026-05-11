@@ -103,7 +103,7 @@ ep{번호}/                    ← yadam 기준
 ├── sfx_manifest.json        ← SFX manifest (W5-2에서 SRT 앵커 검색 결과로 생성, 파일명에 _MMSS 포함)
 │   (TTS/SRT/SFX 스크립트는 에피소드 dir이 아니라 skill bundle: skills/story-engine/scripts/*.cjs)
 ├── media/                   ← 최종 프로덕션 산출물
-│   ├── final_full.mp3       ← 전체 병합 오디오 (기+승+전+결)
+│   ├── final_full.mp3       ← 전체 병합 오디오 (hook+기+승+전+결)
 │   ├── final_full.srt       ← 전체 병합 자막 (오프셋 적용)
 │   └── sfx/                 ← SFX (전체 타임라인 기준 MMSS)
 │       ├── 01_주판_구슬_튕기기_0030.mp3
