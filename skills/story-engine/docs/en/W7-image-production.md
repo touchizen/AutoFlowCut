@@ -1,6 +1,6 @@
 # W7: Image production (ref + scene + QA)
 
-This document is the W7 (image production) stage guide for the story-engine skill — dark-history genre.
+This document is the W7 (image production) stage guide for the story-engine skill — shared across all genres (yadam / dark-history / bespoke); genre-specific filenames & tone live in the meta-prompts under `meta-prompts/{genre}/`.
 
 W7 covers **image generation** and **image QA only**. Audio is imported into the AutoFlowCut app at W5-5 (best-effort, after W5-4 mechanic QA passes), so the user can review TTS in the Audio tab while W7 runs in parallel. CapCut export, video generation, and the audio-import idempotent re-call (safety net for cases where W5-5 was skipped/failed) are W8 (Assembly).
 

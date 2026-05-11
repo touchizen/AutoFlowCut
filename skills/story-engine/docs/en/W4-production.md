@@ -1,6 +1,6 @@
 # W4: Production Extraction + Review
 
-This document is the W4 (production extraction + review) stage guide for the story-engine skill — dark-history genre.
+This document is the W4 (production extraction + review) stage guide for the story-engine skill — shared across all genres (yadam / dark-history / bespoke); genre-specific filenames & tone live in the meta-prompts under `meta-prompts/{genre}/`.
 
 **Bundled scripts** (`skills/story-engine/scripts/` — invoked from W5; W4 is text extraction only):
 

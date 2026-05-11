@@ -1,6 +1,6 @@
 # W8: Assembly (audio import + CapCut + video)
 
-This document is the W8 (Assembly) stage guide for the story-engine skill — dark-history genre.
+This document is the W8 (Assembly) stage guide for the story-engine skill — shared across all genres (yadam / dark-history / bespoke); genre-specific filenames & tone live in the meta-prompts under `meta-prompts/{genre}/`.
 
 **Run only after W7 (image production) completes with user sign-off.**
 

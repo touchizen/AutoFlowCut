@@ -1,6 +1,6 @@
 # W1: Story Design
 
-This document is the W1 (success-factor analysis, fact-check, research) stage guide for the story-engine skill — dark-history genre.
+This document is the W1 (success-factor analysis, fact-check, research) stage guide for the story-engine skill — shared across all genres (yadam / dark-history / bespoke); genre-specific filenames & tone live in the meta-prompts under `meta-prompts/{genre}/`.
 
 ## Environment precheck (required before starting)
 

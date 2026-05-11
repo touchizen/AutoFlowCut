@@ -1,6 +1,6 @@
 # W5: TTS / SFX + Timecode Validation
 
-This document is the W5 (TTS / SFX generation + timecode validation) stage guide for the story-engine skill — dark-history genre.
+This document is the W5 (TTS / SFX generation + timecode validation) stage guide for the story-engine skill — shared across all genres (yadam / dark-history / bespoke); genre-specific filenames & tone live in the meta-prompts under `meta-prompts/{genre}/`.
 
 Uses the narration / dialogue / SFX data extracted in W4 to generate audio.
 
@@ -397,4 +397,4 @@ the app reflects the latest audio package.
 ---
 
 ## Wave review summary
-Each substep above enforces max-5-round review with auto-advance on 0 issues. Wave 5 completes when the last substep's review passes. Escalate to user if any substep exceeds 5 rounds.
+Substeps **5-1 through 5-4** enforce max-5-round review with auto-advance on 0 issues. Substep **5-5 (audio-import)** is a side-effect step with no review loop — it either succeeds (continue) or warns (continue; W8-1 covers via idempotent re-import). Wave 5 completes when 5-5 finishes (success or warned). Escalate to user only if a reviewing substep (5-1 through 5-4) exceeds 5 rounds.

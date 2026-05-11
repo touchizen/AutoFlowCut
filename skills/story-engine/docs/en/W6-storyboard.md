@@ -1,6 +1,6 @@
 # W6: Storyboard CSV + Review
 
-This document is the W6 (storyboard CSV creation + review) stage guide for the story-engine skill — dark-history genre.
+This document is the W6 (storyboard CSV creation + review) stage guide for the story-engine skill — shared across all genres (yadam / dark-history / bespoke); genre-specific filenames & tone live in the meta-prompts under `meta-prompts/{genre}/`.
 
 > ## 🚫 W6 scope — HARD RULES
 >

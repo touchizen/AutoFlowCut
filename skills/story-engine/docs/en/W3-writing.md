@@ -1,6 +1,6 @@
 # W3: Script Writing + Review
 
-This document is the W3 (script writing + review) stage guide for the story-engine skill — dark-history genre.
+This document is the W3 (script writing + review) stage guide for the story-engine skill — shared across all genres (yadam / dark-history / bespoke); genre-specific filenames & tone live in the meta-prompts under `meta-prompts/{genre}/`.
 
 ## Reference documents (must read at this stage)
 
