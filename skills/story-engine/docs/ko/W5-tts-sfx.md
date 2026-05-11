@@ -350,16 +350,16 @@ ffmpeg -y -f concat -safe 0 -i merge_all.txt -c copy media/final_full.mp3
 타임코드 깨진/SFX 범위 초과된 오디오를 듣게 된다. W5-4 통과 후 임포트하면
 사용자는 mechanic-clean한 패키지를 W6/W7 도는 동안 병렬로 검토할 수 있다.
 
-**voices 폴더 정리** (대사 존재 시) — API 호출 전 캐릭터별 서브폴더 생성. idempotent (W8-1에서 재실행해도 안전):
-```bash
-shopt -s nullglob   # bash; zsh: setopt null_glob
-cd ep{번호}/media/voices && for f in *.mp3; do
-  [ -e "$f" ] || continue
-  char=$(echo "$f" | sed 's/^[0-9]*_\([^_]*\)_.*/\1/')
-  mkdir -p "$char"
-  mv "$f" "$char/"
-done
+**voices 폴더 정리** (대사 존재 시) — API 호출 전 캐릭터별 서브폴더 생성. idempotent (W8-1에서 재실행해도 안전). **portable** — bash + zsh 모두 동작 (글로브 확장 대신 `find` 사용):
+```sh
+cd ep{번호}/media/voices && find . -maxdepth 1 -type f -name '*.mp3' \
+  | while read -r f; do
+      char=$(echo "$f" | sed 's|^\./[0-9]*_\([^_]*\)_.*|\1|')
+      mkdir -p "$char"
+      mv "$f" "$char/"
+    done
 ```
+루트 레벨의 모든 `*.mp3`가 캐릭터 서브폴더로 이동되면 `find`가 빈 결과를 반환해 루프가 진짜 no-op이 된다.
 
 **API 호출 (단일 POST):**
 ```bash

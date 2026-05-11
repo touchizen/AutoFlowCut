@@ -20,25 +20,22 @@ expensive W7 image generation has already finished. If a clip is broken, the
 user has paid Google Flow credits for images that may need to be redone
 alongside the audio regeneration.
 
-If we import as soon as the W5-3 5-part merge produces `media/final_full.mp3`
-+ `media/sfx/`, the user can review audio in the app's Audio tab **in parallel
-with W6 (CSV) and W7 (image generation)** — the slowest wave. By the time W8
-starts, audio review is typically already complete.
+If we import as soon as the **W5-4 mechanic QA passes** (i.e., audio +
+SFX have been validated for collisions, range, offsets), the user can
+review audio in the app's Audio tab **in parallel with W6 (CSV) and
+W7 (image generation)** — the slowest wave. By the time W8 starts,
+audio review is typically already complete.
 
 ---
 
-## Decision: single import trigger, not per-part
+## Decision: single import trigger, after W5-4 mechanic QA
 
-Per-part import after W5-1e (narration only, no SFX) was considered. Rejected
-because:
+Considered and rejected:
 
-- Two import triggers complicate the pipeline spec and the audio-review state machine
-- Narration without SFX sounds incomplete and may produce false-positive flags
-- Marginal benefit (catching bad part1 TTS while part2 generates) is small —
-  W5 TTS for all 5 parts typically takes 2–5 minutes; W7 image generation
-  takes 30+ minutes, so the review window is dominated by W7 anyway
+- **Per-part import after W5-1e** (narration only, no SFX) — two import triggers complicate the spec and the audio-review state machine; narration without SFX may produce false-positive flags; marginal benefit small since W7 (the long wave) dominates the review window.
+- **Import right after W5-3 merge, before W5-4** — the first iteration of this plan placed it here. Rejected after review: W5-4 catches timecode collisions / SFX out-of-range, and the user shouldn't listen to a mechanically-broken package. If W5-4 fails and timecodes change, the early import would be stale.
 
-Single trigger at end of W5-3.
+Single trigger at **W5-5**, immediately after W5-4 passes.
 
 ---
 
@@ -123,6 +120,6 @@ Done:
 
 | Risk | Mitigation |
 |------|-----------|
-| Import side effect at W5-3a triggers app dialog that blocks orchestrator | The import API is a non-interactive HTTP POST — no dialog. Confirmed by W8-1 current usage. |
+| Import side effect at W5-5 triggers app dialog that blocks orchestrator | The import API is a non-interactive HTTP POST — no dialog. Confirmed by W8-1's current usage of the same endpoint. |
 | Audio review flag races with W7 image generation | Flags live in `.audio_review.json` (file-level). W7 doesn't touch audio files. No race. |
 | User regenerates audio during W6/W7 (manually re-runs W5-1a for a part) | Out of scope for this phase — manual mid-pipeline reruns are an existing edge case. Documented in W5-1d (user-review step) as the right place to refine. |

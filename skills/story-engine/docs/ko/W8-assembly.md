@@ -80,13 +80,12 @@ ep{번호}/
 **voices/ 디렉토리 구조 생성:**
 TTS 생성 후 파일명에서 캐릭터명을 추출하여 서브폴더를 자동 생성한다.
 ```bash
-shopt -s nullglob   # bash; zsh: setopt null_glob
-cd ep{번호}/media/voices && for f in *.mp3; do
-  [ -e "$f" ] || continue
-  char=$(echo "$f" | sed 's/^[0-9]*_\([^_]*\)_.*/\1/')
-  mkdir -p "$char"
-  mv "$f" "$char/"
-done
+cd ep{번호}/media/voices && find . -maxdepth 1 -type f -name '*.mp3' \
+  | while read -r f; do
+      char=$(echo "$f" | sed 's|^\./[0-9]*_\([^_]*\)_.*|\1|')
+      mkdir -p "$char"
+      mv "$f" "$char/"
+    done
 ```
 
 **HTTP API로 임포트:**

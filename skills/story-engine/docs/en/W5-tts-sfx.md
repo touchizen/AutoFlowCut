@@ -354,16 +354,18 @@ W6 (CSV) and W7 (image generation) run in parallel.
 
 **Voices folder reorganization** (if dialogue present) — must happen
 before the API call so character subfolders are created. Idempotent so
-W8-1 can re-run safely:
-```bash
-shopt -s nullglob   # bash; zsh: setopt null_glob
-cd ep{number}/media/voices && for f in *.mp3; do
-  [ -e "$f" ] || continue
-  char=$(echo "$f" | sed 's/^[0-9]*_\([^_]*\)_.*/\1/')
-  mkdir -p "$char"
-  mv "$f" "$char/"
-done
+W8-1 can re-run safely. **Portable** — works in bash AND zsh (uses
+`find`, not glob expansion):
+```sh
+cd ep{number}/media/voices && find . -maxdepth 1 -type f -name '*.mp3' \
+  | while read -r f; do
+      char=$(echo "$f" | sed 's|^\./[0-9]*_\([^_]*\)_.*|\1|')
+      mkdir -p "$char"
+      mv "$f" "$char/"
+    done
 ```
+After all root-level `*.mp3` are moved into character subfolders, the
+`find` returns empty and the loop is a true no-op on re-run.
 
 **API call (single POST):**
 ```bash

@@ -84,17 +84,15 @@ ep{number}/
 **Auto-create voices/ subfolders (idempotent — safe to re-run):**
 After TTS, extract character name from filenames and auto-create subfolders.
 W5-5 normally does this first; W8-1's re-run must be a true no-op when the
-root has no loose `*.mp3` left (which is the post-W5-5 state).
-```bash
-# Lift `nullglob` so `*.mp3` expands to nothing when already organized.
-# (zsh: substitute `setopt null_glob`.)
-shopt -s nullglob
-cd ep{number}/media/voices && for f in *.mp3; do
-  [ -e "$f" ] || continue
-  char=$(echo "$f" | sed 's/^[0-9]*_\([^_]*\)_.*/\1/')
-  mkdir -p "$char"
-  mv "$f" "$char/"
-done
+root has no loose `*.mp3` left (post-W5-5 state). Portable form works in
+both bash and zsh:
+```sh
+cd ep{number}/media/voices && find . -maxdepth 1 -type f -name '*.mp3' \
+  | while read -r f; do
+      char=$(echo "$f" | sed 's|^\./[0-9]*_\([^_]*\)_.*|\1|')
+      mkdir -p "$char"
+      mv "$f" "$char/"
+    done
 ```
 
 **Import via HTTP API:**
