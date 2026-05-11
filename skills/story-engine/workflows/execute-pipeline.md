@@ -235,6 +235,36 @@ Format rules:
   during execution (the fences shown above are for this spec doc only).
 - If genre cannot be determined from STATE.md, default to KO.
 
+**Wave entry compliance — pre-spawn checklist (HARD RULE)**
+
+The single most common spec violation is the orchestrator silently entering a
+wave (W2, W3, …) without printing its START banner — the user only sees activity
+once the subagent starts streaming, with no clear "we are now in wave N" signal.
+To make this skipping impossible to overlook:
+
+Before invoking the `Agent` tool for any wave (or doing inline wave work), the
+orchestrator MUST have already completed ALL of the following, in order:
+
+1. **START banner emitted** — the `══` boxed banner for this wave (KO or EN per
+   genre) is printed in chat. No box = no Agent call.
+2. **STATE.md updated** — append a single line `wave_started: W{N} @ {ISO-8601}`
+   to `_story_source/STATE.md` (or the project's equivalent). This is the audit
+   trail; missing line = silent entry = spec violation that `/gsd:forensics`
+   and similar audits will flag.
+3. **`▸ Starting W{N}-0 <name>…`** — the first sub-step status line is emitted
+   immediately after the START banner.
+
+If the orchestrator catches itself about to call `Agent` and any of the three
+above is missing, it MUST stop, emit the missing pieces retroactively (with a
+short `(retroactive)` tag if helpful), and THEN proceed with the Agent call.
+"Just continue, the user will figure it out" is not acceptable — the cost of
+narrating is small, the cost of silence is large.
+
+Symmetric DONE rule: after the wave's Agent call returns, the orchestrator MUST
+emit (a) `✅ W{N}-{last} done …` final sub-step line, (b) the DONE banner
+(`──`), and (c) append `wave_completed: W{N} @ {ISO-8601}` to STATE.md, in that
+order, before moving to W{N+1}.
+
 **Intra-wave sub-step reporting** (orchestrator, mandatory)
 
 Wave START/DONE banners alone are not enough. The orchestrator MUST also emit
@@ -262,6 +292,12 @@ follow this granularity; wave docs may add finer breakdowns but never remove the
 1. ▸ START line BEFORE the work begins: `▸ Starting W{N}-{S} <name>…` (one line, plain text)
 2. (do the work — typically a single foreground `Agent` call, 1–3 min target, OR inline orchestrator work)
 3. ✅ DONE line AFTER the work completes: `✅ W{N}-{S} <name> done (mm:ss). Next: W{N}-{S+1} <next>.`
+
+> ⚠ The first sub-step of each wave (W{N}-0) is the most-skipped announcement.
+> If you are about to spawn the wave's Agent without having emitted the wave
+> START banner + `wave_started` STATE.md line + `▸ Starting W{N}-0 …`, STOP and
+> emit them first. See "Wave entry compliance — pre-spawn checklist (HARD RULE)"
+> above.
 
 **Hard rules:**
 - If a sub-step itself runs >3 min (e.g. W5-4 SFX with 55 cues), it MUST split into
