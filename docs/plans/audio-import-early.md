@@ -44,11 +44,11 @@ Single trigger at end of W5-3.
 
 ## Scope
 
-### In scope
-- New sub-step `W5-3a audio-import` after `W5-3 5-part merge`, before `W5-4 mechanic QA`
-- W8-1 becomes **verification + back-fill** — if audio is already imported, verify and surface any existing flags; if not (backwards-compat for v1 episodes), do a first-time import
-- W5 subagent gains the audio-import side effect
-- User-facing message: "Audio imported — review in Audio tab while W6/W7 run"
+### In scope (final, post-review)
+- New sub-step `W5-5 audio-import` **after `W5-4 mechanic QA passes`** — importing before W5-4 would let the user review audio with broken timecodes / out-of-range SFX
+- W8-1 becomes an **idempotent re-import** (safety net for W5-5) — calls `/api/audio-import` with the explicit episode folder path so the app is guaranteed to be on THIS episode's audio package before CapCut export, regardless of whether W5-5 ran successfully
+- voices/ folder reorganization shell loop made idempotent (`nullglob` + `[ -e "$f" ] || continue`) so W8-1 re-running it on already-organized folders is a no-op
+- User-facing message: "🎧 Audio imported — review in Audio tab while W6/W7 run"
 
 ### Out of scope
 - Changing the import API itself
@@ -61,49 +61,61 @@ Single trigger at end of W5-3.
 
 | File | Change |
 |------|--------|
-| `workflows/execute-pipeline.md` | W5 sub-step decomposition: insert `W5-3a audio-import` between `W5-3` and `W5-4`. W8 sub-step: `W8-1 audio-import` → `W8-1 audio-import (verify; fallback to import if missing)`. W5 subagent prompt section gains the import action. |
-| `docs/{en,ko}/W5-tts-sfx.md` | New § "5-3a. Audio import to AutoFlowCut" after the merge section. Documents the API call, the user-facing chat message, and the precondition (W5-3 outputs exist). |
-| `docs/{en,ko}/W8-assembly.md` | W8-1 reframed as verification step. Original first-time-import path retained as fallback for episodes imported pre-this-spec. |
+| `workflows/execute-pipeline.md` | W5 sub-step decomposition: append `W5-5 audio-import` AFTER `W5-4 mechanic-QA`. W8 sub-step: `W8-1 audio-import` → `W8-1 audio-import (idempotent re-import — safety net for W5-5)`. W5 subagent prompt gains W5-5 step. Wave I/O role descriptions updated (W5 includes initial import; W8 includes idempotent re-import). |
+| `docs/{en,ko}/W5-tts-sfx.md` | New § "5-5. Audio import (best-effort, post-mechanic-QA)" after § 5-4. Documents the API call, idempotent voices/ reorg, best-effort semantics, user chat message, re-import trigger on regeneration. |
+| `docs/{en,ko}/W8-assembly.md` | § 8-1 reframed as idempotent re-import. Explicit note on why `/api/audio-reviews` is NOT used for verification (returns app-wide state regardless of folder). § 8-0 wording updated to "before W8-1 re-import / W8-2 CapCut export". |
+| `docs/{en,ko}/W7-image-production.md` + `SKILL.md` | Top-level role descriptions corrected: W5 carries initial audio import, W8 carries idempotent re-import + CapCut + video. |
 | `docs/plans/audio-import-early.md` | This file. |
 | `TODO.md` | Backlog entry pointing to this plan + mark as in-progress. |
 
 ---
 
-## Implementation phases (single PR, all docs)
+## Implementation result (final)
 
-This is doc-only — no script or app code changes. The API endpoint exists,
+Doc-only — no script or app code changes. The API endpoint exists,
 just gets called earlier.
 
-1. Update `execute-pipeline.md` (W5 + W8 sub-step decomposition, W5 subagent prompt)
-2. Update W5 wave docs (en + ko) with new `5-3a` section
-3. Update W8 wave docs (en + ko) — W8-1 to verification mode
-4. Add this plan doc + TODO backlog entry
+Done:
+1. `execute-pipeline.md` — W5 sub-step decomposition adds W5-5 after W5-4. W8 sub-step W8-1 reframed. W5 subagent prompt includes W5-5. Wave role descriptions updated.
+2. W5 wave docs (en + ko) — new § 5-5 "Audio import (best-effort, post-mechanic-QA)".
+3. W8 wave docs (en + ko) — § 8-1 idempotent re-import. § 8-0 wording corrected.
+4. W7 wave docs (en + ko) + SKILL.md — role descriptions updated.
+5. This plan + TODO backlog entry.
 
-**Verification**: spec re-read for internal consistency. Wave I/O table
-unchanged (the import side effect doesn't add a new file output — the audio
-review state lives inside the AutoFlowCut app, not the episode folder).
+**Verification**: spec re-read; no remaining "W5-3a", "5-3a", or
+`/api/audio-reviews`-based verify references anywhere except the explicit
+"why we DON'T use it" rationale block in W8-1.
 
 ---
 
-## Open questions (answer during implementation)
+## Resolved questions (decision log)
 
-1. **Idempotency of the import API** — if W5 imports and then W8-1 verifies
-   by re-calling the import API on the same folder, does it duplicate or
-   no-op? Likely the app's import logic deduplicates by file path. If not,
-   W8-1 verification uses `api/audio-reviews` (read) instead of re-import.
-   ⇒ Spec writes the safer pattern: **W8-1 reads `/api/audio-reviews` first;
-   only re-imports if the list is empty**.
+1. **Idempotency of `/api/audio-import`** — confirmed by reading
+   `electron/main.js` audio-import handler: calling with the same folderPath
+   on a package already loaded re-runs the loader (effectively a no-op for
+   correctness, possibly a brief re-scan). Calling with a different
+   folderPath switches the app to the new package. Safe to call from both
+   W5-5 and W8-1.
 
-2. **What if user is offline / app not running at W5-3?** — Import fails.
-   W5 should log a warning and continue (W5-4 mechanic QA does not depend
-   on the app). W8-1 falls back to first-time import.
-   ⇒ Spec writes: **import is best-effort at W5-3a; failure logs a warning
-   but does NOT block the wave**.
+2. **`/api/audio-reviews` is folder-agnostic** — confirmed by reading the
+   endpoint: the GET returns whatever `window.__mcpGetAudioReviews()`
+   returns, which is the app's currently-loaded review state with no
+   folder filter. Non-empty data ≠ "this episode is imported"; could be
+   leftover from a different episode. Therefore W8-1 cannot use this GET
+   as evidence of "already imported"; must call `/api/audio-import` with
+   explicit folderPath.
 
-3. **Audio review flags surfaced when?** — User can flag in the app during
-   W6/W7. Those flags persist in `.audio_review.json`. W8-1 reads them and
-   either auto-unflag (if file was regenerated) or escalate.
-   ⇒ Existing W8-1 logic already handles flag refresh; no change needed.
+3. **What if user is offline / app not running at W5-5?** — Import fails.
+   W5 logs a warning and continues (W5-4 mechanic QA does not depend on
+   the app). W8-1's idempotent re-import then performs the import for the
+   first time.
+   ⇒ Spec: **import is best-effort at W5-5; failure logs a warning but
+   does NOT block the wave. W8-1 covers via idempotent re-import.**
+
+4. **Audio review flags surfaced when?** — User can flag in the app during
+   W6/W7. Those flags persist in `.audio_review.json`. W8-1 re-imports
+   then refreshes; existing flag-handling logic processes them.
+   ⇒ No additional logic needed beyond what W8-1 already does.
 
 ---
 

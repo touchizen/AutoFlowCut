@@ -80,7 +80,9 @@ ep{번호}/
 **voices/ 디렉토리 구조 생성:**
 TTS 생성 후 파일명에서 캐릭터명을 추출하여 서브폴더를 자동 생성한다.
 ```bash
+shopt -s nullglob   # bash; zsh: setopt null_glob
 cd ep{번호}/media/voices && for f in *.mp3; do
+  [ -e "$f" ] || continue
   char=$(echo "$f" | sed 's/^[0-9]*_\([^_]*\)_.*/\1/')
   mkdir -p "$char"
   mv "$f" "$char/"
@@ -99,10 +101,10 @@ curl -s -X POST http://localhost:3210/api/audio-import \
 # 오디오 리뷰 상태 조회
 curl -s http://localhost:3210/api/audio-reviews
 
-# 오디오 리뷰 새로고침 (폴더 재스캔 + 자동 언플래그)
-curl -s -X POST http://localhost:3210/api/audio-refresh \
-  -H "Content-Type: application/json" \
-  -d '{"folderPath": "{작업폴더}/ep{번호}_{slug}"}'
+# 오디오 리뷰 새로고침 — 현재 로드된 패키지를 재스캔하고 재생성된 파일을 자동 언플래그.
+# 엔드포인트는 앞선 `/api/audio-import`로 로드된 패키지에 대해 동작하므로
+# body가 필요 없음 (서버가 무시함).
+curl -s -X POST http://localhost:3210/api/audio-refresh
 ```
 
 **MCP 도구로 오디오 검수:**

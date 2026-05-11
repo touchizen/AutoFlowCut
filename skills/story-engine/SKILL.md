@@ -89,7 +89,7 @@ When a review checklist exceeds 5 items, a single subagent skims rather than aud
 
 - **Every new sub-step announces itself in one line BEFORE work begins.** Format: `▸ Starting <step name>…`
 - **Every sub-step completion announces its result with elapsed time.** Format: `✅ <step name> done (mm:ss). Next: <next step>.`
-- **Sub-step ≠ wave.** A wave has multiple sub-steps. Example W5 sub-steps: W5-0 voice-pick, W5-1 narration-TTS, W5-2 dialogue-TTS, W5-3 SRT, W5-4 SFX (batched), W5-5 merge. Each sub-step MUST emit its own status line. See the canonical sub-step decomposition table in `workflows/execute-pipeline.md`.
+- **Sub-step ≠ wave.** A wave has multiple sub-steps. Example W5 sub-steps (illustrative — canonical list lives in `workflows/execute-pipeline.md` § Sub-step decomposition): W5-0 voice-pick, W5-1 narration-TTS, W5-1f dialogue-TTS, W5-2 SFX (batched), W5-3 5-part merge, W5-4 mechanic-QA, W5-5 audio-import. Each sub-step MUST emit its own status line.
 - **No silent block longer than 3 minutes.** Any operation expected to run >3 min MUST be split into 1–3 minute chunks at the orchestrator level, with a status line between chunks.
 - **Repeated calls batch.** When a sub-step does N similar API calls (e.g. 55 SFX cues, 20 scene images), group into batches of 10–15 with one status line per batch: `▸ SFX batch 2/4 (cues 16–30)…` then `✅ batch 2/4 done (M:SS), N/N succeeded.`
 - **Heartbeat fallback.** If a sub-step genuinely cannot be split, the subagent writes `_progress.log` per state change. The orchestrator polls every 30–60 s and forwards the latest line.
@@ -108,7 +108,7 @@ When a review checklist exceeds 5 items, a single subagent skims rather than aud
 
 - **새 서브스텝 시작 시 무조건 1줄 알림 (작업 시작 전).** 형식: `▸ <단계명> 시작…`
 - **서브스텝 완료 시 1줄 알림 (소요시간 포함).** 형식: `✅ <단계명> 완료 (mm:ss). 다음: <다음 단계>.`
-- **서브스텝 ≠ Wave.** 한 Wave는 여러 서브스텝으로 구성. 예시 W5: W5-0(음성 선택), W5-1(나레이션 TTS), W5-2(대화 TTS), W5-3(SRT), W5-4(SFX 배치), W5-5(머지). 각 서브스텝마다 상태 라인 필수. 캐노니컬 서브스텝 분해 표는 `workflows/execute-pipeline.md` 참조.
+- **서브스텝 ≠ Wave.** 한 Wave는 여러 서브스텝으로 구성. 예시 W5 (illustrative — 캐노니컬 목록은 `workflows/execute-pipeline.md` § 서브스텝 분해 표): W5-0(음성 선택), W5-1(나레이션 TTS), W5-1f(대화 TTS), W5-2(SFX 배치), W5-3(5-part merge), W5-4(mechanic QA), W5-5(audio import). 각 서브스텝마다 상태 라인 필수.
 - **3분 이상의 침묵 금지.** 3분 초과 예상되는 작업은 오케스트레이터 레벨에서 1~3분 단위 청크로 분할, 청크 사이에 상태 보고.
 - **반복 호출은 배치로 묶기.** 한 서브스텝이 N개의 유사 호출(SFX 55개, 씬 이미지 20개 등)을 할 때 10~15개 배치로 묶고, 배치당 상태 1줄.
 - **하트비트 대체.** 분할이 정말 불가능한 경우, 서브에이전트가 매 상태 변화마다 `_progress.log`에 1줄 기록 → 오케스트레이터가 30~60초마다 폴링.

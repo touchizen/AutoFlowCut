@@ -353,9 +353,12 @@ W5-4 guarantees the user reviews a mechanically-clean audio package while
 W6 (CSV) and W7 (image generation) run in parallel.
 
 **Voices folder reorganization** (if dialogue present) — must happen
-before the API call so character subfolders are created:
+before the API call so character subfolders are created. Idempotent so
+W8-1 can re-run safely:
 ```bash
+shopt -s nullglob   # bash; zsh: setopt null_glob
 cd ep{number}/media/voices && for f in *.mp3; do
+  [ -e "$f" ] || continue
   char=$(echo "$f" | sed 's/^[0-9]*_\([^_]*\)_.*/\1/')
   mkdir -p "$char"
   mv "$f" "$char/"

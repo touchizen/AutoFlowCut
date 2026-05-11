@@ -81,10 +81,16 @@ ep{number}/
         └── ...
 ```
 
-**Auto-create voices/ subfolders:**
+**Auto-create voices/ subfolders (idempotent — safe to re-run):**
 After TTS, extract character name from filenames and auto-create subfolders.
+W5-5 normally does this first; W8-1's re-run must be a true no-op when the
+root has no loose `*.mp3` left (which is the post-W5-5 state).
 ```bash
+# Lift `nullglob` so `*.mp3` expands to nothing when already organized.
+# (zsh: substitute `setopt null_glob`.)
+shopt -s nullglob
 cd ep{number}/media/voices && for f in *.mp3; do
+  [ -e "$f" ] || continue
   char=$(echo "$f" | sed 's/^[0-9]*_\([^_]*\)_.*/\1/')
   mkdir -p "$char"
   mv "$f" "$char/"
@@ -103,10 +109,11 @@ curl -s -X POST http://localhost:3210/api/audio-import \
 # Query review state
 curl -s http://localhost:3210/api/audio-reviews
 
-# Refresh audio reviews (rescan folder + auto-unflag)
-curl -s -X POST http://localhost:3210/api/audio-refresh \
-  -H "Content-Type: application/json" \
-  -d '{"folderPath": "/path/to/project/story/ep{number}"}'
+# Refresh audio reviews — rescans the currently-loaded package + auto-unflags
+# regenerated files. The endpoint operates on the app's currently-loaded
+# audio package (set by the preceding `/api/audio-import` POST), so no body
+# is required; any payload is ignored by the server.
+curl -s -X POST http://localhost:3210/api/audio-refresh
 ```
 
 **Audio review via MCP:**
