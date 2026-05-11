@@ -171,9 +171,25 @@ when resuming an old episode.
 | W8   | `references.csv`, `{title}_scenes.csv`, `final_{part}.mp3`, `final_{part}.srt`, `media/sfx/`, AutoFlowCut images (from W7) | CapCut project (`{title}` draft folder) — hook segment first on timeline; `08_sfx_scene_match_qa.md`, optional video clips         |
 | W9   | `04_시놉시스.md`, `{title}_*.md` (script — including `{title}_hook.md`), `{title}_scenes.csv`                                   | `11_업로드정보.json`                                                                                          |
 
-Fallback: if a wave reference doc (`docs/{lang}/W{N}-*.md`) lists additional or
-different files, the wave doc takes precedence — log a warning and use the doc's
-list. The table above is the default contract.
+**Authority precedence — non-negotiable:**
+
+The table above is the **single source of truth** for all of the following:
+- Wave inputs / outputs (filenames + patterns)
+- Filename convention per genre
+- `{part}` key set per genre
+- Schema version (`v1` / `v2`)
+- Merge / concatenation order across waves
+
+Wave reference docs (`docs/{lang}/W{N}-*.md`) provide **step-by-step execution
+guidance only** — they do NOT redefine the contract. If a wave doc and this
+table disagree, **this table is correct** and the wave doc has drifted; the
+discrepancy is a spec bug to be fixed in the wave doc, not silently honored
+at runtime.
+
+Concretely: if W4 doc says it produces `narration_1.txt` but the table here
+says `narration_{part}.txt` with `{part}` ranging over the canonical key set,
+the orchestrator writes the canonical key form. The orchestrator MUST NOT
+attempt to "reconcile" by trying both names.
 
 **Banner truncation rule**: if the inputs or outputs list contains more than 5
 filenames, show the first 4 and append `…외 N개` (KO) / `…+N more` (EN), where

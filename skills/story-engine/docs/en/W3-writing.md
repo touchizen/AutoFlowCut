@@ -73,40 +73,26 @@ single most-leveraged 30 seconds of the entire video.
 
 **Hook target**: ~20s of narration (50–80 words EN / 80–130자 KO).
 
-### File structure
+### W3 deliverables
+
+W3 produces **5 script files + 1 review file**. Nothing else.
 
 ```
 ep{number}/
-├── 01_analysis.md
-├── 02_factcheck.md
-├── 03_research.md
-├── 04_synopsis.md
-├── 05_preflight.md
 ├── {title}_part1_setup.md       ← Introduction (POST-hook) [dark-history & bespoke]
 ├── {title}_part2_rising.md      ← Development
 ├── {title}_part3_crisis.md      ← Crisis / twist
 ├── {title}_part4_resolution.md  ← Ending
 ├── {title}_hook.md              ← Cold open (~20s, written LAST — universal ASCII)
-├── 07_review.md
-├── references.csv          ← Character / place / style refs
-├── {title}_scenes.csv      ← Per-scene data (prompt, subtitle, timecode)
-├── 08_sfx_list.md          ← SFX extraction list
-├── segments_{part}/        ← Per-segment mp3 + JSON timestamps
-├── subtitles_{part}.txt    ← Manual subtitle split (| delimiter, ≤42 chars)
-├── timeline_{part}.json    ← Per-segment start/end times
-├── final_{part}.mp3        ← Part-merged audio
-├── final_{part}.srt        ← Part-merged subtitles (meaning units)
-├── sfx/                    ← SFX originals (per-part MMSS timecodes)
-├── sfx_manifest.json       ← SFX manifest (built in W5-2 from SRT-anchor lookup; filenames include _MMSS)
-│   (TTS/SRT/SFX scripts live in the skill bundle, not the episode dir: skills/story-engine/scripts/*.cjs)
-├── media/                  ← Final production output
-│   ├── final_full.mp3      ← Full merged audio (hook+setup+rising+crisis+resolution)
-│   ├── final_full.srt      ← Full merged subtitles (with offsets applied)
-│   └── sfx/                ← SFX (MMSS on the full timeline)
-│       ├── 01_bell_toll_0030.mp3
-│       ├── 13_marketplace_0836.mp3    ← rising 2:01 → full 8:36
-│       └── ...
-└── 11_upload_info.json
+└── 07_review.md                 ← Integrated review
+```
+
+Upstream files (`01_analysis.md` ... `05_preflight.md`) come from W1/W2 and
+are READ-ONLY for W3. Downstream artifacts (`segments_{part}/`,
+`final_{part}.mp3`, `{title}_scenes.csv`, `media/final_full.mp3`, etc.) are
+produced by W4–W8 and **not** by W3 — for the full episode tree across all
+waves, see `workflows/execute-pipeline.md` § Wave I/O contract (the
+single source of truth).
 ```
 
 ### Word count distribution (target: 2,000 – 3,000 words, ~13–20 min at ~150 wpm narration)

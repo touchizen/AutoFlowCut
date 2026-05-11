@@ -78,21 +78,13 @@ Avoid:
 
 ## 5. Pipeline contract for Hook
 
-The Hook is pipeline-uniform with the four narrative parts:
+The Hook is the fifth `{part}` value — universally `hook` (ASCII, all genres).
+Downstream waves treat it identically to the four narrative parts; the only
+special property is that **hook is merged FIRST** in W5-3 (offset 0 on the
+full timeline).
 
-- W4 extracts `narration_hook.txt`, `dialogs_hook.json` (typically `[]`
-  — hook is usually narration-only)
-- W5 TTS produces `segments_hook/`, `final_hook.mp3`,
-  `timeline_hook.json` on the same contract as the four narrative parts
-- W5-3 5-part merge order: `hook → <part1> → <part2> → <part3> → <part4>`,
-  where the four narrative parts are the genre's canonical keys (yadam:
-  `기 → 승 → 전 → 결`; dark-history & bespoke:
-  `setup → rising → crisis → resolution`). Hook's full-timeline offset
-  is `0`; subsequent parts shift by hook duration
-- W6 scenes.csv: hook scenes appear FIRST, anchored at t=0..hook_duration
-- W8 CapCut export: hook segment leads the final timeline
-
-The Hook is the fifth `{part}` value — universally `hook` (ASCII,
-all genres). The only special property is the merge order (it goes
-first). For the full list of {part} keys per genre, see
-`workflows/execute-pipeline.md` § Notation.
+The full pipeline contract — wave I/O filenames, `{part}` keys per genre,
+schema versions, merge order — is defined ONLY in
+`workflows/execute-pipeline.md` § Wave I/O contract. That document is the
+single source of truth. Do NOT duplicate the contract here; if you need to
+look up "what file does W5 produce for hook", read execute-pipeline.md.
