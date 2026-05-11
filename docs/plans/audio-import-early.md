@@ -44,7 +44,7 @@ Single trigger at **W5-5**, immediately after W5-4 passes.
 ### In scope (final, post-review)
 - New sub-step `W5-5 audio-import` **after `W5-4 mechanic QA passes`** — importing before W5-4 would let the user review audio with broken timecodes / out-of-range SFX
 - W8-1 becomes an **idempotent re-import** (safety net for W5-5) — calls `/api/audio-import` with the explicit episode folder path so the app is guaranteed to be on THIS episode's audio package before CapCut export, regardless of whether W5-5 ran successfully
-- voices/ folder reorganization shell loop made idempotent (`nullglob` + `[ -e "$f" ] || continue`) so W8-1 re-running it on already-organized folders is a no-op
+- voices/ folder reorganization shell loop made idempotent (portable `find -maxdepth 1 -type f -name '*.mp3' \| while read` form) so W8-1 re-running it on already-organized folders is a no-op, and the snippet works in both bash and zsh without shell-specific options
 - User-facing message: "🎧 Audio imported — review in Audio tab while W6/W7 run"
 
 ### Out of scope
@@ -78,9 +78,11 @@ Done:
 4. W7 wave docs (en + ko) + SKILL.md — role descriptions updated.
 5. This plan + TODO backlog entry.
 
-**Verification**: spec re-read; no remaining "W5-3a", "5-3a", or
-`/api/audio-reviews`-based verify references anywhere except the explicit
-"why we DON'T use it" rationale block in W8-1.
+**Verification**: spec re-read; no active "W5-3a" instructions or
+`/api/audio-reviews`-based skip logic remain. Two historical mentions
+of "W5-3a" are retained intentionally — the correction-history summary
+at the top of this file, and the explicit "why we DON'T use audio-reviews
+for verification" rationale block in W8-1.
 
 ---
 

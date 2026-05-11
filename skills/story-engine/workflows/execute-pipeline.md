@@ -351,9 +351,9 @@ follow this granularity; wave docs may add finer breakdowns but never remove the
 > above.
 
 **Hard rules:**
-- If a sub-step itself runs >3 min (e.g. W5-4 SFX with 55 cues), it MUST split into
+- If a sub-step itself runs >3 min (e.g. W5-2 SFX with 55 cues), it MUST split into
   batches of 10–15 calls, with one status line per batch:
-  `▸ W5-4 SFX batch 2/4 (cues 16–30)…` then `✅ W5-4 SFX batch 2/4 done (M:SS), N/N succeeded.`
+  `▸ W5-2 SFX batch 2/4 (cues 16–30)…` then `✅ W5-2 SFX batch 2/4 done (M:SS), N/N succeeded.`
 - Silence longer than 3 minutes without a status line is a violation. Default to
   over-reporting; verbosity is recoverable, silence is not.
 - The orchestrator emits these lines DIRECTLY to the user (chat), not to logs.
