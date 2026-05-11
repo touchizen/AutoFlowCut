@@ -65,7 +65,8 @@ hook first produces generic "Long ago, once upon a time…" openings (see
 "Failing hooks" below).
 
 **Hook lives in its own file** — `{title}_hook.md`. It is NOT duplicated inside
-`{title}_setup.md` / `{title}_기.md`; those start with the post-hook narrative.
+`{title}_part1_setup.md` (dark-history / bespoke) or `{title}_기.md` (yadam);
+those start with the post-hook narrative.
 Keeping hook separate lets the writer iterate hook independently (A/B different
 openings without re-running part1) and lets reviewers focus on hook as the
 single most-leveraged 30 seconds of the entire video.
@@ -81,11 +82,11 @@ ep{number}/
 ├── 03_research.md
 ├── 04_synopsis.md
 ├── 05_preflight.md
-├── {title}_setup.md        ← Introduction (POST-hook)
-├── {title}_rising.md       ← Development
-├── {title}_crisis.md       ← Crisis / twist
-├── {title}_resolution.md   ← Ending
-├── {title}_hook.md         ← Cold open (~20s, written LAST)
+├── {title}_part1_setup.md       ← Introduction (POST-hook) [dark-history & bespoke]
+├── {title}_part2_rising.md      ← Development
+├── {title}_part3_crisis.md      ← Crisis / twist
+├── {title}_part4_resolution.md  ← Ending
+├── {title}_hook.md              ← Cold open (~20s, written LAST — universal ASCII)
 ├── 07_review.md
 ├── references.csv          ← Character / place / style refs
 ├── {title}_scenes.csv      ← Per-scene data (prompt, subtitle, timecode)

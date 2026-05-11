@@ -263,7 +263,11 @@ media/sfx/                    ← 최종 (전체 기준)
 ## 5-3. 전체 오디오 병합 + SFX 타임코드 변환 (5파트)
 
 **5파트**의 `final_{파트}.mp3`와 `final_{파트}.srt`를 하나로 병합하여 `media/`에 저장한다.
-병합 순서는 `hook → 1 → 2 → 3 → 4` (hook이 full timeline의 offset 0 에서 시작).
+병합 순서 — `hook`을 첫째, 그 뒤에 4개 본편 파트를 장르 canonical 순서로:
+- **yadam**: `hook → 기 → 승 → 전 → 결`
+- **dark-history / bespoke**: `hook → setup → rising → crisis → resolution`
+
+Hook이 full timeline의 offset 0 에서 시작한다.
 SFX 파일은 파트별 타임코드에서 전체 타임라인 기준으로 변환하여 `media/sfx/`에 저장한다.
 
 **mp3 병합:**

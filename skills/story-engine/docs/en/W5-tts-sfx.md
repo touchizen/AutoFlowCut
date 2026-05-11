@@ -263,9 +263,13 @@ media/sfx/                        ← final (full timeline)
 ## 5-3. Full-audio merge + SFX timecode conversion (5-part)
 
 Merge the **five parts**' `final_{part}.mp3` and `final_{part}.srt` into
-`media/`. Merge order is `hook → 1 → 2 → 3 → 4` (hook leads the full timeline
-at offset 0). Convert SFX files from per-part to full-timeline timecodes and
-save to `media/sfx/`.
+`media/`. Merge order — `hook` first, then the four narrative parts in their
+genre-canonical order:
+- **yadam**: `hook → 기 → 승 → 전 → 결`
+- **dark-history & bespoke**: `hook → setup → rising → crisis → resolution`
+
+Hook leads the full timeline at offset 0. Convert SFX files from per-part to
+full-timeline timecodes and save to `media/sfx/`.
 
 **mp3 merge:**
 ```bash

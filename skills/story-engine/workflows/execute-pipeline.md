@@ -440,7 +440,10 @@ Each subagent receives:
   - 5-1e per-part merge — `merge_audio.cjs` produces `final_{part}.mp3`.
   - 5-1f dialogue TTS (only when dialogue exists) — `generate_tts_typecast.cjs dialogue <dialogsJson> <outDir> <ttsSettings> <segmentsDir>`. The 4th arg `segmentsDir` lets the script resolve each dialog's `_HHMMSS` from `after_paragraph` + `index.json`'s `paragraph_idx`. **Consecutive dialogues sharing one `after_paragraph` are auto-stacked** (previous dialog end + 0.2s gap) so they never collide. Without `start` AND without `after_paragraph` the script throws — silent `00:00:00` collisions are blocked.
 - W5-2 SFX — `generate_sfx.cjs` driven by SRT-anchor manifest (anchor narration + placement + offset → in-part timecode). Applies to all 5 parts (hook + the four narrative parts).
-- **W5-3 5-part merge** (ffmpeg concat) → `media/final_full.mp3` + `media/final_full.srt`. Merge order: `hook → 1 → 2 → 3 → 4`. SFX in-part timecodes converted to full-timeline `media/sfx/*_MMSS.mp3`; the hook's offset is `0` (it leads the full track), part 1's offset = `duration(hook)`, part 2 = `duration(hook) + duration(part1)`, etc.
+- **W5-3 5-part merge** (ffmpeg concat) → `media/final_full.mp3` + `media/final_full.srt`. Merge order is `hook` first, then the four narrative parts in their genre-canonical order:
+  - **yadam**: `hook → 기 → 승 → 전 → 결`
+  - **dark-history & bespoke**: `hook → setup → rising → crisis → resolution`
+  SFX in-part timecodes are converted to full-timeline `media/sfx/*_MMSS.mp3`. The hook's offset is `0` (it leads the full track); each subsequent part's offset is the running sum of preceding `final_{part}.mp3` durations.
 - W5-4 mechanic timecode validation (collision / per-part range / full range / per-part offset) — runs against all 5 parts.
 - Outputs (per part, using the genre-specific {part} keys defined in Notation — yadam `hook|기|승|전|결`, dark-history & bespoke `hook|setup|rising|crisis|resolution`): `segments_{part}/`, `subtitles_{part}.txt`, `final_{part}.mp3`, `final_{part}.srt`, **`timeline_{part}.json`**; plus `voices/` (when dialogue), `media/`.
 
