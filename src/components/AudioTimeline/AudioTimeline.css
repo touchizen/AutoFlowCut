@@ -498,6 +498,79 @@
   outline: 1px dashed #fff;
   outline-offset: -1px;
 }
+.atl-clip-flagged {
+  /* outline 대신 inset box-shadow 사용 → playing의 흰색 outline과 공존 가능 */
+  box-shadow: inset 0 0 0 2px #FFB74D;
+  filter: brightness(0.92) saturate(0.85);
+}
+/* playing + flagged 동시: playing의 흰 outline 유지 + flagged 노란 inset shadow 두껍게 */
+.atl-clip-playing.atl-clip-flagged {
+  filter: brightness(1.15);
+  box-shadow: inset 0 0 0 3px #FFB74D;
+}
+.atl-clip-flag-indicator {
+  position: absolute;
+  top: 2px;
+  left: 3px;
+  font-size: 11px;
+  line-height: 1;
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  z-index: 4;
+}
+.atl-clip-action-btn {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: rgba(0, 0, 0, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 11px;
+  line-height: 1.2;
+  cursor: pointer;
+  color: #fff;
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s, border-color 0.12s;
+  z-index: 5;
+  user-select: none;
+}
+.atl-clip:hover .atl-clip-action-btn,
+.atl-file-mini-clip:hover .atl-clip-action-btn,
+.atl-clip-action-btn:focus-visible {
+  opacity: 1;
+}
+/* 키보드 포커스 시 버튼이 강조되도록 — hover 가 아니면 안 보이는 문제 보완 */
+.atl-clip-action-btn:focus-visible {
+  outline: 2px solid #E4FA04;
+  outline-offset: 1px;
+  background: rgba(0, 0, 0, 0.95);
+}
+/* 얇은 클립 (<40px): 우측 하단에 작은 사이즈 — overflow: hidden 안에 위치 */
+.atl-clip-action-btn.is-narrow {
+  top: auto;
+  bottom: 1px;
+  right: 1px;
+  padding: 0 2px;
+  font-size: 9px;
+  line-height: 1;
+}
+.atl-clip:hover .atl-clip-action-btn {
+  opacity: 1;
+}
+.atl-clip-action-btn:hover {
+  background: rgba(0, 0, 0, 0.95);
+  border-color: #E4FA04;
+}
+.atl-clip-flag-btn.is-flagged {
+  background: rgba(255, 183, 77, 0.85);
+  border-color: #FFB74D;
+  color: #1a1a1a;
+  font-weight: 700;
+}
+.atl-clip-flag-btn.is-flagged:hover {
+  background: rgba(255, 183, 77, 1);
+}
 .atl-clip-block {
   display: flex;
   align-items: center;

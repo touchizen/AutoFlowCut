@@ -1,7 +1,7 @@
 import Clip from './Clip'
 import { TRACK_H, SUB_TRACK_H } from './constants'
 
-export default function TrackLane({ track, width, height, pxPerMs, renderClips = true, onClipClick, onClipDrag, totalDurationMs, playingClipIds, onSceneHover }) {
+export default function TrackLane({ track, width, height, pxPerMs, renderClips = true, onClipClick, onClipDrag, totalDurationMs, playingClipIds, onSceneHover, onFlag, isFlagged }) {
   const h = height ?? (track.isSubTrack ? SUB_TRACK_H : TRACK_H)
   return (
     <div className="atl-lane" style={{ height: h, width }}>
@@ -17,6 +17,8 @@ export default function TrackLane({ track, width, height, pxPerMs, renderClips =
           totalDurationMs={totalDurationMs}
           isPlaying={playingClipIds?.has(clip.id)}
           onSceneHover={onSceneHover}
+          onFlag={onFlag}
+          isFlagged={isFlagged}
         />
       ))}
     </div>

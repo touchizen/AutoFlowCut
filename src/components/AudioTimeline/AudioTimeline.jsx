@@ -12,6 +12,7 @@ import { formatDuration } from '../../utils/formatters'
 import { toast } from '../Toast'
 import TimeRuler from './TimeRuler'
 import TrackLane from './TrackLane'
+import TimelineFlagButton from './TimelineFlagButton'
 import PreviewPanel from './PreviewPanel'
 import Playhead from './Playhead'
 import {
@@ -31,7 +32,7 @@ function formatTC(ms) {
   return formatDuration(ms / 1000)
 }
 
-export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClipSelect, onSaveTimecodeOverride, disabled = false }) {
+export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClipSelect, onSaveTimecodeOverride, disabled = false, onFlag, isFlagged }) {
   const { t } = useI18n()
   const data = useAudioTimeline(audioPackage, scenes, srtEntries)
   const [zoom, setZoom] = useState(1)
@@ -820,6 +821,8 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
                 const clip = track.clip
                 const left = clip.startMs * pxPerMs
                 const width = Math.max(2, (clip.endMs - clip.startMs) * pxPerMs)
+                const fileFlagged = !!(isFlagged && clip.audioPath && isFlagged(clip.audioPath))
+                const showFlagBtn = !!clip.audioPath && !!onFlag
                 return (
                   <div
                     key={`${track.id}-${i}`}
@@ -827,7 +830,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
                     style={{ width: totalWidth, height: FILE_ROW_H }}
                   >
                     <div
-                      className="atl-file-mini-clip"
+                      className={`atl-file-mini-clip${fileFlagged ? ' atl-clip-flagged' : ''}`}
                       style={{ left, width, backgroundColor: track.color }}
                       onPointerDown={(e) => {
                         if (e.button !== 0) return
@@ -836,7 +839,20 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
                         if (clip.audioPath) onClipSelect?.(clip)
                       }}
                       title={clip.filename}
-                    />
+                    >
+                      {fileFlagged && (
+                        <span className="atl-clip-flag-indicator" aria-label="flagged">⚠️</span>
+                      )}
+                      {showFlagBtn && (
+                        <TimelineFlagButton
+                          audioPath={clip.audioPath}
+                          filename={clip.filename}
+                          flagged={fileFlagged}
+                          narrow={width < 40}
+                          onFlag={onFlag}
+                        />
+                      )}
+                    </div>
                   </div>
                 )
               }
@@ -855,6 +871,8 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
                   totalDurationMs={data.totalDurationMs}
                   playingClipIds={playingClipIds}
                   onSceneHover={setHoverScene}
+                  onFlag={onFlag}
+                  isFlagged={isFlagged}
                 />
               )
             })}

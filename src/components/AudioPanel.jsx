@@ -165,6 +165,10 @@ export default function AudioPanel({ audioPackage, audioReviews, loading = false
             srtEntries={deferredSrtEntries}
             disabled={loading || isStale}
             onSaveTimecodeOverride={onSaveTimecodeOverride}
+            // disabled (loading/refresh) 동안엔 onFlag 안 넘김 → Clip/file-item 의 showActionable=false → 버튼 자체가 DOM에 없음
+            // (deferred old package에 marker 잘못 박히는 것 + invisible 버튼 키보드 포커스 회피)
+            onFlag={(loading || isStale) ? undefined : handleFlag}
+            isFlagged={isFileFlagged}
             onClipSelect={(clip) => {
               // 오디오 클립(narration/voice/sfx)만 상세 모달 표시
               // 이미지/자막 클립은 PreviewPanel에서 이미 보여주고 있음

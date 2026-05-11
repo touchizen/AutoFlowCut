@@ -1,10 +1,16 @@
 import { useState, useRef, useEffect } from 'react'
 import Waveform from './Waveform'
+import TimelineFlagButton from './TimelineFlagButton'
 
 // 클립 — click vs drag 자동 구분, draggable이면 드래그로 timecode 보정
-export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDragClip, totalDurationMs, isPlaying, onSceneHover }) {
+// onFlag(audioPath, filename, event): hover ⚠️ 버튼 클릭 시 호출 (audioPath 있고 onFlag 전달된 경우만)
+// isFlagged(filePath): bool — flagged 시각 표시
+export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDragClip, totalDurationMs, isPlaying, onSceneHover, onFlag, isFlagged }) {
   const [dragOffsetMs, setDragOffsetMs] = useState(null)
   const isDragging = dragOffsetMs !== null
+  const flagged = !!(isFlagged && clip.audioPath && isFlagged(clip.audioPath))
+  // audioPath 있으면 audio clip — sub-track은 variant가 없어서 audioPath로 판정
+  const showActionable = !!clip.audioPath && !!onFlag
   // 드래그 중 unmount되면 onUp 미발화 → 여기서 listener 강제 정리
   const dragCleanupRef = useRef(null)
   useEffect(() => () => {
@@ -81,7 +87,7 @@ export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDr
 
   return (
     <div
-      className={`atl-clip atl-clip-${variant}${isPlaying ? ' atl-clip-playing' : ''}${isDragging ? ' atl-clip-dragging' : ''}`}
+      className={`atl-clip atl-clip-${variant}${isPlaying ? ' atl-clip-playing' : ''}${isDragging ? ' atl-clip-dragging' : ''}${flagged ? ' atl-clip-flagged' : ''}`}
       style={style}
       onPointerDown={onPointerDown}
       onMouseEnter={onMouseEnter}
@@ -96,6 +102,20 @@ export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDr
       )}
       {variant === 'audio' && width > 30 && (
         <Waveform color="#fff" />
+      )}
+      {/* Flagged 영구 indicator (좌측) */}
+      {flagged && (
+        <span className="atl-clip-flag-indicator" aria-label="flagged">⚠️</span>
+      )}
+      {/* 호버 시 ⚠️ 액션 버튼 (audioPath + onFlag 전달 시. 얇은 클립은 우측 하단 컴팩트) */}
+      {showActionable && !isDragging && (
+        <TimelineFlagButton
+          audioPath={clip.audioPath}
+          filename={clip.filename}
+          flagged={flagged}
+          narrow={width < 40}
+          onFlag={onFlag}
+        />
       )}
     </div>
   )
