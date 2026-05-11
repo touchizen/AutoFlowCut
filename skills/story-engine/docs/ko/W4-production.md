@@ -10,7 +10,7 @@
 | `generate_tts_typecast.cjs` | Typecast TTS — `narration` 모드(나레이션) 또는 `dialogue` 모드(인물별 대사). 둘 다 with-timestamps alignment 제공 |
 | `draft_subtitles.cjs` | baseline `subtitles_{파트}.txt` 자동 분할 (의미 단위 다듬기 전 초안) |
 | `build_srt.cjs` | alignment + `subtitles_{파트}.txt` → `final_{파트}.srt` |
-| `merge_audio.cjs` | 한 파트의 segment mp3들 → `final_{파트}.mp3` 병합 (W5-1e). **5파트 전체(hook + 1..4)** → `final_full.*` 통합 병합은 W5-3에서 ffmpeg로 별도 처리 |
+| `merge_audio.cjs` | 한 파트의 segment mp3들 → `final_{파트}.mp3` 병합 (W5-1e). **5파트 전체(hook + 4개 본편 파트)** → `final_full.*` 통합 병합은 W5-3에서 ffmpeg로 별도 처리 |
 | `generate_sfx.cjs` | ElevenLabs Sound Generation (SFX, manifest 기반) |
 
 ---
@@ -20,7 +20,11 @@
 **대본이 W3 검토를 거쳐 확정된 후에만 실행한다.** 대본 확정 전에 추출하면 수정 시 재작업이 발생한다.
 
 ### 4-1. 나레이션 추출
-**나레이션 추출** → `narration_{파트}.txt` — 순수 나레이션 텍스트 (대사/지문 제거). `{파트}` 값은 `{hook, 1, 2, 3, 4}` — **콜드 오픈 파일 `{title}_hook.md`는 동일한 contract로 `narration_hook.txt`를 산출**한다. Hook 나레이션 추출은 일반 파트와 완전히 동일한 처리; 다운스트림 TTS/SRT/timeline 파이프라인이 5번째 파트로 다룰 뿐이고, 유일한 특수성은 W5-3에서 full timeline의 offset `0`에 머지된다는 점이다.
+**나레이션 추출** → `narration_{파트}.txt` — 순수 나레이션 텍스트 (대사/지문 제거). `{파트}`는 장르별 5개 canonical key로 치환된다 (자세한 정의는 `execute-pipeline.md` Notation):
+- **yadam**: `narration_hook.txt`, `narration_기.txt`, `narration_승.txt`, `narration_전.txt`, `narration_결.txt`
+- **dark-history & bespoke**: `narration_hook.txt`, `narration_setup.txt`, `narration_rising.txt`, `narration_crisis.txt`, `narration_resolution.txt`
+
+콜드 오픈 파일 `{title}_hook.md`는 4개 본편 파트와 동일한 contract로 `narration_hook.txt`를 산출한다. Hook 나레이션 추출은 일반 파트와 완전히 동일한 처리; 다운스트림 TTS/SRT/timeline 파이프라인이 5번째 파트로 다룰 뿐이고, 유일한 특수성은 W5-3에서 full timeline의 offset `0`에 머지된다는 점이다.
 
 **리뷰 (서브스텝 4-1)** — 서브에이전트 자가검토 → 이슈 목록 → 수정. 최대 5회. 0 이슈 시 다음 서브스텝(4-2)으로 즉시 진행. 5회 초과 시 사용자에게 에스컬레이션.
 

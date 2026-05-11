@@ -10,7 +10,7 @@ This document is the W4 (production extraction + review) stage guide for the sto
 | `generate_tts_typecast.cjs` | Typecast TTS — `narration` mode (narration) or `dialogue` mode (per-character lines). Both return with-timestamps alignment. |
 | `draft_subtitles.cjs` | Auto-draft baseline `subtitles_{part}.txt` (refine into meaning units afterward) |
 | `build_srt.cjs` | alignment + `subtitles_{part}.txt` → `final_{part}.srt` |
-| `merge_audio.cjs` | Concat one part's segment mp3s → `final_{part}.mp3` (W5-1e). Full **5-part** merge (hook + 1..4) into `final_full.*` is a separate ffmpeg step in W5-3. |
+| `merge_audio.cjs` | Concat one part's segment mp3s → `final_{part}.mp3` (W5-1e). Full **5-part** merge (hook + the four narrative parts) into `final_full.*` is a separate ffmpeg step in W5-3. |
 | `generate_sfx.cjs` | ElevenLabs Sound Generation (SFX, manifest-driven) |
 
 ---
@@ -20,7 +20,11 @@ This document is the W4 (production extraction + review) stage guide for the sto
 **Run only after the script has been confirmed through W3 review.** Extracting before the script is locked causes rework on every revision.
 
 ### 4-1. Narration extraction
-**Narration extraction** → `narration_{part}.txt` — pure narration text (dialogue and stage directions removed). `{part}` ranges over `{hook, 1, 2, 3, 4}` — **the cold-open file `{title}_hook.md` produces `narration_hook.txt` on the same contract**. Hook narration extracts identically to a numbered part; the downstream TTS/SRT/timeline pipeline treats it as a fifth part whose only special property is being merged at offset `0` of the full timeline (see W5-3).
+**Narration extraction** → `narration_{part}.txt` — pure narration text (dialogue and stage directions removed). `{part}` substitutes the genre's 5 canonical keys (see `execute-pipeline.md` Notation):
+- **yadam**: `narration_hook.txt`, `narration_기.txt`, `narration_승.txt`, `narration_전.txt`, `narration_결.txt`
+- **dark-history & bespoke**: `narration_hook.txt`, `narration_setup.txt`, `narration_rising.txt`, `narration_crisis.txt`, `narration_resolution.txt`
+
+The cold-open file `{title}_hook.md` produces `narration_hook.txt` on the same contract as the four narrative parts. Hook narration extracts identically; the downstream TTS/SRT/timeline pipeline treats it as a fifth part whose only special property is being merged at offset `0` of the full timeline (see W5-3).
 
 **Review (substep 4-1)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 4-2. 5 rounds exceeded → escalate to user.
 

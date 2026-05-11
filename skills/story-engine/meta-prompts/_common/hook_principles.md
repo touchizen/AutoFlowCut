@@ -83,11 +83,16 @@ The Hook is pipeline-uniform with the four narrative parts:
 - W4 extracts `narration_hook.txt`, `dialogs_hook.json` (typically `[]`
   — hook is usually narration-only)
 - W5 TTS produces `segments_hook/`, `final_hook.mp3`,
-  `timeline_hook.json` on the same contract as numbered parts
-- W5-3 5-part merge order: `hook → 1 → 2 → 3 → 4`. Hook's full-timeline
-  offset is `0`; subsequent parts shift by hook duration
+  `timeline_hook.json` on the same contract as the four narrative parts
+- W5-3 5-part merge order: `hook → <part1> → <part2> → <part3> → <part4>`,
+  where the four narrative parts are the genre's canonical keys (yadam:
+  `기 → 승 → 전 → 결`; dark-history & bespoke:
+  `setup → rising → crisis → resolution`). Hook's full-timeline offset
+  is `0`; subsequent parts shift by hook duration
 - W6 scenes.csv: hook scenes appear FIRST, anchored at t=0..hook_duration
 - W8 CapCut export: hook segment leads the final timeline
 
-The Hook is just a fifth `{part}` value — `hook`. The only special
-property is the merge order (it goes first).
+The Hook is the fifth `{part}` value — universally `hook` (ASCII,
+all genres). The only special property is the merge order (it goes
+first). For the full list of {part} keys per genre, see
+`workflows/execute-pipeline.md` § Notation.

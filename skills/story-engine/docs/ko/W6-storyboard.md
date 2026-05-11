@@ -114,7 +114,7 @@ hook: 0초
 결:   전 누적
 ```
 
-Hook의 scene들은 `scenes.csv`에 **가장 먼저** 들어간다 (full timeline의 t=0..hook_duration 구간). Part 1(기) scene은 hook_duration 오프셋부터 시작, 이후 파트도 동일 방식. Scene 경계 계산 시 `timeline_hook.json`을 `timeline_{1..4}.json`과 함께 읽어야 한다.
+Hook의 scene들은 `scenes.csv`에 **가장 먼저** 들어간다 (full timeline의 t=0..hook_duration 구간). Part 1(기/setup) scene은 hook_duration 오프셋부터 시작, 이후 파트도 동일 방식. Scene 경계 계산 시 5개 `timeline_{파트}.json` 파일을 모두 읽어야 한다 — canonical 파트 키는 yadam의 경우 `hook|기|승|전|결`, dark-history/bespoke의 경우 `hook|setup|rising|crisis|resolution`. `timeline_1.json` 같은 이름은 절대 생성되지 않으니 찾지 말 것.
 
 **리뷰 (서브스텝 6-2)** — 서브에이전트 자가검토 → 이슈 목록 → 수정. 최대 5회. 0 이슈 시 다음 서브스텝(6-3)으로 즉시 진행. 5회 초과 시 사용자에게 에스컬레이션.
 

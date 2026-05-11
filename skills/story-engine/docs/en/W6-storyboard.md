@@ -114,7 +114,7 @@ crisis:     rising + ffprobe(final_rising.mp3)
 resolution: crisis + ffprobe(final_crisis.mp3)
 ```
 
-The hook's scenes appear FIRST in `scenes.csv` (anchored at full-timeline t=0..hook_duration). Part 1 (Setup) scenes follow with offset = hook_duration, and so on. Read `timeline_hook.json` alongside `timeline_{1..4}.json` when computing scene boundaries.
+The hook's scenes appear FIRST in `scenes.csv` (anchored at full-timeline t=0..hook_duration). Part 1 (Setup) scenes follow with offset = hook_duration, and so on. Read all 5 `timeline_{part}.json` files when computing scene boundaries — the canonical part keys are `hook|setup|rising|crisis|resolution` (dark-history & bespoke) or `hook|기|승|전|결` (yadam). Do NOT look for `timeline_1.json` etc. — those names are never produced.
 
 **Review (substep 6-2)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 6-3. 5 rounds exceeded → escalate to user.
 
