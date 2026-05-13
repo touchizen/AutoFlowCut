@@ -289,6 +289,9 @@ export function useMcpServer({
     //
     // Phase 2: 진행 중이면 자동 stop → waitForStopped → start. 확인 모달 없음 (MCP 자동화 의도 명확).
     // timeout 시 restart abort, console.warn.
+    //
+    // Phase 2 sync: 명시 styleId ('preset:*', 'ref:*', plain id)면 selectedStyleRefId도 갱신
+    // → Start 버튼 라벨이 새 스타일 자동 표시. 'auto'/'none'/생략은 UI 유지 (사용자 의도 보존).
     window.__mcpStartBatch = async (styleId, options) => {
       const callHandleStart = options
         ? (effective) => handleStart(effective, options)
@@ -297,6 +300,12 @@ export function useMcpServer({
         if (styleId === 'auto') return null
         if (styleId === 'none') return 'none'
         return normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current)
+      }
+
+      // UI sync: 명시 ID만. normalizeStyleId가 처리한 정규화된 형태로 전달.
+      if (styleId !== undefined && styleId !== null && styleId !== '' && styleId !== 'auto' && styleId !== 'none') {
+        const normalized = normalizeStyleId(styleId)
+        if (normalized) setSelectedStyleRefId?.(normalized)
       }
 
       if (isRunningRef.current) {
@@ -311,6 +320,7 @@ export function useMcpServer({
     }
     // options = { force?: boolean } (선택). 없으면 handleGenerateAllRefs 1-arg 호출 (백워드 호환).
     // Phase 2: 진행 중이면 자동 stop → waitForStopped → start.
+    // Phase 2 sync: 명시 styleId면 selectedStyleRefId 갱신 (UI 라벨).
     window.__mcpStartRefBatch = async (styleId, options) => {
       const callHandler = options
         ? (effective) => handleGenerateAllRefs(effective, options)
@@ -324,6 +334,12 @@ export function useMcpServer({
         }
         if (styleId === 'none') return 'none'
         return normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current)
+      }
+
+      // UI sync: 명시 ID만.
+      if (styleId !== undefined && styleId !== null && styleId !== '' && styleId !== 'auto' && styleId !== 'none') {
+        const normalized = normalizeStyleId(styleId)
+        if (normalized) setSelectedStyleRefId?.(normalized)
       }
 
       if (isRunningRef.current) {

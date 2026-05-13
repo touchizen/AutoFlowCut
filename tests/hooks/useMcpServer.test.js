@@ -105,7 +105,7 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     expect(handleGenerateRef).toHaveBeenCalledWith(0, false, null)
   })
 
-  it('__mcpStartRefBatch normalizes styleId and never mutates global state', () => {
+  it('__mcpStartRefBatch normalizes styleId correctly (and syncs UI for explicit IDs)', () => {
     const handleGenerateAllRefs = vi.fn()
     const setSelectedStyleRefId = vi.fn()
     renderHook(() => useMcpServer(makeProps({ handleGenerateAllRefs, setSelectedStyleRefId })))
@@ -122,15 +122,20 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     window.__mcpStartRefBatch('ref:123')
     expect(handleGenerateAllRefs).toHaveBeenCalledWith('ref:123')
 
-    // null/empty — must become null (auto mode)
+    // null/empty — must become null (auto mode), no UI sync
+    setSelectedStyleRefId.mockClear()
     window.__mcpStartRefBatch(undefined)
     expect(handleGenerateAllRefs).toHaveBeenLastCalledWith(null)
-
-    // 전역 누수 가드 — setSelectedStyleRefId는 한 번도 호출되면 안 됨
     expect(setSelectedStyleRefId).not.toHaveBeenCalled()
+
+    // 'preset:preset:*' / 'preset:ref:*' 회귀 가드 — double-wrap도 단 한번도 일어나지 않아야
+    for (const call of setSelectedStyleRefId.mock.calls) {
+      expect(call[0]).not.toMatch(/^preset:preset:/)
+      expect(call[0]).not.toMatch(/^preset:ref:/)
+    }
   })
 
-  it('__mcpStartBatch (scene batch) normalizes explicit styleId and does not leak global state', () => {
+  it('__mcpStartBatch (scene batch) normalizes explicit styleId correctly (and syncs UI)', () => {
     const handleStart = vi.fn()
     const setSelectedStyleRefId = vi.fn()
     renderHook(() => useMcpServer(makeProps({ handleStart, setSelectedStyleRefId })))
@@ -144,7 +149,11 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     window.__mcpStartBatch('ref:42')
     expect(handleStart).toHaveBeenCalledWith('ref:42')
 
-    expect(setSelectedStyleRefId).not.toHaveBeenCalled()
+    // double-wrap 회귀 가드 — setSelectedStyleRefId 호출 인자에 'preset:preset:*' 없어야
+    for (const call of setSelectedStyleRefId.mock.calls) {
+      expect(call[0]).not.toMatch(/^preset:preset:/)
+      expect(call[0]).not.toMatch(/^preset:ref:/)
+    }
   })
 
   it('__mcpStartBatch falls back to first style card when styleId omitted (MCP automation default)', () => {
@@ -485,6 +494,82 @@ describe('useMcpServer — global handlers (regression guards)', () => {
 
     expect(handleGenerateAllRefs).toHaveBeenCalledWith('preset:noir', { force: true })
     vi.useRealTimers()
+  })
+
+  // --- Task 6 (Phase 2): selectedStyleRefId sync — UI 버튼 라벨 자동 갱신 ---
+
+  it("__mcpStartBatch with explicit 'preset:noir' updates selectedStyleRefId", async () => {
+    const setSelectedStyleRefId = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ setSelectedStyleRefId })))
+
+    await window.__mcpStartBatch('preset:noir')
+    expect(setSelectedStyleRefId).toHaveBeenCalledWith('preset:noir')
+  })
+
+  it("__mcpStartBatch with 'ref:123' updates selectedStyleRefId", async () => {
+    const setSelectedStyleRefId = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ setSelectedStyleRefId })))
+
+    await window.__mcpStartBatch('ref:123')
+    expect(setSelectedStyleRefId).toHaveBeenCalledWith('ref:123')
+  })
+
+  it("__mcpStartBatch with plain id (legacy) updates selectedStyleRefId to wrapped form", async () => {
+    const setSelectedStyleRefId = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ setSelectedStyleRefId })))
+
+    await window.__mcpStartBatch('korean-ani')
+    expect(setSelectedStyleRefId).toHaveBeenCalledWith('preset:korean-ani')
+  })
+
+  it("__mcpStartBatch with 'auto' does NOT update selectedStyleRefId", async () => {
+    const setSelectedStyleRefId = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ setSelectedStyleRefId })))
+
+    await window.__mcpStartBatch('auto')
+    expect(setSelectedStyleRefId).not.toHaveBeenCalled()
+  })
+
+  it("__mcpStartBatch with 'none' does NOT update selectedStyleRefId", async () => {
+    const setSelectedStyleRefId = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ setSelectedStyleRefId })))
+
+    await window.__mcpStartBatch('none')
+    expect(setSelectedStyleRefId).not.toHaveBeenCalled()
+  })
+
+  it('__mcpStartBatch with undefined styleId does NOT update selectedStyleRefId', async () => {
+    const setSelectedStyleRefId = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ setSelectedStyleRefId })))
+
+    await window.__mcpStartBatch(undefined)
+    expect(setSelectedStyleRefId).not.toHaveBeenCalled()
+  })
+
+  it("__mcpStartRefBatch with explicit 'preset:noir' updates selectedStyleRefId", async () => {
+    const setSelectedStyleRefId = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ setSelectedStyleRefId })))
+
+    await window.__mcpStartRefBatch('preset:noir')
+    expect(setSelectedStyleRefId).toHaveBeenCalledWith('preset:noir')
+  })
+
+  it("__mcpStartRefBatch with 'auto' does NOT update selectedStyleRefId", async () => {
+    const setSelectedStyleRefId = vi.fn()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    renderHook(() => useMcpServer(makeProps({ setSelectedStyleRefId })))
+
+    await window.__mcpStartRefBatch('auto')
+    expect(setSelectedStyleRefId).not.toHaveBeenCalled()
+    warnSpy.mockRestore()
+  })
+
+  it("__mcpStartRefBatch with 'none' does NOT update selectedStyleRefId", async () => {
+    const setSelectedStyleRefId = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ setSelectedStyleRefId })))
+
+    await window.__mcpStartRefBatch('none')
+    expect(setSelectedStyleRefId).not.toHaveBeenCalled()
   })
 })
 
