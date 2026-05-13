@@ -68,14 +68,18 @@ export function useMcpServer({
     window.__mcpGetScenes = () => scenes.map(({ image, videoT2V, videoI2V, ...rest }) => rest)
     // styleId override를 직접 받음 (전역 상태 setSelectedStyleRefId + setTimeout race 회피).
     // styleId 형식은 normalizeStyleId로 정규화됨 ('ref:*' / 'preset:*' / plain → 'preset:*' / null).
-    // 'auto' sentinel은 ref 컨텍스트에 의미 없음 (씬 매칭 부재) — null로 취급해 자연스러운 fallback 발동,
-    // 'preset:auto'로 잘못 wrap되어 silent fail (존재 안 하는 preset 조회 → 스타일 미적용) 회피.
+    // 'auto' sentinel은 ref 컨텍스트에 의미 없음 (씬 매칭 부재) — null로 취급해 자연스러운 fallback 발동.
+    //
+    // styleId 생략 시 호출 측에서 findAutoStyle fallback을 미리 적용해 override로 전달.
+    // 그래야 useReferenceGeneration 내부의 selectedStyleRefId(UI 선택값)에 끌려가지 않음 —
+    // MCP 정책: 자동화 호출은 UI 상태와 독립적이어야 함.
     window.__mcpGenerateRef = (index, styleId) => {
       if (styleId === 'auto') {
         console.warn('[MCP] generate-reference received styleId="auto"; ignored (refs have no per-scene matching). Falling back as if styleId were omitted.')
         styleId = null
       }
-      return handleGenerateRef(index, false, normalizeStyleId(styleId)).catch(e => ({ success: false, error: e.message }))
+      const effective = normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current)
+      return handleGenerateRef(index, false, effective).catch(e => ({ success: false, error: e.message }))
     }
     window.__mcpGenerateScene = (sceneId) => handleGenerateScene(sceneId)
     window.__mcpSetStyle = (styleId) => { setSelectedStyleRefId(styleId); return styleId }
@@ -265,7 +269,9 @@ export function useMcpServer({
         console.warn('[MCP] start-ref-batch received styleId="auto"; ignored (refs have no per-scene matching). Falling back as if styleId were omitted.')
         styleId = null
       }
-      handleGenerateAllRefs(normalizeStyleId(styleId))
+      // scene batch와 동일하게 호출 측 fallback — UI selectedStyleRefId 누수 방지.
+      const effective = normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current)
+      handleGenerateAllRefs(effective)
     }
     window.__mcpStopBatch = () => handleStop()
     window.__mcpBatchStatus = () => {

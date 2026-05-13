@@ -175,6 +175,45 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     expect(handleStart).toHaveBeenCalledWith(null)
   })
 
+  it('__mcpGenerateRef applies caller-side fallback when styleId omitted (no UI leak)', async () => {
+    const handleGenerateRef = vi.fn(() => Promise.resolve({ success: true }))
+    const refWithMedia = { id: 555, type: 'style', mediaId: 'm-555' }
+    renderHook(() => useMcpServer(makeProps({
+      handleGenerateRef,
+      references: [refWithMedia],
+      selectedStyleRefId: 'preset:noir',  // UI has a selection — must NOT leak through MCP
+    })))
+
+    await window.__mcpGenerateRef(0)
+    // Override is the first style card, not the UI selection
+    expect(handleGenerateRef).toHaveBeenCalledWith(0, false, 'ref:555')
+  })
+
+  it('__mcpGenerateRef finds prompt-only style card via findAutoStyle', async () => {
+    const handleGenerateRef = vi.fn(() => Promise.resolve({ success: true }))
+    const promptOnlyStyle = { id: 777, type: 'style', prompt: 'noir vibes' /* no mediaId */ }
+    renderHook(() => useMcpServer(makeProps({
+      handleGenerateRef,
+      references: [promptOnlyStyle],
+    })))
+
+    await window.__mcpGenerateRef(0)
+    expect(handleGenerateRef).toHaveBeenCalledWith(0, false, 'ref:777')
+  })
+
+  it('__mcpStartRefBatch applies caller-side fallback when styleId omitted (no UI leak)', () => {
+    const handleGenerateAllRefs = vi.fn()
+    const refWithMedia = { id: 555, type: 'style', mediaId: 'm-555' }
+    renderHook(() => useMcpServer(makeProps({
+      handleGenerateAllRefs,
+      references: [refWithMedia],
+      selectedStyleRefId: 'preset:noir',  // UI has a selection — must NOT leak through MCP
+    })))
+
+    window.__mcpStartRefBatch(undefined)
+    expect(handleGenerateAllRefs).toHaveBeenCalledWith('ref:555')
+  })
+
   it("__mcpStartRefBatch('auto') is silently ignored (refs have no per-scene matching)", () => {
     const handleGenerateAllRefs = vi.fn()
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
