@@ -514,7 +514,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
           index: { type: 'number', description: '레퍼런스 인덱스 (0부터)' },
-          styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" (커스텀 레퍼런스), "preset:<id>" (프리셋), 또는 plain id (자동으로 "preset:"으로 wrap됨). 생략 시 우선순위: 사용 가능한 첫 style 카드 → UI 선택값 → 미적용 (레퍼런스 생성에는 씬 매칭 개념 없음). 전역 상태는 변경하지 않음.' },
+          styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" (커스텀 레퍼런스), "preset:<id>" (프리셋), plain id (자동으로 "preset:"으로 wrap됨), 또는 "none" (스타일 강제 미적용 — fallback도 안 함). 생략 시 우선순위: 사용 가능한 첫 style 카드 → UI 선택값 → 미적용 (레퍼런스 생성에는 씬 매칭 개념 없음). 전역 상태는 변경하지 않음.' },
         },
         required: ['index'],
       },
@@ -538,7 +538,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: 'object',
         properties: {
           port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
-          styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" (커스텀 레퍼런스), "preset:<id>" (프리셋), plain id (예: "korean-ani" — 자동으로 "preset:"으로 wrap), "auto" (씬별 style_tag 매칭 명시). 생략 시 첫 style 카드 자동 fallback (MCP default). list_styles로 조회 가능.' },
+          styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" (커스텀 레퍼런스), "preset:<id>" (프리셋), plain id (예: "korean-ani" — 자동으로 "preset:"으로 wrap), "auto" (씬별 style_tag 매칭 명시), "none" (스타일 강제 미적용 — fallback도 안 함). 생략 시 첫 style 카드 자동 fallback (MCP default). list_styles로 조회 가능.' },
         },
       },
     },
@@ -549,7 +549,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: 'object',
         properties: {
           port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
-          styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" / "preset:<id>" / plain id (자동 wrap). 생략 시 첫 style 카드 자동 fallback. 레퍼런스 생성에는 씬 매칭 개념이 없으므로 "auto" 토큰 미지원.' },
+          styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" / "preset:<id>" / plain id (자동 wrap) / "none" (스타일 강제 미적용 — fallback도 안 함). 생략 시 첫 style 카드 자동 fallback. 레퍼런스 생성에는 씬 매칭 개념이 없으므로 "auto" 토큰 미지원.' },
         },
       },
     },
