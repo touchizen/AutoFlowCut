@@ -30,7 +30,7 @@ Electron 데스크톱 앱 - Google Flow AI로 이미지/비디오 생성 후 Cap
 
 ### Plan / Spec 문서 정리
 
-- 작업이 **완료된 plan/spec 문서는 `docs/plan/`으로 이동**하고 commit한다.
+- 작업이 **완료된 plan/spec 문서는 `docs/plans/`으로 이동**하고 commit한다.
 - `docs/superpowers/plans/`와 `docs/superpowers/specs/`에는 **진행 중 또는 미완료 문서만** 남긴다.
 - 이동은 가능하면 `git mv`로 (rename detect 유지). untracked였다면 `mv` 후 `git add` + 기존 위치 정리.
 - 작업 종료 시점에 한 번 정리해서 PR/merge에 포함한다.
