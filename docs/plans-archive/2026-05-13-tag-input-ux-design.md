@@ -1,6 +1,6 @@
 # Tag Input UX Design
 
-**Status:** Draft
+**Status:** Implemented (2026-05-13)
 **Date:** 2026-05-13
 **Branch:** `claude/mystifying-beaver-0fb0c9`
 
