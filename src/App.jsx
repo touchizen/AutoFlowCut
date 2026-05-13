@@ -630,7 +630,7 @@ function App() {
         // 명시 선택 없을 때는 자동 매칭 모드로 통과 가능 — 단 generation 대상(targetScenes)에
         // 매칭 가능한 씬이 1개 이상일 때만. 전체 scenes 기준이면 완료된 씬 매칭이 false-positive.
         // override가 명시적 null이면 자동 모드 강제 (UI 선택값 무시) — 기본 default(undefined)는 UI 사용.
-        const effectiveStyleId = overrideStyleId !== undefined ? overrideStyleId : selectedStyleRefId
+        const effectiveStyleId = styleResolver.resolveEffectiveStyleId(overrideStyleId)
         if (settings.requireStyle && !effectiveStyleId) {
           const autoMatchable = previewStyleMatching(targetScenes, references).matches.length > 0
           if (!autoMatchable) {
@@ -674,13 +674,9 @@ function App() {
         // T2V는 video scene의 자체 prompt만 사용 — image scene과는 독립.
         // 스타일(selectedStyleRefId)만 추가로 prefix해서 적용.
         // (I2V는 이미지가 source라 별도 처리 — frame-to-video 케이스에서 미적용)
-        // video-text의 "자동" 의미는 image/list와 다름 — 씬 매칭 path가 없으므로
-        // 자동 카드 click(override === null)은 "사용 가능한 첫 스타일 카드"로 해석.
-        // computeStyleLabel도 video-text 분기에서 동일하게 findAutoStyle을 표시하므로
-        // 라벨과 실제 적용 스타일이 일치한다.
-        const effectiveStyleId = overrideStyleId !== undefined
-          ? (overrideStyleId === null ? findAutoStyle(scenesHook.references) : overrideStyleId)
-          : (selectedStyleRefId || findAutoStyle(scenesHook.references))
+        // override → effective는 styleResolver.resolveEffectiveStyleId가 탭별로 처리.
+        // video-text는 null override일 때 findAutoStyle 결과로 변환됨 (resolver 내부 로직).
+        const effectiveStyleId = styleResolver.resolveEffectiveStyleId(overrideStyleId)
         const styledVideoScenes = selectedVideoScenes.map(vs => {
           const matchedRefs = []
           const { styledPrompt } = applyStyle(vs.prompt, effectiveStyleId, scenesHook.references, matchedRefs)
