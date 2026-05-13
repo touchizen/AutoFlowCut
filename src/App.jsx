@@ -1143,19 +1143,28 @@ function App() {
             const canExport = hasScenes && hasRun && !anyRunning && doneCount >= requiredCount
 
             // 스타일 ID → 표시 라벨 변환 (Start: 현재 선택값 / Stop: 실행 중 snapshot)
-            // id가 null이면 자동 매칭 모드 — generation 대상 씬에 매칭이 있으면 그 스타일 이름을 보여줌.
-            // 매칭 0개일 때만 'None'으로 표시 (사용자가 보기에 정직).
+            // id가 null이면 자동 매칭 모드 — 탭별로 실제 적용될 스타일을 라벨에 반영.
+            // - image/list 탭: 씬별 style_tag 매칭 결과 (previewStyleMatching)
+            // - video-text 탭: 씬 매칭 path 없음, findAutoStyle로 첫 style ref 적용
+            const resolveAutoLabelForTab = () => {
+              if (activeTab === 'video-text') {
+                const auto = findAutoStyle(references)
+                return auto || null  // null이면 styleNone, 있으면 ref:N 형태 — 재귀로 라벨 변환
+              }
+              const targetScenes = filterPendingScenes(scenes)
+              const preview = previewStyleMatching(targetScenes, references)
+              if (preview.matches.length === 0) return null
+              const top = preview.styleSummary[0]
+              const more = preview.styleSummary.length - 1
+              const label = more > 0 ? `${top.name} +${more}` : top.name
+              return { __wrappedLabel: t('actions.autoStyle', { label }) }
+            }
             const computeStyleLabel = (id) => {
               if (!id) {
-                const targetScenes = filterPendingScenes(scenes)
-                const preview = previewStyleMatching(targetScenes, references)
-                if (preview.matches.length > 0) {
-                  const top = preview.styleSummary[0]
-                  const more = preview.styleSummary.length - 1
-                  const label = more > 0 ? `${top.name} +${more}` : top.name
-                  return t('actions.autoStyle', { label })
-                }
-                return t('actions.styleNone')
+                const auto = resolveAutoLabelForTab()
+                if (!auto) return t('actions.styleNone')
+                if (typeof auto === 'string') return t('actions.autoStyle', { label: computeStyleLabel(auto) })
+                return auto.__wrappedLabel
               }
               if (id.startsWith('ref:')) {
                 const refId = id.replace('ref:', '')
