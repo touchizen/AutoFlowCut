@@ -296,7 +296,7 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
             </div>
           </>
 
-          {/* 이름 — 스타일이면 클릭 시 StylePicker 팝업 */}
+          {/* 이름 — 항상 자유 입력. isStyle일 때만 보조 버튼으로 프리셋 채우기 가능. */}
           <div className="form-group">
             <label className="label-with-copy">
               {t('reference.name')}
@@ -309,23 +309,24 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
                 >⧉</button>
               )}
             </label>
-            {isStyle ? (
-              <button
-                type="button"
-                className="style-dropdown-btn"
-                onClick={() => setShowStyleDropdown(true)}
-              >
-                <span>{editData.name || t('reference.selectStyle')}</span>
-                <span className="dropdown-arrow">▼</span>
-              </button>
-            ) : (
+            <div className="name-input-row">
               <input
                 type="text"
                 value={editData.name || ''}
                 onChange={(e) => setEditData({ ...editData, name: e.target.value })}
                 placeholder={t('reference.namePlaceholder')}
               />
-            )}
+              {isStyle && (
+                <button
+                  type="button"
+                  className="btn-fill-preset"
+                  onClick={() => setShowStyleDropdown(true)}
+                  title={t('reference.fillFromPreset')}
+                >
+                  {t('reference.fillFromPreset')} ▼
+                </button>
+              )}
+            </div>
           </div>
 
           {/* 타입 */}
