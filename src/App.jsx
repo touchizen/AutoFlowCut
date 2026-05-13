@@ -1143,8 +1143,20 @@ function App() {
             const canExport = hasScenes && hasRun && !anyRunning && doneCount >= requiredCount
 
             // 스타일 ID → 표시 라벨 변환 (Start: 현재 선택값 / Stop: 실행 중 snapshot)
+            // id가 null이면 자동 매칭 모드 — generation 대상 씬에 매칭이 있으면 그 스타일 이름을 보여줌.
+            // 매칭 0개일 때만 'None'으로 표시 (사용자가 보기에 정직).
             const computeStyleLabel = (id) => {
-              if (!id) return t('actions.styleNone')
+              if (!id) {
+                const targetScenes = filterPendingScenes(scenes)
+                const preview = previewStyleMatching(targetScenes, references)
+                if (preview.matches.length > 0) {
+                  const top = preview.styleSummary[0]
+                  const more = preview.styleSummary.length - 1
+                  const label = more > 0 ? `${top.name} +${more}` : top.name
+                  return t('actions.autoStyle', { label })
+                }
+                return t('actions.styleNone')
+              }
               if (id.startsWith('ref:')) {
                 const refId = id.replace('ref:', '')
                 const ref = references.find(r => String(r.id) === refId && r.type === 'style')

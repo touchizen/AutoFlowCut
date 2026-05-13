@@ -235,6 +235,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     changeStyle: '스타일 변경',
     styleLabel: '스타일',
     styleNone: '없음',
+    autoStyle: '자동: {label}',
   },
 
   // 설정 (화면비/Seed/방식은 Flow UI에서 직접 설정)

@@ -235,6 +235,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     changeStyle: 'Change Style',
     styleLabel: 'Style',
     styleNone: 'None',
+    autoStyle: 'Auto: {label}',
   },
 
   // Config (removed: aspectRatio, seed, method — now set directly in Flow UI)
