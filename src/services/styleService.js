@@ -110,3 +110,54 @@ export function resolveSeed(settings) {
     ? settings.seedNo
     : null
 }
+
+/**
+ * 씬별 스타일 매칭을 시뮬레이션한다 (StylePicker 미리보기용).
+ * 우선순위: Reference name 정확 매칭 > STYLE_PRESETS id/name_ko/name_en 매칭
+ *
+ * @param {Array} scenes - 씬 배열 ({id, style_tag})
+ * @param {Array} references - 레퍼런스 배열
+ * @param {object} [opts] - { presets } — 테스트 주입용
+ * @returns {{
+ *   matches: Array<{ sceneId, styleName, source: 'ref'|'preset' }>,
+ *   unmatched: Array<number>,
+ *   styleSummary: Array<{ name, count }>
+ * }}
+ */
+export function previewStyleMatching(scenes, references, opts = {}) {
+  const presets = opts.presets ?? (STYLE_PRESETS?.styles || [])
+  const styleRefs = references.filter(r => r.type === 'style' && r.name)
+
+  const matches = []
+  const unmatched = []
+
+  for (const scene of scenes) {
+    const tag = scene.style_tag
+    if (!tag) {
+      unmatched.push(scene.id)
+      continue
+    }
+
+    const refMatch = styleRefs.find(r => r.name === tag)
+    if (refMatch) {
+      matches.push({ sceneId: scene.id, styleName: refMatch.name, source: 'ref' })
+      continue
+    }
+
+    const preset = presets.find(p => p.id === tag || p.name_ko === tag || p.name_en === tag)
+    if (preset) {
+      matches.push({ sceneId: scene.id, styleName: preset.name_ko || preset.name_en, source: 'preset' })
+      continue
+    }
+
+    unmatched.push(scene.id)
+  }
+
+  const counts = new Map()
+  for (const m of matches) counts.set(m.styleName, (counts.get(m.styleName) || 0) + 1)
+  const styleSummary = [...counts.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count)
+
+  return { matches, unmatched, styleSummary }
+}
