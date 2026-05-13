@@ -604,12 +604,17 @@ function App() {
     switch (activeTab) {
       case 'text':
       case 'list': {
-        // 이미지 생성 — 스타일 필수 검증.
-        // 명시 선택 없을 때는 자동 매칭 모드로 통과 가능 — 단 실제 generation 대상(pending/error/no-image)에
-        // 매칭 가능한 씬이 1개 이상일 때만. 전체 scenes로 검사하면 완료된 씬 매칭이 false-positive를 만든다.
+        // 이미지 생성 — 가드 순서: (1) 생성 대상 0개면 즉시 안내 (스타일 선택 요구하지 않음),
+        // (2) 스타일 필수 검증. 순서가 반대면 "이미 다 생성됐는데 스타일 골라달라" 어색함.
+        const targetScenes = filterPendingScenes(scenes)
+        if (targetScenes.length === 0) {
+          toast.warning(t('toast.allScenesGenerated'))
+          return
+        }
+        // 명시 선택 없을 때는 자동 매칭 모드로 통과 가능 — 단 generation 대상(targetScenes)에
+        // 매칭 가능한 씬이 1개 이상일 때만. 전체 scenes 기준이면 완료된 씬 매칭이 false-positive.
         const effectiveStyleId = overrideStyleId || selectedStyleRefId
         if (settings.requireStyle && !effectiveStyleId) {
-          const targetScenes = filterPendingScenes(scenes)
           const autoMatchable = previewStyleMatching(targetScenes, references).matches.length > 0
           if (!autoMatchable) {
             setShowStylePicker(true)
