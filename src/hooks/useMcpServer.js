@@ -77,6 +77,9 @@ export function useMcpServer({
       if (styleId === 'auto') {
         console.warn('[MCP] generate-reference received styleId="auto"; ignored (refs have no per-scene matching). Falling back as if styleId were omitted.')
         styleId = null
+      } else if (styleId === 'none') {
+        // 'none' sentinel — caller explicitly wants no style; skip first-card fallback entirely.
+        return handleGenerateRef(index, false, null).catch(e => ({ success: false, error: e.message }))
       }
       const effective = normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current)
       return handleGenerateRef(index, false, effective).catch(e => ({ success: false, error: e.message }))
@@ -259,6 +262,11 @@ export function useMcpServer({
         handleStart(null)
         return
       }
+      if (styleId === 'none') {
+        // 'none' sentinel — caller explicitly wants no style; skip first-card fallback.
+        handleStart(null)
+        return
+      }
       const effective = normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current)
       handleStart(effective)
     }
@@ -267,7 +275,13 @@ export function useMcpServer({
       // 잘못 wrap하지 않도록 한다 (silent fail 회피).
       if (styleId === 'auto') {
         console.warn('[MCP] start-ref-batch received styleId="auto"; ignored (refs have no per-scene matching). Falling back as if styleId were omitted.')
-        styleId = null
+        handleGenerateAllRefs(null)
+        return
+      }
+      if (styleId === 'none') {
+        // 'none' sentinel — caller explicitly wants no style; skip first-card fallback.
+        handleGenerateAllRefs(null)
+        return
       }
       // scene batch와 동일하게 호출 측 fallback — UI selectedStyleRefId 누수 방지.
       const effective = normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current)

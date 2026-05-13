@@ -255,4 +255,31 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     window.__mcpStartBatch(undefined)
     expect(handleStart).toHaveBeenCalledWith('ref:555')
   })
+
+  it("__mcpStartBatch('none') forces no style (skips first-card fallback)", () => {
+    const handleStart = vi.fn()
+    const refWithMedia = { id: 555, type: 'style', mediaId: 'm-555' }
+    renderHook(() => useMcpServer(makeProps({ handleStart, references: [refWithMedia] })))
+
+    window.__mcpStartBatch('none')
+    expect(handleStart).toHaveBeenCalledWith(null)
+  })
+
+  it("__mcpStartRefBatch('none') forces no style", () => {
+    const handleGenerateAllRefs = vi.fn()
+    const refWithMedia = { id: 555, type: 'style', mediaId: 'm-555' }
+    renderHook(() => useMcpServer(makeProps({ handleGenerateAllRefs, references: [refWithMedia] })))
+
+    window.__mcpStartRefBatch('none')
+    expect(handleGenerateAllRefs).toHaveBeenCalledWith(null)
+  })
+
+  it("__mcpGenerateRef(_, 'none') forces no style", async () => {
+    const handleGenerateRef = vi.fn(() => Promise.resolve({ success: true }))
+    const refWithMedia = { id: 555, type: 'style', mediaId: 'm-555' }
+    renderHook(() => useMcpServer(makeProps({ handleGenerateRef, references: [refWithMedia] })))
+
+    await window.__mcpGenerateRef(2, 'none')
+    expect(handleGenerateRef).toHaveBeenCalledWith(2, false, null)
+  })
 })
