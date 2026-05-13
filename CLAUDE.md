@@ -27,3 +27,10 @@ Electron 데스크톱 앱 - Google Flow AI로 이미지/비디오 생성 후 Cap
   - 커버리지: `npm run test:coverage`
 - 커밋 전 관련 단위/통합 테스트가 모두 통과하는지 반드시 확인한다.
 - 테스트 없이 머지되는 코드는 없다 — 단순 docs/주석/포매팅 변경 제외.
+
+### Plan / Spec 문서 정리
+
+- 작업이 **완료된 plan/spec 문서는 `docs/plan/`으로 이동**하고 commit한다.
+- `docs/superpowers/plans/`와 `docs/superpowers/specs/`에는 **진행 중 또는 미완료 문서만** 남긴다.
+- 이동은 가능하면 `git mv`로 (rename detect 유지). untracked였다면 `mv` 후 `git add` + 기존 위치 정리.
+- 작업 종료 시점에 한 번 정리해서 PR/merge에 포함한다.
