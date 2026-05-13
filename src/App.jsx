@@ -1151,7 +1151,12 @@ function App() {
                 const auto = findAutoStyle(references)
                 return auto || null  // null이면 styleNone, 있으면 ref:N 형태 — 재귀로 라벨 변환
               }
-              const targetScenes = filterPendingScenes(scenes)
+              // 라벨용 매칭은 generation 대상이 비었을 때 전체 scenes로 fallback —
+              // requireStyle 검증(handleStart)은 여전히 target scenes만 보지만, 라벨은
+              // 사용자에게 "지금 매칭이 잡힌 스타일이 무엇인지" 항상 보여줘야 직관적이다.
+              // (모두 완료 상태 + 매칭 ✓ 인데 라벨이 None으로 표시되는 헷갈림 방지)
+              let targetScenes = filterPendingScenes(scenes)
+              if (targetScenes.length === 0) targetScenes = scenes
               const preview = previewStyleMatching(targetScenes, references)
               if (preview.matches.length === 0) return null
               const top = preview.styleSummary[0]
