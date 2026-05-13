@@ -224,15 +224,14 @@ export function useMcpServer({
 
   // 배치 핸들러 글로벌 등록 (handleStart 등이 정의된 이후에 등록)
   useEffect(() => {
+    // Batch 핸들러: styleId를 정규화 후 override로만 직접 전달.
+    // 전역 setSelectedStyleRefId는 호출하지 않음 — MCP 호출이 UI에 선택된 스타일을
+    // 덮어쓰면 다음 호출/UI 동작에 누수됨. 호출별 스타일은 호출별로만 유효.
     window.__mcpStartBatch = (styleId) => {
-      const fullId = styleId ? `preset:${styleId}` : null
-      if (fullId) setSelectedStyleRefId(fullId)
-      handleStart(fullId)
+      handleStart(normalizeStyleId(styleId))
     }
     window.__mcpStartRefBatch = (styleId) => {
-      const fullId = styleId ? `preset:${styleId}` : null
-      if (fullId) setSelectedStyleRefId(fullId)
-      handleGenerateAllRefs(fullId)
+      handleGenerateAllRefs(normalizeStyleId(styleId))
     }
     window.__mcpStopBatch = () => handleStop()
     window.__mcpBatchStatus = () => {
