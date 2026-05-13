@@ -5,7 +5,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { pickAutoStyleFallback, resolveSceneStyle } from '../services/styleService'
+import { resolveSceneStyle } from '../services/styleService'
 import { filterPendingScenes } from '../utils/sceneFilters'
 import { processAsyncSceneResult } from '../services/imageFinalize'
 import { fileSystemAPI } from './useFileSystem'
@@ -63,9 +63,8 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
   const runConcurrentQueue = async (targetScenes, options, total) => {
     let { projectName, saveMode, imageBatchCount, imageUpscale, selectedStyleRefId, seed = null } = options
     if (selectedStyleRefId != null && typeof selectedStyleRefId !== 'string') selectedStyleRefId = String(selectedStyleRefId)
-    // selectedStyleRefId 없으면 자동 모드. 단, 씬 중 하나라도 style_tag를 가지면
-    // fallback 안 함 — 사용자가 씬별 매칭을 의도한 것이므로 첫 스타일 전역 적용으로 덮어쓰면 안 됨.
-    if (!selectedStyleRefId) selectedStyleRefId = pickAutoStyleFallback(targetScenes, references)
+    // selectedStyleRefId 없으면 자동 매칭 모드 — 씬별 style_tag로만 결정.
+    // 임의의 "첫 스타일 카드 자동 적용" fallback은 제거됨 — UI 라벨("자동")과 실행이 일치해야 함.
     completedCountRef.current = 0
     errorCountRef.current = 0
     const pendingQueue = [] // { generationId, scene, submittedAt }
