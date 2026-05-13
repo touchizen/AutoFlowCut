@@ -87,6 +87,9 @@ export default function StylePicker({
   const autoCardLabel = autoCardLabelOverride ?? (matchPreview
     ? (matchPreview.matches.length > 0 ? t('reference.autoMatch') : t('reference.autoMatchNone'))
     : t('reference.noStyle'))
+  // override가 있으면 호출자가 자동 모드 의미 결정 — 씬 매칭 미리보기(아이콘/툴팁/요약)는 표시 안 함
+  // (예: video-text 컨텍스트에서 image scene 기반 미리보기는 무의미하고 혼선만 만든다)
+  const useScenePreview = autoCardLabelOverride === undefined && !!matchPreview
 
   return (
     <div className="style-picker">
@@ -159,13 +162,13 @@ export default function StylePicker({
         <div
           className={`sp-card sp-no-style ${!selectedId ? 'selected' : ''}`}
           onClick={() => onSelect(null)}
-          title={matchPreview ? buildMatchPreviewTooltip(matchPreview, t) : ''}
+          title={useScenePreview ? buildMatchPreviewTooltip(matchPreview, t) : ''}
         >
           <div className="sp-thumb">
-            <span className="sp-icon">{matchPreview ? '🪄' : '🚫'}</span>
+            <span className="sp-icon">{useScenePreview || autoCardLabelOverride !== undefined ? '🪄' : '🚫'}</span>
           </div>
           <div className="sp-name">{autoCardLabel}</div>
-          {matchPreview && matchPreview.styleSummary.length > 0 && (
+          {useScenePreview && matchPreview.styleSummary.length > 0 && (
             <div className="sp-auto-summary">
               {matchPreview.styleSummary.slice(0, 2).map(s => s.name).join(', ')}
               {matchPreview.styleSummary.length > 2 && ` +${matchPreview.styleSummary.length - 2}`}

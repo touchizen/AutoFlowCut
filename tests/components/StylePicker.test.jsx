@@ -62,4 +62,50 @@ describe('StylePicker — auto-match card', () => {
     const autoCard = container.querySelector('.sp-no-style')
     expect(autoCard.className).toMatch(/selected/)
   })
+
+  it('autoCardLabelOverride takes precedence over scene-match preview', () => {
+    const scenes = [{ id: 1, style_tag: '누아르' }]
+    const references = [{ id: 10, type: 'style', name: '누아르', prompt: 'noir' }]
+    render(
+      <StylePicker
+        {...baseProps}
+        scenes={scenes}
+        references={references}
+        autoCardLabelOverride="custom override label"
+      />
+    )
+    expect(screen.getByText('custom override label')).toBeInTheDocument()
+    // Scene-match label must NOT appear when override is set
+    expect(screen.queryByText('자동 (씬별 매칭)')).toBeNull()
+  })
+
+  it('hides scene-match summary/tooltip when autoCardLabelOverride is set', () => {
+    const scenes = [{ id: 1, style_tag: '누아르' }, { id: 2, style_tag: '누아르' }]
+    const references = [{ id: 10, type: 'style', name: '누아르', prompt: 'noir' }]
+    const { container } = render(
+      <StylePicker
+        {...baseProps}
+        scenes={scenes}
+        references={references}
+        autoCardLabelOverride="video-text auto"
+      />
+    )
+    // No sp-auto-summary rendered (image scene preview suppressed)
+    expect(container.querySelector('.sp-auto-summary')).toBeNull()
+    // Auto card title (tooltip) is empty (not the scene-match preview tooltip)
+    const autoCard = container.querySelector('.sp-no-style')
+    expect(autoCard.getAttribute('title')).toBe('')
+  })
+
+  it('uses 🪄 icon when autoCardLabelOverride is set (auto mode visual)', () => {
+    const { container } = render(
+      <StylePicker
+        {...baseProps}
+        scenes={undefined}  // no scene preview
+        autoCardLabelOverride="auto via override"
+      />
+    )
+    const icon = container.querySelector('.sp-no-style .sp-icon')
+    expect(icon.textContent).toBe('🪄')
+  })
 })
