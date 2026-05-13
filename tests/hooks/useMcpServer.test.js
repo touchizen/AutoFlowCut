@@ -175,6 +175,30 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     expect(handleStart).toHaveBeenCalledWith(null)
   })
 
+  it("__mcpStartRefBatch('auto') is silently ignored (refs have no per-scene matching)", () => {
+    const handleGenerateAllRefs = vi.fn()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    renderHook(() => useMcpServer(makeProps({ handleGenerateAllRefs })))
+
+    window.__mcpStartRefBatch('auto')
+    expect(handleGenerateAllRefs).toHaveBeenCalledWith(null)  // not 'preset:auto'
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('start-ref-batch received styleId="auto"'))
+
+    warnSpy.mockRestore()
+  })
+
+  it("__mcpGenerateRef(_, 'auto') is silently ignored (refs have no per-scene matching)", async () => {
+    const handleGenerateRef = vi.fn(() => Promise.resolve({ success: true }))
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    renderHook(() => useMcpServer(makeProps({ handleGenerateRef })))
+
+    await window.__mcpGenerateRef(3, 'auto')
+    expect(handleGenerateRef).toHaveBeenCalledWith(3, false, null)  // not 'preset:auto'
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('generate-reference received styleId="auto"'))
+
+    warnSpy.mockRestore()
+  })
+
   it("__mcpStartBatch('auto') forces per-scene matching (skips first-card fallback)", () => {
     const handleStart = vi.fn()
     const refWithMedia = { id: 555, type: 'style', mediaId: 'm-555' }

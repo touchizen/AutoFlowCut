@@ -68,8 +68,15 @@ export function useMcpServer({
     window.__mcpGetScenes = () => scenes.map(({ image, videoT2V, videoI2V, ...rest }) => rest)
     // styleId override를 직접 받음 (전역 상태 setSelectedStyleRefId + setTimeout race 회피).
     // styleId 형식은 normalizeStyleId로 정규화됨 ('ref:*' / 'preset:*' / plain → 'preset:*' / null).
-    window.__mcpGenerateRef = (index, styleId) =>
-      handleGenerateRef(index, false, normalizeStyleId(styleId)).catch(e => ({ success: false, error: e.message }))
+    // 'auto' sentinel은 ref 컨텍스트에 의미 없음 (씬 매칭 부재) — null로 취급해 자연스러운 fallback 발동,
+    // 'preset:auto'로 잘못 wrap되어 silent fail (존재 안 하는 preset 조회 → 스타일 미적용) 회피.
+    window.__mcpGenerateRef = (index, styleId) => {
+      if (styleId === 'auto') {
+        console.warn('[MCP] generate-reference received styleId="auto"; ignored (refs have no per-scene matching). Falling back as if styleId were omitted.')
+        styleId = null
+      }
+      return handleGenerateRef(index, false, normalizeStyleId(styleId)).catch(e => ({ success: false, error: e.message }))
+    }
     window.__mcpGenerateScene = (sceneId) => handleGenerateScene(sceneId)
     window.__mcpSetStyle = (styleId) => { setSelectedStyleRefId(styleId); return styleId }
     window.__mcpGetStyle = () => selectedStyleRefId
@@ -252,6 +259,12 @@ export function useMcpServer({
       handleStart(effective)
     }
     window.__mcpStartRefBatch = (styleId) => {
+      // 'auto'는 ref batch에 의미 없음 — null로 취급해 normalizeStyleId가 'preset:auto'로
+      // 잘못 wrap하지 않도록 한다 (silent fail 회피).
+      if (styleId === 'auto') {
+        console.warn('[MCP] start-ref-batch received styleId="auto"; ignored (refs have no per-scene matching). Falling back as if styleId were omitted.')
+        styleId = null
+      }
       handleGenerateAllRefs(normalizeStyleId(styleId))
     }
     window.__mcpStopBatch = () => handleStop()
