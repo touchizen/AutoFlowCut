@@ -16,6 +16,7 @@ import './ReferencePanel.css'
 
 export default function ReferencePanel({
   references,
+  scenes = [],
   onUpdate,
   onUpload,
   onGenerate,
@@ -229,6 +230,8 @@ export default function ReferencePanel({
                 onGenerateThumbnails={onGenerateThumbnails}
                 onStopGenerating={onStopThumbnailGeneration}
                 onDeleteThumbnail={onDeleteThumbnail}
+                scenes={scenes}
+                references={references}
                 t={t}
                 isKo={isKo}
               />
