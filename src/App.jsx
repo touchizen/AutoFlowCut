@@ -23,7 +23,7 @@ import { useFlowEvents } from './hooks/useFlowEvents'
 import { useMcpServer } from './hooks/useMcpServer'
 import { syncVideosIntoScenes } from './services/mediaSync'
 import { retryVideoDownload } from './services/videoRecovery'
-import { findAutoStyle, applyStyle, previewStyleMatching } from './services/styleService'
+import { applyStyle } from './services/styleService'
 import { createStyleResolver } from './services/styleResolver'
 import { filterPendingScenes } from './utils/sceneFilters'
 import { detectFileType, detectCSVType, parseCSVToScenes, parseSRTToScenes } from './utils/parsers'
@@ -1540,15 +1540,7 @@ function App() {
           }}
           onStopGenerating={stopThumbnailGeneration}
           onDeleteThumbnail={deleteThumbnail}
-          scenes={scenes}
-          references={references}
-          autoCardLabelOverride={
-            // video-text는 씬 매칭 의미 없음 — findAutoStyle 결과(첫 카드)를 라벨로 표시.
-            // image/list는 undefined로 두어 StylePicker 자체 매칭 미리보기 사용.
-            activeTab === 'video-text'
-              ? (findAutoStyle(references) ? computeStyleLabel(findAutoStyle(references)) : t('reference.autoMatchNone'))
-              : undefined
-          }
+          autoCardMeta={styleResolver.autoCardMeta}
           t={t}
           isKo={t('common.cancel') === '취소'}
         />

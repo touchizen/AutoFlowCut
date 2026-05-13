@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import StylePicker from '../../src/components/StylePicker'
 import { resolveSceneStyle, previewStyleMatching } from '../../src/services/styleService'
+import { createStyleResolver } from '../../src/services/styleResolver'
 
 const t = (k, vars) => {
   const map = {
@@ -40,16 +41,16 @@ describe('Style selection — end-to-end', () => {
     expect(preview.unmatched).toEqual([3])
   })
 
-  it('StylePicker first card reflects auto-match label and summary', () => {
+  it('StylePicker first card reflects auto-match label and summary (via styleResolver.autoCardMeta)', () => {
+    const resolver = createStyleResolver({ activeTab: 'image', scenes, references, selectedStyleRefId: null, t, isKo: true })
     render(
       <StylePicker
         selectedId={null}
         onSelect={vi.fn()}
-        scenes={scenes}
-        references={references}
         thumbnails={{}}
         uploadedStyleRefs={[userStyle]}
         progress={{ current: 0, total: 0 }}
+        autoCardMeta={resolver.autoCardMeta}
         t={t}
         isKo={true}
       />
@@ -61,16 +62,16 @@ describe('Style selection — end-to-end', () => {
     expect(summaryEl.textContent).toContain('내 시그니처')
   })
 
-  it('auto card tooltip includes the per-scene-matching hint', () => {
+  it('auto card tooltip includes the per-scene-matching hint (via styleResolver.autoCardMeta)', () => {
+    const resolver = createStyleResolver({ activeTab: 'image', scenes, references, selectedStyleRefId: null, t, isKo: true })
     const { container } = render(
       <StylePicker
         selectedId={null}
         onSelect={vi.fn()}
-        scenes={scenes}
-        references={references}
         thumbnails={{}}
         uploadedStyleRefs={[userStyle]}
         progress={{ current: 0, total: 0 }}
+        autoCardMeta={resolver.autoCardMeta}
         t={t}
         isKo={true}
       />

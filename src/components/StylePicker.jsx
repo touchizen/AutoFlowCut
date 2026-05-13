@@ -7,25 +7,9 @@ import { STYLE_PRESETS } from '../config/defaults'
 import { resolveImageSrc, hasImageData, formatElapsedMs } from '../utils/formatters'
 import { toFileUrl } from '../hooks/useStyleThumbnails'
 import { useElapsedTimer } from '../hooks/useElapsedTimer'
-import { previewStyleMatching } from '../services/styleService'
 import './StylePicker.css'
 
 const ALL_CATEGORY = '__all__'
-
-function buildMatchPreviewTooltip(preview, t) {
-  const hint = t('reference.autoMatchHint')
-  if (!preview || preview.matches.length === 0) {
-    return `${hint}\n\n${t('reference.matchPreviewEmpty')}`
-  }
-  const lines = [hint, '', t('reference.matchPreviewTitle')]
-  for (const s of preview.styleSummary) {
-    lines.push(t('reference.matchPreviewSummary', { name: s.name, count: s.count }))
-  }
-  if (preview.unmatched.length > 0) {
-    lines.push(t('reference.matchPreviewUnmatched', { count: preview.unmatched.length }))
-  }
-  return lines.join('\n')
-}
 
 export default function StylePicker({
   selectedId,
@@ -38,9 +22,7 @@ export default function StylePicker({
   progress = { current: 0, total: 0 },
   onGenerateThumbnails,
   onStopGenerating,
-  scenes,
-  references = [],
-  autoCardLabelOverride,  // 호출자가 자동 카드 라벨을 직접 결정 (예: video-text 컨텍스트에서 findAutoStyle 결과)
+  autoCardMeta,  // { label, icon, tooltip, summary } — 호출자가 createStyleResolver로 만든 값. 없으면 단순 "스타일 없음" fallback.
   t,
   isKo
 }) {
@@ -76,20 +58,6 @@ export default function StylePicker({
   const missingPresetCount = allStyles.filter(s => !thumbnails[s.id]).length
   const missingCustomCount = uploadedStyleRefs.filter(r => !hasImageData(r)).length
   const missingCount = missingPresetCount + missingCustomCount
-
-  // 씬별 매칭 미리보기 (scenes prop 있을 때만)
-  const matchPreview = useMemo(() => {
-    if (!scenes || scenes.length === 0) return null
-    return previewStyleMatching(scenes, references)
-  }, [scenes, references])
-
-  // 라벨 우선순위: 호출자 override → 씬 매칭 결과 → "스타일 없음"
-  const autoCardLabel = autoCardLabelOverride ?? (matchPreview
-    ? (matchPreview.matches.length > 0 ? t('reference.autoMatch') : t('reference.autoMatchNone'))
-    : t('reference.noStyle'))
-  // override가 있으면 호출자가 자동 모드 의미 결정 — 씬 매칭 미리보기(아이콘/툴팁/요약)는 표시 안 함
-  // (예: video-text 컨텍스트에서 image scene 기반 미리보기는 무의미하고 혼선만 만든다)
-  const useScenePreview = autoCardLabelOverride === undefined && !!matchPreview
 
   return (
     <div className="style-picker">
@@ -158,23 +126,22 @@ export default function StylePicker({
 
       {/* 프리셋 스타일 그리드 */}
       <div className="sp-grid">
-        {/* 자동 (씬별 매칭) / 스타일 없음 카드 */}
-        <div
-          className={`sp-card sp-no-style ${!selectedId ? 'selected' : ''}`}
-          onClick={() => onSelect(null)}
-          title={useScenePreview ? buildMatchPreviewTooltip(matchPreview, t) : ''}
-        >
-          <div className="sp-thumb">
-            <span className="sp-icon">{useScenePreview || autoCardLabelOverride !== undefined ? '🪄' : '🚫'}</span>
-          </div>
-          <div className="sp-name">{autoCardLabel}</div>
-          {useScenePreview && matchPreview.styleSummary.length > 0 && (
-            <div className="sp-auto-summary">
-              {matchPreview.styleSummary.slice(0, 2).map(s => s.name).join(', ')}
-              {matchPreview.styleSummary.length > 2 && ` +${matchPreview.styleSummary.length - 2}`}
+        {/* 자동 (씬별 매칭) / 스타일 없음 카드 — autoCardMeta는 호출자(styleResolver)가 결정.
+            없으면 단순 "스타일 없음" fallback (Reference 위저드 등 자동 모드 의미 없는 컨텍스트). */}
+        {(() => {
+          const meta = autoCardMeta ?? { label: t('reference.noStyle'), icon: '🚫', tooltip: '', summary: null }
+          return (
+            <div
+              className={`sp-card sp-no-style ${!selectedId ? 'selected' : ''}`}
+              onClick={() => onSelect(null)}
+              title={meta.tooltip}
+            >
+              <div className="sp-thumb"><span className="sp-icon">{meta.icon}</span></div>
+              <div className="sp-name">{meta.label}</div>
+              {meta.summary && <div className="sp-auto-summary">{meta.summary}</div>}
             </div>
-          )}
-        </div>
+          )
+        })()}
 
         {filteredStyles.map(style => {
           const thumb = thumbnails[style.id]
