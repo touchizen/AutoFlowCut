@@ -106,4 +106,25 @@ describe('previewStyleMatching', () => {
     expect(result.matches).toHaveLength(1)
     expect(result.matches[0]).toMatchObject({ sceneId: 1, source: 'ref' })
   })
+
+  it('does not match style ref without prompt (production parity)', () => {
+    // Production resolveSceneStyle requires r.prompt to actually apply the style.
+    // Preview must mirror that to avoid showing matches that production won't apply.
+    const scenes = [{ id: 1, style_tag: '내 시그니처' }]
+    const refs = [{ id: 10, type: 'style', name: '내 시그니처' /* no prompt */ }]
+    const result = previewStyleMatching(scenes, refs)
+    expect(result.matches).toEqual([])
+    expect(result.unmatched).toEqual([1])
+  })
+
+  it('falls through to preset when matching ref has no prompt', () => {
+    const scenes = [{ id: 1, style_tag: 'cinematic' }]
+    const refs = [{ id: 10, type: 'style', name: 'cinematic' /* no prompt */ }]
+    const result = previewStyleMatching(scenes, refs, {
+      presets: [{ id: 'cinematic', name_ko: '시네마틱', name_en: 'Cinematic' }]
+    })
+    expect(result.matches).toEqual([
+      { sceneId: 1, styleName: '시네마틱', source: 'preset' }
+    ])
+  })
 })
