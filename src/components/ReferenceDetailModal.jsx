@@ -154,12 +154,19 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
     const presetId = id.replace('preset:', '')
     const style = STYLE_PRESETS?.styles?.find(s => s.id === presetId)
     if (!style) return
+    // 프리셋으로 채울 때는 카드를 "프리셋 정의 그대로" 새로 만든다 — 이전에 사용자가
+    // 업로드한 커스텀 이미지의 메타데이터(filePath/mediaId/caption/dataStorage)는 클리어.
+    // 안 그러면 새 프리셋 prompt + 예전 image의 mediaId가 섞여 일관성 깨짐.
     setEditData(prev => ({
       ...prev,
       name: style.name_ko,
       prompt: style.prompt_en,
       description: style.name_en,
-      data: thumbnails[presetId] || prev.data // 썸네일 이미지 즉시 반영
+      data: thumbnails[presetId] || null,
+      filePath: null,
+      mediaId: null,
+      caption: null,
+      dataStorage: null,
     }))
   }
 
