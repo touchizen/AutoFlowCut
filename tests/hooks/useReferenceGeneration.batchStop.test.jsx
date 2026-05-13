@@ -117,6 +117,41 @@ describe('useReferenceGeneration — prepare-phase stop cleanup (P1)', () => {
     expect(result.current.preparingRefs).toBe(false)
     expect(result.current.stoppingRefs).toBe(false)
   })
+
+  it('prepare 단계 unexpected throw 시에도 flags 정리됨 (P2 v3: try/finally lifecycle)', async () => {
+    // 회귀 컨텍스트: 이전 cleanupPrepareAndReturn은 명시적 early return만 cover. 예상 못한
+    // throw (IPC reject, network error 등)에선 flag가 stuck 되어 refBatchRunning 영구 true.
+    // try/finally로 전체 lifecycle을 감싸 어떤 종료 경로든 flag 정리.
+
+    const { useReferenceGeneration } = await import('../../src/hooks/useReferenceGeneration')
+    const { fileSystemAPI } = await import('../../src/hooks/useFileSystem')
+
+    // ensurePermission이 throw (예: IPC handler 죽음)
+    fileSystemAPI.ensurePermission.mockImplementationOnce(async () => {
+      throw new Error('IPC handler died')
+    })
+
+    const refs = [{ id: 1, prompt: 'a portrait', type: 'character', status: 'pending' }]
+    const { result } = renderHook(() => useReferenceGeneration({
+      settings: { saveMode: 'folder', imageBatchCount: 1 },
+      references: refs,
+      setReferences: vi.fn(),
+      flowAPI: { getAccessToken: vi.fn().mockResolvedValue('token') },
+      addPendingSave: vi.fn(),
+      openSettings: vi.fn(),
+      t: (k) => k,
+      generationQueue: null
+    }))
+
+    // throw가 caller로 전파될 수 있음 — try로 감싸서 무시
+    await act(async () => {
+      try { await result.current.handleGenerateAllRefs() } catch {}
+    })
+
+    // 핵심 가드: throw에도 flags가 false로 정리됨
+    expect(result.current.preparingRefs).toBe(false)
+    expect(result.current.stoppingRefs).toBe(false)
+  })
 })
 
 describe('useReferenceGeneration — stop during batch', () => {

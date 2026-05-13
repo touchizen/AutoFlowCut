@@ -358,34 +358,31 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     let hasPendingSaves = false
     setSaveFailedOnce(false)
 
-    // prepare 단계 조기 종료 헬퍼 — preparingRefs와 stoppingRefs를 둘 다 정리.
-    // 안 그러면 prepare 구간에 MCP가 stopGenerateAllRefs()로 stoppingRefs=true를 세팅한 후
-    // folder/auth 실패로 조기 return하면 stoppingRefs가 영구히 stuck → 다음 MCP 호출이
-    // waitForStopped 30s timeout 타고 UI도 'stopping' 상태 고착 (P1 회귀 fix).
-    const cleanupPrepareAndReturn = () => {
-      setPreparingRefs(false)
-      setStoppingRefs(false)
-    }
+    // P2 v3 fix: 전체 lifecycle을 try/finally로 감싸 어느 종료 경로에서도 flag를 정리.
+    // 이전엔 명시적 early return만 cleanup했지만, ensurePermission/checkAuthToken/_resolveEffectiveStyleId/
+    // batch loop의 예상 못한 throw (IPC reject 등)에선 flag가 stuck → refBatchRunning이 영구 true,
+    // 다음 MCP 호출이 waitForStopped 30s timeout 회귀.
+    try {
 
     // 폴더 모드 권한 확인
     if (settings.saveMode === 'folder') {
       const permission = await fileSystemAPI.ensurePermission()
-      if (permission.error === 'not_set') { cleanupPrepareAndReturn(); openSettings('storage'); return }
+      if (permission.error === 'not_set') { openSettings('storage'); return }
       if (permission.error === 'folder_deleted') {
         toast.error(t('toast.folderDeleted'))
-        cleanupPrepareAndReturn(); openSettings('storage')
+        openSettings('storage')
         return
       }
       if (!permission.hasPermission) {
         toast.warning(t('toast.folderPermissionNeeded'))
-        cleanupPrepareAndReturn(); openSettings('storage')
+        openSettings('storage')
         return
       }
       console.log('[GenerateAllRefs] Permission granted:', permission.name)
     }
 
     // 토큰 확인
-    if (!(await checkAuthToken(flowAPI, t))) { cleanupPrepareAndReturn(); return }
+    if (!(await checkAuthToken(flowAPI, t))) return
 
     // 비동기 대기열
     const pendingQueue = []
@@ -558,11 +555,17 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     await flowAPI.clearGenerations()
 
     console.log('[GenerateAllRefs] Batch completed, hasPendingSaves:', hasPendingSaves)
-    setStoppingRefs(false)
 
     if (hasPendingSaves) {
       toast.info(t('toast.batchCompleteNeedPermission'))
       openSettings('storage')
+    }
+
+    } finally {
+      // P2 v3: 정상 종료 / early return / throw 어느 경로에서도 flag 정리 (P1 + P2 통합 fix).
+      // 안 그러면 refBatchRunning이 stuck 되어 MCP stop-restart가 30s timeout.
+      setPreparingRefs(false)
+      setStoppingRefs(false)
     }
   }
 

@@ -11,6 +11,7 @@
 import { useEffect, useRef } from 'react'
 import { normalizeStyleId, findAutoStyle } from '../services/styleService'
 import { syncExplicitStyleId } from '../services/mcpStyle'
+import { isSceneGenerationDone, isReferenceUploadedDone } from '../services/generationStatus'
 
 /**
  * @param {object} params
@@ -358,25 +359,18 @@ export function useMcpServer({
     window.__mcpStopBatch = () => handleStop()
     window.__mcpBatchStatus = () => {
       const { isRunning, isPaused, progress, status, statusMessage } = automationState
-      // P2 fix: status가 in-flight면 (pending/generating/error) done에서 제외.
-      // force 재생성 중 이전 image/mediaId가 남아있어도 status가 pending이면 "재생성 중"으로 표시.
-      // status 없으면 image 기반 (legacy 호환).
-      const isSceneDone = (s) =>
-        (s.image || s.imagePath) &&
-        s.status !== 'pending' && s.status !== 'generating' && s.status !== 'error'
-      const isRefDone = (r) =>
-        r.type !== 'style' && r.mediaId &&
-        r.status !== 'pending' && r.status !== 'generating' && r.status !== 'error'
-
+      // P2/P3 v2/v3: done 판정은 services/generationStatus의 공통 helper 사용.
+      // status가 in-flight (pending/generating/error)면 image/mediaId 있어도 done에서 제외 —
+      // force 재생성 중 progress가 100% stuck 회귀 차단.
       const total = scenes.length
-      const done = scenes.filter(isSceneDone).length
+      const done = scenes.filter(isSceneGenerationDone).length
       const pending = scenes.filter(s => s.status === 'pending').length
       const generating = scenes.filter(s => s.status === 'generating').length
       const error = scenes.filter(s => s.status === 'error').length
 
       // 레퍼런스 배치 상태
       const refTotal = references.filter(r => r.type !== 'style').length
-      const refDone = references.filter(isRefDone).length
+      const refDone = references.filter(isReferenceUploadedDone).length
       const refGenerating = generatingRefs.length
       const refPending = Math.max(0, refTotal - refDone - refGenerating)
       // refBatchRunning prop은 preparing/stopping/generating 모두 포함 — P1 회귀 가드.
