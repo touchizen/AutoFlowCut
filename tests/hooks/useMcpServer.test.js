@@ -436,30 +436,93 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     expect(handleStart).toHaveBeenCalledWith('preset:noir', { force: true })
   })
 
-  it('handleStartRef uses LATEST handleStart after re-render (stale closure regression)', async () => {
-    // 회귀 컨텍스트: handleStart는 매 render마다 새로 만들어지는 함수. closure에 `isRunning`을
-    // 잡고 있어서 stop 직전의 handleStart는 stale `isRunning=true`를 들고 있음. 옛 버전을 호출하면
-    // 첫 줄 가드(`if (isRunning) return`)에 막혀 stop-restart 의 restart가 silently 실패.
-    // handleStartRef로 항상 최신 handleStart를 부르도록 한 fix의 회귀 가드.
+  it('handleStartRef uses LATEST handleStart even when rerender happens DURING __mcpStartBatch async call (P0 stale closure)', async () => {
+    // 회귀 컨텍스트 (P0 — live verify에서 발견):
+    //   __mcpStartBatch는 async. 진행 중 stop-restart 경로에서:
+    //   1. 호출 시작 (closure에 handleStart_v1 캡처, await waitForStopped)
+    //   2. state 변경 (isRunning=false 됨) → re-render → handleStart_v2 생성
+    //   3. useEffect 재실행 → window.__mcpStartBatch는 v2 binding으로 교체 — 하지만 이미 실행 중인
+    //      v1 async frame은 자기 closure(handleStart_v1)로 계속 진행
+    //   4. waitForStopped 해소 → v1 closure가 handleStart_v1 호출 — stale `isRunning=true`로 reject
+    //
+    //   handleStartRef 갱신을 useEffect가 매 render마다 하므로, ref.current는 항상 최신 v2.
+    //   async 호출 중에도 ref를 보면 v2를 부른다.
+    //
+    //   ❌ 잘못된 재현: rerender 먼저 → window.__mcpStartBatch 호출 → useEffect가 이미 v2 바인딩으로
+    //   교체했기 때문에 ref 없어도 통과 (예전 코드가 잡고 있던 stale closure를 거치지 않음).
+    //   ✅ 올바른 재현: isRunning=true로 호출 시작 → await 중에 rerender → stop 후 어느 handler가 호출되나.
+    vi.useFakeTimers()
 
-    const handleStart_v1 = vi.fn(() => { /* v1: stale, should NOT be called */ })
+    const handleStart_v1 = vi.fn()
     const handleStart_v2 = vi.fn()
+    const handleStop = vi.fn()
+    let currentIsRunning = true
+    let currentHandleStart = handleStart_v1
 
-    function Wrapper({ handleStart }) {
-      return useMcpServer(makeProps({ isRunning: false, handleStart }))
+    function Wrapper() {
+      return useMcpServer(makeProps({
+        isRunning: currentIsRunning,
+        handleStart: currentHandleStart,
+        handleStop,
+      }))
     }
-    const { rerender } = renderHook(({ handleStart }) => Wrapper({ handleStart }), {
-      initialProps: { handleStart: handleStart_v1 },
-    })
+    const { rerender } = renderHook(Wrapper)
 
-    // mount 시점엔 v1. rerender 후 v2.
-    rerender({ handleStart: handleStart_v2 })
+    // 1. async 호출 시작 — v1 closure가 stop-restart 분기 진입, waitForStopped pending
+    const callPromise = window.__mcpStartBatch('preset:noir', { force: true })
+    expect(handleStop).toHaveBeenCalled()
+    expect(handleStart_v1).not.toHaveBeenCalled()
+    expect(handleStart_v2).not.toHaveBeenCalled()
 
-    await window.__mcpStartBatch('preset:noir', { force: true })
+    // 2. 진행 중 re-render: 새 handleStart (v2), isRunning=false
+    currentHandleStart = handleStart_v2
+    currentIsRunning = false
+    rerender()
 
-    // 최신 (v2)만 호출, v1은 호출 안 됨
+    // 3. polling이 isRunning=false 감지 → waitForStopped 해소 → restart 호출
+    await vi.advanceTimersByTimeAsync(100)
+    await callPromise
+
+    // ref fix가 없으면: v1만 호출됨 (stale).
+    // ref fix가 있으면: v2 호출, v1은 호출 안 됨.
     expect(handleStart_v2).toHaveBeenCalledWith('preset:noir', { force: true })
     expect(handleStart_v1).not.toHaveBeenCalled()
+
+    vi.useRealTimers()
+  })
+
+  it('handleGenerateAllRefsRef uses LATEST handler when rerender happens DURING __mcpStartRefBatch (symmetric to handleStartRef)', async () => {
+    vi.useFakeTimers()
+
+    const handleGenerateAllRefs_v1 = vi.fn()
+    const handleGenerateAllRefs_v2 = vi.fn()
+    const handleStop = vi.fn()
+    let currentIsRunning = true
+    let currentHandler = handleGenerateAllRefs_v1
+
+    function Wrapper() {
+      return useMcpServer(makeProps({
+        isRunning: currentIsRunning,
+        handleGenerateAllRefs: currentHandler,
+        handleStop,
+      }))
+    }
+    const { rerender } = renderHook(Wrapper)
+
+    const callPromise = window.__mcpStartRefBatch('preset:noir', { force: true })
+    expect(handleStop).toHaveBeenCalled()
+
+    currentHandler = handleGenerateAllRefs_v2
+    currentIsRunning = false
+    rerender()
+
+    await vi.advanceTimersByTimeAsync(100)
+    await callPromise
+
+    expect(handleGenerateAllRefs_v2).toHaveBeenCalledWith('preset:noir', { force: true })
+    expect(handleGenerateAllRefs_v1).not.toHaveBeenCalled()
+
+    vi.useRealTimers()
   })
 
   it('__mcpStartBatch with isRunning=true calls handleStop and waits before handleStart', async () => {
