@@ -104,7 +104,10 @@ export function createStyleResolver({ activeTab, scenes = [], references = [], s
       if (override === null) return isVideoText ? autoEffectiveStyleId : null
       return override
     }
-    return selectedStyleRefId ?? null
+    // undefined: UI 선택값 우선. 없을 때 video-text는 findAutoStyle fallback (라벨이 "자동: X"라
+    // 보여주므로 실제 적용도 X로 일치해야). image/list는 null로 둠 — useAutomation이 씬별
+    // style_tag로 자동 매칭.
+    return selectedStyleRefId ?? (isVideoText ? autoEffectiveStyleId : null)
   }
 
   const resolveEffectiveStyleIdForRef = (override) => {

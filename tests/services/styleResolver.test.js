@@ -214,6 +214,27 @@ describe('createStyleResolver — resolveEffectiveStyleId', () => {
     const r = createStyleResolver({ ...baseDeps, selectedStyleRefId: 'preset:noir' })
     expect(r.resolveEffectiveStyleId('ref:99')).toBe('ref:99')
   })
+
+  it('undefined override + video-text + null selection: returns findAutoStyle (P1 #1 — label/apply parity)', () => {
+    // Regression guard: video-text Start button (handleStart() with no override) must apply
+    // the same auto style the label promises ("자동: My Noir"), not silently null-out.
+    const r = createStyleResolver({
+      ...baseDeps,
+      activeTab: 'video-text',
+      selectedStyleRefId: null,
+      references: [{ id: 7, type: 'style', name: 'My Noir', mediaId: 'm-7' }],
+    })
+    expect(r.resolveEffectiveStyleId(undefined)).toBe('ref:7')
+  })
+
+  it('undefined override + image/list + null selection: returns null (per-scene matching by useAutomation)', () => {
+    const r = createStyleResolver({
+      ...baseDeps,
+      activeTab: 'list',
+      selectedStyleRefId: null,
+    })
+    expect(r.resolveEffectiveStyleId(undefined)).toBeNull()
+  })
 })
 
 describe('createStyleResolver — resolveEffectiveStyleIdForRef (reference generation domain)', () => {
