@@ -700,10 +700,12 @@ function App() {
         // T2V는 video scene의 자체 prompt만 사용 — image scene과는 독립.
         // 스타일(selectedStyleRefId)만 추가로 prefix해서 적용.
         // (I2V는 이미지가 source라 별도 처리 — frame-to-video 케이스에서 미적용)
-        // video-text도 image와 동일한 undefined/null 구분 — override null이면 자동 카드 의도라
-        // selectedStyleRefId/findAutoStyle fallback 없이 그대로 null 적용 (스타일 미적용).
+        // video-text의 "자동" 의미는 image/list와 다름 — 씬 매칭 path가 없으므로
+        // 자동 카드 click(override === null)은 "사용 가능한 첫 스타일 카드"로 해석.
+        // computeStyleLabel도 video-text 분기에서 동일하게 findAutoStyle을 표시하므로
+        // 라벨과 실제 적용 스타일이 일치한다.
         const effectiveStyleId = overrideStyleId !== undefined
-          ? overrideStyleId
+          ? (overrideStyleId === null ? findAutoStyle(scenesHook.references) : overrideStyleId)
           : (selectedStyleRefId || findAutoStyle(scenesHook.references))
         const styledVideoScenes = selectedVideoScenes.map(vs => {
           const matchedRefs = []
