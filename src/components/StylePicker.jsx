@@ -40,6 +40,7 @@ export default function StylePicker({
   onStopGenerating,
   scenes,
   references = [],
+  autoCardLabelOverride,  // 호출자가 자동 카드 라벨을 직접 결정 (예: video-text 컨텍스트에서 findAutoStyle 결과)
   t,
   isKo
 }) {
@@ -82,9 +83,10 @@ export default function StylePicker({
     return previewStyleMatching(scenes, references)
   }, [scenes, references])
 
-  const autoCardLabel = matchPreview
+  // 라벨 우선순위: 호출자 override → 씬 매칭 결과 → "스타일 없음"
+  const autoCardLabel = autoCardLabelOverride ?? (matchPreview
     ? (matchPreview.matches.length > 0 ? t('reference.autoMatch') : t('reference.autoMatchNone'))
-    : t('reference.noStyle')
+    : t('reference.noStyle'))
 
   return (
     <div className="style-picker">

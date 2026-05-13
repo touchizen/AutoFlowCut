@@ -1544,12 +1544,14 @@ function App() {
               handleStart(id)
               return
             }
-            // 자동 카드 (id === null) — 진행 조건:
-            //   - requireStyle=false면 매칭 0개여도 그냥 진행 (메인 시작 버튼과 동일하게 스타일 없이 생성 허용)
-            //   - requireStyle=true면 generation 대상에 매칭이 1개 이상일 때만 진행, 0개면 명시 선택 요구
-            const targetScenes = filterPendingScenes(scenes)
-            const autoMatchable = previewStyleMatching(targetScenes, references).matches.length > 0
-            if (autoMatchable || !settings.requireStyle) {
+            // 자동 카드 (id === null) — availability는 탭별 의미가 다름:
+            //   - image/list: 씬별 매칭 가능 여부 (previewStyleMatching)
+            //   - video-text: 첫 사용 가능한 스타일 카드 존재 여부 (findAutoStyle)
+            // requireStyle=false면 어느 탭이든 통과.
+            const autoAvailable = activeTab === 'video-text'
+              ? !!findAutoStyle(references)
+              : previewStyleMatching(filterPendingScenes(scenes), references).matches.length > 0
+            if (autoAvailable || !settings.requireStyle) {
               setShowStylePicker(false)
               handleStart(null)
             } else {
@@ -1574,6 +1576,13 @@ function App() {
           onDeleteThumbnail={deleteThumbnail}
           scenes={scenes}
           references={references}
+          autoCardLabelOverride={
+            // video-text는 씬 매칭 의미 없음 — findAutoStyle 결과(첫 카드)를 라벨로 표시.
+            // image/list는 undefined로 두어 StylePicker 자체 매칭 미리보기 사용.
+            activeTab === 'video-text'
+              ? (findAutoStyle(references) ? computeStyleLabel(findAutoStyle(references)) : t('reference.autoMatchNone'))
+              : undefined
+          }
           t={t}
           isKo={t('common.cancel') === '취소'}
         />
