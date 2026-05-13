@@ -427,7 +427,7 @@ curl http://127.0.0.1:3210/api/batch-status
                 required: ['index'],
                 properties: {
                   index: { type: 'integer', description: '레퍼런스 인덱스 (0-based)', example: 2 },
-                  styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" (커스텀 레퍼런스), "preset:<id>" (프리셋), 또는 plain id (예: "korean-ani" — 자동으로 "preset:"으로 wrap). 생략 시 현재 UI 선택 스타일 또는 첫 style 카드 자동 fallback 적용 (레퍼런스 생성에는 씬 매칭 개념 없음).', example: 'ref:1773499846144' },
+                  styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" (커스텀 레퍼런스), "preset:<id>" (프리셋), 또는 plain id (예: "korean-ani" — 자동으로 "preset:"으로 wrap). 생략 시 우선순위: 사용 가능한 첫 style 카드 → UI 선택값 → 미적용 (레퍼런스 생성에는 씬 매칭 개념 없음).', example: 'ref:1773499846144' },
                 },
               },
             },
