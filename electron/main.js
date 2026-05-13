@@ -1272,7 +1272,9 @@ function startMcpHttpServer(port) {
             } catch {}
             mainWindow.webContents.send('mcp-update', { type: 'start-scene-batch', styleId })
             res.writeHead(200)
-            res.end(JSON.stringify({ success: true, message: 'Scene batch generation started', styleId }))
+            // 응답에 styleId echo 안 함 — fire-and-forget이라 effective style은 renderer fallback이
+            // 결정하므로(예: 첫 카드 자동 적용), main이 즉시 알 수 없음. 거짓 정보를 주는 것보다 안 주는 게 정직.
+            res.end(JSON.stringify({ success: true, message: 'Scene batch generation started' }))
           } else {
             res.writeHead(503)
             res.end(JSON.stringify({ error: 'App not ready' }))
@@ -1305,7 +1307,8 @@ function startMcpHttpServer(port) {
             } catch {}
             mainWindow.webContents.send('mcp-update', { type: 'start-ref-batch', styleId })
             res.writeHead(200)
-            res.end(JSON.stringify({ success: true, message: 'Reference batch generation started', styleId }))
+            // start-scene-batch와 동일 — effective style을 main이 즉시 알 수 없으므로 echo 안 함.
+            res.end(JSON.stringify({ success: true, message: 'Reference batch generation started' }))
           } else {
             res.writeHead(503)
             res.end(JSON.stringify({ error: 'App not ready' }))
