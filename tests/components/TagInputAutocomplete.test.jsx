@@ -139,4 +139,42 @@ describe('TagInputAutocomplete — basic render', () => {
     fireEvent.keyDown(input, { key: 'Escape' })
     expect(container.querySelector('.tag-autocomplete-dropdown')).toBeNull()
   })
+
+  it('includes preset options when type is style', () => {
+    const refs = [{ id: 1, type: 'style', name: 'Custom Noir' }]
+    const presets = [
+      { id: 'cinematic', name_ko: '시네마틱', name_en: 'Cinematic' },
+      { id: 'noir', name_ko: '누아르', name_en: 'Noir' },
+    ]
+    render(<TagInputAutocomplete {...baseProps} type="style" references={refs} presets={presets} />)
+    fireEvent.focus(screen.getByRole('textbox'))
+    expect(screen.getByText('Custom Noir')).toBeInTheDocument()
+    expect(screen.getByText('시네마틱')).toBeInTheDocument()
+    expect(screen.getByText('누아르')).toBeInTheDocument()
+  })
+
+  it('does not show preset options when type is not style', () => {
+    const refs = []
+    const presets = [{ id: 'cinematic', name_ko: '시네마틱', name_en: 'Cinematic' }]
+    render(<TagInputAutocomplete {...baseProps} type="character" references={refs} presets={presets} />)
+    fireEvent.focus(screen.getByRole('textbox'))
+    // empty notice, no preset
+    expect(screen.queryByText('시네마틱')).toBeNull()
+    expect(screen.getByText('사용 가능한 ref/preset이 없습니다')).toBeInTheDocument()
+  })
+
+  it('disabled input does not open dropdown on focus', () => {
+    const refs = [{ id: 1, type: 'character', name: 'Hero' }]
+    const { container } = render(<TagInputAutocomplete {...baseProps} references={refs} disabled />)
+    const input = screen.getByRole('textbox')
+    fireEvent.focus(input)
+    expect(container.querySelector('.tag-autocomplete-dropdown')).toBeNull()
+  })
+
+  it('preset options are visually marked with "(preset)" suffix', () => {
+    const presets = [{ id: 'noir', name_ko: '누아르', name_en: 'Noir' }]
+    render(<TagInputAutocomplete {...baseProps} type="style" presets={presets} />)
+    fireEvent.focus(screen.getByRole('textbox'))
+    expect(screen.getByText(/preset/i)).toBeInTheDocument()
+  })
 })
