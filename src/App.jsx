@@ -632,8 +632,7 @@ function App() {
         // override가 명시적 null이면 자동 모드 강제 (UI 선택값 무시) — 기본 default(undefined)는 UI 사용.
         const effectiveStyleId = styleResolver.resolveEffectiveStyleId(overrideStyleId)
         if (settings.requireStyle && !effectiveStyleId) {
-          const autoMatchable = previewStyleMatching(targetScenes, references).matches.length > 0
-          if (!autoMatchable) {
+          if (!styleResolver.autoAvailable) {
             setShowStylePicker(true)
             return
           }
@@ -1514,14 +1513,11 @@ function App() {
               handleStart(id)
               return
             }
-            // 자동 카드 (id === null) — availability는 탭별 의미가 다름:
-            //   - image/list: 씬별 매칭 가능 여부 (previewStyleMatching)
-            //   - video-text: 첫 사용 가능한 스타일 카드 존재 여부 (findAutoStyle)
+            // 자동 카드 (id === null) — availability는 styleResolver가 탭별로 판단:
+            //   - image/list: 씬별 매칭 가능 여부
+            //   - video-text: 첫 사용 가능한 스타일 카드 존재 여부
             // requireStyle=false면 어느 탭이든 통과.
-            const autoAvailable = activeTab === 'video-text'
-              ? !!findAutoStyle(references)
-              : previewStyleMatching(filterPendingScenes(scenes), references).matches.length > 0
-            if (autoAvailable || !settings.requireStyle) {
+            if (styleResolver.autoAvailable || !settings.requireStyle) {
               setShowStylePicker(false)
               handleStart(null)
             } else {
