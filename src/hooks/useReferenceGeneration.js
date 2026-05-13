@@ -9,6 +9,7 @@ import { checkFolderPermission, checkAuthToken } from '../utils/guards'
 import { cleanBase64, toDataURL } from '../utils/urls'
 import { tryUpscaleImage, extractThumbnailBase64 } from '../utils/imageProcessing'
 import { toast } from '../components/Toast'
+import { findAutoStyle } from '../services/styleService'
 
 // 1~3초 랜덤 딜레이
 const randomDelay = () => new Promise(r => setTimeout(r, 1000 + Math.random() * 2000))
@@ -218,16 +219,15 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
   }
 
   // ─── 공통: effectiveStyleId 결정 ───
+  // 우선순위: explicit override → UI 선택값 → 자동 fallback (첫 사용 가능한 style 카드).
+  // 자동 탐색은 styleService.findAutoStyle 단일 출처 사용 — prompt-only / mediaId-only
+  // 둘 다 잡힘 (production applyStyle 동작과 일치).
   const _resolveEffectiveStyleId = (overrideStyleId) => {
-    let effectiveStyleId = overrideStyleId || selectedStyleRefId
-    if (!effectiveStyleId) {
-      const autoStyle = referencesRef.current.find(r => r.type === 'style' && r.mediaId)
-      if (autoStyle) {
-        effectiveStyleId = `ref:${autoStyle.id}`
-        console.log('[StyleRef] Auto-detected style card:', autoStyle.name, autoStyle.id)
-      }
+    const effective = overrideStyleId || selectedStyleRefId || findAutoStyle(referencesRef.current)
+    if (effective && !overrideStyleId && !selectedStyleRefId) {
+      console.log('[StyleRef] Auto-detected style card:', effective)
     }
-    return effectiveStyleId
+    return effective
   }
 
   // ─── 핵심 생성 로직 (개별) ───
