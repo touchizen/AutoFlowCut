@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { previewStyleMatching } from '../../src/services/styleService'
+import { previewStyleMatching, pickAutoStyleFallback } from '../../src/services/styleService'
 
 describe('previewStyleMatching', () => {
   it('returns empty matches for no scenes', () => {
@@ -137,5 +137,27 @@ describe('previewStyleMatching', () => {
     expect(result.matches).toEqual([
       { sceneId: 1, styleName: '시네마틱', source: 'preset' }
     ])
+  })
+})
+
+describe('pickAutoStyleFallback', () => {
+  const refWithMedia = { id: 1, type: 'style', mediaId: 'm-1' }
+
+  it('returns first auto style when no scene has style_tag', () => {
+    const scenes = [{ id: 1 }, { id: 2, style_tag: '' }, { id: 3, style_tag: '   ' }]
+    expect(pickAutoStyleFallback(scenes, [refWithMedia])).toBe('ref:1')
+  })
+
+  it('returns null when at least one scene has style_tag (preserves auto-match intent)', () => {
+    const scenes = [{ id: 1, style_tag: 'noir' }, { id: 2 }]
+    expect(pickAutoStyleFallback(scenes, [refWithMedia])).toBeNull()
+  })
+
+  it('returns null when no style refs exist', () => {
+    expect(pickAutoStyleFallback([{ id: 1 }], [])).toBeNull()
+  })
+
+  it('returns null for empty scenes (no work to do)', () => {
+    expect(pickAutoStyleFallback([], [refWithMedia])).toBeNull()
   })
 })

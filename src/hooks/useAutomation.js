@@ -5,7 +5,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { findAutoStyle, resolveSceneStyle } from '../services/styleService'
+import { pickAutoStyleFallback, resolveSceneStyle } from '../services/styleService'
 import { processAsyncSceneResult } from '../services/imageFinalize'
 import { fileSystemAPI } from './useFileSystem'
 import { getTimestamp } from '../utils/formatters'
@@ -62,8 +62,9 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
   const runConcurrentQueue = async (targetScenes, options, total) => {
     let { projectName, saveMode, imageBatchCount, imageUpscale, selectedStyleRefId, seed = null } = options
     if (selectedStyleRefId != null && typeof selectedStyleRefId !== 'string') selectedStyleRefId = String(selectedStyleRefId)
-    // selectedStyleRefId 없으면 등록된 style 카드 자동 탐색
-    if (!selectedStyleRefId) selectedStyleRefId = findAutoStyle(references)
+    // selectedStyleRefId 없으면 자동 모드. 단, 씬 중 하나라도 style_tag를 가지면
+    // fallback 안 함 — 사용자가 씬별 매칭을 의도한 것이므로 첫 스타일 전역 적용으로 덮어쓰면 안 됨.
+    if (!selectedStyleRefId) selectedStyleRefId = pickAutoStyleFallback(targetScenes, references)
     completedCountRef.current = 0
     errorCountRef.current = 0
     const pendingQueue = [] // { generationId, scene, submittedAt }

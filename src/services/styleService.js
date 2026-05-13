@@ -18,6 +18,24 @@ export function findAutoStyle(references) {
 }
 
 /**
+ * 이미지 씬 일괄 생성에서 selectedStyleRefId가 비었을 때의 fallback 결정.
+ *
+ * 정책: 씬 중 하나라도 style_tag를 가지면 fallback 안 함 (사용자가 씬별 매칭을 의도한 것 —
+ * 임의의 첫 스타일을 전역 적용하면 그 의도를 덮어쓴다). 모든 씬이 style_tag를 비웠을 때만
+ * 기존 동작(첫 스타일 카드 자동 적용) 유지.
+ *
+ * @param {Array} scenes - 씬 배열
+ * @param {Array} references - 레퍼런스 배열
+ * @returns {string|null} 'ref:{id}' 또는 null (자동 매칭 모드 유지)
+ */
+export function pickAutoStyleFallback(scenes, references) {
+  if (!scenes || scenes.length === 0) return null
+  const hasAnyStyleTag = scenes.some(s => s.style_tag && String(s.style_tag).trim())
+  if (hasAnyStyleTag) return null
+  return findAutoStyle(references)
+}
+
+/**
  * 스타일 ID를 기반으로 프롬프트를 합성하고, 스타일 이미지 레퍼런스를 반환
  *
  * @param {string} prompt - 원본 프롬프트
