@@ -8,7 +8,7 @@
 
 | 장르 | 시놉시스 가이드 | 프리플라이트 |
 |------|----------------|-------------|
-| yadam | `meta-prompts/yadam/야담_시놉시스_작성_지침.md` | `meta-prompts/yadam/야담_프리플라이트.md` |
+| yadam | `meta-prompts/yadam/yadam-synopsis-guide.md` | `meta-prompts/yadam/yadam-preflight.md` |
 | dark-history | `meta-prompts/dark-history/synopsis_guidelines.md` | `meta-prompts/dark-history/preflight.md` |
 | 맞춤형 (bespoke) | `meta-prompts/bespoke/{lang}/synopsis_guidelines.md` | `meta-prompts/bespoke/{lang}/preflight.md` |
 
@@ -36,7 +36,7 @@ W2 시놉시스는 다음 질문에 답해야 한다 (이 4개는 genre-agnostic
 ## 시놉시스 작성
 
 **선택된 장르의 시놉시스 가이드라인을 반드시 읽고 시작한다** (위 "참조 문서" 표 참조):
-- **yadam**: `meta-prompts/yadam/야담_시놉시스_작성_지침.md`
+- **yadam**: `meta-prompts/yadam/yadam-synopsis-guide.md`
 - **dark-history**: `meta-prompts/dark-history/synopsis_guidelines.md`
 - **bespoke (맞춤형)**: `meta-prompts/bespoke/{lang}/synopsis_guidelines.md` + `_story_source/_meta_supplement.md`
 
@@ -102,7 +102,7 @@ W2 시놉시스는 다음 질문에 답해야 한다 (이 4개는 genre-agnostic
 ## 프리플라이트 체크
 
 **선택된 장르의 프리플라이트 체크리스트를 반드시 읽고 시놉시스를 점검한다** (위 "참조 문서" 표 참조):
-- **yadam**: `meta-prompts/yadam/야담_프리플라이트.md`
+- **yadam**: `meta-prompts/yadam/yadam-preflight.md`
 - **dark-history**: `meta-prompts/dark-history/preflight.md`
 - **bespoke (맞춤형)**: `meta-prompts/bespoke/{lang}/preflight.md` (Section 0 Engagement이 bespoke 전용)
 

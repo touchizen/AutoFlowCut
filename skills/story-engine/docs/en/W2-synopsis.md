@@ -8,7 +8,7 @@ This document is the W2 (synopsis writing + preflight check) stage guide for the
 
 | Genre | Synopsis guide | Preflight |
 |-------|----------------|-----------|
-| yadam | `meta-prompts/yadam/야담_시놉시스_작성_지침.md` | `meta-prompts/yadam/야담_프리플라이트.md` |
+| yadam | `meta-prompts/yadam/yadam-synopsis-guide.md` | `meta-prompts/yadam/yadam-preflight.md` |
 | dark-history | `meta-prompts/dark-history/synopsis_guidelines.md` | `meta-prompts/dark-history/preflight.md` |
 | Bespoke | `meta-prompts/bespoke/{lang}/synopsis_guidelines.md` | `meta-prompts/bespoke/{lang}/preflight.md` |
 
@@ -36,7 +36,7 @@ The 20-chapter framework is a tool; the review is by the engagement curve.
 ## Synopsis writing
 
 **You MUST read the selected genre's synopsis guidelines before starting** (see "Reference documents" table above):
-- **yadam**: `meta-prompts/yadam/야담_시놉시스_작성_지침.md`
+- **yadam**: `meta-prompts/yadam/yadam-synopsis-guide.md`
 - **dark-history**: `meta-prompts/dark-history/synopsis_guidelines.md`
 - **Bespoke**: `meta-prompts/bespoke/{lang}/synopsis_guidelines.md` + `_story_source/_meta_supplement.md`
 
@@ -97,7 +97,7 @@ Write a synopsis based on the 20-chapter framework.
 ## Preflight check
 
 **You MUST read the selected genre's preflight checklist and inspect the synopsis against it** (see "Reference documents" table above):
-- **yadam**: `meta-prompts/yadam/야담_프리플라이트.md`
+- **yadam**: `meta-prompts/yadam/yadam-preflight.md`
 - **dark-history**: `meta-prompts/dark-history/preflight.md`
 - **Bespoke**: `meta-prompts/bespoke/{lang}/preflight.md` (Section 0 Engagement is bespoke-only)
 

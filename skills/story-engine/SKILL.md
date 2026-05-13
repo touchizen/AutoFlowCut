@@ -225,8 +225,8 @@ Rules: command strings only (no env values, no credentials, no body content); UR
 | Wave | 문서 |
 |------|------|
 | W1 | `docs/{lang}/W1-story-design.md` |
-| W2 | `docs/{lang}/W2-synopsis.md` + 메타프롬프트:<br>• yadam: `meta-prompts/yadam/야담_시놉시스_작성_지침.md` + `야담_프리플라이트.md`<br>• dark-history: `meta-prompts/dark-history/synopsis_guidelines.md` + `preflight.md`<br>• bespoke: `meta-prompts/bespoke/{lang}/synopsis_guidelines.md` + `preflight.md` + `_story_source/_meta_supplement.md` |
-| W3 | `docs/{lang}/W3-writing.md` + 메타프롬프트:<br>• yadam: `meta-prompts/yadam/야담_시나리오_작성_지침.md` + `야담_서술기법_가이드.md` + `야담_서스펜스_기법.md`<br>• dark-history: `meta-prompts/dark-history/screenplay_guidelines.md` + `narrative_techniques.md` + `suspense_techniques.md`<br>• bespoke: `meta-prompts/bespoke/{lang}/screenplay_guidelines.md` + `narrative_techniques.md` + `suspense_techniques.md` + `_story_source/_meta_supplement.md` |
+| W2 | `docs/{lang}/W2-synopsis.md` + 메타프롬프트:<br>• yadam: `meta-prompts/yadam/yadam-synopsis-guide.md` + `yadam-preflight.md`<br>• dark-history: `meta-prompts/dark-history/synopsis_guidelines.md` + `preflight.md`<br>• bespoke: `meta-prompts/bespoke/{lang}/synopsis_guidelines.md` + `preflight.md` + `_story_source/_meta_supplement.md` |
+| W3 | `docs/{lang}/W3-writing.md` + 메타프롬프트:<br>• yadam: `meta-prompts/yadam/yadam-scenario-guide.md` + `yadam-narrative-guide.md` + `yadam-suspense-techniques.md`<br>• dark-history: `meta-prompts/dark-history/screenplay_guidelines.md` + `narrative_techniques.md` + `suspense_techniques.md`<br>• bespoke: `meta-prompts/bespoke/{lang}/screenplay_guidelines.md` + `narrative_techniques.md` + `suspense_techniques.md` + `_story_source/_meta_supplement.md` |
 | W4 | `docs/{lang}/W4-production.md` |
 | W5 | `docs/{lang}/W5-tts-sfx.md` |
 | W6 | `docs/{lang}/W6-storyboard.md` |

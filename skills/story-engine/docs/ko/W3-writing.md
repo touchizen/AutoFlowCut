@@ -17,7 +17,7 @@
 
 | 장르 | 시나리오 / 서술 / 서스펜스 |
 |------|------------------------|
-| yadam | `meta-prompts/yadam/야담_시나리오_작성_지침.md`, `야담_서술기법_가이드.md`, `야담_서스펜스_기법.md` |
+| yadam | `meta-prompts/yadam/yadam-scenario-guide.md`, `yadam-narrative-guide.md`, `yadam-suspense-techniques.md` |
 | dark-history | `meta-prompts/dark-history/screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md` |
 | 맞춤형 (bespoke) | `meta-prompts/bespoke/{lang}/screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md` |
 
@@ -31,7 +31,7 @@
 
 > SKILL.md 핵심 원칙: **궁금증 + 기대감 = 몰입도. 모든 wave의 최상위 평가 기준.**
 
-W3 대본 검토는 "재미있는가"가 아니라 **"시청자가 다음 단락으로 넘어가게 만드는가"**로 한다. (자세한 review dimension 참조: yadam은 `meta-prompts/yadam/야담_서술기법_가이드.md`, dark-history는 `meta-prompts/dark-history/narrative_techniques.md`, bespoke는 `meta-prompts/bespoke/{lang}/narrative_techniques.md` — 모두 § Review dimensions / 리뷰 차원 참조. E0~E3 (engagement)가 primary, C1~C10 (craft)는 subordinate.)
+W3 대본 검토는 "재미있는가"가 아니라 **"시청자가 다음 단락으로 넘어가게 만드는가"**로 한다. (자세한 review dimension 참조: yadam은 `meta-prompts/yadam/yadam-narrative-guide.md`, dark-history는 `meta-prompts/dark-history/narrative_techniques.md`, bespoke는 `meta-prompts/bespoke/{lang}/narrative_techniques.md` — 모두 § Review dimensions / 리뷰 차원 참조. E0~E3 (engagement)가 primary, C1~C10 (craft)는 subordinate.)
 
 Engagement primary 4 항목 (E0~E3):
 - **E0. 궁금증 유지** — 매 단락이 시청자에게 "다음에 뭐?" / "이건 뭐?" 질문을 던지는가. 3 단락 연속 질문 없으면 drop-off zone.
@@ -46,7 +46,7 @@ Craft 점수가 9.5 넘어도 E0~E3 한 항목이라도 fail이면 revise. Craft
 ## 대본(시나리오) 작성
 
 **선택된 장르의 대본 작성 가이드라인 3개를 반드시 읽고 시작한다** (위 "참조 문서" 표 참조):
-- **yadam**: `meta-prompts/yadam/야담_시나리오_작성_지침.md`, `야담_서술기법_가이드.md`, `야담_서스펜스_기법.md`
+- **yadam**: `meta-prompts/yadam/yadam-scenario-guide.md`, `yadam-narrative-guide.md`, `yadam-suspense-techniques.md`
 - **dark-history**: `meta-prompts/dark-history/screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md`
 - **bespoke (맞춤형)**: `meta-prompts/bespoke/{lang}/screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md` + `_story_source/_meta_supplement.md`
 

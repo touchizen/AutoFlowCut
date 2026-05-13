@@ -384,7 +384,7 @@ Each subagent receives:
    - `lang=en` for dark-history
    - `lang=auto-detected` for bespoke (Korean references/topic → `ko`, English → `en`)
 3. Meta-prompts (for W2, W3):
-   - **yadam**: `meta-prompts/yadam/*.md` (Korean filenames: 야담_*.md)
+   - **yadam**: `meta-prompts/yadam/*.md` (ASCII filenames: yadam-*.md)
    - **dark-history**: `meta-prompts/dark-history/*.md`
    - **bespoke**: `meta-prompts/bespoke/{lang}/*.md` (subfolder per output language) PLUS `_story_source/_meta_supplement.md`
 4. Previous wave summaries (for context continuity)
@@ -401,11 +401,11 @@ Each subagent receives:
 
 **W2 subagent prompt includes:**
 - Synopsis writing guidelines:
-  - **yadam**: `meta-prompts/yadam/야담_시놉시스_작성_지침.md`
+  - **yadam**: `meta-prompts/yadam/yadam-synopsis-guide.md`
   - **dark-history**: `meta-prompts/dark-history/synopsis_guidelines.md`
   - **bespoke**: `meta-prompts/bespoke/{lang}/synopsis_guidelines.md` PLUS `_story_source/_meta_supplement.md`
 - Preflight checklist:
-  - **yadam**: `meta-prompts/yadam/야담_프리플라이트.md`
+  - **yadam**: `meta-prompts/yadam/yadam-preflight.md`
   - **dark-history**: `meta-prompts/dark-history/preflight.md`
   - **bespoke**: `meta-prompts/bespoke/{lang}/preflight.md` (Section 0 Engagement is bespoke-only)
 - 20-chapter framework
@@ -418,7 +418,7 @@ Each subagent receives:
 **W3 subagent prompt includes:**
 - **Common principles** (universal, always loaded): `meta-prompts/_common/hook_principles.md` (hook last, separate file, duration, 5-element checklist, pipeline contract)
 - Screenplay guidelines + narrative + suspense (genre-specific overrides on top of `_common/*`):
-  - **yadam**: `meta-prompts/yadam/야담_시나리오_작성_지침.md`, `야담_서술기법_가이드.md`, `야담_서스펜스_기법.md`
+  - **yadam**: `meta-prompts/yadam/yadam-scenario-guide.md`, `yadam-narrative-guide.md`, `yadam-suspense-techniques.md`
   - **dark-history**: `meta-prompts/dark-history/screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md`
   - **bespoke**: `meta-prompts/bespoke/{lang}/screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md` PLUS `_story_source/_meta_supplement.md`
 - Conflict resolution order (lowest to highest precedence): `_common/*` → genre base → bespoke `_meta_supplement.md`. The episode supplement always wins.

@@ -64,14 +64,14 @@ If genre is unknown after `STATE.md` read → AskUserQuestion (Step 2 below). Do
 
 | Genre | Meta-prompt files |
 |-------|-------------------|
-| **yadam** | `meta-prompts/yadam/야담_시놉시스_작성_지침.md`, `야담_프리플라이트.md`, `야담_시나리오_작성_지침.md`, `야담_서술기법_가이드.md`, `야담_서스펜스_기법.md` |
+| **yadam** | `meta-prompts/yadam/yadam-synopsis-guide.md`, `yadam-preflight.md`, `yadam-scenario-guide.md`, `yadam-narrative-guide.md`, `yadam-suspense-techniques.md` |
 | **dark-history** | `meta-prompts/dark-history/synopsis_guidelines.md`, `preflight.md`, `screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md` |
 | **bespoke** | `meta-prompts/bespoke/{lang}/synopsis_guidelines.md`, `preflight.md`, `screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md` (lang = `ko` or `en` per STATE.md output language) PLUS `_story_source/_meta_supplement.md` (per-episode supplement) |
 
 The W1-Rw-1 diagnosis subagent applies the **engagement E0–E3 lens** (curiosity / expectation / engagement curve / drop-off zones) which is genre-agnostic in concept but lives in:
 - `meta-prompts/bespoke/{lang}/narrative_techniques.md` § "10. Review dimensions" (English) / "10. 리뷰 차원" (Korean) — **primary source** for the engagement-primary review framework. `{lang}` = `en` or `ko` per the source episode's output language.
 - `meta-prompts/dark-history/narrative_techniques.md` § "Review dimensions" — equivalent for dark-history-genre rewrites.
-- For yadam: the same E0–E3 lens applies conceptually; the subagent adapts the universal lens to yadam's `야담_서스펜스_기법.md` "궁금증과 긴장 유지 기법" framing.
+- For yadam: the same E0–E3 lens applies conceptually; the subagent adapts the universal lens to yadam's `yadam-suspense-techniques.md` "궁금증과 긴장 유지 기법" framing.
 
 **Step 3: W1-Rw — engagement diagnosis (subagent)**
 
@@ -83,11 +83,11 @@ The subagent reads (genre-conditional):
 - All script part files (per the filename table in Step 2) — **including `{title}_hook.md` when STATE.md `Schema: v2`**. For schema v1 (no separate hook file), the hook content lives at the very top of part1 and must be diagnosed in place.
 - The universal hook principles: `meta-prompts/_common/hook_principles.md` — engagement diagnosis MUST evaluate the hook against the 5-element checklist regardless of schema version.
 - The genre's meta-prompts:
-  - **yadam**: `야담_시놉시스_작성_지침.md`, `야담_시나리오_작성_지침.md`, `야담_서술기법_가이드.md`, `야담_서스펜스_기법.md`
+  - **yadam**: `yadam-synopsis-guide.md`, `yadam-scenario-guide.md`, `yadam-narrative-guide.md`, `yadam-suspense-techniques.md`
   - **dark-history**: `meta-prompts/dark-history/synopsis_guidelines.md`, `screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md`
   - **bespoke**: `meta-prompts/bespoke/{lang}/synopsis_guidelines.md`, `screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md` — `{lang}` per STATE.md output language (`ko` or `en`)
 - For bespoke additionally: `_story_source/_meta_supplement.md`
-- The engagement E0–E3 lens from `meta-prompts/bespoke/{lang}/narrative_techniques.md` § "Review dimensions" (or "리뷰 차원" in Korean) — canonical source for the engagement-primary review framework. For yadam, adapt the universal lens to `야담_서스펜스_기법.md` "궁금증과 긴장 유지 기법" framing.
+- The engagement E0–E3 lens from `meta-prompts/bespoke/{lang}/narrative_techniques.md` § "Review dimensions" (or "리뷰 차원" in Korean) — canonical source for the engagement-primary review framework. For yadam, adapt the universal lens to `yadam-suspense-techniques.md` "궁금증과 긴장 유지 기법" framing.
 
 The subagent produces `_story_source/01_improvement_diagnosis.md`:
 

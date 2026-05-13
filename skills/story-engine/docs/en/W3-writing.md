@@ -8,7 +8,7 @@ This document is the W3 (script writing + review) stage guide for the story-engi
 
 | Genre | Screenplay / narrative / suspense |
 |-------|-----------------------------------|
-| yadam | `meta-prompts/yadam/야담_시나리오_작성_지침.md`, `야담_서술기법_가이드.md`, `야담_서스펜스_기법.md` |
+| yadam | `meta-prompts/yadam/yadam-scenario-guide.md`, `yadam-narrative-guide.md`, `yadam-suspense-techniques.md` |
 | dark-history | `meta-prompts/dark-history/screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md` |
 | Bespoke | `meta-prompts/bespoke/{lang}/screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md` |
 
@@ -28,7 +28,7 @@ This document is the W3 (script writing + review) stage guide for the story-engi
 
 > `SKILL.md` 핵심 원칙: **Curiosity + Expectation = Engagement. The top-level evaluation criterion.**
 
-W3 review evaluates not "is this interesting?" but **"does this make the viewer keep watching paragraph by paragraph?"** (Detailed review dimensions: yadam in `meta-prompts/yadam/야담_서술기법_가이드.md`, dark-history in `meta-prompts/dark-history/narrative_techniques.md`, bespoke in `meta-prompts/bespoke/{lang}/narrative_techniques.md` — all § Review dimensions. E0–E3 (engagement) is primary; C1–C10 (craft) is subordinate.)
+W3 review evaluates not "is this interesting?" but **"does this make the viewer keep watching paragraph by paragraph?"** (Detailed review dimensions: yadam in `meta-prompts/yadam/yadam-narrative-guide.md`, dark-history in `meta-prompts/dark-history/narrative_techniques.md`, bespoke in `meta-prompts/bespoke/{lang}/narrative_techniques.md` — all § Review dimensions. E0–E3 (engagement) is primary; C1–C10 (craft) is subordinate.)
 
 Engagement primary (4 items, E0–E3):
 - **E0. Curiosity maintenance** — does each paragraph keep the audience asking "what next?" / "what does this mean?" If 3+ paragraphs answer no question and pose no new one, that's a drop-off zone.
@@ -43,7 +43,7 @@ Craft score ≥ 9.5 with even one E-failure = revise. Craft never compensates fo
 ## Script writing
 
 **You MUST read the selected genre's 3 script-writing guidelines before starting** (see the "Reference documents" table above):
-- **yadam**: `meta-prompts/yadam/야담_시나리오_작성_지침.md`, `야담_서술기법_가이드.md`, `야담_서스펜스_기법.md`
+- **yadam**: `meta-prompts/yadam/yadam-scenario-guide.md`, `yadam-narrative-guide.md`, `yadam-suspense-techniques.md`
 - **dark-history**: `meta-prompts/dark-history/screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md`
 - **Bespoke**: `meta-prompts/bespoke/{lang}/screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md` + `_story_source/_meta_supplement.md`
 

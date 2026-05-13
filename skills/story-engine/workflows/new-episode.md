@@ -34,7 +34,7 @@ mkdir -p "{PROJECT_DIR}/ep{number}_{slug}/_story_source"
 
 | Trigger | Genre | Output language | Meta-Prompts |
 |---------|-------|-----------------|--------------|
-| 한국어 + 야담/민담/조선/설화/전설 키워드 | yadam | `ko` (locked) | `meta-prompts/yadam/` (Korean filenames: 야담_*.md) |
+| 한국어 + 야담/민담/조선/설화/전설 키워드 | yadam | `ko` (locked) | `meta-prompts/yadam/` (ASCII filenames: yadam-*.md) |
 | English + dark/gothic/medieval/witch/folklore/colonial 키워드 | dark-history | `en` (locked) | `meta-prompts/dark-history/` (English filenames) |
 | 어느 장르도 키워드가 명확하지 않음 (또는 `--genre bespoke`) | **bespoke** | `ko` or `en` (auto-detect from references/topic; ask user if ambiguous) | `meta-prompts/bespoke/{output_lang}/` (subfolder per output language: `ko/` for Korean, `en/` for English) + per-episode `_meta_supplement.md` (W1-5에서 생성) |
 
