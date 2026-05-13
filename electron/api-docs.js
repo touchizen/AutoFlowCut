@@ -427,7 +427,7 @@ curl http://127.0.0.1:3210/api/batch-status
                 required: ['index'],
                 properties: {
                   index: { type: 'integer', description: '레퍼런스 인덱스 (0-based)', example: 2 },
-                  styleId: { type: 'string', description: '스타일 ID (ref:<id> 또는 preset:<id>)', example: 'ref:1773499846144' },
+                  styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" (커스텀 레퍼런스), "preset:<id>" (프리셋), 또는 plain id (예: "korean-ani") — plain은 자동으로 "preset:"으로 wrap됨. 생략 시 자동 매칭 모드.', example: 'ref:1773499846144' },
                 },
               },
             },
@@ -468,7 +468,20 @@ curl http://127.0.0.1:3210/api/batch-status
       post: {
         tags: ['생성'],
         summary: '씬 일괄 생성 시작',
-        description: 'pending/error 상태인 모든 씬의 이미지를 일괄 생성합니다. 앱의 "생성 시작" 버튼과 동일한 동작입니다. Body 없이 POST합니다.',
+        description: 'pending/error 상태인 모든 씬의 이미지를 일괄 생성합니다. 앱의 "생성 시작" 버튼과 동일한 동작.',
+        requestBody: {
+          required: false,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" / "preset:<id>" / plain id (자동 wrap). 생략 시 자동 매칭 모드.', example: 'preset:korean-ani' },
+                },
+              },
+            },
+          },
+        },
         responses: {
           200: { description: '씬 일괄 생성 시작됨', content: { 'application/json': { schema: { type: 'object', properties: { success: { type: 'boolean' }, message: { type: 'string' } } } } } },
           503: { description: '앱이 준비되지 않음' },
@@ -479,7 +492,20 @@ curl http://127.0.0.1:3210/api/batch-status
       post: {
         tags: ['생성'],
         summary: '레퍼런스 일괄 생성 시작',
-        description: '모든 레퍼런스의 이미지를 일괄 생성합니다. Body 없이 POST합니다.',
+        description: '모든 레퍼런스의 이미지를 일괄 생성합니다.',
+        requestBody: {
+          required: false,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" / "preset:<id>" / plain id (자동 wrap). 생략 시 자동 매칭 모드.', example: 'preset:korean-ani' },
+                },
+              },
+            },
+          },
+        },
         responses: {
           200: { description: '레퍼런스 일괄 생성 시작됨', content: { 'application/json': { schema: { type: 'object', properties: { success: { type: 'boolean' }, message: { type: 'string' } } } } } },
           503: { description: '앱이 준비되지 않음' },

@@ -514,7 +514,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
           index: { type: 'number', description: '레퍼런스 인덱스 (0부터)' },
-          styleId: { type: 'string', description: '스타일 ID (예: "ref:1773499846144" 또는 "preset:xxx"). 생략하면 현재 선택된 스타일 사용.' },
+          styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" (커스텀 레퍼런스), "preset:<id>" (프리셋), 또는 plain id (자동으로 "preset:"으로 wrap됨). 생략 시 호출 시점의 자동 동작 (전역 상태 변경 없음).' },
         },
         required: ['index'],
       },
@@ -538,7 +538,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: 'object',
         properties: {
           port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
-          styleId: { type: 'string', description: '스타일 ID (예: "korean-ani"). list_styles로 조회 가능.' },
+          styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" (커스텀 레퍼런스), "preset:<id>" (프리셋), 또는 plain id (예: "korean-ani") — plain은 자동으로 "preset:"으로 wrap됨. 생략 시 씬별 자동 매칭. list_styles로 조회 가능.' },
         },
       },
     },
@@ -549,7 +549,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: 'object',
         properties: {
           port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
-          styleId: { type: 'string', description: '스타일 ID (예: "korean-ani"). list_styles로 조회 가능.' },
+          styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" / "preset:<id>" / plain id (자동 wrap). 생략 시 호출 시점의 자동 동작.' },
         },
       },
     },
