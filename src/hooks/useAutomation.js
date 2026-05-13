@@ -6,6 +6,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { pickAutoStyleFallback, resolveSceneStyle } from '../services/styleService'
+import { filterPendingScenes } from '../utils/sceneFilters'
 import { processAsyncSceneResult } from '../services/imageFinalize'
 import { fileSystemAPI } from './useFileSystem'
 import { getTimestamp } from '../utils/formatters'
@@ -251,10 +252,11 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     setIsPaused(false)
     setStatus('running')
     
-    // 대상 씬 결정: 이미지 없는 씬 + pending/error 상태 씬 (재생성 대상)
+    // 대상 씬 결정: 이미지 없는 씬 + pending/error 상태 씬 (재생성 대상).
+    // App.jsx의 자동 매칭 검증과 동일한 filterPendingScenes 사용 — 검증/실행 대상 일치.
     const targetScenes = sceneIndices
       ? sceneIndices.map(i => scenes[i]).filter(Boolean)
-      : scenes.filter(s => !s.image && !s.imagePath || s.status === 'pending' || s.status === 'error')
+      : filterPendingScenes(scenes)
     
     const total = targetScenes.length
     if (total === 0) {

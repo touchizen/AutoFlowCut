@@ -24,6 +24,7 @@ import { useMcpServer } from './hooks/useMcpServer'
 import { syncVideosIntoScenes } from './services/mediaSync'
 import { retryVideoDownload } from './services/videoRecovery'
 import { findAutoStyle, applyStyle, previewStyleMatching } from './services/styleService'
+import { filterPendingScenes } from './utils/sceneFilters'
 import { detectFileType, detectCSVType, parseCSVToScenes, parseSRTToScenes } from './utils/parsers'
 import { checkFolderPermission } from './utils/guards'
 import { collectTagErrors } from './utils/tagMatch'
@@ -604,10 +605,12 @@ function App() {
       case 'text':
       case 'list': {
         // 이미지 생성 — 스타일 필수 검증.
-        // 명시 선택 없을 때는 자동 매칭 모드로 통과 가능 — 단 매칭 가능한 씬이 1개 이상일 때만.
+        // 명시 선택 없을 때는 자동 매칭 모드로 통과 가능 — 단 실제 generation 대상(pending/error/no-image)에
+        // 매칭 가능한 씬이 1개 이상일 때만. 전체 scenes로 검사하면 완료된 씬 매칭이 false-positive를 만든다.
         const effectiveStyleId = overrideStyleId || selectedStyleRefId
         if (settings.requireStyle && !effectiveStyleId) {
-          const autoMatchable = previewStyleMatching(scenes, references).matches.length > 0
+          const targetScenes = filterPendingScenes(scenes)
+          const autoMatchable = previewStyleMatching(targetScenes, references).matches.length > 0
           if (!autoMatchable) {
             setShowStylePicker(true)
             return
@@ -1499,9 +1502,10 @@ function App() {
               handleStart(id)
               return
             }
-            // 자동 카드 (id === null) — 씬별 매칭이 1개 이상 있을 때만 진행.
+            // 자동 카드 (id === null) — 실제 generation 대상에 매칭이 1개 이상 있을 때만 진행.
             // 0개면 모달 유지하고 사용자에게 알림 (requireStyle을 만족시킬 수 없음).
-            const autoMatchable = previewStyleMatching(scenes, references).matches.length > 0
+            const targetScenes = filterPendingScenes(scenes)
+            const autoMatchable = previewStyleMatching(targetScenes, references).matches.length > 0
             if (autoMatchable) {
               setShowStylePicker(false)
               handleStart(null)
