@@ -261,7 +261,7 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
 
             <div
               className={`ref-detail-preview ${imageUpload.isDragOver ? 'drag-over' : ''} ${!hasImageData(editData) ? 'empty' : ''}`}
-              {...(isGenerating ? {} : isStyle ? {} : imageUpload.getDropZoneProps())}
+              {...(isGenerating ? {} : imageUpload.getDropZoneProps())}
             >
               {(imageUpload.isUploading || isGenerating) ? (
                 <div className="ref-uploading">
@@ -293,16 +293,14 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
                     }}
                     title={t('reference.clearImage') || '이미지 제거'}
                   >✕</button>
-                  {!isStyle && (
-                    <div className="preview-overlay">
-                      <span>📷 {t('reference.clickToChange')}</span>
-                    </div>
-                  )}
+                  <div className="preview-overlay">
+                    <span>📷 {t('reference.clickToChange')}</span>
+                  </div>
                 </>
               ) : (
-                <div className="ref-placeholder" onClick={isStyle ? () => setShowStyleDropdown(true) : undefined}>
+                <div className="ref-placeholder">
                   <span className="icon">{typeInfo.label.split(' ')[0]}</span>
-                  <span>{isStyle ? t('reference.selectStyle') : t('reference.upload')}</span>
+                  <span>{t('reference.upload')}</span>
                 </div>
               )}
             </div>
