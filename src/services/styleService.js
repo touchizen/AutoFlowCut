@@ -5,6 +5,7 @@
  */
 
 import { STYLE_PRESETS } from '../config/defaults'
+import { splitTags } from '../utils/tagMatch'
 
 /**
  * 등록된 스타일 카드 자동 탐색
@@ -113,14 +114,18 @@ export function resolveSeed(settings) {
 
 /**
  * 씬별 스타일 매칭을 시뮬레이션한다 (StylePicker 미리보기용).
- * 우선순위: Reference name 정확 매칭 > STYLE_PRESETS id/name_ko/name_en 매칭
+ * 우선순위: Reference name 매칭 (case-insensitive, multi-tag split) > STYLE_PRESETS id/name_ko/name_en 매칭
+ *
+ * Production parity (`useScenes.getMatchingReferences` + `resolveSceneStyle`):
+ * - ref-match: `splitTags(scene.style_tag)`로 토큰화(소문자) → 첫 매칭 style ref만 사용
+ * - preset-fallback: 매칭 ref 없을 때만, raw `scene.style_tag` (대소문자/분리 없음)로 조회
  *
  * @param {Array} scenes - 씬 배열 ({id, style_tag})
  * @param {Array} references - 레퍼런스 배열
  * @param {object} [opts] - { presets } — 테스트 주입용
  * @returns {{
  *   matches: Array<{ sceneId, styleName, source: 'ref'|'preset' }>,
- *   unmatched: Array<number>,
+ *   unmatched: Array<string|number>,
  *   styleSummary: Array<{ name, count }>
  * }}
  */
@@ -132,19 +137,20 @@ export function previewStyleMatching(scenes, references, opts = {}) {
   const unmatched = []
 
   for (const scene of scenes) {
-    const tag = scene.style_tag
-    if (!tag) {
+    const tags = splitTags(scene.style_tag)
+    if (tags.length === 0) {
       unmatched.push(scene.id)
       continue
     }
 
-    const refMatch = styleRefs.find(r => r.name === tag)
+    const refMatch = styleRefs.find(r => tags.includes(r.name?.toLowerCase()))
     if (refMatch) {
       matches.push({ sceneId: scene.id, styleName: refMatch.name, source: 'ref' })
       continue
     }
 
-    const preset = presets.find(p => p.id === tag || p.name_ko === tag || p.name_en === tag)
+    const rawTag = scene.style_tag
+    const preset = presets.find(p => p.id === rawTag || p.name_ko === rawTag || p.name_en === rawTag)
     if (preset) {
       matches.push({ sceneId: scene.id, styleName: preset.name_ko || preset.name_en, source: 'preset' })
       continue

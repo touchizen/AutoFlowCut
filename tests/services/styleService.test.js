@@ -71,4 +71,39 @@ describe('previewStyleMatching', () => {
     expect(result.matches).toEqual([])
     expect(result.unmatched).toEqual([1, 2])
   })
+
+  it('matches case-insensitively (production parity)', () => {
+    const scenes = [{ id: 1, style_tag: 'Noir' }]
+    const refs = [{ id: 10, type: 'style', name: 'noir', prompt: 'noir' }]
+    const result = previewStyleMatching(scenes, refs)
+    expect(result.matches).toEqual([
+      { sceneId: 1, styleName: 'noir', source: 'ref' }
+    ])
+  })
+
+  it('handles multi-tag style_tag (comma/semicolon/colon split)', () => {
+    const scenes = [
+      { id: 1, style_tag: 'noir, cinematic' },
+      { id: 2, style_tag: 'gothic;noir' },
+      { id: 3, style_tag: 'cinematic:moody' }
+    ]
+    const refs = [{ id: 10, type: 'style', name: 'Noir', prompt: 'noir' }]
+    const result = previewStyleMatching(scenes, refs)
+    expect(result.matches).toEqual([
+      { sceneId: 1, styleName: 'Noir', source: 'ref' },
+      { sceneId: 2, styleName: 'Noir', source: 'ref' }
+    ])
+    expect(result.unmatched).toEqual([3])
+  })
+
+  it('takes only the first matching ref per scene', () => {
+    const scenes = [{ id: 1, style_tag: 'noir, cinematic' }]
+    const refs = [
+      { id: 10, type: 'style', name: 'noir', prompt: 'a' },
+      { id: 11, type: 'style', name: 'cinematic', prompt: 'b' }
+    ]
+    const result = previewStyleMatching(scenes, refs)
+    expect(result.matches).toHaveLength(1)
+    expect(result.matches[0]).toMatchObject({ sceneId: 1, source: 'ref' })
+  })
 })
