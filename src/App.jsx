@@ -24,6 +24,7 @@ import { useMcpServer } from './hooks/useMcpServer'
 import { syncVideosIntoScenes } from './services/mediaSync'
 import { retryVideoDownload } from './services/videoRecovery'
 import { findAutoStyle, applyStyle, previewStyleMatching } from './services/styleService'
+import { createStyleResolver } from './services/styleResolver'
 import { filterPendingScenes } from './utils/sceneFilters'
 import { detectFileType, detectCSVType, parseCSVToScenes, parseSRTToScenes } from './utils/parsers'
 import { checkFolderPermission } from './utils/guards'
@@ -567,43 +568,16 @@ function App() {
     toast.info(t('videoAutomation.needsRegen') || 'Reset — click Start Generation to retry')
   }, [isRunning, videoAutomation.isRunning, settings, flowAPI, framePairs, scenesHook, videoScenesHook, t])
 
-  // 스타일 ID → 표시 라벨 변환. handleStart에서 시작 시점 snapshot 용으로,
-  // JSX에서 Start/Stop 버튼 라벨 용으로 공유 사용.
-  // - id가 null이면 자동 매칭 모드 (탭별로 image/list는 previewStyleMatching, video-text는 findAutoStyle)
-  const resolveAutoLabelForTab = () => {
-    if (activeTab === 'video-text') {
-      const auto = findAutoStyle(references)
-      return auto || null
-    }
-    let targetScenes = filterPendingScenes(scenes)
-    if (targetScenes.length === 0) targetScenes = scenes
-    const preview = previewStyleMatching(targetScenes, references)
-    if (preview.matches.length === 0) return null
-    const top = preview.styleSummary[0]
-    const more = preview.styleSummary.length - 1
-    const label = more > 0 ? `${top.name} +${more}` : top.name
-    return { __wrappedLabel: t('actions.autoStyle', { label }) }
-  }
-  const computeStyleLabel = (id) => {
-    if (!id) {
-      const auto = resolveAutoLabelForTab()
-      if (!auto) return t('actions.styleNone')
-      if (typeof auto === 'string') return t('actions.autoStyle', { label: computeStyleLabel(auto) })
-      return auto.__wrappedLabel
-    }
-    if (id.startsWith('ref:')) {
-      const refId = id.replace('ref:', '')
-      const ref = references.find(r => String(r.id) === refId && r.type === 'style')
-      return ref?.name || refId
-    }
-    if (id.startsWith('preset:')) {
-      const presetId = id.replace('preset:', '')
-      const preset = STYLE_PRESETS?.styles?.find(s => s.id === presetId)
-      const isKo = t('common.cancel') === '취소'
-      return isKo ? (preset?.name_ko || presetId) : (preset?.name_en || presetId)
-    }
-    return id
-  }
+  const styleResolver = createStyleResolver({
+    activeTab,
+    scenes,
+    references,
+    selectedStyleRefId,
+    t,
+    isKo: t('common.cancel') === '취소',
+  })
+  // 임시 alias — Task 10에서 callsite 모두 styleResolver.resolveLabelForId로 마이그레이션 후 제거
+  const computeStyleLabel = styleResolver.resolveLabelForId
 
   // overrideStyleId 시그니처 (3가지 의미 구분):
   //   undefined: 호출자가 override 안 함 → UI selectedStyleRefId 사용
