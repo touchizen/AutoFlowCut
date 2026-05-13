@@ -9,10 +9,11 @@ import { formatTime, getRatioClass, resolveImageSrc, hasImageData } from '../uti
 import { checkTagMatch } from '../utils/tagMatch'
 import { resolveExportMediaChoice } from '../utils/sceneMedia'
 import { resolveVideoSrc, ensureBase64DataUrl } from '../utils/videoSrc'
-import { UI } from '../config/defaults'
+import { UI, STYLE_PRESETS } from '../config/defaults'
 import SceneDetailModal from './SceneDetailModal'
 import VideoDetailModal from './VideoDetailModal'
 import TagBatchModal from './TagBatchModal'
+import TagInputAutocomplete from './TagInputAutocomplete'
 import InfinityLoader from './InfinityLoader'
 import './SceneList.css'
 
@@ -178,38 +179,48 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
 
       <td className="col-tags">
         <div className="tag-input-wrapper">
-          <input
-            type="text"
-            placeholder={t('sceneList.character')}
+          <TagInputAutocomplete
+            type="character"
             value={scene.characters || ''}
-            onChange={(e) => onUpdate(scene.id, { characters: e.target.value })}
+            onChange={(v) => onUpdate(scene.id, { characters: v })}
+            references={references}
+            placeholder={t('sceneList.character')}
             disabled={disabled}
             title={t('sceneList.characterTitle')}
             className={charMatch ? (charMatch.allMatched ? 'matched' : 'unmatched') : ''}
+            isKo={t('common.cancel') === '취소'}
+            t={t}
           />
           <MatchIndicator match={charMatch} tagType="character" />
         </div>
         <div className="tag-input-wrapper">
-          <input
-            type="text"
-            placeholder={t('sceneList.background')}
+          <TagInputAutocomplete
+            type="scene"
             value={scene.scene_tag || ''}
-            onChange={(e) => onUpdate(scene.id, { scene_tag: e.target.value })}
+            onChange={(v) => onUpdate(scene.id, { scene_tag: v })}
+            references={references}
+            placeholder={t('sceneList.background')}
             disabled={disabled}
             title={t('sceneList.backgroundTitle')}
             className={sceneMatch ? (sceneMatch.allMatched ? 'matched' : 'unmatched') : ''}
+            isKo={t('common.cancel') === '취소'}
+            t={t}
           />
           <MatchIndicator match={sceneMatch} tagType="scene" />
         </div>
         <div className="tag-input-wrapper">
-          <input
-            type="text"
-            placeholder={t('sceneList.style')}
+          <TagInputAutocomplete
+            type="style"
             value={scene.style_tag || ''}
-            onChange={(e) => onUpdate(scene.id, { style_tag: e.target.value })}
+            onChange={(v) => onUpdate(scene.id, { style_tag: v })}
+            references={references}
+            presets={STYLE_PRESETS?.styles || []}
+            placeholder={t('sceneList.style')}
             disabled={disabled}
             title={t('sceneList.styleTitle')}
             className={styleMatch ? (styleMatch.allMatched ? 'matched' : 'unmatched') : ''}
+            isKo={t('common.cancel') === '취소'}
+            t={t}
           />
           <MatchIndicator match={styleMatch} tagType="style" />
         </div>
