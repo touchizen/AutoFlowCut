@@ -1502,11 +1502,12 @@ function App() {
               handleStart(id)
               return
             }
-            // 자동 카드 (id === null) — 실제 generation 대상에 매칭이 1개 이상 있을 때만 진행.
-            // 0개면 모달 유지하고 사용자에게 알림 (requireStyle을 만족시킬 수 없음).
+            // 자동 카드 (id === null) — 진행 조건:
+            //   - requireStyle=false면 매칭 0개여도 그냥 진행 (메인 시작 버튼과 동일하게 스타일 없이 생성 허용)
+            //   - requireStyle=true면 generation 대상에 매칭이 1개 이상일 때만 진행, 0개면 명시 선택 요구
             const targetScenes = filterPendingScenes(scenes)
             const autoMatchable = previewStyleMatching(targetScenes, references).matches.length > 0
-            if (autoMatchable) {
+            if (autoMatchable || !settings.requireStyle) {
               setShowStylePicker(false)
               handleStart(null)
             } else {
