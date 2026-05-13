@@ -84,4 +84,26 @@ describe('ReferenceDetailModal — style card name', () => {
     fireEvent.change(nameInput, { target: { value: '내 누아르' } })
     expect(nameInput.value).toBe('내 누아르')
   })
+
+  it('shows "fill from preset" helper button only for style cards', () => {
+    const styleRef = { id: 1, type: 'style', name: '', prompt: '' }
+    const { unmount } = render(<ReferenceDetailModal {...baseProps} reference={styleRef} />)
+    expect(screen.getByRole('button', { name: /프리셋에서 채우기/ })).toBeInTheDocument()
+    unmount()
+
+    // 별도 mount — editData 가 useState 초기값으로 reference 를 받기 때문에
+    // 다른 type 으로 검증하려면 새로 마운트해야 한다 (rerender 는 초기 state 를 보존)
+    const charRef = { id: 2, type: 'character', name: '', prompt: '' }
+    render(<ReferenceDetailModal {...baseProps} reference={charRef} />)
+    expect(screen.queryByRole('button', { name: /프리셋에서 채우기/ })).not.toBeInTheDocument()
+  })
+
+  it('opens style preset dropdown when "fill from preset" is clicked', () => {
+    const reference = { id: 1, type: 'style', name: '', prompt: '' }
+    render(<ReferenceDetailModal {...baseProps} reference={reference} />)
+    const fillBtn = screen.getByRole('button', { name: /프리셋에서 채우기/ })
+    fireEvent.click(fillBtn)
+    // 실제 컴포넌트에서 showStyleDropdown=true 일 때 .style-picker-overlay 가 렌더됨
+    expect(document.querySelector('.style-picker-overlay')).toBeTruthy()
+  })
 })
