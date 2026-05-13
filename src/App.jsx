@@ -605,7 +605,11 @@ function App() {
     return id
   }
 
-  const handleStart = async (overrideStyleId = null) => {
+  // overrideStyleId 시그니처 (3가지 의미 구분):
+  //   undefined: 호출자가 override 안 함 → UI selectedStyleRefId 사용
+  //   null: 자동 모드 강제 (StylePicker 자동 카드 클릭) → UI 선택값 무시
+  //   'ref:*' / 'preset:*': 그 스타일 강제 적용
+  const handleStart = async (overrideStyleId = undefined) => {
     // 이미 실행 중이거나 큐에 batch가 대기 중이면 무시 (중지는 별도 버튼)
     if (isRunning || videoAutomation.isRunning || hasPendingBatch) return
 
@@ -651,7 +655,8 @@ function App() {
         }
         // 명시 선택 없을 때는 자동 매칭 모드로 통과 가능 — 단 generation 대상(targetScenes)에
         // 매칭 가능한 씬이 1개 이상일 때만. 전체 scenes 기준이면 완료된 씬 매칭이 false-positive.
-        const effectiveStyleId = overrideStyleId || selectedStyleRefId
+        // override가 명시적 null이면 자동 모드 강제 (UI 선택값 무시) — 기본 default(undefined)는 UI 사용.
+        const effectiveStyleId = overrideStyleId !== undefined ? overrideStyleId : selectedStyleRefId
         if (settings.requireStyle && !effectiveStyleId) {
           const autoMatchable = previewStyleMatching(targetScenes, references).matches.length > 0
           if (!autoMatchable) {
@@ -695,7 +700,11 @@ function App() {
         // T2V는 video scene의 자체 prompt만 사용 — image scene과는 독립.
         // 스타일(selectedStyleRefId)만 추가로 prefix해서 적용.
         // (I2V는 이미지가 source라 별도 처리 — frame-to-video 케이스에서 미적용)
-        const effectiveStyleId = overrideStyleId || selectedStyleRefId || findAutoStyle(scenesHook.references)
+        // video-text도 image와 동일한 undefined/null 구분 — override null이면 자동 카드 의도라
+        // selectedStyleRefId/findAutoStyle fallback 없이 그대로 null 적용 (스타일 미적용).
+        const effectiveStyleId = overrideStyleId !== undefined
+          ? overrideStyleId
+          : (selectedStyleRefId || findAutoStyle(scenesHook.references))
         const styledVideoScenes = selectedVideoScenes.map(vs => {
           const matchedRefs = []
           const { styledPrompt } = applyStyle(vs.prompt, effectiveStyleId, scenesHook.references, matchedRefs)
@@ -707,8 +716,8 @@ function App() {
           ? settings.seedNo
           : null
 
-        // Stop 버튼이 현재 실행 중인 스타일을 표시할 수 있도록 snapshot
-        setRunningStyle({ styleId: effectiveStyleId, applies: true })
+        // Stop 버튼이 현재 실행 중인 스타일을 표시할 수 있도록 id + 라벨 모두 snapshot
+        setRunningStyle({ styleId: effectiveStyleId, label: computeStyleLabel(effectiveStyleId), applies: true })
         setHasPendingBatch(true)
 
         videoAutomation.start({
