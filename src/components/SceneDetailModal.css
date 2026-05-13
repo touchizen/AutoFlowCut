@@ -874,3 +874,27 @@
   transform: scale(1.1);
 }
 
+
+.ref-detail-modal .form-group .name-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.ref-detail-modal .form-group .name-input-row input {
+  flex: 1;
+  min-width: 0;
+}
+.ref-detail-modal .btn-fill-preset {
+  flex-shrink: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  background: var(--bg-secondary, #2a2a2a);
+  border: 1px solid var(--border, #444);
+  border-radius: 4px;
+  color: var(--text, #ddd);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ref-detail-modal .btn-fill-preset:hover {
+  background: var(--bg-hover, #333);
+}

@@ -351,3 +351,13 @@
   line-height: 1.4;
   border-top: 1px solid var(--border-color);
 }
+
+.sp-card.sp-no-style .sp-auto-summary {
+  font-size: 11px;
+  color: var(--text-secondary, #888);
+  margin-top: 2px;
+  padding: 0 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

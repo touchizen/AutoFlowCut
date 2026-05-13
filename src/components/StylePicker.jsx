@@ -7,9 +7,24 @@ import { STYLE_PRESETS } from '../config/defaults'
 import { resolveImageSrc, hasImageData, formatElapsedMs } from '../utils/formatters'
 import { toFileUrl } from '../hooks/useStyleThumbnails'
 import { useElapsedTimer } from '../hooks/useElapsedTimer'
+import { previewStyleMatching } from '../services/styleService'
 import './StylePicker.css'
 
 const ALL_CATEGORY = '__all__'
+
+function buildMatchPreviewTooltip(preview, t) {
+  if (!preview || preview.matches.length === 0) {
+    return t('reference.matchPreviewEmpty')
+  }
+  const lines = [t('reference.matchPreviewTitle')]
+  for (const s of preview.styleSummary) {
+    lines.push(t('reference.matchPreviewSummary', { name: s.name, count: s.count }))
+  }
+  if (preview.unmatched.length > 0) {
+    lines.push(t('reference.matchPreviewUnmatched', { count: preview.unmatched.length }))
+  }
+  return lines.join('\n')
+}
 
 export default function StylePicker({
   selectedId,
@@ -22,6 +37,8 @@ export default function StylePicker({
   progress = { current: 0, total: 0 },
   onGenerateThumbnails,
   onStopGenerating,
+  scenes,
+  references = [],
   t,
   isKo
 }) {
@@ -57,6 +74,16 @@ export default function StylePicker({
   const missingPresetCount = allStyles.filter(s => !thumbnails[s.id]).length
   const missingCustomCount = uploadedStyleRefs.filter(r => !hasImageData(r)).length
   const missingCount = missingPresetCount + missingCustomCount
+
+  // 씬별 매칭 미리보기 (scenes prop 있을 때만)
+  const matchPreview = useMemo(() => {
+    if (!scenes || scenes.length === 0) return null
+    return previewStyleMatching(scenes, references)
+  }, [scenes, references])
+
+  const autoCardLabel = matchPreview
+    ? (matchPreview.matches.length > 0 ? t('reference.autoMatch') : t('reference.autoMatchNone'))
+    : t('reference.noStyle')
 
   return (
     <div className="style-picker">
@@ -125,15 +152,22 @@ export default function StylePicker({
 
       {/* 프리셋 스타일 그리드 */}
       <div className="sp-grid">
-        {/* 스타일 없음 카드 */}
+        {/* 자동 (씬별 매칭) / 스타일 없음 카드 */}
         <div
           className={`sp-card sp-no-style ${!selectedId ? 'selected' : ''}`}
           onClick={() => onSelect(null)}
+          title={matchPreview ? buildMatchPreviewTooltip(matchPreview, t) : ''}
         >
           <div className="sp-thumb">
-            <span className="sp-icon">🚫</span>
+            <span className="sp-icon">{matchPreview ? '🪄' : '🚫'}</span>
           </div>
-          <div className="sp-name">{t('reference.noStyle')}</div>
+          <div className="sp-name">{autoCardLabel}</div>
+          {matchPreview && matchPreview.styleSummary.length > 0 && (
+            <div className="sp-auto-summary">
+              {matchPreview.styleSummary.slice(0, 2).map(s => s.name).join(', ')}
+              {matchPreview.styleSummary.length > 2 && ` +${matchPreview.styleSummary.length - 2}`}
+            </div>
+          )}
         </div>
 
         {filteredStyles.map(style => {
