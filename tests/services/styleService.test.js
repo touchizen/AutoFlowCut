@@ -107,14 +107,25 @@ describe('previewStyleMatching', () => {
     expect(result.matches[0]).toMatchObject({ sceneId: 1, source: 'ref' })
   })
 
-  it('does not match style ref without prompt (production parity)', () => {
-    // Production resolveSceneStyle requires r.prompt to actually apply the style.
-    // Preview must mirror that to avoid showing matches that production won't apply.
+  it('does not match style ref without prompt OR mediaId (truly empty)', () => {
+    // Production applies a style ref via either prompt (resolveSceneStyle)
+    // or mediaId (image ref injection). Refs with neither contribute nothing.
     const scenes = [{ id: 1, style_tag: '내 시그니처' }]
-    const refs = [{ id: 10, type: 'style', name: '내 시그니처' /* no prompt */ }]
+    const refs = [{ id: 10, type: 'style', name: '내 시그니처' /* no prompt, no mediaId */ }]
     const result = previewStyleMatching(scenes, refs)
     expect(result.matches).toEqual([])
     expect(result.unmatched).toEqual([1])
+  })
+
+  it('matches image-only style ref (mediaId without prompt)', () => {
+    // Production injects image refs by mediaId even when prompt is empty.
+    // Preview must reflect this so users who only upload an image see the match.
+    const scenes = [{ id: 1, style_tag: '내 누아르' }]
+    const refs = [{ id: 10, type: 'style', name: '내 누아르', mediaId: 'm-abc' /* no prompt */ }]
+    const result = previewStyleMatching(scenes, refs)
+    expect(result.matches).toEqual([
+      { sceneId: 1, styleName: '내 누아르', source: 'ref' }
+    ])
   })
 
   it('falls through to preset when matching ref has no prompt', () => {

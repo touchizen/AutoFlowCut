@@ -131,9 +131,11 @@ export function resolveSeed(settings) {
  */
 export function previewStyleMatching(scenes, references, opts = {}) {
   const presets = opts.presets ?? (STYLE_PRESETS?.styles || [])
-  // Production resolveSceneStyle requires r.prompt to actually apply the style.
-  // Mirror that here so the preview only shows matches that production will apply.
-  const styleRefs = references.filter(r => r.type === 'style' && r.name && r.prompt)
+  // Production applies a style ref via either:
+  //   - resolveSceneStyle when r.prompt exists (concatenates into the prompt)
+  //   - matchedRefs injection when r.mediaId exists (image ref into Flow API)
+  // A ref with neither contributes nothing — drop it from preview.
+  const styleRefs = references.filter(r => r.type === 'style' && r.name && (r.prompt || r.mediaId))
 
   const matches = []
   const unmatched = []
