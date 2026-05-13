@@ -86,4 +86,57 @@ describe('TagInputAutocomplete — basic render', () => {
     fireEvent.mouseDown(screen.getByText('Sidekick'))
     expect(onChange).toHaveBeenCalledWith('hero, Sidekick')
   })
+
+  it('ArrowDown highlights the next option, Enter applies the highlighted one', () => {
+    const onChange = vi.fn()
+    const refs = [
+      { id: 1, type: 'character', name: 'Hero' },
+      { id: 2, type: 'character', name: 'Villain' },
+    ]
+    const { container } = render(<TagInputAutocomplete {...baseProps} references={refs} onChange={onChange} />)
+    const input = screen.getByRole('textbox')
+    fireEvent.focus(input)
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    // 첫 항목 highlighted
+    const highlighted = container.querySelector('.tag-autocomplete-option.highlighted')
+    expect(highlighted.textContent).toBe('Hero')
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onChange).toHaveBeenCalledWith('Villain')
+  })
+
+  it('ArrowUp goes to previous option (no wrap)', () => {
+    const refs = [
+      { id: 1, type: 'character', name: 'Hero' },
+      { id: 2, type: 'character', name: 'Villain' },
+    ]
+    const { container } = render(<TagInputAutocomplete {...baseProps} references={refs} />)
+    const input = screen.getByRole('textbox')
+    fireEvent.focus(input)
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    fireEvent.keyDown(input, { key: 'ArrowUp' })
+    const highlighted = container.querySelector('.tag-autocomplete-option.highlighted')
+    expect(highlighted.textContent).toBe('Hero')
+  })
+
+  it('Enter without a highlighted option does not call onChange', () => {
+    const onChange = vi.fn()
+    const refs = [{ id: 1, type: 'character', name: 'Hero' }]
+    render(<TagInputAutocomplete {...baseProps} references={refs} onChange={onChange} />)
+    const input = screen.getByRole('textbox')
+    fireEvent.focus(input)
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('Escape closes the dropdown without changing value', () => {
+    const refs = [{ id: 1, type: 'character', name: 'Hero' }]
+    const { container } = render(<TagInputAutocomplete {...baseProps} references={refs} />)
+    const input = screen.getByRole('textbox')
+    fireEvent.focus(input)
+    expect(container.querySelector('.tag-autocomplete-dropdown')).toBeInTheDocument()
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(container.querySelector('.tag-autocomplete-dropdown')).toBeNull()
+  })
 })

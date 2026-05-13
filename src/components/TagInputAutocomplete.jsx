@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import './TagInputAutocomplete.css'
 
 // 마지막 토큰 + 그 앞의 prefix를 분리. splitTags와 동일한 separator(,;:) 사용.
@@ -23,6 +23,7 @@ export default function TagInputAutocomplete({
   t,
 }) {
   const [isFocused, setIsFocused] = useState(false)
+  const [highlightedIndex, setHighlightedIndex] = useState(-1)
 
   const refOptions = useMemo(() =>
     references
@@ -49,9 +50,32 @@ export default function TagInputAutocomplete({
     return all.filter(o => o.label.toLowerCase().includes(filterToken))
   }, [refOptions, presetOptions, filterToken])
 
+  // 옵션 리스트 변경 시 highlight reset (사용자가 타이핑할 때마다 -1로)
+  useEffect(() => { setHighlightedIndex(-1) }, [filterToken])
+
   const applyOption = (opt) => {
-    const newValue = prefix + opt.value
-    onChange(newValue)
+    onChange(prefix + opt.value)
+    setHighlightedIndex(-1)
+  }
+
+  const handleKeyDown = (e) => {
+    if (!isFocused || filteredOptions.length === 0) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setHighlightedIndex(i => Math.min(i + 1, filteredOptions.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setHighlightedIndex(i => Math.max(i - 1, 0))
+    } else if (e.key === 'Enter') {
+      if (highlightedIndex >= 0 && highlightedIndex < filteredOptions.length) {
+        e.preventDefault()
+        applyOption(filteredOptions[highlightedIndex])
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      setIsFocused(false)
+      setHighlightedIndex(-1)
+    }
   }
 
   return (
@@ -66,6 +90,7 @@ export default function TagInputAutocomplete({
         onChange={(e) => onChange(e.target.value)}
         onFocus={() => setIsFocused(true)}
         onBlur={() => setTimeout(() => setIsFocused(false), 150)}
+        onKeyDown={handleKeyDown}
       />
       {isFocused && !disabled && (
         <div className="tag-autocomplete-dropdown">
@@ -75,11 +100,12 @@ export default function TagInputAutocomplete({
             filteredOptions.map((opt, i) => (
               <div
                 key={`${opt.kind}-${i}`}
-                className={`tag-autocomplete-option ${opt.kind}`}
+                className={`tag-autocomplete-option ${opt.kind} ${i === highlightedIndex ? 'highlighted' : ''}`}
                 onMouseDown={(e) => {
                   e.preventDefault()
                   applyOption(opt)
                 }}
+                onMouseEnter={() => setHighlightedIndex(i)}
               >
                 {opt.label}
                 {opt.kind === 'preset' && <span className="preset-suffix"> (preset)</span>}
