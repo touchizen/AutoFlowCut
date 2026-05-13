@@ -1512,6 +1512,8 @@ function App() {
           }}
           onStopGenerating={stopThumbnailGeneration}
           onDeleteThumbnail={deleteThumbnail}
+          scenes={scenes}
+          references={references}
           t={t}
           isKo={t('common.cancel') === '취소'}
         />
