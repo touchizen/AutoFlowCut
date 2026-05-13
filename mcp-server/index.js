@@ -514,7 +514,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
           index: { type: 'number', description: '레퍼런스 인덱스 (0부터)' },
-          styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" (커스텀 레퍼런스), "preset:<id>" (프리셋), 또는 plain id (자동으로 "preset:"으로 wrap됨). 생략 시 호출 시점의 자동 동작 (전역 상태 변경 없음).' },
+          styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" (커스텀 레퍼런스), "preset:<id>" (프리셋), 또는 plain id (자동으로 "preset:"으로 wrap됨). 생략 시 현재 UI 선택 스타일 또는 첫 style 카드 자동 fallback (레퍼런스 생성에는 씬 매칭 개념 없음). 전역 상태는 변경하지 않음.' },
         },
         required: ['index'],
       },
