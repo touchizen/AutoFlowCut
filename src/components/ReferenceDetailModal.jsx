@@ -363,7 +363,6 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
           <div className="form-group">
             <label className="label-with-copy">
               {t('reference.prompt')}
-              {isStyle && <span className="label-hint">({t('reference.autoFilled')})</span>}
               {editData.prompt && (
                 <button
                   type="button"
@@ -378,7 +377,6 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
               onChange={(e) => setEditData({ ...editData, prompt: e.target.value })}
               placeholder={t('reference.promptPlaceholder')}
               rows={4}
-              readOnly={isStyle}
             />
           </div>
 
