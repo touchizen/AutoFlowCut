@@ -8,6 +8,24 @@ import { STYLE_PRESETS } from '../config/defaults'
 import { splitTags } from '../utils/tagMatch'
 
 /**
+ * MCP/외부 호출자가 보내는 styleId를 내부 형식(`ref:*` / `preset:*`)으로 정규화한다.
+ *
+ * 동작:
+ *   - null / undefined / '' → null (선택 없음)
+ *   - 'ref:*' / 'preset:*' → 그대로 반환 (이중 wrap 방지)
+ *   - plain id (예: 'korean-ani') → 'preset:korean-ani' (legacy backward compat)
+ *
+ * @param {string|number|null|undefined} styleId
+ * @returns {string|null}
+ */
+export function normalizeStyleId(styleId) {
+  if (styleId == null || styleId === '') return null
+  const s = String(styleId)
+  if (s.startsWith('ref:') || s.startsWith('preset:')) return s
+  return `preset:${s}`
+}
+
+/**
  * 등록된 스타일 카드 자동 탐색
  * @param {Array} references - 레퍼런스 배열
  * @returns {string|null} 'ref:{id}' 형태 또는 null

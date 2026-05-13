@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { previewStyleMatching, pickAutoStyleFallback } from '../../src/services/styleService'
+import { previewStyleMatching, pickAutoStyleFallback, normalizeStyleId } from '../../src/services/styleService'
 
 describe('previewStyleMatching', () => {
   it('returns empty matches for no scenes', () => {
@@ -159,5 +159,32 @@ describe('pickAutoStyleFallback', () => {
 
   it('returns null for empty scenes (no work to do)', () => {
     expect(pickAutoStyleFallback([], [refWithMedia])).toBeNull()
+  })
+})
+
+describe('normalizeStyleId', () => {
+  it('returns null for null/undefined/empty', () => {
+    expect(normalizeStyleId(null)).toBeNull()
+    expect(normalizeStyleId(undefined)).toBeNull()
+    expect(normalizeStyleId('')).toBeNull()
+  })
+
+  it('passes through ref:* unchanged', () => {
+    expect(normalizeStyleId('ref:1773499846144')).toBe('ref:1773499846144')
+    expect(normalizeStyleId('ref:abc')).toBe('ref:abc')
+  })
+
+  it('passes through preset:* unchanged (no double-wrap)', () => {
+    expect(normalizeStyleId('preset:korean-ani')).toBe('preset:korean-ani')
+    expect(normalizeStyleId('preset:noir')).toBe('preset:noir')
+  })
+
+  it('wraps plain id in preset: (legacy MCP backward compat)', () => {
+    expect(normalizeStyleId('korean-ani')).toBe('preset:korean-ani')
+    expect(normalizeStyleId('cinematic')).toBe('preset:cinematic')
+  })
+
+  it('coerces non-string ids to string before checking prefix', () => {
+    expect(normalizeStyleId(12345)).toBe('preset:12345')
   })
 })
