@@ -114,8 +114,8 @@ Claude Code
 | `update-scene` | `index`, `fields` | 특정 씬 수정 |
 | `generate-reference` | `index`, `styleId?` | 레퍼런스 생성 (IPC → global 호출) |
 | `generate-scene` | `sceneId`, `styleId?` | 씬 생성 (IPC → global 호출) |
-| `start-scene-batch` | `styleId?` | 씬 일괄 생성 시작 |
-| `start-ref-batch` | `styleId?` | 레퍼런스 일괄 생성 시작 |
+| `start-scene-batch` | `styleId?`, `force?` | 씬 일괄 생성 시작 |
+| `start-ref-batch` | `styleId?`, `force?` | 레퍼런스 일괄 생성 시작 |
 
 #### POST /api/generate-reference
 
@@ -383,8 +383,8 @@ When MCP HTTP Server is ON in the app settings, it listens on `127.0.0.1:3210`.
 | `update-scene` | `index`, `fields` | Edit a specific scene |
 | `generate-reference` | `index`, `styleId?` | Generate reference (IPC → global call) |
 | `generate-scene` | `sceneId` | Generate scene (IPC → global call) |
-| `start-scene-batch` | `styleId?` | Start scene batch generation |
-| `start-ref-batch` | `styleId?` | Start reference batch generation |
+| `start-scene-batch` | `styleId?`, `force?` | Start scene batch generation |
+| `start-ref-batch` | `styleId?`, `force?` | Start reference batch generation |
 
 #### POST /api/generate-reference
 

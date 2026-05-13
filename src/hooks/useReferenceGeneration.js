@@ -320,9 +320,17 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
 
   // ─── 배치 생성 (비동기 fire-and-forget 방식) ───
   // AutoFlow 패턴: 제출 → 7~15초 대기 → 다음 제출, 결과는 별도 수집
-  const _executeBatchRefs = async (overrideStyleId = null) => {
+  //
+  // force=true (MCP 전용): 이미 완료된(image/filePath/status=done) ref도 재생성 대상에 포함.
+  //                       prompt 있고 type !== 'style'인 모든 ref가 대상.
+  // force=false (기본): 기존 동작 — image 없고 pending/error/idle 상태인 ref만.
+  const _executeBatchRefs = async (overrideStyleId = null, force = false) => {
     const generatableIndices = referencesRef.current
-      .map((ref, index) => (ref.prompt && !ref.data && !ref.filePath && ref.type !== 'style' && ref.status !== 'done') ? index : -1)
+      .map((ref, index) => {
+        if (!ref.prompt || ref.type === 'style') return -1
+        if (force) return index
+        return (!ref.data && !ref.filePath && ref.status !== 'done') ? index : -1
+      })
       .filter(i => i !== -1)
 
     if (generatableIndices.length === 0) {
@@ -555,16 +563,18 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     }
   }
 
-  // 큐를 통한 배치 생성
-  const handleGenerateAllRefs = async (overrideStyleId = null) => {
+  // 큐를 통한 배치 생성. options = { force?: boolean }.
+  // force=true (MCP 전용): 이미 완료된 ref도 재생성 대상에 포함.
+  const handleGenerateAllRefs = async (overrideStyleId = null, options = {}) => {
+    const { force = false } = options
     if (!generationQueue) {
-      return _executeBatchRefs(overrideStyleId)
+      return _executeBatchRefs(overrideStyleId, force)
     }
     try {
       await generationQueue.enqueue({
         type: 'reference_batch',
         label: 'Batch References',
-        execute: () => _executeBatchRefs(overrideStyleId)
+        execute: () => _executeBatchRefs(overrideStyleId, force)
       })
     } catch (err) {
       console.warn('[RefGen] Batch queue rejected:', err.message)

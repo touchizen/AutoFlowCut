@@ -1305,11 +1305,13 @@ function startMcpHttpServer(port) {
         if (req.method === 'POST' && pathname === '/api/start-ref-batch') {
           if (mainWindow) {
             let styleId = null
+            let force = false
             try {
               const parsed = JSON.parse(body)
               styleId = parsed.styleId || null
+              force = !!parsed.force  // 선택, 기본 false. true면 완료된 ref도 재생성 대상에.
             } catch {}
-            mainWindow.webContents.send('mcp-update', { type: 'start-ref-batch', styleId })
+            mainWindow.webContents.send('mcp-update', { type: 'start-ref-batch', styleId, force })
             res.writeHead(200)
             // start-scene-batch와 동일 — effective style을 main이 즉시 알 수 없으므로 echo 안 함.
             res.end(JSON.stringify({ success: true, message: 'Reference batch generation started' }))

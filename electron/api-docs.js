@@ -380,7 +380,7 @@ curl http://127.0.0.1:3210/api/batch-status
 - \`generate-reference\`: 레퍼런스 생성 트리거 (index + styleId?)
 - \`generate-scene\`: 씬 생성 트리거 (sceneId + styleId?)
 - \`start-scene-batch\`: 씬 일괄 생성 시작 (styleId? + force?)
-- \`start-ref-batch\`: 레퍼런스 일괄 생성 시작`,
+- \`start-ref-batch\`: 레퍼런스 일괄 생성 시작 (styleId? + force?)`,
         requestBody: {
           required: true,
           content: {
@@ -494,7 +494,7 @@ curl http://127.0.0.1:3210/api/batch-status
       post: {
         tags: ['생성'],
         summary: '레퍼런스 일괄 생성 시작',
-        description: '모든 레퍼런스의 이미지를 일괄 생성합니다. 레퍼런스 생성에는 씬 매칭 개념이 없습니다.',
+        description: '모든 레퍼런스의 이미지를 일괄 생성합니다. 레퍼런스 생성에는 씬 매칭 개념이 없습니다. force=true면 완료된 reference도 포함해 강제 재생성.',
         requestBody: {
           required: false,
           content: {
@@ -503,6 +503,7 @@ curl http://127.0.0.1:3210/api/batch-status
                 type: 'object',
                 properties: {
                   styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" / "preset:<id>" / plain id (자동 wrap) / "none" (스타일 강제 미적용 — fallback도 안 함). 생략 시 첫 style 카드 자동 fallback.', example: 'preset:korean-ani' },
+                  force: { type: 'boolean', description: '선택, 기본 false. true면 완료된 reference도 재생성 대상에 포함 — 새 styleId로 모든 ref 다시 생성. false면 기존 동작 (미완료만).', example: true },
                 },
               },
             },

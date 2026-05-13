@@ -346,6 +346,43 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     window.__mcpStartBatch('none', { force: true })
     expect(handleStart).toHaveBeenCalledWith('none', { force: true })
   })
+
+  // --- Task 4: start-ref-batch force ---
+
+  it('__mcpStartRefBatch passes { force: true } as second arg to handleGenerateAllRefs', () => {
+    const handleGenerateAllRefs = vi.fn()
+    const refWithMedia = { id: 555, type: 'style', mediaId: 'm-555' }
+    renderHook(() => useMcpServer(makeProps({ handleGenerateAllRefs, references: [refWithMedia] })))
+
+    window.__mcpStartRefBatch('preset:cinematic', { force: true })
+    expect(handleGenerateAllRefs).toHaveBeenCalledWith('preset:cinematic', { force: true })
+  })
+
+  it('__mcpStartRefBatch without force keeps single-arg call (backward compat)', () => {
+    const handleGenerateAllRefs = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ handleGenerateAllRefs })))
+
+    window.__mcpStartRefBatch('preset:cinematic')
+    expect(handleGenerateAllRefs).toHaveBeenCalledWith('preset:cinematic')
+  })
+
+  it("__mcpStartRefBatch('auto', { force: true }) forwards force with null override", () => {
+    const handleGenerateAllRefs = vi.fn()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    renderHook(() => useMcpServer(makeProps({ handleGenerateAllRefs })))
+
+    window.__mcpStartRefBatch('auto', { force: true })
+    expect(handleGenerateAllRefs).toHaveBeenCalledWith(null, { force: true })
+    warnSpy.mockRestore()
+  })
+
+  it("__mcpStartRefBatch('none', { force: true }) forwards force with 'none' override", () => {
+    const handleGenerateAllRefs = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ handleGenerateAllRefs })))
+
+    window.__mcpStartRefBatch('none', { force: true })
+    expect(handleGenerateAllRefs).toHaveBeenCalledWith('none', { force: true })
+  })
 })
 
 describe("styleService — 'none' sentinel end-to-end", () => {

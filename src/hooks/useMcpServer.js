@@ -232,8 +232,8 @@ export function useMcpServer({
         console.log('[MCP] Scene batch generation start requested, styleId:', data.styleId, 'force:', data.force)
         window.__mcpStartBatch?.(data.styleId, data.force ? { force: true } : undefined)
       } else if (data.type === 'start-ref-batch') {
-        console.log('[MCP] Reference batch generation start requested, styleId:', data.styleId)
-        window.__mcpStartRefBatch?.(data.styleId)
+        console.log('[MCP] Reference batch generation start requested, styleId:', data.styleId, 'force:', data.force)
+        window.__mcpStartRefBatch?.(data.styleId, data.force ? { force: true } : undefined)
       } else if (data.type === 'reload-project') {
         console.log('[MCP] Project reload requested')
       } else if (data.type === 'qa-progress') {
@@ -279,22 +279,26 @@ export function useMcpServer({
       const effective = normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current)
       callHandleStart(effective)
     }
-    window.__mcpStartRefBatch = (styleId) => {
+    // options = { force?: boolean } (선택). 없으면 handleGenerateAllRefs 1-arg 호출 (백워드 호환).
+    window.__mcpStartRefBatch = (styleId, options) => {
+      const callHandler = options
+        ? (effective) => handleGenerateAllRefs(effective, options)
+        : (effective) => handleGenerateAllRefs(effective)
       // 'auto'는 ref batch에 의미 없음 — null로 취급해 normalizeStyleId가 'preset:auto'로
       // 잘못 wrap하지 않도록 한다 (silent fail 회피).
       if (styleId === 'auto') {
         console.warn('[MCP] start-ref-batch received styleId="auto"; ignored (refs have no per-scene matching). Falling back as if styleId were omitted.')
-        handleGenerateAllRefs(null)
+        callHandler(null)
         return
       }
       if (styleId === 'none') {
         // 'none' sentinel — pass through. applyStyle recognizes 'none' and skips style application.
-        handleGenerateAllRefs('none')
+        callHandler('none')
         return
       }
       // scene batch와 동일하게 호출 측 fallback — UI selectedStyleRefId 누수 방지.
       const effective = normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current)
-      handleGenerateAllRefs(effective)
+      callHandler(effective)
     }
     window.__mcpStopBatch = () => handleStop()
     window.__mcpBatchStatus = () => {

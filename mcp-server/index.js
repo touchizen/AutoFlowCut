@@ -546,12 +546,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'app_start_ref_batch',
-      description: '실행 중인 AutoFlowCut 앱에서 레퍼런스 일괄 생성을 트리거합니다. 모든 레퍼런스의 이미지를 자동 생성합니다.',
+      description: '실행 중인 AutoFlowCut 앱에서 레퍼런스 일괄 생성을 트리거합니다. 모든 레퍼런스의 이미지를 자동 생성합니다. force=true면 완료된 reference도 포함해 강제 재생성합니다. 진행 중에 호출하면 자동으로 중지 후 새 스타일로 재시작합니다.',
       inputSchema: {
         type: 'object',
         properties: {
           port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
           styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" / "preset:<id>" / plain id (자동 wrap) / "none" (스타일 강제 미적용 — fallback도 안 함). 생략 시 첫 style 카드 자동 fallback. 레퍼런스 생성에는 씬 매칭 개념이 없으므로 "auto" 토큰 미지원.' },
+          force: { type: 'boolean', description: '선택, 기본 false. true면 완료된 reference도 재생성 대상에 포함 — 새 styleId로 모든 ref 다시 생성. false면 기존 동작 (미완료만).' },
         },
       },
     },
@@ -1322,8 +1323,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'app_start_ref_batch': {
         const port = args.port || 3210;
-        const body = args.styleId ? { styleId: args.styleId } : null;
-        const res = await appFetch(port, 'POST', '/api/start-ref-batch', body);
+        const body = {};
+        if (args.styleId !== undefined) body.styleId = args.styleId;
+        if (args.force !== undefined) body.force = !!args.force;
+        const res = await appFetch(port, 'POST', '/api/start-ref-batch', Object.keys(body).length ? body : null);
         return {
           content: [{ type: 'text', text: `레퍼런스 일괄 생성 시작: ${JSON.stringify(res.data)}` }],
         };
