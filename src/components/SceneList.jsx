@@ -17,7 +17,7 @@ import TagInputAutocomplete from './TagInputAutocomplete'
 import InfinityLoader from './InfinityLoader'
 import './SceneList.css'
 
-function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, onShowDetail, onShowVideoDetail, references, onOpenTag }) {
+function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, onShowDetail, onShowVideoDetail, references, onOpenTag, styleThumbnails = {} }) {
   const rowRef = useRef(null)
   const [hoverPreview, setHoverPreview] = useState(null)
 
@@ -215,6 +215,7 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
             onChange={(v) => onUpdate(scene.id, { style_tag: v })}
             references={references}
             presets={STYLE_PRESETS?.styles || []}
+            thumbnails={styleThumbnails}
             placeholder={t('sceneList.style')}
             disabled={disabled}
             title={t('sceneList.styleTitle')}
@@ -528,6 +529,7 @@ export default function SceneList({
                 onShowVideoDetail={handleShowVideoDetail}
                 references={references}
                 onOpenTag={openTag}
+                styleThumbnails={styleThumbnails}
               />
             ))}
           </tbody>

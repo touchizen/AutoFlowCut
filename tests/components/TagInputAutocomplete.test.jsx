@@ -177,4 +177,35 @@ describe('TagInputAutocomplete — basic render', () => {
     fireEvent.focus(screen.getByRole('textbox'))
     expect(screen.getByText(/preset/i)).toBeInTheDocument()
   })
+
+  it('renders ref thumbnail from data when available', () => {
+    const refs = [{
+      id: 1, type: 'character', name: 'Hero',
+      data: 'data:image/png;base64,iVBORw0KGgo='
+    }]
+    const { container } = render(<TagInputAutocomplete {...baseProps} references={refs} />)
+    fireEvent.focus(screen.getByRole('textbox'))
+    const img = container.querySelector('.tag-autocomplete-option img.tag-autocomplete-thumb')
+    expect(img).toBeTruthy()
+    expect(img.getAttribute('src')).toContain('data:image/png;base64')
+  })
+
+  it('renders empty thumb placeholder when ref has no image', () => {
+    const refs = [{ id: 1, type: 'character', name: 'NoImage' }]
+    const { container } = render(<TagInputAutocomplete {...baseProps} references={refs} />)
+    fireEvent.focus(screen.getByRole('textbox'))
+    expect(container.querySelector('.tag-autocomplete-thumb.empty')).toBeTruthy()
+  })
+
+  it('renders preset thumbnail from thumbnails map (style type)', () => {
+    const presets = [{ id: 'noir', name_ko: '누아르', name_en: 'Noir' }]
+    const thumbnails = { noir: '/some/path/noir.png' }
+    const { container } = render(
+      <TagInputAutocomplete {...baseProps} type="style" presets={presets} thumbnails={thumbnails} />
+    )
+    fireEvent.focus(screen.getByRole('textbox'))
+    const img = container.querySelector('.tag-autocomplete-option.preset img.tag-autocomplete-thumb')
+    expect(img).toBeTruthy()
+    expect(img.getAttribute('src')).toContain('noir.png')
+  })
 })

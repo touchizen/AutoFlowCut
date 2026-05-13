@@ -1,4 +1,6 @@
 import { useState, useMemo, useEffect } from 'react'
+import { resolveImageSrc } from '../utils/formatters'
+import { toFileUrl } from '../hooks/useStyleThumbnails'
 import './TagInputAutocomplete.css'
 
 // 마지막 토큰 + 그 앞의 prefix를 분리. splitTags와 동일한 separator(,;:) 사용.
@@ -15,6 +17,7 @@ export default function TagInputAutocomplete({
   onChange,
   references = [],
   presets = [],
+  thumbnails = {},   // preset id → file path/url (useStyleThumbnails 결과)
   placeholder,
   disabled,
   title,
@@ -28,7 +31,7 @@ export default function TagInputAutocomplete({
   const refOptions = useMemo(() =>
     references
       .filter(r => r.type === type && r.name)
-      .map(r => ({ kind: 'ref', label: r.name, value: r.name })),
+      .map(r => ({ kind: 'ref', label: r.name, value: r.name, src: resolveImageSrc(r) || null })),
     [references, type]
   )
 
@@ -37,8 +40,9 @@ export default function TagInputAutocomplete({
       kind: 'preset',
       label: isKo ? (p.name_ko || p.name_en) : (p.name_en || p.name_ko),
       value: isKo ? (p.name_ko || p.name_en) : (p.name_en || p.name_ko),
+      src: thumbnails[p.id] ? toFileUrl(thumbnails[p.id]) : null,
     })),
-    [type, presets, isKo]
+    [type, presets, isKo, thumbnails]
   )
 
   const { prefix, last } = splitLastToken(value)
@@ -107,8 +111,15 @@ export default function TagInputAutocomplete({
                 }}
                 onMouseEnter={() => setHighlightedIndex(i)}
               >
-                {opt.label}
-                {opt.kind === 'preset' && <span className="preset-suffix"> (preset)</span>}
+                {opt.src ? (
+                  <img src={opt.src} alt="" className="tag-autocomplete-thumb" loading="lazy" />
+                ) : (
+                  <span className="tag-autocomplete-thumb empty" />
+                )}
+                <span className="tag-autocomplete-option-label">
+                  {opt.label}
+                  {opt.kind === 'preset' && <span className="preset-suffix"> (preset)</span>}
+                </span>
               </div>
             ))
           )}
