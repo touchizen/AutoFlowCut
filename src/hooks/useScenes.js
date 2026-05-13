@@ -14,6 +14,7 @@ import {
   parseTimeToSeconds
 } from '../utils/parsers'
 import { fileSystemAPI } from './useFileSystem'
+import { splitTags } from '../utils/tagMatch'
 
 // snake_case → camelCase 변환 + 숫자 변환
 function normalizeScene(s, i) {
@@ -232,15 +233,6 @@ export function useScenes() {
       return mergeReferences(prev, refsWithImages, shouldUpdate)
     })
   }, [])
-  
-  /**
-   * 태그 문자열을 배열로 분리 (콤마, 세미콜론, 콜론 지원)
-   */
-  const splitTags = (tagString) => {
-    if (!tagString) return []
-    // 콤마, 세미콜론, 콜론으로 분리
-    return tagString.split(/[,;:]/).map(t => t.trim().toLowerCase()).filter(Boolean)
-  }
 
   /**
    * 씬에 매칭되는 레퍼런스 찾기
