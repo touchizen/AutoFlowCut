@@ -48,7 +48,7 @@
 | 트리거 | 동작 |
 |---|---|
 | Focus | 입력란 아래에 dropdown 펼침. 그 type의 ref 이름 + (style일 때) 매칭 preset 옵션 |
-| 타이핑 | 마지막 토큰(`splitTags`의 마지막 요소) 기준 case-insensitive prefix filter |
+| 타이핑 | 마지막 토큰(`splitTags`의 마지막 요소) 기준 case-insensitive substring filter (`String.includes`) |
 | 항목 클릭 또는 Enter | 마지막 토큰만 그 항목 이름으로 교체. 예: `noir, c` + "cinematic" → `noir, cinematic` |
 | ↑↓ | dropdown 항목 순회. 선택된 항목 highlight |
 | ESC | dropdown 닫기 (input 값 유지) |
