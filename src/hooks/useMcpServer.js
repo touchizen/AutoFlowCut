@@ -229,8 +229,8 @@ export function useMcpServer({
         console.log('[MCP] Open project requested:', data.projectName)
         window.__mcpOpenProject?.(data.projectName)
       } else if (data.type === 'start-scene-batch') {
-        console.log('[MCP] Scene batch generation start requested, styleId:', data.styleId)
-        window.__mcpStartBatch?.(data.styleId)
+        console.log('[MCP] Scene batch generation start requested, styleId:', data.styleId, 'force:', data.force)
+        window.__mcpStartBatch?.(data.styleId, data.force ? { force: true } : undefined)
       } else if (data.type === 'start-ref-batch') {
         console.log('[MCP] Reference batch generation start requested, styleId:', data.styleId)
         window.__mcpStartRefBatch?.(data.styleId)
@@ -259,20 +259,25 @@ export function useMcpServer({
     //
     // ref batch는 씬 매칭 개념 자체가 없음 → 'auto' 토큰 미지원.
     // 생략 시 useReferenceGeneration._resolveEffectiveStyleId가 첫 카드 fallback 적용.
-    window.__mcpStartBatch = (styleId) => {
+    // options = { force?: boolean } (선택). 없으면 handleStart 1-arg 호출 (백워드 호환).
+    // options 있으면 handleStart(effective, options) — App.jsx의 handleStart가 force 등을 추출.
+    window.__mcpStartBatch = (styleId, options) => {
+      const callHandleStart = options
+        ? (effective) => handleStart(effective, options)
+        : (effective) => handleStart(effective)
       if (styleId === 'auto') {
         // 명시적 씬별 매칭 모드 — fallback 발동 안 함, useAutomation이 style_tag로만 결정
-        handleStart(null)
+        callHandleStart(null)
         return
       }
       if (styleId === 'none') {
         // 'none' sentinel — pass through to handler. styleService.resolveSceneStyle recognizes
         // 'none' and skips auto-match, preset fallback, and override.
-        handleStart('none')
+        callHandleStart('none')
         return
       }
       const effective = normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current)
-      handleStart(effective)
+      callHandleStart(effective)
     }
     window.__mcpStartRefBatch = (styleId) => {
       // 'auto'는 ref batch에 의미 없음 — null로 취급해 normalizeStyleId가 'preset:auto'로

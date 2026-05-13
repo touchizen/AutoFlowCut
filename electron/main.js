@@ -1268,11 +1268,13 @@ function startMcpHttpServer(port) {
         if (req.method === 'POST' && pathname === '/api/start-scene-batch') {
           if (mainWindow) {
             let styleId = null
+            let force = false
             try {
               const parsed = JSON.parse(body)
               styleId = parsed.styleId || null
+              force = !!parsed.force  // 선택, 기본 false. true면 완료된 씬도 재생성 대상에.
             } catch {}
-            mainWindow.webContents.send('mcp-update', { type: 'start-scene-batch', styleId })
+            mainWindow.webContents.send('mcp-update', { type: 'start-scene-batch', styleId, force })
             res.writeHead(200)
             // 응답에 styleId echo 안 함 — fire-and-forget이라 effective style은 renderer fallback이
             // 결정하므로(예: 첫 카드 자동 적용), main이 즉시 알 수 없음. 거짓 정보를 주는 것보다 안 주는 게 정직.

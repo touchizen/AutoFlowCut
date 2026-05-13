@@ -234,7 +234,8 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       imageBatchCount = 1,
       imageUpscale = 'off',
       selectedStyleRefId: _selectedStyleRefId = null,
-      seed = null
+      seed = null,
+      force = false
     } = options
     const selectedStyleRefId = (_selectedStyleRefId != null && typeof _selectedStyleRefId !== 'string') ? String(_selectedStyleRefId) : _selectedStyleRefId
 
@@ -251,11 +252,15 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     setIsPaused(false)
     setStatus('running')
     
-    // 대상 씬 결정: 이미지 없는 씬 + pending/error 상태 씬 (재생성 대상).
-    // App.jsx의 자동 매칭 검증과 동일한 filterPendingScenes 사용 — 검증/실행 대상 일치.
+    // 대상 씬 결정:
+    //   - sceneIndices 명시: 그 인덱스들 (retry/partial 호출)
+    //   - force=true (MCP 전용): prompt 있는 모든 씬 (완료된 씬도 포함, 새 스타일로 재생성)
+    //   - 그 외: filterPendingScenes — 이미지 없는 씬 + pending/error 상태 (App.jsx 자동 매칭 검증과 일치)
     const targetScenes = sceneIndices
       ? sceneIndices.map(i => scenes[i]).filter(Boolean)
-      : filterPendingScenes(scenes)
+      : force
+        ? scenes.filter(s => s.prompt)
+        : filterPendingScenes(scenes)
     
     const total = targetScenes.length
     if (total === 0) {

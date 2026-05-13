@@ -310,6 +310,42 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     window.__mcpGenerateScene('scene_42')
     expect(handleGenerateScene).toHaveBeenCalledWith('scene_42', undefined)
   })
+
+  // --- Task 3: start-scene-batch force ---
+
+  it('__mcpStartBatch passes { force: true } as second arg to handleStart', () => {
+    const handleStart = vi.fn()
+    const refWithMedia = { id: 555, type: 'style', mediaId: 'm-555' }
+    renderHook(() => useMcpServer(makeProps({ handleStart, references: [refWithMedia] })))
+
+    window.__mcpStartBatch('preset:cinematic', { force: true })
+    expect(handleStart).toHaveBeenCalledWith('preset:cinematic', { force: true })
+  })
+
+  it('__mcpStartBatch without force keeps single-arg call (backward compat)', () => {
+    const handleStart = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ handleStart })))
+
+    window.__mcpStartBatch('preset:cinematic')
+    // 백워드 호환 — 옵션 안 넘기면 handleStart도 1-arg 호출 (기존 테스트가 이 형태 기대)
+    expect(handleStart).toHaveBeenCalledWith('preset:cinematic')
+  })
+
+  it("__mcpStartBatch('auto', { force: true }) forwards force with null override", () => {
+    const handleStart = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ handleStart })))
+
+    window.__mcpStartBatch('auto', { force: true })
+    expect(handleStart).toHaveBeenCalledWith(null, { force: true })
+  })
+
+  it("__mcpStartBatch('none', { force: true }) forwards force with 'none' override", () => {
+    const handleStart = vi.fn()
+    renderHook(() => useMcpServer(makeProps({ handleStart })))
+
+    window.__mcpStartBatch('none', { force: true })
+    expect(handleStart).toHaveBeenCalledWith('none', { force: true })
+  })
 })
 
 describe("styleService — 'none' sentinel end-to-end", () => {

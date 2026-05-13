@@ -581,7 +581,12 @@ function App() {
   //   undefined: 호출자가 override 안 함 → UI selectedStyleRefId 사용
   //   null: 자동 모드 강제 (StylePicker 자동 카드 클릭) → UI 선택값 무시
   //   'ref:*' / 'preset:*': 그 스타일 강제 적용
-  const handleStart = async (overrideStyleId = undefined) => {
+  //
+  // options = { force?: boolean } (선택, MCP 전용):
+  //   - force=true: 완료된 씬도 포함해 재생성 대상에 (필터 우회)
+  //   - 기본 false: 기존 동작 (pending/error만)
+  const handleStart = async (overrideStyleId = undefined, options = {}) => {
+    const { force = false } = options
     // 이미 실행 중이거나 큐에 batch가 대기 중이면 무시 (중지는 별도 버튼)
     if (isRunning || videoAutomation.isRunning || hasPendingBatch) return
 
@@ -620,7 +625,8 @@ function App() {
       case 'list': {
         // 이미지 생성 — 가드 순서: (1) 생성 대상 0개면 즉시 안내 (스타일 선택 요구하지 않음),
         // (2) 스타일 필수 검증. 순서가 반대면 "이미 다 생성됐는데 스타일 골라달라" 어색함.
-        const targetScenes = filterPendingScenes(scenes)
+        // force=true: 완료 씬 포함 강제 재생성 → "이미 다 생성됐다" 가드 우회 (prompt 있는 씬이 1개라도 있으면 진행).
+        const targetScenes = force ? scenes.filter(s => s.prompt) : filterPendingScenes(scenes)
         if (targetScenes.length === 0) {
           toast.warning(t('toast.allScenesGenerated'))
           return
@@ -648,6 +654,7 @@ function App() {
           imageUpscale: settings.imageUpscale || 'off',
           selectedStyleRefId: effectiveStyleId,
           seed: effectiveSeed,
+          force,
         }
 
         const errors = collectTagErrors(scenes, scenesHook.references)
