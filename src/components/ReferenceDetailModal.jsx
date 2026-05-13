@@ -209,7 +209,7 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
   const footer = (
     <>
       <button className="btn-secondary" onClick={onClose}>{t('common.cancel')}</button>
-      {!isStyle && onGenerate && (
+      {onGenerate && (
         <button
           className="btn-warning"
           onClick={handleRegenerate}
@@ -244,7 +244,7 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
               <div className={`ref-status-line status-${editData.status}`} style={{ fontSize: '0.8rem', marginBottom: '8px', color: editData.status === 'error' ? '#e5484d' : 'var(--text-secondary)' }}>
                 <strong>{t('reference.status.label') || 'Status'}:</strong>{' '}
                 {t(`reference.status.${editData.status}`) || editData.status}
-                {editData.status === 'error' && onGenerate && !isStyle && (
+                {editData.status === 'error' && onGenerate && (
                   <button
                     type="button"
                     className="btn-warning"
