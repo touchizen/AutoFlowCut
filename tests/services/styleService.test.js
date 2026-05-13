@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { previewStyleMatching, normalizeStyleId } from '../../src/services/styleService'
+import { previewStyleMatching, normalizeStyleId, findAutoStyle } from '../../src/services/styleService'
 
 describe('previewStyleMatching', () => {
   it('returns empty matches for no scenes', () => {
@@ -164,5 +164,39 @@ describe('normalizeStyleId', () => {
 
   it('coerces non-string ids to string before checking prefix', () => {
     expect(normalizeStyleId(12345)).toBe('preset:12345')
+  })
+})
+
+describe('findAutoStyle', () => {
+  it('returns null when no style refs exist', () => {
+    expect(findAutoStyle([])).toBeNull()
+    expect(findAutoStyle([{ id: 1, type: 'character', mediaId: 'm-1' }])).toBeNull()
+  })
+
+  it('finds style ref with mediaId', () => {
+    const refs = [{ id: 10, type: 'style', mediaId: 'm-10' }]
+    expect(findAutoStyle(refs)).toBe('ref:10')
+  })
+
+  it('finds style ref with prompt only (no mediaId) — production parity', () => {
+    // Production applyStyle/_prepareStyleRefs apply prompt-only style refs.
+    // findAutoStyle must surface those, otherwise MCP auto-fallback silently
+    // skips a usable style card just because no image was uploaded.
+    const refs = [{ id: 20, type: 'style', prompt: 'noir vibes' /* no mediaId */ }]
+    expect(findAutoStyle(refs)).toBe('ref:20')
+  })
+
+  it('returns null for style refs with neither prompt nor mediaId (truly empty)', () => {
+    const refs = [{ id: 30, type: 'style', name: 'placeholder' }]
+    expect(findAutoStyle(refs)).toBeNull()
+  })
+
+  it('returns the first matching style ref (array order)', () => {
+    const refs = [
+      { id: 1, type: 'character', mediaId: 'm-1' },
+      { id: 2, type: 'style', prompt: 'first' },
+      { id: 3, type: 'style', mediaId: 'm-3' },
+    ]
+    expect(findAutoStyle(refs)).toBe('ref:2')
   })
 })

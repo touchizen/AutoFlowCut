@@ -26,12 +26,20 @@ export function normalizeStyleId(styleId) {
 }
 
 /**
- * 등록된 스타일 카드 자동 탐색
+ * 등록된 스타일 카드 자동 탐색.
+ *
+ * "사용 가능한 스타일 카드" 기준: prompt 또는 mediaId 중 하나라도 있어야 함.
+ * 둘 다 없는 placeholder 카드는 production 적용 path가 아무것도 안 하므로 제외.
+ *
+ * 둘 다 잡는 이유: production applyStyle / _prepareStyleRefs는 prompt만 있어도
+ * styledPrompt를 합성하고, mediaId만 있어도 image ref로 주입한다. mediaId만 보면
+ * 사용자가 prompt로만 만든 스타일 카드를 누락 — preview/MCP 자동 모드가 잘못된 결과.
+ *
  * @param {Array} references - 레퍼런스 배열
  * @returns {string|null} 'ref:{id}' 형태 또는 null
  */
 export function findAutoStyle(references) {
-  const autoStyle = references.find(r => r.type === 'style' && r.mediaId)
+  const autoStyle = references.find(r => r.type === 'style' && (r.prompt || r.mediaId))
   return autoStyle ? `ref:${autoStyle.id}` : null
 }
 
