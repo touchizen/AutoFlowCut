@@ -174,4 +174,22 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     window.__mcpStartBatch(undefined)
     expect(handleStart).toHaveBeenCalledWith(null)
   })
+
+  it("__mcpStartBatch('auto') forces per-scene matching (skips first-card fallback)", () => {
+    const handleStart = vi.fn()
+    const refWithMedia = { id: 555, type: 'style', mediaId: 'm-555' }
+    renderHook(() => useMcpServer(makeProps({
+      handleStart,
+      references: [refWithMedia],  // first-card fallback would otherwise pick this
+    })))
+
+    // 'auto' sentinel → caller explicitly wants per-scene matching, no fallback
+    window.__mcpStartBatch('auto')
+    expect(handleStart).toHaveBeenCalledWith(null)
+
+    // Sanity: same setup, undefined styleId would pick the fallback (proves the sentinel changes behavior)
+    handleStart.mockClear()
+    window.__mcpStartBatch(undefined)
+    expect(handleStart).toHaveBeenCalledWith('ref:555')
+  })
 })

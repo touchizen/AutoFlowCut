@@ -233,13 +233,21 @@ export function useMcpServer({
     // 전역 setSelectedStyleRefId는 호출하지 않음 — MCP 호출이 UI에 선택된 스타일을
     // 덮어쓰면 다음 호출/UI 동작에 누수됨. 호출별 스타일은 호출별로만 유효.
     //
-    // styleId 미지정 시 정책:
-    //   - scene batch: useAutomation은 fallback 없음(UI 정직성). 자동화 흐름인 MCP에서는
-    //     호출 측에서 첫 style 카드를 fallback으로 적용 → "MCP 호출자가 스타일을 명시 안 함"
-    //     의도를 "자동으로 사용 가능한 첫 스타일 적용"으로 해석.
-    //   - ref batch: useReferenceGeneration._resolveEffectiveStyleId가 이미 동일한 fallback
-    //     동작을 하므로 호출 측 추가 처리 불필요.
+    // scene batch styleId 의미 모델:
+    //   - 'auto' (sentinel)         → 씬별 style_tag 매칭만 사용 (UI 자동 카드와 동일)
+    //   - 명시 'ref:*' / 'preset:*' → 그 스타일을 모든 씬에 강제 적용
+    //   - plain id (legacy)         → 'preset:'으로 wrap
+    //   - 생략/null/''              → MCP default: 첫 style 카드 자동 fallback
+    //                                 (자동화 호출자가 매번 styleId 명시 부담 줄임)
+    //
+    // ref batch는 씬 매칭 개념 자체가 없음 → 'auto' 토큰 미지원.
+    // 생략 시 useReferenceGeneration._resolveEffectiveStyleId가 첫 카드 fallback 적용.
     window.__mcpStartBatch = (styleId) => {
+      if (styleId === 'auto') {
+        // 명시적 씬별 매칭 모드 — fallback 발동 안 함, useAutomation이 style_tag로만 결정
+        handleStart(null)
+        return
+      }
       const effective = normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current)
       handleStart(effective)
     }
