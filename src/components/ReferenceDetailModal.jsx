@@ -142,8 +142,13 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
   // 스타일 선택 핸들러 (StylePicker에서 preset:ID 형식으로 옴)
   const handleStylePickerSelect = (id) => {
     if (!id || !id.startsWith('preset:')) {
-      // 선택 해제
-      setEditData(prev => ({ ...prev, name: '', prompt: '', data: null, description: '' }))
+      // 선택 해제 — 모든 ref 필드를 함께 클리어해 stale mediaId/filePath/caption이
+      // findAutoStyle()에 잡히지 않도록 한다 (이름 빈 ref인데 mediaId 살아있는 상태 방지).
+      setEditData(prev => ({
+        ...prev,
+        name: '', prompt: '', description: '',
+        data: null, filePath: null, mediaId: null, caption: null, dataStorage: null,
+      }))
       return
     }
     const presetId = id.replace('preset:', '')
