@@ -1,6 +1,6 @@
-# Style Resolution Refactor (proposal)
+# Style Resolution Refactor
 
-**Status:** Proposal (별도 PR 대기)
+**Status:** Implemented (2026-05-13)
 **Date:** 2026-05-13
 **Origin:** Tag Input UX / Style Card UX 라운드의 누적된 외부 reviewer 권고
 
