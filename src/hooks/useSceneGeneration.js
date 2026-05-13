@@ -12,7 +12,11 @@ export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, open
   const [generatingSceneId, setGeneratingSceneId] = useState(null)
 
   // 핵심 생성 로직
-  const _executeSceneGeneration = useCallback(async (sceneId) => {
+  // overrideStyleId: MCP 호출 등에서 명시 styleId 줬을 때 사용. undefined면 기존 동작 (style_tag fallback만).
+  //   - 'preset:*' / 'ref:*' / plain id → resolveSceneStyle에 전달 (해당 스타일 강제)
+  //   - 'none' → 'none' sentinel pass-through (스타일 미적용 강제)
+  //   - 'auto' → null로 취급 (style_tag 매칭 fallback)
+  const _executeSceneGeneration = useCallback(async (sceneId, overrideStyleId = undefined) => {
     const scene = scenes.find(s => s.id === sceneId)
     if (!scene?.prompt) {
       toast.warning(t('toast.noPrompt'))
@@ -40,8 +44,14 @@ export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, open
           caption: r.caption || ''
         }))
 
-      // 스타일 프롬프트 합치기 (style_tag 프리셋 fallback)
-      const { styledPrompt } = resolveSceneStyle(scene.prompt, [], null, [], matchedRefs, scene.style_tag)
+      // overrideStyleId 정규화 — 'auto' 는 null (style_tag fallback만), 'none' 은 그대로, 명시 ID는 그대로.
+      const effectiveOverride =
+        overrideStyleId === 'auto' ? null
+        : overrideStyleId === 'none' ? 'none'
+        : overrideStyleId == null ? null
+        : overrideStyleId
+      // 스타일 프롬프트 합치기 (style_tag 프리셋 fallback + override)
+      const { styledPrompt } = resolveSceneStyle(scene.prompt, [], effectiveOverride, scenesHook.references || [], matchedRefs, scene.style_tag)
 
       // seedLocked && seedNo 가 숫자일 때만 고정 seed, 그 외엔 Flow 자체 랜덤
       const seed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
@@ -82,17 +92,17 @@ export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, open
     setGeneratingSceneId(null)
   }, [settings, scenes, scenesHook, flowAPI, openSettings, setSelectedScene, t])
 
-  // 큐를 통한 생성
-  const handleGenerateScene = useCallback(async (sceneId) => {
+  // 큐를 통한 생성. overrideStyleId 선택 — MCP `app_generate_scene(sceneId, styleId)`에서 사용.
+  const handleGenerateScene = useCallback(async (sceneId, overrideStyleId = undefined) => {
     if (!generationQueue) {
-      return _executeSceneGeneration(sceneId)
+      return _executeSceneGeneration(sceneId, overrideStyleId)
     }
 
     try {
       await generationQueue.enqueue({
         type: 'scene',
         label: `Scene #${sceneId}`,
-        execute: () => _executeSceneGeneration(sceneId)
+        execute: () => _executeSceneGeneration(sceneId, overrideStyleId)
       })
     } catch (err) {
       console.warn('[SceneGen] Queue rejected:', err.message)

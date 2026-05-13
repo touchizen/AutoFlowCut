@@ -378,7 +378,7 @@ curl http://127.0.0.1:3210/api/batch-status
 - \`update-scenes\`: 씬 전체 교체
 - \`update-scene\`: 특정 씬 수정 (index + fields)
 - \`generate-reference\`: 레퍼런스 생성 트리거 (index + styleId?)
-- \`generate-scene\`: 씬 생성 트리거 (sceneId)
+- \`generate-scene\`: 씬 생성 트리거 (sceneId + styleId?)
 - \`start-scene-batch\`: 씬 일괄 생성 시작
 - \`start-ref-batch\`: 레퍼런스 일괄 생성 시작`,
         requestBody: {
@@ -443,7 +443,7 @@ curl http://127.0.0.1:3210/api/batch-status
       post: {
         tags: ['생성'],
         summary: '개별 씬 이미지 생성',
-        description: 'Fire-and-forget 방식으로 특정 씬의 이미지를 생성합니다.',
+        description: 'Fire-and-forget 방식으로 특정 씬의 이미지를 생성합니다. 이미 이미지가 있는 씬도 새 styleId로 재생성됩니다.',
         requestBody: {
           required: true,
           content: {
@@ -453,6 +453,7 @@ curl http://127.0.0.1:3210/api/batch-status
                 required: ['sceneId'],
                 properties: {
                   sceneId: { type: 'string', description: '씬 ID', example: 'scene_42' },
+                  styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" / "preset:<id>" / plain id / "none" (스타일 미적용 강제) / "auto" (style_tag 매칭 fallback만). 생략 시 UI 선택값 영향 없이 style_tag fallback만 적용 (기존 동작). 이미 이미지가 있는 씬이라도 새 styleId로 재생성됩니다.', example: 'preset:noir' },
                 },
               },
             },

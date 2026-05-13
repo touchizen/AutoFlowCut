@@ -1229,10 +1229,12 @@ function startMcpHttpServer(port) {
         if (req.method === 'POST' && pathname === '/api/generate-scene') {
           const data = JSON.parse(body)
           const sceneId = data.sceneId
+          const styleId = data.styleId  // 선택 — undefined면 useSceneGeneration의 기존 동작 (style_tag fallback만)
           if (mainWindow && sceneId) {
             mainWindow.webContents.send('mcp-update', {
               type: 'generate-scene',
-              sceneId: sceneId
+              sceneId: sceneId,
+              styleId: styleId
             })
             res.writeHead(200)
             res.end(JSON.stringify({ success: true, message: `Scene ${sceneId} generation triggered` }))

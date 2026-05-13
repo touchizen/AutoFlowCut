@@ -85,7 +85,9 @@ export function useMcpServer({
       const effective = normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current)
       return handleGenerateRef(index, false, effective).catch(e => ({ success: false, error: e.message }))
     }
-    window.__mcpGenerateScene = (sceneId) => handleGenerateScene(sceneId)
+    // styleId override (선택). 형식은 normalizeStyleId / 'none' / 'auto' 등 styleService와 동일.
+    // 생략하면 handleGenerateScene 내부에서 기존 동작 (scene.style_tag 매칭 fallback) 적용.
+    window.__mcpGenerateScene = (sceneId, styleId) => handleGenerateScene(sceneId, styleId)
     window.__mcpSetStyle = (styleId) => { setSelectedStyleRefId(styleId); return styleId }
     window.__mcpGetStyle = () => selectedStyleRefId
     window.__mcpRefreshAudioReviews = () => refreshReviews()
@@ -221,8 +223,8 @@ export function useMcpServer({
         // styleId를 override로 직접 전달 — 전역 selectedStyleRefId 오염 없음, race 없음.
         window.__mcpGenerateRef?.(data.index, data.styleId)
       } else if (data.type === 'generate-scene') {
-        console.log('[MCP] Generate scene requested:', data.sceneId)
-        window.__mcpGenerateScene?.(data.sceneId)
+        console.log('[MCP] Generate scene requested:', data.sceneId, 'style:', data.styleId)
+        window.__mcpGenerateScene?.(data.sceneId, data.styleId)
       } else if (data.type === 'open-project') {
         console.log('[MCP] Open project requested:', data.projectName)
         window.__mcpOpenProject?.(data.projectName)

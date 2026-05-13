@@ -521,12 +521,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'app_generate_scene',
-      description: '실행 중인 AutoFlowCut 앱에서 특정 씬의 이미지를 생성합니다.',
+      description: '실행 중인 AutoFlowCut 앱에서 특정 씬의 이미지를 생성합니다. styleId를 지정하면 해당 스타일로 강제 적용됩니다. 이미 이미지가 있는 씬이라도 다시 호출하면 새 styleId로 재생성됩니다.',
       inputSchema: {
         type: 'object',
         properties: {
           port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
           sceneId: { type: 'string', description: '씬 ID (예: "scene_1")' },
+          styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" / "preset:<id>" / plain id (자동 wrap) / "none" (스타일 미적용 강제) / "auto" (씬 style_tag 매칭만, 기존 동작). 생략 시 UI 선택값 영향 없이 style_tag fallback만 적용.' },
         },
         required: ['sceneId'],
       },
@@ -1299,9 +1300,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'app_generate_scene': {
         const port = args.port || 3210;
-        const res = await appFetch(port, 'POST', '/api/generate-scene', {
-          sceneId: args.sceneId,
-        });
+        const body = { sceneId: args.sceneId };
+        if (args.styleId !== undefined) body.styleId = args.styleId;
+        const res = await appFetch(port, 'POST', '/api/generate-scene', body);
         return {
           content: [{ type: 'text', text: `씬 [${args.sceneId}] 생성 요청 완료: ${JSON.stringify(res.data)}` }],
         };

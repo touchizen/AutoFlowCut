@@ -284,6 +284,32 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     await window.__mcpGenerateRef(2, 'none')
     expect(handleGenerateRef).toHaveBeenCalledWith(2, false, 'none')
   })
+
+  // --- Task 2: app_generate_scene styleId ---
+
+  it('__mcpGenerateScene forwards styleId to handleGenerateScene (preset)', () => {
+    const handleGenerateScene = vi.fn(() => Promise.resolve({ success: true }))
+    renderHook(() => useMcpServer(makeProps({ handleGenerateScene })))
+
+    window.__mcpGenerateScene('scene_42', 'preset:noir')
+    expect(handleGenerateScene).toHaveBeenCalledWith('scene_42', 'preset:noir')
+  })
+
+  it("__mcpGenerateScene with styleId='none' passes 'none' through", () => {
+    const handleGenerateScene = vi.fn(() => Promise.resolve({ success: true }))
+    renderHook(() => useMcpServer(makeProps({ handleGenerateScene })))
+
+    window.__mcpGenerateScene('scene_42', 'none')
+    expect(handleGenerateScene).toHaveBeenCalledWith('scene_42', 'none')
+  })
+
+  it('__mcpGenerateScene without styleId passes undefined (UI default fallback)', () => {
+    const handleGenerateScene = vi.fn(() => Promise.resolve({ success: true }))
+    renderHook(() => useMcpServer(makeProps({ handleGenerateScene })))
+
+    window.__mcpGenerateScene('scene_42')
+    expect(handleGenerateScene).toHaveBeenCalledWith('scene_42', undefined)
+  })
 })
 
 describe("styleService — 'none' sentinel end-to-end", () => {
