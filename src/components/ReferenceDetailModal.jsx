@@ -193,11 +193,13 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
   const handleRegenerate = () => {
     console.log('[ReferenceDetail] Regenerate clicked', { index, editData, onGenerate: !!onGenerate })
     try {
-      // 먼저 현재 편집 내용 저장
+      // 부모 state에 편집 내용 반영 (다음 render에 commit)
       onUpdate(index, editData)
-      // 재생성 시작
+      // editData를 4번째 인자로 직접 넘겨서 React state commit race를 우회.
+      // (그렇지 않으면 useReferenceGeneration이 옛 references[index]를 읽어
+      // noPrompt 경로 또는 옛 prompt로 생성하는 race 발생)
       if (onGenerate) {
-        onGenerate(index)
+        onGenerate(index, false, null, editData)
       } else {
         console.error('[ReferenceDetail] onGenerate is not defined!')
       }

@@ -231,8 +231,11 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
   }
 
   // ─── 핵심 생성 로직 (개별) ───
-  const _executeGenerateRef = async (index, skipPermissionCheck = false, overrideStyleId = null) => {
-    const ref = references[index]
+  // overrideRef: 호출 측에서 최신 ref 객체를 직접 넘길 때 사용. ReferenceDetailModal의
+  // 재생성 버튼처럼 onUpdate 직후 호출되는 경로에서, React state commit 이전이라
+  // referencesRef.current가 아직 갱신 안 된 race를 회피한다.
+  const _executeGenerateRef = async (index, skipPermissionCheck = false, overrideStyleId = null, overrideRef = null) => {
+    const ref = overrideRef || referencesRef.current[index]
     if (!ref?.prompt) {
       toast.warning(t('toast.noPrompt'))
       return { success: false }
@@ -524,15 +527,17 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
   }
 
   // 큐를 통한 개별 생성
-  const handleGenerateRef = async (index, skipPermissionCheck = false, overrideStyleId = null) => {
+  // overrideRef: ReferenceDetailModal의 재생성처럼 onUpdate 직후 호출되는 경로에서
+  // 최신 ref 객체를 직접 전달해 React state commit race를 차단.
+  const handleGenerateRef = async (index, skipPermissionCheck = false, overrideStyleId = null, overrideRef = null) => {
     if (skipPermissionCheck || !generationQueue) {
-      return _executeGenerateRef(index, skipPermissionCheck, overrideStyleId)
+      return _executeGenerateRef(index, skipPermissionCheck, overrideStyleId, overrideRef)
     }
     try {
       return await generationQueue.enqueue({
         type: 'reference',
         label: `Ref #${index + 1}`,
-        execute: () => _executeGenerateRef(index, false, overrideStyleId)
+        execute: () => _executeGenerateRef(index, false, overrideStyleId, overrideRef)
       })
     } catch (err) {
       console.warn('[RefGen] Queue rejected:', err.message)

@@ -48,6 +48,8 @@ const t = (k, vars) => {
     'common.copy': '복사',
     'common.close': '닫기',
     'common.save': '저장',
+    'reference.regenerate': '재생성',
+    'reference.promptPlaceholder': '이미지 생성용 프롬프트를 입력하세요',
   }
   let s = map[k] || k
   if (vars) for (const [v, val] of Object.entries(vars)) s = s.replace(`{${v}}`, val)
@@ -105,5 +107,32 @@ describe('ReferenceDetailModal — style card name', () => {
     fireEvent.click(fillBtn)
     // 실제 컴포넌트에서 showStyleDropdown=true 일 때 .style-picker-overlay 가 렌더됨
     expect(document.querySelector('.style-picker-overlay')).toBeTruthy()
+  })
+})
+
+describe('ReferenceDetailModal — regenerate race guard', () => {
+  it('passes latest editData as overrideRef (4th arg) to onGenerate', () => {
+    // Regression guard: handleRegenerate calls onUpdate then immediately onGenerate.
+    // Without the 4th-arg override, _executeGenerateRef reads stale references[index]
+    // and either fails with noPrompt or generates with the old prompt.
+    const onGenerate = vi.fn()
+    const onUpdate = vi.fn()
+    const reference = { id: 1, type: 'style', name: '내 누아르', prompt: 'old prompt' }
+    render(<ReferenceDetailModal {...baseProps} reference={reference} onUpdate={onUpdate} onGenerate={onGenerate} />)
+
+    // User edits the prompt
+    const promptArea = screen.getByPlaceholderText('이미지 생성용 프롬프트를 입력하세요')
+    fireEvent.change(promptArea, { target: { value: 'new prompt' } })
+
+    // User clicks regenerate
+    const regenerateBtn = screen.getByRole('button', { name: /재생성/ })
+    fireEvent.click(regenerateBtn)
+
+    // onUpdate persists editData to parent (async commit)
+    expect(onUpdate).toHaveBeenCalledWith(0, expect.objectContaining({ prompt: 'new prompt' }))
+
+    // onGenerate must receive (index, skipPermissionCheck, overrideStyleId, overrideRef-with-new-prompt)
+    // so _executeGenerateRef sees the fresh prompt without waiting for React state commit.
+    expect(onGenerate).toHaveBeenCalledWith(0, false, null, expect.objectContaining({ prompt: 'new prompt' }))
   })
 })
