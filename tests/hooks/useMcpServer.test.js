@@ -321,6 +321,31 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     expect(handleGenerateScene).toHaveBeenCalledWith('scene_42', undefined)
   })
 
+  // P2 fix: plain id ('noir') → 'preset:noir' wrap (다른 path들과 일관)
+  it('__mcpGenerateScene wraps legacy plain id to preset: form', () => {
+    const handleGenerateScene = vi.fn(() => Promise.resolve({ success: true }))
+    renderHook(() => useMcpServer(makeProps({ handleGenerateScene })))
+
+    window.__mcpGenerateScene('scene_42', 'noir')
+    expect(handleGenerateScene).toHaveBeenCalledWith('scene_42', 'preset:noir')
+  })
+
+  it('__mcpGenerateScene passes ref:* through unchanged (no double-wrap)', () => {
+    const handleGenerateScene = vi.fn(() => Promise.resolve({ success: true }))
+    renderHook(() => useMcpServer(makeProps({ handleGenerateScene })))
+
+    window.__mcpGenerateScene('scene_42', 'ref:1773499846144')
+    expect(handleGenerateScene).toHaveBeenCalledWith('scene_42', 'ref:1773499846144')
+  })
+
+  it("__mcpGenerateScene with 'auto' passes 'auto' through (not normalized to preset:auto)", () => {
+    const handleGenerateScene = vi.fn(() => Promise.resolve({ success: true }))
+    renderHook(() => useMcpServer(makeProps({ handleGenerateScene })))
+
+    window.__mcpGenerateScene('scene_42', 'auto')
+    expect(handleGenerateScene).toHaveBeenCalledWith('scene_42', 'auto')
+  })
+
   // --- Task 3: start-scene-batch force ---
 
   it('__mcpStartBatch passes { force: true } as second arg to handleStart', () => {
@@ -570,6 +595,54 @@ describe('useMcpServer — global handlers (regression guards)', () => {
 
     await window.__mcpStartRefBatch('none')
     expect(setSelectedStyleRefId).not.toHaveBeenCalled()
+  })
+
+  // --- P1 fix: refBatchRunning prop (preparing/stopping/generating 통합) ---
+  // generatingRefs.length만으로는 prepare 구간(폴더/토큰 체크 ~ 첫 submit 사이)을 못 잡아서
+  // MCP 호출 중복 진행 회귀 가능. refBatchRunning prop이 그 gap을 메운다.
+
+  it('__mcpStartRefBatch with refBatchRunning=true (preparing) auto-stops and restarts', async () => {
+    vi.useFakeTimers()
+    const handleGenerateAllRefs = vi.fn()
+    const handleStop = vi.fn()
+    let refBatchRunning = true
+
+    function Wrapper() {
+      return useMcpServer(makeProps({
+        // isRunning은 false지만 refBatchRunning=true → stop-restart 발동해야
+        isRunning: refBatchRunning,
+        refBatchRunning,
+        generatingRefs: [],  // preparing 구간이라 아직 비어있음
+        handleGenerateAllRefs,
+        handleStop,
+      }))
+    }
+    const { rerender } = renderHook(Wrapper)
+
+    const callPromise = window.__mcpStartRefBatch('preset:noir', { force: true })
+    expect(handleStop).toHaveBeenCalled()
+    expect(handleGenerateAllRefs).not.toHaveBeenCalled()
+
+    // batch가 stop되어 flag 내려감
+    refBatchRunning = false
+    rerender()
+    await vi.advanceTimersByTimeAsync(100)
+    await callPromise
+
+    expect(handleGenerateAllRefs).toHaveBeenCalledWith('preset:noir', { force: true })
+    vi.useRealTimers()
+  })
+
+  it('__mcpBatchStatus.ref.isRunning reflects refBatchRunning (P1 gap fix)', () => {
+    const result = renderHook(() => useMcpServer(makeProps({
+      refBatchRunning: true,
+      generatingRefs: [],  // preparing 구간 — generatingRefs는 비어있어도
+    })))
+    // useMcpServer 호출 직후 __mcpBatchStatus 등록됨
+    expect(window.__mcpBatchStatus().ref.isRunning).toBe(true)
+
+    // Cleanup
+    result.unmount()
   })
 })
 

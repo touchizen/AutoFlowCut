@@ -635,7 +635,10 @@ function App() {
         // 매칭 가능한 씬이 1개 이상일 때만. 전체 scenes 기준이면 완료된 씬 매칭이 false-positive.
         // override가 명시적 null이면 자동 모드 강제 (UI 선택값 무시) — 기본 default(undefined)는 UI 사용.
         const effectiveStyleId = styleResolver.resolveEffectiveStyleId(overrideStyleId)
-        if (settings.requireStyle && !effectiveStyleId) {
+        // force=true (MCP 자동화 호출)는 requireStyle 가드 우회 — autoAvailable이 filterPendingScenes
+        // 기준이라 모든 씬이 done인 프로젝트에선 false가 되어 picker가 뜨고 return하는 회귀를 차단.
+        // MCP 자동화 호출자는 styleId를 의도적으로 결정해서 force=true를 줬으므로 UI 가드 부적절.
+        if (!force && settings.requireStyle && !effectiveStyleId) {
           if (!styleResolver.autoAvailable) {
             setShowStylePicker(true)
             return
@@ -870,16 +873,21 @@ function App() {
     setPendingStartOptions(null)
   }
 
+  // ref batch는 generatingRefs.length만으로 부족 — preparingRefs(폴더/토큰 체크 ~ 첫 submit 사이)와
+  // stoppingRefs(중지 진행 중)도 "실행 중"에 포함해야 한다. 안 그러면 그 구간에 MCP가 batch 다시
+  // 호출 시 stop-restart 우회하고 동시에 두 batch가 진행되는 회귀 발생.
+  const refBatchRunning = preparingRefs || stoppingRefs || generatingRefs.length > 0
+
   // Handle stop — 활성 자동화 중지 (scene + video + ref batch 모두 cover).
   // Phase 2: MCP 자동 stop-restart 플로우가 handleStop을 trigger하므로 ref batch도 stop해야 함.
   const handleStop = () => {
     if (isRunning) stop()
     if (videoAutomation.isRunning) videoAutomation.stop()
-    if (generatingRefs.length > 0) stopGenerateAllRefs()
+    if (refBatchRunning) stopGenerateAllRefs()
   }
 
   // MCP HTTP 서버 (시작/중지, 글로벌 접근자, 업데이트 수신, 배치 핸들러)
-  // isRunning: scene OR ref OR video — Phase 2 auto stop-restart 트리거에 사용.
+  // isRunning: scene OR ref(prepare/stop/generating) OR video — Phase 2 auto stop-restart 트리거.
   useMcpServer({
     settings,
     scenes, setScenes,
@@ -892,7 +900,8 @@ function App() {
     importByPath, audioPackage,
     automationState: { isRunning, isPaused, progress, status, statusMessage },
     videoAutomation, generatingRefs,
-    isRunning: isRunning || videoAutomation.isRunning || generatingRefs.length > 0
+    refBatchRunning,
+    isRunning: isRunning || videoAutomation.isRunning || refBatchRunning
   })
 
   // 어느 자동화든 실행 중이면 true

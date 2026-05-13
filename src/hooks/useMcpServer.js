@@ -46,7 +46,8 @@ export function useMcpServer({
   refreshReviews, audioReviews,
   importByPath, audioPackage,
   automationState, videoAutomation, generatingRefs,
-  isRunning = false  // Phase 2: 진행 중 MCP batch 호출 시 auto stop-restart 트리거 (anyRunning 등 권장)
+  isRunning = false,  // Phase 2: 진행 중 MCP batch 호출 시 auto stop-restart 트리거 (anyRunning 등 권장)
+  refBatchRunning = false  // ref batch가 preparing/stopping/generating 어느 단계든 true (P1 fix)
 }) {
   // 글로벌 핸들러는 mount 시 한 번만 등록되므로 closure가 stale —
   // 호출 시점의 최신 references가 필요한 곳(MCP 자동 fallback 등)은 ref로 접근.
@@ -94,9 +95,18 @@ export function useMcpServer({
       const effective = normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current)
       return handleGenerateRef(index, false, effective).catch(e => ({ success: false, error: e.message }))
     }
-    // styleId override (선택). 형식은 normalizeStyleId / 'none' / 'auto' 등 styleService와 동일.
-    // 생략하면 handleGenerateScene 내부에서 기존 동작 (scene.style_tag 매칭 fallback) 적용.
-    window.__mcpGenerateScene = (sceneId, styleId) => handleGenerateScene(sceneId, styleId)
+    // styleId override (선택). 형식은 styleService와 동일.
+    //   - 'auto' / 'none' / null / undefined / '': 그대로 forward (sentinel 의미 보존)
+    //   - 'ref:*' / 'preset:*': 그대로 forward
+    //   - plain id (예: 'noir'): normalizeStyleId가 'preset:noir'로 wrap (다른 MCP path와 일관).
+    //     안 하면 applyStyle()이 prefix 없는 id를 인식 못 해서 조용히 스타일 미적용 회귀.
+    window.__mcpGenerateScene = (sceneId, styleId) => {
+      if (styleId === 'auto' || styleId === 'none' || styleId == null || styleId === '') {
+        return handleGenerateScene(sceneId, styleId)
+      }
+      const normalized = normalizeStyleId(styleId) ?? styleId
+      return handleGenerateScene(sceneId, normalized)
+    }
     window.__mcpSetStyle = (styleId) => { setSelectedStyleRefId(styleId); return styleId }
     window.__mcpGetStyle = () => selectedStyleRefId
     window.__mcpRefreshAudioReviews = () => refreshReviews()
@@ -366,7 +376,10 @@ export function useMcpServer({
       const refDone = references.filter(r => r.type !== 'style' && r.mediaId).length
       const refGenerating = generatingRefs.length
       const refPending = refTotal - refDone - refGenerating
-      const refIsRunning = generatingRefs.length > 0
+      // refBatchRunning prop은 preparing/stopping/generating 모두 포함 — P1 회귀 가드.
+      // generatingRefs.length만 보면 preparingRefs 구간에 isRunning이 false로 평가돼서
+      // 중복 batch 진행 가능 (auto stop-restart 우회).
+      const refIsRunning = refBatchRunning || generatingRefs.length > 0
 
       return {
         isRunning: isRunning || videoAutomation.isRunning || refIsRunning,
@@ -384,5 +397,5 @@ export function useMcpServer({
       delete window.__mcpStopBatch
       delete window.__mcpBatchStatus
     }
-  }, [handleStart, handleStop, handleGenerateAllRefs, scenes, references, generatingRefs, automationState, videoAutomation])
+  }, [handleStart, handleStop, handleGenerateAllRefs, scenes, references, generatingRefs, automationState, videoAutomation, refBatchRunning])
 }
