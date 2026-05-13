@@ -10,6 +10,7 @@
 
 import { useEffect, useRef } from 'react'
 import { normalizeStyleId, findAutoStyle } from '../services/styleService'
+import { syncExplicitStyleId } from '../services/mcpStyle'
 
 /**
  * @param {object} params
@@ -312,11 +313,7 @@ export function useMcpServer({
         return normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current)
       }
 
-      // UI sync: 명시 ID만. normalizeStyleId가 처리한 정규화된 형태로 전달.
-      if (styleId !== undefined && styleId !== null && styleId !== '' && styleId !== 'auto' && styleId !== 'none') {
-        const normalized = normalizeStyleId(styleId)
-        if (normalized) setSelectedStyleRefId?.(normalized)
-      }
+      syncExplicitStyleId(styleId, { normalizeStyleId, setSelectedStyleRefId })
 
       if (isRunningRef.current) {
         handleStopRef.current?.()
@@ -346,11 +343,7 @@ export function useMcpServer({
         return normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current)
       }
 
-      // UI sync: 명시 ID만.
-      if (styleId !== undefined && styleId !== null && styleId !== '' && styleId !== 'auto' && styleId !== 'none') {
-        const normalized = normalizeStyleId(styleId)
-        if (normalized) setSelectedStyleRefId?.(normalized)
-      }
+      syncExplicitStyleId(styleId, { normalizeStyleId, setSelectedStyleRefId })
 
       if (isRunningRef.current) {
         handleStopRef.current?.()
@@ -365,17 +358,27 @@ export function useMcpServer({
     window.__mcpStopBatch = () => handleStop()
     window.__mcpBatchStatus = () => {
       const { isRunning, isPaused, progress, status, statusMessage } = automationState
+      // P2 fix: status가 in-flight면 (pending/generating/error) done에서 제외.
+      // force 재생성 중 이전 image/mediaId가 남아있어도 status가 pending이면 "재생성 중"으로 표시.
+      // status 없으면 image 기반 (legacy 호환).
+      const isSceneDone = (s) =>
+        (s.image || s.imagePath) &&
+        s.status !== 'pending' && s.status !== 'generating' && s.status !== 'error'
+      const isRefDone = (r) =>
+        r.type !== 'style' && r.mediaId &&
+        r.status !== 'pending' && r.status !== 'generating' && r.status !== 'error'
+
       const total = scenes.length
-      const done = scenes.filter(s => s.image || s.imagePath).length
+      const done = scenes.filter(isSceneDone).length
       const pending = scenes.filter(s => s.status === 'pending').length
       const generating = scenes.filter(s => s.status === 'generating').length
       const error = scenes.filter(s => s.status === 'error').length
 
       // 레퍼런스 배치 상태
       const refTotal = references.filter(r => r.type !== 'style').length
-      const refDone = references.filter(r => r.type !== 'style' && r.mediaId).length
+      const refDone = references.filter(isRefDone).length
       const refGenerating = generatingRefs.length
-      const refPending = refTotal - refDone - refGenerating
+      const refPending = Math.max(0, refTotal - refDone - refGenerating)
       // refBatchRunning prop은 preparing/stopping/generating 모두 포함 — P1 회귀 가드.
       // generatingRefs.length만 보면 preparingRefs 구간에 isRunning이 false로 평가돼서
       // 중복 batch 진행 가능 (auto stop-restart 우회).

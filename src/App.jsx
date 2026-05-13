@@ -23,7 +23,8 @@ import { useFlowEvents } from './hooks/useFlowEvents'
 import { useMcpServer } from './hooks/useMcpServer'
 import { syncVideosIntoScenes } from './services/mediaSync'
 import { retryVideoDownload } from './services/videoRecovery'
-import { applyStyle } from './services/styleService'
+import { applyStyle, previewStyleMatching } from './services/styleService'
+import { computeGuardAvailable } from './services/startGuard'
 import { createStyleResolver } from './services/styleResolver'
 import { filterPendingScenes } from './utils/sceneFilters'
 import { detectFileType, detectCSVType, parseCSVToScenes, parseSRTToScenes } from './utils/parsers'
@@ -635,11 +636,17 @@ function App() {
         // 매칭 가능한 씬이 1개 이상일 때만. 전체 scenes 기준이면 완료된 씬 매칭이 false-positive.
         // override가 명시적 null이면 자동 모드 강제 (UI 선택값 무시) — 기본 default(undefined)는 UI 사용.
         const effectiveStyleId = styleResolver.resolveEffectiveStyleId(overrideStyleId)
-        // force=true (MCP 자동화 호출)는 requireStyle 가드 우회 — autoAvailable이 filterPendingScenes
-        // 기준이라 모든 씬이 done인 프로젝트에선 false가 되어 picker가 뜨고 return하는 회귀를 차단.
-        // MCP 자동화 호출자는 styleId를 의도적으로 결정해서 force=true를 줬으므로 UI 가드 부적절.
-        if (!force && settings.requireStyle && !effectiveStyleId) {
-          if (!styleResolver.autoAvailable) {
+        // force=true (MCP 강제 재생성)이면 force 대상 기준 autoAvailable 재계산 (P3 fix).
+        // ('none' sentinel은 truthy라 `!effectiveStyleId` 조건 자체를 통과 안 함 → 가드 미적용 = 명시적 무스타일 허용)
+        const guardAvailable = computeGuardAvailable({
+          force,
+          targetScenes,
+          references: scenesHook.references,
+          autoAvailable: styleResolver.autoAvailable,
+          previewStyleMatchingFn: previewStyleMatching,
+        })
+        if (settings.requireStyle && !effectiveStyleId) {
+          if (!guardAvailable) {
             setShowStylePicker(true)
             return
           }

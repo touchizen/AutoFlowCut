@@ -358,25 +358,34 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     let hasPendingSaves = false
     setSaveFailedOnce(false)
 
+    // prepare 단계 조기 종료 헬퍼 — preparingRefs와 stoppingRefs를 둘 다 정리.
+    // 안 그러면 prepare 구간에 MCP가 stopGenerateAllRefs()로 stoppingRefs=true를 세팅한 후
+    // folder/auth 실패로 조기 return하면 stoppingRefs가 영구히 stuck → 다음 MCP 호출이
+    // waitForStopped 30s timeout 타고 UI도 'stopping' 상태 고착 (P1 회귀 fix).
+    const cleanupPrepareAndReturn = () => {
+      setPreparingRefs(false)
+      setStoppingRefs(false)
+    }
+
     // 폴더 모드 권한 확인
     if (settings.saveMode === 'folder') {
       const permission = await fileSystemAPI.ensurePermission()
-      if (permission.error === 'not_set') { setPreparingRefs(false); openSettings('storage'); return }
+      if (permission.error === 'not_set') { cleanupPrepareAndReturn(); openSettings('storage'); return }
       if (permission.error === 'folder_deleted') {
         toast.error(t('toast.folderDeleted'))
-        setPreparingRefs(false); openSettings('storage')
+        cleanupPrepareAndReturn(); openSettings('storage')
         return
       }
       if (!permission.hasPermission) {
         toast.warning(t('toast.folderPermissionNeeded'))
-        setPreparingRefs(false); openSettings('storage')
+        cleanupPrepareAndReturn(); openSettings('storage')
         return
       }
       console.log('[GenerateAllRefs] Permission granted:', permission.name)
     }
 
     // 토큰 확인
-    if (!(await checkAuthToken(flowAPI, t))) { setPreparingRefs(false); return }
+    if (!(await checkAuthToken(flowAPI, t))) { cleanupPrepareAndReturn(); return }
 
     // 비동기 대기열
     const pendingQueue = []

@@ -76,6 +76,49 @@ function setupHook({ checkGenerationImpl }) {
   return { result, setRefCalls, flowAPI }
 }
 
+describe('useReferenceGeneration — prepare-phase stop cleanup (P1)', () => {
+  // 회귀 컨텍스트:
+  //   _executeBatchRefs의 prepare 단계(폴더 권한/auth check)에서 MCP가 stopGenerateAllRefs()를
+  //   호출 → stoppingRefs=true. 이때 폴더 권한/auth가 실패해 조기 return하면 setPreparingRefs(false)만
+  //   호출하고 stoppingRefs는 영구히 true로 stuck. 다음 MCP 호출이 waitForStopped 30s timeout
+  //   타고, UI도 'stopping' 상태에 갇히는 회귀. 모든 early return에서 stoppingRefs도 false로 정리.
+
+  it('folder permission 조기 return 시 stoppingRefs 정리됨', async () => {
+    // 새 모듈 import (mock 재초기화 회피)
+    const { useReferenceGeneration } = await import('../../src/hooks/useReferenceGeneration')
+    const { fileSystemAPI } = await import('../../src/hooks/useFileSystem')
+
+    // folder permission이 not_set 반환하기 직전 stop을 트리거
+    let hookHandle
+    fileSystemAPI.ensurePermission.mockImplementationOnce(async () => {
+      // 외부 stop 호출 시뮬레이션 (MCP path)
+      if (hookHandle) hookHandle.current.stopGenerateAllRefs()
+      return { error: 'not_set' }
+    })
+
+    const refs = [{ id: 1, prompt: 'a portrait', type: 'character', status: 'pending' }]
+    const { result } = renderHook(() => useReferenceGeneration({
+      settings: { saveMode: 'folder', imageBatchCount: 1 },
+      references: refs,
+      setReferences: vi.fn(),
+      flowAPI: { getAccessToken: vi.fn().mockResolvedValue('token') },
+      addPendingSave: vi.fn(),
+      openSettings: vi.fn(),
+      t: (k) => k,
+      generationQueue: null
+    }))
+    hookHandle = result
+
+    await act(async () => {
+      await result.current.handleGenerateAllRefs()
+    })
+
+    // P1 fix: cleanupPrepareAndReturn이 두 플래그 모두 false로
+    expect(result.current.preparingRefs).toBe(false)
+    expect(result.current.stoppingRefs).toBe(false)
+  })
+})
+
 describe('useReferenceGeneration — stop during batch', () => {
   it('does NOT mark stopped refs as error/Timed out', async () => {
     vi.useFakeTimers()

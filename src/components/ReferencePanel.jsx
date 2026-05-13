@@ -49,9 +49,16 @@ export default function ReferencePanel({
 
   // 진행률은 누적 기준 — 스타일 제외 · 프롬프트 있는 전체 중 완료된 개수.
   // 배치를 여러 번 나눠 돌려도 "N/total"이 일관되게 표시된다.
+  //
+  // status가 명시적으로 in-flight면 (pending/generating/error) done에서 제외 — force 재생성 중
+  // 이전 이미지/파일이 남아있는 상황에서 progress가 100%로 stuck되는 회귀 차단 (P2 fix).
+  // status가 없거나 'done'이면 image fields로 판정 (legacy 호환).
   const eligibleRefs = references.filter(r => r.prompt && r.type !== 'style')
   const totalEligible = eligibleRefs.length
-  const doneCount = eligibleRefs.filter(r => r.data || r.filePath).length
+  const doneCount = eligibleRefs.filter(r =>
+    (r.data || r.filePath) &&
+    r.status !== 'pending' && r.status !== 'generating' && r.status !== 'error'
+  ).length
   const errorCount = eligibleRefs.filter(r => r.status === 'error').length
 
   const batchElapsedSec = useElapsedTimer(batchStartedAt)
