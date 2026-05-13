@@ -567,6 +567,44 @@ function App() {
     toast.info(t('videoAutomation.needsRegen') || 'Reset — click Start Generation to retry')
   }, [isRunning, videoAutomation.isRunning, settings, flowAPI, framePairs, scenesHook, videoScenesHook, t])
 
+  // 스타일 ID → 표시 라벨 변환. handleStart에서 시작 시점 snapshot 용으로,
+  // JSX에서 Start/Stop 버튼 라벨 용으로 공유 사용.
+  // - id가 null이면 자동 매칭 모드 (탭별로 image/list는 previewStyleMatching, video-text는 findAutoStyle)
+  const resolveAutoLabelForTab = () => {
+    if (activeTab === 'video-text') {
+      const auto = findAutoStyle(references)
+      return auto || null
+    }
+    let targetScenes = filterPendingScenes(scenes)
+    if (targetScenes.length === 0) targetScenes = scenes
+    const preview = previewStyleMatching(targetScenes, references)
+    if (preview.matches.length === 0) return null
+    const top = preview.styleSummary[0]
+    const more = preview.styleSummary.length - 1
+    const label = more > 0 ? `${top.name} +${more}` : top.name
+    return { __wrappedLabel: t('actions.autoStyle', { label }) }
+  }
+  const computeStyleLabel = (id) => {
+    if (!id) {
+      const auto = resolveAutoLabelForTab()
+      if (!auto) return t('actions.styleNone')
+      if (typeof auto === 'string') return t('actions.autoStyle', { label: computeStyleLabel(auto) })
+      return auto.__wrappedLabel
+    }
+    if (id.startsWith('ref:')) {
+      const refId = id.replace('ref:', '')
+      const ref = references.find(r => String(r.id) === refId && r.type === 'style')
+      return ref?.name || refId
+    }
+    if (id.startsWith('preset:')) {
+      const presetId = id.replace('preset:', '')
+      const preset = STYLE_PRESETS?.styles?.find(s => s.id === presetId)
+      const isKo = t('common.cancel') === '취소'
+      return isKo ? (preset?.name_ko || presetId) : (preset?.name_en || presetId)
+    }
+    return id
+  }
+
   const handleStart = async (overrideStyleId = null) => {
     // 이미 실행 중이거나 큐에 batch가 대기 중이면 무시 (중지는 별도 버튼)
     if (isRunning || videoAutomation.isRunning || hasPendingBatch) return
@@ -643,8 +681,8 @@ function App() {
           return
         }
 
-        // Stop 버튼이 현재 돌고 있는 스타일을 표시할 수 있도록 시작 시점 snapshot
-        setRunningStyle({ styleId: effectiveStyleId, applies: true })
+        // Stop 버튼이 현재 돌고 있는 스타일을 표시할 수 있도록 id + 라벨 모두 시작 시점 snapshot
+        setRunningStyle({ styleId: effectiveStyleId, label: computeStyleLabel(effectiveStyleId), applies: true })
         setHasPendingBatch(true)
         start(startOptions).finally(() => setHasPendingBatch(false))
         break
@@ -835,7 +873,8 @@ function App() {
     setTagValidationErrors(null)
     if (pendingStartOptions) {
       // 시작 시점 snapshot — 사용자가 modal 띄운 사이 스타일 변경해도 startOptions에 들어간 게 진실
-      setRunningStyle({ styleId: pendingStartOptions.selectedStyleRefId, applies: true })
+      const sid = pendingStartOptions.selectedStyleRefId
+      setRunningStyle({ styleId: sid, label: computeStyleLabel(sid), applies: true })
       setHasPendingBatch(true)
       start(pendingStartOptions).finally(() => setHasPendingBatch(false))
       setPendingStartOptions(null)
@@ -1142,52 +1181,13 @@ function App() {
             const requiredCount = Math.ceil(scenes.length * threshold / 100)
             const canExport = hasScenes && hasRun && !anyRunning && doneCount >= requiredCount
 
-            // 스타일 ID → 표시 라벨 변환 (Start: 현재 선택값 / Stop: 실행 중 snapshot)
-            // id가 null이면 자동 매칭 모드 — 탭별로 실제 적용될 스타일을 라벨에 반영.
-            // - image/list 탭: 씬별 style_tag 매칭 결과 (previewStyleMatching)
-            // - video-text 탭: 씬 매칭 path 없음, findAutoStyle로 첫 style ref 적용
-            const resolveAutoLabelForTab = () => {
-              if (activeTab === 'video-text') {
-                const auto = findAutoStyle(references)
-                return auto || null  // null이면 styleNone, 있으면 ref:N 형태 — 재귀로 라벨 변환
-              }
-              // 라벨용 매칭은 generation 대상이 비었을 때 전체 scenes로 fallback —
-              // requireStyle 검증(handleStart)은 여전히 target scenes만 보지만, 라벨은
-              // 사용자에게 "지금 매칭이 잡힌 스타일이 무엇인지" 항상 보여줘야 직관적이다.
-              // (모두 완료 상태 + 매칭 ✓ 인데 라벨이 None으로 표시되는 헷갈림 방지)
-              let targetScenes = filterPendingScenes(scenes)
-              if (targetScenes.length === 0) targetScenes = scenes
-              const preview = previewStyleMatching(targetScenes, references)
-              if (preview.matches.length === 0) return null
-              const top = preview.styleSummary[0]
-              const more = preview.styleSummary.length - 1
-              const label = more > 0 ? `${top.name} +${more}` : top.name
-              return { __wrappedLabel: t('actions.autoStyle', { label }) }
-            }
-            const computeStyleLabel = (id) => {
-              if (!id) {
-                const auto = resolveAutoLabelForTab()
-                if (!auto) return t('actions.styleNone')
-                if (typeof auto === 'string') return t('actions.autoStyle', { label: computeStyleLabel(auto) })
-                return auto.__wrappedLabel
-              }
-              if (id.startsWith('ref:')) {
-                const refId = id.replace('ref:', '')
-                const ref = references.find(r => String(r.id) === refId && r.type === 'style')
-                return ref?.name || refId
-              }
-              if (id.startsWith('preset:')) {
-                const presetId = id.replace('preset:', '')
-                const preset = STYLE_PRESETS?.styles?.find(s => s.id === presetId)
-                const isKo = t('common.cancel') === '취소'
-                return isKo ? (preset?.name_ko || presetId) : (preset?.name_en || presetId)
-              }
-              return id
-            }
             const startStyleLabel = computeStyleLabel(selectedStyleRefId)
             const startStyleApplies = activeTab === 'text' || activeTab === 'list' || activeTab === 'video-text'
-            // Stop 버튼은 실행 시작 시 snapshot한 runningStyle 기준 — 사용자가 실행 중에 탭/스타일 바꿔도 영향 X
-            const stopStyleLabel = computeStyleLabel(runningStyle.styleId)
+            // Stop 버튼은 실행 시작 시 snapshot된 runningStyle.label 우선 사용.
+            // label snapshot이 없는 케이스(이전 동작 호환)만 fallback으로 다시 계산.
+            const stopStyleLabel = runningStyle.label !== undefined
+              ? runningStyle.label
+              : computeStyleLabel(runningStyle.styleId)
             const stopStyleApplies = runningStyle.applies
 
             return (
