@@ -102,9 +102,15 @@ export function resolveSceneStyle(prompt, allMatched, selectedStyleRefId, refere
     appliedStyle = `auto:${matchedStyleRef.name || matchedStyleRef.id}`
   }
 
-  // 1b. 매칭 레퍼런스 없으면 style_tag로 프리셋에서 찾기
+  // 1b. 매칭 레퍼런스 없으면 splitTags 토큰 기반으로 프리셋에서 찾기
+  // (multi-tag `'cinematic, noir'`에서도 각 토큰이 preset과 매칭되면 첫 매칭 적용)
   if (appliedStyle === 'none' && styleTag) {
-    const preset = STYLE_PRESETS?.styles?.find(s => s.id === styleTag || s.name_ko === styleTag || s.name_en === styleTag)
+    const tokens = splitTags(styleTag)
+    const preset = (STYLE_PRESETS?.styles || []).find(s =>
+      tokens.includes(s.id?.toLowerCase()) ||
+      tokens.includes(s.name_ko?.toLowerCase()) ||
+      tokens.includes(s.name_en?.toLowerCase())
+    )
     if (preset?.prompt_en) {
       styledPrompt = `${prompt}, ${preset.prompt_en}`
       appliedStyle = `preset:${preset.id}`
@@ -179,8 +185,14 @@ export function previewStyleMatching(scenes, references, opts = {}) {
       continue
     }
 
-    const rawTag = scene.style_tag
-    const preset = presets.find(p => p.id === rawTag || p.name_ko === rawTag || p.name_en === rawTag)
+    // Preset 매칭은 splitTags 토큰 기반 — multi-tag (`'cinematic, noir'`)에서도
+    // 각 토큰이 preset과 매칭되면 첫 매칭 preset을 적용. 이전엔 raw `scene.style_tag`
+    // 전체를 통째로 비교해 multi-tag preset이 누락됐다.
+    const preset = presets.find(p =>
+      tags.includes(p.id?.toLowerCase()) ||
+      tags.includes(p.name_ko?.toLowerCase()) ||
+      tags.includes(p.name_en?.toLowerCase())
+    )
     if (preset) {
       matches.push({ sceneId: scene.id, styleName: preset.name_ko || preset.name_en, source: 'preset' })
       continue

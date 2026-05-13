@@ -85,10 +85,12 @@ describe('previewStyleMatching', () => {
     const scenes = [
       { id: 1, style_tag: 'noir, cinematic' },
       { id: 2, style_tag: 'gothic;noir' },
-      { id: 3, style_tag: 'cinematic:moody' }
+      { id: 3, style_tag: 'gothic:moody' }  // 둘 다 ref/preset에 없음 — unmatched
     ]
     const refs = [{ id: 10, type: 'style', name: 'Noir', prompt: 'noir' }]
-    const result = previewStyleMatching(scenes, refs)
+    // presets 명시 안 함 → STYLE_PRESETS 사용. scene 1/2는 ref Noir 매칭 우선,
+    // scene 3는 둘 다 토큰이 ref에도 preset에도 없음 → unmatched.
+    const result = previewStyleMatching(scenes, refs, { presets: [] })
     expect(result.matches).toEqual([
       { sceneId: 1, styleName: 'Noir', source: 'ref' },
       { sceneId: 2, styleName: 'Noir', source: 'ref' }
@@ -132,6 +134,37 @@ describe('previewStyleMatching', () => {
     const scenes = [{ id: 1, style_tag: 'cinematic' }]
     const refs = [{ id: 10, type: 'style', name: 'cinematic' /* no prompt */ }]
     const result = previewStyleMatching(scenes, refs, {
+      presets: [{ id: 'cinematic', name_ko: '시네마틱', name_en: 'Cinematic' }]
+    })
+    expect(result.matches).toEqual([
+      { sceneId: 1, styleName: '시네마틱', source: 'preset' }
+    ])
+  })
+
+  it('matches preset by token in multi-tag style_tag (P2 fix)', () => {
+    // 사용자가 dropdown으로 cinematic + noir 두 토큰 입력. 한 토큰만 preset 매칭이어도 적용돼야.
+    const scenes = [{ id: 1, style_tag: 'cinematic, noir' }]
+    const result = previewStyleMatching(scenes, [], {
+      presets: [{ id: 'cinematic', name_ko: '시네마틱', name_en: 'Cinematic' }]
+    })
+    expect(result.matches).toEqual([
+      { sceneId: 1, styleName: '시네마틱', source: 'preset' }
+    ])
+  })
+
+  it('matches preset by token regardless of order (multi-tag)', () => {
+    const scenes = [{ id: 1, style_tag: 'noir, cinematic' }]
+    const result = previewStyleMatching(scenes, [], {
+      presets: [{ id: 'cinematic', name_ko: '시네마틱', name_en: 'Cinematic' }]
+    })
+    expect(result.matches).toEqual([
+      { sceneId: 1, styleName: '시네마틱', source: 'preset' }
+    ])
+  })
+
+  it('matches preset by name_ko token in multi-tag', () => {
+    const scenes = [{ id: 1, style_tag: 'noir, 시네마틱' }]
+    const result = previewStyleMatching(scenes, [], {
       presets: [{ id: 'cinematic', name_ko: '시네마틱', name_en: 'Cinematic' }]
     })
     expect(result.matches).toEqual([
