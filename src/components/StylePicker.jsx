@@ -13,10 +13,11 @@ import './StylePicker.css'
 const ALL_CATEGORY = '__all__'
 
 function buildMatchPreviewTooltip(preview, t) {
+  const hint = t('reference.autoMatchHint')
   if (!preview || preview.matches.length === 0) {
-    return t('reference.matchPreviewEmpty')
+    return `${hint}\n\n${t('reference.matchPreviewEmpty')}`
   }
-  const lines = [t('reference.matchPreviewTitle')]
+  const lines = [hint, '', t('reference.matchPreviewTitle')]
   for (const s of preview.styleSummary) {
     lines.push(t('reference.matchPreviewSummary', { name: s.name, count: s.count }))
   }

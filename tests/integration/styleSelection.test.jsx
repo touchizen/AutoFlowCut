@@ -13,6 +13,7 @@ const t = (k, vars) => {
     'reference.matchPreviewSummary': '{name}: {count}개 씬',
     'reference.matchPreviewUnmatched': '미매칭: {count}개 씬',
     'reference.matchPreviewEmpty': '매칭된 씬이 없습니다',
+    'reference.autoMatchHint': '씬별 style_tag로 스타일을 자동 결정합니다',
     'reference.uploadedStyles': '업로드된 스타일',
     'reference.generateThumbnails': '썸네일 생성',
     'reference.thumbnailProgress': '{current}/{total}',
@@ -58,6 +59,24 @@ describe('Style selection — end-to-end', () => {
     const summaryEl = document.querySelector('.sp-auto-summary')
     expect(summaryEl).toBeTruthy()
     expect(summaryEl.textContent).toContain('내 시그니처')
+  })
+
+  it('auto card tooltip includes the per-scene-matching hint', () => {
+    const { container } = render(
+      <StylePicker
+        selectedId={null}
+        onSelect={vi.fn()}
+        scenes={scenes}
+        references={references}
+        thumbnails={{}}
+        uploadedStyleRefs={[userStyle]}
+        progress={{ current: 0, total: 0 }}
+        t={t}
+        isKo={true}
+      />
+    )
+    const autoCard = container.querySelector('.sp-no-style')
+    expect(autoCard.getAttribute('title')).toContain('씬별 style_tag로 스타일을 자동 결정합니다')
   })
 
   it('explicit selection overrides auto-match in resolveSceneStyle', () => {
