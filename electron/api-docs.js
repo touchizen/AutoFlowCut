@@ -417,7 +417,7 @@ curl http://127.0.0.1:3210/api/batch-status
       post: {
         tags: ['생성'],
         summary: '레퍼런스 이미지 생성',
-        description: 'Fire-and-forget 방식으로 특정 레퍼런스의 이미지를 생성합니다. 즉시 응답하고 생성은 백그라운드에서 진행됩니다.',
+        description: 'Fire-and-forget 방식으로 특정 레퍼런스의 이미지를 생성합니다. 즉시 응답하고 생성은 백그라운드에서 진행됩니다. 이미 이미지가 있는 reference도 다시 호출하면 새 styleId로 재생성됩니다.',
         requestBody: {
           required: true,
           content: {

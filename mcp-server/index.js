@@ -508,7 +508,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'app_generate_reference',
-      description: '실행 중인 AutoFlowCut 앱에서 레퍼런스 이미지를 생성합니다. (프롬프트 기반 Flow API 이미지 생성 트리거). styleId를 지정하면 해당 스타일을 적용합니다.',
+      description: '실행 중인 AutoFlowCut 앱에서 레퍼런스 이미지를 생성합니다. (프롬프트 기반 Flow API 이미지 생성 트리거). styleId를 지정하면 해당 스타일을 적용합니다. 이미 이미지가 있는 reference라도 다시 호출하면 새 styleId로 재생성됩니다.',
       inputSchema: {
         type: 'object',
         properties: {

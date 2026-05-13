@@ -129,6 +129,8 @@ Claude Code
 - `index` (필수): 레퍼런스 인덱스 (0-based)
 - `styleId` (선택): 스타일 적용 (`ref:<id>` 또는 `preset:<id>`). 자세한 의미 모델은 위 "styleId 의미 모델" 표 참고.
 
+> 이미 완료된 reference도 다시 호출하면 새 styleId로 재생성됩니다.
+
 #### POST /api/generate-scene
 
 ```json
@@ -379,6 +381,8 @@ When MCP HTTP Server is ON in the app settings, it listens on `127.0.0.1:3210`.
 
 - `index` (required): Reference index (0-based)
 - `styleId` (optional): Apply a style (`ref:<id>` or `preset:<id>`). See the "styleId semantics" table above for the full model.
+
+> Calling this on an already-completed reference re-generates it with the new styleId.
 
 #### POST /api/generate-scene
 
