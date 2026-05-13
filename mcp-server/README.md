@@ -100,7 +100,8 @@ Claude Code
 | `POST` | `/api/update` | 범용 상태 업데이트 (IPC 전달) |
 | `POST` | `/api/generate-reference` | 레퍼런스 이미지 생성 트리거 |
 | `POST` | `/api/generate-scene` | 개별 씬 이미지 생성 트리거 |
-| `POST` | `/api/start-batch` | 일괄 생성 시작 |
+| `POST` | `/api/start-scene-batch` | 씬 일괄 생성 시작 |
+| `POST` | `/api/start-ref-batch` | 레퍼런스 일괄 생성 시작 |
 | `GET` | `/api/batch-status` | 배치 생성 진행 상태 조회 |
 
 #### POST /api/update — type 목록
@@ -113,7 +114,8 @@ Claude Code
 | `update-scene` | `index`, `fields` | 특정 씬 수정 |
 | `generate-reference` | `index`, `styleId?` | 레퍼런스 생성 (IPC → global 호출) |
 | `generate-scene` | `sceneId` | 씬 생성 (IPC → global 호출) |
-| `start-batch` | — | 일괄 생성 시작 |
+| `start-scene-batch` | `styleId?` | 씬 일괄 생성 시작 |
+| `start-ref-batch` | `styleId?` | 레퍼런스 일괄 생성 시작 |
 
 #### POST /api/generate-reference
 
@@ -125,7 +127,7 @@ Claude Code
 ```
 
 - `index` (필수): 레퍼런스 인덱스 (0-based)
-- `styleId` (선택): 스타일 적용 (`ref:<id>` 또는 `preset:<id>`)
+- `styleId` (선택): 스타일 적용 (`ref:<id>` 또는 `preset:<id>`). 자세한 의미 모델은 위 "styleId 의미 모델" 표 참고.
 
 #### POST /api/generate-scene
 
@@ -135,9 +137,21 @@ Claude Code
 }
 ```
 
-#### POST /api/start-batch
+#### POST /api/start-scene-batch
 
-Body 없이 POST. 앱의 "생성 시작" 버튼과 동일한 동작.
+```json
+{ "styleId": "preset:korean-ani" }
+```
+
+또는 `{ "styleId": "auto" }` (씬별 매칭). Body 없이 POST하면 첫 style 카드 자동 fallback. 앱의 "생성 시작" 버튼과 동일.
+
+#### POST /api/start-ref-batch
+
+```json
+{ "styleId": "preset:korean-ani" }
+```
+
+Body 없이 POST하면 첫 style 카드 자동 fallback. `"auto"`는 ref 컨텍스트에서 의미 없음 — 보내도 무시되고 fallback 동작.
 
 ### MCP 도구 목록
 
@@ -336,7 +350,8 @@ When MCP HTTP Server is ON in the app settings, it listens on `127.0.0.1:3210`.
 | `POST` | `/api/update` | Generic state update (forwarded via IPC) |
 | `POST` | `/api/generate-reference` | Trigger reference image generation |
 | `POST` | `/api/generate-scene` | Trigger single-scene image generation |
-| `POST` | `/api/start-batch` | Start batch generation |
+| `POST` | `/api/start-scene-batch` | Start scene batch generation |
+| `POST` | `/api/start-ref-batch` | Start reference batch generation |
 | `GET` | `/api/batch-status` | Query batch generation progress |
 
 #### POST /api/update — supported `type` values
@@ -349,7 +364,8 @@ When MCP HTTP Server is ON in the app settings, it listens on `127.0.0.1:3210`.
 | `update-scene` | `index`, `fields` | Edit a specific scene |
 | `generate-reference` | `index`, `styleId?` | Generate reference (IPC → global call) |
 | `generate-scene` | `sceneId` | Generate scene (IPC → global call) |
-| `start-batch` | — | Start batch generation |
+| `start-scene-batch` | `styleId?` | Start scene batch generation |
+| `start-ref-batch` | `styleId?` | Start reference batch generation |
 
 #### POST /api/generate-reference
 
@@ -361,7 +377,7 @@ When MCP HTTP Server is ON in the app settings, it listens on `127.0.0.1:3210`.
 ```
 
 - `index` (required): Reference index (0-based)
-- `styleId` (optional): Apply a style (`ref:<id>` or `preset:<id>`)
+- `styleId` (optional): Apply a style (`ref:<id>` or `preset:<id>`). See the "styleId semantics" table above for the full model.
 
 #### POST /api/generate-scene
 
@@ -371,9 +387,21 @@ When MCP HTTP Server is ON in the app settings, it listens on `127.0.0.1:3210`.
 }
 ```
 
-#### POST /api/start-batch
+#### POST /api/start-scene-batch
 
-POST with empty body. Equivalent to clicking "Start Generation" in the app.
+```json
+{ "styleId": "preset:korean-ani" }
+```
+
+Or `{ "styleId": "auto" }` for per-scene matching. Empty body → first style card auto-fallback. Equivalent to clicking "Start Generation" in the app.
+
+#### POST /api/start-ref-batch
+
+```json
+{ "styleId": "preset:korean-ani" }
+```
+
+Empty body → first style card auto-fallback. `"auto"` is meaningless for refs and is silently ignored (falls back).
 
 ### MCP Tools
 
