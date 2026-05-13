@@ -56,6 +56,8 @@ export function applyStyle(prompt, styleId, references, existingMatchedRefs = []
   const styleRefImages = []
   let styledPrompt = prompt
 
+  // 'none' sentinel — caller가 명시적으로 "스타일 미적용" 요구. early return.
+  if (styleId === 'none') return { styledPrompt, styleRefImages }
   if (!styleId) return { styledPrompt, styleRefImages }
 
   if (styleId.startsWith('ref:')) {
@@ -94,6 +96,12 @@ export function applyStyle(prompt, styleId, references, existingMatchedRefs = []
 export function resolveSceneStyle(prompt, allMatched, selectedStyleRefId, references, matchedRefs, styleTag = '') {
   let styledPrompt = prompt
   let appliedStyle = 'none'
+
+  // 'none' sentinel — caller가 명시적으로 "스타일 미적용" 요구.
+  // 자동 매칭, preset fallback, 수동 override 모두 skip.
+  if (selectedStyleRefId === 'none') {
+    return { styledPrompt, appliedStyle: 'none' }
+  }
 
   // 1a. 태그 매칭으로 스타일 레퍼런스가 있으면 자동 적용
   const matchedStyleRef = allMatched.find(r => r.type === 'style' && r.prompt)

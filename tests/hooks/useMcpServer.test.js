@@ -256,30 +256,58 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     expect(handleStart).toHaveBeenCalledWith('ref:555')
   })
 
-  it("__mcpStartBatch('none') forces no style (skips first-card fallback)", () => {
+  it("__mcpStartBatch('none') passes 'none' sentinel through (downstream forces no style)", () => {
     const handleStart = vi.fn()
     const refWithMedia = { id: 555, type: 'style', mediaId: 'm-555' }
     renderHook(() => useMcpServer(makeProps({ handleStart, references: [refWithMedia] })))
 
     window.__mcpStartBatch('none')
-    expect(handleStart).toHaveBeenCalledWith(null)
+    // 'none' must propagate end-to-end so styleService.resolveSceneStyle skips all style application.
+    // null would have meant "auto-match per-scene" which is not what 'none' guarantees.
+    expect(handleStart).toHaveBeenCalledWith('none')
   })
 
-  it("__mcpStartRefBatch('none') forces no style", () => {
+  it("__mcpStartRefBatch('none') passes 'none' sentinel through", () => {
     const handleGenerateAllRefs = vi.fn()
     const refWithMedia = { id: 555, type: 'style', mediaId: 'm-555' }
     renderHook(() => useMcpServer(makeProps({ handleGenerateAllRefs, references: [refWithMedia] })))
 
     window.__mcpStartRefBatch('none')
-    expect(handleGenerateAllRefs).toHaveBeenCalledWith(null)
+    expect(handleGenerateAllRefs).toHaveBeenCalledWith('none')
   })
 
-  it("__mcpGenerateRef(_, 'none') forces no style", async () => {
+  it("__mcpGenerateRef(_, 'none') passes 'none' sentinel through", async () => {
     const handleGenerateRef = vi.fn(() => Promise.resolve({ success: true }))
     const refWithMedia = { id: 555, type: 'style', mediaId: 'm-555' }
     renderHook(() => useMcpServer(makeProps({ handleGenerateRef, references: [refWithMedia] })))
 
     await window.__mcpGenerateRef(2, 'none')
-    expect(handleGenerateRef).toHaveBeenCalledWith(2, false, null)
+    expect(handleGenerateRef).toHaveBeenCalledWith(2, false, 'none')
+  })
+})
+
+describe("styleService — 'none' sentinel end-to-end", () => {
+  it("resolveSceneStyle('none') skips auto-match and preset fallback", async () => {
+    const { resolveSceneStyle } = await import('../../src/services/styleService')
+    const allMatched = [{ id: 1, type: 'style', name: 'noir', prompt: 'noir' }]
+    const matchedRefs = []
+    const result = resolveSceneStyle(
+      'a samurai',
+      allMatched,
+      'none',  // selectedStyleRefId = 'none'
+      [],
+      matchedRefs,
+      'noir'
+    )
+    expect(result.appliedStyle).toBe('none')
+    expect(result.styledPrompt).toBe('a samurai')  // unchanged
+  })
+
+  it("applyStyle('none') returns prompt unchanged with empty styleRefImages", async () => {
+    const { applyStyle } = await import('../../src/services/styleService')
+    const styleRef = { id: 1, type: 'style', prompt: 'noir', mediaId: 'm-1' }
+    const result = applyStyle('a samurai', 'none', [styleRef], [])
+    expect(result.styledPrompt).toBe('a samurai')
+    expect(result.styleRefImages).toEqual([])
   })
 })

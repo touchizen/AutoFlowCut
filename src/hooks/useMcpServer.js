@@ -78,8 +78,9 @@ export function useMcpServer({
         console.warn('[MCP] generate-reference received styleId="auto"; ignored (refs have no per-scene matching). Falling back as if styleId were omitted.')
         styleId = null
       } else if (styleId === 'none') {
-        // 'none' sentinel — caller explicitly wants no style; skip first-card fallback entirely.
-        return handleGenerateRef(index, false, null).catch(e => ({ success: false, error: e.message }))
+        // 'none' sentinel — pass through to handler. styleService.applyStyle/_resolveEffectiveStyleId
+        // recognize 'none' and skip all style application (prompt + ref override).
+        return handleGenerateRef(index, false, 'none').catch(e => ({ success: false, error: e.message }))
       }
       const effective = normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current)
       return handleGenerateRef(index, false, effective).catch(e => ({ success: false, error: e.message }))
@@ -263,8 +264,9 @@ export function useMcpServer({
         return
       }
       if (styleId === 'none') {
-        // 'none' sentinel — caller explicitly wants no style; skip first-card fallback.
-        handleStart(null)
+        // 'none' sentinel — pass through to handler. styleService.resolveSceneStyle recognizes
+        // 'none' and skips auto-match, preset fallback, and override.
+        handleStart('none')
         return
       }
       const effective = normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current)
@@ -279,8 +281,8 @@ export function useMcpServer({
         return
       }
       if (styleId === 'none') {
-        // 'none' sentinel — caller explicitly wants no style; skip first-card fallback.
-        handleGenerateAllRefs(null)
+        // 'none' sentinel — pass through. applyStyle recognizes 'none' and skips style application.
+        handleGenerateAllRefs('none')
         return
       }
       // scene batch와 동일하게 호출 측 fallback — UI selectedStyleRefId 누수 방지.
