@@ -546,10 +546,10 @@
 }
 
 /* ============================================
-   Style Tag Batch Button
+   Tag Batch Button (character/scene/style 공통)
    ============================================ */
 
-.btn-style-tag-batch {
+.btn-tag-batch {
   background: none;
   border: none;
   cursor: pointer;
@@ -560,8 +560,8 @@
   opacity: 0.6;
   transition: opacity 0.15s;
 }
-.btn-style-tag-batch:hover { opacity: 1; }
-.btn-style-tag-batch:disabled { opacity: 0.3; cursor: not-allowed; }
+.btn-tag-batch:hover { opacity: 1; }
+.btn-tag-batch:disabled { opacity: 0.3; cursor: not-allowed; }
 
 /* ============================================
    Tag Batch Modal (character/scene/style 공통)

@@ -481,11 +481,30 @@ export default function SceneList({
               <th className="col-subtitle">{t('sceneList.subtitle')}</th>
               <th className="col-tags">
                 {t('sceneList.tags')}
+                {references.some(r => r.type === 'character') && (
+                  <button
+                    className="btn-tag-batch"
+                    onClick={() => setTagBatchModal({ type: 'character' })}
+                    title={t('sceneList.batchCharacterTag')}
+                    aria-label={t('sceneList.batchCharacterTag')}
+                    disabled={disabled}
+                  >👤</button>
+                )}
+                {references.some(r => r.type === 'scene') && (
+                  <button
+                    className="btn-tag-batch"
+                    onClick={() => setTagBatchModal({ type: 'scene' })}
+                    title={t('sceneList.batchSceneTag')}
+                    aria-label={t('sceneList.batchSceneTag')}
+                    disabled={disabled}
+                  >🏞️</button>
+                )}
                 {references.some(r => r.type === 'style') && (
                   <button
-                    className="btn-style-tag-batch"
+                    className="btn-tag-batch"
                     onClick={() => setTagBatchModal({ type: 'style' })}
                     title={t('sceneList.batchStyleTag')}
+                    aria-label={t('sceneList.batchStyleTag')}
                     disabled={disabled}
                   >🎨</button>
                 )}
