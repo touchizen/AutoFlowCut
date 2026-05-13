@@ -576,8 +576,6 @@ function App() {
     t,
     isKo: t('common.cancel') === '취소',
   })
-  // 임시 alias — Task 10에서 callsite 모두 styleResolver.resolveLabelForId로 마이그레이션 후 제거
-  const computeStyleLabel = styleResolver.resolveLabelForId
 
   // overrideStyleId 시그니처 (3가지 의미 구분):
   //   undefined: 호출자가 override 안 함 → UI selectedStyleRefId 사용
@@ -660,7 +658,7 @@ function App() {
         }
 
         // Stop 버튼이 현재 돌고 있는 스타일을 표시할 수 있도록 id + 라벨 모두 시작 시점 snapshot
-        setRunningStyle({ styleId: effectiveStyleId, label: computeStyleLabel(effectiveStyleId), applies: true })
+        setRunningStyle({ styleId: effectiveStyleId, label: styleResolver.resolveLabelForId(effectiveStyleId), applies: true })
         setHasPendingBatch(true)
         start(startOptions).finally(() => setHasPendingBatch(false))
         break
@@ -688,7 +686,7 @@ function App() {
           : null
 
         // Stop 버튼이 현재 실행 중인 스타일을 표시할 수 있도록 id + 라벨 모두 snapshot
-        setRunningStyle({ styleId: effectiveStyleId, label: computeStyleLabel(effectiveStyleId), applies: true })
+        setRunningStyle({ styleId: effectiveStyleId, label: styleResolver.resolveLabelForId(effectiveStyleId), applies: true })
         setHasPendingBatch(true)
 
         videoAutomation.start({
@@ -854,7 +852,7 @@ function App() {
     if (pendingStartOptions) {
       // 시작 시점 snapshot — 사용자가 modal 띄운 사이 스타일 변경해도 startOptions에 들어간 게 진실
       const sid = pendingStartOptions.selectedStyleRefId
-      setRunningStyle({ styleId: sid, label: computeStyleLabel(sid), applies: true })
+      setRunningStyle({ styleId: sid, label: styleResolver.resolveLabelForId(sid), applies: true })
       setHasPendingBatch(true)
       start(pendingStartOptions).finally(() => setHasPendingBatch(false))
       setPendingStartOptions(null)
@@ -1161,13 +1159,13 @@ function App() {
             const requiredCount = Math.ceil(scenes.length * threshold / 100)
             const canExport = hasScenes && hasRun && !anyRunning && doneCount >= requiredCount
 
-            const startStyleLabel = computeStyleLabel(selectedStyleRefId)
+            const startStyleLabel = styleResolver.resolveLabelForId(selectedStyleRefId)
             const startStyleApplies = activeTab === 'text' || activeTab === 'list' || activeTab === 'video-text'
             // Stop 버튼은 실행 시작 시 snapshot된 runningStyle.label 우선 사용.
             // label snapshot이 없는 케이스(이전 동작 호환)만 fallback으로 다시 계산.
             const stopStyleLabel = runningStyle.label !== undefined
               ? runningStyle.label
-              : computeStyleLabel(runningStyle.styleId)
+              : styleResolver.resolveLabelForId(runningStyle.styleId)
             const stopStyleApplies = runningStyle.applies
 
             return (
