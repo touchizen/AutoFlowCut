@@ -983,7 +983,6 @@ function App() {
         {showReferences && (
           <ReferencePanel
             references={references}
-            scenes={scenes}
             onUpdate={updateReferences}
             onUpload={flowAPI.uploadReference}
             onGenerate={handleGenerateRef}

@@ -16,7 +16,6 @@ import './ReferencePanel.css'
 
 export default function ReferencePanel({
   references,
-  scenes = [],
   onUpdate,
   onUpload,
   onGenerate,
@@ -219,6 +218,8 @@ export default function ReferencePanel({
               <button className="btn-close-wizard" onClick={() => !thumbnailGenerating && setShowBatchWizard(false)} disabled={thumbnailGenerating}>✕</button>
             </div>
             <div className="batch-wizard-body">
+              {/* Reference 위저드는 reference 카드 생성용 — 씬별 매칭과 무관하므로
+                  scenes 안 넘김. StylePicker의 첫 카드는 단순 "스타일 없음"으로 동작. */}
               <StylePicker
                 selectedId={selectedStyleRefId}
                 onSelect={(id) => onStyleRefChange?.(id)}
@@ -230,8 +231,6 @@ export default function ReferencePanel({
                 onGenerateThumbnails={onGenerateThumbnails}
                 onStopGenerating={onStopThumbnailGeneration}
                 onDeleteThumbnail={onDeleteThumbnail}
-                scenes={scenes}
-                references={references}
                 t={t}
                 isKo={isKo}
               />
