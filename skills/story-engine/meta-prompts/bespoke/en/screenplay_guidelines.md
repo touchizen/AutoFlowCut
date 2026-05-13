@@ -66,20 +66,20 @@ Whichever register: NO breaks in voice mid-script. The supplement may pin a spec
 - Within a chapter, sentence/paragraph structure is the writer's call.
 - Compressed chapters (synopsis hand-off may permit "9+10 → one beat") follow the synopsis's compression notes.
 
-## 9. The hook (first 20–30 seconds — separate file)
+## 9. The hook (first 60 seconds)
 
-Universal hook rules — writing order (LAST), separate `{title}_hook.md` file,
-duration target, 5-element checklist, pipeline contract — live in
-[`../../_common/hook_principles.md`](../../_common/hook_principles.md). Read
-that file alongside this guide.
+The first chapter MUST do five things in its opening 60 seconds (~150 words):
 
-Bespoke-specific hook considerations:
-- The hook style MUST match the reference scripts' opening style derived in
-  W1-5 (`_story_source/_meta_supplement.md` § "Hook patterns"). If references
-  favor a particular hook type, prefer it.
-- For audience languages other than English/Korean, recalculate the 20-second
-  word budget — Japanese typically lands at 100–150 mora-units, Spanish at
-  ~70–100 words, etc. Source the per-language calibration from the supplement.
+1. **Time anchor** — date or period
+2. **Place anchor** — geographic or institutional
+3. **A single concrete image** that the audience cannot un-see
+4. **A planted question** (often via a withheld detail — Chekhov's bomb)
+5. **A signal that this is going to matter** — stakes promised, not yet delivered
+
+Avoid:
+- Telling the audience what they're about to hear ("Today we'll tell you the story of…")
+- Generic context ("In a small town…", "Once upon a time…")
+- Pre-spoiling the twist
 
 ## 10. The closing (final 30 seconds)
 

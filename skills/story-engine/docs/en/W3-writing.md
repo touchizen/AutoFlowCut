@@ -1,6 +1,6 @@
 # W3: Script Writing + Review
 
-This document is the W3 (script writing + review) stage guide for the story-engine skill — shared across all genres (yadam / dark-history / bespoke); genre-specific filenames & tone live in the meta-prompts under `meta-prompts/{genre}/`.
+This document is the W3 (script writing + review) stage guide for the story-engine skill — dark-history genre.
 
 ## Reference documents (must read at this stage)
 
@@ -13,12 +13,6 @@ This document is the W3 (script writing + review) stage guide for the story-engi
 | Bespoke | `meta-prompts/bespoke/{lang}/screenplay_guidelines.md`, `narrative_techniques.md`, `suspense_techniques.md` |
 
 **Bespoke `{lang}` resolution**: when `STATE.md` genre is `bespoke`, the output language (`ko` or `en`) is auto-detected. See SKILL.md 참조 문서 table.
-
-**Output filenames** (5 script files + 1 review per genre):
-- **yadam**: `{title}_기.md`, `_승.md`, `_전.md`, `_결.md`, `{title}_hook.md`, `07_검토.md`
-- **dark-history**: `{title}_part1_setup.md`, `_part2_rising.md`, `_part3_crisis.md`, `_part4_resolution.md`, `{title}_hook.md`, `07_review.md`
-- **bespoke**: same English form as dark-history (`{title}_part1_setup.md`, etc., `{title}_hook.md`, `07_review.md`); content in the language `STATE.md` "Output language:" specifies
-- `{title}_hook.md` is **universal ASCII across all genres**. Hook is written LAST, ~20s duration (universal rules: [`meta-prompts/_common/hook_principles.md`](../../meta-prompts/_common/hook_principles.md)).
 
 **Bespoke genre additional REQUIRED read**: `_story_source/_meta_supplement.md` — read alongside the universal base; **supplement WINS on conflicts**. The supplement specifies the per-episode length target, voice register, vocabulary, and benchmark callouts derived from the user's 3–5 reference scripts.
 
@@ -49,50 +43,48 @@ Craft score ≥ 9.5 with even one E-failure = revise. Craft never compensates fo
 
 (Filename typo note: the canonical filenames are `narrative_techniques.md` and `suspense_techniques.md` — plural, not singular.)
 
-Based on the synopsis, **write the four parts (Setup / Rising / Crisis / Resolution) FIRST, then write the Hook with the full story in view, then do integrated review**.
+Based on the synopsis, **write the hook + all four parts (Setup / Rising / Crisis / Resolution) first, then do integrated review**.
 
 ### Writing order
 
 ```
-Setup → Rising → Crisis → Resolution → Hook (LAST) → (after all complete) Review
+Hook (opening) → Setup → Rising → Crisis → Resolution → (after all complete) Review
 ```
 
-**Why Hook is written last** — the cold open's only job is to ignite curiosity or
-anticipation in the first 20–30 seconds. The most compelling lever
-(flash-forward from Act III, mystery of the aftermath, provocative claim,
-sensory immersion) can only be picked after the full arc is on paper. Drafting
-hook first produces generic "Long ago, once upon a time…" openings (see
-"Failing hooks" below).
-
-**Hook lives in its own file** — `{title}_hook.md`. It is NOT duplicated inside
-`{title}_part1_setup.md` (dark-history / bespoke) or `{title}_기.md` (yadam);
-those start with the post-hook narrative.
-Keeping hook separate lets the writer iterate hook independently (A/B different
-openings without re-running part1) and lets reviewers focus on hook as the
-single most-leveraged 30 seconds of the entire video.
-
-**Hook target**: ~20s of narration (50–80 words EN / 80–130자 KO).
-
-### W3 deliverables
-
-W3 produces **5 script files + 1 review file**. Nothing else.
+### File structure
 
 ```
 ep{number}/
-├── {title}_part1_setup.md       ← Introduction (POST-hook) [dark-history & bespoke]
-├── {title}_part2_rising.md      ← Development
-├── {title}_part3_crisis.md      ← Crisis / twist
-├── {title}_part4_resolution.md  ← Ending
-├── {title}_hook.md              ← Cold open (~20s, written LAST — universal ASCII)
-└── 07_review.md                 ← Integrated review
+├── 01_analysis.md
+├── 02_factcheck.md
+├── 03_research.md
+├── 04_synopsis.md
+├── 05_preflight.md
+├── {title}_setup.md        ← Introduction
+├── {title}_rising.md       ← Development
+├── {title}_crisis.md       ← Crisis / twist
+├── {title}_resolution.md   ← Ending
+├── 07_review.md
+├── references.csv          ← Character / place / style refs
+├── {title}_scenes.csv      ← Per-scene data (prompt, subtitle, timecode)
+├── 08_sfx_list.md          ← SFX extraction list
+├── segments_{part}/        ← Per-segment mp3 + JSON timestamps
+├── subtitles_{part}.txt    ← Manual subtitle split (| delimiter, ≤42 chars)
+├── timeline_{part}.json    ← Per-segment start/end times
+├── final_{part}.mp3        ← Part-merged audio
+├── final_{part}.srt        ← Part-merged subtitles (meaning units)
+├── sfx/                    ← SFX originals (per-part MMSS timecodes)
+├── sfx_manifest.json       ← SFX manifest (built in W5-2 from SRT-anchor lookup; filenames include _MMSS)
+│   (TTS/SRT/SFX scripts live in the skill bundle, not the episode dir: skills/story-engine/scripts/*.cjs)
+├── media/                  ← Final production output
+│   ├── final_full.mp3      ← Full merged audio (setup+rising+crisis+resolution)
+│   ├── final_full.srt      ← Full merged subtitles (with offsets applied)
+│   └── sfx/                ← SFX (MMSS on the full timeline)
+│       ├── 01_bell_toll_0030.mp3
+│       ├── 13_marketplace_0836.mp3    ← rising 2:01 → full 8:36
+│       └── ...
+└── 11_upload_info.json
 ```
-
-Upstream files (`01_analysis.md` ... `05_preflight.md`) come from W1/W2 and
-are READ-ONLY for W3. Downstream artifacts (`segments_{part}/`,
-`final_{part}.mp3`, `{title}_scenes.csv`, `media/final_full.mp3`, etc.) are
-produced by W4–W8 and **not** by W3 — for the full episode tree across all
-waves, see `workflows/execute-pipeline.md` § Wave I/O contract (the
-single source of truth).
 
 ### Word count distribution (target: 2,000 – 3,000 words, ~13–20 min at ~150 wpm narration)
 

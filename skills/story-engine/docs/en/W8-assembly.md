@@ -1,6 +1,6 @@
 # W8: Assembly (audio import + CapCut + video)
 
-This document is the W8 (Assembly) stage guide for the story-engine skill — shared across all genres (yadam / dark-history / bespoke); genre-specific filenames & tone live in the meta-prompts under `meta-prompts/{genre}/`.
+This document is the W8 (Assembly) stage guide for the story-engine skill — dark-history genre.
 
 **Run only after W7 (image production) completes with user sign-off.**
 
@@ -8,9 +8,9 @@ W7 was the expensive wave (Google Flow credits). W8 is the free / low-cost assem
 
 ---
 
-## 8-0. SFX scene-match validation (REQUIRED before W8-1 re-import / W8-2 export)
+## 8-0. SFX scene-match validation (REQUIRED before audio import)
 
-W5-4 could not depend on `scenes.csv` (a W6 output), so it only ran mechanic validation (collision / range / per-part offset). This step performs the scenes.csv-based scene-match validation — the natural moment is right before W8-1's idempotent re-import and W8-2's CapCut export, since any scene-match failure may require regenerating SFX and therefore a fresh re-import.
+W5-4 could not depend on `scenes.csv` (a W6 output), so it only ran mechanic validation (collision / range / per-part offset). This step performs the scenes.csv-based scene-match validation — the natural moment is right before audio import.
 
 ```python
 # 1. Parse timecodes (MMSS / HHMMSS) from media/sfx/ filenames
@@ -37,35 +37,17 @@ Only proceed to 8-1 import once this validation passes.
 
 ---
 
-## 8-1. Audio import — idempotent re-import (safety net for W5-5)
+## 8-1. Audio import (narration + SFX)
 
-In the current pipeline, **audio is imported at W5-5** (after W5-4 mechanic
-QA passes). W5-5 is best-effort — the app may have been offline, or the user
-may have switched to another episode in the meantime. **W8-1 issues the same
-import POST idempotently** so the app is guaranteed to be looking at THIS
-episode's audio package before CapCut export runs.
-
-⚠ **Why not just check `/api/audio-reviews`?** That GET returns the app's
-currently-loaded reviews regardless of folder; a non-empty result might be
-leftover state from a previous episode. The only reliable way to ensure the
-app is on this episode's package is to call `/api/audio-import` with the
-explicit folder path.
-
-**W8-1 protocol:**
-
-1. **Precondition** — `media/final_full.mp3` MUST exist on disk. Missing → escalate; W5 did not complete.
-2. **Voices folder reorganization** (if dialogue present, and not already reorganized by W5-5) — idempotent shell loop that creates per-character subfolders. Re-running on already-organized voices is a no-op.
-3. **Import POST** — call `/api/audio-import` with the episode folder path. The app loads (or re-loads, if same path) the audio package.
-4. **Refresh + flag handling** — POST `/api/audio-refresh` to rescan and auto-unflag any regenerated files. Any remaining flagged entries surface in the W8-1 review report.
-
-After step 3, the app is guaranteed to be on THIS episode's audio, regardless of whether W5-5 ran successfully.
+Import the W5-generated audio files into AutoFlowCut.
+After import, narration / SFX will auto-land on the timeline when you export to CapCut.
 
 **Import targets (episode folder):**
 ```
 ep{number}/
 └── media/
-    ├── final_full.mp3           ← full narration audio (hook + setup + rising + crisis + resolution merged in that order; hook starts at t=0)
-    ├── final_full.srt           ← full subtitles (offsets applied — hook subtitles are the first block)
+    ├── final_full.mp3           ← full narration audio
+    ├── final_full.srt           ← full subtitles
     ├── voices/                  ← per-character dialogue TTS (per-character subfolders required)
     │   ├── Reverend/
     │   │   ├── 003_Reverend_000109.mp3
@@ -81,18 +63,14 @@ ep{number}/
         └── ...
 ```
 
-**Auto-create voices/ subfolders (idempotent — safe to re-run):**
+**Auto-create voices/ subfolders:**
 After TTS, extract character name from filenames and auto-create subfolders.
-W5-5 normally does this first; W8-1's re-run must be a true no-op when the
-root has no loose `*.mp3` left (post-W5-5 state). Portable form works in
-both bash and zsh:
-```sh
-cd ep{number}/media/voices && find . -maxdepth 1 -type f -name '*.mp3' \
-  | while read -r f; do
-      char=$(echo "$f" | sed 's|^\./[0-9]*_\([^_]*\)_.*|\1|')
-      mkdir -p "$char"
-      mv "$f" "$char/"
-    done
+```bash
+cd ep{number}/media/voices && for f in *.mp3; do
+  char=$(echo "$f" | sed 's/^[0-9]*_\([^_]*\)_.*/\1/')
+  mkdir -p "$char"
+  mv "$f" "$char/"
+done
 ```
 
 **Import via HTTP API:**
@@ -107,11 +85,10 @@ curl -s -X POST http://localhost:3210/api/audio-import \
 # Query review state
 curl -s http://localhost:3210/api/audio-reviews
 
-# Refresh audio reviews — rescans the currently-loaded package + auto-unflags
-# regenerated files. The endpoint operates on the app's currently-loaded
-# audio package (set by the preceding `/api/audio-import` POST), so no body
-# is required; any payload is ignored by the server.
-curl -s -X POST http://localhost:3210/api/audio-refresh
+# Refresh audio reviews (rescan folder + auto-unflag)
+curl -s -X POST http://localhost:3210/api/audio-refresh \
+  -H "Content-Type: application/json" \
+  -d '{"folderPath": "/path/to/project/story/ep{number}"}'
 ```
 
 **Audio review via MCP:**

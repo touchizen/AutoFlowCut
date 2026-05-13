@@ -1,7 +1,7 @@
 {
   "name": "autoflowcut",
   "version": "0.9.9",
-  "buildNumber": 316,
+  "buildNumber": 444,
   "description": "AutoFlowCut - Automate AI video creation from Google Flow to CapCut projects",
   "main": "dist-electron/main.js",
   "type": "module",
@@ -113,8 +113,7 @@
     "mac": {
       "icon": "assets/icon.icns",
       "target": [
-        "dmg",
-        "zip"
+        "dmg"
       ],
       "artifactName": "${productName}-${version}-mac-${arch}.${ext}",
       "category": "public.app-category.video",

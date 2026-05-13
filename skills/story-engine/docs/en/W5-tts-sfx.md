@@ -1,6 +1,6 @@
 # W5: TTS / SFX + Timecode Validation
 
-This document is the W5 (TTS / SFX generation + timecode validation) stage guide for the story-engine skill — shared across all genres (yadam / dark-history / bespoke); genre-specific filenames & tone live in the meta-prompts under `meta-prompts/{genre}/`.
+This document is the W5 (TTS / SFX generation + timecode validation) stage guide for the story-engine skill — dark-history genre.
 
 Uses the narration / dialogue / SFX data extracted in W4 to generate audio.
 
@@ -260,21 +260,13 @@ media/sfx/                        ← final (full timeline)
 
 ---
 
-## 5-3. Full-audio merge + SFX timecode conversion (5-part)
+## 5-3. Full-audio merge + SFX timecode conversion
 
-Merge the **five parts**' `final_{part}.mp3` and `final_{part}.srt` into
-`media/`. Merge order — `hook` first, then the four narrative parts in their
-genre-canonical order:
-- **yadam**: `hook → 기 → 승 → 전 → 결`
-- **dark-history & bespoke**: `hook → setup → rising → crisis → resolution`
-
-Hook leads the full timeline at offset 0. Convert SFX files from per-part to
-full-timeline timecodes and save to `media/sfx/`.
+Merge the four parts' `final_{part}.mp3` and `final_{part}.srt` into `media/`. Convert SFX files from per-part to full-timeline timecodes and save to `media/sfx/`.
 
 **mp3 merge:**
 ```bash
 # merge_all.txt
-file 'final_hook.mp3'
 file 'final_setup.mp3'
 file 'final_rising.mp3'
 file 'final_crisis.mp3'
@@ -285,24 +277,23 @@ ffmpeg -y -f concat -safe 0 -i merge_all.txt -c copy media/final_full.mp3
 
 **SRT merge:**
 - Add each preceding part's cumulative length as offset to each part's SRT timecodes
-- Measure each `final_{part}.mp3` length with `ffprobe` to compute offsets (hook first)
+- Measure each `final_{part}.mp3` length with `ffprobe` to compute offsets
 - Renumber subtitles from 1 continuously
 
 **Full SFX timecode conversion:**
 - Measure each part's `final_{part}.mp3` length with ffprobe → compute per-part offsets
-- Hook part's offset is `0` (it starts the full timeline)
 - Convert per-part timecodes in `sfx/` originals to full-timeline timecodes
 - Save converted files to `media/sfx/`
 
 ```bash
-# Example per-part offsets (ep10 with hook = 22s)
-# hook: 0s, setup: 22s (0:22), rising: 417s (6:57), crisis: 798s (13:18), resolution: 1401s (23:21)
+# Example per-part offsets (ep10)
+# setup: 0s, rising: 395s (6:35), crisis: 776s (12:56), resolution: 1379s (22:59)
 # sfx/13_marketplace_0201.mp3 (rising 2:01 = 121s)
-# → media/sfx/13_marketplace_0858.mp3 (417 + 121 = 538s = 8:58)
+# → media/sfx/13_marketplace_0836.mp3 (395 + 121 = 516s = 8:36)
 ```
 
 **Final output:**
-- `media/final_full.mp3` — full audio (hook + setup + rising + crisis + resolution concatenated)
+- `media/final_full.mp3` — full audio (setup + rising + crisis + resolution concatenated)
 - `media/final_full.srt` — full subtitles (offsets applied)
 - `media/sfx/*.mp3` — SFX (MMSS timecodes on the full timeline)
 
@@ -312,7 +303,7 @@ ffmpeg -y -f concat -safe 0 -i merge_all.txt -c copy media/final_full.mp3
 
 ## 5-4. SFX timecode mechanic validation (W5 internal consistency only)
 
-**Only the checks possible at W5 are performed here — the "scene match" check depends on `scenes.csv` (a W6 output), so it is moved out and runs at the start of W8 8-0 (before W8-1 idempotent re-import / W8-2 CapCut export) — see `docs/{lang}/W8-assembly.md`.**
+**Only the checks possible at W5 are performed here — the "scene match" check depends on `scenes.csv` (a W6 output), so it is moved out and runs at the start of W8 8-0 (pre-audio-import) — see `docs/{lang}/W8-assembly.md`.**
 
 **Items checked in W5-4 (do NOT require scenes.csv):**
 1. **Collision** — If 3 or more SFX pile onto the same timecode, fail (CapCut track explosion)
@@ -341,60 +332,9 @@ ffmpeg -y -f concat -safe 0 -i merge_all.txt -c copy media/final_full.mp3
 - step: `W05_sfx_timecode_qa`
 - Record after mechanic validation passes (scene-match recorded separately in W8)
 
-**Review (substep 5-4)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 5-5. 5 rounds exceeded → escalate to user.
-
----
-
-## 5-5. Audio import (best-effort, post-mechanic-QA)
-
-Runs **only after W5-4 mechanic QA passes**. Importing earlier risks the user
-listening to audio with broken timecodes / out-of-range SFX; importing after
-W5-4 guarantees the user reviews a mechanically-clean audio package while
-W6 (CSV) and W7 (image generation) run in parallel.
-
-**Voices folder reorganization** (if dialogue present) — must happen
-before the API call so character subfolders are created. Idempotent so
-W8-1 can re-run safely. **Portable** — works in bash AND zsh (uses
-`find`, not glob expansion):
-```sh
-cd ep{number}/media/voices && find . -maxdepth 1 -type f -name '*.mp3' \
-  | while read -r f; do
-      char=$(echo "$f" | sed 's|^\./[0-9]*_\([^_]*\)_.*|\1|')
-      mkdir -p "$char"
-      mv "$f" "$char/"
-    done
-```
-After all root-level `*.mp3` are moved into character subfolders, the
-`find` returns empty and the loop is a true no-op on re-run.
-
-**API call (single POST):**
-```bash
-curl -s -X POST http://localhost:3210/api/audio-import \
-  -H "Content-Type: application/json" \
-  -d '{"folderPath": "/path/to/project/story/ep{number}"}'
-```
-
-**Best-effort semantics:**
-- App offline / network error / non-2xx → log a one-line warning and continue. Do NOT block the wave or retry. W8-1 issues the same POST idempotently as the safety net.
-- Successful import → emit ONE chat line to the user:
-  `🎧 Audio imported — review in the AutoFlowCut Audio tab while W6/W7 run.`
-
-**Why best-effort, not mandatory:** the in-app audio review is an
-optimization (parallel feedback). The pipeline still produces correct
-outputs even if no user review ever happens. W8-1 re-imports
-idempotently regardless of whether W5-5 succeeded.
-
-**Re-import on regeneration:** if the user flags audio in the Audio tab
-during W6/W7 and triggers regeneration of any segment, W5-5 (or W8-1's
-idempotent import) MUST be re-run after the regenerated output lands so
-the app reflects the latest audio package.
-
-**No new file artifacts.** The import side effect lives in the app's state
-(`.audio_review.json` is written by the app, not by W5).
-
-**Review (substep 5-5)** — pass-through: this is a side-effect step, not a content step. No review loop; either succeeded (continue) or warned (continue, W8-1 covers).
+**Review (substep 5-4)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to the next Wave. 5 rounds exceeded → escalate to user.
 
 ---
 
 ## Wave review summary
-Substeps **5-1 through 5-4** enforce max-5-round review with auto-advance on 0 issues. Substep **5-5 (audio-import)** is a side-effect step with no review loop — it either succeeds (continue) or warns (continue; W8-1 covers via idempotent re-import). Wave 5 completes when 5-5 finishes (success or warned). Escalate to user only if a reviewing substep (5-1 through 5-4) exceeds 5 rounds.
+Each substep above enforces max-5-round review with auto-advance on 0 issues. Wave 5 completes when the last substep's review passes. Escalate to user if any substep exceeds 5 rounds.

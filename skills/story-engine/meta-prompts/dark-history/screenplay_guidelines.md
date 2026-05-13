@@ -25,17 +25,12 @@ Each chapter follows this structure:
 
 ## Writing Order
 
-**Hook is written LAST.** Universal hook rules (writing order, separate file,
-duration target, 5-element checklist, pipeline contract) live in
-[`../_common/hook_principles.md`](../_common/hook_principles.md) — always
-read that file alongside this guide.
+**Act I → Act II → Act III → Act IV → Hook**
 
-Dark-history-specific hook considerations:
-- Prefer **Flash-forward** or **Mystery opening** hook types — they fit the
-  genre's noir/gothic register best.
-- The atmospheric details (cold stone, fog, candlelight) work hard for
-  Sensory immersion hooks — use sparingly so they don't blur into part1's
-  establishing scenes.
+The Hook (cold open) is written LAST because:
+- It must tease the most compelling moment
+- You need to know the full story to choose the right hook
+- It sets viewer expectations that must be fulfilled
 
 ---
 

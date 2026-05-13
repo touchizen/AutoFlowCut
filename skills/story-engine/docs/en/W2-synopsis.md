@@ -1,6 +1,6 @@
 # W2: Synopsis + Preflight
 
-This document is the W2 (synopsis writing + preflight check) stage guide for the story-engine skill — shared across all genres (yadam / dark-history / bespoke); genre-specific filenames & tone live in the meta-prompts under `meta-prompts/{genre}/`.
+This document is the W2 (synopsis writing + preflight check) stage guide for the story-engine skill — dark-history genre.
 
 ## Reference documents (must read at this stage)
 

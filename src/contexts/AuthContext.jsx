@@ -210,6 +210,28 @@ export function AuthProvider({ children }) {
     return null
   }, [user?.uid, fetchUserData])
 
+  // 외부 결제/환불/포털 작업 후 앱 복귀 시 자동으로 subscription 재조회.
+  // PaywallModal handleUpgrade → window.open(checkout URL, '_blank') → 사용자가 브라우저에서 결제
+  // → Lemon Squeezy webhook → Firestore 업데이트 → 사용자 앱 복귀.
+  // 이전엔 앱이 fetch를 안 해 stale 상태였음(체험판 뱃지 그대로). focus 이벤트로 자동 fetch.
+  // 5초 미만 blur는 alt-tab 등 무의미 — 5초 이상 unfocused 후 복귀 시에만 refresh (read 비용 절감).
+  useEffect(() => {
+    if (!user?.uid) return
+    let lastBlur = 0
+    const onBlur = () => { lastBlur = Date.now() }
+    const onFocus = () => {
+      if (Date.now() - lastBlur > 5000) {
+        refreshSubscription().catch(err => console.warn('[AuthContext] focus refresh failed:', err?.message))
+      }
+    }
+    window.addEventListener('blur', onBlur)
+    window.addEventListener('focus', onFocus)
+    return () => {
+      window.removeEventListener('blur', onBlur)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [user?.uid, refreshSubscription])
+
   const value = {
     // 상태
     user,

@@ -12,9 +12,8 @@ description: "YouTube story channel script writing skill with 9-wave automated p
 | 스킬 | 역할 | 트리거 |
 |------|------|--------|
 | `/story-new` | 에피소드 초기화 + 주제 논의 | "새 에피소드", "start ep5" |
-| `/story-execute` | **자동** — W1~W9 끝까지 (W3/W7 사용자 게이트 포함) | "파이프라인 실행", "execute" |
-| `/story-next` | 자동 재개 (`/story-execute --from W{N}` 위임) | "이어서 해줘", "continue" |
-| `/story-step` | **수동** — 다음 한 웨이브만 실행 후 종료. 내부 질문 없음, 게이트 없음. 사용자가 결과물 보고 다시 호출하면 다음 웨이브로 | "한 단계만", "step", "한 웨이브" |
+| `/story-execute` | W1~W9 자동 파이프라인 | "파이프라인 실행", "execute" |
+| `/story-next` | 중단 후 재개 | "이어서 해줘", "continue" |
 | `/story-rewrite` | 기존 에피소드 개선 (몰입도 진단 → fork → 개선판) | "rewrite my", "ep03 개선", "다시 써줘" |
 
 ## 9-Wave 파이프라인
@@ -26,11 +25,11 @@ description: "YouTube story channel script writing skill with 9-wave automated p
 | **W3** | 대본 작성 + 검토 | 최대 5회 (목표 9.5점) |
 | | 🛑 **사용자 확인** | |
 | **W4** | 프로덕션 추출 + 검증 | 최대 5회 |
-| **W5** | TTS/SFX + mechanic 타임코드 검증 + 1차 audio import (W5-5, best-effort) | 리뷰 |
+| **W5** | TTS/SFX + mechanic 타임코드 검증 | 리뷰 |
 | **W6** | 스토리보드 CSV + 검토 (batch QA, 3그룹 병렬) | 최대 5회 |
 | **W7** | 이미지 프로덕션 (ref + 씬 + 에러 fix + image QA, batch QA) | 최대 5회 |
 | | 🛑 **사용자 확인** | |
-| **W8** | 어셈블리 (SFX 씬 매칭 + audio import idempotent 재호출/안전망 + CapCut export + 영상 선택) | 최대 5회 |
+| **W8** | 어셈블리 (SFX 씬 매칭 + 오디오 임포트 + CapCut export + 영상 선택) | 최대 5회 |
 | **W9** | 업로드 정보 (제목/설명/태그/썸네일) | — |
 
 ## 장르
@@ -45,11 +44,11 @@ description: "YouTube story channel script writing skill with 9-wave automated p
 
 **Bespoke 장르 추가 요건:** `/story-new` 시 사용자에게 **3~5개 성공 대본 reference**를 받아야 함 (URL / 텍스트 / 로컬 파일). reference가 ≤ 2개 → escalation (다른 장르로 전환 권장).
 
-## Review discipline (W2–W8)
+## Review discipline (W2–W7)
 - Every substep runs a review loop: subagent self-review → list issues → revise.
 - Max 5 rounds. 0 issues → proceed immediately.
 - 5 rounds exceeded → escalate to user.
-- W1 (research) and W9 (upload info) are exceptions with no review loop.
+- W1 (research) and W8 (upload info) are exceptions with no review loop.
 
 ## 리뷰 원칙 (W2–W8)
 - 모든 서브스텝은 리뷰 루프를 실행한다: 서브에이전트 자가검토 → 이슈 목록 → 수정.
@@ -89,7 +88,7 @@ When a review checklist exceeds 5 items, a single subagent skims rather than aud
 
 - **Every new sub-step announces itself in one line BEFORE work begins.** Format: `▸ Starting <step name>…`
 - **Every sub-step completion announces its result with elapsed time.** Format: `✅ <step name> done (mm:ss). Next: <next step>.`
-- **Sub-step ≠ wave.** A wave has multiple sub-steps. Example W5 sub-steps (illustrative — canonical list lives in `workflows/execute-pipeline.md` § Sub-step decomposition): W5-0 voice-pick, W5-1 narration-TTS, W5-1f dialogue-TTS, W5-2 SFX (batched), W5-3 5-part merge, W5-4 mechanic-QA, W5-5 audio-import. Each sub-step MUST emit its own status line.
+- **Sub-step ≠ wave.** A wave has multiple sub-steps. Example W5 sub-steps: W5-0 voice-pick, W5-1 narration-TTS, W5-2 dialogue-TTS, W5-3 SRT, W5-4 SFX (batched), W5-5 merge. Each sub-step MUST emit its own status line. See the canonical sub-step decomposition table in `workflows/execute-pipeline.md`.
 - **No silent block longer than 3 minutes.** Any operation expected to run >3 min MUST be split into 1–3 minute chunks at the orchestrator level, with a status line between chunks.
 - **Repeated calls batch.** When a sub-step does N similar API calls (e.g. 55 SFX cues, 20 scene images), group into batches of 10–15 with one status line per batch: `▸ SFX batch 2/4 (cues 16–30)…` then `✅ batch 2/4 done (M:SS), N/N succeeded.`
 - **Heartbeat fallback.** If a sub-step genuinely cannot be split, the subagent writes `_progress.log` per state change. The orchestrator polls every 30–60 s and forwards the latest line.
@@ -108,7 +107,7 @@ When a review checklist exceeds 5 items, a single subagent skims rather than aud
 
 - **새 서브스텝 시작 시 무조건 1줄 알림 (작업 시작 전).** 형식: `▸ <단계명> 시작…`
 - **서브스텝 완료 시 1줄 알림 (소요시간 포함).** 형식: `✅ <단계명> 완료 (mm:ss). 다음: <다음 단계>.`
-- **서브스텝 ≠ Wave.** 한 Wave는 여러 서브스텝으로 구성. 예시 W5 (illustrative — 캐노니컬 목록은 `workflows/execute-pipeline.md` § 서브스텝 분해 표): W5-0(음성 선택), W5-1(나레이션 TTS), W5-1f(대화 TTS), W5-2(SFX 배치), W5-3(5-part merge), W5-4(mechanic QA), W5-5(audio import). 각 서브스텝마다 상태 라인 필수.
+- **서브스텝 ≠ Wave.** 한 Wave는 여러 서브스텝으로 구성. 예시 W5: W5-0(음성 선택), W5-1(나레이션 TTS), W5-2(대화 TTS), W5-3(SRT), W5-4(SFX 배치), W5-5(머지). 각 서브스텝마다 상태 라인 필수. 캐노니컬 서브스텝 분해 표는 `workflows/execute-pipeline.md` 참조.
 - **3분 이상의 침묵 금지.** 3분 초과 예상되는 작업은 오케스트레이터 레벨에서 1~3분 단위 청크로 분할, 청크 사이에 상태 보고.
 - **반복 호출은 배치로 묶기.** 한 서브스텝이 N개의 유사 호출(SFX 55개, 씬 이미지 20개 등)을 할 때 10~15개 배치로 묶고, 배치당 상태 1줄.
 - **하트비트 대체.** 분할이 정말 불가능한 경우, 서브에이전트가 매 상태 변화마다 `_progress.log`에 1줄 기록 → 오케스트레이터가 30~60초마다 폴링.
@@ -231,7 +230,7 @@ Rules: command strings only (no env values, no credentials, no body content); UR
 | W5 | `docs/{lang}/W5-tts-sfx.md` |
 | W6 | `docs/{lang}/W6-storyboard.md` |
 | W7 | `docs/{lang}/W7-image-production.md` (이미지 프로덕션 — ref + 씬 + QA) |
-| W8 | `docs/{lang}/W8-assembly.md` (어셈블리 — SFX 씬 매칭 + audio import idempotent 재호출 + CapCut export + 영상; 1차 import는 W5-5) |
+| W8 | `docs/{lang}/W8-assembly.md` (어셈블리 — SFX 씬 매칭 + 오디오 임포트 + CapCut export + 영상) |
 | W9 | `docs/{lang}/W9-upload-info.md` (업로드 정보) |
 
 ## AutoFlowCut MCP 도구

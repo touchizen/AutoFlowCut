@@ -81,7 +81,6 @@ Write to `{PROJECT_DIR}/ep{number}_{slug}/_story_source/STATE.md`:
 # Episode {number} -- {topic}
 
 ## Status
-- Schema: v2
 - Genre: {genre}
 - Current Wave: W1
 - Started: {date}

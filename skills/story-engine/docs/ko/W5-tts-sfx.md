@@ -260,20 +260,14 @@ media/sfx/                    ← 최종 (전체 기준)
 
 ---
 
-## 5-3. 전체 오디오 병합 + SFX 타임코드 변환 (5파트)
+## 5-3. 전체 오디오 병합 + SFX 타임코드 변환
 
-**5파트**의 `final_{파트}.mp3`와 `final_{파트}.srt`를 하나로 병합하여 `media/`에 저장한다.
-병합 순서 — `hook`을 첫째, 그 뒤에 4개 본편 파트를 장르 canonical 순서로:
-- **yadam**: `hook → 기 → 승 → 전 → 결`
-- **dark-history / bespoke**: `hook → setup → rising → crisis → resolution`
-
-Hook이 full timeline의 offset 0 에서 시작한다.
+4파트의 `final_{파트}.mp3`와 `final_{파트}.srt`를 하나로 병합하여 `media/`에 저장한다.
 SFX 파일은 파트별 타임코드에서 전체 타임라인 기준으로 변환하여 `media/sfx/`에 저장한다.
 
 **mp3 병합:**
 ```bash
 # merge_all.txt
-file 'final_hook.mp3'
 file 'final_기.mp3'
 file 'final_승.mp3'
 file 'final_전.mp3'
@@ -284,24 +278,23 @@ ffmpeg -y -f concat -safe 0 -i merge_all.txt -c copy media/final_full.mp3
 
 **SRT 병합:**
 - 각 파트의 SRT 타임코드에 앞 파트들의 누적 길이를 오프셋으로 더한다
-- `ffprobe`로 각 `final_{파트}.mp3` 길이를 측정하여 오프셋 계산 (hook 먼저)
+- `ffprobe`로 각 `final_{파트}.mp3` 길이를 측정하여 오프셋 계산
 - 자막 번호를 1부터 연속으로 재부여
 
 **SFX 전체 타임코드 변환:**
 - 각 파트의 `final_{파트}.mp3` 길이를 ffprobe로 측정 → 파트별 오프셋 계산
-- Hook 파트의 오프셋은 `0` (full timeline 시작)
 - `sfx/` 원본 파일의 파트별 타임코드를 전체 타임라인 기준으로 변환
 - 변환된 파일을 `media/sfx/`에 저장
 
 ```bash
-# 파트 오프셋 예시 (ep10, hook = 22초)
-# hook: 0초, 기: 22초(0:22), 승: 417초(6:57), 전: 798초(13:18), 결: 1401초(23:21)
+# 파트 오프셋 예시 (ep10)
+# 기: 0초, 승: 395초(6:35), 전: 776초(12:56), 결: 1379초(22:59)
 # sfx/13_시장_소리_0201.mp3 (승 2:01 = 121초)
-# → media/sfx/13_시장_소리_0858.mp3 (417 + 121 = 538초 = 8:58)
+# → media/sfx/13_시장_소리_0836.mp3 (395 + 121 = 516초 = 8:36)
 ```
 
 **최종 출력:**
-- `media/final_full.mp3` — 전체 오디오 (hook+기+승+전+결 연속)
+- `media/final_full.mp3` — 전체 오디오 (기+승+전+결 연속)
 - `media/final_full.srt` — 전체 자막 (오프셋 적용된 타임코드)
 - `media/sfx/*.mp3` — SFX (전체 타임라인 기준 MMSS 타임코드)
 
@@ -311,7 +304,7 @@ ffmpeg -y -f concat -safe 0 -i merge_all.txt -c copy media/final_full.mp3
 
 ## 5-4. SFX 타임코드 mechanic 검증 (W5 내부 일관성)
 
-**W5 단계에서 검증 가능한 것만 수행한다 — `scenes.csv` (W6 산출물)에 의존하는 "씬 매칭 검증"은 본 단계에서 제외하고 W8 8-0 (W8-1 idempotent 재임포트 / W8-2 CapCut export 전) 도입부에서 실행한다 (`docs/{lang}/W8-assembly.md`).**
+**W5 단계에서 검증 가능한 것만 수행한다 — `scenes.csv` (W6 산출물)에 의존하는 "씬 매칭 검증"은 본 단계에서 제외하고 W8 8-0 (오디오 임포트 전) 도입부에서 실행한다 (`docs/{lang}/W8-assembly.md`).**
 
 **W5-4에서 검증할 항목 (scenes.csv 불필요):**
 1. **겹침 검증** — 같은 타임코드에 3개 이상 몰려있으면 실패 (CapCut에서 트랙 폭발)
@@ -340,53 +333,9 @@ ffmpeg -y -f concat -safe 0 -i merge_all.txt -c copy media/final_full.mp3
 - step: `W05_sfx_timecode_qa`
 - mechanic 검증 통과 후 기록 (씬 매칭은 W8에서 별도 기록)
 
-**리뷰 (서브스텝 5-4)** — 서브에이전트 자가검토 → 이슈 목록 → 수정. 최대 5회. 0 이슈 시 다음 서브스텝(5-5)으로 즉시 진행. 5회 초과 시 사용자에게 에스컬레이션.
-
----
-
-## 5-5. 오디오 임포트 (best-effort, mechanic-QA 통과 후)
-
-**W5-4 mechanic QA가 통과한 후에만** 실행한다. 그 전에 임포트하면 사용자가
-타임코드 깨진/SFX 범위 초과된 오디오를 듣게 된다. W5-4 통과 후 임포트하면
-사용자는 mechanic-clean한 패키지를 W6/W7 도는 동안 병렬로 검토할 수 있다.
-
-**voices 폴더 정리** (대사 존재 시) — API 호출 전 캐릭터별 서브폴더 생성. idempotent (W8-1에서 재실행해도 안전). **portable** — bash + zsh 모두 동작 (글로브 확장 대신 `find` 사용):
-```sh
-cd ep{번호}/media/voices && find . -maxdepth 1 -type f -name '*.mp3' \
-  | while read -r f; do
-      char=$(echo "$f" | sed 's|^\./[0-9]*_\([^_]*\)_.*|\1|')
-      mkdir -p "$char"
-      mv "$f" "$char/"
-    done
-```
-루트 레벨의 모든 `*.mp3`가 캐릭터 서브폴더로 이동되면 `find`가 빈 결과를 반환해 루프가 진짜 no-op이 된다.
-
-**API 호출 (단일 POST):**
-```bash
-curl -s -X POST http://localhost:3210/api/audio-import \
-  -H "Content-Type: application/json" \
-  -d '{"folderPath": "/path/to/project/story/ep{번호}"}'
-```
-
-**Best-effort 시맨틱:**
-- 앱 오프라인 / 네트워크 에러 / non-2xx → 한 줄 warning 로그 후 진행. wave 차단/재시도 안 함. W8-1이 동일 POST를 idempotent하게 한 번 더 호출하는 안전망 역할.
-- 성공 시 사용자에게 ONE 줄 chat:
-  `🎧 오디오 임포트 완료 — W6/W7 진행 중 AutoFlowCut Audio 탭에서 검토하세요.`
-
-**Best-effort인 이유:** 앱 내 audio 리뷰는 최적화(병렬 피드백)이지 정합성
-요구사항이 아니다. 사용자 리뷰가 없어도 파이프라인은 정상 산출. W8-1이
-idempotent하게 재임포트한다.
-
-**재임포트 트리거:** 사용자가 W6/W7 중 Audio 탭에서 어느 세그먼트에 플래그
-달고 재생성하면, 재생성된 산출물이 디스크에 떨어진 후 W5-5(또는 W8-1의
-idempotent 임포트)를 다시 실행해 앱이 최신 패키지를 반영하도록 한다.
-
-**새 파일 산출물 없음.** 임포트 부수효과는 앱 상태에 존재
-(`.audio_review.json`은 앱이 쓰고 W5가 쓰지 않음).
-
-**리뷰 (서브스텝 5-5)** — 패스스루: 부수효과 단계라 콘텐츠 리뷰 없음. 성공(진행) 또는 warning(진행, W8-1이 커버) 둘 중 하나.
+**리뷰 (서브스텝 5-4)** — 서브에이전트 자가검토 → 이슈 목록 → 수정. 최대 5회. 0 이슈 시 다음 Wave로 즉시 진행. 5회 초과 시 사용자에게 에스컬레이션.
 
 ---
 
 ## Wave 리뷰 요약
-서브스텝 **5-1 ~ 5-4**는 최대 5회 리뷰 루프 (0 이슈 시 즉시 진행)를 강제한다. 서브스텝 **5-5 (audio-import)**는 리뷰 루프 없는 side-effect 단계 — 성공(진행) 또는 warning(진행; W8-1이 idempotent 재임포트로 커버) 둘 중 하나. Wave 5는 5-5가 끝나면 (성공/warning 무관) 완료된다. 5-1~5-4 중 5회 초과 시에만 사용자에게 에스컬레이션.
+위 각 서브스텝은 최대 5회 리뷰(0 이슈 시 즉시 진행)를 강제한다. 마지막 서브스텝의 리뷰가 통과하면 Wave 5 완료. 어느 서브스텝이든 5회 초과 시 사용자에게 에스컬레이션.
