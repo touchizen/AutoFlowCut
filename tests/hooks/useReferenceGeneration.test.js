@@ -289,6 +289,57 @@ describe('useReferenceGeneration 로직', () => {
 
         expect(generatableIndices).toHaveLength(0)
       })
+
+      it('force=true: 완료된 ref (data, filePath, status=done)도 포함, type=style은 제외', () => {
+        const references = [
+          { name: 'alice', prompt: 'Alice', data: 'base64...', status: 'done' },
+          { name: 'bob', prompt: 'Bob', data: null, status: 'pending' },
+          { name: 'charlie', prompt: 'Charlie', filePath: '/path/img.png', status: 'done' },
+          { name: 'style1', prompt: 'Style prompt', type: 'style', data: 'base64...' },
+          { name: 'david', prompt: '', data: null }, // prompt 없음 → 제외
+        ]
+
+        // 실 구현(force=true 분기)과 같은 필터
+        const generatableIndices = references
+          .map((ref, index) => {
+            if (!ref.prompt || ref.type === 'style') return -1
+            return index  // force=true: status / data / filePath 무관
+          })
+          .filter(i => i !== -1)
+
+        expect(generatableIndices).toEqual([0, 1, 2])
+      })
+
+      it('force=true: done/error ref를 pending으로 status 리셋 (이미지 필드는 유지)', () => {
+        const references = [
+          { name: 'alice', prompt: 'Alice', data: 'base64-alice', filePath: '/a.png', mediaId: 'm-1', status: 'done' },
+          { name: 'bob', prompt: 'Bob', status: 'error', errorMessage: 'old err' },
+          { name: 'charlie', prompt: 'Charlie', status: 'pending' },
+        ]
+        const generatableIndices = [0, 1, 2]
+
+        // 실 구현(_executeBatchRefs force 분기)과 같은 status 리셋
+        const idxSet = new Set(generatableIndices)
+        const reset = references.map((r, i) => {
+          if (!idxSet.has(i)) return r
+          if (r.status === 'done' || r.status === 'error') {
+            return { ...r, status: 'pending', errorMessage: null }
+          }
+          return r
+        })
+
+        // done/error → pending
+        expect(reset[0].status).toBe('pending')
+        expect(reset[1].status).toBe('pending')
+        expect(reset[1].errorMessage).toBeNull()
+        // pending → pending (변경 없음)
+        expect(reset[2].status).toBe('pending')
+
+        // 이미지/path/mediaId 유지 (사용자가 이전 결과 비교 가능)
+        expect(reset[0].data).toBe('base64-alice')
+        expect(reset[0].filePath).toBe('/a.png')
+        expect(reset[0].mediaId).toBe('m-1')
+      })
     })
 
     describe('폴더 권한 (사용자 제스처)', () => {

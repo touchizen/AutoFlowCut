@@ -261,7 +261,18 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       : force
         ? scenes.filter(s => s.prompt)
         : filterPendingScenes(scenes)
-    
+
+    // force=true 재생성: done 상태인 씬을 pending으로 리셋해 UI에 재생성 시작이 보이게 함.
+    // 이미지/이미지 경로는 유지 — 새 이미지가 도착할 때까지 이전 결과를 노출하면 사용자가 비교 가능.
+    // error/errorKind도 초기화해 stale 메시지 노출 회피.
+    if (force) {
+      for (const s of targetScenes) {
+        if (s.status === 'done' || s.status === 'error') {
+          updateScene(s.id, { status: 'pending', error: null, errorKind: null })
+        }
+      }
+    }
+
     const total = targetScenes.length
     if (total === 0) {
       toast.warning(t('toast.allScenesGenerated'))

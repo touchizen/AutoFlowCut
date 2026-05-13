@@ -338,6 +338,19 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       return
     }
 
+    // force=true 재생성: done/error 상태 ref를 pending으로 리셋해 UI에 재생성 시작이 보이게 함.
+    // data/filePath/mediaId는 유지 — 새 이미지가 도착할 때까지 이전 결과를 노출하면 비교 가능.
+    if (force) {
+      const idxSet = new Set(generatableIndices)
+      setReferences(prev => prev.map((r, i) => {
+        if (!idxSet.has(i)) return r
+        if (r.status === 'done' || r.status === 'error') {
+          return { ...r, status: 'pending', errorMessage: null }
+        }
+        return r
+      }))
+    }
+
     // 배치 시작 - 플래그 리셋
     stopRequestedRef.current = false
     setStoppingRefs(false)
