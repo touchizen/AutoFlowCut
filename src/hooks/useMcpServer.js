@@ -9,6 +9,7 @@
  */
 
 import { useEffect } from 'react'
+import { normalizeStyleId } from '../services/styleService'
 
 /**
  * @param {object} params
@@ -60,7 +61,10 @@ export function useMcpServer({
     window.__mcpOpenProject = (name) => handleProjectChange(name)
     window.__mcpGetReferences = () => references.map(({ data, ...rest }) => rest)
     window.__mcpGetScenes = () => scenes.map(({ image, videoT2V, videoI2V, ...rest }) => rest)
-    window.__mcpGenerateRef = (index) => handleGenerateRef(index).catch(e => ({ success: false, error: e.message }))
+    // styleId override를 직접 받음 (전역 상태 setSelectedStyleRefId + setTimeout race 회피).
+    // styleId 형식은 normalizeStyleId로 정규화됨 ('ref:*' / 'preset:*' / plain → 'preset:*' / null).
+    window.__mcpGenerateRef = (index, styleId) =>
+      handleGenerateRef(index, false, normalizeStyleId(styleId)).catch(e => ({ success: false, error: e.message }))
     window.__mcpGenerateScene = (sceneId) => handleGenerateScene(sceneId)
     window.__mcpSetStyle = (styleId) => { setSelectedStyleRefId(styleId); return styleId }
     window.__mcpGetStyle = () => selectedStyleRefId
@@ -194,12 +198,8 @@ export function useMcpServer({
         console.log('[MCP] Scene', data.index, 'updated via HTTP')
       } else if (data.type === 'generate-reference') {
         console.log('[MCP] Generate reference requested:', data.index, 'style:', data.styleId)
-        if (data.styleId && window.__mcpSetStyle) {
-          window.__mcpSetStyle(data.styleId)
-          setTimeout(() => window.__mcpGenerateRef?.(data.index), 500)
-        } else {
-          window.__mcpGenerateRef?.(data.index)
-        }
+        // styleId를 override로 직접 전달 — 전역 selectedStyleRefId 오염 없음, race 없음.
+        window.__mcpGenerateRef?.(data.index, data.styleId)
       } else if (data.type === 'generate-scene') {
         console.log('[MCP] Generate scene requested:', data.sceneId)
         window.__mcpGenerateScene?.(data.sceneId)
