@@ -1,4 +1,4 @@
-# AutoFlowCut — Microsoft Store Listing (v0.9.8)
+# AutoFlowCut — Microsoft Store Listing (v0.9.9)
 
 ---
 
@@ -156,18 +156,18 @@ Disclaimer: This app is an independent product developed by Touchizen and is not
 
 ### What's New
 ```
-v0.9.8 — Flow Archive Gallery, Disk Upload for F2V, Faster Reference Batches
+v0.9.9 — MCP regenerate-with-style + force re-run + reliability polish
 
-- New: Flow Archive Gallery — browse images previously generated in Google Flow and pick them directly from the F2V dropdown.
-- New: upload local images from disk for F2V (Frame-to-Video) generation — no need to pre-generate.
-- Reference batches are faster: post-processing runs in parallel + elapsed time is shown live.
-- Story Engine: new `/story-step` skill runs one wave at a time (manual mode, no in-wave prompts).
-- Story Engine: per-wave timing is tracked in `W_progress.json` for analysis and resume.
-- Codified error display — errors now have stable kinds with i18n-translated messages (EN/KR/JA/DE).
-- Fix: cross-project image leaks on project load — images from other projects no longer bleed in; missing images are now flagged in the scene list.
-- Fix: when switching projects during a batch, retry-error results were saved to the wrong project.
-- Fix: image generation now clears stale error state on retry and surfaces disk-save failures.
-- Gallery polish: tighter redirect allowlist, request timeout, signed CDN URL handling, label dedupe.
+- New: MCP `app_generate_scene(sceneId, styleId)` — regenerate a single scene with a new style directly from Claude Code.
+- New: `app_start_scene_batch(styleId, force)` and `app_start_ref_batch(styleId, force)` — `force: true` re-runs already-completed scenes/references with a new style.
+- New: Auto stop-restart — when MCP calls again during a running batch, AutoFlowCut stops the current batch and restarts with the new style instantly (no confirmation modal).
+- New: explicit `styleId` from MCP syncs the UI's Start button label automatically; `'none'` sentinel forces "no style" generation end-to-end.
+- Improved: Force-regen UX — target scenes' status resets to `pending` so progress reflects the new run immediately (no more 100%-stuck progress with stale "done" status).
+- Improved: status-aware done counters — MCP `__mcpBatchStatus` and ReferencePanel now share the same definition of completion.
+- Improved: styleResolver refactor — single source of truth for label / effective styleId / autoAvailable across the app.
+- Fix: ref batch lifecycle wrapped in try/finally — preparingRefs/stoppingRefs flags always clean up, preventing the next MCP stop-restart from hitting a 30s timeout.
+- Fix: video-text `undefined` style override now falls back to `autoEffectiveStyleId` correctly.
+- Tests: 1125 → 1199 (+74 — MCP regenerate paths, stop-restart stale closure, status-aware done helpers, force-aware autoAvailable guard).
 ```
 
 ### Keywords
@@ -331,18 +331,18 @@ Touchizen 제작 — touchizen.com
 
 ### What's New (새로운 기능)
 ```
-v0.9.8 — Flow 보관함 갤러리 + 로컬 이미지 업로드 + 레퍼런스 배치 속도 개선
+v0.9.9 — MCP 스타일 변경 재생성 + 강제 재실행 + 안정성 강화
 
-- 신규: Flow 보관함 갤러리 — Google Flow에서 이전에 생성한 이미지를 F2V 드롭다운에서 바로 탐색·선택.
-- 신규: F2V(Frame-to-Video) 생성용 로컬 이미지 디스크 업로드 — 미리 생성할 필요 없이 바로 사용.
-- 레퍼런스 배치 속도 개선: 후처리 병렬화 + 경과 시간 실시간 표시.
-- Story Engine: `/story-step` 스킬 추가 — 한 웨이브씩만 수동 실행 (웨이브 내부 질문 없음).
-- Story Engine: 웨이브별 소요 시간을 `W_progress.json`에 기록.
-- 에러 표시 코드화 — errorKind 도입 + i18n 번역 메시지 (영/한/일/독).
-- 수정: 프로젝트 로드 시 다른 프로젝트의 이미지가 섞이던 버그 + 누락 이미지를 씬 목록에 표시.
-- 수정: 배치 중 프로젝트 전환 시 retry 결과가 잘못된 프로젝트에 저장되던 문제.
-- 수정: 이미지 재생성 시 이전 에러 상태가 남아있던 문제 + 디스크 저장 실패가 보이지 않던 문제.
-- 갤러리 안정화: 리다이렉트 허용 호스트 강화, 요청 타임아웃, 서명된 CDN URL 처리, 라벨 중복 제거.
+- 신규: MCP `app_generate_scene(sceneId, styleId)` — Claude Code에서 단일 씬을 새 스타일로 재생성.
+- 신규: `app_start_scene_batch(styleId, force)` / `app_start_ref_batch(styleId, force)` — `force: true`로 이미 완료된 씬/레퍼런스를 새 스타일로 재실행.
+- 신규: 자동 스톱-리스타트 — 배치 실행 중 MCP가 재호출되면 현재 배치를 중지하고 새 스타일로 즉시 재시작 (확인 모달 없음).
+- 신규: MCP에서 명시한 `styleId`가 UI의 Start 버튼 라벨과 자동 동기화. `'none'` 센티넬로 "스타일 없이 생성"을 끝단까지 강제.
+- 개선: 강제 재생성 UX — 대상 씬 상태를 `pending`으로 리셋해 새 실행 진행률이 즉시 반영됨 (이전 'done' 상태로 100%에서 멈추던 문제 해결).
+- 개선: 상태 인지형 done 카운터 — MCP `__mcpBatchStatus`와 ReferencePanel이 동일한 완료 정의 공유.
+- 개선: styleResolver 리팩터링 — 라벨/효과적 styleId/autoAvailable 결정의 단일 진실 공급원.
+- 수정: 레퍼런스 배치 수명주기를 try/finally로 감싸 preparingRefs/stoppingRefs 플래그가 예외 발생 시에도 정리됨 (다음 MCP 스톱-리스타트의 30초 타임아웃 회귀 방지).
+- 수정: video-text의 `undefined` 스타일 오버라이드가 `autoEffectiveStyleId`로 정상 폴백.
+- 테스트: 1125 → 1199 (+74개 — MCP 재생성 경로, 스톱-리스타트 stale closure, 상태 인지 done 헬퍼, force 인지 autoAvailable 가드).
 ```
 
 ### Keywords (한국어)
@@ -411,18 +411,18 @@ AutoFlowCutはAI動画制作の全プロセスを自動化します。Google Flo
 
 ### What's New
 ```
-v0.9.8 — Flow アーカイブ ギャラリー + ローカル画像アップロード + リファレンスバッチの高速化
+v0.9.9 — MCP スタイル変更付き再生成 + 強制再実行 + 安定性強化
 
-- 新機能：Flow アーカイブ ギャラリー — Google Flow で過去に生成した画像を F2V ドロップダウンから直接ブラウズ・選択。
-- 新機能：F2V（Frame-to-Video）生成用にローカル画像をディスクからアップロード — 事前生成不要。
-- リファレンスバッチの高速化：後処理を並列化 + 経過時間をリアルタイム表示。
-- Story Engine：新スキル `/story-step` — 1ウェーブのみ手動実行（ウェーブ内の質問なし）。
-- Story Engine：ウェーブごとの所要時間を `W_progress.json` に記録。
-- エラー表示のコード化 — errorKind 導入 + 多言語化メッセージ（英・韓・日・独）。
-- 修正：プロジェクト読み込み時に他プロジェクトの画像が混入する不具合 + 欠落画像をシーン一覧で表示。
-- 修正：バッチ中にプロジェクトを切り替えると retry 結果が誤ったプロジェクトに保存される問題。
-- 修正：画像再生成時に古いエラー状態が残る問題 + ディスク保存失敗が表示されない問題。
-- ギャラリー安定化：リダイレクト許可ホスト強化、リクエストタイムアウト、署名済み CDN URL 対応、ラベル重複除去。
+- 新機能：MCP `app_generate_scene(sceneId, styleId)` — Claude Code から単一シーンを新しいスタイルで再生成。
+- 新機能：`app_start_scene_batch(styleId, force)` / `app_start_ref_batch(styleId, force)` — `force: true` で完了済みシーン／リファレンスを新スタイルで再実行。
+- 新機能：自動ストップ・リスタート — バッチ実行中に MCP が再呼び出しされると、現在のバッチを停止して新スタイルで即時再起動（確認モーダルなし）。
+- 新機能：MCP からの明示的 `styleId` が UI の Start ボタンラベルと自動同期。`'none'` センチネルで「スタイルなし」生成をエンドツーエンドで強制。
+- 改善：強制再生成 UX — 対象シーンのステータスを `pending` にリセットし、新実行の進捗が即座に反映（古い「done」ステータスのまま 100% で停止する問題を解消）。
+- 改善：ステータス対応の done カウンター — MCP `__mcpBatchStatus` と ReferencePanel が同じ完了定義を共有。
+- 改善：styleResolver リファクタリング — ラベル／実効 styleId／autoAvailable の単一情報源。
+- 修正：リファレンスバッチのライフサイクルを try/finally で包み、preparingRefs/stoppingRefs フラグが例外時にも常にクリーンアップ（次回 MCP ストップ・リスタート時の 30 秒タイムアウト回帰を防止）。
+- 修正：video-text の `undefined` スタイル上書きが `autoEffectiveStyleId` に正しくフォールバック。
+- テスト：1125 → 1199（+74 — MCP 再生成パス、ストップ・リスタートの stale closure、ステータス対応 done ヘルパー、force 対応 autoAvailable ガード）。
 ```
 
 ---
@@ -486,18 +486,18 @@ Der integrierte MCP-Server (Model Context Protocol) verbindet sich direkt mit Cl
 
 ### What's New
 ```
-v0.9.8 — Flow-Archiv-Galerie + Lokaler Bild-Upload + Schnellere Referenz-Batches
+v0.9.9 — MCP-Neugenerierung mit Stilwechsel + erzwungene Neuausführung + Stabilität
 
-- Neu: Flow-Archiv-Galerie — zuvor in Google Flow generierte Bilder direkt aus dem F2V-Dropdown durchsuchen und auswählen.
-- Neu: Lokale Bilder von der Festplatte für die F2V-Generierung (Frame-to-Video) hochladen — keine Vorgenerierung nötig.
-- Schnellere Referenz-Batches: Nachbearbeitung läuft jetzt parallel + Live-Anzeige der verstrichenen Zeit.
-- Story Engine: Neuer Skill `/story-step` — führt nur eine Wave manuell aus (keine Rückfragen innerhalb der Wave).
-- Story Engine: Wave-spezifische Laufzeiten werden in `W_progress.json` getrackt.
-- Kodifizierte Fehleranzeige — errorKind eingeführt + i18n-übersetzte Meldungen (EN/KR/JA/DE).
-- Fix: Bild-Leaks zwischen Projekten beim Laden — Bilder anderer Projekte erscheinen nicht mehr; fehlende Bilder werden in der Szenenliste markiert.
-- Fix: Bei Projektwechsel während eines Batches wurden Retry-Ergebnisse im falschen Projekt gespeichert.
-- Fix: Bildgenerierung — alter Fehlerzustand wird bei Wiederholung gelöscht; Disk-Save-Fehler werden jetzt angezeigt.
-- Galerie-Politur: Redirect-Allowlist gehärtet, Request-Timeout, signierte CDN-URL-Behandlung, Label-Deduplizierung.
+- Neu: MCP `app_generate_scene(sceneId, styleId)` — eine einzelne Szene aus Claude Code mit neuem Stil neu generieren.
+- Neu: `app_start_scene_batch(styleId, force)` / `app_start_ref_batch(styleId, force)` — mit `force: true` werden bereits abgeschlossene Szenen/Referenzen mit neuem Stil erneut ausgeführt.
+- Neu: Auto-Stop-Restart — wenn MCP während eines laufenden Batches erneut aufgerufen wird, stoppt AutoFlowCut den aktuellen Batch und startet sofort mit dem neuen Stil neu (kein Bestätigungsdialog).
+- Neu: expliziter `styleId` aus MCP synchronisiert sich automatisch mit dem Label des Start-Buttons. `'none'`-Sentinel erzwingt Generierung ohne Stil bis zum Ende.
+- Verbessert: Force-Regen-UX — Status der Zielszenen wird auf `pending` zurückgesetzt, sodass der neue Lauf sofort im Fortschritt sichtbar ist (Problem mit bei 100 % steckenbleibendem Fortschritt durch veralteten „done"-Status behoben).
+- Verbessert: statusbewusste Done-Zähler — MCP `__mcpBatchStatus` und ReferencePanel teilen jetzt dieselbe Definition für „abgeschlossen".
+- Verbessert: styleResolver-Refactor — einheitliche Quelle für Label / effektiven styleId / autoAvailable in der gesamten App.
+- Fix: Referenz-Batch-Lebenszyklus mit try/finally umschlossen — preparingRefs/stoppingRefs-Flags werden auch bei unerwarteten Fehlern aufgeräumt (verhindert 30s-Timeout beim nächsten MCP-Stop-Restart).
+- Fix: `undefined`-Stilüberschreibung bei video-text fällt jetzt korrekt auf `autoEffectiveStyleId` zurück.
+- Tests: 1125 → 1199 (+74 — MCP-Regenerationspfade, Stop-Restart Stale Closure, statusbewusste Done-Helfer, Force-aware autoAvailable-Wächter).
 ```
 
 ---
