@@ -476,7 +476,7 @@ curl http://127.0.0.1:3210/api/batch-status
               schema: {
                 type: 'object',
                 properties: {
-                  styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" / "preset:<id>" / plain id (자동 wrap). 생략 시 자동 매칭 모드.', example: 'preset:korean-ani' },
+                  styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" / "preset:<id>" / plain id (자동 wrap) / "auto" (씬별 style_tag 매칭 명시). 생략 시 첫 style 카드 자동 fallback.', example: 'preset:korean-ani' },
                 },
               },
             },
@@ -492,7 +492,7 @@ curl http://127.0.0.1:3210/api/batch-status
       post: {
         tags: ['생성'],
         summary: '레퍼런스 일괄 생성 시작',
-        description: '모든 레퍼런스의 이미지를 일괄 생성합니다.',
+        description: '모든 레퍼런스의 이미지를 일괄 생성합니다. 레퍼런스 생성에는 씬 매칭 개념이 없습니다.',
         requestBody: {
           required: false,
           content: {
@@ -500,7 +500,7 @@ curl http://127.0.0.1:3210/api/batch-status
               schema: {
                 type: 'object',
                 properties: {
-                  styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" / "preset:<id>" / plain id (자동 wrap). 생략 시 자동 매칭 모드.', example: 'preset:korean-ani' },
+                  styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" / "preset:<id>" / plain id (자동 wrap). 생략 시 첫 style 카드 자동 fallback.', example: 'preset:korean-ani' },
                 },
               },
             },
