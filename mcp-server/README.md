@@ -176,11 +176,23 @@ Body 없이 POST. 앱의 "생성 시작" 버튼과 동일한 동작.
 | `app_update_scene` | 앱 씬 직접 수정 | `index`, `fields` |
 | `app_generate_reference` | 레퍼런스 이미지 생성 | `index`, `styleId?` |
 | `app_generate_scene` | 개별 씬 이미지 생성 | `sceneId` |
-| `app_start_batch` | 일괄 생성 시작 | — |
+| `app_start_scene_batch` | 씬 일괄 생성 시작 | `styleId?` |
+| `app_start_ref_batch` | 레퍼런스 일괄 생성 시작 | `styleId?` |
 | `app_batch_status` | 배치 생성 진행 상태 조회 | — |
 | `app_wait_batch` | 배치 완료까지 대기 (long-poll) | `interval?`, `timeout?` |
 
 > 모든 `app_*` 도구는 선택적 `port` 파라미터 지원 (기본: 3210)
+
+#### `styleId` 의미 모델 (배치/단건 공통)
+
+| 입력 | 동작 |
+|------|------|
+| `"ref:<id>"` / `"preset:<id>"` | 그 스타일을 모든 대상에 강제 적용 |
+| plain id (예: `"korean-ani"`) | 자동으로 `"preset:"`로 wrap |
+| `"auto"` (scene batch 전용) | 씬별 `style_tag` 매칭만 사용 (UI 자동 카드와 동일) |
+| 생략 / `null` / `""` | 첫 style 카드 자동 fallback (MCP default) |
+
+> `app_start_ref_batch`는 씬 매칭 개념이 없어서 `"auto"` sentinel 미지원.
 
 ### 사용 예시
 
@@ -190,8 +202,11 @@ Body 없이 POST. 앱의 "생성 시작" 버튼과 동일한 동작.
 # 1. 씬 프롬프트 수정 (앱 상태 직접 변경)
 app_update_scene(index=5, fields={prompt: "...", imagePath: null, image: null, status: "pending"})
 
-# 2. 일괄 생성 시작
-app_start_batch()
+# 2. 씬 일괄 생성 시작 (styleId 생략 → 첫 style 카드 자동 적용)
+app_start_scene_batch()
+
+# 또는 씬별 style_tag 매칭만 쓰고 싶으면:
+app_start_scene_batch(styleId="auto")
 ```
 
 #### 2. 레퍼런스 재생성
@@ -212,8 +227,8 @@ save_csv()
 # 2. 앱 씬에 반영 (이미지 제거 + 프롬프트 업데이트)
 app_update_scene(index=0, fields={prompt: "...", imagePath: null, status: "pending"})
 
-# 3. 일괄 생성
-app_start_batch()
+# 3. 씬 일괄 생성
+app_start_scene_batch()
 ```
 
 ### 주의사항
@@ -397,11 +412,23 @@ POST with empty body. Equivalent to clicking "Start Generation" in the app.
 | `app_update_scene` | Edit a scene in the app | `index`, `fields` |
 | `app_generate_reference` | Generate a reference image | `index`, `styleId?` |
 | `app_generate_scene` | Generate a single scene image | `sceneId` |
-| `app_start_batch` | Start batch generation | — |
+| `app_start_scene_batch` | Start scene batch generation | `styleId?` |
+| `app_start_ref_batch` | Start reference batch generation | `styleId?` |
 | `app_batch_status` | Query batch generation progress | — |
 | `app_wait_batch` | Wait until batch completes (long-poll) | `interval?`, `timeout?` |
 
 > All `app_*` tools accept an optional `port` parameter (default: 3210).
+
+#### `styleId` semantics (shared by batch/single APIs)
+
+| Input | Behavior |
+|-------|----------|
+| `"ref:<id>"` / `"preset:<id>"` | Apply that style to every target |
+| plain id (e.g. `"korean-ani"`) | Auto-wrapped to `"preset:"` |
+| `"auto"` (scene batch only) | Use per-scene `style_tag` matching only (same as the UI auto card) |
+| omitted / `null` / `""` | First style card auto-fallback (MCP default) |
+
+> `app_start_ref_batch` does not support the `"auto"` sentinel — reference generation has no per-scene matching path.
 
 ### Usage Examples
 
@@ -411,8 +438,11 @@ POST with empty body. Equivalent to clicking "Start Generation" in the app.
 # 1. Edit a scene prompt (mutates app state directly)
 app_update_scene(index=5, fields={prompt: "...", imagePath: null, image: null, status: "pending"})
 
-# 2. Start batch generation
-app_start_batch()
+# 2. Start scene batch generation (omit styleId → first style card auto-fallback)
+app_start_scene_batch()
+
+# Or, to use per-scene style_tag matching only:
+app_start_scene_batch(styleId="auto")
 ```
 
 #### 2. Regenerate a reference
@@ -433,8 +463,8 @@ save_csv()
 # 2. Reflect in the app's scenes (clear image + update prompt)
 app_update_scene(index=0, fields={prompt: "...", imagePath: null, status: "pending"})
 
-# 3. Start batch generation
-app_start_batch()
+# 3. Start scene batch generation
+app_start_scene_batch()
 ```
 
 ### Notes
