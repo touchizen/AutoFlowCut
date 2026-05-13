@@ -820,6 +820,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
   // Toast 메시지
   toast: {
     noPrompt: '프롬프트가 없습니다.',
+    autoMatchNoMatchesPickStyle: '씬별 매칭이 0개입니다. 스타일을 직접 선택하세요.',
     allScenesGenerated: '모든 씬이 이미 생성되었습니다. 개별 씬에서 재생성하세요.',
     allRefsGenerated: '모든 레퍼런스가 이미 생성되었습니다.',
     permissionReleasedMemory: '권한이 해제되어 메모리에 보관 중... 완료 후 저장합니다.',

@@ -820,6 +820,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
   // Toast messages
   toast: {
     noPrompt: 'No prompt provided.',
+    autoMatchNoMatchesPickStyle: 'No scenes match. Pick a style explicitly.',
     allScenesGenerated: 'All scenes already generated. Use regenerate on individual scenes.',
     allRefsGenerated: 'All references already generated.',
     permissionReleasedMemory: 'Permission released. Storing in memory... Will save after completion.',
