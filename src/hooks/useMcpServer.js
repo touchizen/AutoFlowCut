@@ -45,12 +45,21 @@ export function useMcpServer({
   selectedStyleRefId, setSelectedStyleRefId,
   refreshReviews, audioReviews,
   importByPath, audioPackage,
-  automationState, videoAutomation, generatingRefs
+  automationState, videoAutomation, generatingRefs,
+  isRunning = false  // Phase 2: 진행 중 MCP batch 호출 시 auto stop-restart 트리거 (anyRunning 등 권장)
 }) {
   // 글로벌 핸들러는 mount 시 한 번만 등록되므로 closure가 stale —
   // 호출 시점의 최신 references가 필요한 곳(MCP 자동 fallback 등)은 ref로 접근.
   const referencesRef = useRef(references)
   useEffect(() => { referencesRef.current = references }, [references])
+
+  // Phase 2: isRunning을 ref로 mirror — global 핸들러 closure가 polling 시 최신 값 읽음.
+  const isRunningRef = useRef(isRunning)
+  useEffect(() => { isRunningRef.current = isRunning }, [isRunning])
+
+  // handleStop도 ref로 mirror — closure가 stale 안 되게.
+  const handleStopRef = useRef(handleStop)
+  useEffect(() => { handleStopRef.current = handleStop }, [handleStop])
 
   // MCP HTTP 서버 시작/중지
   useEffect(() => {
@@ -244,6 +253,22 @@ export function useMcpServer({
     return cleanup
   }, [])
 
+  // Phase 2: 진행 중 batch 호출 시 사용 — isRunning이 false가 될 때까지 polling.
+  // timeout 시 false 반환 (caller가 restart abort).
+  const waitForStopped = (timeoutMs = 30000, intervalMs = 50) => new Promise((resolve) => {
+    if (!isRunningRef.current) { resolve(true); return }
+    const startTs = Date.now()
+    const timer = setInterval(() => {
+      if (!isRunningRef.current) {
+        clearInterval(timer)
+        resolve(true)
+      } else if (Date.now() - startTs > timeoutMs) {
+        clearInterval(timer)
+        resolve(false)
+      }
+    }, intervalMs)
+  })
+
   // 배치 핸들러 글로벌 등록 (handleStart 등이 정의된 이후에 등록)
   useEffect(() => {
     // Batch 핸들러: styleId를 정규화 후 override로만 직접 전달.
@@ -261,44 +286,55 @@ export function useMcpServer({
     // 생략 시 useReferenceGeneration._resolveEffectiveStyleId가 첫 카드 fallback 적용.
     // options = { force?: boolean } (선택). 없으면 handleStart 1-arg 호출 (백워드 호환).
     // options 있으면 handleStart(effective, options) — App.jsx의 handleStart가 force 등을 추출.
-    window.__mcpStartBatch = (styleId, options) => {
+    //
+    // Phase 2: 진행 중이면 자동 stop → waitForStopped → start. 확인 모달 없음 (MCP 자동화 의도 명확).
+    // timeout 시 restart abort, console.warn.
+    window.__mcpStartBatch = async (styleId, options) => {
       const callHandleStart = options
         ? (effective) => handleStart(effective, options)
         : (effective) => handleStart(effective)
-      if (styleId === 'auto') {
-        // 명시적 씬별 매칭 모드 — fallback 발동 안 함, useAutomation이 style_tag로만 결정
-        callHandleStart(null)
-        return
+      const resolveEffective = () => {
+        if (styleId === 'auto') return null
+        if (styleId === 'none') return 'none'
+        return normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current)
       }
-      if (styleId === 'none') {
-        // 'none' sentinel — pass through to handler. styleService.resolveSceneStyle recognizes
-        // 'none' and skips auto-match, preset fallback, and override.
-        callHandleStart('none')
-        return
+
+      if (isRunningRef.current) {
+        handleStopRef.current?.()
+        const stopped = await waitForStopped()
+        if (!stopped) {
+          console.warn('[MCP] start-scene-batch: stop timeout (30s), aborting restart')
+          return
+        }
       }
-      const effective = normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current)
-      callHandleStart(effective)
+      callHandleStart(resolveEffective())
     }
     // options = { force?: boolean } (선택). 없으면 handleGenerateAllRefs 1-arg 호출 (백워드 호환).
-    window.__mcpStartRefBatch = (styleId, options) => {
+    // Phase 2: 진행 중이면 자동 stop → waitForStopped → start.
+    window.__mcpStartRefBatch = async (styleId, options) => {
       const callHandler = options
         ? (effective) => handleGenerateAllRefs(effective, options)
         : (effective) => handleGenerateAllRefs(effective)
-      // 'auto'는 ref batch에 의미 없음 — null로 취급해 normalizeStyleId가 'preset:auto'로
-      // 잘못 wrap하지 않도록 한다 (silent fail 회피).
-      if (styleId === 'auto') {
-        console.warn('[MCP] start-ref-batch received styleId="auto"; ignored (refs have no per-scene matching). Falling back as if styleId were omitted.')
-        callHandler(null)
-        return
+      const resolveEffective = () => {
+        // 'auto'는 ref batch에 의미 없음 — null로 취급해 normalizeStyleId가 'preset:auto'로
+        // 잘못 wrap하지 않도록 한다 (silent fail 회피).
+        if (styleId === 'auto') {
+          console.warn('[MCP] start-ref-batch received styleId="auto"; ignored (refs have no per-scene matching). Falling back as if styleId were omitted.')
+          return null
+        }
+        if (styleId === 'none') return 'none'
+        return normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current)
       }
-      if (styleId === 'none') {
-        // 'none' sentinel — pass through. applyStyle recognizes 'none' and skips style application.
-        callHandler('none')
-        return
+
+      if (isRunningRef.current) {
+        handleStopRef.current?.()
+        const stopped = await waitForStopped()
+        if (!stopped) {
+          console.warn('[MCP] start-ref-batch: stop timeout (30s), aborting restart')
+          return
+        }
       }
-      // scene batch와 동일하게 호출 측 fallback — UI selectedStyleRefId 누수 방지.
-      const effective = normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current)
-      callHandler(effective)
+      callHandler(resolveEffective())
     }
     window.__mcpStopBatch = () => handleStop()
     window.__mcpBatchStatus = () => {

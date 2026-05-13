@@ -870,13 +870,16 @@ function App() {
     setPendingStartOptions(null)
   }
 
-  // Handle stop — 활성 자동화 중지
+  // Handle stop — 활성 자동화 중지 (scene + video + ref batch 모두 cover).
+  // Phase 2: MCP 자동 stop-restart 플로우가 handleStop을 trigger하므로 ref batch도 stop해야 함.
   const handleStop = () => {
     if (isRunning) stop()
     if (videoAutomation.isRunning) videoAutomation.stop()
+    if (generatingRefs.length > 0) stopGenerateAllRefs()
   }
 
   // MCP HTTP 서버 (시작/중지, 글로벌 접근자, 업데이트 수신, 배치 핸들러)
+  // isRunning: scene OR ref OR video — Phase 2 auto stop-restart 트리거에 사용.
   useMcpServer({
     settings,
     scenes, setScenes,
@@ -888,7 +891,8 @@ function App() {
     refreshReviews, audioReviews,
     importByPath, audioPackage,
     automationState: { isRunning, isPaused, progress, status, statusMessage },
-    videoAutomation, generatingRefs
+    videoAutomation, generatingRefs,
+    isRunning: isRunning || videoAutomation.isRunning || generatingRefs.length > 0
   })
 
   // 어느 자동화든 실행 중이면 true

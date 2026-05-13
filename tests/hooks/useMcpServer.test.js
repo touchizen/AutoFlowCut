@@ -38,6 +38,7 @@ function makeProps(overrides = {}) {
     automationState: { isRunning: false, isPaused: false, progress: { current: 0, total: 0 }, status: 'idle', statusMessage: '' },
     videoAutomation: {},
     generatingRefs: [],
+    isRunning: false,  // Phase 2: anyRunning (scene + ref + video) — used for auto stop-restart
     ...overrides,
   }
 }
@@ -382,6 +383,108 @@ describe('useMcpServer — global handlers (regression guards)', () => {
 
     window.__mcpStartRefBatch('none', { force: true })
     expect(handleGenerateAllRefs).toHaveBeenCalledWith('none', { force: true })
+  })
+
+  // --- Task 5 (Phase 2): auto stop-restart when batch called during running ---
+
+  it('__mcpStartBatch with isRunning=false starts immediately (no stop)', async () => {
+    const handleStart = vi.fn()
+    const handleStop = vi.fn()
+    renderHook(() => useMcpServer(makeProps({
+      isRunning: false,
+      handleStart,
+      handleStop,
+    })))
+
+    await window.__mcpStartBatch('preset:noir', { force: true })
+
+    expect(handleStop).not.toHaveBeenCalled()
+    expect(handleStart).toHaveBeenCalledWith('preset:noir', { force: true })
+  })
+
+  it('__mcpStartBatch with isRunning=true calls handleStop and waits before handleStart', async () => {
+    vi.useFakeTimers()
+    const handleStart = vi.fn()
+    const handleStop = vi.fn()
+    let isRunning = true
+
+    function Wrapper() {
+      // rerender 시 새 isRunning 값으로 hook 재실행 → useEffect가 isRunningRef 갱신
+      return useMcpServer(makeProps({
+        isRunning,
+        handleStart,
+        handleStop,
+      }))
+    }
+    const { rerender } = renderHook(Wrapper)
+
+    // 호출 → handleStop 즉시, handleStart는 아직 pending
+    const callPromise = window.__mcpStartBatch('preset:noir', { force: true })
+    expect(handleStop).toHaveBeenCalled()
+    expect(handleStart).not.toHaveBeenCalled()
+
+    // running 상태 flip
+    isRunning = false
+    rerender()
+
+    // polling이 다음 tick에서 isRunning=false 감지
+    await vi.advanceTimersByTimeAsync(100)
+    await callPromise
+
+    expect(handleStart).toHaveBeenCalledWith('preset:noir', { force: true })
+    vi.useRealTimers()
+  })
+
+  it('__mcpStartBatch waitForStopped timeout: handleStart NOT called', async () => {
+    vi.useFakeTimers()
+    const handleStart = vi.fn()
+    const handleStop = vi.fn()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    renderHook(() => useMcpServer(makeProps({
+      isRunning: true,
+      handleStart,
+      handleStop,
+    })))
+
+    const callPromise = window.__mcpStartBatch('preset:noir', { force: true })
+    await vi.advanceTimersByTimeAsync(31000)  // > 30s timeout
+    await callPromise
+
+    expect(handleStop).toHaveBeenCalled()
+    expect(handleStart).not.toHaveBeenCalled()
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('stop timeout'))
+
+    warnSpy.mockRestore()
+    vi.useRealTimers()
+  })
+
+  it('__mcpStartRefBatch with isRunning=true also auto-stops and restarts', async () => {
+    vi.useFakeTimers()
+    const handleGenerateAllRefs = vi.fn()
+    const handleStop = vi.fn()
+    let isRunning = true
+
+    function Wrapper() {
+      return useMcpServer(makeProps({
+        isRunning,
+        handleGenerateAllRefs,
+        handleStop,
+      }))
+    }
+    const { rerender } = renderHook(Wrapper)
+
+    const callPromise = window.__mcpStartRefBatch('preset:noir', { force: true })
+    expect(handleStop).toHaveBeenCalled()
+    expect(handleGenerateAllRefs).not.toHaveBeenCalled()
+
+    isRunning = false
+    rerender()
+    await vi.advanceTimersByTimeAsync(100)
+    await callPromise
+
+    expect(handleGenerateAllRefs).toHaveBeenCalledWith('preset:noir', { force: true })
+    vi.useRealTimers()
   })
 })
 
