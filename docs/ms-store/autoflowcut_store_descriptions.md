@@ -156,18 +156,14 @@ Disclaimer: This app is an independent product developed by Touchizen and is not
 
 ### What's New
 ```
-v0.9.9 — MCP regenerate-with-style + force re-run + reliability polish
+v0.9.9 — Switch styles on the fly + smoother re-runs
 
-- New: MCP `app_generate_scene(sceneId, styleId)` — regenerate a single scene with a new style directly from Claude Code.
-- New: `app_start_scene_batch(styleId, force)` and `app_start_ref_batch(styleId, force)` — `force: true` re-runs already-completed scenes/references with a new style.
-- New: Auto stop-restart — when MCP calls again during a running batch, AutoFlowCut stops the current batch and restarts with the new style instantly (no confirmation modal).
-- New: explicit `styleId` from MCP syncs the UI's Start button label automatically; `'none'` sentinel forces "no style" generation end-to-end.
-- Improved: Force-regen UX — target scenes' status resets to `pending` so progress reflects the new run immediately (no more 100%-stuck progress with stale "done" status).
-- Improved: status-aware done counters — MCP `__mcpBatchStatus` and ReferencePanel now share the same definition of completion.
-- Improved: styleResolver refactor — single source of truth for label / effective styleId / autoAvailable across the app.
-- Fix: ref batch lifecycle wrapped in try/finally — preparingRefs/stoppingRefs flags always clean up, preventing the next MCP stop-restart from hitting a 30s timeout.
-- Fix: video-text `undefined` style override now falls back to `autoEffectiveStyleId` correctly.
-- Tests: 1125 → 1199 (+74 — MCP regenerate paths, stop-restart stale closure, status-aware done helpers, force-aware autoAvailable guard).
+- Change style mid-batch from Claude Code: regenerate a single scene or re-run an entire batch with a different style — even on scenes you've already finished.
+- Auto stop-restart: start a new batch with a different style while one is running and AutoFlowCut handles the switch for you. No confirmation modal.
+- Clearer style intent: pick a specific style, let auto-match decide per scene, or generate with no style at all — the Start button label always reflects what you chose.
+- Re-run progress that actually moves: regenerating completed scenes now resets and tracks the new run live, instead of looking stuck at 100%.
+- Consistent style labels everywhere: the Start button, scene list, and reference panel all show the same style name the same way.
+- More reliable stop/restart: batches clean up after themselves even when something unexpected happens, so the next Start kicks off without delay.
 ```
 
 ### Keywords
@@ -331,18 +327,14 @@ Touchizen 제작 — touchizen.com
 
 ### What's New (새로운 기능)
 ```
-v0.9.9 — MCP 스타일 변경 재생성 + 강제 재실행 + 안정성 강화
+v0.9.9 — 스타일 즉석에서 바꾸기 + 더 매끄러운 재실행
 
-- 신규: MCP `app_generate_scene(sceneId, styleId)` — Claude Code에서 단일 씬을 새 스타일로 재생성.
-- 신규: `app_start_scene_batch(styleId, force)` / `app_start_ref_batch(styleId, force)` — `force: true`로 이미 완료된 씬/레퍼런스를 새 스타일로 재실행.
-- 신규: 자동 스톱-리스타트 — 배치 실행 중 MCP가 재호출되면 현재 배치를 중지하고 새 스타일로 즉시 재시작 (확인 모달 없음).
-- 신규: MCP에서 명시한 `styleId`가 UI의 Start 버튼 라벨과 자동 동기화. `'none'` 센티넬로 "스타일 없이 생성"을 끝단까지 강제.
-- 개선: 강제 재생성 UX — 대상 씬 상태를 `pending`으로 리셋해 새 실행 진행률이 즉시 반영됨 (이전 'done' 상태로 100%에서 멈추던 문제 해결).
-- 개선: 상태 인지형 done 카운터 — MCP `__mcpBatchStatus`와 ReferencePanel이 동일한 완료 정의 공유.
-- 개선: styleResolver 리팩터링 — 라벨/효과적 styleId/autoAvailable 결정의 단일 진실 공급원.
-- 수정: 레퍼런스 배치 수명주기를 try/finally로 감싸 preparingRefs/stoppingRefs 플래그가 예외 발생 시에도 정리됨 (다음 MCP 스톱-리스타트의 30초 타임아웃 회귀 방지).
-- 수정: video-text의 `undefined` 스타일 오버라이드가 `autoEffectiveStyleId`로 정상 폴백.
-- 테스트: 1125 → 1199 (+74개 — MCP 재생성 경로, 스톱-리스타트 stale closure, 상태 인지 done 헬퍼, force 인지 autoAvailable 가드).
+- Claude Code에서 배치 도중 스타일 변경: 단일 씬만 재생성하거나 배치 전체를 다른 스타일로 다시 실행 — 이미 완성한 씬까지 포함.
+- 자동 스톱-리스타트: 배치 실행 중에 다른 스타일로 새 배치를 시작하면 AutoFlowCut이 알아서 전환. 확인 모달 없음.
+- 명확한 스타일 의도: 특정 스타일 선택 / 씬별 자동 매칭 / 스타일 없이 생성 중 고르기 — 선택한 결과가 Start 버튼 라벨에 그대로 반영됨.
+- 실제로 움직이는 재실행 진행률: 완성된 씬을 다시 실행할 때 진행률이 새로 시작되어 실시간으로 갱신 (이전에 100%에서 멈춘 듯 보이던 문제 해결).
+- 어디서나 일관된 스타일 라벨: Start 버튼, 씬 목록, 레퍼런스 패널 모두 같은 스타일 이름을 같은 방식으로 표시.
+- 더 안정적인 중지/재시작: 도중에 예기치 못한 일이 생겨도 배치가 스스로 정리되어 다음 Start가 지연 없이 즉시 시작됨.
 ```
 
 ### Keywords (한국어)
@@ -411,18 +403,14 @@ AutoFlowCutはAI動画制作の全プロセスを自動化します。Google Flo
 
 ### What's New
 ```
-v0.9.9 — MCP スタイル変更付き再生成 + 強制再実行 + 安定性強化
+v0.9.9 — スタイルをその場で切り替え + よりスムーズな再実行
 
-- 新機能：MCP `app_generate_scene(sceneId, styleId)` — Claude Code から単一シーンを新しいスタイルで再生成。
-- 新機能：`app_start_scene_batch(styleId, force)` / `app_start_ref_batch(styleId, force)` — `force: true` で完了済みシーン／リファレンスを新スタイルで再実行。
-- 新機能：自動ストップ・リスタート — バッチ実行中に MCP が再呼び出しされると、現在のバッチを停止して新スタイルで即時再起動（確認モーダルなし）。
-- 新機能：MCP からの明示的 `styleId` が UI の Start ボタンラベルと自動同期。`'none'` センチネルで「スタイルなし」生成をエンドツーエンドで強制。
-- 改善：強制再生成 UX — 対象シーンのステータスを `pending` にリセットし、新実行の進捗が即座に反映（古い「done」ステータスのまま 100% で停止する問題を解消）。
-- 改善：ステータス対応の done カウンター — MCP `__mcpBatchStatus` と ReferencePanel が同じ完了定義を共有。
-- 改善：styleResolver リファクタリング — ラベル／実効 styleId／autoAvailable の単一情報源。
-- 修正：リファレンスバッチのライフサイクルを try/finally で包み、preparingRefs/stoppingRefs フラグが例外時にも常にクリーンアップ（次回 MCP ストップ・リスタート時の 30 秒タイムアウト回帰を防止）。
-- 修正：video-text の `undefined` スタイル上書きが `autoEffectiveStyleId` に正しくフォールバック。
-- テスト：1125 → 1199（+74 — MCP 再生成パス、ストップ・リスタートの stale closure、ステータス対応 done ヘルパー、force 対応 autoAvailable ガード）。
+- Claude Code からバッチ途中でスタイル変更：単一シーンの再生成、またはバッチ全体を別のスタイルで再実行 — 完了済みのシーンを含めて。
+- 自動ストップ・リスタート：バッチ実行中に別のスタイルで新規バッチを開始すると、AutoFlowCut が自動で切り替え。確認モーダルなし。
+- スタイル意図が明確に：特定のスタイルを指定／シーンごとの自動マッチング／スタイルなしで生成、から選択。選んだ結果が Start ボタンのラベルにそのまま反映。
+- 本当に動く再実行の進捗：完了済みシーンを再実行すると進捗が新しくリセットされ、リアルタイムで更新（以前は 100% で停止しているように見えた問題を解消）。
+- どこでも一貫したスタイルラベル：Start ボタン、シーン一覧、リファレンスパネルすべてで、同じスタイル名が同じ形で表示。
+- より信頼性の高い停止／再起動：途中で予期しない問題が起きてもバッチが自分で片付けるので、次の Start が遅延なくすぐに動作。
 ```
 
 ---
@@ -486,18 +474,14 @@ Der integrierte MCP-Server (Model Context Protocol) verbindet sich direkt mit Cl
 
 ### What's New
 ```
-v0.9.9 — MCP-Neugenerierung mit Stilwechsel + erzwungene Neuausführung + Stabilität
+v0.9.9 — Stile spontan wechseln + flüssigere Neuläufe
 
-- Neu: MCP `app_generate_scene(sceneId, styleId)` — eine einzelne Szene aus Claude Code mit neuem Stil neu generieren.
-- Neu: `app_start_scene_batch(styleId, force)` / `app_start_ref_batch(styleId, force)` — mit `force: true` werden bereits abgeschlossene Szenen/Referenzen mit neuem Stil erneut ausgeführt.
-- Neu: Auto-Stop-Restart — wenn MCP während eines laufenden Batches erneut aufgerufen wird, stoppt AutoFlowCut den aktuellen Batch und startet sofort mit dem neuen Stil neu (kein Bestätigungsdialog).
-- Neu: expliziter `styleId` aus MCP synchronisiert sich automatisch mit dem Label des Start-Buttons. `'none'`-Sentinel erzwingt Generierung ohne Stil bis zum Ende.
-- Verbessert: Force-Regen-UX — Status der Zielszenen wird auf `pending` zurückgesetzt, sodass der neue Lauf sofort im Fortschritt sichtbar ist (Problem mit bei 100 % steckenbleibendem Fortschritt durch veralteten „done"-Status behoben).
-- Verbessert: statusbewusste Done-Zähler — MCP `__mcpBatchStatus` und ReferencePanel teilen jetzt dieselbe Definition für „abgeschlossen".
-- Verbessert: styleResolver-Refactor — einheitliche Quelle für Label / effektiven styleId / autoAvailable in der gesamten App.
-- Fix: Referenz-Batch-Lebenszyklus mit try/finally umschlossen — preparingRefs/stoppingRefs-Flags werden auch bei unerwarteten Fehlern aufgeräumt (verhindert 30s-Timeout beim nächsten MCP-Stop-Restart).
-- Fix: `undefined`-Stilüberschreibung bei video-text fällt jetzt korrekt auf `autoEffectiveStyleId` zurück.
-- Tests: 1125 → 1199 (+74 — MCP-Regenerationspfade, Stop-Restart Stale Closure, statusbewusste Done-Helfer, Force-aware autoAvailable-Wächter).
+- Stil mitten im Batch wechseln aus Claude Code: eine einzelne Szene neu generieren oder den gesamten Batch mit einem anderen Stil erneut ausführen — auch bei bereits fertiggestellten Szenen.
+- Auto-Stop-Restart: einen neuen Batch mit anderem Stil starten, während einer läuft, und AutoFlowCut übernimmt den Wechsel automatisch. Kein Bestätigungsdialog.
+- Klare Stil-Absicht: einen bestimmten Stil wählen, das automatische Matching pro Szene entscheiden lassen oder ganz ohne Stil generieren — das Label des Start-Buttons spiegelt Ihre Wahl direkt wider.
+- Echter Fortschritt beim Neulauf: beim erneuten Generieren fertiger Szenen setzt sich der Fortschritt zurück und zeigt den neuen Lauf live — statt bei 100 % steckenzubleiben.
+- Einheitliche Stilbezeichnungen überall: Start-Button, Szenenliste und Referenz-Panel zeigen denselben Stilnamen immer gleich.
+- Zuverlässigeres Stoppen/Neustarten: Batches räumen auch bei unerwarteten Fehlern hinter sich auf, sodass der nächste Start sofort ohne Verzögerung läuft.
 ```
 
 ---
