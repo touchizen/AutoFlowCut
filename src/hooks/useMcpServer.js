@@ -8,8 +8,8 @@
  * 4. 배치/중지/상태 글로벌 핸들러
  */
 
-import { useEffect } from 'react'
-import { normalizeStyleId } from '../services/styleService'
+import { useEffect, useRef } from 'react'
+import { normalizeStyleId, findAutoStyle } from '../services/styleService'
 
 /**
  * @param {object} params
@@ -47,6 +47,11 @@ export function useMcpServer({
   importByPath, audioPackage,
   automationState, videoAutomation, generatingRefs
 }) {
+  // 글로벌 핸들러는 mount 시 한 번만 등록되므로 closure가 stale —
+  // 호출 시점의 최신 references가 필요한 곳(MCP 자동 fallback 등)은 ref로 접근.
+  const referencesRef = useRef(references)
+  useEffect(() => { referencesRef.current = references }, [references])
+
   // MCP HTTP 서버 시작/중지
   useEffect(() => {
     if (settings.mcpHttpEnabled) {
@@ -227,8 +232,16 @@ export function useMcpServer({
     // Batch 핸들러: styleId를 정규화 후 override로만 직접 전달.
     // 전역 setSelectedStyleRefId는 호출하지 않음 — MCP 호출이 UI에 선택된 스타일을
     // 덮어쓰면 다음 호출/UI 동작에 누수됨. 호출별 스타일은 호출별로만 유효.
+    //
+    // styleId 미지정 시 정책:
+    //   - scene batch: useAutomation은 fallback 없음(UI 정직성). 자동화 흐름인 MCP에서는
+    //     호출 측에서 첫 style 카드를 fallback으로 적용 → "MCP 호출자가 스타일을 명시 안 함"
+    //     의도를 "자동으로 사용 가능한 첫 스타일 적용"으로 해석.
+    //   - ref batch: useReferenceGeneration._resolveEffectiveStyleId가 이미 동일한 fallback
+    //     동작을 하므로 호출 측 추가 처리 불필요.
     window.__mcpStartBatch = (styleId) => {
-      handleStart(normalizeStyleId(styleId))
+      const effective = normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current)
+      handleStart(effective)
     }
     window.__mcpStartRefBatch = (styleId) => {
       handleGenerateAllRefs(normalizeStyleId(styleId))

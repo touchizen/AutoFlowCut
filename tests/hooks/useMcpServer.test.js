@@ -129,7 +129,7 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     expect(setSelectedStyleRefId).not.toHaveBeenCalled()
   })
 
-  it('__mcpStartBatch (scene batch) follows the same normalize + no-leak contract', () => {
+  it('__mcpStartBatch (scene batch) normalizes explicit styleId and does not leak global state', () => {
     const handleStart = vi.fn()
     const setSelectedStyleRefId = vi.fn()
     renderHook(() => useMcpServer(makeProps({ handleStart, setSelectedStyleRefId })))
@@ -144,5 +144,34 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     expect(handleStart).toHaveBeenCalledWith('ref:42')
 
     expect(setSelectedStyleRefId).not.toHaveBeenCalled()
+  })
+
+  it('__mcpStartBatch falls back to first style card when styleId omitted (MCP automation default)', () => {
+    const handleStart = vi.fn()
+    const refWithMedia = { id: 555, type: 'style', mediaId: 'm-555' }
+    renderHook(() => useMcpServer(makeProps({
+      handleStart,
+      references: [{ id: 1, type: 'character' }, refWithMedia, { id: 999, type: 'style' /* no mediaId */ }],
+    })))
+
+    window.__mcpStartBatch(undefined)
+    expect(handleStart).toHaveBeenCalledWith('ref:555')
+
+    window.__mcpStartBatch('')
+    expect(handleStart).toHaveBeenLastCalledWith('ref:555')
+
+    window.__mcpStartBatch(null)
+    expect(handleStart).toHaveBeenLastCalledWith('ref:555')
+  })
+
+  it('__mcpStartBatch passes null when styleId omitted AND no usable style card exists', () => {
+    const handleStart = vi.fn()
+    renderHook(() => useMcpServer(makeProps({
+      handleStart,
+      references: [{ id: 1, type: 'character' }],  // no style card with mediaId
+    })))
+
+    window.__mcpStartBatch(undefined)
+    expect(handleStart).toHaveBeenCalledWith(null)
   })
 })
