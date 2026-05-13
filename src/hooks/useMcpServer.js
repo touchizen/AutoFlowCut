@@ -64,6 +64,15 @@ export function useMcpServer({
   const handleStopRef = useRef(handleStop)
   useEffect(() => { handleStopRef.current = handleStop }, [handleStop])
 
+  // handleStart/handleGenerateAllRefs도 ref로 mirror — Phase 2 auto stop-restart에서
+  // 같은 __mcpStartBatch 호출의 await가 끝난 뒤 호출되는데, 그 사이 re-render로 handleStart가
+  // 새로 만들어지지만 closure는 옛 버전을 잡고 있음. 옛 버전은 stale `isRunning=true`를 들고
+  // 있어서 첫 줄 가드에 막혀 restart fail. ref로 항상 최신 handleStart를 부르도록 한다.
+  const handleStartRef = useRef(handleStart)
+  useEffect(() => { handleStartRef.current = handleStart }, [handleStart])
+  const handleGenerateAllRefsRef = useRef(handleGenerateAllRefs)
+  useEffect(() => { handleGenerateAllRefsRef.current = handleGenerateAllRefs }, [handleGenerateAllRefs])
+
   // MCP HTTP 서버 시작/중지
   useEffect(() => {
     if (settings.mcpHttpEnabled) {
@@ -305,9 +314,10 @@ export function useMcpServer({
     // Phase 2 sync: 명시 styleId ('preset:*', 'ref:*', plain id)면 selectedStyleRefId도 갱신
     // → Start 버튼 라벨이 새 스타일 자동 표시. 'auto'/'none'/생략은 UI 유지 (사용자 의도 보존).
     window.__mcpStartBatch = async (styleId, options) => {
+      // ref로 항상 최신 handleStart 호출 — stop 후 stale `isRunning=true` 가드에 막히는 회귀 방지.
       const callHandleStart = options
-        ? (effective) => handleStart(effective, options)
-        : (effective) => handleStart(effective)
+        ? (effective) => handleStartRef.current?.(effective, options)
+        : (effective) => handleStartRef.current?.(effective)
       const resolveEffective = () => {
         if (styleId === 'auto') return null
         if (styleId === 'none') return 'none'
@@ -330,9 +340,10 @@ export function useMcpServer({
     // Phase 2: 진행 중이면 자동 stop → waitForStopped → start.
     // Phase 2 sync: 명시 styleId면 selectedStyleRefId 갱신 (UI 라벨).
     window.__mcpStartRefBatch = async (styleId, options) => {
+      // ref로 항상 최신 handleGenerateAllRefs — stop-restart 후 stale closure 가드 회귀 방지.
       const callHandler = options
-        ? (effective) => handleGenerateAllRefs(effective, options)
-        : (effective) => handleGenerateAllRefs(effective)
+        ? (effective) => handleGenerateAllRefsRef.current?.(effective, options)
+        : (effective) => handleGenerateAllRefsRef.current?.(effective)
       const resolveEffective = () => {
         // 'auto'는 ref batch에 의미 없음 — null로 취급해 normalizeStyleId가 'preset:auto'로
         // 잘못 wrap하지 않도록 한다 (silent fail 회피).

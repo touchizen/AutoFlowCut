@@ -436,6 +436,32 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     expect(handleStart).toHaveBeenCalledWith('preset:noir', { force: true })
   })
 
+  it('handleStartRef uses LATEST handleStart after re-render (stale closure regression)', async () => {
+    // 회귀 컨텍스트: handleStart는 매 render마다 새로 만들어지는 함수. closure에 `isRunning`을
+    // 잡고 있어서 stop 직전의 handleStart는 stale `isRunning=true`를 들고 있음. 옛 버전을 호출하면
+    // 첫 줄 가드(`if (isRunning) return`)에 막혀 stop-restart 의 restart가 silently 실패.
+    // handleStartRef로 항상 최신 handleStart를 부르도록 한 fix의 회귀 가드.
+
+    const handleStart_v1 = vi.fn(() => { /* v1: stale, should NOT be called */ })
+    const handleStart_v2 = vi.fn()
+
+    function Wrapper({ handleStart }) {
+      return useMcpServer(makeProps({ isRunning: false, handleStart }))
+    }
+    const { rerender } = renderHook(({ handleStart }) => Wrapper({ handleStart }), {
+      initialProps: { handleStart: handleStart_v1 },
+    })
+
+    // mount 시점엔 v1. rerender 후 v2.
+    rerender({ handleStart: handleStart_v2 })
+
+    await window.__mcpStartBatch('preset:noir', { force: true })
+
+    // 최신 (v2)만 호출, v1은 호출 안 됨
+    expect(handleStart_v2).toHaveBeenCalledWith('preset:noir', { force: true })
+    expect(handleStart_v1).not.toHaveBeenCalled()
+  })
+
   it('__mcpStartBatch with isRunning=true calls handleStop and waits before handleStart', async () => {
     vi.useFakeTimers()
     const handleStart = vi.fn()
