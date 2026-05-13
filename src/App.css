@@ -585,8 +585,8 @@ html, body {
   border-color: var(--text-secondary);
 }
 .scene-dropdown-thumb {
-  width: 24px;
-  height: 24px;
+  width: 36px;
+  height: 36px;
   object-fit: cover;
   border-radius: 3px;
   flex-shrink: 0;
@@ -600,8 +600,8 @@ html, body {
   box-shadow: 0 0 6px rgba(100, 149, 237, 0.6);
 }
 .scene-dropdown-empty-thumb {
-  width: 24px;
-  height: 24px;
+  width: 36px;
+  height: 36px;
   flex-shrink: 0;
 }
 .scene-dropdown-label {
