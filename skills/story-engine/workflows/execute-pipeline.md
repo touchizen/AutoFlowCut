@@ -363,10 +363,16 @@ Each subagent receives:
 - CSV schema (`get_schema` MCP tool)
 - References CSV + scenes CSV creation
 - SRT-based scene splitting (15sec rule)
+- 설정 옵션 (W_progress.json 루트 `options`에서 가져옴):
+  - `splitOnSpeakerChange: {true|false}` (없으면 `false` fallback)
+    - `true`: 화자 전환 분리 룰 적용 (W6-storyboard.md "화자 전환 분리" 섹션 참조)
+    - `false`: 기존 룰만 사용
 - Review loop: CSV vs script vs SRT cross-check (max 5)
 - Gap/coverage checks performed by the subagent reading the CSV/SRT directly (not via .py)
 - Output: `references.csv`, `{title}_scenes.csv`, `06_review_group{A,B,C}.md`
 - **HARD RULE**: W6 must NOT generate images. Forbidden calls: `app_start_ref_batch`, `app_start_scene_batch`, `app_generate_reference`, `app_generate_scene`, and their HTTP equivalents. Image generation belongs exclusively to W7. If the subagent even considers kicking off a batch "since the CSV is ready", that is a spec violation — STOP and hand off to W7.
+
+**W6 legacy fallback (옵션 누락 시):** `W_progress.json`에 `options` 객체 자체가 없거나 `options.splitOnSpeakerChange` 필드가 없는 (Task 1 이전에 생성된) 에피소드는 사용자에게 묻지 않고 `splitOnSpeakerChange = false`로 진행한다. 재개 흐름을 끊지 않으며, W6 subagent는 기존 룰만 사용하므로 기존 동작과 동일하다.
 
 **W7 subagent prompt includes:**
 - **MANDATORY pre-check**: `app_open_project({ name })` to switch to target project BEFORE loading CSV or generating. Verify current project matches. If mismatch → STOP.
