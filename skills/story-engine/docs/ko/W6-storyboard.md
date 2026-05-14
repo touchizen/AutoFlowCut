@@ -32,8 +32,9 @@
 - `final_{파트}.srt` — 파트별 자막 (의미 단위, 타임코드 포함)
 - `timeline_{파트}.json` — 세그먼트별 시작/끝 시간
 - 대본 원문 (기/승/전/결 .md 파일)
-- `dialogs_{파트}.json` (있는 경우) — W4가 추출한 캐릭터별 대사. `{order, character, line, emotion, after_paragraph}` 구조. **`options.splitOnSpeakerChange: true` 일 때 speaker→timecode 매핑의 1차 소스**.
-- `segments_{파트}/index.json` (있는 경우) — W5가 만든 narration segment 인덱스. 각 segment의 `paragraph_idx` 가 `dialogs.after_paragraph` 와 매칭되어 dialogue 정확 타임코드 산출.
+- **`voices/result.json`** (대사 있는 경우) — W5-1f가 작성한 dialogue TTS 결과. 각 엔트리에 `{order, character, line, emotion, file, duration, start}` — `start` 는 **TTS 실제 duration 누적까지 반영된 resolved start** (연속 대사 stacking 포함, `generate_tts_typecast.cjs` `groupEnd` 추적 결과). `options.splitOnSpeakerChange: true` 일 때 **1차 source**.
+- **`voices/*_{HHMMSS}.mp3`** (대사 있는 경우) — 파일명의 `HHMMSS` 가 resolved start (TC 형식, line 299의 `tcFromSrtTime` 산출). `voices/result.json` 부재 시 파일명만으로도 speaker(`character` 토큰) + start 복원 가능.
+- `dialogs_{파트}.json` + `segments_{파트}/index.json` (있는 경우) — W4/W5 중간 산출. **fallback** 으로만 사용: 단일 대사 paragraph 에서는 `after_paragraph` → `paragraph_idx` 매칭으로 정확하지만, **같은 paragraph에 연속 대사가 있을 경우 stacking을 알 수 없어 부정확**. voices output이 있으면 우선.
 
 대본과 SRT/타임라인을 기반으로 **레퍼런스 CSV**와 **씬 CSV**를 생성한다.
 AutoFlowCut MCP의 `get_schema` 도구로 CSV 스키마를 조회하여 정확한 구조를 따른다.
@@ -117,9 +118,11 @@ W_progress.json 루트의 `options.splitOnSpeakerChange` 값을 읽어 분기:
 - `false` (default) 또는 필드 누락 → 기존 룰 그대로 (같은 시간대 / 같은 장면 안에서는 화자 달라도 같은 씬)
 
 **Speaker source 우선순위** (`true` 일 때, 위에서부터 적용):
-1. **`dialogs_{파트}.json` + `segments_{파트}/index.json`** — 1차 소스. `dialogs.character` 가 speaker ID, `dialogs.after_paragraph` 를 `segments_index.paragraph_idx` 와 매칭해 timeline 상 정확한 타임코드 산출 (W5-1f가 쓰는 동일 방식). 이 소스가 있으면 보수적 fallback 없이 분리한다.
-2. **대본 (`{title}_*.md`) 의 명시적 화자 라벨** — `"A:"`, `"내레이터:"`, `"{이름}:"` 형식. dialogs JSON이 부재할 때만 사용. 라벨 paragraph를 `segments_index.paragraph_idx` 로 다시 timeline에 매핑 (정확도는 paragraph 단위로 coarse).
-3. **문맥 추정** (위 둘 다 없을 때) — subagent가 대화 흐름으로 추정. 신뢰도 낮으면 분리 안 함 (보수적). 1·2·3 모두 부재면 `splitOnSpeakerChange: true` 라도 실질 효과 없음 — review 노트에 `dialogs_{파트}.json absent — speaker-change splitting skipped` 기록.
+1. **`voices/result.json`** — **1차 source**. 각 엔트리의 `start` 가 W5-1f의 TTS-resolved 값 (연속 대사 stacking까지 반영). `character` 가 speaker ID, `duration` 이 종료 시각 산출용. 이 파일이 있으면 보수적 fallback 없이 분리한다.
+2. **`voices/*_{HHMMSS}.mp3` 파일명 파싱** — `result.json` 부재 시 `voices/` 디렉토리의 mp3 파일명 (`{order}_{character}_{HHMMSS}.mp3`) 에서 speaker + resolved start 복원. duration은 ffprobe 로 산출.
+3. **`dialogs_{파트}.json` + `segments_{파트}/index.json`** (fallback) — `dialogs.after_paragraph` 를 `paragraph_idx` 와 매칭해 base start 산출. **단일 대사 paragraph 일 때만 정확하고, 연속 대사가 있는 paragraph 는 stacking을 못 알아 부정확**. voices output 부재 시 + 해당 paragraph의 대사 1개일 때만 활용.
+4. **대본 (`{title}_*.md`) 의 명시적 화자 라벨** — `"A:"`, `"내레이터:"`, `"{이름}:"` 형식. 위 셋 모두 부재일 때만. 라벨 paragraph를 `segments_index.paragraph_idx` 로 timeline에 매핑 (paragraph 단위로 coarse).
+5. **문맥 추정** — 위 넷 모두 없을 때. subagent가 대화 흐름으로 추정. 신뢰도 낮으면 분리 안 함 (보수적). 1~5 모두 부재면 `splitOnSpeakerChange: true` 라도 실질 효과 없음 — review 노트에 `voices/ + dialogs_{파트}.json absent — speaker-change splitting skipped` 기록.
 
 **전체 타임라인 파트 오프셋 계산:**
 ```

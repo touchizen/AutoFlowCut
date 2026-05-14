@@ -32,8 +32,9 @@ This document is the W6 (storyboard CSV creation + review) stage guide for the s
 - `final_{part}.srt` — per-part subtitles (meaning units, with timecodes)
 - `timeline_{part}.json` — per-segment start/end times
 - Original script (setup/rising/crisis/resolution .md files)
-- `dialogs_{part}.json` (when present) — per-character dialogue extracted by W4. Structure: `{order, character, line, emotion, after_paragraph}`. **Primary speaker→timecode source when `options.splitOnSpeakerChange: true`.**
-- `segments_{part}/index.json` (when present) — narration segment index produced by W5. Each segment's `paragraph_idx` matches `dialogs.after_paragraph` to derive precise dialogue timecodes.
+- **`voices/result.json`** (when dialogue exists) — W5-1f output. Each entry has `{order, character, line, emotion, file, duration, start}`. The `start` field is the **TTS-resolved start, including consecutive-dialogue stacking** (computed by `generate_tts_typecast.cjs`'s `groupEnd` tracker — each subsequent dialog in the same `after_paragraph` group is pushed past the previous dialog's measured duration + 0.2 s gap). Primary speaker→timecode source when `options.splitOnSpeakerChange: true`.
+- **`voices/*_{HHMMSS}.mp3`** (when dialogue exists) — the filename's `HHMMSS` token is the resolved start (TC form, produced by `tcFromSrtTime`). If `voices/result.json` is missing, speaker (`character` token) + resolved start can be recovered from filename alone (duration from ffprobe).
+- `dialogs_{part}.json` + `segments_{part}/index.json` (when present) — W4/W5 intermediate output. **Fallback only**: accurate for single-dialog-per-paragraph cases (match `after_paragraph` against `paragraph_idx` to get the base start), but **cannot account for consecutive-dialogue stacking within the same `after_paragraph`**. Prefer `voices/` when available.
 
 Using the script and SRT/timeline, generate a **references CSV** and a **scenes CSV**.
 Use AutoFlowCut MCP's `get_schema` tool to look up the CSV schema and follow it exactly.
@@ -117,9 +118,11 @@ Read `options.splitOnSpeakerChange` at the root of W_progress.json and branch:
 - If `false` (default) or field missing → keep the existing rules (within the same time window / same scene, different speakers stay in one scene)
 
 **Speaker source priority** (when `true`, apply top-down):
-1. **`dialogs_{part}.json` + `segments_{part}/index.json`** — primary source. `dialogs.character` is the speaker ID; `dialogs.after_paragraph` matched against `segments_index.paragraph_idx` yields a precise timeline timecode (same mechanism W5-1f uses). When this source exists, split without falling back to inference.
-2. **Explicit speaker labels in the script (`{title}_*.md`)** — fallback when dialogs JSON is absent. Labels like `"A:"`, `"Narrator:"`, `"{name}:"`. Re-map the label paragraph to a timeline timecode via `segments_index.paragraph_idx` (paragraph-granularity only — coarser than dialogs JSON).
-3. **Contextual inference** (only when neither 1 nor 2 is available) — the subagent infers the speaker from dialogue flow. If confidence is low, do not split (conservative fallback). If 1, 2, AND 3 are all unavailable, `splitOnSpeakerChange: true` has no real effect for that part — record `dialogs_{part}.json absent — speaker-change splitting skipped` in the review notes.
+1. **`voices/result.json`** — **primary source**. Each entry's `start` is W5-1f's TTS-resolved value (reflects consecutive-dialogue stacking). `character` is the speaker ID; `duration` gives the end time. When this file exists, split without falling back to inference.
+2. **`voices/*_{HHMMSS}.mp3` filename parse** — when `result.json` is absent but the mp3 files exist, recover speaker + resolved start from filenames (`{order}_{character}_{HHMMSS}.mp3`); compute duration with ffprobe.
+3. **`dialogs_{part}.json` + `segments_{part}/index.json`** (fallback) — match `dialogs.after_paragraph` against `paragraph_idx` to derive a base start. **Accurate only for single-dialog-per-paragraph cases; consecutive dialogues in the same paragraph cannot be stacked here**. Use only when both `voices/` outputs are absent AND the paragraph has exactly one dialog.
+4. **Explicit speaker labels in the script (`{title}_*.md`)** — `"A:"`, `"Narrator:"`, `"{name}:"`. Only when 1–3 are unavailable. Re-map the label paragraph to a timeline timecode via `segments_index.paragraph_idx` (paragraph-granularity only).
+5. **Contextual inference** — only when 1–4 are all unavailable. Conservative: if confidence is low, do not split. If 1 through 5 are ALL unavailable, `splitOnSpeakerChange: true` has no real effect — record `voices/ + dialogs_{part}.json absent — speaker-change splitting skipped` in the review notes.
 
 **Full-timeline part offset calculation:**
 ```
