@@ -10,8 +10,10 @@
 //       (mirrors generate_tts_elevenlabs.cjs)
 //
 //   node generate_tts_typecast.cjs dialogue <dialogsJson> <outDir> <ttsSettings> [<segmentsDir>]
-//     → outDir/{order:03d}_{character}_{HHMMSS}.mp3 + result.json
-//       (per-line dialogue with timecode-coded filenames for W8 auto-placement)
+//     → outDir/{order:03d}_{character}_{HHMMSS}.mp3 + result_{part}.json
+//       (per-line dialogue with timecode-coded filenames for W8 auto-placement;
+//        {part} derived from dialogsJson basename, e.g. dialogs_setup.json → result_setup.json,
+//        so running 4 parts into the same outDir preserves all 4 result files)
 //
 //     start time resolution per dialog:
 //       1. dialog.start (SRT-format string) → use as-is
@@ -42,6 +44,16 @@ const EMOTION_MAP = {
   '조롱': 'happy', '비아냥': 'happy', '비웃음': 'happy',
   '흥분/깨달음': 'happy', '희망': 'happy', '안도/환희': 'happy', '깨달음/흥분': 'happy',
 };
+
+// Derive part name from dialogs JSON path: dialogs_setup.json → "setup",
+// dialogs_part1_setup.json → "part1_setup". Used to name per-part result file.
+// Falls back to "unknown" if the basename doesn't match the dialogs_<part>.json
+// pattern (caller can still rely on the unique mp3 filenames in that case).
+function derivePartFromDialogsPath(dialogsPath) {
+  const base = path.basename(dialogsPath, '.json');
+  const m = /^dialogs[_\-](.+)$/i.exec(base);
+  return m ? m[1] : 'unknown';
+}
 
 // Parse W5-0 tts_settings.md:  character: voice_id   # comment
 function parseTtsSettings(p) {
@@ -330,7 +342,8 @@ async function runDialogue(apiKey, dialogsPath, outDir, ttsSettingsPath, segment
     }
     if (generated) await sleep(300);
   }
-  fs.writeFileSync(path.join(outDir, 'result.json'), JSON.stringify(result, null, 2));
+  const partName = derivePartFromDialogsPath(dialogsPath);
+  fs.writeFileSync(path.join(outDir, `result_${partName}.json`), JSON.stringify(result, null, 2));
   console.log(`Generated ${success} (failed ${fail}) -> ${outDir}`);
   if (fail > 0) {
     // Don't pretend success — downstream (W5 merge / W8 import) would silently

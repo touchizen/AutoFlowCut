@@ -152,7 +152,8 @@ node "$SCRIPT_DIR/generate_tts_typecast.cjs" dialogue ep{N}/dialogs_{part}.json 
 ```
 **4th arg `ep{N}/segments_{part}/`** — segments dir from 5-1a. Required for `after_paragraph` → start auto-derivation. Without it, every dialog must carry an explicit `start` field in dialogs.json.
 
-**Outputs:** `voices/{order:03d}_{character}_{HHMMSS}.mp3` + `result.json`
+**Outputs:** `voices/{order:03d}_{character}_{HHMMSS}.mp3` + `voices/result_{part}.json`
+- The `result_{part}.json` filename is derived from the `{part}` token in `dialogs_{part}.json` (via `derivePartFromDialogsPath`). Running 4 parts sequentially into the same `voices/` directory preserves each part's result independently (the previous version wrote a single `result.json`, so only the last part survived).
 - The `_HHMMSS` in the filename is each line's start time (used for auto-placement in W8)
 - start resolution (inside the script):
   1. Explicit `start` in `dialogs.json` (SRT-format string) — used as-is

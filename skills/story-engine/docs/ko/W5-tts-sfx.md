@@ -151,7 +151,8 @@ node "$SCRIPT_DIR/merge_audio.cjs" ep{N}/segments_{파트}/ ep{N}/final_{파트}
 node "$SCRIPT_DIR/generate_tts_typecast.cjs" dialogue ep{N}/dialogs_{파트}.json ep{N}/voices/ ep{N}/tts_settings.md ep{N}/segments_{파트}/
 ```
 **4번째 인자 `ep{N}/segments_{파트}/`** — 5-1a 산출 segments dir. 이게 있어야 `after_paragraph`로 대사 start 자동 도출. 없으면 `dialogs.json`의 명시적 `start` 필드 필수.
-**산출:** `voices/{order:03d}_{캐릭터}_{HHMMSS}.mp3` + `result.json`
+**산출:** `voices/{order:03d}_{캐릭터}_{HHMMSS}.mp3` + `voices/result_{파트}.json`
+- `result_{파트}.json` 파일명은 `dialogs_{파트}.json` 의 `{파트}` 토큰에서 자동 도출됨 (`derivePartFromDialogsPath`). 4개 파트를 같은 `voices/` 에 순차 실행해도 각 파트의 결과가 독립 보존된다 (이전 버전은 `result.json` 단일 파일이라 마지막 파트만 살아남았음).
 - 파일명의 `_HHMMSS`는 대사 시작 시각 (W8 자동 배치용)
 - start 산출 우선순위 (스크립트 내부):
   1. `dialogs.json`의 명시적 `start` (SRT-format 문자열) — 그대로 사용
