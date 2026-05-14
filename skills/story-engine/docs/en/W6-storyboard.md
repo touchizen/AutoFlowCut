@@ -105,6 +105,18 @@ AutoFlowCut MCP: get_schema({ type: "prompt-image" }) → prompt-writing guide
 - Distinguish dialogue-centered scenes from description-centered scenes
 - Average ~10 s per scene (for a 28-minute video, ~150–250 scenes)
 
+**Speaker-change splitting (optional, options.splitOnSpeakerChange):**
+
+Read `options.splitOnSpeakerChange` at the root of W_progress.json and branch:
+- If `true`: every speaker-change boundary in the SRT/script becomes a scene-split candidate.
+  - Example: if A→B→A speak within the same 5-second window, split into 3 scenes
+  - Subject to the 15s cap; short greetings (1–2 seconds) merge into the adjacent speaker's scene (subagent's judgment)
+- If `false` (default) or field missing → keep the existing rules (within the same time window / same scene, different speakers stay in one scene)
+
+**Speaker identification** (when `true`):
+- Extract from the script's speaker labels (e.g. "A:", "Narrator:", "{name}:") or from SRT metadata
+- If no label is present, the subagent infers the speaker from context (dialogue flow). If confidence is low, do not split (conservative fallback)
+
 **Full-timeline part offset calculation:**
 ```
 setup: 0
