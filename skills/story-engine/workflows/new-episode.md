@@ -71,6 +71,7 @@ Use AskUserQuestion to gather:
    - Default 적용 (응답 없거나 ambiguous):
      - yadam / dark-history → 자동 `false` (장르 default)
      - bespoke → reference 분석 결과가 명확히 "대화 중심"이면 `true` 제안. 아니면 `false`. 사용자 override 가능.
+   - **Resolved value substitution**: 사용자 응답을 boolean (`true`/`false`)으로 확정한 뒤, Step 5의 `{split_on_speaker_change_yn}` placeholder는 `yes`/`no`로, Step 6의 `{split_on_speaker_change}` placeholder는 `true`/`false` JSON 리터럴로 치환한다. 기본 `false` 폴백은 `{topic}`/`{genre}` 와 동일하게 "resolved value를 substitute"하는 컨벤션을 따른다 — 템플릿의 리터럴을 그대로 복사하지 말 것.
 
 **Bespoke-specific output preparation:**
 - Create `{PROJECT_DIR}/ep{number}_{slug}/_story_source/_references/` directory
@@ -116,7 +117,7 @@ Write to `{PROJECT_DIR}/ep{number}_{slug}/_story_source/STATE.md`:
 - Output language: {output_lang}  # ko (yadam locked, or bespoke + Korean refs/topic) | en (dark-history locked, or bespoke + English)
 - Target length: {length}
 - References: {references or "none"}{if bespoke: " (3~5 reference scripts in _references/)"}
-- Split on speaker change: yes|no   # display mirror; authoritative value is W_progress.json `options.splitOnSpeakerChange`
+- Split on speaker change: {split_on_speaker_change_yn}   # yes|no, display mirror; authoritative value is W_progress.json `options.splitOnSpeakerChange`
 ```
 
 **Step 6: Initialize W_progress.json**
@@ -129,7 +130,7 @@ Write to `{PROJECT_DIR}/ep{number}_{slug}/_story_source/W_progress.json`:
   "genre": "{genre}",
   "topic": "{topic}",
   "options": {
-    "splitOnSpeakerChange": false
+    "splitOnSpeakerChange": {split_on_speaker_change}
   },
   "waves": {
     "W1": { "status": "pending" },
@@ -145,7 +146,7 @@ Write to `{PROJECT_DIR}/ep{number}_{slug}/_story_source/W_progress.json`:
 }
 ```
 
-`options.splitOnSpeakerChange` is the episode-wide policy collected in Step 4 item 5. It lives at root (not under a specific wave) because it affects W6 storyboard splitting and any subsequent wave that reasons about scene boundaries. Default `false`; set `true` only when the user opted in (or bespoke reference analysis indicates a dialogue-driven format and the user confirmed).
+`options.splitOnSpeakerChange` is the episode-wide policy collected in Step 4 item 5. It lives at root (not under a specific wave) because it affects W6 storyboard splitting and any subsequent wave that reasons about scene boundaries. The `{split_on_speaker_change}` placeholder above MUST be substituted with the resolved boolean — `true` if user opted in (or bespoke reference analysis indicates dialogue-driven + user confirmed), else `false`. Do NOT leave the placeholder unsubstituted and do NOT hard-copy a literal `false`.
 
 For **bespoke** genre, additionally include `references` metadata:
 ```json
