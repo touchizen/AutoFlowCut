@@ -183,6 +183,32 @@ Update the new STATE.md:
 Do NOT copy generated assets (audio, images) — those regenerate for changed
 scenes only. The `_story_source/` folder copy is sufficient input.
 
+**Step 5.5: 씬 분리 정책 재확인 (splitOnSpeakerChange)**
+
+Rewrite는 사용자가 직접 재가동하는 시점이므로, W6가 다시 돌아가기 전에 씬 분리 정책을 확인할 기회를 제공한다. 원본 ep의 `_story_source/W_progress.json`을 읽어 `options.splitOnSpeakerChange` 값을 확인한 후 아래 세 분기 중 하나로 처리한다.
+
+1. **옵션이 명시되어 있음 (`true` 또는 `false`)** — 현재값을 보여주고 유지/변경을 묻는다.
+   - AskUserQuestion: "이전 옵션 (씬 분리 정책: **{현재값 = 화자 바뀔 때마다 분리 / 분리 안 함}**)으로 진행할까요, 변경할까요? / Keep current speaker-change split policy ({current})?"
+   - Options:
+     - "그대로 유지 / Keep current" — 옵션 변경 없음. v2의 `W_progress.json`에는 원본 값을 그대로 복사한다.
+     - "변경 / Change to opposite" — 반대 값으로 toggle (`true` ↔ `false`). v2의 `STATE.md` Decisions와 `W_progress.json` `options.splitOnSpeakerChange`를 모두 새 값으로 갱신한다.
+
+2. **옵션 자체가 없음 (legacy ep, Task 1 이전 생성)** — `options` 객체가 없거나 `splitOnSpeakerChange` 필드가 없으면, rewrite 시점에 정책을 처음 설정할 수 있도록 신규 질문을 던진다 (execute-pipeline의 silent fallback과 의도적으로 다름 — 사용자가 인터랙티브하게 다시 몰고 있는 순간이므로 묻는 게 맞다).
+   - AskUserQuestion: "이 에피소드는 씬 분리 정책이 설정되어 있지 않습니다. 어떻게 설정할까요? / Speaker-change split policy is not set on this legacy episode. Configure now?"
+   - Options (Task 1 `/story-new` Step 4 item 5와 동일한 선택지):
+     - "분리 안 함 (default) / Don't split" — 같은 시간대면 A→B 대사도 한 씬에 통합. 야담/narrator 중심 콘텐츠에 적합.
+     - "화자 바뀔 때마다 분리 / Split on every speaker change" — A 대사 / B 대사 각각 별도 씬. 대화 중심 bespoke / 인터뷰 형식에 적합.
+   - 장르 기반 추천 (질문에 hint로 포함):
+     - yadam / dark-history → "분리 안 함" 추천
+     - bespoke → 모르면 default; reference 분석이 명확히 "대화 중심"이면 "화자 바뀔 때마다 분리" hint
+   - 응답 결정에 따라 v2의 `W_progress.json`에 `options.splitOnSpeakerChange = {true|false}`를 신규 기록하고 v2의 `STATE.md` Decisions 라인에도 `Split on speaker change: yes|no` 항목을 추가한다.
+
+**갱신 대상 (변경 또는 신규 설정 시 둘 다 업데이트):**
+- `{PROJECT_DIR}/{ep}-v2_{slug}/_story_source/W_progress.json` → `options.splitOnSpeakerChange`
+- `{PROJECT_DIR}/{ep}-v2_{slug}/_story_source/STATE.md` → Decisions 섹션의 `Split on speaker change: yes|no` 라인 (없으면 추가)
+
+원본 ep의 파일은 절대 수정하지 않는다 — rewrite는 v2로 fork된 상태이므로 변경은 v2에만 적용한다.
+
 **Step 6: Run wave subset (scope state via `_rewrite_scope.json`, NOT a CLI flag)**
 
 `/story-execute` only accepts `--from` / `--to`. To pass rewrite-mode scope information to wave subagents, write `_story_source/_rewrite_scope.json` BEFORE invoking `/story-execute`:
