@@ -372,7 +372,7 @@ Each subagent receives:
 - Output: `references.csv`, `{title}_scenes.csv`, `06_review_group{A,B,C}.md`
 - **HARD RULE**: W6 must NOT generate images. Forbidden calls: `app_start_ref_batch`, `app_start_scene_batch`, `app_generate_reference`, `app_generate_scene`, and their HTTP equivalents. Image generation belongs exclusively to W7. If the subagent even considers kicking off a batch "since the CSV is ready", that is a spec violation — STOP and hand off to W7.
 
-**W6 legacy fallback (옵션 누락 시):** `W_progress.json`에 `options` 객체 자체가 없거나 `options.splitOnSpeakerChange` 필드가 없는 (Task 1 이전에 생성된) 에피소드는 사용자에게 묻지 않고 `splitOnSpeakerChange = false`로 진행한다. 재개 흐름을 끊지 않으며, W6 subagent는 기존 룰만 사용하므로 기존 동작과 동일하다.
+**W6 legacy fallback (옵션 누락 시):** `W_progress.json`에 `options` 객체 자체가 없거나 `options.splitOnSpeakerChange` 필드가 없는 (Task 1 이전에 생성된) 에피소드는 사용자에게 묻지 않고 `splitOnSpeakerChange = false`로 진행한다. 재개 흐름을 끊지 않으며, W6 subagent는 기존 룰만 사용하므로 기존 동작과 동일하다. (rewrite-episode.md Step 5.5는 의도적으로 인터랙티브하게 묻는다 — 사용자가 직접 재실행을 몰고 있는 시점이라 정책 재확인 가치가 silence보다 크기 때문. 일관성 맞추려 이 silent fallback을 interactive로 바꾸지 말 것.)
 
 **W7 subagent prompt includes:**
 - **MANDATORY pre-check**: `app_open_project({ name })` to switch to target project BEFORE loading CSV or generating. Verify current project matches. If mismatch → STOP.
