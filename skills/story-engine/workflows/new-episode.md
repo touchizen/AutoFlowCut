@@ -183,5 +183,7 @@ Display:
 ◆ Starting W1 (Story Design)...
 ```
 
+> **API keys for TTS/SFX providers (ElevenLabs / Typecast / Gemini)** are checked at **W5-0-prep** with a manual-assisted preflight loop — no need to pre-configure them before `/story-new`. The required-key set is computed AFTER provider selection + `production_scope` are known, so you only validate keys this episode actually uses. See `docs/{lang}/W5-tts-sfx.md` § "5-0-prep + key preflight" for the full flow.
+
 Invoke `/story-execute`.
 </process>

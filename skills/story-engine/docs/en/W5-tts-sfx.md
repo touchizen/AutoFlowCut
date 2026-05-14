@@ -52,6 +52,89 @@ The choice routes 5-0 voice recommendations:
 
 > **No mixing**: feeding a Typecast voice_id to the ElevenLabs script returns 401 (and vice versa). Match provider exactly.
 
+### 5-0-prep + key preflight (MANDATORY before 5-0-assign)
+
+**After provider selection is settled (and AFTER the `production_scope` block has been read at W5 startup)**, the subagent runs a **key preflight loop** so missing or stale API keys are surfaced BEFORE any expensive work begins (W1–W4 outputs are not wasted on a credentials failure deep inside W5).
+
+> **v1 = manual-assisted preflight.** The subagent reads / validates keys and guides the user to the right credentials file path, but **does NOT write the credentials file itself**. The user pastes the key into `~/.<provider>/credentials` manually (one line, dotenv format) and the subagent re-validates. Auto-persist is a deferred follow-up.
+
+**Step 1 — compute the required-key set from provider choices + `production_scope`.** Start empty, then add:
+
+| Narration choice | Dialogue choice | `production_scope.sfx` | Required keys |
+|------------------|-----------------|------------------------|---------------|
+| ElevenLabs       | Typecast        | true                   | ElevenLabs + Typecast |
+| Typecast         | Typecast        | true                   | Typecast + ElevenLabs (for SFX) |
+| ElevenLabs       | (no dialogue)   | true                   | ElevenLabs |
+| Vrew (external)  | Typecast        | true                   | Typecast + ElevenLabs (for SFX) |
+| Typecast         | (no dialogue)   | true                   | Typecast + ElevenLabs (for SFX) |
+| Vrew (external)  | (no dialogue)   | true                   | ElevenLabs (for SFX only) |
+| (any narration)  | (any)           | **false**              | (drop the ElevenLabs-for-SFX entry) |
+
+**`production_scope.dialogue: false`** drops the dialogue-side Typecast requirement, BUT it does NOT drop Typecast if narration is Typecast — narration is mandatory. Likewise, **`production_scope.sfx: false`** drops the ElevenLabs-for-SFX requirement; if no other slot in the row uses ElevenLabs, ElevenLabs is not in the required set at all.
+
+Final rule: **the required set is the union of {narration provider} ∪ {dialogue provider when `production_scope.dialogue: true`} ∪ {ElevenLabs when `production_scope.sfx: true`}**. Vrew has no key (local app) and contributes nothing.
+
+**Step 2 — for each provider in the required set, validate.** Try `readApiKey(provider)` first (env var → credentials file fallback; already implemented in `lib_afc.cjs` for `elevenlabs` and `typecast`). Then issue a cheap GET to confirm the key actually authenticates:
+
+| Provider | Method | URL | Header | Success | Failure (bad key) | Signup URL (shown on miss) |
+|----------|--------|-----|--------|---------|-------------------|----------------------------|
+| ElevenLabs | GET | `https://api.elevenlabs.io/v1/voices` | `xi-api-key: <key>` | 200 | 401 | `https://elevenlabs.io/app/speech-synthesis/api-keys` |
+| Typecast | GET | `https://api.typecast.ai/v1/voices` | `x-api-key: <key>` | 200 | 401 | `https://app.typecast.ai/api-keys` |
+| Google AI Studio (Gemini) | GET | `https://generativelanguage.googleapis.com/v1beta/models?key=<key>` | (key in URL) | 200 | 400 / 403 | `https://aistudio.google.com/app/apikey` |
+
+> Gemini is **documented here for forward-compat only** — the bundled `lib_afc.cjs` `readApiKey()` does NOT yet support `gemini`, and no bundled W5 script consumes a Gemini key today. If a future provider choice selects Gemini, the preflight loop is structurally identical (same three classify-and-remediate branches), but the v1 bundle will block on it. Use the env-name / credentials-path placeholders below as the forward-compatible target.
+
+All three validation endpoints are read-only and free (no usage charge for `GET /voices` or `GET /models`). Each call should complete in < 1 s. Treat 5xx as "validation skipped, proceed with warning" — do NOT block the pipeline on transient infra; let the actual TTS call surface a more specific failure if it recurs.
+
+**Step 3 — classify each result and emit user-facing chat lines.** Print one banner per provider so the user sees the heartbeat:
+
+```
+▸ Validating ElevenLabs API key…
+✅ ElevenLabs key OK
+▸ Validating Typecast API key…
+⚠ Typecast key missing (~/.typecast/credentials)
+  [paste / open-file / switch-to-elevenlabs-for-dialogue]
+```
+
+Three buckets, three branches:
+
+- **Found + validates (200)** → mark provider OK, continue to the next provider in the required set.
+- **Not found (no env var, no credentials file)** → "first-time setup" remediation menu (see Step 4).
+- **Found but 401 / 403** → "stale/invalid key" remediation menu (Step 4). Chat opener:
+  `⚠ Typecast key at ~/.typecast/credentials returned 401. Likely expired or wrong account.`
+
+**Step 4 — remediation menu (AskUserQuestion).** Same four options for both miss and stale; only the chat opener differs:
+
+| Option | What the subagent does |
+|--------|------------------------|
+| **(a) "I have a key — I'll paste it into the credentials file"** | Print the exact path (`~/.<provider>/credentials`) + the exact line format (`<ENVNAME>=<value>`, mode 0600). Wait for user confirmation. Re-run Step 2 validation for this provider. **v1: user pastes manually; the subagent does NOT write the file.** |
+| **(b) "Show me where to get a key"** | Print the provider's signup URL (verbatim from the table above) + a one-line hint on where the key lives in the provider's dashboard. Loop back to (a) when user has it. |
+| **(c) "Switch to a different provider"** | Re-open the W5-0-prep AskUserQuestion (narration or dialogue, whichever slot is unfilled). Recompute the required-key set from Step 1 with the new choice. Re-validate from Step 2. |
+| **(d) "I'll set it up myself, retry later"** | Print the credentials file path and pause the pipeline. On `/story-resume`, re-run Step 2 for the missing providers. |
+
+Every option ends with a one-line reminder of where credentials live:
+
+```
+Credentials file: ~/.<provider>/credentials (dotenv format: <ENVNAME>=...; chmod 0600)
+```
+
+**Credentials path + env-name reference (verbatim — shown to user on miss):**
+
+| Provider | Env var name | Credentials file path |
+|----------|--------------|-----------------------|
+| ElevenLabs | `ELEVENLABS_API_KEY` | `~/.elevenlabs/credentials` |
+| Typecast | `TYPECAST_API_KEY` | `~/.typecast/credentials` |
+| Google AI Studio (Gemini) | `GOOGLE_AI_STUDIO_API_KEY` (placeholder — not yet read by `lib_afc.cjs`) | `~/.google-ai-studio/credentials` (placeholder — not yet read by `lib_afc.cjs`) |
+
+**Step 5 — gate.** Proceed to 5-0-assign **only after every provider in the required set has validated OK** (no provider in the {miss, 401, transient-5xx} buckets). If the user picks (d) and the pipeline pauses, on `/story-resume` the W5 subagent re-enters this preflight loop at Step 2 for whichever providers were not yet OK.
+
+**`production_scope` interaction (explicit):**
+- **`production_scope.dialogue: false`** — drop the dialogue-side Typecast from the required set. Narration-side Typecast still counts if narration = Typecast.
+- **`production_scope.sfx: false`** — drop the ElevenLabs-for-SFX requirement. If no other slot uses ElevenLabs, ElevenLabs is NOT in the required set at all (and validation for it is skipped entirely).
+- Both off → the required set may be as small as {Typecast} (TC narration only) or {ElevenLabs} (EL narration only). Preflight still runs for whichever single provider is left; the loop just iterates once.
+
+**Why preflight at W5-0-prep and not earlier:** the required-key set depends on the provider choice that happens here. Asking at `/story-new` would force keys for providers that may not actually be used this episode. Asking later (mid 5-1a) would already have wasted W1–W4. W5-0-prep is the goldilocks point.
+
 ### 5-0-assign. Per-character voice assignment
 
 > **When `production_scope.dialogue: false`**: character voice assignment is **skipped entirely**. Only the `narrator` row is required in `tts_settings.md`. Because `dialogs_{part}.json` is absent, character extraction itself is impossible — do NOT call `AskUserQuestion` for characters. (If the narrator mapping is also missing, ask for narrator only as part of 5-0-prep.)
