@@ -126,7 +126,7 @@ Credentials file: ~/.<provider>/credentials (dotenv 형식: <ENVNAME>=...; chmod
 | Typecast | `TYPECAST_API_KEY` | `~/.typecast/credentials` |
 | Google AI Studio (Gemini) | `GOOGLE_AI_STUDIO_API_KEY` (placeholder — `lib_afc.cjs`에서 아직 안 읽음) | `~/.google-ai-studio/credentials` (placeholder — `lib_afc.cjs`에서 아직 안 읽음) |
 
-**Step 5 — 게이트.** 필요-키 집합의 **모든 provider가 OK로 검증된 뒤에만** 5-0-assign으로 진행 (어느 provider도 {miss, 401, transient-5xx} 버킷에 남으면 안 됨). 사용자가 (d)를 선택해 파이프라인이 일시정지되면, `/story-resume` 시 W5 서브에이전트는 아직 OK 아닌 provider에 대해 Step 2부터 preflight 루프에 재진입한다.
+**Step 5 — 게이트.** 필요-키 집합의 **모든 provider가 OK 또는 transient-5xx(warning 처리)인 뒤에만** 5-0-assign으로 진행 (어느 provider도 {miss, 401/403} blocking 버킷에 남으면 안 됨). transient-5xx는 위 Step 2 정책에 따라 비-blocking — 경고만 출력 후 진행하고, 실제 TTS 호출에서 잘못된 키면 더 구체적인 에러로 잡힌다. 사용자가 (d)를 선택해 파이프라인이 일시정지되면, `/story-resume` 시 W5 서브에이전트는 아직 OK 아닌 (blocking) provider에 대해 Step 2부터 preflight 루프에 재진입한다.
 
 **`production_scope` 상호작용 (명시):**
 - **`production_scope.dialogue: false`** — 대사 측 Typecast를 필요-키 집합에서 제거. 나레이션이 Typecast라면 나레이션 측 Typecast는 여전히 카운트.

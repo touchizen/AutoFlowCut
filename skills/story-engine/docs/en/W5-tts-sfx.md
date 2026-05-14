@@ -126,7 +126,7 @@ Credentials file: ~/.<provider>/credentials (dotenv format: <ENVNAME>=...; chmod
 | Typecast | `TYPECAST_API_KEY` | `~/.typecast/credentials` |
 | Google AI Studio (Gemini) | `GOOGLE_AI_STUDIO_API_KEY` (placeholder — not yet read by `lib_afc.cjs`) | `~/.google-ai-studio/credentials` (placeholder — not yet read by `lib_afc.cjs`) |
 
-**Step 5 — gate.** Proceed to 5-0-assign **only after every provider in the required set has validated OK** (no provider in the {miss, 401, transient-5xx} buckets). If the user picks (d) and the pipeline pauses, on `/story-resume` the W5 subagent re-enters this preflight loop at Step 2 for whichever providers were not yet OK.
+**Step 5 — gate.** Proceed to 5-0-assign **once every provider in the required set is either OK or transient-5xx (warning, non-blocking)** — no provider may remain in the {miss, 401/403} blocking buckets. transient-5xx is non-blocking per Step 2 policy above (warning emitted, proceed; if the key is actually bad, the real TTS call surfaces a more specific failure). If the user picks (d) and the pipeline pauses, on `/story-resume` the W5 subagent re-enters this preflight loop at Step 2 for whichever (blocking) providers were not yet OK.
 
 **`production_scope` interaction (explicit):**
 - **`production_scope.dialogue: false`** — drop the dialogue-side Typecast from the required set. Narration-side Typecast still counts if narration = Typecast.

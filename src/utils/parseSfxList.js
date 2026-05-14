@@ -28,9 +28,43 @@
 function splitRow(line) {
   const trimmed = line.trim()
   if (!trimmed.startsWith('|') || !trimmed.endsWith('|')) return null
-  // 양쪽 끝 `|`를 떼어내고 `|`로 split, 각 셀 trim
+  // 양쪽 끝 `|`를 떼어내고 escape (`\|`) 인지된 markdown 룰 따라 split, 각 셀 trim
+  // `\|` (escaped pipe) → 본문 pipe, `|` → 셀 구분자.
   const inner = trimmed.slice(1, -1)
-  return inner.split('|').map(c => c.trim())
+  const cells = []
+  let buf = ''
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i]
+    if (ch === '\\' && inner[i + 1] === '|') {
+      buf += '|'
+      i++
+      continue
+    }
+    if (ch === '|') {
+      cells.push(buf.trim())
+      buf = ''
+      continue
+    }
+    buf += ch
+  }
+  cells.push(buf.trim())
+  return cells
+}
+
+/**
+ * W4-3 행이지만 prompt 셀에 escape 안 된 literal `|` 가 들어가 셀 수가 8개를 초과한 경우,
+ * 첫 5개를 cueNo..offset 으로, 마지막 1개를 duration 으로 두고 중간을 prompt 로 join 한다.
+ * (안전한 추정 — 마지막 셀이 숫자로 파싱되어야 적용)
+ */
+function rejoinOverflowPromptCells(cells) {
+  if (cells.length <= 8) return cells
+  const last = cells[cells.length - 1]
+  // 마지막 셀이 숫자 비슷해야 (duration column) 안전하게 재조합
+  if (!/^-?\d+(?:\.\d+)?$/.test(last.trim())) return cells
+  const head = cells.slice(0, 6)  // cueNo, part, file, anchor, placement, offset
+  const promptCells = cells.slice(6, -1)  // 중간 (split 되어버린 prompt 조각들)
+  const prompt = promptCells.join('|').trim()
+  return [...head, prompt, last]
 }
 
 /**
@@ -86,12 +120,14 @@ export function parseSfxList(mdText) {
 
   const lines = mdText.split(/\r?\n/)
   for (const line of lines) {
-    const cells = splitRow(line)
+    let cells = splitRow(line)
     if (!cells) continue
     // separator row: 모든 셀이 `---` 패턴
     if (cells.every(isSeparatorCell)) continue
     // 컬럼 수가 8개 미만이면 W4-3 스펙 행 아님 → skip
     if (cells.length < 8) continue
+    // 8개 초과는 prompt 셀에 unescaped `|` 가 들어간 경우 — 재조합 시도
+    cells = rejoinOverflowPromptCells(cells)
 
     const [cueRaw, partRaw, fileRaw, anchorRaw, placementRaw,
       offsetRaw, promptRaw, durationRaw] = cells

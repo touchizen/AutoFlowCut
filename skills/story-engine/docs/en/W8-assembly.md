@@ -60,11 +60,13 @@ ep{number}/
     │   │   └── ...
     │   └── Baron/
     │       └── ...
-    └── sfx/                     ← SFX (filename timecodes auto-placed)
-        ├── 01_bell/
-        │   ├── toll_01_0030.mp3
-        │   └── ...
+    └── sfx/                     ← SFX (flat — W5 writes `{NN}_{filename}_{HHMMSS}.mp3` directly under media/sfx/)
+        ├── 01_bell_toll_0030.mp3   ← cue #01, anchor stem `01_bell_toll`, placed at 00:30 full-timeline
+        ├── 13_marketplace_0836.mp3 ← cue #13, placed at 08:36
         └── ...
+        # NOTE: filenames must preserve the W4-3 `{NN}_{filename}` stem so the
+        # AudioTab SFX prompt matcher can join against `08_sfx_*.md`. Do NOT
+        # split filenames across category subfolders (would lose the stem).
 ```
 
 **Auto-create voices/ subfolders:**

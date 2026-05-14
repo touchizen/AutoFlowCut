@@ -208,4 +208,50 @@ Some text after.
     expect(meta).toBeDefined()
     expect(meta.cueNo).toBe(null)
   })
+
+  it('handles escaped pipes (\\|) inside prompt cell', () => {
+    const md = `
+| # | Part | Filename | Anchor narration | Placement | Offset (sec) | English prompt | Duration (sec) |
+|---|------|----------|-----------------|-----------|-------------|----------------|----------------|
+| 1 | setup | 01_clock | "the clock chimed" | concurrent | 0 | metronome \\| ticking, slow | 3 |
+`
+    const r = parseSfxList(md)
+    const meta = r.get('01_clock')
+    expect(meta).toBeDefined()
+    expect(meta.prompt).toBe('metronome | ticking, slow')
+    expect(meta.durationSec).toBe(3)
+  })
+
+  it('rejoins prompt when literal | appears without escaping (overflow recovery)', () => {
+    // Author forgot to escape pipe — row has 9 cells instead of 8. Recovery
+    // rule: when the LAST cell is numeric, treat it as duration and join the
+    // overflow middle cells back into the prompt.
+    const md = `
+| # | Part | Filename | Anchor narration | Placement | Offset (sec) | English prompt | Duration (sec) |
+|---|------|----------|-----------------|-----------|-------------|----------------|----------------|
+| 1 | setup | 01_clock | "the clock chimed" | concurrent | 0 | metronome | ticking slow | 3 |
+`
+    const r = parseSfxList(md)
+    const meta = r.get('01_clock')
+    expect(meta).toBeDefined()
+    expect(meta.prompt).toBe('metronome|ticking slow')
+    expect(meta.durationSec).toBe(3)
+  })
+
+  it('overflow recovery is skipped when last cell is non-numeric (no false correction)', () => {
+    // Last cell is not a number → recovery rule does NOT fire. Row still
+    // parses with whatever destructure result we get; durationSec falls back
+    // to 0 via toNumber, prompt is the FIRST overflow segment. We assert the
+    // result is at least non-throwing and stable (no exception).
+    const md = `
+| # | Part | Filename | Anchor narration | Placement | Offset (sec) | English prompt | Duration (sec) |
+|---|------|----------|-----------------|-----------|-------------|----------------|----------------|
+| 1 | setup | 01_x | "anchor" | concurrent | 0 | a | b | c |
+`
+    expect(() => parseSfxList(md)).not.toThrow()
+    const r = parseSfxList(md)
+    const meta = r.get('01_x')
+    expect(meta).toBeDefined()
+    expect(meta.durationSec).toBe(0)
+  })
 })

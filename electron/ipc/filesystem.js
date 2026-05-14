@@ -192,20 +192,30 @@ async function pathExists(p) {
  * or `null` if no file found. Never throws.
  */
 async function loadSfxPromptMap(folderPath) {
-  const candidates = ['08_sfx_list.md', '08_sfx_목록.md']
-  for (const candidate of candidates) {
-    const mdPath = path.join(folderPath, candidate)
-    if (await pathExists(mdPath)) {
-      try {
-        const content = await fs.readFile(mdPath, 'utf-8')
-        const map = parseSfxList(content)
-        // Map → plain object (IPC structured-clone friendly)
-        const obj = {}
-        for (const [k, v] of map.entries()) obj[k] = v
-        return obj
-      } catch (err) {
-        console.warn(`[FS] Failed to parse ${candidate}:`, err?.message || err)
-        return null
+  // story-engine /story-new writes authoring artifacts under `_story_source/`
+  // (see skills/story-engine/workflows/new-episode.md). W8 imports the episode
+  // root, so `08_sfx_*.md` actually lives at `{ep}/_story_source/`. Keep the
+  // bare-root paths as a back-compat fallback for legacy / hand-assembled
+  // bundles where the user dropped the file at the top level.
+  const filenames = ['08_sfx_list.md', '08_sfx_목록.md']
+  const subdirs = ['_story_source', '']  // _story_source first (canonical), root second (legacy)
+  for (const subdir of subdirs) {
+    for (const filename of filenames) {
+      const mdPath = subdir
+        ? path.join(folderPath, subdir, filename)
+        : path.join(folderPath, filename)
+      if (await pathExists(mdPath)) {
+        try {
+          const content = await fs.readFile(mdPath, 'utf-8')
+          const map = parseSfxList(content)
+          // Map → plain object (IPC structured-clone friendly)
+          const obj = {}
+          for (const [k, v] of map.entries()) obj[k] = v
+          return obj
+        } catch (err) {
+          console.warn(`[FS] Failed to parse ${mdPath}:`, err?.message || err)
+          return null
+        }
       }
     }
   }
