@@ -20,6 +20,9 @@ Read STATE.md and determine:
 - Current wave (first wave with status != "done")
 - What was completed
 - Any pending user confirmations
+- `production_scope` block under `## Decisions` (W4-0 gate output)
+  - **Present** → inherit as-is; do NOT re-ask. The user committed at W4-0 and re-asking on resume invites mid-pipeline state churn. If the user really wants to change scope mid-flight, they can edit STATE.md directly.
+  - **Missing** (legacy episode created before this gate existed, OR fresh episode that hasn't hit W4-0 yet) → default silently to `{ dialogue: true, sfx: true }` — the current/full-pipeline behavior. Do NOT inject the W4-0 question on resume; if the next wave is W4 and the block is still missing, the W4 subagent will run W4-0 itself per `workflows/execute-pipeline.md`. Resume is a state-restore step, not a re-discussion step.
 
 **Step 3: Display status**
 

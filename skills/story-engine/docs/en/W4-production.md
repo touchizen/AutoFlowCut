@@ -19,12 +19,64 @@ This document is the W4 (production extraction + review) stage guide for the sto
 
 **Run only after the script has been confirmed through W3 review.** Extracting before the script is locked causes rework on every revision.
 
+### 4-0. Production scope (user gate, first substep)
+
+**Run this BEFORE any other extraction.** The W3 script is locked at this point, so the user can judge what this episode actually needs.
+
+1. **Read STATE.md `## Decisions` for a `production_scope:` block.**
+   - **Block present** → use the values (`dialogue: <bool>`, `sfx: <bool>`) as-is and proceed to 4-1. Do NOT ask (idempotent on resume).
+   - **Block absent (legacy ep / fresh ep)** → call the `AskUserQuestion` below and persist the answer to STATE.md.
+
+2. **AskUserQuestion (only when the block is absent):**
+   ```
+   Production scope for this episode:
+   [x] Dialogue TTS (multi-speaker — Typecast dialogue mode)
+   [x] SFX (atmospheric / tension cues)
+
+   Combos:
+   - Full (default)        : both on
+   - Narration + Dialogue  : SFX off → save ~10–20 min
+   - Narration + SFX       : dialogue off → save ~2–5 min (when script has no dialogue)
+   - Narration only        : both off → save ~12–25 min (draft / preview)
+   ```
+   - Default (no / ambiguous response): both `true` (= current behavior preserved).
+   - Show the user a quick scan summary of dialogue line count / character count so they see the trade-off (e.g. "Script has ~12 dialogue lines across 3 characters" → choosing "narration only" drops all 12 lines).
+
+3. **Update STATE.md `## Decisions`** — append the decision as a nested block:
+   ```markdown
+   - production_scope:
+       dialogue: true
+       sfx: true
+   ```
+
+4. **Orchestrator echoes the scope in the W4 START banner**: e.g. `Scope: dialogue=on, sfx=off`. The user immediately sees which steps will be skipped.
+
+**Cascade (downstream impact):**
+
+| Stage | When `dialogue: false` | When `sfx: false` |
+|-------|------------------------|-------------------|
+| 4-2 dialogue extraction | **Skip entirely** — `dialogs_{part}.json` NOT produced | (n/a) |
+| 4-3 SFX extraction | (n/a) | **Skip entirely** — `08_sfx_list.md` NOT produced |
+| W5-0-assign | Only `narrator` mapping required. Character voice assignment skipped | (n/a) |
+| W5-1f dialogue TTS | Skip — `voices/` not created | (n/a) |
+| W5-2 SFX generation | (n/a) | Skip — `media/sfx/` not produced |
+| W5-3 4-part merge | Narration merge always runs | SFX timecode conversion is a no-op |
+| W5-4 mechanic QA | No change (validates narration timing) | SFX checks (collision / range / offset) vacuous → empty cue list = pass (early-return success) |
+| W6 scenes.csv | No change (SRT-anchored) | No change |
+| W8-0 SFX scene-match | (n/a) | **Skip entirely** |
+| W8-1 audio import | Always runs — imports whatever audio exists (no change) | Always runs — no `media/sfx/` means no SFX tracks (no change) |
+
+**Filename convention unchanged.** Files that aren't produced are simply absent on disk. Downstream subagents branch on file existence; they do NOT distinguish "empty file" vs "missing file".
+
 ### 4-1. Narration extraction
 **Narration extraction** → `narration_{part}.txt` — pure narration text (dialogue and stage directions removed)
 
 **Review (substep 4-1)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 4-2. 5 rounds exceeded → escalate to user.
 
 ### 4-2. Per-character dialogue extraction
+
+> **Skip this substep entirely when `production_scope.dialogue: false`** — do NOT produce `dialogs_{part}.json`. W5-1f auto-skips on file absence (downstream does not distinguish empty file vs missing file, so simply do not create the file).
+
 **Per-character dialogue extraction** → `dialogs_{part}.json`
 
 **Required fields per entry:**
@@ -45,6 +97,9 @@ This document is the W4 (production extraction + review) stage guide for the sto
 **Review (substep 4-2)** — subagent self-review → list issues → revise. Max 5 rounds. 0 issues → proceed immediately to substep 4-3. 5 rounds exceeded → escalate to user.
 
 ### 4-3. SFX extraction
+
+> **Skip this substep entirely when `production_scope.sfx: false`** — do NOT produce `08_sfx_list.md`. W5-2 auto-skips on file absence (downstream does not distinguish empty file vs missing file, so simply do not create the file).
+
 **SFX extraction** → `08_sfx_list.md` — list of sound-effect beats (with English prompts)
 
 **`08_sfx_list.md` format (SRT-anchor based):**

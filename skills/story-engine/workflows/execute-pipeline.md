@@ -139,11 +139,11 @@ Notation:
 | W1   | (none) — only `STATE.md` (topic)                              | `01_분석.md`, `02_팩트체크.md`, `03_자료수집.md` (bespoke also: `01_references_analysis.md`, `04_success_synthesis.md`, `_meta_supplement.md`) |
 | W2   | `01_분석.md`, `02_팩트체크.md`, `03_자료수집.md`               | `04_시놉시스.md`, `05_프리플라이트.md` |
 | W3   | `04_시놉시스.md`, `05_프리플라이트.md`, `02_팩트체크.md`       | `{title}_기.md`, `{title}_승.md`, `{title}_전.md`, `{title}_결.md`, `07_검토.md` |
-| W4   | `{title}_기.md`, `{title}_승.md`, `{title}_전.md`, `{title}_결.md`                                 | `narration_{part}.txt`, `dialogs_{part}.json`, `08_sfx_목록.md`                                              |
-| W5   | `narration_{part}.txt`, `dialogs_{part}.json` (with `after_paragraph`), `08_sfx_목록.md`, `tts_settings.md`                  | `segments_{part}/` (with `index.json` carrying `paragraph_idx`), `subtitles_{part}.txt`, `final_{part}.mp3`, `final_{part}.srt`, **`timeline_{part}.json`**, `voices/` (when dialogue), `media/`, `tts_settings.md` (updated)                   |
-| W6   | `final_{part}.srt`, **`timeline_{part}.json`**, `narration_{part}.txt`, `{title}_*.md` (script), `08_sfx_목록.md`, **`voices/result_{part}.json`** (one per part) + **`voices/{part}_*_{HHMMSS}.mp3`** (when dialogue — primary speaker→timecode source for `splitOnSpeakerChange: true`; carries TTS-resolved per-part start/duration including consecutive-dialogue stacking; part prefix in filename prevents cross-part collisions), `dialogs_{part}.json` + `segments_{part}/index.json` (fallback anchor for single-dialog-per-paragraph cases) | `references.csv`, `{title}_scenes.csv`, `06_review_group{A,B,C}.md` (batch QA)                                |
+| W4   | `{title}_기.md`, `{title}_승.md`, `{title}_전.md`, `{title}_결.md`                                 | `narration_{part}.txt`; `dialogs_{part}.json` — only when `production_scope.dialogue`; `08_sfx_목록.md` — only when `production_scope.sfx` |
+| W5   | `narration_{part}.txt`; `dialogs_{part}.json` (with `after_paragraph`) — when `production_scope.dialogue`; `08_sfx_목록.md` — when `production_scope.sfx`; `tts_settings.md` | `segments_{part}/` (with `index.json` carrying `paragraph_idx`), `subtitles_{part}.txt`, `final_{part}.mp3`, `final_{part}.srt`, **`timeline_{part}.json`**, `voices/` — when `production_scope.dialogue`; `media/sfx/` — when `production_scope.sfx`; `media/final_full.{mp3,srt}`, `tts_settings.md` (updated) |
+| W6   | `final_{part}.srt`, **`timeline_{part}.json`**, `narration_{part}.txt`, `{title}_*.md` (script), `08_sfx_목록.md` (when `production_scope.sfx`), **`voices/result_{part}.json`** (one per part) + **`voices/{part}_*_{HHMMSS}.mp3`** (when `production_scope.dialogue` — primary speaker→timecode source for `splitOnSpeakerChange: true`; carries TTS-resolved per-part start/duration including consecutive-dialogue stacking; part prefix in filename prevents cross-part collisions), `dialogs_{part}.json` + `segments_{part}/index.json` (fallback anchor for single-dialog-per-paragraph cases, when dialogue on) | `references.csv`, `{title}_scenes.csv`, `06_review_group{A,B,C}.md` (batch QA)                                |
 | W7   | `references.csv`, `{title}_scenes.csv` (read-only — for ref/scene prompts)                         | AutoFlowCut images (refs + scenes in workspace), `07_image_review_group{A,B}.md` (batch QA)                  |
-| W8   | `references.csv`, `{title}_scenes.csv`, `final_{part}.mp3`, `final_{part}.srt`, `media/sfx/`, AutoFlowCut images (from W7) | CapCut project (`{title}` draft folder), `08_sfx_scene_match_qa.md`, optional video clips         |
+| W8   | `references.csv`, `{title}_scenes.csv`, `final_{part}.mp3`, `final_{part}.srt`, `media/sfx/` (when `production_scope.sfx`), AutoFlowCut images (from W7) | CapCut project (`{title}` draft folder), `08_sfx_scene_match_qa.md` (when `production_scope.sfx`; W8-0 skipped otherwise), optional video clips |
 | W9   | `04_시놉시스.md`, `{title}_*.md` (script), `{title}_scenes.csv`                                   | `11_업로드정보.json`                                                                                          |
 
 Fallback: if a wave reference doc (`docs/{lang}/W{N}-*.md`) lists additional or
@@ -240,8 +240,8 @@ follow this granularity; wave docs may add finer breakdowns but never remove the
 | W1 (bespoke) | W1-0 load-references (3–5), W1-1 per-reference analysis, W1-2 fact-check, W1-3 research, W1-4 cross-script synthesis, W1-5 meta-prompt synthesis (`_meta_supplement.md`) |
 | W2   | W2-0 read-inputs, W2-1 synopsis-draft, W2-2 preflight, W2-3..N preflight-revise (per round)        |
 | W3   | W3-0 read-inputs, W3-1..4 part-write × 4, W3-5 self-review, W3-6 external-review, W3-7 polish     |
-| W4   | W4-0 read-inputs, W4-1..4 narration-extract × 4, W4-5 dialogue-extract, W4-6 SFX-list, W4-7 audit |
-| W5   | W5-0-prep provider-pick, W5-0-assign voice-assign, W5-1a narration-TTS, W5-1b draft-subs, W5-1c build-SRT+timeline, W5-1d user-review (optional), W5-1e merge-segments, W5-1f dialogue-TTS (when dialogue), W5-2 SFX (batched), W5-3 4-part merge, W5-4 mechanic-QA |
+| W4   | **W4-0 production-scope (user gate — AskUserQuestion if `production_scope` missing in STATE.md; otherwise skip)**, W4-1 read-inputs, W4-2..5 narration-extract × 4, W4-6 dialogue-extract (skip when `production_scope.dialogue: false`), W4-7 SFX-list (skip when `production_scope.sfx: false`), W4-8 audit |
+| W5   | W5-0-prep provider-pick, W5-0-assign voice-assign (narrator-only when `production_scope.dialogue: false`), W5-1a narration-TTS, W5-1b draft-subs, W5-1c build-SRT+timeline, W5-1d user-review (optional), W5-1e merge-segments, W5-1f dialogue-TTS (skip when `production_scope.dialogue: false` OR `dialogs_{part}.json` absent), W5-2 SFX (skip when `production_scope.sfx: false` OR `08_sfx_*.md` absent), W5-3 4-part merge (SFX timecode conversion no-op when sfx off), W5-4 mechanic-QA (SFX checks vacuous → empty cue list = pass when sfx off) |
 | W6   | W6-1 references-CSV (character + scene only), W6-2 scenes-CSV, W6-3a/b/c **batch QA × 3 parallel** (Completeness / Reference integrity / Timing structure) |
 | W7   | W7-0 project-setup, W7-1 ref-batch (incl. style-pick + type:style row), W7-2 scene-batch, W7-2a error-fix, W7-2b-1/2 **image-QA batch × 2 parallel** (Visual / Content) → 🛑 user sign-off |
 | W8   | W8-0 SFX scene-match QA (moved from old W7 7-2c), W8-1 audio-import, W8-2 CapCut-export, W8-3 video (optional, requires user confirm) |
@@ -335,28 +335,51 @@ Each subagent receives:
   - **bespoke**: same English form as dark-history (`{title}_part1_setup.md` etc., `07_review.md`); content in {lang}
 
 **W4 subagent prompt includes:**
-- Narration/dialogue/SFX extraction rules
+- **W4-0 production-scope gate (FIRST sub-step, before any extraction):**
+  - Read `STATE.md` `## Decisions` for a `production_scope:` block (nested keys `dialogue: <bool>` and `sfx: <bool>`).
+  - **If absent** → call `AskUserQuestion` with the two-flag prompt below; persist the resolved booleans to `STATE.md` `## Decisions` under a new `production_scope:` block. Default suggestion: both `true` (current behavior).
+  - **If present** → skip the question, log the current values, and continue. Idempotent on `/story-resume`.
+  - `AskUserQuestion` content (bilingual, mirror existing question style):
+    ```
+    이번 에피소드의 프로덕션 범위 / Production scope for this episode:
+    [x] Dialogue TTS (다중 화자 — Typecast dialogue mode)
+    [x] SFX (atmospheric / 긴장 환기)
+
+    조합 / Combos:
+    - Full (default)        : 둘 다 켬 / both on
+    - Narration + Dialogue  : SFX 끄기 → ~10–20분 절약 / save ~10–20 min
+    - Narration + SFX       : dialogue 끄기 → ~2–5분 절약 (대사 없는 스크립트일 때) / save ~2–5 min
+    - Narration only        : 둘 다 끔 → ~12–25분 절약 (draft / preview용) / save ~12–25 min
+    ```
+  - Echo the resolved scope in the W4 START banner so the user sees what is being skipped (e.g. `프로덕션 범위 / Scope: dialogue=on, sfx=off`).
+- **Cascade on `production_scope`:**
+  - W4-2..5 narration extraction — always runs (narration is mandatory).
+  - W4-6 dialogue extraction — **skip entirely when `dialogue: false`**; do NOT produce `dialogs_{part}.json`. W5-1f then skips by absence-of-file (do NOT special-case empty file vs missing file).
+  - W4-7 SFX list — **skip entirely when `sfx: false`**; do NOT produce `08_sfx_*.md`. W5-2 then skips by absence-of-file.
+- Narration/dialogue/SFX extraction rules (for the enabled tracks)
 - Review loop: subagent cross-checks extraction vs script (max 5)
-- Output (per-genre filename):
-  - **yadam**: `narration_{part}.txt`, `dialogs_{part}.json`, `08_sfx_목록.md`
-  - **dark-history**: `narration_{part}.txt`, `dialogs_{part}.json`, `08_sfx_list.md`
-  - **bespoke**: `narration_{part}.txt`, `dialogs_{part}.json`, `08_sfx_list.md` (English filenames, aligned with dark-history; content in {lang})
+- Output (per-genre filename; conditional on `production_scope`):
+  - **yadam**: `narration_{part}.txt`; `dialogs_{part}.json` (when `dialogue: true`); `08_sfx_목록.md` (when `sfx: true`)
+  - **dark-history**: `narration_{part}.txt`; `dialogs_{part}.json` (when `dialogue: true`); `08_sfx_list.md` (when `sfx: true`)
+  - **bespoke**: `narration_{part}.txt`; `dialogs_{part}.json` (when `dialogue: true`); `08_sfx_list.md` (when `sfx: true`) — English filenames, content in {lang}
 
 **W5 subagent prompt includes:**
+- **Read `production_scope` from `STATE.md` `## Decisions` at startup.** Missing → default `{ dialogue: true, sfx: true }` (legacy episode, current behavior preserved). Persisted absent files (no `dialogs_{part}.json` / no `08_sfx_*.md`) are also respected — `production_scope` flags AND file-presence checks both gate downstream work; absence-of-file is authoritative.
 - **MANDATORY W5-0 provider selection + voice assignment** (BEFORE TTS):
   - 5-0-prep: ask user separately for narration provider (ElevenLabs / Typecast / Vrew-import) and dialogue provider (Typecast / 없음). Bundled dialogue script is **Typecast-only** — every character voice_id MUST be `tc_*`.
   - 5-0-assign: extract unique characters from `dialogs_*.json`, diff against `tts_settings.md`; if any unmapped characters or missing narrator → AskUserQuestion with 3–4 voice recommendations from the chosen provider's library, persist to `tts_settings.md`.
+    - **When `production_scope.dialogue: false`**: only the `narrator` row is required in `tts_settings.md`. Character voice assignment is skipped entirely (no character extraction, no AskUserQuestion for character voices).
 - **W5-1 (5 sub-steps, each invokes a bundled `.cjs` script):**
   - 5-1a narration TTS — `generate_tts_elevenlabs.cjs` OR `generate_tts_typecast.cjs narration` (provider chosen in 5-0-prep). Outputs `segments_{part}/seg_NNN.mp3` + `seg_NNN.json` (alignment) + `index.json` (with `paragraph_idx` for each segment).
   - 5-1b auto-draft baseline subtitles — `draft_subtitles.cjs` produces `subtitles_{part}.txt`. Manual splitting is OPTIONAL refinement (5-1d), not the default; users edit only if baseline cuts are awkward.
   - 5-1c build SRT + timeline — `build_srt.cjs <segmentsDir> <subtitlesFile> <outSrt> <timelineJson>` (4th arg REQUIRED — `timeline_{part}.json` is consumed by W6).
   - 5-1d user review of baseline (optional refinement loop) → re-run 5-1c if subtitles edited.
   - 5-1e per-part merge — `merge_audio.cjs` produces `final_{part}.mp3`.
-  - 5-1f dialogue TTS (only when dialogue exists) — `generate_tts_typecast.cjs dialogue <dialogsJson> <outDir> <ttsSettings> <segmentsDir>`. The 4th arg `segmentsDir` lets the script resolve each dialog's `_HHMMSS` from `after_paragraph` + `index.json`'s `paragraph_idx`. **Consecutive dialogues sharing one `after_paragraph` are auto-stacked** (previous dialog end + 0.2s gap) so they never collide. Without `start` AND without `after_paragraph` the script throws — silent `00:00:00` collisions are blocked.
-- W5-2 SFX — `generate_sfx.cjs` driven by SRT-anchor manifest (anchor narration + placement + offset → in-part timecode).
-- W5-3 4-part merge (ffmpeg concat) → `media/final_full.mp3` + `media/final_full.srt`; SFX in-part timecodes converted to full-timeline `media/sfx/*_MMSS.mp3`.
-- W5-4 mechanic timecode validation (collision / per-part range / full range / per-part offset).
-- Outputs: `segments_{part}/`, `subtitles_{part}.txt`, `final_{part}.mp3`, `final_{part}.srt`, **`timeline_{part}.json`**, `voices/` (when dialogue), `media/`.
+  - 5-1f dialogue TTS — **skip entirely when `production_scope.dialogue: false` OR `dialogs_{part}.json` does not exist** (no `voices/` directory created). Otherwise: `generate_tts_typecast.cjs dialogue <dialogsJson> <outDir> <ttsSettings> <segmentsDir>`. The 4th arg `segmentsDir` lets the script resolve each dialog's `_HHMMSS` from `after_paragraph` + `index.json`'s `paragraph_idx`. **Consecutive dialogues sharing one `after_paragraph` are auto-stacked** (previous dialog end + 0.2s gap) so they never collide. Without `start` AND without `after_paragraph` the script throws — silent `00:00:00` collisions are blocked.
+- W5-2 SFX — **skip entirely when `production_scope.sfx: false` OR `08_sfx_*.md` does not exist** (no `media/sfx/` produced). Otherwise: `generate_sfx.cjs` driven by SRT-anchor manifest (anchor narration + placement + offset → in-part timecode).
+- W5-3 4-part merge (ffmpeg concat) → `media/final_full.mp3` + `media/final_full.srt`. **SFX in-part → full-timeline conversion is a no-op when sfx off** (`sfx/` empty / absent → nothing to convert). Narration merge always runs.
+- W5-4 mechanic timecode validation (collision / per-part range / full range / per-part offset). **When `production_scope.sfx: false`**: empty SFX cue list = pass automatically (early-return success on the SFX checks). Narration timing validation still runs.
+- Outputs (conditional on `production_scope`): `segments_{part}/`, `subtitles_{part}.txt`, `final_{part}.mp3`, `final_{part}.srt`, **`timeline_{part}.json`**, `voices/` (when `dialogue: true`), `media/final_full.{mp3,srt}` (always), `media/sfx/` (when `sfx: true`).
 
 **W6 subagent prompt includes:**
 - **No external scripts** — `scenes.csv` is built directly via AutoFlowCut MCP tools (`get_schema`, `load_csv`, `update_field`, `save_csv`) using W5's `final_{part}.srt` + `timeline_{part}.json` as inputs.
@@ -373,6 +396,32 @@ Each subagent receives:
 - **HARD RULE**: W6 must NOT generate images. Forbidden calls: `app_start_ref_batch`, `app_start_scene_batch`, `app_generate_reference`, `app_generate_scene`, and their HTTP equivalents. Image generation belongs exclusively to W7. If the subagent even considers kicking off a batch "since the CSV is ready", that is a spec violation — STOP and hand off to W7.
 
 **W6 legacy fallback (옵션 누락 시):** `W_progress.json`에 `options` 객체 자체가 없거나 `options.splitOnSpeakerChange` 필드가 없는 (Task 1 이전에 생성된) 에피소드는 사용자에게 묻지 않고 `splitOnSpeakerChange = false`로 진행한다. 재개 흐름을 끊지 않으며, W6 subagent는 기존 룰만 사용하므로 기존 동작과 동일하다. (rewrite-episode.md Step 5.5는 의도적으로 인터랙티브하게 묻는다 — 사용자가 직접 재실행을 몰고 있는 시점이라 정책 재확인 가치가 silence보다 크기 때문. 일관성 맞추려 이 silent fallback을 interactive로 바꾸지 말 것.)
+
+**STATE.md schema — `production_scope` block (W4-0 gate, read by W4 / W5 / W8 subagents)**
+
+The W4-0 sub-step persists user-chosen production scope to `STATE.md` `## Decisions` as a nested YAML-style block:
+
+```markdown
+## Decisions
+- Topic: ...
+- Genre: ...
+- ...
+- production_scope:
+    dialogue: true       # Dialogue TTS on (W4-6 dialogue extract + W5-1f dialogue TTS)
+    sfx: true            # SFX on (W4-7 SFX list + W5-2 SFX generation)
+```
+
+**Semantics:**
+- `dialogue: true` (default) — full pipeline: W4-6 produces `dialogs_{part}.json`, W5-0-assign maps character voices, W5-1f generates per-character TTS into `voices/`.
+- `dialogue: false` — W4-6 skipped; `dialogs_{part}.json` NOT produced; W5-0-assign requires only `narrator`; W5-1f skipped; `voices/` not created.
+- `sfx: true` (default) — full pipeline: W4-7 produces `08_sfx_*.md`, W5-2 generates SFX, W5-3 converts to full timeline, W8-0 scene-match QA runs.
+- `sfx: false` — W4-7 skipped; `08_sfx_*.md` NOT produced; W5-2 skipped; W5-3 SFX conversion is a no-op; W5-4 SFX checks vacuous (empty cue list = pass); W8-0 SFX scene-match QA skipped entirely.
+
+**Legacy fallback (block missing on pre-spec episodes):** Every wave subagent that reads `production_scope` MUST default missing/absent to `{ dialogue: true, sfx: true }` — preserves current behavior for episodes created before this gate existed. The W4-0 question is asked ONLY when the block is absent on a fresh episode; resume on a legacy mid-pipeline episode inherits the defaults silently and does NOT re-ask.
+
+**Filename convention is unchanged.** Files that aren't produced are simply absent on disk. Downstream subagents check existence first (`if exists(dialogs_{part}.json)`); they do NOT special-case "empty file" vs "missing file". This keeps the contract simple: `production_scope` flag controls whether the file is produced; absence-of-file is authoritative for downstream consumers.
+
+**Why W4-0 and not /story-new?** The script is locked at W3 confirmation — by W4 the user knows what the episode actually needs. Asking at /story-new (like `splitOnSpeakerChange`) would be premature: the user is still designing the story. Asking later (W5-0-prep) wastes W4-6/W4-7 extraction work. W4-0 is the goldilocks point.
 
 **W7 subagent prompt includes:**
 - **MANDATORY pre-check**: `app_open_project({ name })` to switch to target project BEFORE loading CSV or generating. Verify current project matches. If mismatch → STOP.

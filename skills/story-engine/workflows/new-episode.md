@@ -120,6 +120,17 @@ Write to `{PROJECT_DIR}/ep{number}_{slug}/_story_source/STATE.md`:
 - Split on speaker change: {split_on_speaker_change_yn}   # yes|no, display mirror; authoritative value is W_progress.json `options.splitOnSpeakerChange`
 ```
 
+> **`production_scope:` block is NOT pre-filled here on purpose.** Unlike `splitOnSpeakerChange` (a stylistic policy collected at /story-new because it's set-and-forget), production scope is collected at **W4-0** — after W3 script confirmation — so the user can see what this episode actually needs before committing to ~10–25 min of TTS/SFX runtime. W4-0 persists the resolved scope into this Decisions block as a nested YAML block:
+>
+> ```markdown
+> - production_scope:
+>     dialogue: true   # default true — Dialogue TTS on (W4-6 + W5-1f)
+>     sfx: true        # default true — SFX on (W4-7 + W5-2)
+> ```
+>
+> Full schema spec: `workflows/execute-pipeline.md` → "STATE.md schema — production_scope block".
+> Legacy ep resumed without this block → defaults silently to `{ dialogue: true, sfx: true }` (current behavior preserved; resume does NOT re-ask — see `workflows/resume.md` Step 2).
+
 **Step 6: Initialize W_progress.json**
 
 Write to `{PROJECT_DIR}/ep{number}_{slug}/_story_source/W_progress.json`:

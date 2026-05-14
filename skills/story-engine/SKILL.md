@@ -24,8 +24,8 @@ description: "YouTube story channel script writing skill with 9-wave automated p
 | **W2** | 시놉시스 + 프리플라이트 | 최대 5회 |
 | **W3** | 대본 작성 + 검토 | 최대 5회 (목표 9.5점) |
 | | 🛑 **사용자 확인** | |
-| **W4** | 프로덕션 추출 + 검증 | 최대 5회 |
-| **W5** | TTS/SFX + mechanic 타임코드 검증 | 리뷰 |
+| **W4** | 프로덕션 추출 + 검증 (W4-0 production-scope 사용자 게이트 — dialogue/sfx 켜기/끄기 선택) | 최대 5회 |
+| **W5** | TTS/SFX + mechanic 타임코드 검증 (`production_scope.dialogue: false` → 5-1f 스킵; `production_scope.sfx: false` → 5-2/5-3 SFX 변환 no-op/5-4 SFX 검사 vacuous) | 리뷰 |
 | **W6** | 스토리보드 CSV + 검토 (batch QA, 3그룹 병렬) | 최대 5회 |
 | **W7** | 이미지 프로덕션 (ref + 씬 + 에러 fix + image QA, batch QA) | 최대 5회 |
 | | 🛑 **사용자 확인** | |

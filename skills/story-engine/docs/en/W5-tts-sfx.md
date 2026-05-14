@@ -4,6 +4,8 @@ This document is the W5 (TTS / SFX generation + timecode validation) stage guide
 
 Uses the narration / dialogue / SFX data extracted in W4 to generate audio.
 
+> **`production_scope` gate (read at startup).** The W5 subagent reads `STATE.md` `## Decisions` for a `production_scope:` block (see `workflows/execute-pipeline.md` "STATE.md schema — production_scope block" for the full spec). Missing block → fallback `{ dialogue: true, sfx: true }` (current behavior preserved). The two flags route the branching at 5-0-assign, 5-1f, 5-2, 5-3, and 5-4 — see the per-substep skip conditions below. **File absence is equally authoritative** — if `dialogs_{part}.json` or `08_sfx_*.md` is not on disk, the corresponding substep auto-skips (empty file vs missing file are NOT distinguished).
+
 ---
 
 ## TTS provider options (overview)
@@ -51,6 +53,8 @@ The choice routes 5-0 voice recommendations:
 > **No mixing**: feeding a Typecast voice_id to the ElevenLabs script returns 401 (and vice versa). Match provider exactly.
 
 ### 5-0-assign. Per-character voice assignment
+
+> **When `production_scope.dialogue: false`**: character voice assignment is **skipped entirely**. Only the `narrator` row is required in `tts_settings.md`. Because `dialogs_{part}.json` is absent, character extraction itself is impossible — do NOT call `AskUserQuestion` for characters. (If the narrator mapping is also missing, ask for narrator only as part of 5-0-prep.)
 
 1. **Extract unique characters** from `dialogs_{part}.json` (all parts combined). De-duplicate by character name.
 2. **Load existing mappings** from memory (`tts_settings.md`). Separate characters into:
@@ -147,6 +151,9 @@ node "$SCRIPT_DIR/merge_audio.cjs" ep{N}/segments_{part}/ ep{N}/final_{part}.mp3
 **Outputs:** `final_{part}.mp3` (ffmpeg concat driven by `segments_{part}/index.json`)
 
 ### 5-1f. Per-character dialogue TTS (Typecast — only when dialogue exists)
+
+> **Skip this substep entirely when `production_scope.dialogue: false` OR `dialogs_{part}.json` is absent.** Do NOT create the `voices/` directory. Either condition is sufficient (both are authoritative). After 5-1e, proceed straight to 5-2.
+
 ```bash
 node "$SCRIPT_DIR/generate_tts_typecast.cjs" dialogue ep{N}/dialogs_{part}.json ep{N}/voices/ ep{N}/tts_settings.md ep{N}/segments_{part}/
 ```
@@ -177,6 +184,8 @@ node "$SCRIPT_DIR/generate_tts_typecast.cjs" dialogue ep{N}/dialogs_{part}.json 
 ---
 
 ## 5-2. SFX generation
+
+> **Skip this substep entirely when `production_scope.sfx: false` OR `08_sfx_list.md` is absent.** Do NOT produce `sfx/` or `media/sfx/`. Either condition is sufficient (both are authoritative). After 5-1f (or 5-1e if dialogue is also off), proceed straight to 5-3.
 
 Generate sound effects based on the SFX list extracted in W4.
 
@@ -265,6 +274,8 @@ media/sfx/                        ← final (full timeline)
 
 ## 5-3. Full-audio merge + SFX timecode conversion
 
+> **When `production_scope.sfx: false`**: the narration mp3/SRT merge still runs (always). The SFX timecode conversion section is a **no-op** (no `sfx/*.mp3` to convert). `media/sfx/` is not created, and the AutoFlowCut import in W8 will simply have no SFX tracks. Downstream (W6 / W8) treats absent `media/sfx/` as a normal state.
+
 Merge the four parts' `final_{part}.mp3` and `final_{part}.srt` into `media/`. Convert SFX files from per-part to full-timeline timecodes and save to `media/sfx/`.
 
 **mp3 merge:**
@@ -305,6 +316,8 @@ ffmpeg -y -f concat -safe 0 -i merge_all.txt -c copy media/final_full.mp3
 ---
 
 ## 5-4. SFX timecode mechanic validation (W5 internal consistency only)
+
+> **When `production_scope.sfx: false`**: the SFX cue list is empty (no `08_sfx_list.md`, no `media/sfx/`). All four checks below (collision / per-part range / full range / per-part offset) become **vacuously true**. **Early-return success** — empty cue list = pass automatically. The mechanic QA substep still runs (subagent self-review loop) and validates narration-timing-related consistency, but the SFX items trivially pass with 0/0.
 
 **Only the checks possible at W5 are performed here — the "scene match" check depends on `scenes.csv` (a W6 output), so it is moved out and runs at the start of W8 8-0 (pre-audio-import) — see `docs/{lang}/W8-assembly.md`.**
 
