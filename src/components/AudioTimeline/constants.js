@@ -6,6 +6,7 @@ export const LABEL_W_KEY = 'autoflowcut.audioTimeline.labelW'
 export const TRACK_H = 64
 export const SUB_TRACK_H = 36
 export const FILE_ROW_H = 22
+export const FILE_ROW_SFX_META_H = 64  // SFX rows with anchor/placement/prompt/duration shown (4-line label)
 export const RULER_H = 32
 export const PX_PER_SEC_BASE = 40 // 100% 줌 기준
 export const ZOOM_MIN = 0.1

@@ -17,7 +17,7 @@ import PreviewPanel from './PreviewPanel'
 import Playhead from './Playhead'
 import {
   LABEL_W_DEFAULT, LABEL_W_MIN, LABEL_W_MAX, LABEL_W_KEY,
-  TRACK_H, SUB_TRACK_H, FILE_ROW_H, RULER_H,
+  TRACK_H, SUB_TRACK_H, FILE_ROW_H, FILE_ROW_SFX_META_H, RULER_H,
   PX_PER_SEC_BASE, ZOOM_MIN, ZOOM_MAX,
   PREVIEW_H_MIN, PREVIEW_H_MAX, PREVIEW_H_DEFAULT, PREVIEW_H_KEY,
   TRACK_H_MIN, TRACK_H_MAX, SUB_TRACK_H_MIN, SUB_TRACK_H_MAX, TRACK_HEIGHTS_KEY,
@@ -68,8 +68,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   const getTrackHeight = (track) => {
     if (track.isFileItem) {
       // SFX 파일 row에 anchor/placement/prompt/duration 메타데이터가 있으면 row 키움
-      // 4줄(filename + anchor + prompt + duration) ≈ 64px (vs 기본 22px)
-      if (track.clip?.sfxMeta) return 64
+      if (track.clip?.sfxMeta) return FILE_ROW_SFX_META_H
       return FILE_ROW_H
     }
     const override = trackHeights[track.id]
@@ -752,11 +751,14 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
               const rowH = getTrackHeight(track)
               const hasMeta = !!meta
               const titleAttr = hasMeta
-                ? `${track.clip.filename}\n` +
-                  `${meta.anchor ? `⚓ "${meta.anchor}"  ` : ''}` +
-                  `${meta.placement ? `▶ ${meta.placement}${meta.offsetSec ? ` @ +${meta.offsetSec}s` : ''}` : ''}\n` +
-                  `${meta.prompt ? `💬 ${meta.prompt}\n` : ''}` +
-                  `${meta.durationSec ? `⏱ ${meta.durationSec}s` : ''}`
+                ? [
+                    track.clip.filename,
+                    meta.anchor
+                      ? `⚓ "${meta.anchor}"${meta.placement ? `  ▶ ${meta.placement}${meta.offsetSec ? ` @ +${meta.offsetSec}s` : ''}` : ''}`
+                      : null,
+                    meta.prompt ? `💬 ${meta.prompt}` : null,
+                    meta.durationSec ? `⏱ ${meta.durationSec}s` : null,
+                  ].filter(Boolean).join('\n')
                 : track.clip.filename
               return (
                 <div
