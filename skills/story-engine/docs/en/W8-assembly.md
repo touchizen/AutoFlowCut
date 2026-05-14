@@ -64,9 +64,19 @@ ep{number}/
 ```
 
 **Auto-create voices/ subfolders:**
-After TTS, extract character name from filenames and auto-create subfolders. Filenames are `{part}_{order:03d}_{character}_{HHMMSS}.mp3` (produced by W5-1f). The regex below accepts the new prefixed form AND the older unprefixed form (`{order}_{character}_{HHMMSS}.mp3`) so existing episodes still work.
+After TTS, move each mp3 into a character-named subfolder. Filenames are `{part}_{order:03d}_{character}_{HHMMSS}.mp3` (produced by W5-1f). The regex below accepts the new prefixed form AND the older unprefixed form (`{order}_{character}_{HHMMSS}.mp3`) so existing episodes still work.
+
+**Pick the right voices dir**: W5-1f writes flat into `ep{number}/voices/`. Some workflows move the files to `ep{number}/media/voices/` later, so detect whichever exists (filesystem.js's import code uses the same priority — `media/voices` first, falling back to `voices`, and only reads character subdirectories underneath).
+
 ```bash
-cd ep{number}/media/voices && for f in *.mp3; do
+ep_dir="ep{number}"
+if [ -d "$ep_dir/media/voices" ]; then
+  voices_dir="$ep_dir/media/voices"
+else
+  voices_dir="$ep_dir/voices"
+fi
+cd "$voices_dir" && for f in *.mp3; do
+  [ -e "$f" ] || continue   # nothing to do if already subfoldered
   # Filename: [{part}_]{order:03d}_{character}_{HHMMSS}.mp3
   # Anchor on the 3-digit order and 6-digit HHMMSS to pull the character out.
   char=$(echo "$f" | sed -E 's/^(.*_)?[0-9]{3}_([^_]+)_[0-9]{6}\.mp3$/\2/')

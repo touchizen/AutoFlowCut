@@ -64,9 +64,19 @@ ep{번호}/
 ```
 
 **voices/ 디렉토리 구조 생성:**
-TTS 생성 후 파일명에서 캐릭터명을 추출하여 서브폴더를 자동 생성한다. 파일명은 `{파트}_{order:03d}_{캐릭터}_{HHMMSS}.mp3` (W5-1f 산출). 파트 prefix가 있는 새 형식과, 없던 이전 형식 모두 처리하도록 정규식이 optional prefix를 받는다.
+TTS 생성 후 파일명에서 캐릭터명을 추출하여 캐릭터별 서브폴더로 재배치한다. 파일명은 `{파트}_{order:03d}_{캐릭터}_{HHMMSS}.mp3` (W5-1f 산출). 파트 prefix가 있는 새 형식과, 없던 이전 형식 모두 처리하도록 정규식이 optional prefix를 받는다.
+
+**대상 디렉토리 선택**: W5-1f는 `ep{번호}/voices/` 에 flat 으로 쓴다. 일부 워크플로우에서 `ep{번호}/media/voices/` 로 옮겨뒀을 수도 있으니, 존재하는 쪽을 자동 선택한다 (filesystem.js 의 import 코드도 동일하게 `media/voices` 우선·`voices` fallback 로 캐릭터 서브폴더만 읽는다).
+
 ```bash
-cd ep{번호}/media/voices && for f in *.mp3; do
+ep_dir="ep{번호}"
+if [ -d "$ep_dir/media/voices" ]; then
+  voices_dir="$ep_dir/media/voices"
+else
+  voices_dir="$ep_dir/voices"
+fi
+cd "$voices_dir" && for f in *.mp3; do
+  [ -e "$f" ] || continue   # flat mp3 없으면 (이미 서브폴더화 됐을 때) skip
   # 파일명: [{part}_]{order:03d}_{character}_{HHMMSS}.mp3
   # 3자리 order 와 6자리 HHMMSS 를 anchor 로 character 추출.
   char=$(echo "$f" | sed -E 's/^(.*_)?[0-9]{3}_([^_]+)_[0-9]{6}\.mp3$/\2/')
