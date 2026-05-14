@@ -32,6 +32,8 @@ This document is the W6 (storyboard CSV creation + review) stage guide for the s
 - `final_{part}.srt` — per-part subtitles (meaning units, with timecodes)
 - `timeline_{part}.json` — per-segment start/end times
 - Original script (setup/rising/crisis/resolution .md files)
+- `dialogs_{part}.json` (when present) — per-character dialogue extracted by W4. Structure: `{order, character, line, emotion, after_paragraph}`. **Primary speaker→timecode source when `options.splitOnSpeakerChange: true`.**
+- `segments_{part}/index.json` (when present) — narration segment index produced by W5. Each segment's `paragraph_idx` matches `dialogs.after_paragraph` to derive precise dialogue timecodes.
 
 Using the script and SRT/timeline, generate a **references CSV** and a **scenes CSV**.
 Use AutoFlowCut MCP's `get_schema` tool to look up the CSV schema and follow it exactly.
@@ -108,14 +110,16 @@ AutoFlowCut MCP: get_schema({ type: "prompt-image" }) → prompt-writing guide
 **Speaker-change splitting (optional, options.splitOnSpeakerChange):**
 
 Read `options.splitOnSpeakerChange` at the root of W_progress.json and branch:
-- If `true`: every speaker-change boundary in the SRT/script becomes a scene-split candidate.
+- If `true`: every speaker-change boundary becomes a scene-split candidate **only when a timecoded speaker source exists** (see priority list below).
   - Example: if A→B→A speak within the same 5-second window, split into 3 scenes
   - Subject to the 15s cap; short greetings (1–2 seconds) merge into the adjacent speaker's scene (subagent's judgment)
+  - **Narration-only intervals** (no dialogue entries, only `narration_{part}.txt`) have no speaker-change candidates → existing rules apply
 - If `false` (default) or field missing → keep the existing rules (within the same time window / same scene, different speakers stay in one scene)
 
-**Speaker identification** (when `true`):
-- Extract from the script's speaker labels (e.g. "A:", "Narrator:", "{name}:") or from SRT metadata
-- If no label is present, the subagent infers the speaker from context (dialogue flow). If confidence is low, do not split (conservative fallback)
+**Speaker source priority** (when `true`, apply top-down):
+1. **`dialogs_{part}.json` + `segments_{part}/index.json`** — primary source. `dialogs.character` is the speaker ID; `dialogs.after_paragraph` matched against `segments_index.paragraph_idx` yields a precise timeline timecode (same mechanism W5-1f uses). When this source exists, split without falling back to inference.
+2. **Explicit speaker labels in the script (`{title}_*.md`)** — fallback when dialogs JSON is absent. Labels like `"A:"`, `"Narrator:"`, `"{name}:"`. Re-map the label paragraph to a timeline timecode via `segments_index.paragraph_idx` (paragraph-granularity only — coarser than dialogs JSON).
+3. **Contextual inference** (only when neither 1 nor 2 is available) — the subagent infers the speaker from dialogue flow. If confidence is low, do not split (conservative fallback). If 1, 2, AND 3 are all unavailable, `splitOnSpeakerChange: true` has no real effect for that part — record `dialogs_{part}.json absent — speaker-change splitting skipped` in the review notes.
 
 **Full-timeline part offset calculation:**
 ```
