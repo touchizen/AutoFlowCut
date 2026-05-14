@@ -59,6 +59,18 @@ Use AskUserQuestion to gather:
    - dark-history (English): 2,500 words / ~17 min
    - bespoke: ask user (default suggestion based on referenced scripts' average length)
 4. Special requirements
+5. Scene splitting policy (씬 분리 정책)
+   - Question: "씬 분리할 때 화자가 바뀌면 별도 씬으로 분리할까요? / Split scenes on speaker change?"
+   - Options:
+     - "분리 안 함 (default) / Don't split" — 같은 시간대면 A→B 대사도 한 씬에 통합. 야담/narrator 중심 콘텐츠에 적합.
+     - "화자 바뀔 때마다 분리 / Split on every speaker change" — A 대사 / B 대사 각각 별도 씬. 대화 중심 bespoke / 인터뷰 형식에 적합.
+   - 장르 기반 추천 (질문에 hint로 포함):
+     - yadam (주로 narrator) → "분리 안 함" 추천
+     - dark-history (narration + 간헐 대사) → "분리 안 함" 추천
+     - bespoke (장르 따라 다름) → reference 분석 결과로 hint, 모르면 default
+   - Default 적용 (응답 없거나 ambiguous):
+     - yadam / dark-history → 자동 `false` (장르 default)
+     - bespoke → reference 분석 결과가 명확히 "대화 중심"이면 `true` 제안. 아니면 `false`. 사용자 override 가능.
 
 **Bespoke-specific output preparation:**
 - Create `{PROJECT_DIR}/ep{number}_{slug}/_story_source/_references/` directory
@@ -104,6 +116,7 @@ Write to `{PROJECT_DIR}/ep{number}_{slug}/_story_source/STATE.md`:
 - Output language: {output_lang}  # ko (yadam locked, or bespoke + Korean refs/topic) | en (dark-history locked, or bespoke + English)
 - Target length: {length}
 - References: {references or "none"}{if bespoke: " (3~5 reference scripts in _references/)"}
+- Split on speaker change: yes|no   # display mirror; authoritative value is W_progress.json `options.splitOnSpeakerChange`
 ```
 
 **Step 6: Initialize W_progress.json**
@@ -115,6 +128,9 @@ Write to `{PROJECT_DIR}/ep{number}_{slug}/_story_source/W_progress.json`:
   "episode": {number},
   "genre": "{genre}",
   "topic": "{topic}",
+  "options": {
+    "splitOnSpeakerChange": false
+  },
   "waves": {
     "W1": { "status": "pending" },
     "W2": { "status": "pending" },
@@ -128,6 +144,8 @@ Write to `{PROJECT_DIR}/ep{number}_{slug}/_story_source/W_progress.json`:
   }
 }
 ```
+
+`options.splitOnSpeakerChange` is the episode-wide policy collected in Step 4 item 5. It lives at root (not under a specific wave) because it affects W6 storyboard splitting and any subsequent wave that reasons about scene boundaries. Default `false`; set `true` only when the user opted in (or bespoke reference analysis indicates a dialogue-driven format and the user confirmed).
 
 For **bespoke** genre, additionally include `references` metadata:
 ```json
