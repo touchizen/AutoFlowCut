@@ -50,7 +50,7 @@ ep{number}/
     ├── final_full.srt           ← full subtitles
     ├── voices/                  ← per-character dialogue TTS (per-character subfolders required)
     │   ├── Reverend/
-    │   │   ├── 003_Reverend_000109.mp3
+    │   │   ├── setup_003_Reverend_000109.mp3
     │   │   └── ...
     │   ├── Agnes/
     │   │   └── ...
@@ -64,10 +64,12 @@ ep{number}/
 ```
 
 **Auto-create voices/ subfolders:**
-After TTS, extract character name from filenames and auto-create subfolders.
+After TTS, extract character name from filenames and auto-create subfolders. Filenames are `{part}_{order:03d}_{character}_{HHMMSS}.mp3` (produced by W5-1f). The regex below accepts the new prefixed form AND the older unprefixed form (`{order}_{character}_{HHMMSS}.mp3`) so existing episodes still work.
 ```bash
 cd ep{number}/media/voices && for f in *.mp3; do
-  char=$(echo "$f" | sed 's/^[0-9]*_\([^_]*\)_.*/\1/')
+  # Filename: [{part}_]{order:03d}_{character}_{HHMMSS}.mp3
+  # Anchor on the 3-digit order and 6-digit HHMMSS to pull the character out.
+  char=$(echo "$f" | sed -E 's/^(.*_)?[0-9]{3}_([^_]+)_[0-9]{6}\.mp3$/\2/')
   mkdir -p "$char"
   mv "$f" "$char/"
 done

@@ -152,8 +152,10 @@ node "$SCRIPT_DIR/generate_tts_typecast.cjs" dialogue ep{N}/dialogs_{part}.json 
 ```
 **4th arg `ep{N}/segments_{part}/`** — segments dir from 5-1a. Required for `after_paragraph` → start auto-derivation. Without it, every dialog must carry an explicit `start` field in dialogs.json.
 
-**Outputs:** `voices/{order:03d}_{character}_{HHMMSS}.mp3` + `voices/result_{part}.json`
-- The `result_{part}.json` filename is derived from the `{part}` token in `dialogs_{part}.json` (via `derivePartFromDialogsPath`). Running 4 parts sequentially into the same `voices/` directory preserves each part's result independently (the previous version wrote a single `result.json`, so only the last part survived).
+**Outputs:** `voices/{part}_{order:03d}_{character}_{HHMMSS}.mp3` + `voices/result_{part}.json`
+- The leading `{part}_` token (e.g. `setup_`, `rising_`, `part1_setup_`) is derived from the `dialogs_{part}.json` basename (via `derivePartFromDialogsPath`). Running 4 parts sequentially into the same `voices/` directory cannot collide — even if the same character speaks at the same per-part order + HHMMSS in two parts, each gets its own mp3, so W6 speaker-split timing and W8 audio import both stay correct.
+- `result_{part}.json` is also per-part, preserving each part's dialogue metadata (start/duration/character) independently.
+- **Previous version (collision-prone):** filename was `{order}_{character}_{HHMMSS}.mp3` and a single `result.json` was written → the second part would silently reuse the first part's mp3 and only the last part's `result.json` survived.
 - The `_HHMMSS` in the filename is each line's start time (used for auto-placement in W8)
 - start resolution (inside the script):
   1. Explicit `start` in `dialogs.json` (SRT-format string) — used as-is

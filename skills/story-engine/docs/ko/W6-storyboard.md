@@ -33,7 +33,7 @@
 - `timeline_{파트}.json` — 세그먼트별 시작/끝 시간
 - 대본 원문 (기/승/전/결 .md 파일)
 - **`voices/result_{파트}.json`** (대사 있는 경우, 파트별로 1개씩 = 최대 4개) — W5-1f가 작성한 dialogue TTS 결과. 각 엔트리에 `{order, character, line, emotion, file, duration, start}` — `start` 는 **TTS 실제 duration 누적까지 반영된 resolved start** (연속 대사 stacking 포함, `generate_tts_typecast.cjs` `groupEnd` 추적 결과). 단, `start` 는 **파트 내부 timecode** (각 파트가 0부터 시작) — W6는 timeline 표 [파트 오프셋 계산]에 따라 full-timeline으로 변환. `options.splitOnSpeakerChange: true` 일 때 **1차 source**.
-- **`voices/*_{HHMMSS}.mp3`** (대사 있는 경우) — 파일명의 `HHMMSS` 가 파트 내부 resolved start (TC 형식). `result_{파트}.json` 부재 시 파일명만으로도 speaker(`character` 토큰) + start 복원 가능. **주의**: 파일명에 파트 접두가 없어 같은 character가 두 파트에서 같은 per-part 시각에 발화하면 fname 충돌 가능 — 그런 경우 `result_{파트}.json` 우선.
+- **`voices/{파트}_*_{HHMMSS}.mp3`** (대사 있는 경우) — 파일명 패턴 `{파트}_{order}_{character}_{HHMMSS}.mp3` 에서 파트 prefix · speaker · 파트 내부 resolved start 모두 복원 가능. `result_{파트}.json` 부재 시 파일명만으로 fallback 가능. (이전 버전은 파트 prefix 없는 `{order}_{character}_{HHMMSS}.mp3` 였고 파트 간 fname 충돌 위험이 있었음 — 현재는 prefix 로 해결됨.)
 - `dialogs_{파트}.json` + `segments_{파트}/index.json` (있는 경우) — W4/W5 중간 산출. **fallback** 으로만 사용: 단일 대사 paragraph 에서는 `after_paragraph` → `paragraph_idx` 매칭으로 정확하지만, **같은 paragraph에 연속 대사가 있을 경우 stacking을 알 수 없어 부정확**. voices output이 있으면 우선.
 
 대본과 SRT/타임라인을 기반으로 **레퍼런스 CSV**와 **씬 CSV**를 생성한다.
@@ -119,7 +119,7 @@ W_progress.json 루트의 `options.splitOnSpeakerChange` 값을 읽어 분기:
 
 **Speaker source 우선순위** (`true` 일 때, 위에서부터 적용):
 1. **`voices/result_{파트}.json`** — **1차 source**. 각 파트별로 1개 파일. 엔트리의 `start` 가 W5-1f의 TTS-resolved 값 (연속 대사 stacking까지 반영). `character` 가 speaker ID, `duration` 이 종료 시각 산출용. 파트별 timecode이므로 W6 파트 오프셋을 더해 full-timeline 으로 변환. 이 파일이 있으면 보수적 fallback 없이 분리한다.
-2. **`voices/*_{HHMMSS}.mp3` 파일명 파싱** — `result_{파트}.json` 부재 시 `voices/` 디렉토리의 mp3 파일명 (`{order}_{character}_{HHMMSS}.mp3`) 에서 speaker + 파트별 resolved start 복원. duration은 ffprobe 로 산출. 어느 파트인지는 mp3 의 mtime 또는 `dialogs_{파트}.json` 의 `{order, character}` 매칭으로 결정.
+2. **`voices/{파트}_*_{HHMMSS}.mp3` 파일명 파싱** — `result_{파트}.json` 부재 시 `voices/` 디렉토리의 mp3 파일명 (`{파트}_{order}_{character}_{HHMMSS}.mp3`) 에서 파트 · speaker · 파트 내부 resolved start 모두 복원. duration 은 ffprobe 로 산출.
 3. **`dialogs_{파트}.json` + `segments_{파트}/index.json`** (fallback) — `dialogs.after_paragraph` 를 `paragraph_idx` 와 매칭해 base start 산출. **단일 대사 paragraph 일 때만 정확하고, 연속 대사가 있는 paragraph 는 stacking을 못 알아 부정확**. voices output 부재 시 + 해당 paragraph의 대사 1개일 때만 활용.
 4. **대본 (`{title}_*.md`) 의 명시적 화자 라벨** — `"A:"`, `"내레이터:"`, `"{이름}:"` 형식. 위 셋 모두 부재일 때만. 라벨 paragraph를 `segments_index.paragraph_idx` 로 timeline에 매핑 (paragraph 단위로 coarse).
 5. **문맥 추정** — 위 넷 모두 없을 때. subagent가 대화 흐름으로 추정. 신뢰도 낮으면 분리 안 함 (보수적). 1~5 모두 부재면 `splitOnSpeakerChange: true` 라도 실질 효과 없음 — review 노트에 `voices/result_*.json + dialogs_{파트}.json absent — speaker-change splitting skipped` 기록.

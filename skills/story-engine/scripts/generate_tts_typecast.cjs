@@ -10,10 +10,11 @@
 //       (mirrors generate_tts_elevenlabs.cjs)
 //
 //   node generate_tts_typecast.cjs dialogue <dialogsJson> <outDir> <ttsSettings> [<segmentsDir>]
-//     → outDir/{order:03d}_{character}_{HHMMSS}.mp3 + result_{part}.json
+//     → outDir/{part}_{order:03d}_{character}_{HHMMSS}.mp3 + result_{part}.json
 //       (per-line dialogue with timecode-coded filenames for W8 auto-placement;
-//        {part} derived from dialogsJson basename, e.g. dialogs_setup.json → result_setup.json,
-//        so running 4 parts into the same outDir preserves all 4 result files)
+//        {part} derived from dialogsJson basename, e.g. dialogs_setup.json → "setup",
+//        so running 4 parts into the same outDir preserves all 4 result files AND
+//        prevents per-part mp3 filename collisions on identical {order, character, HHMMSS})
 //
 //     start time resolution per dialog:
 //       1. dialog.start (SRT-format string) → use as-is
@@ -254,6 +255,13 @@ async function runDialogue(apiKey, dialogsPath, outDir, ttsSettingsPath, segment
   const NARRATION_GAP = 0.3;  // gap from end of preceding narration to first dialog
   const DIALOG_GAP = 0.2;     // gap between consecutive dialogs in the same group
 
+  // Derive part name once and use it for both mp3 filename prefixes and the
+  // result_<part>.json filename so that running the script for 4 parts into
+  // the same outDir cannot collide (an `001_김씨_000023.mp3` from setup and
+  // rising would otherwise share a filename, causing the second run to skip
+  // TTS and reuse the first part's audio + duration — see line ~325 fast-path).
+  const partName = derivePartFromDialogsPath(dialogsPath);
+
   // groupEnd[after_paragraph] = end time (sec, on part timeline) of the LAST
   // dialog already placed in that group. Used to push subsequent dialogs forward
   // so they don't collide with each other on the timeline.
@@ -308,7 +316,7 @@ async function runDialogue(apiKey, dialogsPath, outDir, ttsSettingsPath, segment
     const startStr = fmtTimestamp(startSec);
     const tcEmotion = EMOTION_MAP[d.emotion] || 'normal';
     const tc = tcFromSrtTime(startStr);
-    const fname = `${String(order).padStart(3, '0')}_${character}_${tc}.mp3`;
+    const fname = `${partName}_${String(order).padStart(3, '0')}_${character}_${tc}.mp3`;
     const mp3Path = path.join(outDir, fname);
 
     // Skip if already generated; still measure duration so groupEnd stays accurate.
@@ -342,7 +350,6 @@ async function runDialogue(apiKey, dialogsPath, outDir, ttsSettingsPath, segment
     }
     if (generated) await sleep(300);
   }
-  const partName = derivePartFromDialogsPath(dialogsPath);
   fs.writeFileSync(path.join(outDir, `result_${partName}.json`), JSON.stringify(result, null, 2));
   console.log(`Generated ${success} (failed ${fail}) -> ${outDir}`);
   if (fail > 0) {

@@ -50,7 +50,7 @@ ep{번호}/
     ├── 영상.srt              ← 전체 자막 (또는 final_full.srt)
     ├── voices/               ← 인물별 대사 TTS (캐릭터별 서브폴더 필수)
     │   ├── 머슴/
-    │   │   ├── 003_머슴_000109.mp3
+    │   │   ├── 기_003_머슴_000109.mp3
     │   │   └── ...
     │   ├── 과부/
     │   │   └── ...
@@ -64,10 +64,12 @@ ep{번호}/
 ```
 
 **voices/ 디렉토리 구조 생성:**
-TTS 생성 후 파일명에서 캐릭터명을 추출하여 서브폴더를 자동 생성한다.
+TTS 생성 후 파일명에서 캐릭터명을 추출하여 서브폴더를 자동 생성한다. 파일명은 `{파트}_{order:03d}_{캐릭터}_{HHMMSS}.mp3` (W5-1f 산출). 파트 prefix가 있는 새 형식과, 없던 이전 형식 모두 처리하도록 정규식이 optional prefix를 받는다.
 ```bash
 cd ep{번호}/media/voices && for f in *.mp3; do
-  char=$(echo "$f" | sed 's/^[0-9]*_\([^_]*\)_.*/\1/')
+  # 파일명: [{part}_]{order:03d}_{character}_{HHMMSS}.mp3
+  # 3자리 order 와 6자리 HHMMSS 를 anchor 로 character 추출.
+  char=$(echo "$f" | sed -E 's/^(.*_)?[0-9]{3}_([^_]+)_[0-9]{6}\.mp3$/\2/')
   mkdir -p "$char"
   mv "$f" "$char/"
 done
