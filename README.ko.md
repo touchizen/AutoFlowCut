@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://youtu.be/mYnfgqvCkME">
-    <img src="docs/youtube-thumb.png" alt="AutoFlowCut 소개 영상 - 클릭해서 재생" width="720">
+    <img src="docs/youtube-thumb-ko.png" alt="AutoFlowCut 소개 영상 - 클릭해서 재생" width="720">
   </a>
 </p>
 
