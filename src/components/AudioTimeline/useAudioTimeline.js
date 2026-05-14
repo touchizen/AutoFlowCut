@@ -121,6 +121,18 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
     const voiceClipsAll = voiceSubTracks.flatMap(t => t.clips)
 
     // ── SFX 트랙 (그룹 + 카테고리별 sub-track) ──
+    // sfxPromptMap: { [filenameStem]: { cueNo, partName, anchor, placement, offsetSec, prompt, durationSec } }
+    // 디스크 파일명 `<stem>_<MMSS>.mp3` → 마지막 `_<NNNN>` 또는 `_<NNNNNN>` 분리하여 stem 추출 후 매핑
+    const sfxPromptMap = audioPackage.sfxPromptMap || null
+    const lookupSfxMeta = (filename) => {
+      if (!sfxPromptMap || !filename) return null
+      const nameNoExt = filename.replace(/\.[^.]+$/, '')
+      // 마지막 `_` 이후가 4자리 또는 6자리 숫자면 timecode → 제거
+      const m = nameNoExt.match(/^(.+)_(\d{4}|\d{6})$/)
+      const stem = m ? m[1] : nameNoExt
+      return sfxPromptMap[stem] || null
+    }
+
     const sfxSubTracks = (audioPackage.sfx || []).map((s, si) => {
       const color = shiftHue(COLORS.sfx, si * 20)
       const clips = (s.files || [])
@@ -136,6 +148,7 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
           color,
           type: 'sfx',
           draggable: true,
+          sfxMeta: lookupSfxMeta(f.filename),
         }))
       return { id: `sfx-${s.category}`, name: s.category, color, clips }
     }).filter(t => t.clips.length > 0)

@@ -376,6 +376,66 @@
   flex: 1;
   opacity: 0.85;
 }
+
+/* SFX file row with prompt metadata — column layout, taller row.
+   Used when audioPackage.sfxPromptMap had a match for this clip's filename stem.
+   Falls back to the default row when no metadata, so unaffected rows look the same. */
+.atl-label-file-sfx-meta {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  gap: 2px;
+}
+.atl-label-file-sfx-meta .atl-file-row-line1 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.atl-sfx-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-weight: 400;
+  line-height: 1.25;
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.55);
+  /* metadata text uses the row color for the icon column only; body text is muted */
+}
+.atl-sfx-meta-line {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  overflow: hidden;
+}
+.atl-sfx-meta-line > span:first-child {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+.atl-sfx-anchor-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-style: italic;
+  color: rgba(255, 255, 255, 0.75);
+}
+.atl-sfx-placement {
+  flex-shrink: 0;
+  opacity: 0.6;
+  font-size: 8px;
+}
+.atl-sfx-prompt-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: rgba(255, 255, 255, 0.7);
+}
+.atl-sfx-duration {
+  opacity: 0.55;
+}
+
 .atl-lane-file {
   background: rgba(0, 0, 0, 0.15);
   border-bottom: 1px solid #232323;

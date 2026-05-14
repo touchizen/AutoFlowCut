@@ -42,6 +42,8 @@ Only proceed to 8-1 import once this validation passes.
 Import the W5-generated audio files into AutoFlowCut.
 After import, narration / SFX will auto-land on the timeline when you export to CapCut.
 
+> **AudioTab SFX prompts** — from W5-5 onward, the AudioTab in AutoFlowCut surfaces each SFX clip's anchor narration, placement, English prompt, and duration inline (parsed from `08_sfx_list.md`). Use this to QA SFX without cross-referencing the markdown by hand.
+
 **Import targets (episode folder):**
 ```
 ep{number}/

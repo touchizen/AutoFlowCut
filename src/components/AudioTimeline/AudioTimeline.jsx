@@ -66,7 +66,12 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
     try { localStorage.setItem(TRACK_HEIGHTS_KEY, JSON.stringify(next)) } catch {}
   }
   const getTrackHeight = (track) => {
-    if (track.isFileItem) return FILE_ROW_H
+    if (track.isFileItem) {
+      // SFX 파일 row에 anchor/placement/prompt/duration 메타데이터가 있으면 row 키움
+      // 4줄(filename + anchor + prompt + duration) ≈ 64px (vs 기본 22px)
+      if (track.clip?.sfxMeta) return 64
+      return FILE_ROW_H
+    }
     const override = trackHeights[track.id]
     if (override) return override
     return track.isSubTrack ? SUB_TRACK_H : TRACK_H
@@ -743,16 +748,55 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
           {visibleTracks.map((track, i) => {
             // 파일 항목 row (라벨만, lane 없음)
             if (track.isFileItem) {
+              const meta = track.clip.sfxMeta
+              const rowH = getTrackHeight(track)
+              const hasMeta = !!meta
+              const titleAttr = hasMeta
+                ? `${track.clip.filename}\n` +
+                  `${meta.anchor ? `⚓ "${meta.anchor}"  ` : ''}` +
+                  `${meta.placement ? `▶ ${meta.placement}${meta.offsetSec ? ` @ +${meta.offsetSec}s` : ''}` : ''}\n` +
+                  `${meta.prompt ? `💬 ${meta.prompt}\n` : ''}` +
+                  `${meta.durationSec ? `⏱ ${meta.durationSec}s` : ''}`
+                : track.clip.filename
               return (
                 <div
                   key={`${track.id}-${i}`}
-                  className="atl-label atl-label-file"
-                  style={{ color: track.color, height: FILE_ROW_H }}
+                  className={`atl-label atl-label-file${hasMeta ? ' atl-label-file-sfx-meta' : ''}`}
+                  style={{ color: track.color, height: rowH }}
                   onClick={() => jumpToClip(track.clip)}
-                  title={track.clip.filename}
+                  title={titleAttr}
                 >
-                  <span className="atl-file-tc">{formatTC(track.clip.startMs)}</span>
-                  <span className="atl-file-name">{track.clip.filename}</span>
+                  <div className="atl-file-row-line1">
+                    <span className="atl-file-tc">{formatTC(track.clip.startMs)}</span>
+                    <span className="atl-file-name">{track.clip.filename}</span>
+                  </div>
+                  {hasMeta && (
+                    <div className="atl-sfx-meta">
+                      {meta.anchor && (
+                        <div className="atl-sfx-meta-line atl-sfx-anchor">
+                          <span aria-hidden="true">⚓</span>
+                          <span className="atl-sfx-anchor-text">"{meta.anchor}"</span>
+                          {meta.placement && (
+                            <span className="atl-sfx-placement">
+                              ▶ {meta.placement}{meta.offsetSec ? ` @ +${meta.offsetSec}s` : ''}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      {meta.prompt && (
+                        <div className="atl-sfx-meta-line atl-sfx-prompt">
+                          <span aria-hidden="true">💬</span>
+                          <span className="atl-sfx-prompt-text">{meta.prompt}</span>
+                        </div>
+                      )}
+                      {meta.durationSec ? (
+                        <div className="atl-sfx-meta-line atl-sfx-duration">
+                          <span aria-hidden="true">⏱</span>
+                          <span>{meta.durationSec}s</span>
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
                 </div>
               )
             }
@@ -823,11 +867,12 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
                 const width = Math.max(2, (clip.endMs - clip.startMs) * pxPerMs)
                 const fileFlagged = !!(isFlagged && clip.audioPath && isFlagged(clip.audioPath))
                 const showFlagBtn = !!clip.audioPath && !!onFlag
+                const fileRowH = getTrackHeight(track)
                 return (
                   <div
                     key={`${track.id}-${i}`}
                     className="atl-lane atl-lane-file"
-                    style={{ width: totalWidth, height: FILE_ROW_H }}
+                    style={{ width: totalWidth, height: fileRowH }}
                   >
                     <div
                       className={`atl-file-mini-clip${fileFlagged ? ' atl-clip-flagged' : ''}`}

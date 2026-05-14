@@ -25,6 +25,7 @@ import fsSync from 'fs'
 import path from 'path'
 import { execFile } from 'child_process'
 import { app, dialog } from 'electron'
+import { parseSfxList } from '../../src/utils/parseSfxList.js'
 
 // ============================================================
 // Helper Functions
@@ -183,6 +184,32 @@ async function pathExists(p) {
   } catch {
     return false
   }
+}
+
+/**
+ * Try to read + parse W4-3 SFX prompt list (`08_sfx_list.md` / `08_sfx_목록.md`).
+ * Returns a plain object `{ [filenameStem]: meta }` for IPC structured-clone safety,
+ * or `null` if no file found. Never throws.
+ */
+async function loadSfxPromptMap(folderPath) {
+  const candidates = ['08_sfx_list.md', '08_sfx_목록.md']
+  for (const candidate of candidates) {
+    const mdPath = path.join(folderPath, candidate)
+    if (await pathExists(mdPath)) {
+      try {
+        const content = await fs.readFile(mdPath, 'utf-8')
+        const map = parseSfxList(content)
+        // Map → plain object (IPC structured-clone friendly)
+        const obj = {}
+        for (const [k, v] of map.entries()) obj[k] = v
+        return obj
+      } catch (err) {
+        console.warn(`[FS] Failed to parse ${candidate}:`, err?.message || err)
+        return null
+      }
+    }
+  }
+  return null
 }
 
 // ============================================================
@@ -1112,7 +1139,7 @@ export function registerFilesystemIPC(ipcMain) {
         }
       }
 
-      // 3. 음향효과_추출.md 읽기
+      // 3. 음향효과_추출.md 읽기 (legacy 포맷, 그대로 유지)
       let sfxMdContent = null
       const sfxMdCandidates = ['음향효과_추출.md', 'sfx_timecodes.md']
       for (const candidate of sfxMdCandidates) {
@@ -1122,6 +1149,10 @@ export function registerFilesystemIPC(ipcMain) {
           break
         }
       }
+
+      // 3-b. W4-3 신포맷 08_sfx_list.md / 08_sfx_목록.md → sfxPromptMap
+      // (AudioTab에서 SFX 클립마다 anchor/placement/prompt/duration 표시용)
+      const sfxPromptMap = await loadSfxPromptMap(folderPath)
 
       // media/sfx/ 플랫 파일을 sfxCategories에 합치기
       if (mediaSfxFiles.length > 0) {
@@ -1139,6 +1170,7 @@ export function registerFilesystemIPC(ipcMain) {
         voices,
         sfx: sfxCategories,
         sfxMdContent,
+        sfxPromptMap,
         summary: {
           characters: voices.map(v => v.character),
           totalVoiceFiles: voices.reduce((sum, v) => sum + v.files.length, 0),
@@ -1146,7 +1178,8 @@ export function registerFilesystemIPC(ipcMain) {
           totalSfxFiles: sfxCategories.reduce((sum, c) => sum + c.files.length, 0),
           hasSrt: !!srtContent,
           hasMedia: !!media.video,
-          hasSfxTimecodes: !!sfxMdContent || mediaSfxFiles.some(f => f.timecodeMs != null)
+          hasSfxTimecodes: !!sfxMdContent || mediaSfxFiles.some(f => f.timecodeMs != null),
+          hasSfxPrompts: !!sfxPromptMap && Object.keys(sfxPromptMap).length > 0
         }
       }
     } catch (error) {
@@ -1317,7 +1350,7 @@ export function registerFilesystemIPC(ipcMain) {
         })
       }
 
-      // 3. 음향효과_추출.md 읽기
+      // 3. 음향효과_추출.md 읽기 (legacy 포맷, 그대로 유지)
       let sfxMdContent = null
       const sfxMdCandidates = ['음향효과_추출.md', 'sfx_timecodes.md']
       for (const candidate of sfxMdCandidates) {
@@ -1328,6 +1361,9 @@ export function registerFilesystemIPC(ipcMain) {
         }
       }
 
+      // 3-b. W4-3 신포맷 08_sfx_list.md / 08_sfx_목록.md → sfxPromptMap
+      const sfxPromptMap = await loadSfxPromptMap(folderPath)
+
       return {
         success: true,
         folderPath,
@@ -1336,6 +1372,7 @@ export function registerFilesystemIPC(ipcMain) {
         voices,
         sfx: sfxCategories,
         sfxMdContent,
+        sfxPromptMap,
         summary: {
           characters: voices.map(v => v.character),
           totalVoiceFiles: voices.reduce((sum, v) => sum + v.files.length, 0),
@@ -1343,7 +1380,8 @@ export function registerFilesystemIPC(ipcMain) {
           totalSfxFiles: sfxCategories.reduce((sum, c) => sum + c.files.length, 0),
           hasSrt: !!srtContent,
           hasMedia: !!media.video,
-          hasSfxTimecodes: !!sfxMdContent || mediaSfxFiles.some(f => f.timecodeMs != null)
+          hasSfxTimecodes: !!sfxMdContent || mediaSfxFiles.some(f => f.timecodeMs != null),
+          hasSfxPrompts: !!sfxPromptMap && Object.keys(sfxPromptMap).length > 0
         }
       }
     } catch (error) {
