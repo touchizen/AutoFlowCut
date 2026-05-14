@@ -93,7 +93,7 @@ All three validation endpoints are read-only and free (no usage charge for `GET 
 ✅ ElevenLabs key OK
 ▸ Validating Typecast API key…
 ⚠ Typecast key missing (~/.typecast/credentials)
-  [paste / open-file / switch-to-elevenlabs-for-dialogue]
+  [paste / show-signup-url / switch-provider / retry-later]
 ```
 
 Three buckets, three branches:
