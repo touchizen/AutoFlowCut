@@ -10,7 +10,7 @@ W7 was the expensive wave (Google Flow credits). W8 is the free / low-cost assem
 
 ## 8-0. SFX scene-match validation (REQUIRED before audio import)
 
-> **Skip this substep entirely when `production_scope.sfx: false` OR `media/sfx/` is absent.** With no SFX produced there is nothing to validate. Proceed directly to 8-1 (audio import). (Audio import only ingests audio that exists on disk, so the absence of SFX tracks is fine.)
+> **Skip this substep entirely when `production_scope.sfx: false` OR `media/sfx/` is absent.** With no SFX produced there is nothing to validate. Proceed directly to 8-1 (audio import). (Audio import only ingests audio that exists on disk, so the absence of SFX tracks is fine.) See `workflows/execute-pipeline.md` → "STATE.md schema — production_scope block" for the full flag spec + legacy-fallback rule.
 
 W5-4 could not depend on `scenes.csv` (a W6 output), so it only ran mechanic validation (collision / range / per-part offset). This step performs the scenes.csv-based scene-match validation — the natural moment is right before audio import.
 
