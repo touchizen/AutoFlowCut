@@ -64,24 +64,27 @@ ep{number}/
 ```
 
 **Auto-create voices/ subfolders:**
-After TTS, move each mp3 into a character-named subfolder. Filenames are `{part}_{order:03d}_{character}_{HHMMSS}.mp3` (produced by W5-1f). The regex below accepts the new prefixed form AND the older unprefixed form (`{order}_{character}_{HHMMSS}.mp3`) so existing episodes still work.
+After TTS, move flat mp3 files into character-named subfolders under `ep{number}/media/voices/<character>/`. **The canonical location is `media/voices/`** (filesystem.js's audio-import expects that layout — see comment at line 934). W5-1f writes to flat `ep{number}/voices/` for convenience, so this step relocates them into `media/voices/<char>/`.
 
-**Pick the right voices dir**: W5-1f writes flat into `ep{number}/voices/`. Some workflows move the files to `ep{number}/media/voices/` later, so detect whichever exists (filesystem.js's import code uses the same priority — `media/voices` first, falling back to `voices`, and only reads character subdirectories underneath).
+Filenames are `{part}_{order:03d}_{character}_{HHMMSS}.mp3` (produced by W5-1f). The regex below accepts the new prefixed form AND the older unprefixed form (`{order}_{character}_{HHMMSS}.mp3`) so existing episodes still work.
 
 ```bash
 ep_dir="ep{number}"
-if [ -d "$ep_dir/media/voices" ]; then
-  voices_dir="$ep_dir/media/voices"
-else
-  voices_dir="$ep_dir/voices"
-fi
-cd "$voices_dir" && for f in *.mp3; do
-  [ -e "$f" ] || continue   # nothing to do if already subfoldered
-  # Filename: [{part}_]{order:03d}_{character}_{HHMMSS}.mp3
-  # Anchor on the 3-digit order and 6-digit HHMMSS to pull the character out.
-  char=$(echo "$f" | sed -E 's/^(.*_)?[0-9]{3}_([^_]+)_[0-9]{6}\.mp3$/\2/')
-  mkdir -p "$char"
-  mv "$f" "$char/"
+dest="$ep_dir/media/voices"
+mkdir -p "$dest"
+# Source candidates: ep/voices/ (W5 default) and ep/media/voices/ (in case some files were already relocated but still flat).
+# Walk both — files already under <char>/ subdirs are untouched (the *.mp3 glob only matches flat).
+for src in "$ep_dir/voices" "$dest"; do
+  [ -d "$src" ] || continue
+  for f in "$src"/*.mp3; do
+    [ -e "$f" ] || continue   # nothing to do if already subfoldered
+    base=$(basename "$f")
+    # Filename: [{part}_]{order:03d}_{character}_{HHMMSS}.mp3
+    # Anchor on the 3-digit order and 6-digit HHMMSS to pull the character out.
+    char=$(echo "$base" | sed -E 's/^(.*_)?[0-9]{3}_([^_]+)_[0-9]{6}\.mp3$/\2/')
+    mkdir -p "$dest/$char"
+    mv "$f" "$dest/$char/"
+  done
 done
 ```
 
