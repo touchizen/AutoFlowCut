@@ -55,6 +55,15 @@ function ProjectManager({ projectName, aspectRatio = '16:9', onProjectChange, on
     // 공백 → 언더스코어 변환
     const name = (newProjectName.trim().replace(/\s+/g, '_')) || generateProjectName()
 
+    // 이미 존재하는 이름이면 '신규 생성'이 아니다 — 막는다. 그대로 두면
+    // handleProjectChange 가 선택한 화면비(opts.aspectRatio)로 기존 프로젝트의
+    // project.json 화면비를 덮어쓴다.
+    const exists = await fileSystemAPI.projectExists(name)
+    if (exists) {
+      toast.warning(t('settings.projectExists'))
+      return
+    }
+
     // 프로젝트 폴더 생성
     const result = await fileSystemAPI.getProjectFolder(name)
     if (result.success) {

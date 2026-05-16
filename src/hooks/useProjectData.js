@@ -305,6 +305,8 @@ export async function loadProjectWithResources(projectName) {
  * 현재 프로젝트 데이터 저장 (공통 헬퍼)
  * - 이미지 데이터(base64)는 제외하고 메타데이터만 저장
  * - 이미지는 이미 별도 파일로 저장됨 (images/, references/)
+ * @returns {Promise<{success:boolean,error?:string}|undefined>} saveProjectData
+ *   결과. 저장 대상이 아니면(폴더 모드 아님 / 프로젝트 폴더 없음) undefined.
  */
 async function saveCurrentProject(settings, scenes, references, videoScenes = [], framePairs = [], selectedStyleRefId = null) {
   if (!settings.projectName || settings.saveMode !== 'folder') return
@@ -326,7 +328,7 @@ async function saveCurrentProject(settings, scenes, references, videoScenes = []
   // audioFolderPath를 project.json에 저장 (프로젝트별 오디오 경로 보존)
   const audioFolderPath = localStorage.getItem('audioFolderPath') || null
 
-  await fileSystemAPI.saveProjectData(settings.projectName, {
+  return await fileSystemAPI.saveProjectData(settings.projectName, {
     scenes: scenesWithoutImages,
     references: refsWithoutData,
     videoScenes: videoScenesWithoutMedia,

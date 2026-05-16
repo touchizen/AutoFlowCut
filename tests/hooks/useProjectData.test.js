@@ -392,4 +392,30 @@ describe('handleProjectChange — aspect ratio', () => {
     expect(freshSave).toBeTruthy()
     expect(freshSave[1].settings.aspectRatio).toBe('9:16')
   })
+
+  it('P3: saveCurrentProject surfaces a save failure to the caller', async () => {
+    fileSystemAPI.projectExists.mockResolvedValue(true)
+    fileSystemAPI.saveProjectData.mockResolvedValue({ success: false, error: 'disk full' })
+    const { result } = setup({ projectName: 'p', saveMode: 'folder', aspectRatio: '16:9' })
+
+    let res
+    await act(async () => {
+      res = await result.current.saveCurrentProject()
+    })
+
+    expect(res).toEqual({ success: false, error: 'disk full' })
+  })
+
+  it('P3: saveCurrentProject returns the success result on a good save', async () => {
+    fileSystemAPI.projectExists.mockResolvedValue(true)
+    fileSystemAPI.saveProjectData.mockResolvedValue({ success: true })
+    const { result } = setup({ projectName: 'p', saveMode: 'folder', aspectRatio: '16:9' })
+
+    let res
+    await act(async () => {
+      res = await result.current.saveCurrentProject()
+    })
+
+    expect(res).toEqual({ success: true })
+  })
 })

@@ -1469,13 +1469,17 @@ function App() {
           settings={settings}
           initialTab={settingsTab}
           onProjectChange={handleProjectChange}
-          onSave={(newSettings) => {
+          onSave={async (newSettings) => {
             setSettings(newSettings)
-            // 화면비 등 project.json 에 저장되는 메타가 바뀌었을 수 있으니 현재
-            // 프로젝트에 즉시 반영 (autosave 는 빈 프로젝트를 건너뛰므로 별도 저장).
-            saveCurrentProject(newSettings)
             setShowSettings(false)
             setSettingsTab(null)
+            // 화면비 등 project.json 메타가 바뀌었을 수 있으니 현재 프로젝트에 즉시
+            // 반영 (autosave 는 빈 프로젝트를 건너뜀). 저장 실패는 사용자에게 알린다.
+            const res = await saveCurrentProject(newSettings)
+            if (res && res.success === false) {
+              console.warn('[App] Project meta save failed:', res.error)
+              toast.error(t('toast.projectSaveFailed'))
+            }
           }}
           onClose={() => {
             setShowSettings(false)

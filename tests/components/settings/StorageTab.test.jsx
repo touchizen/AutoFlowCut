@@ -26,6 +26,7 @@ vi.mock('../../../src/components/Toast', () => ({
 
 import StorageTab from '../../../src/components/settings/StorageTab'
 import { fileSystemAPI } from '../../../src/hooks/useFileSystem'
+import { toast } from '../../../src/components/Toast'
 
 const t = (k) => k
 
@@ -46,8 +47,10 @@ function renderStorageTab(onProjectChange = vi.fn()) {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks()
   fileSystemAPI.listProjects.mockResolvedValue({ success: true, projects: ['existing'] })
   fileSystemAPI.getProjectFolder.mockResolvedValue({ success: true })
+  fileSystemAPI.projectExists.mockResolvedValue(false) // name is free unless a test overrides
 })
 
 describe('StorageTab — New Project aspect ratio', () => {
@@ -86,5 +89,25 @@ describe('StorageTab — New Project aspect ratio', () => {
     await waitFor(() => {
       expect(onProjectChange).toHaveBeenCalledWith('my_long', { aspectRatio: '16:9' })
     })
+  })
+
+  it('blocks creating a project whose name already exists (no ratio override)', async () => {
+    // Regression: an existing name typed into New Project must NOT be treated
+    // as a fresh create — otherwise the chosen ratio would overwrite the
+    // existing project's project.json aspect ratio.
+    fileSystemAPI.projectExists.mockResolvedValue(true)
+    const { onProjectChange } = renderStorageTab()
+    fireEvent.click(await screen.findByTitle('settings.createProject'))
+
+    fireEvent.change(screen.getByPlaceholderText('settings.projectNamePlaceholder'), {
+      target: { value: 'existing' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'settings.create' }))
+
+    await waitFor(() => {
+      expect(toast.warning).toHaveBeenCalledWith('settings.projectExists')
+    })
+    expect(onProjectChange).not.toHaveBeenCalled()
+    expect(fileSystemAPI.getProjectFolder).not.toHaveBeenCalled()
   })
 })
