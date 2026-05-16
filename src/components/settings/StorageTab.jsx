@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react'
 import { fileSystemAPI } from '../../hooks/useFileSystem'
 import { generateProjectName } from '../../utils/formatters'
 import { toast } from '../Toast'
+import AspectRatioSelector from './AspectRatioSelector'
 
 // ============================================
 // ProjectManager - 프로젝트 관리 컴포넌트
@@ -227,22 +228,7 @@ function ProjectManager({ projectName, aspectRatio = '16:9', onProjectChange, on
                 </button>
               </div>
               {/* 화면비: 롱폼(16:9) / 숏폼(9:16) */}
-              <div className="batch-selector new-project-ratio">
-                <button
-                  type="button"
-                  className={`batch-btn ${newAspectRatio === '16:9' ? 'active' : ''}`}
-                  onClick={() => setNewAspectRatio('16:9')}
-                >
-                  🖥 16:9 · {t('settings.aspectRatioLongform')}
-                </button>
-                <button
-                  type="button"
-                  className={`batch-btn ${newAspectRatio === '9:16' ? 'active' : ''}`}
-                  onClick={() => setNewAspectRatio('9:16')}
-                >
-                  📱 9:16 · {t('settings.aspectRatioShortform')}
-                </button>
-              </div>
+              <AspectRatioSelector value={newAspectRatio} onChange={setNewAspectRatio} t={t} />
             </div>
           )}
 
@@ -348,19 +334,31 @@ export default function StorageTab({
           projectName={localSettings.projectName}
           aspectRatio={localSettings.aspectRatio || '16:9'}
           onProjectChange={async (name) => {
+            // projectName 을 optimistic 하게 먼저 갱신(드롭다운 즉시 반영)하되,
+            // 전환이 실패하면(success:false) 이전 값으로 롤백한다 — 안 그러면 모달은
+            // 새 프로젝트, 앱은 이전 프로젝트로 어긋난다.
+            const prev = { projectName: localSettings.projectName, aspectRatio: localSettings.aspectRatio }
             setLocalSettings(s => ({ ...s, projectName: name }))
-            // 즉시 프로젝트 데이터 전환 — 전환된 프로젝트의 화면비를 localSettings 에 동기화
             if (onProjectChange) {
               const res = await onProjectChange(name)
-              if (res?.aspectRatio) {
+              if (res && res.success === false) {
+                setLocalSettings(s => ({ ...s, ...prev }))
+              } else if (res?.aspectRatio) {
                 setLocalSettings(s => ({ ...s, aspectRatio: res.aspectRatio }))
               }
             }
           }}
-          onCreateProject={(name, ratio) => {
+          onCreateProject={async (name, ratio) => {
+            // 위와 동일 — 생성 경로도 optimistic 갱신 + 실패 시 롤백.
+            const prev = { projectName: localSettings.projectName, aspectRatio: localSettings.aspectRatio }
             setLocalSettings(s => ({ ...s, projectName: name, aspectRatio: ratio }))
             if (onProjectChange) {
-              onProjectChange(name, { aspectRatio: ratio })
+              // isNewProject: 신규 생성임을 명시 — handleProjectChange 가 기존
+              // project.json 값 대신 이 화면비를 쓰도록.
+              const res = await onProjectChange(name, { aspectRatio: ratio, isNewProject: true })
+              if (res && res.success === false) {
+                setLocalSettings(s => ({ ...s, ...prev }))
+              }
             }
           }}
           t={t}

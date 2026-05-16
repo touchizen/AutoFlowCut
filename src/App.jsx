@@ -184,6 +184,7 @@ function App() {
     openSettings,
     onAudioSwitch: (audioPath) => audioSwitchRef.current?.(audioPath),
     flowAPI,
+    onSaveError: () => toast.error(t('toast.projectSaveFailed')),
   })
 
   // 네이티브 File 메뉴 ↔ renderer 연결 (New Project / Recent Projects)
@@ -369,7 +370,8 @@ function App() {
     scenes, references, videoScenes, framePairs,
     selectedStyleRefId,
     settings, generatingRefsCount: generatingRefs.length,
-    isRunning, isRestoringRef, saveCurrentProject
+    isRunning, isRestoringRef, saveCurrentProject,
+    onSaveError: () => toast.error(t('toast.projectSaveFailed'))
   })
 
   // Save bottom panel height

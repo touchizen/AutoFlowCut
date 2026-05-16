@@ -66,3 +66,57 @@ describe('useAutoSave — aspect ratio', () => {
     expect(save).not.toHaveBeenCalled()
   })
 })
+
+/**
+ * useAutoSave — save failure visibility
+ *
+ * Regression: an autosave (which runs right after image generation) that
+ * failed was swallowed silently — the image existed on disk but its metadata
+ * never reached project.json. Failures now surface via onSaveError.
+ */
+describe('useAutoSave — save failure', () => {
+  it('reports a failed autosave through onSaveError', async () => {
+    const save = vi.fn().mockResolvedValue({ success: false, error: 'disk full' })
+    const onSaveError = vi.fn()
+    renderHook((p) => useAutoSave(p), {
+      initialProps: baseProps({ saveCurrentProject: save, onSaveError }),
+    })
+
+    await vi.runAllTimersAsync()
+
+    expect(onSaveError).toHaveBeenCalledWith('disk full')
+  })
+
+  it('does not report when the autosave succeeds', async () => {
+    const save = vi.fn().mockResolvedValue({ success: true })
+    const onSaveError = vi.fn()
+    renderHook((p) => useAutoSave(p), {
+      initialProps: baseProps({ saveCurrentProject: save, onSaveError }),
+    })
+
+    await vi.runAllTimersAsync()
+
+    expect(onSaveError).not.toHaveBeenCalled()
+  })
+
+  it('reports a failure streak only once, then again after a success', async () => {
+    const save = vi.fn().mockResolvedValue({ success: false, error: 'x' })
+    const onSaveError = vi.fn()
+    const props = baseProps({ saveCurrentProject: save, onSaveError })
+    const { rerender } = renderHook((p) => useAutoSave(p), { initialProps: props })
+
+    await vi.runAllTimersAsync()
+    rerender({ ...props, scenes: [{ id: 's2' }] }) // another failing autosave
+    await vi.runAllTimersAsync()
+    expect(onSaveError).toHaveBeenCalledTimes(1) // streak — notified once
+
+    save.mockResolvedValue({ success: true })     // a success resets the streak
+    rerender({ ...props, scenes: [{ id: 's3' }] })
+    await vi.runAllTimersAsync()
+
+    save.mockResolvedValue({ success: false, error: 'y' }) // failing again notifies
+    rerender({ ...props, scenes: [{ id: 's4' }] })
+    await vi.runAllTimersAsync()
+    expect(onSaveError).toHaveBeenCalledTimes(2)
+  })
+})

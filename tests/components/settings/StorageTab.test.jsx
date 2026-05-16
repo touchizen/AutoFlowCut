@@ -73,7 +73,7 @@ describe('StorageTab — New Project aspect ratio', () => {
     fireEvent.click(screen.getByRole('button', { name: 'settings.create' }))
 
     await waitFor(() => {
-      expect(onProjectChange).toHaveBeenCalledWith('my_short', { aspectRatio: '9:16' })
+      expect(onProjectChange).toHaveBeenCalledWith('my_short', { aspectRatio: '9:16', isNewProject: true })
     })
   })
 
@@ -87,7 +87,7 @@ describe('StorageTab — New Project aspect ratio', () => {
     fireEvent.click(screen.getByRole('button', { name: 'settings.create' }))
 
     await waitFor(() => {
-      expect(onProjectChange).toHaveBeenCalledWith('my_long', { aspectRatio: '16:9' })
+      expect(onProjectChange).toHaveBeenCalledWith('my_long', { aspectRatio: '16:9', isNewProject: true })
     })
   })
 
@@ -109,5 +109,26 @@ describe('StorageTab — New Project aspect ratio', () => {
     })
     expect(onProjectChange).not.toHaveBeenCalled()
     expect(fileSystemAPI.getProjectFolder).not.toHaveBeenCalled()
+  })
+
+  it('rolls back the optimistic project selection when the switch fails', async () => {
+    // handleProjectChange returning { success:false } means the app did NOT
+    // switch. The optimistically-updated localSettings.projectName must roll
+    // back, else the modal shows a different project than the app is on.
+    const onProjectChange = vi.fn().mockResolvedValue({ success: false })
+    const { setLocalSettings } = renderStorageTab(onProjectChange)
+    fireEvent.click(await screen.findByTitle('settings.createProject'))
+
+    fireEvent.change(screen.getByPlaceholderText('settings.projectNamePlaceholder'), {
+      target: { value: 'my_new' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'settings.create' }))
+
+    // wait until the rollback setLocalSettings call lands
+    await waitFor(() => {
+      const lastUpdater = setLocalSettings.mock.calls.at(-1)?.[0]
+      expect(lastUpdater?.({ projectName: 'my_new', aspectRatio: '9:16' }))
+        .toMatchObject({ projectName: 'existing', aspectRatio: '16:9' })
+    })
   })
 })

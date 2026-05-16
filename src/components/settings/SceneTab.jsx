@@ -2,6 +2,8 @@
  * SceneTab - 씬 설정 탭
  */
 
+import AspectRatioSelector from './AspectRatioSelector'
+
 const BATCH_OPTIONS = [1, 2, 3, 4]
 const RESOLUTION_OPTIONS = [
   { value: '270p', label: '270p' },
@@ -21,20 +23,11 @@ export default function SceneTab({ localSettings, setLocalSettings, t }) {
       {/* 프로젝트 화면비: 롱폼(16:9) / 숏폼(9:16) — 생성·카드·CapCut export 에 반영 */}
       <div className="setting-row">
         <label className="setting-label">{t('settings.aspectRatio')}</label>
-        <div className="batch-selector">
-          <button
-            className={`batch-btn ${(localSettings.aspectRatio || '16:9') === '16:9' ? 'active' : ''}`}
-            onClick={() => setLocalSettings(s => ({ ...s, aspectRatio: '16:9' }))}
-          >
-            🖥 16:9 · {t('settings.aspectRatioLongform')}
-          </button>
-          <button
-            className={`batch-btn ${localSettings.aspectRatio === '9:16' ? 'active' : ''}`}
-            onClick={() => setLocalSettings(s => ({ ...s, aspectRatio: '9:16' }))}
-          >
-            📱 9:16 · {t('settings.aspectRatioShortform')}
-          </button>
-        </div>
+        <AspectRatioSelector
+          value={localSettings.aspectRatio}
+          onChange={(ratio) => setLocalSettings(s => ({ ...s, aspectRatio: ratio }))}
+          t={t}
+        />
         <span className="setting-sublabel">{t('settings.aspectRatioHint')}</span>
       </div>
 

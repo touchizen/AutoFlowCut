@@ -329,7 +329,7 @@ describe('handleProjectChange — aspect ratio', () => {
     fileSystemAPI.saveProjectData.mockResolvedValue({ success: true })
   })
 
-  function setup(settings) {
+  function setup(settings, { onSaveError } = {}) {
     const setSettings = vi.fn()
     const { result } = renderHook(() =>
       useProjectData({
@@ -340,12 +340,13 @@ describe('handleProjectChange — aspect ratio', () => {
         framePairs: [], setFramePairs: vi.fn(),
         selectedStyleRefId: null, setSelectedStyleRefId: vi.fn(),
         openSettings: vi.fn(), onAudioSwitch: vi.fn(), flowAPI: null,
+        onSaveError,
       }),
     )
     return { result, setSettings }
   }
 
-  it('P1: opts.aspectRatio wins over an existing project.json ratio', async () => {
+  it('P1: a new-project ratio wins over an existing same-named project.json ratio', async () => {
     fileSystemAPI.projectExists.mockResolvedValue(true)
     fileSystemAPI.loadProjectData.mockResolvedValue({
       success: true,
@@ -355,10 +356,10 @@ describe('handleProjectChange — aspect ratio', () => {
 
     let ret
     await act(async () => {
-      ret = await result.current.handleProjectChange('new', { aspectRatio: '9:16' })
+      ret = await result.current.handleProjectChange('new', { aspectRatio: '9:16', isNewProject: true })
     })
 
-    expect(ret).toEqual({ aspectRatio: '9:16' })
+    expect(ret).toEqual({ aspectRatio: '9:16', success: true })
     const updater = setSettings.mock.calls.at(-1)[0]
     expect(updater({ aspectRatio: '16:9' })).toMatchObject({ aspectRatio: '9:16' })
   })
@@ -376,7 +377,7 @@ describe('handleProjectChange — aspect ratio', () => {
       ret = await result.current.handleProjectChange('other')
     })
 
-    expect(ret).toEqual({ aspectRatio: '9:16' })
+    expect(ret).toEqual({ aspectRatio: '9:16', success: true })
   })
 
   it('P2: materializes project.json for a brand-new project with the chosen ratio', async () => {
@@ -385,7 +386,7 @@ describe('handleProjectChange — aspect ratio', () => {
     const { result } = setup({ projectName: 'old', saveMode: 'folder', aspectRatio: '16:9', defaultDuration: 3 })
 
     await act(async () => {
-      await result.current.handleProjectChange('fresh', { aspectRatio: '9:16' })
+      await result.current.handleProjectChange('fresh', { aspectRatio: '9:16', isNewProject: true })
     })
 
     const freshSave = fileSystemAPI.saveProjectData.mock.calls.find((c) => c[0] === 'fresh')
@@ -417,5 +418,40 @@ describe('handleProjectChange — aspect ratio', () => {
     })
 
     expect(res).toEqual({ success: true })
+  })
+
+  it('reports a failed new-project save via onSaveError', async () => {
+    fileSystemAPI.projectExists.mockResolvedValue(true) // folder exists, no project.json
+    fileSystemAPI.loadProjectData.mockResolvedValue({ success: true, data: null })
+    fileSystemAPI.saveProjectData.mockResolvedValue({ success: false, error: 'disk full' })
+    const onSaveError = vi.fn()
+    const { result } = setup(
+      { projectName: 'old', saveMode: 'folder', aspectRatio: '16:9' },
+      { onSaveError },
+    )
+
+    await act(async () => {
+      await result.current.handleProjectChange('fresh', { aspectRatio: '9:16', isNewProject: true })
+    })
+
+    expect(onSaveError).toHaveBeenCalledWith('disk full')
+  })
+
+  it('clears the restoring/loading flags even when the project change throws', async () => {
+    // projectExists rejects → handleProjectChange must still run its finally
+    // block, otherwise isRestoringRef stays true and autosave is permanently
+    // blocked + the loading overlay is stuck.
+    fileSystemAPI.projectExists.mockRejectedValue(new Error('boom'))
+    const { result } = setup({ projectName: 'old', saveMode: 'folder', aspectRatio: '16:9' })
+
+    let ret
+    await act(async () => {
+      ret = await result.current.handleProjectChange('next')
+    })
+
+    expect(result.current.isRestoringRef.current).toBe(false)
+    expect(result.current.projectLoading).toBe(false)
+    // fallback to current ratio + success:false (threw before the switch landed)
+    expect(ret).toEqual({ aspectRatio: '16:9', success: false })
   })
 })
