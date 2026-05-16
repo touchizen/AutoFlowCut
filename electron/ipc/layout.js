@@ -72,6 +72,13 @@ export function registerLayoutIPC(ipcMain, getMainWindow, getFlowView) {
   ipcMain.handle('app:set-modal-visible', (event, { visible }) => {
     modalVisible = visible
     updateBounds(getMainWindow(), getFlowView())
+    // 모달이 열릴 때 키보드 포커스를 메인 renderer로 되돌린다.
+    // Flow WebContentsView를 0×0으로 줄여도 네이티브 포커스는 그대로 남아
+    // (Electron은 뷰 간 포커스 자동 전환을 안 함), 모달 입력창에 키 입력이
+    // 안 가는 현상이 생긴다 — 특히 Windows에서.
+    if (visible) {
+      getMainWindow()?.webContents?.focus()
+    }
     return { success: true }
   })
 
