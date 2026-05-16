@@ -154,3 +154,33 @@ describe('ResultsTable — 에러 표시', () => {
     })
   })
 })
+
+describe('ResultsTable — 화면비', () => {
+  // 썸네일 셀(.image-cell)이 프로젝트 화면비를 따라야 한다 — 9:16 프로젝트인데
+  // 16:9 가로 썸네일로 보이던 버그(App 이 aspectRatio prop 을 안 넘김) 회귀 방지.
+  it('9:16 프로젝트는 image-cell 에 ratio-portrait 적용', () => {
+    const items = [baseItem({ status: 'done' })]
+    const { container } = wrap(
+      <ResultsTable items={items} mediaType="image" aspectRatio="9:16" onRetry={vi.fn()} />
+    )
+    expect(container.querySelector('.image-cell.ratio-portrait')).toBeInTheDocument()
+    expect(container.querySelector('.image-cell.ratio-landscape')).not.toBeInTheDocument()
+  })
+
+  it('16:9 프로젝트는 image-cell 에 ratio-landscape 적용', () => {
+    const items = [baseItem({ status: 'done' })]
+    const { container } = wrap(
+      <ResultsTable items={items} mediaType="image" aspectRatio="16:9" onRetry={vi.fn()} />
+    )
+    expect(container.querySelector('.image-cell.ratio-landscape')).toBeInTheDocument()
+    expect(container.querySelector('.image-cell.ratio-portrait')).not.toBeInTheDocument()
+  })
+
+  it('aspectRatio 미지정 시 기본 ratio-landscape', () => {
+    const items = [baseItem({ status: 'done' })]
+    const { container } = wrap(
+      <ResultsTable items={items} mediaType="image" onRetry={vi.fn()} />
+    )
+    expect(container.querySelector('.image-cell.ratio-landscape')).toBeInTheDocument()
+  })
+})
