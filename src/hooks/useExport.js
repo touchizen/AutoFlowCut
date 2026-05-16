@@ -122,7 +122,10 @@ export function useExport({
       }
       const project = {
         name: settings.projectName || 'Untitled',
-        format: settings.aspectRatio === '9:16' ? 'short' : 'landscape',
+        // 'portrait' / 'landscape' — GCF(whisk2capcut functions/index.js)가 기대하는 값.
+        // format === 'portrait' 일 때만 canvas_config 를 1080x1920(9:16)로 잡는다.
+        // (예전 'short' 값은 GCF 가 인식 못 해 9:16 프로젝트도 16:9 draft 로 나왔음)
+        format: settings.aspectRatio === '9:16' ? 'portrait' : 'landscape',
         scenes: validScenes.map(s => {
           const sceneDuration = s.duration || settings.defaultDuration || 3
           const video = resolveExportMedia(s)

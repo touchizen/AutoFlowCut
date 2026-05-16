@@ -132,7 +132,7 @@ describe('useExport 로직', () => {
 
         const project = {
           name: settings.projectName,
-          format: settings.aspectRatio === '9:16' ? 'short' : 'landscape',
+          format: settings.aspectRatio === '9:16' ? 'portrait' : 'landscape',
           scenes: scenes.map(s => ({
             id: s.id,
             image_path: s.imagePath || s.image,
@@ -155,21 +155,24 @@ describe('useExport 로직', () => {
         expect(project.scenes[0].subtitle_ko).toBe('한국어 자막')
       })
 
-      it('9:16 비율은 short 포맷', () => {
+      // GCF(whisk2capcut functions/index.js)는 format === 'portrait' 일 때만
+      // canvas_config 를 세로(1080x1920)로 잡는다. 'short' 를 보내면 인식하지
+      // 못해 9:16 프로젝트도 16:9 draft 로 나온다.
+      it('9:16 비율은 portrait 포맷', () => {
         const aspectRatio = '9:16'
-        const format = aspectRatio === '9:16' ? 'short' : 'landscape'
-        expect(format).toBe('short')
+        const format = aspectRatio === '9:16' ? 'portrait' : 'landscape'
+        expect(format).toBe('portrait')
       })
 
       it('16:9 비율은 landscape 포맷', () => {
         const aspectRatio = '16:9'
-        const format = aspectRatio === '9:16' ? 'short' : 'landscape'
+        const format = aspectRatio === '9:16' ? 'portrait' : 'landscape'
         expect(format).toBe('landscape')
       })
 
       it('1:1 비율은 landscape 포맷', () => {
         const aspectRatio = '1:1'
-        const format = aspectRatio === '9:16' ? 'short' : 'landscape'
+        const format = aspectRatio === '9:16' ? 'portrait' : 'landscape'
         expect(format).toBe('landscape')
       })
     })
