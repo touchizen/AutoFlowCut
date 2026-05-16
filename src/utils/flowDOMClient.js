@@ -128,17 +128,24 @@ export function requestStopDOM() {
 }
 
 /**
- * 생성 직전 Flow UI 의 화면비 콤보박스를 프로젝트 화면비로 맞춘다.
- * - '16:9' / '9:16' 만 처리 — 그 외(undefined 등)면 Flow UI 현재 설정을 그대로 둔다.
- * - 실패해도 생성은 계속한다 (사용자가 Flow UI 에서 수동 설정한 값으로 진행).
+ * 생성 직전 Flow UI 의 화면비 탭을 프로젝트 화면비로 맞춘다.
+ * - '16:9' / '9:16' 만 처리 — 그 외(undefined 등)면 강제하지 않고 통과시킨다
+ *   (스타일 썸네일 등 화면비 무관 생성용).
+ * - 적용 실패 시 { success:false } 를 반환한다. 호출부는 생성을 중단해야 한다 —
+ *   9:16 프로젝트인데 화면비 설정이 안 먹은 채로 생성하면 잘못된 16:9 이미지가
+ *   나오고 quota 만 소모된다. 실패를 알려 재시도하게 하는 편이 낫다.
+ * @returns {Promise<{ success: boolean, error?: string }>}
  */
 async function applyAspectRatio(aspectRatio) {
-  if (aspectRatio !== '16:9' && aspectRatio !== '9:16') return
+  if (aspectRatio !== '16:9' && aspectRatio !== '9:16') return { success: true }
   try {
     const r = await window.electronAPI.domSetAspectRatio({ aspectRatio })
-    if (!r?.success) console.warn('[DOM] Set aspect ratio failed:', r?.error)
+    if (r?.success) return { success: true }
+    console.warn('[DOM] Set aspect ratio failed:', r?.error)
+    return { success: false, error: r?.error || 'Aspect ratio not applied' }
   } catch (e) {
     console.warn('[DOM] Set aspect ratio error:', e.message)
+    return { success: false, error: e.message }
   }
 }
 
@@ -162,7 +169,11 @@ export async function submitGenerationDOM(prompt, referenceImages = [], { batchC
   try {
     await ensureFlowProject(false)
     if (stopRequested) return { success: false, error: 'Stopped by user' }
-    await applyAspectRatio(aspectRatio)
+    // 화면비 적용 실패 시 생성 중단 — 잘못된 비율 이미지 + quota 낭비 방지.
+    const ar = await applyAspectRatio(aspectRatio)
+    if (!ar.success) {
+      return { success: false, error: `Aspect ratio ${aspectRatio} not applied: ${ar.error}` }
+    }
 
     console.log('[DOM] Calling flow:generate-image (asyncMode) for prompt:', prompt?.substring(0, 40),
       seed != null ? `seed:${seed}` : 'seed:random')
@@ -227,7 +238,11 @@ export async function generateImageDOM(prompt, referenceImages = [], { batchCoun
     await ensureFlowProject(false)
 
     if (stopRequested) return { success: false, error: 'Stopped by user' }
-    await applyAspectRatio(aspectRatio)
+    // 화면비 적용 실패 시 생성 중단 — 잘못된 비율 이미지 + quota 낭비 방지.
+    const ar = await applyAspectRatio(aspectRatio)
+    if (!ar.success) {
+      return { success: false, error: `Aspect ratio ${aspectRatio} not applied: ${ar.error}` }
+    }
 
     // flow:generate-image IPC 호출
     // CDP 네트워크 캡처로 이미지를 직접 가져옴 (blob 폴링 불필요)

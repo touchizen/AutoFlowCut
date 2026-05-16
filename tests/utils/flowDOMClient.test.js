@@ -1,11 +1,13 @@
 /**
  * flowDOMClient — aspect ratio applied before image generation
  *
- * The Flow image UI has an aspect-ratio combobox that the app must set to the
- * project's format (16:9 longform / 9:16 shortform) before each generation —
- * otherwise generated images keep whatever ratio Flow last had. generateImageDOM
- * and submitGenerationDOM call domSetAspectRatio for a valid ratio, and skip it
- * for an absent/invalid one (leaving Flow's current setting untouched).
+ * The app must set Flow's aspect-ratio tab to the project format (16:9 / 9:16)
+ * before each generation. generateImageDOM / submitGenerationDOM call
+ * domSetAspectRatio for a valid ratio (skipping an absent/invalid one).
+ *
+ * If applying the ratio FAILS, generation is aborted: a 9:16 project must not
+ * silently produce a 16:9 image (wrong output + wasted quota) — the failure is
+ * surfaced so the user can retry.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -54,11 +56,19 @@ describe('generateImageDOM — aspect ratio', () => {
     expect(window.electronAPI.domSetAspectRatio).not.toHaveBeenCalled()
   })
 
-  it('still generates when setting the aspect ratio fails', async () => {
-    window.electronAPI.domSetAspectRatio.mockResolvedValue({ success: false, error: 'no combobox' })
+  it('aborts generation when the aspect ratio cannot be applied', async () => {
+    window.electronAPI.domSetAspectRatio.mockResolvedValue({ success: false, error: 'tab did not switch' })
     const result = await generateImageDOM('a prompt', [], { aspectRatio: '9:16' })
-    expect(window.electronAPI.generateImage).toHaveBeenCalledTimes(1)
-    expect(result.success).toBe(true)
+    expect(window.electronAPI.generateImage).not.toHaveBeenCalled()
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('9:16')
+  })
+
+  it('aborts generation when domSetAspectRatio throws', async () => {
+    window.electronAPI.domSetAspectRatio.mockRejectedValue(new Error('ipc down'))
+    const result = await generateImageDOM('a prompt', [], { aspectRatio: '9:16' })
+    expect(window.electronAPI.generateImage).not.toHaveBeenCalled()
+    expect(result.success).toBe(false)
   })
 })
 
@@ -74,5 +84,12 @@ describe('submitGenerationDOM — aspect ratio', () => {
   it('does not touch the aspect ratio when none is given', async () => {
     await submitGenerationDOM('a prompt', [])
     expect(window.electronAPI.domSetAspectRatio).not.toHaveBeenCalled()
+  })
+
+  it('aborts the submit when the aspect ratio cannot be applied', async () => {
+    window.electronAPI.domSetAspectRatio.mockResolvedValue({ success: false, error: 'tab did not switch' })
+    const result = await submitGenerationDOM('a prompt', [], { aspectRatio: '9:16' })
+    expect(window.electronAPI.generateImage).not.toHaveBeenCalled()
+    expect(result.success).toBe(false)
   })
 })
