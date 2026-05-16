@@ -19,7 +19,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('menu:action', handler)
     return () => ipcRenderer.removeListener('menu:action', handler)
   },
-  notifyProjectActivated: (name) => ipcRenderer.invoke('app:project-activated', { name }),
+  notifyProjectActivated: (name, workFolder) => ipcRenderer.invoke('app:project-activated', { name, workFolder }),
 
   // Flow API
   extractToken: () => ipcRenderer.invoke('flow:extract-token'),

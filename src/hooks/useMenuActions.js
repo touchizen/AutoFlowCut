@@ -9,13 +9,14 @@
  *
  * @param {object}   params
  * @param {string?}  params.activeProject - current project name (null in Flow mode)
+ * @param {string?}  params.workFolder    - current work folder path (null in Flow mode)
  * @param {Function} params.onNewProject  - invoked for the "New Project" item
  * @param {Function} params.onOpenProject - invoked with a name for a Recent item
  */
 
 import { useEffect, useRef } from 'react'
 
-export function useMenuActions({ activeProject, onNewProject, onOpenProject }) {
+export function useMenuActions({ activeProject, workFolder, onNewProject, onOpenProject }) {
   // Keep the latest callbacks reachable without re-subscribing the IPC listener
   // on every render (the callbacks are usually fresh closures each render).
   const handlersRef = useRef({ onNewProject, onOpenProject })
@@ -36,10 +37,13 @@ export function useMenuActions({ activeProject, onNewProject, onOpenProject }) {
     }
   }, [])
 
-  // Push the active project to the main process so Recent Projects stays MRU.
+  // Push the active project + its work folder to the main process so Recent
+  // Projects stays MRU and scoped to the current folder. The work folder is
+  // part of the report: a recent entry is only safe to reopen within the
+  // folder it belongs to.
   useEffect(() => {
-    if (activeProject) {
-      window.electronAPI?.notifyProjectActivated?.(activeProject)
+    if (activeProject && workFolder) {
+      window.electronAPI?.notifyProjectActivated?.(activeProject, workFolder)
     }
-  }, [activeProject])
+  }, [activeProject, workFolder])
 }

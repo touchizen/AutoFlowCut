@@ -1039,10 +1039,10 @@ registerMcpIPC(ipcMain)
 // Layout, modal, sleep, open-external, show-in-folder IPC
 registerLayoutIPC(ipcMain, () => mainWindow, () => flowView)
 
-// Renderer reports the active project so the native "Recent Projects" menu
-// stays in MRU order.
-ipcMain.handle('app:project-activated', (event, { name }) => {
-  try { noteProjectActivated(name) } catch (e) { console.warn('[AutoFlowCut] noteProjectActivated failed:', e.message) }
+// Renderer reports the active project (with its work folder) so the native
+// "Recent Projects" menu stays in MRU order and scoped to the current folder.
+ipcMain.handle('app:project-activated', (event, { name, workFolder }) => {
+  try { noteProjectActivated(name, workFolder) } catch (e) { console.warn('[AutoFlowCut] noteProjectActivated failed:', e.message) }
   return { success: true }
 })
 

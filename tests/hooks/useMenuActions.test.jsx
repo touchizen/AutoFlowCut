@@ -3,8 +3,9 @@
  *
  * Verifies the contract with the main process:
  *  - `menu:action` events route to onNewProject / onOpenProject,
- *  - the active project is reported via notifyProjectActivated so the
- *    "Recent Projects" submenu stays MRU,
+ *  - the active project + its work folder are reported via
+ *    notifyProjectActivated so the "Recent Projects" submenu stays MRU and
+ *    scoped to the current work folder,
  *  - the IPC listener is cleaned up on unmount.
  */
 
@@ -15,6 +16,8 @@ import { useMenuActions } from '../../src/hooks/useMenuActions'
 let menuCallback
 let unsubscribe
 let notifyProjectActivated
+
+const noop = () => {}
 
 beforeEach(() => {
   menuCallback = null
@@ -32,7 +35,9 @@ beforeEach(() => {
 describe('useMenuActions', () => {
   it('routes the "new-project" action to onNewProject', () => {
     const onNewProject = vi.fn()
-    renderHook(() => useMenuActions({ activeProject: 'p', onNewProject, onOpenProject: vi.fn() }))
+    renderHook(() =>
+      useMenuActions({ activeProject: 'p', workFolder: '/wf', onNewProject, onOpenProject: noop }),
+    )
 
     menuCallback({ action: 'new-project' })
 
@@ -41,7 +46,9 @@ describe('useMenuActions', () => {
 
   it('routes the "open-project" action to onOpenProject with the name', () => {
     const onOpenProject = vi.fn()
-    renderHook(() => useMenuActions({ activeProject: 'p', onNewProject: vi.fn(), onOpenProject }))
+    renderHook(() =>
+      useMenuActions({ activeProject: 'p', workFolder: '/wf', onNewProject: noop, onOpenProject }),
+    )
 
     menuCallback({ action: 'open-project', name: 'my-project' })
 
@@ -50,7 +57,9 @@ describe('useMenuActions', () => {
 
   it('ignores an open-project action with no name', () => {
     const onOpenProject = vi.fn()
-    renderHook(() => useMenuActions({ activeProject: 'p', onNewProject: vi.fn(), onOpenProject }))
+    renderHook(() =>
+      useMenuActions({ activeProject: 'p', workFolder: '/wf', onNewProject: noop, onOpenProject }),
+    )
 
     menuCallback({ action: 'open-project' })
     menuCallback(null)
@@ -59,25 +68,50 @@ describe('useMenuActions', () => {
     expect(onOpenProject).not.toHaveBeenCalled()
   })
 
-  it('notifies the main process of the active project on mount', () => {
-    renderHook(() => useMenuActions({ activeProject: 'alpha', onNewProject: vi.fn(), onOpenProject: vi.fn() }))
+  it('reports the active project and its work folder on mount', () => {
+    renderHook(() =>
+      useMenuActions({ activeProject: 'alpha', workFolder: '/wfA', onNewProject: noop, onOpenProject: noop }),
+    )
 
-    expect(notifyProjectActivated).toHaveBeenCalledWith('alpha')
+    expect(notifyProjectActivated).toHaveBeenCalledWith('alpha', '/wfA')
   })
 
-  it('re-notifies when the active project changes', () => {
+  it('re-reports when the active project changes', () => {
     const { rerender } = renderHook(
-      ({ p }) => useMenuActions({ activeProject: p, onNewProject: vi.fn(), onOpenProject: vi.fn() }),
+      ({ p }) =>
+        useMenuActions({ activeProject: p, workFolder: '/wfA', onNewProject: noop, onOpenProject: noop }),
       { initialProps: { p: 'alpha' } },
     )
     rerender({ p: 'beta' })
 
-    expect(notifyProjectActivated).toHaveBeenNthCalledWith(1, 'alpha')
-    expect(notifyProjectActivated).toHaveBeenNthCalledWith(2, 'beta')
+    expect(notifyProjectActivated).toHaveBeenNthCalledWith(1, 'alpha', '/wfA')
+    expect(notifyProjectActivated).toHaveBeenNthCalledWith(2, 'beta', '/wfA')
   })
 
-  it('does not notify when there is no active project (Flow mode)', () => {
-    renderHook(() => useMenuActions({ activeProject: null, onNewProject: vi.fn(), onOpenProject: vi.fn() }))
+  it('re-reports when the work folder changes but the project name stays', () => {
+    const { rerender } = renderHook(
+      ({ wf }) =>
+        useMenuActions({ activeProject: 'same', workFolder: wf, onNewProject: noop, onOpenProject: noop }),
+      { initialProps: { wf: '/wfA' } },
+    )
+    rerender({ wf: '/wfB' })
+
+    expect(notifyProjectActivated).toHaveBeenNthCalledWith(1, 'same', '/wfA')
+    expect(notifyProjectActivated).toHaveBeenNthCalledWith(2, 'same', '/wfB')
+  })
+
+  it('does not report when there is no active project (Flow mode)', () => {
+    renderHook(() =>
+      useMenuActions({ activeProject: null, workFolder: '/wfA', onNewProject: noop, onOpenProject: noop }),
+    )
+
+    expect(notifyProjectActivated).not.toHaveBeenCalled()
+  })
+
+  it('does not report when the work folder is unknown', () => {
+    renderHook(() =>
+      useMenuActions({ activeProject: 'p', workFolder: null, onNewProject: noop, onOpenProject: noop }),
+    )
 
     expect(notifyProjectActivated).not.toHaveBeenCalled()
   })
@@ -86,7 +120,8 @@ describe('useMenuActions', () => {
     const firstNew = vi.fn()
     const secondNew = vi.fn()
     const { rerender } = renderHook(
-      ({ cb }) => useMenuActions({ activeProject: 'p', onNewProject: cb, onOpenProject: vi.fn() }),
+      ({ cb }) =>
+        useMenuActions({ activeProject: 'p', workFolder: '/wf', onNewProject: cb, onOpenProject: noop }),
       { initialProps: { cb: firstNew } },
     )
     rerender({ cb: secondNew })
@@ -100,7 +135,7 @@ describe('useMenuActions', () => {
 
   it('unsubscribes from menu actions on unmount', () => {
     const { unmount } = renderHook(() =>
-      useMenuActions({ activeProject: 'p', onNewProject: vi.fn(), onOpenProject: vi.fn() }),
+      useMenuActions({ activeProject: 'p', workFolder: '/wf', onNewProject: noop, onOpenProject: noop }),
     )
     unmount()
 
@@ -110,7 +145,9 @@ describe('useMenuActions', () => {
   it('does not throw when electronAPI is unavailable', () => {
     delete window.electronAPI
     expect(() =>
-      renderHook(() => useMenuActions({ activeProject: 'p', onNewProject: vi.fn(), onOpenProject: vi.fn() })),
+      renderHook(() =>
+        useMenuActions({ activeProject: 'p', workFolder: '/wf', onNewProject: noop, onOpenProject: noop }),
+      ),
     ).not.toThrow()
   })
 })

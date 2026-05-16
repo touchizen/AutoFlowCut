@@ -187,8 +187,10 @@ function App() {
   })
 
   // 네이티브 File 메뉴 ↔ renderer 연결 (New Project / Recent Projects)
+  // Recent 항목은 work folder 단위로 구분되므로 현재 work folder 경로도 함께 전달.
   useMenuActions({
     activeProject: settings.saveMode === 'folder' ? settings.projectName : null,
+    workFolder: settings.saveMode === 'folder' ? (localStorage.getItem('workFolderPath') || null) : null,
     onNewProject: () => openSettings('storage'),
     onOpenProject: handleProjectChange,
   })
