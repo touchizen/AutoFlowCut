@@ -82,10 +82,20 @@ export function registerDomIPC(ipcMain, deps) {
     }
   })
 
-  // Set aspect ratio: AutoFlow 역공학 — combobox 드롭다운 방식
-  // 1) aspect ratio 드롭다운 버튼 클릭 (crop_portrait/crop_landscape 아이콘)
-  // 2) option 선택 (div[@role='option'])
-  // 3) Escape로 닫기
+  // Set aspect ratio.
+  //
+  // Current Flow UI: the aspect ratio is an always-visible Radix Tabs row.
+  // Tab triggers have an UNSTABLE generated id prefix (radix-:rNN:) but a
+  // STABLE value suffix:
+  //   -trigger-LANDSCAPE     → 16:9      -trigger-PORTRAIT     → 9:16
+  //   -trigger-LANDSCAPE_4_3 → 4:3       -trigger-PORTRAIT_3_4 → 3:4
+  //   -trigger-SQUARE        → 1:1
+  // The exact-suffix matcher [id$=...] is REQUIRED: a *contains* matcher
+  // (*=) would also catch -trigger-PORTRAIT_3_4 / -trigger-LANDSCAPE_4_3,
+  // and querySelector returns the first in DOM order — selecting 9:16 would
+  // actually click the 3:4 tab.
+  //
+  // Legacy fallback: older Flow UI used a combobox dropdown.
   ipcMain.handle('flow:dom-set-aspect-ratio', async (event, { aspectRatio }) => {
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }
@@ -93,8 +103,36 @@ export function registerDomIPC(ipcMain, deps) {
       const isPortrait = aspectRatio === '9:16'
       console.log('[DOM IPC] Setting aspect ratio:', aspectRatio, 'isPortrait:', isPortrait)
 
-      // Step 1: 드롭다운 버튼 찾기 & 클릭
-      // AutoFlow: "//button[@role='combobox' and .//i[normalize-space(text())='crop_portrait' or normalize-space(text())='crop_landscape']]"
+      // ─── Primary: Radix Tabs row (current Flow UI) ───
+      const tabIdSuffix = isPortrait ? '-trigger-PORTRAIT' : '-trigger-LANDSCAPE'
+      const tabExpr = `document.querySelector("button[role='tab'][id$='${tabIdSuffix}']")`
+
+      const tabState = await flowView.webContents.executeJavaScript(`
+        (function() {
+          const btn = ${tabExpr};
+          if (!btn) return { found: false };
+          return { found: true, active: btn.getAttribute('aria-selected') === 'true' };
+        })()
+      `)
+
+      if (tabState && tabState.found) {
+        if (tabState.active) {
+          console.log('[DOM IPC] Aspect ratio already set:', aspectRatio)
+          return { success: true, method: 'tab', alreadySet: true }
+        }
+        // Flow ignores untrusted (isTrusted:false) clicks — must go through
+        // the sendInputEvent-based trusted click (see shared.js).
+        const tabClick = await trustedClickOnFlowView(tabExpr)
+        if (tabClick.success) {
+          await new Promise(r => setTimeout(r, 300))
+          console.log('[DOM IPC] Aspect ratio set via tab:', aspectRatio)
+          return { success: true, method: 'tab' }
+        }
+        return { success: false, error: tabClick.error || 'Aspect ratio tab click failed' }
+      }
+
+      // ─── Legacy fallback: combobox dropdown (old Flow UI) ───
+      console.log('[DOM IPC] Aspect ratio tab not found, trying legacy combobox...')
       const dropdownSelector = `(function() {
       try {
         const xr = document.evaluate(
@@ -108,28 +146,10 @@ export function registerDomIPC(ipcMain, deps) {
 
       const dropdownClick = await trustedClickOnFlowView(dropdownSelector)
       if (!dropdownClick.success) {
-        console.log('[DOM IPC] Aspect ratio dropdown not found, trying tab fallback...')
-
-        // Fallback: CSS tab selector 방식 (새 UI 버전에서 사용)
-        const tabSelector = isPortrait
-          ? "button[role='tab'][id$='-trigger-PORTRAIT'], button[role='tab'][id*='-trigger-PORTRAIT']"
-          : "button[role='tab'][id$='-trigger-LANDSCAPE'], button[role='tab'][id*='-trigger-LANDSCAPE']"
-
-        const tabResult = await flowView.webContents.executeJavaScript(`
-        (function() {
-          const btn = document.querySelector(${JSON.stringify(tabSelector)});
-          if (btn) { btn.click(); return { success: true, method: 'tab_click' }; }
-          return { success: false, error: 'Neither dropdown nor tab found' };
-        })()
-      `)
-        return tabResult
+        return { success: false, error: 'Aspect ratio control not found (no tab, no combobox)' }
       }
-
-      // 드롭다운이 열릴 때까지 대기
       await new Promise(r => setTimeout(r, 500))
 
-      // Step 2: Option 선택
-      // AutoFlow: "//div[@role='option' and .//i[normalize-space(text())='crop_landscape']]"
       const optionIcon = isPortrait ? 'crop_portrait' : 'crop_landscape'
       const optionSelector = `(function() {
       try {
@@ -143,21 +163,7 @@ export function registerDomIPC(ipcMain, deps) {
     })()`
 
       const optionClick = await trustedClickOnFlowView(optionSelector)
-      if (!optionClick.success) {
-        console.log('[DOM IPC] Aspect ratio option not found:', optionIcon)
-        // Escape로 드롭다운 닫기
-        try {
-          await flowView.webContents.executeJavaScript(`
-          document.body.dispatchEvent(new KeyboardEvent('keydown', {
-            key: 'Escape', keyCode: 27, bubbles: true, cancelable: true, composed: true
-          }))
-        `)
-        } catch {}
-        return { success: false, error: 'Aspect ratio option not found' }
-      }
-
-      // Step 3: Escape로 드롭다운 닫기
-      await new Promise(r => setTimeout(r, 500))
+      // Escape로 드롭다운 닫기 (성공/실패 무관)
       try {
         await flowView.webContents.executeJavaScript(`
         document.body.dispatchEvent(new KeyboardEvent('keydown', {
@@ -165,10 +171,12 @@ export function registerDomIPC(ipcMain, deps) {
         }))
       `)
       } catch {}
-
+      if (!optionClick.success) {
+        return { success: false, error: 'Aspect ratio option not found: ' + optionIcon }
+      }
       await new Promise(r => setTimeout(r, 500))
-      console.log('[DOM IPC] Aspect ratio set:', aspectRatio)
-      return { success: true }
+      console.log('[DOM IPC] Aspect ratio set via legacy combobox:', aspectRatio)
+      return { success: true, method: 'combobox' }
     } catch (e) {
       return { success: false, error: e.message }
     }
