@@ -11,10 +11,11 @@ import { toast } from '../Toast'
 // ProjectManager - 프로젝트 관리 컴포넌트
 // ============================================
 
-function ProjectManager({ projectName, onProjectChange, t }) {
+function ProjectManager({ projectName, aspectRatio = '16:9', onProjectChange, onCreateProject, t }) {
   const [projects, setProjects] = useState([])
   const [loading, setLoading] = useState(true)
   const [newProjectName, setNewProjectName] = useState('')
+  const [newAspectRatio, setNewAspectRatio] = useState(aspectRatio)
   const [showNewProject, setShowNewProject] = useState(false)
   const [editMode, setEditMode] = useState(false)
   const [editName, setEditName] = useState('')
@@ -57,7 +58,7 @@ function ProjectManager({ projectName, onProjectChange, t }) {
     // 프로젝트 폴더 생성
     const result = await fileSystemAPI.getProjectFolder(name)
     if (result.success) {
-      onProjectChange(name)
+      onCreateProject(name, newAspectRatio)
       setNewProjectName('')
       setShowNewProject(false)
       await loadProjects(name)
@@ -187,7 +188,10 @@ function ProjectManager({ projectName, onProjectChange, t }) {
 
                 <button
                   className="btn-new-project"
-                  onClick={() => setShowNewProject(!showNewProject)}
+                  onClick={() => {
+                    setNewAspectRatio(aspectRatio)
+                    setShowNewProject(!showNewProject)
+                  }}
                   title={t('settings.createProject')}
                 >
                   ➕
@@ -199,18 +203,37 @@ function ProjectManager({ projectName, onProjectChange, t }) {
           {/* 새 프로젝트 생성 */}
           {showNewProject && !editMode && (
             <div className="new-project-form">
-              <input
-                type="text"
-                value={newProjectName}
-                onChange={(e) => setNewProjectName(e.target.value)}
-                placeholder={t('settings.projectNamePlaceholder')}
-              />
-              <button className="btn-primary btn-small" onClick={handleCreateProject}>
-                {t('settings.create')}
-              </button>
-              <button className="btn-secondary btn-small" onClick={() => setShowNewProject(false)}>
-                {t('common.cancel')}
-              </button>
+              <div className="new-project-row">
+                <input
+                  type="text"
+                  value={newProjectName}
+                  onChange={(e) => setNewProjectName(e.target.value)}
+                  placeholder={t('settings.projectNamePlaceholder')}
+                />
+                <button className="btn-primary btn-small" onClick={handleCreateProject}>
+                  {t('settings.create')}
+                </button>
+                <button className="btn-secondary btn-small" onClick={() => setShowNewProject(false)}>
+                  {t('common.cancel')}
+                </button>
+              </div>
+              {/* 화면비: 롱폼(16:9) / 숏폼(9:16) */}
+              <div className="batch-selector new-project-ratio">
+                <button
+                  type="button"
+                  className={`batch-btn ${newAspectRatio === '16:9' ? 'active' : ''}`}
+                  onClick={() => setNewAspectRatio('16:9')}
+                >
+                  🖥 16:9 · {t('settings.aspectRatioLongform')}
+                </button>
+                <button
+                  type="button"
+                  className={`batch-btn ${newAspectRatio === '9:16' ? 'active' : ''}`}
+                  onClick={() => setNewAspectRatio('9:16')}
+                >
+                  📱 9:16 · {t('settings.aspectRatioShortform')}
+                </button>
+              </div>
             </div>
           )}
 
@@ -314,11 +337,21 @@ export default function StorageTab({
       {localSettings.saveMode === 'folder' && workFolder.name && !workFolder.error && (
         <ProjectManager
           projectName={localSettings.projectName}
-          onProjectChange={(name) => {
+          aspectRatio={localSettings.aspectRatio || '16:9'}
+          onProjectChange={async (name) => {
             setLocalSettings(s => ({ ...s, projectName: name }))
-            // 즉시 프로젝트 데이터 전환
+            // 즉시 프로젝트 데이터 전환 — 전환된 프로젝트의 화면비를 localSettings 에 동기화
             if (onProjectChange) {
-              onProjectChange(name)
+              const res = await onProjectChange(name)
+              if (res?.aspectRatio) {
+                setLocalSettings(s => ({ ...s, aspectRatio: res.aspectRatio }))
+              }
+            }
+          }}
+          onCreateProject={(name, ratio) => {
+            setLocalSettings(s => ({ ...s, projectName: name, aspectRatio: ratio }))
+            if (onProjectChange) {
+              onProjectChange(name, { aspectRatio: ratio })
             }
           }}
           t={t}

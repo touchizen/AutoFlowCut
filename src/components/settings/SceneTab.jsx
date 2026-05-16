@@ -18,6 +18,26 @@ const IMAGE_UPSCALE_OPTIONS = [
 export default function SceneTab({ localSettings, setLocalSettings, t }) {
   return (
     <div className="tab-panel">
+      {/* 프로젝트 화면비: 롱폼(16:9) / 숏폼(9:16) — 생성·카드·CapCut export 에 반영 */}
+      <div className="setting-row">
+        <label className="setting-label">{t('settings.aspectRatio')}</label>
+        <div className="batch-selector">
+          <button
+            className={`batch-btn ${(localSettings.aspectRatio || '16:9') === '16:9' ? 'active' : ''}`}
+            onClick={() => setLocalSettings(s => ({ ...s, aspectRatio: '16:9' }))}
+          >
+            🖥 16:9 · {t('settings.aspectRatioLongform')}
+          </button>
+          <button
+            className={`batch-btn ${localSettings.aspectRatio === '9:16' ? 'active' : ''}`}
+            onClick={() => setLocalSettings(s => ({ ...s, aspectRatio: '9:16' }))}
+          >
+            📱 9:16 · {t('settings.aspectRatioShortform')}
+          </button>
+        </div>
+        <span className="setting-sublabel">{t('settings.aspectRatioHint')}</span>
+      </div>
+
       <div className="setting-row">
         <label className="setting-label">{t('settings.defaultDuration')}</label>
         <input

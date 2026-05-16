@@ -177,8 +177,14 @@
 
 .new-project-form {
   display: flex;
+  flex-direction: column;
   gap: 8px;
   margin-top: 10px;
+}
+
+.new-project-row {
+  display: flex;
+  gap: 8px;
   align-items: center;
 }
 

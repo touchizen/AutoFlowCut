@@ -13,6 +13,7 @@ function createDefaults() {
   return {
     defaultDuration: DEFAULTS.scene.duration,
     projectName: DEFAULTS.project.defaultName,
+    aspectRatio: '16:9', // 프로젝트 화면비: '16:9' 롱폼 / '9:16' 숏폼
     saveMode: 'folder',
     concurrency: DEFAULTS.generation.concurrency,
     exportThreshold: UI.EXPORT_THRESHOLD,
@@ -35,7 +36,6 @@ function loadSettings() {
     const parsed = JSON.parse(saved)
     // 이전 버전 호환: 불필요한 설정 제거
     delete parsed.method
-    delete parsed.aspectRatio
     // seedNo 가 없거나 유효하지 않으면 랜덤으로 초기화
     if (typeof parsed.seedNo !== 'number' || !Number.isFinite(parsed.seedNo)) {
       parsed.seedNo = defaults.seedNo

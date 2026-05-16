@@ -296,6 +296,8 @@ export async function loadProjectWithResources(projectName) {
     framePairs: finalFramePairs,
     audioFolderPath: result.data.audioFolderPath || null,
     selectedStyleRefId: result.data.selectedStyleRefId || null,
+    // 프로젝트별 화면비 — project.json 의 settings 에 저장됨 (없으면 null → 호출부에서 16:9 기본)
+    aspectRatio: result.data.settings?.aspectRatio || null,
   }
 }
 
@@ -438,7 +440,11 @@ export function useProjectData({
         setVideoScenes?.(loaded.videoScenes || [])
         setFramePairs?.(loaded.framePairs || [])
         setSelectedStyleRefId?.(loaded.selectedStyleRefId || null)
-        setSettings(s => ({ ...s, projectName: prevProjectName }))
+        setSettings(s => ({
+          ...s,
+          projectName: prevProjectName,
+          aspectRatio: loaded.aspectRatio || s.aspectRatio,
+        }))
         console.log('[App] Auto-restore complete:', prevProjectName,
           `(${loaded.scenes.filter(s => s.image || s.imagePath).length} images, ${loaded.scenes.filter(s => s.subtitle).length} subtitles)`)
         // In-flight 비디오 복구 (T2V videoScenes + I2V framePairs 둘 다 동일 경로로)
@@ -457,9 +463,14 @@ export function useProjectData({
     })
   }, [])
 
-  // 프로젝트 전환 핸들러
-  const handleProjectChange = async (newProjectName) => {
-    if (newProjectName === settings.projectName) return
+  /**
+   * 프로젝트 전환 핸들러
+   * @param {string} newProjectName
+   * @param {{ aspectRatio?: string }} [opts] - 신규 프로젝트 생성 시 화면비 명시 지정
+   * @returns {{ aspectRatio: string }} 전환된 프로젝트의 확정 화면비 (모달 localSettings 동기화용)
+   */
+  const handleProjectChange = async (newProjectName, opts = {}) => {
+    if (newProjectName === settings.projectName) return { aspectRatio: settings.aspectRatio }
 
     isRestoringRef.current = true
     setProjectLoading(true)
@@ -468,6 +479,9 @@ export function useProjectData({
 
     // 2. 새 프로젝트 데이터 로드
     let audioPath = null
+    // 화면비: 신규 프로젝트는 opts.aspectRatio, 기존 프로젝트는 project.json 값이 우선.
+    // 둘 다 없으면 현재 settings 값 유지.
+    let nextAspectRatio = opts.aspectRatio || null
     const newExists = await fileSystemAPI.projectExists(newProjectName)
     if (newExists) {
       const loaded = await loadProjectWithResources(newProjectName)
@@ -478,6 +492,7 @@ export function useProjectData({
         setFramePairs?.(loaded.framePairs || [])
         setSelectedStyleRefId?.(loaded.selectedStyleRefId || null)
         audioPath = loaded.audioFolderPath
+        if (loaded.aspectRatio) nextAspectRatio = loaded.aspectRatio
         console.log('[App] Project loaded:', newProjectName)
         // In-flight 비디오 복구 (T2V videoScenes + I2V framePairs 둘 다 동일 경로로)
         triggerVideoRecovery(loaded.videoScenes, loaded.framePairs, newProjectName)
@@ -503,10 +518,12 @@ export function useProjectData({
       onAudioSwitch(audioPath)
     }
 
-    // 4. 프로젝트명 업데이트
-    setSettings(s => ({ ...s, projectName: newProjectName }))
+    // 4. 프로젝트명 + 화면비 업데이트
+    const resolvedAspectRatio = nextAspectRatio || settings.aspectRatio
+    setSettings(s => ({ ...s, projectName: newProjectName, aspectRatio: nextAspectRatio || s.aspectRatio }))
     isRestoringRef.current = false
     setProjectLoading(false)
+    return { aspectRatio: resolvedAspectRatio }
   }
 
   return {

@@ -330,6 +330,10 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     
     // 씬 설정
     sceneSettings: '씬 설정',
+    aspectRatio: '화면비',
+    aspectRatioLongform: '롱폼',
+    aspectRatioShortform: '숏폼',
+    aspectRatioHint: '프로젝트 화면 구성 — 생성·카드 표시·CapCut 내보내기에 반영됩니다.',
     defaultDuration: '기본 지속시간 (초)',
     seconds: '',
     projectName: '프로젝트 이름',

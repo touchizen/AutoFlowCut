@@ -272,7 +272,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       const refSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
         ? settings.seedNo
         : null
-      const result = await flowAPI.generateImageDOM(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: refSeed })
+      const result = await flowAPI.generateImageDOM(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: refSeed, aspectRatio: settings.aspectRatio })
 
       if (result.success && result.images?.length > 0) {
         return await _processAndSaveImage(result.images, index, ref, '[Reference]')
@@ -478,7 +478,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
         const batchSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
           ? settings.seedNo
           : null
-        const submitResult = await flowAPI.submitGenerationDOM(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: batchSeed })
+        const submitResult = await flowAPI.submitGenerationDOM(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: batchSeed, aspectRatio: settings.aspectRatio })
 
         if (submitResult?.success && submitResult.generationId) {
           pendingQueue.push({ generationId: submitResult.generationId, index, ref })

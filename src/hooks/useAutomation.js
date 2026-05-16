@@ -61,7 +61,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
    * 비동기 배치 실행 (fire-and-forget + 폴링 수집)
    */
   const runConcurrentQueue = async (targetScenes, options, total) => {
-    let { projectName, saveMode, imageBatchCount, imageUpscale, selectedStyleRefId, seed = null } = options
+    let { projectName, saveMode, imageBatchCount, imageUpscale, aspectRatio, selectedStyleRefId, seed = null } = options
     if (selectedStyleRefId != null && typeof selectedStyleRefId !== 'string') selectedStyleRefId = String(selectedStyleRefId)
     // selectedStyleRefId 없으면 자동 매칭 모드 — 씬별 style_tag로만 결정.
     // 임의의 "첫 스타일 카드 자동 적용" fallback은 제거됨 — UI 라벨("자동")과 실행이 일치해야 함.
@@ -150,7 +150,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
 
       // 비동기 제출
       console.log('[Automation] Scene', scene.id, '→ prompt:', styledPrompt.substring(0, 80) + '...', '| style:', appliedStyle, '| refs:', matchedRefs.length)
-      const submitResult = await submitGenerationDOM(styledPrompt, matchedRefs, { batchCount: imageBatchCount, seed })
+      const submitResult = await submitGenerationDOM(styledPrompt, matchedRefs, { batchCount: imageBatchCount, seed, aspectRatio })
       if (submitResult.success && submitResult.generationId) {
         pendingQueue.push({ generationId: submitResult.generationId, scene, submittedAt: Date.now() })
         consecutiveErrors = 0
@@ -233,6 +233,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       sceneIndices = null,
       imageBatchCount = 1,
       imageUpscale = 'off',
+      aspectRatio = '16:9',
       selectedStyleRefId: _selectedStyleRefId = null,
       seed = null,
       force = false
@@ -401,6 +402,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       saveMode,
       imageBatchCount,
       imageUpscale,
+      aspectRatio,
       selectedStyleRefId,
       seed,
     }, total)

@@ -672,6 +672,7 @@ function App() {
           concurrency: settings.concurrency || 2,
           imageBatchCount: settings.imageBatchCount || 1,
           imageUpscale: settings.imageUpscale || 'off',
+          aspectRatio: settings.aspectRatio,
           selectedStyleRefId: effectiveStyleId,
           seed: effectiveSeed,
           force,
@@ -1045,6 +1046,7 @@ function App() {
         {showReferences && (
           <ReferencePanel
             references={references}
+            aspectRatio={settings.aspectRatio}
             onUpdate={updateReferences}
             onUpload={flowAPI.uploadReference}
             onGenerate={handleGenerateRef}
@@ -1140,6 +1142,7 @@ function App() {
           {activeTab === 'list' && (
             <SceneList
               scenes={scenes}
+              aspectRatio={settings.aspectRatio}
               onUpdate={scenesHook.updateScene}
               onDelete={scenesHook.deleteScene}
               onAdd={scenesHook.addScene}
@@ -1279,6 +1282,7 @@ function App() {
                   concurrency: settings.concurrency || 2,
                   imageBatchCount: settings.imageBatchCount || 1,
                   imageUpscale: settings.imageUpscale || 'off',
+                  aspectRatio: settings.aspectRatio,
                   selectedStyleRefId,
                   seed: effectiveSeed,
                 })
@@ -1318,6 +1322,7 @@ function App() {
                 saveMode: settings.saveMode,
                 imageBatchCount: settings.imageBatchCount || 1,
                 imageUpscale: settings.imageUpscale || 'off',
+                aspectRatio: settings.aspectRatio,
                 selectedStyleRefId,
                 seed: effectiveSeed,
               })
@@ -1355,6 +1360,7 @@ function App() {
                 saveMode: settings.saveMode,
                 imageBatchCount: settings.imageBatchCount || 1,
                 imageUpscale: settings.imageUpscale || 'off',
+                aspectRatio: settings.aspectRatio,
                 selectedStyleRefId,
                 seed: effectiveSeed,
               })
@@ -1371,6 +1377,7 @@ function App() {
       {selectedScene && (
         <SceneDetailModal
           scene={scenes.find(s => s.id === selectedScene.id) || selectedScene}
+          aspectRatio={settings.aspectRatio}
           onUpdate={scenesHook.updateScene}
           onClose={() => setSelectedScene(null)}
           onGenerate={handleGenerateScene}

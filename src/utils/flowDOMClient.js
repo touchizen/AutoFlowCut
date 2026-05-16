@@ -128,6 +128,21 @@ export function requestStopDOM() {
 }
 
 /**
+ * 생성 직전 Flow UI 의 화면비 콤보박스를 프로젝트 화면비로 맞춘다.
+ * - '16:9' / '9:16' 만 처리 — 그 외(undefined 등)면 Flow UI 현재 설정을 그대로 둔다.
+ * - 실패해도 생성은 계속한다 (사용자가 Flow UI 에서 수동 설정한 값으로 진행).
+ */
+async function applyAspectRatio(aspectRatio) {
+  if (aspectRatio !== '16:9' && aspectRatio !== '9:16') return
+  try {
+    const r = await window.electronAPI.domSetAspectRatio({ aspectRatio })
+    if (!r?.success) console.warn('[DOM] Set aspect ratio failed:', r?.error)
+  } catch (e) {
+    console.warn('[DOM] Set aspect ratio error:', e.message)
+  }
+}
+
+/**
  * DOM 방식으로 이미지 생성 (메인 엔트리)
  *
  * 기존: sendPrompt(IPC) → waitForImage(blob 폴링) — blob URL을 못 찾아서 실패
@@ -143,10 +158,11 @@ export function requestStopDOM() {
  * 비동기 제출 — 프롬프트만 제출하고 즉시 반환 (fire-and-forget)
  * @returns {{ success, generationId }} generationId로 나중에 결과 조회
  */
-export async function submitGenerationDOM(prompt, referenceImages = [], { batchCount, seed } = {}) {
+export async function submitGenerationDOM(prompt, referenceImages = [], { batchCount, seed, aspectRatio } = {}) {
   try {
     await ensureFlowProject(false)
     if (stopRequested) return { success: false, error: 'Stopped by user' }
+    await applyAspectRatio(aspectRatio)
 
     console.log('[DOM] Calling flow:generate-image (asyncMode) for prompt:', prompt?.substring(0, 40),
       seed != null ? `seed:${seed}` : 'seed:random')
@@ -205,12 +221,13 @@ export async function clearGenerations() {
 /**
  * DOM 방식으로 이미지 생성 (동기 — 기존 메인 엔트리)
  */
-export async function generateImageDOM(prompt, referenceImages = [], { batchCount, seed } = {}) {
+export async function generateImageDOM(prompt, referenceImages = [], { batchCount, seed, aspectRatio } = {}) {
   try {
     // 프로젝트 초기화: 현재 URL 확인 후 필요시 생성
     await ensureFlowProject(false)
 
     if (stopRequested) return { success: false, error: 'Stopped by user' }
+    await applyAspectRatio(aspectRatio)
 
     // flow:generate-image IPC 호출
     // CDP 네트워크 캡처로 이미지를 직접 가져옴 (blob 폴링 불필요)

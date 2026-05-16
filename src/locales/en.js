@@ -330,6 +330,10 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     
     // Scene settings
     sceneSettings: 'Scene Settings',
+    aspectRatio: 'Aspect Ratio',
+    aspectRatioLongform: 'Longform',
+    aspectRatioShortform: 'Shortform',
+    aspectRatioHint: 'Project format — applied to generation, card layout, and CapCut export.',
     defaultDuration: 'Default Duration',
     seconds: 'sec',
     projectName: 'Project Name',

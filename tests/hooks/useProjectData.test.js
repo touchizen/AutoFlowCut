@@ -257,6 +257,31 @@ describe('loadProjectWithResources — image path remap on load', () => {
     expect(result.scenes[0].image ?? null).toBeNull()
   })
 
+  // ── Project aspect ratio (longform/shortform) ──
+  // project.json stores the per-project aspect ratio under settings.aspectRatio;
+  // the loader surfaces it so handleProjectChange can restore it on switch.
+  it('returns aspectRatio from project.json settings', async () => {
+    fileSystemAPI.loadProjectData.mockResolvedValue({
+      success: true,
+      data: { scenes: [], references: [], settings: { aspectRatio: '9:16' } },
+    })
+
+    const result = await loadProjectWithResources('ep_short')
+
+    expect(result.aspectRatio).toBe('9:16')
+  })
+
+  it('returns null aspectRatio when project.json has no settings block', async () => {
+    fileSystemAPI.loadProjectData.mockResolvedValue({
+      success: true,
+      data: { scenes: [], references: [] },
+    })
+
+    const result = await loadProjectWithResources('ep_legacy')
+
+    expect(result.aspectRatio).toBeNull()
+  })
+
   it('strips stale localized error string from prior missing-image flagging (i18n hygiene)', async () => {
     // A prior load (under a different locale) may have stored a localized error
     // string in scene.error along with errorKind='image-missing'. On reload we
