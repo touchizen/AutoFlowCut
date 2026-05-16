@@ -479,9 +479,10 @@ export function useProjectData({
 
     // 2. 새 프로젝트 데이터 로드
     let audioPath = null
-    // 화면비: 신규 프로젝트는 opts.aspectRatio, 기존 프로젝트는 project.json 값이 우선.
-    // 둘 다 없으면 현재 settings 값 유지.
+    // 화면비: 신규 생성 시 명시한 opts.aspectRatio 가 최우선, 그 다음 기존 project.json
+    // 값, 둘 다 없으면 현재 settings 값 유지.
     let nextAspectRatio = opts.aspectRatio || null
+    let isFreshProject = false
     const newExists = await fileSystemAPI.projectExists(newProjectName)
     if (newExists) {
       const loaded = await loadProjectWithResources(newProjectName)
@@ -492,7 +493,9 @@ export function useProjectData({
         setFramePairs?.(loaded.framePairs || [])
         setSelectedStyleRefId?.(loaded.selectedStyleRefId || null)
         audioPath = loaded.audioFolderPath
-        if (loaded.aspectRatio) nextAspectRatio = loaded.aspectRatio
+        // opts.aspectRatio(신규 생성 명시값)가 있으면 그게 우선 — 같은 이름으로 재생성
+        // 시 기존 project.json 값에 사용자의 선택이 덮이지 않게 한다.
+        if (!opts.aspectRatio && loaded.aspectRatio) nextAspectRatio = loaded.aspectRatio
         console.log('[App] Project loaded:', newProjectName)
         // In-flight 비디오 복구 (T2V videoScenes + I2V framePairs 둘 다 동일 경로로)
         triggerVideoRecovery(loaded.videoScenes, loaded.framePairs, newProjectName)
@@ -502,6 +505,7 @@ export function useProjectData({
         setVideoScenes?.([])
         setFramePairs?.([])
         setSelectedStyleRefId?.(null)
+        isFreshProject = true
         console.log('[App] Empty project:', newProjectName)
       }
     } else {
@@ -510,6 +514,7 @@ export function useProjectData({
       setVideoScenes?.([])
       setFramePairs?.([])
       setSelectedStyleRefId?.(null)
+      isFreshProject = true
       console.log('[App] New project created:', newProjectName)
     }
 
@@ -521,6 +526,16 @@ export function useProjectData({
     // 4. 프로젝트명 + 화면비 업데이트
     const resolvedAspectRatio = nextAspectRatio || settings.aspectRatio
     setSettings(s => ({ ...s, projectName: newProjectName, aspectRatio: nextAspectRatio || s.aspectRatio }))
+
+    // 5. 신규/빈 프로젝트는 project.json 을 즉시 생성한다. autosave 는 빈 프로젝트를
+    //    건너뛰므로(useAutoSave), 그러지 않으면 화면비 등 프로젝트 메타가 유실된다.
+    if (isFreshProject) {
+      await saveCurrentProject(
+        { ...settings, projectName: newProjectName, aspectRatio: resolvedAspectRatio },
+        [], [], [], [], null
+      )
+    }
+
     isRestoringRef.current = false
     setProjectLoading(false)
     return { aspectRatio: resolvedAspectRatio }
@@ -529,7 +544,10 @@ export function useProjectData({
   return {
     addPendingSave,
     handleProjectChange,
-    saveCurrentProject: () => saveCurrentProject(settings, scenes, references, videoScenes, framePairs, selectedStyleRefId),
+    // settingsOverride: 설정 저장 시점처럼 setSettings 직후(아직 리렌더 전) 호출할 때
+    // 최신 settings 를 명시로 넘겨 stale closure 를 피한다.
+    saveCurrentProject: (settingsOverride) =>
+      saveCurrentProject(settingsOverride || settings, scenes, references, videoScenes, framePairs, selectedStyleRefId),
     isRestoringRef,  // auto-save 가드용
     projectLoading   // 로딩 오버레이용
   }

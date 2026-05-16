@@ -39,5 +39,5 @@ export function useAutoSave({
       }, TIMING.AUTO_SAVE_DEBOUNCE)
       return () => clearTimeout(timer)
     }
-  }, [scenes, references, videoScenes, framePairs, selectedStyleRefId, settings.projectName, settings.saveMode, generatingRefsCount, isRunning])
+  }, [scenes, references, videoScenes, framePairs, selectedStyleRefId, settings.projectName, settings.saveMode, settings.aspectRatio, generatingRefsCount, isRunning])
 }

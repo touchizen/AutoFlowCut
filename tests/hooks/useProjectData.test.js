@@ -22,7 +22,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { loadProjectWithResources } from '../../src/hooks/useProjectData'
+import { renderHook, act } from '@testing-library/react'
+import { loadProjectWithResources, useProjectData } from '../../src/hooks/useProjectData'
 import { fileSystemAPI } from '../../src/hooks/useFileSystem'
 
 vi.mock('../../src/hooks/useFileSystem', () => ({
@@ -32,6 +33,8 @@ vi.mock('../../src/hooks/useFileSystem', () => ({
     readResource: vi.fn(),
     readHistoryMetadata: vi.fn(),
     getHistory: vi.fn(),
+    projectExists: vi.fn(),
+    saveProjectData: vi.fn(),
   },
 }))
 
@@ -306,5 +309,87 @@ describe('loadProjectWithResources — image path remap on load', () => {
     expect(result.scenes[0].status).toBe('error')
     expect(result.scenes[0].errorKind).toBe('image-missing')
     expect(result.scenes[0].error).toBeNull()
+  })
+})
+
+/**
+ * handleProjectChange — project aspect ratio resolution
+ *
+ * Regressions:
+ *  - P1: an explicitly chosen ratio (new-project creation, passed via opts)
+ *    must NOT be overwritten by a project.json that already exists for that
+ *    name. opts wins.
+ *  - P2: a brand-new/empty project must get a project.json written immediately
+ *    (autosave skips empty projects) so the chosen ratio is not lost.
+ */
+describe('handleProjectChange — aspect ratio', () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+    localStorage.clear() // keep the mount auto-restore effect a no-op
+    fileSystemAPI.saveProjectData.mockResolvedValue({ success: true })
+  })
+
+  function setup(settings) {
+    const setSettings = vi.fn()
+    const { result } = renderHook(() =>
+      useProjectData({
+        settings,
+        setSettings,
+        scenes: [], references: [], setScenes: vi.fn(), setReferences: vi.fn(),
+        videoScenes: [], setVideoScenes: vi.fn(),
+        framePairs: [], setFramePairs: vi.fn(),
+        selectedStyleRefId: null, setSelectedStyleRefId: vi.fn(),
+        openSettings: vi.fn(), onAudioSwitch: vi.fn(), flowAPI: null,
+      }),
+    )
+    return { result, setSettings }
+  }
+
+  it('P1: opts.aspectRatio wins over an existing project.json ratio', async () => {
+    fileSystemAPI.projectExists.mockResolvedValue(true)
+    fileSystemAPI.loadProjectData.mockResolvedValue({
+      success: true,
+      data: { scenes: [], references: [], settings: { aspectRatio: '16:9' } },
+    })
+    const { result, setSettings } = setup({ projectName: 'old', saveMode: 'folder', aspectRatio: '16:9' })
+
+    let ret
+    await act(async () => {
+      ret = await result.current.handleProjectChange('new', { aspectRatio: '9:16' })
+    })
+
+    expect(ret).toEqual({ aspectRatio: '9:16' })
+    const updater = setSettings.mock.calls.at(-1)[0]
+    expect(updater({ aspectRatio: '16:9' })).toMatchObject({ aspectRatio: '9:16' })
+  })
+
+  it('restores aspectRatio from project.json when switching with no opts', async () => {
+    fileSystemAPI.projectExists.mockResolvedValue(true)
+    fileSystemAPI.loadProjectData.mockResolvedValue({
+      success: true,
+      data: { scenes: [], references: [], settings: { aspectRatio: '9:16' } },
+    })
+    const { result } = setup({ projectName: 'old', saveMode: 'folder', aspectRatio: '16:9' })
+
+    let ret
+    await act(async () => {
+      ret = await result.current.handleProjectChange('other')
+    })
+
+    expect(ret).toEqual({ aspectRatio: '9:16' })
+  })
+
+  it('P2: materializes project.json for a brand-new project with the chosen ratio', async () => {
+    fileSystemAPI.projectExists.mockResolvedValue(true) // folder exists, no project.json
+    fileSystemAPI.loadProjectData.mockResolvedValue({ success: true, data: null })
+    const { result } = setup({ projectName: 'old', saveMode: 'folder', aspectRatio: '16:9', defaultDuration: 3 })
+
+    await act(async () => {
+      await result.current.handleProjectChange('fresh', { aspectRatio: '9:16' })
+    })
+
+    const freshSave = fileSystemAPI.saveProjectData.mock.calls.find((c) => c[0] === 'fresh')
+    expect(freshSave).toBeTruthy()
+    expect(freshSave[1].settings.aspectRatio).toBe('9:16')
   })
 })
