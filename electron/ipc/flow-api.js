@@ -713,6 +713,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
         await new Promise(r => setTimeout(r, 2000))  // 요청이 나갈 시간 확보
         if (cdpFetchEnabled) {
           setPendingReferenceImages(null)
+          setPendingImageAspectRatio?.(null)
           try { await flowView.webContents.debugger.sendCommand('Fetch.disable') } catch {}
           cdpFetchEnabled = false
         }
@@ -855,6 +856,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       // CDP Fetch 인터셉션 정리
       if (cdpFetchEnabled) {
         setPendingReferenceImages(null)
+        setPendingImageAspectRatio?.(null)
         try {
           const flowView = getFlowView()
           await flowView.webContents.debugger.sendCommand('Fetch.disable')

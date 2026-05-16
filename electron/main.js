@@ -19,6 +19,7 @@ import { updateBounds, registerLayoutIPC, setLayoutMode, setSplitRatio, setModal
 import { openApiSpec, getSwaggerHtml } from './api-docs.js'
 import { setupAppMenuAndUpdater, noteProjectActivated } from './updater.js'
 import { selectCdpCase } from './video-cdp-dispatch.js'
+import { injectImageBatchBody } from './cdp-image-inject.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -546,48 +547,29 @@ function createWindow() {
         })
 
         if (cdpCase === 'image-batch') {
-          // 이미지 생성 — 레퍼런스 + seed 가용한 만큼 주입
+          // 이미지 생성 — 레퍼런스 + seed + 화면비를 요청 바디에 주입.
+          // 주입 로직 자체는 cdp-image-inject.js 의 순수 함수 (단위 테스트됨).
           try {
             const body = JSON.parse(params.request.postData || '{}')
-            let modified = false
-
-            // 레퍼런스 이미지 주입
-            if (pendingReferenceImages && pendingReferenceImages.length > 0 && body.requests) {
-              for (const req of body.requests) {
-                if (!req.imageInputs) req.imageInputs = []
-                for (const ref of pendingReferenceImages) {
-                  req.imageInputs.push({
-                    imageInputType: 'IMAGE_INPUT_TYPE_REFERENCE',
-                    name: ref.mediaId
-                  })
-                }
-              }
+            const applied = injectImageBatchBody(body, {
+              referenceImages: pendingReferenceImages,
+              seed: pendingSeedValue,
+              aspectRatio: pendingImageAspectRatio,
+            })
+            if (applied.references) {
               console.log('[Flow API] [Fetch] Injected', pendingReferenceImages.length, 'references')
               pendingReferenceImages = null
-              modified = true
             }
-
-            // Seed 주입 (pendingSeedValue가 숫자면 모든 요청에 적용)
-            if (pendingSeedValue != null && body.requests) {
-              for (const req of body.requests) {
-                req.seed = pendingSeedValue
-              }
-              console.log('[Flow API] [Fetch] Injected seed:', pendingSeedValue, 'into', body.requests.length, 'requests')
-              modified = true
+            if (applied.seed) {
+              console.log('[Flow API] [Fetch] Injected seed:', pendingSeedValue,
+                'into', body.requests.length, 'requests')
             }
-
-            // 화면비 주입 — UI 탭 클릭에 의존하지 않고 요청 바디의 imageAspectRatio
-            // 필드를 직접 교체한다 (Flow UI 구조 변경에 영향받지 않음).
-            if (pendingImageAspectRatio && body.requests) {
-              for (const req of body.requests) {
-                req.imageAspectRatio = pendingImageAspectRatio
-              }
+            if (applied.aspectRatio) {
               console.log('[Flow API] [Fetch] Injected imageAspectRatio:', pendingImageAspectRatio,
                 'into', body.requests.length, 'requests')
-              modified = true
             }
 
-            if (modified) {
+            if (applied.references || applied.seed || applied.aspectRatio) {
               const modifiedPostData = Buffer.from(JSON.stringify(body)).toString('base64')
               continueRequest({ postData: modifiedPostData })
             } else {
