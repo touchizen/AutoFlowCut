@@ -68,7 +68,9 @@ function ProjectManager({ projectName, aspectRatio = '16:9', onProjectChange, on
     // 프로젝트 폴더 생성
     const result = await fileSystemAPI.getProjectFolder(name)
     if (result.success) {
-      onCreateProject(name, newAspectRatio)
+      // onCreateProject 는 async (전환 + 메타 저장 + 실패 시 롤백) — fire-and-forget
+      // 하지 않고 끝난 뒤 폼을 닫고 목록을 갱신한다 (loadProjects 가 전환과 경합 X).
+      await onCreateProject(name, newAspectRatio)
       setNewProjectName('')
       setShowNewProject(false)
       await loadProjects(name)

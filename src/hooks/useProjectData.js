@@ -539,15 +539,23 @@ export function useProjectData({
 
       // 5. 신규/빈 프로젝트는 project.json 을 즉시 생성한다. autosave 는 빈 프로젝트를
       //    건너뛰므로(useAutoSave), 그러지 않으면 화면비 등 프로젝트 메타가 유실된다.
-      //    저장 실패는 알린다 — 생성이 성공처럼 보이는데 메타가 안 남는 상황 방지.
+      //    이 저장은 자체 try/catch 로 감싼다 — {success:false} 든 reject 든 둘 다
+      //    onSaveError 로 알리고, 바깥 catch 로 보내지 않는다. 전환은 step 4 에서
+      //    이미 끝났으므로(switched=true), reject 가 바깥 catch 로 새면 "전환 성공인데
+      //    메타 저장만 조용히 실패" 가 된다.
       if (isFreshProject) {
-        const res = await saveCurrentProject(
-          { ...settings, projectName: newProjectName, aspectRatio: resolvedAspectRatio },
-          [], [], [], [], null
-        )
-        if (res && res.success === false) {
-          console.warn('[App] New project save failed:', res.error)
-          onSaveError?.(res.error)
+        try {
+          const res = await saveCurrentProject(
+            { ...settings, projectName: newProjectName, aspectRatio: resolvedAspectRatio },
+            [], [], [], [], null
+          )
+          if (res && res.success === false) {
+            console.warn('[App] New project save failed:', res.error)
+            onSaveError?.(res.error)
+          }
+        } catch (e) {
+          console.warn('[App] New project save threw:', e)
+          onSaveError?.(e.message)
         }
       }
 

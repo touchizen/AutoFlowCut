@@ -437,6 +437,34 @@ describe('handleProjectChange — aspect ratio', () => {
     expect(onSaveError).toHaveBeenCalledWith('disk full')
   })
 
+  it('reports a THROWN new-project save via onSaveError (reject, not just {success:false})', async () => {
+    // The fresh-project save rejecting (vs returning {success:false}) must
+    // still reach onSaveError — otherwise the reject escapes to the outer
+    // catch, which (switched=true by then) returns success:true and the
+    // metadata-save failure is swallowed.
+    fileSystemAPI.projectExists.mockResolvedValue(true)
+    fileSystemAPI.loadProjectData.mockResolvedValue({ success: true, data: null })
+    // step 1 saves 'old' fine; step 5 saving 'fresh' rejects.
+    fileSystemAPI.saveProjectData.mockImplementation((name) =>
+      name === 'fresh'
+        ? Promise.reject(new Error('io error'))
+        : Promise.resolve({ success: true }),
+    )
+    const onSaveError = vi.fn()
+    const { result } = setup(
+      { projectName: 'old', saveMode: 'folder', aspectRatio: '16:9' },
+      { onSaveError },
+    )
+
+    let ret
+    await act(async () => {
+      ret = await result.current.handleProjectChange('fresh', { aspectRatio: '9:16', isNewProject: true })
+    })
+
+    expect(onSaveError).toHaveBeenCalledWith('io error')
+    expect(ret).toMatchObject({ success: true }) // the switch itself completed
+  })
+
   it('clears the restoring/loading flags even when the project change throws', async () => {
     // projectExists rejects → handleProjectChange must still run its finally
     // block, otherwise isRestoringRef stays true and autosave is permanently
