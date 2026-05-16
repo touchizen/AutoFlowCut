@@ -106,8 +106,7 @@ export function registerDomIPC(ipcMain, deps) {
       // ─── Primary: Radix Tabs row (current Flow UI) ───
       const tabIdSuffix = isPortrait ? '-trigger-PORTRAIT' : '-trigger-LANDSCAPE'
       const tabExpr = `document.querySelector("button[role='tab'][id$='${tabIdSuffix}']")`
-
-      const tabState = await flowView.webContents.executeJavaScript(`
+      const readTab = () => flowView.webContents.executeJavaScript(`
         (function() {
           const btn = ${tabExpr};
           if (!btn) return { found: false };
@@ -115,20 +114,34 @@ export function registerDomIPC(ipcMain, deps) {
         })()
       `)
 
+      // 탭이 렌더될 때까지 잠깐 폴링한다 — 프로젝트가 막 생성된 직후 등 패널이
+      // 아직 안 떠 있을 수 있다.
+      let tabState = await readTab()
+      for (let i = 0; i < 5 && !(tabState && tabState.found); i++) {
+        await new Promise(r => setTimeout(r, 200))
+        tabState = await readTab()
+      }
+
       if (tabState && tabState.found) {
         if (tabState.active) {
           console.log('[DOM IPC] Aspect ratio already set:', aspectRatio)
           return { success: true, method: 'tab', alreadySet: true }
         }
-        // Flow ignores untrusted (isTrusted:false) clicks — must go through
-        // the sendInputEvent-based trusted click (see shared.js).
-        const tabClick = await trustedClickOnFlowView(tabExpr)
-        if (tabClick.success) {
+        // 클릭 후 aria-selected 가 실제로 바뀌었는지 검증하고, 안 바뀌었으면
+        // 재시도한다. 클릭만 보내고 검증하지 않으면 — 배치 첫 클릭이 조용히
+        // 실패해도 success 로 보고돼, 그 씬이 Flow 기본값(16:9)으로 생성된다.
+        // (Flow 는 untrusted 클릭을 무시 → sendInputEvent 기반 trusted click 사용.)
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          await trustedClickOnFlowView(tabExpr)
           await new Promise(r => setTimeout(r, 300))
-          console.log('[DOM IPC] Aspect ratio set via tab:', aspectRatio)
-          return { success: true, method: 'tab' }
+          const after = await readTab()
+          if (after && after.active) {
+            console.log('[DOM IPC] Aspect ratio set via tab:', aspectRatio, `(attempt ${attempt})`)
+            return { success: true, method: 'tab', attempts: attempt }
+          }
+          console.warn(`[DOM IPC] Aspect ratio tab not switched yet (attempt ${attempt})`)
         }
-        return { success: false, error: tabClick.error || 'Aspect ratio tab click failed' }
+        return { success: false, error: 'Aspect ratio tab did not switch after 3 attempts' }
       }
 
       // ─── Legacy fallback: combobox dropdown (old Flow UI) ───
