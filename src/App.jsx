@@ -21,6 +21,7 @@ import { useAppSettings } from './hooks/useAppSettings'
 import { useAutoSave } from './hooks/useAutoSave'
 import { useFlowEvents } from './hooks/useFlowEvents'
 import { useMcpServer } from './hooks/useMcpServer'
+import { useMenuActions } from './hooks/useMenuActions'
 import { syncVideosIntoScenes } from './services/mediaSync'
 import { retryVideoDownload } from './services/videoRecovery'
 import { applyStyle, previewStyleMatching } from './services/styleService'
@@ -183,6 +184,13 @@ function App() {
     openSettings,
     onAudioSwitch: (audioPath) => audioSwitchRef.current?.(audioPath),
     flowAPI,
+  })
+
+  // 네이티브 File 메뉴 ↔ renderer 연결 (New Project / Recent Projects)
+  useMenuActions({
+    activeProject: settings.saveMode === 'folder' ? settings.projectName : null,
+    onNewProject: () => openSettings('storage'),
+    onOpenProject: handleProjectChange,
   })
 
   // Style Thumbnails

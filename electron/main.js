@@ -17,7 +17,7 @@ import { registerDomIPC } from './ipc/dom.js'
 import { createSharedHelpers } from './ipc/shared.js'
 import { updateBounds, registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible } from './ipc/layout.js'
 import { openApiSpec, getSwaggerHtml } from './api-docs.js'
-import { setupAppMenuAndUpdater } from './updater.js'
+import { setupAppMenuAndUpdater, noteProjectActivated } from './updater.js'
 import { selectCdpCase } from './video-cdp-dispatch.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -1039,6 +1039,13 @@ registerMcpIPC(ipcMain)
 // Layout, modal, sleep, open-external, show-in-folder IPC
 registerLayoutIPC(ipcMain, () => mainWindow, () => flowView)
 
+// Renderer reports the active project so the native "Recent Projects" menu
+// stays in MRU order.
+ipcMain.handle('app:project-activated', (event, { name }) => {
+  try { noteProjectActivated(name) } catch (e) { console.warn('[AutoFlowCut] noteProjectActivated failed:', e.message) }
+  return { success: true }
+})
+
 // === MCP HTTP Server ===
 function startMcpHttpServer(port) {
   if (mcpHttpServer) {
@@ -1771,7 +1778,7 @@ app.whenReady().then(() => {
   try { autoSetupSkills() } catch (e) { console.warn('[AutoFlowCut] Skill setup failed:', e.message) }
 
   // Native menu + auto-updater (skips dev mode and AppX builds)
-  try { setupAppMenuAndUpdater() } catch (e) { console.warn('[AutoFlowCut] Updater setup failed:', e.message) }
+  try { setupAppMenuAndUpdater(() => mainWindow) } catch (e) { console.warn('[AutoFlowCut] Updater setup failed:', e.message) }
 
   createWindow()
 })

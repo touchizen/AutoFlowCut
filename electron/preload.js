@@ -13,6 +13,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onLayoutChanged: (callback) => ipcRenderer.on('layout-changed', (_, data) => callback(data)),
   setModalVisible: (params) => ipcRenderer.invoke('app:set-modal-visible', params),
 
+  // Native menu (File → New Project / Recent Projects)
+  onMenuAction: (callback) => {
+    const handler = (_, data) => callback(data)
+    ipcRenderer.on('menu:action', handler)
+    return () => ipcRenderer.removeListener('menu:action', handler)
+  },
+  notifyProjectActivated: (name) => ipcRenderer.invoke('app:project-activated', { name }),
+
   // Flow API
   extractToken: () => ipcRenderer.invoke('flow:extract-token'),
   extractProjectId: () => ipcRenderer.invoke('flow:extract-project-id'),

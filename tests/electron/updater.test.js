@@ -18,6 +18,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { tmpdir } from 'node:os'
 
 // Shared mock fixtures, re-built per test (vi.resetModules + doMock).
 let autoUpdaterMock
@@ -43,6 +44,8 @@ function makeMocks() {
     isPackaged: true,
     getVersion: () => '1.0.0',
     name: 'AutoFlowCut',
+    // recent-projects store reads userData; tmpdir has no store file → [] list
+    getPath: () => tmpdir(),
   }
   menuMock = {
     setApplicationMenu: vi.fn(),
