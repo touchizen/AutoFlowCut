@@ -99,16 +99,17 @@ describe('flow:dom-set-aspect-ratio', () => {
     expect(trustedClickOnFlowView).toHaveBeenCalledTimes(2)
   })
 
-  it('fails after 3 attempts when the tab never switches', async () => {
+  it('fails (controlFound:true) after 3 attempts when the tab never switches', async () => {
     const { invoke, trustedClickOnFlowView } = setup({ tabStates: [NOT_ACTIVE] })
 
     const res = await invoke({}, { aspectRatio: '9:16' })
 
-    expect(res.success).toBe(false)
+    // control IS there, just won't switch → caller should abort
+    expect(res).toMatchObject({ success: false, controlFound: true })
     expect(trustedClickOnFlowView).toHaveBeenCalledTimes(3)
   })
 
-  it('reports failure when the tab is missing and the legacy combobox is absent', async () => {
+  it('reports controlFound:false when neither the tab nor the legacy combobox exists', async () => {
     const { invoke, trustedClickOnFlowView } = setup({
       tabStates: [{ found: false }],
       clickResult: { success: false },
@@ -116,7 +117,8 @@ describe('flow:dom-set-aspect-ratio', () => {
 
     const res = await invoke({}, { aspectRatio: '9:16' })
 
-    expect(res.success).toBe(false)
+    // control is genuinely absent → caller should NOT block generation
+    expect(res).toMatchObject({ success: false, controlFound: false })
     expect(trustedClickOnFlowView).toHaveBeenCalled() // legacy combobox was attempted
   })
 })

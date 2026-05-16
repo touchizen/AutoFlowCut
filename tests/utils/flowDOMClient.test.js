@@ -56,12 +56,25 @@ describe('generateImageDOM — aspect ratio', () => {
     expect(window.electronAPI.domSetAspectRatio).not.toHaveBeenCalled()
   })
 
-  it('aborts generation when the aspect ratio cannot be applied', async () => {
-    window.electronAPI.domSetAspectRatio.mockResolvedValue({ success: false, error: 'tab did not switch' })
+  it('aborts generation when the tab is found but will not switch', async () => {
+    window.electronAPI.domSetAspectRatio.mockResolvedValue({
+      success: false, controlFound: true, error: 'tab did not switch',
+    })
     const result = await generateImageDOM('a prompt', [], { aspectRatio: '9:16' })
     expect(window.electronAPI.generateImage).not.toHaveBeenCalled()
     expect(result.success).toBe(false)
     expect(result.error).toContain('9:16')
+  })
+
+  it('proceeds with generation when the aspect ratio control is not found', async () => {
+    // Flow UI changed / control missing — blocking every scene is worse than
+    // a possibly-wrong ratio, so generation continues.
+    window.electronAPI.domSetAspectRatio.mockResolvedValue({
+      success: false, controlFound: false, error: 'control not found',
+    })
+    const result = await generateImageDOM('a prompt', [], { aspectRatio: '9:16' })
+    expect(window.electronAPI.generateImage).toHaveBeenCalledTimes(1)
+    expect(result.success).toBe(true)
   })
 
   it('aborts generation when domSetAspectRatio throws', async () => {
@@ -86,8 +99,10 @@ describe('submitGenerationDOM — aspect ratio', () => {
     expect(window.electronAPI.domSetAspectRatio).not.toHaveBeenCalled()
   })
 
-  it('aborts the submit when the aspect ratio cannot be applied', async () => {
-    window.electronAPI.domSetAspectRatio.mockResolvedValue({ success: false, error: 'tab did not switch' })
+  it('aborts the submit when the tab is found but will not switch', async () => {
+    window.electronAPI.domSetAspectRatio.mockResolvedValue({
+      success: false, controlFound: true, error: 'tab did not switch',
+    })
     const result = await submitGenerationDOM('a prompt', [], { aspectRatio: '9:16' })
     expect(window.electronAPI.generateImage).not.toHaveBeenCalled()
     expect(result.success).toBe(false)

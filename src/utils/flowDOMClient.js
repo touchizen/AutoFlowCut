@@ -141,6 +141,14 @@ async function applyAspectRatio(aspectRatio) {
   try {
     const r = await window.electronAPI.domSetAspectRatio({ aspectRatio })
     if (r?.success) return { success: true }
+    // 컨트롤 자체를 못 찾으면(Flow UI 변경 등) 생성을 막지 않는다 — 모든 씬이
+    // 막히는 것보다 16:9 라도 진행하는 게 낫다. 컨트롤은 있는데 전환만 실패한
+    // 경우(controlFound:true)는 그대로 중단해 사용자가 재시도하게 한다.
+    if (r && r.controlFound === false) {
+      console.warn('[DOM] Aspect ratio control not found — generating without enforcing it.',
+        r.diagnostics ? JSON.stringify(r.diagnostics) : '')
+      return { success: true, ratioEnforced: false }
+    }
     console.warn('[DOM] Set aspect ratio failed:', r?.error)
     return { success: false, error: r?.error || 'Aspect ratio not applied' }
   } catch (e) {

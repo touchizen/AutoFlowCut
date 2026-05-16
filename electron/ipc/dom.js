@@ -125,7 +125,7 @@ export function registerDomIPC(ipcMain, deps) {
       if (tabState && tabState.found) {
         if (tabState.active) {
           console.log('[DOM IPC] Aspect ratio already set:', aspectRatio)
-          return { success: true, method: 'tab', alreadySet: true }
+          return { success: true, method: 'tab', alreadySet: true, controlFound: true }
         }
         // 클릭 후 aria-selected 가 실제로 바뀌었는지 검증하고, 안 바뀌었으면
         // 재시도한다. 클릭만 보내고 검증하지 않으면 — 배치 첫 클릭이 조용히
@@ -137,11 +137,12 @@ export function registerDomIPC(ipcMain, deps) {
           const after = await readTab()
           if (after && after.active) {
             console.log('[DOM IPC] Aspect ratio set via tab:', aspectRatio, `(attempt ${attempt})`)
-            return { success: true, method: 'tab', attempts: attempt }
+            return { success: true, method: 'tab', attempts: attempt, controlFound: true }
           }
           console.warn(`[DOM IPC] Aspect ratio tab not switched yet (attempt ${attempt})`)
         }
-        return { success: false, error: 'Aspect ratio tab did not switch after 3 attempts' }
+        // 컨트롤은 찾았으나 전환 실패 — controlFound:true 로 호출부가 abort 하게 한다.
+        return { success: false, controlFound: true, error: 'Aspect ratio tab did not switch after 3 attempts' }
       }
 
       // ─── Legacy fallback: combobox dropdown (old Flow UI) ───
@@ -159,7 +160,37 @@ export function registerDomIPC(ipcMain, deps) {
 
       const dropdownClick = await trustedClickOnFlowView(dropdownSelector)
       if (!dropdownClick.success) {
-        return { success: false, error: 'Aspect ratio control not found (no tab, no combobox)' }
+        // 탭도 콤보박스도 못 찾음 — Flow UI 가 바뀌었거나 패널이 안 떠 있음.
+        // 진단용 DOM 덤프를 남기고 controlFound:false 로 반환한다 (호출부는
+        // abort 하지 않고 생성을 계속 — 모든 씬이 막히는 것보다 낫다).
+        let diagnostics = null
+        try {
+          diagnostics = await flowView.webContents.executeJavaScript(`
+            (function() {
+              const pick = (el) => ({
+                tag: el.tagName, role: el.getAttribute('role'), id: el.id || null,
+                ariaLabel: el.getAttribute('aria-label'),
+                ariaSelected: el.getAttribute('aria-selected'),
+                dataState: el.getAttribute('data-state'),
+                text: (el.textContent || '').trim().slice(0, 40),
+              });
+              const tabs = [...document.querySelectorAll("button[role='tab']")].map(pick);
+              const ratioish = [...document.querySelectorAll('button,[role="radio"],[role="option"],[role="tab"]')]
+                .filter(el => /\\b(16:9|9:16|4:3|3:4|1:1)\\b/.test(el.textContent || '')
+                           || /portrait|landscape|aspect|crop_/i.test(el.outerHTML))
+                .slice(0, 25).map(pick);
+              return { tabCount: tabs.length, tabs, ratioish };
+            })()
+          `)
+        } catch {}
+        console.warn('[DOM IPC] Aspect ratio control not found — DOM diagnostics:',
+          JSON.stringify(diagnostics))
+        return {
+          success: false,
+          controlFound: false,
+          error: 'Aspect ratio control not found (no tab, no combobox)',
+          diagnostics,
+        }
       }
       await new Promise(r => setTimeout(r, 500))
 
@@ -185,11 +216,11 @@ export function registerDomIPC(ipcMain, deps) {
       `)
       } catch {}
       if (!optionClick.success) {
-        return { success: false, error: 'Aspect ratio option not found: ' + optionIcon }
+        return { success: false, controlFound: true, error: 'Aspect ratio option not found: ' + optionIcon }
       }
       await new Promise(r => setTimeout(r, 500))
       console.log('[DOM IPC] Aspect ratio set via legacy combobox:', aspectRatio)
-      return { success: true, method: 'combobox' }
+      return { success: true, method: 'combobox', controlFound: true }
     } catch (e) {
       return { success: false, error: e.message }
     }
