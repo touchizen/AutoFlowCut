@@ -68,9 +68,14 @@ function ProjectManager({ projectName, aspectRatio = '16:9', onProjectChange, on
     // 프로젝트 폴더 생성
     const result = await fileSystemAPI.getProjectFolder(name)
     if (result.success) {
-      // onCreateProject 는 async (전환 + 메타 저장 + 실패 시 롤백) — fire-and-forget
-      // 하지 않고 끝난 뒤 폼을 닫고 목록을 갱신한다 (loadProjects 가 전환과 경합 X).
-      await onCreateProject(name, newAspectRatio)
+      // onCreateProject 는 async (전환 + 메타 저장 + 실패 시 롤백). 결과를 받아
+      // 전환 실패면 사용자에게 알린다. 폼은 그래도 닫는다 — getProjectFolder 로
+      // 폴더는 이미 생성됐으므로(같은 이름 재생성이 막힘) 폼을 열어두면 dead-end 다.
+      // 프로젝트는 목록(드롭다운)에서 선택할 수 있다.
+      const res = await onCreateProject(name, newAspectRatio)
+      if (res && res.success === false) {
+        toast.error(t('toast.projectCreateFailed'))
+      }
       setNewProjectName('')
       setShowNewProject(false)
       await loadProjects(name)
@@ -352,16 +357,17 @@ export default function StorageTab({
           }}
           onCreateProject={async (name, ratio) => {
             // 위와 동일 — 생성 경로도 optimistic 갱신 + 실패 시 롤백.
+            // 전환 결과(res)를 호출부(handleCreateProject)로 그대로 반환한다.
             const prev = { projectName: localSettings.projectName, aspectRatio: localSettings.aspectRatio }
             setLocalSettings(s => ({ ...s, projectName: name, aspectRatio: ratio }))
-            if (onProjectChange) {
-              // isNewProject: 신규 생성임을 명시 — handleProjectChange 가 기존
-              // project.json 값 대신 이 화면비를 쓰도록.
-              const res = await onProjectChange(name, { aspectRatio: ratio, isNewProject: true })
-              if (res && res.success === false) {
-                setLocalSettings(s => ({ ...s, ...prev }))
-              }
+            if (!onProjectChange) return undefined
+            // isNewProject: 신규 생성임을 명시 — handleProjectChange 가 기존
+            // project.json 값 대신 이 화면비를 쓰도록.
+            const res = await onProjectChange(name, { aspectRatio: ratio, isNewProject: true })
+            if (res && res.success === false) {
+              setLocalSettings(s => ({ ...s, ...prev }))
             }
+            return res
           }}
           t={t}
         />

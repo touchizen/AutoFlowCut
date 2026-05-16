@@ -131,4 +131,21 @@ describe('StorageTab — New Project aspect ratio', () => {
         .toMatchObject({ projectName: 'existing', aspectRatio: '16:9' })
     })
   })
+
+  it('shows an error toast when project creation fails to switch', async () => {
+    // handleCreateProject must receive onCreateProject's result and surface a
+    // failed switch — otherwise the form closes silently as if it succeeded.
+    const onProjectChange = vi.fn().mockResolvedValue({ success: false })
+    renderStorageTab(onProjectChange)
+    fireEvent.click(await screen.findByTitle('settings.createProject'))
+
+    fireEvent.change(screen.getByPlaceholderText('settings.projectNamePlaceholder'), {
+      target: { value: 'my_new' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'settings.create' }))
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('toast.projectCreateFailed')
+    })
+  })
 })
