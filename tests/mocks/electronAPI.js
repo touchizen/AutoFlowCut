@@ -28,7 +28,6 @@ export const mockElectronAPI = {
   domBlobToBase64: vi.fn(),
   domSendPrompt: vi.fn(),
   domClickEnterTool: vi.fn(),
-  domSetAspectRatio: vi.fn(),
   domNavigate: vi.fn(),
   domGetUrl: vi.fn(),
   domSnapshotBlobs: vi.fn(),

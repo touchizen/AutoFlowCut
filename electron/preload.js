@@ -99,7 +99,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   domNavigate: (params) => ipcRenderer.invoke('flow:dom-navigate', params),
   domGetUrl: () => ipcRenderer.invoke('flow:dom-get-url'),
   domClickEnterTool: (params) => ipcRenderer.invoke('flow:dom-click-enter-tool', params),
-  domSetAspectRatio: (params) => ipcRenderer.invoke('flow:dom-set-aspect-ratio', params),
   domSendPrompt: (params) => ipcRenderer.invoke('flow:dom-send-prompt', params),
   domSnapshotBlobs: () => ipcRenderer.invoke('flow:dom-snapshot-blobs'),
   domScanImages: (params) => ipcRenderer.invoke('flow:dom-scan-images', params),

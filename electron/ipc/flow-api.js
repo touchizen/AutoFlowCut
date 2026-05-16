@@ -24,6 +24,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     pendingGenerations,
     getPendingReferenceImages, setPendingReferenceImages,
     getPendingSeedValue, setPendingSeedValue,
+    setPendingImageAspectRatio,
     getEnterToolClicked, setEnterToolClicked,
     SESSION_URL, TOKEN_INFO_URL, FLOW_URL, MEDIA_REDIRECT_URL, UPLOAD_URL,
     API_HEADERS, GENERATE_URL, BASE_API_URL,
@@ -133,6 +134,15 @@ export function registerFlowAPIIPC(ipcMain, deps) {
 
     // Seed: 숫자면 CDP Fetch 인터셉션에서 사용, null이면 Flow 자체 랜덤 seed 유지
     setPendingSeedValue(typeof seed === 'number' && Number.isFinite(seed) ? seed : null)
+
+    // 화면비: '16:9'/'9:16' → IMAGE_ASPECT_RATIO_* enum 으로 CDP Fetch 인터셉션에서
+    // batchGenerateImages 요청 바디에 주입. 그 외(undefined 등)는 null → 요청 원본 유지.
+    // UI 탭 클릭과 달리 Flow UI 구조 변경에 영향받지 않는다.
+    setPendingImageAspectRatio?.(
+      aspectRatio === '16:9' ? 'IMAGE_ASPECT_RATIO_LANDSCAPE'
+        : aspectRatio === '9:16' ? 'IMAGE_ASPECT_RATIO_PORTRAIT'
+          : null
+    )
 
     // === DOM 자동화 + 네트워크 응답 인터셉트 ===
     // 페이지가 자체적으로 reCAPTCHA를 처리하므로 가장 안정적인 방법

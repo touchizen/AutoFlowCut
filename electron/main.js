@@ -115,6 +115,7 @@ const pendingGenerations = new Map() // 비동기 모드용 다중 생성 추적
 let pendingVideoGeneration = null // DOM-triggered video generation 응답 캡처용 Promise resolver
 let pendingReferenceImages = null // CDP Fetch 인터셉션용 레퍼런스 이미지 (mediaId 배열)
 let pendingSeedValue = null // CDP Fetch 인터셉션용 seed 값 (숫자, null = 랜덤 유지)
+let pendingImageAspectRatio = null // CDP Fetch 인터셉션용 화면비 (IMAGE_ASPECT_RATIO_* enum, null = 유지)
 let pendingI2VInjection = null // CDP Fetch 인터셉션용 I2V startImage 주입 데이터
 let enterToolClicked = false // Enter tool 버튼 클릭 완료 플래그 (무한루프 방지)
 let consentClicked = false   // 동의 버튼 클릭 완료 플래그 (무한루프 방지)
@@ -572,6 +573,17 @@ function createWindow() {
                 req.seed = pendingSeedValue
               }
               console.log('[Flow API] [Fetch] Injected seed:', pendingSeedValue, 'into', body.requests.length, 'requests')
+              modified = true
+            }
+
+            // 화면비 주입 — UI 탭 클릭에 의존하지 않고 요청 바디의 imageAspectRatio
+            // 필드를 직접 교체한다 (Flow UI 구조 변경에 영향받지 않음).
+            if (pendingImageAspectRatio && body.requests) {
+              for (const req of body.requests) {
+                req.imageAspectRatio = pendingImageAspectRatio
+              }
+              console.log('[Flow API] [Fetch] Injected imageAspectRatio:', pendingImageAspectRatio,
+                'into', body.requests.length, 'requests')
               modified = true
             }
 
@@ -1646,6 +1658,7 @@ const flowAPIDeps = {
   setPendingReferenceImages: (v) => { pendingReferenceImages = v },
   getPendingSeedValue: () => pendingSeedValue,
   setPendingSeedValue: (v) => { pendingSeedValue = v },
+  setPendingImageAspectRatio: (v) => { pendingImageAspectRatio = v },
   getEnterToolClicked: () => enterToolClicked,
   setEnterToolClicked: (v) => { enterToolClicked = v },
   SESSION_URL, TOKEN_INFO_URL, FLOW_URL, MEDIA_REDIRECT_URL, UPLOAD_URL,

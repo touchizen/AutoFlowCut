@@ -6,8 +6,10 @@
  *
  * 흐름:
  * 1) 프로젝트 초기화 (Flow 베이스 URL → Enter tool 클릭 → 프로젝트 URL 대기)
- * 2) 화면비 설정 (aspect_ratio 콤보박스 → 비율 선택)
- * 3) flow:generate-image IPC 호출 (Slate.js 프롬프트 인젝션 + CDP 네트워크 캡처)
+ * 2) flow:generate-image IPC 호출 (Slate.js 프롬프트 인젝션 + CDP 네트워크 캡처)
+ *
+ * 화면비는 UI 클릭이 아니라 CDP Fetch 인터셉션으로 batchGenerateImages 요청
+ * 바디의 imageAspectRatio 를 직접 주입한다 (main.js / flow-api.js).
  */
 
 import { DEFAULTS } from '../config/defaults'
@@ -128,36 +130,6 @@ export function requestStopDOM() {
 }
 
 /**
- * 생성 직전 Flow UI 의 화면비 탭을 프로젝트 화면비로 맞춘다.
- * - '16:9' / '9:16' 만 처리 — 그 외(undefined 등)면 강제하지 않고 통과시킨다
- *   (스타일 썸네일 등 화면비 무관 생성용).
- * - 적용 실패 시 { success:false } 를 반환한다. 호출부는 생성을 중단해야 한다 —
- *   9:16 프로젝트인데 화면비 설정이 안 먹은 채로 생성하면 잘못된 16:9 이미지가
- *   나오고 quota 만 소모된다. 실패를 알려 재시도하게 하는 편이 낫다.
- * @returns {Promise<{ success: boolean, error?: string }>}
- */
-async function applyAspectRatio(aspectRatio) {
-  if (aspectRatio !== '16:9' && aspectRatio !== '9:16') return { success: true }
-  try {
-    const r = await window.electronAPI.domSetAspectRatio({ aspectRatio })
-    if (r?.success) return { success: true }
-    // 컨트롤 자체를 못 찾으면(Flow UI 변경 등) 생성을 막지 않는다 — 모든 씬이
-    // 막히는 것보다 16:9 라도 진행하는 게 낫다. 컨트롤은 있는데 전환만 실패한
-    // 경우(controlFound:true)는 그대로 중단해 사용자가 재시도하게 한다.
-    if (r && r.controlFound === false) {
-      console.warn('[DOM] Aspect ratio control not found — generating without enforcing it.',
-        r.diagnostics ? JSON.stringify(r.diagnostics) : '')
-      return { success: true, ratioEnforced: false }
-    }
-    console.warn('[DOM] Set aspect ratio failed:', r?.error)
-    return { success: false, error: r?.error || 'Aspect ratio not applied' }
-  } catch (e) {
-    console.warn('[DOM] Set aspect ratio error:', e.message)
-    return { success: false, error: e.message }
-  }
-}
-
-/**
  * DOM 방식으로 이미지 생성 (메인 엔트리)
  *
  * 기존: sendPrompt(IPC) → waitForImage(blob 폴링) — blob URL을 못 찾아서 실패
@@ -177,17 +149,13 @@ export async function submitGenerationDOM(prompt, referenceImages = [], { batchC
   try {
     await ensureFlowProject(false)
     if (stopRequested) return { success: false, error: 'Stopped by user' }
-    // 화면비 적용 실패 시 생성 중단 — 잘못된 비율 이미지 + quota 낭비 방지.
-    const ar = await applyAspectRatio(aspectRatio)
-    if (!ar.success) {
-      return { success: false, error: `Aspect ratio ${aspectRatio} not applied: ${ar.error}` }
-    }
 
     console.log('[DOM] Calling flow:generate-image (asyncMode) for prompt:', prompt?.substring(0, 40),
-      seed != null ? `seed:${seed}` : 'seed:random')
+      seed != null ? `seed:${seed}` : 'seed:random', aspectRatio ? `ratio:${aspectRatio}` : '')
     const result = await window.electronAPI.generateImage({
       prompt,
-      aspectRatio: null,
+      // CDP Fetch 인터셉션이 batchGenerateImages 요청 바디의 imageAspectRatio 를 주입.
+      aspectRatio,
       token: null,
       model: null,
       projectId: null,
@@ -246,11 +214,6 @@ export async function generateImageDOM(prompt, referenceImages = [], { batchCoun
     await ensureFlowProject(false)
 
     if (stopRequested) return { success: false, error: 'Stopped by user' }
-    // 화면비 적용 실패 시 생성 중단 — 잘못된 비율 이미지 + quota 낭비 방지.
-    const ar = await applyAspectRatio(aspectRatio)
-    if (!ar.success) {
-      return { success: false, error: `Aspect ratio ${aspectRatio} not applied: ${ar.error}` }
-    }
 
     // flow:generate-image IPC 호출
     // CDP 네트워크 캡처로 이미지를 직접 가져옴 (blob 폴링 불필요)
@@ -264,7 +227,7 @@ export async function generateImageDOM(prompt, referenceImages = [], { batchCoun
     const result = await Promise.race([
       window.electronAPI.generateImage({
         prompt,
-        aspectRatio: null,  // DOM mode에서는 UI 드롭다운으로 이미 설정됨
+        aspectRatio,        // CDP Fetch 인터셉션이 요청 바디에 imageAspectRatio 주입
         token: null,        // main.js에서 Flow 페이지의 세션으로 자동 추출
         model: null,
         projectId: null,

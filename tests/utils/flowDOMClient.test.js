@@ -1,13 +1,11 @@
 /**
- * flowDOMClient — aspect ratio applied before image generation
+ * flowDOMClient — aspect ratio forwarded to image generation
  *
- * The app must set Flow's aspect-ratio tab to the project format (16:9 / 9:16)
- * before each generation. generateImageDOM / submitGenerationDOM call
- * domSetAspectRatio for a valid ratio (skipping an absent/invalid one).
- *
- * If applying the ratio FAILS, generation is aborted: a 9:16 project must not
- * silently produce a 16:9 image (wrong output + wasted quota) — the failure is
- * surfaced so the user can retry.
+ * The project aspect ratio is enforced by injecting `imageAspectRatio` into the
+ * batchGenerateImages request body (CDP Fetch interception in main.js /
+ * flow-api.js) — NOT by clicking Flow's UI (the control moved into a collapsed
+ * dropdown and broke). flowDOMClient just forwards the chosen ratio to the
+ * generateImage IPC, which sets the pending value the interceptor injects.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -25,86 +23,43 @@ beforeEach(() => {
       success: true,
       url: 'https://labs.google/fx/tools/flow/project-123',
     }),
-    domSetAspectRatio: vi.fn().mockResolvedValue({ success: true }),
     generateImage: vi.fn().mockResolvedValue({ success: true, images: [] }),
   }
 })
 
 describe('generateImageDOM — aspect ratio', () => {
-  it('sets the aspect ratio before generating for 9:16', async () => {
+  it('forwards 9:16 to the generateImage IPC', async () => {
     await generateImageDOM('a prompt', [], { aspectRatio: '9:16' })
 
-    expect(window.electronAPI.domSetAspectRatio).toHaveBeenCalledWith({ aspectRatio: '9:16' })
-    // ordering: aspect ratio must be set BEFORE the generate call
-    expect(window.electronAPI.domSetAspectRatio.mock.invocationCallOrder[0])
-      .toBeLessThan(window.electronAPI.generateImage.mock.invocationCallOrder[0])
+    expect(window.electronAPI.generateImage).toHaveBeenCalledTimes(1)
+    expect(window.electronAPI.generateImage.mock.calls[0][0].aspectRatio).toBe('9:16')
   })
 
-  it('sets the aspect ratio for 16:9', async () => {
+  it('forwards 16:9 to the generateImage IPC', async () => {
     await generateImageDOM('a prompt', [], { aspectRatio: '16:9' })
-    expect(window.electronAPI.domSetAspectRatio).toHaveBeenCalledWith({ aspectRatio: '16:9' })
+
+    expect(window.electronAPI.generateImage.mock.calls[0][0].aspectRatio).toBe('16:9')
   })
 
-  it('does not touch the aspect ratio when none is given', async () => {
+  it('forwards undefined when no aspect ratio is given', async () => {
     await generateImageDOM('a prompt', [])
-    expect(window.electronAPI.domSetAspectRatio).not.toHaveBeenCalled()
+
     expect(window.electronAPI.generateImage).toHaveBeenCalledTimes(1)
-  })
-
-  it('ignores an unsupported aspect ratio value', async () => {
-    await generateImageDOM('a prompt', [], { aspectRatio: '4:3' })
-    expect(window.electronAPI.domSetAspectRatio).not.toHaveBeenCalled()
-  })
-
-  it('aborts generation when the tab is found but will not switch', async () => {
-    window.electronAPI.domSetAspectRatio.mockResolvedValue({
-      success: false, controlFound: true, error: 'tab did not switch',
-    })
-    const result = await generateImageDOM('a prompt', [], { aspectRatio: '9:16' })
-    expect(window.electronAPI.generateImage).not.toHaveBeenCalled()
-    expect(result.success).toBe(false)
-    expect(result.error).toContain('9:16')
-  })
-
-  it('proceeds with generation when the aspect ratio control is not found', async () => {
-    // Flow UI changed / control missing — blocking every scene is worse than
-    // a possibly-wrong ratio, so generation continues.
-    window.electronAPI.domSetAspectRatio.mockResolvedValue({
-      success: false, controlFound: false, error: 'control not found',
-    })
-    const result = await generateImageDOM('a prompt', [], { aspectRatio: '9:16' })
-    expect(window.electronAPI.generateImage).toHaveBeenCalledTimes(1)
-    expect(result.success).toBe(true)
-  })
-
-  it('aborts generation when domSetAspectRatio throws', async () => {
-    window.electronAPI.domSetAspectRatio.mockRejectedValue(new Error('ipc down'))
-    const result = await generateImageDOM('a prompt', [], { aspectRatio: '9:16' })
-    expect(window.electronAPI.generateImage).not.toHaveBeenCalled()
-    expect(result.success).toBe(false)
+    expect(window.electronAPI.generateImage.mock.calls[0][0].aspectRatio).toBeUndefined()
   })
 })
 
 describe('submitGenerationDOM — aspect ratio', () => {
-  it('sets the aspect ratio before submitting for 9:16', async () => {
+  it('forwards 9:16 to the generateImage IPC', async () => {
     await submitGenerationDOM('a prompt', [], { aspectRatio: '9:16' })
 
-    expect(window.electronAPI.domSetAspectRatio).toHaveBeenCalledWith({ aspectRatio: '9:16' })
-    expect(window.electronAPI.domSetAspectRatio.mock.invocationCallOrder[0])
-      .toBeLessThan(window.electronAPI.generateImage.mock.invocationCallOrder[0])
+    expect(window.electronAPI.generateImage).toHaveBeenCalledTimes(1)
+    expect(window.electronAPI.generateImage.mock.calls[0][0].aspectRatio).toBe('9:16')
   })
 
-  it('does not touch the aspect ratio when none is given', async () => {
+  it('forwards undefined when no aspect ratio is given', async () => {
     await submitGenerationDOM('a prompt', [])
-    expect(window.electronAPI.domSetAspectRatio).not.toHaveBeenCalled()
-  })
 
-  it('aborts the submit when the tab is found but will not switch', async () => {
-    window.electronAPI.domSetAspectRatio.mockResolvedValue({
-      success: false, controlFound: true, error: 'tab did not switch',
-    })
-    const result = await submitGenerationDOM('a prompt', [], { aspectRatio: '9:16' })
-    expect(window.electronAPI.generateImage).not.toHaveBeenCalled()
-    expect(result.success).toBe(false)
+    expect(window.electronAPI.generateImage.mock.calls[0][0].aspectRatio).toBeUndefined()
   })
 })
