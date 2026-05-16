@@ -7,6 +7,11 @@ import { fileSystemAPI } from './useFileSystem'
 import { syncVideosIntoScenes } from '../services/mediaSync'
 import { recoverInFlightVideos } from '../services/videoRecovery'
 
+// 프로젝트 화면비는 project.json 에 프로젝트별로 저장된다. project.json 에 값이
+// 없으면(기능 추가 전 프로젝트 등) 직전 프로젝트 값을 물려받지 않고 이 기본값으로
+// 떨어진다 — 그래야 화면비가 전역처럼 새지 않고 프로젝트별로 결정론적이다.
+const DEFAULT_ASPECT_RATIO = '16:9'
+
 /**
  * 프로젝트 데이터 로드 + 모든 리소스 경로/파일 복원 (공통 헬퍼).
  *
@@ -446,7 +451,8 @@ export function useProjectData({
         setSettings(s => ({
           ...s,
           projectName: prevProjectName,
-          aspectRatio: loaded.aspectRatio || s.aspectRatio,
+          // project.json 값 없으면 직전 값이 아니라 기본값 — 프로젝트별 결정론 보장.
+          aspectRatio: loaded.aspectRatio || DEFAULT_ASPECT_RATIO,
         }))
         console.log('[App] Auto-restore complete:', prevProjectName,
           `(${loaded.scenes.filter(s => s.image || s.imagePath).length} images, ${loaded.scenes.filter(s => s.subtitle).length} subtitles)`)
@@ -533,8 +539,10 @@ export function useProjectData({
       }
 
       // 4. 프로젝트명 + 화면비 업데이트
-      const resolvedAspectRatio = nextAspectRatio || settings.aspectRatio
-      setSettings(s => ({ ...s, projectName: newProjectName, aspectRatio: nextAspectRatio || s.aspectRatio }))
+      // 화면비: 신규는 opts.aspectRatio, 기존은 project.json 값. 둘 다 없으면 직전
+      // 프로젝트 값이 아니라 기본값으로 — 화면비가 전역처럼 새는 것을 막는다.
+      const resolvedAspectRatio = nextAspectRatio || DEFAULT_ASPECT_RATIO
+      setSettings(s => ({ ...s, projectName: newProjectName, aspectRatio: resolvedAspectRatio }))
       switched = true // 여기까지 왔으면 앱은 새 프로젝트로 전환됨
 
       // 5. 신규/빈 프로젝트는 project.json 을 즉시 생성한다. autosave 는 빈 프로젝트를

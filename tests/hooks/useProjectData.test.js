@@ -380,6 +380,27 @@ describe('handleProjectChange — aspect ratio', () => {
     expect(ret).toEqual({ aspectRatio: '9:16', success: true })
   })
 
+  it('falls back to 16:9 — not the previous project — when project.json has no aspectRatio', async () => {
+    // Regression: a pre-feature project's project.json has no settings.aspectRatio.
+    // Opening it must NOT inherit the previously-open project's ratio (that made
+    // the per-project setting behave like a global one).
+    fileSystemAPI.projectExists.mockResolvedValue(true)
+    fileSystemAPI.loadProjectData.mockResolvedValue({
+      success: true,
+      data: { scenes: [], references: [] }, // no settings block at all
+    })
+    const { result, setSettings } = setup({ projectName: 'old', saveMode: 'folder', aspectRatio: '9:16' })
+
+    let ret
+    await act(async () => {
+      ret = await result.current.handleProjectChange('legacy_project')
+    })
+
+    expect(ret).toEqual({ aspectRatio: '16:9', success: true })
+    const updater = setSettings.mock.calls.at(-1)[0]
+    expect(updater({ aspectRatio: '9:16' })).toMatchObject({ aspectRatio: '16:9' })
+  })
+
   it('P2: materializes project.json for a brand-new project with the chosen ratio', async () => {
     fileSystemAPI.projectExists.mockResolvedValue(true) // folder exists, no project.json
     fileSystemAPI.loadProjectData.mockResolvedValue({ success: true, data: null })
