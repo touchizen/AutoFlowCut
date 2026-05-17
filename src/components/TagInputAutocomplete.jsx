@@ -32,17 +32,30 @@ export default function TagInputAutocomplete({
   const refOptions = useMemo(() =>
     references
       .filter(r => r.type === type && r.name)
-      .map(r => ({ kind: 'ref', label: r.name, value: r.name, src: resolveImageSrc(r) || null })),
+      .map(r => ({
+        kind: 'ref',
+        label: r.name,
+        value: r.name,
+        aliases: [r.name.toLowerCase()],
+        src: resolveImageSrc(r) || null,
+      })),
     [references, type]
   )
 
   const presetOptions = useMemo(() =>
-    (type === 'style' ? presets : []).map(p => ({
-      kind: 'preset',
-      label: isKo ? (p.name_ko || p.name_en) : (p.name_en || p.name_ko),
-      value: isKo ? (p.name_ko || p.name_en) : (p.name_en || p.name_ko),
-      src: thumbnails[p.id] ? toFileUrl(thumbnails[p.id]) : null,
-    })),
+    (type === 'style' ? presets : []).map(p => {
+      const label = isKo ? (p.name_ko || p.name_en) : (p.name_en || p.name_ko)
+      return {
+        kind: 'preset',
+        label,
+        value: label,
+        // preset 은 id/name_ko/name_en 어느 형태로 저장돼 있어도 동일 옵션으로 인식한다.
+        aliases: [p.id, p.name_ko, p.name_en]
+          .filter(Boolean)
+          .map(s => String(s).toLowerCase()),
+        src: thumbnails[p.id] ? toFileUrl(thumbnails[p.id]) : null,
+      }
+    }),
     [type, presets, isKo, thumbnails]
   )
 
@@ -51,9 +64,9 @@ export default function TagInputAutocomplete({
     [refOptions, presetOptions]
   )
 
-  // 알려진 옵션 값 집합 (소문자) — 확정 선택 판정용
-  const optionValueSet = useMemo(
-    () => new Set(allOptions.map(o => o.value.toLowerCase())),
+  // 알려진 옵션의 모든 alias 집합 (소문자) — 확정 선택 판정용
+  const optionAliasSet = useMemo(
+    () => new Set(allOptions.flatMap(o => o.aliases)),
     [allOptions]
   )
 
@@ -61,17 +74,21 @@ export default function TagInputAutocomplete({
 
   const { last } = splitLastToken(value)
   const lastTrimLower = last.trim().toLowerCase()
-  // 마지막 토큰이 알려진 옵션과 정확히 일치하면 = 확정 선택 → 필터 안 함 (전체 노출)
-  const isLastCommitted = lastTrimLower !== '' && optionValueSet.has(lastTrimLower)
+  // 마지막 토큰이 알려진 옵션의 alias와 일치하면 = 확정 선택 → 필터 안 함 (전체 노출)
+  const isLastCommitted = lastTrimLower !== '' && optionAliasSet.has(lastTrimLower)
   const filterToken = isLastCommitted ? '' : lastTrimLower
 
   const filteredOptions = useMemo(() => {
     if (!filterToken) return allOptions
-    return allOptions.filter(o => o.label.toLowerCase().includes(filterToken))
+    return allOptions.filter(o =>
+      o.label.toLowerCase().includes(filterToken) ||
+      o.aliases.some(a => a.includes(filterToken))
+    )
   }, [allOptions, filterToken])
 
   // 현재 값에 선택된 토큰 집합 (소문자)
   const selectedSet = useMemo(() => new Set(splitTags(value)), [value])
+  const isEmptyValue = selectedSet.size === 0
 
   // 옵션 리스트 변경 시 highlight reset (사용자가 타이핑할 때마다 -1로)
   useEffect(() => { setHighlightedIndex(-1) }, [filterToken])
@@ -81,17 +98,21 @@ export default function TagInputAutocomplete({
       // 토글: 입력 중이던 미완성 마지막 토큰은 버린다
       const rawTokens = (value || '').split(/[,;:]/).map(s => s.trim()).filter(Boolean)
       const lastTrim = last.trim()
-      const dropLast = lastTrim !== '' && !optionValueSet.has(lastTrim.toLowerCase())
+      const dropLast = lastTrim !== '' && !optionAliasSet.has(lastTrim.toLowerCase())
       const tokens = dropLast ? rawTokens.slice(0, -1) : rawTokens
-      const lc = opt.value.toLowerCase()
-      const exists = tokens.some(tok => tok.toLowerCase() === lc)
+      const exists = tokens.some(tok => opt.aliases.includes(tok.toLowerCase()))
       const next = exists
-        ? tokens.filter(tok => tok.toLowerCase() !== lc)
+        ? tokens.filter(tok => !opt.aliases.includes(tok.toLowerCase()))
         : [...tokens, opt.value]
       onChange(next.join(', '))
     } else {
       onChange(opt.value)
     }
+    setHighlightedIndex(-1)
+  }
+
+  const clearValue = () => {
+    onChange('')
     setHighlightedIndex(-1)
   }
 
@@ -131,11 +152,22 @@ export default function TagInputAutocomplete({
       />
       {isFocused && !disabled && (
         <div className="tag-autocomplete-dropdown">
+          {/* '없음' — 값 비우기. 항상 최상단, 키보드 네비게이션 대상 아님 */}
+          <div
+            className={`tag-autocomplete-option clear ${isEmptyValue ? 'checked' : ''}`}
+            onMouseDown={(e) => {
+              e.preventDefault()
+              clearValue()
+            }}
+          >
+            <span className="tag-autocomplete-check">{isEmptyValue ? '✅' : ''}</span>
+            <span className="tag-autocomplete-option-label">{t('sceneList.tagClear')}</span>
+          </div>
           {filteredOptions.length === 0 ? (
             <div className="tag-autocomplete-empty">{t('sceneList.noRefsForType')}</div>
           ) : (
             filteredOptions.map((opt, i) => {
-              const checked = selectedSet.has(opt.value.toLowerCase())
+              const checked = opt.aliases.some(a => selectedSet.has(a))
               return (
                 <div
                   key={`${opt.kind}-${i}`}

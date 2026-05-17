@@ -71,3 +71,7 @@
 .tag-autocomplete-option.checked {
   background: var(--bg-hover, #3a3a3a);
 }
+.tag-autocomplete-option.clear .tag-autocomplete-option-label {
+  color: var(--text-secondary, #888);
+  font-style: italic;
+}

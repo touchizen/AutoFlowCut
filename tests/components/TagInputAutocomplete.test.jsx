@@ -3,7 +3,10 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import TagInputAutocomplete from '../../src/components/TagInputAutocomplete'
 
 const t = (k) => {
-  const map = { 'sceneList.noRefsForType': '사용 가능한 ref/preset이 없습니다' }
+  const map = {
+    'sceneList.noRefsForType': '사용 가능한 ref/preset이 없습니다',
+    'sceneList.tagClear': '(없음)',
+  }
   return map[k] || k
 }
 
@@ -336,5 +339,58 @@ describe('TagInputAutocomplete — A2 선택 항목 체크 표시', () => {
     fireEvent.focus(screen.getByRole('textbox'))
     const checked = container.querySelectorAll('.tag-autocomplete-option.checked')
     expect(checked.length).toBe(2)
+  })
+})
+
+describe('TagInputAutocomplete — P2 preset alias 매칭', () => {
+  const presets = [{ id: 'korean-ani', name_ko: '한국 애니', name_en: 'Korean Anime' }]
+
+  it('한국어 UI에서 name_en으로 저장된 preset 값도 확정 선택으로 인식한다', () => {
+    const refs = [{ id: 9, type: 'style', name: 'Other' }]
+    const { container } = render(
+      <TagInputAutocomplete {...baseProps} type="style" presets={presets} isKo references={refs} value="Korean Anime" />
+    )
+    fireEvent.focus(screen.getByRole('textbox'))
+    // 확정 선택으로 인식 → 필터 안 함 → 다른 옵션도 보임
+    expect(screen.getByText('Other')).toBeInTheDocument()
+    // preset 옵션에 체크 표시
+    const opt = [...container.querySelectorAll('.tag-autocomplete-option')]
+      .find(o => o.textContent.includes('한국 애니'))
+    expect(opt.classList.contains('checked')).toBe(true)
+  })
+
+  it('레거시 id로 저장된 preset 값도 체크 표시된다', () => {
+    const { container } = render(
+      <TagInputAutocomplete {...baseProps} type="style" presets={presets} isKo value="korean-ani" />
+    )
+    fireEvent.focus(screen.getByRole('textbox'))
+    const opt = [...container.querySelectorAll('.tag-autocomplete-option')]
+      .find(o => o.textContent.includes('한국 애니'))
+    expect(opt.classList.contains('checked')).toBe(true)
+  })
+})
+
+describe('TagInputAutocomplete — P3 없음 선택지', () => {
+  it('드롭다운에 없음(clear) 항목이 있고 클릭하면 값이 비워진다', () => {
+    const onChange = vi.fn()
+    const refs = [{ id: 1, type: 'character', name: 'Hero' }]
+    const { container } = render(
+      <TagInputAutocomplete {...baseProps} type="character" references={refs} value="Hero" onChange={onChange} />
+    )
+    fireEvent.focus(screen.getByRole('textbox'))
+    const clearOpt = container.querySelector('.tag-autocomplete-option.clear')
+    expect(clearOpt).toBeTruthy()
+    fireEvent.mouseDown(clearOpt)
+    expect(onChange).toHaveBeenCalledWith('')
+  })
+
+  it('값이 비어있으면 없음 항목이 checked 표시된다', () => {
+    const refs = [{ id: 1, type: 'character', name: 'Hero' }]
+    const { container } = render(
+      <TagInputAutocomplete {...baseProps} type="character" references={refs} value="" />
+    )
+    fireEvent.focus(screen.getByRole('textbox'))
+    const clearOpt = container.querySelector('.tag-autocomplete-option.clear')
+    expect(clearOpt.classList.contains('checked')).toBe(true)
   })
 })
