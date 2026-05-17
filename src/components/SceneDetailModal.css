@@ -137,14 +137,6 @@
   text-align: right;
 }
 
-/* Scene Detail Modal - 스타일 드롭다운 위로 열기 */
-.scene-detail-modal .style-dropdown-menu {
-  bottom: 100%;
-  top: auto;
-  margin-top: 0;
-  margin-bottom: 4px;
-}
-
 .scene-detail-modal.modal.ref-detail-modal {
   max-height: 90vh;
   display: flex;
@@ -156,11 +148,6 @@
   overflow-y: auto;
   flex: 1;
   min-height: 0;
-}
-
-/* 스타일 드롭다운은 body 외부로 표시될 수 있도록 */
-.scene-detail-modal .style-dropdown-wrapper {
-  position: relative;
 }
 
 /* Scene Detail Modal - 히스토리 썸네일 */
@@ -755,91 +742,8 @@
   color: var(--text-secondary);
 }
 
-/* Style Dropdown */
-.style-dropdown-wrapper {
-  position: relative;
-}
-
-.style-dropdown-btn {
-  width: 100%;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 12px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--border-radius);
-  background: var(--bg-secondary);
-  color: var(--text-color);
-  font-size: 0.9rem;
-  cursor: pointer;
-  transition: border-color 0.2s;
-}
-
-.style-dropdown-btn:hover {
-  border-color: var(--primary-color);
-}
-
 .dropdown-arrow {
   font-size: 0.7rem;
-  color: var(--text-secondary);
-}
-
-.style-dropdown-menu {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  max-height: 300px;
-  overflow-y: auto;
-  background: var(--bg-color);
-  border: 1px solid var(--border-color);
-  border-radius: var(--border-radius);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  z-index: 100;
-  margin-top: 4px;
-}
-
-.style-category {
-  border-bottom: 1px solid var(--border-color);
-}
-
-.style-category:last-child {
-  border-bottom: none;
-}
-
-.style-category-header {
-  padding: 8px 12px;
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  background: var(--bg-secondary);
-}
-
-.style-category-items {
-  display: flex;
-  flex-direction: column;
-}
-
-.style-option {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 16px;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-
-.style-option:hover {
-  background: rgba(139, 92, 246, 0.1);
-}
-
-.style-option.selected {
-  background: rgba(139, 92, 246, 0.2);
-  color: var(--primary-color);
-}
-
-.style-option-en {
-  font-size: 0.75rem;
   color: var(--text-secondary);
 }
 
