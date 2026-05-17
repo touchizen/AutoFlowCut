@@ -394,3 +394,23 @@ describe('TagInputAutocomplete — P3 없음 선택지', () => {
     expect(clearOpt.classList.contains('checked')).toBe(true)
   })
 })
+
+describe('TagInputAutocomplete — P3(2) canonical preset 저장값', () => {
+  const presets = [{ id: 'korean-ani', name_ko: '한국 애니', name_en: 'Korean Anime' }]
+
+  it('한국어 UI에서 preset을 선택하면 canonical name_en이 저장된다', () => {
+    const onChange = vi.fn()
+    render(<TagInputAutocomplete {...baseProps} type="style" presets={presets} isKo value="" onChange={onChange} />)
+    fireEvent.focus(screen.getByRole('textbox'))
+    fireEvent.mouseDown(screen.getByText('한국 애니'))
+    expect(onChange).toHaveBeenCalledWith('Korean Anime')
+  })
+
+  it('영어 UI에서도 같은 preset 선택 시 동일한 canonical 값이 저장된다', () => {
+    const onChange = vi.fn()
+    render(<TagInputAutocomplete {...baseProps} type="style" presets={presets} isKo={false} value="" onChange={onChange} />)
+    fireEvent.focus(screen.getByRole('textbox'))
+    fireEvent.mouseDown(screen.getByText('Korean Anime'))
+    expect(onChange).toHaveBeenCalledWith('Korean Anime')
+  })
+})

@@ -48,7 +48,8 @@ export default function TagInputAutocomplete({
       return {
         kind: 'preset',
         label,
-        value: label,
+        // 저장값은 canonical(name_en) — label 은 locale 표시 전용
+        value: p.name_en || p.name_ko || p.id,
         // preset 은 id/name_ko/name_en 어느 형태로 저장돼 있어도 동일 옵션으로 인식한다.
         aliases: [p.id, p.name_ko, p.name_en]
           .filter(Boolean)
