@@ -12,23 +12,25 @@ import Modal from './Modal'
 import ErrorSection from './ErrorSection'
 import MediaMetaBar from './MediaMetaBar'
 import { fetchLatestHistoryMeta } from '../utils/mediaMeta'
+import TagInputAutocomplete from './TagInputAutocomplete'
 import './SceneDetailModal.css'
 
-export default function SceneDetailModal({ 
-  scene, 
-  onUpdate, 
-  onClose, 
-  onGenerate, 
-  isGenerating, 
-  t, 
+export default function SceneDetailModal({
+  scene,
+  onUpdate,
+  onClose,
+  onGenerate,
+  isGenerating,
+  t,
   projectName,
-  aspectRatio = '9:16'
+  aspectRatio = '9:16',
+  references = [],
+  styleThumbnails = {}
 }) {
   const [editData, setEditData] = useState({ ...scene })
   const [histories, setHistories] = useState([])
   const [shouldReloadHistory, setShouldReloadHistory] = useState(0)
   const [imageSize, setImageSize] = useState(null)
-  const [showStyleDropdown, setShowStyleDropdown] = useState(false)
   // 신규 생성은 scene.seed/generatedAt 으로 들어오지만, 구버전은 비어있음 → history 메타에서 backfill
   const [backfilledMeta, setBackfilledMeta] = useState({ seed: null, generatedAt: null, model: null })
   // 사용자가 history 를 복원했을 때의 메타 (null = 복원 안 함, 객체 = 복원함 + 그 항목의 메타).
@@ -344,11 +346,14 @@ export default function SceneDetailModal({
                 >⧉</button>
               )}
             </label>
-            <input
-              type="text"
+            <TagInputAutocomplete
+              type="character"
               value={editData.characters || ''}
-              onChange={(e) => setEditData({ ...editData, characters: e.target.value })}
+              onChange={(v) => setEditData({ ...editData, characters: v })}
+              references={references}
               placeholder={t('sceneDetail.characterPlaceholder')}
+              isKo={isKo}
+              t={t}
             />
           </div>
           
@@ -365,11 +370,14 @@ export default function SceneDetailModal({
                 >⧉</button>
               )}
             </label>
-            <input
-              type="text"
+            <TagInputAutocomplete
+              type="scene"
               value={editData.scene_tag || ''}
-              onChange={(e) => setEditData({ ...editData, scene_tag: e.target.value })}
+              onChange={(v) => setEditData({ ...editData, scene_tag: v })}
+              references={references}
               placeholder={t('sceneDetail.backgroundPlaceholder')}
+              isKo={isKo}
+              t={t}
             />
           </div>
           
@@ -386,63 +394,17 @@ export default function SceneDetailModal({
                 >⧉</button>
               )}
             </label>
-            <div className="style-dropdown-wrapper">
-              <button 
-                type="button"
-                className="style-dropdown-btn"
-                onClick={() => setShowStyleDropdown(!showStyleDropdown)}
-              >
-                <span>{(() => {
-                  if (!editData.style_tag) return t('sceneDetail.styleSelect')
-                  const tag = editData.style_tag
-                  const preset = STYLE_PRESETS.styles.find(s => s.id === tag || s.name_ko === tag || s.name_en === tag)
-                  if (preset) return isKo ? preset.name_ko : preset.name_en
-                  return editData.style_tag
-                })()}</span>
-                <span className="dropdown-arrow">{showStyleDropdown ? '▲' : '▼'}</span>
-              </button>
-              
-              {showStyleDropdown && (
-                <div className="style-dropdown-menu">
-                  {/* 없음 옵션 */}
-                  <div 
-                    className={`style-option ${!editData.style_tag ? 'selected' : ''}`}
-                    onClick={() => {
-                      setEditData({ ...editData, style_tag: '' })
-                      setShowStyleDropdown(false)
-                    }}
-                  >
-                    {t('sceneDetail.styleNone')}
-                  </div>
-                  
-                  {STYLE_PRESETS.categories.map(cat => (
-                    <div key={cat.id} className="style-category">
-                      <div className="style-category-header">
-                        {cat.icon} {isKo ? cat.name_ko : cat.name_en}
-                      </div>
-                      <div className="style-category-items">
-                        {STYLE_PRESETS.styles
-                          .filter(s => s.category === cat.id)
-                          .map(style => (
-                            <div
-                              key={style.id}
-                              className={`style-option ${editData.style_tag === style.id ? 'selected' : ''}`}
-                              onClick={() => {
-                                setEditData({ ...editData, style_tag: style.id })
-                                setShowStyleDropdown(false)
-                              }}
-                            >
-                              {isKo ? style.name_ko : style.name_en}
-                              <span className="style-option-en">{isKo ? style.name_en : style.name_ko}</span>
-                            </div>
-                          ))
-                        }
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            <TagInputAutocomplete
+              type="style"
+              value={editData.style_tag || ''}
+              onChange={(v) => setEditData({ ...editData, style_tag: v })}
+              references={references}
+              presets={STYLE_PRESETS?.styles || []}
+              thumbnails={styleThumbnails}
+              placeholder={t('sceneDetail.styleSelect')}
+              isKo={isKo}
+              t={t}
+            />
           </div>
 
           {/* 에러 정보 (생성 실패 시에만 노출) */}
