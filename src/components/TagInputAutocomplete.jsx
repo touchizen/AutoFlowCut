@@ -45,20 +45,46 @@ export default function TagInputAutocomplete({
     [type, presets, isKo, thumbnails]
   )
 
-  const { prefix, last } = splitLastToken(value)
+  const allOptions = useMemo(
+    () => [...refOptions, ...presetOptions],
+    [refOptions, presetOptions]
+  )
+
+  // 알려진 옵션 값 집합 (소문자) — 확정 선택 판정용
+  const optionValueSet = useMemo(
+    () => new Set(allOptions.map(o => o.value.toLowerCase())),
+    [allOptions]
+  )
+
+  const isMulti = type === 'character'
+
+  const { last } = splitLastToken(value)
   const filterToken = last.trim().toLowerCase()
 
   const filteredOptions = useMemo(() => {
-    const all = [...refOptions, ...presetOptions]
-    if (!filterToken) return all
-    return all.filter(o => o.label.toLowerCase().includes(filterToken))
-  }, [refOptions, presetOptions, filterToken])
+    if (!filterToken) return allOptions
+    return allOptions.filter(o => o.label.toLowerCase().includes(filterToken))
+  }, [allOptions, filterToken])
 
   // 옵션 리스트 변경 시 highlight reset (사용자가 타이핑할 때마다 -1로)
   useEffect(() => { setHighlightedIndex(-1) }, [filterToken])
 
   const applyOption = (opt) => {
-    onChange(prefix + opt.value)
+    if (isMulti) {
+      // 토글: 입력 중이던 미완성 마지막 토큰은 버린다
+      const rawTokens = (value || '').split(/[,;:]/).map(s => s.trim()).filter(Boolean)
+      const lastTrim = last.trim()
+      const dropLast = lastTrim !== '' && !optionValueSet.has(lastTrim.toLowerCase())
+      const tokens = dropLast ? rawTokens.slice(0, -1) : rawTokens
+      const lc = opt.value.toLowerCase()
+      const exists = tokens.some(tok => tok.toLowerCase() === lc)
+      const next = exists
+        ? tokens.filter(tok => tok.toLowerCase() !== lc)
+        : [...tokens, opt.value]
+      onChange(next.join(', '))
+    } else {
+      onChange(opt.value)
+    }
     setHighlightedIndex(-1)
   }
 

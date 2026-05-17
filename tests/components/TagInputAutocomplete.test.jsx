@@ -209,3 +209,50 @@ describe('TagInputAutocomplete — basic render', () => {
     expect(img.getAttribute('src')).toContain('noir.png')
   })
 })
+
+describe('TagInputAutocomplete — A3 멀티선택/단일 교체', () => {
+  it('character: 이미 선택된 옵션을 클릭하면 제거된다 (토글 off)', () => {
+    const onChange = vi.fn()
+    const refs = [{ id: 1, type: 'character', name: 'Hero' }]
+    render(<TagInputAutocomplete {...baseProps} type="character" references={refs} value="Hero" onChange={onChange} />)
+    fireEvent.focus(screen.getByRole('textbox'))
+    fireEvent.mouseDown(screen.getByText('Hero'))
+    expect(onChange).toHaveBeenCalledWith('')
+  })
+
+  it('character: 다른 옵션을 클릭하면 콤마 목록에 누적된다', () => {
+    const onChange = vi.fn()
+    const refs = [
+      { id: 1, type: 'character', name: 'Hero' },
+      { id: 2, type: 'character', name: 'Villain' },
+    ]
+    render(<TagInputAutocomplete {...baseProps} type="character" references={refs} value="Hero, " onChange={onChange} />)
+    fireEvent.focus(screen.getByRole('textbox'))
+    fireEvent.mouseDown(screen.getByText('Villain'))
+    expect(onChange).toHaveBeenCalledWith('Hero, Villain')
+  })
+
+  it('scene: 옵션 클릭 시 값이 통째로 교체된다 (단일)', () => {
+    const onChange = vi.fn()
+    const refs = [
+      { id: 1, type: 'scene', name: 'Forest' },
+      { id: 2, type: 'scene', name: 'Beach' },
+    ]
+    render(<TagInputAutocomplete {...baseProps} type="scene" references={refs} value="Forest, " onChange={onChange} />)
+    fireEvent.focus(screen.getByRole('textbox'))
+    fireEvent.mouseDown(screen.getByText('Beach'))
+    expect(onChange).toHaveBeenCalledWith('Beach')
+  })
+
+  it('style: 옵션 클릭 시 값이 통째로 교체된다 (단일)', () => {
+    const onChange = vi.fn()
+    const refs = [
+      { id: 1, type: 'style', name: 'Noir' },
+      { id: 2, type: 'style', name: 'Pastel' },
+    ]
+    render(<TagInputAutocomplete {...baseProps} type="style" references={refs} value="Noir, " onChange={onChange} />)
+    fireEvent.focus(screen.getByRole('textbox'))
+    fireEvent.mouseDown(screen.getByText('Pastel'))
+    expect(onChange).toHaveBeenCalledWith('Pastel')
+  })
+})
