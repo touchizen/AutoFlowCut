@@ -70,6 +70,20 @@ describe('HoverImageBalloon', () => {
     expect(name.textContent).toBe('스타일 이름')
   })
 
+  it('wrapper 에 maxHeight + overflow:hidden 을 적용해 풍선이 가용 공간을 넘지 않게 한다', () => {
+    // children(캡션)이 이미지 아래 붙어도 풍선 전체가 가용 높이를 초과하지 않도록
+    // wrapper 자체를 하드 캡한다 (이미지에만 maxHeight 를 주던 빈틈 보완).
+    render(
+      <HoverImageBalloon anchorRect={anchorRect} src={SRC} className="sp-hover-balloon">
+        <div className="sp-hover-name">스타일 이름</div>
+      </HoverImageBalloon>
+    )
+    const balloon = document.querySelector('.sp-hover-balloon')
+    expect(balloon.style.overflow).toBe('hidden')
+    expect(balloon.style.display).toBe('flex')
+    expect(balloon.style.maxHeight).not.toBe('')
+  })
+
   it('anchorRect 가 없으면 아무것도 렌더하지 않는다', () => {
     const { container } = render(
       <HoverImageBalloon anchorRect={null} src={SRC} className="ref-hover-balloon" />
