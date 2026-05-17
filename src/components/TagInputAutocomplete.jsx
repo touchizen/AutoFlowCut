@@ -1,4 +1,5 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { resolveImageSrc } from '../utils/formatters'
 import { toFileUrl } from '../hooks/useStyleThumbnails'
 import { splitTags } from '../utils/tagMatch'
@@ -11,6 +12,8 @@ function splitLastToken(value) {
   if (match) return { last: match[2] }
   return { last: value }
 }
+
+const DROPDOWN_MAX_HEIGHT = 320
 
 export default function TagInputAutocomplete({
   type,
@@ -28,6 +31,8 @@ export default function TagInputAutocomplete({
 }) {
   const [isFocused, setIsFocused] = useState(false)
   const [highlightedIndex, setHighlightedIndex] = useState(-1)
+  const inputRef = useRef(null)
+  const [dropdownPos, setDropdownPos] = useState(null)
 
   const refOptions = useMemo(() =>
     references
@@ -94,6 +99,40 @@ export default function TagInputAutocomplete({
   // 옵션 리스트 변경 시 highlight reset (사용자가 타이핑할 때마다 -1로)
   useEffect(() => { setHighlightedIndex(-1) }, [filterToken])
 
+  const dropdownOpen = isFocused && !disabled
+
+  // 드롭다운은 portal 로 document.body 에 렌더 → 스크롤 컨테이너의
+  // overflow/container-type clip 을 회피한다. 입력칸 위치를 fixed 좌표로
+  // 변환하고, 스크롤/리사이즈 시 갱신한다. 아래 공간이 부족하면 위로 펼친다.
+  useEffect(() => {
+    if (!dropdownOpen) {
+      setDropdownPos(null)
+      return
+    }
+    const update = () => {
+      const el = inputRef.current
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      const spaceBelow = window.innerHeight - r.bottom
+      const spaceAbove = r.top
+      const openUp = spaceBelow < DROPDOWN_MAX_HEIGHT && spaceAbove > spaceBelow
+      setDropdownPos({
+        left: r.left,
+        width: r.width,
+        ...(openUp
+          ? { bottom: window.innerHeight - r.top, maxHeight: Math.min(DROPDOWN_MAX_HEIGHT, spaceAbove - 8) }
+          : { top: r.bottom, maxHeight: Math.min(DROPDOWN_MAX_HEIGHT, spaceBelow - 8) }),
+      })
+    }
+    update()
+    window.addEventListener('scroll', update, true)
+    window.addEventListener('resize', update)
+    return () => {
+      window.removeEventListener('scroll', update, true)
+      window.removeEventListener('resize', update)
+    }
+  }, [dropdownOpen])
+
   const applyOption = (opt) => {
     if (isMulti) {
       // 토글: 입력 중이던 미완성 마지막 토큰은 버린다
@@ -137,9 +176,58 @@ export default function TagInputAutocomplete({
     }
   }
 
+  const dropdown = (
+    <div
+      className="tag-autocomplete-dropdown"
+      style={{ position: 'fixed', ...dropdownPos }}
+    >
+      {/* '없음' — 값 비우기. 항상 최상단, 키보드 네비게이션 대상 아님 */}
+      <div
+        className={`tag-autocomplete-option clear ${isEmptyValue ? 'checked' : ''}`}
+        onMouseDown={(e) => {
+          e.preventDefault()
+          clearValue()
+        }}
+      >
+        <span className="tag-autocomplete-check">{isEmptyValue ? '✅' : ''}</span>
+        <span className="tag-autocomplete-option-label">{t('sceneList.tagClear')}</span>
+      </div>
+      {filteredOptions.length === 0 ? (
+        <div className="tag-autocomplete-empty">{t('sceneList.noRefsForType')}</div>
+      ) : (
+        filteredOptions.map((opt, i) => {
+          const checked = opt.aliases.some(a => selectedSet.has(a))
+          return (
+            <div
+              key={`${opt.kind}-${i}`}
+              className={`tag-autocomplete-option ${opt.kind} ${i === highlightedIndex ? 'highlighted' : ''} ${checked ? 'checked' : ''}`}
+              onMouseDown={(e) => {
+                e.preventDefault()
+                applyOption(opt)
+              }}
+              onMouseEnter={() => setHighlightedIndex(i)}
+            >
+              <span className="tag-autocomplete-check">{checked ? '✅' : ''}</span>
+              {opt.src ? (
+                <img src={opt.src} alt="" className="tag-autocomplete-thumb" loading="lazy" />
+              ) : (
+                <span className="tag-autocomplete-thumb empty" />
+              )}
+              <span className="tag-autocomplete-option-label">
+                {opt.label}
+                {opt.kind === 'preset' && <span className="preset-suffix"> (preset)</span>}
+              </span>
+            </div>
+          )
+        })
+      )}
+    </div>
+  )
+
   return (
     <div className="tag-autocomplete-wrapper">
       <input
+        ref={inputRef}
         type="text"
         value={value || ''}
         placeholder={placeholder}
@@ -151,50 +239,7 @@ export default function TagInputAutocomplete({
         onBlur={() => setTimeout(() => setIsFocused(false), 150)}
         onKeyDown={handleKeyDown}
       />
-      {isFocused && !disabled && (
-        <div className="tag-autocomplete-dropdown">
-          {/* '없음' — 값 비우기. 항상 최상단, 키보드 네비게이션 대상 아님 */}
-          <div
-            className={`tag-autocomplete-option clear ${isEmptyValue ? 'checked' : ''}`}
-            onMouseDown={(e) => {
-              e.preventDefault()
-              clearValue()
-            }}
-          >
-            <span className="tag-autocomplete-check">{isEmptyValue ? '✅' : ''}</span>
-            <span className="tag-autocomplete-option-label">{t('sceneList.tagClear')}</span>
-          </div>
-          {filteredOptions.length === 0 ? (
-            <div className="tag-autocomplete-empty">{t('sceneList.noRefsForType')}</div>
-          ) : (
-            filteredOptions.map((opt, i) => {
-              const checked = opt.aliases.some(a => selectedSet.has(a))
-              return (
-                <div
-                  key={`${opt.kind}-${i}`}
-                  className={`tag-autocomplete-option ${opt.kind} ${i === highlightedIndex ? 'highlighted' : ''} ${checked ? 'checked' : ''}`}
-                  onMouseDown={(e) => {
-                    e.preventDefault()
-                    applyOption(opt)
-                  }}
-                  onMouseEnter={() => setHighlightedIndex(i)}
-                >
-                  <span className="tag-autocomplete-check">{checked ? '✅' : ''}</span>
-                  {opt.src ? (
-                    <img src={opt.src} alt="" className="tag-autocomplete-thumb" loading="lazy" />
-                  ) : (
-                    <span className="tag-autocomplete-thumb empty" />
-                  )}
-                  <span className="tag-autocomplete-option-label">
-                    {opt.label}
-                    {opt.kind === 'preset' && <span className="preset-suffix"> (preset)</span>}
-                  </span>
-                </div>
-              )
-            })
-          )}
-        </div>
-      )}
+      {dropdownOpen && dropdownPos && createPortal(dropdown, document.body)}
     </div>
   )
 }

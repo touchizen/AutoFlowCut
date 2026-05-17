@@ -35,9 +35,9 @@ describe('TagInputAutocomplete — basic render', () => {
 
   it('shows dropdown on focus', () => {
     const refs = [{ id: 1, type: 'character', name: 'Hero' }]
-    const { container } = render(<TagInputAutocomplete {...baseProps} references={refs} />)
+    render(<TagInputAutocomplete {...baseProps} references={refs} />)
     fireEvent.focus(screen.getByRole('textbox'))
-    expect(container.querySelector('.tag-autocomplete-dropdown')).toBeInTheDocument()
+    expect(document.querySelector('.tag-autocomplete-dropdown')).toBeInTheDocument()
   })
 
   it('filters options by the last token (case-insensitive)', () => {
@@ -96,12 +96,12 @@ describe('TagInputAutocomplete — basic render', () => {
       { id: 1, type: 'character', name: 'Hero' },
       { id: 2, type: 'character', name: 'Villain' },
     ]
-    const { container } = render(<TagInputAutocomplete {...baseProps} references={refs} onChange={onChange} />)
+    render(<TagInputAutocomplete {...baseProps} references={refs} onChange={onChange} />)
     const input = screen.getByRole('textbox')
     fireEvent.focus(input)
     fireEvent.keyDown(input, { key: 'ArrowDown' })
     // 첫 항목 highlighted
-    const highlighted = container.querySelector('.tag-autocomplete-option.highlighted')
+    const highlighted = document.querySelector('.tag-autocomplete-option.highlighted')
     expect(highlighted.textContent).toBe('Hero')
     fireEvent.keyDown(input, { key: 'ArrowDown' })
     fireEvent.keyDown(input, { key: 'Enter' })
@@ -113,13 +113,13 @@ describe('TagInputAutocomplete — basic render', () => {
       { id: 1, type: 'character', name: 'Hero' },
       { id: 2, type: 'character', name: 'Villain' },
     ]
-    const { container } = render(<TagInputAutocomplete {...baseProps} references={refs} />)
+    render(<TagInputAutocomplete {...baseProps} references={refs} />)
     const input = screen.getByRole('textbox')
     fireEvent.focus(input)
     fireEvent.keyDown(input, { key: 'ArrowDown' })
     fireEvent.keyDown(input, { key: 'ArrowDown' })
     fireEvent.keyDown(input, { key: 'ArrowUp' })
-    const highlighted = container.querySelector('.tag-autocomplete-option.highlighted')
+    const highlighted = document.querySelector('.tag-autocomplete-option.highlighted')
     expect(highlighted.textContent).toBe('Hero')
   })
 
@@ -135,12 +135,12 @@ describe('TagInputAutocomplete — basic render', () => {
 
   it('Escape closes the dropdown without changing value', () => {
     const refs = [{ id: 1, type: 'character', name: 'Hero' }]
-    const { container } = render(<TagInputAutocomplete {...baseProps} references={refs} />)
+    render(<TagInputAutocomplete {...baseProps} references={refs} />)
     const input = screen.getByRole('textbox')
     fireEvent.focus(input)
-    expect(container.querySelector('.tag-autocomplete-dropdown')).toBeInTheDocument()
+    expect(document.querySelector('.tag-autocomplete-dropdown')).toBeInTheDocument()
     fireEvent.keyDown(input, { key: 'Escape' })
-    expect(container.querySelector('.tag-autocomplete-dropdown')).toBeNull()
+    expect(document.querySelector('.tag-autocomplete-dropdown')).toBeNull()
   })
 
   it('includes preset options when type is style', () => {
@@ -168,10 +168,10 @@ describe('TagInputAutocomplete — basic render', () => {
 
   it('disabled input does not open dropdown on focus', () => {
     const refs = [{ id: 1, type: 'character', name: 'Hero' }]
-    const { container } = render(<TagInputAutocomplete {...baseProps} references={refs} disabled />)
+    render(<TagInputAutocomplete {...baseProps} references={refs} disabled />)
     const input = screen.getByRole('textbox')
     fireEvent.focus(input)
-    expect(container.querySelector('.tag-autocomplete-dropdown')).toBeNull()
+    expect(document.querySelector('.tag-autocomplete-dropdown')).toBeNull()
   })
 
   it('preset options are visually marked with "(preset)" suffix', () => {
@@ -186,28 +186,28 @@ describe('TagInputAutocomplete — basic render', () => {
       id: 1, type: 'character', name: 'Hero',
       data: 'data:image/png;base64,iVBORw0KGgo='
     }]
-    const { container } = render(<TagInputAutocomplete {...baseProps} references={refs} />)
+    render(<TagInputAutocomplete {...baseProps} references={refs} />)
     fireEvent.focus(screen.getByRole('textbox'))
-    const img = container.querySelector('.tag-autocomplete-option img.tag-autocomplete-thumb')
+    const img = document.querySelector('.tag-autocomplete-option img.tag-autocomplete-thumb')
     expect(img).toBeTruthy()
     expect(img.getAttribute('src')).toContain('data:image/png;base64')
   })
 
   it('renders empty thumb placeholder when ref has no image', () => {
     const refs = [{ id: 1, type: 'character', name: 'NoImage' }]
-    const { container } = render(<TagInputAutocomplete {...baseProps} references={refs} />)
+    render(<TagInputAutocomplete {...baseProps} references={refs} />)
     fireEvent.focus(screen.getByRole('textbox'))
-    expect(container.querySelector('.tag-autocomplete-thumb.empty')).toBeTruthy()
+    expect(document.querySelector('.tag-autocomplete-thumb.empty')).toBeTruthy()
   })
 
   it('renders preset thumbnail from thumbnails map (style type)', () => {
     const presets = [{ id: 'noir', name_ko: '누아르', name_en: 'Noir' }]
     const thumbnails = { noir: '/some/path/noir.png' }
-    const { container } = render(
+    render(
       <TagInputAutocomplete {...baseProps} type="style" presets={presets} thumbnails={thumbnails} />
     )
     fireEvent.focus(screen.getByRole('textbox'))
-    const img = container.querySelector('.tag-autocomplete-option.preset img.tag-autocomplete-thumb')
+    const img = document.querySelector('.tag-autocomplete-option.preset img.tag-autocomplete-thumb')
     expect(img).toBeTruthy()
     expect(img.getAttribute('src')).toContain('noir.png')
   })
@@ -317,11 +317,11 @@ describe('TagInputAutocomplete — A2 선택 항목 체크 표시', () => {
       { id: 1, type: 'character', name: 'Hero' },
       { id: 2, type: 'character', name: 'Villain' },
     ]
-    const { container } = render(
+    render(
       <TagInputAutocomplete {...baseProps} type="character" references={refs} value="Hero" />
     )
     fireEvent.focus(screen.getByRole('textbox'))
-    const options = [...container.querySelectorAll('.tag-autocomplete-option')]
+    const options = [...document.querySelectorAll('.tag-autocomplete-option')]
     const heroOpt = options.find(o => o.textContent.includes('Hero'))
     const villainOpt = options.find(o => o.textContent.includes('Villain'))
     expect(heroOpt.classList.contains('checked')).toBe(true)
@@ -333,11 +333,11 @@ describe('TagInputAutocomplete — A2 선택 항목 체크 표시', () => {
       { id: 1, type: 'character', name: 'Hero' },
       { id: 2, type: 'character', name: 'Villain' },
     ]
-    const { container } = render(
+    render(
       <TagInputAutocomplete {...baseProps} type="character" references={refs} value="Hero,Villain" />
     )
     fireEvent.focus(screen.getByRole('textbox'))
-    const checked = container.querySelectorAll('.tag-autocomplete-option.checked')
+    const checked = document.querySelectorAll('.tag-autocomplete-option.checked')
     expect(checked.length).toBe(2)
   })
 })
@@ -347,24 +347,24 @@ describe('TagInputAutocomplete — P2 preset alias 매칭', () => {
 
   it('한국어 UI에서 name_en으로 저장된 preset 값도 확정 선택으로 인식한다', () => {
     const refs = [{ id: 9, type: 'style', name: 'Other' }]
-    const { container } = render(
+    render(
       <TagInputAutocomplete {...baseProps} type="style" presets={presets} isKo references={refs} value="Korean Anime" />
     )
     fireEvent.focus(screen.getByRole('textbox'))
     // 확정 선택으로 인식 → 필터 안 함 → 다른 옵션도 보임
     expect(screen.getByText('Other')).toBeInTheDocument()
     // preset 옵션에 체크 표시
-    const opt = [...container.querySelectorAll('.tag-autocomplete-option')]
+    const opt = [...document.querySelectorAll('.tag-autocomplete-option')]
       .find(o => o.textContent.includes('한국 애니'))
     expect(opt.classList.contains('checked')).toBe(true)
   })
 
   it('레거시 id로 저장된 preset 값도 체크 표시된다', () => {
-    const { container } = render(
+    render(
       <TagInputAutocomplete {...baseProps} type="style" presets={presets} isKo value="korean-ani" />
     )
     fireEvent.focus(screen.getByRole('textbox'))
-    const opt = [...container.querySelectorAll('.tag-autocomplete-option')]
+    const opt = [...document.querySelectorAll('.tag-autocomplete-option')]
       .find(o => o.textContent.includes('한국 애니'))
     expect(opt.classList.contains('checked')).toBe(true)
   })
@@ -374,11 +374,11 @@ describe('TagInputAutocomplete — P3 없음 선택지', () => {
   it('드롭다운에 없음(clear) 항목이 있고 클릭하면 값이 비워진다', () => {
     const onChange = vi.fn()
     const refs = [{ id: 1, type: 'character', name: 'Hero' }]
-    const { container } = render(
+    render(
       <TagInputAutocomplete {...baseProps} type="character" references={refs} value="Hero" onChange={onChange} />
     )
     fireEvent.focus(screen.getByRole('textbox'))
-    const clearOpt = container.querySelector('.tag-autocomplete-option.clear')
+    const clearOpt = document.querySelector('.tag-autocomplete-option.clear')
     expect(clearOpt).toBeTruthy()
     fireEvent.mouseDown(clearOpt)
     expect(onChange).toHaveBeenCalledWith('')
@@ -386,11 +386,11 @@ describe('TagInputAutocomplete — P3 없음 선택지', () => {
 
   it('값이 비어있으면 없음 항목이 checked 표시된다', () => {
     const refs = [{ id: 1, type: 'character', name: 'Hero' }]
-    const { container } = render(
+    render(
       <TagInputAutocomplete {...baseProps} type="character" references={refs} value="" />
     )
     fireEvent.focus(screen.getByRole('textbox'))
-    const clearOpt = container.querySelector('.tag-autocomplete-option.clear')
+    const clearOpt = document.querySelector('.tag-autocomplete-option.clear')
     expect(clearOpt.classList.contains('checked')).toBe(true)
   })
 })
@@ -412,5 +412,19 @@ describe('TagInputAutocomplete — P3(2) canonical preset 저장값', () => {
     fireEvent.focus(screen.getByRole('textbox'))
     fireEvent.mouseDown(screen.getByText('Korean Anime'))
     expect(onChange).toHaveBeenCalledWith('Korean Anime')
+  })
+})
+
+describe('TagInputAutocomplete — 드롭다운 portal (clip 회피)', () => {
+  it('드롭다운은 컴포넌트 wrapper가 아니라 document.body에 portal로 렌더된다', () => {
+    const refs = [{ id: 1, type: 'character', name: 'Hero' }]
+    const { container } = render(<TagInputAutocomplete {...baseProps} references={refs} />)
+    fireEvent.focus(screen.getByRole('textbox'))
+    // 컴포넌트 wrapper 안에는 없다
+    expect(container.querySelector('.tag-autocomplete-dropdown')).toBeNull()
+    // document 에는 있고 position:fixed 다
+    const dd = document.querySelector('.tag-autocomplete-dropdown')
+    expect(dd).toBeInTheDocument()
+    expect(dd.style.position).toBe('fixed')
   })
 })
