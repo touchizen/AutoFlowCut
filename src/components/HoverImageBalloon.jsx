@@ -1,40 +1,32 @@
-import { useRef, useState, useLayoutEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { computeBalloonPosition } from '../utils/balloonPosition'
 
 /**
- * 썸네일 hover 시 뜨는 이미지 미리보기 풍선.
- * portal 로 document.body 에 렌더하고, 풍선을 실측한 뒤 edge-aware 로 배치한다
- * (오른쪽 공간 부족 → 왼쪽, 아래 부족 → 위). 스크롤 컨테이너 clip 도 회피.
+ * 썸네일/마우스 hover 시 뜨는 미리보기 풍선.
+ * portal 로 document.body 에 렌더하고, 측정 없이 앵커+뷰포트만으로 edge-aware 배치한다.
+ * 풍선은 배치된 쪽 가용 공간으로 maxWidth/maxHeight 가 제한돼 썸네일을 덮지 않는다.
+ * src 는 선택 — 없으면 이미지 없이 children 만 렌더한다.
  */
-export default function HoverImageBalloon({ anchorRect, src, className, alt = 'preview', children }) {
-  const ref = useRef(null)
-  const [pos, setPos] = useState(null)
-
-  const reposition = useCallback(() => {
-    const el = ref.current
-    if (!el || !anchorRect) return
-    setPos(computeBalloonPosition({
-      anchor: anchorRect,
-      balloon: { width: el.offsetWidth, height: el.offsetHeight },
-      viewport: { width: window.innerWidth, height: window.innerHeight },
-    }))
-  }, [anchorRect])
-
-  useLayoutEffect(() => { reposition() }, [reposition, src])
-
+export default function HoverImageBalloon({ anchorRect, src, className, alt = 'preview', imgClassName, children }) {
+  if (!anchorRect) return null
+  const { maxHeight, ...boxStyle } = computeBalloonPosition({
+    anchor: anchorRect,
+    viewport: { width: window.innerWidth, height: window.innerHeight },
+  })
   return createPortal(
     <div
-      ref={ref}
       className={className}
-      style={{
-        position: 'fixed',
-        left: pos ? pos.left : 0,
-        top: pos ? pos.top : 0,
-        visibility: pos ? 'visible' : 'hidden',
-      }}
+      style={{ position: 'fixed', boxSizing: 'border-box', ...boxStyle }}
     >
-      <img src={src} alt={alt} decoding="sync" onLoad={reposition} />
+      {src && (
+        <img
+          src={src}
+          alt={alt}
+          className={imgClassName}
+          decoding="sync"
+          style={{ maxWidth: '100%', maxHeight }}
+        />
+      )}
       {children}
     </div>,
     document.body

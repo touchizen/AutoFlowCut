@@ -13,6 +13,7 @@ import { toast } from '../Toast'
 import TimeRuler from './TimeRuler'
 import TrackLane from './TrackLane'
 import TimelineFlagButton from './TimelineFlagButton'
+import HoverImageBalloon from '../HoverImageBalloon'
 import PreviewPanel from './PreviewPanel'
 import Playhead from './Playhead'
 import {
@@ -949,10 +950,13 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
       {hoverScene && (() => {
         const imgPath = hoverScene.scene.imagePath || hoverScene.scene.image_path || hoverScene.scene.filePath
         return (
-          <div className="atl-tooltip" style={{ left: hoverScene.x + 12, top: hoverScene.y - 8 }}>
-            {imgPath && <img src={`file://${imgPath}`} alt="" />}
+          <HoverImageBalloon
+            anchorRect={{ left: hoverScene.x, right: hoverScene.x, top: hoverScene.y, bottom: hoverScene.y }}
+            src={imgPath ? `file://${imgPath}` : undefined}
+            className="atl-tooltip"
+          >
             {hoverScene.scene.subtitle && <div className="atl-tooltip-sub">{hoverScene.scene.subtitle}</div>}
-          </div>
+          </HoverImageBalloon>
         )
       })()}
     </div>

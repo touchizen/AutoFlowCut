@@ -9,6 +9,7 @@ import { useAudioPlayback } from '../hooks/useAudioPlayback'
 import { findSrtSegment } from '../utils/audioTimeline'
 import { parseTimeToSeconds } from '../utils/parsers'
 import AudioFlagPopover from './AudioFlagPopover'
+import HoverImageBalloon from './HoverImageBalloon'
 import AudioTimeline from './AudioTimeline/AudioTimeline'
 import AudioDetailModal from './AudioDetailModal'
 import AudioSummary from './AudioSummary'
@@ -242,14 +243,16 @@ export default function AudioPanel({ audioPackage, audioReviews, loading = false
 
       {/* Scene hover tooltip */}
       {hoverTooltip && (
-        <div className="scene-hover-tooltip" style={{ left: hoverTooltip.x + 12, top: hoverTooltip.y - 8 }}>
-          {hoverTooltip.scene.imagePath && (
-            <img className="scene-hover-img" src={`file://${hoverTooltip.scene.imagePath}`} alt="" />
-          )}
+        <HoverImageBalloon
+          anchorRect={{ left: hoverTooltip.x, right: hoverTooltip.x, top: hoverTooltip.y, bottom: hoverTooltip.y }}
+          src={hoverTooltip.scene.imagePath ? `file://${hoverTooltip.scene.imagePath}` : undefined}
+          className="scene-hover-tooltip"
+          imgClassName="scene-hover-img"
+        >
           {hoverTooltip.scene.prompt_ko && <div className="scene-hover-prompt">{hoverTooltip.scene.prompt_ko}</div>}
           {hoverTooltip.scene.subtitle && <div className="scene-hover-sub">{hoverTooltip.scene.subtitle}</div>}
           {hoverTooltip.scene.characters && <div className="scene-hover-chars">👤 {hoverTooltip.scene.characters}</div>}
-        </div>
+        </HoverImageBalloon>
       )}
 
       {/* Custom refresh tooltip */}

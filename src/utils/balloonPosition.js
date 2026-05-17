@@ -1,28 +1,32 @@
 /**
- * hover 미리보기 풍선의 fixed 좌표 계산.
- * 기본은 앵커(썸네일) 오른쪽. 오른쪽 공간이 부족하면 왼쪽으로 flip,
- * 아래로 넘치면 위로 shift — 풍선이 썸네일을 가리거나 화면 밖으로 나가지 않게 한다.
+ * hover 미리보기 풍선의 fixed 배치 스타일 계산 — 풍선 크기를 측정하지 않는다.
+ * 앵커(썸네일 또는 마우스 지점)와 뷰포트만으로:
+ *  - 가로: 좌/우 중 넓은 쪽에 배치하고 그 쪽 가용 폭으로 maxWidth 를 제한
+ *  - 세로: 위/아래 중 넓은 쪽 기준으로 배치하고 가용 높이로 maxHeight 를 제한
+ * → 풍선이 썸네일을 덮거나 화면 밖으로 나가는 일이 없다.
  *
  * @param {object} args
- * @param {{left:number,right:number,top:number,bottom:number}} args.anchor 썸네일 화면 좌표
- * @param {{width:number,height:number}} args.balloon 풍선 실측 크기
+ * @param {{left:number,right:number,top:number,bottom:number}} args.anchor
+ *        썸네일의 화면 좌표. 마우스 지점이면 left===right, top===bottom 인 0-크기 사각형을 넘긴다.
  * @param {{width:number,height:number}} args.viewport
  * @param {number} [args.gap=8]
- * @returns {{left:number, top:number}}
+ * @returns {object} 인라인 스타일 일부 — { left|right, top|bottom, maxWidth, maxHeight }
  */
-export function computeBalloonPosition({ anchor, balloon, viewport, gap = 8 }) {
-  let left = anchor.right + gap
-  if (left + balloon.width > viewport.width) {
-    // 오른쪽 공간 부족 → 왼쪽으로 flip
-    const flippedLeft = anchor.left - gap - balloon.width
-    left = flippedLeft >= 0
-      ? flippedLeft
-      : Math.max(0, viewport.width - balloon.width)  // 양쪽 다 부족 — 화면 안으로만
-  }
-  let top = anchor.top
-  if (top + balloon.height > viewport.height) {
-    top = viewport.height - balloon.height - gap  // 아래로 넘침 → 위로 shift
-  }
-  top = Math.max(gap, top)
-  return { left, top }
+export function computeBalloonPosition({ anchor, viewport, gap = 8 }) {
+  const spaceRight = viewport.width - anchor.right - gap
+  const spaceLeft = anchor.left - gap
+  const spaceBelow = viewport.height - anchor.top - gap
+  const spaceAbove = anchor.bottom - gap
+
+  // 가로: 넓은 쪽에 배치 + 그 쪽 가용 폭으로 maxWidth 제한
+  const horizontal = spaceRight >= spaceLeft
+    ? { left: anchor.right + gap, maxWidth: Math.max(0, spaceRight) }
+    : { right: Math.max(0, viewport.width - anchor.left + gap), maxWidth: Math.max(0, spaceLeft) }
+
+  // 세로: 아래 공간이 넓으면 위(anchor.top)에서 아래로, 아니면 아래(anchor.bottom)에서 위로.
+  const vertical = spaceBelow >= spaceAbove
+    ? { top: Math.max(gap, anchor.top), maxHeight: Math.max(0, spaceBelow) }
+    : { bottom: Math.max(0, viewport.height - anchor.bottom), maxHeight: Math.max(0, spaceAbove) }
+
+  return { ...horizontal, ...vertical }
 }
