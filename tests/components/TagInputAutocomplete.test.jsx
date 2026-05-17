@@ -268,6 +268,19 @@ describe('TagInputAutocomplete — A3 멀티선택/단일 교체', () => {
     fireEvent.mouseDown(screen.getByText('Hero'))
     expect(onChange).toHaveBeenCalledWith('Villain')
   })
+
+  it('character: 마지막 토큰이 확정 매칭이면 보존하고 새 옵션을 추가한다', () => {
+    const onChange = vi.fn()
+    const refs = [
+      { id: 1, type: 'character', name: 'Hero' },
+      { id: 2, type: 'character', name: 'Villain' },
+      { id: 3, type: 'character', name: 'Sidekick' },
+    ]
+    render(<TagInputAutocomplete {...baseProps} type="character" references={refs} value="Hero, Villain" onChange={onChange} />)
+    fireEvent.focus(screen.getByRole('textbox'))
+    fireEvent.mouseDown(screen.getByText('Sidekick'))
+    expect(onChange).toHaveBeenCalledWith('Hero, Villain, Sidekick')
+  })
 })
 
 describe('TagInputAutocomplete — A1 확정 선택 시 전체목록', () => {
