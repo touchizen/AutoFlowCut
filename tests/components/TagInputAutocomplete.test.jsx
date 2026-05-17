@@ -269,3 +269,28 @@ describe('TagInputAutocomplete — A3 멀티선택/단일 교체', () => {
     expect(onChange).toHaveBeenCalledWith('Villain')
   })
 })
+
+describe('TagInputAutocomplete — A1 확정 선택 시 전체목록', () => {
+  it('마지막 토큰이 ref 이름과 정확히 일치하면 전체 옵션을 보여준다', () => {
+    const refs = [
+      { id: 1, type: 'character', name: 'Hero' },
+      { id: 2, type: 'character', name: 'Villain' },
+    ]
+    render(<TagInputAutocomplete {...baseProps} type="character" references={refs} value="Hero" />)
+    fireEvent.focus(screen.getByRole('textbox'))
+    // Hero 가 확정 매칭이어도 Villain 이 계속 보여야 함
+    expect(screen.getByText('Hero')).toBeInTheDocument()
+    expect(screen.getByText('Villain')).toBeInTheDocument()
+  })
+
+  it('입력 중인 미완성 토큰은 여전히 필터링한다', () => {
+    const refs = [
+      { id: 1, type: 'character', name: 'Hero' },
+      { id: 2, type: 'character', name: 'Villain' },
+    ]
+    render(<TagInputAutocomplete {...baseProps} type="character" references={refs} value="vil" />)
+    fireEvent.focus(screen.getByRole('textbox'))
+    expect(screen.queryByText('Hero')).toBeNull()
+    expect(screen.getByText('Villain')).toBeInTheDocument()
+  })
+})

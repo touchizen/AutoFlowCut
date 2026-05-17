@@ -59,7 +59,10 @@ export default function TagInputAutocomplete({
   const isMulti = type === 'character'
 
   const { last } = splitLastToken(value)
-  const filterToken = last.trim().toLowerCase()
+  const lastTrimLower = last.trim().toLowerCase()
+  // 마지막 토큰이 알려진 옵션과 정확히 일치하면 = 확정 선택 → 필터 안 함 (전체 노출)
+  const isLastCommitted = lastTrimLower !== '' && optionValueSet.has(lastTrimLower)
+  const filterToken = isLastCommitted ? '' : lastTrimLower
 
   const filteredOptions = useMemo(() => {
     if (!filterToken) return allOptions
