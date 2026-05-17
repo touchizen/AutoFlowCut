@@ -34,7 +34,7 @@ export default function HoverImageBalloon({ anchorRect, src, className, alt = 'p
         visibility: pos ? 'visible' : 'hidden',
       }}
     >
-      <img src={src} alt={alt} onLoad={reposition} />
+      <img src={src} alt={alt} decoding="sync" onLoad={reposition} />
       {children}
     </div>,
     document.body
