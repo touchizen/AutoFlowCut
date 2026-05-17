@@ -294,3 +294,34 @@ describe('TagInputAutocomplete — A1 확정 선택 시 전체목록', () => {
     expect(screen.getByText('Villain')).toBeInTheDocument()
   })
 })
+
+describe('TagInputAutocomplete — A2 선택 항목 체크 표시', () => {
+  it('현재 값에 포함된 옵션에만 checked 클래스를 붙인다', () => {
+    const refs = [
+      { id: 1, type: 'character', name: 'Hero' },
+      { id: 2, type: 'character', name: 'Villain' },
+    ]
+    const { container } = render(
+      <TagInputAutocomplete {...baseProps} type="character" references={refs} value="Hero" />
+    )
+    fireEvent.focus(screen.getByRole('textbox'))
+    const options = [...container.querySelectorAll('.tag-autocomplete-option')]
+    const heroOpt = options.find(o => o.textContent.includes('Hero'))
+    const villainOpt = options.find(o => o.textContent.includes('Villain'))
+    expect(heroOpt.classList.contains('checked')).toBe(true)
+    expect(villainOpt.classList.contains('checked')).toBe(false)
+  })
+
+  it('멀티값(콤마)일 때 선택된 모든 토큰을 checked 처리한다', () => {
+    const refs = [
+      { id: 1, type: 'character', name: 'Hero' },
+      { id: 2, type: 'character', name: 'Villain' },
+    ]
+    const { container } = render(
+      <TagInputAutocomplete {...baseProps} type="character" references={refs} value="Hero,Villain" />
+    )
+    fireEvent.focus(screen.getByRole('textbox'))
+    const checked = container.querySelectorAll('.tag-autocomplete-option.checked')
+    expect(checked.length).toBe(2)
+  })
+})

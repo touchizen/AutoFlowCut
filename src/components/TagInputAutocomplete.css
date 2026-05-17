@@ -62,3 +62,12 @@
   color: var(--text-secondary, #888);
   font-style: italic;
 }
+.tag-autocomplete-check {
+  width: 16px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 11px;
+}
+.tag-autocomplete-option.checked {
+  background: var(--bg-hover, #3a3a3a);
+}

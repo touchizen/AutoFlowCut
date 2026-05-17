@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react'
 import { resolveImageSrc } from '../utils/formatters'
 import { toFileUrl } from '../hooks/useStyleThumbnails'
+import { splitTags } from '../utils/tagMatch'
 import './TagInputAutocomplete.css'
 
 // 마지막 토큰만 분리. splitTags와 동일한 separator(,;:) 사용.
@@ -69,6 +70,9 @@ export default function TagInputAutocomplete({
     return allOptions.filter(o => o.label.toLowerCase().includes(filterToken))
   }, [allOptions, filterToken])
 
+  // 현재 값에 선택된 토큰 집합 (소문자)
+  const selectedSet = useMemo(() => new Set(splitTags(value)), [value])
+
   // 옵션 리스트 변경 시 highlight reset (사용자가 타이핑할 때마다 -1로)
   useEffect(() => { setHighlightedIndex(-1) }, [filterToken])
 
@@ -130,27 +134,31 @@ export default function TagInputAutocomplete({
           {filteredOptions.length === 0 ? (
             <div className="tag-autocomplete-empty">{t('sceneList.noRefsForType')}</div>
           ) : (
-            filteredOptions.map((opt, i) => (
-              <div
-                key={`${opt.kind}-${i}`}
-                className={`tag-autocomplete-option ${opt.kind} ${i === highlightedIndex ? 'highlighted' : ''}`}
-                onMouseDown={(e) => {
-                  e.preventDefault()
-                  applyOption(opt)
-                }}
-                onMouseEnter={() => setHighlightedIndex(i)}
-              >
-                {opt.src ? (
-                  <img src={opt.src} alt="" className="tag-autocomplete-thumb" loading="lazy" />
-                ) : (
-                  <span className="tag-autocomplete-thumb empty" />
-                )}
-                <span className="tag-autocomplete-option-label">
-                  {opt.label}
-                  {opt.kind === 'preset' && <span className="preset-suffix"> (preset)</span>}
-                </span>
-              </div>
-            ))
+            filteredOptions.map((opt, i) => {
+              const checked = selectedSet.has(opt.value.toLowerCase())
+              return (
+                <div
+                  key={`${opt.kind}-${i}`}
+                  className={`tag-autocomplete-option ${opt.kind} ${i === highlightedIndex ? 'highlighted' : ''} ${checked ? 'checked' : ''}`}
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    applyOption(opt)
+                  }}
+                  onMouseEnter={() => setHighlightedIndex(i)}
+                >
+                  <span className="tag-autocomplete-check">{checked ? '✅' : ''}</span>
+                  {opt.src ? (
+                    <img src={opt.src} alt="" className="tag-autocomplete-thumb" loading="lazy" />
+                  ) : (
+                    <span className="tag-autocomplete-thumb empty" />
+                  )}
+                  <span className="tag-autocomplete-option-label">
+                    {opt.label}
+                    {opt.kind === 'preset' && <span className="preset-suffix"> (preset)</span>}
+                  </span>
+                </div>
+              )
+            })
           )}
         </div>
       )}
