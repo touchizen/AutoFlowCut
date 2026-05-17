@@ -562,6 +562,8 @@ export default function SceneList({
           t={t}
           projectName={projectName}
           aspectRatio={aspectRatio}
+          references={references}
+          styleThumbnails={styleThumbnails}
         />
       )}
 

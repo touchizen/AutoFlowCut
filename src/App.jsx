@@ -1389,6 +1389,8 @@ function App() {
           isGenerating={generatingSceneId === selectedScene.id}
           t={t}
           projectName={ensureProjectName()}
+          references={references}
+          styleThumbnails={styleThumbnails}
         />
       )}
 
