@@ -209,11 +209,11 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     }
 
     // 레퍼런스 상태 업데이트
-    setReferences(prev => prev.map((r, i) =>
-      i === index
-        ? { ...r, data: savedDataUrl, filePath, dataStorage: filePath ? 'file' : 'base64', mediaId, caption, status: 'done', errorMessage: null }
-        : r
-    ))
+    const donePatch = { data: savedDataUrl, filePath, dataStorage: filePath ? 'file' : 'base64', mediaId, caption, status: 'done', errorMessage: null }
+    setReferences(prev => prev.map((r, i) => i === index ? { ...r, ...donePatch } : r))
+    // 동기 갱신: 같은 batch flow 의 다음 phase(_prepareStyleRefs)가 React 재렌더 전에
+    // referencesRef.current 를 읽어도 방금 만든 style 카드의 mediaId 를 보장받게 한다.
+    referencesRef.current = referencesRef.current.map((r, i) => i === index ? { ...r, ...donePatch } : r)
     setGeneratingRefs(prev => prev.filter(i => i !== index))
     return { success: true, savedToMemory: filePath === null && settings.saveMode === 'folder' }
   }

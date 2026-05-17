@@ -44,14 +44,14 @@ export default function ReferencePanel({
   const [showBatchWizard, setShowBatchWizard] = useState(false)
   const [batchStartedAt, setBatchStartedAt] = useState(null)
 
-  // 생성 가능한 레퍼런스 (프롬프트 있고, 이미지 없음, 스타일 제외)
-  const generatableRefs = references.filter(r => r.prompt && !r.data && !r.filePath && r.type !== 'style')
+  // 생성 가능한 레퍼런스 (프롬프트 있고, 이미지 없음). 스타일 카드도 배치 대상.
+  const generatableRefs = references.filter(r => r.prompt && !r.data && !r.filePath)
   const isGenerating = generatingRefs.length > 0
 
-  // 진행률은 누적 기준 — 스타일 제외 · 프롬프트 있는 전체 중 완료된 개수.
+  // 진행률은 누적 기준 — 프롬프트 있는 전체(스타일 카드 포함) 중 완료된 개수.
   // 배치를 여러 번 나눠 돌려도 "N/total"이 일관되게 표시된다.
   // done 판정은 services/generationStatus의 공통 helper로 MCP와 정책 일치 (P2/P3 review v2/v3).
-  const eligibleRefs = references.filter(r => r.prompt && r.type !== 'style')
+  const eligibleRefs = references.filter(r => r.prompt)
   const totalEligible = eligibleRefs.length
   const doneCount = eligibleRefs.filter(isReferenceImageDone).length
   const errorCount = eligibleRefs.filter(r => r.status === 'error').length
