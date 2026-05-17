@@ -60,7 +60,7 @@ describe('TagInputAutocomplete — basic render', () => {
     expect(screen.getByText('Villain')).toBeInTheDocument()
   })
 
-  it('clicking an option replaces only the last token', () => {
+  it('character: clicking an option replaces the partial last token', () => {
     const onChange = vi.fn()
     const refs = [{ id: 1, type: 'character', name: 'Villain' }]
     render(<TagInputAutocomplete {...baseProps} references={refs} value="hero, vi" onChange={onChange} />)
@@ -254,5 +254,18 @@ describe('TagInputAutocomplete — A3 멀티선택/단일 교체', () => {
     fireEvent.focus(screen.getByRole('textbox'))
     fireEvent.mouseDown(screen.getByText('Pastel'))
     expect(onChange).toHaveBeenCalledWith('Pastel')
+  })
+
+  it('character: 멀티값에서 마지막이 아닌 토큰도 토글 해제된다', () => {
+    const onChange = vi.fn()
+    const refs = [
+      { id: 1, type: 'character', name: 'Hero' },
+      { id: 2, type: 'character', name: 'Villain' },
+    ]
+    // 마지막 토큰이 빈 문자열이면 모든 옵션이 표시되어 Hero를 클릭할 수 있다
+    render(<TagInputAutocomplete {...baseProps} type="character" references={refs} value="Hero, Villain, " onChange={onChange} />)
+    fireEvent.focus(screen.getByRole('textbox'))
+    fireEvent.mouseDown(screen.getByText('Hero'))
+    expect(onChange).toHaveBeenCalledWith('Villain')
   })
 })

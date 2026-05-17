@@ -3,12 +3,12 @@ import { resolveImageSrc } from '../utils/formatters'
 import { toFileUrl } from '../hooks/useStyleThumbnails'
 import './TagInputAutocomplete.css'
 
-// 마지막 토큰 + 그 앞의 prefix를 분리. splitTags와 동일한 separator(,;:) 사용.
+// 마지막 토큰만 분리. splitTags와 동일한 separator(,;:) 사용.
 function splitLastToken(value) {
-  if (!value) return { prefix: '', last: '' }
+  if (!value) return { last: '' }
   const match = value.match(/^(.*[,;:]\s*)(.*)$/)
-  if (match) return { prefix: match[1], last: match[2] }
-  return { prefix: '', last: value }
+  if (match) return { last: match[2] }
+  return { last: value }
 }
 
 export default function TagInputAutocomplete({
