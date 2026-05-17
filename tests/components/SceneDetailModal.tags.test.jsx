@@ -2,7 +2,7 @@
  * SceneDetailModal — 태그 입력이 TagInputAutocomplete 콤보로 동작하는지 검증
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 
 const mockGetHistory = vi.fn()
 vi.mock('../../src/hooks/useFileSystem', () => ({
