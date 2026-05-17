@@ -768,6 +768,25 @@ describe('useMcpServer — global handlers (regression guards)', () => {
 
     result.unmount()
   })
+
+  it('__mcpBatchStatus: prompt 없는 수동 업로드 ref가 done>total 모순을 만들지 않는다', () => {
+    // prompt 없이 mediaId만 있는 수동 업로드 ref — total(prompt 기준)엔 안 들어가는데
+    // done이 전체 references에 적용되면 done>total 모순. total/done은 같은 모집단이어야 한다.
+    const result = renderHook(() => useMcpServer(makeProps({
+      references: [
+        { id: 1, type: 'style', mediaId: 'm-1', status: 'done' },     // prompt 없음
+        { id: 2, type: 'character', mediaId: 'm-2', status: 'done' },  // prompt 없음
+      ],
+      generatingRefs: [],
+    })))
+    const ref = window.__mcpBatchStatus().ref
+    expect(ref.done).toBeLessThanOrEqual(ref.total)
+    // prompt 없는 ref는 total/done 양쪽 모두에서 제외
+    expect(ref.total).toBe(0)
+    expect(ref.done).toBe(0)
+
+    result.unmount()
+  })
 })
 
 describe("styleService — 'none' sentinel end-to-end", () => {

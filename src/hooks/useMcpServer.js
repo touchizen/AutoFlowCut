@@ -379,9 +379,11 @@ export function useMcpServer({
       const generating = scenes.filter(s => s.status === 'generating').length
       const error = scenes.filter(s => s.status === 'error').length
 
-      // 레퍼런스 배치 상태
-      const refTotal = references.filter(r => r.prompt).length
-      const refDone = references.filter(isReferenceUploadedDone).length
+      // 레퍼런스 배치 상태 — total/done 은 같은 모집단(refEligible)에서 계산해
+      // done ⊆ total 을 보장한다 (prompt 없는 수동 업로드 ref 가 done 만 키우는 모순 차단).
+      const refEligible = references.filter(r => r.prompt)
+      const refTotal = refEligible.length
+      const refDone = refEligible.filter(isReferenceUploadedDone).length
       const refGenerating = generatingRefs.length
       const refPending = Math.max(0, refTotal - refDone - refGenerating)
       // refBatchRunning prop은 preparing/stopping/generating 모두 포함 — P1 회귀 가드.
