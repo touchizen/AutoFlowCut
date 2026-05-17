@@ -261,7 +261,7 @@
   position: fixed;
   z-index: 3000;
   width: auto;
-  max-width: 90vw;
+  max-width: min(var(--balloon-avail-width, 100vw), 90vw);
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 10px;
@@ -279,6 +279,7 @@
 .sp-hover-balloon img {
   width: 100%;
   display: block;
+  max-height: var(--balloon-avail-height, 80vh);
 }
 
 .sp-hover-name {

@@ -280,7 +280,7 @@
   border: 1px solid var(--border-color, #444);
   border-radius: 8px;
   padding: 10px;
-  max-width: 320px;
+  max-width: min(var(--balloon-avail-width, 100vw), 320px);
   pointer-events: none;
   box-shadow: 0 4px 16px rgba(0,0,0,0.4);
 }
@@ -288,6 +288,7 @@
   width: 100%;
   border-radius: 6px;
   margin-bottom: 6px;
+  max-height: var(--balloon-avail-height, 100vh);
 }
 .scene-hover-prompt {
   font-size: 12px;

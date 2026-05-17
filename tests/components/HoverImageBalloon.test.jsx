@@ -84,6 +84,31 @@ describe('HoverImageBalloon', () => {
     expect(balloon.style.maxHeight).not.toBe('')
   })
 
+  it('wrapper 가 가용 공간을 CSS 변수로 노출한다 (--balloon-avail-width/height)', () => {
+    // 가용 공간을 인라인 max-width/height 로 박지 않고 CSS 변수로 노출 →
+    // 각 풍선 CSS 가 min(var(...), 디자인 상한) 으로 두 캡을 함께 적용할 수 있다.
+    render(
+      <HoverImageBalloon anchorRect={anchorRect} src={SRC} className="ref-hover-balloon" />
+    )
+    const balloon = document.querySelector('.ref-hover-balloon')
+    const availW = balloon.style.getPropertyValue('--balloon-avail-width')
+    const availH = balloon.style.getPropertyValue('--balloon-avail-height')
+    expect(availW).not.toBe('')
+    expect(availW.endsWith('px')).toBe(true)
+    expect(availH).not.toBe('')
+    expect(availH.endsWith('px')).toBe(true)
+  })
+
+  it('img 에 인라인 max-height 를 박지 않는다 (디자인 캡은 CSS 가 담당)', () => {
+    render(
+      <HoverImageBalloon anchorRect={anchorRect} src={SRC} className="ref-hover-balloon" />
+    )
+    const img = document.querySelector('.ref-hover-balloon img')
+    expect(img.style.maxHeight).toBe('')
+    expect(img.style.maxWidth).toBe('100%')
+    expect(img.style.objectFit).toBe('contain')
+  })
+
   it('anchorRect 가 없으면 아무것도 렌더하지 않는다', () => {
     const { container } = render(
       <HoverImageBalloon anchorRect={null} src={SRC} className="ref-hover-balloon" />

@@ -450,7 +450,7 @@
   position: fixed;
   z-index: 3000;
   width: auto;
-  max-width: 90vw;
+  max-width: min(var(--balloon-avail-width, 100vw), 90vw);
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 10px;
@@ -463,7 +463,7 @@
 .ref-hover-balloon img {
   display: block;
   max-width: 100%;
-  max-height: 80vh;
+  max-height: min(var(--balloon-avail-height, 100vh), 80vh);
 }
 
 @keyframes ref-balloon-in {

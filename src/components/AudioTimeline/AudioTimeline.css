@@ -756,7 +756,7 @@
   border: 1px solid #4a4a4a;
   border-radius: 6px;
   padding: 8px;
-  max-width: 280px;
+  max-width: min(var(--balloon-avail-width, 100vw), 280px);
   pointer-events: none;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
 }
@@ -765,7 +765,7 @@
   width: 100%;
   height: auto;
   border-radius: 4px;
-  max-height: 180px;
+  max-height: min(var(--balloon-avail-height, 100vh), 180px);
   object-fit: cover;
 }
 .atl-tooltip-sub {
