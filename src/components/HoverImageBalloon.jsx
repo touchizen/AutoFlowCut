@@ -13,8 +13,18 @@ import { computeBalloonPosition } from '../utils/balloonPosition'
  */
 export default function HoverImageBalloon({ anchorRect, src, className, alt = 'preview', imgClassName, children }) {
   if (!anchorRect) return null
+  // 풍선은 AutoCraft 앱 패널(.app-content-split) 안에만 머문다 — 패널 바깥 영역은
+  // 네이티브 Flow WebContentsView 가 깔려 있어 DOM 풍선이 그 뒤로 가려진다.
+  const panelEl = typeof document !== 'undefined' ? document.querySelector('.app-content-split') : null
+  const bounds = panelEl
+    ? (() => {
+        const r = panelEl.getBoundingClientRect()
+        return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }
+      })()
+    : { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight }
   const { maxWidth, maxHeight, ...boxStyle } = computeBalloonPosition({
     anchor: anchorRect,
+    bounds,
     viewport: { width: window.innerWidth, height: window.innerHeight },
   })
   return createPortal(
