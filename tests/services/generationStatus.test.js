@@ -56,8 +56,13 @@ describe('isReferenceUploadedDone (MCP domain — mediaId 기준)', () => {
     expect(isReferenceUploadedDone({ status: 'pending', mediaId: 'm-1' })).toBe(false)
   })
 
-  it("type === 'style'은 항상 done 아님 (batch 대상 아님)", () => {
-    expect(isReferenceUploadedDone({ type: 'style', mediaId: 'm-1' })).toBe(false)
+  it("type === 'style' 카드도 다른 ref와 동일하게 카운트 (batch 대상)", () => {
+    // style 카드도 batch가 생성하므로 mediaId + non-in-flight면 done.
+    expect(isReferenceUploadedDone({ type: 'style', mediaId: 'm-1' })).toBe(true)
+    // in-flight style은 여전히 done 아님
+    expect(isReferenceUploadedDone({ type: 'style', status: 'generating', mediaId: 'm-1' })).toBe(false)
+    // mediaId 없는 style은 done 아님
+    expect(isReferenceUploadedDone({ type: 'style' })).toBe(false)
   })
 
   it('mediaId 자체가 없으면 done 아님', () => {

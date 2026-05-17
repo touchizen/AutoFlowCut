@@ -380,7 +380,7 @@ export function useMcpServer({
       const error = scenes.filter(s => s.status === 'error').length
 
       // 레퍼런스 배치 상태
-      const refTotal = references.filter(r => r.type !== 'style').length
+      const refTotal = references.filter(r => r.prompt).length
       const refDone = references.filter(isReferenceUploadedDone).length
       const refGenerating = generatingRefs.length
       const refPending = Math.max(0, refTotal - refDone - refGenerating)

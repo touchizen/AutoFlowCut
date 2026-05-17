@@ -30,7 +30,6 @@ export function isSceneGenerationDone(scene) {
  */
 export function isReferenceUploadedDone(ref) {
   if (!ref) return false
-  if (ref.type === 'style') return false  // style은 batch 대상 아님
   if (ref.status === 'pending' || ref.status === 'generating' || ref.status === 'error') {
     return false
   }

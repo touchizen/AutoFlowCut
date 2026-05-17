@@ -733,6 +733,41 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     // Cleanup
     result.unmount()
   })
+
+  // --- 회귀 가드: style 카드도 batch가 생성하므로 ref status에 포함돼야 ---
+  // 이전엔 style을 batch 대상 아님으로 취급 → style-only batch가 { total: 0, generating: 1 }
+  // 같은 모순된 상태를 보고함. style을 prompt 기준 total에 포함 + done helper로 카운트.
+
+  it('__mcpBatchStatus counts a generating style card in ref.total (not 0)', () => {
+    // style 카드 1개, prompt 있음, index 0이 생성 중 (generatingRefs).
+    const result = renderHook(() => useMcpServer(makeProps({
+      references: [{ id: 1, type: 'style', prompt: 'noir vibes' }],
+      generatingRefs: [0],
+    })))
+    const ref = window.__mcpBatchStatus().ref
+    // total은 style을 포함 → 최소 1 (예전 회귀에선 0)
+    expect(ref.total).toBeGreaterThanOrEqual(1)
+    expect(ref.generating).toBeGreaterThanOrEqual(1)
+    // 내부 일관성: generating이 total을 넘지 않음, done은 아직 0
+    expect(ref.total).toBeGreaterThanOrEqual(ref.generating)
+    expect(ref.done).toBe(0)
+
+    result.unmount()
+  })
+
+  it('__mcpBatchStatus counts a completed style card in ref.done', () => {
+    // style 카드 완료: mediaId 있음, status done, generatingRefs 비어있음.
+    const result = renderHook(() => useMcpServer(makeProps({
+      references: [{ id: 1, type: 'style', prompt: 'noir vibes', status: 'done', mediaId: 'm-1' }],
+      generatingRefs: [],
+    })))
+    const ref = window.__mcpBatchStatus().ref
+    expect(ref.total).toBeGreaterThanOrEqual(1)
+    expect(ref.done).toBeGreaterThanOrEqual(1)
+    expect(ref.generating).toBe(0)
+
+    result.unmount()
+  })
 })
 
 describe("styleService — 'none' sentinel end-to-end", () => {
