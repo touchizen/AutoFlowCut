@@ -565,9 +565,12 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     await runPhase(styleIndices, null)
 
     // Phase 2: non-style refs — resolve style AFTER phase 1 so freshly-generated
-    // style cards are picked up by the auto-fallback.
-    const batchEffectiveStyleId = _resolveEffectiveStyleId(overrideStyleId)
-    await runPhase(nonStyleIndices, batchEffectiveStyleId)
+    // style cards are picked up by the auto-fallback. 스타일 단계 도중 사용자가
+    // 중단했다면 비스타일 단계는 통째로 건너뛴다 (중복 stop 토스트 + 무의미한 호출 방지).
+    if (!stopRequestedRef.current) {
+      const batchEffectiveStyleId = _resolveEffectiveStyleId(overrideStyleId)
+      await runPhase(nonStyleIndices, batchEffectiveStyleId)
+    }
 
     await flowAPI.clearGenerations()
 
