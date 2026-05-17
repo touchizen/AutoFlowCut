@@ -7,6 +7,7 @@ import { STYLE_PRESETS } from '../config/defaults'
 import { resolveImageSrc, hasImageData, formatElapsedMs } from '../utils/formatters'
 import { toFileUrl } from '../hooks/useStyleThumbnails'
 import { useElapsedTimer } from '../hooks/useElapsedTimer'
+import HoverImageBalloon from './HoverImageBalloon'
 import './StylePicker.css'
 
 const ALL_CATEGORY = '__all__'
@@ -175,8 +176,7 @@ export default function StylePicker({
                       const rect = e.currentTarget.getBoundingClientRect()
                       setHoverPreview({
                         style, thumb,
-                        x: rect.right + 8,
-                        y: rect.top
+                        rect: { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }
                       })
                     }}
                     onMouseLeave={() => setHoverPreview(null)}
@@ -220,16 +220,13 @@ export default function StylePicker({
       </div>
       {/* 호버 풍선 미리보기 */}
       {hoverPreview && (
-        <div
+        <HoverImageBalloon
+          anchorRect={hoverPreview.rect}
+          src={toFileUrl(hoverPreview.thumb)}
           className="sp-hover-balloon"
-          style={{
-            top: Math.min(hoverPreview.y, window.innerHeight - 320),
-            left: Math.min(hoverPreview.x, window.innerWidth - 280)
-          }}
         >
-          <img src={toFileUrl(hoverPreview.thumb)} alt="" />
           <div className="sp-hover-name">{isKo ? hoverPreview.style.name_ko : hoverPreview.style.name_en}</div>
-        </div>
+        </HoverImageBalloon>
       )}
 
       {/* 미리보기 모달 */}

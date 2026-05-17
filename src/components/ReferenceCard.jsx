@@ -3,10 +3,10 @@
  */
 
 import { useState, useRef, useEffect } from 'react'
-import { createPortal } from 'react-dom'
 import { REFERENCE_TYPES } from '../config/defaults'
 import { getRatioClass, resolveImageSrc, hasImageData, formatElapsed } from '../utils/formatters'
 import { useElapsedTimer } from '../hooks/useElapsedTimer'
+import HoverImageBalloon from './HoverImageBalloon'
 
 // 초시계 아이콘 — ResultsTable / FrameToVideoPanel 과 동일 스타일
 function StopwatchIcon({ size = 16 }) {
@@ -217,7 +217,9 @@ export default function ReferenceCard({
             alt={reference.name || 'Reference'}
             onMouseEnter={(e) => {
               const rect = e.currentTarget.getBoundingClientRect()
-              setHoverPreview({ x: rect.right + 8, y: rect.top })
+              setHoverPreview({
+                rect: { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }
+              })
             }}
             onMouseLeave={() => setHoverPreview(null)}
           />
@@ -265,17 +267,12 @@ export default function ReferenceCard({
       )}
 
       {/* 호버 풍선 프리뷰 */}
-      {hoverPreview && hasRefImage && createPortal(
-        <div
+      {hoverPreview && hasRefImage && (
+        <HoverImageBalloon
+          anchorRect={hoverPreview.rect}
+          src={refImgSrc}
           className="ref-hover-balloon"
-          style={{
-            left: Math.min(hoverPreview.x, window.innerWidth - 420),
-            top: Math.max(0, Math.min(hoverPreview.y, window.innerHeight - 400))
-          }}
-        >
-          <img src={refImgSrc} alt="preview" />
-        </div>,
-        document.body
+        />
       )}
     </div>
   )

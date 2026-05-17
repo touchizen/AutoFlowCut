@@ -4,13 +4,13 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { createPortal } from 'react-dom'
 import { useI18n } from '../hooks/useI18n'
 import { useElapsedTimer } from '../hooks/useElapsedTimer'
 import { getRatioClass, resolveImageSrc, hasImageData, formatElapsed } from '../utils/formatters'
 import { resolveVideoSrc } from '../utils/videoSrc'
 import { resolveDisplayError } from '../utils/errorDisplay'
 import InfinityLoader from './InfinityLoader'
+import HoverImageBalloon from './HoverImageBalloon'
 
 /** 초시계 아이콘 — 초침이 실시간 회전 */
 function StopwatchIcon({ size = 18 }) {
@@ -126,7 +126,10 @@ export default function ResultsTable({
           className="result-thumbnail"
           onMouseEnter={(e) => {
             const rect = e.currentTarget.getBoundingClientRect()
-            setHoverPreview({ src: e.currentTarget.src, x: rect.right + 8, y: rect.top })
+            setHoverPreview({
+              src: e.currentTarget.src,
+              rect: { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }
+            })
           }}
           onMouseLeave={() => setHoverPreview(null)}
         />
@@ -345,17 +348,12 @@ export default function ResultsTable({
       </div>
 
       {/* 호버 풍선 프리뷰 */}
-      {hoverPreview && createPortal(
-        <div
+      {hoverPreview && (
+        <HoverImageBalloon
+          anchorRect={hoverPreview.rect}
+          src={hoverPreview.src}
           className="ref-hover-balloon"
-          style={{
-            left: Math.min(hoverPreview.x, window.innerWidth - 420),
-            top: Math.max(0, Math.min(hoverPreview.y, window.innerHeight - 400))
-          }}
-        >
-          <img src={hoverPreview.src} alt="preview" decoding="sync" />
-        </div>,
-        document.body
+        />
       )}
     </div>
   )

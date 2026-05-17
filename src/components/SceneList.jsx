@@ -3,7 +3,6 @@
  */
 
 import { useState, useRef, useEffect } from 'react'
-import { createPortal } from 'react-dom'
 import { useI18n } from '../hooks/useI18n'
 import { formatTime, getRatioClass, resolveImageSrc, hasImageData } from '../utils/formatters'
 import { checkTagMatch } from '../utils/tagMatch'
@@ -15,6 +14,7 @@ import VideoDetailModal from './VideoDetailModal'
 import TagBatchModal from './TagBatchModal'
 import TagInputAutocomplete from './TagInputAutocomplete'
 import InfinityLoader from './InfinityLoader'
+import HoverImageBalloon from './HoverImageBalloon'
 import './SceneList.css'
 
 function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, onShowDetail, onShowVideoDetail, references, onOpenTag, styleThumbnails = {} }) {
@@ -250,7 +250,10 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
                 alt={`Scene ${index + 1}`}
                 onMouseEnter={(e) => {
                   const rect = e.currentTarget.getBoundingClientRect()
-                  setHoverPreview({ src: imgSrc, x: rect.right + 8, y: rect.top })
+                  setHoverPreview({
+                    src: imgSrc,
+                    rect: { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }
+                  })
                 }}
                 onMouseLeave={() => setHoverPreview(null)}
               />
@@ -350,17 +353,12 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
       </td>
 
       {/* 호버 풍선 프리뷰 */}
-      {hoverPreview && createPortal(
-        <div
+      {hoverPreview && (
+        <HoverImageBalloon
+          anchorRect={hoverPreview.rect}
+          src={hoverPreview.src}
           className="ref-hover-balloon"
-          style={{
-            left: Math.min(hoverPreview.x, window.innerWidth - 420),
-            top: Math.max(0, Math.min(hoverPreview.y, window.innerHeight - 400))
-          }}
-        >
-          <img src={hoverPreview.src} alt="preview" />
-        </div>,
-        document.body
+        />
       )}
     </tr>
   )
