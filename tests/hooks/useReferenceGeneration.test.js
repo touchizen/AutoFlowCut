@@ -290,7 +290,7 @@ describe('useReferenceGeneration 로직', () => {
         expect(generatableIndices).toHaveLength(0)
       })
 
-      it('force=true: 완료된 ref (data, filePath, status=done)도 포함, type=style은 제외', () => {
+      it('force=true: 완료된 ref (data, filePath, status=done)도 포함, style은 styleIndices로 분리 선택', () => {
         const references = [
           { name: 'alice', prompt: 'Alice', data: 'base64...', status: 'done' },
           { name: 'bob', prompt: 'Bob', data: null, status: 'pending' },
@@ -298,16 +298,26 @@ describe('useReferenceGeneration 로직', () => {
           { name: 'style1', prompt: 'Style prompt', type: 'style', data: 'base64...' },
           { name: 'david', prompt: '', data: null }, // prompt 없음 → 제외
         ]
+        const force = true
 
-        // 실 구현(force=true 분기)과 같은 필터
-        const generatableIndices = references
+        // 실 구현(_executeBatchRefs)의 pickIndices 와 같은 필터
+        const pickIndices = (typeMatches) => references
           .map((ref, index) => {
-            if (!ref.prompt || ref.type === 'style') return -1
-            return index  // force=true: status / data / filePath 무관
+            if (!ref.prompt || !typeMatches(ref.type)) return -1
+            if (force) return index
+            return (!ref.data && !ref.filePath && ref.status !== 'done') ? index : -1
           })
           .filter(i => i !== -1)
 
-        expect(generatableIndices).toEqual([0, 1, 2])
+        const styleIndices = pickIndices(ty => ty === 'style')
+        const nonStyleIndices = pickIndices(ty => ty !== 'style')
+
+        // style ref 는 이제 배치에 포함된다 — styleIndices 로 분리 선택
+        expect(styleIndices).toEqual([3])
+        // non-style ref 는 별도 phase 로
+        expect(nonStyleIndices).toEqual([0, 1, 2])
+        // style 이 먼저 — allIndices = [...style, ...nonStyle]
+        expect([...styleIndices, ...nonStyleIndices]).toEqual([3, 0, 1, 2])
       })
 
       it('force=true: done/error ref를 pending으로 status 리셋 (이미지 필드는 유지)', () => {

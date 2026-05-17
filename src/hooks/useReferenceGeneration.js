@@ -325,15 +325,20 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
   //                       prompt 있고 type !== 'style'인 모든 ref가 대상.
   // force=false (기본): 기존 동작 — image 없고 pending/error/idle 상태인 ref만.
   const _executeBatchRefs = async (overrideStyleId = null, force = false) => {
-    const generatableIndices = referencesRef.current
+    // 타입 predicate 로 인덱스 선택 — style / non-style 을 분리 추출.
+    const pickIndices = (typeMatches) => referencesRef.current
       .map((ref, index) => {
-        if (!ref.prompt || ref.type === 'style') return -1
+        if (!ref.prompt || !typeMatches(ref.type)) return -1
         if (force) return index
         return (!ref.data && !ref.filePath && ref.status !== 'done') ? index : -1
       })
       .filter(i => i !== -1)
 
-    if (generatableIndices.length === 0) {
+    const styleIndices = pickIndices(ty => ty === 'style')
+    const nonStyleIndices = pickIndices(ty => ty !== 'style')
+    const allIndices = [...styleIndices, ...nonStyleIndices]
+
+    if (allIndices.length === 0) {
       toast.info(t('toast.allRefsGenerated'))
       return
     }
@@ -341,7 +346,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     // force=true 재생성: done/error 상태 ref를 pending으로 리셋해 UI에 재생성 시작이 보이게 함.
     // data/filePath/mediaId는 유지 — 새 이미지가 도착할 때까지 이전 결과를 노출하면 비교 가능.
     if (force) {
-      const idxSet = new Set(generatableIndices)
+      const idxSet = new Set(allIndices)
       setReferences(prev => prev.map((r, i) => {
         if (!idxSet.has(i)) return r
         if (r.status === 'done' || r.status === 'error') {
@@ -384,173 +389,185 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     // 토큰 확인
     if (!(await checkAuthToken(flowAPI, t))) return
 
-    // 비동기 대기열
-    const pendingQueue = []
+    // ─── 단일 배치 phase 의 lifecycle (제출 → 폴링 → 정리) ───
+    // style phase / non-style phase 가 각각 fresh 큐로 호출한다.
+    const runPhase = async (indices, effectiveStyleId) => {
+      if (indices.length === 0) return
 
-    // 완료된 결과 수집 + 후처리
-    //
-    // 세 단계로 동작 — splice 타이밍에 주의:
-    //   1) 상태 확인 (sequential) — checkGeneration 은 가벼운 HTTP. 병렬로 묶으면
-    //      Flow 측 rate limit 위험이 있어 그대로 순차. 큐에서 아직 제거하지 않음.
-    //   2) 후처리 (parallel) — 같은 폴링 창에 N개가 완료된 경우, 각 항목의 후처리
-    //      (upscale → uploadReference → save → history → setReferences) 는 서로
-    //      독립적이라 Promise.all 로 동시 실행.
-    //   3) 성공 항목만 큐에서 제거 — 후처리 throw 한 항목은 큐에 남겨둬서 Phase 2
-    //      타임아웃 cleanup 이 'error' 또는 'pending' 으로 정리하도록 함. (이전 직렬
-    //      구현이 제공하던 안전망: processAsyncResult 가 throw 하면 splice 도달 못
-    //      해서 큐에 남는 동작과 의미적으로 동일.)
-    //
-    //  setReferences/setGeneratingRefs 는 함수형 업데이트라 race-safe.
-    //  hasPendingSaves 는 OR 누적이라 race-safe.
-    //  단일 항목 완료 시엔 병렬 효과 없음 — 다중 클러스터 완료 시 wall-clock 단축.
-    const collectCompleted = async () => {
-      // Phase 1: 완료된 항목 식별 (큐에서 아직 제거하지 않음)
-      const completed = []
-      for (let i = pendingQueue.length - 1; i >= 0; i--) {
-        const pending = pendingQueue[i]
-        try {
-          const status = await flowAPI.checkGeneration(pending.generationId)
-          if (status?.success && status.completed) {
-            completed.push(pending)
-          }
-        } catch (e) {
-          console.warn('[GenerateAllRefs] Check failed for gen:', pending.generationId, e.message)
-        }
-      }
+      // 비동기 대기열
+      const pendingQueue = []
+      let submitFailCount = 0
 
-      if (completed.length === 0) return
-      if (completed.length > 1) {
-        console.log('[GenerateAllRefs] Processing', completed.length, 'completed in parallel')
-      }
-
-      // Phase 2: 후처리 — 동시성 5 제한 (useAutomation 자동 업로드 경로와 동일 한계).
-      // 무제한 Promise.all 시 같은 폴링 창에 N개 완료된 ref 가 모두 동시에 Flow 를 두드려
-      // 429 rate-limit risk. 성공한 항목만 succeeded set 에 등록 — 실패는 큐에 남겨
-      // Phase 2 타임아웃 cleanup 으로 위임 (직렬 구현 안전망 보존).
-      const succeeded = new Set()
-      await mapWithConcurrency(completed, async (pending) => {
-        try {
-          console.log('[GenerateAllRefs] Collecting completed gen:', pending.generationId, 'index:', pending.index)
-          const result = await processAsyncResult(pending.generationId, pending.index, pending.ref)
-          if (result?.savedToMemory) hasPendingSaves = true
-          succeeded.add(pending)
-        } catch (e) {
-          console.error('[GenerateAllRefs] Post-processing failed for gen:', pending.generationId, e?.message || e)
-        }
-      }, 5)
-
-      // Phase 3: 성공한 항목만 큐에서 제거 (역순 splice 로 인덱스 안정성 유지)
-      if (succeeded.size > 0) {
+      // 완료된 결과 수집 + 후처리
+      //
+      // 세 단계로 동작 — splice 타이밍에 주의:
+      //   1) 상태 확인 (sequential) — checkGeneration 은 가벼운 HTTP. 병렬로 묶으면
+      //      Flow 측 rate limit 위험이 있어 그대로 순차. 큐에서 아직 제거하지 않음.
+      //   2) 후처리 (parallel) — 같은 폴링 창에 N개가 완료된 경우, 각 항목의 후처리
+      //      (upscale → uploadReference → save → history → setReferences) 는 서로
+      //      독립적이라 Promise.all 로 동시 실행.
+      //   3) 성공 항목만 큐에서 제거 — 후처리 throw 한 항목은 큐에 남겨둬서 Phase 2
+      //      타임아웃 cleanup 이 'error' 또는 'pending' 으로 정리하도록 함. (이전 직렬
+      //      구현이 제공하던 안전망: processAsyncResult 가 throw 하면 splice 도달 못
+      //      해서 큐에 남는 동작과 의미적으로 동일.)
+      //
+      //  setReferences/setGeneratingRefs 는 함수형 업데이트라 race-safe.
+      //  hasPendingSaves 는 OR 누적이라 race-safe.
+      //  단일 항목 완료 시엔 병렬 효과 없음 — 다중 클러스터 완료 시 wall-clock 단축.
+      const collectCompleted = async () => {
+        // Phase 1: 완료된 항목 식별 (큐에서 아직 제거하지 않음)
+        const completed = []
         for (let i = pendingQueue.length - 1; i >= 0; i--) {
-          if (succeeded.has(pendingQueue[i])) pendingQueue.splice(i, 1)
+          const pending = pendingQueue[i]
+          try {
+            const status = await flowAPI.checkGeneration(pending.generationId)
+            if (status?.success && status.completed) {
+              completed.push(pending)
+            }
+          } catch (e) {
+            console.warn('[GenerateAllRefs] Check failed for gen:', pending.generationId, e.message)
+          }
+        }
+
+        if (completed.length === 0) return
+        if (completed.length > 1) {
+          console.log('[GenerateAllRefs] Processing', completed.length, 'completed in parallel')
+        }
+
+        // Phase 2: 후처리 — 동시성 5 제한 (useAutomation 자동 업로드 경로와 동일 한계).
+        // 무제한 Promise.all 시 같은 폴링 창에 N개 완료된 ref 가 모두 동시에 Flow 를 두드려
+        // 429 rate-limit risk. 성공한 항목만 succeeded set 에 등록 — 실패는 큐에 남겨
+        // Phase 2 타임아웃 cleanup 으로 위임 (직렬 구현 안전망 보존).
+        const succeeded = new Set()
+        await mapWithConcurrency(completed, async (pending) => {
+          try {
+            console.log('[GenerateAllRefs] Collecting completed gen:', pending.generationId, 'index:', pending.index)
+            const result = await processAsyncResult(pending.generationId, pending.index, pending.ref)
+            if (result?.savedToMemory) hasPendingSaves = true
+            succeeded.add(pending)
+          } catch (e) {
+            console.error('[GenerateAllRefs] Post-processing failed for gen:', pending.generationId, e?.message || e)
+          }
+        }, 5)
+
+        // Phase 3: 성공한 항목만 큐에서 제거 (역순 splice 로 인덱스 안정성 유지)
+        if (succeeded.size > 0) {
+          for (let i = pendingQueue.length - 1; i >= 0; i--) {
+            if (succeeded.has(pendingQueue[i])) pendingQueue.splice(i, 1)
+          }
         }
       }
-    }
 
-    // 스타일 결정 (공통 함수)
-    const batchEffectiveStyleId = _resolveEffectiveStyleId(overrideStyleId)
+      // ─── Phase 1: 비동기 제출 (fire-and-forget) ───
+      console.log('[GenerateAllRefs] Starting async batch for', indices.length, 'refs')
 
-    // ─── Phase 1: 비동기 제출 (fire-and-forget) ───
-    setPreparingRefs(false)
-    console.log('[GenerateAllRefs] Starting async batch for', generatableIndices.length, 'refs')
-    let submitFailCount = 0
-
-    for (const index of generatableIndices) {
-      if (stopRequestedRef.current) {
-        console.log('[GenerateAllRefs] Stop requested by user')
-        toast.info(t('toast.batchStopped'))
-        break
-      }
-
-      try {
-        await collectCompleted()
-
-        const ref = referencesRef.current[index]
-        if (!ref) {
-          console.warn('[GenerateAllRefs] Ref not found at index:', index, '— skipping')
-          continue
+      for (const index of indices) {
+        if (stopRequestedRef.current) {
+          console.log('[GenerateAllRefs] Stop requested by user')
+          toast.info(t('toast.batchStopped'))
+          break
         }
-        const { styledPrompt, styleRefImages } = await _prepareStyleRefs(ref, batchEffectiveStyleId, '[GenerateAllRefs]')
 
-        setGeneratingRefs(prev => [...prev, index])
-        setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'generating', errorMessage: null, generatingStartedAt: Date.now(), generatingEndedAt: null } : r))
+        try {
+          await collectCompleted()
 
-        const batchSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
-          ? settings.seedNo
-          : null
-        const submitResult = await flowAPI.submitGenerationDOM(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: batchSeed, aspectRatio: settings.aspectRatio })
+          const ref = referencesRef.current[index]
+          if (!ref) {
+            console.warn('[GenerateAllRefs] Ref not found at index:', index, '— skipping')
+            continue
+          }
+          const { styledPrompt, styleRefImages } = await _prepareStyleRefs(ref, effectiveStyleId, '[GenerateAllRefs]')
 
-        if (submitResult?.success && submitResult.generationId) {
-          pendingQueue.push({ generationId: submitResult.generationId, index, ref })
-          console.log('[GenerateAllRefs] Submitted index:', index, 'gen:', submitResult.generationId)
-          submitFailCount = 0
-        } else {
-          console.warn('[GenerateAllRefs] Submit failed for index:', index, submitResult?.error)
+          setGeneratingRefs(prev => [...prev, index])
+          setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'generating', errorMessage: null, generatingStartedAt: Date.now(), generatingEndedAt: null } : r))
+
+          const batchSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
+            ? settings.seedNo
+            : null
+          const submitResult = await flowAPI.submitGenerationDOM(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: batchSeed, aspectRatio: settings.aspectRatio })
+
+          if (submitResult?.success && submitResult.generationId) {
+            pendingQueue.push({ generationId: submitResult.generationId, index, ref })
+            console.log('[GenerateAllRefs] Submitted index:', index, 'gen:', submitResult.generationId)
+            submitFailCount = 0
+          } else {
+            console.warn('[GenerateAllRefs] Submit failed for index:', index, submitResult?.error)
+            setGeneratingRefs(prev => prev.filter(i => i !== index))
+            setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: submitResult?.error || 'Submit failed' } : r))
+            submitFailCount++
+
+            if (submitFailCount >= 3) {
+              toast.error(t('toast.serverErrorPersist'))
+              break
+            }
+          }
+
+          // AutoFlow 스타일 대기 (7~15초) — 마지막이 아닐 때만
+          if (index !== indices[indices.length - 1]) {
+            const delay = 7000 + Math.random() * 8000
+            console.log('[GenerateAllRefs] Waiting', Math.round(delay / 1000), 's before next submit...')
+            await new Promise(r => setTimeout(r, delay))
+          }
+        } catch (err) {
+          console.error('[GenerateAllRefs] Error processing index:', index, err)
           setGeneratingRefs(prev => prev.filter(i => i !== index))
-          setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: submitResult?.error || 'Submit failed' } : r))
+          setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: err.message || 'Unexpected error' } : r))
           submitFailCount++
-
           if (submitFailCount >= 3) {
+            console.error('[GenerateAllRefs] 3 consecutive errors — aborting batch')
             toast.error(t('toast.serverErrorPersist'))
             break
           }
         }
+      }
 
-        // AutoFlow 스타일 대기 (7~15초) — 마지막이 아닐 때만
-        if (index !== generatableIndices[generatableIndices.length - 1]) {
-          const delay = 7000 + Math.random() * 8000
-          console.log('[GenerateAllRefs] Waiting', Math.round(delay / 1000), 's before next submit...')
-          await new Promise(r => setTimeout(r, delay))
-        }
-      } catch (err) {
-        console.error('[GenerateAllRefs] Error processing index:', index, err)
-        setGeneratingRefs(prev => prev.filter(i => i !== index))
-        setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: err.message || 'Unexpected error' } : r))
-        submitFailCount++
-        if (submitFailCount >= 3) {
-          console.error('[GenerateAllRefs] 3 consecutive errors — aborting batch')
-          toast.error(t('toast.serverErrorPersist'))
+      // ─── Phase 2: 남은 결과 전부 수집 (폴링) ───
+      console.log('[GenerateAllRefs] All submitted. Waiting for', pendingQueue.length, 'remaining results...')
+      const maxWait = 180000
+      const pollStart = Date.now()
+
+      while (pendingQueue.length > 0 && Date.now() - pollStart < maxWait) {
+        if (stopRequestedRef.current) {
+          console.log('[GenerateAllRefs] Stop requested during collection')
+          toast.info(t('toast.batchStopped'))
           break
         }
+        await new Promise(r => setTimeout(r, 3000))
+        await collectCompleted()
+      }
+
+      // 미수집 항목 정리
+      // 사용자 중단(stop) vs. 진짜 타임아웃은 다른 사건이다.
+      //   - 중단: pending 상태로 되돌려 재실행 가능하게 (errorMessage 비움)
+      //   - 타임아웃: error 상태로 마킹 (사용자가 무엇이 실패했는지 인지)
+      if (pendingQueue.length > 0) {
+        const userStopped = stopRequestedRef.current
+        if (userStopped) {
+          console.log('[GenerateAllRefs] User stopped — reverting', pendingQueue.length, 'pending generations to idle')
+        } else {
+          console.warn('[GenerateAllRefs] Timed out waiting for', pendingQueue.length, 'generations')
+        }
+        for (const pending of pendingQueue) {
+          setGeneratingRefs(prev => prev.filter(i => i !== pending.index))
+          setReferences(prev => prev.map((r, i) => {
+            if (i !== pending.index) return r
+            return userStopped
+              ? { ...r, status: 'pending', errorMessage: null }
+              : { ...r, status: 'error', errorMessage: 'Timed out' }
+          }))
+        }
       }
     }
 
-    // ─── Phase 2: 남은 결과 전부 수집 (폴링) ───
-    console.log('[GenerateAllRefs] All submitted. Waiting for', pendingQueue.length, 'remaining results...')
-    const maxWait = 180000
-    const pollStart = Date.now()
+    setPreparingRefs(false)
 
-    while (pendingQueue.length > 0 && Date.now() - pollStart < maxWait) {
-      if (stopRequestedRef.current) {
-        console.log('[GenerateAllRefs] Stop requested during collection')
-        toast.info(t('toast.batchStopped'))
-        break
-      }
-      await new Promise(r => setTimeout(r, 3000))
-      await collectCompleted()
-    }
+    // Phase 1: style refs first — they generate standalone (no style applied to a style ref).
+    await runPhase(styleIndices, null)
 
-    // 미수집 항목 정리
-    // 사용자 중단(stop) vs. 진짜 타임아웃은 다른 사건이다.
-    //   - 중단: pending 상태로 되돌려 재실행 가능하게 (errorMessage 비움)
-    //   - 타임아웃: error 상태로 마킹 (사용자가 무엇이 실패했는지 인지)
-    if (pendingQueue.length > 0) {
-      const userStopped = stopRequestedRef.current
-      if (userStopped) {
-        console.log('[GenerateAllRefs] User stopped — reverting', pendingQueue.length, 'pending generations to idle')
-      } else {
-        console.warn('[GenerateAllRefs] Timed out waiting for', pendingQueue.length, 'generations')
-      }
-      for (const pending of pendingQueue) {
-        setGeneratingRefs(prev => prev.filter(i => i !== pending.index))
-        setReferences(prev => prev.map((r, i) => {
-          if (i !== pending.index) return r
-          return userStopped
-            ? { ...r, status: 'pending', errorMessage: null }
-            : { ...r, status: 'error', errorMessage: 'Timed out' }
-        }))
-      }
-    }
+    // Phase 2: non-style refs — resolve style AFTER phase 1 so freshly-generated
+    // style cards are picked up by the auto-fallback.
+    const batchEffectiveStyleId = _resolveEffectiveStyleId(overrideStyleId)
+    await runPhase(nonStyleIndices, batchEffectiveStyleId)
 
     await flowAPI.clearGenerations()
 
