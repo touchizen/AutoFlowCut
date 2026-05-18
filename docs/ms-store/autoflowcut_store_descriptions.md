@@ -1,4 +1,4 @@
-# AutoFlowCut — Microsoft Store Listing (v0.9.9)
+# AutoFlowCut — Microsoft Store Listing (v0.9.10)
 
 ---
 
@@ -156,14 +156,15 @@ Disclaimer: This app is an independent product developed by Touchizen and is not
 
 ### What's New
 ```
-v0.9.9 — Switch styles on the fly + smoother re-runs
+v0.9.10 — Choose your aspect ratio + an easier tag picker
 
-- Change style mid-batch from Claude Code: regenerate a single scene or re-run an entire batch with a different style — even on scenes you've already finished.
-- Auto stop-restart: start a new batch with a different style while one is running and AutoFlowCut handles the switch for you. No confirmation modal.
-- Clearer style intent: pick a specific style, let auto-match decide per scene, or generate with no style at all — the Start button label always reflects what you chose.
-- Re-run progress that actually moves: regenerating completed scenes now resets and tracks the new run live, instead of looking stuck at 100%.
-- Consistent style labels everywhere: the Start button, scene list, and reference panel all show the same style name the same way.
-- More reliable stop/restart: batches clean up after themselves even when something unexpected happens, so the next Start kicks off without delay.
+- Pick an aspect ratio per project: set each project to 16:9 for longform or 9:16 for shorts. Image and video generation, the thumbnails in the results list, and the CapCut export all match your choice automatically.
+- An easier tag picker: choose several character tags at once, see a checkmark next to the ones you've picked, and keep the full list in view while you select. A new "(None)" option clears a tag. The same picker now works in the scene detail window too.
+- New Project and Recent Projects in the menu bar: start a new project or reopen a recent one straight from the File menu.
+- Smarter batch reference generation: a batch now includes your style references and creates them first, so the character and background references that follow are generated to match the style.
+- Hover previews that stay on screen: image previews and audio tooltips now reposition and resize so they're never cut off or covering the thumbnail you're pointing at.
+- Your subscription updates on its own: after you upgrade to Pro in your browser, your plan refreshes the moment you switch back to AutoFlowCut — no restart needed.
+- Sound effect details in the Audio tab: each SFX now shows where it's anchored, its prompt, and its length right in the Audio tab, so you can review the full sound design before exporting.
 ```
 
 ### Keywords
@@ -327,14 +328,15 @@ Touchizen 제작 — touchizen.com
 
 ### What's New (새로운 기능)
 ```
-v0.9.9 — 스타일 즉석에서 바꾸기 + 더 매끄러운 재실행
+v0.9.10 — 화면 비율 선택 + 더 쉬워진 태그 선택
 
-- Claude Code에서 배치 도중 스타일 변경: 단일 씬만 재생성하거나 배치 전체를 다른 스타일로 다시 실행 — 이미 완성한 씬까지 포함.
-- 자동 스톱-리스타트: 배치 실행 중에 다른 스타일로 새 배치를 시작하면 AutoFlowCut이 알아서 전환. 확인 모달 없음.
-- 명확한 스타일 의도: 특정 스타일 선택 / 씬별 자동 매칭 / 스타일 없이 생성 중 고르기 — 선택한 결과가 Start 버튼 라벨에 그대로 반영됨.
-- 실제로 움직이는 재실행 진행률: 완성된 씬을 다시 실행할 때 진행률이 새로 시작되어 실시간으로 갱신 (이전에 100%에서 멈춘 듯 보이던 문제 해결).
-- 어디서나 일관된 스타일 라벨: Start 버튼, 씬 목록, 레퍼런스 패널 모두 같은 스타일 이름을 같은 방식으로 표시.
-- 더 안정적인 중지/재시작: 도중에 예기치 못한 일이 생겨도 배치가 스스로 정리되어 다음 Start가 지연 없이 즉시 시작됨.
+- 프로젝트마다 화면 비율 선택: 프로젝트별로 롱폼 16:9 또는 숏폼 9:16을 설정하세요. 이미지·비디오 생성, 결과 목록의 썸네일, CapCut 내보내기가 모두 선택한 비율에 자동으로 맞춰집니다.
+- 더 쉬워진 태그 선택: 캐릭터 태그를 한 번에 여러 개 고르고, 선택한 항목에는 체크 표시가 보이며, 고르는 동안 전체 목록이 계속 펼쳐져 있습니다. 태그를 비우는 '(None)' 옵션도 새로 추가됐습니다. 같은 태그 선택기를 이제 씬 상세 창에서도 쓸 수 있습니다.
+- 메뉴 바의 새 프로젝트 / 최근 프로젝트: File 메뉴에서 바로 새 프로젝트를 만들거나 최근 프로젝트를 다시 열 수 있습니다.
+- 똑똑해진 레퍼런스 일괄 생성: 일괄 생성 시 스타일 레퍼런스가 함께 포함되어 먼저 생성되므로, 뒤이어 만들어지는 캐릭터·배경 레퍼런스가 스타일에 맞춰 생성됩니다.
+- 화면 안에 머무는 호버 미리보기: 이미지 미리보기와 오디오 툴팁이 위치와 크기를 자동 조정해, 화면 밖으로 잘리거나 가리키던 썸네일을 덮지 않습니다.
+- 자동으로 갱신되는 구독: 브라우저에서 Pro로 업그레이드한 뒤 AutoFlowCut으로 돌아오면 플랜이 즉시 갱신됩니다. 재시작이 필요 없습니다.
+- Audio 탭에서 효과음 확인: 각 효과음의 배치 위치, 프롬프트, 길이가 Audio 탭에 바로 표시됩니다. 내보내기 전에 사운드 구성을 한눈에 검토하세요.
 ```
 
 ### Keywords (한국어)
@@ -403,14 +405,15 @@ AutoFlowCutはAI動画制作の全プロセスを自動化します。Google Flo
 
 ### What's New
 ```
-v0.9.9 — スタイルをその場で切り替え + よりスムーズな再実行
+v0.9.10 — アスペクト比を選択 + より使いやすいタグ選択
 
-- Claude Code からバッチ途中でスタイル変更：単一シーンの再生成、またはバッチ全体を別のスタイルで再実行 — 完了済みのシーンを含めて。
-- 自動ストップ・リスタート：バッチ実行中に別のスタイルで新規バッチを開始すると、AutoFlowCut が自動で切り替え。確認モーダルなし。
-- スタイル意図が明確に：特定のスタイルを指定／シーンごとの自動マッチング／スタイルなしで生成、から選択。選んだ結果が Start ボタンのラベルにそのまま反映。
-- 本当に動く再実行の進捗：完了済みシーンを再実行すると進捗が新しくリセットされ、リアルタイムで更新（以前は 100% で停止しているように見えた問題を解消）。
-- どこでも一貫したスタイルラベル：Start ボタン、シーン一覧、リファレンスパネルすべてで、同じスタイル名が同じ形で表示。
-- より信頼性の高い停止／再起動：途中で予期しない問題が起きてもバッチが自分で片付けるので、次の Start が遅延なくすぐに動作。
+- プロジェクトごとにアスペクト比を選択：各プロジェクトをロングフォーム 16:9 またはショート 9:16 に設定できます。画像・動画生成、結果リストのサムネイル、CapCut エクスポートがすべて選んだ比率に自動で合わせます。
+- より使いやすいタグ選択：キャラクタータグを一度に複数選べて、選択した項目にはチェックマークが表示され、選択中も一覧全体が開いたままになります。タグを消去する「(None)」オプションも新たに追加。同じタグ選択がシーン詳細ウィンドウでも使えるようになりました。
+- メニューバーの新規プロジェクト / 最近のプロジェクト：File メニューから直接、新規プロジェクトの作成や最近のプロジェクトの再オープンができます。
+- 賢くなったリファレンスの一括生成：一括生成にスタイルリファレンスが含まれ、先に生成されるため、続いて作られるキャラクター・背景リファレンスがスタイルに合わせて生成されます。
+- 画面内に収まるホバープレビュー：画像プレビューと音声ツールチップが位置とサイズを自動調整し、画面外に切れたり、指しているサムネイルを隠したりしなくなりました。
+- 自動で更新されるサブスクリプション：ブラウザで Pro にアップグレードした後、AutoFlowCut に戻るとプランがすぐに更新されます。再起動は不要です。
+- Audio タブで効果音を確認：各効果音の配置位置、プロンプト、長さが Audio タブに直接表示されます。エクスポート前にサウンド構成をひと目で確認できます。
 ```
 
 ---
@@ -474,14 +477,15 @@ Der integrierte MCP-Server (Model Context Protocol) verbindet sich direkt mit Cl
 
 ### What's New
 ```
-v0.9.9 — Stile spontan wechseln + flüssigere Neuläufe
+v0.9.10 — Seitenverhältnis wählen + einfacherer Tag-Picker
 
-- Stil mitten im Batch wechseln aus Claude Code: eine einzelne Szene neu generieren oder den gesamten Batch mit einem anderen Stil erneut ausführen — auch bei bereits fertiggestellten Szenen.
-- Auto-Stop-Restart: einen neuen Batch mit anderem Stil starten, während einer läuft, und AutoFlowCut übernimmt den Wechsel automatisch. Kein Bestätigungsdialog.
-- Klare Stil-Absicht: einen bestimmten Stil wählen, das automatische Matching pro Szene entscheiden lassen oder ganz ohne Stil generieren — das Label des Start-Buttons spiegelt Ihre Wahl direkt wider.
-- Echter Fortschritt beim Neulauf: beim erneuten Generieren fertiger Szenen setzt sich der Fortschritt zurück und zeigt den neuen Lauf live — statt bei 100 % steckenzubleiben.
-- Einheitliche Stilbezeichnungen überall: Start-Button, Szenenliste und Referenz-Panel zeigen denselben Stilnamen immer gleich.
-- Zuverlässigeres Stoppen/Neustarten: Batches räumen auch bei unerwarteten Fehlern hinter sich auf, sodass der nächste Start sofort ohne Verzögerung läuft.
+- Seitenverhältnis pro Projekt wählen: Stellen Sie jedes Projekt auf 16:9 für Longform oder 9:16 für Shorts ein. Bild- und Videogenerierung, die Thumbnails in der Ergebnisliste und der CapCut-Export richten sich automatisch nach Ihrer Wahl.
+- Einfacherer Tag-Picker: Wählen Sie mehrere Charakter-Tags auf einmal, sehen Sie ein Häkchen bei den gewählten Einträgen, und die vollständige Liste bleibt während der Auswahl geöffnet. Eine neue „(None)"-Option leert ein Tag. Derselbe Picker funktioniert jetzt auch im Szenendetail-Fenster.
+- Neues Projekt und Letzte Projekte in der Menüleiste: Starten Sie ein neues Projekt oder öffnen Sie ein kürzlich verwendetes direkt über das Datei-Menü.
+- Klügere Stapel-Referenzgenerierung: Ein Stapel enthält jetzt Ihre Stil-Referenzen und erzeugt sie zuerst, sodass die anschließend erstellten Charakter- und Hintergrund-Referenzen zum Stil passen.
+- Hover-Vorschauen, die auf dem Bildschirm bleiben: Bildvorschauen und Audio-Tooltips passen Position und Größe automatisch an, sodass sie nie abgeschnitten werden oder das Thumbnail verdecken, auf das Sie zeigen.
+- Ihr Abo aktualisiert sich von selbst: Nach dem Upgrade auf Pro im Browser wird Ihr Plan aktualisiert, sobald Sie zu AutoFlowCut zurückwechseln – kein Neustart nötig.
+- Soundeffekt-Details im Audio-Tab: Jeder Soundeffekt zeigt jetzt direkt im Audio-Tab seine Position, seinen Prompt und seine Länge – so prüfen Sie das gesamte Sounddesign vor dem Export.
 ```
 
 ---
