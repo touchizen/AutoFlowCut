@@ -276,9 +276,11 @@ export function registerFlowAPIIPC(ipcMain, deps) {
         }
       }
 
-      // 0.8. 이미지 모드 + 배치 설정 (Settings에서 전달받은 값 사용, 기본 x2)
+      // 0.8. 이미지 모드 + 배치 + 화면비 설정 (Settings에서 전달받은 값 사용, 기본 x2)
+      // aspectRatio 는 설정 메뉴가 열려 있는 동안 함께 적용된다 — 메뉴를 닫은 뒤
+      // 별도로 동기화하면 Radix 가 content 를 unmount 해서 동작하지 않기 때문.
       const effectiveBatchCount = Math.max(1, Math.min(4, batchCount || 2))
-      const modeResult = await configureFlowMode('IMAGE', effectiveBatchCount)
+      const modeResult = await configureFlowMode('IMAGE', effectiveBatchCount, aspectRatio)
       if (modeResult.success) {
         console.log('[Flow API] Image mode configured:', modeResult.method, 'batch:', modeResult.batch)
       } else {
