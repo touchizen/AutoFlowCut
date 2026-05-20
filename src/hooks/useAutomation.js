@@ -179,7 +179,10 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
         // cutoff > 0: 이전 wave 가 있음. 모든 reCAPTCHA 실패 씬이 그 wave 시작 전에 submit된
         // in-flight 잔여일 때만 absorb 허용. 하나라도 wave 이후 submit됐으면 fresh post-resume
         // probe 이므로 escalation 강제.
-        const allRemnant = cutoff > 0 && recaptchaScenes.every(item => item.submittedAt <= cutoff)
+        // Use originalSubmittedAt (never bumped) for the in-flight residual check.
+        // item.submittedAt is bumped by waitedMs after each wave to keep ITEM_TIMEOUT working,
+        // so comparing it against the wall-clock cutoff would always fail post-wave.
+        const allRemnant = cutoff > 0 && recaptchaScenes.every(item => (item.originalSubmittedAt ?? item.submittedAt) <= cutoff)
         console.warn(
           '[Automation] reCAPTCHA block detected on', recaptchaScenes.length,
           'scenes this cycle (allRemnant:', allRemnant, ')'
@@ -215,7 +218,8 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       console.log('[Automation] Scene', scene.id, '→ prompt:', styledPrompt.substring(0, 80) + '...', '| style:', appliedStyle, '| refs:', matchedRefs.length)
       const submitResult = await submitGenerationDOM(styledPrompt, matchedRefs, { batchCount: imageBatchCount, seed, aspectRatio })
       if (submitResult.success && submitResult.generationId) {
-        pendingQueue.push({ generationId: submitResult.generationId, scene, submittedAt: Date.now() })
+        const _now = Date.now()
+        pendingQueue.push({ generationId: submitResult.generationId, scene, submittedAt: _now, originalSubmittedAt: _now })
         consecutiveErrors = 0
         console.log('[Automation] Submitted scene', scene.id, '→', submitResult.generationId)
       } else {

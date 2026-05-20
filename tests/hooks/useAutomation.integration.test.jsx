@@ -448,37 +448,69 @@ describe('useAutomation reCAPTCHA integration', () => {
     expect(hook.result.current.isRunning).toBe(false)
   }, 30000)
 
-  // Test 6 (P1 regression): grace-window absorbed collect-path reCAPTCHA must not deadlock
+  // Test 6 (Round-3 P1 regression): grace-window ABSORBED collect-path reCAPTCHA must unpause
+  //
+  // Scenario (3 scenes so a non-reCAPTCHA item stays in pendingQueue during absorbed):
+  //   - s1, s2, s3 모두 Phase 1 에서 submit (모두 submittedAt < waveStart).
+  //   - Phase 2 cycle 1: gen-1 collect reCAPTCHA → wave T1 시작 (5 min).
+  //   - wave 끝 → grace(5s) 시작.
+  //   - Phase 2 cycle 2 (grace 안): gen-2 collect reCAPTCHA →
+  //     allRemnant = (gen-2.originalSubmittedAt <= T1) = true → allowAbsorb=true →
+  //     handlingRef=true → mode='absorbed'.
+  //     gen-3: 아직 not-completed → stillPending=[gen-3] → pendingQueue=[gen-3] ≠ ∅.
+  //   - Round 3 fix: absorbed 시 pausedRef=false → Phase 2 outer loop 재진입, gen-3 수집.
+  //   - Round 3 가 깨지면: pausedRef=true → Phase 2 inner while(pausedRef) 무한 spin → deadlock.
   it('grace-window absorbed reCAPTCHA does not leave batch paused indefinitely (P1 regression)', async () => {
-    TEST_GRACE.ms = 200  // grace window 활성
+    TEST_GRACE.ms = 5000  // grace window > 3s poll interval → gen-2 collect lands inside grace
 
     const { hook, submitGenerationDOM, checkGeneration, collectGeneration } = setupHook({
       scenes: [
         { id: 's1', prompt: 'a', status: 'pending' },
         { id: 's2', prompt: 'b', status: 'pending' },
+        { id: 's3', prompt: 'c', status: 'pending' },
       ],
     })
 
-    // 두 씬 모두 submit success. 고유 generation ID 발급.
+    // 세 씬 모두 Phase 1 에서 submit. gid=3 이후 = 모두 submit 완료.
     let gid = 0
-    submitGenerationDOM.mockImplementation(async () => ({
-      success: true,
-      generationId: `gen-${++gid}`,
-    }))
+    let allSubmitted = false
+    submitGenerationDOM.mockImplementation(async () => {
+      const id = ++gid
+      if (id === 3) allSubmitted = true
+      return { success: true, generationId: `gen-${id}` }
+    })
 
-    // s2 는 s1 이 collect 될 때까지 completed=false → 다른 cycle 로 분리.
-    let s1Collected = false
+    // gen-1: Phase 1 중간 수집엔 not-completed. Phase 2(allSubmitted=true)에서 completed → wave T1.
+    // gen-2: wave(5 min=300s) 끝나고 grace(5s) 안에서 completed → absorbed.
+    //        waveStart 기준 300s+ 경과 시 completed.
+    // gen-3: gen-2 absorbed 이후 3s+ 더 지나야 completed → pendingQueue 에 잔류해 deadlock 을 유발.
+    //        waveStart 기준 305s+ 경과 시 completed (> gen-2 의 300s + cycle gap 3s = 303s 기준).
+    let waveStart = null
     checkGeneration.mockImplementation(async (generationId) => {
-      if (generationId === 'gen-1') return { completed: true }
-      if (generationId === 'gen-2') return { completed: s1Collected }
+      if (generationId === 'gen-1') {
+        return { completed: allSubmitted }
+      }
+      if (generationId === 'gen-2') {
+        // wave 끝나고 grace 안에 들어오도록: 300s 경과 직후 completed.
+        return { completed: waveStart !== null && Date.now() - waveStart > 5 * 60 * 1000 }
+      }
+      if (generationId === 'gen-3') {
+        // gen-2 absorbed cycle 이후 poll interval(3s) 만큼 추가 지연 → pendingQueue 잔류 보장.
+        // 300000 + 3100 ms = 303100ms 경과 후 completed.
+        return { completed: waveStart !== null && Date.now() - waveStart > (5 * 60 * 1000 + 3100) }
+      }
       return { completed: false }
     })
 
-    // 두 씬 모두 collect 시 reCAPTCHA 실패. s1 collect 시 s1Collected 를 true 로 전환.
     collectGeneration.mockImplementation(async (generationId) => {
-      if (generationId === 'gen-1') {
-        s1Collected = true
+      if (generationId === 'gen-1' && waveStart === null) {
+        waveStart = Date.now()  // wave start timestamp (= T1)
+      }
+      if (generationId === 'gen-2') {
         return { success: false, error: 'reCAPTCHA evaluation failed' }
+      }
+      if (generationId === 'gen-3') {
+        return { success: true, images: [{ id: 'img-3', mediaId: 'm-3' }] }
       }
       return { success: false, error: 'reCAPTCHA evaluation failed' }
     })
@@ -488,17 +520,23 @@ describe('useAutomation reCAPTCHA integration', () => {
       startPromise = hook.result.current.start({ projectName: 'p', saveMode: 'memory' })
     })
 
-    // s1 collect → tier-1 block (5 min). 그 직후 grace window(200ms) 안에 s2 cycle → absorbed.
-    // 수정 전: absorbed 에서 pausedRef=true 유지 → while(pausedRef) 무한 대기.
-    // 수정 후: absorbed 에서 unpause → batch 정상 진행 후 종료.
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(20 * 60 * 1000)
-    })
+    // Absorbed 경로: wave(5 min) + polling(~3s) + gen-3 수집(~3s) → 6 min 안에 완료.
+    // Round 3 회귀 시: absorbed 후 pausedRef=true → inner spin → deadlock.
+    //   pendingQueue=[gen-3] 이므로 outer loop 재진입 → while(pausedRef=true) 무한 반복.
+    //   6 min 안에 resolve 되지 않음 (Phase 2 3-min budget 도 pause 동안 체크 안 됨).
+    let resolved = false
+    startPromise.then(() => { resolved = true })
+    await act(async () => { await vi.advanceTimersByTimeAsync(6 * 60 * 1000) })
 
+    // Round 3 fix 있음: resolved=true. 회귀 시: resolved=false (deadlock).
+    expect(resolved).toBe(true)
+
+    // 나머지 정리 + await
+    await act(async () => { await vi.advanceTimersByTimeAsync(60 * 1000) })
     await startPromise
 
-    // batch 가 정상 종료됐는지 — isRunning=false, isPaused 풀려 있어야 함.
+    // deadlock 회귀 가드: 정상 종료.
     expect(hook.result.current.isRunning).toBe(false)
     expect(hook.result.current.isPaused).toBe(false)
-  })
+  }, 30000)
 })
