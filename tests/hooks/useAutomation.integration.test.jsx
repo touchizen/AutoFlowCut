@@ -384,6 +384,70 @@ describe('useAutomation reCAPTCHA integration', () => {
     expect(hook.result.current.isRunning).toBe(false)
   })
 
+  // Test 7 (Round-5 regression): collect-path reCAPTCHA with fresh submittedAt (> cutoff) must
+  // escalate to tier 2, not be absorbed by the prior wave's grace window.
+  //
+  // Bug: old code passed allowAbsorb=true unconditionally on collect path.
+  // Fix: allRemnant = cutoff > 0 && every item.submittedAt <= cutoff. If any item is fresh
+  //      (submittedAt > cutoff), allowAbsorb=false → escalate.
+  //
+  // Scenario: s1 submit→reCAPTCHA → tier-1 wave (5 min). waveStart = T1.
+  //           s2 submit→success after the wave (submittedAt = T2 > T1).
+  //           s2 collect→reCAPTCHA within the 5s grace window.
+  //   Bug  → absorbed (handlingRef=true, allowAbsorb=true) → modal never reaches tier-2.
+  //   Fix  → allRemnant=false (T2 > T1) → allowAbsorb=false → tier-2 modal ({waitMs:600000}).
+  //
+  // We observe `recaptchaModal` right after s2's collect is processed (within grace), before
+  // advancing past tier-2. With the fix it must be {mode:'auto', waitMs:600000}.
+  it('collect-path reCAPTCHA with fresh submittedAt (> cutoff) escalates to tier 2, not absorbed', async () => {
+    TEST_GRACE.ms = 5000  // 5s grace
+
+    const { hook, submitGenerationDOM, checkGeneration, collectGeneration } = setupHook({
+      scenes: [
+        { id: 's1', prompt: 'a', status: 'pending' },
+        { id: 's2', prompt: 'b', status: 'pending' },
+      ],
+    })
+
+    let gid = 0
+    submitGenerationDOM
+      .mockResolvedValueOnce({ success: false, error: 'reCAPTCHA evaluation failed' }) // s1: tier-1
+      .mockImplementation(async () => ({ success: true, generationId: `gen-${++gid}` })) // s2+: fresh
+
+    checkGeneration.mockResolvedValue({ completed: true })
+
+    let collectCount = 0
+    collectGeneration.mockImplementation(async () => {
+      collectCount++
+      if (collectCount === 1) return { success: false, error: 'reCAPTCHA evaluation failed' }
+      return { success: true, images: [{ id: 'img-1', mediaId: 'm-1' }] }
+    })
+
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({ projectName: 'p', saveMode: 'memory' })
+    })
+
+    // Advance 5 min: tier-1 wave completes. Grace 5s timer starts.
+    await act(async () => { await vi.advanceTimersByTimeAsync(5 * 60 * 1000) })
+    // Advance 500ms: still within grace. Phase-1 resumes, s2 submits (submittedAt = T1 + 5min + 500ms).
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    // Advance 500ms: Phase-2 collect runs for s2 (still within 5s grace window).
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+
+    // Capture modal right after s2's collect was processed.
+    // Fix: tier-2 wave started → modal = {mode:'auto', waitMs:600000}.
+    // Bug: absorbed → modal = null.
+    const modalAfterCollect = hook.result.current.recaptchaModal
+
+    // Advance 12 min to let tier-2 finish and batch complete.
+    await act(async () => { await vi.advanceTimersByTimeAsync(12 * 60 * 1000) })
+    await startPromise
+
+    expect(modalAfterCollect).toEqual({ mode: 'auto', waitMs: 600_000 })
+    expect(hook.result.current.isRunning).toBe(false)
+  }, 30000)
+
   // Test 6 (P1 regression): grace-window absorbed collect-path reCAPTCHA must not deadlock
   it('grace-window absorbed reCAPTCHA does not leave batch paused indefinitely (P1 regression)', async () => {
     TEST_GRACE.ms = 200  // grace window 활성

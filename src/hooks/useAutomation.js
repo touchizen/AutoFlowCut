@@ -95,12 +95,11 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     }
 
     // pause 후 backoff 등록, 결과에 따라 시간 보정 / pause 해제.
-    // - source='submit': fresh probe → allowAbsorb=false (grace 우회, escalation 강제)
-    // - source='collect': in-flight 잔여 흡수 허용 → allowAbsorb=true (기본)
-    const pauseAndRegisterRecaptcha = async (source) => {
+    // - allowAbsorb=false: fresh probe → grace 우회, escalation 강제 (submit-path 또는 post-resume fresh collect)
+    // - allowAbsorb=true: in-flight 잔여 흡수 허용 (wave 시작 전에 submit된 씬의 collect-path)
+    const pauseAndRegisterRecaptcha = async ({ allowAbsorb }) => {
       pausedRef.current = true
       setIsPaused(true)
-      const allowAbsorb = source === 'collect'
       const { waitedMs, mode, resumed } = await recaptcha.registerBlock({ allowAbsorb })
       if (mode === 'absorbed') {
         // 다른 핸들러가 처리 중인 wave 흡수 — 추가 wait 없음, pause 해제 후 진행.
@@ -176,8 +175,16 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
 
       // 한 cycle 의 모든 reCAPTCHA 실패는 한 incident 으로 묶어 처리.
       if (recaptchaScenes.length > 0) {
-        console.warn('[Automation] reCAPTCHA block detected on', recaptchaScenes.length, 'scenes this cycle')
-        await pauseAndRegisterRecaptcha('collect')
+        const cutoff = recaptcha.getLastBlockStartedAt()
+        // cutoff > 0: 이전 wave 가 있음. 모든 reCAPTCHA 실패 씬이 그 wave 시작 전에 submit된
+        // in-flight 잔여일 때만 absorb 허용. 하나라도 wave 이후 submit됐으면 fresh post-resume
+        // probe 이므로 escalation 강제.
+        const allRemnant = cutoff > 0 && recaptchaScenes.every(item => item.submittedAt <= cutoff)
+        console.warn(
+          '[Automation] reCAPTCHA block detected on', recaptchaScenes.length,
+          'scenes this cycle (allRemnant:', allRemnant, ')'
+        )
+        await pauseAndRegisterRecaptcha({ allowAbsorb: allRemnant })
       }
     }
 
@@ -217,7 +224,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
           console.warn('[Automation] reCAPTCHA block on submit, scene', scene.id)
           markRecaptchaError(scene)
           updateProgressMsg(completedCountRef.current)
-          await pauseAndRegisterRecaptcha('submit')
+          await pauseAndRegisterRecaptcha({ allowAbsorb: false })
           continue
         }
         updateScene(scene.id, { status: 'error', error: submitResult.error, errorKind: null })

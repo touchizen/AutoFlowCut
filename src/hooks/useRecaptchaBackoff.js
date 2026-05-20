@@ -23,6 +23,7 @@ export function useRecaptchaBackoff(t, opts = {}) {
   const consecutiveSuccessRef = useRef(0)
   const cancelRef = useRef(false)
   const graceTimerRef = useRef(null)
+  const lastBlockStartedAtRef = useRef(0)
 
   const clearGraceTimer = () => {
     if (graceTimerRef.current) {
@@ -37,6 +38,7 @@ export function useRecaptchaBackoff(t, opts = {}) {
     handlingRef.current = false
     consecutiveSuccessRef.current = 0
     cancelRef.current = false
+    lastBlockStartedAtRef.current = 0
     setModalState(null)
   }, [])
 
@@ -67,6 +69,7 @@ export function useRecaptchaBackoff(t, opts = {}) {
     clearGraceTimer()
     handlingRef.current = true
     incidentRef.current += 1
+    lastBlockStartedAtRef.current = Date.now()
     consecutiveSuccessRef.current = 0
     cancelRef.current = false
 
@@ -132,6 +135,7 @@ export function useRecaptchaBackoff(t, opts = {}) {
       recordSuccess,
       recordFailure,
       reset,
+      getLastBlockStartedAt: () => lastBlockStartedAtRef.current,
       // 디버그/테스트용 — 외부 직접 접근은 권장 안 함
       _debug: {
         incidentCount: () => incidentRef.current,

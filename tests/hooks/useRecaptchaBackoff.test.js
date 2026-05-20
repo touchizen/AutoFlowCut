@@ -468,7 +468,29 @@ describe('allowAbsorb=false (submit-probe semantics)', () => {
   })
 })
 
-// ─── 16. cancelWait during grace releases immediately ─────────────────────────
+// ─── 16. getLastBlockStartedAt tracks wave start time ────────────────────────
+describe('getLastBlockStartedAt()', () => {
+  it('returns 0 before any wave, a positive timestamp after registerBlock, and 0 again after reset()', async () => {
+    const { result } = renderHook(() => useRecaptchaBackoff(t, { graceMs: 0 }))
+    expect(result.current.getLastBlockStartedAt()).toBe(0)
+
+    let p
+    act(() => { p = result.current.registerBlock() })
+    // Should be set synchronously inside registerBlock before the wait loop
+    expect(result.current.getLastBlockStartedAt()).toBeGreaterThan(0)
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(5 * 60 * 1000) })
+    await p
+
+    // Still positive after the wave completes
+    expect(result.current.getLastBlockStartedAt()).toBeGreaterThan(0)
+
+    act(() => { result.current.reset() })
+    expect(result.current.getLastBlockStartedAt()).toBe(0)
+  })
+})
+
+// ─── 17. cancelWait during grace releases immediately ─────────────────────────
 describe('cancelWait during grace releases immediately', () => {
   it('cancelWait clears grace timer and allows new incident immediately', async () => {
     const GRACE = 5000
