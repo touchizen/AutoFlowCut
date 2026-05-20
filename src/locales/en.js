@@ -747,6 +747,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     // the message is resolved at display time via the user's current locale.
     kind: {
       'image-missing': 'Image file not found — please regenerate',
+      'recaptcha': 'reCAPTCHA blocked — retry shortly (auto or manual)',
     },
   },
 

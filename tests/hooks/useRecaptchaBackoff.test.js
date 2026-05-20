@@ -14,7 +14,7 @@ afterEach(() => vi.useRealTimers())
 // ─── 1. Reset state on init/reset ───────────────────────────────────────────
 describe('reset()', () => {
   it('incident count and modal state are zero/null after reset()', () => {
-    const { result } = renderHook(() => useRecaptchaBackoff(t))
+    const { result } = renderHook(() => useRecaptchaBackoff(t, { graceMs: 0 }))
 
     act(() => { result.current.reset() })
 
@@ -27,7 +27,7 @@ describe('reset()', () => {
 // ─── 2. Single block: auto mode ─────────────────────────────────────────────
 describe('registerBlock() — auto mode (tier 1)', () => {
   it('modal becomes {mode:auto, waitMs:300000} immediately, resolves after 5 min', async () => {
-    const { result } = renderHook(() => useRecaptchaBackoff(t))
+    const { result } = renderHook(() => useRecaptchaBackoff(t, { graceMs: 0 }))
 
     let p
     act(() => { p = result.current.registerBlock() })
@@ -49,7 +49,7 @@ describe('registerBlock() — auto mode (tier 1)', () => {
 // ─── 3. Concurrent calls absorbed ───────────────────────────────────────────
 describe('registerBlock() — concurrent call absorption', () => {
   it('second call while first is in-progress resolves immediately as absorbed', async () => {
-    const { result } = renderHook(() => useRecaptchaBackoff(t))
+    const { result } = renderHook(() => useRecaptchaBackoff(t, { graceMs: 0 }))
 
     let p1, p2
     act(() => { p1 = result.current.registerBlock() })
@@ -74,7 +74,7 @@ describe('registerBlock() — concurrent call absorption', () => {
 // ─── 4. Escalation tiers ────────────────────────────────────────────────────
 describe('registerBlock() — escalation tiers', () => {
   it('tier 1→2→3→4(manual) with correct waitMs at each level', async () => {
-    const { result } = renderHook(() => useRecaptchaBackoff(t))
+    const { result } = renderHook(() => useRecaptchaBackoff(t, { graceMs: 0 }))
 
     // Tier 1: 300000 ms
     let p
@@ -101,11 +101,16 @@ describe('registerBlock() — escalation tiers', () => {
     expect(r3.mode).toBe('auto')
     expect(result.current._debug.incidentCount()).toBe(3)
 
-    // Tier 4: manual
+    // Tier 4: manual — now waits for cancelWait/stop; use cancelWait to resolve it
     act(() => { p = result.current.registerBlock() })
+    expect(result.current.modalState).toEqual({ mode: 'manual', waitMs: 0 })
+    // resolve via cancelWait (resumed=false because cancelledByUser=true)
+    await act(async () => {
+      result.current.cancelWait()
+      await vi.advanceTimersByTimeAsync(600)
+    })
     const r4 = await p
     expect(r4.mode).toBe('manual')
-    expect(r4.waitedMs).toBe(0)
     expect(r4.resumed).toBe(false)
     expect(result.current._debug.incidentCount()).toBe(4)
   })
@@ -114,7 +119,7 @@ describe('registerBlock() — escalation tiers', () => {
 // ─── 5. cancelWait shortens auto-mode wait ───────────────────────────────────
 describe('cancelWait()', () => {
   it('ends an in-progress wait early; waitedMs reflects only elapsed time', async () => {
-    const { result } = renderHook(() => useRecaptchaBackoff(t))
+    const { result } = renderHook(() => useRecaptchaBackoff(t, { graceMs: 0 }))
 
     let p
     act(() => { p = result.current.registerBlock() })
@@ -138,7 +143,7 @@ describe('cancelWait()', () => {
 // ─── 6. recordSuccess resets incident counter at threshold ───────────────────
 describe('recordSuccess() — resets at threshold', () => {
   it('25 consecutive successes after 1 block resets incident to 0', async () => {
-    const { result } = renderHook(() => useRecaptchaBackoff(t))
+    const { result } = renderHook(() => useRecaptchaBackoff(t, { graceMs: 0 }))
 
     // one block (tier 1)
     let p
@@ -166,7 +171,7 @@ describe('recordSuccess() — resets at threshold', () => {
 // ─── 7. recordSuccess below threshold doesn't reset ──────────────────────────
 describe('recordSuccess() — below threshold', () => {
   it('24 successes after 1 block do not reset; next block becomes tier 2', async () => {
-    const { result } = renderHook(() => useRecaptchaBackoff(t))
+    const { result } = renderHook(() => useRecaptchaBackoff(t, { graceMs: 0 }))
 
     let p
     act(() => { p = result.current.registerBlock() })
@@ -191,7 +196,7 @@ describe('recordSuccess() — below threshold', () => {
 // ─── 8. recordFailure zeroes the streak ─────────────────────────────────────
 describe('recordFailure()', () => {
   it('failure resets streak; 20 successes after failure not enough to reset incidents', async () => {
-    const { result } = renderHook(() => useRecaptchaBackoff(t))
+    const { result } = renderHook(() => useRecaptchaBackoff(t, { graceMs: 0 }))
 
     // 1 block
     let p
@@ -226,7 +231,7 @@ describe('recordFailure()', () => {
 describe('notifyOS injection', () => {
   it('auto mode: notifyOS called with correct title and min value in body', async () => {
     const notifyOS = vi.fn()
-    const { result } = renderHook(() => useRecaptchaBackoff(t, { notifyOS }))
+    const { result } = renderHook(() => useRecaptchaBackoff(t, { notifyOS, graceMs: 0 }))
 
     let p
     act(() => { p = result.current.registerBlock() })
@@ -241,9 +246,9 @@ describe('notifyOS injection', () => {
 
   it('manual mode: notifyOS called with manual message key', async () => {
     const notifyOS = vi.fn()
-    const { result } = renderHook(() => useRecaptchaBackoff(t, { notifyOS }))
+    const { result } = renderHook(() => useRecaptchaBackoff(t, { notifyOS, graceMs: 0 }))
 
-    // force 4 incidents to reach manual mode
+    // force 4 incidents to reach manual mode (first 3 auto tiers)
     for (let i = 0; i < 3; i++) {
       let p
       act(() => { p = result.current.registerBlock() })
@@ -254,22 +259,27 @@ describe('notifyOS injection', () => {
     }
     notifyOS.mockClear()
 
-    // 4th block → manual
+    // 4th block → manual; resolve with cancelWait
     let p
     act(() => { p = result.current.registerBlock() })
-    const ret = await p
-    expect(ret.mode).toBe('manual')
     expect(notifyOS).toHaveBeenCalledTimes(1)
     const call = notifyOS.mock.calls[0][0]
     expect(call.title).toBe('AutoFlowCut')
     expect(call.body).toBe('recaptcha.notifyManual')
+
+    // clean up
+    await act(async () => {
+      result.current.cancelWait()
+      await vi.advanceTimersByTimeAsync(600)
+    })
+    await p
   })
 })
 
 // ─── 10. No notifyOS injected = no error ─────────────────────────────────────
 describe('default usage (no opts)', () => {
   it('does not throw when notifyOS is not provided', async () => {
-    const { result } = renderHook(() => useRecaptchaBackoff(t))
+    const { result } = renderHook(() => useRecaptchaBackoff(t, { graceMs: 0 }))
 
     let p
     expect(() => {
@@ -278,5 +288,171 @@ describe('default usage (no opts)', () => {
 
     await act(async () => { await vi.advanceTimersByTimeAsync(300_000) })
     await expect(p).resolves.toMatchObject({ mode: 'auto' })
+  })
+})
+
+// ─── 11. Stop signal ends wait early (P1-A) ──────────────────────────────────
+describe('getStopRequested integration (P1-A)', () => {
+  it('stop signal ends auto-mode wait early with resumed:false', async () => {
+    let stopFlag = false
+    const { result } = renderHook(() =>
+      useRecaptchaBackoff(t, { graceMs: 0, getStopRequested: () => stopFlag })
+    )
+
+    let p
+    act(() => { p = result.current.registerBlock() })
+
+    // advance 60 seconds into the 5-min wait
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
+
+    // set stop flag
+    stopFlag = true
+
+    // advance 600ms so the loop polls getStopRequested
+    await act(async () => { await vi.advanceTimersByTimeAsync(600) })
+
+    const ret = await p
+    expect(ret.resumed).toBe(false)
+    expect(ret.mode).toBe('auto')
+    expect(ret.waitedMs).toBeGreaterThanOrEqual(60_000)
+    expect(ret.waitedMs).toBeLessThan(65_000)
+  })
+})
+
+// ─── 12. Manual mode awaits cancelWait (P1-C) ────────────────────────────────
+describe('manual mode — awaits cancelWait (P1-C)', () => {
+  it('manual mode promise does not resolve immediately; resolves after cancelWait', async () => {
+    const { result } = renderHook(() => useRecaptchaBackoff(t, { graceMs: 0 }))
+
+    // reach manual (incident=4): run 3 auto tiers first
+    for (let i = 0; i < 3; i++) {
+      let p
+      act(() => { p = result.current.registerBlock() })
+      if (i === 0) await act(async () => { await vi.advanceTimersByTimeAsync(300_000) })
+      else if (i === 1) await act(async () => { await vi.advanceTimersByTimeAsync(600_000) })
+      else await act(async () => { await vi.advanceTimersByTimeAsync(1_800_000) })
+      await p
+    }
+
+    let resolved = false
+    let ret
+    let p
+    act(() => {
+      p = result.current.registerBlock()
+      p.then(r => { resolved = true; ret = r })
+    })
+
+    // After 10 seconds — must NOT have resolved
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+    expect(resolved).toBe(false)
+
+    // Now cancelWait
+    await act(async () => {
+      result.current.cancelWait()
+      await vi.advanceTimersByTimeAsync(600)
+    })
+    await p
+
+    expect(resolved).toBe(true)
+    expect(ret.mode).toBe('manual')
+    expect(ret.resumed).toBe(false)
+  })
+})
+
+// ─── 13. Manual mode awaits stop (P1-C) ──────────────────────────────────────
+describe('manual mode — awaits stop signal (P1-C)', () => {
+  it('manual mode promise resolves with resumed:false when stop signal fires', async () => {
+    let stopFlag = false
+    const { result } = renderHook(() =>
+      useRecaptchaBackoff(t, { graceMs: 0, getStopRequested: () => stopFlag })
+    )
+
+    // reach manual
+    for (let i = 0; i < 3; i++) {
+      let p
+      act(() => { p = result.current.registerBlock() })
+      if (i === 0) await act(async () => { await vi.advanceTimersByTimeAsync(300_000) })
+      else if (i === 1) await act(async () => { await vi.advanceTimersByTimeAsync(600_000) })
+      else await act(async () => { await vi.advanceTimersByTimeAsync(1_800_000) })
+      await p
+    }
+
+    let p
+    act(() => { p = result.current.registerBlock() })
+
+    // still pending after 5 seconds
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+
+    // fire stop
+    stopFlag = true
+    await act(async () => { await vi.advanceTimersByTimeAsync(600) })
+
+    const ret = await p
+    expect(ret.mode).toBe('manual')
+    expect(ret.resumed).toBe(false)
+  })
+})
+
+// ─── 14. Grace period absorbs subsequent calls (P2-A) ────────────────────────
+describe('grace period (P2-A)', () => {
+  it('call within grace window is absorbed; call after grace starts new incident', async () => {
+    const GRACE = 200
+    const { result } = renderHook(() => useRecaptchaBackoff(t, { graceMs: GRACE }))
+
+    // First registerBlock — auto tier 1
+    let p1
+    act(() => { p1 = result.current.registerBlock() })
+    await act(async () => { await vi.advanceTimersByTimeAsync(300_000) })
+    const r1 = await p1
+    expect(r1.mode).toBe('auto')
+    expect(result.current._debug.incidentCount()).toBe(1)
+    // handlingRef still true (grace window active)
+    expect(result.current._debug.isHandling()).toBe(true)
+
+    // Within grace window — second call absorbed
+    let p2
+    await act(async () => {
+      p2 = result.current.registerBlock()
+    })
+    const r2 = await p2
+    expect(r2.mode).toBe('absorbed')
+    expect(result.current._debug.incidentCount()).toBe(1)
+
+    // After grace expires
+    await act(async () => { await vi.advanceTimersByTimeAsync(GRACE + 50) })
+    expect(result.current._debug.isHandling()).toBe(false)
+
+    // Now a new call → new incident
+    let p3
+    act(() => { p3 = result.current.registerBlock() })
+    expect(result.current._debug.incidentCount()).toBe(2)
+    await act(async () => { await vi.advanceTimersByTimeAsync(600_000) })
+    await p3
+  })
+})
+
+// ─── 15. cancelWait during grace releases immediately ─────────────────────────
+describe('cancelWait during grace releases immediately', () => {
+  it('cancelWait clears grace timer and allows new incident immediately', async () => {
+    const GRACE = 5000
+    const { result } = renderHook(() => useRecaptchaBackoff(t, { graceMs: GRACE }))
+
+    // complete an auto block — enters grace
+    let p1
+    act(() => { p1 = result.current.registerBlock() })
+    await act(async () => { await vi.advanceTimersByTimeAsync(300_000) })
+    await p1
+    expect(result.current._debug.isHandling()).toBe(true) // grace active
+
+    // cancelWait clears grace immediately
+    act(() => { result.current.cancelWait() })
+    expect(result.current._debug.isHandling()).toBe(false)
+
+    // new registerBlock starts a fresh incident without waiting for grace to expire
+    let p2
+    act(() => { p2 = result.current.registerBlock() })
+    expect(result.current._debug.incidentCount()).toBe(2)
+    await act(async () => { await vi.advanceTimersByTimeAsync(600_000) })
+    await p2
   })
 })

@@ -747,6 +747,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     // 데이터는 언어 독립이고 언어 전환 시 자동으로 다시 번역된다.
     kind: {
       'image-missing': '이미지 파일을 찾을 수 없습니다 — 재생성이 필요합니다',
+      'recaptcha': 'reCAPTCHA 차단 — 잠시 후 자동/수동 재시도',
     },
   },
 

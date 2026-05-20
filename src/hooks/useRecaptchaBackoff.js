@@ -10,18 +10,29 @@ import { planRecaptchaWait, shouldResetIncidents } from '../services/recaptchaPo
  * - reset(): 모든 상태 초기화 (배치 시작 시).
  *
  * @param {Function} t  i18n 함수
- * @param {{ notifyOS?: ({title,body}) => void }} [opts]  의존성 주입 (테스트 친화)
+ * @param {{ notifyOS?: ({title,body}) => void, getStopRequested?: () => boolean, graceMs?: number }} [opts]
  */
 export function useRecaptchaBackoff(t, opts = {}) {
   const notifyOS = opts.notifyOS  // 주입 없으면 알림 생략 (테스트에서 window.electronAPI 의존 회피)
+  const getStopRequested = opts.getStopRequested ?? (() => false)
+  const GRACE_MS = opts.graceMs ?? 10000  // 호출자가 테스트용으로 override 가능
 
   const [modalState, setModalState] = useState(null) // { mode:'auto'|'manual', waitMs } | null
   const incidentRef = useRef(0)
   const handlingRef = useRef(false)
   const consecutiveSuccessRef = useRef(0)
   const cancelRef = useRef(false)
+  const graceTimerRef = useRef(null)
+
+  const clearGraceTimer = () => {
+    if (graceTimerRef.current) {
+      clearTimeout(graceTimerRef.current)
+      graceTimerRef.current = null
+    }
+  }
 
   const reset = useCallback(() => {
+    clearGraceTimer()
     incidentRef.current = 0
     handlingRef.current = false
     consecutiveSuccessRef.current = 0
@@ -43,13 +54,14 @@ export function useRecaptchaBackoff(t, opts = {}) {
   /**
    * @returns {Promise<{ waitedMs:number, mode:'auto'|'manual'|'absorbed', resumed:boolean }>}
    *   - mode 'absorbed': 같은 wave 안의 중복 호출 — 호출자는 이 케이스에서 추가 시간 보정 불필요.
-   *   - mode 'auto': 정상 backoff 진행 후 resolve. waitedMs = 실제 경과 시간 (cancel 시 단축됨).
-   *   - mode 'manual': incident 4회+ — wait 없이 즉시 resolve. 사용자 수동 처리.
+   *   - mode 'auto': 정상 backoff 진행 후 resolve. waitedMs = 실제 경과 시간.
+   *   - mode 'manual': incident 4회+ — cancelWait 또는 stop 까지 대기 후 resolve.
    */
   const registerBlock = useCallback(async () => {
     if (handlingRef.current) {
       return { waitedMs: 0, mode: 'absorbed', resumed: false }
     }
+    clearGraceTimer()
     handlingRef.current = true
     incidentRef.current += 1
     consecutiveSuccessRef.current = 0
@@ -57,37 +69,55 @@ export function useRecaptchaBackoff(t, opts = {}) {
 
     const { waitMs, autoResume } = planRecaptchaWait(incidentRef.current)
 
-    if (!autoResume) {
-      setModalState({ mode: 'manual', waitMs: 0 })
-      try { notifyOS?.({ title: 'AutoFlowCut', body: t('recaptcha.notifyManual') }) } catch {}
-      // manual mode: 즉시 ref 풀어 다음 차단도 잡을 수 있게 (별도 gap fix 와 일치)
-      handlingRef.current = false
-      return { waitedMs: 0, mode: 'manual', resumed: false }
-    }
-
-    setModalState({ mode: 'auto', waitMs })
+    setModalState({ mode: autoResume ? 'auto' : 'manual', waitMs: autoResume ? waitMs : 0 })
     try {
       notifyOS?.({
         title: 'AutoFlowCut',
-        body: t('recaptcha.notify', { min: Math.round(waitMs / 60000) }),
+        body: autoResume
+          ? t('recaptcha.notify', { min: Math.round(waitMs / 60000) })
+          : t('recaptcha.notifyManual'),
       })
     } catch {}
 
     const start = Date.now()
-    const end = start + waitMs
-    while (!cancelRef.current && Date.now() < end) {
+    const end = autoResume ? start + waitMs : null  // manual: 무한 — cancel/stop 까지 대기
+
+    while (
+      !cancelRef.current &&
+      !getStopRequested() &&
+      (end === null || Date.now() < end)
+    ) {
       await new Promise(r => setTimeout(r, 500))
     }
     const waitedMs = Date.now() - start
+    const stoppedExternally = getStopRequested()
+    const cancelledByUser = cancelRef.current
 
     setModalState(null)
-    handlingRef.current = false
     cancelRef.current = false
-    return { waitedMs, mode: 'auto', resumed: true }
-  }, [t, notifyOS])
+
+    if (autoResume && !stoppedExternally && GRACE_MS > 0) {
+      // 정상 auto 종료 — grace window: 직후의 in-flight 잔여 reCAPTCHA 를 같은 incident 으로 흡수.
+      graceTimerRef.current = setTimeout(() => {
+        handlingRef.current = false
+        graceTimerRef.current = null
+      }, GRACE_MS)
+    } else {
+      // stop / manual / cancel / graceMs=0 — 즉시 풀기.
+      handlingRef.current = false
+    }
+
+    return {
+      waitedMs,
+      mode: autoResume ? 'auto' : 'manual',
+      resumed: !stoppedExternally && !cancelledByUser,
+    }
+  }, [t, notifyOS, getStopRequested, GRACE_MS])
 
   const cancelWait = useCallback(() => {
     cancelRef.current = true
+    clearGraceTimer()
+    handlingRef.current = false
     setModalState(null)
   }, [])
 

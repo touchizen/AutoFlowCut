@@ -35,7 +35,10 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
   const notifyOS = useCallback((payload) => {
     try { window.electronAPI?.notifyOS?.(payload) } catch { /* 무시 */ }
   }, [])
-  const recaptcha = useRecaptchaBackoff(t, { notifyOS })
+  const recaptcha = useRecaptchaBackoff(t, {
+    notifyOS,
+    getStopRequested: () => stopRequestedRef.current,
+  })
 
   const stopRequestedRef = useRef(false)
   const pausedRef = useRef(false)
@@ -114,8 +117,11 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
             const result = await collectGeneration(item.generationId)
             if (!result.success && isRecaptchaError(result.error)) {
               recaptchaScenes.push(item)
-              updateScene(item.scene.id, { status: 'pending', error: null, errorKind: null })
-              // 큐에서 제외 (stillPending 에 추가하지 않음) — 사용자 retryErrors 가 잡음.
+              // 회계: reCAPTCHA error 로 마킹, 큐에서 제외, retryErrors 가 잡도록.
+              updateScene(item.scene.id, { status: 'error', error: 'reCAPTCHA blocked', errorKind: 'recaptcha' })
+              errorCountRef.current++
+              completedCountRef.current++
+              updateProgressMsg(completedCountRef.current)
               continue
             }
             console.log('[Automation] Collected scene', item.scene.id, ':', result.success, result.images?.length || 0, 'images')
@@ -191,8 +197,12 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
         console.error('[Automation] Submit failed for scene', scene.id, ':', submitResult.error)
         if (isRecaptchaError(submitResult.error)) {
           console.warn('[Automation] reCAPTCHA block on submit, scene', scene.id)
-          // 이 씬은 generationId 가 없으므로 pending 으로 되돌려 retryErrors 가 잡을 수 있게 함.
-          updateScene(scene.id, { status: 'pending', error: null, errorKind: null })
+          // 회계: reCAPTCHA 차단은 명시적 error 로 마킹 (errorKind 로 i18n 구분).
+          // 큐에 들어간 적이 없으므로 completed/error 카운트만 증가.
+          updateScene(scene.id, { status: 'error', error: 'reCAPTCHA blocked', errorKind: 'recaptcha' })
+          errorCountRef.current++
+          completedCountRef.current++
+          updateProgressMsg(completedCountRef.current)
           pausedRef.current = true
           setIsPaused(true)
           const { waitedMs, resumed } = await recaptcha.registerBlock()
@@ -204,7 +214,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
             pausedRef.current = false
             setIsPaused(false)
           }
-          // manual mode: pausedRef true 유지. 다음 iteration 의 while(pausedRef)가 사용자 togglePause 까지 대기.
+          // manual mode 도 이제 await 안 으로 들어옴 (cancelWait/stop 까지) — 별도 분기 불필요.
           continue
         }
         updateScene(scene.id, { status: 'error', error: submitResult.error, errorKind: null })
@@ -513,13 +523,14 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     setIsPaused(false)
     setIsStopping(true)
     setStatusMessage(t('status.stopping'))
+    recaptcha.cancelWait()  // reCAPTCHA wait 또는 grace 즉시 종료
     // DOM 모드 폴링 루프도 즉시 중단
     requestStopDOM()
     // 큐에 남은 작업 즉시 제거 (불필요한 API 요청 방지)
     if (generationQueue?.clearQueue) {
       generationQueue.clearQueue()
     }
-  }, [t, generationQueue])
+  }, [t, generationQueue, recaptcha])
   
   /**
    * 특정 씬 재시도
