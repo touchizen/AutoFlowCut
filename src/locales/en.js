@@ -923,4 +923,16 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     proceedAnyway: 'Proceed Anyway',
   },
 
+  // reCAPTCHA block notice
+  recaptcha: {
+    title: '⚠️ reCAPTCHA paused — auto-resume in {min} min',
+    titleManual: '🚫 reCAPTCHA block won\'t clear',
+    body: 'Google Flow temporarily blocks generation when too many requests arrive in a short time and the bot-protection (reCAPTCHA) score drops. This is not an app error — it is Google\'s protection. The score recovers on its own; the batch will auto-resume in {min} minutes. You can leave it as is.',
+    bodyManual: 'Auto-resume was tried 3 times but the block persists. Generate 1-2 images manually in the Flow tab to clear reCAPTCHA. If it still fails, turn off any VPN or retry after 30-60 minutes. Press the app\'s resume button once it works.',
+    countdown: 'Auto-resume in {time}',
+    confirm: 'OK',
+    notify: 'reCAPTCHA block detected — auto-resume in {min} min',
+    notifyManual: 'reCAPTCHA block — manual action required',
+  },
+
 }

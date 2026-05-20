@@ -923,4 +923,16 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     proceedAnyway: '그냥 진행',
   },
 
+  // reCAPTCHA 차단 안내
+  recaptcha: {
+    title: '⚠️ reCAPTCHA 일시 차단 — {min}분 후 자동 재개',
+    titleManual: '🚫 reCAPTCHA 차단이 풀리지 않습니다',
+    body: 'Google Flow는 짧은 시간에 생성 요청이 몰리면 봇 방지(reCAPTCHA) 점수가 낮아져 생성을 일시적으로 막습니다. 앱 오류가 아니라 Google 측 보호 장치입니다. 점수는 잠시 쉬면 자동으로 회복되며, {min}분 뒤 배치를 자동으로 이어서 진행합니다. 그대로 두셔도 됩니다.',
+    bodyManual: '자동 재개를 3번 시도했지만 계속 막혔습니다. Flow 탭에서 이미지를 직접 1~2장 생성해 reCAPTCHA를 풀어주세요. 그래도 안 되면 VPN을 끄거나 30분~1시간 뒤 다시 시도하세요. 해결되면 앱의 재개 버튼을 눌러주세요.',
+    countdown: '자동 재개까지 {time}',
+    confirm: '확인',
+    notify: 'reCAPTCHA 차단 감지 — {min}분 후 자동 재개',
+    notifyManual: 'reCAPTCHA 차단 — 수동 조치가 필요합니다',
+  },
+
 }
