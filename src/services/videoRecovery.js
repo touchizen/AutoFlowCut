@@ -226,6 +226,9 @@ export async function recoverInFlightVideos({
               ...(dlResult.generatedAt ? { generatedAt: dlResult.generatedAt } : {}),
               ...(dlResult.model ? { model: dlResult.model } : {}),
               generatingEndedAt: Date.now(),
+              // 이전 실패의 stale error 메시지 clear
+              error: null,
+              errorKind: null,
             })
             recovered++
             console.log(`${logPrefix} Recovered ${fp.id} → ${statusInfo.mediaId.substring(0, 16)}`)
@@ -380,6 +383,9 @@ export async function retryVideoDownload({
       ...(dl.generatedAt ? { generatedAt: dl.generatedAt } : {}),
       ...(dl.model ? { model: dl.model } : {}),
       generatingEndedAt: Date.now(),
+      // 이전 실패의 stale error 메시지 clear
+      error: null,
+      errorKind: null,
     })
     return { success: true }
   }

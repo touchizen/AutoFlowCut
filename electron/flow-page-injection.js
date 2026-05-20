@@ -91,7 +91,8 @@ export const FLOW_PAGE_INJECTION = /* js */ `
 
   // ─── Patched fetch ────────────────────────────────────────────
   window.fetch = async function(input, init) {
-    const url    = typeof input === 'string' ? input : (input?.url || '')
+    let url      = typeof input === 'string' ? input : (input?.url || '')
+    let _input   = input
     let _init    = init || {}
     const inject = window.__autoflowcut_inject__ || {}
 
@@ -133,9 +134,12 @@ export const FLOW_PAGE_INJECTION = /* js */ `
               : inject.i2v.i2vUrl
             if (targetUrl && url !== targetUrl) {
               console.log('[Flow Inject] i2v redirect:', url.split('/v1/').pop(), '→', targetUrl.split('/v1/').pop())
-              return _fetch.call(this, targetUrl, _init)
+              // Don't early-return — re-target so the main fetch+capture path applies the new URL.
+              _input = targetUrl
+              url = targetUrl
+            } else {
+              console.log('[Flow Inject] i2v body modified (same endpoint)')
             }
-            console.log('[Flow Inject] i2v body modified (same endpoint)')
           }
 
         // T2V seed-only injection (when i2v is null but seed is set)
@@ -159,7 +163,7 @@ export const FLOW_PAGE_INJECTION = /* js */ `
     }
 
     // === EXECUTE original fetch ===
-    const res = await _fetch.call(this, input, _init)
+    const res = await _fetch.call(this, _input, _init)
 
     // === RESPONSE CAPTURE ===
     try {

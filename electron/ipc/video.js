@@ -616,8 +616,6 @@ export function registerVideoIPC(ipcMain, deps) {
             const allUrls = findUrls(m, 'media')
             console.log('[Flow VideoStatus] ✅ URLs in response:', JSON.stringify(allUrls))
             console.log('[Flow VideoStatus] ✅ mediaMetadata keys:', JSON.stringify(Object.keys(m?.mediaMetadata || {})))
-            // [DEBUG round-N] 전체 media 객체 dump — Flow 응답 schema 변경 진단용. 검증 끝나면 제거.
-            console.log('[DEBUG VideoStatus] Full media object:', JSON.stringify(m, null, 2))
 
             // AutoFlow: 비디오 URL은 status 응답에서 직접 추출
             const meta = m?.mediaMetadata

@@ -1,6 +1,9 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
-import electron from 'vite-plugin-electron/simple'
+// 'simple' 대신 일반 vite-plugin-electron 사용 — 'simple' 은 preload 에
+// inlineDynamicImports: true 를 강제해서 multiple input (preload + flow-preload) 빌드 시 실패함.
+// 일반 plugin 은 entries 배열을 받아 각 entry 를 single input 으로 빌드 (호환).
+import electron from 'vite-plugin-electron'
 import renderer from 'vite-plugin-electron-renderer'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -22,9 +25,12 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [
       react(),
-      electron({
-        main: {
+      // main process 만 vite-plugin-electron 으로. preload 들은 esbuild script 로 (vite-plugin-electron
+      // 이 rollupOptions.output.format 을 override 해서 ESM 으로 출력하는 문제 회피).
+      electron([
+        {
           entry: 'electron/main.js',
+          onstart(args) { args.startup() },
           vite: {
             build: {
               outDir: 'dist-electron',
@@ -35,17 +41,10 @@ export default defineConfig(({ mode }) => {
             esbuild: isProduction ? { drop: ['console', 'debugger'] } : {}
           }
         },
-        preload: {
-          input: 'electron/preload.js',
-          vite: {
-            build: {
-              outDir: 'dist-electron'
-            },
-            esbuild: isProduction ? { drop: ['console', 'debugger'] } : {}
-          }
-        }
-      }),
+      ]),
       renderer()
+      // preload (electron/preload.js) + flow-preload (electron/flow-preload.js) 둘 다
+      // package.json scripts 의 esbuild step 으로 CJS 빌드.
     ],
     // renderer (React) — production에서 console/debugger 제거
     esbuild: isProduction ? { drop: ['console', 'debugger'] } : {},

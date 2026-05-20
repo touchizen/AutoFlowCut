@@ -521,7 +521,9 @@ function App() {
             ...(result?.seed != null ? { seed: result.seed } : {}),
             ...(result?.generatedAt ? { generatedAt: result.generatedAt } : {}),
             ...(result?.model ? { model: result.model } : {}),
-            ...(result?.error ? { error: result.error } : {}),
+            // 'error'/'errorKind' in result 패턴 — null 값도 patch 에 포함시켜 stale error 메시지 clear.
+            ...(result && 'error' in result ? { error: result.error } : {}),
+            ...(result && 'errorKind' in result ? { errorKind: result.errorKind } : {}),
           } : p
         ))
         if (newStatus === 'complete' && result?.base64) {
@@ -548,7 +550,9 @@ function App() {
           ...(result?.seed != null ? { seed: result.seed } : {}),
           ...(result?.generatedAt ? { generatedAt: result.generatedAt } : {}),
           ...(result?.model ? { model: result.model } : {}),
-          ...(result?.error ? { error: result.error } : {}),
+          // null 값도 적용해 stale error clear (success 분기 patch 가 작동하도록).
+          ...(result && 'error' in result ? { error: result.error } : {}),
+          ...(result && 'errorKind' in result ? { errorKind: result.errorKind } : {}),
         })
         if (newStatus === 'complete' && result?.base64) {
           const sceneId = id.replace('vscene_', 'scene_')
@@ -745,7 +749,9 @@ function App() {
               ...(result?.seed != null ? { seed: result.seed } : {}),
               ...(result && 'generatedAt' in result ? { generatedAt: result.generatedAt } : {}),
               ...(result?.model ? { model: result.model } : {}),
-              ...(result?.error ? { error: result.error } : {}),
+              // null 값 보존 — success 시 stale error 메시지 clear.
+              ...(result && 'error' in result ? { error: result.error } : {}),
+              ...(result && 'errorKind' in result ? { errorKind: result.errorKind } : {}),
             })
 
             // ── T2V 완료 → 번호 매칭으로 씬에 videoT2V 동기화 ──
@@ -836,7 +842,9 @@ function App() {
                   ...(result?.seed != null ? { seed: result.seed } : {}),
                   ...(result && 'generatedAt' in result ? { generatedAt: result.generatedAt } : {}),
                   ...(result?.model ? { model: result.model } : {}),
-                  ...(result?.error ? { error: result.error } : {}),
+                  // null 값 보존 — success 시 stale error 메시지 clear.
+                  ...(result && 'error' in result ? { error: result.error } : {}),
+                  ...(result && 'errorKind' in result ? { errorKind: result.errorKind } : {}),
                 } : p
               )
 

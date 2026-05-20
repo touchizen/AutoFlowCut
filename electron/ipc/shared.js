@@ -332,8 +332,6 @@ export function createSharedHelpers(ctx) {
     let redirectText = ''
     let redirectOk = false
 
-    // [DEBUG round-N] redirectUrl 자체 + 응답 body 진단용. 검증 끝나면 제거.
-    console.log('[DEBUG fetchMedia] mediaId:', mediaId, '| URL:', redirectUrl)
     try {
       const pageResult = await flowPageFetch(redirectUrl, {
         method: 'GET',
@@ -343,7 +341,6 @@ export function createSharedHelpers(ctx) {
       redirectText = pageResult.text || ''
       if (!redirectOk) {
         console.warn(`[fetchMedia] flowPageFetch HTTP ${pageResult.status}, trying sessionFetch...`)
-        console.warn('[DEBUG fetchMedia] flowPageFetch body:', pageResult.text?.substring(0, 1000))
       }
     } catch (e) {
       console.warn('[fetchMedia] flowPageFetch failed:', e.message, ', trying sessionFetch...')
@@ -355,8 +352,6 @@ export function createSharedHelpers(ctx) {
         headers: { 'Authorization': `Bearer ${token}` }
       })
       if (!redirectRes.ok) {
-        const errBody = await redirectRes.text().catch(() => '')
-        console.warn('[DEBUG fetchMedia] sessionFetch body:', errBody.substring(0, 1000))
         throw new Error(`Media redirect HTTP ${redirectRes.status}`)
       }
       redirectText = await redirectRes.text()

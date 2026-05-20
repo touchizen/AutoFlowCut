@@ -689,7 +689,12 @@ async function clearFlowPageInject() {
 // filtering uses a simple "generation was registered" guard instead of time comparison.
 // The injection guard on the page side (single monkey-patch per page load) + the
 // per-cycle clear of __autoflowcut_inject__ ensures correctness without timestamps.
-ipcMain.handle('flow:report-response', (event, { url, body, status }) => {
+ipcMain.handle('flow:report-response', (event, payload) => {
+  // Sender 검증 먼저 — flowView WebContents 가 아닌 곳에서 호출되면 거부.
+  // (메인 BrowserWindow / 다른 view 가 우연/악의적으로 같은 IPC 를 호출해도 무시.)
+  // Payload destructure 보다 먼저 검증해야 malformed payload 가 throw 하지 않는다.
+  if (!flowView || event.sender !== flowView.webContents) return { ok: false, error: 'sender mismatch' }
+  const { url, body, status } = payload || {}
   if (!url || !body) return { ok: false }
 
   const now = Date.now() / 1000  // approximate wallTime for compatibility
@@ -786,7 +791,7 @@ function createWindow() {
     title: `AutoFlowCut v${app.getVersion()}`,
     icon: path.join(__dirname, '..', 'assets', 'icon.png'),
     webPreferences: {
-      preload: path.join(__dirname, 'preload.mjs'),
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: false  // 로컬 file:// 이미지 로드 허용
@@ -804,12 +809,24 @@ function createWindow() {
       partition: 'persist:flow',
       contextIsolation: true,
       webSecurity: false,  // 비디오 API를 페이지 컨텍스트에서 호출할 때 CORS 허용
+      // Flow 페이지 전용 preload (flowReportResponse만 노출).
+      // 메인 preload 를 그대로 attach 하면 원격 Flow 페이지에 전체 electronAPI (filesystem,
+      // auth, MCP, CapCut 등) 가 노출되는 보안 위험. flow-preload 는 최소 표면만 노출하고
+      // ipcMain.handle('flow:report-response') 는 sender === flowView.webContents 검증.
+      preload: path.join(__dirname, 'flow-preload.cjs'),
     }
   })
   mainWindow.contentView.addChildView(flowView)
 
   // Load Flow
   flowView.webContents.loadURL(FLOW_URL)
+
+  // 페이지 console 로그를 main 콘솔에 forward (우리 prefix만 filtering — Flow 자체 로그 noise 회피)
+  flowView.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    if (message.includes('[Flow Inject]') || message.includes('[Flow Debug]') || message.includes('[autoflowcut')) {
+      console.log('[Flow Page]', message)
+    }
+  })
 
   // 지역 제한 조기 감지 (did-navigate는 did-finish-load보다 먼저 발생)
   flowView.webContents.on('did-navigate', (_, url) => {
@@ -1150,9 +1167,7 @@ function createWindow() {
     }
 
     // Re-inject fetch monkey-patch on SPA navigation (guard flag ensures idempotency)
-    try {
-      await flowView.webContents.executeJavaScript(FLOW_PAGE_INJECTION)
-    } catch (_) {}
+    flowView.webContents.executeJavaScript(FLOW_PAGE_INJECTION).catch(() => {})
   })
 
   // Debugger 프로토콜 attach는 첫 번째 자동화 IPC 호출까지 지연 (lazy attach).

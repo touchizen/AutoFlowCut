@@ -464,6 +464,9 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
                 generationId: submission.generationId,
                 duration,
                 mode,
+                // 이전 실패에서 남은 error 메시지 clear (success 이후 stale 표시 방지)
+                error: null,
+                errorKind: null,
               })
               completedCount++
               console.log(`[VideoAutomation] ✅ Downloaded & saved: ${itemId}`)
