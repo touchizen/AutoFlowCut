@@ -1,4 +1,4 @@
-# AutoFlowCut — Microsoft Store Listing (v0.9.10)
+# AutoFlowCut — Microsoft Store Listing (v0.9.11)
 
 ---
 
@@ -11,16 +11,16 @@ AutoFlowCut
 
 ### Short Description (100 chars)
 ```
-Bulk generate AI images & videos with Google Flow, then export complete CapCut projects in one click.
+Bulk-generate AI images & videos with Google Flow (Veo); export full CapCut projects in one click.
 ```
 
 ### Description
 ```
 Still creating AI videos one scene at a time?
 
-Generate 100+ images. Create T2V and I2V videos. Run a fully automated story pipeline. Export a complete CapCut project. All in one desktop app.
+AutoFlowCut takes Google Flow (Veo) AI image and video generation all the way to a ready-to-edit CapCut project — batch-generate 100+ visuals, then export to CapCut in one click. Full AI-video automation, from Flow to CapCut.
 
-AutoFlowCut automates the entire AI video creation pipeline — from Google Flow AI image/video generation to a ready-to-edit CapCut project. Import your script, generate visuals, place narration and SFX automatically, select the best media per scene, and export everything with one click.
+Import your script, generate visuals, place narration and SFX automatically, select the best media per scene, and export everything with one click.
 
 
 🎬 COMPLETE AI VIDEO PIPELINE
@@ -156,20 +156,22 @@ Disclaimer: This app is an independent product developed by Touchizen and is not
 
 ### What's New
 ```
-v0.9.10 — Choose your aspect ratio + an easier tag picker
+v0.9.11 — Automation works again + smarter reCAPTCHA handling
 
-- Pick an aspect ratio per project: set each project to 16:9 for longform or 9:16 for shorts. Image and video generation, the thumbnails in the results list, and the CapCut export all match your choice automatically.
-- An easier tag picker: choose several character tags at once, see a checkmark next to the ones you've picked, and keep the full list in view while you select. A new "(None)" option clears a tag. The same picker now works in the scene detail window too.
-- New Project and Recent Projects in the menu bar: start a new project or reopen a recent one straight from the File menu.
-- Smarter batch reference generation: a batch now includes your style references and creates them first, so the character and background references that follow are generated to match the style.
-- Hover previews that stay on screen: image previews and audio tooltips now reposition and resize so they're never cut off or covering the thumbnail you're pointing at.
-- Your subscription updates on its own: after you upgrade to Pro in your browser, your plan refreshes the moment you switch back to AutoFlowCut — no restart needed.
-- Sound effect details in the Audio tab: each SFX now shows where it's anchored, its prompt, and its length right in the Audio tab, so you can review the full sound design before exporting.
+- Google Flow automation restored: a recent Flow update broke previous versions (Error 253, blank Flow page, downloads that just failed for no reason). This release switches to a stealthier mode that Flow accepts — if you've been hitting these issues, please update.
+- reCAPTCHA challenges handled automatically: when Flow throttles you, AutoFlowCut now detects it, waits 5 / 10 / 30 minutes between attempts, and resumes your batch from where it stopped. A countdown modal shows what's happening, and an OS notification fires if the app is in the background. After 3 strikes it stops and asks you to step in.
+- No more "Where to save?" pop-ups during generation: files go straight to your project folder, so batches run uninterrupted.
+- Stale error messages clear themselves: a video that errored once and then succeeded on retry now shows as completed instead of staying stuck with the old error.
+- Stop button actually stops: pressing Stop ends the batch even mid-reCAPTCHA wait, and pending image batches no longer get killed by reCAPTCHA cooldowns.
+- New Flow URL formats recognized: fixes "ProjectId not captured" when starting a brand-new Flow project.
+- Aspect-ratio toggle stays in sync during image generation.
+- Quieter, safer Flow page: the Flow page now only sees a tiny, scoped API surface from AutoFlowCut instead of the full app — smaller blast radius if Flow ever ships a hostile script.
+- All new reCAPTCHA messages are translated to English and Korean.
 ```
 
 ### Keywords
 ```
-AI video, CapCut, Google Flow, text to video, image to video, AI image generator, video automation, batch generation, Ken Burns, subtitle, SRT, faceless YouTube, AI storytelling, story engine, MCP, Claude Code, open source
+Google Flow, Flow to CapCut, CapCut export, AI video to CapCut, Veo to CapCut, video automation, text to video
 ```
 
 ---
@@ -183,16 +185,16 @@ AutoFlowCut
 
 ### Short Description (100자 이내)
 ```
-Google Flow AI로 이미지/비디오를 대량 생성하고 CapCut 프로젝트로 원클릭 내보내기하는 데스크톱 앱
+Google Flow(Veo)로 이미지·비디오를 대량 생성하고 CapCut 프로젝트로 원클릭 내보내기하는 데스크톱 앱
 ```
 
 ### Description
 ```
 AI 영상, 아직도 한 장면씩 만들고 계신가요?
 
-이미지 100장 이상 생성. T2V, I2V 비디오 생성. 완전 자동화된 스토리 파이프라인. CapCut 프로젝트 원클릭 내보내기. 하나의 데스크톱 앱으로.
+AutoFlowCut은 Google Flow(Veo)의 AI 이미지·비디오 생성을 바로 편집 가능한 CapCut 프로젝트까지 한 번에 이어줍니다 — 100장 이상의 비주얼을 일괄 생성하고 원클릭으로 CapCut에 내보내세요. Flow에서 CapCut까지, AI 영상 제작 전 과정 자동화.
 
-AutoFlowCut은 AI 영상 제작 전 과정을 자동화합니다 — Google Flow AI로 이미지/비디오를 생성하고, 나레이션·효과음을 자동 배치하고, 바로 편집 가능한 CapCut 프로젝트로 변환합니다. 대본을 가져오고, 비주얼을 생성하고, 씬별 최적 미디어를 선택하고, 원클릭으로 내보내세요.
+대본을 가져오고, 비주얼을 생성하고, 나레이션·효과음을 자동 배치하고, 씬별 최적 미디어를 선택하고, 원클릭으로 내보내세요.
 
 
 🎬 AI 영상 제작 전체 파이프라인
@@ -328,15 +330,17 @@ Touchizen 제작 — touchizen.com
 
 ### What's New (새로운 기능)
 ```
-v0.9.10 — 화면 비율 선택 + 더 쉬워진 태그 선택
+v0.9.11 — 자동화 복구 + 더 똑똑해진 reCAPTCHA 대응
 
-- 프로젝트마다 화면 비율 선택: 프로젝트별로 롱폼 16:9 또는 숏폼 9:16을 설정하세요. 이미지·비디오 생성, 결과 목록의 썸네일, CapCut 내보내기가 모두 선택한 비율에 자동으로 맞춰집니다.
-- 더 쉬워진 태그 선택: 캐릭터 태그를 한 번에 여러 개 고르고, 선택한 항목에는 체크 표시가 보이며, 고르는 동안 전체 목록이 계속 펼쳐져 있습니다. 태그를 비우는 '(None)' 옵션도 새로 추가됐습니다. 같은 태그 선택기를 이제 씬 상세 창에서도 쓸 수 있습니다.
-- 메뉴 바의 새 프로젝트 / 최근 프로젝트: File 메뉴에서 바로 새 프로젝트를 만들거나 최근 프로젝트를 다시 열 수 있습니다.
-- 똑똑해진 레퍼런스 일괄 생성: 일괄 생성 시 스타일 레퍼런스가 함께 포함되어 먼저 생성되므로, 뒤이어 만들어지는 캐릭터·배경 레퍼런스가 스타일에 맞춰 생성됩니다.
-- 화면 안에 머무는 호버 미리보기: 이미지 미리보기와 오디오 툴팁이 위치와 크기를 자동 조정해, 화면 밖으로 잘리거나 가리키던 썸네일을 덮지 않습니다.
-- 자동으로 갱신되는 구독: 브라우저에서 Pro로 업그레이드한 뒤 AutoFlowCut으로 돌아오면 플랜이 즉시 갱신됩니다. 재시작이 필요 없습니다.
-- Audio 탭에서 효과음 확인: 각 효과음의 배치 위치, 프롬프트, 길이가 Audio 탭에 바로 표시됩니다. 내보내기 전에 사운드 구성을 한눈에 검토하세요.
+- Google Flow 자동화 복구: 최근 Flow 업데이트로 이전 버전들이 막혀 있었습니다 (Error 253, 빈 Flow 화면, 까닭 모를 다운로드 실패). 이번 버전은 Flow가 받아주는 더 은밀한 방식으로 동작합니다 — 위 증상을 겪고 계셨다면 꼭 업데이트하세요.
+- reCAPTCHA를 자동으로 처리: Flow가 일시 차단(reCAPTCHA)을 걸면 AutoFlowCut이 자동으로 감지해 5분 / 10분 / 30분 단계로 기다린 뒤 재시도하고, 멈춘 지점부터 배치를 이어갑니다. 카운트다운 모달로 진행 상황을 보여주고, 앱이 백그라운드에 있으면 OS 알림으로도 알려줍니다. 3회 차단 후에는 자동 재시도를 멈추고 사용자에게 확인을 요청합니다.
+- 생성 중 "다른 이름으로 저장" 팝업 없음: 모든 파일이 프로젝트 폴더로 바로 저장되어 배치가 끊기지 않습니다.
+- 옛 에러 메시지가 알아서 사라집니다: 한 번 실패한 비디오가 재시도로 성공하면 이전 에러가 남지 않고 '완료'로 표시됩니다.
+- Stop 버튼이 진짜로 멈춥니다: reCAPTCHA 대기 중에 눌러도 즉시 중단되고, 대기 시간 동안 진행 중이던 이미지 배치도 끊기지 않습니다.
+- Flow의 새 프로젝트 URL 형식 인식: 새 프로젝트 시작 시 "ProjectId not captured" 에러로 막히던 문제 해결.
+- 이미지 생성 중에도 화면 비율 토글이 동기 상태를 유지합니다.
+- 더 조용하고 안전해진 Flow 페이지: Flow 페이지가 이제 앱 전체가 아닌 작고 한정된 API만 볼 수 있어, 만에 하나 Flow가 악성 스크립트를 띄워도 영향 범위가 최소화됩니다.
+- 새 reCAPTCHA 안내 메시지는 영어와 한국어로 번역됐습니다.
 ```
 
 ### Keywords (한국어)
@@ -350,16 +354,16 @@ AI 영상, CapCut, Google Flow, 텍스트투비디오, 이미지투비디오, AI
 
 ### Short Description
 ```
-Google Flow AIで画像・動画を生成し、CapCutプロジェクトをワンクリックでエクスポートするデスクトップアプリ
+Google Flow（Veo）で画像・動画を生成し、CapCutプロジェクトをワンクリックでエクスポートするデスクトップアプリ
 ```
 
 ### Description
 ```
 AI動画、まだ1シーンずつ作っていますか？
 
-100枚以上の画像生成。T2V・I2V動画生成。完全自動化されたストーリーパイプライン。CapCutプロジェクトをワンクリックエクスポート。すべて1つのデスクトップアプリで。
+AutoFlowCutは、Google Flow（Veo）のAI画像・動画生成を、すぐに編集できるCapCutプロジェクトまで一気につなぎます。100枚以上のビジュアルを一括生成し、ワンクリックでCapCutにエクスポート。FlowからCapCutまで、AI動画制作の全プロセスを自動化。
 
-AutoFlowCutはAI動画制作の全プロセスを自動化します。Google Flow AIで画像・動画を生成し、ナレーションとSFXを自動配置、すぐに編集できるCapCutプロジェクトに変換。スクリプトをインポートし、ビジュアルを生成し、シーンごとに最適なメディアを選択して、ワンクリックでエクスポート。
+スクリプトをインポートし、ビジュアルを生成し、ナレーションとSFXを自動配置、シーンごとに最適なメディアを選択して、ワンクリックでエクスポート。
 
 
 ⚡ 主な機能
@@ -405,15 +409,17 @@ AutoFlowCutはAI動画制作の全プロセスを自動化します。Google Flo
 
 ### What's New
 ```
-v0.9.10 — アスペクト比を選択 + より使いやすいタグ選択
+v0.9.11 — 自動化が再び動作 + より賢い reCAPTCHA 対応
 
-- プロジェクトごとにアスペクト比を選択：各プロジェクトをロングフォーム 16:9 またはショート 9:16 に設定できます。画像・動画生成、結果リストのサムネイル、CapCut エクスポートがすべて選んだ比率に自動で合わせます。
-- より使いやすいタグ選択：キャラクタータグを一度に複数選べて、選択した項目にはチェックマークが表示され、選択中も一覧全体が開いたままになります。タグを消去する「(None)」オプションも新たに追加。同じタグ選択がシーン詳細ウィンドウでも使えるようになりました。
-- メニューバーの新規プロジェクト / 最近のプロジェクト：File メニューから直接、新規プロジェクトの作成や最近のプロジェクトの再オープンができます。
-- 賢くなったリファレンスの一括生成：一括生成にスタイルリファレンスが含まれ、先に生成されるため、続いて作られるキャラクター・背景リファレンスがスタイルに合わせて生成されます。
-- 画面内に収まるホバープレビュー：画像プレビューと音声ツールチップが位置とサイズを自動調整し、画面外に切れたり、指しているサムネイルを隠したりしなくなりました。
-- 自動で更新されるサブスクリプション：ブラウザで Pro にアップグレードした後、AutoFlowCut に戻るとプランがすぐに更新されます。再起動は不要です。
-- Audio タブで効果音を確認：各効果音の配置位置、プロンプト、長さが Audio タブに直接表示されます。エクスポート前にサウンド構成をひと目で確認できます。
+- Google Flow 自動化を復旧：最近の Flow 更新で以前のバージョンが動かなくなっていました（Error 253、Flow 画面が真っ白、原因不明のダウンロード失敗）。本バージョンでは Flow に受け入れられるよりステルスなモードに切り替えました — 上記の症状が出ていた方はぜひアップデートしてください。
+- reCAPTCHA を自動でさばく：Flow がレート制限（reCAPTCHA）をかけてきたら、AutoFlowCut が自動で検知し、5分 / 10分 / 30分の間隔で再試行し、停止した場所からバッチを再開します。カウントダウン・モーダルで状況を表示し、アプリがバックグラウンドにあるときは OS 通知でもお知らせします。3回ブロックされた後は自動再試行を止め、ユーザーの判断を求めます。
+- 生成中の「名前を付けて保存」ポップアップなし：すべてのファイルがプロジェクトフォルダーに直接保存され、バッチが途切れません。
+- 古いエラーメッセージが自動で消えます：一度失敗した動画が再試行で成功した場合、古いエラーが残らず「完了」と表示されます。
+- Stop ボタンが本当に停止：reCAPTCHA 待機中でも押せばすぐに停止し、待機中の画像バッチも巻き添えで止まらなくなりました。
+- Flow の新しいプロジェクト URL 形式に対応：新規プロジェクト開始時に「ProjectId not captured」で止まっていた問題を解決。
+- 画像生成中もアスペクト比の切替が同期したままになります。
+- より静かで安全な Flow ページ：Flow ページはアプリ全体ではなく、限定された小さな API のみを見られるようになり、万一 Flow が悪意あるスクリプトを配信しても影響範囲を最小化します。
+- 新しい reCAPTCHA 案内メッセージは英語・韓国語に翻訳済みです。
 ```
 
 ---
@@ -422,16 +428,16 @@ v0.9.10 — アスペクト比を選択 + より使いやすいタグ選択
 
 ### Short Description
 ```
-KI-Bilder und -Videos mit Google Flow generieren und CapCut-Projekte mit einem Klick exportieren.
+KI-Bilder und -Videos mit Google Flow (Veo) generieren und CapCut-Projekte mit einem Klick exportieren.
 ```
 
 ### Description
 ```
 Erstellen Sie Ihre KI-Videos immer noch Szene für Szene?
 
-100+ Bilder generieren. T2V- und I2V-Videos erstellen. Vollautomatisierte Story-Pipeline. CapCut-Projekt mit einem Klick exportieren. Alles in einer Desktop-App.
+AutoFlowCut bringt die KI-Bild- und Videogenerierung von Google Flow (Veo) bis zum fertigen, bearbeitbaren CapCut-Projekt — generieren Sie 100+ Visuals im Stapel und exportieren Sie sie mit einem Klick nach CapCut. Komplette KI-Video-Automatisierung, von Flow zu CapCut.
 
-AutoFlowCut automatisiert die gesamte KI-Videoproduktion — von der Google Flow AI Bild-/Videogenerierung bis zum fertigen CapCut-Projekt. Importieren Sie Ihr Skript, generieren Sie Visuals, lassen Sie Narration und SFX automatisch platzieren, wählen Sie das beste Medium pro Szene und exportieren Sie alles mit einem Klick.
+Importieren Sie Ihr Skript, generieren Sie Visuals, lassen Sie Narration und SFX automatisch platzieren, wählen Sie das beste Medium pro Szene und exportieren Sie alles mit einem Klick.
 
 
 ⚡ HAUPTFUNKTIONEN
@@ -477,15 +483,17 @@ Der integrierte MCP-Server (Model Context Protocol) verbindet sich direkt mit Cl
 
 ### What's New
 ```
-v0.9.10 — Seitenverhältnis wählen + einfacherer Tag-Picker
+v0.9.11 — Automatisierung läuft wieder + smarteres reCAPTCHA-Handling
 
-- Seitenverhältnis pro Projekt wählen: Stellen Sie jedes Projekt auf 16:9 für Longform oder 9:16 für Shorts ein. Bild- und Videogenerierung, die Thumbnails in der Ergebnisliste und der CapCut-Export richten sich automatisch nach Ihrer Wahl.
-- Einfacherer Tag-Picker: Wählen Sie mehrere Charakter-Tags auf einmal, sehen Sie ein Häkchen bei den gewählten Einträgen, und die vollständige Liste bleibt während der Auswahl geöffnet. Eine neue „(None)"-Option leert ein Tag. Derselbe Picker funktioniert jetzt auch im Szenendetail-Fenster.
-- Neues Projekt und Letzte Projekte in der Menüleiste: Starten Sie ein neues Projekt oder öffnen Sie ein kürzlich verwendetes direkt über das Datei-Menü.
-- Klügere Stapel-Referenzgenerierung: Ein Stapel enthält jetzt Ihre Stil-Referenzen und erzeugt sie zuerst, sodass die anschließend erstellten Charakter- und Hintergrund-Referenzen zum Stil passen.
-- Hover-Vorschauen, die auf dem Bildschirm bleiben: Bildvorschauen und Audio-Tooltips passen Position und Größe automatisch an, sodass sie nie abgeschnitten werden oder das Thumbnail verdecken, auf das Sie zeigen.
-- Ihr Abo aktualisiert sich von selbst: Nach dem Upgrade auf Pro im Browser wird Ihr Plan aktualisiert, sobald Sie zu AutoFlowCut zurückwechseln – kein Neustart nötig.
-- Soundeffekt-Details im Audio-Tab: Jeder Soundeffekt zeigt jetzt direkt im Audio-Tab seine Position, seinen Prompt und seine Länge – so prüfen Sie das gesamte Sounddesign vor dem Export.
+- Google-Flow-Automatisierung wiederhergestellt: Ein kürzliches Flow-Update hatte ältere Versionen blockiert (Error 253, leere Flow-Seite, Downloads, die einfach grundlos fehlschlugen). Diese Version wechselt in einen unauffälligeren Modus, den Flow akzeptiert — bitte aktualisieren, falls Sie diese Probleme hatten.
+- reCAPTCHA wird automatisch behandelt: Wenn Flow Sie drosselt, erkennt AutoFlowCut das jetzt automatisch, wartet 5 / 10 / 30 Minuten zwischen den Versuchen und setzt Ihre Stapelverarbeitung dort fort, wo sie gestoppt wurde. Ein Countdown-Modal zeigt den Status, und eine OS-Benachrichtigung informiert Sie, wenn die App im Hintergrund läuft. Nach 3 Sperren stoppt der Auto-Retry und fragt Sie nach.
+- Keine „Speichern unter"-Pop-ups mehr während der Generierung: Dateien gehen direkt in Ihren Projektordner, sodass die Stapel ohne Unterbrechung laufen.
+- Veraltete Fehlermeldungen verschwinden von selbst: Ein Video, das einmal fehlerhaft war und beim Retry erfolgreich war, wird jetzt als „abgeschlossen" angezeigt, anstatt mit der alten Fehlermeldung hängenzubleiben.
+- Stop-Button stoppt tatsächlich: Stop beendet den Stapel jetzt sofort — auch mitten in einer reCAPTCHA-Wartezeit — und laufende Bild-Stapel werden nicht mehr von reCAPTCHA-Wartezeiten abgewürgt.
+- Neue Flow-Projekt-URL-Formate erkannt: Behebt „ProjectId not captured" beim Starten eines brandneuen Projekts.
+- Der Seitenverhältnis-Schalter bleibt während der Bildgenerierung synchron.
+- Leisere, sicherere Flow-Seite: Die Flow-Seite sieht jetzt nur eine winzige, eingegrenzte API-Schnittstelle von AutoFlowCut statt der gesamten App — kleinere Angriffsfläche, falls Flow jemals ein bösartiges Skript ausliefert.
+- Alle neuen reCAPTCHA-Nachrichten sind ins Englische und Koreanische übersetzt.
 ```
 
 ---
