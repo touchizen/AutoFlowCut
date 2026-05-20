@@ -1,4 +1,4 @@
-import { app, BrowserWindow, WebContentsView, ipcMain, shell, protocol, net, powerSaveBlocker } from 'electron'
+import { app, BrowserWindow, WebContentsView, ipcMain, shell, protocol, net, powerSaveBlocker, Notification } from 'electron'
 import http from 'node:http'
 import fs from 'node:fs/promises'
 import fsSync from 'node:fs'
@@ -1038,6 +1038,18 @@ registerLayoutIPC(ipcMain, () => mainWindow, () => flowView)
 ipcMain.handle('app:project-activated', (event, { name, workFolder }) => {
   try { noteProjectActivated(name, workFolder) } catch (e) { console.warn('[AutoFlowCut] noteProjectActivated failed:', e.message) }
   return { success: true }
+})
+
+// OS-level notification (reCAPTCHA block alerts, etc.) — surfaces alerts when the app is backgrounded.
+ipcMain.handle('notify:os', (_e, { title, body } = {}) => {
+  try {
+    if (Notification.isSupported()) {
+      new Notification({ title: String(title || 'AutoFlowCut'), body: String(body || '') }).show()
+    }
+  } catch (e) {
+    console.warn('[notify:os] failed:', e.message)
+  }
+  return { ok: true }
 })
 
 // === MCP HTTP Server ===

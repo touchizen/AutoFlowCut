@@ -117,11 +117,23 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       if (!autoResume) {
         setRecaptchaModal({ mode: 'manual', waitMs: 0 })
         setStatusMessage(t('recaptcha.notifyManual'))
+        try {
+          window.electronAPI?.notifyOS?.({
+            title: 'AutoFlowCut',
+            body: t('recaptcha.notifyManual'),
+          })
+        } catch { /* 알림 실패는 무시 */ }
         return
       }
 
       setRecaptchaModal({ mode: 'auto', waitMs })
       setStatusMessage(t('recaptcha.notify', { min: Math.round(waitMs / 60000) }))
+      try {
+        window.electronAPI?.notifyOS?.({
+          title: 'AutoFlowCut',
+          body: t('recaptcha.notify', { min: Math.round(waitMs / 60000) }),
+        })
+      } catch { /* 알림 실패는 무시 */ }
 
       while (!stopRequestedRef.current && Date.now() < lastRecaptchaAtRef.current + waitMs) {
         await new Promise(r => setTimeout(r, 500))
