@@ -150,16 +150,23 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
         console.warn('[Automation] reCAPTCHA block detected on', recaptchaScenes.length, 'scenes this cycle')
         pausedRef.current = true
         setIsPaused(true)
-        const { waitedMs, resumed } = await recaptcha.registerBlock()
-        if (waitedMs > 0) {
-          for (const item of pendingQueue) item.submittedAt += waitedMs
-          pauseBudgetMs += waitedMs
-        }
-        if (resumed) {
+        const { waitedMs, mode, resumed } = await recaptcha.registerBlock()
+        if (mode === 'absorbed') {
+          // 같은 wave 의 메인 핸들러가 이미 처리 중 (또는 grace window) — 이번 호출은 추가 wait 없음.
+          // pre-pause 를 풀어 batch 가 무한 대기에 빠지지 않게 함.
           pausedRef.current = false
           setIsPaused(false)
+        } else {
+          if (waitedMs > 0) {
+            for (const item of pendingQueue) item.submittedAt += waitedMs
+            pauseBudgetMs += waitedMs
+          }
+          if (resumed) {
+            pausedRef.current = false
+            setIsPaused(false)
+          }
+          // !resumed (stop) 인 경우: pausedRef true 유지 → 메인 루프의 stopRequestedRef 가드가 break.
         }
-        // manual mode: pausedRef true 유지. Phase 1 의 while(pausedRef) 또는 Phase 2 의 추가 가드가 처리.
       }
     }
 
@@ -205,16 +212,24 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
           updateProgressMsg(completedCountRef.current)
           pausedRef.current = true
           setIsPaused(true)
-          const { waitedMs, resumed } = await recaptcha.registerBlock()
-          if (waitedMs > 0) {
-            for (const item of pendingQueue) item.submittedAt += waitedMs
-            pauseBudgetMs += waitedMs
-          }
-          if (resumed) {
+          const { waitedMs, mode, resumed } = await recaptcha.registerBlock()
+          if (mode === 'absorbed') {
+            // 같은 wave 의 메인 핸들러가 이미 처리 중 (또는 grace window) — 이번 호출은 추가 wait 없음.
+            // pre-pause 를 풀어 batch 가 무한 대기에 빠지지 않게 함.
             pausedRef.current = false
             setIsPaused(false)
+          } else {
+            if (waitedMs > 0) {
+              for (const item of pendingQueue) item.submittedAt += waitedMs
+              pauseBudgetMs += waitedMs
+            }
+            if (resumed) {
+              pausedRef.current = false
+              setIsPaused(false)
+            }
+            // !resumed (stop) 인 경우: pausedRef true 유지 → 메인 루프의 stopRequestedRef 가드가 break.
           }
-          // manual mode 도 이제 await 안 으로 들어옴 (cancelWait/stop 까지) — 별도 분기 불필요.
+          // absorbed / manual mode 모두 await 안으로 처리 완료.
           continue
         }
         updateScene(scene.id, { status: 'error', error: submitResult.error, errorKind: null })

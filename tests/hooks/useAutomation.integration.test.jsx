@@ -52,13 +52,16 @@ vi.mock('../../src/utils/sceneFilters', () => ({
   filterPendingScenes: vi.fn((scenes) => scenes),
 }))
 
-// Wrap real useRecaptchaBackoff to inject graceMs:0 for deterministic tests.
+// Per-test override for graceMs (default 0 → deterministic for existing tests).
+const TEST_GRACE = vi.hoisted(() => ({ ms: 0 }))
+
+// Wrap real useRecaptchaBackoff to inject TEST_GRACE.ms for deterministic tests.
 vi.mock('../../src/hooks/useRecaptchaBackoff', async () => {
   const actual = await vi.importActual('../../src/hooks/useRecaptchaBackoff')
   return {
     ...actual,
     useRecaptchaBackoff: (t, opts) =>
-      actual.useRecaptchaBackoff(t, { ...opts, graceMs: 0 }),
+      actual.useRecaptchaBackoff(t, { ...opts, graceMs: TEST_GRACE.ms }),
   }
 })
 
@@ -120,6 +123,7 @@ function setupHook(overrides = {}) {
 // ─── Timer setup ───────────────────────────────────────────────────────────────
 
 beforeEach(() => {
+  TEST_GRACE.ms = 0  // 기본값 — 기존 테스트 영향 X
   vi.useFakeTimers()
   // Pin Math.random to 0 to eliminate inter-scene wait variance (7000 + 0*8000 = 7000ms).
   vi.spyOn(Math, 'random').mockReturnValue(0)
@@ -343,5 +347,59 @@ describe('useAutomation reCAPTCHA integration', () => {
     await startPromise
 
     expect(h.result.current.isRunning).toBe(false)
+  })
+
+  // Test 5 (P1 regression): grace-window absorbed reCAPTCHA must not deadlock
+  it('grace-window absorbed reCAPTCHA does not leave batch paused indefinitely (P1 regression)', async () => {
+    TEST_GRACE.ms = 200  // grace window 활성
+
+    const { hook, submitGenerationDOM, checkGeneration, collectGeneration } = setupHook({
+      scenes: [
+        { id: 's1', prompt: 'a', status: 'pending' },
+        { id: 's2', prompt: 'b', status: 'pending' },
+      ],
+    })
+
+    // 두 씬 모두 submit success. 고유 generation ID 발급.
+    let gid = 0
+    submitGenerationDOM.mockImplementation(async () => ({
+      success: true,
+      generationId: `gen-${++gid}`,
+    }))
+
+    // s2 는 s1 이 collect 될 때까지 completed=false → 다른 cycle 로 분리.
+    let s1Collected = false
+    checkGeneration.mockImplementation(async (generationId) => {
+      if (generationId === 'gen-1') return { completed: true }
+      if (generationId === 'gen-2') return { completed: s1Collected }
+      return { completed: false }
+    })
+
+    // 두 씬 모두 collect 시 reCAPTCHA 실패. s1 collect 시 s1Collected 를 true 로 전환.
+    collectGeneration.mockImplementation(async (generationId) => {
+      if (generationId === 'gen-1') {
+        s1Collected = true
+        return { success: false, error: 'reCAPTCHA evaluation failed' }
+      }
+      return { success: false, error: 'reCAPTCHA evaluation failed' }
+    })
+
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({ projectName: 'p', saveMode: 'memory' })
+    })
+
+    // s1 collect → tier-1 block (5 min). 그 직후 grace window(200ms) 안에 s2 cycle → absorbed.
+    // 수정 전: absorbed 에서 pausedRef=true 유지 → while(pausedRef) 무한 대기.
+    // 수정 후: absorbed 에서 unpause → batch 정상 진행 후 종료.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20 * 60 * 1000)
+    })
+
+    await startPromise
+
+    // batch 가 정상 종료됐는지 — isRunning=false, isPaused 풀려 있어야 함.
+    expect(hook.result.current.isRunning).toBe(false)
+    expect(hook.result.current.isPaused).toBe(false)
   })
 })
