@@ -342,94 +342,75 @@ function createWindow() {
 
         // 4단계: "Enter tool" 버튼 자동 클릭 → 프로젝트 생성
         // AutoFlow도 동일한 방식으로 projectId를 얻음 (clickNewProjectButton)
-        // SPA가 완전히 렌더링될 때까지 재시도 (최대 15초)
+        // 단일 시도 — 실패하면 다음 API 요청에서 projectId 재시도.
         console.log('[Flow API] No project in URL, looking for Enter tool button...')
 
-        let clicked = null
-        for (let retry = 0; retry < 6 && !capturedProjectId; retry++) {
-          if (retry > 0) {
-            await new Promise(r => setTimeout(r, 2000))
-            // 재시도 중 capturedProjectId가 설정됐을 수 있음
-            if (capturedProjectId) break
-            // URL에 projectId가 추가됐을 수 있음
-            const retryUrl = flowView.webContents.getURL()
-            const retryMatch = retryUrl.match(/\/project\/([a-f0-9-]{36})/)
-            if (retryMatch) {
-              capturedProjectId = retryMatch[1]
-              console.log('[Flow API] ProjectId from URL during retry:', capturedProjectId)
-              break
+        // New Project 버튼 찾기 + 클릭 (AutoFlow: icon='add_2')
+        const clicked = await flowView.webContents.executeJavaScript(`
+          (function() {
+            const allButtons = document.querySelectorAll('button');
+            // 디버그 로깅
+            const iconButtons = [], textButtons = [];
+            for (const b of allButtons) {
+              const icons = b.querySelectorAll('i, span, mat-icon');
+              icons.forEach(icon => { if (icon.textContent.trim()) iconButtons.push(icon.textContent.trim().substring(0, 30)); });
+              if (icons.length === 0) textButtons.push(b.textContent.trim().substring(0, 50));
             }
-          }
+            console.log('[Flow Debug] Icon buttons:', JSON.stringify(iconButtons));
+            console.log('[Flow Debug] Text buttons:', JSON.stringify(textButtons.slice(0, 10)));
+            console.log('[Flow Debug] Total buttons:', allButtons.length);
 
-          // New Project 버튼 찾기 + 클릭 (AutoFlow: icon='add_2')
-          clicked = await flowView.webContents.executeJavaScript(`
-            (function() {
-              const allButtons = document.querySelectorAll('button');
-              // 디버그 로깅
-              if (${retry} === 0) {
-                const iconButtons = [], textButtons = [];
-                for (const b of allButtons) {
-                  const icons = b.querySelectorAll('i, span, mat-icon');
-                  icons.forEach(icon => { if (icon.textContent.trim()) iconButtons.push(icon.textContent.trim().substring(0, 30)); });
-                  if (icons.length === 0) textButtons.push(b.textContent.trim().substring(0, 50));
-                }
-                console.log('[Flow Debug] Icon buttons:', JSON.stringify(iconButtons));
-                console.log('[Flow Debug] Text buttons:', JSON.stringify(textButtons.slice(0, 10)));
-                console.log('[Flow Debug] Total buttons:', allButtons.length);
-              }
+            // 방법 1: add_2 아이콘 버튼 (AutoFlow에서 확인된 실제 XPath)
+            try {
+              const xr = document.evaluate(
+                "//button[.//i[normalize-space(text())='add_2']] | (//button[.//i[normalize-space(.)='add_2']])",
+                document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null
+              );
+              if (xr.singleNodeValue) { xr.singleNodeValue.click(); return 'add_2_xpath'; }
+            } catch {}
 
-              // 방법 1: add_2 아이콘 버튼 (AutoFlow에서 확인된 실제 XPath)
-              try {
-                const xr = document.evaluate(
-                  "//button[.//i[normalize-space(text())='add_2']] | (//button[.//i[normalize-space(.)='add_2']])",
-                  document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null
-                );
-                if (xr.singleNodeValue) { xr.singleNodeValue.click(); return 'add_2_xpath'; }
-              } catch {}
+            // 방법 2: icon 텍스트 'add_2' 직접 탐색
+            for (const b of allButtons) {
+              const icons = b.querySelectorAll('i, span.material-icons, span.material-symbols-outlined, mat-icon');
+              for (const icon of icons) {
+                const t = icon.textContent.trim();
+                if (t === 'add_2' || t === 'add') {
+                  b.click(); return 'icon_' + t;
+                }
+              }
+            }
+            // 방법 3: arrow_forward 아이콘 (구버전 호환)
+            for (const b of allButtons) {
+              const icons = b.querySelectorAll('i, span.material-icons, span.material-symbols-outlined');
+              for (const icon of icons) {
+                if (icon.textContent.trim() === 'arrow_forward') {
+                  b.click(); return 'arrow_forward';
+                }
+              }
+            }
+            // 방법 4: 텍스트 버튼
+            for (const b of allButtons) {
+              const text = b.textContent.trim().toLowerCase();
+              if (['start', '시작', 'enter', 'new', 'create', '새로 만들기', '새 프로젝트', '새프로젝트', '만들기'].some(k => text.includes(k))) {
+                b.click(); return 'text_' + text.substring(0, 30);
+              }
+            }
+            // 방법 5: primary/filled 버튼
+            for (const b of allButtons) {
+              const cls = b.className || '';
+              if (cls.includes('primary') || cls.includes('filled') || cls.includes('cta')) {
+                b.click(); return 'cta';
+              }
+            }
+            return null;
+          })()
+        `).catch(() => null)
 
-              // 방법 2: icon 텍스트 'add_2' 직접 탐색
-              for (const b of allButtons) {
-                const icons = b.querySelectorAll('i, span.material-icons, span.material-symbols-outlined, mat-icon');
-                for (const icon of icons) {
-                  const t = icon.textContent.trim();
-                  if (t === 'add_2' || t === 'add') {
-                    b.click(); return 'icon_' + t;
-                  }
-                }
-              }
-              // 방법 3: arrow_forward 아이콘 (구버전 호환)
-              for (const b of allButtons) {
-                const icons = b.querySelectorAll('i, span.material-icons, span.material-symbols-outlined');
-                for (const icon of icons) {
-                  if (icon.textContent.trim() === 'arrow_forward') {
-                    b.click(); return 'arrow_forward';
-                  }
-                }
-              }
-              // 방법 4: 텍스트 버튼
-              for (const b of allButtons) {
-                const text = b.textContent.trim().toLowerCase();
-                if (['start', '시작', 'enter', 'new', 'create', '새로 만들기', '새 프로젝트', '새프로젝트', '만들기'].some(k => text.includes(k))) {
-                  b.click(); return 'text_' + text.substring(0, 30);
-                }
-              }
-              // 방법 5: primary/filled 버튼
-              for (const b of allButtons) {
-                const cls = b.className || '';
-                if (cls.includes('primary') || cls.includes('filled') || cls.includes('cta')) {
-                  b.click(); return 'cta';
-                }
-              }
-              return null;
-            })()
-          `).catch(() => null)
-
-          if (clicked) {
-            console.log('[Flow API] Clicked button (retry ' + retry + '):', clicked)
-            enterToolClicked = true // 무한루프 방지
-            break
-          }
-          console.log('[Flow API] Button not found, retry', retry + 1, '/ 6')
+        if (clicked) {
+          console.log('[Flow API] Clicked button:', clicked)
+          enterToolClicked = true // 무한루프 방지
+        } else {
+          console.log('[Flow API] Button not found')
         }
 
         if (clicked && !capturedProjectId) {
@@ -715,7 +696,16 @@ function createWindow() {
         responseStatusMap[params.requestId] = params.response?.status
         if (!capturedProjectId) {
           const url = params.response?.url || ''
-          const pidMatch = url.match(/projects\/([a-f0-9-]{36})/)
+          // Flow URL pattern들 (2026-05 현재 확인):
+          //   - projects/UUID/...                  (legacy path 형식)
+          //   - ?projectId=UUID 또는 &projectId=UUID (query param — sessions, *.json 등 다수)
+          //   - /UUID.json                         (CDN 파일명 자체가 UUID)
+          //   - %22UUID%22 (URL-encoded JSON 안)   (fetchProjectInitialData input 등)
+          const pidMatch =
+            url.match(/projects\/([a-f0-9-]{36})/) ||
+            url.match(/[?&]projectId=([a-f0-9-]{36})/) ||
+            url.match(/\/([a-f0-9-]{36})\.json/) ||
+            url.match(/%22([a-f0-9-]{36})%22/)
           if (pidMatch) {
             capturedProjectId = pidMatch[1]
             console.log('[Flow API] ProjectId from response URL:', capturedProjectId)
