@@ -1,6 +1,11 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import RecaptchaModal from '../../src/components/RecaptchaModal'
+
+// useModalVisibility mock — window.electronAPI 미정의 환경 안전
+beforeEach(() => {
+  globalThis.window.electronAPI = { setModalVisible: vi.fn() }
+})
 
 const t = (key, vars = {}) =>
   ({
@@ -14,8 +19,8 @@ const t = (key, vars = {}) =>
 
 describe('RecaptchaModal', () => {
   it('renders nothing when closed', () => {
-    const { container } = render(<RecaptchaModal open={false} t={t} />)
-    expect(container.firstChild).toBeNull()
+    render(<RecaptchaModal open={false} t={t} />)
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('shows auto-resume title with minutes when open', () => {
@@ -28,10 +33,16 @@ describe('RecaptchaModal', () => {
     expect(screen.getByText('manual')).toBeTruthy()
   })
 
-  it('confirm button calls onClose', () => {
+  it('confirm button calls onClose AND hides the modal locally without changing parent open prop', () => {
     const onClose = vi.fn()
     render(<RecaptchaModal open mode="auto" waitMs={300000} onClose={onClose} t={t} />)
     fireEvent.click(screen.getByText('OK'))
     expect(onClose).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('useModalVisibility is invoked while visible', () => {
+    render(<RecaptchaModal open mode="auto" waitMs={300000} onClose={() => {}} t={t} />)
+    expect(window.electronAPI.setModalVisible).toHaveBeenCalledWith({ visible: true })
   })
 })

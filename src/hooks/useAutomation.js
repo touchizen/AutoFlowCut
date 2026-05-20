@@ -14,7 +14,7 @@ import { cleanBase64 as stripBase64Prefix } from '../utils/urls'
 import { toast } from '../components/Toast'
 import { resetDOMSession, requestStopDOM } from '../utils/flowDOMClient'
 import { isRecaptchaError } from '../utils/recaptchaDetect'
-import { planRecaptchaWait, shouldResetIncidents } from '../services/recaptchaPolicy'
+import { useRecaptchaBackoff } from './useRecaptchaBackoff'
 
 export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings = null, addPendingSave = null, t = (key) => key, onAuthError = null, generationQueue = null, onComplete = null) {
   const [isRunning, setIsRunning] = useState(false)
@@ -23,8 +23,6 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
   const [progress, setProgress] = useState({ current: 0, total: 0, percent: 0, errorCount: 0, startedAt: null, endedAt: null })
   const [status, setStatus] = useState('ready')
   const [statusMessage, setStatusMessage] = useState('')
-  // reCAPTCHA 차단 모달 상태: null 이면 닫힘
-  const [recaptchaModal, setRecaptchaModal] = useState(null) // { mode:'auto'|'manual', waitMs }
 
   // t 함수가 변경되면 초기 상태 메시지 업데이트
   useEffect(() => {
@@ -33,15 +31,17 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     }
   }, [t, status, isRunning])
   
+  // notifyOS 안정적 콜백으로 캡슐화 — backoff hook 의존성으로 안전.
+  const notifyOS = useCallback((payload) => {
+    try { window.electronAPI?.notifyOS?.(payload) } catch { /* 무시 */ }
+  }, [])
+  const recaptcha = useRecaptchaBackoff(t, { notifyOS })
+
   const stopRequestedRef = useRef(false)
   const pausedRef = useRef(false)
   const completedCountRef = useRef(0)
   const errorCountRef = useRef(0)
   const batchStartedAtRef = useRef(null)
-  const recaptchaIncidentRef = useRef(0)      // 연속 차단 횟수
-  const recaptchaHandlingRef = useRef(false)  // 한 incident 동안 핸들러 중복 실행 방지
-  const lastRecaptchaAtRef = useRef(0)        // 마지막 reCAPTCHA 발생 시각 — in-flight 잔여 실패가 들어오면 갱신되어 대기 종료를 자동 연장
-  const consecutiveSuccessRef = useRef(0)     // 재개 후 연속 성공 씬 수
 
   // generateImageDOM 은 dead processScene 제거와 함께 호출 사이트가 사라져서 destructuring 에서도 제외.
   // 단일 씬 동기 호출이 필요해지면 flowAPI.generateImageDOM 으로 직접 접근.
@@ -74,11 +74,8 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     // selectedStyleRefId 없으면 자동 매칭 모드 — 씬별 style_tag로만 결정.
     // 임의의 "첫 스타일 카드 자동 적용" fallback은 제거됨 — UI 라벨("자동")과 실행이 일치해야 함.
     completedCountRef.current = 0
-    recaptchaIncidentRef.current = 0
-    recaptchaHandlingRef.current = false
-    lastRecaptchaAtRef.current = 0
-    consecutiveSuccessRef.current = 0
-    setRecaptchaModal(null)
+    recaptcha.reset()
+    let pauseBudgetMs = 0  // 누적 wait — pollStart / submittedAt 보정용
     errorCountRef.current = 0
     const pendingQueue = [] // { generationId, scene, submittedAt }
     let consecutiveErrors = 0
@@ -95,69 +92,16 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       logPrefix: '[Automation]',
     })
 
-    // reCAPTCHA 차단 감지 → 일시정지 + escalation 대기 + 자동 재개.
-    // 한 incident 동안 여러 씬이 동시에 실패해도 incident 카운터는 1회만 증가(recaptchaHandlingRef 가드).
-    // 다만 in-flight 잔여(동시 ~4개)가 시차로 실패해 들어올 때마다 lastRecaptchaAtRef 가 갱신되어,
-    // 대기 종료가 자연히 "마지막 차단 + waitMs" 시점으로 밀린다.
-    // (그렇지 않으면 첫 5분의 앞부분(15~30초)이 "여전히 차단당하는 중"으로 깎여 실질 휴식이 부족함.)
-    const handleRecaptchaBlock = async () => {
-      // 차단 발생 때마다 시각 갱신 — 이미 핸들링 중이어도 갱신만 하고 빠짐.
-      lastRecaptchaAtRef.current = Date.now()
-      if (recaptchaHandlingRef.current) return
-
-      recaptchaHandlingRef.current = true
-      recaptchaIncidentRef.current += 1
-      consecutiveSuccessRef.current = 0
-
-      const { waitMs, autoResume } = planRecaptchaWait(recaptchaIncidentRef.current)
-
-      pausedRef.current = true
-      setIsPaused(true)
-
-      if (!autoResume) {
-        setRecaptchaModal({ mode: 'manual', waitMs: 0 })
-        setStatusMessage(t('recaptcha.notifyManual'))
-        try {
-          window.electronAPI?.notifyOS?.({
-            title: 'AutoFlowCut',
-            body: t('recaptcha.notifyManual'),
-          })
-        } catch { /* 알림 실패는 무시 */ }
-        return
-      }
-
-      setRecaptchaModal({ mode: 'auto', waitMs })
-      setStatusMessage(t('recaptcha.notify', { min: Math.round(waitMs / 60000) }))
-      try {
-        window.electronAPI?.notifyOS?.({
-          title: 'AutoFlowCut',
-          body: t('recaptcha.notify', { min: Math.round(waitMs / 60000) }),
-        })
-      } catch { /* 알림 실패는 무시 */ }
-
-      while (!stopRequestedRef.current && Date.now() < lastRecaptchaAtRef.current + waitMs) {
-        await new Promise(r => setTimeout(r, 500))
-      }
-
-      setRecaptchaModal(null)
-      recaptchaHandlingRef.current = false
-      if (!stopRequestedRef.current) {
-        pausedRef.current = false
-        setIsPaused(false)
-      }
-    }
-
     // 완료된 결과 수집
     const ITEM_TIMEOUT = 120000 // 개별 아이템 2분 타임아웃
     const collectCompleted = async () => {
       const stillPending = []
+      const recaptchaScenes = []
       for (const item of pendingQueue) {
         if (stopRequestedRef.current) { stillPending.push(item); continue }
-        // 개별 타임아웃 체크
         const elapsed = Date.now() - item.submittedAt
         if (elapsed > ITEM_TIMEOUT) {
           console.warn('[Automation] Scene', item.scene.id, 'timed out after', Math.round(elapsed / 1000), 's')
-          // errorKind 명시 클리어 — prior image-missing 마커가 새 timeout 메시지를 가리지 않도록.
           updateScene(item.scene.id, { status: 'error', error: 'Generation timeout', errorKind: null })
           errorCountRef.current++
           completedCountRef.current++
@@ -169,22 +113,18 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
           if (st.completed) {
             const result = await collectGeneration(item.generationId)
             if (!result.success && isRecaptchaError(result.error)) {
-              console.warn('[Automation] reCAPTCHA block detected on scene', item.scene.id)
-              await handleRecaptchaBlock()
+              recaptchaScenes.push(item)
+              updateScene(item.scene.id, { status: 'pending', error: null, errorKind: null })
+              // 큐에서 제외 (stillPending 에 추가하지 않음) — 사용자 retryErrors 가 잡음.
+              continue
             }
             console.log('[Automation] Collected scene', item.scene.id, ':', result.success, result.images?.length || 0, 'images')
-            // processAsyncResult 의 반환값은 finalize success (이미지 받았어도 디스크 저장 실패 시 false).
-            // result.success 만 보면 save 실패 씬이 배치 요약에서 성공으로 잘못 집계되는 회귀.
             const finalizeOk = await processAsyncResult(item.scene, result)
             if (finalizeOk) {
-              consecutiveSuccessRef.current++
-              if (recaptchaIncidentRef.current > 0 && shouldResetIncidents(consecutiveSuccessRef.current)) {
-                console.log('[Automation] reCAPTCHA incident counter reset after', consecutiveSuccessRef.current, 'successes')
-                recaptchaIncidentRef.current = 0
-              }
+              recaptcha.recordSuccess()
             } else {
               errorCountRef.current++
-              consecutiveSuccessRef.current = 0
+              recaptcha.recordFailure()
             }
             completedCountRef.current++
             updateProgressMsg(completedCountRef.current)
@@ -193,12 +133,28 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
           }
         } catch (e) {
           console.error('[Automation] Check/collect error for scene', item.scene.id, ':', e.message)
-          // 에러가 연속되면 타임아웃에서 처리되므로 다시 pending에 넣음
           stillPending.push(item)
         }
       }
       pendingQueue.length = 0
       pendingQueue.push(...stillPending)
+
+      // 한 cycle 의 모든 reCAPTCHA 실패는 한 incident 으로 묶어 처리.
+      if (recaptchaScenes.length > 0) {
+        console.warn('[Automation] reCAPTCHA block detected on', recaptchaScenes.length, 'scenes this cycle')
+        pausedRef.current = true
+        setIsPaused(true)
+        const { waitedMs, mode, resumed } = await recaptcha.registerBlock()
+        if (waitedMs > 0) {
+          for (const item of pendingQueue) item.submittedAt += waitedMs
+          pauseBudgetMs += waitedMs
+        }
+        if (resumed) {
+          pausedRef.current = false
+          setIsPaused(false)
+        }
+        // manual mode: pausedRef true 유지. Phase 1 의 while(pausedRef) 또는 Phase 2 의 추가 가드가 처리.
+      }
     }
 
     // Phase 1: 비동기 제출 + 중간 수집
@@ -234,9 +190,22 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       } else {
         console.error('[Automation] Submit failed for scene', scene.id, ':', submitResult.error)
         if (isRecaptchaError(submitResult.error)) {
-          console.warn('[Automation] reCAPTCHA block detected on submit, scene', scene.id)
-          await handleRecaptchaBlock()
-          continue   // 연속 submit 실패(3회 break) 카운트에 포함하지 않음
+          console.warn('[Automation] reCAPTCHA block on submit, scene', scene.id)
+          // 이 씬은 generationId 가 없으므로 pending 으로 되돌려 retryErrors 가 잡을 수 있게 함.
+          updateScene(scene.id, { status: 'pending', error: null, errorKind: null })
+          pausedRef.current = true
+          setIsPaused(true)
+          const { waitedMs, mode, resumed } = await recaptcha.registerBlock()
+          if (waitedMs > 0) {
+            for (const item of pendingQueue) item.submittedAt += waitedMs
+            pauseBudgetMs += waitedMs
+          }
+          if (resumed) {
+            pausedRef.current = false
+            setIsPaused(false)
+          }
+          // manual mode: pausedRef true 유지. 다음 iteration 의 while(pausedRef)가 사용자 togglePause 까지 대기.
+          continue
         }
         updateScene(scene.id, { status: 'error', error: submitResult.error, errorKind: null })
         errorCountRef.current++
@@ -269,7 +238,16 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
 
     // Phase 2: 남은 결과 전부 수집 (3초 간격, 최대 3분)
     const pollStart = Date.now()
-    while (pendingQueue.length > 0 && !stopRequestedRef.current && (Date.now() - pollStart < 180000)) {
+    while (
+      pendingQueue.length > 0 &&
+      !stopRequestedRef.current &&
+      (Date.now() - pollStart - pauseBudgetMs < 180000)
+    ) {
+      // paused (reCAPTCHA backoff 등) 인식 — Phase 2 도 pause 동안 멈춤.
+      while (pausedRef.current && !stopRequestedRef.current) {
+        await new Promise(r => setTimeout(r, 500))
+      }
+      if (stopRequestedRef.current) break
       setStatusMessage(t('status.collectingResults', { remaining: pendingQueue.length }))
       await collectCompleted()
       if (pendingQueue.length > 0) {
@@ -519,15 +497,12 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
   const togglePause = useCallback(() => {
     pausedRef.current = !pausedRef.current
     setIsPaused(pausedRef.current)
-    // 사용자가 수동 재개하면 reCAPTCHA 핸들링 가드도 풀어 다음 차단을 다시 잡을 수 있게 한다.
-    // (manual mode 진입 시 핸들러가 즉시 return 하므로 ref가 true로 남는데, 그대로면
-    //  사용자가 Flow에서 풀고 재개해도 다음 reCAPTCHA가 silently drop됨.)
-    if (!pausedRef.current && recaptchaHandlingRef.current) {
-      recaptchaHandlingRef.current = false
-      setRecaptchaModal(null)
+    if (!pausedRef.current) {
+      // 사용자 재개 — reCAPTCHA wait 진행 중이면 즉시 종료.
+      recaptcha.cancelWait()
     }
     setStatusMessage(pausedRef.current ? t('status.paused') : t('status.resuming'))
-  }, [t])
+  }, [t, recaptcha])
   
   /**
    * 중지
@@ -608,8 +583,9 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     stop,
     retryScene,
     retryErrors,
-    recaptchaModal,
-    closeRecaptchaModal: () => setRecaptchaModal(null),
+    recaptchaModal: recaptcha.modalState,
+    // 모달 [확인] 은 모달 내부 dismissed 로 처리 — onClose 는 noop 으로 둠.
+    closeRecaptchaModal: () => {},
   }
 }
 
