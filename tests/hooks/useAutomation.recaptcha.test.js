@@ -21,3 +21,10 @@ describe('reCAPTCHA detection → escalation integration', () => {
     expect(planRecaptchaWait(4).autoResume).toBe(false)
   })
 })
+
+// Gap fix verification: confirm the policy-level invariant (manual branch is "fire once, user resumes")
+describe('manual mode + user resume invariant', () => {
+  it('4회차 진입 후에도 planRecaptchaWait(5) 는 여전히 manual', () => {
+    expect(planRecaptchaWait(5)).toEqual({ waitMs: 0, autoResume: false })
+  })
+})

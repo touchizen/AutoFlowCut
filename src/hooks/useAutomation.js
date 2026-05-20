@@ -519,6 +519,13 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
   const togglePause = useCallback(() => {
     pausedRef.current = !pausedRef.current
     setIsPaused(pausedRef.current)
+    // 사용자가 수동 재개하면 reCAPTCHA 핸들링 가드도 풀어 다음 차단을 다시 잡을 수 있게 한다.
+    // (manual mode 진입 시 핸들러가 즉시 return 하므로 ref가 true로 남는데, 그대로면
+    //  사용자가 Flow에서 풀고 재개해도 다음 reCAPTCHA가 silently drop됨.)
+    if (!pausedRef.current && recaptchaHandlingRef.current) {
+      recaptchaHandlingRef.current = false
+      setRecaptchaModal(null)
+    }
     setStatusMessage(pausedRef.current ? t('status.paused') : t('status.resuming'))
   }, [t])
   
