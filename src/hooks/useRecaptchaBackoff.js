@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useMemo } from 'react'
 import { planRecaptchaWait, shouldResetIncidents } from '../services/recaptchaPolicy'
 
 /**
@@ -91,17 +91,20 @@ export function useRecaptchaBackoff(t, opts = {}) {
     setModalState(null)
   }, [])
 
-  return {
-    modalState,
-    registerBlock,
-    cancelWait,
-    recordSuccess,
-    recordFailure,
-    reset,
-    // 디버그/테스트용 — 외부 직접 접근은 권장 안 함
-    _debug: {
-      incidentCount: () => incidentRef.current,
-      isHandling: () => handlingRef.current,
-    },
-  }
+  return useMemo(
+    () => ({
+      modalState,
+      registerBlock,
+      cancelWait,
+      recordSuccess,
+      recordFailure,
+      reset,
+      // 디버그/테스트용 — 외부 직접 접근은 권장 안 함
+      _debug: {
+        incidentCount: () => incidentRef.current,
+        isHandling: () => handlingRef.current,
+      },
+    }),
+    [modalState, registerBlock, cancelWait, recordSuccess, recordFailure, reset]
+  )
 }

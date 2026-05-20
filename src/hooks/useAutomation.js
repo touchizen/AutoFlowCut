@@ -144,7 +144,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
         console.warn('[Automation] reCAPTCHA block detected on', recaptchaScenes.length, 'scenes this cycle')
         pausedRef.current = true
         setIsPaused(true)
-        const { waitedMs, mode, resumed } = await recaptcha.registerBlock()
+        const { waitedMs, resumed } = await recaptcha.registerBlock()
         if (waitedMs > 0) {
           for (const item of pendingQueue) item.submittedAt += waitedMs
           pauseBudgetMs += waitedMs
@@ -195,7 +195,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
           updateScene(scene.id, { status: 'pending', error: null, errorKind: null })
           pausedRef.current = true
           setIsPaused(true)
-          const { waitedMs, mode, resumed } = await recaptcha.registerBlock()
+          const { waitedMs, resumed } = await recaptcha.registerBlock()
           if (waitedMs > 0) {
             for (const item of pendingQueue) item.submittedAt += waitedMs
             pauseBudgetMs += waitedMs
