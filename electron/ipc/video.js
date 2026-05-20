@@ -20,6 +20,7 @@ export function registerVideoIPC(ipcMain, deps) {
     getPendingI2VInjection, setPendingI2VInjection,
     setPendingSeedValue,
     ensureDebuggerAttached,
+    setFlowPageInject, clearFlowPageInject,
     SESSION_URL, VIDEO_T2V_URL, VIDEO_I2V_URL, VIDEO_I2V_START_END_URL, VIDEO_STATUS_URL, VIDEO_UPSCALE_URL,
     API_HEADERS, FLOW_URL,
   } = deps
@@ -57,14 +58,21 @@ export function registerVideoIPC(ipcMain, deps) {
     if (!flowView) return { success: false, error: 'Flow view not ready' }
     try { await ensureDebuggerAttached() } catch (e) { console.warn('[Flow T2V] Debugger attach failed:', e.message) }
 
-    // Seed: 숫자면 CDP Fetch 인터셉션이 batchAsyncGenerateVideoText 요청에 주입,
+    // Seed: 숫자면 monkey-patch inject가 batchAsyncGenerateVideoText 요청에 주입,
     //       null/undefined면 Flow 자체 랜덤 seed 유지
     const hasUserSeed = typeof seed === 'number' && Number.isFinite(seed)
-    setPendingSeedValue?.(hasUserSeed ? seed : null)
+    const _seedValue  = hasUserSeed ? seed : null
+    setPendingSeedValue?.(_seedValue)  // also set legacy CDP var for AUTOFLOWCUT_ENABLE_CDP=1
 
-    // CDP Fetch 도메인이 image용 패턴만 등록돼 있을 수 있으므로,
-    // 사용자 seed 지정 시 video text 패턴으로 등록 (없으면 inject 안 됨).
-    // I2V 핸들러와 동일한 패턴으로 finally에서 정리한다.
+    // Monkey-patch path: write inject state into Flow page
+    await setFlowPageInject?.({
+      seed:        _seedValue,
+      aspectRatio: null,
+      references:  null,
+      i2v:         null,
+    })
+
+    // CDP path (only active when AUTOFLOWCUT_ENABLE_CDP=1): keep for compatibility
     let cdpFetchEnabled = false
     if (hasUserSeed) {
       try {
@@ -75,9 +83,8 @@ export function registerVideoIPC(ipcMain, deps) {
           ]
         })
         cdpFetchEnabled = true
-        console.log('[Flow Video T2V] [Fetch] Enabled with video text pattern for seed inject')
-      } catch (e) {
-        console.warn('[Flow Video T2V] [Fetch] Fetch.enable failed:', e.message)
+      } catch (_) {
+        // Expected when CDP is disabled (default)
       }
     }
 
@@ -275,14 +282,12 @@ export function registerVideoIPC(ipcMain, deps) {
       console.error('[Flow Video T2V] Error:', e.message)
       return { success: false, error: e.message }
     } finally {
-      // CDP Fetch 인터셉션 + seed 정리 (I2V 핸들러와 동일 패턴, 항상 실행)
-      // pendingSeedValue를 비워야 다음 비-자동화 Flow 요청에 stale seed가 새지 않음.
+      // Monkey-patch inject + legacy CDP vars 정리 (항상 실행)
       setPendingSeedValue?.(null)
+      await clearFlowPageInject?.()
+      // CDP Fetch 정리 (AUTOFLOWCUT_ENABLE_CDP=1 경로만)
       if (cdpFetchEnabled) {
-        try {
-          await flowView.webContents.debugger.sendCommand('Fetch.disable')
-          console.log('[Flow Video T2V] CDP Fetch interception disabled')
-        } catch {}
+        try { await flowView.webContents.debugger.sendCommand('Fetch.disable') } catch {}
       }
     }
   })
@@ -299,10 +304,11 @@ export function registerVideoIPC(ipcMain, deps) {
     if (!flowView) return { success: false, error: 'Flow view not ready' }
     try { await ensureDebuggerAttached() } catch (e) { console.warn('[Flow I2V] Debugger attach failed:', e.message) }
 
-    // Seed: 숫자면 CDP Fetch 인터셉션이 batchAsyncGenerateVideoStartImage 등에 주입,
+    // Seed: 숫자면 monkey-patch inject가 video 요청에 주입,
     //       null/undefined면 Flow 자체 랜덤 seed 유지
     const hasUserSeed = typeof seed === 'number' && Number.isFinite(seed)
-    setPendingSeedValue?.(hasUserSeed ? seed : null)
+    const _seedValue  = hasUserSeed ? seed : null
+    setPendingSeedValue?.(_seedValue)  // also set legacy CDP var
 
     const hasEndImage = !!endImageMediaId
     console.log('[Flow Video I2V] Starting DOM-triggered I2V generation, start:', startImageMediaId?.substring(0, 8),
@@ -434,24 +440,30 @@ export function registerVideoIPC(ipcMain, deps) {
       }
       console.log('[Flow Video I2V] Prompt injected successfully')
 
-      // 3. CDP Fetch 인터셉션 활성화 — 나가는 T2V 요청을 I2V로 변환
-      setPendingI2VInjection({
+      // 3. Set inject state for monkey-patch path + legacy CDP path
+      const i2vConfig = {
         startImageMediaId,
         endImageMediaId: hasEndImage ? endImageMediaId : null,
         i2vUrl: VIDEO_I2V_URL,
         i2vStartEndUrl: VIDEO_I2V_START_END_URL,
+      }
+      // Monkey-patch path: write into Flow page
+      await setFlowPageInject?.({
+        seed:        _seedValue,
+        aspectRatio: null,
+        references:  null,
+        i2v:         i2vConfig,
       })
+      // Legacy CDP path
+      setPendingI2VInjection(i2vConfig)
       try {
         await flowView.webContents.debugger.sendCommand('Fetch.enable', {
           patterns: [{ urlPattern: '*batchAsyncGenerateVideo*', requestStage: 'Request' }]
         })
         cdpFetchEnabled = true
-        console.log('[Flow Video I2V] CDP Fetch interception enabled for',
-          hasEndImage ? 'start+end image injection' : 'start image injection')
-      } catch (e) {
-        console.warn('[Flow Video I2V] Fetch.enable failed:', e.message)
-        setPendingI2VInjection(null)
-        return { success: false, error: 'Failed to enable CDP Fetch interception: ' + e.message }
+        console.log('[Flow Video I2V] CDP Fetch interception also enabled (ENABLE_CDP mode)')
+      } catch (_) {
+        // Expected when CDP is disabled (default) — monkey-patch handles injection
       }
 
       // 4. CDP 비디오 응답 캡처 Promise 설정
@@ -523,17 +535,13 @@ export function registerVideoIPC(ipcMain, deps) {
       console.error('[Flow Video I2V] Error:', e.message)
       return { success: false, error: e.message }
     } finally {
-      // pendingSeedValue는 핸들러 진입 시 unconditionally set되므로(line 302),
-      // 여기서도 unconditionally 정리 — Fetch.enable 성공 여부와 무관.
-      // 안 하면 다음 수동 Flow 요청에 stale seed가 새어나갈 수 있음.
+      // Monkey-patch inject + legacy CDP vars 정리 (항상 실행)
       setPendingSeedValue?.(null)
-      // CDP Fetch + I2V injection 정리 (Fetch.enable 성공한 경로만)
+      setPendingI2VInjection(null)
+      await clearFlowPageInject?.()
+      // CDP Fetch 정리 (AUTOFLOWCUT_ENABLE_CDP=1 경로만)
       if (cdpFetchEnabled) {
-        setPendingI2VInjection(null)
-        try {
-          await flowView.webContents.debugger.sendCommand('Fetch.disable')
-          console.log('[Flow Video I2V] CDP Fetch interception disabled')
-        } catch {}
+        try { await flowView.webContents.debugger.sendCommand('Fetch.disable') } catch {}
       }
     }
   })
@@ -608,6 +616,8 @@ export function registerVideoIPC(ipcMain, deps) {
             const allUrls = findUrls(m, 'media')
             console.log('[Flow VideoStatus] ✅ URLs in response:', JSON.stringify(allUrls))
             console.log('[Flow VideoStatus] ✅ mediaMetadata keys:', JSON.stringify(Object.keys(m?.mediaMetadata || {})))
+            // [DEBUG round-N] 전체 media 객체 dump — Flow 응답 schema 변경 진단용. 검증 끝나면 제거.
+            console.log('[DEBUG VideoStatus] Full media object:', JSON.stringify(m, null, 2))
 
             // AutoFlow: 비디오 URL은 status 응답에서 직접 추출
             const meta = m?.mediaMetadata

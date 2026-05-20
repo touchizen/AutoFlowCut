@@ -20,15 +20,27 @@ import { openApiSpec, getSwaggerHtml } from './api-docs.js'
 import { setupAppMenuAndUpdater, noteProjectActivated } from './updater.js'
 import { selectCdpCase } from './video-cdp-dispatch.js'
 import { injectImageBatchBody } from './cdp-image-inject.js'
+import { FLOW_PAGE_INJECTION } from './flow-page-injection.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-// 진단 모드 — Flow 자동화를 완전히 끔 (CDP attach + did-finish-load 자동 진입 둘 다 skip).
-// AUTOFLOWCUT_DISABLE_FLOW_AUTOMATION=1 로 실행하면 Flow 탭이 일반 브라우저처럼 동작:
-// 봇 감지/세션 차단 의심 시 CDP 영향 배제하고 페이지만 띄워 보는 용도.
-const FLOW_AUTOMATION_DISABLED = process.env.AUTOFLOWCUT_DISABLE_FLOW_AUTOMATION === '1'
+// CDP debugger attach 영구 비활성 (default).
+// 이유: Flow 의 안티 디버깅이 debugger.attach 를 감지하면
+//   - 비디오 element 가 페이지에서 사라짐
+//   - status 응답에서 videoUrl 필드가 빠짐
+//   - media.getMediaUrlRedirect 가 400 Internal Error
+//   → 다운로드 흐름 전체가 깨짐.
+// CDP 가 작동 안 하므로 다음 기능들도 함께 비활성됨:
+//   - seed/aspectRatio/reference 자동 inject (Fetch.continueRequest)
+//   - 응답 body 자동 캡처 (Network.responseReceived getResponseBody)
+//   - Page.setDownloadBehavior (다운로드 path 자동 지정 — session.on('will-download') 로 대체 필요)
+// inject 기능 자체는 별도 라운드에서 Flow UI 조작 (DOM) 으로 대체 작업 필요.
+// 개발 시 강제 활성: AUTOFLOWCUT_ENABLE_CDP=1
+const FLOW_AUTOMATION_DISABLED = process.env.AUTOFLOWCUT_ENABLE_CDP !== '1'
 if (FLOW_AUTOMATION_DISABLED) {
-  console.log('[Flow] ⚠️ AUTOFLOWCUT_DISABLE_FLOW_AUTOMATION=1 — automation OFF, Flow renders as plain page')
+  console.log('[Flow] CDP debugger disabled by default (anti-detect). Set AUTOFLOWCUT_ENABLE_CDP=1 to force.')
+} else {
+  console.log('[Flow] ⚠️ AUTOFLOWCUT_ENABLE_CDP=1 — CDP attach forced ON (debug mode, may trigger anti-debug block).')
 }
 
 // Force the display name so dev-mode submenu items ("About …", "Quit …", etc.)
@@ -632,6 +644,141 @@ async function ensureDebuggerAttached() {
   return _debuggerAttachInProgress
 }
 
+// ─── Monkey-patch path: inject pending values into the Flow page ──────────────
+// Called before each automation cycle. Writes window.__autoflowcut_inject__
+// in the Flow page so the patched fetch can modify outgoing requests.
+// This replaces the CDP Fetch.enable / pendingSeedValue / pendingReferenceImages
+// setters that were only used by the CDP path.
+async function setFlowPageInject({ seed, aspectRatio, references, i2v }) {
+  if (!flowView) return
+  const payload = {
+    seed:        seed        ?? null,
+    aspectRatio: aspectRatio ?? null,
+    references:  references  ?? null,
+    i2v:         i2v         ?? null,
+  }
+  try {
+    await flowView.webContents.executeJavaScript(
+      `window.__autoflowcut_inject__ = ${JSON.stringify(payload)}`
+    )
+    console.log('[Flow Inject] __autoflowcut_inject__ set:', {
+      seed: payload.seed, aspectRatio: payload.aspectRatio,
+      refs: payload.references?.length ?? 0, i2v: !!payload.i2v,
+    })
+  } catch (e) {
+    console.warn('[Flow Inject] setFlowPageInject failed:', e.message)
+  }
+}
+
+// Clear inject state after each automation cycle.
+async function clearFlowPageInject() {
+  if (!flowView) return
+  try {
+    await flowView.webContents.executeJavaScript(
+      `window.__autoflowcut_inject__ = { seed: null, aspectRatio: null, references: null, i2v: null }`
+    )
+  } catch (_) {}
+}
+
+// ─── flow:report-response — page monkey-patch → main (replaces CDP getResponseBody) ──
+// The Flow page injection script calls window.electronAPI.flowReportResponse({ url, body, status }).
+// This handler mirrors the CDP Network.loadingFinished routing logic:
+//   - batchGenerateImages → pendingGeneration (sync) or pendingGenerations (async)
+//   - batchAsyncGenerateVideo* → pendingVideoGeneration
+// Timestamps are not available here (fetch doesn't expose wallTime), so stale-response
+// filtering uses a simple "generation was registered" guard instead of time comparison.
+// The injection guard on the page side (single monkey-patch per page load) + the
+// per-cycle clear of __autoflowcut_inject__ ensures correctness without timestamps.
+ipcMain.handle('flow:report-response', (event, { url, body, status }) => {
+  if (!url || !body) return { ok: false }
+
+  const now = Date.now() / 1000  // approximate wallTime for compatibility
+
+  // ── batchGenerateImages → sync mode ──────────────────────────────────────
+  if (url.includes('batchGenerateImages')) {
+    if (pendingGeneration) {
+      console.log('[Flow Inject] [NetCapture] batchGenerateImages response received, HTTP', status,
+        ', length:', body.length)
+      pendingGeneration.responses.push({ error: false, body, status })
+      console.log('[Flow Inject] [NetCapture] collected (' +
+        pendingGeneration.responses.length + '/' + pendingGeneration.expectedCount + ')')
+
+      if (pendingGeneration.responses.length >= pendingGeneration.expectedCount) {
+        console.log('[Flow Inject] [NetCapture] All', pendingGeneration.expectedCount, 'responses — resolving')
+        const saved = pendingGeneration
+        pendingGeneration = null
+        if (saved.collectionTimer) clearTimeout(saved.collectionTimer)
+        saved.resolve({ error: false, responses: saved.responses })
+      } else {
+        // More expected — start/reset collection timer
+        if (pendingGeneration.collectionTimer) clearTimeout(pendingGeneration.collectionTimer)
+        pendingGeneration.collectionTimer = setTimeout(() => {
+          if (pendingGeneration) {
+            console.log('[Flow Inject] [NetCapture] Collection timer fired — resolving with',
+              pendingGeneration.responses.length, '/', pendingGeneration.expectedCount)
+            const saved = pendingGeneration
+            pendingGeneration = null
+            saved.resolve({ error: false, responses: saved.responses })
+          }
+        }, 30000)
+      }
+      return { ok: true }
+    }
+
+    // ── batchGenerateImages → async mode ──────────────────────────────────
+    if (pendingGenerations.size > 0) {
+      // Match to most-recently-registered incomplete generation
+      let matchId = null
+      let matchSetAt = -Infinity
+      for (const [id, gen] of pendingGenerations) {
+        if (!gen.completed && gen.setAt > matchSetAt) {
+          matchId = id
+          matchSetAt = gen.setAt
+        }
+      }
+      if (matchId) {
+        const g = pendingGenerations.get(matchId)
+        g.responses.push({ error: false, body, status })
+        console.log('[Flow Inject] [AsyncCapture] batchGenerateImages response → gen:',
+          matchId.substring(0, 8), '(' + g.responses.length + '/' + g.expectedCount + ')')
+        if (g.responses.length >= g.expectedCount) {
+          g.completed = true
+          if (g.collectionTimer) clearTimeout(g.collectionTimer)
+          console.log('[Flow Inject] [AsyncCapture] Generation COMPLETED:', matchId.substring(0, 8))
+        } else {
+          if (g.collectionTimer) clearTimeout(g.collectionTimer)
+          g.collectionTimer = setTimeout(() => {
+            if (pendingGenerations.has(matchId)) {
+              const gg = pendingGenerations.get(matchId)
+              if (!gg.completed) {
+                gg.completed = true
+                console.log('[Flow Inject] [AsyncCapture] Timer fired — marking completed:',
+                  matchId.substring(0, 8))
+              }
+            }
+          }, 30000)
+        }
+      }
+      return { ok: true }
+    }
+  }
+
+  // ── batchAsyncGenerateVideo* → pendingVideoGeneration ──────────────────
+  if (url.includes('batchAsyncGenerateVideo') && pendingVideoGeneration) {
+    console.log('[Flow Inject] [VideoCapture] Video response received, HTTP', status,
+      ', length:', body.length)
+    if (status >= 400) {
+      console.error('[Flow Inject] [VideoCapture] Error body:', body.substring(0, 500))
+    }
+    const saved = pendingVideoGeneration
+    pendingVideoGeneration = null
+    saved.resolve({ error: status >= 400, body, status })
+    return { ok: true }
+  }
+
+  return { ok: false, reason: 'no pending capture' }
+})
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -692,6 +839,14 @@ function createWindow() {
     if (unavailable) {
       console.log('[Flow] Region unavailable detected — skipping auto-actions')
       return
+    }
+
+    // Inject fetch monkey-patch (idempotent — guard flag on page prevents double-patch)
+    try {
+      await flowView.webContents.executeJavaScript(FLOW_PAGE_INJECTION)
+      console.log('[Flow] fetch monkey-patch injected')
+    } catch (e) {
+      console.warn('[Flow] fetch injection failed:', e.message)
     }
 
     // 랜딩 페이지: "Create with Flow" 버튼 자동 클릭
@@ -993,6 +1148,11 @@ function createWindow() {
         url
       })
     }
+
+    // Re-inject fetch monkey-patch on SPA navigation (guard flag ensures idempotency)
+    try {
+      await flowView.webContents.executeJavaScript(FLOW_PAGE_INJECTION)
+    } catch (_) {}
   })
 
   // Debugger 프로토콜 attach는 첫 번째 자동화 IPC 호출까지 지연 (lazy attach).
@@ -1689,6 +1849,8 @@ const flowAPIDeps = {
   getEnterToolClicked: () => enterToolClicked,
   setEnterToolClicked: (v) => { enterToolClicked = v },
   ensureDebuggerAttached,
+  setFlowPageInject,
+  clearFlowPageInject,
   SESSION_URL, TOKEN_INFO_URL, FLOW_URL, MEDIA_REDIRECT_URL, UPLOAD_URL,
   API_HEADERS, GENERATE_URL, BASE_API_URL,
 }
@@ -1713,6 +1875,8 @@ const videoDeps = {
   setPendingI2VInjection: (v) => { pendingI2VInjection = v },
   setPendingSeedValue: (v) => { pendingSeedValue = v },
   ensureDebuggerAttached,
+  setFlowPageInject,
+  clearFlowPageInject,
   SESSION_URL, VIDEO_T2V_URL, VIDEO_I2V_URL, VIDEO_I2V_START_END_URL, VIDEO_STATUS_URL, VIDEO_UPSCALE_URL,
   API_HEADERS, FLOW_URL,
 }

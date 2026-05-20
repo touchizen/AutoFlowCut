@@ -114,6 +114,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setPreventSleep: (params) => ipcRenderer.invoke('app:set-prevent-sleep', params),
   getPreventSleep: () => ipcRenderer.invoke('app:get-prevent-sleep'),
 
+  // Flow page → main response forwarding (replaces CDP Network.getResponseBody)
+  flowReportResponse: (payload) => ipcRenderer.invoke('flow:report-response', payload),
+
   // MCP HTTP Server
   startMcpHttp: (params) => ipcRenderer.invoke('mcp:start-http', params),
   stopMcpHttp: () => ipcRenderer.invoke('mcp:stop-http'),

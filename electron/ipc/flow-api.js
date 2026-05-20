@@ -27,6 +27,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     setPendingImageAspectRatio,
     getEnterToolClicked, setEnterToolClicked,
     ensureDebuggerAttached,
+    setFlowPageInject, clearFlowPageInject,
     SESSION_URL, TOKEN_INFO_URL, FLOW_URL, MEDIA_REDIRECT_URL, UPLOAD_URL,
     API_HEADERS, GENERATE_URL, BASE_API_URL,
   } = deps
@@ -133,24 +134,24 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }
 
+    // (CDP path not needed for monkey-patch mode — ensureDebuggerAttached is a no-op when CDP disabled)
     try { await ensureDebuggerAttached() } catch (e) { console.warn('[Flow API] generate-image: debugger attach skipped:', e.message) }
 
-    // Seed: 숫자면 CDP Fetch 인터셉션에서 사용, null이면 Flow 자체 랜덤 seed 유지
-    setPendingSeedValue(typeof seed === 'number' && Number.isFinite(seed) ? seed : null)
-
-    // 화면비: '16:9'/'9:16' → IMAGE_ASPECT_RATIO_* enum 으로 CDP Fetch 인터셉션에서
-    // batchGenerateImages 요청 바디에 주입. 그 외(undefined 등)는 null → 요청 원본 유지.
-    // UI 탭 클릭과 달리 Flow UI 구조 변경에 영향받지 않는다.
-    setPendingImageAspectRatio?.(
+    // Seed / aspectRatio / references → set in page via monkey-patch inject
+    // (Also still set the old CDP vars as fallback for AUTOFLOWCUT_ENABLE_CDP=1 mode)
+    const _seedValue = typeof seed === 'number' && Number.isFinite(seed) ? seed : null
+    setPendingSeedValue(_seedValue)
+    const _aspectRatioEnum = (
       aspectRatio === '16:9' ? 'IMAGE_ASPECT_RATIO_LANDSCAPE'
         : aspectRatio === '9:16' ? 'IMAGE_ASPECT_RATIO_PORTRAIT'
           : null
     )
+    setPendingImageAspectRatio?.(_aspectRatioEnum)
 
     // === DOM 자동화 + 네트워크 응답 인터셉트 ===
     // 페이지가 자체적으로 reCAPTCHA를 처리하므로 가장 안정적인 방법
     // ⚠️ cdpFetchEnabled를 try 밖에 선언 (esbuild가 try 안의 let을 finally에서 못 찾는 버그 회피)
-    let cdpFetchEnabled = false
+    let cdpFetchEnabled = false  // only used when AUTOFLOWCUT_ENABLE_CDP=1
     try {
       console.log('[Flow API] [DOM+Net] Starting DOM-triggered generation')
 
@@ -290,22 +291,28 @@ export function registerFlowAPIIPC(ipcMain, deps) {
         console.warn('[Flow API] Image mode config failed (continuing anyway):', modeResult.error)
       }
 
-      // 0.9. CDP Fetch 인터셉션 설정 (레퍼런스 이미지 주입 + seed 테스트)
-      //   batchGenerateImages 요청을 가로채서 imageInputs / seed 수정
-      //   [SEED TEST] 항상 활성화 — main.js에서 body 로깅 + seed:12345 주입
+      // 0.9. Inject pending values into Flow page (monkey-patch path)
+      //   window.__autoflowcut_inject__ is read by the patched window.fetch on the page.
+      //   Also set legacy CDP vars in case AUTOFLOWCUT_ENABLE_CDP=1 is active.
       if (referenceImages && referenceImages.length > 0) {
         setPendingReferenceImages(referenceImages)
       }
+      // Monkey-patch: set inject state on page
+      await setFlowPageInject?.({
+        seed:        _seedValue,
+        aspectRatio: _aspectRatioEnum,
+        references:  referenceImages?.length > 0 ? referenceImages : null,
+        i2v:         null,
+      })
+      // CDP path (only active when AUTOFLOWCUT_ENABLE_CDP=1): keep for compatibility
       try {
         await flowView.webContents.debugger.sendCommand('Fetch.enable', {
           patterns: [{ urlPattern: '*batchGenerateImages*', requestStage: 'Request' }]
         })
         cdpFetchEnabled = true
-        console.log('[Flow API] [Fetch] Interception enabled (refs:',
-          (referenceImages?.length || 0), ', seedTestMode: true)')
+        console.log('[Flow API] [Fetch] CDP interception also enabled (ENABLE_CDP mode)')
       } catch (e) {
-        console.warn('[Flow API] [Fetch] Fetch.enable failed:', e.message)
-        setPendingReferenceImages(null)
+        // Expected when CDP is disabled (default) — not an error
       }
 
       // 1. 네트워크 응답 캡처 Promise 설정 (동기 모드만)
@@ -714,11 +721,12 @@ export function registerFlowAPIIPC(ipcMain, deps) {
         console.log('[Flow API] [Async] expectedCount updated to', expectedImageCount,
           'for gen:', generationId)
 
-        // 비동기 모드: Fetch 인터셉션 정리 후 즉시 반환
+        // 비동기 모드: inject 정리 후 즉시 반환
         await new Promise(r => setTimeout(r, 2000))  // 요청이 나갈 시간 확보
+        setPendingReferenceImages(null)
+        setPendingImageAspectRatio?.(null)
+        await clearFlowPageInject?.()
         if (cdpFetchEnabled) {
-          setPendingReferenceImages(null)
-          setPendingImageAspectRatio?.(null)
           try { await flowView.webContents.debugger.sendCommand('Fetch.disable') } catch {}
           cdpFetchEnabled = false
         }
@@ -858,17 +866,17 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       setPendingGeneration(null)
       return { success: false, error: e.message }
     } finally {
-      // CDP Fetch 인터셉션 정리
+      // Monkey-patch inject 정리 (다음 유기적 Flow 요청에 stale 값이 새지 않도록)
+      setPendingReferenceImages(null)
+      setPendingImageAspectRatio?.(null)
+      await clearFlowPageInject?.()
+      // CDP Fetch 인터셉션 정리 (AUTOFLOWCUT_ENABLE_CDP=1 경로만)
       if (cdpFetchEnabled) {
-        setPendingReferenceImages(null)
-        setPendingImageAspectRatio?.(null)
         try {
           const flowView = getFlowView()
           await flowView.webContents.debugger.sendCommand('Fetch.disable')
-          console.log('[Flow API] [Fetch] Interception disabled')
-        } catch (e) {
-          // Fetch.disable 실패해도 무시 (디버거 분리 등)
-        }
+        } catch (_) {}
+        cdpFetchEnabled = false
       }
     }
   })
@@ -1022,40 +1030,31 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }
     if (!mediaId) return { success: false, error: 'No mediaId' }
-    try { await ensureDebuggerAttached() } catch (e) {
-      console.warn('[Flow DOMDownload] Debugger attach failed (Page.setDownloadBehavior will fail):', e.message)
-    }
+    // CDP 없이도 동작 — will-download 핸들러가 path 지정. ensureDebuggerAttached 호출 안 함.
 
     console.log('[Flow DOMDownload] Starting DOM download — mediaId:', mediaId?.substring(0, 30), 'resolution:', resolution)
+
+    // session.will-download 핸들러 (CDP setDownloadBehavior 대체) — 함수 스코프 변수로 cleanup
+    let willDownloadHandler = null
+    const dlSession = flowView.webContents.session
 
     try {
       const fs = await import('node:fs')
       const os = await import('node:os')
 
-      // Step 1: CDP로 다운로드 경로 설정 (save dialog 스킵)
+      // Step 1: 다운로드 path 가로채기 (Electron session.will-download — CDP 무관)
       const tempDir = path.join(os.tmpdir(), `flow-dl-${Date.now()}`)
       fs.mkdirSync(tempDir, { recursive: true })
       console.log('[Flow DOMDownload] Download dir:', tempDir)
 
-      try {
-        await flowView.webContents.debugger.sendCommand('Page.setDownloadBehavior', {
-          behavior: 'allow',
-          downloadPath: tempDir
-        })
-        console.log('[Flow DOMDownload] CDP Page.setDownloadBehavior set')
-      } catch (cdpErr) {
-        console.warn('[Flow DOMDownload] CDP setDownloadBehavior failed:', cdpErr.message, '— trying Browser domain')
-        try {
-          await flowView.webContents.debugger.sendCommand('Browser.setDownloadBehavior', {
-            behavior: 'allow',
-            downloadPath: tempDir,
-            eventsEnabled: true
-          })
-          console.log('[Flow DOMDownload] CDP Browser.setDownloadBehavior set')
-        } catch (cdpErr2) {
-          console.warn('[Flow DOMDownload] Browser.setDownloadBehavior also failed:', cdpErr2.message)
-        }
+      willDownloadHandler = (_event, item) => {
+        const filename = item.getFilename()
+        const savePath = path.join(tempDir, filename)
+        console.log('[Flow DOMDownload] will-download intercept:', filename, '→', savePath)
+        item.setSavePath(savePath)
       }
+      dlSession.on('will-download', willDownloadHandler)
+      console.log('[Flow DOMDownload] will-download handler installed (no CDP)')
 
       // Step 2: DOM 자동화 — AutoFlow downloadVideoAtResolution 패턴
       const domResult = await flowView.webContents.executeJavaScript(`
@@ -1417,12 +1416,11 @@ export function registerFlowAPIIPC(ipcMain, deps) {
         }
       }
 
-      // CDP 다운로드 설정 해제
-      try {
-        await flowView.webContents.debugger.sendCommand('Page.setDownloadBehavior', {
-          behavior: 'default'
-        })
-      } catch {}
+      // will-download 핸들러 해제 (CDP setDownloadBehavior reset 대체)
+      if (willDownloadHandler) {
+        dlSession.off('will-download', willDownloadHandler)
+        willDownloadHandler = null
+      }
 
       // "닫기" 버튼 클릭 — 업스케일링 완료 토스트 닫기
       try {
@@ -1774,38 +1772,32 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }
     if (!mediaId) return { success: false, error: 'No mediaId' }
-    try { await ensureDebuggerAttached() } catch (e) {
-      console.warn('[Flow Image Upscale] Debugger attach failed:', e.message)
-    }
+    // CDP 없이도 동작 — will-download 핸들러가 path 지정.
 
     const normalizedRes = String(resolution || '2k').toLowerCase()
     const resText = normalizedRes === '4k' ? '4K' : '2K'
 
     console.log('[Flow Image Upscale] Starting DOM upscale — mediaId:', mediaId?.substring(0, 30), 'resolution:', resText)
 
+    let willDownloadHandler = null
+    const dlSession = flowView.webContents.session
+
     try {
       const fs = await import('node:fs')
       const os = await import('node:os')
 
-      // Step 1: CDP로 다운로드 경로 설정 (save dialog 스킵)
+      // Step 1: 다운로드 path 가로채기 (Electron session.will-download — CDP 무관)
       const tempDir = path.join(os.tmpdir(), `flow-img-up-${Date.now()}`)
       fs.mkdirSync(tempDir, { recursive: true })
       console.log('[Flow Image Upscale] Download dir:', tempDir)
 
-      try {
-        await flowView.webContents.debugger.sendCommand('Page.setDownloadBehavior', {
-          behavior: 'allow',
-          downloadPath: tempDir
-        })
-      } catch (cdpErr) {
-        try {
-          await flowView.webContents.debugger.sendCommand('Browser.setDownloadBehavior', {
-            behavior: 'allow',
-            downloadPath: tempDir,
-            eventsEnabled: true
-          })
-        } catch {}
+      willDownloadHandler = (_event, item) => {
+        const filename = item.getFilename()
+        const savePath = path.join(tempDir, filename)
+        console.log('[Flow Image Upscale] will-download intercept:', filename, '→', savePath)
+        item.setSavePath(savePath)
       }
+      dlSession.on('will-download', willDownloadHandler)
 
       // Step 2: DOM 자동화 — 이미지 hover → three-dots → download → 해상도 선택
       const domResult = await flowView.webContents.executeJavaScript(`
@@ -2090,10 +2082,11 @@ export function registerFlowAPIIPC(ipcMain, deps) {
         } catch {}
       }
 
-      // CDP 다운로드 설정 해제
-      try {
-        await flowView.webContents.debugger.sendCommand('Page.setDownloadBehavior', { behavior: 'default' })
-      } catch {}
+      // will-download 핸들러 해제 (CDP setDownloadBehavior reset 대체)
+      if (willDownloadHandler) {
+        dlSession.off('will-download', willDownloadHandler)
+        willDownloadHandler = null
+      }
 
       // 업스케일 완료 토스트 닫기
       try {
