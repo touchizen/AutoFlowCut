@@ -1,0 +1,20 @@
+.recaptcha-modal-overlay {
+  position: fixed; inset: 0; z-index: 9000;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex; align-items: center; justify-content: center;
+}
+.recaptcha-modal {
+  background: #1e2530; color: #e8ecf1;
+  border-radius: 12px; padding: 28px 32px;
+  max-width: 460px; width: calc(100% - 48px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+.recaptcha-modal-title { margin: 0 0 14px; font-size: 1.1rem; }
+.recaptcha-modal-body { margin: 0 0 16px; font-size: .92rem; line-height: 1.65; color: #c4ccd6; }
+.recaptcha-modal-countdown { margin: 0 0 18px; font-size: 1rem; font-weight: 700; color: #ffd866; }
+.recaptcha-modal-confirm {
+  display: block; width: 100%; padding: 10px 0;
+  background: #3a9a3a; color: #fff; border: none; border-radius: 8px;
+  font-size: .95rem; font-weight: 700; cursor: pointer;
+}
+.recaptcha-modal-confirm:hover { background: #338233; }
