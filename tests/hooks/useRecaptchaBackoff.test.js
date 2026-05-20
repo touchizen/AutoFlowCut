@@ -431,7 +431,44 @@ describe('grace period (P2-A)', () => {
   })
 })
 
-// ─── 15. cancelWait during grace releases immediately ─────────────────────────
+// ─── 15. allowAbsorb=false bypasses grace window ────────────────────────────────
+describe('allowAbsorb=false (submit-probe semantics)', () => {
+  it('allowAbsorb=false bypasses grace window and starts a new incident', async () => {
+    const notifyOS = vi.fn()
+    const { result } = renderHook(() =>
+      useRecaptchaBackoff(t, { notifyOS, graceMs: 5000 })
+    )
+
+    // First wave: tier 1 (5 min)
+    let p1
+    act(() => { p1 = result.current.registerBlock() })
+    await act(async () => { await vi.advanceTimersByTimeAsync(5 * 60 * 1000) })
+    const r1 = await p1
+    expect(r1.mode).toBe('auto')
+    expect(r1.waitedMs).toBeGreaterThanOrEqual(299000)
+
+    // Grace window is now active (5s). handlingRef stays true.
+    // allowAbsorb=true (default) — absorbs.
+    let pAbsorbed
+    act(() => { pAbsorbed = result.current.registerBlock() })
+    const rAbsorbed = await pAbsorbed
+    expect(rAbsorbed.mode).toBe('absorbed')
+    expect(result.current._debug.incidentCount()).toBe(1)
+
+    // allowAbsorb=false — must NOT absorb, must escalate to tier 2 (10 min).
+    let p2
+    act(() => { p2 = result.current.registerBlock({ allowAbsorb: false }) })
+    // Incident count must have bumped to 2 synchronously.
+    expect(result.current._debug.incidentCount()).toBe(2)
+    // Run out tier 2 wait.
+    await act(async () => { await vi.advanceTimersByTimeAsync(10 * 60 * 1000) })
+    const r2 = await p2
+    expect(r2.mode).toBe('auto')
+    expect(r2.waitedMs).toBeGreaterThanOrEqual(599000)
+  })
+})
+
+// ─── 16. cancelWait during grace releases immediately ─────────────────────────
 describe('cancelWait during grace releases immediately', () => {
   it('cancelWait clears grace timer and allows new incident immediately', async () => {
     const GRACE = 5000

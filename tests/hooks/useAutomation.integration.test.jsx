@@ -349,7 +349,42 @@ describe('useAutomation reCAPTCHA integration', () => {
     expect(h.result.current.isRunning).toBe(false)
   })
 
-  // Test 5 (P1 regression): grace-window absorbed reCAPTCHA must not deadlock
+  // Test 5 (Round-4 regression): submit inside grace window must escalate, not absorb
+  it('submit reCAPTCHA inside grace window escalates instead of absorbing (P1 regression)', async () => {
+    TEST_GRACE.ms = 5000  // 5s grace — enough to swallow quick second submit if buggy
+
+    const { hook, submitGenerationDOM } = setupHook({
+      scenes: [
+        { id: 's1', prompt: 'a', status: 'pending' },
+        { id: 's2', prompt: 'b', status: 'pending' },
+      ],
+    })
+
+    // Both submits fail with reCAPTCHA. Second one fires inside grace window of first.
+    submitGenerationDOM
+      .mockResolvedValueOnce({ success: false, error: 'reCAPTCHA evaluation failed' })
+      .mockResolvedValueOnce({ success: false, error: 'reCAPTCHA evaluation failed' })
+
+    const t0 = Date.now()
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({ projectName: 'p', saveMode: 'memory' })
+    })
+
+    // Budget: 20 min covers buggy path (~5 min) and fix path (~15 min, tier1+tier2).
+    await act(async () => { await vi.advanceTimersByTimeAsync(20 * 60 * 1000) })
+    await startPromise
+    const elapsed = Date.now() - t0
+
+    // Both submits must have been attempted.
+    expect(submitGenerationDOM).toHaveBeenCalledTimes(2)
+    // Correct escalation = tier1 (5 min) + tier2 (10 min) = 15 min minimum.
+    // Allow -2 min margin for inter-scene wait (7s) and overhead.
+    expect(elapsed).toBeGreaterThan(13 * 60 * 1000)
+    expect(hook.result.current.isRunning).toBe(false)
+  })
+
+  // Test 6 (P1 regression): grace-window absorbed collect-path reCAPTCHA must not deadlock
   it('grace-window absorbed reCAPTCHA does not leave batch paused indefinitely (P1 regression)', async () => {
     TEST_GRACE.ms = 200  // grace window 활성
 

@@ -87,6 +87,38 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       setProgress({ current, total, percent: Math.round((current / total) * 100), errorCount: errorCountRef.current, startedAt: batchStartedAtRef.current, endedAt: null })
     }
 
+    // reCAPTCHA error 마킹 (1 씬)
+    const markRecaptchaError = (scene) => {
+      updateScene(scene.id, { status: 'error', error: 'reCAPTCHA blocked', errorKind: 'recaptcha' })
+      errorCountRef.current++
+      completedCountRef.current++
+    }
+
+    // pause 후 backoff 등록, 결과에 따라 시간 보정 / pause 해제.
+    // - source='submit': fresh probe → allowAbsorb=false (grace 우회, escalation 강제)
+    // - source='collect': in-flight 잔여 흡수 허용 → allowAbsorb=true (기본)
+    const pauseAndRegisterRecaptcha = async (source) => {
+      pausedRef.current = true
+      setIsPaused(true)
+      const allowAbsorb = source === 'collect'
+      const { waitedMs, mode, resumed } = await recaptcha.registerBlock({ allowAbsorb })
+      if (mode === 'absorbed') {
+        // 다른 핸들러가 처리 중인 wave 흡수 — 추가 wait 없음, pause 해제 후 진행.
+        pausedRef.current = false
+        setIsPaused(false)
+        return
+      }
+      if (waitedMs > 0) {
+        for (const item of pendingQueue) item.submittedAt += waitedMs
+        pauseBudgetMs += waitedMs
+      }
+      if (resumed) {
+        pausedRef.current = false
+        setIsPaused(false)
+      }
+      // !resumed (stop) 인 경우 pausedRef true 유지 — 메인 루프의 stopRequestedRef 가드가 break.
+    }
+
     // 비동기 결과 후처리 (업스케일 + 저장) — 단위 테스트 가능한 standalone 헬퍼로 위임.
     const processAsyncResult = (scene, result) => processAsyncSceneResult({
       scene, result,
@@ -117,10 +149,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
             const result = await collectGeneration(item.generationId)
             if (!result.success && isRecaptchaError(result.error)) {
               recaptchaScenes.push(item)
-              // 회계: reCAPTCHA error 로 마킹, 큐에서 제외, retryErrors 가 잡도록.
-              updateScene(item.scene.id, { status: 'error', error: 'reCAPTCHA blocked', errorKind: 'recaptcha' })
-              errorCountRef.current++
-              completedCountRef.current++
+              markRecaptchaError(item.scene)
               updateProgressMsg(completedCountRef.current)
               continue
             }
@@ -148,25 +177,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       // 한 cycle 의 모든 reCAPTCHA 실패는 한 incident 으로 묶어 처리.
       if (recaptchaScenes.length > 0) {
         console.warn('[Automation] reCAPTCHA block detected on', recaptchaScenes.length, 'scenes this cycle')
-        pausedRef.current = true
-        setIsPaused(true)
-        const { waitedMs, mode, resumed } = await recaptcha.registerBlock()
-        if (mode === 'absorbed') {
-          // 같은 wave 의 메인 핸들러가 이미 처리 중 (또는 grace window) — 이번 호출은 추가 wait 없음.
-          // pre-pause 를 풀어 batch 가 무한 대기에 빠지지 않게 함.
-          pausedRef.current = false
-          setIsPaused(false)
-        } else {
-          if (waitedMs > 0) {
-            for (const item of pendingQueue) item.submittedAt += waitedMs
-            pauseBudgetMs += waitedMs
-          }
-          if (resumed) {
-            pausedRef.current = false
-            setIsPaused(false)
-          }
-          // !resumed (stop) 인 경우: pausedRef true 유지 → 메인 루프의 stopRequestedRef 가드가 break.
-        }
+        await pauseAndRegisterRecaptcha('collect')
       }
     }
 
@@ -204,32 +215,9 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
         console.error('[Automation] Submit failed for scene', scene.id, ':', submitResult.error)
         if (isRecaptchaError(submitResult.error)) {
           console.warn('[Automation] reCAPTCHA block on submit, scene', scene.id)
-          // 회계: reCAPTCHA 차단은 명시적 error 로 마킹 (errorKind 로 i18n 구분).
-          // 큐에 들어간 적이 없으므로 completed/error 카운트만 증가.
-          updateScene(scene.id, { status: 'error', error: 'reCAPTCHA blocked', errorKind: 'recaptcha' })
-          errorCountRef.current++
-          completedCountRef.current++
+          markRecaptchaError(scene)
           updateProgressMsg(completedCountRef.current)
-          pausedRef.current = true
-          setIsPaused(true)
-          const { waitedMs, mode, resumed } = await recaptcha.registerBlock()
-          if (mode === 'absorbed') {
-            // 같은 wave 의 메인 핸들러가 이미 처리 중 (또는 grace window) — 이번 호출은 추가 wait 없음.
-            // pre-pause 를 풀어 batch 가 무한 대기에 빠지지 않게 함.
-            pausedRef.current = false
-            setIsPaused(false)
-          } else {
-            if (waitedMs > 0) {
-              for (const item of pendingQueue) item.submittedAt += waitedMs
-              pauseBudgetMs += waitedMs
-            }
-            if (resumed) {
-              pausedRef.current = false
-              setIsPaused(false)
-            }
-            // !resumed (stop) 인 경우: pausedRef true 유지 → 메인 루프의 stopRequestedRef 가드가 break.
-          }
-          // absorbed / manual mode 모두 await 안으로 처리 완료.
+          await pauseAndRegisterRecaptcha('submit')
           continue
         }
         updateScene(scene.id, { status: 'error', error: submitResult.error, errorKind: null })

@@ -52,13 +52,16 @@ export function useRecaptchaBackoff(t, opts = {}) {
   }, [])
 
   /**
+   * @param {{ allowAbsorb?: boolean }} [opts]
+   *   - allowAbsorb=true (기본): handling 중이면 absorbed 반환 (in-flight 잔여 흡수).
+   *   - allowAbsorb=false: handling 가드 무시. grace window 안이라도 새 incident 시작 (submit probe 용).
    * @returns {Promise<{ waitedMs:number, mode:'auto'|'manual'|'absorbed', resumed:boolean }>}
    *   - mode 'absorbed': 같은 wave 안의 중복 호출 — 호출자는 이 케이스에서 추가 시간 보정 불필요.
    *   - mode 'auto': 정상 backoff 진행 후 resolve. waitedMs = 실제 경과 시간.
    *   - mode 'manual': incident 4회+ — cancelWait 또는 stop 까지 대기 후 resolve.
    */
-  const registerBlock = useCallback(async () => {
-    if (handlingRef.current) {
+  const registerBlock = useCallback(async ({ allowAbsorb = true } = {}) => {
+    if (handlingRef.current && allowAbsorb) {
       return { waitedMs: 0, mode: 'absorbed', resumed: false }
     }
     clearGraceTimer()
