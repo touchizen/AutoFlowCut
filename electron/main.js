@@ -23,6 +23,14 @@ import { injectImageBatchBody } from './cdp-image-inject.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
+// 진단 모드 — Flow 자동화를 완전히 끔 (CDP attach + did-finish-load 자동 진입 둘 다 skip).
+// AUTOFLOWCUT_DISABLE_FLOW_AUTOMATION=1 로 실행하면 Flow 탭이 일반 브라우저처럼 동작:
+// 봇 감지/세션 차단 의심 시 CDP 영향 배제하고 페이지만 띄워 보는 용도.
+const FLOW_AUTOMATION_DISABLED = process.env.AUTOFLOWCUT_DISABLE_FLOW_AUTOMATION === '1'
+if (FLOW_AUTOMATION_DISABLED) {
+  console.log('[Flow] ⚠️ AUTOFLOWCUT_DISABLE_FLOW_AUTOMATION=1 — automation OFF, Flow renders as plain page')
+}
+
 // Force the display name so dev-mode submenu items ("About …", "Quit …", etc.)
 // match the productName from electron-builder. Has no effect on the bold app
 // title in macOS menu bar (that comes from the Electron binary's Info.plist
@@ -121,6 +129,10 @@ let pendingI2VInjection = null // CDP Fetch 인터셉션용 I2V startImage 주�
 let enterToolClicked = false // Enter tool 버튼 클릭 완료 플래그 (무한루프 방지)
 let consentClicked = false   // 동의 버튼 클릭 완료 플래그 (무한루프 방지)
 
+// === Lazy CDP debugger attach state ===
+let _debuggerAttached = false
+let _debuggerAttachInProgress = null // Promise — 동시 호출 중복 방지
+
 // === Shared helpers (trustedClick, fetch, parse, extract, configureFlowMode) ===
 const helpers = createSharedHelpers({
   getFlowView: () => flowView,
@@ -136,6 +148,489 @@ const {
 } = helpers
 
 // updateBounds → ipc/layout.js로 이동 (import로 사용)
+
+// === Lazy CDP debugger attach ===
+// Google Flow가 pageload 시점에 debugger.attach()를 감지하면 봇 차단(Error 253)이 발생.
+// 첫 번째 자동화 IPC 호출 때까지 attach를 지연한다.
+// - 멱등(idempotent): 이미 attached면 no-op
+// - 동시 중복 방지: in-progress Promise를 재사용
+async function ensureDebuggerAttached() {
+  if (_debuggerAttached) return
+  if (_debuggerAttachInProgress) return _debuggerAttachInProgress
+
+  _debuggerAttachInProgress = (async () => {
+    try {
+      if (FLOW_AUTOMATION_DISABLED) {
+        throw new Error('FLOW_AUTOMATION_DISABLED_BY_ENV')
+      }
+      const fv = flowView
+      if (!fv) throw new Error('flowView not ready')
+
+      fv.webContents.debugger.attach('1.3')
+      fv.webContents.debugger.sendCommand('Network.enable')
+
+      const requestUrlMap = {}
+      const requestMethodMap = {} // requestId → HTTP method (GET/POST/OPTIONS)
+      const responseStatusMap = {} // requestId → HTTP status
+      const requestSentTimeMap = {} // requestId → 요청 시작 시간 (stale 응답 필터링용)
+
+      fv.webContents.debugger.on('message', (event, method, params) => {
+        // ========== Fetch.requestPaused — outgoing 요청 가로채서 주입 ==========
+        // 분기 결정은 selectCdpCase()로 위임 (단위 테스트 가능). 우선순위 규칙은
+        // electron/video-cdp-dispatch.js 의 JSDoc 참조 — 특히 i2v는 t2v-seed보다
+        // 반드시 먼저 매치되어야 한다(54b3293 회귀 사고).
+        if (method === 'Fetch.requestPaused') {
+          const reqUrl = params.request?.url || ''
+          const reqMethod = params.request?.method || ''
+          const continueRequest = (extra) =>
+            fv.webContents.debugger.sendCommand('Fetch.continueRequest', {
+              requestId: params.requestId,
+              ...(extra || {})
+            })
+          const cdpCase = selectCdpCase({
+            reqUrl,
+            reqMethod,
+            pendingSeedValue,
+            pendingI2VInjection,
+          })
+
+          if (cdpCase === 'image-batch') {
+            // 이미지 생성 — 레퍼런스 + seed + 화면비를 요청 바디에 주입.
+            // 주입 로직 자체는 cdp-image-inject.js 의 순수 함수 (단위 테스트됨).
+            try {
+              const body = JSON.parse(params.request.postData || '{}')
+              const applied = injectImageBatchBody(body, {
+                referenceImages: pendingReferenceImages,
+                seed: pendingSeedValue,
+                aspectRatio: pendingImageAspectRatio,
+              })
+              if (applied.references) {
+                console.log('[Flow API] [Fetch] Injected', pendingReferenceImages.length, 'references')
+                pendingReferenceImages = null
+              }
+              if (applied.seed) {
+                console.log('[Flow API] [Fetch] Injected seed:', pendingSeedValue,
+                  'into', body.requests.length, 'requests')
+              }
+              if (applied.aspectRatio) {
+                console.log('[Flow API] [Fetch] Injected imageAspectRatio:', pendingImageAspectRatio,
+                  'into', body.requests.length, 'requests')
+              }
+
+              if (applied.references || applied.seed || applied.aspectRatio) {
+                const modifiedPostData = Buffer.from(JSON.stringify(body)).toString('base64')
+                continueRequest({ postData: modifiedPostData })
+              } else {
+                continueRequest()
+              }
+            } catch (e) {
+              console.error('[Flow API] [Fetch] batchGenerateImages injection error:', e.message)
+              continueRequest()
+            }
+          }
+          else if (cdpCase === 'i2v') {
+            // I2V startImage 주입 (T2V 요청을 I2V로 변환). seed가 함께 잠겨 있어도
+            // 이 케이스가 우선이라 t2v-seed에 가로채지지 않는다.
+            // OPTIONS 프리플라이트는 수정 없이 통과 (pendingI2VInjection 유지 — POST에서 소비)
+            if (reqMethod === 'OPTIONS') {
+              console.log('[Flow Video I2V] [Fetch] OPTIONS preflight — pass through')
+              continueRequest()
+            } else {
+              try {
+                const body = JSON.parse(params.request.postData || '{}')
+                const hasEndImage = !!pendingI2VInjection.endImageMediaId
+
+                // T2V → I2V 모델 키 변환 (SHORT 키 사용 — Flow 페이지가 실제로 쓰는 형식)
+                // 참고: AutoFlow 확장은 _ultra_relaxed 접미사 사용하지만, Flow 웹은 짧은 키 사용
+                const T2V_TO_I2V_MODEL_MAP = {
+                  // landscape (16:9) 모델
+                  'veo_3_1_t2v_fast_ultra_relaxed': 'veo_3_1_i2v_s_fast_fl',
+                  'veo_3_1_t2v_fast': 'veo_3_1_i2v_s_fast_fl',
+                  // portrait/square 모델
+                  'veo_3_1_t2v_fast_portrait_ultra_relaxed': 'veo_3_1_i2v_s_fast',
+                  'veo_3_1_t2v_fast_portrait': 'veo_3_1_i2v_s_fast',
+                  // quality 모델
+                  'veo_3_1_t2v_quality_ultra_relaxed': 'veo_3_1_i2v_quality',
+                  'veo_3_1_t2v_quality': 'veo_3_1_i2v_quality',
+                }
+                // 기본 cropCoordinates (전체 이미지)
+                const defaultCrop = { top: 0, left: 0, bottom: 1, right: 1 }
+
+                if (body.requests) {
+                  for (const req of body.requests) {
+                    // 모델 키 변환
+                    const originalModel = req.videoModelKey
+                    const i2vModel = T2V_TO_I2V_MODEL_MAP[originalModel]
+                    if (i2vModel) {
+                      req.videoModelKey = i2vModel
+                    } else {
+                      // 매핑에 없는 모델 → 기본 landscape I2V
+                      console.warn('[Flow Video I2V] [Fetch] Unknown T2V model:', originalModel, '→ fallback to veo_3_1_i2v_s_fast_fl')
+                      req.videoModelKey = 'veo_3_1_i2v_s_fast_fl'
+                    }
+                    // startImage + cropCoordinates 주입
+                    req.startImage = {
+                      mediaId: pendingI2VInjection.startImageMediaId,
+                      cropCoordinates: defaultCrop
+                    }
+                    if (hasEndImage) {
+                      req.endImage = {
+                        mediaId: pendingI2VInjection.endImageMediaId,
+                        cropCoordinates: defaultCrop
+                      }
+                    }
+                    // Seed 주입 (사용자 지정 시 덮어쓰기, 아니면 Flow 자동 seed 유지)
+                    if (pendingSeedValue != null) {
+                      req.seed = pendingSeedValue
+                    }
+                    console.log('[Flow Video I2V] [Fetch] Model:', originalModel, '→', req.videoModelKey,
+                      '| injecting startImage' + (hasEndImage ? ' + endImage' : '') +
+                      (pendingSeedValue != null ? ` | seed: ${pendingSeedValue}` : ''))
+                  }
+                }
+                const modifiedPostData = Buffer.from(JSON.stringify(body)).toString('base64')
+                // I2V 엔드포인트로 URL 변경
+                const targetUrl = hasEndImage
+                  ? pendingI2VInjection.i2vStartEndUrl   // batchAsyncGenerateVideoStartAndEndImage
+                  : pendingI2VInjection.i2vUrl            // batchAsyncGenerateVideoStartImage
+                continueRequest({ url: targetUrl, postData: modifiedPostData })
+                console.log('[Flow Video I2V] [Fetch] Injected startImage (' +
+                  pendingI2VInjection.startImageMediaId?.substring(0, 8) + ')' +
+                  (hasEndImage ? ' + endImage (' + pendingI2VInjection.endImageMediaId?.substring(0, 8) + ')' : '') +
+                  ' → ' + targetUrl.split('/v1/')[1])
+                console.log('[Flow Video I2V] [Fetch] Modified body:', JSON.stringify(body).substring(0, 800))
+                pendingI2VInjection = null  // 한 번만 주입 (POST에서만 소비)
+              } catch (e) {
+                console.error('[Flow Video I2V] [Fetch] Injection error:', e.message)
+                continueRequest()
+              }
+            }
+          }
+          else if (cdpCase === 't2v-seed') {
+            // T2V seed 덮어쓰기 (Flow가 자동 랜덤 seed 채우는 자리). I2V 모드 아닐 때만.
+            try {
+              const body = JSON.parse(params.request.postData || '{}')
+              if (body.requests) {
+                for (const req of body.requests) {
+                  req.seed = pendingSeedValue
+                }
+                console.log('[Flow Video] [Fetch] Injected seed:', pendingSeedValue, 'into', body.requests.length, 'video requests')
+                const modifiedPostData = Buffer.from(JSON.stringify(body)).toString('base64')
+                continueRequest({ postData: modifiedPostData })
+              } else {
+                continueRequest()
+              }
+            } catch (e) {
+              console.error('[Flow Video] [Fetch] T2V seed injection error:', e.message)
+              continueRequest()
+            }
+          }
+          else {
+            // pass-through — 대상이 아닌 요청은 수정 없이 통과
+            continueRequest()
+          }
+          return  // Fetch 이벤트는 여기서 처리 완료
+        }
+
+        // ========== Network 이벤트 ==========
+        // 요청 URL 기록 + 시작 시간 기록 + HTTP 메서드 기록
+        if (method === 'Network.requestWillBeSent') {
+          requestUrlMap[params.requestId] = params.request?.url || ''
+          requestMethodMap[params.requestId] = params.request?.method || ''
+          requestSentTimeMap[params.requestId] = params.wallTime || (Date.now() / 1000)
+          // 비디오 생성 요청 body 캡처 (모델 키 + 이미지 구조 확인용)
+          const sentUrl = params.request?.url || ''
+          if (sentUrl.includes('batchAsyncGenerateVideo') && params.request?.method === 'POST' && params.request?.postData) {
+            try {
+              const sentBody = JSON.parse(params.request.postData)
+              const req0 = sentBody?.requests?.[0] || {}
+              console.log('[Flow Video DEBUG] Request to:', sentUrl.split('/v1/')[1])
+              console.log('[Flow Video DEBUG] videoModelKey:', req0.videoModelKey)
+              console.log('[Flow Video DEBUG] aspectRatio:', req0.aspectRatio)
+              console.log('[Flow Video DEBUG] startImage:', JSON.stringify(req0.startImage || null))
+              console.log('[Flow Video DEBUG] endImage:', JSON.stringify(req0.endImage || null))
+              console.log('[Flow Video DEBUG] paygateTier:', sentBody?.clientContext?.userPaygateTier)
+              // [SEED PROBE] Flow 비디오 API가 seed 필드를 받는지 확인용 — 전체 schema dump
+              console.log('[Flow Video DEBUG] req[0] keys:', Object.keys(req0))
+              console.log('[Flow Video DEBUG] seed value:', req0.seed)
+              console.log('[Flow Video DEBUG] FULL BODY:', JSON.stringify(sentBody, null, 2))
+            } catch {}
+          }
+        }
+
+        // HTTP 상태 코드 기록 + projectId 캡처
+        if (method === 'Network.responseReceived') {
+          responseStatusMap[params.requestId] = params.response?.status
+          if (!capturedProjectId) {
+            const url = params.response?.url || ''
+            // Flow URL pattern들 (2026-05 현재 확인):
+            //   - projects/UUID/...                  (legacy path 형식)
+            //   - ?projectId=UUID 또는 &projectId=UUID (query param — sessions, *.json 등 다수)
+            //   - /UUID.json                         (CDN 파일명 자체가 UUID)
+            //   - %22UUID%22 (URL-encoded JSON 안)   (fetchProjectInitialData input 등)
+            const pidMatch =
+              url.match(/projects\/([a-f0-9-]{36})/) ||
+              url.match(/[?&]projectId=([a-f0-9-]{36})/) ||
+              url.match(/\/([a-f0-9-]{36})\.json/) ||
+              url.match(/%22([a-f0-9-]{36})%22/)
+            if (pidMatch) {
+              capturedProjectId = pidMatch[1]
+              console.log('[Flow API] ProjectId from response URL:', capturedProjectId)
+            }
+          }
+        }
+
+        // 네트워크 요청 실패 → 실패도 응답 카운트에 포함 (멀티 이미지: 일부 실패 가능)
+        if (method === 'Network.loadingFailed' && pendingGeneration) {
+          const reqUrl = requestUrlMap[params.requestId] || ''
+          const failMethod = requestMethodMap[params.requestId] || ''
+          if (reqUrl.includes('batchGenerateImages') && failMethod !== 'OPTIONS') {
+            // Stale 응답 필터링
+            const reqSentAt = requestSentTimeMap[params.requestId] || 0
+            if (pendingGeneration.setAt && reqSentAt < pendingGeneration.setAt) {
+              console.log('[Flow API] [NetCapture] Skipping STALE batchGenerateImages failure',
+                '(reqSentAt:', reqSentAt.toFixed(3), ', setAt:', pendingGeneration.setAt.toFixed(3), ')')
+              return
+            }
+            pendingGeneration.responses.push({ error: true, message: params.errorText || 'Network request failed' })
+            console.error('[Flow API] [NetCapture] batchGenerateImages FAILED (' +
+              pendingGeneration.responses.length + '/' + pendingGeneration.expectedCount + '):', params.errorText)
+
+            if (pendingGeneration.responses.length >= pendingGeneration.expectedCount) {
+              console.log('[Flow API] [NetCapture] All responses collected (with failures) — resolving')
+              const saved = pendingGeneration
+              pendingGeneration = null
+              if (saved.collectionTimer) clearTimeout(saved.collectionTimer)
+              // 성공 응답이 하나라도 있으면 error: false
+              const hasSuccess = saved.responses.some(r => !r.error)
+              saved.resolve(hasSuccess
+                ? { error: false, responses: saved.responses }
+                : { error: true, message: 'All image generations failed' })
+            }
+          }
+        }
+
+        // 네트워크 요청 실패 → 비동기 모드 (pendingGenerations Map)
+        if (method === 'Network.loadingFailed' && pendingGenerations.size > 0) {
+          const reqUrl = requestUrlMap[params.requestId] || ''
+          const failMethod = requestMethodMap[params.requestId] || ''
+          if (reqUrl.includes('batchGenerateImages') && failMethod !== 'OPTIONS') {
+            const reqSentAt = requestSentTimeMap[params.requestId] || 0
+            let matchId = null
+            let matchSetAt = -Infinity
+            for (const [id, gen] of pendingGenerations) {
+              if (!gen.completed && gen.setAt <= reqSentAt && gen.setAt > matchSetAt) {
+                matchId = id
+                matchSetAt = gen.setAt
+              }
+            }
+            if (matchId) {
+              const g = pendingGenerations.get(matchId)
+              g.responses.push({ error: true, message: params.errorText || 'Network request failed' })
+              console.error('[Flow API] [AsyncCapture] batchGenerateImages FAILED for gen:',
+                matchId.substring(0, 8), '(' + g.responses.length + '/' + g.expectedCount + ')')
+              if (g.responses.length >= g.expectedCount) {
+                g.completed = true
+                if (g.collectionTimer) clearTimeout(g.collectionTimer)
+              }
+            }
+          }
+        }
+
+        // 비디오 API 요청 실패 처리
+        if (method === 'Network.loadingFailed' && pendingVideoGeneration) {
+          const reqUrl = requestUrlMap[params.requestId] || ''
+          const failMethod = requestMethodMap[params.requestId] || ''
+          if (reqUrl.includes('batchAsyncGenerateVideo') && failMethod !== 'OPTIONS') {
+            const reqSentAt = requestSentTimeMap[params.requestId] || 0
+            if (pendingVideoGeneration.setAt && reqSentAt < pendingVideoGeneration.setAt) return
+            console.error('[Flow API] [VideoCapture] Video API request FAILED:', params.errorText)
+            const saved = pendingVideoGeneration
+            pendingVideoGeneration = null
+            saved.resolve({ error: true, message: params.errorText || 'Video API request failed' })
+          }
+        }
+
+        // 응답 body 가져오기 (projectId 추출 + DOM 생성 결과 캡처)
+        if (method === 'Network.loadingFinished' && params.requestId) {
+          const reqUrl = requestUrlMap[params.requestId] || ''
+          const httpStatus = responseStatusMap[params.requestId]
+
+          // batchGenerateImages 응답 → DOM-triggered generation 결과 캡처 (멀티 이미지 수집)
+          // ⚠️ OPTIONS 프리플라이트 요청은 무시 (body 없어서 getResponseBody 실패함)
+          const reqMethod = requestMethodMap[params.requestId] || ''
+          if (pendingGeneration && reqUrl.includes('batchGenerateImages') && reqMethod !== 'OPTIONS') {
+            // Stale 응답 필터링: pendingGeneration 설정 이전에 시작된 요청은 무시
+            const reqSentAt = requestSentTimeMap[params.requestId] || 0
+            if (pendingGeneration.setAt && reqSentAt < pendingGeneration.setAt) {
+              console.log('[Flow API] [NetCapture] Skipping STALE batchGenerateImages response',
+                '(reqSentAt:', reqSentAt.toFixed(3), ', setAt:', pendingGeneration.setAt.toFixed(3),
+                ', diff:', ((pendingGeneration.setAt - reqSentAt) * 1000).toFixed(0), 'ms)')
+              return
+            }
+            console.log('[Flow API] [NetCapture] ✅ ACCEPTED batchGenerateImages response',
+              '(reqSentAt:', reqSentAt.toFixed(3), ', setAt:', pendingGeneration.setAt.toFixed(3),
+              ', diff:', ((reqSentAt - pendingGeneration.setAt) * 1000).toFixed(0), 'ms after)')
+
+            fv.webContents.debugger.sendCommand('Network.getResponseBody', { requestId: params.requestId })
+              .then(result => {
+                if (result?.body && pendingGeneration) {
+                  pendingGeneration.responses.push({ error: false, body: result.body, status: httpStatus })
+                  console.log('[Flow API] [NetCapture] batchGenerateImages response collected (' +
+                    pendingGeneration.responses.length + '/' + pendingGeneration.expectedCount +
+                    ') HTTP', httpStatus, ', length:', result.body.length)
+
+                  // 예상 개수만큼 모았으면 즉시 resolve
+                  if (pendingGeneration.responses.length >= pendingGeneration.expectedCount) {
+                    console.log('[Flow API] [NetCapture] All', pendingGeneration.expectedCount, 'responses collected — resolving')
+                    const saved = pendingGeneration
+                    pendingGeneration = null
+                    if (saved.collectionTimer) clearTimeout(saved.collectionTimer)
+                    saved.resolve({ error: false, responses: saved.responses })
+                  } else {
+                    // 아직 더 남음 — 30초 타이머로 대기 (이미지 생성은 최대 20-30초 소요 가능)
+                    if (pendingGeneration.collectionTimer) clearTimeout(pendingGeneration.collectionTimer)
+                    pendingGeneration.collectionTimer = setTimeout(() => {
+                      if (pendingGeneration) {
+                        console.log('[Flow API] [NetCapture] Collection timer fired — resolving with',
+                          pendingGeneration.responses.length, '/', pendingGeneration.expectedCount, 'responses')
+                        const saved = pendingGeneration
+                        pendingGeneration = null
+                        saved.resolve({ error: false, responses: saved.responses })
+                      }
+                    }, 30000)
+                  }
+                }
+              })
+              .catch(err => {
+                console.warn('[Flow API] [NetCapture] getResponseBody failed:', err.message)
+                // getResponseBody 실패도 카운트에 포함
+                if (pendingGeneration) {
+                  pendingGeneration.responses.push({ error: true, message: err.message })
+                  if (pendingGeneration.responses.length >= pendingGeneration.expectedCount) {
+                    const saved = pendingGeneration
+                    pendingGeneration = null
+                    if (saved.collectionTimer) clearTimeout(saved.collectionTimer)
+                    saved.resolve({ error: false, responses: saved.responses })
+                  }
+                }
+              })
+          }
+          // batchGenerateImages 응답 → 비동기 모드 (pendingGenerations Map)
+          else if (pendingGenerations.size > 0 && reqUrl.includes('batchGenerateImages') && reqMethod !== 'OPTIONS') {
+            const reqSentAt = requestSentTimeMap[params.requestId] || 0
+            // 타임스탬프 기반 매칭: reqSentAt >= gen.setAt인 것 중 가장 늦은(가장 가까운) generation
+            let matchId = null
+            let matchSetAt = -Infinity
+            for (const [id, gen] of pendingGenerations) {
+              if (!gen.completed && gen.setAt <= reqSentAt && gen.setAt > matchSetAt) {
+                matchId = id
+                matchSetAt = gen.setAt
+              }
+            }
+            if (matchId) {
+              const gen = pendingGenerations.get(matchId)
+              console.log('[Flow API] [AsyncCapture] ✅ batchGenerateImages → gen:', matchId.substring(0, 8),
+                '(reqSentAt:', reqSentAt.toFixed(3), ', setAt:', gen.setAt.toFixed(3), ')')
+              fv.webContents.debugger.sendCommand('Network.getResponseBody', { requestId: params.requestId })
+                .then(result => {
+                  if (result?.body && pendingGenerations.has(matchId)) {
+                    const g = pendingGenerations.get(matchId)
+                    g.responses.push({ error: false, body: result.body, status: httpStatus })
+                    console.log('[Flow API] [AsyncCapture] Response collected (' +
+                      g.responses.length + '/' + g.expectedCount + ') for gen:', matchId.substring(0, 8))
+                    if (g.responses.length >= g.expectedCount) {
+                      g.completed = true
+                      if (g.collectionTimer) clearTimeout(g.collectionTimer)
+                      console.log('[Flow API] [AsyncCapture] Generation COMPLETED:', matchId.substring(0, 8))
+                    } else {
+                      // 30초 타이머
+                      if (g.collectionTimer) clearTimeout(g.collectionTimer)
+                      g.collectionTimer = setTimeout(() => {
+                        if (pendingGenerations.has(matchId)) {
+                          const gg = pendingGenerations.get(matchId)
+                          if (!gg.completed) {
+                            gg.completed = true
+                            console.log('[Flow API] [AsyncCapture] Timer fired — marking completed with',
+                              gg.responses.length, '/', gg.expectedCount, 'for gen:', matchId.substring(0, 8))
+                          }
+                        }
+                      }, 30000)
+                    }
+                  }
+                })
+                .catch(err => {
+                  console.warn('[Flow API] [AsyncCapture] getResponseBody failed:', err.message)
+                  if (pendingGenerations.has(matchId)) {
+                    const g = pendingGenerations.get(matchId)
+                    g.responses.push({ error: true, message: err.message })
+                    if (g.responses.length >= g.expectedCount) {
+                      g.completed = true
+                      if (g.collectionTimer) clearTimeout(g.collectionTimer)
+                    }
+                  }
+                })
+            }
+          }
+          // 비디오 API 응답 캡처 (DOM-triggered video generation)
+          else if (pendingVideoGeneration && reqUrl.includes('batchAsyncGenerateVideo') && reqMethod !== 'OPTIONS') {
+            const reqSentAt = requestSentTimeMap[params.requestId] || 0
+            if (pendingVideoGeneration.setAt && reqSentAt < pendingVideoGeneration.setAt) {
+              console.log('[Flow API] [VideoCapture] Skipping STALE video response')
+              return
+            }
+            console.log('[Flow API] [VideoCapture] ✅ ACCEPTED video API response, HTTP', httpStatus)
+
+            fv.webContents.debugger.sendCommand('Network.getResponseBody', { requestId: params.requestId })
+              .then(result => {
+                if (result?.body && pendingVideoGeneration) {
+                  console.log('[Flow API] [VideoCapture] Video response body captured, length:', result.body.length)
+                  if (httpStatus >= 400) {
+                    console.error('[Flow API] [VideoCapture] ❌ Error response body:', result.body.substring(0, 500))
+                  }
+                  const saved = pendingVideoGeneration
+                  pendingVideoGeneration = null
+                  saved.resolve({ error: httpStatus >= 400, body: result.body, status: httpStatus })
+                }
+              })
+              .catch(err => {
+                console.warn('[Flow API] [VideoCapture] getResponseBody failed:', err.message)
+                if (pendingVideoGeneration) {
+                  const saved = pendingVideoGeneration
+                  pendingVideoGeneration = null
+                  saved.resolve({ error: true, message: err.message })
+                }
+              })
+          }
+          // projectId 추출 (아직 없을 때만)
+          else if (!capturedProjectId && reqUrl.includes('aisandbox-pa.googleapis.com')) {
+            fv.webContents.debugger.sendCommand('Network.getResponseBody', { requestId: params.requestId })
+              .then(result => {
+                if (result?.body) {
+                  const match = result.body.match(/"projectId"\s*:\s*"([a-f0-9-]{36})"/)
+                  if (match && !capturedProjectId) {
+                    capturedProjectId = match[1]
+                    console.log('[Flow API] ProjectId CAPTURED:', capturedProjectId)
+                  }
+                }
+              })
+              .catch(() => {})
+          }
+        }
+      })
+
+      _debuggerAttached = true
+      console.log('[Flow] ⚡ Debugger attached lazily (first automation call)')
+    } catch (e) {
+      console.warn('[Flow] Debugger attach failed:', e.message)
+      throw e  // 호출자에게 전파 (IPC 핸들러가 적절히 처리)
+    } finally {
+      _debuggerAttachInProgress = null
+    }
+  })()
+
+  return _debuggerAttachInProgress
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -182,6 +677,8 @@ function createWindow() {
   flowView.webContents.on('did-finish-load', async () => {
     const url = flowView.webContents.getURL()
     console.log('[Flow] did-finish-load:', url)
+    // (옵션 A) FLOW_AUTOMATION_DISABLED 여도 자동 진입은 시도 — DOM 클릭 + URL 매칭은 CDP 없이도 동작.
+    // CDP attach 자체만 skip 됨. 진입 성공 시 did-navigate 가 capturedProjectId 를 잡아준다.
     // 지역 제한 감지 (URL 기반 — localization 무관)
     const unavailable = url.includes('unsupported-country')
 
@@ -498,463 +995,9 @@ function createWindow() {
     }
   })
 
-  // Debugger 프로토콜: projectId 자동 추출 + batchGenerateImages 응답 캡처
-  try {
-    flowView.webContents.debugger.attach('1.3')
-    flowView.webContents.debugger.sendCommand('Network.enable')
-    const requestUrlMap = {}
-    const requestMethodMap = {} // requestId → HTTP method (GET/POST/OPTIONS)
-    const responseStatusMap = {} // requestId → HTTP status
-    const requestSentTimeMap = {} // requestId → 요청 시작 시간 (stale 응답 필터링용)
-
-    flowView.webContents.debugger.on('message', (event, method, params) => {
-      // ========== Fetch.requestPaused — outgoing 요청 가로채서 주입 ==========
-      // 분기 결정은 selectCdpCase()로 위임 (단위 테스트 가능). 우선순위 규칙은
-      // electron/video-cdp-dispatch.js 의 JSDoc 참조 — 특히 i2v는 t2v-seed보다
-      // 반드시 먼저 매치되어야 한다(54b3293 회귀 사고).
-      if (method === 'Fetch.requestPaused') {
-        const reqUrl = params.request?.url || ''
-        const reqMethod = params.request?.method || ''
-        const continueRequest = (extra) =>
-          flowView.webContents.debugger.sendCommand('Fetch.continueRequest', {
-            requestId: params.requestId,
-            ...(extra || {})
-          })
-        const cdpCase = selectCdpCase({
-          reqUrl,
-          reqMethod,
-          pendingSeedValue,
-          pendingI2VInjection,
-        })
-
-        if (cdpCase === 'image-batch') {
-          // 이미지 생성 — 레퍼런스 + seed + 화면비를 요청 바디에 주입.
-          // 주입 로직 자체는 cdp-image-inject.js 의 순수 함수 (단위 테스트됨).
-          try {
-            const body = JSON.parse(params.request.postData || '{}')
-            const applied = injectImageBatchBody(body, {
-              referenceImages: pendingReferenceImages,
-              seed: pendingSeedValue,
-              aspectRatio: pendingImageAspectRatio,
-            })
-            if (applied.references) {
-              console.log('[Flow API] [Fetch] Injected', pendingReferenceImages.length, 'references')
-              pendingReferenceImages = null
-            }
-            if (applied.seed) {
-              console.log('[Flow API] [Fetch] Injected seed:', pendingSeedValue,
-                'into', body.requests.length, 'requests')
-            }
-            if (applied.aspectRatio) {
-              console.log('[Flow API] [Fetch] Injected imageAspectRatio:', pendingImageAspectRatio,
-                'into', body.requests.length, 'requests')
-            }
-
-            if (applied.references || applied.seed || applied.aspectRatio) {
-              const modifiedPostData = Buffer.from(JSON.stringify(body)).toString('base64')
-              continueRequest({ postData: modifiedPostData })
-            } else {
-              continueRequest()
-            }
-          } catch (e) {
-            console.error('[Flow API] [Fetch] batchGenerateImages injection error:', e.message)
-            continueRequest()
-          }
-        }
-        else if (cdpCase === 'i2v') {
-          // I2V startImage 주입 (T2V 요청을 I2V로 변환). seed가 함께 잠겨 있어도
-          // 이 케이스가 우선이라 t2v-seed에 가로채지지 않는다.
-          // OPTIONS 프리플라이트는 수정 없이 통과 (pendingI2VInjection 유지 — POST에서 소비)
-          if (reqMethod === 'OPTIONS') {
-            console.log('[Flow Video I2V] [Fetch] OPTIONS preflight — pass through')
-            continueRequest()
-          } else {
-            try {
-              const body = JSON.parse(params.request.postData || '{}')
-              const hasEndImage = !!pendingI2VInjection.endImageMediaId
-
-              // T2V → I2V 모델 키 변환 (SHORT 키 사용 — Flow 페이지가 실제로 쓰는 형식)
-              // 참고: AutoFlow 확장은 _ultra_relaxed 접미사 사용하지만, Flow 웹은 짧은 키 사용
-              const T2V_TO_I2V_MODEL_MAP = {
-                // landscape (16:9) 모델
-                'veo_3_1_t2v_fast_ultra_relaxed': 'veo_3_1_i2v_s_fast_fl',
-                'veo_3_1_t2v_fast': 'veo_3_1_i2v_s_fast_fl',
-                // portrait/square 모델
-                'veo_3_1_t2v_fast_portrait_ultra_relaxed': 'veo_3_1_i2v_s_fast',
-                'veo_3_1_t2v_fast_portrait': 'veo_3_1_i2v_s_fast',
-                // quality 모델
-                'veo_3_1_t2v_quality_ultra_relaxed': 'veo_3_1_i2v_quality',
-                'veo_3_1_t2v_quality': 'veo_3_1_i2v_quality',
-              }
-              // 기본 cropCoordinates (전체 이미지)
-              const defaultCrop = { top: 0, left: 0, bottom: 1, right: 1 }
-
-              if (body.requests) {
-                for (const req of body.requests) {
-                  // 모델 키 변환
-                  const originalModel = req.videoModelKey
-                  const i2vModel = T2V_TO_I2V_MODEL_MAP[originalModel]
-                  if (i2vModel) {
-                    req.videoModelKey = i2vModel
-                  } else {
-                    // 매핑에 없는 모델 → 기본 landscape I2V
-                    console.warn('[Flow Video I2V] [Fetch] Unknown T2V model:', originalModel, '→ fallback to veo_3_1_i2v_s_fast_fl')
-                    req.videoModelKey = 'veo_3_1_i2v_s_fast_fl'
-                  }
-                  // startImage + cropCoordinates 주입
-                  req.startImage = {
-                    mediaId: pendingI2VInjection.startImageMediaId,
-                    cropCoordinates: defaultCrop
-                  }
-                  if (hasEndImage) {
-                    req.endImage = {
-                      mediaId: pendingI2VInjection.endImageMediaId,
-                      cropCoordinates: defaultCrop
-                    }
-                  }
-                  // Seed 주입 (사용자 지정 시 덮어쓰기, 아니면 Flow 자동 seed 유지)
-                  if (pendingSeedValue != null) {
-                    req.seed = pendingSeedValue
-                  }
-                  console.log('[Flow Video I2V] [Fetch] Model:', originalModel, '→', req.videoModelKey,
-                    '| injecting startImage' + (hasEndImage ? ' + endImage' : '') +
-                    (pendingSeedValue != null ? ` | seed: ${pendingSeedValue}` : ''))
-                }
-              }
-              const modifiedPostData = Buffer.from(JSON.stringify(body)).toString('base64')
-              // I2V 엔드포인트로 URL 변경
-              const targetUrl = hasEndImage
-                ? pendingI2VInjection.i2vStartEndUrl   // batchAsyncGenerateVideoStartAndEndImage
-                : pendingI2VInjection.i2vUrl            // batchAsyncGenerateVideoStartImage
-              continueRequest({ url: targetUrl, postData: modifiedPostData })
-              console.log('[Flow Video I2V] [Fetch] Injected startImage (' +
-                pendingI2VInjection.startImageMediaId?.substring(0, 8) + ')' +
-                (hasEndImage ? ' + endImage (' + pendingI2VInjection.endImageMediaId?.substring(0, 8) + ')' : '') +
-                ' → ' + targetUrl.split('/v1/')[1])
-              console.log('[Flow Video I2V] [Fetch] Modified body:', JSON.stringify(body).substring(0, 800))
-              pendingI2VInjection = null  // 한 번만 주입 (POST에서만 소비)
-            } catch (e) {
-              console.error('[Flow Video I2V] [Fetch] Injection error:', e.message)
-              continueRequest()
-            }
-          }
-        }
-        else if (cdpCase === 't2v-seed') {
-          // T2V seed 덮어쓰기 (Flow가 자동 랜덤 seed 채우는 자리). I2V 모드 아닐 때만.
-          try {
-            const body = JSON.parse(params.request.postData || '{}')
-            if (body.requests) {
-              for (const req of body.requests) {
-                req.seed = pendingSeedValue
-              }
-              console.log('[Flow Video] [Fetch] Injected seed:', pendingSeedValue, 'into', body.requests.length, 'video requests')
-              const modifiedPostData = Buffer.from(JSON.stringify(body)).toString('base64')
-              continueRequest({ postData: modifiedPostData })
-            } else {
-              continueRequest()
-            }
-          } catch (e) {
-            console.error('[Flow Video] [Fetch] T2V seed injection error:', e.message)
-            continueRequest()
-          }
-        }
-        else {
-          // pass-through — 대상이 아닌 요청은 수정 없이 통과
-          continueRequest()
-        }
-        return  // Fetch 이벤트는 여기서 처리 완료
-      }
-
-      // ========== Network 이벤트 ==========
-      // 요청 URL 기록 + 시작 시간 기록 + HTTP 메서드 기록
-      if (method === 'Network.requestWillBeSent') {
-        requestUrlMap[params.requestId] = params.request?.url || ''
-        requestMethodMap[params.requestId] = params.request?.method || ''
-        requestSentTimeMap[params.requestId] = params.wallTime || (Date.now() / 1000)
-        // 🔍 비디오 생성 요청 body 캡처 (모델 키 + 이미지 구조 확인용)
-        const sentUrl = params.request?.url || ''
-        if (sentUrl.includes('batchAsyncGenerateVideo') && params.request?.method === 'POST' && params.request?.postData) {
-          try {
-            const sentBody = JSON.parse(params.request.postData)
-            const req0 = sentBody?.requests?.[0] || {}
-            console.log('[Flow Video DEBUG] Request to:', sentUrl.split('/v1/')[1])
-            console.log('[Flow Video DEBUG] videoModelKey:', req0.videoModelKey)
-            console.log('[Flow Video DEBUG] aspectRatio:', req0.aspectRatio)
-            console.log('[Flow Video DEBUG] startImage:', JSON.stringify(req0.startImage || null))
-            console.log('[Flow Video DEBUG] endImage:', JSON.stringify(req0.endImage || null))
-            console.log('[Flow Video DEBUG] paygateTier:', sentBody?.clientContext?.userPaygateTier)
-            // [SEED PROBE] Flow 비디오 API가 seed 필드를 받는지 확인용 — 전체 schema dump
-            console.log('[Flow Video DEBUG] req[0] keys:', Object.keys(req0))
-            console.log('[Flow Video DEBUG] seed value:', req0.seed)
-            console.log('[Flow Video DEBUG] FULL BODY:', JSON.stringify(sentBody, null, 2))
-          } catch {}
-        }
-      }
-
-      // HTTP 상태 코드 기록 + projectId 캡처
-      if (method === 'Network.responseReceived') {
-        responseStatusMap[params.requestId] = params.response?.status
-        if (!capturedProjectId) {
-          const url = params.response?.url || ''
-          // Flow URL pattern들 (2026-05 현재 확인):
-          //   - projects/UUID/...                  (legacy path 형식)
-          //   - ?projectId=UUID 또는 &projectId=UUID (query param — sessions, *.json 등 다수)
-          //   - /UUID.json                         (CDN 파일명 자체가 UUID)
-          //   - %22UUID%22 (URL-encoded JSON 안)   (fetchProjectInitialData input 등)
-          const pidMatch =
-            url.match(/projects\/([a-f0-9-]{36})/) ||
-            url.match(/[?&]projectId=([a-f0-9-]{36})/) ||
-            url.match(/\/([a-f0-9-]{36})\.json/) ||
-            url.match(/%22([a-f0-9-]{36})%22/)
-          if (pidMatch) {
-            capturedProjectId = pidMatch[1]
-            console.log('[Flow API] ProjectId from response URL:', capturedProjectId)
-          }
-        }
-      }
-
-      // 네트워크 요청 실패 → 실패도 응답 카운트에 포함 (멀티 이미지: 일부 실패 가능)
-      if (method === 'Network.loadingFailed' && pendingGeneration) {
-        const reqUrl = requestUrlMap[params.requestId] || ''
-        const failMethod = requestMethodMap[params.requestId] || ''
-        if (reqUrl.includes('batchGenerateImages') && failMethod !== 'OPTIONS') {
-          // Stale 응답 필터링
-          const reqSentAt = requestSentTimeMap[params.requestId] || 0
-          if (pendingGeneration.setAt && reqSentAt < pendingGeneration.setAt) {
-            console.log('[Flow API] [NetCapture] Skipping STALE batchGenerateImages failure',
-              '(reqSentAt:', reqSentAt.toFixed(3), ', setAt:', pendingGeneration.setAt.toFixed(3), ')')
-            return
-          }
-          pendingGeneration.responses.push({ error: true, message: params.errorText || 'Network request failed' })
-          console.error('[Flow API] [NetCapture] batchGenerateImages FAILED (' +
-            pendingGeneration.responses.length + '/' + pendingGeneration.expectedCount + '):', params.errorText)
-
-          if (pendingGeneration.responses.length >= pendingGeneration.expectedCount) {
-            console.log('[Flow API] [NetCapture] All responses collected (with failures) — resolving')
-            const saved = pendingGeneration
-            pendingGeneration = null
-            if (saved.collectionTimer) clearTimeout(saved.collectionTimer)
-            // 성공 응답이 하나라도 있으면 error: false
-            const hasSuccess = saved.responses.some(r => !r.error)
-            saved.resolve(hasSuccess
-              ? { error: false, responses: saved.responses }
-              : { error: true, message: 'All image generations failed' })
-          }
-        }
-      }
-
-      // 네트워크 요청 실패 → 비동기 모드 (pendingGenerations Map)
-      if (method === 'Network.loadingFailed' && pendingGenerations.size > 0) {
-        const reqUrl = requestUrlMap[params.requestId] || ''
-        const failMethod = requestMethodMap[params.requestId] || ''
-        if (reqUrl.includes('batchGenerateImages') && failMethod !== 'OPTIONS') {
-          const reqSentAt = requestSentTimeMap[params.requestId] || 0
-          let matchId = null
-          let matchSetAt = -Infinity
-          for (const [id, gen] of pendingGenerations) {
-            if (!gen.completed && gen.setAt <= reqSentAt && gen.setAt > matchSetAt) {
-              matchId = id
-              matchSetAt = gen.setAt
-            }
-          }
-          if (matchId) {
-            const g = pendingGenerations.get(matchId)
-            g.responses.push({ error: true, message: params.errorText || 'Network request failed' })
-            console.error('[Flow API] [AsyncCapture] batchGenerateImages FAILED for gen:',
-              matchId.substring(0, 8), '(' + g.responses.length + '/' + g.expectedCount + ')')
-            if (g.responses.length >= g.expectedCount) {
-              g.completed = true
-              if (g.collectionTimer) clearTimeout(g.collectionTimer)
-            }
-          }
-        }
-      }
-
-      // 비디오 API 요청 실패 처리
-      if (method === 'Network.loadingFailed' && pendingVideoGeneration) {
-        const reqUrl = requestUrlMap[params.requestId] || ''
-        const failMethod = requestMethodMap[params.requestId] || ''
-        if (reqUrl.includes('batchAsyncGenerateVideo') && failMethod !== 'OPTIONS') {
-          const reqSentAt = requestSentTimeMap[params.requestId] || 0
-          if (pendingVideoGeneration.setAt && reqSentAt < pendingVideoGeneration.setAt) return
-          console.error('[Flow API] [VideoCapture] Video API request FAILED:', params.errorText)
-          const saved = pendingVideoGeneration
-          pendingVideoGeneration = null
-          saved.resolve({ error: true, message: params.errorText || 'Video API request failed' })
-        }
-      }
-
-      // 응답 body 가져오기 (projectId 추출 + DOM 생성 결과 캡처)
-      if (method === 'Network.loadingFinished' && params.requestId) {
-        const reqUrl = requestUrlMap[params.requestId] || ''
-        const httpStatus = responseStatusMap[params.requestId]
-
-        // batchGenerateImages 응답 → DOM-triggered generation 결과 캡처 (멀티 이미지 수집)
-        // ⚠️ OPTIONS 프리플라이트 요청은 무시 (body 없어서 getResponseBody 실패함)
-        const reqMethod = requestMethodMap[params.requestId] || ''
-        if (pendingGeneration && reqUrl.includes('batchGenerateImages') && reqMethod !== 'OPTIONS') {
-          // Stale 응답 필터링: pendingGeneration 설정 이전에 시작된 요청은 무시
-          const reqSentAt = requestSentTimeMap[params.requestId] || 0
-          if (pendingGeneration.setAt && reqSentAt < pendingGeneration.setAt) {
-            console.log('[Flow API] [NetCapture] Skipping STALE batchGenerateImages response',
-              '(reqSentAt:', reqSentAt.toFixed(3), ', setAt:', pendingGeneration.setAt.toFixed(3),
-              ', diff:', ((pendingGeneration.setAt - reqSentAt) * 1000).toFixed(0), 'ms)')
-            return
-          }
-          console.log('[Flow API] [NetCapture] ✅ ACCEPTED batchGenerateImages response',
-            '(reqSentAt:', reqSentAt.toFixed(3), ', setAt:', pendingGeneration.setAt.toFixed(3),
-            ', diff:', ((reqSentAt - pendingGeneration.setAt) * 1000).toFixed(0), 'ms after)')
-
-          flowView.webContents.debugger.sendCommand('Network.getResponseBody', { requestId: params.requestId })
-            .then(result => {
-              if (result?.body && pendingGeneration) {
-                pendingGeneration.responses.push({ error: false, body: result.body, status: httpStatus })
-                console.log('[Flow API] [NetCapture] batchGenerateImages response collected (' +
-                  pendingGeneration.responses.length + '/' + pendingGeneration.expectedCount +
-                  ') HTTP', httpStatus, ', length:', result.body.length)
-
-                // 예상 개수만큼 모았으면 즉시 resolve
-                if (pendingGeneration.responses.length >= pendingGeneration.expectedCount) {
-                  console.log('[Flow API] [NetCapture] All', pendingGeneration.expectedCount, 'responses collected — resolving')
-                  const saved = pendingGeneration
-                  pendingGeneration = null
-                  if (saved.collectionTimer) clearTimeout(saved.collectionTimer)
-                  saved.resolve({ error: false, responses: saved.responses })
-                } else {
-                  // 아직 더 남음 — 30초 타이머로 대기 (이미지 생성은 최대 20-30초 소요 가능)
-                  if (pendingGeneration.collectionTimer) clearTimeout(pendingGeneration.collectionTimer)
-                  pendingGeneration.collectionTimer = setTimeout(() => {
-                    if (pendingGeneration) {
-                      console.log('[Flow API] [NetCapture] Collection timer fired — resolving with',
-                        pendingGeneration.responses.length, '/', pendingGeneration.expectedCount, 'responses')
-                      const saved = pendingGeneration
-                      pendingGeneration = null
-                      saved.resolve({ error: false, responses: saved.responses })
-                    }
-                  }, 30000)
-                }
-              }
-            })
-            .catch(err => {
-              console.warn('[Flow API] [NetCapture] getResponseBody failed:', err.message)
-              // getResponseBody 실패도 카운트에 포함
-              if (pendingGeneration) {
-                pendingGeneration.responses.push({ error: true, message: err.message })
-                if (pendingGeneration.responses.length >= pendingGeneration.expectedCount) {
-                  const saved = pendingGeneration
-                  pendingGeneration = null
-                  if (saved.collectionTimer) clearTimeout(saved.collectionTimer)
-                  saved.resolve({ error: false, responses: saved.responses })
-                }
-              }
-            })
-        }
-        // batchGenerateImages 응답 → 비동기 모드 (pendingGenerations Map)
-        else if (pendingGenerations.size > 0 && reqUrl.includes('batchGenerateImages') && reqMethod !== 'OPTIONS') {
-          const reqSentAt = requestSentTimeMap[params.requestId] || 0
-          // 타임스탬프 기반 매칭: reqSentAt >= gen.setAt인 것 중 가장 늦은(가장 가까운) generation
-          let matchId = null
-          let matchSetAt = -Infinity
-          for (const [id, gen] of pendingGenerations) {
-            if (!gen.completed && gen.setAt <= reqSentAt && gen.setAt > matchSetAt) {
-              matchId = id
-              matchSetAt = gen.setAt
-            }
-          }
-          if (matchId) {
-            const gen = pendingGenerations.get(matchId)
-            console.log('[Flow API] [AsyncCapture] ✅ batchGenerateImages → gen:', matchId.substring(0, 8),
-              '(reqSentAt:', reqSentAt.toFixed(3), ', setAt:', gen.setAt.toFixed(3), ')')
-            flowView.webContents.debugger.sendCommand('Network.getResponseBody', { requestId: params.requestId })
-              .then(result => {
-                if (result?.body && pendingGenerations.has(matchId)) {
-                  const g = pendingGenerations.get(matchId)
-                  g.responses.push({ error: false, body: result.body, status: httpStatus })
-                  console.log('[Flow API] [AsyncCapture] Response collected (' +
-                    g.responses.length + '/' + g.expectedCount + ') for gen:', matchId.substring(0, 8))
-                  if (g.responses.length >= g.expectedCount) {
-                    g.completed = true
-                    if (g.collectionTimer) clearTimeout(g.collectionTimer)
-                    console.log('[Flow API] [AsyncCapture] Generation COMPLETED:', matchId.substring(0, 8))
-                  } else {
-                    // 30초 타이머
-                    if (g.collectionTimer) clearTimeout(g.collectionTimer)
-                    g.collectionTimer = setTimeout(() => {
-                      if (pendingGenerations.has(matchId)) {
-                        const gg = pendingGenerations.get(matchId)
-                        if (!gg.completed) {
-                          gg.completed = true
-                          console.log('[Flow API] [AsyncCapture] Timer fired — marking completed with',
-                            gg.responses.length, '/', gg.expectedCount, 'for gen:', matchId.substring(0, 8))
-                        }
-                      }
-                    }, 30000)
-                  }
-                }
-              })
-              .catch(err => {
-                console.warn('[Flow API] [AsyncCapture] getResponseBody failed:', err.message)
-                if (pendingGenerations.has(matchId)) {
-                  const g = pendingGenerations.get(matchId)
-                  g.responses.push({ error: true, message: err.message })
-                  if (g.responses.length >= g.expectedCount) {
-                    g.completed = true
-                    if (g.collectionTimer) clearTimeout(g.collectionTimer)
-                  }
-                }
-              })
-          }
-        }
-        // 비디오 API 응답 캡처 (DOM-triggered video generation)
-        else if (pendingVideoGeneration && reqUrl.includes('batchAsyncGenerateVideo') && reqMethod !== 'OPTIONS') {
-          const reqSentAt = requestSentTimeMap[params.requestId] || 0
-          if (pendingVideoGeneration.setAt && reqSentAt < pendingVideoGeneration.setAt) {
-            console.log('[Flow API] [VideoCapture] Skipping STALE video response')
-            return
-          }
-          console.log('[Flow API] [VideoCapture] ✅ ACCEPTED video API response, HTTP', httpStatus)
-
-          flowView.webContents.debugger.sendCommand('Network.getResponseBody', { requestId: params.requestId })
-            .then(result => {
-              if (result?.body && pendingVideoGeneration) {
-                console.log('[Flow API] [VideoCapture] Video response body captured, length:', result.body.length)
-                if (httpStatus >= 400) {
-                  console.error('[Flow API] [VideoCapture] ❌ Error response body:', result.body.substring(0, 500))
-                }
-                const saved = pendingVideoGeneration
-                pendingVideoGeneration = null
-                saved.resolve({ error: httpStatus >= 400, body: result.body, status: httpStatus })
-              }
-            })
-            .catch(err => {
-              console.warn('[Flow API] [VideoCapture] getResponseBody failed:', err.message)
-              if (pendingVideoGeneration) {
-                const saved = pendingVideoGeneration
-                pendingVideoGeneration = null
-                saved.resolve({ error: true, message: err.message })
-              }
-            })
-        }
-        // projectId 추출 (아직 없을 때만)
-        else if (!capturedProjectId && reqUrl.includes('aisandbox-pa.googleapis.com')) {
-          flowView.webContents.debugger.sendCommand('Network.getResponseBody', { requestId: params.requestId })
-            .then(result => {
-              if (result?.body) {
-                const match = result.body.match(/"projectId"\s*:\s*"([a-f0-9-]{36})"/)
-                if (match && !capturedProjectId) {
-                  capturedProjectId = match[1]
-                  console.log('[Flow API] ProjectId CAPTURED:', capturedProjectId)
-                }
-              }
-            })
-            .catch(() => {})
-        }
-      }
-    })
-    console.log('[Flow] Debugger attached for projectId + response capture')
-  } catch (e) {
-    console.warn('[Flow] Debugger attach failed:', e.message)
-  }
+  // Debugger 프로토콜 attach는 첫 번째 자동화 IPC 호출까지 지연 (lazy attach).
+  // ensureDebuggerAttached() 함수가 모듈 레벨에 정의되어 있고,
+  // flowAPIDeps / videoDeps / domDeps 를 통해 IPC 핸들러에 주입된다.
 
   // Flow 페이지의 네트워크 요청에서 projectId 자동 캡처 + 로깅
   flowView.webContents.session.webRequest.onBeforeRequest(
@@ -1645,6 +1688,7 @@ const flowAPIDeps = {
   setPendingImageAspectRatio: (v) => { pendingImageAspectRatio = v },
   getEnterToolClicked: () => enterToolClicked,
   setEnterToolClicked: (v) => { enterToolClicked = v },
+  ensureDebuggerAttached,
   SESSION_URL, TOKEN_INFO_URL, FLOW_URL, MEDIA_REDIRECT_URL, UPLOAD_URL,
   API_HEADERS, GENERATE_URL, BASE_API_URL,
 }
@@ -1668,6 +1712,7 @@ const videoDeps = {
   getPendingI2VInjection: () => pendingI2VInjection,
   setPendingI2VInjection: (v) => { pendingI2VInjection = v },
   setPendingSeedValue: (v) => { pendingSeedValue = v },
+  ensureDebuggerAttached,
   SESSION_URL, VIDEO_T2V_URL, VIDEO_I2V_URL, VIDEO_I2V_START_END_URL, VIDEO_STATUS_URL, VIDEO_UPSCALE_URL,
   API_HEADERS, FLOW_URL,
 }
@@ -1681,6 +1726,7 @@ const domDeps = {
   FLOW_URL,
   getCapturedProjectId: () => capturedProjectId,
   setCapturedProjectId: (v) => { capturedProjectId = v },
+  ensureDebuggerAttached,
 }
 registerDomIPC(ipcMain, domDeps)
 

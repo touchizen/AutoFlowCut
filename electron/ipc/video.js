@@ -19,6 +19,7 @@ export function registerVideoIPC(ipcMain, deps) {
     getPendingVideoGeneration, setPendingVideoGeneration,
     getPendingI2VInjection, setPendingI2VInjection,
     setPendingSeedValue,
+    ensureDebuggerAttached,
     SESSION_URL, VIDEO_T2V_URL, VIDEO_I2V_URL, VIDEO_I2V_START_END_URL, VIDEO_STATUS_URL, VIDEO_UPSCALE_URL,
     API_HEADERS, FLOW_URL,
   } = deps
@@ -54,6 +55,7 @@ export function registerVideoIPC(ipcMain, deps) {
     const mainWindow = getMainWindow()
     if (!prompt) return { success: false, error: 'No prompt' }
     if (!flowView) return { success: false, error: 'Flow view not ready' }
+    try { await ensureDebuggerAttached() } catch (e) { console.warn('[Flow T2V] Debugger attach failed:', e.message) }
 
     // Seed: 숫자면 CDP Fetch 인터셉션이 batchAsyncGenerateVideoText 요청에 주입,
     //       null/undefined면 Flow 자체 랜덤 seed 유지
@@ -295,6 +297,7 @@ export function registerVideoIPC(ipcMain, deps) {
     const mainWindow = getMainWindow()
     if (!startImageMediaId) return { success: false, error: 'No start image mediaId' }
     if (!flowView) return { success: false, error: 'Flow view not ready' }
+    try { await ensureDebuggerAttached() } catch (e) { console.warn('[Flow I2V] Debugger attach failed:', e.message) }
 
     // Seed: 숫자면 CDP Fetch 인터셉션이 batchAsyncGenerateVideoStartImage 등에 주입,
     //       null/undefined면 Flow 자체 랜덤 seed 유지
@@ -540,6 +543,7 @@ export function registerVideoIPC(ipcMain, deps) {
     const flowView = getFlowView()
     if (!token) return { success: false, error: 'No token' }
     if (!flowView) return { success: false, error: 'Flow view not ready' }
+    try { await ensureDebuggerAttached() } catch (_) {}
 
     const pid = projectId || getCapturedProjectId() || ''
 
@@ -672,6 +676,7 @@ export function registerVideoIPC(ipcMain, deps) {
     if (!token) return { success: false, error: 'No token' }
     if (!mediaId) return { success: false, error: 'No mediaId' }
     if (!flowView) return { success: false, error: 'Flow view not ready' }
+    try { await ensureDebuggerAttached() } catch (_) {}
 
     const normalizedRes = String(resolution || '1080p').toLowerCase()
     const resolutionEnum = normalizedRes === '4k' ? 'VIDEO_RESOLUTION_4K' : 'VIDEO_RESOLUTION_1080P'

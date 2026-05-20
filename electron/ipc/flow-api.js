@@ -26,6 +26,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     getPendingSeedValue, setPendingSeedValue,
     setPendingImageAspectRatio,
     getEnterToolClicked, setEnterToolClicked,
+    ensureDebuggerAttached,
     SESSION_URL, TOKEN_INFO_URL, FLOW_URL, MEDIA_REDIRECT_URL, UPLOAD_URL,
     API_HEADERS, GENERATE_URL, BASE_API_URL,
   } = deps
@@ -131,6 +132,8 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     if (!prompt) return { success: false, error: 'No prompt' }
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }
+
+    try { await ensureDebuggerAttached() } catch (e) { console.warn('[Flow API] generate-image: debugger attach skipped:', e.message) }
 
     // Seed: 숫자면 CDP Fetch 인터셉션에서 사용, null이면 Flow 자체 랜덤 seed 유지
     setPendingSeedValue(typeof seed === 'number' && Number.isFinite(seed) ? seed : null)
@@ -872,6 +875,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
 
   // ─── 비동기 생성 결과 조회 (폴링용) ───
   ipcMain.handle('flow:check-generation', async (event, { generationId }) => {
+    try { await ensureDebuggerAttached() } catch (_) {}
     if (!generationId) return { success: false, error: 'No generationId' }
     const gen = pendingGenerations.get(generationId)
     if (!gen) return { success: false, error: 'Generation not found', notFound: true }
@@ -885,6 +889,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
 
   // ─── 비동기 생성 결과 수집 + 파싱 (완료 후 호출) ───
   ipcMain.handle('flow:collect-generation', async (event, { generationId, token }) => {
+    try { await ensureDebuggerAttached() } catch (_) {}
     if (!generationId) return { success: false, error: 'No generationId' }
     const gen = pendingGenerations.get(generationId)
     if (!gen) return { success: false, error: 'Generation not found', notFound: true }
@@ -959,6 +964,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
 
   // ─── 비동기 생성 일괄 정리 (배치 종료 시) ───
   ipcMain.handle('flow:clear-generations', async () => {
+    try { await ensureDebuggerAttached() } catch (_) {}
     for (const [id, gen] of pendingGenerations) {
       if (gen.collectionTimer) clearTimeout(gen.collectionTimer)
     }
@@ -970,6 +976,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
 
   // Fetch media by ID (mediaId → redirect → base64)
   ipcMain.handle('flow:fetch-media', async (event, { token, mediaId }) => {
+    try { await ensureDebuggerAttached() } catch (_) {}
     if (!token) return { success: false, error: 'No token' }
     if (!mediaId) return { success: false, error: 'No mediaId' }
 
@@ -983,6 +990,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
 
   // 비디오 URL 직접 다운로드 (status 응답에서 추출한 fifeUri/url)
   ipcMain.handle('flow:download-video-url', async (event, { url, token }) => {
+    try { await ensureDebuggerAttached() } catch (_) {}
     if (!url) return { success: false, error: 'No URL' }
 
     try {
@@ -1014,6 +1022,9 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }
     if (!mediaId) return { success: false, error: 'No mediaId' }
+    try { await ensureDebuggerAttached() } catch (e) {
+      console.warn('[Flow DOMDownload] Debugger attach failed (Page.setDownloadBehavior will fail):', e.message)
+    }
 
     console.log('[Flow DOMDownload] Starting DOM download — mediaId:', mediaId?.substring(0, 30), 'resolution:', resolution)
 
@@ -1468,6 +1479,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
 
   // Upload image to Flow
   ipcMain.handle('flow:upload-reference', async (event, { token, base64, projectId }) => {
+    try { await ensureDebuggerAttached() } catch (_) {}
     if (!token) return { success: false, error: 'No token' }
 
     // projectId가 없으면 flowView URL에서 추출 시도
@@ -1548,6 +1560,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
   // 사용자의 Flow 프로젝트(=날짜별 세션) 목록을 가져온다.
   // 응답: result.data.json.result.projects[] → {projectId, projectInfo, creationTime}
   ipcMain.handle('flow:list-projects', async (event, { token, pageSize = 20 } = {}) => {
+    try { await ensureDebuggerAttached() } catch (_) {}
     try {
       const input = JSON.stringify({ json: { pageSize, toolName: 'PINHOLE' } })
       const url = `https://labs.google/fx/api/trpc/project.searchUserProjects?input=${encodeURIComponent(input)}`
@@ -1592,6 +1605,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
   // 이미지(image.userUploadedImage)와 생성 이미지(image.generatedImage)
   // 모두 반환한다. 비디오는 제외.
   ipcMain.handle('flow:fetch-gallery', async (event, { token, projectId }) => {
+    try { await ensureDebuggerAttached() } catch (_) {}
     try {
       if (!projectId) {
         projectId = getCapturedProjectId?.()
@@ -1760,6 +1774,9 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }
     if (!mediaId) return { success: false, error: 'No mediaId' }
+    try { await ensureDebuggerAttached() } catch (e) {
+      console.warn('[Flow Image Upscale] Debugger attach failed:', e.message)
+    }
 
     const normalizedRes = String(resolution || '2k').toLowerCase()
     const resText = normalizedRes === '4k' ? '4K' : '2K'
