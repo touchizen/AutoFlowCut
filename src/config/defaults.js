@@ -21,6 +21,13 @@ export const DEFAULTS = {
     concurrency: 1,        // 항상 순차 (FlowView가 하나이므로)
   },
 
+  // reCAPTCHA 차단 대응 (escalation)
+  recaptcha: {
+    waitTiersMs: [5 * 60 * 1000, 10 * 60 * 1000, 30 * 60 * 1000], // 1·2·3회 대기
+    maxIncidents: 3,          // 초과(4회+) 시 자동 재개 중단 → 수동
+    resetAfterScenes: 25,     // 재개 후 연속 성공 N씬 → incident 카운터 리셋
+  },
+
   // API 엔드포인트 (Flow AI)
   api: {
     baseUrl: 'https://aisandbox-pa.googleapis.com/v1',
