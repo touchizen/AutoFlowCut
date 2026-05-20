@@ -52,6 +52,7 @@ import { ExportModal } from './components/ExportModal'
 import { AuthModal } from './components/AuthModal'
 import { PaywallModal } from './components/PaywallModal'
 import TagValidationModal from './components/TagValidationModal'
+import RecaptchaModal from './components/RecaptchaModal'
 import AudioResultModal from './components/AudioResultModal'
 import QAProgressBanner from './components/QAProgressBanner'
 import AudioPanel from './components/AudioPanel'
@@ -150,7 +151,7 @@ function App() {
   const { videoScenes, setVideoScenes } = videoScenesHook
 
   const { scenes, references, parseFromText, parseFromCSV, parseFromSRT, parseReferencesFromCSV, updateReferences, setScenes, setReferences } = scenesHook
-  const { isRunning, isPaused, isStopping, progress, status, statusMessage, start, togglePause, stop, retryErrors } = automation
+  const { isRunning, isPaused, isStopping, progress, status, statusMessage, start, togglePause, stop, retryErrors, recaptchaModal, closeRecaptchaModal } = automation
 
   // 씬이 복원되어 WelcomeScreen이 스킵될 때도 자동으로 인증 체크
   useEffect(() => {
@@ -1393,6 +1394,14 @@ function App() {
           styleThumbnails={styleThumbnails}
         />
       )}
+
+      <RecaptchaModal
+        open={!!recaptchaModal}
+        mode={recaptchaModal?.mode}
+        waitMs={recaptchaModal?.waitMs || 0}
+        onClose={closeRecaptchaModal}
+        t={t}
+      />
 
       {/* 비디오 상세 모달 (ResultsTable에서 열림) */}
       {selectedVideo && (
