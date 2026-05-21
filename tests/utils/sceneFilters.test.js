@@ -72,4 +72,28 @@ describe('filterPendingScenes', () => {
     ]
     expect(filterPendingScenes(scenes).map(s => s.id)).toEqual([4])
   })
+
+  it('image+video prompts 둘 다 있어도 image prompt 있으면 통과 (video 는 별도 트랙)', () => {
+    const scenes = [
+      { id: 1, prompt: 'image only' },
+      { id: 2, prompt: 'image+video', videoT2VPrompt: 'video too' },
+      { id: 3, prompt: '', videoT2VPrompt: 'video only' },
+    ]
+    expect(filterPendingScenes(scenes).map(s => s.id)).toEqual([1, 2])
+  })
+
+  it('ep02 시나리오: 8 scenes 중 일부만 image prompt — 그것만 batch 대상', () => {
+    // 시청자가 prompts.txt 6개만 가져왔을 때 (max 길이로 8 유지)
+    const scenes = [
+      { id: 1, prompt: '이미지 1', subtitle: '자막 1' },
+      { id: 2, prompt: '이미지 2', subtitle: '자막 2' },
+      { id: 3, prompt: '이미지 3', subtitle: '자막 3' },
+      { id: 4, prompt: '이미지 4', subtitle: '자막 4' },
+      { id: 5, prompt: '이미지 5', subtitle: '자막 5' },
+      { id: 6, prompt: '이미지 6', subtitle: '자막 6' },
+      { id: 7, prompt: '', subtitle: '자막 7' }, // image prompt 없음 — 제외
+      { id: 8, prompt: '', subtitle: '자막 8' }, // image prompt 없음 — 제외
+    ]
+    expect(filterPendingScenes(scenes).map(s => s.id)).toEqual([1, 2, 3, 4, 5, 6])
+  })
 })

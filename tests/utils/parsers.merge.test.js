@@ -91,6 +91,26 @@ describe('mergeTextIntoScenes', () => {
     expect(result[1].videoT2VPrompt).toBe('V2')
     expect(result[1].prompt).toBe('')
   })
+
+  it('fieldName=videoI2VPrompt: I2V prompt 만 갱신, image / T2V prompt 보존', () => {
+    const existing = [
+      { id: 'scene_1', prompt: '이미지', videoT2VPrompt: 'T2V', videoI2VPrompt: '', subtitle: 's', duration: 4 },
+    ]
+    const result = mergeTextIntoScenes(existing, 'I2V-NEW', 3, { fieldName: 'videoI2VPrompt' })
+    expect(result[0].videoI2VPrompt).toBe('I2V-NEW')
+    expect(result[0].prompt).toBe('이미지') // 보존
+    expect(result[0].videoT2VPrompt).toBe('T2V') // 보존
+    expect(result[0].subtitle).toBe('s') // 보존
+    expect(result[0].duration).toBe(4) // 보존
+  })
+
+  it('fieldName=videoI2VPrompt: 빈 scenes에서 호출 시 videoI2VPrompt 만 채움', () => {
+    const result = mergeTextIntoScenes([], 'I1\nI2', 3, { fieldName: 'videoI2VPrompt' })
+    expect(result).toHaveLength(2)
+    expect(result[0].videoI2VPrompt).toBe('I1')
+    expect(result[0].prompt).toBe('')
+    expect(result[0].videoT2VPrompt).toBe('')
+  })
 })
 
 // ============================================================
@@ -146,6 +166,52 @@ describe('mergeSRTIntoScenes', () => {
     expect(result[1].prompt).toBe('') // 새 씬도 prompt 빈 칸
     expect(result[1].subtitle).toBe('두 번째 자막') // 자막만
   })
+
+  it('SRT가 더 짧으면: 초과 scenes 통째 보존 (max 길이 정책)', () => {
+    const existing = [
+      { id: 'scene_1', prompt: 'p1', subtitle: '', duration: 3 },
+      { id: 'scene_2', prompt: 'p2', subtitle: '', duration: 3 },
+      { id: 'scene_3', prompt: 'p3', subtitle: 's3', duration: 5, image: 'img3' },
+    ]
+    const result = mergeSRTIntoScenes(existing, SAMPLE_SRT) // SRT 2개
+    expect(result).toHaveLength(3) // max(3, 2)
+    // 0, 1 은 SRT subtitle/duration 갱신, prompt 보존
+    expect(result[0].subtitle).toBe('첫 번째 자막')
+    expect(result[0].prompt).toBe('p1')
+    expect(result[1].subtitle).toBe('두 번째 자막')
+    expect(result[1].prompt).toBe('p2')
+    // 2 는 SRT 없음 → 통째 보존
+    expect(result[2].prompt).toBe('p3')
+    expect(result[2].subtitle).toBe('s3')
+    expect(result[2].image).toBe('img3')
+  })
+
+  it('ep02 시연 시나리오: SRT(8) → prompts.txt(6) → 8씬 유지, 뒤 2는 SRT 데이터만', () => {
+    // SRT 8라인 가져오기 후 .txt 6라인 (이미지 prompt) 가져옴
+    const eightSRT = Array.from({ length: 8 }, (_, i) => {
+      const start = `00:00:${String(i * 4).padStart(2, '0')},000`
+      const end = `00:00:${String((i + 1) * 4).padStart(2, '0')},000`
+      return `${i + 1}\n${start} --> ${end}\n자막 ${i + 1}`
+    }).join('\n\n')
+
+    let scenes = mergeSRTIntoScenes([], eightSRT)
+    expect(scenes).toHaveLength(8)
+
+    // .txt 6 라인으로 머지 (이미지 prompt, fieldName 기본 'prompt')
+    const sixPrompts = Array.from({ length: 6 }, (_, i) => `이미지 ${i + 1}`).join('\n')
+    scenes = mergeTextIntoScenes(scenes, sixPrompts, 3)
+
+    expect(scenes).toHaveLength(8) // 8 유지 (max 길이)
+    expect(scenes[0].prompt).toBe('이미지 1')
+    expect(scenes[0].subtitle).toBe('자막 1')
+    expect(scenes[5].prompt).toBe('이미지 6')
+    expect(scenes[5].subtitle).toBe('자막 6')
+    // 6, 7 번 — image prompt 없음, subtitle 만
+    expect(scenes[6].prompt).toBe('')
+    expect(scenes[6].subtitle).toBe('자막 7')
+    expect(scenes[7].prompt).toBe('')
+    expect(scenes[7].subtitle).toBe('자막 8')
+  })
 })
 
 // ============================================================
@@ -190,5 +256,39 @@ describe('mergeCSVIntoScenes', () => {
     const result = mergeCSVIntoScenes(existing, csv, 3)
     expect(result[0].duration).toBe(7.5)
     expect(result[0].subtitle).toBe('s') // 보존
+  })
+
+  // ─── P1 회귀: video prompt 컬럼 인식 ────────────────────
+  it('video_t2v_prompt 컬럼이 videoT2VPrompt 로 라우팅됨', () => {
+    const csv = 'video_t2v_prompt\nT2V-A\nT2V-B'
+    const result = mergeCSVIntoScenes([], csv, 3)
+    expect(result).toHaveLength(2)
+    expect(result[0].videoT2VPrompt).toBe('T2V-A')
+    expect(result[1].videoT2VPrompt).toBe('T2V-B')
+    expect(result[0].prompt).toBe('') // image prompt 안 채움
+  })
+
+  it('video_prompt 별칭도 videoT2VPrompt 로 인식', () => {
+    const csv = 'video_prompt\nALT-A'
+    const result = mergeCSVIntoScenes([], csv, 3)
+    expect(result[0].videoT2VPrompt).toBe('ALT-A')
+  })
+
+  it('video_i2v_prompt 컬럼이 videoI2VPrompt 로 라우팅됨', () => {
+    const csv = 'video_i2v_prompt\nI2V-A'
+    const result = mergeCSVIntoScenes([], csv, 3)
+    expect(result[0].videoI2VPrompt).toBe('I2V-A')
+  })
+
+  it('CSV 비디오 컬럼 머지: 기존 image prompt 보존', () => {
+    const existing = [
+      { id: 'scene_1', prompt: '이미지 그대로', subtitle: '자막', duration: 5 },
+    ]
+    const csv = 'video_t2v_prompt\n비디오 새로'
+    const result = mergeCSVIntoScenes(existing, csv, 3)
+    expect(result[0].prompt).toBe('이미지 그대로') // 보존
+    expect(result[0].subtitle).toBe('자막') // 보존
+    expect(result[0].duration).toBe(5) // 보존
+    expect(result[0].videoT2VPrompt).toBe('비디오 새로')
   })
 })
