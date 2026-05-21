@@ -616,4 +616,88 @@ Goodbye world`
       expect(result.current.getPendingScenes()).toEqual([])
     })
   })
+
+  // ============================================================
+  // 머지 모드 — ep02 시연 흐름: SRT 가져오기 → .txt 가져오기 → subtitle·duration 보존
+  // ============================================================
+  describe('merge mode (sequential imports preserve fields)', () => {
+    const SRT = `1
+00:00:00,000 --> 00:00:04,157
+미국이 진 빚, 약 39조 달러. 우리 돈으로 5경 원이 넘습니다.
+
+2
+00:00:04,157 --> 00:00:06,501
+지금 이 순간에도 빠르게 늘어나고 있습니다.`
+
+    it('SRT 후 .txt 가져오기: subtitle/duration 보존, prompt만 갱신', () => {
+      const { result } = renderHook(() => useScenes())
+
+      // STEP 3: SRT 가져오기
+      act(() => {
+        result.current.parseFromSRT(SRT)
+      })
+      expect(result.current.scenes).toHaveLength(2)
+      expect(result.current.scenes[0].subtitle).toBe('미국이 진 빚, 약 39조 달러. 우리 돈으로 5경 원이 넘습니다.')
+      expect(result.current.scenes[0].duration).toBeCloseTo(4.157, 3)
+      // SRT 머지: 빈 prompt → 자막으로 셋팅 (첫 가져오기 시)
+      expect(result.current.scenes[0].prompt).toBe(result.current.scenes[0].subtitle)
+
+      // STEP 4: prompts.txt 가져오기
+      act(() => {
+        result.current.parseFromText('거대한 디지털 숫자판\n빌딩 높이만큼 솟아오른 달러')
+      })
+
+      expect(result.current.scenes).toHaveLength(2)
+      // prompt는 새 값으로 갱신
+      expect(result.current.scenes[0].prompt).toBe('거대한 디지털 숫자판')
+      expect(result.current.scenes[1].prompt).toBe('빌딩 높이만큼 솟아오른 달러')
+      // subtitle 보존 ✅
+      expect(result.current.scenes[0].subtitle).toBe('미국이 진 빚, 약 39조 달러. 우리 돈으로 5경 원이 넘습니다.')
+      expect(result.current.scenes[1].subtitle).toBe('지금 이 순간에도 빠르게 늘어나고 있습니다.')
+      // duration 보존 ✅
+      expect(result.current.scenes[0].duration).toBeCloseTo(4.157, 3)
+      expect(result.current.scenes[1].duration).toBeCloseTo(2.344, 3)
+    })
+
+    it('.txt 후 SRT 가져오기: prompt 보존, subtitle·duration 갱신', () => {
+      const { result } = renderHook(() => useScenes())
+
+      // 먼저 prompts.txt 가져오기
+      act(() => {
+        result.current.parseFromText('이미지 프롬프트 1\n이미지 프롬프트 2')
+      })
+
+      // 그 후 SRT 가져오기
+      act(() => {
+        result.current.parseFromSRT(SRT)
+      })
+
+      expect(result.current.scenes).toHaveLength(2)
+      // prompt 보존 ✅
+      expect(result.current.scenes[0].prompt).toBe('이미지 프롬프트 1')
+      expect(result.current.scenes[1].prompt).toBe('이미지 프롬프트 2')
+      // subtitle/duration 갱신 ✅
+      expect(result.current.scenes[0].subtitle).toBe('미국이 진 빚, 약 39조 달러. 우리 돈으로 5경 원이 넘습니다.')
+      expect(result.current.scenes[0].duration).toBeCloseTo(4.157, 3)
+    })
+
+    it('parseFromText는 PromptInput onChange와 동일한 머지 동작 (입력창=가져오기 일관성)', () => {
+      const { result } = renderHook(() => useScenes())
+
+      // 초기: SRT
+      act(() => {
+        result.current.parseFromSRT(SRT)
+      })
+
+      // PromptInput에서 prompt 텍스트 편집 (handleTextChange 시뮬레이션)
+      act(() => {
+        result.current.parseFromText('수정된 프롬프트 A\n수정된 프롬프트 B')
+      })
+
+      // subtitle, duration 보존 — *입력창 동작도 가져오기와 동일* 보장
+      expect(result.current.scenes[0].subtitle).toBeTruthy()
+      expect(result.current.scenes[0].duration).toBeCloseTo(4.157, 3)
+      expect(result.current.scenes[0].prompt).toBe('수정된 프롬프트 A')
+    })
+  })
 })

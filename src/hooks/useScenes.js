@@ -8,6 +8,9 @@ import {
   parseTextToScenes,
   parseCSVToScenes,
   parseSRTToScenes,
+  mergeTextIntoScenes,
+  mergeCSVIntoScenes,
+  mergeSRTIntoScenes,
   parseReferencesCSV,
   mergeReferences,
   findDuplicateReferenceNames,
@@ -48,30 +51,40 @@ export function useScenes() {
   }, [])
   
   /**
-   * 텍스트에서 씬 파싱 (줄바꿈 구분)
+   * 텍스트에서 씬 파싱 — 기존 씬에 머지 (prompt 필드만 갱신, subtitle·duration 보존)
+   * 빈 scenes에서 호출하면 통째 생성과 동일.
    */
   const parseFromText = useCallback((text, defaultDuration = DEFAULTS.scene.duration) => {
-    const newScenes = parseTextToScenes(text, defaultDuration)
-    setScenes(newScenes)
-    return newScenes
+    let merged
+    setScenes(prev => {
+      merged = mergeTextIntoScenes(prev, text, defaultDuration)
+      return merged
+    })
+    return merged
   }, [])
-  
+
   /**
-   * CSV에서 씬 파싱
+   * CSV에서 씬 파싱 — 기존 씬에 머지 (CSV에 채워진 필드만 덮어쓰기)
    */
   const parseFromCSV = useCallback((csvText, defaultDuration = DEFAULTS.scene.duration) => {
-    const newScenes = parseCSVToScenes(csvText, defaultDuration)
-    setScenes(newScenes)
-    return newScenes
+    let merged
+    setScenes(prev => {
+      merged = mergeCSVIntoScenes(prev, csvText, defaultDuration)
+      return merged
+    })
+    return merged
   }, [])
-  
+
   /**
-   * SRT에서 씬 파싱
+   * SRT에서 씬 파싱 — 기존 씬에 머지 (subtitle/duration 갱신, prompt 보존)
    */
   const parseFromSRT = useCallback((srtText) => {
-    const newScenes = parseSRTToScenes(srtText)
-    setScenes(newScenes)
-    return newScenes
+    let merged
+    setScenes(prev => {
+      merged = mergeSRTIntoScenes(prev, srtText)
+      return merged
+    })
+    return merged
   }, [])
   
   /**

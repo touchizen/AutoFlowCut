@@ -192,6 +192,147 @@ export function parseSRTToScenes(srtText) {
 }
 
 // ============================================================
+// 머지 파서 — 기존 씬과 병합 (한 가져오기가 다른 필드를 덮어쓰지 않게)
+//
+// 예: SRT 가져오기로 subtitle/duration 설정 → 이어서 .txt 가져오기로 prompt만 갱신
+//     이 때 subtitle/duration이 보존돼야 한다. setScenes(prev => mergeXxx(prev, ...)) 패턴.
+// ============================================================
+
+/**
+ * 텍스트 → 기존 씬에 prompt만 머지.
+ * - 입력 줄 수 = 기존 씬 수: 각 씬 prompt 필드만 갱신, 다른 필드 보존
+ * - 입력 줄 수 > 기존: 부족분 새 씬 추가 (다른 필드 기본값)
+ * - 입력 줄 수 < 기존: 초과 씬 제거 (입력 줄 수가 최종 길이)
+ */
+export function mergeTextIntoScenes(existing, text, defaultDuration = DEFAULTS.scene.duration) {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
+  let cursor = 0
+  return lines.map((line, i) => {
+    if (i < existing.length) {
+      const ex = existing[i]
+      // 기존 씬: prompt만 갱신, 시간 정보 보존. cursor는 기존 endTime 또는 cursor+duration로 추적
+      cursor = (typeof ex.endTime === 'number') ? ex.endTime : (cursor + (ex.duration || defaultDuration))
+      return { ...ex, prompt: line }
+    }
+    // 새 씬: 누적 시간
+    const startTime = cursor
+    const endTime = cursor + defaultDuration
+    cursor = endTime
+    return {
+      id: `scene_${i + 1}`,
+      startTime,
+      endTime,
+      duration: defaultDuration,
+      prompt: line,
+      subtitle: '',
+      characters: '',
+      scene_tag: '',
+      style_tag: '',
+      status: 'pending',
+      image: null,
+    }
+  })
+}
+
+/**
+ * SRT → 기존 씬에 subtitle/시간 머지. prompt는 기존 보존 (단 기존이 빈 칸이면 자막).
+ * - 입력 블록 수 ↔ 기존 씬 수 정책은 mergeTextIntoScenes와 동일 (입력이 길이 결정)
+ */
+export function mergeSRTIntoScenes(existing, srtText) {
+  const blocks = srtText.trim().split(/\n\n+/)
+  const parsed = []
+
+  for (const block of blocks) {
+    const lines = block.trim().split('\n')
+    if (lines.length < 3) continue
+
+    const timeLine = lines[1]
+    const timeMatch = timeLine.match(/(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,\.]\d{3})/)
+    if (!timeMatch) continue
+
+    const startTime = parseSRTTime(timeMatch[1])
+    const endTime = parseSRTTime(timeMatch[2])
+    const subtitle = lines.slice(2).join('\n').trim()
+
+    parsed.push({ startTime, endTime, duration: endTime - startTime, subtitle })
+  }
+
+  return parsed.map((p, i) => {
+    if (i < existing.length) {
+      const ex = existing[i]
+      return {
+        ...ex,
+        startTime: p.startTime,
+        endTime: p.endTime,
+        duration: p.duration,
+        subtitle: p.subtitle,
+        prompt: ex.prompt && ex.prompt.trim() ? ex.prompt : p.subtitle,
+      }
+    }
+    return {
+      id: `scene_${i + 1}`,
+      startTime: p.startTime,
+      endTime: p.endTime,
+      duration: p.duration,
+      prompt: p.subtitle,
+      subtitle: p.subtitle,
+      characters: '',
+      scene_tag: '',
+      style_tag: '',
+      status: 'pending',
+      image: null,
+    }
+  })
+}
+
+/**
+ * CSV → 기존 씬에 머지. CSV에 명시된 컬럼만 덮어쓰고, CSV에 없는 컬럼의 기존 값은 보존.
+ * (parseCSVToScenes는 누락 컬럼을 기본값으로 채우기 때문에 결과만으로 머지하면 의도와 다르게
+ *  기본값이 기존 값을 덮어쓴다. 그래서 헤더를 보고 "CSV가 제공한 필드"만 적용한다.)
+ */
+export function mergeCSVIntoScenes(existing, csvText, defaultDuration = DEFAULTS.scene.duration) {
+  const firstLine = csvText.trim().split('\n')[0]
+  const headers = parseCSVLine(firstLine).map(h => h.trim().toLowerCase())
+
+  // CSV 헤더 → scene 필드 매핑 (parseCSVToScenes와 동일한 별칭 규칙)
+  const aliases = {
+    prompt: ['prompt', 'prompt_en'],
+    prompt_ko: ['prompt_ko'],
+    subtitle: ['subtitle', 'subtitle_ko'],
+    subtitle_en: ['subtitle_en'],
+    characters: ['characters', 'character'],
+    scene_tag: ['scene_tag', 'scene', 'background'],
+    style_tag: ['style_tag', 'style'],
+    duration: ['duration'],
+    startTime: ['start_time'],
+    endTime: ['end_time'],
+  }
+
+  const providedFields = new Set()
+  for (const [field, fieldAliases] of Object.entries(aliases)) {
+    if (fieldAliases.some(a => headers.includes(a))) {
+      providedFields.add(field)
+    }
+  }
+
+  const parsed = parseCSVToScenes(csvText, defaultDuration)
+  return parsed.map((p, i) => {
+    if (i < existing.length) {
+      const ex = existing[i]
+      const merged = { ...ex }
+      for (const field of providedFields) {
+        const value = p[field]
+        if (value !== '' && value !== null && value !== undefined) {
+          merged[field] = value
+        }
+      }
+      return merged
+    }
+    return p
+  })
+}
+
+// ============================================================
 // 파일 타입 감지
 // ============================================================
 

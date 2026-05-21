@@ -5,7 +5,6 @@
 
 import { useState, useCallback } from 'react'
 import { DEFAULTS } from '../config/defaults'
-import { parseTextToScenes } from '../utils/parsers'
 
 /**
  * VideoScene shape:
@@ -28,26 +27,35 @@ export function useVideoScenes() {
   const [videoScenes, setVideoScenes] = useState([])
 
   /**
-   * 텍스트에서 비디오 씬 파싱 (줄바꿈 구분)
-   * 1. parseTextToScenes로 파싱
-   * 2. id를 scene_N -> vscene_N으로 변경
-   * 3. selected: true 추가
+   * 텍스트에서 비디오 씬 파싱 — 기존 비디오 씬에 머지.
+   * - 입력 줄과 같은 인덱스의 기존 씬이 있으면 prompt만 갱신 (video/mediaId 등 생성 결과 보존)
+   * - 빈 videoScenes에서 호출하면 통째 생성과 동일
    */
   const parseFromText = useCallback((text, defaultDuration = DEFAULTS.scene.duration) => {
-    const parsed = parseTextToScenes(text, defaultDuration)
-
-    const newVideoScenes = parsed.map(scene => ({
-      ...scene,
-      id: scene.id.replace('scene_', 'vscene_'),
-      video: null,
-      videoPath: null,
-      mediaId: null,
-      generationId: null,
-      selected: false,
-    }))
-
-    setVideoScenes(newVideoScenes)
-    return newVideoScenes
+    let merged
+    setVideoScenes(prev => {
+      const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
+      merged = lines.map((line, i) => {
+        if (i < prev.length) {
+          return { ...prev[i], prompt: line }
+        }
+        return {
+          id: `vscene_${i + 1}`,
+          startTime: 0,
+          endTime: defaultDuration,
+          duration: defaultDuration,
+          prompt: line,
+          status: 'pending',
+          video: null,
+          videoPath: null,
+          mediaId: null,
+          generationId: null,
+          selected: false,
+        }
+      })
+      return merged
+    })
+    return merged
   }, [])
 
   /**
