@@ -257,6 +257,17 @@ function csvPromptHeaderToVideoT2V(headerLine) {
 export function mergeTextIntoScenes(existing, text, defaultDuration = DEFAULTS.scene.duration, options = {}) {
   const fieldName = options.fieldName || 'prompt'
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
+
+  // 완전 빈 입력 가드 — fieldName 별로 의미가 다르다.
+  //   - fieldName='prompt': 이미지 워크플로우의 시작점. PromptInput 을 비우면 = "전부 비움"
+  //     → scenes 통째 삭제 (이전 통째 덮어쓰기 동작과 일치, max-length 정책의 회귀 방지).
+  //   - fieldName='videoT2VPrompt' / 'videoI2VPrompt': 보조 트랙. 비디오 탭 입력 비우기 =
+  //     "비디오 prompt 만 클리어, scenes 자체는 보존" — 이미지 데이터까지 같이 날리는 회귀 방지.
+  if (lines.length === 0) {
+    if (fieldName === 'prompt') return []
+    return existing.map(s => ({ ...s, [fieldName]: '' }))
+  }
+
   const maxLen = Math.max(existing.length, lines.length)
   let cursor = 0
   return Array.from({ length: maxLen }, (_, i) => {

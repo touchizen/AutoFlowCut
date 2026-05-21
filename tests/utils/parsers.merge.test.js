@@ -111,6 +111,39 @@ describe('mergeTextIntoScenes', () => {
     expect(result[0].prompt).toBe('')
     expect(result[0].videoT2VPrompt).toBe('')
   })
+
+  // ─── 빈 입력 가드 (PromptInput 통째 삭제 회귀 방지) ──
+  it('빈 text + fieldName=prompt → scenes 통째 삭제 (이미지 워크플로우 리셋)', () => {
+    const existing = [
+      { id: 'scene_1', prompt: 'p1', subtitle: 's1', duration: 4 },
+      { id: 'scene_2', prompt: 'p2', subtitle: 's2', duration: 5 },
+    ]
+    expect(mergeTextIntoScenes(existing, '', 3)).toEqual([])
+    expect(mergeTextIntoScenes(existing, '   \n  ', 3)).toEqual([]) // whitespace only
+  })
+
+  it('빈 text + fieldName=videoT2VPrompt → scenes 보존, videoT2VPrompt 만 클리어', () => {
+    const existing = [
+      { id: 'scene_1', prompt: 'image1', videoT2VPrompt: 'v1', subtitle: 's1', duration: 4 },
+      { id: 'scene_2', prompt: 'image2', videoT2VPrompt: 'v2', subtitle: 's2' },
+    ]
+    const result = mergeTextIntoScenes(existing, '', 3, { fieldName: 'videoT2VPrompt' })
+    expect(result).toHaveLength(2) // scenes 보존
+    expect(result[0].prompt).toBe('image1') // 이미지 prompt 보존
+    expect(result[0].subtitle).toBe('s1') // 자막 보존
+    expect(result[0].videoT2VPrompt).toBe('') // 비디오 만 클리어
+    expect(result[1].videoT2VPrompt).toBe('')
+  })
+
+  it('빈 text + fieldName=videoI2VPrompt → scenes 보존, videoI2VPrompt 만 클리어', () => {
+    const existing = [
+      { id: 'scene_1', prompt: 'p', videoI2VPrompt: 'i', duration: 3 },
+    ]
+    const result = mergeTextIntoScenes(existing, '', 3, { fieldName: 'videoI2VPrompt' })
+    expect(result).toHaveLength(1)
+    expect(result[0].prompt).toBe('p')
+    expect(result[0].videoI2VPrompt).toBe('')
+  })
 })
 
 // ============================================================
