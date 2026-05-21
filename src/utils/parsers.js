@@ -393,15 +393,30 @@ export function detectFileType(content) {
     return 'srt'
   }
 
-  // CSV 감지: 첫 줄에 콤마가 있고, 헤더처럼 보이는 경우
+  // CSV 감지: 첫 줄에 콤마가 있거나, 단일 컬럼이라도 알려진 CSV 헤더면 CSV.
+  // 단일 컬럼 헤더 예: 'video_t2v_prompt\nv1\nv2' — 콤마는 없지만 video CSV 로 처리해야 한다.
   const firstLine = trimmed.split('\n')[0]
   if (firstLine.includes(',')) {
     const csvType = detectCSVType(content)
     if (csvType === 'reference') return 'reference'
     if (csvType === 'scene') return 'csv'
-    // CSV 형식이지만 타입을 알 수 없는 경우
     if (csvType === 'unknown' && firstLine.split(',').length >= 2) {
-      return 'csv' // 기본적으로 씬 CSV로 간주
+      return 'csv'
+    }
+  } else {
+    // 단일 컬럼 CSV 가능성: 첫 줄이 알려진 scene CSV 헤더 이름이면 CSV 로 처리
+    const singleCol = firstLine.trim().toLowerCase()
+    const knownSceneHeaders = new Set([
+      'prompt', 'prompt_en', 'prompt_ko',
+      'video_t2v_prompt', 'video_prompt', 'video_i2v_prompt',
+      'subtitle', 'subtitle_ko', 'subtitle_en',
+      'characters', 'character',
+      'scene_tag', 'scene', 'background',
+      'style_tag', 'style',
+      'duration',
+    ])
+    if (knownSceneHeaders.has(singleCol)) {
+      return 'csv'
     }
   }
 
@@ -426,6 +441,7 @@ export function detectCSVType(csvContent) {
   const hasName = header.includes('name')
   const hasType = header.includes('type')
   const hasPrompt = header.includes('prompt') || header.includes('prompt_en') || header.includes('prompt_ko')
+  const hasVideoPrompt = header.includes('video_t2v_prompt') || header.includes('video_prompt') || header.includes('video_i2v_prompt')
   const hasSubtitle = header.includes('subtitle') || header.includes('subtitle_ko') || header.includes('subtitle_en')
   const hasCharacters = header.includes('characters') || header.includes('character')
   const hasSceneTag = header.includes('scene_tag') || header.includes('scene') || header.includes('background')
@@ -437,13 +453,13 @@ export function detectCSVType(csvContent) {
     return 'reference'
   }
 
-  // 씬 CSV: prompt 있고, 씬 관련 컬럼 중 하나라도 있음
-  if (hasPrompt && (hasSubtitle || hasCharacters || hasSceneTag || hasStyleTag || hasDuration)) {
+  // 씬 CSV: prompt(또는 video_*_prompt) 있고, 씬 관련 컬럼 중 하나라도 있음
+  if ((hasPrompt || hasVideoPrompt) && (hasSubtitle || hasCharacters || hasSceneTag || hasStyleTag || hasDuration)) {
     return 'scene'
   }
 
-  // prompt만 있는 경우 씬으로 간주
-  if (hasPrompt && !hasName) {
+  // prompt 또는 video_*_prompt 만 있는 경우 씬으로 간주
+  if ((hasPrompt || hasVideoPrompt) && !hasName) {
     return 'scene'
   }
 

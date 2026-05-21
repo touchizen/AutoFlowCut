@@ -233,6 +233,30 @@ describe('detectCSVType', () => {
     expect(detectCSVType('prompt,subtitle,duration\ntest,sub,3')).toBe('scene')
   })
 
+  it('detectCSVType — video_t2v_prompt 단일 컬럼도 scene', () => {
+    expect(detectCSVType('video_t2v_prompt\nT2V-A')).toBe('scene')
+  })
+
+  it('detectCSVType — video_prompt 별칭도 scene', () => {
+    expect(detectCSVType('video_prompt\nALT')).toBe('scene')
+  })
+
+  it('detectCSVType — video_i2v_prompt 도 scene', () => {
+    expect(detectCSVType('video_i2v_prompt\nI2V')).toBe('scene')
+  })
+
+  it('detectFileType — 단일 컬럼 video_t2v_prompt CSV (콤마 없음) 도 csv', () => {
+    expect(detectFileType('video_t2v_prompt\nv1\nv2')).toBe('csv')
+  })
+
+  it('detectFileType — 단일 컬럼 prompt CSV (콤마 없음) 도 csv', () => {
+    expect(detectFileType('prompt\nfoo\nbar')).toBe('csv')
+  })
+
+  it('detectFileType — 알려진 헤더가 아닌 단일 컬럼은 text', () => {
+    expect(detectFileType('just\nplain\nlines')).toBe('text')
+  })
+
   it('detects reference CSV', () => {
     expect(detectCSVType('name,type\nChar1,character')).toBe('reference')
   })

@@ -446,17 +446,15 @@ function App() {
         ? importIntoVideoT2V(content)
         : parseFromText(content, settings.defaultDuration),
       csv: () => isVideo
-        ? importIntoVideoT2V(
-            // CSV 비디오 모드: video_t2v_prompt 컬럼이 우선, 없으면 prompt 컬럼 fallback
-            parseCSVToScenes(content, settings.defaultDuration)
-              .map(s => s.videoT2VPrompt || s.prompt)
-              .filter(Boolean)
-              .join('\n')
-          )
+        // CSV 비디오 모드: 행 단위 매칭 보존을 위해 parseFromCSV 직접 사용.
+        // mergeCSVIntoScenes 가 video_t2v_prompt / video_prompt 컬럼을 scene.videoT2VPrompt 로
+        // 자동 라우팅한다. text 변환 + filter 경로는 빈 행을 제거해서 N번째 씬의 비디오 프롬프트가
+        // N-k번째 씬으로 당겨지는 버그가 있었음.
+        ? parseFromCSV(content, settings.defaultDuration)
         : parseFromCSV(content, settings.defaultDuration),
       srt: () => isVideo
         ? importIntoVideoT2V(
-            // SRT 비디오 모드: 자막을 비디오 프롬프트로 (SRT 자체에 비디오용 텍스트 별도 없으므로)
+            // SRT 비디오 모드: 자막을 비디오 프롬프트로 (SRT 자체에 비디오용 텍스트 별도 없음)
             parseSRTToScenes(content).map(s => s.subtitle || s.prompt).filter(Boolean).join('\n')
           )
         : parseFromSRT(content),
@@ -693,7 +691,10 @@ function App() {
           force,
         }
 
-        const errors = collectTagErrors(scenes, scenesHook.references)
+        // 태그 검증: 이미지 생성 대상 씬만 검사 (전체 scenes 가 아님).
+        // 비디오 전용 씬 (image prompt 없음) 에 unmatched tag 가 있어도 이미지 batch 가 그 씬을
+        // 건드리지 않으므로 시작을 막을 이유 X — filterPendingScenes 정책과 일치시킨다.
+        const errors = collectTagErrors(targetScenes, scenesHook.references)
         if (errors.length > 0) {
           setTagValidationErrors(errors)
           setPendingStartOptions(startOptions)
