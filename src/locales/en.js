@@ -666,6 +666,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     processing: 'Processing...',
     later: 'Maybe Later',
     error: 'Could not open payment page. Please try again.',
+    testBuildBlocked: 'This is a beta test build. Please download the official build to use payment and subscription features.',
   },
 
   // Subscription

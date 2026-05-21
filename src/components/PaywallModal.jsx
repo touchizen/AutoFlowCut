@@ -84,7 +84,11 @@ export function PaywallModal({ isOpen, onClose, reason = 'trial_expired' }) {
       }
     } catch (err) {
       console.error('[Paywall] Checkout failed:', err)
-      setError(t('paywall.error'))
+      if (err?.code === 'functions/permission-denied') {
+        setError(t('paywall.testBuildBlocked'))
+      } else {
+        setError(t('paywall.error'))
+      }
     } finally {
       setLoading(false)
     }

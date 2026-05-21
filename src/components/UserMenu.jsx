@@ -9,6 +9,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { createPortalSession } from '../firebase/functions'
 import { useI18n } from '../hooks/useI18n'
 import { useCachedAvatar } from '../hooks/useCachedAvatar'
+import { toast } from './Toast'
 import './UserMenu.css'
 
 /**
@@ -86,6 +87,11 @@ export function UserMenu({ onLoginClick, onUpgradeClick }) {
       }
     } catch (error) {
       console.error('Portal session failed:', error)
+      if (error?.code === 'functions/permission-denied') {
+        toast.error(t('paywall.testBuildBlocked'))
+      } else {
+        toast.error(t('paywall.error'))
+      }
     } finally {
       setPortalLoading(false)
       setIsOpen(false)

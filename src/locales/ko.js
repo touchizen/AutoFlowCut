@@ -666,6 +666,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     processing: '처리 중...',
     later: '나중에 하기',
     error: '결제 페이지를 열 수 없습니다. 다시 시도해주세요.',
+    testBuildBlocked: '이 빌드는 베타 테스트용입니다. 결제·구독 기능을 사용하시려면 정식 빌드를 다운로드해주세요.',
   },
 
   // 구독
