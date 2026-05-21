@@ -534,10 +534,10 @@
 
 /* mode 토글 (이미지/비디오) — title 옆에 붙지 않고 row 의 오른쪽 끝에 고정.
    이렇게 해야 title 길이가 달라도 토글의 x 축 위치가 행마다 같다.
-   margin-right: 50px 으로 option-arrow(→) 와 거리 둠. */
+   margin-right: 30px 으로 option-arrow(→) 와 거리 둠. */
 .option-title-row .import-mode-segment {
   margin-left: auto;
-  margin-right: 50px;
+  margin-right: 30px;
 }
 
 .option-title {
