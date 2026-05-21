@@ -205,12 +205,20 @@ export function parseSRTToScenes(srtText) {
 // ============================================================
 
 /**
- * 텍스트 → 기존 씬에 prompt만 머지.
- * - 입력 줄 수 = 기존 씬 수: 각 씬 prompt 필드만 갱신, 다른 필드 보존
- * - 입력 줄 수 > 기존: 부족분 새 씬 추가 (다른 필드 기본값)
- * - 입력 줄 수 < 기존: 초과 씬 제거 (입력 줄 수가 최종 길이)
+ * 텍스트 → 기존 씬에 한 필드만 머지.
+ * - 입력 줄 수 = 기존 씬 수: 각 씬의 지정 필드만 갱신, 다른 필드 보존
+ * - 입력 줄 수 > 기존: 부족분 새 씬 추가 (해당 필드만 채워짐, 나머지 prompt 필드는 빈 칸)
+ * - 입력 줄 수 < 기존: 초과 씬 보존 (max 길이 정책)
+ *
+ * @param {Array} existing
+ * @param {string} text
+ * @param {number} defaultDuration
+ * @param {object} [options]
+ * @param {'prompt'|'videoT2VPrompt'|'videoI2VPrompt'} [options.fieldName='prompt']
+ *   text 탭은 'prompt' (이미지), video-text 탭은 'videoT2VPrompt', frame-to-video는 'videoI2VPrompt'.
  */
-export function mergeTextIntoScenes(existing, text, defaultDuration = DEFAULTS.scene.duration) {
+export function mergeTextIntoScenes(existing, text, defaultDuration = DEFAULTS.scene.duration, options = {}) {
+  const fieldName = options.fieldName || 'prompt'
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
   const maxLen = Math.max(existing.length, lines.length)
   let cursor = 0
@@ -218,16 +226,16 @@ export function mergeTextIntoScenes(existing, text, defaultDuration = DEFAULTS.s
     const ex = existing[i]
     const line = lines[i]
     if (ex && line !== undefined) {
-      // 둘 다: prompt만 갱신, 기존 다른 필드 보존
+      // 둘 다: 지정 필드만 갱신, 다른 필드 보존
       cursor = (typeof ex.endTime === 'number') ? ex.endTime : (cursor + (ex.duration || defaultDuration))
-      return { ...ex, prompt: line }
+      return { ...ex, [fieldName]: line }
     }
     if (ex) {
       // 기존만 (incoming이 더 짧음): 통째 보존
       cursor = (typeof ex.endTime === 'number') ? ex.endTime : (cursor + (ex.duration || defaultDuration))
       return ex
     }
-    // 새 씬 (incoming이 더 김): 누적 시간
+    // 새 씬 (incoming이 더 김): 해당 필드만 채우고 나머지 prompt 필드는 빈 칸
     const startTime = cursor
     const endTime = cursor + defaultDuration
     cursor = endTime
@@ -236,9 +244,9 @@ export function mergeTextIntoScenes(existing, text, defaultDuration = DEFAULTS.s
       startTime,
       endTime,
       duration: defaultDuration,
-      prompt: line,
-      videoT2VPrompt: '',
-      videoI2VPrompt: '',
+      prompt: fieldName === 'prompt' ? line : '',
+      videoT2VPrompt: fieldName === 'videoT2VPrompt' ? line : '',
+      videoI2VPrompt: fieldName === 'videoI2VPrompt' ? line : '',
       subtitle: '',
       characters: '',
       scene_tag: '',

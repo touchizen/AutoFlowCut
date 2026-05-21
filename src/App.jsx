@@ -417,7 +417,10 @@ function App() {
   }
 
   // Handle video text input change (T2V 독립 프롬프트)
+  // Step 2: scenes[i].videoT2VPrompt 가 single source of truth.
+  //         videoScenes 도 mirror 로 갱신 (Step 3에서 derived view로 전환 예정)
   const handleVideoTextChange = (text) => {
+    scenesHook.parseFromText(text, settings.defaultDuration, { fieldName: 'videoT2VPrompt' })
     videoScenesHook.parseFromText(text, settings.defaultDuration)
     localStorage.setItem('autoflowcut_savedVideoPrompts', text)
   }
@@ -432,24 +435,28 @@ function App() {
     const detectedType = detectFileType(content)
     const projectName = settings.projectName
 
-    // 비디오 모드: videoScenesHook으로 라우팅
+    // 비디오 모드: scenes.videoT2VPrompt 가 source of truth, videoScenes 도 mirror (Step 2)
     const isVideo = mode === 'video'
+
+    // 비디오 모드 통합 import — scenes.videoT2VPrompt 갱신 + videoScenes mirror
+    const importIntoVideoT2V = (text) => {
+      scenesHook.parseFromText(text, settings.defaultDuration, { fieldName: 'videoT2VPrompt' })
+      videoScenesHook.parseFromText(text, settings.defaultDuration)
+    }
 
     // 타입별 실행 액션
     const actions = {
       text: () => isVideo
-        ? videoScenesHook.parseFromText(content, settings.defaultDuration)
+        ? importIntoVideoT2V(content)
         : parseFromText(content, settings.defaultDuration),
       csv: () => isVideo
-        ? videoScenesHook.parseFromText(
-            parseCSVToScenes(content, settings.defaultDuration).map(s => s.prompt).join('\n'),
-            settings.defaultDuration
+        ? importIntoVideoT2V(
+            parseCSVToScenes(content, settings.defaultDuration).map(s => s.prompt).join('\n')
           )
         : parseFromCSV(content, settings.defaultDuration),
       srt: () => isVideo
-        ? videoScenesHook.parseFromText(
-            parseSRTToScenes(content).map(s => s.prompt).join('\n'),
-            settings.defaultDuration
+        ? importIntoVideoT2V(
+            parseSRTToScenes(content).map(s => s.prompt).join('\n')
           )
         : parseFromSRT(content),
       reference: async () => {
@@ -1353,7 +1360,12 @@ function App() {
             selectable={true}
             onToggle={videoScenesHook.toggleSelect}
             onToggleAll={videoScenesHook.toggleSelectAll}
-            onPromptEdit={(id, newPrompt) => videoScenesHook.updateVideoScene(id, { prompt: newPrompt })}
+            onPromptEdit={(id, newPrompt) => {
+              // Step 2: scenes.videoT2VPrompt 를 source of truth 로 갱신 + videoScenes mirror
+              videoScenesHook.updateVideoScene(id, { prompt: newPrompt })
+              const sceneId = id.replace('vscene_', 'scene_')
+              scenesHook.updateScene(sceneId, { videoT2VPrompt: newPrompt })
+            }}
             onClearMedia={(id) => videoScenesHook.updateVideoScene(id, { video: null, status: 'pending' })}
             disabled={anyRunning}
           />

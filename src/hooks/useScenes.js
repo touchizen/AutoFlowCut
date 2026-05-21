@@ -53,13 +53,16 @@ export function useScenes() {
   }, [])
   
   /**
-   * 텍스트에서 씬 파싱 — 기존 씬에 머지 (prompt 필드만 갱신, subtitle·duration 보존)
+   * 텍스트에서 씬 파싱 — 기존 씬에 머지 (지정 필드만 갱신, 다른 필드 보존)
    * 빈 scenes에서 호출하면 통째 생성과 동일.
+   *
+   * @param {object} [options] - { fieldName: 'prompt' | 'videoT2VPrompt' | 'videoI2VPrompt' }
+   *   기본 'prompt' (text 탭). video-text 탭은 'videoT2VPrompt'.
    */
-  const parseFromText = useCallback((text, defaultDuration = DEFAULTS.scene.duration) => {
+  const parseFromText = useCallback((text, defaultDuration = DEFAULTS.scene.duration, options = {}) => {
     let merged
     setScenes(prev => {
-      merged = mergeTextIntoScenes(prev, text, defaultDuration)
+      merged = mergeTextIntoScenes(prev, text, defaultDuration, options)
       return merged
     })
     return merged

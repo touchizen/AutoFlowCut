@@ -72,6 +72,25 @@ describe('mergeTextIntoScenes', () => {
     expect(result).toHaveLength(2)
     expect(result.map(s => s.prompt)).toEqual(['A', 'B'])
   })
+
+  it('fieldName=videoT2VPrompt: videoT2VPrompt만 갱신, prompt 보존', () => {
+    const existing = [
+      { id: 'scene_1', prompt: '이미지 프롬프트', videoT2VPrompt: '', subtitle: '자막', duration: 5 },
+    ]
+    const result = mergeTextIntoScenes(existing, '비디오 프롬프트', 3, { fieldName: 'videoT2VPrompt' })
+    expect(result[0].videoT2VPrompt).toBe('비디오 프롬프트')
+    expect(result[0].prompt).toBe('이미지 프롬프트') // 보존
+    expect(result[0].subtitle).toBe('자막') // 보존
+  })
+
+  it('fieldName=videoT2VPrompt: 빈 scenes에서 호출 시 비디오 prompt만 채우고 image prompt는 빈 칸', () => {
+    const result = mergeTextIntoScenes([], 'V1\nV2', 3, { fieldName: 'videoT2VPrompt' })
+    expect(result).toHaveLength(2)
+    expect(result[0].videoT2VPrompt).toBe('V1')
+    expect(result[0].prompt).toBe('') // 이미지 prompt는 빈 칸
+    expect(result[1].videoT2VPrompt).toBe('V2')
+    expect(result[1].prompt).toBe('')
+  })
 })
 
 // ============================================================
