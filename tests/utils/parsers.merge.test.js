@@ -250,6 +250,57 @@ describe('mergeTextIntoScenes', () => {
     expect(result[2].startTime).toBe(8)
     expect(result[2].endTime).toBe(12)
   })
+
+  // ─── truncate 모드에서 빈 줄 보존 (갭 있는 비디오 prompt 회귀 방지) ──
+  it('truncate + 빈 줄 입력 → 그 위치 fieldName 비움 (갭 보존)', () => {
+    const existing = [
+      { id: 'scene_1', prompt: 'img1', videoT2VPrompt: 'A' },
+      { id: 'scene_2', prompt: 'img2', videoT2VPrompt: '' },
+      { id: 'scene_3', prompt: 'img3', videoT2VPrompt: 'C' },
+    ]
+    // 사용자가 입력창에서 'A\n\nC' (가운데 빈 줄) 그대로 — 의도: scene_2 비디오 prompt 비워둠
+    const result = mergeTextIntoScenes(existing, 'A\n\nC', 3, {
+      fieldName: 'videoT2VPrompt', truncateToIncoming: true,
+    })
+    expect(result).toHaveLength(3)
+    expect(result[0].videoT2VPrompt).toBe('A')
+    expect(result[1].videoT2VPrompt).toBe('') // 빈 줄 → 비움 (압축으로 'C' 가 당겨오면 안 됨)
+    expect(result[2].videoT2VPrompt).toBe('C') // 자리 보존
+    // 이미지 prompt 다 보존
+    expect(result[0].prompt).toBe('img1')
+    expect(result[1].prompt).toBe('img2')
+    expect(result[2].prompt).toBe('img3')
+  })
+
+  it('truncate + trailing 빈 줄은 무시 (사용자가 마지막에 \\n 추가 시 새 씬 만들지 않음)', () => {
+    const existing = [
+      { id: 'scene_1', prompt: 'p1' },
+      { id: 'scene_2', prompt: 'p2' },
+    ]
+    const result = mergeTextIntoScenes(existing, 'A\nB\n\n', 3, { truncateToIncoming: true })
+    expect(result).toHaveLength(2) // trailing 빈 줄 제거 → 2줄
+    expect(result[0].prompt).toBe('A')
+    expect(result[1].prompt).toBe('B')
+  })
+
+  it('truncate + fieldName=prompt: 중간 빈 줄도 그 위치 prompt 비움', () => {
+    const existing = [
+      { id: 'scene_1', prompt: 'p1' },
+      { id: 'scene_2', prompt: 'p2' },
+      { id: 'scene_3', prompt: 'p3' },
+    ]
+    const result = mergeTextIntoScenes(existing, 'A\n\nC', 3, { truncateToIncoming: true })
+    expect(result).toHaveLength(3) // 빈 줄도 위치 차지
+    expect(result[0].prompt).toBe('A')
+    expect(result[1].prompt).toBe('') // 빈 줄 → 비움
+    expect(result[2].prompt).toBe('C')
+  })
+
+  it('non-truncate (import) 는 빈 줄 무시 (기존 동작 유지)', () => {
+    const result = mergeTextIntoScenes([], 'A\n\nC', 3)
+    expect(result).toHaveLength(2) // import 는 빈 줄 filter
+    expect(result.map(s => s.prompt)).toEqual(['A', 'C'])
+  })
 })
 
 // ============================================================

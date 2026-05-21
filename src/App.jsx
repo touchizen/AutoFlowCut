@@ -1125,7 +1125,10 @@ function App() {
           )}
           {activeTab === 'video-text' && (
             <PromptInput
-              value={videoScenes.map(s => s.prompt).join('\n')}
+              // 압축된 derived videoScenes 가 아니라 전체 scenes 기준으로 value 생성 — 갭이 있는
+              // 비디오 prompt 가 편집 순간 다른 씬으로 당겨지는 회귀를 막는다. 마지막 trailing
+              // 빈 줄만 정리해서 표시 깔끔하게.
+              value={scenes.map(s => s.videoT2VPrompt || '').join('\n').replace(/\n+$/, '')}
               onChange={handleVideoTextChange}
               disabled={anyRunning}
               placeholder={t('prompt.videoPlaceholder')}

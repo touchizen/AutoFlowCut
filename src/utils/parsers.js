@@ -257,10 +257,14 @@ function csvPromptHeaderToVideoT2V(headerLine) {
 export function mergeTextIntoScenes(existing, text, defaultDuration = DEFAULTS.scene.duration, options = {}) {
   const fieldName = options.fieldName || 'prompt'
   // truncateToIncoming — PromptInput 직접 편집용. incoming 길이 = 최종 길이.
-  //   true  : PromptInput onChange (입력창의 텍스트가 = 최종 상태. 줄을 지우면 씬도 줄어든다)
-  //   false : .txt / .srt / .csv import (부분 데이터로 부분 갱신, tail 통째 보존 = max-length)
+  //   true  : PromptInput onChange (입력창의 텍스트가 = 최종 상태. 줄을 지우면 씬도 줄어든다.
+  //           빈 줄은 *그 위치의 prompt 를 비운다* — 갭 있는 비디오 트랙을 편집할 때 필요)
+  //   false : .txt / .srt / .csv import (외부 파일의 빈 줄은 보통 의도된 데이터가 아니라 filter)
   const truncate = options.truncateToIncoming === true
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
+  let split = text.split('\n').map(l => l.trim())
+  // 마지막 trailing 빈 줄들은 의도 없음 — 제거 (PromptInput 끝의 \n 등)
+  while (split.length > 0 && split[split.length - 1] === '') split.pop()
+  const lines = truncate ? split : split.filter(Boolean)
 
   // 완전 빈 입력 가드 — fieldName 별로 의미가 다르다.
   //   - fieldName='prompt': 이미지 워크플로우의 시작점. PromptInput 을 비우면 = "전부 비움"
