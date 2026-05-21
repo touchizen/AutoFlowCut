@@ -473,6 +473,11 @@ function App() {
       reference: 'import.wrongTypeReference'
     }
 
+    // video-text 탭으로 이동할지 여부 — 실제 실행된 type 이 text/csv 일 때만.
+    //   (SRT 는 자막 데이터이므로 isVideo 가 켜져 있어도 비디오 탭으로 이동하지 않아야 한다.)
+    const shouldGoVideoTab = (resolvedType) =>
+      isVideo && (resolvedType === 'text' || resolvedType === 'csv')
+
     // 타입 불일치 시 확인 후 감지된 타입으로 실행
     if (detectedType && detectedType !== type) {
       const confirmKey = confirmKeys[detectedType]
@@ -480,14 +485,14 @@ function App() {
         await actions[detectedType]?.()
       }
       setShowImport(false)
-      if (isVideo) setActiveTab('video-text')
+      if (shouldGoVideoTab(detectedType)) setActiveTab('video-text')
       return
     }
 
     // 정상 처리
     await actions[type]?.()
     setShowImport(false)
-    if (isVideo) setActiveTab('video-text')
+    if (shouldGoVideoTab(type)) setActiveTab('video-text')
   }
 
   // Handle start — 활성 탭에 따라 이미지/비디오 생성 모드 분기

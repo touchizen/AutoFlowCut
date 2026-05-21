@@ -93,8 +93,13 @@ export default function ImportModal({ onImport, onImportAudio, onClose }) {
     const file = e.target.files?.[0]
     if (!file || !selectedType) return
 
+    // mode 토글이 노출되는 타입(text/csv) 에서만 importMode 전달.
+    // SRT / reference 같이 mode 무관 타입에서는 다른 행의 토글 상태가 새어 나가지 않게 'image' 로 강제.
+    const supportsModeToggle = selectedType === 'text' || selectedType === 'csv'
+    const effectiveMode = supportsModeToggle ? importMode : 'image'
+
     const reader = new FileReader()
-    reader.onloadend = () => onImport(selectedType, reader.result, importMode)
+    reader.onloadend = () => onImport(selectedType, reader.result, effectiveMode)
     reader.readAsText(file)
 
     e.target.value = ''
