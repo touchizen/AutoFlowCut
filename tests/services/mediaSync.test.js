@@ -262,8 +262,21 @@ describe('syncVideosIntoScenes — I2V (framePairs)', () => {
 
 // ─── Edge cases ────────────────────────────────────────────
 describe('syncVideosIntoScenes — edge cases', () => {
-  it('scenes 가 비어 있으면 false 반환', () => {
-    expect(syncVideosIntoScenes([], [{ status: 'complete', videoPath: '/x' }], [])).toBe(false)
+  it('scenes 와 videoScenes 모두 비어 있으면 false 반환', () => {
+    expect(syncVideosIntoScenes([], [], [])).toBe(false)
+  })
+
+  it('scenes 가 비어 있고 videoScenes 만 있으면 자동 보강 후 true', () => {
+    const scenes = []
+    const videoScenes = [{
+      id: 'vscene_1', prompt: 'video prompt', status: 'complete',
+      videoPath: '/x.mp4', duration: 5,
+    }]
+    const synced = syncVideosIntoScenes(scenes, videoScenes, [])
+    expect(synced).toBe(true)
+    expect(scenes).toHaveLength(1) // 자동 보강
+    expect(scenes[0].videoT2VPrompt).toBe('video prompt')
+    expect(scenes[0].videoT2VPath).toBe('/x.mp4')
   })
 
   it('scenes 가 null 이어도 throw 없이 false', () => {
@@ -274,6 +287,33 @@ describe('syncVideosIntoScenes — edge cases', () => {
     const scenes = [makeScene('scene_1')]
     expect(() => syncVideosIntoScenes(scenes, null, undefined)).not.toThrow()
     expect(syncVideosIntoScenes(scenes, null, undefined)).toBe(false)
+  })
+
+  it('videoScenes.prompt 가 scene.videoT2VPrompt 로 동기화됨 (결과물 없어도)', () => {
+    const scenes = [makeScene('scene_1')]
+    const videoScenes = [{ id: 'vscene_1', prompt: '비디오 프롬프트', status: 'pending' }]
+    const synced = syncVideosIntoScenes(scenes, videoScenes, [])
+    expect(synced).toBe(true)
+    expect(scenes[0].videoT2VPrompt).toBe('비디오 프롬프트')
+    // 결과물 (path) 은 없으니 sync 안 됨 (makeScene이 null로 초기화)
+    expect(scenes[0].videoT2VPath).toBeFalsy()
+  })
+
+  it('videoScenes 가 더 길면 부분 보강 (scenes 3 + videoScenes 5 → scenes 5)', () => {
+    const scenes = [makeScene('scene_1'), makeScene('scene_2'), makeScene('scene_3')]
+    const videoScenes = [
+      { id: 'vscene_1', prompt: 'v1', status: 'pending' },
+      { id: 'vscene_2', prompt: 'v2', status: 'pending' },
+      { id: 'vscene_3', prompt: 'v3', status: 'pending' },
+      { id: 'vscene_4', prompt: 'v4', status: 'pending', duration: 4 },
+      { id: 'vscene_5', prompt: 'v5', status: 'pending', duration: 4 },
+    ]
+    syncVideosIntoScenes(scenes, videoScenes, [])
+    expect(scenes).toHaveLength(5)
+    expect(scenes[3].id).toBe('scene_4')
+    expect(scenes[3].videoT2VPrompt).toBe('v4')
+    expect(scenes[3].prompt).toBe('') // 이미지 prompt는 비어있음 (보강 stub)
+    expect(scenes[3].duration).toBe(4)
   })
 
   it('T2V + I2V 동시에 동기화될 수 있다', () => {

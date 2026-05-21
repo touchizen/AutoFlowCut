@@ -19,7 +19,7 @@ import {
 import { fileSystemAPI } from './useFileSystem'
 import { splitTags } from '../utils/tagMatch'
 
-// snake_case → camelCase 변환 + 숫자 변환
+// snake_case → camelCase 변환 + 숫자 변환 + videoT2V/I2V prompt 필드 기본값 보장
 function normalizeScene(s, i) {
   const rawStart = s.start_time !== undefined ? s.start_time : s.startTime
   const parsedStart = parseTimeToSeconds(rawStart)
@@ -29,6 +29,8 @@ function normalizeScene(s, i) {
   const parsedEnd = parseTimeToSeconds(rawEnd)
   const endTime = !isNaN(parsedEnd) ? parsedEnd : (startTime + duration)
   return {
+    videoT2VPrompt: '',
+    videoI2VPrompt: '',
     ...s,
     id: s.id || `scene_${i + 1}`,
     startTime,

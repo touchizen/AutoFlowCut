@@ -50,18 +50,21 @@ describe('mergeTextIntoScenes', () => {
     expect(result[1].duration).toBe(3)
   })
 
-  it('입력이 더 짧으면: 초과 씬 제거 (입력 길이가 최종 길이)', () => {
+  it('입력이 더 짧으면: 초과 씬 *보존* (max 길이 정책)', () => {
     const existing = [
       { id: 'scene_1', prompt: 'a', subtitle: 'sa', duration: 5 },
       { id: 'scene_2', prompt: 'b', subtitle: 'sb', duration: 5 },
       { id: 'scene_3', prompt: 'c', subtitle: 'sc', duration: 5 },
     ]
     const result = mergeTextIntoScenes(existing, 'X\nY', 3)
-    expect(result).toHaveLength(2)
+    expect(result).toHaveLength(3) // max(3, 2) = 3
     expect(result[0].prompt).toBe('X')
     expect(result[0].subtitle).toBe('sa') // 보존
     expect(result[1].prompt).toBe('Y')
     expect(result[1].subtitle).toBe('sb') // 보존
+    // 3번째 씬은 incoming에 없으므로 통째 보존 (prompt 도 'c' 그대로)
+    expect(result[2].prompt).toBe('c')
+    expect(result[2].subtitle).toBe('sc')
   })
 
   it('빈 줄 무시', () => {

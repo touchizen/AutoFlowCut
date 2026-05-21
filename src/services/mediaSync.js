@@ -15,19 +15,56 @@
  * @returns {boolean} 동기화가 발생했는지 여부
  */
 export function syncVideosIntoScenes(scenes, videoScenes, framePairs, logPrefix = '[Sync]') {
-  if (!scenes?.length) return false
+  if (!scenes) return false  // null/undefined 보호 (push 실패 방지)
   let synced = false
 
-  // T2V: vscene_N → scene_N (path + duration 동기화).
-  // 이전엔 "scene path 비어있을 때만" 채웠으나, recovery / regen 후 source path 가 바뀌어도
-  // scene 에 옛 path 가 남아 있으면 동기화 skip → SceneList/export 가 옛 비디오 사용.
-  // derived 필드 의미상 source 가 권위 — source path 가 있으면 다른 값일 때 overwrite.
+  // 자동 보강: videoScenes가 scenes보다 길면 부족분 stub scene 생성.
+  // 이미지 프롬프트 없이 비디오 프롬프트만 있을 때도 익스포트에 들어가도록.
+  if (videoScenes?.length > scenes.length) {
+    for (let i = scenes.length; i < videoScenes.length; i++) {
+      const vs = videoScenes[i]
+      scenes.push({
+        id: `scene_${i + 1}`,
+        prompt: '',
+        videoT2VPrompt: vs.prompt || '',
+        videoI2VPrompt: '',
+        subtitle: '',
+        duration: vs.duration || 3,
+        startTime: 0,
+        endTime: vs.duration || 3,
+        characters: '',
+        scene_tag: '',
+        style_tag: '',
+        status: 'pending',
+        image: null,
+      })
+      synced = true
+    }
+    if (synced) console.log(`${logPrefix} Auto-padded scenes from videoScenes (${videoScenes.length} entries)`)
+  }
+
+  if (!scenes?.length) return false
+
+  // T2V: vscene_N → scene_N.
+  // (a) prompt 동기화: videoScenes[i].prompt 가 곧 scene.videoT2VPrompt — 단일 진실의 원천
+  //     (Step 2/3에서 videoScenes 자체 삭제 예정. 그때까지 sync로 보장)
+  // (b) 결과물 (path + duration) 동기화 — 이전엔 "scene path 비어있을 때만" 채웠으나, recovery / regen 후
+  //     source path 가 바뀌어도 scene 에 옛 path 가 남아 있으면 동기화 skip → SceneList/export 가 옛 비디오 사용.
+  //     derived 필드 의미상 source 가 권위 — source path 가 있으면 다른 값일 때 overwrite.
   if (videoScenes?.length) {
     for (const vs of videoScenes) {
+      const sceneId = vs.id.replace('vscene_', 'scene_')
+      const scene = scenes.find(s => s.id === sceneId)
+      if (!scene) continue
+
+      // (a) prompt sync — vs.prompt가 비어있어도 scene.videoT2VPrompt가 우선 (수동 편집 보존)
+      if (vs.prompt && scene.videoT2VPrompt !== vs.prompt) {
+        scene.videoT2VPrompt = vs.prompt
+        synced = true
+      }
+
+      // (b) 결과물 sync — 완료된 비디오만
       if ((vs.status === 'complete' || vs.status === 'done') && (vs.video || vs.videoPath)) {
-        const sceneId = vs.id.replace('vscene_', 'scene_')
-        const scene = scenes.find(s => s.id === sceneId)
-        if (!scene) continue
         const newPath = vs.videoPath || null
         if (scene.videoT2VPath !== newPath) {
           scene.videoT2VPath = newPath

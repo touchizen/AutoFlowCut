@@ -86,6 +86,8 @@ export function parseTextToScenes(text, defaultDuration = DEFAULTS.scene.duratio
       endTime,
       duration: defaultDuration,
       prompt: line.trim(),
+      videoT2VPrompt: '',
+      videoI2VPrompt: '',
       subtitle: '',
       characters: '',
       scene_tag: '',
@@ -135,6 +137,8 @@ export function parseCSVToScenes(csvText, defaultDuration = DEFAULTS.scene.durat
       duration: endTime - startTime,
       prompt: row.prompt || row.prompt_en || '',
       prompt_ko: row.prompt_ko || '',
+      videoT2VPrompt: row.video_t2v_prompt || row.video_prompt || '',
+      videoI2VPrompt: row.video_i2v_prompt || '',
       subtitle: row.subtitle || row.subtitle_ko || '',
       subtitle_en: row.subtitle_en || '',
       characters: row.characters || row.character || '',
@@ -179,6 +183,8 @@ export function parseSRTToScenes(srtText) {
       endTime,
       duration: endTime - startTime,
       prompt: subtitle, // SRT의 자막을 프롬프트로 사용
+      videoT2VPrompt: '',
+      videoI2VPrompt: '',
       subtitle,
       characters: '',
       scene_tag: '',
@@ -206,15 +212,22 @@ export function parseSRTToScenes(srtText) {
  */
 export function mergeTextIntoScenes(existing, text, defaultDuration = DEFAULTS.scene.duration) {
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
+  const maxLen = Math.max(existing.length, lines.length)
   let cursor = 0
-  return lines.map((line, i) => {
-    if (i < existing.length) {
-      const ex = existing[i]
-      // 기존 씬: prompt만 갱신, 시간 정보 보존. cursor는 기존 endTime 또는 cursor+duration로 추적
+  return Array.from({ length: maxLen }, (_, i) => {
+    const ex = existing[i]
+    const line = lines[i]
+    if (ex && line !== undefined) {
+      // 둘 다: prompt만 갱신, 기존 다른 필드 보존
       cursor = (typeof ex.endTime === 'number') ? ex.endTime : (cursor + (ex.duration || defaultDuration))
       return { ...ex, prompt: line }
     }
-    // 새 씬: 누적 시간
+    if (ex) {
+      // 기존만 (incoming이 더 짧음): 통째 보존
+      cursor = (typeof ex.endTime === 'number') ? ex.endTime : (cursor + (ex.duration || defaultDuration))
+      return ex
+    }
+    // 새 씬 (incoming이 더 김): 누적 시간
     const startTime = cursor
     const endTime = cursor + defaultDuration
     cursor = endTime
@@ -224,6 +237,8 @@ export function mergeTextIntoScenes(existing, text, defaultDuration = DEFAULTS.s
       endTime,
       duration: defaultDuration,
       prompt: line,
+      videoT2VPrompt: '',
+      videoI2VPrompt: '',
       subtitle: '',
       characters: '',
       scene_tag: '',
@@ -257,9 +272,11 @@ export function mergeSRTIntoScenes(existing, srtText) {
     parsed.push({ startTime, endTime, duration: endTime - startTime, subtitle })
   }
 
-  return parsed.map((p, i) => {
-    if (i < existing.length) {
-      const ex = existing[i]
+  const maxLen = Math.max(existing.length, parsed.length)
+  return Array.from({ length: maxLen }, (_, i) => {
+    const ex = existing[i]
+    const p = parsed[i]
+    if (ex && p) {
       return {
         ...ex,
         startTime: p.startTime,
@@ -269,12 +286,18 @@ export function mergeSRTIntoScenes(existing, srtText) {
         prompt: ex.prompt && ex.prompt.trim() ? ex.prompt : p.subtitle,
       }
     }
+    if (ex) {
+      // 기존만 (SRT 더 짧음): 보존
+      return ex
+    }
     return {
       id: `scene_${i + 1}`,
       startTime: p.startTime,
       endTime: p.endTime,
       duration: p.duration,
       prompt: p.subtitle,
+      videoT2VPrompt: '',
+      videoI2VPrompt: '',
       subtitle: p.subtitle,
       characters: '',
       scene_tag: '',
@@ -298,6 +321,8 @@ export function mergeCSVIntoScenes(existing, csvText, defaultDuration = DEFAULTS
   const aliases = {
     prompt: ['prompt', 'prompt_en'],
     prompt_ko: ['prompt_ko'],
+    videoT2VPrompt: ['video_t2v_prompt', 'video_prompt'],
+    videoI2VPrompt: ['video_i2v_prompt'],
     subtitle: ['subtitle', 'subtitle_ko'],
     subtitle_en: ['subtitle_en'],
     characters: ['characters', 'character'],
@@ -316,9 +341,11 @@ export function mergeCSVIntoScenes(existing, csvText, defaultDuration = DEFAULTS
   }
 
   const parsed = parseCSVToScenes(csvText, defaultDuration)
-  return parsed.map((p, i) => {
-    if (i < existing.length) {
-      const ex = existing[i]
+  const maxLen = Math.max(existing.length, parsed.length)
+  return Array.from({ length: maxLen }, (_, i) => {
+    const ex = existing[i]
+    const p = parsed[i]
+    if (ex && p) {
       const merged = { ...ex }
       for (const field of providedFields) {
         const value = p[field]
@@ -327,6 +354,10 @@ export function mergeCSVIntoScenes(existing, csvText, defaultDuration = DEFAULTS
         }
       }
       return merged
+    }
+    if (ex) {
+      // 기존만 (CSV 더 짧음): 보존
+      return ex
     }
     return p
   })
