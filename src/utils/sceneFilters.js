@@ -11,7 +11,11 @@
 /**
  * 이미지 batch generation의 대상 씬을 필터한다.
  *
- * 조건: 이미지가 없거나(없는 게 미생성), 상태가 명시적으로 pending/error.
+ * 조건: scene.prompt 가 있고, 이미지가 없거나(없는 게 미생성) 또는 pending/error.
+ *
+ * prompt 체크: scenes 에는 videoT2VPrompt 만 있고 (이미지) prompt 가 빈 항목도 존재할 수
+ * 있다 (예: video-text 탭에서 비디오 prompt 만 입력한 씬). 이런 씬을 이미지 생성 대상에서
+ * 제외해야 빈 prompt 로 API 가 호출되는 사고를 막는다.
  *
  * @param {Array} scenes
  * @returns {Array}
@@ -19,6 +23,6 @@
 export function filterPendingScenes(scenes) {
   if (!Array.isArray(scenes)) return []
   return scenes.filter(s =>
-    (!s.image && !s.imagePath) || s.status === 'pending' || s.status === 'error'
+    s.prompt && ((!s.image && !s.imagePath) || s.status === 'pending' || s.status === 'error')
   )
 }

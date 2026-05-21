@@ -447,12 +447,17 @@ function App() {
         : parseFromText(content, settings.defaultDuration),
       csv: () => isVideo
         ? importIntoVideoT2V(
-            parseCSVToScenes(content, settings.defaultDuration).map(s => s.prompt).join('\n')
+            // CSV 비디오 모드: video_t2v_prompt 컬럼이 우선, 없으면 prompt 컬럼 fallback
+            parseCSVToScenes(content, settings.defaultDuration)
+              .map(s => s.videoT2VPrompt || s.prompt)
+              .filter(Boolean)
+              .join('\n')
           )
         : parseFromCSV(content, settings.defaultDuration),
       srt: () => isVideo
         ? importIntoVideoT2V(
-            parseSRTToScenes(content).map(s => s.prompt).join('\n')
+            // SRT 비디오 모드: 자막을 비디오 프롬프트로 (SRT 자체에 비디오용 텍스트 별도 없으므로)
+            parseSRTToScenes(content).map(s => s.subtitle || s.prompt).filter(Boolean).join('\n')
           )
         : parseFromSRT(content),
       reference: async () => {

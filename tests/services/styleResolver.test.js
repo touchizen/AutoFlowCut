@@ -54,7 +54,7 @@ describe('createStyleResolver — autoAvailable', () => {
     const r = createStyleResolver({
       ...baseDeps,
       activeTab: 'list',
-      scenes: [{ id: 1, style_tag: 'noir' }],
+      scenes: [{ id: 1, prompt: 'a scene', style_tag: 'noir' }],
       references: [{ id: 10, type: 'style', name: 'noir', prompt: 'noir' }],
     })
     expect(r.autoAvailable).toBe(true)
@@ -64,7 +64,7 @@ describe('createStyleResolver — autoAvailable', () => {
     const r = createStyleResolver({
       ...baseDeps,
       activeTab: 'list',
-      scenes: [{ id: 1, style_tag: '' }],
+      scenes: [{ id: 1, prompt: 'a scene', style_tag: '' }],
       references: [{ id: 10, type: 'style', name: 'noir', prompt: 'noir' }],
     })
     expect(r.autoAvailable).toBe(false)
@@ -107,7 +107,7 @@ describe('createStyleResolver — autoLabel', () => {
     const r = createStyleResolver({
       ...baseDeps,
       activeTab: 'list',
-      scenes: [{ id: 1, style_tag: '' }],
+      scenes: [{ id: 1, prompt: 'a scene', style_tag: '' }],
     })
     expect(r.autoLabel).toBe('없음')
   })
@@ -145,7 +145,7 @@ describe('createStyleResolver — autoCardMeta', () => {
     const r = createStyleResolver({
       ...baseDeps,
       activeTab: 'list',
-      scenes: [{ id: 1, style_tag: '' }],
+      scenes: [{ id: 1, prompt: 'a scene', style_tag: '' }],
     })
     expect(r.autoCardMeta.icon).toBe('🚫')
     expect(r.autoCardMeta.label).toBe('자동 (매칭 없음)')
