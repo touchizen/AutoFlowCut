@@ -80,4 +80,30 @@ describe('collectTagErrors — preset-aware', () => {
     expect(errors.length).toBe(1)
     expect(errors[0].errors[0].type).toBe('style')
   })
+
+  // ─── sceneIndex 가 원본 scenes 인덱스를 가리키는지 ──
+  it('sceneIndex 는 전체 scenes 의 인덱스 (filter 무관)', () => {
+    const scenes = [
+      { id: 's1', style_tag: 'cinematic' }, // OK
+      { id: 's2', style_tag: 'cinematic' }, // OK
+      { id: 's3', style_tag: 'totally-fake-style' }, // error
+      { id: 's4', style_tag: 'cinematic' }, // OK
+    ]
+    const errors = collectTagErrors(scenes, [])
+    expect(errors).toHaveLength(1)
+    expect(errors[0].sceneIndex).toBe(2) // s3 의 원본 index
+  })
+
+  it('filter 옵션 — 일부 씬만 검사하되 sceneIndex 는 원본 인덱스 유지', () => {
+    const scenes = [
+      { id: 's1', prompt: 'p1', style_tag: 'totally-fake' }, // 검사 대상, error
+      { id: 's2', prompt: '',   style_tag: 'totally-fake' }, // filter 제외 (검사 X)
+      { id: 's3', prompt: 'p3', style_tag: 'cinematic' },    // 검사 대상, OK
+      { id: 's4', prompt: 'p4', style_tag: 'also-fake' },    // 검사 대상, error
+    ]
+    const errors = collectTagErrors(scenes, [], { filter: s => !!s.prompt })
+    expect(errors).toHaveLength(2)
+    expect(errors[0].sceneIndex).toBe(0) // s1
+    expect(errors[1].sceneIndex).toBe(3) // s4 — 원본 인덱스 보존
+  })
 })

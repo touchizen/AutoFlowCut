@@ -440,17 +440,32 @@ function App() {
       videoScenesHook.parseFromText(text, settings.defaultDuration)
     }
 
+    /**
+     * CSV 헤더의 prompt 컬럼을 video_t2v_prompt 로 rename — 비디오 모드용.
+     * 이미 video_*_prompt 컬럼이 있으면 변경하지 않는다 (CSV가 명시한 의도 우선).
+     * row 위치는 보존되므로 행-기반 매칭이 깨지지 않는다.
+     */
+    const csvPromptToVideoT2V = (csvText) => {
+      const firstLineEnd = csvText.indexOf('\n')
+      if (firstLineEnd < 0) return csvText
+      const headerLine = csvText.slice(0, firstLineEnd)
+      const rest = csvText.slice(firstLineEnd)
+      const headers = headerLine.split(',').map(h => h.trim())
+      const hasVideoCol = headers.some(h => /^(video_t2v_prompt|video_prompt|video_i2v_prompt)$/i.test(h))
+      if (hasVideoCol) return csvText
+      const newHeaders = headers.map(h => h.toLowerCase() === 'prompt' ? 'video_t2v_prompt' : h)
+      return newHeaders.join(',') + rest
+    }
+
     // 타입별 실행 액션
     const actions = {
       text: () => isVideo
         ? importIntoVideoT2V(content)
         : parseFromText(content, settings.defaultDuration),
       csv: () => isVideo
-        // CSV 비디오 모드: 행 단위 매칭 보존을 위해 parseFromCSV 직접 사용.
-        // mergeCSVIntoScenes 가 video_t2v_prompt / video_prompt 컬럼을 scene.videoT2VPrompt 로
-        // 자동 라우팅한다. text 변환 + filter 경로는 빈 행을 제거해서 N번째 씬의 비디오 프롬프트가
-        // N-k번째 씬으로 당겨지는 버그가 있었음.
-        ? parseFromCSV(content, settings.defaultDuration)
+        // CSV 비디오 모드: prompt 컬럼이 있으면 video_t2v_prompt 로 rename 한 후 parseFromCSV.
+        // 행 단위 매칭은 그대로 보존되고, video_*_prompt 컬럼이 이미 있는 CSV 는 그대로 통과.
+        ? parseFromCSV(csvPromptToVideoT2V(content), settings.defaultDuration)
         : parseFromCSV(content, settings.defaultDuration),
       srt: () => isVideo
         ? importIntoVideoT2V(
@@ -691,10 +706,12 @@ function App() {
           force,
         }
 
-        // 태그 검증: 이미지 생성 대상 씬만 검사 (전체 scenes 가 아님).
-        // 비디오 전용 씬 (image prompt 없음) 에 unmatched tag 가 있어도 이미지 batch 가 그 씬을
-        // 건드리지 않으므로 시작을 막을 이유 X — filterPendingScenes 정책과 일치시킨다.
-        const errors = collectTagErrors(targetScenes, scenesHook.references)
+        // 태그 검증: 이미지 생성 대상 씬만 검사. 단 sceneIndex 는 원본 scenes 배열의 인덱스로
+        // 와야 모달의 "#N" 표시가 실제 씬 번호와 일치한다 (filter 옵션으로 전달).
+        const targetSet = new Set(targetScenes.map(s => s.id))
+        const errors = collectTagErrors(scenes, scenesHook.references, {
+          filter: s => targetSet.has(s.id),
+        })
         if (errors.length > 0) {
           setTagValidationErrors(errors)
           setPendingStartOptions(startOptions)
