@@ -1,10 +1,13 @@
 /**
- * syncVideosIntoScenes — derived scene path 동기화 정책 단위 테스트
+ * syncVideosIntoScenes — I2V 결과물 동기화 정책 단위 테스트
+ *
+ * Step 3 이후 T2V 는 scenes 가 single source of truth (useVideoScenes 가 직접
+ * scene.videoT2V* 를 갱신). 이 모듈은 I2V (framePair → scene.videoI2V*)
+ * 결과물 동기화만 담당한다. T2V 관련 테스트는 제거됨.
  *
  * 회귀 방지 — 이전 정책 ("scene path 가 비어있을 때만 채움")은
  *   recovery / regen 으로 source path 가 바뀌어도 scene 에 옛 path 가 남아 있으면
  *   동기화가 skip 되어 SceneList/export 가 옛 비디오를 사용하는 버그를 만들었다.
- *
  * 새 정책: source 가 권위. source path 가 다르면 overwrite.
  */
 
@@ -12,7 +15,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { syncVideosIntoScenes } from '../../src/services/mediaSync'
 
 beforeEach(() => {
-  // 동기화 로그가 테스트 출력을 어지럽히지 않도록 silence — 호출 횟수는 검증 안 함
   vi.spyOn(console, 'log').mockImplementation(() => {})
 })
 
@@ -31,17 +33,6 @@ function makeScene(id, overrides = {}) {
   }
 }
 
-function makeT2V(id, overrides = {}) {
-  // id 는 'vscene_N' — syncVideosIntoScenes 가 'scene_N' 으로 매핑
-  return {
-    id,
-    status: 'complete',
-    videoPath: '/path/new.mp4',
-    duration: 8,
-    ...overrides,
-  }
-}
-
 function makeFramePair(overrides = {}) {
   return {
     status: 'complete',
@@ -51,121 +42,6 @@ function makeFramePair(overrides = {}) {
     ...overrides,
   }
 }
-
-// ─── T2V ────────────────────────────────────────────────
-describe('syncVideosIntoScenes — T2V', () => {
-  it('scene 에 path 가 비어 있고 vscene 에 새 path 있으면 채운다', () => {
-    const scenes = [makeScene('scene_1')]
-    const videoScenes = [makeT2V('vscene_1', { videoPath: '/path/v1.mp4' })]
-
-    const synced = syncVideosIntoScenes(scenes, videoScenes, [])
-
-    expect(synced).toBe(true)
-    expect(scenes[0].videoT2VPath).toBe('/path/v1.mp4')
-  })
-
-  it('scene 에 옛 path 가 있고 vscene 의 새 path 와 다르면 overwrite (회귀 방지)', () => {
-    const scenes = [makeScene('scene_1', { videoT2VPath: '/path/old.mp4' })]
-    const videoScenes = [makeT2V('vscene_1', { videoPath: '/path/new.mp4' })]
-
-    const synced = syncVideosIntoScenes(scenes, videoScenes, [])
-
-    expect(synced).toBe(true)
-    expect(scenes[0].videoT2VPath).toBe('/path/new.mp4')
-  })
-
-  it('scene path 와 vscene path 가 같으면 변경 없음 (synced=false)', () => {
-    // duration 도 같게 맞춰야 path-only 검증이 됨 (duration 불일치 시 그쪽에서 synced=true 가 됨)
-    const scenes = [makeScene('scene_1', {
-      videoT2VPath: '/path/same.mp4',
-      videoT2VDuration: 8,
-    })]
-    const videoScenes = [makeT2V('vscene_1', { videoPath: '/path/same.mp4', duration: 8 })]
-
-    const synced = syncVideosIntoScenes(scenes, videoScenes, [])
-
-    expect(synced).toBe(false)
-    expect(scenes[0].videoT2VPath).toBe('/path/same.mp4')
-  })
-
-  it('vscene 의 videoPath 가 비어 있으면 scene 에 path 가 있어도 null 로 정리 (drain stale)', () => {
-    // 정책 결정: source 가 권위 — source 에 path 가 없으면 scene 에도 없어야 한다.
-    const scenes = [makeScene('scene_1', { videoT2VPath: '/path/stale.mp4' })]
-    // videoPath 없지만 video(base64) 가 있는 케이스 → fallback 가드 통과만 함, 실제 path 는 null
-    const videoScenes = [makeT2V('vscene_1', { videoPath: null, video: 'data:base64...' })]
-
-    const synced = syncVideosIntoScenes(scenes, videoScenes, [])
-
-    expect(synced).toBe(true)
-    expect(scenes[0].videoT2VPath).toBeNull()
-  })
-
-  it('vscene 의 status 가 complete/done 이 아니면 동기화 안 함', () => {
-    const scenes = [makeScene('scene_1')]
-    const videoScenes = [makeT2V('vscene_1', { status: 'pending' })]
-
-    const synced = syncVideosIntoScenes(scenes, videoScenes, [])
-
-    expect(synced).toBe(false)
-    expect(scenes[0].videoT2VPath).toBeNull()
-  })
-
-  it('vscene 에 video/videoPath 둘 다 없으면 동기화 안 함 (불완전 상태)', () => {
-    const scenes = [makeScene('scene_1', { videoT2VPath: '/path/old.mp4' })]
-    const videoScenes = [makeT2V('vscene_1', { videoPath: null, video: null })]
-
-    const synced = syncVideosIntoScenes(scenes, videoScenes, [])
-
-    expect(synced).toBe(false)
-    expect(scenes[0].videoT2VPath).toBe('/path/old.mp4')
-  })
-
-  it('status="done" 도 complete 와 동일하게 처리', () => {
-    const scenes = [makeScene('scene_1')]
-    const videoScenes = [makeT2V('vscene_1', { status: 'done', videoPath: '/path/done.mp4' })]
-
-    const synced = syncVideosIntoScenes(scenes, videoScenes, [])
-
-    expect(synced).toBe(true)
-    expect(scenes[0].videoT2VPath).toBe('/path/done.mp4')
-  })
-
-  it('vscene 에 매칭되는 scene 이 없으면 무시', () => {
-    const scenes = [makeScene('scene_1')]
-    const videoScenes = [makeT2V('vscene_99')] // scene_99 없음
-
-    const synced = syncVideosIntoScenes(scenes, videoScenes, [])
-
-    expect(synced).toBe(false)
-  })
-
-  it('duration 도 다를 때 overwrite 한다', () => {
-    const scenes = [makeScene('scene_1', { videoT2VDuration: 3 })]
-    const videoScenes = [makeT2V('vscene_1', { duration: 8 })]
-
-    const synced = syncVideosIntoScenes(scenes, videoScenes, [])
-
-    expect(synced).toBe(true)
-    expect(scenes[0].videoT2VDuration).toBe(8)
-  })
-
-  it('duration 만 같고 path 만 다르면 path 만 동기화', () => {
-    const scenes = [makeScene('scene_1', {
-      videoT2VPath: '/path/old.mp4',
-      videoT2VDuration: 8,
-    })]
-    const videoScenes = [makeT2V('vscene_1', {
-      videoPath: '/path/new.mp4',
-      duration: 8,
-    })]
-
-    const synced = syncVideosIntoScenes(scenes, videoScenes, [])
-
-    expect(synced).toBe(true)
-    expect(scenes[0].videoT2VPath).toBe('/path/new.mp4')
-    expect(scenes[0].videoT2VDuration).toBe(8)
-  })
-})
 
 // ─── I2V ────────────────────────────────────────────────
 describe('syncVideosIntoScenes — I2V (framePairs)', () => {
@@ -262,21 +138,8 @@ describe('syncVideosIntoScenes — I2V (framePairs)', () => {
 
 // ─── Edge cases ────────────────────────────────────────────
 describe('syncVideosIntoScenes — edge cases', () => {
-  it('scenes 와 videoScenes 모두 비어 있으면 false 반환', () => {
+  it('scenes 가 비어 있으면 false 반환 (I2V 처리 대상 없음)', () => {
     expect(syncVideosIntoScenes([], [], [])).toBe(false)
-  })
-
-  it('scenes 가 비어 있고 videoScenes 만 있으면 자동 보강 후 true', () => {
-    const scenes = []
-    const videoScenes = [{
-      id: 'vscene_1', prompt: 'video prompt', status: 'complete',
-      videoPath: '/x.mp4', duration: 5,
-    }]
-    const synced = syncVideosIntoScenes(scenes, videoScenes, [])
-    expect(synced).toBe(true)
-    expect(scenes).toHaveLength(1) // 자동 보강
-    expect(scenes[0].videoT2VPrompt).toBe('video prompt')
-    expect(scenes[0].videoT2VPath).toBe('/x.mp4')
   })
 
   it('scenes 가 null 이어도 throw 없이 false', () => {
@@ -289,65 +152,14 @@ describe('syncVideosIntoScenes — edge cases', () => {
     expect(syncVideosIntoScenes(scenes, null, undefined)).toBe(false)
   })
 
-  it('videoScenes.prompt 가 scene.videoT2VPrompt 로 동기화됨 (결과물 없어도)', () => {
-    const scenes = [makeScene('scene_1')]
-    const videoScenes = [{ id: 'vscene_1', prompt: '비디오 프롬프트', status: 'pending' }]
+  it('videoScenes 인자는 무시됨 (T2V 는 scenes 가 source of truth, Step 3+)', () => {
+    const scenes = [makeScene('scene_1', { videoT2VPath: null })]
+    const videoScenes = [{
+      id: 'vscene_1', prompt: 'video prompt', status: 'complete',
+      videoPath: '/x.mp4', duration: 5,
+    }]
     const synced = syncVideosIntoScenes(scenes, videoScenes, [])
-    expect(synced).toBe(true)
-    expect(scenes[0].videoT2VPrompt).toBe('비디오 프롬프트')
-    // 결과물 (path) 은 없으니 sync 안 됨 (makeScene이 null로 초기화)
-    expect(scenes[0].videoT2VPath).toBeFalsy()
-  })
-
-  it('videoScenes 가 더 길면 부분 보강 (scenes 3 + videoScenes 5 → scenes 5)', () => {
-    const scenes = [makeScene('scene_1'), makeScene('scene_2'), makeScene('scene_3')]
-    const videoScenes = [
-      { id: 'vscene_1', prompt: 'v1', status: 'pending' },
-      { id: 'vscene_2', prompt: 'v2', status: 'pending' },
-      { id: 'vscene_3', prompt: 'v3', status: 'pending' },
-      { id: 'vscene_4', prompt: 'v4', status: 'pending', duration: 4 },
-      { id: 'vscene_5', prompt: 'v5', status: 'pending', duration: 4 },
-    ]
-    syncVideosIntoScenes(scenes, videoScenes, [])
-    expect(scenes).toHaveLength(5)
-    expect(scenes[3].id).toBe('scene_4')
-    expect(scenes[3].videoT2VPrompt).toBe('v4')
-    expect(scenes[3].prompt).toBe('') // 이미지 prompt는 비어있음 (보강 stub)
-    expect(scenes[3].duration).toBe(4)
-  })
-
-  it('T2V + I2V 동시에 동기화될 수 있다', () => {
-    const scenes = [makeScene('scene_1')]
-    const videoScenes = [makeT2V('vscene_1', { videoPath: '/path/t2v.mp4' })]
-    const framePairs = [makeFramePair({
-      videoPath: '/path/i2v.mp4',
-      startSceneId: 'scene_1',
-    })]
-
-    const synced = syncVideosIntoScenes(scenes, videoScenes, framePairs)
-
-    expect(synced).toBe(true)
-    expect(scenes[0].videoT2VPath).toBe('/path/t2v.mp4')
-    expect(scenes[0].videoI2VPath).toBe('/path/i2v.mp4')
-  })
-
-  it('여러 scene/vscene 매칭 — 각 scene 이 자신의 vscene 과 매칭', () => {
-    const scenes = [
-      makeScene('scene_1'),
-      makeScene('scene_2'),
-      makeScene('scene_3'),
-    ]
-    const videoScenes = [
-      makeT2V('vscene_1', { videoPath: '/v1.mp4' }),
-      makeT2V('vscene_3', { videoPath: '/v3.mp4' }),
-      // vscene_2 없음
-    ]
-
-    const synced = syncVideosIntoScenes(scenes, videoScenes, [])
-
-    expect(synced).toBe(true)
-    expect(scenes[0].videoT2VPath).toBe('/v1.mp4')
-    expect(scenes[1].videoT2VPath).toBeNull() // 매칭 없음
-    expect(scenes[2].videoT2VPath).toBe('/v3.mp4')
+    expect(synced).toBe(false) // T2V sync 안 함
+    expect(scenes[0].videoT2VPath).toBeNull() // 변경 없음
   })
 })
