@@ -205,6 +205,51 @@ describe('mergeTextIntoScenes', () => {
     expect(result[3].videoT2VPrompt).toBe('D')
     expect(result[2].prompt).toBe('') // 새 씬 — 이미지 prompt 빈 칸
   })
+
+  // ─── truncate 새 씬 시간이 누적되는지 (P1: 0~defaultDuration 으로 박힘 회귀 방지) ──
+  it('truncate + fieldName=prompt 새 씬 시간이 누적 (cursor 보존)', () => {
+    const existing = [
+      { id: 'scene_1', prompt: 'p1', startTime: 0, endTime: 5, duration: 5 },
+      { id: 'scene_2', prompt: 'p2', startTime: 5, endTime: 8, duration: 3 },
+    ]
+    const result = mergeTextIntoScenes(existing, 'p1\np2\nNEW3\nNEW4', 3, { truncateToIncoming: true })
+    expect(result).toHaveLength(4)
+    // 기존 시간 보존
+    expect(result[0].endTime).toBe(5)
+    expect(result[1].startTime).toBe(5)
+    expect(result[1].endTime).toBe(8)
+    // 새 씬: 누적 (마지막 기존 endTime 부터)
+    expect(result[2].startTime).toBe(8)
+    expect(result[2].endTime).toBe(11) // 8 + 3
+    expect(result[3].startTime).toBe(11)
+    expect(result[3].endTime).toBe(14)
+  })
+
+  it('truncate + fieldName=videoT2VPrompt 새 씬 시간도 누적', () => {
+    const existing = [
+      { id: 'scene_1', prompt: 'p1', videoT2VPrompt: 'v1', startTime: 0, endTime: 4, duration: 4 },
+    ]
+    const result = mergeTextIntoScenes(existing, 'A\nB\nC', 3, {
+      fieldName: 'videoT2VPrompt', truncateToIncoming: true,
+    })
+    expect(result).toHaveLength(3)
+    expect(result[0].endTime).toBe(4)
+    expect(result[1].startTime).toBe(4) // 누적
+    expect(result[1].endTime).toBe(7)
+    expect(result[2].startTime).toBe(7)
+    expect(result[2].endTime).toBe(10)
+  })
+
+  it('truncate + fieldName=prompt 빈 scenes 에서 시작해도 누적', () => {
+    const result = mergeTextIntoScenes([], 'A\nB\nC', 4, { truncateToIncoming: true })
+    expect(result).toHaveLength(3)
+    expect(result[0].startTime).toBe(0)
+    expect(result[0].endTime).toBe(4)
+    expect(result[1].startTime).toBe(4)
+    expect(result[1].endTime).toBe(8)
+    expect(result[2].startTime).toBe(8)
+    expect(result[2].endTime).toBe(12)
+  })
 })
 
 // ============================================================

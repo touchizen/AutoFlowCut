@@ -276,13 +276,22 @@ export function mergeTextIntoScenes(existing, text, defaultDuration = DEFAULTS.s
   //   fieldName='prompt'  : incoming length 가 결정. 짧으면 tail 제거, 길면 새 씬 추가.
   //   fieldName='videoT2VPrompt'/'videoI2VPrompt' : scenes 자체는 max-length 로 유지하되,
   //     입력 범위 밖의 비디오 prompt 는 빈 칸으로. 비디오 트랙이 줄어들지 늘어날지가 입력으로 결정.
+  // 새 씬 시간은 누적 (cursor) 으로 계산 — 0~defaultDuration 으로 일괄 박지 않음 (Export 타임라인 보호).
   if (truncate) {
     if (fieldName === 'prompt') {
+      let cursor = 0
       return lines.map((line, i) => {
-        if (i < existing.length) return { ...existing[i], prompt: line }
+        if (i < existing.length) {
+          const ex = existing[i]
+          cursor = (typeof ex.endTime === 'number') ? ex.endTime : (cursor + (ex.duration || defaultDuration))
+          return { ...ex, prompt: line }
+        }
+        const startTime = cursor
+        const endTime = cursor + defaultDuration
+        cursor = endTime
         return {
           id: `scene_${i + 1}`,
-          startTime: 0, endTime: defaultDuration, duration: defaultDuration,
+          startTime, endTime, duration: defaultDuration,
           prompt: line, videoT2VPrompt: '', videoI2VPrompt: '',
           subtitle: '', characters: '', scene_tag: '', style_tag: '',
           status: 'pending', image: null,
@@ -290,13 +299,20 @@ export function mergeTextIntoScenes(existing, text, defaultDuration = DEFAULTS.s
       })
     }
     const maxLenTrunc = Math.max(existing.length, lines.length)
+    let cursor = 0
     return Array.from({ length: maxLenTrunc }, (_, i) => {
       const ex = existing[i]
       const line = i < lines.length ? lines[i] : ''
-      if (ex) return { ...ex, [fieldName]: line }
+      if (ex) {
+        cursor = (typeof ex.endTime === 'number') ? ex.endTime : (cursor + (ex.duration || defaultDuration))
+        return { ...ex, [fieldName]: line }
+      }
+      const startTime = cursor
+      const endTime = cursor + defaultDuration
+      cursor = endTime
       return {
         id: `scene_${i + 1}`,
-        startTime: 0, endTime: defaultDuration, duration: defaultDuration,
+        startTime, endTime, duration: defaultDuration,
         prompt: '', videoT2VPrompt: fieldName === 'videoT2VPrompt' ? line : '',
         videoI2VPrompt: fieldName === 'videoI2VPrompt' ? line : '',
         subtitle: '', characters: '', scene_tag: '', style_tag: '',
