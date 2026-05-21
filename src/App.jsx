@@ -800,10 +800,12 @@ function App() {
           const endScene = endIsGallery ? null : scenes.find(s => s.id === p.endSceneId)
 
           // promptSource에 따라 effective prompt 계산
-          const originalIdx = framePairs.indexOf(p)
+          // 씬 ID 기준 매칭 (array index 가 아님) — 길이 불일치 시 다른 씬 prompt 가 섞이는 버그 방지.
           let effectivePrompt = p.prompt // default: image prompt
           if (ftvPromptSource === 'video') {
-            effectivePrompt = p.videoPrompt || videoScenes[originalIdx]?.prompt || p.prompt
+            const vsceneId = p.startSceneId?.replace?.('scene_', 'vscene_')
+            const matched = videoScenes.find(vs => vs.id === vsceneId)
+            effectivePrompt = p.videoPrompt || matched?.prompt || p.prompt
           } else if (ftvPromptSource === 'none') {
             effectivePrompt = p.customPrompt || ''
           }

@@ -122,7 +122,9 @@ export default function ImportModal({ onImport, onImportAudio, onClose }) {
               <div className="option-info">
                 <div className="option-title-row">
                   <span className="option-title">{option.title}</span>
-                  {option.id === 'text' && (
+                  {/* 이미지/비디오 모드 선택 — text/csv/srt 에 모두 노출 (reference 는 무관)
+                      이전엔 text 에만 노출됐는데, csv/srt 도 모드가 적용되어 숨은 상태 leak 위험이 있었음 */}
+                  {(option.id === 'text' || option.id === 'csv' || option.id === 'srt') && (
                     <div className="import-mode-segment" onClick={(e) => e.stopPropagation()}>
                       <button
                         className={`segment-btn${importMode === 'image' ? ' active' : ''}`}

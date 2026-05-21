@@ -743,7 +743,11 @@ export default function FrameToVideoPanel({
               {promptSource === 'video' && (
                 <input
                   type="text"
-                  value={pair.videoPrompt || videoScenes[index]?.prompt || ''}
+                  // 씬 ID 기준 매칭 (array index 가 아님) — SRT/이미지/비디오 길이가 다를 때 다른 씬의 prompt
+                  // 가 보이는 버그 방지.
+                  value={pair.videoPrompt
+                    || videoScenes.find(vs => vs.id === pair.startSceneId?.replace?.('scene_', 'vscene_'))?.prompt
+                    || ''}
                   onChange={(e) => updatePair(index, 'videoPrompt', e.target.value)}
                   disabled={disabled || pair.status === 'generating'}
                   placeholder={t('frameToVideo.videoPromptPlaceholder')}
