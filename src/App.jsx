@@ -412,14 +412,21 @@ function App() {
 
   // Handle text input change
   const handleTextChange = (text) => {
-    parseFromText(text, settings.defaultDuration)
+    // PromptInput 직접 편집: 입력창의 텍스트 = 최종 상태. truncateToIncoming 으로 줄 추가/삭제가
+    // 즉시 scenes 에 반영 (이전 통째-덮어쓰기 동작과 같은 UX, 다만 머지로 subtitle/duration 보존).
+    parseFromText(text, settings.defaultDuration, { truncateToIncoming: true })
     localStorage.setItem('autoflowcut_savedPrompts', text)
   }
 
   // Handle video text input change (T2V 독립 프롬프트)
   // Step 3: videoScenesHook 이 scenes 의 derived view — 내부에서 scenes.videoT2VPrompt 로 라우팅
+  // PromptInput 직접 편집이라 truncateToIncoming — 줄 줄이면 그 위치 비디오 prompt 클리어,
+  // 늘리면 scenes 도 같이 늘어남 (scenes 자체는 보존)
   const handleVideoTextChange = (text) => {
-    videoScenesHook.parseFromText(text, settings.defaultDuration)
+    scenesHook.parseFromText(text, settings.defaultDuration, {
+      fieldName: 'videoT2VPrompt',
+      truncateToIncoming: true,
+    })
     localStorage.setItem('autoflowcut_savedVideoPrompts', text)
   }
 

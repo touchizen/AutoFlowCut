@@ -256,6 +256,10 @@ function csvPromptHeaderToVideoT2V(headerLine) {
  */
 export function mergeTextIntoScenes(existing, text, defaultDuration = DEFAULTS.scene.duration, options = {}) {
   const fieldName = options.fieldName || 'prompt'
+  // truncateToIncoming — PromptInput 직접 편집용. incoming 길이 = 최종 길이.
+  //   true  : PromptInput onChange (입력창의 텍스트가 = 최종 상태. 줄을 지우면 씬도 줄어든다)
+  //   false : .txt / .srt / .csv import (부분 데이터로 부분 갱신, tail 통째 보존 = max-length)
+  const truncate = options.truncateToIncoming === true
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
 
   // 완전 빈 입력 가드 — fieldName 별로 의미가 다르다.
@@ -266,6 +270,39 @@ export function mergeTextIntoScenes(existing, text, defaultDuration = DEFAULTS.s
   if (lines.length === 0) {
     if (fieldName === 'prompt') return []
     return existing.map(s => ({ ...s, [fieldName]: '' }))
+  }
+
+  // truncateToIncoming 모드: PromptInput 직접 편집
+  //   fieldName='prompt'  : incoming length 가 결정. 짧으면 tail 제거, 길면 새 씬 추가.
+  //   fieldName='videoT2VPrompt'/'videoI2VPrompt' : scenes 자체는 max-length 로 유지하되,
+  //     입력 범위 밖의 비디오 prompt 는 빈 칸으로. 비디오 트랙이 줄어들지 늘어날지가 입력으로 결정.
+  if (truncate) {
+    if (fieldName === 'prompt') {
+      return lines.map((line, i) => {
+        if (i < existing.length) return { ...existing[i], prompt: line }
+        return {
+          id: `scene_${i + 1}`,
+          startTime: 0, endTime: defaultDuration, duration: defaultDuration,
+          prompt: line, videoT2VPrompt: '', videoI2VPrompt: '',
+          subtitle: '', characters: '', scene_tag: '', style_tag: '',
+          status: 'pending', image: null,
+        }
+      })
+    }
+    const maxLenTrunc = Math.max(existing.length, lines.length)
+    return Array.from({ length: maxLenTrunc }, (_, i) => {
+      const ex = existing[i]
+      const line = i < lines.length ? lines[i] : ''
+      if (ex) return { ...ex, [fieldName]: line }
+      return {
+        id: `scene_${i + 1}`,
+        startTime: 0, endTime: defaultDuration, duration: defaultDuration,
+        prompt: '', videoT2VPrompt: fieldName === 'videoT2VPrompt' ? line : '',
+        videoI2VPrompt: fieldName === 'videoI2VPrompt' ? line : '',
+        subtitle: '', characters: '', scene_tag: '', style_tag: '',
+        status: 'pending', image: null,
+      }
+    })
   }
 
   const maxLen = Math.max(existing.length, lines.length)

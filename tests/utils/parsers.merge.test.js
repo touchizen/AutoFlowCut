@@ -144,6 +144,67 @@ describe('mergeTextIntoScenes', () => {
     expect(result[0].prompt).toBe('p')
     expect(result[0].videoI2VPrompt).toBe('')
   })
+
+  // ─── truncateToIncoming (PromptInput 직접 편집) ──
+  it('truncateToIncoming + fieldName=prompt: 3줄 → 2줄로 줄이면 scenes 2개로 줄어듦', () => {
+    const existing = [
+      { id: 'scene_1', prompt: 'p1', subtitle: 's1', duration: 4 },
+      { id: 'scene_2', prompt: 'p2', subtitle: 's2', duration: 5 },
+      { id: 'scene_3', prompt: 'p3', subtitle: 's3', duration: 6 },
+    ]
+    const result = mergeTextIntoScenes(existing, 'NEW1\nNEW2', 3, { truncateToIncoming: true })
+    expect(result).toHaveLength(2) // 3 → 2
+    expect(result[0].prompt).toBe('NEW1')
+    expect(result[0].subtitle).toBe('s1') // 머지 — 다른 필드 보존
+    expect(result[0].duration).toBe(4)
+    expect(result[1].prompt).toBe('NEW2')
+    expect(result[1].subtitle).toBe('s2')
+  })
+
+  it('truncateToIncoming + fieldName=prompt: 2줄 → 3줄로 늘리면 scenes 3개', () => {
+    const existing = [
+      { id: 'scene_1', prompt: 'p1', subtitle: 's1' },
+      { id: 'scene_2', prompt: 'p2', subtitle: 's2' },
+    ]
+    const result = mergeTextIntoScenes(existing, 'A\nB\nC', 3, { truncateToIncoming: true })
+    expect(result).toHaveLength(3)
+    expect(result[0].subtitle).toBe('s1') // 기존 보존
+    expect(result[1].subtitle).toBe('s2')
+    expect(result[2].subtitle).toBe('') // 새 씬
+    expect(result.map(s => s.prompt)).toEqual(['A', 'B', 'C'])
+  })
+
+  it('truncateToIncoming + fieldName=videoT2VPrompt: 3줄 → 2줄로 줄이면 scenes 유지 + 3번째 비디오 prompt 클리어', () => {
+    const existing = [
+      { id: 'scene_1', prompt: 'img1', videoT2VPrompt: 'v1', subtitle: 's1' },
+      { id: 'scene_2', prompt: 'img2', videoT2VPrompt: 'v2', subtitle: 's2' },
+      { id: 'scene_3', prompt: 'img3', videoT2VPrompt: 'v3', subtitle: 's3' },
+    ]
+    const result = mergeTextIntoScenes(existing, 'NEW-V1\nNEW-V2', 3, {
+      fieldName: 'videoT2VPrompt', truncateToIncoming: true,
+    })
+    expect(result).toHaveLength(3) // scenes 자체는 보존
+    expect(result[0].videoT2VPrompt).toBe('NEW-V1')
+    expect(result[1].videoT2VPrompt).toBe('NEW-V2')
+    expect(result[2].videoT2VPrompt).toBe('') // 입력 범위 밖 — 클리어
+    // 이미지 prompt / subtitle 등 보존
+    expect(result[0].prompt).toBe('img1')
+    expect(result[2].prompt).toBe('img3')
+  })
+
+  it('truncateToIncoming + fieldName=videoT2VPrompt: 2줄 → 4줄로 늘리면 scenes 도 4개로 늘어남', () => {
+    const existing = [
+      { id: 'scene_1', prompt: 'img1', videoT2VPrompt: 'v1' },
+      { id: 'scene_2', prompt: 'img2', videoT2VPrompt: 'v2' },
+    ]
+    const result = mergeTextIntoScenes(existing, 'A\nB\nC\nD', 3, {
+      fieldName: 'videoT2VPrompt', truncateToIncoming: true,
+    })
+    expect(result).toHaveLength(4)
+    expect(result[2].videoT2VPrompt).toBe('C')
+    expect(result[3].videoT2VPrompt).toBe('D')
+    expect(result[2].prompt).toBe('') // 새 씬 — 이미지 prompt 빈 칸
+  })
 })
 
 // ============================================================
