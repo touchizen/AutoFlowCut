@@ -457,12 +457,8 @@ function App() {
         // 행 단위 매칭은 그대로 보존되고, video_*_prompt 컬럼이 이미 있는 CSV 는 그대로 통과.
         ? parseFromCSV(csvPromptToVideoT2V(content), settings.defaultDuration)
         : parseFromCSV(content, settings.defaultDuration),
-      srt: () => isVideo
-        ? importIntoVideoT2V(
-            // SRT 비디오 모드: 자막을 비디오 프롬프트로 (SRT 자체에 비디오용 텍스트 별도 없음)
-            parseSRTToScenes(content).map(s => s.subtitle || s.prompt).filter(Boolean).join('\n')
-          )
-        : parseFromSRT(content),
+      // SRT 는 자막 전용 — 비디오 모드 의미 없음 (자막 → 비디오 prompt 강제 변환은 부자연)
+      srt: () => parseFromSRT(content),
       reference: async () => {
         await parseReferencesFromCSV(content, projectName)
         setShowReferences(true)
