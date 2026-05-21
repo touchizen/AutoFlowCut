@@ -167,9 +167,9 @@ Second subtitle`
     expect(scenes[1].endTime).toBeCloseTo(6.5, 1)
   })
 
-  it('uses subtitle text as prompt', () => {
+  it('leaves prompt empty — subtitle is independent (책임 분리)', () => {
     const scenes = parseSRTToScenes(srtSample)
-    expect(scenes[0].prompt).toBe('First subtitle')
+    expect(scenes[0].prompt).toBe('') // SRT 는 자막만, prompt 는 비워둠
     expect(scenes[0].subtitle).toBe('First subtitle')
   })
 

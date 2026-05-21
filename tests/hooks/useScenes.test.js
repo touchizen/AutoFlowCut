@@ -159,7 +159,7 @@ Goodbye world`
 
       expect(scenes).toHaveLength(2)
       expect(scenes[0].subtitle).toBe('Hello world')
-      expect(scenes[0].prompt).toBe('Hello world')
+      expect(scenes[0].prompt).toBe('') // SRT 는 prompt 채우지 않음 (책임 분리)
       expect(scenes[0].startTime).toBe(0)
       expect(scenes[0].endTime).toBe(3)
       expect(scenes[0].duration).toBe(3)
@@ -639,8 +639,8 @@ Goodbye world`
       expect(result.current.scenes).toHaveLength(2)
       expect(result.current.scenes[0].subtitle).toBe('미국이 진 빚, 약 39조 달러. 우리 돈으로 5경 원이 넘습니다.')
       expect(result.current.scenes[0].duration).toBeCloseTo(4.157, 3)
-      // SRT 머지: 빈 prompt → 자막으로 셋팅 (첫 가져오기 시)
-      expect(result.current.scenes[0].prompt).toBe(result.current.scenes[0].subtitle)
+      // SRT 머지: prompt 는 자막을 복사하지 않음 (책임 분리). 빈 prompt 그대로.
+      expect(result.current.scenes[0].prompt).toBe('')
 
       // STEP 4: prompts.txt 가져오기
       act(() => {

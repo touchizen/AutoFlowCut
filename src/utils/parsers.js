@@ -182,7 +182,8 @@ export function parseSRTToScenes(srtText) {
       startTime,
       endTime,
       duration: endTime - startTime,
-      prompt: subtitle, // SRT의 자막을 프롬프트로 사용
+      // SRT는 자막 전용 — 이미지 prompt 는 비워둠 (SceneList 자막 / ResultsTable prompt 책임 분리)
+      prompt: '',
       videoT2VPrompt: '',
       videoI2VPrompt: '',
       subtitle,
@@ -285,13 +286,14 @@ export function mergeSRTIntoScenes(existing, srtText) {
     const ex = existing[i]
     const p = parsed[i]
     if (ex && p) {
+      // SRT 는 자막/시간 갱신 — prompt 는 기존 그대로 (자막을 prompt 로 복사하지 않음).
+      // SceneList(자막) / ResultsTable(prompt) 책임 분리 디자인에 맞춤.
       return {
         ...ex,
         startTime: p.startTime,
         endTime: p.endTime,
         duration: p.duration,
         subtitle: p.subtitle,
-        prompt: ex.prompt && ex.prompt.trim() ? ex.prompt : p.subtitle,
       }
     }
     if (ex) {
@@ -303,7 +305,8 @@ export function mergeSRTIntoScenes(existing, srtText) {
       startTime: p.startTime,
       endTime: p.endTime,
       duration: p.duration,
-      prompt: p.subtitle,
+      // SRT 새 씬: 자막만, prompt 는 비워둠
+      prompt: '',
       videoT2VPrompt: '',
       videoI2VPrompt: '',
       subtitle: p.subtitle,

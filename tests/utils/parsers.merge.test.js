@@ -106,11 +106,11 @@ const SAMPLE_SRT = `1
 두 번째 자막`
 
 describe('mergeSRTIntoScenes', () => {
-  it('빈 scenes에서 호출하면 통째 생성, prompt=subtitle', () => {
+  it('빈 scenes에서 호출하면 통째 생성, prompt는 비워둠 (자막 전용 정책)', () => {
     const result = mergeSRTIntoScenes([], SAMPLE_SRT)
     expect(result).toHaveLength(2)
     expect(result[0].subtitle).toBe('첫 번째 자막')
-    expect(result[0].prompt).toBe('첫 번째 자막') // 빈 prompt → 자막으로
+    expect(result[0].prompt).toBe('') // SRT는 prompt에 자막 복사하지 않음
     expect(result[0].startTime).toBe(0)
     expect(result[0].endTime).toBeCloseTo(4.157, 3)
     expect(result[0].duration).toBeCloseTo(4.157, 3)
@@ -130,19 +130,21 @@ describe('mergeSRTIntoScenes', () => {
     expect(result[1].prompt).toBe('이미지 프롬프트 2') // 보존
   })
 
-  it('기존 prompt가 빈 칸이면 자막으로 셋팅', () => {
+  it('기존 prompt가 빈 칸이면 그대로 둠 (자막 복사 X — 책임 분리)', () => {
     const existing = [{ id: 'scene_1', prompt: '', subtitle: '', duration: 3 }]
     const result = mergeSRTIntoScenes(existing, SAMPLE_SRT)
-    expect(result[0].prompt).toBe('첫 번째 자막')
+    expect(result[0].prompt).toBe('') // 빈 prompt 유지
+    expect(result[0].subtitle).toBe('첫 번째 자막') // 자막만 갱신
   })
 
-  it('SRT가 더 길면: 새 씬 추가', () => {
+  it('SRT가 더 길면: 새 씬 추가 (새 씬도 prompt 빈 칸)', () => {
     const existing = [{ id: 'scene_1', prompt: 'old', subtitle: '', duration: 3, image: 'i' }]
     const result = mergeSRTIntoScenes(existing, SAMPLE_SRT)
     expect(result).toHaveLength(2)
     expect(result[0].prompt).toBe('old')
     expect(result[0].image).toBe('i')
-    expect(result[1].prompt).toBe('두 번째 자막') // 새 씬
+    expect(result[1].prompt).toBe('') // 새 씬도 prompt 빈 칸
+    expect(result[1].subtitle).toBe('두 번째 자막') // 자막만
   })
 })
 
