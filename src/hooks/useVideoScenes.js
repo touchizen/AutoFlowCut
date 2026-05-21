@@ -44,6 +44,7 @@ const FIELD_MAP = {
 function mapUpdatesToSceneFields(updates) {
   const out = {}
   for (const [k, v] of Object.entries(updates)) {
+    if (k === 'id') continue  // id 는 호출자가 매핑 (vscene_N → scene_N), 매핑 대상이 아님
     const target = FIELD_MAP[k] ?? k
     out[target] = v
   }
