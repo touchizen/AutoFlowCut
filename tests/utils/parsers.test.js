@@ -13,6 +13,7 @@ import {
   parseReferencesCSV,
   mergeReferences,
   findDuplicateReferenceNames,
+  csvPromptToVideoT2V,
 } from '../../src/utils/parsers'
 
 // ============================================================
@@ -412,5 +413,61 @@ describe('findDuplicateReferenceNames', () => {
     const newRefs = [{ name: 'Hero' }, { name: 'Villain' }, { name: 'New' }]
     const dupes = findDuplicateReferenceNames(existing, newRefs)
     expect(dupes).toEqual(['Hero', 'Villain'])
+  })
+})
+
+// ============================================================
+// csvPromptToVideoT2V — 비디오 모드 CSV import 헤더 변환
+// ============================================================
+describe('csvPromptToVideoT2V', () => {
+  it('prompt 헤더를 video_t2v_prompt 로 rename', () => {
+    const input = 'prompt,subtitle\nA,sa\nB,sb'
+    const out = csvPromptToVideoT2V(input)
+    expect(out.split('\n')[0]).toBe('video_t2v_prompt,subtitle')
+    expect(out.split('\n').slice(1).join('\n')).toBe('A,sa\nB,sb') // 본문 그대로
+  })
+
+  it('prompt_en 도 video_t2v_prompt 로 rename (P3 회귀 방지)', () => {
+    const input = 'prompt_en,duration\nHello,5\nWorld,7'
+    const out = csvPromptToVideoT2V(input)
+    expect(out.split('\n')[0]).toBe('video_t2v_prompt,duration')
+  })
+
+  it('단일 컬럼 prompt_en CSV 도 변환', () => {
+    const input = 'prompt_en\nLine1\nLine2'
+    const out = csvPromptToVideoT2V(input)
+    expect(out).toBe('video_t2v_prompt\nLine1\nLine2')
+  })
+
+  it('video_t2v_prompt 가 이미 있으면 그대로 통과 (CSV 명시 의도 우선)', () => {
+    const input = 'video_t2v_prompt,prompt\nV1,I1'
+    const out = csvPromptToVideoT2V(input)
+    expect(out).toBe(input)
+  })
+
+  it('video_prompt / video_i2v_prompt 도 명시되어 있으면 그대로 통과', () => {
+    expect(csvPromptToVideoT2V('video_prompt\nP')).toBe('video_prompt\nP')
+    expect(csvPromptToVideoT2V('prompt,video_i2v_prompt\nP,I')).toBe('prompt,video_i2v_prompt\nP,I')
+  })
+
+  it('prompt_ko 는 별도 필드 — 변환하지 않음', () => {
+    const input = 'prompt_ko,subtitle\n안녕,자막'
+    const out = csvPromptToVideoT2V(input)
+    expect(out).toBe(input)
+  })
+
+  it('첫 번째 prompt(_en) 컬럼만 변환 (두 개면 첫 번째만)', () => {
+    const input = 'prompt,prompt_en,duration\nA,B,5'
+    const out = csvPromptToVideoT2V(input)
+    expect(out.split('\n')[0]).toBe('video_t2v_prompt,prompt_en,duration')
+  })
+
+  it('prompt 류 헤더 없으면 그대로', () => {
+    const input = 'subtitle,duration\nsub,5'
+    expect(csvPromptToVideoT2V(input)).toBe(input)
+  })
+
+  it('헤더만 있는 (한 줄) CSV 도 처리', () => {
+    expect(csvPromptToVideoT2V('prompt_en')).toBe('video_t2v_prompt')
   })
 })

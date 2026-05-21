@@ -198,6 +198,42 @@ export function parseSRTToScenes(srtText) {
   return scenes
 }
 
+/**
+ * CSV 비디오 모드용 헤더 변환 — `prompt` / `prompt_en` 을 `video_t2v_prompt` 로 rename.
+ *
+ * 비디오 모드에서 CSV 에 video_*_prompt 컬럼이 없으면 image prompt 컬럼 (prompt, prompt_en)
+ * 을 비디오 프롬프트로 라우팅한다. 이미 video_*_prompt 가 있으면 (사용자 명시 의도 우선) 변경 X.
+ * prompt_ko 는 별도 필드라 건드리지 않는다.
+ *
+ * 행 위치는 보존되므로 행-단위 매칭이 깨지지 않는다.
+ *
+ * @param {string} csvText
+ * @returns {string} 헤더만 변경된 CSV 텍스트
+ */
+export function csvPromptToVideoT2V(csvText) {
+  const firstLineEnd = csvText.indexOf('\n')
+  if (firstLineEnd < 0) {
+    // 단일 줄 (헤더만)
+    return csvPromptHeaderToVideoT2V(csvText)
+  }
+  const headerLine = csvText.slice(0, firstLineEnd)
+  const rest = csvText.slice(firstLineEnd)
+  return csvPromptHeaderToVideoT2V(headerLine) + rest
+}
+
+function csvPromptHeaderToVideoT2V(headerLine) {
+  const headers = headerLine.split(',').map(h => h)
+  const trimmedLower = headers.map(h => h.trim().toLowerCase())
+  const hasVideoCol = trimmedLower.some(h => h === 'video_t2v_prompt' || h === 'video_prompt' || h === 'video_i2v_prompt')
+  if (hasVideoCol) return headerLine
+  // 첫 번째 prompt 또는 prompt_en 만 video_t2v_prompt 로 변경
+  const idx = trimmedLower.findIndex(h => h === 'prompt' || h === 'prompt_en')
+  if (idx < 0) return headerLine
+  const newHeaders = headers.slice()
+  newHeaders[idx] = 'video_t2v_prompt'
+  return newHeaders.join(',')
+}
+
 // ============================================================
 // 머지 파서 — 기존 씬과 병합 (한 가져오기가 다른 필드를 덮어쓰지 않게)
 //

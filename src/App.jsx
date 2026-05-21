@@ -28,7 +28,7 @@ import { applyStyle, previewStyleMatching } from './services/styleService'
 import { computeGuardAvailable } from './services/startGuard'
 import { createStyleResolver } from './services/styleResolver'
 import { filterPendingScenes } from './utils/sceneFilters'
-import { detectFileType, detectCSVType, parseCSVToScenes, parseSRTToScenes } from './utils/parsers'
+import { detectFileType, detectCSVType, parseCSVToScenes, parseSRTToScenes, csvPromptToVideoT2V } from './utils/parsers'
 import { checkFolderPermission } from './utils/guards'
 import { collectTagErrors } from './utils/tagMatch'
 import { toast } from './components/Toast'
@@ -438,23 +438,6 @@ function App() {
 
     const importIntoVideoT2V = (text) => {
       videoScenesHook.parseFromText(text, settings.defaultDuration)
-    }
-
-    /**
-     * CSV 헤더의 prompt 컬럼을 video_t2v_prompt 로 rename — 비디오 모드용.
-     * 이미 video_*_prompt 컬럼이 있으면 변경하지 않는다 (CSV가 명시한 의도 우선).
-     * row 위치는 보존되므로 행-기반 매칭이 깨지지 않는다.
-     */
-    const csvPromptToVideoT2V = (csvText) => {
-      const firstLineEnd = csvText.indexOf('\n')
-      if (firstLineEnd < 0) return csvText
-      const headerLine = csvText.slice(0, firstLineEnd)
-      const rest = csvText.slice(firstLineEnd)
-      const headers = headerLine.split(',').map(h => h.trim())
-      const hasVideoCol = headers.some(h => /^(video_t2v_prompt|video_prompt|video_i2v_prompt)$/i.test(h))
-      if (hasVideoCol) return csvText
-      const newHeaders = headers.map(h => h.toLowerCase() === 'prompt' ? 'video_t2v_prompt' : h)
-      return newHeaders.join(',') + rest
     }
 
     // 타입별 실행 액션
