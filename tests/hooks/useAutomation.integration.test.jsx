@@ -540,3 +540,56 @@ describe('useAutomation reCAPTCHA integration', () => {
     expect(hook.result.current.isPaused).toBe(false)
   }, 30000)
 })
+
+describe('useAutomation — force regenerate status reset ordering', () => {
+  // 회귀: force 리셋이 토큰 확인보다 먼저 실행되면, 로그인 만료 상태에서 "전체 재생성"을
+  // 눌렀을 때 done 씬이 pending 으로 리셋된 채 생성은 시작도 못 하고 abort →
+  // pending+image = "이미지는 있는데 미완료" 상태로 저장된다. 리셋은 확인 통과 후에 해야 한다.
+  it('force=true: does not reset scene status when the auth token check fails', async () => {
+    const { hook, updateScene } = setupHook({
+      flowAPI: { getAccessToken: vi.fn().mockResolvedValue(null) },
+      scenes: [
+        { id: 's1', prompt: 'a', status: 'done', image: 'data:old-1' },
+        { id: 's2', prompt: 'b', status: 'done', image: 'data:old-2' },
+      ],
+    })
+
+    await act(async () => {
+      await hook.result.current.start({ projectName: 'X', saveMode: 'folder', force: true })
+    })
+
+    // 토큰이 없어 생성이 시작도 못 했으므로 done 씬을 pending 으로 되돌리면 안 된다.
+    const resetToPending = updateScene.mock.calls.filter(
+      ([, patch]) => patch && patch.status === 'pending'
+    )
+    expect(resetToPending).toEqual([])
+  })
+
+  it('force=true: does not reset scene status when Stop is pressed during pre-flight', async () => {
+    // checkPermission / getAccessToken / reference upload 대기 중 Stop 을 누르면
+    // 실제 씬 제출은 안 되는데 force reset 만 실행될 수 있다 — !stopRequestedRef 가드 확인.
+    let triggerStop
+    const { hook, updateScene } = setupHook({
+      flowAPI: {
+        getAccessToken: vi.fn().mockImplementation(async () => {
+          triggerStop()           // 토큰 확인 await 중 사용자가 Stop 누른 상황 모사
+          return 'fake-token'
+        }),
+      },
+      scenes: [
+        { id: 's1', prompt: 'a', status: 'done', image: 'data:old-1' },
+        { id: 's2', prompt: 'b', status: 'done', image: 'data:old-2' },
+      ],
+    })
+    triggerStop = () => hook.result.current.stop()
+
+    await act(async () => {
+      await hook.result.current.start({ projectName: 'X', saveMode: 'folder', force: true })
+    })
+
+    const resetToPending = updateScene.mock.calls.filter(
+      ([, patch]) => patch && patch.status === 'pending'
+    )
+    expect(resetToPending).toEqual([])
+  })
+})

@@ -346,17 +346,6 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
         ? scenes.filter(s => s.prompt)
         : filterPendingScenes(scenes)
 
-    // force=true 재생성: done 상태인 씬을 pending으로 리셋해 UI에 재생성 시작이 보이게 함.
-    // 이미지/이미지 경로는 유지 — 새 이미지가 도착할 때까지 이전 결과를 노출하면 사용자가 비교 가능.
-    // error/errorKind도 초기화해 stale 메시지 노출 회피.
-    if (force) {
-      for (const s of targetScenes) {
-        if (s.status === 'done' || s.status === 'error') {
-          updateScene(s.id, { status: 'pending', error: null, errorKind: null })
-        }
-      }
-    }
-
     const total = targetScenes.length
     if (total === 0) {
       toast.warning(t('toast.allScenesGenerated'))
@@ -476,6 +465,20 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       })
     }
     
+    // force=true 재생성: done/error 씬을 pending으로 리셋해 UI에 재생성 시작이 보이게 함.
+    // 이미지/이미지 경로는 유지 — 새 이미지 도착 전까지 이전 결과를 노출해 사용자가 비교 가능.
+    // error/errorKind도 초기화해 stale 메시지 노출 회피.
+    // ⚠️ 폴더/토큰 확인·ref 업로드를 모두 통과한 뒤(실제 씬 제출 직전)에 리셋한다. 그리고
+    //    그 대기 중 Stop 을 눌렀을 수 있으니 !stopRequestedRef 도 확인 — 안 그러면 제출은
+    //    안 됐는데 done 씬이 pending+image 로 남아 "이미지는 있는데 미완료"로 저장된다.
+    if (force && !stopRequestedRef.current) {
+      for (const s of targetScenes) {
+        if (s.status === 'done' || s.status === 'error') {
+          updateScene(s.id, { status: 'pending', error: null, errorKind: null })
+        }
+      }
+    }
+
     // 씬 처리 (DOM 모드 — 반드시 순차)
     batchStartedAtRef.current = Date.now()
     setStatus('running')
