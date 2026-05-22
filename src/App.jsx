@@ -38,6 +38,7 @@ import Header from './components/Header'
 import WelcomeScreen from './components/WelcomeScreen'
 import PromptInput from './components/PromptInput'
 import SceneList from './components/SceneList'
+import GenerateMenu from './components/GenerateMenu'
 import FrameToVideoPanel from './components/FrameToVideoPanel'
 import ReferencePanel from './components/ReferencePanel'
 import SettingsModal from './components/SettingsModal'
@@ -167,6 +168,9 @@ function App() {
   // effect 자체가 재실행되지 않지만, 만에 하나 다른 state가 deps에 끼어드는 미래 변경에도
   // wasRunningRef 가드 덕에 stale 시점에 잘못 clear하지 않는다.
   const wasRunningRef = useRef(false)
+  // requireStyle 가드가 StylePicker 를 띄울 때 force(전체 재생성) 의도를 보존 —
+  // 스타일 선택 후 handleStart 로 재진입할 때 force 를 그대로 넘긴다.
+  const pendingStyleForceRef = useRef(false)
   useEffect(() => {
     const running = isRunning || videoAutomation.isRunning
     if (wasRunningRef.current && !running) {
@@ -676,6 +680,8 @@ function App() {
         })
         if (settings.requireStyle && !effectiveStyleId) {
           if (!guardAvailable) {
+            // 스타일 선택 후 handleStart 로 재진입할 때 force 의도를 잃지 않도록 보존.
+            pendingStyleForceRef.current = force
             setShowStylePicker(true)
             return
           }
@@ -1260,26 +1266,35 @@ function App() {
                     )}
                   </button>
                 ) : (
-                  <button
-                    className={`btn-primary ${canExport ? 'half' : ''}`}
-                    onClick={() => handleStart()}
-                    disabled={
-                      ((activeTab === 'text' || activeTab === 'list') && scenes.length === 0) ||
-                      (activeTab === 'video-text' && videoScenes.length === 0) ||
-                      (activeTab === 'frame-to-video' && framePairs.length === 0) ||
-                      hasPendingBatch
-                    }
-                  >
-                    {startStyleApplies
-                      ? <>
-                          {activeTab === 'video-text' ? '🎬' : '✨'} {t('actions.start')}
-                          ▸
-                          <span className="btn-style-link" onClick={(e) => { e.stopPropagation(); setShowStylePicker(true) }}>
-                            🎨 {startStyleLabel}
-                          </span>
-                        </>
-                      : `🎬 ${t('actions.start')}`}
-                  </button>
+                  <>
+                    <button
+                      className={`btn-primary ${canExport ? 'half' : ''}`}
+                      onClick={() => handleStart()}
+                      disabled={
+                        ((activeTab === 'text' || activeTab === 'list') && scenes.length === 0) ||
+                        (activeTab === 'video-text' && videoScenes.length === 0) ||
+                        (activeTab === 'frame-to-video' && framePairs.length === 0) ||
+                        hasPendingBatch
+                      }
+                    >
+                      {startStyleApplies
+                        ? <>
+                            {activeTab === 'video-text' ? '🎬' : '✨'} {t('actions.start')}
+                            ▸
+                            <span className="btn-style-link" onClick={(e) => { e.stopPropagation(); pendingStyleForceRef.current = false; setShowStylePicker(true) }}>
+                              🎨 {startStyleLabel}
+                            </span>
+                          </>
+                        : `🎬 ${t('actions.start')}`}
+                    </button>
+                    {/* 전체 재생성 — 생성된 이미지가 있을 때만 ▾ 노출 (덮어쓸 게 있어야 의미) */}
+                    {(activeTab === 'text' || activeTab === 'list') && scenes.some(s => s.image || s.imagePath) && (
+                      <GenerateMenu
+                        onForceRegenerate={() => handleStart(undefined, { force: true })}
+                        disabled={hasPendingBatch}
+                      />
+                    )}
+                  </>
                 )}
 
                 {canExport && (
@@ -1623,7 +1638,7 @@ function App() {
             setSelectedStyleRefId(id)
             if (id) {
               setShowStylePicker(false)
-              handleStart(id)
+              handleStart(id, { force: pendingStyleForceRef.current })
               return
             }
             // 자동 카드 (id === null) — availability는 styleResolver가 탭별로 판단:
@@ -1632,7 +1647,7 @@ function App() {
             // requireStyle=false면 어느 탭이든 통과.
             if (styleResolver.autoAvailable || !settings.requireStyle) {
               setShowStylePicker(false)
-              handleStart(null)
+              handleStart(null, { force: pendingStyleForceRef.current })
             } else {
               toast.warning(t('toast.autoMatchNoMatchesPickStyle'))
             }

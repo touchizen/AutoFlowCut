@@ -1,0 +1,66 @@
+/* GenerateMenu — 생성 버튼 옆 ▾ 드롭다운 */
+
+.generate-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.generate-menu-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  height: 34px;
+  background: var(--bg-color);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  color: var(--text-color);
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.generate-menu-trigger:hover:not(:disabled) {
+  border-color: var(--primary-color);
+}
+
+.generate-menu-trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 생성 버튼이 화면 하단에 있어 드롭다운은 위로 연다 */
+.generate-menu-dropdown {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  min-width: 180px;
+  background: #1a1a2e;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+  padding: 6px;
+  z-index: 100;
+}
+
+.generate-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: #ccc;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.generate-menu-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
