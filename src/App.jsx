@@ -1237,6 +1237,9 @@ function App() {
             const threshold = settings.exportThreshold || 50
             const requiredCount = Math.ceil(scenes.length * threshold / 100)
             const canExport = hasScenes && hasRun && !anyRunning && doneCount >= requiredCount
+            // 전체 재생성 ▾ — 이미지 탭 + 생성된 이미지가 1개 이상일 때만 노출 (덮어쓸 게 있어야 의미)
+            const showGenerateMenu = (activeTab === 'text' || activeTab === 'list')
+              && scenes.some(s => s.image || s.imagePath)
 
             const startStyleLabel = styleResolver.resolveLabelForId(selectedStyleRefId)
             const startStyleApplies = activeTab === 'text' || activeTab === 'list' || activeTab === 'video-text'
@@ -1266,7 +1269,7 @@ function App() {
                     )}
                   </button>
                 ) : (
-                  <>
+                  <div className={`generate-split ${showGenerateMenu ? 'has-menu' : ''}`}>
                     <button
                       className={`btn-primary ${canExport ? 'half' : ''}`}
                       onClick={() => handleStart()}
@@ -1287,14 +1290,14 @@ function App() {
                           </>
                         : `🎬 ${t('actions.start')}`}
                     </button>
-                    {/* 전체 재생성 — 생성된 이미지가 있을 때만 ▾ 노출 (덮어쓸 게 있어야 의미) */}
-                    {(activeTab === 'text' || activeTab === 'list') && scenes.some(s => s.image || s.imagePath) && (
+                    {/* 전체 재생성 ▾ — split-button 으로 생성 버튼에 붙는다 */}
+                    {showGenerateMenu && (
                       <GenerateMenu
                         onForceRegenerate={() => handleStart(undefined, { force: true })}
                         disabled={hasPendingBatch}
                       />
                     )}
-                  </>
+                  </div>
                 )}
 
                 {canExport && (
