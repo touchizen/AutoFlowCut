@@ -648,7 +648,14 @@ export function registerFlowAPIIPC(ipcMain, deps) {
           responses: [],
           collectionTimer: null,
           completed: false,
-          token  // 나중에 이미지 fetch용
+          token,              // 나중에 이미지 fetch용
+          // 응답↔gen 상관키 (generationMatch.js) — 요청 body 의 prompt/refs/seed/aspectRatio 와 대조
+          promptKey: prompt,
+          refMediaIds: Array.isArray(referenceImages)
+            ? referenceImages.map((r) => r?.mediaId).filter(Boolean).sort()
+            : [],
+          reqSeed: _seedValue,
+          reqAspectRatio: _aspectRatioEnum
         })
         console.log('[Flow API] [Async] pendingGenerations set:', generationId,
           '(setAt:', generationSetAt.toFixed(3), ')')

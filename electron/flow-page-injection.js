@@ -81,9 +81,11 @@ export const FLOW_PAGE_INJECTION = /* js */ `
 
   // ─── reportResponse ───────────────────────────────────────────
   // Forwards captured response to main process via preload-exposed IPC.
-  function reportResponse(url, body, status) {
+  // requestBody: the outgoing request body string — main uses it to correlate
+  // the response to the generation that triggered it (prompt-based matching).
+  function reportResponse(url, body, status, requestBody) {
     try {
-      window.electronAPI?.flowReportResponse?.({ url, body, status })
+      window.electronAPI?.flowReportResponse?.({ url, body, status, requestBody })
     } catch (e) {
       console.warn('[Flow Inject] reportResponse failed:', e.message)
     }
@@ -176,8 +178,9 @@ export const FLOW_PAGE_INJECTION = /* js */ `
         url.includes(URL_VIDEO_STATUS)
       )) {
         const cloned = res.clone()
+        const reqBody = typeof _init.body === 'string' ? _init.body : null
         cloned.text()
-          .then(body => reportResponse(url, body, res.status))
+          .then(body => reportResponse(url, body, res.status, reqBody))
           .catch(() => {})
       }
     } catch (e) {

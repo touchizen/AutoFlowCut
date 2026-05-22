@@ -21,6 +21,7 @@ import { setupAppMenuAndUpdater, noteProjectActivated } from './updater.js'
 import { selectCdpCase } from './video-cdp-dispatch.js'
 import { injectImageBatchBody } from './cdp-image-inject.js'
 import { FLOW_PAGE_INJECTION } from './flow-page-injection.js'
+import { matchGenerationForResponse } from './ipc/generationMatch.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -681,20 +682,21 @@ async function clearFlowPageInject() {
 }
 
 // ─── flow:report-response — page monkey-patch → main (replaces CDP getResponseBody) ──
-// The Flow page injection script calls window.electronAPI.flowReportResponse({ url, body, status }).
-// This handler mirrors the CDP Network.loadingFinished routing logic:
+// The Flow page injection script calls
+//   window.electronAPI.flowReportResponse({ url, body, status, requestBody }).
+// Routing:
 //   - batchGenerateImages → pendingGeneration (sync) or pendingGenerations (async)
 //   - batchAsyncGenerateVideo* → pendingVideoGeneration
-// Timestamps are not available here (fetch doesn't expose wallTime), so stale-response
-// filtering uses a simple "generation was registered" guard instead of time comparison.
-// The injection guard on the page side (single monkey-patch per page load) + the
-// per-cycle clear of __autoflowcut_inject__ ensures correctness without timestamps.
+// Async batchGenerateImages 응답은 요청 body 안의 프롬프트로 해당 generation 에
+// 상관시킨다 (matchGenerationForResponse) — fetch 는 wallTime 을 안 주므로 timestamp
+// 매칭이 불가능하고, "가장 최근 gen" 추측은 생성이 겹칠 때 응답을 오배달했다.
+// sync 모드는 동시 1건이라 매칭이 필요 없다.
 ipcMain.handle('flow:report-response', (event, payload) => {
   // Sender 검증 먼저 — flowView WebContents 가 아닌 곳에서 호출되면 거부.
   // (메인 BrowserWindow / 다른 view 가 우연/악의적으로 같은 IPC 를 호출해도 무시.)
   // Payload destructure 보다 먼저 검증해야 malformed payload 가 throw 하지 않는다.
   if (!flowView || event.sender !== flowView.webContents) return { ok: false, error: 'sender mismatch' }
-  const { url, body, status } = payload || {}
+  const { url, body, status, requestBody } = payload || {}
   if (!url || !body) return { ok: false }
 
   const now = Date.now() / 1000  // approximate wallTime for compatibility
@@ -732,15 +734,10 @@ ipcMain.handle('flow:report-response', (event, payload) => {
 
     // ── batchGenerateImages → async mode ──────────────────────────────────
     if (pendingGenerations.size > 0) {
-      // Match to most-recently-registered incomplete generation
-      let matchId = null
-      let matchSetAt = -Infinity
-      for (const [id, gen] of pendingGenerations) {
-        if (!gen.completed && gen.setAt > matchSetAt) {
-          matchId = id
-          matchSetAt = gen.setAt
-        }
-      }
+      // 응답을 트리거한 generation 에 정확히 상관 — 요청 body 안의 프롬프트로 매칭.
+      // 기존 newest-wins 는 생성이 겹치면(이전 gen 진행 중 + 다음 gen 제출) 응답을
+      // 엉뚱한 gen 으로 보내, 원래 gen 은 timeout / 다른 씬엔 남의 이미지가 저장됐다.
+      const matchId = matchGenerationForResponse(pendingGenerations, requestBody)
       if (matchId) {
         const g = pendingGenerations.get(matchId)
         g.responses.push({ error: false, body, status })
