@@ -122,4 +122,22 @@ describe('matchGenerationForResponse', () => {
     const body = reqBody('shared prompt', { refMediaIds: ['m2'] })
     expect(matchGenerationForResponse(pending, body)).toBe(null)
   })
+
+  it('matches the prompt regardless of its field name or nesting in the request body', () => {
+    // 회귀: 실제 batchGenerateImages body 는
+    //   { clientContext: { recaptchaContext: { token } }, requests: [...] }
+    // 형태다. 프롬프트 필드명을 가정하면(requests[].prompt) 매칭이 전부 실패해 fail-closed 로
+    // 모든 응답이 폐기됐다. promptKey 가 body 안에 JSON 문자열 값으로 있으면 매칭돼야 한다.
+    const prompt = 'A young scholar reading under an oak tree, Western 3D CG cartoon style'
+    const pending = new Map()
+    pending.set('gen-A', gen(prompt))
+    pending.set('gen-B', gen('an unrelated celebration scene with banners'))
+
+    const body = JSON.stringify({
+      clientContext: { recaptchaContext: { token: 'x'.repeat(600) } },
+      requests: [{ userInput: prompt, seed: 1, imageAspectRatio: 'IMAGE_ASPECT_RATIO_LANDSCAPE' }],
+    })
+
+    expect(matchGenerationForResponse(pending, body)).toBe('gen-A')
+  })
 })
