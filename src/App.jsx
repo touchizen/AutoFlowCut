@@ -1295,10 +1295,13 @@ function App() {
             )
           })()}
 
-          {!anyRunning && scenes.some(s => s.status === 'error') && (
+          {!anyRunning && !hasPendingBatch && scenes.some(s => s.status === 'error') && (
             <button
               className="btn-secondary"
               onClick={() => {
+                // 큐 대기(hasPendingBatch, isRunning 아직 false) 구간에도 노출될 수 있으니
+                // snapshot 을 덮기 전에 먼저 차단 — Start 버튼의 disabled 조건과 동일선상.
+                if (anyRunning || hasPendingBatch) return
                 // ⚠️ 직접 바인딩(`onClick={retryErrors}`) 시 React SyntheticEvent 가
                 //    options 인자로 들어가서 projectName 누락 → start() 가 'Untitled' 로
                 //    폴백 → 모든 저장이 다른 프로젝트로 잘못 가는 데이터 손실 회귀.
@@ -1306,6 +1309,8 @@ function App() {
                 const effectiveSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
                   ? settings.seedNo
                   : null
+                // Stop 버튼이 retry 중에도 스타일을 표시하도록 snapshot — 정상 생성(handleStart)과 동일.
+                setRunningStyle({ styleId: selectedStyleRefId, label: styleResolver.resolveLabelForId(selectedStyleRefId), applies: true })
                 retryErrors({
                   projectName: ensureProjectName(),
                   saveMode: settings.saveMode,
@@ -1349,8 +1354,13 @@ function App() {
             mediaType="image"
             aspectRatio={settings.aspectRatio}
             onRetry={(id) => {
+              // 실행 중·큐 대기(hasPendingBatch) 중엔 retryScene→start() 가 무시되거나 큐에
+              // 쌓인다. snapshot 만 덮어 돌고 있는 배치의 스타일 표시가 틀어지지 않도록 먼저 차단.
+              if (anyRunning || hasPendingBatch) return
               const effectiveSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
                 ? settings.seedNo : null
+              // Stop 버튼이 retry 중에도 스타일을 표시하도록 snapshot — 정상 생성(handleStart)과 동일.
+              setRunningStyle({ styleId: selectedStyleRefId, label: styleResolver.resolveLabelForId(selectedStyleRefId), applies: true })
               automation.retryScene(id, {
                 projectName: ensureProjectName(),
                 saveMode: settings.saveMode,
@@ -1392,8 +1402,13 @@ function App() {
             mediaType="image"
             aspectRatio={settings.aspectRatio}
             onRetry={(id) => {
+              // 실행 중·큐 대기(hasPendingBatch) 중엔 retryScene→start() 가 무시되거나 큐에
+              // 쌓인다. snapshot 만 덮어 돌고 있는 배치의 스타일 표시가 틀어지지 않도록 먼저 차단.
+              if (anyRunning || hasPendingBatch) return
               const effectiveSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
                 ? settings.seedNo : null
+              // Stop 버튼이 retry 중에도 스타일을 표시하도록 snapshot — 정상 생성(handleStart)과 동일.
+              setRunningStyle({ styleId: selectedStyleRefId, label: styleResolver.resolveLabelForId(selectedStyleRefId), applies: true })
               automation.retryScene(id, {
                 projectName: ensureProjectName(),
                 saveMode: settings.saveMode,
