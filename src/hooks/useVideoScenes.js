@@ -138,10 +138,12 @@ export function useVideoScenes(scenes = [], scenesHook = null) {
     })
   }, [scenesHook])
 
-  /** parseFromText → scenes.videoT2VPrompt 머지 */
-  const parseFromText = useCallback((text, defaultDuration = DEFAULTS.scene.duration) => {
+  /** parseFromText → scenes.videoT2VPrompt 머지
+   *  framePairs는 trim 단계가 F→V owner-bound 씬을 trim 하지 않게 하기 위해 전달.
+   *  미전달 시 [] 폴백 — 단방향 wrapper 라 caller가 명시적으로 넘겨야 함. */
+  const parseFromText = useCallback((text, defaultDuration = DEFAULTS.scene.duration, framePairs = []) => {
     if (!scenesHook?.parseFromText) return []
-    return scenesHook.parseFromText(text, defaultDuration, { fieldName: 'videoT2VPrompt' })
+    return scenesHook.parseFromText(text, defaultDuration, { fieldName: 'videoT2VPrompt' }, framePairs)
   }, [scenesHook])
 
   /** updateVideoScene → 해당 scene 의 videoT2V* 필드 갱신 */

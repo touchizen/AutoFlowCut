@@ -439,7 +439,7 @@ function App() {
     const savedVideo = localStorage.getItem('autoflowcut_savedVideoPrompts')
     if (savedVideo) {
       console.log('[App] Loading savedVideoPrompts from localStorage')
-      videoScenesHook.parseFromText(savedVideo, settings.defaultDuration)
+      videoScenesHook.parseFromText(savedVideo, settings.defaultDuration, framePairs)
     }
   }, [])
 
@@ -477,7 +477,7 @@ function App() {
     const isVideo = mode === 'video'
 
     const importIntoVideoT2V = (text) => {
-      videoScenesHook.parseFromText(text, settings.defaultDuration)
+      videoScenesHook.parseFromText(text, settings.defaultDuration, framePairs)
     }
 
     // 타입별 실행 액션
@@ -846,10 +846,11 @@ function App() {
           const endScene = endIsGallery ? null : scenes.find(s => s.id === p.endSceneId)
 
           // promptSource에 따라 effective prompt 계산
-          // 씬 ID 기준 매칭 (array index 가 아님) — 길이 불일치 시 다른 씬 prompt 가 섞이는 버그 방지.
+          // owner-binding: ownerSceneId 가 행과 영구 묶임. startSceneId 는 단순 입력 이미지라
+          // dropdown 으로 다른 씬 가리키게 바꿔도 generation 은 owner 씬의 video prompt 사용.
           let effectivePrompt = p.prompt // default: image prompt
           if (ftvPromptSource === 'video') {
-            const vsceneId = p.startSceneId?.replace?.('scene_', 'vscene_')
+            const vsceneId = p.ownerSceneId?.replace?.('scene_', 'vscene_')
             const matched = videoScenes.find(vs => vs.id === vsceneId)
             effectivePrompt = p.videoPrompt || matched?.prompt || p.prompt
           } else if (ftvPromptSource === 'none') {
@@ -1225,7 +1226,12 @@ function App() {
                 if (scene) setSceneToDelete({ scene, sceneIndex })
               }}
               onAdd={scenesHook.addScene}
-              onClearAll={scenesHook.clearScenes}
+              onClearAll={() => {
+                // 씬 통째 삭제 = framePairs 도 같이 cascade. 그렇지 않으면 ownerSceneId
+                // 가 전부 dangling 됨 (deleteScene cascade 와 동일 class 의 회귀).
+                scenesHook.clearScenes()
+                setFramePairs([])
+              }}
               defaultDuration={settings.defaultDuration}
               disabled={anyRunning}
               projectName={ensureProjectName()}

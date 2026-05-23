@@ -33,7 +33,9 @@ export default function DeleteSceneConfirmModal({
     return s.length > n ? s.slice(0, n) + '…' : s
   }
 
-  const hasImage = !!scene.mediaId
+  // mediaId 외에도 base64 (scene.image) 또는 파일 경로 (scene.imagePath) 만 있는 경우도
+  // 생성된 이미지로 인정. mediaId 만 보면 path-only 로드된 이미지가 모달에서 누락됨.
+  const hasImage = !!(scene.image || scene.imagePath || scene.mediaId)
   const imagePrompt = scene.prompt?.trim() || ''
   const videoT2V = scene.videoT2VPrompt?.trim() || ''
   const videoI2V = scene.videoI2VPrompt?.trim() || ''

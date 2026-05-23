@@ -788,10 +788,11 @@ export default function FrameToVideoPanel({
               {promptSource === 'video' && (
                 <input
                   type="text"
-                  // 씬 ID 기준 매칭 (array index 가 아님) — SRT/이미지/비디오 길이가 다를 때 다른 씬의 prompt
-                  // 가 보이는 버그 방지.
+                  // owner-binding: ownerSceneId 가 행과 영구 묶여 있다. start image dropdown 만
+                  // 다른 씬으로 바꿔도 video prompt 는 owner 씬에서 가져와야 일관됨 (startSceneId
+                  // 기반이면 dropdown 만 바꿔도 video prompt 가 다른 씬 것으로 튀어 silently wrong).
                   value={pair.videoPrompt
-                    || videoScenes.find(vs => vs.id === pair.startSceneId?.replace?.('scene_', 'vscene_'))?.prompt
+                    || videoScenes.find(vs => vs.id === pair.ownerSceneId?.replace?.('scene_', 'vscene_'))?.prompt
                     || ''}
                   onChange={(e) => updatePair(index, 'videoPrompt', e.target.value)}
                   disabled={disabled || pair.status === 'generating'}
