@@ -109,6 +109,12 @@ function App() {
   const [showAudioResult, setShowAudioResult] = useState(false)
   const [showReferences, setShowReferences] = useState(false)
   const [authReady, setAuthReady] = useState(false)
+  // True after handleAuthError fires — disables the auto-recovery effect at line ~165
+  // that would otherwise immediately re-extract a token from the webview and flip
+  // authReady back to true (making the header revert from "Login" to green dot in
+  // a single render tick — user observed this as "header stayed green during 401").
+  // Cleared by handleAuthRecovered when the user explicitly re-authenticates.
+  const authInvalidatedRef = useRef(false)
   const [selectedScene, setSelectedScene] = useState(null) // 상세 모달용 선택된 씬
   const [selectedStyleRefId, setSelectedStyleRefId] = useState(null) // 레퍼런스 생성 시 적용할 스타일
   const [showStylePicker, setShowStylePicker] = useState(false) // 스타일 선택 모달
@@ -133,8 +139,17 @@ function App() {
   // used to live here and risked drifting apart over time.
   const handleAuthError = useCallback(() => {
     setAuthReady(false)
+    authInvalidatedRef.current = true  // prevent auto-recovery effect from flipping us back
     toast.error(t('status.authErrorStopped') || 'Auth expired — please re-login to Flow', TIMING.AUTH_ERROR_TOAST)
   }, [t])
+
+  // Called by Header when the user explicitly re-authenticates (login badge click or
+  // openFlow polling detects a fresh token). Restores authReady and unblocks the
+  // auto-recovery effect for future cycles.
+  const handleAuthRecovered = useCallback(() => {
+    authInvalidatedRef.current = false
+    setAuthReady(true)
+  }, [])
 
   const flowAPI = useFlowAPI({ onAuthError: handleAuthError })
   const scenesHook = useScenes()
@@ -157,9 +172,13 @@ function App() {
   const { videoScenes, setVideoScenes } = videoScenesHook
   const { isRunning, isPaused, isStopping, progress, status, statusMessage, start, togglePause, stop, retryErrors, recaptchaModal, closeRecaptchaModal } = automation
 
-  // 씬이 복원되어 WelcomeScreen이 스킵될 때도 자동으로 인증 체크
+  // 씬이 복원되어 WelcomeScreen이 스킵될 때도 자동으로 인증 체크.
+  // authInvalidatedRef: handleAuthError가 명시적으로 무효화한 후엔 자동 복구하지 않는다.
+  // 사용자가 Header의 login badge로 직접 재인증해야 handleAuthRecovered가 ref를 풀고
+  // authReady를 되살린다. 이게 없으면 401 직후 authReady=false → 이 effect → 새 토큰 추출 →
+  // setAuthReady(true) 순으로 한 render tick 만에 되돌아가 header가 녹색을 유지하는 회귀가 발생.
   useEffect(() => {
-    if (scenes.length > 0 && !authReady) {
+    if (scenes.length > 0 && !authReady && !authInvalidatedRef.current) {
       flowAPI.getAccessToken(false, true).then(token => {
         if (token) setAuthReady(true)
       }).catch(() => {})
@@ -983,6 +1002,7 @@ function App() {
         hasImages={scenes.some(s => s.image || s.imagePath)}
         getAccessToken={flowAPI.getAccessToken}
         authReady={authReady}
+        onAuthRecovered={handleAuthRecovered}
         projectName={settings.projectName}
         onProjectChange={handleProjectChange}
         onNewProject={() => openSettings('storage')}

@@ -80,6 +80,7 @@ export default function Header({
   hasImages,
   getAccessToken,
   authReady,
+  onAuthRecovered,  // App.authReady=false 후 re-auth 성공 시 호출 — App이 invalidation 풀고 authReady=true 복구
   projectName,
   onProjectChange,
   onNewProject,
@@ -169,12 +170,14 @@ export default function Header({
       setAuthStatus('unauthenticated')
       return
     }
-    
+
     setAuthStatus('checking')
     try {
       // quickCheck: 탭 열기/대기 없이 빠르게 확인만
       const token = await getAccessToken(false, quickCheck)
       setAuthStatus(token ? 'authenticated' : 'unauthenticated')
+      // Token came back via badge-click re-check → tell App so authReady recovers.
+      if (token) onAuthRecovered?.()
     } catch (e) {
       setAuthStatus('unauthenticated')
     }
@@ -201,6 +204,10 @@ export default function Header({
         if (token) {
           setAuthStatus('authenticated')
           stopPolling()
+          // Notify App so it clears its auth-invalidated flag and re-enables features
+          // that gate on authReady. Without this, App stays at authReady=false even
+          // though Flow is logged in again.
+          onAuthRecovered?.()
         }
       } catch {}
     }, TIMING.AUTH_POLL_INTERVAL || 2000)
