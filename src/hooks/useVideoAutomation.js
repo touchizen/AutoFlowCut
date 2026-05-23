@@ -450,6 +450,23 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
       return
     }
 
+    // Auth died mid-submit AND some items had already been submitted before the break.
+    // The token is dead — polling those generationIds would just hit 401 every iteration
+    // until the poll loop itself broke on authFailed (relying on it is fragile and the test
+    // had to mock checkVideoStatus authFailed too to exit cleanly). Abandon the batch now,
+    // marking the already-submitted items with the same auth error so the user sees a
+    // consistent end state across all items.
+    if (authStopped) {
+      const authMsg = t('toast.authErrorStop') || 'Auth expired — please re-login to Flow'
+      for (const sub of submissions) {
+        onItemUpdate?.(sub.itemId, 'error', { error: authMsg, errorKind: 'auth' })
+        videoErrorCount++
+      }
+      setIsRunning(false)
+      // status/statusMessage already set at the submit break site — do not overwrite.
+      return
+    }
+
     console.log(`[VideoAutomation] Phase 1 done: ${submissions.length} pending poll (${freshGen.length} fresh + ${inFlight.length} in-flight)`)
 
     // ═══════════════════════════════════════════

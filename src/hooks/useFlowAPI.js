@@ -103,11 +103,30 @@ export function useFlowAPI({ onAuthError } = {}) {
   useEffect(() => { getAccessTokenRef.current = getAccessToken }, [getAccessToken])
   useEffect(() => { onAuthErrorRef.current = onAuthError }, [onAuthError])
 
+  // Inline clearTokenCache — defined here (not as useCallback at end of hook)
+  // so the wrapper's onAuthError shim can call it. Doing the cache invalidation
+  // inside the hook ensures every consumer of useFlowAPI gets it for free, instead
+  // of relying on each App-level onAuthError callback to remember to clear.
+  const clearTokenCacheImpl = () => {
+    setAccessToken(null)
+    setTokenExpiry(null)
+    localStorage.removeItem('flowAccessToken')
+    localStorage.removeItem('flowTokenExp')
+  }
+
   const withAuthRetryRef = useRef(null)
   if (!withAuthRetryRef.current) {
     withAuthRetryRef.current = createAuthRetryWrapper({
       getAccessToken: (force) => getAccessTokenRef.current(force),
-      onAuthError: () => onAuthErrorRef.current?.(),
+      // Always clear the cache before delegating to the caller's onAuthError.
+      // The cache (state + localStorage) may still have a stale token whose
+      // tokenExpiry hasn't lapsed by our clock but the server has invalidated.
+      // Without this, the next getAccessToken() would re-return the same dead
+      // token even after the user re-logs into Flow.
+      onAuthError: () => {
+        clearTokenCacheImpl()
+        onAuthErrorRef.current?.()
+      },
     })
   }
   const withAuthRetry = withAuthRetryRef.current
@@ -318,14 +337,13 @@ export function useFlowAPI({ onAuthError } = {}) {
 
   /**
    * 토큰 캐시 초기화 (401 에러 시 호출)
-   * 다음 getAccessToken 호출 시 Flow 웹뷰에서 새로 추출
+   * 다음 getAccessToken 호출 시 Flow 웹뷰에서 새로 추출.
+   *
+   * 보통은 withAuthRetry 가 2nd 401 시점에 자동으로 캐시를 비우므로 (위쪽
+   * clearTokenCacheImpl 참고) 외부에서 명시적으로 호출할 필요는 거의 없다.
+   * 수동 트리거 (재로그인 후 강제 invalidation 등) 용으로 노출.
    */
-  const clearTokenCache = useCallback(() => {
-    setAccessToken(null)
-    setTokenExpiry(null)
-    localStorage.removeItem('flowAccessToken')
-    localStorage.removeItem('flowTokenExp')
-  }, [])
+  const clearTokenCache = useCallback(clearTokenCacheImpl, [])
 
   return {
     accessToken,

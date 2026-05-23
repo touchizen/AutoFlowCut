@@ -125,6 +125,12 @@ function App() {
   }
 
   // Hooks
+  //
+  // Single source of truth for auth-failure UX: clear cache → setAuthReady(false) → toast.
+  // The same callback is passed to useFlowAPI (wrapper fires it on 2nd 401) AND to the
+  // hooks' onAuthError params (still used by useAutomation's preflight no-token path —
+  // useAutomation.js:418). This eliminates the three near-duplicate callbacks that
+  // used to live here and risked drifting apart over time.
   const handleAuthError = useCallback(() => {
     setAuthReady(false)
     toast.error(t('status.authErrorStopped') || 'Auth expired — please re-login to Flow', TIMING.AUTH_ERROR_TOAST)
@@ -139,20 +145,12 @@ function App() {
     () => openSettings('storage'),
     (saveFunc) => addPendingSave(saveFunc),
     t,
-    () => {
-      setAuthReady(false)
-      flowAPI.clearTokenCache()  // 캐시된 만료 토큰 제거
-      toast.error(t('status.authErrorStopped'), TIMING.AUTH_ERROR_TOAST)
-    },
+    handleAuthError,
     generationQueue,
     () => saveCurrentProject()
   )
 
-  const videoAutomation = useVideoAutomation(flowAPI, t, () => {
-    setAuthReady(false)
-    flowAPI.clearTokenCache()  // 캐시된 만료 토큰 제거 → 재로그인 후 새 토큰 획득
-    toast.error(t('status.authErrorStopped'))
-  }, generationQueue)
+  const videoAutomation = useVideoAutomation(flowAPI, t, handleAuthError, generationQueue)
   const { scenes, references, parseFromText, parseFromCSV, parseFromSRT, parseReferencesFromCSV, updateReferences, setScenes, setReferences } = scenesHook
   // Step 3: videoScenes 는 scenes 에서 derived. useVideoScenes 가 scenesHook 으로 라우팅.
   const videoScenesHook = useVideoScenes(scenes, scenesHook)

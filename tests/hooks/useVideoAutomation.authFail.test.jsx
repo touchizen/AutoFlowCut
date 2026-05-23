@@ -195,23 +195,19 @@ describe('useVideoAutomation — auth failure during polling', () => {
 })
 
 describe('useVideoAutomation — auth failure during submit', () => {
-  it('marks remaining un-submitted items with errorKind:"auth" when submit authFailed fires', async () => {
-    // Item 1 submits successfully, item 2 gets authFailed, item 3 should be auto-marked.
-    // Note: item 1's generationId enters the poll queue, so checkVideoStatus must also
-    // return authFailed to avoid the poll loop running indefinitely in the test.
+  it('marks all items (submitted, failing, remaining) with errorKind:"auth" and skips polling', async () => {
+    // Item 1 submits successfully, item 2 gets authFailed, item 3 is yet to submit.
+    // Hook must: (a) mark item 2 (failed) and item 3 (remaining) with errorKind:'auth',
+    // (b) also mark item 1 (already submitted) with errorKind:'auth' instead of leaving it
+    // for a doomed poll, and (c) NOT enter the polling loop at all — token is dead.
     let callCount = 0
     const generateVideoT2V = vi.fn().mockImplementation(async () => {
       callCount++
       if (callCount === 1) return { success: true, generationId: 'gen-1' }
-      // Second call: auth failed
       return { success: false, authFailed: true, error: 'Auth expired' }
     })
-    // Also fail with authFailed in poll phase so the loop exits cleanly
-    const checkVideoStatus = vi.fn().mockResolvedValue({
-      success: false,
-      authFailed: true,
-      error: 'Auth expired',
-    })
+    // checkVideoStatus is provided but MUST NOT be called — we assert that below.
+    const checkVideoStatus = vi.fn()
 
     const onItemUpdate = vi.fn()
     const flowAPI = {
@@ -243,17 +239,21 @@ describe('useVideoAutomation — auth failure during submit', () => {
     })
 
     // Advance past inter-item submit delay (7000ms with Math.random mocked to 0)
-    // so item 2 gets submitted and authFails. Then poll loop for item 1 fires immediately.
+    // so item 2 gets submitted and authFails.
     await act(async () => { await vi.advanceTimersByTimeAsync(8000) })
     await act(async () => { await startPromise })
 
-    // Item 2 and item 3 must both be marked with errorKind:'auth'
+    // All three items end in error state with errorKind:'auth' — no silent abandonment.
     const authErrorCalls = onItemUpdate.mock.calls.filter(
       ([_id, status, patch]) => status === 'error' && patch?.errorKind === 'auth'
     )
     const authErrorIds = authErrorCalls.map(([id]) => id)
-    expect(authErrorIds).toContain('vscene_2')
-    expect(authErrorIds).toContain('vscene_3')
+    expect(authErrorIds).toContain('vscene_1')  // already submitted, but token dead
+    expect(authErrorIds).toContain('vscene_2')  // failed at submit
+    expect(authErrorIds).toContain('vscene_3')  // not yet submitted
+
+    // Polling must NOT be invoked when auth is dead — no point asking a stale token.
+    expect(checkVideoStatus).not.toHaveBeenCalled()
   }, 15000)
 
   it('sets status to "error" (not "done") after submit authFailed break', async () => {
@@ -302,10 +302,10 @@ describe('useVideoAutomation — auth failure on i2v (F→V) mode', () => {
       if (callCount === 1) return { success: true, generationId: 'gen-1' }
       return { success: false, authFailed: true, error: 'Auth expired' }
     })
-    // Poll loop also needs to break on authFailed since fp_1's generationId enters the queue
-    const checkVideoStatus = vi.fn().mockResolvedValue({
-      success: false, authFailed: true, error: 'Auth expired',
-    })
+    // checkVideoStatus is provided but must NOT be called — submit-phase auth death
+    // abandons the batch entirely instead of polling already-submitted items with a
+    // known-bad token.
+    const checkVideoStatus = vi.fn()
 
     const onItemUpdate = vi.fn()
     const flowAPI = {
@@ -341,15 +341,19 @@ describe('useVideoAutomation — auth failure on i2v (F→V) mode', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(8000) })
     await act(async () => { await startPromise })
 
-    // fp_2 (failing) and fp_3 (remaining) must both be marked with errorKind:'auth'
+    // All 3 framePairs must end with errorKind:'auth' — fp_1 (submitted), fp_2 (failed),
+    // fp_3 (not yet submitted).
     const authErrorCalls = onItemUpdate.mock.calls.filter(
       ([_id, status, patch]) => status === 'error' && patch?.errorKind === 'auth'
     )
     const authErrorIds = authErrorCalls.map(([id]) => id)
+    expect(authErrorIds).toContain('fp_1')
     expect(authErrorIds).toContain('fp_2')
     expect(authErrorIds).toContain('fp_3')
     // i2v path was actually invoked (not the t2v path)
     expect(generateVideoI2V).toHaveBeenCalled()
+    // No polling on a dead token
+    expect(checkVideoStatus).not.toHaveBeenCalled()
   }, 15000)
 
   it('breaks i2v poll loop immediately when checkVideoStatus returns authFailed', async () => {
