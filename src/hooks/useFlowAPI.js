@@ -284,18 +284,19 @@ export function useFlowAPI({ onAuthError } = {}) {
    * @returns {{ success, items: [{ mediaId, url }] }}
    */
   const fetchGallery = useCallback(async (specificProjectId) => {
-    const token = await getAccessToken()
-    if (!token) return { success: false, error: 'No access token', items: [] }
+    return withAuthRetry('fetchGallery', async (token) => {
+      if (!token) return { success: false, error: 'No access token', items: [] }
 
-    try {
-      return await window.electronAPI.fetchGallery({
-        token,
-        projectId: specificProjectId || projectId
-      })
-    } catch (error) {
-      return { success: false, error: error.message, items: [] }
-    }
-  }, [getAccessToken, projectId])
+      try {
+        return await window.electronAPI.fetchGallery({
+          token,
+          projectId: specificProjectId || projectId
+        })
+      } catch (error) {
+        return { success: false, error: error.message, items: [] }
+      }
+    })
+  }, [projectId, withAuthRetry])
 
   /**
    * 사용자의 Flow 프로젝트(=날짜 세션) 목록 조회
