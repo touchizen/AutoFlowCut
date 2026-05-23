@@ -72,8 +72,12 @@ export function useScenes() {
       // 동일 reference 반환 시 정규화 스킵 (no-op 최적화)
       if (next === prev) return prev
       if (Array.isArray(next)) {
-        syncCounterFromScenes(next)
-        return next.map(normalizeScene)
+        // Normalize FIRST so scenes missing IDs get scene_${i+1} fallback assigned.
+        // Then sync counter so it accounts for those fallback IDs and won't collide
+        // on next addScene/allocateSceneId call.
+        const normalized = next.map(normalizeScene)
+        syncCounterFromScenes(normalized)
+        return normalized
       }
       return next
     })
