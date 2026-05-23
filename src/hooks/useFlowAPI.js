@@ -172,17 +172,18 @@ export function useFlowAPI({ onAuthError } = {}) {
    * mediaId로 미디어 fetch (base64 반환)
    */
   const fetchMedia = useCallback(async (mediaId) => {
-    const token = await getAccessToken()
-    if (!token) {
-      return { success: false, error: 'No access token' }
-    }
+    return withAuthRetry('fetchMedia', async (token) => {
+      if (!token) {
+        return { success: false, error: 'No access token' }
+      }
 
-    try {
-      return await window.electronAPI.fetchMedia({ token, mediaId })
-    } catch (error) {
-      return { success: false, error: error.message }
-    }
-  }, [getAccessToken])
+      try {
+        return await window.electronAPI.fetchMedia({ token, mediaId })
+      } catch (error) {
+        return { success: false, error: error.message }
+      }
+    })
+  }, [withAuthRetry])
 
   /**
    * Text to Video 생성 요청
