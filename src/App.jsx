@@ -1459,20 +1459,35 @@ function App() {
               videoScenesHook.updateVideoScene(id, { prompt: newPrompt })
             }}
             onClearMedia={(id) => videoScenesHook.updateVideoScene(id, {
-              // T2V 비디오 전체 정리 — videoPath / mediaId 까지 비워야 sceneTrim/SceneList 가
-              // stale 비디오 path 를 더 이상 잡지 않음. FIELD_MAP 으로 scene.videoT2V* 로 매핑됨.
-              video: null, videoPath: null, mediaId: null, status: 'pending',
+              // T2V 비디오 전체 정리 — sceneTrim/SceneList 가 stale path 를 안 잡도록,
+              // 그리고 generationId 가 남으면 useProjectData 의 recovery 가 reload 시
+              // "in-flight 였던 항목" 으로 오해해 서버 결과를 다시 attach 함 (= clear 무효화).
+              // FIELD_MAP 으로 scene.videoT2V* 로 매핑됨.
+              video: null, videoPath: null, mediaId: null, generationId: null,
+              status: 'pending', selected: false,
             })}
             disabled={anyRunning}
           />
         )}
         {activeTab === 'frame-to-video' && (
           <ResultsTable items={framePairs} mediaType="frame-pair" aspectRatio={settings.aspectRatio} onShowDetail={(item) => setSelectedVideo(item)} onVideoRetry={handleVideoRetry} onClearMedia={(id) => {
-            // FramePair clear — 추가로 owner scene 의 derived videoI2V* 도 같이 정리.
-            // mediaSync 가 framePair → scene 으로 흘려보낸 path/base64 가 남아 있으면
-            // SceneList/sceneTrim 이 stale 비디오를 계속 잡음.
+            // FramePair clear — 전체 미디어/recovery 식별자/메타 정리.
+            // generationId/mediaId 가 남으면 useProjectData reload 시 in-flight 로 오인되어
+            // videoRecovery 가 서버 결과를 다시 attach (= clear 무효화). 옛 error/timing 메타가
+            // 남으면 UI 가 stale 상태 표시. owner scene 의 derived videoI2V* 도 같이 정리.
             const fp = framePairs.find(f => f.id === id)
-            setFramePairs(prev => prev.map(p => p.id === id ? { ...p, base64: null, videoPath: null, status: 'pending' } : p))
+            setFramePairs(prev => prev.map(p => p.id === id ? {
+              ...p,
+              // 미디어 자체
+              base64: null, video: null, videoPath: null, videoSaveId: null,
+              // recovery 식별자 — reload 시 in-flight 로 안 잡히도록 둘 다 null
+              generationId: null, mediaId: null,
+              // 상태/에러 — pending 으로 되돌리고 stale error 제거
+              status: 'pending', error: null, errorKind: null,
+              // timing / 메타 — history 모달에 stale 값 표시 안 되도록
+              generatingStartedAt: null, generatingEndedAt: null,
+              seed: null, generatedAt: null, model: null, duration: null,
+            } : p))
             if (fp?.ownerSceneId) {
               scenesHook.updateScene(fp.ownerSceneId, { videoI2V: null, videoI2VPath: null, videoI2VDuration: null })
             }
