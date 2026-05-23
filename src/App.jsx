@@ -125,7 +125,12 @@ function App() {
   }
 
   // Hooks
-  const flowAPI = useFlowAPI()
+  const handleAuthError = useCallback(() => {
+    setAuthReady(false)
+    toast.error(t('status.authErrorStopped') || 'Auth expired — please re-login to Flow', TIMING.AUTH_ERROR_TOAST)
+  }, [t])
+
+  const flowAPI = useFlowAPI({ onAuthError: handleAuthError })
   const scenesHook = useScenes()
   const automation = useAutomation(
     flowAPI,

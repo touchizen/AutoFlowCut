@@ -14,8 +14,9 @@ import {
   collectGeneration as collectGenerationImpl,
   clearGenerations as clearGenerationsImpl
 } from '../utils/flowDOMClient'
+import { createAuthRetryWrapper } from '../utils/withAuthRetry'
 
-export function useFlowAPI() {
+export function useFlowAPI({ onAuthError } = {}) {
   const [accessToken, setAccessToken] = useState(null)
   const [tokenExpiry, setTokenExpiry] = useState(null)
   const [projectId, setProjectId] = useState(null)
@@ -84,6 +85,17 @@ export function useFlowAPI() {
 
     return null
   }, [accessToken, tokenExpiry])
+
+  // Build the withAuthRetry wrapper once per hook instance.
+  // useRef prevents re-creation on every render (which would lose single-flight state).
+  const withAuthRetryRef = useRef(null)
+  if (!withAuthRetryRef.current) {
+    withAuthRetryRef.current = createAuthRetryWrapper({
+      getAccessToken,
+      onAuthError,
+    })
+  }
+  const withAuthRetry = withAuthRetryRef.current
 
   /**
    * 이미지 생성 (DOM 자동화 + CDP 네트워크 캡처)
@@ -198,17 +210,15 @@ export function useFlowAPI() {
    * @returns {{ success, statuses: [{ status, mediaId?, error?, progress? }] }}
    */
   const checkVideoStatus = useCallback(async (generationIds) => {
-    const token = await getAccessToken()
-    if (!token) return { success: false, error: 'No access token' }
-
-    try {
-      return await window.electronAPI.checkVideoStatus({
-        token, generationIds, projectId
-      })
-    } catch (error) {
-      return { success: false, error: error.message }
-    }
-  }, [getAccessToken, projectId])
+    return withAuthRetry('checkVideoStatus', async (token) => {
+      if (!token) return { success: false, error: 'No access token' }
+      try {
+        return await window.electronAPI.checkVideoStatus({ token, generationIds, projectId })
+      } catch (error) {
+        return { success: false, error: error.message }
+      }
+    })
+  }, [projectId, withAuthRetry])
 
   /**
    * 비디오 업스케일 (1080p/4K) 제출
