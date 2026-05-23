@@ -861,6 +861,7 @@ export default function FrameToVideoPanel({
           className="btn-add-row"
           onClick={addRow}
           disabled={disabled}
+          title={t('frameToVideo.addRowHint')}
         >
           {t('frameToVideo.addRow')}
         </button>

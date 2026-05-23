@@ -68,7 +68,8 @@ export default {
     videoPromptPlaceholder: 'Video tab prompt...',
     customPromptPlaceholder: 'Type your own prompt...',
     autoBatch: '⚡ Auto Batch',
-    autoBatchHint: 'Auto-create frame pairs from all available image scenes',
+    autoBatchHint: 'Auto-create F→V rows for every scene with a generated image (start=this scene, end=next scene). One click vs. clicking Add Row N times.',
+    addRowHint: 'Add one F→V row. If all scenes are already owned, a new scene will be created too.',
     clickToDetail: 'Click to view details',
   },
 

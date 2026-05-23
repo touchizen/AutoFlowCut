@@ -68,7 +68,8 @@ export default {
     videoPromptPlaceholder: '비디오 탭 프롬프트...',
     customPromptPlaceholder: '직접 프롬프트를 입력하세요...',
     autoBatch: '⚡ 전체 배치',
-    autoBatchHint: '이미지가 있는 모든 씬을 프레임 페어로 자동 배치',
+    autoBatchHint: '이미지가 생성된 모든 씬에 F→V 행을 한 번에 자동 추가 (시작=해당 씬, 끝=다음 씬). Add Row 를 여러 번 누르는 대신 한 클릭으로 N행 생성.',
+    addRowHint: 'F→V 행 1개 추가. 모든 씬이 이미 owned 면 새 씬도 같이 생성됨.',
     clickToDetail: '클릭하여 상세 보기',
   },
 
