@@ -136,9 +136,10 @@ export function useFlowAPI({ onAuthError } = {}) {
 
   // 비동기 결과 수집 (완료 후 이미지 파싱)
   const collectGeneration = useCallback(async (generationId) => {
-    const token = await getAccessToken()
-    return collectGenerationImpl(generationId, token)
-  }, [getAccessToken])
+    return withAuthRetry('collectGeneration', async (token) => {
+      return collectGenerationImpl(generationId, token)
+    })
+  }, [withAuthRetry])
 
   // 비동기 생성 일괄 정리
   const clearGenerations = useCallback(async () => {
