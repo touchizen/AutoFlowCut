@@ -569,8 +569,10 @@ function App() {
         ))
         if (newStatus === 'complete' && result?.base64) {
           const fp = framePairs.find(p => p.id === id)
-          if (fp?.startSceneId && !fp.startSceneId.startsWith('gallery::')) {
-            scenesHook.updateScene(fp.startSceneId, {
+          // ownerSceneId is the canonical row-to-scene binding. Gallery-rooted
+          // rows have ownerSceneId=null and are skipped by the truthy guard.
+          if (fp?.ownerSceneId) {
+            scenesHook.updateScene(fp.ownerSceneId, {
               videoI2V: result.base64,
               videoI2VPath: result.videoPath || null,
               ...(result?.duration ? { videoI2VDuration: result.duration } : {}),
@@ -898,12 +900,14 @@ function App() {
                 } : p
               )
 
-              // ── I2V 완료 → startSceneId로 씬에 videoI2V 동기화 ──
+              // ── I2V 완료 → ownerSceneId로 씬에 videoI2V 동기화 ──
               // prev를 사용해 stale closure 방지
               if (newStatus === 'complete' && result?.base64) {
                 const fp = prev.find(p => p.id === id)
-                if (fp?.startSceneId && !fp.startSceneId.startsWith('gallery::')) {
-                  scenesHook.updateScene(fp.startSceneId, {
+                // ownerSceneId is the canonical row-to-scene binding. Gallery-rooted
+                // rows have ownerSceneId=null and are skipped by the truthy guard.
+                if (fp?.ownerSceneId) {
+                  scenesHook.updateScene(fp.ownerSceneId, {
                     videoI2V: result.base64,
                     videoI2VPath: result.videoPath || null,
                     ...(result?.duration ? { videoI2VDuration: result.duration } : {}),
@@ -913,8 +917,8 @@ function App() {
               // 새 generation 제출 — scene-level derived 비디오 메타도 클리어.
               if (newStatus === 'generating' && result && 'videoPath' in result) {
                 const fp = prev.find(p => p.id === id)
-                if (fp?.startSceneId && !fp.startSceneId.startsWith('gallery::')) {
-                  scenesHook.updateScene(fp.startSceneId, {
+                if (fp?.ownerSceneId) {
+                  scenesHook.updateScene(fp.ownerSceneId, {
                     videoI2V: null,
                     videoI2VPath: null,
                     videoI2VDuration: null,
@@ -1535,10 +1539,12 @@ function App() {
                   ? { ...p, video: patch.video, base64: patch.video, videoPath: patch.videoPath, ...metaPatch }
                   : p
               ))
-              // 매칭 image scene의 videoI2V 동기화 — startSceneId 기준
+              // 매칭 image scene의 videoI2V 동기화 — ownerSceneId 기준
               const fp = framePairs.find(p => p.id === videoId)
-              if (fp?.startSceneId && !fp.startSceneId.startsWith('gallery::')) {
-                scenesHook.updateScene(fp.startSceneId, {
+              // ownerSceneId is the canonical row-to-scene binding. Gallery-rooted
+              // rows have ownerSceneId=null and are skipped by the truthy guard.
+              if (fp?.ownerSceneId) {
+                scenesHook.updateScene(fp.ownerSceneId, {
                   ...(patch.video ? { videoI2V: patch.video } : {}),
                   videoI2VPath: patch.videoPath || null,
                 })
@@ -1557,12 +1563,16 @@ function App() {
             } else if (videoId.startsWith('i2v_')) {
               // synthetic id — scene 에는 비디오 데이터/path 만 sync (이미지 메타 슬롯 보호).
               // video 메타는 source-of-truth 인 fp_X 에만 반영.
-              const sceneId = `scene_${videoId.replace('i2v_', '')}`
-              scenesHook.updateScene(sceneId, {
-                ...(patch.video ? { videoI2V: patch.video } : {}),
-                videoI2VPath: patch.videoPath || null,
-              })
+              // NOTE: i2v_N derives from fp.id (sequential counter), NOT from scene number,
+              // so `scene_N` string-parse is wrong. Route via framePair's ownerSceneId instead.
               const fpId = `fp_${videoId.replace('i2v_', '')}`
+              const fpForI2v = framePairs.find(p => p.id === fpId)
+              if (fpForI2v?.ownerSceneId) {
+                scenesHook.updateScene(fpForI2v.ownerSceneId, {
+                  ...(patch.video ? { videoI2V: patch.video } : {}),
+                  videoI2VPath: patch.videoPath || null,
+                })
+              }
               setFramePairs(prev => prev.map(p =>
                 p.id === fpId ? { ...p, ...metaPatch } : p
               ))
