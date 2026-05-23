@@ -190,17 +190,18 @@ export function useFlowAPI({ onAuthError } = {}) {
    * @returns {{ success, generationId }} 비동기 operationId
    */
   const generateVideoT2V = useCallback(async (prompt, model, aspectRatio, duration, videoBatchCount, seed = null) => {
-    const token = await getAccessToken()
-    if (!token) return { success: false, error: 'No access token' }
+    return withAuthRetry('generateVideoT2V', async (token) => {
+      if (!token) return { success: false, error: 'No access token' }
 
-    try {
-      return await window.electronAPI.generateVideoT2V({
-        token, prompt, projectId, model, aspectRatio, duration, videoBatchCount, seed
-      })
-    } catch (error) {
-      return { success: false, error: error.message }
-    }
-  }, [getAccessToken, projectId])
+      try {
+        return await window.electronAPI.generateVideoT2V({
+          token, prompt, projectId, model, aspectRatio, duration, videoBatchCount, seed
+        })
+      } catch (error) {
+        return { success: false, error: error.message }
+      }
+    })
+  }, [projectId, withAuthRetry])
 
   /**
    * Image to Video (Frame to Video) 생성 요청
