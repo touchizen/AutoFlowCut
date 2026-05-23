@@ -34,7 +34,9 @@ describe('generateSRT', () => {
       expect(srt).toContain('Second subtitle')
     })
 
-    it('sorts scenes by ID number', () => {
+    it('preserves scenes array order (stable-ID model: array order = timeline order)', () => {
+      // 사용자가 moveScene 으로 순서를 바꿔도 stable ID는 안 바뀜.
+      // SRT 는 array 순서대로 timing을 누적해야 CapCut export (array 순서 기반)와 일치.
       const project = {
         scenes: [
           { id: 'scene_3', subtitle_ko: 'Third', image_duration: 2 },
@@ -47,10 +49,17 @@ describe('generateSRT', () => {
       const srt = generateSRT(project, 'ko')
       const lines = srt.split('\n')
 
-      // First subtitle entry should be "First"
-      const firstSubIdx = lines.indexOf('First')
-      const thirdSubIdx = lines.indexOf('Third')
-      expect(firstSubIdx).toBeLessThan(thirdSubIdx)
+      // Array 순서: Third → First → Second 가 SRT 순서가 되어야 함
+      const thirdIdx = lines.indexOf('Third')
+      const firstIdx = lines.indexOf('First')
+      const secondIdx = lines.indexOf('Second')
+      expect(thirdIdx).toBeLessThan(firstIdx)
+      expect(firstIdx).toBeLessThan(secondIdx)
+
+      // Timing 도 누적이 0→2→4→6 으로 array 순 기준
+      expect(srt).toContain('00:00:00,000 --> 00:00:02,000')  // Third
+      expect(srt).toContain('00:00:02,000 --> 00:00:04,000')  // First
+      expect(srt).toContain('00:00:04,000 --> 00:00:06,000')  // Second
     })
   })
 

@@ -1436,7 +1436,12 @@ function App() {
               })
             }}
             onShowDetail={(scene) => setSelectedScene(scene)}
-            onClearMedia={(id) => scenesHook.updateScene(id, { image: null, imagePath: null, filePath: null, data: null, status: 'pending' })}
+            onClearMedia={(id) => scenesHook.updateScene(id, {
+              // 이미지 미디어 전체 정리 — mediaId 남기면 isSceneEmpty 가 scene을 non-empty 로
+              // 판정해 trim 안 됨. derived 메타도 같이 비워야 history/재생성 경로가 stale 메타로 흐트러지지 않음.
+              image: null, imagePath: null, filePath: null, data: null, status: 'pending',
+              mediaId: null, seed: null, generatedAt: null, model: null,
+            })}
           />
         )}
         {activeTab === 'video-text' && (
@@ -1453,12 +1458,25 @@ function App() {
               // Step 3: videoScenesHook 내부에서 scenes.videoT2VPrompt 로 라우팅
               videoScenesHook.updateVideoScene(id, { prompt: newPrompt })
             }}
-            onClearMedia={(id) => videoScenesHook.updateVideoScene(id, { video: null, status: 'pending' })}
+            onClearMedia={(id) => videoScenesHook.updateVideoScene(id, {
+              // T2V 비디오 전체 정리 — videoPath / mediaId 까지 비워야 sceneTrim/SceneList 가
+              // stale 비디오 path 를 더 이상 잡지 않음. FIELD_MAP 으로 scene.videoT2V* 로 매핑됨.
+              video: null, videoPath: null, mediaId: null, status: 'pending',
+            })}
             disabled={anyRunning}
           />
         )}
         {activeTab === 'frame-to-video' && (
-          <ResultsTable items={framePairs} mediaType="frame-pair" aspectRatio={settings.aspectRatio} onShowDetail={(item) => setSelectedVideo(item)} onVideoRetry={handleVideoRetry} onClearMedia={(id) => setFramePairs(prev => prev.map(fp => fp.id === id ? { ...fp, base64: null, videoPath: null, status: 'pending' } : fp))} />
+          <ResultsTable items={framePairs} mediaType="frame-pair" aspectRatio={settings.aspectRatio} onShowDetail={(item) => setSelectedVideo(item)} onVideoRetry={handleVideoRetry} onClearMedia={(id) => {
+            // FramePair clear — 추가로 owner scene 의 derived videoI2V* 도 같이 정리.
+            // mediaSync 가 framePair → scene 으로 흘려보낸 path/base64 가 남아 있으면
+            // SceneList/sceneTrim 이 stale 비디오를 계속 잡음.
+            const fp = framePairs.find(f => f.id === id)
+            setFramePairs(prev => prev.map(p => p.id === id ? { ...p, base64: null, videoPath: null, status: 'pending' } : p))
+            if (fp?.ownerSceneId) {
+              scenesHook.updateScene(fp.ownerSceneId, { videoI2V: null, videoI2VPath: null, videoI2VDuration: null })
+            }
+          }} />
         )}
         {activeTab === 'list' && (
           <ResultsTable
@@ -1484,7 +1502,12 @@ function App() {
               })
             }}
             onShowDetail={(scene) => setSelectedScene(scene)}
-            onClearMedia={(id) => scenesHook.updateScene(id, { image: null, imagePath: null, filePath: null, data: null, status: 'pending' })}
+            onClearMedia={(id) => scenesHook.updateScene(id, {
+              // 이미지 미디어 전체 정리 — mediaId 남기면 isSceneEmpty 가 scene을 non-empty 로
+              // 판정해 trim 안 됨. derived 메타도 같이 비워야 history/재생성 경로가 stale 메타로 흐트러지지 않음.
+              image: null, imagePath: null, filePath: null, data: null, status: 'pending',
+              mediaId: null, seed: null, generatedAt: null, model: null,
+            })}
           />
         )}
       </div>

@@ -46,14 +46,11 @@ export function generateSRT(project, lang = 'ko') {
   let index = 1;
   let currentTimeMs = 0;
 
-  // 씬 정렬
-  const sortedScenes = [...scenes].sort((a, b) => {
-    const aNum = parseInt(String(a.id).replace('scene_', ''));
-    const bNum = parseInt(String(b.id).replace('scene_', ''));
-    return aNum - bNum;
-  });
-
-  for (const scene of sortedScenes) {
+  // 배열 순서 그대로 사용 — stable-ID 모델에서는 scene.id 가 위치를 반영하지 않는다.
+  // 사용자가 moveScene 으로 [scene_2, scene_3, scene_1] 순서로 바꿔도 SRT 가 ID 정렬
+  // 하면 자막 타이밍이 시각 순서와 어긋남 (CapCut export 는 array 순서 사용 → 불일치).
+  // scenes 배열 순서 = 타임라인 순서.
+  for (const scene of scenes) {
     const subtitle = lang === 'ko' ? scene.subtitle_ko : scene.subtitle_en;
 
     // 자막이 없으면 스킵
