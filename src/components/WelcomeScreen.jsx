@@ -33,10 +33,12 @@ export default function WelcomeScreen({ getAccessToken, onReady }) {
         onReady?.()
       }
     }
-    window.electronAPI?.onFlowStatus?.(handleFlowStatus)
+    // preload 가 반환하는 unsubscribe 를 cleanup 에서 호출 — listener leak 방지.
+    const off = window.electronAPI?.onFlowStatus?.(handleFlowStatus)
 
     // cleanup
     return () => {
+      off?.()
       if (pollingRef.current) {
         clearInterval(pollingRef.current)
       }

@@ -116,8 +116,12 @@ export default function Header({
         stopPolling()
       }
     }
-    window.electronAPI?.onFlowStatus?.(handleFlowStatus)
-    return () => stopPolling()
+    // preload 가 반환하는 unsubscribe 를 cleanup 에서 호출 — listener leak 방지.
+    const off = window.electronAPI?.onFlowStatus?.(handleFlowStatus)
+    return () => {
+      off?.()
+      stopPolling()
+    }
   }, [])
   
   // authReady prop에만 의존 — 독립적인 checkAuth 제거

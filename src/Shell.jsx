@@ -31,15 +31,13 @@ function ShellContent() {
   const shellRef = useRef(null)
 
   useEffect(() => {
-    if (window.electronAPI?.onFlowStatus) {
-      window.electronAPI.onFlowStatus((data) => setFlowStatus(data))
-    }
-    if (window.electronAPI?.onLayoutChanged) {
-      window.electronAPI.onLayoutChanged(({ mode, splitRatio: ratio }) => {
-        setLayoutMode(mode)
-        setSplitRatio(ratio)
-      })
-    }
+    // IPC listener leak 방지: preload 가 반환하는 unsubscribe 를 cleanup 에서 호출.
+    // 미호출 시 HMR / 재마운트마다 listener 누적 → MaxListenersExceededWarning.
+    const offFlowStatus = window.electronAPI?.onFlowStatus?.((data) => setFlowStatus(data))
+    const offLayoutChanged = window.electronAPI?.onLayoutChanged?.(({ mode, splitRatio: ratio }) => {
+      setLayoutMode(mode)
+      setSplitRatio(ratio)
+    })
     // 저장된 레이아웃 로드
     const saved = localStorage.getItem('layoutSettings')
     if (saved) {
@@ -55,6 +53,10 @@ function ShellContent() {
     } else {
       // 저장된 설정 없으면 기본값 적용
       window.electronAPI?.setLayout?.({ mode: DEFAULT_LAYOUT, ratio: DEFAULT_RATIO })
+    }
+    return () => {
+      offFlowStatus?.()
+      offLayoutChanged?.()
     }
   }, [])
 

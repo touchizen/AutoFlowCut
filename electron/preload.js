@@ -5,13 +5,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openExternal: (url) => ipcRenderer.invoke('app:open-external', { url }),
   showInFolder: (filePath) => ipcRenderer.invoke('app:show-in-folder', { filePath }),
   notifyOS: (payload) => ipcRenderer.invoke('notify:os', payload),
-  onFlowStatus: (callback) => ipcRenderer.on('flow-status', (_, data) => callback(data)),
+  onFlowStatus: (callback) => {
+    // 반환된 unsubscribe 를 useEffect cleanup 에서 호출해야 listener leak 안 됨.
+    // 미반환 시 HMR / 재마운트 때마다 listener 누적 → MaxListenersExceededWarning.
+    const handler = (_, data) => callback(data)
+    ipcRenderer.on('flow-status', handler)
+    return () => ipcRenderer.removeListener('flow-status', handler)
+  },
 
   // Layout
   setLayout: (params) => ipcRenderer.invoke('app:set-layout', params),
   updateSplit: (params) => ipcRenderer.invoke('app:update-split', params),
   getLayout: () => ipcRenderer.invoke('app:get-layout'),
-  onLayoutChanged: (callback) => ipcRenderer.on('layout-changed', (_, data) => callback(data)),
+  onLayoutChanged: (callback) => {
+    const handler = (_, data) => callback(data)
+    ipcRenderer.on('layout-changed', handler)
+    return () => ipcRenderer.removeListener('layout-changed', handler)
+  },
   setModalVisible: (params) => ipcRenderer.invoke('app:set-modal-visible', params),
 
   // Native menu (File → New Project / Recent Projects)
