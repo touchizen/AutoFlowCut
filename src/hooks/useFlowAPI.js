@@ -149,23 +149,24 @@ export function useFlowAPI({ onAuthError } = {}) {
    * 레퍼런스 이미지 업로드 (IPC를 통해 main process에서 fetch)
    */
   const uploadReference = useCallback(async (base64Data, category) => {
-    console.log('[FlowAPI] uploadReference called, base64Len:', base64Data?.length, 'category:', category)
-    const token = await getAccessToken()
-    if (!token) {
-      console.error('[FlowAPI] uploadReference: No access token — aborting upload')
-      return { success: false, error: 'No access token' }
-    }
-    console.log('[FlowAPI] uploadReference: token OK, projectId:', projectId, '→ calling IPC...')
+    return withAuthRetry('uploadReference', async (token) => {
+      console.log('[FlowAPI] uploadReference called, base64Len:', base64Data?.length, 'category:', category)
+      if (!token) {
+        console.error('[FlowAPI] uploadReference: No access token — aborting upload')
+        return { success: false, error: 'No access token' }
+      }
+      console.log('[FlowAPI] uploadReference: token OK, projectId:', projectId, '→ calling IPC...')
 
-    try {
-      const result = await window.electronAPI.uploadReference({ token, base64: base64Data, projectId })
-      console.log('[FlowAPI] uploadReference IPC result:', result)
-      return result
-    } catch (error) {
-      console.error('[FlowAPI] uploadReference IPC error:', error.message)
-      return { success: false, error: error.message }
-    }
-  }, [getAccessToken, projectId])
+      try {
+        const result = await window.electronAPI.uploadReference({ token, base64: base64Data, projectId })
+        console.log('[FlowAPI] uploadReference IPC result:', result)
+        return result
+      } catch (error) {
+        console.error('[FlowAPI] uploadReference IPC error:', error.message)
+        return { success: false, error: error.message }
+      }
+    })
+  }, [projectId, withAuthRetry])
 
   /**
    * mediaId로 미디어 fetch (base64 반환)
