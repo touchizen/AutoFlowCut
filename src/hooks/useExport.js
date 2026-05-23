@@ -170,6 +170,9 @@ export function useExport({
             .map(p => ({
               id: p.id,
               video_path: p.videoPath || p.base64,
+              // scene_id = canonical binding (which scene this video belongs to in the timeline).
+              // from_scene/to_scene = informational (which images bookend the motion).
+              scene_id: p.ownerSceneId || null,
               from_scene: p.startSceneId || null,
               to_scene: p.endSceneId || null,
               prompt: p.prompt || '',
