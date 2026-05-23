@@ -33,15 +33,32 @@ const AUTH_FAILED_MESSAGE = 'Auth expired — please re-login to Flow'
  * @returns {(label: string, fn: (token: string) => Promise<any>) => Promise<any>}
  */
 export function createAuthRetryWrapper({ getAccessToken, onAuthError }) {
+  // Single-flight: if a refresh is already in flight, concurrent callers
+  // await the same promise instead of each triggering their own refresh.
+  let inFlightRefresh = null
+
+  async function refreshOnce() {
+    if (inFlightRefresh) return inFlightRefresh
+    inFlightRefresh = (async () => {
+      try {
+        return await getAccessToken(true)
+      } finally {
+        // Clear so a future 401 (after this refresh resolves) can trigger a new refresh.
+        inFlightRefresh = null
+      }
+    })()
+    return inFlightRefresh
+  }
+
   return async function withAuthRetry(label, fn) {
     const token = await getAccessToken()
     const result = await fn(token)
 
     if (!isAuthError(result)) return result
 
-    // First 401 → try silent refresh once
+    // First 401 → try silent refresh once (single-flight across concurrent callers)
     console.warn(`[FlowAPI] ${label}: 401 — refreshing token (1-time retry)`)
-    const newToken = await getAccessToken(true)
+    const newToken = await refreshOnce()
     if (!newToken) {
       onAuthError?.()
       return { success: false, authFailed: true, error: AUTH_FAILED_MESSAGE }
