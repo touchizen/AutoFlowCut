@@ -150,8 +150,9 @@ export function useFlowAPI({ onAuthError } = {}) {
    * 레퍼런스 이미지 업로드 (IPC를 통해 main process에서 fetch)
    */
   const uploadReference = useCallback(async (base64Data, category) => {
+    // Entry log outside the wrapper so it fires once per user call, not twice on 401 retry.
+    console.log('[FlowAPI] uploadReference called, base64Len:', base64Data?.length, 'category:', category)
     return withAuthRetry('uploadReference', async (token) => {
-      console.log('[FlowAPI] uploadReference called, base64Len:', base64Data?.length, 'category:', category)
       if (!token) {
         console.error('[FlowAPI] uploadReference: No access token — aborting upload')
         return { success: false, error: 'No access token' }
