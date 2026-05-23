@@ -415,7 +415,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
           console.warn(`[VideoAutomation] ❌ Submit authFailed: token dead, stopping batch`)
           authStopped = true
           setStatus('error')
-          setStatusMessage(`🔐 ${t('videoAutomation.authErrorStop') || 'Auth expired — please re-login to Flow'}`)
+          setStatusMessage(`🔐 ${t('toast.authErrorStop') || 'Auth expired — please re-login to Flow'}`)
           break
         }
         onItemUpdate?.(item.id, 'error', { error: genResult.error })
@@ -494,7 +494,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
         pending.clear()
         authStopped = true
         setStatus('error')
-        setStatusMessage(`🔐 ${t('videoAutomation.authErrorStop') || 'Auth expired — please re-login to Flow'}`)
+        setStatusMessage(`🔐 ${t('toast.authErrorStop') || 'Auth expired — please re-login to Flow'}`)
         break
       }
       // Top-level fail (예: { success: false, error: "RESOURCE_EXHAUSTED..." }) — quota 검사 후 break.
