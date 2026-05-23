@@ -246,17 +246,18 @@ export function useFlowAPI({ onAuthError } = {}) {
    * @returns {{ success, resultMediaName }}
    */
   const upscaleVideo = useCallback(async (mediaId, resolution, aspectRatio) => {
-    const token = await getAccessToken()
-    if (!token) return { success: false, error: 'No access token' }
+    return withAuthRetry('upscaleVideo', async (token) => {
+      if (!token) return { success: false, error: 'No access token' }
 
-    try {
-      return await window.electronAPI.upscaleVideo({
-        token, mediaId, projectId, resolution, aspectRatio
-      })
-    } catch (error) {
-      return { success: false, error: error.message }
-    }
-  }, [getAccessToken, projectId])
+      try {
+        return await window.electronAPI.upscaleVideo({
+          token, mediaId, projectId, resolution, aspectRatio
+        })
+      } catch (error) {
+        return { success: false, error: error.message }
+      }
+    })
+  }, [projectId, withAuthRetry])
 
   /**
    * 이미지 업스케일 (2K/4K) — 생성된 이미지를 고해상도로 변환
