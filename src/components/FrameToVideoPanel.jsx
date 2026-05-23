@@ -513,13 +513,16 @@ export default function FrameToVideoPanel({
 
   // 새로운 이미지 씬이 생기면 자동으로 프레임 페어 추가 (unselected)
   // strict-mode 이중 실행에도 안전하도록 함수형 setter + 중복 ID 가드 사용
-  const prevAvailableCountRef = useRef(availableScenes.length)
   useEffect(() => {
     onUpdate(prev => {
       // Dedup by ownerSceneId (immutable row-to-scene binding) not startSceneId
       // (mutable input field). Without this, a row whose start image was changed
       // would no longer count as "owning" its original scene, and auto-add would
       // re-create a duplicate row.
+      //
+      // NOTE: usedOwners is also memoized at component scope for addRow/autoBatch/
+      // button-disabled. Recomputed here from `prev` (functional updater) to avoid
+      // stale closure — render-scope memo could lag a render behind setState batches.
       const usedOwners = new Set(prev.map(p => p.ownerSceneId).filter(Boolean))
       const unusedScenes = availableScenes.filter(s => !usedOwners.has(s.id))
 
@@ -547,7 +550,6 @@ export default function FrameToVideoPanel({
       })
       return [...prev, ...newPairs]
     })
-    prevAvailableCountRef.current = availableScenes.length
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [availableScenes.length]) // 이미지 씬 수가 바뀔 때만
 
