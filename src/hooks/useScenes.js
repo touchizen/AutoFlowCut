@@ -172,9 +172,18 @@ export function useScenes() {
 
   /**
    * 씬 삭제
+   * @param {string} sceneId - 삭제할 씬 ID
+   * @param {Array} [framePairs=[]] - F→V 소유권 배열. 삭제된 씬을 소유한 항목을 제거한 배열을 반환.
+   *   변경 없으면 원본 reference 반환 (caller: `next !== framePairs` 로 setState 스킵 가능)
+   * @returns {Array} 필터링된 framePairs
    */
-  const deleteScene = useCallback((sceneId) => {
+  const deleteScene = useCallback((sceneId, framePairs = []) => {
     setScenes(prev => recalculateTimesArr(prev.filter(s => s.id !== sceneId)))
+    // Cascade: return framePairs without those owning the deleted scene.
+    // Caller (App.jsx) applies via setFramePairs. Same reference returned
+    // when nothing changed — caller can use `next !== framePairs` to skip setState.
+    const filtered = framePairs.filter(fp => fp.ownerSceneId !== sceneId)
+    return filtered.length === framePairs.length ? framePairs : filtered
   }, [])
 
   /**

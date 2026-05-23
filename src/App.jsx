@@ -1215,7 +1215,10 @@ function App() {
               scenes={scenes}
               aspectRatio={settings.aspectRatio}
               onUpdate={scenesHook.updateScene}
-              onDelete={scenesHook.deleteScene}
+              onDelete={(sceneId) => {
+                const nextFramePairs = scenesHook.deleteScene(sceneId, framePairs)
+                if (nextFramePairs !== framePairs) setFramePairs(nextFramePairs)
+              }}
               onAdd={scenesHook.addScene}
               onClearAll={scenesHook.clearScenes}
               defaultDuration={settings.defaultDuration}
