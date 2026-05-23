@@ -38,6 +38,8 @@ export function createAuthRetryWrapper({ getAccessToken, onAuthError }) {
   let inFlightRefresh = null
 
   async function refreshOnce() {
+    // inFlightRefresh is set synchronously below before any await, so concurrent
+    // callers arriving during the in-flight refresh see it non-null and share the promise.
     if (inFlightRefresh) return inFlightRefresh
     inFlightRefresh = (async () => {
       try {

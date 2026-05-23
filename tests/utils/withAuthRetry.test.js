@@ -115,8 +115,10 @@ describe('createAuthRetryWrapper — single-flight refresh', () => {
     const pA = wrapper('A', callA)
     const pB = wrapper('B', callB)
 
-    // Both hit 401, both should be waiting on the single refresh.
-    // Let microtasks settle.
+    // Each wrapper branch needs two microtask yields (getAccessToken + fn) before
+    // reaching refreshOnce(). setTimeout(r, 0) is a macrotask, which fires after
+    // ALL pending microtasks — i.e., both branches are guaranteed to be blocked
+    // on the refresh promise by the time we assert.
     await new Promise((r) => setTimeout(r, 0))
 
     // The refresh must have been requested exactly once (force=true)
@@ -142,7 +144,7 @@ describe('createAuthRetryWrapper — single-flight refresh', () => {
     const getAccessToken = vi.fn()
       .mockResolvedValueOnce('t1')         // initial call A
       .mockResolvedValueOnce('t2')         // refresh #1 (for A)
-      .mockResolvedValueOnce('t2')         // initial call B (uses cache, returns t2)
+      .mockResolvedValueOnce('t2')         // initial call B — mock returns t2 (simulating externally-cached token)
       .mockResolvedValueOnce('t3')         // refresh #2 (for B)
     const onAuthError = vi.fn()
     const wrapper = createAuthRetryWrapper({ getAccessToken, onAuthError })
