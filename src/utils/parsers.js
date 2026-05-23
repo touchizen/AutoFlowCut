@@ -266,59 +266,39 @@ export function mergeTextIntoScenes(existing, text, defaultDuration = DEFAULTS.s
   while (split.length > 0 && split[split.length - 1] === '') split.pop()
   const lines = truncate ? split : split.filter(Boolean)
 
-  // 완전 빈 입력 가드 — fieldName 별로 의미가 다르다.
-  //   - fieldName='prompt': 이미지 워크플로우의 시작점. PromptInput 을 비우면 = "전부 비움"
-  //     → scenes 통째 삭제 (이전 통째 덮어쓰기 동작과 일치, max-length 정책의 회귀 방지).
-  //   - fieldName='videoT2VPrompt' / 'videoI2VPrompt': 보조 트랙. 비디오 탭 입력 비우기 =
-  //     "비디오 prompt 만 클리어, scenes 자체는 보존" — 이미지 데이터까지 같이 날리는 회귀 방지.
+  // 완전 빈 입력 가드 — 해당 필드를 모든 기존 씬에서 클리어.
+  // 씬 자체를 삭제하지 않는다. 완전히 빈 trailing 씬 정리는 useScenes 의
+  // trimTrailingEmptyScenes 에서 별도 처리한다 (max-driver 모델).
   if (lines.length === 0) {
-    if (fieldName === 'prompt') return []
     return existing.map(s => ({ ...s, [fieldName]: '' }))
   }
 
-  // truncateToIncoming 모드: PromptInput 직접 편집
-  //   fieldName='prompt'  : incoming length 가 결정. 짧으면 tail 제거, 길면 새 씬 추가.
-  //   fieldName='videoT2VPrompt'/'videoI2VPrompt' : scenes 자체는 max-length 로 유지하되,
-  //     입력 범위 밖의 비디오 prompt 는 빈 칸으로. 비디오 트랙이 줄어들지 늘어날지가 입력으로 결정.
-  // 새 씬 시간은 누적 (cursor) 으로 계산 — 0~defaultDuration 으로 일괄 박지 않음 (Export 타임라인 보호).
+  // truncateToIncoming 모드: PromptInput 직접 편집 — 모든 fieldName 에 동일한 max-preserve 시맨틱.
+  // max-driver 모델: scenes.length = max(image lines, video lines, SRT blocks).
+  //   - fieldName X 의 lines.length < existing.length → X 를 tail 씬에서 클리어, 씬 자체는 보존.
+  //   - fieldName X 의 lines.length > existing.length → 새 씬 추가 (X 필드만 채움).
+  // 새 씬 시간은 누적 (cursor) 계산 — 0~defaultDuration 일괄 박지 않음 (Export 타임라인 보호).
+  // trailing empty 씬 정리는 useScenes 의 trimTrailingEmptyScenes 에서 별도 처리.
   if (truncate) {
-    if (fieldName === 'prompt') {
-      let cursor = 0
-      return lines.map((line, i) => {
-        if (i < existing.length) {
-          const ex = existing[i]
-          cursor = (typeof ex.endTime === 'number') ? ex.endTime : (cursor + (ex.duration || defaultDuration))
-          return { ...ex, prompt: line }
-        }
-        const startTime = cursor
-        const endTime = cursor + defaultDuration
-        cursor = endTime
-        return {
-          id: `scene_${i + 1}`,
-          startTime, endTime, duration: defaultDuration,
-          prompt: line, videoT2VPrompt: '', videoI2VPrompt: '',
-          subtitle: '', characters: '', scene_tag: '', style_tag: '',
-          status: 'pending', image: null,
-        }
-      })
-    }
-    const maxLenTrunc = Math.max(existing.length, lines.length)
+    const maxLen = Math.max(existing.length, lines.length)
     let cursor = 0
-    return Array.from({ length: maxLenTrunc }, (_, i) => {
-      const ex = existing[i]
-      const line = i < lines.length ? lines[i] : ''
-      if (ex) {
+    return Array.from({ length: maxLen }, (_, i) => {
+      if (i < existing.length) {
+        const ex = existing[i]
         cursor = (typeof ex.endTime === 'number') ? ex.endTime : (cursor + (ex.duration || defaultDuration))
-        return { ...ex, [fieldName]: line }
+        // lines[i] 가 있으면 그 값, 없으면 해당 필드 클리어 (씬 자체는 보존)
+        return { ...ex, [fieldName]: i < lines.length ? lines[i] : '' }
       }
+      // i >= existing.length: 새 씬 — 지정 필드만 채우고 나머지는 빈 칸
       const startTime = cursor
       const endTime = cursor + defaultDuration
       cursor = endTime
       return {
         id: `scene_${i + 1}`,
         startTime, endTime, duration: defaultDuration,
-        prompt: '', videoT2VPrompt: fieldName === 'videoT2VPrompt' ? line : '',
-        videoI2VPrompt: fieldName === 'videoI2VPrompt' ? line : '',
+        prompt: fieldName === 'prompt' ? lines[i] : '',
+        videoT2VPrompt: fieldName === 'videoT2VPrompt' ? lines[i] : '',
+        videoI2VPrompt: fieldName === 'videoI2VPrompt' ? lines[i] : '',
         subtitle: '', characters: '', scene_tag: '', style_tag: '',
         status: 'pending', image: null,
       }

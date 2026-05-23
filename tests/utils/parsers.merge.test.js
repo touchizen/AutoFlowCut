@@ -112,14 +112,23 @@ describe('mergeTextIntoScenes', () => {
     expect(result[0].videoT2VPrompt).toBe('')
   })
 
-  // ─── 빈 입력 가드 (PromptInput 통째 삭제 회귀 방지) ──
-  it('빈 text + fieldName=prompt → scenes 통째 삭제 (이미지 워크플로우 리셋)', () => {
+  // ─── 빈 입력 가드 ──
+  // max-driver 모델: 빈 입력은 해당 필드를 전체 씬에서 클리어.
+  // 씬 자체 삭제는 하지 않는다. trailing 완전 빈 씬 정리는 useScenes 의 trimTrailingEmptyScenes 에서 처리.
+  it('빈 text + fieldName=prompt → 모든 씬의 prompt 클리어, 씬 자체는 보존', () => {
     const existing = [
       { id: 'scene_1', prompt: 'p1', subtitle: 's1', duration: 4 },
       { id: 'scene_2', prompt: 'p2', subtitle: 's2', duration: 5 },
     ]
-    expect(mergeTextIntoScenes(existing, '', 3)).toEqual([])
-    expect(mergeTextIntoScenes(existing, '   \n  ', 3)).toEqual([]) // whitespace only
+    const result1 = mergeTextIntoScenes(existing, '', 3)
+    expect(result1).toHaveLength(2) // 씬 보존
+    expect(result1[0].prompt).toBe('')
+    expect(result1[0].subtitle).toBe('s1') // 다른 필드 보존
+    expect(result1[1].prompt).toBe('')
+
+    const result2 = mergeTextIntoScenes(existing, '   \n  ', 3) // whitespace only
+    expect(result2).toHaveLength(2)
+    expect(result2[0].prompt).toBe('')
   })
 
   it('빈 text + fieldName=videoT2VPrompt → scenes 보존, videoT2VPrompt 만 클리어', () => {
@@ -146,19 +155,27 @@ describe('mergeTextIntoScenes', () => {
   })
 
   // ─── truncateToIncoming (PromptInput 직접 편집) ──
-  it('truncateToIncoming + fieldName=prompt: 3줄 → 2줄로 줄이면 scenes 2개로 줄어듦', () => {
+  // max-driver 모델: 모든 fieldName 에 max-preserve 시맨틱.
+  // prompt 탭에서 줄을 지워도 씬 자체는 보존되고 해당 prompt 만 클리어.
+  // trailing 완전 빈 씬 정리는 useScenes 의 trimTrailingEmptyScenes 에서 처리.
+  it('truncateToIncoming + fieldName=prompt: 3줄 → 2줄로 줄이면 scenes 유지 + 3번째 prompt 클리어', () => {
     const existing = [
       { id: 'scene_1', prompt: 'p1', subtitle: 's1', duration: 4 },
       { id: 'scene_2', prompt: 'p2', subtitle: 's2', duration: 5 },
       { id: 'scene_3', prompt: 'p3', subtitle: 's3', duration: 6 },
     ]
     const result = mergeTextIntoScenes(existing, 'NEW1\nNEW2', 3, { truncateToIncoming: true })
-    expect(result).toHaveLength(2) // 3 → 2
+    // max-preserve: max(3, 2) = 3 — 씬 보존, 범위 밖 prompt 만 클리어
+    expect(result).toHaveLength(3)
     expect(result[0].prompt).toBe('NEW1')
-    expect(result[0].subtitle).toBe('s1') // 머지 — 다른 필드 보존
+    expect(result[0].subtitle).toBe('s1') // 다른 필드 보존
     expect(result[0].duration).toBe(4)
     expect(result[1].prompt).toBe('NEW2')
     expect(result[1].subtitle).toBe('s2')
+    // 3번째 씬: prompt 클리어, subtitle/duration 등 다른 데이터 보존
+    expect(result[2].prompt).toBe('')
+    expect(result[2].subtitle).toBe('s3')
+    expect(result[2].duration).toBe(6)
   })
 
   it('truncateToIncoming + fieldName=prompt: 2줄 → 3줄로 늘리면 scenes 3개', () => {
