@@ -155,6 +155,43 @@ describe('useVideoAutomation — auth failure during polling', () => {
 
     expect(hook.result.current.status).toBe('error')
   })
+
+  it('shows the resolved locale string in statusMessage (not the raw key)', async () => {
+    // Regression guard: previously t('videoAutomation.authErrorStop') resolved
+    // to the raw key string (key doesn't exist) — users saw the literal
+    // 'videoAutomation.authErrorStop' in the status bar instead of the translated message.
+    const generateVideoT2V = vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' })
+    const checkVideoStatus = vi.fn().mockResolvedValue({
+      success: false, authFailed: true, error: 'Auth expired',
+    })
+    const flowAPI = {
+      generateVideoT2V,
+      generateVideoI2V: vi.fn(),
+      checkVideoStatus,
+      upscaleVideo: vi.fn(),
+      fetchMedia: vi.fn(),
+      getAccessToken: vi.fn().mockResolvedValue('token'),
+    }
+    // Realistic translator: returns a translated string for known keys, the key for unknown.
+    const t = (k) => k === 'toast.authErrorStop' ? 'Auth error. Stopping.' : k
+    const hook = renderHook(() => useVideoAutomation(flowAPI, t, vi.fn(), null))
+
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({
+        mode: 't2v',
+        scenes: [{ id: 'vscene_1', prompt: 'test' }],
+        projectName: 'p',
+        saveMode: 'folder',
+      })
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(100) })
+    await act(async () => { await startPromise })
+
+    // Must contain the translated string, NOT contain the bare key
+    expect(hook.result.current.statusMessage).toContain('Auth error. Stopping.')
+    expect(hook.result.current.statusMessage).not.toContain('videoAutomation.authErrorStop')
+  })
 })
 
 describe('useVideoAutomation — auth failure during submit', () => {
