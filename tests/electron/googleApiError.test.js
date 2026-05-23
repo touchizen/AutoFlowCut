@@ -40,4 +40,24 @@ describe('formatGoogleApiError', () => {
   it('알 수 없는 shape → JSON.stringify', () => {
     expect(formatGoogleApiError({ foo: 'bar' })).toContain('foo')
   })
+
+  // 회귀: Google이 code: 401만 보내고 status 필드를 생략하면 isAuthError가 못 잡아
+  // 401 silent refresh가 우회됐다. code 필드를 HTTP 401 형태로 보존하면 renderer 의
+  // isAuthError ('http 401' 매칭) 가 잡아낸다.
+  it('code 401 (status 없음) → "HTTP 401" 프리픽스 보존', () => {
+    const text = formatGoogleApiError({ code: 401, message: 'Request failed' })
+    expect(text).toContain('HTTP 401')
+    expect(text).toContain('Request failed')
+  })
+
+  it('code + message + status 셋 다 있으면 모두 노출', () => {
+    const text = formatGoogleApiError({ code: 401, message: 'bad token', status: 'UNAUTHENTICATED' })
+    expect(text).toContain('HTTP 401')
+    expect(text).toContain('bad token')
+    expect(text).toContain('UNAUTHENTICATED')
+  })
+
+  it('code 만 있으면 "HTTP {code}" 만 반환', () => {
+    expect(formatGoogleApiError({ code: 500 })).toBe('HTTP 500')
+  })
 })

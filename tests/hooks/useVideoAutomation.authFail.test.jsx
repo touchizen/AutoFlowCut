@@ -290,3 +290,106 @@ describe('useVideoAutomation — auth failure during submit', () => {
     expect(hook.result.current.status).toBe('error')
   })
 })
+
+describe('useVideoAutomation — auth failure on i2v (F→V) mode', () => {
+  // Regression guard for the original F→V bug: the auth-retry plumbing must work
+  // for framePairs (i2v) just as for scenes (t2v). The i2v path uses framePairs
+  // and generateVideoI2V — easy to leave un-tested if the suite only covers t2v.
+  it('marks current and remaining framePairs with errorKind:"auth" on submit authFailed', async () => {
+    let callCount = 0
+    const generateVideoI2V = vi.fn().mockImplementation(async () => {
+      callCount++
+      if (callCount === 1) return { success: true, generationId: 'gen-1' }
+      return { success: false, authFailed: true, error: 'Auth expired' }
+    })
+    // Poll loop also needs to break on authFailed since fp_1's generationId enters the queue
+    const checkVideoStatus = vi.fn().mockResolvedValue({
+      success: false, authFailed: true, error: 'Auth expired',
+    })
+
+    const onItemUpdate = vi.fn()
+    const flowAPI = {
+      generateVideoT2V: vi.fn(),
+      generateVideoI2V,
+      checkVideoStatus,
+      upscaleVideo: vi.fn(),
+      fetchMedia: vi.fn(),
+      getAccessToken: vi.fn().mockResolvedValue('token'),
+    }
+    const t = (k) => k
+    const hook = renderHook(() => useVideoAutomation(flowAPI, t, vi.fn(), null))
+
+    // Shape mirrors what useVideoAutomation expects after framePairs filtering (line 260)
+    const framePairs = [
+      { id: 'fp_1', prompt: 'pair 1', startSceneId: 'scene_1', _startMediaId: 'media_1', status: 'pending' },
+      { id: 'fp_2', prompt: 'pair 2', startSceneId: 'scene_2', _startMediaId: 'media_2', status: 'pending' },
+      { id: 'fp_3', prompt: 'pair 3', startSceneId: 'scene_3', _startMediaId: 'media_3', status: 'pending' },
+    ]
+
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({
+        mode: 'i2v',
+        framePairs,
+        projectName: 'p',
+        saveMode: 'folder',
+        onItemUpdate,
+      })
+    })
+
+    // Advance past inter-item submit delay so fp_2 gets submitted and authFails.
+    await act(async () => { await vi.advanceTimersByTimeAsync(8000) })
+    await act(async () => { await startPromise })
+
+    // fp_2 (failing) and fp_3 (remaining) must both be marked with errorKind:'auth'
+    const authErrorCalls = onItemUpdate.mock.calls.filter(
+      ([_id, status, patch]) => status === 'error' && patch?.errorKind === 'auth'
+    )
+    const authErrorIds = authErrorCalls.map(([id]) => id)
+    expect(authErrorIds).toContain('fp_2')
+    expect(authErrorIds).toContain('fp_3')
+    // i2v path was actually invoked (not the t2v path)
+    expect(generateVideoI2V).toHaveBeenCalled()
+  }, 15000)
+
+  it('breaks i2v poll loop immediately when checkVideoStatus returns authFailed', async () => {
+    const generateVideoI2V = vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' })
+    const checkVideoStatus = vi.fn().mockResolvedValue({
+      success: false, authFailed: true, error: 'Auth expired',
+    })
+    const onItemUpdate = vi.fn()
+    const flowAPI = {
+      generateVideoT2V: vi.fn(),
+      generateVideoI2V,
+      checkVideoStatus,
+      upscaleVideo: vi.fn(),
+      fetchMedia: vi.fn(),
+      getAccessToken: vi.fn().mockResolvedValue('token'),
+    }
+    const t = (k) => k
+    const hook = renderHook(() => useVideoAutomation(flowAPI, t, vi.fn(), null))
+
+    const framePairs = [
+      { id: 'fp_1', prompt: 'pair 1', startSceneId: 'scene_1', _startMediaId: 'media_1', status: 'pending' },
+    ]
+
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({
+        mode: 'i2v',
+        framePairs,
+        projectName: 'p',
+        saveMode: 'folder',
+        onItemUpdate,
+      })
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(100) })
+    await act(async () => { await startPromise })
+
+    expect(checkVideoStatus).toHaveBeenCalledTimes(1)
+    const authErrorCall = onItemUpdate.mock.calls.find(
+      ([_id, status, patch]) => status === 'error' && patch?.errorKind === 'auth'
+    )
+    expect(authErrorCall?.[0]).toBe('fp_1')
+  })
+})
