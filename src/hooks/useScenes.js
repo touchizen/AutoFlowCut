@@ -47,18 +47,31 @@ export function useScenes() {
   // ── Stable ID counter ──────────────────────────────────────────────────────
   const nextSceneIdRef = useRef(1)
 
-  // Sync counter to max existing ID + 1 (idempotent; only advances, never resets)
-  const syncCounterFromScenes = (scenesArr) => {
-    if (!scenesArr?.length) return
+  /**
+   * Align counter to match a scenes array.
+   *
+   *   - reset=true  → counter SET to max(IDs)+1 exactly.
+   *     Used on project replacement (direct setScenes(arr)) so opening project B
+   *     after project A with scene_100 doesn't leak scene_101 into project B.
+   *
+   *   - reset=false → counter only ADVANCES if input has a higher max.
+   *     Used on functional setScenes(prev => ...) — incremental edits within
+   *     the current project must preserve monotonicity (never reuse).
+   */
+  const syncCounterFromScenes = (scenesArr, { reset = false } = {}) => {
     let maxId = 0
-    for (const s of scenesArr) {
+    for (const s of scenesArr || []) {
       const m = /^scene_(\d+)$/.exec(s.id || '')
       if (m) {
         const n = parseInt(m[1], 10)
         if (n > maxId) maxId = n
       }
     }
-    if (maxId + 1 > nextSceneIdRef.current) {
+    if (reset) {
+      // Project switch / replacement: rebase counter to this project's max.
+      nextSceneIdRef.current = maxId + 1
+    } else if (maxId + 1 > nextSceneIdRef.current) {
+      // In-session: only advance.
       nextSceneIdRef.current = maxId + 1
     }
   }
@@ -67,6 +80,11 @@ export function useScenes() {
   // ── End stable ID counter ──────────────────────────────────────────────────
 
   const setScenes = useCallback((valueOrFn) => {
+    // Direct array form = wholesale replacement (project load / clearScenes).
+    // Functional form = incremental update (addScene, deleteScene, merges).
+    // Reset counter only on wholesale replacement so counter doesn't leak
+    // across project switches.
+    const isReplacement = typeof valueOrFn !== 'function'
     _setScenes(prev => {
       const next = typeof valueOrFn === 'function' ? valueOrFn(prev) : valueOrFn
       // 동일 reference 반환 시 정규화 스킵 (no-op 최적화)
@@ -76,7 +94,7 @@ export function useScenes() {
         // Then sync counter so it accounts for those fallback IDs and won't collide
         // on next addScene/allocateSceneId call.
         const normalized = next.map(normalizeScene)
-        syncCounterFromScenes(normalized)
+        syncCounterFromScenes(normalized, { reset: isReplacement })
         return normalized
       }
       return next

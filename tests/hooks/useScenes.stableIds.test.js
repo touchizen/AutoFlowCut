@@ -93,4 +93,66 @@ describe('useScenes — stable scene IDs', () => {
     const newSceneId = result.current.scenes.find(s => !['scene_1', 'scene_5'].includes(s.id))?.id
     expect(newSceneId).toBe('scene_6')
   })
+
+  it('counter REBASES on project switch (direct setScenes replacement)', () => {
+    // Regression: previously counter only "advanced". After loading project A
+    // with scene_100, switching to project B (lower max) leaked scene_101
+    // into project B. Direct setScenes(arr) is treated as a project switch.
+    const { result } = renderHook(() => useScenes())
+
+    // Load project A with scene_100
+    act(() => {
+      result.current.setScenes([
+        { id: 'scene_100', duration: 3, startTime: 0, endTime: 3 },
+      ])
+    })
+    // Counter is at 101 now
+
+    // Switch to project B (fresh, max scene_2)
+    act(() => {
+      result.current.setScenes([
+        { id: 'scene_1', duration: 3, startTime: 0, endTime: 3 },
+        { id: 'scene_2', duration: 3, startTime: 3, endTime: 6 },
+      ])
+    })
+
+    // Add scene — should be scene_3, NOT scene_101
+    act(() => { result.current.addScene() })
+    const newSceneId = result.current.scenes.find(s => !['scene_1', 'scene_2'].includes(s.id))?.id
+    expect(newSceneId).toBe('scene_3')
+  })
+
+  it('counter does NOT rebase on functional setScenes (in-session edits preserve monotonicity)', () => {
+    const { result } = renderHook(() => useScenes())
+
+    // Add 3 scenes, delete middle one → counter is at 4
+    act(() => {
+      result.current.addScene()   // scene_1
+      result.current.addScene()   // scene_2
+      result.current.addScene()   // scene_3
+      result.current.deleteScene('scene_2', [])
+    })
+    // scenes = [scene_1, scene_3]
+
+    // Functional update (e.g., updateScene) shouldn't rebase counter to 4
+    act(() => {
+      result.current.setScenes(prev => prev.map(s => ({ ...s, status: 'done' })))
+    })
+
+    // Counter still at 4 → next add is scene_4 (NOT scene_4 collision-checked)
+    act(() => { result.current.addScene() })
+    expect(result.current.scenes.map(s => s.id)).toEqual(['scene_1', 'scene_3', 'scene_4'])
+  })
+
+  it('clearScenes rebases counter to 1 (empty replacement)', () => {
+    const { result } = renderHook(() => useScenes())
+    act(() => {
+      result.current.addScene()  // scene_1
+      result.current.addScene()  // scene_2
+      result.current.clearScenes()
+    })
+    act(() => { result.current.addScene() })
+    // After clear, counter resets — new scene is scene_1, not scene_3
+    expect(result.current.scenes[0].id).toBe('scene_1')
+  })
 })
