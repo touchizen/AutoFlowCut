@@ -210,17 +210,18 @@ export function useFlowAPI({ onAuthError } = {}) {
    * @returns {{ success, generationId }}
    */
   const generateVideoI2V = useCallback(async (prompt, startImageMediaId, endImageMediaId, model, aspectRatio, duration, seed = null) => {
-    const token = await getAccessToken()
-    if (!token) return { success: false, error: 'No access token' }
+    return withAuthRetry('generateVideoI2V', async (token) => {
+      if (!token) return { success: false, error: 'No access token' }
 
-    try {
-      return await window.electronAPI.generateVideoI2V({
-        token, prompt, startImageMediaId, endImageMediaId, projectId, model, aspectRatio, duration, seed
-      })
-    } catch (error) {
-      return { success: false, error: error.message }
-    }
-  }, [getAccessToken, projectId])
+      try {
+        return await window.electronAPI.generateVideoI2V({
+          token, prompt, startImageMediaId, endImageMediaId, projectId, model, aspectRatio, duration, seed
+        })
+      } catch (error) {
+        return { success: false, error: error.message }
+      }
+    })
+  }, [projectId, withAuthRetry])
 
   /**
    * 비디오 생성 상태 폴링
