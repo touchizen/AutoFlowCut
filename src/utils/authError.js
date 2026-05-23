@@ -9,7 +9,7 @@
  */
 export function isAuthError(result) {
   if (!result || result.success) return false
-  const err = (result.error || '').toLowerCase()
+  const err = String(result.error || '').toLowerCase()
   if (err.includes('http 401')) return true
   if (err.includes('unauthenticated')) return true
   if (err.includes('invalid authentication')) return true

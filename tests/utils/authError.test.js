@@ -36,4 +36,10 @@ describe('isAuthError', () => {
     // We require either "HTTP 401" or auth keywords — bare "401" alone is ambiguous
     expect(isAuthError({ success: false, error: 'Generated 401 frames in batch' })).toBe(false)
   })
+
+  it('handles non-string and missing error fields safely', () => {
+    expect(() => isAuthError({ success: false, error: 401 })).not.toThrow()
+    expect(isAuthError({ success: false, error: 401 })).toBe(false)
+    expect(isAuthError({ success: false })).toBe(false)
+  })
 })
