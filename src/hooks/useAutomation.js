@@ -46,6 +46,9 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
   const completedCountRef = useRef(0)
   const errorCountRef = useRef(0)
   const batchStartedAtRef = useRef(null)
+  // Set true when batch stops due to authFailed sentinel — prevents the normal
+  // stopRequestedRef final-status logic from overwriting 'error' with 'stopped'.
+  const authStoppedRef = useRef(false)
 
   // generateImageDOM 은 dead processScene 제거와 함께 호출 사이트가 사라져서 destructuring 에서도 제외.
   // 단일 씬 동기 호출이 필요해지면 flowAPI.generateImageDOM 으로 직접 접근.
@@ -151,6 +154,20 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
           const st = await checkGeneration(item.generationId)
           if (st.completed) {
             const result = await collectGeneration(item.generationId)
+            // Auth failed sentinel — token is dead, stop batch immediately.
+            // onAuthError was already fired by the withAuthRetry wrapper; don't fire again.
+            if (result.authFailed) {
+              console.warn('[Automation] collectGeneration authFailed — stopping batch:', result.error)
+              updateScene(item.scene.id, { status: 'error', error: result.error || 'Auth expired — please re-login to Flow', errorKind: 'auth' })
+              errorCountRef.current++
+              completedCountRef.current++
+              updateProgressMsg(completedCountRef.current)
+              stopRequestedRef.current = true
+              authStoppedRef.current = true
+              setStatus('error')
+              setStatusMessage(result.error || 'Auth expired — please re-login to Flow')
+              continue
+            }
             if (!result.success && isRecaptchaError(result.error)) {
               recaptchaScenes.push(item)
               markRecaptchaError(item.scene)
@@ -348,6 +365,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
 
     stopRequestedRef.current = false
     pausedRef.current = false
+    authStoppedRef.current = false
     completedCountRef.current = 0
 
     // 새 배치 시작: DOM 세션 리셋
@@ -439,6 +457,16 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
             ref.caption = result.caption || ref.caption
             return
           }
+          // Auth failed sentinel — token is dead, stop batch immediately.
+          // onAuthError was already fired by the withAuthRetry wrapper; don't fire again.
+          if (result.authFailed) {
+            console.warn('[Automation] uploadReference authFailed — stopping batch:', result.error)
+            stopRequestedRef.current = true
+            authStoppedRef.current = true
+            setStatus('error')
+            setStatusMessage(result.error || 'Auth expired — please re-login to Flow')
+            return
+          }
           if (result.error?.includes('429') && attempt < MAX_RETRIES) {
             const backoff = (attempt + 1) * 2000 + Math.random() * 1000
             console.warn(`[Automation] Rate limited on ${ref.name}, retry in ${Math.round(backoff)}ms`)
@@ -484,8 +512,16 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
           tryLaunch()
         }, INTERVAL)
       })
+
+      // Auth-failed during upload — status/message already set in uploadOne. Clean up and exit.
+      if (authStoppedRef.current) {
+        setIsRunning(false)
+        setIsPaused(false)
+        setIsStopping(false)
+        return
+      }
     }
-    
+
     // force=true 재생성: done/error 씬을 pending으로 리셋해 UI에 재생성 시작이 보이게 함.
     // 이미지/이미지 경로는 유지 — 새 이미지 도착 전까지 이전 결과를 노출해 사용자가 비교 가능.
     // error/errorKind도 초기화해 stale 메시지 노출 회피.
@@ -529,7 +565,9 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       ? `✅ ${doneCount}  ❌ ${errCount}`
       : `✅ ${doneCount}`
 
-    if (stopRequestedRef.current) {
+    if (authStoppedRef.current) {
+      // Status + message already set at the auth-fail site — do not overwrite.
+    } else if (stopRequestedRef.current) {
       setStatus('stopped')
       setStatusMessage(`${t('status.stopped')} — ${summary}`)
     } else {
