@@ -117,6 +117,14 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     image: '이미지 프롬프트',
     videoT2V: '비디오 T2V',
     videoI2V: '비디오 I2V',
+    // ── Seed 컨트롤 (이미지/비디오 생성 결정성) ──
+    // Seed 는 생성 모델의 "난수 출발점". 같은 prompt + 같은 seed 면 거의 같은 결과 — 일관된
+    // 결과 또는 정확한 재현이 필요할 때 잠금. 비우거나 unlock 하면 매번 새 seed 로 다른 결과.
+    seedTitle: 'Seed (잠그면 같은 prompt 로 같은 결과 재현)',
+    seedRandom: '랜덤',
+    seedDice: '🎲 새 랜덤 seed + 잠금',
+    seedLock: '🔓 잠금 (이 seed 재사용)',
+    seedUnlock: '🔒 잠금 해제 (매번 랜덤)',
   },
   
   // 씬 목록

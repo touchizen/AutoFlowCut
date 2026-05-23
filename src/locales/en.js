@@ -117,6 +117,15 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     image: 'Image prompt',
     videoT2V: 'Video T2V',
     videoI2V: 'Video I2V',
+    // ── Seed controls (deterministic image/video generation) ──
+    // Seed is the model's RNG starting point. Same prompt + same seed produces
+    // (nearly) identical output — lock it for consistent results or exact
+    // reproduction. Leave blank/unlocked for a fresh random seed each time.
+    seedTitle: 'Seed (locked = same prompt yields the same result every time)',
+    seedRandom: 'random',
+    seedDice: '🎲 New random seed + lock',
+    seedLock: '🔓 Lock (reuse this seed)',
+    seedUnlock: '🔒 Unlock (random each time)',
   },
   
   // Scene list
