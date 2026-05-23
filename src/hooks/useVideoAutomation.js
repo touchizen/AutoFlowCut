@@ -15,6 +15,7 @@ import { fileSystemAPI } from './useFileSystem'
 import { toast } from '../components/Toast'
 import { retryVideoDownload } from '../services/videoRecovery'
 import { pickVideoMetadata, buildVideoMetaPatch } from '../utils/videoMetadata'
+import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 
 // 유틸: 랜덤 대기
 const randomSleep = (min, max) =>
@@ -31,6 +32,17 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
 
   const stopRequestedRef = useRef(false)
   const pausedRef = useRef(false)
+  // 이번 batch 가 quota 로 멈췄는지 — start() 마다 reset. isQuotaBlocked() race 회피
+  // (사용자가 모달을 빨리 dismiss 하면 전역 block flag 가 false 로 돌아가도 이 ref 는 유지).
+  const quotaStoppedRef = useRef(false)
+
+  // quota stop 공통 모듈 위임 — queue clear 는 useGenerationQueue 가 직접 subscribe 함.
+  const _maybeTriggerQuotaStop = (err) => {
+    if (!isQuotaExhaustedError(err)) return false
+    quotaStoppedRef.current = true
+    emitQuotaStop({ stopRequestedRef, scope: 'VideoAutomation' })
+    return true
+  }
 
   const { generateVideoT2V, generateVideoI2V, checkVideoStatus, upscaleVideo, fetchMedia, getAccessToken } = flowAPI
 
@@ -209,6 +221,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
     }
 
     stopRequestedRef.current = false
+    quotaStoppedRef.current = false
     pausedRef.current = false
     setIsRunning(true)
     setIsPaused(false)
@@ -388,6 +401,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
         onItemUpdate?.(item.id, 'error', { error: genResult.error })
         videoErrorCount++
         console.warn(`[VideoAutomation] ❌ Submit failed ${i + 1}/${total}:`, genResult.error)
+        if (_maybeTriggerQuotaStop(genResult.error)) break
       }
 
       // 다음 제출 전 랜덤 대기 (마지막 아이템 제외)
@@ -399,10 +413,18 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
     }
 
     if (submissions.length === 0) {
-      // 모든 제출 실패 + in-flight 도 없음
+      // 모든 제출 실패 + in-flight 도 없음 — quota stop 인지 일반 실패인지 구분.
+      // quota 면 사용자 입장에서 "완료" 가 아니라 "중단" 으로 표시돼야 다음 행동이 명확.
       setIsRunning(false)
-      setStatus('done')
-      setStatusMessage(`❌ ${t('videoAutomation.allFailed') || 'All submissions failed'}`)
+      if (quotaStoppedRef.current) {
+        // local ref — 모달 dismiss 와 무관하게 이번 batch 의 stop 사유를 정확히 판별.
+        // 전역 isQuotaBlocked() 보면 사용자가 모달을 1초 안에 닫는 경우 race 로 'done' 표시되는 회귀.
+        setStatus('stopped')
+        setStatusMessage(`⛔ ${t('videoAutomation.quotaStopped') || 'Flow generation limit reached — stopped'}`)
+      } else {
+        setStatus('done')
+        setStatusMessage(`❌ ${t('videoAutomation.allFailed') || 'All submissions failed'}`)
+      }
       return
     }
 
@@ -435,6 +457,11 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
       const pendingEntries = Array.from(pending.entries()) // [[itemId, { generationId }], ...]
       const genIds = pendingEntries.map(([_, s]) => s.generationId)
       const result = await checkVideoStatus(genIds)
+
+      // Top-level fail (예: { success: false, error: "RESOURCE_EXHAUSTED..." }) — quota 검사 후 break.
+      // statuses[] 내부 'failed' 만 보는 기존 코드는 batch 전체가 server-side 에러로 떨어진
+      // 경우를 못 잡아 max polls 까지 무한정 polling 후 timeout 처리.
+      if (!result.success && _maybeTriggerQuotaStop(result.error)) break
 
       if (result.success && result.statuses) {
         // statuses 배열은 genIds 순서와 동일 → 인덱스로 매칭
@@ -503,13 +530,16 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
             })
             pending.delete(itemId)
             console.warn(`[VideoAutomation] ❌ Generation failed: ${submission.generationId.substring(0, 16)}`)
+            _maybeTriggerQuotaStop(statusInfo.error)
           }
           // else: 'pending' / 'processing' → 계속 폴링
         }
       }
 
       pollCount++
-      if (pending.size > 0) {
+      // sleep 전 stop 재확인 — quota 감지(_maybeTriggerQuotaStop) 직후 불필요한
+      // 10초 sleep 을 피해 즉시 루프 빠져나가도록.
+      if (pending.size > 0 && !stopRequestedRef.current) {
         await sleep(TIMING.VIDEO_POLL_INTERVAL)
       }
     }
@@ -530,7 +560,13 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
 
     if (stopRequestedRef.current) {
       setStatus('stopped')
-      setStatusMessage(t('status.stopped'))
+      // poll 단계에서 quota 로 멈춘 경우에도 첫 submit path 와 동일한 quotaStopped 메시지.
+      // quotaStoppedRef 는 batch 동안만 유지되어 사용자 수동 stop 과 안전하게 구분된다.
+      if (quotaStoppedRef.current) {
+        setStatusMessage(`⛔ ${t('videoAutomation.quotaStopped') || 'Flow generation limit reached — stopped'}`)
+      } else {
+        setStatusMessage(t('status.stopped'))
+      }
     } else {
       setStatus('done')
       const parts = []

@@ -871,6 +871,13 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     copyFailed: '복사 실패',
   },
 
+  // Quota 소진 안내 모달
+  quotaExhausted: {
+    title: 'Flow 생성 한도 도달',
+    message: 'Google Flow가 더 이상 생성을 받지 않습니다.\n\n계정의 Flow 크레딧 또는 이미지 생성 한도에 도달했을 수 있습니다.\n\nFlow 우상단 프로필에서 비디오의 경우 잔여 크레딧을 확인하시고, 이미지의 경우 하단에서 모델을 변경해 보세요.',
+    ok: '확인',
+  },
+
   // 상세 모달의 메타 정보 표시 (사이즈 · seed · 생성일시 · 모델)
   mediaMeta: {
     justNow: '방금 전',
@@ -912,6 +919,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     done: '비디오 생성 완료!',
     noItems: '생성할 항목이 없습니다.',
     stopped: '비디오 생성이 중지되었습니다.',
+    quotaStopped: 'Flow 생성 한도 도달 — 중단',
     complete: '완료',
   },
 

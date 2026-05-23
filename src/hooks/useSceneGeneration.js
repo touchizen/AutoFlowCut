@@ -7,6 +7,7 @@ import { checkFolderPermission, checkAuthToken } from '../utils/guards'
 import { resolveSceneStyle } from '../services/styleService'
 import { finalizeGeneratedImage } from '../services/imageFinalize'
 import { toast } from '../components/Toast'
+import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 
 export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, openSettings, setSelectedScene, t, generationQueue }) {
   const [generatingSceneId, setGeneratingSceneId] = useState(null)
@@ -72,21 +73,29 @@ export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, open
       if (success) {
         toast.success(t('toast.sceneGenerateSuccess', { sceneId }))
       } else {
-        toast.error(t('toast.sceneGenerateFailed', { error: sceneUpdate.error || 'Unknown error' }))
+        // 단일 씬 실패도 quota 면 batch 와 동일하게 전역 stop+modal 트리거 — 사용자가 잇따른
+        // 단일 재시도로 quota 를 더 소진하는 것을 막는다.
+        const failErr = result?.error ?? sceneUpdate.error
+        if (isQuotaExhaustedError(failErr)) {
+          emitQuotaStop({ scope: 'SceneGen' })
+        } else {
+          toast.error(t('toast.sceneGenerateFailed', { error: sceneUpdate.error || 'Unknown error' }))
+        }
       }
     } catch (error) {
       console.error('Scene generation error:', error)
-      // prior errorKind (예: image-missing) 가 남아 잘못된 메시지가 노출되지 않도록 명시 초기화하고
-      // 이번 catch 의 실제 메시지를 free-form error 로 surface.
-      // string/null rejection 등 비-Error throw 도 안전하게 처리해야 한다 — 직접 .message 접근하면
-      // secondary throw 가 나서 finally 자리 (setGeneratingSceneId) 까지 도달 못 하는 회귀.
       const errorMessage = error?.message || String(error)
       scenesHook.updateScene(sceneId, {
         status: 'error',
         errorKind: null,
         error: errorMessage,
       })
-      toast.error(t('toast.sceneGenerateError', { error: errorMessage }))
+      // throw 경로 quota 도 동일하게 처리.
+      if (isQuotaExhaustedError(error)) {
+        emitQuotaStop({ scope: 'SceneGen' })
+      } else {
+        toast.error(t('toast.sceneGenerateError', { error: errorMessage }))
+      }
     }
 
     setGeneratingSceneId(null)

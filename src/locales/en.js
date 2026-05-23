@@ -871,6 +871,13 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     copyFailed: 'Copy failed',
   },
 
+  // Quota-exhausted alert modal
+  quotaExhausted: {
+    title: 'Flow Generation Limit Reached',
+    message: "Google Flow is no longer accepting generations.\n\nYou may have reached your account's Flow credits or image generation limit.\n\nFor videos, check your remaining credits in Flow's top-right profile. For images, try switching the model at the bottom.",
+    ok: 'OK',
+  },
+
   // Detail modal meta-info display (size · seed · generated time · model)
   mediaMeta: {
     justNow: 'just now',
@@ -912,6 +919,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     done: 'Video generation complete!',
     noItems: 'No items to generate.',
     stopped: 'Video generation stopped.',
+    quotaStopped: 'Flow generation limit reached — stopped',
     complete: 'complete',
   },
 

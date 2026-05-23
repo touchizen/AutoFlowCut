@@ -5,6 +5,8 @@
  * and video status polling.
  */
 
+import { extractServerErrorMessage } from './videoErrorExtractor.js'
+
 /**
  * Register video-generation-related IPC handlers.
  *
@@ -264,8 +266,9 @@ export function registerVideoIPC(ipcMain, deps) {
       const netResult = await videoResponsePromise
 
       if (netResult.error) {
-        console.warn('[Flow Video T2V] Video API failed:', netResult.message || `HTTP ${netResult.status}`)
-        return { success: false, error: netResult.message || `HTTP ${netResult.status}: Video generation failed` }
+        const errMsg = extractServerErrorMessage(netResult, parseFlowResponse)
+        console.warn('[Flow Video T2V] Video API failed:', errMsg)
+        return { success: false, error: errMsg }
       }
 
       // 6. 응답에서 generation ID 추출
@@ -517,8 +520,9 @@ export function registerVideoIPC(ipcMain, deps) {
       const netResult = await videoResponsePromise
 
       if (netResult.error) {
-        console.warn('[Flow Video I2V] Video API failed:', netResult.message || `HTTP ${netResult.status}`)
-        return { success: false, error: netResult.message || `HTTP ${netResult.status}: Video generation failed` }
+        const errMsg = extractServerErrorMessage(netResult, parseFlowResponse)
+        console.warn('[Flow Video I2V] Video API failed:', errMsg)
+        return { success: false, error: errMsg }
       }
 
       // 7. 응답에서 generation ID 추출

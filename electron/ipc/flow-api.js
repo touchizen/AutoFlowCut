@@ -7,6 +7,7 @@
 
 import path from 'node:path'
 import { net } from 'electron'
+import { formatGoogleApiError } from './googleApiError.js'
 
 /**
  * Register all Flow API IPC handlers.
@@ -803,7 +804,9 @@ export function registerFlowAPIIPC(ipcMain, deps) {
 
         // 에러 체크
         if (data.error) {
-          allErrors.push(data.error.message || JSON.stringify(data.error))
+          // formatGoogleApiError 가 message + status 를 합쳐서 노출 — renderer 의 quota
+          // detector 가 "RESOURCE_EXHAUSTED" 같은 status-only quota 신호도 잡을 수 있게.
+          allErrors.push(formatGoogleApiError(data.error))
           continue
         }
 
@@ -928,7 +931,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     for (const resp of successResponses) {
       const data = parseFlowResponse(resp.body)
       if (!data) { allErrors.push('Failed to parse response'); continue }
-      if (data.error) { allErrors.push(data.error.message || JSON.stringify(data.error)); continue }
+      if (data.error) { allErrors.push(formatGoogleApiError(data.error)); continue }
 
       // base64 이미지 직접 추출
       const base64Images = extractBase64Images(data)

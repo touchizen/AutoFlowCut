@@ -7,6 +7,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { STYLE_PRESETS } from '../config/defaults'
 import { toast } from '../components/Toast'
+import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 
 const THUMBNAIL_PROMPT_PREFIX = 'A serene landscape with mountains and a river'
 
@@ -168,9 +169,19 @@ export function useStyleThumbnails(flowAPI) {
           generated++
         } else {
           console.warn(`[StyleThumbnails] Failed to generate ${presetId}:`, result.error)
+          if (isQuotaExhaustedError(result.error)) {
+            emitQuotaStop({ scope: 'StyleThumbnails(preset)' })
+            stopped = true
+            break
+          }
         }
       } catch (e) {
         console.error(`[StyleThumbnails] Error generating ${presetId}:`, e)
+        if (isQuotaExhaustedError(e)) {
+          emitQuotaStop({ scope: 'StyleThumbnails(preset)' })
+          stopped = true
+          break
+        }
         if (e.message?.includes('401') || e.message?.includes('auth')) {
           toast.error(t?.('toast.authErrorStop') || 'Authentication error')
           stopped = true
@@ -205,11 +216,21 @@ export function useStyleThumbnails(flowAPI) {
             const dataUrl = imageData.startsWith('data:') ? imageData : `data:image/png;base64,${imageData}`
             customResults.push({ refId: ref.id, data: dataUrl })
             generated++
+          } else if (!result.success && isQuotaExhaustedError(result.error)) {
+            emitQuotaStop({ scope: 'StyleThumbnails(custom)' })
+            stopped = true
+            break
           }
         } catch (e) {
           console.error(`[StyleThumbnails] Error generating custom "${ref.name}":`, e)
+          if (isQuotaExhaustedError(e)) {
+            emitQuotaStop({ scope: 'StyleThumbnails(custom)' })
+            stopped = true
+            break
+          }
           if (e.message?.includes('401') || e.message?.includes('auth')) {
             toast.error(t?.('toast.authErrorStop') || 'Authentication error')
+            stopped = true
             break
           }
         }

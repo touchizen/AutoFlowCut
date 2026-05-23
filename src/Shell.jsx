@@ -12,6 +12,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { I18nProvider } from './hooks/useI18n'
 import { AuthProvider } from './contexts/AuthContext'
 import { ToastProvider } from './components/Toast'
+import { QuotaExhaustedModalProvider } from './components/QuotaExhaustedModal'
 import App from './App'
 
 const DEFAULT_LAYOUT = 'split-left'
@@ -206,7 +207,9 @@ export default function Shell() {
     <I18nProvider>
       <AuthProvider>
         <ToastProvider>
-          <ShellContent />
+          <QuotaExhaustedModalProvider>
+            <ShellContent />
+          </QuotaExhaustedModalProvider>
         </ToastProvider>
       </AuthProvider>
     </I18nProvider>

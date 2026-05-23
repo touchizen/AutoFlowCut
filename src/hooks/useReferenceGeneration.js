@@ -10,6 +10,7 @@ import { cleanBase64, toDataURL } from '../utils/urls'
 import { tryUpscaleImage, extractThumbnailBase64 } from '../utils/imageProcessing'
 import { toast } from '../components/Toast'
 import { createStyleResolver } from '../services/styleResolver'
+import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 
 // 1~3초 랜덤 딜레이
 const randomDelay = () => new Promise(r => setTimeout(r, 1000 + Math.random() * 2000))
@@ -65,6 +66,13 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
   const [saveFailedOnce, setSaveFailedOnce] = useState(false)  // 배치 중 저장 실패 알림 1회만
   const stopRequestedRef = useRef(false)
   const presetMediaCache = useRef({})  // 프리셋 썸네일 → Flow mediaId 캐시
+
+  // quota stop 공통 모듈 위임 — queue clear 는 useGenerationQueue 가 직접 subscribe 함.
+  const _maybeTriggerQuotaStop = (err) => {
+    if (!isQuotaExhaustedError(err)) return false
+    emitQuotaStop({ stopRequestedRef, scope: 'GenerateRef' })
+    return true
+  }
   const referencesRef = useRef(references)
   referencesRef.current = references  // 매 렌더마다 최신 상태 반영
 
@@ -280,10 +288,11 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
         const errorMsg = result.error || ''
         const isAuthError = errorMsg.includes('401') || errorMsg.includes('auth') || errorMsg.includes('token') || errorMsg.includes('login')
         const isServerError = errorMsg.includes('500') || errorMsg.includes('502') || errorMsg.includes('503') || errorMsg.includes('server')
-        toast.error(t('toast.generateFailed', { error: result.error || 'Unknown error' }))
+        const isQuota = _maybeTriggerQuotaStop(errorMsg)
+        if (!isQuota) toast.error(t('toast.generateFailed', { error: result.error || 'Unknown error' }))
         setGeneratingRefs(prev => prev.filter(i => i !== index))
         setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: result.error || 'Generation failed' } : r))
-        return { success: false, authError: isAuthError, serverError: isServerError }
+        return { success: false, authError: isAuthError, serverError: isServerError, quotaExhausted: isQuota }
       }
     } catch (error) {
       console.error('Reference generation error:', error)
@@ -309,10 +318,11 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       const errorMsg = result.error || ''
       const isAuthError = errorMsg.includes('401') || errorMsg.includes('auth') || errorMsg.includes('token')
       const isServerError = errorMsg.includes('500') || errorMsg.includes('502') || errorMsg.includes('503')
-      toast.error(t('toast.generateFailed', { error: result.error || 'Unknown error' }))
+      const isQuota = _maybeTriggerQuotaStop(errorMsg)
+      if (!isQuota) toast.error(t('toast.generateFailed', { error: result.error || 'Unknown error' }))
       setGeneratingRefs(prev => prev.filter(i => i !== index))
       setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: result.error || 'Generation failed' } : r))
-      return { success: false, authError: isAuthError, serverError: isServerError }
+      return { success: false, authError: isAuthError, serverError: isServerError, quotaExhausted: isQuota }
     }
 
     return await _processAndSaveImage(result.images, index, ref, '[AsyncRef]')
@@ -356,7 +366,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       }))
     }
 
-    // 배치 시작 - 플래그 리셋
+    // 배치 시작 - 플래그 리셋. quota block 상태는 모달 dismiss 시점에 별도 해제됨.
     stopRequestedRef.current = false
     setStoppingRefs(false)
     setPreparingRefs(true)
@@ -470,6 +480,10 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
 
         try {
           await collectCompleted()
+          // collectCompleted 안에서 quota 감지로 stopRequestedRef 가 켜졌을 수 있다.
+          // outer for-loop 의 stop 가드는 다음 iteration 시작 시에만 검사하므로,
+          // 여기서 한 번 더 확인해야 추가 submit (line 506) 이 새지 않는다.
+          if (stopRequestedRef.current) break
 
           const ref = referencesRef.current[index]
           if (!ref) {
@@ -494,6 +508,10 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
             console.warn('[GenerateAllRefs] Submit failed for index:', index, submitResult?.error)
             setGeneratingRefs(prev => prev.filter(i => i !== index))
             setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: submitResult?.error || 'Submit failed' } : r))
+
+            if (_maybeTriggerQuotaStop(submitResult?.error)) {
+              break
+            }
             submitFailCount++
 
             if (submitFailCount >= 3) {

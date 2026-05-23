@@ -14,6 +14,7 @@ import { cleanBase64 as stripBase64Prefix } from '../utils/urls'
 import { toast } from '../components/Toast'
 import { resetDOMSession, requestStopDOM } from '../utils/flowDOMClient'
 import { isRecaptchaError } from '../utils/recaptchaDetect'
+import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 import { useRecaptchaBackoff } from './useRecaptchaBackoff'
 
 export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings = null, addPendingSave = null, t = (key) => key, onAuthError = null, generationQueue = null, onComplete = null) {
@@ -82,6 +83,10 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     errorCountRef.current = 0
     const pendingQueue = [] // { generationId, scene, submittedAt }
     let consecutiveErrors = 0
+    // quota stop 은 공통 모듈 — stopRequestedRef 마킹 + listeners (queue, 모달) 자동 발사.
+    // queue clear 는 useGenerationQueue 가 자체 subscribe 해서 처리하므로 caller 책임 X.
+    // 이미 submit 한 in-flight 는 마저 collect 시도 (운 좋게 결과 오면 살림).
+    const triggerQuotaStop = () => emitQuotaStop({ stopRequestedRef, scope: 'Automation' })
 
     const updateProgressMsg = (current) => {
       setProgress({ current, total, percent: Math.round((current / total) * 100), errorCount: errorCountRef.current, startedAt: batchStartedAtRef.current, endedAt: null })
@@ -150,6 +155,14 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
               recaptchaScenes.push(item)
               markRecaptchaError(item.scene)
               updateProgressMsg(completedCountRef.current)
+              continue
+            }
+            if (!result.success && isQuotaExhaustedError(result.error)) {
+              updateScene(item.scene.id, { status: 'error', error: result.error, errorKind: null })
+              errorCountRef.current++
+              completedCountRef.current++
+              updateProgressMsg(completedCountRef.current)
+              triggerQuotaStop()
               continue
             }
             console.log('[Automation] Collected scene', item.scene.id, ':', result.success, result.images?.length || 0, 'images')
@@ -230,6 +243,14 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
           updateProgressMsg(completedCountRef.current)
           await pauseAndRegisterRecaptcha({ allowAbsorb: false })
           continue
+        }
+        if (isQuotaExhaustedError(submitResult.error)) {
+          updateScene(scene.id, { status: 'error', error: submitResult.error, errorKind: null })
+          errorCountRef.current++
+          completedCountRef.current++
+          updateProgressMsg(completedCountRef.current)
+          triggerQuotaStop()
+          break
         }
         updateScene(scene.id, { status: 'error', error: submitResult.error, errorKind: null })
         errorCountRef.current++
