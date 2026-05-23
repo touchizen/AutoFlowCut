@@ -158,14 +158,14 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
             // onAuthError was already fired by the withAuthRetry wrapper; don't fire again.
             if (result.authFailed) {
               console.warn('[Automation] collectGeneration authFailed — stopping batch:', result.error)
-              updateScene(item.scene.id, { status: 'error', error: result.error || 'Auth expired — please re-login to Flow', errorKind: 'auth' })
+              updateScene(item.scene.id, { status: 'error', error: result.error || t('status.authErrorStopped'), errorKind: 'auth' })
               errorCountRef.current++
               completedCountRef.current++
               updateProgressMsg(completedCountRef.current)
               stopRequestedRef.current = true
               authStoppedRef.current = true
               setStatus('error')
-              setStatusMessage(result.error || 'Auth expired — please re-login to Flow')
+              setStatusMessage(result.error || t('status.authErrorStopped'))
               continue
             }
             if (!result.success && isRecaptchaError(result.error)) {
@@ -464,7 +464,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
             stopRequestedRef.current = true
             authStoppedRef.current = true
             setStatus('error')
-            setStatusMessage(result.error || 'Auth expired — please re-login to Flow')
+            setStatusMessage(result.error || t('status.authErrorStopped'))
             return
           }
           if (result.error?.includes('429') && attempt < MAX_RETRIES) {
@@ -494,7 +494,10 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
               uploadedCount = completedCount
               const percent = Math.round((uploadedCount / refsToUpload.length) * 100)
               setProgress({ current: uploadedCount, total: refsToUpload.length, percent, errorCount: 0, startedAt: batchStartedAtRef.current, endedAt: null })
-              setStatusMessage(t('status.uploadingRefs', { current: uploadedCount, total: refsToUpload.length }))
+              // Don't overwrite the auth-error message that uploadOne already set.
+              if (!authStoppedRef.current) {
+                setStatusMessage(t('status.uploadingRefs', { current: uploadedCount, total: refsToUpload.length }))
+              }
               if (completedCount >= refsToUpload.length || stopRequestedRef.current) {
                 resolve()
               }
