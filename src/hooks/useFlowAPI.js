@@ -6,7 +6,7 @@
  * webContents.executeJavaScript() in the main process.
  */
 
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import {
   generateImageDOM as generateImageDOMImpl,
   submitGenerationDOM as submitGenerationDOMImpl,
@@ -88,11 +88,26 @@ export function useFlowAPI({ onAuthError } = {}) {
 
   // Build the withAuthRetry wrapper once per hook instance.
   // useRef prevents re-creation on every render (which would lose single-flight state).
+  //
+  // Closure-staleness notes (both mitigated via ref-forwarded shims below):
+  //   - getAccessToken: re-creates on [accessToken, tokenExpiry] state change.
+  //     The wrapper holds the first-render reference, but reading via a ref means
+  //     we always invoke the current implementation. (Even without this, the
+  //     localStorage path in getAccessToken would keep stale closures correct —
+  //     but relying on that implementation detail is fragile.)
+  //   - onAuthError: parent useCallback may re-create when its deps (e.g. `t` for
+  //     i18n) change. The ref ensures the wrapper always calls the latest one,
+  //     so things like a mid-session language switch still produce correct toasts.
+  const getAccessTokenRef = useRef(getAccessToken)
+  const onAuthErrorRef = useRef(onAuthError)
+  useEffect(() => { getAccessTokenRef.current = getAccessToken }, [getAccessToken])
+  useEffect(() => { onAuthErrorRef.current = onAuthError }, [onAuthError])
+
   const withAuthRetryRef = useRef(null)
   if (!withAuthRetryRef.current) {
     withAuthRetryRef.current = createAuthRetryWrapper({
-      getAccessToken,
-      onAuthError,
+      getAccessToken: (force) => getAccessTokenRef.current(force),
+      onAuthError: () => onAuthErrorRef.current?.(),
     })
   }
   const withAuthRetry = withAuthRetryRef.current
