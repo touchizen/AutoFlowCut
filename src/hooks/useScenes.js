@@ -2,7 +2,7 @@
  * Scenes Hook - 씬 데이터 관리
  */
 
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useRef } from 'react'
 import { DEFAULTS } from '../config/defaults'
 import {
   parseTextToScenes,
@@ -44,29 +44,51 @@ export function useScenes() {
   const [scenes, _setScenes] = useState([])
   const [references, setReferences] = useState([])
 
+  // ── Stable ID counter ──────────────────────────────────────────────────────
+  const nextSceneIdRef = useRef(1)
+
+  // Sync counter to max existing ID + 1 (idempotent; only advances, never resets)
+  const syncCounterFromScenes = (scenesArr) => {
+    if (!scenesArr?.length) return
+    let maxId = 0
+    for (const s of scenesArr) {
+      const m = /^scene_(\d+)$/.exec(s.id || '')
+      if (m) {
+        const n = parseInt(m[1], 10)
+        if (n > maxId) maxId = n
+      }
+    }
+    if (maxId + 1 > nextSceneIdRef.current) {
+      nextSceneIdRef.current = maxId + 1
+    }
+  }
+
+  const allocateSceneId = useCallback(() => `scene_${nextSceneIdRef.current++}`, [])
+  // ── End stable ID counter ──────────────────────────────────────────────────
+
   const setScenes = useCallback((valueOrFn) => {
     _setScenes(prev => {
       const next = typeof valueOrFn === 'function' ? valueOrFn(prev) : valueOrFn
       // 동일 reference 반환 시 정규화 스킵 (no-op 최적화)
       if (next === prev) return prev
-      return Array.isArray(next) ? next.map(normalizeScene) : next
+      if (Array.isArray(next)) {
+        syncCounterFromScenes(next)
+        return next.map(normalizeScene)
+      }
+      return next
     })
   }, [])
 
   /**
-   * ID 재정렬 + 시간 재계산 (공통)
+   * 시간 재계산 — IDs는 건드리지 않음 (안정적 ID 보장)
    */
-  const reindexScenes = (scenes) => {
+  const recalculateTimesArr = (scenesArr) => {
     let currentTime = 0
-    return scenes.map((scene, idx) => {
-      const updated = {
-        ...scene,
-        id: `scene_${idx + 1}`,
-        startTime: currentTime,
-        endTime: currentTime + scene.duration
-      }
-      currentTime = updated.endTime
-      return updated
+    return scenesArr.map((scene) => {
+      const startTime = currentTime
+      const endTime = currentTime + (scene.duration || DEFAULTS.scene.duration)
+      currentTime = endTime
+      return { ...scene, startTime, endTime }
     })
   }
 
@@ -81,12 +103,8 @@ export function useScenes() {
   const parseFromText = useCallback((text, defaultDuration = DEFAULTS.scene.duration, options = {}, framePairs = []) => {
     let merged
     setScenes(prev => {
-      const afterMerge = mergeTextIntoScenes(prev, text, defaultDuration, options)
-      // TODO: After reindex, framePair.ownerSceneId references may dangle (a pre-existing
-      // issue not introduced here — deleteScene has the same problem). The trim model
-      // inherits the limitation; a coordinated remap of framePair owners after reindex
-      // is tracked separately.
-      merged = reindexScenes(trimTrailingEmptyScenes(afterMerge, framePairs))
+      const afterMerge = mergeTextIntoScenes(prev, text, defaultDuration, { ...options, allocateId: allocateSceneId })
+      merged = recalculateTimesArr(trimTrailingEmptyScenes(afterMerge, framePairs))
       return merged
     })
     return merged
@@ -100,12 +118,8 @@ export function useScenes() {
   const parseFromCSV = useCallback((csvText, defaultDuration = DEFAULTS.scene.duration, framePairs = []) => {
     let merged
     setScenes(prev => {
-      const afterMerge = mergeCSVIntoScenes(prev, csvText, defaultDuration)
-      // TODO: After reindex, framePair.ownerSceneId references may dangle (a pre-existing
-      // issue not introduced here — deleteScene has the same problem). The trim model
-      // inherits the limitation; a coordinated remap of framePair owners after reindex
-      // is tracked separately.
-      merged = reindexScenes(trimTrailingEmptyScenes(afterMerge, framePairs))
+      const afterMerge = mergeCSVIntoScenes(prev, csvText, defaultDuration, { allocateId: allocateSceneId })
+      merged = recalculateTimesArr(trimTrailingEmptyScenes(afterMerge, framePairs))
       return merged
     })
     return merged
@@ -119,12 +133,8 @@ export function useScenes() {
   const parseFromSRT = useCallback((srtText, framePairs = []) => {
     let merged
     setScenes(prev => {
-      const afterMerge = mergeSRTIntoScenes(prev, srtText)
-      // TODO: After reindex, framePair.ownerSceneId references may dangle (a pre-existing
-      // issue not introduced here — deleteScene has the same problem). The trim model
-      // inherits the limitation; a coordinated remap of framePair owners after reindex
-      // is tracked separately.
-      merged = reindexScenes(trimTrailingEmptyScenes(afterMerge, framePairs))
+      const afterMerge = mergeSRTIntoScenes(prev, srtText, { allocateId: allocateSceneId })
+      merged = recalculateTimesArr(trimTrailingEmptyScenes(afterMerge, framePairs))
       return merged
     })
     return merged
@@ -164,7 +174,7 @@ export function useScenes() {
    * 씬 삭제
    */
   const deleteScene = useCallback((sceneId) => {
-    setScenes(prev => reindexScenes(prev.filter(s => s.id !== sceneId)))
+    setScenes(prev => recalculateTimesArr(prev.filter(s => s.id !== sceneId)))
   }, [])
 
   /**
@@ -179,7 +189,7 @@ export function useScenes() {
       const duration = DEFAULTS.scene.duration
 
       const newScene = {
-        id: `scene_${insertIndex + 1}`,
+        id: allocateSceneId(),
         startTime,
         endTime: startTime + duration,
         duration,
@@ -194,7 +204,7 @@ export function useScenes() {
 
       const newScenes = [...prev]
       newScenes.splice(insertIndex, 0, newScene)
-      return reindexScenes(newScenes)
+      return recalculateTimesArr(newScenes)
     })
   }, [])
 
@@ -208,7 +218,7 @@ export function useScenes() {
       const newScenes = [...prev]
       const [moved] = newScenes.splice(fromIndex, 1)
       newScenes.splice(toIndex, 0, moved)
-      return reindexScenes(newScenes)
+      return recalculateTimesArr(newScenes)
     })
   }, [])
   
@@ -227,7 +237,7 @@ export function useScenes() {
   const trimScenes = useCallback((framePairs = []) => {
     setScenes(prev => {
       const trimmed = trimTrailingEmptyScenes(prev, framePairs)
-      return trimmed === prev ? prev : reindexScenes(trimmed)
+      return trimmed === prev ? prev : recalculateTimesArr(trimmed)
     })
   }, [])
 

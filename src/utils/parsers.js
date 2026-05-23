@@ -294,7 +294,7 @@ export function mergeTextIntoScenes(existing, text, defaultDuration = DEFAULTS.s
       const endTime = cursor + defaultDuration
       cursor = endTime
       return {
-        id: `scene_${i + 1}`,
+        id: options.allocateId ? options.allocateId() : `scene_${i + 1}`,
         startTime, endTime, duration: defaultDuration,
         prompt: fieldName === 'prompt' ? lines[i] : '',
         videoT2VPrompt: fieldName === 'videoT2VPrompt' ? lines[i] : '',
@@ -325,7 +325,7 @@ export function mergeTextIntoScenes(existing, text, defaultDuration = DEFAULTS.s
     const endTime = cursor + defaultDuration
     cursor = endTime
     return {
-      id: `scene_${i + 1}`,
+      id: options.allocateId ? options.allocateId() : `scene_${i + 1}`,
       startTime,
       endTime,
       duration: defaultDuration,
@@ -346,7 +346,7 @@ export function mergeTextIntoScenes(existing, text, defaultDuration = DEFAULTS.s
  * SRT → 기존 씬에 subtitle/시간 머지. prompt는 기존 보존 (단 기존이 빈 칸이면 자막).
  * - 입력 블록 수 ↔ 기존 씬 수 정책은 mergeTextIntoScenes와 동일 (입력이 길이 결정)
  */
-export function mergeSRTIntoScenes(existing, srtText) {
+export function mergeSRTIntoScenes(existing, srtText, options = {}) {
   const blocks = srtText.trim().split(/\n\n+/)
   const parsed = []
 
@@ -385,7 +385,7 @@ export function mergeSRTIntoScenes(existing, srtText) {
       return ex
     }
     return {
-      id: `scene_${i + 1}`,
+      id: options.allocateId ? options.allocateId() : `scene_${i + 1}`,
       startTime: p.startTime,
       endTime: p.endTime,
       duration: p.duration,
@@ -408,7 +408,7 @@ export function mergeSRTIntoScenes(existing, srtText) {
  * (parseCSVToScenes는 누락 컬럼을 기본값으로 채우기 때문에 결과만으로 머지하면 의도와 다르게
  *  기본값이 기존 값을 덮어쓴다. 그래서 헤더를 보고 "CSV가 제공한 필드"만 적용한다.)
  */
-export function mergeCSVIntoScenes(existing, csvText, defaultDuration = DEFAULTS.scene.duration) {
+export function mergeCSVIntoScenes(existing, csvText, defaultDuration = DEFAULTS.scene.duration, options = {}) {
   const firstLine = csvText.trim().split('\n')[0]
   const headers = parseCSVLine(firstLine).map(h => h.trim().toLowerCase())
 
@@ -454,7 +454,8 @@ export function mergeCSVIntoScenes(existing, csvText, defaultDuration = DEFAULTS
       // 기존만 (CSV 더 짧음): 보존
       return ex
     }
-    return p
+    // 새 씬 (CSV가 더 김): allocateId 가 있으면 안정적 ID 사용
+    return options.allocateId ? { ...p, id: options.allocateId() } : p
   })
 }
 

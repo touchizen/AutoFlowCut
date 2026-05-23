@@ -214,7 +214,7 @@ Goodbye world`
   // deleteScene
   // ============================================================
   describe('deleteScene', () => {
-    it('removes scene and re-numbers IDs', () => {
+    it('removes scene but does NOT renumber surviving IDs', () => {
       const { result } = renderHook(() => useScenes())
 
       act(() => {
@@ -226,13 +226,14 @@ Goodbye world`
       })
 
       expect(result.current.scenes).toHaveLength(2)
+      // scene_1 and scene_3 survive with their original IDs (no renumber)
       expect(result.current.scenes[0].id).toBe('scene_1')
       expect(result.current.scenes[0].prompt).toBe('a')
-      expect(result.current.scenes[1].id).toBe('scene_2')
+      expect(result.current.scenes[1].id).toBe('scene_3')
       expect(result.current.scenes[1].prompt).toBe('c')
     })
 
-    it('handles deleting first scene', () => {
+    it('handles deleting first scene (survivor keeps its original ID)', () => {
       const { result } = renderHook(() => useScenes())
 
       act(() => {
@@ -244,7 +245,8 @@ Goodbye world`
       })
 
       expect(result.current.scenes).toHaveLength(1)
-      expect(result.current.scenes[0].id).toBe('scene_1')
+      // scene_2 keeps its ID — no renumber
+      expect(result.current.scenes[0].id).toBe('scene_2')
       expect(result.current.scenes[0].prompt).toBe('second')
     })
 
@@ -302,7 +304,7 @@ Goodbye world`
       expect(result.current.scenes[3].prompt).toBe('c')
     })
 
-    it('re-numbers all IDs after insert', () => {
+    it('uses next allocated ID for inserted scene, existing IDs unchanged', () => {
       const { result } = renderHook(() => useScenes())
 
       act(() => {
@@ -313,9 +315,11 @@ Goodbye world`
         result.current.addScene(0)
       })
 
+      // parseFromText allocated scene_1 and scene_2; next addScene gets scene_3
+      // Order after insert-after-index-0: [scene_1(a), scene_3(new), scene_2(b)]
       expect(result.current.scenes[0].id).toBe('scene_1')
-      expect(result.current.scenes[1].id).toBe('scene_2')
-      expect(result.current.scenes[2].id).toBe('scene_3')
+      expect(result.current.scenes[1].id).toBe('scene_3')
+      expect(result.current.scenes[2].id).toBe('scene_2')
     })
 
     it('recalculates timing after insert', () => {
@@ -357,7 +361,7 @@ Goodbye world`
       expect(result.current.scenes[2].prompt).toBe('b')
     })
 
-    it('re-numbers IDs after move', () => {
+    it('keeps original IDs after move (positions shift, IDs do not renumber)', () => {
       const { result } = renderHook(() => useScenes())
 
       act(() => {
@@ -368,9 +372,10 @@ Goodbye world`
         result.current.moveScene(0, 2)
       })
 
-      expect(result.current.scenes[0].id).toBe('scene_1')
-      expect(result.current.scenes[1].id).toBe('scene_2')
-      expect(result.current.scenes[2].id).toBe('scene_3')
+      // scene_1(a) moved to end: order becomes scene_2(b), scene_3(c), scene_1(a)
+      expect(result.current.scenes[0].id).toBe('scene_2')
+      expect(result.current.scenes[1].id).toBe('scene_3')
+      expect(result.current.scenes[2].id).toBe('scene_1')
     })
 
     it('does nothing when same index', () => {
