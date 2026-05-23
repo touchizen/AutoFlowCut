@@ -13,6 +13,34 @@ import { recoverInFlightVideos } from '../services/videoRecovery'
 const DEFAULT_ASPECT_RATIO = '16:9'
 
 /**
+ * Backfill ownerSceneId on legacy framePairs that pre-date the owner-scene binding.
+ *
+ * Until this plan landed, framePairs only carried startSceneId/endSceneId, and every
+ * sync site used startSceneId as the linkage to a scene. That conflated "which scene
+ * does this row produce a video for" with "which scene's image is the start frame" —
+ * changing the start image silently reassigned the row.
+ *
+ * On load, any framePair without ownerSceneId gets it backfilled:
+ *   - gallery-rooted (startSceneId === 'gallery::*') → null (no owning scene)
+ *   - empty/missing startSceneId → null
+ *   - otherwise → startSceneId (preserves prior behavior for legacy files)
+ *
+ * Exported for tests; called by the framePairsWithMedia loader.
+ *
+ * @param {object} fp
+ * @returns {object}  — new object, never mutates input
+ */
+export function backfillFramePairOwner(fp) {
+  if (fp.ownerSceneId !== undefined) return fp
+  const start = fp.startSceneId
+  let ownerSceneId = null
+  if (typeof start === 'string' && start.length > 0 && !start.startsWith('gallery::')) {
+    ownerSceneId = start
+  }
+  return { ...fp, ownerSceneId }
+}
+
+/**
  * 프로젝트 데이터 로드 + 모든 리소스 경로/파일 복원 (공통 헬퍼).
  *
  * 처리 대상:
@@ -211,6 +239,8 @@ export async function loadProjectWithResources(projectName) {
   // framePairs 비디오 파일 로드 (새 명명 i2v_N 우선, 기존 fp_N 폴백)
   const framePairsWithMedia = await Promise.all(
     (result.data.framePairs || []).map(async (fp) => {
+      // 레거시 framePairs 에 ownerSceneId 가 없으면 startSceneId 로 backfill (스키마 마이그레이션)
+      fp = backfillFramePairOwner(fp)
       // videoPath 를 현재 프로젝트 폴더 기준으로 항상 재산출 (folder rename 회귀 차단)
       const remapped = await remapVideoPath(fp)
       let next = { ...fp }
