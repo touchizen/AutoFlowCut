@@ -394,9 +394,16 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
         })
         console.log(`[VideoAutomation] ✅ Submitted ${i + 1}/${total}: ${genResult.generationId.substring(0, 16)}...`)
       } else {
-        // 401 인증 에러 감지
-        if (genResult.error && (genResult.error.includes('401') || genResult.error.includes('auth'))) {
-          onAuthError?.()
+        // Auth errors now handled via withAuthRetry's authFailed sentinel (see below).
+        // Inline 401 string-match removed to avoid duplicate onAuthError firing.
+        if (genResult?.authFailed) {
+          onItemUpdate?.(item.id, 'error', {
+            error: genResult.error || 'Auth expired — please re-login to Flow',
+            errorKind: 'auth',
+          })
+          videoErrorCount++
+          console.warn(`[VideoAutomation] ❌ Submit authFailed: token dead, stopping batch`)
+          break
         }
         onItemUpdate?.(item.id, 'error', { error: genResult.error })
         videoErrorCount++
@@ -458,6 +465,19 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
       const genIds = pendingEntries.map(([_, s]) => s.generationId)
       const result = await checkVideoStatus(genIds)
 
+      // Top-level fail handling: auth-failed takes precedence over quota detection.
+      // The wrapper already fired onAuthError + cleared cache. Mark all pending items
+      // as auth-error and break immediately — no point polling on a dead token.
+      if (result?.authFailed) {
+        for (const [itemId] of pending) {
+          onItemUpdate?.(itemId, 'error', {
+            error: result.error || 'Auth expired — please re-login to Flow',
+            errorKind: 'auth',
+          })
+        }
+        pending.clear()
+        break
+      }
       // Top-level fail (예: { success: false, error: "RESOURCE_EXHAUSTED..." }) — quota 검사 후 break.
       // statuses[] 내부 'failed' 만 보는 기존 코드는 batch 전체가 server-side 에러로 떨어진
       // 경우를 못 잡아 max polls 까지 무한정 polling 후 timeout 처리.
