@@ -18,6 +18,7 @@ import { useMemo, useEffect, useRef, useState, useCallback } from 'react'
 import { resolveImageSrc, formatElapsed } from '../utils/formatters'
 import { useElapsedTimer } from '../hooks/useElapsedTimer'
 import useFlowArchiveBrowser, { ARCHIVE_LABELS } from '../hooks/useFlowArchiveBrowser'
+import { toast } from './Toast'
 
 /** 초시계 아이콘 — 초침이 실시간 회전 */
 function StopwatchIcon({ size = 16 }) {
@@ -580,16 +581,18 @@ export default function FrameToVideoPanel({
     if (!nextStart) {
       // 모든 씬이 owned → 새 씬을 만들고 그 씬을 owner 로 하는 F→V 행을 즉시 생성.
       // 새 씬은 mediaId 가 없어서 availableScenes 필터에서 빠짐 → start/end image dropdown
-      // 에선 안 보이지만, 행 자체는 시각적으로 즉시 추가됨. 사용자가 image-tab 에서
-      // 이미지 생성하면 dropdown 에 나타나고, 행에서 직접 선택 가능.
+      // 에선 안 보이지만, 행 자체는 시각적으로 즉시 추가됨.
       const newSceneId = onRequestNewScene?.()
-      if (!newSceneId) return  // parent가 안 만들어 줬으면 no-op (silent fail)
+      if (!newSceneId) {
+        toast.warning(t('frameToVideo.addRowFail') || '새 씬을 만들지 못했어요')
+        return
+      }
       onUpdate([
         ...framePairs,
         {
           id: `fp_${getNextPairId(framePairs)}`,
           ownerSceneId: newSceneId,
-          startSceneId: '',  // mediaId 없는 새 씬 — 사용자가 이미지 생성 후 dropdown 에서 선택
+          startSceneId: '',
           endSceneId: '',
           prompt: '',
           videoPrompt: '',
@@ -598,6 +601,7 @@ export default function FrameToVideoPanel({
           selected: false,
         },
       ])
+      toast.info(t('frameToVideo.addRowNewScene') || '새 씬과 F→V 행 추가됨. 이미지를 생성하면 dropdown에서 시작 이미지를 선택할 수 있어요.')
       return
     }
 
@@ -618,13 +622,18 @@ export default function FrameToVideoPanel({
         status: 'waiting',
       },
     ])
+    toast.success(t('frameToVideo.addRowOk') || `F→V 행 추가됨 (씬 #${scenes.findIndex(s => s.id === nextStartId) + 1})`)
   }
 
   // Auto Batch — 아직 배치 안 된 씬 전부를 프레임 페어로 자동 생성
   const autoBatch = () => {
     const unusedScenes = availableScenes.filter(s => !usedOwners.has(s.id))
 
-    if (unusedScenes.length === 0) return
+    if (unusedScenes.length === 0) {
+      // 모든 씬에 이미 F→V 행이 있음. silently no-op 대신 toast 로 알려줌.
+      toast.info(t('frameToVideo.autoBatchNoop') || '모든 씬에 이미 F→V 행이 있어요. 추가할 것이 없어요.')
+      return
+    }
 
     let nextId = getNextPairId(framePairs)
     const newPairs = unusedScenes.map((scene) => {
@@ -644,6 +653,7 @@ export default function FrameToVideoPanel({
     })
 
     onUpdate([...framePairs, ...newPairs])
+    toast.success(t('frameToVideo.autoBatchOk', { count: newPairs.length }) || `⚡ F→V 행 ${newPairs.length}개 자동 추가됨`)
   }
 
   const removeRow = (index) => {
@@ -882,7 +892,7 @@ export default function FrameToVideoPanel({
         <button
           className="btn-add-row btn-auto-batch"
           onClick={autoBatch}
-          disabled={disabled || !hasUnusedScene}
+          disabled={disabled}
           title={t('frameToVideo.autoBatchHint')}
         >
           {t('frameToVideo.autoBatch')}

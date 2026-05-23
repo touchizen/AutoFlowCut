@@ -70,6 +70,11 @@ export default {
     autoBatch: '⚡ 전체 배치',
     autoBatchHint: '이미지가 생성된 모든 씬에 F→V 행을 한 번에 자동 추가 (시작=해당 씬, 끝=다음 씬). Add Row 를 여러 번 누르는 대신 한 클릭으로 N행 생성.',
     addRowHint: 'F→V 행 1개 추가. 모든 씬이 이미 owned 면 새 씬도 같이 생성됨.',
+    addRowOk: 'F→V 행 추가됨',
+    addRowNewScene: '새 씬과 F→V 행 추가됨. 이미지를 생성하면 dropdown에서 시작 이미지를 선택할 수 있어요.',
+    addRowFail: '새 씬을 만들지 못했어요',
+    autoBatchOk: '⚡ F→V 행 {count}개 자동 추가됨',
+    autoBatchNoop: '모든 씬에 이미 F→V 행이 있어요. 추가할 것이 없어요.',
     clickToDetail: '클릭하여 상세 보기',
   },
 
