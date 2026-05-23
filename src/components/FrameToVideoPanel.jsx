@@ -578,8 +578,11 @@ export default function FrameToVideoPanel({
     // 기본값: 순서대로 자동 채움
     const nextStart = availableScenes.find(s => !usedOwners.has(s.id))
     if (!nextStart) {
-      // No unowned scene — ask parent to create a new scene. The auto-add useEffect
-      // will then pick it up and create the F→V row owning it.
+      // No unowned scene — ask parent to create a new scene. Two-step flow:
+      //   1. Parent creates an empty scene (addScene) — no mediaId yet
+      //   2. F→V row is NOT auto-created immediately because availableScenes filters
+      //      on mediaId. The row appears once the user generates/uploads an image.
+      // This is intentional — frame-to-video requires a real start image.
       onRequestNewScene?.()
       return
     }
