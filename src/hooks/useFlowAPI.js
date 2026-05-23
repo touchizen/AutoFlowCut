@@ -303,15 +303,16 @@ export function useFlowAPI({ onAuthError } = {}) {
    * @returns {{ success, items: [{ projectId, title, thumbnailMediaKey, creationTime }] }}
    */
   const listFlowProjects = useCallback(async (pageSize = 20) => {
-    const token = await getAccessToken()
-    if (!token) return { success: false, error: 'No access token', items: [] }
+    return withAuthRetry('listFlowProjects', async (token) => {
+      if (!token) return { success: false, error: 'No access token', items: [] }
 
-    try {
-      return await window.electronAPI.listFlowProjects({ token, pageSize })
-    } catch (error) {
-      return { success: false, error: error.message, items: [] }
-    }
-  }, [getAccessToken])
+      try {
+        return await window.electronAPI.listFlowProjects({ token, pageSize })
+      } catch (error) {
+        return { success: false, error: error.message, items: [] }
+      }
+    })
+  }, [withAuthRetry])
 
   /**
    * 토큰 캐시 초기화 (401 에러 시 호출)
