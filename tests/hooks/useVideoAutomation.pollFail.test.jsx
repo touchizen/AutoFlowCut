@@ -54,7 +54,7 @@ describe('useVideoAutomation — poll top-level fail quota', () => {
       getAccessToken: vi.fn().mockResolvedValue('token'),
     }
 
-    const hook = renderHook(() => useVideoAutomation(flowAPI, (k) => k, null, null))
+    const hook = renderHook(() => useVideoAutomation(flowAPI, (k) => k, null))
 
     let startPromise
     await act(async () => {

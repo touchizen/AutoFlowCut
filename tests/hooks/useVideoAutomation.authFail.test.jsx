@@ -46,7 +46,6 @@ describe('useVideoAutomation — auth failure during polling', () => {
       authFailed: true,
       error: 'Auth expired — please re-login to Flow',
     })
-    const onAuthError = vi.fn()
     const flowAPI = {
       generateVideoT2V,
       generateVideoI2V: vi.fn(),
@@ -56,7 +55,7 @@ describe('useVideoAutomation — auth failure during polling', () => {
       getAccessToken: vi.fn().mockResolvedValue('token'),
     }
     const t = (k) => k
-    const hook = renderHook(() => useVideoAutomation(flowAPI, t, onAuthError, null))
+    const hook = renderHook(() => useVideoAutomation(flowAPI, t, null))
 
     const items = [{ id: 'vscene_1', prompt: 'test' }]
     let startPromise
@@ -85,7 +84,6 @@ describe('useVideoAutomation — auth failure during polling', () => {
       authFailed: true,
       error: 'Auth expired — please re-login to Flow',
     })
-    const onAuthError = vi.fn()
     const onItemUpdate = vi.fn()
     const flowAPI = {
       generateVideoT2V,
@@ -96,7 +94,7 @@ describe('useVideoAutomation — auth failure during polling', () => {
       getAccessToken: vi.fn().mockResolvedValue('token'),
     }
     const t = (k) => k
-    const hook = renderHook(() => useVideoAutomation(flowAPI, t, onAuthError, null))
+    const hook = renderHook(() => useVideoAutomation(flowAPI, t, null))
 
     const items = [{ id: 'vscene_1', prompt: 'test' }]
     let startPromise
@@ -137,7 +135,7 @@ describe('useVideoAutomation — auth failure during polling', () => {
       getAccessToken: vi.fn().mockResolvedValue('token'),
     }
     const t = (k) => k
-    const hook = renderHook(() => useVideoAutomation(flowAPI, t, vi.fn(), null))
+    const hook = renderHook(() => useVideoAutomation(flowAPI, t, null))
 
     const items = [{ id: 'vscene_1', prompt: 'test' }]
     let startPromise
@@ -174,7 +172,7 @@ describe('useVideoAutomation — auth failure during polling', () => {
     }
     // Realistic translator: returns a translated string for known keys, the key for unknown.
     const t = (k) => k === 'toast.authErrorStop' ? 'Auth error. Stopping.' : k
-    const hook = renderHook(() => useVideoAutomation(flowAPI, t, vi.fn(), null))
+    const hook = renderHook(() => useVideoAutomation(flowAPI, t, null))
 
     let startPromise
     await act(async () => {
@@ -219,7 +217,7 @@ describe('useVideoAutomation — auth failure during submit', () => {
       getAccessToken: vi.fn().mockResolvedValue('token'),
     }
     const t = (k) => k
-    const hook = renderHook(() => useVideoAutomation(flowAPI, t, vi.fn(), null))
+    const hook = renderHook(() => useVideoAutomation(flowAPI, t, null))
 
     const items = [
       { id: 'vscene_1', prompt: 'item 1' },
@@ -271,7 +269,7 @@ describe('useVideoAutomation — auth failure during submit', () => {
       getAccessToken: vi.fn().mockResolvedValue('token'),
     }
     const t = (k) => k
-    const hook = renderHook(() => useVideoAutomation(flowAPI, t, vi.fn(), null))
+    const hook = renderHook(() => useVideoAutomation(flowAPI, t, null))
 
     const items = [{ id: 'vscene_1', prompt: 'test' }]
     let startPromise
@@ -317,7 +315,7 @@ describe('useVideoAutomation — auth failure on i2v (F→V) mode', () => {
       getAccessToken: vi.fn().mockResolvedValue('token'),
     }
     const t = (k) => k
-    const hook = renderHook(() => useVideoAutomation(flowAPI, t, vi.fn(), null))
+    const hook = renderHook(() => useVideoAutomation(flowAPI, t, null))
 
     // Shape mirrors what useVideoAutomation expects after framePairs filtering (line 260)
     const framePairs = [
@@ -371,7 +369,7 @@ describe('useVideoAutomation — auth failure on i2v (F→V) mode', () => {
       getAccessToken: vi.fn().mockResolvedValue('token'),
     }
     const t = (k) => k
-    const hook = renderHook(() => useVideoAutomation(flowAPI, t, vi.fn(), null))
+    const hook = renderHook(() => useVideoAutomation(flowAPI, t, null))
 
     const framePairs = [
       { id: 'fp_1', prompt: 'pair 1', startSceneId: 'scene_1', _startMediaId: 'media_1', status: 'pending' },

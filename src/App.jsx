@@ -132,11 +132,14 @@ function App() {
 
   // Hooks
   //
-  // Single source of truth for auth-failure UX: clear cache → setAuthReady(false) → toast.
-  // The same callback is passed to useFlowAPI (wrapper fires it on 2nd 401) AND to the
-  // hooks' onAuthError params (still used by useAutomation's preflight no-token path —
-  // useAutomation.js:418). This eliminates the three near-duplicate callbacks that
-  // used to live here and risked drifting apart over time.
+  // Single source of truth for the UI side of auth failure:
+  //   setAuthReady(false) → mark invalidated → toast.
+  // Cache clearing (state + localStorage) is owned upstream by useFlowAPI's wrapper
+  // shim (see useFlowAPI.js — clearTokenCacheImpl runs before onAuthError delegates
+  // here). This callback only handles what App actually controls: UI state + user
+  // notification. Same callback is reused by useAutomation's preflight no-token
+  // path (useAutomation.js:418) so the user sees a consistent message regardless
+  // of which code path detected the failure.
   const handleAuthError = useCallback(() => {
     setAuthReady(false)
     authInvalidatedRef.current = true  // prevent auto-recovery effect from flipping us back
@@ -165,7 +168,7 @@ function App() {
     () => saveCurrentProject()
   )
 
-  const videoAutomation = useVideoAutomation(flowAPI, t, handleAuthError, generationQueue)
+  const videoAutomation = useVideoAutomation(flowAPI, t, generationQueue)
   const { scenes, references, parseFromText, parseFromCSV, parseFromSRT, parseReferencesFromCSV, updateReferences, setScenes, setReferences } = scenesHook
   // Step 3: videoScenes 는 scenes 에서 derived. useVideoScenes 가 scenesHook 으로 라우팅.
   const videoScenesHook = useVideoScenes(scenes, scenesHook)

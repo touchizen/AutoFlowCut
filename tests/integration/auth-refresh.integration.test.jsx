@@ -82,7 +82,7 @@ describe('Integration — token expires mid-batch, refresh recovers', () => {
 
     const t = (k) => k
     const onItemUpdate = vi.fn()
-    const hook = renderHook(() => useVideoAutomation(flowAPI, t, onAuthError, null))
+    const hook = renderHook(() => useVideoAutomation(flowAPI, t, null))
 
     const items = [{ id: 'vscene_1', prompt: 'p', videoSaveId: 't2v_1' }]
     let startPromise

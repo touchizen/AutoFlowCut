@@ -48,7 +48,7 @@ function setupHook(overrides = {}) {
   }
 
   const t = (k) => k
-  const hook = renderHook(() => useVideoAutomation(flowAPI, t, null, null))
+  const hook = renderHook(() => useVideoAutomation(flowAPI, t, null))
   return { hook, flowAPI, generateVideoT2V }
 }
 

@@ -23,7 +23,13 @@ const randomSleep = (min, max) =>
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 
-export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null, generationQueue = null) {
+// Auth failures are handled centrally by useFlowAPI's withAuthRetry wrapper
+// (see useFlowAPI.js — wrapper shim calls clearTokenCache + the App-level
+// handleAuthError on 2nd 401). This hook only consumes the `authFailed` sentinel
+// returned by wrapped API calls and translates it into batch-level break/error.
+// Previously took an `onAuthError` param that was never invoked after the inline
+// 401 string-match was removed — dropped to keep the responsibility boundary clean.
+export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = null) {
   const [isRunning, setIsRunning] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
   const [progress, setProgress] = useState({ current: 0, total: 0, percent: 0, errorCount: 0, startedAt: null })
