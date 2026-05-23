@@ -460,6 +460,7 @@ export default function FrameToVideoPanel({
   onShowSceneDetail, onVideoRetry, disabled, t, galleryItems, galleryLoading, onLoadGallery,
   onUploadFromDisk, onListFlowProjects, onFetchProjectGallery, onPickArchiveImage,
   seedNo = null, seedLocked = false, onSeedChange, onSeedLockToggle, onSeedRandom,
+  onRequestNewScene,
 }) {
   const showSeedUI = typeof onSeedChange === 'function'
   const handleSeedInputChange = (e) => {
@@ -575,7 +576,12 @@ export default function FrameToVideoPanel({
   const addRow = () => {
     // 기본값: 순서대로 자동 채움
     const nextStart = availableScenes.find(s => !usedOwners.has(s.id))
-    if (!nextStart) return  // no scenes left without an owning row
+    if (!nextStart) {
+      // No unowned scene — ask parent to create a new scene. The auto-add useEffect
+      // will then pick it up and create the F→V row owning it.
+      onRequestNewScene?.()
+      return
+    }
 
     const nextStartId = nextStart.id
     const startIdx = availableScenes.findIndex(s => s.id === nextStartId)
@@ -843,7 +849,7 @@ export default function FrameToVideoPanel({
         <button
           className="btn-add-row"
           onClick={addRow}
-          disabled={disabled || !hasUnusedScene}
+          disabled={disabled}
         >
           {t('frameToVideo.addRow')}
         </button>
