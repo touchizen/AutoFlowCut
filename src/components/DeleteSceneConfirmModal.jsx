@@ -33,15 +33,19 @@ export default function DeleteSceneConfirmModal({
     return s.length > n ? s.slice(0, n) + '…' : s
   }
 
-  // mediaId 외에도 base64 (scene.image) 또는 파일 경로 (scene.imagePath) 만 있는 경우도
-  // 생성된 이미지로 인정. mediaId 만 보면 path-only 로드된 이미지가 모달에서 누락됨.
+  // 생성된 미디어 판정 기준은 sceneTrim.isSceneEmpty 와 정렬 — base64 / path / mediaId
+  // 중 하나라도 있으면 "데이터 있음". 다르면 trim 이 살려둔 씬을 모달이 "빈 씬" 으로
+  // 잘못 표시해 사용자가 손실 인지 못 함.
   const hasImage = !!(scene.image || scene.imagePath || scene.mediaId)
+  const hasVideoT2V = !!(scene.videoT2V || scene.videoT2VPath)
+  const hasVideoI2V = !!(scene.videoI2V || scene.videoI2VPath)
   const imagePrompt = scene.prompt?.trim() || ''
-  const videoT2V = scene.videoT2VPrompt?.trim() || ''
-  const videoI2V = scene.videoI2VPrompt?.trim() || ''
+  const videoT2VPrompt = scene.videoT2VPrompt?.trim() || ''
+  const videoI2VPrompt = scene.videoI2VPrompt?.trim() || ''
   const subtitle = scene.subtitle?.trim() || ''
 
-  const isEmpty = !imagePrompt && !videoT2V && !videoI2V && !subtitle && !hasImage && ownedRowCount === 0
+  const isEmpty = !imagePrompt && !videoT2VPrompt && !videoI2VPrompt && !subtitle
+    && !hasImage && !hasVideoT2V && !hasVideoI2V && ownedRowCount === 0
 
   return (
     <Modal
@@ -70,14 +74,14 @@ export default function DeleteSceneConfirmModal({
               <strong>{t('prompt.image') || '이미지 프롬프트'}:</strong> {truncate(imagePrompt)}
             </li>
           )}
-          {videoT2V && (
+          {videoT2VPrompt && (
             <li>
-              <strong>{t('prompt.videoT2V') || '비디오 T2V'}:</strong> {truncate(videoT2V)}
+              <strong>{t('prompt.videoT2V') || '비디오 T2V'}:</strong> {truncate(videoT2VPrompt)}
             </li>
           )}
-          {videoI2V && (
+          {videoI2VPrompt && (
             <li>
-              <strong>{t('prompt.videoI2V') || '비디오 I2V'}:</strong> {truncate(videoI2V)}
+              <strong>{t('prompt.videoI2V') || '비디오 I2V'}:</strong> {truncate(videoI2VPrompt)}
             </li>
           )}
           {subtitle && (
@@ -88,6 +92,16 @@ export default function DeleteSceneConfirmModal({
           {hasImage && (
             <li>
               <strong>{t('sceneList.generatedImage') || '생성된 이미지'}</strong>
+            </li>
+          )}
+          {hasVideoT2V && (
+            <li>
+              <strong>{t('sceneList.generatedVideoT2V') || '생성된 T2V 비디오'}</strong>
+            </li>
+          )}
+          {hasVideoI2V && (
+            <li>
+              <strong>{t('sceneList.generatedVideoI2V') || '생성된 I2V 비디오'}</strong>
             </li>
           )}
           {ownedRowCount > 0 && (

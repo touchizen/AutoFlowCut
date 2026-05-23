@@ -156,6 +156,8 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     deleteConfirmIntro: 'Delete scene? The following data will also be removed:',
     deleteConfirmEmpty: '(empty scene)',
     generatedImage: 'Generated image',
+    generatedVideoT2V: 'Generated T2V video',
+    generatedVideoI2V: 'Generated I2V video',
     rowCount: '{count} row(s)',
   },
   

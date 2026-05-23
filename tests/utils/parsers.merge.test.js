@@ -374,22 +374,22 @@ describe('mergeSRTIntoScenes', () => {
     expect(result[1].subtitle).toBe('두 번째 자막') // 자막만
   })
 
-  it('SRT가 더 짧으면: 초과 scenes 통째 보존 (max 길이 정책)', () => {
+  it('SRT가 더 짧으면: 초과 위치의 subtitle 만 CLEAR, 다른 컬럼은 보존 (max-driver: SRT N = 현재 컬럼 길이)', () => {
     const existing = [
       { id: 'scene_1', prompt: 'p1', subtitle: '', duration: 3 },
       { id: 'scene_2', prompt: 'p2', subtitle: '', duration: 3 },
       { id: 'scene_3', prompt: 'p3', subtitle: 's3', duration: 5, image: 'img3' },
     ]
     const result = mergeSRTIntoScenes(existing, SAMPLE_SRT) // SRT 2개
-    expect(result).toHaveLength(3) // max(3, 2)
+    expect(result).toHaveLength(3) // max(3, 2) — scene 자체는 prompt/image 가 살림
     // 0, 1 은 SRT subtitle/duration 갱신, prompt 보존
     expect(result[0].subtitle).toBe('첫 번째 자막')
     expect(result[0].prompt).toBe('p1')
     expect(result[1].subtitle).toBe('두 번째 자막')
     expect(result[1].prompt).toBe('p2')
-    // 2 는 SRT 없음 → 통째 보존
+    // 2 는 SRT 범위 밖 → subtitle CLEAR, prompt/image 보존
+    expect(result[2].subtitle).toBe('')   // 옛 's3' 사라짐
     expect(result[2].prompt).toBe('p3')
-    expect(result[2].subtitle).toBe('s3')
     expect(result[2].image).toBe('img3')
   })
 

@@ -381,8 +381,11 @@ export function mergeSRTIntoScenes(existing, srtText, options = {}) {
       }
     }
     if (ex) {
-      // 기존만 (SRT 더 짧음): 보존
-      return ex
+      // SRT 가 더 짧음 → 초과 위치는 subtitle CLEAR (max-driver 모델: "SRT N" 은 현재
+      // SRT 컬럼 길이 N 을 의미). 다른 컬럼(prompt/video/image/F→V)은 보존 — 그게 있으면
+      // sceneTrim 이 씬 자체는 살림. 옛 subtitle 잔존하면 reimport 후에도 scene count/export 가
+      // stale 자막으로 부풀려짐.
+      return { ...ex, subtitle: '' }
     }
     return {
       id: options.allocateId ? options.allocateId() : `scene_${i + 1}`,

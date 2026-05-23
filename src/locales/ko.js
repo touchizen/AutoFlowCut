@@ -156,6 +156,8 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     deleteConfirmIntro: '씬을 삭제합니다. 다음 데이터가 함께 사라집니다:',
     deleteConfirmEmpty: '(빈 씬)',
     generatedImage: '생성된 이미지',
+    generatedVideoT2V: '생성된 T2V 비디오',
+    generatedVideoI2V: '생성된 I2V 비디오',
     rowCount: '{count}개 행',
   },
   
