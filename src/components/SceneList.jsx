@@ -344,7 +344,7 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
       <td className="col-actions">
         <button
           className="btn-delete"
-          onClick={() => onDelete(scene.id)}
+          onClick={() => onDelete(scene.id, index)}
           disabled={disabled || scene.status === 'generating'}
           title={t('common.delete')}
         >

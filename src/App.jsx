@@ -60,6 +60,7 @@ import AudioPanel from './components/AudioPanel'
 import { SubscriptionBanner } from './components/SubscriptionBanner'
 import StylePicker from './components/StylePicker'
 import Modal from './components/Modal'
+import DeleteSceneConfirmModal from './components/DeleteSceneConfirmModal'
 import { useAuth } from './contexts/AuthContext'
 
 function App() {
@@ -77,6 +78,9 @@ function App() {
 
   // Tag Validation Modal
   const [tagValidationErrors, setTagValidationErrors] = useState(null)
+
+  // Scene delete confirmation
+  const [sceneToDelete, setSceneToDelete] = useState(null) // { scene, sceneIndex } | null
   const [pendingStartOptions, setPendingStartOptions] = useState(null)
 
   // 실제 실행 중인 자동화의 스타일 snapshot — Stop 버튼이 표시함.
@@ -1215,9 +1219,9 @@ function App() {
               scenes={scenes}
               aspectRatio={settings.aspectRatio}
               onUpdate={scenesHook.updateScene}
-              onDelete={(sceneId) => {
-                const nextFramePairs = scenesHook.deleteScene(sceneId, framePairs)
-                if (nextFramePairs !== framePairs) setFramePairs(nextFramePairs)
+              onDelete={(sceneId, sceneIndex) => {
+                const scene = scenes.find(s => s.id === sceneId)
+                if (scene) setSceneToDelete({ scene, sceneIndex })
               }}
               onAdd={scenesHook.addScene}
               onClearAll={scenesHook.clearScenes}
@@ -1728,6 +1732,20 @@ function App() {
           }}
         />
       )}
+
+      <DeleteSceneConfirmModal
+        scene={sceneToDelete?.scene || null}
+        sceneIndex={sceneToDelete?.sceneIndex ?? 0}
+        framePairs={framePairs}
+        onConfirm={() => {
+          if (!sceneToDelete) return
+          const nextFramePairs = scenesHook.deleteScene(sceneToDelete.scene.id, framePairs)
+          if (nextFramePairs !== framePairs) setFramePairs(nextFramePairs)
+          setSceneToDelete(null)
+        }}
+        onCancel={() => setSceneToDelete(null)}
+        t={t}
+      />
     </div>
   )
 }
