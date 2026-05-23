@@ -108,6 +108,9 @@ Example:
 A drone shot slowly rising over a misty mountain forest at sunrise
 A cat jumping from shelf to shelf in a cozy bookstore, slow motion
 Ocean waves crashing against a lighthouse during a dramatic storm`,
+    image: 'Image prompt',
+    videoT2V: 'Video T2V',
+    videoI2V: 'Video I2V',
   },
   
   // Scene list
@@ -149,6 +152,11 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     orPickPreset: 'or pick from presets',
     noStyleRef: 'No style references. Add one in the Ref tab.',
     noRefForType: 'No {type} references. Add one in the Ref tab.',
+    deleteConfirmTitle: 'Delete scene',
+    deleteConfirmIntro: 'Delete scene? The following data will also be removed:',
+    deleteConfirmEmpty: '(empty scene)',
+    generatedImage: 'Generated image',
+    rowCount: '{count} row(s)',
   },
   
   // Reference

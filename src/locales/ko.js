@@ -108,6 +108,9 @@ The king and queen discuss important matters`,
 A drone shot slowly rising over a misty mountain forest at sunrise
 A cat jumping from shelf to shelf in a cozy bookstore, slow motion
 Ocean waves crashing against a lighthouse during a dramatic storm`,
+    image: '이미지 프롬프트',
+    videoT2V: '비디오 T2V',
+    videoI2V: '비디오 I2V',
   },
   
   // 씬 목록
@@ -149,6 +152,11 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     orPickPreset: '또는 프리셋에서 선택',
     noStyleRef: '스타일 레퍼런스가 없습니다. Ref 탭에서 추가하세요.',
     noRefForType: '{type} 레퍼런스가 없습니다. Ref 탭에서 추가하세요.',
+    deleteConfirmTitle: '씬 삭제 확인',
+    deleteConfirmIntro: '씬을 삭제합니다. 다음 데이터가 함께 사라집니다:',
+    deleteConfirmEmpty: '(빈 씬)',
+    generatedImage: '생성된 이미지',
+    rowCount: '{count}개 행',
   },
   
   // 레퍼런스
