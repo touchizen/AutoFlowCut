@@ -30,12 +30,16 @@ export function generateSRT(project, lang = 'ko') {
   const scenes = project.scenes || [];
   const videos = project.videos || [];
 
-  // 비디오가 커버하는 씬 매핑
+  // 비디오가 커버하는 씬 매핑.
+  // scene_id (= framePair.ownerSceneId — owner-binding canonical) 우선,
+  // 없으면 legacy from_scene (= startSceneId, mutable) 폴백.
+  // 사용자가 start 이미지 dropdown 만 바꿔도 비디오는 owner 씬에 묶여야 자막
+  // 타이밍이 정확한 씬에 attach 됨.
   const videoMap = {};
   videos.forEach(video => {
-    if (video.video_path && video.from_scene) {
-      videoMap[video.from_scene] = video;
-    }
+    if (!video.video_path) return;
+    const sceneKey = video.scene_id ?? video.from_scene;
+    if (sceneKey) videoMap[sceneKey] = video;
   });
 
   let srtContent = '';

@@ -17,7 +17,7 @@ import InfinityLoader from './InfinityLoader'
 import HoverImageBalloon from './HoverImageBalloon'
 import './SceneList.css'
 
-function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, onShowDetail, onShowVideoDetail, references, onOpenTag, styleThumbnails = {} }) {
+function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, onShowDetail, onShowVideoDetail, references, onOpenTag, styleThumbnails = {}, framePairs = [] }) {
   const rowRef = useRef(null)
   const [hoverPreview, setHoverPreview] = useState(null)
 
@@ -293,7 +293,16 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
             </div>
           )}
           {/* I2V 비디오 */}
-          {(scene.videoI2V || scene.videoI2VPath) && (
+          {(scene.videoI2V || scene.videoI2VPath) && (() => {
+            // ownerSceneId 로 owning framePair 를 해석한다.
+            // 과거 `i2v_${scene.id.replace('scene_', '')}` (= i2v_3) 패턴은 fp.id 가 scene
+            // 번호와 1:1 매칭일 때만 우연히 동작 — stable ID + 삭제 갭이 생기면 깨진다.
+            // owning fp 가 있으면 그 fp.id 로 i2v_N 을 만들고, 없으면 scene.id 폴백.
+            const ownerFp = framePairs.find(fp => fp.ownerSceneId === scene.id)
+            const i2vId = ownerFp?.id
+              ? `i2v_${ownerFp.id.replace('fp_', '')}`
+              : `i2v_${scene.id.replace('scene_', '')}`
+            return (
             <div
               className={`media-thumb ${isSelected('i2v')} clickable`}
               onClick={(e) => {
@@ -302,7 +311,7 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
                   switchExportMedia('i2v')
                 } else {
                   onShowVideoDetail({
-                    id: `i2v_${scene.id.replace('scene_', '')}`,
+                    id: i2vId,
                     prompt: scene.prompt,
                     video: scene.videoI2V,
                     videoPath: scene.videoI2VPath,
@@ -311,7 +320,7 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
                 }
               }}
               onDoubleClick={() => onShowVideoDetail({
-                id: `i2v_${scene.id.replace('scene_', '')}`,
+                id: i2vId,
                 prompt: scene.prompt,
                 video: scene.videoI2V,
                 videoPath: scene.videoI2VPath,
@@ -323,7 +332,8 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
               <div className="play-button-overlay mini">▶</div>
               {mediaCount > 1 && <span className="media-label">I2V</span>}
             </div>
-          )}
+            )
+          })()}
           {/* 미디어 없음 → 상태 아이콘 */}
           {mediaCount === 0 && (
             <div
@@ -366,6 +376,7 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
 
 export default function SceneList({
   scenes,
+  framePairs = [],
   onUpdate,
   onDelete,
   onAdd,
@@ -522,6 +533,7 @@ export default function SceneList({
                 onDelete={onDelete}
                 disabled={disabled}
                 ratioClass={ratioClass}
+                framePairs={framePairs}
                 t={t}
                 onShowDetail={handleShowDetail}
                 onShowVideoDetail={handleShowVideoDetail}

@@ -1217,6 +1217,7 @@ function App() {
           {activeTab === 'list' && (
             <SceneList
               scenes={scenes}
+              framePairs={framePairs}
               aspectRatio={settings.aspectRatio}
               onUpdate={scenesHook.updateScene}
               onDelete={(sceneId, sceneIndex) => {
