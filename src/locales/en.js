@@ -69,7 +69,7 @@ export default {
     customPromptPlaceholder: 'Type your own prompt...',
     autoBatch: '⚡ Auto Batch',
     autoBatchHint: 'Auto-create F→V rows for every scene with a generated image (start=this scene, end=next scene). One click vs. clicking Add Row N times.',
-    addRowHint: 'Add one F→V row. If all scenes are already owned, a new scene will be created too.',
+    addRowHint: 'Add one F→V row. If every scene already has a row, a new scene will be created too.',
     addRowOk: 'F→V row added',
     addRowNewScene: 'New scene + F→V row added. Generate an image and you can pick it as the start image from the dropdown.',
     addRowFail: 'Could not create a new scene',
