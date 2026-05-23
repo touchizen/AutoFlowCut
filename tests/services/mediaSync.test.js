@@ -38,6 +38,7 @@ function makeFramePair(overrides = {}) {
     status: 'complete',
     videoPath: '/path/new-i2v.mp4',
     duration: 8,
+    ownerSceneId: 'scene_1',
     startSceneId: 'scene_1',
     ...overrides,
   }
@@ -88,10 +89,11 @@ describe('syncVideosIntoScenes — I2V (framePairs)', () => {
     expect(scenes[0].videoI2VPath).toBe('/path/same-i2v.mp4')
   })
 
-  it('startSceneId 가 "gallery::"로 시작하면 scene 동기화 안 함 (gallery 전용)', () => {
+  it('ownerSceneId 가 없으면 (gallery-rooted 행) scene 동기화 안 함', () => {
     const scenes = [makeScene('scene_1', { videoI2VPath: '/path/old.mp4' })]
     const framePairs = [makeFramePair({
       videoPath: '/path/new.mp4',
+      ownerSceneId: null,
       startSceneId: 'gallery::abc123',
     })]
 
@@ -113,9 +115,9 @@ describe('syncVideosIntoScenes — I2V (framePairs)', () => {
     expect(synced).toBe(false)
   })
 
-  it('startSceneId 가 없으면 동기화 안 함', () => {
+  it('ownerSceneId 가 없으면 동기화 안 함', () => {
     const scenes = [makeScene('scene_1')]
-    const framePairs = [makeFramePair({ startSceneId: null })]
+    const framePairs = [makeFramePair({ ownerSceneId: null, startSceneId: null })]
 
     const synced = syncVideosIntoScenes(scenes, [], framePairs)
 

@@ -22,13 +22,15 @@ export function syncVideosIntoScenes(scenes, _videoScenes, framePairs, logPrefix
   if (!scenes?.length) return false
   let synced = false
 
-  // I2V: framePair.startSceneId → scene (path + duration 동기화) — overwrite 정책.
-  // recovery / regen 후 source path 가 바뀌어도 scene 에 옛 path 가 남아 있으면 동기화 skip
-  // → SceneList/export 가 옛 비디오 사용. derived 필드 의미상 source 가 권위.
+  // I2V: framePair.ownerSceneId → scene (path + duration 동기화) — overwrite 정책.
+  // ownerSceneId is the canonical row-to-scene binding (see plan
+  // 2026-05-23-framepair-owner-scene-binding.md). startSceneId is just the
+  // mutable input image — irrelevant for "which scene does this video belong to".
+  // Gallery-rooted rows have ownerSceneId=null and are naturally skipped by the truthy guard.
   if (framePairs?.length) {
     for (const fp of framePairs) {
-      if ((fp.status === 'complete' || fp.status === 'done') && (fp.base64 || fp.videoPath) && fp.startSceneId && !fp.startSceneId.startsWith('gallery::')) {
-        const scene = scenes.find(s => s.id === fp.startSceneId)
+      if ((fp.status === 'complete' || fp.status === 'done') && (fp.base64 || fp.videoPath) && fp.ownerSceneId) {
+        const scene = scenes.find(s => s.id === fp.ownerSceneId)
         if (!scene) continue
         const newPath = fp.videoPath || null
         if (scene.videoI2VPath !== newPath) {
@@ -39,7 +41,7 @@ export function syncVideosIntoScenes(scenes, _videoScenes, framePairs, logPrefix
           scene.videoI2VDuration = fp.duration
           synced = true
         }
-        if (synced) console.log(`${logPrefix} Synced I2V video → ${fp.startSceneId}`)
+        if (synced) console.log(`${logPrefix} Synced I2V video → ${fp.ownerSceneId}`)
       }
     }
   }
