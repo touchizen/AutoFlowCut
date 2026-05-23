@@ -18,7 +18,7 @@
  *   prompt       ↔ videoT2VPrompt
  *   duration     ↔ videoT2VDuration (없으면 scene.duration)
  *   status       ↔ videoT2VStatus
- *   video        ↔ videoT2VVideo
+ *   video        ↔ videoT2V
  *   videoPath    ↔ videoT2VPath
  *   mediaId      ↔ videoT2VMediaId
  *   generationId ↔ videoT2VGenerationId
@@ -28,12 +28,15 @@
 import { useCallback, useMemo } from 'react'
 import { DEFAULTS } from '../config/defaults'
 
-/** videoScene update field → scenes update field 매핑 테이블 */
+/** videoScene update field → scenes update field 매핑 테이블.
+ *  주의: video 는 scene.videoT2V (gen / trim / sceneMedia 가 읽는 canonical 필드)
+ *  로 매핑. 이전엔 videoT2VVideo 라는 phantom 필드로 매핑돼 있어 clear-media 가
+ *  scene.videoT2V 를 못 비워서 stale 비디오가 export/trim 에 남는 회귀가 있었음. */
 const FIELD_MAP = {
   prompt: 'videoT2VPrompt',
   duration: 'videoT2VDuration',
   status: 'videoT2VStatus',
-  video: 'videoT2VVideo',
+  video: 'videoT2V',
   videoPath: 'videoT2VPath',
   mediaId: 'videoT2VMediaId',
   generationId: 'videoT2VGenerationId',
@@ -65,7 +68,7 @@ function deriveVideoScene(s) {
     startTime: s.startTime ?? 0,
     endTime: s.endTime ?? 0,
     status: s.videoT2VStatus ?? 'pending',
-    video: s.videoT2VVideo ?? null,
+    video: s.videoT2V ?? null,
     videoPath: s.videoT2VPath ?? null,
     mediaId: s.videoT2VMediaId ?? null,
     generationId: s.videoT2VGenerationId ?? null,
@@ -159,7 +162,7 @@ export function useVideoScenes(scenes = [], scenesHook = null) {
     scenesHook.setScenes(prev => (prev || []).map(s => ({
       ...s,
       videoT2VPrompt: '',
-      videoT2VVideo: null,
+      videoT2V: null,
       videoT2VPath: null,
       videoT2VStatus: 'pending',
       videoT2VMediaId: null,
