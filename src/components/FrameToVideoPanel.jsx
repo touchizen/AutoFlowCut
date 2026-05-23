@@ -477,6 +477,18 @@ export default function FrameToVideoPanel({
     [scenes]
   )
 
+  // 한 씬당 1개 owning row invariant — addRow/autoBatch/auto-add 가드 + 버튼
+  // disabled 상태가 모두 같은 데이터를 본다. useMemo로 한 번만 계산해 재렌더
+  // 마다 Set 새로 만드는 부담 제거.
+  const usedOwners = useMemo(
+    () => new Set(framePairs.map(p => p.ownerSceneId).filter(Boolean)),
+    [framePairs]
+  )
+  const hasUnusedScene = useMemo(
+    () => availableScenes.some(s => !usedOwners.has(s.id)),
+    [availableScenes, usedOwners]
+  )
+
   // 마운트 시점에 기존 저장된 framePairs에 중복 ID가 있으면 정제.
   // 과거 버그(모듈 카운터 고아)로 저장된 프로젝트 데이터를 자동 복구한다.
   useEffect(() => {
@@ -560,7 +572,6 @@ export default function FrameToVideoPanel({
 
   const addRow = () => {
     // 기본값: 순서대로 자동 채움
-    const usedOwners = new Set(framePairs.map(p => p.ownerSceneId).filter(Boolean))
     const nextStart = availableScenes.find(s => !usedOwners.has(s.id))
     if (!nextStart) return  // no scenes left without an owning row
 
@@ -585,7 +596,6 @@ export default function FrameToVideoPanel({
 
   // Auto Batch — 아직 배치 안 된 씬 전부를 프레임 페어로 자동 생성
   const autoBatch = () => {
-    const usedOwners = new Set(framePairs.map(p => p.ownerSceneId).filter(Boolean))
     const unusedScenes = availableScenes.filter(s => !usedOwners.has(s.id))
 
     if (unusedScenes.length === 0) return
@@ -831,14 +841,14 @@ export default function FrameToVideoPanel({
         <button
           className="btn-add-row"
           onClick={addRow}
-          disabled={disabled || availableScenes.filter(s => !new Set(framePairs.map(p => p.ownerSceneId).filter(Boolean)).has(s.id)).length === 0}
+          disabled={disabled || !hasUnusedScene}
         >
           {t('frameToVideo.addRow')}
         </button>
         <button
           className="btn-add-row btn-auto-batch"
           onClick={autoBatch}
-          disabled={disabled || availableScenes.filter(s => !new Set(framePairs.map(p => p.ownerSceneId).filter(Boolean)).has(s.id)).length === 0}
+          disabled={disabled || !hasUnusedScene}
           title={t('frameToVideo.autoBatchHint')}
         >
           {t('frameToVideo.autoBatch')}
