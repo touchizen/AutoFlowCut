@@ -1,7 +1,12 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { syncVideosIntoScenes } from '../../src/services/mediaSync'
 
 describe('syncVideosIntoScenes — ownerSceneId binding', () => {
+  let logSpy
+  beforeEach(() => { logSpy = vi.spyOn(console, 'log').mockImplementation(() => {}) })
+  afterEach(() => { logSpy.mockRestore() })
+
+
   it('binds video to ownerSceneId, not startSceneId, when they differ', () => {
     // The exact regression: user picked scene_3 as the start image for a row that
     // owns scene_2. The video must land on scene_2.
