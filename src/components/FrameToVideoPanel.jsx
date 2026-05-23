@@ -504,8 +504,12 @@ export default function FrameToVideoPanel({
   const prevAvailableCountRef = useRef(availableScenes.length)
   useEffect(() => {
     onUpdate(prev => {
-      const usedStart = new Set(prev.map(p => p.startSceneId))
-      const unusedScenes = availableScenes.filter(s => !usedStart.has(s.id))
+      // Dedup by ownerSceneId (immutable row-to-scene binding) not startSceneId
+      // (mutable input field). Without this, a row whose start image was changed
+      // would no longer count as "owning" its original scene, and auto-add would
+      // re-create a duplicate row.
+      const usedOwners = new Set(prev.map(p => p.ownerSceneId).filter(Boolean))
+      const unusedScenes = availableScenes.filter(s => !usedOwners.has(s.id))
 
       if (unusedScenes.length === 0) return prev
 
@@ -519,7 +523,8 @@ export default function FrameToVideoPanel({
         const nextScene = globalIdx >= 0 ? availableScenes[globalIdx + 1] : null
         return {
           id,
-          startSceneId: scene.id,
+          ownerSceneId: scene.id,    // immutable owner — never changed by dropdowns
+          startSceneId: scene.id,    // mutable input; user can repoint via dropdown
           endSceneId: nextScene?.id || '',
           prompt: scene.prompt || '',
           videoPrompt: '',
@@ -545,6 +550,8 @@ export default function FrameToVideoPanel({
     onUpdate(framePairs.map(p => ({ ...p, selected: !allSelected })))
   }
 
+  // Mutates only the named field. `ownerSceneId` is intentionally NOT exposed via
+  // any dropdown — it stays whatever auto-add set at row creation.
   const updatePair = (index, field, value) => {
     const updated = [...framePairs]
     updated[index] = { ...updated[index], [field]: value }
@@ -553,10 +560,11 @@ export default function FrameToVideoPanel({
 
   const addRow = () => {
     // 기본값: 순서대로 자동 채움
-    const usedStart = new Set(framePairs.map(p => p.startSceneId))
-    const nextStart = availableScenes.find(s => !usedStart.has(s.id))
-    const nextStartId = nextStart?.id || ''
+    const usedOwners = new Set(framePairs.map(p => p.ownerSceneId).filter(Boolean))
+    const nextStart = availableScenes.find(s => !usedOwners.has(s.id))
+    if (!nextStart) return  // no scenes left without an owning row
 
+    const nextStartId = nextStart.id
     const startIdx = availableScenes.findIndex(s => s.id === nextStartId)
     const nextEnd = startIdx >= 0 ? availableScenes[startIdx + 1] : null
 
@@ -564,9 +572,10 @@ export default function FrameToVideoPanel({
       ...framePairs,
       {
         id: `fp_${getNextPairId(framePairs)}`,
+        ownerSceneId: nextStartId,
         startSceneId: nextStartId,
         endSceneId: nextEnd?.id || '',
-        prompt: nextStart?.prompt || '',
+        prompt: nextStart.prompt || '',
         videoPrompt: '',
         customPrompt: '',
         status: 'waiting',
@@ -576,18 +585,19 @@ export default function FrameToVideoPanel({
 
   // Auto Batch — 아직 배치 안 된 씬 전부를 프레임 페어로 자동 생성
   const autoBatch = () => {
-    const usedStart = new Set(framePairs.map(p => p.startSceneId))
-    const unusedScenes = availableScenes.filter(s => !usedStart.has(s.id))
+    const usedOwners = new Set(framePairs.map(p => p.ownerSceneId).filter(Boolean))
+    const unusedScenes = availableScenes.filter(s => !usedOwners.has(s.id))
 
     if (unusedScenes.length === 0) return
 
     let nextId = getNextPairId(framePairs)
-    const newPairs = unusedScenes.map((scene, i) => {
+    const newPairs = unusedScenes.map((scene) => {
       const globalIdx = availableScenes.indexOf(scene)
       const nextScene = globalIdx >= 0 ? availableScenes[globalIdx + 1] : null
       return {
         id: `fp_${nextId++}`,
-        startSceneId: scene.id,
+        ownerSceneId: scene.id,    // immutable owner — never changed by dropdowns
+        startSceneId: scene.id,    // mutable input; user can repoint via dropdown
         endSceneId: nextScene?.id || '',
         prompt: scene.prompt || '',
         videoPrompt: '',
@@ -624,6 +634,7 @@ export default function FrameToVideoPanel({
               if (item.url && onPickArchiveImage) onPickArchiveImage(item)
               onUpdate([{
                 id: `fp_${getNextPairId([])}`,
+                ownerSceneId: null,  // gallery-rooted: no owning project scene
                 startSceneId: GALLERY_PREFIX + item.mediaId,
                 endSceneId: '',
                 prompt: '',
@@ -681,7 +692,13 @@ export default function FrameToVideoPanel({
               onChange={() => toggleSelect(pair.id)}
               disabled={disabled}
             /></span>
-            <span className="mapping-col col-num">{index + 1}</span>
+            <span className="mapping-col col-num">
+              {(() => {
+                if (!pair.ownerSceneId) return '—'
+                const idx = scenes.findIndex(s => s.id === pair.ownerSceneId)
+                return idx >= 0 ? `#${idx + 1}` : '⚠'
+              })()}
+            </span>
 
             {/* Start Image 드롭다운 */}
             <div className="mapping-col col-image">
@@ -814,14 +831,14 @@ export default function FrameToVideoPanel({
         <button
           className="btn-add-row"
           onClick={addRow}
-          disabled={disabled}
+          disabled={disabled || availableScenes.filter(s => !new Set(framePairs.map(p => p.ownerSceneId).filter(Boolean)).has(s.id)).length === 0}
         >
           {t('frameToVideo.addRow')}
         </button>
         <button
           className="btn-add-row btn-auto-batch"
           onClick={autoBatch}
-          disabled={disabled || availableScenes.filter(s => !new Set(framePairs.map(p => p.startSceneId)).has(s.id)).length === 0}
+          disabled={disabled || availableScenes.filter(s => !new Set(framePairs.map(p => p.ownerSceneId).filter(Boolean)).has(s.id)).length === 0}
           title={t('frameToVideo.autoBatchHint')}
         >
           {t('frameToVideo.autoBatch')}
