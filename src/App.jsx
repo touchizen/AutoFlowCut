@@ -1211,7 +1211,7 @@ function App() {
                 const n = Math.floor(Math.random() * 1000000)
                 setSettings(s => ({ ...s, seedNo: n, seedLocked: true }))
               }}
-              onRequestNewScene={() => scenesHook.addScene()}
+              onRequestNewScene={() => scenesHook.addScene()  /* returns new scene id */}
               onRequestSceneTrim={(nextFramePairs) => scenesHook.trimScenes(nextFramePairs)}
             />
           )}

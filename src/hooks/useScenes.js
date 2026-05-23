@@ -212,6 +212,11 @@ export function useScenes() {
    * 씬 추가
    */
   const addScene = useCallback((afterIndex = -1) => {
+    // Allocate id BEFORE setScenes so caller can use it (e.g. F→V Add Row needs the
+    // new scene's id to immediately create a framePair pointing at it). The id will
+    // be synced into nextSceneIdRef by the setScenes wrapper after normalize, so no
+    // collision risk even though allocateSceneId fires before the state update.
+    const newId = allocateSceneId()
     setScenes(prev => {
       const insertIndex = afterIndex === -1 ? prev.length : afterIndex + 1
 
@@ -220,7 +225,7 @@ export function useScenes() {
       const duration = DEFAULTS.scene.duration
 
       const newScene = {
-        id: allocateSceneId(),
+        id: newId,
         startTime,
         endTime: startTime + duration,
         duration,
@@ -237,6 +242,7 @@ export function useScenes() {
       newScenes.splice(insertIndex, 0, newScene)
       return recalculateTimesArr(newScenes)
     })
+    return newId
   }, [])
 
   /**

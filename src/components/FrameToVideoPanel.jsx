@@ -578,12 +578,26 @@ export default function FrameToVideoPanel({
     // 기본값: 순서대로 자동 채움
     const nextStart = availableScenes.find(s => !usedOwners.has(s.id))
     if (!nextStart) {
-      // No unowned scene — ask parent to create a new scene. Two-step flow:
-      //   1. Parent creates an empty scene (addScene) — no mediaId yet
-      //   2. F→V row is NOT auto-created immediately because availableScenes filters
-      //      on mediaId. The row appears once the user generates/uploads an image.
-      // This is intentional — frame-to-video requires a real start image.
-      onRequestNewScene?.()
+      // 모든 씬이 owned → 새 씬을 만들고 그 씬을 owner 로 하는 F→V 행을 즉시 생성.
+      // 새 씬은 mediaId 가 없어서 availableScenes 필터에서 빠짐 → start/end image dropdown
+      // 에선 안 보이지만, 행 자체는 시각적으로 즉시 추가됨. 사용자가 image-tab 에서
+      // 이미지 생성하면 dropdown 에 나타나고, 행에서 직접 선택 가능.
+      const newSceneId = onRequestNewScene?.()
+      if (!newSceneId) return  // parent가 안 만들어 줬으면 no-op (silent fail)
+      onUpdate([
+        ...framePairs,
+        {
+          id: `fp_${getNextPairId(framePairs)}`,
+          ownerSceneId: newSceneId,
+          startSceneId: '',  // mediaId 없는 새 씬 — 사용자가 이미지 생성 후 dropdown 에서 선택
+          endSceneId: '',
+          prompt: '',
+          videoPrompt: '',
+          customPrompt: '',
+          status: 'waiting',
+          selected: false,
+        },
+      ])
       return
     }
 
