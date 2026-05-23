@@ -223,6 +223,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
     stopRequestedRef.current = false
     quotaStoppedRef.current = false
     pausedRef.current = false
+    let authStopped = false   // set true on authFailed break — prevents fall-through 'done' status
     setIsRunning(true)
     setIsPaused(false)
     setStatus('running')
@@ -397,12 +398,24 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
         // Auth errors now handled via withAuthRetry's authFailed sentinel (see below).
         // Inline 401 string-match removed to avoid duplicate onAuthError firing.
         if (genResult?.authFailed) {
+          const authErr = genResult.error || 'Auth expired — please re-login to Flow'
           onItemUpdate?.(item.id, 'error', {
-            error: genResult.error || 'Auth expired — please re-login to Flow',
+            error: authErr,
             errorKind: 'auth',
           })
           videoErrorCount++
+          // Mark all remaining un-submitted items with the same auth error
+          for (let j = i + 1; j < freshGen.length; j++) {
+            onItemUpdate?.(freshGen[j].id, 'error', {
+              error: authErr,
+              errorKind: 'auth',
+            })
+            videoErrorCount++
+          }
           console.warn(`[VideoAutomation] ❌ Submit authFailed: token dead, stopping batch`)
+          authStopped = true
+          setStatus('error')
+          setStatusMessage(`🔐 ${t('videoAutomation.authErrorStop') || 'Auth expired — please re-login to Flow'}`)
           break
         }
         onItemUpdate?.(item.id, 'error', { error: genResult.error })
@@ -420,10 +433,12 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
     }
 
     if (submissions.length === 0) {
-      // 모든 제출 실패 + in-flight 도 없음 — quota stop 인지 일반 실패인지 구분.
-      // quota 면 사용자 입장에서 "완료" 가 아니라 "중단" 으로 표시돼야 다음 행동이 명확.
+      // 모든 제출 실패 + in-flight 도 없음 — auth/quota/일반 실패 구분.
+      // auth 면 status 와 메시지가 이미 break 시점에 설정돼 있으므로 덮어쓰지 않는다.
       setIsRunning(false)
-      if (quotaStoppedRef.current) {
+      if (authStopped) {
+        // Status + message already set at the break site — do not overwrite.
+      } else if (quotaStoppedRef.current) {
         // local ref — 모달 dismiss 와 무관하게 이번 batch 의 stop 사유를 정확히 판별.
         // 전역 isQuotaBlocked() 보면 사용자가 모달을 1초 안에 닫는 경우 race 로 'done' 표시되는 회귀.
         setStatus('stopped')
@@ -469,13 +484,17 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
       // The wrapper already fired onAuthError + cleared cache. Mark all pending items
       // as auth-error and break immediately — no point polling on a dead token.
       if (result?.authFailed) {
+        const authErr = result.error || 'Auth expired — please re-login to Flow'
         for (const [itemId] of pending) {
           onItemUpdate?.(itemId, 'error', {
-            error: result.error || 'Auth expired — please re-login to Flow',
+            error: authErr,
             errorKind: 'auth',
           })
         }
         pending.clear()
+        authStopped = true
+        setStatus('error')
+        setStatusMessage(`🔐 ${t('videoAutomation.authErrorStop') || 'Auth expired — please re-login to Flow'}`)
         break
       }
       // Top-level fail (예: { success: false, error: "RESOURCE_EXHAUSTED..." }) — quota 검사 후 break.
@@ -578,7 +597,9 @@ export function useVideoAutomation(flowAPI, t = (key) => key, onAuthError = null
     setIsPaused(false)
     setProgress({ current: total, total, percent: 100, errorCount: videoErrorCount, startedAt: batchStartedAt, endedAt: Date.now() })
 
-    if (stopRequestedRef.current) {
+    if (authStopped) {
+      // Status + message already set at the break site — do not overwrite.
+    } else if (stopRequestedRef.current) {
       setStatus('stopped')
       // poll 단계에서 quota 로 멈춘 경우에도 첫 submit path 와 동일한 quotaStopped 메시지.
       // quotaStoppedRef 는 batch 동안만 유지되어 사용자 수동 stop 과 안전하게 구분된다.

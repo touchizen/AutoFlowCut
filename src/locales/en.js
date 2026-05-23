@@ -752,6 +752,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     kind: {
       'image-missing': 'Image file not found — please regenerate',
       'recaptcha': 'reCAPTCHA blocked — retry shortly (auto or manual)',
+      'auth': 'Authentication expired — please re-login to Flow',
     },
   },
 

@@ -1,9 +1,14 @@
 /**
- * useVideoAutomation — 401 auth failure during polling
+ * useVideoAutomation — 401 auth failure during polling and submit
  *
  * The wrapper's `authFailed: true` sentinel must break the poll loop
  * immediately. Without this break, the loop would run for 20 min until
  * VIDEO_MAX_POLL_COUNT timeout, with no user-visible error.
+ *
+ * Additional contracts verified here:
+ *  - onItemUpdate called with errorKind:'auth' for the failing item
+ *  - Remaining un-submitted items also get errorKind:'auth' (not left pending)
+ *  - status is set to 'error', not 'done', after auth break
  */
 import { renderHook, act } from '@testing-library/react'
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
@@ -71,5 +76,180 @@ describe('useVideoAutomation — auth failure during polling', () => {
 
     // checkVideoStatus called once (broke immediately on authFailed)
     expect(checkVideoStatus).toHaveBeenCalledTimes(1)
+  })
+
+  it('calls onItemUpdate with errorKind:"auth" when poll authFailed fires', async () => {
+    const generateVideoT2V = vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' })
+    const checkVideoStatus = vi.fn().mockResolvedValue({
+      success: false,
+      authFailed: true,
+      error: 'Auth expired — please re-login to Flow',
+    })
+    const onAuthError = vi.fn()
+    const onItemUpdate = vi.fn()
+    const flowAPI = {
+      generateVideoT2V,
+      generateVideoI2V: vi.fn(),
+      checkVideoStatus,
+      upscaleVideo: vi.fn(),
+      fetchMedia: vi.fn(),
+      getAccessToken: vi.fn().mockResolvedValue('token'),
+    }
+    const t = (k) => k
+    const hook = renderHook(() => useVideoAutomation(flowAPI, t, onAuthError, null))
+
+    const items = [{ id: 'vscene_1', prompt: 'test' }]
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({
+        mode: 't2v',
+        scenes: items,
+        projectName: 'p',
+        saveMode: 'folder',
+        onItemUpdate,
+      })
+    })
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(100) })
+    await act(async () => { await startPromise })
+
+    // The polling item must be marked with errorKind:'auth'
+    const authErrorCalls = onItemUpdate.mock.calls.filter(
+      ([_id, status, patch]) => status === 'error' && patch?.errorKind === 'auth'
+    )
+    expect(authErrorCalls.length).toBeGreaterThanOrEqual(1)
+    expect(authErrorCalls[0][0]).toBe('vscene_1')
+  })
+
+  it('sets status to "error" (not "done") after auth-failed poll break', async () => {
+    const generateVideoT2V = vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' })
+    const checkVideoStatus = vi.fn().mockResolvedValue({
+      success: false,
+      authFailed: true,
+      error: 'Auth expired',
+    })
+    const flowAPI = {
+      generateVideoT2V,
+      generateVideoI2V: vi.fn(),
+      checkVideoStatus,
+      upscaleVideo: vi.fn(),
+      fetchMedia: vi.fn(),
+      getAccessToken: vi.fn().mockResolvedValue('token'),
+    }
+    const t = (k) => k
+    const hook = renderHook(() => useVideoAutomation(flowAPI, t, vi.fn(), null))
+
+    const items = [{ id: 'vscene_1', prompt: 'test' }]
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({
+        mode: 't2v',
+        scenes: items,
+        projectName: 'p',
+        saveMode: 'folder',
+      })
+    })
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(100) })
+    await act(async () => { await startPromise })
+
+    expect(hook.result.current.status).toBe('error')
+  })
+})
+
+describe('useVideoAutomation — auth failure during submit', () => {
+  it('marks remaining un-submitted items with errorKind:"auth" when submit authFailed fires', async () => {
+    // Item 1 submits successfully, item 2 gets authFailed, item 3 should be auto-marked.
+    // Note: item 1's generationId enters the poll queue, so checkVideoStatus must also
+    // return authFailed to avoid the poll loop running indefinitely in the test.
+    let callCount = 0
+    const generateVideoT2V = vi.fn().mockImplementation(async () => {
+      callCount++
+      if (callCount === 1) return { success: true, generationId: 'gen-1' }
+      // Second call: auth failed
+      return { success: false, authFailed: true, error: 'Auth expired' }
+    })
+    // Also fail with authFailed in poll phase so the loop exits cleanly
+    const checkVideoStatus = vi.fn().mockResolvedValue({
+      success: false,
+      authFailed: true,
+      error: 'Auth expired',
+    })
+
+    const onItemUpdate = vi.fn()
+    const flowAPI = {
+      generateVideoT2V,
+      generateVideoI2V: vi.fn(),
+      checkVideoStatus,
+      upscaleVideo: vi.fn(),
+      fetchMedia: vi.fn(),
+      getAccessToken: vi.fn().mockResolvedValue('token'),
+    }
+    const t = (k) => k
+    const hook = renderHook(() => useVideoAutomation(flowAPI, t, vi.fn(), null))
+
+    const items = [
+      { id: 'vscene_1', prompt: 'item 1' },
+      { id: 'vscene_2', prompt: 'item 2' },
+      { id: 'vscene_3', prompt: 'item 3' },
+    ]
+
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({
+        mode: 't2v',
+        scenes: items,
+        projectName: 'p',
+        saveMode: 'folder',
+        onItemUpdate,
+      })
+    })
+
+    // Advance past inter-item submit delay (7000ms with Math.random mocked to 0)
+    // so item 2 gets submitted and authFails. Then poll loop for item 1 fires immediately.
+    await act(async () => { await vi.advanceTimersByTimeAsync(8000) })
+    await act(async () => { await startPromise })
+
+    // Item 2 and item 3 must both be marked with errorKind:'auth'
+    const authErrorCalls = onItemUpdate.mock.calls.filter(
+      ([_id, status, patch]) => status === 'error' && patch?.errorKind === 'auth'
+    )
+    const authErrorIds = authErrorCalls.map(([id]) => id)
+    expect(authErrorIds).toContain('vscene_2')
+    expect(authErrorIds).toContain('vscene_3')
+  }, 15000)
+
+  it('sets status to "error" (not "done") after submit authFailed break', async () => {
+    const generateVideoT2V = vi.fn().mockResolvedValue({
+      success: false,
+      authFailed: true,
+      error: 'Auth expired',
+    })
+    const flowAPI = {
+      generateVideoT2V,
+      generateVideoI2V: vi.fn(),
+      checkVideoStatus: vi.fn(),
+      upscaleVideo: vi.fn(),
+      fetchMedia: vi.fn(),
+      getAccessToken: vi.fn().mockResolvedValue('token'),
+    }
+    const t = (k) => k
+    const hook = renderHook(() => useVideoAutomation(flowAPI, t, vi.fn(), null))
+
+    const items = [{ id: 'vscene_1', prompt: 'test' }]
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({
+        mode: 't2v',
+        scenes: items,
+        projectName: 'p',
+        saveMode: 'folder',
+      })
+    })
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(100) })
+    await act(async () => { await startPromise })
+
+    expect(hook.result.current.status).toBe('error')
   })
 })

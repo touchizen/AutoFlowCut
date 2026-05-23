@@ -752,6 +752,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     kind: {
       'image-missing': '이미지 파일을 찾을 수 없습니다 — 재생성이 필요합니다',
       'recaptcha': 'reCAPTCHA 차단 — 잠시 후 자동/수동 재시도',
+      'auth': '인증 만료 — Flow 재로그인이 필요합니다',
     },
   },
 
