@@ -266,17 +266,18 @@ export function useFlowAPI({ onAuthError } = {}) {
    * @returns {{ success, data: 'data:image/png;base64,...' }}
    */
   const upscaleImage = useCallback(async (mediaId, resolution) => {
-    const token = await getAccessToken()
-    if (!token) return { success: false, error: 'No access token' }
+    return withAuthRetry('upscaleImage', async (token) => {
+      if (!token) return { success: false, error: 'No access token' }
 
-    try {
-      return await window.electronAPI.upscaleImage({
-        token, mediaId, projectId, resolution
-      })
-    } catch (error) {
-      return { success: false, error: error.message }
-    }
-  }, [getAccessToken, projectId])
+      try {
+        return await window.electronAPI.upscaleImage({
+          token, mediaId, projectId, resolution
+        })
+      } catch (error) {
+        return { success: false, error: error.message }
+      }
+    })
+  }, [projectId, withAuthRetry])
 
   /**
    * 갤러리 (프로젝트 미디어) 조회
