@@ -79,3 +79,33 @@ describe('FrameToVideoPanel — max-driver model', () => {
     expect(addButton.disabled).toBe(false)
   })
 })
+
+describe('FrameToVideoPanel — Remove Row trim trigger', () => {
+  it('calls onRequestSceneTrim with updated framePairs after removeRow', async () => {
+    const onUpdate = vi.fn()
+    const onRequestSceneTrim = vi.fn()
+    const framePairs = [
+      { id: 'fp_1', ownerSceneId: 'scene_1', startSceneId: 'scene_1', endSceneId: '', prompt: 'p', status: 'pending' },
+    ]
+
+    render(
+      <FrameToVideoPanel
+        scenes={scenes}
+        framePairs={framePairs}
+        onUpdate={onUpdate}
+        onRequestSceneTrim={onRequestSceneTrim}
+        t={t}
+      />
+    )
+
+    // The Remove button renders as ✕ with class btn-remove and title frameToVideo.removeRow
+    const removeButton = screen.getByTitle('frameToVideo.removeRow')
+    fireEvent.click(removeButton)
+
+    expect(onUpdate).toHaveBeenCalled()
+    expect(onRequestSceneTrim).toHaveBeenCalled()
+    // Verify the trim callback got the post-removal framePairs (empty in this case)
+    const trimArg = onRequestSceneTrim.mock.calls[0][0]
+    expect(trimArg).toHaveLength(0)
+  })
+})

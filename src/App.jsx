@@ -1207,6 +1207,7 @@ function App() {
                 setSettings(s => ({ ...s, seedNo: n, seedLocked: true }))
               }}
               onRequestNewScene={() => scenesHook.addScene()}
+              onRequestSceneTrim={(nextFramePairs) => scenesHook.trimScenes(nextFramePairs)}
             />
           )}
           {activeTab === 'list' && (

@@ -461,6 +461,7 @@ export default function FrameToVideoPanel({
   onUploadFromDisk, onListFlowProjects, onFetchProjectGallery, onPickArchiveImage,
   seedNo = null, seedLocked = false, onSeedChange, onSeedLockToggle, onSeedRandom,
   onRequestNewScene,
+  onRequestSceneTrim,
 }) {
   const showSeedUI = typeof onSeedChange === 'function'
   const handleSeedInputChange = (e) => {
@@ -629,7 +630,13 @@ export default function FrameToVideoPanel({
   }
 
   const removeRow = (index) => {
-    onUpdate(framePairs.filter((_, i) => i !== index))
+    const updated = framePairs.filter((_, i) => i !== index)
+    onUpdate(updated)
+    // After the framePair removal, ask parent to re-evaluate trim — the row's
+    // owner scene may now be fully empty (no image/video/subtitle, no F→V row),
+    // in which case trim removes it. Non-empty scenes survive because the
+    // auto-add useEffect immediately re-creates a row owning them.
+    onRequestSceneTrim?.(updated)
   }
 
   const getSceneLabel = (scene) => {
