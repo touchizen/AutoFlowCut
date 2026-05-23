@@ -16,6 +16,7 @@ import {
   findDuplicateReferenceNames,
   parseTimeToSeconds
 } from '../utils/parsers'
+import { trimTrailingEmptyScenes } from '../utils/sceneTrim'
 import { fileSystemAPI } from './useFileSystem'
 import { splitTags } from '../utils/tagMatch'
 
@@ -51,18 +52,41 @@ export function useScenes() {
       return Array.isArray(next) ? next.map(normalizeScene) : next
     })
   }, [])
-  
+
+  /**
+   * ID 재정렬 + 시간 재계산 (공통)
+   */
+  const reindexScenes = (scenes) => {
+    let currentTime = 0
+    return scenes.map((scene, idx) => {
+      const updated = {
+        ...scene,
+        id: `scene_${idx + 1}`,
+        startTime: currentTime,
+        endTime: currentTime + scene.duration
+      }
+      currentTime = updated.endTime
+      return updated
+    })
+  }
+
   /**
    * 텍스트에서 씬 파싱 — 기존 씬에 머지 (지정 필드만 갱신, 다른 필드 보존)
    * 빈 scenes에서 호출하면 통째 생성과 동일.
    *
    * @param {object} [options] - { fieldName: 'prompt' | 'videoT2VPrompt' | 'videoI2VPrompt' }
    *   기본 'prompt' (text 탭). video-text 탭은 'videoT2VPrompt'.
+   * @param {Array} [framePairs] - F→V 소유권 배열 (trim 시 alive 판단에 사용)
    */
-  const parseFromText = useCallback((text, defaultDuration = DEFAULTS.scene.duration, options = {}) => {
+  const parseFromText = useCallback((text, defaultDuration = DEFAULTS.scene.duration, options = {}, framePairs = []) => {
     let merged
     setScenes(prev => {
-      merged = mergeTextIntoScenes(prev, text, defaultDuration, options)
+      const afterMerge = mergeTextIntoScenes(prev, text, defaultDuration, options)
+      // TODO: After reindex, framePair.ownerSceneId references may dangle (a pre-existing
+      // issue not introduced here — deleteScene has the same problem). The trim model
+      // inherits the limitation; a coordinated remap of framePair owners after reindex
+      // is tracked separately.
+      merged = reindexScenes(trimTrailingEmptyScenes(afterMerge, framePairs))
       return merged
     })
     return merged
@@ -70,11 +94,18 @@ export function useScenes() {
 
   /**
    * CSV에서 씬 파싱 — 기존 씬에 머지 (CSV에 채워진 필드만 덮어쓰기)
+   *
+   * @param {Array} [framePairs] - F→V 소유권 배열 (trim 시 alive 판단에 사용)
    */
-  const parseFromCSV = useCallback((csvText, defaultDuration = DEFAULTS.scene.duration) => {
+  const parseFromCSV = useCallback((csvText, defaultDuration = DEFAULTS.scene.duration, framePairs = []) => {
     let merged
     setScenes(prev => {
-      merged = mergeCSVIntoScenes(prev, csvText, defaultDuration)
+      const afterMerge = mergeCSVIntoScenes(prev, csvText, defaultDuration)
+      // TODO: After reindex, framePair.ownerSceneId references may dangle (a pre-existing
+      // issue not introduced here — deleteScene has the same problem). The trim model
+      // inherits the limitation; a coordinated remap of framePair owners after reindex
+      // is tracked separately.
+      merged = reindexScenes(trimTrailingEmptyScenes(afterMerge, framePairs))
       return merged
     })
     return merged
@@ -82,11 +113,18 @@ export function useScenes() {
 
   /**
    * SRT에서 씬 파싱 — 기존 씬에 머지 (subtitle/duration 갱신, prompt 보존)
+   *
+   * @param {Array} [framePairs] - F→V 소유권 배열 (trim 시 alive 판단에 사용)
    */
-  const parseFromSRT = useCallback((srtText) => {
+  const parseFromSRT = useCallback((srtText, framePairs = []) => {
     let merged
     setScenes(prev => {
-      merged = mergeSRTIntoScenes(prev, srtText)
+      const afterMerge = mergeSRTIntoScenes(prev, srtText)
+      // TODO: After reindex, framePair.ownerSceneId references may dangle (a pre-existing
+      // issue not introduced here — deleteScene has the same problem). The trim model
+      // inherits the limitation; a coordinated remap of framePair owners after reindex
+      // is tracked separately.
+      merged = reindexScenes(trimTrailingEmptyScenes(afterMerge, framePairs))
       return merged
     })
     return merged
@@ -121,23 +159,6 @@ export function useScenes() {
       return newScenes
     })
   }, [])
-  
-  /**
-   * ID 재정렬 + 시간 재계산 (공통)
-   */
-  const reindexScenes = (scenes) => {
-    let currentTime = 0
-    return scenes.map((scene, idx) => {
-      const updated = {
-        ...scene,
-        id: `scene_${idx + 1}`,
-        startTime: currentTime,
-        endTime: currentTime + scene.duration
-      }
-      currentTime = updated.endTime
-      return updated
-    })
-  }
 
   /**
    * 씬 삭제
@@ -197,7 +218,19 @@ export function useScenes() {
   const clearScenes = useCallback(() => {
     setScenes([])
   }, [])
-  
+
+  /**
+   * 외부 호출용 trim — F→V 행 제거 등 외부 변경 후 후처리에 사용 (Task 5 참조)
+   *
+   * @param {Array} [framePairs] - F→V 소유권 배열 (trim 시 alive 판단에 사용)
+   */
+  const trimScenes = useCallback((framePairs = []) => {
+    setScenes(prev => {
+      const trimmed = trimTrailingEmptyScenes(prev, framePairs)
+      return trimmed === prev ? prev : reindexScenes(trimmed)
+    })
+  }, [])
+
   /**
    * 레퍼런스 업데이트
    */
@@ -331,6 +364,7 @@ export function useScenes() {
     moveScene,
     clearScenes,
     recalculateTimes,
+    trimScenes,
     
     // Reference actions
     updateReferences,
