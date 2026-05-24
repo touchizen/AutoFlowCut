@@ -1,4 +1,4 @@
-# AutoFlowCut — Microsoft Store Listing (v0.9.11)
+# AutoFlowCut — Microsoft Store Listing (v0.9.12)
 
 ---
 
@@ -156,17 +156,17 @@ Disclaimer: This app is an independent product developed by Touchizen and is not
 
 ### What's New
 ```
-v0.9.11 — Automation works again + smarter reCAPTCHA handling
+v0.9.12 — Token-expiry auto-refresh + Regenerate All + sticky scene rows
 
-- Google Flow automation restored: a recent Flow update broke previous versions (Error 253, blank Flow page, downloads that just failed for no reason). This release switches to a stealthier mode that Flow accepts — if you've been hitting these issues, please update.
-- reCAPTCHA challenges handled automatically: when Flow throttles you, AutoFlowCut now detects it, waits 5 / 10 / 30 minutes between attempts, and resumes your batch from where it stopped. A countdown modal shows what's happening, and an OS notification fires if the app is in the background. After 3 strikes it stops and asks you to step in.
-- No more "Where to save?" pop-ups during generation: files go straight to your project folder, so batches run uninterrupted.
-- Stale error messages clear themselves: a video that errored once and then succeeded on retry now shows as completed instead of staying stuck with the old error.
-- Stop button actually stops: pressing Stop ends the batch even mid-reCAPTCHA wait, and pending image batches no longer get killed by reCAPTCHA cooldowns.
-- New Flow URL formats recognized: fixes "ProjectId not captured" when starting a brand-new Flow project.
-- Aspect-ratio toggle stays in sync during image generation.
-- Quieter, safer Flow page: the Flow page now only sees a tiny, scoped API surface from AutoFlowCut instead of the full app — smaller blast radius if Flow ever ships a hostile script.
-- All new reCAPTCHA messages are translated to English and Korean.
+- 1-hour batch deaths fixed: Google's access token (~1 h) is now refreshed silently in the background — no prompt, no restart, no lost work. Covers images, T2V/I2V, upscale, gallery, and status polling.
+- Regenerate All: split-menu on the generate button re-runs every item in the current view (images / videos / F→V) at once.
+- Scene rows stay attached to their content: F→V rows are now permanently bound to their scene. Reorder, delete, or import a new SRT — rows and videos stay with the right scene.
+- Scene count auto-adjusts to the largest of images / videos / F→V / SRT. Trailing empty scenes get cleaned up.
+- Delete preview: shows image, subtitle, prompt, and generated T2V/I2V before you confirm.
+- F→V "Add Row" creates scene + row together (instant feedback).
+- Stops immediately on out_of_credits instead of failing every remaining scene.
+- Import cleanup: CSV keeps row positions with blanks; video CSV accepts prompt_en aliases; SRT no longer overwrites prompts.
+- i18n polish, IPC listener memory-leak fix, T2V clear now empties the scene.
 ```
 
 ### Keywords
@@ -330,17 +330,17 @@ Touchizen 제작 — touchizen.com
 
 ### What's New (새로운 기능)
 ```
-v0.9.11 — 자동화 복구 + 더 똑똑해진 reCAPTCHA 대응
+v0.9.12 — 토큰 만료 자동 갱신 + 전체 재생성 + 안 떨어지는 씬 행
 
-- Google Flow 자동화 복구: 최근 Flow 업데이트로 이전 버전들이 막혀 있었습니다 (Error 253, 빈 Flow 화면, 까닭 모를 다운로드 실패). 이번 버전은 Flow가 받아주는 더 은밀한 방식으로 동작합니다 — 위 증상을 겪고 계셨다면 꼭 업데이트하세요.
-- reCAPTCHA를 자동으로 처리: Flow가 일시 차단(reCAPTCHA)을 걸면 AutoFlowCut이 자동으로 감지해 5분 / 10분 / 30분 단계로 기다린 뒤 재시도하고, 멈춘 지점부터 배치를 이어갑니다. 카운트다운 모달로 진행 상황을 보여주고, 앱이 백그라운드에 있으면 OS 알림으로도 알려줍니다. 3회 차단 후에는 자동 재시도를 멈추고 사용자에게 확인을 요청합니다.
-- 생성 중 "다른 이름으로 저장" 팝업 없음: 모든 파일이 프로젝트 폴더로 바로 저장되어 배치가 끊기지 않습니다.
-- 옛 에러 메시지가 알아서 사라집니다: 한 번 실패한 비디오가 재시도로 성공하면 이전 에러가 남지 않고 '완료'로 표시됩니다.
-- Stop 버튼이 진짜로 멈춥니다: reCAPTCHA 대기 중에 눌러도 즉시 중단되고, 대기 시간 동안 진행 중이던 이미지 배치도 끊기지 않습니다.
-- Flow의 새 프로젝트 URL 형식 인식: 새 프로젝트 시작 시 "ProjectId not captured" 에러로 막히던 문제 해결.
-- 이미지 생성 중에도 화면 비율 토글이 동기 상태를 유지합니다.
-- 더 조용하고 안전해진 Flow 페이지: Flow 페이지가 이제 앱 전체가 아닌 작고 한정된 API만 볼 수 있어, 만에 하나 Flow가 악성 스크립트를 띄워도 영향 범위가 최소화됩니다.
-- 새 reCAPTCHA 안내 메시지는 영어와 한국어로 번역됐습니다.
+- 1시간 배치 끊김 해결: Google 액세스 토큰(약 1시간)을 백그라운드에서 조용히 갱신합니다 — 팝업·재시작·작업 손실 없음. 이미지/T2V/I2V/업스케일/갤러리/상태 폴링까지 모두 포함.
+- 전체 재생성(Regenerate All): 생성 버튼에 분할 메뉴 추가 — 현재 뷰의 모든 항목(이미지/비디오/F→V)을 한 번에 재생성.
+- 씬 행이 콘텐츠에 묶입니다: F→V 행은 생성된 씬에 영구 바인딩. 순서 변경·삭제·새 SRT 임포트해도 행과 비디오가 올바른 씬에 그대로 남습니다.
+- 씬 개수 자동 조정: 이미지/비디오/F→V/SRT 중 최대값에 맞춰 늘어나고, 뒤쪽 빈 씬은 자동 정리.
+- 삭제 미리보기: 확정 전에 이미지·자막·프롬프트·생성된 T2V/I2V를 함께 표시.
+- F→V "Add Row"가 씬+행을 함께 생성 (즉시 피드백).
+- out_of_credits 응답 시 남은 씬에서 줄줄이 실패하지 않고 배치를 즉시 정지.
+- 임포트 정리: CSV가 빈 행에서도 행 위치 유지, 비디오 CSV는 prompt_en 등 컬럼 별칭 인식, SRT가 프롬프트를 덮어쓰지 않음.
+- i18n 다듬기, 장시간 세션 IPC 메모리 누수 수정, T2V 클리어가 씬을 실제로 비웁니다.
 ```
 
 ### Keywords (한국어)
@@ -409,17 +409,17 @@ AutoFlowCutは、Google Flow（Veo）のAI画像・動画生成を、すぐに�
 
 ### What's New
 ```
-v0.9.11 — 自動化が再び動作 + より賢い reCAPTCHA 対応
+v0.9.12 — トークン期限切れ自動更新 + 全件再生成 + ズレないシーン行
 
-- Google Flow 自動化を復旧：最近の Flow 更新で以前のバージョンが動かなくなっていました（Error 253、Flow 画面が真っ白、原因不明のダウンロード失敗）。本バージョンでは Flow に受け入れられるよりステルスなモードに切り替えました — 上記の症状が出ていた方はぜひアップデートしてください。
-- reCAPTCHA を自動でさばく：Flow がレート制限（reCAPTCHA）をかけてきたら、AutoFlowCut が自動で検知し、5分 / 10分 / 30分の間隔で再試行し、停止した場所からバッチを再開します。カウントダウン・モーダルで状況を表示し、アプリがバックグラウンドにあるときは OS 通知でもお知らせします。3回ブロックされた後は自動再試行を止め、ユーザーの判断を求めます。
-- 生成中の「名前を付けて保存」ポップアップなし：すべてのファイルがプロジェクトフォルダーに直接保存され、バッチが途切れません。
-- 古いエラーメッセージが自動で消えます：一度失敗した動画が再試行で成功した場合、古いエラーが残らず「完了」と表示されます。
-- Stop ボタンが本当に停止：reCAPTCHA 待機中でも押せばすぐに停止し、待機中の画像バッチも巻き添えで止まらなくなりました。
-- Flow の新しいプロジェクト URL 形式に対応：新規プロジェクト開始時に「ProjectId not captured」で止まっていた問題を解決。
-- 画像生成中もアスペクト比の切替が同期したままになります。
-- より静かで安全な Flow ページ：Flow ページはアプリ全体ではなく、限定された小さな API のみを見られるようになり、万一 Flow が悪意あるスクリプトを配信しても影響範囲を最小化します。
-- 新しい reCAPTCHA 案内メッセージは英語・韓国語に翻訳済みです。
+- 1時間バッチ落ち解消：Google アクセストークン（約1時間）をバックグラウンドで静かに更新 — ポップアップ・再起動・作業損失なし。画像/T2V/I2V/アップスケール/ギャラリー/ステータスに対応。
+- 全件再生成（Regenerate All）：生成ボタンの分割メニューで現在のビュー（画像/動画/F→V）の全項目を一度に再生成。
+- シーン行がコンテンツに紐づいたまま：F→V 行は生成元シーンに恒久バインド。並べ替え・削除・新しい SRT 取り込みでも行と動画が正しいシーンに残ります。
+- シーン数の自動調整：画像/動画/F→V/SRT の最大値に合わせて伸び、末尾の空シーンは自動整理。
+- プレビュー付き削除確認：確定前に画像・字幕・プロンプト・生成済み T2V/I2V を表示。
+- F→V「Add Row」がシーン+行を同時生成（即時反映）。
+- out_of_credits で残り全シーン失敗ではなくバッチを即停止。
+- インポート整理：CSV は空行があっても行位置を保持、動画 CSV は prompt_en などの列エイリアスを認識、SRT がプロンプトを上書きしない。
+- i18n の磨き直し、長時間セッションでの IPC メモリリーク修正、T2V クリアがシーンを実際に空に。
 ```
 
 ---
@@ -483,17 +483,17 @@ Der integrierte MCP-Server (Model Context Protocol) verbindet sich direkt mit Cl
 
 ### What's New
 ```
-v0.9.11 — Automatisierung läuft wieder + smarteres reCAPTCHA-Handling
+v0.9.12 — Token-Ablauf-Auto-Refresh + Alles neu generieren + klebende Szenenzeilen
 
-- Google-Flow-Automatisierung wiederhergestellt: Ein kürzliches Flow-Update hatte ältere Versionen blockiert (Error 253, leere Flow-Seite, Downloads, die einfach grundlos fehlschlugen). Diese Version wechselt in einen unauffälligeren Modus, den Flow akzeptiert — bitte aktualisieren, falls Sie diese Probleme hatten.
-- reCAPTCHA wird automatisch behandelt: Wenn Flow Sie drosselt, erkennt AutoFlowCut das jetzt automatisch, wartet 5 / 10 / 30 Minuten zwischen den Versuchen und setzt Ihre Stapelverarbeitung dort fort, wo sie gestoppt wurde. Ein Countdown-Modal zeigt den Status, und eine OS-Benachrichtigung informiert Sie, wenn die App im Hintergrund läuft. Nach 3 Sperren stoppt der Auto-Retry und fragt Sie nach.
-- Keine „Speichern unter"-Pop-ups mehr während der Generierung: Dateien gehen direkt in Ihren Projektordner, sodass die Stapel ohne Unterbrechung laufen.
-- Veraltete Fehlermeldungen verschwinden von selbst: Ein Video, das einmal fehlerhaft war und beim Retry erfolgreich war, wird jetzt als „abgeschlossen" angezeigt, anstatt mit der alten Fehlermeldung hängenzubleiben.
-- Stop-Button stoppt tatsächlich: Stop beendet den Stapel jetzt sofort — auch mitten in einer reCAPTCHA-Wartezeit — und laufende Bild-Stapel werden nicht mehr von reCAPTCHA-Wartezeiten abgewürgt.
-- Neue Flow-Projekt-URL-Formate erkannt: Behebt „ProjectId not captured" beim Starten eines brandneuen Projekts.
-- Der Seitenverhältnis-Schalter bleibt während der Bildgenerierung synchron.
-- Leisere, sicherere Flow-Seite: Die Flow-Seite sieht jetzt nur eine winzige, eingegrenzte API-Schnittstelle von AutoFlowCut statt der gesamten App — kleinere Angriffsfläche, falls Flow jemals ein bösartiges Skript ausliefert.
-- Alle neuen reCAPTCHA-Nachrichten sind ins Englische und Koreanische übersetzt.
+- Schluss mit Stapel-Abbrüchen nach 1 Stunde: Googles Access Token (~1 h) wird jetzt still im Hintergrund erneuert — kein Popup, kein Neustart, kein Datenverlust. Deckt Bilder, T2V/I2V, Upscale, Gallery und Status ab.
+- Alles neu generieren (Regenerate All): Split-Menü am Generieren-Button erzeugt alle Einträge der aktuellen Ansicht (Bilder/Videos/F→V) auf einmal neu.
+- Szenenzeilen bleiben an ihrem Inhalt: F→V-Zeilen sind jetzt dauerhaft an die Szene gebunden. Umsortieren, Löschen, neuer SRT-Import — Zeilen und Videos bleiben bei der richtigen Szene.
+- Szenenanzahl passt sich automatisch an das Maximum aus Bildern/Videos/F→V/SRT an; leere Szenen am Ende werden aufgeräumt.
+- Löschvorschau: zeigt Bild, Untertitel, Prompt und erzeugte T2V/I2V vor dem Bestätigen.
+- F→V „Add Row" erzeugt Szene + Zeile zusammen (sofortiges Feedback).
+- Stoppt sofort bei out_of_credits statt jede verbleibende Szene fehlschlagen zu lassen.
+- Importbereinigung: CSV behält Zeilenpositionen auch bei Leerzeilen, Video-CSV akzeptiert prompt_en und andere Spaltenaliase, SRT überschreibt Prompts nicht mehr.
+- i18n-Feinschliff, IPC-Memory-Leak in langen Sessions behoben, T2V-Clear leert die Szene jetzt tatsächlich.
 ```
 
 ---
