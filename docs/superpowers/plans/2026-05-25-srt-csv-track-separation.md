@@ -333,19 +333,62 @@ if (headers.includes('scene')) {
 - 새 샘플 작성 (한국어/영어 모두 포함, 6행 정도)
 - 가이드 anchor 변경 시 ImportModal 의 URL도 동기화
 
-### Phase 9 — SRT 재import 가드 + 경고 다이얼로그
+### Phase 9 — SRT 재import 가드 + 스마트 매칭 다이얼로그
 
-**Goal:** 옛 방식 프로젝트에서 SRT import 차단. 새 방식 프로젝트에서도 라인 수 변경 시 경고.
+**Goal:** 옛 방식 프로젝트에서 SRT import 차단. 새 방식 프로젝트는 라인 수 변경 시 텍스트 유사도 기반 자동 매칭을 시도해 묶음을 최대한 보존, 사용자가 선택할 수 있게.
 
 **Files:**
-- `src/App.jsx` (handleImport)
-- 새 다이얼로그 컴포넌트
-- 테스트
+- `src/utils/srtLineMatcher.js` (신규) — 텍스트 유사도 매칭 휴리스틱
+- `src/components/SrtReimportDialog.jsx` (신규) — 5-option 모달
+- `src/components/SrtDiffViewer.jsx` (신규) — 비교 보기 서브 다이얼로그
+- `src/App.jsx` (handleImport) — 진입 가드
+- `tests/utils/srtLineMatcher.test.js` (신규)
+- `tests/components/SrtReimportDialog.test.jsx` (신규)
 
 **Tasks:**
-- 옛 형식 프로젝트 감지 → 마이그레이션 다이얼로그
-- 새 형식 + 라인 수 변경 감지 → "묶음 유지 시도 / 초기화 / 취소" 다이얼로그
-- 라인 수 동일하면 무경고로 통과
+
+1. **옛 형식 감지 + 차단**
+   - 프로젝트의 `schemaVersion` 또는 `srtTrack` 부재 감지
+   - 마이그레이션 다이얼로그 (Phase 7 의 다이얼로그 재사용)
+
+2. **라인 수 동일 케이스**
+   - 묶음 자동 유지, 텍스트/시간만 갱신
+   - 모달 없이 무경고로 통과
+
+3. **라인 수 변경 케이스 — 자동 매칭 휴리스틱**
+   - `matchSrtLines(oldTrack, newTrack)` 구현
+     - 텍스트 정확 일치 우선
+     - 정확 일치 없으면 정규화 후 substring/Levenshtein (threshold 0.85)
+     - 결과: `{ matched: [{oldId, newIdx}], removed: [oldId], added: [newIdx] }`
+   - 씬의 `srtLineIds` 를 매칭된 라인의 새 ID 로 재할당
+   - removed 라인이 묶음에 있으면 그 씬의 `srtLineIds` 에서 제외
+   - added 라인은 그 라인의 시간상 가장 가까운 씬에 자동 합류 (또는 단독 씬으로 신규)
+
+4. **모달 — 5 옵션**
+   - **[ 추천 적용 ]** — 자동 매칭 결과 그대로 적용 (가장 안전, default)
+   - **[ 묶음 유지 ]** — 라인 번호 기반 강제 유지 (어긋날 수 있음을 경고)
+   - **[ 묶음 초기화 ]** — 1자막=1씬으로 펼침 (작업 손실 경고)
+   - **[ 비교 보기 ]** — `SrtDiffViewer` 띄움, 결정은 다시 본 모달
+   - **[ 취소 ]** — 아무 변경 없음
+
+5. **모달 본문 표시 항목**
+   - 기존 srtTrack 라인 수 → 새 SRT 라인 수 (증감 표시)
+   - 기존 묶음 요약 (예: "4 씬: 씬A=3, 씬B=3, 씬C=4, 씬D=1")
+   - 자동 매칭 결과 요약 (예: "라인 5 삭제 추정, 씬B 에서 자동 제외 가능")
+   - 매칭 confidence 표시 (높음/중간/낮음)
+
+6. **`SrtDiffViewer`**
+   - 좌: 기존 srtTrack, 우: 새 SRT, 색상 diff (라인별 변경/추가/삭제)
+   - 매칭 화살표 (옛 라인 → 새 라인) 시각화
+   - "이 라인은 어느 씬의 묶음" 인지 hover 표시
+
+**Tests:**
+- 라인 수 동일 → 모달 미표시
+- 라인 1개 삭제 → 자동 매칭 성공, "추천 적용" 시 묶음 보존
+- 라인 1개 추가 → 가장 가까운 씬에 합류
+- 라인 텍스트 절반 이상 변경 → confidence 낮음, 사용자 결정 권장
+- 옛 형식 프로젝트 → 마이그레이션 다이얼로그
+- 다이얼로그 5 옵션 각각 클릭 시 데이터 변화 검증
 
 ### Phase 10 — Integration Test + E2E 시나리오
 
@@ -361,7 +404,10 @@ if (headers.includes('scene')) {
 4. 옛 CSV import → 옛 동작 (회귀 검증)
 5. 옛 프로젝트 로드 → 자동 마이그레이션 → SRT import 가능
 6. 묶기 후 동일 SRT 재import → 묶음 유지
-7. 묶기 후 다른 SRT (라인 수 변경) → 경고 다이얼로그
+7. 묶기 후 다른 SRT (라인 수 변경) → 스마트 매칭 모달
+   - 라인 1개 삭제 → "추천 적용" 한 번에 묶음 보존
+   - 라인 1개 추가 → 가장 가까운 씬에 자동 합류 제안
+   - 텍스트 절반 이상 변경 → confidence 낮음 표시 + 사용자 결정
 8. 묶기 후 CapCut export → 자막은 원본 타이밍, 이미지는 묶음 duration
 
 ### Phase 11 — MCP SRT 경로 통합
