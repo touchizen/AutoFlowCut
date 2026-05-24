@@ -3,13 +3,13 @@
 **Status:** Active (Multi-phase, sequential)
 **Created:** 2026-05-25
 **Target release:** v0.10.0 (다음 minor)
-**Estimated:** 10 phase (각 phase 0.5~1일, 총 5~7일)
+**Estimated:** 13 phase (각 phase 0.5~1일, 총 7~10일)
 
 ---
 
 ## Problem
 
-현재 SRT/CSV import 모델은 자막과 씬을 분리하지 않아서, 사용자가 의도한 "여러 자막을 한 씬으로 묶기" 워크플로우에서 다음 두 가지 문제가 발생한다.
+현재 SRT/CSV import 모델은 자막과 씬을 분리하지 않아서, 사용자가 의도한 "여러 자막을 한 씬으로 묶기" 워크플로우에서 다음 네 가지 문제가 발생한다. 추가로 MCP / Audio package 경로에서 자막 출처가 분기되어 export 일관성이 깨지는 문제도 함께 다룬다.
 
 ### 문제 1 — 묶음 후 SRT 재import 시 데이터 손실
 
@@ -41,6 +41,30 @@
 - 원본 SRT 라인 경계 정보 손실 (복원 불가)
 - 개별 자막 시간 정보 없음
 - 따옴표 이스케이프 지옥
+
+### 문제 4 — MCP / Audio package 경로에서 자막 출처가 꼬임
+
+CapCut export 의 자막은 [src/exporters/capcutCloud.js:543-560](../../src/exporters/capcutCloud.js#L543) 에서 두 출처 중 하나로 결정된다:
+
+```js
+if (audioPackage?.srtContent && (subtitleOption === 'ko' || 'both')) {
+  srtContent = audioPackage.srtContent   // 1순위: audio 폴더 SRT 원본
+} else {
+  srtContent = generateSRT(project, 'ko')  // 2순위: scenes.subtitle 재생성
+}
+```
+
+이로 인해 같은 SRT 입력이라도 어느 경로로 들어왔는지에 따라 export 결과가 달라진다:
+
+| 경로 | audioPackage | 사용 자막 | 문제 |
+|------|--------------|-----------|------|
+| ImportModal SRT | null | generateSRT 재생성 | 자막 1:1 → 거의 OK |
+| ImportModal CSV(묶음) | null | generateSRT 재생성 | 묶음 자막 한꺼번에 표시 |
+| MCP load_csv | null | generateSRT 재생성 | 위와 동일 |
+| MCP + audioFolderPath | non-null | audioPackage.srtContent | **MCP scenes 묶기와 어긋남** — audioPackage 가 이김 |
+| Audio 폴더 import | non-null | audioPackage.srtContent | 원본 보존 ✓ |
+
+특히 **MCP + audioFolderPath 케이스에서는 사용자가 MCP 로 scenes 묶기를 적용해도 audioPackage SRT 가 export 를 이겨서 묶기 의도가 무시**된다. 자동 복원([useMcpServer.js:125-128](../../src/hooks/useMcpServer.js#L125))이 같이 작동하면 어느 SRT 가 export 됐는지 추적도 어려움.
 
 ---
 
@@ -340,6 +364,72 @@ if (headers.includes('scene')) {
 7. 묶기 후 다른 SRT (라인 수 변경) → 경고 다이얼로그
 8. 묶기 후 CapCut export → 자막은 원본 타이밍, 이미지는 묶음 duration
 
+### Phase 11 — MCP SRT 경로 통합
+
+**Goal:** MCP 를 통한 자막 수신 시에도 `srtTrack` 이 채워지도록 통합. MCP scenes 묶기와 export 결과 일치.
+
+**Files:**
+- `mcp-server/index.js` — `load_csv` 가 새 형식 CSV 인식
+- `mcp-server/lib/csv.js` — `parseSceneCSVToTracks` 와 같은 결과 반환
+- `src/hooks/useMcpServer.js` — `update-scenes` 수신 시 `srtTrack` 도 갱신
+- 테스트 — MCP 수신 → srtTrack 채움 / export 일치
+
+**Tasks:**
+- `load_csv` 가 새 형식 CSV (scene 컬럼) 자동 인식, srtTrack + scenes 동시 반환
+- 옛 형식 CSV 도 받아주되 srtTrack 에 자막 1개씩 등록 (호환)
+- `useMcpServer.js:221` `update-scenes` 핸들러를 `update-scenes-and-srt-track` 로 확장
+- 새 메서드 `update-srt-track` 추가 (자막만 갱신하고 싶을 때)
+- 기존 MCP 도구 (`load_csv` 등) 의 응답 스펙 문서 갱신
+
+### Phase 12 — Audio Package SRT 통합
+
+**Goal:** Audio 폴더 import 시 SRT 를 `project.srtTrack` 으로 흡수. [capcutCloud.js:544](../../src/exporters/capcutCloud.js#L544) 의 audioPackage 분기 제거.
+
+**Files:**
+- `src/hooks/useAudioImport.js` — `_processScanResult` 에서 폴더 SRT → srtTrack 동기화
+- `src/exporters/capcutCloud.js` — `audioPackage.srtContent` 분기 제거, 항상 `project.srtTrack` 기반 SRT 사용
+- `src/exporters/capcut.js` — 동일 (로컬 export 경로)
+- `src/hooks/useExport.js` — export payload 에서 srtTrack 필수, audioPackage.srtEntries 는 timeline 표시용으로만 유지
+- 테스트
+
+**Tasks:**
+- Audio 폴더 SRT 와 `project.srtTrack` 비교
+  - 둘 다 비어있음 → 폴더 SRT 로 srtTrack 채움
+  - srtTrack 비어있고 폴더 SRT 있음 → 흡수
+  - 둘 다 있고 다름 → 다이얼로그: "audio 폴더 SRT 로 교체 / 현재 유지 / 양쪽 비교"
+  - 둘 다 있고 같음 → 무동작
+- `audioPackage.srtContent` / `audioPackage.srtEntries` 를 export 의 자막 소스에서 제외
+  - AudioTimeline UI 표시용으로만 유지 (deprecated 표시, 후방 호환)
+- capcutCloud.js 분기 제거 — 항상 `generateSRT(project)` 호출 (이젠 srtTrack 기반)
+
+**Dialog UX:**
+```
+┌────────────────────────────────────────────────────────────┐
+│ Audio 폴더의 자막이 프로젝트 자막과 다릅니다.              │
+│                                                            │
+│ 폴더 SRT: 12 라인  /  프로젝트 srtTrack: 8 라인            │
+│                                                            │
+│   [ 폴더 SRT 로 교체 ]  [ 현재 유지 ]  [ 비교 보기 ]       │
+└────────────────────────────────────────────────────────────┘
+```
+
+### Phase 13 — Multi-source 통합 테스트 + Export 일관성 검증
+
+**Goal:** 세 import 경로 + audioPackage 가 모두 같은 export SRT 를 만드는지 검증.
+
+**Files:**
+- `tests/integration/srt-csv-track-separation.test.jsx` (Phase 10 확장)
+- `tests/integration/mcp-srt-track.test.jsx` (신규)
+- `tests/integration/audio-package-srt-integration.test.jsx` (신규)
+
+**Scenarios:**
+1. **동일 SRT 세 경로 비교** — 같은 SRT 텍스트를 ImportModal / MCP load_csv / Audio 폴더 세 경로로 입력 → export SRT 가 byte-identical 까지는 아니지만 라인 수 / 시간 / 텍스트가 동일
+2. **MCP 묶기 → export** — MCP 로 scene 컬럼 있는 CSV 전송 → 묶음 적용 → export SRT 는 원본 자막 타이밍 유지
+3. **MCP + audioFolderPath** — MCP 가 scenes + audio 둘 다 전달 → srtTrack 일관성 검증
+4. **audioPackage 충돌** — 프로젝트에 이미 srtTrack 있는 상태에서 다른 SRT 가진 audio 폴더 import → 다이얼로그 동작 확인 (3가지 선택지 각각)
+5. **자동 복원 + MCP** — 프로젝트 전환 시 옛 audioFolderPath 자동 복원 → MCP load_csv 도 함께 들어옴 → srtTrack 어긋남 없이 통합
+6. **세 경로 + 묶기 + export** — Audio 폴더 SRT → MCP CSV 묶기 → CapCut export → 자막 원본 타이밍 + 이미지 묶음 duration
+
 ---
 
 ## Verification
@@ -359,6 +449,9 @@ if (headers.includes('scene')) {
 5. CapCut export → 생성된 SRT 가 원본 자막 6줄 타이밍 그대로 출력
 6. 이미지 트랙 → 각 씬이 묶인 자막 시간 합 동안 표시
 7. 동일 SRT 재import → 묶음 유지 (경고 없음)
+8. **MCP 경로 일치** — MCP `load_csv` 로 같은 CSV 전송 시 ImportModal 결과와 srtTrack 동일
+9. **Audio 폴더 SRT 흡수** — 빈 프로젝트에 audio 폴더 import → 폴더 SRT 가 srtTrack 으로 들어가고, 다음 CSV import (묶기) → 묶음 적용된 채로 export
+10. **충돌 다이얼로그** — srtTrack 있는 상태에서 다른 audio 폴더 SRT → 다이얼로그 3개 선택지 모두 동작
 
 ---
 
@@ -368,8 +461,9 @@ if (headers.includes('scene')) {
 - 자막 트랙 별도 편집 패널 UI (필요시 별도 milestone)
 - 자막 시간 fine-tuning UI (현재는 import 후 CSV 재작성으로만 변경 가능)
 - 가이드 페이지 (`touchizen.github.io`) 의 anchor 변경 — 별도 PR/배포 사이클
-- MCP 서버 (`mcp-server/`) 의 `load_csv` 명령은 새 형식 자동 지원 (parser 공유), 단 명시적 API 변경 없음
 - 옛 CSV 자동 변환 (B 모드 — subtitle 분해 휴리스틱). 사용자가 명시적으로 새 형식 CSV 다시 작성하도록 안내
+- `audioPackage.srtEntries` / `srtContent` 의 완전 제거 — Phase 12 에서 deprecated 표시만, 다음 major 까지 후방 호환 유지
+- MCP 도구의 binary protocol 변경 — JSON over HTTP 그대로 유지, 추가 메서드만 도입
 
 ---
 
@@ -382,6 +476,9 @@ if (headers.includes('scene')) {
 | 가이드 페이지 anchor 미동기화 | AI Gen 버튼이 옛 가이드로 점프 | Phase 8 에서 ImportModal URL 검토, 가이드 PR 병행 |
 | srtTrack 데이터 부풀림 | 큰 프로젝트에서 메모리/저장소 증가 | 자막 객체가 작아서 무시 가능 (1만 라인 ≈ 1MB) |
 | F→V 링크 / 이미지 포인터 손실 | 사용자가 생성한 미디어 잃음 | Phase 7 마이그레이션에서 씬 ID 안정적 유지 + framePairs `ownerSceneId` 보존 |
+| MCP 클라이언트(외부 스크립트) 회귀 | 사용자 자동화 깨짐 | Phase 11 에서 옛 응답 스펙 유지, 새 필드만 추가 — MCP 도구 문서에 변경점 명시 |
+| Audio 폴더 SRT 와 srtTrack 충돌 시 사용자 혼란 | 잘못된 SRT 가 export 됨 | Phase 12 다이얼로그 + AudioSummary UI 에 "현재 export 자막 출처" 표시 |
+| capcutCloud.js:544 분기 제거로 옛 export 경로 회귀 | 기존 Cloud export 사용자 영향 | Phase 12 에서 옛 동작과 byte-identical 비교 테스트 추가 (audioPackage SRT == srtTrack 일 때) |
 
 ---
 
