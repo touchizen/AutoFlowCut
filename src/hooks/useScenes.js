@@ -247,6 +247,9 @@ export function useScenes() {
       const oldIdToNewId = new Map(
         matched.map(m => [m.oldId, newTrack[m.newIdx].id])
       )
+      // R24 review fix: scene 마다 newTrack.find() O(N) 반복하던 것을 Map 으로
+      // O(1) 캐싱. 대용량 SRT (1000+ lines) 에서 누적 비용 제거.
+      const newTrackById = new Map(newTrack.map(l => [l.id, l]))
 
       // 기존 씬의 srtLineIds 를 매칭된 새 ID 로 remap (제거된 라인은 자동 탈락)
       const remappedScenes = prevScenes.map(scene => {
@@ -255,15 +258,15 @@ export function useScenes() {
           .filter(Boolean)
         // 매칭된 첫 라인의 시간으로 갱신 (없으면 기존 시간 유지)
         const firstId = newIds[0]
-        const firstLine = firstId ? newTrack.find(l => l.id === firstId) : null
+        const firstLine = firstId ? newTrackById.get(firstId) : null
         const lastId = newIds[newIds.length - 1]
-        const lastLine = lastId ? newTrack.find(l => l.id === lastId) : null
+        const lastLine = lastId ? newTrackById.get(lastId) : null
         // C16 fix: subtitle 은 항상 srtLineIds 기반으로 재계산 (빈 매치면 '').
         // 그렇지 않으면 SceneList 가 옛 scene.subtitle 보여주고 export 는 srtTrack 사용 → UI/export 불일치.
         const updates = {
           srtLineIds: newIds,
           subtitle: newIds
-            .map(id => newTrack.find(l => l.id === id)?.text || '')
+            .map(id => newTrackById.get(id)?.text || '')
             .filter(Boolean)
             .join('\n'),
         }

@@ -60,6 +60,18 @@ function levenshtein(a, b) {
 export function similarity(a, b) {
   const na = normalizeText(a)
   const nb = normalizeText(b)
+  return similarityNorm(na, nb)
+}
+
+/**
+ * 정규화 완료된 문자열 기준 유사도 — R21 review fix: matchSrtLines 가 inner loop
+ * 에서 호출 시 normalizeText 중복 제거 (pre-normalize 후 이 함수 사용).
+ *
+ * @param {string} na — normalized a
+ * @param {string} nb — normalized b
+ * @returns {number} 0~1
+ */
+function similarityNorm(na, nb) {
   if (!na || !nb) return 0
   if (na === nb) return 1
   // C14: 한쪽이 cap 넘으면 levenshtein 안 함 (OOM 방지). 매칭 안 된 것으로 취급.
@@ -90,41 +102,44 @@ export function matchSrtLines(oldTrack, newTrack) {
   const removed = []
   const usedNew = new Set()
 
-  for (const oldLine of oldArr) {
-    const oldText = oldLine?.text || ''
+  // R21 review fix: pre-normalize 모든 라인 — inner loop 에서 normalizeText 가
+  // O(N*M) 회 호출되는 것 제거. 대용량 SRT 재import 시 CPU 점유 ↓.
+  const newNormalized = newArr.map((line, idx) => ({
+    idx,
+    id: line?.id,
+    norm: normalizeText(line?.text),
+  }))
 
+  for (const oldLine of oldArr) {
     // C11 review fix: 빈 텍스트는 매칭에서 제외 (whitespace-only 포함).
-    // 정규화 후 빈 문자열끼리 === true 가 되어 의미 없는 임의 1:1 매핑이 일어남.
-    const normOld = normalizeText(oldText)
+    const normOld = normalizeText(oldLine?.text)
     if (!normOld) {
       removed.push(oldLine.id)
       continue
     }
 
     // 정확 일치 우선 (정규화 기준, 빈 문자열 제외)
-    const exactIdx = newArr.findIndex(
-      (n, i) => {
-        if (usedNew.has(i)) return false
-        const normNew = normalizeText(n?.text)
-        if (!normNew) return false
-        return normNew === normOld
-      }
-    )
+    let exactIdx = -1
+    for (const n of newNormalized) {
+      if (usedNew.has(n.idx)) continue
+      if (!n.norm) continue
+      if (n.norm === normOld) { exactIdx = n.idx; break }
+    }
     if (exactIdx >= 0) {
       matched.push({ oldId: oldLine.id, newIdx: exactIdx, score: 1 })
       usedNew.add(exactIdx)
       continue
     }
 
-    // 유사도 best 매치
+    // 유사도 best 매치 — pre-normalized 사용
     let bestIdx = -1
     let bestScore = 0
-    for (let i = 0; i < newArr.length; i++) {
-      if (usedNew.has(i)) continue
-      const s = similarity(oldText, newArr[i].text || '')
+    for (const n of newNormalized) {
+      if (usedNew.has(n.idx)) continue
+      const s = similarityNorm(normOld, n.norm)
       if (s > bestScore) {
         bestScore = s
-        bestIdx = i
+        bestIdx = n.idx
       }
     }
     if (bestIdx >= 0 && bestScore >= SIMILARITY_THRESHOLD) {
