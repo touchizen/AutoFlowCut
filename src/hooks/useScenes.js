@@ -329,6 +329,15 @@ export function useScenes() {
   }, [allocateSceneId])
   
   /**
+   * srtTrack 의 특정 라인 텍스트 갱신 (R3 review fix: SceneList 단일 라인 inline 편집용)
+   */
+  const updateSrtLine = useCallback((lineId, newText) => {
+    setSrtTrack(prev => prev.map(line =>
+      line.id === lineId ? { ...line, text: newText } : line
+    ))
+  }, [])
+
+  /**
    * 씬 업데이트
    */
   const updateScene = useCallback((sceneId, updates) => {
@@ -583,6 +592,7 @@ export function useScenes() {
     
     // Scene actions
     updateScene,
+    updateSrtLine,
     deleteScene,
     addScene,
     moveScene,

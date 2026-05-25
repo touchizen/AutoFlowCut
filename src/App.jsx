@@ -1237,6 +1237,7 @@ function App() {
               framePairs={framePairs}
               aspectRatio={settings.aspectRatio}
               onUpdate={scenesHook.updateScene}
+              onUpdateSrtLine={scenesHook.updateSrtLine}
               onDelete={(sceneId, sceneIndex) => {
                 const scene = scenes.find(s => s.id === sceneId)
                 if (scene) setSceneToDelete({ scene, sceneIndex })

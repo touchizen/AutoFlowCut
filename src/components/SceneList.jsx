@@ -18,7 +18,7 @@ import InfinityLoader from './InfinityLoader'
 import HoverImageBalloon from './HoverImageBalloon'
 import './SceneList.css'
 
-function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, onShowDetail, onShowVideoDetail, references, onOpenTag, styleThumbnails = {}, framePairs = [], srtTrack = [] }) {
+function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, onShowDetail, onShowVideoDetail, references, onOpenTag, styleThumbnails = {}, framePairs = [], srtTrack = [], onUpdateSrtLine = null }) {
   const rowRef = useRef(null)
   const [hoverPreview, setHoverPreview] = useState(null)
 
@@ -167,19 +167,36 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
         />
       </td>
 
-      {/* 자막 컬럼 — srtLineIds 있으면 srtTrack 에서 묶음 자막 표시 (Phase 6) */}
+      {/* 자막 컬럼 — srtLineIds 있으면 srtTrack 에서 묶음 자막 표시 (Phase 6).
+          R3 review fix: 단일 srtLine 은 그 라인 inline 편집, 묶음은 read-only.
+          legacy (srtLineIds 없음) 는 기존대로 scene.subtitle 편집. */}
       <td className="col-subtitle">
-        <textarea
-          value={
-            (scene.srtLineIds?.length && srtTrack.length)
-              ? getSceneSubtitle(scene, srtTrack)
-              : (scene.subtitle || '')
-          }
-          onChange={(e) => onUpdate(scene.id, { subtitle: e.target.value })}
-          disabled={disabled}
-          rows={2}
-          placeholder={t('sceneList.subtitlePlaceholder')}
-        />
+        {(() => {
+          const lineIds = scene.srtLineIds || []
+          const hasLineIds = lineIds.length > 0 && srtTrack.length > 0
+          const isBundled = lineIds.length > 1
+          const value = hasLineIds
+            ? getSceneSubtitle(scene, srtTrack)
+            : (scene.subtitle || '')
+          return (
+            <textarea
+              value={value}
+              onChange={(e) => {
+                if (isBundled) return // read-only for bundled scenes
+                if (hasLineIds && onUpdateSrtLine) {
+                  onUpdateSrtLine(lineIds[0], e.target.value)
+                } else {
+                  onUpdate(scene.id, { subtitle: e.target.value })
+                }
+              }}
+              readOnly={isBundled}
+              title={isBundled ? t('sceneList.bundledSubtitleReadonly') : undefined}
+              disabled={disabled}
+              rows={2}
+              placeholder={t('sceneList.subtitlePlaceholder')}
+            />
+          )
+        })()}
       </td>
 
       <td className="col-tags">
@@ -384,6 +401,7 @@ export default function SceneList({
   srtTrack = [],
   framePairs = [],
   onUpdate,
+  onUpdateSrtLine = null,
   onDelete,
   onAdd,
   onClearAll,
@@ -536,6 +554,7 @@ export default function SceneList({
                 scene={scene}
                 index={index}
                 onUpdate={onUpdate}
+                onUpdateSrtLine={onUpdateSrtLine}
                 onDelete={onDelete}
                 disabled={disabled}
                 ratioClass={ratioClass}
