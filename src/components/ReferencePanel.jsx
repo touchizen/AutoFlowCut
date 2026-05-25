@@ -189,7 +189,7 @@ export default function ReferencePanel({
       {!collapsed && (
         <div className={`ref-grid ${ratioClass}`}>
           {references.map((ref, index) => (
-            <ReferenceCard 
+            <ReferenceCard
               key={ref.id || index}
               reference={ref}
               index={index}
@@ -201,6 +201,7 @@ export default function ReferencePanel({
               t={t}
               isGenerating={generatingRefs.includes(index)}
               onShowDetail={setDetailIndex}
+              projectName={projectName}
             />
           ))}
           

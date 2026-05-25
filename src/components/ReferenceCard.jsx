@@ -6,6 +6,7 @@ import { useState, useRef, useEffect } from 'react'
 import { REFERENCE_TYPES } from '../config/defaults'
 import { getRatioClass, resolveImageSrc, hasImageData, formatElapsed } from '../utils/formatters'
 import { useElapsedTimer } from '../hooks/useElapsedTimer'
+import { fileSystemAPI } from '../hooks/useFileSystem'
 import HoverImageBalloon from './HoverImageBalloon'
 
 // 초시계 아이콘 — ResultsTable / FrameToVideoPanel 과 동일 스타일
@@ -46,7 +47,8 @@ export default function ReferenceCard({
   aspectRatio,
   t,
   isGenerating,
-  onShowDetail
+  onShowDetail,
+  projectName,
 }) {
   const cardRef = useRef(null)
   const fileInputRef = useRef(null)
@@ -70,32 +72,63 @@ export default function ReferenceCard({
 
     setIsUploading(true)
 
-    // R25 review fix: T3 의 blob URL 접근을 revert. data 는 base64 로 유지 — 자동화
-    // 업로드 (useAutomation.js) 와 autosave 분리 (useProjectData 가 큰 data 는 strip
-    // 하고 filePath 로 reload) 와 호환. blob URL 로 바꿨다가 자동화/reload 가 깨졌었음.
-    // 메모리 절감은 Electron file save IPC 도입이 필요 — 별도 follow-up.
     const reader = new FileReader()
     reader.onloadend = async () => {
       const base64 = reader.result
 
+      // 즉시 표시
       onUpdate(index, {
         ...reference,
         data: base64,
         mimeType: file.type,
       })
 
+      let uploadedMediaId = null
+      let uploadedCaption = null
       if (onUpload) {
         const cleanBase64 = base64.split(',')[1]
         const result = await onUpload(cleanBase64, reference.category)
         if (result.success) {
-          onUpdate(index, {
-            ...reference,
-            data: base64,
-            mediaId: result.mediaId,
-            caption: result.caption,
-          })
+          uploadedMediaId = result.mediaId
+          uploadedCaption = result.caption
         }
       }
+
+      // R30 review fix: 디스크에도 저장해서 filePath 확보 — autosave 가 data 를
+      // strip 해도 reload 시 references/{name} 파일에서 복구 가능. projectName
+      // 이 없거나 권한이 없으면 기존 동작 (메모리만) 유지.
+      let savedFilePath = null
+      if (projectName && reference.name) {
+        try {
+          const permission = await fileSystemAPI.checkPermission()
+          if (permission?.hasPermission) {
+            const metadata = {
+              mediaId: uploadedMediaId,
+              caption: uploadedCaption,
+              category: reference.category,
+            }
+            const saveResult = await fileSystemAPI.saveReference(
+              projectName, reference.name, base64, 'imported', metadata
+            )
+            if (saveResult?.success) {
+              savedFilePath = saveResult.path
+            }
+          }
+        } catch (e) {
+          console.warn('[ReferenceCard] saveReference failed:', e?.message || e)
+        }
+      }
+
+      onUpdate(index, {
+        ...reference,
+        data: base64,
+        mediaId: uploadedMediaId,
+        caption: uploadedCaption,
+        filePath: savedFilePath,
+        dataStorage: savedFilePath ? 'file' : 'base64',
+        // R27 review fix 와 일관: 캐시 무효화용 timestamp
+        generatedAt: Date.now(),
+      })
 
       setIsUploading(false)
     }
