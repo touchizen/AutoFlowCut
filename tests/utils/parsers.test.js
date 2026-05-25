@@ -3,7 +3,6 @@
  */
 import { describe, it, expect } from 'vitest'
 import {
-  parseCSVLine,
   parseSRTTime,
   parseTextToScenes,
   parseCSVToScenes,
@@ -16,26 +15,9 @@ import {
   csvPromptToVideoT2V,
 } from '../../src/utils/parsers'
 
-// ============================================================
-// parseCSVLine
-// ============================================================
-describe('parseCSVLine', () => {
-  it('splits simple CSV', () => {
-    expect(parseCSVLine('a,b,c')).toEqual(['a', 'b', 'c'])
-  })
-
-  it('handles quoted fields with commas', () => {
-    expect(parseCSVLine('a,"b,c",d')).toEqual(['a', 'b,c', 'd'])
-  })
-
-  it('trims whitespace', () => {
-    expect(parseCSVLine(' a , b , c ')).toEqual(['a', 'b', 'c'])
-  })
-
-  it('handles empty fields', () => {
-    expect(parseCSVLine('a,,c')).toEqual(['a', '', 'c'])
-  })
-})
+// R14 review fix: parseCSVLine removed (deprecated, escaped quote/multiline 미지원).
+// CSV 파싱 RFC 가드는 tests/utils/csvParser.test.js + tests/utils/parsers.rfcEdges.test.js
+// 에서 커버.
 
 // ============================================================
 // parseSRTTime

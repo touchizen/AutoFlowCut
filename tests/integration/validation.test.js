@@ -9,10 +9,12 @@ import {
   parseTextToScenes,
   parseCSVToScenes,
   parseSRTToScenes,
-  parseCSVLine,
   parseReferencesCSV,
   detectFileType
 } from '../../src/utils/parsers'
+
+// R14 review fix: parseCSVLine removed (deprecated). RFC parser tests are in
+// tests/utils/csvParser.test.js + tests/utils/parsers.rfcEdges.test.js.
 
 describe('텍스트 입력 유효성', () => {
   describe('특수 문자 처리', () => {
@@ -360,41 +362,6 @@ beach,SCENE`
       expect(refs[0].type).toBe('character')
       expect(refs[1].type).toBe('scene')
     })
-  })
-})
-
-describe('parseCSVLine 유효성', () => {
-  it('기본 케이스', () => {
-    expect(parseCSVLine('a,b,c')).toEqual(['a', 'b', 'c'])
-  })
-
-  it('따옴표 필드', () => {
-    expect(parseCSVLine('"a,b",c')).toEqual(['a,b', 'c'])
-  })
-
-  it('빈 필드', () => {
-    expect(parseCSVLine('a,,c')).toEqual(['a', '', 'c'])
-  })
-
-  it('끝에 빈 필드', () => {
-    expect(parseCSVLine('a,b,')).toEqual(['a', 'b', ''])
-  })
-
-  it('공백 처리', () => {
-    expect(parseCSVLine(' a , b , c ')).toEqual(['a', 'b', 'c'])
-  })
-
-  it('따옴표 내 공백', () => {
-    // parseCSVLine은 결과에 trim()을 적용하므로 공백 제거됨
-    expect(parseCSVLine('" a "," b "')).toEqual(['a', 'b'])
-  })
-
-  it('빈 문자열', () => {
-    expect(parseCSVLine('')).toEqual([''])
-  })
-
-  it('따옴표만', () => {
-    expect(parseCSVLine('""')).toEqual([''])
   })
 })
 

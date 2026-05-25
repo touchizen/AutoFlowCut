@@ -29,29 +29,11 @@ export function parseTimeToSeconds(timeStr) {
 }
 
 /**
- * CSV 라인 파싱 (따옴표 처리)
+ * R14 review fix: parseCSVLine removed. 옛 line-split + 단순 quote toggle 파서는
+ * escaped quote (""→"), multiline field, CRLF 처리 안 됨. 모든 src 진입점은
+ * parseCSVTextToRows (csvParser.js) 를 사용한다. 외부 caller 가 있다면 그쪽도
+ * 마이그레이션 필요.
  */
-export function parseCSVLine(line) {
-  const result = []
-  let current = ''
-  let inQuotes = false
-  
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i]
-    
-    if (char === '"') {
-      inQuotes = !inQuotes
-    } else if (char === ',' && !inQuotes) {
-      result.push(current.trim())
-      current = ''
-    } else {
-      current += char
-    }
-  }
-  
-  result.push(current.trim())
-  return result
-}
 
 /**
  * SRT 시간 파싱 (00:00:00,000 -> 초)
