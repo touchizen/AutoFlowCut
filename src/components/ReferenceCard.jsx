@@ -97,8 +97,15 @@ export default function ReferenceCard({
       // R30 review fix: 디스크에도 저장해서 filePath 확보 — autosave 가 data 를
       // strip 해도 reload 시 references/{name} 파일에서 복구 가능. projectName
       // 이 없거나 권한이 없으면 기존 동작 (메모리만) 유지.
+      // R33 review fix: name 비어 있으면 imported_{id} fallback 으로 저장 — 사용자가
+      // 이름 입력 전 업로드해도 디스크에 영속화되어 reload 시 복구 가능. ref.id 는
+      // ReferencePanel.handleAdd 가 항상 발급. 이름은 patch 에도 반영해 후속 autosave
+      // 가 같은 saveName 으로 일관 유지.
+      const effectiveName = (reference.name && String(reference.name).trim())
+        ? reference.name
+        : (reference.id != null ? `imported_${reference.id}` : null)
       let savedFilePath = null
-      if (projectName && reference.name) {
+      if (projectName && effectiveName) {
         try {
           const permission = await fileSystemAPI.checkPermission()
           if (permission?.hasPermission) {
@@ -108,7 +115,7 @@ export default function ReferenceCard({
               category: reference.category,
             }
             const saveResult = await fileSystemAPI.saveReference(
-              projectName, reference.name, base64, 'imported', metadata
+              projectName, effectiveName, base64, 'imported', metadata
             )
             if (saveResult?.success) {
               savedFilePath = saveResult.path
@@ -121,6 +128,7 @@ export default function ReferenceCard({
 
       onUpdate(index, {
         ...reference,
+        name: effectiveName || reference.name,
         data: base64,
         mediaId: uploadedMediaId,
         caption: uploadedCaption,
