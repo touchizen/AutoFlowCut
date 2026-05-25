@@ -8,6 +8,7 @@ import { formatTime, getRatioClass, resolveImageSrc, hasImageData } from '../uti
 import { checkTagMatch } from '../utils/tagMatch'
 import { resolveExportMediaChoice } from '../utils/sceneMedia'
 import { resolveVideoSrc, ensureBase64DataUrl } from '../utils/videoSrc'
+import { getSceneSubtitle, getSceneDuration } from '../utils/srtTrack'
 import { UI, STYLE_PRESETS } from '../config/defaults'
 import SceneDetailModal from './SceneDetailModal'
 import VideoDetailModal from './VideoDetailModal'
@@ -17,7 +18,7 @@ import InfinityLoader from './InfinityLoader'
 import HoverImageBalloon from './HoverImageBalloon'
 import './SceneList.css'
 
-function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, onShowDetail, onShowVideoDetail, references, onOpenTag, styleThumbnails = {}, framePairs = [] }) {
+function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, onShowDetail, onShowVideoDetail, references, onOpenTag, styleThumbnails = {}, framePairs = [], srtTrack = [] }) {
   const rowRef = useRef(null)
   const [hoverPreview, setHoverPreview] = useState(null)
 
@@ -166,10 +167,14 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
         />
       </td>
 
-      {/* 자막 컬럼 (프롬프트 제거, 자막만 표시) */}
+      {/* 자막 컬럼 — srtLineIds 있으면 srtTrack 에서 묶음 자막 표시 (Phase 6) */}
       <td className="col-subtitle">
         <textarea
-          value={scene.subtitle || ''}
+          value={
+            (scene.srtLineIds?.length && srtTrack.length)
+              ? getSceneSubtitle(scene, srtTrack)
+              : (scene.subtitle || '')
+          }
           onChange={(e) => onUpdate(scene.id, { subtitle: e.target.value })}
           disabled={disabled}
           rows={2}
@@ -376,6 +381,7 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
 
 export default function SceneList({
   scenes,
+  srtTrack = [],
   framePairs = [],
   onUpdate,
   onDelete,
@@ -540,6 +546,7 @@ export default function SceneList({
                 references={references}
                 onOpenTag={openTag}
                 styleThumbnails={styleThumbnails}
+                srtTrack={srtTrack}
               />
             ))}
           </tbody>

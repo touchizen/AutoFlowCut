@@ -1218,6 +1218,7 @@ function App() {
           {activeTab === 'list' && (
             <SceneList
               scenes={scenes}
+              srtTrack={scenesHook.srtTrack}
               framePairs={framePairs}
               aspectRatio={settings.aspectRatio}
               onUpdate={scenesHook.updateScene}
