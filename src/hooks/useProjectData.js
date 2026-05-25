@@ -76,8 +76,22 @@ export async function loadProjectWithResources(projectName) {
   // 메시지 문자열을 일절 set 하지 않으므로 project.json 은 언어 독립이고 사용자가 언어를
   // 전환해도 stale 메시지가 남지 않는다. (free-form generation 에러는 별개 — scene.error 에 그대로 보존)
   const ERROR_KIND_IMAGE_MISSING = 'image-missing'
-  const scenesWithPaths = await Promise.all(
-    (result.data.scenes || []).map(async (scene) => {
+  // S6 review fix: 모든 씬을 unbounded Promise.all 로 처리하던 것을 50개 chunk
+  // 단위로 분할 — Electron IPC 채널에 수백 메시지가 동시 적재되어 메인 프로세스
+  // 디스크 큐가 막히는 것을 방지. 같은 패턴이 아래 history 복원에도 이미 사용됨.
+  const RESOURCE_CHUNK = 50
+  async function mapInChunks(arr, mapper) {
+    const out = []
+    for (let i = 0; i < arr.length; i += RESOURCE_CHUNK) {
+      const chunk = arr.slice(i, i + RESOURCE_CHUNK)
+      const results = await Promise.all(chunk.map(mapper))
+      out.push(...results)
+    }
+    return out
+  }
+  const scenesWithPaths = await mapInChunks(
+    (result.data.scenes || []),
+    async (scene) => {
       if (scene.id) {
         const pathResult = await fileSystemAPI.getResourcePath(projectName, 'scenes', scene.id)
         if (pathResult.success) {
@@ -122,12 +136,13 @@ export async function loadProjectWithResources(projectName) {
         }
       }
       return { ...scene, status: scene.status || 'pending' }
-    })
+    }
   )
 
   // references: 절대 파일 경로 확보 (base64 로드 안 함 — 메모리 최적화)
-  const refsWithPaths = await Promise.all(
-    (result.data.references || []).map(async (ref) => {
+  const refsWithPaths = await mapInChunks(
+    (result.data.references || []),
+    async (ref) => {
       if (ref.name) {
         // 항상 현재 프로젝트 폴더 기준으로 경로 재확인
         const pathResult = await fileSystemAPI.getResourcePath(projectName, 'references', ref.name)
@@ -137,7 +152,7 @@ export async function loadProjectWithResources(projectName) {
       }
       // No file resolved — preserve prior status/errorMessage; default to 'pending'
       return { ...ref, status: ref.status || 'pending', errorMessage: ref.errorMessage || null }
-    })
+    }
   )
 
   // mediaId 누락 씬 복구 (history 메타데이터에서 병렬 조회, 50개씩 청크)
