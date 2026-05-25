@@ -10,6 +10,7 @@ import { getRatioClass, resolveImageSrc, hasImageData, formatElapsed } from '../
 import { resolveVideoSrc } from '../utils/videoSrc'
 import { resolveDisplayError } from '../utils/errorDisplay'
 import InfinityLoader from './InfinityLoader'
+import LazyImage from './LazyImage'
 import HoverImageBalloon from './HoverImageBalloon'
 
 /** 초시계 아이콘 — 초침이 실시간 회전 */
@@ -119,15 +120,16 @@ export default function ResultsTable({
   const renderMedia = (item, index) => {
     const itemImgSrc = resolveImageSrc(item)
     if (mediaType === 'image' && hasImageData(item)) {
+      // R37 fix: LazyImage — 뷰포트 이탈 시 img 언마운트해 VRAM 회수
       return (
-        <img
+        <LazyImage
           src={itemImgSrc}
           alt={`Scene ${index + 1}`}
           className="result-thumbnail"
           onMouseEnter={(e) => {
             const rect = e.currentTarget.getBoundingClientRect()
             setHoverPreview({
-              src: e.currentTarget.src,
+              src: itemImgSrc,
               rect: { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }
             })
           }}

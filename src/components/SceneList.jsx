@@ -13,6 +13,7 @@ import { UI, STYLE_PRESETS } from '../config/defaults'
 import SceneDetailModal from './SceneDetailModal'
 import VideoDetailModal from './VideoDetailModal'
 import TagBatchModal from './TagBatchModal'
+import LazyImage from './LazyImage'
 import TagInputAutocomplete from './TagInputAutocomplete'
 import InfinityLoader from './InfinityLoader'
 import HoverImageBalloon from './HoverImageBalloon'
@@ -270,7 +271,8 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
               onDoubleClick={() => onShowDetail(scene)}
               title={`IMG${activeMedia === 'image' ? ' ✓' : ''}`}
             >
-              <img
+              {/* R37 fix: LazyImage — 뷰포트 이탈 시 img 언마운트해 VRAM 회수 */}
+              <LazyImage
                 src={imgSrc}
                 alt={`Scene ${index + 1}`}
                 onMouseEnter={(e) => {
@@ -319,7 +321,7 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
               {hoveredVideo === 't2v' ? (
                 <video src={toVideoSrc(scene.videoT2V, scene.videoT2VPath)} muted preload="metadata" onLoadedMetadata={(e) => handleVideoMetadata(e, 't2v')} />
               ) : (
-                imgSrc ? <img src={imgSrc} alt="T2V poster" /> : <div className="video-placeholder" />
+                imgSrc ? <LazyImage src={imgSrc} alt="T2V poster" /> : <div className="video-placeholder" />
               )}
               <div className="play-button-overlay mini">▶</div>
               {mediaCount > 1 && <span className="media-label">T2V</span>}
@@ -367,7 +369,7 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
               {hoveredVideo === 'i2v' ? (
                 <video src={toVideoSrc(scene.videoI2V, scene.videoI2VPath)} muted preload="metadata" onLoadedMetadata={(e) => handleVideoMetadata(e, 'i2v')} />
               ) : (
-                imgSrc ? <img src={imgSrc} alt="I2V poster" /> : <div className="video-placeholder" />
+                imgSrc ? <LazyImage src={imgSrc} alt="I2V poster" /> : <div className="video-placeholder" />
               )}
               <div className="play-button-overlay mini">▶</div>
               {mediaCount > 1 && <span className="media-label">I2V</span>}

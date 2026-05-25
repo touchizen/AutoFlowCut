@@ -145,7 +145,9 @@ export default function ReferenceCard({
       onUpdate(index, {
         ...reference,
         name: effectiveName || reference.name,
-        data: base64,
+        // R36 fix: 디스크 저장 성공 시 base64 메모리 해제. useAutomation.js 는
+        // ref.data 없으면 ref.filePath 에서 readFileByPath fallback 이 있음.
+        data: savedFilePath ? null : base64,
         mediaId: uploadedMediaId,
         caption: uploadedCaption,
         filePath: savedFilePath,
