@@ -1,8 +1,9 @@
+export const VIDEO_POSTER_CACHE_LIMIT = 100
+
 const posterCache = new Map()
 let posterQueue = Promise.resolve()
 
 function cleanupVideo(video) {
-  try { video.pause?.() } catch {}
   try { video.removeAttribute?.('src') } catch {}
 }
 
@@ -21,9 +22,25 @@ function captureFrame(video) {
   return canvas.toDataURL('image/jpeg', 0.72)
 }
 
-function extractVideoPoster(videoSrc) {
+function getCaptureTime(duration) {
+  if (!Number.isFinite(duration) || duration <= 0) return 0
+  const preferred = Math.min(1, Math.max(0.5, duration * 0.1))
+  return Math.min(preferred, Math.max(0, duration - 0.05))
+}
+
+function rememberPosterPromise(videoSrc, promise, signal) {
+  if (posterCache.has(videoSrc)) posterCache.delete(videoSrc)
+  posterCache.set(videoSrc, { promise, signal })
+
+  while (posterCache.size > VIDEO_POSTER_CACHE_LIMIT) {
+    const oldestKey = posterCache.keys().next().value
+    posterCache.delete(oldestKey)
+  }
+}
+
+function extractVideoPoster(videoSrc, signal) {
   return new Promise((resolve) => {
-    if (!videoSrc || typeof document === 'undefined') {
+    if (!videoSrc || signal?.aborted || typeof document === 'undefined') {
       resolve(null)
       return
     }
@@ -37,9 +54,12 @@ function extractVideoPoster(videoSrc) {
       if (settled) return
       settled = true
       if (timeoutId) clearTimeout(timeoutId)
+      signal?.removeEventListener?.('abort', abort)
       cleanupVideo(video)
       resolve(poster || null)
     }
+
+    const abort = () => done(null)
 
     const capture = () => {
       try {
@@ -52,9 +72,12 @@ function extractVideoPoster(videoSrc) {
     video.muted = true
     video.playsInline = true
     video.preload = 'metadata'
+    if (/^https?:\/\//i.test(videoSrc)) {
+      video.crossOrigin = 'anonymous'
+    }
+    signal?.addEventListener?.('abort', abort, { once: true })
     video.addEventListener('loadedmetadata', () => {
-      const duration = Number.isFinite(video.duration) ? video.duration : 0
-      targetTime = duration > 0 ? Math.min(0.1, duration / 2) : 0
+      targetTime = getCaptureTime(video.duration)
       if (targetTime > 0.01) {
         try {
           video.currentTime = targetTime
@@ -74,15 +97,36 @@ function extractVideoPoster(videoSrc) {
   })
 }
 
-export function getVideoPoster(videoSrc) {
+export function getVideoPoster(videoSrc, options = {}) {
   if (!videoSrc) return Promise.resolve(null)
-  if (posterCache.has(videoSrc)) return posterCache.get(videoSrc)
+  const { signal } = options
+  if (signal?.aborted) return Promise.resolve(null)
+  if (posterCache.has(videoSrc)) {
+    const cached = posterCache.get(videoSrc)
+    if (cached?.signal?.aborted) {
+      posterCache.delete(videoSrc)
+    } else {
+      posterCache.delete(videoSrc)
+      posterCache.set(videoSrc, cached)
+      return cached.promise
+    }
+  }
 
   const promise = posterQueue
-    .then(() => extractVideoPoster(videoSrc))
-    .catch(() => null)
+    .then(() => {
+      if (signal?.aborted) return null
+      return extractVideoPoster(videoSrc, signal)
+    })
+    .then((poster) => {
+      if (!poster) posterCache.delete(videoSrc)
+      return poster
+    })
+    .catch(() => {
+      posterCache.delete(videoSrc)
+      return null
+    })
 
-  posterCache.set(videoSrc, promise)
+  rememberPosterPromise(videoSrc, promise, signal)
   posterQueue = promise.catch(() => null).then(() => undefined)
   return promise
 }

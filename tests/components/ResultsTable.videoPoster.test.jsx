@@ -43,7 +43,10 @@ describe('ResultsTable — generated video poster thumbnails', () => {
       expect(poster.getAttribute('src')).toBe('data:image/jpeg;base64,VIDEOPOSTER')
     })
 
-    expect(getVideoPoster).toHaveBeenCalledWith('file:///abs/v1.mp4')
+    expect(getVideoPoster).toHaveBeenCalledWith(
+      'file:///abs/v1.mp4',
+      { signal: expect.any(AbortSignal) }
+    )
     expect(container.querySelectorAll('video')).toHaveLength(0)
   })
 })

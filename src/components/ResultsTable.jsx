@@ -54,12 +54,14 @@ function VideoPosterThumbnail({ videoSrc, fallbackSrc, alt }) {
     if (!videoSrc || fallbackSrc) return
 
     let cancelled = false
+    const controller = new AbortController()
     setPosterSrc(null)
-    getVideoPoster(videoSrc).then((src) => {
+    getVideoPoster(videoSrc, { signal: controller.signal }).then((src) => {
       if (!cancelled && src) setPosterSrc(src)
     })
     return () => {
       cancelled = true
+      controller.abort()
     }
   }, [videoSrc, fallbackSrc])
 
