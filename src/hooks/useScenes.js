@@ -48,19 +48,13 @@ function normalizeScene(s, i) {
 export function useScenes() {
   const [scenes, _setScenes] = useState([])
   const [references, setReferences] = useState([])
-  const [srtTrack, setSrtTrack] = useState([])
+  const [srtTrack, _setSrtTrack] = useState([])
 
-  // scenes 의 최신 스냅샷을 동기적으로 읽기 위한 ref. React 18 의 batched
-  // updates 가 setScenes(prev => ...) 콜백 실행을 지연시키면 closure 내부에서
-  // 캡처한 변수(newSrtTrack 등)가 setSrtTrack 호출 시점에 undefined 가 된다.
-  // import 류 메서드는 ref 로 prev 를 읽고 새 값을 동기 계산해서 양쪽 state 를
-  // 모두 동기적으로 갱신한다.
-  //
-  // Review C15 limitation: useEffect 동기화는 commit 후 실행 → 같은 tick 에 다른
-  // setState 가 큐된 직후 import 호출하면 ref 는 한 render 뒤처짐. 실사용 빈도는
-  // 낮지만 (사용자 액션은 render 사이에 분리됨), MCP 자동 시퀀스 등 programmatic
-  // rapid call 에서는 두번째 호출이 첫 호출 결과 못 볼 수 있음. 진정한 fix 는
-  // useState getter 가 필요한데 React 가 제공 안 함.
+  // scenes/srtTrack 의 최신 스냅샷을 동기 읽기용 ref. R6 review fix: setter
+  // wrapper 가 _setReact 호출 BEFORE 에 ref 를 동기 갱신하므로 같은 tick 에
+  // back-to-back parseFromCSV/SRT 가 첫 호출 결과 본다 (useEffect 만으로는
+  // commit 후에야 sync 되어 stale 한 문제). useEffect 동기화는 safety net 으로
+  // 유지 — setter wrapper 외부에서 state 가 어떻게든 바뀌면 ref 가 따라옴.
   const scenesRef = useRef(scenes)
   useEffect(() => { scenesRef.current = scenes }, [scenes])
   const srtTrackRef = useRef(srtTrack)
@@ -106,21 +100,30 @@ export function useScenes() {
     // Functional form = incremental update (addScene, deleteScene, merges).
     // Reset counter only on wholesale replacement so counter doesn't leak
     // across project switches.
+    //
+    // R6 review fix: ref 를 source of truth 로 써서 같은 tick 의 back-to-back
+    // 호출도 직전 결과 본다. _setScenes 호출 BEFORE 에 ref 갱신 → React 가
+    // re-render 할 때까지 기다리지 않고 동기 읽기 가능.
     const isReplacement = typeof valueOrFn !== 'function'
-    _setScenes(prev => {
-      const next = typeof valueOrFn === 'function' ? valueOrFn(prev) : valueOrFn
-      // 동일 reference 반환 시 정규화 스킵 (no-op 최적화)
-      if (next === prev) return prev
-      if (Array.isArray(next)) {
-        // Normalize FIRST so scenes missing IDs get scene_${i+1} fallback assigned.
-        // Then sync counter so it accounts for those fallback IDs and won't collide
-        // on next addScene/allocateSceneId call.
-        const normalized = next.map(normalizeScene)
-        syncCounterFromScenes(normalized, { reset: isReplacement })
-        return normalized
-      }
-      return next
-    })
+    const prev = scenesRef.current
+    const next = typeof valueOrFn === 'function' ? valueOrFn(prev) : valueOrFn
+    if (next === prev) return
+    let normalized = next
+    if (Array.isArray(next)) {
+      normalized = next.map(normalizeScene)
+      syncCounterFromScenes(normalized, { reset: isReplacement })
+    }
+    scenesRef.current = normalized
+    _setScenes(normalized)
+  }, [])
+
+  // R6 review fix: setSrtTrack wrapper 도 동기 ref 갱신
+  const setSrtTrack = useCallback((valueOrFn) => {
+    const prev = srtTrackRef.current
+    const next = typeof valueOrFn === 'function' ? valueOrFn(prev) : valueOrFn
+    if (next === prev) return
+    srtTrackRef.current = next
+    _setSrtTrack(next)
   }, [])
 
   /**

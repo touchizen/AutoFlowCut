@@ -3,6 +3,7 @@
  */
 
 import { DEFAULTS } from '../config/defaults'
+import { parseCSVTextToRows } from './csvParser'
 
 // ============================================================
 // 기본 유틸
@@ -213,13 +214,12 @@ export function parseSRTToScenes(srtText) {
  */
 export function isNewSceneCSVFormat(csvText) {
   if (!csvText || !String(csvText).trim()) return false
-  const lines = csvText.trim().split('\n')
-  if (lines.length < 2) return false
-  const headers = lines[0].split(',').map(h => h.trim().toLowerCase())
-  const sceneIdx = headers.indexOf('scene')
-  if (sceneIdx === -1) return false
-  const firstRow = parseCSVLine(lines[1])
-  const sceneVal = (firstRow[sceneIdx] || '').trim()
+  // R7 review fix: RFC parser 사용 (escaped quote / multiline / CRLF 안전)
+  const { headers, rows } = parseCSVTextToRows(csvText)
+  if (rows.length === 0) return false
+  const sceneHeader = headers.find(h => h.toLowerCase() === 'scene')
+  if (!sceneHeader) return false
+  const sceneVal = (rows[0][sceneHeader] || '').trim()
   return /^\d+$/.test(sceneVal)
 }
 
@@ -239,16 +239,15 @@ export function isNewSceneCSVFormat(csvText) {
  */
 export function parseSceneCSVToTracks(csvText, options = {}) {
   if (!csvText || !String(csvText).trim()) return { srtTrack: [], scenes: [] }
-  const lines = csvText.trim().split('\n')
-  if (lines.length < 2) return { srtTrack: [], scenes: [] }
+  // R7 review fix: RFC parser (escaped quote / multiline / CRLF 안전)
+  const { headers: rawHeaders, rows: parsedTextRows } = parseCSVTextToRows(csvText)
+  if (parsedTextRows.length === 0) return { srtTrack: [], scenes: [] }
 
   const defaultDuration = options.defaultDuration ?? DEFAULTS.scene.duration
-  const headers = lines[0].split(',').map(h => h.trim().toLowerCase())
-  const sceneIdx = headers.indexOf('scene')
-  if (sceneIdx === -1) return { srtTrack: [], scenes: [] }
-
-  // 각 컬럼 인덱스 미리 계산
-  const colIdx = (name) => headers.indexOf(name)
+  // 헤더 → lowercase 이름 매핑 (값 lookup 용)
+  const headerByLower = new Map()
+  for (const h of rawHeaders) headerByLower.set(h.toLowerCase(), h)
+  if (!headerByLower.has('scene')) return { srtTrack: [], scenes: [] }
 
   // 행들을 scene 번호 별로 그룹화 (등장 순서 보존)
   const groups = []
@@ -256,16 +255,14 @@ export function parseSceneCSVToTracks(csvText, options = {}) {
   let cursor = 0
 
   const parsedRows = []
-  for (let i = 1; i < lines.length; i++) {
-    const values = parseCSVLine(lines[i])
-    if (!values.length) continue
-    const sceneNumStr = (values[sceneIdx] || '').trim()
+  for (const textRow of parsedTextRows) {
+    const sceneNumStr = (textRow[headerByLower.get('scene')] || '').trim()
     if (!/^\d+$/.test(sceneNumStr)) continue
     const sceneNum = parseInt(sceneNumStr, 10)
 
     const getCol = (name) => {
-      const idx = colIdx(name)
-      return idx >= 0 ? (values[idx] || '').trim() : ''
+      const key = headerByLower.get(name)
+      return key ? (textRow[key] || '').trim() : ''
     }
     const startRaw = getCol('start_time')
     const endRaw = getCol('end_time')
