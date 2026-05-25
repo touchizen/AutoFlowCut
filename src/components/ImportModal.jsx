@@ -63,7 +63,7 @@ export default function ImportModal({ onImport, onImportAudio, onClose }) {
       hint: t('import.srtHint'),
       guideUrl: `${guideBaseUrl}/import-guide.html#srt-subtitle`,
       sampleUrl: `${guideBaseUrl}/samples/sample-subtitles.srt`,
-      aiPromptUrl: `${guideBaseUrl}/import-guide.html#tts-srt`
+      aiPromptUrl: `${guideBaseUrl}/import-guide.html#ai-srt-to-csv`
     }
   ]
 
