@@ -54,7 +54,7 @@ describe('T2 — SceneList video lazy mount', () => {
     expect(videos).toHaveLength(0) // 비디오 mount 안 됨
   })
 
-  it('videoT2VDuration 캐시 없으면 <video> mount (duration 추출 위해)', () => {
+  it('R26 review fix: duration 캐시 없어도 첫 로드에는 <video> mount 안 함 (hover-activated)', () => {
     const scene = {
       ...baseScene,
       videoT2VPath: '/abs/t2v.mp4',
@@ -72,7 +72,7 @@ describe('T2 — SceneList video lazy mount', () => {
       />
     )
     const videos = container.querySelectorAll('video')
-    expect(videos.length).toBeGreaterThanOrEqual(1)
+    expect(videos).toHaveLength(0) // 첫 로드: VRAM burst 없음
   })
 
   it('videoI2VDuration 캐시 있으면 I2V 도 poster only', () => {

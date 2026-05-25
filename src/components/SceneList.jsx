@@ -21,6 +21,9 @@ import './SceneList.css'
 function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, onShowDetail, onShowVideoDetail, references, onOpenTag, styleThumbnails = {}, framePairs = [], srtTrack = [], onUpdateSrtLine = null }) {
   const rowRef = useRef(null)
   const [hoverPreview, setHoverPreview] = useState(null)
+  // R26 review fix: 비디오 mount 를 hover 시점으로 미룸. duration 캐시 유무와 무관
+  // 하게 첫 로드 VRAM burst 차단 ('t2v' | 'i2v' | null).
+  const [hoveredVideo, setHoveredVideo] = useState(null)
 
   // 생성 중이면 자동 스크롤
   useEffect(() => {
@@ -286,6 +289,8 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
           {(scene.videoT2V || scene.videoT2VPath) && (
             <div
               className={`media-thumb ${isSelected('t2v')} clickable`}
+              onMouseEnter={() => setHoveredVideo('t2v')}
+              onMouseLeave={() => setHoveredVideo(null)}
               onClick={(e) => {
                 e.stopPropagation()
                 if (mediaCount > 1) {
@@ -309,13 +314,12 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
               })}
               title={`T2V${activeMedia === 't2v' ? ' ✓' : ''} — ${t('sceneList.dblClickToView') || 'Double-click to view'}`}
             >
-              {/* T2 review fix: videoT2VDuration 이미 캐시되어 있으면 정적 poster 만
-                  사용 (VRAM 절약). 없으면 1회 mount 해서 onLoadedMetadata 로 추출 →
-                  다음 render 부터는 poster path 로 자동 전환. */}
-              {scene.videoT2VDuration ? (
-                imgSrc ? <img src={imgSrc} alt="T2V poster" /> : <div className="video-placeholder" />
-              ) : (
+              {/* R26 review fix: hover 시점에만 <video> mount. duration 추출도 hover
+                  순간 onLoadedMetadata 로. 첫 로드 VRAM burst 없음. */}
+              {hoveredVideo === 't2v' ? (
                 <video src={toVideoSrc(scene.videoT2V, scene.videoT2VPath)} muted preload="metadata" onLoadedMetadata={(e) => handleVideoMetadata(e, 't2v')} />
+              ) : (
+                imgSrc ? <img src={imgSrc} alt="T2V poster" /> : <div className="video-placeholder" />
               )}
               <div className="play-button-overlay mini">▶</div>
               {mediaCount > 1 && <span className="media-label">T2V</span>}
@@ -334,6 +338,8 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
             return (
             <div
               className={`media-thumb ${isSelected('i2v')} clickable`}
+              onMouseEnter={() => setHoveredVideo('i2v')}
+              onMouseLeave={() => setHoveredVideo(null)}
               onClick={(e) => {
                 e.stopPropagation()
                 if (mediaCount > 1) {
@@ -357,11 +363,11 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
               })}
               title={`I2V${activeMedia === 'i2v' ? ' ✓' : ''} — ${t('sceneList.dblClickToView') || 'Double-click to view'}`}
             >
-              {/* T2 review fix: videoI2VDuration 캐시 있으면 poster 만. (T2V 와 동일) */}
-              {scene.videoI2VDuration ? (
-                imgSrc ? <img src={imgSrc} alt="I2V poster" /> : <div className="video-placeholder" />
-              ) : (
+              {/* R26 review fix: hover 시점에만 <video> mount (T2V 와 동일) */}
+              {hoveredVideo === 'i2v' ? (
                 <video src={toVideoSrc(scene.videoI2V, scene.videoI2VPath)} muted preload="metadata" onLoadedMetadata={(e) => handleVideoMetadata(e, 'i2v')} />
+              ) : (
+                imgSrc ? <img src={imgSrc} alt="I2V poster" /> : <div className="video-placeholder" />
               )}
               <div className="play-button-overlay mini">▶</div>
               {mediaCount > 1 && <span className="media-label">I2V</span>}
