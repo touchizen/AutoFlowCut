@@ -1,0 +1,148 @@
+/**
+ * srtTrack — 자막 트랙 데이터 모델 + 유틸리티
+ *
+ * Phase 1 of docs/superpowers/plans/2026-05-25-srt-csv-track-separation.md
+ *
+ * 자막(시간 기반)과 씬(이미지 묶음 단위)을 분리한다.
+ *
+ *   project.srtTrack: [{ id, startTime, endTime, text }]
+ *   project.scenes[i].srtLineIds: ["sub_1", "sub_2", ...]
+ *
+ * scene.subtitle / scene.duration 은 srtLineIds 로부터 계산해서 표시 (저장 안 함).
+ */
+
+const SUB_ID_PATTERN = /^sub_(\d+)$/
+
+/**
+ * srtTrack 에서 다음 라인 ID 할당 (sub_N 패턴의 최대값 + 1).
+ * 패턴 외 ID 는 무시. 빈 트랙이면 sub_1.
+ *
+ * @param {Array} srtTrack
+ * @returns {string} 새 ID (e.g. "sub_3")
+ */
+export function allocateSrtLineId(srtTrack) {
+  if (!Array.isArray(srtTrack) || srtTrack.length === 0) return 'sub_1'
+  let max = 0
+  for (const line of srtTrack) {
+    const m = SUB_ID_PATTERN.exec(line?.id || '')
+    if (m) {
+      const n = parseInt(m[1], 10)
+      if (n > max) max = n
+    }
+  }
+  return `sub_${max + 1}`
+}
+
+/**
+ * 씬의 표시용 자막 텍스트를 srtTrack 에서 계산.
+ * 여러 라인이면 \n 으로 join.
+ *
+ * @param {object} scene — { srtLineIds?: string[] }
+ * @param {Array} srtTrack
+ * @returns {string}
+ */
+export function getSceneSubtitle(scene, srtTrack) {
+  if (!scene?.srtLineIds?.length || !Array.isArray(srtTrack) || srtTrack.length === 0) return ''
+  const byId = new Map(srtTrack.map(l => [l.id, l]))
+  const texts = []
+  for (const id of scene.srtLineIds) {
+    const line = byId.get(id)
+    if (line) texts.push(line.text ?? '')
+  }
+  return texts.join('\n')
+}
+
+/**
+ * 씬의 자동 계산 duration. srtLineIds 가 있으면 시간 합, 없으면 scene.duration fallback.
+ *
+ * @param {object} scene — { srtLineIds?: string[], duration?: number }
+ * @param {Array} srtTrack
+ * @returns {number} 초
+ */
+export function getSceneDuration(scene, srtTrack) {
+  if (scene?.srtLineIds?.length && Array.isArray(srtTrack) && srtTrack.length > 0) {
+    const byId = new Map(srtTrack.map(l => [l.id, l]))
+    let sum = 0
+    let any = false
+    for (const id of scene.srtLineIds) {
+      const line = byId.get(id)
+      if (line) {
+        sum += (Number(line.endTime) - Number(line.startTime)) || 0
+        any = true
+      }
+    }
+    if (any) return sum
+  }
+  return Number(scene?.duration) || 0
+}
+
+/**
+ * 옛 형식 scenes 에서 srtTrack + 새 scenes (srtLineIds 포함) 생성.
+ * 각 씬의 subtitle = 자막 1개로 등록. 빈 subtitle 인 씬은 라인 없이 srtLineIds=[].
+ *
+ * 시간 정보 없는 씬은 duration 으로 cursor 진행.
+ *
+ * @param {Array} scenes — legacy scenes (subtitle/startTime/endTime/duration 포함)
+ * @returns {{ srtTrack: Array, scenes: Array }} 입력은 변형하지 않음.
+ */
+export function createSrtTrackFromScenes(scenes) {
+  if (!Array.isArray(scenes) || scenes.length === 0) {
+    return { srtTrack: [], scenes: [] }
+  }
+  const srtTrack = []
+  const newScenes = []
+  let cursor = 0
+
+  for (const scene of scenes) {
+    const subtitle = scene?.subtitle
+    const hasStart = typeof scene?.startTime === 'number'
+    const hasEnd = typeof scene?.endTime === 'number'
+    const duration = Number(scene?.duration) || 0
+    const start = hasStart ? scene.startTime : cursor
+    const end = hasEnd ? scene.endTime : (start + duration)
+    cursor = end
+
+    if (subtitle && String(subtitle).length > 0) {
+      const id = allocateSrtLineId(srtTrack)
+      srtTrack.push({ id, startTime: start, endTime: end, text: String(subtitle) })
+      newScenes.push({ ...scene, srtLineIds: [id] })
+    } else {
+      newScenes.push({ ...scene, srtLineIds: [] })
+    }
+  }
+  return { srtTrack, scenes: newScenes }
+}
+
+/**
+ * 옛 프로젝트(legacy) 를 새 모델(schemaVersion=2)로 마이그레이션.
+ * - 이미 schemaVersion=2 면 그대로 반환 (같은 참조)
+ * - 그렇지 않으면 srtTrack 채우고 scenes 의 srtLineIds 설정 후 schemaVersion=2 마킹
+ * - 입력 프로젝트는 변형하지 않음 (새 객체 반환)
+ *
+ * 단 이미 srtTrack 가지지만 schemaVersion 만 빠진 경우: srtTrack 보존, schemaVersion 만 표시.
+ *
+ * @param {object} project
+ * @returns {object} migrated project
+ */
+export function migrateLegacyProject(project) {
+  if (project?.schemaVersion === 2) return project
+
+  const scenes = Array.isArray(project?.scenes) ? project.scenes : []
+
+  if (Array.isArray(project?.srtTrack) && project.srtTrack.length > 0) {
+    return {
+      ...project,
+      schemaVersion: 2,
+      srtTrack: project.srtTrack,
+      scenes,
+    }
+  }
+
+  const built = createSrtTrackFromScenes(scenes)
+  return {
+    ...project,
+    schemaVersion: 2,
+    srtTrack: built.srtTrack,
+    scenes: built.scenes,
+  }
+}
