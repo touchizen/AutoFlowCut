@@ -281,6 +281,7 @@ export default function ReferenceCard({
           <LazyImage
             src={refImgSrc}
             alt={reference.name || 'Reference'}
+            eager
             onMouseEnter={(e) => {
               const rect = e.currentTarget.getBoundingClientRect()
               setHoverPreview({

@@ -1,15 +1,17 @@
 /**
- * LazyImage — IntersectionObserver 기반 뷰포트 언로드
+ * LazyImage — IntersectionObserver 기반 뷰포트 진입/이탈 이미지 로딩
  *
- * 초기 렌더는 img 를 즉시 마운트 (visible=true 기본값) — file:// 같은 로컬
- * 이미지는 거의 0프레임에 표시되므로 placeholder 가 보이지 않음. IO 콜백이
- * fire 된 후에 화면 밖 항목만 unmount 되어 VRAM 을 회수한다.
+ * 모드:
+ * - 기본 (lazy): 초기 렌더에 img 마운트 안 함 → IO 진입 신호 시 마운트.
+ *   긴 리스트 / 그리드에서 초기 CPU·VRAM 스파이크 방지. (SceneList, ResultsTable,
+ *   StylePicker)
+ * - eager=true: 초기 렌더에 img 즉시 마운트. 깜빡임 0. 카드 1-2개짜리 단일
+ *   썸네일에서 placeholder spinner 회피용. (ReferenceCard)
  *
- * - 초기: img 즉시 표시 (지연 없음)
- * - IO 가 isIntersecting:false → img unmount → 브라우저 GC 가 비트맵 회수
- * - IO 가 isIntersecting:true → img 다시 mount
+ * 두 모드 모두 IO 가 isIntersecting:false 판정하면 img 를 unmount 해서 비트맵
+ * VRAM 을 회수한다. 스크롤로 재진입하면 다시 mount.
  *
- * rootMargin 200px 여유: 스크롤 시 빈 화면 노출 방지
+ * rootMargin 200px 여유: 스크롤 시 빈 화면 노출 방지.
  *
  * 크기 보장: wrapper/placeholder/img 모두 컴포넌트 차원에서 부모 fill 을 inline
  * style 로 보장. CSS 파일 의존 없이 어느 부모 컨텍스트(block/flex)에서도 동작.
@@ -20,10 +22,10 @@ const WRAPPER_STYLE = { width: '100%', height: '100%', display: 'block' }
 const PLACEHOLDER_STYLE = { width: '100%', height: '100%', display: 'block' }
 const IMG_STYLE = { width: '100%', height: '100%', objectFit: 'cover', display: 'block' }
 
-export default function LazyImage({ src, alt, className, style, ...props }) {
-  // 초기 visible=true: 로컬 file:// 이미지는 즉시 로드되어 placeholder 가 보이지
-  // 않음. IO 콜백이 fire 된 후 화면 밖 항목만 unmount 되어 VRAM 회수.
-  const [visible, setVisible] = useState(true)
+export default function LazyImage({ src, alt, className, style, eager = false, ...props }) {
+  // eager=true: 즉시 mount (작은 단독 카드 등에서 placeholder spinner 회피)
+  // 기본 lazy: IO 진입 신호 후 mount (긴 리스트/그리드에서 첫 렌더 스파이크 방지)
+  const [visible, setVisible] = useState(eager)
   const wrapperRef = useRef(null)
 
   useEffect(() => {
@@ -52,7 +54,7 @@ export default function LazyImage({ src, alt, className, style, ...props }) {
       style={{ ...WRAPPER_STYLE, ...style }}
     >
       {visible && src ? (
-        <img src={src} alt={alt} style={IMG_STYLE} {...props} />
+        <img src={src} alt={alt} decoding="async" style={IMG_STYLE} {...props} />
       ) : (
         <div className="lazy-image-placeholder" style={PLACEHOLDER_STYLE} />
       )}

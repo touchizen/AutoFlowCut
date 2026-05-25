@@ -39,24 +39,45 @@ afterEach(() => {
 import LazyImage from '../../src/components/LazyImage'
 
 describe('LazyImage — viewport-aware image loading (#4)', () => {
-  it('초기 렌더에는 즉시 img 가 표시된다 (지연 없음)', () => {
+  it('기본(lazy)에서는 초기 렌더에 img 를 마운트하지 않는다', () => {
     const { container } = render(
       <LazyImage src="/image/scene1.png" alt="scene" className="thumb" />
+    )
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.querySelector('.lazy-image-wrapper')).toBeTruthy()
+    expect(container.querySelector('.lazy-image-placeholder')).toBeTruthy()
+  })
+
+  it('eager prop 이 true 면 초기 렌더에서 즉시 img 가 표시된다', () => {
+    const { container } = render(
+      <LazyImage src="/image/scene1.png" alt="scene" eager />
     )
     const img = container.querySelector('img')
     expect(img).toBeTruthy()
     expect(img.getAttribute('src')).toBe('/image/scene1.png')
-    expect(container.querySelector('.lazy-image-wrapper')).toBeTruthy()
   })
 
-  it('IO 가 이탈 신호 보내면 img 가 unmount 된다 (VRAM 회수)', async () => {
+  it('lazy 기본에서 IO 가 진입 신호 보내면 img 가 마운트된다', async () => {
     const { container } = render(
       <LazyImage src="/image/scene1.png" alt="scene" />
     )
-    // 초기에는 img 있음
+    expect(container.querySelector('img')).toBeNull()
+
+    await act(async () => {
+      observerCallback([{ isIntersecting: true }])
+    })
+
+    const img = container.querySelector('img')
+    expect(img).toBeTruthy()
+    expect(img.getAttribute('src')).toBe('/image/scene1.png')
+  })
+
+  it('eager 모드에서 IO 가 이탈 신호 보내면 img 가 unmount 된다 (VRAM 회수)', async () => {
+    const { container } = render(
+      <LazyImage src="/image/scene1.png" alt="scene" eager />
+    )
     expect(container.querySelector('img')).toBeTruthy()
 
-    // IO 가 화면 밖 판정
     await act(async () => {
       observerCallback([{ isIntersecting: false }])
     })
@@ -70,24 +91,24 @@ describe('LazyImage — viewport-aware image loading (#4)', () => {
       <LazyImage src="/image/scene1.png" alt="scene" />
     )
 
-    // 이탈
+    await act(async () => {
+      observerCallback([{ isIntersecting: true }])
+    })
+    expect(container.querySelector('img')).toBeTruthy()
+
     await act(async () => {
       observerCallback([{ isIntersecting: false }])
     })
     expect(container.querySelector('img')).toBeNull()
 
-    // 재진입
     await act(async () => {
       observerCallback([{ isIntersecting: true }])
     })
-
-    const img = container.querySelector('img')
-    expect(img).toBeTruthy()
-    expect(img.getAttribute('src')).toBe('/image/scene1.png')
+    expect(container.querySelector('img')).toBeTruthy()
   })
 
-  it('src 없으면 진입 상태여도 img 를 렌더링하지 않는다', async () => {
-    const { container } = render(<LazyImage src={null} alt="empty" />)
+  it('src 없으면 eager 라도 img 를 렌더링하지 않는다', () => {
+    const { container } = render(<LazyImage src={null} alt="empty" eager />)
     expect(container.querySelector('img')).toBeNull()
     expect(container.querySelector('.lazy-image-placeholder')).toBeTruthy()
   })
