@@ -19,7 +19,7 @@ import {
   findDuplicateReferenceNames,
   parseTimeToSeconds
 } from '../utils/parsers'
-import { createSrtTrackFromScenes } from '../utils/srtTrack'
+import { createSrtTrackFromScenes, pruneSrtTrackToScenes } from '../utils/srtTrack'
 import { matchSrtLines } from '../utils/srtLineMatcher'
 import { trimTrailingEmptyScenes } from '../utils/sceneTrim'
 import { fileSystemAPI } from './useFileSystem'
@@ -360,7 +360,14 @@ export function useScenes() {
    * @returns {Array} 필터링된 framePairs
    */
   const deleteScene = useCallback((sceneId, framePairs = []) => {
-    setScenes(prev => recalculateTimesArr(prev.filter(s => s.id !== sceneId)))
+    // R1 review fix: 동시에 srtTrack 도 prune — 삭제된 씬이 가리키던 자막 라인이
+    // 다른 씬이 참조 안 하면 제거 (stale 자막 export 누수 방지).
+    // setScenes' updater 안에서 srtTrack 동기화 — scenesRef 의 C15 stale 문제 회피.
+    setScenes(prev => {
+      const survivingScenes = prev.filter(s => s.id !== sceneId)
+      setSrtTrack(track => pruneSrtTrackToScenes(track, survivingScenes))
+      return recalculateTimesArr(survivingScenes)
+    })
     // Cascade: return framePairs without those owning the deleted scene.
     // Caller (App.jsx) applies via setFramePairs. Same reference returned
     // when nothing changed — caller can use `next !== framePairs` to skip setState.
@@ -424,6 +431,8 @@ export function useScenes() {
    */
   const clearScenes = useCallback(() => {
     setScenes([])
+    // R1 review fix: srtTrack 도 같이 비움
+    setSrtTrack([])
   }, [])
 
   /**

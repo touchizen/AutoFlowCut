@@ -114,6 +114,26 @@ export function createSrtTrackFromScenes(scenes) {
 }
 
 /**
+ * scenes 에서 참조되는 srtTrack 라인만 남기고 prune.
+ *
+ * Review R1 fix: deleteScene/clearScenes/export 등에서 stale 자막 누수 방지.
+ *
+ * @param {Array} srtTrack
+ * @param {Array} scenes — scenes with srtLineIds
+ * @returns {Array} srtTrack 의 원래 순서를 유지하며 사용된 라인만 필터
+ */
+export function pruneSrtTrackToScenes(srtTrack, scenes) {
+  if (!Array.isArray(srtTrack) || srtTrack.length === 0) return []
+  const used = new Set()
+  for (const scene of scenes || []) {
+    const ids = scene?.srtLineIds
+    if (!Array.isArray(ids)) continue
+    for (const id of ids) used.add(id)
+  }
+  return srtTrack.filter(line => used.has(line.id))
+}
+
+/**
  * 옛 프로젝트(legacy) 를 새 모델(schemaVersion=2)로 마이그레이션.
  * - 이미 schemaVersion=2 면 그대로 반환 (같은 참조)
  * - 그렇지 않으면 srtTrack 채우고 scenes 의 srtLineIds 설정 후 schemaVersion=2 마킹

@@ -12,6 +12,7 @@ import { fileSystemAPI } from './useFileSystem'
 import { toast } from '../components/Toast'
 import useI18n from './useI18n'
 import { resolveExportMediaChoice, hasExportableMedia, getExportFilePaths } from '../utils/sceneMedia'
+import { pruneSrtTrackToScenes } from '../utils/srtTrack'
 
 /**
  * Export 미디어를 실제 data/path 와 함께 반환.
@@ -127,8 +128,10 @@ export function useExport({
         // format === 'portrait' 일 때만 canvas_config 를 1080x1920(9:16)로 잡는다.
         // (예전 'short' 값은 GCF 가 인식 못 해 9:16 프로젝트도 16:9 draft 로 나왔음)
         format: settings.aspectRatio === '9:16' ? 'portrait' : 'landscape',
-        // Phase 5: 자막 트랙 원본 (generateSRT 가 우선 사용)
-        srtTrack,
+        // Phase 5 + R1 review fix: srtTrack 을 validScenes 가 가리키는 라인으로
+        // 제한해서 export. 그렇지 않으면 hasExportableMedia 로 export 에서 빠진
+        // 씬의 자막이 원래 시간에 그대로 export 됨 (stale 자막 누수).
+        srtTrack: pruneSrtTrackToScenes(srtTrack, validScenes),
         scenes: validScenes.map(s => {
           const sceneDuration = s.duration || settings.defaultDuration || 3
           const video = resolveExportMedia(s)
