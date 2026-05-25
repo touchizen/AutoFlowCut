@@ -217,7 +217,10 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     }
 
     // 레퍼런스 상태 업데이트
-    const donePatch = { data: savedDataUrl, filePath, dataStorage: filePath ? 'file' : 'base64', mediaId, caption, status: 'done', errorMessage: null }
+    // R27 review fix: generatedAt 세팅 — references/{name}.png 가 같은 경로를
+    // 덮어쓰므로 resolveImageSrc 의 ?v=<version> 캐시 키가 갱신되어야 Chromium
+    // 이 이전 디코딩 캐시를 버리고 새 이미지 표시.
+    const donePatch = { data: savedDataUrl, filePath, dataStorage: filePath ? 'file' : 'base64', mediaId, caption, status: 'done', errorMessage: null, generatedAt: Date.now() }
     setReferences(prev => prev.map((r, i) => i === index ? { ...r, ...donePatch } : r))
     // 동기 갱신: 같은 batch flow 의 다음 phase(_prepareStyleRefs)가 React 재렌더 전에
     // referencesRef.current 를 읽어도 방금 만든 style 카드의 mediaId 를 보장받게 한다.
