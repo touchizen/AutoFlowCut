@@ -195,7 +195,10 @@ export function useScenes() {
           videoI2VDuration: existing.videoI2VDuration,
         }
       })
-      merged = recalculateTimesArr(trimTrailingEmptyScenes(mergedScenes, framePairs))
+      // R4 review fix: parseSceneCSVToTracks 가 row 별 start_time/end_time 절대값을
+      // scene.startTime/endTime 으로 채웠음. recalculateTimesArr 는 sequential 로
+      // 재배치해서 gap 을 압축 → 자막 (srtTrack 절대 시간) 과 어긋남. skip.
+      merged = trimTrailingEmptyScenes(mergedScenes, framePairs)
       setScenes(() => merged)
       setSrtTrack(parsed.srtTrack)
       return merged
@@ -315,7 +318,10 @@ export function useScenes() {
         }
         return { ...ns, id: allocateSceneId() }
       })
-      merged = recalculateTimesArr(trimTrailingEmptyScenes(out, framePairs))
+      // R4 review fix: parseSRTToTrack 가 라인 절대 시간을 scene.startTime/endTime
+      // 으로 채웠음. recalculateTimesArr 가 sequential 로 재배치하면 자막/이미지
+      // 어긋남. cold import 도 절대 시간 그대로 보존.
+      merged = trimTrailingEmptyScenes(out, framePairs)
       return merged
     })
     setSrtTrack(newTrack)
