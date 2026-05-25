@@ -670,7 +670,10 @@ export function detectFileType(content) {
 
   // CSV 감지: 첫 줄에 콤마가 있거나, 단일 컬럼이라도 알려진 CSV 헤더면 CSV.
   // 단일 컬럼 헤더 예: 'video_t2v_prompt\nv1\nv2' — 콤마는 없지만 video CSV 로 처리해야 한다.
-  const firstLine = trimmed.split('\n')[0]
+  // S4 review fix: 전체 split('\n') 대신 indexOf 로 첫 행 substring 만 — 대용량
+  // 파일 메모리 할당 회피.
+  const firstLineEnd = trimmed.indexOf('\n')
+  const firstLine = firstLineEnd >= 0 ? trimmed.substring(0, firstLineEnd) : trimmed
   if (firstLine.includes(',')) {
     const csvType = detectCSVType(content)
     if (csvType === 'reference') return 'reference'
@@ -705,8 +708,13 @@ export function detectFileType(content) {
  * @returns {'scene' | 'reference' | 'unknown'} CSV 타입
  */
 export function detectCSVType(csvContent) {
-  // R10 review fix: shared RFC parser
-  const { headers: rawHeaders } = parseCSVTextToRows(csvContent)
+  // R10 + S5 review fix: shared RFC parser. detection 은 헤더만 필요하므로
+  // 전체 CSV 가 아닌 첫 줄 substring 만 파서에 전달 (대용량 CSV 의 row 인스턴스화
+  // 비용 회피).
+  if (!csvContent) return 'unknown'
+  const firstLineEnd = csvContent.indexOf('\n')
+  const headerOnly = firstLineEnd >= 0 ? csvContent.substring(0, firstLineEnd) : csvContent
+  const { headers: rawHeaders } = parseCSVTextToRows(headerOnly)
   if (rawHeaders.length === 0) return 'unknown'
   const header = rawHeaders.map(h => h.toLowerCase())
 
