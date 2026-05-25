@@ -164,10 +164,33 @@ export function useScenes() {
         allocateSceneId,
         defaultDuration,
       })
-      setScenes(() => {
-        merged = recalculateTimesArr(trimTrailingEmptyScenes(parsed.scenes, framePairs))
-        return merged
+      // C6 fix: 기존 씬의 image/imagePath/status/mediaId/generatingStartedAt/image_size 등
+      // 런타임 필드를 인덱스 기반으로 보존 (CSV 가 명시한 필드만 갱신).
+      // 그렇지 않으면 prompt 수정 위해 CSV 재import 시 생성된 이미지 전부 손실 (regression).
+      const prev = scenesRef.current || []
+      const mergedScenes = parsed.scenes.map((parsedScene, i) => {
+        const existing = prev[i]
+        if (!existing) return parsedScene
+        return {
+          ...parsedScene,
+          id: existing.id, // 안정 ID 유지
+          image: existing.image,
+          imagePath: existing.imagePath,
+          status: existing.status || parsedScene.status,
+          mediaId: existing.mediaId,
+          generatingStartedAt: existing.generatingStartedAt,
+          image_size: existing.image_size,
+          // 비디오 관련 런타임 필드도 보존
+          videoT2V: existing.videoT2V,
+          videoT2VPath: existing.videoT2VPath,
+          videoI2V: existing.videoI2V,
+          videoI2VPath: existing.videoI2VPath,
+          videoT2VDuration: existing.videoT2VDuration,
+          videoI2VDuration: existing.videoI2VDuration,
+        }
       })
+      merged = recalculateTimesArr(trimTrailingEmptyScenes(mergedScenes, framePairs))
+      setScenes(() => merged)
       setSrtTrack(parsed.srtTrack)
       return merged
     }
@@ -216,16 +239,19 @@ export function useScenes() {
         const firstLine = firstId ? newTrack.find(l => l.id === firstId) : null
         const lastId = newIds[newIds.length - 1]
         const lastLine = lastId ? newTrack.find(l => l.id === lastId) : null
-        const updates = { srtLineIds: newIds }
+        // C16 fix: subtitle 은 항상 srtLineIds 기반으로 재계산 (빈 매치면 '').
+        // 그렇지 않으면 SceneList 가 옛 scene.subtitle 보여주고 export 는 srtTrack 사용 → UI/export 불일치.
+        const updates = {
+          srtLineIds: newIds,
+          subtitle: newIds
+            .map(id => newTrack.find(l => l.id === id)?.text || '')
+            .filter(Boolean)
+            .join('\n'),
+        }
         if (firstLine && lastLine) {
           updates.startTime = firstLine.startTime
           updates.endTime = lastLine.endTime
           updates.duration = lastLine.endTime - firstLine.startTime
-          // 후방 호환 subtitle 필드 갱신
-          updates.subtitle = newIds
-            .map(id => newTrack.find(l => l.id === id)?.text || '')
-            .filter(Boolean)
-            .join('\n')
         }
         return { ...scene, ...updates }
       })

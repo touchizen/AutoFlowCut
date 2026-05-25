@@ -242,6 +242,9 @@ export function useMcpServer({
               mediaId: existing.mediaId,
               generatingStartedAt: existing.generatingStartedAt,
               image_size: existing.image_size,
+              // C9 fix: incoming 이 srtLineIds 안 보내면 기존 보존. 옛 MCP 클라이언트는
+              // srtLineIds 를 모르고 scenes 만 전송 → 기존 묶음 정보 잃지 않도록.
+              srtLineIds: incoming.srtLineIds ?? existing.srtLineIds ?? [],
             }
           })
         })
