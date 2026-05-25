@@ -55,20 +55,28 @@ async function loadBundledThumbnails(existingIds = []) {
 
 /**
  * filePath → file:// URL 변환 (표시용)
+ *
+ * T1 review fix: 옛 `?t=${Date.now()}` 가 매 render 마다 새 URL → 캐시 무력화.
+ * version 인자 (e.g. thumbnail generatedAt) 받아서 실제 변경 시에만 query 갱신.
+ * version 없으면 query 생략 — stable URL 유지.
+ *
+ * @param {string} pathOrUrl
+ * @param {string|number|null} [version] — cache key (e.g. generatedAt timestamp)
  */
-export function toFileUrl(pathOrUrl) {
+export function toFileUrl(pathOrUrl, version = null) {
   if (!pathOrUrl) return null
   // 이미 URL이면 그대로 (blob:, data:, file://)
   if (pathOrUrl.startsWith('blob:') || pathOrUrl.startsWith('data:') || pathOrUrl.startsWith('file://')) {
     return pathOrUrl
   }
-  // 절대 경로 → file:// (캐시 방지용 timestamp)
+  const query = version != null ? `?v=${encodeURIComponent(version)}` : ''
+  // 절대 경로 → file://
   if (pathOrUrl.startsWith('/')) {
-    return `file://${pathOrUrl}?t=${Date.now()}`
+    return `file://${pathOrUrl}${query}`
   }
   // Windows 경로
   if (/^[A-Z]:\\/i.test(pathOrUrl)) {
-    return `file:///${pathOrUrl.replace(/\\/g, '/')}?t=${Date.now()}`
+    return `file:///${pathOrUrl.replace(/\\/g, '/')}${query}`
   }
   return pathOrUrl
 }

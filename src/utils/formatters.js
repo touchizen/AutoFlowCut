@@ -326,12 +326,17 @@ export function resolveImageSrc(item) {
   if (!item) return null
   // 파일 경로 우선 (scene.imagePath 또는 reference.filePath) — 절대 경로만
   const filePath = item.imagePath || item.filePath
+  // T1 review fix: stable cache buster. 옛 `?t=${Date.now()}` 는 매 render 마다 새
+  // URL 만들어 브라우저 캐시 무력화 → 매 frame 디스크 재읽기 + 재디코딩 (CPU/VRAM
+  // 폭발). item.generatedAt 등 실제 변경 시점만 query 변경하고, 없으면 query 생략.
+  const version = item.generatedAt ?? item.updatedAt ?? item.flaggedAt ?? null
+  const query = version != null ? `?v=${encodeURIComponent(version)}` : ''
   if (filePath && filePath.startsWith('/')) {
-    return `file://${filePath}?t=${Date.now()}`
+    return `file://${filePath}${query}`
   }
   // Windows 절대 경로 (C:\...)
   if (filePath && /^[A-Z]:\\/i.test(filePath)) {
-    return `file:///${filePath.replace(/\\/g, '/')}?t=${Date.now()}`
+    return `file:///${filePath.replace(/\\/g, '/')}${query}`
   }
   // fallback: 메모리 base64 (scene.image 또는 reference.data)
   return item.image || item.data || null
