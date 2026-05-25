@@ -9,6 +9,8 @@ import {
   parseCSVToScenes,
   parseSRTToScenes,
   parseSRTToTrack,
+  parseSceneCSVToTracks,
+  isNewSceneCSVFormat,
   mergeTextIntoScenes,
   mergeCSVIntoScenes,
   mergeSRTIntoScenes,
@@ -135,19 +137,36 @@ export function useScenes() {
   }, [])
 
   /**
-   * CSV에서 씬 파싱 — 기존 씬에 머지 (CSV에 채워진 필드만 덮어쓰기)
+   * CSV에서 씬 파싱 — Phase 3 부터 헤더 분기.
+   *
+   * - 새 형식 (scene 컬럼 + 정수값): parseSceneCSVToTracks → srtTrack + scenes wholesale 교체
+   * - 옛 형식: 기존 mergeCSVIntoScenes (CSV에 채워진 필드만 덮어쓰기)
    *
    * @param {Array} [framePairs] - F→V 소유권 배열 (trim 시 alive 판단에 사용)
    */
   const parseFromCSV = useCallback((csvText, defaultDuration = DEFAULTS.scene.duration, framePairs = []) => {
     let merged
+
+    if (isNewSceneCSVFormat(csvText)) {
+      const parsed = parseSceneCSVToTracks(csvText, {
+        allocateSceneId,
+        defaultDuration,
+      })
+      setScenes(() => {
+        merged = recalculateTimesArr(trimTrailingEmptyScenes(parsed.scenes, framePairs))
+        return merged
+      })
+      setSrtTrack(parsed.srtTrack)
+      return merged
+    }
+
     setScenes(prev => {
       const afterMerge = mergeCSVIntoScenes(prev, csvText, defaultDuration, { allocateId: allocateSceneId })
       merged = recalculateTimesArr(trimTrailingEmptyScenes(afterMerge, framePairs))
       return merged
     })
     return merged
-  }, [])
+  }, [allocateSceneId])
 
   /**
    * SRT에서 씬 파싱 — 새 srtTrack 분리 모델 (Phase 2)

@@ -199,6 +199,152 @@ export function parseSRTToScenes(srtText) {
 }
 
 /**
+ * 새 형식 CSV (scene 컬럼) 감지. Phase 3.
+ *
+ * 새 형식 식별 기준:
+ *   - 헤더에 'scene' 컬럼 존재
+ *   - 첫 데이터 행의 scene 값이 정수
+ *
+ * 옛 CSV 의 `scene` 가 `scene_tag` alias (예: scene=courtyard) 인 케이스는
+ * 정수 검사로 걸러진다.
+ *
+ * @param {string} csvText
+ * @returns {boolean}
+ */
+export function isNewSceneCSVFormat(csvText) {
+  if (!csvText || !String(csvText).trim()) return false
+  const lines = csvText.trim().split('\n')
+  if (lines.length < 2) return false
+  const headers = lines[0].split(',').map(h => h.trim().toLowerCase())
+  const sceneIdx = headers.indexOf('scene')
+  if (sceneIdx === -1) return false
+  const firstRow = parseCSVLine(lines[1])
+  const sceneVal = (firstRow[sceneIdx] || '').trim()
+  return /^\d+$/.test(sceneVal)
+}
+
+/**
+ * 새 형식 CSV (scene 컬럼) → { srtTrack, scenes } 변환. Phase 3.
+ *
+ * 규칙:
+ *   - 같은 scene 번호 행들이 1개 씬으로 묶임
+ *   - 씬 속성 (prompt, prompt_ko, characters, scene_tag, style_tag, shot_type) 은 그룹 첫 행만
+ *   - subtitle / start_time / end_time 은 행마다
+ *
+ * @param {string} csvText
+ * @param {object} [options]
+ * @param {() => string} [options.allocateSceneId] — 씬 ID 할당 함수
+ * @param {number} [options.defaultDuration] — 시간 정보 없을 때 cursor 진행
+ * @returns {{ srtTrack: Array, scenes: Array }}
+ */
+export function parseSceneCSVToTracks(csvText, options = {}) {
+  if (!csvText || !String(csvText).trim()) return { srtTrack: [], scenes: [] }
+  const lines = csvText.trim().split('\n')
+  if (lines.length < 2) return { srtTrack: [], scenes: [] }
+
+  const defaultDuration = options.defaultDuration ?? DEFAULTS.scene.duration
+  const headers = lines[0].split(',').map(h => h.trim().toLowerCase())
+  const sceneIdx = headers.indexOf('scene')
+  if (sceneIdx === -1) return { srtTrack: [], scenes: [] }
+
+  // 각 컬럼 인덱스 미리 계산
+  const colIdx = (name) => headers.indexOf(name)
+
+  // 행들을 scene 번호 별로 그룹화 (등장 순서 보존)
+  const groups = []
+  const groupByNumber = new Map()
+  let cursor = 0
+
+  const parsedRows = []
+  for (let i = 1; i < lines.length; i++) {
+    const values = parseCSVLine(lines[i])
+    if (!values.length) continue
+    const sceneNumStr = (values[sceneIdx] || '').trim()
+    if (!/^\d+$/.test(sceneNumStr)) continue
+    const sceneNum = parseInt(sceneNumStr, 10)
+
+    const getCol = (name) => {
+      const idx = colIdx(name)
+      return idx >= 0 ? (values[idx] || '').trim() : ''
+    }
+    const startRaw = getCol('start_time')
+    const endRaw = getCol('end_time')
+    const parsedStart = parseTimeToSeconds(startRaw)
+    const startTime = !isNaN(parsedStart) ? parsedStart : cursor
+    const parsedEnd = parseTimeToSeconds(endRaw)
+    const endTime = !isNaN(parsedEnd) ? parsedEnd : startTime + defaultDuration
+    cursor = endTime
+
+    const row = {
+      sceneNum,
+      subtitle: getCol('subtitle') || getCol('subtitle_ko') || '',
+      startTime,
+      endTime,
+      prompt: getCol('prompt') || getCol('prompt_en') || '',
+      prompt_ko: getCol('prompt_ko') || '',
+      videoT2VPrompt: getCol('video_t2v_prompt') || getCol('video_prompt') || '',
+      videoI2VPrompt: getCol('video_i2v_prompt') || '',
+      characters: getCol('characters') || getCol('character') || '',
+      scene_tag: getCol('scene_tag') || getCol('background') || '',
+      style_tag: getCol('style_tag') || getCol('style') || '',
+      shot_type: getCol('shot_type') || '',
+    }
+    parsedRows.push(row)
+
+    if (!groupByNumber.has(sceneNum)) {
+      const g = { sceneNum, rows: [] }
+      groupByNumber.set(sceneNum, g)
+      groups.push(g)
+    }
+    groupByNumber.get(sceneNum).rows.push(row)
+  }
+
+  const srtTrack = []
+  const scenes = []
+  for (const group of groups) {
+    const first = group.rows[0]
+    const srtLineIds = []
+    for (const row of group.rows) {
+      const lineId = `sub_${srtTrack.length + 1}`
+      srtTrack.push({
+        id: lineId,
+        startTime: row.startTime,
+        endTime: row.endTime,
+        text: row.subtitle,
+      })
+      srtLineIds.push(lineId)
+    }
+    const sceneId = options.allocateSceneId
+      ? options.allocateSceneId()
+      : `scene_${scenes.length + 1}`
+    const groupStart = group.rows[0].startTime
+    const groupEnd = group.rows[group.rows.length - 1].endTime
+    scenes.push({
+      id: sceneId,
+      srtLineIds,
+      startTime: groupStart,
+      endTime: groupEnd,
+      duration: groupEnd - groupStart,
+      // 씬 속성은 그룹 첫 행에서만
+      prompt: first.prompt,
+      prompt_ko: first.prompt_ko,
+      videoT2VPrompt: first.videoT2VPrompt,
+      videoI2VPrompt: first.videoI2VPrompt,
+      // 후방 호환 subtitle: 그룹의 모든 자막 join (Phase 6 까지)
+      subtitle: group.rows.map(r => r.subtitle).filter(Boolean).join('\n'),
+      characters: first.characters,
+      scene_tag: first.scene_tag,
+      style_tag: first.style_tag,
+      shot_type: first.shot_type,
+      status: 'pending',
+      image: null,
+    })
+  }
+
+  return { srtTrack, scenes }
+}
+
+/**
  * SRT → { srtTrack, scenes } 분리 모델 변환 (Phase 2).
  *
  * 라인마다 srtTrack 항목 1개 + 씬 1개 (1:1 매핑). 씬은 srtLineIds=[그 라인 id] 를 갖고,
