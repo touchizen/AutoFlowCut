@@ -488,6 +488,18 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     audioHint: 'media/ + media/voices/ + media/sfx/',
   },
 
+  // SRT import conflict modal — shown when existing scenes/srtTrack present
+  srtImport: {
+    conflictTitle: 'SRT Import Conflict',
+    conflictIntro: 'This project already has subtitle/scene data. How do you want to import?',
+    existingScenes: 'Existing scenes',
+    existingSrtLines: 'Existing subtitle lines',
+    replace: 'Replace Subtitles',
+    replaceDesc: 'Replace subtitles only. New SRT lines are placed 1:1 by scene index. Existing prompts/images/videos stay in place.',
+    merge: 'Smart Merge',
+    mergeDesc: 'Match similar subtitles to existing scenes by text similarity, keeping line bundles. Unmatched new lines are appended as new scenes.',
+  },
+
   // Audio Import
   audioImport: {
     electronRequired: 'Available only in Electron desktop version.',

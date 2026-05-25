@@ -61,6 +61,7 @@ import { SubscriptionBanner } from './components/SubscriptionBanner'
 import StylePicker from './components/StylePicker'
 import Modal from './components/Modal'
 import DeleteSceneConfirmModal from './components/DeleteSceneConfirmModal'
+import SrtImportConflictModal from './components/SrtImportConflictModal'
 import { useAuth } from './contexts/AuthContext'
 
 function App() {
@@ -110,6 +111,9 @@ function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [settingsTab, setSettingsTab] = useState(null) // 설정 모달 초기 탭
   const [showImport, setShowImport] = useState(false)
+  // SRT 가져오기 충돌 모달: 기존 scenes/srtTrack 있을 때 사용자에게 대체/병합/취소 묻는 상태.
+  // null = 미요청. { content, framePairs } 객체가 들어있으면 모달 띄움.
+  const [srtImportPending, setSrtImportPending] = useState(null)
   const [showAudioResult, setShowAudioResult] = useState(false)
   const [showReferences, setShowReferences] = useState(false)
   const [authReady, setAuthReady] = useState(false)
@@ -504,7 +508,18 @@ function App() {
         ? parseFromCSV(csvPromptToVideoT2V(content), settings.defaultDuration, framePairs)
         : parseFromCSV(content, settings.defaultDuration, framePairs),
       // SRT 는 자막 전용 — 비디오 모드 의미 없음 (자막 → 비디오 prompt 강제 변환은 부자연)
-      srt: () => parseFromSRT(content, framePairs),
+      // 기존 srtTrack 이 있을 때만 충돌 모달 띄움. parseFromSRT 의 smart-match
+      // (fuzzy 매칭) 분기는 oldTrack && prevScenes 둘 다 있을 때만 동작하므로,
+      // srtTrack 없이 scenes 만 있는 케이스 (text/CSV import 이후 첫 SRT) 는
+      // 모달 약속과 어긋남 → silent 로 wholesale index merge (기존 동작) 유지.
+      srt: () => {
+        const hasExistingSrt = (scenesHook.srtTrack || []).length > 0
+        if (hasExistingSrt) {
+          setSrtImportPending({ content, framePairs })
+          return
+        }
+        parseFromSRT(content, framePairs)
+      },
       reference: async () => {
         await parseReferencesFromCSV(content, projectName)
         setShowReferences(true)
@@ -1813,6 +1828,26 @@ function App() {
           setSceneToDelete(null)
         }}
         onCancel={() => setSceneToDelete(null)}
+        t={t}
+      />
+
+      <SrtImportConflictModal
+        isOpen={!!srtImportPending}
+        existingSceneCount={(scenesHook.scenes || []).length}
+        existingSrtLineCount={(scenesHook.srtTrack || []).length}
+        onReplace={() => {
+          if (!srtImportPending) return
+          // replace 모드는 자막만 새 SRT 로 인덱스 1:1 교체 — scene ID/prompt/이미지/비디오는
+          // 보존되므로 framePairs.ownerSceneId 도 그대로 살아있음. 추가 cleanup 불필요.
+          parseFromSRT(srtImportPending.content, srtImportPending.framePairs, { mode: 'replace' })
+          setSrtImportPending(null)
+        }}
+        onMerge={() => {
+          if (!srtImportPending) return
+          parseFromSRT(srtImportPending.content, srtImportPending.framePairs)
+          setSrtImportPending(null)
+        }}
+        onCancel={() => setSrtImportPending(null)}
         t={t}
       />
     </div>

@@ -487,6 +487,18 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     audioHint: 'media/ + media/voices/ + media/sfx/',
   },
 
+  // SRT import 충돌 모달 — 기존 scenes/srtTrack 있을 때
+  srtImport: {
+    conflictTitle: 'SRT 가져오기 충돌',
+    conflictIntro: '기존 프로젝트에 이미 자막/씬 데이터가 있습니다. 어떻게 가져올까요?',
+    existingScenes: '기존 씬',
+    existingSrtLines: '기존 자막 라인',
+    replace: '자막교체',
+    replaceDesc: '자막만 새 SRT 로 바꿉니다. 씬 순서대로 1:1 끼워 넣고, 기존 prompt/이미지/비디오는 그대로 유지됩니다.',
+    merge: '스마트 병합',
+    mergeDesc: '유사한 자막은 기존 씬에 텍스트 매칭으로 묶음을 보존합니다. 매칭 안 된 새 라인은 뒤에 새 씬으로 추가됩니다.',
+  },
+
   // 오디오 Import
   audioImport: {
     electronRequired: 'Electron 데스크탑 버전에서만 사용 가능합니다.',

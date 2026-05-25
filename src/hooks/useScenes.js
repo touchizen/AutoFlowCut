@@ -234,15 +234,22 @@ export function useScenes() {
    * - SRT 가 짧으면: 초과 씬은 srtLineIds=[] + subtitle='' 로 클리어, 나머지 콘텐츠 보존
    *
    * @param {Array} [framePairs] - F→V 소유권 배열 (trim 시 alive 판단에 사용)
+   * @param {{ mode?: 'merge' | 'replace' }} [options] -
+   *   - 'merge' (기본): 기존 srtTrack 있으면 텍스트 유사도(fuzzy) 매칭으로 묶음/콘텐츠 보존.
+   *   - 'replace': 자막 트랙만 새 SRT 로 교체. 씬 순서대로 1:1 인덱스 매핑 →
+   *     기존 scene ID/prompt/이미지/비디오 보존, srtLineIds/subtitle/startTime/endTime/duration 만 갱신.
+   *     scene ID 가 살아 있으니 framePairs.ownerSceneId 도 안전. 모달 "대체" 선택 시 사용.
    */
-  const parseFromSRT = useCallback((srtText, framePairs = []) => {
+  const parseFromSRT = useCallback((srtText, framePairs = [], options = {}) => {
     const parsed = parseSRTToTrack(srtText)
     const newTrack = parsed.srtTrack
     const oldTrack = srtTrackRef.current || []
     const prevScenes = scenesRef.current || []
+    const mode = options.mode || 'merge'
 
-    // Phase 9: 기존 srtTrack 있으면 스마트 매칭으로 묶음 보존
-    if (oldTrack.length > 0 && prevScenes.length > 0) {
+    // mode='merge' 인 경우에만 fuzzy 매칭 분기 사용.
+    // replace 는 무조건 wholesale 인덱스 경로 (밑에) 로 떨어져서 자막만 교체, 콘텐츠 보존.
+    if (mode === 'merge' && oldTrack.length > 0 && prevScenes.length > 0) {
       const { matched, added } = matchSrtLines(oldTrack, newTrack)
       const oldIdToNewId = new Map(
         matched.map(m => [m.oldId, newTrack[m.newIdx].id])
@@ -309,7 +316,10 @@ export function useScenes() {
       return merged
     }
 
-    // 빈 srtTrack 또는 빈 scenes → Phase 2 wholesale 동작
+    // 두 경로가 여기로 떨어진다:
+    //   1) 빈 srtTrack 또는 빈 scenes (cold import) → Phase 2 wholesale 동작
+    //   2) mode='replace' → 자막만 인덱스 1:1 교체, 콘텐츠 보존 ({...old, ...})
+    // 두 경우 모두 동일한 인덱스 매핑 + prev 콘텐츠 보존 동작이 정답이라 분기 통합.
     let merged
     setScenes(prev => {
       const maxLen = Math.max(prev.length, parsed.scenes.length)
