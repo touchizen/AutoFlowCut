@@ -48,9 +48,13 @@ export function parseCSVText(text) {
       current += ch
     }
   }
-  // last field
+  // R23 review fix: 마지막 행 처리 일관성. 옛 로직 `fields.some(f => f.length > 0)`
+  // 는 끝 행이 ',,' (모두 빈 컬럼) 일 때 drop 했지만, 동일 내용이 '\n' 으로 끝나면
+  // 메인 루프가 push 함 — 뉴라인 유무로 행 수가 달라짐. 새 가드: 다중 컬럼 (>=2)
+  // 이거나 단일 필드라도 내용 있으면 유효. 단일 빈 필드만 trailing newline 잔여로
+  // drop.
   fields.push(current)
-  if (fields.some(f => f.length > 0)) {
+  if (fields.length > 1 || (fields.length === 1 && fields[0].length > 0)) {
     rows.push(fields)
   }
   return rows

@@ -26,25 +26,33 @@ export function normalizeText(s) {
 }
 
 /**
- * Levenshtein distance (편집 거리)
+ * Levenshtein distance (편집 거리). R22 review fix: 2-row rolling 으로 공간
+ * 복잡도 O(N*M) → O(min(N, M)). 짧은 쪽을 inner dimension 으로 swap.
  */
 function levenshtein(a, b) {
   if (!a.length) return b.length
   if (!b.length) return a.length
-  const dp = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0))
-  for (let i = 0; i <= a.length; i++) dp[i][0] = i
-  for (let j = 0; j <= b.length; j++) dp[0][j] = j
+  // 메모리 최소화: b 가 짧은 쪽이 되도록 swap
+  if (a.length < b.length) { [a, b] = [b, a] }
+  let prevRow = new Array(b.length + 1)
+  let currRow = new Array(b.length + 1)
+  for (let j = 0; j <= b.length; j++) prevRow[j] = j
   for (let i = 1; i <= a.length; i++) {
+    currRow[0] = i
     for (let j = 1; j <= b.length; j++) {
       const cost = a[i - 1] === b[j - 1] ? 0 : 1
-      dp[i][j] = Math.min(
-        dp[i - 1][j] + 1,
-        dp[i][j - 1] + 1,
-        dp[i - 1][j - 1] + cost
+      currRow[j] = Math.min(
+        prevRow[j] + 1,       // deletion
+        currRow[j - 1] + 1,   // insertion
+        prevRow[j - 1] + cost // substitution
       )
     }
+    // row swap
+    const tmp = prevRow
+    prevRow = currRow
+    currRow = tmp
   }
-  return dp[a.length][b.length]
+  return prevRow[b.length]
 }
 
 /**
