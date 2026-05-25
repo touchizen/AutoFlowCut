@@ -252,3 +252,34 @@ export function migrateLegacyProject(project) {
     scenes: built.scenes,
   }
 }
+
+/**
+ * srtTrack 라인을 GCF cloudRequest.srtEntries 형태로 변환.
+ *
+ * srtTrack: { startTime, endTime, text } (초)
+ * srtEntries: { startMs, endMs, text } (밀리초)
+ *
+ * audio package 없이 사용자가 일반 SRT 만 import 한 케이스에서, 사용자가
+ * import 한 SRT 의 narration timing 을 GCF 자막 segment 에 그대로 전달하려고
+ * 사용. 사용자 원칙: SRT/MP3 가 source of truth, timing 가공 X.
+ *
+ * 비어있거나 모든 라인이 빈 텍스트면 null 반환 — caller 가 GCF 의 scene
+ * 단위 fallback 로 떨어뜨릴 수 있게.
+ *
+ * @param {Array<{ startTime?: number, endTime?: number, text?: string }>} srtTrack
+ * @returns {Array<{ startMs: number, endMs: number, text: string }> | null}
+ */
+export function srtTrackToEntries(srtTrack) {
+  if (!Array.isArray(srtTrack) || srtTrack.length === 0) return null
+  const entries = []
+  for (const line of srtTrack) {
+    const text = typeof line?.text === 'string' ? line.text.trim() : ''
+    if (!text) continue
+    entries.push({
+      startMs: Math.round((Number(line.startTime) || 0) * 1000),
+      endMs: Math.round((Number(line.endTime) || 0) * 1000),
+      text: line.text,
+    })
+  }
+  return entries.length > 0 ? entries : null
+}

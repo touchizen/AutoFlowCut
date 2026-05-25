@@ -9,6 +9,7 @@
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { fileSystemAPI } from '../hooks/useFileSystem';
 import { cleanBase64 as stripBase64Prefix } from '../utils/urls';
+import { srtTrackToEntries } from '../utils/srtTrack';
 import { APP_ID } from '../firebase/config';
 
 /**
@@ -334,7 +335,18 @@ async function prepareCloudRequest(project, options = {}) {
       },
       subtitleOption,
       subtitleFontSize,
-      srtEntries: audioPackage?.srtEntries || null,
+      // 우선순위: audioPackage.srtEntries (narration MP3 align)
+      //   → project.rawSrtTrack 변환 (prune/rebase 전 원본 — 사용자 import SRT 의
+      //     원본 timing 그대로. orphan scene 가 참조하던 라인도 보존)
+      //   → project.srtTrack 폴백 (옛 caller 호환, rawSrtTrack 없으면 prune 된 트랙 사용)
+      //   → null (GCF 가 scene 단위 cumulative fallback)
+      // 사용자 원칙: SRT/MP3 가 source of truth, GCF 자막 segment 가 SRT timing
+      // 그대로 박혀야 함. pruneSrtTrackToScenes 가 validScenes 의 used 라인만
+      // 남기는 동작이 8~10번 자막 (이미지 없는 orphan scene 의 라인) 을 죽이는
+      // 문제 회피.
+      srtEntries: (Array.isArray(audioPackage?.srtEntries) && audioPackage.srtEntries.length > 0)
+        ? audioPackage.srtEntries
+        : (srtTrackToEntries(project.rawSrtTrack || project.srtTrack) || null),
       audioDurationSec: audioPackage?.media?.video?.durationMs
         ? audioPackage.media.video.durationMs / 1000
         : null,

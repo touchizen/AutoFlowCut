@@ -138,6 +138,12 @@ export function useExport({
           validScenes,
           { preserveUnlinked: true }
         ),
+        // P1 review fix: prune/rebase 전 원본 srtTrack 도 보존. GCF subtitle
+        // segment 가 사용자 import SRT 의 원본 timing 으로 박히도록 capcutCloud
+        // 가 이걸 srtEntries 로 변환해 보냄. validScenes 가 이미지 없는 orphan
+        // scene 을 제외해서 그 scene 의 srtLineIds 가 가리키던 자막 라인이 prune
+        // 으로 죽는 회귀 (예: 자막교체 7→10 의 8~10 라인) 회피.
+        rawSrtTrack: srtTrack,
         scenes: validScenes.map(s => {
           const sceneDuration = s.duration || settings.defaultDuration || 3
           const video = resolveExportMedia(s)
