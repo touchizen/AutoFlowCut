@@ -364,9 +364,20 @@ export function useScenes() {
       const lineIds = scene?.srtLineIds || []
       if (lineIds.length === 1) {
         const targetId = lineIds[0]
-        setSrtTrack(prev => prev.map(line =>
-          line.id === targetId ? { ...line, text: updates.subtitle } : line
-        ))
+        // R29 review fix: srtTrack 은 source of truth. updateScene 의 subtitle 키가
+        // 실제로 사용자 편집을 의미할 때만 sync — 즉 incoming subtitle 이 scene 의
+        // OLD subtitle 과 다른 경우. 같으면 (SceneDetailModal stale editData 가 patch
+        // 에 안 바뀐 subtitle 키를 그대로 포함한 케이스) srtTrack 보존. 외부 경로가
+        // srtTrack 만 갱신했을 때 stale modal save 로 덮어쓰는 회귀 차단.
+        const oldSubtitle = scene?.subtitle ?? ''
+        if (updates.subtitle !== oldSubtitle) {
+          const currentLine = (srtTrackRef.current || []).find(l => l.id === targetId)
+          if (currentLine && currentLine.text !== updates.subtitle) {
+            setSrtTrack(prev => prev.map(line =>
+              line.id === targetId ? { ...line, text: updates.subtitle } : line
+            ))
+          }
+        }
       }
     }
     setScenes(prev => prev.map(scene =>
