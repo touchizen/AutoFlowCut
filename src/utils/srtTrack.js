@@ -127,13 +127,15 @@ export function createSrtTrackFromScenes(scenes) {
  * @param {Array} scenes
  * @returns {Array} rebased srtTrack 라인 (scenes 순서대로)
  */
-export function rebaseSrtTrackToScenes(srtTrack, scenes) {
+export function rebaseSrtTrackToScenes(srtTrack, scenes, options = {}) {
   if (!Array.isArray(srtTrack) || srtTrack.length === 0) return []
   if (!Array.isArray(scenes) || scenes.length === 0) return []
-  // R12 review fix: scene 중 하나도 srtLineIds 가지지 않으면 unlinked srtTrack
-  // (audio 폴더 SRT 흡수 등). rebase 할 anchor 가 없으니 절대 시간 그대로 반환.
+  const { preserveUnlinked = false } = options
+  // R12 review fix: export 경로 (preserveUnlinked: true) 는 linkage 없어도 절대
+  // 시간 그대로 반환 (audio 폴더 SRT 흡수 등). R16 review fix: 기본은 strict —
+  // linkage 없으면 빈 결과. deleteScene 등 strict 가 필요한 호출부 보호.
   const hasLinkage = scenes.some(s => Array.isArray(s?.srtLineIds) && s.srtLineIds.length > 0)
-  if (!hasLinkage) return srtTrack
+  if (!hasLinkage) return preserveUnlinked ? srtTrack : []
   const lineMap = new Map(srtTrack.map(l => [l.id, l]))
   const out = []
   let cumulative = 0
@@ -185,15 +187,17 @@ export function rebaseSrtTrackToScenes(srtTrack, scenes) {
  * @param {Array} scenes — scenes with srtLineIds
  * @returns {Array} srtTrack 의 원래 순서를 유지하며 사용된 라인만 필터
  */
-export function pruneSrtTrackToScenes(srtTrack, scenes) {
+export function pruneSrtTrackToScenes(srtTrack, scenes, options = {}) {
   if (!Array.isArray(srtTrack) || srtTrack.length === 0) return []
-  // 빈 scenes → 아무것도 export 안 함 (의도적 비움)
+  // 빈 scenes → 아무것도 남기지 않음
   if (!Array.isArray(scenes) || scenes.length === 0) return []
-  // R12 review fix: scenes 가 있지만 어느 것도 srtLineIds 가지지 않으면 unlinked
-  // srtTrack (audio 폴더 SRT 흡수, 옛 프로젝트 등). prune 하면 export 자막 전부
-  // 손실 → 그대로 반환. linkage 있는 scene 하나라도 있으면 옛 prune 동작 유지.
+  const { preserveUnlinked = false } = options
   const hasLinkage = scenes.some(s => Array.isArray(s?.srtLineIds) && s.srtLineIds.length > 0)
-  if (!hasLinkage) return srtTrack
+  // R12 review fix: export 경로는 preserveUnlinked: true — audio 폴더 SRT 흡수 등
+  // unlinked srtTrack 도 export. R16 review fix: 기본은 strict (옛 contract) — 어떤
+  // scene 도 참조 안 하는 라인은 제거. deleteScene/clearScenes 가 srtTrack 정리에
+  // 의존.
+  if (!hasLinkage) return preserveUnlinked ? srtTrack : []
   const used = new Set()
   for (const scene of scenes) {
     const ids = scene?.srtLineIds

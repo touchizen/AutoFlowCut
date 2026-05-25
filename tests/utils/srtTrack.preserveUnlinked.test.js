@@ -8,17 +8,27 @@
 import { describe, it, expect } from 'vitest'
 import { pruneSrtTrackToScenes, rebaseSrtTrackToScenes } from '../../src/utils/srtTrack'
 
-describe('R12 — pruneSrtTrackToScenes 가 unlinked srtTrack 보존', () => {
-  it('어떤 scene 도 srtLineIds 없으면 srtTrack 그대로 반환', () => {
+describe('R12/R16 — pruneSrtTrackToScenes preserveUnlinked 옵션', () => {
+  it('preserveUnlinked:true 면 어떤 scene 도 srtLineIds 없을 때 srtTrack 그대로', () => {
     const srtTrack = [
       { id: 'sub_1', startTime: 0, endTime: 2, text: 'A' },
       { id: 'sub_2', startTime: 2, endTime: 4, text: 'B' },
     ]
     const scenes = [
       { id: 's1', srtLineIds: [], image: 'img1' },
-      { id: 's2', image: 'img2' }, // srtLineIds 아예 없음
+      { id: 's2', image: 'img2' },
     ]
-    expect(pruneSrtTrackToScenes(srtTrack, scenes)).toEqual(srtTrack)
+    expect(pruneSrtTrackToScenes(srtTrack, scenes, { preserveUnlinked: true })).toEqual(srtTrack)
+  })
+
+  it('기본 (strict) 은 unlinked srtTrack 제거 (R16: deleteScene 등 정리 시 사용)', () => {
+    const srtTrack = [
+      { id: 'sub_1', startTime: 0, endTime: 2, text: 'A' },
+    ]
+    const scenes = [
+      { id: 's1', srtLineIds: [], image: 'img1' },
+    ]
+    expect(pruneSrtTrackToScenes(srtTrack, scenes)).toEqual([])
   })
 
   it('하나라도 srtLineIds 가지면 prune 적용 (옛 동작 유지)', () => {
@@ -26,17 +36,15 @@ describe('R12 — pruneSrtTrackToScenes 가 unlinked srtTrack 보존', () => {
       { id: 'sub_1', startTime: 0, endTime: 2, text: 'A' },
       { id: 'sub_2', startTime: 2, endTime: 4, text: 'B' },
     ]
-    const scenes = [
-      { id: 's1', srtLineIds: ['sub_1'] }, // linkage 있음
-    ]
+    const scenes = [{ id: 's1', srtLineIds: ['sub_1'] }]
     const result = pruneSrtTrackToScenes(srtTrack, scenes)
     expect(result).toHaveLength(1)
     expect(result[0].id).toBe('sub_1')
   })
 })
 
-describe('R12 — rebaseSrtTrackToScenes 가 unlinked srtTrack 보존', () => {
-  it('어떤 scene 도 srtLineIds 없으면 srtTrack 그대로 (절대 시간) 반환', () => {
+describe('R12/R16 — rebaseSrtTrackToScenes preserveUnlinked 옵션', () => {
+  it('preserveUnlinked:true 면 unlinked 시 절대 시간 그대로 반환', () => {
     const srtTrack = [
       { id: 'sub_1', startTime: 5, endTime: 8, text: 'A' },
     ]
@@ -44,10 +52,16 @@ describe('R12 — rebaseSrtTrackToScenes 가 unlinked srtTrack 보존', () => {
       { id: 's1', duration: 3 },
       { id: 's2', srtLineIds: [], duration: 3 },
     ]
-    expect(rebaseSrtTrackToScenes(srtTrack, scenes)).toEqual(srtTrack)
+    expect(rebaseSrtTrackToScenes(srtTrack, scenes, { preserveUnlinked: true })).toEqual(srtTrack)
   })
 
-  it('linkage 있는 scene 하나라도 있으면 rebase 적용', () => {
+  it('기본 (strict) 은 unlinked 시 빈 결과', () => {
+    const srtTrack = [{ id: 'sub_1', startTime: 5, endTime: 8, text: 'A' }]
+    const scenes = [{ id: 's1', duration: 3 }]
+    expect(rebaseSrtTrackToScenes(srtTrack, scenes)).toEqual([])
+  })
+
+  it('linkage 있는 scene 하나라도 있으면 rebase 적용 (옵션 무관)', () => {
     const srtTrack = [
       { id: 'sub_1', startTime: 5, endTime: 8, text: 'A' },
     ]

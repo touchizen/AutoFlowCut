@@ -134,8 +134,9 @@ export function useExport({
         // capcutCloud 의 visual track 은 sequential cumulativeTime + image_duration
         // 누적이라 srtTrack 의 절대 시간 그대로 보내면 자막/이미지 drift.
         srtTrack: rebaseSrtTrackToScenes(
-          pruneSrtTrackToScenes(srtTrack, validScenes),
-          validScenes
+          pruneSrtTrackToScenes(srtTrack, validScenes, { preserveUnlinked: true }),
+          validScenes,
+          { preserveUnlinked: true }
         ),
         scenes: validScenes.map(s => {
           const sceneDuration = s.duration || settings.defaultDuration || 3
