@@ -4,7 +4,12 @@ const posterCache = new Map()
 let posterQueue = Promise.resolve()
 
 function cleanupVideo(video) {
+  // detached element는 GC되지만, 진행 중인 metadata fetch는 src 제거만으론
+  // abort 보장이 약하다. pause → removeAttribute → load 순으로 호출해
+  // 브라우저에 명시적 reset 신호를 보낸다 (MDN 권장 패턴).
+  try { video.pause?.() } catch {}
   try { video.removeAttribute?.('src') } catch {}
+  try { video.load?.() } catch {}
 }
 
 function captureFrame(video) {
