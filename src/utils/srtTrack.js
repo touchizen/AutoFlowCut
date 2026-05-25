@@ -146,13 +146,23 @@ export function rebaseSrtTrackToScenes(srtTrack, scenes) {
       continue
     }
     const originalStart = Number(sceneLines[0].startTime) || 0
+    // R13 review fix: 씬 경계 (cumulative + sceneDuration) 안으로 라인 clamp.
+    // 사용자가 scene.duration 줄이면 srtTrack 라인 span 은 그대로라 다음 씬 image
+    // 위로 자막 넘침 — endTime 클램프 + startTime 이 경계 넘으면 line drop.
+    const sceneBoundary = sceneDuration > 0
+      ? cumulative + sceneDuration
+      : Infinity
     for (const line of sceneLines) {
       const relStart = (Number(line.startTime) || 0) - originalStart
       const relEnd = (Number(line.endTime) || 0) - originalStart
+      const absStart = cumulative + relStart
+      const absEnd = cumulative + relEnd
+      // startTime 이 이미 경계 넘으면 line drop
+      if (absStart >= sceneBoundary) continue
       out.push({
         ...line,
-        startTime: cumulative + relStart,
-        endTime: cumulative + relEnd,
+        startTime: absStart,
+        endTime: Math.min(absEnd, sceneBoundary),
       })
     }
     // 씬 길이는 명시된 duration 우선, 없으면 line span
