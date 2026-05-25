@@ -2,7 +2,7 @@
  * Scenes Hook - 씬 데이터 관리
  */
 
-import { useState, useCallback, useMemo, useRef } from 'react'
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import { DEFAULTS } from '../config/defaults'
 import {
   parseTextToScenes,
@@ -19,6 +19,7 @@ import {
   findDuplicateReferenceNames,
   parseTimeToSeconds
 } from '../utils/parsers'
+import { createSrtTrackFromScenes } from '../utils/srtTrack'
 import { trimTrailingEmptyScenes } from '../utils/sceneTrim'
 import { fileSystemAPI } from './useFileSystem'
 import { splitTags } from '../utils/tagMatch'
@@ -47,6 +48,14 @@ export function useScenes() {
   const [scenes, _setScenes] = useState([])
   const [references, setReferences] = useState([])
   const [srtTrack, setSrtTrack] = useState([])
+
+  // scenes 의 최신 스냅샷을 동기적으로 읽기 위한 ref. React 18 의 batched
+  // updates 가 setScenes(prev => ...) 콜백 실행을 지연시키면 closure 내부에서
+  // 캡처한 변수(newSrtTrack 등)가 setSrtTrack 호출 시점에 undefined 가 된다.
+  // import 류 메서드는 ref 로 prev 를 읽고 새 값을 동기 계산해서 양쪽 state 를
+  // 모두 동기적으로 갱신한다.
+  const scenesRef = useRef(scenes)
+  useEffect(() => { scenesRef.current = scenes }, [scenes])
 
   // ── Stable ID counter ──────────────────────────────────────────────────────
   const nextSceneIdRef = useRef(1)
@@ -160,11 +169,14 @@ export function useScenes() {
       return merged
     }
 
-    setScenes(prev => {
-      const afterMerge = mergeCSVIntoScenes(prev, csvText, defaultDuration, { allocateId: allocateSceneId })
-      merged = recalculateTimesArr(trimTrailingEmptyScenes(afterMerge, framePairs))
-      return merged
-    })
+    // 옛 형식: 동기 계산 후 양쪽 state 갱신 (batched-update deferral 회피)
+    const prev = scenesRef.current
+    const afterMerge = mergeCSVIntoScenes(prev, csvText, defaultDuration, { allocateId: allocateSceneId })
+    const trimmed = trimTrailingEmptyScenes(afterMerge, framePairs)
+    const built = createSrtTrackFromScenes(trimmed)
+    merged = recalculateTimesArr(built.scenes)
+    setScenes(() => merged)
+    setSrtTrack(built.srtTrack)
     return merged
   }, [allocateSceneId])
 

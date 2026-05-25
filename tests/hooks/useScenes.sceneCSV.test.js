@@ -60,16 +60,17 @@ describe('useScenes — parseFromCSV (new scene-column format)', () => {
     expect(result.current.scenes[1].srtLineIds).toEqual([track[3].id, track[4].id, track[5].id])
   })
 
-  it('옛 형식 CSV (scene 컬럼 없음) → 옛 동작 (srtTrack 변경 없음)', () => {
+  it('옛 형식 CSV (scene 컬럼 없음) → 옛 머지 동작 + Phase 4 부터 srtTrack 자동 채움 (1줄=1씬)', () => {
     const oldCsv = `prompt,subtitle,duration\n"P1","S1",3\n"P2","S2",3`
     const { result } = renderHook(() => useScenes())
     act(() => {
       result.current.parseFromCSV(oldCsv)
     })
-    // 씬은 2개 (옛 동작)
+    // 씬은 2개 (옛 머지 동작)
     expect(result.current.scenes).toHaveLength(2)
-    // srtTrack 은 비어있어야 함 (Phase 3 은 옛 형식 srtTrack 안 채움 — Phase 4 가 처리)
-    expect(result.current.srtTrack).toHaveLength(0)
+    // Phase 4: 옛 형식도 srtTrack 채워짐 (1 씬 = 1 라인)
+    expect(result.current.srtTrack).toHaveLength(2)
+    expect(result.current.srtTrack.map(l => l.text)).toEqual(['S1', 'S2'])
   })
 
   it('새 CSV 재import 시 srtTrack 도 교체', () => {
