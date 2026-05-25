@@ -6,8 +6,17 @@
  * - 뷰포트 이탈: img 언마운트 → 브라우저 GC 가 비트맵 메모리 회수
  *
  * rootMargin 200px 여유: 스크롤 시 빈 화면 노출 방지
+ *
+ * 크기 보장: wrapper/placeholder/img 모두 컴포넌트 차원에서 부모 fill 을 inline
+ * style 로 보장. CSS 파일 의존 없이 어느 부모 컨텍스트(block/flex)에서도 동작.
+ * 호출부가 style prop 을 전달하면 wrapper 기본값과 merge; img 에 style 을 전달하면
+ * props spread 로 override 가능.
  */
 import { useState, useEffect, useRef } from 'react'
+
+const WRAPPER_STYLE = { width: '100%', height: '100%', display: 'block' }
+const PLACEHOLDER_STYLE = { width: '100%', height: '100%', display: 'block' }
+const IMG_STYLE = { width: '100%', height: '100%', objectFit: 'cover', display: 'block' }
 
 export default function LazyImage({ src, alt, className, style, ...props }) {
   const [visible, setVisible] = useState(false)
@@ -36,12 +45,12 @@ export default function LazyImage({ src, alt, className, style, ...props }) {
     <div
       ref={wrapperRef}
       className={`lazy-image-wrapper${className ? ` ${className}` : ''}`}
-      style={style}
+      style={{ ...WRAPPER_STYLE, ...style }}
     >
       {visible && src ? (
-        <img src={src} alt={alt} {...props} />
+        <img src={src} alt={alt} style={IMG_STYLE} {...props} />
       ) : (
-        <div className="lazy-image-placeholder" />
+        <div className="lazy-image-placeholder" style={PLACEHOLDER_STYLE} />
       )}
     </div>
   )
