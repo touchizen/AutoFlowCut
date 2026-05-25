@@ -129,8 +129,11 @@ export function createSrtTrackFromScenes(scenes) {
  */
 export function rebaseSrtTrackToScenes(srtTrack, scenes, options = {}) {
   if (!Array.isArray(srtTrack) || srtTrack.length === 0) return []
-  if (!Array.isArray(scenes) || scenes.length === 0) return []
   const { preserveUnlinked = false } = options
+  // R19 review fix: 빈 scenes 분기도 preserveUnlinked 존중.
+  if (!Array.isArray(scenes) || scenes.length === 0) {
+    return preserveUnlinked ? srtTrack : []
+  }
   // R12 review fix: export 경로 (preserveUnlinked: true) 는 linkage 없어도 절대
   // 시간 그대로 반환 (audio 폴더 SRT 흡수 등). R16 review fix: 기본은 strict —
   // linkage 없으면 빈 결과. deleteScene 등 strict 가 필요한 호출부 보호.
@@ -189,9 +192,13 @@ export function rebaseSrtTrackToScenes(srtTrack, scenes, options = {}) {
  */
 export function pruneSrtTrackToScenes(srtTrack, scenes, options = {}) {
   if (!Array.isArray(srtTrack) || srtTrack.length === 0) return []
-  // 빈 scenes → 아무것도 남기지 않음
-  if (!Array.isArray(scenes) || scenes.length === 0) return []
   const { preserveUnlinked = false } = options
+  // R19 review fix: 빈 scenes 분기도 preserveUnlinked 존중. audio-only 프로젝트의
+  // 마지막 scene 삭제 시 narration srtTrack 통째로 사라지는 버그 방지.
+  // 기본 (strict) 동작은 옛 contract 유지 — 빈 scenes 면 빈 결과.
+  if (!Array.isArray(scenes) || scenes.length === 0) {
+    return preserveUnlinked ? srtTrack : []
+  }
   const hasLinkage = scenes.some(s => Array.isArray(s?.srtLineIds) && s.srtLineIds.length > 0)
   // R12 review fix: export 경로는 preserveUnlinked: true — audio 폴더 SRT 흡수 등
   // unlinked srtTrack 도 export. R16 review fix: 기본은 strict (옛 contract) — 어떤
