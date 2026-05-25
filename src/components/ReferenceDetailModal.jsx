@@ -61,11 +61,19 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
     uploadToFlow: onUpload,
     category: editData.category,
     onUploadComplete: (result) => {
+      // R31 review fix: 새 이미지로 교체 시 filePath/dataStorage 도 클리어 해야
+      // handleSave 의 `!editData.filePath` 가드가 saveReference 를 새로 호출 →
+      // 디스크에도 새 이미지가 기록되고 resolveImageSrc 도 새 이미지 표시.
+      // handleRestoreHistory (line 104) 가 이미 같은 정책 사용.
       setEditData(prev => ({
         ...prev,
         data: result.data,
         mediaId: result.mediaId || prev.mediaId,
-        caption: result.caption || prev.caption
+        caption: result.caption || prev.caption,
+        filePath: null,
+        dataStorage: null,
+        // cache bust (R27)
+        generatedAt: Date.now(),
       }))
     }
   })
