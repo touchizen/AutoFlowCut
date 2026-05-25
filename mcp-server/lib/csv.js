@@ -39,9 +39,12 @@ export function parseCSV(text) {
       current += ch;
     }
   }
-  // last field
+  // S1 review fix: 끝자리 개행 유무에 따른 빈 행 누락 버그 동기화 (renderer R23
+  // 와 동일). 옛 `fields.some(f => f.length > 0)` 은 ',,' 만 있는 마지막 행을
+  // drop 해서 '\n' 유무로 행 수가 달라짐. 새 가드: 다중 컬럼이거나 단일이라도
+  // 내용 있으면 유효 행.
   fields.push(current);
-  if (fields.some(f => f.length > 0)) {
+  if (fields.length > 1 || (fields.length === 1 && fields[0].length > 0)) {
     rows.push(fields);
   }
   return rows;
