@@ -38,7 +38,7 @@ export default function ImportModal({ onImport, onImportAudio, onClose }) {
       title: t('import.csvTitle'),
       description: t('import.csvDesc'),
       accept: '.csv',
-      hint: 'prompt, subtitle, characters, scene_tag, style_tag, duration',
+      hint: 'scene, prompt, subtitle, characters, scene_tag, style_tag, start_time, end_time',
       guideUrl: `${guideBaseUrl}/import-guide.html#scene-csv`,
       sampleUrl: `${guideBaseUrl}/samples/sample-scenes.csv`,
       aiPromptUrl: `${guideBaseUrl}/import-guide.html#ai-csv-prompt`
