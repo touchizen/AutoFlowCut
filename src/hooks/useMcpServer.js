@@ -236,9 +236,27 @@ export function useMcpServer({
           const prevHasSceneNums = byNum.size > 0
           // R15 review fix: result 의 id 가 유니크해야 React key/state 가 깨지지
           // 않음. taken 추적 — 이미 prev 에 있거나 result 에 이미 할당된 id 와
-          // 충돌하면 fresh scene_N (max+1) 할당.
+          // 충돌하면 fresh scene_N 할당.
+          // R18 review fix: freshId 는 monotonic — gap 재사용 안 함. prev + incoming
+          // 의 max scene_N + 1 부터 시작 (useScenes 의 stable id 정책과 일관).
           const taken = new Set(prev.map(s => s.id))
-          let nextFreshN = 1
+          let maxSceneN = 0
+          const incomingScenes = data.scenes || []
+          for (const s of prev) {
+            const m = /^scene_(\d+)$/.exec(s.id || '')
+            if (m) {
+              const n = parseInt(m[1], 10)
+              if (n > maxSceneN) maxSceneN = n
+            }
+          }
+          for (const s of incomingScenes) {
+            const m = /^scene_(\d+)$/.exec(s.id || '')
+            if (m) {
+              const n = parseInt(m[1], 10)
+              if (n > maxSceneN) maxSceneN = n
+            }
+          }
+          let nextFreshN = maxSceneN + 1
           const freshId = () => {
             while (taken.has(`scene_${nextFreshN}`)) nextFreshN++
             const fid = `scene_${nextFreshN}`
@@ -264,8 +282,17 @@ export function useMcpServer({
               if (matched._sceneNum != null) byNum.delete(matched._sceneNum)
             }
             if (!matched) {
-              // R15: incoming.id 충돌하면 fresh id
-              const assignedId = taken.has(incomingId) ? freshId() : incomingId
+              // R18 review fix: prev 비어있으면 (첫 로드) incoming.id 신뢰 (충돌만
+              // 회피). prev 가 있으면 unmatched 는 stable-id 정책상 항상 monotonic
+              // fresh id — gap (예: prev=[scene_1, scene_3] 에 새 scene 들어왔을
+              // 때 scene_2 재사용) 금지. useScenes 의 in-session-monotonic 정책과
+              // 일관.
+              let assignedId
+              if (prev.length === 0) {
+                assignedId = taken.has(incomingId) ? freshId() : incomingId
+              } else {
+                assignedId = freshId()
+              }
               taken.add(assignedId)
               return { ...incoming, id: assignedId, status: incoming.status || 'pending' }
             }
