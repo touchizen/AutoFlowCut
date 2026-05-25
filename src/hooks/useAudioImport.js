@@ -9,7 +9,7 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { parseSRT, parseSfxTimecodes, buildAudioTracks } from '../utils/audioTimeline'
 import { toast } from '../components/Toast'
 
-export function useAudioImport(t) {
+export function useAudioImport(t, { onAudioSrtAbsorbed = null } = {}) {
   const [audioPackage, setAudioPackage] = useState(null)
   const [audioTracks, setAudioTracks] = useState(null)
   const [importing, setImporting] = useState(false)
@@ -227,6 +227,23 @@ export function useAudioImport(t) {
 
     if (!shouldCommit()) return null
     setAudioPackage(pkg)
+
+    // Phase 12: 폴더 SRT 를 project.srtTrack 으로 흡수.
+    // 호출 측 (App.jsx) 가 "srtTrack 비어있을 때만 흡수" 등의 정책 적용.
+    if (onAudioSrtAbsorbed && srtEntries.length > 0) {
+      try {
+        // parseSRT 는 startMs/endMs (ms 단위). srtTrack 은 startTime/endTime (초 단위).
+        const srtTrack = srtEntries.map((entry, i) => ({
+          id: `sub_${i + 1}`,
+          startTime: (entry.startMs ?? 0) / 1000,
+          endTime: (entry.endMs ?? 0) / 1000,
+          text: entry.text || '',
+        }))
+        onAudioSrtAbsorbed(srtTrack)
+      } catch (e) {
+        console.warn('[useAudioImport] onAudioSrtAbsorbed failed:', e)
+      }
+    }
 
     // 프로젝트별 audioFolderPath 저장 — stale write가 다른 프로젝트 경로를 덮지 않도록 가드
     if (!shouldCommit()) return null

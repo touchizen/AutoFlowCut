@@ -540,15 +540,20 @@ export async function exportCapcutPackageCloud(project, options = {}) {
   const { generateSRT } = await import('./capcut.js');
   const srtFiles = [];
 
-  // 원본 SRT가 있으면 그대로 사용 (나레이션 sync 유지)
-  if (audioPackage?.srtContent && (subtitleOption === 'ko' || subtitleOption === 'both')) {
-    srtFiles.push({ filename: `${name}_subtitle_ko.srt`, content: audioPackage.srtContent });
-    console.log('[CapCut Cloud] Using original SRT from audio package');
-  } else if (subtitleOption === 'ko' || subtitleOption === 'both') {
-    const srtKo = generateSRT(project, 'ko');
+  // Phase 12: srtTrack 일원화. audioPackage.srtContent 는 useAudioImport 가
+  // project.srtTrack 으로 이미 흡수했으므로 별도 분기 불필요. generateSRT 가
+  // project.srtTrack 우선 사용 (Phase 5) → 모든 import 경로 동일한 export.
+  // audioPackage.srtContent 는 후방 호환 fallback (srtTrack 비어 있고 폴더 SRT
+  // 만 있는 옛 데이터 케이스 한정).
+  if (subtitleOption === 'ko' || subtitleOption === 'both') {
+    let srtKo = generateSRT(project, 'ko');
+    if (!srtKo && audioPackage?.srtContent) {
+      srtKo = audioPackage.srtContent;
+      console.log('[CapCut Cloud] Fallback to audioPackage.srtContent (srtTrack empty)');
+    }
     if (srtKo) {
       srtFiles.push({ filename: `${name}_subtitle_ko.srt`, content: srtKo });
-      console.log('[CapCut Cloud] Collected SRT file: ko (generated)');
+      console.log('[CapCut Cloud] Collected SRT file: ko');
     }
   }
   if (subtitleOption === 'en' || subtitleOption === 'both') {
