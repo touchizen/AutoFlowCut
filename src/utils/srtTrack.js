@@ -114,6 +114,55 @@ export function createSrtTrackFromScenes(scenes) {
 }
 
 /**
+ * srtTrack 시간을 scenes 의 cumulative timeline 으로 rebase.
+ *
+ * Review R8 fix: capcutCloud visual track 은 sequential cumulativeTime 누적으로
+ * 만들어지는데 srtTrack 은 절대 시간을 보존해서 SRT/CSV gap 이 있거나 moveScene
+ * 후에는 자막이 이미지와 어긋남. Export 직전 scenes 순서로 라인 시간 재작성:
+ *   - 각 씬의 출력 시작 시점 = 직전 씬들의 duration 합 (cumulative)
+ *   - 씬 내부 라인은 원본 startTime 의 상대 offset 보존 (라인 간 gap 유지)
+ *   - scenes 가 참조하지 않는 라인은 결과에서 제외 (prune 역할 겸함)
+ *
+ * @param {Array} srtTrack
+ * @param {Array} scenes
+ * @returns {Array} rebased srtTrack 라인 (scenes 순서대로)
+ */
+export function rebaseSrtTrackToScenes(srtTrack, scenes) {
+  if (!Array.isArray(srtTrack) || srtTrack.length === 0) return []
+  if (!Array.isArray(scenes) || scenes.length === 0) return []
+  const lineMap = new Map(srtTrack.map(l => [l.id, l]))
+  const out = []
+  let cumulative = 0
+  for (const scene of scenes) {
+    const ids = scene?.srtLineIds || []
+    const sceneLines = ids.map(id => lineMap.get(id)).filter(Boolean)
+    const sceneDuration = Number(scene?.duration) || 0
+    if (sceneLines.length === 0) {
+      cumulative += sceneDuration
+      continue
+    }
+    const originalStart = Number(sceneLines[0].startTime) || 0
+    for (const line of sceneLines) {
+      const relStart = (Number(line.startTime) || 0) - originalStart
+      const relEnd = (Number(line.endTime) || 0) - originalStart
+      out.push({
+        ...line,
+        startTime: cumulative + relStart,
+        endTime: cumulative + relEnd,
+      })
+    }
+    // 씬 길이는 명시된 duration 우선, 없으면 line span
+    if (sceneDuration > 0) {
+      cumulative += sceneDuration
+    } else {
+      const lineSpan = (Number(sceneLines[sceneLines.length - 1].endTime) || 0) - originalStart
+      cumulative += lineSpan
+    }
+  }
+  return out
+}
+
+/**
  * scenes 에서 참조되는 srtTrack 라인만 남기고 prune.
  *
  * Review R1 fix: deleteScene/clearScenes/export 등에서 stale 자막 누수 방지.

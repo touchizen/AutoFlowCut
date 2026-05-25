@@ -12,7 +12,7 @@ import { fileSystemAPI } from './useFileSystem'
 import { toast } from '../components/Toast'
 import useI18n from './useI18n'
 import { resolveExportMediaChoice, hasExportableMedia, getExportFilePaths } from '../utils/sceneMedia'
-import { pruneSrtTrackToScenes } from '../utils/srtTrack'
+import { pruneSrtTrackToScenes, rebaseSrtTrackToScenes } from '../utils/srtTrack'
 
 /**
  * Export 미디어를 실제 data/path 와 함께 반환.
@@ -128,10 +128,15 @@ export function useExport({
         // format === 'portrait' 일 때만 canvas_config 를 1080x1920(9:16)로 잡는다.
         // (예전 'short' 값은 GCF 가 인식 못 해 9:16 프로젝트도 16:9 draft 로 나왔음)
         format: settings.aspectRatio === '9:16' ? 'portrait' : 'landscape',
-        // Phase 5 + R1 review fix: srtTrack 을 validScenes 가 가리키는 라인으로
-        // 제한해서 export. 그렇지 않으면 hasExportableMedia 로 export 에서 빠진
-        // 씬의 자막이 원래 시간에 그대로 export 됨 (stale 자막 누수).
-        srtTrack: pruneSrtTrackToScenes(srtTrack, validScenes),
+        // Phase 5 + R1 + R8 review fix: srtTrack 을 validScenes 순서로 rebase.
+        // - prune (validScenes 가 가리키는 라인만)
+        // - rebase (cumulative 누적 timeline 으로 시간 재작성)
+        // capcutCloud 의 visual track 은 sequential cumulativeTime + image_duration
+        // 누적이라 srtTrack 의 절대 시간 그대로 보내면 자막/이미지 drift.
+        srtTrack: rebaseSrtTrackToScenes(
+          pruneSrtTrackToScenes(srtTrack, validScenes),
+          validScenes
+        ),
         scenes: validScenes.map(s => {
           const sceneDuration = s.duration || settings.defaultDuration || 3
           const video = resolveExportMedia(s)
