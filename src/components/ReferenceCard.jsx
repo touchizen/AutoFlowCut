@@ -105,7 +105,10 @@ export default function ReferenceCard({
         ? reference.name
         : (reference.id != null ? `imported_${reference.id}` : null)
       let savedFilePath = null
+      let saveAttempted = false
+      let saveErrorMessage = null
       if (projectName && effectiveName) {
+        saveAttempted = true
         try {
           const permission = await fileSystemAPI.checkPermission()
           if (permission?.hasPermission) {
@@ -119,12 +122,25 @@ export default function ReferenceCard({
             )
             if (saveResult?.success) {
               savedFilePath = saveResult.path
+            } else {
+              saveErrorMessage = saveResult?.error || 'reference.saveFailed'
             }
+          } else {
+            saveErrorMessage = 'reference.noPermission'
           }
         } catch (e) {
           console.warn('[ReferenceCard] saveReference failed:', e?.message || e)
+          saveErrorMessage = e?.message || 'reference.saveFailed'
         }
       }
+
+      // R35 review fix: save 가 시도되었는데 실패하면 'error' — autosave 가 data 를
+      // strip 한 뒤 reload 하면 'done인데 파일 없음' orphan 상태가 됨. save 가
+      // 스킵된 경우 (projectName 없거나 name 못 만들 때) 는 memory-only 로 'done'
+      // 유지 (기존 폴백 동작).
+      const saveFailedAfterAttempt = saveAttempted && !savedFilePath
+      const finalStatus = saveFailedAfterAttempt ? 'error' : 'done'
+      const finalErrorMessage = saveFailedAfterAttempt ? saveErrorMessage : null
 
       onUpdate(index, {
         ...reference,
@@ -136,11 +152,9 @@ export default function ReferenceCard({
         dataStorage: savedFilePath ? 'file' : 'base64',
         // R27 review fix 와 일관: 캐시 무효화용 timestamp
         generatedAt: Date.now(),
-        // R34 review fix: 업로드/저장 성공 경로면 status='done'. 새 카드 기본값
-        // pending 이 spread 로 새어들어와 isReferenceImageDone 이 false → 배치
-        // 완료 카운트 누락 + 자동화가 미완료로 오인하는 회귀 차단.
-        status: 'done',
-        errorMessage: null,
+        // R34 + R35 review fix: 성공/스킵 시 'done', 실패 시 'error'.
+        status: finalStatus,
+        errorMessage: finalErrorMessage,
       })
 
       setIsUploading(false)
