@@ -30,6 +30,24 @@ export function generateSRT(project, lang = 'ko') {
   const scenes = project.scenes || [];
   const videos = project.videos || [];
 
+  // Phase 5: project.srtTrack 가 있으면 직접 출력 (원본 자막 타이밍 보존).
+  // srtTrack 라인은 단일 언어 (text 필드만) — lang 인자 무시.
+  if (Array.isArray(project.srtTrack) && project.srtTrack.length > 0) {
+    let srt = '';
+    let idx = 1;
+    for (const line of project.srtTrack) {
+      const text = (line.text || '').trim();
+      if (!text) { idx++; continue; }
+      const startMs = Math.round((Number(line.startTime) || 0) * 1000);
+      const endMs = Math.round((Number(line.endTime) || 0) * 1000);
+      srt += `${idx}\n`;
+      srt += `${formatSRTTime(startMs)} --> ${formatSRTTime(endMs)}\n`;
+      srt += `${text}\n\n`;
+      idx++;
+    }
+    return srt.trim();
+  }
+
   // 비디오가 커버하는 씬 매핑.
   // scene_id (= framePair.ownerSceneId — owner-binding canonical) 우선,
   // 없으면 legacy from_scene (= startSceneId, mutable) 폴백.

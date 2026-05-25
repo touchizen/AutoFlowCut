@@ -267,7 +267,7 @@ function App() {
 
   // Export
   const { showExportModal, setShowExportModal, exporting, exportPhase, handleExportClick, handleExportConfirm } = useExport({
-    settings, scenes, videoScenes, framePairs, openSettings,
+    settings, scenes, srtTrack: scenesHook.srtTrack, videoScenes, framePairs, openSettings,
     audioPackage,
     isAuthenticated,
     subscription,

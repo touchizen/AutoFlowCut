@@ -30,6 +30,7 @@ function resolveExportMedia(scene) {
 export function useExport({
   settings,
   scenes,
+  srtTrack = [],
   videoScenes = [],
   framePairs = [],
   openSettings,
@@ -126,6 +127,8 @@ export function useExport({
         // format === 'portrait' 일 때만 canvas_config 를 1080x1920(9:16)로 잡는다.
         // (예전 'short' 값은 GCF 가 인식 못 해 9:16 프로젝트도 16:9 draft 로 나왔음)
         format: settings.aspectRatio === '9:16' ? 'portrait' : 'landscape',
+        // Phase 5: 자막 트랙 원본 (generateSRT 가 우선 사용)
+        srtTrack,
         scenes: validScenes.map(s => {
           const sceneDuration = s.duration || settings.defaultDuration || 3
           const video = resolveExportMedia(s)
