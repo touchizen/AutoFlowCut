@@ -9,6 +9,7 @@ import { useElapsedTimer } from '../hooks/useElapsedTimer'
 import { getRatioClass, resolveImageSrc, hasImageData, formatElapsed } from '../utils/formatters'
 import { resolveVideoSrc } from '../utils/videoSrc'
 import { resolveDisplayError } from '../utils/errorDisplay'
+import { getVideoPoster } from '../utils/videoPoster'
 import InfinityLoader from './InfinityLoader'
 import LazyImage from './LazyImage'
 import HoverImageBalloon from './HoverImageBalloon'
@@ -44,6 +45,49 @@ function StopwatchIcon({ size = 18 }) {
 function ElapsedTime({ startedAt, endedAt }) {
   const elapsed = useElapsedTimer(startedAt, endedAt)
   return <span>{formatElapsed(elapsed)}</span>
+}
+
+function VideoPosterThumbnail({ videoSrc, fallbackSrc, alt }) {
+  const [posterSrc, setPosterSrc] = useState(null)
+
+  useEffect(() => {
+    if (!videoSrc || fallbackSrc) return
+
+    let cancelled = false
+    setPosterSrc(null)
+    getVideoPoster(videoSrc).then((src) => {
+      if (!cancelled && src) setPosterSrc(src)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [videoSrc, fallbackSrc])
+
+  if (posterSrc) {
+    return (
+      <img
+        src={posterSrc}
+        alt={alt}
+        className="result-thumbnail"
+        loading="lazy"
+        decoding="async"
+      />
+    )
+  }
+
+  if (fallbackSrc) {
+    return (
+      <LazyImage
+        src={fallbackSrc}
+        alt={alt}
+        className="result-thumbnail"
+        eager
+        loading="lazy"
+      />
+    )
+  }
+
+  return <div className="video-placeholder" />
 }
 
 export default function ResultsTable({
@@ -129,16 +173,12 @@ export default function ResultsTable({
             preload="metadata"
             className="result-thumbnail-video"
           />
-        ) : itemImgSrc ? (
-          <LazyImage
-            src={itemImgSrc}
-            alt={posterAlt}
-            className="result-thumbnail"
-            eager
-            loading="lazy"
-          />
         ) : (
-          <div className="video-placeholder" />
+          <VideoPosterThumbnail
+            videoSrc={videoSrc}
+            fallbackSrc={itemImgSrc}
+            alt={posterAlt}
+          />
         )}
         <div className="play-button-overlay">▶</div>
       </>
