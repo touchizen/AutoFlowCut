@@ -1692,7 +1692,14 @@ function App() {
         projectName={ensureProjectName()}
         loading={exporting}
         exportPhase={exportPhase}
-        hasSubtitles={scenes.some(s => s.subtitle && s.subtitle.trim())}
+        hasSubtitles={
+          // R12 review fix: scene.subtitle 뿐 아니라 srtTrack 또는 audioPackage SRT 도
+          // 자막 source 로 인정. audio 폴더 SRT 흡수만 한 케이스에서 export 옵션 숨겨지는
+          // 회귀 방지.
+          scenes.some(s => s.subtitle && s.subtitle.trim())
+            || (scenesHook.srtTrack || []).some(l => l.text && l.text.trim())
+            || !!audioPackage?.srtContent
+        }
         onUpgradeClick={() => {
           setShowExportModal(false)
           setPaywallReason('upgrade')

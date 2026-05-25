@@ -130,6 +130,10 @@ export function createSrtTrackFromScenes(scenes) {
 export function rebaseSrtTrackToScenes(srtTrack, scenes) {
   if (!Array.isArray(srtTrack) || srtTrack.length === 0) return []
   if (!Array.isArray(scenes) || scenes.length === 0) return []
+  // R12 review fix: scene 중 하나도 srtLineIds 가지지 않으면 unlinked srtTrack
+  // (audio 폴더 SRT 흡수 등). rebase 할 anchor 가 없으니 절대 시간 그대로 반환.
+  const hasLinkage = scenes.some(s => Array.isArray(s?.srtLineIds) && s.srtLineIds.length > 0)
+  if (!hasLinkage) return srtTrack
   const lineMap = new Map(srtTrack.map(l => [l.id, l]))
   const out = []
   let cumulative = 0
@@ -173,8 +177,15 @@ export function rebaseSrtTrackToScenes(srtTrack, scenes) {
  */
 export function pruneSrtTrackToScenes(srtTrack, scenes) {
   if (!Array.isArray(srtTrack) || srtTrack.length === 0) return []
+  // 빈 scenes → 아무것도 export 안 함 (의도적 비움)
+  if (!Array.isArray(scenes) || scenes.length === 0) return []
+  // R12 review fix: scenes 가 있지만 어느 것도 srtLineIds 가지지 않으면 unlinked
+  // srtTrack (audio 폴더 SRT 흡수, 옛 프로젝트 등). prune 하면 export 자막 전부
+  // 손실 → 그대로 반환. linkage 있는 scene 하나라도 있으면 옛 prune 동작 유지.
+  const hasLinkage = scenes.some(s => Array.isArray(s?.srtLineIds) && s.srtLineIds.length > 0)
+  if (!hasLinkage) return srtTrack
   const used = new Set()
-  for (const scene of scenes || []) {
+  for (const scene of scenes) {
     const ids = scene?.srtLineIds
     if (!Array.isArray(ids)) continue
     for (const id of ids) used.add(id)
