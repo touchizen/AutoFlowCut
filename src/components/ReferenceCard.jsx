@@ -8,6 +8,7 @@ import { getRatioClass, resolveImageSrc, hasImageData, formatElapsed } from '../
 import { useElapsedTimer } from '../hooks/useElapsedTimer'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import HoverImageBalloon from './HoverImageBalloon'
+import LazyImage from './LazyImage'
 
 // 초시계 아이콘 — ResultsTable / FrameToVideoPanel 과 동일 스타일
 function StopwatchIcon({ size = 16 }) {
@@ -277,7 +278,7 @@ export default function ReferenceCard({
             )}
           </div>
         ) : hasRefImage ? (
-          <img
+          <LazyImage
             src={refImgSrc}
             alt={reference.name || 'Reference'}
             onMouseEnter={(e) => {
