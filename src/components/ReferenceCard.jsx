@@ -70,39 +70,36 @@ export default function ReferenceCard({
 
     setIsUploading(true)
 
-    // T3 review fix: 메모리 절약 — blob URL 을 state.data 에 보관 (binary 는 브라우저
-    // 내부 보유, 문자열은 'blob:http...' 정도로 작음). base64 는 upload payload
-    // 용으로만 일회성 생성 후 GC. 옛 코드는 base64 전체 (원본 ~33% 증가) 를 state
-    // 에 영구 보관 → 여러 ref 업로드 시 누적 메모리.
-    const blobUrl = URL.createObjectURL(file)
-    onUpdate(index, {
-      ...reference,
-      data: blobUrl,
-      mimeType: file.type,
-    })
+    // R25 review fix: T3 의 blob URL 접근을 revert. data 는 base64 로 유지 — 자동화
+    // 업로드 (useAutomation.js) 와 autosave 분리 (useProjectData 가 큰 data 는 strip
+    // 하고 filePath 로 reload) 와 호환. blob URL 로 바꿨다가 자동화/reload 가 깨졌었음.
+    // 메모리 절감은 Electron file save IPC 도입이 필요 — 별도 follow-up.
+    const reader = new FileReader()
+    reader.onloadend = async () => {
+      const base64 = reader.result
 
-    if (onUpload) {
-      // upload 시점에만 base64 를 메모리에 잠시 생성
-      const reader = new FileReader()
-      reader.onloadend = async () => {
-        const base64 = reader.result || ''
-        const cleanBase64 = base64.split(',')[1] || ''
+      onUpdate(index, {
+        ...reference,
+        data: base64,
+        mimeType: file.type,
+      })
+
+      if (onUpload) {
+        const cleanBase64 = base64.split(',')[1]
         const result = await onUpload(cleanBase64, reference.category)
         if (result.success) {
           onUpdate(index, {
             ...reference,
-            data: blobUrl, // base64 안 저장. UI 는 blob URL 로 표시.
+            data: base64,
             mediaId: result.mediaId,
             caption: result.caption,
           })
         }
-        // base64 closure scope 끝 → GC
-        setIsUploading(false)
       }
-      reader.readAsDataURL(file)
-    } else {
+
       setIsUploading(false)
     }
+    reader.readAsDataURL(file)
   }
   
   const handleFileSelect = async (e) => {
