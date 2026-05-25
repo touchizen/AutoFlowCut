@@ -540,20 +540,21 @@ export async function exportCapcutPackageCloud(project, options = {}) {
   const { generateSRT } = await import('./capcut.js');
   const srtFiles = [];
 
-  // Phase 12: srtTrack 일원화. audioPackage.srtContent 는 useAudioImport 가
-  // project.srtTrack 으로 이미 흡수했으므로 별도 분기 불필요. generateSRT 가
-  // project.srtTrack 우선 사용 (Phase 5) → 모든 import 경로 동일한 export.
-  // audioPackage.srtContent 는 후방 호환 fallback (srtTrack 비어 있고 폴더 SRT
-  // 만 있는 옛 데이터 케이스 한정).
+  // Review fix C5/C20: audioPackage.srtContent 가 있으면 narration-aligned 정밀
+  // timing 우선 (옛 동작 복원). Phase 7 마이그레이션이 srtTrack 을 항상 채우는
+  // 바람에 Phase 12 의 "비어있을 때만 fallback" 정책이 사실상 안 fire 했고,
+  // scene 시간 기반 srtTrack 이 narration SRT 를 덮어쓰는 회귀가 있었음.
   if (subtitleOption === 'ko' || subtitleOption === 'both') {
-    let srtKo = generateSRT(project, 'ko');
-    if (!srtKo && audioPackage?.srtContent) {
+    let srtKo;
+    if (audioPackage?.srtContent) {
       srtKo = audioPackage.srtContent;
-      console.log('[CapCut Cloud] Fallback to audioPackage.srtContent (srtTrack empty)');
+      console.log('[CapCut Cloud] Using narration SRT from audio package (priority)');
+    } else {
+      srtKo = generateSRT(project, 'ko');
+      if (srtKo) console.log('[CapCut Cloud] Generated SRT from project.srtTrack');
     }
     if (srtKo) {
       srtFiles.push({ filename: `${name}_subtitle_ko.srt`, content: srtKo });
-      console.log('[CapCut Cloud] Collected SRT file: ko');
     }
   }
   if (subtitleOption === 'en' || subtitleOption === 'both') {

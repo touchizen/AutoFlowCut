@@ -35,7 +35,7 @@ describe('generateSRT — srtTrack path (Phase 5)', () => {
     expect(lines).toContain('2')
   })
 
-  it('빈 text 라인은 스킵 (인덱스 건너뜀)', () => {
+  it('빈 text 라인은 스킵 + 번호 순차 유지 (review C2 fix)', () => {
     const project = {
       scenes: [],
       srtTrack: [
@@ -47,16 +47,20 @@ describe('generateSRT — srtTrack path (Phase 5)', () => {
     const srt = generateSRT(project, 'ko')
     expect(srt).toContain('A')
     expect(srt).toContain('C')
-    expect(srt).not.toMatch(/^2$/m) // 인덱스 2 없음 (B 가 스킵됨)
+    // C2 review fix: 빈 라인이 idx 증가 안 시킴 → 1, 2 순차
+    expect(srt).toMatch(/^2$/m)
+    expect(srt).not.toMatch(/^3$/m) // 총 2 블록
   })
 
-  it('lang 파라미터 무관 — srtTrack 은 단일 언어', () => {
+  it('lang=ko 는 srtTrack 사용, lang=en 은 폴백 (review C1 fix)', () => {
     const project = {
       scenes: [],
       srtTrack: [{ id: 'sub_1', startTime: 0, endTime: 1, text: 'OnlyText' }],
     }
     expect(generateSRT(project, 'ko')).toContain('OnlyText')
-    expect(generateSRT(project, 'en')).toContain('OnlyText')
+    // C1 fix: srtTrack 은 단일 언어 (보통 KO). lang=en 은 scene.subtitle_en 폴백
+    // — scenes 비어있으므로 결과 빈 문자열.
+    expect(generateSRT(project, 'en')).toBe('')
   })
 
   it('srtTrack 비어있으면 옛 동작 (scene.subtitle 기반) 으로 폴백', () => {

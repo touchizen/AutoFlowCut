@@ -30,14 +30,16 @@ export function generateSRT(project, lang = 'ko') {
   const scenes = project.scenes || [];
   const videos = project.videos || [];
 
-  // Phase 5: project.srtTrack 가 있으면 직접 출력 (원본 자막 타이밍 보존).
-  // srtTrack 라인은 단일 언어 (text 필드만) — lang 인자 무시.
-  if (Array.isArray(project.srtTrack) && project.srtTrack.length > 0) {
+  // Phase 5 + C1 review fix: srtTrack 은 단일 언어 (보통 ko narration). lang='ko'
+  // 만 srtTrack 사용. lang='en' 요청은 scene.subtitle_en 폴백 (옛 동작) — 그렇지
+  // 않으면 EN 자막 파일에 KO 텍스트가 들어감.
+  // C2 review fix: 빈 텍스트 라인은 idx 도 안 증가 → 출력 SRT 가 1..N 순차 유지.
+  if (lang === 'ko' && Array.isArray(project.srtTrack) && project.srtTrack.length > 0) {
     let srt = '';
     let idx = 1;
     for (const line of project.srtTrack) {
       const text = (line.text || '').trim();
-      if (!text) { idx++; continue; }
+      if (!text) continue;
       const startMs = Math.round((Number(line.startTime) || 0) * 1000);
       const endMs = Math.round((Number(line.endTime) || 0) * 1000);
       srt += `${idx}\n`;

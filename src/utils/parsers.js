@@ -305,6 +305,10 @@ export function parseSceneCSVToTracks(csvText, options = {}) {
     const first = group.rows[0]
     const srtLineIds = []
     for (const row of group.rows) {
+      // C12 review fix: 빈 subtitle 행은 srtTrack 에 push 안 함 (ghost line 방지).
+      // 그 행의 prompt/시간 같은 속성은 그룹 첫 행 컨텍스트로만 쓰이고, srtTrack
+      // 라인은 안 만들어 export 출력에서도 빠진다.
+      if (!row.subtitle || !String(row.subtitle).trim()) continue
       const lineId = `sub_${srtTrack.length + 1}`
       srtTrack.push({
         id: lineId,

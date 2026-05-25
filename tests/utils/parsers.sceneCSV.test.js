@@ -165,12 +165,11 @@ describe('parseSceneCSVToTracks', () => {
     expect(result.scenes[0].prompt).toBe('FIRST')
   })
 
-  it('빈 subtitle 인 행은 srtTrack 에서 빈 텍스트로 등록 (라인 자체는 유지)', () => {
+  it('빈 subtitle 인 행은 srtTrack 에서 제외 (review C12 fix — ghost line 방지)', () => {
     const csv = `scene,subtitle,start_time,end_time\n1,"A",0,1\n1,,1,2`
     const result = parseSceneCSVToTracks(csv)
-    expect(result.srtTrack).toHaveLength(2)
+    expect(result.srtTrack).toHaveLength(1)
     expect(result.srtTrack[0].text).toBe('A')
-    expect(result.srtTrack[1].text).toBe('')
   })
 
   it('헤더 케이스 무시 (Scene, Subtitle, Prompt)', () => {
