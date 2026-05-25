@@ -199,6 +199,61 @@ export function parseSRTToScenes(srtText) {
 }
 
 /**
+ * SRT → { srtTrack, scenes } 분리 모델 변환 (Phase 2).
+ *
+ * 라인마다 srtTrack 항목 1개 + 씬 1개 (1:1 매핑). 씬은 srtLineIds=[그 라인 id] 를 갖고,
+ * subtitle 필드도 후방 호환을 위해 채움 (Phase 6 까지). prompt/image 는 빈 값.
+ *
+ * @param {string} srtText
+ * @param {object} [options]
+ * @param {() => string} [options.allocateSceneId] — 씬 ID 할당 함수 (없으면 `scene_N`)
+ * @returns {{ srtTrack: Array, scenes: Array }} (빈 SRT → 둘 다 빈 배열)
+ */
+export function parseSRTToTrack(srtText, options = {}) {
+  if (!srtText || !String(srtText).trim()) return { srtTrack: [], scenes: [] }
+  const blocks = srtText.trim().split(/\n\n+/)
+  const srtTrack = []
+  const scenes = []
+
+  for (const block of blocks) {
+    const lines = block.trim().split('\n')
+    if (lines.length < 3) continue
+    const timeLine = lines[1]
+    const timeMatch = timeLine.match(/(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,\.]\d{3})/)
+    if (!timeMatch) continue
+
+    const startTime = parseSRTTime(timeMatch[1])
+    const endTime = parseSRTTime(timeMatch[2])
+    const text = lines.slice(2).join('\n').trim()
+
+    const lineId = `sub_${srtTrack.length + 1}`
+    srtTrack.push({ id: lineId, startTime, endTime, text })
+
+    const sceneId = options.allocateSceneId
+      ? options.allocateSceneId()
+      : `scene_${scenes.length + 1}`
+    scenes.push({
+      id: sceneId,
+      srtLineIds: [lineId],
+      startTime,
+      endTime,
+      duration: endTime - startTime,
+      prompt: '',
+      videoT2VPrompt: '',
+      videoI2VPrompt: '',
+      subtitle: text,
+      characters: '',
+      scene_tag: '',
+      style_tag: '',
+      status: 'pending',
+      image: null,
+    })
+  }
+
+  return { srtTrack, scenes }
+}
+
+/**
  * CSV 비디오 모드용 헤더 변환 — `prompt` / `prompt_en` 을 `video_t2v_prompt` 로 rename.
  *
  * 비디오 모드에서 CSV 에 video_*_prompt 컬럼이 없으면 image prompt 컬럼 (prompt, prompt_en)

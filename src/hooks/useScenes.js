@@ -8,6 +8,7 @@ import {
   parseTextToScenes,
   parseCSVToScenes,
   parseSRTToScenes,
+  parseSRTToTrack,
   mergeTextIntoScenes,
   mergeCSVIntoScenes,
   mergeSRTIntoScenes,
@@ -43,6 +44,7 @@ function normalizeScene(s, i) {
 export function useScenes() {
   const [scenes, _setScenes] = useState([])
   const [references, setReferences] = useState([])
+  const [srtTrack, setSrtTrack] = useState([])
 
   // ── Stable ID counter ──────────────────────────────────────────────────────
   const nextSceneIdRef = useRef(1)
@@ -148,19 +150,44 @@ export function useScenes() {
   }, [])
 
   /**
-   * SRT에서 씬 파싱 — 기존 씬에 머지 (subtitle/duration 갱신, prompt 보존)
+   * SRT에서 씬 파싱 — 새 srtTrack 분리 모델 (Phase 2)
+   *
+   * - srtTrack 을 새 SRT 로 wholesale 교체
+   * - 기존 씬의 prompt/image/etc 콘텐츠는 max-driver 방식으로 인덱스별 보존
+   * - 새 SRT 라인 각 씬의 srtLineIds + subtitle (후방 호환) + 시간 필드 갱신
+   * - SRT 가 짧으면: 초과 씬은 srtLineIds=[] + subtitle='' 로 클리어, 나머지 콘텐츠 보존
    *
    * @param {Array} [framePairs] - F→V 소유권 배열 (trim 시 alive 판단에 사용)
    */
   const parseFromSRT = useCallback((srtText, framePairs = []) => {
+    const parsed = parseSRTToTrack(srtText)
     let merged
     setScenes(prev => {
-      const afterMerge = mergeSRTIntoScenes(prev, srtText, { allocateId: allocateSceneId })
-      merged = recalculateTimesArr(trimTrailingEmptyScenes(afterMerge, framePairs))
+      const maxLen = Math.max(prev.length, parsed.scenes.length)
+      const out = Array.from({ length: maxLen }, (_, i) => {
+        const old = prev[i]
+        const ns = parsed.scenes[i]
+        if (old && ns) {
+          return {
+            ...old,
+            srtLineIds: ns.srtLineIds,
+            subtitle: ns.subtitle,
+            startTime: ns.startTime,
+            endTime: ns.endTime,
+            duration: ns.duration,
+          }
+        }
+        if (old) {
+          return { ...old, srtLineIds: [], subtitle: '' }
+        }
+        return { ...ns, id: allocateSceneId() }
+      })
+      merged = recalculateTimesArr(trimTrailingEmptyScenes(out, framePairs))
       return merged
     })
+    setSrtTrack(parsed.srtTrack)
     return merged
-  }, [])
+  }, [allocateSceneId])
   
   /**
    * 씬 업데이트
@@ -393,10 +420,12 @@ export function useScenes() {
     // State
     scenes,
     references,
-    
+    srtTrack,
+
     // Setters
     setScenes,
     setReferences,
+    setSrtTrack,
     
     // Parsers
     parseFromText,
