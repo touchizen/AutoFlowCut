@@ -297,13 +297,26 @@ export default function SceneDetailModal({
                 >⧉</button>
               )}
             </label>
-            <textarea
-              value={editData.subtitle || ''}
-              onChange={(e) => setEditData({ ...editData, subtitle: e.target.value })}
-              placeholder={t('sceneDetail.subtitlePlaceholder')}
-              rows={2}
-              className="subtitle-input"
-            />
+            {(() => {
+              // R20 review fix: 묶음 자막 (>1 srtLine) 은 readOnly — 어느 라인이 바뀐
+              // 건지 모호해 저장해도 다음 render 에 srtTrack 으로 덮어씌워짐.
+              // SceneList textarea (R3 fix) 와 동일 정책.
+              const isBundled = (scene?.srtLineIds || []).length > 1
+              return (
+                <textarea
+                  value={editData.subtitle || ''}
+                  onChange={(e) => {
+                    if (isBundled) return
+                    setEditData({ ...editData, subtitle: e.target.value })
+                  }}
+                  readOnly={isBundled}
+                  title={isBundled ? t('sceneList.bundledSubtitleReadonly') : undefined}
+                  placeholder={t('sceneDetail.subtitlePlaceholder')}
+                  rows={2}
+                  className="subtitle-input"
+                />
+              )
+            })()}
           </div>
           
           {/* 시간 정보 */}

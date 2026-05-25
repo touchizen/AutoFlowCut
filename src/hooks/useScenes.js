@@ -349,9 +349,24 @@ export function useScenes() {
 
   /**
    * 씬 업데이트
+   *
+   * R20 review fix: subtitle 변경 시 단일 srtLine 가진 씬이면 srtTrack 도 동기 갱신.
+   * SceneDetailModal 같은 generic 호출 경로도 silent data loss 방지. 묶음 씬
+   * (>1 srtLine) 은 어느 라인이 바뀐 건지 모호해 srtTrack 안 건드림 (caller 가
+   * updateSrtLine 직접 호출하거나 UI 에서 readOnly 처리).
    */
   const updateScene = useCallback((sceneId, updates) => {
-    setScenes(prev => prev.map(scene => 
+    if (updates && Object.prototype.hasOwnProperty.call(updates, 'subtitle')) {
+      const scene = (scenesRef.current || []).find(s => s.id === sceneId)
+      const lineIds = scene?.srtLineIds || []
+      if (lineIds.length === 1) {
+        const targetId = lineIds[0]
+        setSrtTrack(prev => prev.map(line =>
+          line.id === targetId ? { ...line, text: updates.subtitle } : line
+        ))
+      }
+    }
+    setScenes(prev => prev.map(scene =>
       scene.id === sceneId ? { ...scene, ...updates } : scene
     ))
   }, [])
