@@ -387,10 +387,15 @@ export function useScenes() {
   const deleteScene = useCallback((sceneId, framePairs = []) => {
     // R1 review fix: 동시에 srtTrack 도 prune — 삭제된 씬이 가리키던 자막 라인이
     // 다른 씬이 참조 안 하면 제거 (stale 자막 export 누수 방지).
-    // setScenes' updater 안에서 srtTrack 동기화 — scenesRef 의 C15 stale 문제 회피.
+    // R17 review fix: prev 에 linkage 가 하나라도 있었으면 strict prune (옛 contract
+    // — orphan 라인 정리). prev 가 처음부터 linkage 없는 audio-only 프로젝트면
+    // preserveUnlinked — narration srtTrack 이 통째로 사라지는 것 방지.
     setScenes(prev => {
       const survivingScenes = prev.filter(s => s.id !== sceneId)
-      setSrtTrack(track => pruneSrtTrackToScenes(track, survivingScenes))
+      const prevHadLinkage = prev.some(s => Array.isArray(s?.srtLineIds) && s.srtLineIds.length > 0)
+      setSrtTrack(track => pruneSrtTrackToScenes(track, survivingScenes, {
+        preserveUnlinked: !prevHadLinkage,
+      }))
       return recalculateTimesArr(survivingScenes)
     })
     // Cascade: return framePairs without those owning the deleted scene.
