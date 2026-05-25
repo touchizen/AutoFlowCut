@@ -75,13 +75,11 @@ describe('useScenes — parseFromSRT populates srtTrack', () => {
     expect(scenes[2].srtLineIds).toEqual([track[2].id])
   })
 
-  it('SRT 재import (라인 수 동일) — 기존 prompt/image 보존, srtLineIds 재할당', () => {
+  it('SRT 재import 동일 텍스트 → matcher 가 묶음 보존 + srtLineIds 새 ID 로 remap', () => {
     const { result } = renderHook(() => useScenes())
-    // 첫 번째 SRT import
     act(() => {
       result.current.parseFromSRT(SRT_3)
     })
-    // 씬에 prompt/image 추가
     const ids = result.current.scenes.map(s => s.id)
     act(() => {
       result.current.updateScene(ids[0], { prompt: 'P0', image: 'img0' })
@@ -89,42 +87,59 @@ describe('useScenes — parseFromSRT populates srtTrack', () => {
       result.current.updateScene(ids[2], { prompt: 'P2', image: 'img2' })
     })
 
-    // 다른 SRT 로 재import (같은 길이)
-    const altSrt = `1
-00:00:00,000 --> 00:00:05,000
-새자막1
-
-2
-00:00:05,000 --> 00:00:10,000
-새자막2
-
-3
-00:00:10,000 --> 00:00:15,000
-새자막3`
-
+    // 동일 텍스트 SRT 재import — matcher 가 모두 매칭 → 묶음 유지
     act(() => {
-      result.current.parseFromSRT(altSrt)
+      result.current.parseFromSRT(SRT_3)
     })
 
     const newScenes = result.current.scenes
     const newTrack = result.current.srtTrack
-
-    // prompt/image 보존 확인
+    expect(newScenes).toHaveLength(3) // 신규 씬 없음
     expect(newScenes[0].prompt).toBe('P0')
     expect(newScenes[0].image).toBe('img0')
-    expect(newScenes[1].prompt).toBe('P1')
-    expect(newScenes[2].prompt).toBe('P2')
-
-    // srtTrack 새 텍스트
-    expect(newTrack.map(l => l.text)).toEqual(['새자막1', '새자막2', '새자막3'])
-
-    // srtLineIds 새 라인 가리킴
     expect(newScenes[0].srtLineIds).toEqual([newTrack[0].id])
     expect(newScenes[1].srtLineIds).toEqual([newTrack[1].id])
     expect(newScenes[2].srtLineIds).toEqual([newTrack[2].id])
   })
 
-  it('SRT 라인 수가 줄어들면: 초과 씬은 srtLineIds 빈 배열, 내용 보존', () => {
+  it('SRT 재import 텍스트 완전 변경 → 기존 씬 prompt/image 보존, 새 씬 append', () => {
+    const { result } = renderHook(() => useScenes())
+    act(() => {
+      result.current.parseFromSRT(SRT_3)
+    })
+    const ids = result.current.scenes.map(s => s.id)
+    act(() => {
+      result.current.updateScene(ids[0], { prompt: 'P0', image: 'img0' })
+    })
+
+    // 완전히 다른 텍스트 SRT (matcher 임계 미만)
+    const altSrt = `1
+00:00:00,000 --> 00:00:05,000
+완전히 다른 텍스트입니다
+
+2
+00:00:05,000 --> 00:00:10,000
+이것도 매칭 안 됨
+
+3
+00:00:10,000 --> 00:00:15,000
+세번째도 다름`
+    act(() => {
+      result.current.parseFromSRT(altSrt)
+    })
+
+    // 기존 3 씬 보존 + 3 새 씬 append → 총 6 씬
+    expect(result.current.scenes).toHaveLength(6)
+    expect(result.current.scenes[0].prompt).toBe('P0') // 보존
+    expect(result.current.scenes[0].image).toBe('img0') // 보존
+    expect(result.current.scenes[0].srtLineIds).toEqual([]) // 매칭 안 됨
+    // 새 씬들은 새 srtTrack 가리킴
+    const newTrack = result.current.srtTrack
+    expect(newTrack).toHaveLength(3)
+    expect(result.current.scenes[3].srtLineIds).toEqual([newTrack[0].id])
+  })
+
+  it('SRT 라인 수가 줄어들면 (텍스트 변경 포함): 기존 씬 보존 + 매칭 안 된 라인 append', () => {
     const { result } = renderHook(() => useScenes())
     act(() => {
       result.current.parseFromSRT(SRT_3) // 3개
@@ -134,7 +149,7 @@ describe('useScenes — parseFromSRT populates srtTrack', () => {
       result.current.updateScene(ids[2], { prompt: 'keepP2', image: 'keepImg2' })
     })
 
-    // 짧은 SRT 로 교체 (2개)
+    // 짧은 SRT 로 교체 (2개, 다른 텍스트)
     act(() => {
       result.current.parseFromSRT(SRT_2)
     })
@@ -142,22 +157,21 @@ describe('useScenes — parseFromSRT populates srtTrack', () => {
     const scenes = result.current.scenes
     const track = result.current.srtTrack
     expect(track).toHaveLength(2)
-    expect(scenes).toHaveLength(3) // max-driver: 옛 씬 보존
-
-    // 초과 씬: srtLineIds 빈 배열
-    expect(scenes[2].srtLineIds).toEqual([])
+    // 기존 3 + 새 2 append = 5
+    expect(scenes).toHaveLength(5)
     // 콘텐츠 보존
     expect(scenes[2].prompt).toBe('keepP2')
     expect(scenes[2].image).toBe('keepImg2')
+    expect(scenes[2].srtLineIds).toEqual([]) // 자막3 사라짐
   })
 
-  it('SRT 라인 수가 늘어나면: 새 씬 추가, srtLineIds 각자 할당', () => {
+  it('SRT 라인 수가 늘어나면 (텍스트 변경 포함): 기존 씬 보존 + 새 라인 append', () => {
     const { result } = renderHook(() => useScenes())
     act(() => {
       result.current.parseFromSRT(SRT_2) // 2개
     })
 
-    // 더 긴 SRT 로 교체 (3개)
+    // 더 긴, 다른 텍스트 SRT (3개)
     act(() => {
       result.current.parseFromSRT(SRT_3)
     })
@@ -165,11 +179,12 @@ describe('useScenes — parseFromSRT populates srtTrack', () => {
     const scenes = result.current.scenes
     const track = result.current.srtTrack
     expect(track).toHaveLength(3)
-    expect(scenes).toHaveLength(3)
-
-    scenes.forEach((s, i) => {
-      expect(s.srtLineIds).toEqual([track[i].id])
-    })
+    // 기존 2 + 새 3 append = 5
+    expect(scenes).toHaveLength(5)
+    // 새 씬 3개는 새 라인 각자 가리킴
+    expect(scenes[2].srtLineIds).toEqual([track[0].id])
+    expect(scenes[3].srtLineIds).toEqual([track[1].id])
+    expect(scenes[4].srtLineIds).toEqual([track[2].id])
   })
 
   it('초기 빈 상태에서 SRT import → 새 씬 N개', () => {

@@ -20,6 +20,7 @@ import {
   parseTimeToSeconds
 } from '../utils/parsers'
 import { createSrtTrackFromScenes } from '../utils/srtTrack'
+import { matchSrtLines } from '../utils/srtLineMatcher'
 import { trimTrailingEmptyScenes } from '../utils/sceneTrim'
 import { fileSystemAPI } from './useFileSystem'
 import { splitTags } from '../utils/tagMatch'
@@ -56,6 +57,8 @@ export function useScenes() {
   // 모두 동기적으로 갱신한다.
   const scenesRef = useRef(scenes)
   useEffect(() => { scenesRef.current = scenes }, [scenes])
+  const srtTrackRef = useRef(srtTrack)
+  useEffect(() => { srtTrackRef.current = srtTrack }, [srtTrack])
 
   // ── Stable ID counter ──────────────────────────────────────────────────────
   const nextSceneIdRef = useRef(1)
@@ -192,6 +195,69 @@ export function useScenes() {
    */
   const parseFromSRT = useCallback((srtText, framePairs = []) => {
     const parsed = parseSRTToTrack(srtText)
+    const newTrack = parsed.srtTrack
+    const oldTrack = srtTrackRef.current || []
+    const prevScenes = scenesRef.current || []
+
+    // Phase 9: 기존 srtTrack 있으면 스마트 매칭으로 묶음 보존
+    if (oldTrack.length > 0 && prevScenes.length > 0) {
+      const { matched, added } = matchSrtLines(oldTrack, newTrack)
+      const oldIdToNewId = new Map(
+        matched.map(m => [m.oldId, newTrack[m.newIdx].id])
+      )
+
+      // 기존 씬의 srtLineIds 를 매칭된 새 ID 로 remap (제거된 라인은 자동 탈락)
+      const remappedScenes = prevScenes.map(scene => {
+        const newIds = (scene.srtLineIds || [])
+          .map(oldId => oldIdToNewId.get(oldId))
+          .filter(Boolean)
+        // 매칭된 첫 라인의 시간으로 갱신 (없으면 기존 시간 유지)
+        const firstId = newIds[0]
+        const firstLine = firstId ? newTrack.find(l => l.id === firstId) : null
+        const lastId = newIds[newIds.length - 1]
+        const lastLine = lastId ? newTrack.find(l => l.id === lastId) : null
+        const updates = { srtLineIds: newIds }
+        if (firstLine && lastLine) {
+          updates.startTime = firstLine.startTime
+          updates.endTime = lastLine.endTime
+          updates.duration = lastLine.endTime - firstLine.startTime
+          // 후방 호환 subtitle 필드 갱신
+          updates.subtitle = newIds
+            .map(id => newTrack.find(l => l.id === id)?.text || '')
+            .filter(Boolean)
+            .join('\n')
+        }
+        return { ...scene, ...updates }
+      })
+
+      // 새로 추가된 라인 → 새 1:1 씬으로 append
+      for (const newIdx of added) {
+        const line = newTrack[newIdx]
+        remappedScenes.push({
+          id: allocateSceneId(),
+          srtLineIds: [line.id],
+          startTime: line.startTime,
+          endTime: line.endTime,
+          duration: line.endTime - line.startTime,
+          prompt: '',
+          videoT2VPrompt: '',
+          videoI2VPrompt: '',
+          subtitle: line.text,
+          characters: '',
+          scene_tag: '',
+          style_tag: '',
+          status: 'pending',
+          image: null,
+        })
+      }
+
+      const merged = recalculateTimesArr(trimTrailingEmptyScenes(remappedScenes, framePairs))
+      setScenes(() => merged)
+      setSrtTrack(newTrack)
+      return merged
+    }
+
+    // 빈 srtTrack 또는 빈 scenes → Phase 2 wholesale 동작
     let merged
     setScenes(prev => {
       const maxLen = Math.max(prev.length, parsed.scenes.length)
@@ -216,7 +282,7 @@ export function useScenes() {
       merged = recalculateTimesArr(trimTrailingEmptyScenes(out, framePairs))
       return merged
     })
-    setSrtTrack(parsed.srtTrack)
+    setSrtTrack(newTrack)
     return merged
   }, [allocateSceneId])
   
