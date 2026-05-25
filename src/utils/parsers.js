@@ -106,33 +106,31 @@ export function parseTextToScenes(text, defaultDuration = DEFAULTS.scene.duratio
  * @returns {Array} 씬 배열
  */
 export function parseCSVToScenes(csvText, defaultDuration = DEFAULTS.scene.duration) {
-  const lines = csvText.trim().split('\n')
-  if (lines.length < 2) return []
-  
-  const headers = lines[0].split(',').map(h => h.trim().toLowerCase())
-  
+  // R10 review fix: shared RFC parser (escaped quote / multiline / CRLF 안전)
+  const { headers: rawHeaders, rows } = parseCSVTextToRows(csvText)
+  if (rows.length === 0) return []
+  const headerLower = rawHeaders.map(h => h.toLowerCase())
+
   let currentTime = 0
   const scenes = []
-  
-  for (let i = 1; i < lines.length; i++) {
-    const values = parseCSVLine(lines[i])
-    if (!values.length) continue
-    
+
+  rows.forEach((textRow, i) => {
+    // lowercased key lookup (옛 동작 보존)
     const row = {}
-    headers.forEach((header, idx) => {
-      row[header] = values[idx] || ''
+    rawHeaders.forEach((h, idx) => {
+      row[headerLower[idx]] = textRow[h] || ''
     })
-    
+
     const duration = parseFloat(row.duration) || defaultDuration
     const parsedStart = parseTimeToSeconds(row.start_time)
     const startTime = !isNaN(parsedStart) ? parsedStart : currentTime
     const parsedEnd = parseTimeToSeconds(row.end_time)
     const endTime = !isNaN(parsedEnd) ? parsedEnd : startTime + duration
-    
+
     currentTime = endTime
-    
+
     scenes.push({
-      id: `scene_${i}`,
+      id: `scene_${i + 1}`,
       startTime,
       endTime,
       duration: endTime - startTime,
@@ -148,8 +146,8 @@ export function parseCSVToScenes(csvText, defaultDuration = DEFAULTS.scene.durat
       status: 'pending',
       image: null
     })
-  }
-  
+  })
+
   return scenes
 }
 
@@ -617,8 +615,10 @@ export function mergeSRTIntoScenes(existing, srtText, options = {}) {
  *  기본값이 기존 값을 덮어쓴다. 그래서 헤더를 보고 "CSV가 제공한 필드"만 적용한다.)
  */
 export function mergeCSVIntoScenes(existing, csvText, defaultDuration = DEFAULTS.scene.duration, options = {}) {
-  const firstLine = csvText.trim().split('\n')[0]
-  const headers = parseCSVLine(firstLine).map(h => h.trim().toLowerCase())
+  // R10 review fix: shared RFC parser. parseCSVToScenes 가 같은 parser 쓰니 여기서도
+  // headers 만 추출해 providedFields 계산.
+  const { headers: rawHeaders } = parseCSVTextToRows(csvText)
+  const headers = rawHeaders.map(h => h.toLowerCase())
 
   // CSV 헤더 → scene 필드 매핑 (parseCSVToScenes와 동일한 별칭 규칙)
   const aliases = {
@@ -723,10 +723,10 @@ export function detectFileType(content) {
  * @returns {'scene' | 'reference' | 'unknown'} CSV 타입
  */
 export function detectCSVType(csvContent) {
-  const lines = csvContent.trim().split('\n')
-  if (lines.length < 1) return 'unknown'
-
-  const header = parseCSVLine(lines[0]).map(h => h.toLowerCase().trim())
+  // R10 review fix: shared RFC parser
+  const { headers: rawHeaders } = parseCSVTextToRows(csvContent)
+  if (rawHeaders.length === 0) return 'unknown'
+  const header = rawHeaders.map(h => h.toLowerCase())
 
   // 레퍼런스 CSV 특성: name 컬럼 필수, type 컬럼 있음, prompt 컬럼 없거나 선택적
   // 씬 CSV 특성: prompt 컬럼 필수, subtitle/characters/scene_tag/style_tag/duration 등
@@ -781,37 +781,32 @@ const TYPE_TO_CATEGORY = {
  * @returns {Array|null} 레퍼런스 배열 또는 null
  */
 export function parseReferencesCSV(csvContent) {
-  const lines = csvContent.trim().split('\n')
-  if (lines.length < 2) return null
+  // R10 review fix: shared RFC parser
+  const { headers: rawHeaders, rows } = parseCSVTextToRows(csvContent)
+  if (rows.length === 0) return null
 
-  const header = parseCSVLine(lines[0]).map(h => h.toLowerCase().trim())
-  const nameIdx = header.indexOf('name')
-  const typeIdx = header.indexOf('type')
-  // prompt 또는 description 컬럼 지원
-  let promptIdx = header.indexOf('prompt')
-  if (promptIdx === -1) promptIdx = header.indexOf('description')
-  // image_path 또는 image 컬럼 지원
-  let imagePathIdx = header.indexOf('image_path')
-  if (imagePathIdx === -1) imagePathIdx = header.indexOf('image')
+  const headerLower = rawHeaders.map(h => h.toLowerCase())
+  const headerByLower = new Map()
+  rawHeaders.forEach((h, i) => headerByLower.set(headerLower[i], h))
 
-  if (nameIdx === -1) {
+  const nameKey = headerByLower.get('name')
+  if (!nameKey) {
     console.warn('Reference CSV: name column required')
     return null
   }
+  const typeKey = headerByLower.get('type')
+  const promptKey = headerByLower.get('prompt') || headerByLower.get('description')
+  const imagePathKey = headerByLower.get('image_path') || headerByLower.get('image')
 
   const refs = []
 
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim()
-    if (!line) continue
-
-    const values = parseCSVLine(line)
-    const name = values[nameIdx]?.trim()
+  for (const row of rows) {
+    const name = (row[nameKey] || '').trim()
     if (!name) continue
 
-    const type = typeIdx !== -1 ? values[typeIdx]?.trim().toLowerCase() : 'character'
-    const prompt = promptIdx !== -1 ? values[promptIdx]?.trim() : ''
-    const imagePath = imagePathIdx !== -1 ? values[imagePathIdx]?.trim() : ''
+    const type = typeKey ? (row[typeKey] || '').trim().toLowerCase() : 'character'
+    const prompt = promptKey ? (row[promptKey] || '').trim() : ''
+    const imagePath = imagePathKey ? (row[imagePathKey] || '').trim() : ''
     const category = TYPE_TO_CATEGORY[type] || 'MEDIA_CATEGORY_SUBJECT'
 
     // type value 매핑 (background -> scene)
@@ -827,7 +822,7 @@ export function parseReferencesCSV(csvContent) {
       imagePath  // 이미지 경로 추가
     })
   }
-  
+
   return refs.length > 0 ? refs : null
 }
 
