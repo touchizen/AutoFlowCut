@@ -136,6 +136,11 @@ export default function ReferenceCard({
         dataStorage: savedFilePath ? 'file' : 'base64',
         // R27 review fix 와 일관: 캐시 무효화용 timestamp
         generatedAt: Date.now(),
+        // R34 review fix: 업로드/저장 성공 경로면 status='done'. 새 카드 기본값
+        // pending 이 spread 로 새어들어와 isReferenceImageDone 이 false → 배치
+        // 완료 카운트 누락 + 자동화가 미완료로 오인하는 회귀 차단.
+        status: 'done',
+        errorMessage: null,
       })
 
       setIsUploading(false)
