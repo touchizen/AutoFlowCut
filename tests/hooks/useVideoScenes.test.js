@@ -89,6 +89,25 @@ describe('useVideoScenes — derived view', () => {
     expect(vs[0].duration).toBe(4)
     expect(vs[1].duration).toBe(7)
   })
+
+  it('source scene의 이미지 필드를 poster용으로 vscene에 보존한다', () => {
+    const { result } = setupHook([
+      {
+        id: 'scene_1',
+        videoT2VPrompt: 'v1',
+        image: 'data:image/png;base64,POSTER',
+        imagePath: '/abs/poster.png',
+        filePath: '/abs/fallback.png',
+        data: 'data:image/png;base64,FALLBACK',
+      },
+    ])
+
+    const [vs] = result.current.videoScenesHook.videoScenes
+    expect(vs.image).toBe('data:image/png;base64,POSTER')
+    expect(vs.imagePath).toBe('/abs/poster.png')
+    expect(vs.filePath).toBe('/abs/fallback.png')
+    expect(vs.data).toBe('data:image/png;base64,FALLBACK')
+  })
 })
 
 describe('useVideoScenes — write 라우팅', () => {

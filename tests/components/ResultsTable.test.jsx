@@ -207,6 +207,35 @@ describe('ResultsTable — video lazy mount', () => {
     expect(container.querySelectorAll('.lazy-image-wrapper')).toHaveLength(2)
   })
 
+  it('poster가 있으면 IntersectionObserver 대기 없이 첫 렌더에서 img를 mount한다', () => {
+    const originalIntersectionObserver = global.IntersectionObserver
+    global.IntersectionObserver = class FakeIntersectionObserver {
+      observe() {}
+      disconnect() {}
+    }
+
+    try {
+      const { container } = wrap(
+        <ResultsTable
+          items={[videoItem({ id: 'v1', videoPath: '/abs/v1.mp4' })]}
+          mediaType="video"
+          onShowDetail={vi.fn()}
+        />
+      )
+
+      expect(container.querySelectorAll('video')).toHaveLength(0)
+      const poster = container.querySelector('img')
+      expect(poster).toBeInTheDocument()
+      expect(poster.getAttribute('src')).toBe('data:image/png;base64,POSTER')
+    } finally {
+      if (originalIntersectionObserver) {
+        global.IntersectionObserver = originalIntersectionObserver
+      } else {
+        delete global.IntersectionObserver
+      }
+    }
+  })
+
   it('video mediaType은 hover한 row에만 <video>를 mount하고 mouse leave에서 unmount한다', () => {
     const items = [
       videoItem({ id: 'v1', videoPath: '/abs/v1.mp4' }),

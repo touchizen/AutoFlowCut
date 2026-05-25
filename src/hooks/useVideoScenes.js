@@ -11,7 +11,8 @@
  *
  * VideoScene 형태:
  *   id, prompt, duration, startTime, endTime, status,
- *   video, videoPath, mediaId, generationId, selected
+ *   video, videoPath, mediaId, generationId, selected,
+ *   image, imagePath, filePath, data
  *
  * 매핑 (videoScenes 필드 → scenes 필드):
  *   id           ↔ id (vscene_N ↔ scene_N)
@@ -73,6 +74,12 @@ function deriveVideoScene(s) {
     mediaId: s.videoT2VMediaId ?? null,
     generationId: s.videoT2VGenerationId ?? null,
     selected: s.videoT2VSelected ?? false,
+    // Poster fields from the source image scene. ResultsTable uses these while
+    // keeping the video element unmounted until hover.
+    image: s.image ?? null,
+    imagePath: s.imagePath ?? null,
+    filePath: s.filePath ?? null,
+    data: s.data ?? null,
   }
 }
 

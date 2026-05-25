@@ -134,6 +134,8 @@ export default function ResultsTable({
             src={itemImgSrc}
             alt={posterAlt}
             className="result-thumbnail"
+            eager
+            loading="lazy"
           />
         ) : (
           <div className="video-placeholder" />
