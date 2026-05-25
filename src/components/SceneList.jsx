@@ -309,7 +309,14 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
               })}
               title={`T2V${activeMedia === 't2v' ? ' ✓' : ''} — ${t('sceneList.dblClickToView') || 'Double-click to view'}`}
             >
-              <video src={toVideoSrc(scene.videoT2V, scene.videoT2VPath)} muted preload="metadata" onLoadedMetadata={(e) => handleVideoMetadata(e, 't2v')} />
+              {/* T2 review fix: videoT2VDuration 이미 캐시되어 있으면 정적 poster 만
+                  사용 (VRAM 절약). 없으면 1회 mount 해서 onLoadedMetadata 로 추출 →
+                  다음 render 부터는 poster path 로 자동 전환. */}
+              {scene.videoT2VDuration ? (
+                imgSrc ? <img src={imgSrc} alt="T2V poster" /> : <div className="video-placeholder" />
+              ) : (
+                <video src={toVideoSrc(scene.videoT2V, scene.videoT2VPath)} muted preload="metadata" onLoadedMetadata={(e) => handleVideoMetadata(e, 't2v')} />
+              )}
               <div className="play-button-overlay mini">▶</div>
               {mediaCount > 1 && <span className="media-label">T2V</span>}
             </div>
@@ -350,7 +357,12 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
               })}
               title={`I2V${activeMedia === 'i2v' ? ' ✓' : ''} — ${t('sceneList.dblClickToView') || 'Double-click to view'}`}
             >
-              <video src={toVideoSrc(scene.videoI2V, scene.videoI2VPath)} muted preload="metadata" onLoadedMetadata={(e) => handleVideoMetadata(e, 'i2v')} />
+              {/* T2 review fix: videoI2VDuration 캐시 있으면 poster 만. (T2V 와 동일) */}
+              {scene.videoI2VDuration ? (
+                imgSrc ? <img src={imgSrc} alt="I2V poster" /> : <div className="video-placeholder" />
+              ) : (
+                <video src={toVideoSrc(scene.videoI2V, scene.videoI2VPath)} muted preload="metadata" onLoadedMetadata={(e) => handleVideoMetadata(e, 'i2v')} />
+              )}
               <div className="play-button-overlay mini">▶</div>
               {mediaCount > 1 && <span className="media-label">I2V</span>}
             </div>
