@@ -22,7 +22,7 @@ import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
 import { appFetch } from './lib/appClient.js';
-import { parseCSV, loadCSV, escapeCSVField, saveCSV } from './lib/csv.js';
+import { parseCSV, loadCSV, escapeCSVField, saveCSV, isNewSceneCSVFormat, bundleSceneCSVRows } from './lib/csv.js';
 
 // ── 상태 ──────────────────────────────────────────────────────
 
@@ -848,8 +848,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           };
         }
 
-        // scenes CSV
-        scenes = data.scenes;
+        // scenes CSV — R2 review fix: 새 형식 (scene 컬럼 + 정수값) 감지 시 묶음
+        // scenes + srtTrack 으로 변환해서 app 에 전송. ImportModal 경로와 동일한
+        // bundling 적용.
+        const isNewFormat = isNewSceneCSVFormat(headers, data.scenes);
+        let bundledSrtTrack = null;
+        if (isNewFormat) {
+          const bundled = bundleSceneCSVRows(data.scenes);
+          scenes = bundled.scenes;
+          bundledSrtTrack = bundled.srtTrack;
+        } else {
+          scenes = data.scenes;
+        }
         // project.json 자동 로드 (image_dir이 프로젝트 루트)
         let projectLoaded = false;
         if (imageDirPath) {
@@ -884,10 +894,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }
         }
 
-        // 앱에 update-scenes 전달
+        // 앱에 update-scenes 전달 (새 형식이면 srtTrack 도 동봉)
         const port = args.port || 3210;
         try {
-          await appFetch(port, 'POST', '/api/update', { type: 'update-scenes', scenes: scenes });
+          const payload = { type: 'update-scenes', scenes: scenes };
+          if (bundledSrtTrack) payload.srtTrack = bundledSrtTrack;
+          await appFetch(port, 'POST', '/api/update', payload);
         } catch { /* 앱 미실행 시 무시 */ }
 
         const modeLabel = sceneMode === 'video' ? '비디오' : '이미지';
