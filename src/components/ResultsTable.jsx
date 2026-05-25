@@ -64,6 +64,7 @@ export default function ResultsTable({
 }) {
   const { t } = useI18n()
   const [hoverPreview, setHoverPreview] = useState(null)
+  const [hoveredVideoKey, setHoveredVideoKey] = useState(null)
   const rowRefs = useRef({})
 
   // 생성 중인 행으로 자동 스크롤 (status 변경 감지)
@@ -117,8 +118,30 @@ export default function ResultsTable({
   /**
    * Render the media thumbnail for a given item
    */
-  const renderMedia = (item, index) => {
+  const renderMedia = (item, index, isVideoHovered = false) => {
     const itemImgSrc = resolveImageSrc(item)
+    const renderLazyVideo = (videoSrc, posterAlt) => (
+      <>
+        {isVideoHovered ? (
+          <video
+            src={videoSrc}
+            muted
+            preload="metadata"
+            className="result-thumbnail-video"
+          />
+        ) : itemImgSrc ? (
+          <LazyImage
+            src={itemImgSrc}
+            alt={posterAlt}
+            className="result-thumbnail"
+          />
+        ) : (
+          <div className="video-placeholder" />
+        )}
+        <div className="play-button-overlay">▶</div>
+      </>
+    )
+
     if (mediaType === 'image' && hasImageData(item)) {
       // R37 fix: LazyImage — 뷰포트 이탈 시 img 언마운트해 VRAM 회수
       return (
@@ -142,32 +165,12 @@ export default function ResultsTable({
       // 공용 utils/videoSrc — base64 우선, 없으면 file path (T2V path-only 모드 지원).
       // useProjectData 가 T2V 도 path-only 로 로드하므로 item.video 가 비어도 path 만으로 재생 가능.
       const videoSrc = resolveVideoSrc(item.video, item.videoPath)
-      return (
-        <>
-          <video
-            src={videoSrc}
-            muted
-            preload="metadata"
-            className="result-thumbnail-video"
-          />
-          <div className="play-button-overlay">▶</div>
-        </>
-      )
+      return renderLazyVideo(videoSrc, `Video ${index + 1} poster`)
     }
 
     if (isPairType && (item.base64 || item.videoPath)) {
       const videoSrc = resolveVideoSrc(item.base64, item.videoPath)
-      return (
-        <>
-          <video
-            src={videoSrc}
-            muted
-            preload="metadata"
-            className="result-thumbnail-video"
-          />
-          <div className="play-button-overlay">▶</div>
-        </>
-      )
+      return renderLazyVideo(videoSrc, `Frame pair ${index + 1} poster`)
     }
 
     return null
@@ -296,12 +299,14 @@ export default function ResultsTable({
               <td className="col-img">
                 <div
                   className={`image-cell ${ratioClass} ${hasMedia(item) ? 'clickable' : ''}`}
+                  onMouseEnter={isVideoType && hasMedia(item) ? () => setHoveredVideoKey(item.id ?? `row-${index}`) : undefined}
+                  onMouseLeave={isVideoType && hasMedia(item) ? () => setHoveredVideoKey(null) : undefined}
                   onClick={() => onShowDetail && onShowDetail(item)}
                   title={t('headerExtra.clickToDetail')}
                 >
                   {hasMedia(item) ? (
                     <>
-                      {renderMedia(item, index)}
+                      {renderMedia(item, index, hoveredVideoKey === (item.id ?? `row-${index}`))}
                       {onClearMedia && !disabled && (
                         <button
                           className="btn-clear-media"

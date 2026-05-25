@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest'
-import { render } from '@testing-library/react'
+import { render, fireEvent } from '@testing-library/react'
 import ResultsTable from '../../src/components/ResultsTable'
 import { I18nProvider } from '../../src/hooks/useI18n'
 
@@ -182,5 +182,100 @@ describe('ResultsTable — 화면비', () => {
       <ResultsTable items={items} mediaType="image" onRetry={vi.fn()} />
     )
     expect(container.querySelector('.image-cell.ratio-landscape')).toBeInTheDocument()
+  })
+})
+
+describe('ResultsTable — video lazy mount', () => {
+  const videoItem = (overrides = {}) => baseItem({
+    status: 'complete',
+    videoPath: '/abs/video.mp4',
+    image: 'data:image/png;base64,POSTER',
+    ...overrides,
+  })
+
+  it('video mediaType은 첫 렌더에서 <video>를 mount하지 않고 poster와 재생 오버레이를 표시', () => {
+    const items = [
+      videoItem({ id: 'v1', videoPath: '/abs/v1.mp4' }),
+      videoItem({ id: 'v2', videoPath: '/abs/v2.mp4' }),
+    ]
+    const { container } = wrap(
+      <ResultsTable items={items} mediaType="video" onShowDetail={vi.fn()} />
+    )
+
+    expect(container.querySelectorAll('video')).toHaveLength(0)
+    expect(container.querySelectorAll('.play-button-overlay')).toHaveLength(2)
+    expect(container.querySelectorAll('.lazy-image-wrapper')).toHaveLength(2)
+  })
+
+  it('video mediaType은 hover한 row에만 <video>를 mount하고 mouse leave에서 unmount한다', () => {
+    const items = [
+      videoItem({ id: 'v1', videoPath: '/abs/v1.mp4' }),
+      videoItem({ id: 'v2', videoPath: '/abs/v2.mp4' }),
+    ]
+    const { container } = wrap(
+      <ResultsTable items={items} mediaType="video" onShowDetail={vi.fn()} />
+    )
+    const cells = container.querySelectorAll('.image-cell.clickable')
+
+    fireEvent.mouseEnter(cells[0])
+
+    const videos = container.querySelectorAll('video')
+    expect(videos).toHaveLength(1)
+    expect(videos[0].getAttribute('src')).toBe('file:///abs/v1.mp4')
+
+    fireEvent.mouseLeave(cells[0])
+
+    expect(container.querySelectorAll('video')).toHaveLength(0)
+  })
+
+  it('frame-pair mediaType도 첫 렌더에서는 placeholder와 재생 오버레이만 표시한다', () => {
+    const items = [
+      baseItem({
+        id: 'fp1',
+        status: 'complete',
+        base64: 'AAAA',
+        image: null,
+      }),
+    ]
+    const { container } = wrap(
+      <ResultsTable items={items} mediaType="frame-pair" onShowDetail={vi.fn()} />
+    )
+
+    expect(container.querySelectorAll('video')).toHaveLength(0)
+    expect(container.querySelector('.video-placeholder')).toBeInTheDocument()
+    expect(container.querySelector('.play-button-overlay')).toBeInTheDocument()
+  })
+
+  it('frame-pair mediaType은 hover 시점에 <video>를 mount한다', () => {
+    const items = [
+      baseItem({
+        id: 'fp1',
+        status: 'complete',
+        base64: 'AAAA',
+        image: null,
+      }),
+    ]
+    const { container } = wrap(
+      <ResultsTable items={items} mediaType="frame-pair" onShowDetail={vi.fn()} />
+    )
+
+    fireEvent.mouseEnter(container.querySelector('.image-cell.clickable'))
+
+    const video = container.querySelector('video')
+    expect(video).toBeInTheDocument()
+    expect(video.getAttribute('src')).toBe('data:video/mp4;base64,AAAA')
+  })
+
+  it('video thumbnail click 동작은 기존처럼 onShowDetail을 호출한다', () => {
+    const onShowDetail = vi.fn()
+    const item = videoItem({ id: 'v1' })
+    const { container } = wrap(
+      <ResultsTable items={[item]} mediaType="video" onShowDetail={onShowDetail} />
+    )
+
+    fireEvent.click(container.querySelector('.image-cell.clickable'))
+
+    expect(onShowDetail).toHaveBeenCalledTimes(1)
+    expect(onShowDetail).toHaveBeenCalledWith(item)
   })
 })
