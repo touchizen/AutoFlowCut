@@ -881,15 +881,29 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             try {
               const pj = JSON.parse(fs.readFileSync(pjPath, 'utf-8'));
               const existingScenes = pj.scenes || [];
-              if (existingScenes.length === scenes.length) {
-                // 씬 갯수 동일 → 인덱스 기반 매핑 보존
+              // R9 review fix: _sceneNum 우선 매칭 → reorder/insert 안전. 둘 다
+              // _sceneNum 가지면 stable key 로 매핑 (renderer parseFromCSV 와 동일
+              // 전략). 둘 중 한쪽이라도 _sceneNum 없으면 옛 동작 (길이 동일 시 인덱스 매핑).
+              const existingByNum = new Map();
+              existingScenes.forEach(s => {
+                if (s._sceneNum != null) existingByNum.set(s._sceneNum, s);
+              });
+              if (existingByNum.size > 0) {
+                scenes.forEach(s => {
+                  const existing = existingByNum.get(s._sceneNum);
+                  if (!existing) return;
+                  if (existing.mediaId) s.mediaId = existing.mediaId;
+                  if (existing.imagePath) s.imagePath = existing.imagePath;
+                  if (existing.status === 'done') s.status = 'done';
+                });
+              } else if (existingScenes.length === scenes.length) {
+                // 옛 동작 fallback — 길이 동일 시 인덱스 매핑
                 existingScenes.forEach((existing, i) => {
                   if (existing.mediaId) scenes[i].mediaId = existing.mediaId;
                   if (existing.imagePath) scenes[i].imagePath = existing.imagePath;
                   if (existing.status === 'done') scenes[i].status = 'done';
                 });
               }
-              // 씬 갯수 다르면 매핑 초기화 (이미지 재생성 필요)
             } catch { /* project.json 파싱 실패 시 무시 */ }
           }
         }

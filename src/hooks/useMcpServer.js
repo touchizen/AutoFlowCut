@@ -227,24 +227,32 @@ export function useMcpServer({
         // pending → full regeneration of an entire episode (ep4 sat-fire).
         setScenes(prev => {
           const byId = new Map(prev.map(s => [s.id, s]))
+          // R9 review fix: incoming._sceneNum 우선 매칭 (renderer parseFromCSV
+          // 와 같은 전략). MCP bundler 가 매번 scene_1/2 새 id 부여하므로 id 만
+          // 으로 매칭하면 reorder/insert 시 generated image 가 엉뚱한 prompt 에
+          // 붙음. _sceneNum 매칭 → id fallback → index fallback 순.
+          const byNum = new Map()
+          prev.forEach(s => { if (s._sceneNum != null) byNum.set(s._sceneNum, s) })
+          const prevHasSceneNums = byNum.size > 0
           return (data.scenes || []).map((incoming, i) => {
             const id = incoming.id || `scene_${i + 1}`
-            const existing = byId.get(id)
-            if (!existing) {
+            const matched = (incoming._sceneNum != null && byNum.get(incoming._sceneNum))
+              || byId.get(id)
+              || (prevHasSceneNums ? null : prev[i])
+            if (!matched) {
               return { ...incoming, id, status: incoming.status || 'pending' }
             }
             return {
               ...incoming,                             // CSV-authoritative: prompt, subtitle, characters, scene_tag, etc.
-              id,
-              image: existing.image,                   // preserve in-memory image payload (if any)
-              imagePath: existing.imagePath,           // preserve saved image path
-              status: existing.status || incoming.status || 'pending',
-              mediaId: existing.mediaId,
-              generatingStartedAt: existing.generatingStartedAt,
-              image_size: existing.image_size,
-              // C9 fix: incoming 이 srtLineIds 안 보내면 기존 보존. 옛 MCP 클라이언트는
-              // srtLineIds 를 모르고 scenes 만 전송 → 기존 묶음 정보 잃지 않도록.
-              srtLineIds: incoming.srtLineIds ?? existing.srtLineIds ?? [],
+              id: matched.id,                          // R9 fix: 기존 stable id 유지 (incoming.id 무시)
+              image: matched.image,                    // preserve in-memory image payload (if any)
+              imagePath: matched.imagePath,            // preserve saved image path
+              status: matched.status || incoming.status || 'pending',
+              mediaId: matched.mediaId,
+              generatingStartedAt: matched.generatingStartedAt,
+              image_size: matched.image_size,
+              // C9 fix: incoming 이 srtLineIds 안 보내면 기존 보존
+              srtLineIds: incoming.srtLineIds ?? matched.srtLineIds ?? [],
             }
           })
         })
