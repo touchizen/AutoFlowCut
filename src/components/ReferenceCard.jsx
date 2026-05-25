@@ -67,36 +67,42 @@ export default function ReferenceCard({
   // 파일 처리 공통 함수
   const processFile = async (file) => {
     if (!file || !file.type.startsWith('image/')) return
-    
+
     setIsUploading(true)
-    
-    const reader = new FileReader()
-    reader.onloadend = async () => {
-      const base64 = reader.result
-      
-      onUpdate(index, { 
-        ...reference, 
-        data: base64,
-        mimeType: file.type
-      })
-      
-      // API 업로드
-      if (onUpload) {
-        const cleanBase64 = base64.split(',')[1]
+
+    // T3 review fix: 메모리 절약 — blob URL 을 state.data 에 보관 (binary 는 브라우저
+    // 내부 보유, 문자열은 'blob:http...' 정도로 작음). base64 는 upload payload
+    // 용으로만 일회성 생성 후 GC. 옛 코드는 base64 전체 (원본 ~33% 증가) 를 state
+    // 에 영구 보관 → 여러 ref 업로드 시 누적 메모리.
+    const blobUrl = URL.createObjectURL(file)
+    onUpdate(index, {
+      ...reference,
+      data: blobUrl,
+      mimeType: file.type,
+    })
+
+    if (onUpload) {
+      // upload 시점에만 base64 를 메모리에 잠시 생성
+      const reader = new FileReader()
+      reader.onloadend = async () => {
+        const base64 = reader.result || ''
+        const cleanBase64 = base64.split(',')[1] || ''
         const result = await onUpload(cleanBase64, reference.category)
         if (result.success) {
           onUpdate(index, {
             ...reference,
-            data: base64,
+            data: blobUrl, // base64 안 저장. UI 는 blob URL 로 표시.
             mediaId: result.mediaId,
-            caption: result.caption
+            caption: result.caption,
           })
         }
+        // base64 closure scope 끝 → GC
+        setIsUploading(false)
       }
-      
+      reader.readAsDataURL(file)
+    } else {
       setIsUploading(false)
     }
-    reader.readAsDataURL(file)
   }
   
   const handleFileSelect = async (e) => {
