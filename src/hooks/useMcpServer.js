@@ -41,6 +41,7 @@ export function useMcpServer({
   settings,
   scenes, setScenes,
   references, setReferences,
+  srtTrack = [], setSrtTrack = null,
   handleGenerateRef, handleGenerateScene,
   handleGenerateAllRefs, handleStart, handleStop,
   handleProjectChange, handleExportConfirm,
@@ -244,7 +245,18 @@ export function useMcpServer({
             }
           })
         })
+        // Phase 11: MCP 가 srtTrack 동봉 시 함께 적용 (새 형식 CSV 경로용)
+        if (Array.isArray(data.srtTrack) && setSrtTrack) {
+          setSrtTrack(data.srtTrack)
+          console.log('[MCP] srtTrack synced via HTTP:', data.srtTrack.length)
+        }
         console.log('[MCP] Scenes merged via HTTP:', (data.scenes || []).length)
+      } else if (data.type === 'update-srt-track') {
+        // Phase 11: 자막 트랙만 갱신하고 싶을 때
+        if (Array.isArray(data.srtTrack) && setSrtTrack) {
+          setSrtTrack(data.srtTrack)
+          console.log('[MCP] srtTrack replaced via HTTP:', data.srtTrack.length)
+        }
       } else if (data.type === 'update-scene') {
         setScenes(prev => prev.map((s, i) => i === data.index ? { ...prev[i], ...data.fields } : s))
         console.log('[MCP] Scene', data.index, 'updated via HTTP')

@@ -982,6 +982,8 @@ function App() {
     settings,
     scenes, setScenes,
     references, setReferences,
+    // Phase 11: MCP 가 srtTrack 동기화할 수 있게 setter 전달
+    srtTrack: scenesHook.srtTrack, setSrtTrack: scenesHook.setSrtTrack,
     handleGenerateRef, handleGenerateScene,
     handleGenerateAllRefs, handleStart, handleStop,
     handleProjectChange, handleExportConfirm,
