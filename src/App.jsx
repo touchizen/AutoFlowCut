@@ -215,6 +215,8 @@ function App() {
     videoScenes, setVideoScenes,
     framePairs, setFramePairs,
     selectedStyleRefId, setSelectedStyleRefId,
+    // Phase 7: srtTrack 영속화 (load/save 시 useProjectData 가 동기화)
+    srtTrack: scenesHook.srtTrack, setSrtTrack: scenesHook.setSrtTrack,
     openSettings,
     onAudioSwitch: (audioPath) => audioSwitchRef.current?.(audioPath),
     flowAPI,

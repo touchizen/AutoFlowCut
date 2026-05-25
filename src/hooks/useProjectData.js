@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 import { fileSystemAPI } from './useFileSystem'
 import { syncVideosIntoScenes } from '../services/mediaSync'
 import { recoverInFlightVideos } from '../services/videoRecovery'
+import { migrateLegacyProject } from '../utils/srtTrack'
 
 // 프로젝트 화면비는 project.json 에 프로젝트별로 저장된다. project.json 에 값이
 // 없으면(기능 추가 전 프로젝트 등) 직전 프로젝트 값을 물려받지 않고 이 기본값으로
@@ -324,8 +325,18 @@ export async function loadProjectWithResources(projectName) {
   // sync 는 "scene 에 path 가 없을 때만" 채우므로, 위에서 자체 remap 성공한 path 는 그대로 유지.
   syncVideosIntoScenes(finalScenes, finalVideoScenes, finalFramePairs, '[ProjectData]')
 
-  return {
+  // Phase 7: schemaVersion=2 로 자동 마이그레이션. 옛 프로젝트(srtTrack 없음) 는
+  // 각 씬의 subtitle 을 자막 1개로 등록하고 srtLineIds 를 설정한다. 이미 v2 면 no-op.
+  const migrated = migrateLegacyProject({
+    schemaVersion: result.data.schemaVersion,
+    srtTrack: result.data.srtTrack,
     scenes: finalScenes,
+  })
+
+  return {
+    scenes: migrated.scenes,
+    srtTrack: migrated.srtTrack,
+    schemaVersion: migrated.schemaVersion,
     references: finalReferences,
     videoScenes: finalVideoScenes,
     framePairs: finalFramePairs,
@@ -343,7 +354,7 @@ export async function loadProjectWithResources(projectName) {
  * @returns {Promise<{success:boolean,error?:string}|undefined>} saveProjectData
  *   결과. 저장 대상이 아니면(폴더 모드 아님 / 프로젝트 폴더 없음) undefined.
  */
-async function saveCurrentProject(settings, scenes, references, videoScenes = [], framePairs = [], selectedStyleRefId = null) {
+async function saveCurrentProject(settings, scenes, references, videoScenes = [], framePairs = [], selectedStyleRefId = null, srtTrack = []) {
   if (!settings.projectName || settings.saveMode !== 'folder') return
   const exists = await fileSystemAPI.projectExists(settings.projectName)
   if (!exists) return
@@ -364,6 +375,9 @@ async function saveCurrentProject(settings, scenes, references, videoScenes = []
   const audioFolderPath = localStorage.getItem('audioFolderPath') || null
 
   return await fileSystemAPI.saveProjectData(settings.projectName, {
+    // Phase 7: 새 모델 마킹 + srtTrack 영속화
+    schemaVersion: 2,
+    srtTrack,
     scenes: scenesWithoutImages,
     references: refsWithoutData,
     videoScenes: videoScenesWithoutMedia,
@@ -380,6 +394,7 @@ export function useProjectData({
   videoScenes, setVideoScenes,
   framePairs, setFramePairs,
   selectedStyleRefId = null, setSelectedStyleRefId = null,
+  srtTrack = [], setSrtTrack = null,
   openSettings,
   onAudioSwitch,
   flowAPI = null,
@@ -478,6 +493,7 @@ export function useProjectData({
         setVideoScenes?.(loaded.videoScenes || [])
         setFramePairs?.(loaded.framePairs || [])
         setSelectedStyleRefId?.(loaded.selectedStyleRefId || null)
+        setSrtTrack?.(loaded.srtTrack || [])
         setSettings(s => ({
           ...s,
           projectName: prevProjectName,
@@ -519,7 +535,7 @@ export function useProjectData({
     let switched = false // step 4(setSettings)까지 도달했는지 — 실패 반환값 판정용
     try {
       // 1. 현재 프로젝트 데이터 저장
-      await saveCurrentProject(settings, scenes, references, videoScenes, framePairs, selectedStyleRefId)
+      await saveCurrentProject(settings, scenes, references, videoScenes, framePairs, selectedStyleRefId, srtTrack)
 
       // 2. 새 프로젝트 데이터 로드
       let audioPath = null
@@ -536,6 +552,7 @@ export function useProjectData({
           setVideoScenes?.(loaded.videoScenes || [])
           setFramePairs?.(loaded.framePairs || [])
           setSelectedStyleRefId?.(loaded.selectedStyleRefId || null)
+          setSrtTrack?.(loaded.srtTrack || [])
           audioPath = loaded.audioFolderPath
           // 기존 프로젝트 전환일 때만 project.json 화면비를 복원한다 (신규 생성이면
           // 위에서 정한 opts.aspectRatio 를 유지 — duplicate-name 으로 기존 프로젝트가
@@ -550,6 +567,7 @@ export function useProjectData({
           setVideoScenes?.([])
           setFramePairs?.([])
           setSelectedStyleRefId?.(null)
+          setSrtTrack?.([])
           isFreshProject = true
           console.log('[App] Empty project:', newProjectName)
         }
@@ -585,7 +603,7 @@ export function useProjectData({
         try {
           const res = await saveCurrentProject(
             { ...settings, projectName: newProjectName, aspectRatio: resolvedAspectRatio },
-            [], [], [], [], null
+            [], [], [], [], null, []
           )
           if (res && res.success === false) {
             console.warn('[App] New project save failed:', res.error)
@@ -618,7 +636,7 @@ export function useProjectData({
     // settingsOverride: 설정 저장 시점처럼 setSettings 직후(아직 리렌더 전) 호출할 때
     // 최신 settings 를 명시로 넘겨 stale closure 를 피한다.
     saveCurrentProject: (settingsOverride) =>
-      saveCurrentProject(settingsOverride || settings, scenes, references, videoScenes, framePairs, selectedStyleRefId),
+      saveCurrentProject(settingsOverride || settings, scenes, references, videoScenes, framePairs, selectedStyleRefId, srtTrack),
     isRestoringRef,  // auto-save 가드용
     projectLoading   // 로딩 오버레이용
   }
