@@ -277,7 +277,11 @@ export function useScenes() {
         })
       }
 
-      const merged = recalculateTimesArr(trimTrailingEmptyScenes(remappedScenes, framePairs))
+      // C3 review fix: smart-match 가 이미 scene.startTime/endTime 을 srtTrack
+      // 라인의 절대 시간으로 설정했으니 recalculateTimesArr 로 sequential 재계산
+      // 하면 안 됨 (원본 SRT gap/타이밍이 손실되고 export srtTrack 과 어긋남).
+      // 매칭 안 된 씬은 기존 시간 유지.
+      const merged = trimTrailingEmptyScenes(remappedScenes, framePairs)
       setScenes(() => merged)
       setSrtTrack(newTrack)
       return merged

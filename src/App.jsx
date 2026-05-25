@@ -414,6 +414,8 @@ function App() {
   useAutoSave({
     scenes, references, videoScenes, framePairs,
     selectedStyleRefId,
+    // C17 review fix: srtTrack 변경도 autosave trigger
+    srtTrack: scenesHook.srtTrack,
     settings, generatingRefsCount: generatingRefs.length,
     isRunning, isRestoringRef, saveCurrentProject,
     onSaveError: () => toast.error(t('toast.projectSaveFailed'))

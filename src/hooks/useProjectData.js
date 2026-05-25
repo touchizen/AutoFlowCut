@@ -577,6 +577,9 @@ export function useProjectData({
         setVideoScenes?.([])
         setFramePairs?.([])
         setSelectedStyleRefId?.(null)
+        // C4 review fix: 새 프로젝트 분기에도 srtTrack 리셋 (안 그러면 직전 프로젝트의
+        // srtTrack 이 새 프로젝트로 누수되어 autosave 가 잘못 영속화함)
+        setSrtTrack?.([])
         isFreshProject = true
         console.log('[App] New project created:', newProjectName)
       }

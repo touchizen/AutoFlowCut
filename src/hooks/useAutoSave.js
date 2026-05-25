@@ -8,6 +8,11 @@
 import { useEffect, useRef } from 'react'
 import { TIMING } from '../config/defaults'
 
+// Stable reference for the default srtTrack — using `= []` in the destructure
+// would mint a fresh array per render and falsely trigger the deps array,
+// breaking the "does not re-save when deps unchanged" guarantee.
+const EMPTY_SRT_TRACK = []
+
 /**
  * @param {object} params
  * @param {Array} params.scenes
@@ -25,6 +30,7 @@ import { TIMING } from '../config/defaults'
 export function useAutoSave({
   scenes, references, videoScenes, framePairs,
   selectedStyleRefId = null,
+  srtTrack = EMPTY_SRT_TRACK,
   settings, generatingRefsCount, isRunning,
   isRestoringRef, saveCurrentProject, onSaveError = null
 }) {
@@ -58,5 +64,7 @@ export function useAutoSave({
       }, TIMING.AUTO_SAVE_DEBOUNCE)
       return () => clearTimeout(timer)
     }
-  }, [scenes, references, videoScenes, framePairs, selectedStyleRefId, settings.projectName, settings.saveMode, settings.aspectRatio, generatingRefsCount, isRunning])
+    // C17 review fix: srtTrack 변경도 trigger — MCP update-srt-track 등 자막만
+    // 갱신하는 경로가 autosave 안 되면 종료 시 손실.
+  }, [scenes, references, videoScenes, framePairs, selectedStyleRefId, srtTrack, settings.projectName, settings.saveMode, settings.aspectRatio, generatingRefsCount, isRunning])
 }
