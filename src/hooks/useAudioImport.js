@@ -10,6 +10,12 @@ import { parseSRT, parseSfxTimecodes, buildAudioTracks } from '../utils/audioTim
 import { toast } from '../components/Toast'
 
 export function useAudioImport(t, { onAudioSrtAbsorbed = null } = {}) {
+  // C10 review fix: importAudioPackage 는 useCallback 으로 메모이즈되어 첫 render
+  // 의 onAudioSrtAbsorbed 클로저에 고정. App.jsx 가 매 render 다른 콜백 (다른
+  // scenesHook.srtTrack 클로저) 을 전달해도 옛 콜백이 호출됨. ref 로 항상 최신
+  // 콜백 사용 → 콜백 내부 closure 의 srtTrack 도 최신값.
+  const onAudioSrtAbsorbedRef = useRef(onAudioSrtAbsorbed)
+  onAudioSrtAbsorbedRef.current = onAudioSrtAbsorbed
   const [audioPackage, setAudioPackage] = useState(null)
   const [audioTracks, setAudioTracks] = useState(null)
   const [importing, setImporting] = useState(false)
@@ -228,9 +234,10 @@ export function useAudioImport(t, { onAudioSrtAbsorbed = null } = {}) {
     if (!shouldCommit()) return null
     setAudioPackage(pkg)
 
-    // Phase 12: 폴더 SRT 를 project.srtTrack 으로 흡수.
-    // 호출 측 (App.jsx) 가 "srtTrack 비어있을 때만 흡수" 등의 정책 적용.
-    if (onAudioSrtAbsorbed && srtEntries.length > 0) {
+    // Phase 12: 폴더 SRT 를 project.srtTrack 으로 흡수. C10 review fix: ref 통해
+    // 최신 콜백 사용 (memoized importAudioPackage closure 의 stale callback 회피).
+    const cb = onAudioSrtAbsorbedRef.current
+    if (cb && srtEntries.length > 0) {
       try {
         // parseSRT 는 startMs/endMs (ms 단위). srtTrack 은 startTime/endTime (초 단위).
         const srtTrack = srtEntries.map((entry, i) => ({
@@ -239,7 +246,7 @@ export function useAudioImport(t, { onAudioSrtAbsorbed = null } = {}) {
           endTime: (entry.endMs ?? 0) / 1000,
           text: entry.text || '',
         }))
-        onAudioSrtAbsorbed(srtTrack)
+        cb(srtTrack)
       } catch (e) {
         console.warn('[useAudioImport] onAudioSrtAbsorbed failed:', e)
       }

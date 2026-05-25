@@ -55,6 +55,12 @@ export function useScenes() {
   // 캡처한 변수(newSrtTrack 등)가 setSrtTrack 호출 시점에 undefined 가 된다.
   // import 류 메서드는 ref 로 prev 를 읽고 새 값을 동기 계산해서 양쪽 state 를
   // 모두 동기적으로 갱신한다.
+  //
+  // Review C15 limitation: useEffect 동기화는 commit 후 실행 → 같은 tick 에 다른
+  // setState 가 큐된 직후 import 호출하면 ref 는 한 render 뒤처짐. 실사용 빈도는
+  // 낮지만 (사용자 액션은 render 사이에 분리됨), MCP 자동 시퀀스 등 programmatic
+  // rapid call 에서는 두번째 호출이 첫 호출 결과 못 볼 수 있음. 진정한 fix 는
+  // useState getter 가 필요한데 React 가 제공 안 함.
   const scenesRef = useRef(scenes)
   useEffect(() => { scenesRef.current = scenes }, [scenes])
   const srtTrackRef = useRef(srtTrack)
