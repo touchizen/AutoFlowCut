@@ -8,6 +8,7 @@ import { resolveImageSrc, hasImageData, formatElapsedMs } from '../utils/formatt
 import { toFileUrl } from '../hooks/useStyleThumbnails'
 import { useElapsedTimer } from '../hooks/useElapsedTimer'
 import HoverImageBalloon from './HoverImageBalloon'
+import LazyImage from './LazyImage'
 import './StylePicker.css'
 
 const ALL_CATEGORY = '__all__'
@@ -113,7 +114,7 @@ export default function StylePicker({
               >
                 <div className="sp-thumb">
                   {hasImageData(ref) ? (
-                    <img src={resolveImageSrc(ref)} alt={ref.name} />
+                    <LazyImage src={resolveImageSrc(ref)} alt={ref.name} />
                   ) : (
                     <span className="sp-icon">🖼️</span>
                   )}
@@ -164,10 +165,9 @@ export default function StylePicker({
             >
               <div className="sp-thumb">
                 {thumb ? (
-                  <img
+                  <LazyImage
                     src={toFileUrl(thumb)}
                     alt={styleName}
-                    loading="lazy"
                     onDoubleClick={(e) => {
                       e.stopPropagation()
                       setPreviewStyle({ ...style, thumb })
