@@ -236,9 +236,16 @@ export function useMcpServer({
           const prevHasSceneNums = byNum.size > 0
           return (data.scenes || []).map((incoming, i) => {
             const id = incoming.id || `scene_${i + 1}`
-            const matched = (incoming._sceneNum != null && byNum.get(incoming._sceneNum))
-              || byId.get(id)
-              || (prevHasSceneNums ? null : prev[i])
+            // R11 review fix: prev 에 _sceneNum 있고 incoming 도 가지면 byNum 만
+            // 신뢰. MCP bundler 가 매번 scene_N 새 id 부여 → byId fallback 하면
+            // 새 _sceneNum 의 incoming 이 옛 id 와 충돌해 엉뚱한 image 가 붙음.
+            // _sceneNum 가 어느 쪽이라도 없으면 옛 동작 (id → index) 유지 (legacy 호환).
+            let matched
+            if (prevHasSceneNums && incoming._sceneNum != null) {
+              matched = byNum.get(incoming._sceneNum) || null
+            } else {
+              matched = byId.get(id) || (prevHasSceneNums ? null : prev[i])
+            }
             if (!matched) {
               return { ...incoming, id, status: incoming.status || 'pending' }
             }
