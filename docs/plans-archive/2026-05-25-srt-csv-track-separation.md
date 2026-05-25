@@ -224,6 +224,8 @@ if (headers.includes('scene')) {
 
 ### Phase 1 — 데이터 모델 + 유틸리티
 
+**Completed:** 2026-05-25 (9a864e7)
+
 **Goal:** `srtTrack`/`srtLineIds` 데이터 모델 + 변환 헬퍼 도입. 옛 코드는 아직 건드리지 않음.
 
 **Files:**
@@ -240,6 +242,8 @@ if (headers.includes('scene')) {
 
 ### Phase 2 — SRT Import (새 모델 출력)
 
+**Completed:** 2026-05-25 (ee5e31e)
+
 **Goal:** SRT 파일 import 시 `srtTrack` 채우고 scenes 1:1 생성. 옛 `mergeSRTIntoScenes` 는 호환 경로로 유지.
 
 **Files:**
@@ -253,6 +257,8 @@ if (headers.includes('scene')) {
 - 옛 동작 호환 모드 분기 (옛 프로젝트는 옛 경로로)
 
 ### Phase 3 — 새 CSV Import (`scene` 컬럼 인식)
+
+**Completed:** 2026-05-25 (9d08611)
 
 **Goal:** 새 형식 CSV 파싱. `scene` 번호로 행 그룹화, `srtTrack` + `scenes` 동시 생성.
 
@@ -269,6 +275,8 @@ if (headers.includes('scene')) {
 
 ### Phase 4 — 옛 CSV 호환 Import
 
+**Completed:** 2026-05-25 (ba8464f)
+
 **Goal:** `scene` 컬럼 없는 옛 CSV 도 받음. 옛 동작 그대로 + `srtTrack` 에는 자막 1개로 등록.
 
 **Files:**
@@ -281,6 +289,8 @@ if (headers.includes('scene')) {
 - 옛 동작 회귀 없는지 확인
 
 ### Phase 5 — CapCut Export 갱신
+
+**Completed:** 2026-05-25 (8acba83)
 
 **Goal:** `generateSRT` 가 `srtTrack` 을 사용. 이미지는 씬 묶음 단위로 출력.
 
@@ -296,6 +306,8 @@ if (headers.includes('scene')) {
 
 ### Phase 6 — Scene List UI 갱신
 
+**Completed:** 2026-05-25 (1cbecb9)
+
 **Goal:** 씬 목록에서 묶인 자막을 한 셀에 합쳐 표시. duration 도 자동 계산값 표시.
 
 **Files:**
@@ -308,6 +320,8 @@ if (headers.includes('scene')) {
 - 묶인 자막이 시각적으로 구분되도록 (예: 줄바꿈 또는 항목별 마커)
 
 ### Phase 7 — Existing Project Migration
+
+**Completed:** 2026-05-25 (3d19eaf)
 
 **Goal:** 옛 형식 프로젝트가 처음 열릴 때 자동으로 새 모델 변환.
 
@@ -322,6 +336,8 @@ if (headers.includes('scene')) {
 
 ### Phase 8 — CSV Sample + Guide Update
 
+**Completed:** 2026-05-25 (10be881) — 가이드 사이트 변경은 별도 PR (Windows)
+
 **Goal:** 새 형식 CSV 샘플 + LLM 프롬프트 가이드 갱신.
 
 **Files:**
@@ -334,6 +350,8 @@ if (headers.includes('scene')) {
 - 가이드 anchor 변경 시 ImportModal 의 URL도 동기화
 
 ### Phase 9 — SRT 재import 가드 + 스마트 매칭 다이얼로그
+
+**Completed:** 2026-05-25 (5bac00f) — matcher + auto-apply. 5-option 모달은 deferred (별도 phase 로 분리 가능)
 
 **Goal:** 옛 방식 프로젝트에서 SRT import 차단. 새 방식 프로젝트는 라인 수 변경 시 텍스트 유사도 기반 자동 매칭을 시도해 묶음을 최대한 보존, 사용자가 선택할 수 있게.
 
@@ -392,6 +410,8 @@ if (headers.includes('scene')) {
 
 ### Phase 10 — Integration Test + E2E 시나리오
 
+**Completed:** 2026-05-25 (c729c6f)
+
 **Goal:** 두 형식 혼용 / 마이그레이션 / 재import 등 E2E 시나리오 통합 테스트.
 
 **Files:**
@@ -412,6 +432,8 @@ if (headers.includes('scene')) {
 
 ### Phase 11 — MCP SRT 경로 통합
 
+**Completed:** 2026-05-25 (2d50efb) — app-side receiver. mcp-server detection 은 후속 (현재 호환 동작 유지)
+
 **Goal:** MCP 를 통한 자막 수신 시에도 `srtTrack` 이 채워지도록 통합. MCP scenes 묶기와 export 결과 일치.
 
 **Files:**
@@ -428,6 +450,8 @@ if (headers.includes('scene')) {
 - 기존 MCP 도구 (`load_csv` 등) 의 응답 스펙 문서 갱신
 
 ### Phase 12 — Audio Package SRT 통합
+
+**Completed:** 2026-05-25 (f3533eb) — 충돌 다이얼로그는 deferred (현재는 "비어있을 때만 흡수" 정책 + audioPackage.srtContent fallback)
 
 **Goal:** Audio 폴더 import 시 SRT 를 `project.srtTrack` 으로 흡수. [capcutCloud.js:544](../../src/exporters/capcutCloud.js#L544) 의 audioPackage 분기 제거.
 
@@ -460,6 +484,8 @@ if (headers.includes('scene')) {
 ```
 
 ### Phase 13 — Multi-source 통합 테스트 + Export 일관성 검증
+
+**Completed:** 2026-05-25 (363da6c)
 
 **Goal:** 세 import 경로 + audioPackage 가 모두 같은 export SRT 를 만드는지 검증.
 
