@@ -170,12 +170,19 @@ export function useScenes() {
         allocateSceneId,
         defaultDuration,
       })
-      // C6 fix: 기존 씬의 image/imagePath/status/mediaId/generatingStartedAt/image_size 등
-      // 런타임 필드를 인덱스 기반으로 보존 (CSV 가 명시한 필드만 갱신).
-      // 그렇지 않으면 prompt 수정 위해 CSV 재import 시 생성된 이미지 전부 손실 (regression).
+      // C6 + R5 review fix: 기존 씬의 런타임 필드를 보존하되, 매칭 키는 CSV scene 번호
+      // (_sceneNum). prev 에 _sceneNum 있는 씬이 하나라도 있으면 sceneNum 매칭만
+      // 사용 (insert/reorder 안전 — 매칭 안 되는 parsed 씬은 진짜 신규로 취급).
+      // prev 에 _sceneNum 가 전혀 없으면 (legacy SRT/CSV 에서 온 경우) index fallback.
       const prev = scenesRef.current || []
+      const prevByNum = new Map()
+      prev.forEach(s => {
+        if (s._sceneNum != null) prevByNum.set(s._sceneNum, s)
+      })
+      const prevHasSceneNums = prevByNum.size > 0
       const mergedScenes = parsed.scenes.map((parsedScene, i) => {
-        const existing = prev[i]
+        const existing = prevByNum.get(parsedScene._sceneNum)
+          || (prevHasSceneNums ? null : prev[i])
         if (!existing) return parsedScene
         return {
           ...parsedScene,

@@ -326,6 +326,9 @@ export function parseSceneCSVToTracks(csvText, options = {}) {
     scenes.push({
       id: sceneId,
       srtLineIds,
+      // R5 review fix: CSV 의 scene 번호를 stable key 로 보존. parseFromCSV 재import
+      // 시 sceneNum 매칭 → reorder/insert 에도 image/status 가 올바른 prompt 따라감.
+      _sceneNum: group.sceneNum,
       startTime: groupStart,
       endTime: groupEnd,
       duration: groupEnd - groupStart,
