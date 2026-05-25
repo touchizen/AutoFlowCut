@@ -65,11 +65,15 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
       // handleSave 의 `!editData.filePath` 가드가 saveReference 를 새로 호출 →
       // 디스크에도 새 이미지가 기록되고 resolveImageSrc 도 새 이미지 표시.
       // handleRestoreHistory (line 104) 가 이미 같은 정책 사용.
+      // R32 review fix: mediaId/caption 도 클리어. Flow upload 실패 (result.mediaId
+      // null) 시 옛 mediaId 유지하면 자동화 (useAutomation.js:428) 가 새 이미지를
+      // 안 올리고 옛 mediaId 를 그대로 주입 → 새 이미지 무시. 새 result 가 있을
+      // 때만 그 값으로 채움.
       setEditData(prev => ({
         ...prev,
         data: result.data,
-        mediaId: result.mediaId || prev.mediaId,
-        caption: result.caption || prev.caption,
+        mediaId: result.mediaId || null,
+        caption: result.caption || null,
         filePath: null,
         dataStorage: null,
         // cache bust (R27)
