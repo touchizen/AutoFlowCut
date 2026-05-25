@@ -234,8 +234,19 @@ export function useMcpServer({
           const byNum = new Map()
           prev.forEach(s => { if (s._sceneNum != null) byNum.set(s._sceneNum, s) })
           const prevHasSceneNums = byNum.size > 0
+          // R15 review fix: result 의 id 가 유니크해야 React key/state 가 깨지지
+          // 않음. taken 추적 — 이미 prev 에 있거나 result 에 이미 할당된 id 와
+          // 충돌하면 fresh scene_N (max+1) 할당.
+          const taken = new Set(prev.map(s => s.id))
+          let nextFreshN = 1
+          const freshId = () => {
+            while (taken.has(`scene_${nextFreshN}`)) nextFreshN++
+            const fid = `scene_${nextFreshN}`
+            nextFreshN++
+            return fid
+          }
           return (data.scenes || []).map((incoming, i) => {
-            const id = incoming.id || `scene_${i + 1}`
+            const incomingId = incoming.id || `scene_${i + 1}`
             // R11 review fix: prev 에 _sceneNum 있고 incoming 도 가지면 byNum 만
             // 신뢰. MCP bundler 가 매번 scene_N 새 id 부여 → byId fallback 하면
             // 새 _sceneNum 의 incoming 이 옛 id 와 충돌해 엉뚱한 image 가 붙음.
@@ -244,11 +255,22 @@ export function useMcpServer({
             if (prevHasSceneNums && incoming._sceneNum != null) {
               matched = byNum.get(incoming._sceneNum) || null
             } else {
-              matched = byId.get(id) || (prevHasSceneNums ? null : prev[i])
+              matched = byId.get(incomingId) || (prevHasSceneNums ? null : prev[i])
+            }
+            // R15: 한 prev 가 두 incoming 에 매칭되면 두번째는 fresh id 필요.
+            // 매칭 즉시 maps 에서 제거해 다음 incoming 이 동일 prev 재매칭 못 하게.
+            if (matched) {
+              byId.delete(matched.id)
+              if (matched._sceneNum != null) byNum.delete(matched._sceneNum)
             }
             if (!matched) {
-              return { ...incoming, id, status: incoming.status || 'pending' }
+              // R15: incoming.id 충돌하면 fresh id
+              const assignedId = taken.has(incomingId) ? freshId() : incomingId
+              taken.add(assignedId)
+              return { ...incoming, id: assignedId, status: incoming.status || 'pending' }
             }
+            // matched: matched.id 는 prev 에서 왔으니 이미 taken — 중복 체크 불필요
+            taken.add(matched.id)
             return {
               ...incoming,                             // CSV-authoritative: prompt, subtitle, characters, scene_tag, etc.
               id: matched.id,                          // R9 fix: 기존 stable id 유지 (incoming.id 무시)
