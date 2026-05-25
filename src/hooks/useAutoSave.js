@@ -38,6 +38,11 @@ export function useAutoSave({
   // 새 클로저여도 autosave 타이머가 재예약되지 않게.
   const onSaveErrorRef = useRef(onSaveError)
   onSaveErrorRef.current = onSaveError
+  // S2 review fix: saveCurrentProject 도 동일 패턴. useProjectData 가 매 render
+  // 새 closure 로 만드는데 deps 에 넣으면 매 render 마다 timer 재예약 → autosave
+  // 무력화. 안 넣으면 stale closure 위험. ref 로 최신성 유지하고 deps 에서 제외.
+  const saveCurrentProjectRef = useRef(saveCurrentProject)
+  saveCurrentProjectRef.current = saveCurrentProject
   // 저장 실패가 연속될 때 토스트 도배 방지 — 실패 streak 의 첫 건에서만 알린다.
   const saveFailedRef = useRef(false)
 
@@ -48,7 +53,7 @@ export function useAutoSave({
     if (settings.saveMode === 'folder' && settings.projectName) {
       const timer = setTimeout(async () => {
         if (isRestoringRef?.current) return
-        const res = await saveCurrentProject()
+        const res = await saveCurrentProjectRef.current()
         if (res && res.success === false) {
           // 생성 직후 등 autosave 실패 — 조용히 묻으면 이미지는 있는데 메타가
           // 유실된다. 사용자에게 보이게 한다.

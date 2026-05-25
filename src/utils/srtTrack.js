@@ -92,6 +92,10 @@ export function createSrtTrackFromScenes(scenes) {
   const srtTrack = []
   const newScenes = []
   let cursor = 0
+  // S3 review fix: 옛 코드는 매 iteration 마다 allocateSrtLineId(srtTrack) 가
+  // srtTrack 전체를 훑어서 max 찾음 → 전체 O(N²). srtTrack 을 처음부터 만드는
+  // 단방향 빌드이므로 카운터 한 번만 유지하면 O(N).
+  let maxIdN = 0
 
   for (const scene of scenes) {
     const subtitle = scene?.subtitle
@@ -103,7 +107,8 @@ export function createSrtTrackFromScenes(scenes) {
     cursor = end
 
     if (subtitle && String(subtitle).length > 0) {
-      const id = allocateSrtLineId(srtTrack)
+      maxIdN += 1
+      const id = `sub_${maxIdN}`
       srtTrack.push({ id, startTime: start, endTime: end, text: String(subtitle) })
       newScenes.push({ ...scene, srtLineIds: [id] })
     } else {
