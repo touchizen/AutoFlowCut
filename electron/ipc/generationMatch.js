@@ -38,6 +38,14 @@ function sameIds(a, b) {
 
 // tie-break 용 시그니처 — refMediaIds / seed / imageAspectRatio 는 injectImageBatchBody 가
 // requests[] 의 각 항목에 직접 세팅하는 확정 필드명이라 JSON 파싱으로 안전하게 읽는다.
+//
+// reference image 추출은 두 포맷을 모두 지원해야 한다:
+//   (1) imageInputs[] — 현재 Google Flow protobuf 가 요구하는 정식 포맷.
+//       [{ imageInputType: 'IMAGE_INPUT_TYPE_REFERENCE', name: <mediaId> }]
+//   (2) referenceImages[] — 레거시. 한때 우리 monkey-patch 가 잘못 보내던 필드명.
+//       Google 이 unknown field 로 400 INVALID_ARGUMENT 를 던지지만, 본 매칭은
+//       outgoing 요청 본문을 보는 것이므로 server 거부와 무관하게 안전한 폴백.
+// 둘 다 비어 있으면 [] — refs 없는 일반 생성과 동일하게 처리된다.
 function parseSignature(requestBody) {
   let parsed
   try {
@@ -47,10 +55,20 @@ function parseSignature(requestBody) {
   }
   const first = Array.isArray(parsed?.requests) ? parsed.requests[0] : null
   if (!first) return null
+
+  let refMediaIds = []
+  if (Array.isArray(first.imageInputs) && first.imageInputs.length > 0) {
+    refMediaIds = first.imageInputs
+      .filter((x) => x?.imageInputType === 'IMAGE_INPUT_TYPE_REFERENCE')
+      .map((x) => x?.name)
+      .filter(Boolean)
+      .sort()
+  } else if (Array.isArray(first.referenceImages)) {
+    refMediaIds = first.referenceImages.map((x) => x?.mediaId).filter(Boolean).sort()
+  }
+
   return {
-    refMediaIds: Array.isArray(first.referenceImages)
-      ? first.referenceImages.map((x) => x?.mediaId).filter(Boolean).sort()
-      : [],
+    refMediaIds,
     seed: typeof first.seed === 'number' ? first.seed : null,
     aspectRatio: typeof first.imageAspectRatio === 'string' ? first.imageAspectRatio : null,
   }

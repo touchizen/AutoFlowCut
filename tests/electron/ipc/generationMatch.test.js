@@ -123,6 +123,70 @@ describe('matchGenerationForResponse', () => {
     expect(matchGenerationForResponse(pending, body)).toBe(null)
   })
 
+  // === imageInputs[] format (현재 정식) — 2026-05-26 regression fix ===
+  // monkey-patch (flow-page-injection.js) 가 보내는 reference 필드는 protobuf
+  // 정식 포맷인 imageInputs[]: [{ imageInputType: 'IMAGE_INPUT_TYPE_REFERENCE', name: <mediaId> }].
+  // parseSignature 가 이 새 포맷에서 refMediaIds 를 못 뽑으면 모든 ref 가 있는 gen 의
+  // 응답이 시그니처 mismatch 로 폐기돼 180s timeout 으로 끝난다 — 실제 회귀 발생함.
+  it('tie-breaks same-prompt gens by imageInputs[] (modern Flow request format)', () => {
+    const pending = new Map()
+    pending.set('gen-A', gen('same prompt', { refMediaIds: ['m1'] }))
+    pending.set('gen-B', gen('same prompt', { refMediaIds: ['m2'] }))
+
+    const body = JSON.stringify({
+      requests: [{
+        prompt: 'same prompt',
+        imageInputs: [{ imageInputType: 'IMAGE_INPUT_TYPE_REFERENCE', name: 'm2' }],
+      }],
+    })
+
+    expect(matchGenerationForResponse(pending, body)).toBe('gen-B')
+  })
+
+  it('matches a single-pending gen whose refs were sent as imageInputs[]', () => {
+    // 실제 회귀 시나리오: 씬 1개 생성, refs 3장 → imageInputs[] 로 전송 →
+    // 응답이 매칭 안 돼 폐기 → 180s timeout.
+    const pending = new Map()
+    pending.set('gen-only', gen('scholar reading under a tree', {
+      refMediaIds: ['ref-1', 'ref-2', 'ref-3'],
+    }))
+
+    const body = JSON.stringify({
+      clientContext: { recaptchaContext: { token: 'x' } },
+      requests: [{
+        userInput: 'scholar reading under a tree',
+        imageAspectRatio: 'IMAGE_ASPECT_RATIO_LANDSCAPE',
+        seed: 753942,
+        imageInputs: [
+          { imageInputType: 'IMAGE_INPUT_TYPE_REFERENCE', name: 'ref-1' },
+          { imageInputType: 'IMAGE_INPUT_TYPE_REFERENCE', name: 'ref-2' },
+          { imageInputType: 'IMAGE_INPUT_TYPE_REFERENCE', name: 'ref-3' },
+        ],
+      }],
+    })
+
+    expect(matchGenerationForResponse(pending, body)).toBe('gen-only')
+  })
+
+  it('ignores non-reference imageInputs[] entries when extracting refMediaIds', () => {
+    // imageInputs[] 는 reference 외 다른 imageInputType (예: IMAGE_INPUT_TYPE_OTHER) 도
+    // 담을 수 있다. refMediaIds 시그니처는 IMAGE_INPUT_TYPE_REFERENCE 만 봐야 한다.
+    const pending = new Map()
+    pending.set('gen-A', gen('same prompt', { refMediaIds: ['ref-1'] }))
+
+    const body = JSON.stringify({
+      requests: [{
+        prompt: 'same prompt',
+        imageInputs: [
+          { imageInputType: 'IMAGE_INPUT_TYPE_OTHER', name: 'other-1' },
+          { imageInputType: 'IMAGE_INPUT_TYPE_REFERENCE', name: 'ref-1' },
+        ],
+      }],
+    })
+
+    expect(matchGenerationForResponse(pending, body)).toBe('gen-A')
+  })
+
   it('matches the prompt regardless of its field name or nesting in the request body', () => {
     // 회귀: 실제 batchGenerateImages body 는
     //   { clientContext: { recaptchaContext: { token } }, requests: [...] }

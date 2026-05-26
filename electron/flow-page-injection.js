@@ -43,13 +43,26 @@ export const FLOW_PAGE_INJECTION = /* js */ `
 
   // ─── injectImageBatchBody ──────────────────────────────────────
   // Returns true if body was modified.
+  //
+  // Reference images MUST go into imageInputs[] with shape
+  //   { imageInputType: 'IMAGE_INPUT_TYPE_REFERENCE', name: <mediaId> }
+  // — Google's batchGenerateImages protobuf rejects a flat 'referenceImages'
+  // field with HTTP 400 INVALID_ARGUMENT / "Unknown name 'referenceImages'
+  // … Cannot find field". Pinned by tests/electron/flow-page-injection.test.js
+  // and (for the response-side parser) tests/electron/ipc/generationMatch.test.js.
   function injectImageBatchBody(body, inject) {
     if (!Array.isArray(body.requests)) return false
     let modified = false
     for (const req of body.requests) {
       if (inject.seed != null)       { req.seed = inject.seed;                        modified = true }
       if (inject.aspectRatio)        { req.imageAspectRatio = inject.aspectRatio;     modified = true }
-      if (inject.references)         { req.referenceImages  = inject.references;      modified = true }
+      if (inject.references && inject.references.length > 0) {
+        if (!req.imageInputs) req.imageInputs = []
+        for (const ref of inject.references) {
+          req.imageInputs.push({ imageInputType: 'IMAGE_INPUT_TYPE_REFERENCE', name: ref.mediaId })
+        }
+        modified = true
+      }
     }
     return modified
   }
