@@ -1,7 +1,7 @@
 {
   "name": "autoflowcut",
-  "version": "0.9.14",
-  "buildNumber": 733,
+  "version": "0.9.15",
+  "buildNumber": 734,
   "description": "AutoFlowCut - Automate AI video creation from Google Flow to CapCut projects",
   "main": "dist-electron/main.js",
   "type": "module",
@@ -41,6 +41,7 @@
   "private": true,
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
+    "@sentry/electron": "^7.13.0",
     "dotenv": "^17.3.1",
     "electron-updater": "^6.8.3",
     "firebase": "^12.9.0",

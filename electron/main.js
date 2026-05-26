@@ -22,6 +22,7 @@ import { selectCdpCase } from './video-cdp-dispatch.js'
 import { injectImageBatchBody } from './cdp-image-inject.js'
 import { FLOW_PAGE_INJECTION } from './flow-page-injection.js'
 import { matchGenerationForResponse } from './ipc/generationMatch.js'
+import { initSentryMain } from './sentry-init.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -104,6 +105,10 @@ process.on('uncaughtException', (err) => {
 
 // Load .env from project root
 dotenv.config({ path: path.join(__dirname, '..', '.env') })
+
+// Initialize Sentry as early as possible after env is loaded so subsequent
+// errors are captured. No-op when ENABLE_SENTRY != '1' or DSN missing.
+initSentryMain()
 
 // === Flow API URLs ===
 const FLOW_URL = 'https://labs.google/fx/tools/flow'

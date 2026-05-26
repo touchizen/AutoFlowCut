@@ -22,6 +22,16 @@ export default defineConfig(({ mode }) => {
 
   const isProduction = mode === 'production'
 
+  // Sentry env vars to inline into main process bundle so packaged builds
+  // (which don't ship .env) still get the DSN/toggle at runtime. Renderer
+  // already gets VITE_* via import.meta.env automatically.
+  const mainDefine = {
+    'process.env.SENTRY_DSN': JSON.stringify(env.SENTRY_DSN || ''),
+    'process.env.ENABLE_SENTRY': JSON.stringify(env.ENABLE_SENTRY || '0'),
+    'process.env.SENTRY_TRACES_SAMPLE_RATE': JSON.stringify(env.SENTRY_TRACES_SAMPLE_RATE || '0.1'),
+    'process.env.VITE_FUNCTION_ENV': JSON.stringify(functionEnv),
+  }
+
   return {
     plugins: [
       react(),
@@ -32,6 +42,7 @@ export default defineConfig(({ mode }) => {
           entry: 'electron/main.js',
           onstart(args) { args.startup() },
           vite: {
+            define: mainDefine,
             build: {
               outDir: 'dist-electron',
               rollupOptions: {
