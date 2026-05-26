@@ -1,4 +1,4 @@
-# AutoFlowCut — Microsoft Store Listing (v0.9.12)
+# AutoFlowCut — Microsoft Store Listing (v0.9.13)
 
 ---
 
@@ -156,17 +156,15 @@ Disclaimer: This app is an independent product developed by Touchizen and is not
 
 ### What's New
 ```
-v0.9.12 — Token-expiry auto-refresh + Regenerate All + sticky scene rows
+v0.9.13 — Smarter subtitles, lighter memory
 
-- 1-hour batch deaths fixed: Google's access token (~1 h) is now refreshed silently in the background — no prompt, no restart, no lost work. Covers images, T2V/I2V, upscale, gallery, and status polling.
-- Regenerate All: split-menu on the generate button re-runs every item in the current view (images / videos / F→V) at once.
-- Scene rows stay attached to their content: F→V rows are now permanently bound to their scene. Reorder, delete, or import a new SRT — rows and videos stay with the right scene.
-- Scene count auto-adjusts to the largest of images / videos / F→V / SRT. Trailing empty scenes get cleaned up.
-- Delete preview: shows image, subtitle, prompt, and generated T2V/I2V before you confirm.
-- F→V "Add Row" creates scene + row together (instant feedback).
-- Stops immediately on out_of_credits instead of failing every remaining scene.
-- Import cleanup: CSV keeps row positions with blanks; video CSV accepts prompt_en aliases; SRT no longer overwrites prompts.
-- i18n polish, IPC listener memory-leak fix, T2V clear now empties the scene.
+- Group multiple subtitle lines into one scene: keep the original SRT timing for narration videos while merging related lines onto a single image. New CSV format with a "scene" column.
+- SRT re-import conflict dialog: re-importing an SRT no longer wipes your work. Pick "Replace subtitles only" (keeps prompts, images, and videos) or "Smart merge" with fuzzy line matching.
+- Narration SRT in your audio folder is auto-absorbed into the scene's subtitle track — one source of truth, no double-tracking.
+- Exported subtitles use the raw SRT timing, so lines that aren't linked to a scene yet still make it into the CapCut project.
+- Browse 100+ video scenes without memory spikes: videos in Scene List and Results Table only mount on hover; image thumbnails unload off-screen and snap back in when scrolled.
+- Real video poster thumbnails replace black placeholders.
+- Reliability: reference uploads always persist to disk and survive reload; replacing a reference now clears the old file cleanly.
 ```
 
 ### Keywords
@@ -330,17 +328,15 @@ Touchizen 제작 — touchizen.com
 
 ### What's New (새로운 기능)
 ```
-v0.9.12 — 토큰 만료 자동 갱신 + 전체 재생성 + 안 떨어지는 씬 행
+v0.9.13 — 더 똑똑한 자막, 더 가벼운 메모리
 
-- 1시간 배치 끊김 해결: Google 액세스 토큰(약 1시간)을 백그라운드에서 조용히 갱신합니다 — 팝업·재시작·작업 손실 없음. 이미지/T2V/I2V/업스케일/갤러리/상태 폴링까지 모두 포함.
-- 전체 재생성(Regenerate All): 생성 버튼에 분할 메뉴 추가 — 현재 뷰의 모든 항목(이미지/비디오/F→V)을 한 번에 재생성.
-- 씬 행이 콘텐츠에 묶입니다: F→V 행은 생성된 씬에 영구 바인딩. 순서 변경·삭제·새 SRT 임포트해도 행과 비디오가 올바른 씬에 그대로 남습니다.
-- 씬 개수 자동 조정: 이미지/비디오/F→V/SRT 중 최대값에 맞춰 늘어나고, 뒤쪽 빈 씬은 자동 정리.
-- 삭제 미리보기: 확정 전에 이미지·자막·프롬프트·생성된 T2V/I2V를 함께 표시.
-- F→V "Add Row"가 씬+행을 함께 생성 (즉시 피드백).
-- out_of_credits 응답 시 남은 씬에서 줄줄이 실패하지 않고 배치를 즉시 정지.
-- 임포트 정리: CSV가 빈 행에서도 행 위치 유지, 비디오 CSV는 prompt_en 등 컬럼 별칭 인식, SRT가 프롬프트를 덮어쓰지 않음.
-- i18n 다듬기, 장시간 세션 IPC 메모리 누수 수정, T2V 클리어가 씬을 실제로 비웁니다.
+- 여러 자막 줄을 하나의 씬으로 묶기: 나레이션 영상에서 원본 SRT 타이밍은 그대로 살리면서, 관련 자막 줄을 한 장의 이미지에 모아 보여줍니다. 신규 CSV 형식에 'scene' 컬럼 추가.
+- SRT 재임포트 충돌 다이얼로그: 기존 프로젝트에 SRT를 다시 불러올 때 작업이 날아가지 않습니다. "자막만 교체"(프롬프트·이미지·비디오 유지) 또는 "스마트 병합"(유사 줄 자동 매칭) 중 선택.
+- 오디오 폴더의 나레이션 SRT가 씬의 자막 트랙으로 자동 흡수 — 한 곳에서만 관리하면 됩니다.
+- 내보내기 자막은 원본 SRT 타임코드를 그대로 사용. 아직 씬에 연결되지 않은 줄도 빠짐없이 CapCut 프로젝트에 들어갑니다.
+- 100개 이상의 비디오 씬을 메모리 폭주 없이 탐색: Scene List와 Results Table의 비디오는 호버 시에만 로드되고, 이미지 썸네일은 화면 밖으로 나가면 언로드, 다시 스크롤하면 즉시 복귀.
+- 검은 플레이스홀더 대신 실제 비디오 첫 프레임 썸네일 표시.
+- 안정성: 레퍼런스 업로드가 디스크에 항상 저장되어 재시작 후에도 유지, 레퍼런스 교체 시 이전 파일이 깔끔하게 정리됩니다.
 ```
 
 ### Keywords (한국어)
@@ -409,17 +405,15 @@ AutoFlowCutは、Google Flow（Veo）のAI画像・動画生成を、すぐに�
 
 ### What's New
 ```
-v0.9.12 — トークン期限切れ自動更新 + 全件再生成 + ズレないシーン行
+v0.9.13 — よりスマートな字幕、より軽いメモリ
 
-- 1時間バッチ落ち解消：Google アクセストークン（約1時間）をバックグラウンドで静かに更新 — ポップアップ・再起動・作業損失なし。画像/T2V/I2V/アップスケール/ギャラリー/ステータスに対応。
-- 全件再生成（Regenerate All）：生成ボタンの分割メニューで現在のビュー（画像/動画/F→V）の全項目を一度に再生成。
-- シーン行がコンテンツに紐づいたまま：F→V 行は生成元シーンに恒久バインド。並べ替え・削除・新しい SRT 取り込みでも行と動画が正しいシーンに残ります。
-- シーン数の自動調整：画像/動画/F→V/SRT の最大値に合わせて伸び、末尾の空シーンは自動整理。
-- プレビュー付き削除確認：確定前に画像・字幕・プロンプト・生成済み T2V/I2V を表示。
-- F→V「Add Row」がシーン+行を同時生成（即時反映）。
-- out_of_credits で残り全シーン失敗ではなくバッチを即停止。
-- インポート整理：CSV は空行があっても行位置を保持、動画 CSV は prompt_en などの列エイリアスを認識、SRT がプロンプトを上書きしない。
-- i18n の磨き直し、長時間セッションでの IPC メモリリーク修正、T2V クリアがシーンを実際に空に。
+- 複数の字幕行を1つのシーンにまとめる：ナレーション動画で元のSRTタイミングを保ちつつ、関連する字幕行を1枚の画像に集約。新CSV形式に「scene」カラムを追加。
+- SRT再インポート競合ダイアログ：既存プロジェクトにSRTを再読み込みしても作業が消えません。「字幕のみ置き換え」（プロンプト・画像・動画は維持）または「スマートマージ」（あいまい行マッチング）を選択。
+- 音声フォルダ内のナレーションSRTがシーンの字幕トラックに自動取り込み — 一元管理されます。
+- エクスポート字幕は元のSRTタイムコードをそのまま使用。まだシーンに紐づいていない行もCapCutプロジェクトに確実に含まれます。
+- 100以上の動画シーンをメモリ急増なしで閲覧：Scene ListとResults Tableの動画はホバー時のみマウント、画像サムネイルは画面外で解放し再スクロールで即復帰。
+- 黒いプレースホルダの代わりに、実際の動画の最初のフレームをサムネイル表示。
+- 信頼性向上：参照画像のアップロードが常にディスクへ保存され再起動後も残り、参照の差し替え時に古いファイルがきちんと整理されます。
 ```
 
 ---
@@ -483,17 +477,15 @@ Der integrierte MCP-Server (Model Context Protocol) verbindet sich direkt mit Cl
 
 ### What's New
 ```
-v0.9.12 — Token-Ablauf-Auto-Refresh + Alles neu generieren + klebende Szenenzeilen
+v0.9.13 — Schlauere Untertitel, leichterer Speicher
 
-- Schluss mit Stapel-Abbrüchen nach 1 Stunde: Googles Access Token (~1 h) wird jetzt still im Hintergrund erneuert — kein Popup, kein Neustart, kein Datenverlust. Deckt Bilder, T2V/I2V, Upscale, Gallery und Status ab.
-- Alles neu generieren (Regenerate All): Split-Menü am Generieren-Button erzeugt alle Einträge der aktuellen Ansicht (Bilder/Videos/F→V) auf einmal neu.
-- Szenenzeilen bleiben an ihrem Inhalt: F→V-Zeilen sind jetzt dauerhaft an die Szene gebunden. Umsortieren, Löschen, neuer SRT-Import — Zeilen und Videos bleiben bei der richtigen Szene.
-- Szenenanzahl passt sich automatisch an das Maximum aus Bildern/Videos/F→V/SRT an; leere Szenen am Ende werden aufgeräumt.
-- Löschvorschau: zeigt Bild, Untertitel, Prompt und erzeugte T2V/I2V vor dem Bestätigen.
-- F→V „Add Row" erzeugt Szene + Zeile zusammen (sofortiges Feedback).
-- Stoppt sofort bei out_of_credits statt jede verbleibende Szene fehlschlagen zu lassen.
-- Importbereinigung: CSV behält Zeilenpositionen auch bei Leerzeilen, Video-CSV akzeptiert prompt_en und andere Spaltenaliase, SRT überschreibt Prompts nicht mehr.
-- i18n-Feinschliff, IPC-Memory-Leak in langen Sessions behoben, T2V-Clear leert die Szene jetzt tatsächlich.
+- Mehrere Untertitelzeilen zu einer Szene bündeln: Original-SRT-Timing bleibt für Narrationsvideos erhalten, während zusammengehörige Zeilen auf einem Bild zusammengeführt werden. Neues CSV-Format mit „scene"-Spalte.
+- SRT-Re-Import-Konfliktdialog: Ein erneuter SRT-Import löscht Ihre Arbeit nicht mehr. Wählen Sie „Nur Untertitel ersetzen" (behält Prompts, Bilder, Videos) oder „Smart Merge" mit Fuzzy-Zeilenabgleich.
+- Narrations-SRT aus dem Audio-Ordner wird automatisch in die Untertitelspur der Szene übernommen — eine einzige Datenquelle.
+- Exportierte Untertitel nutzen die rohen SRT-Timecodes, damit auch noch nicht mit einer Szene verknüpfte Zeilen es ins CapCut-Projekt schaffen.
+- 100+ Videoszenen durchblättern ohne Speicherausschläge: Videos in Scene List und Results Table werden nur beim Hover geladen, Bild-Thumbnails entladen sich außerhalb des Sichtbereichs und springen sofort zurück.
+- Echte Video-Poster-Thumbnails statt schwarzer Platzhalter.
+- Stabilität: Referenz-Uploads landen jetzt zuverlässig auf der Festplatte und überstehen Neustarts; ein Austausch der Referenz entfernt die alte Datei sauber.
 ```
 
 ---

@@ -1,7 +1,7 @@
 {
   "name": "autoflowcut",
   "version": "0.9.13",
-  "buildNumber": 648,
+  "buildNumber": 731,
   "description": "AutoFlowCut - Automate AI video creation from Google Flow to CapCut projects",
   "main": "dist-electron/main.js",
   "type": "module",
