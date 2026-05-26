@@ -1,4 +1,4 @@
-# AutoFlowCut — Microsoft Store Listing (v0.9.13)
+# AutoFlowCut — Microsoft Store Listing (v0.9.14)
 
 ---
 
@@ -156,15 +156,14 @@ Disclaimer: This app is an independent product developed by Touchizen and is not
 
 ### What's New
 ```
-v0.9.13 — Smarter subtitles, lighter memory
+v0.9.14 — Hotfix
 
-- Group multiple subtitle lines into one scene: keep the original SRT timing for narration videos while merging related lines onto a single image. New CSV format with a "scene" column.
-- SRT re-import conflict dialog: re-importing an SRT no longer wipes your work. Pick "Replace subtitles only" (keeps prompts, images, and videos) or "Smart merge" with fuzzy line matching.
-- Narration SRT in your audio folder is auto-absorbed into the scene's subtitle track — one source of truth, no double-tracking.
-- Exported subtitles use the raw SRT timing, so lines that aren't linked to a scene yet still make it into the CapCut project.
-- Browse 100+ video scenes without memory spikes: videos in Scene List and Results Table only mount on hover; image thumbnails unload off-screen and snap back in when scrolled.
-- Real video poster thumbnails replace black placeholders.
-- Reliability: reference uploads always persist to disk and survive reload; replacing a reference now clears the old file cleanly.
+Fixes scene generation failing when reference images are attached.
+
+- "Unknown name 'referenceImages' … Cannot find field" (HTTP 400)
+- or "Generation timeout" (180s)
+
+If you were using ref-attached scenes on v0.9.10–v0.9.13, this update restores normal generation.
 ```
 
 ### Keywords
@@ -328,15 +327,14 @@ Touchizen 제작 — touchizen.com
 
 ### What's New (새로운 기능)
 ```
-v0.9.13 — 더 똑똑한 자막, 더 가벼운 메모리
+v0.9.14 — Hotfix
 
-- 여러 자막 줄을 하나의 씬으로 묶기: 나레이션 영상에서 원본 SRT 타이밍은 그대로 살리면서, 관련 자막 줄을 한 장의 이미지에 모아 보여줍니다. 신규 CSV 형식에 'scene' 컬럼 추가.
-- SRT 재임포트 충돌 다이얼로그: 기존 프로젝트에 SRT를 다시 불러올 때 작업이 날아가지 않습니다. "자막만 교체"(프롬프트·이미지·비디오 유지) 또는 "스마트 병합"(유사 줄 자동 매칭) 중 선택.
-- 오디오 폴더의 나레이션 SRT가 씬의 자막 트랙으로 자동 흡수 — 한 곳에서만 관리하면 됩니다.
-- 내보내기 자막은 원본 SRT 타임코드를 그대로 사용. 아직 씬에 연결되지 않은 줄도 빠짐없이 CapCut 프로젝트에 들어갑니다.
-- 100개 이상의 비디오 씬을 메모리 폭주 없이 탐색: Scene List와 Results Table의 비디오는 호버 시에만 로드되고, 이미지 썸네일은 화면 밖으로 나가면 언로드, 다시 스크롤하면 즉시 복귀.
-- 검은 플레이스홀더 대신 실제 비디오 첫 프레임 썸네일 표시.
-- 안정성: 레퍼런스 업로드가 디스크에 항상 저장되어 재시작 후에도 유지, 레퍼런스 교체 시 이전 파일이 깔끔하게 정리됩니다.
+레퍼런스 이미지를 첨부한 씬 생성이 실패하던 문제를 수정했습니다.
+
+- "Unknown name 'referenceImages' … Cannot find field" (HTTP 400)
+- 또는 "Generation timeout" (180초)
+
+v0.9.10~v0.9.13에서 ref 첨부 씬을 사용하셨다면 이 업데이트로 정상 동작합니다.
 ```
 
 ### Keywords (한국어)
@@ -405,15 +403,14 @@ AutoFlowCutは、Google Flow（Veo）のAI画像・動画生成を、すぐに�
 
 ### What's New
 ```
-v0.9.13 — よりスマートな字幕、より軽いメモリ
+v0.9.14 — Hotfix
 
-- 複数の字幕行を1つのシーンにまとめる：ナレーション動画で元のSRTタイミングを保ちつつ、関連する字幕行を1枚の画像に集約。新CSV形式に「scene」カラムを追加。
-- SRT再インポート競合ダイアログ：既存プロジェクトにSRTを再読み込みしても作業が消えません。「字幕のみ置き換え」（プロンプト・画像・動画は維持）または「スマートマージ」（あいまい行マッチング）を選択。
-- 音声フォルダ内のナレーションSRTがシーンの字幕トラックに自動取り込み — 一元管理されます。
-- エクスポート字幕は元のSRTタイムコードをそのまま使用。まだシーンに紐づいていない行もCapCutプロジェクトに確実に含まれます。
-- 100以上の動画シーンをメモリ急増なしで閲覧：Scene ListとResults Tableの動画はホバー時のみマウント、画像サムネイルは画面外で解放し再スクロールで即復帰。
-- 黒いプレースホルダの代わりに、実際の動画の最初のフレームをサムネイル表示。
-- 信頼性向上：参照画像のアップロードが常にディスクへ保存され再起動後も残り、参照の差し替え時に古いファイルがきちんと整理されます。
+参照画像を添付したシーン生成が失敗する不具合を修正しました。
+
+- 「Unknown name 'referenceImages' … Cannot find field」(HTTP 400)
+- または「Generation timeout」(180秒)
+
+v0.9.10〜v0.9.13で参照画像付きシーンを使用されていた方は、このアップデートで正常に生成できるようになります。
 ```
 
 ---
@@ -477,15 +474,14 @@ Der integrierte MCP-Server (Model Context Protocol) verbindet sich direkt mit Cl
 
 ### What's New
 ```
-v0.9.13 — Schlauere Untertitel, leichterer Speicher
+v0.9.14 — Hotfix
 
-- Mehrere Untertitelzeilen zu einer Szene bündeln: Original-SRT-Timing bleibt für Narrationsvideos erhalten, während zusammengehörige Zeilen auf einem Bild zusammengeführt werden. Neues CSV-Format mit „scene"-Spalte.
-- SRT-Re-Import-Konfliktdialog: Ein erneuter SRT-Import löscht Ihre Arbeit nicht mehr. Wählen Sie „Nur Untertitel ersetzen" (behält Prompts, Bilder, Videos) oder „Smart Merge" mit Fuzzy-Zeilenabgleich.
-- Narrations-SRT aus dem Audio-Ordner wird automatisch in die Untertitelspur der Szene übernommen — eine einzige Datenquelle.
-- Exportierte Untertitel nutzen die rohen SRT-Timecodes, damit auch noch nicht mit einer Szene verknüpfte Zeilen es ins CapCut-Projekt schaffen.
-- 100+ Videoszenen durchblättern ohne Speicherausschläge: Videos in Scene List und Results Table werden nur beim Hover geladen, Bild-Thumbnails entladen sich außerhalb des Sichtbereichs und springen sofort zurück.
-- Echte Video-Poster-Thumbnails statt schwarzer Platzhalter.
-- Stabilität: Referenz-Uploads landen jetzt zuverlässig auf der Festplatte und überstehen Neustarts; ein Austausch der Referenz entfernt die alte Datei sauber.
+Behebt einen Fehler, durch den die Szenengenerierung mit angehängten Referenzbildern fehlschlug.
+
+- „Unknown name 'referenceImages' … Cannot find field" (HTTP 400)
+- oder „Generation timeout" (180 s)
+
+Wenn Sie in v0.9.10–v0.9.13 Szenen mit Referenzbildern verwendet haben, stellt dieses Update die normale Generierung wieder her.
 ```
 
 ---
