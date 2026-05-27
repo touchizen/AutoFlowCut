@@ -47,13 +47,14 @@ function shiftHue(hex, deg) {
 
 export function useAudioTimeline(audioPackage, scenes, srtEntries) {
   return useMemo(() => {
-    if (!audioPackage) return null
-
-    const folderPath = audioPackage.folderPath || ''
+    // audioPackage가 없어도 placeholder 트랙은 생성 (드롭 타겟 제공).
+    // scenes/srtEntries만 있어도 image/subtitle 트랙은 표시.
+    const pkg = audioPackage || {}
+    const folderPath = pkg.folderPath || ''
     const toRelPath = (p) => (p && folderPath) ? p.replace(folderPath + '/', '') : p
 
     // 총 길이 — narration 우선, 없으면 모든 클립 max end
-    let totalDurationMs = audioPackage.media?.video?.durationMs || 0
+    let totalDurationMs = pkg.media?.video?.durationMs || 0
 
     // ── Image 트랙 ──
     // scenes의 필드는 imagePath/startTime (camelCase) 또는 image_path/start_time (snake_case)
@@ -88,17 +89,17 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
     }))
 
     // ── Narration 트랙 ──
-    const narrationClips = audioPackage.media?.video ? [{
+    const narrationClips = pkg.media?.video ? [{
       id: 'narration',
       startMs: 0,
-      endMs: audioPackage.media.video.durationMs || 0,
-      audioPath: audioPackage.media.video.path,
-      filename: audioPackage.media.video.filename,
+      endMs: pkg.media.video.durationMs || 0,
+      audioPath: pkg.media.video.path,
+      filename: pkg.media.video.filename,
       color: COLORS.narration,
     }] : []
 
     // ── Voice 트랙 (그룹 + 캐릭터별 sub-track) ──
-    const voiceSubTracks = (audioPackage.voices || []).map((v, vi) => {
+    const voiceSubTracks = (pkg.voices || []).map((v, vi) => {
       const color = shiftHue(COLORS.voice, vi * 30)
       const clips = (v.files || [])
         .filter(f => f.timecodeMs != null)
@@ -123,7 +124,7 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
     // ── SFX 트랙 (그룹 + 카테고리별 sub-track) ──
     // sfxPromptMap: { [filenameStem]: { cueNo, partName, anchor, placement, offsetSec, prompt, durationSec } }
     // 디스크 파일명 `<stem>_<MMSS>.mp3` → 마지막 `_<NNNN>` 또는 `_<NNNNNN>` 분리하여 stem 추출 후 매핑
-    const sfxPromptMap = audioPackage.sfxPromptMap || null
+    const sfxPromptMap = pkg.sfxPromptMap || null
     const lookupSfxMeta = (filename) => {
       if (!sfxPromptMap || !filename) return null
       const nameNoExt = filename.replace(/\.[^.]+$/, '')
@@ -133,7 +134,7 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
       return sfxPromptMap[stem] || null
     }
 
-    const sfxSubTracks = (audioPackage.sfx || []).map((s, si) => {
+    const sfxSubTracks = (pkg.sfx || []).map((s, si) => {
       const color = shiftHue(COLORS.sfx, si * 20)
       const clips = (s.files || [])
         .filter(f => f.timecodeMs != null)
@@ -161,17 +162,30 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
     if (maxEnd > totalDurationMs) totalDurationMs = maxEnd
     if (!totalDurationMs) totalDurationMs = 60000 // 빈 패키지 fallback (1분)
 
-    return {
-      totalDurationMs,
-      tracks: [
-        { id: 'image',     name: 'Image',     color: COLORS.image,     variant: 'block', clips: imageClips },
-        { id: 'subtitle',  name: '자막',       color: COLORS.subtitle,  variant: 'text',  clips: subtitleClips },
-        { id: 'narration', name: 'Narration', color: COLORS.narration, variant: 'audio', clips: narrationClips },
-        { id: 'voice',     name: 'Voice',     color: COLORS.voice,     variant: 'audio', expandable: true,
-          clips: voiceClipsAll, subTracks: voiceSubTracks },
-        { id: 'sfx',       name: 'SFX',       color: COLORS.sfx,       variant: 'audio', expandable: true,
-          clips: sfxClipsAll, subTracks: sfxSubTracks },
-      ],
+    // 트랙 구성 — Narration/SFX는 placeholder로 항상 표시 (드롭 타겟).
+    // Image/Subtitle/Voice는 데이터 있을 때만 (드롭 받지 않음).
+    const tracks = []
+    if (imageClips.length > 0) {
+      tracks.push({ id: 'image', name: 'Image', color: COLORS.image, variant: 'block', clips: imageClips, role: 'image' })
     }
+    if (subtitleClips.length > 0) {
+      tracks.push({ id: 'subtitle', name: '자막', color: COLORS.subtitle, variant: 'text', clips: subtitleClips, role: 'subtitle' })
+    }
+    tracks.push({
+      id: 'narration', name: 'Narration', color: COLORS.narration, variant: 'audio',
+      clips: narrationClips, role: 'narration', acceptsDrop: 'audio',
+    })
+    if (voiceSubTracks.length > 0) {
+      tracks.push({
+        id: 'voice', name: 'Voice', color: COLORS.voice, variant: 'audio', expandable: true,
+        clips: voiceClipsAll, subTracks: voiceSubTracks, role: 'voice',
+      })
+    }
+    tracks.push({
+      id: 'sfx', name: 'SFX', color: COLORS.sfx, variant: 'audio', expandable: true,
+      clips: sfxClipsAll, subTracks: sfxSubTracks, role: 'sfx', acceptsDrop: 'audio',
+    })
+
+    return { totalDurationMs, tracks }
   }, [audioPackage, scenes, srtEntries])
 }

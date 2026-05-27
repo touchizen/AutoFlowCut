@@ -46,12 +46,16 @@ describe('AudioPanel loading state', () => {
     expect(screen.queryByText(/Import audio|먼저 가져오세요/i)).not.toBeInTheDocument()
   })
 
-  it('loading=false + 데이터 없음 → 일반 empty state (spinner 없음)', () => {
+  it('loading=false + 데이터 없음 → 빈 타임라인 + emptyHint (spinner 없음)', () => {
     const { container } = render(
       <AudioPanel audioPackage={null} loading={false} scenes={[]} srtEntries={[]} />
     )
+    // spinner는 없음
     expect(container.querySelector('.audio-spinner')).toBeNull()
-    expect(screen.getByText(/Import audio|먼저 가져오세요/i)).toBeInTheDocument()
+    // emptyHint overlay 표시
+    expect(container.querySelector('.audio-panel-empty-hint')).toBeInTheDocument()
+    // 타임라인 placeholder 트랙 (narration/sfx) 표시 — Audio Timeline 헤더는 있어야 함
+    expect(screen.getByText(/Audio Timeline/i)).toBeInTheDocument()
   })
 
   it('loading + 데이터 있음 → overlay spinner가 컨텐츠 위에 표시', () => {

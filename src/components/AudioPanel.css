@@ -21,6 +21,26 @@
   opacity: 0.5;
 }
 
+.audio-panel-empty-hint {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--bg-secondary, rgba(40, 40, 40, 0.85));
+  color: var(--text-secondary);
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  pointer-events: none;
+  z-index: 5;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.audio-panel {
+  position: relative;
+}
+
 /* Sub tabs */
 .audio-sub-tabs {
   display: flex;

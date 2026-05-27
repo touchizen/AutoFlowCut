@@ -80,7 +80,9 @@ describe('AudioTimeline 통합 (real parser → hook)', () => {
       useAudioTimeline(audioPackage, [], audioPackage.srtEntries)
     )
     expect(result.current).toBeTruthy()
-    expect(result.current.tracks).toHaveLength(5)
+    // subtitle + narration + sfx (voice는 빈 voices라 안 만들어짐. image는 scenes 없음)
+    const ids = result.current.tracks.map(t => t.id)
+    expect(ids).toEqual(['subtitle', 'narration', 'sfx'])
   })
 
   describe('edge cases', () => {
@@ -102,7 +104,7 @@ describe('AudioTimeline 통합 (real parser → hook)', () => {
       expect(voice.subTracks[0].clips[0].endMs).toBe(1000)
     })
 
-    it('빈 srtEntries 배열을 정상 처리', () => {
+    it('빈 srtEntries 배열을 정상 처리 (subtitle 트랙 생성 안 됨)', () => {
       const audioPackage = {
         folderPath: '/x',
         media: { video: { path: '/n.mp3', filename: 'n.mp3', durationMs: 5000 } },
@@ -111,18 +113,21 @@ describe('AudioTimeline 통합 (real parser → hook)', () => {
       }
       const { result } = renderHook(() => useAudioTimeline(audioPackage, [], []))
       const sub = result.current.tracks.find(t => t.id === 'subtitle')
-      expect(sub.clips).toEqual([])
+      expect(sub).toBeUndefined()
     })
 
-    it('voices/sfx가 undefined여도 안전하게 동작', () => {
+    it('voices/sfx가 undefined여도 안전하게 동작 (placeholder sfx만 생성)', () => {
       const audioPackage = {
         folderPath: '/x',
         media: { video: { path: '/n.mp3', filename: 'n.mp3', durationMs: 5000 } },
         // voices, sfx 누락
       }
       const { result } = renderHook(() => useAudioTimeline(audioPackage, [], []))
-      expect(result.current.tracks.find(t => t.id === 'voice').subTracks).toEqual([])
-      expect(result.current.tracks.find(t => t.id === 'sfx').subTracks).toEqual([])
+      // voice는 데이터 없으면 안 만들어짐. sfx는 placeholder로 항상 생성
+      expect(result.current.tracks.find(t => t.id === 'voice')).toBeUndefined()
+      const sfx = result.current.tracks.find(t => t.id === 'sfx')
+      expect(sfx).toBeDefined()
+      expect(sfx.subTracks).toEqual([])
     })
 
     it('한글 캐릭터명/카테고리명이 그대로 보존됨', () => {

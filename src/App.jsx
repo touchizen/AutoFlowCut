@@ -29,6 +29,7 @@ import { computeGuardAvailable } from './services/startGuard'
 import { createStyleResolver } from './services/styleResolver'
 import { filterPendingScenes } from './utils/sceneFilters'
 import { detectFileType, detectCSVType, parseCSVToScenes, parseSRTToScenes, csvPromptToVideoT2V } from './utils/parsers'
+import { srtTrackToEntries } from './utils/srtTrack'
 import { checkFolderPermission } from './utils/guards'
 import { collectTagErrors } from './utils/tagMatch'
 import { toast } from './components/Toast'
@@ -1115,10 +1116,9 @@ function App() {
               📋 <span className="tab-label">{t('tabs.list')}</span> ({scenes.length})
             </button>
             <button
-              className={`tab tab-icon ${activeTab === 'audio' ? 'active' : ''}${!audioPackage ? ' tab-disabled' : ''}`}
-              onClick={() => audioPackage ? setActiveTab('audio') : null}
+              className={`tab tab-icon ${activeTab === 'audio' ? 'active' : ''}`}
+              onClick={() => setActiveTab('audio')}
               title={t('audioTab.title') || '오디오'}
-              disabled={!audioPackage}
             >
               🎵 <span className="tab-label">{t('audioTab.title') || '오디오'}</span>
               {audioPackage && <span className="tab-count"> ({(audioPackage.summary?.totalVoiceFiles || 0) + (audioPackage.summary?.totalSfxFiles || 0)})</span>}
@@ -1282,7 +1282,7 @@ function App() {
               onBulkReview={saveBulkReviews}
               onRefresh={refreshReviews}
               onSaveTimecodeOverride={saveTimecodeOverride}
-              srtEntries={audioPackage?.srtEntries}
+              srtEntries={audioPackage?.srtEntries || srtTrackToEntries(scenesHook.srtTrack)}
               scenes={scenes}
             />
           )}

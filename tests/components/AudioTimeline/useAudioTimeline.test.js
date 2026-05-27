@@ -56,14 +56,20 @@ const baseAudio = {
 
 describe('useAudioTimeline', () => {
   describe('null/undefined audioPackage', () => {
-    it('returns null when audioPackage is null', () => {
+    it('returns placeholder tracks (narration/sfx) when audioPackage is null', () => {
       const { result } = renderHook(() => useAudioTimeline(null, [], []))
-      expect(result.current).toBeNull()
+      expect(result.current).not.toBeNull()
+      const ids = result.current.tracks.map(t => t.id)
+      expect(ids).toEqual(['narration', 'sfx'])
+      // 둘 다 빈 placeholder
+      expect(result.current.tracks.every(t => t.clips.length === 0)).toBe(true)
     })
 
-    it('returns null when audioPackage is undefined', () => {
+    it('returns placeholder tracks when audioPackage is undefined', () => {
       const { result } = renderHook(() => useAudioTimeline(undefined, [], []))
-      expect(result.current).toBeNull()
+      expect(result.current).not.toBeNull()
+      const ids = result.current.tracks.map(t => t.id)
+      expect(ids).toEqual(['narration', 'sfx'])
     })
   })
 
@@ -120,10 +126,10 @@ describe('useAudioTimeline', () => {
       expect(img.clips[0].sceneRef.id).toBe('y')
     })
 
-    it('handles empty scenes array', () => {
+    it('omits image track when scenes array is empty', () => {
       const { result } = renderHook(() => useAudioTimeline(baseAudio, [], []))
       const img = result.current.tracks.find(t => t.id === 'image')
-      expect(img.clips).toEqual([])
+      expect(img).toBeUndefined()
     })
   })
 
@@ -145,10 +151,10 @@ describe('useAudioTimeline', () => {
       expect(sub.clips[0].endMs).toBe(4200)
     })
 
-    it('handles empty srtEntries', () => {
+    it('omits subtitle track when srtEntries is empty', () => {
       const { result } = renderHook(() => useAudioTimeline(baseAudio, [], []))
       const sub = result.current.tracks.find(t => t.id === 'subtitle')
-      expect(sub.clips).toEqual([])
+      expect(sub).toBeUndefined()
     })
   })
 
@@ -203,7 +209,7 @@ describe('useAudioTimeline', () => {
       expect(new Set(colors).size).toBe(colors.length) // 모두 unique
     })
 
-    it('drops sub-track if all files lack timecodeMs', () => {
+    it('omits voice track if all files lack timecodeMs', () => {
       const noTc = {
         ...baseAudio,
         voices: [{
@@ -213,7 +219,7 @@ describe('useAudioTimeline', () => {
       }
       const { result } = renderHook(() => useAudioTimeline(noTc, [], []))
       const voice = result.current.tracks.find(t => t.id === 'voice')
-      expect(voice.subTracks).toHaveLength(0)
+      expect(voice).toBeUndefined()
     })
 
     it('uses 3000ms default duration when file lacks durationMs', () => {

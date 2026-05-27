@@ -13,6 +13,7 @@ import HoverImageBalloon from './HoverImageBalloon'
 import AudioTimeline from './AudioTimeline/AudioTimeline'
 import AudioDetailModal from './AudioDetailModal'
 import AudioSummary from './AudioSummary'
+import { toast } from './Toast'
 import './AudioPanel.css'
 
 /** ms → MM:SS or HH:MM:SS */
@@ -50,7 +51,7 @@ function findSceneAtTime(scenes, timecodeMs, srtEntries) {
     scenes.find(s => s.subtitle && srtText.includes(s.subtitle)) || null
 }
 
-export default function AudioPanel({ audioPackage, audioReviews, loading = false, onSaveReview, onBulkReview, onRefresh, onSaveTimecodeOverride, srtEntries, scenes }) {
+export default function AudioPanel({ audioPackage, audioReviews, loading = false, onSaveReview, onBulkReview, onRefresh, onSaveTimecodeOverride, srtEntries, scenes, onImportMp3, onSrtImport }) {
   const { t } = useI18n()
   const [subTab, setSubTab] = useState('timeline')
   const [flagTarget, setFlagTarget] = useState(null)
@@ -119,17 +120,45 @@ export default function AudioPanel({ audioPackage, audioReviews, loading = false
     )
   }
 
-  if (!audioPackage) {
-    return (
-      <div className="audio-panel-empty">
-        <div className="audio-panel-empty-icon">🎵</div>
-        <p>{t('audioTab.importFirst') || '오디오 패키지를 먼저 가져오세요'}</p>
-      </div>
-    )
+  // 패널 레벨 드롭 (TrackLane이 mp3를 안 받았거나 SRT 파일인 경우만 여기까지 옴)
+  const handlePanelDragOver = (e) => {
+    if (Array.from(e.dataTransfer.types).includes('Files')) {
+      e.preventDefault()
+    }
+  }
+  const handlePanelDrop = async (e) => {
+    const files = Array.from(e.dataTransfer.files || [])
+    if (files.length === 0) return
+    const srt = files.find(f => /\.srt$/i.test(f.name))
+    const hasMp3 = files.some(f => /\.(mp3|wav|m4a)$/i.test(f.name))
+    // SRT가 있으면 패널 차원에서 임포트
+    if (srt && onSrtImport) {
+      e.preventDefault()
+      try {
+        const text = await srt.text()
+        onSrtImport(text)
+      } catch (err) {
+        console.error('[AudioPanel] SRT read failed:', err)
+      }
+      return
+    }
+    // mp3가 트랙 위가 아닌 빈 공간에 떨어졌다면 안내 toast
+    if (hasMp3) {
+      e.preventDefault()
+      toast.info(t('audioTab.dropOnNarrationOrSfx') || 'Narration 또는 SFX 트랙 위에 끌어다 놓으세요')
+    }
   }
 
+  // 빈 상태 hint: audioPackage 없고 scenes/srtEntries도 없을 때 overlay 표시
+  const isFullyEmpty = !audioPackage && !(scenes?.length) && !(srtEntries?.length)
+
   return (
-    <div className="audio-panel">
+    <div className="audio-panel" onDragOver={handlePanelDragOver} onDrop={handlePanelDrop}>
+      {isFullyEmpty && (
+        <div className="audio-panel-empty-hint">
+          🎵 {t('audioTab.emptyHint') || 'mp3는 Narration 또는 SFX 트랙에, srt는 어디든 끌어다 놓으세요'}
+        </div>
+      )}
       <div className="audio-sub-tabs">
         <button className={`sub-tab-btn${subTab === 'timeline' ? ' active' : ''}`}
           onClick={() => setSubTab('timeline')}>
@@ -186,7 +215,7 @@ export default function AudioPanel({ audioPackage, audioReviews, loading = false
               })
             }}
           />
-        ) : (
+        ) : audioPackage ? (
           <AudioSummary
             audioPackage={audioPackage}
             audioReviews={audioReviews}
@@ -199,6 +228,11 @@ export default function AudioPanel({ audioPackage, audioReviews, loading = false
             getFileReview={getFileReview}
             onFlagClick={handleFlag}
           />
+        ) : (
+          <div className="audio-panel-empty">
+            <div className="audio-panel-empty-icon">🎵</div>
+            <p>{t('audioTab.importFirst') || '오디오 패키지를 먼저 가져오세요'}</p>
+          </div>
         )}
 
         {/* loading: import/refresh 비동기 진행 중. isStale: 새 데이터 commit 전 deferred render 중. */}
@@ -217,11 +251,11 @@ export default function AudioPanel({ audioPackage, audioReviews, loading = false
           target={flagTarget}
           existingReview={audioReviews?.[flagTarget.relativePath]}
           onSave={(reason) => {
-            onSaveReview(audioPackage.folderPath, flagTarget.relativePath, { reason })
+            onSaveReview(audioPackage?.folderPath, flagTarget.relativePath, { reason })
             setFlagTarget(null)
           }}
           onRemove={() => {
-            onSaveReview(audioPackage.folderPath, flagTarget.relativePath, null)
+            onSaveReview(audioPackage?.folderPath, flagTarget.relativePath, null)
             setFlagTarget(null)
           }}
           onClose={() => setFlagTarget(null)}

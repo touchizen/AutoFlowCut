@@ -59,11 +59,18 @@ beforeEach(() => {
 
 describe('AudioTimeline', () => {
   describe('빈 상태', () => {
-    it('audioPackage가 null이면 아무것도 렌더하지 않음', () => {
+    it('audioPackage가 null이어도 Narration/SFX placeholder 트랙 렌더', () => {
       const { container } = render(
         <AudioTimeline audioPackage={null} scenes={[]} srtEntries={[]} />
       )
-      expect(container.firstChild).toBeNull()
+      // 헤더 + placeholder 트랙 표시
+      expect(container.querySelector('.atl-root')).toBeInTheDocument()
+      expect(screen.getByText('Narration')).toBeInTheDocument()
+      expect(screen.getByText('SFX')).toBeInTheDocument()
+      // image/subtitle/voice는 빈 상태에서 안 나옴
+      expect(screen.queryByText('Image')).not.toBeInTheDocument()
+      expect(screen.queryByText('Subtitle')).not.toBeInTheDocument()
+      expect(screen.queryByText('Voice')).not.toBeInTheDocument()
     })
   })
 
@@ -390,7 +397,8 @@ describe('AudioTimeline', () => {
           <AudioTimeline audioPackage={null} scenes={[]} srtEntries={[]} />,
           { wrapper: I18nProvider }
         )
-        expect(container.firstChild).toBeNull()
+        // placeholder 트랙으로 정상 마운트
+        expect(container.querySelector('.atl-root')).toBeInTheDocument()
         expect(() => {
           rerender(<AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />)
         }).not.toThrow()
@@ -464,7 +472,8 @@ describe('AudioTimeline', () => {
         { wrapper: I18nProvider }
       )
       rerender(<AudioTimeline audioPackage={null} scenes={[]} srtEntries={[]} />)
-      expect(container.firstChild).toBeNull()
+      // null이어도 placeholder 트랙으로 정상 렌더
+      expect(container.querySelector('.atl-root')).toBeInTheDocument()
       // Esc도 크래시 없이 동작
       expect(() => {
         fireEvent.keyDown(window, { code: 'Escape' })
