@@ -29,7 +29,7 @@ import { computeGuardAvailable } from './services/startGuard'
 import { createStyleResolver } from './services/styleResolver'
 import { filterPendingScenes } from './utils/sceneFilters'
 import { detectFileType, detectCSVType, parseCSVToScenes, parseSRTToScenes, csvPromptToVideoT2V } from './utils/parsers'
-import { srtTrackToEntries } from './utils/srtTrack'
+import { resolveAudioSrtEntries } from './utils/srtTrack'
 import { checkFolderPermission } from './utils/guards'
 import { collectTagErrors } from './utils/tagMatch'
 import { toast } from './components/Toast'
@@ -1282,7 +1282,7 @@ function App() {
               onBulkReview={saveBulkReviews}
               onRefresh={refreshReviews}
               onSaveTimecodeOverride={saveTimecodeOverride}
-              srtEntries={audioPackage?.srtEntries || srtTrackToEntries(scenesHook.srtTrack)}
+              srtEntries={resolveAudioSrtEntries(audioPackage, scenesHook.srtTrack)}
               scenes={scenes}
               onImportMp3={importMp3ToTrack}
               onSrtImport={(content) => handleImport('srt', content)}

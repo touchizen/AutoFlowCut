@@ -269,6 +269,19 @@ export function migrateLegacyProject(project) {
  * @param {Array<{ startTime?: number, endTime?: number, text?: string }>} srtTrack
  * @returns {Array<{ startMs: number, endMs: number, text: string }> | null}
  */
+/**
+ * Audio 탭용 srtEntries 결정자.
+ * 1순위: audioPackage.srtEntries (오디오 패키지 안의 SRT — 비어있지 않을 때만)
+ * 2순위: 프로젝트 srtTrack → entries 변환
+ *
+ * audioPackage.srtEntries가 `[]` (빈 배열, truthy)일 때 srtTrack으로 fallback이
+ * 안 일어나던 버그 방지용 헬퍼. 빈 배열은 1순위로 치지 않음.
+ */
+export function resolveAudioSrtEntries(audioPackage, srtTrack) {
+  if (audioPackage?.srtEntries?.length) return audioPackage.srtEntries
+  return srtTrackToEntries(srtTrack)
+}
+
 export function srtTrackToEntries(srtTrack) {
   if (!Array.isArray(srtTrack) || srtTrack.length === 0) return null
   const entries = []

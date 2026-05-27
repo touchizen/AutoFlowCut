@@ -188,4 +188,81 @@ describe('importMp3ToTrack', () => {
       expect(result.current.audioTracks).toEqual({ buildResult: 'with-pkg' })
     })
   })
+
+  // P1 regression: synthetic audioPackage에 완전한 summary 기본값.
+  // AudioSummary가 summary.characters.length 등을 직접 접근해서 NPE 났던 케이스.
+  describe('synthetic audioPackage summary (P1 regression)', () => {
+    it('narration 드롭 → summary가 모든 필드 정의됨', async () => {
+      const { result } = renderHook(() => useAudioImport(baseT))
+      await act(async () => {
+        await result.current.importMp3ToTrack({ mp3Path: '/audio/n.mp3', trackType: 'narration' })
+      })
+      const { summary } = result.current.audioPackage
+      expect(summary.characters).toEqual([])
+      expect(summary.totalVoiceFiles).toBe(0)
+      expect(summary.totalSfxCategories).toBe(0)
+      expect(summary.totalSfxFiles).toBe(0)
+      expect(summary.hasSrt).toBe(false)
+      expect(summary.hasMedia).toBe(true) // narration이 들어왔으므로
+    })
+
+    it('sfx 드롭 → summary.totalSfxCategories/totalSfxFiles 갱신', async () => {
+      const { result } = renderHook(() => useAudioImport(baseT))
+      await act(async () => {
+        await result.current.importMp3ToTrack({ mp3Path: '/audio/a.mp3', trackType: 'sfx', timecodeMs: 1000 })
+      })
+      const { summary } = result.current.audioPackage
+      expect(summary.characters).toEqual([])
+      expect(summary.totalSfxCategories).toBe(1)
+      expect(summary.totalSfxFiles).toBe(1)
+      expect(summary.hasMedia).toBe(false)
+    })
+
+    it('연속 sfx 드롭 → totalSfxFiles 누적', async () => {
+      const { result } = renderHook(() => useAudioImport(baseT))
+      await act(async () => {
+        await result.current.importMp3ToTrack({ mp3Path: '/a.mp3', trackType: 'sfx', timecodeMs: 1000 })
+      })
+      window.electronAPI.probeAudioFile.mockResolvedValue({
+        success: true, path: '/b.mp3', filename: 'b.mp3', folderPath: '/', durationMs: 1000,
+      })
+      await act(async () => {
+        await result.current.importMp3ToTrack({ mp3Path: '/b.mp3', trackType: 'sfx', timecodeMs: 2000 })
+      })
+      expect(result.current.audioPackage.summary.totalSfxFiles).toBe(2)
+      expect(result.current.audioPackage.summary.totalSfxCategories).toBe(1) // 같은 _dropped
+    })
+  })
+
+  // P2 regression: ffprobe await 중 새 import/clear가 일어나면 stale commit 차단.
+  describe('opVersionRef stale-commit 가드 (P2 regression)', () => {
+    it('probe 중 clearAudioPackage 호출되면 결과 commit 안 됨', async () => {
+      // probe를 수동으로 resolve할 수 있게 lazy mock
+      let resolveProbe
+      window.electronAPI.probeAudioFile.mockImplementation(
+        () => new Promise(r => { resolveProbe = r })
+      )
+
+      const { result } = renderHook(() => useAudioImport(baseT))
+      // importMp3ToTrack 시작 (await으로 막힘)
+      let importPromise
+      act(() => {
+        importPromise = result.current.importMp3ToTrack({
+          mp3Path: '/audio/n.mp3', trackType: 'narration',
+        })
+      })
+
+      // probe 중 clearAudioPackage → opVersionRef bump
+      act(() => { result.current.clearAudioPackage() })
+
+      // 이제 probe 완료
+      await act(async () => {
+        resolveProbe({ success: true, path: '/audio/n.mp3', filename: 'n.mp3', folderPath: '/audio', durationMs: 60000 })
+        await importPromise
+      })
+
+      // stale commit 차단됨 → audioPackage는 여전히 null
+      expect(result.current.audioPackage).toBeNull()
+    })
+  })
 })

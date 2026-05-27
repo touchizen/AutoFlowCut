@@ -541,7 +541,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
   audioTab: {
     title: 'Audio',
     importFirst: 'Import audio package first',
-    emptyHint: '🎵 Drop mp3 onto Narration or SFX track, drop srt anywhere',
+    emptyHint: '🎵 Drop mp3 onto Narration or SFX track, drop srt anywhere (drops are session-only; use folder import for permanent assets)',
     trackNarration: 'Narration',
     trackSfx: 'SFX',
     dropOnNarrationOrSfx: 'Drop on Narration or SFX track',

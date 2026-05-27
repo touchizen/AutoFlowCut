@@ -156,4 +156,58 @@ describe('TrackLane drag-and-drop', () => {
 
     expect(onTrackDrop).not.toHaveBeenCalled()
   })
+
+  // P3 regression: mp3 + srt를 lane에 동시에 드롭하면 mp3는 lane이 처리하되,
+  // srt는 패널 레벨로 bubbling 되어야 함 (stopPropagation 하지 않음).
+  it('mp3 + srt 동시 lane 드롭 → mp3 처리 + 이벤트 bubble (P3 regression)', () => {
+    const onTrackDrop = vi.fn()
+    const panelOnDrop = vi.fn()
+    const { container } = render(
+      <div onDrop={panelOnDrop}>
+        <TrackLane
+          track={sfxTrack}
+          width={800}
+          pxPerMs={0.04}
+          onTrackDrop={onTrackDrop}
+          onTrackDragOver={vi.fn()}
+        />
+      </div>
+    )
+    const lane = container.querySelector('.atl-lane')
+    lane.getBoundingClientRect = () => ({ left: 0, top: 0, right: 800, bottom: 64, width: 800, height: 64 })
+
+    const mp3 = makeFile('boom.mp3')
+    const srt = new File(['1\n00:00:00,000 --> 00:00:01,000\nhi'], 'sub.srt', { type: 'text/plain' })
+    fireDragEvent(lane, 'drop', { files: [mp3, srt], clientX: 100 })
+
+    // lane: mp3 처리
+    expect(onTrackDrop).toHaveBeenCalledTimes(1)
+    expect(onTrackDrop.mock.calls[0][0].files).toEqual([mp3])
+    // 패널: 같은 이벤트를 받음 (bubbling)
+    expect(panelOnDrop).toHaveBeenCalledTimes(1)
+  })
+
+  it('mp3만 lane 드롭 → stopPropagation으로 패널에 bubble 안 됨', () => {
+    const onTrackDrop = vi.fn()
+    const panelOnDrop = vi.fn()
+    const { container } = render(
+      <div onDrop={panelOnDrop}>
+        <TrackLane
+          track={sfxTrack}
+          width={800}
+          pxPerMs={0.04}
+          onTrackDrop={onTrackDrop}
+          onTrackDragOver={vi.fn()}
+        />
+      </div>
+    )
+    const lane = container.querySelector('.atl-lane')
+    lane.getBoundingClientRect = () => ({ left: 0, top: 0, right: 800, bottom: 64, width: 800, height: 64 })
+
+    const mp3 = makeFile('boom.mp3')
+    fireDragEvent(lane, 'drop', { files: [mp3], clientX: 100 })
+
+    expect(onTrackDrop).toHaveBeenCalledTimes(1)
+    expect(panelOnDrop).not.toHaveBeenCalled() // stopPropagation
+  })
 })

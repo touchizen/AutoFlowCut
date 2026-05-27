@@ -418,3 +418,7 @@ const importMp3ToTrack = useCallback(async ({ mp3Path, trackType, timecodeMs }) 
 - 드롭 undo
 - 패널 외부에서 글로벌 드롭 받기
 - SRT를 특정 라인 위에 명시적으로 드롭 vs 패널 어디든 — 후자로 통일
+- **드롭한 mp3의 영속성 (project.json 저장 / 폴더 정규화)**: 현재는 **메모리에만** 보존됨. 새로고침/프로젝트 전환 시 사라짐. 별도 phase에서 결정:
+  - 옵션 A: project.json에 `audioDroppedFiles: [{ path, trackType, timecodeMs }]` 메타만 (절대경로 참조, 파일 이동/삭제 시 깨짐)
+  - 옵션 B: 드롭 시 오디오 폴더 구조(media/, sfx/_dropped/)로 복사/정규화
+  - 사용자에게 명시: 드롭은 "이번 export 직전 한 번의 ad-hoc 작업"용. 영구 자산은 폴더 import 사용.

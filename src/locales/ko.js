@@ -540,7 +540,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
   audioTab: {
     title: '오디오',
     importFirst: '오디오 패키지를 먼저 가져오세요',
-    emptyHint: '🎵 mp3는 Narration 또는 SFX 트랙에, srt는 어디든 끌어다 놓으세요',
+    emptyHint: '🎵 mp3는 Narration 또는 SFX 트랙에, srt는 어디든 끌어다 놓으세요 (드롭은 세션 이내; 영구 보존은 폴더 import 사용)',
     trackNarration: 'Narration',
     trackSfx: 'SFX',
     dropOnNarrationOrSfx: 'Narration 또는 SFX 트랙 위에 끌어다 놓으세요',

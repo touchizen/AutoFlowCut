@@ -8,7 +8,7 @@
  * 그대로 GCF 자막 segment 에 전달하기 위한 변환.
  */
 import { describe, it, expect } from 'vitest'
-import { srtTrackToEntries } from '../../src/utils/srtTrack'
+import { srtTrackToEntries, resolveAudioSrtEntries } from '../../src/utils/srtTrack'
 
 describe('srtTrackToEntries', () => {
   it('비어있거나 null 입력 → null 반환 (GCF fallback 트리거)', () => {
@@ -56,5 +56,36 @@ describe('srtTrackToEntries', () => {
       { id: 'b', startTime: 1, endTime: 2, text: '   ' },
     ]
     expect(srtTrackToEntries(track)).toBeNull()
+  })
+})
+
+describe('resolveAudioSrtEntries (Audio 탭 우선순위)', () => {
+  const audioEntries = [{ startMs: 0, endMs: 1000, text: 'audio srt' }]
+  const srtTrack = [
+    { id: 'a', startTime: 0, endTime: 2, text: 'project srt' },
+  ]
+  const expectedFromTrack = [{ startMs: 0, endMs: 2000, text: 'project srt' }]
+
+  it('audioPackage.srtEntries가 있으면 그것을 우선', () => {
+    const pkg = { srtEntries: audioEntries }
+    expect(resolveAudioSrtEntries(pkg, srtTrack)).toBe(audioEntries)
+  })
+
+  it('audioPackage.srtEntries가 빈 배열이면 srtTrack으로 fallback (P1 regression)', () => {
+    const pkg = { srtEntries: [] }
+    expect(resolveAudioSrtEntries(pkg, srtTrack)).toEqual(expectedFromTrack)
+  })
+
+  it('audioPackage가 null이면 srtTrack으로 fallback', () => {
+    expect(resolveAudioSrtEntries(null, srtTrack)).toEqual(expectedFromTrack)
+  })
+
+  it('audioPackage.srtEntries가 undefined여도 srtTrack으로 fallback', () => {
+    expect(resolveAudioSrtEntries({}, srtTrack)).toEqual(expectedFromTrack)
+  })
+
+  it('둘 다 비면 null', () => {
+    expect(resolveAudioSrtEntries(null, [])).toBeNull()
+    expect(resolveAudioSrtEntries({ srtEntries: [] }, null)).toBeNull()
   })
 })

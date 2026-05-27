@@ -128,6 +128,32 @@ describe('AudioPanel drag-and-drop routing', () => {
     expect(onSrtImport).not.toHaveBeenCalled()
   })
 
+  // P3 regression: mp3 + srt를 SFX lane에 함께 드롭 → mp3는 lane으로, srt는 패널로 동시 처리
+  it('mp3 + srt 동시 lane 드롭 → onImportMp3 + onSrtImport 둘 다 호출 (P3 regression)', async () => {
+    const onImportMp3 = vi.fn().mockResolvedValue({ success: true })
+    const onSrtImport = vi.fn()
+    const { container } = renderPanel({
+      audioPackage: null,
+      scenes: [],
+      srtEntries: [],
+      onImportMp3,
+      onSrtImport,
+    })
+
+    const sfxLane = container.querySelector('.atl-lane[data-track-role="sfx"]')
+    sfxLane.getBoundingClientRect = () => ({ left: 0, top: 0, right: 800, bottom: 64, width: 800, height: 64 })
+
+    const mp3 = makeFile('boom.mp3')
+    const srt = makeFile('sub.srt', '1\n00:00:00,000 --> 00:00:01,000\nfoo', 'text/plain')
+    fireDragEvent(sfxLane, 'drop', { files: [mp3, srt], clientX: 100 })
+
+    await new Promise(r => setTimeout(r, 0))
+    expect(onImportMp3).toHaveBeenCalledTimes(1)
+    expect(onImportMp3.mock.calls[0][0].trackType).toBe('sfx')
+    expect(onSrtImport).toHaveBeenCalledTimes(1)
+    expect(onSrtImport.mock.calls[0][0]).toContain('foo')
+  })
+
   it('mp3 + srt 동시 드롭 (패널 레벨) → srt만 처리 (mp3는 트랙으로 가야 했음)', async () => {
     const onImportMp3 = vi.fn()
     const onSrtImport = vi.fn()

@@ -358,6 +358,9 @@ export function useAudioImport(t, { onAudioSrtAbsorbed = null } = {}) {
    * 드래그앤드롭으로 mp3 한 파일을 특정 트랙(narration/sfx)에 추가/교체.
    * - narration: media.video 교체 (1개만)
    * - sfx: sfx[]에 '_dropped' 카테고리로 누적, timecodeMs는 드롭 x좌표
+   *
+   * 영속성: 메모리에만 보존됨. 새로고침/프로젝트 전환 시 사라짐.
+   * 별도 phase에서 project.json 저장 또는 폴더 정규화로 영속화 예정.
    */
   const importMp3ToTrack = useCallback(async ({ mp3Path, trackType, timecodeMs }) => {
     if (!mp3Path) return null
@@ -367,7 +370,12 @@ export function useAudioImport(t, { onAudioSrtAbsorbed = null } = {}) {
       return null
     }
 
+    // import/refresh와 같은 토큰 시스템에 참여 — ffprobe 중 프로젝트 전환 시 stale commit 차단
+    const myVersion = ++opVersionRef.current
+    const shouldCommit = () => myVersion === opVersionRef.current
+
     const probe = await window.electronAPI.probeAudioFile({ filePath: mp3Path })
+    if (!shouldCommit()) return null
     if (!probe?.success) {
       toast.error(
         (t('audioImport.probeFailed') || 'Probe failed: {error}')
@@ -376,7 +384,21 @@ export function useAudioImport(t, { onAudioSrtAbsorbed = null } = {}) {
       return null
     }
 
+    // 기본 summary — AudioSummary가 직접 접근하는 모든 필드 채움 (NPE 방어).
+    // 드롭은 임시 상태라 정확한 카운트보다 "구조적으로 안전한 0값"이 목적.
+    const emptySummary = {
+      characters: [],
+      totalVoiceFiles: 0,
+      totalSfxCategories: 0,
+      totalSfxFiles: 0,
+      hasSrt: false,
+      hasMedia: false,
+      hasSfxTimecodes: false,
+      hasSfxPrompts: false,
+    }
+
     setAudioPackage(prev => {
+      if (!shouldCommit()) return prev
       const base = prev || {
         folderPath: probe.folderPath,
         media: { video: null, srt: null },
@@ -385,8 +407,10 @@ export function useAudioImport(t, { onAudioSrtAbsorbed = null } = {}) {
         srtEntries: [],
         srtContent: null,
         sfxTimecodes: [],
-        summary: {},
+        summary: { ...emptySummary },
       }
+      // 기존 summary가 부분만 있으면 빈 필드 채움 (legacy / synthetic 둘 다 안전).
+      const mergedSummary = { ...emptySummary, ...(base.summary || {}) }
 
       if (trackType === 'narration') {
         return {
@@ -399,6 +423,7 @@ export function useAudioImport(t, { onAudioSrtAbsorbed = null } = {}) {
               durationMs: probe.durationMs,
             },
           },
+          summary: { ...mergedSummary, hasMedia: true },
         }
       }
 
@@ -411,13 +436,25 @@ export function useAudioImport(t, { onAudioSrtAbsorbed = null } = {}) {
         timecodeMs: Math.max(0, Math.round(timecodeMs || 0)),
         durationMs: probe.durationMs,
       }
+      let newSfx
       if (idx === -1) {
-        return { ...base, sfx: [...sfxList, { category: '_dropped', files: [newFile] }] }
+        newSfx = [...sfxList, { category: '_dropped', files: [newFile] }]
+      } else {
+        const updatedCat = { ...sfxList[idx], files: [...(sfxList[idx].files || []), newFile] }
+        newSfx = [...sfxList]
+        newSfx[idx] = updatedCat
       }
-      const updatedCat = { ...sfxList[idx], files: [...(sfxList[idx].files || []), newFile] }
-      const newSfx = [...sfxList]
-      newSfx[idx] = updatedCat
-      return { ...base, sfx: newSfx }
+      const totalSfxFiles = newSfx.reduce((sum, c) => sum + c.files.length, 0)
+      return {
+        ...base,
+        sfx: newSfx,
+        summary: {
+          ...mergedSummary,
+          totalSfxCategories: newSfx.length,
+          totalSfxFiles,
+          hasSfxTimecodes: newSfx.some(c => c.files.some(f => f.timecodeMs != null)),
+        },
+      }
     })
 
     return { success: true, probe }
