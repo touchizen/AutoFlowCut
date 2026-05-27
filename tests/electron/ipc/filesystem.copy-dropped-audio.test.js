@@ -248,4 +248,46 @@ describe('fs:copy-dropped-audio IPC handler', () => {
     expect(result.success).toBe(true)
     expect(result.filename).toBe('foo_0001.wav')
   })
+
+  // P3 regression: source가 이미 media/ 안에 있는 파일(자기 자신 재드롭)이면
+  // pre-clean이 source를 unlink하면 copy 실패. source는 skip해야 함.
+  it('narration: media/ 안 source 재드롭 → source 보존 + 다른 audio만 unlink', async () => {
+    const fs = await import('fs/promises')
+    await fs.mkdir(join(audioFolderPath, 'media'), { recursive: true })
+    // 시뮬레이션: 폴더 import한 narration이 media/에 있음
+    const inPlaceSource = join(audioFolderPath, 'media', 'intro.mp3')
+    writeFileSync(inPlaceSource, 'in-place-content')
+    // 다른 audio 파일도 같이 (예: BGM)
+    writeFileSync(join(audioFolderPath, 'media', 'bgm.mp3'), 'bgm-content')
+
+    const result = await ipcMain.invoke('fs:copy-dropped-audio', {
+      sourcePath: inPlaceSource,
+      audioFolderPath,
+      trackType: 'narration',
+      timecodeMs: 0,
+    })
+
+    expect(result.success).toBe(true)
+    expect(result.filename).toBe('intro.mp3')
+    expect(result.destPath).toBe(inPlaceSource)
+    // source 보존
+    expect(existsSync(inPlaceSource)).toBe(true)
+    expect(readFileSync(inPlaceSource, 'utf8')).toBe('in-place-content')
+    // 다른 audio는 unlink
+    expect(existsSync(join(audioFolderPath, 'media', 'bgm.mp3'))).toBe(false)
+  })
+
+  it('narration: sourcePath === destPath면 copy 자체를 skip', async () => {
+    const fs = await import('fs/promises')
+    await fs.mkdir(join(audioFolderPath, 'media'), { recursive: true })
+    const inPlace = join(audioFolderPath, 'media', 'voice.mp3')
+    writeFileSync(inPlace, 'original-bytes')
+
+    // 같은 path에 copy 시도가 일어나면 OS별로 truncate 위험. skip되어야 안전.
+    const result = await ipcMain.invoke('fs:copy-dropped-audio', {
+      sourcePath: inPlace, audioFolderPath, trackType: 'narration', timecodeMs: 0,
+    })
+    expect(result.success).toBe(true)
+    expect(readFileSync(inPlace, 'utf8')).toBe('original-bytes') // 내용 보존
+  })
 })

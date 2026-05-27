@@ -235,9 +235,10 @@ function App() {
     selectedStyleRefId, setSelectedStyleRefId,
     // Phase 7: srtTrack 영속화 (load/save 시 useProjectData 가 동기화)
     srtTrack: scenesHook.srtTrack, setSrtTrack: scenesHook.setSrtTrack,
-    // B-phase: 드롭으로 변경된 audio 폴더가 즉시 project.json에 박히도록 prop으로 전달
-    // (localStorage fallback 대신 React state가 truth source).
-    audioFolderPath: audioPackage?.folderPath || null,
+    // B-phase: 드롭으로 변경된 audio 폴더가 즉시 project.json에 박히도록 prop으로 전달.
+    // audioPackage 로드 중(transient null)에 명시적 null로 덮어쓰지 않도록 undefined 유지 —
+    // saveCurrentProject가 undefined일 때 localStorage fallback.
+    audioFolderPath: audioPackage?.folderPath,
     openSettings,
     onAudioSwitch: (audioPath) => audioSwitchRef.current?.(audioPath),
     flowAPI,
@@ -425,7 +426,8 @@ function App() {
     selectedStyleRefId,
     // C17 review fix: srtTrack 변경도 autosave trigger
     srtTrack: scenesHook.srtTrack,
-    // B-phase fix: audio 폴더 변경(드롭 등)도 autosave trigger — 그래야 project.json 영속화
+    // B-phase fix: audio 폴더 변경(드롭 등)도 autosave trigger — 그래야 project.json 영속화.
+    // useAutoSave는 audio-only 가드용으로 truthy 검사만 하므로 || null 안전.
     audioFolderPath: audioPackage?.folderPath || null,
     settings, generatingRefsCount: generatingRefs.length,
     isRunning, isRestoringRef, saveCurrentProject,

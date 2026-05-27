@@ -23,7 +23,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
-import { loadProjectWithResources, useProjectData } from '../../src/hooks/useProjectData'
+import { loadProjectWithResources, useProjectData, saveCurrentProject } from '../../src/hooks/useProjectData'
 import { fileSystemAPI } from '../../src/hooks/useFileSystem'
 
 vi.mock('../../src/hooks/useFileSystem', () => ({
@@ -502,5 +502,45 @@ describe('handleProjectChange — aspect ratio', () => {
     expect(result.current.projectLoading).toBe(false)
     // fallback to current ratio + success:false (threw before the switch landed)
     expect(ret).toEqual({ aspectRatio: '16:9', success: false })
+  })
+})
+
+// B-phase P2 regression: audioFolderPath arg vs localStorage fallback.
+// 명시적 null 전달 → null 저장(사용자가 audio 제거). undefined 전달 → localStorage fallback
+// (transient state during reload — 기존 path 보존).
+describe('saveCurrentProject — audioFolderPath arg semantics', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    fileSystemAPI.projectExists.mockResolvedValue(true)
+    fileSystemAPI.saveProjectData.mockResolvedValue({ success: true })
+    localStorage.clear()
+  })
+
+  const baseSettings = { projectName: 'p', saveMode: 'folder', aspectRatio: '16:9', defaultDuration: 3 }
+
+  it('audioFolderPathArg=undefined + localStorage 있음 → localStorage 값 저장 (fallback)', async () => {
+    localStorage.setItem('audioFolderPath', '/cached/audio')
+    await saveCurrentProject(baseSettings, [{ id: 's1' }], [], [], [], null, [], undefined)
+    const saved = fileSystemAPI.saveProjectData.mock.calls.at(-1)[1]
+    expect(saved.audioFolderPath).toBe('/cached/audio')
+  })
+
+  it('audioFolderPathArg=null → null 저장 (명시적 제거, localStorage 무시)', async () => {
+    localStorage.setItem('audioFolderPath', '/cached/audio')
+    await saveCurrentProject(baseSettings, [{ id: 's1' }], [], [], [], null, [], null)
+    const saved = fileSystemAPI.saveProjectData.mock.calls.at(-1)[1]
+    expect(saved.audioFolderPath).toBeNull()
+  })
+
+  it('audioFolderPathArg=값 → 그 값 저장', async () => {
+    await saveCurrentProject(baseSettings, [{ id: 's1' }], [], [], [], null, [], '/new/audio')
+    const saved = fileSystemAPI.saveProjectData.mock.calls.at(-1)[1]
+    expect(saved.audioFolderPath).toBe('/new/audio')
+  })
+
+  it('audioFolderPathArg=undefined + localStorage 없음 → null 저장', async () => {
+    await saveCurrentProject(baseSettings, [{ id: 's1' }], [], [], [], null, [], undefined)
+    const saved = fileSystemAPI.saveProjectData.mock.calls.at(-1)[1]
+    expect(saved.audioFolderPath).toBeNull()
   })
 })

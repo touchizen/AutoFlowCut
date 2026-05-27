@@ -50,7 +50,8 @@ export function useAutoSave({
   useEffect(() => {
     if (generatingRefsCount > 0 || isRunning) return
     if (isRestoringRef?.current) return
-    if (scenes.length === 0 && references.length === 0 && videoScenes.length === 0) return
+    // 빈 프로젝트는 저장 안 함. 단 audioFolderPath만 있어도(audio-only) 저장 대상.
+    if (scenes.length === 0 && references.length === 0 && videoScenes.length === 0 && !audioFolderPath) return
     if (settings.saveMode === 'folder' && settings.projectName) {
       const timer = setTimeout(async () => {
         if (isRestoringRef?.current) return

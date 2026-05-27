@@ -95,6 +95,34 @@ describe('useAutoSave — audioFolderPath (B-phase P2 regression)', () => {
 
     expect(save).not.toHaveBeenCalled()
   })
+
+  // P2 #1 regression: audio만 있는 프로젝트(scenes/refs/videoScenes 비어있고 audio만)도
+  // empty 가드를 통과하여 autosave가 실제로 일어나야 함.
+  it('audio-only 프로젝트도 autosave 됨 (empty 가드 audioFolderPath 고려)', () => {
+    const save = vi.fn()
+    renderHook((p) => useAutoSave(p), {
+      initialProps: baseProps({
+        scenes: [], references: [], videoScenes: [], framePairs: [],
+        audioFolderPath: '/p/audio',
+        saveCurrentProject: save,
+      }),
+    })
+    vi.runAllTimers()
+    expect(save).toHaveBeenCalledTimes(1)
+  })
+
+  it('audio도 없고 다른 데이터도 없으면 여전히 skip', () => {
+    const save = vi.fn()
+    renderHook((p) => useAutoSave(p), {
+      initialProps: baseProps({
+        scenes: [], references: [], videoScenes: [], framePairs: [],
+        audioFolderPath: null,
+        saveCurrentProject: save,
+      }),
+    })
+    vi.runAllTimers()
+    expect(save).not.toHaveBeenCalled()
+  })
 })
 
 /**

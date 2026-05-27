@@ -374,7 +374,8 @@ export async function loadProjectWithResources(projectName) {
  * @returns {Promise<{success:boolean,error?:string}|undefined>} saveProjectData
  *   결과. 저장 대상이 아니면(폴더 모드 아님 / 프로젝트 폴더 없음) undefined.
  */
-async function saveCurrentProject(settings, scenes, references, videoScenes = [], framePairs = [], selectedStyleRefId = null, srtTrack = [], audioFolderPathArg = undefined) {
+// 테스트용 export — hook 통합 없이 직접 호출 가능 (예: audioFolderPath fallback 검증)
+export async function saveCurrentProject(settings, scenes, references, videoScenes = [], framePairs = [], selectedStyleRefId = null, srtTrack = [], audioFolderPathArg = undefined) {
   if (!settings.projectName || settings.saveMode !== 'folder') return
   const exists = await fileSystemAPI.projectExists(settings.projectName)
   if (!exists) return

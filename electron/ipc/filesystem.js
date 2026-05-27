@@ -1455,14 +1455,17 @@ export function registerFilesystemIPC(ipcMain) {
       // Narration은 "media/ 안 첫 mp3" 컨트랙트라 의미적으로 1개. 새 narration 드롭 시
       // 기존 audio 파일들을 unlink — 안 그러면 readdir 알파벳 순서로 옛 파일이 다시
       // narration으로 잡힘(예: intro.mp3가 그대로 있고 새 intro_1.mp3가 무시됨).
-      // SRT는 보존.
+      // SRT는 보존. source 파일이 media/ 안에 있다면(자기 자신 재드롭) skip해야 copy 가능.
+      const sourceResolved = path.resolve(sourcePath)
       if (trackType === 'narration') {
         try {
           const existing = await fs.readdir(mediaDir)
           for (const f of existing) {
             const fext = path.extname(f).toLowerCase()
             if (['.mp3', '.wav', '.m4a', '.mp4'].includes(fext)) {
-              await fs.unlink(path.join(mediaDir, f))
+              const filePath = path.join(mediaDir, f)
+              if (path.resolve(filePath) === sourceResolved) continue // source 보존
+              await fs.unlink(filePath)
             }
           }
         } catch (e) {
@@ -1500,8 +1503,10 @@ export function registerFilesystemIPC(ipcMain) {
       //      `boom_0005_1.mp3`처럼 뒤에 붙으면 scanner가 마지막 `1`을 보고
       //      timecodeMs를 null로 인식 → 타임라인에서 사라짐.
       // Narration: 위에서 pre-clean으로 충돌 없음 (이 분기엔 안 옴).
+      // sourcePath === destPath(자기 자신 재드롭)는 "충돌"이 아니라 no-op로 처리.
       let destPath = path.join(destDir, destFilename)
-      if (await pathExists(destPath)) {
+      const isSelfCopy = path.resolve(destPath) === sourceResolved
+      if (!isSelfCopy && await pathExists(destPath)) {
         if (trackType === 'sfx') {
           // SFX: <stem>_<timecode>.<ext> → <stem>_<N>_<timecode>.<ext>
           const tcWithExt = destFilename.slice(destFilename.lastIndexOf('_'))  // "_0005.mp3"
@@ -1530,7 +1535,11 @@ export function registerFilesystemIPC(ipcMain) {
         }
       }
 
-      await fs.copyFile(sourcePath, destPath)
+      // sourcePath === destPath (자기 자신 재드롭, 같은 경로) — copy 자체가 no-op면 skip.
+      // OS에 따라 fs.copyFile에 같은 경로 주면 truncate 위험.
+      if (path.resolve(destPath) !== sourceResolved) {
+        await fs.copyFile(sourcePath, destPath)
+      }
 
       return {
         success: true,
