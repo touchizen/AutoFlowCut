@@ -374,7 +374,7 @@ export async function loadProjectWithResources(projectName) {
  * @returns {Promise<{success:boolean,error?:string}|undefined>} saveProjectData
  *   결과. 저장 대상이 아니면(폴더 모드 아님 / 프로젝트 폴더 없음) undefined.
  */
-async function saveCurrentProject(settings, scenes, references, videoScenes = [], framePairs = [], selectedStyleRefId = null, srtTrack = []) {
+async function saveCurrentProject(settings, scenes, references, videoScenes = [], framePairs = [], selectedStyleRefId = null, srtTrack = [], audioFolderPathArg = undefined) {
   if (!settings.projectName || settings.saveMode !== 'folder') return
   const exists = await fileSystemAPI.projectExists(settings.projectName)
   if (!exists) return
@@ -391,8 +391,11 @@ async function saveCurrentProject(settings, scenes, references, videoScenes = []
   // framePairs에서 base64/video 제외
   const framePairsWithoutMedia = framePairs.map(({ base64, video, ...rest }) => rest)
 
-  // audioFolderPath를 project.json에 저장 (프로젝트별 오디오 경로 보존)
-  const audioFolderPath = localStorage.getItem('audioFolderPath') || null
+  // audioFolderPath: 인자(=React state)가 truth source. legacy 호출자(인자 미전달)는
+  // localStorage fallback. 인자가 명시적으로 null이면 null 저장 (예: 프로젝트 전환).
+  const audioFolderPath = audioFolderPathArg !== undefined
+    ? audioFolderPathArg
+    : (localStorage.getItem('audioFolderPath') || null)
 
   return await fileSystemAPI.saveProjectData(settings.projectName, {
     // Phase 7: 새 모델 마킹 + srtTrack 영속화
@@ -415,6 +418,7 @@ export function useProjectData({
   framePairs, setFramePairs,
   selectedStyleRefId = null, setSelectedStyleRefId = null,
   srtTrack = [], setSrtTrack = null,
+  audioFolderPath = undefined, // React state로 추적된 audio 폴더; undefined면 localStorage fallback
   openSettings,
   onAudioSwitch,
   flowAPI = null,
@@ -555,7 +559,7 @@ export function useProjectData({
     let switched = false // step 4(setSettings)까지 도달했는지 — 실패 반환값 판정용
     try {
       // 1. 현재 프로젝트 데이터 저장
-      await saveCurrentProject(settings, scenes, references, videoScenes, framePairs, selectedStyleRefId, srtTrack)
+      await saveCurrentProject(settings, scenes, references, videoScenes, framePairs, selectedStyleRefId, srtTrack, audioFolderPath)
 
       // 2. 새 프로젝트 데이터 로드
       let audioPath = null
@@ -626,7 +630,7 @@ export function useProjectData({
         try {
           const res = await saveCurrentProject(
             { ...settings, projectName: newProjectName, aspectRatio: resolvedAspectRatio },
-            [], [], [], [], null, []
+            [], [], [], [], null, [], null, // 신규 프로젝트 — audio 폴더는 아직 없음
           )
           if (res && res.success === false) {
             console.warn('[App] New project save failed:', res.error)
@@ -659,7 +663,7 @@ export function useProjectData({
     // settingsOverride: 설정 저장 시점처럼 setSettings 직후(아직 리렌더 전) 호출할 때
     // 최신 settings 를 명시로 넘겨 stale closure 를 피한다.
     saveCurrentProject: (settingsOverride) =>
-      saveCurrentProject(settingsOverride || settings, scenes, references, videoScenes, framePairs, selectedStyleRefId, srtTrack),
+      saveCurrentProject(settingsOverride || settings, scenes, references, videoScenes, framePairs, selectedStyleRefId, srtTrack, audioFolderPath),
     isRestoringRef,  // auto-save 가드용
     projectLoading   // 로딩 오버레이용
   }

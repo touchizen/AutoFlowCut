@@ -213,8 +213,21 @@ function App() {
     wasRunningRef.current = running
   }, [isRunning, videoAutomation.isRunning])
 
-  // Project Data 관리
+  // Audio Import — useProjectData에서 audioPackage?.folderPath를 의존성으로 쓰므로
+  // 먼저 호출해야 한다.
   const audioSwitchRef = useRef()
+  const { audioPackage, audioTracks, importing: audioImporting, audioLoading, importAudioPackage, importByPath, clearAudioPackage, audioReviews, saveReview, saveBulkReviews, refreshReviews, saveTimecodeOverride, importMp3ToTrack } = useAudioImport(t, {
+    // Phase 12: 오디오 폴더 SRT 를 project.srtTrack 으로 흡수.
+    // 정책: 현재 srtTrack 이 비어 있을 때만 폴더 SRT 로 채움 (사용자 작업 보호).
+    onAudioSrtAbsorbed: (audioSrtTrack) => {
+      if ((scenesHook.srtTrack || []).length === 0 && audioSrtTrack.length > 0) {
+        scenesHook.setSrtTrack(audioSrtTrack)
+        console.log('[App] Absorbed audio folder SRT into project.srtTrack:', audioSrtTrack.length)
+      }
+    },
+  })
+
+  // Project Data 관리
   const { addPendingSave, handleProjectChange, saveCurrentProject, isRestoringRef, projectLoading } = useProjectData({
     settings, setSettings, scenes, references, setScenes, setReferences,
     videoScenes, setVideoScenes,
@@ -222,6 +235,9 @@ function App() {
     selectedStyleRefId, setSelectedStyleRefId,
     // Phase 7: srtTrack 영속화 (load/save 시 useProjectData 가 동기화)
     srtTrack: scenesHook.srtTrack, setSrtTrack: scenesHook.setSrtTrack,
+    // B-phase: 드롭으로 변경된 audio 폴더가 즉시 project.json에 박히도록 prop으로 전달
+    // (localStorage fallback 대신 React state가 truth source).
+    audioFolderPath: audioPackage?.folderPath || null,
     openSettings,
     onAudioSwitch: (audioPath) => audioSwitchRef.current?.(audioPath),
     flowAPI,
@@ -248,18 +264,6 @@ function App() {
   // Scene 재생성
   const { generatingSceneId, handleGenerateScene } = useSceneGeneration({
     settings, scenes, scenesHook, flowAPI, openSettings, setSelectedScene, t, generationQueue
-  })
-
-  // Audio Import
-  const { audioPackage, audioTracks, importing: audioImporting, audioLoading, importAudioPackage, importByPath, clearAudioPackage, audioReviews, saveReview, saveBulkReviews, refreshReviews, saveTimecodeOverride, importMp3ToTrack } = useAudioImport(t, {
-    // Phase 12: 오디오 폴더 SRT 를 project.srtTrack 으로 흡수.
-    // 정책: 현재 srtTrack 이 비어 있을 때만 폴더 SRT 로 채움 (사용자 작업 보호).
-    onAudioSrtAbsorbed: (audioSrtTrack) => {
-      if ((scenesHook.srtTrack || []).length === 0 && audioSrtTrack.length > 0) {
-        scenesHook.setSrtTrack(audioSrtTrack)
-        console.log('[App] Absorbed audio folder SRT into project.srtTrack:', audioSrtTrack.length)
-      }
-    },
   })
 
   const handleImportAudio = async () => {
@@ -421,6 +425,8 @@ function App() {
     selectedStyleRefId,
     // C17 review fix: srtTrack 변경도 autosave trigger
     srtTrack: scenesHook.srtTrack,
+    // B-phase fix: audio 폴더 변경(드롭 등)도 autosave trigger — 그래야 project.json 영속화
+    audioFolderPath: audioPackage?.folderPath || null,
     settings, generatingRefsCount: generatingRefs.length,
     isRunning, isRestoringRef, saveCurrentProject,
     onSaveError: () => toast.error(t('toast.projectSaveFailed'))

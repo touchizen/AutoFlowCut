@@ -67,6 +67,36 @@ describe('useAutoSave — aspect ratio', () => {
   })
 })
 
+// P2 regression: audio 폴더 변경(드롭 등)도 autosave를 trigger해야 project.json에 영속화됨.
+// 이전에는 localStorage만 갱신되어 다른 변경 없이 종료하면 audioFolderPath 손실.
+describe('useAutoSave — audioFolderPath (B-phase P2 regression)', () => {
+  it('audioFolderPath 변경 시 autosave trigger', () => {
+    const save = vi.fn()
+    const props = baseProps({ saveCurrentProject: save, audioFolderPath: null })
+    const { rerender } = renderHook((p) => useAutoSave(p), { initialProps: props })
+    vi.runAllTimers()
+    save.mockClear()
+
+    rerender({ ...props, audioFolderPath: '/project/audio' })
+    vi.runAllTimers()
+
+    expect(save).toHaveBeenCalledTimes(1)
+  })
+
+  it('audioFolderPath 같으면 재저장 안 함', () => {
+    const save = vi.fn()
+    const props = baseProps({ saveCurrentProject: save, audioFolderPath: '/p/audio' })
+    const { rerender } = renderHook((p) => useAutoSave(p), { initialProps: props })
+    vi.runAllTimers()
+    save.mockClear()
+
+    rerender({ ...props, audioFolderPath: '/p/audio' })
+    vi.runAllTimers()
+
+    expect(save).not.toHaveBeenCalled()
+  })
+})
+
 /**
  * useAutoSave — save failure visibility
  *

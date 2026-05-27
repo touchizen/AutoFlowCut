@@ -1452,11 +1452,30 @@ export function registerFilesystemIPC(ipcMain) {
       const destDir = trackType === 'sfx' ? path.join(mediaDir, 'sfx') : mediaDir
       await fs.mkdir(destDir, { recursive: true })
 
+      // Narration은 "media/ 안 첫 mp3" 컨트랙트라 의미적으로 1개. 새 narration 드롭 시
+      // 기존 audio 파일들을 unlink — 안 그러면 readdir 알파벳 순서로 옛 파일이 다시
+      // narration으로 잡힘(예: intro.mp3가 그대로 있고 새 intro_1.mp3가 무시됨).
+      // SRT는 보존.
+      if (trackType === 'narration') {
+        try {
+          const existing = await fs.readdir(mediaDir)
+          for (const f of existing) {
+            const fext = path.extname(f).toLowerCase()
+            if (['.mp3', '.wav', '.m4a', '.mp4'].includes(fext)) {
+              await fs.unlink(path.join(mediaDir, f))
+            }
+          }
+        } catch (e) {
+          // 디렉토리 없거나 권한 문제 — copy 단계에서 다시 잡힘
+          console.warn('[FS] narration pre-clean failed:', e?.message)
+        }
+      }
+
       // 파일명 결정
       const origStem = path.basename(sourcePath, ext)
       let destFilename
       if (trackType === 'narration') {
-        // 원본 파일명 그대로 (timecode 인코딩 없음)
+        // 원본 파일명 그대로 (timecode 인코딩 없음). pre-clean 했으므로 충돌 없음.
         destFilename = `${origStem}${ext}`
       } else {
         // sfx — <stem>_<MMSS or HHMMSS>.mp3
@@ -1475,17 +1494,38 @@ export function registerFilesystemIPC(ipcMain) {
         destFilename = `${origStem}_${tcStr}${ext}`
       }
 
-      // 충돌 시 _1, _2 ... 증분 suffix (확장자 앞에 삽입)
+      // 충돌 시 증분 suffix.
+      // SFX: scanner는 파일명의 **마지막** `_` 토큰을 timecode로 보므로 suffix는
+      //      timecode **앞에** 삽입해야 함. 예: boom_0005.mp3 → boom_1_0005.mp3.
+      //      `boom_0005_1.mp3`처럼 뒤에 붙으면 scanner가 마지막 `1`을 보고
+      //      timecodeMs를 null로 인식 → 타임라인에서 사라짐.
+      // Narration: 위에서 pre-clean으로 충돌 없음 (이 분기엔 안 옴).
       let destPath = path.join(destDir, destFilename)
       if (await pathExists(destPath)) {
-        const baseNoExt = destFilename.slice(0, -ext.length)
-        for (let n = 1; n < 1000; n++) {
-          const candidate = `${baseNoExt}_${n}${ext}`
-          const candPath = path.join(destDir, candidate)
-          if (!(await pathExists(candPath))) {
-            destFilename = candidate
-            destPath = candPath
-            break
+        if (trackType === 'sfx') {
+          // SFX: <stem>_<timecode>.<ext> → <stem>_<N>_<timecode>.<ext>
+          const tcWithExt = destFilename.slice(destFilename.lastIndexOf('_'))  // "_0005.mp3"
+          const stemPart = destFilename.slice(0, destFilename.lastIndexOf('_')) // "boom"
+          for (let n = 1; n < 1000; n++) {
+            const candidate = `${stemPart}_${n}${tcWithExt}`
+            const candPath = path.join(destDir, candidate)
+            if (!(await pathExists(candPath))) {
+              destFilename = candidate
+              destPath = candPath
+              break
+            }
+          }
+        } else {
+          // 안전망 — 사실 narration은 pre-clean으로 이 분기 안 옴
+          const baseNoExt = destFilename.slice(0, -ext.length)
+          for (let n = 1; n < 1000; n++) {
+            const candidate = `${baseNoExt}_${n}${ext}`
+            const candPath = path.join(destDir, candidate)
+            if (!(await pathExists(candPath))) {
+              destFilename = candidate
+              destPath = candPath
+              break
+            }
           }
         }
       }

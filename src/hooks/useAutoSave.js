@@ -31,6 +31,7 @@ export function useAutoSave({
   scenes, references, videoScenes, framePairs,
   selectedStyleRefId = null,
   srtTrack = EMPTY_SRT_TRACK,
+  audioFolderPath = null,
   settings, generatingRefsCount, isRunning,
   isRestoringRef, saveCurrentProject, onSaveError = null
 }) {
@@ -71,5 +72,7 @@ export function useAutoSave({
     }
     // C17 review fix: srtTrack 변경도 trigger — MCP update-srt-track 등 자막만
     // 갱신하는 경로가 autosave 안 되면 종료 시 손실.
-  }, [scenes, references, videoScenes, framePairs, selectedStyleRefId, srtTrack, settings.projectName, settings.saveMode, settings.aspectRatio, generatingRefsCount, isRunning])
+    // B-phase fix: audioFolderPath도 trigger — mp3 드롭 직후 앱 종료해도 project.json
+    // 에 반영되도록.
+  }, [scenes, references, videoScenes, framePairs, selectedStyleRefId, srtTrack, audioFolderPath, settings.projectName, settings.saveMode, settings.aspectRatio, generatingRefsCount, isRunning])
 }
