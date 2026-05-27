@@ -1426,6 +1426,85 @@ export function registerFilesystemIPC(ipcMain) {
   })
 
   // ----------------------------------------------------------
+  // 23-d. fs:copy-dropped-audio — 드롭한 mp3를 오디오 패키지 폴더로 복사하여 영속화
+  // - audioFolderPath: 패키지 root. 없으면 IPC가 만들지 않음 (호출자가 결정).
+  // - trackType: 'narration' (→ media/) 또는 'sfx' (→ media/sfx/, 파일명에 timecode 인코딩)
+  // - 충돌 시 _1, _2 suffix
+  // ----------------------------------------------------------
+  ipcMain.handle('fs:copy-dropped-audio', async (_event, { sourcePath, audioFolderPath, trackType, timecodeMs }) => {
+    try {
+      if (!sourcePath || !(await pathExists(sourcePath))) {
+        return { success: false, error: 'Source file not found' }
+      }
+      if (!audioFolderPath) {
+        return { success: false, error: 'audioFolderPath required' }
+      }
+      if (!['narration', 'sfx'].includes(trackType)) {
+        return { success: false, error: `Unsupported trackType: ${trackType}` }
+      }
+      const ext = path.extname(sourcePath).toLowerCase()
+      if (!['.mp3', '.wav', '.m4a', '.mp4'].includes(ext)) {
+        return { success: false, error: 'Unsupported format' }
+      }
+
+      // 폴더 자동 생성 (audio/, audio/media[/sfx])
+      const mediaDir = path.join(audioFolderPath, 'media')
+      const destDir = trackType === 'sfx' ? path.join(mediaDir, 'sfx') : mediaDir
+      await fs.mkdir(destDir, { recursive: true })
+
+      // 파일명 결정
+      const origStem = path.basename(sourcePath, ext)
+      let destFilename
+      if (trackType === 'narration') {
+        // 원본 파일명 그대로 (timecode 인코딩 없음)
+        destFilename = `${origStem}${ext}`
+      } else {
+        // sfx — <stem>_<MMSS or HHMMSS>.mp3
+        const totalSec = Math.max(0, Math.floor((timecodeMs || 0) / 1000))
+        let tcStr
+        if (totalSec >= 3600) {
+          const hh = Math.floor(totalSec / 3600)
+          const mm = Math.floor((totalSec % 3600) / 60)
+          const ss = totalSec % 60
+          tcStr = `${String(hh).padStart(2, '0')}${String(mm).padStart(2, '0')}${String(ss).padStart(2, '0')}`
+        } else {
+          const mm = Math.floor(totalSec / 60)
+          const ss = totalSec % 60
+          tcStr = `${String(mm).padStart(2, '0')}${String(ss).padStart(2, '0')}`
+        }
+        destFilename = `${origStem}_${tcStr}${ext}`
+      }
+
+      // 충돌 시 _1, _2 ... 증분 suffix (확장자 앞에 삽입)
+      let destPath = path.join(destDir, destFilename)
+      if (await pathExists(destPath)) {
+        const baseNoExt = destFilename.slice(0, -ext.length)
+        for (let n = 1; n < 1000; n++) {
+          const candidate = `${baseNoExt}_${n}${ext}`
+          const candPath = path.join(destDir, candidate)
+          if (!(await pathExists(candPath))) {
+            destFilename = candidate
+            destPath = candPath
+            break
+          }
+        }
+      }
+
+      await fs.copyFile(sourcePath, destPath)
+
+      return {
+        success: true,
+        destPath,
+        audioFolderPath,
+        filename: destFilename,
+      }
+    } catch (error) {
+      console.error('[FS] copy-dropped-audio error:', error)
+      return { success: false, error: error.message }
+    }
+  })
+
+  // ----------------------------------------------------------
   // 24. fs:read-file-absolute — 절대 경로로 파일 읽기 (base64)
   //     오디오 파일 등 workFolder 밖의 파일을 읽을 때 사용
   // ----------------------------------------------------------

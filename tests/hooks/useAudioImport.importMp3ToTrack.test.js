@@ -35,6 +35,21 @@ describe('importMp3ToTrack', () => {
         folderPath: '/audio',
         durationMs: 60000,
       }),
+      // 복사 IPC mock: 입력의 sourcePath를 그대로 destPath로 echo (audioFolderPath/media 기준)
+      // 호출 시 sfx는 timecode 인코딩된 파일명 시뮬레이션
+      copyDroppedAudio: vi.fn().mockImplementation(async ({ sourcePath, audioFolderPath, trackType, timecodeMs }) => {
+        const filename = sourcePath.split('/').pop()
+        const stem = filename.replace(/\.\w+$/, '')
+        const ext = filename.slice(filename.lastIndexOf('.'))
+        if (trackType === 'sfx') {
+          const totalSec = Math.floor((timecodeMs || 0) / 1000)
+          const mm = String(Math.floor(totalSec / 60)).padStart(2, '0')
+          const ss = String(totalSec % 60).padStart(2, '0')
+          const destFilename = `${stem}_${mm}${ss}${ext}`
+          return { success: true, destPath: `${audioFolderPath}/media/sfx/${destFilename}`, filename: destFilename, audioFolderPath }
+        }
+        return { success: true, destPath: `${audioFolderPath}/media/${filename}`, filename, audioFolderPath }
+      }),
       // 초기 자동 로드 방지: rescan 안 부르도록 localStorage 비움
       rescanAudioPackage: vi.fn().mockResolvedValue({ success: false }),
       readFileAbsolute: vi.fn().mockResolvedValue({ success: false }),
@@ -47,51 +62,65 @@ describe('importMp3ToTrack', () => {
     localStorage.clear()
   })
 
-  it('narration: 빈 상태 → 새 audioPackage with media.video', async () => {
+  it('narration: 빈 상태 + fallbackFolderPath → 새 audioPackage, 디스크 경로 반영', async () => {
     const { result } = renderHook(() => useAudioImport(baseT))
     expect(result.current.audioPackage).toBeNull()
 
     await act(async () => {
       await result.current.importMp3ToTrack({
-        mp3Path: '/audio/n.mp3',
+        mp3Path: '/src/n.mp3',
         trackType: 'narration',
+        fallbackFolderPath: '/project/audio',
       })
     })
 
     expect(result.current.audioPackage).not.toBeNull()
     expect(result.current.audioPackage.media.video).toMatchObject({
-      path: '/audio/n.mp3',
+      path: '/project/audio/media/n.mp3', // copy 결과의 destPath
       filename: 'n.mp3',
       durationMs: 60000,
     })
-    expect(result.current.audioPackage.folderPath).toBe('/audio')
+    expect(result.current.audioPackage.folderPath).toBe('/project/audio')
+    // copy IPC 호출 검증
+    expect(window.electronAPI.copyDroppedAudio).toHaveBeenCalledWith({
+      sourcePath: '/src/n.mp3',
+      audioFolderPath: '/project/audio',
+      trackType: 'narration',
+      timecodeMs: 0,
+    })
   })
 
-  it('narration: 기존 narration 있음 → 교체', async () => {
+  it('narration: 기존 narration 있음 → 교체 (기존 폴더 사용)', async () => {
     const { result } = renderHook(() => useAudioImport(baseT))
     // 첫 narration
     await act(async () => {
-      await result.current.importMp3ToTrack({ mp3Path: '/audio/old.mp3', trackType: 'narration' })
+      await result.current.importMp3ToTrack({
+        mp3Path: '/src/old.mp3', trackType: 'narration', fallbackFolderPath: '/project/audio',
+      })
     })
-    // 새 narration
+    // 새 narration — fallback 안 줘도 기존 audioPackage.folderPath 사용해야 함
     window.electronAPI.probeAudioFile.mockResolvedValue({
-      success: true, path: '/audio/new.mp3', filename: 'new.mp3', folderPath: '/audio', durationMs: 30000,
+      success: true, path: '/src/new.mp3', filename: 'new.mp3', folderPath: '/src', durationMs: 30000,
     })
     await act(async () => {
-      await result.current.importMp3ToTrack({ mp3Path: '/audio/new.mp3', trackType: 'narration' })
+      await result.current.importMp3ToTrack({ mp3Path: '/src/new.mp3', trackType: 'narration' })
     })
 
     expect(result.current.audioPackage.media.video.filename).toBe('new.mp3')
     expect(result.current.audioPackage.media.video.durationMs).toBe(30000)
+    // 두 번째 copy도 기존 폴더로 (fallback 없이도)
+    const lastCall = window.electronAPI.copyDroppedAudio.mock.calls.at(-1)[0]
+    expect(lastCall.audioFolderPath).toBe('/project/audio')
   })
 
-  it('sfx: 빈 상태 → 새 audioPackage with _dropped 카테고리 1개', async () => {
+  it('sfx: 빈 상태 → 새 audioPackage with _dropped 카테고리 + 디스크 경로', async () => {
     const { result } = renderHook(() => useAudioImport(baseT))
     await act(async () => {
       await result.current.importMp3ToTrack({
-        mp3Path: '/audio/a.mp3',
+        mp3Path: '/src/a.mp3',
         trackType: 'sfx',
         timecodeMs: 5000,
+        fallbackFolderPath: '/project/audio',
       })
     })
 
@@ -99,7 +128,12 @@ describe('importMp3ToTrack', () => {
     expect(result.current.audioPackage.sfx[0]).toMatchObject({
       category: '_dropped',
       files: [
-        expect.objectContaining({ filename: 'n.mp3', timecodeMs: 5000, durationMs: 60000 }),
+        expect.objectContaining({
+          filename: 'a_0005.mp3', // copy IPC가 timecode 인코딩
+          path: '/project/audio/media/sfx/a_0005.mp3',
+          timecodeMs: 5000,
+          durationMs: 60000,
+        }),
       ],
     })
   })
@@ -108,20 +142,23 @@ describe('importMp3ToTrack', () => {
     const { result } = renderHook(() => useAudioImport(baseT))
     // 첫 sfx
     await act(async () => {
-      await result.current.importMp3ToTrack({ mp3Path: '/audio/a.mp3', trackType: 'sfx', timecodeMs: 1000 })
+      await result.current.importMp3ToTrack({
+        mp3Path: '/src/a.mp3', trackType: 'sfx', timecodeMs: 1000, fallbackFolderPath: '/project/audio',
+      })
     })
-    // 둘째 sfx
+    // 둘째 sfx — 기존 audioPackage.folderPath 사용
     window.electronAPI.probeAudioFile.mockResolvedValue({
-      success: true, path: '/audio/b.mp3', filename: 'b.mp3', folderPath: '/audio', durationMs: 2000,
+      success: true, path: '/src/b.mp3', filename: 'b.mp3', folderPath: '/src', durationMs: 2000,
     })
     await act(async () => {
-      await result.current.importMp3ToTrack({ mp3Path: '/audio/b.mp3', trackType: 'sfx', timecodeMs: 3500 })
+      await result.current.importMp3ToTrack({ mp3Path: '/src/b.mp3', trackType: 'sfx', timecodeMs: 3500 })
     })
 
     expect(result.current.audioPackage.sfx).toHaveLength(1)
     expect(result.current.audioPackage.sfx[0].files).toHaveLength(2)
     expect(result.current.audioPackage.sfx[0].files[1]).toMatchObject({
-      filename: 'b.mp3', timecodeMs: 3500,
+      filename: 'b_0003.mp3', // 3500ms → 0003
+      timecodeMs: 3500,
     })
   })
 
@@ -130,10 +167,10 @@ describe('importMp3ToTrack', () => {
     // 기존 audioPackage에 폴더 import한 sfx가 있다고 가정 → setAudioPackage로 강제
     act(() => {
       result.current.setAudioPackage({
-        folderPath: '/audio',
+        folderPath: '/project/audio',
         media: { video: null, srt: null },
         voices: [],
-        sfx: [{ category: '발소리', files: [{ filename: 'foot.mp3', path: '/audio/sfx/발소리/foot.mp3', timecodeMs: 0 }] }],
+        sfx: [{ category: '발소리', files: [{ filename: 'foot.mp3', path: '/project/audio/media/sfx/발소리/foot.mp3', timecodeMs: 0 }] }],
         srtEntries: [],
         srtContent: null,
         sfxTimecodes: [],
@@ -141,7 +178,7 @@ describe('importMp3ToTrack', () => {
     })
 
     await act(async () => {
-      await result.current.importMp3ToTrack({ mp3Path: '/audio/a.mp3', trackType: 'sfx', timecodeMs: 2000 })
+      await result.current.importMp3ToTrack({ mp3Path: '/src/a.mp3', trackType: 'sfx', timecodeMs: 2000 })
     })
 
     expect(result.current.audioPackage.sfx).toHaveLength(2)
@@ -231,6 +268,68 @@ describe('importMp3ToTrack', () => {
       })
       expect(result.current.audioPackage.summary.totalSfxFiles).toBe(2)
       expect(result.current.audioPackage.summary.totalSfxCategories).toBe(1) // 같은 _dropped
+    })
+  })
+
+  // B-phase regression: copy IPC 실패 시 메모리 변경 없음 + 영속성 localStorage 기록.
+  describe('copy IPC 영속화 (B-phase)', () => {
+    it('copy 실패 → audioPackage 변경 없음 + toast', async () => {
+      window.electronAPI.copyDroppedAudio.mockResolvedValue({
+        success: false, error: 'Permission denied',
+      })
+
+      const templateT = (k) => k === 'audioImport.copyFailed' ? 'Copy failed: {error}' : k
+      const { result } = renderHook(() => useAudioImport(templateT))
+      const before = result.current.audioPackage
+
+      await act(async () => {
+        await result.current.importMp3ToTrack({
+          mp3Path: '/src/n.mp3', trackType: 'narration', fallbackFolderPath: '/p/audio',
+        })
+      })
+
+      expect(result.current.audioPackage).toBe(before)
+      expect(toastError).toHaveBeenCalled()
+      expect(toastError.mock.calls.at(-1)[0]).toContain('Permission denied')
+    })
+
+    it('drop 성공 → localStorage.audioFolderPath에 resolvedFolderPath 기록', async () => {
+      const { result } = renderHook(() => useAudioImport(baseT))
+      await act(async () => {
+        await result.current.importMp3ToTrack({
+          mp3Path: '/src/n.mp3', trackType: 'narration', fallbackFolderPath: '/project/audio',
+        })
+      })
+      expect(localStorage.getItem('audioFolderPath')).toBe('/project/audio')
+    })
+
+    it('drop 성공 + projectName 있음 → audioFolderPaths 맵에도 기록', async () => {
+      localStorage.setItem('autoflowcut_settings', JSON.stringify({ projectName: 'ep03' }))
+      const { result } = renderHook(() => useAudioImport(baseT))
+      await act(async () => {
+        await result.current.importMp3ToTrack({
+          mp3Path: '/src/n.mp3', trackType: 'narration', fallbackFolderPath: '/project/audio',
+        })
+      })
+      const map = JSON.parse(localStorage.getItem('audioFolderPaths') || '{}')
+      expect(map.ep03).toBe('/project/audio')
+    })
+
+    it('fallbackFolderPath 누락 + audioPackage 없음 → copy에 audioFolderPath=undefined 전달', async () => {
+      // 실제 IPC가 'audioFolderPath required' 에러 반환하지만 mock은 echo. 인자 전달 검증.
+      window.electronAPI.copyDroppedAudio.mockResolvedValue({
+        success: false, error: 'audioFolderPath required',
+      })
+      const templateT = (k) => k === 'audioImport.copyFailed' ? 'Copy failed: {error}' : k
+      const { result } = renderHook(() => useAudioImport(templateT))
+
+      await act(async () => {
+        await result.current.importMp3ToTrack({ mp3Path: '/src/a.mp3', trackType: 'narration' })
+      })
+
+      const call = window.electronAPI.copyDroppedAudio.mock.calls.at(-1)[0]
+      expect(call.audioFolderPath).toBeUndefined()
+      expect(toastError).toHaveBeenCalled()
     })
   })
 

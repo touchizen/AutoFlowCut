@@ -85,6 +85,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   scanAudioPackage: () => ipcRenderer.invoke('fs:scan-audio-package'),
   rescanAudioPackage: (params) => ipcRenderer.invoke('fs:rescan-audio-package', params),
   probeAudioFile: (params) => ipcRenderer.invoke('fs:probe-audio-file', params),
+  copyDroppedAudio: (params) => ipcRenderer.invoke('fs:copy-dropped-audio', params),
   // Electron 36에서 File.path는 deprecated → webUtils.getPathForFile 사용
   getPathForFile: (file) => webUtils.getPathForFile(file),
   readFileAbsolute: (params) => ipcRenderer.invoke('fs:read-file-absolute', params),

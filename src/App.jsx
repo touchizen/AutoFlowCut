@@ -1284,7 +1284,17 @@ function App() {
               onSaveTimecodeOverride={saveTimecodeOverride}
               srtEntries={resolveAudioSrtEntries(audioPackage, scenesHook.srtTrack)}
               scenes={scenes}
-              onImportMp3={importMp3ToTrack}
+              onImportMp3={async (params) => {
+                // 드롭한 mp3는 audioFolderPath/media[/sfx]/로 복사되어 영속화.
+                // 기존 audioPackage가 있으면 그 folderPath를, 없으면 프로젝트 폴더 내
+                // audio/로 자동 생성.
+                const workFolder = localStorage.getItem('workFolderPath')
+                const projectName = settings.projectName
+                const fallbackFolderPath = workFolder && projectName
+                  ? `${workFolder}/${projectName}/audio`
+                  : null
+                return importMp3ToTrack({ ...params, fallbackFolderPath })
+              }}
               onSrtImport={(content) => handleImport('srt', content)}
             />
           )}
