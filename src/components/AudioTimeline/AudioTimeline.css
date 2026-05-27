@@ -534,6 +534,16 @@
   background: #1a1a1a;
   border-bottom: 1px solid #2a2a2a;
 }
+.atl-lane[data-accepts-drop="audio"] {
+  /* 드롭 가능 lane은 항상 살짝 점선 — 사용자에게 어디에 떨어뜨릴 수 있는지 hint */
+  outline: 1px dashed rgba(255, 255, 255, 0.06);
+  outline-offset: -1px;
+}
+.atl-lane.is-drop-target {
+  background: rgba(79, 195, 247, 0.12);
+  outline: 2px dashed rgba(79, 195, 247, 0.7);
+  outline-offset: -2px;
+}
 
 /* ── Clip ── */
 .atl-clip {

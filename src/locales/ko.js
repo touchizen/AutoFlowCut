@@ -502,6 +502,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
   // 오디오 Import
   audioImport: {
     electronRequired: 'Electron 데스크탑 버전에서만 사용 가능합니다.',
+    probeFailed: '오디오 파일 분석 실패: {error}',
     scanFailed: '오디오 패키지 스캔 실패: {error}',
     scanSuccess: '오디오 패키지 로드 완료!\n인물: {characters}\n음성 {voiceCount}개, SFX {sfxCount}개',
   },

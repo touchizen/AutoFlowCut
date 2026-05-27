@@ -33,7 +33,7 @@ function formatTC(ms) {
   return formatDuration(ms / 1000)
 }
 
-export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClipSelect, onSaveTimecodeOverride, disabled = false, onFlag, isFlagged }) {
+export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClipSelect, onSaveTimecodeOverride, disabled = false, onFlag, isFlagged, onTrackDrop }) {
   const { t } = useI18n()
   const data = useAudioTimeline(audioPackage, scenes, srtEntries)
   const [zoom, setZoom] = useState(1)
@@ -130,6 +130,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   const [playingClipIds, setPlayingClipIds] = useState(new Set()) // 현재 재생 중인 클립 (단독 또는 글로벌)
   const [isGlobalPlaying, setIsGlobalPlaying] = useState(false)
   const [hoverScene, setHoverScene] = useState(null) // { x, y, scene }
+  const [dragOverTrackId, setDragOverTrackId] = useState(null) // 드롭 타겟 lane 하이라이트용
   const audioInstancesRef = useRef(new Map()) // clipId -> Audio
   const scheduledTimersRef = useRef([]) // setTimeout IDs (글로벌 재생 시 미래 클립 예약)
   const scrollRef = useRef(null)
@@ -921,6 +922,10 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
                   onSceneHover={setHoverScene}
                   onFlag={onFlag}
                   isFlagged={isFlagged}
+                  onTrackDrop={onTrackDrop}
+                  onTrackDragOver={setDragOverTrackId}
+                  onTrackDragLeave={() => setDragOverTrackId(null)}
+                  dragOverTrackId={dragOverTrackId}
                 />
               )
             })}

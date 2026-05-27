@@ -1400,6 +1400,32 @@ export function registerFilesystemIPC(ipcMain) {
   })
 
   // ----------------------------------------------------------
+  // 23-c. fs:probe-audio-file — 단일 오디오 파일 메타 측정 (드래그앤드롭 경로용)
+  // 파일 존재 확인 + 지원 확장자 체크 + duration 측정 + 부모 폴더 경로 반환.
+  // ----------------------------------------------------------
+  ipcMain.handle('fs:probe-audio-file', async (_event, { filePath }) => {
+    try {
+      if (!filePath || !(await pathExists(filePath))) {
+        return { success: false, error: 'File not found' }
+      }
+      const ext = path.extname(filePath).toLowerCase()
+      if (!['.mp3', '.wav', '.m4a', '.mp4'].includes(ext)) {
+        return { success: false, error: 'Unsupported format' }
+      }
+      const durationMs = await getAudioDurationMs(filePath)
+      return {
+        success: true,
+        path: filePath,
+        filename: path.basename(filePath),
+        folderPath: path.dirname(filePath),
+        durationMs: durationMs || null,
+      }
+    } catch (error) {
+      return { success: false, error: error.message }
+    }
+  })
+
+  // ----------------------------------------------------------
   // 24. fs:read-file-absolute — 절대 경로로 파일 읽기 (base64)
   //     오디오 파일 등 workFolder 밖의 파일을 읽을 때 사용
   // ----------------------------------------------------------

@@ -251,7 +251,7 @@ function App() {
   })
 
   // Audio Import
-  const { audioPackage, audioTracks, importing: audioImporting, audioLoading, importAudioPackage, importByPath, clearAudioPackage, audioReviews, saveReview, saveBulkReviews, refreshReviews, saveTimecodeOverride } = useAudioImport(t, {
+  const { audioPackage, audioTracks, importing: audioImporting, audioLoading, importAudioPackage, importByPath, clearAudioPackage, audioReviews, saveReview, saveBulkReviews, refreshReviews, saveTimecodeOverride, importMp3ToTrack } = useAudioImport(t, {
     // Phase 12: 오디오 폴더 SRT 를 project.srtTrack 으로 흡수.
     // 정책: 현재 srtTrack 이 비어 있을 때만 폴더 SRT 로 채움 (사용자 작업 보호).
     onAudioSrtAbsorbed: (audioSrtTrack) => {
@@ -1284,6 +1284,8 @@ function App() {
               onSaveTimecodeOverride={saveTimecodeOverride}
               srtEntries={audioPackage?.srtEntries || srtTrackToEntries(scenesHook.srtTrack)}
               scenes={scenes}
+              onImportMp3={importMp3ToTrack}
+              onSrtImport={(content) => handleImport('srt', content)}
             />
           )}
         </div>

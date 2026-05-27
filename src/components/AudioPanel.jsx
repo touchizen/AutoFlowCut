@@ -195,6 +195,16 @@ export default function AudioPanel({ audioPackage, audioReviews, loading = false
             srtEntries={deferredSrtEntries}
             disabled={loading || isStale}
             onSaveTimecodeOverride={onSaveTimecodeOverride}
+            onTrackDrop={async ({ trackRole, files, timecodeMs }) => {
+              if (!onImportMp3) return
+              for (const file of files) {
+                const mp3Path = window.electronAPI?.getPathForFile?.(file)
+                if (!mp3Path) continue
+                await onImportMp3({ mp3Path, trackType: trackRole, timecodeMs })
+                // narration은 1개만 의미 있음 (교체 모드) → 첫 파일 후 break
+                if (trackRole === 'narration') break
+              }
+            }}
             // disabled (loading/refresh) 동안엔 onFlag 안 넘김 → Clip/file-item 의 showActionable=false → 버튼 자체가 DOM에 없음
             // (deferred old package에 marker 잘못 박히는 것 + invisible 버튼 키보드 포커스 회피)
             onFlag={(loading || isStale) ? undefined : handleFlag}

@@ -503,6 +503,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
   // Audio Import
   audioImport: {
     electronRequired: 'Available only in Electron desktop version.',
+    probeFailed: 'Failed to probe audio file: {error}',
     scanFailed: 'Audio package scan failed: {error}',
     scanSuccess: 'Audio package loaded!\nCharacters: {characters}\n{voiceCount} voice files, {sfxCount} SFX categories',
   },

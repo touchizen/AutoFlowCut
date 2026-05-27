@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // App
@@ -84,6 +84,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteStyleThumbnail: (params) => ipcRenderer.invoke('fs:delete-style-thumbnail', params),
   scanAudioPackage: () => ipcRenderer.invoke('fs:scan-audio-package'),
   rescanAudioPackage: (params) => ipcRenderer.invoke('fs:rescan-audio-package', params),
+  probeAudioFile: (params) => ipcRenderer.invoke('fs:probe-audio-file', params),
+  // Electron 36에서 File.path는 deprecated → webUtils.getPathForFile 사용
+  getPathForFile: (file) => webUtils.getPathForFile(file),
   readFileAbsolute: (params) => ipcRenderer.invoke('fs:read-file-absolute', params),
   writeFileAbsolute: (params) => ipcRenderer.invoke('fs:write-file-absolute', params),
 

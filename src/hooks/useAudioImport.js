@@ -355,6 +355,83 @@ export function useAudioImport(t, { onAudioSrtAbsorbed = null } = {}) {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   /**
+   * 드래그앤드롭으로 mp3 한 파일을 특정 트랙(narration/sfx)에 추가/교체.
+   * - narration: media.video 교체 (1개만)
+   * - sfx: sfx[]에 '_dropped' 카테고리로 누적, timecodeMs는 드롭 x좌표
+   */
+  const importMp3ToTrack = useCallback(async ({ mp3Path, trackType, timecodeMs }) => {
+    if (!mp3Path) return null
+    if (!['narration', 'sfx'].includes(trackType)) return null
+    if (!window.electronAPI?.probeAudioFile) {
+      toast.error(t('audioImport.electronRequired'))
+      return null
+    }
+
+    const probe = await window.electronAPI.probeAudioFile({ filePath: mp3Path })
+    if (!probe?.success) {
+      toast.error(
+        (t('audioImport.probeFailed') || 'Probe failed: {error}')
+          .replace('{error}', probe?.error || 'unknown')
+      )
+      return null
+    }
+
+    setAudioPackage(prev => {
+      const base = prev || {
+        folderPath: probe.folderPath,
+        media: { video: null, srt: null },
+        voices: [],
+        sfx: [],
+        srtEntries: [],
+        srtContent: null,
+        sfxTimecodes: [],
+        summary: {},
+      }
+
+      if (trackType === 'narration') {
+        return {
+          ...base,
+          media: {
+            ...(base.media || {}),
+            video: {
+              path: mp3Path,
+              filename: probe.filename,
+              durationMs: probe.durationMs,
+            },
+          },
+        }
+      }
+
+      // sfx — '_dropped' 카테고리에 누적
+      const sfxList = base.sfx || []
+      const idx = sfxList.findIndex(c => c.category === '_dropped')
+      const newFile = {
+        path: mp3Path,
+        filename: probe.filename,
+        timecodeMs: Math.max(0, Math.round(timecodeMs || 0)),
+        durationMs: probe.durationMs,
+      }
+      if (idx === -1) {
+        return { ...base, sfx: [...sfxList, { category: '_dropped', files: [newFile] }] }
+      }
+      const updatedCat = { ...sfxList[idx], files: [...(sfxList[idx].files || []), newFile] }
+      const newSfx = [...sfxList]
+      newSfx[idx] = updatedCat
+      return { ...base, sfx: newSfx }
+    })
+
+    return { success: true, probe }
+  }, [t])
+
+  // audioPackage 변경 시 audioTracks 재빌드 (드롭/오버라이드/import 모두 커버).
+  // 초기 mount 시 audioPackage=null이면 buildAudioTracks 호출 skip.
+  useEffect(() => {
+    if (!audioPackage) return
+    const tracks = buildAudioTracks(audioPackage, audioPackage.srtEntries || [])
+    setAudioTracks(tracks)
+  }, [audioPackage])
+
+  /**
    * 오디오 패키지 초기화 — 프로젝트 전환 시 즉시 비우고 다음 import 호출.
    * opVersion을 bump해서 in-flight import가 클리어 직후 자기 데이터를 다시 commit하지 못하게 한다.
    */
@@ -482,6 +559,7 @@ export function useAudioImport(t, { onAudioSrtAbsorbed = null } = {}) {
     saveBulkReviews,
     loadReviews,
     refreshReviews,
-    saveTimecodeOverride
+    saveTimecodeOverride,
+    importMp3ToTrack,
   }
 }
