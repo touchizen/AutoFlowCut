@@ -55,7 +55,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
         if (t.role !== 'video') return t
         return {
           ...t,
-          clips: t.clips.map(c => (posterMap[c.id] ? { ...c, posterDataUrl: posterMap[c.id] } : c)),
+          clips: t.clips.map(c => (posterMap[c.id]?.url ? { ...c, posterDataUrl: posterMap[c.id].url } : c)),
         }
       }),
     }

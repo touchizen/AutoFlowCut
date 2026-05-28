@@ -1,5 +1,6 @@
 import { useMemo, useRef, useEffect } from 'react'
 import { parseTimeToSeconds } from '../../utils/parsers'
+import { resolveVideoSrc } from '../../utils/videoSrc'
 import { computeVideoClipPlacement } from './useAudioTimeline'
 
 // 현재 playhead 위치의 씬 이미지 + 자막
@@ -62,8 +63,10 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
       return
     }
 
-    // src swap — 활성 비디오 path가 바뀐 경우에만
-    const desiredSrc = `file://${videoPlacement.videoPath}`
+    // src swap — 활성 비디오 path가 바뀐 경우에만.
+    // Windows 절대경로(C:\...) → file:///C:/... 형태로 정규화는 resolveVideoSrc가 담당.
+    const desiredSrc = resolveVideoSrc(null, videoPlacement.videoPath)
+    if (!desiredSrc) return
     if (currentSrcRef.current !== desiredSrc) {
       currentSrcRef.current = desiredSrc
       el.src = desiredSrc
