@@ -8,7 +8,7 @@
  * 기존 getVideoPoster는 sequential queue + 100-entry LRU (videoPoster.js).
  * 500개 동시 요청해도 큐가 순차 처리하며, LRU evict로 메모리는 안정.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { getVideoPoster } from '../../utils/videoPoster'
 
 // 내부 상태: posterMap value는 { url, src } — src는 추출에 쓰인 URL.
@@ -17,12 +17,32 @@ import { getVideoPoster } from '../../utils/videoPoster'
 //
 // clip.videoSrc는 useAudioTimeline이 미리 resolveVideoSrc()로 정규화한 값.
 // 이 hook은 raw videoPath를 더 이상 보지 않는다 — 정규화 책임은 단일 지점.
+//
+// Poster 완료 → setPosterMap을 매번 부르지 않고 RAF 한 프레임에 묶어 flush.
+// 500 클립이 같은 프레임에 끝나도 setState는 1회 → React 리렌더 1회.
+const hasRAF = typeof requestAnimationFrame === 'function'
+function scheduleFrame(fn) {
+  if (hasRAF) return requestAnimationFrame(fn)
+  return setTimeout(fn, 16)
+}
+function cancelFrame(id) {
+  if (id == null) return
+  if (hasRAF) cancelAnimationFrame(id)
+  else clearTimeout(id)
+}
+
 export function useVideoPosters(clips) {
   const [posterMap, setPosterMap] = useState({})
+  // pendingRef: 다음 RAF 까지 모인 신규 poster들. flush 시점에 한 번에 setState.
+  const pendingRef = useRef(new Map())
+  const rafIdRef = useRef(null)
 
   useEffect(() => {
     if (!clips || clips.length === 0) {
       setPosterMap({})
+      pendingRef.current.clear()
+      cancelFrame(rafIdRef.current)
+      rafIdRef.current = null
       return undefined
     }
 
@@ -48,6 +68,29 @@ export function useVideoPosters(clips) {
       return next
     })
 
+    const flush = () => {
+      rafIdRef.current = null
+      if (cancelled || pendingRef.current.size === 0) return
+      const batch = pendingRef.current
+      pendingRef.current = new Map()
+      setPosterMap(prev => {
+        let changed = false
+        const next = { ...prev }
+        for (const [id, entry] of batch) {
+          const existing = next[id]
+          if (existing?.url === entry.url && existing?.src === entry.src) continue
+          next[id] = entry
+          changed = true
+        }
+        return changed ? next : prev
+      })
+    }
+
+    const scheduleFlush = () => {
+      if (rafIdRef.current != null) return
+      rafIdRef.current = scheduleFrame(flush)
+    }
+
     for (const clip of clips) {
       if (!clip?.id || !clip?.videoSrc) continue
       const src = clip.videoSrc
@@ -56,11 +99,8 @@ export function useVideoPosters(clips) {
         .then(dataUrl => {
           if (cancelled || signal.aborted) return
           if (!dataUrl) return
-          setPosterMap(prev => {
-            const existing = prev[clip.id]
-            if (existing?.url === dataUrl && existing?.src === src) return prev
-            return { ...prev, [clip.id]: { url: dataUrl, src } }
-          })
+          pendingRef.current.set(clip.id, { url: dataUrl, src })
+          scheduleFlush()
         })
         .catch(() => { /* swallow — getVideoPoster already returns null on error */ })
     }
@@ -68,6 +108,9 @@ export function useVideoPosters(clips) {
     return () => {
       cancelled = true
       controller.abort()
+      pendingRef.current.clear()
+      cancelFrame(rafIdRef.current)
+      rafIdRef.current = null
     }
   }, [clips])
 
