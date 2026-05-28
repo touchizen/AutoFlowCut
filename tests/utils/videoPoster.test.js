@@ -161,6 +161,25 @@ describe('videoPoster', () => {
     expect(videos).toHaveLength(2)
   })
 
+  it('shared cache survives one consumer aborting when a peer is still alive', async () => {
+    installFakeMediaDom({ duration: 3, autoMetadata: false })
+
+    const ctrlA = new AbortController()
+    const ctrlB = new AbortController()
+    const consumerA = getVideoPoster('file:///shared.mp4', { signal: ctrlA.signal })
+    const consumerB = getVideoPoster('file:///shared.mp4', { signal: ctrlB.signal })
+
+    // A aborts; B is still interested — extraction must still fire and B must get the poster.
+    ctrlA.abort()
+
+    await waitFor(() => expect(videos).toHaveLength(1))
+    videos[0].dispatch('loadedmetadata')
+
+    expect(await consumerA).toBeNull()
+    expect(await consumerB).toBe(POSTER)
+    expect(videos).toHaveLength(1) // single shared extraction, no retry
+  })
+
   it('bounds the poster cache and evicts the oldest entries', async () => {
     installFakeMediaDom({ duration: 3 })
 

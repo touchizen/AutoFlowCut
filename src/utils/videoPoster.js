@@ -33,14 +33,26 @@ function getCaptureTime(duration) {
   return Math.min(preferred, Math.max(0, duration - 0.05))
 }
 
-function rememberPosterPromise(videoSrc, promise, signal) {
+function rememberPosterEntry(videoSrc, entry) {
   if (posterCache.has(videoSrc)) posterCache.delete(videoSrc)
-  posterCache.set(videoSrc, { promise, signal })
+  posterCache.set(videoSrc, entry)
 
   while (posterCache.size > VIDEO_POSTER_CACHE_LIMIT) {
     const oldestKey = posterCache.keys().next().value
     posterCache.delete(oldestKey)
   }
+}
+
+// Cache entry는 소비자 signal과 독립.
+// signals: 등록된 소비자들의 AbortSignal 집합 (참조 카운팅 — 모두 abort되어야 entry 폐기)
+// hasUnsignaled: signal 없이 들어온 소비자가 1명이라도 있으면 true (영구 interest)
+// 두 조건 중 하나라도 충족되면 extraction 진행, 둘 다 깨지면 큐 시점에 스킵.
+function anyConsumerAlive(entry) {
+  if (entry.hasUnsignaled) return true
+  for (const s of entry.signals) {
+    if (!s.aborted) return true
+  }
+  return false
 }
 
 function extractVideoPoster(videoSrc, signal) {
@@ -106,34 +118,54 @@ export function getVideoPoster(videoSrc, options = {}) {
   if (!videoSrc) return Promise.resolve(null)
   const { signal } = options
   if (signal?.aborted) return Promise.resolve(null)
-  if (posterCache.has(videoSrc)) {
-    const cached = posterCache.get(videoSrc)
-    if (cached?.signal?.aborted) {
-      posterCache.delete(videoSrc)
-    } else {
-      posterCache.delete(videoSrc)
-      posterCache.set(videoSrc, cached)
-      return cached.promise
+
+  let entry = posterCache.get(videoSrc)
+  if (entry) {
+    // Cache hit — LRU touch + 이 소비자의 interest를 entry에 등록
+    posterCache.delete(videoSrc)
+    posterCache.set(videoSrc, entry)
+    if (signal) entry.signals.add(signal)
+    else entry.hasUnsignaled = true
+  } else {
+    // New entry — extraction promise는 entry.signals/hasUnsignaled를 큐 시점에 평가.
+    // 어떤 소비자의 signal도 entry.promise 자체에는 묶이지 않음 → 공유 캐시 안전.
+    const newEntry = {
+      signals: new Set(),
+      hasUnsignaled: !signal,
     }
+    if (signal) newEntry.signals.add(signal)
+
+    newEntry.promise = posterQueue
+      .then(() => {
+        // 큐 시점에 살아있는 소비자가 한 명도 없으면 extraction 스킵 (큐 최적화 유지)
+        if (!anyConsumerAlive(newEntry)) return null
+        return extractVideoPoster(videoSrc, null)
+      })
+      .then((poster) => {
+        if (!poster) posterCache.delete(videoSrc)
+        return poster
+      })
+      .catch(() => {
+        posterCache.delete(videoSrc)
+        return null
+      })
+
+    rememberPosterEntry(videoSrc, newEntry)
+    posterQueue = newEntry.promise.catch(() => null).then(() => undefined)
+    entry = newEntry
   }
 
-  const promise = posterQueue
-    .then(() => {
-      if (signal?.aborted) return null
-      return extractVideoPoster(videoSrc, signal)
+  // Consumer wrapper — signal abort는 이 소비자의 resolve에만 영향, entry.promise는 무관.
+  if (!signal) return entry.promise
+  return new Promise((resolve) => {
+    if (signal.aborted) { resolve(null); return }
+    const onAbort = () => resolve(null)
+    signal.addEventListener('abort', onAbort, { once: true })
+    entry.promise.then((poster) => {
+      signal.removeEventListener('abort', onAbort)
+      resolve(poster)
     })
-    .then((poster) => {
-      if (!poster) posterCache.delete(videoSrc)
-      return poster
-    })
-    .catch(() => {
-      posterCache.delete(videoSrc)
-      return null
-    })
-
-  rememberPosterPromise(videoSrc, promise, signal)
-  posterQueue = promise.catch(() => null).then(() => undefined)
-  return promise
+  })
 }
 
 export function clearVideoPosterCacheForTests() {
