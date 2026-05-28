@@ -39,7 +39,10 @@ export function useVideoPosters(clips) {
 
   useEffect(() => {
     if (!clips || clips.length === 0) {
-      setPosterMap({})
+      // 동일 내용일 때 새 {} 반환하면 setState → 리렌더 → effect 재실행 → setState ... 무한 루프.
+      // 호출부가 매 렌더 새 [] 를 넘기는 패턴(테스트의 useVideoPosters([]))에서 특히 위험.
+      // prev 가 이미 비어 있으면 동일 ref 그대로 반환 → React 가 bail out.
+      setPosterMap(prev => (Object.keys(prev).length ? {} : prev))
       pendingRef.current.clear()
       cancelFrame(rafIdRef.current)
       rafIdRef.current = null
@@ -58,14 +61,20 @@ export function useVideoPosters(clips) {
     }
 
     // 새 clips 세트가 들어왔으니 이전 맵에서 (a) 더 이상 존재하지 않는 키와
-    // (b) 같은 id지만 src가 바뀐 항목(stale poster)을 정리
+    // (b) 같은 id지만 src가 바뀐 항목(stale poster)을 정리.
+    // 변경된 항목이 하나도 없으면 prev 그대로 반환 → 불필요한 리렌더 + 효과 churn 방지.
     setPosterMap(prev => {
+      const prevKeys = Object.keys(prev)
+      if (prevKeys.length === 0) return prev
+      let removedAny = false
       const next = {}
-      for (const [id, entry] of Object.entries(prev)) {
+      for (const id of prevKeys) {
+        const entry = prev[id]
         const stillValid = currentPairs.has(id) && currentPairs.get(id) === entry?.src
         if (stillValid) next[id] = entry
+        else removedAny = true
       }
-      return next
+      return removedAny ? next : prev
     })
 
     const flush = () => {
