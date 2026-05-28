@@ -60,6 +60,10 @@
 .atl-preview-stage {
   position: relative;
   height: 100%;
+  /* width:100% — 이미지 없는 T2V-only 씬에서도 absolute video 오버레이가
+     preview 전체 영역을 채우도록. 이미지는 height:100% + width:auto + max-width:100%
+     로 자체 letterbox 처리되므로 시각적 회귀 없음. */
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
