@@ -1649,6 +1649,18 @@ html, body {
 
 .col-check input[type="checkbox"] {
   cursor: pointer;
+  /* 명시적 accent-color — 체크 상태는 강조색, 미체크는 브라우저 기본 (회색 박스) 대신
+     보더가 살아나도록 약간 더 큰 사이즈 + 강조. dim 처리된 행에서도 "클릭 가능" 으로
+     읽히게 한다. */
+  accent-color: var(--accent, #3b82f6);
+  width: 16px;
+  height: 16px;
+}
+
+.col-check input[type="checkbox"]:hover {
+  outline: 2px solid var(--accent, #3b82f6);
+  outline-offset: 1px;
+  border-radius: 3px;
 }
 
 /* Inline prompt editing in ResultsTable */
@@ -1669,10 +1681,10 @@ html, body {
   outline: none;
 }
 
-/* Deselected row in selectable ResultsTable */
-.results-table tr.deselected {
-  opacity: 0.4;
-}
+/* Deselected row — visual dim 제거.
+   체크 해제는 "다음 배치 제외" 상태일 뿐 행 자체는 완전 인터랙티브(프롬프트 편집,
+   미디어 클릭으로 상세 보기 등 모두 가능). opacity 0.4 는 "비활성/수정 불가" 로
+   잘못 읽혀 사용자에게 혼란을 줬다. 선택 상태는 체크박스만으로 충분히 전달된다. */
 
 /* ── LazyImage — viewport-aware image loading (R37) ─────────────────────────
    wrapper 가 부모를 꽉 채우고, 내부 img 도 fill + cover 보장.
