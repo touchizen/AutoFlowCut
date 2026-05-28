@@ -263,13 +263,19 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
     if (!totalDurationMs) totalDurationMs = 60000 // 빈 패키지 fallback (1분)
 
     // 트랙 구성 — Narration/SFX는 placeholder로 항상 표시 (드롭 타겟).
-    // Image/Video/Subtitle/Voice는 데이터 있을 때만 (드롭 받지 않음).
+    // Video/Image/Subtitle/Voice는 데이터 있을 때만 (드롭 받지 않음).
+    //
+    // 트랙 순서 (위→아래) = 비주얼 z-order (위 트랙이 위 레이어):
+    //   Video > Image > 자막 > Narration > Voice > SFX
+    // PreviewPanel이 비디오를 이미지 위에 오버레이하는 동작과 일치 —
+    // 사용자가 "비디오가 image 위에 깔린다"는 인지를 트랙 배치에서도 확인.
+    // 일반 NLE(Premiere/CapCut/DaVinci) 컨벤션과 동일.
     const tracks = []
-    if (imageClips.length > 0) {
-      tracks.push({ id: 'image', name: 'Image', color: COLORS.image, variant: 'block', clips: imageClips, role: 'image' })
-    }
     if (videoClips.length > 0) {
       tracks.push({ id: 'video', name: 'Video', color: COLORS.video, variant: 'block', clips: videoClips, role: 'video' })
+    }
+    if (imageClips.length > 0) {
+      tracks.push({ id: 'image', name: 'Image', color: COLORS.image, variant: 'block', clips: imageClips, role: 'image' })
     }
     if (subtitleClips.length > 0) {
       tracks.push({ id: 'subtitle', name: '자막', color: COLORS.subtitle, variant: 'text', clips: subtitleClips, role: 'subtitle' })
