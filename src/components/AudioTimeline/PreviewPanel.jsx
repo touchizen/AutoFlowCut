@@ -1,24 +1,19 @@
 import { useMemo, useRef, useEffect } from 'react'
-import { parseTimeToSeconds } from '../../utils/parsers'
 import { resolveVideoSrc } from '../../utils/videoSrc'
-import { computeVideoClipPlacement } from './useAudioTimeline'
+import { computeVideoClipPlacement, getSceneTimeRangeMs } from './useAudioTimeline'
 
 // 현재 playhead 위치의 씬 이미지 + 자막
 // 씬에 비디오(i2v 우선, t2v 차순)가 있고 playhead가 비디오 구간 안이면
 // 단일 공유 <video> element를 이미지 위에 오버레이 재생한다.
 // <video>는 DOM에 항상 1개만 존재 — 씬이 바뀔 때만 src swap (500씬 스케일 대응).
 export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 240 }) {
-  // 시간 기준 씬 매칭 (camelCase / snake_case 둘 다 지원)
+  // 시간 기준 씬 매칭 (camelCase / snake_case 정규화는 getSceneTimeRangeMs가 흡수)
   const scene = useMemo(() => {
     if (!scenes?.length) return null
-    const timeSec = playheadMs / 1000
     return scenes.find(s => {
-      const startRaw = s.startTime ?? s.start_time
-      const endRaw = s.endTime ?? s.end_time
-      const start = typeof startRaw === 'number' ? startRaw : parseTimeToSeconds(startRaw)
-      const end = typeof endRaw === 'number' ? endRaw : parseTimeToSeconds(endRaw)
-      if (isNaN(start) || isNaN(end)) return false
-      return timeSec >= start && timeSec < end
+      const range = getSceneTimeRangeMs(s)
+      if (!range) return false
+      return playheadMs >= range.startMs && playheadMs < range.endMs
     }) || null
   }, [scenes, playheadMs])
 
@@ -32,15 +27,11 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
   const subtitleText = srt?.text || ''
 
   // ── 비디오 오버레이 ──
-  // 현재 scene의 비디오 placement 계산 — useAudioTimeline과 동일 로직(같은 export).
+  // 현재 scene의 비디오 placement — useAudioTimeline과 동일 로직 + 동일 헬퍼.
   const videoPlacement = useMemo(() => {
-    if (!scene) return null
-    const startRaw = scene.startTime ?? scene.start_time
-    const endRaw = scene.endTime ?? scene.end_time
-    const startSec = typeof startRaw === 'number' ? startRaw : parseTimeToSeconds(startRaw)
-    const endSec = typeof endRaw === 'number' ? endRaw : parseTimeToSeconds(endRaw)
-    if (isNaN(startSec) || isNaN(endSec)) return null
-    return computeVideoClipPlacement(scene, startSec * 1000, endSec * 1000)
+    const range = getSceneTimeRangeMs(scene)
+    if (!range) return null
+    return computeVideoClipPlacement(scene, range.startMs, range.endMs)
   }, [scene])
 
   const isVideoActive = !!videoPlacement

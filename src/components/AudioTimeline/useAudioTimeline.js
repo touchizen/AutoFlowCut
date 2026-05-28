@@ -15,6 +15,26 @@ const COLORS = {
 }
 
 /**
+ * 씬의 시작/끝 시간을 ms 단위로 정규화.
+ *
+ * Scene 객체는 camelCase(`startTime`/`endTime`)와 snake_case(`start_time`/`end_time`)
+ * 두 표기를 혼용하며, 값은 number(seconds) 또는 string(`"00:01:23,456"` 류 timecode)일 수 있다.
+ * 이 헬퍼가 양쪽을 흡수해 항상 `{ startMs, endMs }` 또는 `null` 을 반환한다.
+ *
+ * @param {object} scene
+ * @returns {{startMs: number, endMs: number} | null}
+ */
+export function getSceneTimeRangeMs(scene) {
+  if (!scene) return null
+  const startRaw = scene.startTime ?? scene.start_time
+  const endRaw = scene.endTime ?? scene.end_time
+  const startSec = typeof startRaw === 'number' ? startRaw : parseTimeToSeconds(startRaw)
+  const endSec = typeof endRaw === 'number' ? endRaw : parseTimeToSeconds(endRaw)
+  if (!Number.isFinite(startSec) || !Number.isFinite(endSec)) return null
+  return { startMs: startSec * 1000, endMs: endSec * 1000 }
+}
+
+/**
  * 씬 안에서 비디오가 차지할 구간을 계산.
  * i2v 우선, 없으면 t2v. duration은 초 단위(소수점 1자리)로 저장됨 — SceneList.jsx의
  * detectVideoDuration / handleVideoMetadata와 동일 단위 가정.
@@ -119,15 +139,12 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
       .map(s => {
         const imgPath = s.imagePath || s.image_path || s.filePath
         if (!imgPath) return null
-        const startRaw = s.startTime ?? s.start_time
-        const endRaw = s.endTime ?? s.end_time
-        const startSec = typeof startRaw === 'number' ? startRaw : parseTimeToSeconds(startRaw)
-        const endSec = typeof endRaw === 'number' ? endRaw : parseTimeToSeconds(endRaw)
-        if (isNaN(startSec) || isNaN(endSec)) return null
+        const range = getSceneTimeRangeMs(s)
+        if (!range) return null
         return {
           id: `img-${s.id}`,
-          startMs: startSec * 1000,
-          endMs: endSec * 1000,
+          startMs: range.startMs,
+          endMs: range.endMs,
           imagePath: imgPath,
           sceneRef: s,
           color: COLORS.image,
@@ -140,12 +157,9 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
     // 배치는 computeVideoClipPlacement로 Case A/B 분기.
     const videoClips = (scenes || [])
       .map(s => {
-        const startRaw = s.startTime ?? s.start_time
-        const endRaw = s.endTime ?? s.end_time
-        const startSec = typeof startRaw === 'number' ? startRaw : parseTimeToSeconds(startRaw)
-        const endSec = typeof endRaw === 'number' ? endRaw : parseTimeToSeconds(endRaw)
-        if (isNaN(startSec) || isNaN(endSec)) return null
-        const placement = computeVideoClipPlacement(s, startSec * 1000, endSec * 1000)
+        const range = getSceneTimeRangeMs(s)
+        if (!range) return null
+        const placement = computeVideoClipPlacement(s, range.startMs, range.endMs)
         if (!placement) return null
         return {
           id: `vid-${s.id}`,
