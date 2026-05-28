@@ -48,11 +48,14 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
 
   // visible-range filtering — 500씬에서도 화면 안 보이는 클립의 추출을 지연.
   // viewport ± POSTER_VIEWPORT_BUFFER_MS 범위에 걸치는 클립만 useVideoPosters에 전달.
-  // visibleRangeMs는 scroll/zoom 시 RAF 단위로 갱신 (아래 effect).
-  const [visibleRangeMs, setVisibleRangeMs] = useState({ startMs: 0, endMs: Infinity })
+  //
+  // 초기 상태는 null(=unmeasured). useLayoutEffect가 첫 paint 전에 측정해서 set.
+  // null 동안에는 빈 clips 만 전달 → useVideoPosters가 초기 mount에서
+  // 전체 클립 큐잉하는 사고를 막음 (Infinity sentinel 의 버그 수정).
+  const [visibleRangeMs, setVisibleRangeMs] = useState(null)
   const videoClipsForPosters = useMemo(() => {
     if (!allVideoClips.length) return allVideoClips
-    if (!Number.isFinite(visibleRangeMs.endMs)) return allVideoClips // 초기 (아직 측정 전)
+    if (!visibleRangeMs) return [] // 미측정 — poster 큐 누르지 않음
     const minMs = Math.max(0, visibleRangeMs.startMs - POSTER_VIEWPORT_BUFFER_MS)
     const maxMs = visibleRangeMs.endMs + POSTER_VIEWPORT_BUFFER_MS
     return allVideoClips.filter(c => c.endMs >= minMs && c.startMs <= maxMs)
@@ -269,32 +272,45 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   // scroll/zoom 시 viewport에 보이는 ms 범위를 RAF 단위로 측정해 visibleRangeMs 갱신.
   // useVideoPosters는 이 범위에 걸치는 클립만 받아 처리 → 500씬에서 안 보이는 클립의
   // poster 추출이 뒤로 밀림. 100ms 미만 미세 이동은 무시 (sub-pixel scroll churn 차단).
-  useEffect(() => {
+  //
+  // 디자인 결정:
+  //   1. useLayoutEffect — 첫 paint 전에 측정해서 useVideoPosters의 첫 effect가
+  //      "unmeasured" 가 아닌 실제 visible range로 시작. 초기 mount에서 빈 클립을
+  //      넘기는 시간을 0으로 만듦.
+  //   2. dep은 [pxPerMs, dataReady] — `data`는 posterMap 변경마다 새 ref가 되므로
+  //      dep으로 두면 poster 도착마다 scroll listener 재등록 + lastRange 리셋 →
+  //      setVisibleRangeMs 의도하지 않은 재호출 피드백 루프. 안정 boolean으로 대체.
+  //   3. lastRangeRef — effect 재실행(줌 변경 등)에도 마지막 측정값 유지.
+  //      재등록 시 첫 commit 이 false-positive setState 를 안 함.
+  const dataReady = !!data
+  const lastRangeRef = useRef({ startMs: -1, endMs: -1 })
+  useLayoutEffect(() => {
+    if (!dataReady) return
     const el = scrollRef.current
-    if (!el || !data) return
+    if (!el) return
     let rafId = null
-    let lastRange = { startMs: -1, endMs: -1 }
 
     const commit = () => {
       rafId = null
       const startMs = el.scrollLeft / pxPerMs
       const endMs = (el.scrollLeft + el.clientWidth) / pxPerMs
-      if (Math.abs(lastRange.startMs - startMs) < 100 && Math.abs(lastRange.endMs - endMs) < 100) return
-      lastRange = { startMs, endMs }
-      setVisibleRangeMs(lastRange)
+      if (Math.abs(lastRangeRef.current.startMs - startMs) < 100 &&
+          Math.abs(lastRangeRef.current.endMs - endMs) < 100) return
+      lastRangeRef.current = { startMs, endMs }
+      setVisibleRangeMs(lastRangeRef.current)
     }
     const onScroll = () => {
       if (rafId != null) return
       rafId = requestAnimationFrame(commit)
     }
     el.addEventListener('scroll', onScroll, { passive: true })
-    commit() // initial 측정
+    commit() // initial 측정 (layout phase 라 paint 전)
 
     return () => {
       el.removeEventListener('scroll', onScroll)
       if (rafId != null) cancelAnimationFrame(rafId)
     }
-  }, [pxPerMs, data])
+  }, [pxPerMs, dataReady])
 
   // ── 트랙 펼치기/접기 ──
   const toggleExpand = (trackId) => {
