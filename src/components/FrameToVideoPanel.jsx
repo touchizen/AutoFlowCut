@@ -841,17 +841,19 @@ export default function FrameToVideoPanel({
                   <StopwatchIcon size={16} /> <ElapsedTime startedAt={pair.generatingStartedAt} endedAt={pair.generatingEndedAt} />
                 </span>
               ) : pair.status === 'error' ? (
-                <span className="status error-wrap">
-                  <span className="status error" title={pair.error}>
+                // 에러 배지 + 재시도 버튼 한 그룹. 인라인 style 대신 CSS 클래스로 통일 —
+                // btn-icon-retry 가 btn-remove (✕) 와 동일한 크기/스타일 베이스를 공유해
+                // 행 우측 액션 버튼들이 시각적으로 정렬됨.
+                <span className="status-error-group">
+                  <span className="status error status-badge" title={pair.error}>
                     {STATUS_ICONS.error} {t(`frameToVideo.${pair.status}`)}
                   </span>
                   {onVideoRetry && !disabled && (
                     <button
                       type="button"
-                      className="retry-btn-inline"
+                      className="btn-icon-retry"
                       onClick={() => onVideoRetry(pair)}
                       title={pair.error || t('actions.retryDownload') || 'Retry download'}
-                      style={{ marginLeft: '6px', padding: '2px 6px', border: '1px solid #888', borderRadius: '3px', background: 'transparent', cursor: 'pointer' }}
                     >
                       🔄
                     </button>

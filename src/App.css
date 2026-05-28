@@ -509,10 +509,56 @@ html, body {
 }
 
 .col-status {
-  width: 80px;
+  /* 에러 상태에선 배지 + 재시도 버튼이 inline 으로 들어가므로 80px 로는 부족.
+     auto 폭 + min-width 로 정상 상태(텍스트) 와 에러 상태(배지+버튼) 양쪽 다 깔끔하게. */
+  min-width: 110px;
   font-size: 0.78rem;
   text-align: center;
   white-space: nowrap;
+}
+
+/* 에러 배지 + 재시도 버튼 그룹 — 같은 행, 일정한 gap, 가운데 정렬 */
+.status-error-group {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+/* 클릭 불가한 status badge — .status.error 베이스가 cursor:pointer 라 misleading.
+   .status-badge 변형은 단순 표시용이므로 default cursor 로 되돌린다. */
+.status.status-badge {
+  cursor: default;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+/* 재시도 아이콘 버튼 — btn-remove (✕) 와 동일한 24x24 베이스로 행 우측 액션들이
+   시각적으로 정렬됨. hover 는 accent 강조 (btn-remove 의 destructive red 와 구분). */
+.btn-icon-retry {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-color);
+  cursor: pointer;
+  font-size: 0.85rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+
+.btn-icon-retry:hover:not(:disabled) {
+  border-color: var(--accent, #3b82f6);
+  background: rgba(59, 130, 246, 0.12);
+}
+
+.btn-icon-retry:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .col-action {
