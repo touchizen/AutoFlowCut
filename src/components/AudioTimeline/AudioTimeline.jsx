@@ -7,6 +7,7 @@
 
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react'
 import { useAudioTimeline } from './useAudioTimeline'
+import { useVideoPosters } from './useVideoPosters'
 import { useI18n } from '../../hooks/useI18n'
 import { formatDuration } from '../../utils/formatters'
 import { toast } from '../Toast'
@@ -35,7 +36,31 @@ function formatTC(ms) {
 
 export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClipSelect, onSaveTimecodeOverride, disabled = false, onFlag, isFlagged, onTrackDrop }) {
   const { t } = useI18n()
-  const data = useAudioTimeline(audioPackage, scenes, srtEntries)
+  const rawData = useAudioTimeline(audioPackage, scenes, srtEntries)
+
+  // 비디오 트랙 클립에 posterDataUrl 주입 (썸네일 비동기 로드).
+  // useAudioTimeline은 순수 정규화만 담당 — 비동기/캐시는 여기서 합성.
+  const videoClipsForPosters = useMemo(() => {
+    const vt = rawData?.tracks?.find(t => t.role === 'video')
+    return vt?.clips || []
+  }, [rawData])
+  const posterMap = useVideoPosters(videoClipsForPosters)
+
+  const data = useMemo(() => {
+    if (!rawData?.tracks) return rawData
+    if (!videoClipsForPosters.length || Object.keys(posterMap).length === 0) return rawData
+    return {
+      ...rawData,
+      tracks: rawData.tracks.map(t => {
+        if (t.role !== 'video') return t
+        return {
+          ...t,
+          clips: t.clips.map(c => (posterMap[c.id] ? { ...c, posterDataUrl: posterMap[c.id] } : c)),
+        }
+      }),
+    }
+  }, [rawData, posterMap, videoClipsForPosters])
+
   const [zoom, setZoom] = useState(1)
   const [playheadMs, setPlayheadMs] = useState(0)
   const [expandedTracks, setExpandedTracks] = useState(new Set())

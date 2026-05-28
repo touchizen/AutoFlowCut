@@ -97,6 +97,9 @@ export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDr
       {variant === 'block' && clip.imagePath && (
         <img className="atl-clip-img" src={`file://${clip.imagePath}`} alt="" />
       )}
+      {variant === 'block' && !clip.imagePath && clip.posterDataUrl && (
+        <img className="atl-clip-img" src={clip.posterDataUrl} alt="" />
+      )}
       {variant === 'text' && (
         <span className="atl-clip-text" style={{ color: clip.color }}>{clip.label}</span>
       )}
