@@ -10,7 +10,11 @@ import { computeVideoClipPlacement, getSceneTimeRangeMs } from './useAudioTimeli
  * - inclusiveEnd=false (기본, 씬용): t < endMs
  * - inclusiveEnd=true  (SRT용): t <= endMs
  *
- * 가정: ranges는 startMs 오름차순 정렬되어 있고 비-중첩.
+ * 가정: ranges는 startMs 오름차순 정렬되어 있고 **비-중첩**.
+ * 두 range가 t 시점에 동시에 활성(overlap)이면 startMs가 더 큰 쪽을 반환 —
+ * "first-by-array-order" 의미가 필요한 경우 (예: SRT) findRangeAt 대신
+ * sorted ranges 위에서 .find() 를 직접 사용하는 게 안전.
+ *
  * O(log N) — 1500 entries에서도 ~11 비교/lookup.
  */
 export function findRangeAt(ranges, t, inclusiveEnd = false) {
@@ -57,16 +61,22 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
       .sort((a, b) => a.startMs - b.startMs)
   }, [srtEntries])
 
-  // 시간 기준 씬 매칭 — O(log N) binary search
+  // 시간 기준 씬 매칭 — O(log N) binary search.
+  // 씬은 도메인상 비-overlap 보장 (CSV의 start_time/end_time이 순차 분할).
   const scene = useMemo(() => {
     if (!sceneRanges.length) return null
     return findRangeAt(sceneRanges, playheadMs, /* inclusiveEnd */ false)?.scene || null
   }, [sceneRanges, playheadMs])
 
-  // SRT 자막 — endMs 포함 매칭
+  // SRT 자막 — startMs 정렬된 ranges 위에서 linear .find.
+  // 일반 SRT는 비-overlap이지만 일부 도구가 카라오케·다중 화자용으로 겹친 cue를 생성.
+  // 그런 경우 "가장 먼저 시작한" 매칭을 보여주는 게 자연 — findRangeAt(lower-bound) 는
+  // "가장 늦게 시작한" 을 반환하므로 의미가 바뀜. 첫-매칭 의미 유지를 위해 linear.
+  // 일반적 SRT 길이(수십~수백 cue)에서 linear cost는 무시할 수준.
   const srt = useMemo(() => {
     if (!srtRanges.length) return null
-    return findRangeAt(srtRanges, playheadMs, /* inclusiveEnd */ true)?.entry || null
+    const r = srtRanges.find(e => playheadMs >= e.startMs && playheadMs <= e.endMs)
+    return r?.entry || null
   }, [srtRanges, playheadMs])
 
   const imgPath = scene?.imagePath || scene?.image_path || scene?.filePath
