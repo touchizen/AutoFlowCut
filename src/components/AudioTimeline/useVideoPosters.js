@@ -10,11 +10,13 @@
  */
 import { useEffect, useState } from 'react'
 import { getVideoPoster } from '../../utils/videoPoster'
-import { resolveVideoSrc } from '../../utils/videoSrc'
 
 // 내부 상태: posterMap value는 { url, src } — src는 추출에 쓰인 URL.
-// 같은 clip.id에서 videoPath가 바뀐 경우(같은 씬에서 i2v↔t2v 스왑)
+// 같은 clip.id에서 videoSrc가 바뀐 경우(같은 씬에서 i2v↔t2v 스왑)
 // 이전 src로 추출된 poster를 잘못 노출하지 않도록 비교 키로 함께 보관.
+//
+// clip.videoSrc는 useAudioTimeline이 미리 resolveVideoSrc()로 정규화한 값.
+// 이 hook은 raw videoPath를 더 이상 보지 않는다 — 정규화 책임은 단일 지점.
 export function useVideoPosters(clips) {
   const [posterMap, setPosterMap] = useState({})
 
@@ -28,12 +30,11 @@ export function useVideoPosters(clips) {
     const { signal } = controller
     let cancelled = false
 
-    // 현재 clips의 (id, 해상된 src) 페어를 만들어 보존 판단 기준으로 사용
+    // 현재 clips의 (id, src) 페어를 만들어 보존 판단 기준으로 사용
     const currentPairs = new Map()
     for (const c of clips) {
-      if (!c?.id) continue
-      const src = resolveVideoSrc(null, c?.videoPath)
-      currentPairs.set(c.id, src)
+      if (!c?.id || !c?.videoSrc) continue
+      currentPairs.set(c.id, c.videoSrc)
     }
 
     // 새 clips 세트가 들어왔으니 이전 맵에서 (a) 더 이상 존재하지 않는 키와
@@ -48,11 +49,9 @@ export function useVideoPosters(clips) {
     })
 
     for (const clip of clips) {
-      if (!clip?.id) continue
-      const src = currentPairs.get(clip.id)
-      if (!src) continue
-      // Windows 절대경로 정규화는 resolveVideoSrc(null, path)에서 일괄 처리.
-      // getVideoPoster는 sequential queue + 100-entry LRU (videoPoster.js).
+      if (!clip?.id || !clip?.videoSrc) continue
+      const src = clip.videoSrc
+      // getVideoPoster는 sequential queue + 100-entry LRU + consumer-signal 분리 (videoPoster.js).
       getVideoPoster(src, { signal })
         .then(dataUrl => {
           if (cancelled || signal.aborted) return

@@ -4,6 +4,7 @@
 
 import { useMemo } from 'react'
 import { parseTimeToSeconds } from '../../utils/parsers'
+import { resolveVideoSrc } from '../../utils/videoSrc'
 
 const COLORS = {
   image: '#7E57C2',
@@ -161,11 +162,16 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
         if (!range) return null
         const placement = computeVideoClipPlacement(s, range.startMs, range.endMs)
         if (!placement) return null
+        const videoSrc = resolveVideoSrc(null, placement.videoPath)
+        if (!videoSrc) return null
         return {
           id: `vid-${s.id}`,
           startMs: placement.videoIn,
           endMs: placement.videoOut,
           videoPath: placement.videoPath,
+          // 단일 정규화 지점 — useVideoPosters / AudioTimeline poster 주입 검증 /
+          // PreviewPanel <video src> 가 모두 이 값을 그대로 사용.
+          videoSrc,
           sceneRef: s,
           color: COLORS.video,
           role: 'video',
