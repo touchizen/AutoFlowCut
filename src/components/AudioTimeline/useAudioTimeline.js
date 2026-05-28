@@ -7,10 +7,66 @@ import { parseTimeToSeconds } from '../../utils/parsers'
 
 const COLORS = {
   image: '#7E57C2',
+  video: '#26C281',
   subtitle: '#FFD54F',
   narration: '#4FC3F7',
   voice: '#BA68C8',
   sfx: '#FFB74D',
+}
+
+/**
+ * 씬 안에서 비디오가 차지할 구간을 계산.
+ * i2v 우선, 없으면 t2v. duration은 초 단위(소수점 1자리)로 저장됨 — SceneList.jsx의
+ * detectVideoDuration / handleVideoMetadata와 동일 단위 가정.
+ *
+ * Case A (scene_dur >= video_dur): 비디오를 씬의 뒤편에 정렬
+ *   videoIn = sceneEnd - videoDur
+ *   videoOut = sceneEnd
+ *   앞쪽 패딩(scene_start → videoIn)에는 이미지 그대로 (PreviewPanel 기존 동작)
+ *
+ * Case B (scene_dur < video_dur): 비디오를 씬의 시작에 정렬, 꼬리 잘림
+ *   videoIn = sceneStart
+ *   videoOut = sceneEnd   (비디오 자연 길이가 아니라 씬 끝에서 컷)
+ *
+ * 반환 단위는 ms.
+ * @param {object} scene - useScenes 정규화된 씬 객체
+ * @param {number} sceneStartMs - 씬 시작 ms (이미 계산되어 있어야 함)
+ * @param {number} sceneEndMs - 씬 끝 ms
+ * @returns {{videoPath: string, videoIn: number, videoOut: number} | null}
+ */
+export function computeVideoClipPlacement(scene, sceneStartMs, sceneEndMs) {
+  if (!scene) return null
+  if (!Number.isFinite(sceneStartMs) || !Number.isFinite(sceneEndMs)) return null
+  const sceneDurMs = sceneEndMs - sceneStartMs
+  if (sceneDurMs <= 0) return null
+
+  // i2v 우선
+  const i2vPath = scene.videoI2VPath || scene.video_i2v_path || null
+  const t2vPath = scene.videoT2VPath || scene.video_t2v_path || null
+  const videoPath = i2vPath || t2vPath
+  if (!videoPath) return null
+
+  const videoDurSec = i2vPath
+    ? (scene.videoI2VDuration ?? scene.video_i2v_duration ?? null)
+    : (scene.videoT2VDuration ?? scene.video_t2v_duration ?? null)
+  if (!Number.isFinite(videoDurSec) || videoDurSec <= 0) return null
+
+  const videoDurMs = videoDurSec * 1000
+
+  if (sceneDurMs >= videoDurMs) {
+    // Case A — 씬이 같거나 더 김 → 비디오 뒤편
+    return {
+      videoPath,
+      videoIn: sceneEndMs - videoDurMs,
+      videoOut: sceneEndMs,
+    }
+  }
+  // Case B — 씬이 더 짧음 → 비디오 앞부터, 씬 끝에서 컷
+  return {
+    videoPath,
+    videoIn: sceneStartMs,
+    videoOut: sceneEndMs,
+  }
 }
 
 // HSL hue shift (sub-track 색상 변형용)
@@ -75,6 +131,30 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
           imagePath: imgPath,
           sceneRef: s,
           color: COLORS.image,
+        }
+      })
+      .filter(Boolean)
+
+    // ── Video 트랙 (T2V/I2V 생성 결과) ──
+    // 씬에 비디오가 있고 duration 메타데이터가 감지된 경우만 클립 생성.
+    // 배치는 computeVideoClipPlacement로 Case A/B 분기.
+    const videoClips = (scenes || [])
+      .map(s => {
+        const startRaw = s.startTime ?? s.start_time
+        const endRaw = s.endTime ?? s.end_time
+        const startSec = typeof startRaw === 'number' ? startRaw : parseTimeToSeconds(startRaw)
+        const endSec = typeof endRaw === 'number' ? endRaw : parseTimeToSeconds(endRaw)
+        if (isNaN(startSec) || isNaN(endSec)) return null
+        const placement = computeVideoClipPlacement(s, startSec * 1000, endSec * 1000)
+        if (!placement) return null
+        return {
+          id: `vid-${s.id}`,
+          startMs: placement.videoIn,
+          endMs: placement.videoOut,
+          videoPath: placement.videoPath,
+          sceneRef: s,
+          color: COLORS.video,
+          role: 'video',
         }
       })
       .filter(Boolean)
@@ -157,16 +237,19 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
     const sfxClipsAll = sfxSubTracks.flatMap(t => t.clips)
 
     // 총 길이 보강 — narration 없거나 부족할 경우
-    const allClips = [...imageClips, ...subtitleClips, ...narrationClips, ...voiceClipsAll, ...sfxClipsAll]
+    const allClips = [...imageClips, ...videoClips, ...subtitleClips, ...narrationClips, ...voiceClipsAll, ...sfxClipsAll]
     const maxEnd = allClips.reduce((m, c) => Math.max(m, c.endMs || 0), 0)
     if (maxEnd > totalDurationMs) totalDurationMs = maxEnd
     if (!totalDurationMs) totalDurationMs = 60000 // 빈 패키지 fallback (1분)
 
     // 트랙 구성 — Narration/SFX는 placeholder로 항상 표시 (드롭 타겟).
-    // Image/Subtitle/Voice는 데이터 있을 때만 (드롭 받지 않음).
+    // Image/Video/Subtitle/Voice는 데이터 있을 때만 (드롭 받지 않음).
     const tracks = []
     if (imageClips.length > 0) {
       tracks.push({ id: 'image', name: 'Image', color: COLORS.image, variant: 'block', clips: imageClips, role: 'image' })
+    }
+    if (videoClips.length > 0) {
+      tracks.push({ id: 'video', name: 'Video', color: COLORS.video, variant: 'block', clips: videoClips, role: 'video' })
     }
     if (subtitleClips.length > 0) {
       tracks.push({ id: 'subtitle', name: '자막', color: COLORS.subtitle, variant: 'text', clips: subtitleClips, role: 'subtitle' })
