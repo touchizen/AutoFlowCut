@@ -885,7 +885,8 @@ function App() {
 
           // promptSource에 따라 effective prompt 계산 — ResultsTable 표시와 동일한 규칙이어야
           // mismatch (UI 가 옛 값을 보이는데 generation 은 새 값을 쓰는 등) 가 안 난다.
-          const effectivePrompt = getFramePairEffectivePrompt(p, ftvPromptSource, videoScenes)
+          // image 모드는 owner scene.prompt 가 진실 — pair.prompt 는 행 생성 시 스냅샷이라 stale 가능.
+          const effectivePrompt = getFramePairEffectivePrompt(p, ftvPromptSource, videoScenes, scenes)
 
           return {
             ...p,
@@ -1221,6 +1222,12 @@ function App() {
               videoScenes={videoScenes}
               framePairs={framePairs}
               onUpdate={setFramePairs}
+              // image 모드의 단일 진실 소스 = owner scene.prompt. F→V 행에서 image 프롬프트 편집은
+              // scene 본체로 라우팅 — 이미지/T2V 탭에서 수정한 값과 자동 일치 유지.
+              onScenePromptUpdate={(sceneId, newPrompt) => scenesHook.updateScene(sceneId, { prompt: newPrompt })}
+              // video 모드도 동일한 단일 진실 소스 = scene.videoT2VPrompt. F→V 의 video prompt
+              // 편집은 owner scene 의 T2V prompt 로 라우팅 → T2V 탭과 양방향 일치.
+              onSceneVideoPromptUpdate={(sceneId, newPrompt) => scenesHook.updateScene(sceneId, { videoT2VPrompt: newPrompt })}
               promptSource={ftvPromptSource}
               onPromptSourceChange={setFtvPromptSource}
               onShowSceneDetail={(scene) => setSelectedScene(scene)}
@@ -1521,7 +1528,7 @@ function App() {
           // 다른 필드는 그대로 보존 — status/mediaId/generationId 등.
           <ResultsTable items={framePairs.map(p => ({
             ...p,
-            prompt: getFramePairEffectivePrompt(p, ftvPromptSource, videoScenes),
+            prompt: getFramePairEffectivePrompt(p, ftvPromptSource, videoScenes, scenes),
           }))} mediaType="frame-pair" aspectRatio={settings.aspectRatio} onShowDetail={(item) => setSelectedVideo(item)} onVideoRetry={handleVideoRetry} onClearMedia={(id) => {
             // FramePair clear — 전체 미디어/recovery 식별자/메타 정리.
             // generationId/mediaId 가 남으면 useProjectData reload 시 in-flight 로 오인되어

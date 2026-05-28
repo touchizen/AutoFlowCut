@@ -458,6 +458,8 @@ export { GALLERY_PREFIX }
 
 export default function FrameToVideoPanel({
   scenes, videoScenes = [], framePairs, onUpdate, promptSource = 'image', onPromptSourceChange,
+  onScenePromptUpdate,  // image 모드 input 편집을 scene 본체로 라우팅 (단일 진실 소스 = scene.prompt)
+  onSceneVideoPromptUpdate,  // video 모드 input 편집을 scene.videoT2VPrompt 로 라우팅 (단일 진실 소스 = T2V prompt)
   onShowSceneDetail, onVideoRetry, disabled, t, galleryItems, galleryLoading, onLoadGallery,
   onUploadFromDisk, onListFlowProjects, onFetchProjectGallery, onPickArchiveImage,
   seedNo = null, seedLocked = false, onSeedChange, onSeedLockToggle, onSeedRandom,
@@ -800,29 +802,55 @@ export default function FrameToVideoPanel({
 
             {/* 프롬프트 — 이미지/비디오/직접입력 모드 */}
             <div className="mapping-col col-prompt">
-              {promptSource === 'image' && (
-                <input
-                  type="text"
-                  value={pair.prompt || ''}
-                  onChange={(e) => updatePair(index, 'prompt', e.target.value)}
-                  disabled={disabled || pair.status === 'generating'}
-                  placeholder={t('frameToVideo.promptPlaceholder')}
-                />
-              )}
-              {promptSource === 'video' && (
-                <input
-                  type="text"
-                  // owner-binding: ownerSceneId 가 행과 영구 묶여 있다. start image dropdown 만
-                  // 다른 씬으로 바꿔도 video prompt 는 owner 씬에서 가져와야 일관됨 (startSceneId
-                  // 기반이면 dropdown 만 바꿔도 video prompt 가 다른 씬 것으로 튀어 silently wrong).
-                  value={pair.videoPrompt
-                    || videoScenes.find(vs => vs.id === pair.ownerSceneId?.replace?.('scene_', 'vscene_'))?.prompt
-                    || ''}
-                  onChange={(e) => updatePair(index, 'videoPrompt', e.target.value)}
-                  disabled={disabled || pair.status === 'generating'}
-                  placeholder={t('frameToVideo.videoPromptPlaceholder')}
-                />
-              )}
+              {promptSource === 'image' && (() => {
+                // Image 모드의 단일 진실 소스 = owner scene.prompt. 행 생성 시 pair.prompt 가
+                // 스냅샷으로 복사돼서 이후 scene 쪽에서 prompt 가 바뀌면 pair.prompt 가 stale.
+                // 따라서 scene-bound 행은 항상 owner scene 의 현재 prompt 를 표시/편집하고,
+                // gallery-rooted (ownerSceneId=null) 행만 pair.prompt 를 폴백으로 사용.
+                const ownerScene = pair.ownerSceneId ? scenes.find(s => s.id === pair.ownerSceneId) : null
+                const value = ownerScene ? (ownerScene.prompt || '') : (pair.prompt || '')
+                const handleChange = (v) => {
+                  if (ownerScene && onScenePromptUpdate) onScenePromptUpdate(ownerScene.id, v)
+                  else updatePair(index, 'prompt', v)
+                }
+                return (
+                  <input
+                    type="text"
+                    value={value}
+                    onChange={(e) => handleChange(e.target.value)}
+                    disabled={disabled || pair.status === 'generating'}
+                    placeholder={t('frameToVideo.promptPlaceholder')}
+                  />
+                )
+              })()}
+              {promptSource === 'video' && (() => {
+                // Video 모드의 단일 진실 소스 = owner scene.videoT2VPrompt. T2V 탭에서 video
+                // prompt 를 수정하면 F→V 에도 즉시 sync. legacy pair.videoPrompt 는 scene 에
+                // videoT2VPrompt 필드 자체가 없을 때만 fallback (legacy/image-only scene 케이스).
+                // owner-binding: startSceneId 가 아닌 ownerSceneId 기준이어야 dropdown 만 바꿔도
+                // video prompt 가 다른 씬 것으로 튀지 않음.
+                //
+                // 주의: useVideoScenes 의 derived videoScenes 는 truthy 필터(s.videoT2VPrompt)
+                // 라 빈 문자열이면 vscene 이 사라진다. 따라서 derived 가 아니라 owner scene 자체에서
+                // videoT2VPrompt 를 lookup — '필드가 string 으로 정의됨' 을 authoritative 로 판단해야
+                // 사용자가 prompt 를 "지우면" 진짜 비어 보이고 legacy pair.videoPrompt 가 부활 안 함.
+                const ownerScene = pair.ownerSceneId ? scenes.find(s => s.id === pair.ownerSceneId) : null
+                const sceneT2VDefined = ownerScene && typeof ownerScene.videoT2VPrompt === 'string'
+                const value = sceneT2VDefined ? ownerScene.videoT2VPrompt : (pair.videoPrompt || '')
+                const handleChange = (v) => {
+                  if (ownerScene && onSceneVideoPromptUpdate) onSceneVideoPromptUpdate(ownerScene.id, v)
+                  else updatePair(index, 'videoPrompt', v)
+                }
+                return (
+                  <input
+                    type="text"
+                    value={value}
+                    onChange={(e) => handleChange(e.target.value)}
+                    disabled={disabled || pair.status === 'generating'}
+                    placeholder={t('frameToVideo.videoPromptPlaceholder')}
+                  />
+                )
+              })()}
               {promptSource === 'none' && (
                 <input
                   type="text"
