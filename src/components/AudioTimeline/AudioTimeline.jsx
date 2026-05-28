@@ -10,6 +10,7 @@ import { useAudioTimeline } from './useAudioTimeline'
 import { useVideoPosters } from './useVideoPosters'
 import { useI18n } from '../../hooks/useI18n'
 import { formatDuration } from '../../utils/formatters'
+import { resolveVideoSrc } from '../../utils/videoSrc'
 import { toast } from '../Toast'
 import TimeRuler from './TimeRuler'
 import TrackLane from './TrackLane'
@@ -55,7 +56,15 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
         if (t.role !== 'video') return t
         return {
           ...t,
-          clips: t.clips.map(c => (posterMap[c.id]?.url ? { ...c, posterDataUrl: posterMap[c.id].url } : c)),
+          clips: t.clips.map(c => {
+            const entry = posterMap[c.id]
+            if (!entry?.url) return c
+            // src 일치 검증 — useVideoPosters effect가 이전 posterMap을 정리하기 전
+            // 같은 render에서 stale poster가 새 비디오에 잘못 주입되는 한-프레임 flash 차단.
+            const currentSrc = resolveVideoSrc(null, c.videoPath)
+            if (entry.src !== currentSrc) return c
+            return { ...c, posterDataUrl: entry.url }
+          }),
         }
       }),
     }
