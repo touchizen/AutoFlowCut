@@ -2,6 +2,12 @@ import { useMemo, useRef, useEffect } from 'react'
 import { resolveVideoSrc } from '../../utils/videoSrc'
 import { computeVideoClipPlacement, getSceneTimeRangeMs } from './useAudioTimeline'
 
+// 활성 직전 비디오 prefetch lead time — playhead가 다음 비디오 활성에 도달
+// PREFETCH_LEAD_MS 안쪽으로 가까워지면 hidden <video>로 미리 src+load 트리거.
+// 첫 재생 시 OS 페이지 캐시 cold read 로 인한 ~수백ms~수초 hang을 평탄화.
+// 너무 짧으면 효과 없음 / 너무 길면 prefetch가 빈번해짐 — 1.5s가 일반적 안전치.
+const PREFETCH_LEAD_MS = 1500
+
 /**
  * Lower-bound binary search — startMs 기준 정렬된 ranges 배열에서
  * `t` 시점에 활성인 range를 찾아 반환 (없으면 null).
@@ -98,6 +104,59 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
   const videoRef = useRef(null)
   const currentSrcRef = useRef(null)
 
+  // ── Prefetch lookahead ──
+  // 전체 씬에서 비디오 placement를 한 번에 precompute (videoIn 기준 정렬).
+  // playhead가 다음 활성까지 PREFETCH_LEAD_MS 안쪽 진입 시 hidden video에 src 설정.
+  const videoPlacements = useMemo(() => {
+    return sceneRanges
+      .map(r => {
+        const p = computeVideoClipPlacement(r.scene, r.startMs, r.endMs)
+        if (!p) return null
+        return { videoIn: p.videoIn, videoOut: p.videoOut, videoPath: p.videoPath }
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.videoIn - b.videoIn)
+  }, [sceneRanges])
+
+  // 다음 활성 예정 비디오 lookup — O(log N) binary search.
+  // playhead보다 큰 첫 videoIn 찾고, 그 차이가 PREFETCH_LEAD_MS 이내면 prefetch 대상.
+  const prefetchSrc = useMemo(() => {
+    if (!videoPlacements.length) return null
+    let lo = 0, hi = videoPlacements.length
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1
+      if (videoPlacements[mid].videoIn <= playheadMs) lo = mid + 1
+      else hi = mid
+    }
+    if (lo >= videoPlacements.length) return null
+    const next = videoPlacements[lo]
+    const delta = next.videoIn - playheadMs
+    if (delta > PREFETCH_LEAD_MS) return null
+    return resolveVideoSrc(null, next.videoPath)
+  }, [videoPlacements, playheadMs])
+
+  const prefetchRef = useRef(null)
+  const prefetchSrcRef = useRef(null)
+  useEffect(() => {
+    const el = prefetchRef.current
+    if (!el) return
+    // 타깃 없음 → src 해제 (메모리/네트워크 정리)
+    if (!prefetchSrc) {
+      if (prefetchSrcRef.current) {
+        prefetchSrcRef.current = null
+        try { el.removeAttribute('src'); el.load() } catch {}
+      }
+      return
+    }
+    // 이미 메인 비디오가 들고 있는 src거나 동일 prefetch target이면 no-op
+    if (prefetchSrcRef.current === prefetchSrc) return
+    if (currentSrcRef.current === prefetchSrc) return
+    prefetchSrcRef.current = prefetchSrc
+    el.src = prefetchSrc
+    // preload="auto" + load() — 브라우저가 metadata + 초기 chunk fetch → OS 캐시 warm
+    try { el.load() } catch {}
+  }, [prefetchSrc])
+
   useEffect(() => {
     const el = videoRef.current
     if (!el) return
@@ -163,6 +222,15 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
           <div className="atl-preview-subtitle">{subtitleText}</div>
         )}
       </div>
+      {/* Hidden prefetch — 다음 활성 비디오를 미리 OS 캐시에 warm. 화면 표시는 안 함. */}
+      <video
+        ref={prefetchRef}
+        muted
+        playsInline
+        preload="auto"
+        style={{ display: 'none', position: 'absolute', width: 1, height: 1, pointerEvents: 'none' }}
+        aria-hidden="true"
+      />
     </div>
   )
 }
