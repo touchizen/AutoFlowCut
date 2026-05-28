@@ -613,6 +613,24 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
       }
     }
 
+    // 사용자 stop — 남은 in-flight 항목 마무리.
+    // 빠뜨리면 videoT2VStatus 가 'generating' 으로 영원히 남고 generatingEndedAt 이 null 이라
+    // ResultsTable 의 useElapsedTimer 가 무한 증가 (사용자가 보기엔 "여전히 작업 중" 처럼).
+    // Flow API 는 cancel 이 없어 서버 생성 자체는 막을 수 없으므로, generationId 는 보존해
+    // (a) 앱 재시작 시 videoRecovery 가 결과 회수, (b) Flow 완료 후 Retry 다운로드 가능.
+    if (pending.size > 0 && stopRequestedRef.current) {
+      const stoppedMsg = t('videoAutomation.stoppedByUser') || 'Stopped by user — Flow may still be generating; use Retry later or restart for auto-recovery'
+      for (const [itemId, submission] of pending) {
+        const item = items.find(i => i.id === itemId)
+        onItemUpdate?.(itemId, 'error', {
+          error: stoppedMsg,
+          errorKind: 'stopped',
+          generationId: submission.generationId,
+          ...buildVideoMetaPatch(item, { seed, videoModel }),
+        })
+      }
+    }
+
     // ═══════════════════════════════════════════
     // 완료
     // ═══════════════════════════════════════════
