@@ -21,6 +21,11 @@ export const SUB_TRACK_H_MIN = 24
 export const SUB_TRACK_H_MAX = 120
 export const TRACK_HEIGHTS_KEY = 'autoflowcut.audioTimeline.trackHeights'
 
+// 비디오 poster 추출 viewport 버퍼 (양쪽으로 ±N ms 까지 추출 대상에 포함).
+// 너무 작으면 작은 스크롤마다 클립 churn → useVideoPosters effect 재실행 비용.
+// 너무 크면 가시화 우선 효과 약해짐. 10s는 일반 숏폼 ~3 씬 분량.
+export const POSTER_VIEWPORT_BUFFER_MS = 10_000
+
 // 트랙 ID → i18n key 매핑 (sub-track은 user data라 매핑 X)
 export const TRACK_LABEL_KEYS = {
   image: 'audioTimeline.trackImage',

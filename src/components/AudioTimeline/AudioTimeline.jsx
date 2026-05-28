@@ -24,6 +24,7 @@ import {
   PREVIEW_H_MIN, PREVIEW_H_MAX, PREVIEW_H_DEFAULT, PREVIEW_H_KEY,
   TRACK_H_MIN, TRACK_H_MAX, SUB_TRACK_H_MIN, SUB_TRACK_H_MAX, TRACK_HEIGHTS_KEY,
   TRACK_LABEL_KEYS,
+  POSTER_VIEWPORT_BUFFER_MS,
 } from './constants'
 import './AudioTimeline.css'
 
@@ -40,15 +41,29 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
 
   // 비디오 트랙 클립에 posterDataUrl 주입 (썸네일 비동기 로드).
   // useAudioTimeline은 순수 정규화만 담당 — 비동기/캐시는 여기서 합성.
-  const videoClipsForPosters = useMemo(() => {
+  const allVideoClips = useMemo(() => {
     const vt = rawData?.tracks?.find(t => t.role === 'video')
     return vt?.clips || []
   }, [rawData])
+
+  // visible-range filtering — 500씬에서도 화면 안 보이는 클립의 추출을 지연.
+  // viewport ± POSTER_VIEWPORT_BUFFER_MS 범위에 걸치는 클립만 useVideoPosters에 전달.
+  // visibleRangeMs는 scroll/zoom 시 RAF 단위로 갱신 (아래 effect).
+  const [visibleRangeMs, setVisibleRangeMs] = useState({ startMs: 0, endMs: Infinity })
+  const videoClipsForPosters = useMemo(() => {
+    if (!allVideoClips.length) return allVideoClips
+    if (!Number.isFinite(visibleRangeMs.endMs)) return allVideoClips // 초기 (아직 측정 전)
+    const minMs = Math.max(0, visibleRangeMs.startMs - POSTER_VIEWPORT_BUFFER_MS)
+    const maxMs = visibleRangeMs.endMs + POSTER_VIEWPORT_BUFFER_MS
+    return allVideoClips.filter(c => c.endMs >= minMs && c.startMs <= maxMs)
+  }, [allVideoClips, visibleRangeMs])
   const posterMap = useVideoPosters(videoClipsForPosters)
 
   const data = useMemo(() => {
     if (!rawData?.tracks) return rawData
-    if (!videoClipsForPosters.length || Object.keys(posterMap).length === 0) return rawData
+    // posterMap 기준만 체크 — 사용자가 스크롤해서 visible 밖으로 나가도
+    // 이미 로드된 poster들은 그대로 표시되어야 함 (visibleVideoClips로 판단 X).
+    if (Object.keys(posterMap).length === 0) return rawData
     return {
       ...rawData,
       tracks: rawData.tracks.map(t => {
@@ -67,7 +82,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
         }
       }),
     }
-  }, [rawData, posterMap, videoClipsForPosters])
+  }, [rawData, posterMap])
 
   const [zoom, setZoom] = useState(1)
   const [playheadMs, setPlayheadMs] = useState(0)
@@ -249,6 +264,37 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
     return () => el.removeEventListener('wheel', handleWheel)
     // data를 deps에 둬야 — null → 데이터 복귀 시 .atl-scroll DOM이 새로 마운트되므로 리스너 재등록 필요
   }, [handleWheel, data])
+
+  // ── visible time range 측정 (poster 추출 가시화 우선) ──
+  // scroll/zoom 시 viewport에 보이는 ms 범위를 RAF 단위로 측정해 visibleRangeMs 갱신.
+  // useVideoPosters는 이 범위에 걸치는 클립만 받아 처리 → 500씬에서 안 보이는 클립의
+  // poster 추출이 뒤로 밀림. 100ms 미만 미세 이동은 무시 (sub-pixel scroll churn 차단).
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el || !data) return
+    let rafId = null
+    let lastRange = { startMs: -1, endMs: -1 }
+
+    const commit = () => {
+      rafId = null
+      const startMs = el.scrollLeft / pxPerMs
+      const endMs = (el.scrollLeft + el.clientWidth) / pxPerMs
+      if (Math.abs(lastRange.startMs - startMs) < 100 && Math.abs(lastRange.endMs - endMs) < 100) return
+      lastRange = { startMs, endMs }
+      setVisibleRangeMs(lastRange)
+    }
+    const onScroll = () => {
+      if (rafId != null) return
+      rafId = requestAnimationFrame(commit)
+    }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    commit() // initial 측정
+
+    return () => {
+      el.removeEventListener('scroll', onScroll)
+      if (rafId != null) cancelAnimationFrame(rafId)
+    }
+  }, [pxPerMs, data])
 
   // ── 트랙 펼치기/접기 ──
   const toggleExpand = (trackId) => {
