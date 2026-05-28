@@ -2,6 +2,33 @@ import { useMemo, useRef, useEffect } from 'react'
 import { resolveVideoSrc } from '../../utils/videoSrc'
 import { computeVideoClipPlacement, getSceneTimeRangeMs } from './useAudioTimeline'
 
+/**
+ * Lower-bound binary search — startMs 기준 정렬된 ranges 배열에서
+ * `t` 시점에 활성인 range를 찾아 반환 (없으면 null).
+ *
+ * Range는 [startMs, endMs) 반-개구간 매칭 (endMs 포함 여부는 inclusiveEnd로 제어).
+ * - inclusiveEnd=false (기본, 씬용): t < endMs
+ * - inclusiveEnd=true  (SRT용): t <= endMs
+ *
+ * 가정: ranges는 startMs 오름차순 정렬되어 있고 비-중첩.
+ * O(log N) — 1500 entries에서도 ~11 비교/lookup.
+ */
+export function findRangeAt(ranges, t, inclusiveEnd = false) {
+  let lo = 0
+  let hi = ranges.length
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1
+    if (ranges[mid].startMs <= t) lo = mid + 1
+    else hi = mid
+  }
+  // lo = startMs > t 인 첫 항목 → 직전 항목이 후보
+  const idx = lo - 1
+  if (idx < 0) return null
+  const r = ranges[idx]
+  const endOk = inclusiveEnd ? t <= r.endMs : t < r.endMs
+  return endOk ? r : null
+}
+
 // 현재 playhead 위치의 씬 이미지 + 자막
 // 씬에 비디오(i2v 우선, t2v 차순)가 있고 playhead가 비디오 구간 안이면
 // 단일 공유 <video> element를 이미지 위에 오버레이 재생한다.
@@ -9,7 +36,7 @@ import { computeVideoClipPlacement, getSceneTimeRangeMs } from './useAudioTimeli
 export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 240 }) {
   // 씬 ranges precompute — getSceneTimeRangeMs는 parseTimeToSeconds(regex+split)을 부르므로
   // playhead 매 tick (60fps) 마다 N회 반복하면 1시간/1500씬 기준 ~0.5% CPU 누적.
-  // 한 번 정규화해서 number range로 들고 있고, 매 tick의 find는 number 비교만.
+  // sort를 명시적으로 — binary search 정확성 보장.
   const sceneRanges = useMemo(() => {
     if (!scenes?.length) return []
     return scenes
@@ -18,20 +45,29 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
         return r ? { startMs: r.startMs, endMs: r.endMs, scene: s } : null
       })
       .filter(Boolean)
+      .sort((a, b) => a.startMs - b.startMs)
   }, [scenes])
 
-  // 시간 기준 씬 매칭 (precomputed ranges 위에서 number 비교)
+  // SRT ranges — 이미 number지만 정렬 안 됐을 수 있으므로 메모이즈 + 정렬해서 보관.
+  const srtRanges = useMemo(() => {
+    if (!srtEntries?.length) return []
+    return srtEntries
+      .filter(e => Number.isFinite(e?.startMs) && Number.isFinite(e?.endMs))
+      .map(e => ({ startMs: e.startMs, endMs: e.endMs, entry: e }))
+      .sort((a, b) => a.startMs - b.startMs)
+  }, [srtEntries])
+
+  // 시간 기준 씬 매칭 — O(log N) binary search
   const scene = useMemo(() => {
     if (!sceneRanges.length) return null
-    return sceneRanges.find(r => playheadMs >= r.startMs && playheadMs < r.endMs)?.scene || null
+    return findRangeAt(sceneRanges, playheadMs, /* inclusiveEnd */ false)?.scene || null
   }, [sceneRanges, playheadMs])
 
-  // SRT 자막 — startMs/endMs는 import 시점에 이미 number로 파싱돼 있음 (parsers.js).
-  // 별도 ranges precompute 불필요, find가 그대로 number 비교.
+  // SRT 자막 — endMs 포함 매칭
   const srt = useMemo(() => {
-    if (!srtEntries?.length) return null
-    return srtEntries.find(e => playheadMs >= e.startMs && playheadMs <= e.endMs) || null
-  }, [srtEntries, playheadMs])
+    if (!srtRanges.length) return null
+    return findRangeAt(srtRanges, playheadMs, /* inclusiveEnd */ true)?.entry || null
+  }, [srtRanges, playheadMs])
 
   const imgPath = scene?.imagePath || scene?.image_path || scene?.filePath
   const subtitleText = srt?.text || ''
