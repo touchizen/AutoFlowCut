@@ -90,6 +90,54 @@ describe('useVideoScenes — derived view', () => {
     expect(vs[1].duration).toBe(7)
   })
 
+  it('T2V 진행중 타이머 필드(generatingStartedAt/EndedAt)를 vscene 에 노출한다', () => {
+    // 회귀: deriveVideoScene 이 이 필드를 안 꺼내면 ResultsTable 의 ElapsedTime 이
+    // 항상 0:00 으로 멈춰 다운로드 완료 전까지 경과 시간을 보여주지 못한다.
+    const startedAt = 1700000000000
+    const { result } = setupHook([
+      {
+        id: 'scene_1',
+        videoT2VPrompt: 'v1',
+        videoT2VStatus: 'generating',
+        videoT2VGeneratingStartedAt: startedAt,
+        videoT2VGeneratingEndedAt: null,
+      },
+      {
+        id: 'scene_2',
+        videoT2VPrompt: 'v2',
+        videoT2VStatus: 'complete',
+        videoT2VGeneratingStartedAt: startedAt,
+        videoT2VGeneratingEndedAt: startedAt + 30000,
+      },
+    ])
+    const vs = result.current.videoScenesHook.videoScenes
+    expect(vs[0].generatingStartedAt).toBe(startedAt)
+    expect(vs[0].generatingEndedAt).toBeNull()
+    expect(vs[1].generatingStartedAt).toBe(startedAt)
+    expect(vs[1].generatingEndedAt).toBe(startedAt + 30000)
+  })
+
+  it('updateVideoScene { generatingStartedAt } → scene.videoT2VGeneratingStartedAt (네임스페이스 매핑)', () => {
+    // 이미지 씬도 같은 이름의 필드를 쓰므로, 네임스페이스 없이 그대로 저장하면
+    // T2V 시작이 이미지 씬의 generatingStartedAt 를 덮어쓴다(또는 그 반대).
+    const startedAt = 1700000000000
+    const { result } = setupHook([
+      { id: 'scene_1', videoT2VPrompt: 'v1', generatingStartedAt: 1234 },
+    ])
+    act(() => {
+      result.current.videoScenesHook.updateVideoScene('vscene_1', {
+        status: 'generating',
+        generatingStartedAt: startedAt,
+        generatingEndedAt: null,
+      })
+    })
+    const scene = result.current.scenesHook.scenes[0]
+    expect(scene.videoT2VGeneratingStartedAt).toBe(startedAt)
+    expect(scene.videoT2VGeneratingEndedAt).toBeNull()
+    // 이미지 씬의 동명 필드는 영향받지 않아야 한다
+    expect(scene.generatingStartedAt).toBe(1234)
+  })
+
   it('source scene의 이미지 필드를 poster용으로 vscene에 보존한다', () => {
     const { result } = setupHook([
       {

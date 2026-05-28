@@ -203,6 +203,17 @@ export function useScenes() {
           videoI2VPath: existing.videoI2VPath,
           videoT2VDuration: existing.videoT2VDuration,
           videoI2VDuration: existing.videoI2VDuration,
+          // T2V 런타임 상태 — CSV 에는 안 실리는 항목들. 재파싱이 진행 중 generation/recovery/선택을 깨지 않도록 보존.
+          //   - videoT2VStatus: ResultsTable 이 status === 'generating' 일 때만 타이머를 렌더 → 잃으면 타이머가 사라짐.
+          //   - videoT2VMediaId / videoT2VGenerationId: videoRecovery 가 in-flight 분류에 사용 → 잃으면 reload 후 재제출(중복 quota).
+          //   - videoT2VSelected: 단순 UI 선택 상태인데 재파싱으로 리셋되면 사용자 의도가 사라짐.
+          //   - videoT2VGeneratingStartedAt/EndedAt: 위의 status 와 짝 — status 만 살리고 timestamp 잃으면 0:00 회귀.
+          videoT2VStatus: existing.videoT2VStatus,
+          videoT2VMediaId: existing.videoT2VMediaId,
+          videoT2VGenerationId: existing.videoT2VGenerationId,
+          videoT2VSelected: existing.videoT2VSelected,
+          videoT2VGeneratingStartedAt: existing.videoT2VGeneratingStartedAt,
+          videoT2VGeneratingEndedAt: existing.videoT2VGeneratingEndedAt,
         }
       })
       // R4 review fix: parseSceneCSVToTracks 가 row 별 start_time/end_time 절대값을

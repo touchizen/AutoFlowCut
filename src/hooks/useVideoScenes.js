@@ -42,6 +42,10 @@ const FIELD_MAP = {
   mediaId: 'videoT2VMediaId',
   generationId: 'videoT2VGenerationId',
   selected: 'videoT2VSelected',
+  // T2V 경과 타이머 — 이미지 씬의 동명 필드(scene.generatingStartedAt)와 충돌하면
+  // 한쪽 generation 이 다른 쪽 타이머를 덮어쓰므로 별도 네임스페이스로 매핑한다.
+  generatingStartedAt: 'videoT2VGeneratingStartedAt',
+  generatingEndedAt: 'videoT2VGeneratingEndedAt',
   // startTime / endTime 은 scene 본체와 공유 — 별도 매핑 없이 patch에 그대로
 }
 
@@ -74,6 +78,9 @@ function deriveVideoScene(s) {
     mediaId: s.videoT2VMediaId ?? null,
     generationId: s.videoT2VGenerationId ?? null,
     selected: s.videoT2VSelected ?? false,
+    // ResultsTable 의 ElapsedTime 이 이 필드를 읽는다. 없으면 useElapsedTimer 가 항상 0 → 0:00 고정.
+    generatingStartedAt: s.videoT2VGeneratingStartedAt ?? null,
+    generatingEndedAt: s.videoT2VGeneratingEndedAt ?? null,
     // Poster fields from the source image scene. ResultsTable uses these while
     // keeping the video element unmounted until hover.
     image: s.image ?? null,

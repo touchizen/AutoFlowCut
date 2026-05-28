@@ -81,6 +81,46 @@ describe('C6 — 새 형식 CSV 재import 시 image/status 보존', () => {
   })
 })
 
+describe('T2V 런타임 필드 — CSV 재파싱 시 보존', () => {
+  // 회귀: ResultsTable 은 videoT2VStatus==='generating' 일 때만 타이머를 그리므로,
+  // 재파싱이 videoT2VStatus 를 지워버리면 generation 진행 중 타이머가 사라진다.
+  // (timestamps 만 보존해도 status 가 'pending' 으로 떨어지면 화면에서 안 보임.)
+  it('CSV 재import 가 videoT2VStatus/mediaId/generationId/selected/timer 를 보존한다', () => {
+    const csv1 = `scene,prompt,video_t2v_prompt,subtitle\n1,"image A","video A","s1"\n2,"image B","video B","s2"`
+    const csv2 = `scene,prompt,video_t2v_prompt,subtitle\n1,"image A2","video A2","s1"\n2,"image B2","video B2","s2"`
+
+    const { result } = renderHook(() => useScenes())
+    act(() => { result.current.parseFromCSV(csv1) })
+    const ids = result.current.scenes.map(s => s.id)
+
+    const startedAt = 1700000000000
+    act(() => {
+      result.current.updateScene(ids[0], {
+        videoT2VStatus: 'generating',
+        videoT2VGenerationId: 'gen_aaa',
+        videoT2VMediaId: 'media_aaa',
+        videoT2VSelected: true,
+        videoT2VGeneratingStartedAt: startedAt,
+        videoT2VGeneratingEndedAt: null,
+      })
+    })
+
+    // 진행 중 CSV 재import (사용자가 프롬프트 갱신 등)
+    act(() => { result.current.parseFromCSV(csv2) })
+
+    const s0 = result.current.scenes[0]
+    // prompt 는 새 CSV 값으로 갱신
+    expect(s0.videoT2VPrompt).toBe('video A2')
+    // 런타임 필드는 전부 보존
+    expect(s0.videoT2VStatus).toBe('generating')
+    expect(s0.videoT2VGenerationId).toBe('gen_aaa')
+    expect(s0.videoT2VMediaId).toBe('media_aaa')
+    expect(s0.videoT2VSelected).toBe(true)
+    expect(s0.videoT2VGeneratingStartedAt).toBe(startedAt)
+    expect(s0.videoT2VGeneratingEndedAt).toBeNull()
+  })
+})
+
 describe('C16 — smart-match 실패 시 scene.subtitle 클리어', () => {
   it('SRT 재import 텍스트 완전 변경 → 기존 씬 srtLineIds=[] + subtitle 클리어 (UI/export 일치)', () => {
     const { result } = renderHook(() => useScenes())
