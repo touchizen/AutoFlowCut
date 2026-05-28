@@ -24,6 +24,7 @@ export const TRACK_HEIGHTS_KEY = 'autoflowcut.audioTimeline.trackHeights'
 // 트랙 ID → i18n key 매핑 (sub-track은 user data라 매핑 X)
 export const TRACK_LABEL_KEYS = {
   image: 'audioTimeline.trackImage',
+  video: 'audioTimeline.trackVideo',
   subtitle: 'audioTimeline.trackSubtitle',
   narration: 'audioTimeline.trackNarration',
   voice: 'audioTimeline.trackVoice',

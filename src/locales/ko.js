@@ -578,6 +578,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
   audioTimeline: {
     title: '오디오 타임라인',
     trackImage: '이미지',
+    trackVideo: '비디오',
     trackSubtitle: '자막',
     trackNarration: '나레이션',
     trackVoice: '음성',
