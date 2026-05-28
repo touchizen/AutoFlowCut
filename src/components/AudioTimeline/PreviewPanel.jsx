@@ -7,17 +7,27 @@ import { computeVideoClipPlacement, getSceneTimeRangeMs } from './useAudioTimeli
 // 단일 공유 <video> element를 이미지 위에 오버레이 재생한다.
 // <video>는 DOM에 항상 1개만 존재 — 씬이 바뀔 때만 src swap (500씬 스케일 대응).
 export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 240 }) {
-  // 시간 기준 씬 매칭 (camelCase / snake_case 정규화는 getSceneTimeRangeMs가 흡수)
-  const scene = useMemo(() => {
-    if (!scenes?.length) return null
-    return scenes.find(s => {
-      const range = getSceneTimeRangeMs(s)
-      if (!range) return false
-      return playheadMs >= range.startMs && playheadMs < range.endMs
-    }) || null
-  }, [scenes, playheadMs])
+  // 씬 ranges precompute — getSceneTimeRangeMs는 parseTimeToSeconds(regex+split)을 부르므로
+  // playhead 매 tick (60fps) 마다 N회 반복하면 1시간/1500씬 기준 ~0.5% CPU 누적.
+  // 한 번 정규화해서 number range로 들고 있고, 매 tick의 find는 number 비교만.
+  const sceneRanges = useMemo(() => {
+    if (!scenes?.length) return []
+    return scenes
+      .map(s => {
+        const r = getSceneTimeRangeMs(s)
+        return r ? { startMs: r.startMs, endMs: r.endMs, scene: s } : null
+      })
+      .filter(Boolean)
+  }, [scenes])
 
-  // SRT 자막 — 정확히 그 시점에 표시되는 것만
+  // 시간 기준 씬 매칭 (precomputed ranges 위에서 number 비교)
+  const scene = useMemo(() => {
+    if (!sceneRanges.length) return null
+    return sceneRanges.find(r => playheadMs >= r.startMs && playheadMs < r.endMs)?.scene || null
+  }, [sceneRanges, playheadMs])
+
+  // SRT 자막 — startMs/endMs는 import 시점에 이미 number로 파싱돼 있음 (parsers.js).
+  // 별도 ranges precompute 불필요, find가 그대로 number 비교.
   const srt = useMemo(() => {
     if (!srtEntries?.length) return null
     return srtEntries.find(e => playheadMs >= e.startMs && playheadMs <= e.endMs) || null
