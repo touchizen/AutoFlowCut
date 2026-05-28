@@ -20,15 +20,37 @@ vi.mock('../../../src/utils/videoPoster', () => ({
   }),
 }))
 
+// jsdom의 requestAnimationFrame은 vitest 환경에서 불안정/타이밍 비결정적.
+// 결정적 flush를 위해 RAF/cancelAF를 동기 큐로 stub — flushRaf()로 명시적으로 진행.
+let rafQueue
+let nextRafId
+const flushRaf = () => {
+  const q = rafQueue
+  rafQueue = []
+  q.forEach(({ fn }) => fn(0))
+}
+
 const makeClip = (id, src) => ({ id, videoSrc: src })
 
 describe('useVideoPosters', () => {
   beforeEach(() => {
     mockResolvers = new Map()
+    rafQueue = []
+    nextRafId = 1
+    vi.stubGlobal('requestAnimationFrame', (fn) => {
+      const id = nextRafId++
+      rafQueue.push({ id, fn })
+      return id
+    })
+    vi.stubGlobal('cancelAnimationFrame', (id) => {
+      rafQueue = rafQueue.filter(e => e.id !== id)
+    })
   })
 
   afterEach(() => {
     mockResolvers = null
+    rafQueue = []
+    vi.unstubAllGlobals()
   })
 
   it('returns empty map on mount when no clips', () => {
@@ -53,20 +75,17 @@ describe('useVideoPosters', () => {
     const baselineRenders = renderCount
     expect(baselineRenders).toBeGreaterThanOrEqual(1)
 
-    // 3개 poster를 같은 마이크로태스크에 해상 — 모두 같은 프레임의 pendingRef에 들어감
+    // 3개 poster를 같은 마이크로태스크에 해상 — 모두 같은 프레임의 pendingRef에 들어감.
+    // flushRaf()로 batched setState 1회 commit.
     await act(async () => {
       mockResolvers.get('file:///1.mp4')('data:image/jpeg;base64,A')
       mockResolvers.get('file:///2.mp4')('data:image/jpeg;base64,B')
       mockResolvers.get('file:///3.mp4')('data:image/jpeg;base64,C')
-      // RAF flush 대기
-      await new Promise(r => requestAnimationFrame(r))
-      // React가 batched setState를 commit 할 시간
-      await Promise.resolve()
+      await Promise.resolve() // .then 콜백 비우기
+      flushRaf()
     })
 
-    await waitFor(() => {
-      expect(Object.keys(result.current)).toHaveLength(3)
-    })
+    expect(Object.keys(result.current)).toHaveLength(3)
 
     // 3 poster → 단 1번의 batched render (baseline 이후)
     const flushedRenders = renderCount - baselineRenders
@@ -84,7 +103,8 @@ describe('useVideoPosters', () => {
     unmount()
     await act(async () => {
       mockResolvers.get('file:///1.mp4')('data:image/jpeg;base64,LATE')
-      await new Promise(r => setTimeout(r, 32))
+      await Promise.resolve()
+      flushRaf()
     })
 
     // result.current는 unmount 시점에 고정 — 빈 맵 그대로
@@ -100,12 +120,10 @@ describe('useVideoPosters', () => {
     // 첫 poster 도착
     await act(async () => {
       mockResolvers.get('file:///old.mp4')('data:image/jpeg;base64,OLD')
-      await new Promise(r => requestAnimationFrame(r))
       await Promise.resolve()
+      flushRaf()
     })
-    await waitFor(() => {
-      expect(result.current['vid-1']).toEqual({ url: 'data:image/jpeg;base64,OLD', src: 'file:///old.mp4' })
-    })
+    expect(result.current['vid-1']).toEqual({ url: 'data:image/jpeg;base64,OLD', src: 'file:///old.mp4' })
 
     // 같은 id, 새 src로 clips 갱신 (i2v↔t2v swap 시나리오)
     mockResolvers.clear()
@@ -120,11 +138,9 @@ describe('useVideoPosters', () => {
     // 새 poster 도착
     await act(async () => {
       mockResolvers.get('file:///new.mp4')('data:image/jpeg;base64,NEW')
-      await new Promise(r => requestAnimationFrame(r))
       await Promise.resolve()
+      flushRaf()
     })
-    await waitFor(() => {
-      expect(result.current['vid-1']).toEqual({ url: 'data:image/jpeg;base64,NEW', src: 'file:///new.mp4' })
-    })
+    expect(result.current['vid-1']).toEqual({ url: 'data:image/jpeg;base64,NEW', src: 'file:///new.mp4' })
   })
 })
