@@ -32,6 +32,7 @@ import { detectFileType, detectCSVType, parseCSVToScenes, parseSRTToScenes, csvP
 import { resolveAudioSrtEntries } from './utils/srtTrack'
 import { checkFolderPermission } from './utils/guards'
 import { collectTagErrors } from './utils/tagMatch'
+import { getFramePairEffectivePrompt } from './utils/framePairPrompt'
 import { toast } from './components/Toast'
 
 // Components
@@ -882,17 +883,9 @@ function App() {
           const startScene = startIsGallery ? null : scenes.find(s => s.id === p.startSceneId)
           const endScene = endIsGallery ? null : scenes.find(s => s.id === p.endSceneId)
 
-          // promptSource에 따라 effective prompt 계산
-          // owner-binding: ownerSceneId 가 행과 영구 묶임. startSceneId 는 단순 입력 이미지라
-          // dropdown 으로 다른 씬 가리키게 바꿔도 generation 은 owner 씬의 video prompt 사용.
-          let effectivePrompt = p.prompt // default: image prompt
-          if (ftvPromptSource === 'video') {
-            const vsceneId = p.ownerSceneId?.replace?.('scene_', 'vscene_')
-            const matched = videoScenes.find(vs => vs.id === vsceneId)
-            effectivePrompt = p.videoPrompt || matched?.prompt || p.prompt
-          } else if (ftvPromptSource === 'none') {
-            effectivePrompt = p.customPrompt || ''
-          }
+          // promptSource에 따라 effective prompt 계산 — ResultsTable 표시와 동일한 규칙이어야
+          // mismatch (UI 가 옛 값을 보이는데 generation 은 새 값을 쓰는 등) 가 안 난다.
+          const effectivePrompt = getFramePairEffectivePrompt(p, ftvPromptSource, videoScenes)
 
           return {
             ...p,
@@ -1522,7 +1515,14 @@ function App() {
           />
         )}
         {activeTab === 'frame-to-video' && (
-          <ResultsTable items={framePairs} mediaType="frame-pair" aspectRatio={settings.aspectRatio} onShowDetail={(item) => setSelectedVideo(item)} onVideoRetry={handleVideoRetry} onClearMedia={(id) => {
+          // ResultsTable 은 item.prompt 만 본다. F→V 는 promptSource(image/video/none) 에
+          // 따라 effective prompt 가 달라지므로, generation 과 동일한 규칙을 적용해 derived
+          // prompt 를 매핑해 넘긴다 (안 그러면 video/none 모드 편집이 ResultsTable 에 반영 안 됨).
+          // 다른 필드는 그대로 보존 — status/mediaId/generationId 등.
+          <ResultsTable items={framePairs.map(p => ({
+            ...p,
+            prompt: getFramePairEffectivePrompt(p, ftvPromptSource, videoScenes),
+          }))} mediaType="frame-pair" aspectRatio={settings.aspectRatio} onShowDetail={(item) => setSelectedVideo(item)} onVideoRetry={handleVideoRetry} onClearMedia={(id) => {
             // FramePair clear — 전체 미디어/recovery 식별자/메타 정리.
             // generationId/mediaId 가 남으면 useProjectData reload 시 in-flight 로 오인되어
             // videoRecovery 가 서버 결과를 다시 attach (= clear 무효화). 옛 error/timing 메타가
