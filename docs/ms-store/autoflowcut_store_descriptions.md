@@ -156,14 +156,15 @@ Disclaimer: This app is an independent product developed by Touchizen and is not
 
 ### What's New
 ```
-v0.9.14 — Hotfix
+v0.9.15 — Audio drag-and-drop, video on the timeline, Sentry crash reporting
 
-Fixes scene generation failing when reference images are attached.
+Audio gets drag-and-drop: drop an mp3 onto a Narration or SFX lane and it's copied into your project folder automatically. The Audio tab is now always visible with placeholder tracks before you import a package.
 
-- "Unknown name 'referenceImages' … Cannot find field" (HTTP 400)
-- or "Generation timeout" (180s)
+Video joins the timeline: T2V/I2V scenes get a dedicated Video track above the Image track. The preview panel plays the matching video synced to the playhead, with lazy poster thumbnails and next-clip prefetch for smooth playback.
 
-If you were using ref-attached scenes on v0.9.10–v0.9.13, this update restores normal generation.
+Frame-to-Video polish: the T2V elapsed timer no longer gets stuck at 0:00, prompt sources are unified as a single source of truth, and stopping generation now clears pending items immediately.
+
+Sentry crash reporting is now active in production builds — errors that previously went unnoticed now surface in our dashboard so we can fix them faster.
 ```
 
 ### Keywords
@@ -327,14 +328,15 @@ Touchizen 제작 — touchizen.com
 
 ### What's New (새로운 기능)
 ```
-v0.9.14 — Hotfix
+v0.9.15 — 오디오 드래그&드롭, 타임라인 비디오 트랙, Sentry 크래시 리포팅
 
-레퍼런스 이미지를 첨부한 씬 생성이 실패하던 문제를 수정했습니다.
+오디오 드래그&드롭: mp3 파일을 나레이션·SFX 레인에 드롭하면 프로젝트 폴더에 자동 복사됩니다. 오디오 탭은 이제 패키지 임포트 전에도 항상 표시되며 플레이스홀더 트랙을 제공합니다.
 
-- "Unknown name 'referenceImages' … Cannot find field" (HTTP 400)
-- 또는 "Generation timeout" (180초)
+타임라인에 비디오 트랙 추가: T2V/I2V 씬에 이미지 트랙 위에 별도 비디오 트랙이 생깁니다. 프리뷰 패널에서 플레이헤드에 맞춰 해당 비디오가 재생되며, 지연 로딩 포스터 썸네일과 다음 클립 프리페치로 부드러운 재생을 지원합니다.
 
-v0.9.10~v0.9.13에서 ref 첨부 씬을 사용하셨다면 이 업데이트로 정상 동작합니다.
+Frame-to-Video 개선: T2V 경과 타이머가 0:00에서 멈추는 버그 수정, 프롬프트 소스 단일 소스 정리, 생성 중단 시 대기 항목 즉시 정리.
+
+Sentry 크래시 리포팅이 프로덕션 빌드에 적용됩니다 — 기존에 놓쳤던 오류들을 빠르게 파악하고 수정할 수 있게 됩니다.
 ```
 
 ### Keywords (한국어)
@@ -403,14 +405,15 @@ AutoFlowCutは、Google Flow（Veo）のAI画像・動画生成を、すぐに�
 
 ### What's New
 ```
-v0.9.14 — Hotfix
+v0.9.15 — オーディオD&D、タイムラインビデオトラック、Sentryクラッシュレポート
 
-参照画像を添付したシーン生成が失敗する不具合を修正しました。
+オーディオのドラッグ&ドロップ: mp3をナレーション・SFXレーンにドロップするとプロジェクトフォルダへ自動コピー。オーディオタブはパッケージ読み込み前から常に表示されます。
 
-- 「Unknown name 'referenceImages' … Cannot find field」(HTTP 400)
-- または「Generation timeout」(180秒)
+タイムラインにビデオトラック追加: T2V/I2VシーンにImageトラック上の専用Videoトラックが追加。プレビューパネルでプレイヘッドに同期して再生、遅延ポスター読み込みと次クリップのプリフェッチでスムーズな再生を実現。
 
-v0.9.10〜v0.9.13で参照画像付きシーンを使用されていた方は、このアップデートで正常に生成できるようになります。
+Frame-to-Video改善: T2Vタイマーが0:00で止まるバグ修正、プロンプトソースの一本化、停止時の即時クリーンアップ。
+
+Sentryクラッシュレポートをプロダクションビルドに導入 — これまで見逃していたエラーを素早く把握・修正できるようになります。
 ```
 
 ---
@@ -474,14 +477,15 @@ Der integrierte MCP-Server (Model Context Protocol) verbindet sich direkt mit Cl
 
 ### What's New
 ```
-v0.9.14 — Hotfix
+v0.9.15 — Audio Drag&Drop, Video-Track auf der Timeline, Sentry Crash-Reporting
 
-Behebt einen Fehler, durch den die Szenengenerierung mit angehängten Referenzbildern fehlschlug.
+Audio per Drag&Drop: mp3-Dateien auf eine Narration- oder SFX-Spur ziehen – die Datei wird automatisch in den Projektordner kopiert. Der Audio-Tab ist jetzt immer sichtbar, auch vor dem Importieren eines Pakets.
 
-- „Unknown name 'referenceImages' … Cannot find field" (HTTP 400)
-- oder „Generation timeout" (180 s)
+Video auf der Timeline: T2V/I2V-Szenen erhalten einen eigenen Video-Track oberhalb des Image-Tracks. Das Vorschaufenster spielt das passende Video synchron zum Playhead ab, mit Lazy-Poster-Thumbnails und Prefetch für flüssige Wiedergabe.
 
-Wenn Sie in v0.9.10–v0.9.13 Szenen mit Referenzbildern verwendet haben, stellt dieses Update die normale Generierung wieder her.
+Frame-to-Video-Verbesserungen: T2V-Timer bleibt nicht mehr bei 0:00 hängen, Prompt-Quellen wurden vereinheitlicht, Abbruch bereinigt ausstehende Einträge sofort.
+
+Sentry Crash-Reporting ist in Produktions-Builds jetzt aktiv – bisher übersehene Fehler werden schneller erkannt und behoben.
 ```
 
 ---
