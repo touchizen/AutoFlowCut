@@ -993,4 +993,13 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     notifyManual: 'reCAPTCHA 차단 — 수동 조치가 필요합니다',
   },
 
+  // Microsoft Store 평점 유도 (내보내기 몇 회 성공 후 표시)
+  storeRating: {
+    title: 'AutoFlowCut, 잘 쓰고 계신가요?',
+    body: 'AutoFlowCut이 작업에 도움이 되고 있는 것 같네요! \n시간을 아껴주셨다면 Microsoft Store에 평점을 남겨주시면 큰 힘이 됩니다. 몇 초면 충분해요.',
+    rate: '⭐ 스토어에 평가하기',
+    later: '나중에',
+    never: '다시 묻지 않기',
+  },
+
 }

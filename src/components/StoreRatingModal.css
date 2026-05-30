@@ -1,0 +1,41 @@
+.store-rating-modal {
+  max-width: 420px;
+}
+
+.store-rating-stars {
+  font-size: 28px;
+  text-align: center;
+  letter-spacing: 4px;
+  margin: 4px 0 14px;
+}
+
+.store-rating-body {
+  margin: 0;
+  line-height: 1.6;
+  text-align: center;
+  color: var(--text-secondary, #cbd5e1);
+  white-space: pre-line;
+}
+
+.store-rating-modal .modal-footer {
+  display: flex;
+  align-items: center;
+}
+
+.store-rating-spacer {
+  flex: 1;
+}
+
+.store-rating-never {
+  background: none;
+  border: none;
+  color: var(--text-muted, #94a3b8);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 6px 4px;
+}
+
+.store-rating-never:hover {
+  color: var(--text-secondary, #cbd5e1);
+  text-decoration: underline;
+}

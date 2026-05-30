@@ -994,4 +994,13 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     notifyManual: 'reCAPTCHA block — manual action required',
   },
 
+  // Microsoft Store rating prompt (shown after a few successful exports)
+  storeRating: {
+    title: 'Enjoying AutoFlowCut?',
+    body: 'Looks like AutoFlowCut is part of your workflow now! \nIf it saves you time, a quick rating on the Microsoft Store helps a lot. It only takes a few seconds.',
+    rate: '⭐ Rate on Store',
+    later: 'Maybe later',
+    never: 'Don\'t ask again',
+  },
+
 }

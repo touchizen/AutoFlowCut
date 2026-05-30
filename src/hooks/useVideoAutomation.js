@@ -29,7 +29,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 // returned by wrapped API calls and translates it into batch-level break/error.
 // Previously took an `onAuthError` param that was never invoked after the inline
 // 401 string-match was removed — dropped to keep the responsibility boundary clean.
-export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = null) {
+export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = null, onComplete = null) {
   const [isRunning, setIsRunning] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
   const [progress, setProgress] = useState({ current: 0, total: 0, percent: 0, errorCount: 0, startedAt: null })
@@ -353,6 +353,8 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
       } else {
         setStatus('done')
         setStatusMessage(`✅ ${t('videoAutomation.done')} — ${redownloadedCount} re-downloaded`)
+        // 진행률 100% 도달(사용자 중단 없음) — 평점 카운터 반영
+        try { onComplete?.({ completed: true }) } catch (e) { console.warn('[VideoAutomation] onComplete error:', e.message) }
       }
       return
     }
@@ -656,8 +658,10 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
       if (redownloadedCount > 0) parts.push(`${redownloadedCount} re-downloaded`)
       const tail = parts.length > 0 ? ` — ${parts.join(', ')}` : ''
       setStatusMessage(`✅ ${t('videoAutomation.done')}${tail}`)
+      // 진행률 100% 도달(사용자/auth 중단 없음) — 평점 카운터 반영
+      try { onComplete?.({ completed: true }) } catch (e) { console.warn('[VideoAutomation] onComplete error:', e.message) }
     }
-  }, [isRunning, generateVideoT2V, generateVideoI2V, checkVideoStatus, upscaleVideo, fetchMedia, getAccessToken, t])
+  }, [isRunning, generateVideoT2V, generateVideoI2V, checkVideoStatus, upscaleVideo, fetchMedia, getAccessToken, t, onComplete])
 
   /**
    * 일시정지/재개

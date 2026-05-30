@@ -40,7 +40,8 @@ export function useExport({
   subscription,
   refreshSubscription,
   onLoginRequired,
-  onPaywallRequired
+  onPaywallRequired,
+  onExportSuccess
 }) {
   const { t } = useI18n()
   const [showExportModal, setShowExportModal] = useState(false)
@@ -256,6 +257,9 @@ export function useExport({
           console.warn('[Export] Failed to refresh subscription after export:', refreshError)
         }
       }
+
+      // 내보내기 성공 — Store 평점 유도 카운터 증가 (모달 트리거는 호출측에서 판단)
+      onExportSuccess?.()
     } catch (error) {
       toast.error(t('toast.exportFailed', { error: error.message }))
     } finally {

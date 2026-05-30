@@ -554,8 +554,12 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     }, total)
     
     // 완료 — 즉시 저장 (auto-save debounce 전에 프로젝트 전환/종료 방지)
+    // completed=true 는 "진행률 100% 도달" 을 의미한다. 다음은 모두 false 여야 한다:
+    //   - 사용자 중단(stop)·쿼터 중단(stopRequestedRef)
+    //   - 3회 연속 submit 실패로 인한 조기 break, auth-stop 등 → completedCount < total
+    const completedFully = !stopRequestedRef.current && completedCountRef.current >= total
     if (onComplete) {
-      try { await onComplete() } catch (e) { console.warn('[Automation] onComplete error:', e.message) }
+      try { await onComplete({ completed: completedFully }) } catch (e) { console.warn('[Automation] onComplete error:', e.message) }
     }
     setIsRunning(false)
     setIsPaused(false)

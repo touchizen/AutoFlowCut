@@ -16,6 +16,7 @@ import { useStyleThumbnails } from './hooks/useStyleThumbnails'
 import { useSceneGeneration } from './hooks/useSceneGeneration'
 import { useGenerationQueue } from './hooks/useGenerationQueue'
 import { useExport } from './hooks/useExport'
+import { useStoreRating } from './hooks/useStoreRating'
 import { useAudioImport } from './hooks/useAudioImport'
 import { useAppSettings } from './hooks/useAppSettings'
 import { useAutoSave } from './hooks/useAutoSave'
@@ -56,6 +57,7 @@ import { AuthModal } from './components/AuthModal'
 import { PaywallModal } from './components/PaywallModal'
 import TagValidationModal from './components/TagValidationModal'
 import RecaptchaModal from './components/RecaptchaModal'
+import StoreRatingModal from './components/StoreRatingModal'
 import AudioResultModal from './components/AudioResultModal'
 import QAProgressBanner from './components/QAProgressBanner'
 import AudioPanel from './components/AudioPanel'
@@ -164,6 +166,10 @@ function App() {
     setAuthReady(true)
   }, [])
 
+  // Microsoft Store 평점 유도 (appx/Store 빌드에서만 동작)
+  // 내보내기 성공(3회) 또는 생성 100% 완료(5회) 시 평점 모달을 띄운다.
+  const storeRating = useStoreRating({ isStoreBuild: __BUILD_TARGET__ === 'appx' })
+
   const flowAPI = useFlowAPI({ onAuthError: handleAuthError })
   const scenesHook = useScenes()
   const automation = useAutomation(
@@ -175,10 +181,17 @@ function App() {
     t,
     handleAuthError,
     generationQueue,
-    () => saveCurrentProject()
+    async (result) => {
+      await saveCurrentProject()
+      // 사용자 중단 없이 100% 완료된 배치만 평점 카운터에 반영
+      if (result?.completed) storeRating.recordGeneration()
+    }
   )
 
-  const videoAutomation = useVideoAutomation(flowAPI, t, generationQueue)
+  const videoAutomation = useVideoAutomation(flowAPI, t, generationQueue, (result) => {
+    // 비디오(T2V/I2V/F→V) 배치 100% 완료도 동일 generation 채널에 합산
+    if (result?.completed) storeRating.recordGeneration()
+  })
   const { scenes, references, parseFromText, parseFromCSV, parseFromSRT, parseReferencesFromCSV, updateReferences, setScenes, setReferences } = scenesHook
   // Step 3: videoScenes 는 scenes 에서 derived. useVideoScenes 가 scenesHook 으로 라우팅.
   const videoScenesHook = useVideoScenes(scenes, scenesHook)
@@ -298,7 +311,8 @@ function App() {
     onPaywallRequired: (reason) => {
       setPaywallReason(reason)
       setShowPaywallModal(true)
-    }
+    },
+    onExportSuccess: storeRating.recordExport
   })
 
   // ── 완성된 비디오 → 씬에 자동 동기화 (세션 내 기존 비디오 반영) ──
@@ -1856,6 +1870,13 @@ function App() {
         }}
         onCancel={() => setSceneToDelete(null)}
         t={t}
+      />
+
+      <StoreRatingModal
+        isOpen={storeRating.showModal}
+        onRate={storeRating.rateNow}
+        onLater={storeRating.remindLater}
+        onNever={storeRating.dismissForever}
       />
 
       <SrtImportConflictModal
