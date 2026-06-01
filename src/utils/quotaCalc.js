@@ -79,6 +79,27 @@ function asDate(v) {
  *   effectiveRemaining: number,
  * }}
  */
+/**
+ * 무제한 구독 혜택을 받는 상태인지 판단. (GCF `src/quota.js` 의 hasUnlimitedAccess 와 동일)
+ *
+ * - 'active': 정상 구독 → 무제한
+ * - 'cancelled': 갱신 취소했지만 subscriptionEndDate(=ends_at) 까지는 유효 → now < endDate 면 무제한.
+ *   endDate 를 진실의 원천으로 삼아 expired webhook 누락에도 날짜로 자동 차단.
+ *
+ * @param {object} appData
+ * @param {Date} now
+ * @returns {boolean}
+ */
+export function hasUnlimitedAccess(appData, now) {
+  const status = appData?.subscriptionStatus
+  if (status === 'active') return true
+  if (status === 'cancelled') {
+    const endDate = asDate(appData.subscriptionEndDate)
+    return !!endDate && now < endDate
+  }
+  return false
+}
+
 export function computeQuotaState(appData, now) {
   // 신규 사용자 (doc 없음)
   if (!appData) {
@@ -94,8 +115,9 @@ export function computeQuotaState(appData, now) {
     }
   }
 
-  // 활성 구독자 — 무제한
-  if (appData.subscriptionStatus === 'active') {
+  // 활성 구독자 (active, 또는 cancelled+grace) — 무제한.
+  // grace period 도 'active' 로 정규화 → 호출자(calculateTrialStatus 등) 무제한 분기 그대로.
+  if (hasUnlimitedAccess(appData, now)) {
     return {
       isActive: true,
       isExpired: false,

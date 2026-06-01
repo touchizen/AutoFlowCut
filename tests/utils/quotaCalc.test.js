@@ -80,6 +80,43 @@ describe('quotaCalc — GCF mirror', () => {
       expect(state.effectiveRemaining).toBe(Infinity)
     })
 
+    // cancelled 는 ends_at(subscriptionEndDate) 까지 grace — GCF 와 동일 동작.
+    it('cancelled + endDate 미래 → 무제한 (active 와 동일)', () => {
+      const state = computeQuotaState({
+        subscriptionStatus: 'cancelled',
+        subscriptionEndDate: ts(new Date('2026-06-16T00:00:00Z')), // now(5/15) 이후
+        bonusRemaining: 0,
+        monthlyUsed: 999,
+      }, now)
+      expect(state.isActive).toBe(true)
+      expect(state.subscriptionStatus).toBe('active')
+      expect(state.effectiveRemaining).toBe(Infinity)
+      expect(state.monthlyQuota).toBe(Infinity)
+    })
+
+    it('cancelled + endDate 과거 → 무료 quota 로 강등', () => {
+      const state = computeQuotaState({
+        subscriptionStatus: 'cancelled',
+        subscriptionEndDate: ts(new Date('2026-05-01T00:00:00Z')), // now(5/15) 이전
+        bonusRemaining: 0,
+        monthlyUsed: 0,
+        quotaPeriodStart: ts(new Date('2026-05-01T00:00:00Z')),
+      }, now)
+      expect(state.subscriptionStatus).not.toBe('active')
+      expect(state.monthlyQuota).toBe(5)
+    })
+
+    it('cancelled + endDate 누락 → 무료 quota (grace 불가)', () => {
+      const state = computeQuotaState({
+        subscriptionStatus: 'cancelled',
+        subscriptionEndDate: null,
+        bonusRemaining: 0,
+        monthlyUsed: 0,
+      }, now)
+      expect(state.subscriptionStatus).not.toBe('active')
+      expect(state.monthlyQuota).toBe(5)
+    })
+
     it('보너스 3 / 월 2 → 6 가능', () => {
       const state = computeQuotaState({
         subscriptionStatus: 'trial',
