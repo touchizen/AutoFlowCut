@@ -31,7 +31,7 @@ import { createStyleResolver } from './services/styleResolver'
 import { filterPendingScenes } from './utils/sceneFilters'
 import { detectFileType, detectCSVType, parseCSVToScenes, parseSRTToScenes, csvPromptToVideoT2V } from './utils/parsers'
 import { resolveAudioSrtEntries } from './utils/srtTrack'
-import { tabForType } from './utils/importTabRouting'
+import { tabAfterImport } from './utils/importTabRouting'
 import { checkFolderPermission } from './utils/guards'
 import { collectTagErrors } from './utils/tagMatch'
 import { getFramePairEffectivePrompt } from './utils/framePairPrompt'
@@ -567,11 +567,14 @@ function App() {
     // 타입 불일치 시 확인 후 감지된 타입으로 실행
     if (detectedType && detectedType !== type) {
       const confirmKey = confirmKeys[detectedType]
+      let didImport = false
       if (confirmKey && window.confirm(t(confirmKey))) {
         await actions[detectedType]?.()
+        didImport = true
       }
       setShowImport(false)
-      const tab = tabForType(detectedType, isVideo)
+      // Cancel(didImport=false)이면 action 미실행 → 탭 전환 안 함
+      const tab = tabAfterImport({ didImport, type: detectedType, isVideo })
       if (tab) setActiveTab(tab)
       return
     }
@@ -579,7 +582,7 @@ function App() {
     // 정상 처리
     await actions[type]?.()
     setShowImport(false)
-    const tab = tabForType(type, isVideo)
+    const tab = tabAfterImport({ didImport: true, type, isVideo })
     if (tab) setActiveTab(tab)
   }
 

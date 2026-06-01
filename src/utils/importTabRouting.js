@@ -19,3 +19,18 @@ export function tabForType(type, isVideo) {
   }
   return null
 }
+
+/**
+ * 실제로 import가 일어났을 때만 탭 전환.
+ *
+ * wrong-type 확인창에서 사용자가 Cancel하면 action이 실행되지 않으므로
+ * (didImport=false) 탭을 전환하면 안 된다 — 안 그러면 가져온 게 없는데
+ * 화면이 바뀌어 import된 것처럼 느껴진다.
+ *
+ * @param {{ didImport: boolean, type: string, isVideo: boolean }} params
+ * @returns {string|null} 전환할 탭 이름, 또는 전환하지 않으면 null
+ */
+export function tabAfterImport({ didImport, type, isVideo }) {
+  if (!didImport) return null
+  return tabForType(type, isVideo)
+}
