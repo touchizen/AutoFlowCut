@@ -31,6 +31,7 @@ import { createStyleResolver } from './services/styleResolver'
 import { filterPendingScenes } from './utils/sceneFilters'
 import { detectFileType, detectCSVType, parseCSVToScenes, parseSRTToScenes, csvPromptToVideoT2V } from './utils/parsers'
 import { resolveAudioSrtEntries } from './utils/srtTrack'
+import { tabForType } from './utils/importTabRouting'
 import { checkFolderPermission } from './utils/guards'
 import { collectTagErrors } from './utils/tagMatch'
 import { getFramePairEffectivePrompt } from './utils/framePairPrompt'
@@ -540,9 +541,10 @@ function App() {
         const hasExistingSrt = (scenesHook.srtTrack || []).length > 0
         if (hasExistingSrt) {
           setSrtImportPending({ content, framePairs })
-          return
+          return  // conflict — 모달 resolve(replace/merge)가 list 전환 담당
         }
         parseFromSRT(content, framePairs)
+        setActiveTab('list')  // 자막이 매칭된 결과를 씬 목록에서 확인
       },
       reference: async () => {
         await parseReferencesFromCSV(content, projectName)
@@ -558,10 +560,9 @@ function App() {
       reference: 'import.wrongTypeReference'
     }
 
-    // video-text 탭으로 이동할지 여부 — 실제 실행된 type 이 text/csv 일 때만.
-    //   (SRT 는 자막 데이터이므로 isVideo 가 켜져 있어도 비디오 탭으로 이동하지 않아야 한다.)
-    const shouldGoVideoTab = (resolvedType) =>
-      isVideo && (resolvedType === 'text' || resolvedType === 'csv')
+    // import한 데이터를 보거나 편집할 수 있는 탭으로 자동 전환.
+    //   text/csv 는 tabForType (이미지→text / 비디오→video-text).
+    //   srt 는 actions.srt / 모달이 list 전환을 직접 담당, reference 는 Ref 패널.
 
     // 타입 불일치 시 확인 후 감지된 타입으로 실행
     if (detectedType && detectedType !== type) {
@@ -570,14 +571,16 @@ function App() {
         await actions[detectedType]?.()
       }
       setShowImport(false)
-      if (shouldGoVideoTab(detectedType)) setActiveTab('video-text')
+      const tab = tabForType(detectedType, isVideo)
+      if (tab) setActiveTab(tab)
       return
     }
 
     // 정상 처리
     await actions[type]?.()
     setShowImport(false)
-    if (shouldGoVideoTab(type)) setActiveTab('video-text')
+    const tab = tabForType(type, isVideo)
+    if (tab) setActiveTab(tab)
   }
 
   // Handle start — 활성 탭에 따라 이미지/비디오 생성 모드 분기
@@ -1889,11 +1892,13 @@ function App() {
           // 보존되므로 framePairs.ownerSceneId 도 그대로 살아있음. 추가 cleanup 불필요.
           parseFromSRT(srtImportPending.content, srtImportPending.framePairs, { mode: 'replace' })
           setSrtImportPending(null)
+          setActiveTab('list')  // 자막 결과를 씬 목록에서 확인
         }}
         onMerge={() => {
           if (!srtImportPending) return
           parseFromSRT(srtImportPending.content, srtImportPending.framePairs)
           setSrtImportPending(null)
+          setActiveTab('list')  // 자막 결과를 씬 목록에서 확인
         }}
         onCancel={() => setSrtImportPending(null)}
         t={t}
