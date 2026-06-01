@@ -19,6 +19,13 @@ export default function PromptInput({
   const { t } = useI18n()
   const [text, setText] = useState(value || '')
 
+  // 입력창이 처음 등장할 때만 ~2.6초 윤기 인트로를 보여주고 끈다.
+  const [intro, setIntro] = useState(true)
+  useEffect(() => {
+    const id = setTimeout(() => setIntro(false), 2600)
+    return () => clearTimeout(id)
+  }, [])
+
   // 외부에서 value가 변경되면 로컬 상태 동기화 (프로젝트 전환, 파일 로드 등)
   useEffect(() => {
     setText(value || '')
@@ -79,14 +86,19 @@ export default function PromptInput({
 
   return (
     <div className="prompt-input-container">
-      <textarea
-        className="prompt-textarea"
-        value={text}
-        onChange={handleChange}
-        onPaste={handlePaste}
-        placeholder={placeholder || t('prompt.placeholder')}
-        disabled={disabled}
-      />
+      <div
+        className={`prompt-textarea-wrap ${intro ? 'intro' : ''}`}
+        data-testid="prompt-textarea-wrap"
+      >
+        <textarea
+          className="prompt-textarea"
+          value={text}
+          onChange={handleChange}
+          onPaste={handlePaste}
+          placeholder={placeholder || t('prompt.placeholder')}
+          disabled={disabled}
+        />
+      </div>
 
       <div className="prompt-input-footer">
         <span className="line-count">

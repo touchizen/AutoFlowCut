@@ -275,7 +275,81 @@ html, body {
   min-height: 0;
 }
 
+/* ── 프롬프트 입력창 윤기/광택 — "등장 인트로" (처음 ~2.6초만 반짝) ─────
+   처음 보일 때만 테두리 글로우 링이 돌고, 외곽 bloom + 표면 sheen 이 흐른다.
+   인트로(.intro)가 끝나면(JS 가 2.6초 뒤 클래스 제거) 원래 입력창 그대로.
+   Electron(Chromium) 전용 — @property / conic-gradient / mask 사용. */
+@property --af-gloss-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+.prompt-textarea-wrap {
+  position: relative;
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  border-radius: var(--border-radius);
+  isolation: isolate;
+}
+
+/* 도는 하이라이트 테두리 (mask 로 1.5px 링만 남김) — 기본은 숨김 */
+.prompt-textarea-wrap::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;                 /* textarea 모서리 위에 링을 그린다 */
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--af-gloss-angle),
+    rgba(255, 255, 255, 0.06),
+    #6ee7ff 0.16turn,
+    #a78bfa 0.30turn,
+    #f0abfc 0.44turn,
+    rgba(255, 255, 255, 0.06) 0.6turn,
+    rgba(255, 255, 255, 0.06)
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+          mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.5s ease;
+}
+
+/* 부드러운 외곽 글로우 — 기본은 숨김 */
+.prompt-textarea-wrap::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: 0 0 16px 0 rgba(124, 134, 255, 0.22);
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+
+/* ── 인트로: 처음 ~2.6초만 반짝 ── */
+.prompt-textarea-wrap.intro::before {
+  opacity: 1;
+  animation: af-gloss-spin 2.5s linear infinite;
+}
+.prompt-textarea-wrap.intro::after {
+  opacity: 1;
+  animation: af-gloss-breathe 3.4s ease-in-out infinite;
+}
+
 .prompt-textarea {
+  position: relative;
+  z-index: 1;
   flex: 1;
   width: 100%;
   padding: 12px;
@@ -289,6 +363,17 @@ html, body {
   font-family: inherit;
 }
 
+/* 인트로 동안만 표면 윤기: ① 흐르는 대각선 sheen ② 위 광택 ③ 베이스색
+   (모두 background 레이어 = 텍스트 뒤라 가독성 유지) */
+.prompt-textarea-wrap.intro .prompt-textarea {
+  border-color: transparent;   /* 인트로 땐 글로우 링이 테두리 역할 */
+  background:
+    linear-gradient(105deg, transparent 42%, rgba(255, 255, 255, 0.10) 50%, transparent 58%) 0 0 / 250% 100% no-repeat,
+    linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0) 42%) 0 0 / 100% 100% no-repeat,
+    var(--bg-secondary);
+  animation: af-surface-sheen 1.3s ease-in-out infinite;
+}
+
 .prompt-textarea:focus {
   outline: none;
   border-color: var(--primary-color);
@@ -296,6 +381,30 @@ html, body {
 
 .prompt-textarea::placeholder {
   color: var(--text-secondary);
+}
+
+@keyframes af-gloss-spin {
+  to { --af-gloss-angle: 360deg; }
+}
+
+@keyframes af-gloss-breathe {
+  0%, 100% { box-shadow: 0 0 13px 0 rgba(110, 231, 255, 0.16); }
+  50%      { box-shadow: 0 0 22px 2px rgba(167, 139, 250, 0.30); }
+}
+
+/* 표면 sheen 이 좌우로 흐른다 (3개 background 레이어 → position 3개) */
+@keyframes af-surface-sheen {
+  0%   { background-position: 150% 0, 0 0, 0 0; }
+  100% { background-position: -150% 0, 0 0, 0 0; }
+}
+
+/* 모션 최소화 선호 시 애니메이션 정지 */
+@media (prefers-reduced-motion: reduce) {
+  .prompt-textarea-wrap.intro::before,
+  .prompt-textarea-wrap.intro::after,
+  .prompt-textarea-wrap.intro .prompt-textarea {
+    animation: none;
+  }
 }
 
 .prompt-input-footer {
