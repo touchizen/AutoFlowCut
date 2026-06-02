@@ -32,6 +32,12 @@ describe('isAuthError', () => {
     expect(isAuthError({ success: false, error: 'Request had invalid authentication credentials' })).toBe(true)
   })
 
+  it('detects BYOK Gemini key rejection (400 invalid / API_KEY_INVALID / 403 PERMISSION_DENIED)', () => {
+    expect(isAuthError({ success: false, error: 'HTTP 400 :: API key not valid. Please pass a valid API key. :: INVALID_ARGUMENT' })).toBe(true)
+    expect(isAuthError({ success: false, error: 'API_KEY_INVALID' })).toBe(true)
+    expect(isAuthError({ success: false, error: 'HTTP 403 :: Permission denied :: PERMISSION_DENIED' })).toBe(true)
+  })
+
   it('does not false-positive on the digits "401" in other contexts', () => {
     // We require either "HTTP 401" or auth keywords — bare "401" alone is ambiguous
     expect(isAuthError({ success: false, error: 'Generated 401 frames in batch' })).toBe(false)

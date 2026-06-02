@@ -167,6 +167,53 @@ describe('useGenAPI — 비디오', () => {
   })
 })
 
+describe('useGenAPI — auth 실패 센티넬 (BYOK 키 거부)', () => {
+  it('generateImageDOM: 키 거부 → authFailed + onAuthError', async () => {
+    const onAuthError = vi.fn()
+    window.electronAPI.genaiGenerateImage.mockResolvedValue({
+      success: false, error: 'HTTP 400 :: API key not valid :: INVALID_ARGUMENT',
+    })
+    const { result } = renderHook(() => useGenAPI({ onAuthError }))
+    let r
+    await act(async () => { r = await result.current.generateImageDOM('p', []) })
+    expect(r.authFailed).toBe(true)
+    expect(onAuthError).toHaveBeenCalled()
+  })
+
+  it('generateVideoT2V: 키 거부 → authFailed', async () => {
+    const onAuthError = vi.fn()
+    window.electronAPI.genaiGenerateVideo.mockResolvedValue({ success: false, error: 'PERMISSION_DENIED' })
+    const { result } = renderHook(() => useGenAPI({ onAuthError }))
+    let r
+    await act(async () => { r = await result.current.generateVideoT2V('p', 'veo-3.1-fast', '16:9', 8) })
+    expect(r.authFailed).toBe(true)
+    expect(onAuthError).toHaveBeenCalled()
+  })
+
+  it('checkVideoStatus: 폴링 중 키 거부 → authFailed 전파', async () => {
+    const onAuthError = vi.fn()
+    window.electronAPI.genaiCheckVideoStatus.mockResolvedValue({
+      success: true,
+      statuses: [{ generationId: 'a', status: 'failed', error: 'HTTP 403 :: PERMISSION_DENIED' }],
+    })
+    const { result } = renderHook(() => useGenAPI({ onAuthError }))
+    let r
+    await act(async () => { r = await result.current.checkVideoStatus(['a']) })
+    expect(r.authFailed).toBe(true)
+    expect(onAuthError).toHaveBeenCalled()
+  })
+
+  it('일반(quota) 에러는 authFailed 아님', async () => {
+    const onAuthError = vi.fn()
+    window.electronAPI.genaiGenerateImage.mockResolvedValue({ success: false, error: 'RESOURCE_EXHAUSTED' })
+    const { result } = renderHook(() => useGenAPI({ onAuthError }))
+    let r
+    await act(async () => { r = await result.current.generateImageDOM('p', []) })
+    expect(r.authFailed).toBeUndefined()
+    expect(onAuthError).not.toHaveBeenCalled()
+  })
+})
+
 describe('useGenAPI — Flow 전용 graceful degrade', () => {
   it('uploadReference no-op (mediaId null)', async () => {
     const { result } = renderHook(() => useGenAPI())

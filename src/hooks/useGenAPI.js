@@ -18,6 +18,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { resolveReferenceImages } from '../utils/referenceResolver'
 import { normalizeVideoModel } from '../utils/videoModels'
+import { isAuthError } from '../utils/authError'
 
 // base64 또는 data URL 문자열 → Veo inline 이미지 { mimeType, data } (없으면 null).
 function toInlineImage(val) {
@@ -71,6 +72,18 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
 
   const clearTokenCache = useCallback(() => setAccessToken(null), [])
 
+  // 결과가 인증(키) 에러면 authFailed 센티넬을 달고 onAuthError 를 한 번 트리거.
+  // 배치 루프(useAutomation/useVideoAutomation)는 result.authFailed 를 보고 즉시 중단한다.
+  // BYOK 에선 키가 잘못/만료된 경우 Google 이 매 호출 거부하므로, 이 가드가 없으면
+  // 50씬 배치가 죽은 키로 전부 실패할 때까지 계속 호출한다.
+  const markAuthFailure = useCallback((result) => {
+    if (isAuthError(result)) {
+      onAuthErrorRef.current?.()
+      return { ...result, authFailed: true }
+    }
+    return result
+  }, [])
+
   const setStopRequested = useCallback((value) => {
     stopRequestedRef.current = !!value
   }, [])
@@ -86,7 +99,7 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
     try {
       const refs = await resolveReferenceImages(referenceImages, { projectName: projectName() })
       const result = await window.electronAPI.genaiGenerateImage({ prompt, referenceImages: refs, aspectRatio })
-      if (!result?.success) return result || { success: false, error: 'Unknown error' }
+      if (!result?.success) return markAuthFailure(result || { success: false, error: 'Unknown error' })
       const images = (result.images || []).map((im) => ({
         base64: im.dataUrl || im.base64,
         mimeType: im.mimeType,
@@ -138,22 +151,23 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
 
   const generateVideoT2V = useCallback(async (prompt, model, aspectRatio, duration) => {
     try {
-      return await window.electronAPI.genaiGenerateVideo({
+      const r = await window.electronAPI.genaiGenerateVideo({
         prompt,
         aspectRatio: toVeoAspect(aspectRatio),
         durationSeconds: duration,
         model: normalizeVideoModel(model),
       })
+      return markAuthFailure(r)
     } catch (error) {
       return { success: false, error: error?.message || String(error) }
     }
-  }, [])
+  }, [markAuthFailure])
 
   // I2V / F2V: 시작·끝 프레임을 base64/dataUrl 로 받아 inline(image / lastFrame)로 전달.
   // (cloud Veo 는 mediaId 가 없고 inlineData base64 를 받는다 — 문서 확인)
   const generateVideoI2V = useCallback(async (prompt, startImage, endImage, model, aspectRatio, duration) => {
     try {
-      return await window.electronAPI.genaiGenerateVideo({
+      const r = await window.electronAPI.genaiGenerateVideo({
         prompt,
         image: toInlineImage(startImage),
         endImage: toInlineImage(endImage),
@@ -161,10 +175,11 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
         durationSeconds: duration,
         model: normalizeVideoModel(model),
       })
+      return markAuthFailure(r)
     } catch (error) {
       return { success: false, error: error?.message || String(error) }
     }
-  }, [])
+  }, [markAuthFailure])
 
   // 상태 폴링 — operationName(=generationId) 배열로 조회. statuses[] 매핑.
   const checkVideoStatus = useCallback(async (generationIds) => {
@@ -180,6 +195,12 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
         mediaId: s.videoUri || null,  // mediaId 자리에 videoUri 전달 (완료 게이트 호환)
         error: s.error,
       }))
+      // 폴링 중 키 거부(authFailed)면 배치 루프가 즉시 중단하도록 센티넬 전파.
+      const authStatus = statuses.find((s) => s.status === 'failed' && isAuthError({ success: false, error: s.error }))
+      if (authStatus) {
+        onAuthErrorRef.current?.()
+        return { success: true, statuses, authFailed: true }
+      }
       return { success: true, statuses }
     } catch (error) {
       return { success: false, error: error?.message || String(error) }
