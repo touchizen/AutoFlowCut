@@ -413,11 +413,13 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     setStatusMessage(t('status.checkingAuth'))
     const token = await getAccessToken()
     if (!token) {
-      console.log('[Automation] No token found. Calling onAuthError.')
+      // BYOK 키 없음 → 생성 중단 + API 키 모달 안내 (handleStart 와 동일 UX).
+      // 'flow-login-expired' → App 의 useFlowEvents → showApiKeyModal.
+      console.log('[Automation] No API key — prompting setup.')
       setStatusMessage(`❌ ${t('status.loginRequired')}`)
       setStatus('error')
       setIsRunning(false)
-      onAuthError?.()
+      window.dispatchEvent(new CustomEvent('flow-login-expired'))
       return
     }
     

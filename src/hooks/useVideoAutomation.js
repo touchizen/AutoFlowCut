@@ -193,10 +193,10 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
 
     if (isRunning) return
 
-    // 토큰 확인
+    // 토큰 확인 — 키 없으면 API 키 모달 안내(handleStart 와 동일 UX, 토스트 대신).
     const token = await getAccessToken()
     if (!token) {
-      toast.error(t('status.loginRequired'))
+      window.dispatchEvent(new CustomEvent('flow-login-expired'))
       return
     }
 
