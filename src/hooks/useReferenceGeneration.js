@@ -6,8 +6,8 @@ import { useState, useRef, useCallback } from 'react'
 import { RESOURCE, STYLE_PRESETS } from '../config/defaults'
 import { fileSystemAPI } from './useFileSystem'
 import { checkFolderPermission, checkAuthToken } from '../utils/guards'
-import { cleanBase64, toDataURL } from '../utils/urls'
-import { tryUpscaleImage, extractThumbnailBase64 } from '../utils/imageProcessing'
+import { toDataURL } from '../utils/urls'
+import { tryUpscaleImage } from '../utils/imageProcessing'
 import { toast } from '../components/Toast'
 import { createStyleResolver } from '../services/styleResolver'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
@@ -32,40 +32,12 @@ async function mapWithConcurrency(items, mapper, concurrency = 5) {
   return results
 }
 
-// uploadReference 429 retry — useAutomation.js 의 보호와 동일 패턴. 각 호출이 자체적으로
-// rate-limit 을 견디게 함. 비-429 실패는 즉시 반환 (백오프 무의미).
-async function uploadReferenceWithRetry(flowAPI, base64, category, logPrefix) {
-  const MAX_RETRIES = 2
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      const result = await flowAPI.uploadReference(base64, category)
-      if (result.success) return result
-      if (result.error?.includes('429') && attempt < MAX_RETRIES) {
-        const backoff = (attempt + 1) * 2000 + Math.random() * 1000
-        console.warn(`${logPrefix} uploadReference 429 — retry in ${Math.round(backoff)}ms (attempt ${attempt + 1}/${MAX_RETRIES})`)
-        await new Promise(r => setTimeout(r, backoff))
-        continue
-      }
-      return result
-    } catch (e) {
-      if (attempt < MAX_RETRIES && /429|rate/i.test(e?.message || '')) {
-        const backoff = (attempt + 1) * 2000 + Math.random() * 1000
-        await new Promise(r => setTimeout(r, backoff))
-        continue
-      }
-      return { success: false, error: e?.message || String(e) }
-    }
-  }
-  return { success: false, error: 'uploadReference exhausted retries' }
-}
-
 export function useReferenceGeneration({ settings, references, setReferences, flowAPI, addPendingSave, openSettings, pendingSavesCount = 0, t, selectedStyleRefId, styleThumbnails, generationQueue }) {
   const [generatingRefs, setGeneratingRefs] = useState([])
   const [stoppingRefs, setStoppingRefs] = useState(false)
   const [preparingRefs, setPreparingRefs] = useState(false)  // 배치 준비 중 (권한/토큰/썸네일 업로드)
   const [saveFailedOnce, setSaveFailedOnce] = useState(false)  // 배치 중 저장 실패 알림 1회만
   const stopRequestedRef = useRef(false)
-  const presetMediaCache = useRef({})  // 프리셋 썸네일 → Flow mediaId 캐시
 
   // quota stop 공통 모듈 위임 — queue clear 는 useGenerationQueue 가 직접 subscribe 함.
   const _maybeTriggerQuotaStop = (err) => {
@@ -107,30 +79,8 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     } else if (effectiveStyleId.startsWith('preset:')) {
       const presetId = effectiveStyleId.replace('preset:', '')
       const preset = STYLE_PRESETS?.styles?.find(s => s.id === presetId)
-
-      // 썸네일: 캐시 hit → 사용, miss → 업로드 후 캐시
-      if (styleThumbnails?.[presetId]) {
-        let mediaId = presetMediaCache.current[presetId]
-        if (!mediaId) {
-          const thumbBase64 = await extractThumbnailBase64(styleThumbnails[presetId], fileSystemAPI, logPrefix)
-          if (thumbBase64) {
-            try {
-              const uploadResult = await flowAPI.uploadReference(thumbBase64, 'style')
-              if (uploadResult.success) {
-                mediaId = uploadResult.mediaId
-                presetMediaCache.current[presetId] = mediaId
-                console.log(logPrefix, 'Preset thumbnail uploaded, mediaId:', mediaId)
-              }
-            } catch (e) {
-              console.warn(logPrefix, 'Preset thumbnail upload failed:', e)
-            }
-          }
-        }
-        if (mediaId) {
-          styleRefImages.push({ category: 'style', mediaId, caption: preset?.prompt_en || '' })
-        }
-      }
-
+      // cloud(Veo): 프리셋은 프롬프트(prompt_en)로만 적용. (구 Flow 는 썸네일을 업로드해
+      // image-ref 로 주입했으나 cloud 엔 mediaId 업로드가 없다.)
       if (preset?.prompt_en) {
         styledPrompt = `${ref.prompt}, ${preset.prompt_en}`
       }
@@ -154,21 +104,10 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
 
     const displayUrl = toDataURL(imageData)
 
-    // Flow에 업로드 → mediaId + caption.
-    // 429 retry 포함 (병렬 후처리 도입 후 동시 호출 시 rate-limit 보호; useAutomation 의
-    // 자동 업로드 경로와 동일 패턴: MAX_RETRIES=2 + exponential backoff + jitter).
-    const base64ForUpload = cleanBase64(imageData)
-    let mediaId = null
-    let caption = null
-    console.log(logPrefix, 'Uploading to Flow for mediaId...', { category: ref.category, base64Len: base64ForUpload.length })
-    const uploadResult = await uploadReferenceWithRetry(flowAPI, base64ForUpload, ref.category, logPrefix)
-    console.log(logPrefix, 'Upload result:', uploadResult)
-    if (uploadResult.success) {
-      mediaId = uploadResult.mediaId
-      caption = uploadResult.caption
-    } else {
-      console.error(logPrefix, 'Upload failed (after retries):', uploadResult.error)
-    }
+    // cloud(Veo): Flow 업로드 없음. 레퍼런스는 디스크에 저장되고, 생성 시 name 으로
+    // base64 가 해석된다(referenceResolver). cloud 엔 mediaId/caption 이 없으므로 null.
+    const mediaId = null
+    const caption = null
 
     // 파일 저장 (폴더 모드)
     let filePath = null

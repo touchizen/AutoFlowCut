@@ -136,20 +136,16 @@ describe('useReferenceGeneration — batch order (style first)', () => {
     expect(styleIdx).toBeLessThan(charIdx)
   })
 
-  it('non-style phase submits the character ref WITH the fresh style card mediaId', async () => {
-    // P2 회귀: _processAndSaveImage가 mediaId를 setReferences로만 써서,
-    //   같은 batch flow의 non-style phase가 React 재렌더 전 stale한
-    //   referencesRef.current를 읽으면 style 카드의 mediaId 없이 제출됨.
+  it('non-style phase submits the character ref WITH the fresh style card (by name)', async () => {
+    // 회귀: 같은 batch flow의 non-style phase가 React 재렌더 전 stale한
+    //   referencesRef.current를 읽으면 방금 만든 style 카드 없이 제출됨.
+    // cloud(Veo): style 카드는 mediaId 가 아니라 name 으로 주입된다 (referenceResolver).
     const { result, submitCalls } = setupHook({
       statefulRefs: true,
       references: [
-        { id: 1, type: 'style', prompt: 'a style', status: 'pending' },
+        { id: 1, type: 'style', name: 'mystyle', prompt: 'a style', status: 'pending' },
         { id: 2, type: 'character', prompt: 'a hero', status: 'pending' }
-      ],
-      flowOverrides: {
-        // style 카드 업로드가 알려진 mediaId 산출
-        uploadReference: vi.fn().mockResolvedValue({ success: true, mediaId: 'style-media-xyz', caption: '' })
-      }
+      ]
     })
 
     await runBatch(result)
@@ -158,9 +154,9 @@ describe('useReferenceGeneration — batch order (style first)', () => {
     expect(submitCalls.length).toBe(2)
     const charSubmit = submitCalls.find(c => c.prompt.includes('a hero'))
     expect(charSubmit).toBeTruthy()
-    // 2번째 인자(styleRefImages)에 방금 만든 style 카드의 mediaId가 실려야 함
+    // 2번째 인자(styleRefImages)에 방금 만든 style 카드가 name 으로 실려야 함
     expect(Array.isArray(charSubmit.styleRefImages)).toBe(true)
-    expect(charSubmit.styleRefImages.some(img => img.mediaId === 'style-media-xyz')).toBe(true)
+    expect(charSubmit.styleRefImages.some(img => img.name === 'mystyle')).toBe(true)
   })
 
   it('with no style ref, still generates the non-style refs (behaves as before)', async () => {
