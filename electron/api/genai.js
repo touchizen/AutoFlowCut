@@ -202,9 +202,10 @@ export async function generateImage(
  * @returns {Promise<{success:boolean, operationName?:string, error?:string}>}
  *   operationName 은 이후 checkVideoOperation 에 넘기는 generationId 역할.
  *
- * Veo(generativelanguage) predictLongRunning 은 instances[].image 를
- * `{ bytesBase64Encoded, mimeType }` 형태로 받는다 (SRT-Video-Studio 에서
- * 검증된 동일 endpoint 경로). lastFrame(끝 프레임 보간)도 같은 형태.
+ * Gemini API(generativelanguage) predictLongRunning 은 instances[].image 를
+ * `{ inlineData: { mimeType, data } }` 형태로 받는다 (공식 REST 예시 기준:
+ * ai.google.dev/gemini-api/docs/video). `bytesBase64Encoded` 는 Vertex AI 형식이라
+ * generativelanguage 엔드포인트에선 거부된다. lastFrame(끝 프레임 보간)도 동일 형태.
  */
 export async function submitVideo(
   {
@@ -224,14 +225,12 @@ export async function submitVideo(
   const instance = { prompt: prompt || '' }
   if (image && image.data) {
     instance.image = {
-      bytesBase64Encoded: image.data,
-      mimeType: image.mimeType || 'image/png',
+      inlineData: { mimeType: image.mimeType || 'image/png', data: image.data },
     }
   }
   if (endImage && endImage.data) {
     instance.lastFrame = {
-      bytesBase64Encoded: endImage.data,
-      mimeType: endImage.mimeType || 'image/png',
+      inlineData: { mimeType: endImage.mimeType || 'image/png', data: endImage.data },
     }
   }
 
