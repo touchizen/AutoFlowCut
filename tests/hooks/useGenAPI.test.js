@@ -114,8 +114,42 @@ describe('useGenAPI — 비디오', () => {
     const { result } = renderHook(() => useGenAPI())
     let r
     await act(async () => { r = await result.current.checkVideoStatus(['a', 'b']) })
-    expect(r.statuses[0]).toMatchObject({ generationId: 'a', status: 'completed', videoUri: 'https://v/a', mediaId: 'https://v/a' })
+    // 'completed' → 'complete' 정규화, videoUri/videoUrl/mediaId 모두 uri 노출
+    expect(r.statuses[0]).toMatchObject({
+      generationId: 'a', status: 'complete',
+      videoUri: 'https://v/a', videoUrl: 'https://v/a', mediaId: 'https://v/a',
+    })
     expect(r.statuses[1]).toMatchObject({ generationId: 'b', status: 'pending' })
+  })
+
+  it('generateVideoI2V/F2V: start/end 프레임 base64 → image/endImage', async () => {
+    const { result } = renderHook(() => useGenAPI())
+    await act(async () => {
+      await result.current.generateVideoI2V(
+        'morph',
+        'data:image/jpeg;base64,START',
+        'data:image/png;base64,END',
+        'veo-3.1-fast', '16:9', 8
+      )
+    })
+    expect(window.electronAPI.genaiGenerateVideo).toHaveBeenCalledWith({
+      prompt: 'morph',
+      image: { mimeType: 'image/jpeg', data: 'START' },
+      endImage: { mimeType: 'image/png', data: 'END' },
+      aspectRatio: '16:9',
+      durationSeconds: 8,
+      model: 'veo-3.1-fast',
+    })
+  })
+
+  it('generateVideoI2V: 끝 프레임 없으면 endImage null (단일 시작 프레임 I2V)', async () => {
+    const { result } = renderHook(() => useGenAPI())
+    await act(async () => {
+      await result.current.generateVideoI2V('go', 'data:image/png;base64,ONLY', null, 'veo-3.1-fast', '16:9', 8)
+    })
+    const call = window.electronAPI.genaiGenerateVideo.mock.calls.at(-1)[0]
+    expect(call.image).toEqual({ mimeType: 'image/png', data: 'ONLY' })
+    expect(call.endImage).toBeNull()
   })
 
   it('downloadVideo → base64', async () => {

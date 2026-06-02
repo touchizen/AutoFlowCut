@@ -18,6 +18,15 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { resolveReferenceImages } from '../utils/referenceResolver'
 
+// base64 또는 data URL 문자열 → Veo inline 이미지 { mimeType, data } (없으면 null).
+function toInlineImage(val) {
+  if (typeof val !== 'string' || !val) return null
+  const m = val.match(/^data:([^;]+);base64,(.+)$/)
+  if (m) return { mimeType: m[1], data: m[2] }
+  if (/^[A-Za-z0-9+/=]{64,}$/.test(val)) return { mimeType: 'image/png', data: val }
+  return null
+}
+
 export function useGenAPI({ onAuthError, getProjectName } = {}) {
   const [accessToken, setAccessToken] = useState(null)
   const getProjectNameRef = useRef(getProjectName)
@@ -135,18 +144,14 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
     }
   }, [])
 
-  // I2V: 시작 이미지가 base64/dataUrl 이면 inline 전달, 아니면 T2V 로 degrade.
-  // (Flow mediaId → base64 plumbing 은 live 검증 후속 작업으로 분리)
-  const generateVideoI2V = useCallback(async (prompt, startImageMediaId, _endImageMediaId, model, aspectRatio, duration) => {
-    let image = null
-    if (typeof startImageMediaId === 'string' && /^data:|^[A-Za-z0-9+/=]{64,}$/.test(startImageMediaId)) {
-      const data = startImageMediaId.replace(/^data:[^;]+;base64,/, '')
-      image = { mimeType: 'image/png', data }
-    }
+  // I2V / F2V: 시작·끝 프레임을 base64/dataUrl 로 받아 inline(image / lastFrame)로 전달.
+  // (cloud Veo 는 mediaId 가 없고 inlineData base64 를 받는다 — 문서 확인)
+  const generateVideoI2V = useCallback(async (prompt, startImage, endImage, model, aspectRatio, duration) => {
     try {
       return await window.electronAPI.genaiGenerateVideo({
         prompt,
-        image,
+        image: toInlineImage(startImage),
+        endImage: toInlineImage(endImage),
         aspectRatio,
         durationSeconds: duration,
         model: normalizeVideoModel(model),
@@ -163,9 +168,11 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
       if (!res?.success) return res || { success: false, error: 'Unknown error' }
       const statuses = (res.statuses || []).map((s) => ({
         generationId: s.generationId,
-        status: s.status,        // 'pending' | 'completed' | 'failed'
+        // 소비자(useVideoAutomation/videoRecovery)는 'complete' 를 기대 → 정규화
+        status: s.status === 'completed' ? 'complete' : s.status, // 'pending' | 'complete' | 'failed'
         videoUri: s.videoUri || null,
-        mediaId: s.videoUri || null, // 다운로드 단계에서 videoUri 를 mediaId 자리로 전달
+        videoUrl: s.videoUri || null, // 일부 소비자가 videoUrl 로 읽음 (download 경로)
+        mediaId: s.videoUri || null,  // mediaId 자리에 videoUri 전달 (완료 게이트 호환)
         error: s.error,
       }))
       return { success: true, statuses }

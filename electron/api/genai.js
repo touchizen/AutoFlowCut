@@ -141,19 +141,24 @@ export async function generateImage(
  * @param {object} params
  * @param {string} params.apiKey
  * @param {string} params.prompt
- * @param {{mimeType:string,data:string}} [params.image] - I2V 시작 이미지 (inline base64). 없으면 T2V.
+ * @param {{mimeType:string,data:string}} [params.image] - I2V 시작 프레임 (inline base64). 없으면 T2V.
+ * @param {{mimeType:string,data:string}} [params.endImage] - F2V 끝 프레임 (lastFrame). image 와 함께 주면 첫/끝 보간.
  * @param {string} [params.aspectRatio]
  * @param {number} [params.durationSeconds]
  * @param {string} [params.model]
  * @param {object} [deps]
  * @returns {Promise<{success:boolean, operationName?:string, error?:string}>}
  *   operationName 은 이후 checkVideoOperation 에 넘기는 generationId 역할.
+ *
+ * Veo(generativelanguage) 는 이미지를 `inlineData: { mimeType, data }` 로 받는다
+ * (Vertex 의 bytesBase64Encoded 아님 — 공식 문서/포럼 확인). lastFrame 도 동일 형태.
  */
 export async function submitVideo(
   {
     apiKey,
     prompt,
     image = null,
+    endImage = null,
     aspectRatio = DEFAULT_ASPECT_RATIO,
     durationSeconds = DEFAULT_VIDEO_DURATION,
     model = DEFAULT_VIDEO_MODEL,
@@ -165,8 +170,12 @@ export async function submitVideo(
   const instance = { prompt: prompt || '' }
   if (image && image.data) {
     instance.image = {
-      bytesBase64Encoded: image.data,
-      mimeType: image.mimeType || 'image/png',
+      inlineData: { mimeType: image.mimeType || 'image/png', data: image.data },
+    }
+  }
+  if (endImage && endImage.data) {
+    instance.lastFrame = {
+      inlineData: { mimeType: endImage.mimeType || 'image/png', data: endImage.data },
     }
   }
 
