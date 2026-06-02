@@ -294,17 +294,22 @@ html, body {
   position: relative;
   background: transparent;
 }
+/* 보이는 그립은 가로 리사이저처럼 짧게(중앙). 드래그 히트영역은 전체 높이(.content-monitor-resizer). */
 .content-monitor-resizer::after {
   content: '';
   position: absolute;
-  top: 0; bottom: 0; left: 3px;
-  width: 2px;
+  top: 50%;
+  left: 2px;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 40px;
   border-radius: 2px;
   background: var(--border-color);
-  transition: background 0.15s;
+  transition: background 0.15s, height 0.15s;
 }
 .content-monitor-resizer:hover::after {
-  background: #4a9eff;
+  background: var(--text-secondary);
+  height: 60px;
 }
 
 /* Prompt Input */
