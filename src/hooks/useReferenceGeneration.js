@@ -136,21 +136,14 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
         savedDataUrl = saveResult.dataUrl || displayUrl
         console.log(logPrefix, 'Saved to:', filePath)
       } else {
-        console.warn(logPrefix, 'Save failed:', saveResult.error, '- keeping in memory and continuing...')
+        // 디스크 저장 실패 — base64 를 메모리에 유지하고 계속 진행. desktop 의 addPendingSave 는
+        // no-op 이라 재시도하지 않는 대신, project 저장이 filePath 없는 ref 의 base64 를 strip
+        // 하지 않으므로(stripReferencesForSave) project.json 에 보존돼 재오픈 시 유실되지 않는다.
+        console.warn(logPrefix, 'Save failed:', saveResult.error, '- keeping base64 in project (no disk file)')
         if (!saveFailedOnce) {
           setSaveFailedOnce(true)
           toast.warning(t('toast.permissionReleasedMemory'))
         }
-        addPendingSave(async () => {
-          const pendingSave = await fileSystemAPI.saveReference(projectName, refName, imageData, 'flow', metadata)
-          if (pendingSave.success) {
-            console.log(logPrefix, 'Pending save succeeded:', pendingSave.path)
-            setReferences(prev => prev.map((r, i) =>
-              i === index ? { ...r, filePath: pendingSave.path, dataStorage: 'file' } : r
-            ))
-          }
-          return pendingSave
-        })
         filePath = null
       }
 

@@ -7,6 +7,7 @@ import { fileSystemAPI } from './useFileSystem'
 import { syncVideosIntoScenes } from '../services/mediaSync'
 import { recoverInFlightVideos } from '../services/videoRecovery'
 import { migrateLegacyProject } from '../utils/srtTrack'
+import { stripReferencesForSave } from '../utils/projectPersist'
 
 // 프로젝트 화면비는 project.json 에 프로젝트별로 저장된다. project.json 에 값이
 // 없으면(기능 추가 전 프로젝트 등) 직전 프로젝트 값을 물려받지 않고 이 기본값으로
@@ -383,8 +384,9 @@ export async function saveCurrentProject(settings, scenes, references, videoScen
   // scenes에서 base64 데이터 제외 (image, videoT2V, videoI2V)
   const scenesWithoutImages = scenes.map(({ image, videoT2V, videoI2V, ...rest }) => rest)
 
-  // references에서 data(base64) 제외
-  const refsWithoutData = references.map(({ data, ...rest }) => rest)
+  // references에서 data(base64) 제외 — 단, 디스크 저장된(filePath 있는) ref 만.
+  // 저장 실패로 filePath 없는 ref 는 base64 를 보존해 재오픈 유실 방지 (projectPersist 참고).
+  const refsWithoutData = stripReferencesForSave(references)
 
   // videoScenes에서 video(base64) 제외
   const videoScenesWithoutMedia = videoScenes.map(({ video, ...rest }) => rest)
