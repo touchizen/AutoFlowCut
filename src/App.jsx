@@ -639,12 +639,6 @@ function App() {
       toast.warning(t('videoAutomation.busy') || 'Generation already running')
       return
     }
-    // 다운로드-only 재시도는 videoAutomation 프리플라이트를 안 거치므로 여기서 키 가드.
-    // 키 없으면 checkVideoStatus/다운로드가 'No API key' 로 조용히 실패 → 대신 API 키 모달.
-    if (!(await flowAPI.getAccessToken(false, true))) {
-      window.dispatchEvent(new CustomEvent('flow-login-expired'))
-      return
-    }
 
     // 타입 판별: framePair는 pair.id가 fp_*, videoScene은 vscene_*
     const isFramePair = typeof item.id === 'string' && item.id.startsWith('fp_')
@@ -712,8 +706,13 @@ function App() {
       }
     }
 
-    // Fast path: download-only
+    // Fast path: download-only — 다운로드/상태조회에 키가 필요. 없으면 'No API key' 로
+    // 조용히 실패하므로 여기서 가드 → API 키 모달. (slow path 의 pending 리셋은 키 불필요)
     if (item.generationId && item.mediaId) {
+      if (!(await flowAPI.getAccessToken(false, true))) {
+        window.dispatchEvent(new CustomEvent('flow-login-expired'))
+        return
+      }
       retryVideoDownload({
         item,
         flowAPI,
