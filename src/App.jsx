@@ -35,6 +35,7 @@ import { tabAfterImport } from './utils/importTabRouting'
 import { checkFolderPermission } from './utils/guards'
 import { collectTagErrors } from './utils/tagMatch'
 import { getFramePairEffectivePrompt } from './utils/framePairPrompt'
+import { frameImageFor } from './utils/framePairImages'
 import { toast } from './components/Toast'
 
 // Components
@@ -362,16 +363,12 @@ function App() {
       const base64 = String(dataUrl).split(',')[1] || ''
       if (!base64) return { success: false, error: 'Empty file' }
 
-      const result = await flowAPI.uploadReference(base64, 'frame')
-      if (!result?.success || !result.mediaId) {
-        return { success: false, error: result?.error || 'Upload failed' }
-      }
-
-      setGalleryItems(prev => {
-        if (prev.some(it => it.mediaId === result.mediaId)) return prev
-        return [{ mediaId: result.mediaId, url: dataUrl, local: true }, ...prev]
-      })
-      return { success: true, mediaId: result.mediaId, url: dataUrl }
+      // cloud(BYOK): Flow 업로드(mediaId) 없이 로컬 dataUrl 을 갤러리 아이템으로 저장.
+      // resolvedPairs(frameImageFor)가 이 dataUrl 을 _startImage/_endImage 로 해석해
+      // Veo inline 프레임으로 전달한다.
+      const localId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      setGalleryItems(prev => [{ mediaId: localId, url: dataUrl, dataUrl, local: true }, ...prev])
+      return { success: true, mediaId: localId, url: dataUrl, dataUrl }
     } catch (e) {
       console.error('[Gallery] upload from disk failed:', e)
       return { success: false, error: e.message }
@@ -914,10 +911,10 @@ function App() {
             prompt: effectivePrompt,
             _startMediaId: startIsGallery ? p.startSceneId.slice(GALLERY_PFX.length) : (startScene?.mediaId || null),
             _endMediaId: endIsGallery ? p.endSceneId.slice(GALLERY_PFX.length) : (endScene?.mediaId || null),
-            // cloud(Veo) F2V: 메모리 base64 가 있으면 직접, 없으면 useVideoAutomation 이
-            // startSceneId/endSceneId 로 디스크(readImage)에서 해석.
-            _startImage: startScene?.image || null,
-            _endImage: endScene?.image || null,
+            // cloud(Veo) F2V: 갤러리(디스크 업로드) dataUrl 또는 씬 메모리 이미지 → inline 프레임.
+            // 씬이 folder 모드라 image 가 null 이면 useVideoAutomation 이 readImage(sceneId) 폴백.
+            _startImage: frameImageFor(p.startSceneId, { scenes, galleryItems, galleryPrefix: GALLERY_PFX }),
+            _endImage: frameImageFor(p.endSceneId, { scenes, galleryItems, galleryPrefix: GALLERY_PFX }),
           }
         })
         // seed: 이미지/T2V와 동일한 정책 — locked + 숫자일 때만 고정 seed

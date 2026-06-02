@@ -60,10 +60,13 @@ describe('FrameToVideoPanel — Upload from disk', () => {
   })
 
   it('calls onUploadFromDisk and updates pair value on successful upload', async () => {
+    // cloud(BYOK) 계약: Flow mediaId 가 아니라 로컬 id + dataUrl.
+    // 실제 프레임 해석(dataUrl→inline)은 frameImageFor 가 담당 (framePairImages.test.js).
     const onUploadFromDisk = vi.fn().mockResolvedValue({
       success: true,
-      mediaId: 'uploaded-xyz',
+      mediaId: 'local-xyz',
       url: 'data:image/png;base64,AAA',
+      dataUrl: 'data:image/png;base64,AAA',
     })
     const { onUpdate } = renderPanel({ onUploadFromDisk })
 
@@ -86,14 +89,15 @@ describe('FrameToVideoPanel — Upload from disk', () => {
     const updatedPairs = typeof lastUpdate === 'function'
       ? lastUpdate([basePair])
       : lastUpdate
-    expect(updatedPairs[0].startSceneId).toBe('gallery::uploaded-xyz')
+    expect(updatedPairs[0].startSceneId).toBe('gallery::local-xyz')
   })
 
   it('shows upload CTA in empty state and creates a gallery-prefixed pair on success', async () => {
     const onUploadFromDisk = vi.fn().mockResolvedValue({
       success: true,
-      mediaId: 'fresh-1',
+      mediaId: 'local-fresh-1',
       url: 'data:image/png;base64,AAA',
+      dataUrl: 'data:image/png;base64,AAA',
     })
     const onUpdate = vi.fn()
     render(
@@ -126,7 +130,7 @@ describe('FrameToVideoPanel — Upload from disk', () => {
     const pairs = onUpdate.mock.calls.at(-1)[0]
     expect(Array.isArray(pairs)).toBe(true)
     expect(pairs).toHaveLength(1)
-    expect(pairs[0].startSceneId).toBe('gallery::fresh-1')
+    expect(pairs[0].startSceneId).toBe('gallery::local-fresh-1')
   })
 
   it('does not upload from empty-state CTA when disabled', async () => {
