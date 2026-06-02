@@ -10,7 +10,7 @@ import { TIMING } from '../config/defaults'
 import './WelcomeScreen.css'
 import appIconUrl from '/assets/icon128.png'
 
-export default function WelcomeScreen({ getAccessToken, onReady, onSetupKey }) {
+export default function WelcomeScreen({ getAccessToken, onReady, onSetupKey, onExplore }) {
   const { t } = useI18n()
   const [authStatus, setAuthStatus] = useState('checking') // 'checking' | 'authenticated' | 'unauthenticated' | 'waiting'
   const pollingRef = useRef(null)
@@ -110,6 +110,14 @@ export default function WelcomeScreen({ getAccessToken, onReady, onSetupKey }) {
         <div className="welcome-hint">
           💡 {t('welcome.loginHint')}
         </div>
+
+        <button
+          type="button"
+          onClick={onExplore}
+          style={{ marginTop: '16px', background: 'none', border: 'none', color: '#7aa7d9', fontSize: '13px', cursor: 'pointer', textDecoration: 'underline' }}
+        >
+          {t('welcome.explore')}
+        </button>
       </div>
     </div>
   )

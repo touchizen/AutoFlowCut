@@ -26,6 +26,7 @@ export default {
     openFlow: 'Set up API Key',
     waitingLogin: 'Checking key...',
     loginHint: 'Save your API key in Settings to start automatically',
+    explore: 'Explore without a key',
     checking: 'Checking authentication...',
   },
   

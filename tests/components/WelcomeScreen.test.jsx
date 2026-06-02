@@ -30,6 +30,14 @@ describe('WelcomeScreen — BYOK 키 설정', () => {
     expect(screen.getByText(/welcome\.openFlow/)).toBeTruthy()
   })
 
+  it("'둘러보기' 클릭 → onExplore 호출 (키 없이 UI 진입)", async () => {
+    const onExplore = vi.fn()
+    render(<WelcomeScreen getAccessToken={vi.fn().mockResolvedValue(null)} onSetupKey={vi.fn()} onReady={vi.fn()} onExplore={onExplore} />)
+    const link = await screen.findByText(/welcome\.explore/)
+    fireEvent.click(link)
+    expect(onExplore).toHaveBeenCalled()
+  })
+
   it('키 있으면 자동 진입(onReady 호출)', async () => {
     const getAccessToken = vi.fn().mockResolvedValue('byok')
     const onReady = vi.fn()

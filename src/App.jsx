@@ -126,6 +126,9 @@ function App() {
   const [showAudioResult, setShowAudioResult] = useState(false)
   const [showReferences, setShowReferences] = useState(false)
   const [authReady, setAuthReady] = useState(false)
+  // '둘러보기' — 키 없이도 UI 진입(생성은 여전히 키 가드). 키 저장 시 authReady 가
+  // 켜지면 정식 진입 상태가 된다.
+  const [exploreWithoutKey, setExploreWithoutKey] = useState(false)
   // True after handleAuthError fires — disables the auto-recovery effect at line ~165
   // that would otherwise immediately re-extract a token from the webview and flip
   // authReady back to true (making the header revert from "Login" to green dot in
@@ -1118,17 +1121,18 @@ function App() {
         hideWhenPro={true}
       />
 
-      {/* 시작 화면 - 씬 없고 인증 안됐을 때 */}
-      {scenes.length === 0 && !authReady && (
+      {/* 시작 화면 - 씬 없고 키 없고 '둘러보기' 안 했을 때 */}
+      {scenes.length === 0 && !authReady && !exploreWithoutKey && (
         <WelcomeScreen
           getAccessToken={flowAPI.getAccessToken}
           onReady={() => setAuthReady(true)}
           onSetupKey={() => openSettings('apiKey')}
+          onExplore={() => setExploreWithoutKey(true)}
         />
       )}
 
-      {/* 메인 UI - 인증됐거나 씬 있을 때 */}
-      {(authReady || scenes.length > 0) && (
+      {/* 메인 UI - 인증됐거나 씬 있거나 '둘러보기' 진입 시 */}
+      {(authReady || scenes.length > 0 || exploreWithoutKey) && (
       <>
       <div className="main-panel">
         {/* 탭 헤더 */}

@@ -26,6 +26,7 @@ export default {
     openFlow: 'API 키 설정',
     waitingLogin: '키 확인 중...',
     loginHint: '설정 창에서 API 키를 저장하면 자동으로 시작됩니다',
+    explore: '키 없이 둘러보기',
     checking: '인증 확인 중...',
   },
   
