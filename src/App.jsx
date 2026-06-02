@@ -3,7 +3,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { DEFAULTS, UI, TIMING, STYLE_PRESETS, RESOURCE } from './config/defaults'
+import { DEFAULTS, UI, TIMING, STYLE_PRESETS } from './config/defaults'
 import { useGenAPI } from './hooks/useGenAPI'
 import { useScenes } from './hooks/useScenes'
 import { useAutomation } from './hooks/useAutomation'
@@ -36,7 +36,7 @@ import { checkFolderPermission } from './utils/guards'
 import { collectTagErrors } from './utils/tagMatch'
 import { getFramePairEffectivePrompt } from './utils/framePairPrompt'
 import { frameImageFor } from './utils/framePairImages'
-import { fileSystemAPI } from './hooks/useFileSystem'
+import { persistGalleryFrame } from './utils/galleryUpload'
 import { toast } from './components/Toast'
 
 // Components
@@ -364,19 +364,21 @@ function App() {
       const base64 = String(dataUrl).split(',')[1] || ''
       if (!base64) return { success: false, error: 'Empty file' }
 
-      // cloud(BYOK): Flow 업로드(mediaId) 없이 로컬 프레임을 프로젝트 리소스(frames/)로 저장.
-      // folder 모드면 디스크에 저장 → 재오픈 후에도 useVideoAutomation 이 readResource 로 해석.
-      // 메모리 dataUrl 은 이번 세션 썸네일/즉시 해석용 (frameImageFor).
+      // cloud(BYOK): Flow 업로드 없이 로컬 프레임을 프로젝트 리소스(frames/)로 저장.
+      // saveResource 는 실패 시 throw 가 아니라 {success:false} → 결과를 확인해 조용한 성공을
+      // 막고, 실패 시 보정 재시도(addPendingSave) 등록 + 경고. 메모리 dataUrl 은 이번 세션용.
       const localId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-      if (settings.saveMode === 'folder' && settings.projectName) {
-        try {
-          await fileSystemAPI.saveResource(settings.projectName, RESOURCE.FRAMES, localId, dataUrl)
-        } catch (e) {
-          console.warn('[Gallery] frame disk save failed (memory-only this session):', e?.message)
-        }
+      const { persisted } = await persistGalleryFrame({
+        localId, dataUrl,
+        saveMode: settings.saveMode,
+        projectName: settings.projectName,
+        addPendingSave,
+      })
+      if (settings.saveMode === 'folder' && !persisted) {
+        toast.warning(t('toast.permissionReleasedMemory'))
       }
-      setGalleryItems(prev => [{ mediaId: localId, url: dataUrl, dataUrl, local: true }, ...prev])
-      return { success: true, mediaId: localId, url: dataUrl, dataUrl }
+      setGalleryItems(prev => [{ mediaId: localId, url: dataUrl, dataUrl, local: true, persisted }, ...prev])
+      return { success: true, mediaId: localId, url: dataUrl, dataUrl, persisted }
     } catch (e) {
       console.error('[Gallery] upload from disk failed:', e)
       return { success: false, error: e.message }
