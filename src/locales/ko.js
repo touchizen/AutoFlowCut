@@ -417,8 +417,8 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
 
     // 비디오 다운로드
     videoDownloadSettings: '비디오 다운로드',
-    videoResolution: '다운로드 해상도',
-    videoResolutionHint: '비디오 다운로드 시 upscale 해상도 (기본: 1080p)',
+    videoResolution: '비디오 해상도',
+    videoResolutionHint: 'Veo 출력 해상도. 1080p/4K는 항상 8초, 720p는 씬 길이에 맞춰 4/6/8초.',
 
     // MCP HTTP 서버
     mcpHttpSettings: 'MCP HTTP 서버',

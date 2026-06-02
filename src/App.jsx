@@ -30,7 +30,7 @@ import { computeGuardAvailable } from './services/startGuard'
 import { createStyleResolver } from './services/styleResolver'
 import { filterPendingScenes } from './utils/sceneFilters'
 import { detectFileType, detectCSVType, parseCSVToScenes, parseSRTToScenes, csvPromptToVideoT2V } from './utils/parsers'
-import { resolveAudioSrtEntries } from './utils/srtTrack'
+import { resolveAudioSrtEntries, getSceneDuration } from './utils/srtTrack'
 import { tabAfterImport } from './utils/importTabRouting'
 import { checkFolderPermission } from './utils/guards'
 import { collectTagErrors } from './utils/tagMatch'
@@ -687,7 +687,7 @@ function App() {
         onUpdate,
         projectName,
         saveMode: settings.saveMode || 'folder',
-        videoResolution: settings.videoResolution || '1080p',
+        videoResolution: settings.videoResolution || '720p',
       }).catch(err => {
         console.error('[handleVideoRetry] Unexpected error:', err)
         onUpdate(item.id, 'error', { error: String(err?.message || err) })
@@ -833,7 +833,8 @@ function App() {
         const styledVideoScenes = selectedVideoScenes.map(vs => {
           const matchedRefs = []
           const { styledPrompt } = applyStyle(vs.prompt, effectiveStyleId, scenesHook.references, matchedRefs)
-          return { ...vs, prompt: styledPrompt }
+          // 자동 길이: 씬 길이(SRT 기반)를 비디오 생성 길이 스냅에 사용 (useVideoAutomation).
+          return { ...vs, prompt: styledPrompt, targetDuration: getSceneDuration(vs, scenesHook.srtTrack) }
         })
 
         // seed: 이미지와 동일한 정책 — locked + 숫자일 때만 고정 seed
@@ -851,7 +852,7 @@ function App() {
           seed: effectiveVideoSeed,
           projectName,
           saveMode: settings.saveMode,
-          videoResolution: settings.videoResolution || '1080p',
+          videoResolution: settings.videoResolution || '720p',
           videoBatchCount: settings.videoBatchCount || 1,
           onItemUpdate: (id, newStatus, result) => {
             // 명시적 null 도 통과시켜야 하는 필드(video/videoPath/mediaId/generatedAt 등)는
@@ -942,7 +943,7 @@ function App() {
           framePairs: resolvedPairs,
           projectName,
           saveMode: settings.saveMode,
-          videoResolution: settings.videoResolution || '1080p',
+          videoResolution: settings.videoResolution || '720p',
           videoBatchCount: settings.videoBatchCount || 1,
           seed: effectiveI2VSeed,
           onItemUpdate: (id, newStatus, result) => {

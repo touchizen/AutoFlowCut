@@ -20,7 +20,7 @@ function createDefaults() {
     imageBatchCount: 1,
     imageUpscale: 'off',
     videoBatchCount: 1,
-    videoResolution: '1080p',
+    videoResolution: '720p',
     requireStyle: false,
     seedNo: randomSeed(),
     seedLocked: true,

@@ -4,6 +4,13 @@
 
 import AspectRatioSelector from './AspectRatioSelector'
 
+// 공식 Veo 지원 해상도. 1080p/4k 는 8초 고정(공식 제약), 720p 는 씬 길이에 맞춰 4/6/8초.
+const VIDEO_RESOLUTION_OPTIONS = [
+  { value: '720p', label: '720p' },
+  { value: '1080p', label: '1080p' },
+  { value: '4k', label: '4K' },
+]
+
 export default function SceneTab({ localSettings, setLocalSettings, t }) {
   return (
     <div className="tab-panel">
@@ -66,13 +73,30 @@ export default function SceneTab({ localSettings, setLocalSettings, t }) {
       </div>
 
       {/*
-        배치 카운트(이미지/비디오) · 이미지 업스케일(2k/4k) · 비디오 다운로드 해상도
-        컨트롤은 공식 API(BYOK) 전환으로 동작하지 않아 제거했다:
-          - Gemini 이미지: 호출당 1장 (batchCount 무효)
-          - Veo: operation 당 1개, 모델 고정 해상도 (videoBatchCount/해상도 무효)
-          - 이미지 업스케일: Flow DOM 전용 기능 (공식 API 대응물 없음 → no-op)
-        잘못된 기대를 주지 않도록 UI 에서 노출하지 않는다.
+        배치 카운트(이미지/비디오) · 이미지 업스케일(2k/4k) 컨트롤은 공식 API(BYOK)
+        에서 동작하지 않아 제거: Gemini 이미지는 호출당 1장(batchCount 무효), 이미지
+        업스케일은 Flow DOM 전용(공식 API 대응물 없음). 비디오 해상도는 공식 Veo 가
+        지원하므로 아래에 유지·연결한다.
       */}
+
+      {/* 비디오 해상도 (공식 Veo: 720p/1080p/4k) */}
+      <div className="settings-section">
+        <h3>{t('settings.videoResolution')}</h3>
+        <div className="setting-row">
+          <div className="batch-selector">
+            {VIDEO_RESOLUTION_OPTIONS.map(r => (
+              <button
+                key={r.value}
+                className={`batch-btn ${(localSettings.videoResolution || '720p') === r.value ? 'active' : ''}`}
+                onClick={() => setLocalSettings(s => ({ ...s, videoResolution: r.value }))}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+          <span className="setting-sublabel">{t('settings.videoResolutionHint')}</span>
+        </div>
+      </div>
     </div>
   )
 }

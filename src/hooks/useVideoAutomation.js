@@ -18,6 +18,7 @@ import { downloadVideoBase64 } from '../services/videoDownload'
 import { resolveFrameImageBase64 } from '../utils/framePairImages'
 import { pickVideoMetadata, buildVideoMetaPatch } from '../utils/videoMetadata'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
+import { snapVeoDuration } from '../utils/videoModels'
 
 // 유틸: 랜덤 대기
 const randomSleep = (min, max) =>
@@ -56,12 +57,16 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
 
   // ─── Phase 1 Helper: 비디오 제출 ───
   const submitVideoItem = async (item, mode, options) => {
-    const { videoModel, aspectRatio, duration, seed = null, projectName = '' } = options
+    const { videoModel, aspectRatio, duration, seed = null, videoResolution, projectName = '' } = options
     const prompt = item.prompt || ''
 
     switch (mode) {
-      case 't2v':
-        return await generateVideoT2V(prompt, videoModel, aspectRatio, duration, seed)
+      case 't2v': {
+        // 자동 길이: 씬 길이(item.targetDuration, SRT 기반)를 Veo 허용값 {4,6,8} 으로 스냅.
+        // 1080p/4k 면 submitVideo 가 8초로 강제(공식 제약).
+        const dur = snapVeoDuration(item.targetDuration ?? duration)
+        return await generateVideoT2V(prompt, videoModel, aspectRatio, dur, seed, videoResolution)
+      }
       case 'i2v': {
         // 시작 프레임 base64 (필수). 끝 프레임은 있으면 lastFrame 보간.
         // 메모리(_startImage) 우선, 없으면 디스크(gallery→frames/, 씬→scenes/) 폴백 — 재오픈 후에도 동작.
@@ -70,7 +75,8 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
           return { success: false, error: 'No start image — generate the start scene first' }
         }
         const endB64 = await resolveFrameImageBase64(item.endSceneId, item.endImage, projectName)
-        return await generateVideoI2V(prompt, startB64, endB64, videoModel, aspectRatio, duration, seed)
+        // I2V/F2V 는 reference 이미지 제약으로 8초 강제(submitVideo 에서 enforce) — duration 그대로 전달.
+        return await generateVideoI2V(prompt, startB64, endB64, videoModel, aspectRatio, duration, seed, videoResolution)
       }
       default:
         return { success: false, error: `Unknown mode: ${mode}` }

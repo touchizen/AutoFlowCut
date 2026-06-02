@@ -418,8 +418,8 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
 
     // Video download
     videoDownloadSettings: 'Video Download',
-    videoResolution: 'Download Resolution',
-    videoResolutionHint: 'Upscale resolution for video download (default: 1080p)',
+    videoResolution: 'Video Resolution',
+    videoResolutionHint: 'Veo output resolution. 1080p/4K are always 8s; 720p matches scene length (4/6/8s).',
 
     // MCP HTTP Server
     mcpHttpSettings: 'MCP HTTP Server',

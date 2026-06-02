@@ -113,6 +113,16 @@ describe('useGenAPI — 비디오', () => {
     expect(window.electronAPI.genaiGenerateVideo.mock.calls.at(-1)[0].seed).toBe(42)
   })
 
+  it('generateVideoT2V/I2V: resolution 을 IPC 에 전달', async () => {
+    const { result } = renderHook(() => useGenAPI())
+    await act(async () => { await result.current.generateVideoT2V('go', 'veo-3.1-fast', '16:9', 4, null, '720p') })
+    expect(window.electronAPI.genaiGenerateVideo.mock.calls.at(-1)[0].resolution).toBe('720p')
+    await act(async () => {
+      await result.current.generateVideoI2V('go', 'data:image/png;base64,ONLY', null, 'veo-3.1-fast', '16:9', 8, null, '1080p')
+    })
+    expect(window.electronAPI.genaiGenerateVideo.mock.calls.at(-1)[0].resolution).toBe('1080p')
+  })
+
   it('구 Flow underscore 키는 공식 모델명으로 매핑 (잘못된 endpoint 방지)', async () => {
     const { result } = renderHook(() => useGenAPI())
     await act(async () => { await result.current.generateVideoT2V('go', 'veo_3_1_t2v_fast_ultra_relaxed', '16:9', 8) })
