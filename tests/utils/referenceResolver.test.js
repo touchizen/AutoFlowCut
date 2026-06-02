@@ -54,4 +54,20 @@ describe('resolveReferenceImages', () => {
     const out = await resolveReferenceImages([{ name: 'x' }], { projectName: 'p', fs })
     expect(out).toEqual([])
   })
+
+  it('해석 실패 레퍼런스는 console.warn 으로 표면화 (조용히 묻지 않음)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const fs = mkFs({})
+    await resolveReferenceImages([{ name: 'missing' }], { projectName: 'p', fs })
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("'missing'"))
+    warn.mockRestore()
+  })
+
+  it('readReference throw 도 경고 로그', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const fs = { readReference: vi.fn().mockRejectedValue(new Error('io')) }
+    await resolveReferenceImages([{ name: 'boom' }], { projectName: 'p', fs })
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('boom'))
+    warn.mockRestore()
+  })
 })

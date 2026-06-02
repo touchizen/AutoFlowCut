@@ -39,14 +39,22 @@ export async function resolveReferenceImages(refs, { projectName, fs = fileSyste
       try {
         const res = await fs.readReference(projectName, ref.name)
         if (res?.success && res.data) raw = res.data
-      } catch {
-        /* 해석 실패한 레퍼런스는 조용히 건너뜀 — 생성은 계속 */
+      } catch (e) {
+        // 해석 실패해도 생성은 계속하되, 조용히 묻지 말고 경고 — 캐릭터 일관성이
+        // 말없이 저하되는 것을 막는다 (어떤 레퍼런스가 빠졌는지 로그로 확인 가능).
+        console.warn(`[referenceResolver] reference '${ref.name}' read failed: ${e?.message || e}`)
       }
     }
 
-    if (!raw) continue
+    if (!raw) {
+      console.warn(`[referenceResolver] reference '${ref.name || '?'}' could not be resolved — skipping (character consistency may degrade)`)
+      continue
+    }
     const data = cleanBase64(raw)
-    if (!data) continue
+    if (!data) {
+      console.warn(`[referenceResolver] reference '${ref.name || '?'}' produced empty base64 — skipping`)
+      continue
+    }
     const ext = detectImageType(raw)
     resolved.push({ mimeType: EXT_TO_MIME[ext] || 'image/png', data })
   }
