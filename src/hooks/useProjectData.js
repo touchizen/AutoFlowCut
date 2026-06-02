@@ -457,6 +457,7 @@ export function useProjectData({
       saveMode: settings?.saveMode || 'folder',
       videoResolution: settings?.videoResolution || '1080p',
       checkVideoStatus: flowAPI.checkVideoStatus,
+      downloadVideo: flowAPI.downloadVideo,
       fetchMedia: flowAPI.fetchMedia,
       getAccessToken: flowAPI.getAccessToken,
       logPrefix: '[ProjectData]',

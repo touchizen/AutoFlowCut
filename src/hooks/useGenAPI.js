@@ -27,6 +27,13 @@ function toInlineImage(val) {
   return null
 }
 
+// Flow 화면비 enum(VIDEO_ASPECT_RATIO_*) 또는 clean 값 → Veo 화면비('16:9'|'9:16').
+function toVeoAspect(ar) {
+  if (ar === '16:9' || ar === '9:16') return ar
+  if (typeof ar === 'string' && /PORTRAIT|9.?16/i.test(ar)) return '9:16'
+  return '16:9'
+}
+
 export function useGenAPI({ onAuthError, getProjectName } = {}) {
   const [accessToken, setAccessToken] = useState(null)
   const getProjectNameRef = useRef(getProjectName)
@@ -135,7 +142,7 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
     try {
       return await window.electronAPI.genaiGenerateVideo({
         prompt,
-        aspectRatio,
+        aspectRatio: toVeoAspect(aspectRatio),
         durationSeconds: duration,
         model: normalizeVideoModel(model),
       })
@@ -152,7 +159,7 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
         prompt,
         image: toInlineImage(startImage),
         endImage: toInlineImage(endImage),
-        aspectRatio,
+        aspectRatio: toVeoAspect(aspectRatio),
         durationSeconds: duration,
         model: normalizeVideoModel(model),
       })

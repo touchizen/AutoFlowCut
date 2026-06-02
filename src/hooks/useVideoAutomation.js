@@ -14,6 +14,7 @@ import { TIMING } from '../config/defaults'
 import { fileSystemAPI } from './useFileSystem'
 import { toast } from '../components/Toast'
 import { retryVideoDownload } from '../services/videoRecovery'
+import { downloadVideoBase64 } from '../services/videoDownload'
 import { pickVideoMetadata, buildVideoMetaPatch } from '../utils/videoMetadata'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 
@@ -50,21 +51,38 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
     return true
   }
 
-  const { generateVideoT2V, generateVideoI2V, checkVideoStatus, upscaleVideo, fetchMedia, getAccessToken } = flowAPI
+  const { generateVideoT2V, generateVideoI2V, checkVideoStatus, upscaleVideo, fetchMedia, getAccessToken, downloadVideo } = flowAPI
 
-  // ─── Phase 1 Helper: 비디오 제출 (DOM 조작) ───
+  // 씬의 생성 이미지 base64 를 얻는다 — 메모리(in-memory) 우선, 없으면 디스크 readImage.
+  // cloud(Veo) I2V/F2V 는 Flow mediaId 대신 inline base64 프레임을 받는다.
+  const resolveSceneImageBase64 = async (sceneId, inlineImage, projectName) => {
+    if (inlineImage) return inlineImage
+    if (!sceneId || !projectName) return null
+    if (typeof sceneId === 'string' && sceneId.startsWith('gallery::')) return null // Flow gallery 미지원(cloud)
+    try {
+      const r = await fileSystemAPI.readImage(projectName, sceneId)
+      return r?.success ? r.data : null
+    } catch {
+      return null
+    }
+  }
+
+  // ─── Phase 1 Helper: 비디오 제출 ───
   const submitVideoItem = async (item, mode, options) => {
-    const { videoModel, aspectRatio, duration, videoBatchCount = 1, seed = null } = options
+    const { videoModel, aspectRatio, duration, videoBatchCount = 1, seed = null, projectName = '' } = options
     const prompt = item.prompt || ''
 
     switch (mode) {
       case 't2v':
         return await generateVideoT2V(prompt, videoModel, aspectRatio, duration, videoBatchCount, seed)
       case 'i2v': {
-        if (!item.startMediaId) {
-          return { success: false, error: 'No start image mediaId' }
+        // 시작 프레임 base64 (필수). 끝 프레임은 있으면 lastFrame 보간.
+        const startB64 = await resolveSceneImageBase64(item.startSceneId, item.startImage, projectName)
+        if (!startB64) {
+          return { success: false, error: 'No start image — generate the start scene first' }
         }
-        return await generateVideoI2V(prompt, item.startMediaId, item.endMediaId || null, videoModel, aspectRatio, duration, seed)
+        const endB64 = await resolveSceneImageBase64(item.endSceneId, item.endImage, projectName)
+        return await generateVideoI2V(prompt, startB64, endB64, videoModel, aspectRatio, duration, seed)
       }
       default:
         return { success: false, error: `Unknown mode: ${mode}` }
@@ -81,63 +99,14 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
   //   DOM 반환값의 resolution 필드(720p/1080p/4K/default)로 실제 다운로드
   //   해상도를 확인할 수 있다.
   const downloadAndSaveVideo = async (mediaId, videoUrl, item, options, setStatusMsg) => {
-    const { projectName, saveMode, videoResolution = '1080p' } = options
-    let mediaResult
-
-    // ─── 1. DOM 다운로드 (hover → 3-dot → download → 해상도 선택) ───
-    if (window.electronAPI?.domDownloadVideo) {
-      try {
-        console.log('[VideoAutomation] [1/3] DOM download — mediaId:', mediaId?.substring(0, 20), 'resolution:', videoResolution)
-        setStatusMsg?.(`⬇️ Downloading ${videoResolution} — ${mediaId?.substring(0, 16)}...`)
-        mediaResult = await window.electronAPI.domDownloadVideo({
-          mediaId, resolution: videoResolution
-        })
-        if (mediaResult?.success) {
-          const actualRes = mediaResult.resolution || 'unknown'
-          console.log('[VideoAutomation] ✅ DOM download success (resolution:', actualRes, ')')
-          if (actualRes === 'default') {
-            console.warn('[VideoAutomation] ⚠️ Flow UI의 해상도 서브메뉴가 열리지 않아 원본 해상도로 저장됨. 요청:', videoResolution)
-          }
-        } else {
-          console.warn('[VideoAutomation] DOM download failed:', mediaResult?.error)
-        }
-      } catch (e) {
-        console.warn('[VideoAutomation] DOM download exception:', e.message)
-      }
-    }
-
-    // ─── 2. videoUrl 직접 다운로드 (DOM 실패 시 — 원본 해상도) ───
-    if (!mediaResult?.success && videoUrl) {
-      try {
-        console.log('[VideoAutomation] [2/3] Direct URL download:', videoUrl?.substring(0, 80))
-        const token = await getAccessToken()
-        mediaResult = await window.electronAPI.downloadVideoUrl({ url: videoUrl, token })
-        if (mediaResult?.success) {
-          console.log('[VideoAutomation] ✅ Direct URL download success')
-        } else {
-          console.warn('[VideoAutomation] Direct URL download failed:', mediaResult?.error)
-        }
-      } catch (e) {
-        console.warn('[VideoAutomation] Direct URL download exception:', e.message)
-        mediaResult = null
-      }
-    }
-
-    // ─── 3. fetchMedia fallback ───
-    if (!mediaResult?.success) {
-      try {
-        console.log('[VideoAutomation] [3/3] fetchMedia for mediaId:', mediaId?.substring(0, 20))
-        mediaResult = await fetchMedia(mediaId)
-        if (mediaResult?.success) {
-          console.log('[VideoAutomation] ✅ fetchMedia success')
-        }
-      } catch (e) {
-        console.warn('[VideoAutomation] fetchMedia exception:', e.message)
-      }
-    }
+    const { projectName, saveMode } = options
+    // cloud(Veo): 완료된 operation 의 videoUri 를 직접 base64 로 다운로드.
+    // (구 Flow 의 DOM→URL→fetchMedia 3단계 폴백은 제거 — videoDownload 공통 헬퍼로 통일)
+    setStatusMsg?.(`⬇️ Downloading — ${String(videoUrl || mediaId || '').substring(0, 24)}...`)
+    const mediaResult = await downloadVideoBase64(downloadVideo, videoUrl)
 
     if (!mediaResult?.success) {
-      return { success: false, error: `Media download failed: ${mediaResult?.error || 'All methods failed'}` }
+      return { success: false, error: `Video download failed: ${mediaResult?.error || 'no video URL'}` }
     }
 
     // 파일 저장 — videoSaveId 우선 (t2v_N / i2v_N), 없으면 기존 item.id (vscene_N / fp_N)
@@ -271,6 +240,9 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
             startMediaId: p._startMediaId,
             endMediaId: p._endMediaId || null,
             startSceneId: p.startSceneId,
+            endSceneId: p.endSceneId,
+            startImage: p._startImage || null,
+            endImage: p._endImage || null,
             videoSaveId: `i2v_${p.id.replace('fp_', '')}`,
             status: p.status,
             generationId: p.generationId,
@@ -326,7 +298,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
         const chunk = downloadOnly.slice(i, i + CONCURRENCY)
         const results = await Promise.all(chunk.map(it => retryVideoDownload({
           item: it,
-          flowAPI: { checkVideoStatus, fetchMedia, getAccessToken },
+          flowAPI: { checkVideoStatus, fetchMedia, getAccessToken, downloadVideo },
           onUpdate: (id, newStatus, patch) => onItemUpdate?.(id, newStatus, patch),
           projectName,
           saveMode,
@@ -378,7 +350,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
       onItemUpdate?.(item.id, 'generating')
 
       const genResult = await submitVideoItem(item, mode, {
-        videoModel, aspectRatio, duration, videoBatchCount, seed
+        videoModel, aspectRatio, duration, videoBatchCount, seed, projectName
       })
 
       if (genResult.success && genResult.generationId) {

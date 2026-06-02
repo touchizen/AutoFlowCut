@@ -914,6 +914,10 @@ function App() {
             prompt: effectivePrompt,
             _startMediaId: startIsGallery ? p.startSceneId.slice(GALLERY_PFX.length) : (startScene?.mediaId || null),
             _endMediaId: endIsGallery ? p.endSceneId.slice(GALLERY_PFX.length) : (endScene?.mediaId || null),
+            // cloud(Veo) F2V: 메모리 base64 가 있으면 직접, 없으면 useVideoAutomation 이
+            // startSceneId/endSceneId 로 디스크(readImage)에서 해석.
+            _startImage: startScene?.image || null,
+            _endImage: endScene?.image || null,
           }
         })
         // seed: 이미지/T2V와 동일한 정책 — locked + 숫자일 때만 고정 seed

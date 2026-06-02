@@ -10,6 +10,7 @@
  */
 
 import { fileSystemAPI } from '../hooks/useFileSystem'
+import { downloadVideoBase64 } from './videoDownload'
 
 /**
  * 다운로드 + 저장 (useVideoAutomation의 Phase 3 로직과 동일)
@@ -21,57 +22,17 @@ export async function downloadAndSaveVideo({
   item,                  // { id, videoSaveId? }
   projectName,
   saveMode = 'folder',
-  videoResolution = '1080p',
-  fetchMedia,            // from flowAPI
-  getAccessToken,        // from flowAPI
+  videoResolution = '1080p', // cloud 다운로드에선 미사용 — 시그니처 호환 위해 유지
+  downloadVideo,         // from flowAPI (useGenAPI)
+  fetchMedia,            // (legacy, 미사용)
+  getAccessToken,        // (legacy, 미사용)
 }) {
-  let mediaResult
-
-  // ─── 1. DOM 다운로드 ───
-  if (window.electronAPI?.domDownloadVideo) {
-    try {
-      console.log('[VideoRecovery] [1/3] DOM download — mediaId:', mediaId?.substring(0, 20), 'resolution:', videoResolution)
-      mediaResult = await window.electronAPI.domDownloadVideo({
-        mediaId, resolution: videoResolution
-      })
-      if (mediaResult?.success) {
-        const actualRes = mediaResult.resolution || 'unknown'
-        console.log('[VideoRecovery] DOM download success (resolution:', actualRes, ')')
-      } else {
-        console.warn('[VideoRecovery] DOM download failed:', mediaResult?.error)
-      }
-    } catch (e) {
-      console.warn('[VideoRecovery] DOM download exception:', e.message)
-    }
-  }
-
-  // ─── 2. videoUrl 직접 다운로드 ───
-  if (!mediaResult?.success && videoUrl && getAccessToken) {
-    try {
-      console.log('[VideoRecovery] [2/3] Direct URL download:', videoUrl?.substring(0, 80))
-      const token = await getAccessToken()
-      mediaResult = await window.electronAPI.downloadVideoUrl({ url: videoUrl, token })
-      if (mediaResult?.success) {
-        console.log('[VideoRecovery] Direct URL download success')
-      }
-    } catch (e) {
-      console.warn('[VideoRecovery] Direct URL download exception:', e.message)
-      mediaResult = null
-    }
-  }
-
-  // ─── 3. fetchMedia fallback ───
-  if (!mediaResult?.success && fetchMedia) {
-    try {
-      console.log('[VideoRecovery] [3/3] fetchMedia for mediaId:', mediaId?.substring(0, 20))
-      mediaResult = await fetchMedia(mediaId)
-    } catch (e) {
-      console.warn('[VideoRecovery] fetchMedia exception:', e.message)
-    }
-  }
+  // cloud(Veo): videoUri 직접 base64 다운로드 (구 DOM→URL→fetchMedia 폴백 제거,
+  // useVideoAutomation 과 동일한 videoDownload 공통 헬퍼 사용)
+  const mediaResult = await downloadVideoBase64(downloadVideo, videoUrl)
 
   if (!mediaResult?.success) {
-    return { success: false, error: `Media download failed: ${mediaResult?.error || 'All methods failed'}`, mediaId }
+    return { success: false, error: `Media download failed: ${mediaResult?.error || 'no video URL'}`, mediaId }
   }
 
   // 파일 저장 — useVideoAutomation 와 동일한 metadata 규칙(seed/timestamp/model) +
@@ -143,8 +104,9 @@ export async function recoverInFlightVideos({
   saveMode = 'folder',
   videoResolution = '1080p',
   checkVideoStatus,      // flowAPI.checkVideoStatus(genIds[]) → { success, statuses[] }
-  fetchMedia,            // flowAPI.fetchMedia
-  getAccessToken,        // flowAPI.getAccessToken
+  downloadVideo,         // flowAPI.downloadVideo(videoUri)
+  fetchMedia,            // (legacy, 미사용)
+  getAccessToken,        // (legacy, 미사용)
   onFramePairUpdate,     // (id, patch) => void
   logPrefix = '[VideoRecovery]',
 }) {
@@ -209,8 +171,7 @@ export async function recoverInFlightVideos({
             projectName,
             saveMode,
             videoResolution,
-            fetchMedia,
-            getAccessToken,
+            downloadVideo,
           })
 
           if (dlResult.success && dlResult.base64) {
@@ -366,8 +327,7 @@ export async function retryVideoDownload({
     projectName,
     saveMode,
     videoResolution,
-    fetchMedia: flowAPI.fetchMedia,
-    getAccessToken: flowAPI.getAccessToken,
+    downloadVideo: flowAPI.downloadVideo,
   })
 
   if (dl.success && dl.base64) {

@@ -5,13 +5,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openExternal: (url) => ipcRenderer.invoke('app:open-external', { url }),
   showInFolder: (filePath) => ipcRenderer.invoke('app:show-in-folder', { filePath }),
   notifyOS: (payload) => ipcRenderer.invoke('notify:os', payload),
-  onFlowStatus: (callback) => {
-    // 반환된 unsubscribe 를 useEffect cleanup 에서 호출해야 listener leak 안 됨.
-    // 미반환 시 HMR / 재마운트 때마다 listener 누적 → MaxListenersExceededWarning.
-    const handler = (_, data) => callback(data)
-    ipcRenderer.on('flow-status', handler)
-    return () => ipcRenderer.removeListener('flow-status', handler)
-  },
 
   // Layout
   setLayout: (params) => ipcRenderer.invoke('app:set-layout', params),
@@ -31,28 +24,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('menu:action', handler)
   },
   notifyProjectActivated: (name, workFolder) => ipcRenderer.invoke('app:project-activated', { name, workFolder }),
-
-  // Flow API
-  extractToken: () => ipcRenderer.invoke('flow:extract-token'),
-  extractProjectId: () => ipcRenderer.invoke('flow:extract-project-id'),
-  validateToken: (params) => ipcRenderer.invoke('flow:validate-token', params),
-  generateImage: (params) => ipcRenderer.invoke('flow:generate-image', params),
-  checkGeneration: (params) => ipcRenderer.invoke('flow:check-generation', params),
-  collectGeneration: (params) => ipcRenderer.invoke('flow:collect-generation', params),
-  clearGenerations: () => ipcRenderer.invoke('flow:clear-generations'),
-  fetchMedia: (params) => ipcRenderer.invoke('flow:fetch-media', params),
-  uploadReference: (params) => ipcRenderer.invoke('flow:upload-reference', params),
-
-  // Flow Video API
-  generateVideoT2V: (params) => ipcRenderer.invoke('flow:generate-video-t2v', params),
-  generateVideoI2V: (params) => ipcRenderer.invoke('flow:generate-video-i2v', params),
-  checkVideoStatus: (params) => ipcRenderer.invoke('flow:check-video-status', params),
-  downloadVideoUrl: (params) => ipcRenderer.invoke('flow:download-video-url', params),
-  domDownloadVideo: (params) => ipcRenderer.invoke('flow:dom-download-video', params),
-  upscaleVideo: (params) => ipcRenderer.invoke('flow:upscale-video', params),
-  upscaleImage: (params) => ipcRenderer.invoke('flow:upscale-image', params),
-  fetchGallery: (params) => ipcRenderer.invoke('flow:fetch-gallery', params),
-  listFlowProjects: (params) => ipcRenderer.invoke('flow:list-projects', params),
 
   // File System
   getDefaultWorkFolder: () => ipcRenderer.invoke('fs:get-default-work-folder'),
@@ -110,16 +81,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   skillsInstall: (params) => ipcRenderer.invoke('skills:install', params),
   skillsUninstall: (params) => ipcRenderer.invoke('skills:uninstall', params),
 
-  // Flow DOM Mode
-  domNavigate: (params) => ipcRenderer.invoke('flow:dom-navigate', params),
-  domGetUrl: () => ipcRenderer.invoke('flow:dom-get-url'),
-  domClickEnterTool: (params) => ipcRenderer.invoke('flow:dom-click-enter-tool', params),
-  domSendPrompt: (params) => ipcRenderer.invoke('flow:dom-send-prompt', params),
-  domSnapshotBlobs: () => ipcRenderer.invoke('flow:dom-snapshot-blobs'),
-  domScanImages: (params) => ipcRenderer.invoke('flow:dom-scan-images', params),
-  domBlobToBase64: (params) => ipcRenderer.invoke('flow:dom-blob-to-base64', params),
-  domShowFlow: () => ipcRenderer.invoke('flow:dom-show-flow'),
-
   // Google GenAI (BYOK) — official Imagen/Veo API, replaces Flow reverse-engineering.
   // Key management exposes only existence/validity to the renderer — never the key itself.
   genaiGetKeyStatus: () => ipcRenderer.invoke('genai:get-key-status'),
@@ -138,9 +99,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Power Save
   setPreventSleep: (params) => ipcRenderer.invoke('app:set-prevent-sleep', params),
   getPreventSleep: () => ipcRenderer.invoke('app:get-prevent-sleep'),
-
-  // Flow page → main response forwarding (replaces CDP Network.getResponseBody)
-  flowReportResponse: (payload) => ipcRenderer.invoke('flow:report-response', payload),
 
   // MCP HTTP Server
   startMcpHttp: (params) => ipcRenderer.invoke('mcp:start-http', params),

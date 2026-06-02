@@ -318,10 +318,12 @@ describe('useVideoAutomation — auth failure on i2v (F→V) mode', () => {
     const hook = renderHook(() => useVideoAutomation(flowAPI, t, null))
 
     // Shape mirrors what useVideoAutomation expects after framePairs filtering (line 260)
+    // cloud(Veo) I2V: 시작 프레임을 inline base64(_startImage)로 제공 (mediaId 대체)
+    const IMG = 'data:image/png;base64,AAAA'
     const framePairs = [
-      { id: 'fp_1', prompt: 'pair 1', startSceneId: 'scene_1', _startMediaId: 'media_1', status: 'pending' },
-      { id: 'fp_2', prompt: 'pair 2', startSceneId: 'scene_2', _startMediaId: 'media_2', status: 'pending' },
-      { id: 'fp_3', prompt: 'pair 3', startSceneId: 'scene_3', _startMediaId: 'media_3', status: 'pending' },
+      { id: 'fp_1', prompt: 'pair 1', startSceneId: 'scene_1', _startImage: IMG, status: 'pending' },
+      { id: 'fp_2', prompt: 'pair 2', startSceneId: 'scene_2', _startImage: IMG, status: 'pending' },
+      { id: 'fp_3', prompt: 'pair 3', startSceneId: 'scene_3', _startImage: IMG, status: 'pending' },
     ]
 
     let startPromise
@@ -372,7 +374,7 @@ describe('useVideoAutomation — auth failure on i2v (F→V) mode', () => {
     const hook = renderHook(() => useVideoAutomation(flowAPI, t, null))
 
     const framePairs = [
-      { id: 'fp_1', prompt: 'pair 1', startSceneId: 'scene_1', _startMediaId: 'media_1', status: 'pending' },
+      { id: 'fp_1', prompt: 'pair 1', startSceneId: 'scene_1', _startImage: 'data:image/png;base64,AAAA', status: 'pending' },
     ]
 
     let startPromise

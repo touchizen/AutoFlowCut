@@ -476,9 +476,10 @@ export default function FrameToVideoPanel({
     if (Number.isFinite(num)) onSeedChange?.(num)
   }
 
-  // mediaId 있는 씬만 드롭다운에 표시
+  // 생성 이미지가 있는 씬만 드롭다운에 표시.
+  // cloud(Veo): imagePath(디스크)/image(메모리) 기준. legacy Flow: mediaId 도 허용.
   const availableScenes = useMemo(
-    () => scenes.filter(s => s.mediaId),
+    () => scenes.filter(s => s.mediaId || s.imagePath || s.image),
     [scenes]
   )
 
