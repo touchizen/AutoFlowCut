@@ -280,6 +280,9 @@ html, body {
 }
 .content-monitor {
   flex: 0 0 auto; /* 폭은 inline style(monitorWidth) */
+  /* 저장된 큰 폭(예: 큰 화면에서 2000px)이 작은 창에서 패널을 밀어내지 않도록 렌더 시
+     캡 — 드래그 상한(90%)과 동일. JS 재-clamp 없이 레이아웃 안전 보장. */
+  max-width: 90%;
   align-self: stretch;
   min-height: 180px;
   background: #0d0d0d;
