@@ -15,6 +15,7 @@ import { fileSystemAPI } from './useFileSystem'
 import { toast } from '../components/Toast'
 import { retryVideoDownload } from '../services/videoRecovery'
 import { downloadVideoBase64 } from '../services/videoDownload'
+import { resolveFrameImageBase64 } from '../utils/framePairImages'
 import { pickVideoMetadata, buildVideoMetaPatch } from '../utils/videoMetadata'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 
@@ -53,20 +54,6 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
 
   const { generateVideoT2V, generateVideoI2V, checkVideoStatus, upscaleVideo, fetchMedia, getAccessToken, downloadVideo } = flowAPI
 
-  // 씬의 생성 이미지 base64 를 얻는다 — 메모리(in-memory) 우선, 없으면 디스크 readImage.
-  // cloud(Veo) I2V/F2V 는 Flow mediaId 대신 inline base64 프레임을 받는다.
-  const resolveSceneImageBase64 = async (sceneId, inlineImage, projectName) => {
-    if (inlineImage) return inlineImage
-    if (!sceneId || !projectName) return null
-    if (typeof sceneId === 'string' && sceneId.startsWith('gallery::')) return null // Flow gallery 미지원(cloud)
-    try {
-      const r = await fileSystemAPI.readImage(projectName, sceneId)
-      return r?.success ? r.data : null
-    } catch {
-      return null
-    }
-  }
-
   // ─── Phase 1 Helper: 비디오 제출 ───
   const submitVideoItem = async (item, mode, options) => {
     const { videoModel, aspectRatio, duration, videoBatchCount = 1, seed = null, projectName = '' } = options
@@ -77,11 +64,12 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
         return await generateVideoT2V(prompt, videoModel, aspectRatio, duration, videoBatchCount, seed)
       case 'i2v': {
         // 시작 프레임 base64 (필수). 끝 프레임은 있으면 lastFrame 보간.
-        const startB64 = await resolveSceneImageBase64(item.startSceneId, item.startImage, projectName)
+        // 메모리(_startImage) 우선, 없으면 디스크(gallery→frames/, 씬→scenes/) 폴백 — 재오픈 후에도 동작.
+        const startB64 = await resolveFrameImageBase64(item.startSceneId, item.startImage, projectName)
         if (!startB64) {
           return { success: false, error: 'No start image — generate the start scene first' }
         }
-        const endB64 = await resolveSceneImageBase64(item.endSceneId, item.endImage, projectName)
+        const endB64 = await resolveFrameImageBase64(item.endSceneId, item.endImage, projectName)
         return await generateVideoI2V(prompt, startB64, endB64, videoModel, aspectRatio, duration, seed)
       }
       default:

@@ -100,6 +100,7 @@ export const DEFAULTS = {
 export const RESOURCE = {
   SCENES: 'scenes',
   REFERENCES: 'references',
+  FRAMES: 'frames', // F2V 디스크 업로드 프레임 (gallery::local-*) 영속 저장
 }
 
 export const REFERENCE_TYPES = [

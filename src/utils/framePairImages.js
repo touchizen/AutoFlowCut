@@ -10,6 +10,14 @@
  * cloud(Veo) F2V 는 Flow mediaId 가 아니라 inline base64 프레임을 받으므로,
  * 여기서 dataUrl/base64 를 뽑아 _startImage/_endImage 로 넘긴다.
  *
+ * @module framePairImages
+ */
+import { fileSystemAPI } from '../hooks/useFileSystem'
+import { RESOURCE } from '../config/defaults'
+
+/**
+ * 메모리(이번 세션)에서 프레임 id 를 dataUrl/base64 로 해석. 디스크 접근 없음.
+ *
  * @param {string} id - startSceneId / endSceneId
  * @param {object} ctx
  * @param {Array} [ctx.scenes]
@@ -28,4 +36,44 @@ export function frameImageFor(id, { scenes = [], galleryItems = [], galleryPrefi
 
   const scene = (scenes || []).find((s) => s && s.id === id)
   return scene?.image || null
+}
+
+/**
+ * 실행 시점에 시작/끝 프레임을 base64/dataUrl 로 해석 (디스크 폴백 포함).
+ *
+ * 우선순위:
+ *   1. inlineImage (이번 세션 메모리 dataUrl — frameImageFor 결과)
+ *   2. gallery::<id> → frames/ 리소스 (디스크 업로드, 재오픈 후에도 동작)
+ *   3. 씬 id → scenes/<id> 리소스 (folder 모드 디스크 저장본)
+ *
+ * fs 주입 가능 → 단위 테스트.
+ *
+ * @param {string} sceneId - startSceneId / endSceneId
+ * @param {string|null} inlineImage - frameImageFor 가 채운 메모리 dataUrl (있으면 우선)
+ * @param {string} projectName
+ * @param {object} [opts]
+ * @param {object} [opts.fs] - fileSystemAPI (기본: 싱글톤)
+ * @param {string} [opts.galleryPrefix]
+ * @returns {Promise<string|null>}
+ */
+export async function resolveFrameImageBase64(sceneId, inlineImage, projectName, { fs = fileSystemAPI, galleryPrefix = 'gallery::' } = {}) {
+  if (inlineImage) return inlineImage
+  if (!sceneId || !projectName) return null
+
+  if (typeof sceneId === 'string' && sceneId.startsWith(galleryPrefix)) {
+    const gid = sceneId.slice(galleryPrefix.length)
+    try {
+      const r = await fs.readResource(projectName, RESOURCE.FRAMES, gid)
+      return r?.success ? r.data : null
+    } catch {
+      return null
+    }
+  }
+
+  try {
+    const r = await fs.readImage(projectName, sceneId)
+    return r?.success ? r.data : null
+  } catch {
+    return null
+  }
 }

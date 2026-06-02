@@ -3,7 +3,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { DEFAULTS, UI, TIMING, STYLE_PRESETS } from './config/defaults'
+import { DEFAULTS, UI, TIMING, STYLE_PRESETS, RESOURCE } from './config/defaults'
 import { useGenAPI } from './hooks/useGenAPI'
 import { useScenes } from './hooks/useScenes'
 import { useAutomation } from './hooks/useAutomation'
@@ -36,6 +36,7 @@ import { checkFolderPermission } from './utils/guards'
 import { collectTagErrors } from './utils/tagMatch'
 import { getFramePairEffectivePrompt } from './utils/framePairPrompt'
 import { frameImageFor } from './utils/framePairImages'
+import { fileSystemAPI } from './hooks/useFileSystem'
 import { toast } from './components/Toast'
 
 // Components
@@ -363,10 +364,17 @@ function App() {
       const base64 = String(dataUrl).split(',')[1] || ''
       if (!base64) return { success: false, error: 'Empty file' }
 
-      // cloud(BYOK): Flow 업로드(mediaId) 없이 로컬 dataUrl 을 갤러리 아이템으로 저장.
-      // resolvedPairs(frameImageFor)가 이 dataUrl 을 _startImage/_endImage 로 해석해
-      // Veo inline 프레임으로 전달한다.
+      // cloud(BYOK): Flow 업로드(mediaId) 없이 로컬 프레임을 프로젝트 리소스(frames/)로 저장.
+      // folder 모드면 디스크에 저장 → 재오픈 후에도 useVideoAutomation 이 readResource 로 해석.
+      // 메모리 dataUrl 은 이번 세션 썸네일/즉시 해석용 (frameImageFor).
       const localId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      if (settings.saveMode === 'folder' && settings.projectName) {
+        try {
+          await fileSystemAPI.saveResource(settings.projectName, RESOURCE.FRAMES, localId, dataUrl)
+        } catch (e) {
+          console.warn('[Gallery] frame disk save failed (memory-only this session):', e?.message)
+        }
+      }
       setGalleryItems(prev => [{ mediaId: localId, url: dataUrl, dataUrl, local: true }, ...prev])
       return { success: true, mediaId: localId, url: dataUrl, dataUrl }
     } catch (e) {
