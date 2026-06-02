@@ -1063,7 +1063,7 @@ function App() {
         </div>
       )}
       <Header
-        onSettings={() => openSettings()}
+        onSettings={(tab) => openSettings(typeof tab === 'string' ? tab : null)}
         onExport={handleExportClick}
         hasImages={scenes.some(s => s.image || s.imagePath)}
         getAccessToken={flowAPI.getAccessToken}
@@ -1096,6 +1096,7 @@ function App() {
         <WelcomeScreen
           getAccessToken={flowAPI.getAccessToken}
           onReady={() => setAuthReady(true)}
+          onSetupKey={() => openSettings('apiKey')}
         />
       )}
 

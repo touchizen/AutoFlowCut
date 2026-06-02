@@ -10,7 +10,7 @@ import { TIMING } from '../config/defaults'
 import './WelcomeScreen.css'
 import appIconUrl from '/assets/icon128.png'
 
-export default function WelcomeScreen({ getAccessToken, onReady }) {
+export default function WelcomeScreen({ getAccessToken, onReady, onSetupKey }) {
   const { t } = useI18n()
   const [authStatus, setAuthStatus] = useState('checking') // 'checking' | 'authenticated' | 'unauthenticated' | 'waiting' | 'unavailable'
   const pollingRef = useRef(null)
@@ -94,12 +94,12 @@ export default function WelcomeScreen({ getAccessToken, onReady }) {
     }
   }
   
+  // cloud(BYOK) 모드: Flow 로그인 대신 API Key 설정 탭을 연다.
+  // 키 저장 시 startPolling 의 getAccessToken('byok') 이 truthy 가 되어 자동 진입.
   const openFlow = () => {
-    if (window.electronAPI?.switchTab) {
-      window.electronAPI.switchTab('flow')
-    }
+    onSetupKey?.()
     setAuthStatus('waiting')
-    startPolling() // 로그인 대기 시작
+    startPolling()
   }
   
   if (authStatus === 'checking') {

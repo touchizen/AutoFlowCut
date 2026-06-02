@@ -195,11 +195,10 @@ export default function Header({
     }
   }
 
-  // Flow 사이트 열기 + 로그인 대기 폴링
+  // cloud(BYOK) 모드: Flow 로그인 대신 API Key 설정 탭을 연다.
+  // 키 저장 시 아래 폴링의 getAccessToken('byok') 이 truthy 가 되어 인증 처리.
   const openFlow = () => {
-    if (window.electronAPI?.switchTab) {
-      window.electronAPI.switchTab('flow')
-    }
+    onSettings?.('apiKey')
     setAuthStatus('waiting')
     stopPolling()
     pollingRef.current = setInterval(async () => {
