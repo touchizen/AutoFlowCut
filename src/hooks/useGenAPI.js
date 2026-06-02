@@ -17,6 +17,7 @@
  */
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { resolveReferenceImages } from '../utils/referenceResolver'
+import { normalizeVideoModel } from '../utils/videoModels'
 
 // base64 또는 data URL 문자열 → Veo inline 이미지 { mimeType, data } (없으면 null).
 function toInlineImage(val) {
@@ -134,9 +135,6 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
   const fetchMedia = useCallback(async () => ({ success: false, error: 'fetchMedia not supported in API mode' }), [])
 
   // --- 비디오 생성 -----------------------------------------------------------
-
-  const normalizeVideoModel = (model) =>
-    model && String(model).startsWith('veo') ? model : undefined
 
   const generateVideoT2V = useCallback(async (prompt, model, aspectRatio, duration) => {
     try {

@@ -165,7 +165,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
       framePairs = [],
       projectName = '',
       saveMode = 'folder',
-      videoModel = 'veo_3_1_t2v_fast_ultra_relaxed',
+      videoModel = 'veo-3.1-fast-generate-preview',
       aspectRatio = 'VIDEO_ASPECT_RATIO_LANDSCAPE',
       duration = 8,
       videoResolution = '1080p',

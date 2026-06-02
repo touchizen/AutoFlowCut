@@ -103,6 +103,12 @@ describe('useGenAPI — 비디오', () => {
     expect(window.electronAPI.genaiGenerateVideo.mock.calls[0][0].model).toBeUndefined()
   })
 
+  it('구 Flow underscore 키는 공식 모델명으로 매핑 (잘못된 endpoint 방지)', async () => {
+    const { result } = renderHook(() => useGenAPI())
+    await act(async () => { await result.current.generateVideoT2V('go', 'veo_3_1_t2v_fast_ultra_relaxed', '16:9', 8) })
+    expect(window.electronAPI.genaiGenerateVideo.mock.calls[0][0].model).toBe('veo-3.1-fast-generate-preview')
+  })
+
   it('checkVideoStatus → statuses 매핑 (videoUri ↔ mediaId)', async () => {
     window.electronAPI.genaiCheckVideoStatus.mockResolvedValue({
       success: true,
