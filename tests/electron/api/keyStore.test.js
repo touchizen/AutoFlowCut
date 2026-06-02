@@ -24,15 +24,17 @@ const noSafeStorage = {
 
 function makeFs(initial = {}) {
   const files = new Map(Object.entries(initial))
+  const opts = new Map()
   return {
     existsSync: (p) => files.has(p),
     readFileSync: (p) => {
       if (!files.has(p)) throw new Error('ENOENT')
       return files.get(p)
     },
-    writeFileSync: (p, data) => { files.set(p, data) },
+    writeFileSync: (p, data, options) => { files.set(p, data); opts.set(p, options) },
     unlinkSync: (p) => { files.delete(p) },
     _files: files,
+    _opts: opts,
   }
 }
 
@@ -61,6 +63,13 @@ describe('keyStore — setKey/getKey', () => {
     const stored = fs._files.get(FP)
     expect(stored.toString('utf8')).toBe('ENC:AIza-secret')
     expect(stored.toString('utf8')).not.toBe('AIza-secret') // 평문 아님
+  })
+
+  it('setKey → 파일 권한 0o600 (소유자 전용)', () => {
+    const fs = makeFs()
+    const store = createKeyStore({ safeStorage: okSafeStorage, filePath: FP, fs })
+    store.setKey('AIza-secret')
+    expect(fs._opts.get(FP)).toEqual({ mode: 0o600 })
   })
 
   it('roundtrip: setKey 후 getKey → 원본 복원', () => {
@@ -93,6 +102,13 @@ describe('keyStore — hasKey/clearKey', () => {
     const fs = makeFs({ [FP]: Buffer.alloc(0) })
     const store = createKeyStore({ safeStorage: okSafeStorage, filePath: FP, fs })
     expect(store.hasKey()).toBe(false)
+  })
+
+  it('hasKey: 암호화 불가면 파일 있어도 false (getKey 와 일관)', () => {
+    const fs = makeFs({ [FP]: Buffer.from('ENC:x') })
+    const store = createKeyStore({ safeStorage: noSafeStorage, filePath: FP, fs })
+    expect(store.hasKey()).toBe(false)
+    expect(store.getKey()).toBeNull() // 둘 다 falsy — "키 있음인데 생성 실패" 불일치 없음
   })
 
   it('clearKey: 파일 삭제 → hasKey false', () => {

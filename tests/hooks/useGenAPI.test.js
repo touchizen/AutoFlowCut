@@ -103,6 +103,32 @@ describe('useGenAPI — 비디오', () => {
     expect(window.electronAPI.genaiGenerateVideo.mock.calls[0][0].model).toBeUndefined()
   })
 
+  it('generateVideoT2V/I2V: seed 숫자면 IPC 에 전달 (Veo 재현성)', async () => {
+    const { result } = renderHook(() => useGenAPI())
+    await act(async () => { await result.current.generateVideoT2V('go', 'veo-3.1-fast', '16:9', 8, 777) })
+    expect(window.electronAPI.genaiGenerateVideo.mock.calls.at(-1)[0].seed).toBe(777)
+    await act(async () => {
+      await result.current.generateVideoI2V('go', 'data:image/png;base64,ONLY', null, 'veo-3.1-fast', '16:9', 8, 42)
+    })
+    expect(window.electronAPI.genaiGenerateVideo.mock.calls.at(-1)[0].seed).toBe(42)
+  })
+
+  it('generateVideoT2V/I2V: resolution 을 IPC 에 전달', async () => {
+    const { result } = renderHook(() => useGenAPI())
+    await act(async () => { await result.current.generateVideoT2V('go', 'veo-3.1-fast', '16:9', 4, null, '720p') })
+    expect(window.electronAPI.genaiGenerateVideo.mock.calls.at(-1)[0].resolution).toBe('720p')
+    await act(async () => {
+      await result.current.generateVideoI2V('go', 'data:image/png;base64,ONLY', null, 'veo-3.1-fast', '16:9', 8, null, '1080p')
+    })
+    expect(window.electronAPI.genaiGenerateVideo.mock.calls.at(-1)[0].resolution).toBe('1080p')
+  })
+
+  it('구 Flow underscore 키는 공식 모델명으로 매핑 (잘못된 endpoint 방지)', async () => {
+    const { result } = renderHook(() => useGenAPI())
+    await act(async () => { await result.current.generateVideoT2V('go', 'veo_3_1_t2v_fast_ultra_relaxed', '16:9', 8) })
+    expect(window.electronAPI.genaiGenerateVideo.mock.calls[0][0].model).toBe('veo-3.1-fast-generate-preview')
+  })
+
   it('checkVideoStatus → statuses 매핑 (videoUri ↔ mediaId)', async () => {
     window.electronAPI.genaiCheckVideoStatus.mockResolvedValue({
       success: true,
@@ -152,12 +178,69 @@ describe('useGenAPI — 비디오', () => {
     expect(call.endImage).toBeNull()
   })
 
+  it('generateVideoI2V: 줄바꿈 포함 data URL 프레임도 정상 파싱 (I2V→T2V 강등 방지)', async () => {
+    const { result } = renderHook(() => useGenAPI())
+    const wrapped = 'data:image/png;base64,AAAA\nBBBB\nCCCC'
+    await act(async () => {
+      await result.current.generateVideoI2V('go', wrapped, null, 'veo-3.1-fast', '16:9', 8)
+    })
+    const call = window.electronAPI.genaiGenerateVideo.mock.calls.at(-1)[0]
+    expect(call.image).toEqual({ mimeType: 'image/png', data: 'AAAABBBBCCCC' })
+  })
+
   it('downloadVideo → base64', async () => {
     const { result } = renderHook(() => useGenAPI())
     let r
     await act(async () => { r = await result.current.downloadVideo('https://v/a') })
     expect(window.electronAPI.genaiDownloadVideo).toHaveBeenCalledWith({ videoUri: 'https://v/a' })
     expect(r).toEqual({ success: true, base64: 'VID' })
+  })
+})
+
+describe('useGenAPI — auth 실패 센티넬 (BYOK 키 거부)', () => {
+  it('generateImageDOM: 키 거부 → authFailed + onAuthError', async () => {
+    const onAuthError = vi.fn()
+    window.electronAPI.genaiGenerateImage.mockResolvedValue({
+      success: false, error: 'HTTP 400 :: API key not valid :: INVALID_ARGUMENT',
+    })
+    const { result } = renderHook(() => useGenAPI({ onAuthError }))
+    let r
+    await act(async () => { r = await result.current.generateImageDOM('p', []) })
+    expect(r.authFailed).toBe(true)
+    expect(onAuthError).toHaveBeenCalled()
+  })
+
+  it('generateVideoT2V: 키 거부 → authFailed', async () => {
+    const onAuthError = vi.fn()
+    window.electronAPI.genaiGenerateVideo.mockResolvedValue({ success: false, error: 'PERMISSION_DENIED' })
+    const { result } = renderHook(() => useGenAPI({ onAuthError }))
+    let r
+    await act(async () => { r = await result.current.generateVideoT2V('p', 'veo-3.1-fast', '16:9', 8) })
+    expect(r.authFailed).toBe(true)
+    expect(onAuthError).toHaveBeenCalled()
+  })
+
+  it('checkVideoStatus: 폴링 중 키 거부 → authFailed 전파', async () => {
+    const onAuthError = vi.fn()
+    window.electronAPI.genaiCheckVideoStatus.mockResolvedValue({
+      success: true,
+      statuses: [{ generationId: 'a', status: 'failed', error: 'HTTP 403 :: PERMISSION_DENIED' }],
+    })
+    const { result } = renderHook(() => useGenAPI({ onAuthError }))
+    let r
+    await act(async () => { r = await result.current.checkVideoStatus(['a']) })
+    expect(r.authFailed).toBe(true)
+    expect(onAuthError).toHaveBeenCalled()
+  })
+
+  it('일반(quota) 에러는 authFailed 아님', async () => {
+    const onAuthError = vi.fn()
+    window.electronAPI.genaiGenerateImage.mockResolvedValue({ success: false, error: 'RESOURCE_EXHAUSTED' })
+    const { result } = renderHook(() => useGenAPI({ onAuthError }))
+    let r
+    await act(async () => { r = await result.current.generateImageDOM('p', []) })
+    expect(r.authFailed).toBeUndefined()
+    expect(onAuthError).not.toHaveBeenCalled()
   })
 })
 

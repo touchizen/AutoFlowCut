@@ -291,7 +291,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     folderNotSet: 'Please select work folder in Settings',
     folderPermission: 'Work folder permission required',
     folderPermissionStopped: 'Work folder permission required. Generation stopped.',
-    authErrorStopped: 'Auth error. Please login to Flow and try again.',
+    authErrorStopped: 'API key was rejected. Check your API key in Settings and try again.',
     stopping: 'Stopping...',
     resuming: 'Resuming...',
     collectingResults: 'Collecting results... ({remaining} remaining)',
@@ -418,8 +418,8 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
 
     // Video download
     videoDownloadSettings: 'Video Download',
-    videoResolution: 'Download Resolution',
-    videoResolutionHint: 'Upscale resolution for video download (default: 1080p)',
+    videoResolution: 'Video Resolution',
+    videoResolutionHint: 'Veo output resolution. 1080p/4K are always 8s; 720p matches scene length (4/6/8s).',
 
     // MCP HTTP Server
     mcpHttpSettings: 'MCP HTTP Server',

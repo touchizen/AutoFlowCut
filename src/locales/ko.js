@@ -290,7 +290,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     folderNotSet: '설정에서 작업 폴더를 선택하세요',
     folderPermission: '작업 폴더 권한이 필요합니다',
     folderPermissionStopped: '작업 폴더 권한이 필요합니다. 생성 중지됨.',
-    authErrorStopped: '인증 오류로 중단되었습니다. Flow에 로그인 후 다시 시도해주세요.',
+    authErrorStopped: 'API 키가 거부되어 중단되었습니다. 설정에서 API 키를 확인 후 다시 시도해주세요.',
     stopping: '중지 중...',
     resuming: '재개...',
     collectingResults: '결과 수집 중... ({remaining}건 남음)',
@@ -417,8 +417,8 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
 
     // 비디오 다운로드
     videoDownloadSettings: '비디오 다운로드',
-    videoResolution: '다운로드 해상도',
-    videoResolutionHint: '비디오 다운로드 시 upscale 해상도 (기본: 1080p)',
+    videoResolution: '비디오 해상도',
+    videoResolutionHint: 'Veo 출력 해상도. 1080p/4K는 항상 8초, 720p는 씬 길이에 맞춰 4/6/8초.',
 
     // MCP HTTP 서버
     mcpHttpSettings: 'MCP HTTP 서버',

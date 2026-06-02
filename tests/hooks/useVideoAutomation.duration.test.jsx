@@ -1,0 +1,99 @@
+/**
+ * useVideoAutomation — 씬 길이 자동 duration + resolution 이 제출까지 전달되는지(회귀).
+ *
+ * 회귀: start() 내부에서 items 재구성 시 targetDuration 미복사 / 제출 options 에
+ * videoResolution 누락으로, 자동 길이와 해상도가 generateVideoT2V 까지 도달하지 못하고
+ * 기본값으로 떨어졌다. 제출 호출 인자를 직접 검증한다.
+ */
+import { renderHook, act } from '@testing-library/react'
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { useVideoAutomation } from '../../src/hooks/useVideoAutomation'
+import { __resetQuotaStopForTests } from '../../src/utils/quotaStop'
+
+vi.mock('../../src/hooks/useFileSystem', () => ({
+  fileSystemAPI: { checkPermission: vi.fn().mockResolvedValue({ success: true }) },
+}))
+vi.mock('../../src/components/Toast', () => ({
+  toast: { error: vi.fn(), info: vi.fn(), success: vi.fn(), warning: vi.fn() },
+}))
+vi.mock('../../src/services/videoRecovery', () => ({ retryVideoDownload: vi.fn() }))
+vi.mock('../../src/utils/videoMetadata', () => ({
+  pickVideoMetadata: vi.fn(() => ({})),
+  buildVideoMetaPatch: vi.fn(() => ({})),
+}))
+
+beforeEach(() => {
+  __resetQuotaStopForTests()
+  vi.useFakeTimers()
+  vi.spyOn(Math, 'random').mockReturnValue(0)
+})
+afterEach(() => {
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+})
+
+function makeHook() {
+  const generateVideoT2V = vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' })
+  // pending 유지 → 제출만 확인하고 stop 으로 종료
+  const checkVideoStatus = vi.fn().mockResolvedValue({
+    success: true, statuses: [{ generationId: 'gen-1', status: 'pending' }],
+  })
+  const flowAPI = {
+    generateVideoT2V,
+    generateVideoI2V: vi.fn(),
+    checkVideoStatus,
+    downloadVideo: vi.fn(),
+    upscaleVideo: vi.fn(),
+    getAccessToken: vi.fn().mockResolvedValue('token'),
+  }
+  const hook = renderHook(() => useVideoAutomation(flowAPI, (k) => k, null))
+  return { hook, generateVideoT2V }
+}
+
+async function runT2V(hook, sceneOverrides, startOverrides) {
+  let startPromise
+  await act(async () => {
+    startPromise = hook.result.current.start({
+      mode: 't2v',
+      scenes: [{ id: 'vscene_v1', prompt: 'p', ...sceneOverrides }],
+      projectName: 'test', saveMode: 'memory',
+      videoModel: 'veo-3.1-fast-generate-preview', aspectRatio: '16:9',
+      duration: 8, seed: null, ...startOverrides,
+    })
+  })
+  // 제출 + 첫 폴링까지 진행
+  await act(async () => { await vi.advanceTimersByTimeAsync(20 * 1000) })
+  // 정리: 폴링 중단
+  await act(async () => { hook.result.current.stop() })
+  await act(async () => { await vi.advanceTimersByTimeAsync(30 * 1000) })
+  await startPromise
+}
+
+describe('useVideoAutomation — 자동 duration + resolution 제출 전달', () => {
+  // generateVideoT2V(prompt, model, aspectRatio, duration, seed, resolution)
+  it('720p + 씬 길이 5s → duration 6 으로 스냅, resolution 전달', async () => {
+    const { hook, generateVideoT2V } = makeHook()
+    await runT2V(hook, { targetDuration: 5 }, { videoResolution: '720p' })
+
+    expect(generateVideoT2V).toHaveBeenCalledTimes(1)
+    const args = generateVideoT2V.mock.calls[0]
+    expect(args[3]).toBe(6)        // 5 → {4,6,8} 스냅 = 6
+    expect(args[5]).toBe('720p')   // [P1] resolution 가 제출까지 도달
+  })
+
+  it('1080p 면 씬 길이 4s 라도 duration 8 강제 + resolution 전달', async () => {
+    const { hook, generateVideoT2V } = makeHook()
+    await runT2V(hook, { targetDuration: 4 }, { videoResolution: '1080p' })
+
+    const args = generateVideoT2V.mock.calls[0]
+    expect(args[3]).toBe(8)        // 1080p → 8 강제
+    expect(args[5]).toBe('1080p')
+  })
+
+  it('targetDuration 없으면 batch duration(8) 사용', async () => {
+    const { hook, generateVideoT2V } = makeHook()
+    await runT2V(hook, {}, { videoResolution: '720p', duration: 8 })
+
+    expect(generateVideoT2V.mock.calls[0][3]).toBe(8)
+  })
+})

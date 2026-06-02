@@ -36,7 +36,9 @@ export function createKeyStore({ safeStorage, filePath, fs }) {
     }
     try {
       const encrypted = safeStorage.encryptString(plain)
-      fs.writeFileSync(filePath, encrypted)
+      // 0o600: 소유자만 읽기/쓰기 — 다른 로컬 사용자의 파일 접근 차단(특히 Linux 의
+      // safeStorage 'basic_text' 약한 백엔드 대비 defense-in-depth).
+      fs.writeFileSync(filePath, encrypted, { mode: 0o600 })
       return { success: true }
     } catch (e) {
       return { success: false, error: e?.message || String(e) }
@@ -59,9 +61,15 @@ export function createKeyStore({ safeStorage, filePath, fs }) {
     }
   }
 
-  /** 키 존재 여부 (renderer 에 노출 가능한 유일한 정보). */
+  /**
+   * 키 존재 여부 (renderer 에 노출 가능한 유일한 정보).
+   * getKey 와 동일한 전제(암호화 가용)를 따른다 — 암호화 불가 시 키가 복호화 불가라
+   * 사실상 없는 것과 같으므로 false. (불일치 시 "키 있음" UI인데 모든 생성이
+   * "No API key" 로 실패하는 혼란 방지.)
+   */
   function hasKey() {
     try {
+      if (!isEncryptionAvailable()) return false
       if (!fs.existsSync(filePath)) return false
       const buf = fs.readFileSync(filePath)
       return !!buf && buf.length > 0

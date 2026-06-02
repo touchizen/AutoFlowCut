@@ -4,17 +4,11 @@
 
 import AspectRatioSelector from './AspectRatioSelector'
 
-const BATCH_OPTIONS = [1, 2, 3, 4]
-const RESOLUTION_OPTIONS = [
-  { value: '270p', label: '270p' },
+// 공식 Veo 지원 해상도. 1080p/4k 는 8초 고정(공식 제약), 720p 는 씬 길이에 맞춰 4/6/8초.
+const VIDEO_RESOLUTION_OPTIONS = [
   { value: '720p', label: '720p' },
-  { value: '1080p', label: '1080p (HD)' },
+  { value: '1080p', label: '1080p' },
   { value: '4k', label: '4K' },
-]
-const IMAGE_UPSCALE_OPTIONS = [
-  { value: 'off', labelKey: 'settings.imageUpscaleOff' },
-  { value: '2k', labelKey: 'settings.imageUpscale2k' },
-  { value: '4k', labelKey: 'settings.imageUpscale4k' },
 ]
 
 export default function SceneTab({ localSettings, setLocalSettings, t }) {
@@ -78,82 +72,31 @@ export default function SceneTab({ localSettings, setLocalSettings, t }) {
         <span className="setting-sublabel">{t('settings.requireStyleHint')}</span>
       </div>
 
-      {/* 배치 카운트 설정 */}
-      <div className="settings-section">
-        <h3>{t('settings.batchSettings')}</h3>
+      {/*
+        배치 카운트(이미지/비디오) · 이미지 업스케일(2k/4k) 컨트롤은 공식 API(BYOK)
+        에서 동작하지 않아 제거: Gemini 이미지는 호출당 1장(batchCount 무효), 이미지
+        업스케일은 Flow DOM 전용(공식 API 대응물 없음). 비디오 해상도는 공식 Veo 가
+        지원하므로 아래에 유지·연결한다.
+      */}
 
+      {/* 비디오 해상도 (공식 Veo: 720p/1080p/4k) */}
+      <div className="settings-section">
+        <h3>{t('settings.videoResolution')}</h3>
         <div className="setting-row">
-          <label className="setting-label">{t('settings.imageBatchCount')}</label>
           <div className="batch-selector">
-            {BATCH_OPTIONS.map(n => (
+            {VIDEO_RESOLUTION_OPTIONS.map(r => (
               <button
-                key={`img-${n}`}
-                className={`batch-btn ${(localSettings.imageBatchCount || 1) === n ? 'active' : ''}`}
-                onClick={() => setLocalSettings(s => ({ ...s, imageBatchCount: n }))}
+                key={r.value}
+                className={`batch-btn ${(localSettings.videoResolution || '720p') === r.value ? 'active' : ''}`}
+                onClick={() => setLocalSettings(s => ({ ...s, videoResolution: r.value }))}
               >
-                x{n}
+                {r.label}
               </button>
             ))}
           </div>
-          <span className="setting-sublabel">{t('settings.imageBatchHint')}</span>
-        </div>
-
-        <div className="setting-row">
-          <label className="setting-label">{t('settings.videoBatchCount')}</label>
-          <div className="batch-selector">
-            {BATCH_OPTIONS.map(n => (
-              <button
-                key={`vid-${n}`}
-                className={`batch-btn ${(localSettings.videoBatchCount || 1) === n ? 'active' : ''}`}
-                onClick={() => setLocalSettings(s => ({ ...s, videoBatchCount: n }))}
-              >
-                x{n}
-              </button>
-            ))}
-          </div>
-          <span className="setting-sublabel">{t('settings.videoBatchHint')}</span>
-        </div>
-      </div>
-
-      {/* 이미지 업스케일 */}
-      <div className="settings-section">
-        <h3>{t('settings.imageUpscaleSettings')}</h3>
-
-        <div className="setting-row">
-          <label className="setting-label">{t('settings.imageUpscale')}</label>
-          <div className="batch-selector">
-            {IMAGE_UPSCALE_OPTIONS.map(opt => (
-              <button
-                key={opt.value}
-                className={`batch-btn ${(localSettings.imageUpscale || '2k') === opt.value ? 'active' : ''}`}
-                onClick={() => setLocalSettings(s => ({ ...s, imageUpscale: opt.value }))}
-              >
-                {t(opt.labelKey)}
-              </button>
-            ))}
-          </div>
-          <span className="setting-sublabel">{t('settings.imageUpscaleHint')}</span>
-        </div>
-      </div>
-
-      {/* 비디오 다운로드 해상도 */}
-      <div className="settings-section">
-        <h3>{t('settings.videoDownloadSettings')}</h3>
-
-        <div className="setting-row">
-          <label className="setting-label">{t('settings.videoResolution')}</label>
-          <select
-            value={localSettings.videoResolution || '1080p'}
-            onChange={(e) => setLocalSettings(s => ({ ...s, videoResolution: e.target.value }))}
-          >
-            {RESOLUTION_OPTIONS.map(opt => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
           <span className="setting-sublabel">{t('settings.videoResolutionHint')}</span>
         </div>
       </div>
-
     </div>
   )
 }
