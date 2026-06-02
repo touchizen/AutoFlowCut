@@ -155,12 +155,14 @@ function App() {
   const [monitorMs, setMonitorMs] = useState(0)
   // 하단 타임라인이 재생 중인지 — 모니터 비디오는 이때만 재생(정지 시 프레임만).
   const [monitorPlaying, setMonitorPlaying] = useState(false)
-  // 프리뷰 모니터 폭(px) — 좌우 드래그로 조절, localStorage 영속.
+  // 프리뷰 모니터 폭 — 좌우 드래그로 조절, localStorage 영속.
+  // 기본은 null = 좌/우 5:5 (CSS width '50%'). 한 번이라도 드래그하면 px 값으로 고정·저장.
   const [monitorWidth, setMonitorWidth] = useState(() => {
     const saved = parseInt(localStorage.getItem('autoflowcut_monitorWidth'), 10)
-    return Number.isFinite(saved) ? saved : 320
+    return Number.isFinite(saved) ? saved : null
   })
   useEffect(() => {
+    if (!Number.isFinite(monitorWidth)) return // 5:5 기본(null)은 저장 안 함 — 창 크기에 따라 반응
     try { localStorage.setItem('autoflowcut_monitorWidth', String(monitorWidth)) } catch {}
   }, [monitorWidth])
   const startMonitorResize = useCallback((e) => {
@@ -1567,7 +1569,7 @@ function App() {
               onDoubleClick={() => setMonitorWidth(320)}
               title="드래그=폭 조절 · 더블클릭=기본값"
             />
-            <aside className="content-monitor" style={{ width: monitorWidth }}>
+            <aside className="content-monitor" style={{ width: monitorWidth ?? '50%' }}>
               <PreviewPanel
                 playheadMs={monitorMs}
                 scenes={scenes}
