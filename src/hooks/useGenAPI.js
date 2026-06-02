@@ -161,13 +161,14 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
 
   // --- 비디오 생성 -----------------------------------------------------------
 
-  const generateVideoT2V = useCallback(async (prompt, model, aspectRatio, duration) => {
+  const generateVideoT2V = useCallback(async (prompt, model, aspectRatio, duration, seed) => {
     try {
       const r = await window.electronAPI.genaiGenerateVideo({
         prompt,
         aspectRatio: toVeoAspect(aspectRatio),
         durationSeconds: duration,
         model: normalizeVideoModel(model),
+        seed: Number.isFinite(seed) ? seed : undefined,
       })
       return markAuthFailure(r)
     } catch (error) {
@@ -177,7 +178,7 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
 
   // I2V / F2V: 시작·끝 프레임을 base64/dataUrl 로 받아 inline(image / lastFrame)로 전달.
   // (cloud Veo 는 mediaId 가 없고 inlineData base64 를 받는다 — 문서 확인)
-  const generateVideoI2V = useCallback(async (prompt, startImage, endImage, model, aspectRatio, duration) => {
+  const generateVideoI2V = useCallback(async (prompt, startImage, endImage, model, aspectRatio, duration, seed) => {
     try {
       const r = await window.electronAPI.genaiGenerateVideo({
         prompt,
@@ -186,6 +187,7 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
         aspectRatio: toVeoAspect(aspectRatio),
         durationSeconds: duration,
         model: normalizeVideoModel(model),
+        seed: Number.isFinite(seed) ? seed : undefined,
       })
       return markAuthFailure(r)
     } catch (error) {

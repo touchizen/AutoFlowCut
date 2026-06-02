@@ -69,8 +69,8 @@ export function registerGenaiIPC(ipcMain, deps) {
   ipcMain.handle('genai:generate-video', async (_e, params = {}) => {
     const apiKey = keyStore.getKey()
     if (!apiKey) return { success: false, error: 'No API key' }
-    const { prompt, image = null, endImage = null, aspectRatio, durationSeconds, model } = params
-    const res = await submitVideo({ apiKey, prompt, image, endImage, aspectRatio, durationSeconds, model }, engineDeps)
+    const { prompt, image = null, endImage = null, aspectRatio, durationSeconds, model, seed } = params
+    const res = await submitVideo({ apiKey, prompt, image, endImage, aspectRatio, durationSeconds, model, seed }, engineDeps)
     // 기존 contract 와 호환되게 operationName → generationId 로도 노출
     if (res.success) return { success: true, generationId: res.operationName, operationName: res.operationName }
     return res

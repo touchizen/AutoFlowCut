@@ -206,6 +206,7 @@ export async function submitVideo(
     aspectRatio = DEFAULT_ASPECT_RATIO,
     durationSeconds = DEFAULT_VIDEO_DURATION,
     model = DEFAULT_VIDEO_MODEL,
+    seed = null,
   } = {},
   deps = {}
 ) {
@@ -225,13 +226,14 @@ export async function submitVideo(
     }
   }
 
-  const body = {
-    instances: [instance],
-    parameters: {
-      aspectRatio: aspectRatio || DEFAULT_ASPECT_RATIO,
-      durationSeconds: String(durationSeconds),
-    },
+  const parameters = {
+    aspectRatio: aspectRatio || DEFAULT_ASPECT_RATIO,
+    durationSeconds: String(durationSeconds),
   }
+  // seed 는 Veo 가 지원 — 숫자일 때만 전달(재현성). 이미지(Gemini)는 미지원이라 안 보냄.
+  if (Number.isFinite(seed)) parameters.seed = seed
+
+  const body = { instances: [instance], parameters }
 
   try {
     const { data } = await genaiFetch(

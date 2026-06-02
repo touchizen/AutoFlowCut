@@ -226,6 +226,16 @@ describe('genai — submitVideo', () => {
     expect(body.instances[0].lastFrame).toEqual({ bytesBase64Encoded: 'END', mimeType: 'image/png' })
   })
 
+  it('seed 숫자면 parameters.seed 포함, 없으면 생략 (Veo 지원)', async () => {
+    const withSeed = mockFetchOnce(jsonRes({ name: 'op' }))
+    await submitVideo({ apiKey: 'k', prompt: 'x', seed: 12345 }, { fetchImpl: withSeed })
+    expect(JSON.parse(withSeed.mock.calls[0][1].body).parameters.seed).toBe(12345)
+
+    const noSeed = mockFetchOnce(jsonRes({ name: 'op' }))
+    await submitVideo({ apiKey: 'k', prompt: 'x' }, { fetchImpl: noSeed })
+    expect(JSON.parse(noSeed.mock.calls[0][1].body).parameters.seed).toBeUndefined()
+  })
+
   it('name 없으면 실패', async () => {
     const fetchImpl = mockFetchOnce(jsonRes({}))
     const res = await submitVideo({ apiKey: 'k', prompt: 'x' }, { fetchImpl })

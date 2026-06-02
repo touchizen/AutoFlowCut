@@ -56,12 +56,12 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
 
   // ─── Phase 1 Helper: 비디오 제출 ───
   const submitVideoItem = async (item, mode, options) => {
-    const { videoModel, aspectRatio, duration, videoBatchCount = 1, seed = null, projectName = '' } = options
+    const { videoModel, aspectRatio, duration, seed = null, projectName = '' } = options
     const prompt = item.prompt || ''
 
     switch (mode) {
       case 't2v':
-        return await generateVideoT2V(prompt, videoModel, aspectRatio, duration, videoBatchCount, seed)
+        return await generateVideoT2V(prompt, videoModel, aspectRatio, duration, seed)
       case 'i2v': {
         // 시작 프레임 base64 (필수). 끝 프레임은 있으면 lastFrame 보간.
         // 메모리(_startImage) 우선, 없으면 디스크(gallery→frames/, 씬→scenes/) 폴백 — 재오픈 후에도 동작.
