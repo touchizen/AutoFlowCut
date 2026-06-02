@@ -18,6 +18,13 @@ let currentWorkFolder = null
 // process.windowsStore is true when running as a packaged AppX.
 const isAppx = process.platform === 'win32' && !!process.windowsStore
 
+// dev 감지. app.isPackaged 는 electron 바이너리 이름을 'AutoFlowCut' 로 패치
+// (scripts/patch-electron-name.cjs)하면 dev 에서도 true 로 오판한다(basename !== 'electron').
+// 그래서 dev 가드가 뚫려 checkForUpdates 가 실행되고 app-update.yml(패키지 빌드에만 존재)을
+// 못 찾아 ENOENT 가 났다. vite-plugin-electron 이 dev 에서만 설정하는 VITE_DEV_SERVER_URL 을
+// 신뢰 신호로 쓴다(main.js 의 dev 판정과 동일).
+const isDev = !!process.env.VITE_DEV_SERVER_URL || !app.isPackaged
+
 let manualCheckInProgress = false
 let updateDownloadInProgress = false
 let updateDownloaded = false
@@ -127,7 +134,7 @@ function startAutoCheck() {
     log('AppX build detected — skipping auto-update (Microsoft Store handles updates)')
     return
   }
-  if (!app.isPackaged) {
+  if (isDev) {
     log('dev mode — skipping auto-update check')
     return
   }
@@ -149,7 +156,7 @@ function manualCheck() {
     })
     return
   }
-  if (!app.isPackaged) {
+  if (isDev) {
     dialog.showMessageBox({
       type: 'info',
       title: 'AutoFlowCut',

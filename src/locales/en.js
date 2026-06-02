@@ -10,8 +10,8 @@ export default {
   header: {
     export: 'Export CapCut',
     settings: 'Settings',
-    login: 'Login',
-    authenticated: 'Authenticated',
+    login: 'API Key',
+    authenticated: 'API key set',
     checking: 'Checking...',
     waitingLogin: 'Waiting for login...',
     unavailable: 'Region not supported',
@@ -22,16 +22,25 @@ export default {
   // Welcome screen
   welcome: {
     title: 'AutoFlowCut',
-    description: 'Generate images & videos with Flow AI\nand export to CapCut projects',
-    openFlow: 'Open Flow',
-    waitingLogin: 'Waiting for login...',
-    loginHint: 'Login in Flow to continue automatically',
-    unavailable: 'Flow is not available in your region',
-    unavailableHint: 'Google Flow AI is currently available in limited regions only. Please use a VPN to connect from a supported country (e.g., United States), then relaunch the app.',
+    description: 'Generate images & videos with AI\nand export to CapCut projects',
+    openFlow: 'Set up API Key',
+    waitingLogin: 'Checking key...',
+    loginHint: 'Save your API key in Settings to start automatically',
+    explore: 'Explore without a key',
     checking: 'Checking authentication...',
   },
   
   // Tabs
+  bottomPanel: {
+    timeline: 'Timeline',
+    results: 'Results',
+    preview: 'Preview',
+  },
+  apiKeyNeeded: {
+    title: 'API key required',
+    message: 'You need a Gemini API key to generate images & videos. Add your key in Settings.',
+    cta: 'Set up API Key',
+  },
   tabs: {
     text: 'Image',
     videoText: 'Video',
@@ -286,7 +295,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     uploadingRefs: 'Uploading references... ({current}/{total})',
     generatingScene: 'Generating: {ids} ({current}/{total})',
     retrying: 'Retrying: {id} ({count}/{max})',
-    loginRequired: 'Login required - Please open labs.google tab',
+    loginRequired: 'API key required — add it in Settings',
     styleRequired: 'Please select a style (Require Style is ON in Settings)',
     folderNotSet: 'Please select work folder in Settings',
     folderPermission: 'Work folder permission required',

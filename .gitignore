@@ -5,6 +5,7 @@ output/
 release/
 .DS_Store
 *.log
+.superpowers/
 .env
 .env.*
 !.env.example

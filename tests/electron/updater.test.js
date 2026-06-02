@@ -231,3 +231,38 @@ describe('manualCheck — gating', () => {
     expect(autoUpdaterMock.autoDownload).toBe(false)
   })
 })
+
+describe('startAutoCheck — dev gating (renamed-binary regression)', () => {
+  afterEach(() => { delete process.env.VITE_DEV_SERVER_URL })
+
+  it('VITE_DEV_SERVER_URL 있으면 isPackaged=true 라도 자동 체크 스킵', async () => {
+    // patch-electron-name 이 바이너리를 rename 하면 Electron 이 dev 인데도
+    // app.isPackaged=true 로 오판한다. VITE_DEV_SERVER_URL(vite-plugin-electron, dev 전용)을
+    // 신뢰 신호로 써서 dev 에선 확실히 스킵해야 한다(ENOENT app-update.yml 회귀 방어).
+    vi.useFakeTimers()
+    process.env.VITE_DEV_SERVER_URL = 'http://localhost:5173'
+    appMock.isPackaged = true
+    try {
+      const { setupAppMenuAndUpdater } = await import('../../electron/updater.js')
+      setupAppMenuAndUpdater()
+      await vi.advanceTimersByTimeAsync(5000) // startAutoCheck 의 3s 지연을 통과
+      expect(autoUpdaterMock.checkForUpdates).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('packaged(VITE 없음 + isPackaged=true)면 지연 후 자동 체크 실행 (대조)', async () => {
+    vi.useFakeTimers()
+    delete process.env.VITE_DEV_SERVER_URL
+    appMock.isPackaged = true
+    try {
+      const { setupAppMenuAndUpdater } = await import('../../electron/updater.js')
+      setupAppMenuAndUpdater()
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(autoUpdaterMock.checkForUpdates).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})

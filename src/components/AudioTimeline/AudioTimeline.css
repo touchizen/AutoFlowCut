@@ -10,6 +10,14 @@
   user-select: none;
 }
 
+/* compact(하단 도크): height:100% 대신 남은 공간만 채워(StatusBar/탭 위로 넘쳐 잘리는 것
+   방지). 프리뷰 패널은 숨겨지고 트랙(.atl-body, flex:1)이 도크 높이를 채운다. */
+.atl-root--compact {
+  height: auto;
+  flex: 1;
+  min-height: 0;
+}
+
 /* ── Preview Panel — 비디오 미리보기 (Remotion Studio 스타일) ── */
 .atl-preview {
   flex-shrink: 0;

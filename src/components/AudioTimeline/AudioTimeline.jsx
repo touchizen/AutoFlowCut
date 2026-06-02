@@ -35,7 +35,7 @@ function formatTC(ms) {
   return formatDuration(ms / 1000)
 }
 
-export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClipSelect, onSaveTimecodeOverride, disabled = false, onFlag, isFlagged, onTrackDrop }) {
+export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClipSelect, onSaveTimecodeOverride, disabled = false, onFlag, isFlagged, onTrackDrop, compact = false, onPlayheadChange, onPlayingChange }) {
   const { t } = useI18n()
   const rawData = useAudioTimeline(audioPackage, scenes, srtEntries)
 
@@ -89,6 +89,8 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
 
   const [zoom, setZoom] = useState(1)
   const [playheadMs, setPlayheadMs] = useState(0)
+  // 플레이헤드 변경을 상단 모니터(App)로 보고 — 스크럽/재생 시 모니터가 따라온다.
+  useEffect(() => { onPlayheadChange?.(playheadMs) }, [playheadMs])
   const [expandedTracks, setExpandedTracks] = useState(new Set())
   const [expandedSubTracks, setExpandedSubTracks] = useState(new Set())
   const [labelW, setLabelW] = useState(() => {
@@ -180,6 +182,8 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   const hideBtnTooltip = () => setBtnTooltip(null)
   const [playingClipIds, setPlayingClipIds] = useState(new Set()) // 현재 재생 중인 클립 (단독 또는 글로벌)
   const [isGlobalPlaying, setIsGlobalPlaying] = useState(false)
+  // 재생 상태를 상단 모니터(App)로 보고 — 재생 중일 때만 모니터 비디오도 재생.
+  useEffect(() => { onPlayingChange?.(isGlobalPlaying) }, [isGlobalPlaying])
   const [hoverScene, setHoverScene] = useState(null) // { x, y, scene }
   const [dragOverTrackId, setDragOverTrackId] = useState(null) // 드롭 타겟 lane 하이라이트용
   const audioInstancesRef = useRef(new Map()) // clipId -> Audio
@@ -723,31 +727,37 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   }
 
   return (
-    <div className="atl-root">
-      {/* 비디오 프리뷰 (현재 playhead 위치의 씬 이미지 + 자막) */}
-      <PreviewPanel
-        playheadMs={playheadMs}
-        scenes={scenes}
-        srtEntries={srtEntries}
-        height={previewHeight}
-      />
+    <div className={`atl-root${compact ? ' atl-root--compact' : ''}`}>
+      {/* compact(하단 도크): 큰 프리뷰 패널을 접어 좁은 높이에서 트랙이 보이게 한다. */}
+      {!compact && (
+        <>
+          {/* 비디오 프리뷰 (현재 playhead 위치의 씬 이미지 + 자막) */}
+          <PreviewPanel
+            playheadMs={playheadMs}
+            scenes={scenes}
+            srtEntries={srtEntries}
+            height={previewHeight}
+            isPlaying={isGlobalPlaying}
+          />
 
-      {/* Preview ↔ Timeline 사이 splitter (드래그=조절 / 더블클릭=기본값 복귀) */}
-      <div
-        className="atl-splitter"
-        onPointerDown={startSplitterDrag}
-        onDoubleClick={() => {
-          setPreviewHeight(PREVIEW_H_DEFAULT)
-          try { localStorage.setItem(PREVIEW_H_KEY, String(PREVIEW_H_DEFAULT)) } catch {}
-        }}
-        title="드래그=높이 조절 · 더블클릭=기본값"
-      >
-        <div className="atl-splitter-grip" />
-      </div>
+          {/* Preview ↔ Timeline 사이 splitter (드래그=조절 / 더블클릭=기본값 복귀) */}
+          <div
+            className="atl-splitter"
+            onPointerDown={startSplitterDrag}
+            onDoubleClick={() => {
+              setPreviewHeight(PREVIEW_H_DEFAULT)
+              try { localStorage.setItem(PREVIEW_H_KEY, String(PREVIEW_H_DEFAULT)) } catch {}
+            }}
+            title="드래그=높이 조절 · 더블클릭=기본값"
+          >
+            <div className="atl-splitter-grip" />
+          </div>
+        </>
+      )}
 
       {/* Header */}
       <div className="atl-header">
-        <div className="atl-title">{t('audioTimeline.title') || 'Audio Timeline'}</div>
+        <div className="atl-title">{compact ? (t('bottomPanel.preview') || '프리뷰') : (t('audioTimeline.title') || 'Audio Timeline')}</div>
         <div className="atl-transport">
           <button
             className={`atl-play-btn${isGlobalPlaying ? ' atl-playing' : ''}`}

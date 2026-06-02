@@ -41,7 +41,6 @@ import { toast } from './components/Toast'
 
 // Components
 import Header from './components/Header'
-import WelcomeScreen from './components/WelcomeScreen'
 import PromptInput from './components/PromptInput'
 import SceneList from './components/SceneList'
 import GenerateMenu from './components/GenerateMenu'
@@ -64,6 +63,11 @@ import StoreRatingModal from './components/StoreRatingModal'
 import AudioResultModal from './components/AudioResultModal'
 import QAProgressBanner from './components/QAProgressBanner'
 import AudioPanel from './components/AudioPanel'
+import BottomPanelTabs from './components/BottomPanelTabs'
+import LiveTimeline from './components/LiveTimeline'
+import PreviewPanel from './components/AudioTimeline/PreviewPanel'
+import { getSceneTimeRangeMs } from './components/AudioTimeline/useAudioTimeline'
+import { hasImageData } from './utils/formatters'
 import { SubscriptionBanner } from './components/SubscriptionBanner'
 import StylePicker from './components/StylePicker'
 import Modal from './components/Modal'
@@ -82,7 +86,7 @@ function App() {
   const [paywallReason, setPaywallReason] = useState('trial_expired')
 
   // Flow Login Expired Modal
-  const [showLoginExpiredModal, setShowLoginExpiredModal] = useState(false)
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false)
 
   // Tag Validation Modal
   const [tagValidationErrors, setTagValidationErrors] = useState(null)
@@ -107,7 +111,7 @@ function App() {
   const { settings, setSettings, updateSetting, ensureProjectName } = useAppSettings()
 
   // Flow 이벤트 (로그인 만료, 레이아웃 보정)
-  useFlowEvents({ onLoginExpired: () => setShowLoginExpiredModal(true) })
+  useFlowEvents({ onLoginExpired: () => setShowApiKeyModal(true) })
 
   // UI State
   const [activeTab, setActiveTab] = useState('text') // 'text' | 'video-text' | 'frame-to-video' | 'list' | 'audio'
@@ -138,6 +142,54 @@ function App() {
     const saved = localStorage.getItem('autoflowcut_bottomPanelHeight')
     return saved ? parseInt(saved, 10) : UI.DEFAULT_BOTTOM_PANEL_HEIGHT // 기본 높이
   })
+  // 하단 패널 뷰: 'timeline'(라이브 NLE 프리뷰) | 'results'(기존 결과표). 기본 타임라인.
+  const [bottomPanelView, setBottomPanelView] = useState(() =>
+    localStorage.getItem('autoflowcut_bottomPanelView') || 'timeline'
+  )
+  useEffect(() => {
+    localStorage.setItem('autoflowcut_bottomPanelView', bottomPanelView)
+  }, [bottomPanelView])
+
+  // 상단 모니터(프리뷰)가 보여줄 시점(ms). 하단 타임라인 스크럽/재생이 갱신하고,
+  // 생성 중에는 막 생성된 씬으로 점프한다(아래 effect).
+  const [monitorMs, setMonitorMs] = useState(0)
+  // 하단 타임라인이 재생 중인지 — 모니터 비디오는 이때만 재생(정지 시 프레임만).
+  const [monitorPlaying, setMonitorPlaying] = useState(false)
+  // 프리뷰 모니터 폭 — 좌우 드래그로 조절, localStorage 영속.
+  // 기본은 null = 좌/우 5:5 (CSS width '50%'). 한 번이라도 드래그하면 px 값으로 고정·저장.
+  const [monitorWidth, setMonitorWidth] = useState(() => {
+    const saved = parseInt(localStorage.getItem('autoflowcut_monitorWidth'), 10)
+    return Number.isFinite(saved) ? saved : null
+  })
+  useEffect(() => {
+    if (!Number.isFinite(monitorWidth)) return // 5:5 기본(null)은 저장 안 함 — 창 크기에 따라 반응
+    try { localStorage.setItem('autoflowcut_monitorWidth', String(monitorWidth)) } catch {}
+  }, [monitorWidth])
+  const startMonitorResize = useCallback((e) => {
+    e.preventDefault()
+    const row = e.currentTarget.parentElement // .editor-row
+    const rect = row.getBoundingClientRect()
+    const rightEdge = rect.right
+    // 최대 폭 = 콘텐츠 너비의 90% (좌측 패널 10% 확보). 창 크기에 따라 스케일.
+    const maxW = rect.width * 0.9
+    const onMove = (ev) => setMonitorWidth(Math.max(200, Math.min(maxW, rightEdge - ev.clientX)))
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }, [])
+  // 리사이저 더블클릭 → 5:5 기본으로 리셋(null). 저장 effect는 null 을 건너뛰므로
+  // localStorage 의 기존 px 값을 직접 지워 stale 복원 방지.
+  const resetMonitorWidth = useCallback(() => {
+    setMonitorWidth(null)
+    try { localStorage.removeItem('autoflowcut_monitorWidth') } catch {}
+  }, [])
 
   // 설정 모달 열기 (특정 탭으로)
   const openSettings = (tab = null) => {
@@ -202,7 +254,7 @@ function App() {
   const { videoScenes, setVideoScenes } = videoScenesHook
   const { isRunning, isPaused, isStopping, progress, status, statusMessage, start, togglePause, stop, retryErrors, recaptchaModal, closeRecaptchaModal } = automation
 
-  // 씬이 복원되어 WelcomeScreen이 스킵될 때도 자동으로 인증 체크.
+  // 씬이 복원되어 들어온 경우에도 자동으로 인증 체크(키 존재 → authReady).
   // authInvalidatedRef: handleAuthError가 명시적으로 무효화한 후엔 자동 복구하지 않는다.
   // 사용자가 Header의 login badge로 직접 재인증해야 handleAuthRecovered가 ref를 풀고
   // authReady를 되살린다. 이게 없으면 401 직후 authReady=false → 이 effect → 새 토큰 추출 →
@@ -214,6 +266,25 @@ function App() {
       }).catch(() => {})
     }
   }, [scenes.length, authReady])
+
+  // 앱 시작 시 키 존재 여부 1회 확인 → 있으면 정식 진입 상태(Header 배지 🟢).
+  // (시작 화면을 제거했으므로 이 mount 체크가 그 역할을 대신한다.)
+  useEffect(() => {
+    flowAPI.getAccessToken(false, true).then(token => { if (token) setAuthReady(true) }).catch(() => {})
+  }, [])
+
+  // BYOK 키가 앱 내에서 저장/삭제되면(useApiKey) 폴링 없이 즉시 인증 상태 재확인.
+  // 사용자가 명시적으로 키를 바꾼 것이므로 authInvalidated 도 해제한다.
+  useEffect(() => {
+    const onKeyChanged = () => {
+      flowAPI.getAccessToken(false, true).then(token => {
+        authInvalidatedRef.current = false
+        setAuthReady(!!token)
+      }).catch(() => {})
+    }
+    window.addEventListener('byok-key-changed', onKeyChanged)
+    return () => window.removeEventListener('byok-key-changed', onKeyChanged)
+  }, [])
 
   // 자동화가 끝나면 Stop 버튼용 running snapshot 정리.
   // Transition-based: 실행 → 종료 전이일 때만 clear. 큐로 대기 중일 때는 deps가 변하지 않아
@@ -606,7 +677,7 @@ function App() {
    * 둘 중 하나라도 없으면: full 재생성이 필요하므로 해당 아이템 상태를 pending으로 되돌린 뒤
    * 사용자가 "Start Generation" 버튼으로 일괄 재생성할 수 있게 둔다.
    */
-  const handleVideoRetry = useCallback((item) => {
+  const handleVideoRetry = useCallback(async (item) => {
     if (!item) return
     if (isRunning || videoAutomation.isRunning) {
       toast.warning(t('videoAutomation.busy') || 'Generation already running')
@@ -679,8 +750,13 @@ function App() {
       }
     }
 
-    // Fast path: download-only
+    // Fast path: download-only — 다운로드/상태조회에 키가 필요. 없으면 'No API key' 로
+    // 조용히 실패하므로 여기서 가드 → API 키 모달. (slow path 의 pending 리셋은 키 불필요)
     if (item.generationId && item.mediaId) {
+      if (!(await flowAPI.getAccessToken(false, true))) {
+        window.dispatchEvent(new CustomEvent('flow-login-expired'))
+        return
+      }
       retryVideoDownload({
         item,
         flowAPI,
@@ -721,6 +797,12 @@ function App() {
     const { force = false } = options
     // 이미 실행 중이거나 큐에 batch가 대기 중이면 무시 (중지는 별도 버튼)
     if (isRunning || videoAutomation.isRunning || hasPendingBatch) return
+
+    // BYOK 키 없으면 생성 불가 → 설정 안내 모달 (시작 화면으로 막지 않고 여기서 안내).
+    if (!(await flowAPI.getAccessToken(false, true))) {
+      setShowApiKeyModal(true)
+      return
+    }
 
     // 선택 검증 (폴더 확인보다 먼저)
     if (activeTab === 'video-text') {
@@ -1051,6 +1133,22 @@ function App() {
 
   // 어느 자동화든 실행 중이면 true
   const anyRunning = isRunning || videoAutomation.isRunning
+
+  // 생성 중: 가장 최근 생성된 이미지 씬으로 모니터를 점프 → "만들어지는 걸 본다".
+  // (씬에 SRT/길이 타이밍이 있어야 위치 계산 가능 — 없으면 그대로 둠)
+  const lastMonitorSceneRef = useRef(null)
+  useEffect(() => {
+    if (!anyRunning) return
+    let latest = null
+    for (const s of scenes) {
+      if (hasImageData(s) && s.generatedAt && (!latest || s.generatedAt > latest.generatedAt)) latest = s
+    }
+    if (latest && latest.id !== lastMonitorSceneRef.current) {
+      lastMonitorSceneRef.current = latest.id
+      const range = getSceneTimeRangeMs(latest)
+      if (range) setMonitorMs(range.startMs)
+    }
+  }, [scenes, anyRunning])
   const isVideoTab = activeTab === 'video-text' || activeTab === 'frame-to-video'
   const currentProgress = isVideoTab ? videoAutomation.progress : progress
   const currentStatus = isVideoTab ? videoAutomation.status : status
@@ -1094,17 +1192,8 @@ function App() {
         hideWhenPro={true}
       />
 
-      {/* 시작 화면 - 씬 없고 인증 안됐을 때 */}
-      {scenes.length === 0 && !authReady && (
-        <WelcomeScreen
-          getAccessToken={flowAPI.getAccessToken}
-          onReady={() => setAuthReady(true)}
-          onSetupKey={() => openSettings('apiKey')}
-        />
-      )}
-
-      {/* 메인 UI - 인증됐거나 씬 있을 때 */}
-      {(authReady || scenes.length > 0) && (
+      {/* 메인 UI - 항상 표시. 키 없으면 생성(Start) 시 API 키 모달로 안내(시작 화면 게이트 제거). */}
+      {(
       <>
       <div className="main-panel">
         {/* 탭 헤더 */}
@@ -1167,6 +1256,10 @@ function App() {
             </button>
           </div>
         </div>
+
+        {/* 편집 영역(좌: 콘텐츠+액션버튼) | 프리뷰 모니터(우) — 모니터가 둘을 아우름 */}
+        <div className="editor-row">
+        <div className="editor-col">
 
         {/* 스크롤 가능한 콘텐츠 영역 (레퍼런스 + 탭 콘텐츠) */}
         <div className="tab-content">
@@ -1471,6 +1564,29 @@ function App() {
             </button>
           )}
         </div>
+        </div>
+
+        {/* 우측 프리뷰 모니터 — 좌측 [콘텐츠+액션버튼] 을 아우르는 컬럼. 좌우 드래그로 폭 조절. */}
+        {activeTab !== 'audio' && (
+          <>
+            <div
+              className="content-monitor-resizer"
+              onMouseDown={startMonitorResize}
+              onDoubleClick={resetMonitorWidth}
+              title="드래그=폭 조절 · 더블클릭=기본(5:5)"
+            />
+            <aside className="content-monitor" style={{ width: monitorWidth ?? '50%' }}>
+              <PreviewPanel
+                playheadMs={monitorMs}
+                scenes={scenes}
+                srtEntries={resolveAudioSrtEntries(audioPackage, scenesHook.srtTrack)}
+                height="100%"
+                isPlaying={monitorPlaying}
+              />
+            </aside>
+          </>
+        )}
+        </div>
       </div>
 
       {/* 리사이즈 핸들 */}
@@ -1489,6 +1605,34 @@ function App() {
           scenes={scenes}
         />
 
+        {activeTab !== 'audio' && (
+          <>
+            <BottomPanelTabs view={bottomPanelView} onChange={setBottomPanelView} t={t} />
+            {bottomPanelView === 'timeline' ? (
+              <LiveTimeline
+                scenes={scenes}
+                srtEntries={resolveAudioSrtEntries(audioPackage, scenesHook.srtTrack)}
+                audioPackage={audioPackage}
+                onSceneSelect={(scene) => setSelectedScene(scene)}
+                onSaveTimecodeOverride={saveTimecodeOverride}
+                onPlayheadChange={setMonitorMs}
+                onPlayingChange={setMonitorPlaying}
+                onTrackDrop={async ({ trackRole, files, timecodeMs }) => {
+                  // mp3 드롭 → 나레이션/SFX 트랙에 추가 (Audio 탭과 동일 import 경로).
+                  const workFolder = localStorage.getItem('workFolderPath')
+                  const projectName = settings.projectName
+                  const fallbackFolderPath = workFolder && projectName ? `${workFolder}/${projectName}/audio` : null
+                  for (const file of files) {
+                    const mp3Path = window.electronAPI?.getPathForFile?.(file)
+                    if (!mp3Path) continue
+                    await importMp3ToTrack({ mp3Path, trackType: trackRole, timecodeMs, fallbackFolderPath })
+                    if (trackRole === 'narration') break // narration 은 1개(교체)
+                  }
+                }}
+                disabled={anyRunning}
+              />
+            ) : (
+              <>
         {activeTab === 'text' && (
           <ResultsTable
             items={scenes}
@@ -1608,6 +1752,10 @@ function App() {
               mediaId: null, seed: null, generatedAt: null, model: null,
             })}
           />
+        )}
+              </>
+            )}
+          </>
         )}
       </div>
       </>
@@ -1787,18 +1935,26 @@ function App() {
         reason={paywallReason}
       />
 
-      {/* Flow Login Expired Modal */}
+      {/* API 키 필요 모달 — 키 없이 생성 시도 시 설정으로 안내 */}
       <Modal
-        isOpen={showLoginExpiredModal}
-        onClose={() => setShowLoginExpiredModal(false)}
-        title={t('toast.flowLoginExpiredTitle')}
+        isOpen={showApiKeyModal}
+        onClose={() => setShowApiKeyModal(false)}
+        title={t('apiKeyNeeded.title')}
         footer={
-          <button className="btn btn-primary" onClick={() => setShowLoginExpiredModal(false)}>
-            {t('export.confirm') || '확인'}
-          </button>
+          <>
+            <button className="btn btn-secondary" onClick={() => setShowApiKeyModal(false)}>
+              {t('settings.cancel') || '닫기'}
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={() => { setShowApiKeyModal(false); openSettings('apiKey') }}
+            >
+              🔑 {t('apiKeyNeeded.cta')}
+            </button>
+          </>
         }
       >
-        <p>{t('toast.flowLoginExpiredMessage')}</p>
+        <p>{t('apiKeyNeeded.message')}</p>
       </Modal>
 
       {tagValidationErrors && (

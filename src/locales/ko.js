@@ -10,8 +10,8 @@ export default {
   header: {
     export: 'CapCut 내보내기',
     settings: '설정',
-    login: '로그인',
-    authenticated: '인증됨',
+    login: 'API 키',
+    authenticated: 'API 키 설정됨',
     checking: '확인 중...',
     waitingLogin: '로그인 대기 중...',
     unavailable: '지원되지 않는 지역',
@@ -22,16 +22,25 @@ export default {
   // 시작 화면
   welcome: {
     title: 'AutoFlowCut',
-    description: 'Flow AI로 이미지/비디오를 생성하고\nCapCut 프로젝트로 내보내세요',
-    openFlow: 'Flow 열기',
-    waitingLogin: '로그인 대기 중...',
-    loginHint: 'Flow에서 로그인하면 자동으로 진입합니다',
-    unavailable: '이 지역에서는 Flow를 사용할 수 없습니다',
-    unavailableHint: 'Google Flow AI는 현재 제한된 지역에서만 사용 가능합니다. VPN으로 지원 국가(예: 미국)에 연결한 후 앱을 다시 실행해주세요.',
+    description: 'AI로 이미지/비디오를 생성하고\nCapCut 프로젝트로 내보내세요',
+    openFlow: 'API 키 설정',
+    waitingLogin: '키 확인 중...',
+    loginHint: '설정 창에서 API 키를 저장하면 자동으로 시작됩니다',
+    explore: '키 없이 둘러보기',
     checking: '인증 확인 중...',
   },
   
   // 탭
+  bottomPanel: {
+    timeline: '타임라인',
+    results: '결과표',
+    preview: '프리뷰',
+  },
+  apiKeyNeeded: {
+    title: 'API 키가 필요해요',
+    message: '이미지·비디오를 생성하려면 Gemini API 키가 필요합니다. 설정에서 키를 등록해주세요.',
+    cta: 'API 키 설정',
+  },
   tabs: {
     text: '이미지',
     videoText: '비디오',
@@ -285,7 +294,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     uploadingRefs: '레퍼런스 업로드 중... ({current}/{total})',
     generatingScene: '생성 중: {ids} ({current}/{total})',
     retrying: '재시도 중: {id} ({count}/{max})',
-    loginRequired: '로그인 필요 - labs.google 탭을 열어주세요',
+    loginRequired: 'API 키가 필요합니다 — 설정에서 등록하세요',
     styleRequired: '스타일을 선택해주세요 (설정에서 스타일 필수가 ON입니다)',
     folderNotSet: '설정에서 작업 폴더를 선택하세요',
     folderPermission: '작업 폴더 권한이 필요합니다',
