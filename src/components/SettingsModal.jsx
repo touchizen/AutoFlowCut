@@ -25,16 +25,7 @@ const TABS = [
 export default function SettingsModal({ settings, onSave, onClose, initialTab = null, onProjectChange }) {
   const { t } = useI18n()
   const [activeTab, setActiveTab] = useState(initialTab || 'storage')
-  const [localSettings, setLocalSettings] = useState(() => {
-    const merged = { ...settings }
-    // layoutSettings는 Shell에서 별도 localStorage로 관리 → 현재 값 반영
-    try {
-      const layout = JSON.parse(localStorage.getItem('layoutSettings') || '{}')
-      if (layout.mode) merged.layoutMode = layout.mode
-      if (layout.ratio) merged.splitRatio = layout.ratio
-    } catch (e) { /* ignore */ }
-    return merged
-  })
+  const [localSettings, setLocalSettings] = useState(() => ({ ...settings }))
   const [workFolder, setWorkFolder] = useState({ name: '', error: null })
   const [highlight, setHighlight] = useState(!!initialTab)
 
@@ -69,13 +60,6 @@ export default function SettingsModal({ settings, onSave, onClose, initialTab = 
   }
 
   const handleSave = () => {
-    // 레이아웃 변경 시 main process에 알림
-    if (localSettings.layoutMode) {
-      window.electronAPI?.setLayout?.({
-        mode: localSettings.layoutMode,
-        ratio: localSettings.splitRatio || 0.5
-      })
-    }
     onSave(localSettings)
   }
 
@@ -133,11 +117,7 @@ export default function SettingsModal({ settings, onSave, onClose, initialTab = 
         )}
 
         {activeTab === 'display' && (
-          <DisplayTab
-            localSettings={localSettings}
-            setLocalSettings={setLocalSettings}
-            t={t}
-          />
+          <DisplayTab t={t} />
         )}
 
         {activeTab === 'mcp' && (

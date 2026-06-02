@@ -740,16 +740,6 @@ function App() {
     const folderCheck = await checkFolderPermission(settings, openSettings, t)
     if (!folderCheck.ok) return
 
-    // tab이면 split으로 전환 (Flow UI가 보여야 함)
-    try {
-      const current = JSON.parse(localStorage.getItem('layoutSettings') || '{}')
-      if (!current.mode || current.mode === 'tab') {
-        window.electronAPI?.setLayout?.({ mode: 'split-left', ratio: 0.5 })
-      }
-    } catch (e) {
-      window.electronAPI?.setLayout?.({ mode: 'split-left', ratio: 0.5 })
-    }
-
     const projectName = ensureProjectName()
 
     switch (activeTab) {
