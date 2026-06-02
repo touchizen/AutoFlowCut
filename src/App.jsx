@@ -146,8 +146,6 @@ function App() {
   useEffect(() => {
     localStorage.setItem('autoflowcut_bottomPanelView', bottomPanelView)
   }, [bottomPanelView])
-  // 라이브 타임라인 자동 스크롤 타깃 — 가장 최근 생성/갱신된 씬 id.
-  const [lastGeneratedSceneId, setLastGeneratedSceneId] = useState(null)
 
   // 설정 모달 열기 (특정 탭으로)
   const openSettings = (tab = null) => {
@@ -635,10 +633,16 @@ function App() {
    * 둘 중 하나라도 없으면: full 재생성이 필요하므로 해당 아이템 상태를 pending으로 되돌린 뒤
    * 사용자가 "Start Generation" 버튼으로 일괄 재생성할 수 있게 둔다.
    */
-  const handleVideoRetry = useCallback((item) => {
+  const handleVideoRetry = useCallback(async (item) => {
     if (!item) return
     if (isRunning || videoAutomation.isRunning) {
       toast.warning(t('videoAutomation.busy') || 'Generation already running')
+      return
+    }
+    // 다운로드-only 재시도는 videoAutomation 프리플라이트를 안 거치므로 여기서 키 가드.
+    // 키 없으면 checkVideoStatus/다운로드가 'No API key' 로 조용히 실패 → 대신 API 키 모달.
+    if (!(await flowAPI.getAccessToken(false, true))) {
+      window.dispatchEvent(new CustomEvent('flow-login-expired'))
       return
     }
 
@@ -1523,7 +1527,6 @@ function App() {
                 scenes={scenes}
                 srtEntries={resolveAudioSrtEntries(audioPackage, scenesHook.srtTrack)}
                 audioPackage={audioPackage}
-                focusSceneId={lastGeneratedSceneId}
                 onSceneSelect={(scene) => setSelectedScene(scene)}
                 onSaveTimecodeOverride={saveTimecodeOverride}
                 disabled={anyRunning}
