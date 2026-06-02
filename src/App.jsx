@@ -36,7 +36,7 @@ import { checkFolderPermission } from './utils/guards'
 import { collectTagErrors } from './utils/tagMatch'
 import { getFramePairEffectivePrompt } from './utils/framePairPrompt'
 import { frameImageFor } from './utils/framePairImages'
-import { persistGalleryFrame } from './utils/galleryUpload'
+import { saveGalleryFrame } from './utils/galleryUpload'
 import { toast } from './components/Toast'
 
 // Components
@@ -365,20 +365,21 @@ function App() {
       if (!base64) return { success: false, error: 'Empty file' }
 
       // cloud(BYOK): Flow 업로드 없이 로컬 프레임을 프로젝트 리소스(frames/)로 저장.
-      // saveResource 는 실패 시 throw 가 아니라 {success:false} → 결과를 확인해 조용한 성공을
-      // 막고, 실패 시 보정 재시도(addPendingSave) 등록 + 경고. 메모리 dataUrl 은 이번 세션용.
+      // folder 모드에서 디스크 영속 실패면 업로드 자체를 실패로 — pair 를 만들지 않아
+      // 재오픈 시 frames/ 에서 못 살아나는 gallery::local-* 항목 생성을 막는다.
+      // (desktop addPendingSave 는 no-op 이라 "나중에 재시도" 약속 대신 즉시 실패)
       const localId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-      const { persisted } = await persistGalleryFrame({
+      const saved = await saveGalleryFrame({
         localId, dataUrl,
         saveMode: settings.saveMode,
         projectName: settings.projectName,
-        addPendingSave,
       })
-      if (settings.saveMode === 'folder' && !persisted) {
-        toast.warning(t('toast.permissionReleasedMemory'))
+      if (!saved.success) {
+        toast.error(t('toast.folderSelectFirst'))
+        return { success: false, error: saved.error || 'Frame save failed' }
       }
-      setGalleryItems(prev => [{ mediaId: localId, url: dataUrl, dataUrl, local: true, persisted }, ...prev])
-      return { success: true, mediaId: localId, url: dataUrl, dataUrl, persisted }
+      setGalleryItems(prev => [{ mediaId: localId, url: dataUrl, dataUrl, local: true, persisted: saved.persisted }, ...prev])
+      return { success: true, mediaId: localId, url: dataUrl, dataUrl, persisted: saved.persisted }
     } catch (e) {
       console.error('[Gallery] upload from disk failed:', e)
       return { success: false, error: e.message }
