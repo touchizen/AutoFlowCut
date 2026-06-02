@@ -35,6 +35,11 @@ export default {
     timeline: 'Timeline',
     results: 'Results',
   },
+  apiKeyNeeded: {
+    title: 'API key required',
+    message: 'You need a Gemini API key to generate images & videos. Add your key in Settings.',
+    cta: 'Set up API Key',
+  },
   tabs: {
     text: 'Image',
     videoText: 'Video',

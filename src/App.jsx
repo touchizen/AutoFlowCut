@@ -41,7 +41,6 @@ import { toast } from './components/Toast'
 
 // Components
 import Header from './components/Header'
-import WelcomeScreen from './components/WelcomeScreen'
 import PromptInput from './components/PromptInput'
 import SceneList from './components/SceneList'
 import GenerateMenu from './components/GenerateMenu'
@@ -84,7 +83,7 @@ function App() {
   const [paywallReason, setPaywallReason] = useState('trial_expired')
 
   // Flow Login Expired Modal
-  const [showLoginExpiredModal, setShowLoginExpiredModal] = useState(false)
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false)
 
   // Tag Validation Modal
   const [tagValidationErrors, setTagValidationErrors] = useState(null)
@@ -109,7 +108,7 @@ function App() {
   const { settings, setSettings, updateSetting, ensureProjectName } = useAppSettings()
 
   // Flow 이벤트 (로그인 만료, 레이아웃 보정)
-  useFlowEvents({ onLoginExpired: () => setShowLoginExpiredModal(true) })
+  useFlowEvents({ onLoginExpired: () => setShowApiKeyModal(true) })
 
   // UI State
   const [activeTab, setActiveTab] = useState('text') // 'text' | 'video-text' | 'frame-to-video' | 'list' | 'audio'
@@ -126,9 +125,6 @@ function App() {
   const [showAudioResult, setShowAudioResult] = useState(false)
   const [showReferences, setShowReferences] = useState(false)
   const [authReady, setAuthReady] = useState(false)
-  // '둘러보기' — 키 없이도 UI 진입(생성은 여전히 키 가드). 키 저장 시 authReady 가
-  // 켜지면 정식 진입 상태가 된다.
-  const [exploreWithoutKey, setExploreWithoutKey] = useState(false)
   // True after handleAuthError fires — disables the auto-recovery effect at line ~165
   // that would otherwise immediately re-extract a token from the webview and flip
   // authReady back to true (making the header revert from "Login" to green dot in
@@ -216,7 +212,7 @@ function App() {
   const { videoScenes, setVideoScenes } = videoScenesHook
   const { isRunning, isPaused, isStopping, progress, status, statusMessage, start, togglePause, stop, retryErrors, recaptchaModal, closeRecaptchaModal } = automation
 
-  // 씬이 복원되어 WelcomeScreen이 스킵될 때도 자동으로 인증 체크.
+  // 씬이 복원되어 들어온 경우에도 자동으로 인증 체크(키 존재 → authReady).
   // authInvalidatedRef: handleAuthError가 명시적으로 무효화한 후엔 자동 복구하지 않는다.
   // 사용자가 Header의 login badge로 직접 재인증해야 handleAuthRecovered가 ref를 풀고
   // authReady를 되살린다. 이게 없으면 401 직후 authReady=false → 이 effect → 새 토큰 추출 →
@@ -228,6 +224,12 @@ function App() {
       }).catch(() => {})
     }
   }, [scenes.length, authReady])
+
+  // 앱 시작 시 키 존재 여부 1회 확인 → 있으면 정식 진입 상태(Header 배지 🟢).
+  // (시작 화면을 제거했으므로 이 mount 체크가 그 역할을 대신한다.)
+  useEffect(() => {
+    flowAPI.getAccessToken(false, true).then(token => { if (token) setAuthReady(true) }).catch(() => {})
+  }, [])
 
   // BYOK 키가 앱 내에서 저장/삭제되면(useApiKey) 폴링 없이 즉시 인증 상태 재확인.
   // 사용자가 명시적으로 키를 바꾼 것이므로 authInvalidated 도 해제한다.
@@ -749,6 +751,12 @@ function App() {
     // 이미 실행 중이거나 큐에 batch가 대기 중이면 무시 (중지는 별도 버튼)
     if (isRunning || videoAutomation.isRunning || hasPendingBatch) return
 
+    // BYOK 키 없으면 생성 불가 → 설정 안내 모달 (시작 화면으로 막지 않고 여기서 안내).
+    if (!(await flowAPI.getAccessToken(false, true))) {
+      setShowApiKeyModal(true)
+      return
+    }
+
     // 선택 검증 (폴더 확인보다 먼저)
     if (activeTab === 'video-text') {
       if (videoScenes.filter(s => s.selected !== false).length === 0) {
@@ -1121,18 +1129,8 @@ function App() {
         hideWhenPro={true}
       />
 
-      {/* 시작 화면 - 씬 없고 키 없고 '둘러보기' 안 했을 때 */}
-      {scenes.length === 0 && !authReady && !exploreWithoutKey && (
-        <WelcomeScreen
-          getAccessToken={flowAPI.getAccessToken}
-          onReady={() => setAuthReady(true)}
-          onSetupKey={() => openSettings('apiKey')}
-          onExplore={() => setExploreWithoutKey(true)}
-        />
-      )}
-
-      {/* 메인 UI - 인증됐거나 씬 있거나 '둘러보기' 진입 시 */}
-      {(authReady || scenes.length > 0 || exploreWithoutKey) && (
+      {/* 메인 UI - 항상 표시. 키 없으면 생성(Start) 시 API 키 모달로 안내(시작 화면 게이트 제거). */}
+      {(
       <>
       <div className="main-panel">
         {/* 탭 헤더 */}
@@ -1834,18 +1832,26 @@ function App() {
         reason={paywallReason}
       />
 
-      {/* Flow Login Expired Modal */}
+      {/* API 키 필요 모달 — 키 없이 생성 시도 시 설정으로 안내 */}
       <Modal
-        isOpen={showLoginExpiredModal}
-        onClose={() => setShowLoginExpiredModal(false)}
-        title={t('toast.flowLoginExpiredTitle')}
+        isOpen={showApiKeyModal}
+        onClose={() => setShowApiKeyModal(false)}
+        title={t('apiKeyNeeded.title')}
         footer={
-          <button className="btn btn-primary" onClick={() => setShowLoginExpiredModal(false)}>
-            {t('export.confirm') || '확인'}
-          </button>
+          <>
+            <button className="btn btn-secondary" onClick={() => setShowApiKeyModal(false)}>
+              {t('settings.cancel') || '닫기'}
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={() => { setShowApiKeyModal(false); openSettings('apiKey') }}
+            >
+              🔑 {t('apiKeyNeeded.cta')}
+            </button>
+          </>
         }
       >
-        <p>{t('toast.flowLoginExpiredMessage')}</p>
+        <p>{t('apiKeyNeeded.message')}</p>
       </Modal>
 
       {tagValidationErrors && (

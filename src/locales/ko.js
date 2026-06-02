@@ -35,6 +35,11 @@ export default {
     timeline: '타임라인',
     results: '결과표',
   },
+  apiKeyNeeded: {
+    title: 'API 키가 필요해요',
+    message: '이미지·비디오를 생성하려면 Gemini API 키가 필요합니다. 설정에서 키를 등록해주세요.',
+    cta: 'API 키 설정',
+  },
   tabs: {
     text: '이미지',
     videoText: '비디오',
