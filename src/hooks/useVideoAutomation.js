@@ -20,6 +20,17 @@ import { pickVideoMetadata, buildVideoMetaPatch } from '../utils/videoMetadata'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 import { snapVeoDuration } from '../utils/videoModels'
 
+// 실제 제출되는 비디오 길이(초). submitVideo(engine)의 제약과 동일하게 계산해 제출값과
+// 완료-메타가 일치하도록 한다(어긋나면 history 길이가 실제와 불일치):
+//   - i2v/f2v(reference 이미지) → 8 고정
+//   - 1080p/4k → 8 고정 (공식 Veo 제약)
+//   - 그 외(t2v + 720p) → 씬 길이(targetDuration)를 {4,6,8} 로 스냅
+function effectiveVideoDuration(item, mode, batchDuration, resolution) {
+  if (mode === 'i2v') return 8
+  if (resolution === '1080p' || resolution === '4k') return 8
+  return snapVeoDuration(item?.targetDuration ?? batchDuration)
+}
+
 // 유틸: 랜덤 대기
 const randomSleep = (min, max) =>
   new Promise(r => setTimeout(r, Math.floor(Math.random() * (max - min + 1)) + min))
@@ -64,7 +75,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
       case 't2v': {
         // 자동 길이: 씬 길이(item.targetDuration, SRT 기반)를 Veo 허용값 {4,6,8} 으로 스냅.
         // 1080p/4k 면 submitVideo 가 8초로 강제(공식 제약).
-        const dur = snapVeoDuration(item.targetDuration ?? duration)
+        const dur = effectiveVideoDuration(item, mode, duration, videoResolution)
         return await generateVideoT2V(prompt, videoModel, aspectRatio, dur, seed, videoResolution)
       }
       case 'i2v': {
@@ -174,7 +185,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
       videoModel = 'veo-3.1-fast-generate-preview',
       aspectRatio = 'VIDEO_ASPECT_RATIO_LANDSCAPE',
       duration = 8,
-      videoResolution = '1080p',
+      videoResolution = '720p',
       videoBatchCount = 1,
       seed = null,
       onItemUpdate
@@ -223,6 +234,8 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
             videoPath: s.videoPath,
             seed: s.seed ?? seed ?? null,
             model: s.model || videoModel || null,
+            // 자동 길이용 — 씬 길이(SRT 기반). 제출 시 {4,6,8} 로 스냅됨.
+            targetDuration: s.targetDuration ?? null,
           }))
         break
       case 'i2v':
@@ -344,7 +357,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
       onItemUpdate?.(item.id, 'generating')
 
       const genResult = await submitVideoItem(item, mode, {
-        videoModel, aspectRatio, duration, videoBatchCount, seed, projectName
+        videoModel, aspectRatio, duration, videoBatchCount, seed, projectName, videoResolution
       })
 
       if (genResult.success && genResult.generationId) {
@@ -519,7 +532,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
               onItemUpdate?.(itemId, 'complete', {
                 ...dlResult,
                 generationId: submission.generationId,
-                duration,
+                duration: effectiveVideoDuration(item, mode, duration, videoResolution),
                 mode,
                 // 이전 실패에서 남은 error 메시지 clear (success 이후 stale 표시 방지)
                 error: null,
