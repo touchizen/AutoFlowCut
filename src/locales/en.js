@@ -32,6 +32,10 @@ export default {
   },
   
   // Tabs
+  bottomPanel: {
+    timeline: 'Timeline',
+    results: 'Results',
+  },
   tabs: {
     text: 'Image',
     videoText: 'Video',

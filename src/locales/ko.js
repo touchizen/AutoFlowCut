@@ -32,6 +32,10 @@ export default {
   },
   
   // 탭
+  bottomPanel: {
+    timeline: '타임라인',
+    results: '결과표',
+  },
   tabs: {
     text: '이미지',
     videoText: '비디오',

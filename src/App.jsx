@@ -64,6 +64,8 @@ import StoreRatingModal from './components/StoreRatingModal'
 import AudioResultModal from './components/AudioResultModal'
 import QAProgressBanner from './components/QAProgressBanner'
 import AudioPanel from './components/AudioPanel'
+import BottomPanelTabs from './components/BottomPanelTabs'
+import LiveTimeline from './components/LiveTimeline'
 import { SubscriptionBanner } from './components/SubscriptionBanner'
 import StylePicker from './components/StylePicker'
 import Modal from './components/Modal'
@@ -138,6 +140,15 @@ function App() {
     const saved = localStorage.getItem('autoflowcut_bottomPanelHeight')
     return saved ? parseInt(saved, 10) : UI.DEFAULT_BOTTOM_PANEL_HEIGHT // 기본 높이
   })
+  // 하단 패널 뷰: 'timeline'(라이브 NLE 프리뷰) | 'results'(기존 결과표). 기본 타임라인.
+  const [bottomPanelView, setBottomPanelView] = useState(() =>
+    localStorage.getItem('autoflowcut_bottomPanelView') || 'timeline'
+  )
+  useEffect(() => {
+    localStorage.setItem('autoflowcut_bottomPanelView', bottomPanelView)
+  }, [bottomPanelView])
+  // 라이브 타임라인 자동 스크롤 타깃 — 가장 최근 생성/갱신된 씬 id.
+  const [lastGeneratedSceneId, setLastGeneratedSceneId] = useState(null)
 
   // 설정 모달 열기 (특정 탭으로)
   const openSettings = (tab = null) => {
@@ -1489,6 +1500,21 @@ function App() {
           scenes={scenes}
         />
 
+        {activeTab !== 'audio' && (
+          <>
+            <BottomPanelTabs view={bottomPanelView} onChange={setBottomPanelView} t={t} />
+            {bottomPanelView === 'timeline' ? (
+              <LiveTimeline
+                scenes={scenes}
+                srtEntries={resolveAudioSrtEntries(audioPackage, scenesHook.srtTrack)}
+                audioPackage={audioPackage}
+                focusSceneId={lastGeneratedSceneId}
+                onSceneSelect={(scene) => setSelectedScene(scene)}
+                onSaveTimecodeOverride={saveTimecodeOverride}
+                disabled={anyRunning}
+              />
+            ) : (
+              <>
         {activeTab === 'text' && (
           <ResultsTable
             items={scenes}
@@ -1608,6 +1634,10 @@ function App() {
               mediaId: null, seed: null, generatedAt: null, model: null,
             })}
           />
+        )}
+              </>
+            )}
+          </>
         )}
       </div>
       </>
