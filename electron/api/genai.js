@@ -150,8 +150,9 @@ export async function generateImage(
  * @returns {Promise<{success:boolean, operationName?:string, error?:string}>}
  *   operationName 은 이후 checkVideoOperation 에 넘기는 generationId 역할.
  *
- * Veo(generativelanguage) 는 이미지를 `inlineData: { mimeType, data }` 로 받는다
- * (Vertex 의 bytesBase64Encoded 아님 — 공식 문서/포럼 확인). lastFrame 도 동일 형태.
+ * Veo(generativelanguage) predictLongRunning 은 instances[].image 를
+ * `{ bytesBase64Encoded, mimeType }` 형태로 받는다 (SRT-Video-Studio 에서
+ * 검증된 동일 endpoint 경로). lastFrame(끝 프레임 보간)도 같은 형태.
  */
 export async function submitVideo(
   {
@@ -170,12 +171,14 @@ export async function submitVideo(
   const instance = { prompt: prompt || '' }
   if (image && image.data) {
     instance.image = {
-      inlineData: { mimeType: image.mimeType || 'image/png', data: image.data },
+      bytesBase64Encoded: image.data,
+      mimeType: image.mimeType || 'image/png',
     }
   }
   if (endImage && endImage.data) {
     instance.lastFrame = {
-      inlineData: { mimeType: endImage.mimeType || 'image/png', data: endImage.data },
+      bytesBase64Encoded: endImage.data,
+      mimeType: endImage.mimeType || 'image/png',
     }
   }
 
