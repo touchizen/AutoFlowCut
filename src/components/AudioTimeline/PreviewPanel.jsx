@@ -43,7 +43,7 @@ export function findRangeAt(ranges, t, inclusiveEnd = false) {
 // 씬에 비디오(i2v 우선, t2v 차순)가 있고 playhead가 비디오 구간 안이면
 // 단일 공유 <video> element를 이미지 위에 오버레이 재생한다.
 // <video>는 DOM에 항상 1개만 존재 — 씬이 바뀔 때만 src swap (500씬 스케일 대응).
-export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 240 }) {
+export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 240, isPlaying = false }) {
   // 씬 ranges precompute — getSceneTimeRangeMs는 parseTimeToSeconds(regex+split)을 부르므로
   // playhead 매 tick (60fps) 마다 N회 반복하면 1시간/1500씬 기준 ~0.5% CPU 누적.
   // sort를 명시적으로 — binary search 정확성 보장.
@@ -189,10 +189,14 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
       }
     }
 
-    if (el.paused) {
-      el.play().catch(() => { /* autoplay 정책 거부 시 silent */ })
+    // 재생 중일 때만 play. 정지(스크럽/모니터 — playhead가 안 움직임)면 해당 프레임에서
+    // pause — 플레이헤드가 비디오 위에 있다고 영상이 멋대로 재생되지 않도록.
+    if (isPlaying) {
+      if (el.paused) el.play().catch(() => { /* autoplay 정책 거부 시 silent */ })
+    } else if (!el.paused) {
+      try { el.pause() } catch {}
     }
-  }, [isVideoActive, videoPlacement, playheadMs])
+  }, [isVideoActive, videoPlacement, playheadMs, isPlaying])
 
   return (
     <div className="atl-preview" style={{ height }}>

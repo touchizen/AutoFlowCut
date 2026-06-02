@@ -153,6 +153,8 @@ function App() {
   // 상단 모니터(프리뷰)가 보여줄 시점(ms). 하단 타임라인 스크럽/재생이 갱신하고,
   // 생성 중에는 막 생성된 씬으로 점프한다(아래 effect).
   const [monitorMs, setMonitorMs] = useState(0)
+  // 하단 타임라인이 재생 중인지 — 모니터 비디오는 이때만 재생(정지 시 프레임만).
+  const [monitorPlaying, setMonitorPlaying] = useState(false)
   // 프리뷰 모니터 폭(px) — 좌우 드래그로 조절, localStorage 영속.
   const [monitorWidth, setMonitorWidth] = useState(() => {
     const saved = parseInt(localStorage.getItem('autoflowcut_monitorWidth'), 10)
@@ -1429,6 +1431,7 @@ function App() {
                   scenes={scenes}
                   srtEntries={resolveAudioSrtEntries(audioPackage, scenesHook.srtTrack)}
                   height="100%"
+                  isPlaying={monitorPlaying}
                 />
               </aside>
             </>
@@ -1602,6 +1605,7 @@ function App() {
                 onSceneSelect={(scene) => setSelectedScene(scene)}
                 onSaveTimecodeOverride={saveTimecodeOverride}
                 onPlayheadChange={setMonitorMs}
+                onPlayingChange={setMonitorPlaying}
                 disabled={anyRunning}
               />
             ) : (

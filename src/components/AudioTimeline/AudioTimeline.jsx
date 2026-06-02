@@ -35,7 +35,7 @@ function formatTC(ms) {
   return formatDuration(ms / 1000)
 }
 
-export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClipSelect, onSaveTimecodeOverride, disabled = false, onFlag, isFlagged, onTrackDrop, compact = false, onPlayheadChange }) {
+export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClipSelect, onSaveTimecodeOverride, disabled = false, onFlag, isFlagged, onTrackDrop, compact = false, onPlayheadChange, onPlayingChange }) {
   const { t } = useI18n()
   const rawData = useAudioTimeline(audioPackage, scenes, srtEntries)
 
@@ -182,6 +182,8 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   const hideBtnTooltip = () => setBtnTooltip(null)
   const [playingClipIds, setPlayingClipIds] = useState(new Set()) // 현재 재생 중인 클립 (단독 또는 글로벌)
   const [isGlobalPlaying, setIsGlobalPlaying] = useState(false)
+  // 재생 상태를 상단 모니터(App)로 보고 — 재생 중일 때만 모니터 비디오도 재생.
+  useEffect(() => { onPlayingChange?.(isGlobalPlaying) }, [isGlobalPlaying])
   const [hoverScene, setHoverScene] = useState(null) // { x, y, scene }
   const [dragOverTrackId, setDragOverTrackId] = useState(null) // 드롭 타겟 lane 하이라이트용
   const audioInstancesRef = useRef(new Map()) // clipId -> Audio
@@ -735,6 +737,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
             scenes={scenes}
             srtEntries={srtEntries}
             height={previewHeight}
+            isPlaying={isGlobalPlaying}
           />
 
           {/* Preview ↔ Timeline 사이 splitter (드래그=조절 / 더블클릭=기본값 복귀) */}
