@@ -166,8 +166,8 @@ function App() {
     const row = e.currentTarget.parentElement // .content-row
     const rect = row.getBoundingClientRect()
     const rightEdge = rect.right
-    // 최대 폭 = 콘텐츠 너비의 80% (좌측 패널 20% 확보). 창 크기에 따라 스케일.
-    const maxW = rect.width * 0.8
+    // 최대 폭 = 콘텐츠 너비의 90% (좌측 패널 10% 확보). 창 크기에 따라 스케일.
+    const maxW = rect.width * 0.9
     const onMove = (ev) => setMonitorWidth(Math.max(200, Math.min(maxW, rightEdge - ev.clientX)))
     const onUp = () => {
       document.removeEventListener('mousemove', onMove)
