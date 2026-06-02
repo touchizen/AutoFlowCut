@@ -253,8 +253,8 @@ export default function Header({
           <span className="logo-text">{t('appName')}</span>
         </h1>
         
-        {/* 프로젝트 선택기 (폴더 모드 + 로그인 상태일 때만) */}
-        {saveMode === 'folder' && authStatus === 'authenticated' && (
+        {/* 프로젝트 선택기 (폴더 모드면 표시 — 프로젝트는 로컬이라 API 키와 무관) */}
+        {saveMode === 'folder' && (
           <div className={`project-selector-header ${disabled ? 'disabled' : ''}`} ref={dropdownRef}>
             <button
               className="project-current"
