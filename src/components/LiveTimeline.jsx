@@ -10,7 +10,7 @@
  * compact: 하단 도크(기본 ~180px)는 좁으므로 AudioTimeline 의 큰 프리뷰 패널을 접고
  * 트랙이 보이도록 한다.
  */
-import { useDeferredValue } from 'react'
+import { useDeferredValue, useEffect } from 'react'
 import AudioTimeline from './AudioTimeline/AudioTimeline'
 
 export default function LiveTimeline({
@@ -28,6 +28,13 @@ export default function LiveTimeline({
   const dScenes = useDeferredValue(scenes)
   const dSrt = useDeferredValue(srtEntries)
   const dPkg = useDeferredValue(audioPackage)
+
+  // unmount 시 상단 모니터에 정지 통보. 결과표/오디오 탭으로 전환하면 이 컴포넌트는
+  // unmount 되는데, AudioTimeline 의 onPlayingChange 는 상태 변화 때만 발화하므로
+  // unmount 중 setIsGlobalPlaying(false)가 parent 까지 도달하지 못한다 → monitorPlaying
+  // 이 true 로 남아 상단 비디오가 playhead 정지 상태에서도 멋대로 재생됨. 여기서 차단.
+  // onPlayingChange 는 stable(setState) 이므로 cleanup 은 unmount 시에만 실행됨.
+  useEffect(() => () => onPlayingChange?.(false), [onPlayingChange])
 
   return (
     <AudioTimeline

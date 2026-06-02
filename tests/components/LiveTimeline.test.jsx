@@ -36,4 +36,14 @@ describe('LiveTimeline', () => {
     captured.props.onClipSelect({ id: 'sub-1' })
     expect(onSceneSelect).not.toHaveBeenCalled()
   })
+
+  it('unmount 시 onPlayingChange(false) 로 상단 모니터 정지 통보 (재생 잔류 방지)', () => {
+    const onPlayingChange = vi.fn()
+    const { unmount } = render(
+      <LiveTimeline scenes={[]} srtEntries={[]} audioPackage={null} onSceneSelect={vi.fn()} onPlayingChange={onPlayingChange} />
+    )
+    onPlayingChange.mockClear() // mount 시 발화 무시, unmount 만 검증
+    unmount()
+    expect(onPlayingChange).toHaveBeenCalledWith(false)
+  })
 })
