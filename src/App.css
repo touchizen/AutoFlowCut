@@ -270,7 +270,7 @@ html, body {
 /* 콘텐츠 영역을 좌(패널)/우(프리뷰 모니터)로 분할 */
 .tab-content-inner.content-row {
   flex-direction: row;
-  gap: 10px;
+  gap: 0;
 }
 .content-panels {
   flex: 1;
@@ -279,13 +279,32 @@ html, body {
   flex-direction: column;
 }
 .content-monitor {
-  flex: 0 0 clamp(220px, 30%, 380px);
+  flex: 0 0 auto; /* 폭은 inline style(monitorWidth) */
   align-self: stretch;
   min-height: 180px;
   background: #0d0d0d;
   border: 1px solid var(--border-color);
   border-radius: 8px;
   overflow: hidden;
+}
+/* 패널 ↔ 모니터 좌우 리사이저 */
+.content-monitor-resizer {
+  flex: 0 0 8px;
+  cursor: col-resize;
+  position: relative;
+  background: transparent;
+}
+.content-monitor-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0; left: 3px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--border-color);
+  transition: background 0.15s;
+}
+.content-monitor-resizer:hover::after {
+  background: #4a9eff;
 }
 
 /* Prompt Input */

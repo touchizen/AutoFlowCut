@@ -153,6 +153,30 @@ function App() {
   // 상단 모니터(프리뷰)가 보여줄 시점(ms). 하단 타임라인 스크럽/재생이 갱신하고,
   // 생성 중에는 막 생성된 씬으로 점프한다(아래 effect).
   const [monitorMs, setMonitorMs] = useState(0)
+  // 프리뷰 모니터 폭(px) — 좌우 드래그로 조절, localStorage 영속.
+  const [monitorWidth, setMonitorWidth] = useState(() => {
+    const saved = parseInt(localStorage.getItem('autoflowcut_monitorWidth'), 10)
+    return Number.isFinite(saved) ? saved : 320
+  })
+  useEffect(() => {
+    try { localStorage.setItem('autoflowcut_monitorWidth', String(monitorWidth)) } catch {}
+  }, [monitorWidth])
+  const startMonitorResize = useCallback((e) => {
+    e.preventDefault()
+    const row = e.currentTarget.parentElement // .content-row
+    const rightEdge = row.getBoundingClientRect().right
+    const onMove = (ev) => setMonitorWidth(Math.max(200, Math.min(640, rightEdge - ev.clientX)))
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }, [])
 
   // 설정 모달 열기 (특정 탭으로)
   const openSettings = (tab = null) => {
@@ -1386,16 +1410,25 @@ function App() {
           )}
           </div>
 
-          {/* 우측 프리뷰 모니터 — 플레이헤드/생성 진행에 따라 현재 프레임+자막 표시 */}
+          {/* 우측 프리뷰 모니터 — 플레이헤드/생성 진행에 따라 현재 프레임+자막 표시.
+              좌우 드래그 핸들로 폭 조절. */}
           {activeTab !== 'audio' && (
-            <aside className="content-monitor">
-              <PreviewPanel
-                playheadMs={monitorMs}
-                scenes={scenes}
-                srtEntries={resolveAudioSrtEntries(audioPackage, scenesHook.srtTrack)}
-                height="100%"
+            <>
+              <div
+                className="content-monitor-resizer"
+                onMouseDown={startMonitorResize}
+                onDoubleClick={() => setMonitorWidth(320)}
+                title="드래그=폭 조절 · 더블클릭=기본값"
               />
-            </aside>
+              <aside className="content-monitor" style={{ width: monitorWidth }}>
+                <PreviewPanel
+                  playheadMs={monitorMs}
+                  scenes={scenes}
+                  srtEntries={resolveAudioSrtEntries(audioPackage, scenesHook.srtTrack)}
+                  height="100%"
+                />
+              </aside>
+            </>
           )}
         </div>
         </div>
