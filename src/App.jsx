@@ -1609,6 +1609,18 @@ function App() {
                 onSaveTimecodeOverride={saveTimecodeOverride}
                 onPlayheadChange={setMonitorMs}
                 onPlayingChange={setMonitorPlaying}
+                onTrackDrop={async ({ trackRole, files, timecodeMs }) => {
+                  // mp3 드롭 → 나레이션/SFX 트랙에 추가 (Audio 탭과 동일 import 경로).
+                  const workFolder = localStorage.getItem('workFolderPath')
+                  const projectName = settings.projectName
+                  const fallbackFolderPath = workFolder && projectName ? `${workFolder}/${projectName}/audio` : null
+                  for (const file of files) {
+                    const mp3Path = window.electronAPI?.getPathForFile?.(file)
+                    if (!mp3Path) continue
+                    await importMp3ToTrack({ mp3Path, trackType: trackRole, timecodeMs, fallbackFolderPath })
+                    if (trackRole === 'narration') break // narration 은 1개(교체)
+                  }
+                }}
                 disabled={anyRunning}
               />
             ) : (
