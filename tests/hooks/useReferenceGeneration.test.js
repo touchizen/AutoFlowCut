@@ -128,29 +128,26 @@ describe('useReferenceGeneration 로직', () => {
         }
       })
 
-      it('저장 실패 시 pendingSave 추가', async () => {
-        mockFileSystemAPI.saveReference.mockResolvedValue({
-          success: false,
-          error: 'Permission denied'
-        })
+      it('저장 실패 시 base64 보존 + 경고 (pendingSave 등록/설정창 열기 안 함)', async () => {
+        // 새 계약(cloud): 디스크 저장 실패해도 base64 를 메모리/project.json 에 보존하고
+        //   경고만. desktop addPendingSave 는 no-op 이라 pending 등록/설정창 열기 없음 —
+        //   filePath 없는 ref 의 data 는 stripReferencesForSave 가 보존 (유실 방지).
+        mockFileSystemAPI.saveReference.mockResolvedValue({ success: false, error: 'Permission denied' })
 
-        const saveResult = await mockFileSystemAPI.saveReference(
-          'project',
-          'alice',
-          'base64',
-          'whisk',
-          {}
-        )
+        const saveResult = await mockFileSystemAPI.saveReference('project', 'alice', 'base64', 'flow', {})
 
+        let donePatch = null
         if (!saveResult.success) {
-          mockAddPendingSave(vi.fn())
-          mockToast.warning('로컬 저장을 위해 권한이 필요합니다.')
-          mockOpenSettings('storage')
+          mockToast.warning('toast.permissionReleasedMemory')
+          donePatch = { data: 'base64', filePath: null, dataStorage: 'base64', status: 'done' }
         }
 
-        expect(mockAddPendingSave).toHaveBeenCalled()
         expect(mockToast.warning).toHaveBeenCalled()
-        expect(mockOpenSettings).toHaveBeenCalledWith('storage')
+        expect(mockAddPendingSave).not.toHaveBeenCalled()
+        expect(mockOpenSettings).not.toHaveBeenCalled()
+        // filePath 없음 + base64 보존 → project 저장 시 stripReferencesForSave 가 data 를 남김
+        expect(donePatch.filePath).toBeNull()
+        expect(donePatch.dataStorage).toBe('base64')
       })
     })
 
