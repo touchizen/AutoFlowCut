@@ -1,4 +1,4 @@
-import { app, BrowserWindow, WebContentsView, ipcMain, shell, protocol, net, powerSaveBlocker, Notification } from 'electron'
+import { app, BrowserWindow, WebContentsView, ipcMain, shell, protocol, net, powerSaveBlocker, Notification, safeStorage } from 'electron'
 import http from 'node:http'
 import fs from 'node:fs/promises'
 import fsSync from 'node:fs'
@@ -14,6 +14,8 @@ import { registerMcpIPC } from './ipc/mcp.js'
 import { registerFlowAPIIPC } from './ipc/flow-api.js'
 import { registerVideoIPC } from './ipc/video.js'
 import { registerDomIPC } from './ipc/dom.js'
+import { registerGenaiIPC } from './ipc/genai-api.js'
+import { createKeyStore } from './api/keyStore.js'
 import { createSharedHelpers } from './ipc/shared.js'
 import { updateBounds, registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible } from './ipc/layout.js'
 import { openApiSpec, getSwaggerHtml } from './api-docs.js'
@@ -1230,6 +1232,16 @@ function createWindow() {
 
 // File System IPC (Node.js fs operations)
 registerFilesystemIPC(ipcMain)
+
+// Google GenAI IPC (BYOK key management + Imagen/Veo official-API generation).
+// Replaces Flow web reverse-engineering. Key is encrypted via OS keychain
+// (safeStorage) and never leaves the main process.
+const genaiKeyStore = createKeyStore({
+  safeStorage,
+  filePath: path.join(app.getPath('userData'), 'genai-key.enc'),
+  fs: fsSync,
+})
+registerGenaiIPC(ipcMain, { keyStore: genaiKeyStore })
 
 // Auth IPC (Google OAuth)
 registerAuthIPC(ipcMain, () => flowView)

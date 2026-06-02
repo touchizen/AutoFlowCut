@@ -120,6 +120,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   domBlobToBase64: (params) => ipcRenderer.invoke('flow:dom-blob-to-base64', params),
   domShowFlow: () => ipcRenderer.invoke('flow:dom-show-flow'),
 
+  // Google GenAI (BYOK) — official Imagen/Veo API, replaces Flow reverse-engineering.
+  // Key management exposes only existence/validity to the renderer — never the key itself.
+  genaiGetKeyStatus: () => ipcRenderer.invoke('genai:get-key-status'),
+  genaiSetKey: (params) => ipcRenderer.invoke('genai:set-key', params),
+  genaiClearKey: () => ipcRenderer.invoke('genai:clear-key'),
+  genaiValidateKey: (params) => ipcRenderer.invoke('genai:validate-key', params),
+  genaiGenerateImage: (params) => ipcRenderer.invoke('genai:generate-image', params),
+  genaiGenerateVideo: (params) => ipcRenderer.invoke('genai:generate-video', params),
+  genaiCheckVideoStatus: (params) => ipcRenderer.invoke('genai:check-video-status', params),
+  genaiDownloadVideo: (params) => ipcRenderer.invoke('genai:download-video', params),
+
   // Auth
   googleSignIn: () => ipcRenderer.invoke('auth:google-sign-in'),
   googleSignOut: () => ipcRenderer.invoke('auth:google-sign-out'),
