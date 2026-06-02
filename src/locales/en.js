@@ -10,8 +10,8 @@ export default {
   header: {
     export: 'Export CapCut',
     settings: 'Settings',
-    login: 'Login',
-    authenticated: 'Authenticated',
+    login: 'API Key',
+    authenticated: 'API key set',
     checking: 'Checking...',
     waitingLogin: 'Waiting for login...',
     unavailable: 'Region not supported',

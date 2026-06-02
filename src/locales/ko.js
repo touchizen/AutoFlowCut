@@ -10,8 +10,8 @@ export default {
   header: {
     export: 'CapCut 내보내기',
     settings: '설정',
-    login: '로그인',
-    authenticated: '인증됨',
+    login: 'API 키',
+    authenticated: 'API 키 설정됨',
     checking: '확인 중...',
     waitingLogin: '로그인 대기 중...',
     unavailable: '지원되지 않는 지역',
