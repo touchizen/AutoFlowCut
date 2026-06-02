@@ -68,11 +68,11 @@ export default function WelcomeScreen({ getAccessToken, onReady, onSetupKey }) {
     }
   }
   
-  // cloud(BYOK) 모드: Flow 로그인 대신 API Key 설정 탭을 연다.
-  // 키 저장 시 startPolling 의 getAccessToken('byok') 이 truthy 가 되어 자동 진입.
+  // cloud(BYOK) 모드: API Key 설정 탭을 연다. 폴링은 백그라운드 — 키가 저장되면
+  // getAccessToken('byok') 이 truthy 가 되어 자동 진입. 'waiting' UI 로 잠그지 않으므로
+  // 사용자가 설정 모달을 그냥 닫아도(취소) 화면은 버튼 그대로 남는다.
   const openFlow = () => {
     onSetupKey?.()
-    setAuthStatus('waiting')
     startPolling()
   }
   
@@ -103,22 +103,14 @@ export default function WelcomeScreen({ getAccessToken, onReady, onSetupKey }) {
         </p>
         
         <div className="welcome-auth">
-          {authStatus === 'waiting' ? (
-            <button className="btn-flow waiting" disabled>
-              ⏳ {t('welcome.waitingLogin')}
-            </button>
-          ) : (
-            <button className="btn-flow" onClick={openFlow}>
-              🔑 {t('welcome.openFlow')}
-            </button>
-          )}
+          <button className="btn-flow" onClick={openFlow}>
+            🔑 {t('welcome.openFlow')}
+          </button>
         </div>
 
-        {authStatus === 'waiting' && (
-          <div className="welcome-hint">
-            💡 {t('welcome.loginHint')}
-          </div>
-        )}
+        <div className="welcome-hint">
+          💡 {t('welcome.loginHint')}
+        </div>
       </div>
     </div>
   )
