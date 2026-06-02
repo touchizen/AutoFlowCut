@@ -34,6 +34,7 @@ export default {
   bottomPanel: {
     timeline: '타임라인',
     results: '결과표',
+    preview: '프리뷰',
   },
   apiKeyNeeded: {
     title: 'API 키가 필요해요',

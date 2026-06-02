@@ -65,6 +65,9 @@ import QAProgressBanner from './components/QAProgressBanner'
 import AudioPanel from './components/AudioPanel'
 import BottomPanelTabs from './components/BottomPanelTabs'
 import LiveTimeline from './components/LiveTimeline'
+import PreviewPanel from './components/AudioTimeline/PreviewPanel'
+import { getSceneTimeRangeMs } from './components/AudioTimeline/useAudioTimeline'
+import { hasImageData } from './utils/formatters'
 import { SubscriptionBanner } from './components/SubscriptionBanner'
 import StylePicker from './components/StylePicker'
 import Modal from './components/Modal'
@@ -146,6 +149,10 @@ function App() {
   useEffect(() => {
     localStorage.setItem('autoflowcut_bottomPanelView', bottomPanelView)
   }, [bottomPanelView])
+
+  // 상단 모니터(프리뷰)가 보여줄 시점(ms). 하단 타임라인 스크럽/재생이 갱신하고,
+  // 생성 중에는 막 생성된 씬으로 점프한다(아래 effect).
+  const [monitorMs, setMonitorMs] = useState(0)
 
   // 설정 모달 열기 (특정 탭으로)
   const openSettings = (tab = null) => {
@@ -1089,6 +1096,22 @@ function App() {
 
   // 어느 자동화든 실행 중이면 true
   const anyRunning = isRunning || videoAutomation.isRunning
+
+  // 생성 중: 가장 최근 생성된 이미지 씬으로 모니터를 점프 → "만들어지는 걸 본다".
+  // (씬에 SRT/길이 타이밍이 있어야 위치 계산 가능 — 없으면 그대로 둠)
+  const lastMonitorSceneRef = useRef(null)
+  useEffect(() => {
+    if (!anyRunning) return
+    let latest = null
+    for (const s of scenes) {
+      if (hasImageData(s) && s.generatedAt && (!latest || s.generatedAt > latest.generatedAt)) latest = s
+    }
+    if (latest && latest.id !== lastMonitorSceneRef.current) {
+      lastMonitorSceneRef.current = latest.id
+      const range = getSceneTimeRangeMs(latest)
+      if (range) setMonitorMs(range.startMs)
+    }
+  }, [scenes, anyRunning])
   const isVideoTab = activeTab === 'video-text' || activeTab === 'frame-to-video'
   const currentProgress = isVideoTab ? videoAutomation.progress : progress
   const currentStatus = isVideoTab ? videoAutomation.status : status
@@ -1234,8 +1257,9 @@ function App() {
           />
         )}
 
-        {/* 탭 콘텐츠 */}
-        <div className="tab-content-inner">
+        {/* 탭 콘텐츠 (좌: 패널 / 우: 프리뷰 모니터) */}
+        <div className="tab-content-inner content-row">
+          <div className="content-panels">
           {activeTab === 'text' && (
             <PromptInput
               value={scenes.map(s => s.prompt).join('\n')}
@@ -1359,6 +1383,19 @@ function App() {
               }}
               onSrtImport={(content) => handleImport('srt', content)}
             />
+          )}
+          </div>
+
+          {/* 우측 프리뷰 모니터 — 플레이헤드/생성 진행에 따라 현재 프레임+자막 표시 */}
+          {activeTab !== 'audio' && (
+            <aside className="content-monitor">
+              <PreviewPanel
+                playheadMs={monitorMs}
+                scenes={scenes}
+                srtEntries={resolveAudioSrtEntries(audioPackage, scenesHook.srtTrack)}
+                height="100%"
+              />
+            </aside>
           )}
         </div>
         </div>
@@ -1528,6 +1565,7 @@ function App() {
                 audioPackage={audioPackage}
                 onSceneSelect={(scene) => setSelectedScene(scene)}
                 onSaveTimecodeOverride={saveTimecodeOverride}
+                onPlayheadChange={setMonitorMs}
                 disabled={anyRunning}
               />
             ) : (

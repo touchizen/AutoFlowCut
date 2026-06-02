@@ -35,7 +35,7 @@ function formatTC(ms) {
   return formatDuration(ms / 1000)
 }
 
-export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClipSelect, onSaveTimecodeOverride, disabled = false, onFlag, isFlagged, onTrackDrop, compact = false }) {
+export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClipSelect, onSaveTimecodeOverride, disabled = false, onFlag, isFlagged, onTrackDrop, compact = false, onPlayheadChange }) {
   const { t } = useI18n()
   const rawData = useAudioTimeline(audioPackage, scenes, srtEntries)
 
@@ -89,6 +89,8 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
 
   const [zoom, setZoom] = useState(1)
   const [playheadMs, setPlayheadMs] = useState(0)
+  // 플레이헤드 변경을 상단 모니터(App)로 보고 — 스크럽/재생 시 모니터가 따라온다.
+  useEffect(() => { onPlayheadChange?.(playheadMs) }, [playheadMs])
   const [expandedTracks, setExpandedTracks] = useState(new Set())
   const [expandedSubTracks, setExpandedSubTracks] = useState(new Set())
   const [labelW, setLabelW] = useState(() => {
@@ -752,7 +754,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
 
       {/* Header */}
       <div className="atl-header">
-        <div className="atl-title">{t('audioTimeline.title') || 'Audio Timeline'}</div>
+        <div className="atl-title">{compact ? (t('bottomPanel.preview') || '프리뷰') : (t('audioTimeline.title') || 'Audio Timeline')}</div>
         <div className="atl-transport">
           <button
             className={`atl-play-btn${isGlobalPlaying ? ' atl-playing' : ''}`}
