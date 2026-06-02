@@ -267,14 +267,17 @@ html, body {
   flex-direction: column;
 }
 
-/* 콘텐츠 영역을 좌(패널)/우(프리뷰 모니터)로 분할 */
-.tab-content-inner.content-row {
+/* 편집 영역(좌: 콘텐츠+액션버튼) | 프리뷰 모니터(우). 모니터가 둘을 아우르는 우측 컬럼. */
+.editor-row {
+  flex: 1;
+  min-height: 0;
+  display: flex;
   flex-direction: row;
-  gap: 0;
 }
-.content-panels {
+.editor-col {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }

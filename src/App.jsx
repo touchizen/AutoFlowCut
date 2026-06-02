@@ -165,7 +165,7 @@ function App() {
   }, [monitorWidth])
   const startMonitorResize = useCallback((e) => {
     e.preventDefault()
-    const row = e.currentTarget.parentElement // .content-row
+    const row = e.currentTarget.parentElement // .editor-row
     const rect = row.getBoundingClientRect()
     const rightEdge = rect.right
     // 최대 폭 = 콘텐츠 너비의 90% (좌측 패널 10% 확보). 창 크기에 따라 스케일.
@@ -1249,6 +1249,10 @@ function App() {
           </div>
         </div>
 
+        {/* 편집 영역(좌: 콘텐츠+액션버튼) | 프리뷰 모니터(우) — 모니터가 둘을 아우름 */}
+        <div className="editor-row">
+        <div className="editor-col">
+
         {/* 스크롤 가능한 콘텐츠 영역 (레퍼런스 + 탭 콘텐츠) */}
         <div className="tab-content">
         {/* 레퍼런스 패널 (접기 가능) */}
@@ -1286,9 +1290,8 @@ function App() {
           />
         )}
 
-        {/* 탭 콘텐츠 (좌: 패널 / 우: 프리뷰 모니터) */}
-        <div className="tab-content-inner content-row">
-          <div className="content-panels">
+        {/* 탭 콘텐츠 */}
+        <div className="tab-content-inner">
           {activeTab === 'text' && (
             <PromptInput
               value={scenes.map(s => s.prompt).join('\n')}
@@ -1412,29 +1415,6 @@ function App() {
               }}
               onSrtImport={(content) => handleImport('srt', content)}
             />
-          )}
-          </div>
-
-          {/* 우측 프리뷰 모니터 — 플레이헤드/생성 진행에 따라 현재 프레임+자막 표시.
-              좌우 드래그 핸들로 폭 조절. */}
-          {activeTab !== 'audio' && (
-            <>
-              <div
-                className="content-monitor-resizer"
-                onMouseDown={startMonitorResize}
-                onDoubleClick={() => setMonitorWidth(320)}
-                title="드래그=폭 조절 · 더블클릭=기본값"
-              />
-              <aside className="content-monitor" style={{ width: monitorWidth }}>
-                <PreviewPanel
-                  playheadMs={monitorMs}
-                  scenes={scenes}
-                  srtEntries={resolveAudioSrtEntries(audioPackage, scenesHook.srtTrack)}
-                  height="100%"
-                  isPlaying={monitorPlaying}
-                />
-              </aside>
-            </>
           )}
         </div>
         </div>
@@ -1575,6 +1555,29 @@ function App() {
               🔄 {t('actions.retryErrors')}
             </button>
           )}
+        </div>
+        </div>
+
+        {/* 우측 프리뷰 모니터 — 좌측 [콘텐츠+액션버튼] 을 아우르는 컬럼. 좌우 드래그로 폭 조절. */}
+        {activeTab !== 'audio' && (
+          <>
+            <div
+              className="content-monitor-resizer"
+              onMouseDown={startMonitorResize}
+              onDoubleClick={() => setMonitorWidth(320)}
+              title="드래그=폭 조절 · 더블클릭=기본값"
+            />
+            <aside className="content-monitor" style={{ width: monitorWidth }}>
+              <PreviewPanel
+                playheadMs={monitorMs}
+                scenes={scenes}
+                srtEntries={resolveAudioSrtEntries(audioPackage, scenesHook.srtTrack)}
+                height="100%"
+                isPlaying={monitorPlaying}
+              />
+            </aside>
+          </>
+        )}
         </div>
       </div>
 
