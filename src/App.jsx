@@ -4,7 +4,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { DEFAULTS, UI, TIMING, STYLE_PRESETS } from './config/defaults'
-import { useFlowAPI } from './hooks/useFlowAPI'
+import { useGenAPI } from './hooks/useGenAPI'
 import { useScenes } from './hooks/useScenes'
 import { useAutomation } from './hooks/useAutomation'
 import { useVideoAutomation } from './hooks/useVideoAutomation'
@@ -171,7 +171,8 @@ function App() {
   // 내보내기 성공(3회) 또는 생성 100% 완료(5회) 시 평점 모달을 띄운다.
   const storeRating = useStoreRating({ isStoreBuild: __BUILD_TARGET__ === 'appx' })
 
-  const flowAPI = useFlowAPI({ onAuthError: handleAuthError })
+  // Flow 역공학 → 공식 GenAI(BYOK). 변수명은 호환을 위해 flowAPI 유지(점진 정리).
+  const flowAPI = useGenAPI({ onAuthError: handleAuthError, getProjectName: () => settings.projectName })
   const scenesHook = useScenes()
   const automation = useAutomation(
     flowAPI,

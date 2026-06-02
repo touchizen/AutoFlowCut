@@ -67,8 +67,13 @@ export function applyStyle(prompt, styleId, references, existingMatchedRefs = []
       if (styleRef.prompt) {
         styledPrompt = `${prompt}, ${styleRef.prompt}`
       }
-      if (styleRef.mediaId && !existingMatchedRefs.some(r => r.mediaId === styleRef.mediaId)) {
-        styleRefImages.push({ category: styleRef.category || 'style', mediaId: styleRef.mediaId, caption: styleRef.caption || '' })
+      // mediaId(Flow) 또는 name(공식 API base64 해석용) 중 하나라도 있으면 image ref 로 주입.
+      if (styleRef.mediaId || styleRef.name) {
+        const dup = existingMatchedRefs.some(r =>
+          (styleRef.mediaId && r.mediaId === styleRef.mediaId) || (styleRef.name && r.name === styleRef.name))
+        if (!dup) {
+          styleRefImages.push({ category: styleRef.category || 'style', mediaId: styleRef.mediaId || null, caption: styleRef.caption || '', name: styleRef.name })
+        }
       }
     }
   } else if (styleId.startsWith('preset:')) {
@@ -130,11 +135,11 @@ export function resolveSceneStyle(prompt, allMatched, selectedStyleRefId, refere
     const { styledPrompt: sp, styleRefImages } = applyStyle(prompt, selectedStyleRefId, references, matchedRefs)
     styledPrompt = sp
     appliedStyle = selectedStyleRefId
-    // styleRefImages를 matchedRefs에 추가
+    // styleRefImages를 matchedRefs에 추가 (mediaId 또는 name 기준 dedup)
     for (const img of styleRefImages) {
-      if (!matchedRefs.some(r => r.mediaId === img.mediaId)) {
-        matchedRefs.push(img)
-      }
+      const dup = matchedRefs.some(r =>
+        (img.mediaId && r.mediaId === img.mediaId) || (img.name && r.name === img.name))
+      if (!dup) matchedRefs.push(img)
     }
   }
 

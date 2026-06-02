@@ -95,8 +95,10 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       const refId = effectiveStyleId.replace('ref:', '')
       const styleRef = referencesRef.current.find(r => r.id == refId && r.type === 'style')
       if (styleRef) {
-        if (styleRef.mediaId) {
-          styleRefImages.push({ category: styleRef.category, mediaId: styleRef.mediaId, caption: styleRef.caption || '' })
+        // 공식 API 모드는 name 으로 base64 를 해석하므로 mediaId 또는 name 중
+        // 하나만 있어도 image ref 로 주입하고 name 을 보존한다.
+        if (styleRef.mediaId || styleRef.name) {
+          styleRefImages.push({ category: styleRef.category, mediaId: styleRef.mediaId || null, caption: styleRef.caption || '', name: styleRef.name })
         }
         if (styleRef.prompt) {
           styledPrompt = `${ref.prompt}, ${styleRef.prompt}`

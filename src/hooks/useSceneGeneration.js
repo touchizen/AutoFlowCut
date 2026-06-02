@@ -36,13 +36,16 @@ export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, open
     scenesHook.updateScene(sceneId, { status: 'generating' })
 
     try {
-      // 매칭되는 레퍼런스 찾기
+      // 매칭되는 레퍼런스 찾기.
+      // 공식 API 모드는 mediaId 대신 name 으로 base64 를 해석하므로
+      // mediaId 또는 name 중 하나만 있어도 선택하고, name 을 보존한다.
       const matchedRefs = scenesHook.getMatchingReferences(scene)
-        .filter(r => r.mediaId)
+        .filter(r => r.mediaId || r.name)
         .map(r => ({
           category: r.category,
-          mediaId: r.mediaId,
-          caption: r.caption || ''
+          mediaId: r.mediaId || null,
+          caption: r.caption || '',
+          name: r.name
         }))
 
       // overrideStyleId 정규화 — 'auto' 는 null (style_tag fallback만), 'none' 은 그대로, 명시 ID는 그대로.
