@@ -217,6 +217,7 @@ export async function submitVideo(
     durationSeconds = DEFAULT_VIDEO_DURATION,
     model = DEFAULT_VIDEO_MODEL,
     seed = null,
+    resolution = null,
   } = {},
   deps = {}
 ) {
@@ -234,10 +235,22 @@ export async function submitVideo(
     }
   }
 
-  const parameters = {
-    aspectRatio: aspectRatio || DEFAULT_ASPECT_RATIO,
-    durationSeconds: String(durationSeconds),
-  }
+  const parameters = { aspectRatio: aspectRatio || DEFAULT_ASPECT_RATIO }
+
+  // 해상도: 지정 시 전달 (720p/1080p/4k). 미지정이면 API 기본(720p).
+  const res = resolution || null
+  if (res) parameters.resolution = res
+
+  // 길이: {4,6,8} 로 보정. reference 이미지(I2V/F2V) 또는 1080p/4k 면 8초 강제(공식 Veo 제약).
+  const hasImage = !!((image && image.data) || (endImage && endImage.data))
+  let dur = Math.round(Number(durationSeconds))
+  if (!Number.isFinite(dur) || dur <= 0) dur = DEFAULT_VIDEO_DURATION
+  if (dur <= 4) dur = 4
+  else if (dur <= 6) dur = 6
+  else dur = 8
+  if (hasImage || res === '1080p' || res === '4k') dur = 8
+  parameters.durationSeconds = String(dur)
+
   // seed 는 Veo 가 지원 — 숫자일 때만 전달(재현성). 이미지(Gemini)는 미지원이라 안 보냄.
   if (Number.isFinite(seed)) parameters.seed = seed
 

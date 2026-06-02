@@ -37,3 +37,18 @@ export function normalizeVideoModel(model) {
   // 매핑되지 않은 underscore 구 키 / 비-veo 값 → 엔진 기본값으로.
   return undefined
 }
+
+// Veo 3.x 가 허용하는 비디오 길이(초). 4k/1080p · reference 이미지 사용 시엔 8 강제(API 제약).
+export const VEO_DURATIONS = [4, 6, 8]
+
+/**
+ * 씬 길이(초)를 Veo 허용값 {4,6,8} 으로 스냅. 씬을 "덮는" 가장 짧은 값(>= 길이),
+ * 8 초과면 8(단일 클립 최대). 0/누락/비정상 → 8(기본).
+ * @param {number} seconds
+ * @returns {4|6|8}
+ */
+export function snapVeoDuration(seconds) {
+  const s = Number(seconds)
+  if (!Number.isFinite(s) || s <= 0) return 8
+  return VEO_DURATIONS.find((d) => d >= s) ?? 8
+}
