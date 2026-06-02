@@ -231,11 +231,13 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       updateScene(scene.id, { status: 'generating', generatingStartedAt: Date.now() })
       setStatusMessage(t('status.generatingScene', { ids: scene.id, current: completedCountRef.current, total }))
 
-      // 매칭 레퍼런스
+      // 매칭 레퍼런스.
+      // 공식 API 모드는 mediaId 대신 name 으로 base64 를 해석하므로(useSceneGeneration
+      // 단일 씬 경로와 동일 계약) mediaId 또는 name 중 하나만 있어도 선택하고 name 을 보존한다.
       const allMatched = getMatchingReferences(scene)
       const matchedRefs = allMatched
-        .filter(r => r.mediaId)
-        .map(r => ({ category: r.category, mediaId: r.mediaId, caption: r.caption || '' }))
+        .filter(r => r.mediaId || r.name)
+        .map(r => ({ category: r.category, mediaId: r.mediaId || null, caption: r.caption || '', name: r.name }))
       if (matchedRefs.length > 0) {
         console.log('[Automation] Scene', scene.id, '→ injecting', matchedRefs.length, 'refs')
       }

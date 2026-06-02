@@ -537,6 +537,40 @@ describe('useAutomation reCAPTCHA integration', () => {
   }, 30000)
 })
 
+describe('useAutomation — batch reference contract (API mode name-based)', () => {
+  // 회귀: API 모드는 mediaId 대신 name 으로 레퍼런스 base64 를 해석한다(uploadReference 가
+  // mediaId:null 반환). 배치 경로가 r.mediaId 로만 필터링하면 name-only 레퍼런스가 전부
+  // 탈락해 캐릭터/스타일 일관성이 깨진다. 단일 씬 경로와 동일하게 mediaId||name 으로 선택하고
+  // name 을 보존해야 한다.
+  it('name-only 레퍼런스(mediaId 없음)를 submitGenerationDOM 에 name 포함해 전달', async () => {
+    const { hook, submitGenerationDOM, checkGeneration, collectGeneration } = setupHook({
+      scenes: [{ id: 's1', prompt: 'a', status: 'pending' }],
+      scenesHook: {
+        getMatchingReferences: vi.fn(() => [
+          { category: 'character', name: 'hero', mediaId: null, caption: 'main' },
+        ]),
+      },
+    })
+
+    submitGenerationDOM.mockResolvedValue({ success: true, generationId: 'gen-1' })
+    checkGeneration.mockResolvedValue({ completed: true })
+    collectGeneration.mockResolvedValue({ success: true, images: [{ id: 'img-1', mediaId: 'm-1' }] })
+
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({ projectName: 'p', saveMode: 'memory' })
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(60 * 1000) })
+    await startPromise
+
+    expect(submitGenerationDOM).toHaveBeenCalled()
+    const matchedRefs = submitGenerationDOM.mock.calls[0][1]
+    expect(matchedRefs).toEqual([
+      { category: 'character', mediaId: null, caption: 'main', name: 'hero' },
+    ])
+  })
+})
+
 describe('useAutomation — force regenerate status reset ordering', () => {
   // 회귀: force 리셋이 토큰 확인보다 먼저 실행되면, 로그인 만료 상태에서 "전체 재생성"을
   // 눌렀을 때 done 씬이 pending 으로 리셋된 채 생성은 시작도 못 하고 abort →
