@@ -38,6 +38,17 @@ export const mockElectronAPI = {
   openCapcut: vi.fn(),
   getAppVersion: vi.fn(),
   saveSrtFile: vi.fn(),
+  openExternal: vi.fn(),
+
+  // Google GenAI (BYOK)
+  genaiGetKeyStatus: vi.fn(),
+  genaiSetKey: vi.fn(),
+  genaiClearKey: vi.fn(),
+  genaiValidateKey: vi.fn(),
+  genaiGenerateImage: vi.fn(),
+  genaiGenerateVideo: vi.fn(),
+  genaiCheckVideoStatus: vi.fn(),
+  genaiDownloadVideo: vi.fn(),
 }
 
 export function resetElectronAPI() {
