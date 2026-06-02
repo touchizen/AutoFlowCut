@@ -158,7 +158,8 @@ export async function generateImage(
       return { success: false, error: `HTTP ${response?.status ?? '?'} :: empty response` }
     }
 
-    const responseParts = data.candidates?.[0]?.content?.parts || []
+    const candidate = data.candidates?.[0]
+    const responseParts = candidate?.content?.parts || []
     const imagePart = responseParts.find((p) => p.inlineData)
 
     if (imagePart) {
@@ -170,9 +171,17 @@ export async function generateImage(
       }
     }
 
-    // 이미지가 없으면 모델이 텍스트로 거부 사유를 줬을 수 있음 (안전필터 등)
+    // 이미지가 없는 경우 — 사유를 최대한 구체적으로 표면화해 사용자가 안전필터 차단인지
+    // 일시 오류인지 구분하고 재시도 여부를 판단할 수 있게 한다.
     const textPart = responseParts.find((p) => p.text)
-    return { success: false, error: textPart?.text || 'No image was generated' }
+    if (textPart?.text) return { success: false, error: textPart.text }
+    const blockReason = data.promptFeedback?.blockReason
+    if (blockReason) return { success: false, error: `Blocked by safety filter: ${blockReason}` }
+    const finishReason = candidate?.finishReason
+    if (finishReason && finishReason !== 'STOP') {
+      return { success: false, error: `No image generated (finishReason: ${finishReason})` }
+    }
+    return { success: false, error: 'No image was generated' }
   } catch (error) {
     return { success: false, error: error?.message || String(error) }
   }

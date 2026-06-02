@@ -169,10 +169,26 @@ describe('genai — generateImage', () => {
     expect(res).toEqual({ success: false, error: 'blocked by safety filter' })
   })
 
-  it('fetch throw → catch 해서 error 반환', async () => {
-    const fetchImpl = vi.fn().mockRejectedValue(new Error('network down'))
+  it('parts 없이 promptFeedback.blockReason → 차단 사유 표면화', async () => {
+    const fetchImpl = mockFetchOnce(jsonRes({ promptFeedback: { blockReason: 'SAFETY' } }))
     const res = await generateImage({ apiKey: 'k', prompt: 'x' }, { fetchImpl })
+    expect(res.success).toBe(false)
+    expect(res.error).toMatch(/SAFETY/)
+  })
+
+  it('parts 없이 finishReason(IMAGE_SAFETY) → finishReason 표면화', async () => {
+    const fetchImpl = mockFetchOnce(jsonRes({ candidates: [{ finishReason: 'IMAGE_SAFETY', content: { parts: [] } }] }))
+    const res = await generateImage({ apiKey: 'k', prompt: 'x' }, { fetchImpl })
+    expect(res.success).toBe(false)
+    expect(res.error).toMatch(/IMAGE_SAFETY/)
+  })
+
+  it('fetch throw → 네트워크 재시도 후 catch 해서 error 반환', async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new Error('network down'))
+    const sleepImpl = vi.fn().mockResolvedValue(undefined)
+    const res = await generateImage({ apiKey: 'k', prompt: 'x' }, { fetchImpl, sleepImpl })
     expect(res).toEqual({ success: false, error: 'network down' })
+    expect(fetchImpl).toHaveBeenCalledTimes(3) // 최초 + 2회 재시도
   })
 })
 
@@ -383,9 +399,10 @@ describe('genai — validateApiKey', () => {
     expect(res.error).toBe('HTTP 400 :: API key not valid :: INVALID_ARGUMENT')
   })
 
-  it('fetch throw → invalid', async () => {
+  it('fetch throw → 재시도 후 invalid', async () => {
     const fetchImpl = vi.fn().mockRejectedValue(new Error('offline'))
-    const res = await validateApiKey({ apiKey: 'k' }, { fetchImpl })
+    const sleepImpl = vi.fn().mockResolvedValue(undefined)
+    const res = await validateApiKey({ apiKey: 'k' }, { fetchImpl, sleepImpl })
     expect(res).toEqual({ valid: false, error: 'offline' })
   })
 })
