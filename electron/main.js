@@ -49,7 +49,10 @@ app.setName('AutoFlowCut')
 // (app.dock은 whenReady 이후에만 사용 가능 → 아래로 옮김)
 const __filename_main = fileURLToPath(import.meta.url)
 const __dirname_main = path.dirname(__filename_main)
-const APP_ICON_PATH = path.join(__dirname_main, '..', 'assets', 'icon.icns')
+// dock.setIcon 은 nativeImage 로 로드 — .icns 디코딩이 불안정해 실패한다(dev 에서
+// "Failed to load image" 경고). PNG 를 쓴다(프로덕션 .app 번들 아이콘은 electron-builder 가
+// 별도 .icns 로 처리하므로 무관).
+const APP_ICON_PATH = path.join(__dirname_main, '..', 'assets', 'icon.png')
 const HAS_APP_ICON = fsSync.existsSync(APP_ICON_PATH)
 
 // package.json에서 buildNumber 읽기 (dev/prod 모두 동일)
