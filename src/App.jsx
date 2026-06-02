@@ -184,6 +184,12 @@ function App() {
     document.addEventListener('mousemove', onMove)
     document.addEventListener('mouseup', onUp)
   }, [])
+  // 리사이저 더블클릭 → 5:5 기본으로 리셋(null). 저장 effect는 null 을 건너뛰므로
+  // localStorage 의 기존 px 값을 직접 지워 stale 복원 방지.
+  const resetMonitorWidth = useCallback(() => {
+    setMonitorWidth(null)
+    try { localStorage.removeItem('autoflowcut_monitorWidth') } catch {}
+  }, [])
 
   // 설정 모달 열기 (특정 탭으로)
   const openSettings = (tab = null) => {
@@ -1566,8 +1572,8 @@ function App() {
             <div
               className="content-monitor-resizer"
               onMouseDown={startMonitorResize}
-              onDoubleClick={() => setMonitorWidth(320)}
-              title="드래그=폭 조절 · 더블클릭=기본값"
+              onDoubleClick={resetMonitorWidth}
+              title="드래그=폭 조절 · 더블클릭=기본(5:5)"
             />
             <aside className="content-monitor" style={{ width: monitorWidth ?? '50%' }}>
               <PreviewPanel
