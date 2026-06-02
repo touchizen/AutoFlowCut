@@ -1,7 +1,7 @@
 /**
  * WelcomeScreen Component - 시작 화면
- * 
- * 토큰 없을 때 Flow 로그인 안내
+ *
+ * BYOK API 키가 없을 때 키 설정으로 안내. (구 Flow 로그인 화면을 대체)
  */
 
 import { useState, useEffect, useRef } from 'react'
@@ -12,43 +12,17 @@ import appIconUrl from '/assets/icon128.png'
 
 export default function WelcomeScreen({ getAccessToken, onReady, onSetupKey }) {
   const { t } = useI18n()
-  const [authStatus, setAuthStatus] = useState('checking') // 'checking' | 'authenticated' | 'unauthenticated' | 'waiting' | 'unavailable'
+  const [authStatus, setAuthStatus] = useState('checking') // 'checking' | 'authenticated' | 'unauthenticated' | 'waiting'
   const pollingRef = useRef(null)
 
   useEffect(() => {
     checkAuth(true) // quickCheck 모드
-
-    // Flow 지역 제한 감지
-    const handleFlowStatus = (data) => {
-      if (data?.unavailable) {
-        unavailableRef.current = true
-        setAuthStatus('unavailable')
-        stopPolling()
-      } else if (data?.authenticated) {
-        setAuthStatus('authenticated')
-        stopPolling()
-        setTimeout(() => {
-          window.electronAPI?.switchTab?.('app')
-        }, 1000)
-        onReady?.()
-      }
-    }
-    // preload 가 반환하는 unsubscribe 를 cleanup 에서 호출 — listener leak 방지.
-    const off = window.electronAPI?.onFlowStatus?.(handleFlowStatus)
-
-    // cleanup
     return () => {
-      off?.()
-      if (pollingRef.current) {
-        clearInterval(pollingRef.current)
-      }
+      if (pollingRef.current) clearInterval(pollingRef.current)
     }
   }, [])
-  
-  const unavailableRef = useRef(false)
 
   const checkAuth = async (quickCheck = false) => {
-    if (unavailableRef.current) return // 지역 제한 시 인증 체크 중단
     setAuthStatus('checking')
     try {
       const token = await getAccessToken(false, quickCheck)
@@ -61,10 +35,10 @@ export default function WelcomeScreen({ getAccessToken, onReady, onSetupKey }) {
         }, 1000)
         onReady?.()
       } else {
-        if (!unavailableRef.current) setAuthStatus('unauthenticated')
+        setAuthStatus('unauthenticated')
       }
     } catch (e) {
-      if (!unavailableRef.current) setAuthStatus('unauthenticated')
+      setAuthStatus('unauthenticated')
     }
   }
   
@@ -129,26 +103,17 @@ export default function WelcomeScreen({ getAccessToken, onReady, onSetupKey }) {
         </p>
         
         <div className="welcome-auth">
-          {authStatus === 'unavailable' ? (
-            <button className="btn-flow unavailable" disabled>
-              🌍 {t('welcome.unavailable')}
-            </button>
-          ) : authStatus === 'waiting' ? (
+          {authStatus === 'waiting' ? (
             <button className="btn-flow waiting" disabled>
               ⏳ {t('welcome.waitingLogin')}
             </button>
           ) : (
             <button className="btn-flow" onClick={openFlow}>
-              🚀 {t('welcome.openFlow')}
+              🔑 {t('welcome.openFlow')}
             </button>
           )}
         </div>
 
-        {authStatus === 'unavailable' && (
-          <div className="welcome-hint unavailable-hint">
-            ⚠️ {t('welcome.unavailableHint')}
-          </div>
-        )}
         {authStatus === 'waiting' && (
           <div className="welcome-hint">
             💡 {t('welcome.loginHint')}

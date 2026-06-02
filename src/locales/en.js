@@ -22,12 +22,10 @@ export default {
   // Welcome screen
   welcome: {
     title: 'AutoFlowCut',
-    description: 'Generate images & videos with Flow AI\nand export to CapCut projects',
-    openFlow: 'Open Flow',
-    waitingLogin: 'Waiting for login...',
-    loginHint: 'Login in Flow to continue automatically',
-    unavailable: 'Flow is not available in your region',
-    unavailableHint: 'Google Flow AI is currently available in limited regions only. Please use a VPN to connect from a supported country (e.g., United States), then relaunch the app.',
+    description: 'Generate images & videos with AI\nand export to CapCut projects',
+    openFlow: 'Set up API Key',
+    waitingLogin: 'Checking key...',
+    loginHint: 'Save your API key in Settings to start automatically',
     checking: 'Checking authentication...',
   },
   

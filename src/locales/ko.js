@@ -22,12 +22,10 @@ export default {
   // 시작 화면
   welcome: {
     title: 'AutoFlowCut',
-    description: 'Flow AI로 이미지/비디오를 생성하고\nCapCut 프로젝트로 내보내세요',
-    openFlow: 'Flow 열기',
-    waitingLogin: '로그인 대기 중...',
-    loginHint: 'Flow에서 로그인하면 자동으로 진입합니다',
-    unavailable: '이 지역에서는 Flow를 사용할 수 없습니다',
-    unavailableHint: 'Google Flow AI는 현재 제한된 지역에서만 사용 가능합니다. VPN으로 지원 국가(예: 미국)에 연결한 후 앱을 다시 실행해주세요.',
+    description: 'AI로 이미지/비디오를 생성하고\nCapCut 프로젝트로 내보내세요',
+    openFlow: 'API 키 설정',
+    waitingLogin: '키 확인 중...',
+    loginHint: '설정 창에서 API 키를 저장하면 자동으로 시작됩니다',
     checking: '인증 확인 중...',
   },
   
