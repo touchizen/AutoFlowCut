@@ -195,25 +195,11 @@ export default function Header({
     }
   }
 
-  // cloud(BYOK) 모드: Flow 로그인 대신 API Key 설정 탭을 연다.
-  // 키 저장 시 아래 폴링의 getAccessToken('byok') 이 truthy 가 되어 인증 처리.
+  // BYOK 모드: API Key 설정 탭을 연다. 폴링 없음 — 키 저장 시 useApiKey 가 쏘는
+  // 'byok-key-changed' 이벤트를 App 이 받아 authReady 를 갱신하면, 아래 authReady
+  // 동기화 effect 가 배지를 🟢 로 바꾼다.
   const openFlow = () => {
     onSettings?.('apiKey')
-    setAuthStatus('waiting')
-    stopPolling()
-    pollingRef.current = setInterval(async () => {
-      try {
-        const token = await getAccessToken(true)
-        if (token) {
-          setAuthStatus('authenticated')
-          stopPolling()
-          // Notify App so it clears its auth-invalidated flag and re-enables features
-          // that gate on authReady. Without this, App stays at authReady=false even
-          // though Flow is logged in again.
-          onAuthRecovered?.()
-        }
-      } catch {}
-    }, TIMING.AUTH_POLL_INTERVAL || 2000)
   }
   
   const handleProjectSelect = (name) => {

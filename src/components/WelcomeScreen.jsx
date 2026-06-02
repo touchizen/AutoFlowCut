@@ -68,12 +68,11 @@ export default function WelcomeScreen({ getAccessToken, onReady, onSetupKey }) {
     }
   }
   
-  // cloud(BYOK) 모드: API Key 설정 탭을 연다. 폴링은 백그라운드 — 키가 저장되면
-  // getAccessToken('byok') 이 truthy 가 되어 자동 진입. 'waiting' UI 로 잠그지 않으므로
-  // 사용자가 설정 모달을 그냥 닫아도(취소) 화면은 버튼 그대로 남는다.
+  // BYOK 모드: API Key 설정 탭을 연다. 폴링 없음 — 키가 저장되면 useApiKey 가 쏘는
+  // 'byok-key-changed' 이벤트를 App 이 받아 authReady=true 로 만들고, 그러면 이 WelcomeScreen
+  // 은 언마운트된다(App 의 !authReady 조건). 취소해도 화면은 버튼 그대로 남는다.
   const openFlow = () => {
     onSetupKey?.()
-    startPolling()
   }
   
   if (authStatus === 'checking') {

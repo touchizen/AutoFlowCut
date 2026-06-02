@@ -226,6 +226,19 @@ function App() {
     }
   }, [scenes.length, authReady])
 
+  // BYOK 키가 앱 내에서 저장/삭제되면(useApiKey) 폴링 없이 즉시 인증 상태 재확인.
+  // 사용자가 명시적으로 키를 바꾼 것이므로 authInvalidated 도 해제한다.
+  useEffect(() => {
+    const onKeyChanged = () => {
+      flowAPI.getAccessToken(false, true).then(token => {
+        authInvalidatedRef.current = false
+        setAuthReady(!!token)
+      }).catch(() => {})
+    }
+    window.addEventListener('byok-key-changed', onKeyChanged)
+    return () => window.removeEventListener('byok-key-changed', onKeyChanged)
+  }, [])
+
   // 자동화가 끝나면 Stop 버튼용 running snapshot 정리.
   // Transition-based: 실행 → 종료 전이일 때만 clear. 큐로 대기 중일 때는 deps가 변하지 않아
   // effect 자체가 재실행되지 않지만, 만에 하나 다른 state가 deps에 끼어드는 미래 변경에도

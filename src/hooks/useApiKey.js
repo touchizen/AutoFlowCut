@@ -45,7 +45,12 @@ export function useApiKey() {
   const saveKey = useCallback(async (apiKey) => {
     try {
       const res = await window.electronAPI.genaiSetKey({ apiKey })
-      if (res?.success) await refresh()
+      if (res?.success) {
+        await refresh()
+        // 키가 앱 내에서 바뀌었음을 전역 통지 — Header/Welcome 인증 게이트가 폴링 없이
+        // 즉시 반영(App 의 'byok-key-changed' 리스너 → authReady 재확인).
+        window.dispatchEvent(new CustomEvent('byok-key-changed'))
+      }
       return res
     } catch (e) {
       return { success: false, error: e?.message || String(e) }
@@ -56,6 +61,7 @@ export function useApiKey() {
     try {
       const res = await window.electronAPI.genaiClearKey()
       await refresh()
+      window.dispatchEvent(new CustomEvent('byok-key-changed'))
       return res
     } catch (e) {
       return { success: false, error: e?.message || String(e) }

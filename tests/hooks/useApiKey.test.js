@@ -4,7 +4,7 @@
  * window.electronAPI.genai* IPC 를 mock 해 상태 로드/검증/저장/삭제 위임과
  * 저장·삭제 후 상태 새로고침을 검증.
  */
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { useApiKey } from '../../src/hooks/useApiKey'
 
@@ -54,6 +54,27 @@ describe('useApiKey', () => {
     await act(async () => { await result.current.saveKey('K') })
     expect(window.electronAPI.genaiSetKey).toHaveBeenCalledWith({ apiKey: 'K' })
     await waitFor(() => expect(result.current.hasKey).toBe(true))
+  })
+
+  it('saveKey 성공 시 byok-key-changed 이벤트 발행 (폴링 대체 — App 이 즉시 감지)', async () => {
+    const onChanged = vi.fn()
+    window.addEventListener('byok-key-changed', onChanged)
+    const { result } = renderHook(() => useApiKey())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    await act(async () => { await result.current.saveKey('K') })
+    expect(onChanged).toHaveBeenCalled()
+    window.removeEventListener('byok-key-changed', onChanged)
+  })
+
+  it('saveKey 실패 시엔 이벤트 발행 안 함', async () => {
+    window.electronAPI.genaiSetKey.mockResolvedValue({ success: false, error: 'x' })
+    const onChanged = vi.fn()
+    window.addEventListener('byok-key-changed', onChanged)
+    const { result } = renderHook(() => useApiKey())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    await act(async () => { await result.current.saveKey('K') })
+    expect(onChanged).not.toHaveBeenCalled()
+    window.removeEventListener('byok-key-changed', onChanged)
   })
 
   it('clearKey 위임 + 새로고침', async () => {
