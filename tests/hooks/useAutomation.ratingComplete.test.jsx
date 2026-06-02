@@ -20,10 +20,6 @@ vi.mock('../../src/hooks/useFileSystem', () => ({
     readFileByPath: vi.fn().mockRejectedValue(new Error('unused')),
   },
 }))
-vi.mock('../../src/utils/flowDOMClient', () => ({
-  resetDOMSession: vi.fn(),
-  requestStopDOM: vi.fn(),
-}))
 vi.mock('../../src/components/Toast', () => ({
   toast: { error: vi.fn(), warning: vi.fn(), success: vi.fn() },
 }))

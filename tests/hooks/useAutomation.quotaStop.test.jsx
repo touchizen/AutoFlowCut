@@ -22,10 +22,6 @@ vi.mock('../../src/hooks/useFileSystem', () => ({
   },
 }))
 
-vi.mock('../../src/utils/flowDOMClient', () => ({
-  resetDOMSession: vi.fn(),
-  requestStopDOM: vi.fn(),
-}))
 
 vi.mock('../../src/components/Toast', () => ({
   toast: { error: vi.fn(), warning: vi.fn(), success: vi.fn(), info: vi.fn() },

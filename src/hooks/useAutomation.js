@@ -12,7 +12,6 @@ import { fileSystemAPI } from './useFileSystem'
 import { getTimestamp } from '../utils/formatters'
 import { cleanBase64 as stripBase64Prefix } from '../utils/urls'
 import { toast } from '../components/Toast'
-import { resetDOMSession, requestStopDOM } from '../utils/flowDOMClient'
 import { isRecaptchaError } from '../utils/recaptchaDetect'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 import { useRecaptchaBackoff } from './useRecaptchaBackoff'
@@ -368,9 +367,6 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     authStoppedRef.current = false
     completedCountRef.current = 0
 
-    // 새 배치 시작: DOM 세션 리셋
-    resetDOMSession()
-
     setIsRunning(true)
     setIsPaused(false)
     setStatus('running')
@@ -607,8 +603,6 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     setIsStopping(true)
     setStatusMessage(t('status.stopping'))
     recaptcha.cancelWait()  // reCAPTCHA wait 또는 grace 즉시 종료
-    // DOM 모드 폴링 루프도 즉시 중단
-    requestStopDOM()
     // 큐에 남은 작업 즉시 제거 (불필요한 API 요청 방지)
     if (generationQueue?.clearQueue) {
       generationQueue.clearQueue()
