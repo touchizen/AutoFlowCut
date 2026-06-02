@@ -69,13 +69,37 @@ describe('genai — generateImage', () => {
     })
   })
 
-  it('올바른 endpoint + 모델 + key 로 호출', async () => {
+  it('올바른 endpoint + 모델 + 키 헤더로 호출 (URL 에 key= 노출 안 함)', async () => {
     const fetchImpl = mockFetchOnce(jsonRes(IMG_PART()))
     await generateImage({ apiKey: 'SECRET', prompt: 'a cat' }, { fetchImpl })
 
     const [url, opts] = fetchImpl.mock.calls[0]
-    expect(url).toBe(`${GENAI_BASE}/models/${DEFAULT_IMAGE_MODEL}:generateContent?key=SECRET`)
+    expect(url).toBe(`${GENAI_BASE}/models/${DEFAULT_IMAGE_MODEL}:generateContent`)
+    expect(url).not.toContain('key=')
     expect(opts.method).toBe('POST')
+    expect(opts.headers['x-goog-api-key']).toBe('SECRET')
+  })
+
+  it('503/UNAVAILABLE 일시 과부하는 백오프 후 재시도해 성공', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonRes({ error: { code: 503, message: 'The model is overloaded', status: 'UNAVAILABLE' } }, { ok: false, status: 503 }))
+      .mockResolvedValueOnce(jsonRes(IMG_PART('OK')))
+    const sleepImpl = vi.fn().mockResolvedValue(undefined)
+    const res = await generateImage({ apiKey: 'k', prompt: 'x' }, { fetchImpl, sleepImpl })
+    expect(res.success).toBe(true)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(sleepImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('503 재시도 모두 소진 시 에러 반환 (maxRetries=2 → 3회 호출)', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonRes({ error: { code: 503, message: 'overloaded', status: 'UNAVAILABLE' } }, { ok: false, status: 503 })
+    )
+    const sleepImpl = vi.fn().mockResolvedValue(undefined)
+    const res = await generateImage({ apiKey: 'k', prompt: 'x' }, { fetchImpl, sleepImpl })
+    expect(res.success).toBe(false)
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
+    expect(sleepImpl).toHaveBeenCalledTimes(2)
   })
 
   it('레퍼런스 없을 때: text part 만, consistency 지시문 없음', async () => {
@@ -167,7 +191,8 @@ describe('genai — submitVideo', () => {
     expect(res).toEqual({ success: true, operationName: 'operations/abc123' })
 
     const [url, opts] = fetchImpl.mock.calls[0]
-    expect(url).toBe(`${GENAI_BASE}/models/${DEFAULT_VIDEO_MODEL}:predictLongRunning?key=k`)
+    expect(url).toBe(`${GENAI_BASE}/models/${DEFAULT_VIDEO_MODEL}:predictLongRunning`)
+    expect(opts.headers['x-goog-api-key']).toBe('k')
     const body = JSON.parse(opts.body)
     expect(body.instances[0].prompt).toBe('a river')
     expect(body.instances[0].image).toBeUndefined()
@@ -256,19 +281,21 @@ describe('genai — checkVideoOperation', () => {
 })
 
 describe('genai — fetchVideoBase64', () => {
-  it('ok → base64 변환 + key 쿼리 부착', async () => {
+  it('ok → base64 변환 + 키 헤더 (URL 에 key= 노출 안 함)', async () => {
     const fetchImpl = mockFetchOnce(binRes([1, 2, 3, 4]))
     const res = await fetchVideoBase64({ apiKey: 'KEY', videoUri: 'https://v/clip' }, { fetchImpl })
     expect(res.success).toBe(true)
     expect(res.base64).toBe(Buffer.from([1, 2, 3, 4]).toString('base64'))
     expect(res.mimeType).toBe('video/mp4')
-    expect(fetchImpl.mock.calls[0][0]).toBe('https://v/clip?key=KEY')
+    expect(fetchImpl.mock.calls[0][0]).toBe('https://v/clip')
+    expect(fetchImpl.mock.calls[0][1].headers['x-goog-api-key']).toBe('KEY')
   })
 
-  it('uri 에 이미 쿼리 있으면 & 로 연결', async () => {
+  it('uri 의 기존 쿼리는 그대로 유지 (key 는 헤더로)', async () => {
     const fetchImpl = mockFetchOnce(binRes([0]))
     await fetchVideoBase64({ apiKey: 'KEY', videoUri: 'https://v/clip?alt=media' }, { fetchImpl })
-    expect(fetchImpl.mock.calls[0][0]).toBe('https://v/clip?alt=media&key=KEY')
+    expect(fetchImpl.mock.calls[0][0]).toBe('https://v/clip?alt=media')
+    expect(fetchImpl.mock.calls[0][1].headers['x-goog-api-key']).toBe('KEY')
   })
 
   it('!ok → 실패', async () => {
@@ -333,7 +360,8 @@ describe('genai — validateApiKey', () => {
     const fetchImpl = mockFetchOnce(jsonRes({ models: [{ name: 'models/gemini-2.5-flash-image' }] }))
     const res = await validateApiKey({ apiKey: 'GOOD' }, { fetchImpl })
     expect(res).toEqual({ valid: true })
-    expect(fetchImpl.mock.calls[0][0]).toBe(`${GENAI_BASE}/models?key=GOOD`)
+    expect(fetchImpl.mock.calls[0][0]).toBe(`${GENAI_BASE}/models`)
+    expect(fetchImpl.mock.calls[0][1]?.headers['x-goog-api-key']).toBe('GOOD')
   })
 
   it('error 응답 → invalid + 사유', async () => {

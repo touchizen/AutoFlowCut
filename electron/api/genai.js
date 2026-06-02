@@ -59,6 +59,54 @@ function buildReferenceParts(referenceImages = []) {
     }))
 }
 
+// 일시적 과부하 후 재시도 대기 (attempt 0, 1). 길이 = 최대 재시도 횟수.
+export const RETRY_BACKOFF_MS = [1000, 3000]
+
+/** 일시적 과부하 응답인지 — 503 / UNAVAILABLE / "overloaded". 429(quota)는 제외(quota-stop 별도 처리). */
+function isTransientOverload(response, data) {
+  if (response?.status === 503) return true
+  if (data?.error?.status === 'UNAVAILABLE') return true
+  return /overloaded|temporarily unavailable|try again later/i.test(data?.error?.message || '')
+}
+
+/**
+ * 공통 JSON 요청 헬퍼.
+ *   - API 키를 `x-goog-api-key` 헤더로 전달 (URL ?key= 노출 회피 — 로그/Sentry
+ *     breadcrumb 으로 키가 새는 것을 막음).
+ *   - 503/UNAVAILABLE/"overloaded" 일시 오류는 백오프 재시도 (Gemini 이미지/Veo 는
+ *     부하 시 503 을 흔히 뱉음 — 단발 blip 으로 씬 전체를 실패시키지 않게).
+ * fetch/sleep 주입 가능 → 실제 네트워크·타이머 없이 테스트.
+ *
+ * @returns {Promise<{response:any, data:any}>}
+ */
+async function genaiFetch(
+  url,
+  { apiKey, method = 'GET', body = null } = {},
+  { fetchImpl = fetch, sleepImpl = defaultSleep, maxRetries = RETRY_BACKOFF_MS.length } = {}
+) {
+  const init = { method, headers: { 'x-goog-api-key': apiKey } }
+  if (body != null) {
+    init.headers['Content-Type'] = 'application/json'
+    init.body = JSON.stringify(body)
+  }
+
+  let attempt = 0
+  for (;;) {
+    let response
+    try {
+      response = await fetchImpl(url, init)
+    } catch (e) {
+      if (attempt < maxRetries) { await sleepImpl(RETRY_BACKOFF_MS[attempt]); attempt += 1; continue }
+      throw e
+    }
+    const data = await safeJson(response)
+    if (isTransientOverload(response, data) && attempt < maxRetries) {
+      await sleepImpl(RETRY_BACKOFF_MS[attempt]); attempt += 1; continue
+    }
+    return { response, data }
+  }
+}
+
 /**
  * 이미지 생성 (gemini-2.5-flash-image).
  *
@@ -74,7 +122,7 @@ function buildReferenceParts(referenceImages = []) {
  */
 export async function generateImage(
   { apiKey, prompt, referenceImages = [], aspectRatio = DEFAULT_ASPECT_RATIO, model = DEFAULT_IMAGE_MODEL } = {},
-  { fetchImpl = fetch } = {}
+  deps = {}
 ) {
   if (!apiKey) return { success: false, error: 'No API key' }
 
@@ -97,16 +145,11 @@ export async function generateImage(
   }
 
   try {
-    const response = await fetchImpl(
-      `${GENAI_BASE}/models/${model}:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      }
+    const { response, data } = await genaiFetch(
+      `${GENAI_BASE}/models/${model}:generateContent`,
+      { apiKey, method: 'POST', body },
+      deps
     )
-
-    const data = await safeJson(response)
 
     if (data?.error) {
       return { success: false, error: formatGoogleApiError(data.error) }
@@ -164,7 +207,7 @@ export async function submitVideo(
     durationSeconds = DEFAULT_VIDEO_DURATION,
     model = DEFAULT_VIDEO_MODEL,
   } = {},
-  { fetchImpl = fetch } = {}
+  deps = {}
 ) {
   if (!apiKey) return { success: false, error: 'No API key' }
 
@@ -191,16 +234,11 @@ export async function submitVideo(
   }
 
   try {
-    const response = await fetchImpl(
-      `${GENAI_BASE}/models/${model}:predictLongRunning?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      }
+    const { data } = await genaiFetch(
+      `${GENAI_BASE}/models/${model}:predictLongRunning`,
+      { apiKey, method: 'POST', body },
+      deps
     )
-
-    const data = await safeJson(response)
 
     if (data?.error) {
       return { success: false, error: formatGoogleApiError(data.error) }
@@ -222,17 +260,13 @@ export async function submitVideo(
  */
 export async function checkVideoOperation(
   { apiKey, operationName } = {},
-  { fetchImpl = fetch } = {}
+  deps = {}
 ) {
   if (!apiKey) return { success: false, done: false, error: 'No API key' }
   if (!operationName) return { success: false, done: false, error: 'No operation name' }
 
   try {
-    const response = await fetchImpl(`${GENAI_BASE}/${operationName}?key=${apiKey}`, {
-      headers: { 'Content-Type': 'application/json' },
-    })
-
-    const data = await safeJson(response)
+    const { response, data } = await genaiFetch(`${GENAI_BASE}/${operationName}`, { apiKey }, deps)
 
     if (data?.error) {
       return { success: false, done: false, error: formatGoogleApiError(data.error) }
@@ -258,31 +292,36 @@ export async function checkVideoOperation(
 
 /**
  * 완료된 비디오 URI 를 base64 로 다운로드.
- * Veo 의 video.uri 는 key 쿼리를 붙여야 다운로드 가능.
+ * Veo 의 video.uri 는 인증이 필요 — API 키를 x-goog-api-key 헤더로 전달(URL ?key= 노출 회피).
+ * 503/네트워크 일시 오류는 백오프 재시도.
  *
  * @returns {Promise<{success:boolean, base64?:string, mimeType?:string, error?:string}>}
  */
 export async function fetchVideoBase64(
   { apiKey, videoUri } = {},
-  { fetchImpl = fetch } = {}
+  { fetchImpl = fetch, sleepImpl = defaultSleep, maxRetries = RETRY_BACKOFF_MS.length } = {}
 ) {
   if (!apiKey) return { success: false, error: 'No API key' }
   if (!videoUri) return { success: false, error: 'No video URI' }
 
-  const separator = videoUri.includes('?') ? '&' : '?'
-  const url = `${videoUri}${separator}key=${apiKey}`
-
-  try {
-    const response = await fetchImpl(url)
-    if (!response.ok) {
-      return { success: false, error: `HTTP ${response.status} :: video download failed` }
+  let attempt = 0
+  for (;;) {
+    try {
+      const response = await fetchImpl(videoUri, { headers: { 'x-goog-api-key': apiKey } })
+      if (!response.ok) {
+        if (response.status === 503 && attempt < maxRetries) {
+          await sleepImpl(RETRY_BACKOFF_MS[attempt]); attempt += 1; continue
+        }
+        return { success: false, error: `HTTP ${response.status} :: video download failed` }
+      }
+      const buf = await response.arrayBuffer()
+      const base64 = Buffer.from(buf).toString('base64')
+      const mimeType = response.headers?.get?.('content-type') || 'video/mp4'
+      return { success: true, base64, mimeType }
+    } catch (error) {
+      if (attempt < maxRetries) { await sleepImpl(RETRY_BACKOFF_MS[attempt]); attempt += 1; continue }
+      return { success: false, error: error?.message || String(error) }
     }
-    const buf = await response.arrayBuffer()
-    const base64 = Buffer.from(buf).toString('base64')
-    const mimeType = response.headers?.get?.('content-type') || 'video/mp4'
-    return { success: true, base64, mimeType }
-  } catch (error) {
-    return { success: false, error: error?.message || String(error) }
   }
 }
 
@@ -301,17 +340,17 @@ export async function generateVideo(
     maxAttempts = VIDEO_POLL_MAX_ATTEMPTS,
   } = {}
 ) {
-  const submitted = await submitVideo(params, { fetchImpl })
+  const submitted = await submitVideo(params, { fetchImpl, sleepImpl })
   if (!submitted.success) return submitted
 
   const { operationName } = submitted
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     await sleepImpl(pollIntervalMs)
-    const status = await checkVideoOperation({ apiKey: params.apiKey, operationName }, { fetchImpl })
+    const status = await checkVideoOperation({ apiKey: params.apiKey, operationName }, { fetchImpl, sleepImpl })
     if (!status.success) return { ...status, operationName }
     if (status.done) {
-      const dl = await fetchVideoBase64({ apiKey: params.apiKey, videoUri: status.videoUri }, { fetchImpl })
+      const dl = await fetchVideoBase64({ apiKey: params.apiKey, videoUri: status.videoUri }, { fetchImpl, sleepImpl })
       return { ...dl, operationName }
     }
   }
@@ -324,12 +363,11 @@ export async function generateVideo(
  *
  * @returns {Promise<{valid:boolean, error?:string}>}
  */
-export async function validateApiKey({ apiKey } = {}, { fetchImpl = fetch } = {}) {
+export async function validateApiKey({ apiKey } = {}, deps = {}) {
   if (!apiKey) return { valid: false, error: 'No API key' }
 
   try {
-    const response = await fetchImpl(`${GENAI_BASE}/models?key=${apiKey}`)
-    const data = await safeJson(response)
+    const { response, data } = await genaiFetch(`${GENAI_BASE}/models`, { apiKey }, deps)
 
     if (data?.error) {
       return { valid: false, error: formatGoogleApiError(data.error) }

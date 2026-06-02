@@ -88,7 +88,7 @@ describe('genai-api — 키 관리', () => {
     registerGenaiIPC(ipc, { keyStore: makeKeyStore(), fetchImpl })
     const res = await ipc.invoke('genai:validate-key', { apiKey: 'CANDIDATE' })
     expect(res).toEqual({ valid: true })
-    expect(fetchImpl.mock.calls[0][0]).toContain('key=CANDIDATE')
+    expect(fetchImpl.mock.calls[0][1].headers['x-goog-api-key']).toBe('CANDIDATE')
   })
 
   it('validate-key: 후보 없으면 저장된 키로', async () => {
@@ -96,7 +96,7 @@ describe('genai-api — 키 관리', () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ models: [{ name: 'm' }] }))
     registerGenaiIPC(ipc, { keyStore: makeKeyStore(), fetchImpl })
     await ipc.invoke('genai:validate-key', {})
-    expect(fetchImpl.mock.calls[0][0]).toContain('key=STORED_KEY')
+    expect(fetchImpl.mock.calls[0][1].headers['x-goog-api-key']).toBe('STORED_KEY')
   })
 
   it('validate-key: 키 아예 없으면 invalid', async () => {
@@ -125,8 +125,8 @@ describe('genai-api — 이미지 생성', () => {
     const res = await ipc.invoke('genai:generate-image', { prompt: 'a cat', apiKey: 'ATTACKER_KEY' })
     expect(res.success).toBe(true)
     expect(res.images[0].base64).toBe('IMG64')
-    expect(fetchImpl.mock.calls[0][0]).toContain('key=STORED_KEY')
-    expect(fetchImpl.mock.calls[0][0]).not.toContain('ATTACKER_KEY')
+    expect(fetchImpl.mock.calls[0][1].headers['x-goog-api-key']).toBe('STORED_KEY')
+    expect(JSON.stringify(fetchImpl.mock.calls[0])).not.toContain('ATTACKER_KEY')
   })
 })
 
