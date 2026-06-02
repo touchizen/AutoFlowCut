@@ -10,15 +10,16 @@ vi.mock('../../src/components/AudioTimeline/AudioTimeline', () => ({
 import LiveTimeline from '../../src/components/LiveTimeline'
 
 describe('LiveTimeline', () => {
-  it('scenes/srt/audioPackage/focusSceneId 를 AudioTimeline 으로 전달', () => {
+  it('scenes/srt/audioPackage 를 AudioTimeline 으로 전달 + compact 모드', () => {
     const scenes = [{ id: 's1' }]
     const srt = [{ startMs: 0, endMs: 1000 }]
     render(
-      <LiveTimeline scenes={scenes} srtEntries={srt} audioPackage={null} focusSceneId="s1" onSceneSelect={vi.fn()} />
+      <LiveTimeline scenes={scenes} srtEntries={srt} audioPackage={null} onSceneSelect={vi.fn()} />
     )
     expect(captured.props.scenes).toEqual(scenes)
     expect(captured.props.srtEntries).toEqual(srt)
-    expect(captured.props.focusSceneId).toBe('s1')
+    // 하단 도크는 좁으므로 큰 프리뷰 패널을 접는다.
+    expect(captured.props.compact).toBe(true)
   })
 
   it('클립 선택 시 sceneRef 로 onSceneSelect 호출', () => {

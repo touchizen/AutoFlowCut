@@ -35,7 +35,7 @@ function formatTC(ms) {
   return formatDuration(ms / 1000)
 }
 
-export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClipSelect, onSaveTimecodeOverride, disabled = false, onFlag, isFlagged, onTrackDrop }) {
+export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClipSelect, onSaveTimecodeOverride, disabled = false, onFlag, isFlagged, onTrackDrop, compact = false }) {
   const { t } = useI18n()
   const rawData = useAudioTimeline(audioPackage, scenes, srtEntries)
 
@@ -723,27 +723,32 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   }
 
   return (
-    <div className="atl-root">
-      {/* 비디오 프리뷰 (현재 playhead 위치의 씬 이미지 + 자막) */}
-      <PreviewPanel
-        playheadMs={playheadMs}
-        scenes={scenes}
-        srtEntries={srtEntries}
-        height={previewHeight}
-      />
+    <div className={`atl-root${compact ? ' atl-root--compact' : ''}`}>
+      {/* compact(하단 도크): 큰 프리뷰 패널을 접어 좁은 높이에서 트랙이 보이게 한다. */}
+      {!compact && (
+        <>
+          {/* 비디오 프리뷰 (현재 playhead 위치의 씬 이미지 + 자막) */}
+          <PreviewPanel
+            playheadMs={playheadMs}
+            scenes={scenes}
+            srtEntries={srtEntries}
+            height={previewHeight}
+          />
 
-      {/* Preview ↔ Timeline 사이 splitter (드래그=조절 / 더블클릭=기본값 복귀) */}
-      <div
-        className="atl-splitter"
-        onPointerDown={startSplitterDrag}
-        onDoubleClick={() => {
-          setPreviewHeight(PREVIEW_H_DEFAULT)
-          try { localStorage.setItem(PREVIEW_H_KEY, String(PREVIEW_H_DEFAULT)) } catch {}
-        }}
-        title="드래그=높이 조절 · 더블클릭=기본값"
-      >
-        <div className="atl-splitter-grip" />
-      </div>
+          {/* Preview ↔ Timeline 사이 splitter (드래그=조절 / 더블클릭=기본값 복귀) */}
+          <div
+            className="atl-splitter"
+            onPointerDown={startSplitterDrag}
+            onDoubleClick={() => {
+              setPreviewHeight(PREVIEW_H_DEFAULT)
+              try { localStorage.setItem(PREVIEW_H_KEY, String(PREVIEW_H_DEFAULT)) } catch {}
+            }}
+            title="드래그=높이 조절 · 더블클릭=기본값"
+          >
+            <div className="atl-splitter-grip" />
+          </div>
+        </>
+      )}
 
       {/* Header */}
       <div className="atl-header">
