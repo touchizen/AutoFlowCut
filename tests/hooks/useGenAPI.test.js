@@ -158,6 +158,16 @@ describe('useGenAPI — 비디오', () => {
     expect(call.endImage).toBeNull()
   })
 
+  it('generateVideoI2V: 줄바꿈 포함 data URL 프레임도 정상 파싱 (I2V→T2V 강등 방지)', async () => {
+    const { result } = renderHook(() => useGenAPI())
+    const wrapped = 'data:image/png;base64,AAAA\nBBBB\nCCCC'
+    await act(async () => {
+      await result.current.generateVideoI2V('go', wrapped, null, 'veo-3.1-fast', '16:9', 8)
+    })
+    const call = window.electronAPI.genaiGenerateVideo.mock.calls.at(-1)[0]
+    expect(call.image).toEqual({ mimeType: 'image/png', data: 'AAAABBBBCCCC' })
+  })
+
   it('downloadVideo → base64', async () => {
     const { result } = renderHook(() => useGenAPI())
     let r

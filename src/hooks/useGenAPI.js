@@ -19,14 +19,26 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { resolveReferenceImages } from '../utils/referenceResolver'
 import { normalizeVideoModel } from '../utils/videoModels'
 import { isAuthError } from '../utils/authError'
+import { cleanBase64, detectImageType } from '../utils/urls'
 
 // base64 또는 data URL 문자열 → Veo inline 이미지 { mimeType, data } (없으면 null).
+// 일부 인코더는 base64 를 76자마다 줄바꿈하므로 공백/개행을 제거한 뒤 처리한다.
+// (구버전은 `.+`/`{64,}$` 정규식이 개행을 거부해 멀쩡한 프레임을 null 로 떨궈 I2V→T2V 로
+//  조용히 강등시켰다.)
 function toInlineImage(val) {
-  if (typeof val !== 'string' || !val) return null
-  const m = val.match(/^data:([^;]+);base64,(.+)$/)
-  if (m) return { mimeType: m[1], data: m[2] }
-  if (/^[A-Za-z0-9+/=]{64,}$/.test(val)) return { mimeType: 'image/png', data: val }
-  return null
+  if (typeof val !== 'string') return null
+  const trimmed = val.trim()
+  if (!trimmed) return null
+  const dataUrlMime = trimmed.match(/^data:([^;]+);base64,/)?.[1] || null
+  const data = cleanBase64(trimmed).replace(/\s/g, '')
+  if (!data) return null
+  if (!dataUrlMime) {
+    // data: 프리픽스 없는 raw base64 — 임의 짧은 문자열을 이미지로 오인하지 않도록 검증.
+    if (data.length < 64 || !/^[A-Za-z0-9+/=]+$/.test(data)) return null
+  }
+  const ext = detectImageType(data)
+  const mimeType = dataUrlMime || (ext === 'jpg' ? 'image/jpeg' : `image/${ext}`)
+  return { mimeType, data }
 }
 
 // Flow 화면비 enum(VIDEO_ASPECT_RATIO_*) 또는 clean 값 → Veo 화면비('16:9'|'9:16').
