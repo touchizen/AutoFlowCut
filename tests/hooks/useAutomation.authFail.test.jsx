@@ -45,15 +45,6 @@ vi.mock('../../src/utils/sceneFilters', () => ({
   filterPendingScenes: vi.fn((scenes) => scenes),
 }))
 
-vi.mock('../../src/hooks/useRecaptchaBackoff', async () => {
-  const actual = await vi.importActual('../../src/hooks/useRecaptchaBackoff')
-  return {
-    ...actual,
-    useRecaptchaBackoff: (t, opts) =>
-      actual.useRecaptchaBackoff(t, { ...opts, graceMs: 0 }),
-  }
-})
-
 // ─── Timer setup ───────────────────────────────────────────────────────────────
 
 beforeEach(() => {

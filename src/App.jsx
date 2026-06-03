@@ -58,7 +58,6 @@ import { ExportModal } from './components/ExportModal'
 import { AuthModal } from './components/AuthModal'
 import { PaywallModal } from './components/PaywallModal'
 import TagValidationModal from './components/TagValidationModal'
-import RecaptchaModal from './components/RecaptchaModal'
 import StoreRatingModal from './components/StoreRatingModal'
 import AudioResultModal from './components/AudioResultModal'
 import QAProgressBanner from './components/QAProgressBanner'
@@ -252,7 +251,7 @@ function App() {
   // Step 3: videoScenes 는 scenes 에서 derived. useVideoScenes 가 scenesHook 으로 라우팅.
   const videoScenesHook = useVideoScenes(scenes, scenesHook)
   const { videoScenes, setVideoScenes } = videoScenesHook
-  const { isRunning, isPaused, isStopping, progress, status, statusMessage, start, togglePause, stop, retryErrors, recaptchaModal, closeRecaptchaModal } = automation
+  const { isRunning, isPaused, isStopping, progress, status, statusMessage, start, togglePause, stop, retryErrors } = automation
 
   // 씬이 복원되어 들어온 경우에도 자동으로 인증 체크(키 존재 → authReady).
   // authInvalidatedRef: handleAuthError가 명시적으로 무효화한 후엔 자동 복구하지 않는다.
@@ -1776,14 +1775,6 @@ function App() {
           styleThumbnails={styleThumbnails}
         />
       )}
-
-      <RecaptchaModal
-        open={!!recaptchaModal}
-        mode={recaptchaModal?.mode}
-        waitMs={recaptchaModal?.waitMs || 0}
-        onClose={closeRecaptchaModal}
-        t={t}
-      />
 
       {/* 비디오 상세 모달 (ResultsTable에서 열림) */}
       {selectedVideo && (

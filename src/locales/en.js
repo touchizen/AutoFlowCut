@@ -955,8 +955,8 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
 
   // Quota-exhausted alert modal
   quotaExhausted: {
-    title: 'Flow Generation Limit Reached',
-    message: "Google Flow is no longer accepting generations.\n\nYou may have reached your account's Flow credits or image generation limit.\n\nFor videos, check your remaining credits in Flow's top-right profile. For images, try switching the model at the bottom.",
+    title: 'API Generation Limit Reached',
+    message: "The Gemini API is no longer accepting generations.\n\nYour API key may have hit its per-minute/daily free limit, or its quota is used up.\n\nWait a moment and retry, or check your usage and limits in Google AI Studio. Video (Veo) and higher limits require linking billing to your Google Cloud project.",
     ok: 'OK',
   },
 
@@ -1002,7 +1002,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     noItems: 'No items to generate.',
     stopped: 'Video generation stopped.',
     stoppedByUser: 'Stopped by user — Flow may still be generating. Use Retry later or restart the app for auto-recovery.',
-    quotaStopped: 'Flow generation limit reached — stopped',
+    quotaStopped: 'API generation limit reached — stopped',
     complete: 'complete',
   },
 
@@ -1017,18 +1017,6 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     summary: '{tagCount} tags in {sceneCount} scenes not matched with references',
     cancel: 'Cancel (Fix)',
     proceedAnyway: 'Proceed Anyway',
-  },
-
-  // reCAPTCHA block notice
-  recaptcha: {
-    title: '⚠️ reCAPTCHA paused — auto-resume in {min} min',
-    titleManual: '🚫 reCAPTCHA block won\'t clear',
-    body: 'Google Flow temporarily blocks generation when too many requests arrive in a short time and the bot-protection (reCAPTCHA) score drops. This is not an app error — it is Google\'s protection. The score recovers on its own; the batch will auto-resume in {min} minutes. You can leave it as is.',
-    bodyManual: 'Auto-resume was tried 3 times but the block persists. Generate 1-2 images manually in the Flow tab to clear reCAPTCHA. If it still fails, turn off any VPN or retry after 30-60 minutes. Press the app\'s resume button once it works.',
-    countdown: 'Auto-resume in {time}',
-    confirm: 'OK',
-    notify: 'reCAPTCHA block detected — auto-resume in {min} min',
-    notifyManual: 'reCAPTCHA block — manual action required',
   },
 
   // Microsoft Store rating prompt (shown after a few successful exports)
