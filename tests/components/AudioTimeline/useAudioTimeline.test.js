@@ -141,6 +141,29 @@ describe('useAudioTimeline', () => {
       expect(img.clips[0].imgSrc).toBe('file:///img/1.png')
     })
 
+    // B: generating 씬은 imagePath 없어도 placeholder 클립 생성 → 타임라인 shimmer
+    it('generating 씬은 imagePath 없어도 placeholder 클립 생성', () => {
+      const scenes = [{ id: 's1', status: 'generating', start_time: '00:00', end_time: '00:03' }]
+      const { result } = renderHook(() => useAudioTimeline(baseAudio, scenes, []))
+      const img = result.current.tracks.find(t => t.id === 'image')
+      expect(img.clips).toHaveLength(1)
+      expect(img.clips[0]).toMatchObject({ generating: true, placeholder: true })
+      expect(img.clips[0].imagePath).toBeNull()
+    })
+
+    it('완료 이미지 클립은 generating=false, placeholder=false', () => {
+      const { result } = renderHook(() => useAudioTimeline(baseAudio, baseScenes, []))
+      const img = result.current.tracks.find(t => t.id === 'image')
+      expect(img.clips[0]).toMatchObject({ generating: false, placeholder: false })
+    })
+
+    it('pending 씬(이미지 없음, 생성 중 아님)은 클립 안 만듦', () => {
+      const scenes = [{ id: 's1', status: 'pending', start_time: '00:00', end_time: '00:03' }]
+      const { result } = renderHook(() => useAudioTimeline(baseAudio, scenes, []))
+      const img = result.current.tracks.find(t => t.id === 'image')
+      expect(img).toBeUndefined() // 이미지 클립 0개 → 트랙 자체 없음
+    })
+
     // 비디오도 안정 파일명(t2v_N/i2v_N) 재생성 시 stale → videoSrc 에 ?v=generatedAt.
     // (useVideoPosters 가 이 videoSrc 를 poster 추출 키로 쓰므로 poster 도 갱신됨)
     it('video clip videoSrc 에 ?v=generatedAt 부착', () => {

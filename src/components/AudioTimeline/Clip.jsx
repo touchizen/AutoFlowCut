@@ -100,6 +100,8 @@ export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDr
       {variant === 'block' && !clip.imagePath && clip.posterDataUrl && (
         <img className="atl-clip-img" src={clip.posterDataUrl} alt="" />
       )}
+      {/* 생성 중 클립 — shimmer(윤기/광택). placeholder(이미지 없음)면 빈 박스 위에. */}
+      {variant === 'block' && clip.generating && <div className="gen-shimmer" aria-hidden="true" />}
       {variant === 'text' && (
         <span className="atl-clip-text" style={{ color: clip.color }}>{clip.label}</span>
       )}

@@ -140,16 +140,20 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
     const imageClips = (scenes || [])
       .map(s => {
         const imgPath = s.imagePath || s.image_path || s.filePath
-        if (!imgPath) return null
+        // 생성 중인 씬은 이미지가 아직 없어도 placeholder 클립을 만들어 shimmer 를 보여준다.
+        const isGenerating = s.status === 'generating' || (!!s.generatingStartedAt && !s.generatingEndedAt)
+        if (!imgPath && !isGenerating) return null
         const range = getSceneTimeRangeMs(s)
         if (!range) return null
         return {
           id: `img-${s.id}`,
           startMs: range.startMs,
           endMs: range.endMs,
-          imagePath: imgPath,
+          imagePath: imgPath || null,
           // 캐시버스터 적용 src — Clip.jsx 가 raw file:// 대신 사용 (재생성 stale 회피)
-          imgSrc: resolveImageSrc({ imagePath: imgPath, generatedAt: s.generatedAt, image: s.image }),
+          imgSrc: imgPath ? resolveImageSrc({ imagePath: imgPath, generatedAt: s.generatedAt, image: s.image }) : null,
+          generating: isGenerating,
+          placeholder: !imgPath,  // 이미지 없는 생성중 클립 → 빈 박스 + shimmer
           sceneRef: s,
           color: COLORS.image,
         }
