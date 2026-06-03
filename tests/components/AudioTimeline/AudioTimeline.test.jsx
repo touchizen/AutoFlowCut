@@ -107,6 +107,18 @@ describe('AudioTimeline', () => {
       expect(container.querySelectorAll('.atl-track-toggle[aria-label="toggle mute"]').length).toBeGreaterThanOrEqual(1)
     })
 
+    it('토글 시 onHiddenRolesChange 로 disabledTracks 통보 (상단 모니터 동기화용)', () => {
+      const onHiddenRolesChange = vi.fn()
+      const { container } = render(
+        <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} onHiddenRolesChange={onHiddenRolesChange} />
+      )
+      const view = container.querySelector('.atl-track-toggle[aria-label="toggle view"]')
+      fireEvent.click(view)
+      const lastArg = onHiddenRolesChange.mock.calls.at(-1)[0]
+      expect(lastArg instanceof Set).toBe(true)
+      expect(lastArg.size).toBe(1)
+    })
+
     it('mute 토글 클릭 → is-off 활성', () => {
       const { container } = render(
         <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />

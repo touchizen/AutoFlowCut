@@ -73,7 +73,7 @@ function formatTC(ms) {
   return formatDuration(ms / 1000)
 }
 
-export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClipSelect, onSaveTimecodeOverride, disabled = false, onFlag, isFlagged, onTrackDrop, compact = false, onPlayheadChange, onPlayingChange }) {
+export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClipSelect, onSaveTimecodeOverride, disabled = false, onFlag, isFlagged, onTrackDrop, compact = false, onPlayheadChange, onPlayingChange, onHiddenRolesChange }) {
   const { t } = useI18n()
   const rawData = useAudioTimeline(audioPackage, scenes, srtEntries)
 
@@ -228,6 +228,9 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   const [disabledTracks, setDisabledTracks] = useState(() => new Set())
   const disabledTracksRef = useRef(disabledTracks)
   useEffect(() => { disabledTracksRef.current = disabledTracks }, [disabledTracks])
+  // 상단 모니터(App content-monitor PreviewPanel)도 같은 hiddenRoles 를 쓰도록 통보.
+  // compact 모드에선 AudioTimeline 자체 프리뷰가 접혀 보이는 건 App 모니터뿐이라 필수.
+  useEffect(() => { onHiddenRolesChange?.(disabledTracks) }, [disabledTracks])
   const audioInstancesRef = useRef(new Map()) // clipId -> Audio
   const scheduledTimersRef = useRef([]) // setTimeout IDs (글로벌 재생 시 미래 클립 예약)
   const scrollRef = useRef(null)

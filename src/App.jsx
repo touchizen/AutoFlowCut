@@ -156,6 +156,8 @@ function App() {
   const [monitorMs, setMonitorMs] = useState(0)
   // 하단 타임라인이 재생 중인지 — 모니터 비디오는 이때만 재생(정지 시 프레임만).
   const [monitorPlaying, setMonitorPlaying] = useState(false)
+  // 타임라인 트랙 View 토글 → 상단 모니터 프리뷰에도 반영(LiveTimeline 이 통보).
+  const [monitorHiddenRoles, setMonitorHiddenRoles] = useState(() => new Set())
   // 생성 중 모니터가 라이브 그리드로 보여줄 자산 모드 — 생성 시작 시 snapshot
   // (탭 버튼이 생성 중에도 활성이라 live activeTab 을 쓰면 탭 이동 시 엉뚱한 보드가 뜸).
   const [runningGenMode, setRunningGenMode] = useState('image')
@@ -1608,6 +1610,7 @@ function App() {
                   srtEntries={resolveAudioSrtEntries(audioPackage, scenesHook.srtTrack)}
                   height="100%"
                   isPlaying={monitorPlaying}
+                  hiddenRoles={monitorHiddenRoles}
                 />
               )}
             </aside>
@@ -1645,6 +1648,7 @@ function App() {
                 onSaveTimecodeOverride={saveTimecodeOverride}
                 onPlayheadChange={setMonitorMs}
                 onPlayingChange={setMonitorPlaying}
+                onHiddenRolesChange={setMonitorHiddenRoles}
                 onTrackDrop={async ({ trackRole, files, timecodeMs }) => {
                   // mp3 드롭 → 나레이션/SFX 트랙에 추가 (Audio 탭과 동일 import 경로).
                   const workFolder = localStorage.getItem('workFolderPath')

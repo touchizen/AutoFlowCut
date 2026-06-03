@@ -21,6 +21,7 @@ export default function LiveTimeline({
   onSaveTimecodeOverride,
   onPlayheadChange,
   onPlayingChange,
+  onHiddenRolesChange,
   onTrackDrop,
   disabled = false,
 }) {
@@ -44,6 +45,7 @@ export default function LiveTimeline({
       compact
       onPlayheadChange={onPlayheadChange}
       onPlayingChange={onPlayingChange}
+      onHiddenRolesChange={onHiddenRolesChange}
       onTrackDrop={onTrackDrop}
       disabled={disabled}
       onSaveTimecodeOverride={onSaveTimecodeOverride}
