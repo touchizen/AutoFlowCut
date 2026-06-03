@@ -279,18 +279,18 @@ describe('genai — submitVideo', () => {
     expect(body.parameters).toEqual({ aspectRatio: '16:9', durationSeconds: '8' })
   })
 
-  it('I2V: image 주어지면 inlineData 로 포함 (Gemini API 계약, Vertex bytesBase64Encoded 아님)', async () => {
+  it('I2V: image 주어지면 imageBytes 로 포함 (Veo predictLongRunning 계약 — inlineData/bytesBase64Encoded 거부됨)', async () => {
     const fetchImpl = mockFetchOnce(jsonRes({ name: 'operations/i2v' }))
     await submitVideo(
       { apiKey: 'k', prompt: 'move', image: { mimeType: 'image/png', data: 'IMG64' } },
       { fetchImpl }
     )
     const body = JSON.parse(fetchImpl.mock.calls[0][1].body)
-    expect(body.instances[0].image).toEqual({ inlineData: { mimeType: 'image/png', data: 'IMG64' } })
+    expect(body.instances[0].image).toEqual({ imageBytes: 'IMG64', mimeType: 'image/png' })
     expect(body.instances[0].lastFrame).toBeUndefined()
   })
 
-  it('F2V: image + endImage → image + lastFrame (둘 다 inlineData)', async () => {
+  it('F2V: image + endImage → image + lastFrame (둘 다 imageBytes)', async () => {
     const fetchImpl = mockFetchOnce(jsonRes({ name: 'operations/f2v' }))
     await submitVideo(
       {
@@ -302,8 +302,8 @@ describe('genai — submitVideo', () => {
       { fetchImpl }
     )
     const body = JSON.parse(fetchImpl.mock.calls[0][1].body)
-    expect(body.instances[0].image).toEqual({ inlineData: { mimeType: 'image/jpeg', data: 'START' } })
-    expect(body.instances[0].lastFrame).toEqual({ inlineData: { mimeType: 'image/png', data: 'END' } })
+    expect(body.instances[0].image).toEqual({ imageBytes: 'START', mimeType: 'image/jpeg' })
+    expect(body.instances[0].lastFrame).toEqual({ imageBytes: 'END', mimeType: 'image/png' })
   })
 
   it('resolution 지정 시 parameters.resolution 전달', async () => {

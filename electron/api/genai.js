@@ -237,10 +237,11 @@ export async function generateImage(
  * @returns {Promise<{success:boolean, operationName?:string, error?:string}>}
  *   operationName 은 이후 checkVideoOperation 에 넘기는 generationId 역할.
  *
- * Gemini API(generativelanguage) predictLongRunning 은 instances[].image 를
- * `{ inlineData: { mimeType, data } }` 형태로 받는다 (공식 REST 예시 기준:
- * ai.google.dev/gemini-api/docs/video). `bytesBase64Encoded` 는 Vertex AI 형식이라
- * generativelanguage 엔드포인트에선 거부된다. lastFrame(끝 프레임 보간)도 동일 형태.
+ * Veo predictLongRunning 의 instances[].image 는 `{ imageBytes: <base64>, mimeType }`.
+ * (google-genai SDK 의 types.Image(image_bytes=…) 직렬화 형식 = imageBytes.)
+ * 주의: REST 문서 예시의 `inlineData` 와 Vertex 의 `bytesBase64Encoded` 는 둘 다
+ * veo-3.1 모델에서 "isn't supported by this model" (400) 으로 거부된다(2026-06 확인).
+ * lastFrame(끝 프레임 보간)도 동일 형태.
  */
 export async function submitVideo(
   {
@@ -260,14 +261,10 @@ export async function submitVideo(
 
   const instance = { prompt: prompt || '' }
   if (image && image.data) {
-    instance.image = {
-      inlineData: { mimeType: image.mimeType || 'image/png', data: image.data },
-    }
+    instance.image = { imageBytes: image.data, mimeType: image.mimeType || 'image/png' }
   }
   if (endImage && endImage.data) {
-    instance.lastFrame = {
-      inlineData: { mimeType: endImage.mimeType || 'image/png', data: endImage.data },
-    }
+    instance.lastFrame = { imageBytes: endImage.data, mimeType: endImage.mimeType || 'image/png' }
   }
 
   const parameters = { aspectRatio: aspectRatio || DEFAULT_ASPECT_RATIO }
