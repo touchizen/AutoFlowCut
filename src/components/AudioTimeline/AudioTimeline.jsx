@@ -32,6 +32,7 @@ import './AudioTimeline.css'
 const VISUAL_ROLES = new Set(['video-i2v', 'video-t2v', 'image', 'subtitle'])
 const VIDEO_ROLES = new Set(['video-i2v', 'video-t2v'])
 const AUDIO_ROLES = new Set(['narration', 'voice', 'sfx'])
+const PLAYHEAD_PARENT_SYNC_MS = 80
 
 // 트랙 라벨의 토글 아이콘 (kind: 'view'|'mute', off: 비활성 여부).
 function TrackToggleIcon({ kind, off }) {
@@ -129,8 +130,23 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
 
   const [zoom, setZoom] = useState(1)
   const [playheadMs, setPlayheadMs] = useState(0)
-  // 플레이헤드 변경을 상단 모니터(App)로 보고 — 스크럽/재생 시 모니터가 따라온다.
-  useEffect(() => { onPlayheadChange?.(playheadMs) }, [playheadMs])
+  const isGlobalPlayingRef = useRef(false)
+  const lastParentPlayheadSyncRef = useRef({ at: -Infinity, value: null })
+  const syncPlayheadToParent = useCallback((nextMs, { force = false } = {}) => {
+    if (!onPlayheadChange) return
+    const now = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
+    const last = lastParentPlayheadSyncRef.current
+    if (!force && isGlobalPlayingRef.current && now - last.at < PLAYHEAD_PARENT_SYNC_MS) return
+    if (!force && last.value === nextMs) return
+    lastParentPlayheadSyncRef.current = { at: now, value: nextMs }
+    onPlayheadChange(nextMs)
+  }, [onPlayheadChange])
+  // 플레이헤드 변경을 상단 모니터(App)로 보고.
+  // 재생 중에는 App 전체 리렌더를 매 RAF마다 만들지 않도록 짧게 throttle하고,
+  // 스크럽/클립 점프/정지 상태 변경은 즉시 반영한다.
+  useEffect(() => {
+    syncPlayheadToParent(playheadMs, { force: !isGlobalPlayingRef.current })
+  }, [playheadMs, syncPlayheadToParent])
   const [expandedTracks, setExpandedTracks] = useState(new Set())
   const [expandedSubTracks, setExpandedSubTracks] = useState(new Set())
   const [labelW, setLabelW] = useState(() => {
@@ -239,7 +255,6 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   const rafRef = useRef(null)
   const playStartTimeRef = useRef(0) // performance.now() 시점
   const playStartMsRef = useRef(0)   // 재생 시작 시 playhead 위치 (ms)
-  const isGlobalPlayingRef = useRef(false)
   // 활성 드래그 cleanup. pointerup 정상 종료 시 / 컴포넌트 unmount 시 모두 호출됨 (idempotent).
   // 드래그 중 프로젝트 전환 등으로 onUp이 안 와도 listener/cursor 잔류 방지.
   const activeDragCleanupRef = useRef(null)

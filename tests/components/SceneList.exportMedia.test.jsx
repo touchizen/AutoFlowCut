@@ -4,7 +4,7 @@
  * ("UI 는 i2v 만, CapCut 은 둘 다" 불일치 방지).
  */
 import { describe, it, expect, vi } from 'vitest'
-import { render } from '@testing-library/react'
+import { render, fireEvent } from '@testing-library/react'
 
 vi.mock('../../src/hooks/useI18n', () => ({
   useI18n: () => ({ t: (k) => k, lang: 'ko', setLang: vi.fn() }),

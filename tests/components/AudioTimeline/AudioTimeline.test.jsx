@@ -2,7 +2,7 @@
  * AudioTimeline 컴포넌트 테스트
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render as rtlRender, screen, fireEvent } from '@testing-library/react'
+import { act, render as rtlRender, screen, fireEvent } from '@testing-library/react'
 import AudioTimeline from '../../../src/components/AudioTimeline/AudioTimeline'
 import { I18nProvider } from '../../../src/hooks/useI18n'
 
@@ -428,6 +428,47 @@ describe('AudioTimeline', () => {
       const playhead = container.querySelector('.atl-playhead')
       expect(playhead).toBeInTheDocument()
       expect(playhead.style.left).toBe('0px')
+    })
+
+    it('재생 중 부모 playhead 콜백은 RAF 매 프레임 호출하지 않고 throttle', () => {
+      let now = 0
+      const rafQueue = []
+      const onPlayheadChange = vi.fn()
+      const perfSpy = vi.spyOn(performance, 'now').mockImplementation(() => now)
+      vi.stubGlobal('requestAnimationFrame', vi.fn((cb) => {
+        rafQueue.push(cb)
+        return rafQueue.length
+      }))
+      vi.stubGlobal('cancelAnimationFrame', vi.fn())
+
+      try {
+        const { container } = rtlRender(
+          <AudioTimeline
+            audioPackage={audioPackage}
+            scenes={scenes}
+            srtEntries={srtEntries}
+            onPlayheadChange={onPlayheadChange}
+          />,
+          { wrapper: I18nProvider }
+        )
+        onPlayheadChange.mockClear()
+
+        fireEvent.click(container.querySelector('.atl-play-btn'))
+
+        for (const t of [16, 32, 48, 64, 80]) {
+          now = t
+          act(() => {
+            const cb = rafQueue.shift()
+            cb?.()
+          })
+        }
+
+        expect(onPlayheadChange.mock.calls.length).toBeLessThanOrEqual(2)
+      } finally {
+        fireEvent.click(document.querySelector('.atl-stop-btn'))
+        perfSpy.mockRestore()
+        vi.unstubAllGlobals()
+      }
     })
   })
 
