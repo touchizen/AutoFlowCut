@@ -152,3 +152,23 @@ describe('computeVideoClipPlacement', () => {
     })
   })
 })
+
+describe('computeVideoClipPlacement — source 분리 (i2v/t2v 트랙)', () => {
+  const both = { id: 's', videoI2VPath: '/i2v.mp4', videoI2VDuration: 2, videoT2VPath: '/t2v.mp4', videoT2VDuration: 4 }
+
+  it("source='i2v' → i2v 경로만 사용", () => {
+    expect(computeVideoClipPlacement(both, 0, 10_000, 'i2v').videoPath).toBe('/i2v.mp4')
+  })
+  it("source='t2v' → i2v 있어도 t2v 경로 사용", () => {
+    const r = computeVideoClipPlacement(both, 0, 10_000, 't2v')
+    expect(r.videoPath).toBe('/t2v.mp4')
+    expect(r.videoIn).toBe(6000) // 10s 씬 - 4s 비디오 = 6000 (Case A)
+  })
+  it("source='t2v' 인데 t2v 없으면 null (i2v 폴백 안 함)", () => {
+    const onlyI2v = { id: 's', videoI2VPath: '/i.mp4', videoI2VDuration: 2 }
+    expect(computeVideoClipPlacement(onlyI2v, 0, 10_000, 't2v')).toBeNull()
+  })
+  it("source 미지정 → 기존 동작(i2v 우선)", () => {
+    expect(computeVideoClipPlacement(both, 0, 10_000).videoPath).toBe('/i2v.mp4')
+  })
+})

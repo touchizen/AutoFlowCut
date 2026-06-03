@@ -29,7 +29,8 @@ import {
 import './AudioTimeline.css'
 
 // 트랙 토글: 비주얼=View(눈, off→프리뷰에서 숨김), 오디오=Mute(스피커, off→재생 제외).
-const VISUAL_ROLES = new Set(['video', 'image', 'subtitle'])
+const VISUAL_ROLES = new Set(['video-i2v', 'video-t2v', 'image', 'subtitle'])
+const VIDEO_ROLES = new Set(['video-i2v', 'video-t2v'])
 const AUDIO_ROLES = new Set(['narration', 'voice', 'sfx'])
 
 // 트랙 라벨의 토글 아이콘 (kind: 'view'|'mute', off: 비활성 여부).
@@ -80,8 +81,9 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   // 비디오 트랙 클립에 posterDataUrl 주입 (썸네일 비동기 로드).
   // useAudioTimeline은 순수 정규화만 담당 — 비동기/캐시는 여기서 합성.
   const allVideoClips = useMemo(() => {
-    const vt = rawData?.tracks?.find(t => t.role === 'video')
-    return vt?.clips || []
+    return (rawData?.tracks || [])
+      .filter(t => VIDEO_ROLES.has(t.role))
+      .flatMap(t => t.clips || [])
   }, [rawData])
 
   // visible-range filtering — 500씬에서도 화면 안 보이는 클립의 추출을 지연.
@@ -108,7 +110,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
     return {
       ...rawData,
       tracks: rawData.tracks.map(t => {
-        if (t.role !== 'video') return t
+        if (!VIDEO_ROLES.has(t.role)) return t
         return {
           ...t,
           clips: t.clips.map(c => {

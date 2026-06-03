@@ -56,21 +56,24 @@ export function getSceneTimeRangeMs(scene) {
  * @param {number} sceneEndMs - 씬 끝 ms
  * @returns {{videoPath: string, videoIn: number, videoOut: number} | null}
  */
-export function computeVideoClipPlacement(scene, sceneStartMs, sceneEndMs) {
+// source: 'i2v' | 't2v' → 해당 소스만. 미지정이면 i2v 우선(기존 동작, PreviewPanel fallback 등).
+// 비디오 트랙을 i2v/t2v 두 개로 분리하면서, 트랙별로 자기 소스만 배치하도록 파라미터 추가.
+export function computeVideoClipPlacement(scene, sceneStartMs, sceneEndMs, source) {
   if (!scene) return null
   if (!Number.isFinite(sceneStartMs) || !Number.isFinite(sceneEndMs)) return null
   const sceneDurMs = sceneEndMs - sceneStartMs
   if (sceneDurMs <= 0) return null
 
-  // i2v 우선
   const i2vPath = scene.videoI2VPath || scene.video_i2v_path || null
   const t2vPath = scene.videoT2VPath || scene.video_t2v_path || null
-  const videoPath = i2vPath || t2vPath
-  if (!videoPath) return null
+  const i2vDur = scene.videoI2VDuration ?? scene.video_i2v_duration ?? null
+  const t2vDur = scene.videoT2VDuration ?? scene.video_t2v_duration ?? null
 
-  const videoDurSec = i2vPath
-    ? (scene.videoI2VDuration ?? scene.video_i2v_duration ?? null)
-    : (scene.videoT2VDuration ?? scene.video_t2v_duration ?? null)
+  let videoPath, videoDurSec
+  if (source === 'i2v') { videoPath = i2vPath; videoDurSec = i2vDur }
+  else if (source === 't2v') { videoPath = t2vPath; videoDurSec = t2vDur }
+  else { videoPath = i2vPath || t2vPath; videoDurSec = i2vPath ? i2vDur : t2vDur } // 미지정: i2v 우선
+  if (!videoPath) return null
   if (!Number.isFinite(videoDurSec) || videoDurSec <= 0) return null
 
   const videoDurMs = videoDurSec * 1000
@@ -177,33 +180,49 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
       })
       .filter(Boolean)
 
-    // ── Video 트랙 (T2V/I2V 생성 결과) ──
-    // 씬에 비디오가 있고 duration 메타데이터가 감지된 경우만 클립 생성.
-    // 배치는 computeVideoClipPlacement로 Case A/B 분기.
-    const videoClips = (scenes || [])
+    // ── Video 트랙 (I2V / T2V 분리) ──
+    // 한 씬이 i2v·t2v 둘 다 가질 수 있어, 예전엔 i2v 우선 1개만 보여 t2v 가 가려졌다.
+    // 트랙을 source 별로 분리해 둘 다 노출(모니터 재생 우선순위는 PreviewPanel + View 토글).
+    // t2v 는 생성 중(videoT2VStatus==='generating') placeholder+shimmer 도 만든다(이미지 트랙과 동일).
+    const buildVideoClips = (source) => (scenes || [])
       .map(s => {
         const range = getSceneTimeRangeMs(s)
         if (!range) return null
-        const placement = computeVideoClipPlacement(s, range.startMs, range.endMs)
-        if (!placement) return null
-        // 비디오 자체 generatedAt 우선(이미지 재생성과 분리). i2v 우선(placement 도 i2v 우선).
-        const videoVersion = s.videoI2VGeneratedAt ?? s.videoT2VGeneratedAt ?? s.generatedAt
+        const isGenerating = source === 't2v' && s.videoT2VStatus === 'generating'
+        const placement = computeVideoClipPlacement(s, range.startMs, range.endMs, source)
+        if (!placement) {
+          // 완료 비디오는 아직 없지만 생성 중 → 빈 박스 + shimmer
+          if (isGenerating) {
+            return {
+              id: `vid-${source}-${s.id}`, startMs: range.startMs, endMs: range.endMs,
+              videoPath: null, videoSrc: null, generating: true, placeholder: true,
+              sceneRef: s, color: COLORS.video, role: `video-${source}`,
+            }
+          }
+          return null
+        }
+        const videoVersion = source === 'i2v'
+          ? (s.videoI2VGeneratedAt ?? s.generatedAt)
+          : (s.videoT2VGeneratedAt ?? s.generatedAt)
         const videoSrc = resolveVideoSrc(null, placement.videoPath, { version: videoVersion })
         if (!videoSrc) return null
         return {
-          id: `vid-${s.id}`,
+          id: `vid-${source}-${s.id}`,
           startMs: placement.videoIn,
           endMs: placement.videoOut,
           videoPath: placement.videoPath,
-          // 단일 정규화 지점 — useVideoPosters / AudioTimeline poster 주입 검증 /
-          // PreviewPanel <video src> 가 모두 이 값을 그대로 사용.
+          // 단일 정규화 지점 — useVideoPosters / AudioTimeline poster 주입 / PreviewPanel <video src> 공유.
           videoSrc,
+          generating: isGenerating,
           sceneRef: s,
           color: COLORS.video,
-          role: 'video',
+          role: `video-${source}`,
         }
       })
       .filter(Boolean)
+
+    const videoI2VClips = buildVideoClips('i2v')
+    const videoT2VClips = buildVideoClips('t2v')
 
     // ── 자막 트랙 ──
     const subtitleClips = (srtEntries || []).map((e, i) => ({
@@ -283,7 +302,7 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
     const sfxClipsAll = sfxSubTracks.flatMap(t => t.clips)
 
     // 총 길이 보강 — narration 없거나 부족할 경우
-    const allClips = [...imageClips, ...videoClips, ...subtitleClips, ...narrationClips, ...voiceClipsAll, ...sfxClipsAll]
+    const allClips = [...imageClips, ...videoI2VClips, ...videoT2VClips, ...subtitleClips, ...narrationClips, ...voiceClipsAll, ...sfxClipsAll]
     const maxEnd = allClips.reduce((m, c) => Math.max(m, c.endMs || 0), 0)
     if (maxEnd > totalDurationMs) totalDurationMs = maxEnd
     if (!totalDurationMs) totalDurationMs = 60000 // 빈 패키지 fallback (1분)
@@ -292,13 +311,15 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
     // Video/Image/Subtitle/Voice는 데이터 있을 때만 (드롭 받지 않음).
     //
     // 트랙 순서 (위→아래) = 비주얼 z-order (위 트랙이 위 레이어):
-    //   Video > Image > 자막 > Narration > Voice > SFX
-    // PreviewPanel이 비디오를 이미지 위에 오버레이하는 동작과 일치 —
-    // 사용자가 "비디오가 image 위에 깔린다"는 인지를 트랙 배치에서도 확인.
+    //   Video(I2V) > Video(T2V) > Image > 자막 > Narration > Voice > SFX
+    // 위 트랙이 위 레이어 — 모니터는 맨 위 "보이는" 비디오 트랙을 재생(i2v 우선, View 끄면 t2v).
     // 일반 NLE(Premiere/CapCut/DaVinci) 컨벤션과 동일.
     const tracks = []
-    if (videoClips.length > 0) {
-      tracks.push({ id: 'video', name: 'Video', color: COLORS.video, variant: 'block', clips: videoClips, role: 'video' })
+    if (videoI2VClips.length > 0) {
+      tracks.push({ id: 'video-i2v', name: 'Video (I2V)', color: COLORS.video, variant: 'block', clips: videoI2VClips, role: 'video-i2v' })
+    }
+    if (videoT2VClips.length > 0) {
+      tracks.push({ id: 'video-t2v', name: 'Video (T2V)', color: COLORS.video, variant: 'block', clips: videoT2VClips, role: 'video-t2v' })
     }
     if (imageClips.length > 0) {
       tracks.push({ id: 'image', name: 'Image', color: COLORS.image, variant: 'block', clips: imageClips, role: 'image' })

@@ -92,21 +92,23 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
   const subtitleText = srt?.text || ''
 
   // ── 비디오 오버레이 ──
-  // 현재 scene의 비디오 placement — useAudioTimeline과 동일 로직 + 동일 헬퍼.
-  const videoPlacement = useMemo(() => {
+  // 모니터는 한 화면이라 비디오 1개만 재생 — 맨 위 "보이는" 트랙 우선(i2v → t2v).
+  // i2v 트랙 View 를 끄면(hiddenRoles) t2v 가 재생된다(트랙 스택과 일치).
+  const { videoPlacement, videoSource } = useMemo(() => {
     const range = getSceneTimeRangeMs(scene)
-    if (!range) return null
-    return computeVideoClipPlacement(scene, range.startMs, range.endMs)
-  }, [scene])
+    if (!range) return { videoPlacement: null, videoSource: null }
+    const i2v = hiddenRoles.has('video-i2v') ? null : computeVideoClipPlacement(scene, range.startMs, range.endMs, 'i2v')
+    const t2v = hiddenRoles.has('video-t2v') ? null : computeVideoClipPlacement(scene, range.startMs, range.endMs, 't2v')
+    if (i2v && playheadMs >= i2v.videoIn && playheadMs < i2v.videoOut) return { videoPlacement: i2v, videoSource: 'i2v' }
+    if (t2v && playheadMs >= t2v.videoIn && playheadMs < t2v.videoOut) return { videoPlacement: t2v, videoSource: 't2v' }
+    return { videoPlacement: null, videoSource: null }
+  }, [scene, hiddenRoles, playheadMs])
 
   // 트랙 View 토글 — 해당 role 이 hiddenRoles 에 있으면 프리뷰에서 끔.
   const hideImage = hiddenRoles.has('image')
   const hideSubtitle = hiddenRoles.has('subtitle')
 
   const isVideoActive = !!videoPlacement
-    && playheadMs >= videoPlacement.videoIn
-    && playheadMs < videoPlacement.videoOut
-    && !hiddenRoles.has('video')
 
   // 단일 <video> ref — src는 활성 placement가 바뀔 때만 swap, currentTime/play는 매 tick 동기화
   const videoRef = useRef(null)
@@ -180,7 +182,7 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
 
     // src swap — 활성 비디오 path가 바뀐 경우에만.
     // Windows 절대경로(C:\...) → file:///C:/... 형태로 정규화는 resolveVideoSrc가 담당.
-    const desiredSrc = resolveVideoSrc(null, videoPlacement.videoPath, { version: scene?.videoI2VGeneratedAt ?? scene?.videoT2VGeneratedAt ?? scene?.generatedAt })
+    const desiredSrc = resolveVideoSrc(null, videoPlacement.videoPath, { version: (videoSource === 't2v' ? scene?.videoT2VGeneratedAt : scene?.videoI2VGeneratedAt) ?? scene?.generatedAt })
     if (!desiredSrc) return
     if (currentSrcRef.current !== desiredSrc) {
       currentSrcRef.current = desiredSrc

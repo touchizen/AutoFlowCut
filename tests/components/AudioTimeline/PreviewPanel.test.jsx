@@ -30,3 +30,24 @@ describe('PreviewPanel — hiddenRoles (View off)', () => {
     expect(container.querySelector('.atl-preview-empty')).toBeInTheDocument()
   })
 })
+
+describe('PreviewPanel — i2v/t2v 모니터 우선순위 (top-visible)', () => {
+  const bothScene = [{
+    id: 's1', imagePath: '/a.png', start_time: 0, end_time: 10,
+    videoI2VPath: '/v/i2v_1.mp4', videoI2VDuration: 3,
+    videoT2VPath: '/v/t2v_1.mp4', videoT2VDuration: 3,
+  }]
+  // playhead 9000 → 두 비디오 모두 [7000,10000) 활성 구간
+  const renderMon = (hiddenRoles) =>
+    render(<PreviewPanel playheadMs={9000} scenes={bothScene} srtEntries={[]} hiddenRoles={hiddenRoles} />)
+
+  it('둘 다 있으면 기본은 i2v 재생 (맨 위 트랙)', () => {
+    const { container } = renderMon()
+    expect(container.querySelector('video.atl-preview-video').src).toContain('i2v_1')
+  })
+
+  it('video-i2v 숨기면 t2v 재생 (수동 토글로 override)', () => {
+    const { container } = renderMon(new Set(['video-i2v']))
+    expect(container.querySelector('video.atl-preview-video').src).toContain('t2v_1')
+  })
+})
