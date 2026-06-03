@@ -11,22 +11,8 @@ import { useState } from 'react'
 import { fileSystemAPI } from './useFileSystem'
 import { toast } from '../components/Toast'
 import useI18n from './useI18n'
-import { resolveExportMediaChoice, hasExportableMedia, getExportFilePaths } from '../utils/sceneMedia'
+import { resolveExportVideos, hasExportableMedia, getExportFilePaths } from '../utils/sceneMedia'
 import { pruneSrtTrackToScenes, rebaseSrtTrackToScenes } from '../utils/srtTrack'
-
-/**
- * Export 미디어를 실제 data/path 와 함께 반환.
- * choice 결정은 SceneList 와 공용 utility 에 위임하여 시각/실제 export 의
- * 일관성을 보장한다.
- */
-function resolveExportMedia(scene) {
-  const choice = resolveExportMediaChoice(scene)
-  if (choice === 'i2v')
-    return { type: 'video', data: scene.videoI2V, path: scene.videoI2VPath }
-  if (choice === 't2v')
-    return { type: 'video', data: scene.videoT2V, path: scene.videoT2VPath }
-  return { type: 'image', data: scene.image, path: scene.imagePath }
-}
 
 export function useExport({
   settings,
@@ -147,12 +133,14 @@ export function useExport({
         rawSrtTrack: srtTrack,
         scenes: validScenes.map(s => {
           const sceneDuration = s.duration || settings.defaultDuration || 3
-          const video = resolveExportMedia(s)
-          const hasVideo = video.type === 'video' && (video.path || video.data)
-          // Fallback chain: explicit video duration → scene duration (typical 3s default).
-          // Protects against onLoadedMetadata race — user clicks Export before SceneList mounts
-          // the <video> element that would normally populate video{T2V,I2V}Duration.
-          const videoDuration = hasVideo ? (s.videoT2VDuration || s.videoI2VDuration || sceneDuration || 0) : 0
+          // 하이브리드: 명시 선택이면 1개, auto+둘다면 2개(i2v 앞/t2v 뒤). 각 영상은
+          // 씬 안에 오버레이로 배치(씬 길이 안 늘림). duration 없으면 sceneDuration 폴백
+          // (onLoadedMetadata race — Export 가 SceneList <video> mount 전이면 duration 미정).
+          const videos = resolveExportVideos(s).map(v => ({
+            source: v.source,
+            path: v.path || v.data,
+            duration: v.duration || sceneDuration || 0,
+          }))
 
           return {
             id: s.id,
@@ -163,9 +151,8 @@ export function useExport({
             image_fallback: s.image,
             image_duration: sceneDuration,
             image_size: s.image_size || null,
-            // ── 영상 (선택적, 씬 뒤쪽 배치) ──
-            video_path: hasVideo ? (video.path || video.data) : null,
-            video_duration: videoDuration,
+            // ── 영상 (0~2개, 하이브리드: i2v 앞 / t2v 뒤) ──
+            videos,
             // ── 자막 ──
             subtitle_ko: s.subtitle || '',
             subtitle_en: s.subtitle_en || '',

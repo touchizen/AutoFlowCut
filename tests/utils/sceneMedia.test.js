@@ -20,6 +20,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   resolveExportMediaChoice,
+  resolveExportVideos,
   hasExportableMedia,
   getExportFilePaths,
 } from '../../src/utils/sceneMedia'
@@ -348,17 +349,17 @@ describe('getExportFilePaths', () => {
       expect(paths.length).toBe(2)
     })
 
-    it('auto + image + 양쪽 영상 path → I2V 우선, T2V 제외', () => {
+    it('auto + image + 양쪽 영상 path → 하이브리드: 이미지+i2v+t2v 모두 (2트랙 export)', () => {
       const scene = {
         imagePath: '/i.png',
-        videoT2VPath: '/t.mp4',  // auto 우선순위에서 밀림 — 제외
+        videoT2VPath: '/t.mp4',  // 하이브리드: auto + 둘 다면 둘 다 포함(2트랙)
         videoI2VPath: '/v.mp4',
       }
       const paths = getExportFilePaths(scene)
       expect(paths).toContain('/i.png')
       expect(paths).toContain('/v.mp4')
-      expect(paths).not.toContain('/t.mp4')
-      expect(paths.length).toBe(2)
+      expect(paths).toContain('/t.mp4')
+      expect(paths.length).toBe(3)
     })
   })
 
@@ -389,5 +390,39 @@ describe('getExportFilePaths', () => {
       videoI2V: 'b64',
     }
     expect(getExportFilePaths(scene)).toEqual([])
+  })
+})
+
+describe('resolveExportVideos (하이브리드: 명시→1개, auto+둘다→2개)', () => {
+  const i2v = { videoI2VPath: '/i.mp4', videoI2VDuration: 2 }
+  const t2v = { videoT2VPath: '/t.mp4', videoT2VDuration: 4 }
+
+  it('auto + i2v·t2v 둘 다 → 둘 다 반환 (i2v 먼저)', () => {
+    const out = resolveExportVideos({ ...i2v, ...t2v })
+    expect(out.map(v => v.source)).toEqual(['i2v', 't2v'])
+    expect(out[0].path).toBe('/i.mp4')
+    expect(out[0].duration).toBe(2)
+    expect(out[1].path).toBe('/t.mp4')
+    expect(out[1].duration).toBe(4)
+  })
+  it('auto + 하나만 → 그 하나', () => {
+    expect(resolveExportVideos({ ...t2v }).map(v => v.source)).toEqual(['t2v'])
+  })
+  it("exportMedia='i2v' → i2v 만 (t2v 있어도)", () => {
+    expect(resolveExportVideos({ ...i2v, ...t2v, exportMedia: 'i2v' }).map(v => v.source)).toEqual(['i2v'])
+  })
+  it("exportMedia='t2v' → t2v 만", () => {
+    expect(resolveExportVideos({ ...i2v, ...t2v, exportMedia: 't2v' }).map(v => v.source)).toEqual(['t2v'])
+  })
+  it("exportMedia='image' → 빈 배열", () => {
+    expect(resolveExportVideos({ ...i2v, ...t2v, exportMedia: 'image' })).toEqual([])
+  })
+  it('비디오 없으면 빈 배열', () => {
+    expect(resolveExportVideos({ imagePath: '/x.png' })).toEqual([])
+  })
+  it('base64만 있어도(path 없음) 인식', () => {
+    const out = resolveExportVideos({ videoT2V: 'BASE64DATA' })
+    expect(out.map(v => v.source)).toEqual(['t2v'])
+    expect(out[0].data).toBe('BASE64DATA')
   })
 })

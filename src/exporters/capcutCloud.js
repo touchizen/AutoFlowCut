@@ -99,7 +99,7 @@ function getFilename(path, sceneId, type) {
 /**
  * 프로젝트 데이터를 Cloud Functions용 포맷으로 변환
  */
-async function prepareCloudRequest(project, options = {}) {
+export async function prepareCloudRequest(project, options = {}) {
   const {
     scaleMode = 'fill',  // 'fill' | 'fit' | 'none'
     kenBurns = false,
@@ -180,23 +180,30 @@ async function prepareCloudRequest(project, options = {}) {
       fallback
     });
 
-    // 영상 오버레이 (있으면 배치: 영상이 짧으면 씬 뒤쪽, 영상이 길면 처음부터 씬 길이만큼 자름)
-    const videoPath = scene.video_path;
-    const videoDuration = scene.video_duration || 0;
-    if (videoPath && videoDuration > 0) {
-      const videoFilename = getFilename(videoPath, sceneId, 'video');
+    // 영상 오버레이 (하이브리드: 씬당 0~2개. i2v=trackIndex 1 앞(위 트랙) / t2v=0 뒤).
+    // 영상이 짧으면 씬 뒤쪽 배치, 길면 처음부터 씬 길이만큼 자름. GCF 가 trackIndex 별로
+    // 트랙을 분리(없으면 0 → 단일 트랙 하위호환).
+    const sceneVideos = scene.videos || [];
+    for (const v of sceneVideos) {
+      const videoPath = v.path;
+      const videoDuration = v.duration || 0;
+      if (!videoPath || videoDuration <= 0) continue;
+
+      // i2v·t2v 동시 export 시 파일명 충돌 방지 — data URL 분기는 sceneId 기반이므로 source 포함.
+      const videoFilename = getFilename(videoPath, `${sceneId}_${v.source}`, 'video');
       const clipDuration = Math.min(videoDuration, sceneDuration); // 씬 길이 초과 시 자름
       const videoStartMs = videoDuration < sceneDuration
-        ? cumulativeTime + (sceneDuration - videoDuration) * 1000  // 영상이 짧으면 뒤쪽 배치
-        : cumulativeTime;  // 영상이 길면 처음부터 시작
+        ? cumulativeTime + (sceneDuration - videoDuration) * 1000  // 짧으면 뒤쪽
+        : cumulativeTime;  // 길면 처음부터
 
       cloudVideoOverlays.push({
         sceneId,
         filename: videoFilename,
-        width: imgWidth,  // 영상도 동일 캔버스
+        width: imgWidth,
         height: imgHeight,
         durationMs: clipDuration * 1000,
-        startMs: videoStartMs
+        startMs: videoStartMs,
+        trackIndex: v.source === 'i2v' ? 1 : 0,  // i2v 앞(위) / t2v 뒤(아래)
       });
 
       mediaFiles.push({
@@ -204,7 +211,7 @@ async function prepareCloudRequest(project, options = {}) {
         type: 'video',
         filename: videoFilename,
         path: videoPath,
-        fallback: null
+        fallback: null,
       });
     }
 

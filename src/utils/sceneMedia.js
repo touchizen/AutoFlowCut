@@ -35,6 +35,29 @@ export function resolveExportMediaChoice(scene) {
 }
 
 /**
+ * 하이브리드 export: 씬에서 내보낼 영상 목록(0~2개)을 반환.
+ *   - exportMedia 명시('i2v'/'t2v') → 그 하나만 (있으면)
+ *   - exportMedia 'image' → []
+ *   - 'auto' → 존재하는 영상 모두 (i2v·t2v 둘 다면 2개, i2v 먼저=프리뷰 상단/앞)
+ * 각 항목: { source:'i2v'|'t2v', path, data, duration }
+ * → CapCut 2트랙 export(i2v 앞 / t2v 뒤)와 프리뷰 일관성을 위함.
+ */
+export function resolveExportVideos(scene) {
+  if (!scene) return []
+  const i2v = (scene.videoI2V || scene.videoI2VPath)
+    ? { source: 'i2v', path: scene.videoI2VPath || null, data: scene.videoI2V || null, duration: scene.videoI2VDuration ?? null }
+    : null
+  const t2v = (scene.videoT2V || scene.videoT2VPath)
+    ? { source: 't2v', path: scene.videoT2VPath || null, data: scene.videoT2V || null, duration: scene.videoT2VDuration ?? null }
+    : null
+  const choice = scene.exportMedia || 'auto'
+  if (choice === 'image') return []
+  if (choice === 'i2v') return i2v ? [i2v] : []
+  if (choice === 't2v') return t2v ? [t2v] : []
+  return [i2v, t2v].filter(Boolean) // auto: 있는 것 다 (i2v 먼저)
+}
+
+/**
  * 씬에 export 가능한 미디어가 있는지 체크.
  *
  * **현재 exporter(capcutCloud) 의 contract**: 모든 씬은 이미지를 메인 트랙으로
@@ -80,10 +103,10 @@ export function getExportFilePaths(scene) {
   // 이미지 path 는 모든 export 모드에서 읽힘 (메인 트랙)
   if (isFilePath(scene.imagePath)) paths.push(scene.imagePath)
 
-  // 선택된 영상의 path 만 추가
-  const choice = resolveExportMediaChoice(scene)
-  if (choice === 'i2v' && isFilePath(scene.videoI2VPath)) paths.push(scene.videoI2VPath)
-  if (choice === 't2v' && isFilePath(scene.videoT2VPath)) paths.push(scene.videoT2VPath)
+  // 선택된 영상(들)의 path 만 추가 — 하이브리드면 i2v·t2v 둘 다 가능.
+  for (const v of resolveExportVideos(scene)) {
+    if (isFilePath(v.path)) paths.push(v.path)
+  }
 
   return paths
 }
