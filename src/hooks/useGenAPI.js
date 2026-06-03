@@ -85,6 +85,15 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
 
   const clearTokenCache = useCallback(() => setAccessToken(null), [])
 
+  // 라이브 /models 목록(raw). 모델 선택 드롭다운을 실제 사용 가능한 모델로 채우는 데 사용.
+  const listModels = useCallback(async () => {
+    try {
+      return await window.electronAPI.genaiListModels()
+    } catch (error) {
+      return { success: false, error: error?.message || String(error) }
+    }
+  }, [])
+
   // 결과가 인증(키) 에러면 authFailed 센티넬을 달고 onAuthError 를 한 번 트리거.
   // 배치 루프(useAutomation/useVideoAutomation)는 result.authFailed 를 보고 즉시 중단한다.
   // BYOK 에선 키가 잘못/만료된 경우 Google 이 매 호출 거부하므로, 이 가드가 없으면
@@ -250,6 +259,7 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
     projectId: null,
     getAccessToken,
     clearTokenCache,
+    listModels,
     generateImageDOM,
     submitGenerationDOM,
     checkGeneration,

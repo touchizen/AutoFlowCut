@@ -6,7 +6,7 @@
  * falsy 면 null.
  */
 import { describe, it, expect } from 'vitest'
-import { modelLabel, coerceResolution } from '../../src/config/genModels'
+import { modelLabel, coerceResolution, categorizeApiModels } from '../../src/config/genModels'
 
 describe('genModels — modelLabel', () => {
   it('이미지 모델 id → 라벨', () => {
@@ -66,5 +66,35 @@ describe('genModels — coerceResolution (모델별 해상도 가드)', () => {
     expect(coerceResolution('veo-3.1-fast-generate-preview', 'foo')).toBeUndefined()
     expect(coerceResolution('veo-3.1-generate-preview', '4K')).toBeUndefined() // 대문자 변종도 미지 처리
     expect(coerceResolution('veo-3.1-lite-generate-preview', '2k')).toBeUndefined()
+  })
+})
+
+describe('genModels — categorizeApiModels (라이브 /models → 카테고리)', () => {
+  const raw = [
+    { id: 'gemini-2.5-flash-image', displayName: 'NB live', methods: ['generateContent'] },
+    { id: 'gemini-9-flash-image', displayName: 'Future Flash Image', description: 'new', methods: ['generateContent'] },
+    { id: 'imagen-4.0-generate-001', displayName: 'Imagen 4', methods: ['predict'] },
+    { id: 'gemini-2.5-flash', displayName: 'Flash text', methods: ['generateContent'] },
+    { id: 'veo-3.1-fast-generate-preview', displayName: 'Veo Fast live', methods: ['predictLongRunning'] },
+    { id: 'veo-2.0-generate-001', displayName: 'Veo 2', methods: ['predictLongRunning'] },
+  ]
+
+  it('이미지: generateContent+image 만, 큐레이션 우선 + extra raw (imagen/텍스트 제외)', () => {
+    const { imageModels } = categorizeApiModels(raw)
+    expect(imageModels.map(m => m.id)).toEqual(['gemini-2.5-flash-image', 'gemini-9-flash-image'])
+    expect(imageModels[0].label).toBe('Nano Banana')   // 큐레이션 라벨 유지
+    expect(imageModels[0].cost).toBe('$0.039/장')       // 큐레이션 비용 유지
+    expect(imageModels[1].label).toBe('Future Flash Image') // extra = displayName
+  })
+
+  it('비디오: predictLongRunning, 큐레이션 우선 + extra(veo-2)', () => {
+    const { videoModels } = categorizeApiModels(raw)
+    expect(videoModels.map(m => m.id)).toEqual(['veo-3.1-fast-generate-preview', 'veo-2.0-generate-001'])
+    expect(videoModels[0].label).toBe('Veo 3.1 Fast')
+    expect(videoModels[1].label).toBe('Veo 2')
+  })
+
+  it('null/빈 입력 → 빈 목록', () => {
+    expect(categorizeApiModels(null)).toEqual({ imageModels: [], videoModels: [] })
   })
 })

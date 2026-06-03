@@ -63,17 +63,31 @@ describe('SceneTab — model selectors (T2I/T2V/F2V)', () => {
     expect(screen.getByText('settings.modelVideoF2VTitle')).toBeTruthy()
   })
 
-  it('이미지 모델 선택 → setLocalSettings(imageModel) (고유 라벨로 검증)', () => {
+  it('이미지 모델 select 변경 → setLocalSettings(imageModel)', () => {
     const setLocalSettings = vi.fn()
-    render(<SceneTab localSettings={baseSettings} setLocalSettings={setLocalSettings} t={t} />)
-    fireEvent.click(screen.getByRole('button', { name: /Nano Banana 2/ }))
+    const { container } = render(<SceneTab localSettings={baseSettings} setLocalSettings={setLocalSettings} t={t} />)
+    const t2iSelect = container.querySelectorAll('select.model-select')[0] // T2I 가 첫 셀렉터
+    fireEvent.change(t2iSelect, { target: { value: 'gemini-3.1-flash-image' } })
     expect(setLocalSettings.mock.calls[0][0](baseSettings).imageModel).toBe('gemini-3.1-flash-image')
   })
 
-  it('imageModel 미지정 시 Nano Banana(기본) active', () => {
+  it('imageModel 미지정 시 기본(Nano Banana = gemini-2.5-flash-image)이 select 현재값', () => {
     const { container } = render(<SceneTab localSettings={{ ...baseSettings, imageModel: undefined }} setLocalSettings={vi.fn()} t={t} />)
-    const active = container.querySelector('.model-option.active')
-    expect(active.textContent).toContain('Nano Banana')
+    const t2iSelect = container.querySelectorAll('select.model-select')[0]
+    expect(t2iSelect.value).toBe('gemini-2.5-flash-image')
+  })
+
+  it('imageModels/videoModels prop 주면 동적 옵션 사용 (없으면 정적 카탈로그 폴백)', () => {
+    const imageModels = [{ id: 'dyn-img', label: 'Dynamic Img', cost: '$9' }]
+    const videoModels = [{ id: 'dyn-vid', label: 'Dynamic Vid', cost: '$8' }]
+    const { container } = render(
+      <SceneTab localSettings={baseSettings} setLocalSettings={vi.fn()} t={t} imageModels={imageModels} videoModels={videoModels} />
+    )
+    const selects = container.querySelectorAll('select.model-select')
+    expect([...selects[0].querySelectorAll('option')].map(o => o.value)).toEqual(['dyn-img'])
+    // T2V, F2V 둘 다 비디오 동적 목록
+    expect([...selects[1].querySelectorAll('option')].map(o => o.value)).toEqual(['dyn-vid'])
+    expect([...selects[2].querySelectorAll('option')].map(o => o.value)).toEqual(['dyn-vid'])
   })
 })
 

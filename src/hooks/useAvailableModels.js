@@ -1,0 +1,56 @@
+/**
+ * useAvailableModels — 라이브 /models 조회로 모델 선택 옵션을 채운다.
+ *
+ * flowAPI.listModels() 결과를 categorizeApiModels 로 T2I/T2V·F2V 로 분류해 노출.
+ * 키 없음/오프라인/분류 결과 빈 경우엔 정적 카탈로그(IMAGE_MODELS/VIDEO_MODELS)로
+ * graceful 폴백 — 설정 UI 가 항상 동작하도록.
+ */
+import { useState, useEffect } from 'react'
+import { IMAGE_MODELS, VIDEO_MODELS, categorizeApiModels } from '../config/genModels'
+
+export function useAvailableModels(flowAPI) {
+  const [state, setState] = useState({
+    imageModels: IMAGE_MODELS,
+    videoModels: VIDEO_MODELS,
+    loading: true,
+    error: null,
+  })
+
+  // flowAPI 객체는 렌더마다 새로 생성되지만 listModels(useCallback)는 안정적 →
+  // 함수 참조에 의존해 effect 재실행/무한 루프를 막는다.
+  const listModels = flowAPI?.listModels
+
+  useEffect(() => {
+    let cancelled = false
+    if (!listModels) {
+      setState((s) => ({ ...s, loading: false }))
+      return
+    }
+    setState((s) => ({ ...s, loading: true, error: null }))
+    listModels()
+      .then((res) => {
+        if (cancelled) return
+        if (res?.success) {
+          const { imageModels, videoModels } = categorizeApiModels(res.models)
+          // 카테고리별 독립 폴백 — 한쪽만 비어도 그쪽만 정적으로.
+          setState({
+            imageModels: imageModels.length ? imageModels : IMAGE_MODELS,
+            videoModels: videoModels.length ? videoModels : VIDEO_MODELS,
+            loading: false,
+            error: null,
+          })
+        } else {
+          setState({ imageModels: IMAGE_MODELS, videoModels: VIDEO_MODELS, loading: false, error: res?.error || 'Failed to list models' })
+        }
+      })
+      .catch((e) => {
+        if (cancelled) return
+        setState({ imageModels: IMAGE_MODELS, videoModels: VIDEO_MODELS, loading: false, error: e?.message || String(e) })
+      })
+    return () => { cancelled = true }
+  }, [listModels])
+
+  return state
+}
+
+export default useAvailableModels

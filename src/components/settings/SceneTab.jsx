@@ -13,7 +13,8 @@ const VIDEO_RESOLUTION_OPTIONS = [
   { value: '4k', label: '4K' },
 ]
 
-export default function SceneTab({ localSettings, setLocalSettings, t }) {
+// imageModels/videoModels: 라이브 /models 로 채운 동적 목록(상위에서 주입). 없으면 정적 카탈로그.
+export default function SceneTab({ localSettings, setLocalSettings, t, imageModels = IMAGE_MODELS, videoModels = VIDEO_MODELS }) {
   return (
     <div className="tab-panel">
       {/* 프로젝트 화면비: 롱폼(16:9) / 숏폼(9:16) — 생성·카드·CapCut export 에 반영 */}
@@ -101,7 +102,7 @@ export default function SceneTab({ localSettings, setLocalSettings, t }) {
       <div className="settings-section">
         <h3>{t('settings.modelImageTitle')}</h3>
         <ModelSelector
-          options={IMAGE_MODELS}
+          options={imageModels}
           value={localSettings.imageModel}
           defaultValue={DEFAULT_IMAGE_MODEL_ID}
           onChange={(id) => setLocalSettings(s => ({ ...s, imageModel: id }))}
@@ -112,7 +113,7 @@ export default function SceneTab({ localSettings, setLocalSettings, t }) {
       <div className="settings-section">
         <h3>{t('settings.modelVideoT2VTitle')}</h3>
         <ModelSelector
-          options={VIDEO_MODELS}
+          options={videoModels}
           value={localSettings.videoModelT2V}
           defaultValue={DEFAULT_VIDEO_MODEL_ID}
           onChange={(id) => setLocalSettings(s => ({ ...s, videoModelT2V: id }))}
@@ -123,7 +124,7 @@ export default function SceneTab({ localSettings, setLocalSettings, t }) {
       <div className="settings-section">
         <h3>{t('settings.modelVideoF2VTitle')}</h3>
         <ModelSelector
-          options={VIDEO_MODELS}
+          options={videoModels}
           value={localSettings.videoModelF2V}
           defaultValue={DEFAULT_VIDEO_MODEL_ID}
           onChange={(id) => setLocalSettings(s => ({ ...s, videoModelF2V: id }))}

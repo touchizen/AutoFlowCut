@@ -87,6 +87,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   genaiSetKey: (params) => ipcRenderer.invoke('genai:set-key', params),
   genaiClearKey: () => ipcRenderer.invoke('genai:clear-key'),
   genaiValidateKey: (params) => ipcRenderer.invoke('genai:validate-key', params),
+  genaiListModels: () => ipcRenderer.invoke('genai:list-models'),
   genaiGenerateImage: (params) => ipcRenderer.invoke('genai:generate-image', params),
   genaiGenerateVideo: (params) => ipcRenderer.invoke('genai:generate-video', params),
   genaiCheckVideoStatus: (params) => ipcRenderer.invoke('genai:check-video-status', params),

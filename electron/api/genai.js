@@ -434,3 +434,38 @@ export async function validateApiKey({ apiKey } = {}, deps = {}) {
     return { valid: false, error: error?.message || String(error) }
   }
 }
+
+/**
+ * 사용 가능한 모델 전체 목록(raw). 카테고리 분류는 호출자(renderer) 가 담당.
+ * nextPageToken 을 따라 모든 페이지를 수집한다. quota 미소비(가벼운 GET).
+ *
+ * @returns {Promise<{success:boolean, models?:Array<{id,displayName,description,methods}>, error?:string}>}
+ */
+export async function listModels({ apiKey } = {}, deps = {}) {
+  if (!apiKey) return { success: false, error: 'No API key' }
+
+  try {
+    const models = []
+    let pageToken = null
+    do {
+      const url = `${GENAI_BASE}/models?pageSize=200${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`
+      const { response, data } = await genaiFetch(url, { apiKey }, deps)
+      if (data?.error) return { success: false, error: formatGoogleApiError(data.error) }
+      if (!response?.ok || !Array.isArray(data?.models)) {
+        return { success: false, error: `HTTP ${response?.status ?? '?'} :: unexpected response` }
+      }
+      for (const m of data.models) {
+        models.push({
+          id: (m.name || '').replace(/^models\//, ''),
+          displayName: m.displayName || '',
+          description: m.description || '',
+          methods: m.supportedGenerationMethods || [],
+        })
+      }
+      pageToken = data.nextPageToken || null
+    } while (pageToken)
+    return { success: true, models }
+  } catch (error) {
+    return { success: false, error: error?.message || String(error) }
+  }
+}

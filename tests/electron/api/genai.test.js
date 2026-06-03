@@ -17,6 +17,7 @@ import {
   fetchVideoBase64,
   generateVideo,
   validateApiKey,
+  listModels,
   parseRetryDelayMs,
   MAX_429_RETRY_DELAY_MS,
   GENAI_BASE,
@@ -500,5 +501,43 @@ describe('genai — validateApiKey', () => {
     const sleepImpl = vi.fn().mockResolvedValue(undefined)
     const res = await validateApiKey({ apiKey: 'k' }, { fetchImpl, sleepImpl })
     expect(res).toEqual({ valid: false, error: 'offline' })
+  })
+})
+
+describe('genai — listModels', () => {
+  it('키 없으면 실패', async () => {
+    expect(await listModels({}, { fetchImpl: vi.fn() })).toEqual({ success: false, error: 'No API key' })
+  })
+
+  it('models 파싱: name→id, supportedGenerationMethods→methods, displayName/description', async () => {
+    const fetchImpl = mockFetchOnce(jsonRes({ models: [
+      { name: 'models/gemini-2.5-flash-image', displayName: 'Nano Banana', description: 'd', supportedGenerationMethods: ['generateContent'] },
+      { name: 'models/veo-3.1-fast-generate-preview', displayName: 'Veo 3.1 Fast', supportedGenerationMethods: ['predictLongRunning'] },
+    ] }))
+    const res = await listModels({ apiKey: 'GOOD' }, { fetchImpl })
+    expect(res.success).toBe(true)
+    expect(res.models).toEqual([
+      { id: 'gemini-2.5-flash-image', displayName: 'Nano Banana', description: 'd', methods: ['generateContent'] },
+      { id: 'veo-3.1-fast-generate-preview', displayName: 'Veo 3.1 Fast', description: '', methods: ['predictLongRunning'] },
+    ])
+    expect(fetchImpl.mock.calls[0][1]?.headers['x-goog-api-key']).toBe('GOOD')
+  })
+
+  it('nextPageToken 따라 전체 페이지 수집', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonRes({ models: [{ name: 'models/a', supportedGenerationMethods: ['generateContent'] }], nextPageToken: 'tok2' }))
+      .mockResolvedValueOnce(jsonRes({ models: [{ name: 'models/b', supportedGenerationMethods: ['predictLongRunning'] }] }))
+    const res = await listModels({ apiKey: 'k' }, { fetchImpl })
+    expect(res.success).toBe(true)
+    expect(res.models.map(m => m.id)).toEqual(['a', 'b'])
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(fetchImpl.mock.calls[1][0]).toContain('pageToken=tok2')
+  })
+
+  it('error 응답 → 실패 + 사유', async () => {
+    const fetchImpl = mockFetchOnce(jsonRes({ error: { code: 400, message: 'API key not valid', status: 'INVALID_ARGUMENT' } }, { ok: false, status: 400 }))
+    const res = await listModels({ apiKey: 'BAD' }, { fetchImpl })
+    expect(res.success).toBe(false)
+    expect(res.error).toContain('API key not valid')
   })
 })

@@ -1905,6 +1905,7 @@ function App() {
           settings={settings}
           initialTab={settingsTab}
           onProjectChange={handleProjectChange}
+          genAPI={flowAPI}
           onSave={async (newSettings) => {
             setSettings(newSettings)
             setShowSettings(false)

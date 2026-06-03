@@ -10,6 +10,7 @@
  */
 import {
   validateApiKey,
+  listModels,
   generateImage as genImage,
   submitVideo,
   checkVideoOperation,
@@ -47,6 +48,14 @@ export function registerGenaiIPC(ipcMain, deps) {
     const key = apiKey || keyStore.getKey()
     if (!key) return { valid: false, error: 'No API key' }
     return validateApiKey({ apiKey: key }, engineDeps)
+  })
+
+  // 사용 가능한 모델 목록(raw). 모델 선택 드롭다운을 라이브 /models 로 채우는 데 사용.
+  // 생성 quota 미소비. 카테고리 분류는 renderer(categorizeApiModels) 담당.
+  ipcMain.handle('genai:list-models', async () => {
+    const key = keyStore.getKey()
+    if (!key) return { success: false, error: 'No API key' }
+    return listModels({ apiKey: key }, engineDeps)
   })
 
   // --- 생성 (이미지) ---------------------------------------------------------

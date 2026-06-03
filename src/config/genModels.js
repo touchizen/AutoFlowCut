@@ -36,6 +36,33 @@ export function modelLabel(id) {
   return all.find(m => m.id === id)?.label || id
 }
 
+/**
+ * 라이브 /models 목록(raw: {id, displayName, description, methods})을 T2I/T2V·F2V 카테고리로 분류.
+ * - 이미지: generateContent + id 에 'image' (Imagen=predict, 텍스트 모델 제외 — drop-in 만)
+ * - 비디오: predictLongRunning (Veo)
+ * 각 카테고리는 [큐레이션 카탈로그에 있고 실제 사용 가능한 것(카탈로그 순서, 라벨/비용/설명/링크/해상도 유지)]
+ * + [그 외 사용 가능한 모델(raw, displayName 라벨)] 순.
+ */
+function pickCategory(rawModels, curated, predicate) {
+  const available = (rawModels || []).filter(predicate)
+  const availIds = new Set(available.map(m => m.id))
+  const knownIds = new Set(curated.map(c => c.id))
+  const known = curated.filter(c => availIds.has(c.id)) // 카탈로그 순서, 메타데이터 유지
+  const extras = available
+    .filter(m => !knownIds.has(m.id))
+    .map(m => ({ id: m.id, label: m.displayName || m.id, desc: m.description || '' }))
+  return [...known, ...extras]
+}
+
+export function categorizeApiModels(rawModels) {
+  const isImage = (m) => (m.methods || []).includes('generateContent') && /image/i.test(m.id || '') && !/imagen/i.test(m.id || '')
+  const isVideo = (m) => (m.methods || []).includes('predictLongRunning') || /^veo/i.test(m.id || '')
+  return {
+    imageModels: pickCategory(rawModels, IMAGE_MODELS, isImage),
+    videoModels: pickCategory(rawModels, VIDEO_MODELS, isVideo),
+  }
+}
+
 /** id 가 카탈로그에 있으면 그대로, 없으면 기본값으로. (저장된 stale/legacy id 방어) */
 export function coerceImageModel(id) {
   return IMAGE_MODELS.some(m => m.id === id) ? id : DEFAULT_IMAGE_MODEL_ID

@@ -5,6 +5,7 @@
 import { useState, useEffect } from 'react'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { useI18n } from '../hooks/useI18n'
+import { useAvailableModels } from '../hooks/useAvailableModels'
 import { TIMING } from '../config/defaults'
 import Modal from './Modal'
 import StorageTab from './settings/StorageTab'
@@ -22,8 +23,10 @@ const TABS = [
   { id: 'mcp', icon: '🔌', labelKey: 'settings.tabMcp' }
 ]
 
-export default function SettingsModal({ settings, onSave, onClose, initialTab = null, onProjectChange }) {
+export default function SettingsModal({ settings, onSave, onClose, initialTab = null, onProjectChange, genAPI = null }) {
   const { t } = useI18n()
+  // 모델 선택 옵션 — 라이브 /models 로 채움(실패/무키 시 정적 카탈로그 폴백).
+  const availableModels = useAvailableModels(genAPI)
   const [activeTab, setActiveTab] = useState(initialTab || 'storage')
   const [localSettings, setLocalSettings] = useState(() => ({ ...settings }))
   const [workFolder, setWorkFolder] = useState({ name: '', error: null })
@@ -113,6 +116,8 @@ export default function SettingsModal({ settings, onSave, onClose, initialTab = 
             localSettings={localSettings}
             setLocalSettings={setLocalSettings}
             t={t}
+            imageModels={availableModels.imageModels}
+            videoModels={availableModels.videoModels}
           />
         )}
 
