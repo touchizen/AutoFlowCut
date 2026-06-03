@@ -97,6 +97,19 @@ describe('AudioTimeline', () => {
     })
   })
 
+  describe('트랙 라벨 i18n (video-i2v/video-t2v)', () => {
+    it('한국어 UI 에서 비디오 트랙 라벨이 locale 경유 (하드코딩 폴백 아님)', () => {
+      localStorage.setItem('autoflowcut_lang', 'ko')
+      try {
+        const t2vScenes = [{ id: 'scene_1', image_path: '/i.png', start_time: '00:00', end_time: '00:03', videoT2VPath: '/v/t.mp4', videoT2VDuration: 2 }]
+        render(<AudioTimeline audioPackage={audioPackage} scenes={t2vScenes} srtEntries={srtEntries} />)
+        expect(screen.getByText('비디오 (T2V)')).toBeInTheDocument() // 'Video (T2V)' 하드코딩 아님
+      } finally {
+        localStorage.removeItem('autoflowcut_lang')
+      }
+    })
+  })
+
   describe('트랙 토글 (View/Mute)', () => {
     it('비주얼=view, 오디오=mute 토글이 라벨에 렌더', () => {
       const { container } = render(

@@ -120,14 +120,21 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
   const videoPlacements = useMemo(() => {
     return sceneRanges
       .map(r => {
-        const p = computeVideoClipPlacement(r.scene, r.startMs, r.endMs)
+        // 모니터와 동일한 top-visible source 선택 — i2v(안 숨겼으면) → t2v. 실제 재생할
+        // 비디오를 워밍해야 i2v 숨김 상태에서 다음 t2v 가 cold-read 되지 않는다.
+        const i2v = hiddenRoles.has('video-i2v') ? null : computeVideoClipPlacement(r.scene, r.startMs, r.endMs, 'i2v')
+        const t2v = hiddenRoles.has('video-t2v') ? null : computeVideoClipPlacement(r.scene, r.startMs, r.endMs, 't2v')
+        const p = i2v || t2v
         if (!p) return null
-        // generatedAt 동봉 — prefetch 가 메인 <video src> 와 동일한 ?v= URL 을 warming 하도록
-        return { videoIn: p.videoIn, videoOut: p.videoOut, videoPath: p.videoPath, generatedAt: r.scene?.videoI2VGeneratedAt ?? r.scene?.videoT2VGeneratedAt ?? r.scene?.generatedAt }
+        // generatedAt 동봉 — prefetch 가 메인 <video src> 와 동일한 ?v= URL 을 warming(소스별).
+        const generatedAt = i2v
+          ? (r.scene?.videoI2VGeneratedAt ?? r.scene?.generatedAt)
+          : (r.scene?.videoT2VGeneratedAt ?? r.scene?.generatedAt)
+        return { videoIn: p.videoIn, videoOut: p.videoOut, videoPath: p.videoPath, generatedAt }
       })
       .filter(Boolean)
       .sort((a, b) => a.videoIn - b.videoIn)
-  }, [sceneRanges])
+  }, [sceneRanges, hiddenRoles])
 
   // 다음 활성 예정 비디오 lookup — O(log N) binary search.
   // playhead보다 큰 첫 videoIn 찾고, 그 차이가 PREFETCH_LEAD_MS 이내면 prefetch 대상.

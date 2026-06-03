@@ -50,4 +50,19 @@ describe('PreviewPanel — i2v/t2v 모니터 우선순위 (top-visible)', () => 
     const { container } = renderMon(new Set(['video-i2v']))
     expect(container.querySelector('video.atl-preview-video').src).toContain('t2v_1')
   })
+
+  it('프리패치도 top-visible source — i2v 숨기면 다음 t2v 를 워밍(cold-read 방지, P3)', () => {
+    // 곧(1000ms 후) 시작할 비디오 씬 — PREFETCH_LEAD_MS(1500) 안.
+    const soon = [{
+      id: 's1', imagePath: '/a.png', start_time: 0, end_time: 2,
+      videoI2VPath: '/v/i2v_1.mp4', videoI2VDuration: 1,
+      videoT2VPath: '/v/t2v_1.mp4', videoT2VDuration: 1,
+    }]
+    const { container } = render(
+      <PreviewPanel playheadMs={0} scenes={soon} srtEntries={[]} hiddenRoles={new Set(['video-i2v'])} />
+    )
+    const videos = container.querySelectorAll('video')
+    const prefetch = videos[videos.length - 1] // 마지막 = hidden prefetch <video>
+    expect(prefetch.src).toContain('t2v_1') // i2v 아니라 t2v 워밍
+  })
 })
