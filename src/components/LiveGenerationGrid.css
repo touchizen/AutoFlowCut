@@ -5,11 +5,11 @@
   height: 100%;
   overflow: auto;
   display: grid;
-  /* 타일 최소폭 600px 고정 + 1fr(남는 폭 채움) — 컨테이너/창 폭에 따라 자동으로
-     1열→2열→… 늘어나는 반응형(Flow 와 동일 원리). 생성 중엔 자동 스크롤이라 한 번에
-     많이 띄울 필요 없이 크고 잘 보이게.
-     min(100%, …): 모니터가 600px 보다 좁으면 1열 full-width 로 떨어져 overflow 방지. */
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 600px), 1fr));
+  /* 타일 최소폭 440px 고정 + 1fr(남는 폭 채움) — 컨테이너/창 폭에 따라 자동으로
+     1열→2열→3열 늘어나는 반응형(Flow 와 동일 원리). 440px 로 잡아 1920/2(≈960px
+     모니터)에서 최소 2열(각 ~460px, 큼직), 모니터 넓히면 3열, 좁으면 1열.
+     min(100%, …): 모니터가 440px 보다 좁으면 1열 full-width 로 떨어져 overflow 방지. */
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 440px), 1fr));
   grid-auto-rows: min-content;
   gap: 12px;
   padding: 8px;
@@ -28,9 +28,13 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: transform 0.12s ease, border-color 0.12s ease, filter 0.12s ease;
 }
+/* Flow 처럼 hover 시 살짝 떠오르고 밝아짐 */
 .gentile:hover {
   border-color: #4a9eff;
+  transform: translateY(-2px);
+  filter: brightness(1.06);
 }
 
 .gentile-media {
