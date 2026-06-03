@@ -60,9 +60,17 @@ Flow→공식 API(BYOK) 전환 후 생성 파이프라인 UX 가 어정쩡하다
 
 클립은 `sceneRef`(scene 전체)를 들고 있어 `generatedAt` 접근 가능. 이미지 완료 시 `generatedAt` 은 **finalize 경로에서 기록**된다(`imageFinalize.js:59` — `generatedAt = Date.now()`, `status: 'done'`). `resolveImageSrc(sceneRef)` 가 `generatedAt → ?v=` fallback(`updatedAt`/`flaggedAt`)을 처리.
 
-**비디오** — `resolveVideoSrc`(`src/utils/videoSrc.js`)는 현재 version query 를 **안 붙인다**. 비디오도 안정 파일명(`t2v_N`/`i2v_N`)+`generatedAt`(`useVideoAutomation.js:117,163)이라 재생성 stale 동일. → `resolveVideoSrc(base64, filePath, { version })` 로 **optional version 지원 추가**(filePath 경로일 때만 `?v=` 부착; base64/data URL 은 무관). 소비처(`PreviewPanel` 비디오 `src`, Grid video item, `Clip.jsx` 비디오)가 `generatedAt` 전달. (단일 정규화 지점 유지.)
+**비디오** — `resolveVideoSrc`(`src/utils/videoSrc.js`)는 현재 version query 를 **안 붙인다**. 비디오도 안정 파일명(`t2v_N`/`i2v_N`)+`generatedAt`(`useVideoAutomation.js:117,163)이라 재생성 stale 동일. → `resolveVideoSrc(base64, filePath, { version })` 로 **optional version 지원 추가**(filePath 경로일 때만 `?v=` 부착; base64/data URL 은 무관).
 
-**검증**: 같은 경로 재생성 시 타임라인/모니터/Grid 가 새 이미지·비디오로 갱신. (회귀: `resolveImageSrc`/`resolveVideoSrc` 가 `generatedAt` 변화로 다른 URL 생성; base64 우선 경로엔 version 미적용.)
+소비처가 **모두** `generatedAt` 을 전달해야 한다 (한 곳이라도 빠지면 그 경로가 stale):
+- **`useAudioTimeline.js:165`** — videoClips 의 `videoSrc = resolveVideoSrc(null, placement.videoPath)`. ⚠️ 핵심: 타임라인 비디오 **poster** 는 `useVideoPosters` 가 이 `clip.videoSrc` 를 키로 추출하므로(`useVideoPosters.js:56,59`), 여기 version 이 없으면 poster 가 stale. `sceneRef`(scene)의 `generatedAt` 을 `{ version }` 으로 전달.
+- `PreviewPanel.jsx` 비디오 `src` (`resolveVideoSrc(null, videoPlacement.videoPath)`)
+- Grid video item `thumbSrc`/`videoSrc`
+- `Clip.jsx` 비디오 (있다면)
+
+(단일 정규화 지점 유지.)
+
+**검증**: 같은 경로 재생성 시 타임라인/모니터/Grid 가 새 이미지·비디오(**poster 포함**)로 갱신. (회귀: `resolveImageSrc`/`resolveVideoSrc` 가 `generatedAt` 변화로 다른 URL 생성; base64 우선 경로엔 version 미적용; `useVideoPosters` 가 새 `videoSrc` 키로 poster 재추출.)
 
 ## Stage 2. 동시성 윈도우
 
@@ -139,13 +147,18 @@ Flow→공식 API(BYOK) 전환 후 생성 파이프라인 UX 가 어정쩡하다
 
 - **`LiveGenerationGrid({ items, onItemSelect })`** — 순수 표시. 외부 의존은 `onItemSelect` 만.
 - **`GenTile({ item, onClick })`** — item 1개의 상태별 타일.
-- **`buildGenerationItems(activeTab, sources)`** — 순수 함수(단위 테스트 용이), 어댑터.
+- **`buildGenerationItems(mode, sources)`** — 순수 함수(단위 테스트 용이), 어댑터. (`mode` = snapshot `runningGenMode`, **activeTab 아님**)
 
 ### 위치 / 전환
 
 **생성 모드 snapshot (중요)**: 탭 버튼은 생성 중에도 비활성화되지 않는다(`App.jsx:1202` 인근 — `disabled` 없음). 따라서 Grid 가 **live `activeTab`** 을 쓰면, 예) `video-text` 생성 중 사용자가 `list` 로 이동 시 `anyRunning` 은 true 인데 이미지 보드가 뜨는 불일치가 생긴다. → **생성 시작 시 모드를 snapshot** 한다:
 
-- App 에 `runningGenMode` state(`'image'|'t2v'|'f2v'`). 생성 start 핸들러에서 현재 탭 기준으로 set (`text`·`list`→`image`, `video-text`→`t2v`, `frame-to-video`→`f2v`).
+- App 에 `runningGenMode` state(`'image'|'t2v'|'f2v'`). 현재 탭 기준 매핑 (`text`·`list`→`image`, `video-text`→`t2v`, `frame-to-video`→`f2v`).
+- **모든 생성 start 경로에서 set** (handleStart 한 곳만 넣으면 retry/재개에서 stale):
+  - `handleStart()` (App.jsx:795) — 현재 탭 기준
+  - **에러 재시도 버튼** `retryErrors({...})` (App.jsx:1547) — handleStart 를 안 타므로 별도 set. 재시도는 이미지 에러 씬 대상이라 `'image'`
+  - **스타일 검증 후 재개** `start(pendingStartOptions)` (App.jsx:1086) — 보류된 옵션 재개 시 set
+  (이미 Stop 버튼용 스타일 snapshot 이 같은 3경로에 들어가 있음 — 동일 위치에 추가하면 됨.)
 - Grid 는 **`activeTab` 이 아니라 `runningGenMode` snapshot** 을 어댑터에 넘긴다 → 탭 이동과 무관하게 일관.
 
 모니터 영역(`.content-monitor`)이 조건부 렌더:
@@ -208,7 +221,7 @@ CSS keyframes (gradient sweep). `generating` 타일 + (B) 타임라인 `generati
 - `buildGenerationItems`: 탭별 정규화 — `text`·`list`→image, `video-text`→video(ref `vscene_`), `frame-to-video`→video(ref `fp_`); `isComplete`(done·complete), `waiting`→pending.
 - `normalizeState`: done/complete→complete, generating→generating, error→error, pending/waiting/기타→pending (rawStatus 분리).
 - 클릭 라우팅: `kind:'image'`→`setSelectedScene`, `kind:'video'`→`setSelectedVideo` (framePair 가 SceneDetailModal 로 새지 않음).
-- 모드 snapshot: 생성 중 탭 이동해도 Grid 는 `runningGenMode` 기준(보드 안 바뀜) — 통합.
+- 모드 snapshot: 생성 중 탭 이동해도 Grid 는 `runningGenMode` 기준(보드 안 바뀜) — 통합. retry/재개 경로도 set 확인.
 - `LiveGenerationGrid`: 상태별 타일 렌더 (pending/generating/complete/error) 단위 테스트.
 - `GenTile`: error 시 ⚠️ + tooltip, complete 시 캐시버스터 src.
 - 모니터 전환: `anyRunning` true → Grid, false → PreviewPanel (통합).
