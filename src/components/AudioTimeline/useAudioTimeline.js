@@ -141,7 +141,10 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
       .map(s => {
         const imgPath = s.imagePath || s.image_path || s.filePath
         // 생성 중인 씬은 이미지가 아직 없어도 placeholder 클립을 만들어 shimmer 를 보여준다.
-        const isGenerating = s.status === 'generating' || (!!s.generatingStartedAt && !s.generatingEndedAt)
+        // status 만 신뢰 — useAutomation 이 시작 시 atomic 하게 'generating' 설정, 완료 시 'done'/'error'.
+        // (generatingStartedAt && !generatingEndedAt 보조 판정은 이미지 완료 경로(imageFinalize)가
+        //  generatingEndedAt 을 안 채워 완료 후에도 영구 true → shimmer 가 안 꺼지는 회귀를 만들었다.)
+        const isGenerating = s.status === 'generating'
         if (!imgPath && !isGenerating) return null
         const range = getSceneTimeRangeMs(s)
         if (!range) return null

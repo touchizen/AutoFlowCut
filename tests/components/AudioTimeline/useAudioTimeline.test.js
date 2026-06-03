@@ -157,6 +157,15 @@ describe('useAudioTimeline', () => {
       expect(img.clips[0]).toMatchObject({ generating: false, placeholder: false })
     })
 
+    it('완료된 씬(done, generatingStartedAt 남고 generatingEndedAt 없음)은 generating=false (shimmer 영구화 회귀)', () => {
+      // 이미지 완료 경로(imageFinalize)는 status='done' 만 쓰고 generatingEndedAt 을 안 채운다.
+      // 따라서 (generatingStartedAt && !generatingEndedAt) 에 의존하면 완료 후에도 shimmer 가 영구히 남는다.
+      const scenes = [{ id: 's1', image_path: '/i.png', status: 'done', generatingStartedAt: 1000, start_time: '00:00', end_time: '00:03' }]
+      const { result } = renderHook(() => useAudioTimeline(baseAudio, scenes, []))
+      const img = result.current.tracks.find(t => t.id === 'image')
+      expect(img.clips[0].generating).toBe(false)
+    })
+
     it('pending 씬(이미지 없음, 생성 중 아님)은 클립 안 만듦', () => {
       const scenes = [{ id: 's1', status: 'pending', start_time: '00:00', end_time: '00:03' }]
       const { result } = renderHook(() => useAudioTimeline(baseAudio, scenes, []))
