@@ -26,6 +26,14 @@ describe('ModelSelector (dropdown)', () => {
     expect(container.querySelector('option').textContent).toContain('$0.039/img')
   })
 
+  it('저장값이 옵션에 없으면 합성 옵션으로 노출 (동적 모델 보존 표시, P2)', () => {
+    const o = [{ id: 'a', label: 'A' }]
+    const { container } = render(<ModelSelector options={o} value="saved-dynamic" onChange={vi.fn()} t={(k) => k} />)
+    const vals = [...container.querySelectorAll('option')].map((x) => x.value)
+    expect(vals).toContain('saved-dynamic')
+    expect(container.querySelector('select.model-select').value).toBe('saved-dynamic')
+  })
+
   it('value 가 select 의 현재값', () => {
     const { container } = render(<ModelSelector options={opts} value="b" onChange={vi.fn()} t={t} />)
     expect(container.querySelector('select.model-select').value).toBe('b')
@@ -41,6 +49,16 @@ describe('ModelSelector (dropdown)', () => {
     const { container } = render(<ModelSelector options={opts} value="a" onChange={onChange} t={t} />)
     fireEvent.change(container.querySelector('select.model-select'), { target: { value: 'b' } })
     expect(onChange).toHaveBeenCalledWith('b')
+  })
+
+  it('descKey 없는 동적 모델(desc만) 선택 시 크래시 없음 + desc 표시 (P1)', () => {
+    // 실제 useI18n.t 는 key.split('.') 하므로 undefined key 면 throw → 재현용 mock.
+    const splitT = (k) => k.split('.').slice(-1)[0]
+    const dyn = [{ id: 'veo-2.0-generate-001', label: 'Veo 2', desc: 'legacy veo' }] // descKey 없음
+    const { container } = render(
+      <ModelSelector options={dyn} value="veo-2.0-generate-001" onChange={vi.fn()} t={splitT} />
+    )
+    expect(container.querySelector('.model-desc')?.textContent).toBe('legacy veo')
   })
 
   it('선택된 모델의 설명(desc)을 한 줄로 표시', () => {

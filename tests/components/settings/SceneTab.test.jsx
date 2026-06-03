@@ -80,8 +80,10 @@ describe('SceneTab — model selectors (T2I/T2V/F2V)', () => {
   it('imageModels/videoModels prop 주면 동적 옵션 사용 (없으면 정적 카탈로그 폴백)', () => {
     const imageModels = [{ id: 'dyn-img', label: 'Dynamic Img', cost: '$9' }]
     const videoModels = [{ id: 'dyn-vid', label: 'Dynamic Vid', cost: '$8' }]
+    // 저장된 모델이 제공된 동적 목록 안에 있는 정상 케이스 (없으면 합성 옵션이 붙음).
+    const ls = { ...baseSettings, imageModel: 'dyn-img', videoModelT2V: 'dyn-vid', videoModelF2V: 'dyn-vid' }
     const { container } = render(
-      <SceneTab localSettings={baseSettings} setLocalSettings={vi.fn()} t={t} imageModels={imageModels} videoModels={videoModels} />
+      <SceneTab localSettings={ls} setLocalSettings={vi.fn()} t={t} imageModels={imageModels} videoModels={videoModels} />
     )
     const selects = container.querySelectorAll('select.model-select')
     expect([...selects[0].querySelectorAll('option')].map(o => o.value)).toEqual(['dyn-img'])

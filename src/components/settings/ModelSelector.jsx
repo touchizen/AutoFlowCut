@@ -18,7 +18,12 @@ const costText = (m, t) => {
 export default function ModelSelector({ options, value, defaultValue, onChange, t, priceUrl }) {
   const list = options || []
   const selected = value || defaultValue
-  const selectedModel = list.find((m) => m.id === selected)
+  // 저장된 모델이 현재 옵션 목록에 없으면(예: /models 로드 전·실패 시 정적 폴백인데 동적
+  // 모델이 저장돼 있는 경우) 합성 옵션으로 노출 — select 가 값을 잃지 않게.
+  const displayList = selected && !list.some((m) => m.id === selected)
+    ? [{ id: selected, label: selected }, ...list]
+    : list
+  const selectedModel = displayList.find((m) => m.id === selected)
   return (
     <div className="model-selector">
       <div className="model-select-row">
@@ -27,7 +32,7 @@ export default function ModelSelector({ options, value, defaultValue, onChange, 
           value={selected || ''}
           onChange={(e) => onChange(e.target.value)}
         >
-          {list.map((m) => (
+          {displayList.map((m) => (
             <option key={m.id} value={m.id}>
               {m.cost ? `${m.label} · ${costText(m, t)}` : m.label}
             </option>
@@ -46,7 +51,7 @@ export default function ModelSelector({ options, value, defaultValue, onChange, 
       </div>
       {selectedModel && (
         <div className="model-select-info">
-          <span className="model-desc">{t(selectedModel.descKey)}</span>
+          <span className="model-desc">{selectedModel.descKey ? t(selectedModel.descKey) : (selectedModel.desc || '')}</span>
           {selectedModel.url && (
             <button
               type="button"

@@ -5,7 +5,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { DEFAULTS, UI } from '../config/defaults'
 import { generateProjectName } from '../utils/formatters'
-import { DEFAULT_IMAGE_MODEL_ID, DEFAULT_VIDEO_MODEL_ID, coerceImageModel, coerceVideoModel } from '../config/genModels'
+import { DEFAULT_IMAGE_MODEL_ID, DEFAULT_VIDEO_MODEL_ID } from '../config/genModels'
 
 const STORAGE_KEY = 'autoflowcut_settings'
 
@@ -48,11 +48,9 @@ function loadSettings() {
     // 옛 Flow(none) 저장 모드 폐기 — 공식 API 는 base64 만 오므로 작업폴더 저장이 필수.
     // 'none'/legacy 값은 'folder' 로 강제 (설정 UI 의 저장 방식 토글도 제거됨).
     if (merged.saveMode !== 'folder') merged.saveMode = 'folder'
-    // 모델 id 는 카탈로그 기준으로 강제 — 제거/preview 변종 등 stale id 가 localStorage 에
-    // 남으면 그대로 models/<id> 로 나가 전 생성이 실패하므로, 알 수 없으면 기본 모델로 치유.
-    merged.imageModel = coerceImageModel(merged.imageModel)
-    merged.videoModelT2V = coerceVideoModel(merged.videoModelT2V)
-    merged.videoModelF2V = coerceVideoModel(merged.videoModelF2V)
+    // 모델 id 는 coerce 하지 않고 저장값을 그대로 보존한다 — 정적 카탈로그에 없는 동적
+    // /models 모델을 선택·저장했을 때 reload 마다 기본값으로 되돌아가지 않도록(리뷰 P2).
+    // 실제 사용 가능 여부는 /models 로드 후 ModelSelector 가 조정(없으면 합성 옵션 노출).
     return merged
   }
   return defaults

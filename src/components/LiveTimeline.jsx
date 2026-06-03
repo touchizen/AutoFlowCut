@@ -37,6 +37,10 @@ export default function LiveTimeline({
   // onPlayingChange 는 stable(setState) 이므로 cleanup 은 unmount 시에만 실행됨.
   useEffect(() => () => onPlayingChange?.(false), [onPlayingChange])
 
+  // 같은 이유로 hidden roles 도 unmount 시 초기화 — View off 상태로 timeline 을 벗어나면
+  // App 의 monitorHiddenRoles 가 남아 상단 모니터가 계속 숨김 상태가 된다(리뷰 P2).
+  useEffect(() => () => onHiddenRolesChange?.(new Set()), [onHiddenRolesChange])
+
   return (
     <AudioTimeline
       audioPackage={dPkg}

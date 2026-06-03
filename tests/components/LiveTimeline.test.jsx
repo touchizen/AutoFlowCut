@@ -46,4 +46,19 @@ describe('LiveTimeline', () => {
     unmount()
     expect(onPlayingChange).toHaveBeenCalledWith(false)
   })
+
+  it('unmount 시 onHiddenRolesChange(빈 Set) 로 모니터 숨김 해제 (잔류 방지)', () => {
+    // View off 후 bottom panel 을 timeline 밖으로 바꾸면 LiveTimeline unmount → App 의
+    // monitorHiddenRoles 가 남아 상단 모니터가 계속 숨김 상태가 되는 걸 막는다(리뷰 P2).
+    const onHiddenRolesChange = vi.fn()
+    const { unmount } = render(
+      <LiveTimeline scenes={[]} srtEntries={[]} audioPackage={null} onSceneSelect={vi.fn()} onHiddenRolesChange={onHiddenRolesChange} />
+    )
+    onHiddenRolesChange.mockClear()
+    unmount()
+    expect(onHiddenRolesChange).toHaveBeenCalledTimes(1)
+    const arg = onHiddenRolesChange.mock.calls[0][0]
+    expect(arg instanceof Set).toBe(true)
+    expect(arg.size).toBe(0)
+  })
 })
