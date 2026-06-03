@@ -38,6 +38,33 @@ describe('StatusBar', () => {
       expect(errEl.textContent).toContain('2')
     })
 
+    it('부분 실패(done + errorCount>0)는 success 가 아니라 warning 색상', () => {
+      const { container } = render(
+        <StatusBar
+          progress={{ current: 3, total: 3, percent: 100, errorCount: 2 }}
+          status="done"
+          message="⚠️ done — 1 regenerated, 2 failed"
+          scenes={[{ id: 's1', imagePath: '/a.png' }]}
+        />
+      )
+      const root = container.querySelector('.status-bar')
+      expect(root.className).toContain('warning')
+      expect(root.className).not.toContain('success')
+    })
+
+    it('전체 성공(done + errorCount 0)은 success 색상 유지', () => {
+      const { container } = render(
+        <StatusBar
+          progress={{ current: 3, total: 3, percent: 100, errorCount: 0 }}
+          status="done"
+          message="✅ done"
+          scenes={[{ id: 's1', imagePath: '/a.png' }]}
+        />
+      )
+      const root = container.querySelector('.status-bar')
+      expect(root.className).toContain('success')
+    })
+
     it('progress bar 값 설정', () => {
       const { container } = render(
         <StatusBar

@@ -16,7 +16,7 @@ export default function StatusBar({ progress, status, message, scenes = [] }) {
   const errorCount = Math.max(sceneErrorCount, progress?.errorCount || 0)
   const hasScenes = scenes.length > 0
 
-  const statusClass = {
+  const baseStatusClass = {
     ready: '',
     uploading: 'uploading',
     running: 'running',
@@ -24,6 +24,8 @@ export default function StatusBar({ progress, status, message, scenes = [] }) {
     stopped: 'warning',
     error: 'error'
   }[status] || ''
+  // 부분 실패(done 인데 실패 있음)는 success(초록)로 보이지 않게 warning 색.
+  const statusClass = (status === 'done' && errorCount > 0) ? 'warning' : baseStatusClass
 
   const isActive = status === 'running' || status === 'uploading'
 
