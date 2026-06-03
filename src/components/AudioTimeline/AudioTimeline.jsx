@@ -6,7 +6,7 @@
  */
 
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react'
-import { useAudioTimeline } from './useAudioTimeline'
+import { useAudioTimeline, collectPlayableClips } from './useAudioTimeline'
 import { useVideoPosters } from './useVideoPosters'
 import { useI18n } from '../../hooks/useI18n'
 import { formatDuration, resolveImageSrc } from '../../utils/formatters'
@@ -27,6 +27,44 @@ import {
   POSTER_VIEWPORT_BUFFER_MS,
 } from './constants'
 import './AudioTimeline.css'
+
+// 트랙 토글: 비주얼=View(눈, off→프리뷰에서 숨김), 오디오=Mute(스피커, off→재생 제외).
+const VISUAL_ROLES = new Set(['video', 'image', 'subtitle'])
+const AUDIO_ROLES = new Set(['narration', 'voice', 'sfx'])
+
+// 트랙 라벨의 토글 아이콘 (kind: 'view'|'mute', off: 비활성 여부).
+function TrackToggleIcon({ kind, off }) {
+  if (kind === 'view') {
+    return off ? (
+      // eye-off
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 10 8 10 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+        <path d="M6.61 6.61A18.5 18.5 0 0 0 2 12s3 8 10 8a9.12 9.12 0 0 0 5.39-1.61" />
+        <line x1="2" y1="2" x2="22" y2="22" />
+      </svg>
+    ) : (
+      // eye
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M2 12s3-8 10-8 10 8 10 8-3 8-10 8-10-8-10-8z" />
+        <circle cx="12" cy="12" r="3" />
+      </svg>
+    )
+  }
+  return off ? (
+    // volume-x (muted)
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+      <line x1="23" y1="9" x2="17" y2="15" />
+      <line x1="17" y1="9" x2="23" y2="15" />
+    </svg>
+  ) : (
+    // volume-2 (audible)
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+      <path d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14" />
+    </svg>
+  )
+}
 
 // utils/formatters의 formatDuration(seconds)와 표시 규칙이 동일.
 // 여기선 ms-friendly + 비유한값 가드를 추가한 thin wrapper로 둠 (시간 포맷 단일 출처 유지).
@@ -186,6 +224,10 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   useEffect(() => { onPlayingChange?.(isGlobalPlaying) }, [isGlobalPlaying])
   const [hoverScene, setHoverScene] = useState(null) // { x, y, scene }
   const [dragOverTrackId, setDragOverTrackId] = useState(null) // 드롭 타겟 lane 하이라이트용
+  // 트랙별 토글 off (View 끔=프리뷰 숨김 / Mute 끔=재생 제외). 세션 단위.
+  const [disabledTracks, setDisabledTracks] = useState(() => new Set())
+  const disabledTracksRef = useRef(disabledTracks)
+  useEffect(() => { disabledTracksRef.current = disabledTracks }, [disabledTracks])
   const audioInstancesRef = useRef(new Map()) // clipId -> Audio
   const scheduledTimersRef = useRef([]) // setTimeout IDs (글로벌 재생 시 미래 클립 예약)
   const scrollRef = useRef(null)
@@ -432,13 +474,38 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   }
 
   // ── 재생 ──
-  const playableClips = useMemo(() => {
-    if (!data) return []
-    return data.tracks
-      .flatMap(t => t.clips || [])
-      .filter(c => c.audioPath)
-      .sort((a, b) => a.startMs - b.startMs)
+  // Mute 된 트랙(disabledTracks)은 재생 대상에서 제외.
+  const playableClips = useMemo(() => collectPlayableClips(data?.tracks, disabledTracks), [data, disabledTracks])
+
+  // clipId → trackId (예약 재생 가드 / 라이브 음소거 정지용).
+  const clipTrackMap = useMemo(() => {
+    const m = new Map()
+    for (const t of data?.tracks || []) {
+      for (const c of t.clips || []) m.set(c.id, t.id)
+    }
+    return m
   }, [data])
+
+  // 트랙 토글: View(비주얼)/Mute(오디오) on↔off.
+  const toggleTrackDisabled = useCallback((trackId) => {
+    setDisabledTracks(prev => {
+      const next = new Set(prev)
+      if (next.has(trackId)) next.delete(trackId); else next.add(trackId)
+      return next
+    })
+  }, [])
+
+  // 재생 중 Mute 토글 시 — 해당 트랙의 현재 재생 중 오디오를 즉시 정지.
+  useEffect(() => {
+    if (audioInstancesRef.current.size === 0) return
+    for (const [clipId, audio] of audioInstancesRef.current) {
+      if (disabledTracks.has(clipTrackMap.get(clipId))) {
+        try { audio.pause() } catch {}
+        audioInstancesRef.current.delete(clipId)
+        setPlayingClipIds(prev => { const n = new Set(prev); n.delete(clipId); return n })
+      }
+    }
+  }, [disabledTracks, clipTrackMap])
 
   // 모든 audio 정지 + RAF/timer 정리
   const stopAll = () => {
@@ -460,6 +527,8 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   // 한 클립 시작 (offsetMs는 클립 시작 시점 기준 오프셋)
   const startClipAt = async (clip, offsetMs = 0) => {
     if (!clip?.audioPath) return
+    // 예약(setTimeout) 발화 시점에 트랙이 음소거됐으면 재생 안 함 (ref로 최신값 읽기).
+    if (disabledTracksRef.current.has(clipTrackMap.get(clip.id))) return
     try {
       const result = await window.electronAPI?.readFileAbsolute({ filePath: clip.audioPath })
       if (!result?.success) {
@@ -738,6 +807,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
             srtEntries={srtEntries}
             height={previewHeight}
             isPlaying={isGlobalPlaying}
+            hiddenRoles={disabledTracks}
           />
 
           {/* Preview ↔ Timeline 사이 splitter (드래그=조절 / 더블클릭=기본값 복귀) */}
@@ -929,6 +999,20 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
                 {track.isSubTrack && !track.isSubGroup && <span className="atl-sub-marker">└</span>}
                 {track.isSubTrack && track.isSubGroup && (
                   <span className="atl-expand atl-expand-sub">{track.isSubExpanded ? '▼' : '▶'}</span>
+                )}
+                {!track.isSubTrack && (VISUAL_ROLES.has(track.role) || AUDIO_ROLES.has(track.role)) && (
+                  <button
+                    type="button"
+                    className={`atl-track-toggle${disabledTracks.has(track.id) ? ' is-off' : ''}`}
+                    onClick={(e) => { e.stopPropagation(); toggleTrackDisabled(track.id) }}
+                    title={VISUAL_ROLES.has(track.role)
+                      ? (disabledTracks.has(track.id) ? '보기 켜기' : '보기 끄기')
+                      : (disabledTracks.has(track.id) ? '음소거 해제' : '음소거')}
+                    aria-label={VISUAL_ROLES.has(track.role) ? 'toggle view' : 'toggle mute'}
+                    aria-pressed={!disabledTracks.has(track.id)}
+                  >
+                    <TrackToggleIcon kind={VISUAL_ROLES.has(track.role) ? 'view' : 'mute'} off={disabledTracks.has(track.id)} />
+                  </button>
                 )}
                 <span className="atl-label-name">
                   {track.isSubTrack

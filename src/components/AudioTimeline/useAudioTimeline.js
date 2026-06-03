@@ -123,6 +123,20 @@ function shiftHue(hex, deg) {
   return `#${toHex(r2)}${toHex(g2)}${toHex(b2)}`
 }
 
+/**
+ * 재생 대상 오디오 클립 수집 — audioPath 있는 클립만, startMs 오름차순.
+ * disabledTrackIds 에 든 트랙(Mute)은 통째로 제외. 비주얼 트랙을 넣어도 audioPath 가
+ * 없어 무해(harmless) — 호출자가 disabledTracks 전체를 그대로 넘겨도 됨.
+ */
+export function collectPlayableClips(tracks, disabledTrackIds = new Set()) {
+  if (!tracks) return []
+  return tracks
+    .filter(t => !disabledTrackIds.has(t.id))
+    .flatMap(t => t.clips || [])
+    .filter(c => c.audioPath)
+    .sort((a, b) => a.startMs - b.startMs)
+}
+
 export function useAudioTimeline(audioPackage, scenes, srtEntries) {
   return useMemo(() => {
     // audioPackage가 없어도 placeholder 트랙은 생성 (드롭 타겟 제공).

@@ -44,7 +44,9 @@ export function findRangeAt(ranges, t, inclusiveEnd = false) {
 // 씬에 비디오(i2v 우선, t2v 차순)가 있고 playhead가 비디오 구간 안이면
 // 단일 공유 <video> element를 이미지 위에 오버레이 재생한다.
 // <video>는 DOM에 항상 1개만 존재 — 씬이 바뀔 때만 src swap (500씬 스케일 대응).
-export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 240, isPlaying = false }) {
+const EMPTY_HIDDEN = new Set()
+
+export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 240, isPlaying = false, hiddenRoles = EMPTY_HIDDEN }) {
   // 씬 ranges precompute — getSceneTimeRangeMs는 parseTimeToSeconds(regex+split)을 부르므로
   // playhead 매 tick (60fps) 마다 N회 반복하면 1시간/1500씬 기준 ~0.5% CPU 누적.
   // sort를 명시적으로 — binary search 정확성 보장.
@@ -97,9 +99,14 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
     return computeVideoClipPlacement(scene, range.startMs, range.endMs)
   }, [scene])
 
+  // 트랙 View 토글 — 해당 role 이 hiddenRoles 에 있으면 프리뷰에서 끔.
+  const hideImage = hiddenRoles.has('image')
+  const hideSubtitle = hiddenRoles.has('subtitle')
+
   const isVideoActive = !!videoPlacement
     && playheadMs >= videoPlacement.videoIn
     && playheadMs < videoPlacement.videoOut
+    && !hiddenRoles.has('video')
 
   // 단일 <video> ref — src는 활성 placement가 바뀔 때만 swap, currentTime/play는 매 tick 동기화
   const videoRef = useRef(null)
@@ -203,7 +210,7 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
   return (
     <div className="atl-preview" style={{ height }}>
       <div className="atl-preview-stage">
-        {imgPath ? (
+        {imgPath && !hideImage ? (
           <img className="atl-preview-img" src={resolveImageSrc({ imagePath: imgPath, generatedAt: scene?.generatedAt, image: scene?.image })} alt="" />
         ) : (
           <div className="atl-preview-empty">— 씬 없음 —</div>
@@ -224,7 +231,7 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
             background: '#000',
           }}
         />
-        {subtitleText && (
+        {subtitleText && !hideSubtitle && (
           <div className="atl-preview-subtitle">{subtitleText}</div>
         )}
       </div>

@@ -97,6 +97,29 @@ describe('AudioTimeline', () => {
     })
   })
 
+  describe('트랙 토글 (View/Mute)', () => {
+    it('비주얼=view, 오디오=mute 토글이 라벨에 렌더', () => {
+      const { container } = render(
+        <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />
+      )
+      // 이미지/자막=view, narration/voice/sfx=mute
+      expect(container.querySelectorAll('.atl-track-toggle[aria-label="toggle view"]').length).toBeGreaterThanOrEqual(1)
+      expect(container.querySelectorAll('.atl-track-toggle[aria-label="toggle mute"]').length).toBeGreaterThanOrEqual(1)
+    })
+
+    it('mute 토글 클릭 → is-off 활성', () => {
+      const { container } = render(
+        <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />
+      )
+      const mute = container.querySelector('.atl-track-toggle[aria-label="toggle mute"]')
+      expect(mute.classList.contains('is-off')).toBe(false)
+      fireEvent.click(mute)
+      const after = container.querySelector('.atl-track-toggle[aria-label="toggle mute"]')
+      expect(after.classList.contains('is-off')).toBe(true)
+      expect(after.getAttribute('aria-pressed')).toBe('false')
+    })
+  })
+
   describe('트랙 렌더링', () => {
     it('5개 메인 트랙 라벨 표시 (영어 locale 기준)', () => {
       render(<AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />)
