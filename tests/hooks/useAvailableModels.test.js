@@ -3,7 +3,7 @@
  * 카탈로그로 graceful 폴백.
  */
 import { describe, it, expect, vi } from 'vitest'
-import { renderHook, waitFor } from '@testing-library/react'
+import { renderHook, waitFor, act } from '@testing-library/react'
 import { useAvailableModels } from '../../src/hooks/useAvailableModels'
 import { IMAGE_MODELS, VIDEO_MODELS } from '../../src/config/genModels'
 
@@ -43,5 +43,33 @@ describe('useAvailableModels', () => {
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(result.current.imageModels).toEqual(IMAGE_MODELS)
     expect(result.current.videoModels).toEqual(VIDEO_MODELS)
+  })
+
+  it('byok-key-changed 시 /models 재조회 — 키 저장 후 동적 목록 반영 (리뷰)', async () => {
+    const listModels = vi.fn()
+      .mockResolvedValueOnce({ success: false, error: 'No API key' }) // 최초: 무키
+      .mockResolvedValueOnce({ success: true, models: [
+        { id: 'gemini-2.5-flash-image', methods: ['generateContent'] },
+      ] }) // 키 저장 후
+    const { result } = renderHook(() => useAvailableModels({ listModels }))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.imageModels).toEqual(IMAGE_MODELS) // 무키 → 정적
+
+    act(() => { window.dispatchEvent(new CustomEvent('byok-key-changed')) })
+    await waitFor(() => expect(listModels).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(result.current.imageModels.map(m => m.id)).toContain('gemini-2.5-flash-image'))
+  })
+
+  it('byok-key-changed 후 키 없으면 정적 폴백으로 복귀 — 이전 키 동적 목록 비움 (리뷰)', async () => {
+    const listModels = vi.fn()
+      .mockResolvedValueOnce({ success: true, models: [
+        { id: 'veo-2.0-generate-001', methods: ['predictLongRunning'] },
+      ] })
+      .mockResolvedValueOnce({ success: false, error: 'No API key' }) // 키 삭제 후
+    const { result } = renderHook(() => useAvailableModels({ listModels }))
+    await waitFor(() => expect(result.current.videoModels.map(m => m.id)).toContain('veo-2.0-generate-001'))
+
+    act(() => { window.dispatchEvent(new CustomEvent('byok-key-changed')) })
+    await waitFor(() => expect(result.current.videoModels).toEqual(VIDEO_MODELS))
   })
 })

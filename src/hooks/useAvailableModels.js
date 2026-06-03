@@ -22,32 +22,43 @@ export function useAvailableModels(genAPI) {
 
   useEffect(() => {
     let cancelled = false
-    if (!listModels) {
-      setState((s) => ({ ...s, loading: false }))
-      return
+    const run = () => {
+      if (!listModels) {
+        if (!cancelled) setState((s) => ({ ...s, loading: false, error: null }))
+        return
+      }
+      setState((s) => ({ ...s, loading: true, error: null }))
+      listModels()
+        .then((res) => {
+          if (cancelled) return
+          if (res?.success) {
+            const { imageModels, videoModels } = categorizeApiModels(res.models)
+            // 카테고리별 독립 폴백 — 한쪽만 비어도 그쪽만 정적으로.
+            setState({
+              imageModels: imageModels.length ? imageModels : IMAGE_MODELS,
+              videoModels: videoModels.length ? videoModels : VIDEO_MODELS,
+              loading: false,
+              error: null,
+            })
+          } else {
+            // 무키/실패 → 정적 폴백(이전 키의 동적 목록도 비움).
+            setState({ imageModels: IMAGE_MODELS, videoModels: VIDEO_MODELS, loading: false, error: res?.error || 'Failed to list models' })
+          }
+        })
+        .catch((e) => {
+          if (cancelled) return
+          setState({ imageModels: IMAGE_MODELS, videoModels: VIDEO_MODELS, loading: false, error: e?.message || String(e) })
+        })
     }
-    setState((s) => ({ ...s, loading: true, error: null }))
-    listModels()
-      .then((res) => {
-        if (cancelled) return
-        if (res?.success) {
-          const { imageModels, videoModels } = categorizeApiModels(res.models)
-          // 카테고리별 독립 폴백 — 한쪽만 비어도 그쪽만 정적으로.
-          setState({
-            imageModels: imageModels.length ? imageModels : IMAGE_MODELS,
-            videoModels: videoModels.length ? videoModels : VIDEO_MODELS,
-            loading: false,
-            error: null,
-          })
-        } else {
-          setState({ imageModels: IMAGE_MODELS, videoModels: VIDEO_MODELS, loading: false, error: res?.error || 'Failed to list models' })
-        }
-      })
-      .catch((e) => {
-        if (cancelled) return
-        setState({ imageModels: IMAGE_MODELS, videoModels: VIDEO_MODELS, loading: false, error: e?.message || String(e) })
-      })
-    return () => { cancelled = true }
+    run()
+    // 키 저장/삭제(byok-key-changed: saveKey/clearKey 둘 다 dispatch) 시 재조회 —
+    // 앱 시작 시 무키였다가 키를 넣은 신규 사용자/키 교체가 동적 목록·stale 치유에 반영되도록.
+    const onKeyChanged = () => run()
+    window.addEventListener('byok-key-changed', onKeyChanged)
+    return () => {
+      cancelled = true
+      window.removeEventListener('byok-key-changed', onKeyChanged)
+    }
   }, [listModels])
 
   return state
