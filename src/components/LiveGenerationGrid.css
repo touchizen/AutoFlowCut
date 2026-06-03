@@ -78,20 +78,19 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
-  /* 넓고 부드러운 윤기 띠 — 가운데가 가장 밝고 양쪽으로 서서히 페이드(광택 느낌), 살짝 푸른빛. */
-  background: linear-gradient(
-    115deg,
-    rgba(255, 255, 255, 0) 35%,
-    rgba(255, 255, 255, 0.06) 45%,
-    rgba(235, 245, 255, 0.20) 50%,
-    rgba(255, 255, 255, 0.06) 55%,
-    rgba(255, 255, 255, 0) 65%
-  );
-  background-size: 250% 100%;
-  /* ease-in-out 으로 부드럽게 가속/감속 (linear 의 딱딱한 느낌 제거) */
-  animation: gen-shimmer-sweep 1.9s ease-in-out infinite;
+  /* 다방향 윤기 — 부드러운 하이라이트 3개가 서로 다른 방향으로 흘러 한 방향 스윕 느낌을 없앤다.
+     흰빛 + 살짝 푸른빛/초록빛으로 "에너지 도는" 광택. (이미지 위엔 은은히 얹힘) */
+  background:
+    radial-gradient(60% 60% at 25% 25%, rgba(255, 255, 255, 0.18), transparent 60%),
+    radial-gradient(55% 55% at 80% 35%, rgba(180, 215, 255, 0.15), transparent 60%),
+    radial-gradient(65% 65% at 60% 85%, rgba(190, 255, 225, 0.12), transparent 62%);
+  background-size: 180% 180%, 170% 170%, 200% 200%;
+  background-repeat: no-repeat;
+  /* alternate 로 왕복 — 멈칫거림 없이 여러 방향으로 천천히 부유. */
+  animation: gen-shimmer-drift 3.2s ease-in-out infinite alternate;
 }
-@keyframes gen-shimmer-sweep {
-  0%   { background-position: 150% 0; }
-  100% { background-position: -50% 0; }
+@keyframes gen-shimmer-drift {
+  0%   { background-position:   0%   0%, 100%   0%,  50% 100%; }
+  50%  { background-position: 100%  60%,   0%  40%,  20%  20%; }
+  100% { background-position:  20% 100%,  80% 100%, 100%   0%; }
 }
