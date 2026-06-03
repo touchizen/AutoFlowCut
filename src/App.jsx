@@ -238,17 +238,18 @@ function App() {
 
   // 라이브 /models 로 채운 사용 가능 모델 목록(설정 드롭다운 + stale 저장값 치유에 공유).
   const availableModels = useAvailableModels(genAPI)
-  // settings 를 effect deps 없이 최신으로 읽기 위한 ref (heal effect 가 settings 변경마다
-  // 재실행되지 않도록 — 변경은 idempotent 라 안전하지만 불필요한 실행 회피).
-  const settingsModelRef = useRef(settings)
-  useEffect(() => { settingsModelRef.current = settings }, [settings])
   // /models 가 성공해 권위 있는 동적 목록을 얻은 경우에만, 저장된 모델이 그 목록에 없으면
   // (= 이 키로 사용 불가한 stale 값) 기본/첫 사용가능 모델로 치유 → 생성 시 invalid 모델이
   // API 로 나가는 걸 막는다. 정적 폴백(=참조가 카탈로그 그대로)·로딩·실패면 보존(리뷰 P2).
+  // availableModels 변경뿐 아니라 settings.모델 변경(프로젝트 로드·모달 저장 등)에도 반응 —
+  // 로드 후 stale 모델이 setSettings 로 다시 들어와도 치유되도록(리뷰 P2). setSettings(prev=>)
+  // + no-op(prev 그대로 반환) 가드로 무한 루프 없이 수렴.
   useEffect(() => {
-    const heal = computeModelHeal(availableModels, settingsModelRef.current)
-    for (const [key, val] of Object.entries(heal)) updateSetting(key, val)
-  }, [availableModels.imageModels, availableModels.videoModels, updateSetting])
+    setSettings(prev => {
+      const heal = computeModelHeal(availableModels, prev)
+      return Object.keys(heal).length ? { ...prev, ...heal } : prev
+    })
+  }, [availableModels.imageModels, availableModels.videoModels, settings.imageModel, settings.videoModelT2V, settings.videoModelF2V])
   const scenesHook = useScenes()
   const automation = useAutomation(
     genAPI,

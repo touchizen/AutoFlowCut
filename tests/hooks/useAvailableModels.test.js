@@ -60,6 +60,26 @@ describe('useAvailableModels', () => {
     await waitFor(() => expect(result.current.imageModels.map(m => m.id)).toContain('gemini-2.5-flash-image'))
   })
 
+  it('superseded(지난) /models 응답이 최신 상태를 덮지 않음 (race, 리뷰)', async () => {
+    let resolveA
+    const pA = new Promise((r) => { resolveA = r })
+    const listModels = vi.fn()
+      .mockReturnValueOnce(pA)                                         // 1st(키 A) — 늦게 resolve
+      .mockResolvedValueOnce({ success: false, error: 'No API key' })  // 2nd(키 삭제) — 먼저 resolve
+    const { result } = renderHook(() => useAvailableModels({ listModels }))
+
+    // 1st in-flight 중 키 삭제 이벤트 → 2nd 발화
+    act(() => { window.dispatchEvent(new CustomEvent('byok-key-changed')) })
+    await waitFor(() => expect(listModels).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(result.current.videoModels).toEqual(VIDEO_MODELS)) // 2nd → 정적
+
+    // 이제 1st(키 A)가 늦게 동적으로 성공 — superseded 라 무시돼야 함
+    await act(async () => {
+      resolveA({ success: true, models: [{ id: 'veo-2.0-generate-001', methods: ['predictLongRunning'] }] })
+    })
+    expect(result.current.videoModels).toEqual(VIDEO_MODELS) // 여전히 정적 (지난 응답 무시)
+  })
+
   it('byok-key-changed 후 키 없으면 정적 폴백으로 복귀 — 이전 키 동적 목록 비움 (리뷰)', async () => {
     const listModels = vi.fn()
       .mockResolvedValueOnce({ success: true, models: [

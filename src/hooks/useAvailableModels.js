@@ -5,7 +5,7 @@
  * 키 없음/오프라인/분류 결과 빈 경우엔 정적 카탈로그(IMAGE_MODELS/VIDEO_MODELS)로
  * graceful 폴백 — 설정 UI 가 항상 동작하도록.
  */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { IMAGE_MODELS, VIDEO_MODELS, categorizeApiModels } from '../config/genModels'
 
 export function useAvailableModels(genAPI) {
@@ -19,18 +19,23 @@ export function useAvailableModels(genAPI) {
   // genAPI 객체는 렌더마다 새로 생성되지만 listModels(useCallback)는 안정적 →
   // 함수 참조에 의존해 effect 재실행/무한 루프를 막는다.
   const listModels = genAPI?.listModels
+  // 요청 시퀀스 — 여러 /models 요청이 겹칠 때(키 교체/삭제 중 늦은 응답) 최신 요청만 반영.
+  const runSeqRef = useRef(0)
 
   useEffect(() => {
     let cancelled = false
     const run = () => {
+      const myRun = ++runSeqRef.current
+      // unmount(cancelled) 또는 더 최신 요청이 시작됐으면(superseded) 응답 무시.
+      const stale = () => cancelled || myRun !== runSeqRef.current
       if (!listModels) {
-        if (!cancelled) setState((s) => ({ ...s, loading: false, error: null }))
+        if (!stale()) setState((s) => ({ ...s, loading: false, error: null }))
         return
       }
       setState((s) => ({ ...s, loading: true, error: null }))
       listModels()
         .then((res) => {
-          if (cancelled) return
+          if (stale()) return
           if (res?.success) {
             const { imageModels, videoModels } = categorizeApiModels(res.models)
             // 카테고리별 독립 폴백 — 한쪽만 비어도 그쪽만 정적으로.
@@ -46,7 +51,7 @@ export function useAvailableModels(genAPI) {
           }
         })
         .catch((e) => {
-          if (cancelled) return
+          if (stale()) return
           setState({ imageModels: IMAGE_MODELS, videoModels: VIDEO_MODELS, loading: false, error: e?.message || String(e) })
         })
     }
