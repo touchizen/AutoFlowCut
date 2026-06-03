@@ -470,6 +470,34 @@ describe('AudioTimeline', () => {
         vi.unstubAllGlobals()
       }
     })
+
+    it('playhead 값이 같으면 부모 콜백 identity가 바뀌어도 다시 통보하지 않음', () => {
+      const first = vi.fn()
+      const second = vi.fn()
+      const { rerender } = rtlRender(
+        <AudioTimeline
+          audioPackage={audioPackage}
+          scenes={scenes}
+          srtEntries={srtEntries}
+          onPlayheadChange={first}
+        />,
+        { wrapper: I18nProvider }
+      )
+
+      expect(first).toHaveBeenCalledTimes(1)
+      expect(first).toHaveBeenCalledWith(0)
+
+      rerender(
+        <AudioTimeline
+          audioPackage={audioPackage}
+          scenes={scenes}
+          srtEntries={srtEntries}
+          onPlayheadChange={second}
+        />
+      )
+
+      expect(second).not.toHaveBeenCalled()
+    })
   })
 
   // Regression: 프로젝트 전환 시 useAudioTimeline이 잠깐 null을 반환할 때

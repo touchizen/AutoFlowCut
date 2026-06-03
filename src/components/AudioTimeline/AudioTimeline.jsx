@@ -136,8 +136,8 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
     if (!onPlayheadChange) return
     const now = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
     const last = lastParentPlayheadSyncRef.current
+    if (last.value === nextMs) return
     if (!force && isGlobalPlayingRef.current && now - last.at < PLAYHEAD_PARENT_SYNC_MS) return
-    if (!force && last.value === nextMs) return
     lastParentPlayheadSyncRef.current = { at: now, value: nextMs }
     onPlayheadChange(nextMs)
   }, [onPlayheadChange])
