@@ -77,6 +77,19 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     errorCountRef.current = 0
     const pendingQueue = [] // { generationId, scene, submittedAt }
     let consecutiveErrors = 0
+
+    // 사용자 일시정지 동안 대기하고, 재개 시 그 시간만큼 보정한다 — pause 가
+    // in-flight 의 ITEM_TIMEOUT(2분)이나 Phase2 drain 예산(3분)을 갉아먹지 않게.
+    const awaitUnpause = async () => {
+      if (!pausedRef.current) return
+      const pausedAt = Date.now()
+      while (pausedRef.current && !stopRequestedRef.current) {
+        await new Promise(r => setTimeout(r, 500))
+      }
+      const waited = Date.now() - pausedAt
+      for (const item of pendingQueue) item.submittedAt += waited
+      pauseBudgetMs += waited
+    }
     // quota stop 은 공통 모듈 — stopRequestedRef 마킹 + listeners (queue, 모달) 자동 발사.
     // queue clear 는 useGenerationQueue 가 자체 subscribe 해서 처리하므로 caller 책임 X.
     // 이미 submit 한 in-flight 는 마저 collect 시도 (운 좋게 결과 오면 살림).
@@ -156,9 +169,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
 
     // Phase 1: 비동기 제출 + 중간 수집
     for (let i = 0; i < targetScenes.length; i++) {
-      while (pausedRef.current && !stopRequestedRef.current) {
-        await new Promise(r => setTimeout(r, 500))
-      }
+      await awaitUnpause()
       if (stopRequestedRef.current) break
 
       // 동시성 게이트 — in-flight(pendingQueue) 가 concurrency 이상이면 슬롯이 빌 때까지 대기.
@@ -167,9 +178,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       while (pendingQueue.length >= concurrency && !stopRequestedRef.current) {
         await collectCompleted()
         if (pendingQueue.length >= concurrency) {
-          while (pausedRef.current && !stopRequestedRef.current) {
-            await new Promise(r => setTimeout(r, 500))
-          }
+          await awaitUnpause()
           if (stopRequestedRef.current) break
           await new Promise(r => setTimeout(r, GATE_POLL_MS))
         }
@@ -232,10 +241,8 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       !stopRequestedRef.current &&
       (Date.now() - pollStart - pauseBudgetMs < 180000)
     ) {
-      // paused (사용자 일시정지) 인식 — Phase 2 도 pause 동안 멈춤.
-      while (pausedRef.current && !stopRequestedRef.current) {
-        await new Promise(r => setTimeout(r, 500))
-      }
+      // paused (사용자 일시정지) 인식 — Phase 2 도 pause 동안 멈추고 시간 보정.
+      await awaitUnpause()
       if (stopRequestedRef.current) break
       setStatusMessage(t('status.collectingResults', { remaining: pendingQueue.length }))
       await collectCompleted()

@@ -24,7 +24,9 @@ export function GenTile({ item, onClick }) {
         <img className="gentile-media" src={thumbSrc} alt="" />
       )}
       {showMedia && kind === 'video' && (
-        <video className="gentile-media" src={thumbSrc} muted playsInline preload="metadata" />
+        // preload="none" — 100+ 씬에서 metadata 일괄 로드/디코드 부하 회피. 첫 프레임은
+        // 브라우저가 필요 시(스크럽/재생) 로드. (ResultsTable 의 hover-poster 패턴 경량화 버전)
+        <video className="gentile-media" src={thumbSrc} muted playsInline preload="none" />
       )}
       {state === 'generating' && <div className="gen-shimmer" aria-hidden="true" />}
       {state === 'error' && <span className="gentile-error-icon">⚠️</span>}
@@ -32,9 +34,17 @@ export function GenTile({ item, onClick }) {
   )
 }
 
-export default function LiveGenerationGrid({ items, onItemSelect }) {
+// '16:9' → '16 / 9' (CSS aspect-ratio). 프로젝트 종횡비를 타일에 반영.
+function aspectToCss(aspectRatio) {
+  if (typeof aspectRatio === 'string' && /^\d+:\d+$/.test(aspectRatio)) {
+    return aspectRatio.replace(':', ' / ')
+  }
+  return '16 / 9'
+}
+
+export default function LiveGenerationGrid({ items, onItemSelect, aspectRatio }) {
   return (
-    <div className="live-gen-grid">
+    <div className="live-gen-grid" style={{ '--gentile-aspect': aspectToCss(aspectRatio) }}>
       {(items || []).map((item) => (
         <GenTile key={item.id} item={item} onClick={onItemSelect} />
       ))}

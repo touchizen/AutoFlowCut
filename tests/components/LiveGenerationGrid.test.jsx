@@ -66,4 +66,16 @@ describe('LiveGenerationGrid', () => {
     const { container } = render(<LiveGenerationGrid items={[]} onItemSelect={vi.fn()} />)
     expect(container.querySelectorAll('.gentile')).toHaveLength(0)
   })
+
+  it('aspectRatio prop → 타일 종횡비 CSS 변수 (프로젝트 9:16/1:1 반영)', () => {
+    const { container } = render(<LiveGenerationGrid items={items} onItemSelect={vi.fn()} aspectRatio="9:16" />)
+    const grid = container.querySelector('.live-gen-grid')
+    expect(grid.style.getPropertyValue('--gentile-aspect')).toBe('9 / 16')
+  })
+
+  it('aspectRatio 미지정 → 16 / 9 기본', () => {
+    const { container } = render(<LiveGenerationGrid items={items} onItemSelect={vi.fn()} />)
+    const grid = container.querySelector('.live-gen-grid')
+    expect(grid.style.getPropertyValue('--gentile-aspect')).toBe('16 / 9')
+  })
 })

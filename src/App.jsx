@@ -722,6 +722,8 @@ function App() {
               videoI2V: result.base64,
               videoI2VPath: result.videoPath || null,
               ...(result?.duration ? { videoI2VDuration: result.duration } : {}),
+              // 비디오 캐시버스터용 — 이미지 generatedAt 과 분리(I2V 재생성 시 타임라인/모니터 갱신).
+              ...(result?.generatedAt ? { videoI2VGeneratedAt: result.generatedAt } : {}),
             })
           }
         }
@@ -1060,6 +1062,8 @@ function App() {
                     videoI2V: result.base64,
                     videoI2VPath: result.videoPath || null,
                     ...(result?.duration ? { videoI2VDuration: result.duration } : {}),
+                    // 비디오 캐시버스터용 — 이미지 generatedAt 과 분리(I2V 재생성 갱신).
+                    ...(result?.generatedAt ? { videoI2VGeneratedAt: result.generatedAt } : {}),
                   })
                 }
               }
@@ -1157,9 +1161,12 @@ function App() {
     }
   }, [scenes, anyRunning])
   const isVideoTab = activeTab === 'video-text' || activeTab === 'frame-to-video'
-  const currentProgress = isVideoTab ? videoAutomation.progress : progress
-  const currentStatus = isVideoTab ? videoAutomation.status : status
-  const currentStatusMessage = isVideoTab ? videoAutomation.statusMessage : statusMessage
+  // 생성 중에는 snapshot 된 runningGenMode 로 자동화 상태를 고른다 — Grid 와 일관되게,
+  // 탭을 바꿔도 StatusBar 가 다른 automation 상태로 튀지 않게(live activeTab 사용 시 회귀).
+  const showVideoAutomation = anyRunning ? (runningGenMode !== 'image') : isVideoTab
+  const currentProgress = showVideoAutomation ? videoAutomation.progress : progress
+  const currentStatus = showVideoAutomation ? videoAutomation.status : status
+  const currentStatusMessage = showVideoAutomation ? videoAutomation.statusMessage : statusMessage
 
   return (
     <div className="app">
@@ -1588,6 +1595,7 @@ function App() {
                 // 생성 중 — 라이브 자산 그리드(snapshot 된 runningGenMode 기준).
                 <LiveGenerationGrid
                   items={buildGenerationItems(runningGenMode, { scenes, videoScenes, framePairs })}
+                  aspectRatio={settings.aspectRatio}
                   onItemSelect={(item) => item.kind === 'video' ? setSelectedVideo(item.ref) : setSelectedScene(item.ref)}
                 />
               ) : (
@@ -1662,6 +1670,8 @@ function App() {
                 ? settings.seedNo : null
               // Stop 버튼이 retry 중에도 스타일을 표시하도록 snapshot — 정상 생성(handleStart)과 동일.
               setRunningStyle({ styleId: selectedStyleRefId, label: styleResolver.resolveLabelForId(selectedStyleRefId), applies: true })
+              // 개별 재시도도 handleStart 를 우회하므로 모드 snapshot 직접 set (이미지 씬 재시도 = image).
+              setRunningGenMode('image')
               automation.retryScene(id, {
                 projectName: ensureProjectName(),
                 saveMode: settings.saveMode,
@@ -1750,6 +1760,8 @@ function App() {
                 ? settings.seedNo : null
               // Stop 버튼이 retry 중에도 스타일을 표시하도록 snapshot — 정상 생성(handleStart)과 동일.
               setRunningStyle({ styleId: selectedStyleRefId, label: styleResolver.resolveLabelForId(selectedStyleRefId), applies: true })
+              // 개별 재시도도 handleStart 를 우회하므로 모드 snapshot 직접 set (이미지 씬 재시도 = image).
+              setRunningGenMode('image')
               automation.retryScene(id, {
                 projectName: ensureProjectName(),
                 saveMode: settings.saveMode,

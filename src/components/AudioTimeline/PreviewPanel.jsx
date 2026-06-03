@@ -114,7 +114,7 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
         const p = computeVideoClipPlacement(r.scene, r.startMs, r.endMs)
         if (!p) return null
         // generatedAt 동봉 — prefetch 가 메인 <video src> 와 동일한 ?v= URL 을 warming 하도록
-        return { videoIn: p.videoIn, videoOut: p.videoOut, videoPath: p.videoPath, generatedAt: r.scene?.generatedAt }
+        return { videoIn: p.videoIn, videoOut: p.videoOut, videoPath: p.videoPath, generatedAt: r.scene?.videoI2VGeneratedAt ?? r.scene?.videoT2VGeneratedAt ?? r.scene?.generatedAt }
       })
       .filter(Boolean)
       .sort((a, b) => a.videoIn - b.videoIn)
@@ -173,7 +173,7 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
 
     // src swap — 활성 비디오 path가 바뀐 경우에만.
     // Windows 절대경로(C:\...) → file:///C:/... 형태로 정규화는 resolveVideoSrc가 담당.
-    const desiredSrc = resolveVideoSrc(null, videoPlacement.videoPath, { version: scene?.generatedAt })
+    const desiredSrc = resolveVideoSrc(null, videoPlacement.videoPath, { version: scene?.videoI2VGeneratedAt ?? scene?.videoT2VGeneratedAt ?? scene?.generatedAt })
     if (!desiredSrc) return
     if (currentSrcRef.current !== desiredSrc) {
       currentSrcRef.current = desiredSrc

@@ -16,7 +16,7 @@
 
 .gentile {
   position: relative;
-  aspect-ratio: 16 / 9;
+  aspect-ratio: var(--gentile-aspect, 16 / 9);
   border-radius: 6px;
   overflow: hidden;
   background: #141414;

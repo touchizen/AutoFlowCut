@@ -32,9 +32,10 @@ function setupHook(scenes, overrides = {}) {
     uploadReference: vi.fn(),
     getAccessToken: vi.fn().mockResolvedValue('tok'),
   }
-  const scenesHook = { scenes, references: [], updateScene: vi.fn(), getMatchingReferences: vi.fn(() => []) }
+  const updateScene = vi.fn()
+  const scenesHook = { scenes, references: [], updateScene, getMatchingReferences: vi.fn(() => []) }
   const hook = renderHook(() => useAutomation(flowAPI, scenesHook, null, null, null, (k) => k, null, null, null))
-  return { hook, submitGenerationDOM, flowAPI }
+  return { hook, submitGenerationDOM, flowAPI, updateScene }
 }
 
 beforeEach(() => {
@@ -99,6 +100,31 @@ describe('useAutomation 동시성 윈도우', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
     await startPromise
     expect(submitGenerationDOM).toHaveBeenCalledTimes(4)
+  })
+
+  it('pause 시간은 ITEM_TIMEOUT 에 포함되지 않음 (3분 pause 후 재개해도 timeout 아님)', async () => {
+    let completed = false
+    const checkGeneration = vi.fn().mockImplementation(async () => ({ completed }))
+    const { hook, updateScene } = setupHook([{ id: 's1', prompt: 'a', status: 'pending' }], {
+      checkGeneration,
+      collectGeneration: vi.fn().mockResolvedValue({ success: true, images: [{ id: 'i', mediaId: 'm' }] }),
+    })
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({ projectName: 'p', saveMode: 'memory', concurrency: 1 })
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000) }) // s1 제출됨, pending
+    await act(async () => { hook.result.current.togglePause() })
+    // ITEM_TIMEOUT(2분)보다 긴 3분 pause
+    await act(async () => { await vi.advanceTimersByTimeAsync(3 * 60 * 1000) })
+    completed = true
+    await act(async () => { hook.result.current.togglePause() }) // 재개
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
+    await startPromise
+
+    // pause 시간이 보정돼 timeout 으로 안 떨어져야 함
+    const timedOut = updateScene.mock.calls.find(([, upd]) => upd?.error === 'Generation timeout')
+    expect(timedOut).toBeUndefined()
   })
 
   it('concurrency=0 (잘못된 값) → 무한대기 없이 기본 5 로 clamp', async () => {

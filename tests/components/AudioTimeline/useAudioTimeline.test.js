@@ -166,11 +166,18 @@ describe('useAudioTimeline', () => {
 
     // 비디오도 안정 파일명(t2v_N/i2v_N) 재생성 시 stale → videoSrc 에 ?v=generatedAt.
     // (useVideoPosters 가 이 videoSrc 를 poster 추출 키로 쓰므로 poster 도 갱신됨)
-    it('video clip videoSrc 에 ?v=generatedAt 부착', () => {
+    it('video clip videoSrc 에 ?v=generatedAt 부착 (비디오 generatedAt 없으면 scene fallback)', () => {
       const scenes = [{ id: 's1', image_path: '/i.png', videoT2VPath: '/v/t2v_1.mp4', videoT2VDuration: 2, generatedAt: 999, start_time: '00:00', end_time: '00:03' }]
       const { result } = renderHook(() => useAudioTimeline(baseAudio, scenes, []))
       const video = result.current.tracks.find(t => t.id === 'video')
       expect(video.clips[0].videoSrc).toBe('file:///v/t2v_1.mp4?v=999')
+    })
+
+    it('video clip videoSrc — 비디오 자체 generatedAt(videoT2V/I2V) 우선 (이미지 재생성과 분리)', () => {
+      const scenes = [{ id: 's1', image_path: '/i.png', videoT2VPath: '/v/t2v_1.mp4', videoT2VDuration: 2, generatedAt: 111, videoT2VGeneratedAt: 222, start_time: '00:00', end_time: '00:03' }]
+      const { result } = renderHook(() => useAudioTimeline(baseAudio, scenes, []))
+      const video = result.current.tracks.find(t => t.id === 'video')
+      expect(video.clips[0].videoSrc).toBe('file:///v/t2v_1.mp4?v=222') // 222(비디오) not 111(이미지)
     })
 
     it('omits image track when scenes array is empty', () => {

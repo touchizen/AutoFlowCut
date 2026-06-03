@@ -169,7 +169,9 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
         if (!range) return null
         const placement = computeVideoClipPlacement(s, range.startMs, range.endMs)
         if (!placement) return null
-        const videoSrc = resolveVideoSrc(null, placement.videoPath, { version: s.generatedAt })
+        // 비디오 자체 generatedAt 우선(이미지 재생성과 분리). i2v 우선(placement 도 i2v 우선).
+        const videoVersion = s.videoI2VGeneratedAt ?? s.videoT2VGeneratedAt ?? s.generatedAt
+        const videoSrc = resolveVideoSrc(null, placement.videoPath, { version: videoVersion })
         if (!videoSrc) return null
         return {
           id: `vid-${s.id}`,
