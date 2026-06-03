@@ -471,6 +471,43 @@ describe('AudioTimeline', () => {
       }
     })
 
+    it('스크럽 중 부모 playhead 콜백도 pointermove 매번 호출하지 않고 throttle', () => {
+      let now = 0
+      const onPlayheadChange = vi.fn()
+      const perfSpy = vi.spyOn(performance, 'now').mockImplementation(() => now)
+
+      try {
+        const { container } = rtlRender(
+          <AudioTimeline
+            audioPackage={audioPackage}
+            scenes={scenes}
+            srtEntries={srtEntries}
+            onPlayheadChange={onPlayheadChange}
+          />,
+          { wrapper: I18nProvider }
+        )
+        onPlayheadChange.mockClear()
+
+        const scrollEl = container.querySelector('.atl-scroll')
+        Object.defineProperty(scrollEl, 'clientWidth', { configurable: true, value: 400 })
+        Object.defineProperty(scrollEl, 'clientHeight', { configurable: true, value: 240 })
+        scrollEl.getBoundingClientRect = () => ({
+          left: 0, top: 0, right: 400, bottom: 240, width: 400, height: 240,
+        })
+
+        fireEvent.pointerDown(scrollEl, { button: 0, clientX: 100, clientY: 20 })
+        for (const x of [110, 120, 130, 140, 150]) {
+          now += 16
+          fireEvent(window, new PointerEvent('pointermove', { clientX: x, clientY: 20 }))
+        }
+
+        expect(onPlayheadChange.mock.calls.length).toBeLessThanOrEqual(2)
+        fireEvent(window, new PointerEvent('pointerup', { clientX: 150, clientY: 20 }))
+      } finally {
+        perfSpy.mockRestore()
+      }
+    })
+
     it('playhead 값이 같으면 부모 콜백 identity가 바뀌어도 다시 통보하지 않음', () => {
       const first = vi.fn()
       const second = vi.fn()

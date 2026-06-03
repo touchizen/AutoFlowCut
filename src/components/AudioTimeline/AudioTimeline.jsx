@@ -131,13 +131,15 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   const [zoom, setZoom] = useState(1)
   const [playheadMs, setPlayheadMs] = useState(0)
   const isGlobalPlayingRef = useRef(false)
+  const isDraggingRef = useRef(false)
   const lastParentPlayheadSyncRef = useRef({ at: -Infinity, value: null })
   const syncPlayheadToParent = useCallback((nextMs, { force = false } = {}) => {
     if (!onPlayheadChange) return
     const now = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
     const last = lastParentPlayheadSyncRef.current
+    const shouldThrottle = isGlobalPlayingRef.current || isDraggingRef.current
     if (last.value === nextMs) return
-    if (!force && isGlobalPlayingRef.current && now - last.at < PLAYHEAD_PARENT_SYNC_MS) return
+    if (!force && shouldThrottle && now - last.at < PLAYHEAD_PARENT_SYNC_MS) return
     lastParentPlayheadSyncRef.current = { at: now, value: nextMs }
     onPlayheadChange(nextMs)
   }, [onPlayheadChange])
@@ -145,7 +147,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   // 재생 중에는 App 전체 리렌더를 매 RAF마다 만들지 않도록 짧게 throttle하고,
   // 스크럽/클립 점프/정지 상태 변경은 즉시 반영한다.
   useEffect(() => {
-    syncPlayheadToParent(playheadMs, { force: !isGlobalPlayingRef.current })
+    syncPlayheadToParent(playheadMs, { force: !isGlobalPlayingRef.current && !isDraggingRef.current })
   }, [playheadMs, syncPlayheadToParent])
   const [expandedTracks, setExpandedTracks] = useState(new Set())
   const [expandedSubTracks, setExpandedSubTracks] = useState(new Set())
@@ -684,8 +686,6 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   }, [disabled])
 
   // ── 스크럽 (Remotion 패턴: 타임라인 영역 전체 pointerdown + window pointermove) ──
-  const isDraggingRef = useRef(false)
-
   const computeMsFromClientX = useCallback((clientX) => {
     const scrollEl = scrollRef.current
     if (!scrollEl) return 0
@@ -755,6 +755,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
       ensureEdgeScroll()
     }
     const cleanup = () => {
+      syncPlayheadToParent(computeMsFromClientX(lastClientX), { force: true })
       isDraggingRef.current = false
       stopEdgeScroll()
       document.body.style.userSelect = ''
