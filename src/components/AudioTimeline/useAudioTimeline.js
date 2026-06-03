@@ -5,6 +5,7 @@
 import { useMemo } from 'react'
 import { parseTimeToSeconds } from '../../utils/parsers'
 import { resolveVideoSrc } from '../../utils/videoSrc'
+import { resolveImageSrc } from '../../utils/formatters'
 
 const COLORS = {
   image: '#7E57C2',
@@ -147,6 +148,8 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
           startMs: range.startMs,
           endMs: range.endMs,
           imagePath: imgPath,
+          // 캐시버스터 적용 src — Clip.jsx 가 raw file:// 대신 사용 (재생성 stale 회피)
+          imgSrc: resolveImageSrc({ imagePath: imgPath, generatedAt: s.generatedAt, image: s.image }),
           sceneRef: s,
           color: COLORS.image,
         }
@@ -162,7 +165,7 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
         if (!range) return null
         const placement = computeVideoClipPlacement(s, range.startMs, range.endMs)
         if (!placement) return null
-        const videoSrc = resolveVideoSrc(null, placement.videoPath)
+        const videoSrc = resolveVideoSrc(null, placement.videoPath, { version: s.generatedAt })
         if (!videoSrc) return null
         return {
           id: `vid-${s.id}`,

@@ -50,6 +50,35 @@ describe('resolveVideoSrc', () => {
     expect(resolveVideoSrc(null, 'media/v.mp4'))
       .toBe('media/v.mp4')
   })
+
+  // 캐시버스터 — 안정 파일명(t2v_N/i2v_N) 재생성 시 stale 회피. filePath 경로에만 ?v= 부착.
+  it('filePath + version → ?v= 부착 (POSIX)', () => {
+    expect(resolveVideoSrc(null, '/Users/u/v.mp4', { version: 1717000000000 }))
+      .toBe('file:///Users/u/v.mp4?v=1717000000000')
+  })
+
+  it('filePath + version → ?v= 부착 (Windows)', () => {
+    expect(resolveVideoSrc(null, 'C:\\u\\v.mp4', { version: 42 }))
+      .toBe('file:///C:/u/v.mp4?v=42')
+  })
+
+  it('이미 query 가 있는 path 는 & 로 연결', () => {
+    expect(resolveVideoSrc(null, 'https://e.com/v.mp4?x=1', { version: 7 }))
+      .toBe('https://e.com/v.mp4?x=1&v=7')
+  })
+
+  it('base64/data URL 우선 경로는 version 무관 (캐시 무의미)', () => {
+    expect(resolveVideoSrc('data:video/mp4;base64,xxx', '/foo.mp4', { version: 9 }))
+      .toBe('data:video/mp4;base64,xxx')
+    expect(resolveVideoSrc('rawbase64', null, { version: 9 }))
+      .toBe('data:video/mp4;base64,rawbase64')
+  })
+
+  it('version 없음/null → 기존과 동일 (?v 미부착, 하위호환)', () => {
+    expect(resolveVideoSrc(null, '/v.mp4')).toBe('file:///v.mp4')
+    expect(resolveVideoSrc(null, '/v.mp4', {})).toBe('file:///v.mp4')
+    expect(resolveVideoSrc(null, '/v.mp4', { version: null })).toBe('file:///v.mp4')
+  })
 })
 
 describe('ensureBase64DataUrl', () => {

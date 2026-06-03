@@ -95,7 +95,7 @@ export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDr
       title={clip.filename || clip.label || ''}
     >
       {variant === 'block' && clip.imagePath && (
-        <img className="atl-clip-img" src={`file://${clip.imagePath}`} alt="" />
+        <img className="atl-clip-img" src={clip.imgSrc || `file://${clip.imagePath}`} alt="" />
       )}
       {variant === 'block' && !clip.imagePath && clip.posterDataUrl && (
         <img className="atl-clip-img" src={clip.posterDataUrl} alt="" />

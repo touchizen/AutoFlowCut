@@ -126,6 +126,30 @@ describe('useAudioTimeline', () => {
       expect(img.clips[0].sceneRef.id).toBe('y')
     })
 
+    // 캐시버스터 — 같은 경로 재생성 시 stale 회피. clip 이 cache-busted imgSrc 를 들고
+    // 있어야 Clip.jsx 가 raw file:// 대신 그것을 쓴다.
+    it('image clip imgSrc 에 ?v=generatedAt 부착', () => {
+      const scenes = [{ id: 's1', image_path: '/img/1.png', generatedAt: 12345, start_time: '00:00', end_time: '00:03' }]
+      const { result } = renderHook(() => useAudioTimeline(baseAudio, scenes, []))
+      const img = result.current.tracks.find(t => t.id === 'image')
+      expect(img.clips[0].imgSrc).toBe('file:///img/1.png?v=12345')
+    })
+
+    it('image clip imgSrc — generatedAt 없으면 ?v 미부착', () => {
+      const { result } = renderHook(() => useAudioTimeline(baseAudio, baseScenes, []))
+      const img = result.current.tracks.find(t => t.id === 'image')
+      expect(img.clips[0].imgSrc).toBe('file:///img/1.png')
+    })
+
+    // 비디오도 안정 파일명(t2v_N/i2v_N) 재생성 시 stale → videoSrc 에 ?v=generatedAt.
+    // (useVideoPosters 가 이 videoSrc 를 poster 추출 키로 쓰므로 poster 도 갱신됨)
+    it('video clip videoSrc 에 ?v=generatedAt 부착', () => {
+      const scenes = [{ id: 's1', image_path: '/i.png', videoT2VPath: '/v/t2v_1.mp4', videoT2VDuration: 2, generatedAt: 999, start_time: '00:00', end_time: '00:03' }]
+      const { result } = renderHook(() => useAudioTimeline(baseAudio, scenes, []))
+      const video = result.current.tracks.find(t => t.id === 'video')
+      expect(video.clips[0].videoSrc).toBe('file:///v/t2v_1.mp4?v=999')
+    })
+
     it('omits image track when scenes array is empty', () => {
       const { result } = renderHook(() => useAudioTimeline(baseAudio, [], []))
       const img = result.current.tracks.find(t => t.id === 'image')

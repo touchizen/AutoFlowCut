@@ -9,7 +9,7 @@ import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } fr
 import { useAudioTimeline } from './useAudioTimeline'
 import { useVideoPosters } from './useVideoPosters'
 import { useI18n } from '../../hooks/useI18n'
-import { formatDuration } from '../../utils/formatters'
+import { formatDuration, resolveImageSrc } from '../../utils/formatters'
 import { toast } from '../Toast'
 import TimeRuler from './TimeRuler'
 import TrackLane from './TrackLane'
@@ -1062,7 +1062,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
         return (
           <HoverImageBalloon
             anchorRect={{ left: hoverScene.x, right: hoverScene.x, top: hoverScene.y, bottom: hoverScene.y }}
-            src={imgPath ? `file://${imgPath}` : undefined}
+            src={imgPath ? resolveImageSrc({ imagePath: imgPath, generatedAt: hoverScene.scene?.generatedAt, image: hoverScene.scene?.image }) : undefined}
             className="atl-tooltip"
           >
             {hoverScene.scene.subtitle && <div className="atl-tooltip-sub">{hoverScene.scene.subtitle}</div>}

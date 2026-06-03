@@ -1,5 +1,6 @@
 import { useMemo, useRef, useEffect } from 'react'
 import { resolveVideoSrc } from '../../utils/videoSrc'
+import { resolveImageSrc } from '../../utils/formatters'
 import { computeVideoClipPlacement, getSceneTimeRangeMs } from './useAudioTimeline'
 
 // 활성 직전 비디오 prefetch lead time — playhead가 다음 비디오 활성에 도달
@@ -112,7 +113,8 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
       .map(r => {
         const p = computeVideoClipPlacement(r.scene, r.startMs, r.endMs)
         if (!p) return null
-        return { videoIn: p.videoIn, videoOut: p.videoOut, videoPath: p.videoPath }
+        // generatedAt 동봉 — prefetch 가 메인 <video src> 와 동일한 ?v= URL 을 warming 하도록
+        return { videoIn: p.videoIn, videoOut: p.videoOut, videoPath: p.videoPath, generatedAt: r.scene?.generatedAt }
       })
       .filter(Boolean)
       .sort((a, b) => a.videoIn - b.videoIn)
@@ -132,7 +134,7 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
     const next = videoPlacements[lo]
     const delta = next.videoIn - playheadMs
     if (delta > PREFETCH_LEAD_MS) return null
-    return resolveVideoSrc(null, next.videoPath)
+    return resolveVideoSrc(null, next.videoPath, { version: next.generatedAt })
   }, [videoPlacements, playheadMs])
 
   const prefetchRef = useRef(null)
@@ -171,7 +173,7 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
 
     // src swap — 활성 비디오 path가 바뀐 경우에만.
     // Windows 절대경로(C:\...) → file:///C:/... 형태로 정규화는 resolveVideoSrc가 담당.
-    const desiredSrc = resolveVideoSrc(null, videoPlacement.videoPath)
+    const desiredSrc = resolveVideoSrc(null, videoPlacement.videoPath, { version: scene?.generatedAt })
     if (!desiredSrc) return
     if (currentSrcRef.current !== desiredSrc) {
       currentSrcRef.current = desiredSrc
@@ -202,7 +204,7 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
     <div className="atl-preview" style={{ height }}>
       <div className="atl-preview-stage">
         {imgPath ? (
-          <img className="atl-preview-img" src={`file://${imgPath}`} alt="" />
+          <img className="atl-preview-img" src={resolveImageSrc({ imagePath: imgPath, generatedAt: scene?.generatedAt, image: scene?.image })} alt="" />
         ) : (
           <div className="atl-preview-empty">— 씬 없음 —</div>
         )}
