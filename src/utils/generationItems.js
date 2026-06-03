@@ -18,6 +18,16 @@ import { resolveVideoSrc } from './videoSrc'
  *   generating → generating, error → error
  *   pending·waiting(F2V)·미시작·기타 → pending
  */
+/**
+ * activeTab → 생성 모드. 생성 시작 시 snapshot 해서 Grid 가 쓴다(탭 이동과 무관하게 일관).
+ *   text·list → image, video-text → t2v, frame-to-video → f2v, 그 외 → image(기본)
+ */
+export function genModeForTab(activeTab) {
+  if (activeTab === 'video-text') return 't2v'
+  if (activeTab === 'frame-to-video') return 'f2v'
+  return 'image'
+}
+
 export function normalizeState(rawStatus) {
   if (rawStatus === 'done' || rawStatus === 'complete') return 'complete'
   if (rawStatus === 'generating') return 'generating'

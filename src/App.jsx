@@ -53,6 +53,8 @@ import ResultsTable from './components/ResultsTable'
 // SelectablePromptList 제거됨 — 체크박스 기능이 ResultsTable에 통합
 import SceneDetailModal from './components/SceneDetailModal'
 import VideoDetailModal from './components/VideoDetailModal'
+import LiveGenerationGrid from './components/LiveGenerationGrid'
+import { buildGenerationItems, genModeForTab } from './utils/generationItems'
 import ResizeHandle from './components/ResizeHandle'
 import { ExportModal } from './components/ExportModal'
 import { AuthModal } from './components/AuthModal'
@@ -154,6 +156,9 @@ function App() {
   const [monitorMs, setMonitorMs] = useState(0)
   // 하단 타임라인이 재생 중인지 — 모니터 비디오는 이때만 재생(정지 시 프레임만).
   const [monitorPlaying, setMonitorPlaying] = useState(false)
+  // 생성 중 모니터가 라이브 그리드로 보여줄 자산 모드 — 생성 시작 시 snapshot
+  // (탭 버튼이 생성 중에도 활성이라 live activeTab 을 쓰면 탭 이동 시 엉뚱한 보드가 뜸).
+  const [runningGenMode, setRunningGenMode] = useState('image')
   // 프리뷰 모니터 폭 — 좌우 드래그로 조절, localStorage 영속.
   // 기본은 null = 좌/우 5:5 (CSS width '50%'). 한 번이라도 드래그하면 px 값으로 고정·저장.
   const [monitorWidth, setMonitorWidth] = useState(() => {
@@ -802,6 +807,9 @@ function App() {
       setShowApiKeyModal(true)
       return
     }
+
+    // 생성 모드 snapshot — 라이브 그리드가 탭 이동과 무관하게 이 값을 쓴다.
+    setRunningGenMode(genModeForTab(activeTab))
 
     // 선택 검증 (폴더 확인보다 먼저)
     if (activeTab === 'video-text') {
@@ -1544,6 +1552,8 @@ function App() {
                   : null
                 // Stop 버튼이 retry 중에도 스타일을 표시하도록 snapshot — 정상 생성(handleStart)과 동일.
                 setRunningStyle({ styleId: selectedStyleRefId, label: styleResolver.resolveLabelForId(selectedStyleRefId), applies: true })
+                // retryErrors 는 handleStart 를 우회하므로 모드 snapshot 을 직접 set (에러 재시도 = 이미지).
+                setRunningGenMode('image')
                 retryErrors({
                   projectName: ensureProjectName(),
                   saveMode: settings.saveMode,
@@ -1574,13 +1584,21 @@ function App() {
               title="드래그=폭 조절 · 더블클릭=기본(5:5)"
             />
             <aside className="content-monitor" style={{ width: monitorWidth ?? '50%' }}>
-              <PreviewPanel
-                playheadMs={monitorMs}
-                scenes={scenes}
-                srtEntries={resolveAudioSrtEntries(audioPackage, scenesHook.srtTrack)}
-                height="100%"
-                isPlaying={monitorPlaying}
-              />
+              {anyRunning ? (
+                // 생성 중 — 라이브 자산 그리드(snapshot 된 runningGenMode 기준).
+                <LiveGenerationGrid
+                  items={buildGenerationItems(runningGenMode, { scenes, videoScenes, framePairs })}
+                  onItemSelect={(item) => item.kind === 'video' ? setSelectedVideo(item.ref) : setSelectedScene(item.ref)}
+                />
+              ) : (
+                <PreviewPanel
+                  playheadMs={monitorMs}
+                  scenes={scenes}
+                  srtEntries={resolveAudioSrtEntries(audioPackage, scenesHook.srtTrack)}
+                  height="100%"
+                  isPlaying={monitorPlaying}
+                />
+              )}
             </aside>
           </>
         )}
