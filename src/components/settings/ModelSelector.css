@@ -9,7 +9,7 @@
   grid-template-columns: 1fr auto;
   grid-template-areas:
     "name cost"
-    "desc cost";
+    "desc doc";
   align-items: center;
   gap: 2px 12px;
   width: 100%;
@@ -45,4 +45,30 @@
   color: #7fb3ff;
   font-family: 'JetBrains Mono', 'Menlo', 'Consolas', monospace;
   white-space: nowrap;
+}
+.model-doc {
+  grid-area: doc;
+  justify-self: end;
+  font-size: 0.72rem;
+  color: var(--text-secondary, #999);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.model-doc:hover {
+  color: #7fb3ff;
+  text-decoration: underline;
+}
+.model-pricing-link {
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 2px 0;
+  background: none;
+  border: none;
+  color: var(--text-secondary, #999);
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+.model-pricing-link:hover {
+  color: #7fb3ff;
+  text-decoration: underline;
 }

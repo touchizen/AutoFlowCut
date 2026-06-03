@@ -2,7 +2,7 @@
 
 날짜: 2026-06-03
 브랜치: `feat/async-generation`
-상태: **WIP** (기반 커밋됨, 아래 "남은 일" 진행)
+상태: **구현 완료** (Task#1~5 전부 done, 2301 tests green). 단 하나 남은 acceptance: NB2/NB Pro 모델 ID 실제 API 검증(아래 ⚠️).
 
 ## 목표
 T2I / T2V / F2V **각각** 생성 모델을 설정에서 선택. 옵션마다 **특징·비용·문서URL·가격URL** 표시.
@@ -24,7 +24,7 @@ T2I / T2V / F2V **각각** 생성 모델을 설정에서 선택. 옵션마다 **
 - locale — `settings.modelImageTitle/modelVideoT2VTitle/modelVideoF2VTitle` + 6개 desc (ko/en)
 - 2271 tests green
 
-## ⬜ 남은 일
+## ✅ 작업 (Task#1~5 전부 완료)
 
 ### 1. ✅ 이미지 모델 plumbing (T2I 실제 적용) — 완료 (2026-06-03)
 **기록 폐회로까지 닫음**: `generateImageDOM` 이 effective model 을 **결과에도 실어서**(`{ success, images, model }`) finalize 의 기존 `result.model` 경로가 `item.model` 로 기록 → ResultsTable/모달 표시가 'flow' 가 아닌 실제 모델. 단일 모달 경로(`useSceneGeneration`)도 포함. (리뷰 P1-a/P1-b 반영)
@@ -42,7 +42,10 @@ T2I / T2V / F2V **각각** 생성 모델을 설정에서 선택. 옵션마다 **
 - 개별 retry(`retryScene`/`retryErrors`) 옵션에도 `imageModel: settings.imageModel` 추가 (App 버튼 핸들러)
 - **TDD**: genai.test (generateImage model 전달 — 이미 model 인자 지원) / useAutomation 가 imageModel 을 submitGenerationDOM 에 넘기는지 / 통합
 
-### 2. URL (문서 + 가격) — 카탈로그 + ModelSelector
+### 2. ✅ URL (문서 + 가격) — 완료 (2026-06-03)
+구현: genModels(각 모델 `url`=공식 docs, `PRICING_URL` 상수), ModelSelector(카드 내 `.model-doc` span+stopPropagation 으로 카드 선택과 분리, 하단 `.model-pricing-link` 버튼, `openExternal` 헬퍼), SceneTab(3개 셀렉터 `priceUrl={PRICING_URL}`), locale `settings.modelDocsLink/modelPricingLink`, ModelSelector.css. TDD 4 (링크 렌더/클릭 openExternal/stopPropagation/조건부).
+
+~~상세 스펙(아래)~~
 - `genModels.js`: 각 모델에 `url`(문서) 추가 + `PRICING_URL` 상수.
   - 이미지 → `https://ai.google.dev/gemini-api/docs/image-generation`
   - 비디오 → `https://ai.google.dev/gemini-api/docs/video` (또는 모델별 `.../docs/models/<id>`)
@@ -60,19 +63,25 @@ T2I / T2V / F2V **각각** 생성 모델을 설정에서 선택. 옵션마다 **
 - locale: `results.model` (en/ko). ✅
 - **TDD**: genModels(modelLabel 4) / useGenAPI(model 전달+결과 기록 3) / useAutomation(imageModel passthrough 1) / useSceneGeneration(model 전달 1) / ResultsTable(컬럼 4). 전체 2284 green.
 
-### 4. 상세 모달 모델 표시
-- `SceneDetailModal`(이미지) / `VideoDetailModal`(비디오) 에 모델 메타 행 추가(`modelLabel(item.model || scene.model)`).
-- 비디오는 `videoT2VModel`/`videoI2V` 쪽 메타(useVideoScenes 가 `model` 노출 — derive 확인). 이미지는 `scene.model`.
-- **TDD**: 모달이 모델 라벨 표시.
+### 4. ✅ 상세 모달 모델 표시 — 완료 (2026-06-03)
+모달은 이미 `MediaMetaBar`(`parseModelLabel`)로 `🤖 모델`을 표시 중이었으나, 새 공식 id 가
+`veo / fast generate preview v3.1`, `gemini-2.5-flash-image`(원본) 처럼 뭉개졌다.
+→ `parseModelLabel` 을 **카탈로그 인식**하게: catalog hit 면 큐레이션 라벨(`Veo 3.1 Fast`,
+`Nano Banana`) 우선, 미스면 기존 범용 파서. 모달 추가 변경 없이 양쪽(Scene/Video) 자동 적용.
+- **TDD**: parseModelLabel 카탈로그 라벨 1 (기존 mediaMeta/모달 meta 테스트 전부 green).
 
-### 5. ⬜ 해상도 ↔ 모델 가드 (리뷰 P1-c) — 미착수
-공식 문서상 **Veo 3.1 Lite 는 4K 미지원**(720p/1080p). 현재 `videoResolution`(전역, 4k 포함)이 `videoModel` 과 독립 전달돼 Lite+4K 조합이 런타임 실패로 도달 가능.
-- **must**: `genModels.VIDEO_MODELS` 에 `allowedResolutions` + `generateVideoT2V/I2V` submit 시 `coerceResolution(model, resolution)` (stale settings·Lite 전환 후 잔존 4k 방어).
-- **nice**: SceneTab 에서 Lite 선택 시 4K 옵션 disable.
-- **TDD**: Lite+4k → coerce 로 1080p 강등 / 비-Lite 는 4k 유지.
+### 5. ✅ 해상도 ↔ 모델 가드 (리뷰 P1-c) — 완료 (2026-06-03)
+공식 문서상 **Veo 3.1 Lite 는 4K 미지원**(720p/1080p). 전역 `videoResolution` + 타입별 모델
+조합에서 Lite+4K 가 API 로 새어나가 실패하는 걸 submit-time 에서 차단.
+- genModels: `VIDEO_MODELS[*].allowedResolutions` (Lite=[720p,1080p], Fast/Quality=[…,4k]) + `coerceResolution(modelId, resolution)` (미허용 → 허용 최대로 강등, 모르는 모델/falsy → passthrough).
+- useGenAPI: `generateVideoT2V`/`generateVideoI2V` 둘 다 `resolution: coerceResolution(model, resolution)`.
+- **UI disable 는 의도적 미채택**: resolution 은 전역, 모델은 타입별(T2V/F2V) 이라 "어느 모델 기준?" 모호 → submit-time per-call coerce 가 유일한 클린 지점.
+- **TDD**: genModels coerceResolution 5 / useGenAPI Lite+4k→1080p·Quality+4k 유지 2.
+
+## ⚠️ 남은 acceptance (코드 외 — 사용자 BYOK 키 필요)
+- **NB2/NB Pro 모델 ID 실제 검증**: 카탈로그의 `gemini-3.1-flash-image`(NB2) / `gemini-3-pro-image`(NB Pro) 는 미검증. `-preview` 변종일 수 있음. 실제 키로 해당 모델 선택→생성 1회, 또는 `/models` listing 으로 확정. (coerce 는 카탈로그에 *없는* id 만 막으므로, 카탈로그 id 자체가 틀리면 선택 시 그 모델만 실패 — Nano Banana 기본은 안전.)
 
 ## 주의 / 함정
-- NB2/NB Pro ID 에 `-preview` 변종 가능 — 빌드 후 실제 호출로 ID 확정.
 - 비디오 model 옵션 필드명은 내부적으로 `options.videoModel`(useVideoAutomation), `item.model` — settings 의 `videoModelT2V/F2V` 와 구분.
 - saveMode/Flow 잔재 정리와는 별개 작업.
 

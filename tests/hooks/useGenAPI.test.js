@@ -154,6 +154,26 @@ describe('useGenAPI — 비디오', () => {
     expect(window.electronAPI.genaiGenerateVideo.mock.calls.at(-1)[0].resolution).toBe('1080p')
   })
 
+  it('generateVideoT2V/I2V: Veo Lite + 4K 는 1080p 로 강등(미지원 해상도 가드)', async () => {
+    const { result } = renderHook(() => useGenAPI())
+    await act(async () => {
+      await result.current.generateVideoT2V('go', 'veo-3.1-lite-generate-preview', '16:9', 8, null, '4k')
+    })
+    expect(window.electronAPI.genaiGenerateVideo.mock.calls.at(-1)[0].resolution).toBe('1080p')
+    await act(async () => {
+      await result.current.generateVideoI2V('go', 'data:image/png;base64,ONLY', null, 'veo-3.1-lite-generate-preview', '16:9', 8, null, '4k')
+    })
+    expect(window.electronAPI.genaiGenerateVideo.mock.calls.at(-1)[0].resolution).toBe('1080p')
+  })
+
+  it('generateVideoT2V: Veo Quality + 4K 는 그대로 4k', async () => {
+    const { result } = renderHook(() => useGenAPI())
+    await act(async () => {
+      await result.current.generateVideoT2V('go', 'veo-3.1-generate-preview', '16:9', 8, null, '4k')
+    })
+    expect(window.electronAPI.genaiGenerateVideo.mock.calls.at(-1)[0].resolution).toBe('4k')
+  })
+
   it('구 Flow underscore 키는 공식 모델명으로 매핑 (잘못된 endpoint 방지)', async () => {
     const { result } = renderHook(() => useGenAPI())
     await act(async () => { await result.current.generateVideoT2V('go', 'veo_3_1_t2v_fast_ultra_relaxed', '16:9', 8) })

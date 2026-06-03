@@ -4,7 +4,7 @@
 
 import AspectRatioSelector from './AspectRatioSelector'
 import ModelSelector from './ModelSelector'
-import { IMAGE_MODELS, VIDEO_MODELS, DEFAULT_IMAGE_MODEL_ID, DEFAULT_VIDEO_MODEL_ID } from '../../config/genModels'
+import { IMAGE_MODELS, VIDEO_MODELS, DEFAULT_IMAGE_MODEL_ID, DEFAULT_VIDEO_MODEL_ID, PRICING_URL } from '../../config/genModels'
 
 // 공식 Veo 지원 해상도. 1080p/4k 는 8초 고정(공식 제약), 720p 는 씬 길이에 맞춰 4/6/8초.
 const VIDEO_RESOLUTION_OPTIONS = [
@@ -106,6 +106,7 @@ export default function SceneTab({ localSettings, setLocalSettings, t }) {
           defaultValue={DEFAULT_IMAGE_MODEL_ID}
           onChange={(id) => setLocalSettings(s => ({ ...s, imageModel: id }))}
           t={t}
+          priceUrl={PRICING_URL}
         />
       </div>
       <div className="settings-section">
@@ -116,6 +117,7 @@ export default function SceneTab({ localSettings, setLocalSettings, t }) {
           defaultValue={DEFAULT_VIDEO_MODEL_ID}
           onChange={(id) => setLocalSettings(s => ({ ...s, videoModelT2V: id }))}
           t={t}
+          priceUrl={PRICING_URL}
         />
       </div>
       <div className="settings-section">
@@ -126,6 +128,7 @@ export default function SceneTab({ localSettings, setLocalSettings, t }) {
           defaultValue={DEFAULT_VIDEO_MODEL_ID}
           onChange={(id) => setLocalSettings(s => ({ ...s, videoModelF2V: id }))}
           t={t}
+          priceUrl={PRICING_URL}
         />
       </div>
 

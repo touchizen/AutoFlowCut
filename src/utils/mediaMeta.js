@@ -10,6 +10,7 @@
  */
 
 import { fileSystemAPI } from '../hooks/useFileSystem'
+import { modelLabel } from '../config/genModels'
 
 /**
  * 가장 최근 history metadata JSON 한 건을 읽어 { seed, generatedAt, model } 반환.
@@ -72,6 +73,12 @@ export function parseModelLabel(model) {
   if (!model || typeof model !== 'string') return null
   const raw = model.trim()
   if (!raw) return null
+
+  // 카탈로그(공식 모델)면 큐레이션된 라벨 우선 — 범용 파서가
+  // 'veo-3.1-fast-generate-preview' 를 'veo / fast generate preview v3.1' 로
+  // 뭉개거나, 'gemini-2.5-flash-image' 를 원본 그대로 내보내는 걸 방지.
+  const catalog = modelLabel(raw)
+  if (catalog && catalog !== raw) return { name: catalog, version: null }
 
   // veo_3_1_t2v_*
   const veoMatch = raw.match(/^veo[-_]?(\d+)[-_]?(\d+)?[-_]?(.*)$/i)

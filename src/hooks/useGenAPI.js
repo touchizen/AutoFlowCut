@@ -18,7 +18,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { resolveReferenceImages } from '../utils/referenceResolver'
 import { normalizeVideoModel } from '../utils/videoModels'
-import { DEFAULT_IMAGE_MODEL_ID } from '../config/genModels'
+import { DEFAULT_IMAGE_MODEL_ID, coerceResolution } from '../config/genModels'
 import { isAuthError } from '../utils/authError'
 import { cleanBase64, detectImageType } from '../utils/urls'
 
@@ -174,7 +174,9 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
         durationSeconds: duration,
         model: normalizeVideoModel(model),
         seed: Number.isFinite(seed) ? seed : undefined,
-        resolution: resolution || undefined,
+        // 모델이 지원하지 않는 해상도(예: Veo Lite + 4K)는 허용 최대로 강등 — 전역 resolution
+        // 설정과 타입별 모델 조합에서 잘못된 해상도가 API 로 새어나가 실패하는 걸 막는다.
+        resolution: coerceResolution(model, resolution) || undefined,
       })
       return markAuthFailure(r)
     } catch (error) {
@@ -194,7 +196,7 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
         durationSeconds: duration,
         model: normalizeVideoModel(model),
         seed: Number.isFinite(seed) ? seed : undefined,
-        resolution: resolution || undefined,
+        resolution: coerceResolution(model, resolution) || undefined,
       })
       return markAuthFailure(r)
     } catch (error) {
