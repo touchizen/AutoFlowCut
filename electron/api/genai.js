@@ -237,11 +237,10 @@ export async function generateImage(
  * @returns {Promise<{success:boolean, operationName?:string, error?:string}>}
  *   operationName 은 이후 checkVideoOperation 에 넘기는 generationId 역할.
  *
- * Veo predictLongRunning 의 instances[].image 는 `{ imageBytes: <base64>, mimeType }`.
- * (google-genai SDK 의 types.Image(image_bytes=…) 직렬화 형식 = imageBytes.)
- * 주의: REST 문서 예시의 `inlineData` 와 Vertex 의 `bytesBase64Encoded` 는 둘 다
- * veo-3.1 모델에서 "isn't supported by this model" (400) 으로 거부된다(2026-06 확인).
- * lastFrame(끝 프레임 보간)도 동일 형태.
+ * Veo predictLongRunning 의 instances[].image 는 `{ bytesBase64Encoded: <base64>, mimeType }`.
+ * 시행착오(2026-06): `inlineData`(REST 문서 예시)·`imageBytes`(SDK 필드)는 둘 다
+ * "isn't supported by this model"(400, 스키마 거부). `bytesBase64Encoded`(Vertex 형식)만
+ * 스키마 통과 — 이 엔드포인트가 Vertex predict 스키마를 공유. lastFrame 도 동일 형태.
  */
 export async function submitVideo(
   {
@@ -261,10 +260,10 @@ export async function submitVideo(
 
   const instance = { prompt: prompt || '' }
   if (image && image.data) {
-    instance.image = { imageBytes: image.data, mimeType: image.mimeType || 'image/png' }
+    instance.image = { bytesBase64Encoded: image.data, mimeType: image.mimeType || 'image/png' }
   }
   if (endImage && endImage.data) {
-    instance.lastFrame = { imageBytes: endImage.data, mimeType: endImage.mimeType || 'image/png' }
+    instance.lastFrame = { bytesBase64Encoded: endImage.data, mimeType: endImage.mimeType || 'image/png' }
   }
 
   const parameters = { aspectRatio: aspectRatio || DEFAULT_ASPECT_RATIO }
