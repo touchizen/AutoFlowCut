@@ -1629,6 +1629,7 @@ function App() {
           status={currentStatus}
           message={currentStatusMessage}
           scenes={scenes}
+          progressIsVideo={showVideoAutomation}
         />
 
         {activeTab !== 'audio' && (

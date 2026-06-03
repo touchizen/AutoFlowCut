@@ -5,15 +5,16 @@
 import { useElapsedTimer } from '../hooks/useElapsedTimer'
 import { formatElapsed, hasImageData } from '../utils/formatters'
 
-export default function StatusBar({ progress, status, message, scenes = [] }) {
+export default function StatusBar({ progress, status, message, scenes = [], progressIsVideo = false }) {
   const elapsed = useElapsedTimer(progress.startedAt, progress.endedAt)
 
   // 씬 통계 (항상 계산)
   const doneCount = scenes.filter(s => hasImageData(s) || s.imagePath).length
   const sceneErrorCount = scenes.filter(s => s.status === 'error').length
-  // 비디오(T2V/F2V) 실패는 scene.status='error' 가 아니라 progress.errorCount 로만 온다.
-  // 완료 후에도 실패가 성공처럼 보이지 않도록 둘 중 큰 값 표시(이미지는 둘이 같아 중복 없음).
-  const errorCount = Math.max(sceneErrorCount, progress?.errorCount || 0)
+  // 표시 중인 progress 가 비디오면 비디오 실패(progress.errorCount)를 쓴다 — scenes 는
+  // 이미지 씬이라, 옛 이미지 에러가 비디오 성공에 새어들어 false warning 나는 걸 방지(도메인 분리).
+  // 이미지 뷰는 scenes 가 진실(progress.errorCount 와 동일).
+  const errorCount = progressIsVideo ? (progress?.errorCount || 0) : sceneErrorCount
   const hasScenes = scenes.length > 0
 
   const baseStatusClass = {
