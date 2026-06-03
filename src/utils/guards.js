@@ -39,16 +39,16 @@ export async function checkFolderPermission(settings, openSettings, t) {
  * Flow 토큰 확인 (배치 시작 전 필수 호출).
  * 캐시를 무시하고 실제 토큰 유효성을 재확인한다.
  * 만료 시 팝업(모달)으로 재로그인을 안내한다.
- * @param {object} flowAPI - Flow API
+ * @param {object} genAPI - Flow API
  * @param {function} t - 다국어 함수
  * @param {function} [showLoginModal] - 로그인 만료 모달 표시 함수
  * @returns {boolean} true = 통과, false = 차단됨
  */
-export async function checkAuthToken(flowAPI, t) {
+export async function checkAuthToken(genAPI, t) {
   // forceRefresh=true: 캐시 무시, 실제 WebContentsView에서 토큰 재추출
-  const token = await flowAPI.getAccessToken(true)
+  const token = await genAPI.getAccessToken(true)
   if (!token) {
-    flowAPI.clearTokenCache()
+    genAPI.clearTokenCache()
     // 커스텀 이벤트로 로그인 만료 모달 표시 요청
     window.dispatchEvent(new CustomEvent('flow-login-expired'))
     return false

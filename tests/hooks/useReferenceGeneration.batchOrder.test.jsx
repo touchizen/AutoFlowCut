@@ -47,10 +47,10 @@ function setupHook({ references, flowOverrides = {}, statefulRefs = false }) {
 
   const submitOrder = []
   const submitCalls = []
-  const flowAPI = {
+  const genAPI = {
     getAccessToken: vi.fn().mockResolvedValue('token'),
     clearTokenCache: vi.fn(),
-    submitGenerationDOM: vi.fn(async (prompt, styleRefImages) => {
+    submitGeneration: vi.fn(async (prompt, styleRefImages) => {
       submitOrder.push(prompt)
       submitCalls.push({ prompt, styleRefImages })
       return { success: true, generationId: `g-${submitOrder.length}` }
@@ -74,7 +74,7 @@ function setupHook({ references, flowOverrides = {}, statefulRefs = false }) {
     settings: { saveMode: 'project', imageBatchCount: 1 },
     references: liveRefs,
     setReferences,
-    flowAPI,
+    genAPI,
     addPendingSave: vi.fn(),
     openSettings: vi.fn(),
     t: (k) => k,
@@ -82,7 +82,7 @@ function setupHook({ references, flowOverrides = {}, statefulRefs = false }) {
   }))
   rerenderRef.current = () => rerender()
 
-  return { result, flowAPI, submitOrder, submitCalls }
+  return { result, genAPI, submitOrder, submitCalls }
 }
 
 // Drives a batch run to completion, stepping through inter-submit delays and
@@ -107,7 +107,7 @@ async function runBatch(result) {
 
 describe('useReferenceGeneration — batch order (style first)', () => {
   it('includes style refs in the batch (both style and character submitted)', async () => {
-    const { result, flowAPI } = setupHook({
+    const { result, genAPI } = setupHook({
       references: [
         { id: 1, type: 'style', prompt: 'a style', status: 'pending' },
         { id: 2, type: 'character', prompt: 'a hero', status: 'pending' }
@@ -116,7 +116,7 @@ describe('useReferenceGeneration — batch order (style first)', () => {
 
     await runBatch(result)
 
-    expect(flowAPI.submitGenerationDOM).toHaveBeenCalledTimes(2)
+    expect(genAPI.submitGeneration).toHaveBeenCalledTimes(2)
   })
 
   it('submits the style ref before the non-style ref', async () => {
@@ -160,7 +160,7 @@ describe('useReferenceGeneration — batch order (style first)', () => {
   })
 
   it('with no style ref, still generates the non-style refs (behaves as before)', async () => {
-    const { result, flowAPI } = setupHook({
+    const { result, genAPI } = setupHook({
       references: [
         { id: 1, type: 'character', prompt: 'a hero', status: 'pending' },
         { id: 2, type: 'character', prompt: 'a villain', status: 'pending' }
@@ -169,6 +169,6 @@ describe('useReferenceGeneration — batch order (style first)', () => {
 
     await runBatch(result)
 
-    expect(flowAPI.submitGenerationDOM.mock.calls.length).toBeGreaterThanOrEqual(1)
+    expect(genAPI.submitGeneration.mock.calls.length).toBeGreaterThanOrEqual(1)
   })
 })

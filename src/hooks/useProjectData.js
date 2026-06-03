@@ -424,7 +424,7 @@ export function useProjectData({
   audioFolderPath = undefined, // React state로 추적된 audio 폴더; undefined면 localStorage fallback
   openSettings,
   onAudioSwitch,
-  flowAPI = null,
+  genAPI = null,
   onSaveError = null, // 프로젝트 저장 실패 시 호출 (인자: 에러 메시지)
 }) {
   // 복구 콜백 — framePairs state에 patch를 병합
@@ -439,12 +439,12 @@ export function useProjectData({
     setVideoScenes(prev => prev.map(vs => vs.id === id ? { ...vs, ...patch } : vs))
   }
 
-  // 로드 직후 in-flight 비디오 복구 트리거 (flowAPI 필요).
+  // 로드 직후 in-flight 비디오 복구 트리거 (genAPI 필요).
   // T2V (videoScenes) + I2V (framePairs) 둘 다 같은 recoverInFlightVideos 경로를 타게 한다.
   // 분리하던 시절엔 T2V 가 영원히 'generating' 으로 남아 다음 start() 에서 fresh 생성 되어
   // quota 재소비 + 옛 generationId 폐기 회귀 발생.
   const triggerVideoRecovery = async (loadedVideoScenes, loadedFramePairs, projectName) => {
-    if (!flowAPI) return
+    if (!genAPI) return
 
     const t2vInFlight = (loadedVideoScenes || []).some(vs =>
       vs.generationId && !vs.videoPath && (vs.status === 'generating' || vs.status === 'pending')
@@ -458,10 +458,10 @@ export function useProjectData({
       projectName,
       saveMode: settings?.saveMode || 'folder',
       videoResolution: settings?.videoResolution || '1080p',
-      checkVideoStatus: flowAPI.checkVideoStatus,
-      downloadVideo: flowAPI.downloadVideo,
-      fetchMedia: flowAPI.fetchMedia,
-      getAccessToken: flowAPI.getAccessToken,
+      checkVideoStatus: genAPI.checkVideoStatus,
+      downloadVideo: genAPI.downloadVideo,
+      fetchMedia: genAPI.fetchMedia,
+      getAccessToken: genAPI.getAccessToken,
       logPrefix: '[ProjectData]',
     }
 

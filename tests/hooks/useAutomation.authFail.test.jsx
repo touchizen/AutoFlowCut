@@ -4,7 +4,7 @@
  * The wrapper's `authFailed: true` sentinel must break the batch immediately.
  *
  * Contracts verified:
- *  - uploadReference authFailed → submitGenerationDOM NOT called (batch stops before generation)
+ *  - uploadReference authFailed → submitGeneration NOT called (batch stops before generation)
  *  - uploadReference authFailed → status set to 'error', not 'done'
  *  - collectGeneration authFailed → scene marked with errorKind:'auth'
  *  - collectGeneration authFailed → status set to 'error', not 'done'
@@ -58,11 +58,11 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-// ─── Helper to build a minimal flowAPI + scenesHook ────────────────────────────
+// ─── Helper to build a minimal genAPI + scenesHook ────────────────────────────
 
 function makeFlowAPI(overrides = {}) {
   return {
-    submitGenerationDOM: vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' }),
+    submitGeneration: vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' }),
     checkGeneration: vi.fn().mockResolvedValue({ completed: false }),
     collectGeneration: vi.fn().mockResolvedValue({ success: true, images: [{ id: 'img-1', mediaId: 'm-1' }] }),
     clearGenerations: vi.fn().mockResolvedValue(undefined),
@@ -85,8 +85,8 @@ function makeScenesHook(overrides = {}) {
 // ─── Tests: uploadReference authFailed ─────────────────────────────────────────
 
 describe('useAutomation — auth failure during uploadReference', () => {
-  it('stops batch immediately — submitGenerationDOM not called when uploadReference authFailed', async () => {
-    const flowAPI = makeFlowAPI({
+  it('stops batch immediately — submitGeneration not called when uploadReference authFailed', async () => {
+    const genAPI = makeFlowAPI({
       uploadReference: vi.fn().mockResolvedValue({
         success: false,
         authFailed: true,
@@ -100,7 +100,7 @@ describe('useAutomation — auth failure during uploadReference', () => {
 
     const t = (k) => k
     const { result } = renderHook(() =>
-      useAutomation(flowAPI, scenesHook, null, null, null, t, vi.fn(), null, null)
+      useAutomation(genAPI, scenesHook, null, null, null, t, vi.fn(), null, null)
     )
 
     let startPromise
@@ -112,11 +112,11 @@ describe('useAutomation — auth failure during uploadReference', () => {
     await act(async () => { await startPromise })
 
     // The batch must not proceed to scene generation
-    expect(flowAPI.submitGenerationDOM).not.toHaveBeenCalled()
+    expect(genAPI.submitGeneration).not.toHaveBeenCalled()
   }, 15000)
 
   it('sets status to "error" when uploadReference authFailed fires', async () => {
-    const flowAPI = makeFlowAPI({
+    const genAPI = makeFlowAPI({
       uploadReference: vi.fn().mockResolvedValue({
         success: false,
         authFailed: true,
@@ -131,7 +131,7 @@ describe('useAutomation — auth failure during uploadReference', () => {
 
     const t = (k) => k
     const { result } = renderHook(() =>
-      useAutomation(flowAPI, scenesHook, null, null, null, t, vi.fn(), null, null)
+      useAutomation(genAPI, scenesHook, null, null, null, t, vi.fn(), null, null)
     )
 
     let startPromise
@@ -151,14 +151,14 @@ describe('useAutomation — auth failure during uploadReference', () => {
       authFailed: true,
       error: 'Auth expired — please re-login to Flow',
     })
-    const flowAPI = makeFlowAPI({ uploadReference })
+    const genAPI = makeFlowAPI({ uploadReference })
     const scenesHook = makeScenesHook({
       references: [{ id: 'ref1', name: 'ref1.png', data: 'base64data==', category: 'style', mediaId: null }],
     })
 
     const t = (k) => k
     const { result } = renderHook(() =>
-      useAutomation(flowAPI, scenesHook, null, null, null, t, vi.fn(), null, null)
+      useAutomation(genAPI, scenesHook, null, null, null, t, vi.fn(), null, null)
     )
 
     let startPromise
@@ -180,8 +180,8 @@ describe('useAutomation — auth failure during collectGeneration', () => {
   it('marks the scene with errorKind:"auth" when collectGeneration returns authFailed', async () => {
     const updateScene = vi.fn()
     // No references → skip upload phase, go straight to generation
-    const flowAPI = makeFlowAPI({
-      submitGenerationDOM: vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' }),
+    const genAPI = makeFlowAPI({
+      submitGeneration: vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' }),
       checkGeneration: vi.fn().mockResolvedValue({ completed: true }),
       collectGeneration: vi.fn().mockResolvedValue({
         success: false,
@@ -193,7 +193,7 @@ describe('useAutomation — auth failure during collectGeneration', () => {
 
     const t = (k) => k
     const { result } = renderHook(() =>
-      useAutomation(flowAPI, scenesHook, null, null, null, t, vi.fn(), null, null)
+      useAutomation(genAPI, scenesHook, null, null, null, t, vi.fn(), null, null)
     )
 
     let startPromise
@@ -213,8 +213,8 @@ describe('useAutomation — auth failure during collectGeneration', () => {
   }, 15000)
 
   it('sets status to "error" when collectGeneration authFailed fires', async () => {
-    const flowAPI = makeFlowAPI({
-      submitGenerationDOM: vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' }),
+    const genAPI = makeFlowAPI({
+      submitGeneration: vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' }),
       checkGeneration: vi.fn().mockResolvedValue({ completed: true }),
       collectGeneration: vi.fn().mockResolvedValue({
         success: false,
@@ -229,7 +229,7 @@ describe('useAutomation — auth failure during collectGeneration', () => {
 
     const t = (k) => k
     const { result } = renderHook(() =>
-      useAutomation(flowAPI, scenesHook, null, null, null, t, vi.fn(), null, null)
+      useAutomation(genAPI, scenesHook, null, null, null, t, vi.fn(), null, null)
     )
 
     let startPromise

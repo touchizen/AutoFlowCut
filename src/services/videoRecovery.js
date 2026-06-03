@@ -23,7 +23,7 @@ export async function downloadAndSaveVideo({
   projectName,
   saveMode = 'folder',
   videoResolution = '1080p', // cloud 다운로드에선 미사용 — 시그니처 호환 위해 유지
-  downloadVideo,         // from flowAPI (useGenAPI)
+  downloadVideo,         // from genAPI (useGenAPI)
   fetchMedia,            // (legacy, 미사용)
   getAccessToken,        // (legacy, 미사용)
 }) {
@@ -103,8 +103,8 @@ export async function recoverInFlightVideos({
   projectName,
   saveMode = 'folder',
   videoResolution = '1080p',
-  checkVideoStatus,      // flowAPI.checkVideoStatus(genIds[]) → { success, statuses[] }
-  downloadVideo,         // flowAPI.downloadVideo(videoUri)
+  checkVideoStatus,      // genAPI.checkVideoStatus(genIds[]) → { success, statuses[] }
+  downloadVideo,         // genAPI.downloadVideo(videoUri)
   fetchMedia,            // (legacy, 미사용)
   getAccessToken,        // (legacy, 미사용)
   onFramePairUpdate,     // (id, patch) => void
@@ -246,7 +246,7 @@ export async function recoverInFlightVideos({
  *
  * @param {object}   args
  * @param {object}   args.item       — { id, generationId, mediaId, videoSaveId? }
- * @param {object}   args.flowAPI    — { checkVideoStatus, fetchMedia, getAccessToken }
+ * @param {object}   args.genAPI    — { checkVideoStatus, fetchMedia, getAccessToken }
  * @param {function} args.onUpdate   — (id, status, patch) => void
  * @param {string}   [args.projectName]
  * @param {string}   [args.saveMode]       ('folder' | 'memory')
@@ -255,7 +255,7 @@ export async function recoverInFlightVideos({
  */
 export async function retryVideoDownload({
   item,
-  flowAPI,
+  genAPI,
   onUpdate,
   projectName = '',
   saveMode = 'folder',
@@ -266,8 +266,8 @@ export async function retryVideoDownload({
     onUpdate?.(item.id, 'error', { error })
     return { success: false, error }
   }
-  if (!flowAPI?.checkVideoStatus) {
-    const error = 'Cannot retry: flowAPI.checkVideoStatus unavailable'
+  if (!genAPI?.checkVideoStatus) {
+    const error = 'Cannot retry: genAPI.checkVideoStatus unavailable'
     onUpdate?.(item.id, 'error', { error })
     return { success: false, error }
   }
@@ -277,7 +277,7 @@ export async function retryVideoDownload({
   // ─── 1. 서버 상태 확인 ───
   let statusResult
   try {
-    statusResult = await flowAPI.checkVideoStatus([item.generationId])
+    statusResult = await genAPI.checkVideoStatus([item.generationId])
   } catch (e) {
     const err = String(e?.message || e)
     const isExpired = err.includes('404') || err.includes('NOT_FOUND') || err.toLowerCase().includes('expired')
@@ -327,7 +327,7 @@ export async function retryVideoDownload({
     projectName,
     saveMode,
     videoResolution,
-    downloadVideo: flowAPI.downloadVideo,
+    downloadVideo: genAPI.downloadVideo,
   })
 
   if (dl.success && dl.base64) {

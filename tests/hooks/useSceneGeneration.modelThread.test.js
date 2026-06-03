@@ -1,6 +1,6 @@
 /**
  * useSceneGeneration — 단일 씬 재생성(상세 모달) 경로가 settings.imageModel 을
- * generateImageDOM 까지 전달하는지 검증.
+ * generateImage 까지 전달하는지 검증.
  *
  * 회귀 방지: 배치 경로(useAutomation)만 모델을 전달하고 모달 개별 재생성이 빠지면,
  * SceneDetailModal 재생성 / MCP 단일 생성이 선택 모델을 무시하고 기본 모델로 생성된다.
@@ -32,8 +32,8 @@ import { useSceneGeneration } from '../../src/hooks/useSceneGeneration'
 describe('useSceneGeneration — 모델 전달', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('settings.imageModel 을 generateImageDOM 옵션의 model 로 전달', async () => {
-    const generateImageDOM = vi.fn().mockResolvedValue({ success: true, images: [{ base64: 'X' }], model: 'gemini-3-pro-image' })
+  it('settings.imageModel 을 generateImage 옵션의 model 로 전달', async () => {
+    const generateImage = vi.fn().mockResolvedValue({ success: true, images: [{ base64: 'X' }], model: 'gemini-3-pro-image' })
     const scenes = [{ id: 'scene_1', prompt: 'a hero' }]
     const scenesHook = {
       references: [],
@@ -45,7 +45,7 @@ describe('useSceneGeneration — 모델 전달', () => {
     const { result } = renderHook(() =>
       useSceneGeneration({
         settings, scenes, scenesHook,
-        flowAPI: { generateImageDOM },
+        genAPI: { generateImage },
         openSettings: vi.fn(), setSelectedScene: vi.fn(),
         t: (k) => k, generationQueue: null,
       })
@@ -53,8 +53,8 @@ describe('useSceneGeneration — 모델 전달', () => {
 
     await act(async () => { await result.current.handleGenerateScene('scene_1') })
 
-    expect(generateImageDOM).toHaveBeenCalledTimes(1)
-    const opts = generateImageDOM.mock.calls[0][2]
+    expect(generateImage).toHaveBeenCalledTimes(1)
+    const opts = generateImage.mock.calls[0][2]
     expect(opts.model).toBe('gemini-3-pro-image')
   })
 })

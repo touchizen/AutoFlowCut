@@ -45,7 +45,7 @@ describe('useVideoAutomation — poll top-level fail quota', () => {
       error: 'Resource has been exhausted (e.g. check quota).',
     })
 
-    const flowAPI = {
+    const genAPI = {
       generateVideoT2V,
       generateVideoI2V: vi.fn(),
       checkVideoStatus,
@@ -54,7 +54,7 @@ describe('useVideoAutomation — poll top-level fail quota', () => {
       getAccessToken: vi.fn().mockResolvedValue('token'),
     }
 
-    const hook = renderHook(() => useVideoAutomation(flowAPI, (k) => k, null))
+    const hook = renderHook(() => useVideoAutomation(genAPI, (k) => k, null))
 
     let startPromise
     await act(async () => {
@@ -83,11 +83,11 @@ describe('useVideoAutomation — poll top-level fail quota', () => {
       success: true,
       statuses: [{ status: 'failed', error: 'Video generation failed' }],
     })
-    const flowAPI = {
+    const genAPI = {
       generateVideoT2V, generateVideoI2V: vi.fn(), checkVideoStatus,
       upscaleVideo: vi.fn(), fetchMedia: vi.fn(), getAccessToken: vi.fn().mockResolvedValue('token'),
     }
-    const hook = renderHook(() => useVideoAutomation(flowAPI, (k) => k, null))
+    const hook = renderHook(() => useVideoAutomation(genAPI, (k) => k, null))
     let startPromise
     await act(async () => {
       startPromise = hook.result.current.start({

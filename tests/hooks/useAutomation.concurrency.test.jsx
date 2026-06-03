@@ -22,10 +22,10 @@ vi.mock('../../src/services/imageFinalize', () => ({ processAsyncSceneResult: vi
 vi.mock('../../src/utils/sceneFilters', () => ({ filterPendingScenes: vi.fn((scenes) => scenes) }))
 
 function setupHook(scenes, overrides = {}) {
-  const submitGenerationDOM = vi.fn().mockImplementation(async () => ({ success: true, generationId: `gen-${++gid}` }))
+  const submitGeneration = vi.fn().mockImplementation(async () => ({ success: true, generationId: `gen-${++gid}` }))
   let gid = 0
-  const flowAPI = {
-    submitGenerationDOM,
+  const genAPI = {
+    submitGeneration,
     checkGeneration: overrides.checkGeneration || vi.fn().mockResolvedValue({ completed: false }),
     collectGeneration: overrides.collectGeneration || vi.fn().mockResolvedValue({ success: true, images: [{ id: 'i', mediaId: 'm' }] }),
     clearGenerations: vi.fn().mockResolvedValue(undefined),
@@ -34,8 +34,8 @@ function setupHook(scenes, overrides = {}) {
   }
   const updateScene = vi.fn()
   const scenesHook = { scenes, references: [], updateScene, getMatchingReferences: vi.fn(() => []) }
-  const hook = renderHook(() => useAutomation(flowAPI, scenesHook, null, null, null, (k) => k, null, null, null))
-  return { hook, submitGenerationDOM, flowAPI, updateScene }
+  const hook = renderHook(() => useAutomation(genAPI, scenesHook, null, null, null, (k) => k, null, null, null))
+  return { hook, submitGeneration, genAPI, updateScene }
 }
 
 beforeEach(() => {
@@ -57,14 +57,14 @@ const FOUR = [
 describe('useAutomation 동시성 윈도우', () => {
   it('in-flight 가 concurrency 를 넘지 않음 (완료 없으면 추가 제출 차단)', async () => {
     // checkGeneration 이 계속 미완료 → window 가 concurrency 에서 멈춤
-    const { hook, submitGenerationDOM } = setupHook(FOUR)
+    const { hook, submitGeneration } = setupHook(FOUR)
     let startPromise
     await act(async () => {
       startPromise = hook.result.current.start({ projectName: 'p', saveMode: 'memory', concurrency: 2 })
     })
     // window 가 채워지고, 게이트가 더 이상 제출 안 함
     await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
-    expect(submitGenerationDOM).toHaveBeenCalledTimes(2) // concurrency=2 에서 멈춤
+    expect(submitGeneration).toHaveBeenCalledTimes(2) // concurrency=2 에서 멈춤
 
     // 정리
     await act(async () => { hook.result.current.stop() })
@@ -74,7 +74,7 @@ describe('useAutomation 동시성 윈도우', () => {
 
   it('씬 사이 7~15초 대기 제거 — 즉시 완료되면 배치가 빠르게 끝남', async () => {
     // 모두 즉시 완료. 옛 코드면 (N-1)*~7s 대기가 필요했음.
-    const { hook, submitGenerationDOM } = setupHook(FOUR, {
+    const { hook, submitGeneration } = setupHook(FOUR, {
       checkGeneration: vi.fn().mockResolvedValue({ completed: true }),
       collectGeneration: vi.fn().mockResolvedValue({ success: true, images: [{ id: 'i', mediaId: 'm' }] }),
     })
@@ -85,12 +85,12 @@ describe('useAutomation 동시성 윈도우', () => {
     // 4*7s=28s 보다 훨씬 짧은 5s 안에 완료돼야 함 (대기 제거 증명)
     await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
     await startPromise
-    expect(submitGenerationDOM).toHaveBeenCalledTimes(4)
+    expect(submitGeneration).toHaveBeenCalledTimes(4)
     expect(hook.result.current.isRunning).toBe(false)
   })
 
   it('concurrency 미지정 → 기본 5 (4 씬 모두 한 번에 제출, 게이트 안 걸림)', async () => {
-    const { hook, submitGenerationDOM } = setupHook(FOUR, {
+    const { hook, submitGeneration } = setupHook(FOUR, {
       checkGeneration: vi.fn().mockResolvedValue({ completed: true }),
     })
     let startPromise
@@ -99,7 +99,7 @@ describe('useAutomation 동시성 윈도우', () => {
     })
     await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
     await startPromise
-    expect(submitGenerationDOM).toHaveBeenCalledTimes(4)
+    expect(submitGeneration).toHaveBeenCalledTimes(4)
   })
 
   it('pause 시간은 ITEM_TIMEOUT 에 포함되지 않음 (3분 pause 후 재개해도 timeout 아님)', async () => {
@@ -128,7 +128,7 @@ describe('useAutomation 동시성 윈도우', () => {
   })
 
   it('start({ sceneIds }) 는 index 가 아니라 id 로 대상 씬 resolve (queue 지연 중 재정렬 안전)', async () => {
-    const { hook, submitGenerationDOM } = setupHook([
+    const { hook, submitGeneration } = setupHook([
       { id: 's1', prompt: 'PROMPT_1', status: 'pending' },
       { id: 's2', prompt: 'PROMPT_2', status: 'pending' },
       { id: 's3', prompt: 'PROMPT_3', status: 'pending' },
@@ -140,12 +140,12 @@ describe('useAutomation 동시성 윈도우', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
     await startPromise
     // s2 한 개만 제출 — 프롬프트로 id 기반 resolve 확인
-    expect(submitGenerationDOM).toHaveBeenCalledTimes(1)
-    expect(submitGenerationDOM.mock.calls[0][0]).toBe('PROMPT_2')
+    expect(submitGeneration).toHaveBeenCalledTimes(1)
+    expect(submitGeneration.mock.calls[0][0]).toBe('PROMPT_2')
   })
 
   it('retryScene 은 sceneIds 로 enqueue (index staleness 회피)', async () => {
-    const { hook, submitGenerationDOM } = setupHook([
+    const { hook, submitGeneration } = setupHook([
       { id: 's1', prompt: 'P1', status: 'error' },
       { id: 's2', prompt: 'P2', status: 'error' },
     ], { checkGeneration: vi.fn().mockResolvedValue({ completed: true }) })
@@ -153,12 +153,12 @@ describe('useAutomation 동시성 윈도우', () => {
     await act(async () => { p = hook.result.current.retryScene('s2', { projectName: 'p', saveMode: 'memory', concurrency: 5 }) })
     await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
     await p
-    expect(submitGenerationDOM).toHaveBeenCalledTimes(1)
-    expect(submitGenerationDOM.mock.calls[0][0]).toBe('P2')
+    expect(submitGeneration).toHaveBeenCalledTimes(1)
+    expect(submitGeneration.mock.calls[0][0]).toBe('P2')
   })
 
   it('concurrency=0 (잘못된 값) → 무한대기 없이 기본 5 로 clamp', async () => {
-    const { hook, submitGenerationDOM } = setupHook(FOUR, {
+    const { hook, submitGeneration } = setupHook(FOUR, {
       checkGeneration: vi.fn().mockResolvedValue({ completed: true }),
     })
     let startPromise
@@ -167,7 +167,7 @@ describe('useAutomation 동시성 윈도우', () => {
     })
     await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
     await startPromise
-    expect(submitGenerationDOM).toHaveBeenCalledTimes(4) // 0 이 1로 안 막히고 정상 진행
+    expect(submitGeneration).toHaveBeenCalledTimes(4) // 0 이 1로 안 막히고 정상 진행
     expect(hook.result.current.isRunning).toBe(false)
   })
 })

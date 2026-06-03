@@ -37,7 +37,7 @@ describe('finalizeGeneratedImage — errorKind cleanup', () => {
   it('success path: sceneUpdate explicitly sets errorKind: null (clears stale image-missing)', async () => {
     const res = await finalizeGeneratedImage({
       result: { success: true, images: [{ base64: TINY_BASE64, mediaId: 'm1' }] },
-      flowAPI: {},
+      genAPI: {},
       saveMode: 'folder',
       projectName: 'ep6',
       sceneId: 'scene_1',
@@ -55,7 +55,7 @@ describe('finalizeGeneratedImage — errorKind cleanup', () => {
   it('failure path (no images): sceneUpdate sets errorKind: null', async () => {
     const res = await finalizeGeneratedImage({
       result: { success: false, error: 'Quota exceeded', images: [] },
-      flowAPI: {},
+      genAPI: {},
       saveMode: 'folder',
       projectName: 'ep6',
       sceneId: 'scene_1',
@@ -75,7 +75,7 @@ describe('finalizeGeneratedImage — errorKind cleanup', () => {
 
     const res = await finalizeGeneratedImage({
       result: { success: true, images: [{ base64: TINY_BASE64, mediaId: 'm1' }] },
-      flowAPI: {},
+      genAPI: {},
       saveMode: 'folder',
       projectName: 'ep6',
       sceneId: 'scene_1',
@@ -102,7 +102,7 @@ describe('processAsyncSceneResult — useAutomation batch error counting contrac
   const baseArgs = (overrides = {}) => ({
     scene: { id: 'scene_1', prompt: 'a cat' },
     result: { success: true, images: [{ base64: TINY_BASE64, mediaId: 'm1' }] },
-    flowAPI: {},
+    genAPI: {},
     imageUpscale: 'off',
     saveMode: 'folder',
     projectName: 'ep6',

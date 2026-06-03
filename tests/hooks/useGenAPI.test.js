@@ -36,11 +36,11 @@ describe('useGenAPI — 인증(BYOK)', () => {
 })
 
 describe('useGenAPI — 이미지', () => {
-  it('generateImageDOM: 레퍼런스 base64 해석 후 전달 + 결과 매핑', async () => {
+  it('generateImage: 레퍼런스 base64 해석 후 전달 + 결과 매핑', async () => {
     const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
     let r
     await act(async () => {
-      r = await result.current.generateImageDOM(
+      r = await result.current.generateImage(
         'a cat',
         [{ name: 'hero', data: 'data:image/png;base64,REF' }],
         { aspectRatio: '16:9' }
@@ -56,29 +56,29 @@ describe('useGenAPI — 이미지', () => {
     expect(r.images[0]).toEqual({ base64: 'data:image/png;base64,ABC', mimeType: 'image/png', mediaId: null })
   })
 
-  it('generateImageDOM: 선택 모델을 IPC 로 전달 + 결과에 model 기록', async () => {
+  it('generateImage: 선택 모델을 IPC 로 전달 + 결과에 model 기록', async () => {
     const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
     let r
     await act(async () => {
-      r = await result.current.generateImageDOM('a cat', [], { aspectRatio: '9:16', model: 'gemini-3.1-flash-image' })
+      r = await result.current.generateImage('a cat', [], { aspectRatio: '9:16', model: 'gemini-3.1-flash-image' })
     })
     expect(window.electronAPI.genaiGenerateImage.mock.calls.at(-1)[0].model).toBe('gemini-3.1-flash-image')
     // finalize 가 result.model 을 주워 item.model 로 기록하므로, 결과에 effective model 이 실려야 한다.
     expect(r.model).toBe('gemini-3.1-flash-image')
   })
 
-  it('generateImageDOM: model 미지정 시 기본 이미지 모델로 폴백(결과에도 기록)', async () => {
+  it('generateImage: model 미지정 시 기본 이미지 모델로 폴백(결과에도 기록)', async () => {
     const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
     let r
-    await act(async () => { r = await result.current.generateImageDOM('a cat', []) })
+    await act(async () => { r = await result.current.generateImage('a cat', []) })
     expect(window.electronAPI.genaiGenerateImage.mock.calls.at(-1)[0].model).toBe(DEFAULT_IMAGE_MODEL_ID)
     expect(r.model).toBe(DEFAULT_IMAGE_MODEL_ID)
   })
 
-  it('submitGenerationDOM: options.imageModel 을 generateImageDOM model 로 매핑', async () => {
+  it('submitGeneration: options.imageModel 을 generateImage model 로 매핑', async () => {
     const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
     await act(async () => {
-      await result.current.submitGenerationDOM('p', [], { aspectRatio: '16:9', imageModel: 'gemini-3-pro-image' })
+      await result.current.submitGeneration('p', [], { aspectRatio: '16:9', imageModel: 'gemini-3-pro-image' })
     })
     await waitFor(() => {
       expect(window.electronAPI.genaiGenerateImage.mock.calls.at(-1)[0].model).toBe('gemini-3-pro-image')
@@ -88,7 +88,7 @@ describe('useGenAPI — 이미지', () => {
   it('submit → check → collect 비동기 에뮬레이션', async () => {
     const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
     let sub
-    await act(async () => { sub = await result.current.submitGenerationDOM('p', []) })
+    await act(async () => { sub = await result.current.submitGeneration('p', []) })
     expect(sub.success).toBe(true)
     expect(sub.generationId).toMatch(/^gen_/)
 
@@ -110,7 +110,7 @@ describe('useGenAPI — 이미지', () => {
   it('clearGenerations 후 collect 실패', async () => {
     const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
     let sub
-    await act(async () => { sub = await result.current.submitGenerationDOM('p', []) })
+    await act(async () => { sub = await result.current.submitGeneration('p', []) })
     await act(async () => { await result.current.clearGenerations() })
     const r = await result.current.collectGeneration(sub.generationId)
     expect(r.success).toBe(false)
@@ -249,14 +249,14 @@ describe('useGenAPI — 비디오', () => {
 })
 
 describe('useGenAPI — auth 실패 센티넬 (BYOK 키 거부)', () => {
-  it('generateImageDOM: 키 거부 → authFailed + onAuthError', async () => {
+  it('generateImage: 키 거부 → authFailed + onAuthError', async () => {
     const onAuthError = vi.fn()
     window.electronAPI.genaiGenerateImage.mockResolvedValue({
       success: false, error: 'HTTP 400 :: API key not valid :: INVALID_ARGUMENT',
     })
     const { result } = renderHook(() => useGenAPI({ onAuthError }))
     let r
-    await act(async () => { r = await result.current.generateImageDOM('p', []) })
+    await act(async () => { r = await result.current.generateImage('p', []) })
     expect(r.authFailed).toBe(true)
     expect(onAuthError).toHaveBeenCalled()
   })
@@ -289,7 +289,7 @@ describe('useGenAPI — auth 실패 센티넬 (BYOK 키 거부)', () => {
     window.electronAPI.genaiGenerateImage.mockResolvedValue({ success: false, error: 'RESOURCE_EXHAUSTED' })
     const { result } = renderHook(() => useGenAPI({ onAuthError }))
     let r
-    await act(async () => { r = await result.current.generateImageDOM('p', []) })
+    await act(async () => { r = await result.current.generateImage('p', []) })
     expect(r.authFailed).toBeUndefined()
     expect(onAuthError).not.toHaveBeenCalled()
   })

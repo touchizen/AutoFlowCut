@@ -38,7 +38,7 @@ function makeHook() {
   const checkVideoStatus = vi.fn().mockResolvedValue({
     success: true, statuses: [{ generationId: 'gen-1', status: 'pending' }],
   })
-  const flowAPI = {
+  const genAPI = {
     generateVideoT2V,
     generateVideoI2V: vi.fn(),
     checkVideoStatus,
@@ -46,7 +46,7 @@ function makeHook() {
     upscaleVideo: vi.fn(),
     getAccessToken: vi.fn().mockResolvedValue('token'),
   }
-  const hook = renderHook(() => useVideoAutomation(flowAPI, (k) => k, null))
+  const hook = renderHook(() => useVideoAutomation(genAPI, (k) => k, null))
   return { hook, generateVideoT2V }
 }
 

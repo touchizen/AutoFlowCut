@@ -117,7 +117,7 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
    * @returns {{success, images:[{base64, mimeType, mediaId}], error}}
    *   base64 필드는 data URL — downstream 은 cleanBase64 로 저장, 그대로 표시.
    */
-  const generateImageDOM = useCallback(async (prompt, referenceImages = [], { aspectRatio, model } = {}) => {
+  const generateImage = useCallback(async (prompt, referenceImages = [], { aspectRatio, model } = {}) => {
     // 선택 모델(없으면 기본). API 호출에 쓰고, 결과에도 실어 finalize 가 item.model 로
     // 기록하게 한다 — 그래야 ResultsTable/상세 모달의 모델 표시가 'flow' 가 아닌 실제 모델이 됨.
     const effectiveModel = model || DEFAULT_IMAGE_MODEL_ID
@@ -137,16 +137,16 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
   }, [])
 
   // 비동기 제출 — 동기 생성을 fire-and-forget 으로 감싸 in-flight 에 저장
-  const submitGenerationDOM = useCallback(async (prompt, referenceImages = [], options = {}) => {
+  const submitGeneration = useCallback(async (prompt, referenceImages = [], options = {}) => {
     const id = `gen_${++counterRef.current}`
     inflightRef.current.set(id, { status: 'pending', result: null })
     // 의도적으로 await 안 함 (fire-and-forget)
-    // 배치 경로는 options.imageModel 로 모델을 넘긴다 → generateImageDOM 의 model 로 매핑.
-    generateImageDOM(prompt, referenceImages, { aspectRatio: options.aspectRatio, model: options.imageModel ?? options.model })
+    // 배치 경로는 options.imageModel 로 모델을 넘긴다 → generateImage 의 model 로 매핑.
+    generateImage(prompt, referenceImages, { aspectRatio: options.aspectRatio, model: options.imageModel ?? options.model })
       .then((result) => inflightRef.current.set(id, { status: 'done', result }))
       .catch((e) => inflightRef.current.set(id, { status: 'done', result: { success: false, error: e?.message || String(e) } }))
     return { success: true, generationId: id }
-  }, [generateImageDOM])
+  }, [generateImage])
 
   const checkGeneration = useCallback(async (generationId) => {
     const entry = inflightRef.current.get(generationId)
@@ -260,8 +260,8 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
     getAccessToken,
     clearTokenCache,
     listModels,
-    generateImageDOM,
-    submitGenerationDOM,
+    generateImage,
+    submitGeneration,
     checkGeneration,
     collectGeneration,
     clearGenerations,

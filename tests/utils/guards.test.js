@@ -70,24 +70,24 @@ describe('checkFolderPermission', () => {
 // ============================================================
 describe('checkAuthToken', () => {
   it('returns true when token is available', async () => {
-    const flowAPI = {
+    const genAPI = {
       getAccessToken: vi.fn().mockResolvedValue('some-token'),
       clearTokenCache: vi.fn(),
     }
-    const result = await checkAuthToken(flowAPI, t)
+    const result = await checkAuthToken(genAPI, t)
     expect(result).toBe(true)
-    expect(flowAPI.getAccessToken).toHaveBeenCalledWith(true)
+    expect(genAPI.getAccessToken).toHaveBeenCalledWith(true)
   })
 
   it('returns false and dispatches login-expired event when no token', async () => {
-    const flowAPI = {
+    const genAPI = {
       getAccessToken: vi.fn().mockResolvedValue(null),
       clearTokenCache: vi.fn(),
     }
     const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
-    const result = await checkAuthToken(flowAPI, t)
+    const result = await checkAuthToken(genAPI, t)
     expect(result).toBe(false)
-    expect(flowAPI.clearTokenCache).toHaveBeenCalled()
+    expect(genAPI.clearTokenCache).toHaveBeenCalled()
     expect(dispatchSpy).toHaveBeenCalledWith(expect.objectContaining({ type: 'flow-login-expired' }))
     dispatchSpy.mockRestore()
   })

@@ -51,7 +51,7 @@ describe('useProjectData — C4 fix: new project clears srtTrack', () => {
         setSrtTrack,
         openSettings: vi.fn(),
         onAudioSwitch: null,
-        flowAPI: null,
+        genAPI: null,
       })
     )
 

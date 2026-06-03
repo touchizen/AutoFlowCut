@@ -37,19 +37,19 @@ function setupHook(overrides = {}) {
     success: false,
     error: 'Resource has been exhausted (e.g. check quota).',
   })
-  const flowAPI = {
+  const genAPI = {
     generateVideoT2V,
     generateVideoI2V: vi.fn(),
     checkVideoStatus: vi.fn(),
     upscaleVideo: vi.fn(),
     fetchMedia: vi.fn(),
     getAccessToken: vi.fn().mockResolvedValue('token'),
-    ...(overrides.flowAPI || {}),
+    ...(overrides.genAPI || {}),
   }
 
   const t = (k) => k
-  const hook = renderHook(() => useVideoAutomation(flowAPI, t, null))
-  return { hook, flowAPI, generateVideoT2V }
+  const hook = renderHook(() => useVideoAutomation(genAPI, t, null))
+  return { hook, genAPI, generateVideoT2V }
 }
 
 beforeEach(() => {
@@ -72,7 +72,7 @@ describe('useVideoAutomation — quota stop race regression', () => {
       statuses: [{ status: 'failed', error: 'Resource has been exhausted (e.g. check quota).' }],
     })
     const { hook } = setupHook({
-      flowAPI: { generateVideoT2V, generateVideoI2V: vi.fn(), checkVideoStatus, upscaleVideo: vi.fn(), fetchMedia: vi.fn(), getAccessToken: vi.fn().mockResolvedValue('token') },
+      genAPI: { generateVideoT2V, generateVideoI2V: vi.fn(), checkVideoStatus, upscaleVideo: vi.fn(), fetchMedia: vi.fn(), getAccessToken: vi.fn().mockResolvedValue('token') },
     })
 
     let startPromise

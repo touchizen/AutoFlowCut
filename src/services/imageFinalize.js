@@ -24,7 +24,7 @@ import { tryUpscaleImage } from '../utils/imageProcessing'
  *
  * @param {object} params
  * @param {object} params.result - 생성 결과 { success, images: [{ base64, mediaId, model? }], seed? }
- * @param {object} params.flowAPI - Flow API 인스턴스 (upscaleImage)
+ * @param {object} params.genAPI - Flow API 인스턴스 (upscaleImage)
  * @param {string} params.upscaleRes - 업스케일 해상도 ('off', '2k', '4k')
  * @param {string} params.saveMode - 저장 모드 ('folder' | 'none')
  * @param {string} params.projectName - 프로젝트명
@@ -37,7 +37,7 @@ import { tryUpscaleImage } from '../utils/imageProcessing'
  *   sceneUpdate: updateScene 에 전달할 객체 (status, image, imagePath, mediaId, image_size, seed, generatedAt, model)
  */
 export async function finalizeGeneratedImage({
-  result, flowAPI, upscaleRes = 'off', saveMode, projectName, sceneId, prompt,
+  result, genAPI, upscaleRes = 'off', saveMode, projectName, sceneId, prompt,
   seed = null, model = 'flow', logPrefix = '[Finalize]'
 }) {
   if (!result.success || !result.images?.length) {
@@ -65,7 +65,7 @@ export async function finalizeGeneratedImage({
   const effectiveSeed = firstImage.seed ?? result.seed ?? seed ?? null
 
   // 업스케일
-  const upscaled = await tryUpscaleImage(flowAPI, mediaId, upscaleRes, logPrefix)
+  const upscaled = await tryUpscaleImage(genAPI, mediaId, upscaleRes, logPrefix)
   if (upscaled) imageData = upscaled
 
   // 이미지 크기 추출
@@ -162,12 +162,12 @@ export async function finalizeGeneratedImage({
  */
 export async function processAsyncSceneResult({
   scene, result,
-  flowAPI, imageUpscale, saveMode, projectName, seed,
+  genAPI, imageUpscale, saveMode, projectName, seed,
   updateScene,
   logPrefix = '[Automation]',
 }) {
   const { success, sceneUpdate } = await finalizeGeneratedImage({
-    result, flowAPI,
+    result, genAPI,
     upscaleRes: imageUpscale || 'off',
     saveMode, projectName,
     sceneId: scene.id, prompt: scene.prompt,

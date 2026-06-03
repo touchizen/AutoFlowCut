@@ -45,7 +45,7 @@ vi.mock('../../src/utils/sceneFilters', () => ({
 // ─── Setup helper ──────────────────────────────────────────────────────────────
 
 function setupHook(overrides = {}) {
-  const submitGenerationDOM = vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' })
+  const submitGeneration = vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' })
   const checkGeneration = vi.fn().mockResolvedValue({ completed: false })
   const collectGeneration = vi.fn().mockResolvedValue({
     success: true,
@@ -57,14 +57,14 @@ function setupHook(overrides = {}) {
   const updateScene = vi.fn()
   const getMatchingReferences = vi.fn(() => [])
 
-  const flowAPI = {
-    submitGenerationDOM,
+  const genAPI = {
+    submitGeneration,
     checkGeneration,
     collectGeneration,
     clearGenerations,
     uploadReference,
     getAccessToken,
-    ...(overrides.flowAPI || {}),
+    ...(overrides.genAPI || {}),
   }
 
   const scenes = overrides.scenes || [
@@ -83,15 +83,15 @@ function setupHook(overrides = {}) {
   const t = (k) => k
 
   const hook = renderHook(() =>
-    useAutomation(flowAPI, scenesHook, null, null, null, t, null, null, null)
+    useAutomation(genAPI, scenesHook, null, null, null, t, null, null, null)
   )
 
   return {
     hook,
-    flowAPI,
+    genAPI,
     scenesHook,
     updateScene,
-    submitGenerationDOM,
+    submitGeneration,
     checkGeneration,
     collectGeneration,
   }
@@ -117,8 +117,8 @@ describe('useAutomation — batch reference contract (API mode name-based)', () 
   // mediaId:null 반환). 배치 경로가 r.mediaId 로만 필터링하면 name-only 레퍼런스가 전부
   // 탈락해 캐릭터/스타일 일관성이 깨진다. 단일 씬 경로와 동일하게 mediaId||name 으로 선택하고
   // name 을 보존해야 한다.
-  it('name-only 레퍼런스(mediaId 없음)를 submitGenerationDOM 에 name 포함해 전달', async () => {
-    const { hook, submitGenerationDOM, checkGeneration, collectGeneration } = setupHook({
+  it('name-only 레퍼런스(mediaId 없음)를 submitGeneration 에 name 포함해 전달', async () => {
+    const { hook, submitGeneration, checkGeneration, collectGeneration } = setupHook({
       scenes: [{ id: 's1', prompt: 'a', status: 'pending' }],
       scenesHook: {
         getMatchingReferences: vi.fn(() => [
@@ -127,7 +127,7 @@ describe('useAutomation — batch reference contract (API mode name-based)', () 
       },
     })
 
-    submitGenerationDOM.mockResolvedValue({ success: true, generationId: 'gen-1' })
+    submitGeneration.mockResolvedValue({ success: true, generationId: 'gen-1' })
     checkGeneration.mockResolvedValue({ completed: true })
     collectGeneration.mockResolvedValue({ success: true, images: [{ id: 'img-1', mediaId: 'm-1' }] })
 
@@ -138,20 +138,20 @@ describe('useAutomation — batch reference contract (API mode name-based)', () 
     await act(async () => { await vi.advanceTimersByTimeAsync(60 * 1000) })
     await startPromise
 
-    expect(submitGenerationDOM).toHaveBeenCalled()
-    const matchedRefs = submitGenerationDOM.mock.calls[0][1]
+    expect(submitGeneration).toHaveBeenCalled()
+    const matchedRefs = submitGeneration.mock.calls[0][1]
     expect(matchedRefs).toEqual([
       { category: 'character', mediaId: null, caption: 'main', name: 'hero' },
     ])
   })
 
-  // 회귀: 설정의 imageModel(T2I 선택 모델)이 배치 제출 옵션까지 전달돼야 generateImageDOM →
+  // 회귀: 설정의 imageModel(T2I 선택 모델)이 배치 제출 옵션까지 전달돼야 generateImage →
   // genai 호출이 선택 모델을 쓰고, 결과 model 이 item.model 로 기록된다(ResultsTable 모델 컬럼).
-  it('start({imageModel}) 을 submitGenerationDOM 옵션으로 전달', async () => {
-    const { hook, submitGenerationDOM, checkGeneration, collectGeneration } = setupHook({
+  it('start({imageModel}) 을 submitGeneration 옵션으로 전달', async () => {
+    const { hook, submitGeneration, checkGeneration, collectGeneration } = setupHook({
       scenes: [{ id: 's1', prompt: 'a', status: 'pending' }],
     })
-    submitGenerationDOM.mockResolvedValue({ success: true, generationId: 'gen-1' })
+    submitGeneration.mockResolvedValue({ success: true, generationId: 'gen-1' })
     checkGeneration.mockResolvedValue({ completed: true })
     collectGeneration.mockResolvedValue({ success: true, images: [{ id: 'img-1', mediaId: 'm-1' }] })
 
@@ -162,7 +162,7 @@ describe('useAutomation — batch reference contract (API mode name-based)', () 
     await act(async () => { await vi.advanceTimersByTimeAsync(60 * 1000) })
     await startPromise
 
-    const submitOptions = submitGenerationDOM.mock.calls[0][2]
+    const submitOptions = submitGeneration.mock.calls[0][2]
     expect(submitOptions.imageModel).toBe('gemini-3.1-flash-image')
   })
 })
@@ -173,7 +173,7 @@ describe('useAutomation — force regenerate status reset ordering', () => {
   // pending+image = "이미지는 있는데 미완료" 상태로 저장된다. 리셋은 확인 통과 후에 해야 한다.
   it('force=true: does not reset scene status when the auth token check fails', async () => {
     const { hook, updateScene } = setupHook({
-      flowAPI: { getAccessToken: vi.fn().mockResolvedValue(null) },
+      genAPI: { getAccessToken: vi.fn().mockResolvedValue(null) },
       scenes: [
         { id: 's1', prompt: 'a', status: 'done', image: 'data:old-1' },
         { id: 's2', prompt: 'b', status: 'done', image: 'data:old-2' },
@@ -196,7 +196,7 @@ describe('useAutomation — force regenerate status reset ordering', () => {
     // 실제 씬 제출은 안 되는데 force reset 만 실행될 수 있다 — !stopRequestedRef 가드 확인.
     let triggerStop
     const { hook, updateScene } = setupHook({
-      flowAPI: {
+      genAPI: {
         getAccessToken: vi.fn().mockImplementation(async () => {
           triggerStop()           // 토큰 확인 await 중 사용자가 Stop 누른 상황 모사
           return 'fake-token'

@@ -32,7 +32,7 @@ async function mapWithConcurrency(items, mapper, concurrency = 5) {
   return results
 }
 
-export function useReferenceGeneration({ settings, references, setReferences, flowAPI, addPendingSave, openSettings, pendingSavesCount = 0, t, selectedStyleRefId, styleThumbnails, generationQueue }) {
+export function useReferenceGeneration({ settings, references, setReferences, genAPI, addPendingSave, openSettings, pendingSavesCount = 0, t, selectedStyleRefId, styleThumbnails, generationQueue }) {
   const [generatingRefs, setGeneratingRefs] = useState([])
   const [stoppingRefs, setStoppingRefs] = useState(false)
   const [preparingRefs, setPreparingRefs] = useState(false)  // 배치 준비 중 (권한/토큰/썸네일 업로드)
@@ -98,7 +98,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     // 업스케일 (style 카드 제외)
     const origMediaId = firstImage.mediaId || null
     if (ref.type !== 'style') {
-      const upscaled = await tryUpscaleImage(flowAPI, origMediaId, settings.imageUpscale || 'off', logPrefix)
+      const upscaled = await tryUpscaleImage(genAPI, origMediaId, settings.imageUpscale || 'off', logPrefix)
       if (upscaled) imageData = upscaled
     }
 
@@ -201,7 +201,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       const folderCheck = await checkFolderPermission(settings, openSettings, t)
       if (!folderCheck.ok) return { success: false, permissionError: folderCheck.permissionError }
     }
-    if (!(await checkAuthToken(flowAPI, t))) {
+    if (!(await checkAuthToken(genAPI, t))) {
       setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: 'Auth required' } : r))
       return { success: false, authError: true }
     }
@@ -217,7 +217,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       const refSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
         ? settings.seedNo
         : null
-      const result = await flowAPI.generateImageDOM(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: refSeed, aspectRatio: settings.aspectRatio })
+      const result = await genAPI.generateImage(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: refSeed, aspectRatio: settings.aspectRatio })
 
       if (result.success && result.images?.length > 0) {
         return await _processAndSaveImage(result.images, index, ref, '[Reference]')
@@ -249,7 +249,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
 
   // ─── 비동기 결과 수집 + 후처리 (배치용) ───
   const processAsyncResult = async (generationId, index, ref) => {
-    const result = await flowAPI.collectGeneration(generationId)
+    const result = await genAPI.collectGeneration(generationId)
 
     if (!result.success || !result.images?.length) {
       const errorMsg = result.error || ''
@@ -334,7 +334,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     }
 
     // 토큰 확인
-    if (!(await checkAuthToken(flowAPI, t))) return
+    if (!(await checkAuthToken(genAPI, t))) return
 
     // ─── 단일 배치 phase 의 lifecycle (제출 → 폴링 → 정리) ───
     // style phase / non-style phase 가 각각 fresh 큐로 호출한다.
@@ -367,7 +367,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
         for (let i = pendingQueue.length - 1; i >= 0; i--) {
           const pending = pendingQueue[i]
           try {
-            const status = await flowAPI.checkGeneration(pending.generationId)
+            const status = await genAPI.checkGeneration(pending.generationId)
             if (status?.success && status.completed) {
               completed.push(pending)
             }
@@ -435,7 +435,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
           const batchSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
             ? settings.seedNo
             : null
-          const submitResult = await flowAPI.submitGenerationDOM(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: batchSeed, aspectRatio: settings.aspectRatio })
+          const submitResult = await genAPI.submitGeneration(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: batchSeed, aspectRatio: settings.aspectRatio })
 
           if (submitResult?.success && submitResult.generationId) {
             pendingQueue.push({ generationId: submitResult.generationId, index, ref })
@@ -527,7 +527,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       await runPhase(nonStyleIndices, batchEffectiveStyleId)
     }
 
-    await flowAPI.clearGenerations()
+    await genAPI.clearGenerations()
 
     console.log('[GenerateAllRefs] Batch completed, hasPendingSaves:', hasPendingSaves)
 

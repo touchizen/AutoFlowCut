@@ -44,7 +44,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 // returned by wrapped API calls and translates it into batch-level break/error.
 // Previously took an `onAuthError` param that was never invoked after the inline
 // 401 string-match was removed — dropped to keep the responsibility boundary clean.
-export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = null, onComplete = null) {
+export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = null, onComplete = null) {
   const [isRunning, setIsRunning] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
   const [progress, setProgress] = useState({ current: 0, total: 0, percent: 0, errorCount: 0, startedAt: null })
@@ -65,7 +65,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
     return true
   }
 
-  const { generateVideoT2V, generateVideoI2V, checkVideoStatus, upscaleVideo, fetchMedia, getAccessToken, downloadVideo } = flowAPI
+  const { generateVideoT2V, generateVideoI2V, checkVideoStatus, upscaleVideo, fetchMedia, getAccessToken, downloadVideo } = genAPI
 
   // ─── Phase 1 Helper: 비디오 제출 ───
   const submitVideoItem = async (item, mode, options) => {
@@ -309,7 +309,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
         const chunk = downloadOnly.slice(i, i + CONCURRENCY)
         const results = await Promise.all(chunk.map(it => retryVideoDownload({
           item: it,
-          flowAPI: { checkVideoStatus, fetchMedia, getAccessToken, downloadVideo },
+          genAPI: { checkVideoStatus, fetchMedia, getAccessToken, downloadVideo },
           onUpdate: (id, newStatus, patch) => onItemUpdate?.(id, newStatus, patch),
           projectName,
           saveMode,

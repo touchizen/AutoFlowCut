@@ -49,10 +49,10 @@ function setupHook({ checkGenerationImpl }) {
 
   let hookHandle
 
-  const flowAPI = {
+  const genAPI = {
     getAccessToken: vi.fn().mockResolvedValue('token'),
     clearTokenCache: vi.fn(),
-    submitGenerationDOM: vi.fn().mockResolvedValue({ success: true, generationId: 'g-1' }),
+    submitGeneration: vi.fn().mockResolvedValue({ success: true, generationId: 'g-1' }),
     checkGeneration: vi.fn(async () => {
       await checkGenerationImpl?.(hookHandle)
       return { success: true, completed: false }
@@ -64,7 +64,7 @@ function setupHook({ checkGenerationImpl }) {
     settings: { saveMode: 'project', imageBatchCount: 1 },
     references: refs,
     setReferences,
-    flowAPI,
+    genAPI,
     addPendingSave: vi.fn(),
     openSettings: vi.fn(),
     t: (k) => k,
@@ -73,7 +73,7 @@ function setupHook({ checkGenerationImpl }) {
   // result.current is the hook's return object — expose it directly to callers
   hookHandle = result
 
-  return { result, setRefCalls, flowAPI }
+  return { result, setRefCalls, genAPI }
 }
 
 describe('useReferenceGeneration — prepare-phase stop cleanup (P1)', () => {
@@ -101,7 +101,7 @@ describe('useReferenceGeneration — prepare-phase stop cleanup (P1)', () => {
       settings: { saveMode: 'folder', imageBatchCount: 1 },
       references: refs,
       setReferences: vi.fn(),
-      flowAPI: { getAccessToken: vi.fn().mockResolvedValue('token') },
+      genAPI: { getAccessToken: vi.fn().mockResolvedValue('token') },
       addPendingSave: vi.fn(),
       openSettings: vi.fn(),
       t: (k) => k,
@@ -136,7 +136,7 @@ describe('useReferenceGeneration — prepare-phase stop cleanup (P1)', () => {
       settings: { saveMode: 'folder', imageBatchCount: 1 },
       references: refs,
       setReferences: vi.fn(),
-      flowAPI: { getAccessToken: vi.fn().mockResolvedValue('token') },
+      genAPI: { getAccessToken: vi.fn().mockResolvedValue('token') },
       addPendingSave: vi.fn(),
       openSettings: vi.fn(),
       t: (k) => k,

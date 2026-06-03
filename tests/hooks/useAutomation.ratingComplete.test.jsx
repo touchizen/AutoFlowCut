@@ -43,13 +43,13 @@ afterEach(() => {
 })
 
 function setup({ scenes, flowOverrides = {} }) {
-  const submitGenerationDOM = vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' })
+  const submitGeneration = vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' })
   const checkGeneration = vi.fn().mockResolvedValue({ completed: true })
   const collectGeneration = vi.fn().mockResolvedValue({ success: true, images: [{ id: 'i', mediaId: 'm' }] })
   const clearGenerations = vi.fn().mockResolvedValue(undefined)
   const getAccessToken = vi.fn().mockResolvedValue('token')
-  const flowAPI = {
-    submitGenerationDOM, checkGeneration, collectGeneration, clearGenerations,
+  const genAPI = {
+    submitGeneration, checkGeneration, collectGeneration, clearGenerations,
     uploadReference: vi.fn(), getAccessToken, ...flowOverrides,
   }
   const scenesHook = {
@@ -57,9 +57,9 @@ function setup({ scenes, flowOverrides = {} }) {
   }
   const onComplete = vi.fn()
   const hook = renderHook(() =>
-    useAutomation(flowAPI, scenesHook, null, null, null, (k) => k, null, null, onComplete)
+    useAutomation(genAPI, scenesHook, null, null, null, (k) => k, null, null, onComplete)
   )
-  return { hook, onComplete, submitGenerationDOM }
+  return { hook, onComplete, submitGeneration }
 }
 
 describe('useAutomation — onComplete completed flag', () => {
@@ -82,7 +82,7 @@ describe('useAutomation — onComplete completed flag', () => {
 
   it('3회 연속 submit 실패로 조기 종료 시 completed:false (진행률 < 100%)', async () => {
     // 4 씬: 처음 3개 submit 이 연속 실패 → break (completedCount=3 < total=4)
-    const { hook, onComplete, submitGenerationDOM } = setup({
+    const { hook, onComplete, submitGeneration } = setup({
       scenes: [
         { id: 's1', prompt: 'a', status: 'pending' },
         { id: 's2', prompt: 'b', status: 'pending' },
@@ -90,7 +90,7 @@ describe('useAutomation — onComplete completed flag', () => {
         { id: 's4', prompt: 'd', status: 'pending' },
       ],
     })
-    submitGenerationDOM.mockResolvedValue({ success: false, error: 'boom (generic submit failure)' })
+    submitGeneration.mockResolvedValue({ success: false, error: 'boom (generic submit failure)' })
 
     let p
     await act(async () => { p = hook.result.current.start({ projectName: 'p', saveMode: 'folder' }) })
@@ -98,7 +98,7 @@ describe('useAutomation — onComplete completed flag', () => {
     await p
 
     // 4번째 씬은 제출 시도조차 안 됨 (3연속 실패 후 break)
-    expect(submitGenerationDOM).toHaveBeenCalledTimes(3)
+    expect(submitGeneration).toHaveBeenCalledTimes(3)
     expect(onComplete).toHaveBeenCalledTimes(1)
     expect(onComplete).toHaveBeenCalledWith({ completed: false })
   })

@@ -3,7 +3,7 @@
  *
  * Review finding: useReferenceGeneration의 _executeBatchRefs 안에서
  * `await collectCompleted()` 가 quota 를 감지해 stopRequestedRef=true 로 만들어도,
- * 같은 iteration 의 그 다음 라인 (`await flowAPI.submitGenerationDOM(...)`) 이 stop
+ * 같은 iteration 의 그 다음 라인 (`await genAPI.submitGeneration(...)`) 이 stop
  * 재확인 없이 그대로 실행돼 ref 가 하나 더 submit 되는 leak 가 있었다.
  *
  * Fix: collectCompleted 직후 `if (stopRequestedRef.current) break` 추가.
@@ -59,7 +59,7 @@ describe('useReferenceGeneration — quota stop in collect path', () => {
 
     // 1st submit success — 그 다음 iteration 의 collectCompleted 에서 quota.
     let submitCallCount = 0
-    const submitGenerationDOM = vi.fn(async () => {
+    const submitGeneration = vi.fn(async () => {
       submitCallCount++
       return { success: true, generationId: `gen-${submitCallCount}` }
     })
@@ -69,10 +69,10 @@ describe('useReferenceGeneration — quota stop in collect path', () => {
       error: 'Resource has been exhausted (e.g. check quota).',
     })
 
-    const flowAPI = {
+    const genAPI = {
       getAccessToken: vi.fn().mockResolvedValue('token'),
       clearTokenCache: vi.fn(),
-      submitGenerationDOM,
+      submitGeneration,
       checkGeneration,
       collectGeneration,
       clearGenerations: vi.fn().mockResolvedValue(undefined),
@@ -83,7 +83,7 @@ describe('useReferenceGeneration — quota stop in collect path', () => {
         settings: { saveMode: 'project', imageBatchCount: 1 },
         references: refs,
         setReferences: vi.fn(),
-        flowAPI,
+        genAPI,
         addPendingSave: vi.fn(),
         openSettings: vi.fn(),
         t: (k) => k,

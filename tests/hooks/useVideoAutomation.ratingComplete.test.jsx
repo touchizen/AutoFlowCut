@@ -58,10 +58,10 @@ describe('useVideoAutomation — onComplete completed flag', () => {
       success: true,
       statuses: [{ status: 'failed', error: 'server gen failed' }],
     })
-    const flowAPI = buildFlowAPI({ generateVideoT2V, checkVideoStatus })
+    const genAPI = buildFlowAPI({ generateVideoT2V, checkVideoStatus })
     const onComplete = vi.fn()
 
-    const hook = renderHook(() => useVideoAutomation(flowAPI, (k) => k, null, onComplete))
+    const hook = renderHook(() => useVideoAutomation(genAPI, (k) => k, null, onComplete))
 
     let p
     await act(async () => {
@@ -84,10 +84,10 @@ describe('useVideoAutomation — onComplete completed flag', () => {
   it('사용자 stop 시 onComplete 가 completed:true 로 호출되지 않음', async () => {
     const generateVideoT2V = vi.fn().mockResolvedValue({ success: true, generationId: 'gen_stop' })
     const checkVideoStatus = vi.fn().mockResolvedValue({ success: true, statuses: [{ status: 'pending' }] })
-    const flowAPI = buildFlowAPI({ generateVideoT2V, checkVideoStatus })
+    const genAPI = buildFlowAPI({ generateVideoT2V, checkVideoStatus })
     const onComplete = vi.fn()
 
-    const hook = renderHook(() => useVideoAutomation(flowAPI, (k) => k, null, onComplete))
+    const hook = renderHook(() => useVideoAutomation(genAPI, (k) => k, null, onComplete))
 
     let p
     await act(async () => {

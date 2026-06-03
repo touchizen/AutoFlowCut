@@ -15,7 +15,7 @@ import { toast } from '../components/Toast'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 import { clampInt } from '../utils/clampInt'
 
-export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings = null, addPendingSave = null, t = (key) => key, onAuthError = null, generationQueue = null, onComplete = null) {
+export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings = null, addPendingSave = null, t = (key) => key, onAuthError = null, generationQueue = null, onComplete = null) {
   const [isRunning, setIsRunning] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
@@ -39,9 +39,9 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
   // stopRequestedRef final-status logic from overwriting 'error' with 'stopped'.
   const authStoppedRef = useRef(false)
 
-  // generateImageDOM 은 dead processScene 제거와 함께 호출 사이트가 사라져서 destructuring 에서도 제외.
-  // 단일 씬 동기 호출이 필요해지면 flowAPI.generateImageDOM 으로 직접 접근.
-  const { submitGenerationDOM, checkGeneration, collectGeneration, clearGenerations, uploadReference, getAccessToken } = flowAPI
+  // generateImage 은 dead processScene 제거와 함께 호출 사이트가 사라져서 destructuring 에서도 제외.
+  // 단일 씬 동기 호출이 필요해지면 genAPI.generateImage 으로 직접 접근.
+  const { submitGeneration, checkGeneration, collectGeneration, clearGenerations, uploadReference, getAccessToken } = genAPI
   const { scenes, references, updateScene, getMatchingReferences } = scenesHook
 
   // 씬이 모두 삭제되거나, 생성된 이미지가 없는 상태로 돌아가면 progress/status 리셋
@@ -102,7 +102,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     // 비동기 결과 후처리 (업스케일 + 저장) — 단위 테스트 가능한 standalone 헬퍼로 위임.
     const processAsyncResult = (scene, result) => processAsyncSceneResult({
       scene, result,
-      flowAPI, imageUpscale, saveMode, projectName, seed,
+      genAPI, imageUpscale, saveMode, projectName, seed,
       updateScene,
       logPrefix: '[Automation]',
     })
@@ -205,7 +205,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
 
       // 비동기 제출
       console.log('[Automation] Scene', scene.id, '→ prompt:', styledPrompt.substring(0, 80) + '...', '| style:', appliedStyle, '| refs:', matchedRefs.length)
-      const submitResult = await submitGenerationDOM(styledPrompt, matchedRefs, { batchCount: imageBatchCount, seed, aspectRatio, imageModel })
+      const submitResult = await submitGeneration(styledPrompt, matchedRefs, { batchCount: imageBatchCount, seed, aspectRatio, imageModel })
       if (submitResult.success && submitResult.generationId) {
         const _now = Date.now()
         pendingQueue.push({ generationId: submitResult.generationId, scene, submittedAt: _now, originalSubmittedAt: _now })
@@ -522,7 +522,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       setStatusMessage(`${t('status.done')} — ${summary}`)
     }
 
-  }, [isRunning, scenes, references, submitGenerationDOM, checkGeneration, collectGeneration, clearGenerations, uploadReference, getAccessToken, updateScene, getMatchingReferences, t, onOpenSettings])
+  }, [isRunning, scenes, references, submitGeneration, checkGeneration, collectGeneration, clearGenerations, uploadReference, getAccessToken, updateScene, getMatchingReferences, t, onOpenSettings])
   
   /**
    * 일시정지/재개

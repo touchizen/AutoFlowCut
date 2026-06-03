@@ -229,11 +229,11 @@ function App() {
   // 내보내기 성공(3회) 또는 생성 100% 완료(5회) 시 평점 모달을 띄운다.
   const storeRating = useStoreRating({ isStoreBuild: __BUILD_TARGET__ === 'appx' })
 
-  // Flow 역공학 → 공식 GenAI(BYOK). 변수명은 호환을 위해 flowAPI 유지(점진 정리).
-  const flowAPI = useGenAPI({ onAuthError: handleAuthError, getProjectName: () => settings.projectName })
+  // Flow 역공학 → 공식 GenAI(BYOK). 변수명은 호환을 위해 genAPI 유지(점진 정리).
+  const genAPI = useGenAPI({ onAuthError: handleAuthError, getProjectName: () => settings.projectName })
   const scenesHook = useScenes()
   const automation = useAutomation(
-    flowAPI,
+    genAPI,
     scenesHook,
     null,
     () => openSettings('storage'),
@@ -248,7 +248,7 @@ function App() {
     }
   )
 
-  const videoAutomation = useVideoAutomation(flowAPI, t, generationQueue, (result) => {
+  const videoAutomation = useVideoAutomation(genAPI, t, generationQueue, (result) => {
     // 비디오(T2V/I2V/F→V) 배치 100% 완료도 동일 generation 채널에 합산
     if (result?.completed) storeRating.recordGeneration()
   })
@@ -265,7 +265,7 @@ function App() {
   // setAuthReady(true) 순으로 한 render tick 만에 되돌아가 header가 녹색을 유지하는 회귀가 발생.
   useEffect(() => {
     if (scenes.length > 0 && !authReady && !authInvalidatedRef.current) {
-      flowAPI.getAccessToken(false, true).then(token => {
+      genAPI.getAccessToken(false, true).then(token => {
         if (token) setAuthReady(true)
       }).catch(() => {})
     }
@@ -274,14 +274,14 @@ function App() {
   // 앱 시작 시 키 존재 여부 1회 확인 → 있으면 정식 진입 상태(Header 배지 🟢).
   // (시작 화면을 제거했으므로 이 mount 체크가 그 역할을 대신한다.)
   useEffect(() => {
-    flowAPI.getAccessToken(false, true).then(token => { if (token) setAuthReady(true) }).catch(() => {})
+    genAPI.getAccessToken(false, true).then(token => { if (token) setAuthReady(true) }).catch(() => {})
   }, [])
 
   // BYOK 키가 앱 내에서 저장/삭제되면(useApiKey) 폴링 없이 즉시 인증 상태 재확인.
   // 사용자가 명시적으로 키를 바꾼 것이므로 authInvalidated 도 해제한다.
   useEffect(() => {
     const onKeyChanged = () => {
-      flowAPI.getAccessToken(false, true).then(token => {
+      genAPI.getAccessToken(false, true).then(token => {
         authInvalidatedRef.current = false
         setAuthReady(!!token)
       }).catch(() => {})
@@ -334,7 +334,7 @@ function App() {
     audioFolderPath: audioPackage?.folderPath,
     openSettings,
     onAudioSwitch: (audioPath) => audioSwitchRef.current?.(audioPath),
-    flowAPI,
+    genAPI,
     onSaveError: () => toast.error(t('toast.projectSaveFailed')),
   })
 
@@ -348,16 +348,16 @@ function App() {
   })
 
   // Style Thumbnails
-  const { thumbnails: styleThumbnails, generating: thumbnailGenerating, stopping: thumbnailStopping, progress: thumbnailProgress, generateThumbnails, stopGenerating: stopThumbnailGeneration, deleteThumbnail } = useStyleThumbnails(flowAPI)
+  const { thumbnails: styleThumbnails, generating: thumbnailGenerating, stopping: thumbnailStopping, progress: thumbnailProgress, generateThumbnails, stopGenerating: stopThumbnailGeneration, deleteThumbnail } = useStyleThumbnails(genAPI)
 
   // Reference 생성
   const { generatingRefs, stoppingRefs, preparingRefs, handleGenerateRef, handleGenerateAllRefs, stopGenerateAllRefs } = useReferenceGeneration({
-    settings, references, setReferences, flowAPI, addPendingSave, openSettings, t, selectedStyleRefId, styleThumbnails, generationQueue
+    settings, references, setReferences, genAPI, addPendingSave, openSettings, t, selectedStyleRefId, styleThumbnails, generationQueue
   })
 
   // Scene 재생성
   const { generatingSceneId, handleGenerateScene } = useSceneGeneration({
-    settings, scenes, scenesHook, flowAPI, openSettings, setSelectedScene, t, generationQueue
+    settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue
   })
 
   const handleImportAudio = async () => {
@@ -467,7 +467,7 @@ function App() {
     if (galleryLoading) return
     setGalleryLoading(true)
     try {
-      const result = await flowAPI.fetchGallery(specificProjectId)
+      const result = await genAPI.fetchGallery(specificProjectId)
       if (result.success) {
         // 로컬 업로드 항목(local:true) 보존 + 서버 결과 merge.
         // 서버가 같은 mediaId를 이미 반환하면 서버 버전 우선.
@@ -495,7 +495,7 @@ function App() {
   // 픽할 때만 onPickArchiveImage 콜백이 그 한 개를 galleryItems에 추가한다.
   const fetchProjectGallery = async (projectId) => {
     try {
-      return await flowAPI.fetchGallery(projectId)
+      return await genAPI.fetchGallery(projectId)
     } catch (e) {
       return { success: false, error: e.message, items: [] }
     }
@@ -513,7 +513,7 @@ function App() {
   // Flow 프로젝트(날짜) 목록 — 두 번째 단계 진입점
   const listFlowProjectsHandler = async () => {
     try {
-      const result = await flowAPI.listFlowProjects(20)
+      const result = await genAPI.listFlowProjects(20)
       return result
     } catch (e) {
       return { success: false, error: e.message, items: [] }
@@ -759,13 +759,13 @@ function App() {
     // Fast path: download-only — 다운로드/상태조회에 키가 필요. 없으면 'No API key' 로
     // 조용히 실패하므로 여기서 가드 → API 키 모달. (slow path 의 pending 리셋은 키 불필요)
     if (item.generationId && item.mediaId) {
-      if (!(await flowAPI.getAccessToken(false, true))) {
+      if (!(await genAPI.getAccessToken(false, true))) {
         window.dispatchEvent(new CustomEvent('flow-login-expired'))
         return
       }
       retryVideoDownload({
         item,
-        flowAPI,
+        genAPI,
         onUpdate,
         projectName,
         saveMode: settings.saveMode || 'folder',
@@ -780,7 +780,7 @@ function App() {
     // Slow path: no generationId/mediaId — reset to pending; user clicks Start Generation to regenerate
     onUpdate(item.id, 'pending', { error: null })
     toast.info(t('videoAutomation.needsRegen') || 'Reset — click Start Generation to retry')
-  }, [isRunning, videoAutomation.isRunning, settings, flowAPI, framePairs, scenesHook, videoScenesHook, t])
+  }, [isRunning, videoAutomation.isRunning, settings, genAPI, framePairs, scenesHook, videoScenesHook, t])
 
   const styleResolver = createStyleResolver({
     activeTab,
@@ -805,7 +805,7 @@ function App() {
     if (isRunning || videoAutomation.isRunning || hasPendingBatch) return
 
     // BYOK 키 없으면 생성 불가 → 설정 안내 모달 (시작 화면으로 막지 않고 여기서 안내).
-    if (!(await flowAPI.getAccessToken(false, true))) {
+    if (!(await genAPI.getAccessToken(false, true))) {
       setShowApiKeyModal(true)
       return
     }
@@ -1184,7 +1184,7 @@ function App() {
         onSettings={(tab) => openSettings(typeof tab === 'string' ? tab : null)}
         onExport={handleExportClick}
         hasImages={scenes.some(s => s.image || s.imagePath)}
-        getAccessToken={flowAPI.getAccessToken}
+        getAccessToken={genAPI.getAccessToken}
         authReady={authReady}
         onAuthRecovered={handleAuthRecovered}
         projectName={settings.projectName}
@@ -1286,7 +1286,7 @@ function App() {
             references={references}
             aspectRatio={settings.aspectRatio}
             onUpdate={updateReferences}
-            onUpload={flowAPI.uploadReference}
+            onUpload={genAPI.uploadReference}
             onGenerate={handleGenerateRef}
             onGenerateAll={handleGenerateAllRefs}
             onStopGenerateAll={stopGenerateAllRefs}
@@ -1905,7 +1905,7 @@ function App() {
           settings={settings}
           initialTab={settingsTab}
           onProjectChange={handleProjectChange}
-          genAPI={flowAPI}
+          genAPI={genAPI}
           onSave={async (newSettings) => {
             setSettings(newSettings)
             setShowSettings(false)

@@ -81,7 +81,7 @@ export function toFileUrl(pathOrUrl, version = null) {
   return pathOrUrl
 }
 
-export function useStyleThumbnails(flowAPI) {
+export function useStyleThumbnails(genAPI) {
   const [thumbnails, setThumbnails] = useState({})         // { presetId: filePath | blobUrl }
   const [generating, setGenerating] = useState(false)
   const [stopping, setStopping] = useState(false)
@@ -116,7 +116,7 @@ export function useStyleThumbnails(flowAPI) {
 
   // 썸네일 일괄 생성 (프리셋 + 커스텀 스타일 레퍼런스)
   const generateThumbnails = useCallback(async (presetIds, customRefs, t) => {
-    if (!flowAPI?.generateImageDOM) {
+    if (!genAPI?.generateImage) {
       toast.error('Flow API not available')
       return
     }
@@ -157,7 +157,7 @@ export function useStyleThumbnails(flowAPI) {
       console.log(`[StyleThumbnails] Generating preset ${presetId}: ${prompt}`)
 
       try {
-        const result = await flowAPI.generateImageDOM(prompt, [], { batchCount: 1 })
+        const result = await genAPI.generateImage(prompt, [], { batchCount: 1 })
 
         if (result.success && result.images?.length > 0) {
           const firstImage = result.images[0]
@@ -216,7 +216,7 @@ export function useStyleThumbnails(flowAPI) {
         console.log(`[StyleThumbnails] Generating custom style "${ref.name}": ${prompt}`)
 
         try {
-          const result = await flowAPI.generateImageDOM(prompt, [], { batchCount: 1 })
+          const result = await genAPI.generateImage(prompt, [], { batchCount: 1 })
 
           if (result.success && result.images?.length > 0) {
             const firstImage = result.images[0]
@@ -262,7 +262,7 @@ export function useStyleThumbnails(flowAPI) {
     }
 
     return customResults  // 커스텀 스타일 결과 반환 → App에서 References 업데이트
-  }, [flowAPI, thumbnails])
+  }, [genAPI, thumbnails])
 
   const stopGenerating = useCallback(() => {
     stopRequestedRef.current = true

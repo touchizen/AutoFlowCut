@@ -9,7 +9,7 @@ import { finalizeGeneratedImage } from '../services/imageFinalize'
 import { toast } from '../components/Toast'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 
-export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, openSettings, setSelectedScene, t, generationQueue }) {
+export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue }) {
   const [generatingSceneId, setGeneratingSceneId] = useState(null)
 
   // 핵심 생성 로직
@@ -30,7 +30,7 @@ export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, open
       setSelectedScene(null)  // 모달 닫기
       return
     }
-    if (!(await checkAuthToken(flowAPI, t))) return
+    if (!(await checkAuthToken(genAPI, t))) return
 
     setGeneratingSceneId(sceneId)
     scenesHook.updateScene(sceneId, { status: 'generating' })
@@ -61,10 +61,10 @@ export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, open
       const seed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
         ? settings.seedNo
         : null
-      const result = await flowAPI.generateImageDOM(styledPrompt, matchedRefs, { batchCount: settings.imageBatchCount, seed, aspectRatio: settings.aspectRatio, model: settings.imageModel })
+      const result = await genAPI.generateImage(styledPrompt, matchedRefs, { batchCount: settings.imageBatchCount, seed, aspectRatio: settings.aspectRatio, model: settings.imageModel })
 
       const { success, sceneUpdate } = await finalizeGeneratedImage({
-        result, flowAPI,
+        result, genAPI,
         upscaleRes: settings.imageUpscale || 'off',
         saveMode: settings.saveMode,
         projectName: settings.projectName,
@@ -102,7 +102,7 @@ export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, open
     }
 
     setGeneratingSceneId(null)
-  }, [settings, scenes, scenesHook, flowAPI, openSettings, setSelectedScene, t])
+  }, [settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t])
 
   // 큐를 통한 생성. overrideStyleId 선택 — MCP `app_generate_scene(sceneId, styleId)`에서 사용.
   const handleGenerateScene = useCallback(async (sceneId, overrideStyleId = undefined) => {

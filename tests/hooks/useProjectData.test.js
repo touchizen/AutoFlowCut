@@ -339,7 +339,7 @@ describe('handleProjectChange — aspect ratio', () => {
         videoScenes: [], setVideoScenes: vi.fn(),
         framePairs: [], setFramePairs: vi.fn(),
         selectedStyleRefId: null, setSelectedStyleRefId: vi.fn(),
-        openSettings: vi.fn(), onAudioSwitch: vi.fn(), flowAPI: null,
+        openSettings: vi.fn(), onAudioSwitch: vi.fn(), genAPI: null,
         onSaveError,
       }),
     )

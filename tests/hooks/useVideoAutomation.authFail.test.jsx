@@ -46,7 +46,7 @@ describe('useVideoAutomation — auth failure during polling', () => {
       authFailed: true,
       error: 'Auth expired — please re-login to Flow',
     })
-    const flowAPI = {
+    const genAPI = {
       generateVideoT2V,
       generateVideoI2V: vi.fn(),
       checkVideoStatus,
@@ -55,7 +55,7 @@ describe('useVideoAutomation — auth failure during polling', () => {
       getAccessToken: vi.fn().mockResolvedValue('token'),
     }
     const t = (k) => k
-    const hook = renderHook(() => useVideoAutomation(flowAPI, t, null))
+    const hook = renderHook(() => useVideoAutomation(genAPI, t, null))
 
     const items = [{ id: 'vscene_1', prompt: 'test' }]
     let startPromise
@@ -85,7 +85,7 @@ describe('useVideoAutomation — auth failure during polling', () => {
       error: 'Auth expired — please re-login to Flow',
     })
     const onItemUpdate = vi.fn()
-    const flowAPI = {
+    const genAPI = {
       generateVideoT2V,
       generateVideoI2V: vi.fn(),
       checkVideoStatus,
@@ -94,7 +94,7 @@ describe('useVideoAutomation — auth failure during polling', () => {
       getAccessToken: vi.fn().mockResolvedValue('token'),
     }
     const t = (k) => k
-    const hook = renderHook(() => useVideoAutomation(flowAPI, t, null))
+    const hook = renderHook(() => useVideoAutomation(genAPI, t, null))
 
     const items = [{ id: 'vscene_1', prompt: 'test' }]
     let startPromise
@@ -126,7 +126,7 @@ describe('useVideoAutomation — auth failure during polling', () => {
       authFailed: true,
       error: 'Auth expired',
     })
-    const flowAPI = {
+    const genAPI = {
       generateVideoT2V,
       generateVideoI2V: vi.fn(),
       checkVideoStatus,
@@ -135,7 +135,7 @@ describe('useVideoAutomation — auth failure during polling', () => {
       getAccessToken: vi.fn().mockResolvedValue('token'),
     }
     const t = (k) => k
-    const hook = renderHook(() => useVideoAutomation(flowAPI, t, null))
+    const hook = renderHook(() => useVideoAutomation(genAPI, t, null))
 
     const items = [{ id: 'vscene_1', prompt: 'test' }]
     let startPromise
@@ -162,7 +162,7 @@ describe('useVideoAutomation — auth failure during polling', () => {
     const checkVideoStatus = vi.fn().mockResolvedValue({
       success: false, authFailed: true, error: 'Auth expired',
     })
-    const flowAPI = {
+    const genAPI = {
       generateVideoT2V,
       generateVideoI2V: vi.fn(),
       checkVideoStatus,
@@ -172,7 +172,7 @@ describe('useVideoAutomation — auth failure during polling', () => {
     }
     // Realistic translator: returns a translated string for known keys, the key for unknown.
     const t = (k) => k === 'toast.authErrorStop' ? 'Auth error. Stopping.' : k
-    const hook = renderHook(() => useVideoAutomation(flowAPI, t, null))
+    const hook = renderHook(() => useVideoAutomation(genAPI, t, null))
 
     let startPromise
     await act(async () => {
@@ -208,7 +208,7 @@ describe('useVideoAutomation — auth failure during submit', () => {
     const checkVideoStatus = vi.fn()
 
     const onItemUpdate = vi.fn()
-    const flowAPI = {
+    const genAPI = {
       generateVideoT2V,
       generateVideoI2V: vi.fn(),
       checkVideoStatus,
@@ -217,7 +217,7 @@ describe('useVideoAutomation — auth failure during submit', () => {
       getAccessToken: vi.fn().mockResolvedValue('token'),
     }
     const t = (k) => k
-    const hook = renderHook(() => useVideoAutomation(flowAPI, t, null))
+    const hook = renderHook(() => useVideoAutomation(genAPI, t, null))
 
     const items = [
       { id: 'vscene_1', prompt: 'item 1' },
@@ -260,7 +260,7 @@ describe('useVideoAutomation — auth failure during submit', () => {
       authFailed: true,
       error: 'Auth expired',
     })
-    const flowAPI = {
+    const genAPI = {
       generateVideoT2V,
       generateVideoI2V: vi.fn(),
       checkVideoStatus: vi.fn(),
@@ -269,7 +269,7 @@ describe('useVideoAutomation — auth failure during submit', () => {
       getAccessToken: vi.fn().mockResolvedValue('token'),
     }
     const t = (k) => k
-    const hook = renderHook(() => useVideoAutomation(flowAPI, t, null))
+    const hook = renderHook(() => useVideoAutomation(genAPI, t, null))
 
     const items = [{ id: 'vscene_1', prompt: 'test' }]
     let startPromise
@@ -306,7 +306,7 @@ describe('useVideoAutomation — auth failure on i2v (F→V) mode', () => {
     const checkVideoStatus = vi.fn()
 
     const onItemUpdate = vi.fn()
-    const flowAPI = {
+    const genAPI = {
       generateVideoT2V: vi.fn(),
       generateVideoI2V,
       checkVideoStatus,
@@ -315,7 +315,7 @@ describe('useVideoAutomation — auth failure on i2v (F→V) mode', () => {
       getAccessToken: vi.fn().mockResolvedValue('token'),
     }
     const t = (k) => k
-    const hook = renderHook(() => useVideoAutomation(flowAPI, t, null))
+    const hook = renderHook(() => useVideoAutomation(genAPI, t, null))
 
     // Shape mirrors what useVideoAutomation expects after framePairs filtering (line 260)
     // cloud(Veo) I2V: 시작 프레임을 inline base64(_startImage)로 제공 (mediaId 대체)
@@ -362,7 +362,7 @@ describe('useVideoAutomation — auth failure on i2v (F→V) mode', () => {
       success: false, authFailed: true, error: 'Auth expired',
     })
     const onItemUpdate = vi.fn()
-    const flowAPI = {
+    const genAPI = {
       generateVideoT2V: vi.fn(),
       generateVideoI2V,
       checkVideoStatus,
@@ -371,7 +371,7 @@ describe('useVideoAutomation — auth failure on i2v (F→V) mode', () => {
       getAccessToken: vi.fn().mockResolvedValue('token'),
     }
     const t = (k) => k
-    const hook = renderHook(() => useVideoAutomation(flowAPI, t, null))
+    const hook = renderHook(() => useVideoAutomation(genAPI, t, null))
 
     const framePairs = [
       { id: 'fp_1', prompt: 'pair 1', startSceneId: 'scene_1', _startImage: 'data:image/png;base64,AAAA', status: 'pending' },

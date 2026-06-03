@@ -1,14 +1,14 @@
 /**
  * useAvailableModels — 라이브 /models 조회로 모델 선택 옵션을 채운다.
  *
- * flowAPI.listModels() 결과를 categorizeApiModels 로 T2I/T2V·F2V 로 분류해 노출.
+ * genAPI.listModels() 결과를 categorizeApiModels 로 T2I/T2V·F2V 로 분류해 노출.
  * 키 없음/오프라인/분류 결과 빈 경우엔 정적 카탈로그(IMAGE_MODELS/VIDEO_MODELS)로
  * graceful 폴백 — 설정 UI 가 항상 동작하도록.
  */
 import { useState, useEffect } from 'react'
 import { IMAGE_MODELS, VIDEO_MODELS, categorizeApiModels } from '../config/genModels'
 
-export function useAvailableModels(flowAPI) {
+export function useAvailableModels(genAPI) {
   const [state, setState] = useState({
     imageModels: IMAGE_MODELS,
     videoModels: VIDEO_MODELS,
@@ -16,9 +16,9 @@ export function useAvailableModels(flowAPI) {
     error: null,
   })
 
-  // flowAPI 객체는 렌더마다 새로 생성되지만 listModels(useCallback)는 안정적 →
+  // genAPI 객체는 렌더마다 새로 생성되지만 listModels(useCallback)는 안정적 →
   // 함수 참조에 의존해 effect 재실행/무한 루프를 막는다.
-  const listModels = flowAPI?.listModels
+  const listModels = genAPI?.listModels
 
   useEffect(() => {
     let cancelled = false
