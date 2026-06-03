@@ -3,12 +3,19 @@
  */
 
 import AspectRatioSelector from './AspectRatioSelector'
+import { VIDEO_MODEL_FAST, VIDEO_MODEL_QUALITY } from '../../utils/videoModels'
 
 // 공식 Veo 지원 해상도. 1080p/4k 는 8초 고정(공식 제약), 720p 는 씬 길이에 맞춰 4/6/8초.
 const VIDEO_RESOLUTION_OPTIONS = [
   { value: '720p', label: '720p' },
   { value: '1080p', label: '1080p' },
   { value: '4k', label: '4K' },
+]
+
+// 비디오 모델(T2V·F2V 공용). Fast=저렴·빠름, Quality=고품질·비쌈(약 4배).
+const VIDEO_MODEL_OPTIONS = [
+  { value: VIDEO_MODEL_FAST, label: 'Fast' },
+  { value: VIDEO_MODEL_QUALITY, label: 'Quality' },
 ]
 
 export default function SceneTab({ localSettings, setLocalSettings, t }) {
@@ -94,6 +101,25 @@ export default function SceneTab({ localSettings, setLocalSettings, t }) {
         업스케일은 Flow DOM 전용(공식 API 대응물 없음). 비디오 해상도는 공식 Veo 가
         지원하므로 아래에 유지·연결한다.
       */}
+
+      {/* 비디오 모델 (T2V·F2V 공용: Veo Fast/Quality) */}
+      <div className="settings-section">
+        <h3>{t('settings.videoModel')}</h3>
+        <div className="setting-row">
+          <div className="batch-selector">
+            {VIDEO_MODEL_OPTIONS.map(m => (
+              <button
+                key={m.value}
+                className={`batch-btn ${(localSettings.videoModel || VIDEO_MODEL_FAST) === m.value ? 'active' : ''}`}
+                onClick={() => setLocalSettings(s => ({ ...s, videoModel: m.value }))}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+          <span className="setting-sublabel">{t('settings.videoModelHint')}</span>
+        </div>
+      </div>
 
       {/* 비디오 해상도 (공식 Veo: 720p/1080p/4k) */}
       <div className="settings-section">

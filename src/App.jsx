@@ -934,6 +934,7 @@ function App() {
           projectName,
           saveMode: settings.saveMode,
           videoResolution: settings.videoResolution || '720p',
+          videoModel: settings.videoModel,
           videoBatchCount: settings.videoBatchCount || 1,
           onItemUpdate: (id, newStatus, result) => {
             // 명시적 null 도 통과시켜야 하는 필드(video/videoPath/mediaId/generatedAt 등)는
@@ -1025,6 +1026,7 @@ function App() {
           projectName,
           saveMode: settings.saveMode,
           videoResolution: settings.videoResolution || '720p',
+          videoModel: settings.videoModel,
           videoBatchCount: settings.videoBatchCount || 1,
           seed: effectiveI2VSeed,
           onItemUpdate: (id, newStatus, result) => {

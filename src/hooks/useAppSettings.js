@@ -5,6 +5,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { DEFAULTS, UI } from '../config/defaults'
 import { generateProjectName } from '../utils/formatters'
+import { VIDEO_MODEL_FAST } from '../utils/videoModels'
 
 const STORAGE_KEY = 'autoflowcut_settings'
 
@@ -20,6 +21,7 @@ function createDefaults() {
     imageBatchCount: 1,
     imageUpscale: 'off',
     videoBatchCount: 1,
+    videoModel: VIDEO_MODEL_FAST,  // T2V·F2V 공용 Veo 모델 (Fast 기본; 설정에서 Quality 선택)
     videoResolution: '720p',
     requireStyle: false,
     seedNo: randomSeed(),

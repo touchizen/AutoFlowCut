@@ -55,6 +55,26 @@ describe('SceneTab — aspect ratio', () => {
   })
 })
 
+describe('SceneTab — video model', () => {
+  it('현재 비디오 모델(Quality) 버튼이 active', () => {
+    render(<SceneTab localSettings={{ ...baseSettings, videoModel: 'veo-3.1-generate-preview' }} setLocalSettings={vi.fn()} t={t} />)
+    expect(screen.getByRole('button', { name: /Quality/ }).className).toContain('active')
+    expect(screen.getByRole('button', { name: /Fast/ }).className).not.toContain('active')
+  })
+
+  it('videoModel 미지정 시 Fast 기본 active', () => {
+    render(<SceneTab localSettings={{ ...baseSettings, videoModel: undefined }} setLocalSettings={vi.fn()} t={t} />)
+    expect(screen.getByRole('button', { name: /Fast/ }).className).toContain('active')
+  })
+
+  it('Quality 클릭 시 setLocalSettings(videoModel)', () => {
+    const setLocalSettings = vi.fn()
+    render(<SceneTab localSettings={{ ...baseSettings, videoModel: 'veo-3.1-fast-generate-preview' }} setLocalSettings={setLocalSettings} t={t} />)
+    fireEvent.click(screen.getByRole('button', { name: /Quality/ }))
+    expect(setLocalSettings.mock.calls[0][0](baseSettings).videoModel).toBe('veo-3.1-generate-preview')
+  })
+})
+
 describe('SceneTab — concurrency', () => {
   it('renders the current concurrency value', () => {
     render(<SceneTab localSettings={{ ...baseSettings, concurrency: 5 }} setLocalSettings={vi.fn()} t={t} />)

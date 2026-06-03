@@ -429,6 +429,8 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
 
     // 비디오 다운로드
     videoDownloadSettings: '비디오 다운로드',
+    videoModel: '비디오 모델',
+    videoModelHint: 'T2V·F2V 공용. Fast=저렴·빠름($0.10/초~), Quality=고품질·비쌈(약 4배, $0.40/초~). 품질이 아쉬우면 Quality.',
     videoResolution: '비디오 해상도',
     videoResolutionHint: 'Veo 출력 해상도. 1080p/4K는 항상 8초, 720p는 씬 길이에 맞춰 4/6/8초.',
 
