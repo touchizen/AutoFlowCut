@@ -77,6 +77,7 @@ T2I / T2V / F2V **각각** 생성 모델을 설정에서 선택. 옵션마다 **
 - useGenAPI: `generateVideoT2V`/`generateVideoI2V` 둘 다 `resolution: coerceResolution(model, resolution)`.
 - **UI disable 는 의도적 미채택**: resolution 은 전역, 모델은 타입별(T2V/F2V) 이라 "어느 모델 기준?" 모호 → submit-time per-call coerce 가 유일한 클린 지점.
 - **TDD**: genModels coerceResolution 5 / useGenAPI Lite+4k→1080p·Quality+4k 유지 2.
+- **리뷰 P2 후속**: ① coerceResolution 을 `VIDEO_RESOLUTIONS` known-set 기반으로 — 미지의 값('2k'/'foo'/'4K')을 모델 최대로 무단 상향하던 버그 제거(→undefined=엔진 기본). ② 강등을 useVideoAutomation.start 에서 **한 번** 수행 → duration 계산·history 메타·생성 호출이 모두 같은 값(부분 coerce 로 기록='4k' vs 실제=1080p 어긋남 제거). useGenAPI coerce 는 API 경계 idempotent 방어로 유지.
 
 ## ⚠️ 남은 acceptance (코드 외 — 사용자 BYOK 키 필요)
 - **NB2/NB Pro 모델 ID 실제 검증**: 카탈로그의 `gemini-3.1-flash-image`(NB2) / `gemini-3-pro-image`(NB Pro) 는 미검증. `-preview` 변종일 수 있음. 실제 키로 해당 모델 선택→생성 1회, 또는 `/models` listing 으로 확정. (coerce 는 카탈로그에 *없는* id 만 막으므로, 카탈로그 id 자체가 틀리면 선택 시 그 모델만 실패 — Nano Banana 기본은 안전.)

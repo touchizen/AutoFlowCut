@@ -53,6 +53,15 @@ describe('ModelSelector', () => {
       expect(onChange).not.toHaveBeenCalled() // 카드 선택과 분리
     })
 
+    it('문서 링크는 옵션 버튼과 분리된 실제 <button> (키보드 조작 + button 중첩 금지)', () => {
+      const { container } = render(<ModelSelector options={urlOpts} value="a" onChange={vi.fn()} t={t} />)
+      const doc = container.querySelector('.model-doc')
+      // 실제 button → Enter/Space 네이티브 동작, role=link span+tabindex 의 HTML 위반/키보드 불가 해소
+      expect(doc.tagName).toBe('BUTTON')
+      // 옵션 선택 button 의 자손이면 안 됨 (button 안 interactive 자손 금지)
+      expect(doc.closest('.model-option')).toBeNull()
+    })
+
     it('url 없는 옵션엔 문서 링크 없음', () => {
       const { container } = render(<ModelSelector options={opts} value="a" onChange={vi.fn()} t={t} />)
       expect(container.querySelector('.model-doc')).toBeNull()

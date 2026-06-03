@@ -54,8 +54,17 @@ describe('genModels — coerceResolution (모델별 해상도 가드)', () => {
     expect(coerceResolution('veo-3.1-lite-generate-preview', undefined)).toBeUndefined()
   })
 
-  it('알 수 없는 모델 id 는 해상도를 건드리지 않음', () => {
+  it('알 수 없는 모델 id 는 known 해상도를 건드리지 않음', () => {
     expect(coerceResolution('veo-3.1-fast', '4k')).toBe('4k')
     expect(coerceResolution(undefined, '4k')).toBe('4k')
+  })
+
+  it('미지의(known set 밖) 해상도는 무단 상향 없이 undefined(엔진 기본)로', () => {
+    // 회귀: 예전 구현은 known-set 밖 값까지 모델 최대로 올려 'foo'/'2k' 가 Fast/Quality 에서
+    // '4k' 가 됐다(비용·8초 강제 폭증). 알 수 없는 값은 엔진 기본(720p)에 위임해야 한다.
+    expect(coerceResolution('veo-3.1-fast-generate-preview', '2k')).toBeUndefined()
+    expect(coerceResolution('veo-3.1-fast-generate-preview', 'foo')).toBeUndefined()
+    expect(coerceResolution('veo-3.1-generate-preview', '4K')).toBeUndefined() // 대문자 변종도 미지 처리
+    expect(coerceResolution('veo-3.1-lite-generate-preview', '2k')).toBeUndefined()
   })
 })

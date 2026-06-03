@@ -11,28 +11,29 @@ export default function ModelSelector({ options, value, defaultValue, onChange, 
   return (
     <div className="model-selector">
       {(options || []).map((m) => (
-        <button
-          key={m.id}
-          type="button"
-          className={`model-option ${selected === m.id ? 'active' : ''}`}
-          onClick={() => onChange(m.id)}
-        >
-          <span className="model-name">{m.label}</span>
-          <span className="model-desc">{t(m.descKey)}</span>
-          <span className="model-cost">{m.cost}</span>
+        // 선택 버튼과 문서 링크를 sibling 으로 — button 안에 interactive(tabindex) 자손을 두는
+        // HTML 위반/키보드 불가를 피한다. 둘 다 독립 button 이라 클릭 버블도 자연 분리.
+        <div key={m.id} className="model-option-row">
+          <button
+            type="button"
+            className={`model-option ${selected === m.id ? 'active' : ''}`}
+            onClick={() => onChange(m.id)}
+          >
+            <span className="model-name">{m.label}</span>
+            <span className="model-desc">{t(m.descKey)}</span>
+            <span className="model-cost">{m.cost}</span>
+          </button>
           {m.url && (
-            // 카드 내부지만 카드 선택(onChange)과 분리 — stopPropagation. (button 중첩 회피 위해 span)
-            <span
+            <button
+              type="button"
               className="model-doc"
-              role="link"
-              tabIndex={0}
               title={m.url}
-              onClick={(e) => { e.stopPropagation(); openExternal(m.url) }}
+              onClick={() => openExternal(m.url)}
             >
               {t('settings.modelDocsLink')}
-            </span>
+            </button>
           )}
-        </button>
+        </div>
       ))}
       {priceUrl && (
         <button

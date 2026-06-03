@@ -44,10 +44,17 @@ export function coerceVideoModel(id) {
   return VIDEO_MODELS.some(m => m.id === id) ? id : DEFAULT_VIDEO_MODEL_ID
 }
 
+/** 앱이 지원하는 비디오 해상도 known set. */
+export const VIDEO_RESOLUTIONS = ['720p', '1080p', '4k']
+
 /** 모델이 지원하지 않는 해상도면 허용 최대로 강등(예: Veo Lite + 4K → 1080p).
- *  falsy 해상도(엔진 기본 위임)나 모르는 모델 id 는 건드리지 않음. */
+ *  - falsy → passthrough (엔진 기본 위임)
+ *  - known set 밖(stale/오타) → undefined (무단 상향 금지, 엔진 기본 720p)
+ *  - 모르는 모델 id → known 값 그대로 (제약 모르면 건드리지 않음)
+ *  - known-but-disallowed (Lite+4k) → 허용 최대 */
 export function coerceResolution(modelId, resolution) {
   if (!resolution) return resolution
+  if (!VIDEO_RESOLUTIONS.includes(resolution)) return undefined
   const m = VIDEO_MODELS.find(v => v.id === modelId)
   if (!m?.allowedResolutions) return resolution
   if (m.allowedResolutions.includes(resolution)) return resolution

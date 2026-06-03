@@ -19,6 +19,7 @@ import { resolveFrameImageBase64 } from '../utils/framePairImages'
 import { pickVideoMetadata, buildVideoMetaPatch } from '../utils/videoMetadata'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 import { snapVeoDuration } from '../utils/videoModels'
+import { coerceResolution } from '../config/genModels'
 
 // 실제 제출되는 비디오 길이(초). submitVideo(engine)의 제약과 동일하게 계산해 제출값과
 // 완료-메타가 일치하도록 한다(어긋나면 history 길이가 실제와 불일치):
@@ -185,11 +186,14 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
       videoModel = 'veo-3.1-fast-generate-preview',
       aspectRatio = 'VIDEO_ASPECT_RATIO_LANDSCAPE',
       duration = 8,
-      videoResolution = '720p',
       videoBatchCount = 1,
       seed = null,
       onItemUpdate
     } = options
+    // 모델이 지원하지 않거나(예: Veo Lite + 4K) stale 한 해상도는 여기서 한 번만 강등/정규화.
+    // 이후 effectiveVideoDuration 계산·history 메타데이터·생성 호출이 전부 같은 값을 써서
+    // 부분 coerce 로 인한 어긋남(기록은 4k, 실제는 1080p)을 방지한다. (리뷰 P2)
+    const videoResolution = coerceResolution(videoModel, options.videoResolution ?? '720p')
 
     if (isRunning) return
 
