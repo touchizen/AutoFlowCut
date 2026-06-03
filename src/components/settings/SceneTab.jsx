@@ -3,19 +3,14 @@
  */
 
 import AspectRatioSelector from './AspectRatioSelector'
-import { VIDEO_MODEL_FAST, VIDEO_MODEL_QUALITY } from '../../utils/videoModels'
+import ModelSelector from './ModelSelector'
+import { IMAGE_MODELS, VIDEO_MODELS, DEFAULT_IMAGE_MODEL_ID, DEFAULT_VIDEO_MODEL_ID } from '../../config/genModels'
 
 // 공식 Veo 지원 해상도. 1080p/4k 는 8초 고정(공식 제약), 720p 는 씬 길이에 맞춰 4/6/8초.
 const VIDEO_RESOLUTION_OPTIONS = [
   { value: '720p', label: '720p' },
   { value: '1080p', label: '1080p' },
   { value: '4k', label: '4K' },
-]
-
-// 비디오 모델(T2V·F2V 공용). Fast=저렴·빠름, Quality=고품질·비쌈(약 4배).
-const VIDEO_MODEL_OPTIONS = [
-  { value: VIDEO_MODEL_FAST, label: 'Fast' },
-  { value: VIDEO_MODEL_QUALITY, label: 'Quality' },
 ]
 
 export default function SceneTab({ localSettings, setLocalSettings, t }) {
@@ -102,23 +97,36 @@ export default function SceneTab({ localSettings, setLocalSettings, t }) {
         지원하므로 아래에 유지·연결한다.
       */}
 
-      {/* 비디오 모델 (T2V·F2V 공용: Veo Fast/Quality) */}
+      {/* 생성 모델 선택 — T2I / T2V / F2V 각각 (옵션마다 특징·비용 표시) */}
       <div className="settings-section">
-        <h3>{t('settings.videoModel')}</h3>
-        <div className="setting-row">
-          <div className="batch-selector">
-            {VIDEO_MODEL_OPTIONS.map(m => (
-              <button
-                key={m.value}
-                className={`batch-btn ${(localSettings.videoModel || VIDEO_MODEL_FAST) === m.value ? 'active' : ''}`}
-                onClick={() => setLocalSettings(s => ({ ...s, videoModel: m.value }))}
-              >
-                {m.label}
-              </button>
-            ))}
-          </div>
-          <span className="setting-sublabel">{t('settings.videoModelHint')}</span>
-        </div>
+        <h3>{t('settings.modelImageTitle')}</h3>
+        <ModelSelector
+          options={IMAGE_MODELS}
+          value={localSettings.imageModel}
+          defaultValue={DEFAULT_IMAGE_MODEL_ID}
+          onChange={(id) => setLocalSettings(s => ({ ...s, imageModel: id }))}
+          t={t}
+        />
+      </div>
+      <div className="settings-section">
+        <h3>{t('settings.modelVideoT2VTitle')}</h3>
+        <ModelSelector
+          options={VIDEO_MODELS}
+          value={localSettings.videoModelT2V}
+          defaultValue={DEFAULT_VIDEO_MODEL_ID}
+          onChange={(id) => setLocalSettings(s => ({ ...s, videoModelT2V: id }))}
+          t={t}
+        />
+      </div>
+      <div className="settings-section">
+        <h3>{t('settings.modelVideoF2VTitle')}</h3>
+        <ModelSelector
+          options={VIDEO_MODELS}
+          value={localSettings.videoModelF2V}
+          defaultValue={DEFAULT_VIDEO_MODEL_ID}
+          onChange={(id) => setLocalSettings(s => ({ ...s, videoModelF2V: id }))}
+          t={t}
+        />
       </div>
 
       {/* 비디오 해상도 (공식 Veo: 720p/1080p/4k) */}

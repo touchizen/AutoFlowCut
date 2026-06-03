@@ -55,23 +55,25 @@ describe('SceneTab — aspect ratio', () => {
   })
 })
 
-describe('SceneTab — video model', () => {
-  it('현재 비디오 모델(Quality) 버튼이 active', () => {
-    render(<SceneTab localSettings={{ ...baseSettings, videoModel: 'veo-3.1-generate-preview' }} setLocalSettings={vi.fn()} t={t} />)
-    expect(screen.getByRole('button', { name: /Quality/ }).className).toContain('active')
-    expect(screen.getByRole('button', { name: /Fast/ }).className).not.toContain('active')
+describe('SceneTab — model selectors (T2I/T2V/F2V)', () => {
+  it('3개 모델 섹션(T2I/T2V/F2V) 렌더', () => {
+    render(<SceneTab localSettings={baseSettings} setLocalSettings={vi.fn()} t={t} />)
+    expect(screen.getByText('settings.modelImageTitle')).toBeTruthy()
+    expect(screen.getByText('settings.modelVideoT2VTitle')).toBeTruthy()
+    expect(screen.getByText('settings.modelVideoF2VTitle')).toBeTruthy()
   })
 
-  it('videoModel 미지정 시 Fast 기본 active', () => {
-    render(<SceneTab localSettings={{ ...baseSettings, videoModel: undefined }} setLocalSettings={vi.fn()} t={t} />)
-    expect(screen.getByRole('button', { name: /Fast/ }).className).toContain('active')
-  })
-
-  it('Quality 클릭 시 setLocalSettings(videoModel)', () => {
+  it('이미지 모델 선택 → setLocalSettings(imageModel) (고유 라벨로 검증)', () => {
     const setLocalSettings = vi.fn()
-    render(<SceneTab localSettings={{ ...baseSettings, videoModel: 'veo-3.1-fast-generate-preview' }} setLocalSettings={setLocalSettings} t={t} />)
-    fireEvent.click(screen.getByRole('button', { name: /Quality/ }))
-    expect(setLocalSettings.mock.calls[0][0](baseSettings).videoModel).toBe('veo-3.1-generate-preview')
+    render(<SceneTab localSettings={baseSettings} setLocalSettings={setLocalSettings} t={t} />)
+    fireEvent.click(screen.getByRole('button', { name: /Nano Banana 2/ }))
+    expect(setLocalSettings.mock.calls[0][0](baseSettings).imageModel).toBe('gemini-3.1-flash-image')
+  })
+
+  it('imageModel 미지정 시 Nano Banana(기본) active', () => {
+    const { container } = render(<SceneTab localSettings={{ ...baseSettings, imageModel: undefined }} setLocalSettings={vi.fn()} t={t} />)
+    const active = container.querySelector('.model-option.active')
+    expect(active.textContent).toContain('Nano Banana')
   })
 })
 

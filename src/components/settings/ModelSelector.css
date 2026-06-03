@@ -1,0 +1,48 @@
+/* 모델 선택 카드 리스트 — 옵션마다 이름·특징·비용 */
+.model-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.model-option {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "name cost"
+    "desc cost";
+  align-items: center;
+  gap: 2px 12px;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color, #2a2a2a);
+  border-radius: 8px;
+  background: #1b1b1b;
+  color: #ddd;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.model-option:hover {
+  background: #232323;
+}
+.model-option.active {
+  border-color: #4a9eff;
+  background: #182433;
+}
+.model-name {
+  grid-area: name;
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+.model-desc {
+  grid-area: desc;
+  font-size: 0.78rem;
+  color: var(--text-secondary, #999);
+}
+.model-cost {
+  grid-area: cost;
+  font-size: 0.8rem;
+  color: #7fb3ff;
+  font-family: 'JetBrains Mono', 'Menlo', 'Consolas', monospace;
+  white-space: nowrap;
+}

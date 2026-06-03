@@ -430,8 +430,15 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
 
     // Video download
     videoDownloadSettings: 'Video Download',
-    videoModel: 'Video Model',
-    videoModelHint: 'Shared by T2V/F2V. Fast = cheap & quick ($0.10/s+); Quality = higher quality, pricier (~4x, $0.40/s+). Pick Quality if results look weak.',
+    modelImageTitle: 'Image model (T2I)',
+    modelVideoT2VTitle: 'Video model (T2V)',
+    modelVideoF2VTitle: 'Video model (F2V)',
+    modelImgNb: 'Fast & cheap — default',
+    modelImgNb2: 'Newer, higher quality · up to 10 reference images',
+    modelImgNbPro: 'Top quality · 4K · precise text',
+    modelVidLite: 'Cheapest — drafts / high volume',
+    modelVidFast: 'Cheap · fast',
+    modelVidQuality: 'Top quality · cinematic',
     videoResolution: 'Video Resolution',
     videoResolutionHint: 'Veo output resolution. 1080p/4K are always 8s; 720p matches scene length (4/6/8s).',
 
