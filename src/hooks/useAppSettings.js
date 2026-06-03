@@ -40,7 +40,11 @@ function loadSettings() {
     if (typeof parsed.seedNo !== 'number' || !Number.isFinite(parsed.seedNo)) {
       parsed.seedNo = defaults.seedNo
     }
-    return { ...defaults, ...parsed }
+    const merged = { ...defaults, ...parsed }
+    // 옛 Flow(none) 저장 모드 폐기 — 공식 API 는 base64 만 오므로 작업폴더 저장이 필수.
+    // 'none'/legacy 값은 'folder' 로 강제 (설정 UI 의 저장 방식 토글도 제거됨).
+    if (merged.saveMode !== 'folder') merged.saveMode = 'folder'
+    return merged
   }
   return defaults
 }

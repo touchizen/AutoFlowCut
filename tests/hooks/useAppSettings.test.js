@@ -39,3 +39,22 @@ describe('useAppSettings — aspectRatio', () => {
     expect(result.current.settings.projectName).toBe('ep1')
   })
 })
+
+describe('useAppSettings — saveMode (Flow/none 모드 폐기, folder 필수)', () => {
+  it('저장된 옛 Flow 모드(saveMode "none")는 로드 시 "folder" 로 강제', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ saveMode: 'none' }))
+    const { result } = renderHook(() => useAppSettings())
+    expect(result.current.settings.saveMode).toBe('folder')
+  })
+
+  it('기본 saveMode 는 folder', () => {
+    const { result } = renderHook(() => useAppSettings())
+    expect(result.current.settings.saveMode).toBe('folder')
+  })
+
+  it('folder 는 그대로 유지', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ saveMode: 'folder' }))
+    const { result } = renderHook(() => useAppSettings())
+    expect(result.current.settings.saveMode).toBe('folder')
+  })
+})
