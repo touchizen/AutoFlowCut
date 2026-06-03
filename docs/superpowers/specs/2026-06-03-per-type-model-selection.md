@@ -26,8 +26,11 @@ T2I / T2V / F2V **각각** 생성 모델을 설정에서 선택. 옵션마다 **
 
 ## ⬜ 남은 일
 
-### 1. 이미지 모델 plumbing (T2I 실제 적용) — 핵심
-현재 `imageModel` 설정은 있지만 **생성에 전달 안 됨**(IPC 는 `model` 받는데 그 위 체인이 안 넘김).
+### 1. ✅ 이미지 모델 plumbing (T2I 실제 적용) — 완료 (2026-06-03)
+**기록 폐회로까지 닫음**: `generateImageDOM` 이 effective model 을 **결과에도 실어서**(`{ success, images, model }`) finalize 의 기존 `result.model` 경로가 `item.model` 로 기록 → ResultsTable/모달 표시가 'flow' 가 아닌 실제 모델. 단일 모달 경로(`useSceneGeneration`)도 포함. (리뷰 P1-a/P1-b 반영)
+적용: useGenAPI(generateImageDOM model 인자+결과 기록, submitGenerationDOM imageModel→model), useAutomation(start/runConcurrentQueue imageModel 배선), useSceneGeneration(model 전달), App.jsx 4개 옵션 블록(main+retryErrors+retryScene×2). genModels 변경 없음.
+
+~~현재 `imageModel` 설정은 있지만 **생성에 전달 안 됨**(IPC 는 `model` 받는데 그 위 체인이 안 넘김).~~
 체인: `App.handleStart` → `start(options)` → `useAutomation.runConcurrentQueue` → `submitGenerationDOM` → `useGenAPI.generateImageDOM` → `genaiGenerateImage` → `genai.generateImage(model)`.
 - `src/hooks/useGenAPI.js`:
   - `generateImageDOM(prompt, refs, { aspectRatio, model })` — model 받아 `genaiGenerateImage({ ..., model })` 로 전달 (현재 model 미전달, line ~110-113)
@@ -49,16 +52,24 @@ T2I / T2V / F2V **각각** 생성 모델을 설정에서 선택. 옵션마다 **
 - SceneTab: 각 `<ModelSelector priceUrl={PRICING_URL}>`.
 - **TDD**: 링크 렌더 + 클릭 시 openExternal 호출(주입/mocked) + stopPropagation.
 
-### 3. ResultsTable 모델 컬럼
-- 생성 항목엔 `item.model`(API id)이 이미 기록됨(imageFinalize/video onUpdate).
-- `genModels.js`: `modelLabel(id)` 헬퍼(카탈로그 id→label, 없으면 id 그대로).
-- `ResultsTable.jsx`: 모델 컬럼 헤더 + 셀(`modelLabel(item.model)`, 없으면 '—'). 컬럼 정의/렌더 위치 확인 필요.
-- **TDD**: ResultsTable 가 item.model 라벨을 렌더.
+### 3. ✅ ResultsTable 모델 컬럼 — 완료 (2026-06-03)
+- `item.model` 기록: **비디오는 기존부터**(useVideoAutomation), **이미지는 Task#1 으로 폐회로 완성**.
+- `genModels.js`: `modelLabel(id)` 헬퍼(카탈로그 id→label, falsy→null, 없으면 id 그대로). ✅
+- `ResultsTable.jsx`: prompt↔status 사이 `col-model` 헤더+셀(`modelLabel(item.model) || '—'`, title 에 raw id). ✅
+- CSS: `.col-model` 고정폭 104px + ellipsis, `<400px` 컨테이너 쿼리에서 status 와 함께 hide(헤더/바디 2-table 정렬 유지). ✅
+- locale: `results.model` (en/ko). ✅
+- **TDD**: genModels(modelLabel 4) / useGenAPI(model 전달+결과 기록 3) / useAutomation(imageModel passthrough 1) / useSceneGeneration(model 전달 1) / ResultsTable(컬럼 4). 전체 2284 green.
 
 ### 4. 상세 모달 모델 표시
 - `SceneDetailModal`(이미지) / `VideoDetailModal`(비디오) 에 모델 메타 행 추가(`modelLabel(item.model || scene.model)`).
 - 비디오는 `videoT2VModel`/`videoI2V` 쪽 메타(useVideoScenes 가 `model` 노출 — derive 확인). 이미지는 `scene.model`.
 - **TDD**: 모달이 모델 라벨 표시.
+
+### 5. ⬜ 해상도 ↔ 모델 가드 (리뷰 P1-c) — 미착수
+공식 문서상 **Veo 3.1 Lite 는 4K 미지원**(720p/1080p). 현재 `videoResolution`(전역, 4k 포함)이 `videoModel` 과 독립 전달돼 Lite+4K 조합이 런타임 실패로 도달 가능.
+- **must**: `genModels.VIDEO_MODELS` 에 `allowedResolutions` + `generateVideoT2V/I2V` submit 시 `coerceResolution(model, resolution)` (stale settings·Lite 전환 후 잔존 4k 방어).
+- **nice**: SceneTab 에서 Lite 선택 시 4K 옵션 disable.
+- **TDD**: Lite+4k → coerce 로 1080p 강등 / 비-Lite 는 4k 유지.
 
 ## 주의 / 함정
 - NB2/NB Pro ID 에 `-preview` 변종 가능 — 빌드 후 실제 호출로 ID 확정.

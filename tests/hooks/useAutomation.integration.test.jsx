@@ -144,6 +144,27 @@ describe('useAutomation — batch reference contract (API mode name-based)', () 
       { category: 'character', mediaId: null, caption: 'main', name: 'hero' },
     ])
   })
+
+  // 회귀: 설정의 imageModel(T2I 선택 모델)이 배치 제출 옵션까지 전달돼야 generateImageDOM →
+  // genai 호출이 선택 모델을 쓰고, 결과 model 이 item.model 로 기록된다(ResultsTable 모델 컬럼).
+  it('start({imageModel}) 을 submitGenerationDOM 옵션으로 전달', async () => {
+    const { hook, submitGenerationDOM, checkGeneration, collectGeneration } = setupHook({
+      scenes: [{ id: 's1', prompt: 'a', status: 'pending' }],
+    })
+    submitGenerationDOM.mockResolvedValue({ success: true, generationId: 'gen-1' })
+    checkGeneration.mockResolvedValue({ completed: true })
+    collectGeneration.mockResolvedValue({ success: true, images: [{ id: 'img-1', mediaId: 'm-1' }] })
+
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({ projectName: 'p', saveMode: 'memory', imageModel: 'gemini-3.1-flash-image' })
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(60 * 1000) })
+    await startPromise
+
+    const submitOptions = submitGenerationDOM.mock.calls[0][2]
+    expect(submitOptions.imageModel).toBe('gemini-3.1-flash-image')
+  })
 })
 
 describe('useAutomation — force regenerate status reset ordering', () => {

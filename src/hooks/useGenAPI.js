@@ -18,6 +18,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { resolveReferenceImages } from '../utils/referenceResolver'
 import { normalizeVideoModel } from '../utils/videoModels'
+import { DEFAULT_IMAGE_MODEL_ID } from '../config/genModels'
 import { isAuthError } from '../utils/authError'
 import { cleanBase64, detectImageType } from '../utils/urls'
 
@@ -107,17 +108,20 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
    * @returns {{success, images:[{base64, mimeType, mediaId}], error}}
    *   base64 필드는 data URL — downstream 은 cleanBase64 로 저장, 그대로 표시.
    */
-  const generateImageDOM = useCallback(async (prompt, referenceImages = [], { aspectRatio } = {}) => {
+  const generateImageDOM = useCallback(async (prompt, referenceImages = [], { aspectRatio, model } = {}) => {
+    // 선택 모델(없으면 기본). API 호출에 쓰고, 결과에도 실어 finalize 가 item.model 로
+    // 기록하게 한다 — 그래야 ResultsTable/상세 모달의 모델 표시가 'flow' 가 아닌 실제 모델이 됨.
+    const effectiveModel = model || DEFAULT_IMAGE_MODEL_ID
     try {
       const refs = await resolveReferenceImages(referenceImages, { projectName: projectName() })
-      const result = await window.electronAPI.genaiGenerateImage({ prompt, referenceImages: refs, aspectRatio })
+      const result = await window.electronAPI.genaiGenerateImage({ prompt, referenceImages: refs, aspectRatio, model: effectiveModel })
       if (!result?.success) return markAuthFailure(result || { success: false, error: 'Unknown error' })
       const images = (result.images || []).map((im) => ({
         base64: im.dataUrl || im.base64,
         mimeType: im.mimeType,
         mediaId: null, // 공식 API 는 Flow mediaId 가 없음 → 업스케일/I2V 자동 skip
       }))
-      return { success: true, images }
+      return { success: true, images, model: effectiveModel }
     } catch (error) {
       return { success: false, error: error?.message || String(error) }
     }
@@ -128,7 +132,8 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
     const id = `gen_${++counterRef.current}`
     inflightRef.current.set(id, { status: 'pending', result: null })
     // 의도적으로 await 안 함 (fire-and-forget)
-    generateImageDOM(prompt, referenceImages, options)
+    // 배치 경로는 options.imageModel 로 모델을 넘긴다 → generateImageDOM 의 model 로 매핑.
+    generateImageDOM(prompt, referenceImages, { aspectRatio: options.aspectRatio, model: options.imageModel ?? options.model })
       .then((result) => inflightRef.current.set(id, { status: 'done', result }))
       .catch((e) => inflightRef.current.set(id, { status: 'done', result: { success: false, error: e?.message || String(e) } }))
     return { success: true, generationId: id }

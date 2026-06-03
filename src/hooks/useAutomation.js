@@ -65,7 +65,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
    * 비동기 배치 실행 (fire-and-forget + 폴링 수집)
    */
   const runConcurrentQueue = async (targetScenes, options, total) => {
-    let { projectName, saveMode, imageBatchCount, imageUpscale, aspectRatio, selectedStyleRefId, seed = null, concurrency: rawConcurrency } = options
+    let { projectName, saveMode, imageBatchCount, imageUpscale, aspectRatio, imageModel, selectedStyleRefId, seed = null, concurrency: rawConcurrency } = options
     if (selectedStyleRefId != null && typeof selectedStyleRefId !== 'string') selectedStyleRefId = String(selectedStyleRefId)
     // 동시 in-flight 상한. 잘못된 값(0/음수/NaN)은 무한대기를 유발하므로 기본 5 로 clamp(1~10).
     const concurrency = clampInt(rawConcurrency, 1, 10, 5)
@@ -205,7 +205,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
 
       // 비동기 제출
       console.log('[Automation] Scene', scene.id, '→ prompt:', styledPrompt.substring(0, 80) + '...', '| style:', appliedStyle, '| refs:', matchedRefs.length)
-      const submitResult = await submitGenerationDOM(styledPrompt, matchedRefs, { batchCount: imageBatchCount, seed, aspectRatio })
+      const submitResult = await submitGenerationDOM(styledPrompt, matchedRefs, { batchCount: imageBatchCount, seed, aspectRatio, imageModel })
       if (submitResult.success && submitResult.generationId) {
         const _now = Date.now()
         pendingQueue.push({ generationId: submitResult.generationId, scene, submittedAt: _now, originalSubmittedAt: _now })
@@ -290,6 +290,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       imageBatchCount = 1,
       imageUpscale = 'off',
       aspectRatio = '16:9',
+      imageModel = undefined,
       selectedStyleRefId: _selectedStyleRefId = null,
       seed = null,
       concurrency = undefined,
@@ -486,6 +487,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       imageBatchCount,
       imageUpscale,
       aspectRatio,
+      imageModel,
       selectedStyleRefId,
       seed,
       concurrency,

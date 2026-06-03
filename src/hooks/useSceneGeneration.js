@@ -61,7 +61,7 @@ export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, open
       const seed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
         ? settings.seedNo
         : null
-      const result = await flowAPI.generateImageDOM(styledPrompt, matchedRefs, { batchCount: settings.imageBatchCount, seed, aspectRatio: settings.aspectRatio })
+      const result = await flowAPI.generateImageDOM(styledPrompt, matchedRefs, { batchCount: settings.imageBatchCount, seed, aspectRatio: settings.aspectRatio, model: settings.imageModel })
 
       const { success, sceneUpdate } = await finalizeGeneratedImage({
         result, flowAPI,

@@ -21,6 +21,14 @@ export const VIDEO_MODELS = [
 export const DEFAULT_IMAGE_MODEL_ID = 'gemini-2.5-flash-image'
 export const DEFAULT_VIDEO_MODEL_ID = 'veo-3.1-fast-generate-preview'
 
+/** API 모델 id → 사람이 읽는 라벨. 카탈로그에 없으면 id 그대로, falsy 면 null.
+ *  ResultsTable / 상세 모달의 모델 표시에 사용. */
+export function modelLabel(id) {
+  if (!id) return null
+  const all = [...IMAGE_MODELS, ...VIDEO_MODELS]
+  return all.find(m => m.id === id)?.label || id
+}
+
 /** id 가 카탈로그에 있으면 그대로, 없으면 기본값으로. (저장된 stale/legacy id 방어) */
 export function coerceImageModel(id) {
   return IMAGE_MODELS.some(m => m.id === id) ? id : DEFAULT_IMAGE_MODEL_ID

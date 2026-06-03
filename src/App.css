@@ -1351,6 +1351,14 @@ html, body {
 
 .results-table .col-id { width: 28px; text-align: center; }
 .results-table .col-img { width: 72px; }
+.results-table .col-model {
+  width: 104px;
+  font-size: 0.78rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary, #9aa0b4);
+}
 .results-table .col-status { width: 90px; }
 
 .results-table tr.status-generating {
@@ -1485,9 +1493,10 @@ html, body {
    Responsive Results Table - Container Queries
    ============================================ */
 
-/* < 400px: Status 컬럼 숨김 → 프롬프트 + 이미지 유지 */
+/* < 400px: Status/모델 컬럼 숨김 → 프롬프트 + 이미지 유지 */
 @container results-table (max-width: 399px) {
-  .results-table .col-status {
+  .results-table .col-status,
+  .results-table .col-model {
     display: none;
   }
   .results-table td,

@@ -155,6 +155,42 @@ describe('ResultsTable — 에러 표시', () => {
   })
 })
 
+describe('ResultsTable — 모델 컬럼', () => {
+  it('헤더에 모델 컬럼(th.col-model) 노출', () => {
+    const items = [baseItem({ status: 'done', model: 'gemini-2.5-flash-image' })]
+    const { container } = wrap(
+      <ResultsTable items={items} mediaType="image" onRetry={vi.fn()} />
+    )
+    expect(container.querySelector('th.col-model')).toBeInTheDocument()
+  })
+
+  it('item.model 을 라벨로 변환해 셀에 표시', () => {
+    const items = [baseItem({ status: 'done', model: 'gemini-2.5-flash-image' })]
+    const { container } = wrap(
+      <ResultsTable items={items} mediaType="image" onRetry={vi.fn()} />
+    )
+    const cell = container.querySelector('td.col-model')
+    expect(cell).toBeInTheDocument()
+    expect(cell.textContent).toBe('Nano Banana')
+  })
+
+  it('비디오 모델 id 도 라벨로 표시', () => {
+    const items = [baseItem({ status: 'complete', model: 'veo-3.1-fast-generate-preview' })]
+    const { container } = wrap(
+      <ResultsTable items={items} mediaType="video" onVideoRetry={vi.fn()} />
+    )
+    expect(container.querySelector('td.col-model').textContent).toBe('Veo 3.1 Fast')
+  })
+
+  it('model 없으면 — 표시', () => {
+    const items = [baseItem({ status: 'done' })]
+    const { container } = wrap(
+      <ResultsTable items={items} mediaType="image" onRetry={vi.fn()} />
+    )
+    expect(container.querySelector('td.col-model').textContent).toBe('—')
+  })
+})
+
 describe('ResultsTable — 화면비', () => {
   // 썸네일 셀(.image-cell)이 프로젝트 화면비를 따라야 한다 — 9:16 프로젝트인데
   // 16:9 가로 썸네일로 보이던 버그(App 이 aspectRatio prop 을 안 넘김) 회귀 방지.

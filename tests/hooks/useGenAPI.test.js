@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { useGenAPI } from '../../src/hooks/useGenAPI'
+import { DEFAULT_IMAGE_MODEL_ID } from '../../src/config/genModels'
 
 const IMG_RESULT = {
   success: true,
@@ -49,9 +50,39 @@ describe('useGenAPI — 이미지', () => {
       prompt: 'a cat',
       referenceImages: [{ mimeType: 'image/png', data: 'REF' }],
       aspectRatio: '16:9',
+      model: DEFAULT_IMAGE_MODEL_ID,
     })
     // base64 필드는 data URL, mediaId 는 null (업스케일 자동 skip)
     expect(r.images[0]).toEqual({ base64: 'data:image/png;base64,ABC', mimeType: 'image/png', mediaId: null })
+  })
+
+  it('generateImageDOM: 선택 모델을 IPC 로 전달 + 결과에 model 기록', async () => {
+    const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
+    let r
+    await act(async () => {
+      r = await result.current.generateImageDOM('a cat', [], { aspectRatio: '9:16', model: 'gemini-3.1-flash-image' })
+    })
+    expect(window.electronAPI.genaiGenerateImage.mock.calls.at(-1)[0].model).toBe('gemini-3.1-flash-image')
+    // finalize 가 result.model 을 주워 item.model 로 기록하므로, 결과에 effective model 이 실려야 한다.
+    expect(r.model).toBe('gemini-3.1-flash-image')
+  })
+
+  it('generateImageDOM: model 미지정 시 기본 이미지 모델로 폴백(결과에도 기록)', async () => {
+    const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
+    let r
+    await act(async () => { r = await result.current.generateImageDOM('a cat', []) })
+    expect(window.electronAPI.genaiGenerateImage.mock.calls.at(-1)[0].model).toBe(DEFAULT_IMAGE_MODEL_ID)
+    expect(r.model).toBe(DEFAULT_IMAGE_MODEL_ID)
+  })
+
+  it('submitGenerationDOM: options.imageModel 을 generateImageDOM model 로 매핑', async () => {
+    const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
+    await act(async () => {
+      await result.current.submitGenerationDOM('p', [], { aspectRatio: '16:9', imageModel: 'gemini-3-pro-image' })
+    })
+    await waitFor(() => {
+      expect(window.electronAPI.genaiGenerateImage.mock.calls.at(-1)[0].model).toBe('gemini-3-pro-image')
+    })
   })
 
   it('submit → check → collect 비동기 에뮬레이션', async () => {

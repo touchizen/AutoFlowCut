@@ -877,6 +877,7 @@ function App() {
           imageBatchCount: settings.imageBatchCount || 1,
           imageUpscale: settings.imageUpscale || 'off',
           aspectRatio: settings.aspectRatio,
+          imageModel: settings.imageModel,
           selectedStyleRefId: effectiveStyleId,
           seed: effectiveSeed,
           force,
@@ -1571,6 +1572,7 @@ function App() {
                   imageBatchCount: settings.imageBatchCount || 1,
                   imageUpscale: settings.imageUpscale || 'off',
                   aspectRatio: settings.aspectRatio,
+                  imageModel: settings.imageModel,
                   selectedStyleRefId,
                   seed: effectiveSeed,
                 }).finally(() => setHasPendingBatch(false))
@@ -1682,6 +1684,7 @@ function App() {
                 imageBatchCount: settings.imageBatchCount || 1,
                 imageUpscale: settings.imageUpscale || 'off',
                 aspectRatio: settings.aspectRatio,
+                imageModel: settings.imageModel,
                 selectedStyleRefId,
                 seed: effectiveSeed,
               }).finally(() => setHasPendingBatch(false))
@@ -1776,6 +1779,7 @@ function App() {
                 imageBatchCount: settings.imageBatchCount || 1,
                 imageUpscale: settings.imageUpscale || 'off',
                 aspectRatio: settings.aspectRatio,
+                imageModel: settings.imageModel,
                 selectedStyleRefId,
                 seed: effectiveSeed,
               }).finally(() => setHasPendingBatch(false))
