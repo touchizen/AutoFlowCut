@@ -558,6 +558,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
                 generationId: submission.generationId,
                 ...buildVideoMetaPatch(item, { seed, videoModel }),
               })
+              videoErrorCount++  // Phase 2 다운로드 실패도 errorCount 에 집계
               console.warn(`[VideoAutomation] ❌ Download failed: ${itemId}`, errMsg)
             }
             pending.delete(itemId)
@@ -571,6 +572,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
               error: statusInfo.error || 'Video generation failed',
               ...buildVideoMetaPatch(item, { seed, videoModel }),
             })
+            videoErrorCount++  // 서버 generation 실패도 집계
             pending.delete(itemId)
             console.warn(`[VideoAutomation] ❌ Generation failed: ${submission.generationId.substring(0, 16)}`)
             _maybeTriggerQuotaStop(statusInfo.error)
@@ -591,6 +593,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
     if (pending.size > 0 && !stopRequestedRef.current) {
       for (const [itemId] of pending) {
         onItemUpdate?.(itemId, 'error', { error: 'Polling timeout — video generation took too long' })
+        videoErrorCount++  // polling timeout 도 집계
       }
     }
 

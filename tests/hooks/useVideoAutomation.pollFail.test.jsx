@@ -75,4 +75,30 @@ describe('useVideoAutomation — poll top-level fail quota', () => {
     expect(hook.result.current.status).toBe('stopped')
     expect(hook.result.current.statusMessage).toMatch(/quota|limit reached|한도/i)
   })
+
+  it('서버 generation failed 는 progress.errorCount 에 반영됨 (Phase 2 실패 집계)', async () => {
+    const generateVideoT2V = vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' })
+    // 서버가 해당 item 을 'failed' 로 보고 (quota 아님)
+    const checkVideoStatus = vi.fn().mockResolvedValue({
+      success: true,
+      statuses: [{ status: 'failed', error: 'Video generation failed' }],
+    })
+    const flowAPI = {
+      generateVideoT2V, generateVideoI2V: vi.fn(), checkVideoStatus,
+      upscaleVideo: vi.fn(), fetchMedia: vi.fn(), getAccessToken: vi.fn().mockResolvedValue('token'),
+    }
+    const hook = renderHook(() => useVideoAutomation(flowAPI, (k) => k, null))
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({
+        mode: 't2v', scenes: [{ id: 'vscene_v1', prompt: 'p' }],
+        projectName: 'test', saveMode: 'folder', videoModel: 'veo-3', aspectRatio: '16:9',
+        duration: 8, videoResolution: '1080', videoBatchCount: 1, seed: null,
+      })
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(60 * 1000) })
+    await startPromise
+
+    expect(hook.result.current.progress.errorCount).toBe(1)
+  })
 })

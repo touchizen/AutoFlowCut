@@ -286,6 +286,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       projectName = 'Untitled',
       saveMode = 'folder',
       sceneIndices = null,
+      sceneIds = null,  // 선호 — queue 지연 후에도 안정적으로 id 로 resolve (index staleness 회피)
       imageBatchCount = 1,
       imageUpscale = 'off',
       aspectRatio = '16:9',
@@ -311,11 +312,13 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     //   - sceneIndices 명시: 그 인덱스들 (retry/partial 호출)
     //   - force=true (MCP 전용): prompt 있는 모든 씬 (완료된 씬도 포함, 새 스타일로 재생성)
     //   - 그 외: filterPendingScenes — 이미지 없는 씬 + pending/error 상태 (App.jsx 자동 매칭 검증과 일치)
-    const targetScenes = sceneIndices
-      ? sceneIndices.map(i => scenes[i]).filter(Boolean)
-      : force
-        ? scenes.filter(s => s.prompt)
-        : filterPendingScenes(scenes)
+    const targetScenes = sceneIds
+      ? sceneIds.map(id => scenes.find(s => s.id === id)).filter(Boolean)  // 실행 시점 현재 scenes 에서 id 로 resolve
+      : sceneIndices
+        ? sceneIndices.map(i => scenes[i]).filter(Boolean)
+        : force
+          ? scenes.filter(s => s.prompt)
+          : filterPendingScenes(scenes)
 
     const total = targetScenes.length
     if (total === 0) {
@@ -564,10 +567,9 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
    * 특정 씬 재시도 — startQueued 경유(정상 Start 와 동일한 queue 직렬화).
    */
   const retryScene = useCallback(async (sceneId, options = {}) => {
-    const sceneIdx = scenes.findIndex(s => s.id === sceneId)
-    if (sceneIdx === -1) return
-
-    await startQueued({ ...options, sceneIndices: [sceneIdx] })
+    if (!scenes.some(s => s.id === sceneId)) return
+    // id 로 전달 — queue 대기 중 scenes 재정렬/삭제가 있어도 실행 시점에 올바른 씬을 resolve.
+    await startQueued({ ...options, sceneIds: [sceneId] })
   }, [scenes, startQueued])
 
   /**
@@ -583,13 +585,12 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       console.warn('[useAutomation] retryErrors called with SyntheticEvent — caller must pass an options object with projectName. Aborting.')
       return
     }
-    const errorIndices = scenes
-      .map((s, i) => s.status === 'error' ? i : -1)
-      .filter(i => i !== -1)
+    // id 로 스냅샷 — queue 대기 중 재정렬돼도 실행 시점에 동일 씬을 resolve(index staleness 회피).
+    const errorIds = scenes.filter(s => s.status === 'error').map(s => s.id)
 
-    if (errorIndices.length === 0) return
+    if (errorIds.length === 0) return
 
-    await startQueued({ ...options, sceneIndices: errorIndices })
+    await startQueued({ ...options, sceneIds: errorIds })
   }, [scenes, startQueued])
 
   return {

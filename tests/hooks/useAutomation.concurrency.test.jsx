@@ -127,6 +127,36 @@ describe('useAutomation 동시성 윈도우', () => {
     expect(timedOut).toBeUndefined()
   })
 
+  it('start({ sceneIds }) 는 index 가 아니라 id 로 대상 씬 resolve (queue 지연 중 재정렬 안전)', async () => {
+    const { hook, submitGenerationDOM } = setupHook([
+      { id: 's1', prompt: 'PROMPT_1', status: 'pending' },
+      { id: 's2', prompt: 'PROMPT_2', status: 'pending' },
+      { id: 's3', prompt: 'PROMPT_3', status: 'pending' },
+    ], { checkGeneration: vi.fn().mockResolvedValue({ completed: true }) })
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({ projectName: 'p', saveMode: 'memory', sceneIds: ['s2'], concurrency: 5 })
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+    await startPromise
+    // s2 한 개만 제출 — 프롬프트로 id 기반 resolve 확인
+    expect(submitGenerationDOM).toHaveBeenCalledTimes(1)
+    expect(submitGenerationDOM.mock.calls[0][0]).toBe('PROMPT_2')
+  })
+
+  it('retryScene 은 sceneIds 로 enqueue (index staleness 회피)', async () => {
+    const { hook, submitGenerationDOM } = setupHook([
+      { id: 's1', prompt: 'P1', status: 'error' },
+      { id: 's2', prompt: 'P2', status: 'error' },
+    ], { checkGeneration: vi.fn().mockResolvedValue({ completed: true }) })
+    let p
+    await act(async () => { p = hook.result.current.retryScene('s2', { projectName: 'p', saveMode: 'memory', concurrency: 5 }) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+    await p
+    expect(submitGenerationDOM).toHaveBeenCalledTimes(1)
+    expect(submitGenerationDOM.mock.calls[0][0]).toBe('P2')
+  })
+
   it('concurrency=0 (잘못된 값) → 무한대기 없이 기본 5 로 clamp', async () => {
     const { hook, submitGenerationDOM } = setupHook(FOUR, {
       checkGeneration: vi.fn().mockResolvedValue({ completed: true }),

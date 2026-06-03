@@ -1561,6 +1561,8 @@ function App() {
                 setRunningStyle({ styleId: selectedStyleRefId, label: styleResolver.resolveLabelForId(selectedStyleRefId), applies: true })
                 // retryErrors 는 handleStart 를 우회하므로 모드 snapshot 을 직접 set (에러 재시도 = 이미지).
                 setRunningGenMode('image')
+                // 큐 대기 구간 중복 enqueue 방지 — 정상 Start 와 동일하게 pending 플래그.
+                setHasPendingBatch(true)
                 retryErrors({
                   projectName: ensureProjectName(),
                   saveMode: settings.saveMode,
@@ -1572,7 +1574,7 @@ function App() {
                   aspectRatio: settings.aspectRatio,
                   selectedStyleRefId,
                   seed: effectiveSeed,
-                })
+                }).finally(() => setHasPendingBatch(false))
               }}
             >
               🔄 {t('actions.retryErrors')}
@@ -1672,6 +1674,8 @@ function App() {
               setRunningStyle({ styleId: selectedStyleRefId, label: styleResolver.resolveLabelForId(selectedStyleRefId), applies: true })
               // 개별 재시도도 handleStart 를 우회하므로 모드 snapshot 직접 set (이미지 씬 재시도 = image).
               setRunningGenMode('image')
+              // 큐 대기 구간 중복 enqueue 방지 — 정상 Start 와 동일하게 pending 플래그.
+              setHasPendingBatch(true)
               automation.retryScene(id, {
                 projectName: ensureProjectName(),
                 saveMode: settings.saveMode,
@@ -1680,7 +1684,7 @@ function App() {
                 aspectRatio: settings.aspectRatio,
                 selectedStyleRefId,
                 seed: effectiveSeed,
-              })
+              }).finally(() => setHasPendingBatch(false))
             }}
             onShowDetail={(scene) => setSelectedScene(scene)}
             onClearMedia={(id) => scenesHook.updateScene(id, {
@@ -1764,6 +1768,8 @@ function App() {
               setRunningStyle({ styleId: selectedStyleRefId, label: styleResolver.resolveLabelForId(selectedStyleRefId), applies: true })
               // 개별 재시도도 handleStart 를 우회하므로 모드 snapshot 직접 set (이미지 씬 재시도 = image).
               setRunningGenMode('image')
+              // 큐 대기 구간 중복 enqueue 방지 — 정상 Start 와 동일하게 pending 플래그.
+              setHasPendingBatch(true)
               automation.retryScene(id, {
                 projectName: ensureProjectName(),
                 saveMode: settings.saveMode,
@@ -1772,7 +1778,7 @@ function App() {
                 aspectRatio: settings.aspectRatio,
                 selectedStyleRefId,
                 seed: effectiveSeed,
-              })
+              }).finally(() => setHasPendingBatch(false))
             }}
             onShowDetail={(scene) => setSelectedScene(scene)}
             onClearMedia={(id) => scenesHook.updateScene(id, {
