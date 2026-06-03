@@ -49,17 +49,20 @@ Flow→공식 API(BYOK) 전환 후 생성 파이프라인 UX 가 어정쩡하다
 
 ---
 
-## A. 캐시버스터
+## A. 캐시버스터 (이미지 + 비디오)
 
-타임라인/모니터의 생짜 `file://경로` 3곳을 `resolveImageSrc`(또는 `?v=generatedAt`)로 교체:
+안정 파일명(같은 경로 덮어쓰기) + `generatedAt` 구조라 **이미지·비디오 모두** 재생성 시 브라우저 캐시로 stale. 결과표(`resolveImageSrc`, `?v=generatedAt`)는 정상이지만 타임라인/모니터/Grid 는 생짜 경로라 옛 것이 보인다.
 
+**이미지** — 생짜 `file://경로` 3곳을 `resolveImageSrc`(또는 `?v=generatedAt`)로 교체:
 - `src/components/AudioTimeline/Clip.jsx:98` (`file://${clip.imagePath}`)
 - `src/components/AudioTimeline/AudioTimeline.jsx:1065` (`file://${imgPath}`)
 - `src/components/AudioTimeline/PreviewPanel.jsx:205` (`file://${imgPath}`)
 
-클립은 `sceneRef`(scene 전체)를 들고 있어 `generatedAt` 접근 가능. 이미지 완료 시 `generatedAt` 은 **finalize 경로에서 기록**된다(`imageFinalize.js:59` — `generatedAt = Date.now()`, `status: 'done'`). (비디오는 `App.jsx` onUpdate 경로.) `resolveImageSrc(sceneRef)` 가 `generatedAt → ?v=` fallback(`updatedAt`/`flaggedAt`)을 처리.
+클립은 `sceneRef`(scene 전체)를 들고 있어 `generatedAt` 접근 가능. 이미지 완료 시 `generatedAt` 은 **finalize 경로에서 기록**된다(`imageFinalize.js:59` — `generatedAt = Date.now()`, `status: 'done'`). `resolveImageSrc(sceneRef)` 가 `generatedAt → ?v=` fallback(`updatedAt`/`flaggedAt`)을 처리.
 
-**검증**: 같은 경로 재생성 시 타임라인/모니터가 새 이미지로 갱신. (회귀 테스트: resolveImageSrc 가 generatedAt 변화로 다른 URL 생성)
+**비디오** — `resolveVideoSrc`(`src/utils/videoSrc.js`)는 현재 version query 를 **안 붙인다**. 비디오도 안정 파일명(`t2v_N`/`i2v_N`)+`generatedAt`(`useVideoAutomation.js:117,163)이라 재생성 stale 동일. → `resolveVideoSrc(base64, filePath, { version })` 로 **optional version 지원 추가**(filePath 경로일 때만 `?v=` 부착; base64/data URL 은 무관). 소비처(`PreviewPanel` 비디오 `src`, Grid video item, `Clip.jsx` 비디오)가 `generatedAt` 전달. (단일 정규화 지점 유지.)
+
+**검증**: 같은 경로 재생성 시 타임라인/모니터/Grid 가 새 이미지·비디오로 갱신. (회귀: `resolveImageSrc`/`resolveVideoSrc` 가 `generatedAt` 변화로 다른 URL 생성; base64 우선 경로엔 version 미적용.)
 
 ## Stage 2. 동시성 윈도우
 
@@ -110,22 +113,27 @@ Flow→공식 API(BYOK) 전환 후 생성 파이프라인 UX 가 어정쩡하다
 
 ```js
 // GenerationItem
-{ id, status, kind: 'image' | 'video', thumbSrc, generatedAt, error, ref }
+{ id, rawStatus, state, kind: 'image' | 'video', thumbSrc, generatedAt, error, ref }
+//   rawStatus: 소스 원본 status (done/complete/generating/waiting/pending/error…)
+//   state    : 정규화된 UI 상태 — 'pending' | 'generating' | 'complete' | 'error'
 ```
 
-- `status` 는 **정규화** — `isComplete(status) = status === 'done' || status === 'complete'`
-  (이미지=`'done'`, 비디오=`'complete'`. `imageFinalize.js:134`/video automation 차이. `ResultsTable.jsx:226` 의 `isDone` 선례와 동일 규칙). `'waiting'`(F2V framePair, `FrameToVideoPanel.jsx`)·미시작은 **pending 으로 정규화**.
-- `thumbSrc` 는 캐시버스터 적용된 `resolveImageSrc`(이미지) 또는 비디오 경로(poster/`<video muted>`).
+- `state = normalizeState(rawStatus)` (raw 와 정규화를 **분리** — 혼용 금지):
+  - `'done'`·`'complete'` → `'complete'` (이미지=`done`(`imageFinalize.js:134`), 비디오=`complete`. `ResultsTable.jsx:226` `isDone` 선례와 동일 규칙)
+  - `'generating'` → `'generating'`
+  - `'error'` → `'error'`
+  - `'pending'`·`'waiting'`(F2V framePair, `FrameToVideoPanel.jsx`)·미시작·기타 → `'pending'`
+- `thumbSrc`/비디오 src 는 **캐시버스터(`?v=generatedAt`) 적용** — 이미지는 `resolveImageSrc`, 비디오는 `resolveVideoSrc` 에 version 지원 추가(또는 adapter 에서 `?v=` 부착). 비디오도 안정 파일명(`t2v_N`/`i2v_N`)+`generatedAt` 이라(`useVideoAutomation.js:117,163) 재생성 시 stale 회피 필요. (A 섹션 참조)
 - `kind` 가 **클릭 라우팅을 결정** — `image` → `setSelectedScene(ref)`, `video` → `setSelectedVideo(ref)`.
 - `ref` = 해당 상세 모달이 받는 객체:
   - image → `scene` (SceneDetailModal)
   - T2V → 파생 video item(`vscene_…` 형태, VideoDetailModal 이 받는 객체와 동일)
   - F2V → `fp_…` framePair (VideoDetailModal)
 
-**어댑터** `buildGenerationItems(activeTab, { scenes, videoScenes, framePairs })`:
-- `'text'` | `'list'` → scenes → image items (`kind:'image'`, `ref: scene`)
-- `'video-text'` → videoT2VPrompt 있는 파생 video scenes → video items (`kind:'video'`, `ref: vscene_…`)
-- `'frame-to-video'` → framePairs → video items (`kind:'video'`, `ref: fp_…`)
+**어댑터** `buildGenerationItems(mode, { scenes, videoScenes, framePairs })` — `mode` 는 snapshot 된 `runningGenMode`(`'image'|'t2v'|'f2v'`), live activeTab 아님:
+- `'image'` (탭 `text`·`list`) → scenes → image items (`kind:'image'`, `ref: scene`)
+- `'t2v'` (탭 `video-text`) → videoT2VPrompt 있는 파생 video scenes → video items (`kind:'video'`, `ref: vscene_…`)
+- `'f2v'` (탭 `frame-to-video`) → framePairs → video items (`kind:'video'`, `ref: fp_…`)
 
 ### 컴포넌트 경계
 
@@ -135,12 +143,17 @@ Flow→공식 API(BYOK) 전환 후 생성 파이프라인 UX 가 어정쩡하다
 
 ### 위치 / 전환
 
+**생성 모드 snapshot (중요)**: 탭 버튼은 생성 중에도 비활성화되지 않는다(`App.jsx:1202` 인근 — `disabled` 없음). 따라서 Grid 가 **live `activeTab`** 을 쓰면, 예) `video-text` 생성 중 사용자가 `list` 로 이동 시 `anyRunning` 은 true 인데 이미지 보드가 뜨는 불일치가 생긴다. → **생성 시작 시 모드를 snapshot** 한다:
+
+- App 에 `runningGenMode` state(`'image'|'t2v'|'f2v'`). 생성 start 핸들러에서 현재 탭 기준으로 set (`text`·`list`→`image`, `video-text`→`t2v`, `frame-to-video`→`f2v`).
+- Grid 는 **`activeTab` 이 아니라 `runningGenMode` snapshot** 을 어댑터에 넘긴다 → 탭 이동과 무관하게 일관.
+
 모니터 영역(`.content-monitor`)이 조건부 렌더:
 
 ```jsx
 anyRunning ? (
   <LiveGenerationGrid
-    items={buildGenerationItems(activeTab, { scenes, videoScenes, framePairs })}
+    items={buildGenerationItems(runningGenMode, { scenes, videoScenes, framePairs })}
     onItemSelect={(item) => item.kind === 'video' ? setSelectedVideo(item.ref) : setSelectedScene(item.ref)}
   />
 ) : (
@@ -148,18 +161,18 @@ anyRunning ? (
 )
 ```
 
-`anyRunning` false → 자동으로 PreviewPanel 복귀.
+`anyRunning` false → 자동으로 PreviewPanel 복귀. (`buildGenerationItems` 의 첫 인자는 `activeTab` 이 아니라 snapshot 된 `runningGenMode`.)
 
 ### 타일 상태 모델 (Google Flow 스타일)
 
-`item.status`(정규화) 기반:
+`item.state`(정규화) 기반:
 
-| 상태 | 판정 | 표시 |
-|------|------|------|
-| pending | `'pending'`·`'waiting'`·미시작 | 빈 placeholder (옅은 박스) |
-| generating | `'generating'` | **shimmer**(윤기/광택). 이전 thumbSrc 있으면 그 위 오버레이, 없으면 빈 타일 위 |
-| complete | `isComplete(status)` (`'done'`·`'complete'`) | 실제 이미지/비디오 썸네일 (`thumbSrc`, 캐시버스터) |
-| error | `'error'` | ⚠️ 아이콘 + 빨강 테두리, hover 시 `item.error` tooltip |
+| state | 표시 |
+|-------|------|
+| `'pending'` | 빈 placeholder (옅은 박스) |
+| `'generating'` | **shimmer**(윤기/광택). 이전 thumbSrc 있으면 그 위 오버레이, 없으면 빈 타일 위 |
+| `'complete'` | 실제 이미지/비디오 썸네일 (`thumbSrc`, 캐시버스터) |
+| `'error'` | ⚠️ 아이콘 + 빨강 테두리, hover 시 `item.error` tooltip |
 
 - 타일 클릭 → `onItemSelect(item)` → `item.kind` 로 라우팅(image→`setSelectedScene`, video→`setSelectedVideo`). 기존 상세 모달 재사용.
 
@@ -193,7 +206,9 @@ CSS keyframes (gradient sweep). `generating` 타일 + (B) 타임라인 `generati
 
 **검증**:
 - `buildGenerationItems`: 탭별 정규화 — `text`·`list`→image, `video-text`→video(ref `vscene_`), `frame-to-video`→video(ref `fp_`); `isComplete`(done·complete), `waiting`→pending.
+- `normalizeState`: done/complete→complete, generating→generating, error→error, pending/waiting/기타→pending (rawStatus 분리).
 - 클릭 라우팅: `kind:'image'`→`setSelectedScene`, `kind:'video'`→`setSelectedVideo` (framePair 가 SceneDetailModal 로 새지 않음).
+- 모드 snapshot: 생성 중 탭 이동해도 Grid 는 `runningGenMode` 기준(보드 안 바뀜) — 통합.
 - `LiveGenerationGrid`: 상태별 타일 렌더 (pending/generating/complete/error) 단위 테스트.
 - `GenTile`: error 시 ⚠️ + tooltip, complete 시 캐시버스터 src.
 - 모니터 전환: `anyRunning` true → Grid, false → PreviewPanel (통합).
@@ -202,7 +217,7 @@ CSS keyframes (gradient sweep). `generating` 타일 + (B) 타임라인 `generati
 
 ## 테스트 전략
 
-- 단위: `buildGenerationItems`(탭별 정규화+isComplete), LiveGenerationGrid/GenTile 상태 렌더, resolveImageSrc 캐시버스터, useAutomation 동시성 윈도우(게이트 sleep 포함).
+- 단위: `buildGenerationItems`(모드별 정규화+normalizeState), LiveGenerationGrid/GenTile 상태 렌더, resolveImageSrc/**resolveVideoSrc version** 캐시버스터, useAutomation 동시성 윈도우(게이트 sleep+clamp).
 - 통합: 모니터 anyRunning 전환, 배치 동시성 동작(fake timer), mp3/기존 흐름 회귀.
 - 러너: vitest. 커밋 전 관련 테스트 green.
 
