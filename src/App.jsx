@@ -1370,9 +1370,6 @@ function App() {
               galleryLoading={galleryLoading}
               onLoadGallery={loadGallery}
               onUploadFromDisk={handleUploadGalleryImage}
-              onListFlowProjects={listFlowProjectsHandler}
-              onFetchProjectGallery={fetchProjectGallery}
-              onPickArchiveImage={addArchiveItem}
               seedNo={settings.seedNo}
               seedLocked={settings.seedLocked}
               onSeedChange={(v) => setSettings(s => ({ ...s, seedNo: v }))}
