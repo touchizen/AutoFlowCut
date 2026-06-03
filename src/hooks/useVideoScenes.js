@@ -46,6 +46,14 @@ const FIELD_MAP = {
   // 한쪽 generation 이 다른 쪽 타이머를 덮어쓰므로 별도 네임스페이스로 매핑한다.
   generatingStartedAt: 'videoT2VGeneratingStartedAt',
   generatingEndedAt: 'videoT2VGeneratingEndedAt',
+  // 비디오 생성 메타 — 이미지 씬의 동명 필드(scene.generatedAt/error/seed/model)와
+  // 충돌해 서로 덮어쓰지 않도록 videoT2V* 네임스페이스로 매핑. (캐시버스터·에러표시·시드 보존)
+  generatedAt: 'videoT2VGeneratedAt',
+  seed: 'videoT2VSeed',
+  model: 'videoT2VModel',
+  error: 'videoT2VError',
+  errorKind: 'videoT2VErrorKind',
+  videoSaveId: 'videoT2VSaveId',
   // startTime / endTime 은 scene 본체와 공유 — 별도 매핑 없이 patch에 그대로
 }
 
@@ -81,6 +89,13 @@ function deriveVideoScene(s) {
     // ResultsTable 의 ElapsedTime 이 이 필드를 읽는다. 없으면 useElapsedTimer 가 항상 0 → 0:00 고정.
     generatingStartedAt: s.videoT2VGeneratingStartedAt ?? null,
     generatingEndedAt: s.videoT2VGeneratingEndedAt ?? null,
+    // 비디오 생성 메타 — Grid 캐시버스터(generatedAt)·에러 타일·시드 표시가 읽는다.
+    generatedAt: s.videoT2VGeneratedAt ?? null,
+    seed: s.videoT2VSeed ?? null,
+    model: s.videoT2VModel ?? null,
+    error: s.videoT2VError ?? null,
+    errorKind: s.videoT2VErrorKind ?? null,
+    videoSaveId: s.videoT2VSaveId ?? null,
     // Poster fields from the source image scene. ResultsTable uses these while
     // keeping the video element unmounted until hover.
     image: s.image ?? null,
