@@ -441,6 +441,8 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     modelVidQuality: '최고 품질 · 시네마틱',
     modelDocsLink: '문서 ↗',
     modelPricingLink: '가격표 ↗',
+    unitPerImage: '장',
+    unitPerSec: '초',
     videoResolution: '비디오 해상도',
     videoResolutionHint: 'Veo 출력 해상도. 1080p/4K는 항상 8초, 720p는 씬 길이에 맞춰 4/6/8초.',
 

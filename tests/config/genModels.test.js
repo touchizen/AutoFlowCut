@@ -6,7 +6,7 @@
  * falsy 면 null.
  */
 import { describe, it, expect } from 'vitest'
-import { modelLabel, coerceResolution, categorizeApiModels } from '../../src/config/genModels'
+import { modelLabel, coerceResolution, categorizeApiModels, IMAGE_MODELS, VIDEO_MODELS } from '../../src/config/genModels'
 
 describe('genModels — modelLabel', () => {
   it('이미지 모델 id → 라벨', () => {
@@ -69,6 +69,15 @@ describe('genModels — coerceResolution (모델별 해상도 가드)', () => {
   })
 })
 
+describe('genModels — cost i18n (한글 단위 누출 방지)', () => {
+  it('카탈로그 cost 는 ASCII 만(한글 단위 없음) + unit 필드 보유', () => {
+    for (const m of [...IMAGE_MODELS, ...VIDEO_MODELS]) {
+      expect(m.cost).toMatch(/^[\x20-\x7E]*$/) // printable ASCII only — '장'/'초' 같은 한글 금지
+      expect(['image', 'sec']).toContain(m.unit)
+    }
+  })
+})
+
 describe('genModels — categorizeApiModels (라이브 /models → 카테고리)', () => {
   const raw = [
     { id: 'gemini-2.5-flash-image', displayName: 'NB live', methods: ['generateContent'] },
@@ -83,7 +92,7 @@ describe('genModels — categorizeApiModels (라이브 /models → 카테고리)
     const { imageModels } = categorizeApiModels(raw)
     expect(imageModels.map(m => m.id)).toEqual(['gemini-2.5-flash-image', 'gemini-9-flash-image'])
     expect(imageModels[0].label).toBe('Nano Banana')   // 큐레이션 라벨 유지
-    expect(imageModels[0].cost).toBe('$0.039/장')       // 큐레이션 비용 유지
+    expect(imageModels[0].cost).toBe('$0.039')          // 큐레이션 비용 유지(단위는 unit 필드)
     expect(imageModels[1].label).toBe('Future Flash Image') // extra = displayName
   })
 

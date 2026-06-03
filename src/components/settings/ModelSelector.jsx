@@ -7,6 +7,14 @@ import './ModelSelector.css'
 
 const openExternal = (url) => window.electronAPI?.openExternal?.(url)
 
+// 단위(장/sec 등)는 locale 로 — 비용 문자열에 한글 박지 않기 위함.
+const UNIT_KEY = { image: 'settings.unitPerImage', sec: 'settings.unitPerSec' }
+const costText = (m, t) => {
+  if (!m.cost) return ''
+  const unit = m.unit && UNIT_KEY[m.unit] ? `/${t(UNIT_KEY[m.unit])}` : ''
+  return `${m.cost}${unit}`
+}
+
 export default function ModelSelector({ options, value, defaultValue, onChange, t, priceUrl }) {
   const list = options || []
   const selected = value || defaultValue
@@ -21,7 +29,7 @@ export default function ModelSelector({ options, value, defaultValue, onChange, 
         >
           {list.map((m) => (
             <option key={m.id} value={m.id}>
-              {m.cost ? `${m.label} · ${m.cost}` : m.label}
+              {m.cost ? `${m.label} · ${costText(m, t)}` : m.label}
             </option>
           ))}
         </select>

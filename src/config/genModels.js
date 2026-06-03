@@ -11,18 +11,19 @@ const IMAGE_DOCS_URL = 'https://ai.google.dev/gemini-api/docs/image-generation'
 const VIDEO_DOCS_URL = 'https://ai.google.dev/gemini-api/docs/video'
 export const PRICING_URL = 'https://ai.google.dev/gemini-api/docs/pricing'
 
+// cost 는 가격만(ASCII), 단위(장/sec 등)는 unit 필드 → ModelSelector 가 locale 로 표시.
 export const IMAGE_MODELS = [
-  { id: 'gemini-2.5-flash-image', label: 'Nano Banana', cost: '$0.039/장', descKey: 'settings.modelImgNb', url: IMAGE_DOCS_URL },
-  { id: 'gemini-3.1-flash-image', label: 'Nano Banana 2', cost: '$0.045~/장', descKey: 'settings.modelImgNb2', url: IMAGE_DOCS_URL },
-  { id: 'gemini-3-pro-image', label: 'Nano Banana Pro', cost: '$0.134~/장', descKey: 'settings.modelImgNbPro', url: IMAGE_DOCS_URL },
+  { id: 'gemini-2.5-flash-image', label: 'Nano Banana', cost: '$0.039', unit: 'image', descKey: 'settings.modelImgNb', url: IMAGE_DOCS_URL },
+  { id: 'gemini-3.1-flash-image', label: 'Nano Banana 2', cost: '$0.045~', unit: 'image', descKey: 'settings.modelImgNb2', url: IMAGE_DOCS_URL },
+  { id: 'gemini-3-pro-image', label: 'Nano Banana Pro', cost: '$0.134~', unit: 'image', descKey: 'settings.modelImgNbPro', url: IMAGE_DOCS_URL },
 ]
 
 // allowedResolutions: 낮은→높은 순. 공식 Veo 3.1 Lite 는 4K 미지원(720p/1080p),
 // Fast/Quality 는 4K 지원. coerceResolution 이 미허용 해상도를 허용 최대로 강등.
 export const VIDEO_MODELS = [
-  { id: 'veo-3.1-lite-generate-preview', label: 'Veo 3.1 Lite', cost: '$0.05~/초', descKey: 'settings.modelVidLite', url: VIDEO_DOCS_URL, allowedResolutions: ['720p', '1080p'] },
-  { id: 'veo-3.1-fast-generate-preview', label: 'Veo 3.1 Fast', cost: '$0.10~/초', descKey: 'settings.modelVidFast', url: VIDEO_DOCS_URL, allowedResolutions: ['720p', '1080p', '4k'] },
-  { id: 'veo-3.1-generate-preview', label: 'Veo 3.1 Quality', cost: '$0.40~/초', descKey: 'settings.modelVidQuality', url: VIDEO_DOCS_URL, allowedResolutions: ['720p', '1080p', '4k'] },
+  { id: 'veo-3.1-lite-generate-preview', label: 'Veo 3.1 Lite', cost: '$0.05~', unit: 'sec', descKey: 'settings.modelVidLite', url: VIDEO_DOCS_URL, allowedResolutions: ['720p', '1080p'] },
+  { id: 'veo-3.1-fast-generate-preview', label: 'Veo 3.1 Fast', cost: '$0.10~', unit: 'sec', descKey: 'settings.modelVidFast', url: VIDEO_DOCS_URL, allowedResolutions: ['720p', '1080p', '4k'] },
+  { id: 'veo-3.1-generate-preview', label: 'Veo 3.1 Quality', cost: '$0.40~', unit: 'sec', descKey: 'settings.modelVidQuality', url: VIDEO_DOCS_URL, allowedResolutions: ['720p', '1080p', '4k'] },
 ]
 
 export const DEFAULT_IMAGE_MODEL_ID = 'gemini-2.5-flash-image'

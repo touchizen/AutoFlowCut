@@ -19,6 +19,13 @@ describe('ModelSelector (dropdown)', () => {
     expect(options[0].textContent).toContain('$1') // 비용은 옵션 텍스트에 (접힌 상태 노출)
   })
 
+  it('cost + unit → 비용 뒤에 로컬라이즈된 단위 (i18n 누출 방지)', () => {
+    const tUnit = (k) => (k === 'settings.unitPerImage' ? 'img' : k)
+    const o = [{ id: 'a', label: 'A', cost: '$0.039', unit: 'image' }]
+    const { container } = render(<ModelSelector options={o} value="a" onChange={vi.fn()} t={tUnit} />)
+    expect(container.querySelector('option').textContent).toContain('$0.039/img')
+  })
+
   it('value 가 select 의 현재값', () => {
     const { container } = render(<ModelSelector options={opts} value="b" onChange={vi.fn()} t={t} />)
     expect(container.querySelector('select.model-select').value).toBe('b')

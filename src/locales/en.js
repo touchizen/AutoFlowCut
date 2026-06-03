@@ -442,6 +442,8 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     modelVidQuality: 'Top quality · cinematic',
     modelDocsLink: 'Docs ↗',
     modelPricingLink: 'Pricing ↗',
+    unitPerImage: 'img',
+    unitPerSec: 'sec',
     videoResolution: 'Video Resolution',
     videoResolutionHint: 'Veo output resolution. 1080p/4K are always 8s; 720p matches scene length (4/6/8s).',
 
