@@ -5,14 +5,14 @@
   height: 100%;
   overflow: auto;
   display: grid;
-  /* Google Flow 처럼 — 타일 크기가 브라우저 폭에 비례(vw)해 커진다.
-     Flow 는 풀폭 3열·타일 ~580px(=뷰포트의 약 30%). 우리 그리드는 모니터(절반폭)라
-     같은 vw 비율이면 ~2열이지만 타일 크기는 Flow 급.
-     clamp(260,22vw,560): 작은 화면 260px, 큰 화면 560px 로 상·하한. 1fr 로 남는 폭 채움.
+  /* Google Flow 분석값 그대로 — Flow 는 타일 최소폭 ~480px 고정 + 1fr(남는 폭 채움)으로
+     타일이 480→640px 늘다가 한 열씩 추가되는 표준 반응형(창 좁으면 1열→2열→3열).
+     우리 그리드는 모니터(절반폭)라 480px면 1열이 돼, 440px 로 살짝 줄여 기본 2열
+     (타일 ~470px, Flow 급)·모니터 넓히면 3열. 콘텐츠/창 폭에 자동 반응.
      min(100%, …): 모니터가 타일보다 좁으면 1열 full-width 로 떨어져 overflow 방지. */
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, clamp(260px, 22vw, 560px)), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 440px), 1fr));
   grid-auto-rows: min-content;
-  gap: 8px;
+  gap: 12px;
   padding: 8px;
   align-content: start;
   box-sizing: border-box;
@@ -21,7 +21,7 @@
 .gentile {
   position: relative;
   aspect-ratio: var(--gentile-aspect, 16 / 9);
-  border-radius: 6px;
+  border-radius: 10px;
   overflow: hidden;
   background: #141414;
   border: 1px solid var(--border-color, #2a2a2a);
