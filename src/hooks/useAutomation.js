@@ -13,6 +13,7 @@ import { getTimestamp } from '../utils/formatters'
 import { cleanBase64 as stripBase64Prefix } from '../utils/urls'
 import { toast } from '../components/Toast'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
+import { clampInt } from '../utils/clampInt'
 
 export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings = null, addPendingSave = null, t = (key) => key, onAuthError = null, generationQueue = null, onComplete = null) {
   const [isRunning, setIsRunning] = useState(false)
@@ -64,8 +65,11 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
    * 비동기 배치 실행 (fire-and-forget + 폴링 수집)
    */
   const runConcurrentQueue = async (targetScenes, options, total) => {
-    let { projectName, saveMode, imageBatchCount, imageUpscale, aspectRatio, selectedStyleRefId, seed = null } = options
+    let { projectName, saveMode, imageBatchCount, imageUpscale, aspectRatio, selectedStyleRefId, seed = null, concurrency: rawConcurrency } = options
     if (selectedStyleRefId != null && typeof selectedStyleRefId !== 'string') selectedStyleRefId = String(selectedStyleRefId)
+    // 동시 in-flight 상한. 잘못된 값(0/음수/NaN)은 무한대기를 유발하므로 기본 5 로 clamp(1~10).
+    const concurrency = clampInt(rawConcurrency, 1, 10, 5)
+    const GATE_POLL_MS = 600  // window full 일 때 재확인 간격 (busy-loop/checkGeneration 과호출 방지)
     // selectedStyleRefId 없으면 자동 매칭 모드 — 씬별 style_tag로만 결정.
     // 임의의 "첫 스타일 카드 자동 적용" fallback은 제거됨 — UI 라벨("자동")과 실행이 일치해야 함.
     completedCountRef.current = 0
@@ -157,6 +161,21 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       }
       if (stopRequestedRef.current) break
 
+      // 동시성 게이트 — in-flight(pendingQueue) 가 concurrency 이상이면 슬롯이 빌 때까지 대기.
+      // collect 로 완료분 회수 시도 → 여전히 full 이면 pause/stop 존중하며 GATE_POLL_MS 폴링
+      // (busy-loop / checkGeneration 과호출 방지). Flow 시대의 고정 7~15초 대기를 대체.
+      while (pendingQueue.length >= concurrency && !stopRequestedRef.current) {
+        await collectCompleted()
+        if (pendingQueue.length >= concurrency) {
+          while (pausedRef.current && !stopRequestedRef.current) {
+            await new Promise(r => setTimeout(r, 500))
+          }
+          if (stopRequestedRef.current) break
+          await new Promise(r => setTimeout(r, GATE_POLL_MS))
+        }
+      }
+      if (stopRequestedRef.current) break
+
       const scene = targetScenes[i]
       updateScene(scene.id, { status: 'generating', generatingStartedAt: Date.now() })
       setStatusMessage(t('status.generatingScene', { ids: scene.id, current: completedCountRef.current, total }))
@@ -204,22 +223,6 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
         }
       }
 
-      // 씬 사이 대기 (7~15초) + 중간 수집
-      if (i < targetScenes.length - 1 && !stopRequestedRef.current) {
-        const waitMs = 7000 + Math.floor(Math.random() * 8000)
-        console.log('[Automation] Waiting', Math.round(waitMs / 1000), 's before next submit...')
-        const waitEnd = Date.now() + waitMs
-        while (Date.now() < waitEnd && !stopRequestedRef.current) {
-          while (pausedRef.current && !stopRequestedRef.current) {
-            await new Promise(r => setTimeout(r, 500))
-          }
-          await new Promise(r => setTimeout(r, 500))
-        }
-        // 중간 수집
-        if (pendingQueue.length > 0 && !stopRequestedRef.current) {
-          await collectCompleted()
-        }
-      }
     }
 
     // Phase 2: 남은 결과 전부 수집 (3초 간격, 최대 3분)
@@ -281,6 +284,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       aspectRatio = '16:9',
       selectedStyleRefId: _selectedStyleRefId = null,
       seed = null,
+      concurrency = undefined,
       force = false
     } = options
     const selectedStyleRefId = (_selectedStyleRefId != null && typeof _selectedStyleRefId !== 'string') ? String(_selectedStyleRefId) : _selectedStyleRefId
@@ -474,6 +478,7 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       aspectRatio,
       selectedStyleRefId,
       seed,
+      concurrency,
     }, total)
     
     // 완료 — 즉시 저장 (auto-save debounce 전에 프로젝트 전환/종료 방지)

@@ -139,14 +139,15 @@ describe('useAutomation quota-exhausted stop', () => {
 
     let startPromise
     await act(async () => {
-      startPromise = hook.result.current.start({ projectName: 'p', saveMode: 'folder' })
+      // concurrency=1 → 게이트가 s1 제출 후 다음 제출 전에 collectCompleted 실행 →
+      // collect-path quota 감지 → stop. (동시성>1 이면 window 만큼 먼저 제출되는 게 정상)
+      startPromise = hook.result.current.start({ projectName: 'p', saveMode: 'folder', concurrency: 1 })
     })
-    // Advance past inter-scene wait so collectCompleted fires.
     await act(async () => { await vi.advanceTimersByTimeAsync(30 * 1000) })
     await startPromise
 
-    // s1 was submitted; collectCompleted (mid-wait) saw quota → stopRequestedRef=true,
-    // remaining s2/s3 never submitted.
+    // s1 제출 후 게이트의 collectCompleted 가 quota 감지 → stopRequestedRef=true,
+    // 남은 s2/s3 는 제출 안 됨.
     expect(submitGenerationDOM).toHaveBeenCalledTimes(1)
     expect(showMock).toHaveBeenCalledTimes(1)
     // s1 marked error with quota error string (via collect path, not finalize).
