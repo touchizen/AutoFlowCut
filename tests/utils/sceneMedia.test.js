@@ -279,44 +279,29 @@ describe('getExportFilePaths', () => {
     expect(getExportFilePaths({ imagePath: '/img.png' })).toEqual(['/img.png'])
   })
 
-  describe('🚨 회귀 가드 — 선택 안 된 영상 path 는 제외', () => {
-    it("exportMedia='image' + 영상 path 들 있어도 imagePath 만 반환", () => {
-      // 사용자가 image export 선택했는데 과거 영상 path 가 남아있어 권한 prompt 뜨던 회귀
+  describe('B1 — exportMedia 무시, 있는 영상 path 다 포함', () => {
+    it("exportMedia='image' 여도 image + 영상 path 다 (영상도 export 하므로 권한 필요)", () => {
       const scene = {
         exportMedia: 'image',
         imagePath: '/img.png',
-        videoT2VPath: '/t.mp4',  // 선택 안 됨 — 제외
-        videoI2VPath: '/i.mp4',  // 선택 안 됨 — 제외
+        videoT2VPath: '/t.mp4',
+        videoI2VPath: '/i.mp4',
       }
-      expect(getExportFilePaths(scene)).toEqual(['/img.png'])
+      const paths = getExportFilePaths(scene)
+      expect(paths).toEqual(expect.arrayContaining(['/img.png', '/i.mp4', '/t.mp4']))
+      expect(paths.length).toBe(3)
     })
 
-    it("exportMedia='t2v' 면 imagePath + videoT2VPath, videoI2VPath 는 제외", () => {
+    it("exportMedia='t2v' 여도 videoI2VPath 도 포함 (핀이 export 를 거르지 않음)", () => {
       const scene = {
         exportMedia: 't2v',
         imagePath: '/img.png',
         videoT2VPath: '/t.mp4',
-        videoI2VPath: '/i.mp4',  // 선택 안 됨 — 제외
-      }
-      const paths = getExportFilePaths(scene)
-      expect(paths).toContain('/img.png')
-      expect(paths).toContain('/t.mp4')
-      expect(paths).not.toContain('/i.mp4')
-      expect(paths.length).toBe(2)
-    })
-
-    it("exportMedia='i2v' 면 imagePath + videoI2VPath, videoT2VPath 는 제외", () => {
-      const scene = {
-        exportMedia: 'i2v',
-        imagePath: '/img.png',
-        videoT2VPath: '/t.mp4',  // 선택 안 됨 — 제외
         videoI2VPath: '/i.mp4',
       }
       const paths = getExportFilePaths(scene)
-      expect(paths).toContain('/img.png')
-      expect(paths).toContain('/i.mp4')
-      expect(paths).not.toContain('/t.mp4')
-      expect(paths.length).toBe(2)
+      expect(paths).toEqual(expect.arrayContaining(['/img.png', '/t.mp4', '/i.mp4']))
+      expect(paths.length).toBe(3)
     })
   })
 
@@ -393,11 +378,11 @@ describe('getExportFilePaths', () => {
   })
 })
 
-describe('resolveExportVideos (하이브리드: 명시→1개, auto+둘다→2개)', () => {
+describe('resolveExportVideos (B1: exportMedia 무시 — 있는 영상 다 export)', () => {
   const i2v = { videoI2VPath: '/i.mp4', videoI2VDuration: 2 }
   const t2v = { videoT2VPath: '/t.mp4', videoT2VDuration: 4 }
 
-  it('auto + i2v·t2v 둘 다 → 둘 다 반환 (i2v 먼저)', () => {
+  it('i2v·t2v 둘 다 → 둘 다 반환 (i2v 먼저)', () => {
     const out = resolveExportVideos({ ...i2v, ...t2v })
     expect(out.map(v => v.source)).toEqual(['i2v', 't2v'])
     expect(out[0].path).toBe('/i.mp4')
@@ -405,17 +390,17 @@ describe('resolveExportVideos (하이브리드: 명시→1개, auto+둘다→2�
     expect(out[1].path).toBe('/t.mp4')
     expect(out[1].duration).toBe(4)
   })
-  it('auto + 하나만 → 그 하나', () => {
+  it('하나만 → 그 하나', () => {
     expect(resolveExportVideos({ ...t2v }).map(v => v.source)).toEqual(['t2v'])
   })
-  it("exportMedia='i2v' → i2v 만 (t2v 있어도)", () => {
-    expect(resolveExportVideos({ ...i2v, ...t2v, exportMedia: 'i2v' }).map(v => v.source)).toEqual(['i2v'])
+  it("exportMedia='i2v' 여도 둘 다 (핀은 export 안 거름 — 큐레이션은 CapCut)", () => {
+    expect(resolveExportVideos({ ...i2v, ...t2v, exportMedia: 'i2v' }).map(v => v.source)).toEqual(['i2v', 't2v'])
   })
-  it("exportMedia='t2v' → t2v 만", () => {
-    expect(resolveExportVideos({ ...i2v, ...t2v, exportMedia: 't2v' }).map(v => v.source)).toEqual(['t2v'])
+  it("exportMedia='t2v' 여도 둘 다", () => {
+    expect(resolveExportVideos({ ...i2v, ...t2v, exportMedia: 't2v' }).map(v => v.source)).toEqual(['i2v', 't2v'])
   })
-  it("exportMedia='image' → 빈 배열", () => {
-    expect(resolveExportVideos({ ...i2v, ...t2v, exportMedia: 'image' })).toEqual([])
+  it("exportMedia='image' 여도 영상 다 (영상 큐레이션은 CapCut 에서)", () => {
+    expect(resolveExportVideos({ ...i2v, ...t2v, exportMedia: 'image' }).map(v => v.source)).toEqual(['i2v', 't2v'])
   })
   it('비디오 없으면 빈 배열', () => {
     expect(resolveExportVideos({ imagePath: '/x.png' })).toEqual([])

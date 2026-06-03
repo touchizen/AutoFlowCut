@@ -35,12 +35,11 @@ export function resolveExportMediaChoice(scene) {
 }
 
 /**
- * 하이브리드 export: 씬에서 내보낼 영상 목록(0~2개)을 반환.
- *   - exportMedia 명시('i2v'/'t2v') → 그 하나만 (있으면)
- *   - exportMedia 'image' → []
- *   - 'auto' → 존재하는 영상 모두 (i2v·t2v 둘 다면 2개, i2v 먼저=프리뷰 상단/앞)
+ * export: 씬에서 내보낼 영상 목록(0~2개)을 반환.
+ * B1: exportMedia(i2v/t2v/image 핀) 무시 — 존재하는 영상은 모두 내보낸다.
+ *   (i2v·t2v 둘 다면 2개, i2v 먼저=프리뷰 상단/앞. 어느 take 쓸지는 CapCut 에서 큐레이션.)
  * 각 항목: { source:'i2v'|'t2v', path, data, duration }
- * → CapCut 2트랙 export(i2v 앞 / t2v 뒤)와 프리뷰 일관성을 위함.
+ * → CapCut 2트랙 export(i2v 앞 / t2v 뒤)와 프리뷰가 항상 일치.
  */
 export function resolveExportVideos(scene) {
   if (!scene) return []
@@ -50,11 +49,7 @@ export function resolveExportVideos(scene) {
   const t2v = (scene.videoT2V || scene.videoT2VPath)
     ? { source: 't2v', path: scene.videoT2VPath || null, data: scene.videoT2V || null, duration: scene.videoT2VDuration ?? null }
     : null
-  const choice = scene.exportMedia || 'auto'
-  if (choice === 'image') return []
-  if (choice === 'i2v') return i2v ? [i2v] : []
-  if (choice === 't2v') return t2v ? [t2v] : []
-  return [i2v, t2v].filter(Boolean) // auto: 있는 것 다 (i2v 먼저)
+  return [i2v, t2v].filter(Boolean) // 있는 영상 다 (i2v 먼저)
 }
 
 /**

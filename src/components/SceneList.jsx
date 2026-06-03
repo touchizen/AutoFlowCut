@@ -7,7 +7,7 @@ import { useI18n } from '../hooks/useI18n'
 import { formatTime, getRatioClass, resolveImageSrc, hasImageData } from '../utils/formatters'
 import { checkTagMatch } from '../utils/tagMatch'
 import { resolveExportVideos } from '../utils/sceneMedia'
-import { resolveVideoSrc, ensureBase64DataUrl } from '../utils/videoSrc'
+import { resolveVideoSrc } from '../utils/videoSrc'
 import { getSceneSubtitle, getSceneDuration } from '../utils/srtTrack'
 import { UI, STYLE_PRESETS } from '../config/defaults'
 import SceneDetailModal from './SceneDetailModal'
@@ -45,18 +45,18 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
   const sceneMatch = checkTagMatch(scene.scene_tag, references, 'scene')
   const styleMatch = checkTagMatch(scene.style_tag, references, 'style')
 
-  // 실제 export 되는 미디어 집합 (useExport 와 동일 — 시각이 export 결과를 정확히 반영).
-  // 하이브리드: auto + i2v·t2v 둘 다면 둘 다 export → 둘 다 selected (예전엔 i2v 만 표시했음).
-  const exportedSources = new Set(resolveExportVideos(scene).map(v => v.source))
-  const imageOnly = exportedSources.size === 0 // 영상 없이 이미지만 export
-  const isIncluded = (type) => (type === 'image' ? imageOnly : exportedSources.has(type))
-  const isSelected = (type) => isIncluded(type) ? 'selected' : ''
-  const exportMark = (type) => isIncluded(type) ? ' ✓' : ''
-
-  // 미디어 개수 (선택 UI 필요 여부)
   const hasImage = hasImageData(scene)
   const imgSrc = resolveImageSrc(scene)
-  const mediaCount = [hasImage, scene.videoT2V || scene.videoT2VPath, scene.videoI2V || scene.videoI2VPath].filter(Boolean).length
+  const mediaCount = [hasImage, scene.videoT2V || scene.videoT2VPath, scene.videoI2V || scene.videoI2VPath].filter(Boolean).length // 라벨 표시 여부
+
+  // B1: export 는 "있는 영상 다" 내보냄(어느 take 쓸지는 CapCut 에서 큐레이션).
+  // 이미지는 항상 베이스 트랙으로 나감. → Media 컬럼은 "export 에 포함됨"을 ✓/selected 로
+  // 보여주는 표시 전용이고, 클릭은 미리보기만(아래 onClick) — export 선택을 바꾸지 않는다.
+  const exportedSources = new Set(resolveExportVideos(scene).map(v => v.source))
+  const imageOnly = exportedSources.size === 0 // 영상 없이 이미지만 (duration 핸들러용)
+  const isIncluded = (type) => (type === 'image' ? hasImage : exportedSources.has(type))
+  const isSelected = (type) => isIncluded(type) ? 'selected' : ''
+  const exportMark = (type) => isIncluded(type) ? ' ✓' : ''
 
   // 매칭 상태 아이콘 (클릭 가능 — 태그 선택 모달 열기)
   const MatchIndicator = ({ match, tagType }) => {
@@ -85,24 +85,6 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
   // 비디오 src 생성 헬퍼 — 공용 utils/videoSrc 로 통합 (cache busting/Windows 경로/data URL 일관 처리)
   const toVideoSrc = (data, filePath, version) => resolveVideoSrc(data, filePath, { version }) || ''
 
-  // 비디오 duration 감지 (Promise) — base64 데이터에서 즉시 감지
-  const detectVideoDuration = (videoData) => {
-    return new Promise((resolve) => {
-      if (!videoData) return resolve(null)
-      const vid = document.createElement('video')
-      vid.preload = 'metadata'
-      vid.muted = true
-      vid.onloadedmetadata = () => {
-        const dur = Math.round(vid.duration * 10) / 10
-        resolve(dur > 0 ? dur : null)
-        vid.src = ''
-      }
-      vid.onerror = () => resolve(null)
-      vid.src = ensureBase64DataUrl(videoData) || ''
-      setTimeout(() => resolve(null), 3000) // 3초 타임아웃
-    })
-  }
-
   // 비디오 메타데이터 로드 → duration 감지 및 저장 (썸네일 onLoadedMetadata 백업용)
   const handleVideoMetadata = (e, type) => {
     const videoDuration = Math.round(e.target.duration * 10) / 10
@@ -121,30 +103,6 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
     }
 
     // 비디오 duration은 캐시만 하고, 씬 duration은 CSV 기준 유지
-    onUpdate(scene.id, updates)
-  }
-
-  // Export 미디어 전환 (duration은 CSV 기준 유지, 변경 안 함)
-  const switchExportMedia = async (type) => {
-    // 이미 명시 선택된 thumb 을 다시 클릭 → 선택 해제(exportMedia=null = auto).
-    // auto 면 있는 영상 다 export(i2v+t2v 2트랙) → 명시 단일 선택의 one-way door 해소.
-    if (scene.exportMedia === type) {
-      onUpdate(scene.id, { exportMedia: null })
-      return
-    }
-
-    const updates = { exportMedia: type }
-
-    if (type !== 'image') {
-      // 비디오 duration 캐시만 (씬 duration은 건드리지 않음)
-      const videoData = type === 't2v' ? scene.videoT2V : scene.videoI2V
-      const durationField = type === 't2v' ? 'videoT2VDuration' : 'videoI2VDuration'
-      if (!scene[durationField] && videoData) {
-        const videoDur = await detectVideoDuration(videoData)
-        if (videoDur) updates[durationField] = videoDur
-      }
-    }
-
     onUpdate(scene.id, updates)
   }
 
@@ -273,11 +231,7 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
               className={`media-thumb ${isSelected('image')} clickable`}
               onClick={(e) => {
                 e.stopPropagation()
-                if (mediaCount > 1) {
-                  switchExportMedia('image')
-                } else {
-                  onShowDetail(scene)
-                }
+                onShowDetail(scene)
               }}
               onDoubleClick={() => onShowDetail(scene)}
               title={`IMG${exportMark('image')}`}
@@ -306,17 +260,13 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
               onMouseLeave={() => setHoveredVideo(null)}
               onClick={(e) => {
                 e.stopPropagation()
-                if (mediaCount > 1) {
-                  switchExportMedia('t2v')
-                } else {
-                  onShowVideoDetail({
-                    id: `t2v_${scene.id.replace('scene_', '')}`,
-                    prompt: scene.prompt,
-                    video: scene.videoT2V,
-                    videoPath: scene.videoT2VPath,
-                    status: 'complete',
-                  })
-                }
+                onShowVideoDetail({
+                  id: `t2v_${scene.id.replace('scene_', '')}`,
+                  prompt: scene.prompt,
+                  video: scene.videoT2V,
+                  videoPath: scene.videoT2VPath,
+                  status: 'complete',
+                })
               }}
               onDoubleClick={() => onShowVideoDetail({
                 id: `t2v_${scene.id.replace('scene_', '')}`,
@@ -355,17 +305,13 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
               onMouseLeave={() => setHoveredVideo(null)}
               onClick={(e) => {
                 e.stopPropagation()
-                if (mediaCount > 1) {
-                  switchExportMedia('i2v')
-                } else {
-                  onShowVideoDetail({
-                    id: i2vId,
-                    prompt: scene.prompt,
-                    video: scene.videoI2V,
-                    videoPath: scene.videoI2VPath,
-                    status: 'complete',
-                  })
-                }
+                onShowVideoDetail({
+                  id: i2vId,
+                  prompt: scene.prompt,
+                  video: scene.videoI2V,
+                  videoPath: scene.videoI2VPath,
+                  status: 'complete',
+                })
               }}
               onDoubleClick={() => onShowVideoDetail({
                 id: i2vId,
