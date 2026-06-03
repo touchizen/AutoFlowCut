@@ -6,7 +6,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useI18n } from '../hooks/useI18n'
 import { formatTime, getRatioClass, resolveImageSrc, hasImageData } from '../utils/formatters'
 import { checkTagMatch } from '../utils/tagMatch'
-import { resolveExportMediaChoice } from '../utils/sceneMedia'
+import { resolveExportVideos } from '../utils/sceneMedia'
 import { resolveVideoSrc, ensureBase64DataUrl } from '../utils/videoSrc'
 import { getSceneSubtitle, getSceneDuration } from '../utils/srtTrack'
 import { UI, STYLE_PRESETS } from '../config/defaults'
@@ -45,9 +45,13 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
   const sceneMatch = checkTagMatch(scene.scene_tag, references, 'scene')
   const styleMatch = checkTagMatch(scene.style_tag, references, 'style')
 
-  // 현재 export 미디어 결정 (useExport 와 동일 로직 — 시각이 실제 export 결과를 정확히 반영)
-  const activeMedia = resolveExportMediaChoice(scene)
-  const isSelected = (type) => activeMedia === type ? 'selected' : ''
+  // 실제 export 되는 미디어 집합 (useExport 와 동일 — 시각이 export 결과를 정확히 반영).
+  // 하이브리드: auto + i2v·t2v 둘 다면 둘 다 export → 둘 다 selected (예전엔 i2v 만 표시했음).
+  const exportedSources = new Set(resolveExportVideos(scene).map(v => v.source))
+  const imageOnly = exportedSources.size === 0 // 영상 없이 이미지만 export
+  const isIncluded = (type) => (type === 'image' ? imageOnly : exportedSources.has(type))
+  const isSelected = (type) => isIncluded(type) ? 'selected' : ''
+  const exportMark = (type) => isIncluded(type) ? ' ✓' : ''
 
   // 미디어 개수 (선택 UI 필요 여부)
   const hasImage = hasImageData(scene)
@@ -157,8 +161,8 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
               duration,
               endTime: scene.startTime + duration
             }
-            // 이미지 모드에서 수동 변경 → imageDuration도 업데이트
-            if (activeMedia === 'image') {
+            // 이미지 모드(영상 export 없음)에서 수동 변경 → imageDuration도 업데이트
+            if (imageOnly) {
               updates.imageDuration = duration
             }
             onUpdate(scene.id, updates)
@@ -269,7 +273,7 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
                 }
               }}
               onDoubleClick={() => onShowDetail(scene)}
-              title={`IMG${activeMedia === 'image' ? ' ✓' : ''}`}
+              title={`IMG${exportMark('image')}`}
             >
               {/* R37 fix: LazyImage — 뷰포트 이탈 시 img 언마운트해 VRAM 회수 */}
               <LazyImage
@@ -314,7 +318,7 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
                 videoPath: scene.videoT2VPath,
                 status: 'complete',
               })}
-              title={`T2V${activeMedia === 't2v' ? ' ✓' : ''} — ${t('sceneList.dblClickToView') || 'Double-click to view'}`}
+              title={`T2V${exportMark('t2v')} — ${t('sceneList.dblClickToView') || 'Double-click to view'}`}
             >
               {/* R26 review fix: hover 시점에만 <video> mount. duration 추출도 hover
                   순간 onLoadedMetadata 로. 첫 로드 VRAM burst 없음. */}
@@ -363,7 +367,7 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
                 videoPath: scene.videoI2VPath,
                 status: 'complete',
               })}
-              title={`I2V${activeMedia === 'i2v' ? ' ✓' : ''} — ${t('sceneList.dblClickToView') || 'Double-click to view'}`}
+              title={`I2V${exportMark('i2v')} — ${t('sceneList.dblClickToView') || 'Double-click to view'}`}
             >
               {/* R26 review fix: hover 시점에만 <video> mount (T2V 와 동일) */}
               {hoveredVideo === 'i2v' ? (
