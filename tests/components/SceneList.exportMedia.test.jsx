@@ -52,3 +52,23 @@ describe('SceneList — export 미디어 표시 일관성', () => {
     expect(thumbFor(container, 'T2V').classList.contains('selected')).toBe(false)
   })
 })
+
+describe('SceneList — Auto 복귀 (선택된 thumb 재클릭 토글)', () => {
+  const renderWith = (scene, onUpdate) => render(
+    <SceneList scenes={[scene]} onUpdate={onUpdate} onDelete={vi.fn()} onAdd={vi.fn()} defaultDuration={3} projectName="P" />
+  )
+
+  it('명시 선택된 thumb 재클릭 → exportMedia=null (auto/둘 다 복귀)', () => {
+    const onUpdate = vi.fn()
+    const { container } = renderWith(bothScene({ exportMedia: 'i2v' }), onUpdate)
+    fireEvent.click(thumbFor(container, 'I2V'))
+    expect(onUpdate).toHaveBeenCalledWith('scene_1', expect.objectContaining({ exportMedia: null }))
+  })
+
+  it('auto 상태에서 thumb 클릭 → 그 type 으로 핀 (해제 아님)', () => {
+    const onUpdate = vi.fn()
+    const { container } = renderWith(bothScene(), onUpdate)
+    fireEvent.click(thumbFor(container, 'I2V'))
+    expect(onUpdate).toHaveBeenCalledWith('scene_1', expect.objectContaining({ exportMedia: 'i2v' }))
+  })
+})

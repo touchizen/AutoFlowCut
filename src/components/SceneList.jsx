@@ -126,6 +126,13 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
 
   // Export 미디어 전환 (duration은 CSV 기준 유지, 변경 안 함)
   const switchExportMedia = async (type) => {
+    // 이미 명시 선택된 thumb 을 다시 클릭 → 선택 해제(exportMedia=null = auto).
+    // auto 면 있는 영상 다 export(i2v+t2v 2트랙) → 명시 단일 선택의 one-way door 해소.
+    if (scene.exportMedia === type) {
+      onUpdate(scene.id, { exportMedia: null })
+      return
+    }
+
     const updates = { exportMedia: type }
 
     if (type !== 'image') {
