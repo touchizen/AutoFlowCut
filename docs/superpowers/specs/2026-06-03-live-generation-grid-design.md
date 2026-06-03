@@ -30,8 +30,12 @@ Flow→공식 API(BYOK) 전환 후 생성 파이프라인 UX 가 어정쩡하다
 ## 핵심 사실 (API rate limit — 설계 근거)
 
 - 이미지(`gemini-2.5-flash-image`)·Veo 는 **유료 tier 전용** (무료 미지원).
-- 한도는 **프로젝트 단위**(키 단위 아님). 이미지 ~10 IPM, Paid Tier1 텍스트 300 RPM.
-- **별도 동시성 cap 없음** → 동시성은 IPM 이 결정. 안전 기본값 **5** (설정 노출 예정).
+- 한도는 **프로젝트 단위**(키 단위 아님)이며 **모델/티어/계정 상태에 따라 달라진다**.
+  활성 한도는 AI Studio 대시보드에서 확인. (공식 문서 기준 — 고정 수치 아님)
+- 현재 관측/AI Studio 기준 이미지 대략 ~10 IPM 수준, Paid Tier1 텍스트 ~300 RPM 수준
+  (참고치, 변동 가능).
+- **별도 동시성 cap 은 문서화돼 있지 않음** → 동시성 상한은 사실상 IPM 이 결정.
+  안전 기본값 **5** (설정 노출).
 - 429 처리: 지수 backoff + jitter, `RetryInfo.retryDelay` 존중, 5~8회 cap. (① 에서 반영)
 
 ## 구현 순서 (의존성)
@@ -53,7 +57,7 @@ Flow→공식 API(BYOK) 전환 후 생성 파이프라인 UX 가 어정쩡하다
 - `src/components/AudioTimeline/AudioTimeline.jsx:1065` (`file://${imgPath}`)
 - `src/components/AudioTimeline/PreviewPanel.jsx:205` (`file://${imgPath}`)
 
-클립은 `sceneRef`(scene 전체)를 들고 있어 `generatedAt` 접근 가능. scene 은 이미지 완료 시 `generatedAt` 을 기록한다(`App.jsx:944`). `resolveImageSrc(sceneRef)` 가 `generatedAt → ?v=` fallback(`updatedAt`/`flaggedAt`)을 처리.
+클립은 `sceneRef`(scene 전체)를 들고 있어 `generatedAt` 접근 가능. 이미지 완료 시 `generatedAt` 은 **finalize 경로에서 기록**된다(`imageFinalize.js:59` — `generatedAt = Date.now()`, `status: 'done'`). (비디오는 `App.jsx` onUpdate 경로.) `resolveImageSrc(sceneRef)` 가 `generatedAt → ?v=` fallback(`updatedAt`/`flaggedAt`)을 처리.
 
 **검증**: 같은 경로 재생성 시 타임라인/모니터가 새 이미지로 갱신. (회귀 테스트: resolveImageSrc 가 generatedAt 변화로 다른 URL 생성)
 
@@ -62,7 +66,11 @@ Flow→공식 API(BYOK) 전환 후 생성 파이프라인 UX 가 어정쩡하다
 `useAutomation` 의 `runConcurrentQueue` Phase 1:
 
 - **제거**: 씬 사이 7~15초 랜덤 대기 (`waitMs = 7000 + random*8000`) + 그 대기 루프.
-- **추가**: 제출 전 동시성 게이트 — `pendingQueue.length >= concurrency` 이면 `collectCompleted()` 로 슬롯이 빌 때까지(또는 stop) 짧은 폴링 대기.
+- **추가**: 제출 전 동시성 게이트 — `pendingQueue.length >= concurrency` 이면:
+  1. `collectCompleted()` 1회 호출 (완료분 회수 → 슬롯 확보 시도)
+  2. **여전히 full 이면 500~1000ms 대기** (busy-loop / `checkGeneration` 과호출 방지)
+  3. `pausedRef`(사용자 일시정지)·`stopRequestedRef` 존중 — pause 중엔 멈추고, stop 이면 break
+  슬롯이 빌 때까지 1~3 반복.
 - `concurrency` 는 `options` 로 주입 (기본 **5**). `runConcurrentQueue` 에서 `concurrency = 5` 기본값.
 - Phase 2(잔여 드레인), collect/inflight 인프라, quota-stop, 사용자 pause 는 그대로 유지.
 
@@ -71,18 +79,53 @@ Flow→공식 API(BYOK) 전환 후 생성 파이프라인 UX 가 어정쩡하다
 - 7~15초 inter-scene 대기 제거 — 배치가 fake-timer 짧은 advance 로 완료(기존엔 (N-1)·~7s 필요).
 - 기존 비-reCAPTCHA 통합 테스트(name-based refs, force reset) 유지.
 
-## Stage 3. 동시성 설정
+## Stage 3. 동시성 설정 (현재 dead field → 연결)
 
-설정(설정 모달의 적절한 탭) + localStorage 로 `concurrency` 노출. 기본 5. `start()`/`runConcurrentQueue` 옵션으로 전달.
+**현재 상태**: `concurrency` 는 이미 `defaults.js`(현재 `1`)·settings·localStorage 에 존재하고
+`App.jsx` 가 `start({ concurrency: settings.concurrency || 2, ... })` 로 넘긴다(866, 1553).
+그러나 `useAutomation.start()` 가 이를 **destructure 하지 않아 dead field** 다
+(App.jsx:1550 주석에 명시). default 도 1/2.
 
-**검증**: 설정값이 `runConcurrentQueue` 에 전달됨 (단위).
+**변경**:
+- `defaults.js` concurrency 기본값 `1` → **`5`**.
+- `useAutomation.start()` 가 `concurrency` 를 destructure → `runConcurrentQueue` options 로 전달
+  (Stage 2 게이트가 소비).
+- App 의 `settings.concurrency || 2` fallback → `|| 5` 로 통일.
+- UI 컨트롤: 설정 모달에 동시성 슬라이더/숫자 입력 (없으면 추가, 있으면 기본 5 반영).
+
+**검증**: `start({ concurrency: N })` → `runConcurrentQueue` 가 N 으로 동작 (단위/통합).
 
 ## Grid + B. Live Generation Grid
 
+### 정규화 GenerationItem 모델 (핵심 — 탭별 소스 차이 흡수)
+
+탭마다 자산 소스가 **다르다**:
+- 이미지 탭 `'text'` → `scenes` 의 `imagePath`/`image`/`status`
+- T2V 탭 `'video-text'` → `scenes` 의 `videoT2VPath`/`videoT2V`/`videoT2VStatus` (videoT2VPrompt 있는 씬만)
+- F2V 탭 `'frame-to-video'` → **`framePairs`** (원본이 scenes 가 아님)
+
+→ Grid 는 scenes 를 직접 받지 않고 **정규화 item 배열**을 받는다. 탭별 어댑터가 변환:
+
+```js
+// GenerationItem
+{ id, status, kind: 'image' | 'video', thumbSrc, generatedAt, error, ref }
+```
+
+- `status` 는 **정규화** — `isComplete(status) = status === 'done' || status === 'complete'`
+  (이미지=`'done'`, 비디오=`'complete'`. `imageFinalize.js:134`/video automation 차이. `ResultsTable.jsx:226` 의 `isDone` 선례와 동일 규칙).
+- `thumbSrc` 는 캐시버스터 적용된 `resolveImageSrc`(이미지) 또는 비디오 경로(poster/`<video muted>`).
+- `ref` = 원본(scene 또는 framePair) — 클릭 시 상세 모달용.
+
+**어댑터** `buildGenerationItems(activeTab, { scenes, framePairs })`:
+- `'text'` → scenes → image items
+- `'video-text'` → videoT2VPrompt 있는 scenes → video items (videoT2V* 필드)
+- `'frame-to-video'` → framePairs → video items
+
 ### 컴포넌트 경계
 
-- **`LiveGenerationGrid({ scenes, assetType, onSceneSelect })`** — 순수 표시. 상태는 `scenes` 에서 파생. 외부 의존은 `onSceneSelect` 만.
-- **`GenTile({ scene, assetType, onClick })`** — 씬 1개의 상태별 타일.
+- **`LiveGenerationGrid({ items, onItemSelect })`** — 순수 표시. 외부 의존은 `onItemSelect` 만.
+- **`GenTile({ item, onClick })`** — item 1개의 상태별 타일.
+- **`buildGenerationItems(activeTab, sources)`** — 순수 함수(단위 테스트 용이), 어댑터.
 
 ### 위치 / 전환
 
@@ -90,7 +133,10 @@ Flow→공식 API(BYOK) 전환 후 생성 파이프라인 UX 가 어정쩡하다
 
 ```jsx
 anyRunning ? (
-  <LiveGenerationGrid scenes={scenes} assetType={activeTab === 'video' || activeTab === 'f2v' ? 'video' : 'image'} onSceneSelect={setSelectedScene} />
+  <LiveGenerationGrid
+    items={buildGenerationItems(activeTab, { scenes, framePairs })}
+    onItemSelect={(item) => setSelectedScene(item.ref)}
+  />
 ) : (
   <PreviewPanel ... />  // 기존 단일프레임 프리뷰
 )
@@ -100,21 +146,20 @@ anyRunning ? (
 
 ### 타일 상태 모델 (Google Flow 스타일)
 
-`scene.status` 기반:
+`item.status`(정규화) 기반:
 
-| status | 표시 |
-|--------|------|
-| `pending` | 빈 placeholder (옅은 박스) |
-| `generating` | **shimmer**(윤기/광택) 애니메이션. 이전 이미지 있으면 그 위 오버레이, 없으면 빈 타일 위 |
-| `complete` | 실제 이미지/비디오 썸네일 (캐시버스터 적용) |
-| `error` | ⚠️ 아이콘 + 빨강 테두리, hover 시 `scene.error` tooltip |
+| 상태 | 판정 | 표시 |
+|------|------|------|
+| pending | `'pending'` 또는 미시작 | 빈 placeholder (옅은 박스) |
+| generating | `'generating'` | **shimmer**(윤기/광택). 이전 thumbSrc 있으면 그 위 오버레이, 없으면 빈 타일 위 |
+| complete | `isComplete(status)` (`'done'`·`'complete'`) | 실제 이미지/비디오 썸네일 (`thumbSrc`, 캐시버스터) |
+| error | `'error'` | ⚠️ 아이콘 + 빨강 테두리, hover 시 `item.error` tooltip |
 
-- `assetType==='image'` → `imagePath`(캐시버스터), `video` → `videoPath` 썸네일/`<video muted>`.
-- 타일 클릭 → `onSceneSelect(scene)` (기존 씬 상세 모달 재사용).
+- 타일 클릭 → `onItemSelect(item)` → `setSelectedScene(item.ref)` (기존 상세 모달 재사용).
 
 ### 데이터 소스
 
-`scenes` 전체 (진행 보드 — 전체가 채워지는 게 보임). 별도 fetch 없음.
+탭별 어댑터가 만든 **정규화 item 배열 전체** (진행 보드 — 전체가 채워지는 게 보임). 별도 fetch 없음.
 
 ### 반응형 레이아웃 (CSS)
 
@@ -128,17 +173,28 @@ CSS keyframes (gradient sweep). `generating` 타일 + (B) 타임라인 `generati
 
 ### B. 타임라인 클립 shimmer
 
-`useAudioTimeline` 이미지/비디오 클립에 `generating` 플래그 파생(`scene.status==='generating'` 또는 `generatingStartedAt && !generatingEndedAt`). `Clip.jsx` 가 `generating` 일 때 shimmer 클래스. 현재는 `imagePath` 있을 때만 클립 생성 → `generating` 이고 이미지 없는 씬도 placeholder 클립을 그려야 shimmer 가 보임 (해당 씬 시간 구간에).
+`useAudioTimeline` 이미지/비디오 클립에 `generating` 플래그 파생(`scene.status==='generating'` 또는 `generatingStartedAt && !generatingEndedAt`). `Clip.jsx` 가 `generating` 일 때 shimmer 클래스.
+
+**클립 생성 계약 변경**: 현재 `useAudioTimeline` 은 `imagePath` 가 **없으면 이미지 클립을 만들지 않는다**(`useAudioTimeline.js:139`). 따라서 `generating` 인데 아직 이미지가 없는 씬은 타임라인에 안 나타나 shimmer 도 안 보인다. → **generating 씬은 imagePath 없어도 placeholder 클립을 생성**:
+
+```js
+// useAudioTimeline 이미지 트랙 — imagePath 없어도 generating 이면 placeholder 클립
+{ id: `img-${s.id}`, startMs, endMs, imagePath: imgPath || null,
+  generating: true, placeholder: !imgPath, sceneRef: s, color: COLORS.image }
+```
+
+`Clip.jsx` 는 `generating` → shimmer, `placeholder`(이미지 없음) → 빈 박스+shimmer. 기존 완료 클립(imagePath 有)은 그대로.
 
 **검증**:
+- `buildGenerationItems`: 탭별(text/video-text/frame-to-video) 정규화, `isComplete`(done·complete 둘 다) 단위 테스트.
 - `LiveGenerationGrid`: 상태별 타일 렌더 (pending/generating/complete/error) 단위 테스트.
 - `GenTile`: error 시 ⚠️ + tooltip, complete 시 캐시버스터 src.
 - 모니터 전환: `anyRunning` true → Grid, false → PreviewPanel (통합).
-- 타임라인 클립 shimmer: generating 씬에 shimmer 클래스.
+- 타임라인 클립 shimmer: generating 씬에 placeholder 클립 + shimmer 클래스.
 
 ## 테스트 전략
 
-- 단위: LiveGenerationGrid/GenTile 상태 렌더, resolveImageSrc 캐시버스터, snapVeo 무관, useAutomation 동시성 윈도우.
+- 단위: `buildGenerationItems`(탭별 정규화+isComplete), LiveGenerationGrid/GenTile 상태 렌더, resolveImageSrc 캐시버스터, useAutomation 동시성 윈도우(게이트 sleep 포함).
 - 통합: 모니터 anyRunning 전환, 배치 동시성 동작(fake timer), mp3/기존 흐름 회귀.
 - 러너: vitest. 커밋 전 관련 테스트 green.
 
