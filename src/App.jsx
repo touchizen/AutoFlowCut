@@ -54,7 +54,7 @@ import ResultsTable from './components/ResultsTable'
 import SceneDetailModal from './components/SceneDetailModal'
 import VideoDetailModal from './components/VideoDetailModal'
 import LiveGenerationGrid from './components/LiveGenerationGrid'
-import { buildGenerationItems, genModeForTab } from './utils/generationItems'
+import { buildGenerationItems, genModeForTab, sortGenerationItems } from './utils/generationItems'
 import ResizeHandle from './components/ResizeHandle'
 import { ExportModal } from './components/ExportModal'
 import { AuthModal } from './components/AuthModal'
@@ -1593,7 +1593,7 @@ function App() {
               {anyRunning ? (
                 // 생성 중 — 라이브 자산 그리드(snapshot 된 runningGenMode 기준).
                 <LiveGenerationGrid
-                  items={buildGenerationItems(runningGenMode, { scenes, videoScenes, framePairs })}
+                  items={sortGenerationItems(buildGenerationItems(runningGenMode, { scenes, videoScenes, framePairs }))}
                   aspectRatio={settings.aspectRatio}
                   onItemSelect={(item) => item.kind === 'video' ? setSelectedVideo(item.ref) : setSelectedScene(item.ref)}
                 />

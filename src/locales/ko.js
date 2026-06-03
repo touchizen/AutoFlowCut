@@ -324,7 +324,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     cancel: '취소',
     
     // 탭
-    tabStorage: '저장',
+    tabStorage: '프로젝트',
     tabGeneration: '생성',
     tabScene: '씬',
     tabDisplay: '화면',

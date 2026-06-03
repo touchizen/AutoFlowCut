@@ -15,7 +15,7 @@ import ApiKeyTab from './settings/ApiKeyTab'
 import './SettingsModal.css'
 
 const TABS = [
-  { id: 'storage', icon: '💾', labelKey: 'settings.tabStorage' },
+  { id: 'storage', icon: '📁', labelKey: 'settings.tabStorage' },
   { id: 'apiKey', icon: '🔑', labelKey: 'settings.tabApiKey' },
   { id: 'scene', icon: '🎬', labelKey: 'settings.tabScene' },
   { id: 'display', icon: '🖥️', labelKey: 'settings.tabDisplay' },

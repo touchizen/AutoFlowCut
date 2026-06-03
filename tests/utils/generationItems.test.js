@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { normalizeState, buildGenerationItems } from '../../src/utils/generationItems'
+import { normalizeState, buildGenerationItems, sortGenerationItems } from '../../src/utils/generationItems'
 
 describe('normalizeState', () => {
   it('done·complete → complete (이미지=done, 비디오=complete)', () => {
@@ -70,5 +70,33 @@ describe('buildGenerationItems', () => {
     expect(buildGenerationItems('image', {})).toEqual([])
     expect(buildGenerationItems('t2v', {})).toEqual([])
     expect(buildGenerationItems('f2v', {})).toEqual([])
+  })
+})
+
+describe('sortGenerationItems', () => {
+  it('generating 맨 위 → complete(최신순) → error → pending', () => {
+    const items = [
+      { id: 'p', state: 'pending' },
+      { id: 'c1', state: 'complete', generatedAt: 100 },
+      { id: 'g', state: 'generating' },
+      { id: 'c2', state: 'complete', generatedAt: 200 },
+      { id: 'e', state: 'error' },
+    ]
+    expect(sortGenerationItems(items).map(i => i.id)).toEqual(['g', 'c2', 'c1', 'e', 'p'])
+  })
+
+  it('같은 state 는 입력 순서 유지(안정 정렬)', () => {
+    const items = [
+      { id: 'g1', state: 'generating' },
+      { id: 'g2', state: 'generating' },
+      { id: 'p1', state: 'pending' },
+    ]
+    expect(sortGenerationItems(items).map(i => i.id)).toEqual(['g1', 'g2', 'p1'])
+  })
+
+  it('원본 배열은 변형하지 않음 (순수)', () => {
+    const items = [{ id: 'a', state: 'pending' }, { id: 'b', state: 'generating' }]
+    sortGenerationItems(items)
+    expect(items.map(i => i.id)).toEqual(['a', 'b'])
   })
 })

@@ -74,3 +74,16 @@ export function buildGenerationItems(mode, { scenes, videoScenes, framePairs } =
   if (mode === 'f2v') return (framePairs || []).map(videoItem)
   return []
 }
+
+// 그리드 표시 순서 — 생성 중인 게 맨 위로, 그다음 방금 완료된 것(최신순), 에러, 대기.
+// 사용자가 "지금 뭐가 생성되는지" 와 갓 나온 결과를 스크롤 없이 바로 보게 한다.
+const STATE_ORDER = { generating: 0, complete: 1, error: 2, pending: 3 }
+export function sortGenerationItems(items) {
+  // 원본 불변(순수) + 안정 정렬(같은 state 는 입력 순서 유지 — V8 sort 는 stable).
+  return [...(items || [])].sort((a, b) => {
+    const d = (STATE_ORDER[a.state] ?? 9) - (STATE_ORDER[b.state] ?? 9)
+    if (d !== 0) return d
+    if (a.state === 'complete') return (b.generatedAt || 0) - (a.generatedAt || 0) // 최신 완료가 위
+    return 0
+  })
+}
