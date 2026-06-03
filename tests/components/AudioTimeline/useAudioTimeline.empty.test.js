@@ -75,6 +75,6 @@ describe('useAudioTimeline empty-state placeholders', () => {
     const srt = [{ startMs: 0, endMs: 5000, text: 'foo' }]
     const { result } = renderHook(() => useAudioTimeline(pkg, scenes, srt))
     const ids = result.current.tracks.map(t => t.id)
-    expect(ids).toEqual(['image', 'subtitle', 'narration', 'voice', 'sfx'])
+    expect(ids).toEqual(['subtitle', 'image', 'narration', 'voice', 'sfx'])
   })
 })

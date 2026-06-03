@@ -346,10 +346,10 @@ describe('useAudioTimeline', () => {
   })
 
   describe('트랙 순서', () => {
-    it('returns tracks in order: image, subtitle, narration, voice, sfx', () => {
+    it('returns tracks in z-order: subtitle, image, narration, voice, sfx (자막 최상단)', () => {
       const { result } = renderHook(() => useAudioTimeline(baseAudio, baseScenes, baseSrt))
       const ids = result.current.tracks.map(t => t.id)
-      expect(ids).toEqual(['image', 'subtitle', 'narration', 'voice', 'sfx'])
+      expect(ids).toEqual(['subtitle', 'image', 'narration', 'voice', 'sfx'])
     })
   })
 

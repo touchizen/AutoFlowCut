@@ -310,11 +310,15 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
     // 트랙 구성 — Narration/SFX는 placeholder로 항상 표시 (드롭 타겟).
     // Video/Image/Subtitle/Voice는 데이터 있을 때만 (드롭 받지 않음).
     //
-    // 트랙 순서 (위→아래) = 비주얼 z-order (위 트랙이 위 레이어):
-    //   Video(I2V) > Video(T2V) > Image > 자막 > Narration > Voice > SFX
-    // 위 트랙이 위 레이어 — 모니터는 맨 위 "보이는" 비디오 트랙을 재생(i2v 우선, View 끄면 t2v).
-    // 일반 NLE(Premiere/CapCut/DaVinci) 컨벤션과 동일.
+    // 트랙 순서 (위→아래) = 비주얼 z-order (위 트랙이 위 레이어). PreviewPanel 렌더 순서
+    // (이미지 배경 → 비디오 오버레이 → 자막 최상단)와 일치시킨다:
+    //   자막 > Video(I2V) > Video(T2V) > Image > Narration > Voice > SFX
+    // 자막은 비디오/이미지 위에 얹히므로 맨 위. 모니터는 맨 위 "보이는" 비디오 트랙을
+    // 재생(i2v 우선, View 끄면 t2v). 일반 NLE(Premiere/CapCut/DaVinci) 컨벤션과 동일.
     const tracks = []
+    if (subtitleClips.length > 0) {
+      tracks.push({ id: 'subtitle', name: '자막', color: COLORS.subtitle, variant: 'text', clips: subtitleClips, role: 'subtitle' })
+    }
     if (videoI2VClips.length > 0) {
       tracks.push({ id: 'video-i2v', name: 'Video (I2V)', color: COLORS.video, variant: 'block', clips: videoI2VClips, role: 'video-i2v' })
     }
@@ -323,9 +327,6 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
     }
     if (imageClips.length > 0) {
       tracks.push({ id: 'image', name: 'Image', color: COLORS.image, variant: 'block', clips: imageClips, role: 'image' })
-    }
-    if (subtitleClips.length > 0) {
-      tracks.push({ id: 'subtitle', name: '자막', color: COLORS.subtitle, variant: 'text', clips: subtitleClips, role: 'subtitle' })
     }
     tracks.push({
       id: 'narration', name: 'Narration', color: COLORS.narration, variant: 'audio',
