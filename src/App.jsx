@@ -19,6 +19,8 @@ import { useExport } from './hooks/useExport'
 import { useStoreRating } from './hooks/useStoreRating'
 import { useAudioImport } from './hooks/useAudioImport'
 import { useAppSettings } from './hooks/useAppSettings'
+import { useAvailableModels } from './hooks/useAvailableModels'
+import { computeModelHeal } from './config/genModels'
 import { useAutoSave } from './hooks/useAutoSave'
 import { useFlowEvents } from './hooks/useFlowEvents'
 import { useMcpServer } from './hooks/useMcpServer'
@@ -233,6 +235,20 @@ function App() {
 
   // Flow 역공학 → 공식 GenAI(BYOK). 변수명은 호환을 위해 genAPI 유지(점진 정리).
   const genAPI = useGenAPI({ onAuthError: handleAuthError, getProjectName: () => settings.projectName })
+
+  // 라이브 /models 로 채운 사용 가능 모델 목록(설정 드롭다운 + stale 저장값 치유에 공유).
+  const availableModels = useAvailableModels(genAPI)
+  // settings 를 effect deps 없이 최신으로 읽기 위한 ref (heal effect 가 settings 변경마다
+  // 재실행되지 않도록 — 변경은 idempotent 라 안전하지만 불필요한 실행 회피).
+  const settingsModelRef = useRef(settings)
+  useEffect(() => { settingsModelRef.current = settings }, [settings])
+  // /models 가 성공해 권위 있는 동적 목록을 얻은 경우에만, 저장된 모델이 그 목록에 없으면
+  // (= 이 키로 사용 불가한 stale 값) 기본/첫 사용가능 모델로 치유 → 생성 시 invalid 모델이
+  // API 로 나가는 걸 막는다. 정적 폴백(=참조가 카탈로그 그대로)·로딩·실패면 보존(리뷰 P2).
+  useEffect(() => {
+    const heal = computeModelHeal(availableModels, settingsModelRef.current)
+    for (const [key, val] of Object.entries(heal)) updateSetting(key, val)
+  }, [availableModels.imageModels, availableModels.videoModels, updateSetting])
   const scenesHook = useScenes()
   const automation = useAutomation(
     genAPI,
@@ -1909,7 +1925,7 @@ function App() {
           settings={settings}
           initialTab={settingsTab}
           onProjectChange={handleProjectChange}
-          genAPI={genAPI}
+          availableModels={availableModels}
           onSave={async (newSettings) => {
             setSettings(newSettings)
             setShowSettings(false)

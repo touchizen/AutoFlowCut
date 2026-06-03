@@ -64,6 +64,43 @@ export function categorizeApiModels(rawModels) {
   }
 }
 
+/**
+ * 권위 있는(authoritative) 모델 목록 기준으로 유효한 모델 id 선택.
+ * 저장값이 목록에 있으면 그대로, 없으면 defaultId(목록에 있을 때), 그것도 없으면 첫 항목.
+ * 빈 목록(권위 없음/로딩·실패)이면 치유하지 않고 id 보존.
+ * → /models 성공 목록으로 stale 저장값을 치유하되, 목록을 모를 땐 보존(리뷰 P2).
+ */
+export function pickValidModel(list, id, defaultId) {
+  const ids = (list || []).map(m => m.id)
+  if (!ids.length) return id
+  if (id && ids.includes(id)) return id
+  if (defaultId && ids.includes(defaultId)) return defaultId
+  return ids[0]
+}
+
+/**
+ * 권위 있는 동적 목록(/models 성공)으로 저장된 모델 id 를 치유. 변경이 필요한 키만 담은
+ * 객체를 반환(없으면 {}).
+ * - 목록이 정적 카탈로그 *참조 그대로*(IMAGE_MODELS/VIDEO_MODELS)면 = 폴백/로딩/실패 →
+ *   권위 없음 → 치유 안 함(보존). (useAvailableModels 가 폴백 시 같은 참조를 돌려줌)
+ * - 동적 목록에 없는 저장값만 pickValidModel 로 치유(기본/첫 사용가능). 유효한 값은 유지.
+ */
+export function computeModelHeal(availableModels, settings) {
+  const out = {}
+  const { imageModels, videoModels } = availableModels || {}
+  if (imageModels && imageModels !== IMAGE_MODELS) {
+    const next = pickValidModel(imageModels, settings.imageModel, DEFAULT_IMAGE_MODEL_ID)
+    if (next !== settings.imageModel) out.imageModel = next
+  }
+  if (videoModels && videoModels !== VIDEO_MODELS) {
+    const t2v = pickValidModel(videoModels, settings.videoModelT2V, DEFAULT_VIDEO_MODEL_ID)
+    if (t2v !== settings.videoModelT2V) out.videoModelT2V = t2v
+    const f2v = pickValidModel(videoModels, settings.videoModelF2V, DEFAULT_VIDEO_MODEL_ID)
+    if (f2v !== settings.videoModelF2V) out.videoModelF2V = f2v
+  }
+  return out
+}
+
 /** id 가 카탈로그에 있으면 그대로, 없으면 기본값으로. (저장된 stale/legacy id 방어) */
 export function coerceImageModel(id) {
   return IMAGE_MODELS.some(m => m.id === id) ? id : DEFAULT_IMAGE_MODEL_ID

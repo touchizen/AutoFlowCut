@@ -6,7 +6,7 @@
  * falsy 면 null.
  */
 import { describe, it, expect } from 'vitest'
-import { modelLabel, coerceResolution, categorizeApiModels, IMAGE_MODELS, VIDEO_MODELS } from '../../src/config/genModels'
+import { modelLabel, coerceResolution, categorizeApiModels, pickValidModel, computeModelHeal, IMAGE_MODELS, VIDEO_MODELS } from '../../src/config/genModels'
 
 describe('genModels — modelLabel', () => {
   it('이미지 모델 id → 라벨', () => {
@@ -105,5 +105,56 @@ describe('genModels — categorizeApiModels (라이브 /models → 카테고리)
 
   it('null/빈 입력 → 빈 목록', () => {
     expect(categorizeApiModels(null)).toEqual({ imageModels: [], videoModels: [] })
+  })
+})
+
+describe('genModels — pickValidModel (권위 있는 목록 기준 치유)', () => {
+  const list = [{ id: 'a' }, { id: 'b' }, { id: 'c' }]
+
+  it('id 가 목록에 있으면 그대로', () => {
+    expect(pickValidModel(list, 'b', 'a')).toBe('b')
+  })
+  it('id 가 목록에 없고 default 가 목록에 있으면 default', () => {
+    expect(pickValidModel(list, 'stale', 'a')).toBe('a')
+  })
+  it('id·default 둘 다 목록에 없으면 첫 항목', () => {
+    expect(pickValidModel(list, 'stale', 'nope')).toBe('a')
+  })
+  it('빈 목록이면(권위 없음) id 보존', () => {
+    expect(pickValidModel([], 'x', 'a')).toBe('x')
+    expect(pickValidModel(null, 'x', 'a')).toBe('x')
+  })
+  it('falsy id 면 default(목록에 있으면)', () => {
+    expect(pickValidModel(list, undefined, 'c')).toBe('c')
+  })
+})
+
+describe('genModels — computeModelHeal (권위 있는 목록으로 stale 저장값 치유)', () => {
+  it('정적 폴백(카탈로그 참조 그대로)이면 치유 안 함 — 보존', () => {
+    const out = computeModelHeal(
+      { imageModels: IMAGE_MODELS, videoModels: VIDEO_MODELS },
+      { imageModel: 'stale-dynamic', videoModelT2V: 'x', videoModelF2V: 'y' },
+    )
+    expect(out).toEqual({})
+  })
+
+  it('동적 목록에 없는 저장값 → 치유(default 우선, 없으면 첫 항목), 유효한 건 그대로', () => {
+    const dynImg = [{ id: 'gemini-2.5-flash-image' }, { id: 'gemini-9' }] // default 포함
+    const dynVid = [{ id: 'veo-2.0-generate-001' }]                       // default 미포함
+    const out = computeModelHeal(
+      { imageModels: dynImg, videoModels: dynVid },
+      { imageModel: 'stale', videoModelT2V: 'veo-stale', videoModelF2V: 'veo-2.0-generate-001' },
+    )
+    expect(out.imageModel).toBe('gemini-2.5-flash-image')   // default in list
+    expect(out.videoModelT2V).toBe('veo-2.0-generate-001')  // default 없음 → 첫 항목
+    expect('videoModelF2V' in out).toBe(false)              // 이미 유효 → 변경 없음
+  })
+
+  it('동적 목록에 있는 저장값 → 변경 없음', () => {
+    const out = computeModelHeal(
+      { imageModels: [{ id: 'gemini-9' }], videoModels: VIDEO_MODELS },
+      { imageModel: 'gemini-9', videoModelT2V: 'x', videoModelF2V: 'y' },
+    )
+    expect(out).toEqual({})
   })
 })
