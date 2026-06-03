@@ -638,8 +638,11 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
       const parts = []
       if (completedCount > 0) parts.push(`${completedCount} regenerated`)
       if (redownloadedCount > 0) parts.push(`${redownloadedCount} re-downloaded`)
+      if (videoErrorCount > 0) parts.push(`${videoErrorCount} failed`)  // Phase 2 실패도 완료 요약에 노출
       const tail = parts.length > 0 ? ` — ${parts.join(', ')}` : ''
-      setStatusMessage(`✅ ${t('videoAutomation.done')}${tail}`)
+      // 실패가 있으면 성공처럼 보이지 않도록 아이콘 구분.
+      const icon = videoErrorCount > 0 ? '⚠️' : '✅'
+      setStatusMessage(`${icon} ${t('videoAutomation.done')}${tail}`)
       // 진행률 100% 도달(사용자/auth 중단 없음) — 평점 카운터 반영
       try { onComplete?.({ completed: true }) } catch (e) { console.warn('[VideoAutomation] onComplete error:', e.message) }
     }

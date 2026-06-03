@@ -10,7 +10,10 @@ export default function StatusBar({ progress, status, message, scenes = [] }) {
 
   // 씬 통계 (항상 계산)
   const doneCount = scenes.filter(s => hasImageData(s) || s.imagePath).length
-  const errorCount = scenes.filter(s => s.status === 'error').length
+  const sceneErrorCount = scenes.filter(s => s.status === 'error').length
+  // 비디오(T2V/F2V) 실패는 scene.status='error' 가 아니라 progress.errorCount 로만 온다.
+  // 완료 후에도 실패가 성공처럼 보이지 않도록 둘 중 큰 값 표시(이미지는 둘이 같아 중복 없음).
+  const errorCount = Math.max(sceneErrorCount, progress?.errorCount || 0)
   const hasScenes = scenes.length > 0
 
   const statusClass = {

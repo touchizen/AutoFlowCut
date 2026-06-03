@@ -100,5 +100,8 @@ describe('useVideoAutomation — poll top-level fail quota', () => {
     await startPromise
 
     expect(hook.result.current.progress.errorCount).toBe(1)
+    // 완료 메시지가 실패를 숨기지 않음 (성공처럼 안 보이게)
+    expect(hook.result.current.statusMessage).toMatch(/1 failed/)
+    expect(hook.result.current.statusMessage).toContain('⚠️')
   })
 })

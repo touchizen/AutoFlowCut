@@ -23,6 +23,21 @@ describe('StatusBar', () => {
       expect(screen.getByText('생성 중...')).toBeInTheDocument()
     })
 
+    it('완료(비활성) 시 비디오 실패(progress.errorCount)도 ❌ 로 표시 (씬 이미지 에러 0이어도)', () => {
+      // T2V/F2V 실패는 scene.status='error' 가 아니라 progress.errorCount 로만 옴.
+      const { container } = render(
+        <StatusBar
+          progress={{ current: 3, total: 3, percent: 100, errorCount: 2 }}
+          status="done"
+          message="⚠️ done — 1 regenerated, 2 failed"
+          scenes={[{ id: 's1', imagePath: '/a.png' }]}
+        />
+      )
+      const errEl = container.querySelector('.error-count')
+      expect(errEl).toBeTruthy()
+      expect(errEl.textContent).toContain('2')
+    })
+
     it('progress bar 값 설정', () => {
       const { container } = render(
         <StatusBar
