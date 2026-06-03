@@ -71,7 +71,8 @@ Flow→공식 API(BYOK) 전환 후 생성 파이프라인 UX 가 어정쩡하다
   2. **여전히 full 이면 500~1000ms 대기** (busy-loop / `checkGeneration` 과호출 방지)
   3. `pausedRef`(사용자 일시정지)·`stopRequestedRef` 존중 — pause 중엔 멈추고, stop 이면 break
   슬롯이 빌 때까지 1~3 반복.
-- `concurrency` 는 `options` 로 주입 (기본 **5**). `runConcurrentQueue` 에서 `concurrency = 5` 기본값.
+- `concurrency` 는 `options` 로 주입. **clamp 필수** — `clampInt(options.concurrency, 1, 10, 5)`
+  (localStorage/직접 호출로 `0`·음수·`NaN`·문자열이 들어오면 게이트가 **무한 대기**하므로 1~10 으로 강제, 기본 5).
 - Phase 2(잔여 드레인), collect/inflight 인프라, quota-stop, 사용자 pause 는 그대로 유지.
 
 **검증 (TDD)**:
@@ -91,17 +92,18 @@ Flow→공식 API(BYOK) 전환 후 생성 파이프라인 UX 가 어정쩡하다
 - `useAutomation.start()` 가 `concurrency` 를 destructure → `runConcurrentQueue` options 로 전달
   (Stage 2 게이트가 소비).
 - App 의 `settings.concurrency || 2` fallback → `|| 5` 로 통일.
-- UI 컨트롤: 설정 모달에 동시성 슬라이더/숫자 입력 (없으면 추가, 있으면 기본 5 반영).
+- UI 컨트롤: 설정 모달에 동시성 슬라이더/숫자 입력 (없으면 추가, 있으면 기본 5 반영). 범위 1~10.
+- 게이트의 `clampInt(concurrency, 1, 10, 5)`(Stage 2)가 최종 방어선 — UI/저장값이 망가져도 안전.
 
-**검증**: `start({ concurrency: N })` → `runConcurrentQueue` 가 N 으로 동작 (단위/통합).
+**검증**: `start({ concurrency: N })` → `runConcurrentQueue` 가 N 으로 동작; `0`/`-1`/`NaN`/`'x'` → 5 로 clamp (단위/통합).
 
 ## Grid + B. Live Generation Grid
 
 ### 정규화 GenerationItem 모델 (핵심 — 탭별 소스 차이 흡수)
 
 탭마다 자산 소스가 **다르다**:
-- 이미지 탭 `'text'` → `scenes` 의 `imagePath`/`image`/`status`
-- T2V 탭 `'video-text'` → `scenes` 의 `videoT2VPath`/`videoT2V`/`videoT2VStatus` (videoT2VPrompt 있는 씬만)
+- 이미지 탭 `'text'` **및** `'list'`(둘 다 이미지 생성 컨텍스트 — `App.jsx:1456`) → `scenes` 의 `imagePath`/`image`/`status`
+- T2V 탭 `'video-text'` → `scenes` 의 `videoT2VPath`/`videoT2V`/`videoT2VStatus` (videoT2VPrompt 있는 씬만; 파생 video item)
 - F2V 탭 `'frame-to-video'` → **`framePairs`** (원본이 scenes 가 아님)
 
 → Grid 는 scenes 를 직접 받지 않고 **정규화 item 배열**을 받는다. 탭별 어댑터가 변환:
@@ -112,14 +114,18 @@ Flow→공식 API(BYOK) 전환 후 생성 파이프라인 UX 가 어정쩡하다
 ```
 
 - `status` 는 **정규화** — `isComplete(status) = status === 'done' || status === 'complete'`
-  (이미지=`'done'`, 비디오=`'complete'`. `imageFinalize.js:134`/video automation 차이. `ResultsTable.jsx:226` 의 `isDone` 선례와 동일 규칙).
+  (이미지=`'done'`, 비디오=`'complete'`. `imageFinalize.js:134`/video automation 차이. `ResultsTable.jsx:226` 의 `isDone` 선례와 동일 규칙). `'waiting'`(F2V framePair, `FrameToVideoPanel.jsx`)·미시작은 **pending 으로 정규화**.
 - `thumbSrc` 는 캐시버스터 적용된 `resolveImageSrc`(이미지) 또는 비디오 경로(poster/`<video muted>`).
-- `ref` = 원본(scene 또는 framePair) — 클릭 시 상세 모달용.
+- `kind` 가 **클릭 라우팅을 결정** — `image` → `setSelectedScene(ref)`, `video` → `setSelectedVideo(ref)`.
+- `ref` = 해당 상세 모달이 받는 객체:
+  - image → `scene` (SceneDetailModal)
+  - T2V → 파생 video item(`vscene_…` 형태, VideoDetailModal 이 받는 객체와 동일)
+  - F2V → `fp_…` framePair (VideoDetailModal)
 
-**어댑터** `buildGenerationItems(activeTab, { scenes, framePairs })`:
-- `'text'` → scenes → image items
-- `'video-text'` → videoT2VPrompt 있는 scenes → video items (videoT2V* 필드)
-- `'frame-to-video'` → framePairs → video items
+**어댑터** `buildGenerationItems(activeTab, { scenes, videoScenes, framePairs })`:
+- `'text'` | `'list'` → scenes → image items (`kind:'image'`, `ref: scene`)
+- `'video-text'` → videoT2VPrompt 있는 파생 video scenes → video items (`kind:'video'`, `ref: vscene_…`)
+- `'frame-to-video'` → framePairs → video items (`kind:'video'`, `ref: fp_…`)
 
 ### 컴포넌트 경계
 
@@ -134,8 +140,8 @@ Flow→공식 API(BYOK) 전환 후 생성 파이프라인 UX 가 어정쩡하다
 ```jsx
 anyRunning ? (
   <LiveGenerationGrid
-    items={buildGenerationItems(activeTab, { scenes, framePairs })}
-    onItemSelect={(item) => setSelectedScene(item.ref)}
+    items={buildGenerationItems(activeTab, { scenes, videoScenes, framePairs })}
+    onItemSelect={(item) => item.kind === 'video' ? setSelectedVideo(item.ref) : setSelectedScene(item.ref)}
   />
 ) : (
   <PreviewPanel ... />  // 기존 단일프레임 프리뷰
@@ -150,12 +156,12 @@ anyRunning ? (
 
 | 상태 | 판정 | 표시 |
 |------|------|------|
-| pending | `'pending'` 또는 미시작 | 빈 placeholder (옅은 박스) |
+| pending | `'pending'`·`'waiting'`·미시작 | 빈 placeholder (옅은 박스) |
 | generating | `'generating'` | **shimmer**(윤기/광택). 이전 thumbSrc 있으면 그 위 오버레이, 없으면 빈 타일 위 |
 | complete | `isComplete(status)` (`'done'`·`'complete'`) | 실제 이미지/비디오 썸네일 (`thumbSrc`, 캐시버스터) |
 | error | `'error'` | ⚠️ 아이콘 + 빨강 테두리, hover 시 `item.error` tooltip |
 
-- 타일 클릭 → `onItemSelect(item)` → `setSelectedScene(item.ref)` (기존 상세 모달 재사용).
+- 타일 클릭 → `onItemSelect(item)` → `item.kind` 로 라우팅(image→`setSelectedScene`, video→`setSelectedVideo`). 기존 상세 모달 재사용.
 
 ### 데이터 소스
 
@@ -186,11 +192,13 @@ CSS keyframes (gradient sweep). `generating` 타일 + (B) 타임라인 `generati
 `Clip.jsx` 는 `generating` → shimmer, `placeholder`(이미지 없음) → 빈 박스+shimmer. 기존 완료 클립(imagePath 有)은 그대로.
 
 **검증**:
-- `buildGenerationItems`: 탭별(text/video-text/frame-to-video) 정규화, `isComplete`(done·complete 둘 다) 단위 테스트.
+- `buildGenerationItems`: 탭별 정규화 — `text`·`list`→image, `video-text`→video(ref `vscene_`), `frame-to-video`→video(ref `fp_`); `isComplete`(done·complete), `waiting`→pending.
+- 클릭 라우팅: `kind:'image'`→`setSelectedScene`, `kind:'video'`→`setSelectedVideo` (framePair 가 SceneDetailModal 로 새지 않음).
 - `LiveGenerationGrid`: 상태별 타일 렌더 (pending/generating/complete/error) 단위 테스트.
 - `GenTile`: error 시 ⚠️ + tooltip, complete 시 캐시버스터 src.
 - 모니터 전환: `anyRunning` true → Grid, false → PreviewPanel (통합).
 - 타임라인 클립 shimmer: generating 씬에 placeholder 클립 + shimmer 클래스.
+- 동시성 clamp: `runConcurrentQueue`/`start` 가 `0`/`-1`/`NaN`/`'x'` → 5.
 
 ## 테스트 전략
 
