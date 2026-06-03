@@ -175,7 +175,7 @@ export default function VideoDetailModal({
   }, [projectName, video.id, video.video])
 
   // 비디오 소스: base64 (메모리) 우선, 없으면 file path — 공용 유틸로 통합.
-  const videoSrc = resolveVideoSrc(activeVideo, activeVideoPath || video.videoPath)
+  const videoSrc = resolveVideoSrc(activeVideo, activeVideoPath || video.videoPath, { version: video.generatedAt })
 
   // base64 데이터에서 파일 사이즈 추정 — 공통 유틸 재사용
   const getFileSize = () => estimateBase64FileSize(activeVideo)

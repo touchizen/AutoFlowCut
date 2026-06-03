@@ -79,7 +79,7 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
   }
 
   // 비디오 src 생성 헬퍼 — 공용 utils/videoSrc 로 통합 (cache busting/Windows 경로/data URL 일관 처리)
-  const toVideoSrc = (data, filePath) => resolveVideoSrc(data, filePath) || ''
+  const toVideoSrc = (data, filePath, version) => resolveVideoSrc(data, filePath, { version }) || ''
 
   // 비디오 duration 감지 (Promise) — base64 데이터에서 즉시 감지
   const detectVideoDuration = (videoData) => {
@@ -319,7 +319,7 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
               {/* R26 review fix: hover 시점에만 <video> mount. duration 추출도 hover
                   순간 onLoadedMetadata 로. 첫 로드 VRAM burst 없음. */}
               {hoveredVideo === 't2v' ? (
-                <video src={toVideoSrc(scene.videoT2V, scene.videoT2VPath)} muted preload="metadata" onLoadedMetadata={(e) => handleVideoMetadata(e, 't2v')} />
+                <video src={toVideoSrc(scene.videoT2V, scene.videoT2VPath, scene.videoT2VGeneratedAt)} muted preload="metadata" onLoadedMetadata={(e) => handleVideoMetadata(e, 't2v')} />
               ) : (
                 imgSrc ? <LazyImage src={imgSrc} alt="T2V poster" /> : <div className="video-placeholder" />
               )}
@@ -367,7 +367,7 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
             >
               {/* R26 review fix: hover 시점에만 <video> mount (T2V 와 동일) */}
               {hoveredVideo === 'i2v' ? (
-                <video src={toVideoSrc(scene.videoI2V, scene.videoI2VPath)} muted preload="metadata" onLoadedMetadata={(e) => handleVideoMetadata(e, 'i2v')} />
+                <video src={toVideoSrc(scene.videoI2V, scene.videoI2VPath, scene.videoI2VGeneratedAt)} muted preload="metadata" onLoadedMetadata={(e) => handleVideoMetadata(e, 'i2v')} />
               ) : (
                 imgSrc ? <LazyImage src={imgSrc} alt="I2V poster" /> : <div className="video-placeholder" />
               )}

@@ -543,41 +543,8 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     }
   }, [t, generationQueue])
   
-  /**
-   * 특정 씬 재시도
-   */
-  const retryScene = useCallback(async (sceneId, options = {}) => {
-    const sceneIdx = scenes.findIndex(s => s.id === sceneId)
-    if (sceneIdx === -1) return
-    
-    await start({ ...options, sceneIndices: [sceneIdx] })
-  }, [scenes, start])
-  
-  /**
-   * 에러 씬들만 재시도
-   *
-   * 호출자가 React SyntheticEvent(onClick={retryErrors})를 그대로 넘기면 options
-   * 자리가 이벤트 객체가 되어 projectName 이 누락 → start() 가 'Untitled' 폴백 →
-   * 새 이미지 저장이 잘못된 프로젝트로 가는 데이터 손실 회귀가 발생한다.
-   * 가드: SyntheticEvent 흔적이 보이면 options 을 비우는 대신 **즉시 return**.
-   * (비우기만 하고 start() 로 넘기면 그 안에서 'Untitled' 폴백을 타게 되어
-   *  같은 데이터 손실 경로가 살아있게 됨 — 절반-방어가 됨.)
-   */
-  const retryErrors = useCallback(async (options = {}) => {
-    if (options && typeof options.preventDefault === 'function') {
-      console.warn('[useAutomation] retryErrors called with SyntheticEvent — caller must pass an options object with projectName. Aborting.')
-      return
-    }
-    const errorIndices = scenes
-      .map((s, i) => s.status === 'error' ? i : -1)
-      .filter(i => i !== -1)
-
-    if (errorIndices.length === 0) return
-
-    await start({ ...options, sceneIndices: errorIndices })
-  }, [scenes, start])
-  
-  // 큐를 통한 시작
+  // 큐를 통한 시작 — 정상 Start 와 retry 가 모두 이 경로를 타 ref/video 작업과 직렬화한다.
+  // (queue 없으면 직접 start — 하위호환.)
   const startQueued = useCallback(async (options = {}) => {
     if (!generationQueue) {
       return start(options)
@@ -592,6 +559,38 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       console.warn('[Automation] Queue rejected:', err.message)
     }
   }, [generationQueue, start])
+
+  /**
+   * 특정 씬 재시도 — startQueued 경유(정상 Start 와 동일한 queue 직렬화).
+   */
+  const retryScene = useCallback(async (sceneId, options = {}) => {
+    const sceneIdx = scenes.findIndex(s => s.id === sceneId)
+    if (sceneIdx === -1) return
+
+    await startQueued({ ...options, sceneIndices: [sceneIdx] })
+  }, [scenes, startQueued])
+
+  /**
+   * 에러 씬들만 재시도 — startQueued 경유.
+   *
+   * 호출자가 React SyntheticEvent(onClick={retryErrors})를 그대로 넘기면 options
+   * 자리가 이벤트 객체가 되어 projectName 이 누락 → start() 가 'Untitled' 폴백 →
+   * 새 이미지 저장이 잘못된 프로젝트로 가는 데이터 손실 회귀가 발생한다.
+   * 가드: SyntheticEvent 흔적이 보이면 options 을 비우는 대신 **즉시 return**.
+   */
+  const retryErrors = useCallback(async (options = {}) => {
+    if (options && typeof options.preventDefault === 'function') {
+      console.warn('[useAutomation] retryErrors called with SyntheticEvent — caller must pass an options object with projectName. Aborting.')
+      return
+    }
+    const errorIndices = scenes
+      .map((s, i) => s.status === 'error' ? i : -1)
+      .filter(i => i !== -1)
+
+    if (errorIndices.length === 0) return
+
+    await startQueued({ ...options, sceneIndices: errorIndices })
+  }, [scenes, startQueued])
 
   return {
     isRunning,

@@ -198,6 +198,13 @@ export function useVideoScenes(scenes = [], scenesHook = null) {
       videoT2VGenerationId: null,
       videoT2VSelected: false,
       videoT2VDuration: undefined,
+      // 새 비디오 메타 필드도 함께 초기화 (clear 후 상세 모달/저장에 stale 메타 잔류 방지)
+      videoT2VGeneratedAt: null,
+      videoT2VSeed: null,
+      videoT2VModel: null,
+      videoT2VError: null,
+      videoT2VErrorKind: null,
+      videoT2VSaveId: null,
     })))
   }, [scenesHook])
 

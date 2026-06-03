@@ -245,6 +245,20 @@ describe('useVideoScenes — write 라우팅', () => {
     expect(result.current.videoScenesHook.videoScenes).toEqual([])
   })
 
+  it('clearVideoScenes → 새 메타 필드(videoT2VGeneratedAt/Error/Seed/Model/ErrorKind/SaveId)도 초기화', () => {
+    const { result } = setupHook([
+      { id: 'scene_1', videoT2VPrompt: 'v', videoT2VGeneratedAt: 999, videoT2VError: 'e', videoT2VSeed: 5, videoT2VModel: 'm', videoT2VErrorKind: 'k', videoT2VSaveId: 't2v_1' },
+    ])
+    act(() => { result.current.videoScenesHook.clearVideoScenes() })
+    const s = result.current.scenesHook.scenes[0]
+    expect(s.videoT2VGeneratedAt).toBeNull()
+    expect(s.videoT2VError).toBeNull()
+    expect(s.videoT2VSeed).toBeNull()
+    expect(s.videoT2VModel).toBeNull()
+    expect(s.videoT2VErrorKind).toBeNull()
+    expect(s.videoT2VSaveId).toBeNull()
+  })
+
   it('toggleSelect → 해당 scene 의 videoT2VSelected 토글', () => {
     const { result } = setupHook([
       { id: 'scene_1', videoT2VPrompt: 'v1', videoT2VSelected: false },
