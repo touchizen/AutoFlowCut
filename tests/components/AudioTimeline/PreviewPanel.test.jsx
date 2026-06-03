@@ -65,4 +65,19 @@ describe('PreviewPanel — i2v/t2v 모니터 우선순위 (top-visible)', () => 
     const prefetch = videos[videos.length - 1] // 마지막 = hidden prefetch <video>
     expect(prefetch.src).toContain('t2v_1') // i2v 아니라 t2v 워밍
   })
+
+  it('같은 씬 i2v·t2v 둘 다 보이고 t2v 가 먼저 시작 → t2v 진입도 프리패치 (P3)', () => {
+    // 10s 씬, i2v 2s(→videoIn 8000), t2v 4s(→videoIn 6000, 먼저 시작).
+    // 6-8s 는 모니터가 t2v 재생. 프리패치 배열이 i2v 만 남기면 t2v 6s 진입이 cold-read.
+    const scene = [{
+      id: 's1', imagePath: '/a.png', start_time: 0, end_time: 10,
+      videoI2VPath: '/v/i2v_1.mp4', videoI2VDuration: 2,
+      videoT2VPath: '/v/t2v_1.mp4', videoT2VDuration: 4,
+    }]
+    // playhead 5000 → 다음 top-visible 진입은 6000(t2v). 둘 다 보임.
+    const { container } = render(<PreviewPanel playheadMs={5000} scenes={scene} srtEntries={[]} />)
+    const videos = container.querySelectorAll('video')
+    const prefetch = videos[videos.length - 1]
+    expect(prefetch.src).toContain('t2v_1') // i2v(8000) 아니라 t2v(6000) 워밍
+  })
 })

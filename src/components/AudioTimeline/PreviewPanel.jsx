@@ -118,22 +118,23 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
   // 전체 씬에서 비디오 placement를 한 번에 precompute (videoIn 기준 정렬).
   // playhead가 다음 활성까지 PREFETCH_LEAD_MS 안쪽 진입 시 hidden video에 src 설정.
   const videoPlacements = useMemo(() => {
-    return sceneRanges
-      .map(r => {
-        // 모니터와 동일한 top-visible source 선택 — i2v(안 숨겼으면) → t2v. 실제 재생할
-        // 비디오를 워밍해야 i2v 숨김 상태에서 다음 t2v 가 cold-read 되지 않는다.
-        const i2v = hiddenRoles.has('video-i2v') ? null : computeVideoClipPlacement(r.scene, r.startMs, r.endMs, 'i2v')
-        const t2v = hiddenRoles.has('video-t2v') ? null : computeVideoClipPlacement(r.scene, r.startMs, r.endMs, 't2v')
-        const p = i2v || t2v
-        if (!p) return null
-        // generatedAt 동봉 — prefetch 가 메인 <video src> 와 동일한 ?v= URL 을 warming(소스별).
-        const generatedAt = i2v
-          ? (r.scene?.videoI2VGeneratedAt ?? r.scene?.generatedAt)
-          : (r.scene?.videoT2VGeneratedAt ?? r.scene?.generatedAt)
-        return { videoIn: p.videoIn, videoOut: p.videoOut, videoPath: p.videoPath, generatedAt }
-      })
-      .filter(Boolean)
-      .sort((a, b) => a.videoIn - b.videoIn)
+    // 한 씬 안에서도 i2v·t2v 가 서로 다른 구간에 top-visible 일 수 있다(예: t2v 가 더 길어
+    // 먼저 시작 → t2v 6-8s 재생 후 i2v 8-10s 재생). 그래서 source 별 진입점을 각각 후보로
+    // 넣되, "실제 top-visible 인 진입"만 등록한다:
+    //   - i2v(보이면): 활성 시 항상 최상단 → videoIn 등록.
+    //   - t2v(보이면): i2v 가 없거나 t2v 가 i2v 보다 먼저 시작할 때만(그 전 구간에서 top-visible).
+    const out = []
+    for (const r of sceneRanges) {
+      const i2v = hiddenRoles.has('video-i2v') ? null : computeVideoClipPlacement(r.scene, r.startMs, r.endMs, 'i2v')
+      const t2v = hiddenRoles.has('video-t2v') ? null : computeVideoClipPlacement(r.scene, r.startMs, r.endMs, 't2v')
+      if (i2v) {
+        out.push({ videoIn: i2v.videoIn, videoOut: i2v.videoOut, videoPath: i2v.videoPath, generatedAt: r.scene?.videoI2VGeneratedAt ?? r.scene?.generatedAt })
+      }
+      if (t2v && (!i2v || t2v.videoIn < i2v.videoIn)) {
+        out.push({ videoIn: t2v.videoIn, videoOut: t2v.videoOut, videoPath: t2v.videoPath, generatedAt: r.scene?.videoT2VGeneratedAt ?? r.scene?.generatedAt })
+      }
+    }
+    return out.sort((a, b) => a.videoIn - b.videoIn)
   }, [sceneRanges, hiddenRoles])
 
   // 다음 활성 예정 비디오 lookup — O(log N) binary search.
