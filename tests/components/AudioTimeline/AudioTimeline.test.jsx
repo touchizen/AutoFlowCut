@@ -119,6 +119,28 @@ describe('AudioTimeline', () => {
       expect(lastArg.size).toBe(1)
     })
 
+    it('재생 시 narration 트랙 오디오를 읽음 (Mute 기준선)', () => {
+      const { container } = render(
+        <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />
+      )
+      fireEvent.click(container.querySelector('.atl-play-btn'))
+      const paths = window.electronAPI.readFileAbsolute.mock.calls.map(c => c[0].filePath)
+      expect(paths).toContain('/audio/narration.mp3')
+      fireEvent.click(container.querySelector('.atl-stop-btn')) // RAF 정리
+    })
+
+    it('Mute 된 트랙(narration)은 재생에서 제외 — 오디오 안 읽음', () => {
+      const { container } = render(
+        <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />
+      )
+      // 첫 mute 토글 = narration
+      fireEvent.click(container.querySelectorAll('.atl-track-toggle[aria-label="toggle mute"]')[0])
+      fireEvent.click(container.querySelector('.atl-play-btn'))
+      const paths = window.electronAPI.readFileAbsolute.mock.calls.map(c => c[0].filePath)
+      expect(paths).not.toContain('/audio/narration.mp3')
+      fireEvent.click(container.querySelector('.atl-stop-btn'))
+    })
+
     it('mute 토글 클릭 → is-off 활성', () => {
       const { container } = render(
         <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />
