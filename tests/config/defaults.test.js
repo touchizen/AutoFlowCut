@@ -27,7 +27,7 @@ describe('DEFAULTS', () => {
   it('has generation section', () => {
     expect(DEFAULTS.generation).toBeDefined()
     expect(DEFAULTS.generation.retryCount).toBe(2)
-    expect(DEFAULTS.generation.concurrency).toBe(1)
+    expect(DEFAULTS.generation.concurrency).toBe(5) // 공식 API 동시 생성 기본 (옛 Flow=1 순차)
     expect(typeof DEFAULTS.generation.delayMin).toBe('number')
     expect(typeof DEFAULTS.generation.delayMax).toBe('number')
   })

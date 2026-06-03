@@ -863,7 +863,7 @@ function App() {
         const startOptions = {
           projectName,
           saveMode: settings.saveMode,
-          concurrency: settings.concurrency || 2,
+          concurrency: settings.concurrency || 5,
           imageBatchCount: settings.imageBatchCount || 1,
           imageUpscale: settings.imageUpscale || 'off',
           aspectRatio: settings.aspectRatio,
@@ -1547,10 +1547,9 @@ function App() {
                 retryErrors({
                   projectName: ensureProjectName(),
                   saveMode: settings.saveMode,
-                  // concurrency 는 현재 useAutomation.start() 가 destructure 하지
-                  // 않는 dead field 지만, 정상 시작(line 549) 옵션과의 symmetry 를
-                  // 유지해 미래에 실제 구현될 때 retryErrors 만 누락되는 회귀를 차단.
-                  concurrency: settings.concurrency || 2,
+                  // 동시성 — retryErrors 도 정상 생성과 동일하게 전달 (Stage 2 에서
+                  // runConcurrentQueue 가 실제 소비). 게이트가 clampInt 로 재방어.
+                  concurrency: settings.concurrency || 5,
                   imageBatchCount: settings.imageBatchCount || 1,
                   imageUpscale: settings.imageUpscale || 'off',
                   aspectRatio: settings.aspectRatio,

@@ -405,6 +405,9 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     exportThreshold: '내보내기 버튼 표시 완료율',
     exportThresholdHint: '씬 생성 완료 후, 이 비율 이상 성공 시 내보내기 버튼 표시',
 
+    concurrency: '동시 생성 개수',
+    concurrencyHint: '한 번에 동시에 생성할 이미지/비디오 수. 높을수록 빠르지만 API 분당 한도(IPM) 초과 시 429가 늘어납니다. 기본 5.',
+
     // 스타일 필수
     requireStyle: '스타일 필수',
     requireStyleHint: 'ON: 스타일 미선택 시 생성 차단 / OFF: 스타일 없이도 생성 가능',

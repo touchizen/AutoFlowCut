@@ -54,3 +54,22 @@ describe('SceneTab — aspect ratio', () => {
     expect(updater(baseSettings)).toMatchObject({ aspectRatio: '16:9' })
   })
 })
+
+describe('SceneTab — concurrency', () => {
+  it('renders the current concurrency value', () => {
+    render(<SceneTab localSettings={{ ...baseSettings, concurrency: 5 }} setLocalSettings={vi.fn()} t={t} />)
+    expect(screen.getByLabelText('settings.concurrency').value).toBe('5')
+  })
+
+  it('falls back to 5 when concurrency is unset', () => {
+    render(<SceneTab localSettings={{ ...baseSettings, concurrency: undefined }} setLocalSettings={vi.fn()} t={t} />)
+    expect(screen.getByLabelText('settings.concurrency').value).toBe('5')
+  })
+
+  it('updates concurrency on change', () => {
+    const setLocalSettings = vi.fn()
+    render(<SceneTab localSettings={{ ...baseSettings, concurrency: 5 }} setLocalSettings={setLocalSettings} t={t} />)
+    fireEvent.change(screen.getByLabelText('settings.concurrency'), { target: { value: '8' } })
+    expect(setLocalSettings.mock.calls[0][0](baseSettings).concurrency).toBe(8)
+  })
+})
