@@ -61,24 +61,37 @@
   line-height: 1;
 }
 
-/* generating — shimmer(윤기/광택) 스윕 오버레이 */
+/* generating — 부드러운 윤기/광택 sheen + placeholder 숨쉬는 펄스 */
+.gentile--generating {
+  border-color: #3a7a52;
+  /* placeholder(이미지 없음) 박스가 은은히 숨쉬는 그라데이션. 이미지가 있으면 그 위는 sheen 만 보임. */
+  background-image: linear-gradient(135deg, #15171a 0%, #20242b 45%, #15171a 90%);
+  background-size: 200% 200%;
+  animation: gen-bg-pulse 2.6s ease-in-out infinite;
+}
+@keyframes gen-bg-pulse {
+  0%, 100% { background-position: 0% 50%; }
+  50%      { background-position: 100% 50%; }
+}
+
 .gen-shimmer {
   position: absolute;
   inset: 0;
   pointer-events: none;
+  /* 넓고 부드러운 윤기 띠 — 가운데가 가장 밝고 양쪽으로 서서히 페이드(광택 느낌), 살짝 푸른빛. */
   background: linear-gradient(
-    100deg,
-    rgba(255, 255, 255, 0) 30%,
-    rgba(255, 255, 255, 0.14) 50%,
-    rgba(255, 255, 255, 0) 70%
+    115deg,
+    rgba(255, 255, 255, 0) 35%,
+    rgba(255, 255, 255, 0.06) 45%,
+    rgba(235, 245, 255, 0.20) 50%,
+    rgba(255, 255, 255, 0.06) 55%,
+    rgba(255, 255, 255, 0) 65%
   );
-  background-size: 220% 100%;
-  animation: gen-shimmer-sweep 1.25s linear infinite;
+  background-size: 250% 100%;
+  /* ease-in-out 으로 부드럽게 가속/감속 (linear 의 딱딱한 느낌 제거) */
+  animation: gen-shimmer-sweep 1.9s ease-in-out infinite;
 }
 @keyframes gen-shimmer-sweep {
-  0% { background-position: 180% 0; }
-  100% { background-position: -80% 0; }
-}
-.gentile--generating {
-  border-color: #3a7a52;
+  0%   { background-position: 150% 0; }
+  100% { background-position: -50% 0; }
 }
