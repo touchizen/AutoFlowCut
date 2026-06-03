@@ -152,10 +152,16 @@
   justify-content: center;
   line-height: 1;
 }
-.atl-play-btn:hover,
-.atl-stop-btn:hover {
+.atl-play-btn:hover:not(:disabled),
+.atl-stop-btn:hover:not(:disabled) {
   background: #353535;
   color: #fff;
+}
+/* 생성 중(disabled) — 기능은 가드돼 있고 시각적으로도 비활성 표시 */
+.atl-play-btn:disabled,
+.atl-stop-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 .atl-play-btn.atl-playing {
   background: #1d6f42;
