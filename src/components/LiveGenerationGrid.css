@@ -5,12 +5,11 @@
   height: 100%;
   overflow: auto;
   display: grid;
-  /* Google Flow 분석값 그대로 — Flow 는 타일 최소폭 ~480px 고정 + 1fr(남는 폭 채움)으로
-     타일이 480→640px 늘다가 한 열씩 추가되는 표준 반응형(창 좁으면 1열→2열→3열).
-     우리 그리드는 모니터(절반폭)라 480px면 1열이 돼, 440px 로 살짝 줄여 기본 2열
-     (타일 ~470px, Flow 급)·모니터 넓히면 3열. 콘텐츠/창 폭에 자동 반응.
-     min(100%, …): 모니터가 타일보다 좁으면 1열 full-width 로 떨어져 overflow 방지. */
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 440px), 1fr));
+  /* 타일 최소폭 600px 고정 + 1fr(남는 폭 채움) — 컨테이너/창 폭에 따라 자동으로
+     1열→2열→… 늘어나는 반응형(Flow 와 동일 원리). 생성 중엔 자동 스크롤이라 한 번에
+     많이 띄울 필요 없이 크고 잘 보이게.
+     min(100%, …): 모니터가 600px 보다 좁으면 1열 full-width 로 떨어져 overflow 방지. */
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 600px), 1fr));
   grid-auto-rows: min-content;
   gap: 12px;
   padding: 8px;
