@@ -17,6 +17,8 @@ import {
   fetchVideoBase64,
   generateVideo,
   validateApiKey,
+  parseRetryDelayMs,
+  MAX_429_RETRY_DELAY_MS,
   GENAI_BASE,
   DEFAULT_IMAGE_MODEL,
   DEFAULT_VIDEO_MODEL,
@@ -48,6 +50,16 @@ const mockFetchOnce = (res) => {
 
 const IMG_PART = (data = 'AAAA', mimeType = 'image/png') => ({
   candidates: [{ content: { parts: [{ inlineData: { mimeType, data } }] } }],
+})
+
+/** 429 RESOURCE_EXHAUSTED + RetryInfo.retryDelay (예: '2s', '1.5s') */
+const RETRY_INFO = (retryDelay) => ({
+  error: {
+    code: 429,
+    message: 'rate limit exceeded',
+    status: 'RESOURCE_EXHAUSTED',
+    details: [{ '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay }],
+  },
 })
 
 describe('genai — generateImage', () => {
@@ -159,6 +171,58 @@ describe('genai — generateImage', () => {
     const res = await generateImage({ apiKey: 'k', prompt: 'x' }, { fetchImpl })
     expect(res.success).toBe(false)
     expect(res.error).toBe('HTTP 429 :: Request failed :: RESOURCE_EXHAUSTED')
+  })
+
+  // ── 429 rate-limit (IPM/RPM 순간초과) — RetryInfo.retryDelay 가 짧을 때만 흡수 ──
+  // 일일소진/billing(=retryDelay 없음 또는 너무 김) 은 재시도 없이 quota-stop 으로 흘려보냄.
+  it('429 + 짧은 retryDelay(RetryInfo) → 그 지연만큼 대기 후 재시도해 성공', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonRes(RETRY_INFO('2s'), { ok: false, status: 429 }))
+      .mockResolvedValueOnce(jsonRes(IMG_PART('OK')))
+    const sleepImpl = vi.fn().mockResolvedValue(undefined)
+    const res = await generateImage({ apiKey: 'k', prompt: 'x' }, { fetchImpl, sleepImpl, random: () => 0 })
+    expect(res.success).toBe(true)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(sleepImpl).toHaveBeenCalledTimes(1)
+    expect(sleepImpl).toHaveBeenCalledWith(2000) // 서버 retryDelay 존중 (jitter random=0)
+  })
+
+  it('429 retryDelay 재시도 모두 소진 → 에러 반환 (maxRetries=2 → 3회 호출)', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes(RETRY_INFO('1s'), { ok: false, status: 429 }))
+    const sleepImpl = vi.fn().mockResolvedValue(undefined)
+    const res = await generateImage({ apiKey: 'k', prompt: 'x' }, { fetchImpl, sleepImpl, random: () => 0 })
+    expect(res.success).toBe(false)
+    expect(res.error).toMatch(/RESOURCE_EXHAUSTED/)
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
+    expect(sleepImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it('429 + RetryInfo 없음(일일소진/billing 추정) → 재시도 없이 즉시 반환', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonRes({ error: { code: 429, message: 'quota', status: 'RESOURCE_EXHAUSTED' } }, { ok: false, status: 429 })
+    )
+    const sleepImpl = vi.fn().mockResolvedValue(undefined)
+    const res = await generateImage({ apiKey: 'k', prompt: 'x' }, { fetchImpl, sleepImpl })
+    expect(res.success).toBe(false)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(sleepImpl).not.toHaveBeenCalled()
+  })
+
+  it('429 + 너무 긴 retryDelay(>cap) → 재시도 안 함 (즉시 반환)', async () => {
+    const longDelay = `${Math.round(MAX_429_RETRY_DELAY_MS / 1000) + 60}s`
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes(RETRY_INFO(longDelay), { ok: false, status: 429 }))
+    const sleepImpl = vi.fn().mockResolvedValue(undefined)
+    const res = await generateImage({ apiKey: 'k', prompt: 'x' }, { fetchImpl, sleepImpl })
+    expect(res.success).toBe(false)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(sleepImpl).not.toHaveBeenCalled()
+  })
+
+  it('parseRetryDelayMs: "5s"→5000, "1.5s"→1500, RetryInfo 없음→null', () => {
+    expect(parseRetryDelayMs(RETRY_INFO('5s'))).toBe(5000)
+    expect(parseRetryDelayMs(RETRY_INFO('1.5s'))).toBe(1500)
+    expect(parseRetryDelayMs({ error: { code: 429, status: 'RESOURCE_EXHAUSTED' } })).toBeNull()
+    expect(parseRetryDelayMs(null)).toBeNull()
   })
 
   it('이미지 없이 text 만 오면 거부 사유를 error 로', async () => {
