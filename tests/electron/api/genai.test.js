@@ -276,7 +276,7 @@ describe('genai — submitVideo', () => {
     const body = JSON.parse(opts.body)
     expect(body.instances[0].prompt).toBe('a river')
     expect(body.instances[0].image).toBeUndefined()
-    expect(body.parameters).toEqual({ aspectRatio: '16:9', durationSeconds: '8' })
+    expect(body.parameters).toEqual({ aspectRatio: '16:9', durationSeconds: 8 })
   })
 
   it('I2V: image 주어지면 bytesBase64Encoded 로 포함 (Veo predict — inlineData/imageBytes 거부됨)', async () => {
@@ -311,22 +311,22 @@ describe('genai — submitVideo', () => {
     await submitVideo({ apiKey: 'k', prompt: 'x', resolution: '720p', durationSeconds: 6 }, { fetchImpl: f })
     const p = JSON.parse(f.mock.calls[0][1].body).parameters
     expect(p.resolution).toBe('720p')
-    expect(p.durationSeconds).toBe('6')
+    expect(p.durationSeconds).toBe(6)
   })
 
   it('T2V 720p: 길이 {4,6,8} 로 보정 (5→6, 7→8)', async () => {
     const f1 = mockFetchOnce(jsonRes({ name: 'op' }))
     await submitVideo({ apiKey: 'k', prompt: 'x', resolution: '720p', durationSeconds: 5 }, { fetchImpl: f1 })
-    expect(JSON.parse(f1.mock.calls[0][1].body).parameters.durationSeconds).toBe('6')
+    expect(JSON.parse(f1.mock.calls[0][1].body).parameters.durationSeconds).toBe(6)
     const f2 = mockFetchOnce(jsonRes({ name: 'op' }))
     await submitVideo({ apiKey: 'k', prompt: 'x', resolution: '720p', durationSeconds: 7 }, { fetchImpl: f2 })
-    expect(JSON.parse(f2.mock.calls[0][1].body).parameters.durationSeconds).toBe('8')
+    expect(JSON.parse(f2.mock.calls[0][1].body).parameters.durationSeconds).toBe(8)
   })
 
   it('1080p/4k 는 4초 요청해도 8초 강제 (공식 제약)', async () => {
     const f = mockFetchOnce(jsonRes({ name: 'op' }))
     await submitVideo({ apiKey: 'k', prompt: 'x', resolution: '1080p', durationSeconds: 4 }, { fetchImpl: f })
-    expect(JSON.parse(f.mock.calls[0][1].body).parameters.durationSeconds).toBe('8')
+    expect(JSON.parse(f.mock.calls[0][1].body).parameters.durationSeconds).toBe(8)
   })
 
   it('I2V(시작 이미지) 는 4초 요청해도 8초 강제 (reference 이미지 제약)', async () => {
@@ -335,7 +335,7 @@ describe('genai — submitVideo', () => {
       { apiKey: 'k', prompt: 'x', image: { mimeType: 'image/png', data: 'IMG' }, durationSeconds: 4 },
       { fetchImpl: f }
     )
-    expect(JSON.parse(f.mock.calls[0][1].body).parameters.durationSeconds).toBe('8')
+    expect(JSON.parse(f.mock.calls[0][1].body).parameters.durationSeconds).toBe(8)
   })
 
   it('seed 숫자면 parameters.seed 포함, 없으면 생략 (Veo 지원)', async () => {

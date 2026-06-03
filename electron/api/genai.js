@@ -280,7 +280,7 @@ export async function submitVideo(
   else if (dur <= 6) dur = 6
   else dur = 8
   if (hasImage || res === '1080p' || res === '4k') dur = 8
-  parameters.durationSeconds = String(dur)
+  parameters.durationSeconds = dur  // 숫자로 — API 는 string 거부('needs to be a number')
 
   // seed 는 Veo 가 지원 — 숫자일 때만 전달(재현성). 이미지(Gemini)는 미지원이라 안 보냄.
   if (Number.isFinite(seed)) parameters.seed = seed
