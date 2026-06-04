@@ -272,7 +272,8 @@ html, body {
   flex: 1;
   min-height: 0;
   display: flex;
-  flex-direction: row;
+  /* row-reverse: 프리뷰 모니터를 좌측, board(콘텐츠+액션) 를 우측으로. resizer 수학도 left 기준으로 flip. */
+  flex-direction: row-reverse;
 }
 .editor-col {
   flex: 1;

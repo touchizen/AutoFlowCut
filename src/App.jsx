@@ -178,10 +178,11 @@ function App() {
     e.preventDefault()
     const row = e.currentTarget.parentElement // .editor-row
     const rect = row.getBoundingClientRect()
-    const rightEdge = rect.right
-    // 최대 폭 = 콘텐츠 너비의 90% (좌측 패널 10% 확보). 창 크기에 따라 스케일.
+    // 모니터가 좌측(row-reverse)이라 폭 = 마우스 - 좌측 edge.
+    const leftEdge = rect.left
+    // 최대 폭 = 콘텐츠 너비의 90% (우측 패널 10% 확보). 창 크기에 따라 스케일.
     const maxW = rect.width * 0.9
-    const onMove = (ev) => setMonitorWidth(Math.max(200, Math.min(maxW, rightEdge - ev.clientX)))
+    const onMove = (ev) => setMonitorWidth(Math.max(200, Math.min(maxW, ev.clientX - leftEdge)))
     const onUp = () => {
       document.removeEventListener('mousemove', onMove)
       document.removeEventListener('mouseup', onUp)
@@ -1270,14 +1271,16 @@ function App() {
             >
               📋 <span className="tab-label">{t('tabs.list')}</span> ({scenes.length})
             </button>
-            <button
+            {/* Audio 탭 — SFX 입력용. 현재 상단 프리뷰(LiveTimeline)가 타임라인을 커버해 중복이라 숨김.
+                SFX 입력 처리 재개 시 주석 해제. (content 블록은 activeTab==='audio' 가 안 돼 자동 미렌더) */}
+            {/* <button
               className={`tab tab-icon ${activeTab === 'audio' ? 'active' : ''}`}
               onClick={() => setActiveTab('audio')}
               title={t('audioTab.title') || '오디오'}
             >
               🎵 <span className="tab-label">{t('audioTab.title') || '오디오'}</span>
               {audioPackage && <span className="tab-count"> ({(audioPackage.summary?.totalVoiceFiles || 0) + (audioPackage.summary?.totalSfxFiles || 0)})</span>}
-            </button>
+            </button> */}
             <button
               className={`tab tab-icon ${showReferences ? 'active' : ''}`}
               onClick={() => setShowReferences(!showReferences)}
@@ -1608,7 +1611,7 @@ function App() {
         </div>
         </div>
 
-        {/* 우측 프리뷰 모니터 — 좌측 [콘텐츠+액션버튼] 을 아우르는 컬럼. 좌우 드래그로 폭 조절. */}
+        {/* 프리뷰 모니터 — .editor-row 가 row-reverse 라 화면상 좌측. 우측은 [콘텐츠+액션버튼] 컬럼. 좌우 드래그로 폭 조절. */}
         {activeTab !== 'audio' && (
           <>
             <div
@@ -2086,7 +2089,10 @@ function App() {
           loading={audioImporting}
           onClose={() => {
             setShowAudioResult(false)
-            if (audioPackage) setActiveTab('audio')
+            // Audio 탭은 현재 숨김. import 후 숨은 activeTab='audio' 상태로 보내지 않고,
+            // 씬/자막 확인이 가능한 list 탭으로 복귀한다.
+            // if (audioPackage) setActiveTab('audio')
+            if (audioPackage) setActiveTab('list')
           }}
         />
       )}
