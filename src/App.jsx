@@ -1741,6 +1741,9 @@ function App() {
               status: 'pending', selected: false,
               // 비디오 메타도 정리 — 상세 모달/저장에 이전 비디오 메타 잔류 방지.
               generatedAt: null, seed: null, model: null, error: null, errorKind: null, videoSaveId: null,
+              // per-clip videoT2VDisabled 는 여기서 의도적으로 안 건드림: path 가 null 이 되면
+              // resolveExportVideos/timeline 에 T2V 후보 자체가 안 생겨 플래그가 inert 하고,
+              // 재생성 완료(line ~991)가 어차피 null 로 리셋한다. (per-clip-video-toggle spec)
             })}
             disabled={anyRunning}
           />
