@@ -33,8 +33,8 @@ per-clip on/off는 타임라인에서 **영상 클립 단위로 export 포함/�
 - `scene.videoI2VDisabled` (true면 i2v 클립 export/프리뷰 제외)
 - `scene.videoT2VDisabled`
 
-없음/`false` = 켜짐(기본). project.json에 저장(영속). 기존 `videoI2VPath` /
-`videoI2VDuration` 네이밍과 일관. **단일 진실 원천** — export·프리뷰·SceneList가
+없음/`false`/`null` = 켜짐(= **falsy**); `true` = 꺼짐. project.json에 저장(영속).
+기존 `videoI2VPath`/`videoI2VDuration` 네이밍과 일관. **단일 진실 원천** — export·프리뷰·SceneList가
 모두 이 플래그를 읽어 자동 일관.
 
 ## 변경 지점 (export · 프리뷰 · SceneList · 타임라인 UI/배선 · 보존 · 재생성 라이프사이클)
@@ -95,20 +95,26 @@ dim + 👁 off(사선) 표시. 기존 트랙 View 토글(👁)과 시각 일관.
   `onSceneUpdate(clip.sceneRef.id, { [field]: !clip.sceneRef[field] })`
   (field = `source==='i2v' ? 'videoI2VDisabled' : 'videoT2VDisabled'`)
 
-### 5. 보존 — `src/hooks/useScenes.js` 재파싱 merge
-CSV/SRT/text 재파싱 시 기존 씬의 런타임 필드를 merge로 보존하는데(line ~196 하드코딩
-목록: `videoI2VPath`/`videoI2VDuration` 등), 새 플래그를 그 목록에 추가:
-```
-videoI2VDisabled: existing.videoI2VDisabled,
-videoT2VDisabled: existing.videoT2VDisabled,
-```
-빠지면 사용자가 타임라인에서 끈 뒤 텍스트/CSV를 재파싱하면 설정이 날아간다.
-(런타임 필드 보존이 일어나는 다른 merge 경로 — `mergeTextIntoScenes`/`mergeSRTIntoScenes` —
-도 같은 누락 없는지 점검.)
+### 5. 보존 — `src/hooks/useScenes.js` 재파싱
+재파싱 경로마다 보존 방식이 달라 **실제 수정 지점은 CSV allowlist 한 곳**:
+- **CSV 새 형식 (line ~196): 명시 allowlist** — `parsedScene` 기반으로 보존할 필드를
+  하드코딩(`videoI2VPath`/`Duration` 등). ⚠️ **여기에 새 플래그 추가 필수:**
+  ```
+  videoI2VDisabled: existing.videoI2VDisabled,
+  videoT2VDisabled: existing.videoT2VDisabled,
+  ```
+- **SRT `parseFromSRT` (line ~254): spread** — merge 분기 `{...scene, ...updates}`,
+  replace/cold 분기 `{...old, ...}` → 기존 씬을 통째로 spread하므로 disabled **자동 보존.
+  손댈 필요 없음.** (import만 되고 안 쓰이는 `mergeSRTIntoScenes`(parsers.js)는 건드리지
+  말 것 — 함정.)
+- **text `parseFromText`**: spread/allowlist 여부 구현 시 확인 → allowlist면 동일 추가.
+
+빠지면 타임라인에서 끈 뒤 CSV 재파싱 시 설정이 날아간다. 테스트로 가드.
 
 ### 6. 재생성 / clear / 복원 시 disabled 라이프사이클
 **규칙: 새 generation 제출·완료, 그리고 clear/복원 시 해당 source의 `video*Disabled`를
-reset(false/null).** 재생성한 클립은 "새 클립" = **enabled**로 시작한다.
+reset → `null` 기록**(sibling `video*Path/Duration` clear와 동일 컨벤션; enabled 판정은
+falsy라 `null`/`false`/없음 모두 켜짐). 재생성한 클립은 "새 클립" = **enabled**로 시작한다.
 이유: disabled를 켜둔 채 재생성하면 새로 만든 영상이 조용히 프리뷰/export에서 빠진다.
 
 구현 지점(App.jsx) — `video*Path`를 clear/set 하는 patch에 `video*Disabled: null` 동반:
@@ -132,8 +138,9 @@ reset(false/null).** 재생성한 클립은 "새 클립" = **enabled**로 시작
 - **component PreviewPanel** (placement는 내부 useMemo라 직접 unit 곤란): `videoI2VDisabled`
   씬 재생 → 렌더된 visible/preload `<video>` src가 i2v(disabled)를 **안 잡음**. (또는 판정
   로직을 순수 헬퍼로 분리해 unit.)
-- **unit useScenes 재파싱 보존**: 씬에 `videoI2VDisabled=true` 설정 후 CSV/SRT 재파싱 merge → 플래그 보존.
-- **재생성 리셋**: `videoI2VDisabled=true` 씬 재생성 완료 → `videoI2VDisabled` false(새 영상이 프리뷰/export에 포함).
+- **unit useScenes 재파싱 보존**: `videoI2VDisabled=true` 씬 → CSV(allowlist 경로) 재파싱 → 플래그 보존. (SRT spread 경로는 자동 보존이라 가드 1개로 충분.)
+- **재생성 리셋(완료)**: `videoI2VDisabled=true` 씬 재생성 완료(path set) → `videoI2VDisabled` falsy(`!disabled`).
+- **재생성 리셋(제출 clear)**: 새 generation 제출(path clear) → `videoI2VDisabled` falsy. (정책: 제출·완료·clear·복원 모두 reset — clear 시점 가드.)
 - **component SceneList**: `videoI2VDisabled` 씬 → I2V thumb ✓ 안 됨(썸네일은 렌더).
 - **component 타임라인 클립**: 👁 클릭 → `onSceneUpdate(sceneId, { video*Disabled })` 호출 **+ 씬 선택/모달(`onClickClip`)은 안 터짐**(전파 차단).
 
