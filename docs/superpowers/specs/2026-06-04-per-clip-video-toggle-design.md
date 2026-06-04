@@ -37,7 +37,7 @@ per-clip on/off는 타임라인에서 **영상 클립 단위로 export 포함/�
 `videoI2VDuration` 네이밍과 일관. **단일 진실 원천** — export·프리뷰·SceneList가
 모두 이 플래그를 읽어 자동 일관.
 
-## 변경 지점 (export · 프리뷰 · SceneList · 타임라인 UI/배선 · 보존)
+## 변경 지점 (export · 프리뷰 · SceneList · 타임라인 UI/배선 · 보존 · 재생성 라이프사이클)
 
 ### 1. Export — `src/utils/sceneMedia.js` `resolveExportVideos`
 disabled source를 후보에서 제외:
@@ -80,6 +80,11 @@ disabled를 빼므로, disabled 영상 thumb은 자동으로 ✓(selected) 빠�
 **UI**: 영상 클립(`role: video-i2v|video-t2v`) 호버 시 작은 👁 버튼. disabled 클립은
 dim + 👁 off(사선) 표시. 기존 트랙 View 토글(👁)과 시각 일관.
 
+**⚠️ 이벤트 전파 차단**: 클립 루트(`Clip.jsx` line 45 `onPointerDown`)가 드래그/클릭을
+판정해 `onClickClip`(씬 선택/모달)을 부른다. 안쪽 👁 버튼은 `TimelineFlagButton`과 동일
+패턴 — `onPointerDown`에서 `stopPropagation`, `onClick`에서 `stopPropagation`+
+`preventDefault` — 안 하면 eye 클릭이 씬 선택/모달까지 같이 발화한다.
+
 **⚠️ 배선 (현재 AudioTimeline엔 scene 업데이트 prop이 없음 — 새로 뚫어야 함):**
 - AudioTimeline에 새 prop `onSceneUpdate(sceneId, patch)` 추가(옵셔널 — 미전달 시 👁
   버튼 숨겨 안전).
@@ -101,6 +106,19 @@ videoT2VDisabled: existing.videoT2VDisabled,
 (런타임 필드 보존이 일어나는 다른 merge 경로 — `mergeTextIntoScenes`/`mergeSRTIntoScenes` —
 도 같은 누락 없는지 점검.)
 
+### 6. 재생성 / clear / 복원 시 disabled 라이프사이클
+**규칙: 새 generation 제출·완료, 그리고 clear/복원 시 해당 source의 `video*Disabled`를
+reset(false/null).** 재생성한 클립은 "새 클립" = **enabled**로 시작한다.
+이유: disabled를 켜둔 채 재생성하면 새로 만든 영상이 조용히 프리뷰/export에서 빠진다.
+
+구현 지점(App.jsx) — `video*Path`를 clear/set 하는 patch에 `video*Disabled: null` 동반:
+- T2V: 새 제출 clear (line ~997) · 완료 set (line ~987)
+- I2V: 새 제출 clear (line ~1098) · 완료 set (line ~1085)
+- I2V clear/복원 (line ~1776) (+ 대응되는 T2V clear 경로)
+
+핵심은 **clear 시점에 같이 reset**하면 충분(이후 완료가 path만 채움). 완료 경로에도
+넣으면 belt-and-suspenders.
+
 ## 엣지 케이스
 - **둘 다 끄기** → 이미지-only export(스틸). 정상.
 - **이미지 없는 video-only 씬** → 어차피 `hasExportableMedia=false`로 씬째 drop(P2 처리됨). 영상 토글은 무해.
@@ -111,10 +129,13 @@ videoT2VDisabled: existing.videoT2VDisabled,
 - **unit `resolveExportVideos`**: `videoI2VDisabled` → i2v 제외 / 둘 다 disabled → `[]`.
 - **unit `getExportFilePaths`**: disabled 영상 path는 결과에서 빠짐.
 - **unit `buildVideoClips`**: disabled 클립도 트랙에 **존재 + `disabled:true`**(타임라인 dim 보장 — 사라지면 안 됨).
-- **unit PreviewPanel placement**: `videoI2VDisabled` 씬 → active `videoPlacement` + prefetch `videoPlacements` 에서 i2v 제외(`hiddenRoles`와 동일 경로).
+- **component PreviewPanel** (placement는 내부 useMemo라 직접 unit 곤란): `videoI2VDisabled`
+  씬 재생 → 렌더된 visible/preload `<video>` src가 i2v(disabled)를 **안 잡음**. (또는 판정
+  로직을 순수 헬퍼로 분리해 unit.)
 - **unit useScenes 재파싱 보존**: 씬에 `videoI2VDisabled=true` 설정 후 CSV/SRT 재파싱 merge → 플래그 보존.
+- **재생성 리셋**: `videoI2VDisabled=true` 씬 재생성 완료 → `videoI2VDisabled` false(새 영상이 프리뷰/export에 포함).
 - **component SceneList**: `videoI2VDisabled` 씬 → I2V thumb ✓ 안 됨(썸네일은 렌더).
-- **component 타임라인 클립**: 👁 클릭 → `onSceneUpdate(sceneId, { video*Disabled })` 올바르게 호출.
+- **component 타임라인 클립**: 👁 클릭 → `onSceneUpdate(sceneId, { video*Disabled })` 호출 **+ 씬 선택/모달(`onClickClip`)은 안 터짐**(전파 차단).
 
 ## 비고
 - B1 이후 vestigial인 `scene.exportMedia` 필드와는 독립(이 기능은 별도 disabled 플래그 사용).
