@@ -221,6 +221,22 @@ describe('useAudioTimeline', () => {
     })
   })
 
+  describe('disabled 비디오 클립', () => {
+    it('disabled 인 영상 클립도 트랙에 존재하되 disabled:true(타임라인 dim 유지)', () => {
+      const scenes = [{
+        id: 'scene_1', startTime: 0, endTime: 3, duration: 3,
+        imagePath: '/i.png',
+        videoI2VPath: '/i.mp4', videoI2VDuration: 2, videoI2VDisabled: true,
+      }]
+      const { result } = renderHook(() => useAudioTimeline(null, scenes, []))
+      const i2vTrack = result.current.tracks.find(t => t.role === 'video-i2v')
+      expect(i2vTrack).toBeTruthy()
+      const clip = i2vTrack.clips.find(c => c.sceneRef.id === 'scene_1')
+      expect(clip).toBeTruthy()          // disabled 라도 사라지면 안 됨
+      expect(clip.disabled).toBe(true)   // dim 표시용
+    })
+  })
+
   describe('자막 트랙', () => {
     it('builds subtitle clips from srtEntries (startMs/endMs format)', () => {
       const { result } = renderHook(() => useAudioTimeline(baseAudio, [], baseSrt))

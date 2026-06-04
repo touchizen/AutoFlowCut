@@ -189,6 +189,7 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
         const range = getSceneTimeRangeMs(s)
         if (!range) return null
         const isGenerating = source === 't2v' && s.videoT2VStatus === 'generating'
+        const isDisabled = source === 'i2v' ? !!s.videoI2VDisabled : !!s.videoT2VDisabled
         const placement = computeVideoClipPlacement(s, range.startMs, range.endMs, source)
         if (!placement) {
           // 완료 비디오는 아직 없지만 생성 중 → 빈 박스 + shimmer
@@ -197,6 +198,7 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
               id: `vid-${source}-${s.id}`, startMs: range.startMs, endMs: range.endMs,
               videoPath: null, videoSrc: null, generating: true, placeholder: true,
               sceneRef: s, color: COLORS.video, role: `video-${source}`,
+              disabled: isDisabled,
             }
           }
           return null
@@ -217,6 +219,7 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
           sceneRef: s,
           color: COLORS.video,
           role: `video-${source}`,
+          disabled: isDisabled,
         }
       })
       .filter(Boolean)
