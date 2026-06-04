@@ -7,7 +7,7 @@
  * 스킵 조건: path 없음 / duration 없음 / duration <= 0 / scene_dur <= 0
  */
 import { describe, it, expect } from 'vitest'
-import { computeVideoClipPlacement } from '../../../src/components/AudioTimeline/useAudioTimeline'
+import { computeVideoClipPlacement, isPreviewVideoVisible } from '../../../src/components/AudioTimeline/useAudioTimeline'
 
 describe('computeVideoClipPlacement', () => {
   describe('Case A — scene >= video → back-aligned', () => {
@@ -150,6 +150,22 @@ describe('computeVideoClipPlacement', () => {
       expect(computeVideoClipPlacement(null, 0, 5000)).toBeNull()
       expect(computeVideoClipPlacement(undefined, 0, 5000)).toBeNull()
     })
+  })
+})
+
+describe('isPreviewVideoVisible', () => {
+  const EMPTY = new Set()
+  it('disabled 없으면 보임', () => {
+    expect(isPreviewVideoVisible({}, 'i2v', EMPTY)).toBe(true)
+  })
+  it('videoI2VDisabled=true → i2v 안 보임', () => {
+    expect(isPreviewVideoVisible({ videoI2VDisabled: true }, 'i2v', EMPTY)).toBe(false)
+  })
+  it('hiddenRoles(View off) 도 안 보임', () => {
+    expect(isPreviewVideoVisible({}, 'i2v', new Set(['video-i2v']))).toBe(false)
+  })
+  it('t2v disabled 는 i2v 에 영향 없음', () => {
+    expect(isPreviewVideoVisible({ videoT2VDisabled: true }, 'i2v', EMPTY)).toBe(true)
   })
 })
 

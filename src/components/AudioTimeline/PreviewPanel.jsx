@@ -1,7 +1,7 @@
 import { useMemo, useRef, useEffect } from 'react'
 import { resolveVideoSrc } from '../../utils/videoSrc'
 import { resolveImageSrc } from '../../utils/formatters'
-import { computeVideoClipPlacement, getSceneTimeRangeMs } from './useAudioTimeline'
+import { computeVideoClipPlacement, getSceneTimeRangeMs, isPreviewVideoVisible } from './useAudioTimeline'
 
 // 활성 직전 비디오 prefetch lead time — playhead가 다음 비디오 활성에 도달
 // PREFETCH_LEAD_MS 안쪽으로 가까워지면 hidden <video>로 미리 src+load 트리거.
@@ -97,8 +97,8 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
   const { videoPlacement, videoSource } = useMemo(() => {
     const range = getSceneTimeRangeMs(scene)
     if (!range) return { videoPlacement: null, videoSource: null }
-    const i2v = hiddenRoles.has('video-i2v') ? null : computeVideoClipPlacement(scene, range.startMs, range.endMs, 'i2v')
-    const t2v = hiddenRoles.has('video-t2v') ? null : computeVideoClipPlacement(scene, range.startMs, range.endMs, 't2v')
+    const i2v = isPreviewVideoVisible(scene, 'i2v', hiddenRoles) ? computeVideoClipPlacement(scene, range.startMs, range.endMs, 'i2v') : null
+    const t2v = isPreviewVideoVisible(scene, 't2v', hiddenRoles) ? computeVideoClipPlacement(scene, range.startMs, range.endMs, 't2v') : null
     if (i2v && playheadMs >= i2v.videoIn && playheadMs < i2v.videoOut) return { videoPlacement: i2v, videoSource: 'i2v' }
     if (t2v && playheadMs >= t2v.videoIn && playheadMs < t2v.videoOut) return { videoPlacement: t2v, videoSource: 't2v' }
     return { videoPlacement: null, videoSource: null }
@@ -125,8 +125,8 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
     //   - t2v(보이면): i2v 가 없거나 t2v 가 i2v 보다 먼저 시작할 때만(그 전 구간에서 top-visible).
     const out = []
     for (const r of sceneRanges) {
-      const i2v = hiddenRoles.has('video-i2v') ? null : computeVideoClipPlacement(r.scene, r.startMs, r.endMs, 'i2v')
-      const t2v = hiddenRoles.has('video-t2v') ? null : computeVideoClipPlacement(r.scene, r.startMs, r.endMs, 't2v')
+      const i2v = isPreviewVideoVisible(r.scene, 'i2v', hiddenRoles) ? computeVideoClipPlacement(r.scene, r.startMs, r.endMs, 'i2v') : null
+      const t2v = isPreviewVideoVisible(r.scene, 't2v', hiddenRoles) ? computeVideoClipPlacement(r.scene, r.startMs, r.endMs, 't2v') : null
       if (i2v) {
         out.push({ videoIn: i2v.videoIn, videoOut: i2v.videoOut, videoPath: i2v.videoPath, generatedAt: r.scene?.videoI2VGeneratedAt ?? r.scene?.generatedAt })
       }

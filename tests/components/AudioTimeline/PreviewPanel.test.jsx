@@ -66,6 +66,16 @@ describe('PreviewPanel — i2v/t2v 모니터 우선순위 (top-visible)', () => 
     expect(prefetch.src).toContain('t2v_1') // i2v 아니라 t2v 워밍
   })
 
+  it('videoI2VDisabled 면 i2v 구간 playhead 라도 i2v 영상은 모니터에 안 잡힘', () => {
+    const scene = {
+      id: 'scene_1', startTime: 0, endTime: 4, duration: 4, imagePath: '/i.png',
+      videoI2VPath: '/i.mp4', videoI2VDuration: 4, videoI2VDisabled: true,
+    }
+    const { container } = render(<PreviewPanel playheadMs={1000} scenes={[scene]} srtEntries={[]} />)
+    const vids = [...container.querySelectorAll('video')]
+    expect(vids.every(v => !(v.getAttribute('src') || '').includes('i.mp4'))).toBe(true)
+  })
+
   it('같은 씬 i2v·t2v 둘 다 보이고 t2v 가 먼저 시작 → t2v 진입도 프리패치 (P3)', () => {
     // 10s 씬, i2v 2s(→videoIn 8000), t2v 4s(→videoIn 6000, 먼저 시작).
     // 6-8s 는 모니터가 t2v 재생. 프리패치 배열이 i2v 만 남기면 t2v 6s 진입이 cold-read.

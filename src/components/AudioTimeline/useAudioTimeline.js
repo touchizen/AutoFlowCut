@@ -56,6 +56,14 @@ export function getSceneTimeRangeMs(scene) {
  * @param {number} sceneEndMs - 씬 끝 ms
  * @returns {{videoPath: string, videoIn: number, videoOut: number} | null}
  */
+// 프리뷰 모니터에서 이 source 영상이 보이는지: View 토글(hiddenRoles)과 per-clip disabled 둘 다 고려.
+// (export 는 disabled 만 보지만 — resolveExportVideos — 프리뷰는 View 토글도 합쳐서 본다.)
+export function isPreviewVideoVisible(scene, source, hiddenRoles) {
+  if (!scene) return false
+  if (hiddenRoles && hiddenRoles.has(`video-${source}`)) return false
+  return source === 'i2v' ? !scene.videoI2VDisabled : !scene.videoT2VDisabled
+}
+
 // source: 'i2v' | 't2v' → 해당 소스만. 미지정이면 i2v 우선(기존 동작, PreviewPanel fallback 등).
 // 비디오 트랙을 i2v/t2v 두 개로 분리하면서, 트랙별로 자기 소스만 배치하도록 파라미터 추가.
 export function computeVideoClipPlacement(scene, sceneStartMs, sceneEndMs, source) {
