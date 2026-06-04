@@ -31,7 +31,7 @@ import { applyStyle, previewStyleMatching } from './services/styleService'
 import { computeGuardAvailable } from './services/startGuard'
 import { createStyleResolver } from './services/styleResolver'
 import { filterPendingScenes } from './utils/sceneFilters'
-import { videoClearPatch } from './utils/sceneMedia'
+import { videoClearPatch, buildFramePairVideoPatch } from './utils/sceneMedia'
 import { detectFileType, detectCSVType, parseCSVToScenes, parseSRTToScenes, csvPromptToVideoT2V } from './utils/parsers'
 import { resolveAudioSrtEntries, getSceneDuration } from './utils/srtTrack'
 import { tabAfterImport } from './utils/importTabRouting'
@@ -432,13 +432,19 @@ function App() {
           copy.videoT2VPath !== orig.videoT2VPath ||
           copy.videoI2VPath !== orig.videoI2VPath ||
           copy.videoT2VDuration !== orig.videoT2VDuration ||
-          copy.videoI2VDuration !== orig.videoI2VDuration
+          copy.videoI2VDuration !== orig.videoI2VDuration ||
+          // 캐시버스터 — mediaSync 가 framePair.generatedAt 으로 mutate 하므로 함께 감지/반영해야
+          // 함(아니면 path 등 다른 변경이 없을 때 generatedAt 갱신이 유실 → stale 비디오).
+          copy.videoT2VGeneratedAt !== orig.videoT2VGeneratedAt ||
+          copy.videoI2VGeneratedAt !== orig.videoI2VGeneratedAt
         if (changed) {
           scenesHook.updateScene(copy.id, {
             videoT2V: copy.videoT2V, videoT2VPath: copy.videoT2VPath,
             videoI2V: copy.videoI2V, videoI2VPath: copy.videoI2VPath,
             ...(copy.videoT2VDuration !== orig.videoT2VDuration ? { videoT2VDuration: copy.videoT2VDuration } : {}),
             ...(copy.videoI2VDuration !== orig.videoI2VDuration ? { videoI2VDuration: copy.videoI2VDuration } : {}),
+            ...(copy.videoT2VGeneratedAt !== orig.videoT2VGeneratedAt ? { videoT2VGeneratedAt: copy.videoT2VGeneratedAt } : {}),
+            ...(copy.videoI2VGeneratedAt !== orig.videoI2VGeneratedAt ? { videoI2VGeneratedAt: copy.videoI2VGeneratedAt } : {}),
           })
         }
       }
@@ -1878,9 +1884,7 @@ function App() {
               })
             } else if (videoId.startsWith('fp_')) {
               setFramePairs(prev => prev.map(p =>
-                p.id === videoId
-                  ? { ...p, video: patch.video, base64: patch.video, videoPath: patch.videoPath, ...metaPatch }
-                  : p
+                p.id === videoId ? { ...p, ...buildFramePairVideoPatch(patch) } : p
               ))
               // 매칭 image scene의 videoI2V 동기화 — ownerSceneId 기준
               const fp = framePairs.find(p => p.id === videoId)
@@ -1919,8 +1923,9 @@ function App() {
                   videoI2VDisabled: null, // history 복원 = 새 영상 → enabled (per-clip toggle)
                 })
               }
+              // P3 fix: fp_ 와 동일하게 video/base64/videoPath 까지 갱신(이전엔 metaPatch 만 → stale 결과표).
               setFramePairs(prev => prev.map(p =>
-                p.id === fpId ? { ...p, ...metaPatch } : p
+                p.id === fpId ? { ...p, ...buildFramePairVideoPatch(patch) } : p
               ))
             }
           }}

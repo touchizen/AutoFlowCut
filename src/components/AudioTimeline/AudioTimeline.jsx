@@ -10,6 +10,7 @@ import { useAudioTimeline, collectPlayableClips } from './useAudioTimeline'
 import { useVideoPosters } from './useVideoPosters'
 import { useI18n } from '../../hooks/useI18n'
 import { formatDuration, resolveImageSrc } from '../../utils/formatters'
+import { getVideoDisabledField } from '../../utils/sceneMedia'
 import { toast } from '../Toast'
 import TimeRuler from './TimeRuler'
 import TrackLane from './TrackLane'
@@ -80,8 +81,9 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   // 영상 클립 호버 👁 → 해당 씬의 i2v/t2v export 제외 플래그 토글 (falsy=포함).
   const handleToggleVideo = useCallback((clip) => {
     if (!onSceneUpdate || !clip?.sceneRef) return
-    const source = clip.role === 'video-i2v' ? 'i2v' : 't2v'
-    const field = source === 'i2v' ? 'videoI2VDisabled' : 'videoT2VDisabled'
+    const source = clip.role === 'video-i2v' ? 'i2v' : clip.role === 'video-t2v' ? 't2v' : null
+    if (!source) return // 알 수 없는 role 은 토글 안 함(silent t2v 처리 방지)
+    const field = getVideoDisabledField(source)
     onSceneUpdate(clip.sceneRef.id, { [field]: clip.sceneRef[field] ? null : true })
   }, [onSceneUpdate])
   const rawData = useAudioTimeline(audioPackage, scenes, srtEntries)

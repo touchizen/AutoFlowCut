@@ -24,6 +24,9 @@ import {
   getExportFilePaths,
   videoClearPatch,
   buildVideoRestorePatch,
+  assertVideoSource,
+  getVideoDisabledField,
+  buildFramePairVideoPatch,
 } from '../../src/utils/sceneMedia'
 
 describe('hasExportableMedia', () => {
@@ -305,5 +308,30 @@ describe('buildVideoRestorePatch (history 복원 → source-specific scene patch
     expect(out).not.toHaveProperty('videoT2V')
     expect(out.videoT2VPath).toBe('/v.mp4')
     expect(out.videoT2VDisabled).toBe(null)
+  })
+})
+
+describe('source 헬퍼 — assert/getVideoDisabledField/buildFramePairVideoPatch (typo 방어)', () => {
+  it('assertVideoSource: i2v/t2v 통과, 그 외(typo/undefined) throw', () => {
+    expect(assertVideoSource('i2v')).toBe('i2v')
+    expect(assertVideoSource('t2v')).toBe('t2v')
+    expect(() => assertVideoSource('i2V')).toThrow()
+    expect(() => assertVideoSource(undefined)).toThrow()
+  })
+  it('getVideoDisabledField: source 별 올바른 disabled 필드', () => {
+    expect(getVideoDisabledField('i2v')).toBe('videoI2VDisabled')
+    expect(getVideoDisabledField('t2v')).toBe('videoT2VDisabled')
+    expect(() => getVideoDisabledField('x')).toThrow()
+  })
+  it('videoClearPatch/buildVideoRestorePatch: unknown source → throw (silent fallback 제거)', () => {
+    expect(() => videoClearPatch('x')).toThrow()
+    expect(() => buildVideoRestorePatch('x', {})).toThrow()
+  })
+  it('buildFramePairVideoPatch: video/base64/videoPath + present-key 메타', () => {
+    expect(buildFramePairVideoPatch({ video: 'B', videoPath: '/p', seed: 1, generatedAt: 2 }))
+      .toEqual({ video: 'B', base64: 'B', videoPath: '/p', seed: 1, generatedAt: 2 })
+    const out = buildFramePairVideoPatch({ videoPath: '/p' })
+    expect(out).not.toHaveProperty('seed')
+    expect(out.videoPath).toBe('/p')
   })
 })

@@ -79,14 +79,44 @@ export function getExportFilePaths(scene) {
 }
 
 /**
+ * video source 검증 — 'i2v' | 't2v' 만 허용. typo/undefined 가 조용히 잘못된 필드를
+ * 업데이트하는 걸 막는다(이전 `source==='i2v' ? ... : ...` 의 silent t2v fallback 제거).
+ * @param {'i2v'|'t2v'} source
+ * @returns {'i2v'|'t2v'}
+ */
+export function assertVideoSource(source) {
+  if (source !== 'i2v' && source !== 't2v') {
+    throw new Error(`Unknown video source: ${JSON.stringify(source)} (expected 'i2v' | 't2v')`)
+  }
+  return source
+}
+
+/** source 의 per-clip disabled 필드명. */
+export function getVideoDisabledField(source) {
+  return assertVideoSource(source) === 'i2v' ? 'videoI2VDisabled' : 'videoT2VDisabled'
+}
+
+/**
  * 새 generation 제출/clear 시 해당 source 의 영상 필드를 초기화하는 patch.
  * per-clip `video*Disabled` 도 reset(null) — 재생성한 클립은 "새 클립" = enabled.
  * @param {'i2v'|'t2v'} source
  */
 export function videoClearPatch(source) {
-  return source === 'i2v'
+  return assertVideoSource(source) === 'i2v'
     ? { videoI2V: null, videoI2VPath: null, videoI2VDuration: null, videoI2VDisabled: null }
     : { videoT2V: null, videoT2VPath: null, videoT2VDuration: null, videoT2VDisabled: null }
+}
+
+/**
+ * history 복원 → framePair 에 적용할 patch (source 무관 — framePair 필드는 prefix 없음).
+ * F→V 결과표/fp 상세가 base64 우선 렌더하므로 video/base64/videoPath + 메타까지.
+ * (App fp_ 복원 분기와 동일 shape — 한 곳에서 정의해 분기 간 drift 방지.)
+ * @param {{video?, videoPath?, seed?, generatedAt?, model?, mediaId?}} patch
+ */
+export function buildFramePairVideoPatch(patch = {}) {
+  const out = { video: patch.video, base64: patch.video, videoPath: patch.videoPath }
+  for (const k of ['seed', 'generatedAt', 'model', 'mediaId']) if (k in patch) out[k] = patch[k]
+  return out
 }
 
 /**
@@ -102,6 +132,7 @@ export function videoClearPatch(source) {
  * @param {{video?, videoPath?, seed?, generatedAt?, model?, mediaId?}} patch
  */
 export function buildVideoRestorePatch(source, patch = {}) {
+  assertVideoSource(source)
   if (source === 't2v') {
     const out = { videoT2VPath: patch.videoPath || null, videoT2VDisabled: null }
     if (patch.video) out.videoT2V = patch.video

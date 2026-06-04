@@ -6,7 +6,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useI18n } from '../hooks/useI18n'
 import { formatTime, getRatioClass, resolveImageSrc, hasImageData } from '../utils/formatters'
 import { checkTagMatch } from '../utils/tagMatch'
-import { resolveExportVideos, hasExportableMedia, buildVideoRestorePatch } from '../utils/sceneMedia'
+import { resolveExportVideos, hasExportableMedia, buildVideoRestorePatch, buildFramePairVideoPatch } from '../utils/sceneMedia'
 import { resolveVideoSrc } from '../utils/videoSrc'
 import { getSceneSubtitle, getSceneDuration } from '../utils/srtTrack'
 import { UI, STYLE_PRESETS } from '../config/defaults'
@@ -608,9 +608,7 @@ export default function SceneList({
             // base64 를 우선 렌더하므로 현재 세션 일관성을 위해 — video/base64/videoPath + 메타까지 갱신.
             // (App fp_ 복원 경로와 동일 shape)
             if (v.source === 'i2v' && v.fpId && typeof onUpdateFramePair === 'function') {
-              const fpPatch = { video: patch.video, base64: patch.video, videoPath: patch.videoPath }
-              for (const k of ['seed', 'generatedAt', 'model', 'mediaId']) if (k in patch) fpPatch[k] = patch[k]
-              onUpdateFramePair(v.fpId, fpPatch)
+              onUpdateFramePair(v.fpId, buildFramePairVideoPatch(patch))
             }
           }}
         />
