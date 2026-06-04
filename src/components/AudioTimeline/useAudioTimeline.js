@@ -194,12 +194,15 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
     // ── Video 트랙 (I2V / T2V 분리) ──
     // 한 씬이 i2v·t2v 둘 다 가질 수 있어, 예전엔 i2v 우선 1개만 보여 t2v 가 가려졌다.
     // 트랙을 source 별로 분리해 둘 다 노출(모니터 재생 우선순위는 PreviewPanel + View 토글).
-    // t2v 는 생성 중(videoT2VStatus==='generating') placeholder+shimmer 도 만든다(이미지 트랙과 동일).
+    // 생성 중(t2v: videoT2VStatus / i2v: videoI2VStatus === 'generating')엔 기존 비디오를 화면에서
+    // 숨기고 placeholder+shimmer (이미지 트랙과 동일). 데이터는 유지 → 에러/취소 시 복귀.
     const buildVideoClips = (source) => (scenes || [])
       .map(s => {
         const range = getSceneTimeRangeMs(s)
         if (!range) return null
-        const isGenerating = source === 't2v' && s.videoT2VStatus === 'generating'
+        const isGenerating = source === 'i2v'
+          ? s.videoI2VStatus === 'generating'
+          : s.videoT2VStatus === 'generating'
         const isDisabled = source === 'i2v' ? !!s.videoI2VDisabled : !!s.videoT2VDisabled
         // 재생성 중(t2v) → 기존 비디오를 화면에서 숨기고 빈칸+shimmer (새로 만드는 느낌, 이미지 트랙과 동일).
         // scene.videoT2VPath 등 데이터는 건드리지 않으므로(아래 placement 경로를 안 탐) 에러/취소 시

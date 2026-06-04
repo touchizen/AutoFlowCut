@@ -1077,29 +1077,24 @@ function App() {
                 } : p
               )
 
-              // ── I2V 완료 → ownerSceneId로 씬에 videoI2V 동기화 ──
-              // prev를 사용해 stale closure 방지
-              if (newStatus === 'complete' && result?.base64) {
-                const fp = prev.find(p => p.id === id)
-                // ownerSceneId is the canonical row-to-scene binding. Gallery-rooted
-                // rows have ownerSceneId=null and are skipped by the truthy guard.
-                if (fp?.ownerSceneId) {
-                  scenesHook.updateScene(fp.ownerSceneId, {
-                    videoI2V: result.base64,
-                    videoI2VPath: result.videoPath || null,
-                    videoI2VDisabled: null,
-                    ...(result?.duration ? { videoI2VDuration: result.duration } : {}),
-                    // 비디오 캐시버스터용 — 이미지 generatedAt 과 분리(I2V 재생성 갱신).
-                    ...(result?.generatedAt ? { videoI2VGeneratedAt: result.generatedAt } : {}),
-                  })
+              // ── I2V 상태/결과를 ownerSceneId 로 씬에 동기화 ── (prev 사용 — stale closure 방지)
+              // ownerSceneId is the canonical row-to-scene binding. Gallery-rooted rows(null)는 스킵.
+              // - videoI2VStatus: t2v 의 videoT2VStatus 대응 신호 — 타임라인이 generating 시 빈칸+shimmer 판정.
+              // - 제출(generating) 시 비디오 데이터는 일부러 안 지운다(예전엔 videoClearPatch('i2v')).
+              //   타임라인/모니터가 generating 동안 화면에서만 숨기므로 stale 노출 없고, 데이터를 유지해야
+              //   에러/취소 시 status≠generating 으로 기존 비디오가 복귀한다. 완료 시 아래에서 새 걸로 교체.
+              const fpOwner = prev.find(p => p.id === id)
+              if (fpOwner?.ownerSceneId) {
+                const scenePatch = { videoI2VStatus: newStatus }
+                if (newStatus === 'complete' && result?.base64) {
+                  scenePatch.videoI2V = result.base64
+                  scenePatch.videoI2VPath = result.videoPath || null
+                  scenePatch.videoI2VDisabled = null
+                  if (result?.duration) scenePatch.videoI2VDuration = result.duration
+                  // 비디오 캐시버스터용 — 이미지 generatedAt 과 분리(I2V 재생성 갱신).
+                  if (result?.generatedAt) scenePatch.videoI2VGeneratedAt = result.generatedAt
                 }
-              }
-              // 새 generation 제출 — scene-level derived 비디오 메타도 클리어.
-              if (newStatus === 'generating' && result && 'videoPath' in result) {
-                const fp = prev.find(p => p.id === id)
-                if (fp?.ownerSceneId) {
-                  scenesHook.updateScene(fp.ownerSceneId, videoClearPatch('i2v'))
-                }
+                scenesHook.updateScene(fpOwner.ownerSceneId, scenePatch)
               }
 
               return updated

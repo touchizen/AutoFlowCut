@@ -249,7 +249,31 @@ describe('useAudioTimeline', () => {
     })
   })
 
-  describe('재생성 중(generating) t2v 비디오', () => {
+  describe('재생성 중(generating) 비디오 (t2v/i2v)', () => {
+    it('videoI2VPath 있어도 videoI2VStatus=generating 이면 빈칸+shimmer (기존 숨김)', () => {
+      const scenes = [{
+        id: 'scene_1', startTime: 0, endTime: 3, duration: 3, imagePath: '/i.png',
+        videoI2VPath: '/old.mp4', videoI2VDuration: 8, videoI2VStatus: 'generating',
+      }]
+      const { result } = renderHook(() => useAudioTimeline(null, scenes, []))
+      const i2vTrack = result.current.tracks.find(t => t.role === 'video-i2v')
+      const clip = i2vTrack.clips.find(c => c.sceneRef.id === 'scene_1')
+      expect(clip).toBeTruthy()
+      expect(clip.generating).toBe(true)
+      expect(clip.placeholder).toBe(true)
+      expect(clip.videoPath).toBe(null)
+    })
+    it('i2v generating 아니면 기존 비디오 표시 (에러/취소 시 복귀)', () => {
+      const scenes = [{
+        id: 'scene_1', startTime: 0, endTime: 3, duration: 3, imagePath: '/i.png',
+        videoI2VPath: '/old.mp4', videoI2VDuration: 8, // videoI2VStatus 없음
+      }]
+      const { result } = renderHook(() => useAudioTimeline(null, scenes, []))
+      const i2vTrack = result.current.tracks.find(t => t.role === 'video-i2v')
+      const clip = i2vTrack.clips.find(c => c.sceneRef.id === 'scene_1')
+      expect(clip.videoPath).toBe('/old.mp4')
+      expect(clip.placeholder).toBeFalsy()
+    })
     it('videoT2VPath 있어도 generating 이면 빈칸+shimmer (기존 숨김), placement 안 탐', () => {
       const scenes = [{
         id: 'scene_1', startTime: 0, endTime: 3, duration: 3, imagePath: '/i.png',

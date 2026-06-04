@@ -217,6 +217,8 @@ export function useScenes() {
           videoT2VSelected: existing.videoT2VSelected,
           videoT2VGeneratingStartedAt: existing.videoT2VGeneratingStartedAt,
           videoT2VGeneratingEndedAt: existing.videoT2VGeneratingEndedAt,
+          // I2V 생성 상태 — 타임라인 generating(빈칸+shimmer) 판정용. 재파싱 중 generation 상태 보존.
+          videoI2VStatus: existing.videoI2VStatus,
         }
       })
       // R4 review fix: parseSceneCSVToTracks 가 row 별 start_time/end_time 절대값을
