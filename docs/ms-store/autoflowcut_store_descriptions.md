@@ -29,6 +29,19 @@ or use the existing test account below if one has been provided separately.
 AutoFlowCut
 ```
 
+### Slogan / Tagline (for use next to the title)
+```
+Prompts in, video project out
+```
+Notes:
+- Avoid "CapCut" here — it's a ByteDance trademark and risky next to the app
+  title/name in store listings (body Description may still mention "export to
+  CapCut" for compatibility).
+- Alternatives:
+  - `Prompts in, edit-ready project out`
+  - `Prompts in, full timeline out`
+  - `Batch AI video, ready to edit`
+
 ### Short Description (100 chars)
 ```
 Bulk-generate AI images & videos with Google Gemini/Veo API; export full CapCut projects in one click.
