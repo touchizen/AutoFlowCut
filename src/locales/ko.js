@@ -628,6 +628,12 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     guideStep5: 'AI가 마크된 파일과 사유를 분석하여 대체 파일을 추천합니다',
   },
 
+  // 타임라인 클립 토글
+  timeline: {
+    includeClip: 'export 에 포함',
+    excludeClip: 'export 에서 제외',
+  },
+
   // 오디오 타임라인
   audioTimeline: {
     title: '오디오 타임라인',

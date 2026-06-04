@@ -629,6 +629,12 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     guideStep5: 'AI analyzes flagged files and reasons, then recommends replacements',
   },
 
+  // Timeline clip toggle
+  timeline: {
+    includeClip: 'Include in export',
+    excludeClip: 'Exclude from export',
+  },
+
   // Audio Timeline
   audioTimeline: {
     title: 'Audio Timeline',
