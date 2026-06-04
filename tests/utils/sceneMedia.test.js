@@ -240,4 +240,18 @@ describe('resolveExportVideos (B1: exportMedia 무시 — 있는 영상 다 expo
     expect(out.map(v => v.source)).toEqual(['t2v'])
     expect(out[0].data).toBe('BASE64DATA')
   })
+
+  it('videoI2VDisabled=true → i2v 제외(t2v만)', () => {
+    expect(resolveExportVideos({ ...i2v, ...t2v, videoI2VDisabled: true }).map(v => v.source)).toEqual(['t2v'])
+  })
+  it('videoT2VDisabled=true → t2v 제외(i2v만)', () => {
+    expect(resolveExportVideos({ ...i2v, ...t2v, videoT2VDisabled: true }).map(v => v.source)).toEqual(['i2v'])
+  })
+  it('둘 다 disabled → 빈 배열(이미지만 export)', () => {
+    expect(resolveExportVideos({ ...i2v, ...t2v, videoI2VDisabled: true, videoT2VDisabled: true })).toEqual([])
+  })
+  it('disabled=null/false 는 켜짐(falsy)', () => {
+    expect(resolveExportVideos({ ...i2v, videoI2VDisabled: null }).map(v => v.source)).toEqual(['i2v'])
+    expect(resolveExportVideos({ ...i2v, videoI2VDisabled: false }).map(v => v.source)).toEqual(['i2v'])
+  })
 })
