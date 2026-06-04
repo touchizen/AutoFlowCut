@@ -6,7 +6,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useI18n } from '../hooks/useI18n'
 import { formatTime, getRatioClass, resolveImageSrc, hasImageData } from '../utils/formatters'
 import { checkTagMatch } from '../utils/tagMatch'
-import { resolveExportVideos } from '../utils/sceneMedia'
+import { resolveExportVideos, hasExportableMedia } from '../utils/sceneMedia'
 import { resolveVideoSrc } from '../utils/videoSrc'
 import { getSceneSubtitle, getSceneDuration } from '../utils/srtTrack'
 import { UI, STYLE_PRESETS } from '../config/defaults'
@@ -52,9 +52,12 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
   // B1: export 는 "있는 영상 다" 내보냄(어느 take 쓸지는 CapCut 에서 큐레이션).
   // 이미지는 항상 베이스 트랙으로 나감. → Media 컬럼은 "export 에 포함됨"을 ✓/selected 로
   // 보여주는 표시 전용이고, 클릭은 미리보기만(아래 onClick) — export 선택을 바꾸지 않는다.
+  // ⚠️ exporter contract: 이미지 없는 씬은 hasExportableMedia=false → useExport 가 통째로
+  // drop. 그러므로 export 불가 씬은 영상이 있어도 ✓ 표시 안 함(거짓 ✓ 방지).
+  const sceneExportable = hasExportableMedia(scene)
   const exportedSources = new Set(resolveExportVideos(scene).map(v => v.source))
   const imageOnly = exportedSources.size === 0 // 영상 없이 이미지만 (duration 핸들러용)
-  const isIncluded = (type) => (type === 'image' ? hasImage : exportedSources.has(type))
+  const isIncluded = (type) => sceneExportable && (type === 'image' ? hasImage : exportedSources.has(type))
   const isSelected = (type) => isIncluded(type) ? 'selected' : ''
   const exportMark = (type) => isIncluded(type) ? ' ✓' : ''
 

@@ -10,7 +10,6 @@ import { renderHook } from '@testing-library/react'
 // 그 헬퍼가 import 되므로 mock
 vi.mock('../../src/utils/sceneMedia', () => ({
   hasExportableMedia: vi.fn((s) => !!(s.image || s.imagePath)),
-  resolveExportMediaChoice: vi.fn(() => 'image'),
   getExportFilePaths: vi.fn(() => ({})),
 }))
 

@@ -19,180 +19,10 @@
 
 import { describe, it, expect } from 'vitest'
 import {
-  resolveExportMediaChoice,
   resolveExportVideos,
   hasExportableMedia,
   getExportFilePaths,
 } from '../../src/utils/sceneMedia'
-
-describe('resolveExportMediaChoice', () => {
-  describe('명시적 exportMedia (사용자가 클릭으로 선택)', () => {
-    it("exportMedia='i2v' 면 데이터 유무와 무관하게 'i2v'", () => {
-      expect(resolveExportMediaChoice({ exportMedia: 'i2v' })).toBe('i2v')
-      expect(
-        resolveExportMediaChoice({ exportMedia: 'i2v', videoI2V: 'b64' })
-      ).toBe('i2v')
-      expect(
-        resolveExportMediaChoice({ exportMedia: 'i2v', videoI2VPath: '/p' })
-      ).toBe('i2v')
-    })
-
-    it("exportMedia='t2v' 면 't2v'", () => {
-      expect(resolveExportMediaChoice({ exportMedia: 't2v' })).toBe('t2v')
-    })
-
-    it("exportMedia='image' 면 'image' (영상 데이터 있어도)", () => {
-      expect(
-        resolveExportMediaChoice({
-          exportMedia: 'image',
-          videoI2VPath: '/path',
-          videoT2VPath: '/path',
-        })
-      ).toBe('image')
-    })
-  })
-
-  describe('auto (exportMedia 미설정)', () => {
-    it('아무 미디어도 없으면 image', () => {
-      expect(resolveExportMediaChoice({})).toBe('image')
-    })
-
-    it('image 만 있으면 image (image 자체는 auto 분기에선 영향 없음 — fallback)', () => {
-      expect(resolveExportMediaChoice({ image: 'b64' })).toBe('image')
-      expect(resolveExportMediaChoice({ imagePath: '/img' })).toBe('image')
-    })
-
-    it('I2V base64 만 → i2v', () => {
-      expect(resolveExportMediaChoice({ videoI2V: 'b64' })).toBe('i2v')
-    })
-
-    it('I2V path 만 → i2v (이전 세션에서 생성한 I2V)', () => {
-      expect(resolveExportMediaChoice({ videoI2VPath: '/i2v.mp4' })).toBe('i2v')
-    })
-
-    it('T2V base64 만 → t2v', () => {
-      expect(resolveExportMediaChoice({ videoT2V: 'b64' })).toBe('t2v')
-    })
-
-    it('T2V path 만 → t2v (이전 세션에서 생성한 T2V)', () => {
-      expect(resolveExportMediaChoice({ videoT2VPath: '/t2v.mp4' })).toBe('t2v')
-    })
-
-    it('I2V + T2V 둘 다 있으면 I2V 우선', () => {
-      expect(
-        resolveExportMediaChoice({
-          videoI2V: 'i2v_b64',
-          videoT2V: 't2v_b64',
-        })
-      ).toBe('i2v')
-      expect(
-        resolveExportMediaChoice({
-          videoI2VPath: '/i2v.mp4',
-          videoT2VPath: '/t2v.mp4',
-        })
-      ).toBe('i2v')
-    })
-  })
-
-  describe('🚨 회귀 가드 — cross-session 시각/실제 일치', () => {
-    it('이전 세션 I2V (path만) + 이번 세션 T2V (base64) → i2v (이전 코드는 t2v 반환했음)', () => {
-      // 사용자 실제 시나리오:
-      // - 이전 세션 I2V 생성 → 저장 → base64 사라지고 path 만 남음
-      // - 이번 세션 시작 → T2V 생성 → videoT2V(base64) 메모리에
-      // - exportMedia 미설정 (auto)
-      const scene = {
-        id: 'scene_1',
-        videoI2VPath: 'C:/project/videos/i2v_1.mp4',  // 이전 세션 I2V path 만
-        videoI2V: undefined,                            // base64 없음
-        videoT2VPath: 'C:/project/videos/t2v_1.mp4',  // 이번 세션 T2V path
-        videoT2V: '(base64_placeholder)',               // 이번 세션 T2V base64
-      }
-      // 이전 SceneList 로직(base64만 체크)은 't2v' 반환 → 시각이 거짓말함
-      // 새 공용 로직은 path 도 체크 → 'i2v' 반환 (실제 export 와 일치)
-      expect(resolveExportMediaChoice(scene)).toBe('i2v')
-    })
-
-    it('이전 세션 I2V (path만) + 이번 세션 T2V 없음 → i2v (이전엔 image 반환했음)', () => {
-      // 시나리오: 이전 세션 I2V만 생성, 이번 세션 아무 영상 안 만듦
-      // SceneList 이전 로직: videoI2V undefined → videoT2V undefined → image 반환
-      // 새 공용 로직: videoI2VPath truthy → i2v 반환 (실제 export 와 일치)
-      const scene = {
-        id: 'scene_2',
-        videoI2VPath: 'C:/project/videos/i2v_2.mp4',
-        videoI2V: undefined,
-      }
-      expect(resolveExportMediaChoice(scene)).toBe('i2v')
-    })
-
-    it('명시적 t2v 선택했는데 T2V 데이터가 정말 없으면 여전히 t2v (사용자 의도 존중)', () => {
-      // 명시 선택은 데이터 유무와 무관하게 그 값 반환.
-      // 호출 측(useExport)이 path/data 추출 시 적절히 처리.
-      const scene = {
-        exportMedia: 't2v',
-        videoI2VPath: '/i.mp4',
-        // videoT2V/videoT2VPath 모두 없음
-      }
-      expect(resolveExportMediaChoice(scene)).toBe('t2v')
-    })
-  })
-
-  describe('방어적 동작', () => {
-    it('scene 이 null 이면 image (crash 안 함)', () => {
-      expect(resolveExportMediaChoice(null)).toBe('image')
-    })
-
-    it('scene 이 undefined 면 image', () => {
-      expect(resolveExportMediaChoice(undefined)).toBe('image')
-    })
-
-    it('알 수 없는 exportMedia 값이면 auto 처럼 동작', () => {
-      // 'foo' 같은 잘못된 값 → 명시 분기 통과 못 함 → auto fallback
-      const scene = { exportMedia: 'foo', videoI2VPath: '/i.mp4' }
-      expect(resolveExportMediaChoice(scene)).toBe('i2v')
-    })
-
-    it('exportMedia 가 빈 문자열이면 auto 처리', () => {
-      const scene = { exportMedia: '', videoI2VPath: '/i.mp4' }
-      expect(resolveExportMediaChoice(scene)).toBe('i2v')
-    })
-  })
-
-  describe('우선순위 매트릭스', () => {
-    // [exportMedia, hasI2VBase64, hasI2VPath, hasT2VBase64, hasT2VPath, expected]
-    const scenarios = [
-      // 명시 선택
-      ['i2v', false, false, false, false, 'i2v'],
-      ['t2v', false, false, false, false, 't2v'],
-      ['image', true, true, true, true, 'image'],
-      // auto, 단일 미디어
-      [null, true, false, false, false, 'i2v'],   // I2V base64
-      [null, false, true, false, false, 'i2v'],   // I2V path 만
-      [null, false, false, true, false, 't2v'],   // T2V base64
-      [null, false, false, false, true, 't2v'],   // T2V path 만
-      [null, false, false, false, false, 'image'], // 아무것도 없음
-      // auto, I2V + T2V 동시 (I2V 우선)
-      [null, true, false, true, false, 'i2v'],
-      [null, false, true, false, true, 'i2v'],
-      [null, true, true, true, true, 'i2v'],
-      // ⭐ 회귀 케이스: I2V path만 + T2V base64 → i2v
-      [null, false, true, true, false, 'i2v'],
-    ]
-
-    scenarios.forEach(([exportMedia, i2vB, i2vP, t2vB, t2vP, expected]) => {
-      const desc = `exportMedia=${exportMedia ?? 'auto'} I2V[b=${i2vB ? 'Y' : 'N'},p=${i2vP ? 'Y' : 'N'}] T2V[b=${t2vB ? 'Y' : 'N'},p=${t2vP ? 'Y' : 'N'}] → ${expected}`
-      it(desc, () => {
-        const scene = {
-          exportMedia,
-          videoI2V: i2vB ? 'b64' : undefined,
-          videoI2VPath: i2vP ? '/i.mp4' : undefined,
-          videoT2V: t2vB ? 'b64' : undefined,
-          videoT2VPath: t2vP ? '/t.mp4' : undefined,
-        }
-        expect(resolveExportMediaChoice(scene)).toBe(expected)
-      })
-    })
-  })
-})
 
 describe('hasExportableMedia', () => {
   // Contract: capcutCloud 가 image 를 메인 트랙으로 사용하므로 image 가 없는 씬은
@@ -263,8 +93,8 @@ describe('hasExportableMedia', () => {
 })
 
 describe('getExportFilePaths', () => {
-  // Contract: resolveExportMediaChoice 의 결과에 맞춰 실제 읽을 path 만 반환.
-  // 선택 안 된 영상 path 는 권한 체크 대상에서 제외 (UX 회귀 방지).
+  // Contract(B1): imagePath + 존재하는 영상 path 모두 반환(있는 영상 다 export 하므로).
+  // data:base64 URL 은 디스크 read 불필요 → 제외.
 
   it('null/undefined 씬은 빈 배열', () => {
     expect(getExportFilePaths(null)).toEqual([])

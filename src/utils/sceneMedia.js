@@ -12,29 +12,6 @@
  */
 
 /**
- * 씬에 대해 export 시 어떤 미디어가 선택될지 반환.
- *
- * 우선순위:
- *   1. scene.exportMedia 가 명시되어 있으면 그대로 사용 ('i2v' | 't2v' | 'image')
- *   2. 'auto' 면 base64 또는 path 가 있는 미디어 중 I2V > T2V > image 순
- *
- * 중요: base64(메모리)와 path(디스크) 둘 다 체크해야 한다. 이전 세션에서 생성된
- * 영상은 메모리(base64)에는 없지만 디스크(path)에는 남아있다.
- *
- * @param {object} scene
- * @returns {'i2v' | 't2v' | 'image'}
- */
-export function resolveExportMediaChoice(scene) {
-  if (!scene) return 'image'
-  const choice = scene.exportMedia || 'auto'
-  if (choice === 'i2v' || choice === 't2v' || choice === 'image') return choice
-  // auto: I2V > T2V > image
-  if (scene.videoI2V || scene.videoI2VPath) return 'i2v'
-  if (scene.videoT2V || scene.videoT2VPath) return 't2v'
-  return 'image'
-}
-
-/**
  * export: 씬에서 내보낼 영상 목록(0~2개)을 반환.
  * B1: exportMedia(i2v/t2v/image 핀) 무시 — 존재하는 영상은 모두 내보낸다.
  *   (i2v·t2v 둘 다면 2개, i2v 먼저=프리뷰 상단/앞. 어느 take 쓸지는 CapCut 에서 큐레이션.)
@@ -79,14 +56,9 @@ export function hasExportableMedia(scene) {
  * 실제 export 시 디스크 read 가 필요한 파일 경로만 반환.
  * data:base64 URL 은 권한 불필요 — 제외.
  *
- * **resolveExportMediaChoice 결과에 맞춰 path 를 추리**한다:
+ * B1: resolveExportVideos(= 있는 영상 다)에 맞춰 path 를 모은다:
  *   - 항상 imagePath (capcutCloud 가 메인 트랙으로 사용)
- *   - choice 가 'i2v' 면 videoI2VPath 추가
- *   - choice 가 't2v' 면 videoT2VPath 추가
- *   - 'image' 이면 영상 path 는 추가 안 함 (실제로 안 읽으니까)
- *
- * 이렇게 좁혀야 "사용자는 image 만 export 하는데 과거에 만든 video path 가
- * 남아있어서 권한 prompt 가 뜨거나 export 가 차단되는" UX 회귀를 막는다.
+ *   - 존재하는 영상(i2v·t2v) path 모두 (둘 다면 둘 다 — 실제로 둘 다 export 하므로 권한 필요)
  *
  * @param {object} scene
  * @returns {string[]}
@@ -98,7 +70,7 @@ export function getExportFilePaths(scene) {
   // 이미지 path 는 모든 export 모드에서 읽힘 (메인 트랙)
   if (isFilePath(scene.imagePath)) paths.push(scene.imagePath)
 
-  // 선택된 영상(들)의 path 만 추가 — 하이브리드면 i2v·t2v 둘 다 가능.
+  // 있는 영상(들)의 path 추가 (B1: i2v·t2v 둘 다면 둘 다).
   for (const v of resolveExportVideos(scene)) {
     if (isFilePath(v.path)) paths.push(v.path)
   }

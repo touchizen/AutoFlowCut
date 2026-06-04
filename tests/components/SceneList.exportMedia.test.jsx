@@ -54,6 +54,14 @@ describe('SceneList Media 컬럼 — B1 (있는 미디어 다 export, 표시 전
     expect(thumbFor(container, 'T2V').classList.contains('selected')).toBe(true)
   })
 
+  it('이미지 없는 video-only 씬 → 영상 thumb ✓ 안 됨 (export 시 씬째로 drop → 거짓 ✓ 방지)', () => {
+    // hasExportableMedia 는 image 를 요구 → 이미지 없는 씬은 useExport 가 통째로 제외.
+    // 그러므로 "✓ = export 됨" 계약상 영상 thumb 도 ✓ 면 안 됨.
+    const { container } = renderRow(bothScene({ image: undefined }))
+    expect(thumbFor(container, 'I2V').classList.contains('selected')).toBe(false)
+    expect(thumbFor(container, 'T2V').classList.contains('selected')).toBe(false)
+  })
+
   it('thumb 클릭 → export 변경 없음 (미리보기 전용, onUpdate 미호출)', () => {
     const onUpdate = vi.fn()
     const { container } = renderRow(bothScene(), { onUpdate })
