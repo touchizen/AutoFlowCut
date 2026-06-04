@@ -15,6 +15,23 @@ import { stripReferencesForSave } from '../utils/projectPersist'
 const DEFAULT_ASPECT_RATIO = '16:9'
 
 /**
+ * 로드/복원 시 중단된 'generating' 상태를 'pending' 으로 정규화.
+ * item.status (image/videoScene/framePair 공통) 뿐 아니라 scene 의 비디오별 상태
+ * (videoT2VStatus/videoI2VStatus)도 함께 내린다 — 안 그러면 생성 중 종료/전환/크래시 후
+ * 재로드 시 그 status 가 generating 으로 남아, 타임라인이 멀쩡한 기존 비디오를 영구히
+ * 빈칸+shimmer 로 숨긴다(생성은 이미 끝났는데 복귀가 안 되는 회귀).
+ * @param {object} item
+ */
+export function resetGeneratingItem(item) {
+  if (!item) return item
+  let next = item
+  if (next.status === 'generating') next = { ...next, status: 'pending', generatingStartedAt: undefined }
+  if (next.videoT2VStatus === 'generating') next = { ...next, videoT2VStatus: 'pending', videoT2VGeneratingStartedAt: undefined }
+  if (next.videoI2VStatus === 'generating') next = { ...next, videoI2VStatus: 'pending' }
+  return next
+}
+
+/**
  * Backfill ownerSceneId on legacy framePairs that pre-date the owner-scene binding.
  *
  * Until this plan landed, framePairs only carried startSceneId/endSceneId, and every
@@ -301,9 +318,9 @@ export async function loadProjectWithResources(projectName) {
     }
   )
 
-  // 복원 시 'generating' 상태 리셋 → 'pending' (중단된 생성은 재시작 불가)
-  const resetGenerating = (item) =>
-    item.status === 'generating' ? { ...item, status: 'pending', generatingStartedAt: undefined } : item
+  // 복원 시 'generating' 상태 리셋 → 'pending' (중단된 생성은 재시작 불가).
+  // scene 비디오별 상태(videoT2VStatus/videoI2VStatus)까지 — 위 module helper 참조.
+  const resetGenerating = resetGeneratingItem
 
   // ── 완성된 비디오 → 씬에 동기화 (videoT2V / videoI2V) ──
   // 우선순위:
