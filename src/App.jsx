@@ -31,7 +31,7 @@ import { applyStyle, previewStyleMatching } from './services/styleService'
 import { computeGuardAvailable } from './services/startGuard'
 import { createStyleResolver } from './services/styleResolver'
 import { filterPendingScenes } from './utils/sceneFilters'
-import { videoClearPatch, buildFramePairVideoPatch } from './utils/sceneMedia'
+import { videoClearPatch, buildFramePairVideoPatch, buildVideoRestorePatch, resolveI2vRestoreSceneId } from './utils/sceneMedia'
 import { detectFileType, detectCSVType, parseCSVToScenes, parseSRTToScenes, csvPromptToVideoT2V } from './utils/parsers'
 import { resolveAudioSrtEntries, getSceneDuration } from './utils/srtTrack'
 import { tabAfterImport } from './utils/importTabRouting'
@@ -1661,7 +1661,9 @@ function App() {
                 scenes={scenes}
                 srtEntries={resolveAudioSrtEntries(audioPackage, scenesHook.srtTrack)}
                 audioPackage={audioPackage}
+                framePairs={framePairs}
                 onSceneSelect={(scene) => setSelectedScene(scene)}
+                onVideoSelect={(item) => setSelectedVideo(item)}
                 onSaveTimecodeOverride={saveTimecodeOverride}
                 onPlayheadChange={setMonitorMs}
                 onPlayingChange={setMonitorPlaying}
@@ -1886,11 +1888,9 @@ function App() {
               // ownerSceneId is the canonical row-to-scene binding. Gallery-rooted
               // rows have ownerSceneId=null and are skipped by the truthy guard.
               if (fp?.ownerSceneId) {
-                scenesHook.updateScene(fp.ownerSceneId, {
-                  ...(patch.video ? { videoI2V: patch.video } : {}),
-                  videoI2VPath: patch.videoPath || null,
-                  videoI2VDisabled: null, // history 복원 = 새 영상 → enabled (per-clip toggle)
-                })
+                // i2v_ 분기와 동일 helper — generatedAt→videoI2VGeneratedAt 매핑으로 cache-buster
+                // 갱신(같은 i2v_N.mp4 덮어쓰기 시 timeline/monitor stale preview 방지).
+                scenesHook.updateScene(fp.ownerSceneId, buildVideoRestorePatch('i2v', patch))
               }
             } else if (videoId.startsWith('t2v_')) {
               // synthetic id — scene 에는 비디오 데이터/path 만 sync (이미지 메타 슬롯 보호).
@@ -1907,16 +1907,13 @@ function App() {
             } else if (videoId.startsWith('i2v_')) {
               // synthetic id — scene 에는 비디오 데이터/path 만 sync (이미지 메타 슬롯 보호).
               // video 메타는 source-of-truth 인 fp_X 에만 반영.
-              // NOTE: i2v_N derives from fp.id (sequential counter), NOT from scene number,
-              // so `scene_N` string-parse is wrong. Route via framePair's ownerSceneId instead.
-              const fpId = `fp_${videoId.replace('i2v_', '')}`
-              const fpForI2v = framePairs.find(p => p.id === fpId)
-              if (fpForI2v?.ownerSceneId) {
-                scenesHook.updateScene(fpForI2v.ownerSceneId, {
-                  ...(patch.video ? { videoI2V: patch.video } : {}),
-                  videoI2VPath: patch.videoPath || null,
-                  videoI2VDisabled: null, // history 복원 = 새 영상 → enabled (per-clip toggle)
-                })
+              // i2v_N 은 fp.id 기반이라 owning framePair 의 ownerSceneId 로 scene 을 찾는다.
+              // owning fp 가 없으면(폴백 id) payload 의 sceneId 로 폴백 — 아니면 저장 no-op(P2-1).
+              const { fpId, sceneId: i2vSceneId } = resolveI2vRestoreSceneId(selectedVideo, framePairs)
+              if (i2vSceneId) {
+                // buildVideoRestorePatch 가 videoI2VPath/Disabled + generatedAt→videoI2VGeneratedAt
+                // 매핑 → cache-buster 갱신(같은 i2v_N.mp4 덮어쓰기 시 stale preview 방지, P2-2).
+                scenesHook.updateScene(i2vSceneId, buildVideoRestorePatch('i2v', patch))
               }
               // P3 fix: fp_ 와 동일하게 video/base64/videoPath 까지 갱신(이전엔 metaPatch 만 → stale 결과표).
               setFramePairs(prev => prev.map(p =>

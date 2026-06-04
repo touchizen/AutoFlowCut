@@ -17,7 +17,9 @@ export default function LiveTimeline({
   scenes,
   srtEntries,
   audioPackage,
+  framePairs = [],
   onSceneSelect,
+  onVideoSelect,
   onSaveTimecodeOverride,
   onPlayheadChange,
   onPlayingChange,
@@ -56,8 +58,41 @@ export default function LiveTimeline({
       disabled={disabled}
       onSaveTimecodeOverride={onSaveTimecodeOverride}
       onClipSelect={(clip) => {
-        // 클립은 sceneRef 를 들고 있음(useAudioTimeline) → 해당 씬 상세 모달.
-        if (clip?.sceneRef) onSceneSelect?.(clip.sceneRef)
+        if (!clip?.sceneRef) return
+        const scene = clip.sceneRef
+        // videoPath 는 정규화된 clip.videoPath 를 쓴다 — scene.videoT2VPath/videoI2VPath(camel)만
+        // 넘기면 legacy snake(video_*_path)만 있는 프로젝트는 모달이 No video 가 된다(P2-a).
+        if (clip.role === 'video-t2v' && clip.videoPath) {
+          onVideoSelect?.({
+            id: `t2v_${scene.id.replace('scene_', '')}`,
+            prompt: scene.prompt,
+            video: scene.videoT2V,
+            videoPath: clip.videoPath,
+            status: 'complete',
+            sceneId: scene.id,
+            source: 't2v',
+          })
+        } else if (clip.role === 'video-i2v' && clip.videoPath) {
+          // i2v_N 의 N 은 owning framePair 의 id 에서 와야 한다(App 이 i2v_N→fp_N 으로 해석).
+          // scene 번호로 만들면 fp.id 와 어긋날 때 엉뚱한 framePair 를 갱신/no-op(P1).
+          // SceneList.jsx 와 동일하게 ownerSceneId 로 매핑, owning fp 없으면 scene 번호 폴백.
+          const ownerFp = framePairs.find(fp => fp.ownerSceneId === scene.id)
+          const i2vId = ownerFp?.id
+            ? `i2v_${ownerFp.id.replace('fp_', '')}`
+            : `i2v_${scene.id.replace('scene_', '')}`
+          onVideoSelect?.({
+            id: i2vId,
+            prompt: scene.prompt,
+            video: scene.videoI2V,
+            videoPath: clip.videoPath,
+            status: 'complete',
+            sceneId: scene.id,
+            source: 'i2v',
+            fpId: ownerFp?.id,
+          })
+        } else {
+          onSceneSelect?.(scene)
+        }
       }}
     />
   )

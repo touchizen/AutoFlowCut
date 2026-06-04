@@ -9,13 +9,14 @@ import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } fr
 import { useAudioTimeline, collectPlayableClips } from './useAudioTimeline'
 import { useVideoPosters } from './useVideoPosters'
 import { useI18n } from '../../hooks/useI18n'
-import { formatDuration, resolveImageSrc } from '../../utils/formatters'
+import { formatDuration } from '../../utils/formatters'
 import { getVideoDisabledField } from '../../utils/sceneMedia'
 import { toast } from '../Toast'
 import TimeRuler from './TimeRuler'
 import TrackLane from './TrackLane'
 import TimelineFlagButton from './TimelineFlagButton'
 import HoverImageBalloon from '../HoverImageBalloon'
+import { resolveHoverPreviewSrc, findLiveClip } from './hoverPreview'
 import PreviewPanel from './PreviewPanel'
 import Playhead from './Playhead'
 import {
@@ -1171,19 +1172,17 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
         </div>
       )}
 
-      {/* 씬 hover 툴팁 */}
-      {hoverScene && (() => {
-        const imgPath = hoverScene.scene.imagePath || hoverScene.scene.image_path || hoverScene.scene.filePath
-        return (
-          <HoverImageBalloon
-            anchorRect={{ left: hoverScene.x, right: hoverScene.x, top: hoverScene.y, bottom: hoverScene.y }}
-            src={imgPath ? resolveImageSrc({ imagePath: imgPath, generatedAt: hoverScene.scene?.generatedAt, image: hoverScene.scene?.image }) : undefined}
-            className="atl-tooltip"
-          >
-            {hoverScene.scene.subtitle && <div className="atl-tooltip-sub">{hoverScene.scene.subtitle}</div>}
-          </HoverImageBalloon>
-        )
-      })()}
+      {/* 씬 hover 툴팁 — 비디오 클립은 포스터, 이미지 클립은 씬 이미지 (resolveHoverPreviewSrc).
+          hover 시점 clip 은 poster 주입 전 stale 일 수 있어 현재 data 에서 live clip 재조회(P2-b). */}
+      {hoverScene && (
+        <HoverImageBalloon
+          anchorRect={{ left: hoverScene.x, right: hoverScene.x, top: hoverScene.y, bottom: hoverScene.y }}
+          src={resolveHoverPreviewSrc({ ...hoverScene, clip: findLiveClip(data, hoverScene.clip?.id) || hoverScene.clip })}
+          className="atl-tooltip"
+        >
+          {hoverScene.scene.subtitle && <div className="atl-tooltip-sub">{hoverScene.scene.subtitle}</div>}
+        </HoverImageBalloon>
+      )}
     </div>
   )
 }

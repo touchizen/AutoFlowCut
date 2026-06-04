@@ -155,6 +155,23 @@ export function buildVideoRestorePatch(source, patch = {}) {
   return out
 }
 
+/**
+ * i2v history 복원(VideoDetailModal save) 시 patch 를 적용할 scene/framePair 해석.
+ * - fpId: video.fpId 우선, 없으면 id(`i2v_N`)에서 `fp_N` 파싱(App fp_ 갱신 대상).
+ * - sceneId: owning framePair 의 ownerSceneId 우선, 없으면 payload 의 sceneId 폴백.
+ *   폴백 i2v_id(owning fp 없을 때 scene 번호로 생성됨)는 `fp_N` 이 없어 scene 갱신이
+ *   통째로 no-op 되던 버그(P2-1)를 sceneId 폴백으로 막는다.
+ * @param {{id?: string, fpId?: string, sceneId?: string}|null} video
+ * @param {Array<{id: string, ownerSceneId?: string}>} framePairs
+ * @returns {{fpId: string|null, sceneId: string|null}}
+ */
+export function resolveI2vRestoreSceneId(video, framePairs = []) {
+  if (!video) return { fpId: null, sceneId: null }
+  const fpId = video.fpId || (video.id ? `fp_${String(video.id).replace('i2v_', '')}` : null)
+  const fp = fpId ? framePairs.find(p => p.id === fpId) : null
+  return { fpId, sceneId: fp?.ownerSceneId || video.sceneId || null }
+}
+
 function isFilePath(v) {
   return v && typeof v === 'string' && !v.startsWith('data:')
 }

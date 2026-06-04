@@ -22,11 +22,11 @@ describe('LiveTimeline', () => {
     expect(captured.props.compact).toBe(true)
   })
 
-  it('클립 선택 시 sceneRef 로 onSceneSelect 호출', () => {
+  it('이미지 클립 선택 시 sceneRef 로 onSceneSelect 호출', () => {
     const onSceneSelect = vi.fn()
     render(<LiveTimeline scenes={[]} srtEntries={[]} audioPackage={null} onSceneSelect={onSceneSelect} />)
     const scene = { id: 's9' }
-    captured.props.onClipSelect({ id: 'img-s9', sceneRef: scene })
+    captured.props.onClipSelect({ id: 'img-s9', role: 'image', sceneRef: scene })
     expect(onSceneSelect).toHaveBeenCalledWith(scene)
   })
 
@@ -35,6 +35,64 @@ describe('LiveTimeline', () => {
     render(<LiveTimeline scenes={[]} srtEntries={[]} audioPackage={null} onSceneSelect={onSceneSelect} />)
     captured.props.onClipSelect({ id: 'sub-1' })
     expect(onSceneSelect).not.toHaveBeenCalled()
+  })
+
+  it('T2V 비디오 클립 선택 시 onVideoSelect 호출 (이미지 모달 아님, videoPath 는 정규화된 clip.videoPath)', () => {
+    const onSceneSelect = vi.fn()
+    const onVideoSelect = vi.fn()
+    render(<LiveTimeline scenes={[]} srtEntries={[]} audioPackage={null} onSceneSelect={onSceneSelect} onVideoSelect={onVideoSelect} />)
+    // legacy snake path 만 있는 씬 — scene.videoT2VPath(camel) 은 없지만 clip.videoPath 는 정규화돼 채워짐.
+    const scene = { id: 'scene_3', prompt: 'a sunset', videoT2V: 'blob:t2v', video_t2v_path: '/videos/t2v.mp4' }
+    captured.props.onClipSelect({ id: 'vid-t2v-scene_3', role: 'video-t2v', videoPath: '/videos/t2v.mp4', sceneRef: scene })
+    expect(onVideoSelect).toHaveBeenCalledWith({
+      id: 't2v_3',
+      prompt: 'a sunset',
+      video: 'blob:t2v',
+      videoPath: '/videos/t2v.mp4', // scene.videoT2VPath(undefined) 가 아니라 clip.videoPath
+      status: 'complete',
+      sceneId: 'scene_3',
+      source: 't2v',
+    })
+    expect(onSceneSelect).not.toHaveBeenCalled()
+  })
+
+  it('I2V 비디오 클립 선택 시 framePair.id 기반 id + clip.videoPath 로 onVideoSelect 호출', () => {
+    const onSceneSelect = vi.fn()
+    const onVideoSelect = vi.fn()
+    // fp.id(=fp_7) 가 scene 번호(5)와 어긋나는 케이스 — ownerSceneId 로 매핑해야 함(P1).
+    const framePairs = [{ id: 'fp_7', ownerSceneId: 'scene_5' }]
+    render(<LiveTimeline scenes={[]} srtEntries={[]} audioPackage={null} framePairs={framePairs} onSceneSelect={onSceneSelect} onVideoSelect={onVideoSelect} />)
+    const scene = { id: 'scene_5', prompt: 'rain', videoI2V: 'blob:i2v', video_i2v_path: '/videos/i2v.mp4' }
+    captured.props.onClipSelect({ id: 'vid-i2v-scene_5', role: 'video-i2v', videoPath: '/videos/i2v.mp4', sceneRef: scene })
+    expect(onVideoSelect).toHaveBeenCalledWith({
+      id: 'i2v_7', // scene 번호 5 가 아니라 owning framePair 의 7
+      prompt: 'rain',
+      video: 'blob:i2v',
+      videoPath: '/videos/i2v.mp4', // clip.videoPath (legacy snake 정규화)
+      status: 'complete',
+      sceneId: 'scene_5',
+      source: 'i2v',
+      fpId: 'fp_7',
+    })
+    expect(onSceneSelect).not.toHaveBeenCalled()
+  })
+
+  it('I2V 클립인데 owning framePair 없으면 scene 번호로 폴백', () => {
+    const onVideoSelect = vi.fn()
+    render(<LiveTimeline scenes={[]} srtEntries={[]} audioPackage={null} framePairs={[]} onSceneSelect={vi.fn()} onVideoSelect={onVideoSelect} />)
+    const scene = { id: 'scene_9', prompt: 'x', videoI2V: 'blob:i2v', videoI2VPath: '/v/i.mp4' }
+    captured.props.onClipSelect({ id: 'vid-i2v-scene_9', role: 'video-i2v', videoPath: '/v/i.mp4', sceneRef: scene })
+    expect(onVideoSelect).toHaveBeenCalledWith(expect.objectContaining({ id: 'i2v_9', fpId: undefined, source: 'i2v' }))
+  })
+
+  it('생성 중인 비디오 클립(videoPath null)은 onSceneSelect 로 폴백', () => {
+    const onSceneSelect = vi.fn()
+    const onVideoSelect = vi.fn()
+    render(<LiveTimeline scenes={[]} srtEntries={[]} audioPackage={null} onSceneSelect={onSceneSelect} onVideoSelect={onVideoSelect} />)
+    const scene = { id: 'scene_2' }
+    captured.props.onClipSelect({ id: 'vid-t2v-scene_2', role: 'video-t2v', videoPath: null, generating: true, sceneRef: scene })
+    expect(onSceneSelect).toHaveBeenCalledWith(scene)
+    expect(onVideoSelect).not.toHaveBeenCalled()
   })
 
   it('unmount 시 onPlayingChange(false) 로 상단 모니터 정지 통보 (재생 잔류 방지)', () => {

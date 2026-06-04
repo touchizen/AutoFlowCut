@@ -27,6 +27,7 @@ import {
   assertVideoSource,
   getVideoDisabledField,
   buildFramePairVideoPatch,
+  resolveI2vRestoreSceneId,
 } from '../../src/utils/sceneMedia'
 
 describe('hasExportableMedia', () => {
@@ -308,6 +309,44 @@ describe('buildVideoRestorePatch (history 복원 → source-specific scene patch
     expect(out).not.toHaveProperty('videoT2V')
     expect(out.videoT2VPath).toBe('/v.mp4')
     expect(out.videoT2VDisabled).toBe(null)
+  })
+
+  it("'i2v' 같은 path 덮어쓰기(base64 없이 path+generatedAt만)도 cache-buster 포함", () => {
+    // fp_ / i2v_ 복원은 보통 같은 i2v_N.mp4 를 덮어써 path 가 불변 — generatedAt 이
+    // videoI2VGeneratedAt 로 들어가야 timeline/monitor 가 stale preview 를 안 본다.
+    const out = buildVideoRestorePatch('i2v', { videoPath: '/v/i2v_3.mp4', generatedAt: 999 })
+    expect(out.videoI2VPath).toBe('/v/i2v_3.mp4')
+    expect(out.videoI2VGeneratedAt).toBe(999)
+    expect(out).not.toHaveProperty('videoI2V')
+  })
+})
+
+describe('resolveI2vRestoreSceneId (i2v history 복원 → 적용 대상 scene/fp 해석)', () => {
+  it('owning framePair 있으면 그 ownerSceneId 사용 (video.fpId 직접)', () => {
+    const fps = [{ id: 'fp_7', ownerSceneId: 'scene_5' }]
+    expect(resolveI2vRestoreSceneId({ id: 'i2v_7', fpId: 'fp_7', sceneId: 'scene_5' }, fps))
+      .toEqual({ fpId: 'fp_7', sceneId: 'scene_5' })
+  })
+
+  it('video.fpId 없으면 id 에서 fp_ 파싱', () => {
+    const fps = [{ id: 'fp_3', ownerSceneId: 'scene_3' }]
+    expect(resolveI2vRestoreSceneId({ id: 'i2v_3', sceneId: 'scene_3' }, fps))
+      .toEqual({ fpId: 'fp_3', sceneId: 'scene_3' })
+  })
+
+  it('owning framePair 없으면 payload.sceneId 로 폴백 (no-op 방지, P2-1)', () => {
+    // 폴백 i2v_9 → fp_9 가 존재하지 않아도, payload 의 sceneId 로 scene 갱신은 되게.
+    expect(resolveI2vRestoreSceneId({ id: 'i2v_9', sceneId: 'scene_9' }, []))
+      .toEqual({ fpId: 'fp_9', sceneId: 'scene_9' })
+  })
+
+  it('framePair 도 sceneId 도 없으면 sceneId=null (스킵)', () => {
+    expect(resolveI2vRestoreSceneId({ id: 'i2v_2' }, []))
+      .toEqual({ fpId: 'fp_2', sceneId: null })
+  })
+
+  it('video 없으면 안전하게 null', () => {
+    expect(resolveI2vRestoreSceneId(null, [])).toEqual({ fpId: null, sceneId: null })
   })
 })
 

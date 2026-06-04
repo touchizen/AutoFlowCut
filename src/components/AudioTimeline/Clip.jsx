@@ -41,7 +41,7 @@ export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDr
 
   const onMouseEnter = (e) => {
     if (clip.sceneRef && variant === 'block') {
-      onSceneHover?.({ x: e.clientX, y: e.clientY, scene: clip.sceneRef })
+      onSceneHover?.({ x: e.clientX, y: e.clientY, scene: clip.sceneRef, clip })
     }
   }
   const onMouseLeave = () => onSceneHover?.(null)
