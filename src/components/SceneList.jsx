@@ -385,7 +385,7 @@ export default function SceneList({
   srtTrack = [],
   framePairs = [],
   onUpdate,
-  onUpdateFramePairMeta = null,
+  onUpdateFramePair = null,
   onUpdateSrtLine = null,
   onDelete,
   onAdd,
@@ -603,12 +603,14 @@ export default function SceneList({
             const v = videoDetailModal.video
             if (!v?.sceneId || typeof onUpdate !== 'function') return
             onUpdate(v.sceneId, buildVideoRestorePatch(v.source, patch))
-            // I2V 메타 권위 source 는 framePair — reload 시 mediaSync 가 framePair.generatedAt 으로
-            // scene.videoI2VGeneratedAt 을 다시 덮으므로, framePair 메타도 갱신해야 복원이 영속(재오픈 후 stale 방지).
-            if (v.source === 'i2v' && v.fpId && typeof onUpdateFramePairMeta === 'function') {
-              const fpMeta = {}
-              for (const k of ['seed', 'generatedAt', 'model', 'mediaId']) if (k in patch) fpMeta[k] = patch[k]
-              onUpdateFramePairMeta(v.fpId, fpMeta)
+            // I2V 의 권위 source 는 framePair. (1) reload 시 mediaSync 가 framePair.generatedAt 으로
+            // scene.videoI2VGeneratedAt 을 다시 덮으므로 영속을 위해, (2) F→V 결과표/fp 상세는 framePair
+            // base64 를 우선 렌더하므로 현재 세션 일관성을 위해 — video/base64/videoPath + 메타까지 갱신.
+            // (App fp_ 복원 경로와 동일 shape)
+            if (v.source === 'i2v' && v.fpId && typeof onUpdateFramePair === 'function') {
+              const fpPatch = { video: patch.video, base64: patch.video, videoPath: patch.videoPath }
+              for (const k of ['seed', 'generatedAt', 'model', 'mediaId']) if (k in patch) fpPatch[k] = patch[k]
+              onUpdateFramePair(v.fpId, fpPatch)
             }
           }}
         />
