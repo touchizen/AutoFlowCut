@@ -23,6 +23,7 @@ import {
   hasExportableMedia,
   getExportFilePaths,
   videoClearPatch,
+  buildVideoRestorePatch,
 } from '../../src/utils/sceneMedia'
 
 describe('hasExportableMedia', () => {
@@ -267,5 +268,42 @@ describe('videoClearPatch (재생성/clear 시 영상 필드 초기화 — disab
     expect(videoClearPatch('t2v')).toEqual({
       videoT2V: null, videoT2VPath: null, videoT2VDuration: null, videoT2VDisabled: null,
     })
+  })
+})
+
+describe('buildVideoRestorePatch (history 복원 → source-specific scene patch)', () => {
+  const meta = { video: 'B64', videoPath: '/v.mp4', seed: 7, generatedAt: 123, model: 'veo', mediaId: 'm1' }
+
+  it("'t2v' → 비디오 메타를 videoT2V* 네임스페이스로 매핑(이미지 메타 오염 방지)", () => {
+    const out = buildVideoRestorePatch('t2v', meta)
+    expect(out.videoT2V).toBe('B64')
+    expect(out.videoT2VPath).toBe('/v.mp4')
+    expect(out.videoT2VDisabled).toBe(null)
+    expect(out.videoT2VSeed).toBe(7)
+    expect(out.videoT2VGeneratedAt).toBe(123)
+    expect(out.videoT2VModel).toBe('veo')
+    expect(out.videoT2VMediaId).toBe('m1')
+    // raw 이미지 메타 키는 절대 포함 안 함
+    expect(out).not.toHaveProperty('seed')
+    expect(out).not.toHaveProperty('generatedAt')
+    expect(out).not.toHaveProperty('model')
+    expect(out).not.toHaveProperty('mediaId')
+  })
+
+  it("'i2v' → 최소 cache-buster(videoI2VGeneratedAt)만 + disabled 리셋, raw 메타 없음", () => {
+    const out = buildVideoRestorePatch('i2v', meta)
+    expect(out.videoI2V).toBe('B64')
+    expect(out.videoI2VPath).toBe('/v.mp4')
+    expect(out.videoI2VDisabled).toBe(null)
+    expect(out.videoI2VGeneratedAt).toBe(123)
+    expect(out).not.toHaveProperty('seed')
+    expect(out).not.toHaveProperty('generatedAt')
+  })
+
+  it('video 없으면(path만 복원) videoXXX 데이터 키 생략', () => {
+    const out = buildVideoRestorePatch('t2v', { videoPath: '/v.mp4' })
+    expect(out).not.toHaveProperty('videoT2V')
+    expect(out.videoT2VPath).toBe('/v.mp4')
+    expect(out.videoT2VDisabled).toBe(null)
   })
 })

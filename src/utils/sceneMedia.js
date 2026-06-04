@@ -89,6 +89,34 @@ export function videoClearPatch(source) {
     : { videoT2V: null, videoT2VPath: null, videoT2VDuration: null, videoT2VDisabled: null }
 }
 
+/**
+ * history 복원(VideoDetailModal save) → 씬에 적용할 source-specific patch.
+ * ⚠️ patch 의 seed/generatedAt/model/mediaId 는 video 메타다. scene 에 raw 로 넣으면
+ * 이미지 메타(scene.seed/generatedAt/model — SceneDetailModal 用)를 오염시키므로(useVideoScenes
+ * FIELD_MAP 이 같은 이유로 videoT2V* 네임스페이스 분리), source 별 video 필드로 매핑한다.
+ * disabled 도 reset(null) — 복원된 새 영상은 enabled.
+ *   - t2v: videoT2V/Path/Disabled + videoT2VSeed/GeneratedAt/Model/MediaId
+ *   - i2v: videoI2V/Path/Disabled + (최소) videoI2VGeneratedAt(캐시버스터).
+ *     i2v 의 seed/model/mediaId source-of-truth 는 framePair 라 SceneList 에선 못 건드림.
+ * @param {'i2v'|'t2v'} source
+ * @param {{video?, videoPath?, seed?, generatedAt?, model?, mediaId?}} patch
+ */
+export function buildVideoRestorePatch(source, patch = {}) {
+  if (source === 't2v') {
+    const out = { videoT2VPath: patch.videoPath || null, videoT2VDisabled: null }
+    if (patch.video) out.videoT2V = patch.video
+    if ('seed' in patch) out.videoT2VSeed = patch.seed
+    if ('generatedAt' in patch) out.videoT2VGeneratedAt = patch.generatedAt
+    if ('model' in patch) out.videoT2VModel = patch.model
+    if ('mediaId' in patch) out.videoT2VMediaId = patch.mediaId
+    return out
+  }
+  const out = { videoI2VPath: patch.videoPath || null, videoI2VDisabled: null }
+  if (patch.video) out.videoI2V = patch.video
+  if ('generatedAt' in patch) out.videoI2VGeneratedAt = patch.generatedAt
+  return out
+}
+
 function isFilePath(v) {
   return v && typeof v === 'string' && !v.startsWith('data:')
 }

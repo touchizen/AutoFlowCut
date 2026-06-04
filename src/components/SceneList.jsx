@@ -6,7 +6,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useI18n } from '../hooks/useI18n'
 import { formatTime, getRatioClass, resolveImageSrc, hasImageData } from '../utils/formatters'
 import { checkTagMatch } from '../utils/tagMatch'
-import { resolveExportVideos, hasExportableMedia } from '../utils/sceneMedia'
+import { resolveExportVideos, hasExportableMedia, buildVideoRestorePatch } from '../utils/sceneMedia'
 import { resolveVideoSrc } from '../utils/videoSrc'
 import { getSceneSubtitle, getSceneDuration } from '../utils/srtTrack'
 import { UI, STYLE_PRESETS } from '../config/defaults'
@@ -596,15 +596,12 @@ export default function SceneList({
           projectName={projectName}
           onUpdate={(_videoId, patch) => {
             // history 복원 저장 → 해당 씬의 video* 갱신 + per-clip disabled 리셋(새 영상=enabled).
-            // 모달 open 시 실어둔 sceneId/source 로 바로 타겟 (App 의 id 라우팅 로직 중복 회피).
+            // 모달 open 시 실어둔 sceneId/source 로 바로 타겟(App id 라우팅 중복 회피).
+            // 메타는 buildVideoRestorePatch 가 source-specific(videoT2V*/videoI2V*)로 매핑 →
+            // scene 의 이미지 메타(seed/generatedAt/model) 오염 방지 + 캐시버스터 갱신.
             const v = videoDetailModal.video
             if (!v?.sceneId || typeof onUpdate !== 'function') return
-            const meta = {}
-            for (const k of ['seed', 'generatedAt', 'model', 'mediaId']) if (k in patch) meta[k] = patch[k]
-            const fields = v.source === 't2v'
-              ? { ...(patch.video ? { videoT2V: patch.video } : {}), videoT2VPath: patch.videoPath || null, videoT2VDisabled: null }
-              : { ...(patch.video ? { videoI2V: patch.video } : {}), videoI2VPath: patch.videoPath || null, videoI2VDisabled: null }
-            onUpdate(v.sceneId, { ...fields, ...meta })
+            onUpdate(v.sceneId, buildVideoRestorePatch(v.source, patch))
           }}
         />
       )}
