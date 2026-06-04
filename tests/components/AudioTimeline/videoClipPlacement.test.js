@@ -167,6 +167,13 @@ describe('isPreviewVideoVisible', () => {
   it('t2v disabled 는 i2v 에 영향 없음', () => {
     expect(isPreviewVideoVisible({ videoT2VDisabled: true }, 'i2v', EMPTY)).toBe(true)
   })
+  it('videoT2VDisabled=true → t2v 안 보임(i2v 미러)', () => {
+    expect(isPreviewVideoVisible({ videoT2VDisabled: true }, 't2v', EMPTY)).toBe(false)
+  })
+  it('hiddenRoles=null 이어도 안전(가드) — disabled 만으로 판정', () => {
+    expect(isPreviewVideoVisible({}, 'i2v', null)).toBe(true)
+    expect(isPreviewVideoVisible({ videoI2VDisabled: true }, 'i2v', null)).toBe(false)
+  })
 })
 
 describe('computeVideoClipPlacement — source 분리 (i2v/t2v 트랙)', () => {

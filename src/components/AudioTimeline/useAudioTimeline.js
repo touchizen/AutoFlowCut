@@ -56,6 +56,7 @@ export function getSceneTimeRangeMs(scene) {
  * @param {number} sceneEndMs - 씬 끝 ms
  * @returns {{videoPath: string, videoIn: number, videoOut: number} | null}
  */
+
 // 프리뷰 모니터에서 이 source 영상이 보이는지: View 토글(hiddenRoles)과 per-clip disabled 둘 다 고려.
 // (export 는 disabled 만 보지만 — resolveExportVideos — 프리뷰는 View 토글도 합쳐서 본다.)
 export function isPreviewVideoVisible(scene, source, hiddenRoles) {
