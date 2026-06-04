@@ -830,6 +830,18 @@
   line-height: 1.3;
 }
 
-/* per-clip export 제외(disabled) — dim 으로 표시(타임라인엔 남김) */
-.atl-clip-disabled { opacity: 0.4; }
-.atl-clip-eye-btn.is-off { opacity: 0.6; }
+/* per-clip export 제외(disabled) — 검정 망(crosshatch) 가림막 + 살짝 어둡게.
+   클립 전체 opacity 대신 ::after overlay 라 eye 버튼(z-index 5)은 망(z-index 1) 위에 또렷. */
+.atl-clip-disabled::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  border-radius: inherit;
+  background:
+    repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.55) 0 1px, transparent 1px 6px),
+    repeating-linear-gradient(-45deg, rgba(0, 0, 0, 0.55) 0 1px, transparent 1px 6px),
+    rgba(0, 0, 0, 0.32);
+}
+.atl-clip-eye-btn.is-off { opacity: 0.7; }
