@@ -114,7 +114,14 @@ export function videoClearPatch(source) {
  * @param {{video?, videoPath?, seed?, generatedAt?, model?, mediaId?}} patch
  */
 export function buildFramePairVideoPatch(patch = {}) {
-  const out = { video: patch.video, base64: patch.video, videoPath: patch.videoPath }
+  const out = {}
+  // media key 가 있을 때만 영상 필드 세팅 — meta-only patch 에 재사용돼도 framePair 영상을
+  // 조용히 wipe 하지 않게(video=undefined spread 방지). base64 도 함께 넣어 stale base64 방지.
+  if ('video' in patch || 'videoPath' in patch) {
+    out.video = patch.video
+    out.base64 = patch.video
+    out.videoPath = patch.videoPath
+  }
   for (const k of ['seed', 'generatedAt', 'model', 'mediaId']) if (k in patch) out[k] = patch[k]
   return out
 }

@@ -334,4 +334,11 @@ describe('source 헬퍼 — assert/getVideoDisabledField/buildFramePairVideoPatc
     expect(out).not.toHaveProperty('seed')
     expect(out.videoPath).toBe('/p')
   })
+  it('buildFramePairVideoPatch: media key 없으면(meta-only) video/base64/videoPath 미포함(영상 wipe 방지)', () => {
+    const out = buildFramePairVideoPatch({ generatedAt: 9 })
+    expect(out).toEqual({ generatedAt: 9 })
+    expect(out).not.toHaveProperty('video')
+    expect(out).not.toHaveProperty('base64')
+    expect(out).not.toHaveProperty('videoPath')
+  })
 })
