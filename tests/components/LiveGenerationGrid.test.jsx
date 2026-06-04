@@ -17,6 +17,13 @@ describe('GenTile', () => {
     expect(container.querySelector('.gen-shimmer')).toBeTruthy()
   })
 
+  it('generating — 이전 결과(thumbSrc) 있어도 기존 미디어 숨기고 shimmer 만 (재생성=새로 만드는 느낌)', () => {
+    const { container } = render(<GenTile item={{ ...base, state: 'generating' }} />)
+    expect(container.querySelector('.gen-shimmer')).toBeTruthy()
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.querySelector('video')).toBeNull()
+  })
+
   it('complete (이미지) → img with thumbSrc', () => {
     const { container } = render(<GenTile item={{ ...base, state: 'complete' }} />)
     expect(container.querySelector('img').getAttribute('src')).toBe('file:///a.png?v=1')

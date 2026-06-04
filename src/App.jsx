@@ -999,12 +999,9 @@ function App() {
                 ...(result?.duration ? { videoT2VDuration: result.duration } : {}),
               })
             }
-            // 새 generation 제출 — scene-level derived 비디오 메타도 함께 클리어.
-            // 빠뜨리면 export/SceneList 가 옛 videoT2V/Path/Duration 으로 옛 비디오를 계속 사용.
-            if (newStatus === 'generating' && result && 'videoPath' in result) {
-              const sceneId = id.replace('vscene_', 'scene_')
-              scenesHook.updateScene(sceneId, videoClearPatch('t2v'))
-            }
+            // 새 generation 제출: 기존 비디오 데이터는 일부러 그대로 둔다(예전엔 여기서 clear).
+            // 타임라인/모니터는 generating 동안 화면에서만 숨기므로(빈칸+shimmer) stale 노출이 없고,
+            // 데이터를 유지해야 에러/취소 시 기존 비디오로 복귀한다. 완료 시 위 블록이 새 걸로 교체.
           },
         }).finally(() => setHasPendingBatch(false))
         break

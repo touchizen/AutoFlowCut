@@ -178,11 +178,13 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
           id: `img-${s.id}`,
           startMs: range.startMs,
           endMs: range.endMs,
-          imagePath: imgPath || null,
+          // 재생성 중(generating)엔 기존 이미지를 화면에서 숨김 → 빈칸+shimmer(새로 만드는 느낌).
+          // scene.imagePath 데이터는 그대로 두므로 에러/취소 시 다음 렌더에서 기존 이미지 복귀.
+          imagePath: isGenerating ? null : (imgPath || null),
           // 캐시버스터 적용 src — Clip.jsx 가 raw file:// 대신 사용 (재생성 stale 회피)
-          imgSrc: imgPath ? resolveImageSrc({ imagePath: imgPath, generatedAt: s.generatedAt, image: s.image }) : null,
+          imgSrc: (imgPath && !isGenerating) ? resolveImageSrc({ imagePath: imgPath, generatedAt: s.generatedAt, image: s.image }) : null,
           generating: isGenerating,
-          placeholder: !imgPath,  // 이미지 없는 생성중 클립 → 빈 박스 + shimmer
+          placeholder: isGenerating || !imgPath,  // 생성중 또는 이미지 없음 → 빈 박스 + shimmer
           sceneRef: s,
           color: COLORS.image,
         }
@@ -199,19 +201,19 @@ export function useAudioTimeline(audioPackage, scenes, srtEntries) {
         if (!range) return null
         const isGenerating = source === 't2v' && s.videoT2VStatus === 'generating'
         const isDisabled = source === 'i2v' ? !!s.videoI2VDisabled : !!s.videoT2VDisabled
-        const placement = computeVideoClipPlacement(s, range.startMs, range.endMs, source)
-        if (!placement) {
-          // 완료 비디오는 아직 없지만 생성 중 → 빈 박스 + shimmer
-          if (isGenerating) {
-            return {
-              id: `vid-${source}-${s.id}`, startMs: range.startMs, endMs: range.endMs,
-              videoPath: null, videoSrc: null, generating: true, placeholder: true,
-              sceneRef: s, color: COLORS.video, role: `video-${source}`,
-              disabled: isDisabled,
-            }
+        // 재생성 중(t2v) → 기존 비디오를 화면에서 숨기고 빈칸+shimmer (새로 만드는 느낌, 이미지 트랙과 동일).
+        // scene.videoT2VPath 등 데이터는 건드리지 않으므로(아래 placement 경로를 안 탐) 에러/취소 시
+        // 다음 렌더(status≠generating)에서 기존 비디오가 그대로 복귀한다.
+        if (isGenerating) {
+          return {
+            id: `vid-${source}-${s.id}`, startMs: range.startMs, endMs: range.endMs,
+            videoPath: null, videoSrc: null, generating: true, placeholder: true,
+            sceneRef: s, color: COLORS.video, role: `video-${source}`,
+            disabled: isDisabled,
           }
-          return null
         }
+        const placement = computeVideoClipPlacement(s, range.startMs, range.endMs, source)
+        if (!placement) return null
         const videoVersion = source === 'i2v'
           ? (s.videoI2VGeneratedAt ?? s.generatedAt)
           : (s.videoT2VGeneratedAt ?? s.generatedAt)

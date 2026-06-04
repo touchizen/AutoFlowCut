@@ -115,6 +115,18 @@ describe('useAudioTimeline', () => {
       expect(img.clips[0].sceneRef.id).toBe('scene_1')
     })
 
+    it('생성 중(generating) 이미지 씬 → 기존 이미지 숨김 + placeholder/generating (데이터 유지 → 에러 시 복귀)', () => {
+      const scenes = [{ id: 's1', image_path: '/old.png', status: 'generating', start_time: '00:00', end_time: '00:03' }]
+      const { result } = renderHook(() => useAudioTimeline(baseAudio, scenes, []))
+      const img = result.current.tracks.find(t => t.id === 'image')
+      const clip = img.clips.find(c => c.sceneRef.id === 's1')
+      expect(clip).toBeTruthy()
+      expect(clip.generating).toBe(true)
+      expect(clip.placeholder).toBe(true)
+      expect(clip.imagePath).toBe(null) // 기존 이미지 숨김(빈칸+shimmer)
+      expect(clip.imgSrc).toBe(null)
+    })
+
     it('skips scenes with invalid time', () => {
       const badScenes = [
         { id: 'x', image_path: '/x.png', start_time: 'invalid', end_time: '00:03' },
@@ -234,6 +246,34 @@ describe('useAudioTimeline', () => {
       const clip = i2vTrack.clips.find(c => c.sceneRef.id === 'scene_1')
       expect(clip).toBeTruthy()          // disabled 라도 사라지면 안 됨
       expect(clip.disabled).toBe(true)   // dim 표시용
+    })
+  })
+
+  describe('재생성 중(generating) t2v 비디오', () => {
+    it('videoT2VPath 있어도 generating 이면 빈칸+shimmer (기존 숨김), placement 안 탐', () => {
+      const scenes = [{
+        id: 'scene_1', startTime: 0, endTime: 3, duration: 3, imagePath: '/i.png',
+        videoT2VPath: '/old.mp4', videoT2VDuration: 8, videoT2VStatus: 'generating',
+      }]
+      const { result } = renderHook(() => useAudioTimeline(null, scenes, []))
+      const t2vTrack = result.current.tracks.find(t => t.role === 'video-t2v')
+      const clip = t2vTrack.clips.find(c => c.sceneRef.id === 'scene_1')
+      expect(clip).toBeTruthy()
+      expect(clip.generating).toBe(true)
+      expect(clip.placeholder).toBe(true)
+      expect(clip.videoPath).toBe(null) // 기존 비디오 숨김(빈칸)
+    })
+    it('generating 아니면 기존 비디오 그대로 표시 (에러/취소 시 복귀 — 데이터 유지)', () => {
+      const scenes = [{
+        id: 'scene_1', startTime: 0, endTime: 3, duration: 3, imagePath: '/i.png',
+        videoT2VPath: '/old.mp4', videoT2VDuration: 8, // status 없음 = 완료/idle
+      }]
+      const { result } = renderHook(() => useAudioTimeline(null, scenes, []))
+      const t2vTrack = result.current.tracks.find(t => t.role === 'video-t2v')
+      const clip = t2vTrack.clips.find(c => c.sceneRef.id === 'scene_1')
+      expect(clip).toBeTruthy()
+      expect(clip.videoPath).toBe('/old.mp4') // 기존 비디오 표시
+      expect(clip.placeholder).toBeFalsy()
     })
   })
 

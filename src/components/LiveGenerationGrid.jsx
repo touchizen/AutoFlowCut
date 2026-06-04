@@ -12,8 +12,9 @@ import './LiveGenerationGrid.css'
 
 export function GenTile({ item, onClick }) {
   const { state, kind, thumbSrc, error } = item
-  // generating 이고 이전 결과(thumbSrc)가 있으면 그 위에 shimmer 오버레이.
-  const showMedia = thumbSrc && (state === 'complete' || state === 'generating')
+  // 재생성 = 새로 만드는 것이므로 generating 동안엔 기존 결과를 숨기고 shimmer 만(fresh).
+  // 완료(complete) 시에만 미디어 표시. (에러/취소면 데이터가 남아 다음 렌더에서 기존 복귀)
+  const showMedia = thumbSrc && state === 'complete'
   return (
     <div
       className={`gentile gentile--${state}`}
