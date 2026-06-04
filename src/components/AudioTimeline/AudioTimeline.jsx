@@ -75,8 +75,15 @@ function formatTC(ms) {
   return formatDuration(ms / 1000)
 }
 
-export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClipSelect, onSaveTimecodeOverride, disabled = false, onFlag, isFlagged, onTrackDrop, compact = false, onPlayheadChange, onPlayingChange, onHiddenRolesChange }) {
+export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClipSelect, onSaveTimecodeOverride, disabled = false, onFlag, isFlagged, onTrackDrop, compact = false, onPlayheadChange, onPlayingChange, onHiddenRolesChange, onSceneUpdate }) {
   const { t } = useI18n()
+  // 영상 클립 호버 👁 → 해당 씬의 i2v/t2v export 제외 플래그 토글 (falsy=포함).
+  const handleToggleVideo = useCallback((clip) => {
+    if (!onSceneUpdate || !clip?.sceneRef) return
+    const source = clip.role === 'video-i2v' ? 'i2v' : 't2v'
+    const field = source === 'i2v' ? 'videoI2VDisabled' : 'videoT2VDisabled'
+    onSceneUpdate(clip.sceneRef.id, { [field]: clip.sceneRef[field] ? null : true })
+  }, [onSceneUpdate])
   const rawData = useAudioTimeline(audioPackage, scenes, srtEntries)
 
   // 비디오 트랙 클립에 posterDataUrl 주입 (썸네일 비동기 로드).
@@ -1132,6 +1139,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
                   onSceneHover={setHoverScene}
                   onFlag={onFlag}
                   isFlagged={isFlagged}
+                  onToggleVideo={onSceneUpdate ? handleToggleVideo : undefined}
                   onTrackDrop={onTrackDrop}
                   onTrackDragOver={setDragOverTrackId}
                   onTrackDragLeave={() => setDragOverTrackId(null)}

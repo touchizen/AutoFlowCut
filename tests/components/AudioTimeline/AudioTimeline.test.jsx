@@ -829,4 +829,16 @@ describe('AudioTimeline', () => {
       expect(document.body.style.cursor).toBe('')
     })
   })
+
+  describe('영상 클립 export 토글 (per-clip eye)', () => {
+    it('영상 클립 eye 클릭 → onSceneUpdate(sceneId, { videoI2VDisabled: true })', () => {
+      const onSceneUpdate = vi.fn()
+      const scenes = [{ id: 'scene_1', startTime: 0, endTime: 3, duration: 3, imagePath: '/i.png', videoI2VPath: '/i.mp4', videoI2VDuration: 3 }]
+      const { container } = render(<AudioTimeline audioPackage={null} scenes={scenes} srtEntries={[]} onSceneUpdate={onSceneUpdate} />)
+      const eye = container.querySelector('.atl-clip-eye-btn')
+      expect(eye).toBeTruthy()
+      fireEvent.click(eye)
+      expect(onSceneUpdate).toHaveBeenCalledWith('scene_1', { videoI2VDisabled: true })
+    })
+  })
 })

@@ -1452,6 +1452,7 @@ function App() {
                 return importMp3ToTrack({ ...params, fallbackFolderPath })
               }}
               onSrtImport={(content) => handleImport('srt', content)}
+              onSceneUpdate={scenesHook.updateScene}
             />
           )}
         </div>
@@ -1675,6 +1676,7 @@ function App() {
                     if (trackRole === 'narration') break // narration 은 1개(교체)
                   }
                 }}
+                onSceneUpdate={scenesHook.updateScene}
                 disabled={anyRunning}
               />
             ) : (

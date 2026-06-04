@@ -829,3 +829,7 @@
   color: #ddd;
   line-height: 1.3;
 }
+
+/* per-clip export 제외(disabled) — dim 으로 표시(타임라인엔 남김) */
+.atl-clip-disabled { opacity: 0.4; }
+.atl-clip-eye-btn.is-off { opacity: 0.6; }

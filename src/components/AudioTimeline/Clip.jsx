@@ -1,16 +1,19 @@
 import { useState, useRef, useEffect } from 'react'
 import Waveform from './Waveform'
 import TimelineFlagButton from './TimelineFlagButton'
+import TimelineVideoToggleButton from './TimelineVideoToggleButton'
 
 // 클립 — click vs drag 자동 구분, draggable이면 드래그로 timecode 보정
 // onFlag(audioPath, filename, event): hover ⚠️ 버튼 클릭 시 호출 (audioPath 있고 onFlag 전달된 경우만)
 // isFlagged(filePath): bool — flagged 시각 표시
-export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDragClip, totalDurationMs, isPlaying, onSceneHover, onFlag, isFlagged }) {
+export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDragClip, totalDurationMs, isPlaying, onSceneHover, onFlag, isFlagged, onToggleVideo }) {
   const [dragOffsetMs, setDragOffsetMs] = useState(null)
   const isDragging = dragOffsetMs !== null
   const flagged = !!(isFlagged && clip.audioPath && isFlagged(clip.audioPath))
   // audioPath 있으면 audio clip — sub-track은 variant가 없어서 audioPath로 판정
   const showActionable = !!clip.audioPath && !!onFlag
+  const isVideoClip = clip.role === 'video-i2v' || clip.role === 'video-t2v'
+  const showVideoToggle = isVideoClip && !!onToggleVideo
   // 드래그 중 unmount되면 onUp 미발화 → 여기서 listener 강제 정리
   const dragCleanupRef = useRef(null)
   useEffect(() => () => {
@@ -87,7 +90,7 @@ export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDr
 
   return (
     <div
-      className={`atl-clip atl-clip-${variant}${isPlaying ? ' atl-clip-playing' : ''}${isDragging ? ' atl-clip-dragging' : ''}${flagged ? ' atl-clip-flagged' : ''}`}
+      className={`atl-clip atl-clip-${variant}${isPlaying ? ' atl-clip-playing' : ''}${isDragging ? ' atl-clip-dragging' : ''}${flagged ? ' atl-clip-flagged' : ''}${clip.disabled ? ' atl-clip-disabled' : ''}`}
       style={style}
       onPointerDown={onPointerDown}
       onMouseEnter={onMouseEnter}
@@ -120,6 +123,14 @@ export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDr
           flagged={flagged}
           narrow={width < 40}
           onFlag={onFlag}
+        />
+      )}
+      {/* 영상 클립 export 포함/제외 토글 (호버 👁) */}
+      {showVideoToggle && !isDragging && (
+        <TimelineVideoToggleButton
+          disabled={!!clip.disabled}
+          narrow={width < 40}
+          onToggle={() => onToggleVideo(clip)}
         />
       )}
     </div>

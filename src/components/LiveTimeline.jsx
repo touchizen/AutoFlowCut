@@ -23,6 +23,7 @@ export default function LiveTimeline({
   onPlayingChange,
   onHiddenRolesChange,
   onTrackDrop,
+  onSceneUpdate,
   disabled = false,
 }) {
   // 배치 생성 중 scenes 가 빠르게 갱신돼도 입력 반응성을 유지 (AudioPanel 과 동일 패턴).
@@ -51,6 +52,7 @@ export default function LiveTimeline({
       onPlayingChange={onPlayingChange}
       onHiddenRolesChange={onHiddenRolesChange}
       onTrackDrop={onTrackDrop}
+      onSceneUpdate={onSceneUpdate}
       disabled={disabled}
       onSaveTimecodeOverride={onSaveTimecodeOverride}
       onClipSelect={(clip) => {
