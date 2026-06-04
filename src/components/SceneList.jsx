@@ -316,7 +316,7 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
                   video: scene.videoI2V,
                   videoPath: scene.videoI2VPath,
                   status: 'complete',
-                  sceneId: scene.id, source: 'i2v', // 저장(history 복원) 시 disabled 리셋용
+                  sceneId: scene.id, source: 'i2v', fpId: ownerFp?.id, // 저장(복원) 시 disabled 리셋 + framePair 메타 갱신용
                 })
               }}
               onDoubleClick={() => onShowVideoDetail({
@@ -325,7 +325,7 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
                 video: scene.videoI2V,
                 videoPath: scene.videoI2VPath,
                 status: 'complete',
-                sceneId: scene.id, source: 'i2v',
+                sceneId: scene.id, source: 'i2v', fpId: ownerFp?.id,
               })}
               title={`I2V${exportMark('i2v')} — ${t('sceneList.dblClickToView') || 'Double-click to view'}`}
             >
@@ -385,6 +385,7 @@ export default function SceneList({
   srtTrack = [],
   framePairs = [],
   onUpdate,
+  onUpdateFramePairMeta = null,
   onUpdateSrtLine = null,
   onDelete,
   onAdd,
@@ -602,6 +603,13 @@ export default function SceneList({
             const v = videoDetailModal.video
             if (!v?.sceneId || typeof onUpdate !== 'function') return
             onUpdate(v.sceneId, buildVideoRestorePatch(v.source, patch))
+            // I2V 메타 권위 source 는 framePair — reload 시 mediaSync 가 framePair.generatedAt 으로
+            // scene.videoI2VGeneratedAt 을 다시 덮으므로, framePair 메타도 갱신해야 복원이 영속(재오픈 후 stale 방지).
+            if (v.source === 'i2v' && v.fpId && typeof onUpdateFramePairMeta === 'function') {
+              const fpMeta = {}
+              for (const k of ['seed', 'generatedAt', 'model', 'mediaId']) if (k in patch) fpMeta[k] = patch[k]
+              onUpdateFramePairMeta(v.fpId, fpMeta)
+            }
           }}
         />
       )}

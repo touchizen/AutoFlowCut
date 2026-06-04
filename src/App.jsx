@@ -1408,6 +1408,7 @@ function App() {
               framePairs={framePairs}
               aspectRatio={settings.aspectRatio}
               onUpdate={scenesHook.updateScene}
+              onUpdateFramePairMeta={(fpId, meta) => setFramePairs(prev => prev.map(p => p.id === fpId ? { ...p, ...meta } : p))}
               onUpdateSrtLine={scenesHook.updateSrtLine}
               onDelete={(sceneId, sceneIndex) => {
                 const scene = scenes.find(s => s.id === sceneId)
