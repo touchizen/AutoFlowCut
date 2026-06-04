@@ -269,6 +269,7 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
                   video: scene.videoT2V,
                   videoPath: scene.videoT2VPath,
                   status: 'complete',
+                  sceneId: scene.id, source: 't2v', // 저장(history 복원) 시 disabled 리셋용
                 })
               }}
               onDoubleClick={() => onShowVideoDetail({
@@ -277,6 +278,7 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
                 video: scene.videoT2V,
                 videoPath: scene.videoT2VPath,
                 status: 'complete',
+                sceneId: scene.id, source: 't2v',
               })}
               title={`T2V${exportMark('t2v')} — ${t('sceneList.dblClickToView') || 'Double-click to view'}`}
             >
@@ -314,6 +316,7 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
                   video: scene.videoI2V,
                   videoPath: scene.videoI2VPath,
                   status: 'complete',
+                  sceneId: scene.id, source: 'i2v', // 저장(history 복원) 시 disabled 리셋용
                 })
               }}
               onDoubleClick={() => onShowVideoDetail({
@@ -322,6 +325,7 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
                 video: scene.videoI2V,
                 videoPath: scene.videoI2VPath,
                 status: 'complete',
+                sceneId: scene.id, source: 'i2v',
               })}
               title={`I2V${exportMark('i2v')} — ${t('sceneList.dblClickToView') || 'Double-click to view'}`}
             >
@@ -590,6 +594,18 @@ export default function SceneList({
           onClose={() => setVideoDetailModal({ open: false, video: null })}
           t={t}
           projectName={projectName}
+          onUpdate={(_videoId, patch) => {
+            // history 복원 저장 → 해당 씬의 video* 갱신 + per-clip disabled 리셋(새 영상=enabled).
+            // 모달 open 시 실어둔 sceneId/source 로 바로 타겟 (App 의 id 라우팅 로직 중복 회피).
+            const v = videoDetailModal.video
+            if (!v?.sceneId || typeof onUpdate !== 'function') return
+            const meta = {}
+            for (const k of ['seed', 'generatedAt', 'model', 'mediaId']) if (k in patch) meta[k] = patch[k]
+            const fields = v.source === 't2v'
+              ? { ...(patch.video ? { videoT2V: patch.video } : {}), videoT2VPath: patch.videoPath || null, videoT2VDisabled: null }
+              : { ...(patch.video ? { videoI2V: patch.video } : {}), videoI2VPath: patch.videoPath || null, videoI2VDisabled: null }
+            onUpdate(v.sceneId, { ...fields, ...meta })
+          }}
         />
       )}
 

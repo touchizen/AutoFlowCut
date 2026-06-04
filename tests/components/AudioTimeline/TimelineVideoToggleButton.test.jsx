@@ -17,4 +17,10 @@ describe('TimelineVideoToggleButton', () => {
     expect(onToggle).toHaveBeenCalled()
     expect(parentClick).not.toHaveBeenCalled()
   })
+  it('aria-pressed = 포함(켜짐) 상태: 켜짐→true, 꺼짐→false', () => {
+    const { getByRole, rerender } = render(<TimelineVideoToggleButton disabled={false} onToggle={vi.fn()} />)
+    expect(getByRole('button').getAttribute('aria-pressed')).toBe('true')
+    rerender(<TimelineVideoToggleButton disabled onToggle={vi.fn()} />)
+    expect(getByRole('button').getAttribute('aria-pressed')).toBe('false')
+  })
 })
