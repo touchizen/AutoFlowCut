@@ -13,7 +13,8 @@ export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDr
   // audioPath 있으면 audio clip — sub-track은 variant가 없어서 audioPath로 판정
   const showActionable = !!clip.audioPath && !!onFlag
   const isVideoClip = clip.role === 'video-i2v' || clip.role === 'video-t2v'
-  const showVideoToggle = isVideoClip && !!onToggleVideo
+  // 생성 중 클립엔 토글 숨김 — 완료 경로가 disabled 를 리셋하므로 선택이 조용히 되돌아감.
+  const showVideoToggle = isVideoClip && !!onToggleVideo && !clip.generating
   // 드래그 중 unmount되면 onUp 미발화 → 여기서 listener 강제 정리
   const dragCleanupRef = useRef(null)
   useEffect(() => () => {

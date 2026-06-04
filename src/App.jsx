@@ -1741,9 +1741,9 @@ function App() {
               status: 'pending', selected: false,
               // 비디오 메타도 정리 — 상세 모달/저장에 이전 비디오 메타 잔류 방지.
               generatedAt: null, seed: null, model: null, error: null, errorKind: null, videoSaveId: null,
-              // per-clip videoT2VDisabled 는 여기서 의도적으로 안 건드림: path 가 null 이 되면
-              // resolveExportVideos/timeline 에 T2V 후보 자체가 안 생겨 플래그가 inert 하고,
-              // 재생성 완료(line ~991)가 어차피 null 로 리셋한다. (per-clip-video-toggle spec)
+              // per-clip toggle 도 reset — stale disabled 가 project.json 에 남아 history 복원 등
+              // path 재부착 경로와 만나면 새 영상이 숨겨짐. (FIELD_MAP 미매핑 → scene.videoT2VDisabled 로 직행)
+              videoT2VDisabled: null,
             })}
             disabled={anyRunning}
           />
@@ -1873,6 +1873,7 @@ function App() {
               scenesHook.updateScene(sceneId, {
                 ...(patch.video ? { videoT2V: patch.video } : {}),
                 videoT2VPath: patch.videoPath || null,
+                videoT2VDisabled: null, // history 복원 = 새 영상 → enabled (per-clip toggle)
               })
             } else if (videoId.startsWith('fp_')) {
               setFramePairs(prev => prev.map(p =>
@@ -1888,6 +1889,7 @@ function App() {
                 scenesHook.updateScene(fp.ownerSceneId, {
                   ...(patch.video ? { videoI2V: patch.video } : {}),
                   videoI2VPath: patch.videoPath || null,
+                  videoI2VDisabled: null, // history 복원 = 새 영상 → enabled (per-clip toggle)
                 })
               }
             } else if (videoId.startsWith('t2v_')) {
@@ -1898,6 +1900,7 @@ function App() {
               scenesHook.updateScene(sceneId, {
                 ...(patch.video ? { videoT2V: patch.video } : {}),
                 videoT2VPath: patch.videoPath || null,
+                videoT2VDisabled: null, // history 복원 = 새 영상 → enabled (per-clip toggle)
               })
               const vsceneId = `vscene_${videoId.replace('t2v_', '')}`
               videoScenesHook.updateVideoScene(vsceneId, metaPatch)
@@ -1912,6 +1915,7 @@ function App() {
                 scenesHook.updateScene(fpForI2v.ownerSceneId, {
                   ...(patch.video ? { videoI2V: patch.video } : {}),
                   videoI2VPath: patch.videoPath || null,
+                  videoI2VDisabled: null, // history 복원 = 새 영상 → enabled (per-clip toggle)
                 })
               }
               setFramePairs(prev => prev.map(p =>

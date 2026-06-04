@@ -28,4 +28,8 @@ describe('Clip — 영상 eye 토글', () => {
     const { container } = render(<Clip clip={{ id: 'img-1', startMs: 0, endMs: 3000, color: '#888', role: 'image', imagePath: '/i.png' }} variant="block" pxPerMs={0.1} height={40} totalDurationMs={3000} onToggleVideo={vi.fn()} />)
     expect(container.querySelector('.atl-clip-eye-btn')).toBeFalsy()
   })
+  it('생성 중(generating) 클립 → eye 버튼 없음(완료 시 선택이 리셋되므로 토글 숨김)', () => {
+    const { container } = render(<Clip clip={vidClip({ generating: true })} variant="block" pxPerMs={0.1} height={40} totalDurationMs={3000} onToggleVideo={vi.fn()} />)
+    expect(container.querySelector('.atl-clip-eye-btn')).toBeFalsy()
+  })
 })
