@@ -68,4 +68,10 @@ describe('SceneList Media 컬럼 — B1 (있는 미디어 다 export, 표시 전
     fireEvent.click(thumbFor(container, 'I2V'))
     expect(onUpdate).not.toHaveBeenCalled()
   })
+
+  it('videoI2VDisabled=true → I2V thumb ✓ 안 됨(썸네일은 렌더), T2V 는 ✓', () => {
+    const { container } = renderRow(bothScene({ videoI2VDisabled: true }))
+    expect(thumbFor(container, 'I2V').classList.contains('selected')).toBe(false)
+    expect(thumbFor(container, 'T2V').classList.contains('selected')).toBe(true)
+  })
 })
