@@ -22,6 +22,7 @@ import {
   resolveExportVideos,
   hasExportableMedia,
   getExportFilePaths,
+  videoClearPatch,
 } from '../../src/utils/sceneMedia'
 
 describe('hasExportableMedia', () => {
@@ -253,5 +254,18 @@ describe('resolveExportVideos (B1: exportMedia 무시 — 있는 영상 다 expo
   it('disabled=null/false 는 켜짐(falsy)', () => {
     expect(resolveExportVideos({ ...i2v, videoI2VDisabled: null }).map(v => v.source)).toEqual(['i2v'])
     expect(resolveExportVideos({ ...i2v, videoI2VDisabled: false }).map(v => v.source)).toEqual(['i2v'])
+  })
+})
+
+describe('videoClearPatch (재생성/clear 시 영상 필드 초기화 — disabled reset 포함)', () => {
+  it("'i2v' → i2v 필드 전부 null + videoI2VDisabled:null", () => {
+    expect(videoClearPatch('i2v')).toEqual({
+      videoI2V: null, videoI2VPath: null, videoI2VDuration: null, videoI2VDisabled: null,
+    })
+  })
+  it("'t2v' → t2v 필드 전부 null + videoT2VDisabled:null", () => {
+    expect(videoClearPatch('t2v')).toEqual({
+      videoT2V: null, videoT2VPath: null, videoT2VDuration: null, videoT2VDisabled: null,
+    })
   })
 })

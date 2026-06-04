@@ -78,6 +78,17 @@ export function getExportFilePaths(scene) {
   return paths
 }
 
+/**
+ * 새 generation 제출/clear 시 해당 source 의 영상 필드를 초기화하는 patch.
+ * per-clip `video*Disabled` 도 reset(null) — 재생성한 클립은 "새 클립" = enabled.
+ * @param {'i2v'|'t2v'} source
+ */
+export function videoClearPatch(source) {
+  return source === 'i2v'
+    ? { videoI2V: null, videoI2VPath: null, videoI2VDuration: null, videoI2VDisabled: null }
+    : { videoT2V: null, videoT2VPath: null, videoT2VDuration: null, videoT2VDisabled: null }
+}
+
 function isFilePath(v) {
   return v && typeof v === 'string' && !v.startsWith('data:')
 }

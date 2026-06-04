@@ -31,6 +31,7 @@ import { applyStyle, previewStyleMatching } from './services/styleService'
 import { computeGuardAvailable } from './services/startGuard'
 import { createStyleResolver } from './services/styleResolver'
 import { filterPendingScenes } from './utils/sceneFilters'
+import { videoClearPatch } from './utils/sceneMedia'
 import { detectFileType, detectCSVType, parseCSVToScenes, parseSRTToScenes, csvPromptToVideoT2V } from './utils/parsers'
 import { resolveAudioSrtEntries, getSceneDuration } from './utils/srtTrack'
 import { tabAfterImport } from './utils/importTabRouting'
@@ -740,6 +741,7 @@ function App() {
             scenesHook.updateScene(fp.ownerSceneId, {
               videoI2V: result.base64,
               videoI2VPath: result.videoPath || null,
+              videoI2VDisabled: null,
               ...(result?.duration ? { videoI2VDuration: result.duration } : {}),
               // 비디오 캐시버스터용 — 이미지 generatedAt 과 분리(I2V 재생성 시 타임라인/모니터 갱신).
               ...(result?.generatedAt ? { videoI2VGeneratedAt: result.generatedAt } : {}),
@@ -769,6 +771,7 @@ function App() {
           scenesHook.updateScene(sceneId, {
             videoT2V: result.base64,
             videoT2VPath: result.videoPath || null,
+            videoT2VDisabled: null,
             ...(result?.duration ? { videoT2VDuration: result.duration } : {}),
           })
         }
@@ -985,6 +988,7 @@ function App() {
               scenesHook.updateScene(sceneId, {
                 ...(result?.base64 ? { videoT2V: result.base64 } : {}),
                 videoT2VPath: result.videoPath || null,
+                videoT2VDisabled: null,
                 ...(result?.duration ? { videoT2VDuration: result.duration } : {}),
               })
             }
@@ -992,11 +996,7 @@ function App() {
             // 빠뜨리면 export/SceneList 가 옛 videoT2V/Path/Duration 으로 옛 비디오를 계속 사용.
             if (newStatus === 'generating' && result && 'videoPath' in result) {
               const sceneId = id.replace('vscene_', 'scene_')
-              scenesHook.updateScene(sceneId, {
-                videoT2V: null,
-                videoT2VPath: null,
-                videoT2VDuration: null,
-              })
+              scenesHook.updateScene(sceneId, videoClearPatch('t2v'))
             }
           },
         }).finally(() => setHasPendingBatch(false))
@@ -1083,6 +1083,7 @@ function App() {
                   scenesHook.updateScene(fp.ownerSceneId, {
                     videoI2V: result.base64,
                     videoI2VPath: result.videoPath || null,
+                    videoI2VDisabled: null,
                     ...(result?.duration ? { videoI2VDuration: result.duration } : {}),
                     // 비디오 캐시버스터용 — 이미지 generatedAt 과 분리(I2V 재생성 갱신).
                     ...(result?.generatedAt ? { videoI2VGeneratedAt: result.generatedAt } : {}),
@@ -1093,11 +1094,7 @@ function App() {
               if (newStatus === 'generating' && result && 'videoPath' in result) {
                 const fp = prev.find(p => p.id === id)
                 if (fp?.ownerSceneId) {
-                  scenesHook.updateScene(fp.ownerSceneId, {
-                    videoI2V: null,
-                    videoI2VPath: null,
-                    videoI2VDuration: null,
-                  })
+                  scenesHook.updateScene(fp.ownerSceneId, videoClearPatch('i2v'))
                 }
               }
 
@@ -1773,7 +1770,7 @@ function App() {
               seed: null, generatedAt: null, model: null, duration: null,
             } : p))
             if (fp?.ownerSceneId) {
-              scenesHook.updateScene(fp.ownerSceneId, { videoI2V: null, videoI2VPath: null, videoI2VDuration: null, videoI2VGeneratedAt: null })
+              scenesHook.updateScene(fp.ownerSceneId, { ...videoClearPatch('i2v'), videoI2VGeneratedAt: null })
             }
           }} />
         )}
