@@ -40,13 +40,21 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
       // 매칭되는 레퍼런스 찾기.
       // 공식 API 모드는 mediaId 대신 name 으로 base64 를 해석하므로
       // mediaId 또는 name 중 하나만 있어도 선택하고, name 을 보존한다.
+      //
+      // R37 review fix: data/filePath 도 보존해야 한다. memory-only 레퍼런스
+      // (디스크 저장 실패/스킵된 경우) 는 ref.data 에만 base64 가 있고
+      // referenceResolver 는 data 우선 → name 디스크 fallback 순으로 읽는데,
+      // 여기서 data 를 떨구면 디스크에 없는 ref 가 조용히 빈 inlineData parts 로
+      // 넘어가 Gemini 가 캐릭터 일관성을 못 잡는다.
       const matchedRefs = scenesHook.getMatchingReferences(scene)
-        .filter(r => r.mediaId || r.name)
+        .filter(r => r.mediaId || r.name || r.data || r.filePath)
         .map(r => ({
           category: r.category,
           mediaId: r.mediaId || null,
           caption: r.caption || '',
-          name: r.name
+          name: r.name,
+          data: r.data || null,
+          filePath: r.filePath || null,
         }))
 
       // overrideStyleId 정규화 — 'auto' 는 null (style_tag fallback만), 'none' 은 그대로, 명시 ID는 그대로.

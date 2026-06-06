@@ -489,6 +489,14 @@ html, body {
   outline: 2px solid var(--primary-color, #6ee7ff);
 }
 
+/* unmatched @xxx — Phase A 의 빨간 wavy underline 을 Lexical 노드로 복원.
+   UnknownMentionTextNode 가 createDOM 에서 이 클래스를 부여한다. */
+.prompt-textarea .unknown-mention {
+  text-decoration: underline wavy var(--danger-color, #e5484d);
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}
+
 /* ── Mention menu — `@` 입력 시 드롭다운 */
 .mention-menu {
   list-style: none;

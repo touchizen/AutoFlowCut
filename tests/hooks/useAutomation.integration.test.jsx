@@ -140,8 +140,9 @@ describe('useAutomation — batch reference contract (API mode name-based)', () 
 
     expect(submitGeneration).toHaveBeenCalled()
     const matchedRefs = submitGeneration.mock.calls[0][1]
+    // R37 review fix: data/filePath 도 보존 (memory-only ref 회귀 차단)
     expect(matchedRefs).toEqual([
-      { category: 'character', mediaId: null, caption: 'main', name: 'hero' },
+      { category: 'character', mediaId: null, caption: 'main', name: 'hero', data: null, filePath: null },
     ])
   })
 

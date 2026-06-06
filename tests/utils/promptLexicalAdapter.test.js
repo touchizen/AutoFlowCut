@@ -10,6 +10,7 @@ import {
   $applyTextToRoot,
   $editorStateToText,
 } from '../../src/utils/promptLexicalAdapter'
+import { UnknownMentionTextNode } from '../../src/components/UnknownMentionTextNode'
 
 // jsdom matchMedia 폴리필 (setup.js 가 적용되긴 하지만 명시)
 beforeAll(() => {
@@ -31,7 +32,7 @@ const REFS = [
 function makeEditor() {
   return createEditor({
     namespace: 'test',
-    nodes: [BeautifulMentionNode],
+    nodes: [BeautifulMentionNode, UnknownMentionTextNode],
     onError: (e) => {
       throw e
     },

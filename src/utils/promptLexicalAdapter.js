@@ -18,6 +18,7 @@ import {
   $createBeautifulMentionNode,
   $isBeautifulMentionNode,
 } from 'lexical-beautiful-mentions'
+import { $createUnknownMentionTextNode } from '../components/UnknownMentionTextNode'
 
 // mentionParser 와 동일 regex — 단어 경계 + 이메일 제외 + Hangul.
 const MENTION_RE = /(^|[\s.,!?;:()\[\]{}'"`])@([A-Za-z0-9_\-가-힣]+)/g
@@ -72,8 +73,9 @@ function buildNodesForLine(line, refByLowerName) {
     if (ref) {
       nodes.push($createBeautifulMentionNode('@', ref.name, refDataPayload(ref)))
     } else {
-      // 매칭 안 되는 @xxx 는 plain text 로 — 사용자가 typo 인지 보이도록.
-      nodes.push($createTextNode(`@${name}`))
+      // 매칭 안 되는 @xxx 는 빨간 wavy underline 이 들어가는 텍스트 노드로.
+      // 일반 TextNode 로 두면 typo 가 plain text 와 구분 안 됨 (Phase A overlay 회귀 방지).
+      nodes.push($createUnknownMentionTextNode(`@${name}`))
     }
     lastIdx = mentionStart + 1 + name.length
   }

@@ -42,6 +42,7 @@ import { $applyTextToRoot, $editorStateToText } from '../utils/promptLexicalAdap
 import { MentionRefsContext } from './MentionRefsContext'
 import MentionChip from './MentionChip'
 import MentionMenuItem from './MentionMenuItem'
+import { UnknownMentionTextNode } from './UnknownMentionTextNode'
 
 // Mention chip 노드 클래스 — 모듈 로드 시 1회만 생성 (한 번 등록한 노드를 새 인스턴스로
 // 갈아끼우면 Lexical 이 "duplicate node" 에러 냄).
@@ -49,7 +50,8 @@ const MentionNodes = createBeautifulMentionNode(MentionChip)
 
 const baseEditorConfig = {
   namespace: 'PromptInput',
-  nodes: MentionNodes,
+  // chip 노드 + 미해결 @xxx 의 빨간 wavy underline 용 텍스트 노드.
+  nodes: [...MentionNodes, UnknownMentionTextNode],
   editorState: null, // 비어 있는 상태로 시작, SyncPlugin 이 채움
   onError(err) {
     // 개발 중 사일런트 swallow 방지 — production 도 console.error 만, 사용자에겐 노출 안 함.
@@ -64,6 +66,15 @@ const baseEditorConfig = {
     },
   },
 }
+
+// mentionParser.js 의 regex 경계 클래스와 정렬 — 이메일 등 mid-word @ 는 제외하되
+// `.,!?;:()[]{}'"\``  뒤에서는 mention 메뉴 트리거. 공백은 라이브러리가 항상 허용.
+// 이거 안 하면 우리 backend 는 `,@alice` 를 매칭하는데 UI 에선 dropdown 이 안 떠서
+// 사용자가 mention 인지 아닌지 헷갈림.
+const MENTION_PRE_TRIGGER_CHARS = `\\.,!\\?;:\\(\\)\\[\\]\\{\\}'"\``
+// 기본 punctuation 에서 `_` 만 제외 — 이름에 `_` 가 들어가는 ref 가 끊기는 것 방지
+// (`@main_hero` → `@main` 으로 짤리던 버그). 다른 termination 문자는 기본값 유지.
+const MENTION_PUNCTUATION = `\\.,\\*\\?\\$\\|#{}\\(\\)\\^\\[\\]\\\\/!%'"~=<>:;`
 
 // ── 커스텀 menu wrapper — 기본 `ul` 에 클래스만 부여. portal 위치는 라이브러리가 담당.
 const MentionMenu = forwardRef(function MentionMenu({ loading, ...rest }, ref) {
@@ -93,17 +104,44 @@ function SyncPlugin({ value, onChange, references }) {
   // 케이스: 프로젝트 전환 시 scenes 가 references 보다 먼저 (또는 같이) 도착하지만
   //   references 가 비어 있어 첫 적용 때 chip 매칭 못 함 → references 가 뒤늦게
   //   채워져도 value 가 같으면 위 effect 가 안 돌아 chip 이 영원히 안 생기는 버그.
+  //
   // 가드:
-  //   - 텍스트에 `@` 없으면 skip (재적용 비용/cursor reset 회피)
-  //   - editor 가 포커스 중이면 skip (사용자 타이핑 중 — chip 재구성으로 cursor jump 방지)
+  //   - 텍스트에 `@` 없으면 skip
+  //   - editor 가 포커스 중이면 즉시 skip 하지 않고 pending 플래그를 세움 →
+  //     blur 시점에 재시도. (focus 중 chip 재구성하면 cursor 가 튐, blur 무한 대기는
+  //     사용자가 입력창에 머무는 동안 chip 복원 안 되는 회귀 버그.)
+  const pendingRehydrateRef = useRef(false)
   useEffect(() => {
     const currentText = lastTextRef.current
     if (!currentText.includes('@')) return
     const rootEl = editor.getRootElement?.()
-    if (rootEl && document.activeElement === rootEl) return
+    const focused = rootEl && document.activeElement === rootEl
+    if (focused) {
+      pendingRehydrateRef.current = true
+      return
+    }
     editor.update(() => $applyTextToRoot(currentText, references))
-    // lastTextRef 는 그대로 — chip 재구성이라도 직렬화 text 는 동일.
+    pendingRehydrateRef.current = false
   }, [editor, references])
+
+  // blur 시점 rehydrate — 위 effect 가 focus 중이라 미뤘던 재해석을 처리.
+  // references 는 ref 로 항상 최신 — 위에서 referencesRef.current 가 갱신됨.
+  useEffect(() => {
+    const rootEl = editor.getRootElement?.()
+    if (!rootEl) return
+    const handler = () => {
+      if (!pendingRehydrateRef.current) return
+      const currentText = lastTextRef.current
+      if (!currentText.includes('@')) {
+        pendingRehydrateRef.current = false
+        return
+      }
+      editor.update(() => $applyTextToRoot(currentText, referencesRef.current))
+      pendingRehydrateRef.current = false
+    }
+    rootEl.addEventListener('blur', handler)
+    return () => rootEl.removeEventListener('blur', handler)
+  }, [editor])
 
   // editor → 외부 onChange (사용자 타이핑 등)
   useEffect(() => {
@@ -257,6 +295,12 @@ export default function PromptInput({
               insertOnBlur={false}
               creatable={false}
               autoSpace={false}
+              // false = 전체 노출 (메뉴 컨테이너에서 자체 스크롤). 기본 5 는 ref 6+ 일 때 회귀.
+              menuItemLimit={false}
+              // mentionParser regex 의 boundary 클래스와 정렬 — `.,@alice` 같은 케이스도 트리거.
+              preTriggerChars={MENTION_PRE_TRIGGER_CHARS}
+              // 기본값에서 `_` 만 제외 — `@main_hero` 가 `@main` 으로 짤리는 버그 회피.
+              punctuation={MENTION_PUNCTUATION}
             />
           </LexicalComposer>
         </div>

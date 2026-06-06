@@ -1358,7 +1358,11 @@ function App() {
               value={scenes.map(s => s.videoT2VPrompt || '').join('\n').replace(/\n+$/, '')}
               onChange={handleVideoTextChange}
               disabled={anyRunning}
-              references={scenesHook.references}
+              // R37 review fix: Veo T2V 는 캐릭터 일관성 ref 를 받지 않는다 (start/end
+              // 프레임은 별도 I2V/F2V 경로). video-text 에서 @ chip 을 띄우면 ref 가
+              // 적용되는 것처럼 사용자 오해 → 의도적으로 references 빈 배열로 전달해
+              // chip/드롭다운 비활성화.
+              references={[]}
               placeholder={t('prompt.videoPlaceholder')}
               seedNo={settings.seedNo}
               seedLocked={settings.seedLocked}
