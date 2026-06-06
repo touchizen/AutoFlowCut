@@ -26,7 +26,7 @@ export const VIDEO_MODELS = [
   { id: 'veo-3.1-generate-preview', label: 'Veo 3.1 Quality', cost: '$0.40~', unit: 'sec', descKey: 'settings.modelVidQuality', url: VIDEO_DOCS_URL, allowedResolutions: ['720p', '1080p', '4k'] },
 ]
 
-export const DEFAULT_IMAGE_MODEL_ID = 'gemini-2.5-flash-image'
+export const DEFAULT_IMAGE_MODEL_ID = 'gemini-3.1-flash-image'  // Nano Banana 2
 export const DEFAULT_VIDEO_MODEL_ID = 'veo-3.1-fast-generate-preview'
 
 /** API 모델 id → 사람이 읽는 라벨. 카탈로그에 없으면 id 그대로, falsy 면 null.

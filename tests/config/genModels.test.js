@@ -6,7 +6,7 @@
  * falsy 면 null.
  */
 import { describe, it, expect } from 'vitest'
-import { modelLabel, coerceResolution, categorizeApiModels, pickValidModel, computeModelHeal, IMAGE_MODELS, VIDEO_MODELS } from '../../src/config/genModels'
+import { modelLabel, coerceResolution, categorizeApiModels, pickValidModel, computeModelHeal, IMAGE_MODELS, VIDEO_MODELS, DEFAULT_IMAGE_MODEL_ID } from '../../src/config/genModels'
 
 describe('genModels — modelLabel', () => {
   it('이미지 모델 id → 라벨', () => {
@@ -139,13 +139,13 @@ describe('genModels — computeModelHeal (권위 있는 목록으로 stale 저�
   })
 
   it('동적 목록에 없는 저장값 → 치유(default 우선, 없으면 첫 항목), 유효한 건 그대로', () => {
-    const dynImg = [{ id: 'gemini-2.5-flash-image' }, { id: 'gemini-9' }] // default 포함
-    const dynVid = [{ id: 'veo-2.0-generate-001' }]                       // default 미포함
+    const dynImg = [{ id: DEFAULT_IMAGE_MODEL_ID }, { id: 'gemini-9' }] // default 포함
+    const dynVid = [{ id: 'veo-2.0-generate-001' }]                     // default 미포함
     const out = computeModelHeal(
       { imageModels: dynImg, videoModels: dynVid },
       { imageModel: 'stale', videoModelT2V: 'veo-stale', videoModelF2V: 'veo-2.0-generate-001' },
     )
-    expect(out.imageModel).toBe('gemini-2.5-flash-image')   // default in list
+    expect(out.imageModel).toBe(DEFAULT_IMAGE_MODEL_ID)     // default in list
     expect(out.videoModelT2V).toBe('veo-2.0-generate-001')  // default 없음 → 첫 항목
     expect('videoModelF2V' in out).toBe(false)              // 이미 유효 → 변경 없음
   })

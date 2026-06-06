@@ -71,10 +71,10 @@ describe('SceneTab — model selectors (T2I/T2V/F2V)', () => {
     expect(setLocalSettings.mock.calls[0][0](baseSettings).imageModel).toBe('gemini-3.1-flash-image')
   })
 
-  it('imageModel 미지정 시 기본(Nano Banana = gemini-2.5-flash-image)이 select 현재값', () => {
+  it('imageModel 미지정 시 기본(Nano Banana 2 = gemini-3.1-flash-image)이 select 현재값', () => {
     const { container } = render(<SceneTab localSettings={{ ...baseSettings, imageModel: undefined }} setLocalSettings={vi.fn()} t={t} />)
     const t2iSelect = container.querySelectorAll('select.model-select')[0]
-    expect(t2iSelect.value).toBe('gemini-2.5-flash-image')
+    expect(t2iSelect.value).toBe('gemini-3.1-flash-image')
   })
 
   it('imageModels/videoModels prop 주면 동적 옵션 사용 (없으면 정적 카탈로그 폴백)', () => {
