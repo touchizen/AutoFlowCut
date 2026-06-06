@@ -217,4 +217,47 @@ describe('useVideoAutomation — concurrency', () => {
     expect(firstPollSubmitCount).toBe(3)
     expect(generateVideoT2V).toHaveBeenCalledTimes(3)
   })
+
+  it('concurrency 가 비정상 문자열이어도 기본값(clampInt)으로 제출', { timeout: 20000 }, async () => {
+    // 손상된 설정값("x") → Math.min/max 면 NaN → pending.size < NaN 항상 false → 0건 제출(no-op).
+    // clampInt 로 NaN→기본 4 폴백되어야 정상 제출.
+    let submitCount = 0
+    const generateVideoT2V = vi.fn().mockImplementation(async () => ({
+      success: true, generationId: `gen_${++submitCount}`
+    }))
+    const checkVideoStatus = makeProgressivePoll(() => submitCount, () => {})
+
+    const genAPI = {
+      generateVideoT2V,
+      generateVideoI2V: vi.fn(),
+      checkVideoStatus,
+      upscaleVideo: vi.fn(),
+      fetchMedia: vi.fn(),
+      downloadVideo: vi.fn().mockResolvedValue({ success: true, base64: 'b64' }),
+      getAccessToken: vi.fn().mockResolvedValue('token'),
+    }
+
+    const hook = renderHook(() => useVideoAutomation(genAPI, (k) => k, null))
+
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({
+        mode: 't2v',
+        scenes: makeScenes(3),
+        projectName: 'test', saveMode: 'folder',
+        videoModel: 'veo-3', aspectRatio: '16:9', duration: 8,
+        videoResolution: '720p', videoBatchCount: 1, seed: null,
+        concurrency: 'x',  // 손상된 값
+        onItemUpdate: vi.fn(),
+      })
+    })
+
+    for (let i = 0; i < 30; i++) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
+    }
+    await act(async () => { await startPromise })
+
+    // clampInt('x',1,10,4)=4 ≥ 3 → 3개 전부 제출 (NaN 이면 0건이라 RED)
+    expect(generateVideoT2V).toHaveBeenCalledTimes(3)
+  })
 })

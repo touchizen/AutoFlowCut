@@ -104,4 +104,49 @@ describe('useVideoAutomation — poll top-level fail quota', () => {
     expect(hook.result.current.statusMessage).toMatch(/1 failed/)
     expect(hook.result.current.statusMessage).toContain('⚠️')
   })
+
+  it('non-quota top-level 실패가 반복돼도 per-item 예산으로 종료 (무한루프 방지)', { timeout: 20000 }, async () => {
+    // submit 은 성공 → polling 진입. 이후 checkVideoStatus 가 항상 non-quota 실패 반환.
+    // quota/auth 가 아니므로 break 안 하고, statuses 도 없어 per-item polls 가 안 늘면 무한 폴링.
+    const generateVideoT2V = vi.fn().mockImplementation(async () => ({
+      success: true, generationId: `gen_${Math.random()}`
+    }))
+    const checkVideoStatus = vi.fn().mockResolvedValue({
+      success: false,
+      error: 'temporary server error 500',  // non-quota
+    })
+    const genAPI = {
+      generateVideoT2V, generateVideoI2V: vi.fn(), checkVideoStatus,
+      upscaleVideo: vi.fn(), fetchMedia: vi.fn(), getAccessToken: vi.fn().mockResolvedValue('token'),
+    }
+    const onItemUpdate = vi.fn()
+    const hook = renderHook(() => useVideoAutomation(genAPI, (k) => k, null))
+
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({
+        mode: 't2v',
+        scenes: [{ id: 'vscene_1', prompt: 'p1' }, { id: 'vscene_2', prompt: 'p2' }],
+        projectName: 'test', saveMode: 'folder', videoModel: 'veo-3', aspectRatio: '16:9',
+        duration: 8, videoResolution: '720p', videoBatchCount: 1, seed: null,
+        concurrency: 2, onItemUpdate,
+      })
+    })
+    startPromise.catch(() => {})
+
+    // per-item 예산(VIDEO_MAX_POLL_COUNT=120) 초과하도록 폴링 사이클 advance
+    for (let i = 0; i < 130; i++) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
+    }
+
+    // 무한루프면 status 가 'running' 으로 고정 → 여기서 실패(RED).
+    expect(hook.result.current.status).not.toBe('running')
+    // 2개 항목 모두 폴링 실패로 error 마감
+    const erroredIds = new Set(
+      onItemUpdate.mock.calls.filter(([, s]) => s === 'error').map(([id]) => id)
+    )
+    expect(erroredIds.size).toBe(2)
+
+    await act(async () => { await startPromise })
+  })
 })

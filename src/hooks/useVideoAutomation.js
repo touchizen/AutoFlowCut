@@ -21,6 +21,7 @@ import { pickVideoMetadata, buildVideoMetaPatch } from '../utils/videoMetadata'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 import { snapVeoDuration } from '../utils/videoModels'
 import { coerceResolution } from '../config/genModels'
+import { clampInt } from '../utils/clampInt'
 
 // 실제 제출되는 비디오 길이(초). submitVideo(engine)의 제약과 동일하게 계산해 제출값과
 // 완료-메타가 일치하도록 한다(어긋나면 history 길이가 실제와 불일치):
@@ -192,7 +193,8 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
       concurrency: rawConcurrency,
       onItemUpdate
     } = options
-    const concurrency = Math.max(1, Math.min(10, rawConcurrency || 4))
+    // 손상된 저장값('x'/NaN/0/음수)은 무한대기/no-op 유발 → clampInt 로 기본 4 폴백 (useAutomation 과 동일).
+    const concurrency = clampInt(rawConcurrency, 1, 10, 4)
     // 모델이 지원하지 않거나(예: Veo Lite + 4K) stale 한 해상도는 여기서 한 번만 강등/정규화.
     // 이후 effectiveVideoDuration 계산·history 메타데이터·생성 호출이 전부 같은 값을 써서
     // 부분 coerce 로 인한 어긋남(기록은 4k, 실제는 1080p)을 방지한다. (리뷰 P2)
@@ -576,6 +578,19 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
               pending.delete(itemId)
               console.warn(`[VideoAutomation] ⏱️ Poll timeout: ${itemId}`)
             }
+          }
+        }
+      } else {
+        // Top-level 폴링 실패(non-quota·non-auth, 예: 일시 500) 또는 statuses 없는 malformed 응답 —
+        // 이번 라운드는 전원 폴링 실패로 간주해 각 항목 예산 차감, 초과 시 timeout.
+        // (옛 global pollCount 제거 후, quota/auth 가 아닌 영구 실패가 무한 폴링되는 것 방지.)
+        console.warn(`[VideoAutomation] ⚠️ Poll failed (non-quota): ${result.error || 'malformed response'}`)
+        for (const [itemId, submission] of Array.from(pending.entries())) {
+          submission.polls++
+          if (submission.polls >= maxPollsPerItem) {
+            onItemUpdate?.(itemId, 'error', { error: `Polling failed — ${result.error || 'server error'}` })
+            videoErrorCount++
+            pending.delete(itemId)
           }
         }
       }
