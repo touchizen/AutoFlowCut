@@ -24,6 +24,7 @@ import {
   DEFAULT_IMAGE_MODEL,
   DEFAULT_VIDEO_MODEL,
 } from '../../../electron/api/genai.js'
+import { DEFAULT_IMAGE_MODEL_ID } from '../../../src/config/genModels'
 
 // --- fetch mock 헬퍼 ---------------------------------------------------------
 
@@ -91,6 +92,12 @@ describe('genai — generateImage', () => {
     expect(url).not.toContain('key=')
     expect(opts.method).toBe('POST')
     expect(opts.headers['x-goog-api-key']).toBe('SECRET')
+  })
+
+  it('main DEFAULT_IMAGE_MODEL 은 renderer DEFAULT_IMAGE_MODEL_ID 와 동기화 (drift 방지)', () => {
+    // main(genai.js) 와 renderer(genModels.js) 가 같은 기본 이미지 모델을 가리켜야 한다.
+    // 한쪽만 바꾸면 IPC/엔진 직접 호출(model 미지정) 시 옛 모델로 폴백되는 회귀 발생.
+    expect(DEFAULT_IMAGE_MODEL).toBe(DEFAULT_IMAGE_MODEL_ID)
   })
 
   it('503/UNAVAILABLE 일시 과부하는 백오프 후 재시도해 성공', async () => {

@@ -7,7 +7,7 @@
  * Flow 웹 역공학(DOM 자동화)을 대체하는 공식 BYOK API 호출부.
  *
  * 인증: 사용자 자기 Gemini Developer API 키(BYOK) → ?key= 쿼리 파라미터.
- * 이미지 모델: gemini-2.5-flash-image (Nano Banana).
+ * 이미지 모델: gemini-3.1-flash-image (Nano Banana 2).
  *   레퍼런스 이미지(캐릭터 일관성)를 inline base64 parts 로 지원 — 이게 핵심.
  *   Imagen API 는 multi-reference 캐릭터 일관성을 제대로 못 하므로 Gemini 이미지 모델을 쓴다.
  *   (SRT-Video-Studio 에서 검증된 경로)
@@ -21,7 +21,9 @@
 import { formatGoogleApiError } from '../ipc/googleApiError.js'
 
 export const GENAI_BASE = 'https://generativelanguage.googleapis.com/v1beta'
-export const DEFAULT_IMAGE_MODEL = 'gemini-2.5-flash-image'
+// Nano Banana 2. renderer 의 DEFAULT_IMAGE_MODEL_ID(src/config/genModels.js)와 동기화 유지
+// — 한쪽만 바꾸면 model 미지정 IPC 호출이 옛 모델로 폴백됨 (genai.test.js drift 가드가 잡음).
+export const DEFAULT_IMAGE_MODEL = 'gemini-3.1-flash-image'
 export const DEFAULT_VIDEO_MODEL = 'veo-3.1-fast-generate-preview'
 export const DEFAULT_ASPECT_RATIO = '16:9'
 export const DEFAULT_VIDEO_DURATION = 8
@@ -143,7 +145,7 @@ async function genaiFetch(
 }
 
 /**
- * 이미지 생성 (gemini-2.5-flash-image).
+ * 이미지 생성 (gemini-3.1-flash-image).
  *
  * @param {object} params
  * @param {string} params.apiKey - 사용자 Gemini API 키 (BYOK)
