@@ -55,13 +55,13 @@ export default function SceneTab({ localSettings, setLocalSettings, t, imageMode
         <span className="setting-sublabel">{t('settings.exportThresholdHint')}</span>
       </div>
 
-      {/* 동시 생성 개수 — 공식 API 모드. 너무 높으면 분당 한도(IPM) 초과로 429. 기본 5. */}
+      {/* 이미지 동시 생성 수 (3~10) */}
       <div className="setting-row">
         <label className="setting-label">{t('settings.concurrency')}</label>
         <div className="threshold-input-group">
           <input
             type="range"
-            min="1" max="10" step="1"
+            min="3" max="10" step="1"
             aria-label={t('settings.concurrency')}
             value={localSettings.concurrency || 5}
             onChange={(e) => { const v = parseInt(e.target.value); setLocalSettings(s => ({ ...s, concurrency: v })) }}
@@ -69,6 +69,22 @@ export default function SceneTab({ localSettings, setLocalSettings, t, imageMode
           <span className="threshold-value">{localSettings.concurrency || 5}</span>
         </div>
         <span className="setting-sublabel">{t('settings.concurrencyHint')}</span>
+      </div>
+
+      {/* 비디오 동시 생성 수 (2~5) */}
+      <div className="setting-row">
+        <label className="setting-label">{t('settings.videoConcurrency')}</label>
+        <div className="threshold-input-group">
+          <input
+            type="range"
+            min="2" max="5" step="1"
+            aria-label={t('settings.videoConcurrency')}
+            value={localSettings.videoConcurrency || 3}
+            onChange={(e) => { const v = parseInt(e.target.value); setLocalSettings(s => ({ ...s, videoConcurrency: v })) }}
+          />
+          <span className="threshold-value">{localSettings.videoConcurrency || 3}</span>
+        </div>
+        <span className="setting-sublabel">{t('settings.videoConcurrencyHint')}</span>
       </div>
 
       {/* 스타일 필수 설정 */}

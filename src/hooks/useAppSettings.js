@@ -17,6 +17,7 @@ function createDefaults() {
     aspectRatio: '16:9', // 프로젝트 화면비: '16:9' 롱폼 / '9:16' 숏폼
     saveMode: 'folder',
     concurrency: DEFAULTS.generation.concurrency,
+    videoConcurrency: DEFAULTS.generation.videoConcurrency,
     exportThreshold: UI.EXPORT_THRESHOLD,
     imageBatchCount: 1,
     imageUpscale: 'off',

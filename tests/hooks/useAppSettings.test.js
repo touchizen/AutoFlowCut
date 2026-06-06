@@ -93,3 +93,16 @@ describe('useAppSettings — 모델 id 보존 (동적 /models 모델 지원)', (
     expect(result.current.settings.videoModelF2V).toBe(DEFAULT_VIDEO_MODEL_ID)
   })
 })
+
+describe('useAppSettings — videoConcurrency', () => {
+  it('fresh install 기본값은 videoConcurrency 3', () => {
+    const { result } = renderHook(() => useAppSettings())
+    expect(result.current.settings.videoConcurrency).toBe(3)
+  })
+
+  it('저장된 videoConcurrency 값 보존', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ videoConcurrency: 4 }))
+    const { result } = renderHook(() => useAppSettings())
+    expect(result.current.settings.videoConcurrency).toBe(4)
+  })
+})

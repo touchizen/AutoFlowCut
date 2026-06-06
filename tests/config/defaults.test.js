@@ -32,6 +32,10 @@ describe('DEFAULTS', () => {
     expect(typeof DEFAULTS.generation.delayMax).toBe('number')
   })
 
+  it('videoConcurrency 기본값은 3', () => {
+    expect(DEFAULTS.generation.videoConcurrency).toBe(3)
+  })
+
   it('has api section with Flow endpoints', () => {
     expect(DEFAULTS.api).toBeDefined()
     expect(DEFAULTS.api.endpoints).toBeDefined()

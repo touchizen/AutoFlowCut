@@ -407,8 +407,11 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     exportThreshold: 'Export Button Display Threshold',
     exportThresholdHint: 'Show export button when this percentage of scenes complete successfully',
 
-    concurrency: 'Concurrent generations',
-    concurrencyHint: 'How many images/videos to generate at once. Higher is faster but exceeding the per-minute API limit (IPM) causes more 429s. Default 5.',
+    concurrency: 'Image concurrency',
+    concurrencyHint: 'How many images to generate at once (3–10). Higher is faster but may hit the per-minute API limit (IPM). Default 5.',
+
+    videoConcurrency: 'Video concurrency',
+    videoConcurrencyHint: 'How many videos to generate at once (2–5). Videos use more quota per request. Default 3.',
 
     // Require style
     requireStyle: 'Require Style',

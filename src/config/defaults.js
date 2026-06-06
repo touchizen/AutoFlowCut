@@ -18,7 +18,8 @@ export const DEFAULTS = {
     retryCount: 2,         // 재시도 횟수
     delayMin: 2000,        // 최소 딜레이 (ms)
     delayMax: 5000,        // 최대 딜레이 (ms)
-    concurrency: 5,        // 공식 API 동시 생성 기본 (1~10, IPM 한도 내에서 조절)
+    concurrency: 5,        // 이미지 동시 생성 기본 (3~10)
+    videoConcurrency: 3,   // 비디오 동시 생성 기본 (2~5)
   },
 
   // API 엔드포인트 (Flow AI)
