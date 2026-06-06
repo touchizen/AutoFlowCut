@@ -411,7 +411,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     concurrencyHint: 'How many images to generate at once (1–15). Higher is faster but may hit the per-minute API limit (IPM). Default 5.',
 
     videoConcurrency: 'Video concurrency',
-    videoConcurrencyHint: 'How many videos to generate at once (1–10). Videos use more quota per request. Default 3.',
+    videoConcurrencyHint: 'How many videos to generate at once (1–10). Videos use more quota per request. Default 4.',
 
     // Require style
     requireStyle: 'Require Style',

@@ -32,7 +32,7 @@ describe('DEFAULTS', () => {
     expect(typeof DEFAULTS.generation.delayMax).toBe('number')
   })
 
-  it('videoConcurrency 기본값은 3', () => {
+  it('videoConcurrency 기본값은 4', () => {
     expect(DEFAULTS.generation.videoConcurrency).toBe(4)
   })
 
