@@ -65,6 +65,25 @@ const REFS = [
   { id: 2, name: 'alice', type: 'character' },
 ]
 
+describe('Mention live transform — Korean particle split', () => {
+  it('plain TextNode `@queen이` becomes Queen chip plus particle text', () => {
+    const editor = makeEditor([{ id: 1, name: 'Queen', type: 'character' }])
+    editor.update(
+      () => {
+        const para = $createParagraphNode()
+        para.append($createTextNode('@queen이 방에 들어간다'))
+        $getRoot().append(para)
+      },
+      { discrete: true }
+    )
+
+    expect(readParagraphChildren(editor)).toEqual([
+      { type: 'chip', content: '@Queen' },
+      { type: 'text', content: '이 방에 들어간다' },
+    ])
+  })
+})
+
 describe('Mention live transform — subclass cleanup', () => {
   it('UnknownMentionTextNode `@ghost` stays as-is on update if still unknown', () => {
     const editor = makeEditor(REFS)
