@@ -168,6 +168,36 @@ describe('E2E: @mention prompt → useSceneGeneration → IPC referenceImages', 
     expect(payload.referenceImages[0].data).toBe(heroBase64Body)
   })
 
+  it('Hangul mention name with attached particle flows to IPC referenceImages', async () => {
+    const heroBase64Body = 'D'.repeat(120)
+    const memoryRef = {
+      id: 1,
+      name: '철수',
+      type: 'character',
+      category: 'character',
+      mediaId: null,
+      caption: '',
+      data: `data:image/jpeg;base64,${heroBase64Body}`,
+      filePath: null,
+    }
+    const scenes = [{ id: 'scene_1', prompt: '@철수가 walks' }]
+    const { sceneGen } = setupHook({
+      scenes,
+      references: [memoryRef],
+      matched: [memoryRef],
+    })
+
+    await act(async () => {
+      await sceneGen.current.handleGenerateScene('scene_1')
+    })
+
+    expect(genaiGenerateImage).toHaveBeenCalledTimes(1)
+    const payload = genaiGenerateImage.mock.calls[0][0]
+    expect(payload.prompt).toBe('철수가 walks')
+    expect(payload.referenceImages).toHaveLength(1)
+    expect(payload.referenceImages[0].data).toBe(heroBase64Body)
+  })
+
   it('regression guard — if matchedRefs builder strips data and disk also empty, refs become empty (not error)', async () => {
     // 회귀 시그널 — data/filePath 모두 떨궈진 매칭은 referenceImages 빈 배열로 흘러 들어간다.
     // 이 케이스가 production 에 도달하지 않게 위 fix (data 보존) 가 필요함을 시각화.

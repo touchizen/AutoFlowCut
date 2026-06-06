@@ -79,6 +79,13 @@ describe('resolveMentions', () => {
     expect(missing).toEqual([])
   })
 
+  it('matches Hangul mention name when Hangul particle is attached', () => {
+    const hangulRefs = [{ id: 10, name: '철수', type: 'character' }]
+    const { matched, missing } = resolveMentions('@철수가 걷는다', hangulRefs)
+    expect(matched.map((r) => r.id)).toEqual([10])
+    expect(missing).toEqual([])
+  })
+
   it('does not split English suffixes as mention prefixes', () => {
     const { matched, missing } = resolveMentions('@aliceville', refs)
     expect(matched).toEqual([])
@@ -121,6 +128,11 @@ describe('stripMentionPrefixes', () => {
 
   it('strips @ from known mention prefix while preserving attached Hangul particle', () => {
     expect(stripMentionPrefixes('@alice가 숲으로 간다', refs)).toBe('alice가 숲으로 간다')
+  })
+
+  it('strips @ from Hangul mention name while preserving attached Hangul particle', () => {
+    const hangulRefs = [{ name: '철수' }]
+    expect(stripMentionPrefixes('@철수가 숲으로 간다', hangulRefs)).toBe('철수가 숲으로 간다')
   })
 
   it('does not strip @ from English suffix composition', () => {

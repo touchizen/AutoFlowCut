@@ -82,6 +82,23 @@ describe('Mention live transform — Korean particle split', () => {
       { type: 'text', content: '이 방에 들어간다' },
     ])
   })
+
+  it('plain TextNode with Hangul mention name becomes chip plus particle text', () => {
+    const editor = makeEditor([{ id: 1, name: '철수', type: 'character' }])
+    editor.update(
+      () => {
+        const para = $createParagraphNode()
+        para.append($createTextNode('@철수가 간다'))
+        $getRoot().append(para)
+      },
+      { discrete: true }
+    )
+
+    expect(readParagraphChildren(editor)).toEqual([
+      { type: 'chip', content: '@철수' },
+      { type: 'text', content: '가 간다' },
+    ])
+  })
 })
 
 describe('Mention live transform — subclass cleanup', () => {

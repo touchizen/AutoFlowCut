@@ -479,6 +479,7 @@ Goodbye world`
         result.current.updateReferences([
           { name: 'Hero', type: 'character' },
           { name: 'Villain', type: 'character' },
+          { name: '철수', type: 'character' },
           { name: 'Forest', type: 'scene' },
           { name: 'Castle', type: 'scene' },
           { name: 'Anime', type: 'style' },
@@ -599,6 +600,15 @@ Goodbye world`
       const matched = result.current.getMatchingReferences(scene)
 
       expect(matched.map((r) => r.name).sort()).toEqual(['Forest', 'Hero'])
+    })
+
+    it('also matches Hangul @name inline mentions with attached particles', () => {
+      const result = setupWithRefs()
+
+      const scene = { prompt: '@철수가 숲으로 간다', characters: '', scene_tag: '', style_tag: '' }
+      const matched = result.current.getMatchingReferences(scene)
+
+      expect(matched.map((r) => r.name)).toEqual(['철수'])
     })
 
     it('dedupes @mention with CSV tag pointing at the same ref', () => {
