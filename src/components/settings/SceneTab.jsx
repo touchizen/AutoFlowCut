@@ -79,10 +79,10 @@ export default function SceneTab({ localSettings, setLocalSettings, t, imageMode
             type="range"
             min="1" max="10" step="1"
             aria-label={t('settings.videoConcurrency')}
-            value={localSettings.videoConcurrency || 3}
+            value={localSettings.videoConcurrency || 4}
             onChange={(e) => { const v = parseInt(e.target.value); setLocalSettings(s => ({ ...s, videoConcurrency: v })) }}
           />
-          <span className="threshold-value">{localSettings.videoConcurrency || 3}</span>
+          <span className="threshold-value">{localSettings.videoConcurrency || 4}</span>
         </div>
         <span className="setting-sublabel">{t('settings.videoConcurrencyHint')}</span>
       </div>

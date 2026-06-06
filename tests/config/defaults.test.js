@@ -33,7 +33,7 @@ describe('DEFAULTS', () => {
   })
 
   it('videoConcurrency 기본값은 3', () => {
-    expect(DEFAULTS.generation.videoConcurrency).toBe(3)
+    expect(DEFAULTS.generation.videoConcurrency).toBe(4)
   })
 
   it('has api section with Flow endpoints', () => {

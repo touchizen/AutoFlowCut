@@ -97,7 +97,7 @@ describe('useAppSettings — 모델 id 보존 (동적 /models 모델 지원)', (
 describe('useAppSettings — videoConcurrency', () => {
   it('fresh install 기본값은 videoConcurrency 3', () => {
     const { result } = renderHook(() => useAppSettings())
-    expect(result.current.settings.videoConcurrency).toBe(3)
+    expect(result.current.settings.videoConcurrency).toBe(4)
   })
 
   it('저장된 videoConcurrency 값 보존', () => {

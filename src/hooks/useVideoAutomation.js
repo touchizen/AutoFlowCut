@@ -191,7 +191,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
       concurrency: rawConcurrency,
       onItemUpdate
     } = options
-    const concurrency = Math.max(1, Math.min(10, rawConcurrency || 3))
+    const concurrency = Math.max(1, Math.min(10, rawConcurrency || 4))
     // 모델이 지원하지 않거나(예: Veo Lite + 4K) stale 한 해상도는 여기서 한 번만 강등/정규화.
     // 이후 effectiveVideoDuration 계산·history 메타데이터·생성 호출이 전부 같은 값을 써서
     // 부분 coerce 로 인한 어긋남(기록은 4k, 실제는 1080p)을 방지한다. (리뷰 P2)
