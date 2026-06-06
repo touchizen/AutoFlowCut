@@ -116,7 +116,7 @@ A king sitting on a golden throne in a palace
 The queen enters the throne room gracefully
 The king and queen discuss important matters`,
     count: '{count} prompts',
-    tip: 'Tip: Each line becomes a scene',
+    tip: 'Tip: Each line is a scene · Press @ to insert a reference',
     videoPlaceholder: `Enter video prompts (one per line)
 
 Example:

@@ -98,4 +98,32 @@ describe('PromptInput @ mention dropdown', () => {
     await user.type(getTextarea(), '@al')
     expect(screen.queryByTestId('prompt-mention-dropdown')).toBeNull()
   })
+
+  describe('highlight overlay', () => {
+    it('renders known @mentions with mention-known class', () => {
+      render(<PromptInput value="A wizard @alice walks" onChange={vi.fn()} references={REFS} />)
+      const overlay = screen.getByTestId('prompt-highlight-overlay')
+      const known = overlay.querySelectorAll('.mention-known')
+      expect(known.length).toBe(1)
+      expect(known[0].textContent).toBe('@alice')
+    })
+
+    it('renders unmatched @xxx with mention-unknown class', () => {
+      render(<PromptInput value="@ghost appears" onChange={vi.fn()} references={REFS} />)
+      const overlay = screen.getByTestId('prompt-highlight-overlay')
+      const unknown = overlay.querySelectorAll('.mention-unknown')
+      expect(unknown.length).toBe(1)
+      expect(unknown[0].textContent).toBe('@ghost')
+    })
+
+    it('updates overlay on text change', async () => {
+      const user = userEvent.setup()
+      render(<PromptInput value="" onChange={vi.fn()} references={REFS} />)
+      const overlay = screen.getByTestId('prompt-highlight-overlay')
+      expect(overlay.querySelectorAll('.mention-known').length).toBe(0)
+
+      await user.type(getTextarea(), 'A @alice')
+      expect(overlay.querySelectorAll('.mention-known').length).toBe(1)
+    })
+  })
 })

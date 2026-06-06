@@ -116,7 +116,7 @@ A king sitting on a golden throne in a palace
 The queen enters the throne room gracefully
 The king and queen discuss important matters`,
     count: '{count}개 프롬프트',
-    tip: 'Tip: 각 줄이 하나의 씬이 됩니다',
+    tip: 'Tip: 각 줄이 하나의 씬 · @를 눌러서 레퍼런스 삽입',
     videoPlaceholder: `비디오 프롬프트를 입력하세요 (줄바꿈으로 구분)
 
 예시:

@@ -407,12 +407,45 @@ html, body {
   padding: 12px;
   border: 1px solid var(--border-color);
   border-radius: var(--border-radius);
-  background: var(--bg-secondary);
+  background: transparent;       /* overlay 의 mention highlight 가 비치도록 */
   color: var(--text-color);
   font-size: 0.9rem;
   line-height: 1.6;
   resize: none;
   font-family: inherit;
+}
+
+/* mention highlight overlay — textarea 와 동일 metric. inset:0 + 같은 padding/border
+   로 글자 위치를 픽셀 정렬. 텍스트는 color:transparent(layout 유지하되 보이지 않음),
+   mention span 만 BG/underline 노출 → textarea 의 실제 텍스트가 그 위에 그려진다. */
+.prompt-textarea-wrap {
+  background: var(--bg-secondary); /* 기존 textarea bg 를 wrap 으로 이동 */
+}
+.prompt-highlight-overlay {
+  position: absolute;
+  inset: 0;
+  padding: 12px;
+  border: 1px solid transparent; /* textarea 와 동일 폭 — content box 정렬 */
+  border-radius: var(--border-radius);
+  font-size: 0.9rem;
+  line-height: 1.6;
+  font-family: inherit;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow: hidden;
+  pointer-events: none;
+  color: transparent;
+  z-index: 0;
+  box-sizing: border-box;
+}
+.prompt-highlight-overlay .mention-known {
+  background-color: rgba(110, 231, 255, 0.18);
+  border-radius: 2px;
+}
+.prompt-highlight-overlay .mention-unknown {
+  text-decoration: underline wavy var(--danger-color, #e5484d);
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
 }
 
 /* 인트로 동안만 표면 윤기: ① 흐르는 대각선 sheen ② 위 광택 ③ 베이스색

@@ -12,6 +12,7 @@ import { createPortal } from 'react-dom'
 import { useI18n } from '../hooks/useI18n'
 import { resolveImageSrc } from '../utils/formatters'
 import { getCaretCoordinates } from '../utils/textareaCaret'
+import { tokenizeMentions } from '../utils/highlightMentions'
 
 // `@` 직전이 문자열 시작/공백/구두점일 때만 트리거 — `user@example.com` 같은 이메일 제외.
 const MENTION_TRIGGER_RE = /(^|[\s.,!?;:()\[\]{}'"`])@([A-Za-z0-9_\-가-힣]*)$/
@@ -33,6 +34,22 @@ export default function PromptInput({
   const { t } = useI18n()
   const [text, setText] = useState(value || '')
   const textareaRef = useRef(null)
+  const overlayRef = useRef(null)
+
+  // 멘션 시각화 segments — known 은 배경 highlight, unknown 은 빨간 wavy underline
+  const highlightSegments = useMemo(
+    () => tokenizeMentions(text, references),
+    [text, references]
+  )
+
+  // textarea 스크롤 → overlay 위치 sync (textarea 가 wrap 보다 클 때만 의미 있음)
+  const syncOverlayScroll = () => {
+    const ta = textareaRef.current
+    const ov = overlayRef.current
+    if (!ta || !ov) return
+    ov.scrollTop = ta.scrollTop
+    ov.scrollLeft = ta.scrollLeft
+  }
 
   // mention dropdown 상태
   const [mentionQuery, setMentionQuery] = useState(null) // null = 비활성, '' = 직후, 'al' = 'al' 까지 입력
@@ -261,6 +278,26 @@ export default function PromptInput({
         className={`prompt-textarea-wrap ${intro ? 'intro' : ''}`}
         data-testid="prompt-textarea-wrap"
       >
+        {/* highlight overlay — textarea 뒤 (z-index 0). 알려진 @멘션 = 배경 highlight,
+            unmatched @멘션 = 빨간 wavy underline. 텍스트 색은 transparent 라 텍스트는
+            보이지 않고 BG/underline 만 노출 → 위 textarea 가 진짜 텍스트를 그린다.
+            aria-hidden — 보조 기술 중복 읽기 방지. */}
+        <div
+          className="prompt-highlight-overlay"
+          ref={overlayRef}
+          aria-hidden="true"
+          data-testid="prompt-highlight-overlay"
+        >
+          {highlightSegments.map((s, i) =>
+            s.kind === 'plain' ? (
+              <span key={i}>{s.text}</span>
+            ) : (
+              <span key={i} className={`mention-token mention-${s.kind}`}>{s.text}</span>
+            )
+          )}
+          {/* 마지막이 newline 으로 끝나면 div 는 빈 줄 layout 못 잡음 — zero-width 보조 */}
+          {text.endsWith('\n') && <span>&#8203;</span>}
+        </div>
         <textarea
           ref={textareaRef}
           className="prompt-textarea"
@@ -269,6 +306,7 @@ export default function PromptInput({
           onPaste={handlePaste}
           onKeyDown={handleKeyDown}
           onSelect={handleSelect}
+          onScroll={syncOverlayScroll}
           onBlur={() => setTimeout(() => setMentionQuery(null), 150)}
           placeholder={placeholder || t('prompt.placeholder')}
           disabled={disabled}
