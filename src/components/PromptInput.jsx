@@ -89,6 +89,22 @@ function SyncPlugin({ value, onChange, references }) {
     lastTextRef.current = incoming
   }, [editor, value])
 
+  // references 변경 → 현재 텍스트의 @멘션을 chip 으로 재해석.
+  // 케이스: 프로젝트 전환 시 scenes 가 references 보다 먼저 (또는 같이) 도착하지만
+  //   references 가 비어 있어 첫 적용 때 chip 매칭 못 함 → references 가 뒤늦게
+  //   채워져도 value 가 같으면 위 effect 가 안 돌아 chip 이 영원히 안 생기는 버그.
+  // 가드:
+  //   - 텍스트에 `@` 없으면 skip (재적용 비용/cursor reset 회피)
+  //   - editor 가 포커스 중이면 skip (사용자 타이핑 중 — chip 재구성으로 cursor jump 방지)
+  useEffect(() => {
+    const currentText = lastTextRef.current
+    if (!currentText.includes('@')) return
+    const rootEl = editor.getRootElement?.()
+    if (rootEl && document.activeElement === rootEl) return
+    editor.update(() => $applyTextToRoot(currentText, references))
+    // lastTextRef 는 그대로 — chip 재구성이라도 직렬화 text 는 동일.
+  }, [editor, references])
+
   // editor → 외부 onChange (사용자 타이핑 등)
   useEffect(() => {
     return editor.registerUpdateListener(({ editorState }) => {

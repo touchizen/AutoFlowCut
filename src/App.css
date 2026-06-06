@@ -463,16 +463,23 @@ html, body {
   white-space: nowrap;
   user-select: all; /* 통째 선택 — backspace 시 chip 단위 삭제 */
 }
+/* chip 썸네일 — height 고정, width auto 로 원본 비율 유지 (16:9 / 9:16 등).
+   max-width 로 너무 길어지는 가로 이미지는 캡, min-width 로 너무 가는 세로
+   이미지는 최소 폭 확보. */
 .mention-chip-thumb {
-  width: 16px;
   height: 16px;
-  border-radius: 50%;
-  object-fit: cover;
+  width: auto;
+  min-width: 12px;
+  max-width: 32px;
+  object-fit: contain;
+  border-radius: 2px;
   background: var(--bg, #1a1a1a);
   flex-shrink: 0;
+  vertical-align: middle;
 }
 .mention-chip-thumb.empty {
   display: inline-block;
+  width: 16px;
   background: var(--bg-tertiary, #222);
 }
 .mention-chip-label {
