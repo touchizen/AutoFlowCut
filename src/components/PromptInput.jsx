@@ -174,6 +174,12 @@ function SyncPlugin({ value, onChange, references }) {
 //   underline 이 즉시 보이게. $applyTextToRoot 는 initial / project load 시점에만
 //   호출되므로 그것만으로는 live typing typo 가 plain text 로 남는 회귀가 있었다.
 //
+// 중요: Lexical 의 registerNodeTransform 은 정확한 klass 에만 발화하고 subclass
+//   에는 발화하지 않는다 ([Lexical.dev.mjs:12599] getRegisteredNode(klass)).
+//   그래서 TextNode 만 등록하면 UnknownMentionTextNode 가 ghost ↔ hero 처럼
+//   고쳐졌을 때 정리 로직이 안 돌아 .unknown-mention 클래스가 남는다.
+//   동일 transform 을 UnknownMentionTextNode 에도 별도 등록 — 양쪽 다 cleanup.
+//
 // 가드:
 //   - 커서가 현재 노드 안의 `@xxx` 토큰 위에 있으면 transform skip — 사용자가 그
 //     멘션을 타이핑 중일 가능성. 커서가 그 영역을 벗어나면 (스페이스, 클릭, 등)
@@ -187,9 +193,9 @@ function MentionLiveTransformPlugin({ references }) {
   }, [references])
 
   useEffect(() => {
-    return editor.registerNodeTransform(TextNode, (node) => {
+    const transformFn = (node) => {
       // BeautifulMentionNode 는 TextNode 가 아니라 DecoratorNode 라 여기 안 들어옴.
-      // UnknownMentionTextNode 는 TextNode 서브클래스라서 들어옴 — 같은 transform 으로 처리.
+      // UnknownMentionTextNode 는 별도 등록(아래) 으로 같은 함수가 호출됨.
       const text = node.getTextContent()
 
       // 1) `@` 자체가 없으면 정리만 (UnknownMentionTextNode 였는데 사용자가 `@` 지운 경우).
@@ -234,7 +240,20 @@ function MentionLiveTransformPlugin({ references }) {
         node.insertBefore(newNode)
       }
       node.remove()
-    })
+    }
+
+    // 양쪽 klass 에 등록 — Lexical 의 transform 은 정확한 klass 매칭이라 subclass
+    // 발화 안 함. UnknownMentionTextNode 에도 등록해야 @ghost → @hero 같은 cleanup
+    // 이 정상 동작.
+    const unregisterText = editor.registerNodeTransform(TextNode, transformFn)
+    const unregisterUnknown = editor.registerNodeTransform(
+      UnknownMentionTextNode,
+      transformFn
+    )
+    return () => {
+      unregisterText()
+      unregisterUnknown()
+    }
   }, [editor])
 
   return null
