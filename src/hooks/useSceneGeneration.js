@@ -8,6 +8,7 @@ import { resolveSceneStyle } from '../services/styleService'
 import { finalizeGeneratedImage } from '../services/imageFinalize'
 import { toast } from '../components/Toast'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
+import { stripMentionPrefixes, resolveMentions } from '../utils/mentionParser'
 
 export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue }) {
   const [generatingSceneId, setGeneratingSceneId] = useState(null)
@@ -54,8 +55,14 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
         : overrideStyleId === 'none' ? 'none'
         : overrideStyleId == null ? null
         : overrideStyleId
+      // `@name` 인라인 멘션 제거 → Gemini 가 본문에서 이름을 일반 명사로 읽도록.
+      // 매칭된 ref 는 getMatchingReferences 가 이미 matchedRefs 에 포함했음.
+      const allRefs = scenesHook.references || []
+      const cleanPrompt = stripMentionPrefixes(scene.prompt, allRefs)
+      const { missing } = resolveMentions(scene.prompt, allRefs)
+      if (missing.length > 0) console.warn('[Scene]', sceneId, 'unknown @mentions:', missing.join(', '))
       // 스타일 프롬프트 합치기 (style_tag 프리셋 fallback + override)
-      const { styledPrompt } = resolveSceneStyle(scene.prompt, [], effectiveOverride, scenesHook.references || [], matchedRefs, scene.style_tag)
+      const { styledPrompt } = resolveSceneStyle(cleanPrompt, [], effectiveOverride, allRefs, matchedRefs, scene.style_tag)
 
       // seedLocked && seedNo 가 숫자일 때만 고정 seed, 그 외엔 Flow 자체 랜덤
       const seed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)

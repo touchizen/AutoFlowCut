@@ -1339,6 +1339,7 @@ function App() {
               value={scenes.map(s => s.prompt).join('\n')}
               onChange={handleTextChange}
               disabled={anyRunning}
+              references={scenesHook.references}
               seedNo={settings.seedNo}
               seedLocked={settings.seedLocked}
               onSeedChange={(v) => setSettings(s => ({ ...s, seedNo: v }))}
@@ -1357,6 +1358,7 @@ function App() {
               value={scenes.map(s => s.videoT2VPrompt || '').join('\n').replace(/\n+$/, '')}
               onChange={handleVideoTextChange}
               disabled={anyRunning}
+              references={scenesHook.references}
               placeholder={t('prompt.videoPlaceholder')}
               seedNo={settings.seedNo}
               seedLocked={settings.seedLocked}

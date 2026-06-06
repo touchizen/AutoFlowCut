@@ -14,6 +14,7 @@ import { cleanBase64 as stripBase64Prefix } from '../utils/urls'
 import { toast } from '../components/Toast'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 import { clampInt } from '../utils/clampInt'
+import { stripMentionPrefixes, resolveMentions } from '../utils/mentionParser'
 
 export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings = null, addPendingSave = null, t = (key) => key, onAuthError = null, generationQueue = null, onComplete = null) {
   const [isRunning, setIsRunning] = useState(false)
@@ -200,8 +201,13 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
         console.log('[Automation] Scene', scene.id, '→ injecting', matchedRefs.length, 'refs')
       }
 
+      // `@name` 인라인 멘션 제거 → Gemini 가 본문에서 이름을 일반 명사로 읽도록.
+      // 매칭된 ref 는 getMatchingReferences (useScenes) 가 이미 allMatched/matchedRefs 에 포함.
+      const cleanPrompt = stripMentionPrefixes(scene.prompt, references)
+      const { missing: missingMentions } = resolveMentions(scene.prompt, references)
+      if (missingMentions.length > 0) console.warn('[Automation] Scene', scene.id, 'unknown @mentions:', missingMentions.join(', '))
       // 스타일 프롬프트 합치기 (태그 매칭 자동 + style_tag 프리셋 fallback + selectedStyleRefId 수동)
-      const { styledPrompt, appliedStyle } = resolveSceneStyle(scene.prompt, allMatched, selectedStyleRefId, references, matchedRefs, scene.style_tag)
+      const { styledPrompt, appliedStyle } = resolveSceneStyle(cleanPrompt, allMatched, selectedStyleRefId, references, matchedRefs, scene.style_tag)
 
       // 비동기 제출
       console.log('[Automation] Scene', scene.id, '→ prompt:', styledPrompt.substring(0, 80) + '...', '| style:', appliedStyle, '| refs:', matchedRefs.length)

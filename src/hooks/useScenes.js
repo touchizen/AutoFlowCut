@@ -24,6 +24,7 @@ import { matchSrtLines } from '../utils/srtLineMatcher'
 import { trimTrailingEmptyScenes } from '../utils/sceneTrim'
 import { fileSystemAPI } from './useFileSystem'
 import { splitTags } from '../utils/tagMatch'
+import { resolveMentions } from '../utils/mentionParser'
 
 // snake_case → camelCase 변환 + 숫자 변환 + videoT2V/I2V prompt 필드 기본값 보장
 function normalizeScene(s, i) {
@@ -621,6 +622,19 @@ export function useScenes() {
         if (ref.type === 'style' && styleTags.includes(ref.name.toLowerCase())) {
           matched.push(ref)
         }
+      }
+    }
+
+    // 프롬프트 본문의 `@name` 인라인 멘션도 함께 수집 — Google Flow 방식.
+    // CSV 태그와 합집합, id 우선 / name 보조로 dedup. 타입 무관 (캐릭터/씬/스타일 모두 가능).
+    if (scene.prompt) {
+      const { matched: mentionMatched } = resolveMentions(scene.prompt, references)
+      for (const ref of mentionMatched) {
+        const dup = matched.some((m) =>
+          (ref.id != null && m.id === ref.id) ||
+          (ref.name && m.name && String(m.name).toLowerCase() === String(ref.name).toLowerCase())
+        )
+        if (!dup) matched.push(ref)
       }
     }
 

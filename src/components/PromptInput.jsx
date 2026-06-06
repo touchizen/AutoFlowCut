@@ -1,15 +1,29 @@
 /**
  * PromptInput Component - 텍스트 입력 탭
+ *
+ * `@` 입력 시 references 목록을 썸네일과 함께 드롭다운으로 보여주고, 선택하면
+ * `@name` 토큰을 현재 커서 위치에 삽입한다 (Google Flow 스타일).
+ * 멘션 해석은 백엔드(useScenes.getMatchingReferences + useAutomation/useSceneGeneration
+ * stripMentionPrefixes)가 담당 — 이 컴포넌트는 입력 UX 전용.
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { useI18n } from '../hooks/useI18n'
+import { resolveImageSrc } from '../utils/formatters'
+import { getCaretCoordinates } from '../utils/textareaCaret'
+
+// `@` 직전이 문자열 시작/공백/구두점일 때만 트리거 — `user@example.com` 같은 이메일 제외.
+const MENTION_TRIGGER_RE = /(^|[\s.,!?;:()\[\]{}'"`])@([A-Za-z0-9_\-가-힣]*)$/
+const MENTION_DROPDOWN_MAX_HEIGHT = 320
+const MENTION_DROPDOWN_MAX_WIDTH = 380
 
 export default function PromptInput({
   value,
   onChange,
   disabled,
   placeholder,
+  references = [],
   seedNo = null,
   seedLocked = false,
   onSeedChange,
@@ -18,6 +32,12 @@ export default function PromptInput({
 }) {
   const { t } = useI18n()
   const [text, setText] = useState(value || '')
+  const textareaRef = useRef(null)
+
+  // mention dropdown 상태
+  const [mentionQuery, setMentionQuery] = useState(null) // null = 비활성, '' = 직후, 'al' = 'al' 까지 입력
+  const [highlightedIndex, setHighlightedIndex] = useState(0)
+  const [dropdownPos, setDropdownPos] = useState(null)
 
   // 입력창이 처음 등장할 때만 ~2.6초 윤기 인트로를 보여주고 끈다.
   const [intro, setIntro] = useState(true)
@@ -31,10 +51,160 @@ export default function PromptInput({
     setText(value || '')
   }, [value])
 
+  // references → dropdown 옵션. 이름 + 타입 + 썸네일 src.
+  const refOptions = useMemo(
+    () =>
+      (references || [])
+        .filter((r) => r?.name)
+        .map((r) => ({
+          name: r.name,
+          type: r.type || 'character',
+          src: resolveImageSrc(r) || null,
+        })),
+    [references]
+  )
+
+  // 현재 query 로 필터링된 옵션. query='' 이면 전체.
+  const filteredOptions = useMemo(() => {
+    if (mentionQuery == null) return []
+    const q = mentionQuery.toLowerCase()
+    if (!q) return refOptions
+    return refOptions.filter((o) => o.name.toLowerCase().includes(q))
+  }, [refOptions, mentionQuery])
+
+  // 옵션 리스트 바뀌면 highlight 0으로 reset
+  useEffect(() => {
+    setHighlightedIndex(0)
+  }, [mentionQuery])
+
+  // textarea caret 위치 기준으로 드롭다운 좌표 계산.
+  // 1) mirror-div 로 caret 의 textarea-local px 좌표 측정
+  // 2) textarea bounding rect + 스크롤 보정으로 viewport(=fixed) 좌표 변환
+  // 3) 화면 끝에 부딪히면 위로 펼치고, 가로로도 화면 안에 클램프
+  const updateDropdownPos = () => {
+    const el = textareaRef.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    const caret = getCaretCoordinates(el, el.selectionStart ?? 0)
+    const caretTop = r.top + caret.top - el.scrollTop
+    const caretBottom = caretTop + caret.height
+    const caretLeft = r.left + caret.left - el.scrollLeft
+
+    const spaceBelow = window.innerHeight - caretBottom
+    const spaceAbove = caretTop
+    const openUp =
+      spaceBelow < MENTION_DROPDOWN_MAX_HEIGHT && spaceAbove > spaceBelow
+
+    // 가로 클램프 — 드롭다운이 viewport 밖으로 나가지 않도록.
+    const minLeft = 8
+    const maxLeft = Math.max(minLeft, window.innerWidth - MENTION_DROPDOWN_MAX_WIDTH - 8)
+    const left = Math.max(minLeft, Math.min(caretLeft, maxLeft))
+
+    setDropdownPos({
+      left,
+      width: MENTION_DROPDOWN_MAX_WIDTH,
+      ...(openUp
+        ? {
+            bottom: window.innerHeight - caretTop + 4,
+            maxHeight: Math.min(MENTION_DROPDOWN_MAX_HEIGHT, spaceAbove - 8),
+          }
+        : {
+            top: caretBottom + 4,
+            maxHeight: Math.min(MENTION_DROPDOWN_MAX_HEIGHT, spaceBelow - 8),
+          }),
+    })
+  }
+
+  // 커서 위치 직전 텍스트가 `@xxx` 패턴이면 mention 모드 켜기.
+  const checkMentionContext = (currentText) => {
+    const el = textareaRef.current
+    if (!el) {
+      setMentionQuery(null)
+      return
+    }
+    const pos = el.selectionStart
+    if (pos !== el.selectionEnd) {
+      setMentionQuery(null)
+      return
+    }
+    const before = currentText.slice(0, pos)
+    const m = before.match(MENTION_TRIGGER_RE)
+    if (m) {
+      setMentionQuery(m[2] || '')
+      updateDropdownPos()
+    } else {
+      setMentionQuery(null)
+    }
+  }
+
+  // 스크롤/리사이즈 시 드롭다운 위치 갱신
+  useEffect(() => {
+    if (mentionQuery == null) return
+    const handler = () => updateDropdownPos()
+    window.addEventListener('scroll', handler, true)
+    window.addEventListener('resize', handler)
+    return () => {
+      window.removeEventListener('scroll', handler, true)
+      window.removeEventListener('resize', handler)
+    }
+  }, [mentionQuery])
+
   const handleChange = (e) => {
     const newText = e.target.value
-    setText(newText)      // 로컬 상태 먼저 업데이트 (키 입력 즉시 반영)
-    onChange(newText)     // 부모에 전달 (파싱 + 씬 생성)
+    setText(newText) // 로컬 상태 먼저 업데이트 (키 입력 즉시 반영)
+    onChange(newText) // 부모에 전달 (파싱 + 씬 생성)
+    // selectionStart 는 onChange 직후 정확 — 같은 frame 에 검사 가능.
+    checkMentionContext(newText)
+  }
+
+  // 커서 이동(클릭/방향키) 시에도 mention 컨텍스트 갱신
+  const handleSelect = () => {
+    checkMentionContext(text)
+  }
+
+  // 멘션 선택 → `@name` 으로 치환
+  const insertMention = (name) => {
+    const el = textareaRef.current
+    if (!el) return
+    const pos = el.selectionStart
+    const before = text.slice(0, pos)
+    const after = text.slice(pos)
+    const m = before.match(MENTION_TRIGGER_RE)
+    if (!m) return
+    // m[0] = boundary 문자 + `@xxx` (string-start 일 때는 boundary 없이 `@xxx`)
+    const matchedFull = m[0]
+    const startsAtStringStart = matchedFull[0] === '@'
+    const boundaryLen = startsAtStringStart ? 0 : 1
+    const replaceStart = before.length - matchedFull.length + boundaryLen
+    const inserted = `@${name}`
+    const newText = text.slice(0, replaceStart) + inserted + after
+    setText(newText)
+    onChange(newText)
+    setMentionQuery(null)
+    // 다음 paint 에 커서 이동 — React 의 state commit 이후 실제 textarea value 가 갱신된 뒤.
+    requestAnimationFrame(() => {
+      const newPos = replaceStart + inserted.length
+      el.focus()
+      el.setSelectionRange(newPos, newPos)
+    })
+  }
+
+  const handleKeyDown = (e) => {
+    if (mentionQuery == null || filteredOptions.length === 0) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setHighlightedIndex((i) => Math.min(i + 1, filteredOptions.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setHighlightedIndex((i) => Math.max(i - 1, 0))
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault()
+      const opt = filteredOptions[highlightedIndex]
+      if (opt) insertMention(opt.name)
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      setMentionQuery(null)
+    }
   }
 
   // 엑셀/시트에서 복사한 탭 구분 데이터를 줄바꿈으로 정규화하여 붙여넣기
@@ -83,6 +253,7 @@ export default function PromptInput({
   }
 
   const showSeedUI = typeof onSeedChange === 'function'
+  const showMentionDropdown = mentionQuery != null && dropdownPos && filteredOptions.length > 0
 
   return (
     <div className="prompt-input-container">
@@ -91,10 +262,14 @@ export default function PromptInput({
         data-testid="prompt-textarea-wrap"
       >
         <textarea
+          ref={textareaRef}
           className="prompt-textarea"
           value={text}
           onChange={handleChange}
           onPaste={handlePaste}
+          onKeyDown={handleKeyDown}
+          onSelect={handleSelect}
+          onBlur={() => setTimeout(() => setMentionQuery(null), 150)}
           placeholder={placeholder || t('prompt.placeholder')}
           disabled={disabled}
         />
@@ -145,6 +320,37 @@ export default function PromptInput({
           💡 {t('prompt.tip')}
         </span>
       </div>
+
+      {showMentionDropdown && createPortal(
+        <div
+          className="prompt-mention-dropdown"
+          style={{ position: 'fixed', ...dropdownPos }}
+          data-testid="prompt-mention-dropdown"
+        >
+          {filteredOptions.map((opt, i) => (
+            <div
+              key={`${opt.name}-${i}`}
+              className={`prompt-mention-option ${i === highlightedIndex ? 'highlighted' : ''}`}
+              onMouseDown={(e) => {
+                e.preventDefault() // textarea blur 방지
+                insertMention(opt.name)
+              }}
+              onMouseEnter={() => setHighlightedIndex(i)}
+            >
+              {opt.src ? (
+                <img src={opt.src} alt="" className="prompt-mention-thumb" loading="lazy" />
+              ) : (
+                <span className="prompt-mention-thumb empty" />
+              )}
+              <span className="prompt-mention-option-label">
+                @{opt.name}
+                <span className="prompt-mention-type">{opt.type}</span>
+              </span>
+            </div>
+          ))}
+        </div>,
+        document.body
+      )}
     </div>
   )
 }

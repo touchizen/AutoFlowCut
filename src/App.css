@@ -481,6 +481,59 @@ html, body {
   text-overflow: ellipsis;
 }
 
+/* ── PromptInput @ mention dropdown ──────────────────────────────────
+   `@` 입력 시 references 목록을 썸네일과 함께 노출. portal → document.body
+   로 렌더되므로 textarea 의 overflow 컨테이너에 안 잘림. */
+.prompt-mention-dropdown {
+  z-index: 10003;
+  background: var(--bg-secondary, #2a2a2a);
+  border: 1px solid var(--border-color, #444);
+  border-radius: 4px;
+  overflow-y: auto;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  padding: 4px 0;
+}
+.prompt-mention-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-color, #ddd);
+}
+.prompt-mention-option:hover,
+.prompt-mention-option.highlighted {
+  background: var(--bg-hover, #3a3a3a);
+}
+.prompt-mention-thumb {
+  width: 36px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 3px;
+  flex-shrink: 0;
+  background: var(--bg, #1a1a1a);
+  border: 1px solid var(--border-color, #444);
+}
+.prompt-mention-thumb.empty {
+  background: var(--bg-tertiary, #222);
+}
+.prompt-mention-option-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.prompt-mention-type {
+  font-size: 11px;
+  color: var(--text-secondary, #888);
+  text-transform: lowercase;
+}
+
 /* Seed control (between line-count and hint) */
 .seed-control {
   flex: 0 1 auto;

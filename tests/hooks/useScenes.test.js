@@ -582,6 +582,25 @@ Goodbye world`
 
       expect(matched).toHaveLength(2)
     })
+
+    it('also matches @name inline mentions in scene.prompt', () => {
+      const result = setupWithRefs()
+
+      const scene = { prompt: 'A wizard @hero fighting @villain in @forest', characters: '', scene_tag: '', style_tag: '' }
+      const matched = result.current.getMatchingReferences(scene)
+
+      expect(matched.map((r) => r.name).sort()).toEqual(['Forest', 'Hero', 'Villain'])
+    })
+
+    it('dedupes @mention with CSV tag pointing at the same ref', () => {
+      const result = setupWithRefs()
+
+      const scene = { prompt: 'A wizard @hero appears', characters: 'hero', scene_tag: '', style_tag: '' }
+      const matched = result.current.getMatchingReferences(scene)
+
+      expect(matched).toHaveLength(1)
+      expect(matched[0].name).toBe('Hero')
+    })
   })
 
   // ============================================================
