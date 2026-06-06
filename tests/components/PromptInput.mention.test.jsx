@@ -1,129 +1,94 @@
+/**
+ * PromptInput (Lexical-based) smoke tests.
+ *
+ * `@` 입력 시 드롭다운/chip 의 깊은 interaction 은 contenteditable + popper 기반이라
+ * jsdom 에서 정확 시뮬레이션이 어려워 — 실 UX 는 수동 확인.
+ * 여기선 회귀를 막을 핵심 계약만 검증:
+ *   - 마운트/언마운트가 깨지지 않는다
+ *   - placeholder 가 빈 상태에서 노출된다
+ *   - initial value 가 본문에 반영된다 (paragraph = 줄)
+ *   - references 안의 이름이 본문 내 `@name` 위치에서 chip 으로 렌더된다
+ *   - disabled prop 이 contenteditable=false 로 전파된다
+ *
+ * 직렬화/역직렬화 본질은 promptLexicalAdapter 의 단위 테스트가 책임진다.
+ */
+
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, screen, fireEvent, cleanup } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { render, screen, cleanup, waitFor } from '@testing-library/react'
 
 vi.mock('../../src/hooks/useI18n', () => ({
   useI18n: () => ({ t: (k) => k, lang: 'ko', setLang: vi.fn() }),
   default: () => ({ t: (k) => k, lang: 'ko', setLang: vi.fn() }),
 }))
 
-// resolveImageSrc 는 file:// URL 등을 만들어 jsdom 에서 noise — 단순화.
-vi.mock('../../src/utils/formatters', async (importOriginal) => {
-  const actual = await importOriginal()
-  return { ...actual, resolveImageSrc: () => null }
+vi.mock('../../src/utils/formatters', async (orig) => {
+  const a = await orig()
+  return { ...a, resolveImageSrc: () => null }
 })
 
 import PromptInput from '../../src/components/PromptInput'
 
 const REFS = [
-  { id: 1, name: 'Alice', type: 'character', data: null },
-  { id: 2, name: 'Bob', type: 'character', data: null },
-  { id: 3, name: 'forest', type: 'scene', data: null },
+  { id: 1, name: 'Alice', type: 'character' },
+  { id: 2, name: 'Bob', type: 'character' },
+  { id: 3, name: 'forest', type: 'scene' },
 ]
 
-function getTextarea() {
-  return document.querySelector('.prompt-textarea')
-}
-
-describe('PromptInput @ mention dropdown', () => {
+describe('PromptInput (Lexical) smoke', () => {
   afterEach(() => cleanup())
 
-  it('does not show dropdown for plain text without @', async () => {
-    const user = userEvent.setup()
-    render(<PromptInput value="" onChange={vi.fn()} references={REFS} />)
-    await user.type(getTextarea(), 'A wizard walking')
-    expect(screen.queryByTestId('prompt-mention-dropdown')).toBeNull()
-  })
-
-  it('shows dropdown with all references when user types lone @', async () => {
-    const user = userEvent.setup()
-    render(<PromptInput value="" onChange={vi.fn()} references={REFS} />)
-    await user.type(getTextarea(), '@')
-    const dropdown = screen.getByTestId('prompt-mention-dropdown')
-    expect(dropdown.querySelectorAll('.prompt-mention-option').length).toBe(3)
-  })
-
-  it('filters dropdown by query after @', async () => {
-    const user = userEvent.setup()
-    render(<PromptInput value="" onChange={vi.fn()} references={REFS} />)
-    await user.type(getTextarea(), 'hello @al')
-    const dropdown = screen.getByTestId('prompt-mention-dropdown')
-    const options = dropdown.querySelectorAll('.prompt-mention-option')
-    expect(options.length).toBe(1)
-    expect(options[0].textContent).toContain('Alice')
-  })
-
-  it('does not trigger on email-like @ (no boundary before @)', async () => {
-    const user = userEvent.setup()
-    render(<PromptInput value="" onChange={vi.fn()} references={REFS} />)
-    await user.type(getTextarea(), 'user@example')
-    expect(screen.queryByTestId('prompt-mention-dropdown')).toBeNull()
-  })
-
-  it('inserts @name when option is clicked and calls onChange', async () => {
-    const user = userEvent.setup()
-    const onChange = vi.fn()
-    render(<PromptInput value="" onChange={onChange} references={REFS} />)
-    await user.type(getTextarea(), 'A wizard @al')
-
-    const option = screen.getByTestId('prompt-mention-dropdown').querySelector('.prompt-mention-option')
-    fireEvent.mouseDown(option)
-
-    expect(onChange).toHaveBeenLastCalledWith('A wizard @Alice')
-  })
-
-  it('closes dropdown on Escape', async () => {
-    const user = userEvent.setup()
-    render(<PromptInput value="" onChange={vi.fn()} references={REFS} />)
-    await user.type(getTextarea(), '@')
-    expect(screen.queryByTestId('prompt-mention-dropdown')).toBeTruthy()
-    await user.keyboard('{Escape}')
-    expect(screen.queryByTestId('prompt-mention-dropdown')).toBeNull()
-  })
-
-  it('Enter on highlighted option inserts mention', async () => {
-    const user = userEvent.setup()
-    const onChange = vi.fn()
-    render(<PromptInput value="" onChange={onChange} references={REFS} />)
-    await user.type(getTextarea(), '@bo')
-    await user.keyboard('{Enter}')
-    expect(onChange).toHaveBeenLastCalledWith('@Bob')
-  })
-
-  it('handles references prop being empty/undefined without crashing', async () => {
-    const user = userEvent.setup()
+  it('mounts without crashing with empty value', () => {
     expect(() => {
-      render(<PromptInput value="" onChange={vi.fn()} />)
+      render(<PromptInput value="" onChange={vi.fn()} references={REFS} />)
     }).not.toThrow()
-    await user.type(getTextarea(), '@al')
-    expect(screen.queryByTestId('prompt-mention-dropdown')).toBeNull()
+    expect(screen.getByTestId('prompt-textarea')).toBeTruthy()
   })
 
-  describe('highlight overlay', () => {
-    it('renders known @mentions with mention-known class', () => {
-      render(<PromptInput value="A wizard @alice walks" onChange={vi.fn()} references={REFS} />)
-      const overlay = screen.getByTestId('prompt-highlight-overlay')
-      const known = overlay.querySelectorAll('.mention-known')
-      expect(known.length).toBe(1)
-      expect(known[0].textContent).toBe('@alice')
-    })
+  it('shows placeholder when value is empty', () => {
+    render(<PromptInput value="" onChange={vi.fn()} references={REFS} placeholder="type here" />)
+    // RichTextPlugin renders placeholder only when editor is empty.
+    expect(document.querySelector('.prompt-placeholder')?.textContent).toContain('type here')
+  })
 
-    it('renders unmatched @xxx with mention-unknown class', () => {
-      render(<PromptInput value="@ghost appears" onChange={vi.fn()} references={REFS} />)
-      const overlay = screen.getByTestId('prompt-highlight-overlay')
-      const unknown = overlay.querySelectorAll('.mention-unknown')
-      expect(unknown.length).toBe(1)
-      expect(unknown[0].textContent).toBe('@ghost')
+  it('renders initial value as paragraphs', async () => {
+    render(<PromptInput value={`line one\nline two`} onChange={vi.fn()} references={REFS} />)
+    const editor = screen.getByTestId('prompt-textarea')
+    await waitFor(() => {
+      expect(editor.textContent).toContain('line one')
+      expect(editor.textContent).toContain('line two')
     })
+    const paragraphs = editor.querySelectorAll('p, .prompt-paragraph')
+    expect(paragraphs.length).toBe(2)
+  })
 
-    it('updates overlay on text change', async () => {
-      const user = userEvent.setup()
-      render(<PromptInput value="" onChange={vi.fn()} references={REFS} />)
-      const overlay = screen.getByTestId('prompt-highlight-overlay')
-      expect(overlay.querySelectorAll('.mention-known').length).toBe(0)
-
-      await user.type(getTextarea(), 'A @alice')
-      expect(overlay.querySelectorAll('.mention-known').length).toBe(1)
+  it('renders @name as inline mention chip when name matches a reference', async () => {
+    render(<PromptInput value="A wizard @alice walks" onChange={vi.fn()} references={REFS} />)
+    const chip = await waitFor(() => {
+      const c = document.querySelector('.mention-chip')
+      expect(c).toBeTruthy()
+      return c
     })
+    expect(chip.textContent).toContain('@Alice') // ref.name 의 case 보존
+  })
+
+  it('leaves unknown @xxx as plain text (no chip)', async () => {
+    render(<PromptInput value="@ghost appears" onChange={vi.fn()} references={REFS} />)
+    const editor = screen.getByTestId('prompt-textarea')
+    await waitFor(() => {
+      expect(editor.textContent).toContain('@ghost')
+    })
+    expect(document.querySelector('.mention-chip')).toBeNull()
+  })
+
+  it('disables contentEditable when disabled prop is true', () => {
+    render(<PromptInput value="" onChange={vi.fn()} references={REFS} disabled />)
+    const editor = screen.getByTestId('prompt-textarea')
+    expect(editor.getAttribute('contenteditable')).toBe('false')
+  })
+
+  it('handles missing references gracefully', () => {
+    expect(() => {
+      render(<PromptInput value="@alice" onChange={vi.fn()} />)
+    }).not.toThrow()
   })
 })

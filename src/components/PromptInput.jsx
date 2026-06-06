@@ -1,23 +1,144 @@
 /**
- * PromptInput Component - 텍스트 입력 탭
+ * PromptInput Component — Lexical 기반 멘션 chip 에디터.
  *
- * `@` 입력 시 references 목록을 썸네일과 함께 드롭다운으로 보여주고, 선택하면
- * `@name` 토큰을 현재 커서 위치에 삽입한다 (Google Flow 스타일).
- * 멘션 해석은 백엔드(useScenes.getMatchingReferences + useAutomation/useSceneGeneration
- * stripMentionPrefixes)가 담당 — 이 컴포넌트는 입력 UX 전용.
+ * Phase B: `@` 를 입력하면 references 가 드롭다운으로 뜨고, 선택 시 인라인
+ * thumbnail chip 으로 삽입된다 (Google Flow 동급). chip 은 backspace 1회로
+ * 통째 삭제, 텍스트 흐름과 함께 wrap, 한국어 IME 안전.
+ *
+ * 외부 인터페이스 (value/onChange/references/disabled/placeholder/seed*) 는
+ * 기존 textarea 버전과 동일 — App.jsx 변경 없이 drop-in.
+ *
+ * 내부:
+ *  - LexicalComposer + RichTextPlugin + HistoryPlugin
+ *  - BeautifulMentionsPlugin (커스텀 menu item + chip 컴포넌트)
+ *  - SyncPlugin: external value ↔ editor state 양방향 sync
+ *  - PasteNormalizationPlugin: 탭 → 줄바꿈 변환 유지
+ *  - EditablePlugin: disabled 토글
+ *
+ * 데이터 모델: paragraph = 씬 1개, BeautifulMentionNode = `@name` 토큰.
+ * 직렬화 시 paragraph 는 `\n` 으로, mention 은 `@value` 로.
  */
 
-import { useState, useEffect, useMemo, useRef } from 'react'
-import { createPortal } from 'react-dom'
-import { useI18n } from '../hooks/useI18n'
-import { resolveImageSrc } from '../utils/formatters'
-import { getCaretCoordinates } from '../utils/textareaCaret'
-import { tokenizeMentions } from '../utils/highlightMentions'
+import { useEffect, useMemo, useRef, useState, forwardRef } from 'react'
+import { LexicalComposer } from '@lexical/react/LexicalComposer'
+import { ContentEditable } from '@lexical/react/LexicalContentEditable'
+import { RichTextPlugin } from '@lexical/react/LexicalRichTextPlugin'
+import { HistoryPlugin } from '@lexical/react/LexicalHistoryPlugin'
+import { LexicalErrorBoundary } from '@lexical/react/LexicalErrorBoundary'
+import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext'
+import {
+  PASTE_COMMAND,
+  COMMAND_PRIORITY_NORMAL,
+  $getSelection,
+  $isRangeSelection,
+} from 'lexical'
+import {
+  BeautifulMentionsPlugin,
+  createBeautifulMentionNode,
+} from 'lexical-beautiful-mentions'
 
-// `@` 직전이 문자열 시작/공백/구두점일 때만 트리거 — `user@example.com` 같은 이메일 제외.
-const MENTION_TRIGGER_RE = /(^|[\s.,!?;:()\[\]{}'"`])@([A-Za-z0-9_\-가-힣]*)$/
-const MENTION_DROPDOWN_MAX_HEIGHT = 320
-const MENTION_DROPDOWN_MAX_WIDTH = 380
+import { useI18n } from '../hooks/useI18n'
+import { $applyTextToRoot, $editorStateToText } from '../utils/promptLexicalAdapter'
+import { MentionRefsContext } from './MentionRefsContext'
+import MentionChip from './MentionChip'
+import MentionMenuItem from './MentionMenuItem'
+
+// Mention chip 노드 클래스 — 모듈 로드 시 1회만 생성 (한 번 등록한 노드를 새 인스턴스로
+// 갈아끼우면 Lexical 이 "duplicate node" 에러 냄).
+const MentionNodes = createBeautifulMentionNode(MentionChip)
+
+const baseEditorConfig = {
+  namespace: 'PromptInput',
+  nodes: MentionNodes,
+  editorState: null, // 비어 있는 상태로 시작, SyncPlugin 이 채움
+  onError(err) {
+    // 개발 중 사일런트 swallow 방지 — production 도 console.error 만, 사용자에겐 노출 안 함.
+    console.error('[PromptInput] Lexical error:', err)
+  },
+  theme: {
+    paragraph: 'prompt-paragraph',
+    beautifulMentions: {
+      // mention chip 의 기본 className. focused 와 별개로 항상 부여됨.
+      '@': 'mention-chip-base',
+      '@Focused': 'mention-chip-base-focused',
+    },
+  },
+}
+
+// ── 커스텀 menu wrapper — 기본 `ul` 에 클래스만 부여. portal 위치는 라이브러리가 담당.
+const MentionMenu = forwardRef(function MentionMenu({ loading, ...rest }, ref) {
+  return <ul ref={ref} className="mention-menu" {...rest} />
+})
+
+// ── SyncPlugin: 외부 value ↔ editor state 양방향 sync.
+//   round-trip 무한루프 방지: 최근 직렬화/적용한 텍스트를 ref 로 기억하고 동일하면 skip.
+//   references 는 ref 로 캡쳐 — 사용자 타이핑 중 references 가 갱신돼도 editor reset 안 되도록.
+function SyncPlugin({ value, onChange, references }) {
+  const [editor] = useLexicalComposerContext()
+  const lastTextRef = useRef('')
+  const referencesRef = useRef(references)
+  useEffect(() => {
+    referencesRef.current = references
+  }, [references])
+
+  // 외부 value → editor (initial + 외부 변경 시)
+  useEffect(() => {
+    const incoming = value || ''
+    if (incoming === lastTextRef.current) return
+    editor.update(() => $applyTextToRoot(incoming, referencesRef.current))
+    lastTextRef.current = incoming
+  }, [editor, value])
+
+  // editor → 외부 onChange (사용자 타이핑 등)
+  useEffect(() => {
+    return editor.registerUpdateListener(({ editorState }) => {
+      const text = $editorStateToText(editorState)
+      if (text === lastTextRef.current) return
+      lastTextRef.current = text
+      onChange?.(text)
+    })
+  }, [editor, onChange])
+
+  return null
+}
+
+// ── PasteNormalizationPlugin: textarea 시절 정책 유지 — 탭/CR 을 줄바꿈으로.
+function PasteNormalizationPlugin() {
+  const [editor] = useLexicalComposerContext()
+  useEffect(() => {
+    return editor.registerCommand(
+      PASTE_COMMAND,
+      (event) => {
+        const raw = event.clipboardData?.getData('text')
+        if (!raw) return false
+        const normalized = raw.replace(/\r\n?/g, '\n').replace(/\t+/g, '\n')
+        if (normalized === raw) return false // 변환 없으면 기본 paste 그대로
+        event.preventDefault()
+        const lines = normalized.split('\n')
+        editor.update(() => {
+          const selection = $getSelection()
+          if (!$isRangeSelection(selection)) return
+          lines.forEach((line, i) => {
+            if (i > 0) selection.insertParagraph()
+            if (line) selection.insertText(line)
+          })
+        })
+        return true
+      },
+      COMMAND_PRIORITY_NORMAL
+    )
+  }, [editor])
+  return null
+}
+
+// ── EditablePlugin: disabled prop 토글
+function EditablePlugin({ editable }) {
+  const [editor] = useLexicalComposerContext()
+  useEffect(() => {
+    editor.setEditable(editable)
+  }, [editor, editable])
+  return null
+}
 
 export default function PromptInput({
   value,
@@ -32,363 +153,142 @@ export default function PromptInput({
   onSeedRandom,
 }) {
   const { t } = useI18n()
+
+  // 라인 카운트용 로컬 state — onChange 텍스트를 그대로 보관해 footer 의 줄 수 표시.
   const [text, setText] = useState(value || '')
-  const textareaRef = useRef(null)
-  const overlayRef = useRef(null)
+  useEffect(() => {
+    setText(value || '')
+  }, [value])
 
-  // 멘션 시각화 segments — known 은 배경 highlight, unknown 은 빨간 wavy underline
-  const highlightSegments = useMemo(
-    () => tokenizeMentions(text, references),
-    [text, references]
-  )
-
-  // textarea 스크롤 → overlay 위치 sync (textarea 가 wrap 보다 클 때만 의미 있음)
-  const syncOverlayScroll = () => {
-    const ta = textareaRef.current
-    const ov = overlayRef.current
-    if (!ta || !ov) return
-    ov.scrollTop = ta.scrollTop
-    ov.scrollLeft = ta.scrollLeft
-  }
-
-  // mention dropdown 상태
-  const [mentionQuery, setMentionQuery] = useState(null) // null = 비활성, '' = 직후, 'al' = 'al' 까지 입력
-  const [highlightedIndex, setHighlightedIndex] = useState(0)
-  const [dropdownPos, setDropdownPos] = useState(null)
-
-  // 입력창이 처음 등장할 때만 ~2.6초 윤기 인트로를 보여주고 끈다.
+  // intro gloss — textarea 버전과 동일 동작 (2.6s 뒤 해제).
   const [intro, setIntro] = useState(true)
   useEffect(() => {
     const id = setTimeout(() => setIntro(false), 2600)
     return () => clearTimeout(id)
   }, [])
 
-  // 외부에서 value가 변경되면 로컬 상태 동기화 (프로젝트 전환, 파일 로드 등)
-  useEffect(() => {
-    setText(value || '')
-  }, [value])
-
-  // references → dropdown 옵션. 이름 + 타입 + 썸네일 src.
-  const refOptions = useMemo(
-    () =>
-      (references || [])
+  // BeautifulMentionsPlugin items: references 를 `@` 트리거에 매핑.
+  // 각 item 은 primitive data 만 허용 — refId/refType 만 넘기고, 썸네일은 chip 이
+  // context 로 lookup.
+  const mentionItems = useMemo(
+    () => ({
+      '@': (references || [])
         .filter((r) => r?.name)
         .map((r) => ({
-          name: r.name,
-          type: r.type || 'character',
-          src: resolveImageSrc(r) || null,
+          value: r.name,
+          refId: r.id != null ? Number(r.id) : null,
+          refType: r.type || null,
         })),
+    }),
     [references]
   )
 
-  // 현재 query 로 필터링된 옵션. query='' 이면 전체.
-  const filteredOptions = useMemo(() => {
-    if (mentionQuery == null) return []
-    const q = mentionQuery.toLowerCase()
-    if (!q) return refOptions
-    return refOptions.filter((o) => o.name.toLowerCase().includes(q))
-  }, [refOptions, mentionQuery])
+  // chip 컴포넌트에 references 전달용 context value (메모이즈).
+  const refsContextValue = useMemo(() => ({ references }), [references])
 
-  // 옵션 리스트 바뀌면 highlight 0으로 reset
-  useEffect(() => {
-    setHighlightedIndex(0)
-  }, [mentionQuery])
-
-  // textarea caret 위치 기준으로 드롭다운 좌표 계산.
-  // 1) mirror-div 로 caret 의 textarea-local px 좌표 측정
-  // 2) textarea bounding rect + 스크롤 보정으로 viewport(=fixed) 좌표 변환
-  // 3) 화면 끝에 부딪히면 위로 펼치고, 가로로도 화면 안에 클램프
-  const updateDropdownPos = () => {
-    const el = textareaRef.current
-    if (!el) return
-    const r = el.getBoundingClientRect()
-    const caret = getCaretCoordinates(el, el.selectionStart ?? 0)
-    const caretTop = r.top + caret.top - el.scrollTop
-    const caretBottom = caretTop + caret.height
-    const caretLeft = r.left + caret.left - el.scrollLeft
-
-    const spaceBelow = window.innerHeight - caretBottom
-    const spaceAbove = caretTop
-    const openUp =
-      spaceBelow < MENTION_DROPDOWN_MAX_HEIGHT && spaceAbove > spaceBelow
-
-    // 가로 클램프 — 드롭다운이 viewport 밖으로 나가지 않도록.
-    const minLeft = 8
-    const maxLeft = Math.max(minLeft, window.innerWidth - MENTION_DROPDOWN_MAX_WIDTH - 8)
-    const left = Math.max(minLeft, Math.min(caretLeft, maxLeft))
-
-    setDropdownPos({
-      left,
-      width: MENTION_DROPDOWN_MAX_WIDTH,
-      ...(openUp
-        ? {
-            bottom: window.innerHeight - caretTop + 4,
-            maxHeight: Math.min(MENTION_DROPDOWN_MAX_HEIGHT, spaceAbove - 8),
-          }
-        : {
-            top: caretBottom + 4,
-            maxHeight: Math.min(MENTION_DROPDOWN_MAX_HEIGHT, spaceBelow - 8),
-          }),
-    })
-  }
-
-  // 커서 위치 직전 텍스트가 `@xxx` 패턴이면 mention 모드 켜기.
-  const checkMentionContext = (currentText) => {
-    const el = textareaRef.current
-    if (!el) {
-      setMentionQuery(null)
-      return
-    }
-    const pos = el.selectionStart
-    if (pos !== el.selectionEnd) {
-      setMentionQuery(null)
-      return
-    }
-    const before = currentText.slice(0, pos)
-    const m = before.match(MENTION_TRIGGER_RE)
-    if (m) {
-      setMentionQuery(m[2] || '')
-      updateDropdownPos()
-    } else {
-      setMentionQuery(null)
-    }
-  }
-
-  // 스크롤/리사이즈 시 드롭다운 위치 갱신
-  useEffect(() => {
-    if (mentionQuery == null) return
-    const handler = () => updateDropdownPos()
-    window.addEventListener('scroll', handler, true)
-    window.addEventListener('resize', handler)
-    return () => {
-      window.removeEventListener('scroll', handler, true)
-      window.removeEventListener('resize', handler)
-    }
-  }, [mentionQuery])
-
-  const handleChange = (e) => {
-    const newText = e.target.value
-    setText(newText) // 로컬 상태 먼저 업데이트 (키 입력 즉시 반영)
-    onChange(newText) // 부모에 전달 (파싱 + 씬 생성)
-    // selectionStart 는 onChange 직후 정확 — 같은 frame 에 검사 가능.
-    checkMentionContext(newText)
-  }
-
-  // 커서 이동(클릭/방향키) 시에도 mention 컨텍스트 갱신
-  const handleSelect = () => {
-    checkMentionContext(text)
-  }
-
-  // 멘션 선택 → `@name` 으로 치환
-  const insertMention = (name) => {
-    const el = textareaRef.current
-    if (!el) return
-    const pos = el.selectionStart
-    const before = text.slice(0, pos)
-    const after = text.slice(pos)
-    const m = before.match(MENTION_TRIGGER_RE)
-    if (!m) return
-    // m[0] = boundary 문자 + `@xxx` (string-start 일 때는 boundary 없이 `@xxx`)
-    const matchedFull = m[0]
-    const startsAtStringStart = matchedFull[0] === '@'
-    const boundaryLen = startsAtStringStart ? 0 : 1
-    const replaceStart = before.length - matchedFull.length + boundaryLen
-    const inserted = `@${name}`
-    const newText = text.slice(0, replaceStart) + inserted + after
+  // SyncPlugin onChange — 외부 onChange + 내부 line-count state 갱신.
+  const handleChange = (newText) => {
     setText(newText)
-    onChange(newText)
-    setMentionQuery(null)
-    // 다음 paint 에 커서 이동 — React 의 state commit 이후 실제 textarea value 가 갱신된 뒤.
-    requestAnimationFrame(() => {
-      const newPos = replaceStart + inserted.length
-      el.focus()
-      el.setSelectionRange(newPos, newPos)
-    })
+    onChange?.(newText)
   }
 
-  const handleKeyDown = (e) => {
-    if (mentionQuery == null || filteredOptions.length === 0) return
-    if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      setHighlightedIndex((i) => Math.min(i + 1, filteredOptions.length - 1))
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      setHighlightedIndex((i) => Math.max(i - 1, 0))
-    } else if (e.key === 'Enter' || e.key === 'Tab') {
-      e.preventDefault()
-      const opt = filteredOptions[highlightedIndex]
-      if (opt) insertMention(opt.name)
-    } else if (e.key === 'Escape') {
-      e.preventDefault()
-      setMentionQuery(null)
-    }
-  }
-
-  // 엑셀/시트에서 복사한 탭 구분 데이터를 줄바꿈으로 정규화하여 붙여넣기
-  // (각 줄 = 한 씬 규칙을 유지)
-  const handlePaste = (e) => {
-    const pasted = e.clipboardData?.getData('text')
-    if (!pasted) return
-
-    const normalized = pasted
-      .replace(/\r\n?/g, '\n')   // CRLF/CR → LF
-      .replace(/\t+/g, '\n')     // 탭(들) → 줄바꿈
-
-    if (normalized === pasted) return // 변환할 게 없으면 기본 동작
-
-    e.preventDefault()
-    const target = e.target
-    const start = target.selectionStart
-    const end = target.selectionEnd
-    const newText = text.slice(0, start) + normalized + text.slice(end)
-    setText(newText)
-    onChange(newText)
-
-    // 커서를 붙여넣은 텍스트 끝으로 이동
-    requestAnimationFrame(() => {
-      const pos = start + normalized.length
-      target.setSelectionRange(pos, pos)
-    })
-  }
-
-  const lineCount = text.split('\n').filter(l => l.trim()).length
-
-  // seed 핸들러: 빈 값 허용, 숫자만 입력
+  // seed UI (기존 그대로)
   const handleSeedInputChange = (e) => {
     const raw = e.target.value
-    if (raw === '') {
-      onSeedChange?.(null)
-      return
-    }
+    if (raw === '') return onSeedChange?.(null)
     const digits = raw.replace(/[^\d]/g, '')
-    if (digits === '') {
-      onSeedChange?.(null)
-      return
-    }
+    if (digits === '') return onSeedChange?.(null)
     const num = parseInt(digits, 10)
     if (Number.isFinite(num)) onSeedChange?.(num)
   }
 
   const showSeedUI = typeof onSeedChange === 'function'
-  const showMentionDropdown = mentionQuery != null && dropdownPos && filteredOptions.length > 0
+  const lineCount = text.split('\n').filter((l) => l.trim()).length
 
   return (
-    <div className="prompt-input-container">
-      <div
-        className={`prompt-textarea-wrap ${intro ? 'intro' : ''}`}
-        data-testid="prompt-textarea-wrap"
-      >
-        {/* highlight overlay — textarea 뒤 (z-index 0). 알려진 @멘션 = 배경 highlight,
-            unmatched @멘션 = 빨간 wavy underline. 텍스트 색은 transparent 라 텍스트는
-            보이지 않고 BG/underline 만 노출 → 위 textarea 가 진짜 텍스트를 그린다.
-            aria-hidden — 보조 기술 중복 읽기 방지. */}
+    <MentionRefsContext.Provider value={refsContextValue}>
+      <div className="prompt-input-container">
         <div
-          className="prompt-highlight-overlay"
-          ref={overlayRef}
-          aria-hidden="true"
-          data-testid="prompt-highlight-overlay"
+          className={`prompt-textarea-wrap ${intro ? 'intro' : ''} ${disabled ? 'disabled' : ''}`}
+          data-testid="prompt-textarea-wrap"
         >
-          {highlightSegments.map((s, i) =>
-            s.kind === 'plain' ? (
-              <span key={i}>{s.text}</span>
-            ) : (
-              <span key={i} className={`mention-token mention-${s.kind}`}>{s.text}</span>
-            )
-          )}
-          {/* 마지막이 newline 으로 끝나면 div 는 빈 줄 layout 못 잡음 — zero-width 보조 */}
-          {text.endsWith('\n') && <span>&#8203;</span>}
-        </div>
-        <textarea
-          ref={textareaRef}
-          className="prompt-textarea"
-          value={text}
-          onChange={handleChange}
-          onPaste={handlePaste}
-          onKeyDown={handleKeyDown}
-          onSelect={handleSelect}
-          onScroll={syncOverlayScroll}
-          onBlur={() => setTimeout(() => setMentionQuery(null), 150)}
-          placeholder={placeholder || t('prompt.placeholder')}
-          disabled={disabled}
-        />
-      </div>
-
-      <div className="prompt-input-footer">
-        <span className="line-count">
-          {t('prompt.count', { count: lineCount })}
-        </span>
-
-        {showSeedUI && (
-          <div className="seed-control" title={t('prompt.seedTitle') || 'Seed (locked = reuse same image)'}>
-            <span className="seed-label">Seed</span>
-            <input
-              type="text"
-              inputMode="numeric"
-              className="seed-input"
-              value={seedNo ?? ''}
-              onChange={handleSeedInputChange}
-              placeholder={t('prompt.seedRandom') || 'random'}
-              disabled={disabled}
-              maxLength={12}
+          <LexicalComposer initialConfig={{ ...baseEditorConfig, editable: !disabled }}>
+            <RichTextPlugin
+              contentEditable={
+                <ContentEditable
+                  className="prompt-textarea"
+                  data-testid="prompt-textarea"
+                  aria-placeholder={placeholder || t('prompt.placeholder')}
+                />
+              }
+              placeholder={
+                <div className="prompt-placeholder">
+                  {placeholder || t('prompt.placeholder')}
+                </div>
+              }
+              ErrorBoundary={LexicalErrorBoundary}
             />
-            <button
-              type="button"
-              className="seed-btn seed-dice"
-              onClick={() => onSeedRandom?.()}
-              disabled={disabled}
-              title={t('prompt.seedDice') || 'New random seed + lock'}
-            >
-              🎲
-            </button>
-            <button
-              type="button"
-              className={`seed-btn seed-lock ${seedLocked ? 'locked' : ''}`}
-              onClick={() => onSeedLockToggle?.()}
-              disabled={disabled}
-              title={seedLocked
-                ? (t('prompt.seedUnlock') || 'Unlock (use random each time)')
-                : (t('prompt.seedLock') || 'Lock (reuse this seed)')}
-            >
-              {seedLocked ? '🔒' : '🔓'}
-            </button>
-          </div>
-        )}
+            <HistoryPlugin />
+            <PasteNormalizationPlugin />
+            <EditablePlugin editable={!disabled} />
+            <SyncPlugin value={value} onChange={handleChange} references={references} />
+            <BeautifulMentionsPlugin
+              items={mentionItems}
+              triggers={['@']}
+              menuComponent={MentionMenu}
+              menuItemComponent={MentionMenuItem}
+              allowSpaces={false}
+              insertOnBlur={false}
+              creatable={false}
+              autoSpace={false}
+            />
+          </LexicalComposer>
+        </div>
 
-        <span className="hint">
-          💡 {t('prompt.tip')}
-        </span>
-      </div>
+        <div className="prompt-input-footer">
+          <span className="line-count">{t('prompt.count', { count: lineCount })}</span>
 
-      {showMentionDropdown && createPortal(
-        <div
-          className="prompt-mention-dropdown"
-          style={{ position: 'fixed', ...dropdownPos }}
-          data-testid="prompt-mention-dropdown"
-        >
-          {filteredOptions.map((opt, i) => (
-            <div
-              key={`${opt.name}-${i}`}
-              className={`prompt-mention-option ${i === highlightedIndex ? 'highlighted' : ''}`}
-              onMouseDown={(e) => {
-                e.preventDefault() // textarea blur 방지
-                insertMention(opt.name)
-              }}
-              onMouseEnter={() => setHighlightedIndex(i)}
-            >
-              {opt.src ? (
-                <img src={opt.src} alt="" className="prompt-mention-thumb" loading="lazy" />
-              ) : (
-                <span className="prompt-mention-thumb empty" />
-              )}
-              <span className="prompt-mention-option-label">
-                @{opt.name}
-                <span className="prompt-mention-type">{opt.type}</span>
-              </span>
+          {showSeedUI && (
+            <div className="seed-control" title={t('prompt.seedTitle') || 'Seed (locked = reuse same image)'}>
+              <span className="seed-label">Seed</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                className="seed-input"
+                value={seedNo ?? ''}
+                onChange={handleSeedInputChange}
+                placeholder={t('prompt.seedRandom') || 'random'}
+                disabled={disabled}
+                maxLength={12}
+              />
+              <button
+                type="button"
+                className="seed-btn seed-dice"
+                onClick={() => onSeedRandom?.()}
+                disabled={disabled}
+                title={t('prompt.seedDice') || 'New random seed + lock'}
+              >
+                🎲
+              </button>
+              <button
+                type="button"
+                className={`seed-btn seed-lock ${seedLocked ? 'locked' : ''}`}
+                onClick={() => onSeedLockToggle?.()}
+                disabled={disabled}
+                title={
+                  seedLocked
+                    ? t('prompt.seedUnlock') || 'Unlock (use random each time)'
+                    : t('prompt.seedLock') || 'Lock (reuse this seed)'
+                }
+              >
+                {seedLocked ? '🔒' : '🔓'}
+              </button>
             </div>
-          ))}
-        </div>,
-        document.body
-      )}
-    </div>
+          )}
+
+          <span className="hint">💡 {t('prompt.tip')}</span>
+        </div>
+      </div>
+    </MentionRefsContext.Provider>
   )
 }

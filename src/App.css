@@ -399,6 +399,7 @@ html, body {
   animation: af-gloss-breathe 3.4s ease-in-out infinite;
 }
 
+/* Lexical contentEditable — textarea 와 동일한 시각 metric 유지 */
 .prompt-textarea {
   position: relative;
   z-index: 1;
@@ -407,45 +408,135 @@ html, body {
   padding: 12px;
   border: 1px solid var(--border-color);
   border-radius: var(--border-radius);
-  background: transparent;       /* overlay 의 mention highlight 가 비치도록 */
+  background: var(--bg-secondary);
   color: var(--text-color);
   font-size: 0.9rem;
   line-height: 1.6;
-  resize: none;
   font-family: inherit;
+  outline: none;
+  overflow-y: auto;
+  word-wrap: break-word;
+  white-space: pre-wrap;
 }
-
-/* mention highlight overlay — textarea 와 동일 metric. inset:0 + 같은 padding/border
-   로 글자 위치를 픽셀 정렬. 텍스트는 color:transparent(layout 유지하되 보이지 않음),
-   mention span 만 BG/underline 노출 → textarea 의 실제 텍스트가 그 위에 그려진다. */
-.prompt-textarea-wrap {
-  background: var(--bg-secondary); /* 기존 textarea bg 를 wrap 으로 이동 */
+.prompt-textarea:focus {
+  border-color: var(--primary-color);
 }
-.prompt-highlight-overlay {
+.prompt-textarea-wrap.disabled .prompt-textarea {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+/* paragraph 사이 간격 — 기본 0 (textarea 시절과 시각 동등). 줄바꿈은 새 paragraph 가 만든다. */
+.prompt-paragraph {
+  margin: 0;
+}
+/* placeholder — RichTextPlugin 이 빈 상태에서만 표시 */
+.prompt-placeholder {
   position: absolute;
-  inset: 0;
-  padding: 12px;
-  border: 1px solid transparent; /* textarea 와 동일 폭 — content box 정렬 */
-  border-radius: var(--border-radius);
+  top: 13px;
+  left: 13px;
+  pointer-events: none;
+  user-select: none;
+  color: var(--text-secondary, #888);
   font-size: 0.9rem;
   line-height: 1.6;
-  font-family: inherit;
   white-space: pre-wrap;
-  word-wrap: break-word;
+  z-index: 2;
+}
+
+/* ── Mention chip — 인라인, 썸네일 + 이름. Backspace 한 번에 통째 삭제 (Lexical decorator). */
+.mention-chip-base {
+  /* BeautifulMentionsPlugin theme 가 노드에 항상 부여 — 자체 스타일은 거의 없음.
+     실제 시각은 chip 컴포넌트의 .mention-chip 이 담당. */
+  display: inline;
+}
+.mention-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px 1px 2px;
+  margin: 0 1px;
+  background: rgba(110, 231, 255, 0.18);
+  border-radius: 10px;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  vertical-align: baseline;
+  white-space: nowrap;
+  user-select: all; /* 통째 선택 — backspace 시 chip 단위 삭제 */
+}
+.mention-chip-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--bg, #1a1a1a);
+  flex-shrink: 0;
+}
+.mention-chip-thumb.empty {
+  display: inline-block;
+  background: var(--bg-tertiary, #222);
+}
+.mention-chip-label {
+  color: var(--text-color);
+}
+.mention-chip-base-focused .mention-chip {
+  outline: 2px solid var(--primary-color, #6ee7ff);
+}
+
+/* ── Mention menu — `@` 입력 시 드롭다운 */
+.mention-menu {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 4px 0;
+  background: var(--bg-secondary, #2a2a2a);
+  border: 1px solid var(--border-color, #444);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  max-height: 320px;
+  overflow-y: auto;
+  z-index: 10003;
+  min-width: 200px;
+  max-width: 380px;
+}
+.mention-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-color, #ddd);
+}
+.mention-menu-item.selected,
+.mention-menu-item:hover {
+  background: var(--bg-hover, #3a3a3a);
+}
+.mention-menu-thumb {
+  width: 36px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 3px;
+  background: var(--bg, #1a1a1a);
+  border: 1px solid var(--border-color, #444);
+  flex-shrink: 0;
+}
+.mention-menu-thumb.empty {
+  background: var(--bg-tertiary, #222);
+  display: inline-block;
+}
+.mention-menu-label {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
-  pointer-events: none;
-  color: transparent;
-  z-index: 0;
-  box-sizing: border-box;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
 }
-.prompt-highlight-overlay .mention-known {
-  background-color: rgba(110, 231, 255, 0.18);
-  border-radius: 2px;
-}
-.prompt-highlight-overlay .mention-unknown {
-  text-decoration: underline wavy var(--danger-color, #e5484d);
-  text-underline-offset: 2px;
-  text-decoration-thickness: 1px;
+.mention-menu-type {
+  font-size: 11px;
+  color: var(--text-secondary, #888);
+  text-transform: lowercase;
 }
 
 /* 인트로 동안만 표면 윤기: ① 흐르는 대각선 sheen ② 위 광택 ③ 베이스색
