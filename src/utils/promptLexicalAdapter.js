@@ -21,7 +21,18 @@ import {
 import { $createUnknownMentionTextNode } from '../components/UnknownMentionTextNode'
 
 // mentionParser 와 동일 regex — 단어 경계 + 이메일 제외 + Hangul.
-const MENTION_RE = /(^|[\s.,!?;:()\[\]{}'"`])@([A-Za-z0-9_\-가-힣]+)/g
+export const MENTION_RE = /(^|[\s.,!?;:()\[\]{}'"`])@([A-Za-z0-9_\-가-힣]+)/g
+
+/**
+ * references 배열 → lowercase name lookup Map. transform / apply 양쪽에서 공유.
+ */
+export function buildRefLookup(references = []) {
+  const map = new Map()
+  for (const r of references || []) {
+    if (r?.name) map.set(String(r.name).toLowerCase(), r)
+  }
+  return map
+}
 
 /**
  * editorState 를 `\n` 으로 합쳐진 plain text 로 직렬화.
@@ -50,13 +61,16 @@ export function $editorStateToText(editorState) {
 
 /**
  * 한 줄의 plain text 를 nodes 배열로 변환. `@name` 토큰 중 references 에
- * 매칭되는 것만 BeautifulMentionNode 로, 나머지는 TextNode 로.
+ * 매칭되는 것만 BeautifulMentionNode 로, 매칭 안 되는 것은 UnknownMentionTextNode
+ * 로, 나머지는 일반 TextNode 로.
+ *
+ * 노출 — node transform (live typing 시 동기화) 에서도 동일 로직 사용.
  *
  * @param {string} line
  * @param {Map<string, object>} refByLowerName - lowercase name → ref object
  * @returns {Array<import('lexical').LexicalNode>}
  */
-function buildNodesForLine(line, refByLowerName) {
+export function buildNodesForLine(line, refByLowerName) {
   const nodes = []
   let lastIdx = 0
   let m

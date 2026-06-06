@@ -29,16 +29,25 @@ import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext
 import {
   PASTE_COMMAND,
   COMMAND_PRIORITY_NORMAL,
+  TextNode,
+  $createTextNode,
   $getSelection,
   $isRangeSelection,
 } from 'lexical'
 import {
   BeautifulMentionsPlugin,
   createBeautifulMentionNode,
+  $isBeautifulMentionNode,
 } from 'lexical-beautiful-mentions'
 
 import { useI18n } from '../hooks/useI18n'
-import { $applyTextToRoot, $editorStateToText } from '../utils/promptLexicalAdapter'
+import {
+  $applyTextToRoot,
+  $editorStateToText,
+  buildNodesForLine,
+  buildRefLookup,
+  MENTION_RE,
+} from '../utils/promptLexicalAdapter'
 import { MentionRefsContext } from './MentionRefsContext'
 import MentionChip from './MentionChip'
 import MentionMenuItem from './MentionMenuItem'
@@ -69,9 +78,13 @@ const baseEditorConfig = {
 
 // mentionParser.js 의 regex 경계 클래스와 정렬 — 이메일 등 mid-word @ 는 제외하되
 // `.,!?;:()[]{}'"\``  뒤에서는 mention 메뉴 트리거. 공백은 라이브러리가 항상 허용.
-// 이거 안 하면 우리 backend 는 `,@alice` 를 매칭하는데 UI 에선 dropdown 이 안 떠서
-// 사용자가 mention 인지 아닌지 헷갈림.
-const MENTION_PRE_TRIGGER_CHARS = `\\.,!\\?;:\\(\\)\\[\\]\\{\\}'"\``
+//
+// 주의: 라이브러리는 이 값을 `(^|\\s|${preTriggerChars})` 형태로 그대로 alternation
+// 에 박는다 ([BeautifulMentionsPlugin.js:51]). 따라서 "한 글자 매칭" 의 정규식 단편
+// 이어야 한다. 이전 시도(`\\.,!\\?;:...`) 는 문자 시퀀스로 해석돼서 (^|\\s|`.,!?;:...`)
+// 가 되어 사실상 매칭 안 됨 — 사용자가 `,@alice` 친 순간 메뉴 안 떴다.
+// 해결: 진짜 char class 로 감싸기. `[`, `]` 만 escape, 나머지는 char class 내에서 literal.
+const MENTION_PRE_TRIGGER_CHARS = `[.,!?;:()\\[\\]{}'"\`]`
 // 기본 punctuation 에서 `_` 만 제외 — 이름에 `_` 가 들어가는 ref 가 끊기는 것 방지
 // (`@main_hero` → `@main` 으로 짤리던 버그). 다른 termination 문자는 기본값 유지.
 const MENTION_PUNCTUATION = `\\.,\\*\\?\\$\\|#{}\\(\\)\\^\\[\\]\\\\/!%'"~=<>:;`
@@ -152,6 +165,77 @@ function SyncPlugin({ value, onChange, references }) {
       onChange?.(text)
     })
   }, [editor, onChange])
+
+  return null
+}
+
+// ── MentionLiveTransformPlugin: 사용자가 editor 안에서 직접 `@ghost` 같은
+//   미해결 mention 을 타이핑할 때 UnknownMentionTextNode 로 갈아끼워 빨간 wavy
+//   underline 이 즉시 보이게. $applyTextToRoot 는 initial / project load 시점에만
+//   호출되므로 그것만으로는 live typing typo 가 plain text 로 남는 회귀가 있었다.
+//
+// 가드:
+//   - 커서가 현재 노드 안의 `@xxx` 토큰 위에 있으면 transform skip — 사용자가 그
+//     멘션을 타이핑 중일 가능성. 커서가 그 영역을 벗어나면 (스페이스, 클릭, 등)
+//     다음 update 에서 transform 발화 → 변환.
+//   - replacement 결과가 현재 노드와 동일 유형/텍스트면 skip — infinite loop 방지.
+function MentionLiveTransformPlugin({ references }) {
+  const [editor] = useLexicalComposerContext()
+  const refsRef = useRef(references)
+  useEffect(() => {
+    refsRef.current = references
+  }, [references])
+
+  useEffect(() => {
+    return editor.registerNodeTransform(TextNode, (node) => {
+      // BeautifulMentionNode 는 TextNode 가 아니라 DecoratorNode 라 여기 안 들어옴.
+      // UnknownMentionTextNode 는 TextNode 서브클래스라서 들어옴 — 같은 transform 으로 처리.
+      const text = node.getTextContent()
+
+      // 1) `@` 자체가 없으면 정리만 (UnknownMentionTextNode 였는데 사용자가 `@` 지운 경우).
+      if (!text.includes('@')) {
+        if (node instanceof UnknownMentionTextNode) {
+          const plain = $createTextNode(text)
+          node.replace(plain)
+        }
+        return
+      }
+
+      // 2) 커서가 이 노드 안의 `@xxx` 영역에 있으면 skip — 타이핑 중.
+      const selection = $getSelection()
+      if (
+        $isRangeSelection(selection) &&
+        selection.isCollapsed() &&
+        selection.anchor.key === node.getKey()
+      ) {
+        const cursorOffset = selection.anchor.offset
+        for (const m of text.matchAll(MENTION_RE)) {
+          const lead = m[1] || ''
+          const mStart = m.index + lead.length
+          const mEnd = mStart + 1 + m[2].length
+          if (cursorOffset >= mStart && cursorOffset <= mEnd) return
+        }
+      }
+
+      // 3) 적절한 node 들로 재구성. 결과가 현재 노드와 동일 형태면 skip.
+      const newNodes = buildNodesForLine(text, buildRefLookup(refsRef.current))
+      if (newNodes.length === 1) {
+        const single = newNodes[0]
+        const sameKind =
+          single instanceof UnknownMentionTextNode ===
+          node instanceof UnknownMentionTextNode
+        const sameMention = $isBeautifulMentionNode(single)
+        // 단일 결과가 chip 이면 항상 다른 형태 — 교체.
+        if (!sameMention && sameKind && single.getTextContent() === text) return
+      }
+
+      // 4) 교체 — original 앞에 새 노드들 insert 후 original remove.
+      for (const newNode of newNodes) {
+        node.insertBefore(newNode)
+      }
+      node.remove()
+    })
+  }, [editor])
 
   return null
 }
@@ -285,6 +369,7 @@ export default function PromptInput({
             <HistoryPlugin />
             <PasteNormalizationPlugin />
             <EditablePlugin editable={!disabled} />
+            <MentionLiveTransformPlugin references={references} />
             <SyncPlugin value={value} onChange={handleChange} references={references} />
             <BeautifulMentionsPlugin
               items={mentionItems}
