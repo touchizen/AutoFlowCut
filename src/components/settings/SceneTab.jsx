@@ -55,7 +55,7 @@ export default function SceneTab({ localSettings, setLocalSettings, t, imageMode
         <span className="setting-sublabel">{t('settings.exportThresholdHint')}</span>
       </div>
 
-      {/* 이미지 동시 생성 수 (3~10) */}
+      {/* 이미지 동시 생성 수 (1~15) */}
       <div className="setting-row">
         <label className="setting-label">{t('settings.concurrency')}</label>
         <div className="threshold-input-group">
@@ -71,7 +71,7 @@ export default function SceneTab({ localSettings, setLocalSettings, t, imageMode
         <span className="setting-sublabel">{t('settings.concurrencyHint')}</span>
       </div>
 
-      {/* 비디오 동시 생성 수 (2~5) */}
+      {/* 비디오 동시 생성 수 (1~10) */}
       <div className="setting-row">
         <label className="setting-label">{t('settings.videoConcurrency')}</label>
         <div className="threshold-input-group">

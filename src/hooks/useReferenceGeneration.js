@@ -11,6 +11,7 @@ import { tryUpscaleImage } from '../utils/imageProcessing'
 import { toast } from '../components/Toast'
 import { createStyleResolver } from '../services/styleResolver'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
+import { clampInt } from '../utils/clampInt'
 
 // 1~3초 랜덤 딜레이
 const randomDelay = () => new Promise(r => setTimeout(r, 1000 + Math.random() * 2000))
@@ -344,7 +345,8 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       // 비동기 대기열
       const pendingQueue = []
       let submitFailCount = 0
-      const concurrency = Math.max(1, Math.min(15, settings.concurrency || 5))
+      // 손상된 저장값('x'/NaN/0/음수)은 게이트 무력화(폭주) 유발 → clampInt 로 기본 5 폴백 (useAutomation 과 동일).
+      const concurrency = clampInt(settings.concurrency, 1, 15, 5)
       const GATE_POLL_MS = 600
 
       // 완료된 결과 수집 + 후처리

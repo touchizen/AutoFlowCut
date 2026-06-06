@@ -480,6 +480,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
         const authErr = result.error || 'Auth expired — please re-login to Flow'
         for (const [itemId] of pending) {
           onItemUpdate?.(itemId, 'error', { error: authErr, errorKind: 'auth' })
+          videoErrorCount++  // fillWindow auth 경로·아래 freshGen 루프와 동일하게 집계 (progress.errorCount 일관성)
         }
         // 아직 제출 안 한 freshGen 도 동일 auth error
         for (let j = nextFreshIdx; j < freshGen.length; j++) {

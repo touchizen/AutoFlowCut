@@ -119,6 +119,34 @@ describe('useVideoAutomation — auth failure during polling', () => {
     expect(authErrorCalls[0][0]).toBe('vscene_1')
   })
 
+  it('poll authFailed 시 pending 항목도 progress.errorCount 에 집계', async () => {
+    // 회귀: poll-path auth 핸들러가 pending 을 errorKind:'auth' 로 마킹하지만 videoErrorCount 를
+    // 안 올려서, 단일 pending auth 실패 시 UI 는 에러 항목인데 progress.errorCount === 0.
+    // (fillWindow auth 경로와 freshGen 루프는 이미 count++ 함 — poll-path 만 비대칭.)
+    const generateVideoT2V = vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' })
+    const checkVideoStatus = vi.fn().mockResolvedValue({
+      success: false, authFailed: true, error: 'Auth expired',
+    })
+    const genAPI = {
+      generateVideoT2V, generateVideoI2V: vi.fn(), checkVideoStatus,
+      upscaleVideo: vi.fn(), fetchMedia: vi.fn(), getAccessToken: vi.fn().mockResolvedValue('token'),
+    }
+    const hook = renderHook(() => useVideoAutomation(genAPI, (k) => k, null))
+
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({
+        mode: 't2v', scenes: [{ id: 'vscene_1', prompt: 'test' }],
+        projectName: 'p', saveMode: 'folder',
+      })
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(100) })
+    await act(async () => { await startPromise })
+
+    // pending 항목이 auth error 로 마감됐으니 errorCount 에도 1 반영 (RED: 0)
+    expect(hook.result.current.progress.errorCount).toBe(1)
+  })
+
   it('sets status to "error" (not "done") after auth-failed poll break', async () => {
     const generateVideoT2V = vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' })
     const checkVideoStatus = vi.fn().mockResolvedValue({

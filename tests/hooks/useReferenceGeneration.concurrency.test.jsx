@@ -90,6 +90,35 @@ describe('useReferenceGeneration — concurrency', () => {
     expect(genAPI.submitGeneration).toHaveBeenCalledTimes(3)
   })
 
+  it('concurrency 가 비정상 문자열이어도 게이트 동작 (clampInt → 5)', { timeout: 15000 }, async () => {
+    // 손상된 설정값("x") → Math.min(15,"x")=NaN → pendingQueue.length >= NaN 항상 false
+    // → 게이트 무력화 → submit 폭주. clampInt('x',1,15,5)=5 로 폴백되면 5에서 막혀야 함.
+    let allowComplete = false
+    const checkGeneration = vi.fn().mockImplementation(async () => ({
+      success: true, completed: allowComplete
+    }))
+
+    const { result, genAPI } = setupHook({
+      references: makeRefs(6),
+      concurrency: 'x',
+      genAPIOverrides: { checkGeneration }
+    })
+
+    let batchPromise
+    await act(async () => { batchPromise = result.current.handleGenerateAllRefs() })
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+
+    // clampInt('x',1,15,5)=5 → 게이트가 5에서 막음. NaN 이면 6개 전부 폭주.
+    expect(genAPI.submitGeneration).toHaveBeenCalledTimes(5)
+
+    // 드레인 — 나머지 완료시켜 batchPromise 종료
+    allowComplete = true
+    for (let i = 0; i < 20; i++) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+    }
+    await act(async () => { await batchPromise })
+  })
+
   it('concurrency=1 이면 첫 번째 항목 수집 전까지 두 번째 항목 제출 안 함', { timeout: 15000 }, async () => {
     // checkGeneration 으로 완료 타이밍 제어 — 처음엔 completed:false 반환,
     // 게이트가 GATE_POLL_MS(600ms) 타이머를 쓰므로 fake timer 로 제어 가능.
