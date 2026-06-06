@@ -344,6 +344,8 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       // 비동기 대기열
       const pendingQueue = []
       let submitFailCount = 0
+      const concurrency = Math.max(1, Math.min(10, settings.concurrency || 5))
+      const GATE_POLL_MS = 600
 
       // 완료된 결과 수집 + 후처리
       //
@@ -416,10 +418,17 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
         }
 
         try {
+          // 기회적 수집 (quota 감지 + 완료분 즉시 드레인)
           await collectCompleted()
-          // collectCompleted 안에서 quota 감지로 stopRequestedRef 가 켜졌을 수 있다.
-          // outer for-loop 의 stop 가드는 다음 iteration 시작 시에만 검사하므로,
-          // 여기서 한 번 더 확인해야 추가 submit (line 506) 이 새지 않는다.
+          if (stopRequestedRef.current) break
+
+          // 동시성 게이트 — in-flight(pendingQueue) 가 concurrency 이상이면 슬롯 빌 때까지 대기
+          while (pendingQueue.length >= concurrency && !stopRequestedRef.current) {
+            await collectCompleted()
+            if (pendingQueue.length >= concurrency) {
+              await new Promise(r => setTimeout(r, GATE_POLL_MS))
+            }
+          }
           if (stopRequestedRef.current) break
 
           const ref = referencesRef.current[index]
@@ -457,12 +466,6 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
             }
           }
 
-          // AutoFlow 스타일 대기 (7~15초) — 마지막이 아닐 때만
-          if (index !== indices[indices.length - 1]) {
-            const delay = 7000 + Math.random() * 8000
-            console.log('[GenerateAllRefs] Waiting', Math.round(delay / 1000), 's before next submit...')
-            await new Promise(r => setTimeout(r, delay))
-          }
         } catch (err) {
           console.error('[GenerateAllRefs] Error processing index:', index, err)
           setGeneratingRefs(prev => prev.filter(i => i !== index))

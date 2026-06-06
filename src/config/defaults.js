@@ -124,8 +124,6 @@ export const TIMING = {
   SETTINGS_HIGHLIGHT: 3000,
   AUTH_ERROR_TOAST: 6000,
   VIDEO_POLL_INTERVAL: 10000,      // 비디오 상태 폴링 간격
-  VIDEO_SUBMIT_MIN_DELAY: 7000,    // 제출 간 최소 대기 (ms)
-  VIDEO_SUBMIT_MAX_DELAY: 15000,   // 제출 간 최대 대기 (ms)
   VIDEO_MAX_POLL_COUNT: 120,       // 최대 폴링 횟수 (120 × 10초 = 20분)
   UPSCALE_POLL_INTERVAL: 2000,     // 업스케일 폴링 간격 (ms)
   UPSCALE_MAX_POLL_COUNT: 90,      // 업스케일 최대 폴링 (90 × 2초 = 3분)

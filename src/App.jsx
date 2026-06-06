@@ -966,6 +966,7 @@ function App() {
           videoResolution: settings.videoResolution || '720p',
           videoModel: settings.videoModelT2V,
           videoBatchCount: settings.videoBatchCount || 1,
+          concurrency: settings.concurrency || 5,
           onItemUpdate: (id, newStatus, result) => {
             // 명시적 null 도 통과시켜야 하는 필드(video/videoPath/mediaId/generatedAt 등)는
             // `'X' in result` 체크 — useVideoAutomation 의 새 generation 제출 시 이전 complete
@@ -1052,6 +1053,7 @@ function App() {
           videoResolution: settings.videoResolution || '720p',
           videoModel: settings.videoModelF2V,
           videoBatchCount: settings.videoBatchCount || 1,
+          concurrency: settings.concurrency || 5,
           seed: effectiveI2VSeed,
           onItemUpdate: (id, newStatus, result) => {
             setFramePairs(prev => {
