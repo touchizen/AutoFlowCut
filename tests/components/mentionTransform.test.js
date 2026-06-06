@@ -16,8 +16,6 @@ import {
   $createTextNode,
   $createParagraphNode,
   $getRoot,
-  $getSelection,
-  $isRangeSelection,
 } from 'lexical'
 import {
   BeautifulMentionNode,
@@ -27,52 +25,11 @@ import {
   UnknownMentionTextNode,
   $createUnknownMentionTextNode,
 } from '../../src/components/UnknownMentionTextNode'
+// 핵심: production 과 같은 transform factory 를 import — drift 방지.
 import {
-  buildNodesForLine,
-  buildRefLookup,
-  MENTION_RE,
-} from '../../src/utils/promptLexicalAdapter'
-
-// PromptInput.jsx 의 transformFn 복제 — 같은 로직을 양쪽 klass 에 등록한다.
-function makeTransformFn(getRefs) {
-  return (node) => {
-    const text = node.getTextContent()
-    if (!text.includes('@')) {
-      if (node instanceof UnknownMentionTextNode) {
-        const plain = $createTextNode(text)
-        node.replace(plain)
-      }
-      return
-    }
-    const selection = $getSelection()
-    if (
-      $isRangeSelection(selection) &&
-      selection.isCollapsed() &&
-      selection.anchor.key === node.getKey()
-    ) {
-      const cursorOffset = selection.anchor.offset
-      for (const m of text.matchAll(MENTION_RE)) {
-        const lead = m[1] || ''
-        const mStart = m.index + lead.length
-        const mEnd = mStart + 1 + m[2].length
-        if (cursorOffset >= mStart && cursorOffset <= mEnd) return
-      }
-    }
-    const newNodes = buildNodesForLine(text, buildRefLookup(getRefs()))
-    if (newNodes.length === 1) {
-      const single = newNodes[0]
-      const sameKind =
-        single instanceof UnknownMentionTextNode ===
-        node instanceof UnknownMentionTextNode
-      const isChip = $isBeautifulMentionNode(single)
-      if (!isChip && sameKind && single.getTextContent() === text) return
-    }
-    for (const newNode of newNodes) {
-      node.insertBefore(newNode)
-    }
-    node.remove()
-  }
-}
+  createMentionTransformFn,
+  registerMentionLiveTransforms,
+} from '../../src/components/mentionLiveTransform'
 
 function makeEditor(refs) {
   const editor = createEditor({
@@ -82,10 +39,7 @@ function makeEditor(refs) {
       throw e
     },
   })
-  const transformFn = makeTransformFn(() => refs)
-  // 양쪽 klass 에 등록 — 이게 P2 fix 의 핵심.
-  editor.registerNodeTransform(TextNode, transformFn)
-  editor.registerNodeTransform(UnknownMentionTextNode, transformFn)
+  registerMentionLiveTransforms(editor, () => refs)
   return editor
 }
 
@@ -193,8 +147,9 @@ describe('Lexical transform behavior — regression guard', () => {
         throw e
       },
     })
-    const transformFn = makeTransformFn(() => REFS)
-    // 의도적으로 한쪽만 등록
+    // 의도적으로 한쪽만 등록 — production 의 registerMentionLiveTransforms 가 양쪽 모두
+    // 등록한다는 invariant 를 깨면 어떻게 되는지 시각화.
+    const transformFn = createMentionTransformFn(() => REFS)
     editor.registerNodeTransform(TextNode, transformFn)
 
     editor.update(

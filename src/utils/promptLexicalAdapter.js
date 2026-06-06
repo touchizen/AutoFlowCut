@@ -19,9 +19,11 @@ import {
   $isBeautifulMentionNode,
 } from 'lexical-beautiful-mentions'
 import { $createUnknownMentionTextNode } from '../components/UnknownMentionTextNode'
+import { MENTION_RE } from './mentionParser'
 
-// mentionParser 와 동일 regex — 단어 경계 + 이메일 제외 + Hangul.
-export const MENTION_RE = /(^|[\s.,!?;:()\[\]{}'"`])@([A-Za-z0-9_\-가-힣]+)/g
+// MENTION_RE 는 mentionParser 의 단일 source 를 re-export — 컴포넌트/테스트가 어댑터
+// 경로로 import 해도 호환 (정의는 mentionParser 한 곳).
+export { MENTION_RE }
 
 /**
  * references 배열 → lowercase name lookup Map. transform / apply 양쪽에서 공유.

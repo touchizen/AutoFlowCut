@@ -10,9 +10,17 @@
  * 이름 → 이미지 매핑을 끝낸 뒤 binary part 로 보내는 것. 우리도 같은 방식.
  */
 
-// @ 가 단어 경계(시작/공백/구두점) 뒤일 때만 매칭 — `user@example.com` 같은 이메일은 제외.
-// 이름은 ASCII alnum + 밑줄/하이픈 + 한글 음절 허용.
-const MENTION_RE = /(^|[\s.,!?;:()\[\]{}'"`])@([A-Za-z0-9_\-가-힣]+)/g
+/**
+ * @ 멘션 grammar 의 단일 source.
+ * promptLexicalAdapter / PromptInput / 테스트 전부 이걸 import — 두 군데서 정의하다가
+ * 갈라지면 UI 에서는 chip 이 보이는데 backend 에서는 매칭 안 되거나 그 반대가 됨.
+ *
+ * 규약:
+ *   - `@` 가 단어 경계(시작/공백/구두점) 뒤일 때만 매칭 — `user@example.com` 같은 이메일 제외
+ *   - 이름은 ASCII alnum + 밑줄/하이픈 + 한글 음절 허용
+ *   - `g` flag — exec/matchAll 양쪽 호환
+ */
+export const MENTION_RE = /(^|[\s.,!?;:()\[\]{}'"`])@([A-Za-z0-9_\-가-힣]+)/g
 
 /**
  * 텍스트에서 `@name` 토큰 추출 (대소문자 기준 dedup, 등장 순서 유지).

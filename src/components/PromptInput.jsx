@@ -29,29 +29,21 @@ import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext
 import {
   PASTE_COMMAND,
   COMMAND_PRIORITY_NORMAL,
-  TextNode,
-  $createTextNode,
   $getSelection,
   $isRangeSelection,
 } from 'lexical'
 import {
   BeautifulMentionsPlugin,
   createBeautifulMentionNode,
-  $isBeautifulMentionNode,
 } from 'lexical-beautiful-mentions'
 
 import { useI18n } from '../hooks/useI18n'
-import {
-  $applyTextToRoot,
-  $editorStateToText,
-  buildNodesForLine,
-  buildRefLookup,
-  MENTION_RE,
-} from '../utils/promptLexicalAdapter'
+import { $applyTextToRoot, $editorStateToText } from '../utils/promptLexicalAdapter'
 import { MentionRefsContext } from './MentionRefsContext'
 import MentionChip from './MentionChip'
 import MentionMenuItem from './MentionMenuItem'
 import { UnknownMentionTextNode } from './UnknownMentionTextNode'
+import { registerMentionLiveTransforms } from './mentionLiveTransform'
 
 // Mention chip 노드 클래스 — 모듈 로드 시 1회만 생성 (한 번 등록한 노드를 새 인스턴스로
 // 갈아끼우면 Lexical 이 "duplicate node" 에러 냄).
@@ -169,22 +161,14 @@ function SyncPlugin({ value, onChange, references }) {
   return null
 }
 
-// ── MentionLiveTransformPlugin: 사용자가 editor 안에서 직접 `@ghost` 같은
-//   미해결 mention 을 타이핑할 때 UnknownMentionTextNode 로 갈아끼워 빨간 wavy
-//   underline 이 즉시 보이게. $applyTextToRoot 는 initial / project load 시점에만
-//   호출되므로 그것만으로는 live typing typo 가 plain text 로 남는 회귀가 있었다.
+// ── MentionLiveTransformPlugin: 사용자가 editor 안에서 직접 `@ghost` 를 타이핑할
+//   때 UnknownMentionTextNode 로 갈아끼워 빨간 wavy underline 이 즉시 보이게.
+//   $applyTextToRoot 는 initial / project load 시점에만 호출되므로 그것만으로는
+//   live typing typo 가 plain text 로 남는 회귀가 있었다.
 //
-// 중요: Lexical 의 registerNodeTransform 은 정확한 klass 에만 발화하고 subclass
-//   에는 발화하지 않는다 ([Lexical.dev.mjs:12599] getRegisteredNode(klass)).
-//   그래서 TextNode 만 등록하면 UnknownMentionTextNode 가 ghost ↔ hero 처럼
-//   고쳐졌을 때 정리 로직이 안 돌아 .unknown-mention 클래스가 남는다.
-//   동일 transform 을 UnknownMentionTextNode 에도 별도 등록 — 양쪽 다 cleanup.
-//
-// 가드:
-//   - 커서가 현재 노드 안의 `@xxx` 토큰 위에 있으면 transform skip — 사용자가 그
-//     멘션을 타이핑 중일 가능성. 커서가 그 영역을 벗어나면 (스페이스, 클릭, 등)
-//     다음 update 에서 transform 발화 → 변환.
-//   - replacement 결과가 현재 노드와 동일 유형/텍스트면 skip — infinite loop 방지.
+// 핵심 로직은 src/components/mentionLiveTransform.js 의 createMentionTransformFn /
+// registerMentionLiveTransforms — production 과 테스트가 같은 함수를 import 해서
+// "테스트가 옛 로직을 검증하는" 드리프트를 막는다.
 function MentionLiveTransformPlugin({ references }) {
   const [editor] = useLexicalComposerContext()
   const refsRef = useRef(references)
@@ -192,69 +176,7 @@ function MentionLiveTransformPlugin({ references }) {
     refsRef.current = references
   }, [references])
 
-  useEffect(() => {
-    const transformFn = (node) => {
-      // BeautifulMentionNode 는 TextNode 가 아니라 DecoratorNode 라 여기 안 들어옴.
-      // UnknownMentionTextNode 는 별도 등록(아래) 으로 같은 함수가 호출됨.
-      const text = node.getTextContent()
-
-      // 1) `@` 자체가 없으면 정리만 (UnknownMentionTextNode 였는데 사용자가 `@` 지운 경우).
-      if (!text.includes('@')) {
-        if (node instanceof UnknownMentionTextNode) {
-          const plain = $createTextNode(text)
-          node.replace(plain)
-        }
-        return
-      }
-
-      // 2) 커서가 이 노드 안의 `@xxx` 영역에 있으면 skip — 타이핑 중.
-      const selection = $getSelection()
-      if (
-        $isRangeSelection(selection) &&
-        selection.isCollapsed() &&
-        selection.anchor.key === node.getKey()
-      ) {
-        const cursorOffset = selection.anchor.offset
-        for (const m of text.matchAll(MENTION_RE)) {
-          const lead = m[1] || ''
-          const mStart = m.index + lead.length
-          const mEnd = mStart + 1 + m[2].length
-          if (cursorOffset >= mStart && cursorOffset <= mEnd) return
-        }
-      }
-
-      // 3) 적절한 node 들로 재구성. 결과가 현재 노드와 동일 형태면 skip.
-      const newNodes = buildNodesForLine(text, buildRefLookup(refsRef.current))
-      if (newNodes.length === 1) {
-        const single = newNodes[0]
-        const sameKind =
-          single instanceof UnknownMentionTextNode ===
-          node instanceof UnknownMentionTextNode
-        const sameMention = $isBeautifulMentionNode(single)
-        // 단일 결과가 chip 이면 항상 다른 형태 — 교체.
-        if (!sameMention && sameKind && single.getTextContent() === text) return
-      }
-
-      // 4) 교체 — original 앞에 새 노드들 insert 후 original remove.
-      for (const newNode of newNodes) {
-        node.insertBefore(newNode)
-      }
-      node.remove()
-    }
-
-    // 양쪽 klass 에 등록 — Lexical 의 transform 은 정확한 klass 매칭이라 subclass
-    // 발화 안 함. UnknownMentionTextNode 에도 등록해야 @ghost → @hero 같은 cleanup
-    // 이 정상 동작.
-    const unregisterText = editor.registerNodeTransform(TextNode, transformFn)
-    const unregisterUnknown = editor.registerNodeTransform(
-      UnknownMentionTextNode,
-      transformFn
-    )
-    return () => {
-      unregisterText()
-      unregisterUnknown()
-    }
-  }, [editor])
+  useEffect(() => registerMentionLiveTransforms(editor, () => refsRef.current), [editor])
 
   return null
 }
