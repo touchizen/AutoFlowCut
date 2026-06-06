@@ -193,6 +193,8 @@ Disclaimer: This app is an independent product developed by Touchizen and is not
 
 ### What's New
 ```
+v1.1.0 — 5× to 10× faster image and video generation. Type @character in the prompt to instantly attach a reference image inline.
+
 v1.0.0 — Your own API key. Faster. No logins. Ever.
 
 AutoFlowCut now calls Google Gemini and Veo directly with your own Google AI Studio key. No web automation, no reCAPTCHA interruptions, no sudden session blocks — just stable generation as fast as your quota allows.
@@ -375,6 +377,8 @@ Touchizen 제작 — touchizen.com
 
 ### What's New (새로운 기능)
 ```
+v1.1.0 — 이미지·비디오 생성 속도 5배~10배 향상. 프롬프트 입력창에서 @캐릭터이름을 타이핑하면 레퍼런스 이미지를 바로 인라인으로 첨부할 수 있습니다.
+
 v1.0.0 — 내 API 키로, 더 빠르게. 로그인 없이. 영구적으로.
 
 AutoFlowCut이 이제 내 Google AI Studio 키로 Gemini·Veo에 직접 연결됩니다. 웹 자동화·reCAPTCHA·세션 만료가 사라졌습니다. 쿼터가 허용하는 한 끊김 없이 생성됩니다.
@@ -462,6 +466,8 @@ Google AI StudioキーをSettings に一度登録してスクリプトを読み�
 
 ### What's New
 ```
+v1.1.0 — 画像・動画の生成速度が5〜10倍に向上。プロンプト入力欄で@キャラクター名を入力すると、参照画像をその場でインラインに添付できます。
+
 v1.0.0 — 自分のAPIキーで、速く、ログイン不要。
 
 AutoFlowCutがGoogle Gemini & Veo公式APIに直接接続。ウェブ自動化・reCAPTCHA・セッション切れがなくなり、クォータの許す限り安定して生成できます。
@@ -544,6 +550,8 @@ Der integrierte MCP-Server (Model Context Protocol) verbindet sich direkt mit Cl
 
 ### What's New
 ```
+v1.1.0 — 5× bis 10× schnellere Bild- und Videogenerierung. Tippen Sie @Charaktername im Prompt-Feld, um ein Referenzbild direkt inline anzuhängen.
+
 v1.0.0 — Eigener API-Schlüssel. Schneller. Nie wieder Login-Probleme.
 
 AutoFlowCut verbindet sich jetzt direkt mit Google Gemini & Veo über Ihren eigenen Google AI Studio-Schlüssel. Keine Web-Automatisierung, kein reCAPTCHA, keine Sitzungsunterbrechungen — stabile Generierung so schnell wie Ihr Kontingent es zulässt.
