@@ -344,7 +344,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       // 비동기 대기열
       const pendingQueue = []
       let submitFailCount = 0
-      const concurrency = Math.max(1, Math.min(10, settings.concurrency || 5))
+      const concurrency = Math.max(1, Math.min(15, settings.concurrency || 5))
       const GATE_POLL_MS = 600
 
       // 완료된 결과 수집 + 후처리

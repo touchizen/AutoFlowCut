@@ -61,7 +61,7 @@ export default function SceneTab({ localSettings, setLocalSettings, t, imageMode
         <div className="threshold-input-group">
           <input
             type="range"
-            min="3" max="10" step="1"
+            min="1" max="15" step="1"
             aria-label={t('settings.concurrency')}
             value={localSettings.concurrency || 5}
             onChange={(e) => { const v = parseInt(e.target.value); setLocalSettings(s => ({ ...s, concurrency: v })) }}
@@ -77,7 +77,7 @@ export default function SceneTab({ localSettings, setLocalSettings, t, imageMode
         <div className="threshold-input-group">
           <input
             type="range"
-            min="2" max="5" step="1"
+            min="1" max="10" step="1"
             aria-label={t('settings.videoConcurrency')}
             value={localSettings.videoConcurrency || 3}
             onChange={(e) => { const v = parseInt(e.target.value); setLocalSettings(s => ({ ...s, videoConcurrency: v })) }}

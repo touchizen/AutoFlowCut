@@ -69,7 +69,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     let { projectName, saveMode, imageBatchCount, imageUpscale, aspectRatio, imageModel, selectedStyleRefId, seed = null, concurrency: rawConcurrency } = options
     if (selectedStyleRefId != null && typeof selectedStyleRefId !== 'string') selectedStyleRefId = String(selectedStyleRefId)
     // 동시 in-flight 상한. 잘못된 값(0/음수/NaN)은 무한대기를 유발하므로 기본 5 로 clamp(1~10).
-    const concurrency = clampInt(rawConcurrency, 1, 10, 5)
+    const concurrency = clampInt(rawConcurrency, 1, 15, 5)
     const GATE_POLL_MS = 600  // window full 일 때 재확인 간격 (busy-loop/checkGeneration 과호출 방지)
     // selectedStyleRefId 없으면 자동 매칭 모드 — 씬별 style_tag로만 결정.
     // 임의의 "첫 스타일 카드 자동 적용" fallback은 제거됨 — UI 라벨("자동")과 실행이 일치해야 함.
