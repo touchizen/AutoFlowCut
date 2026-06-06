@@ -19,11 +19,11 @@ import {
   $isBeautifulMentionNode,
 } from 'lexical-beautiful-mentions'
 import { $createUnknownMentionTextNode } from '../components/UnknownMentionTextNode'
-import { MENTION_RE } from './mentionParser'
+import { MENTION_RE, resolveMentionPrefix } from './mentionParser'
 
 // MENTION_RE 는 mentionParser 의 단일 source 를 re-export — 컴포넌트/테스트가 어댑터
 // 경로로 import 해도 호환 (정의는 mentionParser 한 곳).
-export { MENTION_RE }
+export { MENTION_RE, resolveMentionPrefix }
 
 /**
  * references 배열 → lowercase name lookup Map. transform / apply 양쪽에서 공유.
@@ -59,33 +59,6 @@ export function $editorStateToText(editorState) {
     })
     return lines.join('\n')
   })
-}
-
-const HANGUL_CHAR_RE = /[가-힣]/
-
-/**
- * 멘션 이름을 references 와 매칭. 전체 이름 우선, 없으면 끝 글자가 한글(조사 후보)인 동안
- * 한 글자씩 떼며 가장 긴 ref 접두사를 탐색(longest-first). 영문으로 끝나면 떼지 않아
- * `@kingdom`(king ref) 같은 조합어는 보존. 한국어 조사가 공백 없이 붙은 멘션
- * (`@queen이`, `@철수가`)을 칩 + 조사 텍스트로 분리하기 위함.
- *
- * 안전장치: 전체 토큰이 ref 에 있으면 절대 안 뗀다(한글 이름 보존) — 떼기는 매칭
- * 실패 시 fallback 이며, 매칭되는 접두사가 없으면 null(현행 unknown 처리 유지).
- *
- * @param {string} name - MENTION_RE 가 잡은 멘션 이름(조사 포함 가능)
- * @param {Map<string, object>} refByLowerName
- * @returns {{ ref: object, matched: string } | null}
- */
-export function resolveMentionPrefix(name, refByLowerName) {
-  let cur = name
-  while (cur.length > 0) {
-    const ref = refByLowerName.get(cur.toLowerCase())
-    if (ref) return { ref, matched: cur }
-    // 끝이 한글일 때만 더 떼기 — 영문 조합어는 경계가 공백/구두점이어야 자연스러움.
-    if (!HANGUL_CHAR_RE.test(cur[cur.length - 1])) break
-    cur = cur.slice(0, -1)
-  }
-  return null
 }
 
 /**

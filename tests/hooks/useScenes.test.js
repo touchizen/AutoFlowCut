@@ -592,6 +592,15 @@ Goodbye world`
       expect(matched.map((r) => r.name).sort()).toEqual(['Forest', 'Hero', 'Villain'])
     })
 
+    it('also matches @name inline mentions with attached Hangul particles', () => {
+      const result = setupWithRefs()
+
+      const scene = { prompt: 'A wizard @hero가 @forest에서 걷는다', characters: '', scene_tag: '', style_tag: '' }
+      const matched = result.current.getMatchingReferences(scene)
+
+      expect(matched.map((r) => r.name).sort()).toEqual(['Forest', 'Hero'])
+    })
+
     it('dedupes @mention with CSV tag pointing at the same ref', () => {
       const result = setupWithRefs()
 
