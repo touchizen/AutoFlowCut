@@ -2,34 +2,27 @@ const sharp = require('sharp');
 const path = require('path');
 const fs = require('fs');
 
-const BG_COLOR = { r: 24, g: 24, b: 32, alpha: 1 };
 const FONT_SIZE = 64;
 const CAPTION_HEIGHT = 120;
-const STROKE_WIDTH = 4;
 
 const screenshots = [
-  { file: '스크린샷 2026-03-23 213908.png', caption: 'One-click export to CapCut — your scenes become a ready-to-edit video project' },
-  { file: '스크린샷 2026-03-24 101534.png', caption: 'Built-in audio & video preview with timeline for precise editing' },
-  { file: 'Screenshot 2026-05-03 215005.png', caption: 'Multi-track audio timeline — narration, dialogue, SFX, and subtitles in sync' },
-  { file: '스크린샷 2026-03-23 232121.png', caption: 'Manage scenes with subtitles, timecodes, and media in one unified view' },
-  { file: '스크린샷 2026-03-23 232156.png', caption: 'AI-powered batch video generation — bring every scene to life with F2V' },
-  { file: '스크린샷 2026-03-23 232229.png', caption: 'Reference image system for consistent character visuals across scenes' },
-  { file: '스크린샷 2026-03-23 232246.png', caption: 'All generated images and videos are auto-saved to your PC' },
-  { file: '스크린샷 2026-03-23 232825.png', caption: 'Full scene overview with AI-generated images and detailed prompts' },
-  { file: '스크린샷 2026-03-24 095609.png', caption: 'Claude AI assistant automates scene creation and CapCut export' },
-  { file: '스크린샷 2026-03-24 095828.png', caption: '87 art style presets — from animation to cinematic photography' },
+  { file: '스크린샷 2026-06-06 202752.png', caption: 'Build a full video timeline from AI-generated scenes, audio, and subtitles' },
+  { file: '스크린샷 2026-06-06 203328.png', caption: 'Generate every scene in sequence with one guided workflow' },
+  { file: '스크린샷 2026-06-06 203345.png', caption: 'Review prompts, media, and status across the entire project' },
+  { file: '스크린샷 2026-06-06 203401.png', caption: 'Select only the scenes you need and start batch generation instantly' },
+  { file: '스크린샷 2026-06-06 203415.png', caption: 'Keep characters consistent with reusable reference images' },
+  { file: '스크린샷 2026-06-06 203424.png', caption: 'Import scripts, scene CSV files, references, subtitles, and audio packages' },
+  { file: '스크린샷 2026-06-06 203438.png', caption: 'Export ready-to-edit CapCut projects with subtitles and Ken Burns motion' },
+  { file: '스크린샷 2026-06-06 203531.png', caption: 'Preview long-form stories with synchronized timeline tracks' },
+  { file: '스크린샷 2026-06-06 203550.png', caption: 'Scale production with many scenes, references, and generated media' },
+  { file: '스크린샷 2026-06-06 203713.png', caption: 'Open the exported project directly in CapCut for final editing' },
 ];
 
 function splitToLines(text, fontSize, maxWidth) {
-  const charW = fontSize * 0.55;
-  const totalW = text.length * charW;
+  const charW = (ch) => /[\u3000-\u9fff\uac00-\ud7af]/.test(ch) ? fontSize * 0.9 : fontSize * 0.55;
+  const totalW = [...text].reduce((sum, ch) => sum + charW(ch), 0);
   if (totalW <= maxWidth) return [text];
 
-  // Split at — or nearest space to midpoint
-  const dashIdx = text.indexOf(' — ');
-  if (dashIdx > 0) {
-    return [text.slice(0, dashIdx), text.slice(dashIdx + 3)];
-  }
   const mid = Math.floor(text.length / 2);
   let splitAt = mid;
   for (let d = 0; d < mid; d++) {
@@ -44,14 +37,12 @@ async function addCaption(inputFile, caption, outputFile) {
   let imgWidth = meta.width;
   let imgHeight = meta.height;
 
-  // Resize 3839 → 3840, 2159 → 2160 (fix odd pixels)
   if (imgWidth === 3839) imgWidth = 3840;
   if (imgHeight === 2159) imgHeight = 2160;
 
   const imgBuffer = await sharp(inputFile).resize(imgWidth, imgHeight, { fit: 'fill' }).png().toBuffer();
   const escaped = caption.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-  // Scale font for high-res images (2x for ~3840 width)
   const scale = imgWidth > 2500 ? 2 : 1;
   const fontSize = FONT_SIZE * scale;
   const maxTextWidth = imgWidth - 80 * scale;
@@ -63,7 +54,6 @@ async function addCaption(inputFile, caption, outputFile) {
   const strokeW = Math.max(2, (fontSize / 16) | 0);
   const shadowStd = Math.max(2, (fontSize / 16) | 0);
   const shadowDx = Math.max(2, (fontSize / 20) | 0);
-  const shadowDy = shadowDx;
 
   const textElements = lines.map((line, i) => {
     const y = captionH / 2 + (i - (lineCount - 1) / 2) * lineHeight;
@@ -81,36 +71,36 @@ async function addCaption(inputFile, caption, outputFile) {
             fill="#FFD700">${line}</text>`;
   }).join('\n      ');
 
-  // Semi-transparent overlay band
   const overlaySvg = `
     <svg width="${imgWidth}" height="${captionH}">
       <defs>
         <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
-          <feDropShadow dx="${shadowDx}" dy="${shadowDy}" stdDeviation="${shadowStd}" flood-color="black" flood-opacity="0.8"/>
+          <feDropShadow dx="${shadowDx}" dy="${shadowDx}" stdDeviation="${shadowStd}" flood-color="black" flood-opacity="0.8"/>
         </filter>
       </defs>
       <rect width="100%" height="100%" fill="rgba(0,0,0,0.6)"/>
       ${textElements}
     </svg>`;
 
-  const overlayBuffer = Buffer.from(overlaySvg);
-
-  // Same size as original, overlay on bottom
   await sharp(imgBuffer)
-    .composite([
-      { input: overlayBuffer, top: imgHeight - captionH, left: 0 },
-    ])
+    .composite([{ input: Buffer.from(overlaySvg), top: imgHeight - captionH, left: 0 }])
     .png()
     .toFile(outputFile);
 
   const lineLabel = lineCount > 1 ? ` (${lineCount} lines)` : '';
-  console.log(`✓ ${path.basename(outputFile)} (${imgWidth}x${imgHeight})${lineLabel}`);
+  console.log(`${path.basename(outputFile)} (${imgWidth}x${imgHeight})${lineLabel}`);
 }
 
 async function main() {
   const dir = __dirname;
   const outDir = path.join(dir, 'captioned');
-  if (!fs.existsSync(outDir)) fs.mkdirSync(outDir);
+  fs.mkdirSync(outDir, { recursive: true });
+
+  for (const f of fs.readdirSync(outDir)) {
+    if (/^\d{2}_.+\.png$/i.test(f)) {
+      fs.unlinkSync(path.join(outDir, f));
+    }
+  }
 
   for (let i = 0; i < screenshots.length; i++) {
     const s = screenshots[i];
@@ -122,4 +112,7 @@ async function main() {
   console.log(`\nDone! ${screenshots.length} captioned screenshots saved to: ${outDir}`);
 }
 
-main().catch(console.error);
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
