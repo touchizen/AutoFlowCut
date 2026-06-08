@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, screen, cleanup, waitFor } from '@testing-library/react'
+import { render, screen, cleanup, waitFor, act } from '@testing-library/react'
 
 vi.mock('../../src/hooks/useI18n', () => ({
   useI18n: () => ({ t: (k) => k, lang: 'ko', setLang: vi.fn() }),
@@ -42,6 +42,38 @@ describe('PromptInput (Lexical) smoke', () => {
       render(<PromptInput value="" onChange={vi.fn()} references={REFS} />)
     }).not.toThrow()
     expect(screen.getByTestId('prompt-textarea')).toBeTruthy()
+  })
+
+  it('wraps contentEditable in a non-flex block to avoid Chrome focus warnings', () => {
+    render(<PromptInput value="" onChange={vi.fn()} references={REFS} />)
+    const editor = screen.getByTestId('prompt-textarea')
+    expect(editor.parentElement).toHaveClass('prompt-textarea-content')
+    expect(editor.parentElement?.parentElement).toHaveAttribute('data-testid', 'prompt-textarea-wrap')
+  })
+
+  it('defers initial editor hydration outside React lifecycle effects', async () => {
+    const queued = []
+    const queueSpy = vi
+      .spyOn(globalThis, 'queueMicrotask')
+      .mockImplementation((callback) => queued.push(callback))
+
+    try {
+      render(<PromptInput value="A wizard @alice walks" onChange={vi.fn()} references={REFS} />)
+      const editor = screen.getByTestId('prompt-textarea')
+
+      expect(queued.length).toBeGreaterThan(0)
+      expect(editor.textContent).not.toContain('A wizard')
+
+      await act(async () => {
+        while (queued.length) queued.shift()()
+      })
+
+      await waitFor(() => {
+        expect(editor.textContent).toContain('A wizard')
+      })
+    } finally {
+      queueSpy.mockRestore()
+    }
   })
 
   it('shows placeholder when value is empty', () => {

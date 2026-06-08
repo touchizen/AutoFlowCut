@@ -340,7 +340,6 @@ html, body {
 .prompt-textarea-wrap {
   position: relative;
   flex: 1;
-  display: flex;
   min-height: 0;
   border-radius: var(--border-radius);
   isolation: isolate;
@@ -400,11 +399,22 @@ html, body {
 }
 
 /* Lexical contentEditable — textarea 와 동일한 시각 metric 유지 */
+.prompt-textarea-content {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
 .prompt-textarea {
   position: relative;
   z-index: 1;
-  flex: 1;
   width: 100%;
+  height: 100%;
+  box-sizing: border-box;
   padding: 12px;
   border: 1px solid var(--border-color);
   border-radius: var(--border-radius);

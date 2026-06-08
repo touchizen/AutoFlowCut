@@ -10,7 +10,7 @@ import { MentionRefsContext } from './MentionRefsContext'
 import { resolveImageSrc } from '../utils/formatters'
 
 const MentionMenuItem = forwardRef(function MentionMenuItem(
-  { selected, item, ...rest },
+  { selected, item, itemValue: _itemValue, label: _label, refId: _refIdProp, refType: _refTypeProp, ...rest },
   ref
 ) {
   const ctx = useContext(MentionRefsContext)

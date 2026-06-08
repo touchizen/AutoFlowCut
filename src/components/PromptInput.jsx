@@ -81,6 +81,21 @@ const MENTION_PRE_TRIGGER_CHARS = `[.,!?;:()\\[\\]{}'"\`]`
 // (`@main_hero` → `@main` 으로 짤리던 버그). 다른 termination 문자는 기본값 유지.
 const MENTION_PUNCTUATION = `\\.,\\*\\?\\$\\|#{}\\(\\)\\^\\[\\]\\\\/!%'"~=<>:;`
 
+function deferEditorUpdate(editor, updateFn) {
+  let cancelled = false
+  const run = () => {
+    if (!cancelled) editor.update(updateFn)
+  }
+  if (typeof queueMicrotask === 'function') {
+    queueMicrotask(run)
+  } else {
+    Promise.resolve().then(run)
+  }
+  return () => {
+    cancelled = true
+  }
+}
+
 // ── 커스텀 menu wrapper — 기본 `ul` 에 클래스만 부여. portal 위치는 라이브러리가 담당.
 const MentionMenu = forwardRef(function MentionMenu({ loading, ...rest }, ref) {
   return <ul ref={ref} className="mention-menu" {...rest} />
@@ -101,8 +116,8 @@ function SyncPlugin({ value, onChange, references }) {
   useEffect(() => {
     const incoming = value || ''
     if (incoming === lastTextRef.current) return
-    editor.update(() => $applyTextToRoot(incoming, referencesRef.current))
     lastTextRef.current = incoming
+    return deferEditorUpdate(editor, () => $applyTextToRoot(incoming, referencesRef.current))
   }, [editor, value])
 
   // references 변경 → 현재 텍스트의 @멘션을 chip 으로 재해석.
@@ -125,8 +140,8 @@ function SyncPlugin({ value, onChange, references }) {
       pendingRehydrateRef.current = true
       return
     }
-    editor.update(() => $applyTextToRoot(currentText, references))
     pendingRehydrateRef.current = false
+    return deferEditorUpdate(editor, () => $applyTextToRoot(currentText, references))
   }, [editor, references])
 
   // blur 시점 rehydrate — 위 effect 가 focus 중이라 미뤘던 재해석을 처리.
@@ -294,11 +309,13 @@ export default function PromptInput({
           <LexicalComposer initialConfig={{ ...baseEditorConfig, editable: !disabled }}>
             <RichTextPlugin
               contentEditable={
-                <ContentEditable
-                  className="prompt-textarea"
-                  data-testid="prompt-textarea"
-                  aria-placeholder={placeholder || t('prompt.placeholder')}
-                />
+                <div className="prompt-textarea-content">
+                  <ContentEditable
+                    className="prompt-textarea"
+                    data-testid="prompt-textarea"
+                    aria-placeholder={placeholder || t('prompt.placeholder')}
+                  />
+                </div>
               }
               placeholder={
                 <div className="prompt-placeholder">
