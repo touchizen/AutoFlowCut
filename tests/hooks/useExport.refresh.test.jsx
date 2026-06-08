@@ -46,6 +46,13 @@ const baseSettings = { projectName: 'TestProject', aspectRatio: '16:9', defaultD
 const baseScenes = [
   { id: 's1', image: 'data:image/png;base64,xxx', imagePath: null, duration: 3 }
 ]
+const staleScene = {
+  id: 's-stale',
+  image: null,
+  imagePath: '/tmp/old.png',
+  status: 'pending',
+  duration: 3
+}
 
 const baseConfirmArgs = {
   capcutProjectNumber: 1,
@@ -135,6 +142,28 @@ describe('handleExportClick — loading 윈도우 paywall 차단 (P2-3 후속)',
     })
 
     expect(result.current.showExportModal).toBe(true)
+  })
+
+  it('pending 상태의 stale imagePath 만 있으면 export 모달을 열지 않는다', () => {
+    const { result } = renderHook(() =>
+      useExport({
+        settings: baseSettings,
+        scenes: [staleScene],
+        openSettings: vi.fn(),
+        isAuthenticated: true,
+        subscription: { status: 'trial', canExport: true },
+        refreshSubscription: vi.fn(),
+        onLoginRequired: vi.fn(),
+        onPaywallRequired: vi.fn()
+      })
+    )
+
+    act(() => {
+      result.current.handleExportClick()
+    })
+
+    expect(result.current.showExportModal).toBe(false)
+    expect(mockToastWarning).toHaveBeenCalledWith('toast.noGeneratedImages')
   })
 
   it('미인증 시 onLoginRequired 만 호출', () => {
@@ -289,6 +318,31 @@ describe('handleExportConfirm — 성공 후 refreshSubscription 호출 (P2-1)',
 
     expect(mockExportCapcut).toHaveBeenCalled()
     expect(mockToastSuccess).toHaveBeenCalled()
+  })
+
+  it('pending 상태의 stale imagePath 는 confirm 경로에서도 export 하지 않는다', async () => {
+    const refreshSubscription = vi.fn()
+    const { result } = renderHook(() =>
+      useExport({
+        settings: baseSettings,
+        scenes: [staleScene],
+        openSettings: vi.fn(),
+        isAuthenticated: true,
+        subscription: { status: 'trial', canExport: true },
+        refreshSubscription,
+        onLoginRequired: vi.fn(),
+        onPaywallRequired: vi.fn()
+      })
+    )
+
+    let exportResult
+    await act(async () => {
+      exportResult = await result.current.handleExportConfirm(baseConfirmArgs)
+    })
+
+    expect(exportResult).toEqual({ success: false, error: 'toast.noGeneratedImages' })
+    expect(mockExportCapcut).not.toHaveBeenCalled()
+    expect(refreshSubscription).not.toHaveBeenCalled()
   })
 })
 

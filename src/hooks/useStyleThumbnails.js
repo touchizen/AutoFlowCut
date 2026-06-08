@@ -117,7 +117,7 @@ export function useStyleThumbnails(genAPI) {
   // 썸네일 일괄 생성 (프리셋 + 커스텀 스타일 레퍼런스)
   const generateThumbnails = useCallback(async (presetIds, customRefs, t) => {
     if (!genAPI?.generateImage) {
-      toast.error('Flow API not available')
+      toast.error('GenAI API not available')
       return
     }
 

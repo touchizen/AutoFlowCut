@@ -78,7 +78,7 @@ if (process.platform === 'darwin') {
     applicationName: 'AutoFlowCut',
     applicationVersion: verStr,
     copyright: '© Touchizen',
-    credits: 'AutoFlowCut — Google Flow → CapCut automation',
+    credits: 'AutoFlowCut — Google Gemini/Veo → CapCut automation',
   })
 }
 

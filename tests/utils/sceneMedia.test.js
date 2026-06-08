@@ -260,6 +260,28 @@ describe('resolveExportVideos (B1: exportMedia 무시 — 있는 영상 다 expo
     expect(resolveExportVideos({ ...i2v, videoI2VDisabled: null }).map(v => v.source)).toEqual(['i2v'])
     expect(resolveExportVideos({ ...i2v, videoI2VDisabled: false }).map(v => v.source)).toEqual(['i2v'])
   })
+
+  it('source별 generating 상태는 stale video path 를 export 하지 않음', () => {
+    const out = resolveExportVideos({
+      ...i2v,
+      ...t2v,
+      videoI2VStatus: 'generating',
+      videoT2VStatus: 'complete',
+    })
+
+    expect(out.map(v => v.source)).toEqual(['t2v'])
+  })
+
+  it('t2v generating 상태도 stale path 를 제외하고 i2v 는 유지', () => {
+    const out = resolveExportVideos({
+      ...i2v,
+      ...t2v,
+      videoI2VStatus: 'complete',
+      videoT2VStatus: 'generating',
+    })
+
+    expect(out.map(v => v.source)).toEqual(['i2v'])
+  })
 })
 
 describe('videoClearPatch (재생성/clear 시 영상 필드 초기화 — disabled reset 포함)', () => {

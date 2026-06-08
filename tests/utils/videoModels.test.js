@@ -26,6 +26,11 @@ describe('normalizeVideoModel', () => {
     expect(normalizeVideoModel('veo-3.1-quality')).toBe(VIDEO_MODEL_QUALITY)
   })
 
+  it('Vertex AI 전용 Veo 3.1 GA id 는 Gemini API preview 모델로 치유', () => {
+    expect(normalizeVideoModel('veo-3.1-fast-generate-001')).toBe(VIDEO_MODEL_FAST)
+    expect(normalizeVideoModel('veo-3.1-generate-001')).toBe(VIDEO_MODEL_QUALITY)
+  })
+
   it('이미 공식 hyphen 모델명은 그대로 통과', () => {
     expect(normalizeVideoModel('veo-3.1-lite-generate-preview')).toBe('veo-3.1-lite-generate-preview')
     expect(normalizeVideoModel('veo-3.1-fast-generate-preview')).toBe('veo-3.1-fast-generate-preview')

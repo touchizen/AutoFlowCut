@@ -306,7 +306,8 @@ export async function submitVideo(
 
   const effectiveModel = normalizeVideoModel(model) || DEFAULT_VIDEO_MODEL
   const instance = { prompt: prompt || '' }
-  const invalidVideoReferenceType = (referenceImages || [])
+  const videoReferenceInputs = (referenceImages || []).slice(0, VIDEO_REFERENCE_IMAGE_LIMIT)
+  const invalidVideoReferenceType = videoReferenceInputs
     .filter((ref) => ref && ref.data)
     .find(isInvalidVideoAssetReference)
   if (invalidVideoReferenceType) {
@@ -315,7 +316,7 @@ export async function submitVideo(
       error: 'Veo referenceImages only support asset references.',
     }
   }
-  const invalidVideoReference = (referenceImages || [])
+  const invalidVideoReference = videoReferenceInputs
     .filter((ref) => ref && ref.data)
     .find((ref) => !supportsVideoReferenceMimeType(ref.mimeType))
   if (invalidVideoReference) {
@@ -324,7 +325,7 @@ export async function submitVideo(
       error: 'Veo reference images support PNG, JPEG, or WebP.',
     }
   }
-  const videoReferenceImages = buildVideoReferenceImages(referenceImages)
+  const videoReferenceImages = buildVideoReferenceImages(videoReferenceInputs)
   const hasFrameImage = !!((image && image.data) || (endImage && endImage.data))
   if (videoReferenceImages.length > 0 && !supportsVideoReferenceImages(effectiveModel)) {
     return {
@@ -411,6 +412,22 @@ export function summarizeVeoOperation(data) {
   }
 }
 
+function formatVeoSafetyFilterError(opDiag) {
+  const count = Number(opDiag?.raiFilteredCount) || 0
+  const reasons = opDiag?.raiFilteredReasons
+  let reasonText = ''
+  if (Array.isArray(reasons) && reasons.length > 0) {
+    reasonText = reasons
+      .map((r) => (typeof r === 'string' ? r : (r?.reason || r?.message || JSON.stringify(r))))
+      .filter(Boolean)
+      .join(', ')
+  } else if (typeof reasons === 'string' && reasons.trim()) {
+    reasonText = reasons.trim()
+  }
+  const suffix = reasonText ? ` (${reasonText})` : ''
+  return `Veo media was blocked by the safety filter${count ? ` (${count} item${count === 1 ? '' : 's'})` : ''}${suffix}`
+}
+
 /**
  * 비디오 operation 상태 1회 조회 (폴링용).
  *
@@ -449,6 +466,9 @@ export async function checkVideoOperation(
 
     const videoUri = data.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri
     if (!videoUri) {
+      if (opDiag.raiFilteredCount) {
+        return { success: false, done: true, error: formatVeoSafetyFilterError(opDiag) }
+      }
       return { success: false, done: true, error: 'Video URI not found in completed operation' }
     }
 

@@ -171,6 +171,34 @@ describe('useGenAPI — 비디오', () => {
     expect(refs.map(r => r.data)).toEqual(['A', 'B', 'C'])
   })
 
+  it('generateVideoT2V: 4번째 이후 reference 가 unresolved 여도 전송 대상이 아니므로 실패하지 않음', async () => {
+    localStorage.setItem('workFolderPath', '/work')
+    window.electronAPI.readResource.mockResolvedValue({ success: false, error: 'missing' })
+    const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
+    let r
+    await act(async () => {
+      r = await result.current.generateVideoT2V(
+        'team walks',
+        'veo-3.1-fast-generate-preview',
+        '16:9',
+        8,
+        null,
+        '720p',
+        [
+          { name: 'a', data: 'data:image/png;base64,A' },
+          { name: 'b', data: 'data:image/png;base64,B' },
+          { name: 'c', data: 'data:image/png;base64,C' },
+          { name: 'missing' },
+        ]
+      )
+    })
+
+    expect(r.success).toBe(true)
+    expect(window.electronAPI.readResource).not.toHaveBeenCalled()
+    const refs = window.electronAPI.genaiGenerateVideo.mock.calls.at(-1)[0].referenceImages
+    expect(refs.map(ref => ref.data)).toEqual(['A', 'B', 'C'])
+  })
+
   it('generateVideoT2V: 디스크 기반 reference + seed/resolution 을 함께 IPC 로 전달', async () => {
     localStorage.setItem('workFolderPath', '/work')
     window.electronAPI.readResource.mockResolvedValue({
@@ -227,7 +255,7 @@ describe('useGenAPI — 비디오', () => {
     expect(window.electronAPI.genaiGenerateVideo).not.toHaveBeenCalled()
   })
 
-  it('generateVideoT2V: Vertex 전용 -001 모델명은 referenceImages 미지원으로 거부 (Gemini API 엔 GA 없음)', async () => {
+  it('generateVideoT2V: Vertex 전용 -001 모델명은 preview 로 치유 후 referenceImages 허용', async () => {
     const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
     let r
     await act(async () => {
@@ -242,8 +270,36 @@ describe('useGenAPI — 비디오', () => {
       )
     })
 
+    expect(r.success).toBe(true)
+    expect(window.electronAPI.genaiGenerateVideo).toHaveBeenCalledWith({
+      prompt: 'hero walks',
+      referenceImages: [{ mimeType: 'image/png', data: 'REF' }],
+      aspectRatio: '16:9',
+      durationSeconds: 8,
+      model: 'veo-3.1-fast-generate-preview',
+      resolution: '720p',
+    })
+  })
+
+  it('generateVideoT2V: @ reference 가 resolve 되지 않으면 prompt 만 보내지 않고 실패', async () => {
+    localStorage.setItem('workFolderPath', '/work')
+    window.electronAPI.readResource.mockResolvedValue({ success: false, error: 'missing' })
+    const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
+    let r
+    await act(async () => {
+      r = await result.current.generateVideoT2V(
+        'hero walks',
+        'veo-3.1-fast-generate-preview',
+        '16:9',
+        8,
+        null,
+        '720p',
+        [{ name: 'hero' }]
+      )
+    })
+
     expect(r.success).toBe(false)
-    expect(r.error).toMatch(/Fast\/Quality/)
+    expect(r.error).toMatch(/could not be resolved: hero/)
     expect(window.electronAPI.genaiGenerateVideo).not.toHaveBeenCalled()
   })
 
@@ -383,6 +439,16 @@ describe('useGenAPI — 비디오', () => {
       await result.current.generateVideoI2V('go', 'data:image/png;base64,ONLY', null, 'veo-3.1-lite-generate-preview', '16:9', 8, null, '4k')
     })
     expect(window.electronAPI.genaiGenerateVideo.mock.calls.at(-1)[0].resolution).toBe('1080p')
+  })
+
+  it('generateVideoI2V: 레거시 Lite 모델명도 정규화 후 4K 를 1080p 로 강등', async () => {
+    const { result } = renderHook(() => useGenAPI())
+    await act(async () => {
+      await result.current.generateVideoI2V('go', 'data:image/png;base64,ONLY', null, 'veo-3.1-lite', '16:9', 8, null, '4k')
+    })
+    const payload = window.electronAPI.genaiGenerateVideo.mock.calls.at(-1)[0]
+    expect(payload.model).toBe('veo-3.1-lite-generate-preview')
+    expect(payload.resolution).toBe('1080p')
   })
 
   it('generateVideoT2V: Veo Quality + 4K 는 그대로 4k', async () => {

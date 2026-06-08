@@ -42,7 +42,7 @@ After TTS audio generation, once timecodes are finalized, the SRT is generated a
 
 ## SRT to Scenes CSV Conversion
 
-When an SRT file is imported in Flow2CapCut, it is automatically converted to the scenes CSV structure:
+When an SRT file is imported in AutoFlowCut, it is automatically converted to the scenes CSV structure:
 - `subtitle` <- subtitle text
 - `start_time` <- start timecode (converted to seconds)
 - `end_time` <- end timecode (converted to seconds)

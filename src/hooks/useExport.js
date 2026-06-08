@@ -13,6 +13,11 @@ import { toast } from '../components/Toast'
 import useI18n from './useI18n'
 import { resolveExportVideos, hasExportableMedia, getExportFilePaths } from '../utils/sceneMedia'
 import { pruneSrtTrackToScenes, rebaseSrtTrackToScenes } from '../utils/srtTrack'
+import { isSceneGenerationDone } from '../services/generationStatus'
+
+function isExportableScene(scene) {
+  return isSceneGenerationDone(scene) && hasExportableMedia(scene)
+}
 
 export function useExport({
   settings,
@@ -36,7 +41,7 @@ export function useExport({
 
   // Handle export button click - open modal
   const handleExportClick = () => {
-    const validScenes = scenes.filter(hasExportableMedia)
+    const validScenes = scenes.filter(isExportableScene)
     if (validScenes.length === 0) {
       toast.warning(t('toast.noGeneratedImages'))
       return
@@ -82,7 +87,12 @@ export function useExport({
 
   // Handle export confirm from modal
   const handleExportConfirm = async ({ capcutProjectNumber, scaleMode, kenBurns, kenBurnsMode, kenBurnsCycle, kenBurnsScaleMin, kenBurnsScaleMax, subtitleOption, subtitleFontSize }) => {
-    const validScenes = scenes.filter(hasExportableMedia)
+    const validScenes = scenes.filter(isExportableScene)
+    if (validScenes.length === 0) {
+      toast.warning(t('toast.noGeneratedImages'))
+      setShowExportModal(false)
+      return { success: false, error: t('toast.noGeneratedImages') }
+    }
 
     // 디스크 read 권한이 필요한 파일 경로가 하나라도 있으면 사전에 권한 확인.
     // image / video(T2V/I2V) path 모두 포함 — 영상만 path-backed 인 케이스에서
@@ -94,7 +104,7 @@ export function useExport({
         toast.warning(t('toast.filePermissionRequired'))
         setShowExportModal(false)
         openSettings('storage')
-        return
+        return { success: false, error: t('toast.filePermissionRequired') }
       }
     }
 
@@ -247,8 +257,10 @@ export function useExport({
 
       // 내보내기 성공 — Store 평점 유도 카운터 증가 (모달 트리거는 호출측에서 판단)
       onExportSuccess?.()
+      return { success: true, targetPath: result.targetPath }
     } catch (error) {
       toast.error(t('toast.exportFailed', { error: error.message }))
+      return { success: false, error: error.message }
     } finally {
       setExporting(false)
       setExportPhase(null)

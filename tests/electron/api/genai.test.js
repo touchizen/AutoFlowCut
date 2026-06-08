@@ -401,7 +401,7 @@ describe('genai — submitVideo', () => {
     expect(body.instances[0].referenceImages[0].image.bytesBase64Encoded).toBe('REF')
   })
 
-  it('Vertex 전용 -001 모델명은 referenceImages 미지원으로 거부 (Gemini API 엔 GA 없음)', async () => {
+  it('Vertex 전용 -001 모델명은 preview 로 치유 후 referenceImages 를 허용', async () => {
     const f = mockFetchOnce(jsonRes({ name: 'op' }))
     const res = await submitVideo(
       {
@@ -413,9 +413,10 @@ describe('genai — submitVideo', () => {
       { fetchImpl: f }
     )
 
-    expect(res.success).toBe(false)
-    expect(res.error).toMatch(/Fast\/Quality/)
-    expect(f).not.toHaveBeenCalled()
+    expect(res.success).toBe(true)
+    expect(f.mock.calls[0][0]).toBe(`${GENAI_BASE}/models/veo-3.1-fast-generate-preview:predictLongRunning`)
+    const body = JSON.parse(f.mock.calls[0][1].body)
+    expect(body.instances[0].referenceImages[0].image.bytesBase64Encoded).toBe('REF')
   })
 
   it('T2V referenceImages 는 최대 3개, referenceType 은 asset 으로 보낸다', async () => {
@@ -437,6 +438,27 @@ describe('genai — submitVideo', () => {
     const refs = JSON.parse(f.mock.calls[0][1].body).instances[0].referenceImages
     expect(refs).toHaveLength(VIDEO_REFERENCE_IMAGE_LIMIT)
     expect(refs.map(r => r.referenceType)).toEqual(['asset', 'asset', 'asset'])
+    expect(refs.map(r => r.image.bytesBase64Encoded)).toEqual(['REF1', 'REF2', 'REF3'])
+  })
+
+  it('T2V referenceImages 는 4번째 이후 invalid MIME/type 을 검증하지 않는다', async () => {
+    const f = mockFetchOnce(jsonRes({ name: 'op' }))
+    const res = await submitVideo(
+      {
+        apiKey: 'k',
+        prompt: 'hero walks',
+        referenceImages: [
+          { mimeType: 'image/png', data: 'REF1' },
+          { mimeType: 'image/png', data: 'REF2' },
+          { mimeType: 'image/png', data: 'REF3' },
+          { mimeType: 'image/gif', data: 'REF4', referenceType: 'style' },
+        ],
+      },
+      { fetchImpl: f }
+    )
+
+    expect(res.success).toBe(true)
+    const refs = JSON.parse(f.mock.calls[0][1].body).instances[0].referenceImages
     expect(refs.map(r => r.image.bytesBase64Encoded)).toEqual(['REF1', 'REF2', 'REF3'])
   })
 
@@ -608,6 +630,26 @@ describe('genai — checkVideoOperation', () => {
     expect(res.success).toBe(false)
     expect(res.done).toBe(true)
     expect(res.error).toMatch(/Video URI not found/)
+  })
+
+  it('완료됐지만 안전필터로 uri 가 없으면 원인을 명시한다', async () => {
+    const fetchImpl = mockFetchOnce(jsonRes({
+      done: true,
+      response: {
+        generateVideoResponse: {
+          raiMediaFilteredCount: 1,
+          raiMediaFilteredReasons: ['Output blocked by safety filter'],
+          generatedSamples: [],
+        },
+      },
+    }))
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const res = await checkVideoOperation({ apiKey: 'k', operationName: 'operations/x' }, { fetchImpl })
+    warnSpy.mockRestore()
+    expect(res.success).toBe(false)
+    expect(res.done).toBe(true)
+    expect(res.error).toMatch(/Veo media was blocked by the safety filter/)
+    expect(res.error).toMatch(/Output blocked by safety filter/)
   })
 
   it('error 응답 → formatGoogleApiError', async () => {

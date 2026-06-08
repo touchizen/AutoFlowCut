@@ -128,4 +128,21 @@ describe('useVideoAutomation — 자동 duration + resolution 제출 전달', ()
     expect(args[5]).toBeUndefined()  // '2k' 가 '4k' 로 올라가지 않음
     expect(args[3]).toBe(6)          // resolution 미지 → 씬 길이 5 스냅 = 6 (8 강제 아님)
   })
+
+  it('stale Vertex Veo 3.1 모델 id 는 제출/상태 메타 모두 preview id 로 정규화', async () => {
+    const { hook, generateVideoT2V } = makeHook()
+    const onItemUpdate = vi.fn()
+    await runT2V(hook, { targetDuration: 4 }, {
+      videoModel: 'veo-3.1-fast-generate-001',
+      videoResolution: '720p',
+      onItemUpdate,
+    })
+
+    expect(generateVideoT2V.mock.calls[0][1]).toBe('veo-3.1-fast-generate-preview')
+    expect(onItemUpdate).toHaveBeenCalledWith(
+      'vscene_v1',
+      'generating',
+      expect.objectContaining({ model: 'veo-3.1-fast-generate-preview' })
+    )
+  })
 })

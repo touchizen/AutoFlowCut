@@ -28,6 +28,7 @@ import { useMenuActions } from './hooks/useMenuActions'
 import { syncVideosIntoScenes } from './services/mediaSync'
 import { retryVideoDownload } from './services/videoRecovery'
 import { isStyleReference, previewStyleMatching } from './services/styleService'
+import { isSceneGenerationDone } from './services/generationStatus'
 import { computeGuardAvailable } from './services/startGuard'
 import { createStyleResolver } from './services/styleResolver'
 import { filterPendingScenes } from './utils/sceneFilters'
@@ -221,7 +222,7 @@ function App() {
   const handleAuthError = useCallback(() => {
     setAuthReady(false)
     authInvalidatedRef.current = true  // prevent auto-recovery effect from flipping us back
-    toast.error(t('status.authErrorStopped') || 'Auth expired — please re-login to Flow', TIMING.AUTH_ERROR_TOAST)
+    toast.error(t('status.authErrorStopped') || 'API key was rejected. Check your API key in Settings and try again.', TIMING.AUTH_ERROR_TOAST)
   }, [t])
 
   // Called by Header when the user explicitly re-authenticates (login badge click or
@@ -1211,7 +1212,7 @@ function App() {
       <Header
         onSettings={(tab) => openSettings(typeof tab === 'string' ? tab : null)}
         onExport={handleExportClick}
-        hasImages={scenes.some(s => s.image || s.imagePath)}
+        hasImages={scenes.some(isSceneGenerationDone)}
         getAccessToken={genAPI.getAccessToken}
         authReady={authReady}
         onAuthRecovered={handleAuthRecovered}
@@ -1493,7 +1494,7 @@ function App() {
 
           {/* 생성 완료 후 설정된 완료율 이상 성공 시 버튼 2개로 분할 */}
           {(() => {
-            const doneCount = scenes.filter(s => s.image || s.imagePath).length
+            const doneCount = scenes.filter(isSceneGenerationDone).length
             const hasScenes = scenes.length > 0
             // 생성이 한 번이라도 실행되고 완료됐는지 (done 또는 error 상태가 있음)
             const hasRun = scenes.some(s => s.status === 'done' || s.status === 'error')
@@ -1505,7 +1506,8 @@ function App() {
             const showGenerateMenu = (activeTab === 'text' || activeTab === 'list')
               && scenes.some(s => s.image || s.imagePath)
 
-            const startStyleLabel = styleResolver.resolveLabelForId(selectedStyleRefId)
+            const startStyleId = styleResolver.resolveEffectiveStyleId(undefined)
+            const startStyleLabel = styleResolver.resolveLabelForId(startStyleId)
             const startStyleApplies = activeTab === 'text' || activeTab === 'list' || activeTab === 'video-text'
             // Stop 버튼은 실행 시작 시 snapshot된 runningStyle.label 우선 사용.
             // label snapshot이 없는 케이스(이전 동작 호환)만 fallback으로 다시 계산.

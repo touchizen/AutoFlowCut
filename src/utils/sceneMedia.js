@@ -20,10 +20,10 @@
  */
 export function resolveExportVideos(scene) {
   if (!scene) return []
-  const i2v = (scene.videoI2V || scene.videoI2VPath) && !scene.videoI2VDisabled
+  const i2v = (scene.videoI2V || scene.videoI2VPath) && !scene.videoI2VDisabled && scene.videoI2VStatus !== 'generating'
     ? { source: 'i2v', path: scene.videoI2VPath || null, data: scene.videoI2V || null, duration: scene.videoI2VDuration ?? null }
     : null
-  const t2v = (scene.videoT2V || scene.videoT2VPath) && !scene.videoT2VDisabled
+  const t2v = (scene.videoT2V || scene.videoT2VPath) && !scene.videoT2VDisabled && scene.videoT2VStatus !== 'generating'
     ? { source: 't2v', path: scene.videoT2VPath || null, data: scene.videoT2V || null, duration: scene.videoT2VDuration ?? null }
     : null
   return [i2v, t2v].filter(Boolean) // 있는 영상 다 (i2v 먼저), disabled 제외

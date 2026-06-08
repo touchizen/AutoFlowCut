@@ -63,6 +63,11 @@ function isInvalidVideoAssetReference(ref) {
   return referenceType !== 'asset' || isStyleReference(ref)
 }
 
+function describeVideoReference(ref) {
+  if (!ref) return '(unknown reference)'
+  return ref.name || ref.filePath || ref.id || ref.mediaId || '(unknown reference)'
+}
+
 export function useGenAPI({ onAuthError, getProjectName } = {}) {
   const [accessToken, setAccessToken] = useState(null)
   const getProjectNameRef = useRef(getProjectName)
@@ -192,14 +197,27 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
   const generateVideoT2V = useCallback(async (prompt, model, aspectRatio, duration, seed, resolution, referenceImages = []) => {
     try {
       const effectiveModel = normalizeVideoModel(model)
-      const invalidTypeRef = (referenceImages || []).find(isInvalidVideoAssetReference)
+      const videoReferenceInputs = (referenceImages || []).slice(0, VIDEO_REFERENCE_IMAGE_LIMIT)
+      const invalidTypeRef = videoReferenceInputs.find(isInvalidVideoAssetReference)
       if (invalidTypeRef) {
         return {
           success: false,
           error: 'Veo referenceImages only support asset references.',
         }
       }
-      const refs = await resolveReferenceImages(referenceImages, { projectName: projectName(), strictMime: true })
+      const refs = []
+      const unresolvedRefs = []
+      for (const ref of videoReferenceInputs) {
+        const resolved = await resolveReferenceImages([ref], { projectName: projectName(), strictMime: true })
+        if (resolved.length === 0) unresolvedRefs.push(describeVideoReference(ref))
+        else refs.push(resolved[0])
+      }
+      if (unresolvedRefs.length > 0) {
+        return {
+          success: false,
+          error: `Veo reference images could not be resolved: ${unresolvedRefs.join(', ')}`,
+        }
+      }
       const invalidRef = refs.find(ref => !supportsVideoReferenceMimeType(ref.mimeType))
       if (invalidRef) {
         return {
@@ -223,7 +241,7 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
         resolution: coerceResolution(effectiveModel, resolution) || undefined,
       }
       if (Number.isFinite(seed)) payload.seed = seed
-      if (refs.length > 0) payload.referenceImages = refs.slice(0, VIDEO_REFERENCE_IMAGE_LIMIT)
+      if (refs.length > 0) payload.referenceImages = refs
       const r = await window.electronAPI.genaiGenerateVideo(payload)
       return markAuthFailure(r)
     } catch (error) {
@@ -235,15 +253,16 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
   // (cloud Veo 는 Flow mediaId 를 받지 않는다.)
   const generateVideoI2V = useCallback(async (prompt, startImage, endImage, model, aspectRatio, duration, seed, resolution) => {
     try {
+      const effectiveModel = normalizeVideoModel(model)
       const r = await window.electronAPI.genaiGenerateVideo({
         prompt,
         image: toInlineImage(startImage),
         endImage: toInlineImage(endImage),
         aspectRatio: toVeoAspect(aspectRatio),
         durationSeconds: duration,
-        model: normalizeVideoModel(model),
+        model: effectiveModel,
         seed: Number.isFinite(seed) ? seed : undefined,
-        resolution: coerceResolution(model, resolution) || undefined,
+        resolution: coerceResolution(effectiveModel, resolution) || undefined,
       })
       return markAuthFailure(r)
     } catch (error) {

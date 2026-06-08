@@ -84,6 +84,24 @@ describe('StatusBar', () => {
       expect(root.className).toContain('success')
     })
 
+    it('stale imagePath 가 남은 pending/error 씬은 완료 개수에서 제외', () => {
+      const { container } = render(
+        <StatusBar
+          progress={{ current: 0, total: 3, percent: 0, errorCount: 0 }}
+          status="done"
+          message="완료"
+          scenes={[
+            { id: 's1', status: 'done', imagePath: '/done.png' },
+            { id: 's2', status: 'pending', imagePath: '/old-pending.png' },
+            { id: 's3', status: 'error', imagePath: '/old-error.png' },
+          ]}
+        />
+      )
+
+      expect(container.querySelector('.progress-text').textContent).toContain('1')
+      expect(container.querySelector('.progress-text').textContent).toContain('/ 3')
+    })
+
     it('progress bar 값 설정', () => {
       const { container } = render(
         <StatusBar

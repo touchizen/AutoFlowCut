@@ -19,8 +19,8 @@ import { downloadVideoBase64 } from '../services/videoDownload'
 import { resolveFrameImageBase64 } from '../utils/framePairImages'
 import { pickVideoMetadata, buildVideoMetaPatch } from '../utils/videoMetadata'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
-import { snapVeoDuration } from '../utils/videoModels'
-import { coerceResolution } from '../config/genModels'
+import { normalizeVideoModel, snapVeoDuration } from '../utils/videoModels'
+import { DEFAULT_VIDEO_MODEL_ID, coerceResolution } from '../config/genModels'
 import { clampInt } from '../utils/clampInt'
 
 // 실제 제출되는 비디오 길이(초). submitVideo(engine)의 제약과 동일하게 계산해 제출값과
@@ -197,10 +197,12 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     } = options
     // 손상된 저장값('x'/NaN/0/음수)은 무한대기/no-op 유발 → clampInt 로 기본 4 폴백 (useAutomation 과 동일).
     const concurrency = clampInt(rawConcurrency, 1, 10, 4)
+    const effectiveVideoModel = normalizeVideoModel(videoModel) || DEFAULT_VIDEO_MODEL_ID
+    const canonicalVideoModel = (modelId) => normalizeVideoModel(modelId) || effectiveVideoModel
     // 모델이 지원하지 않거나(예: Veo Lite + 4K) stale 한 해상도는 여기서 한 번만 강등/정규화.
     // 이후 effectiveVideoDuration 계산·history 메타데이터·생성 호출이 전부 같은 값을 써서
     // 부분 coerce 로 인한 어긋남(기록은 4k, 실제는 1080p)을 방지한다. (리뷰 P2)
-    const videoResolution = coerceResolution(videoModel, options.videoResolution ?? '720p')
+    const videoResolution = coerceResolution(effectiveVideoModel, options.videoResolution ?? '720p')
 
     if (isRunning) return
 
@@ -244,7 +246,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
             mediaId: s.mediaId,
             videoPath: s.videoPath,
             seed: s.seed ?? seed ?? null,
-            model: s.model || videoModel || null,
+            model: s.model ? canonicalVideoModel(s.model) : effectiveVideoModel,
             // 자동 길이용 — 씬 길이(SRT 기반). 제출 시 {4,6,8} 로 스냅됨.
             targetDuration: s.targetDuration ?? null,
             referenceImages: Array.isArray(s.referenceImages) ? s.referenceImages : [],
@@ -268,7 +270,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
             mediaId: p.mediaId,
             videoPath: p.videoPath,
             seed: p.seed ?? seed ?? null,
-            model: p.model || videoModel || null,
+            model: p.model ? canonicalVideoModel(p.model) : effectiveVideoModel,
           }))
         break
     }
@@ -378,7 +380,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
         onItemUpdate?.(item.id, 'generating')
 
         const genResult = await submitVideoItem(item, mode, {
-          videoModel, aspectRatio, duration, videoBatchCount, seed, projectName, videoResolution
+          videoModel: effectiveVideoModel, aspectRatio, duration, videoBatchCount, seed, projectName, videoResolution
         })
 
         if (genResult.success && genResult.generationId) {
@@ -390,7 +392,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
           onItemUpdate?.(item.id, 'generating', {
             generationId: genResult.generationId,
             ...(seed != null ? { seed } : {}),
-            ...(videoModel ? { model: videoModel } : {}),
+            model: effectiveVideoModel,
             // canonical 식별자 — recovery/retry 가 file 위치 매칭에 사용 (videoSaveId 없으면 vscene_/fp_ 폴백되어 파일명 갈라짐)
             ...(item.videoSaveId ? { videoSaveId: item.videoSaveId } : {}),
             // 새 generation 제출 — 이전 complete 의 path/mediaId/video 명시적 제거.
@@ -406,7 +408,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
         } else if (genResult?.authFailed) {
           // Auth errors handled via withAuthRetry's authFailed sentinel.
           // 토큰 사망 — 이 항목 + 남은 freshGen 전부 auth error. 이미 제출된 pending 은 post-loop 에서 마감.
-          const authErr = genResult.error || 'Auth expired — please re-login to Flow'
+          const authErr = genResult.error || 'API key was rejected. Check your API key in Settings and try again.'
           for (let j = i; j < freshGen.length; j++) {
             onItemUpdate?.(freshGen[j].id, 'error', { error: authErr, errorKind: 'auth' })
             videoErrorCount++
@@ -414,7 +416,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
           nextFreshIdx = freshGen.length
           authStopped = true
           setStatus('error')
-          setStatusMessage(`🔐 ${t('toast.authErrorStop') || 'Auth expired — please re-login to Flow'}`)
+          setStatusMessage(`🔐 ${t('toast.authErrorStop') || 'API key was rejected. Check your API key in Settings and try again.'}`)
           console.warn(`[VideoAutomation] ❌ Submit authFailed: token dead, stopping batch`)
           return
         } else {
@@ -440,7 +442,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
         // local ref — 모달 dismiss 와 무관하게 이번 batch 의 stop 사유를 정확히 판별.
         // 전역 isQuotaBlocked() 보면 사용자가 모달을 1초 안에 닫는 경우 race 로 'done' 표시되는 회귀.
         setStatus('stopped')
-        setStatusMessage(`⛔ ${t('videoAutomation.quotaStopped') || 'Flow generation limit reached — stopped'}`)
+        setStatusMessage(`⛔ ${t('videoAutomation.quotaStopped') || 'API generation limit reached — stopped'}`)
       } else if (stopRequestedRef.current) {
         setStatus('stopped')
         setStatusMessage(t('status.stopped'))
@@ -480,7 +482,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
       // The wrapper already fired onAuthError + cleared cache. Mark all pending items
       // as auth-error and break immediately — no point polling on a dead token.
       if (result?.authFailed) {
-        const authErr = result.error || 'Auth expired — please re-login to Flow'
+        const authErr = result.error || 'API key was rejected. Check your API key in Settings and try again.'
         for (const [itemId] of pending) {
           onItemUpdate?.(itemId, 'error', { error: authErr, errorKind: 'auth' })
           videoErrorCount++  // fillWindow auth 경로·아래 freshGen 루프와 동일하게 집계 (progress.errorCount 일관성)
@@ -494,7 +496,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
         pending.clear()
         authStopped = true
         setStatus('error')
-        setStatusMessage(`🔐 ${t('toast.authErrorStop') || 'Auth expired — please re-login to Flow'}`)
+        setStatusMessage(`🔐 ${t('toast.authErrorStop') || 'API key was rejected. Check your API key in Settings and try again.'}`)
         break
       }
       // Top-level fail (예: { success: false, error: "RESOURCE_EXHAUSTED..." }) — quota 검사 후 break.
@@ -520,7 +522,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
               statusInfo.mediaId,
               statusInfo.videoUrl,
               item,
-              { projectName, saveMode, videoResolution, aspectRatio, seed, videoModel },
+              { projectName, saveMode, videoResolution, aspectRatio, seed, videoModel: effectiveVideoModel },
               setStatusMessage
             )
 
@@ -552,7 +554,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
                 ...(retryMediaId ? { mediaId: retryMediaId } : {}),
                 ...(dlResult.videoSaveId ? { videoSaveId: dlResult.videoSaveId } : {}),
                 generationId: submission.generationId,
-                ...buildVideoMetaPatch(item, { seed, videoModel }),
+                ...buildVideoMetaPatch(item, { seed, videoModel: effectiveVideoModel }),
               })
               videoErrorCount++  // 다운로드 실패도 errorCount 에 집계
               console.warn(`[VideoAutomation] ❌ Download failed: ${itemId}`, errMsg)
@@ -566,7 +568,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
             const item = items.find(i => i.id === itemId)
             onItemUpdate?.(itemId, 'error', {
               error: statusInfo.error || 'Video generation failed',
-              ...buildVideoMetaPatch(item, { seed, videoModel }),
+              ...buildVideoMetaPatch(item, { seed, videoModel: effectiveVideoModel }),
             })
             videoErrorCount++  // 서버 generation 실패도 집계
             pending.delete(itemId)
@@ -618,7 +620,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
       if (authStopped) {
         // auth 가 fillWindow 제출 중 터진 경우 — 이미 제출된 in-flight 도 auth error 로 마감.
         // (auth 가 폴링 중 터지면 위에서 pending.clear() 했으므로 여기 안 옴.)
-        const authMsg = t('toast.authErrorStop') || 'Auth expired — please re-login to Flow'
+        const authMsg = t('toast.authErrorStop') || 'API key was rejected. Check your API key in Settings and try again.'
         for (const [itemId] of pending) {
           onItemUpdate?.(itemId, 'error', { error: authMsg, errorKind: 'auth' })
           videoErrorCount++
@@ -628,14 +630,14 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
         // (a) 앱 재시작 시 videoRecovery 가 결과 회수, (b) Flow 완료 후 Retry 다운로드.
         // 빠뜨리면 videoT2VStatus 가 'generating' 으로 영원히 남고 generatingEndedAt 이 null 이라
         // ResultsTable 의 useElapsedTimer 가 무한 증가 (사용자가 보기엔 "여전히 작업 중" 처럼).
-        const stoppedMsg = t('videoAutomation.stoppedByUser') || 'Stopped by user — Flow may still be generating; use Retry later or restart for auto-recovery'
+        const stoppedMsg = t('videoAutomation.stoppedByUser') || 'Stopped by user — submitted Veo operations may still be running. Use Retry later or restart for auto-recovery.'
         for (const [itemId, submission] of pending) {
           const item = items.find(i => i.id === itemId)
           onItemUpdate?.(itemId, 'error', {
             error: stoppedMsg,
             errorKind: 'stopped',
             generationId: submission.generationId,
-            ...buildVideoMetaPatch(item, { seed, videoModel }),
+            ...buildVideoMetaPatch(item, { seed, videoModel: effectiveVideoModel }),
           })
         }
       } else {
@@ -661,7 +663,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
       // poll 단계에서 quota 로 멈춘 경우에도 첫 submit path 와 동일한 quotaStopped 메시지.
       // quotaStoppedRef 는 batch 동안만 유지되어 사용자 수동 stop 과 안전하게 구분된다.
       if (quotaStoppedRef.current) {
-        setStatusMessage(`⛔ ${t('videoAutomation.quotaStopped') || 'Flow generation limit reached — stopped'}`)
+        setStatusMessage(`⛔ ${t('videoAutomation.quotaStopped') || 'API generation limit reached — stopped'}`)
       } else {
         setStatusMessage(t('status.stopped'))
       }

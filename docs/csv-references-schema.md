@@ -1,7 +1,7 @@
 # 레퍼런스 CSV 스키마 (References CSV)
 
 인물, 장소, 스타일의 레퍼런스 이미지 생성용 프롬프트를 정의하는 파일.
-Flow2CapCut에서 레퍼런스 이미지를 생성할 때 사용되며, 씬 CSV의 `scene_tag`, `characters` 필드와 매칭된다.
+AutoFlowCut에서 레퍼런스 이미지를 생성할 때 사용되며, 씬 CSV의 `scene_tag`, `characters` 필드와 매칭된다.
 
 ## 컬럼 정의
 

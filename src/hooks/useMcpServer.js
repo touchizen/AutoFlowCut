@@ -86,7 +86,11 @@ export function useMcpServer({
   // MCP HTTP GET 요청을 위한 글로벌 접근자 등록
   useEffect(() => {
     window.__mcpOpenProject = (name) => handleProjectChange(name)
-    window.__mcpGetReferences = () => references.map(({ data, ...rest }) => rest)
+    window.__mcpGetReferences = () => references.map(({ data, ...rest }) => ({
+      ...rest,
+      hasData: !!data,
+      ready: isReferenceUploadedDone({ ...rest, data }),
+    }))
     window.__mcpGetScenes = () => scenes.map(({ image, videoT2V, videoI2V, ...rest }) => rest)
     // styleId override를 직접 받음 (전역 상태 setSelectedStyleRefId + setTimeout race 회피).
     // styleId 형식은 normalizeStyleId로 정규화됨 ('ref:*' / 'preset:*' / plain → 'preset:*' / null).
@@ -162,8 +166,9 @@ export function useMcpServer({
           subtitleFontSize: options.subtitleFontSize || saved.subtitleFontSize || 8
         }
         // 3. handleExportConfirm 호출
-        await handleExportConfirm(exportOptions)
-        return { success: true, path: capcutProjectNumber }
+        const exportResult = await handleExportConfirm(exportOptions)
+        if (exportResult?.success === false) return exportResult
+        return { success: true, path: exportResult?.targetPath || capcutProjectNumber }
       } catch (e) {
         return { success: false, error: e.message }
       }

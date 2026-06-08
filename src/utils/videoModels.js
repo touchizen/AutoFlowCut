@@ -21,6 +21,10 @@ const LEGACY_VIDEO_MODEL_MAP = {
   'veo-3.1-lite': VIDEO_MODEL_LITE,
   'veo-3.1-fast': VIDEO_MODEL_FAST,
   'veo-3.1-quality': VIDEO_MODEL_QUALITY,
+  // Vertex AI 전용 GA id 는 generativelanguage(Veo) endpoint 에선 유효하지 않다.
+  // 저장된 설정/프로젝트에서 새어 나오면 같은 계열 preview 모델로 치유한다.
+  'veo-3.1-fast-generate-001': VIDEO_MODEL_FAST,
+  'veo-3.1-generate-001': VIDEO_MODEL_QUALITY,
   veo_3_1_t2v_fast_ultra_relaxed: VIDEO_MODEL_FAST,
   veo_3_1_t2v_quality_ultra_relaxed: VIDEO_MODEL_QUALITY,
   veo_3_1_i2v_fast_ultra_relaxed: VIDEO_MODEL_FAST,

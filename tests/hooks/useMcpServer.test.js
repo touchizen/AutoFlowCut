@@ -53,16 +53,46 @@ describe('useMcpServer — global handlers (regression guards)', () => {
   })
 
   afterEach(() => {
+    delete window.__mcpGetReferences
     delete window.__mcpGenerateRef
     delete window.__mcpStartRefBatch
     delete window.__mcpStartBatch
     delete window.__mcpSetStyle
+    delete window.__mcpExportCapcut
     delete window.electronAPI
   })
 
   it('registers __mcpGenerateRef on mount', () => {
     renderHook(() => useMcpServer(makeProps()))
     expect(typeof window.__mcpGenerateRef).toBe('function')
+  })
+
+  it('__mcpGetReferences hides raw data but exposes hasData readiness', () => {
+    renderHook(() => useMcpServer(makeProps({
+      references: [
+        { name: 'hero', data: 'data:image/png;base64,REF', mediaId: null },
+        { name: 'disk', filePath: '/refs/disk.png', mediaId: null },
+        { name: 'pending', status: 'pending', data: 'data:image/png;base64,OLD', mediaId: 'old' },
+        { name: 'error', status: 'error', filePath: '/refs/old.png' },
+      ],
+    })))
+
+    const refs = window.__mcpGetReferences()
+    expect(refs[0]).toMatchObject({ name: 'hero', hasData: true, ready: true, mediaId: null })
+    expect(refs[0]).not.toHaveProperty('data')
+    expect(refs[1]).toMatchObject({ name: 'disk', hasData: false, ready: true, filePath: '/refs/disk.png' })
+    expect(refs[2]).toMatchObject({ name: 'pending', hasData: true, ready: false, mediaId: 'old' })
+    expect(refs[3]).toMatchObject({ name: 'error', hasData: false, ready: false, filePath: '/refs/old.png' })
+  })
+
+  it('__mcpExportCapcut forwards handleExportConfirm failure instead of reporting success', async () => {
+    const handleExportConfirm = vi.fn().mockResolvedValue({ success: false, error: 'toast.noGeneratedImages' })
+    renderHook(() => useMcpServer(makeProps({ handleExportConfirm })))
+
+    const result = await window.__mcpExportCapcut({ capcutProjectNumber: '/tmp/capcut-project' })
+
+    expect(result).toEqual({ success: false, error: 'toast.noGeneratedImages' })
+    expect(handleExportConfirm).toHaveBeenCalled()
   })
 
   it('__mcpGenerateRef forwards (index, false, normalized styleId) to handleGenerateRef', async () => {
