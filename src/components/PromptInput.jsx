@@ -116,8 +116,10 @@ function SyncPlugin({ value, onChange, references }) {
   useEffect(() => {
     const incoming = value || ''
     if (incoming === lastTextRef.current) return
-    lastTextRef.current = incoming
-    return deferEditorUpdate(editor, () => $applyTextToRoot(incoming, referencesRef.current))
+    return deferEditorUpdate(editor, () => {
+      $applyTextToRoot(incoming, referencesRef.current)
+      lastTextRef.current = incoming
+    })
   }, [editor, value])
 
   // references 변경 → 현재 텍스트의 @멘션을 chip 으로 재해석.

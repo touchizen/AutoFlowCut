@@ -14,7 +14,8 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, screen, cleanup, waitFor, act } from '@testing-library/react'
+import { StrictMode } from 'react'
+import { render, screen, cleanup, waitFor, act, fireEvent } from '@testing-library/react'
 
 vi.mock('../../src/hooks/useI18n', () => ({
   useI18n: () => ({ t: (k) => k, lang: 'ko', setLang: vi.fn() }),
@@ -76,6 +77,20 @@ describe('PromptInput (Lexical) smoke', () => {
     }
   })
 
+  it('hydrates initial value under React StrictMode after deferred updates', async () => {
+    render(
+      <StrictMode>
+        <PromptInput value={`line one\nline two`} onChange={vi.fn()} references={REFS} />
+      </StrictMode>
+    )
+
+    const editor = screen.getByTestId('prompt-textarea')
+    await waitFor(() => {
+      expect(editor.textContent).toContain('line one')
+      expect(editor.textContent).toContain('line two')
+    })
+  })
+
   it('shows placeholder when value is empty', () => {
     render(<PromptInput value="" onChange={vi.fn()} references={REFS} placeholder="type here" />)
     // RichTextPlugin renders placeholder only when editor is empty.
@@ -101,6 +116,51 @@ describe('PromptInput (Lexical) smoke', () => {
       return c
     })
     expect(chip.textContent).toContain('@Alice') // ref.name 의 case 보존
+  })
+
+  it('rehydrates plain @name into a chip when references load later', async () => {
+    const value = 'A wizard @alice walks'
+    const { rerender } = render(<PromptInput value={value} onChange={vi.fn()} references={[]} />)
+    const editor = screen.getByTestId('prompt-textarea')
+
+    await waitFor(() => {
+      expect(editor.textContent).toContain('@alice')
+    })
+    expect(document.querySelector('.mention-chip')).toBeNull()
+
+    rerender(<PromptInput value={value} onChange={vi.fn()} references={REFS} />)
+
+    const chip = await waitFor(() => {
+      const c = document.querySelector('.mention-chip')
+      expect(c).toBeTruthy()
+      return c
+    })
+    expect(chip.textContent).toContain('@Alice')
+  })
+
+  it('delays reference rehydrate while focused and applies it on blur', async () => {
+    const value = 'A wizard @alice walks'
+    const { rerender } = render(<PromptInput value={value} onChange={vi.fn()} references={[]} />)
+    const editor = screen.getByTestId('prompt-textarea')
+
+    await waitFor(() => {
+      expect(editor.textContent).toContain('@alice')
+    })
+    editor.focus()
+    expect(document.activeElement).toBe(editor)
+
+    rerender(<PromptInput value={value} onChange={vi.fn()} references={REFS} />)
+    await act(async () => {})
+    expect(document.querySelector('.mention-chip')).toBeNull()
+
+    fireEvent.blur(editor)
+
+    const chip = await waitFor(() => {
+      const c = document.querySelector('.mention-chip')
+      expect(c).toBeTruthy()
+      return c
+    })
+    expect(chip.textContent).toContain('@Alice')
   })
 
   it('leaves unknown @xxx as plain text (no chip)', async () => {

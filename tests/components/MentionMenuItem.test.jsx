@@ -20,6 +20,7 @@ describe('MentionMenuItem', () => {
           selected={false}
           item={{ value: 'Alice', data: { refId: 1, refType: 'character' } }}
           itemValue="Alice"
+          label="Alice label"
           refId={1}
           refType="character"
           role="option"
@@ -30,6 +31,7 @@ describe('MentionMenuItem', () => {
     const item = screen.getByRole('option')
     expect(item).not.toHaveAttribute('itemValue')
     expect(item).not.toHaveAttribute('itemvalue')
+    expect(item).not.toHaveAttribute('label')
     expect(item).not.toHaveAttribute('refId')
     expect(item).not.toHaveAttribute('refid')
     expect(item).not.toHaveAttribute('refType')
