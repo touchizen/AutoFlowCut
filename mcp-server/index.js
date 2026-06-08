@@ -23,7 +23,7 @@ import os from 'os';
 import { fileURLToPath } from 'url';
 import { appFetch } from './lib/appClient.js';
 import { parseCSV, loadCSV, escapeCSVField, saveCSV, isNewSceneCSVFormat, bundleSceneCSVRows } from './lib/csv.js';
-import { exportCapcutToolResponse } from './lib/toolResponses.js';
+import { handleExportCapcutTool } from './lib/toolResponses.js';
 
 // ── 상태 ──────────────────────────────────────────────────────
 
@@ -1364,9 +1364,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'export_capcut': {
-        const port = args.port || 3210;
-        const res = await appFetch(port, 'POST', '/api/export-capcut');
-        return exportCapcutToolResponse(res);
+        return handleExportCapcutTool(args, appFetch);
       }
 
       case 'app_notify_qa': {

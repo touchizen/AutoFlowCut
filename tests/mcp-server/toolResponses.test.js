@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { exportCapcutToolResponse } from '../../mcp-server/lib/toolResponses.js'
+import { describe, expect, it, vi } from 'vitest'
+import { exportCapcutToolResponse, handleExportCapcutTool } from '../../mcp-server/lib/toolResponses.js'
 
 describe('mcp-server toolResponses', () => {
   it('export_capcut propagates HTTP failure as MCP tool error', () => {
@@ -32,5 +32,18 @@ describe('mcp-server toolResponses', () => {
     expect(result.isError).toBeUndefined()
     expect(result.content[0].text).toContain('CapCut 내보내기 완료')
     expect(result.content[0].text).toContain('/tmp/capcut-project')
+  })
+
+  it('export_capcut handler fetches app endpoint and propagates failure', async () => {
+    const fetcher = vi.fn().mockResolvedValue({
+      status: 500,
+      data: { success: false, error: 'No generated images' },
+    })
+
+    const result = await handleExportCapcutTool({ port: 4321 }, fetcher)
+
+    expect(fetcher).toHaveBeenCalledWith(4321, 'POST', '/api/export-capcut')
+    expect(result.isError).toBe(true)
+    expect(result.content[0].text).toContain('No generated images')
   })
 })

@@ -20,3 +20,9 @@ export function exportCapcutToolResponse(res) {
     content: [{ type: 'text', text: `CapCut 내보내기 완료: ${JSON.stringify(res.data)}` }],
   }
 }
+
+export async function handleExportCapcutTool(args = {}, fetcher) {
+  const port = args.port || 3210
+  const res = await fetcher(port, 'POST', '/api/export-capcut')
+  return exportCapcutToolResponse(res)
+}
