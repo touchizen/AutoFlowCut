@@ -28,11 +28,11 @@ export const VIDEO_MODELS = [
 
 export const DEFAULT_IMAGE_MODEL_ID = 'gemini-3.1-flash-image'  // Nano Banana 2
 export const DEFAULT_VIDEO_MODEL_ID = 'veo-3.1-fast-generate-preview'
+// Veo 3.1 은 Gemini API(generativelanguage)에서 preview 로만 제공된다 (deprecated 아님).
+// GA(-001)는 Vertex AI 전용(다른 엔드포인트·인증)이라 BYOK 키 경로에선 호출 불가 → 제외.
 export const VIDEO_REFERENCE_IMAGE_MODEL_IDS = [
   'veo-3.1-fast-generate-preview',
   'veo-3.1-generate-preview',
-  'veo-3.1-fast-generate-001',
-  'veo-3.1-generate-001',
 ]
 export const VIDEO_REFERENCE_IMAGE_LIMIT = 3
 export const VIDEO_REFERENCE_IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp']

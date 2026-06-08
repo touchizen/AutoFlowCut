@@ -227,7 +227,7 @@ describe('useGenAPI — 비디오', () => {
     expect(window.electronAPI.genaiGenerateVideo).not.toHaveBeenCalled()
   })
 
-  it('generateVideoT2V: GA Veo 3.1 모델명도 referenceImages 를 IPC 로 전달', async () => {
+  it('generateVideoT2V: Vertex 전용 -001 모델명은 referenceImages 미지원으로 거부 (Gemini API 엔 GA 없음)', async () => {
     const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
     let r
     await act(async () => {
@@ -242,15 +242,9 @@ describe('useGenAPI — 비디오', () => {
       )
     })
 
-    expect(r.success).toBe(true)
-    expect(window.electronAPI.genaiGenerateVideo).toHaveBeenCalledWith({
-      prompt: 'hero walks',
-      referenceImages: [{ mimeType: 'image/png', data: 'REF' }],
-      aspectRatio: '16:9',
-      durationSeconds: 8,
-      model: 'veo-3.1-fast-generate-001',
-      resolution: '720p',
-    })
+    expect(r.success).toBe(false)
+    expect(r.error).toMatch(/Fast\/Quality/)
+    expect(window.electronAPI.genaiGenerateVideo).not.toHaveBeenCalled()
   })
 
   it('generateVideoT2V: 미지원 GIF reference MIME 은 IPC 호출 전에 실패', async () => {

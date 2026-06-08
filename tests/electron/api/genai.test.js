@@ -401,7 +401,7 @@ describe('genai — submitVideo', () => {
     expect(body.instances[0].referenceImages[0].image.bytesBase64Encoded).toBe('REF')
   })
 
-  it('GA Veo 3.1 모델명도 referenceImages 를 허용', async () => {
+  it('Vertex 전용 -001 모델명은 referenceImages 미지원으로 거부 (Gemini API 엔 GA 없음)', async () => {
     const f = mockFetchOnce(jsonRes({ name: 'op' }))
     const res = await submitVideo(
       {
@@ -413,8 +413,9 @@ describe('genai — submitVideo', () => {
       { fetchImpl: f }
     )
 
-    expect(res.success).toBe(true)
-    expect(f.mock.calls[0][0]).toBe(`${GENAI_BASE}/models/veo-3.1-fast-generate-001:predictLongRunning`)
+    expect(res.success).toBe(false)
+    expect(res.error).toMatch(/Fast\/Quality/)
+    expect(f).not.toHaveBeenCalled()
   })
 
   it('T2V referenceImages 는 최대 3개, referenceType 은 asset 으로 보낸다', async () => {

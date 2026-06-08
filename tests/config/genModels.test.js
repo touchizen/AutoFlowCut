@@ -73,8 +73,9 @@ describe('genModels — supportsVideoReferenceImages', () => {
   it('Veo reference images 는 Fast/Quality 에서만 허용하고 Lite 는 차단', () => {
     expect(supportsVideoReferenceImages('veo-3.1-fast-generate-preview')).toBe(true)
     expect(supportsVideoReferenceImages('veo-3.1-generate-preview')).toBe(true)
-    expect(supportsVideoReferenceImages('veo-3.1-fast-generate-001')).toBe(true)
-    expect(supportsVideoReferenceImages('veo-3.1-generate-001')).toBe(true)
+    // veo-3.1-*-001 (GA) 는 Vertex AI 전용 — generativelanguage(Gemini API)엔 없어 미지원.
+    expect(supportsVideoReferenceImages('veo-3.1-fast-generate-001')).toBe(false)
+    expect(supportsVideoReferenceImages('veo-3.1-generate-001')).toBe(false)
     expect(supportsVideoReferenceImages('veo-3.1-lite-generate-preview')).toBe(false)
     expect(supportsVideoReferenceImages(undefined)).toBe(false)
   })
