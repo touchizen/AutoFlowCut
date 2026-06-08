@@ -138,6 +138,43 @@ describe('PromptInput (Lexical) smoke', () => {
     expect(chip.textContent).toContain('@Alice')
   })
 
+  it('does not let stale reference rehydrate overwrite a new external value', async () => {
+    const oldRefs = [{ id: 1, name: 'Alice', type: 'character' }]
+    const newRefs = [{ id: 2, name: 'Bob', type: 'character' }]
+    const onChange = vi.fn()
+    const { rerender } = render(
+      <PromptInput value="Old scene @alice" onChange={onChange} references={oldRefs} />
+    )
+    const editor = screen.getByTestId('prompt-textarea')
+
+    await waitFor(() => {
+      expect(editor.textContent).toContain('Old scene')
+    })
+    onChange.mockClear()
+
+    const queued = []
+    const queueSpy = vi
+      .spyOn(globalThis, 'queueMicrotask')
+      .mockImplementation((callback) => queued.push(callback))
+
+    try {
+      rerender(<PromptInput value="New scene @bob" onChange={onChange} references={newRefs} />)
+
+      await act(async () => {
+        while (queued.length) queued.shift()()
+      })
+
+      await waitFor(() => {
+        expect(editor.textContent).toContain('New scene')
+        expect(editor.textContent).toContain('@Bob')
+        expect(editor.textContent).not.toContain('Old scene')
+      })
+      expect(onChange).not.toHaveBeenCalledWith(expect.stringContaining('Old scene'))
+    } finally {
+      queueSpy.mockRestore()
+    }
+  })
+
   it('delays reference rehydrate while focused and applies it on blur', async () => {
     const value = 'A wizard @alice walks'
     const { rerender } = render(<PromptInput value={value} onChange={vi.fn()} references={[]} />)

@@ -107,6 +107,7 @@ const MentionMenu = forwardRef(function MentionMenu({ loading, ...rest }, ref) {
 function SyncPlugin({ value, onChange, references }) {
   const [editor] = useLexicalComposerContext()
   const lastTextRef = useRef('')
+  const pendingValueTextRef = useRef(null)
   const referencesRef = useRef(references)
   useEffect(() => {
     referencesRef.current = references
@@ -116,10 +117,20 @@ function SyncPlugin({ value, onChange, references }) {
   useEffect(() => {
     const incoming = value || ''
     if (incoming === lastTextRef.current) return
-    return deferEditorUpdate(editor, () => {
+    pendingValueTextRef.current = incoming
+    const cancel = deferEditorUpdate(editor, () => {
       $applyTextToRoot(incoming, referencesRef.current)
       lastTextRef.current = incoming
+      if (pendingValueTextRef.current === incoming) {
+        pendingValueTextRef.current = null
+      }
     })
+    return () => {
+      cancel()
+      if (pendingValueTextRef.current === incoming) {
+        pendingValueTextRef.current = null
+      }
+    }
   }, [editor, value])
 
   // references 변경 → 현재 텍스트의 @멘션을 chip 으로 재해석.
@@ -134,7 +145,7 @@ function SyncPlugin({ value, onChange, references }) {
   //     사용자가 입력창에 머무는 동안 chip 복원 안 되는 회귀 버그.)
   const pendingRehydrateRef = useRef(false)
   useEffect(() => {
-    const currentText = lastTextRef.current
+    const currentText = pendingValueTextRef.current ?? lastTextRef.current
     if (!currentText.includes('@')) return
     const rootEl = editor.getRootElement?.()
     const focused = rootEl && document.activeElement === rootEl
@@ -143,7 +154,11 @@ function SyncPlugin({ value, onChange, references }) {
       return
     }
     pendingRehydrateRef.current = false
-    return deferEditorUpdate(editor, () => $applyTextToRoot(currentText, references))
+    return deferEditorUpdate(editor, () => {
+      const latestText = pendingValueTextRef.current ?? lastTextRef.current
+      if (latestText !== currentText) return
+      $applyTextToRoot(currentText, references)
+    })
   }, [editor, references])
 
   // blur 시점 rehydrate — 위 effect 가 focus 중이라 미뤘던 재해석을 처리.
@@ -153,7 +168,7 @@ function SyncPlugin({ value, onChange, references }) {
     if (!rootEl) return
     const handler = () => {
       if (!pendingRehydrateRef.current) return
-      const currentText = lastTextRef.current
+      const currentText = pendingValueTextRef.current ?? lastTextRef.current
       if (!currentText.includes('@')) {
         pendingRehydrateRef.current = false
         return
