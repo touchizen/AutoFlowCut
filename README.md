@@ -262,12 +262,12 @@ Cloud Functions are deployed with `_test` / `_prod` suffixes.
 
 ## How to Use
 
-1. Launch the app and add your Google API key in **Settings**.
+1. Sign in to AutoFlowCut, then add your Google API key in **Settings**.
 2. Enter prompts (type directly, or import from TXT / CSV / SRT).
 3. Configure reference images (character, background, style tags).
-4. Click **Generate Images** to start batch generation.
+4. Click **Generate Images** to start batch generation with your Google API key.
 5. (Optional) **Generate videos** via T2V or I2V.
-6. Click **Export** — the CapCut project is written to disk and CapCut launches automatically.
+6. Click **Export** — export requires an active AutoFlowCut trial or subscription, then writes the CapCut project to disk and launches CapCut automatically.
 
 ## MCP Server
 
@@ -294,9 +294,14 @@ When the HTTP server is enabled in settings (default port 3210):
 
 ```
 GET  /api/current-project  — Current project state
-POST /api/scenes           — Query scenes
-POST /api/references       — Query references
-POST /api/generate         — Trigger image generation
+GET  /api/scenes           — Query scenes
+GET  /api/references       — Query references
+POST /api/update           — Update scenes or references
+POST /api/generate-scene   — Trigger one scene image generation
+POST /api/generate-reference — Trigger one reference image generation
+POST /api/start-scene-batch — Start scene batch generation
+POST /api/start-ref-batch  — Start reference batch generation
+GET  /api/batch-status     — Query batch progress
 ```
 
 ## Download

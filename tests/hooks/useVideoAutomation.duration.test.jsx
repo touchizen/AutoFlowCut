@@ -8,6 +8,7 @@
 import { renderHook, act } from '@testing-library/react'
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { useVideoAutomation } from '../../src/hooks/useVideoAutomation'
+import { prepareVideoTextStartScenes } from '../../src/services/videoTextStart'
 import { __resetQuotaStopForTests } from '../../src/utils/quotaStop'
 
 vi.mock('../../src/hooks/useFileSystem', () => ({
@@ -105,6 +106,32 @@ describe('useVideoAutomation — 자동 duration + resolution 제출 전달', ()
     const args = generateVideoT2V.mock.calls[0]
     expect(args[3]).toBe(8)
     expect(args[6]).toEqual(referenceImages)
+  })
+
+  it('video-text start prep keeps cleaned @mention prompt and refs through T2V submit', async () => {
+    const { hook, generateVideoT2V } = makeHook()
+    const heroRef = {
+      id: 'ref_hero',
+      name: 'hero',
+      category: 'character',
+      data: 'data:image/png;base64,REF',
+      filePath: null,
+    }
+    const { scenes } = prepareVideoTextStartScenes({
+      videoScenes: [{ id: 'vscene_v1', prompt: 'A wizard @hero walks', targetDuration: 4 }],
+      references: [heroRef],
+      effectiveStyleId: null,
+      warn: vi.fn(),
+    })
+
+    await runT2V(hook, scenes[0], { videoResolution: '720p' })
+
+    const args = generateVideoT2V.mock.calls[0]
+    expect(args[0]).toBe('A wizard hero walks')
+    expect(args[3]).toBe(8)
+    expect(args[6]).toEqual([
+      expect.objectContaining({ name: 'hero', data: 'data:image/png;base64,REF' }),
+    ])
   })
 
   // 회귀(리뷰 P2): 해상도 강등은 start() 에서 한 번 일어나야 duration/메타/생성이 일관.

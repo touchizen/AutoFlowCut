@@ -14,7 +14,7 @@ export const PRICING_URL = 'https://ai.google.dev/gemini-api/docs/pricing'
 // cost 는 가격만(ASCII), 단위(장/sec 등)는 unit 필드 → ModelSelector 가 locale 로 표시.
 export const IMAGE_MODELS = [
   { id: 'gemini-2.5-flash-image', label: 'Nano Banana', cost: '$0.039', unit: 'image', descKey: 'settings.modelImgNb', url: IMAGE_DOCS_URL },
-  { id: 'gemini-3.1-flash-image', label: 'Nano Banana 2', cost: '$0.045~', unit: 'image', descKey: 'settings.modelImgNb2', url: IMAGE_DOCS_URL },
+  { id: 'gemini-3.1-flash-image', label: 'Nano Banana 2', cost: '$0.067~', unit: 'image', descKey: 'settings.modelImgNb2', url: IMAGE_DOCS_URL },
   { id: 'gemini-3-pro-image', label: 'Nano Banana Pro', cost: '$0.134~', unit: 'image', descKey: 'settings.modelImgNbPro', url: IMAGE_DOCS_URL },
 ]
 

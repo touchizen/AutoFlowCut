@@ -152,7 +152,7 @@ describe('genai-api — 비디오 생성/폴링/다운로드', () => {
     expect(res.success).toBe(true)
     const body = JSON.parse(fetchImpl.mock.calls[0][1].body)
     expect(body.instances[0].referenceImages).toEqual([
-      { image: { bytesBase64Encoded: 'REF', mimeType: 'image/png' }, referenceType: 'asset' },
+      { image: { inlineData: { mimeType: 'image/png', data: 'REF' } }, referenceType: 'asset' },
     ])
   })
 

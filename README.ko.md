@@ -262,12 +262,12 @@ Cloud Functions는 `_test` / `_prod` 접미사로 분리 배포되어 있습니�
 
 ## 사용 방법
 
-1. 앱 실행 후 **Settings**에서 Google API 키 입력
+1. AutoFlowCut에 로그인한 뒤 **Settings**에서 Google API 키 입력
 2. 프롬프트 입력 (텍스트 / CSV / SRT 가져오기)
 3. 레퍼런스 이미지 설정 (캐릭터, 배경, 스타일 태그)
-4. **이미지 생성** → 배치 생성 시작
+4. **이미지 생성** → 내 Google API 키로 배치 생성 시작
 5. (선택) **비디오 생성** → T2V 또는 I2V
-6. **Export** → CapCut 프로젝트 폴더에 자동 저장 → CapCut 실행
+6. **Export** → AutoFlowCut 체험판/구독 상태 확인 후 CapCut 프로젝트 폴더에 자동 저장 → CapCut 실행
 
 ## MCP 서버
 
@@ -294,9 +294,14 @@ Claude Code에서 AutoFlowCut의 씬/레퍼런스/프롬프트를 직접 편집�
 
 ```
 GET  /api/current-project  — 현재 프로젝트 상태
-POST /api/scenes           — 씬 조회
-POST /api/references       — 레퍼런스 조회
-POST /api/generate         — 이미지 생성 트리거
+GET  /api/scenes           — 씬 조회
+GET  /api/references       — 레퍼런스 조회
+POST /api/update           — 씬/레퍼런스 수정
+POST /api/generate-scene   — 개별 씬 이미지 생성
+POST /api/generate-reference — 개별 레퍼런스 이미지 생성
+POST /api/start-scene-batch — 씬 일괄 생성 시작
+POST /api/start-ref-batch  — 레퍼런스 일괄 생성 시작
+GET  /api/batch-status     — 배치 진행 상태 조회
 ```
 
 ## 다운로드

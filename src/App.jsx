@@ -31,6 +31,7 @@ import { isStyleReference, previewStyleMatching } from './services/styleService'
 import { isSceneGenerationDone } from './services/generationStatus'
 import { computeGuardAvailable } from './services/startGuard'
 import { createStyleResolver } from './services/styleResolver'
+import { prepareVideoTextStartScenes } from './services/videoTextStart'
 import { filterPendingScenes } from './utils/sceneFilters'
 import { videoClearPatch, buildFramePairVideoPatch, buildVideoRestorePatch, resolveI2vRestoreSceneId } from './utils/sceneMedia'
 import { detectFileType, detectCSVType, parseCSVToScenes, parseSRTToScenes, csvPromptToVideoT2V } from './utils/parsers'
@@ -41,7 +42,7 @@ import { collectTagErrors } from './utils/tagMatch'
 import { getFramePairEffectivePrompt } from './utils/framePairPrompt'
 import { frameImageFor } from './utils/framePairImages'
 import { saveGalleryFrame } from './utils/galleryUpload'
-import { buildVideoPromptScenes, isUsableVideoReference, VIDEO_REFERENCE_LIMIT } from './utils/videoPromptReferences'
+import { isUsableVideoReference } from './utils/videoPromptReferences'
 import { toast } from './components/Toast'
 
 // Components
@@ -946,18 +947,15 @@ function App() {
         // override → effective는 styleResolver.resolveEffectiveStyleId가 탭별로 처리.
         // video-text는 null override일 때 findAutoPromptStyle 결과로 변환됨 (resolver 내부 로직).
         const effectiveStyleId = styleResolver.resolveEffectiveStyleId(overrideStyleId)
-        const preparedVideoScenes = buildVideoPromptScenes(selectedVideoScenes, scenesHook.references || [], effectiveStyleId, scenesHook.srtTrack)
-        let didWarnReferenceLimit = false
-        const styledVideoScenes = preparedVideoScenes.map(({ scene, missing, truncated }) => {
-          if (missing.length > 0) console.warn('[VideoText]', scene.id, 'unknown @mentions:', missing.join(', '))
-          if (truncated > 0) {
-            console.warn('[VideoText]', scene.id, `Veo supports up to ${VIDEO_REFERENCE_LIMIT} reference images; using the first ${VIDEO_REFERENCE_LIMIT}.`)
-            if (!didWarnReferenceLimit) {
-              toast.warning(t('videoAutomation.referenceLimitWarning', { limit: VIDEO_REFERENCE_LIMIT }))
-              didWarnReferenceLimit = true
-            }
-          }
-          return scene
+        const { scenes: styledVideoScenes } = prepareVideoTextStartScenes({
+          videoScenes: selectedVideoScenes,
+          references: scenesHook.references || [],
+          effectiveStyleId,
+          srtTrack: scenesHook.srtTrack,
+          warn: console.warn,
+          onReferenceLimitWarning: (limit) => {
+            toast.warning(t('videoAutomation.referenceLimitWarning', { limit }))
+          },
         })
 
         // seed: 이미지와 동일한 정책 — locked + 숫자일 때만 고정 seed

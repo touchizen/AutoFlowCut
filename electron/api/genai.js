@@ -84,11 +84,11 @@ function buildReferenceParts(referenceImages = []) {
 }
 
 /**
- * Veo 3.1 video reference image payload. predictLongRunning 의 비디오 이미지 입력은
- * I2V/F2V 와 같은 `{ bytesBase64Encoded, mimeType }` 형태로 보낸다.
+ * Veo 3.1 video reference image payload. referenceImages 는 REST 에서
+ * `{ image: { inlineData: { mimeType, data } }, referenceType }` 형태로 보낸다.
  * 모델 제약상 최대 VIDEO_REFERENCE_IMAGE_LIMIT개만 전달한다.
  * @param {Array<{mimeType:string, data:string}>} referenceImages
- * @returns {Array<{image:{bytesBase64Encoded:string,mimeType:string},referenceType:string}>}
+ * @returns {Array<{image:{inlineData:{mimeType:string,data:string}},referenceType:string}>}
  */
 function buildVideoReferenceImages(referenceImages = []) {
   return (referenceImages || [])
@@ -96,8 +96,10 @@ function buildVideoReferenceImages(referenceImages = []) {
     .slice(0, VIDEO_REFERENCE_IMAGE_LIMIT)
     .map((ref) => ({
       image: {
-        bytesBase64Encoded: ref.data,
-        mimeType: String(ref.mimeType).toLowerCase(),
+        inlineData: {
+          mimeType: String(ref.mimeType).toLowerCase(),
+          data: ref.data,
+        },
       },
       referenceType: 'asset',
     }))

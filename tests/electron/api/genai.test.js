@@ -377,8 +377,8 @@ describe('genai — submitVideo', () => {
     const body = JSON.parse(f.mock.calls[0][1].body)
     expect(f.mock.calls[0][0]).toBe(`${GENAI_BASE}/models/veo-3.1-generate-preview:predictLongRunning`)
     expect(body.instances[0].referenceImages).toEqual([
-      { image: { bytesBase64Encoded: 'REF1', mimeType: 'image/png' }, referenceType: 'asset' },
-      { image: { bytesBase64Encoded: 'REF2', mimeType: 'image/jpeg' }, referenceType: 'asset' },
+      { image: { inlineData: { mimeType: 'image/png', data: 'REF1' } }, referenceType: 'asset' },
+      { image: { inlineData: { mimeType: 'image/jpeg', data: 'REF2' } }, referenceType: 'asset' },
     ])
     expect(body.parameters.durationSeconds).toBe(8)
   })
@@ -398,7 +398,7 @@ describe('genai — submitVideo', () => {
     expect(res.success).toBe(true)
     expect(f.mock.calls[0][0]).toBe(`${GENAI_BASE}/models/veo-3.1-fast-generate-preview:predictLongRunning`)
     const body = JSON.parse(f.mock.calls[0][1].body)
-    expect(body.instances[0].referenceImages[0].image.bytesBase64Encoded).toBe('REF')
+    expect(body.instances[0].referenceImages[0].image.inlineData.data).toBe('REF')
   })
 
   it('Vertex 전용 -001 모델명은 preview 로 치유 후 referenceImages 를 허용', async () => {
@@ -416,7 +416,7 @@ describe('genai — submitVideo', () => {
     expect(res.success).toBe(true)
     expect(f.mock.calls[0][0]).toBe(`${GENAI_BASE}/models/veo-3.1-fast-generate-preview:predictLongRunning`)
     const body = JSON.parse(f.mock.calls[0][1].body)
-    expect(body.instances[0].referenceImages[0].image.bytesBase64Encoded).toBe('REF')
+    expect(body.instances[0].referenceImages[0].image.inlineData.data).toBe('REF')
   })
 
   it('T2V referenceImages 는 최대 3개, referenceType 은 asset 으로 보낸다', async () => {
@@ -438,7 +438,7 @@ describe('genai — submitVideo', () => {
     const refs = JSON.parse(f.mock.calls[0][1].body).instances[0].referenceImages
     expect(refs).toHaveLength(VIDEO_REFERENCE_IMAGE_LIMIT)
     expect(refs.map(r => r.referenceType)).toEqual(['asset', 'asset', 'asset'])
-    expect(refs.map(r => r.image.bytesBase64Encoded)).toEqual(['REF1', 'REF2', 'REF3'])
+    expect(refs.map(r => r.image.inlineData.data)).toEqual(['REF1', 'REF2', 'REF3'])
   })
 
   it('T2V referenceImages 는 4번째 이후 invalid MIME/type 을 검증하지 않는다', async () => {
@@ -459,7 +459,7 @@ describe('genai — submitVideo', () => {
 
     expect(res.success).toBe(true)
     const refs = JSON.parse(f.mock.calls[0][1].body).instances[0].referenceImages
-    expect(refs.map(r => r.image.bytesBase64Encoded)).toEqual(['REF1', 'REF2', 'REF3'])
+    expect(refs.map(r => r.image.inlineData.data)).toEqual(['REF1', 'REF2', 'REF3'])
   })
 
   it('T2V referenceImages 는 style/mask 타입이면 asset 으로 위장하지 않고 실패', async () => {
@@ -506,7 +506,7 @@ describe('genai — submitVideo', () => {
     )
 
     const refs = JSON.parse(f.mock.calls[0][1].body).instances[0].referenceImages
-    expect(refs[0].image).toEqual({ bytesBase64Encoded: 'WEBPREF', mimeType: 'image/webp' })
+    expect(refs[0].image).toEqual({ inlineData: { mimeType: 'image/webp', data: 'WEBPREF' } })
   })
 
   it('T2V referenceImages 는 미지원 GIF MIME 이면 API 호출 전에 실패', async () => {
