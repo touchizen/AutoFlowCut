@@ -10,6 +10,7 @@ import { toDataURL } from '../utils/urls'
 import { tryUpscaleImage } from '../utils/imageProcessing'
 import { toast } from '../components/Toast'
 import { createStyleResolver } from '../services/styleResolver'
+import { isStyleReference } from '../services/styleService'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 import { clampInt } from '../utils/clampInt'
 
@@ -60,18 +61,26 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     const styleRefImages = []
     let styledPrompt = ref.prompt
 
-    if (ref.type === 'style' || !effectiveStyleId) {
+    if (isStyleReference(ref) || !effectiveStyleId) {
       return { styledPrompt, styleRefImages }
     }
 
     if (effectiveStyleId.startsWith('ref:')) {
       const refId = effectiveStyleId.replace('ref:', '')
-      const styleRef = referencesRef.current.find(r => r.id == refId && r.type === 'style')
+      const styleRef = referencesRef.current.find(r => r.id == refId && isStyleReference(r))
       if (styleRef) {
-        // 공식 API 모드는 name 으로 base64 를 해석하므로 mediaId 또는 name 중
-        // 하나만 있어도 image ref 로 주입하고 name 을 보존한다.
-        if (styleRef.mediaId || styleRef.name) {
-          styleRefImages.push({ category: styleRef.category, mediaId: styleRef.mediaId || null, caption: styleRef.caption || '', name: styleRef.name })
+        // 공식 API 모드는 data 우선, name+filePath 디스크 fallback 으로 해석한다.
+        // memory-only / file-backed style image 모두 payload 를 보존해야 한다.
+        if (styleRef.mediaId || styleRef.name || styleRef.data || styleRef.filePath) {
+          styleRefImages.push({
+            id: styleRef.id,
+            category: styleRef.category,
+            mediaId: styleRef.mediaId || null,
+            caption: styleRef.caption || '',
+            name: styleRef.name,
+            data: styleRef.data || null,
+            filePath: styleRef.filePath || null,
+          })
         }
         if (styleRef.prompt) {
           styledPrompt = `${ref.prompt}, ${styleRef.prompt}`
@@ -98,7 +107,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
 
     // 업스케일 (style 카드 제외)
     const origMediaId = firstImage.mediaId || null
-    if (ref.type !== 'style') {
+    if (!isStyleReference(ref)) {
       const upscaled = await tryUpscaleImage(genAPI, origMediaId, settings.imageUpscale || 'off', logPrefix)
       if (upscaled) imageData = upscaled
     }
@@ -155,7 +164,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     // R27 review fix: generatedAt 세팅 — references/{name}.png 가 같은 경로를
     // 덮어쓰므로 resolveImageSrc 의 ?v=<version> 캐시 키가 갱신되어야 Chromium
     // 이 이전 디코딩 캐시를 버리고 새 이미지 표시.
-    const donePatch = { data: savedDataUrl, filePath, dataStorage: filePath ? 'file' : 'base64', mediaId, caption, status: 'done', errorMessage: null, generatedAt: Date.now() }
+    const donePatch = { name: ref.name || `ref_${index + 1}`, data: savedDataUrl, filePath, dataStorage: filePath ? 'file' : 'base64', mediaId, caption, status: 'done', errorMessage: null, generatedAt: Date.now() }
     setReferences(prev => prev.map((r, i) => i === index ? { ...r, ...donePatch } : r))
     // 동기 갱신: 같은 batch flow 의 다음 phase(_prepareStyleRefs)가 React 재렌더 전에
     // referencesRef.current 를 읽어도 방금 만든 style 카드의 mediaId 를 보장받게 한다.
@@ -167,8 +176,8 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
   // ─── 공통: effectiveStyleId 결정 ───
   // 우선순위: explicit override → UI 선택값 → 자동 fallback (첫 사용 가능한 style 카드).
   // 자동 탐색은 styleResolver.resolveEffectiveStyleIdForRef 단일 출처 사용 —
-  // 내부적으로 styleService.findAutoStyle 호출 (prompt-only / mediaId-only 둘 다 잡힘,
-  // production applyStyle 동작과 일치).
+  // 내부적으로 styleService.findAutoStyle 호출 (prompt 또는 GenAI에서 읽을 수 있는
+  // data/name+filePath 스타일 이미지가 잡힘, production applyStyle 동작과 일치).
   const _resolveEffectiveStyleId = (overrideStyleId) => {
     // ref 도메인 — createStyleResolver의 ref-aware fallback 사용
     // (activeTab 무관 — ref 생성은 항상 동일 fallback chain)
@@ -270,20 +279,20 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
   // AutoFlow 패턴: 제출 → 7~15초 대기 → 다음 제출, 결과는 별도 수집
   //
   // force=true (MCP 전용): 이미 완료된(image/filePath/status=done) ref도 재생성 대상에 포함.
-  //                       prompt 있고 type !== 'style'인 모든 ref가 대상.
+  //                       prompt 있고 style 이 아닌 모든 ref가 대상.
   // force=false (기본): 기존 동작 — image 없고 pending/error/idle 상태인 ref만.
   const _executeBatchRefs = async (overrideStyleId = null, force = false) => {
     // 타입 predicate 로 인덱스 선택 — style / non-style 을 분리 추출.
-    const pickIndices = (typeMatches) => referencesRef.current
+    const pickIndices = (refMatches) => referencesRef.current
       .map((ref, index) => {
-        if (!ref.prompt || !typeMatches(ref.type)) return -1
+        if (!ref.prompt || !refMatches(ref)) return -1
         if (force) return index
         return (!ref.data && !ref.filePath && ref.status !== 'done') ? index : -1
       })
       .filter(i => i !== -1)
 
-    const styleIndices = pickIndices(ty => ty === 'style')
-    const nonStyleIndices = pickIndices(ty => ty !== 'style')
+    const styleIndices = pickIndices(isStyleReference)
+    const nonStyleIndices = pickIndices(ref => !isStyleReference(ref))
     const allIndices = [...styleIndices, ...nonStyleIndices]
 
     if (allIndices.length === 0) {

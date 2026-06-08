@@ -19,6 +19,13 @@
  * fetch / sleep 은 주입 가능 → 실제 네트워크·키·타이머 없이 테스트.
  */
 import { formatGoogleApiError } from '../ipc/googleApiError.js'
+import { normalizeVideoModel } from '../../src/utils/videoModels.js'
+import {
+  VIDEO_REFERENCE_IMAGE_MODEL_IDS,
+  VIDEO_REFERENCE_IMAGE_LIMIT,
+  coerceResolution,
+  supportsVideoReferenceMimeType,
+} from '../../src/config/genModels.js'
 
 export const GENAI_BASE = 'https://generativelanguage.googleapis.com/v1beta'
 // Nano Banana 2. renderer 의 DEFAULT_IMAGE_MODEL_ID(src/config/genModels.js)와 동기화 유지
@@ -27,12 +34,27 @@ export const DEFAULT_IMAGE_MODEL = 'gemini-3.1-flash-image'
 export const DEFAULT_VIDEO_MODEL = 'veo-3.1-fast-generate-preview'
 export const DEFAULT_ASPECT_RATIO = '16:9'
 export const DEFAULT_VIDEO_DURATION = 8
+export const VIDEO_REFERENCE_IMAGE_MODELS = new Set([
+  ...VIDEO_REFERENCE_IMAGE_MODEL_IDS,
+])
 
 // 비디오 long-running operation 폴링 기본값 (단일 호출 기준은 아님 — submit/poll 분리)
 export const VIDEO_POLL_INTERVAL_MS = 10000
 export const VIDEO_POLL_MAX_ATTEMPTS = 30
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+function supportsVideoReferenceImages(model) {
+  return VIDEO_REFERENCE_IMAGE_MODELS.has(model)
+}
+
+function isInvalidVideoAssetReference(ref) {
+  if (!ref) return false
+  const referenceType = String(ref.referenceType || 'asset').toLowerCase()
+  const type = String(ref.type || '').toLowerCase()
+  const category = String(ref.category || '').toLowerCase()
+  return referenceType !== 'asset' || type === 'style' || category === 'style' || category === 'media_category_style'
+}
 
 /**
  * fetch 응답을 안전하게 JSON 으로 파싱. 비-JSON 응답(HTML 에러 페이지 등)도 죽지 않게.
@@ -58,6 +80,26 @@ function buildReferenceParts(referenceImages = []) {
         mimeType: ref.mimeType || 'image/jpeg',
         data: ref.data,
       },
+    }))
+}
+
+/**
+ * Veo 3.1 video reference image payload. predictLongRunning 의 비디오 이미지 입력은
+ * I2V/F2V 와 같은 `{ bytesBase64Encoded, mimeType }` 형태로 보낸다.
+ * 모델 제약상 최대 VIDEO_REFERENCE_IMAGE_LIMIT개만 전달한다.
+ * @param {Array<{mimeType:string, data:string}>} referenceImages
+ * @returns {Array<{image:{bytesBase64Encoded:string,mimeType:string},referenceType:string}>}
+ */
+function buildVideoReferenceImages(referenceImages = []) {
+  return (referenceImages || [])
+    .filter((ref) => ref && ref.data)
+    .slice(0, VIDEO_REFERENCE_IMAGE_LIMIT)
+    .map((ref) => ({
+      image: {
+        bytesBase64Encoded: ref.data,
+        mimeType: String(ref.mimeType).toLowerCase(),
+      },
+      referenceType: 'asset',
     }))
 }
 
@@ -232,6 +274,7 @@ export async function generateImage(
  * @param {string} params.prompt
  * @param {{mimeType:string,data:string}} [params.image] - I2V 시작 프레임 (inline base64). 없으면 T2V.
  * @param {{mimeType:string,data:string}} [params.endImage] - F2V 끝 프레임 (lastFrame). image 와 함께 주면 첫/끝 보간.
+ * @param {Array<{mimeType:string,data:string}>} [params.referenceImages] - Veo 3.1 T2V reference images, max 3.
  * @param {string} [params.aspectRatio]
  * @param {number} [params.durationSeconds]
  * @param {string} [params.model]
@@ -250,6 +293,7 @@ export async function submitVideo(
     prompt,
     image = null,
     endImage = null,
+    referenceImages = [],
     aspectRatio = DEFAULT_ASPECT_RATIO,
     durationSeconds = DEFAULT_VIDEO_DURATION,
     model = DEFAULT_VIDEO_MODEL,
@@ -260,22 +304,58 @@ export async function submitVideo(
 ) {
   if (!apiKey) return { success: false, error: 'No API key' }
 
+  const effectiveModel = normalizeVideoModel(model) || DEFAULT_VIDEO_MODEL
   const instance = { prompt: prompt || '' }
+  const invalidVideoReferenceType = (referenceImages || [])
+    .filter((ref) => ref && ref.data)
+    .find(isInvalidVideoAssetReference)
+  if (invalidVideoReferenceType) {
+    return {
+      success: false,
+      error: 'Veo referenceImages only support asset references.',
+    }
+  }
+  const invalidVideoReference = (referenceImages || [])
+    .filter((ref) => ref && ref.data)
+    .find((ref) => !supportsVideoReferenceMimeType(ref.mimeType))
+  if (invalidVideoReference) {
+    return {
+      success: false,
+      error: 'Veo reference images support PNG, JPEG, or WebP.',
+    }
+  }
+  const videoReferenceImages = buildVideoReferenceImages(referenceImages)
+  const hasFrameImage = !!((image && image.data) || (endImage && endImage.data))
+  if (videoReferenceImages.length > 0 && !supportsVideoReferenceImages(effectiveModel)) {
+    return {
+      success: false,
+      error: 'Veo reference images require Veo 3.1 Fast/Quality.',
+    }
+  }
+  if (videoReferenceImages.length > 0 && hasFrameImage) {
+    return {
+      success: false,
+      error: 'Veo referenceImages cannot be combined with image/lastFrame.',
+    }
+  }
   if (image && image.data) {
     instance.image = { bytesBase64Encoded: image.data, mimeType: image.mimeType || 'image/png' }
   }
   if (endImage && endImage.data) {
     instance.lastFrame = { bytesBase64Encoded: endImage.data, mimeType: endImage.mimeType || 'image/png' }
   }
+  if (videoReferenceImages.length > 0) {
+    instance.referenceImages = videoReferenceImages
+  }
 
   const parameters = { aspectRatio: aspectRatio || DEFAULT_ASPECT_RATIO }
 
   // 해상도: 지정 시 전달 (720p/1080p/4k). 미지정이면 API 기본(720p).
-  const res = resolution || null
+  const res = coerceResolution(effectiveModel, resolution) || null
   if (res) parameters.resolution = res
 
-  // 길이: {4,6,8} 로 보정. reference 이미지(I2V/F2V) 또는 1080p/4k 면 8초 강제(공식 Veo 제약).
-  const hasImage = !!((image && image.data) || (endImage && endImage.data))
+  // 길이: {4,6,8} 로 보정. 이미지 기반 입력(I2V/F2V/referenceImages) 또는 1080p/4k 면 8초 강제(공식 Veo 제약).
+  const hasImage = !!(hasFrameImage || videoReferenceImages.length > 0)
   let dur = Math.round(Number(durationSeconds))
   if (!Number.isFinite(dur) || dur <= 0) dur = DEFAULT_VIDEO_DURATION
   if (dur <= 4) dur = 4
@@ -291,7 +371,7 @@ export async function submitVideo(
 
   try {
     const { data } = await genaiFetch(
-      `${GENAI_BASE}/models/${model}:predictLongRunning`,
+      `${GENAI_BASE}/models/${effectiveModel}:predictLongRunning`,
       { apiKey, method: 'POST', body },
       deps
     )

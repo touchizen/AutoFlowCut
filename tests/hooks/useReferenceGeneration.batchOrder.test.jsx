@@ -154,9 +154,52 @@ describe('useReferenceGeneration — batch order (style first)', () => {
     expect(submitCalls.length).toBe(2)
     const charSubmit = submitCalls.find(c => c.prompt.includes('a hero'))
     expect(charSubmit).toBeTruthy()
-    // 2번째 인자(styleRefImages)에 방금 만든 style 카드가 name 으로 실려야 함
+    // 2번째 인자(styleRefImages)에 방금 만든 style 카드가 name + data 로 실려야 함
     expect(Array.isArray(charSubmit.styleRefImages)).toBe(true)
-    expect(charSubmit.styleRefImages.some(img => img.name === 'mystyle')).toBe(true)
+    expect(charSubmit.styleRefImages.some(img => img.name === 'mystyle' && img.data === 'img')).toBe(true)
+  })
+
+  it('non-style phase submits data-only auto style card WITH inline data payload', async () => {
+    const { result, submitCalls } = setupHook({
+      references: [
+        { id: 1, type: 'style', data: 'data:image/png;base64,STYLE_DATA', status: 'done' },
+        { id: 2, type: 'character', prompt: 'a hero', status: 'pending' }
+      ]
+    })
+
+    await runBatch(result)
+
+    const charSubmit = submitCalls.find(c => c.prompt.includes('a hero'))
+    expect(charSubmit).toBeTruthy()
+    expect(charSubmit.styleRefImages).toEqual([
+      expect.objectContaining({
+        id: 1,
+        data: 'data:image/png;base64,STYLE_DATA',
+        filePath: null,
+      })
+    ])
+  })
+
+  it('non-style phase submits file-backed auto style card WITH filePath payload', async () => {
+    const { result, submitCalls } = setupHook({
+      references: [
+        { id: 1, type: 'style', name: 'saved-style', filePath: '/refs/saved-style.png', status: 'done' },
+        { id: 2, type: 'character', prompt: 'a hero', status: 'pending' }
+      ]
+    })
+
+    await runBatch(result)
+
+    const charSubmit = submitCalls.find(c => c.prompt.includes('a hero'))
+    expect(charSubmit).toBeTruthy()
+    expect(charSubmit.styleRefImages).toEqual([
+      expect.objectContaining({
+        id: 1,
+        name: 'saved-style',
+        data: null,
+        filePath: '/refs/saved-style.png',
+      })
+    ])
   })
 
   it('with no style ref, still generates the non-style refs (behaves as before)', async () => {

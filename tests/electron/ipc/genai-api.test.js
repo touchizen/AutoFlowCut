@@ -139,6 +139,23 @@ describe('genai-api — 비디오 생성/폴링/다운로드', () => {
     expect(res).toEqual({ success: true, generationId: 'operations/v1', operationName: 'operations/v1' })
   })
 
+  it('generate-video: referenceImages 를 submitVideo REST payload 까지 전달', async () => {
+    const ipc = makeIpcMain()
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ name: 'operations/v1' }))
+    registerGenaiIPC(ipc, { keyStore: makeKeyStore(), fetchImpl })
+    const res = await ipc.invoke('genai:generate-video', {
+      prompt: 'hero walks',
+      model: 'veo-3.1-fast-generate-preview',
+      referenceImages: [{ mimeType: 'image/png', data: 'REF' }],
+    })
+
+    expect(res.success).toBe(true)
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body)
+    expect(body.instances[0].referenceImages).toEqual([
+      { image: { bytesBase64Encoded: 'REF', mimeType: 'image/png' }, referenceType: 'asset' },
+    ])
+  })
+
   it('check-video-status → statuses[] (pending/completed/failed) 매핑', async () => {
     const ipc = makeIpcMain()
     const fetchImpl = vi.fn()

@@ -25,21 +25,45 @@ export function normalizeStyleId(styleId) {
   return `preset:${s}`
 }
 
+export function isStyleReference(ref) {
+  const type = String(ref?.type || '').toLowerCase()
+  const category = String(ref?.category || '').toLowerCase()
+  const referenceType = String(ref?.referenceType || '').toLowerCase()
+  return referenceType === 'style' || type === 'style' || category === 'style' || category === 'media_category_style'
+}
+
+function hasGenAIStyleImage(ref) {
+  return !!(ref?.data || ref?.filePath)
+}
+
 /**
  * 등록된 스타일 카드 자동 탐색.
  *
- * "사용 가능한 스타일 카드" 기준: prompt 또는 mediaId 중 하나라도 있어야 함.
+ * "사용 가능한 스타일 카드" 기준: prompt 또는 이미지 소스 중 하나라도 있어야 함.
  * 둘 다 없는 placeholder 카드는 production 적용 path가 아무것도 안 하므로 제외.
  *
  * 둘 다 잡는 이유: production applyStyle / _prepareStyleRefs는 prompt만 있어도
- * styledPrompt를 합성하고, mediaId만 있어도 image ref로 주입한다. mediaId만 보면
+ * styledPrompt를 합성하고, GenAI에서 해석 가능한 이미지 소스가 있으면 image ref로 주입한다. mediaId만 보면
  * 사용자가 prompt로만 만든 스타일 카드를 누락 — preview/MCP 자동 모드가 잘못된 결과.
  *
  * @param {Array} references - 레퍼런스 배열
  * @returns {string|null} 'ref:{id}' 형태 또는 null
  */
 export function findAutoStyle(references) {
-  const autoStyle = references.find(r => r.type === 'style' && (r.prompt || r.mediaId))
+  const autoStyle = references.find(r => isStyleReference(r) && (
+    r.prompt || hasGenAIStyleImage(r)
+  ))
+  return autoStyle ? `ref:${autoStyle.id}` : null
+}
+
+/**
+ * 비디오 T2V 자동 스타일 탐색.
+ *
+ * Veo 3.1은 style reference image를 지원하지 않으므로, 비디오 자동 스타일은 실제로
+ * 프롬프트를 바꿀 수 있는 prompt 보유 스타일 카드만 사용한다.
+ */
+export function findAutoPromptStyle(references) {
+  const autoStyle = references.find(r => isStyleReference(r) && r.prompt)
   return autoStyle ? `ref:${autoStyle.id}` : null
 }
 
@@ -62,17 +86,28 @@ export function applyStyle(prompt, styleId, references, existingMatchedRefs = []
 
   if (styleId.startsWith('ref:')) {
     const refId = styleId.replace('ref:', '')
-    const styleRef = references.find(r => r.id == refId && r.type === 'style')
+    const styleRef = references.find(r => r.id == refId && isStyleReference(r))
     if (styleRef) {
       if (styleRef.prompt) {
         styledPrompt = `${prompt}, ${styleRef.prompt}`
       }
-      // mediaId(Flow) 또는 name(공식 API base64 해석용) 중 하나라도 있으면 image ref 로 주입.
-      if (styleRef.mediaId || styleRef.name) {
+      // mediaId(Flow), filePath/name(공식 API 디스크 해석), data(메모리 inline) 중 하나라도
+      // 있으면 image ref 로 주입.
+      if (styleRef.mediaId || styleRef.name || styleRef.data || styleRef.filePath) {
         const dup = existingMatchedRefs.some(r =>
-          (styleRef.mediaId && r.mediaId === styleRef.mediaId) || (styleRef.name && r.name === styleRef.name))
+          (styleRef.mediaId && r.mediaId === styleRef.mediaId) ||
+          (styleRef.name && r.name === styleRef.name) ||
+          (styleRef.filePath && r.filePath === styleRef.filePath))
         if (!dup) {
-          styleRefImages.push({ category: styleRef.category || 'style', mediaId: styleRef.mediaId || null, caption: styleRef.caption || '', name: styleRef.name })
+          styleRefImages.push({
+            id: styleRef.id,
+            category: styleRef.category || 'style',
+            mediaId: styleRef.mediaId || null,
+            caption: styleRef.caption || '',
+            name: styleRef.name,
+            data: styleRef.data || null,
+            filePath: styleRef.filePath || null,
+          })
         }
       }
     }
@@ -109,7 +144,7 @@ export function resolveSceneStyle(prompt, allMatched, selectedStyleRefId, refere
   }
 
   // 1a. 태그 매칭으로 스타일 레퍼런스가 있으면 자동 적용
-  const matchedStyleRef = allMatched.find(r => r.type === 'style' && r.prompt)
+  const matchedStyleRef = allMatched.find(r => isStyleReference(r) && r.prompt)
   if (matchedStyleRef) {
     styledPrompt = `${prompt}, ${matchedStyleRef.prompt}`
     appliedStyle = `auto:${matchedStyleRef.name || matchedStyleRef.id}`
@@ -138,7 +173,9 @@ export function resolveSceneStyle(prompt, allMatched, selectedStyleRefId, refere
     // styleRefImages를 matchedRefs에 추가 (mediaId 또는 name 기준 dedup)
     for (const img of styleRefImages) {
       const dup = matchedRefs.some(r =>
-        (img.mediaId && r.mediaId === img.mediaId) || (img.name && r.name === img.name))
+        (img.mediaId && r.mediaId === img.mediaId) ||
+        (img.name && r.name === img.name) ||
+        (img.filePath && r.filePath === img.filePath))
       if (!dup) matchedRefs.push(img)
     }
   }
@@ -178,9 +215,9 @@ export function previewStyleMatching(scenes, references, opts = {}) {
   const presets = opts.presets ?? (STYLE_PRESETS?.styles || [])
   // Production applies a style ref via either:
   //   - resolveSceneStyle when r.prompt exists (concatenates into the prompt)
-  //   - matchedRefs injection when r.mediaId exists (image ref into Flow API)
+  //   - matchedRefs injection when a GenAI-readable image source exists
   // A ref with neither contributes nothing — drop it from preview.
-  const styleRefs = references.filter(r => r.type === 'style' && r.name && (r.prompt || r.mediaId))
+  const styleRefs = references.filter(r => isStyleReference(r) && r.name && (r.prompt || r.data || r.filePath))
 
   const matches = []
   const unmatched = []

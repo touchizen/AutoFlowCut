@@ -24,7 +24,7 @@ import {
   DEFAULT_IMAGE_MODEL,
   DEFAULT_VIDEO_MODEL,
 } from '../../../electron/api/genai.js'
-import { DEFAULT_IMAGE_MODEL_ID } from '../../../src/config/genModels'
+import { DEFAULT_IMAGE_MODEL_ID, VIDEO_REFERENCE_IMAGE_LIMIT } from '../../../src/config/genModels'
 
 // --- fetch mock 헬퍼 ---------------------------------------------------------
 
@@ -337,6 +337,17 @@ describe('genai — submitVideo', () => {
     expect(JSON.parse(f.mock.calls[0][1].body).parameters.durationSeconds).toBe(8)
   })
 
+  it('main boundary: Veo Lite + 4k 는 1080p 로 강등', async () => {
+    const f = mockFetchOnce(jsonRes({ name: 'op' }))
+    await submitVideo(
+      { apiKey: 'k', prompt: 'x', model: 'veo-3.1-lite-generate-preview', resolution: '4k', durationSeconds: 4 },
+      { fetchImpl: f }
+    )
+    const body = JSON.parse(f.mock.calls[0][1].body)
+    expect(body.parameters.resolution).toBe('1080p')
+    expect(body.parameters.durationSeconds).toBe(8)
+  })
+
   it('I2V(시작 이미지) 는 4초 요청해도 8초 강제 (reference 이미지 제약)', async () => {
     const f = mockFetchOnce(jsonRes({ name: 'op' }))
     await submitVideo(
@@ -344,6 +355,200 @@ describe('genai — submitVideo', () => {
       { fetchImpl: f }
     )
     expect(JSON.parse(f.mock.calls[0][1].body).parameters.durationSeconds).toBe(8)
+  })
+
+  it('T2V referenceImages → instances[].referenceImages + 8초 강제 (Veo 3.1 제약)', async () => {
+    const f = mockFetchOnce(jsonRes({ name: 'op' }))
+    await submitVideo(
+      {
+        apiKey: 'k',
+        prompt: 'hero walks',
+        model: 'veo-3.1-generate-preview',
+        referenceImages: [
+          { mimeType: 'image/png', data: 'REF1' },
+          { mimeType: 'image/jpeg', data: 'REF2' },
+        ],
+        durationSeconds: 4,
+      },
+      { fetchImpl: f }
+    )
+
+    const body = JSON.parse(f.mock.calls[0][1].body)
+    expect(f.mock.calls[0][0]).toBe(`${GENAI_BASE}/models/veo-3.1-generate-preview:predictLongRunning`)
+    expect(body.instances[0].referenceImages).toEqual([
+      { image: { bytesBase64Encoded: 'REF1', mimeType: 'image/png' }, referenceType: 'asset' },
+      { image: { bytesBase64Encoded: 'REF2', mimeType: 'image/jpeg' }, referenceType: 'asset' },
+    ])
+    expect(body.parameters.durationSeconds).toBe(8)
+  })
+
+  it('legacy Flow Veo 모델명도 정규화 후 referenceImages 를 허용', async () => {
+    const f = mockFetchOnce(jsonRes({ name: 'op' }))
+    const res = await submitVideo(
+      {
+        apiKey: 'k',
+        prompt: 'hero walks',
+        model: 'veo_3_1_t2v_fast_ultra_relaxed',
+        referenceImages: [{ mimeType: 'image/png', data: 'REF' }],
+      },
+      { fetchImpl: f }
+    )
+
+    expect(res.success).toBe(true)
+    expect(f.mock.calls[0][0]).toBe(`${GENAI_BASE}/models/veo-3.1-fast-generate-preview:predictLongRunning`)
+    const body = JSON.parse(f.mock.calls[0][1].body)
+    expect(body.instances[0].referenceImages[0].image.bytesBase64Encoded).toBe('REF')
+  })
+
+  it('GA Veo 3.1 모델명도 referenceImages 를 허용', async () => {
+    const f = mockFetchOnce(jsonRes({ name: 'op' }))
+    const res = await submitVideo(
+      {
+        apiKey: 'k',
+        prompt: 'hero walks',
+        model: 'veo-3.1-fast-generate-001',
+        referenceImages: [{ mimeType: 'image/png', data: 'REF' }],
+      },
+      { fetchImpl: f }
+    )
+
+    expect(res.success).toBe(true)
+    expect(f.mock.calls[0][0]).toBe(`${GENAI_BASE}/models/veo-3.1-fast-generate-001:predictLongRunning`)
+  })
+
+  it('T2V referenceImages 는 최대 3개, referenceType 은 asset 으로 보낸다', async () => {
+    const f = mockFetchOnce(jsonRes({ name: 'op' }))
+    await submitVideo(
+      {
+        apiKey: 'k',
+        prompt: 'hero walks',
+        referenceImages: [
+          { mimeType: 'image/png', data: 'REF1' },
+          { mimeType: 'image/png', data: 'REF2' },
+          { mimeType: 'image/png', data: 'REF3' },
+          { mimeType: 'image/png', data: 'REF4' },
+        ],
+      },
+      { fetchImpl: f }
+    )
+
+    const refs = JSON.parse(f.mock.calls[0][1].body).instances[0].referenceImages
+    expect(refs).toHaveLength(VIDEO_REFERENCE_IMAGE_LIMIT)
+    expect(refs.map(r => r.referenceType)).toEqual(['asset', 'asset', 'asset'])
+    expect(refs.map(r => r.image.bytesBase64Encoded)).toEqual(['REF1', 'REF2', 'REF3'])
+  })
+
+  it('T2V referenceImages 는 style/mask 타입이면 asset 으로 위장하지 않고 실패', async () => {
+    const fetchImpl = vi.fn()
+    const res = await submitVideo(
+      {
+        apiKey: 'k',
+        prompt: 'hero walks',
+        referenceImages: [{ mimeType: 'image/png', data: 'REF1', referenceType: 'style' }],
+      },
+      { fetchImpl }
+    )
+
+    expect(res.success).toBe(false)
+    expect(res.error).toMatch(/asset references/)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('T2V referenceImages 는 style category 도 asset 으로 위장하지 않고 실패', async () => {
+    const fetchImpl = vi.fn()
+    const res = await submitVideo(
+      {
+        apiKey: 'k',
+        prompt: 'hero walks',
+        referenceImages: [{ mimeType: 'image/png', data: 'REF1', category: 'MEDIA_CATEGORY_STYLE' }],
+      },
+      { fetchImpl }
+    )
+
+    expect(res.success).toBe(false)
+    expect(res.error).toMatch(/asset references/)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('T2V referenceImages 는 WebP MIME 을 통과시키고 정규화한다', async () => {
+    const f = mockFetchOnce(jsonRes({ name: 'op' }))
+    await submitVideo(
+      {
+        apiKey: 'k',
+        prompt: 'hero walks',
+        referenceImages: [{ mimeType: 'IMAGE/WEBP', data: 'WEBPREF' }],
+      },
+      { fetchImpl: f }
+    )
+
+    const refs = JSON.parse(f.mock.calls[0][1].body).instances[0].referenceImages
+    expect(refs[0].image).toEqual({ bytesBase64Encoded: 'WEBPREF', mimeType: 'image/webp' })
+  })
+
+  it('T2V referenceImages 는 미지원 GIF MIME 이면 API 호출 전에 실패', async () => {
+    const fetchImpl = vi.fn()
+    const res = await submitVideo(
+      {
+        apiKey: 'k',
+        prompt: 'hero walks',
+        referenceImages: [{ mimeType: 'image/gif', data: 'GIFREF' }],
+      },
+      { fetchImpl }
+    )
+
+    expect(res.success).toBe(false)
+    expect(res.error).toMatch(/PNG, JPEG, or WebP/)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('T2V referenceImages 는 MIME 이 없으면 API 호출 전에 실패', async () => {
+    const fetchImpl = vi.fn()
+    const res = await submitVideo(
+      {
+        apiKey: 'k',
+        prompt: 'hero walks',
+        referenceImages: [{ data: 'REF' }],
+      },
+      { fetchImpl }
+    )
+
+    expect(res.success).toBe(false)
+    expect(res.error).toMatch(/PNG, JPEG, or WebP/)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('Veo Lite + referenceImages 는 API 호출 전에 실패', async () => {
+    const fetchImpl = vi.fn()
+    const res = await submitVideo(
+      {
+        apiKey: 'k',
+        prompt: 'hero walks',
+        model: 'veo-3.1-lite-generate-preview',
+        referenceImages: [{ mimeType: 'image/png', data: 'REF' }],
+      },
+      { fetchImpl }
+    )
+
+    expect(res.success).toBe(false)
+    expect(res.error).toMatch(/Fast\/Quality/)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('image/lastFrame 과 referenceImages 를 동시에 보내면 API 호출 전에 실패', async () => {
+    const fetchImpl = vi.fn()
+    const res = await submitVideo(
+      {
+        apiKey: 'k',
+        prompt: 'move',
+        image: { mimeType: 'image/png', data: 'IMG' },
+        referenceImages: [{ mimeType: 'image/png', data: 'REF' }],
+      },
+      { fetchImpl }
+    )
+
+    expect(res.success).toBe(false)
+    expect(res.error).toMatch(/cannot be combined/)
+    expect(fetchImpl).not.toHaveBeenCalled()
   })
 
   it('seed 숫자면 parameters.seed 포함, 없으면 생략 (Veo 지원)', async () => {

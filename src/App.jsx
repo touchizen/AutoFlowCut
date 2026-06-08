@@ -27,19 +27,20 @@ import { useMcpServer } from './hooks/useMcpServer'
 import { useMenuActions } from './hooks/useMenuActions'
 import { syncVideosIntoScenes } from './services/mediaSync'
 import { retryVideoDownload } from './services/videoRecovery'
-import { applyStyle, previewStyleMatching } from './services/styleService'
+import { isStyleReference, previewStyleMatching } from './services/styleService'
 import { computeGuardAvailable } from './services/startGuard'
 import { createStyleResolver } from './services/styleResolver'
 import { filterPendingScenes } from './utils/sceneFilters'
 import { videoClearPatch, buildFramePairVideoPatch, buildVideoRestorePatch, resolveI2vRestoreSceneId } from './utils/sceneMedia'
 import { detectFileType, detectCSVType, parseCSVToScenes, parseSRTToScenes, csvPromptToVideoT2V } from './utils/parsers'
-import { resolveAudioSrtEntries, getSceneDuration } from './utils/srtTrack'
+import { resolveAudioSrtEntries } from './utils/srtTrack'
 import { tabAfterImport } from './utils/importTabRouting'
 import { checkFolderPermission } from './utils/guards'
 import { collectTagErrors } from './utils/tagMatch'
 import { getFramePairEffectivePrompt } from './utils/framePairPrompt'
 import { frameImageFor } from './utils/framePairImages'
 import { saveGalleryFrame } from './utils/galleryUpload'
+import { buildVideoPromptScenes, isUsableVideoReference, VIDEO_REFERENCE_LIMIT } from './utils/videoPromptReferences'
 import { toast } from './components/Toast'
 
 // Components
@@ -819,6 +820,9 @@ function App() {
     t,
     isKo: t('common.cancel') === '취소',
   })
+  const uploadedStyleRefsForPicker = activeTab === 'video-text'
+    ? references.filter(ref => isStyleReference(ref) && ref.prompt)
+    : references.filter(isStyleReference)
 
   // overrideStyleId 시그니처 (3가지 의미 구분):
   //   undefined: 호출자가 override 안 함 → UI selectedStyleRefId 사용
@@ -939,13 +943,20 @@ function App() {
         // 스타일(selectedStyleRefId)만 추가로 prefix해서 적용.
         // (I2V는 이미지가 source라 별도 처리 — frame-to-video 케이스에서 미적용)
         // override → effective는 styleResolver.resolveEffectiveStyleId가 탭별로 처리.
-        // video-text는 null override일 때 findAutoStyle 결과로 변환됨 (resolver 내부 로직).
+        // video-text는 null override일 때 findAutoPromptStyle 결과로 변환됨 (resolver 내부 로직).
         const effectiveStyleId = styleResolver.resolveEffectiveStyleId(overrideStyleId)
-        const styledVideoScenes = selectedVideoScenes.map(vs => {
-          const matchedRefs = []
-          const { styledPrompt } = applyStyle(vs.prompt, effectiveStyleId, scenesHook.references, matchedRefs)
-          // 자동 길이: 씬 길이(SRT 기반)를 비디오 생성 길이 스냅에 사용 (useVideoAutomation).
-          return { ...vs, prompt: styledPrompt, targetDuration: getSceneDuration(vs, scenesHook.srtTrack) }
+        const preparedVideoScenes = buildVideoPromptScenes(selectedVideoScenes, scenesHook.references || [], effectiveStyleId, scenesHook.srtTrack)
+        let didWarnReferenceLimit = false
+        const styledVideoScenes = preparedVideoScenes.map(({ scene, missing, truncated }) => {
+          if (missing.length > 0) console.warn('[VideoText]', scene.id, 'unknown @mentions:', missing.join(', '))
+          if (truncated > 0) {
+            console.warn('[VideoText]', scene.id, `Veo supports up to ${VIDEO_REFERENCE_LIMIT} reference images; using the first ${VIDEO_REFERENCE_LIMIT}.`)
+            if (!didWarnReferenceLimit) {
+              toast.warning(t('videoAutomation.referenceLimitWarning', { limit: VIDEO_REFERENCE_LIMIT }))
+              didWarnReferenceLimit = true
+            }
+          }
+          return scene
         })
 
         // seed: 이미지와 동일한 정책 — locked + 숫자일 때만 고정 seed
@@ -1360,11 +1371,7 @@ function App() {
               value={scenes.map(s => s.videoT2VPrompt || '').join('\n').replace(/\n+$/, '')}
               onChange={handleVideoTextChange}
               disabled={anyRunning}
-              // R37 review fix: Veo T2V 는 캐릭터 일관성 ref 를 받지 않는다 (start/end
-              // 프레임은 별도 I2V/F2V 경로). video-text 에서 @ chip 을 띄우면 ref 가
-              // 적용되는 것처럼 사용자 오해 → 의도적으로 references 빈 배열로 전달해
-              // chip/드롭다운 비활성화.
-              references={[]}
+              references={(scenesHook.references || []).filter(isUsableVideoReference)}
               placeholder={t('prompt.videoPlaceholder')}
               seedNo={settings.seedNo}
               seedLocked={settings.seedLocked}
@@ -2059,7 +2066,7 @@ function App() {
             }
           }}
           thumbnails={styleThumbnails}
-          uploadedStyleRefs={references.filter(r => r.type === 'style')}
+          uploadedStyleRefs={uploadedStyleRefsForPicker}
           generating={thumbnailGenerating}
           stopping={thumbnailStopping}
           progress={thumbnailProgress}

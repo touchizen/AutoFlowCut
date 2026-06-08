@@ -520,6 +520,20 @@ Goodbye world`
       expect(matched[0].name).toBe('Anime')
     })
 
+    it('matches category-only style references', () => {
+      const { result } = renderHook(() => useScenes())
+
+      act(() => {
+        result.current.updateReferences([
+          { name: 'Noir', category: 'MEDIA_CATEGORY_STYLE', prompt: 'noir lighting' },
+        ])
+      })
+
+      const matched = result.current.getMatchingReferences({ characters: '', scene_tag: '', style_tag: 'noir' })
+      expect(matched).toHaveLength(1)
+      expect(matched[0].name).toBe('Noir')
+    })
+
     it('matches multiple tags with comma delimiter', () => {
       const result = setupWithRefs()
 

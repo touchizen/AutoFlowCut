@@ -90,7 +90,7 @@ export function useMcpServer({
     window.__mcpGetScenes = () => scenes.map(({ image, videoT2V, videoI2V, ...rest }) => rest)
     // styleId override를 직접 받음 (전역 상태 setSelectedStyleRefId + setTimeout race 회피).
     // styleId 형식은 normalizeStyleId로 정규화됨 ('ref:*' / 'preset:*' / plain → 'preset:*' / null).
-    // 'auto' sentinel은 ref 컨텍스트에 의미 없음 (씬 매칭 부재) — null로 취급해 자연스러운 fallback 발동.
+    // 'auto' sentinel은 ref 컨텍스트에 의미 없음 (씬 매칭 부재) — caller-side fallback만 사용.
     //
     // styleId 생략 시 호출 측에서 findAutoStyle fallback을 미리 적용해 override로 전달.
     // 그래야 useReferenceGeneration 내부의 selectedStyleRefId(UI 선택값)에 끌려가지 않음 —
@@ -98,13 +98,14 @@ export function useMcpServer({
     window.__mcpGenerateRef = (index, styleId) => {
       if (styleId === 'auto') {
         console.warn('[MCP] generate-reference received styleId="auto"; ignored (refs have no per-scene matching). Falling back as if styleId were omitted.')
-        styleId = null
+        const effective = findAutoStyle(referencesRef.current) ?? 'none'
+        return handleGenerateRef(index, false, effective).catch(e => ({ success: false, error: e.message }))
       } else if (styleId === 'none') {
         // 'none' sentinel — pass through to handler. styleService.applyStyle/_resolveEffectiveStyleId
         // recognize 'none' and skip all style application (prompt + ref override).
         return handleGenerateRef(index, false, 'none').catch(e => ({ success: false, error: e.message }))
       }
-      const effective = normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current)
+      const effective = normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current) ?? 'none'
       return handleGenerateRef(index, false, effective).catch(e => ({ success: false, error: e.message }))
     }
     // styleId override (선택). 형식은 styleService와 동일.
@@ -425,13 +426,14 @@ export function useMcpServer({
         : (effective) => handleGenerateAllRefsRef.current?.(effective)
       const resolveEffective = () => {
         // 'auto'는 ref batch에 의미 없음 — null로 취급해 normalizeStyleId가 'preset:auto'로
-        // 잘못 wrap하지 않도록 한다 (silent fail 회피).
+        // 잘못 wrap하지 않도록 한다 (silent fail 회피). usable auto style 이 없으면
+        // 'none'을 넘겨 UI selectedStyleRefId 로 fallback하지 않게 한다.
         if (styleId === 'auto') {
           console.warn('[MCP] start-ref-batch received styleId="auto"; ignored (refs have no per-scene matching). Falling back as if styleId were omitted.')
-          return null
+          return findAutoStyle(referencesRef.current) ?? 'none'
         }
         if (styleId === 'none') return 'none'
-        return normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current)
+        return normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current) ?? 'none'
       }
 
       syncExplicitStyleId(styleId, { normalizeStyleId, setSelectedStyleRefId })

@@ -11,7 +11,8 @@
  * @param {object} opts
  * @param {string} opts.projectName
  * @param {object} [opts.fs] - fileSystemAPI (기본: 실제 싱글톤)
- * @returns {Promise<Array<{mimeType:string, data:string}>>}
+ * @param {boolean} [opts.strictMime=false] - true면 data URL/header/signature로 MIME을 확정할 수 없을 때 null 반환
+ * @returns {Promise<Array<{mimeType:string|null, data:string}>>}
  */
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { cleanBase64, detectImageType } from './urls'
@@ -23,7 +24,37 @@ const EXT_TO_MIME = {
   webp: 'image/webp',
 }
 
-export async function resolveReferenceImages(refs, { projectName, fs = fileSystemAPI } = {}) {
+function normalizeMimeType(mimeType) {
+  return typeof mimeType === 'string' && mimeType.trim()
+    ? mimeType.trim().toLowerCase()
+    : null
+}
+
+function detectKnownImageMime(raw) {
+  const dataUrlMime = typeof raw === 'string'
+    ? raw.match(/^data:([^;]+);base64,/)?.[1]
+    : null
+  if (dataUrlMime) return normalizeMimeType(dataUrlMime)
+
+  const clean = cleanBase64(raw)
+  if (clean.startsWith('/9j/')) return 'image/jpeg'
+  if (clean.startsWith('iVBOR')) return 'image/png'
+  if (clean.startsWith('R0lGO')) return 'image/gif'
+  if (clean.startsWith('UklGR')) return 'image/webp'
+  return null
+}
+
+function resolveMimeType(raw, ref, strictMime) {
+  const explicit = normalizeMimeType(ref?.mimeType)
+  if (explicit) return explicit
+  const detected = detectKnownImageMime(raw)
+  if (detected) return detected
+  if (strictMime) return null
+  const ext = detectImageType(raw)
+  return EXT_TO_MIME[ext] || 'image/png'
+}
+
+export async function resolveReferenceImages(refs, { projectName, fs = fileSystemAPI, strictMime = false } = {}) {
   if (!Array.isArray(refs) || refs.length === 0) return []
 
   const resolved = []
@@ -34,8 +65,18 @@ export async function resolveReferenceImages(refs, { projectName, fs = fileSyste
     // 1) 메모리에 base64 가 있으면 우선 사용
     if (typeof ref.data === 'string' && ref.data) {
       raw = ref.data
-    } else if (ref.name && projectName && fs?.readReference) {
-      // 2) 디스크에서 읽기
+    } else if (ref.filePath && fs?.readFileByPath) {
+      // 2) 정확한 파일 경로가 있으면 우선 사용
+      try {
+        const res = await fs.readFileByPath(ref.filePath)
+        if (res?.success && res.data) raw = res.data
+      } catch (e) {
+        console.warn(`[referenceResolver] reference '${ref.name || ref.filePath}' filePath read failed: ${e?.message || e}`)
+      }
+    }
+
+    if (!raw && ref.name && projectName && fs?.readReference) {
+      // 3) 프로젝트 references/{name} 에서 읽기
       try {
         const res = await fs.readReference(projectName, ref.name)
         if (res?.success && res.data) raw = res.data
@@ -55,8 +96,7 @@ export async function resolveReferenceImages(refs, { projectName, fs = fileSyste
       console.warn(`[referenceResolver] reference '${ref.name || '?'}' produced empty base64 — skipping`)
       continue
     }
-    const ext = detectImageType(raw)
-    resolved.push({ mimeType: EXT_TO_MIME[ext] || 'image/png', data })
+    resolved.push({ mimeType: resolveMimeType(raw, ref, strictMime), data })
   }
 
   return resolved

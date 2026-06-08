@@ -28,6 +28,14 @@ export const VIDEO_MODELS = [
 
 export const DEFAULT_IMAGE_MODEL_ID = 'gemini-3.1-flash-image'  // Nano Banana 2
 export const DEFAULT_VIDEO_MODEL_ID = 'veo-3.1-fast-generate-preview'
+export const VIDEO_REFERENCE_IMAGE_MODEL_IDS = [
+  'veo-3.1-fast-generate-preview',
+  'veo-3.1-generate-preview',
+  'veo-3.1-fast-generate-001',
+  'veo-3.1-generate-001',
+]
+export const VIDEO_REFERENCE_IMAGE_LIMIT = 3
+export const VIDEO_REFERENCE_IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp']
 
 /** API 모델 id → 사람이 읽는 라벨. 카탈로그에 없으면 id 그대로, falsy 면 null.
  *  ResultsTable / 상세 모달의 모델 표시에 사용. */
@@ -107,6 +115,18 @@ export function coerceImageModel(id) {
 }
 export function coerceVideoModel(id) {
   return VIDEO_MODELS.some(m => m.id === id) ? id : DEFAULT_VIDEO_MODEL_ID
+}
+
+/** Veo referenceImages 는 Veo 3.1 Fast/Quality T2V 에서만 지원한다. */
+export function supportsVideoReferenceImages(modelId) {
+  if (!modelId) return false
+  return VIDEO_REFERENCE_IMAGE_MODEL_IDS.includes(String(modelId))
+}
+
+/** Veo referenceImages.image 가 받는 이미지 MIME. */
+export function supportsVideoReferenceMimeType(mimeType) {
+  if (!mimeType) return false
+  return VIDEO_REFERENCE_IMAGE_MIME_TYPES.includes(String(mimeType).toLowerCase())
 }
 
 /** 앱이 지원하는 비디오 해상도 known set. */

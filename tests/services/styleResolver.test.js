@@ -34,13 +34,22 @@ describe('createStyleResolver — autoEffectiveStyleId', () => {
     expect(r.autoEffectiveStyleId).toBeNull()
   })
 
-  it('video-text tab: returns first style card via findAutoStyle', () => {
+  it('video-text tab: returns first prompt style card via findAutoPromptStyle', () => {
     const r = createStyleResolver({
       ...baseDeps,
       activeTab: 'video-text',
-      references: [{ id: 7, type: 'style', mediaId: 'm-7' }],
+      references: [{ id: 7, type: 'style', name: 'My Noir', prompt: 'film noir lighting', filePath: '/refs/my-noir.png' }],
     })
     expect(r.autoEffectiveStyleId).toBe('ref:7')
+  })
+
+  it('video-text tab: ignores image-only style cards because Veo cannot consume style refs', () => {
+    const r = createStyleResolver({
+      ...baseDeps,
+      activeTab: 'video-text',
+      references: [{ id: 7, type: 'style', name: 'My Noir', filePath: '/refs/my-noir.png' }],
+    })
+    expect(r.autoEffectiveStyleId).toBeNull()
   })
 
   it('video-text tab: null when no usable style card', () => {
@@ -70,11 +79,11 @@ describe('createStyleResolver — autoAvailable', () => {
     expect(r.autoAvailable).toBe(false)
   })
 
-  it('video-text: true when findAutoStyle finds a style card', () => {
+  it('video-text: true when findAutoPromptStyle finds a prompt style card', () => {
     const r = createStyleResolver({
       ...baseDeps,
       activeTab: 'video-text',
-      references: [{ id: 7, type: 'style', mediaId: 'm-7' }],
+      references: [{ id: 7, type: 'style', name: 'My Noir', prompt: 'film noir lighting', filePath: '/refs/my-noir.png' }],
     })
     expect(r.autoAvailable).toBe(true)
   })
@@ -116,7 +125,7 @@ describe('createStyleResolver — autoLabel', () => {
     const r = createStyleResolver({
       ...baseDeps,
       activeTab: 'video-text',
-      references: [{ id: 7, type: 'style', name: 'My Noir', mediaId: 'm-7' }],
+      references: [{ id: 7, type: 'style', name: 'My Noir', prompt: 'film noir lighting', filePath: '/refs/my-noir.png' }],
     })
     expect(r.autoLabel).toBe('자동: My Noir')
   })
@@ -156,7 +165,7 @@ describe('createStyleResolver — autoCardMeta', () => {
     const r = createStyleResolver({
       ...baseDeps,
       activeTab: 'video-text',
-      references: [{ id: 7, type: 'style', name: 'My Noir', mediaId: 'm-7' }],
+      references: [{ id: 7, type: 'style', name: 'My Noir', prompt: 'film noir lighting', filePath: '/refs/my-noir.png' }],
     })
     expect(r.autoCardMeta.icon).toBe('🪄')
     expect(r.autoCardMeta.label).toBe('자동: My Noir')
@@ -183,7 +192,7 @@ describe('createStyleResolver — resolveLabelForId', () => {
     const r = createStyleResolver({
       ...baseDeps,
       activeTab: 'video-text',
-      references: [{ id: 7, type: 'style', name: 'My Noir', mediaId: 'm-7' }],
+      references: [{ id: 7, type: 'style', name: 'My Noir', prompt: 'film noir lighting', filePath: '/refs/my-noir.png' }],
     })
     expect(r.resolveLabelForId(null)).toBe('자동: My Noir')
   })
@@ -200,12 +209,12 @@ describe('createStyleResolver — resolveEffectiveStyleId', () => {
     expect(r.resolveEffectiveStyleId(null)).toBeNull()
   })
 
-  it('null override (video-text): returns findAutoStyle result', () => {
+  it('null override (video-text): returns findAutoPromptStyle result', () => {
     const r = createStyleResolver({
       ...baseDeps,
       activeTab: 'video-text',
       selectedStyleRefId: 'preset:noir',
-      references: [{ id: 7, type: 'style', mediaId: 'm-7' }],
+      references: [{ id: 7, type: 'style', name: 'My Noir', prompt: 'film noir lighting', filePath: '/refs/my-noir.png' }],
     })
     expect(r.resolveEffectiveStyleId(null)).toBe('ref:7')
   })
@@ -215,14 +224,14 @@ describe('createStyleResolver — resolveEffectiveStyleId', () => {
     expect(r.resolveEffectiveStyleId('ref:99')).toBe('ref:99')
   })
 
-  it('undefined override + video-text + null selection: returns findAutoStyle (P1 #1 — label/apply parity)', () => {
+  it('undefined override + video-text + null selection: returns findAutoPromptStyle (P1 #1 — label/apply parity)', () => {
     // Regression guard: video-text Start button (handleStart() with no override) must apply
     // the same auto style the label promises ("자동: My Noir"), not silently null-out.
     const r = createStyleResolver({
       ...baseDeps,
       activeTab: 'video-text',
       selectedStyleRefId: null,
-      references: [{ id: 7, type: 'style', name: 'My Noir', mediaId: 'm-7' }],
+      references: [{ id: 7, type: 'style', name: 'My Noir', prompt: 'film noir lighting', filePath: '/refs/my-noir.png' }],
     })
     expect(r.resolveEffectiveStyleId(undefined)).toBe('ref:7')
   })
@@ -235,6 +244,29 @@ describe('createStyleResolver — resolveEffectiveStyleId', () => {
     })
     expect(r.resolveEffectiveStyleId(undefined)).toBeNull()
   })
+
+  it('video-text ignores a selected image-only style ref and falls back to prompt auto style', () => {
+    const r = createStyleResolver({
+      ...baseDeps,
+      activeTab: 'video-text',
+      selectedStyleRefId: 'ref:7',
+      references: [
+        { id: 7, type: 'style', name: 'Image Only', filePath: '/refs/image-only.png' },
+        { id: 8, type: 'style', name: 'Prompt Style', prompt: 'film noir lighting' },
+      ],
+    })
+    expect(r.resolveEffectiveStyleId(undefined)).toBe('ref:8')
+  })
+
+  it('video-text treats an explicit image-only style ref override as unavailable', () => {
+    const r = createStyleResolver({
+      ...baseDeps,
+      activeTab: 'video-text',
+      references: [{ id: 7, type: 'style', name: 'Image Only', filePath: '/refs/image-only.png' }],
+    })
+    expect(r.resolveEffectiveStyleId('ref:7')).toBeNull()
+    expect(r.resolveLabelForId('ref:7')).toBe('없음')
+  })
 })
 
 describe('createStyleResolver — resolveEffectiveStyleIdForRef (reference generation domain)', () => {
@@ -242,7 +274,7 @@ describe('createStyleResolver — resolveEffectiveStyleIdForRef (reference gener
     const r = createStyleResolver({
       ...baseDeps,
       selectedStyleRefId: 'preset:noir',
-      references: [{ id: 7, type: 'style', mediaId: 'm-7' }],
+      references: [{ id: 7, type: 'style', name: 'My Noir', filePath: '/refs/my-noir.png' }],
     })
     expect(r.resolveEffectiveStyleIdForRef(undefined)).toBe('preset:noir')
     expect(r.resolveEffectiveStyleIdForRef('ref:99')).toBe('ref:99')
@@ -252,7 +284,7 @@ describe('createStyleResolver — resolveEffectiveStyleIdForRef (reference gener
     const r = createStyleResolver({
       ...baseDeps,
       selectedStyleRefId: null,
-      references: [{ id: 7, type: 'style', mediaId: 'm-7' }],
+      references: [{ id: 7, type: 'style', name: 'My Noir', filePath: '/refs/my-noir.png' }],
     })
     expect(r.resolveEffectiveStyleIdForRef(null)).toBe('ref:7')
   })

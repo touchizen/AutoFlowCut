@@ -25,6 +25,7 @@ import { trimTrailingEmptyScenes } from '../utils/sceneTrim'
 import { fileSystemAPI } from './useFileSystem'
 import { splitTags } from '../utils/tagMatch'
 import { resolveMentions } from '../utils/mentionParser'
+import { isStyleReference } from '../services/styleService'
 
 // snake_case → camelCase 변환 + 숫자 변환 + videoT2V/I2V prompt 필드 기본값 보장
 function normalizeScene(s, i) {
@@ -619,7 +620,8 @@ export function useScenes() {
     if (scene.style_tag) {
       const styleTags = splitTags(scene.style_tag)
       for (const ref of references) {
-        if (ref.type === 'style' && styleTags.includes(ref.name.toLowerCase())) {
+        const refName = ref.name?.toLowerCase()
+        if (isStyleReference(ref) && refName && styleTags.includes(refName)) {
           matched.push(ref)
         }
       }

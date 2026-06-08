@@ -6,7 +6,7 @@
  *   기존 done 계산이 image/mediaId만 보면 "이미 다 됐다"고 100% stuck. status를 같이 봐서
  *   in-flight (pending/generating/error) 면 done에서 제외해야 progress가 올바르게 표시됨.
  *
- *   MCP는 ref를 mediaId 기준, UI는 data||filePath 기준 — 다른 정의 자체는 유효한 도메인 차이.
+ *   Flow 시절 ref 완료는 mediaId, 공식 GenAI 경로의 ref 완료는 data/filePath 기준이다.
  *   하지만 "status가 in-flight면 done에서 제외" 정책은 공통이어야 한다 → 이 helper로 통일.
  */
 
@@ -24,7 +24,7 @@ export function isSceneGenerationDone(scene) {
 }
 
 /**
- * MCP 도메인 — Flow 업로드 완료(mediaId) 기준.
+ * MCP 도메인 — Flow(mediaId) / GenAI(data 또는 filePath) 완료 기준.
  * @param {object} ref
  * @returns {boolean}
  */
@@ -33,7 +33,7 @@ export function isReferenceUploadedDone(ref) {
   if (ref.status === 'pending' || ref.status === 'generating' || ref.status === 'error') {
     return false
   }
-  return !!ref.mediaId
+  return !!(ref.mediaId || ref.data || ref.filePath)
 }
 
 /**

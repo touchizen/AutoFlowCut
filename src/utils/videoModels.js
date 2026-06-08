@@ -12,11 +12,15 @@
  */
 
 // 공식 Veo(generativelanguage) 모델명.
+export const VIDEO_MODEL_LITE = 'veo-3.1-lite-generate-preview'
 export const VIDEO_MODEL_FAST = 'veo-3.1-fast-generate-preview'
 export const VIDEO_MODEL_QUALITY = 'veo-3.1-generate-preview'
 
-// 구 Flow underscore 키 → 공식 모델명.
+// 구 Flow underscore 키 / 이전 short 키 → 공식 모델명.
 const LEGACY_VIDEO_MODEL_MAP = {
+  'veo-3.1-lite': VIDEO_MODEL_LITE,
+  'veo-3.1-fast': VIDEO_MODEL_FAST,
+  'veo-3.1-quality': VIDEO_MODEL_QUALITY,
   veo_3_1_t2v_fast_ultra_relaxed: VIDEO_MODEL_FAST,
   veo_3_1_t2v_quality_ultra_relaxed: VIDEO_MODEL_QUALITY,
   veo_3_1_i2v_fast_ultra_relaxed: VIDEO_MODEL_FAST,
@@ -32,8 +36,9 @@ export function normalizeVideoModel(model) {
   if (!model) return undefined
   const s = String(model)
   if (LEGACY_VIDEO_MODEL_MAP[s]) return LEGACY_VIDEO_MODEL_MAP[s]
-  // 이미 공식 hyphen 모델명(veo-...)이면 그대로 통과.
-  if (/^veo-/.test(s)) return s
+  // 공식 hyphen 모델명은 `generate` 를 포함한다. `veo-3.1-fast` 같은 short
+  // legacy id 는 위 map 에 없으면 엔진 기본값으로 보내 잘못된 endpoint 를 막는다.
+  if (/^veo-.*generate/i.test(s)) return s
   // 매핑되지 않은 underscore 구 키 / 비-veo 값 → 엔진 기본값으로.
   return undefined
 }

@@ -97,6 +97,16 @@ describe('useVideoAutomation — 자동 duration + resolution 제출 전달', ()
     expect(generateVideoT2V.mock.calls[0][3]).toBe(8)
   })
 
+  it('referenceImages 가 있으면 720p + 씬 길이 4s 도 duration 8 강제 + refs 전달', async () => {
+    const { hook, generateVideoT2V } = makeHook()
+    const referenceImages = [{ name: 'hero', data: 'data:image/png;base64,REF' }]
+    await runT2V(hook, { targetDuration: 4, referenceImages }, { videoResolution: '720p' })
+
+    const args = generateVideoT2V.mock.calls[0]
+    expect(args[3]).toBe(8)
+    expect(args[6]).toEqual(referenceImages)
+  })
+
   // 회귀(리뷰 P2): 해상도 강등은 start() 에서 한 번 일어나야 duration/메타/생성이 일관.
   // generateVideoT2V 가 mock 이라 내부 coerce 가 없으므로, 인자가 coerced 면 upstream 강등 증명.
   it('Veo Lite + 4k 는 start 에서 1080p 로 강등돼 제출까지 일관', async () => {

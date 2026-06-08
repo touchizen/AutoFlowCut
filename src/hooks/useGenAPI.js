@@ -8,7 +8,7 @@
  * Flow 와의 차이를 흡수하는 지점:
  *   - 인증: Flow 토큰 추출 → BYOK 키 존재 여부. getAccessToken 은 키가 있으면
  *     truthy sentinel 을, 없으면 null 을 반환해 기존 auth 가드를 그대로 만족.
- *   - 레퍼런스: Flow mediaId → inline base64 (resolveReferenceImages).
+ *   - 레퍼런스: data URL 또는 프로젝트 references/{name} → inline base64 (resolveReferenceImages).
  *   - 이미지 비동기(submit/check/collect): Gemini 이미지 생성은 동기 1-shot 이므로
  *     in-flight Map 으로 기존 async 배치 인터페이스를 에뮬레이션.
  *   - 비디오: Veo submit/poll/download IPC 로 매핑.
@@ -18,7 +18,15 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { resolveReferenceImages } from '../utils/referenceResolver'
 import { normalizeVideoModel } from '../utils/videoModels'
-import { DEFAULT_IMAGE_MODEL_ID, coerceResolution } from '../config/genModels'
+import {
+  DEFAULT_IMAGE_MODEL_ID,
+  DEFAULT_VIDEO_MODEL_ID,
+  VIDEO_REFERENCE_IMAGE_LIMIT,
+  coerceResolution,
+  supportsVideoReferenceImages,
+  supportsVideoReferenceMimeType,
+} from '../config/genModels'
+import { isStyleReference } from '../services/styleService'
 import { isAuthError } from '../utils/authError'
 import { cleanBase64, detectImageType } from '../utils/urls'
 
@@ -47,6 +55,12 @@ function toVeoAspect(ar) {
   if (ar === '16:9' || ar === '9:16') return ar
   if (typeof ar === 'string' && /PORTRAIT|9.?16/i.test(ar)) return '9:16'
   return '16:9'
+}
+
+function isInvalidVideoAssetReference(ref) {
+  if (!ref) return false
+  const referenceType = String(ref.referenceType || 'asset').toLowerCase()
+  return referenceType !== 'asset' || isStyleReference(ref)
 }
 
 export function useGenAPI({ onAuthError, getProjectName } = {}) {
@@ -175,26 +189,50 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
 
   // --- 비디오 생성 -----------------------------------------------------------
 
-  const generateVideoT2V = useCallback(async (prompt, model, aspectRatio, duration, seed, resolution) => {
+  const generateVideoT2V = useCallback(async (prompt, model, aspectRatio, duration, seed, resolution, referenceImages = []) => {
     try {
-      const r = await window.electronAPI.genaiGenerateVideo({
+      const effectiveModel = normalizeVideoModel(model)
+      const invalidTypeRef = (referenceImages || []).find(isInvalidVideoAssetReference)
+      if (invalidTypeRef) {
+        return {
+          success: false,
+          error: 'Veo referenceImages only support asset references.',
+        }
+      }
+      const refs = await resolveReferenceImages(referenceImages, { projectName: projectName(), strictMime: true })
+      const invalidRef = refs.find(ref => !supportsVideoReferenceMimeType(ref.mimeType))
+      if (invalidRef) {
+        return {
+          success: false,
+          error: 'Veo reference images support PNG, JPEG, or WebP.',
+        }
+      }
+      if (refs.length > 0 && !supportsVideoReferenceImages(effectiveModel || DEFAULT_VIDEO_MODEL_ID)) {
+        return {
+          success: false,
+          error: 'Veo reference images require Veo 3.1 Fast/Quality. Select Fast or Quality, or remove @references.',
+        }
+      }
+      const payload = {
         prompt,
         aspectRatio: toVeoAspect(aspectRatio),
         durationSeconds: duration,
-        model: normalizeVideoModel(model),
-        seed: Number.isFinite(seed) ? seed : undefined,
+        model: effectiveModel,
         // 모델이 지원하지 않는 해상도(예: Veo Lite + 4K)는 허용 최대로 강등 — 전역 resolution
         // 설정과 타입별 모델 조합에서 잘못된 해상도가 API 로 새어나가 실패하는 걸 막는다.
-        resolution: coerceResolution(model, resolution) || undefined,
-      })
+        resolution: coerceResolution(effectiveModel, resolution) || undefined,
+      }
+      if (Number.isFinite(seed)) payload.seed = seed
+      if (refs.length > 0) payload.referenceImages = refs.slice(0, VIDEO_REFERENCE_IMAGE_LIMIT)
+      const r = await window.electronAPI.genaiGenerateVideo(payload)
       return markAuthFailure(r)
     } catch (error) {
       return { success: false, error: error?.message || String(error) }
     }
   }, [markAuthFailure])
 
-  // I2V / F2V: 시작·끝 프레임을 base64/dataUrl 로 받아 inline(image / lastFrame)로 전달.
-  // (cloud Veo 는 mediaId 가 없고 inlineData base64 를 받는다 — 문서 확인)
+  // I2V / F2V: 시작·끝 프레임을 base64/dataUrl 로 받아 image / lastFrame bytes 로 전달.
+  // (cloud Veo 는 Flow mediaId 를 받지 않는다.)
   const generateVideoI2V = useCallback(async (prompt, startImage, endImage, model, aspectRatio, duration, seed, resolution) => {
     try {
       const r = await window.electronAPI.genaiGenerateVideo({

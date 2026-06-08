@@ -18,11 +18,24 @@
  */
 
 import { STYLE_PRESETS } from '../config/defaults'
-import { findAutoStyle, previewStyleMatching } from './styleService'
+import { findAutoPromptStyle, findAutoStyle, isStyleReference, previewStyleMatching } from './styleService'
 import { filterPendingScenes } from '../utils/sceneFilters'
 
 export function createStyleResolver({ activeTab, scenes = [], references = [], selectedStyleRefId, t, isKo }) {
   const isVideoText = activeTab === 'video-text'
+
+  const isVideoPromptStyleId = (id) => {
+    if (!id || id === 'none') return true
+    const styleId = String(id)
+    if (styleId.startsWith('preset:')) return true
+    if (!styleId.startsWith('ref:')) return true
+    const refId = styleId.replace('ref:', '')
+    return references.some(r => String(r.id) === refId && isStyleReference(r) && r.prompt)
+  }
+
+  const selectedStyleForContext = isVideoText && !isVideoPromptStyleId(selectedStyleRefId)
+    ? null
+    : selectedStyleRefId
 
   // image/list: generation 대상 씬에 매칭 가능한 게 있는지
   // 라벨 fallback은 모든 scenes로도 — 모두 완료된 상태에서 빈 라벨 회피
@@ -31,7 +44,7 @@ export function createStyleResolver({ activeTab, scenes = [], references = [], s
   const labelPreview = isVideoText ? null : previewStyleMatching(labelScenes, references)
   const guardPreview = isVideoText ? null : previewStyleMatching(targetScenes, references)
 
-  const autoEffectiveStyleId = isVideoText ? findAutoStyle(references) : null
+  const autoEffectiveStyleId = isVideoText ? findAutoPromptStyle(references) : null
   const autoAvailable = isVideoText
     ? !!autoEffectiveStyleId
     : (guardPreview?.matches.length ?? 0) > 0
@@ -52,7 +65,8 @@ export function createStyleResolver({ activeTab, scenes = [], references = [], s
     }
     if (id.startsWith('ref:')) {
       const refId = id.replace('ref:', '')
-      const ref = references.find(r => String(r.id) === refId && r.type === 'style')
+      const ref = references.find(r => String(r.id) === refId && isStyleReference(r))
+      if (isVideoText && !ref?.prompt) return t('actions.styleNone')
       return ref?.name || refId
     }
     if (id.startsWith('preset:')) {
@@ -102,12 +116,13 @@ export function createStyleResolver({ activeTab, scenes = [], references = [], s
   const resolveEffectiveStyleId = (override) => {
     if (override !== undefined) {
       if (override === null) return isVideoText ? autoEffectiveStyleId : null
+      if (isVideoText && !isVideoPromptStyleId(override)) return null
       return override
     }
-    // undefined: UI 선택값 우선. 없을 때 video-text는 findAutoStyle fallback (라벨이 "자동: X"라
+    // undefined: UI 선택값 우선. 없을 때 video-text는 findAutoPromptStyle fallback (라벨이 "자동: X"라
     // 보여주므로 실제 적용도 X로 일치해야). image/list는 null로 둠 — useAutomation이 씬별
     // style_tag로 자동 매칭.
-    return selectedStyleRefId ?? (isVideoText ? autoEffectiveStyleId : null)
+    return selectedStyleForContext ?? (isVideoText ? autoEffectiveStyleId : null)
   }
 
   const resolveEffectiveStyleIdForRef = (override) => {

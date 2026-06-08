@@ -448,7 +448,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     unitPerImage: 'img',
     unitPerSec: 'sec',
     videoResolution: 'Video Resolution',
-    videoResolutionHint: 'Veo output resolution. 1080p/4K are always 8s; 720p matches scene length (4/6/8s).',
+    videoResolutionHint: 'Veo output resolution. 1080p/4K are always 8s; 720p matches scene length (4/6/8s), except reference-image T2V is always 8s.',
 
     // MCP HTTP Server
     mcpHttpSettings: 'MCP HTTP Server',
@@ -1031,6 +1031,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     stopped: 'Video generation stopped.',
     stoppedByUser: 'Stopped by user — Flow may still be generating. Use Retry later or restart the app for auto-recovery.',
     quotaStopped: 'API generation limit reached — stopped',
+    referenceLimitWarning: 'Veo uses up to {limit} video reference images. Extra references were ignored.',
     complete: 'complete',
   },
 

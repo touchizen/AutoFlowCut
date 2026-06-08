@@ -47,7 +47,7 @@ describe('isSceneGenerationDone', () => {
   })
 })
 
-describe('isReferenceUploadedDone (MCP domain — mediaId 기준)', () => {
+describe('isReferenceUploadedDone (MCP domain — Flow mediaId / GenAI data-file 기준)', () => {
   it('mediaId 있고 status 없음 → done', () => {
     expect(isReferenceUploadedDone({ mediaId: 'm-1' })).toBe(true)
   })
@@ -57,16 +57,22 @@ describe('isReferenceUploadedDone (MCP domain — mediaId 기준)', () => {
   })
 
   it("type === 'style' 카드도 다른 ref와 동일하게 카운트 (batch 대상)", () => {
-    // style 카드도 batch가 생성하므로 mediaId + non-in-flight면 done.
+    // style 카드도 batch가 생성하므로 완료 이미지 + non-in-flight면 done.
     expect(isReferenceUploadedDone({ type: 'style', mediaId: 'm-1' })).toBe(true)
+    expect(isReferenceUploadedDone({ type: 'style', data: 'base64' })).toBe(true)
     // in-flight style은 여전히 done 아님
     expect(isReferenceUploadedDone({ type: 'style', status: 'generating', mediaId: 'm-1' })).toBe(false)
-    // mediaId 없는 style은 done 아님
+    // 완료 이미지 없는 style은 done 아님
     expect(isReferenceUploadedDone({ type: 'style' })).toBe(false)
   })
 
-  it('mediaId 자체가 없으면 done 아님', () => {
-    expect(isReferenceUploadedDone({ type: 'character', data: 'base64' })).toBe(false)
+  it('GenAI data/filePath 완료도 done', () => {
+    expect(isReferenceUploadedDone({ type: 'character', data: 'base64' })).toBe(true)
+    expect(isReferenceUploadedDone({ type: 'character', filePath: '/refs/hero.png' })).toBe(true)
+  })
+
+  it('완료 이미지 자체가 없으면 done 아님', () => {
+    expect(isReferenceUploadedDone({ type: 'character' })).toBe(false)
   })
 
   it("status === 'generating'/'error' → done 아님", () => {

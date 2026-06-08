@@ -447,7 +447,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     unitPerImage: '장',
     unitPerSec: '초',
     videoResolution: '비디오 해상도',
-    videoResolutionHint: 'Veo 출력 해상도. 1080p/4K는 항상 8초, 720p는 씬 길이에 맞춰 4/6/8초.',
+    videoResolutionHint: 'Veo 출력 해상도. 1080p/4K는 항상 8초, 720p는 씬 길이에 맞춰 4/6/8초입니다. 단, 이미지 레퍼런스를 쓰는 T2V는 항상 8초입니다.',
 
     // MCP HTTP 서버
     mcpHttpSettings: 'MCP HTTP 서버',
@@ -1030,6 +1030,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     stopped: '비디오 생성이 중지되었습니다.',
     stoppedByUser: '사용자가 중지함 — Flow 에서는 계속 생성 중일 수 있어요. 잠시 후 Retry 또는 앱 재시작 시 자동 회수됩니다.',
     quotaStopped: 'API 생성 한도 도달 — 중단',
+    referenceLimitWarning: 'Veo 비디오 레퍼런스 이미지는 최대 {limit}개만 사용됩니다. 초과 레퍼런스는 무시되었습니다.',
     complete: '완료',
   },
 

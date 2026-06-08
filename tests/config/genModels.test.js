@@ -6,7 +6,7 @@
  * falsy 면 null.
  */
 import { describe, it, expect } from 'vitest'
-import { modelLabel, coerceResolution, categorizeApiModels, pickValidModel, computeModelHeal, IMAGE_MODELS, VIDEO_MODELS, DEFAULT_IMAGE_MODEL_ID } from '../../src/config/genModels'
+import { modelLabel, coerceResolution, supportsVideoReferenceImages, supportsVideoReferenceMimeType, categorizeApiModels, pickValidModel, computeModelHeal, IMAGE_MODELS, VIDEO_MODELS, DEFAULT_IMAGE_MODEL_ID, VIDEO_REFERENCE_IMAGE_LIMIT } from '../../src/config/genModels'
 
 describe('genModels — modelLabel', () => {
   it('이미지 모델 id → 라벨', () => {
@@ -66,6 +66,34 @@ describe('genModels — coerceResolution (모델별 해상도 가드)', () => {
     expect(coerceResolution('veo-3.1-fast-generate-preview', 'foo')).toBeUndefined()
     expect(coerceResolution('veo-3.1-generate-preview', '4K')).toBeUndefined() // 대문자 변종도 미지 처리
     expect(coerceResolution('veo-3.1-lite-generate-preview', '2k')).toBeUndefined()
+  })
+})
+
+describe('genModels — supportsVideoReferenceImages', () => {
+  it('Veo reference images 는 Fast/Quality 에서만 허용하고 Lite 는 차단', () => {
+    expect(supportsVideoReferenceImages('veo-3.1-fast-generate-preview')).toBe(true)
+    expect(supportsVideoReferenceImages('veo-3.1-generate-preview')).toBe(true)
+    expect(supportsVideoReferenceImages('veo-3.1-fast-generate-001')).toBe(true)
+    expect(supportsVideoReferenceImages('veo-3.1-generate-001')).toBe(true)
+    expect(supportsVideoReferenceImages('veo-3.1-lite-generate-preview')).toBe(false)
+    expect(supportsVideoReferenceImages(undefined)).toBe(false)
+  })
+})
+
+describe('genModels — VIDEO_REFERENCE_IMAGE_LIMIT', () => {
+  it('Veo reference image limit is centralized', () => {
+    expect(VIDEO_REFERENCE_IMAGE_LIMIT).toBe(3)
+  })
+})
+
+describe('genModels — supportsVideoReferenceMimeType', () => {
+  it('Veo video reference images accept PNG/JPEG/WebP only', () => {
+    expect(supportsVideoReferenceMimeType('image/png')).toBe(true)
+    expect(supportsVideoReferenceMimeType('image/jpeg')).toBe(true)
+    expect(supportsVideoReferenceMimeType('image/webp')).toBe(true)
+    expect(supportsVideoReferenceMimeType('image/gif')).toBe(false)
+    expect(supportsVideoReferenceMimeType(undefined)).toBe(false)
+    expect(supportsVideoReferenceMimeType('')).toBe(false)
   })
 })
 

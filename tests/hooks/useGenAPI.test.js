@@ -7,7 +7,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { useGenAPI } from '../../src/hooks/useGenAPI'
-import { DEFAULT_IMAGE_MODEL_ID } from '../../src/config/genModels'
+import { DEFAULT_IMAGE_MODEL_ID, VIDEO_REFERENCE_IMAGE_LIMIT } from '../../src/config/genModels'
 
 const IMG_RESULT = {
   success: true,
@@ -123,9 +123,234 @@ describe('useGenAPI — 비디오', () => {
     let r
     await act(async () => { r = await result.current.generateVideoT2V('go', 'veo-3.1-fast', '16:9', 8) })
     expect(window.electronAPI.genaiGenerateVideo).toHaveBeenCalledWith({
-      prompt: 'go', aspectRatio: '16:9', durationSeconds: 8, model: 'veo-3.1-fast',
+      prompt: 'go', aspectRatio: '16:9', durationSeconds: 8, model: 'veo-3.1-fast-generate-preview',
     })
     expect(r).toEqual({ success: true, generationId: 'op1' })
+  })
+
+  it('generateVideoT2V: referenceImages 를 base64 해석 후 IPC 로 전달', async () => {
+    const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
+    await act(async () => {
+      await result.current.generateVideoT2V(
+        'hero walks',
+        'veo-3.1-fast-generate-preview',
+        '16:9',
+        8,
+        null,
+        '720p',
+        [{ name: 'hero', data: 'data:image/png;base64,REF' }]
+      )
+    })
+
+    expect(window.electronAPI.genaiGenerateVideo).toHaveBeenCalledWith({
+      prompt: 'hero walks',
+      referenceImages: [{ mimeType: 'image/png', data: 'REF' }],
+      aspectRatio: '16:9',
+      durationSeconds: 8,
+      model: 'veo-3.1-fast-generate-preview',
+      resolution: '720p',
+    })
+  })
+
+  it('generateVideoT2V: referenceImages 는 최대 3개만 IPC 로 전달', async () => {
+    const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
+    await act(async () => {
+      await result.current.generateVideoT2V(
+        'team walks',
+        'veo-3.1-fast-generate-preview',
+        '16:9',
+        8,
+        null,
+        '720p',
+        ['a', 'b', 'c', 'd'].map(name => ({ name, data: `data:image/png;base64,${name.toUpperCase()}` }))
+      )
+    })
+
+    const refs = window.electronAPI.genaiGenerateVideo.mock.calls.at(-1)[0].referenceImages
+    expect(refs).toHaveLength(VIDEO_REFERENCE_IMAGE_LIMIT)
+    expect(refs.map(r => r.data)).toEqual(['A', 'B', 'C'])
+  })
+
+  it('generateVideoT2V: 디스크 기반 reference + seed/resolution 을 함께 IPC 로 전달', async () => {
+    localStorage.setItem('workFolderPath', '/work')
+    window.electronAPI.readResource.mockResolvedValue({
+      success: true,
+      data: '/9j/DISKREF',
+    })
+    const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
+    await act(async () => {
+      await result.current.generateVideoT2V(
+        'hero walks',
+        'veo-3.1-fast-generate-preview',
+        '9:16',
+        8,
+        123,
+        '1080p',
+        [{ name: 'hero' }]
+      )
+    })
+
+    expect(window.electronAPI.readResource).toHaveBeenCalledWith({
+      workFolder: '/work',
+      project: 'proj',
+      resourceType: 'references',
+      name: 'hero',
+    })
+    expect(window.electronAPI.genaiGenerateVideo).toHaveBeenCalledWith({
+      prompt: 'hero walks',
+      referenceImages: [{ mimeType: 'image/jpeg', data: '/9j/DISKREF' }],
+      aspectRatio: '9:16',
+      durationSeconds: 8,
+      model: 'veo-3.1-fast-generate-preview',
+      seed: 123,
+      resolution: '1080p',
+    })
+  })
+
+  it('generateVideoT2V: Veo Lite + referenceImages 는 IPC 호출 전에 실패', async () => {
+    const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
+    let r
+    await act(async () => {
+      r = await result.current.generateVideoT2V(
+        'hero walks',
+        'veo-3.1-lite-generate-preview',
+        '16:9',
+        8,
+        null,
+        '720p',
+        [{ name: 'hero', data: 'data:image/png;base64,REF' }]
+      )
+    })
+
+    expect(r.success).toBe(false)
+    expect(r.error).toMatch(/Fast\/Quality/)
+    expect(window.electronAPI.genaiGenerateVideo).not.toHaveBeenCalled()
+  })
+
+  it('generateVideoT2V: GA Veo 3.1 모델명도 referenceImages 를 IPC 로 전달', async () => {
+    const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
+    let r
+    await act(async () => {
+      r = await result.current.generateVideoT2V(
+        'hero walks',
+        'veo-3.1-fast-generate-001',
+        '16:9',
+        8,
+        null,
+        '720p',
+        [{ name: 'hero', data: 'data:image/png;base64,REF' }]
+      )
+    })
+
+    expect(r.success).toBe(true)
+    expect(window.electronAPI.genaiGenerateVideo).toHaveBeenCalledWith({
+      prompt: 'hero walks',
+      referenceImages: [{ mimeType: 'image/png', data: 'REF' }],
+      aspectRatio: '16:9',
+      durationSeconds: 8,
+      model: 'veo-3.1-fast-generate-001',
+      resolution: '720p',
+    })
+  })
+
+  it('generateVideoT2V: 미지원 GIF reference MIME 은 IPC 호출 전에 실패', async () => {
+    const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
+    let r
+    await act(async () => {
+      r = await result.current.generateVideoT2V(
+        'hero walks',
+        'veo-3.1-fast-generate-preview',
+        '16:9',
+        8,
+        null,
+        '720p',
+        [{ name: 'hero', data: 'data:image/gif;base64,R0lGODlh' }]
+      )
+    })
+
+    expect(r.success).toBe(false)
+    expect(r.error).toMatch(/PNG, JPEG, or WebP/)
+    expect(window.electronAPI.genaiGenerateVideo).not.toHaveBeenCalled()
+  })
+
+  it('generateVideoT2V: 명시 GIF MIME 은 PNG 데이터여도 IPC 호출 전에 실패', async () => {
+    const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
+    let r
+    await act(async () => {
+      r = await result.current.generateVideoT2V(
+        'hero walks',
+        'veo-3.1-fast-generate-preview',
+        '16:9',
+        8,
+        null,
+        '720p',
+        [{ name: 'hero', mimeType: 'image/gif', data: 'data:image/png;base64,iVBORpng' }]
+      )
+    })
+
+    expect(r.success).toBe(false)
+    expect(r.error).toMatch(/PNG, JPEG, or WebP/)
+    expect(window.electronAPI.genaiGenerateVideo).not.toHaveBeenCalled()
+  })
+
+  it('generateVideoT2V: MIME 을 확정할 수 없는 raw reference 는 IPC 호출 전에 실패', async () => {
+    const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
+    let r
+    await act(async () => {
+      r = await result.current.generateVideoT2V(
+        'hero walks',
+        'veo-3.1-fast-generate-preview',
+        '16:9',
+        8,
+        null,
+        '720p',
+        [{ name: 'hero', data: 'UNKNOWNRAWBASE64' }]
+      )
+    })
+
+    expect(r.success).toBe(false)
+    expect(r.error).toMatch(/PNG, JPEG, or WebP/)
+    expect(window.electronAPI.genaiGenerateVideo).not.toHaveBeenCalled()
+  })
+
+  it('generateVideoT2V: style reference 는 IPC 호출 전에 실패', async () => {
+    const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
+    let r
+    await act(async () => {
+      r = await result.current.generateVideoT2V(
+        'hero walks',
+        'veo-3.1-fast-generate-preview',
+        '16:9',
+        8,
+        null,
+        '720p',
+        [{ name: 'noir', category: 'MEDIA_CATEGORY_STYLE', data: 'data:image/png;base64,REF' }]
+      )
+    })
+
+    expect(r.success).toBe(false)
+    expect(r.error).toMatch(/asset references/)
+    expect(window.electronAPI.genaiGenerateVideo).not.toHaveBeenCalled()
+  })
+
+  it('generateVideoT2V: referenceType=style 은 IPC 호출 전에 실패', async () => {
+    const { result } = renderHook(() => useGenAPI({ getProjectName: () => 'proj' }))
+    let r
+    await act(async () => {
+      r = await result.current.generateVideoT2V(
+        'hero walks',
+        'veo-3.1-fast-generate-preview',
+        '16:9',
+        8,
+        null,
+        '720p',
+        [{ name: 'noir', referenceType: 'style', data: 'data:image/png;base64,REF' }]
+      )
+    })
+
+    expect(r.success).toBe(false)
+    expect(r.error).toMatch(/asset references/)
+    expect(window.electronAPI.genaiGenerateVideo).not.toHaveBeenCalled()
   })
 
   it('비-veo 모델은 기본값으로 (model undefined)', async () => {
@@ -215,7 +440,7 @@ describe('useGenAPI — 비디오', () => {
       endImage: { mimeType: 'image/png', data: 'END' },
       aspectRatio: '16:9',
       durationSeconds: 8,
-      model: 'veo-3.1-fast',
+      model: 'veo-3.1-fast-generate-preview',
     })
   })
 

@@ -10,7 +10,7 @@
  * useFlowAPI, useProjectData) 는 변경 폭이 최소.
  *
  * VideoScene 형태:
- *   id, prompt, duration, startTime, endTime, status,
+ *   id, prompt, duration, srtLineIds, startTime, endTime, status,
  *   video, videoPath, mediaId, generationId, selected,
  *   image, imagePath, filePath, data
  *
@@ -78,6 +78,7 @@ function deriveVideoScene(s) {
     id: s.id.replace(/^scene_/, 'vscene_'),
     prompt: s.videoT2VPrompt || '',
     duration: s.videoT2VDuration ?? s.duration ?? DEFAULTS.scene.duration,
+    srtLineIds: Array.isArray(s.srtLineIds) ? [...s.srtLineIds] : [],
     startTime: s.startTime ?? 0,
     endTime: s.endTime ?? 0,
     status: s.videoT2VStatus ?? 'pending',
