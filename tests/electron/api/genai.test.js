@@ -14,6 +14,7 @@ import {
   generateImage,
   submitVideo,
   checkVideoOperation,
+  summarizeVeoOperation,
   fetchVideoBase64,
   generateVideo,
   validateApiKey,
@@ -612,6 +613,49 @@ describe('genai — checkVideoOperation', () => {
     const fetchImpl = mockFetchOnce(jsonRes({ error: { code: 500, message: 'oops', status: 'INTERNAL' } }))
     const res = await checkVideoOperation({ apiKey: 'k', operationName: 'o' }, { fetchImpl })
     expect(res.error).toBe('HTTP 500 :: oops :: INTERNAL')
+  })
+})
+
+describe('genai — summarizeVeoOperation (진단 로깅용)', () => {
+  it('완료 응답에서 sampleCount/hasVideoUri 와 generateVideoResponse 키를 추출한다', () => {
+    const data = {
+      done: true,
+      response: {
+        generateVideoResponse: {
+          generatedSamples: [{ video: { uri: 'https://veo/out.mp4' } }],
+        },
+      },
+    }
+    const s = summarizeVeoOperation(data)
+    expect(s.done).toBe(true)
+    expect(s.sampleCount).toBe(1)
+    expect(s.hasVideoUri).toBe(true)
+    // responseKeys 로 실제 응답 필드명을 드러내 미지 필드(필터/경고)를 발견할 수 있어야 한다.
+    expect(s.responseKeys).toContain('generatedSamples')
+  })
+
+  it('RAI 미디어 필터링 카운트/사유를 노출한다 (silent ignore 의 유일한 코드 단서)', () => {
+    const data = {
+      done: true,
+      response: {
+        generateVideoResponse: {
+          raiMediaFilteredCount: 1,
+          raiMediaFilteredReasons: ['Output blocked by safety filter'],
+          generatedSamples: [],
+        },
+      },
+    }
+    const s = summarizeVeoOperation(data)
+    expect(s.raiFilteredCount).toBe(1)
+    expect(s.raiFilteredReasons).toEqual(['Output blocked by safety filter'])
+    expect(s.sampleCount).toBe(0)
+    expect(s.hasVideoUri).toBe(false)
+  })
+
+  it('미완료/빈/null 응답에서도 크래시 없이 안전한 기본값을 반환한다', () => {
+    expect(summarizeVeoOperation({ done: false })).toMatchObject({ done: false, sampleCount: 0, hasVideoUri: false })
+    expect(summarizeVeoOperation(null)).toMatchObject({ done: false, sampleCount: 0, hasVideoUri: false })
+    expect(summarizeVeoOperation({})).toMatchObject({ done: false, sampleCount: 0, hasVideoUri: false })
   })
 })
 

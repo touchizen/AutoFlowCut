@@ -390,6 +390,28 @@ export async function submitVideo(
 }
 
 /**
+ * Veo operation 완료 응답을 로그/진단용으로 요약 (민감 데이터·base64 제외).
+ * referenceImages 가 silent-ignore 되는지 추적할 때, 응답에 실제로 무엇이 들어있는지
+ * (responseKeys)와 안전 필터링 흔적(raiMediaFiltered*)을 드러낸다.
+ *
+ * @param {object} data - checkVideoOperation 의 operation 응답 raw data
+ * @returns {{done:boolean, sampleCount:number, hasVideoUri:boolean, raiFilteredCount?:number, raiFilteredReasons?:*, responseKeys:string[]}}
+ */
+export function summarizeVeoOperation(data) {
+  const d = data || {}
+  const gvr = d.response?.generateVideoResponse || {}
+  const samples = Array.isArray(gvr.generatedSamples) ? gvr.generatedSamples : []
+  return {
+    done: !!d.done,
+    sampleCount: samples.length,
+    hasVideoUri: !!samples[0]?.video?.uri,
+    raiFilteredCount: gvr.raiMediaFilteredCount,
+    raiFilteredReasons: gvr.raiMediaFilteredReasons,
+    responseKeys: Object.keys(gvr),
+  }
+}
+
+/**
  * 비디오 operation 상태 1회 조회 (폴링용).
  *
  * @returns {Promise<{success:boolean, done:boolean, videoUri?:string, error?:string}>}
@@ -413,6 +435,16 @@ export async function checkVideoOperation(
 
     if (!data.done) {
       return { success: true, done: false }
+    }
+
+    // Veo 미디어 안전필터가 reference/출력을 막으면 영상이 비거나 이상하게 나온다 —
+    // silent-fail 안전망으로 그 단서만 경고로 남긴다(정상이면 조용히).
+    const opDiag = summarizeVeoOperation(data)
+    if (opDiag.raiFilteredCount) {
+      console.warn('[VeoRef] Veo media safety filter applied', {
+        raiFilteredCount: opDiag.raiFilteredCount,
+        raiFilteredReasons: opDiag.raiFilteredReasons,
+      })
     }
 
     const videoUri = data.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri
