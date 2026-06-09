@@ -9,12 +9,12 @@ const screenshots = [
   { file: '스크린샷 2026-06-06 202752.png', caption: 'Build a full video timeline from AI-generated scenes, audio, and subtitles' },
   { file: '스크린샷 2026-06-06 203328.png', caption: 'Generate every scene in sequence with one guided workflow' },
   { file: '스크린샷 2026-06-06 203345.png', caption: 'Review prompts, media, and status across the entire project' },
-  { file: '스크린샷 2026-06-06 203401.png', caption: 'Select only the scenes you need and start batch generation instantly' },
+  { file: '스크린샷 2026-06-06 203401.png', caption: 'Generate up to 100 images in about 2-5 minutes with batch selection' },
   { file: '스크린샷 2026-06-06 203415.png', caption: 'Keep characters consistent with reusable reference images' },
   { file: '스크린샷 2026-06-06 203424.png', caption: 'Import scripts, scene CSV files, references, subtitles, and audio packages' },
   { file: '스크린샷 2026-06-06 203438.png', caption: 'Export ready-to-edit CapCut projects with subtitles and Ken Burns motion' },
   { file: '스크린샷 2026-06-06 203531.png', caption: 'Preview long-form stories with synchronized timeline tracks' },
-  { file: '스크린샷 2026-06-06 203550.png', caption: 'Scale production with many scenes, references, and generated media' },
+  { file: '스크린샷 2026-06-09 120954.png', caption: 'Use @mentions in video prompts to insert character references' },
   { file: '스크린샷 2026-06-06 203713.png', caption: 'Open the exported project directly in CapCut for final editing' },
 ];
 

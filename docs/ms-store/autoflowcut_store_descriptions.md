@@ -193,7 +193,9 @@ Disclaimer: This app is an independent product developed by Touchizen and is not
 
 ### What's New
 ```
-v1.1.0 — 5× to 10× faster image and video generation. Type @character in the prompt to instantly attach a reference image inline.
+v1.1.1 — Reference images for video. Attach character and style references to Veo video generation (T2V & I2V) with the same @mention syntax you already use for images — consistent characters now carry into your video clips, not just stills. Plus stability fixes for prompt editing, video reference handling, and CapCut export.
+
+v1.1.0 — 5× to 10× faster image and video generation. 100 images take about 2 to 5 minutes. Type @character in the prompt to instantly attach a reference image inline.
 
 v1.0.0 — Your own API key. Faster. No logins. Ever.
 
@@ -214,7 +216,7 @@ Generate up to 5 scenes in parallel. Concurrency is configurable in Settings; de
 
 ### Keywords
 ```
-Google Gemini API, Veo API, CapCut export, AI video automation, text to video, image to video, batch AI generation, BYOK, faceless YouTube, AI story channel
+AI video automation, text to video, image to video, batch AI generation, BYOK, video timeline, subtitles, SRT, audio sync, Ken Burns, story engine, MCP, open source
 ```
 
 ---
@@ -377,6 +379,8 @@ Touchizen 제작 — touchizen.com
 
 ### What's New (새로운 기능)
 ```
+v1.1.1 — 비디오에도 레퍼런스 이미지. 이미지에서 쓰던 @멘션 방식 그대로 Veo 비디오 생성(T2V·I2V)에 캐릭터·스타일 레퍼런스를 첨부할 수 있습니다 — 이제 정지 이미지뿐 아니라 영상 클립에서도 캐릭터 일관성이 유지됩니다. 프롬프트 편집, 비디오 레퍼런스 처리, CapCut 내보내기 안정성도 함께 개선했습니다.
+
 v1.1.0 — 이미지·비디오 생성 속도 5배~10배 향상. 프롬프트 입력창에서 @캐릭터이름을 타이핑하면 레퍼런스 이미지를 바로 인라인으로 첨부할 수 있습니다.
 
 v1.0.0 — 내 API 키로, 더 빠르게. 로그인 없이. 영구적으로.
@@ -398,7 +402,7 @@ I2V + T2V 동시 내보내기. 이미지→비디오와 텍스트→비디오 �
 
 ### Keywords (한국어)
 ```
-Google Gemini API, Veo API, CapCut, AI 영상 자동화, 텍스트투비디오, 이미지투비디오, AI 이미지 생성, 일괄 생성, Ken Burns, 자막, SRT, 얼굴없는 유튜브, AI 스토리텔링, Story Engine, MCP, Claude Code, 오픈소스
+AI 영상 자동화, 텍스트투비디오, 이미지투비디오, AI 이미지 생성, 일괄 생성, 영상 타임라인, 자막, SRT, 오디오 싱크, Ken Burns, AI 스토리텔링, Story Engine, MCP, 오픈소스
 ```
 
 ---
@@ -416,7 +420,7 @@ Google Gemini/Veo APIで画像・動画を一括生成し、CapCutプロジェ�
 
 Google AI StudioキーをSettings に一度登録してスクリプトを読み込めば、あとはAutoFlowCutが自動処理。Gemini & Veoで画像・動画を一括生成し、リアルタイムで結果を確認しながら、タイムライン・音声・字幕・Ken Burnsアニメーション込みの完成CapCutプロジェクトをワンクリックでエクスポート。
 
-ウェブ自動化なし。ログインなし。reCAPTCHAなし。デバイスからGoogle公式APIへ直接、クォータの許す限り最速で。Gemini APIはGoogle Flowよりはるかに多くの国で利用可能なため、以前は国の制限でAI生成を使えなかったクリエイターも、AutoFlowCutを制限なく利用できます。
+ウェブ自動化なし。ログインなし。reCAPTCHAなし。デバイスからGoogle公式APIへ直接、クォータの許す限り最速で。公式APIベースの安定した生成ワークフローで、AutoFlowCutをスムーズに利用できます。
 
 
 ⚡ 主な機能
@@ -466,6 +470,8 @@ Google AI StudioキーをSettings に一度登録してスクリプトを読み�
 
 ### What's New
 ```
+v1.1.1 — 動画にも参照画像。画像で使う@メンション記法そのままで、Veo動画生成（T2V・I2V）にキャラクター・スタイル参照を添付できます — 静止画だけでなく動画クリップでもキャラクターの一貫性を維持。プロンプト編集、動画参照の処理、CapCutエクスポートの安定性も改善しました。
+
 v1.1.0 — 画像・動画の生成速度が5〜10倍に向上。プロンプト入力欄で@キャラクター名を入力すると、参照画像をその場でインラインに添付できます。
 
 v1.0.0 — 自分のAPIキーで、速く、ログイン不要。
@@ -550,7 +556,9 @@ Der integrierte MCP-Server (Model Context Protocol) verbindet sich direkt mit Cl
 
 ### What's New
 ```
-v1.1.0 — 5× bis 10× schnellere Bild- und Videogenerierung. Tippen Sie @Charaktername im Prompt-Feld, um ein Referenzbild direkt inline anzuhängen.
+v1.1.1 — Referenzbilder jetzt auch für Videos. Hängen Sie Charakter- und Stilreferenzen mit derselben @Mention-Syntax wie bei Bildern an die Veo-Videogenerierung (T2V & I2V) an — konsistente Charaktere gibt es jetzt nicht nur in Standbildern, sondern auch in Ihren Videoclips. Dazu Stabilitätsverbesserungen für Prompt-Bearbeitung, Videoreferenz-Handling und CapCut-Export.
+
+v1.1.0 — 5× bis 10× schnellere Bild- und Videogenerierung. 100 Bilder dauern etwa 2 bis 5 Minuten. Tippen Sie @Charaktername im Prompt-Feld, um ein Referenzbild direkt inline anzuhängen.
 
 v1.0.0 — Eigener API-Schlüssel. Schneller. Nie wieder Login-Probleme.
 
@@ -595,3 +603,4 @@ Bis zu 5 Szenen gleichzeitig generieren (in den Einstellungen konfigurierbar).
 - Privacy Policy URL: https://touchizen.com/en/privacy
 - Website: https://touchizen.com/en/autoflowcut
 - Support: gordon.ahn@touchizen.com
+- Additional terms: A Google AI Studio API key is required for AI image and video generation. A Google account may be required to create and manage the API key. Google Gemini API and Veo API terms of service, quotas, and billing policies apply.
