@@ -80,14 +80,14 @@ describe('useVideoScenes — derived view', () => {
     expect(vs[1].id).toBe('vscene_5')
   })
 
-  it('videoT2VDuration 없으면 scene.duration 으로 fallback', () => {
+  it('duration 은 생성된 비디오 길이(videoT2VDuration)가 아니라 scene.duration 을 따른다', () => {
     const { result } = setupHook([
       { id: 'scene_1', videoT2VPrompt: 'v1', duration: 4, videoT2VDuration: null },
       { id: 'scene_2', videoT2VPrompt: 'v2', duration: 3, videoT2VDuration: 7 },
     ])
     const vs = result.current.videoScenesHook.videoScenes
     expect(vs[0].duration).toBe(4)
-    expect(vs[1].duration).toBe(7)
+    expect(vs[1].duration).toBe(3)
   })
 
   it('source scene 의 srtLineIds 를 vscene 에 보존한다', () => {

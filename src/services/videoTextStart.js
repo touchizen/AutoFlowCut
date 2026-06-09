@@ -24,3 +24,42 @@ export function prepareVideoTextStartScenes({
 
   return { scenes, didWarnReferenceLimit }
 }
+
+export function buildVideoTextStartPayload({
+  videoScenes = [],
+  references = [],
+  effectiveStyleId = null,
+  srtTrack = [],
+  settings = {},
+  projectName = '',
+  styleLabel = null,
+  warn = console.warn,
+  onReferenceLimitWarning = null,
+} = {}) {
+  const { scenes } = prepareVideoTextStartScenes({
+    videoScenes,
+    references,
+    effectiveStyleId,
+    srtTrack,
+    warn,
+    onReferenceLimitWarning,
+  })
+  const seed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
+    ? settings.seedNo
+    : null
+
+  return {
+    runningStyle: { styleId: effectiveStyleId, label: styleLabel, applies: true },
+    startOptions: {
+      mode: 't2v',
+      scenes,
+      seed,
+      projectName,
+      saveMode: settings.saveMode,
+      videoResolution: settings.videoResolution || '720p',
+      videoModel: settings.videoModelT2V,
+      videoBatchCount: settings.videoBatchCount || 1,
+      concurrency: settings.videoConcurrency || 4,
+    },
+  }
+}

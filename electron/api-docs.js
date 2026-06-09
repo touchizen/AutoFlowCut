@@ -306,6 +306,69 @@ curl http://127.0.0.1:3210/api/batch-status
         },
       },
     },
+    '/api/current-project': {
+      get: {
+        tags: ['프로젝트'],
+        summary: '현재 프로젝트 조회',
+        description: '현재 앱에서 열린 프로젝트 이름과 프로젝트 디렉토리를 반환합니다.',
+        responses: {
+          200: {
+            description: '현재 프로젝트',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    projectName: { type: 'string', example: 'demo-project' },
+                    projectDir: { type: 'string', example: '/Users/me/AutoFlowCut/demo-project' },
+                  },
+                },
+              },
+            },
+          },
+          500: { description: '현재 프로젝트 조회 실패' },
+        },
+      },
+      patch: {
+        tags: ['프로젝트'],
+        summary: '현재 프로젝트 전환',
+        description: '이미 존재하는 프로젝트를 앱에서 엽니다.',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['name'],
+                properties: {
+                  name: { type: 'string', description: '열 프로젝트 이름', example: 'demo-project' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: {
+            description: '프로젝트 열기 요청 완료',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean' },
+                    projectDir: { type: 'string' },
+                    projectName: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+          400: { description: '작업 폴더 미설정 또는 name 누락' },
+          404: { description: '프로젝트 없음' },
+          500: { description: '프로젝트 열기 실패' },
+        },
+      },
+    },
     '/api/batch-status': {
       get: {
         tags: ['상태'],

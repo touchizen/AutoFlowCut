@@ -31,7 +31,7 @@ import { isStyleReference, previewStyleMatching } from './services/styleService'
 import { isSceneGenerationDone } from './services/generationStatus'
 import { computeGuardAvailable } from './services/startGuard'
 import { createStyleResolver } from './services/styleResolver'
-import { prepareVideoTextStartScenes } from './services/videoTextStart'
+import { buildVideoTextStartPayload } from './services/videoTextStart'
 import { filterPendingScenes } from './utils/sceneFilters'
 import { videoClearPatch, buildFramePairVideoPatch, buildVideoRestorePatch, resolveI2vRestoreSceneId } from './utils/sceneMedia'
 import { detectFileType, detectCSVType, parseCSVToScenes, parseSRTToScenes, csvPromptToVideoT2V } from './utils/parsers'
@@ -947,36 +947,26 @@ function App() {
         // override → effective는 styleResolver.resolveEffectiveStyleId가 탭별로 처리.
         // video-text는 null override일 때 findAutoPromptStyle 결과로 변환됨 (resolver 내부 로직).
         const effectiveStyleId = styleResolver.resolveEffectiveStyleId(overrideStyleId)
-        const { scenes: styledVideoScenes } = prepareVideoTextStartScenes({
+        const { startOptions: videoTextStartOptions, runningStyle: videoTextRunningStyle } = buildVideoTextStartPayload({
           videoScenes: selectedVideoScenes,
           references: scenesHook.references || [],
           effectiveStyleId,
           srtTrack: scenesHook.srtTrack,
+          settings,
+          projectName,
+          styleLabel: styleResolver.resolveLabelForId(effectiveStyleId),
           warn: console.warn,
           onReferenceLimitWarning: (limit) => {
             toast.warning(t('videoAutomation.referenceLimitWarning', { limit }))
           },
         })
 
-        // seed: 이미지와 동일한 정책 — locked + 숫자일 때만 고정 seed
-        const effectiveVideoSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
-          ? settings.seedNo
-          : null
-
         // Stop 버튼이 현재 실행 중인 스타일을 표시할 수 있도록 id + 라벨 모두 snapshot
-        setRunningStyle({ styleId: effectiveStyleId, label: styleResolver.resolveLabelForId(effectiveStyleId), applies: true })
+        setRunningStyle(videoTextRunningStyle)
         setHasPendingBatch(true)
 
         videoAutomation.start({
-          mode: 't2v',
-          scenes: styledVideoScenes,
-          seed: effectiveVideoSeed,
-          projectName,
-          saveMode: settings.saveMode,
-          videoResolution: settings.videoResolution || '720p',
-          videoModel: settings.videoModelT2V,
-          videoBatchCount: settings.videoBatchCount || 1,
-          concurrency: settings.videoConcurrency || 4,
+          ...videoTextStartOptions,
           onItemUpdate: (id, newStatus, result) => {
             // 명시적 null 도 통과시켜야 하는 필드(video/videoPath/mediaId/generatedAt 등)는
             // `'X' in result` 체크 — useVideoAutomation 의 새 generation 제출 시 이전 complete

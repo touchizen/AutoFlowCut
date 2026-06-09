@@ -8,7 +8,7 @@
 import { renderHook, act } from '@testing-library/react'
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { useVideoAutomation } from '../../src/hooks/useVideoAutomation'
-import { prepareVideoTextStartScenes } from '../../src/services/videoTextStart'
+import { buildVideoTextStartPayload } from '../../src/services/videoTextStart'
 import { __resetQuotaStopForTests } from '../../src/utils/quotaStop'
 
 vi.mock('../../src/hooks/useFileSystem', () => ({
@@ -108,7 +108,7 @@ describe('useVideoAutomation — 자동 duration + resolution 제출 전달', ()
     expect(args[6]).toEqual(referenceImages)
   })
 
-  it('video-text start prep keeps cleaned @mention prompt and refs through T2V submit', async () => {
+  it('video-text start payload keeps cleaned @mention prompt and refs through T2V submit', async () => {
     const { hook, generateVideoT2V } = makeHook()
     const heroRef = {
       id: 'ref_hero',
@@ -117,14 +117,31 @@ describe('useVideoAutomation — 자동 duration + resolution 제출 전달', ()
       data: 'data:image/png;base64,REF',
       filePath: null,
     }
-    const { scenes } = prepareVideoTextStartScenes({
+    const { startOptions, runningStyle } = buildVideoTextStartPayload({
       videoScenes: [{ id: 'vscene_v1', prompt: 'A wizard @hero walks', targetDuration: 4 }],
       references: [heroRef],
       effectiveStyleId: null,
+      settings: {
+        saveMode: 'memory',
+        videoModelT2V: 'veo-3.1-fast-generate-preview',
+        videoResolution: '720p',
+        videoBatchCount: 1,
+        videoConcurrency: 4,
+      },
+      projectName: 'test',
+      styleLabel: 'None',
       warn: vi.fn(),
     })
 
-    await runT2V(hook, scenes[0], { videoResolution: '720p' })
+    expect(runningStyle).toEqual({ styleId: null, label: 'None', applies: true })
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start(startOptions)
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(20 * 1000) })
+    await act(async () => { hook.result.current.stop() })
+    await act(async () => { await vi.advanceTimersByTimeAsync(30 * 1000) })
+    await startPromise
 
     const args = generateVideoT2V.mock.calls[0]
     expect(args[0]).toBe('A wizard hero walks')

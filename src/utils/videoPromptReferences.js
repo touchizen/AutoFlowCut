@@ -42,6 +42,13 @@ function capVideoReferences(mentionRefs) {
   return mentionRefs.slice(0, VIDEO_REFERENCE_LIMIT)
 }
 
+function getVideoTargetDuration(scene, srtTrack) {
+  const sceneDuration = Number(getSceneDuration(scene, srtTrack))
+  if (Number.isFinite(sceneDuration) && sceneDuration > 0) return sceneDuration
+  const explicitTarget = Number(scene?.targetDuration)
+  return Number.isFinite(explicitTarget) && explicitTarget > 0 ? explicitTarget : 0
+}
+
 export function buildVideoPromptWithReferences(prompt, references = [], effectiveStyleId = null) {
   const refs = references || []
   const mentionSources = refs.filter(isUsableVideoReference)
@@ -73,7 +80,7 @@ export function buildVideoPromptScenes(videoScenes = [], references = [], effect
         ...scene,
         prompt: prepared.styledPrompt,
         referenceImages: prepared.referenceImages,
-        targetDuration: getSceneDuration(scene, srtTrack),
+        targetDuration: getVideoTargetDuration(scene, srtTrack),
       },
     }
   })

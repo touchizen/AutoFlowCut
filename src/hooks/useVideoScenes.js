@@ -17,7 +17,7 @@
  * 매핑 (videoScenes 필드 → scenes 필드):
  *   id           ↔ id (vscene_N ↔ scene_N)
  *   prompt       ↔ videoT2VPrompt
- *   duration     ↔ videoT2VDuration (없으면 scene.duration)
+ *   duration     ↔ scene.duration (다음 생성 목표 길이)
  *   status       ↔ videoT2VStatus
  *   video        ↔ videoT2V
  *   videoPath    ↔ videoT2VPath
@@ -30,6 +30,9 @@ import { useCallback, useMemo } from 'react'
 import { DEFAULTS } from '../config/defaults'
 
 /** videoScene update field → scenes update field 매핑 테이블.
+ *  duration 쓰기 경로는 생성된 원본 비디오 길이(videoT2VDuration)를 저장한다.
+ *  반대로 deriveVideoScene 의 duration 읽기 경로는 다음 생성 목표/timeline 길이인
+ *  scene.duration 을 사용한다.
  *  주의: video 는 scene.videoT2V (gen / trim / sceneMedia 가 읽는 canonical 필드)
  *  로 매핑. 이전엔 videoT2VVideo 라는 phantom 필드로 매핑돼 있어 clear-media 가
  *  scene.videoT2V 를 못 비워서 stale 비디오가 export/trim 에 남는 회귀가 있었음. */
@@ -77,7 +80,7 @@ function deriveVideoScene(s) {
   return {
     id: s.id.replace(/^scene_/, 'vscene_'),
     prompt: s.videoT2VPrompt || '',
-    duration: s.videoT2VDuration ?? s.duration ?? DEFAULTS.scene.duration,
+    duration: s.duration ?? DEFAULTS.scene.duration,
     srtLineIds: Array.isArray(s.srtLineIds) ? [...s.srtLineIds] : [],
     startTime: s.startTime ?? 0,
     endTime: s.endTime ?? 0,
