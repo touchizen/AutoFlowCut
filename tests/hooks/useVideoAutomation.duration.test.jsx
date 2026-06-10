@@ -35,20 +35,21 @@ afterEach(() => {
 
 function makeHook() {
   const generateVideoT2V = vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' })
+  const generateVideoI2V = vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' })
   // pending 유지 → 제출만 확인하고 stop 으로 종료
   const checkVideoStatus = vi.fn().mockResolvedValue({
     success: true, statuses: [{ generationId: 'gen-1', status: 'pending' }],
   })
   const genAPI = {
     generateVideoT2V,
-    generateVideoI2V: vi.fn(),
+    generateVideoI2V,
     checkVideoStatus,
     downloadVideo: vi.fn(),
     upscaleVideo: vi.fn(),
     getAccessToken: vi.fn().mockResolvedValue('token'),
   }
   const hook = renderHook(() => useVideoAutomation(genAPI, (k) => k, null))
-  return { hook, generateVideoT2V }
+  return { hook, generateVideoT2V, generateVideoI2V }
 }
 
 async function runT2V(hook, sceneOverrides, startOverrides) {
@@ -65,6 +66,30 @@ async function runT2V(hook, sceneOverrides, startOverrides) {
   // 제출 + 첫 폴링까지 진행
   await act(async () => { await vi.advanceTimersByTimeAsync(20 * 1000) })
   // 정리: 폴링 중단
+  await act(async () => { hook.result.current.stop() })
+  await act(async () => { await vi.advanceTimersByTimeAsync(30 * 1000) })
+  await startPromise
+}
+
+async function runI2V(hook, framePairOverrides, startOverrides) {
+  let startPromise
+  await act(async () => {
+    startPromise = hook.result.current.start({
+      mode: 'i2v',
+      framePairs: [{
+        id: 'fp_1',
+        prompt: 'p',
+        startSceneId: 'scene_1',
+        _startImage: 'data:image/png;base64,REF',
+        status: 'waiting',
+        ...framePairOverrides,
+      }],
+      projectName: 'test', saveMode: 'memory',
+      videoModel: 'veo-3.1-fast-generate-preview', aspectRatio: '16:9',
+      duration: 8, seed: null, ...startOverrides,
+    })
+  })
+  await act(async () => { await vi.advanceTimersByTimeAsync(20 * 1000) })
   await act(async () => { hook.result.current.stop() })
   await act(async () => { await vi.advanceTimersByTimeAsync(30 * 1000) })
   await startPromise
@@ -188,5 +213,23 @@ describe('useVideoAutomation — 자동 duration + resolution 제출 전달', ()
       'generating',
       expect.objectContaining({ model: 'veo-3.1-fast-generate-preview' })
     )
+  })
+
+  it('I2V 720p 는 framePair targetDuration 을 {4,6,8} 로 스냅해서 제출', async () => {
+    const { hook, generateVideoI2V } = makeHook()
+    await runI2V(hook, { targetDuration: 5 }, { videoResolution: '720p' })
+
+    const args = generateVideoI2V.mock.calls[0]
+    expect(args[5]).toBe(6)
+    expect(args[7]).toBe('720p')
+  })
+
+  it('I2V 1080p 는 framePair targetDuration 이 짧아도 8초로 제출', async () => {
+    const { hook, generateVideoI2V } = makeHook()
+    await runI2V(hook, { targetDuration: 4 }, { videoResolution: '1080p' })
+
+    const args = generateVideoI2V.mock.calls[0]
+    expect(args[5]).toBe(8)
+    expect(args[7]).toBe('1080p')
   })
 })

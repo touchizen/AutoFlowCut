@@ -221,7 +221,9 @@ export async function generateImage(
     contents: [{ parts }],
     generationConfig: {
       responseModalities: ['IMAGE'],
-      imageConfig: { aspectRatio: aspectRatio || DEFAULT_ASPECT_RATIO },
+      responseFormat: {
+        image: { aspectRatio: aspectRatio || DEFAULT_ASPECT_RATIO },
+      },
     },
   }
 
@@ -274,7 +276,7 @@ export async function generateImage(
  * @param {object} params
  * @param {string} params.apiKey
  * @param {string} params.prompt
- * @param {{mimeType:string,data:string}} [params.image] - I2V 시작 프레임 (inline base64). 없으면 T2V.
+ * @param {{mimeType:string,data:string}} [params.image] - I2V 시작 프레임 base64. 없으면 T2V.
  * @param {{mimeType:string,data:string}} [params.endImage] - F2V 끝 프레임 (lastFrame). image 와 함께 주면 첫/끝 보간.
  * @param {Array<{mimeType:string,data:string}>} [params.referenceImages] - Veo 3.1 T2V reference images, max 3.
  * @param {string} [params.aspectRatio]
@@ -284,10 +286,12 @@ export async function generateImage(
  * @returns {Promise<{success:boolean, operationName?:string, error?:string}>}
  *   operationName 은 이후 checkVideoOperation 에 넘기는 generationId 역할.
  *
- * Veo predictLongRunning 의 instances[].image 는 `{ bytesBase64Encoded: <base64>, mimeType }`.
+ * Veo REST payload 는 입력 타입별 이미지 wrapper 가 다르다:
+ *   - T2V referenceImages: `{ image: { inlineData: { mimeType, data } }, referenceType: 'asset' }`
+ *   - I2V/F2V image/lastFrame: `{ bytesBase64Encoded: <base64>, mimeType }`
  * 시행착오(2026-06): `inlineData`(REST 문서 예시)·`imageBytes`(SDK 필드)는 둘 다
- * "isn't supported by this model"(400, 스키마 거부). `bytesBase64Encoded`(Vertex 형식)만
- * 스키마 통과 — 이 엔드포인트가 Vertex predict 스키마를 공유. lastFrame 도 동일 형태.
+ * I2V/F2V image/lastFrame 에서 "isn't supported by this model"(400, 스키마 거부).
+ * 해당 필드는 `bytesBase64Encoded`(Vertex 형식)만 스키마 통과했다.
  */
 export async function submitVideo(
   {
@@ -357,14 +361,13 @@ export async function submitVideo(
   const res = coerceResolution(effectiveModel, resolution) || null
   if (res) parameters.resolution = res
 
-  // 길이: {4,6,8} 로 보정. 이미지 기반 입력(I2V/F2V/referenceImages) 또는 1080p/4k 면 8초 강제(공식 Veo 제약).
-  const hasImage = !!(hasFrameImage || videoReferenceImages.length > 0)
+  // 길이: {4,6,8} 로 보정. referenceImages 또는 1080p/4k 면 8초 강제(공식 Veo 제약).
   let dur = Math.round(Number(durationSeconds))
   if (!Number.isFinite(dur) || dur <= 0) dur = DEFAULT_VIDEO_DURATION
   if (dur <= 4) dur = 4
   else if (dur <= 6) dur = 6
   else dur = 8
-  if (hasImage || res === '1080p' || res === '4k') dur = 8
+  if (videoReferenceImages.length > 0 || res === '1080p' || res === '4k') dur = 8
   parameters.durationSeconds = dur  // 숫자로 — API 는 string 거부('needs to be a number')
 
   // seed 는 Veo 가 지원 — 숫자일 때만 전달(재현성). 이미지(Gemini)는 미지원이라 안 보냄.

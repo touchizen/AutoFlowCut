@@ -249,8 +249,9 @@ export function useGenAPI({ onAuthError, getProjectName } = {}) {
     }
   }, [markAuthFailure])
 
-  // I2V / F2V: 시작·끝 프레임을 base64/dataUrl 로 받아 image / lastFrame bytes 로 전달.
-  // (cloud Veo 는 Flow mediaId 를 받지 않는다.)
+  // I2V / F2V: 시작·끝 프레임을 base64/dataUrl 로 받아 { mimeType, data } 로 정규화한다.
+  // main-process submitVideo 가 image/lastFrame 을 bytesBase64Encoded REST payload 로 직렬화한다.
+  // (T2V referenceImages 는 별도 경로로 inlineData 를 쓴다.)
   const generateVideoI2V = useCallback(async (prompt, startImage, endImage, model, aspectRatio, duration, seed, resolution) => {
     try {
       const effectiveModel = normalizeVideoModel(model)

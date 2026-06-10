@@ -25,12 +25,10 @@ import { clampInt } from '../utils/clampInt'
 
 // 실제 제출되는 비디오 길이(초). submitVideo(engine)의 제약과 동일하게 계산해 제출값과
 // 완료-메타가 일치하도록 한다(어긋나면 history 길이가 실제와 불일치):
-//   - i2v/f2v(reference 이미지) → 8 고정
 //   - t2v + referenceImages → 8 고정 (Veo 3.1 reference image 제약)
 //   - 1080p/4k → 8 고정 (공식 Veo 제약)
-//   - 그 외(t2v + 720p) → 씬 길이(targetDuration)를 {4,6,8} 로 스냅
+//   - 그 외(720p) → 씬 길이(targetDuration)를 {4,6,8} 로 스냅
 function effectiveVideoDuration(item, mode, batchDuration, resolution) {
-  if (mode === 'i2v') return 8
   if (mode === 't2v' && Array.isArray(item?.referenceImages) && item.referenceImages.length > 0) return 8
   if (resolution === '1080p' || resolution === '4k') return 8
   return snapVeoDuration(item?.targetDuration ?? batchDuration)
@@ -91,8 +89,8 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
           return { success: false, error: 'No start image — generate the start scene first' }
         }
         const endB64 = await resolveFrameImageBase64(item.endSceneId, item.endImage, projectName)
-        // I2V/F2V 는 reference 이미지 제약으로 8초 강제(submitVideo 에서 enforce) — duration 그대로 전달.
-        return await generateVideoI2V(prompt, startB64, endB64, videoModel, aspectRatio, duration, seed, videoResolution)
+        const dur = effectiveVideoDuration(item, mode, duration, videoResolution)
+        return await generateVideoI2V(prompt, startB64, endB64, videoModel, aspectRatio, dur, seed, videoResolution)
       }
       default:
         return { success: false, error: `Unknown mode: ${mode}` }
@@ -271,6 +269,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
             videoPath: p.videoPath,
             seed: p.seed ?? seed ?? null,
             model: p.model ? canonicalVideoModel(p.model) : effectiveVideoModel,
+            targetDuration: p.targetDuration ?? null,
           }))
         break
     }

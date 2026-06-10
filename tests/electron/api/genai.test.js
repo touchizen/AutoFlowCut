@@ -132,7 +132,8 @@ describe('genai — generateImage', () => {
     expect(parts).toHaveLength(1)
     expect(parts[0].text).toBe('a cat')
     expect(body.generationConfig.responseModalities).toEqual(['IMAGE'])
-    expect(body.generationConfig.imageConfig.aspectRatio).toBe('16:9')
+    expect(body.generationConfig.responseFormat.image.aspectRatio).toBe('16:9')
+    expect(body.generationConfig.imageConfig).toBeUndefined()
   })
 
   it('레퍼런스 있을 때: inlineData parts 먼저 + consistency 지시문 prefix', async () => {
@@ -158,7 +159,8 @@ describe('genai — generateImage', () => {
     expect(parts[2].text).toBe(
       'Using the provided 2 reference image(s) for character consistency and style, generate: a hero'
     )
-    expect(body.generationConfig.imageConfig.aspectRatio).toBe('9:16')
+    expect(body.generationConfig.responseFormat.image.aspectRatio).toBe('9:16')
+    expect(body.generationConfig.imageConfig).toBeUndefined()
   })
 
   it('data 없는 레퍼런스는 무시', async () => {
@@ -349,13 +351,13 @@ describe('genai — submitVideo', () => {
     expect(body.parameters.durationSeconds).toBe(8)
   })
 
-  it('I2V(시작 이미지) 는 4초 요청해도 8초 강제 (reference 이미지 제약)', async () => {
+  it('I2V(시작 이미지) 720p 는 4초 요청을 유지한다', async () => {
     const f = mockFetchOnce(jsonRes({ name: 'op' }))
     await submitVideo(
-      { apiKey: 'k', prompt: 'x', image: { mimeType: 'image/png', data: 'IMG' }, durationSeconds: 4 },
+      { apiKey: 'k', prompt: 'x', image: { mimeType: 'image/png', data: 'IMG' }, resolution: '720p', durationSeconds: 4 },
       { fetchImpl: f }
     )
-    expect(JSON.parse(f.mock.calls[0][1].body).parameters.durationSeconds).toBe(8)
+    expect(JSON.parse(f.mock.calls[0][1].body).parameters.durationSeconds).toBe(4)
   })
 
   it('T2V referenceImages → instances[].referenceImages + 8초 강제 (Veo 3.1 제약)', async () => {

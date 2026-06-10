@@ -35,7 +35,7 @@ import { buildVideoTextStartPayload } from './services/videoTextStart'
 import { filterPendingScenes } from './utils/sceneFilters'
 import { videoClearPatch, buildFramePairVideoPatch, buildVideoRestorePatch, resolveI2vRestoreSceneId } from './utils/sceneMedia'
 import { detectFileType, detectCSVType, parseCSVToScenes, parseSRTToScenes, csvPromptToVideoT2V } from './utils/parsers'
-import { resolveAudioSrtEntries } from './utils/srtTrack'
+import { getSceneDuration, resolveAudioSrtEntries } from './utils/srtTrack'
 import { tabAfterImport } from './utils/importTabRouting'
 import { checkFolderPermission } from './utils/guards'
 import { collectTagErrors } from './utils/tagMatch'
@@ -1019,6 +1019,7 @@ function App() {
           const endIsGallery = p.endSceneId?.startsWith(GALLERY_PFX)
           const startScene = startIsGallery ? null : scenes.find(s => s.id === p.startSceneId)
           const endScene = endIsGallery ? null : scenes.find(s => s.id === p.endSceneId)
+          const ownerScene = p.ownerSceneId ? scenes.find(s => s.id === p.ownerSceneId) : null
 
           // promptSource에 따라 effective prompt 계산 — ResultsTable 표시와 동일한 규칙이어야
           // mismatch (UI 가 옛 값을 보이는데 generation 은 새 값을 쓰는 등) 가 안 난다.
@@ -1034,6 +1035,7 @@ function App() {
             // 씬이 folder 모드라 image 가 null 이면 useVideoAutomation 이 readImage(sceneId) 폴백.
             _startImage: frameImageFor(p.startSceneId, { scenes, galleryItems, galleryPrefix: GALLERY_PFX }),
             _endImage: frameImageFor(p.endSceneId, { scenes, galleryItems, galleryPrefix: GALLERY_PFX }),
+            targetDuration: ownerScene ? getSceneDuration(ownerScene, scenesHook.srtTrack) : (p.targetDuration ?? null),
           }
         })
         // seed: 이미지/T2V와 동일한 정책 — locked + 숫자일 때만 고정 seed
