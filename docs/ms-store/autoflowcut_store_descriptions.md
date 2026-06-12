@@ -193,6 +193,8 @@ Disclaimer: This app is an independent product developed by Touchizen and is not
 
 ### What's New
 ```
+v1.1.2 Store update — Updated the Microsoft Store package assets so Windows tiles and app listings use AutoFlowCut-branded icons instead of generic placeholder imagery.
+
 v1.1.2 — More predictable image and video results. Image generations now follow the selected aspect ratio more reliably, and video clips better match each scene's duration, using the closest supported 4, 6, or 8 second length when available. This makes exported CapCut timelines easier to review and edit.
 
 v1.1.1 — Reference images for video. Attach character and style references to Veo video generation (T2V & I2V) with the same @mention syntax you already use for images — consistent characters now carry into your video clips, not just stills. Plus stability fixes for prompt editing, video reference handling, and CapCut export.
@@ -381,6 +383,8 @@ Touchizen 제작 — touchizen.com
 
 ### What's New (새로운 기능)
 ```
+v1.1.2 Store 업데이트 — Windows 타일과 앱 목록에서 기본 자리표시자 이미지가 아닌 AutoFlowCut 브랜드 아이콘이 표시되도록 Microsoft Store 패키지 자산을 수정했습니다.
+
 v1.1.2 — 이미지와 영상 결과가 더 예측 가능해졌습니다. 선택한 이미지 화면비가 더 정확하게 반영되고, 영상 클립은 각 장면 길이에 맞춰 가능한 경우 4초, 6초, 8초 중 가장 가까운 길이로 생성됩니다. 덕분에 CapCut으로 내보낸 타임라인을 더 쉽게 확인하고 편집할 수 있습니다.
 
 v1.1.1 — 비디오에도 레퍼런스 이미지. 이미지에서 쓰던 @멘션 방식 그대로 Veo 비디오 생성(T2V·I2V)에 캐릭터·스타일 레퍼런스를 첨부할 수 있습니다 — 이제 정지 이미지뿐 아니라 영상 클립에서도 캐릭터 일관성이 유지됩니다. 프롬프트 편집, 비디오 레퍼런스 처리, CapCut 내보내기 안정성도 함께 개선했습니다.
@@ -474,6 +478,8 @@ Google AI StudioキーをSettings に一度登録してスクリプトを読み�
 
 ### What's New
 ```
+v1.1.2 Store update — Microsoft Storeパッケージのアセットを更新し、Windowsタイルとアプリ一覧で汎用プレースホルダーではなくAutoFlowCutブランドのアイコンが表示されるようにしました。
+
 v1.1.2 — 画像と動画の結果がより予測しやすくなりました。選択した画像のアスペクト比がより正確に反映され、動画クリップは各シーンの長さに合わせて、利用可能な場合は4秒・6秒・8秒の最も近い長さで生成されます。CapCutへ書き出したタイムラインを確認・編集しやすくなりました。
 
 v1.1.1 — 動画にも参照画像。画像で使う@メンション記法そのままで、Veo動画生成（T2V・I2V）にキャラクター・スタイル参照を添付できます — 静止画だけでなく動画クリップでもキャラクターの一貫性を維持。プロンプト編集、動画参照の処理、CapCutエクスポートの安定性も改善しました。
@@ -562,6 +568,8 @@ Der integrierte MCP-Server (Model Context Protocol) verbindet sich direkt mit Cl
 
 ### What's New
 ```
+v1.1.2 Store-Update — Die Microsoft Store-Paketassets wurden aktualisiert, damit Windows-Kacheln und App-Listen AutoFlowCut-Branding statt generischer Platzhalterbilder verwenden.
+
 v1.1.2 — Bild- und Videoergebnisse sind jetzt besser vorhersehbar. Das gewählte Seitenverhältnis für Bilder wird zuverlässiger übernommen, und Videoclips passen sich der Szenenlänge besser an, wenn möglich mit der nächstliegenden unterstützten Länge von 4, 6 oder 8 Sekunden. Dadurch lassen sich exportierte CapCut-Timelines leichter prüfen und bearbeiten.
 
 v1.1.1 — Referenzbilder jetzt auch für Videos. Hängen Sie Charakter- und Stilreferenzen mit derselben @Mention-Syntax wie bei Bildern an die Veo-Videogenerierung (T2V & I2V) an — konsistente Charaktere gibt es jetzt nicht nur in Standbildern, sondern auch in Ihren Videoclips. Dazu Stabilitätsverbesserungen für Prompt-Bearbeitung, Videoreferenz-Handling und CapCut-Export.

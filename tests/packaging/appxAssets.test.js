@@ -4,6 +4,7 @@ import { describe, expect, test } from 'vitest'
 
 const rootDir = path.resolve(__dirname, '..', '..')
 const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'))
+const packageLock = JSON.parse(fs.readFileSync(path.join(rootDir, 'package-lock.json'), 'utf8'))
 
 describe('APPX tile assets', () => {
   test('uses branded tile assets instead of electron-builder sample assets', () => {
@@ -20,5 +21,13 @@ describe('APPX tile assets', () => {
     ]) {
       expect(fs.existsSync(path.join(appxAssetsDir, filename)), `${filename} should exist`).toBe(true)
     }
+  })
+
+  test('keeps the app version unchanged while bumping the APPX package version', () => {
+    expect(packageJson.version).toBe('1.1.2')
+    expect(packageLock.version).toBe(packageJson.version)
+    expect(packageLock.packages[''].version).toBe(packageJson.version)
+    expect(packageJson.build.appx.setBuildNumber).toBe(true)
+    expect(String(packageJson.buildNumber)).toMatch(/^[1-9]\d*$/)
   })
 })

@@ -1,6 +1,6 @@
 {
   "name": "autoflowcut",
-  "version": "1.1.3",
+  "version": "1.1.2",
   "buildNumber": 989,
   "description": "AutoFlowCut - Automate AI image and video creation with Google Gemini/Veo APIs for CapCut projects",
   "main": "dist-electron/main.js",
@@ -156,7 +156,8 @@
       ],
       "applicationId": "AutoFlowCut",
       "displayName": "AutoFlowCut",
-      "backgroundColor": "transparent"
+      "backgroundColor": "transparent",
+      "setBuildNumber": true
     },
     "nsis": {
       "oneClick": false,
