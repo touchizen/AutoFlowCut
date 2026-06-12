@@ -43,6 +43,18 @@ export const VIDEO_POLL_INTERVAL_MS = 10000
 export const VIDEO_POLL_MAX_ATTEMPTS = 30
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+const IMAGE_ASPECT_RATIOS = new Set(['1:1', '3:4', '4:3', '9:16', '16:9'])
+
+function normalizeImageAspectRatio(aspectRatio) {
+  const raw = typeof aspectRatio === 'string' ? aspectRatio.trim() : ''
+  if (IMAGE_ASPECT_RATIOS.has(raw)) return raw
+  if (/PORTRAIT|9.?16/i.test(raw)) return '9:16'
+  if (/SQUARE|1.?1/i.test(raw)) return '1:1'
+  if (/3.?4/i.test(raw)) return '3:4'
+  if (/4.?3/i.test(raw)) return '4:3'
+  if (/LANDSCAPE|16.?9/i.test(raw)) return '16:9'
+  return DEFAULT_ASPECT_RATIO
+}
 
 function supportsVideoReferenceImages(model) {
   return VIDEO_REFERENCE_IMAGE_MODELS.has(model)
@@ -216,13 +228,14 @@ export async function generateImage(
     : (prompt || '')
 
   const parts = [...refParts, { text: textPrompt }]
+  const normalizedAspectRatio = normalizeImageAspectRatio(aspectRatio)
 
   const body = {
     contents: [{ parts }],
     generationConfig: {
       responseModalities: ['IMAGE'],
       responseFormat: {
-        image: { aspectRatio: aspectRatio || DEFAULT_ASPECT_RATIO },
+        image: { aspectRatio: normalizedAspectRatio },
       },
     },
   }

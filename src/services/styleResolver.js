@@ -41,8 +41,8 @@ export function createStyleResolver({ activeTab, scenes = [], references = [], s
   // 라벨 fallback은 모든 scenes로도 — 모두 완료된 상태에서 빈 라벨 회피
   const targetScenes = filterPendingScenes(scenes)
   const labelScenes = targetScenes.length > 0 ? targetScenes : scenes
-  const labelPreview = isVideoText ? null : previewStyleMatching(labelScenes, references)
-  const guardPreview = isVideoText ? null : previewStyleMatching(targetScenes, references)
+  const labelPreview = isVideoText ? null : previewStyleMatching(labelScenes, references, { isKo })
+  const guardPreview = isVideoText ? null : previewStyleMatching(targetScenes, references, { isKo })
 
   const autoEffectiveStyleId = isVideoText ? findAutoPromptStyle(references) : null
   const autoAvailable = isVideoText

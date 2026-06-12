@@ -19,6 +19,24 @@ const t = (k, vars) => {
   return s
 }
 
+const tEn = (k, vars) => {
+  const map = {
+    'reference.autoMatch': 'Auto (per-scene match)',
+    'reference.autoMatchNone': 'Auto (no matches)',
+    'reference.matchPreviewTitle': 'Per-scene match preview',
+    'reference.matchPreviewSummary': '{name}: {count} scenes',
+    'reference.matchPreviewUnmatched': 'Unmatched: {count} scenes',
+    'reference.matchPreviewEmpty': 'No matching scenes',
+    'reference.autoMatchHint': 'Automatically chooses styles from each scene style_tag',
+    'reference.noStyle': 'No style',
+    'actions.styleNone': 'None',
+    'actions.autoStyle': 'Auto: {label}',
+  }
+  let s = map[k] || k
+  if (vars) for (const [v, val] of Object.entries(vars)) s = s.replace(`{${v}}`, val)
+  return s
+}
+
 const baseDeps = {
   activeTab: 'list',
   scenes: [],
@@ -110,6 +128,18 @@ describe('createStyleResolver — autoLabel', () => {
       ],
     })
     expect(r.autoLabel).toBe('자동: noir +1')
+  })
+
+  it('image/list preset auto label follows English UI language', () => {
+    const r = createStyleResolver({
+      ...baseDeps,
+      t: tEn,
+      isKo: false,
+      activeTab: 'list',
+      scenes: [{ id: 1, style_tag: 'cinematic' }],
+      references: [],
+    })
+    expect(r.autoLabel).toBe('Auto: Cinematic')
   })
 
   it('image/list with no matches: returns styleNone label', () => {

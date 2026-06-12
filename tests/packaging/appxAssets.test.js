@@ -23,8 +23,8 @@ describe('APPX tile assets', () => {
     }
   })
 
-  test('keeps the app version unchanged while bumping the APPX package version', () => {
-    expect(packageJson.version).toBe('1.1.2')
+  test('keeps package versions in sync while enabling APPX build-number bumps', () => {
+    expect(packageJson.version).toBe('1.1.3')
     expect(packageLock.version).toBe(packageJson.version)
     expect(packageLock.packages[''].version).toBe(packageJson.version)
     expect(packageJson.build.appx.setBuildNumber).toBe(true)

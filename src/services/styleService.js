@@ -204,7 +204,7 @@ export function resolveSeed(settings) {
  *
  * @param {Array} scenes - 씬 배열 ({id, style_tag})
  * @param {Array} references - 레퍼런스 배열
- * @param {object} [opts] - { presets } — 테스트 주입용
+ * @param {object} [opts] - { presets, isKo } — 테스트 주입/표시 언어용
  * @returns {{
  *   matches: Array<{ sceneId, styleName, source: 'ref'|'preset' }>,
  *   unmatched: Array<string|number>,
@@ -213,6 +213,7 @@ export function resolveSeed(settings) {
  */
 export function previewStyleMatching(scenes, references, opts = {}) {
   const presets = opts.presets ?? (STYLE_PRESETS?.styles || [])
+  const isKo = opts.isKo !== false
   // Production applies a style ref via either:
   //   - resolveSceneStyle when r.prompt exists (concatenates into the prompt)
   //   - matchedRefs injection when a GenAI-readable image source exists
@@ -244,7 +245,10 @@ export function previewStyleMatching(scenes, references, opts = {}) {
       tags.includes(p.name_en?.toLowerCase())
     )
     if (preset) {
-      matches.push({ sceneId: scene.id, styleName: preset.name_ko || preset.name_en, source: 'preset' })
+      const styleName = isKo
+        ? (preset.name_ko || preset.name_en || preset.id)
+        : (preset.name_en || preset.name_ko || preset.id)
+      matches.push({ sceneId: scene.id, styleName, source: 'preset' })
       continue
     }
 

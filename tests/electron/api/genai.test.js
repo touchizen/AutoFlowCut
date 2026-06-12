@@ -163,6 +163,21 @@ describe('genai — generateImage', () => {
     expect(body.generationConfig.imageConfig).toBeUndefined()
   })
 
+  it('legacy Flow aspect ratio enum 은 Gemini image aspect ratio 로 정규화', async () => {
+    const fetchImpl = mockFetchOnce(jsonRes(IMG_PART()))
+    await generateImage(
+      {
+        apiKey: 'k',
+        prompt: 'a broadcast warning screen',
+        aspectRatio: 'VIDEO_ASPECT_RATIO_LANDSCAPE',
+      },
+      { fetchImpl }
+    )
+
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body)
+    expect(body.generationConfig.responseFormat.image.aspectRatio).toBe('16:9')
+  })
+
   it('data 없는 레퍼런스는 무시', async () => {
     const fetchImpl = mockFetchOnce(jsonRes(IMG_PART()))
     await generateImage(
