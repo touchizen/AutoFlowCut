@@ -72,7 +72,8 @@
     "productName": "AutoFlowCut",
     "forceCodeSigning": true,
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "assets"
     },
     "publish": [
       {
