@@ -234,9 +234,10 @@ export async function generateImage(
     contents: [{ parts }],
     generationConfig: {
       responseModalities: ['IMAGE'],
-      responseFormat: {
-        image: { aspectRatio: normalizedAspectRatio },
-      },
+      // aspect ratio 는 imageConfig.aspectRatio 로 전달한다.
+      // (1.1.2 에서 responseFormat.image.aspectRatio 로 바꿨다가 v1beta 가 해당 enum 에서
+      //  "16:9" 를 거부 → 전 모델 이미지 생성 실패. imageConfig 로 롤백.)
+      imageConfig: { aspectRatio: normalizedAspectRatio },
     },
   }
 

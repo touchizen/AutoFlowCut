@@ -132,8 +132,10 @@ describe('genai — generateImage', () => {
     expect(parts).toHaveLength(1)
     expect(parts[0].text).toBe('a cat')
     expect(body.generationConfig.responseModalities).toEqual(['IMAGE'])
-    expect(body.generationConfig.responseFormat.image.aspectRatio).toBe('16:9')
-    expect(body.generationConfig.imageConfig).toBeUndefined()
+    // aspect ratio 는 imageConfig.aspectRatio 로 전달 (responseFormat.image 는 v1beta 에서
+    // enum 검증에 걸려 "16:9" 거부됨 — 1.1.2 회귀, imageConfig 로 롤백).
+    expect(body.generationConfig.imageConfig.aspectRatio).toBe('16:9')
+    expect(body.generationConfig.responseFormat).toBeUndefined()
   })
 
   it('레퍼런스 있을 때: inlineData parts 먼저 + consistency 지시문 prefix', async () => {
@@ -159,8 +161,8 @@ describe('genai — generateImage', () => {
     expect(parts[2].text).toBe(
       'Using the provided 2 reference image(s) for character consistency and style, generate: a hero'
     )
-    expect(body.generationConfig.responseFormat.image.aspectRatio).toBe('9:16')
-    expect(body.generationConfig.imageConfig).toBeUndefined()
+    expect(body.generationConfig.imageConfig.aspectRatio).toBe('9:16')
+    expect(body.generationConfig.responseFormat).toBeUndefined()
   })
 
   it('legacy Flow aspect ratio enum 은 Gemini image aspect ratio 로 정규화', async () => {
@@ -175,7 +177,7 @@ describe('genai — generateImage', () => {
     )
 
     const body = JSON.parse(fetchImpl.mock.calls[0][1].body)
-    expect(body.generationConfig.responseFormat.image.aspectRatio).toBe('16:9')
+    expect(body.generationConfig.imageConfig.aspectRatio).toBe('16:9')
   })
 
   it('data 없는 레퍼런스는 무시', async () => {
