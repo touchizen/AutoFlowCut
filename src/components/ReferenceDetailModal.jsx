@@ -49,6 +49,10 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
   // #R9-5: 사용자가 모달에서 이미지를 로컬로 바꿨는지(미저장). dirty 면 prop→local 미디어 동기화를
   //   건너뛰어, 배경 자동화(on-demand 등록 등)가 reference.mediaId 를 바꿔도 미저장 편집을 덮지 않는다.
   const mediaDirtyRef = useRef(false)
+  // #R34: 업로드 시작 시 모달을 즉시 닫아 Flow UI 진행을 보이게 한다. 닫히면 onUploadComplete 가
+  //   setEditData(언마운트됨) 대신 onUpdate(부모)로 결과를 반영하도록, 닫힘 여부 + 스냅샷을 ref 로 보관.
+  const uploadClosingRef = useRef(false)
+  const uploadSnapshotRef = useRef(null)
 
   // 미디어 필드 동기화 (재생성/이미지 교체 완료 시) + 히스토리 재로드 트리거.
   useEffect(() => {
@@ -109,15 +113,16 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
       //   재등록하도록 entityId 를 null 로).
       // #R17-2: 미디어 교체이므로 patch 의 base 를 "비운 ref"로 준다 — result 가 entityId 를 생략하면
       //   옛 editData.entityId 가 보존(R12-9)되어 새 이미지가 옛 캐릭터를 가리키는 것을 막는다.
+      // #R34: 업로드 시작 시 모달을 닫았으면(uploadClosingRef) base 는 닫기 시점 스냅샷.
+      const closing = uploadClosingRef.current
+      const base = closing && uploadSnapshotRef.current ? uploadSnapshotRef.current : editData
       const hasEntityFields = result.entityId != null || result.workflowId != null
-      const clearedBase = { ...editData, entityId: null, workflowId: null, mediaId: null }
+      const clearedBase = { ...base, entityId: null, workflowId: null, mediaId: null }
       const entityPatch = hasEntityFields
         ? applyEntityRegistrationPatch(clearedBase, result, true)
         : { entityId: null, workflowId: null, registered: null, flowNameSyncStatus: null }
-      // #R9-5: 로컬 이미지 교체 = 미저장 편집 → prop 동기화가 덮지 않도록 dirty 표시.
-      mediaDirtyRef.current = true
-      setEditData(prev => ({
-        ...prev,
+      const merged = {
+        ...base,
         data: result.data,
         mediaId: result.mediaId || null,
         caption: result.caption || null,
@@ -127,11 +132,28 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
         ...entityPatch,
         // cache bust (R27)
         generatedAt: Date.now(),
-      }))
+      }
+      if (closing) {
+        // 모달이 이미 닫힘 → setEditData(언마운트)는 무효이므로 부모 ref 에 직접 반영.
+        onUpdate(index, merged)
+        uploadClosingRef.current = false
+        uploadSnapshotRef.current = null
+      } else {
+        // #R9-5: 로컬 이미지 교체 = 미저장 편집 → prop 동기화가 덮지 않도록 dirty 표시.
+        mediaDirtyRef.current = true
+        setEditData(prev => ({ ...prev, ...merged }))
+      }
       // #R33: 캐릭터 entity 등록(entityId 수신) 직후 Flow SPA 새로고침 — 새 이름이 'Untitled' 로
       //   stale 하게 보이거나 멘션 피커가 옛 이름으로 뜨는 것을 방지(비차단).
       if (result.entityId) { try { window.electronAPI?.refreshFlowComposer?.() } catch (_e) {} }
-    }
+    },
+    // #R34: 업로드 시작 → 즉시 모달 닫기(Flow UI 진행 가시화). 결과는 위 onUploadComplete 가
+    //   onUpdate 로 부모 ref 에 반영하므로 닫혀도 안전. 스냅샷으로 merge base 보존.
+    onUploadStart: () => {
+      uploadSnapshotRef.current = { ...editData }
+      uploadClosingRef.current = true
+      onClose()
+    },
   })
   
   // #R12-15: isActive 가드로 stale 결과 적용 방지 + 예외 catch(unhandled rejection 방지).

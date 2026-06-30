@@ -121,6 +121,8 @@ describe('ReferenceDetailModal — entity field propagation (Codex #3)', () => {
         refId: 7,
       })
     )
+    // #R34: 업로드 시작 시 모달은 즉시 닫힌다(Flow UI 진행 가시화).
+    expect(baseProps.onClose).toHaveBeenCalled()
   })
 
   it('Flow character upload: editData gets entityId + flowNameSyncStatus=synced after upload', async () => {
@@ -194,19 +196,22 @@ describe('ReferenceDetailModal — entity field propagation (Codex #3)', () => {
     expect(saved.registered).toBe(true)
   })
 
-  it('#R8-9: entity-only prop update does NOT clobber unsaved media edits (split media/entity sync)', async () => {
+  it('#R8-9: entity-only prop update does NOT clobber an unsaved media edit (이미지 제거 — 모달 유지 경로)', async () => {
+    // #R34: 드롭 업로드는 이제 모달을 닫으므로(close-on-upload), mediaDirtyRef 가드는 모달이 유지되는
+    //   비-업로드 편집(이미지 제거/스타일/히스토리)에서 검증한다. 여기선 이미지 제거(btn-clear-image)로
+    //   미저장 편집을 만든 뒤, entity-only prop 업데이트가 그 편집을 되돌리지 않음을 확인한다.
     const onUpdate = vi.fn()
-    const initialRef = { ...baseRef, mediaId: 'med-init', data: null, filePath: null, entityId: null }
+    const initialRef = { ...baseRef, data: 'data:image/png;base64,ORIG', mediaId: 'med-init', entityId: 'ent-old', flowNameSyncStatus: 'synced' }
 
     const { container, getByText, rerender } = render(
-      <ReferenceDetailModal {...baseProps} reference={initialRef} onUpdate={onUpdate} onUpload={vi.fn().mockResolvedValue({ success: true, data: 'MODALBASE64', mediaId: 'med-local', caption: null })} />
+      <ReferenceDetailModal {...baseProps} reference={initialRef} onUpdate={onUpdate} onUpload={vi.fn()} />
     )
 
-    // User replaces the image locally (unsaved) → editData.data becomes the new base64
-    await triggerDropZoneUpload(container)
+    // 사용자가 이미지 제거(미저장 편집 → mediaDirty=true, data/entity 클리어)
+    const clearBtn = container.querySelector('.btn-clear-image')
+    await act(async () => { clearBtn.click(); await Promise.resolve() })
 
-    // A prop entity update arrives for the OLD media (entityPatched carries initialRef's mediaId).
-    // It is STALE relative to the just-replaced image, so it must NOT be applied (#R17-1).
+    // 그 사이 entity-only prop 업데이트 도착 — mediaDirty 라 적용되면 안 됨.
     const entityPatched = { ...initialRef, entityId: 'ent-x', workflowId: 'wf-x', registered: true, flowNameSyncStatus: 'synced' }
     await act(async () => {
       rerender(<ReferenceDetailModal {...baseProps} reference={entityPatched} onUpdate={onUpdate} onUpload={vi.fn()} />)
@@ -217,11 +222,8 @@ describe('ReferenceDetailModal — entity field propagation (Codex #3)', () => {
     await act(async () => { saveBtn.click(); await Promise.resolve() })
 
     const saved = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][1]
-    // #R8-9: unsaved media edit preserved (not clobbered by the entity-only sync).
-    expect(saved.data).toBeTruthy()
-    expect(saved.data).toContain('MODALBASE64')
-    // #R17-1: the stale entity (registered against the replaced image) is NOT applied while dirty —
-    //   it would make the new image's mention target the old character. It was cleared on replace.
+    // 미저장 편집(클리어) 보존 — prop 의 stale entity 로 되돌려지지 않는다.
+    expect(saved.data).toBeFalsy()
     expect(saved.entityId).toBeFalsy()
   })
 

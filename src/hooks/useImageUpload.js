@@ -10,6 +10,8 @@ import { cleanBase64 } from '../utils/urls'
 export function useImageUpload(options = {}) {
   const {
     onUploadComplete,  // (data) => void - 업로드 완료 콜백
+    onUploadStart,     // #R34: () => void - 업로드 "시작" 콜백(파일 확정 직후). 모달을 즉시 닫아
+                       //   Flow UI 진행을 보이게 하는 용도. 닫혀도 onUploadComplete 가 부모에 반영.
     uploadToFlow,     // (base64, meta) => Promise - Flow 업로드 함수
     category = 'MEDIA_CATEGORY_SUBJECT',  // 기본 카테고리
     uploadMeta = {},  // M4 T7: 추가 메타 (name, type, refId 등) — engineApi 정규화로 흘러감
@@ -28,6 +30,8 @@ export function useImageUpload(options = {}) {
     if (!file || !file.type.startsWith('image/')) return null
 
     setIsUploading(true)
+    // #R34: 파일 확정 직후 시작 콜백 — 호출측(모달)이 즉시 닫혀 Flow UI 진행을 볼 수 있게 한다.
+    if (typeof onUploadStart === 'function') { try { onUploadStart() } catch (e) { console.warn('[useImageUpload] onUploadStart error:', e?.message) } }
     // #R28-3: 업로드 시작 시점 스코프 캡처 — 완료 시 비교해 stale apply 차단.
     const startScope = typeof getScopeToken === 'function' ? getScopeToken() : null
 
@@ -90,7 +94,7 @@ export function useImageUpload(options = {}) {
     } finally {
       setIsUploading(false)
     }
-  }, [uploadToFlow, category, uploadMeta, onUploadComplete, getScopeToken])
+  }, [uploadToFlow, category, uploadMeta, onUploadComplete, onUploadStart, getScopeToken])
   
   // 파일 선택 핸들러
   const handleFileSelect = useCallback((e) => {
