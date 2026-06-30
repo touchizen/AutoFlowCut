@@ -8,7 +8,7 @@
   </a>
 </p>
 
-A desktop app that **mass-generates** images and videos with Google Gemini / Veo APIs and exports them to CapCut projects in one click.
+A desktop app that **mass-generates** images and videos — via Google Flow login or your own Gemini / Veo API key — and exports them to **CapCut / Premiere Pro / Vrew** projects in one click.
 
 [![Release](https://img.shields.io/github/v/release/touchizen/AutoFlowCut)](https://github.com/touchizen/AutoFlowCut/releases)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL%20v3-blue)](LICENSE)
@@ -17,9 +17,14 @@ A desktop app that **mass-generates** images and videos with Google Gemini / Veo
 
 Still building AI videos one shot at a time?
 
-AutoFlowCut automates the entire AI video production pipeline. Generate images and videos with Google Gemini / Veo APIs, then convert them into ready-to-edit projects for CapCut, Adobe Premiere Pro, or Vrew. Import your script, generate visuals, pick the best media per scene, and export in a single click.
+AutoFlowCut automates the entire AI video production pipeline. Generate images and videos — via Google Flow login (free) or your own Gemini / Veo API key (BYOK) — then convert them into ready-to-edit projects for CapCut, Adobe Premiere Pro, or Vrew. Import your script, generate visuals, pick the best media per scene, and export in a single click.
 
 ## Features
+
+### Generation Modes (Flow Login / API Key)
+Choose how you generate — switch anytime from the top toggle:
+- **Flow Login mode** — Generate via Google Flow login. Beginner-friendly, free generation on a (relatively cheap) subscription. Slower (30+ min per 100 images). Just sign in with a Google account.
+- **API Key mode (BYOK)** — Generate directly with your own Gemini / other API key. For power users and bulk / fast work. Pay-as-you-go (no free tier yet). Fast (~2–5 min per 100 images).
 
 ### AI Image / Video Generation
 - **Batch image generation** — Generate 100+ AI images in a single batch via the official Google GenAI APIs, with automatic retry on errors.
@@ -74,7 +79,7 @@ AutoFlowCut automates the entire AI video production pipeline. Generate images a
 |----------|-----------|
 | **Frontend** | React 18 + Vite 6 |
 | **Desktop** | Electron 36 |
-| **AI Engine** | Google Gemini / Veo APIs (BYOK) |
+| **AI Engine** | Google Flow (login) + Google Gemini / Veo APIs (BYOK) |
 | **Backend** | Firebase (Auth, Firestore, Cloud Functions) |
 | **MCP** | @modelcontextprotocol/sdk |
 | **Payments** | Lemon Squeezy |

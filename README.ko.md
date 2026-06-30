@@ -8,7 +8,7 @@
   </a>
 </p>
 
-Google Gemini / Veo API로 이미지/비디오를 **대량 생성**하고, CapCut 영상 프로젝트로 원클릭 내보내기하는 데스크톱 앱.
+Google Flow 로그인 또는 내 Gemini / Veo API 키로 이미지/비디오를 **대량 생성**하고, **CapCut / Premiere Pro / Vrew** 프로젝트로 원클릭 내보내기하는 데스크톱 앱.
 
 [![Release](https://img.shields.io/github/v/release/touchizen/AutoFlowCut)](https://github.com/touchizen/AutoFlowCut/releases)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL%20v3-blue)](LICENSE)
@@ -17,9 +17,14 @@ Google Gemini / Veo API로 이미지/비디오를 **대량 생성**하고, CapCu
 
 AI 영상, 아직도 한 장면씩 만들고 계신가요?
 
-AutoFlowCut은 AI 영상 제작 전 과정을 자동화합니다. Google Gemini / Veo API로 이미지와 비디오를 생성하고, 바로 편집 가능한 CapCut · Adobe Premiere Pro · Vrew 프로젝트로 변환합니다. 대본을 가져오고, 비주얼을 생성하고, 씬별로 최적의 미디어를 선택한 뒤, 원클릭으로 내보내세요.
+AutoFlowCut은 AI 영상 제작 전 과정을 자동화합니다. Google Flow 로그인(무료) 또는 내 Gemini / Veo API 키(BYOK)로 이미지와 비디오를 생성하고, 바로 편집 가능한 CapCut · Adobe Premiere Pro · Vrew 프로젝트로 변환합니다. 대본을 가져오고, 비주얼을 생성하고, 씬별로 최적의 미디어를 선택한 뒤, 원클릭으로 내보내세요.
 
 ## 주요 기능
+
+### 생성 모드 (Flow 로그인 / API 키)
+생성 방식을 선택 — 상단 토글로 언제든 전환:
+- **Flow 로그인 모드** — Google Flow 로그인으로 생성. 초보자 추천, 무료 생성 가능·정액제(상대적으로 저렴). 느림(100장 30분 이상). Google 계정 로그인만 있으면 됨.
+- **API 키 모드 (BYOK)** — 내 Gemini/다른 API 키로 직접 생성. 고급 사용자·대량·빠른 작업. 종량제(현재 무료 없음). 빠름(100장 2~5분).
 
 ### AI 이미지/비디오 생성
 - **일괄 이미지 생성** — 공식 Google GenAI API로 100장 이상의 AI 이미지를 배치 생성. 에러 자동 재시도
@@ -74,7 +79,7 @@ AutoFlowCut은 AI 영상 제작 전 과정을 자동화합니다. Google Gemini 
 |----------|------|
 | **Frontend** | React 18 + Vite 6 |
 | **Desktop** | Electron 36 |
-| **AI Engine** | Google Gemini / Veo API (BYOK) |
+| **AI Engine** | Google Flow (로그인) + Google Gemini / Veo API (BYOK) |
 | **Backend** | Firebase (Auth, Firestore, Cloud Functions) |
 | **MCP** | @modelcontextprotocol/sdk |
 | **결제** | Lemon Squeezy |
