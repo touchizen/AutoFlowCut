@@ -438,7 +438,10 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       selectedStyleRefId: _selectedStyleRefId = null,
       seed = null,
       concurrency = undefined,
-      force = false
+      force = false,
+      // #R34-fix: 호출자(App sync 게이트)가 방금 동기화한 entity 패치가 반영된 refs 를 넘기면
+      //   closure 의 stale `references` 대신 이걸로 시작한다 — 첫 배치부터 @멘션이 해석된다.
+      currentRefs: currentRefsOverride = null,
     } = options
     const selectedStyleRefId = (_selectedStyleRefId != null && typeof _selectedStyleRefId !== 'string') ? String(_selectedStyleRefId) : _selectedStyleRefId
 
@@ -544,7 +547,9 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     // updateReferences 는 React state 만 갱신할 뿐 이 실행 closure 의 `references` 는 stale 로
     // 남는다 → 같은 배치의 씬이 entityId 없는 refs 로 제출돼 멘션이 다음 run 에서야 동작.
     // 패치를 이 로컬 배열에 누적해 runConcurrentQueue 의 멘션/제출에 넘긴다(여러 ref 등록도 누적).
-    let currentRefs = references
+    // #R34-fix: 호출자가 동기화 직후 패치된 refs(currentRefsOverride)를 넘기면 그걸 우선 사용한다.
+    //   (sync 게이트가 updateReferences 한 React state 는 같은 tick 엔 stale 이므로 직접 전달받는다.)
+    let currentRefs = currentRefsOverride || references
     // 레퍼런스 업로드 (비동기 슬라이딩 윈도우 — 1초 간격 투입, 최대 5개 동시)
     console.log('[Automation] References check:', references.map(r => ({ name: r.name, hasData: !!(r.data || r.filePath || r.imagePath), mediaId: r.mediaId })))
     // 이번 run 의 타깃 씬들이 실제 쓰는 ref(캐릭터/씬/스타일 태그 + @멘션, getMatchingReferences

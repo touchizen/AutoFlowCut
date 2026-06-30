@@ -12,6 +12,9 @@ export function useImageUpload(options = {}) {
     onUploadComplete,  // (data) => void - 업로드 완료 콜백
     onUploadStart,     // #R34: () => void - 업로드 "시작" 콜백(파일 확정 직후). 모달을 즉시 닫아
                        //   Flow UI 진행을 보이게 하는 용도. 닫혀도 onUploadComplete 가 부모에 반영.
+    onUploadError,     // #R34-fix: (error) => void - 파일 처리(FileReader 등) 실패 콜백. onUploadStart 가
+                       //   부모를 syncing:true 로 바꾼 뒤 실패하면 onUploadComplete 가 호출되지 않아
+                       //   syncing 이 영구 고착되므로, 여기서 부모가 반드시 해제하도록 한다(scope-guard 적용).
     uploadToFlow,     // (base64, meta) => Promise - Flow 업로드 함수
     category = 'MEDIA_CATEGORY_SUBJECT',  // 기본 카테고리
     uploadMeta = {},  // M4 T7: 추가 메타 (name, type, refId 등) — engineApi 정규화로 흘러감
@@ -97,11 +100,21 @@ export function useImageUpload(options = {}) {
 
     } catch (error) {
       console.error('File processing error:', error)
+      // #R34-fix: onUploadStart 가 syncing:true 로 만든 상태에서 실패했으므로 부모가 해제하게 알린다.
+      //   업로드 도중 mode/project 가 바뀌었으면(scope 변경) 새 프로젝트 ref 를 건드리지 않도록 스킵.
+      if (onUploadError) {
+        const endScope = typeof getScopeToken === 'function' ? getScopeToken() : null
+        if (startScope !== endScope) {
+          console.warn('[useImageUpload] scope changed during upload — skipping stale onUploadError')
+        } else {
+          try { onUploadError(error) } catch (e) { console.warn('[useImageUpload] onUploadError handler error:', e?.message) }
+        }
+      }
       return null
     } finally {
       setIsUploading(false)
     }
-  }, [uploadToFlow, category, uploadMeta, onUploadComplete, onUploadStart, getScopeToken])
+  }, [uploadToFlow, category, uploadMeta, onUploadComplete, onUploadStart, onUploadError, getScopeToken])
   
   // 파일 선택 핸들러
   const handleFileSelect = useCallback((e) => {

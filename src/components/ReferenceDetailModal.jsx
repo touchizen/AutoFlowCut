@@ -40,7 +40,7 @@ function ElapsedTime({ startedAt, endedAt }) {
   return <span>{formatElapsed(elapsed)}</span>
 }
 
-export default function ReferenceDetailModal({ reference, index, onUpdate, onUpload, onClose, onGenerate, isGenerating, t, isKo, projectName, appMode, thumbnails = {}, references = [] }) {
+export default function ReferenceDetailModal({ reference, index, onUpdate, onUpload, onClose, onGenerate, isGenerating, t, isKo, projectName, appMode, getScopeToken: getScopeTokenProp, thumbnails = {}, references = [] }) {
   const [editData, setEditData] = useState({ ...reference })
   const [showStyleDropdown, setShowStyleDropdown] = useState(false)
   const [histories, setHistories] = useState([])
@@ -88,7 +88,10 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
   
   // #R28-3: 업로드 await 동안 mode/project 가 바뀌면 stale Flow 결과(mediaId/entity)를
   //   현재 모달 상태에 적용하지 않도록 스코프 토큰을 제공한다.
-  const getScopeToken = useCallback(() => `${appMode ?? ''}::${projectName ?? ''}`, [appMode, projectName])
+  // #R34-fix: 부모(ReferencePanel)가 ref 기반 live 토큰을 넘기면 그걸 쓴다 — 모달은 업로드 시작 시
+  //   닫혀(unmount) props 가 stale 로 굳으므로, props 기반 토큰만으론 프로젝트 전환을 감지 못한다.
+  const localScopeToken = useCallback(() => `${appMode ?? ''}::${projectName ?? ''}`, [appMode, projectName])
+  const getScopeToken = getScopeTokenProp || localScopeToken
   const imageUpload = useImageUpload({
     uploadToFlow: onUpload,
     getScopeToken,
@@ -159,6 +162,13 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
       // #R34: 카드에 업로드 스피너(⏳)를 즉시 표시 — 카드 자체 업로드와 동일 반응. 완료 시 해제.
       onUpdate(index, { ...editData, syncing: true })
       onClose()
+    },
+    // #R34-fix: 파일 처리 실패(FileReader 등) 시 syncing 스피너가 영구 고착되지 않게 부모에서 해제.
+    onUploadError: () => {
+      const snap = uploadSnapshotRef.current || editData
+      onUpdate(index, { ...snap, syncing: false })
+      uploadClosingRef.current = false
+      uploadSnapshotRef.current = null
     },
   })
   
@@ -258,21 +268,34 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
       && editData.name?.trim()
       && editData.name !== reference.name
     const renameSnapshot = needsFlowRename ? { entityId: editData.entityId, name: editData.name } : null
+    const renameIdx = index
+    const renameBase = { ...editData }
+    // #R34-fix: rename 백그라운드 await 동안 프로젝트/모드가 바뀌면 stale index 에 적용 금지.
+    const renameStartScope = getScopeToken()
 
     onUpdate(index, editData)
     onClose()
 
     if (renameSnapshot) {
       ;(async () => {
+        // #R34-fix: rename 실패 시 로컬 ref 를 'failed'/registered:false 로 되돌린다. 안 그러면 앱은
+        //   synced 로 오인하는데 Flow picker 엔 옛 이름이 남아 다음 `@새이름` 생성이 무조건 실패한다.
+        //   (failed 로 두면 needsEntityRegistration/동기화 버튼이 재시도 후보로 잡는다.)
+        const markFailed = () => {
+          if (getScopeToken() !== renameStartScope) { console.warn('[ReferenceDetail] scope changed during rename — skipping stale failed-mark'); return }
+          onUpdate(renameIdx, { ...renameBase, flowNameSyncStatus: 'failed', registered: false })
+        }
         try {
           const res = await window.electronAPI?.renameFlowCharacter?.({ entityId: renameSnapshot.entityId, displayName: renameSnapshot.name })
           if (res?.success) {
             try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
             toast.success(isKo ? `Flow 이름 동기화: ${renameSnapshot.name}` : `Renamed in Flow: ${renameSnapshot.name}`)
           } else {
+            markFailed()
             toast.error((isKo ? 'Flow 이름 동기화 실패: ' : 'Flow rename failed: ') + (res?.error || 'unknown'))
           }
         } catch (e) {
+          markFailed()
           toast.error((isKo ? 'Flow 이름 동기화 오류: ' : 'Flow rename error: ') + (e?.message || String(e)))
         }
       })()
@@ -346,11 +369,19 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
     if (!editData.name?.trim()) { toast.error(isKo ? '이름을 먼저 입력하세요' : 'Name required'); return }
     const refSnapshot = { ...editData }
     const idx = index
+    // #R34-fix: 동기화는 백그라운드(모달 닫힘)로 진행되며 최대 ~120초 걸릴 수 있다. 그 사이 프로젝트/
+    //   모드가 바뀌면 완료 콜백이 새 프로젝트의 같은 index 에 stale 결과를 덮어쓸 수 있어, 시작 스코프를
+    //   캡처해 완료 시 현재 스코프와 다르면 onUpdate 를 건너뛴다.
+    const startScope = getScopeToken()
     // #R34: 카드에 업로드 스피너(⏳) 표시 후 모달 즉시 닫기 — 동기화는 백그라운드로.
     onUpdate(idx, { ...editData, syncing: true })
     onClose()
     ;(async () => {
       const res = await syncRefToFlow(refSnapshot, onUpload)
+      if (getScopeToken() !== startScope) {
+        console.warn('[ReferenceDetail] scope changed during sync — skipping stale apply')
+        return
+      }
       if (res.ok) {
         onUpdate(idx, { ...refSnapshot, ...res.patch, syncing: false })
         // 동기화 후 Flow SPA 새로고침(나갔다 재진입) — 새 entity 이름 반영(비차단).

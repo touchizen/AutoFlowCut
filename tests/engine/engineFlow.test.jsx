@@ -1225,6 +1225,15 @@ describe('#R33: planUnresolvedMentionFallback (pure)', () => {
     const fb = planUnresolvedMentionFallback('@king', [{ mediaId: 'km' }], [{ name: 'king' }], [unsyncedMedia])
     expect(fb.referenceImages.filter(r => r.mediaId === 'km')).toHaveLength(1)
   })
+
+  it('#R34-fix: 같은 이름의 비-character(scene/style) ref 가 character 멘션 폴백을 가로채지 않는다', () => {
+    // @king 은 캐릭터 멘션 의도. 같은 이름의 scene ref(mediaId 보유)가 있어도
+    // character 가 미동기화이고 주입 불가(mediaId 없음)면 폴백 포기(null) — scene 이미지를 주입하지 않는다.
+    const charNoMedia = { id: 3, name: 'king', type: 'character', mediaId: null, category: 'character' }
+    const sceneSameName = { id: 4, name: 'king', type: 'scene', mediaId: 'scene-media', category: 'scene' }
+    const fb = planUnresolvedMentionFallback('@king walks', [], [{ name: 'king' }], [sceneSameName, charNoMedia])
+    expect(fb).toBeNull()
+  })
 })
 
 // ---------------------------------------------------------------------------

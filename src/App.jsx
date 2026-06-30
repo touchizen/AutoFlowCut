@@ -51,7 +51,7 @@ import { frameImageFor, stripOmniEndFrame } from './utils/framePairImages'
 import { saveGalleryFrame } from './utils/galleryUpload'
 import { isUsableVideoReference } from './utils/videoPromptReferences'
 import { toast } from './components/Toast'
-import { selectUnsyncedMentionedRefs, syncRefToFlow } from './utils/flowCharacterSync'
+import { selectUnsyncedMentionedRefs, syncRefToFlow, isRefSynced } from './utils/flowCharacterSync'
 
 // Components
 import Header from './components/Header'
@@ -1153,10 +1153,13 @@ function App() {
           if (unsyncedMentioned.length > 0) {
             setSyncGate({
               refs: unsyncedMentioned,
-              proceed: () => {
+              // #R34-fix: 게이트에서 방금 동기화한 entity 패치를 첫 생성에 반영한다. start() 는 flow 모드에서
+              //   character 를 재등록하지 않으므로(생성 배치 분리), 패치된 refs 를 currentRefs 로 넘기지 않으면
+              //   첫 배치가 stale(미동기화) ref 로 @멘션을 해석해 폴백/실패한다. (start 는 currentRefs 옵션 지원.)
+              proceed: (currentRefs) => {
                 setRunningStyle({ styleId: effectiveStyleId, label: styleResolver.resolveLabelForId(effectiveStyleId), applies: true })
                 setHasPendingBatch(true)
-                start(startOptions).finally(() => setHasPendingBatch(false))
+                start(currentRefs ? { ...startOptions, currentRefs } : startOptions).finally(() => setHasPendingBatch(false))
               },
             })
             return
@@ -1398,6 +1401,25 @@ function App() {
       }
       // 시작 시점 snapshot — 사용자가 modal 띄운 사이 스타일 변경해도 startOptions에 들어간 게 진실
       const sid = opts.selectedStyleRefId
+      // #R34-fix: 태그검증 proceed 경로도 미동기화 @멘션 가드를 재적용한다. handleStartImpl 은 태그
+      //   오류가 있으면 sync 게이트 전에 return 하므로, 태그경고+미동기화 캐릭터가 같이 있는 씬은 이
+      //   경로로 동기화 모달 없이 생성되던 우회가 있었다. 여기서 동일 게이트를 다시 통과시킨다.
+      if (modeRef.current === 'flow') {
+        const targetScenes = opts.force ? scenes.filter(s => s.prompt) : filterPendingScenes(scenes)
+        const unsyncedMentioned = selectUnsyncedMentionedRefs(targetScenes, scenesHook.references)
+        if (unsyncedMentioned.length > 0) {
+          setSyncGate({
+            refs: unsyncedMentioned,
+            proceed: (currentRefs) => {
+              setRunningStyle({ styleId: sid, label: styleResolver.resolveLabelForId(sid), applies: true })
+              setHasPendingBatch(true)
+              start(currentRefs ? { ...opts, currentRefs } : opts).finally(() => setHasPendingBatch(false))
+            },
+          })
+          setPendingStartOptions(null)
+          return
+        }
+      }
       setRunningStyle({ styleId: sid, label: styleResolver.resolveLabelForId(sid), applies: true })
       setHasPendingBatch(true)
       start(opts).finally(() => setHasPendingBatch(false))
@@ -1417,23 +1439,34 @@ function App() {
     if (!syncGate || syncGateBusy) return
     setSyncGateBusy(true)
     let ok = 0, fail = 0
+    // #R34-fix: 패치를 로컬 배열에 누적해 첫 생성(start)에 currentRefs 로 넘긴다(React state 는 같은
+    //   tick 에 stale). character 는 업로드 성공이어도 displayName PATCH 실패면 'failed' 라 미동기화 —
+    //   patch.flowNameSyncStatus 로 실제 동기화 여부를 판정해 카운트한다(업로드성공=성공으로 오인 금지).
+    let patchedRefs = scenesHook.references
     try {
       for (const ref of syncGate.refs) {
         const res = await syncRefToFlow(ref, genAPI.uploadReference)
-        if (res.ok) {
-          ok++
+        if (res.patch) {
+          // 패치(entityId/failed 마킹 포함)는 동기화 성공 여부와 무관하게 항상 반영(재시도 후보 유지).
+          patchedRefs = patchedRefs.map(r => r.id === ref.id ? { ...r, ...res.patch } : r)
           updateReferences(prev => prev.map(r => r.id === ref.id ? { ...r, ...res.patch } : r))
-        } else {
-          fail++
-          console.warn('[App] sync-gate sync failed for', ref?.name, res.error)
         }
+        const synced = res.ok && isRefSynced(res.patch ? { ...ref, ...res.patch } : ref)
+        if (synced) ok++
+        else { fail++; console.warn('[App] sync-gate sync incomplete for', ref?.name, res.error || res.patch?.flowNameSyncStatus) }
       }
       try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
+      // #R34-fix: 하나도 동기화되지 않았으면(전부 실패) 생성을 시작하지 않는다 — 미동기화 @멘션은
+      //   해석 실패/잘못된 폴백으로 이어져 배치가 무조건 실패한다. 모달을 유지해 재시도/취소하게 둔다.
+      if (ok === 0 && fail > 0) {
+        toast.error(isKo ? `Flow 동기화 실패 (${fail}) — 동기화 전이라 생성을 시작하지 않습니다` : `All ${fail} sync(s) failed — not starting generation`)
+        return
+      }
       if (fail > 0) toast.warning(isKo ? `동기화 ${ok} 성공 · ${fail} 실패 — 생성을 계속합니다` : `Synced ${ok}, ${fail} failed — generating anyway`)
       else toast.success(isKo ? `Flow 동기화 완료 (${ok}) — 생성 시작` : `Synced ${ok} — generating`)
       const proceed = syncGate.proceed
       setSyncGate(null)
-      proceed?.()
+      proceed?.(patchedRefs)
     } finally {
       setSyncGateBusy(false)
     }

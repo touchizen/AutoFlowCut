@@ -139,6 +139,55 @@ describe('useImageUpload — entity field propagation (Codex #3)', () => {
   })
 })
 
+describe('useImageUpload — FileReader error clears syncing (#R34-fix)', () => {
+  // onUploadStart 가 부모를 syncing:true 로 만든 뒤 FileReader 가 실패하면, onUploadComplete 가
+  // 호출 안 돼 부모가 syncing:true 로 영구 고착된다 → onUploadError 로 반드시 해제되어야 한다.
+  class ErrorFileReader {
+    readAsDataURL() {
+      this.error = new Error('read boom')
+      this.onerror?.()
+    }
+  }
+
+  it('onUploadError fires (and onUploadComplete does not) when FileReader errors', async () => {
+    const prev = global.FileReader
+    global.FileReader = ErrorFileReader
+    try {
+      const onUploadStart = vi.fn()
+      const onUploadComplete = vi.fn()
+      const onUploadError = vi.fn()
+      const { result } = renderHook(() =>
+        useImageUpload({ uploadToFlow: vi.fn(), onUploadStart, onUploadComplete, onUploadError })
+      )
+      await act(async () => { await result.current.processFile(makeFile()) })
+      expect(onUploadStart).toHaveBeenCalledTimes(1)
+      expect(onUploadComplete).not.toHaveBeenCalled()
+      expect(onUploadError).toHaveBeenCalledTimes(1)
+    } finally {
+      global.FileReader = prev
+    }
+  })
+
+  it('onUploadError is scope-guarded — not fired when scope changed mid-upload', async () => {
+    const prev = global.FileReader
+    global.FileReader = ErrorFileReader
+    try {
+      let scope = 'flow::projA'
+      const onUploadError = vi.fn()
+      const { result } = renderHook(() =>
+        useImageUpload({ uploadToFlow: vi.fn(), onUploadError, getScopeToken: () => scope })
+      )
+      // change scope synchronously before the (sync) error path checks it
+      const p = result.current.processFile(makeFile())
+      scope = 'flow::projB'
+      await act(async () => { await p })
+      expect(onUploadError).not.toHaveBeenCalled()
+    } finally {
+      global.FileReader = prev
+    }
+  })
+})
+
 describe('useImageUpload — scope guard (#R28-3)', () => {
   it('skips onUploadComplete when scope token changes during upload (mode/project switch)', async () => {
     let scope = 'flow::projA'

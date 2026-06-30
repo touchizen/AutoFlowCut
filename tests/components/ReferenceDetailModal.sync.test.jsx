@@ -142,6 +142,28 @@ describe('#R33: ReferenceDetailModal Flow sync button', () => {
     expect(onUpdate).toHaveBeenCalledWith(0, expect.objectContaining({ name: 'kingnew' }))
   })
 
+  it('#R34-fix: rename 실패 시 로컬 ref 를 failed 로 마킹(앱이 synced 로 오인해 @새이름 생성이 깨지는 것 방지)', async () => {
+    window.electronAPI.renameFlowCharacter = vi.fn().mockResolvedValue({ success: false, error: 'patch failed' })
+    const onUpdate = vi.fn()
+    const syncedChar = { ...charRef, name: 'king', entityId: 'ent-1', flowNameSyncStatus: 'synced', registered: true }
+    const { container, getByText } = render(
+      <ReferenceDetailModal {...baseProps} reference={syncedChar} appMode="flow" onUpdate={onUpdate} onUpload={vi.fn()} />
+    )
+    const nameInput = container.querySelector('input[type="text"]')
+    fireEvent.change(nameInput, { target: { value: 'kingnew' } })
+    await act(async () => {
+      getByText('common.save').click()
+      for (let i = 0; i < 8; i++) await Promise.resolve()
+    })
+    expect(window.electronAPI.renameFlowCharacter).toHaveBeenCalled()
+    expect(toast.error).toHaveBeenCalled()
+    // rename 실패 → 마지막 패치가 미동기화(failed/registered:false) 여야 한다
+    const calls = onUpdate.mock.calls.map(c => c[1])
+    const last = calls[calls.length - 1]
+    expect(last.flowNameSyncStatus).toBe('failed')
+    expect(last.registered).toBe(false)
+  })
+
   it('#R34: 이름이 그대로면 renameFlowCharacter 호출 안 함', async () => {
     window.electronAPI.renameFlowCharacter = vi.fn()
     const onUpdate = vi.fn()

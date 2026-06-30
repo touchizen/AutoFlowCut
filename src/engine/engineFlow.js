@@ -53,8 +53,10 @@ const api = () => window.electronAPI
  */
 export function planUnresolvedMentionFallback(prompt, referenceImages, unresolved, references) {
   if (!unresolved || unresolved.length === 0) return null
+  // #R34-fix: @멘션은 character 의도다. 같은 이름의 비-character(scene/style) ref 가 mediaId 를
+  //   가졌다고 character 멘션 폴백을 가로채면 안 된다 → character 만 lookup 대상으로 둔다.
   const byName = new Map()
-  for (const r of references || []) { if (r?.name) byName.set(String(r.name).toLowerCase(), r) }
+  for (const r of references || []) { if (r?.name && r.type === 'character') byName.set(String(r.name).toLowerCase(), r) }
   const fallbackRefs = []
   for (const u of unresolved) {
     const resolved = resolveMentionPrefix(u.name, byName)

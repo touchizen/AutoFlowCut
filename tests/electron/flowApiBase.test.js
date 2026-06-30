@@ -20,6 +20,11 @@ describe('#R33: captureApiOrigin', () => {
   it('Flow 페이지(labs.google) 등 비-API URL 은 null', () => {
     expect(captureApiOrigin('https://labs.google/fx/tools/flow/project/abc')).toBeNull()
   })
+  it('#R33-fix: aisandbox 가 아닌 googleapis 호스트는 캡처하지 않는다(잘못된 host 로 직접호출 방지)', () => {
+    expect(captureApiOrigin('https://storage.googleapis.com/bucket/x.png')).toBeNull()
+    expect(captureApiOrigin('https://www.googleapis.com/oauth2/v1/userinfo')).toBeNull()
+    expect(captureApiOrigin('https://fonts.googleapis.com/css2?family=Roboto')).toBeNull()
+  })
   it('빈/잘못된 입력은 null', () => {
     expect(captureApiOrigin('')).toBeNull()
     expect(captureApiOrigin(null)).toBeNull()

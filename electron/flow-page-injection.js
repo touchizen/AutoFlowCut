@@ -169,7 +169,9 @@ export const FLOW_PAGE_INJECTION = /* js */ `
     let url      = typeof input === 'string' ? input : (input?.url || '')
     // #R33: 페이지가 보낸 생성 API(googleapis) 요청의 origin 을 stash 한다 — main 이 이 값으로
     //   직접 호출(uploadImage/entities/video i2v·status·upscale) 호스트를 region 에 맞춘다.
-    try { if (/googleapis\.com/i.test(url)) window.__autoflowcut_api_origin__ = new URL(url, location.href).origin } catch (_e) {}
+    // #R33-fix: aisandbox googleapis 호스트만 stash — storage/www/fonts.googleapis.com 같은 비-Flow
+    //   origin 을 잡으면 직접호출(upload/entities/video status·i2v·upscale)이 잘못된 host 로 나간다.
+    try { const _h = new URL(url, location.href); if (/aisandbox/i.test(_h.hostname) && /(^|\.)googleapis\.com$/i.test(_h.hostname)) window.__autoflowcut_api_origin__ = _h.origin } catch (_e) {}
     let _input   = input
     let _init    = init || {}
     const inject = window.__autoflowcut_inject__ || {}

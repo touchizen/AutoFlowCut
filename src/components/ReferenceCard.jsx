@@ -51,6 +51,7 @@ export default function ReferenceCard({
   isGenerating,
   onShowDetail,
   projectName,
+  getScopeToken,  // #R34-fix: live 스코프 토큰(부모 ReferencePanel 제공). 업로드 중 프로젝트/모드 전환 감지.
 }) {
   const cardRef = useRef(null)
   const fileInputRef = useRef(null)
@@ -78,12 +79,24 @@ export default function ReferenceCard({
     if (!file || !file.type.startsWith('image/')) return
 
     setIsUploading(true)
+    // #R34-fix: 업로드(특히 await onUpload)는 시간이 걸린다. 그 사이 프로젝트/모드가 바뀌면 완료 패치가
+    //   현재(새) 프로젝트의 같은 index/id 에 stale 결과를 덮어쓴다(ref id 는 프로젝트별로 1부터 재사용).
+    //   시작 스코프를 캡처해 완료 직전 현재 스코프와 다르면 적용을 스킵한다.
+    const startScope = typeof getScopeToken === 'function' ? getScopeToken() : null
+    const scopeChanged = () => typeof getScopeToken === 'function' && getScopeToken() !== startScope
 
     const reader = new FileReader()
+    // #R34-fix: FileReader 실패/중단 시에도 업로드 상태 고착 방지.
+    reader.onerror = () => { console.warn('[ReferenceCard] FileReader error'); setIsUploading(false) }
+    reader.onabort = () => { setIsUploading(false) }
     reader.onloadend = async () => {
+     // #R34-fix: onUpload reject/예외 시에도 setIsUploading(false) 보장 + unhandled rejection 방지.
+     try {
       const base64 = reader.result
+      if (!base64) { setIsUploading(false); return }
 
-      // 즉시 표시
+      // 즉시 표시 — #R34-fix: 미리보기 패치도 scope 변경 시(프로젝트 전환) 현재 refs 오염 방지.
+      if (scopeChanged()) { console.warn('[ReferenceCard] scope changed before preview — skipping'); setIsUploading(false); return }
       onUpdate(index, {
         ...reference,
         data: base64,
@@ -161,6 +174,13 @@ export default function ReferenceCard({
       const finalStatus = saveFailedAfterAttempt ? 'error' : 'done'
       const finalErrorMessage = saveFailedAfterAttempt ? saveErrorMessage : null
 
+      // #R34-fix: 업로드 도중 프로젝트/모드가 바뀌었으면 결과를 현재(다른) 프로젝트 ref 에 적용하지 않는다.
+      if (scopeChanged()) {
+        console.warn('[ReferenceCard] scope changed during upload — skipping stale apply')
+        setIsUploading(false)
+        return
+      }
+
       onUpdate(index, {
         ...reference,
         name: effectiveName || reference.name,
@@ -186,8 +206,11 @@ export default function ReferenceCard({
       // #R33: 캐릭터 entity 등록(entityId 수신) 직후 Flow SPA 새로고침 — 'Untitled Character' stale
       //   캐시/멘션 피커 옛 이름 방지(비차단).
       if (entityPatch?.entityId) { try { window.electronAPI?.refreshFlowComposer?.() } catch (_e) {} }
-
-      setIsUploading(false)
+     } catch (e) {
+       console.warn('[ReferenceCard] upload processing failed:', e?.message || e)
+     } finally {
+       setIsUploading(false)
+     }
     }
     reader.readAsDataURL(file)
   }

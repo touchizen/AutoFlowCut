@@ -34,14 +34,18 @@ export function isRefSynced(ref) {
  * @returns {Array} 미동기화 character ref (멘션된 것만)
  */
 export function selectUnsyncedMentionedRefs(scenes = [], references = []) {
+  // #R34-fix: @멘션은 character 의도다. resolveMentions 는 전체 ref 를 name→ref 맵(뒤가 덮음)에 넣어
+  //   같은 이름의 scene/style 이 character 를 가리면(@king→scene) character 가 누락돼 게이트가 안 열린다.
+  //   → character ref 만으로 멘션을 해석해 같은 이름 비-character 의 shadowing 을 막는다.
+  const charRefs = (references || []).filter(r => r?.type === 'character')
   const ids = new Set()
   for (const s of scenes || []) {
-    const { matched } = resolveMentions(s?.prompt || '', references)
+    const { matched } = resolveMentions(s?.prompt || '', charRefs)
     for (const r of matched) {
-      if (r?.type === 'character' && r.id != null) ids.add(r.id)
+      if (r?.id != null) ids.add(r.id)
     }
   }
-  return (references || []).filter(r => r && ids.has(r.id) && !isRefSynced(r))
+  return charRefs.filter(r => r && ids.has(r.id) && !isRefSynced(r))
 }
 
 /** 동기화 대상(미동기화 + 이미지 보유)인 character/scene ref 만 추린다. */

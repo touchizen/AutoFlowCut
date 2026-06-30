@@ -20,8 +20,11 @@ export function captureApiOrigin(url) {
   try {
     const u = new URL(url)
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
-    // aisandbox-pa.googleapis.com (관측), 또는 region 변형(*-aisandbox*.googleapis.com 등).
-    if (/(^|\.)googleapis\.com$/i.test(u.hostname) || /aisandbox/i.test(u.hostname)) {
+    // #R33-fix: Flow 생성 API 호스트만 캡처한다 — aisandbox 토큰을 가진 googleapis 호스트로 한정.
+    //   storage/www/fonts.googleapis.com 같은 비-Flow origin 을 잡으면 video i2v/status/upscale·
+    //   이미지 업로드가 잘못된 host 로 나가 깨진다. aisandbox-pa.googleapis.com(관측) + region 변형
+    //   (eu-aisandbox-pa…, content-aisandbox-pa…)만 허용.
+    if (/aisandbox/i.test(u.hostname) && /(^|\.)googleapis\.com$/i.test(u.hostname)) {
       return u.origin
     }
   } catch { /* invalid URL */ }

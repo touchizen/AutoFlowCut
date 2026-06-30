@@ -776,8 +776,11 @@ export function registerCharacterIPC(ipcMain, deps) {
     //   (2) 타입(이미지)은 프롬프트 프리펜드로 강제(영상으로 빠지지 않게). Agent OFF 는 위 IMAGE 모드+inject.
     if (_agentOn) {
       if (applyAgentDefaults) {
-        try { await applyAgentDefaults({ image: { aspectRatio: opts.aspectRatio }, autoApprove: true }) }
-        catch (e) { console.warn('[Flow Scene] (Agent ON) applyAgentDefaults skipped:', e.message) }
+        // #R34-fix: 화면비 미적용이면 fail-closed(retry) — 잘못된 화면비로 씬이 생성돼 quota 낭비 방지.
+        try {
+          const _md = await applyAgentDefaults({ image: { aspectRatio: opts.aspectRatio }, autoApprove: true })
+          if (!_md?.success) return { success: false, error: `Flow 씬 화면비 적용 실패: ${_md?.error || 'unknown'}`, retry: true }
+        } catch (e) { return { success: false, error: `Flow 씬 화면비 적용 오류: ${e.message}`, retry: true } }
       }
       segs.unshift({ type: 'text', text: 'Generate a still image: ' })
     }
@@ -905,7 +908,29 @@ export function registerCharacterIPC(ipcMain, deps) {
   //   피커도 옛 이름으로 떠 매칭이 깨질 수 있다. 단순 reload() 는 SPA in-memory 상태가 남아 이름이
   //   갱신 안 될 수 있어, 사용자가 수동으로 하는 것처럼 "프로젝트를 나갔다(프로젝트 리스트) → 다시
   //   들어오기"로 강제 재요청한다(projectInitialData 재fetch → 새 이름 반영).
+  // #R34-fix: 동시 refresh 정리. card/modal/panel 이 fire-and-forget 으로 호출해 여러 refresh 가
+  //   겹치면 공유 flowView 에서 loadURL 들이 서로 ERR_ABORTED 로 충돌한다.
+  //   - 같은 타깃 projectId 를 향한 refresh 가 이미 진행/대기 중이면 같은 promise 로 coalesce
+  //     (refresh 는 "그 프로젝트 나갔다 재진입"이라 idempotent).
+  //   - 다른 타깃이면 직렬화한다 — 같은 flowView 라 두 navigation 을 동시에 돌리면 안 된다.
+  let refreshChain = Promise.resolve()
+  let refreshActivePid = null
+  let refreshActivePromise = null
+  const resolveRefreshPid = (opts) => opts.projectId || projectIdFromUrl() || (getCapturedProjectId && getCapturedProjectId()) || null
   ipcMain.handle('flow:refresh-composer', async (_e, opts = {}) => {
+    const pid = resolveRefreshPid(opts)
+    if (refreshActivePromise && refreshActivePid === pid) return refreshActivePromise
+    const prev = refreshChain
+    // #R34-fix: 핸들러에서 확정한 pid 를 실행 target 으로 고정한다. 안 그러면 앞선 refresh 의 navigation
+    //   으로 URL 이 바뀐 뒤 doRefreshComposer 가 projectIdFromUrl 로 다른(엉뚱한) 프로젝트를 refresh 할 수 있다.
+    const p = (async () => { await prev.catch(() => {}); return doRefreshComposer({ ...opts, projectId: pid }) })()
+    refreshChain = p.catch(() => {})
+    refreshActivePid = pid
+    refreshActivePromise = p
+    p.finally(() => { if (refreshActivePromise === p) { refreshActivePromise = null; refreshActivePid = null } })
+    return p
+  })
+  async function doRefreshComposer(opts = {}) {
     if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }
@@ -922,8 +947,8 @@ export function registerCharacterIPC(ipcMain, deps) {
       if (pid && ensureOnProjectComposer) {
         try { await ensureOnProjectComposer(flowView, pid) } catch (e) { console.warn('[Flow Refresh] ensureOnProjectComposer:', e.message) }
       } else {
-        // pid 모르면 최소한 reload 로 fallback.
-        await flowView.webContents.reload().catch(() => {})
+        // pid 모르면 최소한 reload 로 fallback. (webContents.reload() 는 void → .catch 불가, try 로 감쌈)
+        try { flowView.webContents.reload() } catch (e) { console.warn('[Flow Refresh] reload fallback:', e.message) }
       }
       // 3) 컴포저 에디터 ready 대기.
       let ready = false
@@ -937,7 +962,7 @@ export function registerCharacterIPC(ipcMain, deps) {
       console.warn('[Flow Refresh] failed:', e.message)
       return { success: false, error: e.message }
     }
-  })
+  }
 
   ipcMain.handle('flow:rename-character', async (_e, opts = {}) => {
     const { entityId, displayName } = opts

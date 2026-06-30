@@ -2,7 +2,7 @@
  * ReferencePanel - 레퍼런스 이미지 관리 패널
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { REFERENCE_TYPES } from '../config/defaults'
 import { useI18n } from '../hooks/useI18n'
@@ -42,6 +42,12 @@ export default function ReferencePanel({
   appMode,  // #R28-3: 모달 업로드 stale-apply 가드용 스코프(mode) — getScopeToken 에 사용
 }) {
   const { t } = useI18n()
+  // #R34-fix: 살아있는 패널에서 갱신되는 ref 기반 스코프 토큰. 모달은 업로드 시작 시 닫혀(unmount)
+  //   props 가 stale 로 굳으므로, 모달 props 기반 가드는 무력하다. 안정적 identity(빈 deps)지만
+  //   scopeRef.current 는 매 렌더 최신값으로 갱신 → 백그라운드 완료가 프로젝트/모드 전환을 감지한다.
+  const scopeRef = useRef('')
+  scopeRef.current = `${appMode ?? ''}::${projectName ?? ''}`
+  const getScopeToken = useCallback(() => scopeRef.current, [])
   const [collapsed, setCollapsed] = useState(false)
   const [detailIndex, setDetailIndex] = useState(null)
   const [showBatchWizard, setShowBatchWizard] = useState(false)
@@ -90,11 +96,15 @@ export default function ReferencePanel({
     if (targets.length === 0) return
     setSyncingAll(true)
     let ok = 0, fail = 0
+    // #R34-fix: 직렬 동기화 도중 프로젝트/모드가 바뀌면 이후 결과를 현재(새) 프로젝트 refs 에 반영하지 않는다.
+    const startScope = getScopeToken()
     try {
       for (const ref of targets) {
+        if (getScopeToken() !== startScope) { console.warn('[ReferencePanel] scope changed during sync-all — aborting remaining'); break }
         // #R34: 처리 중인 카드에 업로드 스피너(⏳) 표시(직렬이라 1개씩).
         onUpdate(prev => prev.map(r => r.id === ref.id ? { ...r, syncing: true } : r))
         const res = await syncRefToFlow(ref, onUpload)
+        if (getScopeToken() !== startScope) { console.warn('[ReferencePanel] scope changed mid-sync — skipping stale apply'); break }
         if (res.ok) {
           ok++
           onUpdate(prev => prev.map(r => r.id === ref.id ? { ...r, ...res.patch, syncing: false } : r))
@@ -268,6 +278,7 @@ export default function ReferencePanel({
               isGenerating={generatingRefs.includes(index)}
               onShowDetail={setDetailIndex}
               projectName={projectName}
+              getScopeToken={getScopeToken}
             />
           ))}
           
@@ -338,6 +349,7 @@ export default function ReferencePanel({
           isKo={isKo}
           projectName={projectName}
           appMode={appMode}
+          getScopeToken={getScopeToken}
           thumbnails={thumbnails}
         />
       )}

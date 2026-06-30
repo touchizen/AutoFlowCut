@@ -170,7 +170,12 @@ export function registerVideoIPC(ipcMain, deps) {
       // #R33: 화면비(설정>씬)는 이미지·비디오 공용. 이미지는 monkey-patch inject 로, 비디오는 이
       //   패널(aspectSuffix)로 적용한다 — aspectRatio 를 안 넘기면 컴포저 기본값(잘못된 비율)으로 나간다.
       if (applyAgentDefaults) {
-        try { const _md = await applyAgentDefaults({ video: { model, aspectRatio } }); if (!_md?.success) console.warn('[Flow Video] applyAgentDefaults(video) failed:', _md?.error) } catch (e) { console.warn('[Flow Video] applyAgentDefaults(video) error:', e.message) }
+        // #R34-fix: 화면비/모델이 패널에 적용 안 되면(요청 필드 미적용) 잘못된 화면비로 영상이 나가
+        //   quota 를 태운다 → fail-closed(retry). applyAgentDefaults 자체가 3회 재시도하므로 일시 실패는 흡수.
+        try {
+          const _md = await applyAgentDefaults({ video: { model, aspectRatio } })
+          if (!_md?.success) return { success: false, error: `Flow 비디오 화면비/모델 적용 실패: ${_md?.error || 'unknown'}`, retry: true }
+        } catch (e) { return { success: false, error: `Flow 비디오 화면비/모델 적용 오류: ${e.message}`, retry: true } }
       }
       } else {
         // [Agent ON — Maps 그라운딩/주소 기반] 토글 ON 유지 + autoApprove. 모드 탭 없어 configureFlowMode 생략.
@@ -180,7 +185,11 @@ export function registerVideoIPC(ipcMain, deps) {
         if (!onOk) return { success: false, error: 'Flow Agent 를 ON 으로 전환하지 못했습니다. Flow 컴포즈에 Agent 토글이 있는지 확인해주세요.' }
         if (applyAgentDefaults) {
           // #R33: Agent ON 도 화면비(설정>씬) 적용 — video.aspectRatio 전달.
-          try { await applyAgentDefaults({ video: { model, aspectRatio }, autoApprove: true }) } catch (e) { console.warn('[Flow Video T2V] applyAgentDefaults skipped:', e.message) }
+          // #R34-fix: 미적용이면 fail-closed(retry) — 잘못된 화면비 생성 방지.
+          try {
+            const _md = await applyAgentDefaults({ video: { model, aspectRatio }, autoApprove: true })
+            if (!_md?.success) return { success: false, error: `Flow 비디오 화면비/모델 적용 실패: ${_md?.error || 'unknown'}`, retry: true }
+          } catch (e) { return { success: false, error: `Flow 비디오 화면비/모델 적용 오류: ${e.message}`, retry: true } }
         }
         // 타입 강제(이미지로 빠지지 않게) — 명시 지시로 감싼다.
         prompt = `Generate a video: ${prompt}`
@@ -490,7 +499,11 @@ export function registerVideoIPC(ipcMain, deps) {
 
       // (v2) Flow 비디오 모델 + 화면비 적용 (I2V — t2v 와 동일). #R33: aspectRatio(설정>씬) 전달.
       if (applyAgentDefaults) {
-        try { const _md = await applyAgentDefaults({ video: { model, aspectRatio } }); if (!_md?.success) console.warn('[Flow Video I2V] applyAgentDefaults(video) failed:', _md?.error) } catch (e) { console.warn('[Flow Video I2V] applyAgentDefaults error:', e.message) }
+        // #R34-fix: 미적용이면 fail-closed(retry) — 잘못된 화면비 생성 방지.
+        try {
+          const _md = await applyAgentDefaults({ video: { model, aspectRatio } })
+          if (!_md?.success) return { success: false, error: `Flow 비디오 화면비/모델 적용 실패: ${_md?.error || 'unknown'}`, retry: true }
+        } catch (e) { return { success: false, error: `Flow 비디오 화면비/모델 적용 오류: ${e.message}`, retry: true } }
       }
 
       // 2. 프롬프트 입력 (T2V와 동일한 Slate 에디터 사용)

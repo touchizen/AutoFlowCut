@@ -15,6 +15,30 @@ import { screen } from 'electron'
 import { computeOffscreenBounds } from '../offscreen-bounds.js'
 
 /**
+ * #R34-fix: applyAgentDefaults 결과가 "요청한 image/video aspect·model 을 실제로 적용했는지" 판정(순수).
+ *   buildAgentDefaultsScript 의 result.ok 는 패널을 찾기만 하면 true 라, 탭/옵션 미발견 같은 필드 적용
+ *   실패를 잡지 못한다. 그대로 success 처리하면 잘못된 화면비/모델로 생성돼 quota 를 낭비한다.
+ *   - 'skipped'(요청 비율이 매핑 안 됨)·'already'·'clicked'·null 은 적용된 것으로 본다.
+ *   - 그 외(tab_not_found, trigger_not_found, menu_not_opened, option_not_found, section error)는 미적용.
+ *   - count(배치 수) 실패는 비치명적이라 무시한다(화면비/모델만 본다).
+ *
+ * @param {object} opts - applyAgentDefaults 에 넘긴 요청({image?,video?})
+ * @param {object} result - page-script 반환값({ok,image,video,...})
+ * @returns {boolean}
+ */
+export function agentDefaultsApplied(opts = {}, result = {}) {
+  const okStatus = (s) => s == null || s === 'skipped' || s === 'already' || s === 'clicked'
+  const sectionOk = (req, sec) => {
+    if (!req) return true                       // 요청 안 함 → 무관
+    if (!sec || sec.error) return false         // section_not_found 등
+    if (req.aspectRatio != null && !okStatus(sec.aspect)) return false
+    if (req.model != null && !okStatus(sec.model)) return false
+    return true
+  }
+  return sectionOk(opts.image, result.image) && sectionOk(opts.video, result.video)
+}
+
+/**
  * Create all shared helpers bound to the given getters.
  *
  * @param {object} ctx
@@ -734,14 +758,17 @@ export function createSharedHelpers(ctx) {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
         const result = await flowView.webContents.executeJavaScript(script)
-        if (result && result.ok) {
+        // #R34-fix: result.ok(패널 발견)뿐 아니라 "요청한 aspect/model 이 실제로 적용됐는지"까지 확인.
+        //   미적용이면 재시도 → 끝까지 미적용이면 success:false (잘못된 화면비/모델 생성 방지).
+        if (result && result.ok && agentDefaultsApplied(opts, result)) {
           console.log('[Flow AgentDefaults] applied:',
             'approval=', result.approval,
             'image=', JSON.stringify(result.image), 'video=', JSON.stringify(result.video),
             'saved=', result.saved, 'panelClosed=', result.panelClosed)
           return { success: true, result }
         }
-        console.warn(`[Flow AgentDefaults] attempt ${attempt + 1}/${maxAttempts} failed:`, result && result.error)
+        console.warn(`[Flow AgentDefaults] attempt ${attempt + 1}/${maxAttempts} not fully applied:`,
+          result && (result.error || `image=${JSON.stringify(result.image)} video=${JSON.stringify(result.video)}`))
       } catch (e) {
         console.warn(`[Flow AgentDefaults] attempt ${attempt + 1} error:`, e.message)
       }
