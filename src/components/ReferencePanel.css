@@ -108,27 +108,25 @@
   cursor: not-allowed;
 }
 
-/* #R34: Flow 일괄 동기화 — 옆 삭제(btn-clear-refs) 버튼과 동일한 투명/컴팩트 톤으로 통일.
-   동기화=주의 의미는 앰버 hover 액센트로만 표현. */
+/* #R34: Flow 일괄 동기화 — 미동기화(주의) 상태를 앰버 pill 로 표시. btn-generate-all 과 동일 형태. */
 .btn-sync-all {
-  padding: 4px 8px;
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
+  padding: 6px 12px;
+  border: 1px solid #f59e0b;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
   font-size: 0.8rem;
+  cursor: pointer;
   transition: all 0.2s;
   white-space: nowrap;
 }
 
 .btn-sync-all:hover:not(:disabled) {
-  color: #f59e0b;
-  border-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.3);
 }
 
 .btn-sync-all:disabled {
-  opacity: 0.5;
+  opacity: 0.6;
   cursor: not-allowed;
 }
 
