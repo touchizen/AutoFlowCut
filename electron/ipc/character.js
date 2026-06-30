@@ -900,27 +900,38 @@ export function registerCharacterIPC(ipcMain, deps) {
     }
   })
 
-  // #R33: Flow 컴포저 새로고침 — 등록/동기화 직후 SPA 가 새 entity 이름을 다시 읽게 한다.
+  // #R34: Flow 컴포저 새로고침 — 등록/동기화 직후 SPA 가 새 entity 이름을 다시 읽게 한다.
   //   캐릭터 등록(PATCH displayName) 후 SPA 가 캐시된 'Untitled Character' 를 그대로 보여, 멘션
-  //   피커도 옛 이름으로 떠 매칭이 깨질 수 있다. 사용자가 프로젝트를 나갔다 들어오는 것과 동일하게
-  //   full reload → did-finish-load 가 FLOW_PAGE_INJECTION 재주입 + projectInitialData 재요청.
+  //   피커도 옛 이름으로 떠 매칭이 깨질 수 있다. 단순 reload() 는 SPA in-memory 상태가 남아 이름이
+  //   갱신 안 될 수 있어, 사용자가 수동으로 하는 것처럼 "프로젝트를 나갔다(프로젝트 리스트) → 다시
+  //   들어오기"로 강제 재요청한다(projectInitialData 재fetch → 새 이름 반영).
   ipcMain.handle('flow:refresh-composer', async (_e, opts = {}) => {
     if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }
     const pid = opts.projectId || projectIdFromUrl() || (getCapturedProjectId && getCapturedProjectId())
     try {
-      await flowView.webContents.reload()
+      // 1) 프로젝트에서 나간다 — 현재 URL 의 /project/<id> 앞부분(= 프로젝트 리스트 base)로 이동.
+      const cur = (flowView.webContents.getURL && flowView.webContents.getURL()) || ''
+      const base = cur.split('/project/')[0]
+      if (base && base !== cur) {
+        await flowView.webContents.loadURL(base).catch((e) => console.warn('[Flow Refresh] leave loadURL:', e.message))
+        await sleep(1000)
+      }
+      // 2) 다시 들어온다 — ensureOnProjectComposer 가 타깃 프로젝트로 loadURL(전체 로드 → 재fetch).
+      if (pid && ensureOnProjectComposer) {
+        try { await ensureOnProjectComposer(flowView, pid) } catch (e) { console.warn('[Flow Refresh] ensureOnProjectComposer:', e.message) }
+      } else {
+        // pid 모르면 최소한 reload 로 fallback.
+        await flowView.webContents.reload().catch(() => {})
+      }
+      // 3) 컴포저 에디터 ready 대기.
       let ready = false
       for (let i = 0; i < 40 && !ready; i++) {
         await sleep(500)
         ready = await flowView.webContents.executeJavaScript(COMPOSE_EDITOR_READY).catch(() => false)
       }
-      // 타깃 프로젝트 컴포저 보장(reload 가 다른 경로로 떨어졌을 때 드리프트 방지).
-      if (pid && ensureOnProjectComposer) {
-        try { await ensureOnProjectComposer(flowView, pid) } catch (e) { console.warn('[Flow Refresh] ensureOnProjectComposer:', e.message) }
-      }
-      console.log('[Flow Refresh] composer refreshed, ready:', ready)
+      console.log('[Flow Refresh] composer refreshed (leave+reenter), ready:', ready)
       return { success: !!ready }
     } catch (e) {
       console.warn('[Flow Refresh] failed:', e.message)

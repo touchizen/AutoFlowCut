@@ -89,7 +89,7 @@ function makeScenesHook(overrides = {}) {
 // ─── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('useAutomation — on-demand entity registration (M6 §3.5.3)', () => {
-  it('flow mode: character ref without entityId gets entity patch after uploadReference', async () => {
+  it('#R34: flow mode — character ref is NOT uploaded/registered in batch (sync moved to Ref tab)', async () => {
     const characterRef = { id: 'ref1', name: 'Alice', type: 'character', category: 'character', data: 'base64data==', mediaId: null, entityId: null }
     const updateReferences = vi.fn()
     const references = [characterRef]
@@ -109,18 +109,9 @@ describe('useAutomation — on-demand entity registration (M6 §3.5.3)', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(60 * 1000) })
     await act(async () => { await startPromise })
 
-    // uploadReference must have been called
-    expect(genAPI.uploadReference).toHaveBeenCalled()
-    // updateReferences must have been called to persist entityId to React state
-    expect(updateReferences).toHaveBeenCalled()
-    // #R10-7: updateReferences is now called with a functional updater (merge into latest state).
-    const updater = updateReferences.mock.calls[0][0]
-    expect(typeof updater).toBe('function')
-    const patchedRef = updater([characterRef]).find(r => r.id === 'ref1')
-    expect(patchedRef?.entityId).toBe('ent-001')
-    expect(patchedRef?.workflowId).toBe('wf-001')
-    expect(patchedRef?.flowNameSyncStatus).toBe('synced')
-    expect(patchedRef?.registered).toBe(true)
+    // #R34: 캐릭터 entity 동기화는 생성 배치에서 분리됨 → character ref 는 업로드/등록되지 않는다.
+    expect(genAPI.uploadReference).not.toHaveBeenCalled()
+    expect(updateReferences).not.toHaveBeenCalled()
   }, 30000)
 
   it('api mode: character ref without entityId — uploadReference called but NO entity patch', async () => {
@@ -169,15 +160,13 @@ describe('useAutomation — on-demand entity registration (M6 §3.5.3)', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(60 * 1000) })
     await act(async () => { await startPromise })
 
-    // uploadReference called (no mediaId → still uploads media)
-    expect(genAPI.uploadReference).toHaveBeenCalled()
-    // No entity patch — ref already has entityId
+    // #R34: flow 모드에선 character 는 배치에서 업로드/등록 안 함(동기화는 Ref 탭에서).
+    expect(genAPI.uploadReference).not.toHaveBeenCalled()
     expect(updateReferences).not.toHaveBeenCalled()
   }, 30000)
 
-  it('#R6-15: same-run scene submission sees the freshly-registered entityId (currentRefs, not stale closure)', async () => {
-    // A character ref uploaded + entity-registered during this batch must be visible to the
-    // scene submission's `references` opt in the SAME run — not deferred to the next run.
+  it('#R34: batch does NOT register characters; scene submitted with existing (unsynced) ref state', async () => {
+    // 캐릭터 동기화는 배치에서 분리 — Dana 는 등록되지 않고, 씬은 기존 ref 상태(entityId 없음)로 제출된다.
     const characterRef = { id: 'ref1', name: 'Dana', type: 'character', category: 'character', data: 'base64data==', mediaId: null, entityId: null }
     const updateReferences = vi.fn()
     const scenesHook = makeScenesHook({
@@ -199,12 +188,13 @@ describe('useAutomation — on-demand entity registration (M6 §3.5.3)', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(60 * 1000) })
     await act(async () => { await startPromise })
 
+    // #R34: 캐릭터는 배치에서 업로드/등록 안 함.
+    expect(genAPI.uploadReference).not.toHaveBeenCalled()
     expect(genAPI.submitGeneration).toHaveBeenCalled()
-    // The references opt passed to submitGeneration must carry the freshly-registered entityId.
+    // 씬은 기존 ref(미등록) 상태로 제출 — entityId 가 주입되지 않는다.
     const opts = genAPI.submitGeneration.mock.calls[0][2]
     const submittedRef = opts.references.find(r => r.id === 'ref1')
-    expect(submittedRef.entityId).toBe('ent-001')
-    expect(submittedRef.flowNameSyncStatus).toBe('synced')
+    expect(submittedRef.entityId).toBeFalsy()
   }, 30000)
 
   it('동기 결과(generationId 없이 images): @멘션 generate-scene 을 finalize 하고 에러로 안 본다 (중복 생성 방지)', async () => {

@@ -13,6 +13,8 @@ import { isReferenceImageDone } from '../services/generationStatus'
 import ReferenceCard from './ReferenceCard'
 import ReferenceDetailModal from './ReferenceDetailModal'
 import StylePicker from './StylePicker'
+import { toast } from './Toast'
+import { selectUnsyncedRefs, syncRefToFlow } from '../utils/flowCharacterSync'
 import './ReferencePanel.css'
 
 export default function ReferencePanel({
@@ -75,7 +77,39 @@ export default function ReferencePanel({
   // 스타일 레퍼런스 목록 (업로드된 Style 카드)
   const styleRefs = references.filter(r => r.type === 'style')
   const isKo = t('common.cancel') === '취소'  // 간단한 언어 감지
-  
+
+  // #R34: Flow 미동기화 character/scene 레퍼런스 — 일괄 동기화 버튼 노출/대상.
+  const unsyncedRefs = selectUnsyncedRefs(references)
+  const [syncingAll, setSyncingAll] = useState(false)
+
+  // #R34: 미동기화 ref 를 Flow 에 일괄(직렬) 동기화. 공유 flowView DOM 자동화라 반드시 1건씩 순차
+  //   실행(동시 실행 시 navigation 이 ERR_ABORTED 로 충돌). 끝나면 Flow SPA 1회 새로고침(이름 반영).
+  const handleSyncAll = async () => {
+    if (syncingAll) return
+    const targets = selectUnsyncedRefs(references)
+    if (targets.length === 0) return
+    setSyncingAll(true)
+    let ok = 0, fail = 0
+    try {
+      for (const ref of targets) {
+        const res = await syncRefToFlow(ref, onUpload)
+        if (res.ok) {
+          ok++
+          onUpdate(prev => prev.map(r => r.id === ref.id ? { ...r, ...res.patch } : r))
+        } else {
+          fail++
+          console.warn('[ReferencePanel] sync-all failed for', ref?.name, res.error)
+        }
+      }
+      // 모두 끝나면 Flow SPA 새로고침(나갔다 재진입) — 새 entity 이름 반영.
+      try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
+      if (fail === 0) toast.success(isKo ? `Flow 동기화 완료 (${ok})` : `Synced ${ok} to Flow`)
+      else toast.error(isKo ? `동기화 ${ok} 성공 · ${fail} 실패` : `Synced ${ok}, ${fail} failed`)
+    } finally {
+      setSyncingAll(false)
+    }
+  }
+
   const handleAdd = () => {
     const maxId = references.length > 0 
       ? Math.max(...references.map(r => r.id || 0)) 
@@ -162,6 +196,19 @@ export default function ReferencePanel({
                   {errorCount > 0 && (isKo ? ` · 실패 ${errorCount}` : ` · ${errorCount} failed`)}
                 </span>
               </div>
+            )}
+            {/* #R34: Flow 일괄 동기화 — 미동기화 character/scene 이 있을 때만(Flow 모드). 직렬 동기화. */}
+            {appMode === 'flow' && unsyncedRefs.length > 0 && (
+              <button
+                className="btn-sync-all"
+                onClick={handleSyncAll}
+                disabled={syncingAll || isGenerating}
+                title={isKo ? '동기화 안 된 캐릭터/씬을 Flow 에 일괄 등록(@멘션 복구)' : 'Sync all unsynced refs to Flow'}
+              >
+                {syncingAll
+                  ? `⏳ ${isKo ? '동기화 중' : 'Syncing'}…`
+                  : `🔄 ${isKo ? '동기화' : 'Sync'} (${unsyncedRefs.length})`}
+              </button>
             )}
             {/* Clear All 버튼 */}
             {references.length > 0 && (

@@ -545,9 +545,6 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     // 남는다 → 같은 배치의 씬이 entityId 없는 refs 로 제출돼 멘션이 다음 run 에서야 동작.
     // 패치를 이 로컬 배열에 누적해 runConcurrentQueue 의 멘션/제출에 넘긴다(여러 ref 등록도 누적).
     let currentRefs = references
-    // #R33: 이번 run 에서 character entity 가 (재)등록됐는지 — 등록 후 Flow SPA 를 한 번 새로고침해
-    //   새 이름이 멘션 피커에 반영되게 한다(stale 'Untitled Character' 로 멘션 매칭이 깨지는 것 방지).
-    let registeredAnyEntity = false
     // 레퍼런스 업로드 (비동기 슬라이딩 윈도우 — 1초 간격 투입, 최대 5개 동시)
     console.log('[Automation] References check:', references.map(r => ({ name: r.name, hasData: !!(r.data || r.filePath || r.imagePath), mediaId: r.mediaId })))
     // 이번 run 의 타깃 씬들이 실제 쓰는 ref(캐릭터/씬/스타일 태그 + @멘션, getMatchingReferences
@@ -558,14 +555,13 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       for (const r of getMatchingReferences(s)) {
         if (r && r.id != null) usedRefIds.add(r.id)
       }
-      // #R33: 태그 매칭엔 안 걸려도 프롬프트에서 @멘션으로 참조된 캐릭터도 선등록 대상에 포함.
-      //   안 그러면 @멘션-only 캐릭터(king)는 선등록을 못 받아 미동기화 → "Unresolved @mention" 으로 고착.
-      const { matched } = resolveMentions(s.prompt, references)
-      for (const r of matched) {
-        if (r && r.id != null) usedRefIds.add(r.id)
-      }
     }
-    const refsToUpload = selectRefsToRegister(references, usedRefIds, mode)
+    let refsToUpload = selectRefsToRegister(references, usedRefIds, mode)
+    // #R34: 캐릭터 entity 동기화는 생성 배치에서 분리한다. 공유 flowView 에서 DOM 자동화가 동시
+    //   실행되면 navigation 이 ERR_ABORTED 로 충돌하고, uploadImage 가 항상 새 entity 를 만들어
+    //   중복 등록된다. 캐릭터는 Ref 탭의 '동기화'(개별/일괄) 버튼으로만 등록한다. 생성 배치는
+    //   비-character ref(스타일/씬 이미지)만 업로드한다. (미동기화 @멘션은 engineFlow 이미지 폴백/에러.)
+    if (mode === 'flow') refsToUpload = refsToUpload.filter(r => r?.type !== 'character')
     console.log('[Automation] Refs to upload:', refsToUpload.length)
     if (refsToUpload.length > 0) {
       setStatus('uploading')
@@ -603,8 +599,6 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
             // so sceneMentions.js can include this ref as a mention candidate (F9 precondition).
             if (needsEntityRegistration(ref, mode)) {
               const entityPatch = applyEntityRegistrationPatch(originalRef, result, true)
-              if (entityPatch?.entityId) registeredAnyEntity = true  // #R33: 등록 발생 → 이후 새로고침
-
               // #R6-15: 패치를 로컬 currentRefs 에 누적(여러 ref 등록도 보존) → 같은 run 의 씬 제출
               //   (runConcurrentQueue)에서 멘션 해석에 쓰여 entityId 가 이번 배치부터 즉시 후보가 된다.
               currentRefs = currentRefs.map(r => r.id === ref.id ? { ...r, ...entityPatch } : r)
@@ -686,16 +680,6 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
           try { await onComplete({ completed: false }) } catch (e) { console.warn('[Automation] onComplete error:', e.message) }
         }
         return
-      }
-
-      // #R33: character entity 가 (재)등록됐으면 씬 제출 전에 Flow SPA 를 한 번 새로고침한다 →
-      //   새 entity 이름이 멘션 피커에 반영되어 @멘션 매칭이 'Untitled Character' stale 로 깨지지 않게.
-      //   (reload 후 컴포저 ready 까지 main 핸들러가 대기하므로 await.)
-      if (mode === 'flow' && registeredAnyEntity && !stopRequestedRef.current) {
-        try {
-          console.log('[Automation] Refreshing Flow composer after entity registration...')
-          await window.electronAPI?.refreshFlowComposer?.()
-        } catch (e) { console.warn('[Automation] refreshFlowComposer failed:', e?.message) }
       }
     }
 
