@@ -95,6 +95,38 @@ describe('useVideoPosters', () => {
     expect(result.current['vid-3']).toEqual({ url: 'data:image/jpeg;base64,C', src: 'file:///3.mp4' })
   })
 
+  it('일시적 추출 실패(null) → 백오프 재시도로 자동 복구 (스크롤 없이)', async () => {
+    // setTimeout/clearTimeout 만 fake — RAF 는 beforeEach 의 수동 stub(flushRaf) 유지.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const clips = [makeClip('vid-1', 'file:///1.mp4')]
+      const { result } = renderHook(() => useVideoPosters(clips))
+
+      // 1차 추출 실패(null) — getVideoPoster 가 6s 타임아웃/에러로 null 반환한 상황
+      await act(async () => {
+        mockResolvers.get('file:///1.mp4')(null)
+        await Promise.resolve()
+      })
+      expect(result.current['vid-1']).toBeUndefined() // 아직 포스터 없음
+
+      // 재시도 타이머 경과 → getVideoPoster 재호출(새 resolver 저장)
+      await act(async () => {
+        vi.advanceTimersByTime(2000)
+        await Promise.resolve()
+      })
+
+      // 재시도 성공 → 포스터 주입
+      await act(async () => {
+        mockResolvers.get('file:///1.mp4')('data:image/jpeg;base64,RETRY')
+        await Promise.resolve()
+        flushRaf()
+      })
+      expect(result.current['vid-1']).toEqual({ url: 'data:image/jpeg;base64,RETRY', src: 'file:///1.mp4' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('clears pending updates on cleanup so stale resolves are dropped', async () => {
     const clips = [makeClip('vid-1', 'file:///1.mp4')]
     const { result, unmount } = renderHook(() => useVideoPosters(clips))

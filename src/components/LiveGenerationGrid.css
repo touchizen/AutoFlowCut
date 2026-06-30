@@ -1,0 +1,96 @@
+/* Live Generation Grid — 생성 중 모니터 그리드 */
+
+.live-gen-grid {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  display: grid;
+  /* 타일 최소폭 440px 고정 + 1fr(남는 폭 채움) — 컨테이너/창 폭에 따라 자동으로
+     1열→2열→3열 늘어나는 반응형(Flow 와 동일 원리). 440px 로 잡아 1920/2(≈960px
+     모니터)에서 최소 2열(각 ~460px, 큼직), 모니터 넓히면 3열, 좁으면 1열.
+     min(100%, …): 모니터가 440px 보다 좁으면 1열 full-width 로 떨어져 overflow 방지. */
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 440px), 1fr));
+  grid-auto-rows: min-content;
+  gap: 12px;
+  padding: 8px;
+  align-content: start;
+  box-sizing: border-box;
+}
+
+.gentile {
+  position: relative;
+  aspect-ratio: var(--gentile-aspect, 16 / 9);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #141414;
+  border: 1px solid var(--border-color, #2a2a2a);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.12s ease, border-color 0.12s ease, filter 0.12s ease;
+}
+/* Flow 처럼 hover 시 살짝 떠오르고 밝아짐 */
+.gentile:hover {
+  border-color: #4a9eff;
+  transform: translateY(-2px);
+  filter: brightness(1.06);
+}
+
+.gentile-media {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* pending — 옅은 빈 박스 */
+.gentile--pending {
+  background: repeating-linear-gradient(
+    45deg, #161616, #161616 8px, #1b1b1b 8px, #1b1b1b 16px
+  );
+}
+
+/* error — 빨강 테두리 + 경고 아이콘 */
+.gentile--error {
+  border-color: #e0533d;
+  background: #2a1512;
+}
+.gentile-error-icon {
+  font-size: 20px;
+  line-height: 1;
+}
+
+/* generating — 부드러운 윤기/광택 sheen + placeholder 숨쉬는 펄스 */
+.gentile--generating {
+  border-color: #3a7a52;
+  /* placeholder(이미지 없음) 박스가 은은히 숨쉬는 그라데이션. 이미지가 있으면 그 위는 sheen 만 보임. */
+  background-image: linear-gradient(135deg, #15171a 0%, #20242b 45%, #15171a 90%);
+  background-size: 200% 200%;
+  animation: gen-bg-pulse 2.6s ease-in-out infinite;
+}
+@keyframes gen-bg-pulse {
+  0%, 100% { background-position: 0% 50%; }
+  50%      { background-position: 100% 50%; }
+}
+
+.gen-shimmer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* 다방향 윤기 — 부드러운 하이라이트 3개가 서로 다른 방향으로 흘러 한 방향 스윕 느낌을 없앤다.
+     흰빛 + 살짝 푸른빛/초록빛으로 "에너지 도는" 광택. (이미지 위엔 은은히 얹힘) */
+  background:
+    radial-gradient(60% 60% at 25% 25%, rgba(255, 255, 255, 0.18), transparent 60%),
+    radial-gradient(55% 55% at 80% 35%, rgba(180, 215, 255, 0.15), transparent 60%),
+    radial-gradient(65% 65% at 60% 85%, rgba(190, 255, 225, 0.12), transparent 62%);
+  background-size: 180% 180%, 170% 170%, 200% 200%;
+  background-repeat: no-repeat;
+  /* alternate 로 왕복 — 멈칫거림 없이 여러 방향으로 천천히 부유. */
+  animation: gen-shimmer-drift 3.2s ease-in-out infinite alternate;
+}
+@keyframes gen-shimmer-drift {
+  0%   { background-position:   0%   0%, 100%   0%,  50% 100%; }
+  50%  { background-position: 100%  60%,   0%  40%,  20%  20%; }
+  100% { background-position:  20% 100%,  80% 100%, 100%   0%; }
+}

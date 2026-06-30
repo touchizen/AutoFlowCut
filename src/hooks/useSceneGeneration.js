@@ -3,13 +3,14 @@
  */
 
 import { useState, useCallback } from 'react'
-import { checkFolderPermission, checkAuthToken } from '../utils/guards'
+import { checkFolderPermission, checkAuthToken, checkFlowProjectReady } from '../utils/guards'
 import { resolveSceneStyle } from '../services/styleService'
 import { finalizeGeneratedImage } from '../services/imageFinalize'
 import { toast } from '../components/Toast'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
+import { resolveMentions } from '../utils/mentionParser'
 
-export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, openSettings, setSelectedScene, t, generationQueue }) {
+export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue, flowProjectReady = true }) {
   const [generatingSceneId, setGeneratingSceneId] = useState(null)
 
   // 핵심 생성 로직
@@ -24,25 +25,45 @@ export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, open
       return
     }
 
-    // 폴더 설정 + 토큰 확인
+    // #R27-1: preflight(folder/ready/auth) await 동안에도 busy 로 표시한다. 안 그러면 그 창에서
+    //   project/mode 전환이 허용돼, 전환 뒤 stale 엔진으로 생성하고 결과를 현재 프로젝트의 씬
+    //   (id 재사용)에 patch 한다. generatingSceneId 를 await 전에 켜고 조기 return 마다 해제한다.
+    setGeneratingSceneId(sceneId)
+
+    // 폴더 설정 + Flow 프로젝트 준비 + 토큰 확인
     const folderCheck = await checkFolderPermission(settings, openSettings, t)
     if (!folderCheck.ok) {
+      setGeneratingSceneId(null)
       setSelectedScene(null)  // 모달 닫기
       return
     }
-    if (!(await checkAuthToken(flowAPI, t))) return
+    const readyCheck = checkFlowProjectReady(flowProjectReady, t)
+    if (!readyCheck.ok) { setGeneratingSceneId(null); return }
+    if (!(await checkAuthToken(genAPI, t))) { setGeneratingSceneId(null); return }
 
-    setGeneratingSceneId(sceneId)
-    scenesHook.updateScene(sceneId, { status: 'generating' })
+    // generatingStartedAt 을 새로 찍는다 — 안 그러면 이전 생성의 stale 시작시각이 남아
+    //   경과시간이 엉뚱하게(예: 1분인데 1시간 25분) 표시된다. (배치/레퍼런스 경로는 이미 세팅.)
+    scenesHook.updateScene(sceneId, { status: 'generating', generatingStartedAt: Date.now(), generatingEndedAt: null })
 
     try {
-      // 매칭되는 레퍼런스 찾기
+      // 매칭되는 레퍼런스 찾기.
+      // 공식 API 모드는 mediaId 대신 name 으로 base64 를 해석하므로
+      // mediaId 또는 name 중 하나만 있어도 선택하고, name 을 보존한다.
+      //
+      // R37 review fix: data/filePath 도 보존해야 한다. memory-only 레퍼런스
+      // (디스크 저장 실패/스킵된 경우) 는 ref.data 에만 base64 가 있고
+      // referenceResolver 는 data 우선 → name 디스크 fallback 순으로 읽는데,
+      // 여기서 data 를 떨구면 디스크에 없는 ref 가 조용히 빈 inlineData parts 로
+      // 넘어가 Gemini 가 캐릭터 일관성을 못 잡는다.
       const matchedRefs = scenesHook.getMatchingReferences(scene)
-        .filter(r => r.mediaId)
+        .filter(r => r.mediaId || r.name || r.data || r.filePath)
         .map(r => ({
           category: r.category,
-          mediaId: r.mediaId,
-          caption: r.caption || ''
+          mediaId: r.mediaId || null,
+          caption: r.caption || '',
+          name: r.name,
+          data: r.data || null,
+          filePath: r.filePath || null,
         }))
 
       // overrideStyleId 정규화 — 'auto' 는 null (style_tag fallback만), 'none' 은 그대로, 명시 ID는 그대로.
@@ -51,22 +72,30 @@ export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, open
         : overrideStyleId === 'none' ? 'none'
         : overrideStyleId == null ? null
         : overrideStyleId
+      // `@name` 인라인 멘션은 engineApi 내부에서 제거됨 (M4 T7). 여기선 로깅 전용.
+      const allRefs = scenesHook.references || []
+      const { missing } = resolveMentions(scene.prompt, allRefs)
+      if (missing.length > 0) console.warn('[Scene]', sceneId, 'unknown @mentions:', missing.join(', '))
       // 스타일 프롬프트 합치기 (style_tag 프리셋 fallback + override)
-      const { styledPrompt } = resolveSceneStyle(scene.prompt, [], effectiveOverride, scenesHook.references || [], matchedRefs, scene.style_tag)
+      // scene.prompt 그대로 전달 — strip은 engineApi.generateImage 내부에서 수행.
+      const { styledPrompt } = resolveSceneStyle(scene.prompt, [], effectiveOverride, allRefs, matchedRefs, scene.style_tag)
 
       // seedLocked && seedNo 가 숫자일 때만 고정 seed, 그 외엔 Flow 자체 랜덤
       const seed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
         ? settings.seedNo
         : null
-      const result = await flowAPI.generateImageDOM(styledPrompt, matchedRefs, { batchCount: settings.imageBatchCount, seed, aspectRatio: settings.aspectRatio })
+      const result = await genAPI.generateImage(styledPrompt, matchedRefs, { batchCount: settings.imageBatchCount, seed, aspectRatio: settings.aspectRatio, model: settings.imageModel, references: allRefs })
 
       const { success, sceneUpdate } = await finalizeGeneratedImage({
-        result, flowAPI,
+        result, genAPI,
         upscaleRes: settings.imageUpscale || 'off',
         saveMode: settings.saveMode,
         projectName: settings.projectName,
         sceneId, prompt: scene.prompt,
         seed,
+        // 선택 모델을 기록 — 안 넘기면 imageFinalize 기본값 'flow' 로 저장돼 ResultsTable 에
+        //   엔진ID 가 뜬다(응답이 더 구체적 model 을 주면 그게 우선). batch 경로와 일관.
+        model: settings.imageModel,
         logPrefix: '[Scene]'
       })
       scenesHook.updateScene(sceneId, sceneUpdate)
@@ -99,7 +128,10 @@ export function useSceneGeneration({ settings, scenes, scenesHook, flowAPI, open
     }
 
     setGeneratingSceneId(null)
-  }, [settings, scenes, scenesHook, flowAPI, openSettings, setSelectedScene, t])
+  // R2-5: flowProjectReady missing from dep array → stale closure could allow
+  // generation when not ready, or block after recovery. Adding it here ensures
+  // the callback sees the current value on every invocation.
+  }, [settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, flowProjectReady])
 
   // 큐를 통한 생성. overrideStyleId 선택 — MCP `app_generate_scene(sceneId, styleId)`에서 사용.
   const handleGenerateScene = useCallback(async (sceneId, overrideStyleId = undefined) => {

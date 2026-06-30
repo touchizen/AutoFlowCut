@@ -80,14 +80,22 @@ describe('useVideoScenes — derived view', () => {
     expect(vs[1].id).toBe('vscene_5')
   })
 
-  it('videoT2VDuration 없으면 scene.duration 으로 fallback', () => {
+  it('duration 은 생성된 비디오 길이(videoT2VDuration)가 아니라 scene.duration 을 따른다', () => {
     const { result } = setupHook([
       { id: 'scene_1', videoT2VPrompt: 'v1', duration: 4, videoT2VDuration: null },
       { id: 'scene_2', videoT2VPrompt: 'v2', duration: 3, videoT2VDuration: 7 },
     ])
     const vs = result.current.videoScenesHook.videoScenes
     expect(vs[0].duration).toBe(4)
-    expect(vs[1].duration).toBe(7)
+    expect(vs[1].duration).toBe(3)
+  })
+
+  it('source scene 의 srtLineIds 를 vscene 에 보존한다', () => {
+    const { result } = setupHook([
+      { id: 'scene_1', videoT2VPrompt: 'v1', srtLineIds: ['sub_1', 'sub_2'] },
+    ])
+    const vs = result.current.videoScenesHook.videoScenes[0]
+    expect(vs.srtLineIds).toEqual(['sub_1', 'sub_2'])
   })
 
   it('T2V 진행중 타이머 필드(generatingStartedAt/EndedAt)를 vscene 에 노출한다', () => {
@@ -196,6 +204,38 @@ describe('useVideoScenes — write 라우팅', () => {
     expect(result.current.scenesHook.scenes[0].videoT2VStatus).toBe('complete')
   })
 
+  it('updateVideoScene { generatedAt, error, seed, model, errorKind, videoSaveId } → videoT2V* (이미지 메타 오염 안 함)', () => {
+    const { result } = setupHook([
+      { id: 'scene_1', prompt: 'image', generatedAt: 100, error: null, seed: 1, videoT2VPrompt: 'v' },
+    ])
+    act(() => {
+      result.current.videoScenesHook.updateVideoScene('vscene_1', {
+        generatedAt: 999, error: 'boom', seed: 42, model: 'veo', errorKind: 'x', videoSaveId: 't2v_1',
+      })
+    })
+    const s = result.current.scenesHook.scenes[0]
+    expect(s.videoT2VGeneratedAt).toBe(999)
+    expect(s.videoT2VError).toBe('boom')
+    expect(s.videoT2VSeed).toBe(42)
+    expect(s.videoT2VModel).toBe('veo')
+    expect(s.videoT2VErrorKind).toBe('x')
+    expect(s.videoT2VSaveId).toBe('t2v_1')
+    // 이미지 씬 메타는 그대로 (오염 금지)
+    expect(s.generatedAt).toBe(100)
+    expect(s.error).toBe(null)
+    expect(s.seed).toBe(1)
+  })
+
+  it('deriveVideoScene 이 videoT2V* 메타(generatedAt/error/seed)를 vscene 에 노출', () => {
+    const { result } = setupHook([
+      { id: 'scene_1', videoT2VPrompt: 'v', videoT2VGeneratedAt: 777, videoT2VError: 'oops', videoT2VSeed: 7 },
+    ])
+    const vs = result.current.videoScenesHook.videoScenes[0]
+    expect(vs.generatedAt).toBe(777)
+    expect(vs.error).toBe('oops')
+    expect(vs.seed).toBe(7)
+  })
+
   it('clearVideoScenes → 모든 scene 의 videoT2V* 필드 초기화 (scene 자체는 보존)', () => {
     const { result } = setupHook([
       { id: 'scene_1', prompt: 'image1', videoT2VPrompt: 'v1', videoT2VPath: '/v1.mp4', videoT2VSelected: true },
@@ -211,6 +251,20 @@ describe('useVideoScenes — write 라우팅', () => {
     expect(scenes[0].videoT2VPath).toBeNull()
     expect(scenes[0].videoT2VSelected).toBe(false)
     expect(result.current.videoScenesHook.videoScenes).toEqual([])
+  })
+
+  it('clearVideoScenes → 새 메타 필드(videoT2VGeneratedAt/Error/Seed/Model/ErrorKind/SaveId)도 초기화', () => {
+    const { result } = setupHook([
+      { id: 'scene_1', videoT2VPrompt: 'v', videoT2VGeneratedAt: 999, videoT2VError: 'e', videoT2VSeed: 5, videoT2VModel: 'm', videoT2VErrorKind: 'k', videoT2VSaveId: 't2v_1' },
+    ])
+    act(() => { result.current.videoScenesHook.clearVideoScenes() })
+    const s = result.current.scenesHook.scenes[0]
+    expect(s.videoT2VGeneratedAt).toBeNull()
+    expect(s.videoT2VError).toBeNull()
+    expect(s.videoT2VSeed).toBeNull()
+    expect(s.videoT2VModel).toBeNull()
+    expect(s.videoT2VErrorKind).toBeNull()
+    expect(s.videoT2VSaveId).toBeNull()
   })
 
   it('toggleSelect → 해당 scene 의 videoT2VSelected 토글', () => {

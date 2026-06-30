@@ -1,5 +1,10 @@
 /**
- * DisplayTab - 화면 레이아웃 + 절전 방지 설정 탭
+ * DisplayTab - 화면 설정 탭
+ *
+ * - 절전 방지 (항상)
+ * - Flow split 레이아웃 방향 선택 (좌/우/상/하) — Flow 모드일 때만 표시.
+ *   클릭 즉시 setLayout 으로 적용(main → layout-changed → Shell 갱신). 비율은 Shell 의
+ *   드래그 리사이저로 조절.
  */
 
 import { useState, useEffect } from 'react'
@@ -11,75 +16,48 @@ const LAYOUT_OPTIONS = [
   { value: 'split-bottom', labelKey: 'settings.layoutSplitBottom' },
 ]
 
-export default function DisplayTab({ localSettings, setLocalSettings, t }) {
-  const layoutMode = localSettings.layoutMode || 'split-left'
+export default function DisplayTab({ t, appMode }) {
   const [preventSleep, setPreventSleep] = useState(false)
+  const [layoutMode, setLayoutMode] = useState('split-left')
 
   useEffect(() => {
-    window.electronAPI?.getPreventSleep?.().then(r => {
-      if (r) setPreventSleep(r.enabled)
-    }).catch(() => {})
+    window.electronAPI?.getPreventSleep?.().then(r => { if (r) setPreventSleep(r.enabled) }).catch(() => {})
+    window.electronAPI?.getLayout?.().then(r => { if (r?.mode) setLayoutMode(r.mode) }).catch(() => {})
   }, [])
 
   const handlePreventSleep = async (enabled) => {
     setPreventSleep(enabled)
-    try {
-      await window.electronAPI?.setPreventSleep?.({ enabled })
-    } catch {}
+    try { await window.electronAPI?.setPreventSleep?.({ enabled }) } catch {}
+  }
+
+  const handleLayout = async (mode) => {
+    setLayoutMode(mode)
+    // 현재 비율 유지하며 방향만 변경(없으면 0.5). Shell 이 layout-changed 로 동기화.
+    let ratio = 0.5
+    try { const r = await window.electronAPI?.getLayout?.(); if (typeof r?.splitRatio === 'number') ratio = r.splitRatio } catch {}
+    try { await window.electronAPI?.setLayout?.({ mode, ratio }) } catch {}
   }
 
   return (
     <div className="tab-panel">
-      {/* 레이아웃 */}
-      <div className="setting-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <label className="setting-label" style={{ margin: 0 }}>{t('settings.layoutMode')}</label>
-        <div style={{ display: 'flex', gap: '2px' }}>
-          {LAYOUT_OPTIONS.map(opt => (
-            <button
-              key={opt.value}
-              onClick={() => setLocalSettings(s => ({ ...s, layoutMode: opt.value }))}
-              style={{
-                padding: '4px 10px',
-                fontSize: '12px',
-                border: '1px solid',
-                borderColor: layoutMode === opt.value ? '#4a9eff' : '#555',
-                background: layoutMode === opt.value ? '#4a9eff' : 'transparent',
-                color: layoutMode === opt.value ? '#fff' : '#aaa',
-                borderRadius: opt === LAYOUT_OPTIONS[0] ? '4px 0 0 4px' : opt === LAYOUT_OPTIONS[LAYOUT_OPTIONS.length - 1] ? '0 4px 4px 0' : '0',
-                cursor: 'pointer',
-              }}
-            >
-              {t(opt.labelKey)}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <hr style={{ border: 'none', borderTop: '1px solid #333', margin: '12px 0' }} />
-
-      {/* Flow 비율 */}
-      <div className="setting-row">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <label className="setting-label" style={{ margin: 0 }}>{t('settings.splitRatio')}</label>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, marginLeft: '16px' }}>
-            <span style={{ fontSize: '11px', color: '#888', whiteSpace: 'nowrap' }}>20%</span>
-            <input
-              type="range"
-              min="20" max="80" step="5"
-              value={Math.round((localSettings.splitRatio || 0.5) * 100)}
-              onChange={(e) => setLocalSettings(s => ({ ...s, splitRatio: parseInt(e.target.value) / 100 }))}
-              style={{ flex: 1 }}
-              className="setting-slider"
-            />
-            <span style={{ fontSize: '11px', color: '#888', whiteSpace: 'nowrap' }}>80%</span>
-            <span style={{ fontSize: '12px', color: '#ccc', fontWeight: 'bold', minWidth: '35px', textAlign: 'right' }}>
-              {Math.round((localSettings.splitRatio || 0.5) * 100)}%
-            </span>
+      {/* Flow split 레이아웃 방향 — Flow 모드 전용 */}
+      {appMode === 'flow' && (
+        <div className="setting-row">
+          <label className="setting-label" style={{ margin: 0 }}>{t('settings.layoutMode')}</label>
+          <div className="batch-selector" style={{ flexWrap: 'wrap' }}>
+            {LAYOUT_OPTIONS.map(opt => (
+              <button
+                key={opt.value}
+                className={`batch-btn ${layoutMode === opt.value ? 'active' : ''}`}
+                onClick={() => handleLayout(opt.value)}
+              >
+                {t(opt.labelKey)}
+              </button>
+            ))}
           </div>
+          <span className="setting-sublabel">{t('settings.layoutModeHint')}</span>
         </div>
-      </div>
-
-      <hr style={{ border: 'none', borderTop: '1px solid #333', margin: '12px 0' }} />
+      )}
 
       {/* 화면 꺼짐 방지 */}
       <div className="setting-row">

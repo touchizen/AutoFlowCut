@@ -12,26 +12,21 @@
  */
 
 /**
- * 씬에 대해 export 시 어떤 미디어가 선택될지 반환.
- *
- * 우선순위:
- *   1. scene.exportMedia 가 명시되어 있으면 그대로 사용 ('i2v' | 't2v' | 'image')
- *   2. 'auto' 면 base64 또는 path 가 있는 미디어 중 I2V > T2V > image 순
- *
- * 중요: base64(메모리)와 path(디스크) 둘 다 체크해야 한다. 이전 세션에서 생성된
- * 영상은 메모리(base64)에는 없지만 디스크(path)에는 남아있다.
- *
- * @param {object} scene
- * @returns {'i2v' | 't2v' | 'image'}
+ * export: 씬에서 내보낼 영상 목록(0~2개)을 반환.
+ * B1: exportMedia(i2v/t2v/image 핀) 무시 — 존재하는 영상은 모두 내보낸다.
+ *   (i2v·t2v 둘 다면 2개, i2v 먼저=프리뷰 상단/앞. 어느 take 쓸지는 CapCut 에서 큐레이션.)
+ * 각 항목: { source:'i2v'|'t2v', path, data, duration }
+ * → CapCut 2트랙 export(i2v 앞 / t2v 뒤)와 프리뷰가 항상 일치.
  */
-export function resolveExportMediaChoice(scene) {
-  if (!scene) return 'image'
-  const choice = scene.exportMedia || 'auto'
-  if (choice === 'i2v' || choice === 't2v' || choice === 'image') return choice
-  // auto: I2V > T2V > image
-  if (scene.videoI2V || scene.videoI2VPath) return 'i2v'
-  if (scene.videoT2V || scene.videoT2VPath) return 't2v'
-  return 'image'
+export function resolveExportVideos(scene) {
+  if (!scene) return []
+  const i2v = (scene.videoI2V || scene.videoI2VPath) && !scene.videoI2VDisabled && scene.videoI2VStatus !== 'generating'
+    ? { source: 'i2v', path: scene.videoI2VPath || null, data: scene.videoI2V || null, duration: scene.videoI2VDuration ?? null }
+    : null
+  const t2v = (scene.videoT2V || scene.videoT2VPath) && !scene.videoT2VDisabled && scene.videoT2VStatus !== 'generating'
+    ? { source: 't2v', path: scene.videoT2VPath || null, data: scene.videoT2V || null, duration: scene.videoT2VDuration ?? null }
+    : null
+  return [i2v, t2v].filter(Boolean) // 있는 영상 다 (i2v 먼저), disabled 제외
 }
 
 /**
@@ -61,14 +56,9 @@ export function hasExportableMedia(scene) {
  * 실제 export 시 디스크 read 가 필요한 파일 경로만 반환.
  * data:base64 URL 은 권한 불필요 — 제외.
  *
- * **resolveExportMediaChoice 결과에 맞춰 path 를 추리**한다:
+ * B1: resolveExportVideos(= 있는 영상 다)에 맞춰 path 를 모은다:
  *   - 항상 imagePath (capcutCloud 가 메인 트랙으로 사용)
- *   - choice 가 'i2v' 면 videoI2VPath 추가
- *   - choice 가 't2v' 면 videoT2VPath 추가
- *   - 'image' 이면 영상 path 는 추가 안 함 (실제로 안 읽으니까)
- *
- * 이렇게 좁혀야 "사용자는 image 만 export 하는데 과거에 만든 video path 가
- * 남아있어서 권한 prompt 가 뜨거나 export 가 차단되는" UX 회귀를 막는다.
+ *   - 존재하는 영상(i2v·t2v) path 모두 (둘 다면 둘 다 — 실제로 둘 다 export 하므로 권한 필요)
  *
  * @param {object} scene
  * @returns {string[]}
@@ -80,12 +70,124 @@ export function getExportFilePaths(scene) {
   // 이미지 path 는 모든 export 모드에서 읽힘 (메인 트랙)
   if (isFilePath(scene.imagePath)) paths.push(scene.imagePath)
 
-  // 선택된 영상의 path 만 추가
-  const choice = resolveExportMediaChoice(scene)
-  if (choice === 'i2v' && isFilePath(scene.videoI2VPath)) paths.push(scene.videoI2VPath)
-  if (choice === 't2v' && isFilePath(scene.videoT2VPath)) paths.push(scene.videoT2VPath)
+  // 있는 영상(들)의 path 추가 (B1: i2v·t2v 둘 다면 둘 다).
+  for (const v of resolveExportVideos(scene)) {
+    if (isFilePath(v.path)) paths.push(v.path)
+  }
 
   return paths
+}
+
+/**
+ * video source 검증 — 'i2v' | 't2v' 만 허용. typo/undefined 가 조용히 잘못된 필드를
+ * 업데이트하는 걸 막는다(이전 `source==='i2v' ? ... : ...` 의 silent t2v fallback 제거).
+ * @param {'i2v'|'t2v'} source
+ * @returns {'i2v'|'t2v'}
+ */
+export function assertVideoSource(source) {
+  if (source !== 'i2v' && source !== 't2v') {
+    throw new Error(`Unknown video source: ${JSON.stringify(source)} (expected 'i2v' | 't2v')`)
+  }
+  return source
+}
+
+/** source 의 per-clip disabled 필드명. */
+export function getVideoDisabledField(source) {
+  return assertVideoSource(source) === 'i2v' ? 'videoI2VDisabled' : 'videoT2VDisabled'
+}
+
+/**
+ * 새 generation 제출/clear 시 해당 source 의 영상 필드를 초기화하는 patch.
+ * per-clip `video*Disabled` 도 reset(null) — 재생성한 클립은 "새 클립" = enabled.
+ * @param {'i2v'|'t2v'} source
+ */
+export function videoClearPatch(source) {
+  return assertVideoSource(source) === 'i2v'
+    ? { videoI2V: null, videoI2VPath: null, videoI2VDuration: null, videoI2VDisabled: null }
+    : { videoT2V: null, videoT2VPath: null, videoT2VDuration: null, videoT2VDisabled: null }
+}
+
+/**
+ * history 복원 → framePair 에 적용할 patch (source 무관 — framePair 필드는 prefix 없음).
+ * F→V 결과표/fp 상세가 base64 우선 렌더하므로 video/base64/videoPath + 메타까지.
+ * (App fp_ 복원 분기와 동일 shape — 한 곳에서 정의해 분기 간 drift 방지.)
+ * @param {{video?, videoPath?, seed?, generatedAt?, model?, mediaId?}} patch
+ */
+export function buildFramePairVideoPatch(patch = {}) {
+  const out = {}
+  // media key 가 있을 때만 영상 필드 세팅 — meta-only patch 에 재사용돼도 framePair 영상을
+  // 조용히 wipe 하지 않게(video=undefined spread 방지). base64 도 함께 넣어 stale base64 방지.
+  if ('video' in patch || 'videoPath' in patch) {
+    out.video = patch.video
+    out.base64 = patch.video
+    out.videoPath = patch.videoPath
+  }
+  // #R33-2: generationId 도 전달 — 복원 시 stale routing 메타(generationId)를 지워야 retry 가 옛
+  //   generation 자산을 재다운로드하지 않는다.
+  for (const k of ['seed', 'generatedAt', 'model', 'mediaId', 'generationId']) if (k in patch) out[k] = patch[k]
+  return out
+}
+
+/**
+ * history 복원(VideoDetailModal save) → 씬에 적용할 source-specific patch.
+ * ⚠️ patch 의 seed/generatedAt/model/mediaId 는 video 메타다. scene 에 raw 로 넣으면
+ * 이미지 메타(scene.seed/generatedAt/model — SceneDetailModal 用)를 오염시키므로(useVideoScenes
+ * FIELD_MAP 이 같은 이유로 videoT2V* 네임스페이스 분리), source 별 video 필드로 매핑한다.
+ * disabled 도 reset(null) — 복원된 새 영상은 enabled.
+ *   - t2v: videoT2V/Path/Disabled + videoT2VSeed/GeneratedAt/Model/MediaId
+ *   - i2v: videoI2V/Path/Disabled + (최소) videoI2VGeneratedAt(캐시버스터).
+ *     i2v 의 seed/model/mediaId source-of-truth 는 framePair 라 SceneList 에선 못 건드림.
+ * @param {'i2v'|'t2v'} source
+ * @param {{video?, videoPath?, seed?, generatedAt?, model?, mediaId?}} patch
+ */
+export function buildVideoRestorePatch(source, patch = {}) {
+  assertVideoSource(source)
+  if (source === 't2v') {
+    const out = { videoT2VPath: patch.videoPath || null, videoT2VDisabled: null }
+    if (patch.video) out.videoT2V = patch.video
+    if ('seed' in patch) out.videoT2VSeed = patch.seed
+    if ('generatedAt' in patch) out.videoT2VGeneratedAt = patch.generatedAt
+    if ('model' in patch) out.videoT2VModel = patch.model
+    if ('mediaId' in patch) out.videoT2VMediaId = patch.mediaId
+    return out
+  }
+  const out = { videoI2VPath: patch.videoPath || null, videoI2VDisabled: null }
+  if (patch.video) out.videoI2V = patch.video
+  if ('generatedAt' in patch) out.videoI2VGeneratedAt = patch.generatedAt
+  return out
+}
+
+/**
+ * i2v history 복원(VideoDetailModal save) 시 patch 를 적용할 scene/framePair 해석.
+ * - fpId: video.fpId 우선, 없으면 id(`i2v_N`)에서 `fp_N` 파싱(App fp_ 갱신 대상).
+ * - sceneId: owning framePair 의 ownerSceneId 우선, 없으면 payload 의 sceneId 폴백.
+ *   폴백 i2v_id(owning fp 없을 때 scene 번호로 생성됨)는 `fp_N` 이 없어 scene 갱신이
+ *   통째로 no-op 되던 버그(P2-1)를 sceneId 폴백으로 막는다.
+ * @param {{id?: string, fpId?: string, sceneId?: string}|null} video
+ * @param {Array<{id: string, ownerSceneId?: string}>} framePairs
+ * @returns {{fpId: string|null, sceneId: string|null}}
+ */
+export function resolveI2vRestoreSceneId(video, framePairs = []) {
+  if (!video) return { fpId: null, sceneId: null }
+  const fpId = video.fpId || (video.id ? `fp_${String(video.id).replace('i2v_', '')}` : null)
+  const fp = fpId ? framePairs.find(p => p.id === fpId) : null
+  return { fpId, sceneId: fp?.ownerSceneId || video.sceneId || null }
+}
+
+/**
+ * regenTargetVideoId — 씬-미디어 모달 id(t2v_N/i2v_N)를 실제 generation 아이템 id 로 매핑한다(#R30-4).
+ *   timeline/SceneList 는 t2v_N/i2v_N 으로 VideoDetailModal 을 여는데, 재생성은 video 결과 테이블의
+ *   실제 아이템(vscene_N / fp_N)을 리셋해야 한다. 그 외 id(이미 vscene_/fp_ 등)는 그대로 둔다.
+ *   - t2v_N → vscene_N
+ *   - i2v_N → fp_N
+ * @param {string} id
+ * @returns {string} 매핑된 generation 아이템 id (해당 없으면 원본)
+ */
+export function regenTargetVideoId(id) {
+  if (typeof id !== 'string') return id
+  if (id.startsWith('t2v_')) return 'vscene_' + id.slice(4)
+  if (id.startsWith('i2v_')) return 'fp_' + id.slice(4)
+  return id
 }
 
 function isFilePath(v) {

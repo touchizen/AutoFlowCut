@@ -1,4 +1,4 @@
-import { app, BrowserWindow, WebContentsView, ipcMain, shell, protocol, net, powerSaveBlocker, Notification } from 'electron'
+import { app, BrowserWindow, WebContentsView, ipcMain, shell, protocol, net, powerSaveBlocker, Notification, safeStorage, globalShortcut } from 'electron'
 import http from 'node:http'
 import fs from 'node:fs/promises'
 import fsSync from 'node:fs'
@@ -10,40 +10,29 @@ import dotenv from 'dotenv'
 import { registerFilesystemIPC } from './ipc/filesystem.js'
 import { registerAuthIPC } from './ipc/auth.js'
 import { registerCapcutIPC } from './ipc/capcut.js'
+import { registerPremiereIPC } from './ipc/premiere.js'
+import { registerVrewIPC } from './ipc/vrew.js'
 import { registerMcpIPC } from './ipc/mcp.js'
+import { registerGenaiIPC } from './ipc/genai-api.js'
+import { createKeyStore } from './api/keyStore.js'
+import { registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible, updateBounds } from './ipc/layout.js'
+import { createModeController } from './ipc/mode.js'
+import { openApiSpec, getSwaggerHtml } from './api-docs.js'
+import { setupAppMenuAndUpdater, noteProjectActivated, setMenuLocale } from './updater.js'
+import { initSentryMain } from './sentry-init.js'
 import { registerFlowAPIIPC } from './ipc/flow-api.js'
 import { registerVideoIPC } from './ipc/video.js'
+import { registerCharacterIPC } from './ipc/character.js'
+import { buildFlowInjectPayload, flowInjectClearPayload } from './flow-inject-payload.js'
 import { registerDomIPC } from './ipc/dom.js'
 import { createSharedHelpers } from './ipc/shared.js'
-import { updateBounds, registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible } from './ipc/layout.js'
-import { openApiSpec, getSwaggerHtml } from './api-docs.js'
-import { setupAppMenuAndUpdater, noteProjectActivated } from './updater.js'
-import { selectCdpCase } from './video-cdp-dispatch.js'
-import { injectImageBatchBody } from './cdp-image-inject.js'
+import { routeReportResponse, isFlowFrameOrigin } from './reportResponseRouter.js'
 import { FLOW_PAGE_INJECTION } from './flow-page-injection.js'
-import { matchGenerationForResponse } from './ipc/generationMatch.js'
-import { initSentryMain } from './sentry-init.js'
+import { FLOW_SETTINGS_DUMPER } from './flow-settings-dumper.js'
+import { FLOW_DOM_DUMP_PROBE, buildDomDumpFilename } from './flow-dom-dump.js'
+import { createMutex } from './asyncMutex.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-
-// CDP debugger attach 영구 비활성 (default).
-// 이유: Flow 의 안티 디버깅이 debugger.attach 를 감지하면
-//   - 비디오 element 가 페이지에서 사라짐
-//   - status 응답에서 videoUrl 필드가 빠짐
-//   - media.getMediaUrlRedirect 가 400 Internal Error
-//   → 다운로드 흐름 전체가 깨짐.
-// CDP 가 작동 안 하므로 다음 기능들도 함께 비활성됨:
-//   - seed/aspectRatio/reference 자동 inject (Fetch.continueRequest)
-//   - 응답 body 자동 캡처 (Network.responseReceived getResponseBody)
-//   - Page.setDownloadBehavior (다운로드 path 자동 지정 — session.on('will-download') 로 대체 필요)
-// inject 기능 자체는 별도 라운드에서 Flow UI 조작 (DOM) 으로 대체 작업 필요.
-// 개발 시 강제 활성: AUTOFLOWCUT_ENABLE_CDP=1
-const FLOW_AUTOMATION_DISABLED = process.env.AUTOFLOWCUT_ENABLE_CDP !== '1'
-if (FLOW_AUTOMATION_DISABLED) {
-  console.log('[Flow] CDP debugger disabled by default (anti-detect). Set AUTOFLOWCUT_ENABLE_CDP=1 to force.')
-} else {
-  console.log('[Flow] ⚠️ AUTOFLOWCUT_ENABLE_CDP=1 — CDP attach forced ON (debug mode, may trigger anti-debug block).')
-}
 
 // Force the display name so dev-mode submenu items ("About …", "Quit …", etc.)
 // match the productName from electron-builder. Has no effect on the bold app
@@ -55,7 +44,10 @@ app.setName('AutoFlowCut')
 // (app.dock은 whenReady 이후에만 사용 가능 → 아래로 옮김)
 const __filename_main = fileURLToPath(import.meta.url)
 const __dirname_main = path.dirname(__filename_main)
-const APP_ICON_PATH = path.join(__dirname_main, '..', 'assets', 'icon.icns')
+// dock.setIcon 은 nativeImage 로 로드 — .icns 디코딩이 불안정해 실패한다(dev 에서
+// "Failed to load image" 경고). PNG 를 쓴다(프로덕션 .app 번들 아이콘은 electron-builder 가
+// 별도 .icns 로 처리하므로 무관).
+const APP_ICON_PATH = path.join(__dirname_main, '..', 'assets', 'icon.png')
 const HAS_APP_ICON = fsSync.existsSync(APP_ICON_PATH)
 
 // package.json에서 buildNumber 읽기 (dev/prod 모두 동일)
@@ -81,7 +73,7 @@ if (process.platform === 'darwin') {
     applicationName: 'AutoFlowCut',
     applicationVersion: verStr,
     copyright: '© Touchizen',
-    credits: 'AutoFlowCut — Google Flow → CapCut automation',
+    credits: 'AutoFlowCut — Google Gemini/Veo → CapCut automation',
   })
 }
 
@@ -133,658 +125,22 @@ const API_HEADERS = {
 }
 
 let mainWindow = null
-let flowView = null
-// layoutMode, splitRatio, modalVisible, powerSaveBlockerId → ipc/layout.js로 이동
+let mcpHttpServer = null // MCP HTTP 서버 인스턴스
+
 let capturedProjectId = null // Flow 네트워크에서 자동 캡처된 projectId
 let pendingGeneration = null // DOM-triggered generation 응답 캡처용 Promise resolver (이미지) — 동기 모드
-let mcpHttpServer = null // MCP HTTP 서버 인스턴스
 const pendingGenerations = new Map() // 비동기 모드용 다중 생성 추적 (key: generationId)
+// DOM 에서 이미 수집(배정)한 결과 이미지 mediaId 집합 — flow-api(비동기)와 character(동기 @멘션)
+//   양쪽이 공유해, 혼합 배치에서 한 경로가 수집한 이미지를 다른 경로가 또 매칭하는 race 를 막는다.
+const collectedMediaIds = new Set()
 let pendingVideoGeneration = null // DOM-triggered video generation 응답 캡처용 Promise resolver
-let pendingReferenceImages = null // CDP Fetch 인터셉션용 레퍼런스 이미지 (mediaId 배열)
-let pendingSeedValue = null // CDP Fetch 인터셉션용 seed 값 (숫자, null = 랜덤 유지)
-let pendingImageAspectRatio = null // CDP Fetch 인터셉션용 화면비 (IMAGE_ASPECT_RATIO_* enum, null = 유지)
-let pendingI2VInjection = null // CDP Fetch 인터셉션용 I2V startImage 주입 데이터
 let enterToolClicked = false // Enter tool 버튼 클릭 완료 플래그 (무한루프 방지)
 let consentClicked = false   // 동의 버튼 클릭 완료 플래그 (무한루프 방지)
 
-// === Lazy CDP debugger attach state ===
-let _debuggerAttached = false
-let _debuggerAttachInProgress = null // Promise — 동시 호출 중복 방지
-
-// === Shared helpers (trustedClick, fetch, parse, extract, configureFlowMode) ===
-const helpers = createSharedHelpers({
-  getFlowView: () => flowView,
-  getMainWindow: () => mainWindow,
-  constants: {
-    SESSION_URL, MEDIA_REDIRECT_URL, RECAPTCHA_SITE_KEY, RECAPTCHA_ACTION,
-  },
-})
-const {
-  trustedClickOnFlowView, parseFlowResponse, sessionFetch, flowPageFetch,
-  getRecaptchaToken, extractMediaIds, extractFifeUrls, extractBase64Images,
-  fetchMediaAsBase64, configureFlowMode, switchFlowToVideoMode,
-} = helpers
-
 // updateBounds → ipc/layout.js로 이동 (import로 사용)
 
-// === Lazy CDP debugger attach ===
-// Google Flow가 pageload 시점에 debugger.attach()를 감지하면 봇 차단(Error 253)이 발생.
-// 첫 번째 자동화 IPC 호출 때까지 attach를 지연한다.
-// - 멱등(idempotent): 이미 attached면 no-op
-// - 동시 중복 방지: in-progress Promise를 재사용
-async function ensureDebuggerAttached() {
-  if (_debuggerAttached) return
-  if (_debuggerAttachInProgress) return _debuggerAttachInProgress
 
-  _debuggerAttachInProgress = (async () => {
-    try {
-      if (FLOW_AUTOMATION_DISABLED) {
-        throw new Error('FLOW_AUTOMATION_DISABLED_BY_ENV')
-      }
-      const fv = flowView
-      if (!fv) throw new Error('flowView not ready')
 
-      fv.webContents.debugger.attach('1.3')
-      fv.webContents.debugger.sendCommand('Network.enable')
-
-      const requestUrlMap = {}
-      const requestMethodMap = {} // requestId → HTTP method (GET/POST/OPTIONS)
-      const responseStatusMap = {} // requestId → HTTP status
-      const requestSentTimeMap = {} // requestId → 요청 시작 시간 (stale 응답 필터링용)
-
-      fv.webContents.debugger.on('message', (event, method, params) => {
-        // ========== Fetch.requestPaused — outgoing 요청 가로채서 주입 ==========
-        // 분기 결정은 selectCdpCase()로 위임 (단위 테스트 가능). 우선순위 규칙은
-        // electron/video-cdp-dispatch.js 의 JSDoc 참조 — 특히 i2v는 t2v-seed보다
-        // 반드시 먼저 매치되어야 한다(54b3293 회귀 사고).
-        if (method === 'Fetch.requestPaused') {
-          const reqUrl = params.request?.url || ''
-          const reqMethod = params.request?.method || ''
-          const continueRequest = (extra) =>
-            fv.webContents.debugger.sendCommand('Fetch.continueRequest', {
-              requestId: params.requestId,
-              ...(extra || {})
-            })
-          const cdpCase = selectCdpCase({
-            reqUrl,
-            reqMethod,
-            pendingSeedValue,
-            pendingI2VInjection,
-          })
-
-          if (cdpCase === 'image-batch') {
-            // 이미지 생성 — 레퍼런스 + seed + 화면비를 요청 바디에 주입.
-            // 주입 로직 자체는 cdp-image-inject.js 의 순수 함수 (단위 테스트됨).
-            try {
-              const body = JSON.parse(params.request.postData || '{}')
-              const applied = injectImageBatchBody(body, {
-                referenceImages: pendingReferenceImages,
-                seed: pendingSeedValue,
-                aspectRatio: pendingImageAspectRatio,
-              })
-              if (applied.references) {
-                console.log('[Flow API] [Fetch] Injected', pendingReferenceImages.length, 'references')
-                pendingReferenceImages = null
-              }
-              if (applied.seed) {
-                console.log('[Flow API] [Fetch] Injected seed:', pendingSeedValue,
-                  'into', body.requests.length, 'requests')
-              }
-              if (applied.aspectRatio) {
-                console.log('[Flow API] [Fetch] Injected imageAspectRatio:', pendingImageAspectRatio,
-                  'into', body.requests.length, 'requests')
-              }
-
-              if (applied.references || applied.seed || applied.aspectRatio) {
-                const modifiedPostData = Buffer.from(JSON.stringify(body)).toString('base64')
-                continueRequest({ postData: modifiedPostData })
-              } else {
-                continueRequest()
-              }
-            } catch (e) {
-              console.error('[Flow API] [Fetch] batchGenerateImages injection error:', e.message)
-              continueRequest()
-            }
-          }
-          else if (cdpCase === 'i2v') {
-            // I2V startImage 주입 (T2V 요청을 I2V로 변환). seed가 함께 잠겨 있어도
-            // 이 케이스가 우선이라 t2v-seed에 가로채지지 않는다.
-            // OPTIONS 프리플라이트는 수정 없이 통과 (pendingI2VInjection 유지 — POST에서 소비)
-            if (reqMethod === 'OPTIONS') {
-              console.log('[Flow Video I2V] [Fetch] OPTIONS preflight — pass through')
-              continueRequest()
-            } else {
-              try {
-                const body = JSON.parse(params.request.postData || '{}')
-                const hasEndImage = !!pendingI2VInjection.endImageMediaId
-
-                // T2V → I2V 모델 키 변환 (SHORT 키 사용 — Flow 페이지가 실제로 쓰는 형식)
-                // 참고: AutoFlow 확장은 _ultra_relaxed 접미사 사용하지만, Flow 웹은 짧은 키 사용
-                const T2V_TO_I2V_MODEL_MAP = {
-                  // landscape (16:9) 모델
-                  'veo_3_1_t2v_fast_ultra_relaxed': 'veo_3_1_i2v_s_fast_fl',
-                  'veo_3_1_t2v_fast': 'veo_3_1_i2v_s_fast_fl',
-                  // portrait/square 모델
-                  'veo_3_1_t2v_fast_portrait_ultra_relaxed': 'veo_3_1_i2v_s_fast',
-                  'veo_3_1_t2v_fast_portrait': 'veo_3_1_i2v_s_fast',
-                  // quality 모델
-                  'veo_3_1_t2v_quality_ultra_relaxed': 'veo_3_1_i2v_quality',
-                  'veo_3_1_t2v_quality': 'veo_3_1_i2v_quality',
-                }
-                // 기본 cropCoordinates (전체 이미지)
-                const defaultCrop = { top: 0, left: 0, bottom: 1, right: 1 }
-
-                if (body.requests) {
-                  for (const req of body.requests) {
-                    // 모델 키 변환
-                    const originalModel = req.videoModelKey
-                    const i2vModel = T2V_TO_I2V_MODEL_MAP[originalModel]
-                    if (i2vModel) {
-                      req.videoModelKey = i2vModel
-                    } else {
-                      // 매핑에 없는 모델 → 기본 landscape I2V
-                      console.warn('[Flow Video I2V] [Fetch] Unknown T2V model:', originalModel, '→ fallback to veo_3_1_i2v_s_fast_fl')
-                      req.videoModelKey = 'veo_3_1_i2v_s_fast_fl'
-                    }
-                    // startImage + cropCoordinates 주입
-                    req.startImage = {
-                      mediaId: pendingI2VInjection.startImageMediaId,
-                      cropCoordinates: defaultCrop
-                    }
-                    if (hasEndImage) {
-                      req.endImage = {
-                        mediaId: pendingI2VInjection.endImageMediaId,
-                        cropCoordinates: defaultCrop
-                      }
-                    }
-                    // Seed 주입 (사용자 지정 시 덮어쓰기, 아니면 Flow 자동 seed 유지)
-                    if (pendingSeedValue != null) {
-                      req.seed = pendingSeedValue
-                    }
-                    console.log('[Flow Video I2V] [Fetch] Model:', originalModel, '→', req.videoModelKey,
-                      '| injecting startImage' + (hasEndImage ? ' + endImage' : '') +
-                      (pendingSeedValue != null ? ` | seed: ${pendingSeedValue}` : ''))
-                  }
-                }
-                const modifiedPostData = Buffer.from(JSON.stringify(body)).toString('base64')
-                // I2V 엔드포인트로 URL 변경
-                const targetUrl = hasEndImage
-                  ? pendingI2VInjection.i2vStartEndUrl   // batchAsyncGenerateVideoStartAndEndImage
-                  : pendingI2VInjection.i2vUrl            // batchAsyncGenerateVideoStartImage
-                continueRequest({ url: targetUrl, postData: modifiedPostData })
-                console.log('[Flow Video I2V] [Fetch] Injected startImage (' +
-                  pendingI2VInjection.startImageMediaId?.substring(0, 8) + ')' +
-                  (hasEndImage ? ' + endImage (' + pendingI2VInjection.endImageMediaId?.substring(0, 8) + ')' : '') +
-                  ' → ' + targetUrl.split('/v1/')[1])
-                console.log('[Flow Video I2V] [Fetch] Modified body:', JSON.stringify(body).substring(0, 800))
-                pendingI2VInjection = null  // 한 번만 주입 (POST에서만 소비)
-              } catch (e) {
-                console.error('[Flow Video I2V] [Fetch] Injection error:', e.message)
-                continueRequest()
-              }
-            }
-          }
-          else if (cdpCase === 't2v-seed') {
-            // T2V seed 덮어쓰기 (Flow가 자동 랜덤 seed 채우는 자리). I2V 모드 아닐 때만.
-            try {
-              const body = JSON.parse(params.request.postData || '{}')
-              if (body.requests) {
-                for (const req of body.requests) {
-                  req.seed = pendingSeedValue
-                }
-                console.log('[Flow Video] [Fetch] Injected seed:', pendingSeedValue, 'into', body.requests.length, 'video requests')
-                const modifiedPostData = Buffer.from(JSON.stringify(body)).toString('base64')
-                continueRequest({ postData: modifiedPostData })
-              } else {
-                continueRequest()
-              }
-            } catch (e) {
-              console.error('[Flow Video] [Fetch] T2V seed injection error:', e.message)
-              continueRequest()
-            }
-          }
-          else {
-            // pass-through — 대상이 아닌 요청은 수정 없이 통과
-            continueRequest()
-          }
-          return  // Fetch 이벤트는 여기서 처리 완료
-        }
-
-        // ========== Network 이벤트 ==========
-        // 요청 URL 기록 + 시작 시간 기록 + HTTP 메서드 기록
-        if (method === 'Network.requestWillBeSent') {
-          requestUrlMap[params.requestId] = params.request?.url || ''
-          requestMethodMap[params.requestId] = params.request?.method || ''
-          requestSentTimeMap[params.requestId] = params.wallTime || (Date.now() / 1000)
-          // 비디오 생성 요청 body 캡처 (모델 키 + 이미지 구조 확인용)
-          const sentUrl = params.request?.url || ''
-          if (sentUrl.includes('batchAsyncGenerateVideo') && params.request?.method === 'POST' && params.request?.postData) {
-            try {
-              const sentBody = JSON.parse(params.request.postData)
-              const req0 = sentBody?.requests?.[0] || {}
-              console.log('[Flow Video DEBUG] Request to:', sentUrl.split('/v1/')[1])
-              console.log('[Flow Video DEBUG] videoModelKey:', req0.videoModelKey)
-              console.log('[Flow Video DEBUG] aspectRatio:', req0.aspectRatio)
-              console.log('[Flow Video DEBUG] startImage:', JSON.stringify(req0.startImage || null))
-              console.log('[Flow Video DEBUG] endImage:', JSON.stringify(req0.endImage || null))
-              console.log('[Flow Video DEBUG] paygateTier:', sentBody?.clientContext?.userPaygateTier)
-              // [SEED PROBE] Flow 비디오 API가 seed 필드를 받는지 확인용 — 전체 schema dump
-              console.log('[Flow Video DEBUG] req[0] keys:', Object.keys(req0))
-              console.log('[Flow Video DEBUG] seed value:', req0.seed)
-              console.log('[Flow Video DEBUG] FULL BODY:', JSON.stringify(sentBody, null, 2))
-            } catch {}
-          }
-        }
-
-        // HTTP 상태 코드 기록 + projectId 캡처
-        if (method === 'Network.responseReceived') {
-          responseStatusMap[params.requestId] = params.response?.status
-          if (!capturedProjectId) {
-            const url = params.response?.url || ''
-            // Flow URL pattern들 (2026-05 현재 확인):
-            //   - projects/UUID/...                  (legacy path 형식)
-            //   - ?projectId=UUID 또는 &projectId=UUID (query param — sessions, *.json 등 다수)
-            //   - /UUID.json                         (CDN 파일명 자체가 UUID)
-            //   - %22UUID%22 (URL-encoded JSON 안)   (fetchProjectInitialData input 등)
-            const pidMatch =
-              url.match(/projects\/([a-f0-9-]{36})/) ||
-              url.match(/[?&]projectId=([a-f0-9-]{36})/) ||
-              url.match(/\/([a-f0-9-]{36})\.json/) ||
-              url.match(/%22([a-f0-9-]{36})%22/)
-            if (pidMatch) {
-              capturedProjectId = pidMatch[1]
-              console.log('[Flow API] ProjectId from response URL:', capturedProjectId)
-            }
-          }
-        }
-
-        // 네트워크 요청 실패 → 실패도 응답 카운트에 포함 (멀티 이미지: 일부 실패 가능)
-        if (method === 'Network.loadingFailed' && pendingGeneration) {
-          const reqUrl = requestUrlMap[params.requestId] || ''
-          const failMethod = requestMethodMap[params.requestId] || ''
-          if (reqUrl.includes('batchGenerateImages') && failMethod !== 'OPTIONS') {
-            // Stale 응답 필터링
-            const reqSentAt = requestSentTimeMap[params.requestId] || 0
-            if (pendingGeneration.setAt && reqSentAt < pendingGeneration.setAt) {
-              console.log('[Flow API] [NetCapture] Skipping STALE batchGenerateImages failure',
-                '(reqSentAt:', reqSentAt.toFixed(3), ', setAt:', pendingGeneration.setAt.toFixed(3), ')')
-              return
-            }
-            pendingGeneration.responses.push({ error: true, message: params.errorText || 'Network request failed' })
-            console.error('[Flow API] [NetCapture] batchGenerateImages FAILED (' +
-              pendingGeneration.responses.length + '/' + pendingGeneration.expectedCount + '):', params.errorText)
-
-            if (pendingGeneration.responses.length >= pendingGeneration.expectedCount) {
-              console.log('[Flow API] [NetCapture] All responses collected (with failures) — resolving')
-              const saved = pendingGeneration
-              pendingGeneration = null
-              if (saved.collectionTimer) clearTimeout(saved.collectionTimer)
-              // 성공 응답이 하나라도 있으면 error: false
-              const hasSuccess = saved.responses.some(r => !r.error)
-              saved.resolve(hasSuccess
-                ? { error: false, responses: saved.responses }
-                : { error: true, message: 'All image generations failed' })
-            }
-          }
-        }
-
-        // 네트워크 요청 실패 → 비동기 모드 (pendingGenerations Map)
-        if (method === 'Network.loadingFailed' && pendingGenerations.size > 0) {
-          const reqUrl = requestUrlMap[params.requestId] || ''
-          const failMethod = requestMethodMap[params.requestId] || ''
-          if (reqUrl.includes('batchGenerateImages') && failMethod !== 'OPTIONS') {
-            const reqSentAt = requestSentTimeMap[params.requestId] || 0
-            let matchId = null
-            let matchSetAt = -Infinity
-            for (const [id, gen] of pendingGenerations) {
-              if (!gen.completed && gen.setAt <= reqSentAt && gen.setAt > matchSetAt) {
-                matchId = id
-                matchSetAt = gen.setAt
-              }
-            }
-            if (matchId) {
-              const g = pendingGenerations.get(matchId)
-              g.responses.push({ error: true, message: params.errorText || 'Network request failed' })
-              console.error('[Flow API] [AsyncCapture] batchGenerateImages FAILED for gen:',
-                matchId.substring(0, 8), '(' + g.responses.length + '/' + g.expectedCount + ')')
-              if (g.responses.length >= g.expectedCount) {
-                g.completed = true
-                if (g.collectionTimer) clearTimeout(g.collectionTimer)
-              }
-            }
-          }
-        }
-
-        // 비디오 API 요청 실패 처리
-        if (method === 'Network.loadingFailed' && pendingVideoGeneration) {
-          const reqUrl = requestUrlMap[params.requestId] || ''
-          const failMethod = requestMethodMap[params.requestId] || ''
-          if (reqUrl.includes('batchAsyncGenerateVideo') && failMethod !== 'OPTIONS') {
-            const reqSentAt = requestSentTimeMap[params.requestId] || 0
-            if (pendingVideoGeneration.setAt && reqSentAt < pendingVideoGeneration.setAt) return
-            console.error('[Flow API] [VideoCapture] Video API request FAILED:', params.errorText)
-            const saved = pendingVideoGeneration
-            pendingVideoGeneration = null
-            saved.resolve({ error: true, message: params.errorText || 'Video API request failed' })
-          }
-        }
-
-        // 응답 body 가져오기 (projectId 추출 + DOM 생성 결과 캡처)
-        if (method === 'Network.loadingFinished' && params.requestId) {
-          const reqUrl = requestUrlMap[params.requestId] || ''
-          const httpStatus = responseStatusMap[params.requestId]
-
-          // batchGenerateImages 응답 → DOM-triggered generation 결과 캡처 (멀티 이미지 수집)
-          // ⚠️ OPTIONS 프리플라이트 요청은 무시 (body 없어서 getResponseBody 실패함)
-          const reqMethod = requestMethodMap[params.requestId] || ''
-          if (pendingGeneration && reqUrl.includes('batchGenerateImages') && reqMethod !== 'OPTIONS') {
-            // Stale 응답 필터링: pendingGeneration 설정 이전에 시작된 요청은 무시
-            const reqSentAt = requestSentTimeMap[params.requestId] || 0
-            if (pendingGeneration.setAt && reqSentAt < pendingGeneration.setAt) {
-              console.log('[Flow API] [NetCapture] Skipping STALE batchGenerateImages response',
-                '(reqSentAt:', reqSentAt.toFixed(3), ', setAt:', pendingGeneration.setAt.toFixed(3),
-                ', diff:', ((pendingGeneration.setAt - reqSentAt) * 1000).toFixed(0), 'ms)')
-              return
-            }
-            console.log('[Flow API] [NetCapture] ✅ ACCEPTED batchGenerateImages response',
-              '(reqSentAt:', reqSentAt.toFixed(3), ', setAt:', pendingGeneration.setAt.toFixed(3),
-              ', diff:', ((reqSentAt - pendingGeneration.setAt) * 1000).toFixed(0), 'ms after)')
-
-            fv.webContents.debugger.sendCommand('Network.getResponseBody', { requestId: params.requestId })
-              .then(result => {
-                if (result?.body && pendingGeneration) {
-                  pendingGeneration.responses.push({ error: false, body: result.body, status: httpStatus })
-                  console.log('[Flow API] [NetCapture] batchGenerateImages response collected (' +
-                    pendingGeneration.responses.length + '/' + pendingGeneration.expectedCount +
-                    ') HTTP', httpStatus, ', length:', result.body.length)
-
-                  // 예상 개수만큼 모았으면 즉시 resolve
-                  if (pendingGeneration.responses.length >= pendingGeneration.expectedCount) {
-                    console.log('[Flow API] [NetCapture] All', pendingGeneration.expectedCount, 'responses collected — resolving')
-                    const saved = pendingGeneration
-                    pendingGeneration = null
-                    if (saved.collectionTimer) clearTimeout(saved.collectionTimer)
-                    saved.resolve({ error: false, responses: saved.responses })
-                  } else {
-                    // 아직 더 남음 — 30초 타이머로 대기 (이미지 생성은 최대 20-30초 소요 가능)
-                    if (pendingGeneration.collectionTimer) clearTimeout(pendingGeneration.collectionTimer)
-                    pendingGeneration.collectionTimer = setTimeout(() => {
-                      if (pendingGeneration) {
-                        console.log('[Flow API] [NetCapture] Collection timer fired — resolving with',
-                          pendingGeneration.responses.length, '/', pendingGeneration.expectedCount, 'responses')
-                        const saved = pendingGeneration
-                        pendingGeneration = null
-                        saved.resolve({ error: false, responses: saved.responses })
-                      }
-                    }, 30000)
-                  }
-                }
-              })
-              .catch(err => {
-                console.warn('[Flow API] [NetCapture] getResponseBody failed:', err.message)
-                // getResponseBody 실패도 카운트에 포함
-                if (pendingGeneration) {
-                  pendingGeneration.responses.push({ error: true, message: err.message })
-                  if (pendingGeneration.responses.length >= pendingGeneration.expectedCount) {
-                    const saved = pendingGeneration
-                    pendingGeneration = null
-                    if (saved.collectionTimer) clearTimeout(saved.collectionTimer)
-                    saved.resolve({ error: false, responses: saved.responses })
-                  }
-                }
-              })
-          }
-          // batchGenerateImages 응답 → 비동기 모드 (pendingGenerations Map)
-          else if (pendingGenerations.size > 0 && reqUrl.includes('batchGenerateImages') && reqMethod !== 'OPTIONS') {
-            const reqSentAt = requestSentTimeMap[params.requestId] || 0
-            // 타임스탬프 기반 매칭: reqSentAt >= gen.setAt인 것 중 가장 늦은(가장 가까운) generation
-            let matchId = null
-            let matchSetAt = -Infinity
-            for (const [id, gen] of pendingGenerations) {
-              if (!gen.completed && gen.setAt <= reqSentAt && gen.setAt > matchSetAt) {
-                matchId = id
-                matchSetAt = gen.setAt
-              }
-            }
-            if (matchId) {
-              const gen = pendingGenerations.get(matchId)
-              console.log('[Flow API] [AsyncCapture] ✅ batchGenerateImages → gen:', matchId.substring(0, 8),
-                '(reqSentAt:', reqSentAt.toFixed(3), ', setAt:', gen.setAt.toFixed(3), ')')
-              fv.webContents.debugger.sendCommand('Network.getResponseBody', { requestId: params.requestId })
-                .then(result => {
-                  if (result?.body && pendingGenerations.has(matchId)) {
-                    const g = pendingGenerations.get(matchId)
-                    g.responses.push({ error: false, body: result.body, status: httpStatus })
-                    console.log('[Flow API] [AsyncCapture] Response collected (' +
-                      g.responses.length + '/' + g.expectedCount + ') for gen:', matchId.substring(0, 8))
-                    if (g.responses.length >= g.expectedCount) {
-                      g.completed = true
-                      if (g.collectionTimer) clearTimeout(g.collectionTimer)
-                      console.log('[Flow API] [AsyncCapture] Generation COMPLETED:', matchId.substring(0, 8))
-                    } else {
-                      // 30초 타이머
-                      if (g.collectionTimer) clearTimeout(g.collectionTimer)
-                      g.collectionTimer = setTimeout(() => {
-                        if (pendingGenerations.has(matchId)) {
-                          const gg = pendingGenerations.get(matchId)
-                          if (!gg.completed) {
-                            gg.completed = true
-                            console.log('[Flow API] [AsyncCapture] Timer fired — marking completed with',
-                              gg.responses.length, '/', gg.expectedCount, 'for gen:', matchId.substring(0, 8))
-                          }
-                        }
-                      }, 30000)
-                    }
-                  }
-                })
-                .catch(err => {
-                  console.warn('[Flow API] [AsyncCapture] getResponseBody failed:', err.message)
-                  if (pendingGenerations.has(matchId)) {
-                    const g = pendingGenerations.get(matchId)
-                    g.responses.push({ error: true, message: err.message })
-                    if (g.responses.length >= g.expectedCount) {
-                      g.completed = true
-                      if (g.collectionTimer) clearTimeout(g.collectionTimer)
-                    }
-                  }
-                })
-            }
-          }
-          // 비디오 API 응답 캡처 (DOM-triggered video generation)
-          else if (pendingVideoGeneration && reqUrl.includes('batchAsyncGenerateVideo') && reqMethod !== 'OPTIONS') {
-            const reqSentAt = requestSentTimeMap[params.requestId] || 0
-            if (pendingVideoGeneration.setAt && reqSentAt < pendingVideoGeneration.setAt) {
-              console.log('[Flow API] [VideoCapture] Skipping STALE video response')
-              return
-            }
-            console.log('[Flow API] [VideoCapture] ✅ ACCEPTED video API response, HTTP', httpStatus)
-
-            fv.webContents.debugger.sendCommand('Network.getResponseBody', { requestId: params.requestId })
-              .then(result => {
-                if (result?.body && pendingVideoGeneration) {
-                  console.log('[Flow API] [VideoCapture] Video response body captured, length:', result.body.length)
-                  if (httpStatus >= 400) {
-                    console.error('[Flow API] [VideoCapture] ❌ Error response body:', result.body.substring(0, 500))
-                  }
-                  const saved = pendingVideoGeneration
-                  pendingVideoGeneration = null
-                  saved.resolve({ error: httpStatus >= 400, body: result.body, status: httpStatus })
-                }
-              })
-              .catch(err => {
-                console.warn('[Flow API] [VideoCapture] getResponseBody failed:', err.message)
-                if (pendingVideoGeneration) {
-                  const saved = pendingVideoGeneration
-                  pendingVideoGeneration = null
-                  saved.resolve({ error: true, message: err.message })
-                }
-              })
-          }
-          // projectId 추출 (아직 없을 때만)
-          else if (!capturedProjectId && reqUrl.includes('aisandbox-pa.googleapis.com')) {
-            fv.webContents.debugger.sendCommand('Network.getResponseBody', { requestId: params.requestId })
-              .then(result => {
-                if (result?.body) {
-                  const match = result.body.match(/"projectId"\s*:\s*"([a-f0-9-]{36})"/)
-                  if (match && !capturedProjectId) {
-                    capturedProjectId = match[1]
-                    console.log('[Flow API] ProjectId CAPTURED:', capturedProjectId)
-                  }
-                }
-              })
-              .catch(() => {})
-          }
-        }
-      })
-
-      _debuggerAttached = true
-      console.log('[Flow] ⚡ Debugger attached lazily (first automation call)')
-    } catch (e) {
-      console.warn('[Flow] Debugger attach failed:', e.message)
-      throw e  // 호출자에게 전파 (IPC 핸들러가 적절히 처리)
-    } finally {
-      _debuggerAttachInProgress = null
-    }
-  })()
-
-  return _debuggerAttachInProgress
-}
-
-// ─── Monkey-patch path: inject pending values into the Flow page ──────────────
-// Called before each automation cycle. Writes window.__autoflowcut_inject__
-// in the Flow page so the patched fetch can modify outgoing requests.
-// This replaces the CDP Fetch.enable / pendingSeedValue / pendingReferenceImages
-// setters that were only used by the CDP path.
-async function setFlowPageInject({ seed, aspectRatio, references, i2v }) {
-  if (!flowView) return
-  const payload = {
-    seed:        seed        ?? null,
-    aspectRatio: aspectRatio ?? null,
-    references:  references  ?? null,
-    i2v:         i2v         ?? null,
-  }
-  try {
-    await flowView.webContents.executeJavaScript(
-      `window.__autoflowcut_inject__ = ${JSON.stringify(payload)}`
-    )
-    console.log('[Flow Inject] __autoflowcut_inject__ set:', {
-      seed: payload.seed, aspectRatio: payload.aspectRatio,
-      refs: payload.references?.length ?? 0, i2v: !!payload.i2v,
-    })
-  } catch (e) {
-    console.warn('[Flow Inject] setFlowPageInject failed:', e.message)
-  }
-}
-
-// Clear inject state after each automation cycle.
-async function clearFlowPageInject() {
-  if (!flowView) return
-  try {
-    await flowView.webContents.executeJavaScript(
-      `window.__autoflowcut_inject__ = { seed: null, aspectRatio: null, references: null, i2v: null }`
-    )
-  } catch (_) {}
-}
-
-// ─── flow:report-response — page monkey-patch → main (replaces CDP getResponseBody) ──
-// The Flow page injection script calls
-//   window.electronAPI.flowReportResponse({ url, body, status, requestBody }).
-// Routing:
-//   - batchGenerateImages → pendingGeneration (sync) or pendingGenerations (async)
-//   - batchAsyncGenerateVideo* → pendingVideoGeneration
-// Async batchGenerateImages 응답은 요청 body 안의 프롬프트로 해당 generation 에
-// 상관시킨다 (matchGenerationForResponse) — fetch 는 wallTime 을 안 주므로 timestamp
-// 매칭이 불가능하고, "가장 최근 gen" 추측은 생성이 겹칠 때 응답을 오배달했다.
-// sync 모드는 동시 1건이라 매칭이 필요 없다.
-ipcMain.handle('flow:report-response', (event, payload) => {
-  // Sender 검증 먼저 — flowView WebContents 가 아닌 곳에서 호출되면 거부.
-  // (메인 BrowserWindow / 다른 view 가 우연/악의적으로 같은 IPC 를 호출해도 무시.)
-  // Payload destructure 보다 먼저 검증해야 malformed payload 가 throw 하지 않는다.
-  if (!flowView || event.sender !== flowView.webContents) return { ok: false, error: 'sender mismatch' }
-  const { url, body, status, requestBody } = payload || {}
-  if (!url || !body) return { ok: false }
-
-  const now = Date.now() / 1000  // approximate wallTime for compatibility
-
-  // ── batchGenerateImages → sync mode ──────────────────────────────────────
-  if (url.includes('batchGenerateImages')) {
-    if (pendingGeneration) {
-      console.log('[Flow Inject] [NetCapture] batchGenerateImages response received, HTTP', status,
-        ', length:', body.length)
-      pendingGeneration.responses.push({ error: false, body, status })
-      console.log('[Flow Inject] [NetCapture] collected (' +
-        pendingGeneration.responses.length + '/' + pendingGeneration.expectedCount + ')')
-
-      if (pendingGeneration.responses.length >= pendingGeneration.expectedCount) {
-        console.log('[Flow Inject] [NetCapture] All', pendingGeneration.expectedCount, 'responses — resolving')
-        const saved = pendingGeneration
-        pendingGeneration = null
-        if (saved.collectionTimer) clearTimeout(saved.collectionTimer)
-        saved.resolve({ error: false, responses: saved.responses })
-      } else {
-        // More expected — start/reset collection timer
-        if (pendingGeneration.collectionTimer) clearTimeout(pendingGeneration.collectionTimer)
-        pendingGeneration.collectionTimer = setTimeout(() => {
-          if (pendingGeneration) {
-            console.log('[Flow Inject] [NetCapture] Collection timer fired — resolving with',
-              pendingGeneration.responses.length, '/', pendingGeneration.expectedCount)
-            const saved = pendingGeneration
-            pendingGeneration = null
-            saved.resolve({ error: false, responses: saved.responses })
-          }
-        }, 30000)
-      }
-      return { ok: true }
-    }
-
-    // ── batchGenerateImages → async mode ──────────────────────────────────
-    if (pendingGenerations.size > 0) {
-      // 응답을 트리거한 generation 에 정확히 상관 — 요청 body 안의 프롬프트로 매칭.
-      // 기존 newest-wins 는 생성이 겹치면(이전 gen 진행 중 + 다음 gen 제출) 응답을
-      // 엉뚱한 gen 으로 보내, 원래 gen 은 timeout / 다른 씬엔 남의 이미지가 저장됐다.
-      const matchId = matchGenerationForResponse(pendingGenerations, requestBody)
-      if (matchId) {
-        const g = pendingGenerations.get(matchId)
-        g.responses.push({ error: false, body, status })
-        console.log('[Flow Inject] [AsyncCapture] batchGenerateImages response → gen:',
-          matchId.substring(0, 8), '(' + g.responses.length + '/' + g.expectedCount + ')')
-        if (g.responses.length >= g.expectedCount) {
-          g.completed = true
-          if (g.collectionTimer) clearTimeout(g.collectionTimer)
-          console.log('[Flow Inject] [AsyncCapture] Generation COMPLETED:', matchId.substring(0, 8))
-        } else {
-          if (g.collectionTimer) clearTimeout(g.collectionTimer)
-          g.collectionTimer = setTimeout(() => {
-            if (pendingGenerations.has(matchId)) {
-              const gg = pendingGenerations.get(matchId)
-              if (!gg.completed) {
-                gg.completed = true
-                console.log('[Flow Inject] [AsyncCapture] Timer fired — marking completed:',
-                  matchId.substring(0, 8))
-              }
-            }
-          }, 30000)
-        }
-      }
-      return { ok: true }
-    }
-  }
-
-  // ── batchAsyncGenerateVideo* → pendingVideoGeneration ──────────────────
-  if (url.includes('batchAsyncGenerateVideo') && pendingVideoGeneration) {
-    console.log('[Flow Inject] [VideoCapture] Video response received, HTTP', status,
-      ', length:', body.length)
-    if (status >= 400) {
-      console.error('[Flow Inject] [VideoCapture] Error body:', body.substring(0, 500))
-    }
-    const saved = pendingVideoGeneration
-    pendingVideoGeneration = null
-    saved.resolve({ error: status >= 400, body, status })
-    return { ok: true }
-  }
-
-  return { ok: false, reason: 'no pending capture' }
-})
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -805,55 +161,161 @@ function createWindow() {
   // createWindow 시점에서 바로 켜야 하므로 직접 호출
   powerSaveBlocker.start('prevent-display-sleep')
 
-  // Create Flow WebContentsView with persistent session
-  flowView = new WebContentsView({
+
+  // Open DevTools in development (detached so it doesn't cover WebContentsView)
+  if (process.env.VITE_DEV_SERVER_URL) {
+    mainWindow.webContents.openDevTools({ mode: 'detach' })
+  }
+
+  // Load the React app (Vite dev server or built files)
+  if (process.env.VITE_DEV_SERVER_URL) {
+    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
+  } else {
+    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
+  }
+
+  // Re-size the Flow WebContentsView whenever the window is resized (§3.4).
+  // modeController is module-scope (created before app.whenReady) so it's always in scope here.
+  mainWindow.on('resize', () => updateBounds(mainWindow, modeController.getFlowView()))
+}
+
+// === IPC Handlers ===
+
+// File System IPC (Node.js fs operations)
+registerFilesystemIPC(ipcMain)
+
+// Google GenAI IPC (BYOK key management + Imagen/Veo official-API generation).
+// Replaces Flow web reverse-engineering. Key is encrypted via OS keychain
+// (safeStorage) and never leaves the main process.
+const genaiKeyStore = createKeyStore({
+  safeStorage,
+  filePath: path.join(app.getPath('userData'), 'genai-key.enc'),
+  fs: fsSync,
+})
+registerGenaiIPC(ipcMain, { keyStore: genaiKeyStore })
+
+// Auth IPC (Google OAuth) — opens its own BrowserWindow; no Flow view dependency.
+registerAuthIPC(ipcMain)
+
+// CapCut IPC (path detection, project writing, app launch)
+registerCapcutIPC(ipcMain)
+
+// Premiere IPC (.prproj writing — gzipped XML)
+registerPremiereIPC(ipcMain)
+
+// MCP IPC (Claude Code MCP server registration)
+registerMcpIPC(ipcMain)
+
+// Vrew IPC (.vrew writing — local zip package)
+registerVrewIPC(ipcMain)
+
+// Flow WebContentsView factory — only called when mode:set('flow') is invoked.
+// Lazy creation ensures API mode startup is unaffected.
+// did-finish-load bootstrap is attached here directly so it fires on view creation.
+function makeFlowView() {
+  const view = new WebContentsView({
     webPreferences: {
       partition: 'persist:flow',
       contextIsolation: true,
-      webSecurity: false,  // 비디오 API를 페이지 컨텍스트에서 호출할 때 CORS 허용
-      // Flow 페이지 전용 preload (flowReportResponse만 노출).
-      // 메인 preload 를 그대로 attach 하면 원격 Flow 페이지에 전체 electronAPI (filesystem,
-      // auth, MCP, CapCut 등) 가 노출되는 보안 위험. flow-preload 는 최소 표면만 노출하고
-      // ipcMain.handle('flow:report-response') 는 sender === flowView.webContents 검증.
+      webSecurity: false,
       preload: path.join(__dirname, 'flow-preload.cjs'),
-    }
+    },
   })
-  mainWindow.contentView.addChildView(flowView)
 
-  // Load Flow
-  flowView.webContents.loadURL(FLOW_URL)
-
-  // 페이지 console 로그를 main 콘솔에 forward (우리 prefix만 filtering — Flow 자체 로그 noise 회피)
-  flowView.webContents.on('console-message', (event, level, message, line, sourceId) => {
+  // 페이지 console 로그를 main 콘솔에 forward (우리 prefix만 filtering)
+  view.webContents.on('console-message', (_event, _level, message) => {
     if (message.includes('[Flow Inject]') || message.includes('[Flow Debug]') || message.includes('[autoflowcut')) {
       console.log('[Flow Page]', message)
     }
   })
 
   // 지역 제한 조기 감지 (did-navigate는 did-finish-load보다 먼저 발생)
-  flowView.webContents.on('did-navigate', (_, url) => {
+  view.webContents.on('did-navigate', (_, url) => {
     if (url.includes('unsupported-country')) {
       console.log('[Flow] Region unavailable detected early (did-navigate)')
-      mainWindow.webContents.send('flow-status', {
-        loaded: true, url, loggedIn: false, unavailable: true
-      })
+      const win = mainWindow
+      if (win) win.webContents.send('flow-status', { loaded: true, url, loggedIn: false, unavailable: true })
     }
+    const pidMatch = url.match(/\/project\/([a-f0-9-]{36})/)
+    if (pidMatch) {
+      capturedProjectId = pidMatch[1]
+      console.log('[Flow API] ProjectId from navigation:', capturedProjectId)
+    }
+    const win = mainWindow
+    if (win) win.webContents.send('flow-status', { loaded: true, url, loggedIn: url.includes('labs.google/fx') })
   })
 
-  flowView.webContents.on('did-finish-load', async () => {
-    const url = flowView.webContents.getURL()
-    console.log('[Flow] did-finish-load:', url)
-    // (옵션 A) FLOW_AUTOMATION_DISABLED 여도 자동 진입은 시도 — DOM 클릭 + URL 매칭은 CDP 없이도 동작.
-    // CDP attach 자체만 skip 됨. 진입 성공 시 did-navigate 가 capturedProjectId 를 잡아준다.
-    // 지역 제한 감지 (URL 기반 — localization 무관)
-    const unavailable = url.includes('unsupported-country')
+  view.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    console.error('[Flow] did-fail-load:', errorCode, errorDescription, validatedURL)
+  })
 
-    mainWindow.webContents.send('flow-status', {
-      loaded: true,
-      url,
-      loggedIn: url.includes('labs.google/fx'),
-      unavailable
-    })
+  // SPA pushState/replaceState 내비게이션 캡처
+  view.webContents.on('did-navigate-in-page', (_, url) => {
+    console.log('[Flow] did-navigate-in-page:', url)
+    const win = mainWindow
+    if (win) win.webContents.send('flow-status', { loaded: true, url, loggedIn: url.includes('labs.google/fx') })
+    const pidMatch = url.match(/\/project\/([a-f0-9-]{36})/)
+    if (pidMatch) {
+      if (!capturedProjectId) {
+        capturedProjectId = pidMatch[1]
+        console.log('[Flow API] ProjectId from SPA navigation:', capturedProjectId)
+      }
+      if (win) win.webContents.send('flow-status', { authenticated: true, url })
+    }
+    // Re-inject fetch monkey-patch on SPA navigation (guard flag ensures idempotency)
+    view.webContents.executeJavaScript(FLOW_PAGE_INJECTION).catch(() => {})
+  })
+
+  // Flow 페이지 네트워크에서 projectId 자동 캡처
+  view.webContents.session.webRequest.onBeforeRequest(
+    { urls: ['*://*/*'] },
+    (details, callback) => {
+      if (details.url.includes('aisandbox') || details.url.includes('googleapis.com/v1')) {
+        const pidMatch = details.url.match(/projects\/([a-f0-9-]{36})/)
+        if (pidMatch && !capturedProjectId) {
+          capturedProjectId = pidMatch[1]
+          console.log('[Flow API] ProjectId captured from network:', capturedProjectId)
+        }
+        if (details.uploadData) {
+          try {
+            const body = details.uploadData.map(d => d.bytes?.toString()).join('')
+            if (body) {
+              const bodyPidMatch = body.match(/"projectId":"([a-f0-9-]{36})"/)
+              if (bodyPidMatch && !capturedProjectId) {
+                capturedProjectId = bodyPidMatch[1]
+                console.log('[Flow API] ProjectId captured from body:', capturedProjectId)
+              }
+            }
+          } catch {}
+        }
+      }
+      callback({})
+    }
+  )
+
+  // ─── did-finish-load bootstrap: injection / landing / consent / token / startup-gate / enter-tool ───
+  view.webContents.on('did-finish-load', async () => {
+    const url = view.webContents.getURL()
+    console.log('[Flow] did-finish-load:', url)
+    if (!url || url === 'about:blank') return
+
+    // #R23-3: Flow 부트스트랩은 여러 await 를 거친다. 그 사이 사용자가 API 모드로 전환하면
+    //   뷰는 detach 되지만 이 핸들러는 계속 돌아 consent/enter-tool 클릭·saved-project 로드 같은
+    //   부수효과를 API 모드에서 실행한다(숨은 모드-전환 레이스). 각 부수효과 직전에 현재 모드를
+    //   재확인해 중단한다.
+    const flowDetached = () => modeController.getCurrentMode() !== 'flow'
+    if (flowDetached()) { console.log('[Flow] bootstrap skipped — not in flow mode'); return }
+
+    const unavailable = url.includes('unsupported-country')
+    const win = mainWindow
+    if (win) {
+      win.webContents.send('flow-status', {
+        loaded: true,
+        url,
+        loggedIn: url.includes('labs.google/fx'),
+        unavailable,
+      })
+    }
 
     if (unavailable) {
       console.log('[Flow] Region unavailable detected — skipping auto-actions')
@@ -862,17 +324,25 @@ function createWindow() {
 
     // Inject fetch monkey-patch (idempotent — guard flag on page prevents double-patch)
     try {
-      await flowView.webContents.executeJavaScript(FLOW_PAGE_INJECTION)
+      await view.webContents.executeJavaScript(FLOW_PAGE_INJECTION)
       console.log('[Flow] fetch monkey-patch injected')
     } catch (e) {
       console.warn('[Flow] fetch injection failed:', e.message)
+    }
+
+    try {
+      await view.webContents.executeJavaScript(FLOW_SETTINGS_DUMPER)
+      console.log('[Flow] settings dumper injected')
+    } catch (e) {
+      console.warn('[Flow] settings dumper injection failed:', e.message)
     }
 
     // 랜딩 페이지: "Create with Flow" 버튼 자동 클릭
     if (url.includes('labs.google')) {
       try {
         await new Promise(r => setTimeout(r, 1500))
-        const landingResult = await flowView.webContents.executeJavaScript(`
+        if (flowDetached()) { console.log('[Flow] landing auto-click skipped — mode switched'); return }
+        const landingResult = await view.webContents.executeJavaScript(`
           (function() {
             const links = document.querySelectorAll('a, button, [role="button"]');
             for (const el of links) {
@@ -896,8 +366,6 @@ function createWindow() {
 
     // Flow 페이지 로드 후: 동의 버튼 자동 클릭 → projectId 추출
     if (url.includes('labs.google/fx')) {
-      // 0단계: 동의/약관 버튼 자동 클릭 (Google Labs 초기 동의 화면 처리)
-      // 이미 동의했거나 프로젝트가 있으면 스킵
       if (consentClicked && (enterToolClicked || capturedProjectId)) {
         console.log('[Flow] Skipping all auto-actions (consent+project already done)')
         return
@@ -906,45 +374,43 @@ function createWindow() {
         if (consentClicked) {
           console.log('[Flow] Consent already clicked, skipping...')
         } else {
-        await new Promise(r => setTimeout(r, 1000)) // 페이지 렌더링 대기
-        const consentResult = await flowView.webContents.executeJavaScript(`
-          (function() {
-            // 동의 버튼 텍스트 패턴 (한국어/영어)
-            const agreeKeywords = ['동의', '동의합니다', 'agree', 'i agree', 'accept', 'consent', 'got it', '확인'];
-            const allButtons = document.querySelectorAll('button, [role="button"], a.button, input[type="submit"]');
-            for (const b of allButtons) {
-              const text = (b.textContent || b.value || '').trim().toLowerCase();
-              if (agreeKeywords.some(k => text.includes(k))) {
-                b.click();
-                return 'consent_clicked: ' + text.substring(0, 40);
+          await new Promise(r => setTimeout(r, 1000))
+          if (flowDetached()) { console.log('[Flow] consent auto-click skipped — mode switched'); return }
+          const consentResult = await view.webContents.executeJavaScript(`
+            (function() {
+              const agreeKeywords = ['동의', '동의합니다', 'agree', 'i agree', 'accept', 'consent', 'got it', '확인'];
+              const allButtons = document.querySelectorAll('button, [role="button"], a.button, input[type="submit"]');
+              for (const b of allButtons) {
+                const text = (b.textContent || b.value || '').trim().toLowerCase();
+                if (agreeKeywords.some(k => text.includes(k))) {
+                  b.click();
+                  return 'consent_clicked: ' + text.substring(0, 40);
+                }
               }
-            }
-            // Material Design 체크박스 + 동의 버튼 패턴
-            const checkboxes = document.querySelectorAll('input[type="checkbox"], [role="checkbox"]');
-            for (const cb of checkboxes) {
-              if (!cb.checked) {
-                cb.click();
-                cb.checked = true;
-                cb.dispatchEvent(new Event('change', { bubbles: true }));
+              const checkboxes = document.querySelectorAll('input[type="checkbox"], [role="checkbox"]');
+              for (const cb of checkboxes) {
+                if (!cb.checked) {
+                  cb.click();
+                  cb.checked = true;
+                  cb.dispatchEvent(new Event('change', { bubbles: true }));
+                }
               }
-            }
-            // 체크박스 클릭 후 다시 동의 버튼 검색
-            for (const b of allButtons) {
-              const text = (b.textContent || b.value || '').trim().toLowerCase();
-              if (agreeKeywords.some(k => text.includes(k))) {
-                b.click();
-                return 'consent_after_checkbox: ' + text.substring(0, 40);
+              for (const b of allButtons) {
+                const text = (b.textContent || b.value || '').trim().toLowerCase();
+                if (agreeKeywords.some(k => text.includes(k))) {
+                  b.click();
+                  return 'consent_after_checkbox: ' + text.substring(0, 40);
+                }
               }
-            }
-            return null;
-          })()
-        `)
-        if (consentResult) {
-          console.log('[Flow] Auto-consent:', consentResult)
-          consentClicked = true
-          await new Promise(r => setTimeout(r, 2000)) // 동의 후 페이지 전환 대기
+              return null;
+            })()
+          `)
+          if (consentResult) {
+            console.log('[Flow] Auto-consent:', consentResult)
+            consentClicked = true
+            await new Promise(r => setTimeout(r, 2000))
+          }
         }
-        } // end of if (!consentClicked)
       } catch (e) {
         console.warn('[Flow] Consent auto-click error:', e.message)
       }
@@ -952,27 +418,24 @@ function createWindow() {
 
     if (url.includes('labs.google/fx')) {
       try {
+        if (flowDetached()) { console.log('[Flow] enter-tool bootstrap skipped — mode switched'); return }
         // 1단계: URL에서 /project/UUID 패턴 추출
         const pidMatch = url.match(/\/project\/([a-f0-9-]{36})/)
         if (pidMatch) {
           capturedProjectId = pidMatch[1]
-          enterToolClicked = true // 이미 프로젝트 안에 있으므로 다시 클릭 불필요
+          enterToolClicked = true
           console.log('[Flow API] ProjectId from URL:', capturedProjectId)
-          mainWindow.webContents.send('flow-status', {
-            authenticated: true,
-            url
-          })
+          if (win) win.webContents.send('flow-status', { authenticated: true, url })
           return
         }
 
-        // 이미 Enter tool 클릭했으면 또 클릭하지 않음 (무한루프 방지)
         if (enterToolClicked || capturedProjectId) {
           console.log('[Flow API] Skipping Enter tool click (already clicked or projectId exists)')
           return
         }
 
-        // 2단계: 토큰 확인 (로그인 여부 체크) — executeJavaScript 사용 (검증된 방식)
-        const sessionData = await flowView.webContents.executeJavaScript(`
+        // 2단계: 토큰 확인 (로그인 여부 체크)
+        const sessionData = await view.webContents.executeJavaScript(`
           fetch('${SESSION_URL}')
             .then(r => r.ok ? r.text() : null)
             .catch(() => null)
@@ -990,10 +453,7 @@ function createWindow() {
           return
         }
         console.log('[Flow API] User logged in, token length:', token.length)
-        mainWindow.webContents.send('flow-status', {
-          authenticated: true,
-          url: flowView.webContents.getURL()
-        })
+        if (win) win.webContents.send('flow-status', { authenticated: true, url: view.webContents.getURL() })
 
         // 3단계: 잠시 대기 — Flow SPA가 자동으로 프로젝트로 리다이렉트할 수 있음
         await new Promise(r => setTimeout(r, 2000))
@@ -1002,8 +462,7 @@ function createWindow() {
           return
         }
 
-        // URL 다시 확인 (SPA 내비게이션으로 변경됐을 수 있음)
-        const currentUrl = flowView.webContents.getURL()
+        const currentUrl = view.webContents.getURL()
         const currentPidMatch = currentUrl.match(/\/project\/([a-f0-9-]{36})/)
         if (currentPidMatch) {
           capturedProjectId = currentPidMatch[1]
@@ -1011,16 +470,32 @@ function createWindow() {
           return
         }
 
-        // 4단계: "Enter tool" 버튼 자동 클릭 → 프로젝트 생성
-        // AutoFlow도 동일한 방식으로 projectId를 얻음 (clickNewProjectButton)
-        // 단일 시도 — 실패하면 다음 API 요청에서 projectId 재시도.
-        console.log('[Flow API] No project in URL, looking for Enter tool button...')
+        // 3.5단계: 시작 자동생성 게이트 — 렌더러가 저장된 flowProjectId 를 선언할 때까지 대기
+        for (let waited = 0; modeController.getStartupDecision().action === 'wait' && waited < 30000; waited += 250) {
+          await new Promise(r => setTimeout(r, 250))
+          if (capturedProjectId) break
+        }
+        if (capturedProjectId) {
+          console.log('[Flow API] Project entered during startup wait:', capturedProjectId)
+          enterToolClicked = true
+          return
+        }
+        if (flowDetached()) { console.log('[Flow] startup-gate side effects skipped — mode switched'); return }
+        const startupDecision = modeController.getStartupDecision()
+        if (startupDecision.action === 'open-saved') {
+          const target = `${FLOW_URL}/project/${startupDecision.flowProjectId}`
+          console.log('[Flow Project] startup: opening saved flow project (skip auto-create):', target)
+          enterToolClicked = true
+          await view.webContents.loadURL(target).catch((e) => console.warn('[Flow Project] startup open failed:', e.message))
+          return
+        }
 
-        // New Project 버튼 찾기 + 클릭 (AutoFlow: icon='add_2')
-        const clicked = await flowView.webContents.executeJavaScript(`
+        // 4단계: "Enter tool" 버튼 자동 클릭 → 프로젝트 생성
+        if (flowDetached()) { console.log('[Flow] enter-tool click skipped — mode switched'); return }
+        console.log('[Flow API] No project in URL, looking for Enter tool button...')
+        const clicked = await view.webContents.executeJavaScript(`
           (function() {
             const allButtons = document.querySelectorAll('button');
-            // 디버그 로깅
             const iconButtons = [], textButtons = [];
             for (const b of allButtons) {
               const icons = b.querySelectorAll('i, span, mat-icon');
@@ -1031,7 +506,6 @@ function createWindow() {
             console.log('[Flow Debug] Text buttons:', JSON.stringify(textButtons.slice(0, 10)));
             console.log('[Flow Debug] Total buttons:', allButtons.length);
 
-            // 방법 1: add_2 아이콘 버튼 (AutoFlow에서 확인된 실제 XPath)
             try {
               const xr = document.evaluate(
                 "//button[.//i[normalize-space(text())='add_2']] | (//button[.//i[normalize-space(.)='add_2']])",
@@ -1040,33 +514,25 @@ function createWindow() {
               if (xr.singleNodeValue) { xr.singleNodeValue.click(); return 'add_2_xpath'; }
             } catch {}
 
-            // 방법 2: icon 텍스트 'add_2' 직접 탐색
             for (const b of allButtons) {
               const icons = b.querySelectorAll('i, span.material-icons, span.material-symbols-outlined, mat-icon');
               for (const icon of icons) {
                 const t = icon.textContent.trim();
-                if (t === 'add_2' || t === 'add') {
-                  b.click(); return 'icon_' + t;
-                }
+                if (t === 'add_2' || t === 'add') { b.click(); return 'icon_' + t; }
               }
             }
-            // 방법 3: arrow_forward 아이콘 (구버전 호환)
             for (const b of allButtons) {
               const icons = b.querySelectorAll('i, span.material-icons, span.material-symbols-outlined');
               for (const icon of icons) {
-                if (icon.textContent.trim() === 'arrow_forward') {
-                  b.click(); return 'arrow_forward';
-                }
+                if (icon.textContent.trim() === 'arrow_forward') { b.click(); return 'arrow_forward'; }
               }
             }
-            // 방법 4: 텍스트 버튼
             for (const b of allButtons) {
               const text = b.textContent.trim().toLowerCase();
               if (['start', '시작', 'enter', 'new', 'create', '새로 만들기', '새 프로젝트', '새프로젝트', '만들기'].some(k => text.includes(k))) {
                 b.click(); return 'text_' + text.substring(0, 30);
               }
             }
-            // 방법 5: primary/filled 버튼
             for (const b of allButtons) {
               const cls = b.className || '';
               if (cls.includes('primary') || cls.includes('filled') || cls.includes('cta')) {
@@ -1079,7 +545,7 @@ function createWindow() {
 
         if (clicked) {
           console.log('[Flow API] Clicked button:', clicked)
-          enterToolClicked = true // 무한루프 방지
+          enterToolClicked = true
         } else {
           console.log('[Flow API] Button not found')
         }
@@ -1092,7 +558,7 @@ function createWindow() {
               console.log('[Flow API] ProjectId captured after button click:', capturedProjectId)
               break
             }
-            const pollUrl = flowView.webContents.getURL()
+            const pollUrl = view.webContents.getURL()
             const pollMatch = pollUrl.match(/\/project\/([a-f0-9-]{36})/)
             if (pollMatch) {
               capturedProjectId = pollMatch[1]
@@ -1104,15 +570,12 @@ function createWindow() {
 
         if (!capturedProjectId) {
           console.warn('[Flow API] ProjectId not captured — will try from next API request')
-          // 페이지 스크립트/localStorage에서 마지막 시도
-          const lastResort = await flowView.webContents.executeJavaScript(`
+          const lastResort = await view.webContents.executeJavaScript(`
             (function() {
-              // 스크립트 태그에서 projectId
               for (const s of document.querySelectorAll('script')) {
                 const m = s.textContent.match(/"projectId"\\s*:\\s*"([a-f0-9-]{36})"/);
                 if (m) return m[1];
               }
-              // localStorage에서 projectId
               try {
                 for (let i = 0; i < localStorage.length; i++) {
                   const key = localStorage.key(i);
@@ -1136,112 +599,136 @@ function createWindow() {
       }
     }
   })
-  flowView.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
-    console.error('[Flow] did-fail-load:', errorCode, errorDescription, validatedURL)
-  })
-  flowView.webContents.on('did-navigate', (event, url) => {
-    console.log('[Flow] did-navigate:', url)
-    mainWindow.webContents.send('flow-status', {
-      loaded: true, url, loggedIn: url.includes('labs.google/fx')
-    })
-    const pidMatch = url.match(/\/project\/([a-f0-9-]{36})/)
-    if (pidMatch) {
-      capturedProjectId = pidMatch[1]
-      console.log('[Flow API] ProjectId from navigation:', capturedProjectId)
-    }
-  })
-  // SPA pushState/replaceState 내비게이션 캡처 (Flow는 SPA)
-  flowView.webContents.on('did-navigate-in-page', (event, url) => {
-    console.log('[Flow] did-navigate-in-page:', url)
-    mainWindow.webContents.send('flow-status', {
-      loaded: true, url, loggedIn: url.includes('labs.google/fx')
-    })
-    const pidMatch = url.match(/\/project\/([a-f0-9-]{36})/)
-    if (pidMatch) {
-      if (!capturedProjectId) {
-        capturedProjectId = pidMatch[1]
-        console.log('[Flow API] ProjectId from SPA navigation:', capturedProjectId)
-      }
-      mainWindow.webContents.send('flow-status', {
-        authenticated: true,
-        url
-      })
-    }
 
-    // Re-inject fetch monkey-patch on SPA navigation (guard flag ensures idempotency)
-    flowView.webContents.executeJavaScript(FLOW_PAGE_INJECTION).catch(() => {})
-  })
-
-  // Debugger 프로토콜 attach는 첫 번째 자동화 IPC 호출까지 지연 (lazy attach).
-  // ensureDebuggerAttached() 함수가 모듈 레벨에 정의되어 있고,
-  // flowAPIDeps / videoDeps / domDeps 를 통해 IPC 핸들러에 주입된다.
-
-  // Flow 페이지의 네트워크 요청에서 projectId 자동 캡처 + 로깅
-  flowView.webContents.session.webRequest.onBeforeRequest(
-    { urls: ['*://*/*'] },
-    (details, callback) => {
-      if (details.url.includes('aisandbox') || details.url.includes('googleapis.com/v1')) {
-        console.log('[Flow Network]', details.method, details.url)
-        // projectId 자동 캡처 (URL에서)
-        const pidMatch = details.url.match(/projects\/([a-f0-9-]{36})/)
-        if (pidMatch && !capturedProjectId) {
-          capturedProjectId = pidMatch[1]
-          console.log('[Flow API] ProjectId captured from network:', capturedProjectId)
-        }
-        // request body에서도 projectId 캡처
-        if (details.uploadData) {
-          try {
-            const body = details.uploadData.map(d => d.bytes?.toString()).join('')
-            if (body) {
-              const bodyPidMatch = body.match(/"projectId":"([a-f0-9-]{36})"/)
-              if (bodyPidMatch && !capturedProjectId) {
-                capturedProjectId = bodyPidMatch[1]
-                console.log('[Flow API] ProjectId captured from body:', capturedProjectId)
-              }
-            }
-          } catch {}
-        }
-      }
-      callback({})
-    }
-  )
-
-  // Handle window resize — update view bounds
-  mainWindow.on('resize', () => updateBounds(mainWindow, flowView))
-
-  // Split 레이아웃 적용
-  updateBounds(mainWindow, flowView)
-
-  // Open DevTools in development (detached so it doesn't cover WebContentsView)
-  if (process.env.VITE_DEV_SERVER_URL) {
-    mainWindow.webContents.openDevTools({ mode: 'detach' })
-  }
-
-  // Load the React app (Vite dev server or built files)
-  if (process.env.VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
-  } else {
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
-  }
-
+  // #R16-8: 초기 Flow 네비게이션 rejection 이 unhandled 로 새지 않게 catch.
+  view.webContents.loadURL(FLOW_URL).catch((e) => console.warn('[Flow] initial loadURL failed:', e?.message))
+  return view
 }
 
-// === IPC Handlers ===
+// Mode controller wires mode:set IPC + lazy Flow view creation/attachment.
+const modeController = createModeController(() => mainWindow, makeFlowView)
+modeController.register(ipcMain)
 
-// File System IPC (Node.js fs operations)
-registerFilesystemIPC(ipcMain)
+// Layout, modal, sleep, open-external, show-in-folder IPC.
+registerLayoutIPC(ipcMain, () => mainWindow, modeController.getFlowView)
 
-// Auth IPC (Google OAuth)
-registerAuthIPC(ipcMain, () => flowView)
+// === Shared Flow helpers (trustedClick, fetch, parse, extract, configureFlowMode) ===
+const helpers = createSharedHelpers({
+  getFlowView: modeController.getFlowView,
+  getMainWindow: () => mainWindow,
+  constants: {
+    SESSION_URL, MEDIA_REDIRECT_URL, RECAPTCHA_SITE_KEY, RECAPTCHA_ACTION,
+  },
+})
+const {
+  trustedClickOnFlowView, parseFlowResponse, sessionFetch, flowPageFetch,
+  getRecaptchaToken, extractMediaIds, extractFifeUrls, extractBase64Images,
+  fetchMediaAsBase64, configureFlowMode, switchFlowToVideoMode, applyAgentDefaults,
+  ensureAgentOff, selectFlowModeTab,
+} = helpers
 
-// CapCut IPC (path detection, project writing, app launch)
-registerCapcutIPC(ipcMain)
+// ─── Monkey-patch path: inject pending values into the Flow page ──────────────
+// #R15-5: arming 결과를 반환한다(성공/실패) — 호출부(image/T2V/I2V)가 실패 시 생성을 중단해
+//   미주입(잘못된 seed/aspect/ref/i2v) 요청이 나가지 않게 한다.
+async function setFlowPageInject({ seed, aspectRatio, references, i2v, duration, videoModel }) {
+  const flowView = modeController.getFlowView()
+  if (!flowView) return { success: false, error: 'Flow view not ready' }
+  // duration/videoModel 은 T2V OmniFlash 강제·길이최적화용 — 페이지측이 inject.duration/
+  //   inject.videoModel 로 읽는다. 단일 contract(flow-inject-payload)로 set/clear 필드 일치.
+  const payload = buildFlowInjectPayload({ seed, aspectRatio, references, i2v, duration, videoModel })
+  try {
+    // #R16-1: payload 를 쓰고 fetch 패치 설치 여부를 함께 확인한다 — 패치가 없으면(주입 무효)
+    //   success 로 보고하지 않는다(호출부가 미주입 생성을 막을 수 있게).
+    const patched = await flowView.webContents.executeJavaScript(
+      `(function(){ window.__autoflowcut_inject__ = ${JSON.stringify(payload)}; return !!window.__autoflowcut_fetch_patched__ })()`
+    )
+    if (!patched) {
+      console.warn('[Flow Inject] fetch patch not installed — inject would be ineffective')
+      return { success: false, error: 'fetch patch not installed' }
+    }
+    console.log('[Flow Inject] __autoflowcut_inject__ set:', {
+      seed: payload.seed, aspectRatio: payload.aspectRatio,
+      refs: payload.references?.length ?? 0, i2v: !!payload.i2v,
+    })
+    return { success: true }
+  } catch (e) {
+    console.warn('[Flow Inject] setFlowPageInject failed:', e.message)
+    return { success: false, error: e.message }
+  }
+}
 
-// MCP IPC (Claude Code MCP server registration)
-registerMcpIPC(ipcMain)
+async function clearFlowPageInject() {
+  const flowView = modeController.getFlowView()
+  if (!flowView) return
+  try {
+    await flowView.webContents.executeJavaScript(
+      `window.__autoflowcut_inject__ = ${JSON.stringify(flowInjectClearPayload())}`
+    )
+  } catch (_) {}
+}
 
-// Layout, modal, sleep, open-external, show-in-folder IPC
-registerLayoutIPC(ipcMain, () => mainWindow, () => flowView)
+// ─── flow:report-response — page monkey-patch → main ───────────────────────
+// NOTE: flow:set-startup-project is registered by modeController.register(ipcMain) in mode.js.
+// No duplicate handler here.
+
+ipcMain.handle('flow:report-response', (event, payload) => {
+  const flowView = modeController.getFlowView()
+  if (!flowView || event.sender !== flowView.webContents) {
+    return { ok: false, error: 'unauthorized sender' }
+  }
+  // #R23-2: sender webContents 일치만으론 부족 — view 가 다른 페이지로 네비게이트되면
+  //   preload 브리지가 그대로 노출돼 생성 응답을 위조할 수 있다. 프레임 origin 을 Flow 로 제한.
+  if (!isFlowFrameOrigin(event.senderFrame?.url)) {
+    return { ok: false, error: 'unauthorized origin' }
+  }
+  return routeReportResponse(payload, {
+    getPendingGeneration: () => pendingGeneration,
+    setPendingGeneration: (v) => { pendingGeneration = v },
+    pendingGenerations,
+    getPendingVideoGeneration: () => pendingVideoGeneration,
+    setPendingVideoGeneration: (v) => { pendingVideoGeneration = v },
+  })
+})
+
+// Flow Agent(Maps 그라운딩) 모드 — 렌더러 설정(flowAgentOn)을 flow:set-agent-mode 로 push.
+// generate 핸들러가 이 값으로 ensureAgentOn vs ensureAgentOff 를 분기한다. 기본 OFF.
+let flowAgentOn = false
+ipcMain.handle('flow:set-agent-mode', (_e, { on } = {}) => { flowAgentOn = !!on; return { ok: true, flowAgentOn } })
+
+// ─── Flow API IPC handlers (all four modules) ───────────────────────────────
+const flowAPIDeps = {
+  getFlowView: modeController.getFlowView,
+  getFlowAgentOn: () => flowAgentOn,
+  // #R25-4: quota 를 쓰는 submit/upscale 핸들러가 API 모드에서 stale 호출로 Flow quota 를
+  //   소모하지 않도록 현재 모드를 노출한다.
+  getCurrentMode: modeController.getCurrentMode,
+  getMainWindow: () => mainWindow,
+  // Shared helpers
+  ...helpers,
+  // Inject state helpers
+  setFlowPageInject,
+  clearFlowPageInject,
+  // Pending generation state
+  pendingGenerations,
+  collectedMediaIds, // 공유 DOM 수집 de-dup (flow-api 비동기 + character 동기)
+  getCapturedProjectId: () => capturedProjectId,
+  setCapturedProjectId: (v) => { capturedProjectId = v },
+  getPendingGeneration: () => pendingGeneration,
+  setPendingGeneration: (v) => { pendingGeneration = v },
+  getPendingVideoGeneration: () => pendingVideoGeneration,
+  setPendingVideoGeneration: (v) => { pendingVideoGeneration = v },
+  getEnterToolClicked: () => enterToolClicked,
+  setEnterToolClicked: (v) => { enterToolClicked = v },
+  // URL constants
+  SESSION_URL, TOKEN_INFO_URL, FLOW_URL, MEDIA_REDIRECT_URL, UPLOAD_URL,
+  API_HEADERS, GENERATE_URL, BASE_API_URL,
+  VIDEO_T2V_URL, VIDEO_I2V_URL, VIDEO_I2V_START_END_URL, VIDEO_STATUS_URL, VIDEO_UPSCALE_URL,
+}
+
+registerFlowAPIIPC(ipcMain, flowAPIDeps)
+registerVideoIPC(ipcMain, flowAPIDeps)
+registerCharacterIPC(ipcMain, flowAPIDeps)
+registerDomIPC(ipcMain, flowAPIDeps)
 
 // Renderer reports the active project (with its work folder) so the native
 // "Recent Projects" menu stays in MRU order and scoped to the current folder.
@@ -1632,6 +1119,27 @@ function startMcpHttpServer(port) {
           return
         }
 
+        // POST /api/export-premiere — Premiere 프로젝트(.prproj) 내보내기
+        if (req.method === 'POST' && pathname === '/api/export-premiere') {
+          if (mainWindow) {
+            const optionsJson = body ? JSON.stringify(JSON.parse(body)) : '{}'
+            mainWindow.webContents.executeJavaScript(
+              `(async () => { const r = await window.__mcpExportPremiere?.(${optionsJson}); return JSON.stringify(r || {}); })()`
+            ).then(result => {
+              const r = JSON.parse(result)
+              res.writeHead(r.success ? 200 : 500)
+              res.end(JSON.stringify(r))
+            }).catch(err => {
+              res.writeHead(500)
+              res.end(JSON.stringify({ error: err.message }))
+            })
+          } else {
+            res.writeHead(503)
+            res.end(JSON.stringify({ error: 'App not ready' }))
+          }
+          return
+        }
+
         // ── 프로젝트 관리 API ──────────────────────────
 
         // GET /api/projects — 프로젝트 목록 조회
@@ -1839,77 +1347,6 @@ ipcMain.handle('mcp:stop-http', () => {
   return { success: true }
 })
 
-// === Flow API IPC (image generation, media fetch, token, reference upload) ===
-const flowAPIDeps = {
-  getFlowView: () => flowView,
-  getMainWindow: () => mainWindow,
-  trustedClickOnFlowView,
-  sessionFetch,
-  flowPageFetch,
-  parseFlowResponse,
-  getRecaptchaToken,
-  extractMediaIds,
-  extractFifeUrls,
-  extractBase64Images,
-  fetchMediaAsBase64,
-  configureFlowMode,
-  getCapturedProjectId: () => capturedProjectId,
-  setCapturedProjectId: (v) => { capturedProjectId = v },
-  getPendingGeneration: () => pendingGeneration,
-  setPendingGeneration: (v) => { pendingGeneration = v },
-  pendingGenerations,  // 비동기 모드용 Map (직접 참조)
-  getPendingReferenceImages: () => pendingReferenceImages,
-  setPendingReferenceImages: (v) => { pendingReferenceImages = v },
-  getPendingSeedValue: () => pendingSeedValue,
-  setPendingSeedValue: (v) => { pendingSeedValue = v },
-  setPendingImageAspectRatio: (v) => { pendingImageAspectRatio = v },
-  getEnterToolClicked: () => enterToolClicked,
-  setEnterToolClicked: (v) => { enterToolClicked = v },
-  ensureDebuggerAttached,
-  setFlowPageInject,
-  clearFlowPageInject,
-  SESSION_URL, TOKEN_INFO_URL, FLOW_URL, MEDIA_REDIRECT_URL, UPLOAD_URL,
-  API_HEADERS, GENERATE_URL, BASE_API_URL,
-}
-registerFlowAPIIPC(ipcMain, flowAPIDeps)
-
-// === Video Generation IPC (T2V, I2V, status polling) ===
-const videoDeps = {
-  getFlowView: () => flowView,
-  getMainWindow: () => mainWindow,
-  trustedClickOnFlowView,
-  sessionFetch,
-  flowPageFetch,
-  parseFlowResponse,
-  getRecaptchaToken,
-  configureFlowMode,
-  switchFlowToVideoMode,
-  getCapturedProjectId: () => capturedProjectId,
-  setCapturedProjectId: (v) => { capturedProjectId = v },
-  getPendingVideoGeneration: () => pendingVideoGeneration,
-  setPendingVideoGeneration: (v) => { pendingVideoGeneration = v },
-  getPendingI2VInjection: () => pendingI2VInjection,
-  setPendingI2VInjection: (v) => { pendingI2VInjection = v },
-  setPendingSeedValue: (v) => { pendingSeedValue = v },
-  ensureDebuggerAttached,
-  setFlowPageInject,
-  clearFlowPageInject,
-  SESSION_URL, VIDEO_T2V_URL, VIDEO_I2V_URL, VIDEO_I2V_START_END_URL, VIDEO_STATUS_URL, VIDEO_UPSCALE_URL,
-  API_HEADERS, FLOW_URL,
-}
-registerVideoIPC(ipcMain, videoDeps)
-
-// === DOM Mode IPC (navigation, script execution, prompt injection, scanning) ===
-const domDeps = {
-  getFlowView: () => flowView,
-  getMainWindow: () => mainWindow,
-  trustedClickOnFlowView,
-  FLOW_URL,
-  getCapturedProjectId: () => capturedProjectId,
-  setCapturedProjectId: (v) => { capturedProjectId = v },
-  ensureDebuggerAttached,
-}
-registerDomIPC(ipcMain, domDeps)
 
 // === Custom Protocol: local-resource:// ===
 // 로컬 파일을 렌더러에서 안전하게 로드하기 위한 커스텀 프로토콜
@@ -2004,7 +1441,37 @@ app.whenReady().then(() => {
   // Native menu + auto-updater (skips dev mode and AppX builds)
   try { setupAppMenuAndUpdater(() => mainWindow) } catch (e) { console.warn('[AutoFlowCut] Updater setup failed:', e.message) }
 
+  // 렌더러 언어 → 네이티브 메뉴 라벨 현지화 (I18nProvider 가 lang 변경 시 push).
+  ipcMain.handle('app:set-locale', (_e, { lang } = {}) => { try { setMenuLocale(lang) } catch {} ; return { ok: true } })
+
   createWindow()
+
+  // 진단: Cmd/Ctrl+Shift+E → 현재 Flow 웹뷰의 인터랙티브 요소 + bodyHTML 을 데스크톱에
+  //   타임스탬프 JSON 파일로 덤프. 라이브 셀렉터(예: 에이전트 챗 패널 닫기 버튼)를 추측 없이
+  //   실제 마크업에서 확보하려는 용도. (수동 콘솔 붙여넣기 대체)
+  try {
+    globalShortcut.register('CommandOrControl+Shift+E', () => { dumpFlowDomToFile() })
+  } catch (e) { console.warn('[FlowDomDump] shortcut register failed:', e.message) }
+})
+
+async function dumpFlowDomToFile() {
+  const flowView = modeController.getFlowView()
+  if (!flowView) { console.warn('[FlowDomDump] Flow view not ready (flow 모드인지 확인)'); return }
+  try {
+    const probe = await flowView.webContents.executeJavaScript(FLOW_DOM_DUMP_PROBE)
+    const filePath = path.join(app.getPath('desktop'), buildDomDumpFilename())
+    fsSync.writeFileSync(filePath, JSON.stringify(probe, null, 2))
+    console.log('[FlowDomDump] wrote', (probe.elements || []).length, 'elements →', filePath)
+    if (mainWindow) {
+      try { mainWindow.webContents.executeJavaScript(`console.log('[FlowDomDump] saved: ${filePath.replace(/'/g, "\\'")}')`) } catch {}
+    }
+  } catch (e) {
+    console.warn('[FlowDomDump] dump failed:', e.message)
+  }
+}
+
+app.on('will-quit', () => {
+  try { globalShortcut.unregisterAll() } catch {}
 })
 
 app.on('window-all-closed', () => {

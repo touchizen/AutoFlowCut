@@ -266,3 +266,50 @@ describe('SceneDetailModal — history 복원 시 메타 반영', () => {
     expect(callArgs.model).toBeNull()
   })
 })
+
+describe('SceneDetailModal — §3.8 close-on-regenerate', () => {
+  it('재생성 버튼 클릭 시 onGenerate AND onClose 모두 호출됨', () => {
+    const onGenerate = vi.fn()
+    const onClose = vi.fn()
+    const t = (k) => k
+
+    render(
+      <SceneDetailModal
+        scene={baseScene}
+        onUpdate={vi.fn()}
+        onClose={onClose}
+        onGenerate={onGenerate}
+        isGenerating={false}
+        t={t}
+        projectName="proj"
+        aspectRatio="9:16"
+      />
+    )
+
+    const regenBtn = screen.getByRole('button', { name: /sceneDetail\.regenerate/ })
+    fireEvent.click(regenBtn)
+
+    expect(onGenerate).toHaveBeenCalledWith('scene_1')
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('onGenerate 없을 때 재생성 버튼이 렌더 안 되고 onClose 호출 안 됨', () => {
+    const onClose = vi.fn()
+    const t = (k) => k
+
+    render(
+      <SceneDetailModal
+        scene={baseScene}
+        onUpdate={vi.fn()}
+        onClose={onClose}
+        isGenerating={false}
+        t={t}
+        projectName="proj"
+        aspectRatio="9:16"
+      />
+    )
+
+    expect(screen.queryByRole('button', { name: /sceneDetail\.regenerate/ })).not.toBeInTheDocument()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+})

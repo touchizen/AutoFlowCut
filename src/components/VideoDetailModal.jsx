@@ -11,6 +11,7 @@ import { toast } from './Toast'
 import Modal from './Modal'
 import ErrorSection from './ErrorSection'
 import MediaMetaBar from './MediaMetaBar'
+import PromptInput from './PromptInput'
 import { fetchLatestHistoryMeta, estimateBase64FileSize } from '../utils/mediaMeta'
 import { resolveVideoSrc, ensureBase64DataUrl } from '../utils/videoSrc'
 import './SceneDetailModal.css'   // 공통 스타일 재사용
@@ -21,12 +22,19 @@ export default function VideoDetailModal({
   t,
   projectName,
   onUpdate,       // (videoId, patch) => void — 부모 state 업데이트 (history 복원 후 저장)
+  onRegenerate,   // (video) => void — 재생성 트리거 (optional, 없으면 버튼 숨김)
+  isGenerating,   // bool — 재생성 중이면 버튼 disabled
+  references = [], // @멘션 chip 후보 (전체 references)
+  onPromptSave,   // (videoId, prompt) => void — 프롬프트 편집 저장 (restore onUpdate 와 분리)
 }) {
   const [histories, setHistories] = useState([])
   const [activeVideo, setActiveVideo] = useState(video.video || null)
   const [activeVideoPath, setActiveVideoPath] = useState(video.videoPath || null)
   const [videoSize, setVideoSize] = useState(null)
   const [dirty, setDirty] = useState(false)
+  // 프롬프트 편집 — restore(dirty)와 분리. video.prompt 와 다르면 promptDirty.
+  const [editPrompt, setEditPrompt] = useState(video.prompt || '')
+  const promptDirty = editPrompt !== (video.prompt || '')
   // 신규 생성은 video.seed/generatedAt 으로 들어오지만, 구버전은 비어있음 → history 메타에서 backfill
   const [backfilledMeta, setBackfilledMeta] = useState({ seed: null, generatedAt: null, model: null })
   // 사용자가 history 항목을 복원 선택했을 때 그 항목의 메타.
@@ -46,7 +54,8 @@ export default function VideoDetailModal({
     setActiveVideoPath(video.videoPath || null)
     setActiveMeta(null)  // prop 갱신 = 부모 상태가 권위 — 로컬 복원 메타 리셋
     setDirty(false)
-  }, [video.video, video.videoPath])
+    setEditPrompt(video.prompt || '')  // 부모 prompt 가 권위 — 편집 상태 리셋
+  }, [video.video, video.videoPath, video.prompt])
 
   // History에서 비디오 복원 — 파일 시스템 복원 + state 업데이트 (저장 시 부모 반영)
   const handleRestoreHistory = async (historyItem) => {
@@ -103,18 +112,35 @@ export default function VideoDetailModal({
     }
   }
 
+  // 재생성 — 생성은 백그라운드로 계속되고 모달은 즉시 닫힘
+  const handleRegenerate = () => {
+    if (typeof onRegenerate === 'function') {
+      onRegenerate(video)
+    }
+    onClose()
+  }
+
   // 저장 — 부모 state 에 반영 후 닫기. 복원한 history 가 있으면 메타도 함께 패치.
   const handleSave = () => {
-    if (typeof onUpdate === 'function') {
+    // restore(video/메타 복원) 저장은 dirty 일 때만 — prompt-only 변경에서 호출하면
+    // 일부 라우팅 분기가 videoPath/disabled 를 리셋하는 부작용이 있음.
+    if (dirty && typeof onUpdate === 'function') {
       const patch = { video: activeVideo, videoPath: activeVideoPath }
       if (activeMeta) {
         // 복원 시 받은 메타를 그대로 — null 이면 명시적으로 null 넣어 stale 값 제거.
         patch.seed = activeMeta.seed
         patch.generatedAt = activeMeta.generatedAt
         patch.model = activeMeta.model
-        if (activeMeta.mediaId) patch.mediaId = activeMeta.mediaId
+        // #R33-2: 복원 = 이전 자산으로 교체. routing 메타를 복원본 기준으로 명시 설정한다(없으면 null).
+        //   안 그러면 현재(교체 전) generation 의 generationId/mediaId 가 남아, 이후 retry 가 그 자산을
+        //   다시 다운로드해 복원 결과를 덮어쓴다(history-restore-to-wrong-item).
+        patch.mediaId = activeMeta.mediaId ?? null
+        patch.generationId = null
       }
       onUpdate(video.id, patch)
+    }
+    if (promptDirty && typeof onPromptSave === 'function') {
+      onPromptSave(video.id, editPrompt)
     }
     onClose()
   }
@@ -175,7 +201,7 @@ export default function VideoDetailModal({
   }, [projectName, video.id, video.video])
 
   // 비디오 소스: base64 (메모리) 우선, 없으면 file path — 공용 유틸로 통합.
-  const videoSrc = resolveVideoSrc(activeVideo, activeVideoPath || video.videoPath)
+  const videoSrc = resolveVideoSrc(activeVideo, activeVideoPath || video.videoPath, { version: video.generatedAt })
 
   // base64 데이터에서 파일 사이즈 추정 — 공통 유틸 재사용
   const getFileSize = () => estimateBase64FileSize(activeVideo)
@@ -205,12 +231,21 @@ export default function VideoDetailModal({
           <button className="btn-secondary" onClick={onClose}>
             {t('actions.cancel') || 'Cancel'}
           </button>
+          {typeof onRegenerate === 'function' && (
+            <button
+              className="btn-warning"
+              onClick={handleRegenerate}
+              disabled={isGenerating}
+            >
+              {isGenerating ? t('sceneDetail.generating') : t('sceneDetail.regenerate')}
+            </button>
+          )}
           {typeof onUpdate === 'function' && (
             <button
               className="btn-primary"
               onClick={handleSave}
-              disabled={!dirty}
-              title={dirty ? '' : (t('detail.noChanges') || 'No changes')}
+              disabled={!dirty && !promptDirty}
+              title={(dirty || promptDirty) ? '' : (t('detail.noChanges') || 'No changes')}
             >
               💾 {t('actions.save') || 'Save'}
             </button>
@@ -285,21 +320,25 @@ export default function VideoDetailModal({
             t={t}
           />
 
-          {/* Prompt */}
+          {/* Prompt — chip 피커로 편집 (footer 숨김). 저장은 onPromptSave. */}
           <div className="form-group">
             <div className="label-with-copy">
               <label>{t('results.prompt') || 'Prompt'}</label>
-              {video.prompt && (
+              {editPrompt && (
                 <button
                   className="btn-copy"
-                  onClick={() => copyToClipboard(video.prompt)}
+                  onClick={() => copyToClipboard(editPrompt)}
                   title="Copy"
                 >&#x29C9;</button>
               )}
             </div>
-            <div className="video-detail-prompt">
-              {video.prompt || '-'}
-            </div>
+            <PromptInput
+              value={editPrompt}
+              onChange={setEditPrompt}
+              references={references}
+              placeholder={t('results.prompt') || 'Prompt'}
+              hideFooter
+            />
           </div>
 
           {/* Meta Info */}

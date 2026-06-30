@@ -76,9 +76,18 @@ function recentLabels() {
 }
 
 describe('File menu — Recent Projects', () => {
-  it('shows "(없음)" when no project has been activated', async () => {
+  it('shows the empty label when no project has been activated (en default)', async () => {
     const { setupAppMenuAndUpdater } = await import('../../electron/updater.js')
     setupAppMenuAndUpdater(() => mainWindow)
+
+    // 메뉴 기본 언어 en (렌더러가 app:set-locale 로 push 하기 전)
+    expect(recentLabels()).toEqual(['(none)'])
+  })
+
+  it('localizes the empty label after setMenuLocale(ko)', async () => {
+    const { setupAppMenuAndUpdater, setMenuLocale } = await import('../../electron/updater.js')
+    setupAppMenuAndUpdater(() => mainWindow)
+    setMenuLocale('ko')
 
     expect(recentLabels()).toEqual(['(없음)'])
   })

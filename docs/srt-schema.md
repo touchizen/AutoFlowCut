@@ -42,7 +42,7 @@ TTS 음성 생성 후 타임코드가 확정되면 SRT를 생성하고, 이를 �
 
 ## SRT → 씬 CSV 변환
 
-SRT 파일을 Flow2CapCut에서 임포트하면 자동으로 씬 CSV 구조로 변환된다:
+SRT 파일을 AutoFlowCut에서 임포트하면 자동으로 씬 CSV 구조로 변환된다:
 - `subtitle` ← 자막 텍스트
 - `start_time` ← 시작 타임코드 (초 변환)
 - `end_time` ← 종료 타임코드 (초 변환)

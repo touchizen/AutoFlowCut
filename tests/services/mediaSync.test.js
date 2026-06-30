@@ -59,6 +59,16 @@ describe('syncVideosIntoScenes — I2V (framePairs)', () => {
     expect(scenes[0].videoI2VPath).toBe('/path/i1.mp4')
   })
 
+  it('framePair.generatedAt 을 scene.videoI2VGeneratedAt 로 동기화 (캐시버스터 — 로드/복구 경로)', () => {
+    const scenes = [makeScene('scene_1')]
+    const framePairs = [makeFramePair({ videoPath: '/path/i2v.mp4', generatedAt: 12345 })]
+
+    const synced = syncVideosIntoScenes(scenes, [], framePairs)
+
+    expect(synced).toBe(true)
+    expect(scenes[0].videoI2VGeneratedAt).toBe(12345)
+  })
+
   it('scene 에 옛 path 가 있고 framePair 의 새 path 와 다르면 overwrite (회귀 방지)', () => {
     const scenes = [makeScene('scene_1', { videoI2VPath: '/path/old-i2v.mp4' })]
     const framePairs = [makeFramePair({

@@ -1,0 +1,19 @@
+/* src/components/ModeToggle.css */
+.mode-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border-color, #3a3a3a);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.mode-toggle-btn {
+  padding: 4px 12px;
+  border: none;
+  background: var(--bg-secondary, #2a2a2a);
+  color: var(--text-secondary, #999);
+  font-size: .8rem;
+  cursor: pointer;
+}
+.mode-toggle-btn.active {
+  background: var(--primary-color, #6c8cff);
+  color: #fff;
+}

@@ -115,6 +115,26 @@ describe('useAudioTimeline', () => {
       expect(img.clips[0].sceneRef.id).toBe('scene_1')
     })
 
+    it('생성 중(generating) 이미지 씬 → 기존 이미지 숨김 + placeholder/generating (데이터 유지 → 에러 시 복귀)', () => {
+      const scenes = [{ id: 's1', image_path: '/old.png', status: 'generating', start_time: '00:00', end_time: '00:03' }]
+      const { result } = renderHook(() => useAudioTimeline(baseAudio, scenes, []))
+      const img = result.current.tracks.find(t => t.id === 'image')
+      const clip = img.clips.find(c => c.sceneRef.id === 's1')
+      expect(clip).toBeTruthy()
+      expect(clip.generating).toBe(true)
+      expect(clip.placeholder).toBe(true)
+      expect(clip.imagePath).toBe(null) // 기존 이미지 숨김(빈칸+shimmer)
+      expect(clip.imgSrc).toBe(null)
+    })
+
+    it('생성 중 이미지 클립은 generatingStartedAt/EndedAt 를 실어 경과시간 표시(클록)에 쓰게 한다', () => {
+      const scenes = [{ id: 's1', status: 'generating', start_time: '00:00', end_time: '00:03', generatingStartedAt: 1000, generatingEndedAt: null }]
+      const { result } = renderHook(() => useAudioTimeline(baseAudio, scenes, []))
+      const clip = result.current.tracks.find(t => t.id === 'image').clips.find(c => c.sceneRef.id === 's1')
+      expect(clip.generatingStartedAt).toBe(1000)
+      expect(clip.generatingEndedAt).toBe(null)
+    })
+
     it('skips scenes with invalid time', () => {
       const badScenes = [
         { id: 'x', image_path: '/x.png', start_time: 'invalid', end_time: '00:03' },
@@ -126,10 +146,174 @@ describe('useAudioTimeline', () => {
       expect(img.clips[0].sceneRef.id).toBe('y')
     })
 
+    // 캐시버스터 — 같은 경로 재생성 시 stale 회피. clip 이 cache-busted imgSrc 를 들고
+    // 있어야 Clip.jsx 가 raw file:// 대신 그것을 쓴다.
+    it('image clip imgSrc 에 ?v=generatedAt 부착', () => {
+      const scenes = [{ id: 's1', image_path: '/img/1.png', generatedAt: 12345, start_time: '00:00', end_time: '00:03' }]
+      const { result } = renderHook(() => useAudioTimeline(baseAudio, scenes, []))
+      const img = result.current.tracks.find(t => t.id === 'image')
+      expect(img.clips[0].imgSrc).toBe('file:///img/1.png?v=12345')
+    })
+
+    it('image clip imgSrc — generatedAt 없으면 ?v 미부착', () => {
+      const { result } = renderHook(() => useAudioTimeline(baseAudio, baseScenes, []))
+      const img = result.current.tracks.find(t => t.id === 'image')
+      expect(img.clips[0].imgSrc).toBe('file:///img/1.png')
+    })
+
+    // B: generating 씬은 imagePath 없어도 placeholder 클립 생성 → 타임라인 shimmer
+    it('generating 씬은 imagePath 없어도 placeholder 클립 생성', () => {
+      const scenes = [{ id: 's1', status: 'generating', start_time: '00:00', end_time: '00:03' }]
+      const { result } = renderHook(() => useAudioTimeline(baseAudio, scenes, []))
+      const img = result.current.tracks.find(t => t.id === 'image')
+      expect(img.clips).toHaveLength(1)
+      expect(img.clips[0]).toMatchObject({ generating: true, placeholder: true })
+      expect(img.clips[0].imagePath).toBeNull()
+    })
+
+    it('완료 이미지 클립은 generating=false, placeholder=false', () => {
+      const { result } = renderHook(() => useAudioTimeline(baseAudio, baseScenes, []))
+      const img = result.current.tracks.find(t => t.id === 'image')
+      expect(img.clips[0]).toMatchObject({ generating: false, placeholder: false })
+    })
+
+    it('완료된 씬(done, generatingStartedAt 남고 generatingEndedAt 없음)은 generating=false (shimmer 영구화 회귀)', () => {
+      // 이미지 완료 경로(imageFinalize)는 status='done' 만 쓰고 generatingEndedAt 을 안 채운다.
+      // 따라서 (generatingStartedAt && !generatingEndedAt) 에 의존하면 완료 후에도 shimmer 가 영구히 남는다.
+      const scenes = [{ id: 's1', image_path: '/i.png', status: 'done', generatingStartedAt: 1000, start_time: '00:00', end_time: '00:03' }]
+      const { result } = renderHook(() => useAudioTimeline(baseAudio, scenes, []))
+      const img = result.current.tracks.find(t => t.id === 'image')
+      expect(img.clips[0].generating).toBe(false)
+    })
+
+    it('pending 씬(이미지 없음, 생성 중 아님)은 클립 안 만듦', () => {
+      const scenes = [{ id: 's1', status: 'pending', start_time: '00:00', end_time: '00:03' }]
+      const { result } = renderHook(() => useAudioTimeline(baseAudio, scenes, []))
+      const img = result.current.tracks.find(t => t.id === 'image')
+      expect(img).toBeUndefined() // 이미지 클립 0개 → 트랙 자체 없음
+    })
+
+    // 비디오도 안정 파일명(t2v_N/i2v_N) 재생성 시 stale → videoSrc 에 ?v=generatedAt.
+    // (useVideoPosters 가 이 videoSrc 를 poster 추출 키로 쓰므로 poster 도 갱신됨)
+    it('video clip videoSrc 에 ?v=generatedAt 부착 (비디오 generatedAt 없으면 scene fallback)', () => {
+      const scenes = [{ id: 's1', image_path: '/i.png', videoT2VPath: '/v/t2v_1.mp4', videoT2VDuration: 2, generatedAt: 999, start_time: '00:00', end_time: '00:03' }]
+      const { result } = renderHook(() => useAudioTimeline(baseAudio, scenes, []))
+      const video = result.current.tracks.find(t => t.id === 'video-t2v')
+      expect(video.clips[0].videoSrc).toBe('file:///v/t2v_1.mp4?v=999')
+    })
+
+    it('video clip videoSrc — 비디오 자체 generatedAt(videoT2V/I2V) 우선 (이미지 재생성과 분리)', () => {
+      const scenes = [{ id: 's1', image_path: '/i.png', videoT2VPath: '/v/t2v_1.mp4', videoT2VDuration: 2, generatedAt: 111, videoT2VGeneratedAt: 222, start_time: '00:00', end_time: '00:03' }]
+      const { result } = renderHook(() => useAudioTimeline(baseAudio, scenes, []))
+      const video = result.current.tracks.find(t => t.id === 'video-t2v')
+      expect(video.clips[0].videoSrc).toBe('file:///v/t2v_1.mp4?v=222') // 222(비디오) not 111(이미지)
+    })
+
+    it('씬에 i2v·t2v 둘 다 → video-i2v(위)·video-t2v(아래) 두 트랙으로 분리', () => {
+      const scenes = [{
+        id: 's1', image_path: '/i.png', start_time: '00:00', end_time: '00:10',
+        videoI2VPath: '/v/i2v_1.mp4', videoI2VDuration: 2,
+        videoT2VPath: '/v/t2v_1.mp4', videoT2VDuration: 4,
+      }]
+      const { result } = renderHook(() => useAudioTimeline(baseAudio, scenes, []))
+      const tracks = result.current.tracks
+      const i2vIdx = tracks.findIndex(t => t.id === 'video-i2v')
+      const t2vIdx = tracks.findIndex(t => t.id === 'video-t2v')
+      expect(i2vIdx).toBeGreaterThanOrEqual(0)
+      expect(t2vIdx).toBeGreaterThan(i2vIdx) // i2v 가 위
+      expect(tracks[i2vIdx].clips[0].videoPath).toBe('/v/i2v_1.mp4')
+      expect(tracks[t2vIdx].clips[0].videoPath).toBe('/v/t2v_1.mp4')
+    })
+
+    it('t2v 생성 중(videoT2VStatus=generating) → video-t2v 트랙에 placeholder+generating 클립', () => {
+      const scenes = [{ id: 's1', image_path: '/i.png', start_time: '00:00', end_time: '00:03', videoT2VStatus: 'generating' }]
+      const { result } = renderHook(() => useAudioTimeline(baseAudio, scenes, []))
+      const t2v = result.current.tracks.find(t => t.id === 'video-t2v')
+      expect(t2v).toBeTruthy()
+      expect(t2v.clips[0].generating).toBe(true)
+      expect(t2v.clips[0].placeholder).toBe(true)
+    })
+
+    it('t2v 생성 중 클립은 videoT2VGeneratingStartedAt/EndedAt 를 clip 에 실어 경과시간 표시에 쓰게 한다', () => {
+      const scenes = [{ id: 's1', image_path: '/i.png', start_time: '00:00', end_time: '00:03', videoT2VStatus: 'generating', videoT2VGeneratingStartedAt: 2000, videoT2VGeneratingEndedAt: null }]
+      const { result } = renderHook(() => useAudioTimeline(baseAudio, scenes, []))
+      const clip = result.current.tracks.find(t => t.id === 'video-t2v').clips[0]
+      expect(clip.generatingStartedAt).toBe(2000)
+      expect(clip.generatingEndedAt).toBe(null)
+    })
+
     it('omits image track when scenes array is empty', () => {
       const { result } = renderHook(() => useAudioTimeline(baseAudio, [], []))
       const img = result.current.tracks.find(t => t.id === 'image')
       expect(img).toBeUndefined()
+    })
+  })
+
+  describe('disabled 비디오 클립', () => {
+    it('disabled 인 영상 클립도 트랙에 존재하되 disabled:true(타임라인 dim 유지)', () => {
+      const scenes = [{
+        id: 'scene_1', startTime: 0, endTime: 3, duration: 3,
+        imagePath: '/i.png',
+        videoI2VPath: '/i.mp4', videoI2VDuration: 2, videoI2VDisabled: true,
+      }]
+      const { result } = renderHook(() => useAudioTimeline(null, scenes, []))
+      const i2vTrack = result.current.tracks.find(t => t.role === 'video-i2v')
+      expect(i2vTrack).toBeTruthy()
+      const clip = i2vTrack.clips.find(c => c.sceneRef.id === 'scene_1')
+      expect(clip).toBeTruthy()          // disabled 라도 사라지면 안 됨
+      expect(clip.disabled).toBe(true)   // dim 표시용
+    })
+  })
+
+  describe('재생성 중(generating) 비디오 (t2v/i2v)', () => {
+    it('videoI2VPath 있어도 videoI2VStatus=generating 이면 빈칸+shimmer (기존 숨김)', () => {
+      const scenes = [{
+        id: 'scene_1', startTime: 0, endTime: 3, duration: 3, imagePath: '/i.png',
+        videoI2VPath: '/old.mp4', videoI2VDuration: 8, videoI2VStatus: 'generating',
+      }]
+      const { result } = renderHook(() => useAudioTimeline(null, scenes, []))
+      const i2vTrack = result.current.tracks.find(t => t.role === 'video-i2v')
+      const clip = i2vTrack.clips.find(c => c.sceneRef.id === 'scene_1')
+      expect(clip).toBeTruthy()
+      expect(clip.generating).toBe(true)
+      expect(clip.placeholder).toBe(true)
+      expect(clip.videoPath).toBe(null)
+    })
+    it('i2v generating 아니면 기존 비디오 표시 (에러/취소 시 복귀)', () => {
+      const scenes = [{
+        id: 'scene_1', startTime: 0, endTime: 3, duration: 3, imagePath: '/i.png',
+        videoI2VPath: '/old.mp4', videoI2VDuration: 8, // videoI2VStatus 없음
+      }]
+      const { result } = renderHook(() => useAudioTimeline(null, scenes, []))
+      const i2vTrack = result.current.tracks.find(t => t.role === 'video-i2v')
+      const clip = i2vTrack.clips.find(c => c.sceneRef.id === 'scene_1')
+      expect(clip.videoPath).toBe('/old.mp4')
+      expect(clip.placeholder).toBeFalsy()
+    })
+    it('videoT2VPath 있어도 generating 이면 빈칸+shimmer (기존 숨김), placement 안 탐', () => {
+      const scenes = [{
+        id: 'scene_1', startTime: 0, endTime: 3, duration: 3, imagePath: '/i.png',
+        videoT2VPath: '/old.mp4', videoT2VDuration: 8, videoT2VStatus: 'generating',
+      }]
+      const { result } = renderHook(() => useAudioTimeline(null, scenes, []))
+      const t2vTrack = result.current.tracks.find(t => t.role === 'video-t2v')
+      const clip = t2vTrack.clips.find(c => c.sceneRef.id === 'scene_1')
+      expect(clip).toBeTruthy()
+      expect(clip.generating).toBe(true)
+      expect(clip.placeholder).toBe(true)
+      expect(clip.videoPath).toBe(null) // 기존 비디오 숨김(빈칸)
+    })
+    it('generating 아니면 기존 비디오 그대로 표시 (에러/취소 시 복귀 — 데이터 유지)', () => {
+      const scenes = [{
+        id: 'scene_1', startTime: 0, endTime: 3, duration: 3, imagePath: '/i.png',
+        videoT2VPath: '/old.mp4', videoT2VDuration: 8, // status 없음 = 완료/idle
+      }]
+      const { result } = renderHook(() => useAudioTimeline(null, scenes, []))
+      const t2vTrack = result.current.tracks.find(t => t.role === 'video-t2v')
+      const clip = t2vTrack.clips.find(c => c.sceneRef.id === 'scene_1')
+      expect(clip).toBeTruthy()
+      expect(clip.videoPath).toBe('/old.mp4') // 기존 비디오 표시
+      expect(clip.placeholder).toBeFalsy()
     })
   })
 
@@ -258,10 +442,10 @@ describe('useAudioTimeline', () => {
   })
 
   describe('트랙 순서', () => {
-    it('returns tracks in order: image, subtitle, narration, voice, sfx', () => {
+    it('returns tracks in z-order: subtitle, image, narration, voice, sfx (자막 최상단)', () => {
       const { result } = renderHook(() => useAudioTimeline(baseAudio, baseScenes, baseSrt))
       const ids = result.current.tracks.map(t => t.id)
-      expect(ids).toEqual(['image', 'subtitle', 'narration', 'voice', 'sfx'])
+      expect(ids).toEqual(['subtitle', 'image', 'narration', 'voice', 'sfx'])
     })
   })
 

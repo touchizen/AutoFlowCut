@@ -1,6 +1,7 @@
 import { app, Menu, dialog, shell } from 'electron'
 import electronUpdater from 'electron-updater'
 import { loadRecentProjects, saveRecentProjects, mergeRecent } from './recent-projects.js'
+import { getMenuLabels } from './menuLabels.js'
 
 const { autoUpdater } = electronUpdater
 
@@ -13,10 +14,19 @@ const { autoUpdater } = electronUpdater
 let getMainWindowRef = () => null
 let recentProjects = []
 let currentWorkFolder = null
+// 렌더러가 app:set-locale 로 push 하는 현재 언어 — 메뉴 라벨 현지화용. 기본 en.
+let currentLang = 'en'
 
 // AppX (Microsoft Store) builds update through the Store, not electron-updater.
 // process.windowsStore is true when running as a packaged AppX.
 const isAppx = process.platform === 'win32' && !!process.windowsStore
+
+// dev 감지. app.isPackaged 는 electron 바이너리 이름을 'AutoFlowCut' 로 패치
+// (scripts/patch-electron-name.cjs)하면 dev 에서도 true 로 오판한다(basename !== 'electron').
+// 그래서 dev 가드가 뚫려 checkForUpdates 가 실행되고 app-update.yml(패키지 빌드에만 존재)을
+// 못 찾아 ENOENT 가 났다. vite-plugin-electron 이 dev 에서만 설정하는 VITE_DEV_SERVER_URL 을
+// 신뢰 신호로 쓴다(main.js 의 dev 판정과 동일).
+const isDev = !!process.env.VITE_DEV_SERVER_URL || !app.isPackaged
 
 let manualCheckInProgress = false
 let updateDownloadInProgress = false
@@ -127,7 +137,7 @@ function startAutoCheck() {
     log('AppX build detected — skipping auto-update (Microsoft Store handles updates)')
     return
   }
-  if (!app.isPackaged) {
+  if (isDev) {
     log('dev mode — skipping auto-update check')
     return
   }
@@ -149,7 +159,7 @@ function manualCheck() {
     })
     return
   }
-  if (!app.isPackaged) {
+  if (isDev) {
     dialog.showMessageBox({
       type: 'info',
       title: 'AutoFlowCut',
@@ -201,9 +211,10 @@ function sendMenuAction(action, payload = {}) {
 function buildAppMenu() {
   const isMac = process.platform === 'darwin'
   const appName = app.name || 'AutoFlowCut'
+  const L = getMenuLabels(currentLang)
 
   const checkForUpdatesItem = {
-    label: '업데이트 확인…',
+    label: L.checkForUpdates,
     click: () => manualCheck(),
   }
 
@@ -230,7 +241,7 @@ function buildAppMenu() {
         label: e.name,
         click: () => sendMenuAction('open-project', { name: e.name }),
       }))
-    : [{ label: '(없음)', enabled: false }]
+    : [{ label: L.recentEmpty, enabled: false }]
 
   const fileMenu = {
     label: 'File',
@@ -269,6 +280,11 @@ function buildAppMenu() {
   const viewMenu = {
     label: 'View',
     submenu: [
+      {
+        label: L.showModeSelector,
+        click: () => sendMenuAction('show-mode-selector'),
+      },
+      { type: 'separator' },
       { role: 'reload' },
       { role: 'forceReload' },
       { role: 'toggleDevTools' },
@@ -294,11 +310,11 @@ function buildAppMenu() {
 
   const helpSubmenu = [
     {
-      label: 'GitHub 저장소',
+      label: L.github,
       click: () => shell.openExternal('https://github.com/touchizen/AutoFlowCut'),
     },
     {
-      label: '이슈 보고',
+      label: L.reportIssue,
       click: () => shell.openExternal('https://github.com/touchizen/AutoFlowCut/issues'),
     },
   ]
@@ -355,6 +371,17 @@ export function setupAppMenuAndUpdater(getMainWindow = () => null) {
   recentProjects = loadRecentProjects()
   buildAppMenu()
   startAutoCheck()
+}
+
+/**
+ * 렌더러(I18nProvider)가 app:set-locale 로 push 한 언어로 메뉴 라벨을 현지화.
+ * 바뀐 경우에만 메뉴를 다시 그린다.
+ * @param {string} lang
+ */
+export function setMenuLocale(lang) {
+  if (!lang || lang === currentLang) return
+  currentLang = lang
+  buildAppMenu()
 }
 
 export { manualCheck as checkForUpdatesManually }

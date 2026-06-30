@@ -2,21 +2,20 @@ const sharp = require('../en/node_modules/sharp');
 const path = require('path');
 const fs = require('fs');
 
-const BG_COLOR = { r: 24, g: 24, b: 32, alpha: 1 };
 const FONT_SIZE = 64;
 const CAPTION_HEIGHT = 120;
 
 const screenshots = [
-  { file: '스크린샷 2026-04-22-1.png', caption: '원클릭 CapCut 내보내기 — 씬이 바로 편집 가능한 영상 프로젝트로' },
-  { file: '스크린샷 2026-04-22-2.png', caption: '타임라인 기반 오디오 & 비디오 미리보기' },
-  { file: 'Screenshot 2026-05-03 220159.png', caption: '멀티 트랙 오디오 타임라인 — 나레이션, 대사, 효과음, 자막을 한 번에' },
-  { file: '스크린샷 2026-04-22-3.png', caption: '자막, 타임코드, 미디어를 한 화면에서 씬 관리' },
-  { file: '스크린샷 2026-04-22-4.png', caption: 'AI 기반 배치 영상 생성 — F2V로 모든 씬을 영상으로' },
-  { file: '스크린샷 2026-04-22-5.png', caption: '레퍼런스 이미지로 캐릭터 비주얼 일관성 유지' },
-  { file: '스크린샷 2026-04-22-7.png', caption: 'AI 생성 이미지와 프롬프트를 한눈에 확인' },
-  { file: '스크린샷 2026-04-22-8.png', caption: '생성된 모든 이미지와 영상이 내 PC에 자동 저장' },
-  { file: '스크린샷 2026-04-22-9.png', caption: 'Claude AI가 씬 생성부터 CapCut 내보내기까지 자동화' },
-  { file: '스크린샷 2026-04-22-10.png', caption: '87가지 아트 스타일 프리셋 제공' },
+  { file: '스크린샷 2026-06-06 200125.png', caption: '긴 영상도 장면, 음성, 자막을 한 타임라인에서 확인' },
+  { file: '스크린샷 2026-06-06 200142.png', caption: 'AI 장면 생성부터 영상 편집 준비까지 한 번에' },
+  { file: '스크린샷 2026-06-06 200205.png', caption: '프로젝트 전체의 프롬프트, 미디어, 생성 상태를 한눈에 관리' },
+  { file: '스크린샷 2026-06-06 200217.png', caption: '이미지 100장도 2~5분 안에 빠르게 대량 생성' },
+  { file: '스크린샷 2026-06-06 200302.png', caption: '생성 결과와 타임코드를 보며 장면별 품질을 검토' },
+  { file: '스크린샷 2026-06-06 200318.png', caption: '대본, CSV, 레퍼런스, 자막, 오디오 패키지를 손쉽게 가져오기' },
+  { file: '스크린샷 2026-06-06 200337.png', caption: '자막과 Ken Burns 효과가 포함된 CapCut 프로젝트로 내보내기' },
+  { file: '스크린샷 2026-06-06 200413.png', caption: '장면 목록에서 스토리 흐름과 생성 결과를 빠르게 점검' },
+  { file: '스크린샷 2026-06-09 121016.png', caption: '이미지 프롬프트에서 @멘션으로 캐릭터 레퍼런스 삽입' },
+  { file: '스크린샷 2026-06-06 201227.png', caption: '내보낸 프로젝트를 CapCut에서 열어 바로 최종 편집' },
 ];
 
 function splitToLines(text, fontSize, maxWidth) {
@@ -24,10 +23,6 @@ function splitToLines(text, fontSize, maxWidth) {
   const totalW = [...text].reduce((sum, ch) => sum + charW(ch), 0);
   if (totalW <= maxWidth) return [text];
 
-  const dashIdx = text.indexOf(' — ');
-  if (dashIdx > 0) {
-    return [text.slice(0, dashIdx), text.slice(dashIdx + 3)];
-  }
   const mid = Math.floor(text.length / 2);
   let splitAt = mid;
   for (let d = 0; d < mid; d++) {
@@ -59,7 +54,6 @@ async function addCaption(inputFile, caption, outputFile) {
   const strokeW = Math.max(2, (fontSize / 16) | 0);
   const shadowStd = Math.max(2, (fontSize / 16) | 0);
   const shadowDx = Math.max(2, (fontSize / 20) | 0);
-  const shadowDy = shadowDx;
 
   const textElements = lines.map((line, i) => {
     const y = captionH / 2 + (i - (lineCount - 1) / 2) * lineHeight;
@@ -81,34 +75,36 @@ async function addCaption(inputFile, caption, outputFile) {
     <svg width="${imgWidth}" height="${captionH}">
       <defs>
         <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
-          <feDropShadow dx="${shadowDx}" dy="${shadowDy}" stdDeviation="${shadowStd}" flood-color="black" flood-opacity="0.8"/>
+          <feDropShadow dx="${shadowDx}" dy="${shadowDx}" stdDeviation="${shadowStd}" flood-color="black" flood-opacity="0.8"/>
         </filter>
       </defs>
       <rect width="100%" height="100%" fill="rgba(0,0,0,0.6)"/>
       ${textElements}
     </svg>`;
 
-  const overlayBuffer = Buffer.from(overlaySvg);
-
   await sharp(imgBuffer)
-    .composite([
-      { input: overlayBuffer, top: imgHeight - captionH, left: 0 },
-    ])
+    .composite([{ input: Buffer.from(overlaySvg), top: imgHeight - captionH, left: 0 }])
     .png()
     .toFile(outputFile);
 
   const lineLabel = lineCount > 1 ? ` (${lineCount} lines)` : '';
-  console.log(`✓ ${path.basename(outputFile)} (${imgWidth}x${imgHeight})${lineLabel}`);
+  console.log(`${path.basename(outputFile)} (${imgWidth}x${imgHeight})${lineLabel}`);
 }
 
 async function main() {
-  const srcDir = __dirname;
-  const outDir = path.join(__dirname, 'captioned');
-  if (!fs.existsSync(outDir)) fs.mkdirSync(outDir);
+  const dir = __dirname;
+  const outDir = path.join(dir, 'captioned');
+  fs.mkdirSync(outDir, { recursive: true });
+
+  for (const f of fs.readdirSync(outDir)) {
+    if (/^\d{2}_.+\.png$/i.test(f)) {
+      fs.unlinkSync(path.join(outDir, f));
+    }
+  }
 
   for (let i = 0; i < screenshots.length; i++) {
     const s = screenshots[i];
-    const inputFile = path.join(srcDir, s.file);
+    const inputFile = path.join(dir, s.file);
     const outputFile = path.join(outDir, `${String(i + 1).padStart(2, '0')}_${s.file}`);
     await addCaption(inputFile, s.caption, outputFile);
   }
@@ -116,4 +112,7 @@ async function main() {
   console.log(`\nDone! ${screenshots.length} captioned screenshots saved to: ${outDir}`);
 }
 
-main().catch(console.error);
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

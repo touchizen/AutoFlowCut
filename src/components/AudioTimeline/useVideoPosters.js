@@ -20,6 +20,10 @@ import { getVideoPoster } from '../../utils/videoPoster'
 //
 // Poster 완료 → setPosterMap을 매번 부르지 않고 RAF 한 프레임에 묶어 flush.
 // 500 클립이 같은 프레임에 끝나도 setState는 1회 → React 리렌더 1회.
+// 추출 실패 재시도: 백오프(BASE*(n+1)) 로 최대 N회. 초기 로드 경합/타임아웃 후 자동 복구.
+const POSTER_MAX_RETRIES = 2
+const POSTER_RETRY_BASE_MS = 800
+
 const hasRAF = typeof requestAnimationFrame === 'function'
 function scheduleFrame(fn) {
   if (hasRAF) return requestAnimationFrame(fn)
@@ -100,24 +104,43 @@ export function useVideoPosters(clips) {
       rafIdRef.current = scheduleFrame(flush)
     }
 
-    for (const clip of clips) {
-      if (!clip?.id || !clip?.videoSrc) continue
-      const src = clip.videoSrc
+    // 추출 실패(null) 시 bounded 재시도 — getVideoPoster 는 6s 타임아웃/에러로 null 을 줄 수 있고
+    // (특히 초기 로드 렌더러 경합 + non-faststart 비디오), 재시도가 없으면 한 번 실패한 썸네일이
+    // 클립셋 변경(스크롤) 전까지 영구 누락됨. 백오프 후 보통 성공(경합이 가심).
+    const retryTimers = new Set()
+    const attempt = (clip, src, n) => {
       // getVideoPoster는 sequential queue + 100-entry LRU + consumer-signal 분리 (videoPoster.js).
+      // null 결과는 cache 에서 삭제되므로 재호출 시 실제 재추출됨.
       getVideoPoster(src, { signal })
         .then(dataUrl => {
           if (cancelled || signal.aborted) return
-          if (!dataUrl) return
+          if (!dataUrl) {
+            if (n < POSTER_MAX_RETRIES) {
+              const tid = setTimeout(() => {
+                retryTimers.delete(tid)
+                if (!cancelled && !signal.aborted) attempt(clip, src, n + 1)
+              }, POSTER_RETRY_BASE_MS * (n + 1))
+              retryTimers.add(tid)
+            }
+            return
+          }
           pendingRef.current.set(clip.id, { url: dataUrl, src })
           scheduleFlush()
         })
         .catch(() => { /* swallow — getVideoPoster already returns null on error */ })
     }
 
+    for (const clip of clips) {
+      if (!clip?.id || !clip?.videoSrc) continue
+      attempt(clip, clip.videoSrc, 0)
+    }
+
     return () => {
       cancelled = true
       controller.abort()
       pendingRef.current.clear()
+      for (const tid of retryTimers) clearTimeout(tid)
+      retryTimers.clear()
       cancelFrame(rafIdRef.current)
       rafIdRef.current = null
     }

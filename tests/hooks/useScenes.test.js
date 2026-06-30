@@ -479,6 +479,7 @@ Goodbye world`
         result.current.updateReferences([
           { name: 'Hero', type: 'character' },
           { name: 'Villain', type: 'character' },
+          { name: '철수', type: 'character' },
           { name: 'Forest', type: 'scene' },
           { name: 'Castle', type: 'scene' },
           { name: 'Anime', type: 'style' },
@@ -517,6 +518,20 @@ Goodbye world`
 
       expect(matched).toHaveLength(1)
       expect(matched[0].name).toBe('Anime')
+    })
+
+    it('matches category-only style references', () => {
+      const { result } = renderHook(() => useScenes())
+
+      act(() => {
+        result.current.updateReferences([
+          { name: 'Noir', category: 'MEDIA_CATEGORY_STYLE', prompt: 'noir lighting' },
+        ])
+      })
+
+      const matched = result.current.getMatchingReferences({ characters: '', scene_tag: '', style_tag: 'noir' })
+      expect(matched).toHaveLength(1)
+      expect(matched[0].name).toBe('Noir')
     })
 
     it('matches multiple tags with comma delimiter', () => {
@@ -581,6 +596,43 @@ Goodbye world`
       const matched = result.current.getMatchingReferences(scene)
 
       expect(matched).toHaveLength(2)
+    })
+
+    it('also matches @name inline mentions in scene.prompt', () => {
+      const result = setupWithRefs()
+
+      const scene = { prompt: 'A wizard @hero fighting @villain in @forest', characters: '', scene_tag: '', style_tag: '' }
+      const matched = result.current.getMatchingReferences(scene)
+
+      expect(matched.map((r) => r.name).sort()).toEqual(['Forest', 'Hero', 'Villain'])
+    })
+
+    it('also matches @name inline mentions with attached Hangul particles', () => {
+      const result = setupWithRefs()
+
+      const scene = { prompt: 'A wizard @hero가 @forest에서 걷는다', characters: '', scene_tag: '', style_tag: '' }
+      const matched = result.current.getMatchingReferences(scene)
+
+      expect(matched.map((r) => r.name).sort()).toEqual(['Forest', 'Hero'])
+    })
+
+    it('also matches Hangul @name inline mentions with attached particles', () => {
+      const result = setupWithRefs()
+
+      const scene = { prompt: '@철수가 숲으로 간다', characters: '', scene_tag: '', style_tag: '' }
+      const matched = result.current.getMatchingReferences(scene)
+
+      expect(matched.map((r) => r.name)).toEqual(['철수'])
+    })
+
+    it('dedupes @mention with CSV tag pointing at the same ref', () => {
+      const result = setupWithRefs()
+
+      const scene = { prompt: 'A wizard @hero appears', characters: 'hero', scene_tag: '', style_tag: '' }
+      const matched = result.current.getMatchingReferences(scene)
+
+      expect(matched).toHaveLength(1)
+      expect(matched[0].name).toBe('Hero')
     })
   })
 

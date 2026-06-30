@@ -8,6 +8,11 @@
  */
 
 import { aspectRatioTabSuffix } from '../flow-aspect-ratio-ui.js'
+import { buildAgentDefaultsScript, buildListModelsScript } from '../flow-agent-defaults.js'
+import { AGENT_TOGGLE_PROBE, AGENT_TOGGLE_SELECTOR, AGENT_CHAT_CLOSE_SELECTOR, AGENT_SETTINGS_CLOSE_SELECTOR } from '../flow-agent-toggle.js'
+import { buildSelectModeScript } from '../flow-mode-tab.js'
+import { screen } from 'electron'
+import { computeOffscreenBounds } from '../offscreen-bounds.js'
 
 /**
  * Create all shared helpers bound to the given getters.
@@ -44,8 +49,8 @@ export function createSharedHelpers(ctx) {
     // 2. 숨겨져 있으면 일시적으로 보이게 (화면 밖에 배치해서 사용자가 안 보이게)
     if (wasHidden) {
       const { width, height } = mainWindow.getContentBounds()
-      // 화면 밖 오른쪽에 배치 (사용자에게 보이지 않음)
-      flowView.setBounds({ x: width + 5000, y: 0, width: width, height: height })
+      // 모든 디스플레이 너머로 — 멀티모니터에서 보조 모니터에 안 깜빡이게.
+      flowView.setBounds(computeOffscreenBounds(screen.getAllDisplays(), mainWindow.getBounds().x, width, height))
       await new Promise(r => setTimeout(r, 300)) // 레이아웃 업데이트 대기
     }
 
@@ -200,7 +205,7 @@ export function createSharedHelpers(ctx) {
    * Flow 페이지의 grecaptcha.enterprise를 사용하여 reCAPTCHA 토큰 획득
    * AutoFlow와 동일한 방식 (sidepanel.js:20097-20108)
    */
-  async function getRecaptchaToken() {
+  async function getRecaptchaToken(action = RECAPTCHA_ACTION) {
     const flowView = getFlowView()
     if (!flowView) return ''
     try {
@@ -215,7 +220,7 @@ export function createSharedHelpers(ctx) {
             }
             const token = await g.enterprise.execute(
               '${RECAPTCHA_SITE_KEY}',
-              { action: '${RECAPTCHA_ACTION}' }
+              { action: '${action}' }
             );
             return String(token || '').trim();
           } catch (e) {
@@ -598,6 +603,239 @@ export function createSharedHelpers(ctx) {
     return configureFlowMode('VIDEO', 1)
   }
 
+  // ─── ensureAgentOff ───────────────────────────────────────────
+  /**
+   * Force Flow's compose "Agent" toggle OFF so generation uses the direct APIs
+   * (batchGenerateImages / batchAsyncGenerateVideoText) that the app's
+   * response-interception collection handles — instead of the agent (streamChat)
+   * which only renders DOM media. Best-effort + logs all candidates.
+   */
+  // Agent 토글을 가릴 수 있는 두 패널(우측 대화"챗" 패널 + "에이전트 설정"(기본값) 패널)을
+  //   모두 닫는다(각각 no-op if 없음). 사용자 지정: OFF/ON 전환 시 둘 다 동시에 떠 있을 수 있어
+  //   토글 가림 여부와 무관하게 선제적으로 강제 close 한다. (Escape 는 설정 패널을 못 닫아 X 클릭 병행.)
+  async function closeAgentPanels(flowView) {
+    await trustedClickOnFlowView(AGENT_CHAT_CLOSE_SELECTOR).catch(() => {})
+    await trustedClickOnFlowView(AGENT_SETTINGS_CLOSE_SELECTOR).catch(() => {})
+    await flowView.webContents.executeJavaScript(
+      `try { document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true, cancelable: true, composed: true })); } catch (e) {}`
+    ).catch(() => {})
+    await new Promise(r => setTimeout(r, 350))
+  }
+
+  async function ensureAgentOff() {
+    const flowView = getFlowView()
+    if (!flowView) return { success: false, error: 'No flowView' }
+    try {
+      // 선제적으로 대화창 + "에이전트 설정" 패널을 모두 닫는다(둘 다 떠 있을 수 있음).
+      await closeAgentPanels(flowView)
+      let probe = await flowView.webContents.executeJavaScript(AGENT_TOGGLE_PROBE)
+      // 그래도 토글이 안 보이면(여전히 가림) 재시도하며 닫는다.
+      for (let i = 0; i < 4 && (!probe || !probe.found); i++) {
+        console.log('[Flow API] ensureAgentOff: toggle hidden — closing covering panel attempt', i + 1)
+        await closeAgentPanels(flowView)
+        probe = await flowView.webContents.executeJavaScript(AGENT_TOGGLE_PROBE)
+      }
+      if (!probe || !probe.found) {
+        console.log('[Flow API] ensureAgentOff: toggle not found (panel close retries exhausted)')
+        return { success: false, state: 'not_found' }
+      }
+      if (!probe.on) {
+        console.log('[Flow API] ensureAgentOff: already OFF')
+        return { success: true, state: 'already_off' }
+      }
+      // ON → Flow 의 토글은 synthetic 클릭(isTrusted:false)을 무시하므로 trusted click 으로 끈다.
+      const click = await trustedClickOnFlowView(AGENT_TOGGLE_SELECTOR)
+      await new Promise(r => setTimeout(r, 400))
+      probe = await flowView.webContents.executeJavaScript(AGENT_TOGGLE_PROBE)
+      const off = !!probe && !probe.on
+      console.log('[Flow API] ensureAgentOff: trusted-click', click?.success, '→ nowOn:', probe?.on, off ? '(OFF ✓)' : '(still ON ✗)')
+      return { success: off, state: off ? 'turned_off' : 'still_on' }
+    } catch (e) {
+      console.warn('[Flow API] ensureAgentOff failed:', e.message)
+      return { success: false, error: e.message }
+    }
+  }
+
+  // ─── ensureAgentOn ────────────────────────────────────────────
+  /**
+   * Force Flow's compose "Agent" toggle ON (Maps-grounded, address-based generation).
+   * ensureAgentOff 의 미러 — already_on 도 success=true. Agent ON 경로(flowAgentOn)에서만 호출.
+   */
+  async function ensureAgentOn() {
+    const flowView = getFlowView()
+    if (!flowView) return { success: false, error: 'No flowView' }
+    try {
+      // 선제적으로 대화창 + "에이전트 설정"(기본값) 패널을 모두 닫는다(ensureAgentOff 와 동일 헬퍼).
+      //   둘 중 어느 쪽이 토글을 가리는지 불확실해도 둘 다 닫으면 된다.
+      await closeAgentPanels(flowView)
+      let probe = await flowView.webContents.executeJavaScript(AGENT_TOGGLE_PROBE)
+      // 그래도 토글이 안 보이면(여전히 가림) 재시도하며 닫는다.
+      for (let i = 0; i < 4 && (!probe || !probe.found); i++) {
+        console.log('[Flow API] ensureAgentOn: toggle hidden — closing covering panel attempt', i + 1)
+        await closeAgentPanels(flowView)
+        probe = await flowView.webContents.executeJavaScript(AGENT_TOGGLE_PROBE)
+      }
+      if (!probe || !probe.found) {
+        console.log('[Flow API] ensureAgentOn: toggle not found (panel close retries exhausted)')
+        return { success: false, state: 'not_found' }
+      }
+      if (probe.on) {
+        console.log('[Flow API] ensureAgentOn: already ON')
+        return { success: true, state: 'already_on' }
+      }
+      const click = await trustedClickOnFlowView(AGENT_TOGGLE_SELECTOR)
+      await new Promise(r => setTimeout(r, 400))
+      probe = await flowView.webContents.executeJavaScript(AGENT_TOGGLE_PROBE)
+      const on = !!probe && !!probe.on
+      console.log('[Flow API] ensureAgentOn: trusted-click', click?.success, '→ nowOn:', probe?.on, on ? '(ON ✓)' : '(still OFF ✗)')
+      return { success: on, state: on ? 'turned_on' : 'still_off' }
+    } catch (e) {
+      console.warn('[Flow API] ensureAgentOn failed:', e.message)
+      return { success: false, error: e.message }
+    }
+  }
+
+  // ─── selectFlowModeTab ────────────────────────────────────────
+  /**
+   * Select the compose IMAGE/VIDEO mode tab (visible when Agent is OFF).
+   * 'already' | 'clicked' | 'not_found'. not_found ⇒ Agent 가 아직 ON (탭 없음).
+   */
+  async function selectFlowModeTab(mode) {
+    const flowView = getFlowView()
+    if (!flowView) return { success: false, error: 'No flowView' }
+    try {
+      const r = await flowView.webContents.executeJavaScript(buildSelectModeScript(mode))
+      console.log(`[Flow API] selectFlowModeTab(${mode}):`, r)
+      return { success: r !== 'not_found', state: r }
+    } catch (e) {
+      console.warn('[Flow API] selectFlowModeTab failed:', e.message)
+      return { success: false, error: e.message }
+    }
+  }
+
+  // ─── applyAgentDefaults ───────────────────────────────────────
+  /**
+   * Set Flow's "에이전트 설정" panel image/video generation defaults
+   * (aspect ratio, batch count, model) and click 저장. Replaces the legacy
+   * popup-menu path (configureFlowMode) which no longer matches Flow's UI.
+   *
+   * @param {object} opts
+   * @param {{aspectRatio?:string,count?:number,model?:string}} [opts.image]
+   * @param {{aspectRatio?:string,count?:number,model?:string}} [opts.video]
+   * @param {boolean} [opts.save=true]
+   * @returns {Promise<{success:boolean,result?:object,error?:string}>}
+   */
+  async function applyAgentDefaults(opts = {}) {
+    const flowView = getFlowView()
+    if (!flowView) return { success: false, error: 'No flowView' }
+
+    const script = buildAgentDefaultsScript(opts)
+    const maxAttempts = 3
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const result = await flowView.webContents.executeJavaScript(script)
+        if (result && result.ok) {
+          console.log('[Flow AgentDefaults] applied:',
+            'approval=', result.approval,
+            'image=', JSON.stringify(result.image), 'video=', JSON.stringify(result.video),
+            'saved=', result.saved, 'panelClosed=', result.panelClosed)
+          return { success: true, result }
+        }
+        console.warn(`[Flow AgentDefaults] attempt ${attempt + 1}/${maxAttempts} failed:`, result && result.error)
+      } catch (e) {
+        console.warn(`[Flow AgentDefaults] attempt ${attempt + 1} error:`, e.message)
+      }
+      await new Promise(r => setTimeout(r, 500 + attempt * 300))
+    }
+    return { success: false, error: 'panel not configured after retries' }
+  }
+
+  // ─── listAgentModels (동적 모델 목록 스크랩) ───────────────────
+  async function listAgentModels() {
+    const flowView = getFlowView()
+    if (!flowView) return { success: false, error: 'No flowView' }
+    try {
+      const r = await flowView.webContents.executeJavaScript(buildListModelsScript())
+      if (r && r.ok) return { success: true, image: r.image, video: r.video }
+      return { success: false, error: (r && r.error) || 'list failed' }
+    } catch (e) {
+      return { success: false, error: e?.message || String(e) }
+    }
+  }
+
+  // ─── ensureOnProjectComposer ──────────────────────────────────
+  /**
+   * Guard: verify Flow page is on the composer of the TARGET project before DOM mutation.
+   *
+   * Codex #R4-4: generation handlers previously only checked "some project page"
+   * (or no page at all), allowing generation to run in the wrong Flow project after
+   * navigation/startup-drift/switch races.
+   *
+   * Behaviour:
+   *   - If projectId is FALSY: fall back to the lenient "some /project/ page" check
+   *     (preserves unbound/startup-flow behavior — don't break callers that haven't
+   *     bound a Flow project yet).
+   *   - If projectId is PROVIDED and the URL is NOT on /project/${projectId}: attempt
+   *     to navigate to the target project (reuses the same loadURL path as flow:open-project
+   *     in dom.js), wait up to 3 s for the URL to confirm, then re-check.
+   *   - Returns { ok: true }  when confirmed on target project.
+   *   - Returns { ok: false, error: '…' } (FAIL CLOSED) when the URL can't be confirmed —
+   *     the caller must abort and NOT mutate.
+   *
+   * @param {Electron.WebContentsView} flowView
+   * @param {string|null|undefined} projectId  Bound Flow project UUID, or falsy if unbound.
+   * @returns {Promise<{ok:boolean, error?:string}>}
+   */
+  async function ensureOnProjectComposer(flowView, projectId) {
+    if (!flowView) return { ok: false, error: 'Flow view not ready' }
+
+    const currentUrl = flowView.webContents.getURL() || ''
+
+    // Falsy projectId → lenient fallback: any /project/ or /tools/flow/ page is acceptable.
+    if (!projectId) {
+      const onSomePage = currentUrl.includes('/project/') || currentUrl.includes('/tools/flow/')
+      return onSomePage
+        ? { ok: true }
+        : { ok: false, error: 'Not on a Flow project page' }
+    }
+
+    // Specific projectId → enforce exact project URL.
+    // #R20-6: /project/{id}/characters · /character/{...} 등 하위 라우트는 컴포저가 아니므로 제외
+    //   (안 그러면 scene 프롬프트가 엉뚱한 컴포저에 주입된다). base 컴포저 경로만 ok.
+    {
+      const marker = `/project/${projectId}`
+      const idx = currentUrl.indexOf(marker)
+      if (idx >= 0 && !/^\/character/.test(currentUrl.slice(idx + marker.length))) {
+        return { ok: true }
+      }
+    }
+
+    // Not on the target project — attempt navigation (same logic as flow:open-project in dom.js).
+    const m = currentUrl.match(/^(.*\/tools\/flow)(\/|$)/)
+    const base = m ? m[1] : 'https://labs.google/fx/tools/flow'
+    const target = `${base}/project/${projectId}`
+    console.log('[Flow Guard] Not on target project, navigating:', target)
+    try {
+      await flowView.webContents.loadURL(target).catch((e) =>
+        console.warn('[Flow Guard] loadURL failed:', e.message))
+    } catch (e) {
+      console.warn('[Flow Guard] loadURL threw:', e.message)
+    }
+
+    // Poll up to 3 s for URL to confirm (6 × 500 ms).
+    for (let i = 0; i < 6; i++) {
+      await new Promise((r) => setTimeout(r, 500))
+      if ((flowView.webContents.getURL() || '').includes(`/project/${projectId}`)) {
+        console.log('[Flow Guard] Confirmed on target project after navigation')
+        return { ok: true }
+      }
+    }
+
+    const finalUrl = flowView.webContents.getURL() || ''
+    console.warn('[Flow Guard] Failed to reach target project. Current URL:', finalUrl)
+    return { ok: false, error: `Flow not on target project ${projectId}` }
+  }
+
   // ─── Return all helpers ───────────────────────────────────────
   return {
     trustedClickOnFlowView,
@@ -611,5 +849,11 @@ export function createSharedHelpers(ctx) {
     fetchMediaAsBase64,
     configureFlowMode,
     switchFlowToVideoMode,
+    applyAgentDefaults,
+    listAgentModels,
+    ensureAgentOff,
+    ensureAgentOn,
+    selectFlowModeTab,
+    ensureOnProjectComposer,
   }
 }

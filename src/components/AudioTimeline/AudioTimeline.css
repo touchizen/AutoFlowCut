@@ -10,6 +10,14 @@
   user-select: none;
 }
 
+/* compact(하단 도크): height:100% 대신 남은 공간만 채워(StatusBar/탭 위로 넘쳐 잘리는 것
+   방지). 프리뷰 패널은 숨겨지고 트랙(.atl-body, flex:1)이 도크 높이를 채운다. */
+.atl-root--compact {
+  height: auto;
+  flex: 1;
+  min-height: 0;
+}
+
 /* ── Preview Panel — 비디오 미리보기 (Remotion Studio 스타일) ── */
 .atl-preview {
   flex-shrink: 0;
@@ -117,6 +125,33 @@
   color: #fff;
   letter-spacing: 0.02em;
 }
+/* Flow 모드: '프리뷰' 타이틀이 모니터 오버레이 토글 버튼일 때의 affordance. */
+.atl-title--btn {
+  font-family: inherit;
+  background: transparent;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  padding: 2px 10px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: border-color 0.12s, background 0.12s, color 0.12s;
+}
+.atl-title--btn::before {
+  content: '🖥';
+  font-size: 12px;
+  opacity: 0.85;
+}
+.atl-title--btn:hover {
+  border-color: #4a9eff;
+  background: rgba(74, 158, 255, 0.12);
+}
+.atl-title--btn.atl-title--active {
+  border-color: #4a9eff;
+  background: #4a9eff;
+  color: #fff;
+}
 .atl-time-range {
   font-family: 'JetBrains Mono', 'Menlo', 'Consolas', monospace;
   font-size: 12px;
@@ -144,10 +179,16 @@
   justify-content: center;
   line-height: 1;
 }
-.atl-play-btn:hover,
-.atl-stop-btn:hover {
+.atl-play-btn:hover:not(:disabled),
+.atl-stop-btn:hover:not(:disabled) {
   background: #353535;
   color: #fff;
+}
+/* 생성 중(disabled) — 기능은 가드돼 있고 시각적으로도 비활성 표시 */
+.atl-play-btn:disabled,
+.atl-stop-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 .atl-play-btn.atl-playing {
   background: #1d6f42;
@@ -469,6 +510,33 @@
   flex: 1;
 }
 
+/* ── 트랙 View/Mute 토글 ── */
+.atl-track-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin-right: 5px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: currentColor;
+  cursor: pointer;
+  opacity: 0.85;
+}
+.atl-track-toggle:hover {
+  background: rgba(255, 255, 255, 0.12);
+  opacity: 1;
+}
+/* off 상태(숨김/음소거) — 흐리게 + 빨강 톤으로 비활성 표시 */
+.atl-track-toggle.is-off {
+  color: #ef4444;
+  opacity: 0.65;
+}
+
 /* ── Scroll area (가로 스크롤) ── */
 .atl-scroll {
   flex: 1;
@@ -591,6 +659,26 @@
   pointer-events: none;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
   z-index: 4;
+}
+/* 생성 중 클록 + 경과시간 — 클립 중앙, shimmer 위에 (Results 와 동일 톤). */
+.atl-clip-gentimer {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  z-index: 5;
 }
 .atl-clip-action-btn {
   position: absolute;
@@ -732,6 +820,10 @@
   font-size: 12px;
   line-height: 1.4;
 }
+/* align:'right' — 버튼 좌측 edge 앵커, 오른쪽으로 펼침 (Flow 네이티브 뷰 회피). */
+.atl-btn-tooltip--right {
+  transform: none;
+}
 .atl-btn-tooltip-label {
   font-weight: 700;
   color: #1976d2;
@@ -788,3 +880,19 @@
   color: #ddd;
   line-height: 1.3;
 }
+
+/* per-clip export 제외(disabled) — 검정 망(crosshatch) 가림막 + 살짝 어둡게.
+   클립 전체 opacity 대신 ::after overlay 라 eye 버튼(z-index 5)은 망(z-index 1) 위에 또렷. */
+.atl-clip-disabled::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  border-radius: inherit;
+  background:
+    repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.55) 0 1px, transparent 1px 6px),
+    repeating-linear-gradient(-45deg, rgba(0, 0, 0, 0.55) 0 1px, transparent 1px 6px),
+    rgba(0, 0, 0, 0.32);
+}
+.atl-clip-eye-btn.is-off { opacity: 0.7; }

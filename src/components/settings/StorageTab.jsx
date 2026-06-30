@@ -280,30 +280,10 @@ export default function StorageTab({
         </div>
       )}
 
-      <div className="setting-row">
-        <label className="setting-label">{t('settings.saveMode')}</label>
-        <div className="save-mode-selector">
-          <button
-            className={`save-mode-btn ${localSettings.saveMode === 'folder' ? 'active' : ''}`}
-            onClick={() => setLocalSettings(s => ({ ...s, saveMode: 'folder' }))}
-          >
-            <span className="mode-icon">📁</span>
-            <span className="mode-label">{t('settings.saveAuto')}</span>
-            <span className="mode-desc">{t('settings.saveAutoDesc')}</span>
-          </button>
+      {/* 저장 방식 토글 제거 — 공식 API(BYOK) 는 base64 만 오므로 작업폴더 저장이 필수.
+          옛 Flow(none, 로컬 저장 안함) 모드는 폐기(useAppSettings 가 folder 로 강제). */}
 
-          <button
-            className={`save-mode-btn ${localSettings.saveMode === 'none' ? 'active' : ''}`}
-            onClick={() => setLocalSettings(s => ({ ...s, saveMode: 'none' }))}
-          >
-            <span className="mode-icon">☁️</span>
-            <span className="mode-label">{t('settings.saveFlow')}</span>
-            <span className="mode-desc">{t('settings.saveFlowDesc')}</span>
-          </button>
-        </div>
-      </div>
-
-      {/* 폴더 저장 모드 - 폴더 선택 */}
+      {/* 작업 폴더 선택 — saveMode 는 항상 folder */}
       {localSettings.saveMode === 'folder' && (
         <div className={`setting-row folder-setting ${!workFolder.name ? 'highlight-box' : ''}`}>
           <label className="setting-label">{t('settings.workFolder')}</label>

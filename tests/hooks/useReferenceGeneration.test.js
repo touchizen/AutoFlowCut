@@ -84,30 +84,16 @@ describe('useReferenceGeneration 로직', () => {
       })
     })
 
-    describe('Whisk 업로드', () => {
-      it('업로드 성공 시 mediaId, caption 반환', async () => {
-        mockUploadReference.mockResolvedValue({
-          success: true,
-          mediaId: 'media_123',
-          caption: 'Beautiful landscape'
-        })
+    // cloud(Veo) 계약: 레퍼런스는 Flow 에 업로드되지 않는다. 디스크 저장 + 생성 시
+    // referenceResolver 가 name 으로 base64 해석. (구 Flow 의 uploadReference→mediaId 계약 폐기)
+    describe('cloud reference (Flow 업로드 없음)', () => {
+      it('uploadReference 는 mediaId 없는 no-op (생성은 name 기반)', async () => {
+        mockUploadReference.mockResolvedValue({ success: true, mediaId: null, caption: null })
 
-        const result = await mockUploadReference('base64', 'MEDIA_CATEGORY_SCENE')
+        const result = await mockUploadReference('base64', 'style')
 
-        expect(result.mediaId).toBe('media_123')
-        expect(result.caption).toBeDefined()
-      })
-
-      it('업로드 실패해도 계속 진행', async () => {
-        mockUploadReference.mockResolvedValue({
-          success: false,
-          error: 'Upload failed'
-        })
-
-        const result = await mockUploadReference('base64', 'MEDIA_CATEGORY_SUBJECT')
-
-        // 업로드 실패해도 로컬 저장은 진행
-        expect(result.success).toBe(false)
+        expect(result.success).toBe(true)
+        expect(result.mediaId).toBeNull()
       })
 
       it('base64 prefix 제거', () => {
@@ -142,29 +128,26 @@ describe('useReferenceGeneration 로직', () => {
         }
       })
 
-      it('저장 실패 시 pendingSave 추가', async () => {
-        mockFileSystemAPI.saveReference.mockResolvedValue({
-          success: false,
-          error: 'Permission denied'
-        })
+      it('저장 실패 시 base64 보존 + 경고 (pendingSave 등록/설정창 열기 안 함)', async () => {
+        // 새 계약(cloud): 디스크 저장 실패해도 base64 를 메모리/project.json 에 보존하고
+        //   경고만. desktop addPendingSave 는 no-op 이라 pending 등록/설정창 열기 없음 —
+        //   filePath 없는 ref 의 data 는 stripReferencesForSave 가 보존 (유실 방지).
+        mockFileSystemAPI.saveReference.mockResolvedValue({ success: false, error: 'Permission denied' })
 
-        const saveResult = await mockFileSystemAPI.saveReference(
-          'project',
-          'alice',
-          'base64',
-          'whisk',
-          {}
-        )
+        const saveResult = await mockFileSystemAPI.saveReference('project', 'alice', 'base64', 'flow', {})
 
+        let donePatch = null
         if (!saveResult.success) {
-          mockAddPendingSave(vi.fn())
-          mockToast.warning('로컬 저장을 위해 권한이 필요합니다.')
-          mockOpenSettings('storage')
+          mockToast.warning('toast.permissionReleasedMemory')
+          donePatch = { data: 'base64', filePath: null, dataStorage: 'base64', status: 'done' }
         }
 
-        expect(mockAddPendingSave).toHaveBeenCalled()
         expect(mockToast.warning).toHaveBeenCalled()
-        expect(mockOpenSettings).toHaveBeenCalledWith('storage')
+        expect(mockAddPendingSave).not.toHaveBeenCalled()
+        expect(mockOpenSettings).not.toHaveBeenCalled()
+        // filePath 없음 + base64 보존 → project 저장 시 stripReferencesForSave 가 data 를 남김
+        expect(donePatch.filePath).toBeNull()
+        expect(donePatch.dataStorage).toBe('base64')
       })
     })
 
@@ -617,88 +600,6 @@ describe('useReferenceGeneration 로직', () => {
       })
     })
 
-    describe('uploadReferenceWithRetry (429 backoff)', () => {
-      // useAutomation 의 자동 업로드 경로와 동일 패턴: MAX_RETRIES=2, exponential backoff,
-      // 429 만 retry, 비-429 실패는 즉시 반환.
-      const uploadReferenceWithRetryAlgo = async (flowAPI, base64, category) => {
-        const MAX_RETRIES = 2
-        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-          try {
-            const result = await flowAPI.uploadReference(base64, category)
-            if (result.success) return result
-            if (result.error?.includes('429') && attempt < MAX_RETRIES) {
-              await new Promise(r => setTimeout(r, 0)) // 테스트에선 즉시 retry
-              continue
-            }
-            return result
-          } catch (e) {
-            if (attempt < MAX_RETRIES && /429|rate/i.test(e?.message || '')) {
-              await new Promise(r => setTimeout(r, 0))
-              continue
-            }
-            return { success: false, error: e?.message || String(e) }
-          }
-        }
-        return { success: false, error: 'uploadReference exhausted retries' }
-      }
-
-      it('성공 시 즉시 반환 (retry 없음)', async () => {
-        const uploadReference = vi.fn().mockResolvedValue({ success: true, mediaId: 'm1' })
-        const flowAPI = { uploadReference }
-
-        const result = await uploadReferenceWithRetryAlgo(flowAPI, 'base64', 'character')
-
-        expect(result).toEqual({ success: true, mediaId: 'm1' })
-        expect(uploadReference).toHaveBeenCalledTimes(1)
-      })
-
-      it('429 시 backoff 후 재시도, 두 번째에 성공', async () => {
-        const uploadReference = vi.fn()
-          .mockResolvedValueOnce({ success: false, error: 'HTTP 429 rate limit' })
-          .mockResolvedValueOnce({ success: true, mediaId: 'm1' })
-        const flowAPI = { uploadReference }
-
-        const result = await uploadReferenceWithRetryAlgo(flowAPI, 'base64', 'character')
-
-        expect(result.success).toBe(true)
-        expect(result.mediaId).toBe('m1')
-        expect(uploadReference).toHaveBeenCalledTimes(2)
-      })
-
-      it('429 가 MAX_RETRIES 까지 지속 → 실패 반환', async () => {
-        const uploadReference = vi.fn().mockResolvedValue({ success: false, error: '429 too many requests' })
-        const flowAPI = { uploadReference }
-
-        const result = await uploadReferenceWithRetryAlgo(flowAPI, 'base64', 'character')
-
-        expect(result.success).toBe(false)
-        expect(uploadReference).toHaveBeenCalledTimes(3) // initial + 2 retries
-      })
-
-      it('비-429 실패는 즉시 반환 (retry 없음)', async () => {
-        const uploadReference = vi.fn().mockResolvedValue({ success: false, error: 'invalid token' })
-        const flowAPI = { uploadReference }
-
-        const result = await uploadReferenceWithRetryAlgo(flowAPI, 'base64', 'character')
-
-        expect(result.success).toBe(false)
-        expect(result.error).toBe('invalid token')
-        expect(uploadReference).toHaveBeenCalledTimes(1) // 한 번만
-      })
-
-      it('throw 시 429 메시지면 retry, 아니면 즉시 실패', async () => {
-        const uploadReference1 = vi.fn().mockRejectedValue(new Error('Got 429 from Flow'))
-        const result1 = await uploadReferenceWithRetryAlgo({ uploadReference: uploadReference1 }, 'b', 'c')
-        expect(uploadReference1).toHaveBeenCalledTimes(3) // 429 keyword → retry to MAX
-        expect(result1.success).toBe(false)
-
-        const uploadReference2 = vi.fn().mockRejectedValue(new Error('network down'))
-        const result2 = await uploadReferenceWithRetryAlgo({ uploadReference: uploadReference2 }, 'b', 'c')
-        expect(uploadReference2).toHaveBeenCalledTimes(1) // 비-429 → 즉시 실패
-        expect(result2.success).toBe(false)
-      })
-    })
-
     describe('인증 에러 복구', () => {
       it('authError 시 토큰 갱신 시도', async () => {
         mockGetAccessToken.mockResolvedValue('new_token')
@@ -826,15 +727,9 @@ describe('통합 시나리오', () => {
     const genResult = await mockGenerateImageAPI(ref.prompt, settings.aspectRatio, [], null)
     expect(genResult.success).toBe(true)
 
-    // 3. Whisk 업로드
-    mockUploadReference.mockResolvedValue({
-      success: true,
-      mediaId: 'media_123',
-      caption: 'A beautiful woman'
-    })
-
-    const uploadResult = await mockUploadReference('base64', ref.category)
-    expect(uploadResult.mediaId).toBe('media_123')
+    // 3. cloud(Veo): Flow 업로드 없음 — 디스크 저장 + 생성 시 name 기반 해석. mediaId/caption null.
+    const mediaId = null
+    const caption = null
 
     // 4. 파일 저장
     mockFileSystemAPI.saveReference.mockResolvedValue({
@@ -847,22 +742,22 @@ describe('통합 시나리오', () => {
       settings.projectName,
       ref.name,
       genResult.images[0],
-      'whisk',
-      { mediaId: uploadResult.mediaId, caption: uploadResult.caption, category: ref.category }
+      'flow',
+      { mediaId, caption, category: ref.category }
     )
     expect(saveResult.success).toBe(true)
 
-    // 5. 상태 업데이트
+    // 5. 상태 업데이트 (생성은 name 으로 해석되므로 mediaId 불필요)
     const updateData = {
       data: saveResult.dataUrl,
       filePath: saveResult.path,
       dataStorage: 'file',
-      mediaId: uploadResult.mediaId,
-      caption: uploadResult.caption
+      mediaId,
+      caption,
     }
 
     expect(updateData.filePath).toContain('alice')
-    expect(updateData.mediaId).toBe('media_123')
+    expect(updateData.mediaId).toBeNull()
   })
 
   it('일괄 생성 전체 플로우', async () => {

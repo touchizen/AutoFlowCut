@@ -5,13 +5,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openExternal: (url) => ipcRenderer.invoke('app:open-external', { url }),
   showInFolder: (filePath) => ipcRenderer.invoke('app:show-in-folder', { filePath }),
   notifyOS: (payload) => ipcRenderer.invoke('notify:os', payload),
-  onFlowStatus: (callback) => {
-    // 반환된 unsubscribe 를 useEffect cleanup 에서 호출해야 listener leak 안 됨.
-    // 미반환 시 HMR / 재마운트 때마다 listener 누적 → MaxListenersExceededWarning.
-    const handler = (_, data) => callback(data)
-    ipcRenderer.on('flow-status', handler)
-    return () => ipcRenderer.removeListener('flow-status', handler)
-  },
 
   // Layout
   setLayout: (params) => ipcRenderer.invoke('app:set-layout', params),
@@ -23,6 +16,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('layout-changed', handler)
   },
   setModalVisible: (params) => ipcRenderer.invoke('app:set-modal-visible', params),
+  // 렌더러 언어 → 네이티브 메뉴 라벨 현지화
+  setLocale: (params) => ipcRenderer.invoke('app:set-locale', params),
+  // Flow Agent(Maps 그라운딩) 모드 on/off → main 상태 (generate 핸들러가 분기)
+  setFlowAgentMode: (params) => ipcRenderer.invoke('flow:set-agent-mode', params),
 
   // Native menu (File → New Project / Recent Projects)
   onMenuAction: (callback) => {
@@ -31,28 +28,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('menu:action', handler)
   },
   notifyProjectActivated: (name, workFolder) => ipcRenderer.invoke('app:project-activated', { name, workFolder }),
-
-  // Flow API
-  extractToken: () => ipcRenderer.invoke('flow:extract-token'),
-  extractProjectId: () => ipcRenderer.invoke('flow:extract-project-id'),
-  validateToken: (params) => ipcRenderer.invoke('flow:validate-token', params),
-  generateImage: (params) => ipcRenderer.invoke('flow:generate-image', params),
-  checkGeneration: (params) => ipcRenderer.invoke('flow:check-generation', params),
-  collectGeneration: (params) => ipcRenderer.invoke('flow:collect-generation', params),
-  clearGenerations: () => ipcRenderer.invoke('flow:clear-generations'),
-  fetchMedia: (params) => ipcRenderer.invoke('flow:fetch-media', params),
-  uploadReference: (params) => ipcRenderer.invoke('flow:upload-reference', params),
-
-  // Flow Video API
-  generateVideoT2V: (params) => ipcRenderer.invoke('flow:generate-video-t2v', params),
-  generateVideoI2V: (params) => ipcRenderer.invoke('flow:generate-video-i2v', params),
-  checkVideoStatus: (params) => ipcRenderer.invoke('flow:check-video-status', params),
-  downloadVideoUrl: (params) => ipcRenderer.invoke('flow:download-video-url', params),
-  domDownloadVideo: (params) => ipcRenderer.invoke('flow:dom-download-video', params),
-  upscaleVideo: (params) => ipcRenderer.invoke('flow:upscale-video', params),
-  upscaleImage: (params) => ipcRenderer.invoke('flow:upscale-image', params),
-  fetchGallery: (params) => ipcRenderer.invoke('flow:fetch-gallery', params),
-  listFlowProjects: (params) => ipcRenderer.invoke('flow:list-projects', params),
 
   // File System
   getDefaultWorkFolder: () => ipcRenderer.invoke('fs:get-default-work-folder'),
@@ -68,6 +43,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getResourcePath: (params) => ipcRenderer.invoke('fs:get-resource-path', params),
   readFileByPath: (params) => ipcRenderer.invoke('fs:read-file-by-path', params),
   saveProjectData: (params) => ipcRenderer.invoke('fs:save-project-data', params),
+  mergeProjectData: (params) => ipcRenderer.invoke('fs:merge-project-data', params),
   loadProjectData: (params) => ipcRenderer.invoke('fs:load-project-data', params),
   projectExists: (params) => ipcRenderer.invoke('fs:project-exists', params),
   renameProject: (params) => ipcRenderer.invoke('fs:rename-project', params),
@@ -102,6 +78,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSystemInfo: () => ipcRenderer.invoke('capcut:get-system-info'),
   getVolumePath: () => ipcRenderer.invoke('capcut:get-volume-path'),
 
+  // Premiere (.prproj — gzipped XML)
+  writePremiereProject: (params) => ipcRenderer.invoke('premiere:write-project', params),
+  checkPremiereInstalled: () => ipcRenderer.invoke('premiere:check-installed'),
+  openPremiereProject: (params) => ipcRenderer.invoke('premiere:open-project', params),
+
+  // Vrew (.vrew — ZIP archive)
+  writeVrewProject: (params) => ipcRenderer.invoke('vrew:write-project', params),
+  openVrewProject: (params) => ipcRenderer.invoke('vrew:open-project', params),
+  checkVrewInstalled: () => ipcRenderer.invoke('vrew:check-installed'),
+
   // MCP (Claude Code integration)
   mcpStatus: () => ipcRenderer.invoke('mcp:status'),
   mcpRegister: () => ipcRenderer.invoke('mcp:register'),
@@ -110,15 +96,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   skillsInstall: (params) => ipcRenderer.invoke('skills:install', params),
   skillsUninstall: (params) => ipcRenderer.invoke('skills:uninstall', params),
 
-  // Flow DOM Mode
-  domNavigate: (params) => ipcRenderer.invoke('flow:dom-navigate', params),
-  domGetUrl: () => ipcRenderer.invoke('flow:dom-get-url'),
-  domClickEnterTool: (params) => ipcRenderer.invoke('flow:dom-click-enter-tool', params),
-  domSendPrompt: (params) => ipcRenderer.invoke('flow:dom-send-prompt', params),
-  domSnapshotBlobs: () => ipcRenderer.invoke('flow:dom-snapshot-blobs'),
-  domScanImages: (params) => ipcRenderer.invoke('flow:dom-scan-images', params),
-  domBlobToBase64: (params) => ipcRenderer.invoke('flow:dom-blob-to-base64', params),
-  domShowFlow: () => ipcRenderer.invoke('flow:dom-show-flow'),
+  // Google GenAI (BYOK) — official Imagen/Veo API, replaces Flow reverse-engineering.
+  // Key management exposes only existence/validity to the renderer — never the key itself.
+  genaiGetKeyStatus: () => ipcRenderer.invoke('genai:get-key-status'),
+  genaiSetKey: (params) => ipcRenderer.invoke('genai:set-key', params),
+  genaiClearKey: () => ipcRenderer.invoke('genai:clear-key'),
+  genaiValidateKey: (params) => ipcRenderer.invoke('genai:validate-key', params),
+  genaiListModels: () => ipcRenderer.invoke('genai:list-models'),
+  genaiGenerateImage: (params) => ipcRenderer.invoke('genai:generate-image', params),
+  genaiGenerateVideo: (params) => ipcRenderer.invoke('genai:generate-video', params),
+  genaiCheckVideoStatus: (params) => ipcRenderer.invoke('genai:check-video-status', params),
+  genaiDownloadVideo: (params) => ipcRenderer.invoke('genai:download-video', params),
 
   // Auth
   googleSignIn: () => ipcRenderer.invoke('auth:google-sign-in'),
@@ -128,9 +116,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setPreventSleep: (params) => ipcRenderer.invoke('app:set-prevent-sleep', params),
   getPreventSleep: () => ipcRenderer.invoke('app:get-prevent-sleep'),
 
-  // Flow page → main response forwarding (replaces CDP Network.getResponseBody)
-  flowReportResponse: (payload) => ipcRenderer.invoke('flow:report-response', payload),
-
   // MCP HTTP Server
   startMcpHttp: (params) => ipcRenderer.invoke('mcp:start-http', params),
   stopMcpHttp: () => ipcRenderer.invoke('mcp:stop-http'),
@@ -138,5 +123,44 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const handler = (_, data) => callback(data)
     ipcRenderer.on('mcp-update', handler)
     return () => ipcRenderer.removeListener('mcp-update', handler)
-  }
+  },
+
+  // Mode controller — attaches/detaches Flow WebContentsView (mode:set handler in electron/ipc/mode.js).
+  // Restored: was dropped during M4 T5 preload rewrite (review C1).
+  setMode: (params) => ipcRenderer.invoke('mode:set', params),
+
+  // Flow DOM automation bridges (Flow mode)
+  flowExtractToken: () => ipcRenderer.invoke('flow:extract-token'),
+  flowValidateToken: (payload) => ipcRenderer.invoke('flow:validate-token', payload),
+  flowExtractProjectId: (opts) => ipcRenderer.invoke('flow:extract-project-id', opts),
+  flowGenerateImage: (payload) => ipcRenderer.invoke('flow:generate-image', payload),
+  flowCheckGeneration: (payload) => ipcRenderer.invoke('flow:check-generation', payload),
+  flowCollectGeneration: (payload) => ipcRenderer.invoke('flow:collect-generation', payload),
+  flowClearGenerations: () => ipcRenderer.invoke('flow:clear-generations'),
+  flowUploadReference: (payload) => ipcRenderer.invoke('flow:upload-reference', payload),
+  flowGenerateCharacter: (payload) => ipcRenderer.invoke('flow:generate-character', payload),
+  flowUploadCharacterEntity: (payload) => ipcRenderer.invoke('flow:upload-character-entity', payload),
+  flowFetchMedia: (payload) => ipcRenderer.invoke('flow:fetch-media', payload),
+  flowGenerateVideoT2V: (payload) => ipcRenderer.invoke('flow:generate-video-t2v', payload),
+  flowGenerateVideoI2V: (payload) => ipcRenderer.invoke('flow:generate-video-i2v', payload),
+  flowCheckVideoStatus: (payload) => ipcRenderer.invoke('flow:check-video-status', payload),
+  flowDownloadVideoUrl: (payload) => ipcRenderer.invoke('flow:download-video-url', payload),
+  flowDomDownloadVideo: (payload) => ipcRenderer.invoke('flow:dom-download-video', payload),
+  flowUpscaleVideo: (payload) => ipcRenderer.invoke('flow:upscale-video', payload),
+  flowUpscaleImage: (payload) => ipcRenderer.invoke('flow:upscale-image', payload),
+  flowFetchGallery: (payload) => ipcRenderer.invoke('flow:fetch-gallery', payload),
+  flowListProjects: (payload) => ipcRenderer.invoke('flow:list-projects', payload),
+  flowGenerateScene: (payload) => ipcRenderer.invoke('flow:generate-scene', payload),
+  setStartupProject: (params) => ipcRenderer.invoke('flow:set-startup-project', params),
+  openFlowProject: (params) => ipcRenderer.invoke('flow:open-project', params),
+  newFlowProject: () => ipcRenderer.invoke('flow:new-project'),
+  dumpFlowSettings: () => ipcRenderer.invoke('flow:dump-settings'),  // 진단: 에이전트 설정 패널 DOM 덤프
+  listFlowAgentModels: () => ipcRenderer.invoke('flow:list-agent-models'),  // 동적 이미지/비디오 모델 목록
+  onFlowStatus: (cb) => {
+    // 반환된 unsubscribe 를 useEffect cleanup 에서 호출해야 listener leak 안 됨.
+    // 미반환 시 HMR / 재마운트 때마다 listener 누적 → MaxListenersExceededWarning.
+    const handler = (_, data) => cb(data)
+    ipcRenderer.on('flow-status', handler)
+    return () => ipcRenderer.removeListener('flow-status', handler)
+  },
 })

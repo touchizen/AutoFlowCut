@@ -3,10 +3,11 @@
  *
  * T2V (Text to Video), I2V (Image to Video) 모드 지원.
  *
- * 3-Phase Async Pipeline (AutoFlow 패턴):
- *   Phase 1: 순차 제출 (7~15초 간격, 완료 안 기다림)
- *   Phase 2: 일괄 폴링 (모든 generationId 배치 체크)
- *   Phase 3: 완료된 것부터 순차 다운로드+저장
+ * Async Pipeline (슬라이딩 윈도우):
+ *   Phase 0: 분류 — download-only / in-flight / fresh
+ *   Submit↔Poll: 동시 in-flight Veo job 을 concurrency 개로 제한. 슬롯이 빌 때마다
+ *     다음 항목 제출(fillWindow), 배치 폴링으로 완료분은 즉시 다운로드+저장하고 슬롯 반납.
+ *   concurrency ≥ 전체 항목수면 한 번에 전부 제출되는 기존 동작과 동일.
  */
 
 import { useState, useCallback, useRef } from 'react'
@@ -14,8 +15,35 @@ import { TIMING } from '../config/defaults'
 import { fileSystemAPI } from './useFileSystem'
 import { toast } from '../components/Toast'
 import { retryVideoDownload } from '../services/videoRecovery'
+import { downloadVideoBase64 } from '../services/videoDownload'
+import { resolveFrameImageBase64 } from '../utils/framePairImages'
 import { pickVideoMetadata, buildVideoMetaPatch } from '../utils/videoMetadata'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
+import { normalizeVideoModel, snapVideoDuration } from '../utils/videoModels'
+import { DEFAULT_VIDEO_MODEL_ID, coerceResolution } from '../config/genModels'
+import { clampInt } from '../utils/clampInt'
+import { makeBatchConsumeGate } from './batchConsumeGate'
+import { resolveProjectBatchId } from '../utils/batchId'
+import { consumeBatchDownload } from '../firebase/functions'
+import { partitionDownloadOnly } from './downloadOnlyGate'
+import { batchStartGate } from './batchStartGate'
+
+// 실제 제출되는 비디오 길이(초). submitVideo(engine)의 제약과 동일하게 계산해 제출값과
+// 완료-메타가 일치하도록 한다(어긋나면 history 길이가 실제와 불일치).
+//
+// ⚠️ 1080p/4k → 8 고정과 referenceImages → 8 고정은 **공식 Veo API(=api 모드) 제약**이다.
+//   Flow 모드는 Flow 백엔드가 길이를 처리하므로(OmniFlash 는 {4,6,8,10}, Flow Veo 도 씬 길이 반영)
+//   이 API 제약을 적용하지 않고 항상 모델 그리드로 스냅한다. (OmniFlash 는 Flow 모드 전용.)
+//   - api 모드: t2v+refs → 8, 1080p/4k → 8, 그 외 720p → {4,6,8} 스냅
+//   - flow 모드: 해상도/refs 무관, 모델 그리드 스냅 (OmniFlash {4,6,8,10}, Veo {4,6,8})
+export function effectiveVideoDuration(item, mode, batchDuration, resolution, model, appMode) {
+  if (appMode !== 'flow') {
+    if (mode === 't2v' && Array.isArray(item?.referenceImages) && item.referenceImages.length > 0) return 8
+    if (resolution === '1080p' || resolution === '4k') return 8
+  }
+  // 모델별 허용 길이 그리드로 스냅 — OmniFlash 는 {4,6,8,10}, 그 외(Veo) {4,6,8}.
+  return snapVideoDuration(model, item?.targetDuration ?? batchDuration)
+}
 
 // 유틸: 랜덤 대기
 const randomSleep = (min, max) =>
@@ -29,7 +57,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 // returned by wrapped API calls and translates it into batch-level break/error.
 // Previously took an `onAuthError` param that was never invoked after the inline
 // 401 string-match was removed — dropped to keep the responsibility boundary clean.
-export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = null, onComplete = null) {
+export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = null, onComplete = null, appMode = 'api', flowProjectReady = true, subscriptionBatch = null, onPaywall = null, isAuthenticated = false, onLoginRequired = null, subscriptionStatus = undefined, refreshSubscription = null) {
   const [isRunning, setIsRunning] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
   const [progress, setProgress] = useState({ current: 0, total: 0, percent: 0, errorCount: 0, startedAt: null })
@@ -41,6 +69,12 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
   // 이번 batch 가 quota 로 멈췄는지 — start() 마다 reset. isQuotaBlocked() race 회피
   // (사용자가 모달을 빨리 dismiss 하면 전역 block flag 가 false 로 돌아가도 이 ref 는 유지).
   const quotaStoppedRef = useRef(false)
+  // #video-3: 논리적 배치 동안 batchId 유지 — 이미지 자동화와 동일 패턴.
+  // full start = 새 배치(새 id), retry/continuation(sceneIds/이전 batchId 존재) = 직전 배치 재사용.
+  // 재사용 시 서버 consume 이 멱등 no-op → 재시도가 이중과금되지 않는다.
+  // 프로젝트별 batchId — projectName -> batchId (이미지 자동화와 동일 패턴). 같은 프로젝트 retry 는
+  // 재사용(서버 멱등=무료), 다른 프로젝트는 분리돼 무임승차 불가.
+  const batchIdByProjectRef = useRef(new Map())
 
   // quota stop 공통 모듈 위임 — queue clear 는 useGenerationQueue 가 직접 subscribe 함.
   const _maybeTriggerQuotaStop = (err) => {
@@ -50,21 +84,47 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
     return true
   }
 
-  const { generateVideoT2V, generateVideoI2V, checkVideoStatus, upscaleVideo, fetchMedia, getAccessToken } = flowAPI
+  const { generateVideoT2V, generateVideoI2V, checkVideoStatus, upscaleVideo, fetchMedia, getAccessToken, downloadVideo } = genAPI
 
-  // ─── Phase 1 Helper: 비디오 제출 (DOM 조작) ───
+  // ─── Phase 1 Helper: 비디오 제출 ───
   const submitVideoItem = async (item, mode, options) => {
-    const { videoModel, aspectRatio, duration, videoBatchCount = 1, seed = null } = options
+    const { videoModel, aspectRatio, duration, seed = null, videoResolution, projectName = '', videoBatchCount = 1 } = options
     const prompt = item.prompt || ''
+    // #R12-3: Flow 엔진은 callOpts.videoBatchCount 로 배치 수를 받는다 — 마지막 인자로 전달.
+    const callOpts = { videoBatchCount }
 
     switch (mode) {
-      case 't2v':
-        return await generateVideoT2V(prompt, videoModel, aspectRatio, duration, videoBatchCount, seed)
+      case 't2v': {
+        // 자동 길이: 씬 길이(item.targetDuration, SRT 기반)를 Veo 허용값 {4,6,8} 으로 스냅.
+        // 1080p/4k 면 submitVideo 가 8초로 강제(공식 제약).
+        const dur = effectiveVideoDuration(item, mode, duration, videoResolution, videoModel, appMode)
+        return await generateVideoT2V(prompt, videoModel, aspectRatio, dur, seed, videoResolution, item.referenceImages || [], callOpts)
+      }
       case 'i2v': {
-        if (!item.startMediaId) {
-          return { success: false, error: 'No start image mediaId' }
+        // 시작 프레임 base64 (필수). 끝 프레임은 있으면 lastFrame 보간.
+        // 메모리(_startImage) 우선, 없으면 디스크(gallery→frames/, 씬→scenes/) 폴백 — 재오픈 후에도 동작.
+        //
+        // #R22-1/#R23-6: Flow 모드는 실제 Flow mediaId(item.startMediaId/endMediaId)를 우선한다.
+        //   아카이브/서버 갤러리에서 복원한 프레임은 이미지 필드에 CDN URL 이 들어있어(base64 아님)
+        //   Flow I2V 가 그 URL 을 base64 로 인식하지 못하고 잘못된 mediaId 로 제출한다. 실제 Flow
+        //   mediaId 가 있으면 그것을 직접 넘겨 정상 제출한다.
+        //   단 디스크 업로드(handleUploadGalleryImage)는 mediaId 가 'local-…' 로컬 id 라 Flow
+        //   mediaId 가 아니다 — 이 경우는 dataUrl 업로드 경로가 필요하므로 제외한다. (씬은 mediaId
+        //   가 null 이면 자동으로 base64 폴백.) API(cloud Veo) 모드는 inline base64 가 필수라 우회 안 함.
+        const isFlowMediaId = (id) => typeof id === 'string' && id.length > 0 && !id.startsWith('local-')
+        const preferStartId = appMode === 'flow' && isFlowMediaId(item.startMediaId)
+        const preferEndId = appMode === 'flow' && isFlowMediaId(item.endMediaId)
+        const startB64 = preferStartId
+          ? item.startMediaId
+          : await resolveFrameImageBase64(item.startSceneId, item.startImage, projectName)
+        if (!startB64) {
+          return { success: false, error: 'No start image — generate the start scene first' }
         }
-        return await generateVideoI2V(prompt, item.startMediaId, item.endMediaId || null, videoModel, aspectRatio, duration, seed)
+        const endB64 = preferEndId
+          ? item.endMediaId
+          : await resolveFrameImageBase64(item.endSceneId, item.endImage, projectName)
+        const dur = effectiveVideoDuration(item, mode, duration, videoResolution, videoModel, appMode)
+        return await generateVideoI2V(prompt, startB64, endB64, videoModel, aspectRatio, dur, seed, videoResolution, callOpts)
       }
       default:
         return { success: false, error: `Unknown mode: ${mode}` }
@@ -81,63 +141,14 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
   //   DOM 반환값의 resolution 필드(720p/1080p/4K/default)로 실제 다운로드
   //   해상도를 확인할 수 있다.
   const downloadAndSaveVideo = async (mediaId, videoUrl, item, options, setStatusMsg) => {
-    const { projectName, saveMode, videoResolution = '1080p' } = options
-    let mediaResult
-
-    // ─── 1. DOM 다운로드 (hover → 3-dot → download → 해상도 선택) ───
-    if (window.electronAPI?.domDownloadVideo) {
-      try {
-        console.log('[VideoAutomation] [1/3] DOM download — mediaId:', mediaId?.substring(0, 20), 'resolution:', videoResolution)
-        setStatusMsg?.(`⬇️ Downloading ${videoResolution} — ${mediaId?.substring(0, 16)}...`)
-        mediaResult = await window.electronAPI.domDownloadVideo({
-          mediaId, resolution: videoResolution
-        })
-        if (mediaResult?.success) {
-          const actualRes = mediaResult.resolution || 'unknown'
-          console.log('[VideoAutomation] ✅ DOM download success (resolution:', actualRes, ')')
-          if (actualRes === 'default') {
-            console.warn('[VideoAutomation] ⚠️ Flow UI의 해상도 서브메뉴가 열리지 않아 원본 해상도로 저장됨. 요청:', videoResolution)
-          }
-        } else {
-          console.warn('[VideoAutomation] DOM download failed:', mediaResult?.error)
-        }
-      } catch (e) {
-        console.warn('[VideoAutomation] DOM download exception:', e.message)
-      }
-    }
-
-    // ─── 2. videoUrl 직접 다운로드 (DOM 실패 시 — 원본 해상도) ───
-    if (!mediaResult?.success && videoUrl) {
-      try {
-        console.log('[VideoAutomation] [2/3] Direct URL download:', videoUrl?.substring(0, 80))
-        const token = await getAccessToken()
-        mediaResult = await window.electronAPI.downloadVideoUrl({ url: videoUrl, token })
-        if (mediaResult?.success) {
-          console.log('[VideoAutomation] ✅ Direct URL download success')
-        } else {
-          console.warn('[VideoAutomation] Direct URL download failed:', mediaResult?.error)
-        }
-      } catch (e) {
-        console.warn('[VideoAutomation] Direct URL download exception:', e.message)
-        mediaResult = null
-      }
-    }
-
-    // ─── 3. fetchMedia fallback ───
-    if (!mediaResult?.success) {
-      try {
-        console.log('[VideoAutomation] [3/3] fetchMedia for mediaId:', mediaId?.substring(0, 20))
-        mediaResult = await fetchMedia(mediaId)
-        if (mediaResult?.success) {
-          console.log('[VideoAutomation] ✅ fetchMedia success')
-        }
-      } catch (e) {
-        console.warn('[VideoAutomation] fetchMedia exception:', e.message)
-      }
-    }
+    const { projectName, saveMode, videoResolution } = options
+    // cloud(Veo): 완료된 operation 의 videoUri 를 직접 base64 로 다운로드.
+    // (구 Flow 의 DOM→URL→fetchMedia 3단계 폴백은 제거 — videoDownload 공통 헬퍼로 통일)
+    setStatusMsg?.(`⬇️ Downloading — ${String(videoUrl || mediaId || '').substring(0, 24)}...`)
+    const mediaResult = await downloadVideoBase64(downloadVideo, videoUrl, videoResolution)
 
     if (!mediaResult?.success) {
-      return { success: false, error: `Media download failed: ${mediaResult?.error || 'All methods failed'}` }
+      return { success: false, error: `Video download failed: ${mediaResult?.error || 'no video URL'}` }
     }
 
     // 파일 저장 — videoSaveId 우선 (t2v_N / i2v_N), 없으면 기존 item.id (vscene_N / fp_N)
@@ -208,21 +219,76 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
       framePairs = [],
       projectName = '',
       saveMode = 'folder',
-      videoModel = 'veo_3_1_t2v_fast_ultra_relaxed',
+      videoModel = 'veo-3.1-fast-generate-preview',
       aspectRatio = 'VIDEO_ASPECT_RATIO_LANDSCAPE',
       duration = 8,
-      videoResolution = '1080p',
       videoBatchCount = 1,
       seed = null,
-      onItemUpdate
+      concurrency: rawConcurrency,
+      onItemUpdate,
+      // #video-3: 명시적 retry 플래그. true 이면 직전 batchId 재사용 → 이중과금 방지.
+      // false/미전달이면 새 배치 id 발급 (첫 실행 또는 의도적 재시작).
+      isRetry = false
     } = options
+    // 손상된 저장값('x'/NaN/0/음수)은 무한대기/no-op 유발 → clampInt 로 기본 4 폴백 (useAutomation 과 동일).
+    const concurrency = clampInt(rawConcurrency, 1, 10, 4)
+    // #R26-4: API 모드는 공식 Veo hyphen 모델명으로 정규화해야 한다(실제 Veo API 로 전송).
+    //   하지만 Flow 모드는 사용자가 고른 Flow 모델 id(underscore, 예: veo_3_1_i2v_s_fast_fl)를
+    //   그대로 메타데이터에 보존한다 — normalize 하면 매핑 안 된 Flow id 가 API 기본 모델로
+    //   둔갑해 메타가 실제 선택과 어긋난다. (Flow 엔진이 그 모델을 실제로 적용하는지는 별개의
+    //   live-DOM 이슈 — video.js 가 현재 model 을 미적용. live-verify 체크리스트에 보존.)
+    const effectiveVideoModel = appMode === 'flow'
+      ? (videoModel || DEFAULT_VIDEO_MODEL_ID)
+      : (normalizeVideoModel(videoModel) || DEFAULT_VIDEO_MODEL_ID)
+    const canonicalVideoModel = (modelId) => appMode === 'flow'
+      ? (modelId || effectiveVideoModel)
+      : (normalizeVideoModel(modelId) || effectiveVideoModel)
+    // 모델이 지원하지 않거나(예: Veo Lite + 4K) stale 한 해상도는 여기서 한 번만 강등/정규화.
+    // 이후 effectiveVideoDuration 계산·history 메타데이터·생성 호출이 전부 같은 값을 써서
+    // 부분 coerce 로 인한 어긋남(기록은 4k, 실제는 1080p)을 방지한다. (리뷰 P2)
+    const videoResolution = coerceResolution(effectiveVideoModel, options.videoResolution ?? '720p')
 
     if (isRunning) return
 
-    // 토큰 확인
+    if (appMode === 'flow' && !flowProjectReady) {
+      toast.warning(t('toast.flowProjectNotReady', { defaultValue: 'Flow 프로젝트 로딩 중... 잠시 후 다시 시도해 주세요.' }))
+      return
+    }
+
+    // 배치 다운로드 구독 게이트 — 토큰 preflight 보다 먼저(요구사항: 로그아웃이면 로그인 모달 우선,
+    // 쿼터 소진이면 paywall). subscriptionBatch 가 null 이면 미게이트(개발/테스트/구독 미로드) → 통과.
+    // loading/error: 인증됐지만 Firestore doc 미확인 → 진행 금지 (서버 consume 거부 회피).
+    {
+      // #5: isRetry 로 이 프로젝트의 기존 batchId 를 재사용하면 paywall 스킵(서버 멱등 no-op/거부에 위임).
+      //   이 프로젝트에 기존 id 가 없으면(첫 실행/재로드) 새 배치로 취급 → paywall 정상 적용.
+      //   프로젝트별 키라 다른 프로젝트의 과금된 id 에는 무임승차 불가.
+      const isReusingBatch = !!(isRetry && batchIdByProjectRef.current.get(projectName))
+      const gate = batchStartGate({ subscriptionBatch, isAuthenticated, subscriptionStatus, isReusingBatch })
+      if (gate.action === 'login') {
+        onLoginRequired?.()
+        setIsRunning(false); setIsPaused(false)
+        setStatus('ready'); setStatusMessage('')
+        return
+      }
+      if (gate.action === 'paywall') {
+        onPaywall?.()
+        setIsRunning(false); setIsPaused(false)
+        setStatus('ready'); setStatusMessage('')
+        return
+      }
+      if (gate.action === 'loading') {
+        // subscription 아직 로드 중 / 에러 — 과금 안 함, paywall 모달 없음, 짧은 안내만.
+        toast.warning(t('toast.subscriptionLoading', { defaultValue: '구독 정보를 확인 중입니다. 잠시 후 다시 시도해 주세요.' }))
+        setIsRunning(false); setIsPaused(false)
+        setStatus('ready'); setStatusMessage('')
+        return
+      }
+    }
+
+    // 토큰 확인 — 키 없으면 API 키 모달 안내(handleStart 와 동일 UX, 토스트 대신).
     const token = await getAccessToken()
     if (!token) {
-      toast.error(t('status.loginRequired'))
+      window.dispatchEvent(new CustomEvent('flow-login-expired'))
       return
     }
 
@@ -259,25 +325,39 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
             mediaId: s.mediaId,
             videoPath: s.videoPath,
             seed: s.seed ?? seed ?? null,
-            model: s.model || videoModel || null,
+            model: s.model ? canonicalVideoModel(s.model) : effectiveVideoModel,
+            // 자동 길이용 — 씬 길이(SRT 기반). 제출 시 {4,6,8} 로 스냅됨.
+            targetDuration: s.targetDuration ?? null,
+            referenceImages: Array.isArray(s.referenceImages) ? s.referenceImages : [],
           }))
         break
       case 'i2v':
+        // 이슈1: t2v(scenes.filter(s=>s.prompt))처럼 complete 여도 전체 Start 에서 재생성한다.
+        //   (이전엔 status!=='complete' 로 완성된 쌍을 제외해 "이미 완료"(noItems)가 떴다 — t2v 와 비대칭.)
+        //   startSceneId 는 필수(시작 이미지 없으면 생성 불가)라 유지.
         items = framePairs
-          .filter(p => p.startSceneId && p.status !== 'complete')
+          .filter(p => p.startSceneId)
           .map(p => ({
             id: p.id,
             prompt: p.prompt,
             startMediaId: p._startMediaId,
             endMediaId: p._endMediaId || null,
             startSceneId: p.startSceneId,
+            endSceneId: p.endSceneId,
+            startImage: p._startImage || null,
+            endImage: p._endImage || null,
             videoSaveId: `i2v_${p.id.replace('fp_', '')}`,
             status: p.status,
             generationId: p.generationId,
             mediaId: p.mediaId,
             videoPath: p.videoPath,
             seed: p.seed ?? seed ?? null,
-            model: p.model || videoModel || null,
+            // t2v(279)와 동일: 저장된 p.model 을 보존하고 없을 때만 현재 선택으로 폴백한다.
+            //   download-only/in-flight 복구 항목은 서버가 옛 모델로 생성한 메타를 그대로 들고 있어야
+            //   pickVideoMetadata(item.model 우선) 가 history 를 실제 사용 모델로 저장한다. fresh 제출은
+            //   fillWindow 가 제출 시점에 effectiveVideoModel 을 다시 stamp 하므로(447) 새 선택이 반영된다.
+            model: p.model ? canonicalVideoModel(p.model) : effectiveVideoModel,
+            targetDuration: p.targetDuration ?? null,
           }))
         break
     }
@@ -289,6 +369,19 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
       setStatus('ready')
       return
     }
+
+    // (배치 구독 게이트는 위 토큰 preflight 이전으로 이동 — 로그인/paywall 우선)
+    const batchType = mode === 'i2v' ? 'video-i2v' : 'video-t2v'
+    // #video-3: batchId — isRetry=true 이면 이 프로젝트의 직전 batchId 재사용, 그 외 새 id 발급.
+    // 재사용 시 서버 consume 이 멱등 no-op → 재생성 재시도가 이중과금되지 않는다. 프로젝트별 키.
+    const { batchId } = resolveProjectBatchId(batchIdByProjectRef.current, projectName, isRetry)
+    // subscriptionBatch 가 null 이면 게이트 미적용(개발/테스트/구독 미로드) — no-op gate 반환.
+    // #6: charged 성공 시 refreshSubscription 1회 호출 — Firestore mirror stale 방지.
+    const consumeGate = subscriptionBatch != null
+      ? makeBatchConsumeGate(batchId, batchType, (a) => consumeBatchDownload(a), () => {
+          refreshSubscription?.().catch(e => console.warn('[VideoAutomation] refreshSubscription failed:', e?.message))
+        })
+      : { ensure: async () => ({ ok: true }) }
 
     // ═══════════════════════════════════════════
     // Phase 0: 분류 — download-only / in-flight / fresh
@@ -319,14 +412,33 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
       setStatusMessage(`⚡ Re-downloading ${downloadOnly.length} server-succeeded videos...`)
       console.log(`[VideoAutomation] Phase 0: download-only for ${downloadOnly.length} items`)
 
+      // Split: items with errorKind='download-entitlement' were NEVER charged (consume was denied
+      // mid-batch). They must pass through the gate before re-downloading. All other download-only
+      // items are ordinary save-failures that were already charged — they re-download for free.
+      const { deniedRetry, plainRedownload } = partitionDownloadOnly(downloadOnly)
+
+      // Gate check for never-charged (denied) items — one consume call covers the whole batch.
+      let deniedGateOk = true // optimistic; only matters if deniedRetry is non-empty
+      if (deniedRetry.length > 0) {
+        const { ok } = await consumeGate.ensure()
+        deniedGateOk = ok
+        if (!ok) {
+          console.warn(`[VideoAutomation] Phase 0: consume denied — skipping ${deniedRetry.length} denied-retry items`)
+          videoErrorCount += deniedRetry.length
+        }
+      }
+
+      // Build the effective download list: plain items always included; denied items only if gate ok.
+      const toDownload = deniedGateOk ? downloadOnly : plainRedownload
+
       const CONCURRENCY = 5
-      for (let i = 0; i < downloadOnly.length; i += CONCURRENCY) {
+      for (let i = 0; i < toDownload.length; i += CONCURRENCY) {
         if (stopRequestedRef.current) break
         await waitIfPaused()
-        const chunk = downloadOnly.slice(i, i + CONCURRENCY)
+        const chunk = toDownload.slice(i, i + CONCURRENCY)
         const results = await Promise.all(chunk.map(it => retryVideoDownload({
           item: it,
-          flowAPI: { checkVideoStatus, fetchMedia, getAccessToken },
+          genAPI: { checkVideoStatus, fetchMedia, getAccessToken, downloadVideo },
           onUpdate: (id, newStatus, patch) => onItemUpdate?.(id, newStatus, patch),
           projectName,
           saveMode,
@@ -336,6 +448,15 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
         for (const r of results) {
           if (r?.success) redownloadedCount++
           else videoErrorCount++
+        }
+
+        // #R25-3: download-only retry 가 authFailed 면 토큰이 죽었으니 남은 chunk 를 죽은 인증으로
+        //   계속 두드리지 않고 즉시 중단한다. authStopped 로 표시해 fall-through 'done' 을 막는다.
+        if (results.some(r => r?.authFailed)) {
+          console.warn('[VideoAutomation] Phase 0 download-only authFailed — stopping batch')
+          stopRequestedRef.current = true
+          authStopped = true
+          break
         }
       }
 
@@ -347,14 +468,18 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
       setIsRunning(false)
       setIsPaused(false)
       setProgress({ current: total, total, percent: 100, errorCount: videoErrorCount, startedAt: batchStartedAt, endedAt: Date.now() })
-      if (stopRequestedRef.current) {
+      if (authStopped) {
+        // #R25-3: download-only 전부였고 Phase 0 에서 인증이 죽은 경우 — 'done' 으로 묻지 않는다.
+        setStatus('error')
+        setStatusMessage(`🔐 ${t('toast.authErrorStop') || 'API key was rejected. Check your API key in Settings and try again.'}`)
+      } else if (stopRequestedRef.current) {
         setStatus('stopped')
         setStatusMessage(t('status.stopped'))
       } else {
         setStatus('done')
         setStatusMessage(`✅ ${t('videoAutomation.done')} — ${redownloadedCount} re-downloaded`)
         // 진행률 100% 도달(사용자 중단 없음) — 평점 카운터 반영
-        try { onComplete?.({ completed: true }) } catch (e) { console.warn('[VideoAutomation] onComplete error:', e.message) }
+        try { await onComplete?.({ completed: true }) } catch (e) { console.warn("[VideoAutomation] onComplete error:", e.message) }
       }
       return
     }
@@ -362,95 +487,116 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
     // items 는 재할당하지 않음 — Phase 2 의 items.find(...) 가 inFlight + freshGen 모두 lookup 가능해야 함.
 
     // ═══════════════════════════════════════════
-    // Phase 1: 순차 제출 (7~15초 간격, 완료 안 기다림)
-    //   - freshGen 만 제출 (inFlight 는 이미 generationId 가 있어 제출 X)
-    //   - submissions 에는 inFlight 도 함께 pre-seed → Phase 2 에서 같이 polling
+    // Phase 1+2: 슬라이딩 윈도우 (제출 ↔ 폴링 인터리브)
+    //   - 동시 in-flight Veo job 을 concurrency 개로 제한.
+    //   - inFlight(이미 generationId 보유) 는 윈도우에 pre-seed → 슬롯 차지.
+    //   - 슬롯이 빌 때마다 freshGen 다음 항목 제출, 완료/실패 시 슬롯 반납.
+    //   - concurrency ≥ (freshGen + inFlight) 면 예전처럼 한 번에 전부 제출되는 것과 동일.
     // ═══════════════════════════════════════════
-    const submissions = inFlight.map(it => ({ itemId: it.id, generationId: it.generationId }))
+    // pending: itemId → { generationId, polls }. polls 는 per-item 폴링 예산(스턱 슬롯 방지).
+    const pending = new Map(inFlight.map(it => [it.id, { generationId: it.generationId, polls: 0 }]))
     let completedCount = 0
+    let nextFreshIdx = 0            // 다음 제출할 freshGen 인덱스
+    const maxPollsPerItem = TIMING.VIDEO_MAX_POLL_COUNT
 
-    for (let i = 0; i < freshGen.length; i++) {
-      if (stopRequestedRef.current) break
-      await waitIfPaused()
+    // 슬롯이 빌 때까지 freshGen 제출. auth → authStopped, quota → stopRequested 설정 후 반환.
+    const fillWindow = async () => {
+      // Flow(Agent OFF)는 동시성 윈도우 대신 제출 사이 7~15초 페이싱으로 throttle → 캡 무시.
+      const ignoreCap = appMode === 'flow'
+      while ((ignoreCap || pending.size < concurrency) && nextFreshIdx < freshGen.length) {
+        if (stopRequestedRef.current || authStopped) return
+        await waitIfPaused()
+        if (stopRequestedRef.current) return
 
-      const item = freshGen[i]
-      setStatusMessage(`📤 ${t('videoAutomation.submitting') || 'Submitting'} ${i + 1}/${freshGen.length} — "${(item.prompt || '').substring(0, 30)}..."`)
-      onItemUpdate?.(item.id, 'generating')
+        const i = nextFreshIdx
+        const item = freshGen[i]
+        setStatusMessage(`📤 ${t('videoAutomation.submitting') || 'Submitting'} ${i + 1}/${freshGen.length} — "${(item.prompt || '').substring(0, 30)}..."`)
+        onItemUpdate?.(item.id, 'generating')
 
-      const genResult = await submitVideoItem(item, mode, {
-        videoModel, aspectRatio, duration, videoBatchCount, seed
-      })
-
-      if (genResult.success && genResult.generationId) {
-        submissions.push({ itemId: item.id, generationId: genResult.generationId })
-        // Persist generationId + 메타(seed/model) 를 즉시 state 에 박는다.
-        // app-kill → reload → recovery 시 videoRecovery 가 item.model/seed 를 읽어
-        // 동일한 모델/seed 로 저장하도록. 누락하면 recovery 가 'flow-video' 로 폴백.
-        onItemUpdate?.(item.id, 'generating', {
-          generationId: genResult.generationId,
-          ...(seed != null ? { seed } : {}),
-          ...(videoModel ? { model: videoModel } : {}),
-          // canonical 식별자 — recovery/retry 가 file 위치 매칭에 사용 (videoSaveId 없으면 vscene_/fp_ 폴백되어 파일명 갈라짐)
-          ...(item.videoSaveId ? { videoSaveId: item.videoSaveId } : {}),
-          // 새 generation 제출 — 이전 complete 의 path/mediaId/video 명시적 제거.
-          // 빠뜨리면 (1) recovery 후보 필터(!fp.videoPath)에 안 걸리고, (2) UI 가 옛 비디오 표시,
-          // (3) 새 비디오 다운로드 실패 시 옛 path 가 그대로 남아 export 까지 옛 파일 사용.
-          videoPath: null,
-          mediaId: null,
-          video: null,
-          base64: null,
-          generatedAt: null,
+        const genResult = await submitVideoItem(item, mode, {
+          videoModel: effectiveVideoModel, aspectRatio, duration, videoBatchCount, seed, projectName, videoResolution
         })
-        console.log(`[VideoAutomation] ✅ Submitted ${i + 1}/${total}: ${genResult.generationId.substring(0, 16)}...`)
-      } else {
-        // Auth errors now handled via withAuthRetry's authFailed sentinel (see below).
-        // Inline 401 string-match removed to avoid duplicate onAuthError firing.
-        if (genResult?.authFailed) {
-          const authErr = genResult.error || 'Auth expired — please re-login to Flow'
-          onItemUpdate?.(item.id, 'error', {
-            error: authErr,
-            errorKind: 'auth',
+
+        if (genResult.success && genResult.generationId) {
+          pending.set(item.id, { generationId: genResult.generationId, polls: 0 })
+          nextFreshIdx++
+          // fresh 제출은 effectiveVideoModel 로 생성됐으므로 로컬 item.model 도 갱신한다.
+          //   완료 시 downloadAndSaveVideo→pickVideoMetadata 가 item.model 을 우선 쓰는데,
+          //   regen(완료 쌍 재생성) 항목은 item-build(310)에서 보존된 옛 p.model 을 들고 있어
+          //   stamp 하지 않으면 새 모델로 생성했는데 history 엔 옛 모델이 저장된다.
+          //   (download-only/in-flight 항목은 fillWindow 를 안 거치므로 옛 메타 그대로 유지.)
+          item.model = effectiveVideoModel
+          // Persist generationId + 메타(seed/model) 를 즉시 state 에 박는다.
+          // app-kill → reload → recovery 시 videoRecovery 가 item.model/seed 를 읽어
+          // 동일한 모델/seed 로 저장하도록. 누락하면 recovery 가 'flow-video' 로 폴백.
+          onItemUpdate?.(item.id, 'generating', {
+            generationId: genResult.generationId,
+            ...(seed != null ? { seed } : {}),
+            model: effectiveVideoModel,
+            // canonical 식별자 — recovery/retry 가 file 위치 매칭에 사용 (videoSaveId 없으면 vscene_/fp_ 폴백되어 파일명 갈라짐)
+            ...(item.videoSaveId ? { videoSaveId: item.videoSaveId } : {}),
+            // 새 generation 제출 — 이전 complete 의 path/mediaId/video 명시적 제거.
+            // 빠뜨리면 (1) recovery 후보 필터(!fp.videoPath)에 안 걸리고, (2) UI 가 옛 비디오 표시,
+            // (3) 새 비디오 다운로드 실패 시 옛 path 가 그대로 남아 export 까지 옛 파일 사용.
+            videoPath: null,
+            mediaId: null,
+            video: null,
+            base64: null,
+            generatedAt: null,
           })
-          videoErrorCount++
-          // Mark all remaining un-submitted items with the same auth error
-          for (let j = i + 1; j < freshGen.length; j++) {
-            onItemUpdate?.(freshGen[j].id, 'error', {
-              error: authErr,
-              errorKind: 'auth',
-            })
+          console.log(`[VideoAutomation] ✅ Submitted ${i + 1}/${total}: ${genResult.generationId.substring(0, 16)}...`)
+        } else if (genResult?.authFailed) {
+          // Auth errors handled via withAuthRetry's authFailed sentinel.
+          // 토큰 사망 — 이 항목 + 남은 freshGen 전부 auth error. 이미 제출된 pending 은 post-loop 에서 마감.
+          const authErr = genResult.error || 'API key was rejected. Check your API key in Settings and try again.'
+          for (let j = i; j < freshGen.length; j++) {
+            onItemUpdate?.(freshGen[j].id, 'error', { error: authErr, errorKind: 'auth' })
             videoErrorCount++
           }
-          console.warn(`[VideoAutomation] ❌ Submit authFailed: token dead, stopping batch`)
+          nextFreshIdx = freshGen.length
           authStopped = true
           setStatus('error')
-          setStatusMessage(`🔐 ${t('toast.authErrorStop') || 'Auth expired — please re-login to Flow'}`)
-          break
+          setStatusMessage(`🔐 ${t('toast.authErrorStop') || 'API key was rejected. Check your API key in Settings and try again.'}`)
+          console.warn(`[VideoAutomation] ❌ Submit authFailed: token dead, stopping batch`)
+          return
+        } else {
+          // 일반 실패 — 이 항목만 error 처리하고 다음 진행. quota 면 batch stop.
+          onItemUpdate?.(item.id, 'error', { error: genResult.error })
+          videoErrorCount++
+          nextFreshIdx++
+          console.warn(`[VideoAutomation] ❌ Submit failed ${i + 1}/${total}:`, genResult.error)
+          if (_maybeTriggerQuotaStop(genResult.error)) return
         }
-        onItemUpdate?.(item.id, 'error', { error: genResult.error })
-        videoErrorCount++
-        console.warn(`[VideoAutomation] ❌ Submit failed ${i + 1}/${total}:`, genResult.error)
-        if (_maybeTriggerQuotaStop(genResult.error)) break
-      }
 
-      // 다음 제출 전 랜덤 대기 (마지막 아이템 제외)
-      if (i < freshGen.length - 1 && !stopRequestedRef.current) {
-        const waitMs = Math.floor(Math.random() * (TIMING.VIDEO_SUBMIT_MAX_DELAY - TIMING.VIDEO_SUBMIT_MIN_DELAY + 1)) + TIMING.VIDEO_SUBMIT_MIN_DELAY
-        setStatusMessage(`⏱️ ${t('videoAutomation.waitingNext') || 'Waiting'} ${Math.round(waitMs / 1000)}s...`)
-        await sleep(waitMs)
+        // Flow 반봇 페이싱 — 다음 제출 전 7~15초 랜덤 대기(이미지 자동화와 동일). API 는 대기 없음.
+        if (appMode === 'flow' && nextFreshIdx < freshGen.length && !stopRequestedRef.current && !authStopped) {
+          const waitMs = 7000 + Math.floor(Math.random() * 8000)
+          const waitEnd = Date.now() + waitMs
+          while (Date.now() < waitEnd && !stopRequestedRef.current) {
+            await waitIfPaused()
+            if (stopRequestedRef.current) break
+            await new Promise(r => setTimeout(r, 500))
+          }
+        }
       }
     }
 
-    if (submissions.length === 0) {
-      // 모든 제출 실패 + in-flight 도 없음 — auth/quota/일반 실패 구분.
-      // auth 면 status 와 메시지가 이미 break 시점에 설정돼 있으므로 덮어쓰지 않는다.
+    // 초기 윈도우 채우기
+    await fillWindow()
+
+    // in-flight 도 없고 제출도 0건 — auth/quota/일반 실패 구분 후 조기 종료.
+    if (pending.size === 0) {
       setIsRunning(false)
       if (authStopped) {
-        // Status + message already set at the break site — do not overwrite.
+        // Status + message already set at the submit break site — do not overwrite.
       } else if (quotaStoppedRef.current) {
         // local ref — 모달 dismiss 와 무관하게 이번 batch 의 stop 사유를 정확히 판별.
         // 전역 isQuotaBlocked() 보면 사용자가 모달을 1초 안에 닫는 경우 race 로 'done' 표시되는 회귀.
         setStatus('stopped')
-        setStatusMessage(`⛔ ${t('videoAutomation.quotaStopped') || 'Flow generation limit reached — stopped'}`)
+        setStatusMessage(`⛔ ${t('videoAutomation.quotaStopped') || 'API generation limit reached — stopped'}`)
+      } else if (stopRequestedRef.current) {
+        setStatus('stopped')
+        setStatusMessage(t('status.stopped'))
       } else {
         setStatus('done')
         setStatusMessage(`❌ ${t('videoAutomation.allFailed') || 'All submissions failed'}`)
@@ -458,40 +604,18 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
       return
     }
 
-    // Auth died mid-submit AND some items had already been submitted before the break.
-    // The token is dead — polling those generationIds would just hit 401 every iteration
-    // until the poll loop itself broke on authFailed (relying on it is fragile and the test
-    // had to mock checkVideoStatus authFailed too to exit cleanly). Abandon the batch now,
-    // marking the already-submitted items with the same auth error so the user sees a
-    // consistent end state across all items.
-    if (authStopped) {
-      const authMsg = t('toast.authErrorStop') || 'Auth expired — please re-login to Flow'
-      for (const sub of submissions) {
-        onItemUpdate?.(sub.itemId, 'error', { error: authMsg, errorKind: 'auth' })
-        videoErrorCount++
-      }
-      setIsRunning(false)
-      // status/statusMessage already set at the submit break site — do not overwrite.
-      return
-    }
-
-    console.log(`[VideoAutomation] Phase 1 done: ${submissions.length} pending poll (${freshGen.length} fresh + ${inFlight.length} in-flight)`)
+    console.log(`[VideoAutomation] Phase 1 window open: ${pending.size} in-flight (${freshGen.length} fresh + ${inFlight.length} pre-seeded)`)
 
     // ═══════════════════════════════════════════
-    // Phase 2: 일괄 폴링 + Phase 3: 완료 즉시 다운로드
+    // 폴링 루프 — 완료/실패 시 슬롯 반납 → fillWindow 로 다음 freshGen 제출 (슬라이딩)
     // ═══════════════════════════════════════════
-    const pending = new Map(submissions.map(s => [s.itemId, s]))
-    let pollCount = 0
-    const maxPolls = TIMING.VIDEO_MAX_POLL_COUNT
-
-    while (pending.size > 0 && pollCount < maxPolls) {
-      if (stopRequestedRef.current) break
+    while (pending.size > 0 && !stopRequestedRef.current && !authStopped) {
       await waitIfPaused()
+      if (stopRequestedRef.current) break
 
-      // 진행률 표시 (redownloadedCount 를 함께 반영)
-      const doneCount = submissions.length - pending.size
-      const overallDone = doneCount + completedCount + redownloadedCount
-      setStatusMessage(`⏳ ${t('videoAutomation.polling') || 'Polling'} ${submissions.length} videos (${overallDone} ${t('videoAutomation.complete') || 'complete'})`)
+      // 진행률 표시 — 완료 다운로드 + Phase 0 재다운로드 + 실패 = 종결 항목
+      const overallDone = Math.min(total, completedCount + redownloadedCount + videoErrorCount)
+      setStatusMessage(`⏳ ${t('videoAutomation.polling') || 'Polling'} ${pending.size} videos (${completedCount + redownloadedCount} ${t('videoAutomation.complete') || 'complete'})`)
       setProgress({
         current: overallDone,
         total,
@@ -501,7 +625,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
       })
 
       // 배치 상태 체크 — genIds 순서와 statuses 순서가 동일 (인덱스 매칭)
-      const pendingEntries = Array.from(pending.entries()) // [[itemId, { generationId }], ...]
+      const pendingEntries = Array.from(pending.entries()) // [[itemId, { generationId, polls }], ...]
       const genIds = pendingEntries.map(([_, s]) => s.generationId)
       const result = await checkVideoStatus(genIds)
 
@@ -509,17 +633,21 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
       // The wrapper already fired onAuthError + cleared cache. Mark all pending items
       // as auth-error and break immediately — no point polling on a dead token.
       if (result?.authFailed) {
-        const authErr = result.error || 'Auth expired — please re-login to Flow'
+        const authErr = result.error || 'API key was rejected. Check your API key in Settings and try again.'
         for (const [itemId] of pending) {
-          onItemUpdate?.(itemId, 'error', {
-            error: authErr,
-            errorKind: 'auth',
-          })
+          onItemUpdate?.(itemId, 'error', { error: authErr, errorKind: 'auth' })
+          videoErrorCount++  // fillWindow auth 경로·아래 freshGen 루프와 동일하게 집계 (progress.errorCount 일관성)
         }
+        // 아직 제출 안 한 freshGen 도 동일 auth error
+        for (let j = nextFreshIdx; j < freshGen.length; j++) {
+          onItemUpdate?.(freshGen[j].id, 'error', { error: authErr, errorKind: 'auth' })
+          videoErrorCount++
+        }
+        nextFreshIdx = freshGen.length
         pending.clear()
         authStopped = true
         setStatus('error')
-        setStatusMessage(`🔐 ${t('toast.authErrorStop') || 'Auth expired — please re-login to Flow'}`)
+        setStatusMessage(`🔐 ${t('toast.authErrorStop') || 'API key was rejected. Check your API key in Settings and try again.'}`)
         break
       }
       // Top-level fail (예: { success: false, error: "RESOURCE_EXHAUSTED..." }) — quota 검사 후 break.
@@ -535,17 +663,41 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
           const [itemId, submission] = pendingEntries[si]
 
           if (statusInfo.status === 'complete' && statusInfo.mediaId) {
-            // ─── Phase 3: 다운로드+저장 (DOM 순차) ───
+            // ─── 다운로드+저장 (DOM 순차) ───
             console.log(`[VideoAutomation] ✅ Complete: ${statusInfo.mediaId.substring(0, 20)} → downloading...`)
             setStatusMessage(`📥 ${t('videoAutomation.downloading') || 'Downloading'} — ${statusInfo.mediaId.substring(0, 16)}...`)
 
             // item 을 한 번만 lookup — downloadAndSaveVideo 와 실패 patch 가 공유 (메타 우선순위 일관성).
             const item = items.find(i => i.id === itemId)
+
+            // 배치 다운로드 구독 게이트 — 첫 번째 다운로드 직전에 한 번만 consume (이후 캐시).
+            const gateResult = await consumeGate.ensure()
+            if (!gateResult.ok) {
+              // denied — 다운로드하지 않고, generationId + mediaId 를 보존해 재시도 가능하게.
+              const retryMediaId = statusInfo.mediaId
+              onItemUpdate?.(itemId, 'error', {
+                error: 'Download entitlement denied — upgrade to download this batch',
+                errorKind: 'download-entitlement',
+                ...(retryMediaId ? { mediaId: retryMediaId } : {}),
+                generationId: submission.generationId,
+                ...buildVideoMetaPatch(item, { seed, videoModel: effectiveVideoModel }),
+              })
+              videoErrorCount++
+              pending.delete(itemId)
+              console.warn(`[VideoAutomation] ❌ Download gate denied: ${itemId}`)
+              // #7: consume denied mid-batch — stop new submissions, trigger paywall.
+              // gate is cached ok:false so all subsequent ensure() calls are instant no-ops.
+              // stopRequestedRef prevents fillWindow from submitting more freshGen items.
+              stopRequestedRef.current = true
+              onPaywall?.()
+              continue
+            }
+
             const dlResult = await downloadAndSaveVideo(
               statusInfo.mediaId,
               statusInfo.videoUrl,
               item,
-              { projectName, saveMode, videoResolution, aspectRatio, seed, videoModel },
+              { projectName, saveMode, videoResolution, aspectRatio, seed, videoModel: effectiveVideoModel },
               setStatusMessage
             )
 
@@ -553,7 +705,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
               onItemUpdate?.(itemId, 'complete', {
                 ...dlResult,
                 generationId: submission.generationId,
-                duration,
+                duration: effectiveVideoDuration(item, mode, duration, videoResolution, effectiveVideoModel, appMode),
                 mode,
                 // 이전 실패에서 남은 error 메시지 clear (success 이후 stale 표시 방지)
                 error: null,
@@ -577,8 +729,9 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
                 ...(retryMediaId ? { mediaId: retryMediaId } : {}),
                 ...(dlResult.videoSaveId ? { videoSaveId: dlResult.videoSaveId } : {}),
                 generationId: submission.generationId,
-                ...buildVideoMetaPatch(item, { seed, videoModel }),
+                ...buildVideoMetaPatch(item, { seed, videoModel: effectiveVideoModel }),
               })
+              videoErrorCount++  // 다운로드 실패도 errorCount 에 집계
               console.warn(`[VideoAutomation] ❌ Download failed: ${itemId}`, errMsg)
             }
             pending.delete(itemId)
@@ -590,46 +743,84 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
             const item = items.find(i => i.id === itemId)
             onItemUpdate?.(itemId, 'error', {
               error: statusInfo.error || 'Video generation failed',
-              ...buildVideoMetaPatch(item, { seed, videoModel }),
+              ...buildVideoMetaPatch(item, { seed, videoModel: effectiveVideoModel }),
             })
+            videoErrorCount++  // 서버 generation 실패도 집계
             pending.delete(itemId)
             console.warn(`[VideoAutomation] ❌ Generation failed: ${submission.generationId.substring(0, 16)}`)
             _maybeTriggerQuotaStop(statusInfo.error)
+
+          } else {
+            // 'pending' / 'processing' — per-item 폴링 예산 소진. 초과 시 슬롯 영구 점유 방지 위해 timeout.
+            submission.polls++
+            if (submission.polls >= maxPollsPerItem) {
+              onItemUpdate?.(itemId, 'error', { error: 'Polling timeout — video generation took too long' })
+              videoErrorCount++
+              pending.delete(itemId)
+              console.warn(`[VideoAutomation] ⏱️ Poll timeout: ${itemId}`)
+            }
           }
-          // else: 'pending' / 'processing' → 계속 폴링
+        }
+      } else {
+        // Top-level 폴링 실패(non-quota·non-auth, 예: 일시 500) 또는 statuses 없는 malformed 응답 —
+        // 이번 라운드는 전원 폴링 실패로 간주해 각 항목 예산 차감, 초과 시 timeout.
+        // (옛 global pollCount 제거 후, quota/auth 가 아닌 영구 실패가 무한 폴링되는 것 방지.)
+        console.warn(`[VideoAutomation] ⚠️ Poll failed (non-quota): ${result.error || 'malformed response'}`)
+        for (const [itemId, submission] of Array.from(pending.entries())) {
+          submission.polls++
+          if (submission.polls >= maxPollsPerItem) {
+            onItemUpdate?.(itemId, 'error', { error: `Polling failed — ${result.error || 'server error'}` })
+            videoErrorCount++
+            pending.delete(itemId)
+          }
         }
       }
 
-      pollCount++
+      // 완료/실패로 빈 슬롯을 다음 freshGen 으로 채움 (슬라이딩).
+      if (!stopRequestedRef.current && !authStopped) {
+        await fillWindow()
+      }
+
       // sleep 전 stop 재확인 — quota 감지(_maybeTriggerQuotaStop) 직후 불필요한
-      // 10초 sleep 을 피해 즉시 루프 빠져나가도록.
-      if (pending.size > 0 && !stopRequestedRef.current) {
+      // 폴링 간격 sleep 을 피해 즉시 루프 빠져나가도록.
+      if (pending.size > 0 && !stopRequestedRef.current && !authStopped) {
         await sleep(TIMING.VIDEO_POLL_INTERVAL)
       }
     }
 
-    // 타임아웃된 항목 처리
-    if (pending.size > 0 && !stopRequestedRef.current) {
-      for (const [itemId] of pending) {
-        onItemUpdate?.(itemId, 'error', { error: 'Polling timeout — video generation took too long' })
-      }
-    }
-
-    // 사용자 stop — 남은 in-flight 항목 마무리.
-    // 빠뜨리면 videoT2VStatus 가 'generating' 으로 영원히 남고 generatingEndedAt 이 null 이라
-    // ResultsTable 의 useElapsedTimer 가 무한 증가 (사용자가 보기엔 "여전히 작업 중" 처럼).
-    // Flow API 는 cancel 이 없어 서버 생성 자체는 막을 수 없으므로, generationId 는 보존해
-    // (a) 앱 재시작 시 videoRecovery 가 결과 회수, (b) Flow 완료 후 Retry 다운로드 가능.
-    if (pending.size > 0 && stopRequestedRef.current) {
-      const stoppedMsg = t('videoAutomation.stoppedByUser') || 'Stopped by user — Flow may still be generating; use Retry later or restart for auto-recovery'
-      for (const [itemId, submission] of pending) {
-        const item = items.find(i => i.id === itemId)
-        onItemUpdate?.(itemId, 'error', {
-          error: stoppedMsg,
-          errorKind: 'stopped',
-          generationId: submission.generationId,
-          ...buildVideoMetaPatch(item, { seed, videoModel }),
-        })
+    // ───────────────────────────────────────────
+    // 남은 pending 마무리 (정상 완료 경로면 비어있음)
+    // ───────────────────────────────────────────
+    if (pending.size > 0) {
+      if (authStopped) {
+        // auth 가 fillWindow 제출 중 터진 경우 — 이미 제출된 in-flight 도 auth error 로 마감.
+        // (auth 가 폴링 중 터지면 위에서 pending.clear() 했으므로 여기 안 옴.)
+        const authMsg = t('toast.authErrorStop') || 'API key was rejected. Check your API key in Settings and try again.'
+        for (const [itemId] of pending) {
+          onItemUpdate?.(itemId, 'error', { error: authMsg, errorKind: 'auth' })
+          videoErrorCount++
+        }
+      } else if (stopRequestedRef.current) {
+        // 사용자/quota stop — 남은 in-flight 항목 마무리. generationId 보존해
+        // (a) 앱 재시작 시 videoRecovery 가 결과 회수, (b) Flow 완료 후 Retry 다운로드.
+        // 빠뜨리면 videoT2VStatus 가 'generating' 으로 영원히 남고 generatingEndedAt 이 null 이라
+        // ResultsTable 의 useElapsedTimer 가 무한 증가 (사용자가 보기엔 "여전히 작업 중" 처럼).
+        const stoppedMsg = t('videoAutomation.stoppedByUser') || 'Stopped by user — submitted Veo operations may still be running. Use Retry later or restart for auto-recovery.'
+        for (const [itemId, submission] of pending) {
+          const item = items.find(i => i.id === itemId)
+          onItemUpdate?.(itemId, 'error', {
+            error: stoppedMsg,
+            errorKind: 'stopped',
+            generationId: submission.generationId,
+            ...buildVideoMetaPatch(item, { seed, videoModel: effectiveVideoModel }),
+          })
+        }
+      } else {
+        // 정상 루프 종료인데 pending 잔여 (이론상 per-item timeout 으로 안 와야 함) — 안전 timeout.
+        for (const [itemId] of pending) {
+          onItemUpdate?.(itemId, 'error', { error: 'Polling timeout — video generation took too long' })
+          videoErrorCount++
+        }
       }
     }
 
@@ -647,7 +838,7 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
       // poll 단계에서 quota 로 멈춘 경우에도 첫 submit path 와 동일한 quotaStopped 메시지.
       // quotaStoppedRef 는 batch 동안만 유지되어 사용자 수동 stop 과 안전하게 구분된다.
       if (quotaStoppedRef.current) {
-        setStatusMessage(`⛔ ${t('videoAutomation.quotaStopped') || 'Flow generation limit reached — stopped'}`)
+        setStatusMessage(`⛔ ${t('videoAutomation.quotaStopped') || 'API generation limit reached — stopped'}`)
       } else {
         setStatusMessage(t('status.stopped'))
       }
@@ -656,12 +847,15 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
       const parts = []
       if (completedCount > 0) parts.push(`${completedCount} regenerated`)
       if (redownloadedCount > 0) parts.push(`${redownloadedCount} re-downloaded`)
+      if (videoErrorCount > 0) parts.push(`${videoErrorCount} failed`)  // Phase 2 실패도 완료 요약에 노출
       const tail = parts.length > 0 ? ` — ${parts.join(', ')}` : ''
-      setStatusMessage(`✅ ${t('videoAutomation.done')}${tail}`)
+      // 실패가 있으면 성공처럼 보이지 않도록 아이콘 구분.
+      const icon = videoErrorCount > 0 ? '⚠️' : '✅'
+      setStatusMessage(`${icon} ${t('videoAutomation.done')}${tail}`)
       // 진행률 100% 도달(사용자/auth 중단 없음) — 평점 카운터 반영
-      try { onComplete?.({ completed: true }) } catch (e) { console.warn('[VideoAutomation] onComplete error:', e.message) }
+      try { await onComplete?.({ completed: true }) } catch (e) { console.warn("[VideoAutomation] onComplete error:", e.message) }
     }
-  }, [isRunning, generateVideoT2V, generateVideoI2V, checkVideoStatus, upscaleVideo, fetchMedia, getAccessToken, t, onComplete])
+  }, [isRunning, generateVideoT2V, generateVideoI2V, checkVideoStatus, upscaleVideo, fetchMedia, getAccessToken, t, onComplete, appMode, flowProjectReady, subscriptionBatch, onPaywall, isAuthenticated, onLoginRequired, subscriptionStatus, refreshSubscription])
 
   /**
    * 일시정지/재개
@@ -684,14 +878,26 @@ export function useVideoAutomation(flowAPI, t = (key) => key, generationQueue = 
 
   // 큐를 통한 시작
   const startQueued = useCallback(async (options = {}) => {
+    // #R13-7: start() 가 예기치 못하게 throw 해도 running UI 가 고착되지 않도록 가드(이미지 자동화와 동일).
+    const guardedStart = async () => {
+      try {
+        return await start(options)
+      } catch (e) {
+        console.error('[VideoGen] start threw — resetting run state:', e?.message)
+        setStatus('error')
+        setStatusMessage(e?.message || 'error')
+        setIsRunning(false)
+        setIsPaused(false)
+      }
+    }
     if (!generationQueue) {
-      return start(options)
+      return guardedStart()
     }
     try {
       await generationQueue.enqueue({
         type: 'video_batch',
         label: 'Video Automation',
-        execute: () => start(options)
+        execute: guardedStart
       })
     } catch (err) {
       console.warn('[VideoGen] Queue rejected:', err.message)

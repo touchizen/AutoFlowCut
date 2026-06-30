@@ -31,7 +31,6 @@ function setupFunctionMocks(suffix = '_test') {
   const mocks = {}
   const functionNames = [
     'initializeUser',
-    'getAppStatus',
     'getPricing',
     'createCheckoutSession',
     'createPortalSession'
@@ -99,34 +98,6 @@ describe('Cloud Functions 호출', () => {
     })
   })
 
-  describe('getAppStatus', () => {
-    it('구독 상태를 반환해야 함', async () => {
-      mocks.getAppStatus.mockResolvedValue({
-        data: { status: 'trial', exportCount: 2, exportsRemaining: 3, daysRemaining: 5 }
-      })
-
-      const { getAppStatus } = await import('../../src/firebase/functions.js')
-      const result = await getAppStatus()
-
-      expect(mockHttpsCallable).toHaveBeenCalledWith(expect.anything(), 'getAppStatus_test')
-      expect(result.status).toBe('trial')
-      expect(result.exportsRemaining).toBe(3)
-    })
-
-    it('함수 호출 실패 시 기본값 반환', async () => {
-      mocks.getAppStatus.mockRejectedValue(new Error('Network error'))
-
-      const { getAppStatus } = await import('../../src/firebase/functions.js')
-      const result = await getAppStatus()
-
-      expect(result).toEqual({
-        status: 'trial',
-        exportCount: 0,
-        exportsRemaining: 5,
-        daysRemaining: 7
-      })
-    })
-  })
 
   describe('getPricing', () => {
     it('가격 정보를 반환해야 함', async () => {

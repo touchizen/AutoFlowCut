@@ -10,6 +10,7 @@
  */
 
 import { fileSystemAPI } from '../hooks/useFileSystem'
+import { downloadVideoBase64 } from './videoDownload'
 
 /**
  * 다운로드 + 저장 (useVideoAutomation의 Phase 3 로직과 동일)
@@ -21,57 +22,17 @@ export async function downloadAndSaveVideo({
   item,                  // { id, videoSaveId? }
   projectName,
   saveMode = 'folder',
-  videoResolution = '1080p',
-  fetchMedia,            // from flowAPI
-  getAccessToken,        // from flowAPI
+  videoResolution = '1080p', // cloud 다운로드에선 미사용 — 시그니처 호환 위해 유지
+  downloadVideo,         // from genAPI (useGenAPI)
+  fetchMedia,            // (legacy, 미사용)
+  getAccessToken,        // (legacy, 미사용)
 }) {
-  let mediaResult
-
-  // ─── 1. DOM 다운로드 ───
-  if (window.electronAPI?.domDownloadVideo) {
-    try {
-      console.log('[VideoRecovery] [1/3] DOM download — mediaId:', mediaId?.substring(0, 20), 'resolution:', videoResolution)
-      mediaResult = await window.electronAPI.domDownloadVideo({
-        mediaId, resolution: videoResolution
-      })
-      if (mediaResult?.success) {
-        const actualRes = mediaResult.resolution || 'unknown'
-        console.log('[VideoRecovery] DOM download success (resolution:', actualRes, ')')
-      } else {
-        console.warn('[VideoRecovery] DOM download failed:', mediaResult?.error)
-      }
-    } catch (e) {
-      console.warn('[VideoRecovery] DOM download exception:', e.message)
-    }
-  }
-
-  // ─── 2. videoUrl 직접 다운로드 ───
-  if (!mediaResult?.success && videoUrl && getAccessToken) {
-    try {
-      console.log('[VideoRecovery] [2/3] Direct URL download:', videoUrl?.substring(0, 80))
-      const token = await getAccessToken()
-      mediaResult = await window.electronAPI.downloadVideoUrl({ url: videoUrl, token })
-      if (mediaResult?.success) {
-        console.log('[VideoRecovery] Direct URL download success')
-      }
-    } catch (e) {
-      console.warn('[VideoRecovery] Direct URL download exception:', e.message)
-      mediaResult = null
-    }
-  }
-
-  // ─── 3. fetchMedia fallback ───
-  if (!mediaResult?.success && fetchMedia) {
-    try {
-      console.log('[VideoRecovery] [3/3] fetchMedia for mediaId:', mediaId?.substring(0, 20))
-      mediaResult = await fetchMedia(mediaId)
-    } catch (e) {
-      console.warn('[VideoRecovery] fetchMedia exception:', e.message)
-    }
-  }
+  // cloud(Veo): videoUri 직접 base64 다운로드 (구 DOM→URL→fetchMedia 폴백 제거,
+  // useVideoAutomation 과 동일한 videoDownload 공통 헬퍼 사용)
+  const mediaResult = await downloadVideoBase64(downloadVideo, videoUrl, videoResolution) // #R13-6
 
   if (!mediaResult?.success) {
-    return { success: false, error: `Media download failed: ${mediaResult?.error || 'All methods failed'}`, mediaId }
+    return { success: false, error: `Media download failed: ${mediaResult?.error || 'no video URL'}`, mediaId }
   }
 
   // 파일 저장 — useVideoAutomation 와 동일한 metadata 규칙(seed/timestamp/model) +
@@ -142,17 +103,29 @@ export async function recoverInFlightVideos({
   projectName,
   saveMode = 'folder',
   videoResolution = '1080p',
-  checkVideoStatus,      // flowAPI.checkVideoStatus(genIds[]) → { success, statuses[] }
-  fetchMedia,            // flowAPI.fetchMedia
-  getAccessToken,        // flowAPI.getAccessToken
+  checkVideoStatus,      // genAPI.checkVideoStatus(genIds[]) → { success, statuses[] }
+  downloadVideo,         // genAPI.downloadVideo(videoUri)
+  fetchMedia,            // (legacy, 미사용)
+  getAccessToken,        // (legacy, 미사용)
   onFramePairUpdate,     // (id, patch) => void
+  mode,                  // #R34-1: 현재 엔진 모드('api'|'flow'). 다른 엔진이 만든 generationId 는 건너뛴다.
   logPrefix = '[VideoRecovery]',
 }) {
-  // 복구 대상: generationId 있음 + videoPath 없음 + status가 generating/pending
+  // #R34-1: 비디오 generationId 는 엔진별로 형태가 다르다 — Flow=UUID, API(Veo)=operationName(경로형).
+  //   현재 mode 의 엔진(genAPI.checkVideoStatus)으로 다른 엔진 id 를 폴링하면 'failed' 로 돌아와
+  //   영구히 error 마킹되고(이후 recovery 가 generating/pending 만 보므로 skip) 완료된 Flow 잡이
+  //   고아가 된다. 엔진이 안 맞으면 폴링하지 않고 그대로 둬, 올바른 모드의 recovery 가 처리하게 한다.
+  const isUuid = (v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v || '').trim())
+  const engineMatches = (genId) => {
+    if (mode !== 'api' && mode !== 'flow') return true  // mode 미지정(legacy) → 필터 안 함
+    return mode === 'flow' ? isUuid(genId) : !isUuid(genId)  // flow=UUID, api=operationName
+  }
+  // 복구 대상: generationId 있음 + videoPath 없음 + status가 generating/pending + 엔진 일치
   const candidates = framePairs.filter(fp =>
     fp.generationId &&
     !fp.videoPath &&
-    (fp.status === 'generating' || fp.status === 'pending')
+    (fp.status === 'generating' || fp.status === 'pending') &&
+    engineMatches(fp.generationId)
   )
 
   if (candidates.length === 0) return { recovered: 0, total: 0, expired: 0 }
@@ -174,6 +147,15 @@ export async function recoverInFlightVideos({
     } catch (e) {
       console.warn(`${logPrefix} checkVideoStatus exception:`, e.message)
       continue
+    }
+
+    // #R24-3: checkVideoStatus 는 success:true + statuses:[] + authFailed:true 로 인증 만료를
+    //   표면화할 수 있다(engineFlow R21-2). 이를 무시하면 빈 statuses 를 정상으로 받아들여
+    //   candidate 들이 'generating' 으로 영구 stuck 된다. 죽은 인증으로 복구를 계속하지 말고 중단.
+    if (result?.authFailed) {
+      console.warn(`${logPrefix} checkVideoStatus authFailed — stopping recovery (dead auth)`)
+      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('flow-login-expired'))
+      break
     }
 
     if (!result?.success || !Array.isArray(result.statuses)) {
@@ -209,8 +191,7 @@ export async function recoverInFlightVideos({
             projectName,
             saveMode,
             videoResolution,
-            fetchMedia,
-            getAccessToken,
+            downloadVideo,
           })
 
           if (dlResult.success && dlResult.base64) {
@@ -285,7 +266,7 @@ export async function recoverInFlightVideos({
  *
  * @param {object}   args
  * @param {object}   args.item       — { id, generationId, mediaId, videoSaveId? }
- * @param {object}   args.flowAPI    — { checkVideoStatus, fetchMedia, getAccessToken }
+ * @param {object}   args.genAPI    — { checkVideoStatus, fetchMedia, getAccessToken }
  * @param {function} args.onUpdate   — (id, status, patch) => void
  * @param {string}   [args.projectName]
  * @param {string}   [args.saveMode]       ('folder' | 'memory')
@@ -294,7 +275,7 @@ export async function recoverInFlightVideos({
  */
 export async function retryVideoDownload({
   item,
-  flowAPI,
+  genAPI,
   onUpdate,
   projectName = '',
   saveMode = 'folder',
@@ -305,8 +286,8 @@ export async function retryVideoDownload({
     onUpdate?.(item.id, 'error', { error })
     return { success: false, error }
   }
-  if (!flowAPI?.checkVideoStatus) {
-    const error = 'Cannot retry: flowAPI.checkVideoStatus unavailable'
+  if (!genAPI?.checkVideoStatus) {
+    const error = 'Cannot retry: genAPI.checkVideoStatus unavailable'
     onUpdate?.(item.id, 'error', { error })
     return { success: false, error }
   }
@@ -316,7 +297,7 @@ export async function retryVideoDownload({
   // ─── 1. 서버 상태 확인 ───
   let statusResult
   try {
-    statusResult = await flowAPI.checkVideoStatus([item.generationId])
+    statusResult = await genAPI.checkVideoStatus([item.generationId])
   } catch (e) {
     const err = String(e?.message || e)
     const isExpired = err.includes('404') || err.includes('NOT_FOUND') || err.toLowerCase().includes('expired')
@@ -325,6 +306,15 @@ export async function retryVideoDownload({
       : `Status check failed: ${err}`
     onUpdate?.(item.id, 'error', { error: msg, generatingEndedAt: Date.now() })
     return { success: false, error: msg }
+  }
+
+  // #R24-3: checkVideoStatus 가 authFailed 를 표면화하면(success:true + statuses:[]) 아래
+  //   statuses[0]===undefined 분기가 "Generation expired" 로 오보한다. 인증 만료를 정확히 보고.
+  if (statusResult?.authFailed) {
+    const msg = statusResult.error || 'Auth expired — please re-login to Flow'
+    if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('flow-login-expired'))
+    onUpdate?.(item.id, 'error', { error: msg, errorKind: 'auth', generatingEndedAt: Date.now() })
+    return { success: false, error: msg, authFailed: true }
   }
 
   if (!statusResult?.success || !Array.isArray(statusResult.statuses)) {
@@ -366,8 +356,7 @@ export async function retryVideoDownload({
     projectName,
     saveMode,
     videoResolution,
-    fetchMedia: flowAPI.fetchMedia,
-    getAccessToken: flowAPI.getAccessToken,
+    downloadVideo: genAPI.downloadVideo,
   })
 
   if (dl.success && dl.base64) {

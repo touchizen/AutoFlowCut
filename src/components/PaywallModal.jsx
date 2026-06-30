@@ -20,8 +20,8 @@ export function PaywallModal({ isOpen, onClose, reason = 'trial_expired' }) {
   const [error, setError] = useState(null)
   const [selectedInterval, setSelectedInterval] = useState('year') // 기본: 연간 (더 저렴)
   const [prices, setPrices] = useState([
-    { priceId: null, amount: 4.99, currency: 'USD', interval: 'month', productName: 'Pro Monthly' },
-    { priceId: null, amount: 39.99, currency: 'USD', interval: 'year', productName: 'Pro Yearly' }
+    { priceId: null, amount: 9.99, currency: 'USD', interval: 'month', productName: 'Pro Monthly' },
+    { priceId: null, amount: 99.99, currency: 'USD', interval: 'year', productName: 'Pro Yearly' }
   ])
 
   // 실제 paywall 을 그릴지 여부 — useModalVisibility 보다 먼저 계산해야 한다.

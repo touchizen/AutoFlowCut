@@ -13,6 +13,7 @@ import ErrorSection from './ErrorSection'
 import MediaMetaBar from './MediaMetaBar'
 import { fetchLatestHistoryMeta } from '../utils/mediaMeta'
 import TagInputAutocomplete from './TagInputAutocomplete'
+import PromptInput from './PromptInput'
 import './SceneDetailModal.css'
 
 export default function SceneDetailModal({
@@ -166,12 +167,12 @@ export default function SceneDetailModal({
     onClose()
   }
   
-  // 재생성
+  // 재생성 — 생성은 백그라운드로 계속되고 모달은 즉시 닫힘 (§3.8)
   const handleRegenerate = () => {
     console.log('[SceneDetail] Regenerate clicked')
-    if (onGenerate) {
-      onGenerate(scene.id)
-    }
+    if (!onGenerate) return
+    onGenerate(scene.id)
+    onClose()
   }
   
   const ratioClass = getRatioClass(aspectRatio)
@@ -276,11 +277,12 @@ export default function SceneDetailModal({
                 >⧉</button>
               )}
             </label>
-            <textarea
+            <PromptInput
               value={editData.prompt || ''}
-              onChange={(e) => setEditData({ ...editData, prompt: e.target.value })}
+              onChange={(text) => setEditData({ ...editData, prompt: text })}
+              references={references}
               placeholder={t('sceneDetail.promptPlaceholder')}
-              rows={3}
+              hideFooter
             />
           </div>
           

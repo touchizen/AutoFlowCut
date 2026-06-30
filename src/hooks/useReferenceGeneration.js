@@ -5,12 +5,14 @@
 import { useState, useRef, useCallback } from 'react'
 import { RESOURCE, STYLE_PRESETS } from '../config/defaults'
 import { fileSystemAPI } from './useFileSystem'
-import { checkFolderPermission, checkAuthToken } from '../utils/guards'
-import { cleanBase64, toDataURL } from '../utils/urls'
-import { tryUpscaleImage, extractThumbnailBase64 } from '../utils/imageProcessing'
+import { checkFolderPermission, checkAuthToken, checkFlowProjectReady } from '../utils/guards'
+import { toDataURL } from '../utils/urls'
+import { tryUpscaleImage } from '../utils/imageProcessing'
 import { toast } from '../components/Toast'
 import { createStyleResolver } from '../services/styleResolver'
+import { isStyleReference } from '../services/styleService'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
+import { clampInt } from '../utils/clampInt'
 
 // 1~3초 랜덤 딜레이
 const randomDelay = () => new Promise(r => setTimeout(r, 1000 + Math.random() * 2000))
@@ -32,40 +34,15 @@ async function mapWithConcurrency(items, mapper, concurrency = 5) {
   return results
 }
 
-// uploadReference 429 retry — useAutomation.js 의 보호와 동일 패턴. 각 호출이 자체적으로
-// rate-limit 을 견디게 함. 비-429 실패는 즉시 반환 (백오프 무의미).
-async function uploadReferenceWithRetry(flowAPI, base64, category, logPrefix) {
-  const MAX_RETRIES = 2
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      const result = await flowAPI.uploadReference(base64, category)
-      if (result.success) return result
-      if (result.error?.includes('429') && attempt < MAX_RETRIES) {
-        const backoff = (attempt + 1) * 2000 + Math.random() * 1000
-        console.warn(`${logPrefix} uploadReference 429 — retry in ${Math.round(backoff)}ms (attempt ${attempt + 1}/${MAX_RETRIES})`)
-        await new Promise(r => setTimeout(r, backoff))
-        continue
-      }
-      return result
-    } catch (e) {
-      if (attempt < MAX_RETRIES && /429|rate/i.test(e?.message || '')) {
-        const backoff = (attempt + 1) * 2000 + Math.random() * 1000
-        await new Promise(r => setTimeout(r, backoff))
-        continue
-      }
-      return { success: false, error: e?.message || String(e) }
-    }
-  }
-  return { success: false, error: 'uploadReference exhausted retries' }
-}
-
-export function useReferenceGeneration({ settings, references, setReferences, flowAPI, addPendingSave, openSettings, pendingSavesCount = 0, t, selectedStyleRefId, styleThumbnails, generationQueue }) {
+export function useReferenceGeneration({ settings, references, setReferences, genAPI, addPendingSave, openSettings, pendingSavesCount = 0, t, selectedStyleRefId, styleThumbnails, generationQueue, flowProjectReady = true }) {
   const [generatingRefs, setGeneratingRefs] = useState([])
   const [stoppingRefs, setStoppingRefs] = useState(false)
   const [preparingRefs, setPreparingRefs] = useState(false)  // 배치 준비 중 (권한/토큰/썸네일 업로드)
   const [saveFailedOnce, setSaveFailedOnce] = useState(false)  // 배치 중 저장 실패 알림 1회만
   const stopRequestedRef = useRef(false)
-  const presetMediaCache = useRef({})  // 프리셋 썸네일 → Flow mediaId 캐시
+  // #R24-4: 배치가 '인증 실패'로 멈췄는지 구분. user-stop 정리는 pending(재실행 가능)으로
+  //   되돌리지만, auth-stop 은 죽은 인증을 숨긴 채 재시도 루프가 돌지 않도록 error(auth)로 남긴다.
+  const authStoppedRef = useRef(false)
 
   // quota stop 공통 모듈 위임 — queue clear 는 useGenerationQueue 가 직접 subscribe 함.
   const _maybeTriggerQuotaStop = (err) => {
@@ -87,16 +64,47 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     const styleRefImages = []
     let styledPrompt = ref.prompt
 
-    if (ref.type === 'style' || !effectiveStyleId) {
+    if (isStyleReference(ref) || !effectiveStyleId) {
       return { styledPrompt, styleRefImages }
     }
 
     if (effectiveStyleId.startsWith('ref:')) {
       const refId = effectiveStyleId.replace('ref:', '')
-      const styleRef = referencesRef.current.find(r => r.id == refId && r.type === 'style')
+      const styleRef = referencesRef.current.find(r => r.id == refId && isStyleReference(r))
       if (styleRef) {
-        if (styleRef.mediaId) {
-          styleRefImages.push({ category: styleRef.category, mediaId: styleRef.mediaId, caption: styleRef.caption || '' })
+        // 공식 API 모드는 data 우선, name+filePath 디스크 fallback 으로 해석한다.
+        // memory-only / file-backed style image 모두 payload 를 보존해야 한다.
+        let styleMediaId = styleRef.mediaId || null
+        // #R19: Flow 모드는 reference 를 mediaId 로만 주입한다(flow-page-injection: name=ref.mediaId).
+        //   API 모드에서 만든 style ref 는 mediaId 가 없어 { name: null } 로 주입되면 무효 →
+        //   on-demand 로 Flow 에 업로드해 mediaId 를 확보하고 ref 에 patch(재사용 대비). API 모드는 no-op.
+        if (!styleMediaId && genAPI?.mode === 'flow') {
+          let base64 = styleRef.data
+          if (!base64 && styleRef.filePath) {
+            const fr = await fileSystemAPI.readFileByPath(styleRef.filePath)
+            if (fr.success) base64 = fr.data
+          }
+          if (base64) {
+            const stripped = String(base64).replace(/^data:[^;]+;base64,/, '')
+            const up = await genAPI.uploadReference(stripped, { category: styleRef.category, name: styleRef.name, type: styleRef.type, refId: styleRef.id })
+            if (up?.success && up.mediaId) {
+              styleMediaId = up.mediaId
+              setReferences(prev => prev.map(r => r.id === styleRef.id ? { ...r, mediaId: up.mediaId } : r))
+            } else {
+              console.warn(logPrefix, 'Flow style ref upload failed — style image not injected:', up?.error)
+            }
+          }
+        }
+        if (styleMediaId || styleRef.name || styleRef.data || styleRef.filePath) {
+          styleRefImages.push({
+            id: styleRef.id,
+            category: styleRef.category,
+            mediaId: styleMediaId,
+            caption: styleRef.caption || '',
+            name: styleRef.name,
+            data: styleRef.data || null,
+            filePath: styleRef.filePath || null,
+          })
         }
         if (styleRef.prompt) {
           styledPrompt = `${ref.prompt}, ${styleRef.prompt}`
@@ -105,30 +113,8 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     } else if (effectiveStyleId.startsWith('preset:')) {
       const presetId = effectiveStyleId.replace('preset:', '')
       const preset = STYLE_PRESETS?.styles?.find(s => s.id === presetId)
-
-      // 썸네일: 캐시 hit → 사용, miss → 업로드 후 캐시
-      if (styleThumbnails?.[presetId]) {
-        let mediaId = presetMediaCache.current[presetId]
-        if (!mediaId) {
-          const thumbBase64 = await extractThumbnailBase64(styleThumbnails[presetId], fileSystemAPI, logPrefix)
-          if (thumbBase64) {
-            try {
-              const uploadResult = await flowAPI.uploadReference(thumbBase64, 'style')
-              if (uploadResult.success) {
-                mediaId = uploadResult.mediaId
-                presetMediaCache.current[presetId] = mediaId
-                console.log(logPrefix, 'Preset thumbnail uploaded, mediaId:', mediaId)
-              }
-            } catch (e) {
-              console.warn(logPrefix, 'Preset thumbnail upload failed:', e)
-            }
-          }
-        }
-        if (mediaId) {
-          styleRefImages.push({ category: 'style', mediaId, caption: preset?.prompt_en || '' })
-        }
-      }
-
+      // cloud(Veo): 프리셋은 프롬프트(prompt_en)로만 적용. (구 Flow 는 썸네일을 업로드해
+      // image-ref 로 주입했으나 cloud 엔 mediaId 업로드가 없다.)
       if (preset?.prompt_en) {
         styledPrompt = `${ref.prompt}, ${preset.prompt_en}`
       }
@@ -145,28 +131,18 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
 
     // 업스케일 (style 카드 제외)
     const origMediaId = firstImage.mediaId || null
-    if (ref.type !== 'style') {
-      const upscaled = await tryUpscaleImage(flowAPI, origMediaId, settings.imageUpscale || 'off', logPrefix)
+    if (!isStyleReference(ref)) {
+      const upscaled = await tryUpscaleImage(genAPI, origMediaId, settings.imageUpscale || 'off', logPrefix)
       if (upscaled) imageData = upscaled
     }
 
     const displayUrl = toDataURL(imageData)
 
-    // Flow에 업로드 → mediaId + caption.
-    // 429 retry 포함 (병렬 후처리 도입 후 동시 호출 시 rate-limit 보호; useAutomation 의
-    // 자동 업로드 경로와 동일 패턴: MAX_RETRIES=2 + exponential backoff + jitter).
-    const base64ForUpload = cleanBase64(imageData)
-    let mediaId = null
-    let caption = null
-    console.log(logPrefix, 'Uploading to Flow for mediaId...', { category: ref.category, base64Len: base64ForUpload.length })
-    const uploadResult = await uploadReferenceWithRetry(flowAPI, base64ForUpload, ref.category, logPrefix)
-    console.log(logPrefix, 'Upload result:', uploadResult)
-    if (uploadResult.success) {
-      mediaId = uploadResult.mediaId
-      caption = uploadResult.caption
-    } else {
-      console.error(logPrefix, 'Upload failed (after retries):', uploadResult.error)
-    }
+    // #R18: Flow 모드에서 생성된 레퍼런스는 firstImage.mediaId 를 가진다 — 이를 보존해야
+    //   같은 배치에서 이 ref 를 style ref 로 재사용할 때 Flow 의 mediaId 계약을 지킨다(안 그러면
+    //   { name: null } 로 주입돼 무효). API(cloud)는 mediaId 가 없어 그대로 null → 동작 불변.
+    const mediaId = firstImage.mediaId || null
+    const caption = firstImage.caption || null
 
     // 파일 저장 (폴더 모드)
     let filePath = null
@@ -179,13 +155,16 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       }
       const projectName = settings.projectName || 'Untitled'
       const refName = ref.name || `ref_${index + 1}`
-      const metadata = { mediaId, caption, category: ref.category }
+      // #R32-3: 엔진 라벨/provenance 를 실제 모드로 — API(BYOK) ref 를 'flow' 로 잘못 라벨하던 것을 고친다.
+      //   Flow 모드는 'flow', API 모드는 선택된 이미지 모델 id(없으면 'api'). model 도 메타에 기록.
+      const engineLabel = genAPI?.mode === 'flow' ? 'flow' : (settings.imageModel || 'api')
+      const metadata = { mediaId, caption, category: ref.category, model: settings.imageModel || null }
       const permission = await fileSystemAPI.ensurePermission()
       console.log(logPrefix, 'Permission:', permission, 'projectName:', projectName, 'refName:', refName)
 
       let saveResult = { success: false }
       if (permission.hasPermission) {
-        saveResult = await fileSystemAPI.saveReference(projectName, refName, imageData, 'flow', metadata)
+        saveResult = await fileSystemAPI.saveReference(projectName, refName, imageData, engineLabel, metadata)
           .catch(e => ({ success: false, error: e.message }))
       }
       console.log(logPrefix, 'saveResult:', saveResult.success, saveResult.error || '')
@@ -195,21 +174,14 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
         savedDataUrl = saveResult.dataUrl || displayUrl
         console.log(logPrefix, 'Saved to:', filePath)
       } else {
-        console.warn(logPrefix, 'Save failed:', saveResult.error, '- keeping in memory and continuing...')
+        // 디스크 저장 실패 — base64 를 메모리에 유지하고 계속 진행. desktop 의 addPendingSave 는
+        // no-op 이라 재시도하지 않는 대신, project 저장이 filePath 없는 ref 의 base64 를 strip
+        // 하지 않으므로(stripReferencesForSave) project.json 에 보존돼 재오픈 시 유실되지 않는다.
+        console.warn(logPrefix, 'Save failed:', saveResult.error, '- keeping base64 in project (no disk file)')
         if (!saveFailedOnce) {
           setSaveFailedOnce(true)
           toast.warning(t('toast.permissionReleasedMemory'))
         }
-        addPendingSave(async () => {
-          const pendingSave = await fileSystemAPI.saveReference(projectName, refName, imageData, 'flow', metadata)
-          if (pendingSave.success) {
-            console.log(logPrefix, 'Pending save succeeded:', pendingSave.path)
-            setReferences(prev => prev.map((r, i) =>
-              i === index ? { ...r, filePath: pendingSave.path, dataStorage: 'file' } : r
-            ))
-          }
-          return pendingSave
-        })
         filePath = null
       }
 
@@ -220,7 +192,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     // R27 review fix: generatedAt 세팅 — references/{name}.png 가 같은 경로를
     // 덮어쓰므로 resolveImageSrc 의 ?v=<version> 캐시 키가 갱신되어야 Chromium
     // 이 이전 디코딩 캐시를 버리고 새 이미지 표시.
-    const donePatch = { data: savedDataUrl, filePath, dataStorage: filePath ? 'file' : 'base64', mediaId, caption, status: 'done', errorMessage: null, generatedAt: Date.now() }
+    const donePatch = { name: ref.name || `ref_${index + 1}`, data: savedDataUrl, filePath, dataStorage: filePath ? 'file' : 'base64', mediaId, caption, status: 'done', errorMessage: null, generatedAt: Date.now() }
     setReferences(prev => prev.map((r, i) => i === index ? { ...r, ...donePatch } : r))
     // 동기 갱신: 같은 batch flow 의 다음 phase(_prepareStyleRefs)가 React 재렌더 전에
     // referencesRef.current 를 읽어도 방금 만든 style 카드의 mediaId 를 보장받게 한다.
@@ -232,8 +204,8 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
   // ─── 공통: effectiveStyleId 결정 ───
   // 우선순위: explicit override → UI 선택값 → 자동 fallback (첫 사용 가능한 style 카드).
   // 자동 탐색은 styleResolver.resolveEffectiveStyleIdForRef 단일 출처 사용 —
-  // 내부적으로 styleService.findAutoStyle 호출 (prompt-only / mediaId-only 둘 다 잡힘,
-  // production applyStyle 동작과 일치).
+  // 내부적으로 styleService.findAutoStyle 호출 (prompt 또는 GenAI에서 읽을 수 있는
+  // data/name+filePath 스타일 이미지가 잡힘, production applyStyle 동작과 일치).
   const _resolveEffectiveStyleId = (overrideStyleId) => {
     // ref 도메인 — createStyleResolver의 ref-aware fallback 사용
     // (activeTab 무관 — ref 생성은 항상 동일 fallback chain)
@@ -262,17 +234,30 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       return { success: false }
     }
 
-    // 폴더 설정 + 토큰 확인 (배치 모드에서는 권한 체크 스킵)
+    // #R27-2: 단일 ref 생성도 preflight(folder/ready/auth) await 동안 busy 로 표시한다.
+    //   안 그러면 그 창에서 project/mode 전환이 허용돼, 전환 뒤 stale 엔진으로 생성하고 결과를
+    //   현재 프로젝트의 ref(index 재사용)에 patch 한다. busy flag(generatingRefs)를 await 전에 켜고
+    //   조기 return 마다 해제. 배치 경로(skipPermissionCheck)는 preparingRefs 가 이미 덮으므로 제외.
+    const trackPreflightBusy = !skipPermissionCheck
+    if (trackPreflightBusy) setGeneratingRefs(prev => prev.includes(index) ? prev : [...prev, index])
+    const releasePreflightBusy = () => {
+      if (trackPreflightBusy) setGeneratingRefs(prev => prev.filter(i => i !== index))
+    }
+
+    // 폴더 설정 + Flow 프로젝트 준비 + 토큰 확인 (배치 모드에서는 권한 체크 스킵)
     if (!skipPermissionCheck) {
       const folderCheck = await checkFolderPermission(settings, openSettings, t)
-      if (!folderCheck.ok) return { success: false, permissionError: folderCheck.permissionError }
+      if (!folderCheck.ok) { releasePreflightBusy(); return { success: false, permissionError: folderCheck.permissionError } }
+      const readyCheck = checkFlowProjectReady(flowProjectReady, t)
+      if (!readyCheck.ok) { releasePreflightBusy(); return { success: false } }
     }
-    if (!(await checkAuthToken(flowAPI, t))) {
+    if (!(await checkAuthToken(genAPI, t))) {
+      releasePreflightBusy()
       setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: 'Auth required' } : r))
       return { success: false, authError: true }
     }
 
-    setGeneratingRefs(prev => [...prev, index])
+    setGeneratingRefs(prev => prev.includes(index) ? prev : [...prev, index])
     setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'generating', errorMessage: null, generatingStartedAt: Date.now(), generatingEndedAt: null } : r))
 
     try {
@@ -283,7 +268,9 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       const refSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
         ? settings.seedNo
         : null
-      const result = await flowAPI.generateImageDOM(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: refSeed, aspectRatio: settings.aspectRatio })
+      // #R32-2: 선택된 이미지 모델(settings.imageModel)을 전달 — 안 넘기면 useGenAPI 가 DEFAULT 로
+      //   폴백해 비-기본 BYOK 모델 선택이 ref 생성에 반영되지 않는다(씬 생성과 동일하게 model 전달).
+      const result = await genAPI.generateImage(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: refSeed, aspectRatio: settings.aspectRatio, model: settings.imageModel, purpose: 'reference', ref: { id: ref.id, name: ref.name, type: ref.type, category: ref.category } })
 
       if (result.success && result.images?.length > 0) {
         return await _processAndSaveImage(result.images, index, ref, '[Reference]')
@@ -294,7 +281,10 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
         const isQuota = _maybeTriggerQuotaStop(errorMsg)
         if (!isQuota) toast.error(t('toast.generateFailed', { error: result.error || 'Unknown error' }))
         setGeneratingRefs(prev => prev.filter(i => i !== index))
-        setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: result.error || 'Generation failed' } : r))
+        // #R26-5: 단일-ref 경로도 배치 경로(R25-5)와 동일하게 인증 실패를 errorKind:'auth' 로 분류.
+        setReferences(prev => prev.map((r, i) => i === index
+          ? { ...r, status: 'error', errorMessage: result.error || 'Generation failed', ...((result.authFailed || isAuthError) ? { errorKind: 'auth' } : {}) }
+          : r))
         return { success: false, authError: isAuthError, serverError: isServerError, quotaExhausted: isQuota }
       }
     } catch (error) {
@@ -304,7 +294,9 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       const isServerError = errorMsg.includes('500') || errorMsg.includes('502') || errorMsg.includes('503') || errorMsg.includes('server')
       toast.error(t('toast.generateError', { error: error.message }))
       setGeneratingRefs(prev => prev.filter(i => i !== index))
-      setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: error.message || 'Generation error' } : r))
+      setReferences(prev => prev.map((r, i) => i === index
+        ? { ...r, status: 'error', errorMessage: error.message || 'Generation error', ...(isAuthError ? { errorKind: 'auth' } : {}) }
+        : r))
       return { success: false, authError: isAuthError, serverError: isServerError }
     }
 
@@ -315,16 +307,26 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
 
   // ─── 비동기 결과 수집 + 후처리 (배치용) ───
   const processAsyncResult = async (generationId, index, ref) => {
-    const result = await flowAPI.collectGeneration(generationId)
+    const result = await genAPI.collectGeneration(generationId)
 
     if (!result.success || !result.images?.length) {
+      // #R21-1: authFailed 센티넬 → 토큰이 죽었으니 배치 즉시 중단(개별 ref 실패로 흘리지 않음).
+      if (result.authFailed) {
+        stopRequestedRef.current = true
+        authStoppedRef.current = true
+        window.dispatchEvent(new CustomEvent('flow-login-expired'))
+      }
       const errorMsg = result.error || ''
       const isAuthError = errorMsg.includes('401') || errorMsg.includes('auth') || errorMsg.includes('token')
       const isServerError = errorMsg.includes('500') || errorMsg.includes('502') || errorMsg.includes('503')
       const isQuota = _maybeTriggerQuotaStop(errorMsg)
       if (!isQuota) toast.error(t('toast.generateFailed', { error: result.error || 'Unknown error' }))
       setGeneratingRefs(prev => prev.filter(i => i !== index))
-      setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: result.error || 'Generation failed' } : r))
+      // #R25-5: authFailed 면 errorKind:'auth' 도 같이 남긴다 — cleanup 은 pendingQueue 항목에만
+      //   auth 마커를 붙이므로, 실제 인증 실패를 맞은 이 ref 가 안정적 auth 표식을 놓치지 않게 한다.
+      setReferences(prev => prev.map((r, i) => i === index
+        ? { ...r, status: 'error', errorMessage: result.error || 'Generation failed', ...(result.authFailed ? { errorKind: 'auth' } : {}) }
+        : r))
       return { success: false, authError: isAuthError, serverError: isServerError, quotaExhausted: isQuota }
     }
 
@@ -335,20 +337,20 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
   // AutoFlow 패턴: 제출 → 7~15초 대기 → 다음 제출, 결과는 별도 수집
   //
   // force=true (MCP 전용): 이미 완료된(image/filePath/status=done) ref도 재생성 대상에 포함.
-  //                       prompt 있고 type !== 'style'인 모든 ref가 대상.
+  //                       prompt 있고 style 이 아닌 모든 ref가 대상.
   // force=false (기본): 기존 동작 — image 없고 pending/error/idle 상태인 ref만.
   const _executeBatchRefs = async (overrideStyleId = null, force = false) => {
     // 타입 predicate 로 인덱스 선택 — style / non-style 을 분리 추출.
-    const pickIndices = (typeMatches) => referencesRef.current
+    const pickIndices = (refMatches) => referencesRef.current
       .map((ref, index) => {
-        if (!ref.prompt || !typeMatches(ref.type)) return -1
+        if (!ref.prompt || !refMatches(ref)) return -1
         if (force) return index
         return (!ref.data && !ref.filePath && ref.status !== 'done') ? index : -1
       })
       .filter(i => i !== -1)
 
-    const styleIndices = pickIndices(ty => ty === 'style')
-    const nonStyleIndices = pickIndices(ty => ty !== 'style')
+    const styleIndices = pickIndices(isStyleReference)
+    const nonStyleIndices = pickIndices(ref => !isStyleReference(ref))
     const allIndices = [...styleIndices, ...nonStyleIndices]
 
     if (allIndices.length === 0) {
@@ -356,21 +358,12 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       return
     }
 
-    // force=true 재생성: done/error 상태 ref를 pending으로 리셋해 UI에 재생성 시작이 보이게 함.
-    // data/filePath/mediaId는 유지 — 새 이미지가 도착할 때까지 이전 결과를 노출하면 비교 가능.
-    if (force) {
-      const idxSet = new Set(allIndices)
-      setReferences(prev => prev.map((r, i) => {
-        if (!idxSet.has(i)) return r
-        if (r.status === 'done' || r.status === 'error') {
-          return { ...r, status: 'pending', errorMessage: null }
-        }
-        return r
-      }))
-    }
+    // #R22-3: force 리셋은 permission/auth/flowProjectReady 게이트 통과 후로 이동(아래 gate 뒤).
+    //   게이트가 막으면 done/error ref 가 pending 으로 리셋된 채 생성이 안 돼 영구 pending 으로 stuck.
 
     // 배치 시작 - 플래그 리셋. quota block 상태는 모달 dismiss 시점에 별도 해제됨.
     stopRequestedRef.current = false
+    authStoppedRef.current = false
     setStoppingRefs(false)
     setPreparingRefs(true)
     let hasPendingSaves = false
@@ -400,7 +393,21 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
     }
 
     // 토큰 확인
-    if (!(await checkAuthToken(flowAPI, t))) return
+    if (!(await checkAuthToken(genAPI, t))) return
+
+    // Flow 프로젝트 준비 확인
+    const readyCheck = checkFlowProjectReady(flowProjectReady, t)
+    if (!readyCheck.ok) return
+
+    // #R22-3: 모든 게이트 통과 후에만 force 리셋(done/error → pending). 게이트가 막으면 리셋 안 함.
+    if (force) {
+      const idxSet = new Set(allIndices)
+      setReferences(prev => prev.map((r, i) => {
+        if (!idxSet.has(i)) return r
+        if (r.status === 'done' || r.status === 'error') return { ...r, status: 'pending', errorMessage: null }
+        return r
+      }))
+    }
 
     // ─── 단일 배치 phase 의 lifecycle (제출 → 폴링 → 정리) ───
     // style phase / non-style phase 가 각각 fresh 큐로 호출한다.
@@ -410,6 +417,9 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       // 비동기 대기열
       const pendingQueue = []
       let submitFailCount = 0
+      // 손상된 저장값('x'/NaN/0/음수)은 게이트 무력화(폭주) 유발 → clampInt 로 기본 5 폴백 (useAutomation 과 동일).
+      const concurrency = clampInt(settings.concurrency, 1, 15, 5)
+      const GATE_POLL_MS = 600
 
       // 완료된 결과 수집 + 후처리
       //
@@ -433,7 +443,17 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
         for (let i = pendingQueue.length - 1; i >= 0; i--) {
           const pending = pendingQueue[i]
           try {
-            const status = await flowAPI.checkGeneration(pending.generationId)
+            const status = await genAPI.checkGeneration(pending.generationId)
+            // #R23-5: checkGeneration 자체가 401/403 → authFailed 를 표면화할 수 있다(완료 안 돼도).
+            //   무시하면 죽은 인증으로 maxWait(3분)까지 pending 으로 매달린다 → 배치 즉시 중단
+            //   (processAsyncResult 의 R21-1 collectGeneration 경로와 동일 stop 시맨틱).
+            if (status?.authFailed) {
+              console.warn('[GenerateAllRefs] checkGeneration authFailed — stopping batch:', status.error)
+              stopRequestedRef.current = true
+              authStoppedRef.current = true
+              window.dispatchEvent(new CustomEvent('flow-login-expired'))
+              break
+            }
             if (status?.success && status.completed) {
               completed.push(pending)
             }
@@ -482,10 +502,17 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
         }
 
         try {
+          // 기회적 수집 (quota 감지 + 완료분 즉시 드레인)
           await collectCompleted()
-          // collectCompleted 안에서 quota 감지로 stopRequestedRef 가 켜졌을 수 있다.
-          // outer for-loop 의 stop 가드는 다음 iteration 시작 시에만 검사하므로,
-          // 여기서 한 번 더 확인해야 추가 submit (line 506) 이 새지 않는다.
+          if (stopRequestedRef.current) break
+
+          // 동시성 게이트 — in-flight(pendingQueue) 가 concurrency 이상이면 슬롯 빌 때까지 대기
+          while (pendingQueue.length >= concurrency && !stopRequestedRef.current) {
+            await collectCompleted()
+            if (pendingQueue.length >= concurrency) {
+              await new Promise(r => setTimeout(r, GATE_POLL_MS))
+            }
+          }
           if (stopRequestedRef.current) break
 
           const ref = referencesRef.current[index]
@@ -493,15 +520,19 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
             console.warn('[GenerateAllRefs] Ref not found at index:', index, '— skipping')
             continue
           }
+          // #R28-4: style-ref 업로드(_prepareStyleRefs)도 busy 로 덮는다 — preparingRefs 는 runPhase
+          //   직전에 꺼지고 generatingRefs 는 prepare 후에야 켜져, 그 사이 첫 item 의 Flow style upload
+          //   동안 refBatchRunning 이 false 가 되어 project/mode 전환이 열린다. prepare 전에 켜두면
+          //   busy 가 연속된다(prepare 가 throw 하면 아래 catch 가 index 를 제거).
+          setGeneratingRefs(prev => prev.includes(index) ? prev : [...prev, index])
           const { styledPrompt, styleRefImages } = await _prepareStyleRefs(ref, effectiveStyleId, '[GenerateAllRefs]')
 
-          setGeneratingRefs(prev => [...prev, index])
           setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'generating', errorMessage: null, generatingStartedAt: Date.now(), generatingEndedAt: null } : r))
 
           const batchSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
             ? settings.seedNo
             : null
-          const submitResult = await flowAPI.submitGenerationDOM(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: batchSeed, aspectRatio: settings.aspectRatio })
+          const submitResult = await genAPI.submitGeneration(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: batchSeed, aspectRatio: settings.aspectRatio, model: settings.imageModel, purpose: 'reference', ref: { id: ref.id, name: ref.name, type: ref.type, category: ref.category } })
 
           if (submitResult?.success && submitResult.generationId) {
             pendingQueue.push({ generationId: submitResult.generationId, index, ref })
@@ -509,8 +540,17 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
             submitFailCount = 0
           } else {
             console.warn('[GenerateAllRefs] Submit failed for index:', index, submitResult?.error)
+            // #R21-1: authFailed → 죽은 인증, 배치 즉시 중단.
+            if (submitResult?.authFailed) {
+              stopRequestedRef.current = true
+              authStoppedRef.current = true
+              window.dispatchEvent(new CustomEvent('flow-login-expired'))
+            }
             setGeneratingRefs(prev => prev.filter(i => i !== index))
-            setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: submitResult?.error || 'Submit failed' } : r))
+            // #R25-5: authFailed 면 errorKind:'auth' 도 남겨 안정적 auth 표식 유지.
+            setReferences(prev => prev.map((r, i) => i === index
+              ? { ...r, status: 'error', errorMessage: submitResult?.error || 'Submit failed', ...(submitResult?.authFailed ? { errorKind: 'auth' } : {}) }
+              : r))
 
             if (_maybeTriggerQuotaStop(submitResult?.error)) {
               break
@@ -523,12 +563,6 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
             }
           }
 
-          // AutoFlow 스타일 대기 (7~15초) — 마지막이 아닐 때만
-          if (index !== indices[indices.length - 1]) {
-            const delay = 7000 + Math.random() * 8000
-            console.log('[GenerateAllRefs] Waiting', Math.round(delay / 1000), 's before next submit...')
-            await new Promise(r => setTimeout(r, delay))
-          }
         } catch (err) {
           console.error('[GenerateAllRefs] Error processing index:', index, err)
           setGeneratingRefs(prev => prev.filter(i => i !== index))
@@ -572,6 +606,12 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
           setGeneratingRefs(prev => prev.filter(i => i !== pending.index))
           setReferences(prev => prev.map((r, i) => {
             if (i !== pending.index) return r
+            // #R24-4: auth-stop 은 user-stop 처럼 pending(에러 없음)으로 되돌리면 죽은 인증을
+            //   숨긴 채 다음 배치가 같은 인증으로 재시도(silent loop). error(auth)로 남겨 사용자가
+            //   재로그인을 인지하게 한다. user-stop 은 기존대로 재실행 가능한 pending.
+            if (authStoppedRef.current) {
+              return { ...r, status: 'error', errorMessage: t('status.authErrorStopped'), errorKind: 'auth' }
+            }
             return userStopped
               ? { ...r, status: 'pending', errorMessage: null }
               : { ...r, status: 'error', errorMessage: 'Timed out' }
@@ -593,7 +633,7 @@ export function useReferenceGeneration({ settings, references, setReferences, fl
       await runPhase(nonStyleIndices, batchEffectiveStyleId)
     }
 
-    await flowAPI.clearGenerations()
+    await genAPI.clearGenerations()
 
     console.log('[GenerateAllRefs] Batch completed, hasPendingSaves:', hasPendingSaves)
 

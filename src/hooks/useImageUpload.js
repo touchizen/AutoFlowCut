@@ -8,10 +8,15 @@ import { useState, useRef, useCallback } from 'react'
 import { cleanBase64 } from '../utils/urls'
 
 export function useImageUpload(options = {}) {
-  const { 
+  const {
     onUploadComplete,  // (data) => void - 업로드 완료 콜백
-    uploadToFlow,     // (base64, category) => Promise - Flow 업로드 함수
-    category = 'MEDIA_CATEGORY_SUBJECT'  // 기본 카테고리
+    uploadToFlow,     // (base64, meta) => Promise - Flow 업로드 함수
+    category = 'MEDIA_CATEGORY_SUBJECT',  // 기본 카테고리
+    uploadMeta = {},  // M4 T7: 추가 메타 (name, type, refId 등) — engineApi 정규화로 흘러감
+    // #R28-3: 업로드 시작/완료 시점의 "스코프 토큰"(예: `${mode}::${projectName}`)을 반환하는 함수.
+    //   업로드 await 동안 mode/project 가 바뀌면 토큰이 달라져, stale Flow 결과(mediaId/entity)를
+    //   새 프로젝트/모드의 ref 에 적용하는 것을 막는다. 미지정 시 가드 없음(기존 동작).
+    getScopeToken,
   } = options
   
   const [isUploading, setIsUploading] = useState(false)
@@ -21,9 +26,11 @@ export function useImageUpload(options = {}) {
   // 파일 처리
   const processFile = useCallback(async (file) => {
     if (!file || !file.type.startsWith('image/')) return null
-    
+
     setIsUploading(true)
-    
+    // #R28-3: 업로드 시작 시점 스코프 캡처 — 완료 시 비교해 stale apply 차단.
+    const startScope = typeof getScopeToken === 'function' ? getScopeToken() : null
+
     try {
       // base64로 변환
       const base64 = await new Promise((resolve, reject) => {
@@ -38,36 +45,52 @@ export function useImageUpload(options = {}) {
       let result = {
         data: base64,
         mediaId: null,
-        caption: null
+        caption: null,
+        // entity fields — populated when uploadResult carries them (Flow character upload)
+        entityId: null,
+        workflowId: null,
+        registered: null,
+        flowNameSyncStatus: null,
       }
-      
+
       // Flow에 업로드 (함수가 있으면)
       if (uploadToFlow) {
         try {
-          const uploadResult = await uploadToFlow(cleanB64, category)
+          const uploadResult = await uploadToFlow(cleanB64, { category, ...uploadMeta })
           if (uploadResult.success) {
             result.mediaId = uploadResult.mediaId
             result.caption = uploadResult.caption || null
+            // Propagate entity fields when Flow character upload returns them
+            // (API mode returns none → these remain null → no behavior change)
+            if (uploadResult.entityId != null) result.entityId = uploadResult.entityId
+            if (uploadResult.workflowId != null) result.workflowId = uploadResult.workflowId
+            if (uploadResult.registered != null) result.registered = uploadResult.registered
+            if (uploadResult.flowNameSyncStatus != null) result.flowNameSyncStatus = uploadResult.flowNameSyncStatus
           }
         } catch (e) {
           console.warn('Flow upload failed:', e)
         }
       }
       
-      // 완료 콜백
+      // 완료 콜백 — #R28-3: 업로드 도중 mode/project 가 바뀌었으면 stale 결과를 적용하지 않는다.
       if (onUploadComplete) {
-        onUploadComplete(result)
+        const endScope = typeof getScopeToken === 'function' ? getScopeToken() : null
+        if (startScope !== endScope) {
+          console.warn('[useImageUpload] scope changed during upload — skipping stale onUploadComplete')
+        } else {
+          onUploadComplete(result)
+        }
       }
-      
+
       return result
-      
+
     } catch (error) {
       console.error('File processing error:', error)
       return null
     } finally {
       setIsUploading(false)
     }
-  }, [uploadToFlow, category, onUploadComplete])
+  }, [uploadToFlow, category, uploadMeta, onUploadComplete, getScopeToken])
   
   // 파일 선택 핸들러
   const handleFileSelect = useCallback((e) => {

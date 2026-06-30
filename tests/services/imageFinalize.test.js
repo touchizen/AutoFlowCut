@@ -37,7 +37,7 @@ describe('finalizeGeneratedImage — errorKind cleanup', () => {
   it('success path: sceneUpdate explicitly sets errorKind: null (clears stale image-missing)', async () => {
     const res = await finalizeGeneratedImage({
       result: { success: true, images: [{ base64: TINY_BASE64, mediaId: 'm1' }] },
-      flowAPI: {},
+      genAPI: {},
       saveMode: 'folder',
       projectName: 'ep6',
       sceneId: 'scene_1',
@@ -55,7 +55,7 @@ describe('finalizeGeneratedImage — errorKind cleanup', () => {
   it('failure path (no images): sceneUpdate sets errorKind: null', async () => {
     const res = await finalizeGeneratedImage({
       result: { success: false, error: 'Quota exceeded', images: [] },
-      flowAPI: {},
+      genAPI: {},
       saveMode: 'folder',
       projectName: 'ep6',
       sceneId: 'scene_1',
@@ -70,12 +70,30 @@ describe('finalizeGeneratedImage — errorKind cleanup', () => {
     })
   })
 
+  it('#R26-6: failure path with authFailed sentinel preserves errorKind:auth', async () => {
+    const res = await finalizeGeneratedImage({
+      result: { success: false, error: 'Auth expired', authFailed: true, images: [] },
+      genAPI: {},
+      saveMode: 'folder',
+      projectName: 'ep6',
+      sceneId: 'scene_1',
+      prompt: 'a cat',
+    })
+
+    expect(res.success).toBe(false)
+    expect(res.sceneUpdate).toMatchObject({
+      status: 'error',
+      error: 'Auth expired',
+      errorKind: 'auth',   // ← auth 분류 보존 (배치 경로와 일관)
+    })
+  })
+
   it('failure path (save error): sceneUpdate sets errorKind: null', async () => {
     fileSystemAPI.saveImage.mockResolvedValue({ success: false, error: 'Disk full' })
 
     const res = await finalizeGeneratedImage({
       result: { success: true, images: [{ base64: TINY_BASE64, mediaId: 'm1' }] },
-      flowAPI: {},
+      genAPI: {},
       saveMode: 'folder',
       projectName: 'ep6',
       sceneId: 'scene_1',
@@ -102,7 +120,7 @@ describe('processAsyncSceneResult — useAutomation batch error counting contrac
   const baseArgs = (overrides = {}) => ({
     scene: { id: 'scene_1', prompt: 'a cat' },
     result: { success: true, images: [{ base64: TINY_BASE64, mediaId: 'm1' }] },
-    flowAPI: {},
+    genAPI: {},
     imageUpscale: 'off',
     saveMode: 'folder',
     projectName: 'ep6',
@@ -118,6 +136,12 @@ describe('processAsyncSceneResult — useAutomation batch error counting contrac
 
     expect(ok).toBe(true)
     expect(updateScene).toHaveBeenCalledWith('scene_1', expect.objectContaining({ status: 'done' }))
+  })
+
+  it('model 옵션을 sceneUpdate.model 로 기록 (배치 ResultsTable 모델명이 flow 로 찍히는 회귀 방지)', async () => {
+    const updateScene = vi.fn()
+    await processAsyncSceneResult(baseArgs({ updateScene, model: 'Nano Banana Pro' }))
+    expect(updateScene).toHaveBeenCalledWith('scene_1', expect.objectContaining({ model: 'Nano Banana Pro' }))
   })
 
   it('returns false when API returned no images (caller increments errorCount)', async () => {

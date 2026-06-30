@@ -104,7 +104,16 @@ function openOAuthPopup() {
       }
     })
 
-    popup.loadURL(authUrl.toString())
+    // #R15-8: loadURL 실패가 unhandled rejection 으로 새거나 IPC 가 영원히 미해결되지 않게
+    //   catch → 팝업 닫고 null resolve.
+    popup.loadURL(authUrl.toString()).catch((e) => {
+      console.warn('[Auth] OAuth popup loadURL failed:', e?.message)
+      if (!resolved) {
+        resolved = true
+        try { popup.close() } catch { /* ignore */ }
+        resolve(null)
+      }
+    })
   })
 }
 

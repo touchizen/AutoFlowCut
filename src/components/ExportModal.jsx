@@ -1,9 +1,11 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useI18n } from '../hooks/useI18n'
 import { useAuth } from '../contexts/AuthContext'
 import { useExportSettings } from '../hooks/useExportSettings'
 import { useModalVisibility } from '../hooks/useModalVisibility'
+import { fileSystemAPI } from '../hooks/useFileSystem'
+import { normalizeExportFormat } from '../utils/exportFormat'
 import { formatExpiryDate } from '../utils/formatters'
 import './ExportModal.css'
 
@@ -21,13 +23,38 @@ const PATH_PRESETS = {
   ]
 }
 
-export const ExportModal = ({ isOpen, onClose, onExport, projectName, loading, exportPhase, hasSubtitles, onUpgradeClick }) => {
+// 포맷 카드 — CapCut / Premiere 공통 프리젠테이셔널. details(children)만 포맷별로 다름.
+function FormatCard({ icon, title, description, children }) {
+  return (
+    <div className="export-format-card selected">
+      <div className="format-header">
+        <span className="format-icon">{icon}</span>
+        <div className="format-info">
+          <h3>{title}</h3>
+          <p className="format-description">{description}</p>
+        </div>
+      </div>
+      <div className="format-details">{children}</div>
+    </div>
+  )
+}
+
+export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExportVrew, initialFormat = 'capcut', projectName, loading, exportPhase, hasSubtitles, onUpgradeClick }) => {
   const { t, lang } = useI18n()
   const { isAuthenticated, subscription } = useAuth()
   const { settings: savedSettings, isLoaded, saveSettings } = useExportSettings()
 
   // OS 감지 (기본값 결정용)
   const detectedMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0
+
+  // 내보내기 포맷 — 'capcut'(기본) | 'premiere' | 'vrew'.
+  // CapCut 은 draft 폴더 경로 + 설치확인 + 앱 실행, Premiere 는 프로젝트 폴더에
+  // .prproj 자동 저장(경로 UI 불필요). Scale/KenBurns/자막 옵션은 공유.
+  const [format, setFormat] = useState(() => normalizeExportFormat(initialFormat))
+
+  // Premiere 출력 폴더 — localStorage 가 비어도 ensurePermission(config 복원/기본폴더)
+  // 으로 해소될 수 있으므로 resolver 결과를 state 로 들고 표시/가드에 사용.
+  const [premiereWorkFolder, setPremiereWorkFolder] = useState(() => localStorage.getItem('workFolderPath') || '')
 
   const [username, setUsername] = useState('')
   const [projectNumber, setProjectNumber] = useState('')
@@ -63,12 +90,27 @@ export const ExportModal = ({ isOpen, onClose, onExport, projectName, loading, e
     }
   }, [isLoaded, savedSettings])
 
+  // 모달 열릴 때 진입에서 고른 포맷으로 초기화 (모달은 unmount 안 되므로 useState 초기값만으론 부족).
+  // useLayoutEffect — paint 전 동기 적용해 "이전 탭이 한 프레임 보이는" 깜빡임 방지.
+  useLayoutEffect(() => {
+    if (isOpen) setFormat(normalizeExportFormat(initialFormat))
+  }, [isOpen, initialFormat])
+
   // 모달 열릴 때 시스템 정보 자동 감지
   useEffect(() => {
     if (!isOpen) return
 
     async function autoDetect() {
       try {
+        // 0. Premiere 출력 폴더 확보 — localStorage 가 비어도 config/기본폴더에서 복원.
+        //    (CapCut 도 미디어 경로에 workFolder 를 쓰므로 무해)
+        try {
+          await fileSystemAPI.ensurePermission()
+        } catch (e) {
+          console.warn('[ExportModal] ensurePermission failed:', e?.message)
+        }
+        setPremiereWorkFolder(localStorage.getItem('workFolderPath') || '')
+
         // 1. 시스템 정보 (username, platform)
         if (window.electronAPI?.getSystemInfo) {
           const info = await window.electronAPI.getSystemInfo()
@@ -142,7 +184,118 @@ export const ExportModal = ({ isOpen, onClose, onExport, projectName, loading, e
 
   if (!isOpen) return null
 
+  // Premiere 출력 — 프로젝트 폴더(`${workFolder}/${projectName}`)에 `${projectName}.prproj` 자동 저장.
+  // 작업 폴더는 이미지 생성 시점에 강제되므로 export 시점엔 항상 존재(방어용으로만 빈값 처리).
+  const safeProjectName = projectName || 'untitled'
+  const premiereOutputFolder = `${premiereWorkFolder}/${safeProjectName}`
+  const premiereTargetPath = `${premiereOutputFolder}/${safeProjectName}.prproj`
+  const vrewOutputFolder = `${premiereWorkFolder}/${safeProjectName}`
+  const vrewTargetPath = `${vrewOutputFolder}/${safeProjectName}.vrew`
+
+  // 포맷 공통 옵션 — CapCut/Premiere 콜백에 동일하게 전달.
+  const buildExportOptions = () => ({
+    scaleMode,  // 'fill' | 'fit' | 'none'
+    kenBurns,
+    kenBurnsMode,
+    kenBurnsCycle: Number(kenBurnsCycle) || 5,
+    kenBurnsScaleMin: Number(kenBurnsScaleMin) / 100 || 1.0,  // % → 비율
+    kenBurnsScaleMax: Number(kenBurnsScaleMax) / 100 || 1.15,  // % → 비율
+    subtitleOption: hasSubtitles && includeSubtitle ? 'ko' : 'none'
+  })
+
+  const persistOptions = () => {
+    saveSettings({
+      pathPreset,
+      scaleMode,
+      includeSubtitle,
+      kenBurns,
+      kenBurnsMode,
+      kenBurnsCycle: Number(kenBurnsCycle) || 5,
+      kenBurnsScaleMin: Number(kenBurnsScaleMin) || 100,
+      kenBurnsScaleMax: Number(kenBurnsScaleMax) || 130,
+    })
+  }
+
+  // Premiere — 프로젝트 폴더에 .prproj 자동 저장. 경로 검증/설치확인/앱실행 단계 없음.
+  // CapCut 은 폴더 번호 자동증가라 충돌이 없지만, Premiere 는 파일명이 고정이라
+  // 기존 .prproj 가 있으면 덮어쓰기 전에 확인 (Premiere 에서 손본 내용 보호).
+  const handleExportPremiere = async () => {
+    if (!premiereWorkFolder) {
+      alert(t('exportModal.premiereWorkFolderRequired'))
+      return
+    }
+    // Premiere Pro 설치 확인 — 미설치 시 다운로드 페이지 안내 (CapCut/Vrew 패턴).
+    // Premiere 는 MS Store 미등재라 store 딥링크 없음 → appx 빌드는 외부링크 금지(정책)라
+    // 안내 텍스트만, 그 외(nsis/mac)는 confirm 후 다운로드 페이지 열기.
+    if (window.electronAPI?.checkPremiereInstalled) {
+      const inst = await window.electronAPI.checkPremiereInstalled()
+      if (!inst?.installed) {
+        if (__BUILD_TARGET__ === 'appx') {
+          alert(t('exportModalExtra.premiereNotInstalled'))
+        } else if (window.confirm(t('exportModalExtra.premiereNotInstalledConfirm'))) {
+          window.electronAPI.openExternal?.('https://www.adobe.com/products/premiere.html')
+        }
+        return
+      }
+    }
+    // checkFolderExists 는 내부적으로 fs.access(pathExists) 라 파일에도 동작 — .prproj 존재 확인에 재사용.
+    const existing = await window.electronAPI?.checkFolderExists?.({ folderPath: premiereTargetPath })
+    if (existing?.exists && !window.confirm(t('exportModal.premiereOverwriteConfirm'))) {
+      return
+    }
+    persistOptions()
+    onExportPremiere({
+      capcutProjectNumber: premiereOutputFolder,  // .prproj 를 쓸 출력 폴더
+      ...buildExportOptions()
+    })
+  }
+
+  const handleExportVrew = async () => {
+    // Vrew 미설치 시 다운로드 안내 (CapCut 설치확인 패턴 미러). MS Store 미배포 → 다운로드 페이지.
+    if (window.electronAPI?.checkVrewInstalled) {
+      try {
+        const result = await window.electronAPI.checkVrewInstalled()
+        if (!result.installed) {
+          if (__BUILD_TARGET__ === 'appx') {
+            // MS Store(appx) 빌드: 외부 다운로드 링크 유도 금지(스토어 정책) → 안내 텍스트만.
+            // Vrew 는 MS Store 미배포라 CapCut 처럼 store 딥링크도 못 줌.
+            alert(t('exportModalExtra.vrewNotInstalledStore'))
+          } else if (window.confirm(t('exportModalExtra.vrewNotInstalled'))) {
+            window.electronAPI.openExternal?.('https://vrew.voyagerx.com/')
+          }
+          return
+        }
+      } catch (err) {
+        console.warn('[ExportModal] Vrew install check failed:', err)
+        // 체크 실패 시 export 막지 않음
+      }
+    }
+
+    if (!premiereWorkFolder) {
+      alert(t('exportModal.premiereWorkFolderRequired'))
+      return
+    }
+    const existing = await window.electronAPI?.checkFolderExists?.({ folderPath: vrewTargetPath })
+    if (existing?.exists && !window.confirm(t('exportModal.vrewOverwriteConfirm'))) {
+      return
+    }
+    persistOptions()
+    onExportVrew?.({
+      capcutProjectNumber: vrewOutputFolder,
+      ...buildExportOptions()
+    })
+  }
+
   const handleExport = async () => {
+    if (format === 'premiere') {
+      await handleExportPremiere()
+      return
+    }
+    if (format === 'vrew') {
+      await handleExportVrew()
+      return
+    }
+
     // 필수 입력 검증
     if (!fullPath.trim()) {
       alert(t('exportModalExtra.pathRequired'))
@@ -170,26 +323,11 @@ export const ExportModal = ({ isOpen, onClose, onExport, projectName, loading, e
     }
 
     // 설정 저장
-    saveSettings({
-      pathPreset,
-      scaleMode,
-      includeSubtitle,
-      kenBurns,
-      kenBurnsMode,
-      kenBurnsCycle: Number(kenBurnsCycle) || 5,
-      kenBurnsScaleMin: Number(kenBurnsScaleMin) || 100,
-      kenBurnsScaleMax: Number(kenBurnsScaleMax) || 130,
-    })
+    persistOptions()
 
     onExport({
       capcutProjectNumber: fullPath,  // 전체 경로 (자동 생성 또는 수동 편집)
-      scaleMode,  // 'fill' | 'fit' | 'none'
-      kenBurns,
-      kenBurnsMode,
-      kenBurnsCycle: Number(kenBurnsCycle) || 5,
-      kenBurnsScaleMin: Number(kenBurnsScaleMin) / 100 || 1.0,  // % → 비율
-      kenBurnsScaleMax: Number(kenBurnsScaleMax) / 100 || 1.15,  // % → 비율
-      subtitleOption: hasSubtitles && includeSubtitle ? 'ko' : 'none'
+      ...buildExportOptions()
     })
   }
 
@@ -202,11 +340,23 @@ export const ExportModal = ({ isOpen, onClose, onExport, projectName, loading, e
             <div className="export-loading-content">
               <div className="export-loading-spinner"></div>
               <p>{exportPhase === 'launching'
-                ? t('exportModal.launchingCapcut')
-                : t('exportModal.preparingPackage')
+                ? (format === 'premiere'
+                  ? t('exportModal.premiereLaunching')
+                  : format === 'vrew'
+                    ? t('exportModal.vrewLaunching')
+                    : t('exportModal.launchingCapcut'))
+                : (format === 'premiere'
+                  ? t('exportModal.premiereExporting')
+                  : format === 'vrew'
+                    ? t('exportModal.vrewExporting')
+                    : t('exportModal.preparingPackage'))
               }</p>
               <span className="export-loading-hint">{exportPhase === 'launching'
-                ? t('exportModal.launchingHint')
+                ? (format === 'premiere'
+                  ? t('exportModal.premiereLaunchingHint')
+                  : format === 'vrew'
+                    ? t('exportModal.vrewLaunchingHint')
+                    : t('exportModal.launchingHint'))
                 : t('exportModal.pleaseWait')
               }</span>
             </div>
@@ -214,7 +364,11 @@ export const ExportModal = ({ isOpen, onClose, onExport, projectName, loading, e
         )}
         <div className="export-modal-header">
           <div className="header-title-wrap">
-            <h2>📦 {t('exportModal.title')}</h2>
+            <h2>📦 {format === 'premiere'
+              ? t('exportModal.premiereTitle')
+              : format === 'vrew'
+                ? t('exportModal.vrewTitle')
+                : t('exportModal.title')}</h2>
             {/* 'loading' 상태에서 0/0 garbage 가 새는 걸 막기 위해 trial/expired 만 명시.
                 useExport gateway 가 loading 윈도우엔 모달을 안 열지만, defense in depth. */}
             {isAuthenticated && (subscription.status === 'trial' || subscription.status === 'expired') && (
@@ -232,23 +386,71 @@ export const ExportModal = ({ isOpen, onClose, onExport, projectName, loading, e
         </div>
 
         <div className="export-modal-content">
-          <div className="export-format-card selected">
-            <div className="format-header">
-              <span className="format-icon">✂️</span>
-              <div className="format-info">
-                <h3>{t('exportModal.capcutPackage')}</h3>
-                <p className="format-description">{t('exportModal.capcutPackageDesc')}</p>
-              </div>
-            </div>
-            <div className="format-details">
+          {/* 포맷 선택 세그먼트 — 가능한 내보내기 포맷을 항상 노출 (발견성) */}
+          <div className="export-format-tabs" role="group" aria-label={t('exportModal.formatSelectLabel')}>
+            <button
+              type="button"
+              className={`export-format-tab ${format === 'capcut' ? 'active' : ''}`}
+              aria-pressed={format === 'capcut'}
+              onClick={() => setFormat('capcut')}
+            >
+              ✂️ CapCut
+            </button>
+            <button
+              type="button"
+              className={`export-format-tab ${format === 'premiere' ? 'active' : ''}`}
+              aria-pressed={format === 'premiere'}
+              onClick={() => setFormat('premiere')}
+            >
+              🎬 Premiere
+            </button>
+            <button
+              type="button"
+              className={`export-format-tab ${format === 'vrew' ? 'active' : ''}`}
+              aria-pressed={format === 'vrew'}
+              onClick={() => setFormat('vrew')}
+            >
+              📝 Vrew
+            </button>
+          </div>
+
+          {format === 'capcut' ? (
+            <FormatCard icon="✂️" title={t('exportModal.capcutPackage')} description={t('exportModal.capcutPackageDesc')}>
               <p>{t('exportModal.zipDesc')}</p>
               <div className="format-output">
                 <span className="output-label">{t('exportModal.output')}</span>
                 <code>{projectName || 'untitled'}_capcut.zip</code>
               </div>
-            </div>
-          </div>
+            </FormatCard>
+          ) : format === 'premiere' ? (
+            <FormatCard icon="🎬" title={t('exportModal.premierePackage')} description={t('exportModal.premierePackageDesc')}>
+              <p>{t('exportModal.premiereSaveDesc')}</p>
+              {premiereWorkFolder ? (
+                <div className="format-output">
+                  <span className="output-label">📁 {t('exportModal.premiereSaveLocation')}</span>
+                  <code style={{ wordBreak: 'break-all' }}>{premiereTargetPath}</code>
+                </div>
+              ) : (
+                // 작업 폴더 미설정 — 가짜 경로 대신 안내. Export 버튼도 비활성(사후 alert 보다 사전 차단).
+                <p className="option-hint">📁 {t('exportModal.premiereWorkFolderRequired')}</p>
+              )}
+            </FormatCard>
+          ) : (
+            <FormatCard icon="📝" title={t('exportModal.vrewPackage')} description={t('exportModal.vrewPackageDesc')}>
+              <p>{t('exportModal.vrewSaveDesc')}</p>
+              {premiereWorkFolder ? (
+                <div className="format-output">
+                  <span className="output-label">📁 {t('exportModal.premiereSaveLocation')}</span>
+                  <code style={{ wordBreak: 'break-all' }}>{vrewTargetPath}</code>
+                </div>
+              ) : (
+                <p className="option-hint">📁 {t('exportModal.premiereWorkFolderRequired')}</p>
+              )}
+            </FormatCard>
+          )}
 
+          {/* ── CapCut 전용: 경로/번호/프리셋 (Premiere/Vrew 는 프로젝트 폴더 자동 저장) ── */}
+          {format === 'capcut' && (<>
           {/* 자동 감지된 설정 (사용자명 + 프로젝트 번호) */}
           <div className="export-option-section">
             <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '8px' }}>
@@ -357,6 +559,7 @@ export const ExportModal = ({ isOpen, onClose, onExport, projectName, loading, e
               </code>
             </div>
           )}
+          </>)}
 
           {/* Scale Mode 옵션 */}
           <div className="export-option-section">
@@ -460,7 +663,8 @@ export const ExportModal = ({ isOpen, onClose, onExport, projectName, loading, e
             </div>
           )}
 
-          {/* Info */}
+          {/* Info — CapCut import 가이드 (Premiere 는 카드의 저장 위치 안내로 충분) */}
+          {format === 'capcut' && (
           <div className="export-info">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
               <h4 style={{ margin: 0 }}>📊 {t('exportModal.importGuide')}</h4>
@@ -495,6 +699,7 @@ export const ExportModal = ({ isOpen, onClose, onExport, projectName, loading, e
               💡 <strong>Tip:</strong> {t('exportModal.autoDownloadTip')}
             </p>
           </div>
+          )}
         </div>
 
         <div className="export-modal-footer">
@@ -520,7 +725,7 @@ export const ExportModal = ({ isOpen, onClose, onExport, projectName, loading, e
               <button
                 className="export-btn export-btn-export"
                 onClick={handleExport}
-                disabled={loading}
+                disabled={loading || ((format === 'premiere' || format === 'vrew') && !premiereWorkFolder)}
               >
                 {loading ? `⏳ ${t('exportModal.exporting')}` : `📦 ${t('exportModal.export')}`}
               </button>

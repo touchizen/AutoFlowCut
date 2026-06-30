@@ -94,6 +94,7 @@
   --border-color: #4a5568;
   --border-radius: 8px;
   --font-family: 'Nunito', -apple-system, BlinkMacSystemFont, sans-serif;
+  --gutter-w: 2rem;
 }
 
 * {
@@ -118,9 +119,26 @@ html, body {
 .app {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 40px);
+  /* 뷰포트를 꽉 채운다. (옛 -40px 는 제거된 하단 footer/StatusBar 잔재 — 지금 StatusBar 는
+     bottom-panel 안에 있어 그 자리를 쓰는 요소가 없었고, API 모드에서만 40px 빈 하단마진이 남았다.
+     flow 모드는 .app-content-split .app 가 100%-4px 로 채워 갭이 없었다.) */
+  height: 100vh;
   overflow: hidden;
   position: relative;
+}
+
+/* ============================================
+   Flow mode split-view layout (§3.4)
+   Flow WebContentsView occupies the RIGHT 50%.
+   The renderer content is constrained to the LEFT half
+   so it does not overlap the overlaid Flow view.
+   api mode = unchanged full-width (no class applied).
+   ============================================ */
+/* flow 모드: split 박스 크기는 Shell(.app-content-split, splitAppStyle)이 제어한다.
+   App 은 그 박스를 100% 채운다 (예전의 width:50% 이중 축소 제거 — Shell 리사이저 복원). */
+.app.mode-flow-split {
+  width: 100%;
+  max-width: 100%;
 }
 
 /* Project Loading Overlay */
@@ -267,6 +285,131 @@ html, body {
   flex-direction: column;
 }
 
+/* 편집 영역(좌: 콘텐츠+액션버튼) | 프리뷰 모니터(우). 모니터가 둘을 아우르는 우측 컬럼. */
+.editor-row {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  /* row-reverse: 프리뷰 모니터를 좌측, board(콘텐츠+액션) 를 우측으로. resizer 수학도 left 기준으로 flip. */
+  flex-direction: row-reverse;
+}
+.editor-col {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.content-monitor {
+  flex: 0 0 auto; /* 폭은 inline style(monitorWidth) */
+  /* 저장된 큰 폭(예: 큰 화면에서 2000px)이 작은 창에서 패널을 밀어내지 않도록 렌더 시
+     캡 — 드래그 상한(90%)과 동일. JS 재-clamp 없이 레이아웃 안전 보장. */
+  max-width: 90%;
+  align-self: stretch;
+  min-height: 180px;
+  background: #0d0d0d;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  overflow: hidden;
+  position: relative; /* content-monitor-tools(absolute) 기준 */
+}
+/* 모니터 우상단 도구(전체화면 ⛶ · flow 닫기 ✕) */
+.content-monitor-tools {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  display: flex;
+  gap: 4px;
+}
+.content-monitor-tool {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  background: rgba(0, 0, 0, 0.6);
+  color: #ddd;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.content-monitor-tool:hover {
+  border-color: #4a9eff;
+  color: #fff;
+}
+/* 모니터 전체화면(CSS maximize) — 윈도우 전체를 덮는다. Flow 뷰는 setModalVisible 로 접혀 있어
+   가리지 않는다. DOM Fullscreen API 미사용(복원 race 회피). */
+.content-monitor--max {
+  position: fixed;
+  inset: 0;
+  width: 100% !important;
+  height: 100vh;
+  max-width: none;
+  border-radius: 0;
+  /* 앱 모달(.modal-overlay z:1000)보다 아래 — 전체화면 중 모달이 떠도 모달이 위에 보이게. */
+  z-index: 990;
+  background: #000;
+}
+/* 전체화면 모니터 하단 트랜스포트(재생/정지) */
+.content-monitor-transport {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  display: flex;
+  gap: 10px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(20, 20, 20, 0.8);
+  border: 1px solid var(--border-color);
+  backdrop-filter: blur(4px);
+}
+.content-monitor-tbtn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  cursor: pointer;
+  font-size: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.content-monitor-tbtn:hover {
+  border-color: #4a9eff;
+  background: rgba(74, 158, 255, 0.2);
+}
+/* 패널 ↔ 모니터 좌우 리사이저 */
+.content-monitor-resizer {
+  flex: 0 0 8px;
+  cursor: col-resize;
+  position: relative;
+  background: transparent;
+}
+/* 보이는 그립은 가로 리사이저처럼 짧게(중앙). 드래그 히트영역은 전체 높이(.content-monitor-resizer). */
+.content-monitor-resizer::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 40px;
+  border-radius: 2px;
+  background: var(--border-color);
+  transition: background 0.15s, height 0.15s;
+}
+.content-monitor-resizer:hover::after {
+  background: var(--text-secondary);
+  height: 60px;
+}
+
 /* Prompt Input */
 .prompt-input-container {
   flex: 1;
@@ -288,7 +431,6 @@ html, body {
 .prompt-textarea-wrap {
   position: relative;
   flex: 1;
-  display: flex;
   min-height: 0;
   border-radius: var(--border-radius);
   isolation: isolate;
@@ -347,20 +489,201 @@ html, body {
   animation: af-gloss-breathe 3.4s ease-in-out infinite;
 }
 
+/* Lexical contentEditable — textarea 와 동일한 시각 metric 유지 */
+.prompt-textarea-content {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
 .prompt-textarea {
   position: relative;
   z-index: 1;
-  flex: 1;
   width: 100%;
-  padding: 12px;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 12px 12px 12px calc(var(--gutter-w, 2rem) + 12px);
   border: 1px solid var(--border-color);
   border-radius: var(--border-radius);
   background: var(--bg-secondary);
   color: var(--text-color);
   font-size: 0.9rem;
   line-height: 1.6;
-  resize: none;
   font-family: inherit;
+  outline: none;
+  overflow-y: auto;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+  /* §3.5.1 줄번호 거터: counter-reset 은 editor root 에 선언 — paragraph 들이 1부터 증가 */
+  counter-reset: scene-line;
+}
+.prompt-textarea:focus {
+  border-color: var(--primary-color);
+}
+/* compact(상세/Ref 모달): 단일 프롬프트라 줄번호 거터 불필요 — 번호 숨김 + 왼쪽 패딩 정상화. */
+.prompt-textarea-wrap.compact .prompt-textarea {
+  padding-left: 12px;
+}
+.prompt-textarea-wrap.compact .prompt-paragraph::before {
+  content: none;
+}
+.prompt-textarea-wrap.disabled .prompt-textarea {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+/* paragraph 사이 간격 — 기본 0 (textarea 시절과 시각 동등). 줄바꿈은 새 paragraph 가 만든다. */
+/* §3.5.1: 줄번호 거터 — counter-increment 로 씬 번호(1·2·3…)를 자동 부여. */
+.prompt-paragraph {
+  margin: 0;
+  position: relative;
+  counter-increment: scene-line;
+}
+/* 씬 번호 — paragraph 의 첫 줄 왼쪽 거터에 표시. wrap 된 긴 줄은 첫 줄에만 붙음(::before = block start). */
+.prompt-paragraph::before {
+  content: counter(scene-line);
+  position: absolute;
+  left: calc(-1 * (var(--gutter-w, 2rem) + 12px - 4px));
+  top: 0;
+  width: calc(var(--gutter-w, 2rem) - 4px);
+  text-align: right;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--text-secondary, #888);
+  opacity: 0.5;
+  user-select: none;
+  pointer-events: none;
+}
+/* placeholder — RichTextPlugin 이 빈 상태에서만 표시 */
+/* §3.5.1: 거터 폭만큼 left 보정 — 텍스트와 동일한 x 위치에 정렬. */
+.prompt-placeholder {
+  position: absolute;
+  top: 13px;
+  left: calc(var(--gutter-w, 2rem) + 13px);
+  pointer-events: none;
+  user-select: none;
+  color: var(--text-secondary, #888);
+  font-size: 0.9rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  z-index: 2;
+}
+
+/* ── Mention chip — 인라인, 썸네일 + 이름. Backspace 한 번에 통째 삭제 (Lexical decorator). */
+.mention-chip-base {
+  /* BeautifulMentionsPlugin theme 가 노드에 항상 부여 — 자체 스타일은 거의 없음.
+     실제 시각은 chip 컴포넌트의 .mention-chip 이 담당. */
+  display: inline;
+}
+.mention-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px 1px 2px;
+  margin: 0 1px;
+  background: rgba(110, 231, 255, 0.18);
+  border-radius: 10px;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  vertical-align: baseline;
+  white-space: nowrap;
+  user-select: all; /* 통째 선택 — backspace 시 chip 단위 삭제 */
+}
+/* chip 썸네일 — height 고정, width auto 로 원본 비율 유지 (16:9 / 9:16 등).
+   max-width 로 너무 길어지는 가로 이미지는 캡, min-width 로 너무 가는 세로
+   이미지는 최소 폭 확보. */
+.mention-chip-thumb {
+  height: 16px;
+  width: auto;
+  min-width: 12px;
+  max-width: 32px;
+  object-fit: contain;
+  border-radius: 2px;
+  background: var(--bg, #1a1a1a);
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+.mention-chip-thumb.empty {
+  display: inline-block;
+  width: 16px;
+  background: var(--bg-tertiary, #222);
+}
+.mention-chip-label {
+  color: var(--text-color);
+}
+.mention-chip-base-focused .mention-chip {
+  outline: 2px solid var(--primary-color, #6ee7ff);
+}
+
+/* unmatched @xxx — Phase A 의 빨간 wavy underline 을 Lexical 노드로 복원.
+   UnknownMentionTextNode 가 createDOM 에서 이 클래스를 부여한다. */
+.prompt-textarea .unknown-mention {
+  text-decoration: underline wavy var(--danger-color, #e5484d);
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}
+
+/* ── Mention menu — `@` 입력 시 드롭다운 */
+.mention-menu {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 4px 0;
+  background: var(--bg-secondary, #2a2a2a);
+  border: 1px solid var(--border-color, #444);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  max-height: 320px;
+  overflow-y: auto;
+  /* position 이 없으면 z-index 가 무시돼(static), 상세 모달의 .modal-overlay(z-index:1000)
+     반투명 배경 뒤로 메뉴가 가려진다. relative 로 z-index 를 활성화해 오버레이 위로 띄운다. */
+  position: relative;
+  z-index: 10003;
+  min-width: 200px;
+  max-width: 380px;
+}
+.mention-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-color, #ddd);
+}
+.mention-menu-item.selected,
+.mention-menu-item:hover {
+  background: var(--bg-hover, #3a3a3a);
+}
+.mention-menu-thumb {
+  width: 36px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 3px;
+  background: var(--bg, #1a1a1a);
+  border: 1px solid var(--border-color, #444);
+  flex-shrink: 0;
+}
+.mention-menu-thumb.empty {
+  background: var(--bg-tertiary, #222);
+  display: inline-block;
+}
+.mention-menu-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.mention-menu-type {
+  font-size: 11px;
+  color: var(--text-secondary, #888);
+  text-transform: lowercase;
 }
 
 /* 인트로 동안만 표면 윤기: ① 흐르는 대각선 sheen ② 위 광택 ③ 베이스색
@@ -411,7 +734,9 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
+  row-gap: 6px;
   padding: 8px 0;
   font-size: 0.8rem;
   color: var(--text-secondary);
@@ -422,11 +747,65 @@ html, body {
   white-space: nowrap;
 }
 
+/* Tip: 한 줄이면 space-between 으로 오른쪽 끝에 붙고, 다 못 들어가면 flex-wrap 으로 자체 줄로
+   내려가 2줄 wrap (좁은 Flow split pane 에서 seed 컨트롤과 겹치던 회귀 차단).
+   flex-grow:0 라 한 줄일 때 남는 공간을 채우지 않아 우측 정렬 유지. */
 .prompt-input-footer .hint {
-  flex: 0 0 auto;
-  white-space: nowrap;
+  flex: 0 1 auto;
+  white-space: normal;
+}
+
+/* ── PromptInput @ mention dropdown ──────────────────────────────────
+   `@` 입력 시 references 목록을 썸네일과 함께 노출. portal → document.body
+   로 렌더되므로 textarea 의 overflow 컨테이너에 안 잘림. */
+.prompt-mention-dropdown {
+  z-index: 10003;
+  background: var(--bg-secondary, #2a2a2a);
+  border: 1px solid var(--border-color, #444);
+  border-radius: 4px;
+  overflow-y: auto;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  padding: 4px 0;
+}
+.prompt-mention-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-color, #ddd);
+}
+.prompt-mention-option:hover,
+.prompt-mention-option.highlighted {
+  background: var(--bg-hover, #3a3a3a);
+}
+.prompt-mention-thumb {
+  width: 36px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 3px;
+  flex-shrink: 0;
+  background: var(--bg, #1a1a1a);
+  border: 1px solid var(--border-color, #444);
+}
+.prompt-mention-thumb.empty {
+  background: var(--bg-tertiary, #222);
+}
+.prompt-mention-option-label {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.prompt-mention-type {
+  font-size: 11px;
+  color: var(--text-secondary, #888);
+  text-transform: lowercase;
 }
 
 /* Seed control (between line-count and hint) */
@@ -498,18 +877,6 @@ html, body {
   opacity: 1;
   background: rgba(74, 158, 255, 0.18);
   border-color: rgba(74, 158, 255, 0.45);
-}
-
-/* Narrow screen: hide the tip, keep seed control + line count */
-@container (max-width: 640px) {
-  .prompt-input-footer .hint {
-    display: none;
-  }
-}
-@media (max-width: 800px) {
-  .prompt-input-footer .hint {
-    display: none;
-  }
 }
 
 /* ============================================
@@ -612,6 +979,11 @@ html, body {
   font-size: 0.75rem;
   padding: 2px 4px;
   cursor: pointer;
+  /* col-prompt(flex:1, min-width:0)가 좁아지면 행의 input(width:100%)처럼 select 도 같이 줄어
+     col-status 헤더와 겹치지 않게. (없으면 select 고유폭이 박스를 오버플로우.) */
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 .prompt-source-toggle:hover {
   border-color: var(--accent-color, #6495ed);
@@ -1086,9 +1458,14 @@ html, body {
 /* Action Buttons */
 .action-buttons {
   display: flex;
+  flex-wrap: wrap;   /* 버튼이 한 행에 안 들어가면(예: 에러 재시도로 3개) 자동 줄바꿈 */
   gap: 8px;
   padding: 12px 0;
   flex-shrink: 0;
+}
+/* 이 폭 미만으로 좁아지면 다음 줄로 wrap (Start 라벨은 그 전에 startButtonTier 로 축약됨). */
+.action-buttons > * {
+  min-width: 140px;
 }
 
 .btn-primary, .btn-secondary, .btn-danger, .btn-warning, .btn-upgrade {
@@ -1300,6 +1677,14 @@ html, body {
 
 .results-table .col-id { width: 28px; text-align: center; }
 .results-table .col-img { width: 72px; }
+.results-table .col-model {
+  width: 104px;
+  font-size: 0.78rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary, #9aa0b4);
+}
 .results-table .col-status { width: 90px; }
 
 .results-table tr.status-generating {
@@ -1434,9 +1819,10 @@ html, body {
    Responsive Results Table - Container Queries
    ============================================ */
 
-/* < 400px: Status 컬럼 숨김 → 프롬프트 + 이미지 유지 */
+/* < 400px: Status/모델 컬럼 숨김 → 프롬프트 + 이미지 유지 */
 @container results-table (max-width: 399px) {
-  .results-table .col-status {
+  .results-table .col-status,
+  .results-table .col-model {
     display: none;
   }
   .results-table td,
@@ -1863,3 +2249,17 @@ html, body {
   height: 100%;
   display: block;
 }
+
+/* 모델 출처 배지 (설정 씬탭 모델 타이틀) — Flow/API 구분 */
+.model-mode-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 10px;
+  vertical-align: middle;
+  margin-left: 6px;
+  letter-spacing: 0.3px;
+}
+.model-mode-flow { background: #6366f1; color: #fff; }
+.model-mode-api { background: #2d8a4e; color: #fff; }

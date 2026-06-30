@@ -23,13 +23,27 @@
 import fs from 'fs/promises'
 import fsSync from 'fs'
 import path from 'path'
-import { execFile } from 'child_process'
+import { execFile, execSync } from 'child_process'
 import { app, dialog } from 'electron'
 import { parseSfxList } from '../../src/utils/parseSfxList.js'
 
 // ============================================================
 // Helper Functions
 // ============================================================
+
+// #R7-4: per-project.json write serialization. save-project-data 와 merge-project-data 가
+//   같은 파일을 read-modify-write 할 때 interleave 하지 않도록 경로별 promise chain 으로 직렬화한다.
+const projectWriteChains = new Map()
+function withProjectWriteLock(jsonPath, fn) {
+  const prev = projectWriteChains.get(jsonPath) || Promise.resolve()
+  const run = prev.then(fn, fn) // 이전 작업 성공/실패와 무관하게 직렬 실행
+  // 다음 caller 가 결과와 무관하게 대기하도록 항상 resolve 하는 guard 를 저장.
+  const guard = run.then(() => {}, () => {})
+  projectWriteChains.set(jsonPath, guard)
+  // #R11-12: 마지막 작업이면 map 엔트리 제거(누수 방지). 사이에 새 writer 가 끼면 get!==guard 라 보존.
+  guard.finally(() => { if (projectWriteChains.get(jsonPath) === guard) projectWriteChains.delete(jsonPath) })
+  return run
+}
 
 /**
  * 오디오 파일 재생 시간(ms) 추출 — ffprobe 사용 (WAV, MP3, OGG, M4A 등 모두 지원)
@@ -69,14 +83,15 @@ function getAudioDurationMs(filePath) {
  * WAV 파일 헤더에서 재생 시간(ms) 추출 (ffprobe 폴백용)
  */
 function getWavDurationMs(filePath) {
+  // #R11-10: fd 를 try 밖에 두고 finally 에서 닫는다 — readSync 가 throw 해도 fd 누수 방지.
+  let fd = null
   try {
-    const fd = fsSync.openSync(filePath, 'r')
+    fd = fsSync.openSync(filePath, 'r')
     const header = Buffer.alloc(44)
     fsSync.readSync(fd, header, 0, 44, 0)
 
     if (header.toString('ascii', 0, 4) !== 'RIFF' ||
         header.toString('ascii', 8, 12) !== 'WAVE') {
-      fsSync.closeSync(fd)
       return null
     }
 
@@ -97,14 +112,14 @@ function getWavDurationMs(filePath) {
       offset += 8 + chunkSize
     }
 
-    fsSync.closeSync(fd)
-
     if (byteRate > 0 && dataSize > 0) {
       return Math.round((dataSize / byteRate) * 1000)
     }
     return null
   } catch {
     return null
+  } finally {
+    if (fd !== null) { try { fsSync.closeSync(fd) } catch { /* ignore */ } }
   }
 }
 
@@ -147,6 +162,25 @@ function getTimestamp() {
 function base64ToBuffer(base64Data) {
   const clean = base64Data.replace(/^data:[^;]+;base64,/, '')
   return Buffer.from(clean, 'base64')
+}
+
+function binaryPayloadToBuffer({ bytes, base64Data }) {
+  if (bytes != null) {
+    if (Buffer.isBuffer(bytes)) return Buffer.from(bytes)
+    if (bytes instanceof ArrayBuffer) return Buffer.from(bytes)
+    if (ArrayBuffer.isView(bytes)) {
+      return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+    }
+    if (Array.isArray(bytes)) return Buffer.from(bytes)
+    throw new Error('Unsupported binary bytes payload')
+  }
+
+  if (typeof base64Data === 'string' && base64Data) {
+    const clean = base64Data.replace(/^data:[^;]+;base64,/, '')
+    return Buffer.from(clean, 'base64')
+  }
+
+  throw new Error('bytes or base64Data is required')
 }
 
 /**
@@ -360,17 +394,38 @@ export function registerFilesystemIPC(ipcMain) {
   // 4. fs:save-project-data
   // ----------------------------------------------------------
   ipcMain.handle('fs:save-project-data', async (_event, { workFolder, project, data }) => {
-    try {
-      const projectDir = path.join(workFolder, project)
-      await fs.mkdir(projectDir, { recursive: true })
+    const jsonPath = path.join(workFolder, project, 'project.json')
+    // #R7-4: project.json 쓰기를 경로별로 직렬화 — merge-project-data 와 interleave 방지.
+    return withProjectWriteLock(jsonPath, async () => {
+      try {
+        await fs.mkdir(path.join(workFolder, project), { recursive: true })
+        await fs.writeFile(jsonPath, JSON.stringify(data, null, 2), 'utf-8')
+        return { success: true }
+      } catch (error) {
+        return { success: false, error: error.message }
+      }
+    })
+  })
 
-      const jsonPath = path.join(projectDir, 'project.json')
-      await fs.writeFile(jsonPath, JSON.stringify(data, null, 2), 'utf-8')
-
-      return { success: true }
-    } catch (error) {
-      return { success: false, error: error.message }
-    }
+  // 4b. fs:merge-project-data — project.json 의 최상위 키만 원자적으로 머지(read-modify-write).
+  //   #R7-4: write-lock 안에서 read+merge+write 를 수행해 autosave(save-project-data)와의
+  //   interleave 로 인한 clobber 를 막는다. patch 의 키만 갱신, 나머지 디스크 데이터는 보존.
+  ipcMain.handle('fs:merge-project-data', async (_event, { workFolder, project, patch }) => {
+    const jsonPath = path.join(workFolder, project, 'project.json')
+    return withProjectWriteLock(jsonPath, async () => {
+      try {
+        if (!(await pathExists(jsonPath))) {
+          return { success: false, error: 'project_json_missing' }
+        }
+        const text = await fs.readFile(jsonPath, 'utf-8')
+        const data = JSON.parse(text)
+        const merged = { ...data, ...(patch || {}) }
+        await fs.writeFile(jsonPath, JSON.stringify(merged, null, 2), 'utf-8')
+        return { success: true }
+      } catch (error) {
+        return { success: false, error: error.message }
+      }
+    })
   })
 
   // ----------------------------------------------------------
@@ -828,7 +883,7 @@ export function registerFilesystemIPC(ipcMain) {
       // Windows EPERM fallback (OneDrive 등 파일 잠금 시)
       if (process.platform === 'win32' && error.code === 'EPERM') {
         try {
-          const { execSync } = require('child_process')
+          // #R11-11: ESM 모듈이라 require 불가 — 모듈 스코프 import 된 execSync 사용.
           execSync(`rmdir /s /q "${path.join(workFolder, project)}"`, { windowsHide: true })
           return { success: true }
         } catch (fallbackErr) {
@@ -1579,6 +1634,25 @@ export function registerFilesystemIPC(ipcMain) {
       return { success: true }
     } catch (error) {
       console.error('[FS] write-file-absolute error:', error)
+      return { success: false, error: error.message }
+    }
+  })
+
+  // ----------------------------------------------------------
+  // 26. fs:write-binary-file-absolute — 절대 경로로 바이너리 파일 쓰기
+  //     .vrew(zip)처럼 UTF-8 문자열로 쓰면 깨지는 파일에 사용
+  // ----------------------------------------------------------
+  ipcMain.handle('fs:write-binary-file-absolute', async (_event, { filePath, bytes, base64Data }) => {
+    try {
+      if (!filePath) {
+        return { success: false, error: 'filePath is required' }
+      }
+      const buffer = binaryPayloadToBuffer({ bytes, base64Data })
+      await fs.mkdir(path.dirname(filePath), { recursive: true })
+      await fs.writeFile(filePath, buffer)
+      return { success: true, targetPath: filePath }
+    } catch (error) {
+      console.error('[FS] write-binary-file-absolute error:', error)
       return { success: false, error: error.message }
     }
   })

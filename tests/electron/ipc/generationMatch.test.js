@@ -205,3 +205,109 @@ describe('matchGenerationForResponse', () => {
     expect(matchGenerationForResponse(pending, body)).toBe('gen-A')
   })
 })
+
+// R13-P1: batchGenerateImages 응답이 sync(pendingGeneration) vs async(pendingGenerations)
+//   어느 쪽 것인지 라우팅. sync 우선이면 async batch 응답을 sync 가 가로채(thumbnail 같은
+//   sync 가 batch 대기 중 활성일 때). async matcher 는 requestBody 로 정확 매칭하므로 async 우선.
+import { routeBatchImageResponse } from '../../../electron/ipc/generationMatch.js'
+
+function genMap(entries) {
+  const m = new Map()
+  for (const [id, g] of entries) m.set(id, g)
+  return m
+}
+// matchGenerationForResponse 가 매칭하려면 promptKey 가 정확히 일치해야 한다.
+const asyncGen = (promptKey, setAt = 100) => ({ promptKey, setAt, refMediaIds: [], reqSeed: null, reqAspectRatio: null, completed: false, responses: [], expectedCount: 1 })
+const bodyFor = (prompt) => JSON.stringify({ requests: [{ prompt: { textInput: { prompt } } }] })
+
+describe('routeBatchImageResponse', () => {
+  it('async gen 과 정확 매칭되면 async (sync 가 동시 활성이어도 async 우선)', () => {
+    const pg = genMap([['g1', asyncGen('batch scene prompt', 100)]])
+    const r = routeBatchImageResponse({
+      hasSyncPending: true, syncSetAt: 200,   // sync 가 더 늦게 arm(있음)
+      pendingGenerations: pg,
+      requestBody: bodyFor('batch scene prompt'),
+      reqStartedAt: 300,                       // sync 기준 stale 아님(>=200)
+    })
+    expect(r).toEqual({ target: 'async', matchId: 'g1' })
+  })
+
+  it('async 매칭 실패 + sync fresh → sync (thumbnail 응답)', () => {
+    const pg = genMap([['g1', asyncGen('batch scene prompt', 100)]])
+    const r = routeBatchImageResponse({
+      hasSyncPending: true, syncSetAt: 200,
+      pendingGenerations: pg,
+      requestBody: bodyFor('thumbnail landscape prompt'),  // 다른 prompt → async 매칭 실패
+      reqStartedAt: 300,
+    })
+    expect(r).toEqual({ target: 'sync' })
+  })
+
+  it('async 매칭 실패 + sync stale → drop', () => {
+    const pg = genMap([['g1', asyncGen('batch prompt', 100)]])
+    const r = routeBatchImageResponse({
+      hasSyncPending: true, syncSetAt: 200,
+      pendingGenerations: pg,
+      requestBody: bodyFor('other prompt'),
+      reqStartedAt: 150,   // < 200 → sync stale
+    })
+    expect(r).toEqual({ target: 'drop' })
+  })
+
+  it('async 없음 + sync fresh → sync', () => {
+    const r = routeBatchImageResponse({
+      hasSyncPending: true, syncSetAt: 200, pendingGenerations: new Map(),
+      requestBody: bodyFor('x'), reqStartedAt: 250,
+    })
+    expect(r).toEqual({ target: 'sync' })
+  })
+
+  it('sync 없음 + async 없음 → drop', () => {
+    const r = routeBatchImageResponse({
+      hasSyncPending: false, syncSetAt: null, pendingGenerations: new Map(),
+      requestBody: bodyFor('x'), reqStartedAt: 250,
+    })
+    expect(r).toEqual({ target: 'drop' })
+  })
+})
+
+describe('routeBatchImageResponse — fail-closed / null body (R14)', () => {
+  const asyncGen2 = (promptKey, { completed = false, setAt = 100 } = {}) => ({
+    promptKey, setAt, refMediaIds: [], reqSeed: null, reqAspectRatio: null,
+    completed, responses: [], expectedCount: 1,
+  })
+  const body2 = (prompt) => JSON.stringify({ requests: [{ prompt: { textInput: { prompt } } }] })
+
+  it('R14-P1: 응답 prompt 가 "완료된 async gen" 과만 일치 + sync fresh → drop (sync 로 새지 않음)', () => {
+    const pg = new Map([['done', asyncGen2('batch prompt', { completed: true })]])
+    const r = routeBatchImageResponse({
+      hasSyncPending: true, syncSetAt: 50,
+      pendingGenerations: pg,
+      requestBody: body2('batch prompt'),   // 완료 gen 의 prompt — 늦은 중복 응답
+      reqStartedAt: 300,                     // sync 기준 fresh
+    })
+    expect(r).toEqual({ target: 'drop' })
+  })
+
+  it('R14-P2: requestBody=null + async incomplete 1개(async-only) → async fallback (crash 없음)', () => {
+    const pg = new Map([['g1', asyncGen2('p')]])
+    const r = routeBatchImageResponse({
+      hasSyncPending: false, syncSetAt: null,
+      pendingGenerations: pg,
+      requestBody: null,
+      reqStartedAt: 300,
+    })
+    expect(r).toEqual({ target: 'async', matchId: 'g1' })
+  })
+
+  it('R14-P2: requestBody=null + sync fresh → sync (crash 없음)', () => {
+    const pg = new Map([['g1', asyncGen2('p')]])
+    const r = routeBatchImageResponse({
+      hasSyncPending: true, syncSetAt: 50,
+      pendingGenerations: pg,
+      requestBody: null,
+      reqStartedAt: 300,
+    })
+    expect(r).toEqual({ target: 'sync' })
+  })
+})

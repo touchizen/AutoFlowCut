@@ -15,6 +15,16 @@ vi.mock('../../src/exporters/capcut.js', () => ({
   exportCapcut: (...args) => mockExportCapcut(...args)
 }))
 
+const mockExportPremiere = vi.fn()
+vi.mock('../../src/exporters/premiere.js', () => ({
+  exportPremiere: (...args) => mockExportPremiere(...args)
+}))
+
+const mockExportVrew = vi.fn()
+vi.mock('../../src/exporters/vrew.js', () => ({
+  exportVrew: (...args) => mockExportVrew(...args)
+}))
+
 const mockToastWarning = vi.fn()
 const mockToastSuccess = vi.fn()
 const mockToastInfo = vi.fn()
@@ -46,6 +56,13 @@ const baseSettings = { projectName: 'TestProject', aspectRatio: '16:9', defaultD
 const baseScenes = [
   { id: 's1', image: 'data:image/png;base64,xxx', imagePath: null, duration: 3 }
 ]
+const staleScene = {
+  id: 's-stale',
+  image: null,
+  imagePath: '/tmp/old.png',
+  status: 'pending',
+  duration: 3
+}
 
 const baseConfirmArgs = {
   capcutProjectNumber: 1,
@@ -62,6 +79,7 @@ const baseConfirmArgs = {
 beforeEach(() => {
   vi.clearAllMocks()
   mockExportCapcut.mockResolvedValue({ success: true, targetPath: '/tmp/out' })
+  mockExportVrew.mockResolvedValue({ success: true, targetPath: '/tmp/p.vrew' })
   // window.electronAPI.openCapcut 우회 — 단위 테스트에서는 호출 안 함
   if (typeof window !== 'undefined') {
     delete window.electronAPI
@@ -135,6 +153,94 @@ describe('handleExportClick — loading 윈도우 paywall 차단 (P2-3 후속)',
     })
 
     expect(result.current.showExportModal).toBe(true)
+  })
+
+  it('handleExportClick(format) — 포맷을 기억하고 localStorage 에 저장', () => {
+    localStorage.removeItem('lastExportFormat')
+    const { result } = renderHook(() =>
+      useExport({
+        settings: baseSettings,
+        scenes: baseScenes,
+        openSettings: vi.fn(),
+        isAuthenticated: true,
+        subscription: { status: 'trial', canExport: true },
+        refreshSubscription: vi.fn(),
+        onLoginRequired: vi.fn(),
+        onPaywallRequired: vi.fn()
+      })
+    )
+
+    expect(result.current.exportFormat).toBe('capcut')
+
+    act(() => {
+      result.current.handleExportClick('premiere')
+    })
+
+    expect(result.current.exportFormat).toBe('premiere')
+    expect(localStorage.getItem('lastExportFormat')).toBe('premiere')
+    expect(result.current.showExportModal).toBe(true)
+  })
+
+  it('exportFormat — localStorage 가 깨진 값이면 capcut 으로 좁힌다', () => {
+    localStorage.setItem('lastExportFormat', 'bad')
+    const { result } = renderHook(() =>
+      useExport({
+        settings: baseSettings,
+        scenes: baseScenes,
+        openSettings: vi.fn(),
+        isAuthenticated: true,
+        subscription: { status: 'trial', canExport: true },
+        refreshSubscription: vi.fn(),
+        onLoginRequired: vi.fn(),
+        onPaywallRequired: vi.fn()
+      })
+    )
+    expect(result.current.exportFormat).toBe('capcut')
+  })
+
+  it('handleExportClick(format) — 미인증이면 포맷 기억해도 모달 안 열림', () => {
+    const onLoginRequired = vi.fn()
+    const { result } = renderHook(() =>
+      useExport({
+        settings: baseSettings,
+        scenes: baseScenes,
+        openSettings: vi.fn(),
+        isAuthenticated: false,
+        subscription: { status: 'trial', canExport: true },
+        refreshSubscription: vi.fn(),
+        onLoginRequired,
+        onPaywallRequired: vi.fn()
+      })
+    )
+
+    act(() => {
+      result.current.handleExportClick('premiere')
+    })
+
+    expect(onLoginRequired).toHaveBeenCalled()
+    expect(result.current.showExportModal).toBe(false)
+  })
+
+  it('pending 상태의 stale imagePath 만 있으면 export 모달을 열지 않는다', () => {
+    const { result } = renderHook(() =>
+      useExport({
+        settings: baseSettings,
+        scenes: [staleScene],
+        openSettings: vi.fn(),
+        isAuthenticated: true,
+        subscription: { status: 'trial', canExport: true },
+        refreshSubscription: vi.fn(),
+        onLoginRequired: vi.fn(),
+        onPaywallRequired: vi.fn()
+      })
+    )
+
+    act(() => {
+      result.current.handleExportClick()
+    })
+
+    expect(result.current.showExportModal).toBe(false)
+    expect(mockToastWarning).toHaveBeenCalledWith('toast.noGeneratedImages')
   })
 
   it('미인증 시 onLoginRequired 만 호출', () => {
@@ -290,6 +396,31 @@ describe('handleExportConfirm — 성공 후 refreshSubscription 호출 (P2-1)',
     expect(mockExportCapcut).toHaveBeenCalled()
     expect(mockToastSuccess).toHaveBeenCalled()
   })
+
+  it('pending 상태의 stale imagePath 는 confirm 경로에서도 export 하지 않는다', async () => {
+    const refreshSubscription = vi.fn()
+    const { result } = renderHook(() =>
+      useExport({
+        settings: baseSettings,
+        scenes: [staleScene],
+        openSettings: vi.fn(),
+        isAuthenticated: true,
+        subscription: { status: 'trial', canExport: true },
+        refreshSubscription,
+        onLoginRequired: vi.fn(),
+        onPaywallRequired: vi.fn()
+      })
+    )
+
+    let exportResult
+    await act(async () => {
+      exportResult = await result.current.handleExportConfirm(baseConfirmArgs)
+    })
+
+    expect(exportResult).toEqual({ success: false, error: 'toast.noGeneratedImages' })
+    expect(mockExportCapcut).not.toHaveBeenCalled()
+    expect(refreshSubscription).not.toHaveBeenCalled()
+  })
 })
 
 describe('handleExportClick — terminal error 상태 처리 (구독 정보 로드 실패)', () => {
@@ -381,5 +512,103 @@ describe('handleExportClick — terminal error 상태 처리 (구독 정보 로�
     if (typeof process !== 'undefined') {
       process.off('unhandledRejection', unhandled)
     }
+  })
+})
+
+describe('handleExportPremiere — 앱 실행 + Premiere 전용 toast', () => {
+  beforeEach(() => {
+    mockExportPremiere.mockResolvedValue({ success: true, targetPath: '/tmp/p.prproj' })
+  })
+
+  const premiereHook = () => renderHook(() =>
+    useExport({
+      settings: baseSettings,
+      scenes: baseScenes,
+      openSettings: vi.fn(),
+      isAuthenticated: true,
+      subscription: { status: 'active', canExport: true },
+      refreshSubscription: vi.fn(),
+      onLoginRequired: vi.fn(),
+      onPaywallRequired: vi.fn()
+    })
+  )
+
+  it('저장 후 openPremiereProject 호출 + Premiere toast (CapCut toast 아님)', async () => {
+    window.electronAPI = { openPremiereProject: vi.fn().mockResolvedValue({ success: true }) }
+    const { result } = premiereHook()
+
+    await act(async () => { await result.current.handleExportPremiere(baseConfirmArgs) })
+
+    expect(mockExportPremiere).toHaveBeenCalled()
+    expect(window.electronAPI.openPremiereProject).toHaveBeenCalledWith({ targetPath: '/tmp/p.prproj' })
+    expect(mockToastSuccess).toHaveBeenCalledWith('toast.premiereSaveComplete', expect.anything())
+    expect(mockToastInfo).toHaveBeenCalledWith('toast.premiereLaunched', expect.anything())
+    // CapCut 전용 문구는 쓰지 않는다 (회귀: "CapCut 프로젝트 저장 완료" toast 누수)
+    expect(mockToastSuccess).not.toHaveBeenCalledWith('toast.exportSaveComplete', expect.anything())
+  })
+
+  it('Premiere 열기 실패 시 premiereLaunchFailed 경고', async () => {
+    window.electronAPI = { openPremiereProject: vi.fn().mockResolvedValue({ success: false }) }
+    const { result } = premiereHook()
+
+    await act(async () => { await result.current.handleExportPremiere(baseConfirmArgs) })
+
+    expect(mockToastWarning).toHaveBeenCalledWith('toast.premiereLaunchFailed', expect.anything())
+  })
+})
+
+describe('handleExportVrew — 로컬 Vrew 저장', () => {
+  it('exportVrew 호출 + 저장 후 .vrew 오픈, GCF refresh 없이 완료', async () => {
+    const refreshSubscription = vi.fn()
+    const onExportSuccess = vi.fn()
+    mockExportVrew.mockResolvedValueOnce({
+      success: true,
+      targetPath: '/tmp/p.vrew',
+      warnings: [{ code: 'unsupported-bgm' }],
+    })
+    window.electronAPI = { openVrewProject: vi.fn().mockResolvedValue({ success: true }) }
+    const { result } = renderHook(() =>
+      useExport({
+        settings: baseSettings,
+        scenes: baseScenes,
+        openSettings: vi.fn(),
+        isAuthenticated: true,
+        subscription: { status: 'active', canExport: true },
+        refreshSubscription,
+        onLoginRequired: vi.fn(),
+        onPaywallRequired: vi.fn(),
+        onExportSuccess
+      })
+    )
+
+    await act(async () => { await result.current.handleExportVrew(baseConfirmArgs) })
+
+    expect(mockExportVrew).toHaveBeenCalledTimes(1)
+    expect(window.electronAPI.openVrewProject).toHaveBeenCalledWith({ targetPath: '/tmp/p.vrew' })
+    expect(mockToastSuccess).toHaveBeenCalledWith('toast.vrewSaveComplete', expect.anything())
+    expect(mockToastWarning).toHaveBeenCalledWith('toast.vrewExportWarnings', expect.anything())
+    expect(mockToastInfo).toHaveBeenCalledWith('toast.vrewLaunched', expect.anything())
+    expect(refreshSubscription).not.toHaveBeenCalled()
+    expect(onExportSuccess).toHaveBeenCalledTimes(1)
+  })
+
+  it('Vrew 열기 실패 시 vrewLaunchFailed 경고', async () => {
+    window.electronAPI = { openVrewProject: vi.fn().mockResolvedValue({ success: false }) }
+    const { result } = renderHook(() =>
+      useExport({
+        settings: baseSettings,
+        scenes: baseScenes,
+        openSettings: vi.fn(),
+        isAuthenticated: true,
+        subscription: { status: 'active', canExport: true },
+        refreshSubscription: vi.fn(),
+        onLoginRequired: vi.fn(),
+        onPaywallRequired: vi.fn()
+      })
+    )
+
+    await act(async () => { await result.current.handleExportVrew(baseConfirmArgs) })
+
+    expect(mockToastWarning).toHaveBeenCalledWith('toast.vrewLaunchFailed', expect.anything())
   })
 })

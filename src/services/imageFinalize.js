@@ -24,7 +24,7 @@ import { tryUpscaleImage } from '../utils/imageProcessing'
  *
  * @param {object} params
  * @param {object} params.result - 생성 결과 { success, images: [{ base64, mediaId, model? }], seed? }
- * @param {object} params.flowAPI - Flow API 인스턴스 (upscaleImage)
+ * @param {object} params.genAPI - Flow API 인스턴스 (upscaleImage)
  * @param {string} params.upscaleRes - 업스케일 해상도 ('off', '2k', '4k')
  * @param {string} params.saveMode - 저장 모드 ('folder' | 'none')
  * @param {string} params.projectName - 프로젝트명
@@ -37,18 +37,20 @@ import { tryUpscaleImage } from '../utils/imageProcessing'
  *   sceneUpdate: updateScene 에 전달할 객체 (status, image, imagePath, mediaId, image_size, seed, generatedAt, model)
  */
 export async function finalizeGeneratedImage({
-  result, flowAPI, upscaleRes = 'off', saveMode, projectName, sceneId, prompt,
+  result, genAPI, upscaleRes = 'off', saveMode, projectName, sceneId, prompt,
   seed = null, model = 'flow', logPrefix = '[Finalize]'
 }) {
   if (!result.success || !result.images?.length) {
     // merge update 에서 stale errorKind (예: image-missing) 가 새 free-form 실패 메시지보다
     // 우선 표시되는 것을 막기 위해 명시적으로 비운다 — 모든 실패 경로 동일.
+    // #R26-6: 단, authFailed 센티넬이면 'auth' 분류를 보존한다(배치 경로와 일관) — 안 그러면
+    //   단일-씬 인증 실패가 errorKind:null 로 평탄화되어 auth 표식을 잃는다.
     return {
       success: false,
       sceneUpdate: {
         status: 'error',
         error: result.error || 'No images',
-        errorKind: null,
+        errorKind: result.authFailed ? 'auth' : null,
       },
     }
   }
@@ -65,7 +67,7 @@ export async function finalizeGeneratedImage({
   const effectiveSeed = firstImage.seed ?? result.seed ?? seed ?? null
 
   // 업스케일
-  const upscaled = await tryUpscaleImage(flowAPI, mediaId, upscaleRes, logPrefix)
+  const upscaled = await tryUpscaleImage(genAPI, mediaId, upscaleRes, logPrefix)
   if (upscaled) imageData = upscaled
 
   // 이미지 크기 추출
@@ -147,6 +149,9 @@ export async function finalizeGeneratedImage({
   }
 }
 
+/** no-op gate used by callers that don't need billing (e.g. single-scene regen via useSceneGeneration). */
+const NO_OP_GATE = { ensure: async () => ({ ok: true }) }
+
 /**
  * 비동기 결과 후처리 — finalize 호출 + scene 업데이트 + finalize 성공값 반환.
  *
@@ -157,21 +162,47 @@ export async function finalizeGeneratedImage({
  * 별도 export 함수로 분리한 이유는 hook 내부 closure 로 두면 직접 단위 테스트가 어려워서.
  * 동일 로직을 hook 에 두 번 인라인하지 않게 하는 효과도 있다.
  *
+ * @param {object} [params.gate] - 배치 다운로드 consume 게이트.
+ *   { ensure(): Promise<{ok}> } — ok:false 면 저장 없이 download-entitlement 에러 반환.
+ *   기본값: no-op (항상 ok:true) — useSceneGeneration 단일 씬 경로는 게이트 없이 호출하여 과금 안 됨.
  * @returns {Promise<boolean>}  finalize 의 success 값 (= updateScene 직후 caller 가 카운터를
  *                              증감하는 데 쓰는 단일 진실 공급원)
  */
 export async function processAsyncSceneResult({
   scene, result,
-  flowAPI, imageUpscale, saveMode, projectName, seed,
+  genAPI, imageUpscale, saveMode, projectName, seed, model,
   updateScene,
+  gate = NO_OP_GATE,
   logPrefix = '[Automation]',
 }) {
+  // 저장 직전에 배치 consume 게이트 확인 (첫 번째 항목만 실제 consume, 이후 캐시).
+  // result 에 base64 가 있을 때(= 이미지 생성 완료 후)만 게이트를 실행 — Flow/API 양쪽 동작.
+  const hasBase64 = !!(result.images?.[0]?.base64 || result.images?.[0])
+  if (hasBase64) {
+    const { ok } = await gate.ensure()
+    if (!ok) {
+      // denied: 생성된 base64 는 보존해 download-only 재시도가 가능하게 하고, 저장은 하지 않는다.
+      const base64 = result.images[0]?.base64 ?? result.images[0] ?? null
+      const sceneUpdate = {
+        status: 'error',
+        error: 'Batch download entitlement denied',
+        errorKind: 'download-entitlement',
+        base64,
+      }
+      updateScene(scene.id, sceneUpdate)
+      return false
+    }
+  }
+
   const { success, sceneUpdate } = await finalizeGeneratedImage({
-    result, flowAPI,
+    result, genAPI,
     upscaleRes: imageUpscale || 'off',
     saveMode, projectName,
     sceneId: scene.id, prompt: scene.prompt,
     seed,
+    // 선택 모델 기록 — 안 넘기면 'flow'(엔진ID) 로 저장돼 ResultsTable 에 'flow' 표시.
+    //   (응답이 더 구체적 model 을 주면 finalizeGeneratedImage 가 그걸 우선.)
+    ...(model !== undefined ? { model } : {}),
     logPrefix,
   })
   updateScene(scene.id, sceneUpdate)

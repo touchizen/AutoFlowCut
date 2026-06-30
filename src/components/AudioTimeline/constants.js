@@ -30,6 +30,8 @@ export const POSTER_VIEWPORT_BUFFER_MS = 10_000
 export const TRACK_LABEL_KEYS = {
   image: 'audioTimeline.trackImage',
   video: 'audioTimeline.trackVideo',
+  'video-i2v': 'audioTimeline.trackVideoI2V',
+  'video-t2v': 'audioTimeline.trackVideoT2V',
   subtitle: 'audioTimeline.trackSubtitle',
   narration: 'audioTimeline.trackNarration',
   voice: 'audioTimeline.trackVoice',

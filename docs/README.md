@@ -1,4 +1,4 @@
-# Flow2CapCut 데이터 스키마 문서
+# AutoFlowCut 데이터 스키마 문서
 
 [한국어](#한국어) | [English](#english)
 
@@ -6,7 +6,7 @@
 
 ## 한국어
 
-Flow2CapCut에서 사용하는 데이터 파일 스키마 문서입니다.
+AutoFlowCut에서 사용하는 데이터 파일 스키마 문서입니다.
 MCP 서버의 `get_schema` 도구로도 조회할 수 있습니다.
 
 ### 📄 스키마 문서
@@ -45,7 +45,7 @@ get_schema({ type: "scenes", lang: "en" })  → 영문 버전
 
 ## English
 
-Data file schema documentation for Flow2CapCut.
+Data file schema documentation for AutoFlowCut.
 Also accessible via the `get_schema` tool in the MCP server.
 
 ### 📄 Schema Documents

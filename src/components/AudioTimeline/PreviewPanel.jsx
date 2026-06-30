@@ -1,6 +1,7 @@
 import { useMemo, useRef, useEffect } from 'react'
 import { resolveVideoSrc } from '../../utils/videoSrc'
-import { computeVideoClipPlacement, getSceneTimeRangeMs } from './useAudioTimeline'
+import { resolveImageSrc } from '../../utils/formatters'
+import { computeVideoClipPlacement, getSceneTimeRangeMs, isPreviewVideoVisible } from './useAudioTimeline'
 
 // 활성 직전 비디오 prefetch lead time — playhead가 다음 비디오 활성에 도달
 // PREFETCH_LEAD_MS 안쪽으로 가까워지면 hidden <video>로 미리 src+load 트리거.
@@ -43,7 +44,9 @@ export function findRangeAt(ranges, t, inclusiveEnd = false) {
 // 씬에 비디오(i2v 우선, t2v 차순)가 있고 playhead가 비디오 구간 안이면
 // 단일 공유 <video> element를 이미지 위에 오버레이 재생한다.
 // <video>는 DOM에 항상 1개만 존재 — 씬이 바뀔 때만 src swap (500씬 스케일 대응).
-export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 240 }) {
+const EMPTY_HIDDEN = new Set()
+
+export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 240, isPlaying = false, hiddenRoles = EMPTY_HIDDEN }) {
   // 씬 ranges precompute — getSceneTimeRangeMs는 parseTimeToSeconds(regex+split)을 부르므로
   // playhead 매 tick (60fps) 마다 N회 반복하면 1시간/1500씬 기준 ~0.5% CPU 누적.
   // sort를 명시적으로 — binary search 정확성 보장.
@@ -89,16 +92,23 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
   const subtitleText = srt?.text || ''
 
   // ── 비디오 오버레이 ──
-  // 현재 scene의 비디오 placement — useAudioTimeline과 동일 로직 + 동일 헬퍼.
-  const videoPlacement = useMemo(() => {
+  // 모니터는 한 화면이라 비디오 1개만 재생 — 맨 위 "보이는" 트랙 우선(i2v → t2v).
+  // i2v 트랙 View 를 끄면(hiddenRoles) t2v 가 재생된다(트랙 스택과 일치).
+  const { videoPlacement, videoSource } = useMemo(() => {
     const range = getSceneTimeRangeMs(scene)
-    if (!range) return null
-    return computeVideoClipPlacement(scene, range.startMs, range.endMs)
-  }, [scene])
+    if (!range) return { videoPlacement: null, videoSource: null }
+    const i2v = isPreviewVideoVisible(scene, 'i2v', hiddenRoles) ? computeVideoClipPlacement(scene, range.startMs, range.endMs, 'i2v') : null
+    const t2v = isPreviewVideoVisible(scene, 't2v', hiddenRoles) ? computeVideoClipPlacement(scene, range.startMs, range.endMs, 't2v') : null
+    if (i2v && playheadMs >= i2v.videoIn && playheadMs < i2v.videoOut) return { videoPlacement: i2v, videoSource: 'i2v' }
+    if (t2v && playheadMs >= t2v.videoIn && playheadMs < t2v.videoOut) return { videoPlacement: t2v, videoSource: 't2v' }
+    return { videoPlacement: null, videoSource: null }
+  }, [scene, hiddenRoles, playheadMs])
+
+  // 트랙 View 토글 — 해당 role 이 hiddenRoles 에 있으면 프리뷰에서 끔.
+  const hideImage = hiddenRoles.has('image')
+  const hideSubtitle = hiddenRoles.has('subtitle')
 
   const isVideoActive = !!videoPlacement
-    && playheadMs >= videoPlacement.videoIn
-    && playheadMs < videoPlacement.videoOut
 
   // 단일 <video> ref — src는 활성 placement가 바뀔 때만 swap, currentTime/play는 매 tick 동기화
   const videoRef = useRef(null)
@@ -108,15 +118,24 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
   // 전체 씬에서 비디오 placement를 한 번에 precompute (videoIn 기준 정렬).
   // playhead가 다음 활성까지 PREFETCH_LEAD_MS 안쪽 진입 시 hidden video에 src 설정.
   const videoPlacements = useMemo(() => {
-    return sceneRanges
-      .map(r => {
-        const p = computeVideoClipPlacement(r.scene, r.startMs, r.endMs)
-        if (!p) return null
-        return { videoIn: p.videoIn, videoOut: p.videoOut, videoPath: p.videoPath }
-      })
-      .filter(Boolean)
-      .sort((a, b) => a.videoIn - b.videoIn)
-  }, [sceneRanges])
+    // 한 씬 안에서도 i2v·t2v 가 서로 다른 구간에 top-visible 일 수 있다(예: t2v 가 더 길어
+    // 먼저 시작 → t2v 6-8s 재생 후 i2v 8-10s 재생). 그래서 source 별 진입점을 각각 후보로
+    // 넣되, "실제 top-visible 인 진입"만 등록한다:
+    //   - i2v(보이면): 활성 시 항상 최상단 → videoIn 등록.
+    //   - t2v(보이면): i2v 가 없거나 t2v 가 i2v 보다 먼저 시작할 때만(그 전 구간에서 top-visible).
+    const out = []
+    for (const r of sceneRanges) {
+      const i2v = isPreviewVideoVisible(r.scene, 'i2v', hiddenRoles) ? computeVideoClipPlacement(r.scene, r.startMs, r.endMs, 'i2v') : null
+      const t2v = isPreviewVideoVisible(r.scene, 't2v', hiddenRoles) ? computeVideoClipPlacement(r.scene, r.startMs, r.endMs, 't2v') : null
+      if (i2v) {
+        out.push({ videoIn: i2v.videoIn, videoOut: i2v.videoOut, videoPath: i2v.videoPath, generatedAt: r.scene?.videoI2VGeneratedAt ?? r.scene?.generatedAt })
+      }
+      if (t2v && (!i2v || t2v.videoIn < i2v.videoIn)) {
+        out.push({ videoIn: t2v.videoIn, videoOut: t2v.videoOut, videoPath: t2v.videoPath, generatedAt: r.scene?.videoT2VGeneratedAt ?? r.scene?.generatedAt })
+      }
+    }
+    return out.sort((a, b) => a.videoIn - b.videoIn)
+  }, [sceneRanges, hiddenRoles])
 
   // 다음 활성 예정 비디오 lookup — O(log N) binary search.
   // playhead보다 큰 첫 videoIn 찾고, 그 차이가 PREFETCH_LEAD_MS 이내면 prefetch 대상.
@@ -132,7 +151,7 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
     const next = videoPlacements[lo]
     const delta = next.videoIn - playheadMs
     if (delta > PREFETCH_LEAD_MS) return null
-    return resolveVideoSrc(null, next.videoPath)
+    return resolveVideoSrc(null, next.videoPath, { version: next.generatedAt })
   }, [videoPlacements, playheadMs])
 
   const prefetchRef = useRef(null)
@@ -171,7 +190,7 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
 
     // src swap — 활성 비디오 path가 바뀐 경우에만.
     // Windows 절대경로(C:\...) → file:///C:/... 형태로 정규화는 resolveVideoSrc가 담당.
-    const desiredSrc = resolveVideoSrc(null, videoPlacement.videoPath)
+    const desiredSrc = resolveVideoSrc(null, videoPlacement.videoPath, { version: (videoSource === 't2v' ? scene?.videoT2VGeneratedAt : scene?.videoI2VGeneratedAt) ?? scene?.generatedAt })
     if (!desiredSrc) return
     if (currentSrcRef.current !== desiredSrc) {
       currentSrcRef.current = desiredSrc
@@ -189,16 +208,20 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
       }
     }
 
-    if (el.paused) {
-      el.play().catch(() => { /* autoplay 정책 거부 시 silent */ })
+    // 재생 중일 때만 play. 정지(스크럽/모니터 — playhead가 안 움직임)면 해당 프레임에서
+    // pause — 플레이헤드가 비디오 위에 있다고 영상이 멋대로 재생되지 않도록.
+    if (isPlaying) {
+      if (el.paused) el.play().catch(() => { /* autoplay 정책 거부 시 silent */ })
+    } else if (!el.paused) {
+      try { el.pause() } catch {}
     }
-  }, [isVideoActive, videoPlacement, playheadMs])
+  }, [isVideoActive, videoPlacement, playheadMs, isPlaying])
 
   return (
     <div className="atl-preview" style={{ height }}>
       <div className="atl-preview-stage">
-        {imgPath ? (
-          <img className="atl-preview-img" src={`file://${imgPath}`} alt="" />
+        {imgPath && !hideImage ? (
+          <img className="atl-preview-img" src={resolveImageSrc({ imagePath: imgPath, generatedAt: scene?.generatedAt, image: scene?.image })} alt="" />
         ) : (
           <div className="atl-preview-empty">— 씬 없음 —</div>
         )}
@@ -218,7 +241,7 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
             background: '#000',
           }}
         />
-        {subtitleText && (
+        {subtitleText && !hideSubtitle && (
           <div className="atl-preview-subtitle">{subtitleText}</div>
         )}
       </div>

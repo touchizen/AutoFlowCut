@@ -100,6 +100,36 @@ export function hasUnlimitedAccess(appData, now) {
   return false
 }
 
+/** 배치 다운로드 월 quota */
+export const BATCH_MONTHLY_QUOTA = 5
+
+/** 배치 다운로드 가입 시 부여 보너스 */
+export const BATCH_BONUS_GRANT = 5
+
+/**
+ * 배치 다운로드 풀 — GCF computePoolState(BATCH_POOL) 의 클라 미러.
+ *
+ * @param {object|null|undefined} appData - Firestore subscription doc data
+ * @param {Date} now
+ * @returns {{ isActive: boolean, bonusRemaining: number, monthlyUsed: number, effectiveRemaining: number }}
+ */
+export function computeBatchQuotaState(appData, now) {
+  if (!appData) {
+    return { isActive: false, bonusRemaining: BATCH_BONUS_GRANT, monthlyUsed: 0,
+      effectiveRemaining: BATCH_BONUS_GRANT + BATCH_MONTHLY_QUOTA }
+  }
+  if (hasUnlimitedAccess(appData, now)) {
+    return { isActive: true, bonusRemaining: appData.batchBonusRemaining ?? 0,
+      monthlyUsed: appData.batchMonthlyUsed ?? 0, effectiveRemaining: Infinity }
+  }
+  const bonusRemaining = appData.batchBonusRemaining ?? BATCH_BONUS_GRANT
+  const storedPeriodStart = asDate(appData.batchQuotaPeriodStart)
+  const needsReset = !storedPeriodStart || !sameUtcMonth(storedPeriodStart, now)
+  const monthlyUsed = needsReset ? 0 : (appData.batchMonthlyUsed ?? 0)
+  const monthlyRemaining = Math.max(0, BATCH_MONTHLY_QUOTA - monthlyUsed)
+  return { isActive: false, bonusRemaining, monthlyUsed, effectiveRemaining: bonusRemaining + monthlyRemaining }
+}
+
 export function computeQuotaState(appData, now) {
   // 신규 사용자 (doc 없음)
   if (!appData) {

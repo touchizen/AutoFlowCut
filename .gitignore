@@ -5,8 +5,10 @@ output/
 release/
 .DS_Store
 *.log
+.superpowers/
 .env
 .env.*
+!.env.example
 client_secret_*.json
 AutoFlow_10.7.58/
 AutoFlow_10.7.58_pretty/
@@ -18,3 +20,11 @@ package-lock.json
 __pycache__/
 *.pyc
 *.pyo
+
+# Large ML model binaries (depth/rembg/inpaint) — >100MB, never commit; distribute separately
+_models/
+*.onnx
+
+# 내부 개발 문서 (public 미공개 — disk-only)
+docs/plans-archive/
+docs/superpowers/

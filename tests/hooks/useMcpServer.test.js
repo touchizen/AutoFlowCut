@@ -53,16 +53,46 @@ describe('useMcpServer — global handlers (regression guards)', () => {
   })
 
   afterEach(() => {
+    delete window.__mcpGetReferences
     delete window.__mcpGenerateRef
     delete window.__mcpStartRefBatch
     delete window.__mcpStartBatch
     delete window.__mcpSetStyle
+    delete window.__mcpExportCapcut
     delete window.electronAPI
   })
 
   it('registers __mcpGenerateRef on mount', () => {
     renderHook(() => useMcpServer(makeProps()))
     expect(typeof window.__mcpGenerateRef).toBe('function')
+  })
+
+  it('__mcpGetReferences hides raw data but exposes hasData readiness', () => {
+    renderHook(() => useMcpServer(makeProps({
+      references: [
+        { name: 'hero', data: 'data:image/png;base64,REF', mediaId: null },
+        { name: 'disk', filePath: '/refs/disk.png', mediaId: null },
+        { name: 'pending', status: 'pending', data: 'data:image/png;base64,OLD', mediaId: 'old' },
+        { name: 'error', status: 'error', filePath: '/refs/old.png' },
+      ],
+    })))
+
+    const refs = window.__mcpGetReferences()
+    expect(refs[0]).toMatchObject({ name: 'hero', hasData: true, ready: true, mediaId: null })
+    expect(refs[0]).not.toHaveProperty('data')
+    expect(refs[1]).toMatchObject({ name: 'disk', hasData: false, ready: true, filePath: '/refs/disk.png' })
+    expect(refs[2]).toMatchObject({ name: 'pending', hasData: true, ready: false, mediaId: 'old' })
+    expect(refs[3]).toMatchObject({ name: 'error', hasData: false, ready: false, filePath: '/refs/old.png' })
+  })
+
+  it('__mcpExportCapcut forwards handleExportConfirm failure instead of reporting success', async () => {
+    const handleExportConfirm = vi.fn().mockResolvedValue({ success: false, error: 'toast.noGeneratedImages' })
+    renderHook(() => useMcpServer(makeProps({ handleExportConfirm })))
+
+    const result = await window.__mcpExportCapcut({ capcutProjectNumber: '/tmp/capcut-project' })
+
+    expect(result).toEqual({ success: false, error: 'toast.noGeneratedImages' })
+    expect(handleExportConfirm).toHaveBeenCalled()
   })
 
   it('__mcpGenerateRef forwards (index, false, normalized styleId) to handleGenerateRef', async () => {
@@ -94,15 +124,26 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     expect(handleGenerateRef).toHaveBeenCalledWith(1, false, 'ref:1773499846144')
   })
 
-  it('__mcpGenerateRef passes null for omitted styleId (auto mode)', async () => {
+  it('__mcpGenerateRef passes none for omitted styleId when no MCP fallback exists', async () => {
     const handleGenerateRef = vi.fn(() => Promise.resolve({ success: true }))
     renderHook(() => useMcpServer(makeProps({ handleGenerateRef })))
 
     await window.__mcpGenerateRef(0, undefined)
-    expect(handleGenerateRef).toHaveBeenCalledWith(0, false, null)
+    expect(handleGenerateRef).toHaveBeenCalledWith(0, false, 'none')
 
     await window.__mcpGenerateRef(0, '')
-    expect(handleGenerateRef).toHaveBeenCalledWith(0, false, null)
+    expect(handleGenerateRef).toHaveBeenCalledWith(0, false, 'none')
+  })
+
+  it('__mcpGenerateRef with omitted styleId does not leak UI selection when no MCP fallback exists', async () => {
+    const handleGenerateRef = vi.fn(() => Promise.resolve({ success: true }))
+    renderHook(() => useMcpServer(makeProps({
+      handleGenerateRef,
+      selectedStyleRefId: 'preset:noir',
+    })))
+
+    await window.__mcpGenerateRef(0, undefined)
+    expect(handleGenerateRef).toHaveBeenCalledWith(0, false, 'none')
   })
 
   it('__mcpStartRefBatch normalizes styleId correctly (and syncs UI for explicit IDs)', () => {
@@ -122,10 +163,10 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     window.__mcpStartRefBatch('ref:123')
     expect(handleGenerateAllRefs).toHaveBeenCalledWith('ref:123')
 
-    // null/empty — must become null (auto mode), no UI sync
+    // null/empty — no MCP fallback exists, so force no style and do not sync UI
     setSelectedStyleRefId.mockClear()
     window.__mcpStartRefBatch(undefined)
-    expect(handleGenerateAllRefs).toHaveBeenLastCalledWith(null)
+    expect(handleGenerateAllRefs).toHaveBeenLastCalledWith('none')
     expect(setSelectedStyleRefId).not.toHaveBeenCalled()
 
     // 'preset:preset:*' / 'preset:ref:*' 회귀 가드 — double-wrap도 단 한번도 일어나지 않아야
@@ -158,10 +199,10 @@ describe('useMcpServer — global handlers (regression guards)', () => {
 
   it('__mcpStartBatch falls back to first style card when styleId omitted (MCP automation default)', () => {
     const handleStart = vi.fn()
-    const refWithMedia = { id: 555, type: 'style', mediaId: 'm-555' }
+    const usableStyleRef = { id: 555, type: 'style', name: 'mcp-style', filePath: '/refs/mcp-style.png' }
     renderHook(() => useMcpServer(makeProps({
       handleStart,
-      references: [{ id: 1, type: 'character' }, refWithMedia, { id: 999, type: 'style' /* no mediaId */ }],
+      references: [{ id: 1, type: 'character' }, usableStyleRef, { id: 999, type: 'style' /* no image source */ }],
     })))
 
     window.__mcpStartBatch(undefined)
@@ -178,7 +219,7 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     const handleStart = vi.fn()
     renderHook(() => useMcpServer(makeProps({
       handleStart,
-      references: [{ id: 1, type: 'character' }],  // no style card with mediaId
+      references: [{ id: 1, type: 'character' }],  // no usable style card
     })))
 
     window.__mcpStartBatch(undefined)
@@ -187,10 +228,10 @@ describe('useMcpServer — global handlers (regression guards)', () => {
 
   it('__mcpGenerateRef applies caller-side fallback when styleId omitted (no UI leak)', async () => {
     const handleGenerateRef = vi.fn(() => Promise.resolve({ success: true }))
-    const refWithMedia = { id: 555, type: 'style', mediaId: 'm-555' }
+    const usableStyleRef = { id: 555, type: 'style', name: 'mcp-style', filePath: '/refs/mcp-style.png' }
     renderHook(() => useMcpServer(makeProps({
       handleGenerateRef,
-      references: [refWithMedia],
+      references: [usableStyleRef],
       selectedStyleRefId: 'preset:noir',  // UI has a selection — must NOT leak through MCP
     })))
 
@@ -213,10 +254,10 @@ describe('useMcpServer — global handlers (regression guards)', () => {
 
   it('__mcpStartRefBatch applies caller-side fallback when styleId omitted (no UI leak)', () => {
     const handleGenerateAllRefs = vi.fn()
-    const refWithMedia = { id: 555, type: 'style', mediaId: 'm-555' }
+    const usableStyleRef = { id: 555, type: 'style', name: 'mcp-style', filePath: '/refs/mcp-style.png' }
     renderHook(() => useMcpServer(makeProps({
       handleGenerateAllRefs,
-      references: [refWithMedia],
+      references: [usableStyleRef],
       selectedStyleRefId: 'preset:noir',  // UI has a selection — must NOT leak through MCP
     })))
 
@@ -230,9 +271,22 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     renderHook(() => useMcpServer(makeProps({ handleGenerateAllRefs })))
 
     window.__mcpStartRefBatch('auto')
-    expect(handleGenerateAllRefs).toHaveBeenCalledWith(null)  // not 'preset:auto'
+    expect(handleGenerateAllRefs).toHaveBeenCalledWith('none')  // not 'preset:auto' and no UI leak
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('start-ref-batch received styleId="auto"'))
 
+    warnSpy.mockRestore()
+  })
+
+  it("__mcpStartRefBatch('auto') does not leak UI-selected style", () => {
+    const handleGenerateAllRefs = vi.fn()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    renderHook(() => useMcpServer(makeProps({
+      handleGenerateAllRefs,
+      selectedStyleRefId: 'preset:noir',
+    })))
+
+    window.__mcpStartRefBatch('auto')
+    expect(handleGenerateAllRefs).toHaveBeenCalledWith('none')
     warnSpy.mockRestore()
   })
 
@@ -242,18 +296,31 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     renderHook(() => useMcpServer(makeProps({ handleGenerateRef })))
 
     await window.__mcpGenerateRef(3, 'auto')
-    expect(handleGenerateRef).toHaveBeenCalledWith(3, false, null)  // not 'preset:auto'
+    expect(handleGenerateRef).toHaveBeenCalledWith(3, false, 'none')  // not 'preset:auto' and no UI leak
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('generate-reference received styleId="auto"'))
 
     warnSpy.mockRestore()
   })
 
+  it("__mcpGenerateRef(_, 'auto') does not leak UI-selected style", async () => {
+    const handleGenerateRef = vi.fn(() => Promise.resolve({ success: true }))
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    renderHook(() => useMcpServer(makeProps({
+      handleGenerateRef,
+      selectedStyleRefId: 'preset:noir',
+    })))
+
+    await window.__mcpGenerateRef(3, 'auto')
+    expect(handleGenerateRef).toHaveBeenCalledWith(3, false, 'none')
+    warnSpy.mockRestore()
+  })
+
   it("__mcpStartBatch('auto') forces per-scene matching (skips first-card fallback)", () => {
     const handleStart = vi.fn()
-    const refWithMedia = { id: 555, type: 'style', mediaId: 'm-555' }
+    const usableStyleRef = { id: 555, type: 'style', name: 'mcp-style', filePath: '/refs/mcp-style.png' }
     renderHook(() => useMcpServer(makeProps({
       handleStart,
-      references: [refWithMedia],  // first-card fallback would otherwise pick this
+      references: [usableStyleRef],  // first-card fallback would otherwise pick this
     })))
 
     // 'auto' sentinel → caller explicitly wants per-scene matching, no fallback
@@ -401,13 +468,13 @@ describe('useMcpServer — global handlers (regression guards)', () => {
     expect(handleGenerateAllRefs).toHaveBeenCalledWith('preset:cinematic')
   })
 
-  it("__mcpStartRefBatch('auto', { force: true }) forwards force with null override", () => {
+  it("__mcpStartRefBatch('auto', { force: true }) forwards force with none override", () => {
     const handleGenerateAllRefs = vi.fn()
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     renderHook(() => useMcpServer(makeProps({ handleGenerateAllRefs })))
 
     window.__mcpStartRefBatch('auto', { force: true })
-    expect(handleGenerateAllRefs).toHaveBeenCalledWith(null, { force: true })
+    expect(handleGenerateAllRefs).toHaveBeenCalledWith('none', { force: true })
     warnSpy.mockRestore()
   })
 
@@ -756,9 +823,9 @@ describe('useMcpServer — global handlers (regression guards)', () => {
   })
 
   it('__mcpBatchStatus counts a completed style card in ref.done', () => {
-    // style 카드 완료: mediaId 있음, status done, generatingRefs 비어있음.
+    // style 카드 완료: 공식 GenAI 경로는 mediaId 없이 data/filePath 로 완료됨.
     const result = renderHook(() => useMcpServer(makeProps({
-      references: [{ id: 1, type: 'style', prompt: 'noir vibes', status: 'done', mediaId: 'm-1' }],
+      references: [{ id: 1, type: 'style', prompt: 'noir vibes', status: 'done', mediaId: null, data: 'base64', filePath: null }],
       generatingRefs: [],
     })))
     const ref = window.__mcpBatchStatus().ref

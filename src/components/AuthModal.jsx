@@ -60,6 +60,10 @@ export function AuthModal({ isOpen, onClose }) {
               <span className="auth-feature-icon">⚡</span>
               <span>{t('auth.feature3')}</span>
             </div>
+            <div className="auth-feature">
+              <span className="auth-feature-icon">📥</span>
+              <span>{t('auth.feature4')}</span>
+            </div>
           </div>
 
           {displayError && (

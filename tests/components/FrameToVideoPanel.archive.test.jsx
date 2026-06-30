@@ -61,6 +61,7 @@ function renderPanel(overrides = {}) {
       onUploadFromDisk={vi.fn()}
       onListFlowProjects={onListFlowProjects}
       onFetchProjectGallery={onFetchProjectGallery}
+      hasFlowArchive={true}
     />
   )
   return { onUpdate, onListFlowProjects, onFetchProjectGallery }
@@ -152,6 +153,7 @@ describe('FrameToVideoPanel — Flow Archive 2-stage navigation', () => {
         onListFlowProjects={onListFlowProjects}
         onFetchProjectGallery={onFetchProjectGallery}
         onPickArchiveImage={onPickArchiveImage}
+        hasFlowArchive={true}
       />
     )
     fireEvent.click(document.querySelectorAll('.scene-dropdown-trigger')[0])
@@ -205,6 +207,7 @@ describe('FrameToVideoPanel — Flow Archive 2-stage navigation', () => {
         onUploadFromDisk={vi.fn()}
         onListFlowProjects={onListFlowProjects}
         onFetchProjectGallery={onFetchProjectGallery}
+        hasFlowArchive={true}
       />
     )
     // disabled scene select should not open on click — but if anyone forces the menu open,
@@ -245,6 +248,7 @@ describe('FrameToVideoPanel — Flow Archive 2-stage navigation', () => {
         onUploadFromDisk={vi.fn()}
         onListFlowProjects={onListFlowProjects}
         onFetchProjectGallery={onFetchProjectGallery}
+        hasFlowArchive={true}
       />
     )
 
@@ -283,10 +287,59 @@ describe('FrameToVideoPanel — Flow Archive 2-stage navigation', () => {
         // intentionally no onUploadFromDisk
         onListFlowProjects={onListFlowProjects}
         onFetchProjectGallery={vi.fn().mockResolvedValue({ success: true, items: [] })}
+        hasFlowArchive={true}
       />
     )
     expect(screen.queryByText(/Upload image from disk/i)).toBeNull()
     expect(screen.getByText(/Browse Flow Archive/i)).toBeTruthy()
+  })
+
+  it('hides archive button when hasFlowArchive is false (API mode)', () => {
+    render(
+      <FrameToVideoPanel
+        scenes={baseScenes}
+        videoScenes={[]}
+        framePairs={[basePair]}
+        onUpdate={vi.fn()}
+        onShowSceneDetail={() => {}}
+        onVideoRetry={() => {}}
+        disabled={false}
+        t={t}
+        galleryItems={[]}
+        galleryLoading={false}
+        onLoadGallery={() => {}}
+        onUploadFromDisk={vi.fn()}
+        onListFlowProjects={vi.fn().mockResolvedValue({ success: true, items: [] })}
+        onFetchProjectGallery={vi.fn().mockResolvedValue({ success: true, items: [] })}
+        hasFlowArchive={false}
+      />
+    )
+    fireEvent.click(document.querySelectorAll('.scene-dropdown-trigger')[0])
+    expect(screen.queryByText(/Browse Flow Archive/i)).toBeNull()
+  })
+
+  it('shows archive button when hasFlowArchive is true (Flow mode)', () => {
+    render(
+      <FrameToVideoPanel
+        scenes={baseScenes}
+        videoScenes={[]}
+        framePairs={[basePair]}
+        onUpdate={vi.fn()}
+        onShowSceneDetail={() => {}}
+        onVideoRetry={() => {}}
+        disabled={false}
+        t={t}
+        galleryItems={[]}
+        galleryLoading={false}
+        onLoadGallery={() => {}}
+        onUploadFromDisk={vi.fn()}
+        onListFlowProjects={vi.fn().mockResolvedValue({ success: true, items: [] })}
+        onFetchProjectGallery={vi.fn().mockResolvedValue({ success: true, items: [] })}
+        hasFlowArchive={true}
+      />
+    )
+    fireEvent.click(document.querySelectorAll('.scene-dropdown-trigger')[0])
+    expect(screen.getAllByText(/Browse Flow Archive/i).length).toBeGreaterThan(0)
   })
 
   it('closing and reopening the dropdown resets to main view', async () => {

@@ -13,8 +13,8 @@
  * @param {string|null} filePath   - 절대 경로 (Windows: C:\... / POSIX: /...)
  * @returns {string|null}          - <video src> 에 직접 넣을 URL
  */
-export function resolveVideoSrc(base64Data, filePath) {
-  // 1. base64 데이터 우선
+export function resolveVideoSrc(base64Data, filePath, { version } = {}) {
+  // 1. base64 데이터 우선 (메모리상 데이터 — 캐시버스터 무의미, version 미적용)
   if (typeof base64Data === 'string' && base64Data.length > 0) {
     if (base64Data.startsWith('data:')) return base64Data
     // file path 형태가 잘못 들어온 경우 (예: 호출부 실수) — file:// 변환으로 폴백
@@ -24,12 +24,14 @@ export function resolveVideoSrc(base64Data, filePath) {
     return `data:video/mp4;base64,${base64Data}`
   }
 
-  // 2. filePath
+  // 2. filePath — 안정 파일명(t2v_N/i2v_N) 재생성 시 stale 회피용 ?v= 부착(version 있을 때만)
+  const withVersion = (url) =>
+    version == null ? url : `${url}${url.includes('?') ? '&' : '?'}v=${encodeURIComponent(version)}`
   if (typeof filePath === 'string' && filePath.length > 0) {
-    if (filePath.startsWith('data:')) return filePath  // 이미 data URL 인 경우
-    if (filePath.startsWith('/')) return `file://${filePath}`
-    if (/^[A-Z]:\\/i.test(filePath)) return `file:///${filePath.replace(/\\/g, '/')}`
-    return filePath  // http(s)/ 상대경로 등은 그대로
+    if (filePath.startsWith('data:')) return filePath  // 이미 data URL 인 경우 (version 무관)
+    if (filePath.startsWith('/')) return withVersion(`file://${filePath}`)
+    if (/^[A-Z]:\\/i.test(filePath)) return withVersion(`file:///${filePath.replace(/\\/g, '/')}`)
+    return withVersion(filePath)  // http(s)/ 상대경로 등은 그대로
   }
 
   return null

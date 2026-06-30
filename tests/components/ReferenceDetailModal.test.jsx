@@ -35,6 +35,21 @@ vi.mock('../../src/components/ErrorSection', () => ({
   default: () => null
 }))
 
+// PromptInput(Lexical) stub — placeholder 가진 textarea 로 대체해 기존 편집 테스트 유지 + props 노출.
+vi.mock('../../src/components/PromptInput', () => ({
+  default: ({ value, onChange, placeholder, references, hideFooter }) => (
+    <textarea
+      data-testid="prompt-input"
+      data-refs={references?.length ?? 0}
+      data-ref-types={(references || []).map(r => r.type).join(',')}
+      data-hide-footer={String(!!hideFooter)}
+      placeholder={placeholder}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    />
+  ),
+}))
+
 import ReferenceDetailModal from '../../src/components/ReferenceDetailModal'
 
 const t = (k, vars) => {
@@ -70,6 +85,35 @@ const baseProps = {
 }
 
 describe('ReferenceDetailModal — style card name', () => {
+  it('prompt 는 PromptInput(chip 피커, footer 숨김)으로 렌더된다', () => {
+    const reference = { id: 1, type: 'style', name: 's', prompt: 'p' }
+    render(<ReferenceDetailModal {...baseProps} reference={reference} />)
+    const pi = screen.getByTestId('prompt-input')
+    expect(pi.getAttribute('data-hide-footer')).toBe('true')
+    expect(pi.value).toBe('p')
+  })
+
+  it('scene 타입 레퍼런스 → @ 피커에 character 만 제공', () => {
+    const allRefs = [
+      { id: 10, type: 'character', name: 'Queen' },
+      { id: 11, type: 'character', name: 'King' },
+      { id: 12, type: 'scene', name: 'Throne' },
+      { id: 13, type: 'style', name: 'Noir' },
+    ]
+    const sceneRef = { id: 12, type: 'scene', name: 'Throne', prompt: '' }
+    render(<ReferenceDetailModal {...baseProps} reference={sceneRef} references={allRefs} />)
+    const pi = screen.getByTestId('prompt-input')
+    expect(pi.getAttribute('data-refs')).toBe('2')
+    expect(pi.getAttribute('data-ref-types')).toBe('character,character')
+  })
+
+  it('비-scene(style/character) 타입 → @ 피커 비움(picking 없음)', () => {
+    const allRefs = [{ id: 10, type: 'character', name: 'Queen' }, { id: 13, type: 'style', name: 'Noir' }]
+    const styleRef = { id: 13, type: 'style', name: 'Noir', prompt: '' }
+    render(<ReferenceDetailModal {...baseProps} reference={styleRef} references={allRefs} />)
+    expect(screen.getByTestId('prompt-input').getAttribute('data-refs')).toBe('0')
+  })
+
   it('renders editable text input for style card name (no dropdown-only mode)', () => {
     const reference = { id: 1, type: 'style', name: '내 시그니처', prompt: 'custom' }
     render(<ReferenceDetailModal {...baseProps} reference={reference} />)
@@ -134,5 +178,55 @@ describe('ReferenceDetailModal — regenerate race guard', () => {
     // onGenerate must receive (index, skipPermissionCheck, overrideStyleId, overrideRef-with-new-prompt)
     // so _executeGenerateRef sees the fresh prompt without waiting for React state commit.
     expect(onGenerate).toHaveBeenCalledWith(0, false, null, expect.objectContaining({ prompt: 'new prompt' }))
+  })
+})
+
+describe('ReferenceDetailModal — §3.8 close-on-regenerate', () => {
+  it('재생성 클릭 시 onGenerate AND onClose 모두 호출됨 (onUpdate→onGenerate→onClose 순서)', () => {
+    // §3.8: 모달은 재생성 dispatch 후 즉시 닫혀야 한다.
+    // 순서: onUpdate(index, editData) → onGenerate(index, false, null, editData) → onClose()
+    const onGenerate = vi.fn()
+    const onUpdate = vi.fn()
+    const onClose = vi.fn()
+    const reference = { id: 1, type: 'character', name: '히어로', prompt: 'hero prompt' }
+    render(
+      <ReferenceDetailModal
+        {...baseProps}
+        reference={reference}
+        onUpdate={onUpdate}
+        onGenerate={onGenerate}
+        onClose={onClose}
+      />
+    )
+
+    const regenerateBtn = screen.getByRole('button', { name: /재생성/ })
+    fireEvent.click(regenerateBtn)
+
+    // §3.8: 재생성이 dispatch 됐으므로 모달이 닫혀야 한다
+    expect(onGenerate).toHaveBeenCalled()
+    expect(onClose).toHaveBeenCalled()
+
+    // 순서 검증: onUpdate → onGenerate → onClose
+    const updateOrder = onUpdate.mock.invocationCallOrder[0]
+    const generateOrder = onGenerate.mock.invocationCallOrder[0]
+    const closeOrder = onClose.mock.invocationCallOrder[0]
+    expect(updateOrder).toBeLessThan(generateOrder)
+    expect(generateOrder).toBeLessThan(closeOrder)
+  })
+
+  it('onGenerate 없을 때 재생성 버튼 자체가 렌더 안 되고 onClose 도 호출 안 됨', () => {
+    const onClose = vi.fn()
+    const reference = { id: 1, type: 'character', name: '히어로', prompt: 'hero prompt' }
+    render(
+      <ReferenceDetailModal
+        {...baseProps}
+        reference={reference}
+        onGenerate={undefined}
+        onClose={onClose}
+      />
+    )
+
+    expect(screen.queryByRole('button', { name: /재생성/ })).not.toBeInTheDocument()
+    expect(onClose).not.toHaveBeenCalled()
   })
 })

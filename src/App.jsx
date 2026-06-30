@@ -2,9 +2,10 @@
  * AutoFlowCut - Main App
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { DEFAULTS, UI, TIMING, STYLE_PRESETS } from './config/defaults'
-import { useFlowAPI } from './hooks/useFlowAPI'
+import { useGenerationEngine } from './engine/useGenerationEngine'
+import { useMode } from './contexts/ModeContext'
 import { useScenes } from './hooks/useScenes'
 import { useAutomation } from './hooks/useAutomation'
 import { useVideoAutomation } from './hooks/useVideoAutomation'
@@ -19,27 +20,40 @@ import { useExport } from './hooks/useExport'
 import { useStoreRating } from './hooks/useStoreRating'
 import { useAudioImport } from './hooks/useAudioImport'
 import { useAppSettings } from './hooks/useAppSettings'
+import { useAvailableModels } from './hooks/useAvailableModels'
+import { computeModelHeal, computeModeSwitch } from './config/genModels'
+import { computeAppClass, flowLayoutForMode } from './utils/appLayout'
 import { useAutoSave } from './hooks/useAutoSave'
 import { useFlowEvents } from './hooks/useFlowEvents'
 import { useMcpServer } from './hooks/useMcpServer'
 import { useMenuActions } from './hooks/useMenuActions'
 import { syncVideosIntoScenes } from './services/mediaSync'
 import { retryVideoDownload } from './services/videoRecovery'
-import { applyStyle, previewStyleMatching } from './services/styleService'
+import { isStyleReference, previewStyleMatching } from './services/styleService'
+import { isSceneGenerationDone } from './services/generationStatus'
 import { computeGuardAvailable } from './services/startGuard'
 import { createStyleResolver } from './services/styleResolver'
+import { buildVideoTextStartPayload } from './services/videoTextStart'
 import { filterPendingScenes } from './utils/sceneFilters'
+import { isOmniFlashModel } from './utils/videoModels'
+import { startButtonTier, startChipLabelVisible } from './utils/actionButtonLayout'
+import { useElementWidth } from './hooks/useElementWidth'
+import { videoClearPatch, buildFramePairVideoPatch, buildVideoRestorePatch, resolveI2vRestoreSceneId, regenTargetVideoId } from './utils/sceneMedia'
 import { detectFileType, detectCSVType, parseCSVToScenes, parseSRTToScenes, csvPromptToVideoT2V } from './utils/parsers'
-import { resolveAudioSrtEntries } from './utils/srtTrack'
+import { getSceneDuration, resolveAudioSrtEntries } from './utils/srtTrack'
 import { tabAfterImport } from './utils/importTabRouting'
-import { checkFolderPermission } from './utils/guards'
+import { checkFolderPermission, checkFlowProjectReady } from './utils/guards'
+import { shouldApplyModeScopedUpdate } from './utils/modeSwitchGuard'
 import { collectTagErrors } from './utils/tagMatch'
 import { getFramePairEffectivePrompt } from './utils/framePairPrompt'
+import { buildI2VScenePatch } from './utils/i2vScenePatch'
+import { frameImageFor, stripOmniEndFrame } from './utils/framePairImages'
+import { saveGalleryFrame } from './utils/galleryUpload'
+import { isUsableVideoReference } from './utils/videoPromptReferences'
 import { toast } from './components/Toast'
 
 // Components
 import Header from './components/Header'
-import WelcomeScreen from './components/WelcomeScreen'
 import PromptInput from './components/PromptInput'
 import SceneList from './components/SceneList'
 import GenerateMenu from './components/GenerateMenu'
@@ -52,16 +66,23 @@ import ResultsTable from './components/ResultsTable'
 // SelectablePromptList 제거됨 — 체크박스 기능이 ResultsTable에 통합
 import SceneDetailModal from './components/SceneDetailModal'
 import VideoDetailModal from './components/VideoDetailModal'
+import { genModeForTab } from './utils/generationItems'
 import ResizeHandle from './components/ResizeHandle'
 import { ExportModal } from './components/ExportModal'
+import ExportSplitButton from './components/ExportSplitButton'
 import { AuthModal } from './components/AuthModal'
 import { PaywallModal } from './components/PaywallModal'
 import TagValidationModal from './components/TagValidationModal'
-import RecaptchaModal from './components/RecaptchaModal'
 import StoreRatingModal from './components/StoreRatingModal'
 import AudioResultModal from './components/AudioResultModal'
 import QAProgressBanner from './components/QAProgressBanner'
 import AudioPanel from './components/AudioPanel'
+import BottomPanelTabs from './components/BottomPanelTabs'
+import LiveTimeline from './components/LiveTimeline'
+import { useMonitor } from './hooks/useMonitor'
+import PreviewMonitor from './components/PreviewMonitor'
+import { getSceneTimeRangeMs } from './components/AudioTimeline/useAudioTimeline'
+import { hasImageData } from './utils/formatters'
 import { SubscriptionBanner } from './components/SubscriptionBanner'
 import StylePicker from './components/StylePicker'
 import Modal from './components/Modal'
@@ -72,6 +93,13 @@ import { useAuth } from './contexts/AuthContext'
 function App() {
   const { t } = useI18n()
   const { isAuthenticated, subscription, refreshSubscription } = useAuth()
+  // 두 자동화 훅(useAutomation, useVideoAutomation)에 동일한 안정 레퍼런스를 전달.
+  // 인라인 객체 리터럴은 매 렌더마다 새 참조를 만들어 useCallback deps 를 불필요하게 갱신함.
+  const subscriptionBatch = useMemo(
+    () => ({ batchRemaining: subscription?.batchRemaining, batchUnlimited: subscription?.batchUnlimited }),
+    [subscription?.batchRemaining, subscription?.batchUnlimited]
+  )
+  const { mode, clearMode } = useMode()
   const generationQueue = useGenerationQueue()
 
   // Auth/Payment Modals
@@ -80,7 +108,7 @@ function App() {
   const [paywallReason, setPaywallReason] = useState('trial_expired')
 
   // Flow Login Expired Modal
-  const [showLoginExpiredModal, setShowLoginExpiredModal] = useState(false)
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false)
 
   // Tag Validation Modal
   const [tagValidationErrors, setTagValidationErrors] = useState(null)
@@ -104,14 +132,19 @@ function App() {
   // Settings (초기화 + localStorage 동기화)
   const { settings, setSettings, updateSetting, ensureProjectName } = useAppSettings()
 
+  // Start 버튼 반응형 라벨 — 버튼 폭(flex:1, 콘텐츠 무관)을 측정해 full/short/icon 으로 축약.
+  const [startBtnRef, startBtnWidth] = useElementWidth()
+  const startTier = startButtonTier(startBtnWidth)
+
   // Flow 이벤트 (로그인 만료, 레이아웃 보정)
-  useFlowEvents({ onLoginExpired: () => setShowLoginExpiredModal(true) })
+  useFlowEvents({ onLoginExpired: () => setShowApiKeyModal(true), mode })
 
   // UI State
   const [activeTab, setActiveTab] = useState('text') // 'text' | 'video-text' | 'frame-to-video' | 'list' | 'audio'
   const [framePairs, setFramePairs] = useState([])   // Frame to Video 매핑
   const [ftvPromptSource, setFtvPromptSource] = useState('image') // 'image' | 'video' | 'none'
   const [galleryItems, setGalleryItems] = useState([])
+  const [galleryUploading, setGalleryUploading] = useState(false)  // #R29-3: F2V 디스크 업로드 중 전환 차단
   const [galleryLoading, setGalleryLoading] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [settingsTab, setSettingsTab] = useState(null) // 설정 모달 초기 탭
@@ -136,6 +169,46 @@ function App() {
     const saved = localStorage.getItem('autoflowcut_bottomPanelHeight')
     return saved ? parseInt(saved, 10) : UI.DEFAULT_BOTTOM_PANEL_HEIGHT // 기본 높이
   })
+  // 하단 패널 뷰: 'timeline'(라이브 NLE 프리뷰) | 'results'(기존 결과표). 기본 타임라인.
+  const [bottomPanelView, setBottomPanelView] = useState(() =>
+    localStorage.getItem('autoflowcut_bottomPanelView') || 'timeline'
+  )
+  useEffect(() => {
+    localStorage.setItem('autoflowcut_bottomPanelView', bottomPanelView)
+  }, [bottomPanelView])
+
+  // Notify main process when mode changes (or on mount) so it can attach/detach the Flow view.
+  // Optional-chaining keeps this a no-op in jsdom/test environments where electronAPI is absent.
+  // In flow mode, request the default split layout (split-left = Flow 왼쪽). Shell 이 레이아웃의
+  // 단일 소유자라(드래그/영속), 여기 setLayout 은 진입 시 Flow 뷰가 곧장 자리잡게 하는 fallback —
+  // Shell 의 effect(부모)가 직후 저장값으로 덮어쓴다(자식 effect 가 먼저 → 부모가 나중).
+  useEffect(() => {
+    if (mode) {
+      // #R13-11: IPC 실패가 unhandled rejection 으로 새지 않게 catch (UI 는 그대로 진행).
+      window.electronAPI?.setMode?.({ mode })?.catch?.((e) => console.warn('[App] setMode failed:', e?.message))
+      const layout = flowLayoutForMode(mode)
+      if (layout) window.electronAPI?.setLayout?.(layout)?.catch?.((e) => console.warn('[App] setLayout failed:', e?.message))
+    }
+  }, [mode])
+
+  // Flow Agent(Maps 그라운딩) 모드를 main 에 push — generate 핸들러가 ensureAgentOn/Off 분기에 사용.
+  useEffect(() => {
+    window.electronAPI?.setFlowAgentMode?.({ on: !!settings.flowAgentOn })?.catch?.(() => {})
+  }, [settings.flowAgentOn])
+
+  // 상단 프리뷰 모니터 상태/효과/핸들러 — useMonitor 훅이 캡슐화(렌더는 <PreviewMonitor>).
+  const {
+    monitorMs, setMonitorMs,
+    monitorPlaying, setMonitorPlaying,
+    monitorHiddenRoles, setMonitorHiddenRoles,
+    monitorWidth, startMonitorResize, resetMonitorWidth,
+    monitorOverlayOpen, setMonitorOverlayOpen,
+    monitorFullscreen, toggleMonitorFullscreen,
+    monitorMode,
+  } = useMonitor({ mode, activeTab })
+  // 생성 중 모니터가 라이브 그리드로 보여줄 자산 모드 — 생성 시작 시 snapshot
+  // (탭 버튼이 생성 중에도 활성이라 live activeTab 을 쓰면 탭 이동 시 엉뚱한 보드가 뜸).
+  const [runningGenMode, setRunningGenMode] = useState('image')
 
   // 설정 모달 열기 (특정 탭으로)
   const openSettings = (tab = null) => {
@@ -156,7 +229,7 @@ function App() {
   const handleAuthError = useCallback(() => {
     setAuthReady(false)
     authInvalidatedRef.current = true  // prevent auto-recovery effect from flipping us back
-    toast.error(t('status.authErrorStopped') || 'Auth expired — please re-login to Flow', TIMING.AUTH_ERROR_TOAST)
+    toast.error(t('status.authErrorStopped') || 'API key was rejected. Check your API key in Settings and try again.', TIMING.AUTH_ERROR_TOAST)
   }, [t])
 
   // Called by Header when the user explicitly re-authenticates (login badge click or
@@ -171,10 +244,225 @@ function App() {
   // 내보내기 성공(3회) 또는 생성 100% 완료(5회) 시 평점 모달을 띄운다.
   const storeRating = useStoreRating({ isStoreBuild: __BUILD_TARGET__ === 'appx' })
 
-  const flowAPI = useFlowAPI({ onAuthError: handleAuthError })
+  // #R3-1: flowProjectId ref — useProjectData 이전에 선언해 useGenerationEngine 에 넘긴다.
+  // useProjectData 반환 후 effect에서 갱신. engineFlow 는 lazy getter 로 최신 id를 읽는다.
+  const flowProjectIdRef = useRef(null)
+
+  // 생성 엔진 facade(§3.1). mode에 따라 어댑터 선택(M2=api 항등, Flow는 M4).
+  // 변수명 genAPI 유지(하위 소비자 호출부 불변) — 값은 이제 engine facade.
+  const genAPI = useGenerationEngine(mode, {
+    onAuthError: handleAuthError,
+    getProjectName: () => settings.projectName,
+    // #R3-1: lazy getter — engineFlow 가 IPC 호출 시점에 최신 bound id 를 읽는다.
+    getFlowProjectId: () => flowProjectIdRef.current,
+  })
+
+  // #R6-11: 현재 엔진을 가리키는 ref — mount 시점 genAPI 를 캡처해 stale 엔진의
+  // getAccessToken 을 호출하지 않도록(useGenerationEngine 은 매 렌더 새 facade 를 반환).
+  const genAPIRef = useRef(genAPI)
+  useEffect(() => { genAPIRef.current = genAPI }, [genAPI])
+
+  // 라이브 /models 로 채운 사용 가능 모델 목록(설정 드롭다운 + stale 저장값 치유에 공유).
+  // mode를 dep에 추가(I1): mode 전환 시 해당 모드의 엔진에서 /models 를 재조회한다.
+  const availableModels = useAvailableModels(genAPI, mode)
+
+  // Flow 모드 모델 동적 목록은 앱 시작 시 Flow 페이지가 아직 로딩(navigating) 중이라
+  //   1회차 스크랩이 빈손 → 정적 폴백에 고정될 수 있다. 두 시점에 재시도한다:
+  //   (1) Flow 프로젝트 준비됨(아래 effect) — 백그라운드로 미리 긁어 캐시(설정 열 때 즉시 표시).
+  //   (2) 설정 모달 오픈 — 아직 dynamic 못 받았을 때만(이미 받았으면 느린 스크랩 생략).
+  const refetchModels = availableModels.refetch
+  const modelsSource = availableModels.source
+  useEffect(() => {
+    if (showSettings && mode === 'flow' && modelsSource !== 'dynamic') refetchModels?.()
+  }, [showSettings, mode, modelsSource, refetchModels])
+
+  // 모드 전환 시 per-mode 모델 선택을 스냅샷/복원 (C3).
+  // 이전 모드 → 현재 모드로 전환될 때마다: prevMode의 선택을 modelsByMode[prevMode]에 저장하고,
+  // modelsByMode[nextMode]에 기억이 있으면 활성 필드에 복원 → heal이 이후 유효성 보정.
+  // api 단독 사용자(전환 없음)는 이 effect가 실행되지 않으므로 동작 불변.
+  const prevModeRef = useRef(null)
+  // Codex #6: tracks previous mode for auth reset (separate ref to avoid coupling model-switch logic)
+  const prevModeForAuthRef = useRef(null)
+  useEffect(() => {
+    const prevMode = prevModeRef.current
+    prevModeRef.current = mode
+    if (!prevMode || prevMode === mode) return // 최초 마운트 or 동일 모드 → noop
+    setSettings(prev => {
+      const patch = computeModeSwitch(prev, prevMode, mode)
+      return Object.keys(patch).length ? { ...prev, ...patch } : prev
+    })
+  }, [mode])
+
+  // /models 가 성공해 권위 있는 동적 목록을 얻은 경우에만, 저장된 모델이 그 목록에 없으면
+  // (= 이 키로 사용 불가한 stale 값) 기본/첫 사용가능 모델로 치유 → 생성 시 invalid 모델이
+  // API 로 나가는 걸 막는다. 정적 폴백(=참조가 카탈로그 그대로)·로딩·실패면 보존(리뷰 P2).
+  // availableModels 변경뿐 아니라 settings.모델 변경(프로젝트 로드·모달 저장 등)에도 반응 —
+  // 로드 후 stale 모델이 setSettings 로 다시 들어와도 치유되도록(리뷰 P2). setSettings(prev=>)
+  // + no-op(prev 그대로 반환) 가드로 무한 루프 없이 수렴.
+  // heal은 mode-switch restore 이후 실행돼 활성 모드 catalog 내 유효성만 보정한다.
+  // loading guard: availableModels.loading=true(카탈로그 재조회 중)면 heal 건너뜀 — stale
+  // 카탈로그로 mode-switch restore 값을 덮어쓰는 transient 오염을 방지.
+  // mode 전달: Flow 모드에서 videoModelF2V는 I2V 모델 기본값을 사용하도록.
+  useEffect(() => {
+    if (availableModels.loading) return
+    setSettings(prev => {
+      const heal = computeModelHeal(availableModels, prev, mode)
+      return Object.keys(heal).length ? { ...prev, ...heal } : prev
+    })
+  }, [availableModels.imageModels, availableModels.videoModels, availableModels.loading, settings.imageModel, settings.videoModelT2V, settings.videoModelF2V, mode])
   const scenesHook = useScenes()
+  const { scenes, references, parseFromText, parseFromCSV, parseFromSRT, parseReferencesFromCSV, updateReferences, setScenes, setReferences } = scenesHook
+  // Step 3: videoScenes 는 scenes 에서 derived. useVideoScenes 가 scenesHook 으로 라우팅.
+  const videoScenesHook = useVideoScenes(scenes, scenesHook)
+  const { videoScenes, setVideoScenes } = videoScenesHook
+
+  // 씬이 복원되어 들어온 경우에도 자동으로 인증 체크(키 존재 → authReady).
+  // authInvalidatedRef: handleAuthError가 명시적으로 무효화한 후엔 자동 복구하지 않는다.
+  // 사용자가 Header의 login badge로 직접 재인증해야 handleAuthRecovered가 ref를 풀고
+  // authReady를 되살린다. 이게 없으면 401 직후 authReady=false → 이 effect → 새 토큰 추출 →
+  // setAuthReady(true) 순으로 한 render tick 만에 되돌아가 header가 녹색을 유지하는 회귀가 발생.
+  useEffect(() => {
+    let cancelled = false
+    if (scenes.length > 0 && !authReady && !authInvalidatedRef.current) {
+      const startMode = modeRef.current
+      // #R7-6: 현재 엔진(genAPIRef) + stale-result guard — 모드가 바뀌면 옛 토큰 체크가
+      //   새 모드를 authed 로 오인하지 않게(R6-10/11 과 동일 패턴).
+      genAPIRef.current.getAccessToken(false, true).then(token => {
+        if (cancelled || modeRef.current !== startMode) return
+        if (token) setAuthReady(true)
+      }).catch(() => {})
+    }
+    return () => { cancelled = true }
+  }, [scenes.length, authReady])
+
+  // 앱 시작 시 키 존재 여부 1회 확인 → 있으면 정식 진입 상태(Header 배지 🟢).
+  // (시작 화면을 제거했으므로 이 mount 체크가 그 역할을 대신한다.)
+  useEffect(() => {
+    const startMode = modeRef.current
+    let cancelled = false
+    // #R7-6: 현재 엔진 + stale-result guard (모드가 바뀐 뒤 늦게 resolve 돼도 무시).
+    genAPIRef.current.getAccessToken(false, true).then(token => {
+      if (cancelled || modeRef.current !== startMode) return
+      if (token) setAuthReady(true)
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [])
+
+  // BYOK 키가 앱 내에서 저장/삭제되면(useApiKey) 폴링 없이 즉시 인증 상태 재확인.
+  // 사용자가 명시적으로 키를 바꾼 것이므로 authInvalidated 도 해제한다.
+  useEffect(() => {
+    const onKeyChanged = () => {
+      // #R6-11: BYOK 키 변경은 api 모드 전용 신호 — flow 모드에서는 무시(Flow 인증은
+      // BYOK 키가 아니다). 또한 mount 시점 genAPI 가 아니라 현재 엔진(genAPIRef)을 쓴다.
+      if (modeRef.current !== 'api') return
+      const startMode = modeRef.current
+      genAPIRef.current.getAccessToken(false, true).then(token => {
+        // #R8-5: recheck 도중 flow 로 전환됐으면 옛 api 결과로 authReady 를 set 하지 않는다.
+        if (modeRef.current !== startMode) return
+        authInvalidatedRef.current = false
+        setAuthReady(!!token)
+      }).catch(() => {})
+    }
+    window.addEventListener('byok-key-changed', onKeyChanged)
+    return () => window.removeEventListener('byok-key-changed', onKeyChanged)
+  }, [])
+
+  // modeRef: listener 재구독 없이 현재 mode 를 읽기 위해 ref 로 추적한다.
+  // (useEffect deps 에 mode 를 넣으면 mode 변경마다 listener 를 재등록해야 함)
+  const modeRef = useRef(mode)
+  useEffect(() => { modeRef.current = mode }, [mode])
+
+  // Flow 모드 인증 완료 이벤트 — main 이 flow-status { authenticated: true } 를 보내면
+  // authReady 를 올린다. optional-chaining 으로 jsdom / api 모드에서는 no-op.
+  // onFlowStatus 는 unsubscribe 함수를 반환하므로 cleanup 에서 호출한다.
+  // modeRef 로 gate: API 모드로 전환 후 늦게 도착한 Flow 인증 이벤트가
+  // authReady 를 올려 api-unauth 를 가리는 것을 방지한다(#R2-6).
+  useEffect(() => {
+    const off = window.electronAPI?.onFlowStatus?.((status) => {
+      if (status?.authenticated && modeRef.current === 'flow') setAuthReady(true)
+    })
+    return () => { off?.() }
+  }, [])
+
+  // Codex #6 fix: reset authReady on mode change so stale auth from previous mode
+  // doesn't mask unauthenticated state in the new mode.
+  // - Switching to 'flow': reset authReady to false so onFlowStatus can re-establish it.
+  //   (If user was authenticated in api mode, that doesn't mean Flow is authenticated.)
+  //   authInvalidatedRef is also reset so auto-recovery can proceed normally.
+  // - Switching to 'api': reset authReady to false, then immediately recheck BYOK key.
+  //   (If user was authenticated in flow mode, we need to verify the api key still exists.)
+  useEffect(() => {
+    const prevMode = prevModeForAuthRef.current
+    prevModeForAuthRef.current = mode
+    if (!prevMode || prevMode === mode) return // initial mount or no change → noop
+
+    // Mode actually changed — reset auth state for the incoming mode
+    authInvalidatedRef.current = false
+    setAuthReady(false)
+
+    // #R6-10: stale-result guard. flow→api→flow 처럼 빠르게 재전환되면, api 분기에서
+    // 시작한 getAccessToken 이 늦게 resolve 되며 (이미 flow 로 돌아온) authReady 를
+    // 옛 api 체크 결과로 덮어쓸 수 있다. cleanup 에서 cancelled 로 막는다.
+    let cancelled = false
+    if (mode === 'api') {
+      // Re-verify BYOK key for api mode
+      genAPI.getAccessToken(false, true).then(token => {
+        if (cancelled) return
+        setAuthReady(!!token)
+      }).catch(() => { if (!cancelled) setAuthReady(false) })
+    }
+    // flow mode: authReady will be restored by onFlowStatus authenticated:true
+    // (the existing effect above handles this)
+    return () => { cancelled = true }
+  }, [mode])
+
+  // Audio Import — useProjectData에서 audioPackage?.folderPath를 의존성으로 쓰므로
+  // 먼저 호출해야 한다.
+  const audioSwitchRef = useRef()
+  const { audioPackage, audioTracks, importing: audioImporting, audioLoading, importAudioPackage, importByPath, clearAudioPackage, audioReviews, saveReview, saveBulkReviews, refreshReviews, saveTimecodeOverride, importMp3ToTrack } = useAudioImport(t, {
+    // Phase 12: 오디오 폴더 SRT 를 project.srtTrack 으로 흡수.
+    // 정책: 현재 srtTrack 이 비어 있을 때만 폴더 SRT 로 채움 (사용자 작업 보호).
+    onAudioSrtAbsorbed: (audioSrtTrack) => {
+      if ((scenesHook.srtTrack || []).length === 0 && audioSrtTrack.length > 0) {
+        scenesHook.setSrtTrack(audioSrtTrack)
+        console.log('[App] Absorbed audio folder SRT into project.srtTrack:', audioSrtTrack.length)
+      }
+    },
+  })
+
+  // Project Data 관리
+  const { addPendingSave, handleProjectChange, saveCurrentProject, isRestoringRef, projectLoading, flowProjectReady, flowProjectId: _flowProjectId } = useProjectData({
+    settings, setSettings, scenes, references, setScenes, setReferences,
+    videoScenes, setVideoScenes,
+    framePairs, setFramePairs,
+    selectedStyleRefId, setSelectedStyleRefId,
+    // Phase 7: srtTrack 영속화 (load/save 시 useProjectData 가 동기화)
+    srtTrack: scenesHook.srtTrack, setSrtTrack: scenesHook.setSrtTrack,
+    // B-phase: 드롭으로 변경된 audio 폴더가 즉시 project.json에 박히도록 prop으로 전달.
+    // audioPackage 로드 중(transient null)에 명시적 null로 덮어쓰지 않도록 undefined 유지 —
+    // saveCurrentProject가 undefined일 때 localStorage fallback.
+    audioFolderPath: audioPackage?.folderPath,
+    openSettings,
+    onAudioSwitch: (audioPath) => audioSwitchRef.current?.(audioPath),
+    genAPI,
+    onSaveError: () => toast.error(t('toast.projectSaveFailed')),
+    mode, // flow 모드에서만 Flow 프로젝트 진입 게이팅 활성화 (api 모드에서는 flowProjectReady 항상 true)
+  })
+
+  // #R3-1: flowProjectId ref 동기화 — engineFlow 가 IPC 호출 시 최신 bound id 를 사용한다.
+  // (useEffect 대신 렌더 중 직접 갱신 — getFlowProjectId() 는 동기 호출이므로 최신값 필요)
+  flowProjectIdRef.current = _flowProjectId ?? null
+
+  // Flow 프로젝트가 준비되면(컴포저 가시·settle) 모델 목록을 백그라운드로 미리 스크랩한다.
+  //   이렇게 캐시해 두면 설정 모달을 열 때 느린 라이브 스크랩 없이 즉시 동적 목록이 뜬다.
+  //   아직 dynamic 을 못 받았을 때만 — 이미 받았으면 반복 스크랩 생략.
+  useEffect(() => {
+    if (mode === 'flow' && flowProjectReady && modelsSource !== 'dynamic') refetchModels?.()
+  }, [mode, flowProjectReady, modelsSource, refetchModels])
+
+  // 이미지 자동화 — flowProjectReady 를 useProjectData 이후에 참조하므로 이 위치에 선언.
   const automation = useAutomation(
-    flowAPI,
+    genAPI,
     scenesHook,
     null,
     () => openSettings('storage'),
@@ -186,31 +474,28 @@ function App() {
       await saveCurrentProject()
       // 사용자 중단 없이 100% 완료된 배치만 평점 카운터에 반영
       if (result?.completed) storeRating.recordGeneration()
-    }
+    },
+    mode,
+    flowProjectReady,
+    !!settings.flowAgentOn,  // Agent ON 이면 배치를 직렬 수집(동기)으로 — 동시 DOM 수집 race 방지.
+    subscriptionBatch,
+    () => { setPaywallReason('upgrade'); setShowPaywallModal(true) },
+    isAuthenticated,
+    () => setShowAuthModal(true),
+    subscription?.status,   // #5/#8: loading/error 상태 전달 — 미확인 subscription 에서 진행 금지
+    refreshSubscription     // #6: consume 성공 시 1회 refresh (stale 방지)
   )
 
-  const videoAutomation = useVideoAutomation(flowAPI, t, generationQueue, (result) => {
+  // 비디오 자동화 — 동일 이유로 useProjectData 이후 선언.
+  const videoAutomation = useVideoAutomation(genAPI, t, generationQueue, (result) => {
     // 비디오(T2V/I2V/F→V) 배치 100% 완료도 동일 generation 채널에 합산
     if (result?.completed) storeRating.recordGeneration()
-  })
-  const { scenes, references, parseFromText, parseFromCSV, parseFromSRT, parseReferencesFromCSV, updateReferences, setScenes, setReferences } = scenesHook
-  // Step 3: videoScenes 는 scenes 에서 derived. useVideoScenes 가 scenesHook 으로 라우팅.
-  const videoScenesHook = useVideoScenes(scenes, scenesHook)
-  const { videoScenes, setVideoScenes } = videoScenesHook
-  const { isRunning, isPaused, isStopping, progress, status, statusMessage, start, togglePause, stop, retryErrors, recaptchaModal, closeRecaptchaModal } = automation
+  }, mode, flowProjectReady, subscriptionBatch, () => { setPaywallReason('upgrade'); setShowPaywallModal(true) }, isAuthenticated, () => setShowAuthModal(true),
+    subscription?.status,   // #5/#8: loading/error 상태 전달
+    refreshSubscription     // #6: consume 성공 시 1회 refresh
+  )
 
-  // 씬이 복원되어 WelcomeScreen이 스킵될 때도 자동으로 인증 체크.
-  // authInvalidatedRef: handleAuthError가 명시적으로 무효화한 후엔 자동 복구하지 않는다.
-  // 사용자가 Header의 login badge로 직접 재인증해야 handleAuthRecovered가 ref를 풀고
-  // authReady를 되살린다. 이게 없으면 401 직후 authReady=false → 이 effect → 새 토큰 추출 →
-  // setAuthReady(true) 순으로 한 render tick 만에 되돌아가 header가 녹색을 유지하는 회귀가 발생.
-  useEffect(() => {
-    if (scenes.length > 0 && !authReady && !authInvalidatedRef.current) {
-      flowAPI.getAccessToken(false, true).then(token => {
-        if (token) setAuthReady(true)
-      }).catch(() => {})
-    }
-  }, [scenes.length, authReady])
+  const { isRunning, isPaused, isStopping, progress, status, statusMessage, start, togglePause, stop, retryErrors } = automation
 
   // 자동화가 끝나면 Stop 버튼용 running snapshot 정리.
   // Transition-based: 실행 → 종료 전이일 때만 clear. 큐로 대기 중일 때는 deps가 변하지 않아
@@ -228,38 +513,6 @@ function App() {
     wasRunningRef.current = running
   }, [isRunning, videoAutomation.isRunning])
 
-  // Audio Import — useProjectData에서 audioPackage?.folderPath를 의존성으로 쓰므로
-  // 먼저 호출해야 한다.
-  const audioSwitchRef = useRef()
-  const { audioPackage, audioTracks, importing: audioImporting, audioLoading, importAudioPackage, importByPath, clearAudioPackage, audioReviews, saveReview, saveBulkReviews, refreshReviews, saveTimecodeOverride, importMp3ToTrack } = useAudioImport(t, {
-    // Phase 12: 오디오 폴더 SRT 를 project.srtTrack 으로 흡수.
-    // 정책: 현재 srtTrack 이 비어 있을 때만 폴더 SRT 로 채움 (사용자 작업 보호).
-    onAudioSrtAbsorbed: (audioSrtTrack) => {
-      if ((scenesHook.srtTrack || []).length === 0 && audioSrtTrack.length > 0) {
-        scenesHook.setSrtTrack(audioSrtTrack)
-        console.log('[App] Absorbed audio folder SRT into project.srtTrack:', audioSrtTrack.length)
-      }
-    },
-  })
-
-  // Project Data 관리
-  const { addPendingSave, handleProjectChange, saveCurrentProject, isRestoringRef, projectLoading } = useProjectData({
-    settings, setSettings, scenes, references, setScenes, setReferences,
-    videoScenes, setVideoScenes,
-    framePairs, setFramePairs,
-    selectedStyleRefId, setSelectedStyleRefId,
-    // Phase 7: srtTrack 영속화 (load/save 시 useProjectData 가 동기화)
-    srtTrack: scenesHook.srtTrack, setSrtTrack: scenesHook.setSrtTrack,
-    // B-phase: 드롭으로 변경된 audio 폴더가 즉시 project.json에 박히도록 prop으로 전달.
-    // audioPackage 로드 중(transient null)에 명시적 null로 덮어쓰지 않도록 undefined 유지 —
-    // saveCurrentProject가 undefined일 때 localStorage fallback.
-    audioFolderPath: audioPackage?.folderPath,
-    openSettings,
-    onAudioSwitch: (audioPath) => audioSwitchRef.current?.(audioPath),
-    flowAPI,
-    onSaveError: () => toast.error(t('toast.projectSaveFailed')),
-  })
-
   // 네이티브 File 메뉴 ↔ renderer 연결 (New Project / Recent Projects)
   // Recent 항목은 work folder 단위로 구분되므로 현재 work folder 경로도 함께 전달.
   useMenuActions({
@@ -267,19 +520,22 @@ function App() {
     workFolder: settings.saveMode === 'folder' ? (localStorage.getItem('workFolderPath') || null) : null,
     onNewProject: () => openSettings('storage'),
     onOpenProject: handleProjectChange,
+    onShowModeSelector: clearMode,
+    // 배치 생성 중에는 모드 리셋(앱 언마운트) 차단 — in-app ModeToggle 와 동일 가드.
+    busy: isRunning || videoAutomation.isRunning,
   })
 
   // Style Thumbnails
-  const { thumbnails: styleThumbnails, generating: thumbnailGenerating, stopping: thumbnailStopping, progress: thumbnailProgress, generateThumbnails, stopGenerating: stopThumbnailGeneration, deleteThumbnail } = useStyleThumbnails(flowAPI)
+  const { thumbnails: styleThumbnails, generating: thumbnailGenerating, stopping: thumbnailStopping, progress: thumbnailProgress, generateThumbnails, stopGenerating: stopThumbnailGeneration, deleteThumbnail } = useStyleThumbnails(genAPI, { flowProjectReady })
 
   // Reference 생성
   const { generatingRefs, stoppingRefs, preparingRefs, handleGenerateRef, handleGenerateAllRefs, stopGenerateAllRefs } = useReferenceGeneration({
-    settings, references, setReferences, flowAPI, addPendingSave, openSettings, t, selectedStyleRefId, styleThumbnails, generationQueue
+    settings, references, setReferences, genAPI, addPendingSave, openSettings, t, selectedStyleRefId, styleThumbnails, generationQueue, flowProjectReady
   })
 
   // Scene 재생성
   const { generatingSceneId, handleGenerateScene } = useSceneGeneration({
-    settings, scenes, scenesHook, flowAPI, openSettings, setSelectedScene, t, generationQueue
+    settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue, flowProjectReady
   })
 
   const handleImportAudio = async () => {
@@ -302,7 +558,7 @@ function App() {
   }
 
   // Export
-  const { showExportModal, setShowExportModal, exporting, exportPhase, handleExportClick, handleExportConfirm } = useExport({
+  const { showExportModal, setShowExportModal, exporting, exportPhase, exportFormat, handleExportClick, handleExportConfirm, handleExportPremiere, handleExportVrew } = useExport({
     settings, scenes, srtTrack: scenesHook.srtTrack, videoScenes, framePairs, openSettings,
     audioPackage,
     isAuthenticated,
@@ -334,13 +590,19 @@ function App() {
           copy.videoT2VPath !== orig.videoT2VPath ||
           copy.videoI2VPath !== orig.videoI2VPath ||
           copy.videoT2VDuration !== orig.videoT2VDuration ||
-          copy.videoI2VDuration !== orig.videoI2VDuration
+          copy.videoI2VDuration !== orig.videoI2VDuration ||
+          // 캐시버스터 — mediaSync 가 framePair.generatedAt 으로 mutate 하므로 함께 감지/반영해야
+          // 함(아니면 path 등 다른 변경이 없을 때 generatedAt 갱신이 유실 → stale 비디오).
+          copy.videoT2VGeneratedAt !== orig.videoT2VGeneratedAt ||
+          copy.videoI2VGeneratedAt !== orig.videoI2VGeneratedAt
         if (changed) {
           scenesHook.updateScene(copy.id, {
             videoT2V: copy.videoT2V, videoT2VPath: copy.videoT2VPath,
             videoI2V: copy.videoI2V, videoI2VPath: copy.videoI2VPath,
             ...(copy.videoT2VDuration !== orig.videoT2VDuration ? { videoT2VDuration: copy.videoT2VDuration } : {}),
             ...(copy.videoI2VDuration !== orig.videoI2VDuration ? { videoI2VDuration: copy.videoI2VDuration } : {}),
+            ...(copy.videoT2VGeneratedAt !== orig.videoT2VGeneratedAt ? { videoT2VGeneratedAt: copy.videoT2VGeneratedAt } : {}),
+            ...(copy.videoI2VGeneratedAt !== orig.videoI2VGeneratedAt ? { videoI2VGeneratedAt: copy.videoI2VGeneratedAt } : {}),
           })
         }
       }
@@ -351,6 +613,9 @@ function App() {
   // F2V Start/End Image 드롭다운에서 "📁 Upload from disk" 로 호출됨
   const handleUploadGalleryImage = async (file) => {
     if (!file) return { success: false, error: 'No file' }
+    // #R29-3: 디스크 업로드(파일 읽기+저장) 동안 project/mode 전환을 막는다 — 안 그러면 전환 뒤
+    //   결과(galleryItems + frame pair)가 새 프로젝트에 잘못 삽입된다. busy flag 로 토글/셀렉터 차단.
+    setGalleryUploading(true)
     try {
       const dataUrl = await new Promise((resolve, reject) => {
         const reader = new FileReader()
@@ -361,19 +626,27 @@ function App() {
       const base64 = String(dataUrl).split(',')[1] || ''
       if (!base64) return { success: false, error: 'Empty file' }
 
-      const result = await flowAPI.uploadReference(base64, 'frame')
-      if (!result?.success || !result.mediaId) {
-        return { success: false, error: result?.error || 'Upload failed' }
-      }
-
-      setGalleryItems(prev => {
-        if (prev.some(it => it.mediaId === result.mediaId)) return prev
-        return [{ mediaId: result.mediaId, url: dataUrl, local: true }, ...prev]
+      // cloud(BYOK): Flow 업로드 없이 로컬 프레임을 프로젝트 리소스(frames/)로 저장.
+      // folder 모드에서 디스크 영속 실패면 업로드 자체를 실패로 — pair 를 만들지 않아
+      // 재오픈 시 frames/ 에서 못 살아나는 gallery::local-* 항목 생성을 막는다.
+      // (desktop addPendingSave 는 no-op 이라 "나중에 재시도" 약속 대신 즉시 실패)
+      const localId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      const saved = await saveGalleryFrame({
+        localId, dataUrl,
+        saveMode: settings.saveMode,
+        projectName: settings.projectName,
       })
-      return { success: true, mediaId: result.mediaId, url: dataUrl }
+      if (!saved.success) {
+        toast.error(t('toast.folderSelectFirst'))
+        return { success: false, error: saved.error || 'Frame save failed' }
+      }
+      setGalleryItems(prev => [{ mediaId: localId, url: dataUrl, dataUrl, local: true, persisted: saved.persisted }, ...prev])
+      return { success: true, mediaId: localId, url: dataUrl, dataUrl, persisted: saved.persisted }
     } catch (e) {
       console.error('[Gallery] upload from disk failed:', e)
       return { success: false, error: e.message }
+    } finally {
+      setGalleryUploading(false)
     }
   }
 
@@ -383,7 +656,7 @@ function App() {
     if (galleryLoading) return
     setGalleryLoading(true)
     try {
-      const result = await flowAPI.fetchGallery(specificProjectId)
+      const result = await genAPI.fetchGallery(specificProjectId)
       if (result.success) {
         // 로컬 업로드 항목(local:true) 보존 + 서버 결과 merge.
         // 서버가 같은 mediaId를 이미 반환하면 서버 버전 우선.
@@ -403,20 +676,6 @@ function App() {
     }
   }
 
-  // 특정 프로젝트의 갤러리 항목을 가져오고 App의 galleryItems에 merge.
-  // 이렇게 해야 사용자가 그 항목을 picker에서 선택했을 때 트리거 라벨/썸네일이
-  // 정상 렌더된다 (gallerySelected 조회는 galleryItems에서만 함).
-  // 특정 프로젝트의 이미지 목록을 가져옴. 결과는 *App 전역 state에 저장하지 않는다* —
-  // 메모리 폭증 방지(이미지 base64는 무거움). 사용자가 dropdown 안에서 한 항목을 실제로
-  // 픽할 때만 onPickArchiveImage 콜백이 그 한 개를 galleryItems에 추가한다.
-  const fetchProjectGallery = async (projectId) => {
-    try {
-      return await flowAPI.fetchGallery(projectId)
-    } catch (e) {
-      return { success: false, error: e.message, items: [] }
-    }
-  }
-
   // archive에서 사용자가 실제로 픽한 한 항목만 galleryItems에 합침 — 트리거 라벨/썸네일 렌더용.
   const addArchiveItem = (item) => {
     if (!item?.mediaId) return
@@ -424,16 +683,6 @@ function App() {
       if (prev.some(it => it.mediaId === item.mediaId)) return prev
       return [{ ...item, archive: true }, ...prev]
     })
-  }
-
-  // Flow 프로젝트(날짜) 목록 — 두 번째 단계 진입점
-  const listFlowProjectsHandler = async () => {
-    try {
-      const result = await flowAPI.listFlowProjects(20)
-      return result
-    } catch (e) {
-      return { success: false, error: e.message, items: [] }
-    }
   }
 
   // Auto-save project data (debounce)
@@ -587,6 +836,13 @@ function App() {
   }
 
   // Handle start — 활성 탭에 따라 이미지/비디오 생성 모드 분기
+  // #R12-11: 다운로드-only 비디오 retry 의 in-flight 래치 — Start/다른 retry 와의 경합 차단.
+  const videoRetryInFlightRef = useRef(false)
+  // #R24-2: ref 는 같은-tick 중복 가드용(비반응적). 모드 토글 차단(modeBusy)은 반응형 state 가
+  //   필요하다 — retry 진행 중 모드를 바꾸면 retryVideoDownload 가 stale 엔진/프로젝트로 디스크
+  //   저장을 끝내버린다(onUpdate 가드는 React 상태만 막고 디스크 쓰기는 이미 진행). 토글을 막아
+  //   레이스 자체를 차단.
+  const [videoRetryRunning, setVideoRetryRunning] = useState(false)
   /**
    * handleVideoRetry — video 단일 아이템 재시도
    *
@@ -597,18 +853,35 @@ function App() {
    * 둘 중 하나라도 없으면: full 재생성이 필요하므로 해당 아이템 상태를 pending으로 되돌린 뒤
    * 사용자가 "Start Generation" 버튼으로 일괄 재생성할 수 있게 둔다.
    */
-  const handleVideoRetry = useCallback((item) => {
+  const handleVideoRetry = useCallback(async (item, opts = {}) => {
     if (!item) return
-    if (isRunning || videoAutomation.isRunning) {
+    // #R30-4: timeline/scene-media 모달은 씬 미디어 id(t2v_N/i2v_N)로 연다. 재생성은 실제 generation
+    //   아이템(vscene_N / fp_N)을 리셋해야 한다 — 안 그러면 updateVideoScene 매퍼가 t2v_/i2v_ 를 몰라
+    //   no-op 이 되어 "재생성" 이 아무것도 안 한다. (t2v_N↔vscene_N, i2v_N↔fp_N: SceneList/LiveTimeline 매핑)
+    if (opts.forceRegenerate && typeof item.id === 'string') {
+      const mappedId = regenTargetVideoId(item.id)
+      if (mappedId !== item.id) item = { ...item, id: mappedId }
+    }
+    // #R12-11/#R14-6: 다운로드-only retry 도 in-flight 추적 + 큐 대기(hasPendingBatch) 중엔 차단.
+    if (isRunning || videoAutomation.isRunning || hasPendingBatch || videoRetryInFlightRef.current) {
       toast.warning(t('videoAutomation.busy') || 'Generation already running')
       return
     }
+    // #R17-7: 시작 모드 스냅샷 — 다운로드 await 동안 모드가 바뀌면(stale 엔진) 중단.
+    const startMode = modeRef.current
 
     // 타입 판별: framePair는 pair.id가 fp_*, videoScene은 vscene_*
     const isFramePair = typeof item.id === 'string' && item.id.startsWith('fp_')
     const projectName = ensureProjectName()
 
     const onUpdate = (id, newStatus, result = {}) => {
+      // #R23-7: retryVideoDownload 완료는 비동기라 preflight 모드 가드(아래 R17-7) 이후에도
+      //   모드가 바뀔 수 있다. 시작 모드와 현재 모드가 다르면 stale 교차-모드 비디오 데이터로
+      //   현재 모드 UI 를 덮어쓰지 않는다.
+      if (!shouldApplyModeScopedUpdate(modeRef.current, startMode)) {
+        console.warn('[handleVideoRetry] onUpdate skipped — mode changed during retry')
+        return
+      }
       if (isFramePair) {
         setFramePairs(prev => prev.map(p =>
           p.id === id ? {
@@ -637,7 +910,10 @@ function App() {
             scenesHook.updateScene(fp.ownerSceneId, {
               videoI2V: result.base64,
               videoI2VPath: result.videoPath || null,
+              videoI2VDisabled: null,
               ...(result?.duration ? { videoI2VDuration: result.duration } : {}),
+              // 비디오 캐시버스터용 — 이미지 generatedAt 과 분리(I2V 재생성 시 타임라인/모니터 갱신).
+              ...(result?.generatedAt ? { videoI2VGeneratedAt: result.generatedAt } : {}),
             })
           }
         }
@@ -664,32 +940,57 @@ function App() {
           scenesHook.updateScene(sceneId, {
             videoT2V: result.base64,
             videoT2VPath: result.videoPath || null,
+            videoT2VDisabled: null,
             ...(result?.duration ? { videoT2VDuration: result.duration } : {}),
           })
         }
       }
     }
 
-    // Fast path: download-only
-    if (item.generationId && item.mediaId) {
+    // Fast path: download-only — 다운로드/상태조회에 키가 필요. 없으면 'No API key' 로
+    // 조용히 실패하므로 여기서 가드 → API 키 모달. (slow path 의 pending 리셋은 키 불필요)
+    // 개별 retry/다운로드는 무료(로그인/게이트 불필요) — 배치 다운로드만 과금 대상이다.
+    // #R29-6: "재생성"(forceRegenerate)은 다운로드-only 가 아니라 새 generation 을 의도한다. 완료된
+    //   영상은 generationId+mediaId 가 있어 이 fast-path 로 빠지면 기존 결과를 재다운로드만 했다.
+    //   forceRegenerate 면 fast-path 를 건너뛰고 아래 slow-path 로 가 status 를 'pending' 으로 되돌린다
+    //   → 분류상 download-only(status==='error')도 in-flight(status==='generating')도 아니라 freshGen
+    //   으로 잡혀, 다음 Start 가 새로 생성한다(기존 영상은 덮어쓰기 전까지 폴백 유지).
+    if (!opts.forceRegenerate && item.generationId && item.mediaId) {
+      // #R12-11/#R13-8: 첫 await(getAccessToken) 전에 in-flight 를 세팅 — 같은 tick 의 중복 Retry/
+      //   Retry+Start 가 auth await 동안 busy 가드를 통과하는 것을 막는다. 모든 종료 경로에서 해제.
+      videoRetryInFlightRef.current = true
+      setVideoRetryRunning(true)  // #R24-2: 모드 토글 차단(반응형)
+      if (!(await genAPI.getAccessToken(false, true))) {
+        videoRetryInFlightRef.current = false
+        setVideoRetryRunning(false)
+        window.dispatchEvent(new CustomEvent('flow-login-expired'))
+        return
+      }
+      // #R17-7: auth await 동안 모드가 바뀌었으면 stale 엔진으로 다운로드하지 않는다.
+      if (modeRef.current !== startMode) {
+        videoRetryInFlightRef.current = false
+        setVideoRetryRunning(false)
+        console.warn('[handleVideoRetry] aborted — mode changed during preflight')
+        return
+      }
       retryVideoDownload({
         item,
-        flowAPI,
+        genAPI,
         onUpdate,
         projectName,
         saveMode: settings.saveMode || 'folder',
-        videoResolution: settings.videoResolution || '1080p',
+        videoResolution: settings.videoResolution || '720p',
       }).catch(err => {
         console.error('[handleVideoRetry] Unexpected error:', err)
         onUpdate(item.id, 'error', { error: String(err?.message || err) })
-      })
+      }).finally(() => { videoRetryInFlightRef.current = false; setVideoRetryRunning(false) })
       return
     }
 
     // Slow path: no generationId/mediaId — reset to pending; user clicks Start Generation to regenerate
     onUpdate(item.id, 'pending', { error: null })
     toast.info(t('videoAutomation.needsRegen') || 'Reset — click Start Generation to retry')
-  }, [isRunning, videoAutomation.isRunning, settings, flowAPI, framePairs, scenesHook, videoScenesHook, t])
+  }, [isRunning, videoAutomation.isRunning, hasPendingBatch, settings, genAPI, framePairs, scenesHook, videoScenesHook, t])
 
   const styleResolver = createStyleResolver({
     activeTab,
@@ -699,6 +1000,9 @@ function App() {
     t,
     isKo: t('common.cancel') === '취소',
   })
+  const uploadedStyleRefsForPicker = activeTab === 'video-text'
+    ? references.filter(ref => isStyleReference(ref) && ref.prompt)
+    : references.filter(isStyleReference)
 
   // overrideStyleId 시그니처 (3가지 의미 구분):
   //   undefined: 호출자가 override 안 함 → UI selectedStyleRefId 사용
@@ -708,10 +1012,37 @@ function App() {
   // options = { force?: boolean } (선택, MCP 전용):
   //   - force=true: 완료된 씬도 포함해 재생성 대상에 (필터 우회)
   //   - 기본 false: 기존 동작 (pending/error만)
-  const handleStart = async (overrideStyleId = undefined, options = {}) => {
+  // #R10-4: 동기 latch — 같은 tick 의 중복 Start/Proceed 가 isRunning/hasPendingBatch state 가
+  //   반영되기 전(await 구간)에 둘 다 통과해 배치를 두 번 enqueue 하는 것을 막는다. handleStart 와
+  //   tag-validation Proceed 가 공유.
+  const startInFlightRef = useRef(false)
+  const handleStartImpl = async (overrideStyleId = undefined, options = {}) => {
     const { force = false } = options
     // 이미 실행 중이거나 큐에 batch가 대기 중이면 무시 (중지는 별도 버튼)
-    if (isRunning || videoAutomation.isRunning || hasPendingBatch) return
+    // #R12-11: 다운로드-only 비디오 retry 진행 중에도 Start 차단(같은 아이템 경합 방지).
+    if (isRunning || videoAutomation.isRunning || hasPendingBatch || videoRetryInFlightRef.current) return
+    // #R7-5: 비동기 preflight(getAccessToken/폴더확인) 동안 모드가 바뀌면 캡처한 엔진/모드가
+    //   stale 해진다 — 시작 모드를 잠그고, 디스패치 직전 바뀌었으면 중단.
+    const startMode = modeRef.current
+
+    // BYOK 키 없으면 생성 불가 → 설정 안내 모달 (시작 화면으로 막지 않고 여기서 안내).
+    // Flow 모드는 Flow 뷰/onFlowStatus 에서 인증을 처리하므로 BYOK 모달을 열지 않는다.
+    if (!(await genAPI.getAccessToken(false, true))) {
+      // #R8-4: getAccessToken await 동안 flow 로 전환됐을 수 있으니 stale closure `mode` 가
+      //   아니라 현재 모드(modeRef)로 BYOK 모달 여부를 판단한다(flow 에서 BYOK 모달 방지).
+      if (modeRef.current !== 'flow') {
+        setShowApiKeyModal(true)
+      }
+      return
+    }
+    // #R8-4: auth preflight 동안 모드가 바뀌었으면 즉시 중단(stale 엔진/모드 제출 방지).
+    if (modeRef.current !== startMode) {
+      console.warn('[App] handleStart aborted — mode changed during auth preflight')
+      return
+    }
+
+    // 생성 모드 snapshot — 라이브 그리드가 탭 이동과 무관하게 이 값을 쓴다.
+    setRunningGenMode(genModeForTab(activeTab))
 
     // 선택 검증 (폴더 확인보다 먼저)
     if (activeTab === 'video-text') {
@@ -731,14 +1062,17 @@ function App() {
     const folderCheck = await checkFolderPermission(settings, openSettings, t)
     if (!folderCheck.ok) return
 
-    // tab이면 split으로 전환 (Flow UI가 보여야 함)
-    try {
-      const current = JSON.parse(localStorage.getItem('layoutSettings') || '{}')
-      if (!current.mode || current.mode === 'tab') {
-        window.electronAPI?.setLayout?.({ mode: 'split-left', ratio: 0.5 })
-      }
-    } catch (e) {
-      window.electronAPI?.setLayout?.({ mode: 'split-left', ratio: 0.5 })
+    // R2-2: flow 모드에서 Flow 프로젝트 진입이 확인되지 않으면 batch 시작 차단.
+    // API 모드에서 flowProjectReady는 항상 true → no-op.
+    if (mode === 'flow') {
+      const readyCheck = checkFlowProjectReady(flowProjectReady, t)
+      if (!readyCheck.ok) return
+    }
+
+    // #R7-5: preflight 비동기 구간에서 모드가 바뀌었으면 중단(stale 엔진/모드로 제출 방지).
+    if (modeRef.current !== startMode) {
+      console.warn('[App] handleStart aborted — mode changed during preflight')
+      return
     }
 
     const projectName = ensureProjectName()
@@ -783,10 +1117,11 @@ function App() {
         const startOptions = {
           projectName,
           saveMode: settings.saveMode,
-          concurrency: settings.concurrency || 2,
+          concurrency: settings.concurrency || 5,
           imageBatchCount: settings.imageBatchCount || 1,
           imageUpscale: settings.imageUpscale || 'off',
           aspectRatio: settings.aspectRatio,
+          imageModel: settings.imageModel,
           selectedStyleRefId: effectiveStyleId,
           seed: effectiveSeed,
           force,
@@ -800,7 +1135,8 @@ function App() {
         })
         if (errors.length > 0) {
           setTagValidationErrors(errors)
-          setPendingStartOptions(startOptions)
+          // #R8-6: 모달 열린 동안 모드가 바뀌면 Proceed 가 가드를 우회하므로 시작 모드를 함께 보관.
+          setPendingStartOptions({ ...startOptions, __startMode: startMode })
           return
         }
 
@@ -819,31 +1155,28 @@ function App() {
         // 스타일(selectedStyleRefId)만 추가로 prefix해서 적용.
         // (I2V는 이미지가 source라 별도 처리 — frame-to-video 케이스에서 미적용)
         // override → effective는 styleResolver.resolveEffectiveStyleId가 탭별로 처리.
-        // video-text는 null override일 때 findAutoStyle 결과로 변환됨 (resolver 내부 로직).
+        // video-text는 null override일 때 findAutoPromptStyle 결과로 변환됨 (resolver 내부 로직).
         const effectiveStyleId = styleResolver.resolveEffectiveStyleId(overrideStyleId)
-        const styledVideoScenes = selectedVideoScenes.map(vs => {
-          const matchedRefs = []
-          const { styledPrompt } = applyStyle(vs.prompt, effectiveStyleId, scenesHook.references, matchedRefs)
-          return { ...vs, prompt: styledPrompt }
+        const { startOptions: videoTextStartOptions, runningStyle: videoTextRunningStyle } = buildVideoTextStartPayload({
+          videoScenes: selectedVideoScenes,
+          references: scenesHook.references || [],
+          effectiveStyleId,
+          srtTrack: scenesHook.srtTrack,
+          settings,
+          projectName,
+          styleLabel: styleResolver.resolveLabelForId(effectiveStyleId),
+          warn: console.warn,
+          onReferenceLimitWarning: (limit) => {
+            toast.warning(t('videoAutomation.referenceLimitWarning', { limit }))
+          },
         })
 
-        // seed: 이미지와 동일한 정책 — locked + 숫자일 때만 고정 seed
-        const effectiveVideoSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
-          ? settings.seedNo
-          : null
-
         // Stop 버튼이 현재 실행 중인 스타일을 표시할 수 있도록 id + 라벨 모두 snapshot
-        setRunningStyle({ styleId: effectiveStyleId, label: styleResolver.resolveLabelForId(effectiveStyleId), applies: true })
+        setRunningStyle(videoTextRunningStyle)
         setHasPendingBatch(true)
 
         videoAutomation.start({
-          mode: 't2v',
-          scenes: styledVideoScenes,
-          seed: effectiveVideoSeed,
-          projectName,
-          saveMode: settings.saveMode,
-          videoResolution: settings.videoResolution || '1080p',
-          videoBatchCount: settings.videoBatchCount || 1,
+          ...videoTextStartOptions,
           onItemUpdate: (id, newStatus, result) => {
             // 명시적 null 도 통과시켜야 하는 필드(video/videoPath/mediaId/generatedAt 등)는
             // `'X' in result` 체크 — useVideoAutomation 의 새 generation 제출 시 이전 complete
@@ -873,19 +1206,13 @@ function App() {
               scenesHook.updateScene(sceneId, {
                 ...(result?.base64 ? { videoT2V: result.base64 } : {}),
                 videoT2VPath: result.videoPath || null,
+                videoT2VDisabled: null,
                 ...(result?.duration ? { videoT2VDuration: result.duration } : {}),
               })
             }
-            // 새 generation 제출 — scene-level derived 비디오 메타도 함께 클리어.
-            // 빠뜨리면 export/SceneList 가 옛 videoT2V/Path/Duration 으로 옛 비디오를 계속 사용.
-            if (newStatus === 'generating' && result && 'videoPath' in result) {
-              const sceneId = id.replace('vscene_', 'scene_')
-              scenesHook.updateScene(sceneId, {
-                videoT2V: null,
-                videoT2VPath: null,
-                videoT2VDuration: null,
-              })
-            }
+            // 새 generation 제출: 기존 비디오 데이터는 일부러 그대로 둔다(예전엔 여기서 clear).
+            // 타임라인/모니터는 generating 동안 화면에서만 숨기므로(빈칸+shimmer) stale 노출이 없고,
+            // 데이터를 유지해야 에러/취소 시 기존 비디오로 복귀한다. 완료 시 위 블록이 새 걸로 교체.
           },
         }).finally(() => setHasPendingBatch(false))
         break
@@ -896,24 +1223,36 @@ function App() {
         // Frame to Video — 선택된 framePairs만 실행 (선택 검증은 상단에서 처리)
         const selectedFramePairs = framePairs.filter(p => p.selected !== false)
         const GALLERY_PFX = 'gallery::'
+        // OmniFlash 는 종료 프레임 미지원 — UI 는 End Image 를 비활성화하지만 state 의
+        //   pair.endSceneId 는 남는다. 제출 payload 에서 끝 프레임을 strip 하지 않으면
+        //   engineFlow 가 숨겨진 끝 이미지를 먼저 업로드하려다 실패해 start-only 생성을 막는다.
+        const omniNoEndFrame = mode === 'flow' && isOmniFlashModel(settings.videoModelF2V)
         const resolvedPairs = selectedFramePairs.map(p => {
           // gallery:: prefix면 mediaId 직접 추출, 아니면 씬에서 resolve
           const startIsGallery = p.startSceneId?.startsWith(GALLERY_PFX)
           const endIsGallery = p.endSceneId?.startsWith(GALLERY_PFX)
           const startScene = startIsGallery ? null : scenes.find(s => s.id === p.startSceneId)
           const endScene = endIsGallery ? null : scenes.find(s => s.id === p.endSceneId)
+          const ownerScene = p.ownerSceneId ? scenes.find(s => s.id === p.ownerSceneId) : null
 
           // promptSource에 따라 effective prompt 계산 — ResultsTable 표시와 동일한 규칙이어야
           // mismatch (UI 가 옛 값을 보이는데 generation 은 새 값을 쓰는 등) 가 안 난다.
           // image 모드는 owner scene.prompt 가 진실 — pair.prompt 는 행 생성 시 스냅샷이라 stale 가능.
           const effectivePrompt = getFramePairEffectivePrompt(p, ftvPromptSource, videoScenes, scenes)
 
-          return {
+          const resolved = {
             ...p,
             prompt: effectivePrompt,
             _startMediaId: startIsGallery ? p.startSceneId.slice(GALLERY_PFX.length) : (startScene?.mediaId || null),
             _endMediaId: endIsGallery ? p.endSceneId.slice(GALLERY_PFX.length) : (endScene?.mediaId || null),
+            // cloud(Veo) F2V: 갤러리(디스크 업로드) dataUrl 또는 씬 메모리 이미지 → inline 프레임.
+            // 씬이 folder 모드라 image 가 null 이면 useVideoAutomation 이 readImage(sceneId) 폴백.
+            _startImage: frameImageFor(p.startSceneId, { scenes, galleryItems, galleryPrefix: GALLERY_PFX }),
+            _endImage: frameImageFor(p.endSceneId, { scenes, galleryItems, galleryPrefix: GALLERY_PFX }),
+            targetDuration: ownerScene ? getSceneDuration(ownerScene, scenesHook.srtTrack) : (p.targetDuration ?? null),
           }
+          // OmniFlash 면 UI 에서 숨긴 끝 프레임을 payload 에서도 제거 (start-only 보장).
+          return stripOmniEndFrame(resolved, omniNoEndFrame)
         })
         // seed: 이미지/T2V와 동일한 정책 — locked + 숫자일 때만 고정 seed
         const effectiveI2VSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
@@ -929,8 +1268,10 @@ function App() {
           framePairs: resolvedPairs,
           projectName,
           saveMode: settings.saveMode,
-          videoResolution: settings.videoResolution || '1080p',
+          videoResolution: settings.videoResolution || '720p',
+          videoModel: settings.videoModelF2V,
           videoBatchCount: settings.videoBatchCount || 1,
+          concurrency: settings.videoConcurrency || 4,
           seed: effectiveI2VSeed,
           onItemUpdate: (id, newStatus, result) => {
             setFramePairs(prev => {
@@ -956,30 +1297,18 @@ function App() {
                 } : p
               )
 
-              // ── I2V 완료 → ownerSceneId로 씬에 videoI2V 동기화 ──
-              // prev를 사용해 stale closure 방지
-              if (newStatus === 'complete' && result?.base64) {
-                const fp = prev.find(p => p.id === id)
-                // ownerSceneId is the canonical row-to-scene binding. Gallery-rooted
-                // rows have ownerSceneId=null and are skipped by the truthy guard.
-                if (fp?.ownerSceneId) {
-                  scenesHook.updateScene(fp.ownerSceneId, {
-                    videoI2V: result.base64,
-                    videoI2VPath: result.videoPath || null,
-                    ...(result?.duration ? { videoI2VDuration: result.duration } : {}),
-                  })
-                }
-              }
-              // 새 generation 제출 — scene-level derived 비디오 메타도 클리어.
-              if (newStatus === 'generating' && result && 'videoPath' in result) {
-                const fp = prev.find(p => p.id === id)
-                if (fp?.ownerSceneId) {
-                  scenesHook.updateScene(fp.ownerSceneId, {
-                    videoI2V: null,
-                    videoI2VPath: null,
-                    videoI2VDuration: null,
-                  })
-                }
+              // ── I2V 상태/결과를 ownerSceneId 로 씬에 동기화 ── (prev 사용 — stale closure 방지)
+              // ownerSceneId is the canonical row-to-scene binding. Gallery-rooted rows(null)는 스킵.
+              // - videoI2VStatus: t2v 의 videoT2VStatus 대응 신호 — 타임라인이 generating 시 빈칸+shimmer 판정.
+              // - 제출(generating) 시 비디오 데이터는 일부러 안 지운다(예전엔 videoClearPatch('i2v')).
+              //   타임라인/모니터가 generating 동안 화면에서만 숨기므로 stale 노출 없고, 데이터를 유지해야
+              //   에러/취소 시 status≠generating 으로 기존 비디오가 복귀한다. 완료 시 아래에서 새 걸로 교체.
+              const fpOwner = prev.find(p => p.id === id)
+              if (fpOwner?.ownerSceneId) {
+                // status + 경과 타이머 타임스탬프(videoI2VGeneratingStartedAt/EndedAt) + 완료 결과를
+                // 한 곳에서 — T2V 와 동일하게 generating 클립 경과 타이머가 동작하도록(00:00 회귀 방지).
+                const scenePatch = buildI2VScenePatch(newStatus, result)
+                scenesHook.updateScene(fpOwner.ownerSceneId, scenePatch)
               }
 
               return updated
@@ -995,16 +1324,64 @@ function App() {
     }
   }
 
+  // #R10-4: latch wrapper — 같은 tick 중복 진입 차단. 실제 로직은 handleStartImpl.
+  const handleStart = async (overrideStyleId = undefined, options = {}) => {
+    if (startInFlightRef.current) return
+    startInFlightRef.current = true
+    try {
+      return await handleStartImpl(overrideStyleId, options)
+    } finally {
+      startInFlightRef.current = false
+    }
+  }
+
   // Tag validation modal callbacks
-  const handleTagValidationProceed = () => {
+  const handleTagValidationProceed = async () => {
     setTagValidationErrors(null)
-    if (pendingStartOptions) {
+    if (!pendingStartOptions) return
+    // #R10-4: 같은 latch 로 중복 Proceed/Start 차단.
+    if (startInFlightRef.current) return
+    startInFlightRef.current = true
+    try {
+      const { __startMode, ...opts } = pendingStartOptions
+      // 이 경로는 handleStart 의 preflight(stale-mode/projectName/auth/flow-ready)를 우회하므로 재검증한다.
+      // #R8-6: 모달이 열린 동안 모드가 바뀌었으면 중단.
+      if (__startMode && modeRef.current !== __startMode) {
+        console.warn('[App] tag-validation proceed aborted — mode changed while modal open')
+        setPendingStartOptions(null)
+        return
+      }
+      // #R9-4: 프로젝트가 바뀌었으면 중단 — stale projectName 으로 저장되면 엉뚱한 프로젝트 오염.
+      if (ensureProjectName() !== opts.projectName) {
+        console.warn('[App] tag-validation proceed aborted — project changed while modal open')
+        setPendingStartOptions(null)
+        return
+      }
+      // #R9-4: 인증 재확인(모달 사이 키 변경/만료 가능). flow 는 BYOK 모달 대신 Flow 뷰가 처리.
+      if (!(await genAPI.getAccessToken(false, true))) {
+        if (modeRef.current !== 'flow') setShowApiKeyModal(true)
+        setPendingStartOptions(null)
+        return
+      }
+      if (modeRef.current !== __startMode) { setPendingStartOptions(null); return } // auth await 동안 모드 변경 재확인
+      // #R10-5: auth await 동안 프로젝트가 바뀌었을 수 있으니 start 직전 다시 확인.
+      if (ensureProjectName() !== opts.projectName) {
+        console.warn('[App] tag-validation proceed aborted — project changed during auth recheck')
+        setPendingStartOptions(null)
+        return
+      }
+      if (modeRef.current === 'flow') {
+        const readyCheck = checkFlowProjectReady(flowProjectReady, t)
+        if (!readyCheck.ok) { setPendingStartOptions(null); return }
+      }
       // 시작 시점 snapshot — 사용자가 modal 띄운 사이 스타일 변경해도 startOptions에 들어간 게 진실
-      const sid = pendingStartOptions.selectedStyleRefId
+      const sid = opts.selectedStyleRefId
       setRunningStyle({ styleId: sid, label: styleResolver.resolveLabelForId(sid), applies: true })
       setHasPendingBatch(true)
-      start(pendingStartOptions).finally(() => setHasPendingBatch(false))
+      start(opts).finally(() => setHasPendingBatch(false))
       setPendingStartOptions(null)
+    } finally {
+      startInFlightRef.current = false
     }
   }
   const handleTagValidationCancel = () => {
@@ -1035,7 +1412,7 @@ function App() {
     srtTrack: scenesHook.srtTrack, setSrtTrack: scenesHook.setSrtTrack,
     handleGenerateRef, handleGenerateScene,
     handleGenerateAllRefs, handleStart, handleStop,
-    handleProjectChange, handleExportConfirm,
+    handleProjectChange, handleExportConfirm, handleExportPremiere,
     selectedStyleRefId, setSelectedStyleRefId,
     refreshReviews, audioReviews,
     importByPath, audioPackage,
@@ -1046,14 +1423,49 @@ function App() {
   })
 
   // 어느 자동화든 실행 중이면 true
-  const anyRunning = isRunning || videoAutomation.isRunning
+  // #R13-14: 큐 대기(hasPendingBatch) 구간도 busy 로 본다 — isRunning 으로 뒤집기 전 windows 에서
+  //   편집/프로젝트 액션이 열려 있던 비일관성 차단. (anyRunning 은 videoRetryInFlightRef 를 제외하지만,
+  //   #R24-2 로 모드 토글 차단용 반응형 videoRetryRunning 은 별도로 modeBusy 에 포함된다.)
+  const anyRunning = isRunning || videoAutomation.isRunning || hasPendingBatch
+
+  // 생성 중: 가장 최근 생성된 이미지 씬으로 모니터를 점프 → "만들어지는 걸 본다".
+  // (씬에 SRT/길이 타이밍이 있어야 위치 계산 가능 — 없으면 그대로 둠)
+  const lastMonitorSceneRef = useRef(null)
+  useEffect(() => {
+    if (!anyRunning) return
+    let latest = null
+    for (const s of scenes) {
+      if (hasImageData(s) && s.generatedAt && (!latest || s.generatedAt > latest.generatedAt)) latest = s
+    }
+    if (latest && latest.id !== lastMonitorSceneRef.current) {
+      lastMonitorSceneRef.current = latest.id
+      const range = getSceneTimeRangeMs(latest)
+      if (range) setMonitorMs(range.startMs)
+    }
+  }, [scenes, anyRunning])
   const isVideoTab = activeTab === 'video-text' || activeTab === 'frame-to-video'
-  const currentProgress = isVideoTab ? videoAutomation.progress : progress
-  const currentStatus = isVideoTab ? videoAutomation.status : status
-  const currentStatusMessage = isVideoTab ? videoAutomation.statusMessage : statusMessage
+  // 생성 중에는 snapshot 된 runningGenMode 로 자동화 상태를 고른다 — Grid 와 일관되게,
+  // 탭을 바꿔도 StatusBar 가 다른 automation 상태로 튀지 않게(live activeTab 사용 시 회귀).
+  const showVideoAutomation = anyRunning ? (runningGenMode !== 'image') : isVideoTab
+  const currentProgress = showVideoAutomation ? videoAutomation.progress : progress
+  const currentStatus = showVideoAutomation ? videoAutomation.status : status
+  const currentStatusMessage = showVideoAutomation ? videoAutomation.statusMessage : statusMessage
+
+  // #R7-18: mp3 드롭 → 나레이션/SFX 트랙 import. 메인(하단 패널) 타임라인이 공유하는 핸들러.
+  const handleTrackDrop = async ({ trackRole, files, timecodeMs }) => {
+    const workFolder = localStorage.getItem('workFolderPath')
+    const projectName = settings.projectName
+    const fallbackFolderPath = workFolder && projectName ? `${workFolder}/${projectName}/audio` : null
+    for (const file of files) {
+      const mp3Path = window.electronAPI?.getPathForFile?.(file)
+      if (!mp3Path) continue
+      await importMp3ToTrack({ mp3Path, trackType: trackRole, timecodeMs, fallbackFolderPath })
+      if (trackRole === 'narration') break // narration 은 1개(교체)
+    }
+  }
 
   return (
-    <div className="app">
+    <div className={computeAppClass(mode)}>
       <QAProgressBanner />
       {projectLoading && (
         <div className="project-loading-overlay">
@@ -1062,22 +1474,27 @@ function App() {
         </div>
       )}
       <Header
-        onSettings={() => openSettings()}
+        onSettings={(tab) => openSettings(typeof tab === 'string' ? tab : null)}
         onExport={handleExportClick}
-        hasImages={scenes.some(s => s.image || s.imagePath)}
-        getAccessToken={flowAPI.getAccessToken}
+        exportFormat={exportFormat}
+        hasImages={scenes.some(isSceneGenerationDone)}
+        getAccessToken={genAPI.getAccessToken}
         authReady={authReady}
         onAuthRecovered={handleAuthRecovered}
         projectName={settings.projectName}
         onProjectChange={handleProjectChange}
         onNewProject={() => openSettings('storage')}
         saveMode={settings.saveMode}
+        // NOTE(#6): onLoginClick → setShowAuthModal (Google/subscription auth).
+        // This is mode-agnostic intentionally — both modes may need to log into the app.
+        // Mode-specific auth (BYOK key for api, Flow webview for flow) is handled separately.
         onLoginClick={() => setShowAuthModal(true)}
         onUpgradeClick={() => {
           setPaywallReason('upgrade')
           setShowPaywallModal(true)
         }}
-        disabled={anyRunning || generatingRefs.length > 0}
+        disabled={anyRunning || refBatchRunning || videoRetryRunning || !!generatingSceneId || thumbnailGenerating || galleryUploading}
+        modeBusy={isRunning || videoAutomation.isRunning || refBatchRunning || hasPendingBatch || videoRetryRunning || !!generatingSceneId || thumbnailGenerating || galleryUploading}
       />
 
       {/* 구독 상태 배너 (Trial/만료 시에만 표시) */}
@@ -1090,16 +1507,8 @@ function App() {
         hideWhenPro={true}
       />
 
-      {/* 시작 화면 - 씬 없고 인증 안됐을 때 */}
-      {scenes.length === 0 && !authReady && (
-        <WelcomeScreen
-          getAccessToken={flowAPI.getAccessToken}
-          onReady={() => setAuthReady(true)}
-        />
-      )}
-
-      {/* 메인 UI - 인증됐거나 씬 있을 때 */}
-      {(authReady || scenes.length > 0) && (
+      {/* 메인 UI - 항상 표시. 키 없으면 생성(Start) 시 API 키 모달로 안내(시작 화면 게이트 제거). */}
+      {(
       <>
       <div className="main-panel">
         {/* 탭 헤더 */}
@@ -1137,14 +1546,16 @@ function App() {
             >
               📋 <span className="tab-label">{t('tabs.list')}</span> ({scenes.length})
             </button>
-            <button
+            {/* Audio 탭 — SFX 입력용. 현재 상단 프리뷰(LiveTimeline)가 타임라인을 커버해 중복이라 숨김.
+                SFX 입력 처리 재개 시 주석 해제. (content 블록은 activeTab==='audio' 가 안 돼 자동 미렌더) */}
+            {/* <button
               className={`tab tab-icon ${activeTab === 'audio' ? 'active' : ''}`}
               onClick={() => setActiveTab('audio')}
               title={t('audioTab.title') || '오디오'}
             >
               🎵 <span className="tab-label">{t('audioTab.title') || '오디오'}</span>
               {audioPackage && <span className="tab-count"> ({(audioPackage.summary?.totalVoiceFiles || 0) + (audioPackage.summary?.totalSfxFiles || 0)})</span>}
-            </button>
+            </button> */}
             <button
               className={`tab tab-icon ${showReferences ? 'active' : ''}`}
               onClick={() => setShowReferences(!showReferences)}
@@ -1163,6 +1574,10 @@ function App() {
           </div>
         </div>
 
+        {/* 편집 영역(좌: 콘텐츠+액션버튼) | 프리뷰 모니터(우) — 모니터가 둘을 아우름 */}
+        <div className="editor-row">
+        <div className="editor-col">
+
         {/* 스크롤 가능한 콘텐츠 영역 (레퍼런스 + 탭 콘텐츠) */}
         <div className="tab-content">
         {/* 레퍼런스 패널 (접기 가능) */}
@@ -1170,8 +1585,13 @@ function App() {
           <ReferencePanel
             references={references}
             aspectRatio={settings.aspectRatio}
+            appMode={mode}
             onUpdate={updateReferences}
-            onUpload={flowAPI.uploadReference}
+            onUpload={async (...args) => {
+              const readyCheck = checkFlowProjectReady(flowProjectReady, t)
+              if (!readyCheck.ok) return { success: false, error: 'flow_project_not_ready' }
+              return genAPI.uploadReference(...args)
+            }}
             onGenerate={handleGenerateRef}
             onGenerateAll={handleGenerateAllRefs}
             onStopGenerateAll={stopGenerateAllRefs}
@@ -1207,6 +1627,7 @@ function App() {
               value={scenes.map(s => s.prompt).join('\n')}
               onChange={handleTextChange}
               disabled={anyRunning}
+              references={scenesHook.references}
               seedNo={settings.seedNo}
               seedLocked={settings.seedLocked}
               onSeedChange={(v) => setSettings(s => ({ ...s, seedNo: v }))}
@@ -1225,6 +1646,7 @@ function App() {
               value={scenes.map(s => s.videoT2VPrompt || '').join('\n').replace(/\n+$/, '')}
               onChange={handleVideoTextChange}
               disabled={anyRunning}
+              references={(scenesHook.references || []).filter(isUsableVideoReference)}
               placeholder={t('prompt.videoPlaceholder')}
               seedNo={settings.seedNo}
               seedLocked={settings.seedLocked}
@@ -1253,13 +1675,15 @@ function App() {
               onShowSceneDetail={(scene) => setSelectedScene(scene)}
               onVideoRetry={handleVideoRetry}
               disabled={anyRunning}
+              endImageDisabled={mode === 'flow' && isOmniFlashModel(settings.videoModelF2V)}
               t={t}
               galleryItems={galleryItems}
               galleryLoading={galleryLoading}
               onLoadGallery={loadGallery}
               onUploadFromDisk={handleUploadGalleryImage}
-              onListFlowProjects={listFlowProjectsHandler}
-              onFetchProjectGallery={fetchProjectGallery}
+              hasFlowArchive={genAPI.capabilities?.hasFlowArchive}
+              onListFlowProjects={genAPI.listFlowProjects}
+              onFetchProjectGallery={genAPI.fetchGallery}
               onPickArchiveImage={addArchiveItem}
               seedNo={settings.seedNo}
               seedLocked={settings.seedLocked}
@@ -1280,6 +1704,7 @@ function App() {
               framePairs={framePairs}
               aspectRatio={settings.aspectRatio}
               onUpdate={scenesHook.updateScene}
+              onUpdateFramePair={(fpId, patch) => setFramePairs(prev => prev.map(p => p.id === fpId ? { ...p, ...patch } : p))}
               onUpdateSrtLine={scenesHook.updateSrtLine}
               onDelete={(sceneId, sceneIndex) => {
                 const scene = scenes.find(s => s.id === sceneId)
@@ -1310,7 +1735,7 @@ function App() {
               onBulkReview={saveBulkReviews}
               onRefresh={refreshReviews}
               onSaveTimecodeOverride={saveTimecodeOverride}
-              srtEntries={resolveAudioSrtEntries(audioPackage, scenesHook.srtTrack)}
+              srtEntries={resolveAudioSrtEntries(audioPackage, scenesHook.srtTrack, scenes)}
               scenes={scenes}
               onImportMp3={async (params) => {
                 // 드롭한 mp3는 audioFolderPath/media[/sfx]/로 복사되어 영속화.
@@ -1324,6 +1749,7 @@ function App() {
                 return importMp3ToTrack({ ...params, fallbackFolderPath })
               }}
               onSrtImport={(content) => handleImport('srt', content)}
+              onSceneUpdate={scenesHook.updateScene}
             />
           )}
         </div>
@@ -1347,7 +1773,7 @@ function App() {
 
           {/* 생성 완료 후 설정된 완료율 이상 성공 시 버튼 2개로 분할 */}
           {(() => {
-            const doneCount = scenes.filter(s => s.image || s.imagePath).length
+            const doneCount = scenes.filter(isSceneGenerationDone).length
             const hasScenes = scenes.length > 0
             // 생성이 한 번이라도 실행되고 완료됐는지 (done 또는 error 상태가 있음)
             const hasRun = scenes.some(s => s.status === 'done' || s.status === 'error')
@@ -1359,7 +1785,8 @@ function App() {
             const showGenerateMenu = (activeTab === 'text' || activeTab === 'list')
               && scenes.some(s => s.image || s.imagePath)
 
-            const startStyleLabel = styleResolver.resolveLabelForId(selectedStyleRefId)
+            const startStyleId = styleResolver.resolveEffectiveStyleId(undefined)
+            const startStyleLabel = styleResolver.resolveLabelForId(startStyleId)
             const startStyleApplies = activeTab === 'text' || activeTab === 'list' || activeTab === 'video-text'
             // Stop 버튼은 실행 시작 시 snapshot된 runningStyle.label 우선 사용.
             // label snapshot이 없는 케이스(이전 동작 호환)만 fallback으로 다시 계산.
@@ -1389,8 +1816,10 @@ function App() {
                 ) : (
                   <div className={`generate-split ${showGenerateMenu ? 'has-menu' : ''}`}>
                     <button
+                      ref={startBtnRef}
                       className={`btn-primary ${canExport ? 'half' : ''}`}
                       onClick={() => handleStart()}
+                      title={t('actions.start')}
                       disabled={
                         ((activeTab === 'text' || activeTab === 'list') && scenes.length === 0) ||
                         (activeTab === 'video-text' && videoScenes.length === 0) ||
@@ -1398,15 +1827,27 @@ function App() {
                         hasPendingBatch
                       }
                     >
-                      {startStyleApplies
-                        ? <>
-                            {activeTab === 'video-text' ? '🎬' : '✨'} {t('actions.start')}
-                            ▸
+                      {(() => {
+                        // 시작 라벨은 full("Start Generation")→short("Start Gen.")→icon(텍스트 생략) 축약.
+                        //   🎨 스타일칩은 **항상** 노출(스타일 적용 탭) — 라벨이 줄어도 스타일 진입점은
+                        //   남는다. 좁은 tier 에선 스타일 라벨 텍스트만 숨긴다(startChipLabelVisible).
+                        const emoji = activeTab === 'video-text' ? '🎬' : '✨'
+                        const label =
+                          startTier === 'icon' ? '' :
+                          startTier === 'mini' ? t('actions.startMini') :
+                          startTier === 'short' ? t('actions.startShort') :
+                          t('actions.start')
+                        if (!startStyleApplies) return `🎬${label ? ` ${label}` : ''}`
+                        return (
+                          <>
+                            {emoji}{label && ` ${label}`}
+                            {' ▸ '}
                             <span className="btn-style-link" onClick={(e) => { e.stopPropagation(); pendingStyleForceRef.current = false; setShowStylePicker(true) }}>
-                              🎨 {startStyleLabel}
+                              🎨{startChipLabelVisible(startTier) ? ` ${startStyleLabel}` : ''}
                             </span>
                           </>
-                        : `🎬 ${t('actions.start')}`}
+                        )
+                      })()}
                     </button>
                     {/* 전체 재생성 ▾ — split-button 으로 생성 버튼에 붙는다 */}
                     {showGenerateMenu && (
@@ -1419,13 +1860,14 @@ function App() {
                 )}
 
                 {canExport && (
-                  <button
-                    className="btn-success half"
-                    onClick={handleExportClick}
+                  <ExportSplitButton
+                    format={exportFormat}
+                    onSelect={handleExportClick}
+                    className="btn-success"
+                    wrapperClassName="half"
+                    direction="up"
                     title={t('actions.scenesComplete').replace('{done}', doneCount).replace('{total}', scenes.length)}
-                  >
-                    📦 {t('actions.exportCapcut')}
-                  </button>
+                  />
                 )}
               </>
             )
@@ -1447,24 +1889,60 @@ function App() {
                   : null
                 // Stop 버튼이 retry 중에도 스타일을 표시하도록 snapshot — 정상 생성(handleStart)과 동일.
                 setRunningStyle({ styleId: selectedStyleRefId, label: styleResolver.resolveLabelForId(selectedStyleRefId), applies: true })
+                // retryErrors 는 handleStart 를 우회하므로 모드 snapshot 을 직접 set (에러 재시도 = 이미지).
+                setRunningGenMode('image')
+                // 큐 대기 구간 중복 enqueue 방지 — 정상 Start 와 동일하게 pending 플래그.
+                setHasPendingBatch(true)
                 retryErrors({
                   projectName: ensureProjectName(),
                   saveMode: settings.saveMode,
-                  // concurrency 는 현재 useAutomation.start() 가 destructure 하지
-                  // 않는 dead field 지만, 정상 시작(line 549) 옵션과의 symmetry 를
-                  // 유지해 미래에 실제 구현될 때 retryErrors 만 누락되는 회귀를 차단.
-                  concurrency: settings.concurrency || 2,
+                  // 동시성 — retryErrors 도 정상 생성과 동일하게 전달 (Stage 2 에서
+                  // runConcurrentQueue 가 실제 소비). 게이트가 clampInt 로 재방어.
+                  concurrency: settings.concurrency || 5,
                   imageBatchCount: settings.imageBatchCount || 1,
                   imageUpscale: settings.imageUpscale || 'off',
                   aspectRatio: settings.aspectRatio,
+                  imageModel: settings.imageModel,
                   selectedStyleRefId,
                   seed: effectiveSeed,
-                })
+                }).finally(() => setHasPendingBatch(false))
               }}
             >
               🔄 {t('actions.retryErrors')}
             </button>
           )}
+        </div>
+        </div>
+
+        {/* 프리뷰 모니터(inline) — 입력 프롬프트 왼쪽(.editor-row 가 row-reverse). API 모드는 상시,
+            Flow 모드는 '프리뷰' 라벨 토글/재생 자동 open 일 때만 표시. 좌우 드래그로 폭 조절.
+            전체화면은 .main-panel(container-type)이 fixed 의 containing block 이 돼 뷰포트 풀스크린이
+            안 되므로 body 로 portal 한다. */}
+        <PreviewMonitor
+          monitorMode={monitorMode}
+          monitorFullscreen={monitorFullscreen}
+          monitorWidth={monitorWidth}
+          monitorMs={monitorMs}
+          monitorPlaying={monitorPlaying}
+          monitorHiddenRoles={monitorHiddenRoles}
+          toggleMonitorFullscreen={toggleMonitorFullscreen}
+          onCloseOverlay={() => setMonitorOverlayOpen(false)}
+          startMonitorResize={startMonitorResize}
+          resetMonitorWidth={resetMonitorWidth}
+          mode={mode}
+          anyRunning={anyRunning}
+          runningGenMode={runningGenMode}
+          bottomPanelView={bottomPanelView}
+          scenes={scenes}
+          videoScenes={videoScenes}
+          framePairs={framePairs}
+          settings={settings}
+          audioPackage={audioPackage}
+          srtTrack={scenesHook.srtTrack}
+          onSelectVideo={setSelectedVideo}
+          onSelectScene={setSelectedScene}
+          t={t}
+        />
         </div>
       </div>
 
@@ -1482,39 +1960,68 @@ function App() {
           status={currentStatus}
           message={currentStatusMessage}
           scenes={scenes}
+          progressIsVideo={showVideoAutomation}
         />
 
+        {activeTab !== 'audio' && (
+          <>
+            <BottomPanelTabs view={bottomPanelView} onChange={setBottomPanelView} t={t} />
+            {bottomPanelView === 'timeline' ? (
+              <LiveTimeline
+                scenes={scenes}
+                srtEntries={resolveAudioSrtEntries(audioPackage, scenesHook.srtTrack, scenes)}
+                audioPackage={audioPackage}
+                framePairs={framePairs}
+                onSceneSelect={(scene) => setSelectedScene(scene)}
+                onVideoSelect={(item) => setSelectedVideo(item)}
+                onSaveTimecodeOverride={saveTimecodeOverride}
+                onPlayheadChange={setMonitorMs}
+                onPlayingChange={setMonitorPlaying}
+                onHiddenRolesChange={setMonitorHiddenRoles}
+                onTrackDrop={handleTrackDrop}
+                onSceneUpdate={scenesHook.updateScene}
+                disabled={anyRunning}
+                onTitleClick={mode === 'flow' ? () => setMonitorOverlayOpen(o => !o) : null}
+                titleActive={monitorOverlayOpen}
+              />
+            ) : (
+              <>
         {activeTab === 'text' && (
-          <ResultsTable
-            items={scenes}
-            mediaType="image"
-            aspectRatio={settings.aspectRatio}
-            onRetry={(id) => {
-              // 실행 중·큐 대기(hasPendingBatch) 중엔 retryScene→start() 가 무시되거나 큐에
-              // 쌓인다. snapshot 만 덮어 돌고 있는 배치의 스타일 표시가 틀어지지 않도록 먼저 차단.
-              if (anyRunning || hasPendingBatch) return
-              const effectiveSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
-                ? settings.seedNo : null
-              // Stop 버튼이 retry 중에도 스타일을 표시하도록 snapshot — 정상 생성(handleStart)과 동일.
-              setRunningStyle({ styleId: selectedStyleRefId, label: styleResolver.resolveLabelForId(selectedStyleRefId), applies: true })
-              automation.retryScene(id, {
-                projectName: ensureProjectName(),
-                saveMode: settings.saveMode,
-                imageBatchCount: settings.imageBatchCount || 1,
-                imageUpscale: settings.imageUpscale || 'off',
-                aspectRatio: settings.aspectRatio,
-                selectedStyleRefId,
-                seed: effectiveSeed,
-              })
-            }}
-            onShowDetail={(scene) => setSelectedScene(scene)}
-            onClearMedia={(id) => scenesHook.updateScene(id, {
-              // 이미지 미디어 전체 정리 — mediaId 남기면 isSceneEmpty 가 scene을 non-empty 로
-              // 판정해 trim 안 됨. derived 메타도 같이 비워야 history/재생성 경로가 stale 메타로 흐트러지지 않음.
-              image: null, imagePath: null, filePath: null, data: null, status: 'pending',
-              mediaId: null, seed: null, generatedAt: null, model: null,
-            })}
-          />
+            <ResultsTable
+              items={scenes}
+              mediaType="image"
+              aspectRatio={settings.aspectRatio}
+              onRetry={(id) => {
+                // 실행 중·큐 대기(hasPendingBatch) 중엔 retryScene→start() 가 무시되거나 큐에
+                // 쌓인다. snapshot 만 덮어 돌고 있는 배치의 스타일 표시가 틀어지지 않도록 먼저 차단.
+                if (anyRunning || hasPendingBatch) return
+                const effectiveSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
+                  ? settings.seedNo : null
+                // Stop 버튼이 retry 중에도 스타일을 표시하도록 snapshot — 정상 생성(handleStart)과 동일.
+                setRunningStyle({ styleId: selectedStyleRefId, label: styleResolver.resolveLabelForId(selectedStyleRefId), applies: true })
+                // 개별 재시도도 handleStart 를 우회하므로 모드 snapshot 직접 set (이미지 씬 재시도 = image).
+                setRunningGenMode('image')
+                // 큐 대기 구간 중복 enqueue 방지 — 정상 Start 와 동일하게 pending 플래그.
+                setHasPendingBatch(true)
+                automation.retryScene(id, {
+                  projectName: ensureProjectName(),
+                  saveMode: settings.saveMode,
+                  imageBatchCount: settings.imageBatchCount || 1,
+                  imageUpscale: settings.imageUpscale || 'off',
+                  aspectRatio: settings.aspectRatio,
+                  imageModel: settings.imageModel,
+                  selectedStyleRefId,
+                  seed: effectiveSeed,
+                }).finally(() => setHasPendingBatch(false))
+              }}
+              onShowDetail={(scene) => setSelectedScene(scene)}
+              onClearMedia={(id) => scenesHook.updateScene(id, {
+                // 이미지 미디어 전체 정리 — mediaId 남기면 isSceneEmpty 가 scene을 non-empty 로
+                // 판정해 trim 안 됨. derived 메타도 같이 비워야 history/재생성 경로가 stale 메타로 흐트러지지 않음.
+                image: null, imagePath: null, filePath: null, data: null, status: 'pending',
+                mediaId: null, seed: null, generatedAt: null, model: null,
+              })}
+            />
         )}
         {activeTab === 'video-text' && (
           <ResultsTable
@@ -1537,6 +2044,11 @@ function App() {
               // FIELD_MAP 으로 scene.videoT2V* 로 매핑됨.
               video: null, videoPath: null, mediaId: null, generationId: null,
               status: 'pending', selected: false,
+              // 비디오 메타도 정리 — 상세 모달/저장에 이전 비디오 메타 잔류 방지.
+              generatedAt: null, seed: null, model: null, error: null, errorKind: null, videoSaveId: null,
+              // per-clip toggle 도 reset — stale disabled 가 project.json 에 남아 history 복원 등
+              // path 재부착 경로와 만나면 새 영상이 숨겨짐. (FIELD_MAP 미매핑 → scene.videoT2VDisabled 로 직행)
+              videoT2VDisabled: null,
             })}
             disabled={anyRunning}
           />
@@ -1568,7 +2080,7 @@ function App() {
               seed: null, generatedAt: null, model: null, duration: null,
             } : p))
             if (fp?.ownerSceneId) {
-              scenesHook.updateScene(fp.ownerSceneId, { videoI2V: null, videoI2VPath: null, videoI2VDuration: null })
+              scenesHook.updateScene(fp.ownerSceneId, { ...videoClearPatch('i2v'), videoI2VGeneratedAt: null })
             }
           }} />
         )}
@@ -1585,15 +2097,20 @@ function App() {
                 ? settings.seedNo : null
               // Stop 버튼이 retry 중에도 스타일을 표시하도록 snapshot — 정상 생성(handleStart)과 동일.
               setRunningStyle({ styleId: selectedStyleRefId, label: styleResolver.resolveLabelForId(selectedStyleRefId), applies: true })
+              // 개별 재시도도 handleStart 를 우회하므로 모드 snapshot 직접 set (이미지 씬 재시도 = image).
+              setRunningGenMode('image')
+              // 큐 대기 구간 중복 enqueue 방지 — 정상 Start 와 동일하게 pending 플래그.
+              setHasPendingBatch(true)
               automation.retryScene(id, {
                 projectName: ensureProjectName(),
                 saveMode: settings.saveMode,
                 imageBatchCount: settings.imageBatchCount || 1,
                 imageUpscale: settings.imageUpscale || 'off',
                 aspectRatio: settings.aspectRatio,
+                imageModel: settings.imageModel,
                 selectedStyleRefId,
                 seed: effectiveSeed,
-              })
+              }).finally(() => setHasPendingBatch(false))
             }}
             onShowDetail={(scene) => setSelectedScene(scene)}
             onClearMedia={(id) => scenesHook.updateScene(id, {
@@ -1603,6 +2120,10 @@ function App() {
               mediaId: null, seed: null, generatedAt: null, model: null,
             })}
           />
+        )}
+              </>
+            )}
+          </>
         )}
       </div>
       </>
@@ -1624,14 +2145,6 @@ function App() {
         />
       )}
 
-      <RecaptchaModal
-        open={!!recaptchaModal}
-        mode={recaptchaModal?.mode}
-        waitMs={recaptchaModal?.waitMs || 0}
-        onClose={closeRecaptchaModal}
-        t={t}
-      />
-
       {/* 비디오 상세 모달 (ResultsTable에서 열림) */}
       {selectedVideo && (
         <VideoDetailModal
@@ -1639,6 +2152,27 @@ function App() {
           onClose={() => setSelectedVideo(null)}
           t={t}
           projectName={ensureProjectName()}
+          onRegenerate={(video) => handleVideoRetry(video, { forceRegenerate: true })}
+          isGenerating={videoAutomation.isRunning || hasPendingBatch}
+          references={scenesHook.references}
+          onPromptSave={(videoId, prompt) => {
+            // 비디오 프롬프트 편집 저장 — source(prefix)별로 canonical prompt 필드에 반영.
+            if (videoId.startsWith('vscene_')) {
+              // updateVideoScene 이 prompt→videoT2VPrompt 로 매핑(scene 직접 갱신).
+              videoScenesHook.updateVideoScene(videoId, { prompt })
+            } else if (videoId.startsWith('t2v_')) {
+              const n = videoId.replace('t2v_', '')
+              scenesHook.updateScene(`scene_${n}`, { videoT2VPrompt: prompt })
+            } else if (videoId.startsWith('fp_')) {
+              setFramePairs(prev => prev.map(p => p.id === videoId ? { ...p, prompt } : p))
+              const fp = framePairs.find(p => p.id === videoId)
+              if (fp?.ownerSceneId) scenesHook.updateScene(fp.ownerSceneId, { videoI2VPrompt: prompt })
+            } else if (videoId.startsWith('i2v_')) {
+              const { fpId, sceneId } = resolveI2vRestoreSceneId(selectedVideo, framePairs)
+              if (sceneId) scenesHook.updateScene(sceneId, { videoI2VPrompt: prompt })
+              if (fpId) setFramePairs(prev => prev.map(p => p.id === fpId ? { ...p, prompt } : p))
+            }
+          }}
           onUpdate={(videoId, patch) => {
             // VideoDetailModal 의 history 복원 patch 에는 video/videoPath 외에
             // seed/generatedAt/model/mediaId 도 포함될 수 있음 (메타 변경 보존).
@@ -1648,6 +2182,9 @@ function App() {
             if ('generatedAt' in patch) metaPatch.generatedAt = patch.generatedAt
             if ('model' in patch) metaPatch.model = patch.model
             if ('mediaId' in patch) metaPatch.mediaId = patch.mediaId
+            // #R33-2: 복원 시 generationId 도 전달(보통 null)해 stale routing 메타를 지운다 — 안 그러면
+            //   이후 retry 가 옛 generation 자산을 재다운로드해 복원 결과를 덮는다.
+            if ('generationId' in patch) metaPatch.generationId = patch.generationId
 
             // ID prefix로 source 분기:
             //   vscene_X → videoScenes (T2V 결과 테이블)
@@ -1665,22 +2202,20 @@ function App() {
               scenesHook.updateScene(sceneId, {
                 ...(patch.video ? { videoT2V: patch.video } : {}),
                 videoT2VPath: patch.videoPath || null,
+                videoT2VDisabled: null, // history 복원 = 새 영상 → enabled (per-clip toggle)
               })
             } else if (videoId.startsWith('fp_')) {
               setFramePairs(prev => prev.map(p =>
-                p.id === videoId
-                  ? { ...p, video: patch.video, base64: patch.video, videoPath: patch.videoPath, ...metaPatch }
-                  : p
+                p.id === videoId ? { ...p, ...buildFramePairVideoPatch(patch) } : p
               ))
               // 매칭 image scene의 videoI2V 동기화 — ownerSceneId 기준
               const fp = framePairs.find(p => p.id === videoId)
               // ownerSceneId is the canonical row-to-scene binding. Gallery-rooted
               // rows have ownerSceneId=null and are skipped by the truthy guard.
               if (fp?.ownerSceneId) {
-                scenesHook.updateScene(fp.ownerSceneId, {
-                  ...(patch.video ? { videoI2V: patch.video } : {}),
-                  videoI2VPath: patch.videoPath || null,
-                })
+                // i2v_ 분기와 동일 helper — generatedAt→videoI2VGeneratedAt 매핑으로 cache-buster
+                // 갱신(같은 i2v_N.mp4 덮어쓰기 시 timeline/monitor stale preview 방지).
+                scenesHook.updateScene(fp.ownerSceneId, buildVideoRestorePatch('i2v', patch))
               }
             } else if (videoId.startsWith('t2v_')) {
               // synthetic id — scene 에는 비디오 데이터/path 만 sync (이미지 메타 슬롯 보호).
@@ -1690,24 +2225,24 @@ function App() {
               scenesHook.updateScene(sceneId, {
                 ...(patch.video ? { videoT2V: patch.video } : {}),
                 videoT2VPath: patch.videoPath || null,
+                videoT2VDisabled: null, // history 복원 = 새 영상 → enabled (per-clip toggle)
               })
               const vsceneId = `vscene_${videoId.replace('t2v_', '')}`
               videoScenesHook.updateVideoScene(vsceneId, metaPatch)
             } else if (videoId.startsWith('i2v_')) {
               // synthetic id — scene 에는 비디오 데이터/path 만 sync (이미지 메타 슬롯 보호).
               // video 메타는 source-of-truth 인 fp_X 에만 반영.
-              // NOTE: i2v_N derives from fp.id (sequential counter), NOT from scene number,
-              // so `scene_N` string-parse is wrong. Route via framePair's ownerSceneId instead.
-              const fpId = `fp_${videoId.replace('i2v_', '')}`
-              const fpForI2v = framePairs.find(p => p.id === fpId)
-              if (fpForI2v?.ownerSceneId) {
-                scenesHook.updateScene(fpForI2v.ownerSceneId, {
-                  ...(patch.video ? { videoI2V: patch.video } : {}),
-                  videoI2VPath: patch.videoPath || null,
-                })
+              // i2v_N 은 fp.id 기반이라 owning framePair 의 ownerSceneId 로 scene 을 찾는다.
+              // owning fp 가 없으면(폴백 id) payload 의 sceneId 로 폴백 — 아니면 저장 no-op(P2-1).
+              const { fpId, sceneId: i2vSceneId } = resolveI2vRestoreSceneId(selectedVideo, framePairs)
+              if (i2vSceneId) {
+                // buildVideoRestorePatch 가 videoI2VPath/Disabled + generatedAt→videoI2VGeneratedAt
+                // 매핑 → cache-buster 갱신(같은 i2v_N.mp4 덮어쓰기 시 stale preview 방지, P2-2).
+                scenesHook.updateScene(i2vSceneId, buildVideoRestorePatch('i2v', patch))
               }
+              // P3 fix: fp_ 와 동일하게 video/base64/videoPath 까지 갱신(이전엔 metaPatch 만 → stale 결과표).
               setFramePairs(prev => prev.map(p =>
-                p.id === fpId ? { ...p, ...metaPatch } : p
+                p.id === fpId ? { ...p, ...buildFramePairVideoPatch(patch) } : p
               ))
             }
           }}
@@ -1720,6 +2255,8 @@ function App() {
           settings={settings}
           initialTab={settingsTab}
           onProjectChange={handleProjectChange}
+          availableModels={availableModels}
+          appMode={mode}
           onSave={async (newSettings) => {
             setSettings(newSettings)
             setShowSettings(false)
@@ -1751,6 +2288,9 @@ function App() {
         isOpen={showExportModal}
         onClose={() => setShowExportModal(false)}
         onExport={handleExportConfirm}
+        onExportPremiere={handleExportPremiere}
+        onExportVrew={handleExportVrew}
+        initialFormat={exportFormat}
         projectName={ensureProjectName()}
         loading={exporting}
         exportPhase={exportPhase}
@@ -1782,18 +2322,26 @@ function App() {
         reason={paywallReason}
       />
 
-      {/* Flow Login Expired Modal */}
+      {/* API 키 필요 모달 — 키 없이 생성 시도 시 설정으로 안내 */}
       <Modal
-        isOpen={showLoginExpiredModal}
-        onClose={() => setShowLoginExpiredModal(false)}
-        title={t('toast.flowLoginExpiredTitle')}
+        isOpen={showApiKeyModal}
+        onClose={() => setShowApiKeyModal(false)}
+        title={t('apiKeyNeeded.title')}
         footer={
-          <button className="btn btn-primary" onClick={() => setShowLoginExpiredModal(false)}>
-            {t('export.confirm') || '확인'}
-          </button>
+          <>
+            <button className="btn btn-secondary" onClick={() => setShowApiKeyModal(false)}>
+              {t('settings.cancel') || '닫기'}
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={() => { setShowApiKeyModal(false); openSettings('apiKey') }}
+            >
+              🔑 {t('apiKeyNeeded.cta')}
+            </button>
+          </>
         }
       >
-        <p>{t('toast.flowLoginExpiredMessage')}</p>
+        <p>{t('apiKeyNeeded.message')}</p>
       </Modal>
 
       {tagValidationErrors && (
@@ -1832,7 +2380,7 @@ function App() {
             }
           }}
           thumbnails={styleThumbnails}
-          uploadedStyleRefs={references.filter(r => r.type === 'style')}
+          uploadedStyleRefs={uploadedStyleRefsForPicker}
           generating={thumbnailGenerating}
           stopping={thumbnailStopping}
           progress={thumbnailProgress}
@@ -1859,7 +2407,10 @@ function App() {
           loading={audioImporting}
           onClose={() => {
             setShowAudioResult(false)
-            if (audioPackage) setActiveTab('audio')
+            // Audio 탭은 현재 숨김. import 후 숨은 activeTab='audio' 상태로 보내지 않고,
+            // 씬/자막 확인이 가능한 list 탭으로 복귀한다.
+            // if (audioPackage) setActiveTab('audio')
+            if (audioPackage) setActiveTab('list')
           }}
         />
       )}

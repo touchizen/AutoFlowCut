@@ -10,7 +10,7 @@
 
 import { doc, getDoc, getDocFromServer } from 'firebase/firestore'
 import { db, APP_ID } from './config'
-import { computeQuotaState, MONTHLY_QUOTA, BONUS_GRANT } from '../utils/quotaCalc'
+import { computeQuotaState, MONTHLY_QUOTA, BONUS_GRANT, computeBatchQuotaState } from '../utils/quotaCalc'
 
 /**
  * 단일 문서를 source 에 따라 server-only 또는 default(server-then-cache)로 읽는다.
@@ -110,6 +110,7 @@ export function toDate(timestamp) {
 export function calculateTrialStatus(appData) {
   const now = new Date()
   const state = computeQuotaState(appData, now)
+  const batch = computeBatchQuotaState(appData, now)
 
   // 활성 구독자
   if (state.subscriptionStatus === 'active') {
@@ -130,6 +131,9 @@ export function calculateTrialStatus(appData) {
       // 기존 active 응답 필드 유지
       expiresAt: appData?.subscriptionEndDate ? toDate(appData.subscriptionEndDate) : null,
       plan: appData?.subscriptionPlan || 'monthly',
+      // 배치 다운로드 풀
+      batchRemaining: batch.effectiveRemaining,
+      batchUnlimited: batch.isActive,
     }
   }
 
@@ -150,5 +154,8 @@ export function calculateTrialStatus(appData) {
     monthlyQuota: state.monthlyQuota,
     monthlyRemaining: state.monthlyRemaining,
     effectiveRemaining: state.effectiveRemaining,
+    // 배치 다운로드 풀
+    batchRemaining: batch.effectiveRemaining,
+    batchUnlimited: batch.isActive,
   }
 }

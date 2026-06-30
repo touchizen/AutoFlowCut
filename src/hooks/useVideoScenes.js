@@ -10,14 +10,14 @@
  * useFlowAPI, useProjectData) 는 변경 폭이 최소.
  *
  * VideoScene 형태:
- *   id, prompt, duration, startTime, endTime, status,
+ *   id, prompt, duration, srtLineIds, startTime, endTime, status,
  *   video, videoPath, mediaId, generationId, selected,
  *   image, imagePath, filePath, data
  *
  * 매핑 (videoScenes 필드 → scenes 필드):
  *   id           ↔ id (vscene_N ↔ scene_N)
  *   prompt       ↔ videoT2VPrompt
- *   duration     ↔ videoT2VDuration (없으면 scene.duration)
+ *   duration     ↔ scene.duration (다음 생성 목표 길이)
  *   status       ↔ videoT2VStatus
  *   video        ↔ videoT2V
  *   videoPath    ↔ videoT2VPath
@@ -30,6 +30,9 @@ import { useCallback, useMemo } from 'react'
 import { DEFAULTS } from '../config/defaults'
 
 /** videoScene update field → scenes update field 매핑 테이블.
+ *  duration 쓰기 경로는 생성된 원본 비디오 길이(videoT2VDuration)를 저장한다.
+ *  반대로 deriveVideoScene 의 duration 읽기 경로는 다음 생성 목표/timeline 길이인
+ *  scene.duration 을 사용한다.
  *  주의: video 는 scene.videoT2V (gen / trim / sceneMedia 가 읽는 canonical 필드)
  *  로 매핑. 이전엔 videoT2VVideo 라는 phantom 필드로 매핑돼 있어 clear-media 가
  *  scene.videoT2V 를 못 비워서 stale 비디오가 export/trim 에 남는 회귀가 있었음. */
@@ -46,6 +49,14 @@ const FIELD_MAP = {
   // 한쪽 generation 이 다른 쪽 타이머를 덮어쓰므로 별도 네임스페이스로 매핑한다.
   generatingStartedAt: 'videoT2VGeneratingStartedAt',
   generatingEndedAt: 'videoT2VGeneratingEndedAt',
+  // 비디오 생성 메타 — 이미지 씬의 동명 필드(scene.generatedAt/error/seed/model)와
+  // 충돌해 서로 덮어쓰지 않도록 videoT2V* 네임스페이스로 매핑. (캐시버스터·에러표시·시드 보존)
+  generatedAt: 'videoT2VGeneratedAt',
+  seed: 'videoT2VSeed',
+  model: 'videoT2VModel',
+  error: 'videoT2VError',
+  errorKind: 'videoT2VErrorKind',
+  videoSaveId: 'videoT2VSaveId',
   // startTime / endTime 은 scene 본체와 공유 — 별도 매핑 없이 patch에 그대로
 }
 
@@ -69,7 +80,8 @@ function deriveVideoScene(s) {
   return {
     id: s.id.replace(/^scene_/, 'vscene_'),
     prompt: s.videoT2VPrompt || '',
-    duration: s.videoT2VDuration ?? s.duration ?? DEFAULTS.scene.duration,
+    duration: s.duration ?? DEFAULTS.scene.duration,
+    srtLineIds: Array.isArray(s.srtLineIds) ? [...s.srtLineIds] : [],
     startTime: s.startTime ?? 0,
     endTime: s.endTime ?? 0,
     status: s.videoT2VStatus ?? 'pending',
@@ -81,6 +93,13 @@ function deriveVideoScene(s) {
     // ResultsTable 의 ElapsedTime 이 이 필드를 읽는다. 없으면 useElapsedTimer 가 항상 0 → 0:00 고정.
     generatingStartedAt: s.videoT2VGeneratingStartedAt ?? null,
     generatingEndedAt: s.videoT2VGeneratingEndedAt ?? null,
+    // 비디오 생성 메타 — Grid 캐시버스터(generatedAt)·에러 타일·시드 표시가 읽는다.
+    generatedAt: s.videoT2VGeneratedAt ?? null,
+    seed: s.videoT2VSeed ?? null,
+    model: s.videoT2VModel ?? null,
+    error: s.videoT2VError ?? null,
+    errorKind: s.videoT2VErrorKind ?? null,
+    videoSaveId: s.videoT2VSaveId ?? null,
     // Poster fields from the source image scene. ResultsTable uses these while
     // keeping the video element unmounted until hover.
     image: s.image ?? null,
@@ -183,6 +202,13 @@ export function useVideoScenes(scenes = [], scenesHook = null) {
       videoT2VGenerationId: null,
       videoT2VSelected: false,
       videoT2VDuration: undefined,
+      // 새 비디오 메타 필드도 함께 초기화 (clear 후 상세 모달/저장에 stale 메타 잔류 방지)
+      videoT2VGeneratedAt: null,
+      videoT2VSeed: null,
+      videoT2VModel: null,
+      videoT2VError: null,
+      videoT2VErrorKind: null,
+      videoT2VSaveId: null,
     })))
   }, [scenesHook])
 

@@ -1,8 +1,8 @@
 {
   "name": "autoflowcut",
-  "version": "0.9.16",
-  "buildNumber": 773,
-  "description": "AutoFlowCut - Automate AI video creation from Google Flow to CapCut projects",
+  "version": "2.0.0",
+  "buildNumber": 1266,
+  "description": "AutoFlowCut - Automate AI image and video creation with Google Gemini/Veo APIs for CapCut projects",
   "main": "dist-electron/main.js",
   "type": "module",
   "scripts": {
@@ -18,6 +18,7 @@
     "build:flow-preload": "esbuild ./electron/flow-preload.js --bundle --format=cjs --platform=node --external:electron --outfile=./dist-electron/flow-preload.cjs",
     "preview": "vite preview",
     "make-ico": "node scripts/make-ico.cjs",
+    "make-appx-assets": "node scripts/gen-appx-assets.cjs",
     "pack": "vite build && npm run build:preloads && electron-builder --dir",
     "dist": "npm run bump:build && vite build --mode production && npm run build:preloads && electron-builder",
     "dist:mac": "npm run bump:build && vite build --mode production && npm run build:preloads && electron-builder --mac",
@@ -40,12 +41,15 @@
   "license": "AGPL-3.0-only",
   "private": true,
   "dependencies": {
+    "@lexical/react": "^0.45.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@sentry/electron": "^7.13.0",
     "dotenv": "^17.3.1",
     "electron-updater": "^6.8.3",
     "firebase": "^12.9.0",
     "flag-icons": "^7.5.0",
+    "lexical": "^0.45.0",
+    "lexical-beautiful-mentions": "^0.1.48",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
@@ -70,7 +74,8 @@
     "productName": "AutoFlowCut",
     "forceCodeSigning": true,
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "assets"
     },
     "publish": [
       {
@@ -153,7 +158,8 @@
       ],
       "applicationId": "AutoFlowCut",
       "displayName": "AutoFlowCut",
-      "backgroundColor": "transparent"
+      "backgroundColor": "transparent",
+      "setBuildNumber": true
     },
     "nsis": {
       "oneClick": false,

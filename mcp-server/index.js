@@ -23,6 +23,7 @@ import os from 'os';
 import { fileURLToPath } from 'url';
 import { appFetch } from './lib/appClient.js';
 import { parseCSV, loadCSV, escapeCSVField, saveCSV, isNewSceneCSVFormat, bundleSceneCSVRows } from './lib/csv.js';
+import { handleExportCapcutTool, handleExportPremiereTool } from './lib/toolResponses.js';
 
 // ── 상태 ──────────────────────────────────────────────────────
 
@@ -108,7 +109,7 @@ function ensureProjectLoaded() {
 // ── MCP 서버 ──────────────────────────────────────────────────
 
 const server = new Server(
-  { name: 'autoflowcut', version: '1.0.0' },
+  { name: 'autoflowcut', version: '1.1.1' },
   { capabilities: { tools: {}, resources: {}, prompts: {} } }
 );
 
@@ -146,7 +147,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: 'get_schema',
-      description: 'CSV/SRT/Audio 스키마 문서를 반환합니다. AutoFlowCut에서 사용하는 데이터 구조를 확인할 때 사용합니다.',
+      description: 'CSV/SRT/Audio 스키마와 이미지/비디오 프롬프트 문서를 반환합니다. AutoFlowCut에서 사용하는 데이터 구조와 프롬프트 작성 가이드를 확인할 때 사용합니다.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -508,13 +509,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'app_generate_reference',
-      description: '실행 중인 AutoFlowCut 앱에서 레퍼런스 이미지를 생성합니다. (프롬프트 기반 Flow API 이미지 생성 트리거). styleId를 지정하면 해당 스타일을 적용합니다. 이미 이미지가 있는 reference라도 다시 호출하면 새 styleId로 재생성됩니다.',
+      description: '실행 중인 AutoFlowCut 앱에서 레퍼런스 이미지를 생성합니다. (프롬프트 기반 Google GenAI/Gemini API 이미지 생성 트리거). styleId를 지정하면 해당 스타일을 적용합니다. 이미 이미지가 있는 reference라도 다시 호출하면 새 styleId로 재생성됩니다.',
       inputSchema: {
         type: 'object',
         properties: {
           port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
           index: { type: 'number', description: '레퍼런스 인덱스 (0부터)' },
-          styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" (커스텀 레퍼런스), "preset:<id>" (프리셋), plain id (자동으로 "preset:"으로 wrap됨), 또는 "none" (스타일 강제 미적용 — fallback도 안 함). 생략 시 우선순위: 사용 가능한 첫 style 카드 → UI 선택값 → 미적용 (레퍼런스 생성에는 씬 매칭 개념 없음). 전역 상태는 변경하지 않음.' },
+          styleId: { type: 'string', description: '스타일 ID. 형식: "ref:<id>" (커스텀 레퍼런스), "preset:<id>" (프리셋), plain id (자동으로 "preset:"으로 wrap됨), 또는 "none" (스타일 강제 미적용 — fallback도 안 함). 생략 시 우선순위: 사용 가능한 첫 style 카드 → 미적용. UI 선택값은 사용하지 않음 (레퍼런스 생성에는 씬 매칭 개념 없음). 전역 상태는 변경하지 않음.' },
         },
         required: ['index'],
       },
@@ -582,6 +583,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: 'export_capcut',
       description: 'CapCut 프로젝트로 내보냅니다. 오디오 임포트 완료 후 실행합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          port: { type: 'number', description: 'HTTP 서버 포트 (기본: 3210)' },
+        },
+      },
+    },
+    {
+      name: 'export_premiere',
+      description: 'Premiere Pro 프로젝트(.prproj)로 내보냅니다. 오디오 임포트 완료 후 실행합니다.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -1240,9 +1251,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const port = args.port || 3210;
         const res = await appFetch(port, 'GET', '/api/references');
         const refs = Array.isArray(res.data) ? res.data : [];
-        const summary = refs.map((r, i) =>
-          `[${i}] ${r.name || '(이름없음)'} | type: ${r.type || '-'} | prompt: ${(r.prompt || '').substring(0, 80)}${r.prompt?.length > 80 ? '...' : ''} | mediaId: ${r.mediaId ? '✅' : '❌'}`
-        ).join('\n');
+        const summary = refs.map((r, i) => {
+          const isInflight = ['pending', 'generating', 'error'].includes(String(r.status || '').toLowerCase());
+          const ready = typeof r.ready === 'boolean'
+            ? r.ready
+            : !isInflight && !!(r.mediaId || r.filePath || r.hasData);
+          return `[${i}] ${r.name || '(이름없음)'} | type: ${r.type || '-'} | prompt: ${(r.prompt || '').substring(0, 80)}${r.prompt?.length > 80 ? '...' : ''} | ready: ${ready ? '✅' : '❌'} | mediaId: ${r.mediaId ? '✅' : '❌'} | file: ${r.filePath ? '✅' : '❌'} | data: ${r.hasData ? '✅' : '❌'}`;
+        }).join('\n');
         return {
           content: [{ type: 'text', text: `레퍼런스 ${refs.length}개:\n${summary}` }],
         };
@@ -1359,11 +1374,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'export_capcut': {
-        const port = args.port || 3210;
-        const res = await appFetch(port, 'POST', '/api/export-capcut');
-        return {
-          content: [{ type: 'text', text: `CapCut 내보내기 완료: ${JSON.stringify(res.data)}` }],
-        };
+        return handleExportCapcutTool(args, appFetch);
+      }
+
+      case 'export_premiere': {
+        return handleExportPremiereTool(args, appFetch);
       }
 
       case 'app_notify_qa': {

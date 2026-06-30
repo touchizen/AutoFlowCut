@@ -44,7 +44,7 @@ export function useMcpServer({
   srtTrack = [], setSrtTrack = null,
   handleGenerateRef, handleGenerateScene,
   handleGenerateAllRefs, handleStart, handleStop,
-  handleProjectChange, handleExportConfirm,
+  handleProjectChange, handleExportConfirm, handleExportPremiere,
   selectedStyleRefId, setSelectedStyleRefId,
   refreshReviews, audioReviews,
   importByPath, audioPackage,
@@ -86,11 +86,15 @@ export function useMcpServer({
   // MCP HTTP GET 요청을 위한 글로벌 접근자 등록
   useEffect(() => {
     window.__mcpOpenProject = (name) => handleProjectChange(name)
-    window.__mcpGetReferences = () => references.map(({ data, ...rest }) => rest)
+    window.__mcpGetReferences = () => references.map(({ data, ...rest }) => ({
+      ...rest,
+      hasData: !!data,
+      ready: isReferenceUploadedDone({ ...rest, data }),
+    }))
     window.__mcpGetScenes = () => scenes.map(({ image, videoT2V, videoI2V, ...rest }) => rest)
     // styleId override를 직접 받음 (전역 상태 setSelectedStyleRefId + setTimeout race 회피).
     // styleId 형식은 normalizeStyleId로 정규화됨 ('ref:*' / 'preset:*' / plain → 'preset:*' / null).
-    // 'auto' sentinel은 ref 컨텍스트에 의미 없음 (씬 매칭 부재) — null로 취급해 자연스러운 fallback 발동.
+    // 'auto' sentinel은 ref 컨텍스트에 의미 없음 (씬 매칭 부재) — caller-side fallback만 사용.
     //
     // styleId 생략 시 호출 측에서 findAutoStyle fallback을 미리 적용해 override로 전달.
     // 그래야 useReferenceGeneration 내부의 selectedStyleRefId(UI 선택값)에 끌려가지 않음 —
@@ -98,13 +102,14 @@ export function useMcpServer({
     window.__mcpGenerateRef = (index, styleId) => {
       if (styleId === 'auto') {
         console.warn('[MCP] generate-reference received styleId="auto"; ignored (refs have no per-scene matching). Falling back as if styleId were omitted.')
-        styleId = null
+        const effective = findAutoStyle(referencesRef.current) ?? 'none'
+        return handleGenerateRef(index, false, effective).catch(e => ({ success: false, error: e.message }))
       } else if (styleId === 'none') {
         // 'none' sentinel — pass through to handler. styleService.applyStyle/_resolveEffectiveStyleId
         // recognize 'none' and skip all style application (prompt + ref override).
         return handleGenerateRef(index, false, 'none').catch(e => ({ success: false, error: e.message }))
       }
-      const effective = normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current)
+      const effective = normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current) ?? 'none'
       return handleGenerateRef(index, false, effective).catch(e => ({ success: false, error: e.message }))
     }
     // styleId override (선택). 형식은 styleService와 동일.
@@ -161,8 +166,50 @@ export function useMcpServer({
           subtitleFontSize: options.subtitleFontSize || saved.subtitleFontSize || 8
         }
         // 3. handleExportConfirm 호출
-        await handleExportConfirm(exportOptions)
-        return { success: true, path: capcutProjectNumber }
+        const exportResult = await handleExportConfirm(exportOptions)
+        if (exportResult?.success === false) return exportResult
+        return { success: true, path: exportResult?.targetPath || capcutProjectNumber }
+      } catch (e) {
+        return { success: false, error: e.message }
+      }
+    }
+    window.__mcpExportPremiere = async (options = {}) => {
+      try {
+        // 0. audioPackage가 없으면 자동 로드
+        if (!audioPackage && options.audioFolderPath) {
+          const pkg = await importByPath(options.audioFolderPath)
+          if (!pkg) console.warn('[MCP Export] Audio import failed, continuing without audio')
+        }
+        // 1. 출력 폴더 경로 결정 (capcutProjectNumber 재사용 = .prproj 를 쓸 폴더).
+        //    명시 안 하면 CapCut 경로 자동 감지를 그대로 사용한다.
+        let capcutProjectNumber = options.capcutProjectNumber
+        if (!capcutProjectNumber) {
+          const pathResult = await window.electronAPI?.detectCapcutPath?.()
+          if (!pathResult?.success) return { success: false, error: 'Output path not detected' }
+          const numResult = await window.electronAPI?.getNextProjectNumber?.({ basePath: pathResult.basePath })
+          if (!numResult?.success) return { success: false, error: 'Cannot determine project number' }
+          const info = await window.electronAPI?.getSystemInfo?.()
+          const sep = info?.platform === 'darwin' ? '/' : '\\'
+          capcutProjectNumber = `${pathResult.basePath}${sep}${numResult.folderName}`
+        }
+        // 2. 저장된 export 설정 읽기
+        let saved = {}
+        try { saved = JSON.parse(localStorage.getItem('exportSettings') || '{}') } catch {}
+        const exportOptions = {
+          capcutProjectNumber,
+          scaleMode: options.scaleMode || saved.scaleMode || 'none',
+          kenBurns: options.kenBurns ?? saved.kenBurns ?? true,
+          kenBurnsMode: options.kenBurnsMode || saved.kenBurnsMode || 'random',
+          kenBurnsCycle: options.kenBurnsCycle || saved.kenBurnsCycle || 5,
+          kenBurnsScaleMin: (options.kenBurnsScaleMin || saved.kenBurnsScaleMin || 100) / 100,
+          kenBurnsScaleMax: (options.kenBurnsScaleMax || saved.kenBurnsScaleMax || 130) / 100,
+          subtitleOption: options.subtitleOption || (saved.includeSubtitle !== false ? 'ko' : 'none'),
+          subtitleFontSize: options.subtitleFontSize || saved.subtitleFontSize || 8
+        }
+        // 3. handleExportPremiere 호출
+        const exportResult = await handleExportPremiere(exportOptions)
+        if (exportResult?.success === false) return exportResult
+        return { success: true, path: exportResult?.targetPath || capcutProjectNumber }
       } catch (e) {
         return { success: false, error: e.message }
       }
@@ -178,8 +225,9 @@ export function useMcpServer({
       delete window.__mcpGetAudioReviews
       delete window.__mcpImportAudio
       delete window.__mcpExportCapcut
+      delete window.__mcpExportPremiere
     }
-  }, [references, scenes, handleGenerateRef, handleGenerateScene, selectedStyleRefId, refreshReviews, audioReviews, handleExportConfirm, importByPath, audioPackage])
+  }, [references, scenes, handleGenerateRef, handleGenerateScene, selectedStyleRefId, refreshReviews, audioReviews, handleExportConfirm, handleExportPremiere, importByPath, audioPackage])
 
   // MCP HTTP 서버에서 오는 데이터 업데이트 수신
   useEffect(() => {
@@ -425,13 +473,14 @@ export function useMcpServer({
         : (effective) => handleGenerateAllRefsRef.current?.(effective)
       const resolveEffective = () => {
         // 'auto'는 ref batch에 의미 없음 — null로 취급해 normalizeStyleId가 'preset:auto'로
-        // 잘못 wrap하지 않도록 한다 (silent fail 회피).
+        // 잘못 wrap하지 않도록 한다 (silent fail 회피). usable auto style 이 없으면
+        // 'none'을 넘겨 UI selectedStyleRefId 로 fallback하지 않게 한다.
         if (styleId === 'auto') {
           console.warn('[MCP] start-ref-batch received styleId="auto"; ignored (refs have no per-scene matching). Falling back as if styleId were omitted.')
-          return null
+          return findAutoStyle(referencesRef.current) ?? 'none'
         }
         if (styleId === 'none') return 'none'
-        return normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current)
+        return normalizeStyleId(styleId) ?? findAutoStyle(referencesRef.current) ?? 'none'
       }
 
       syncExplicitStyleId(styleId, { normalizeStyleId, setSelectedStyleRefId })

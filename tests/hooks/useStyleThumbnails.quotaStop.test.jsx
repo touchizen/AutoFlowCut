@@ -36,15 +36,15 @@ afterEach(() => {
 
 describe('useStyleThumbnails — custom-loop quota stop', () => {
   it('custom 루프 첫 ref 가 quota 면 stopped toast 노출, success toast 미노출', async () => {
-    // generateImageDOM 이 항상 quota 에러 반환.
-    const flowAPI = {
-      generateImageDOM: vi.fn().mockResolvedValue({
+    // generateImage 이 항상 quota 에러 반환.
+    const genAPI = {
+      generateImage: vi.fn().mockResolvedValue({
         success: false,
         error: 'Resource has been exhausted (e.g. check quota).',
       }),
     }
 
-    const { result } = renderHook(() => useStyleThumbnails(flowAPI))
+    const { result } = renderHook(() => useStyleThumbnails(genAPI))
 
     // custom 만 — preset 은 STYLE_PRESETS 빈 배열로 mock.
     await act(async () => {

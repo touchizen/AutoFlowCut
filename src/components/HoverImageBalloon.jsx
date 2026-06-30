@@ -13,9 +13,12 @@ import { computeBalloonPosition } from '../utils/balloonPosition'
  */
 export default function HoverImageBalloon({ anchorRect, src, className, alt = 'preview', imgClassName, children }) {
   if (!anchorRect) return null
-  // 풍선은 AutoCraft 앱 패널(.app-content-split) 안에만 머문다 — 패널 바깥 영역은
-  // 네이티브 Flow WebContentsView 가 깔려 있어 DOM 풍선이 그 뒤로 가려진다.
-  const panelEl = typeof document !== 'undefined' ? document.querySelector('.app-content-split') : null
+  // 풍선은 AutoCraft 앱 패널 안에만 머문다 — 패널 바깥 영역은 네이티브 Flow WebContentsView 가
+  // 깔려 있어 DOM 풍선이 그 뒤로 가려진다. Shell 은 모드에 따라 컨테이너 클래스가 다르다:
+  // API/full = .app-content-full, Flow split = .app-content-split (둘 중 하나만 렌더).
+  const panelEl = typeof document !== 'undefined'
+    ? document.querySelector('.app-content-split, .app-content-full')
+    : null
   const bounds = panelEl
     ? (() => {
         const r = panelEl.getBoundingClientRect()

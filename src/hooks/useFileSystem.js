@@ -665,6 +665,28 @@ export const fileSystemAPI = {
   },
 
   /**
+   * Atomically merge top-level keys into project.json (#R7-4).
+   * read-modify-write happens in main under a per-path write lock, so it does not
+   * clobber a concurrent autosave (saveProjectData). Only `patch` keys change.
+   */
+  async mergeProjectData(projectName, patch) {
+    try {
+      const workFolder = localStorage.getItem('workFolderPath')
+      if (!workFolder) {
+        return { success: false, error: 'not_set' }
+      }
+      return await window.electronAPI.mergeProjectData({
+        workFolder,
+        project: projectName,
+        patch
+      })
+    } catch (error) {
+      console.error('[FileSystem] Merge project data error:', error)
+      return { success: false, error: error.message }
+    }
+  },
+
+  /**
    * Load project data from project.json.
    */
   async loadProjectData(projectName) {

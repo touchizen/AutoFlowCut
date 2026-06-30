@@ -18,14 +18,9 @@ export const DEFAULTS = {
     retryCount: 2,         // 재시도 횟수
     delayMin: 2000,        // 최소 딜레이 (ms)
     delayMax: 5000,        // 최대 딜레이 (ms)
-    concurrency: 1,        // 항상 순차 (FlowView가 하나이므로)
-  },
-
-  // reCAPTCHA 차단 대응 (escalation)
-  recaptcha: {
-    waitTiersMs: [5 * 60 * 1000, 10 * 60 * 1000, 30 * 60 * 1000], // 1·2·3회 대기
-    maxIncidents: 3,          // 초과(4회+) 시 자동 재개 중단 → 수동
-    resetAfterScenes: 25,     // 재개 후 연속 성공 N씬 → incident 카운터 리셋
+    concurrency: 5,        // 이미지 동시 생성 기본 (1~15)
+    videoConcurrency: 4,   // 비디오 동시 생성 기본 (1~10)
+    flowAgentOn: false,    // Flow Agent(Maps 그라운딩) 모드 — 기본 OFF(직접 API 경로)
   },
 
   // API 엔드포인트 (Flow AI)
@@ -56,18 +51,16 @@ export const DEFAULTS = {
     },
     payload: {
       tool: 'PINHOLE',     // clientContext.tool for Flow
-      recaptchaKey: '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV',
-      recaptchaAction: 'generate',
     },
     // 이미지 모델
     imageModels: [
       { value: 'GEM_PIX_2', label: 'Nano Banana 2 (Default)' },
       { value: 'IMAGEN_4', label: 'Imagen 4' },
     ],
-    // 비디오 모델 (v2 API model keys)
+    // 비디오 모델 (공식 generativelanguage Veo 모델명)
     videoModels: [
-      { value: 'veo_3_1_t2v_fast_ultra_relaxed', label: 'Veo 3.1 Fast' },
-      { value: 'veo_3_1_t2v_quality_ultra_relaxed', label: 'Veo 3.1 Quality' },
+      { value: 'veo-3.1-fast-generate-preview', label: 'Veo 3.1 Fast' },
+      { value: 'veo-3.1-generate-preview', label: 'Veo 3.1 Quality' },
     ],
     // 비디오 업스케일 모델 (AutoFlow 10.7.58 역공학)
     upscaleModels: {
@@ -100,6 +93,7 @@ export const DEFAULTS = {
 export const RESOURCE = {
   SCENES: 'scenes',
   REFERENCES: 'references',
+  FRAMES: 'frames', // F2V 디스크 업로드 프레임 (gallery::local-*) 영속 저장
 }
 
 export const REFERENCE_TYPES = [
@@ -132,8 +126,6 @@ export const TIMING = {
   SETTINGS_HIGHLIGHT: 3000,
   AUTH_ERROR_TOAST: 6000,
   VIDEO_POLL_INTERVAL: 10000,      // 비디오 상태 폴링 간격
-  VIDEO_SUBMIT_MIN_DELAY: 7000,    // 제출 간 최소 대기 (ms)
-  VIDEO_SUBMIT_MAX_DELAY: 15000,   // 제출 간 최대 대기 (ms)
   VIDEO_MAX_POLL_COUNT: 120,       // 최대 폴링 횟수 (120 × 10초 = 20분)
   UPSCALE_POLL_INTERVAL: 2000,     // 업스케일 폴링 간격 (ms)
   UPSCALE_MAX_POLL_COUNT: 90,      // 업스케일 최대 폴링 (90 × 2초 = 3분)

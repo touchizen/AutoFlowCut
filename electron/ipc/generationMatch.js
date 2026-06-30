@@ -16,6 +16,8 @@
  * gen 은 등록 시 promptKey / refMediaIds / reqSeed / reqAspectRatio 를 저장한다.
  */
 
+import { isStaleResponse } from '../flow-generation-timeout.js'
+
 // 문자열이 JSON body 안에 들어갔을 때의 표현 (바깥 따옴표 제거).
 function escapeForJsonBody(s) {
   return JSON.stringify(s).slice(1, -1)
@@ -25,6 +27,8 @@ function escapeForJsonBody(s) {
 // 앞뒤 따옴표까지 포함해 검색 → 부분문자열 오매칭 방지 + 필드명 무관.
 function promptInBody(promptKey, requestBody) {
   if (typeof promptKey !== 'string' || promptKey.length === 0) return false
+  // R14-P2: requestBody 가 string 이 아니면(flow-page-injection 이 body 미상 시 null 전달) crash 방지.
+  if (typeof requestBody !== 'string') return false
   return requestBody.includes('"' + escapeForJsonBody(promptKey) + '"')
 }
 
@@ -82,6 +86,43 @@ function signatureMatches(gen, sig) {
   if (gen.reqSeed != null && sig.seed != null && gen.reqSeed !== sig.seed) return false
   if (gen.reqAspectRatio != null && sig.aspectRatio != null && gen.reqAspectRatio !== sig.aspectRatio) return false
   return true
+}
+
+/**
+ * R13-P1: batchGenerateImages 응답을 sync(pendingGeneration) vs async(pendingGenerations)
+ *   중 어디로 보낼지 라우팅.
+ *
+ * 기존엔 report-response 가 sync 를 먼저 봤다 → async 배치 대기 중 thumbnail 같은 sync 생성이
+ * 활성이면, async 배치 응답이 sync 분기에 붙거나(또는 stale 로 drop) async matcher 까지 못 갔다.
+ * async matcher 는 requestBody(prompt/refs/seed) 로 정확 매칭하므로 async 를 먼저 본다.
+ *
+ * ⚠️ sync 가 "동시에" 활성일 때는 async 의 "미완료 1개 fallback"(prompt 미일치인데 유일 gen 이라
+ *   매칭)이 sync 응답을 가로챌 수 있으므로, 그 경우엔 **엄격 prompt 일치**일 때만 async 로 본다.
+ *   sync 가 없으면(async-only) 기존 fallback 동작을 그대로 유지한다.
+ *
+ * @returns {{target:'async', matchId}|{target:'sync'}|{target:'drop'}}
+ */
+export function routeBatchImageResponse({ hasSyncPending, syncSetAt, pendingGenerations, requestBody, reqStartedAt }) {
+  const asyncActive = pendingGenerations && pendingGenerations.size > 0
+  if (asyncActive) {
+    // R13/R14-P1: 이 응답의 prompt 가 async gen(완료분 포함) 중 하나와 일치하면 'async 영역' 응답이다.
+    //   → 미완료 gen 에 매칭되면 async, "완료분 중복(늦은 응답)"이면 drop. 절대 sync 로 흘리지 않는다
+    //   (matchGenerationForResponse 가 완료분 중복에 null 을 주는데, 그 null 을 sync fall-through 로
+    //    오해하면 thumbnail 같은 sync 생성에 남의 늦은 응답이 붙는다 — fail-closed).
+    const belongsToAsync = [...pendingGenerations].some(([, g]) => promptInBody(g?.promptKey, requestBody))
+    if (belongsToAsync) {
+      const matchId = matchGenerationForResponse(pendingGenerations, requestBody)
+      return matchId ? { target: 'async', matchId } : { target: 'drop' }
+    }
+    // prompt 가 어느 async gen 과도 무관(또는 body 미상): 1-incomplete fallback 은 sync 가 동시
+    //   활성이 아닐 때(async-only)만 허용 — sync 동시 시 fallback 이 sync 응답 가로채는 것 차단.
+    if (!hasSyncPending) {
+      const matchId = matchGenerationForResponse(pendingGenerations, requestBody)
+      if (matchId) return { target: 'async', matchId }
+    }
+  }
+  if (hasSyncPending && !isStaleResponse(reqStartedAt, syncSetAt)) return { target: 'sync' }
+  return { target: 'drop' }
 }
 
 export function matchGenerationForResponse(pendingGenerations, requestBody) {

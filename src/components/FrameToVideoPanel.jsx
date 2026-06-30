@@ -462,9 +462,11 @@ export default function FrameToVideoPanel({
   onSceneVideoPromptUpdate,  // video 모드 input 편집을 scene.videoT2VPrompt 로 라우팅 (단일 진실 소스 = T2V prompt)
   onShowSceneDetail, onVideoRetry, disabled, t, galleryItems, galleryLoading, onLoadGallery,
   onUploadFromDisk, onListFlowProjects, onFetchProjectGallery, onPickArchiveImage,
+  hasFlowArchive = false,
   seedNo = null, seedLocked = false, onSeedChange, onSeedLockToggle, onSeedRandom,
   onRequestNewScene,
   onRequestSceneTrim,
+  endImageDisabled = false,  // OmniFlash 는 종료프레임 미지원 → End Image 선택 비활성화
 }) {
   const showSeedUI = typeof onSeedChange === 'function'
   const handleSeedInputChange = (e) => {
@@ -476,9 +478,10 @@ export default function FrameToVideoPanel({
     if (Number.isFinite(num)) onSeedChange?.(num)
   }
 
-  // mediaId 있는 씬만 드롭다운에 표시
+  // 생성 이미지가 있는 씬만 드롭다운에 표시.
+  // cloud(Veo): imagePath(디스크)/image(메모리) 기준. legacy Flow: mediaId 도 허용.
   const availableScenes = useMemo(
-    () => scenes.filter(s => s.mediaId),
+    () => scenes.filter(s => s.mediaId || s.imagePath || s.image),
     [scenes]
   )
 
@@ -673,15 +676,19 @@ export default function FrameToVideoPanel({
     return `#${idx} ${scene.prompt?.substring(0, 25) || scene.id}`
   }
 
+  // §3.1.2: archive 버튼은 hasFlowArchive=true (Flow 모드)일 때만 표시.
+  const archiveListProjects = hasFlowArchive ? onListFlowProjects : undefined
+  const archiveFetchGallery = hasFlowArchive ? onFetchProjectGallery : undefined
+
   if (availableScenes.length === 0 && framePairs.length === 0) {
     return (
       <div className="video-panel-empty">
         <p>🎞️ {t('frameToVideo.noScenesWithMedia')}</p>
-        {(onUploadFromDisk || onListFlowProjects) && (
+        {(onUploadFromDisk || archiveListProjects) && (
           <EmptyStateUpload
             onUploadFromDisk={onUploadFromDisk}
-            onListFlowProjects={onListFlowProjects}
-            onFetchProjectGallery={onFetchProjectGallery}
+            onListFlowProjects={archiveListProjects}
+            onFetchProjectGallery={archiveFetchGallery}
             disabled={disabled}
             onAdded={(item) => {
               // archive에서 픽한 항목이면 galleryItems에도 추가 (트리거 라벨 렌더용)
@@ -771,19 +778,19 @@ export default function FrameToVideoPanel({
                 galleryLoading={galleryLoading}
                 onLoadGallery={onLoadGallery}
                 onUploadFromDisk={onUploadFromDisk}
-                onListFlowProjects={onListFlowProjects}
-                onFetchProjectGallery={onFetchProjectGallery}
+                onListFlowProjects={archiveListProjects}
+                onFetchProjectGallery={archiveFetchGallery}
                 onPickArchiveImage={onPickArchiveImage}
               />
             </div>
 
-            {/* End Image 드롭다운 */}
-            <div className="mapping-col col-image">
+            {/* End Image 드롭다운 — OmniFlash 는 종료프레임 미지원이라 비활성화 */}
+            <div className="mapping-col col-image" title={endImageDisabled ? (t('frameToVideo.omniNoEndImage') || 'OmniFlash는 종료 프레임을 지원하지 않습니다') : undefined}>
               <SceneSelect
-                value={pair.endSceneId}
+                value={endImageDisabled ? '' : pair.endSceneId}
                 onChange={(val) => updatePair(index, 'endSceneId', val)}
-                placeholder={t('frameToVideo.noEndImage')}
-                disabled={disabled || pair.status === 'generating'}
+                placeholder={endImageDisabled ? (t('frameToVideo.omniNoEndImage') || 'OmniFlash 미지원') : t('frameToVideo.noEndImage')}
+                disabled={disabled || pair.status === 'generating' || endImageDisabled}
                 options={availableScenes}
                 getLabel={getSceneLabel}
                 onThumbClick={(sceneId) => {
@@ -794,8 +801,8 @@ export default function FrameToVideoPanel({
                 galleryLoading={galleryLoading}
                 onLoadGallery={onLoadGallery}
                 onUploadFromDisk={onUploadFromDisk}
-                onListFlowProjects={onListFlowProjects}
-                onFetchProjectGallery={onFetchProjectGallery}
+                onListFlowProjects={archiveListProjects}
+                onFetchProjectGallery={archiveFetchGallery}
                 onPickArchiveImage={onPickArchiveImage}
               />
             </div>

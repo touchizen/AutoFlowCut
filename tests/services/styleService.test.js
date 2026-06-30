@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { previewStyleMatching, normalizeStyleId, findAutoStyle } from '../../src/services/styleService'
+import {
+  previewStyleMatching,
+  normalizeStyleId,
+  findAutoStyle,
+  findAutoPromptStyle,
+  isStyleReference,
+} from '../../src/services/styleService'
 
 describe('previewStyleMatching', () => {
   it('returns empty matches for no scenes', () => {
@@ -81,6 +87,15 @@ describe('previewStyleMatching', () => {
     ])
   })
 
+  it('matches style refs that only carry a style category', () => {
+    const scenes = [{ id: 1, style_tag: 'Noir' }]
+    const refs = [{ id: 10, category: 'MEDIA_CATEGORY_STYLE', name: 'noir', prompt: 'noir' }]
+    const result = previewStyleMatching(scenes, refs)
+    expect(result.matches).toEqual([
+      { sceneId: 1, styleName: 'noir', source: 'ref' }
+    ])
+  })
+
   it('handles multi-tag style_tag (comma/semicolon/colon split)', () => {
     const scenes = [
       { id: 1, style_tag: 'noir, cinematic' },
@@ -109,21 +124,27 @@ describe('previewStyleMatching', () => {
     expect(result.matches[0]).toMatchObject({ sceneId: 1, source: 'ref' })
   })
 
-  it('does not match style ref without prompt OR mediaId (truly empty)', () => {
+  it('does not match style ref without prompt or GenAI-readable image source', () => {
     // Production applies a style ref via either prompt (resolveSceneStyle)
-    // or mediaId (image ref injection). Refs with neither contribute nothing.
+    // or a resolver-readable image source. Refs with neither contribute nothing.
     const scenes = [{ id: 1, style_tag: '내 시그니처' }]
-    const refs = [{ id: 10, type: 'style', name: '내 시그니처' /* no prompt, no mediaId */ }]
+    const refs = [{ id: 10, type: 'style', name: '내 시그니처' /* no prompt, no image source */ }]
     const result = previewStyleMatching(scenes, refs)
     expect(result.matches).toEqual([])
     expect(result.unmatched).toEqual([1])
   })
 
-  it('matches image-only style ref (mediaId without prompt)', () => {
-    // Production injects image refs by mediaId even when prompt is empty.
-    // Preview must reflect this so users who only upload an image see the match.
+  it('does not match legacy mediaId-only style ref in GenAI mode', () => {
     const scenes = [{ id: 1, style_tag: '내 누아르' }]
     const refs = [{ id: 10, type: 'style', name: '내 누아르', mediaId: 'm-abc' /* no prompt */ }]
+    const result = previewStyleMatching(scenes, refs)
+    expect(result.matches).toEqual([])
+    expect(result.unmatched).toEqual([1])
+  })
+
+  it('matches API image-only style ref (filePath without prompt/mediaId)', () => {
+    const scenes = [{ id: 1, style_tag: '내 누아르' }]
+    const refs = [{ id: 10, type: 'style', name: '내 누아르', filePath: '/refs/noir.png' }]
     const result = previewStyleMatching(scenes, refs)
     expect(result.matches).toEqual([
       { sceneId: 1, styleName: '내 누아르', source: 'ref' }
@@ -206,9 +227,9 @@ describe('findAutoStyle', () => {
     expect(findAutoStyle([{ id: 1, type: 'character', mediaId: 'm-1' }])).toBeNull()
   })
 
-  it('finds style ref with mediaId', () => {
+  it('ignores legacy mediaId-only style refs', () => {
     const refs = [{ id: 10, type: 'style', mediaId: 'm-10' }]
-    expect(findAutoStyle(refs)).toBe('ref:10')
+    expect(findAutoStyle(refs)).toBeNull()
   })
 
   it('finds style ref with prompt only (no mediaId) — production parity', () => {
@@ -219,7 +240,17 @@ describe('findAutoStyle', () => {
     expect(findAutoStyle(refs)).toBe('ref:20')
   })
 
-  it('returns null for style refs with neither prompt nor mediaId (truly empty)', () => {
+  it('finds API image-only style ref with name + filePath', () => {
+    const refs = [{ id: 25, type: 'style', name: 'saved-style', filePath: '/refs/style.png' }]
+    expect(findAutoStyle(refs)).toBe('ref:25')
+  })
+
+  it('finds filePath-only style refs that the API resolver can read', () => {
+    const refs = [{ id: 26, type: 'style', filePath: '/refs/style.png' }]
+    expect(findAutoStyle(refs)).toBe('ref:26')
+  })
+
+  it('returns null for style refs with neither prompt nor GenAI-readable image source', () => {
     const refs = [{ id: 30, type: 'style', name: 'placeholder' }]
     expect(findAutoStyle(refs)).toBeNull()
   })
@@ -231,5 +262,32 @@ describe('findAutoStyle', () => {
       { id: 3, type: 'style', mediaId: 'm-3' },
     ]
     expect(findAutoStyle(refs)).toBe('ref:2')
+  })
+})
+
+describe('findAutoPromptStyle', () => {
+  it('finds prompt style refs for video text auto style', () => {
+    const refs = [{ id: 20, type: 'style', name: 'noir', prompt: 'noir vibes' }]
+    expect(findAutoPromptStyle(refs)).toBe('ref:20')
+  })
+
+  it('ignores image-only style refs because Veo cannot consume style images', () => {
+    const refs = [{ id: 25, type: 'style', name: 'saved-style', filePath: '/refs/style.png' }]
+    expect(findAutoPromptStyle(refs)).toBeNull()
+  })
+
+  it('recognizes style category without type', () => {
+    const refs = [{ id: 30, category: 'MEDIA_CATEGORY_STYLE', prompt: 'category style' }]
+    expect(findAutoPromptStyle(refs)).toBe('ref:30')
+  })
+})
+
+describe('isStyleReference', () => {
+  it('recognizes type and category style variants', () => {
+    expect(isStyleReference({ type: 'style' })).toBe(true)
+    expect(isStyleReference({ category: 'style' })).toBe(true)
+    expect(isStyleReference({ category: 'MEDIA_CATEGORY_STYLE' })).toBe(true)
+    expect(isStyleReference({ referenceType: 'style' })).toBe(true)
+    expect(isStyleReference({ type: 'character', category: 'MEDIA_CATEGORY_SUBJECT' })).toBe(false)
   })
 })

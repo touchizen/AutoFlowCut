@@ -1,0 +1,39 @@
+/* src/components/ModeSelector.css */
+.mode-selector {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-primary, #1e1e1e);
+  z-index: 1000;
+}
+.mode-selector-inner { text-align: center; max-width: 720px; padding: 24px; }
+.mode-selector-title { font-size: 1.6rem; margin: 0 0 8px; color: var(--text-color, #eee); }
+.mode-selector-sub { margin: 0 0 28px; color: var(--text-secondary, #999); }
+.mode-selector-cards { display: flex; gap: 20px; justify-content: center; flex-wrap: wrap; }
+.mode-card {
+  display: flex; flex-direction: column; gap: 8px;
+  width: 280px; padding: 28px 24px;
+  border: 1px solid var(--border-color, #3a3a3a);
+  border-radius: 12px;
+  background: var(--bg-secondary, #2a2a2a);
+  color: var(--text-color, #eee);
+  cursor: pointer; text-align: left; transition: border-color .15s, transform .1s;
+}
+.mode-card:hover { border-color: var(--primary-color, #6c8cff); transform: translateY(-2px); }
+.mode-card-name { font-size: 1.15rem; font-weight: 600; }
+.mode-card-desc { font-size: .9rem; color: var(--text-secondary, #999); }
+.mode-card-feats {
+  list-style: none; margin: 8px 0 0; padding: 0;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.mode-card-feats li {
+  font-size: .82rem; line-height: 1.35; color: var(--text-color, #ddd);
+  white-space: pre-line; /* extra 항목의 \n 줄바꿈 표시 (무료)/유료) 라인) */
+}
+
+/* 우상단 언어 선택 — 첫 화면에서도 자기 언어로 읽을 수 있게 */
+.mode-selector-lang {
+  position: absolute; top: 20px; right: 20px;
+}

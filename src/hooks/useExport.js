@@ -11,21 +11,13 @@ import { useState } from 'react'
 import { fileSystemAPI } from './useFileSystem'
 import { toast } from '../components/Toast'
 import useI18n from './useI18n'
-import { resolveExportMediaChoice, hasExportableMedia, getExportFilePaths } from '../utils/sceneMedia'
+import { resolveExportVideos, hasExportableMedia, getExportFilePaths } from '../utils/sceneMedia'
 import { pruneSrtTrackToScenes, rebaseSrtTrackToScenes } from '../utils/srtTrack'
+import { isSceneGenerationDone } from '../services/generationStatus'
+import { normalizeExportFormat, EXPORT_FORMATS } from '../utils/exportFormat'
 
-/**
- * Export 미디어를 실제 data/path 와 함께 반환.
- * choice 결정은 SceneList 와 공용 utility 에 위임하여 시각/실제 export 의
- * 일관성을 보장한다.
- */
-function resolveExportMedia(scene) {
-  const choice = resolveExportMediaChoice(scene)
-  if (choice === 'i2v')
-    return { type: 'video', data: scene.videoI2V, path: scene.videoI2VPath }
-  if (choice === 't2v')
-    return { type: 'video', data: scene.videoT2V, path: scene.videoT2VPath }
-  return { type: 'image', data: scene.image, path: scene.imagePath }
+function isExportableScene(scene) {
+  return isSceneGenerationDone(scene) && hasExportableMedia(scene)
 }
 
 export function useExport({
@@ -47,10 +39,19 @@ export function useExport({
   const [showExportModal, setShowExportModal] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [exportPhase, setExportPhase] = useState(null) // 'saving' | 'launching' | null
+  // 마지막 선택 포맷 — split 진입 버튼 본체 동작/문구 + 모달 초기 탭에 사용. localStorage 영속.
+  const [exportFormat, setExportFormat] = useState(() => {
+    try { return normalizeExportFormat(localStorage.getItem('lastExportFormat')) } catch { return 'capcut' }
+  })
 
-  // Handle export button click - open modal
-  const handleExportClick = () => {
-    const validScenes = scenes.filter(hasExportableMedia)
+  // Handle export button click - open modal.
+  // split 드롭다운/본체에서 유효 포맷을 넘기면 기억(없거나 깨진 값이면 기존 유지).
+  const handleExportClick = (format) => {
+    if (EXPORT_FORMATS.includes(format)) {
+      setExportFormat(format)
+      try { localStorage.setItem('lastExportFormat', format) } catch {}
+    }
+    const validScenes = scenes.filter(isExportableScene)
     if (validScenes.length === 0) {
       toast.warning(t('toast.noGeneratedImages'))
       return
@@ -94,9 +95,85 @@ export function useExport({
     setShowExportModal(true)
   }
 
+  // CapCut / Premiere 공통 — exporter 가 기대하는 project 구조 빌드.
+  // 이미지 트랙(기본) + 영상 트랙(선택) 분리 구조. handleExportConfirm /
+  // handleExportPremiere 가 동일한 cloudRequest 를 만들도록 한 곳에 모음.
+  const buildExportProject = (validScenes) => {
+    if (!settings.projectName) {
+      console.warn('[useExport] settings.projectName missing — falling back to "Untitled"')
+    }
+    return {
+      name: settings.projectName || 'Untitled',
+      // 'portrait' / 'landscape' — GCF가 기대하는 값.
+      format: settings.aspectRatio === '9:16' ? 'portrait' : 'landscape',
+      // Phase 5 + R1 + R8 review fix: srtTrack 을 validScenes 순서로 rebase.
+      srtTrack: rebaseSrtTrackToScenes(
+        pruneSrtTrackToScenes(srtTrack, validScenes, { preserveUnlinked: true }),
+        validScenes,
+        { preserveUnlinked: true }
+      ),
+      // P1 review fix: prune/rebase 전 원본 srtTrack 도 보존.
+      rawSrtTrack: srtTrack,
+      scenes: validScenes.map(s => {
+        const sceneDuration = s.duration || settings.defaultDuration || 3
+        const videos = resolveExportVideos(s).map(v => ({
+          source: v.source,
+          path: v.path || v.data,
+          duration: v.duration || sceneDuration || 0,
+        }))
+
+        return {
+          id: s.id,
+          // ── 이미지 (항상 존재) ──
+          media_type: 'image',
+          media_path: s.imagePath || s.image,
+          image_path: s.imagePath || s.image,
+          image_fallback: s.image,
+          image_duration: sceneDuration,
+          image_size: s.image_size || null,
+          // ── 영상 (0~2개, 하이브리드: i2v 앞 / t2v 뒤) ──
+          videos,
+          // ── 자막 ──
+          subtitle_ko: s.subtitle || '',
+          subtitle_en: s.subtitle_en || '',
+          subtitle: s.subtitle || '',
+          title: s.title || ''
+        }
+      }),
+      videos: [
+        // T2V 비디오 (videoScenes)
+        ...videoScenes
+          .filter(vs => (vs.status === 'done' || vs.status === 'complete') && (vs.video || vs.videoPath))
+          .map(vs => ({
+            id: vs.id,
+            video_path: vs.videoPath || vs.video,
+            prompt: vs.prompt || '',
+            source: 't2v',
+          })),
+        // F→V 비디오 (framePairs)
+        ...framePairs
+          .filter(p => p.status === 'complete' && (p.base64 || p.videoPath))
+          .map(p => ({
+            id: p.id,
+            video_path: p.videoPath || p.base64,
+            scene_id: p.ownerSceneId || null,
+            from_scene: p.startSceneId || null,
+            to_scene: p.endSceneId || null,
+            prompt: p.prompt || '',
+            source: 'i2v',
+          })),
+      ]
+    }
+  }
+
   // Handle export confirm from modal
   const handleExportConfirm = async ({ capcutProjectNumber, scaleMode, kenBurns, kenBurnsMode, kenBurnsCycle, kenBurnsScaleMin, kenBurnsScaleMax, subtitleOption, subtitleFontSize }) => {
-    const validScenes = scenes.filter(hasExportableMedia)
+    const validScenes = scenes.filter(isExportableScene)
+    if (validScenes.length === 0) {
+      toast.warning(t('toast.noGeneratedImages'))
+      setShowExportModal(false)
+      return { success: false, error: t('toast.noGeneratedImages') }
+    }
 
     // 디스크 read 권한이 필요한 파일 경로가 하나라도 있으면 사전에 권한 확인.
     // image / video(T2V/I2V) path 모두 포함 — 영상만 path-backed 인 케이스에서
@@ -108,7 +185,7 @@ export function useExport({
         toast.warning(t('toast.filePermissionRequired'))
         setShowExportModal(false)
         openSettings('storage')
-        return
+        return { success: false, error: t('toast.filePermissionRequired') }
       }
     }
 
@@ -118,87 +195,8 @@ export function useExport({
       // dynamic import로 코드 스플리팅
       const { exportCapcut } = await import('../exporters/capcut.js')
 
-      // capcut.js가 기대하는 project 구조로 변환
-      // 이미지 트랙(기본) + 영상 트랙(선택) 분리 구조
-      if (!settings.projectName) {
-        console.warn('[useExport] settings.projectName missing — falling back to "Untitled"')
-      }
-      const project = {
-        name: settings.projectName || 'Untitled',
-        // 'portrait' / 'landscape' — GCF(whisk2capcut functions/index.js)가 기대하는 값.
-        // format === 'portrait' 일 때만 canvas_config 를 1080x1920(9:16)로 잡는다.
-        // (예전 'short' 값은 GCF 가 인식 못 해 9:16 프로젝트도 16:9 draft 로 나왔음)
-        format: settings.aspectRatio === '9:16' ? 'portrait' : 'landscape',
-        // Phase 5 + R1 + R8 review fix: srtTrack 을 validScenes 순서로 rebase.
-        // - prune (validScenes 가 가리키는 라인만)
-        // - rebase (cumulative 누적 timeline 으로 시간 재작성)
-        // capcutCloud 의 visual track 은 sequential cumulativeTime + image_duration
-        // 누적이라 srtTrack 의 절대 시간 그대로 보내면 자막/이미지 drift.
-        srtTrack: rebaseSrtTrackToScenes(
-          pruneSrtTrackToScenes(srtTrack, validScenes, { preserveUnlinked: true }),
-          validScenes,
-          { preserveUnlinked: true }
-        ),
-        // P1 review fix: prune/rebase 전 원본 srtTrack 도 보존. GCF subtitle
-        // segment 가 사용자 import SRT 의 원본 timing 으로 박히도록 capcutCloud
-        // 가 이걸 srtEntries 로 변환해 보냄. validScenes 가 이미지 없는 orphan
-        // scene 을 제외해서 그 scene 의 srtLineIds 가 가리키던 자막 라인이 prune
-        // 으로 죽는 회귀 (예: 자막교체 7→10 의 8~10 라인) 회피.
-        rawSrtTrack: srtTrack,
-        scenes: validScenes.map(s => {
-          const sceneDuration = s.duration || settings.defaultDuration || 3
-          const video = resolveExportMedia(s)
-          const hasVideo = video.type === 'video' && (video.path || video.data)
-          // Fallback chain: explicit video duration → scene duration (typical 3s default).
-          // Protects against onLoadedMetadata race — user clicks Export before SceneList mounts
-          // the <video> element that would normally populate video{T2V,I2V}Duration.
-          const videoDuration = hasVideo ? (s.videoT2VDuration || s.videoI2VDuration || sceneDuration || 0) : 0
-
-          return {
-            id: s.id,
-            // ── 이미지 (항상 존재) ──
-            media_type: 'image',
-            media_path: s.imagePath || s.image,
-            image_path: s.imagePath || s.image,
-            image_fallback: s.image,
-            image_duration: sceneDuration,
-            image_size: s.image_size || null,
-            // ── 영상 (선택적, 씬 뒤쪽 배치) ──
-            video_path: hasVideo ? (video.path || video.data) : null,
-            video_duration: videoDuration,
-            // ── 자막 ──
-            subtitle_ko: s.subtitle || '',
-            subtitle_en: s.subtitle_en || '',
-            subtitle: s.subtitle || '',
-            title: s.title || ''
-          }
-        }),
-        videos: [
-          // T2V 비디오 (videoScenes)
-          ...videoScenes
-            .filter(vs => (vs.status === 'done' || vs.status === 'complete') && (vs.video || vs.videoPath))
-            .map(vs => ({
-              id: vs.id,
-              video_path: vs.videoPath || vs.video,
-              prompt: vs.prompt || '',
-              source: 't2v',
-            })),
-          // F→V 비디오 (framePairs)
-          ...framePairs
-            .filter(p => p.status === 'complete' && (p.base64 || p.videoPath))
-            .map(p => ({
-              id: p.id,
-              video_path: p.videoPath || p.base64,
-              // scene_id = canonical binding (which scene this video belongs to in the timeline).
-              // from_scene/to_scene = informational (which images bookend the motion).
-              scene_id: p.ownerSceneId || null,
-              from_scene: p.startSceneId || null,
-              to_scene: p.endSceneId || null,
-              prompt: p.prompt || '',
-              source: 'i2v',
-            })),
-        ]
-      }
+      // capcut.js가 기대하는 project 구조로 변환 (CapCut/Premiere 공통 빌더)
+      const project = buildExportProject(validScenes)
 
       console.log('[Export] settings.aspectRatio:', settings.aspectRatio, '→ format:', project.format)
       console.log('[Export] First scene data:', {
@@ -260,8 +258,179 @@ export function useExport({
 
       // 내보내기 성공 — Store 평점 유도 카운터 증가 (모달 트리거는 호출측에서 판단)
       onExportSuccess?.()
+      return { success: true, targetPath: result.targetPath }
     } catch (error) {
       toast.error(t('toast.exportFailed', { error: error.message }))
+      return { success: false, error: error.message }
+    } finally {
+      setExporting(false)
+      setExportPhase(null)
+    }
+  }
+
+  // Handle Premiere export (mirror of handleExportConfirm).
+  // capcutProjectNumber 는 .prproj 를 쓸 출력 폴더 경로로 재사용된다.
+  // Premiere 자막은 XML 에 embed 되므로 SRT sidecar / 앱 실행 단계는 없다.
+  const handleExportPremiere = async ({ capcutProjectNumber, scaleMode, kenBurns, kenBurnsMode, kenBurnsCycle, kenBurnsScaleMin, kenBurnsScaleMax, subtitleOption, subtitleFontSize }) => {
+    const validScenes = scenes.filter(isExportableScene)
+    if (validScenes.length === 0) {
+      toast.warning(t('toast.noGeneratedImages'))
+      setShowExportModal(false)
+      return { success: false, error: t('toast.noGeneratedImages') }
+    }
+
+    // 디스크 read 권한이 필요한 파일 경로가 하나라도 있으면 사전에 권한 확인.
+    const hasFilePaths = validScenes.some(s => getExportFilePaths(s).length > 0)
+    if (hasFilePaths) {
+      const permission = await fileSystemAPI.ensurePermission()
+      if (!permission.hasPermission) {
+        toast.warning(t('toast.filePermissionRequired'))
+        setShowExportModal(false)
+        openSettings('storage')
+        return { success: false, error: t('toast.filePermissionRequired') }
+      }
+    }
+
+    setExporting(true)
+    setExportPhase('saving')
+    try {
+      const { exportPremiere } = await import('../exporters/premiere.js')
+      const project = buildExportProject(validScenes)
+
+      console.log('[Export] Premiere — aspectRatio:', settings.aspectRatio, '→ format:', project.format)
+
+      // Desktop: exportPremiere 는 .prproj 를 디스크에 직접 쓰고 { success, targetPath } 반환
+      const result = await exportPremiere(project, {
+        scaleMode,
+        capcutProjectNumber,
+        kenBurns,
+        kenBurnsMode,
+        kenBurnsCycle,
+        kenBurnsScaleMin,
+        kenBurnsScaleMax,
+        subtitleOption,
+        subtitleFontSize,
+        audioPackage
+      })
+
+      if (!result.success) {
+        throw new Error(result.error || 'Export failed')
+      }
+
+      toast.success(t('toast.premiereSaveComplete'), 5000)
+
+      // Premiere Pro 로 .prproj 열기 (CapCut 의 앱 실행 단계 미러).
+      setExportPhase('launching')
+      if (window.electronAPI?.openPremiereProject) {
+        try {
+          const open = await window.electronAPI.openPremiereProject({ targetPath: result.targetPath })
+          if (open?.success) {
+            toast.info(t('toast.premiereLaunched'), 5000)
+          } else {
+            toast.warning(t('toast.premiereLaunchFailed'), 6000)
+          }
+        } catch (openError) {
+          console.warn('[Export] Failed to open Premiere:', openError)
+          toast.warning(t('toast.premiereLaunchFailed'), 6000)
+        }
+      }
+
+      await new Promise(r => setTimeout(r, 1500))
+      setShowExportModal(false)
+
+      // export quota 재조회 (CapCut 과 동일 — GCF 가 exportCount 증가 처리).
+      if (refreshSubscription) {
+        try {
+          await refreshSubscription()
+        } catch (refreshError) {
+          console.warn('[Export] Failed to refresh subscription after export:', refreshError)
+        }
+      }
+
+      onExportSuccess?.()
+      return { success: true, targetPath: result.targetPath }
+    } catch (error) {
+      toast.error(t('toast.exportFailed', { error: error.message }))
+      return { success: false, error: error.message }
+    } finally {
+      setExporting(false)
+      setExportPhase(null)
+    }
+  }
+
+  // Handle Vrew export (local generator + local zip packaging).
+  // capcutProjectNumber 는 .vrew 를 쓸 출력 폴더 경로로 재사용된다.
+  const handleExportVrew = async ({ capcutProjectNumber, scaleMode, kenBurns, kenBurnsMode, kenBurnsCycle, kenBurnsScaleMin, kenBurnsScaleMax, subtitleOption, subtitleFontSize }) => {
+    const validScenes = scenes.filter(isExportableScene)
+    if (validScenes.length === 0) {
+      toast.warning(t('toast.noGeneratedImages'))
+      setShowExportModal(false)
+      return { success: false, error: t('toast.noGeneratedImages') }
+    }
+
+    const hasFilePaths = validScenes.some(s => getExportFilePaths(s).length > 0)
+    if (hasFilePaths) {
+      const permission = await fileSystemAPI.ensurePermission()
+      if (!permission.hasPermission) {
+        toast.warning(t('toast.filePermissionRequired'))
+        setShowExportModal(false)
+        openSettings('storage')
+        return { success: false, error: t('toast.filePermissionRequired') }
+      }
+    }
+
+    setExporting(true)
+    setExportPhase('saving')
+    try {
+      const { exportVrew } = await import('../exporters/vrew.js')
+      const project = buildExportProject(validScenes)
+
+      console.log('[Export] Vrew — aspectRatio:', settings.aspectRatio, '→ format:', project.format)
+
+      const result = await exportVrew(project, {
+        scaleMode,
+        capcutProjectNumber,
+        kenBurns,
+        kenBurnsMode,
+        kenBurnsCycle,
+        kenBurnsScaleMin,
+        kenBurnsScaleMax,
+        subtitleOption,
+        subtitleFontSize,
+        audioPackage
+      })
+
+      if (!result.success) {
+        throw new Error(result.error || 'Export failed')
+      }
+
+      toast.success(t('toast.vrewSaveComplete'), 5000)
+      if (Array.isArray(result.warnings) && result.warnings.length > 0) {
+        toast.warning(t('toast.vrewExportWarnings', { count: result.warnings.length }), 8000)
+      }
+
+      setExportPhase('launching')
+      if (window.electronAPI?.openVrewProject) {
+        try {
+          const open = await window.electronAPI.openVrewProject({ targetPath: result.targetPath })
+          if (open?.success) {
+            toast.info(t('toast.vrewLaunched'), 5000)
+          } else {
+            toast.warning(t('toast.vrewLaunchFailed'), 6000)
+          }
+        } catch (openError) {
+          console.warn('[Export] Failed to open Vrew:', openError)
+          toast.warning(t('toast.vrewLaunchFailed'), 6000)
+        }
+      }
+
+      await new Promise(r => setTimeout(r, 1500))
+      setShowExportModal(false)
+      onExportSuccess?.()
+      return { success: true, targetPath: result.targetPath, warnings: result.warnings }
+    } catch (error) {
+      toast.error(t('toast.exportFailed', { error: error.message }))
+      return { success: false, error: error.message }
     } finally {
       setExporting(false)
       setExportPhase(null)
@@ -273,7 +442,10 @@ export function useExport({
     setShowExportModal,
     exporting,
     exportPhase,
+    exportFormat,
     handleExportClick,
-    handleExportConfirm
+    handleExportConfirm,
+    handleExportPremiere,
+    handleExportVrew
   }
 }

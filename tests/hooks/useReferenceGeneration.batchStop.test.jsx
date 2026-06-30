@@ -12,7 +12,8 @@ import { renderHook, act } from '@testing-library/react'
 
 vi.mock('../../src/utils/guards', () => ({
   checkAuthToken: vi.fn().mockResolvedValue(true),
-  checkFolderPermission: vi.fn().mockResolvedValue({ ok: true })
+  checkFolderPermission: vi.fn().mockResolvedValue({ ok: true }),
+  checkFlowProjectReady: vi.fn().mockReturnValue({ ok: true }),
 }))
 
 vi.mock('../../src/hooks/useFileSystem', () => ({
@@ -49,10 +50,10 @@ function setupHook({ checkGenerationImpl }) {
 
   let hookHandle
 
-  const flowAPI = {
+  const genAPI = {
     getAccessToken: vi.fn().mockResolvedValue('token'),
     clearTokenCache: vi.fn(),
-    submitGenerationDOM: vi.fn().mockResolvedValue({ success: true, generationId: 'g-1' }),
+    submitGeneration: vi.fn().mockResolvedValue({ success: true, generationId: 'g-1' }),
     checkGeneration: vi.fn(async () => {
       await checkGenerationImpl?.(hookHandle)
       return { success: true, completed: false }
@@ -64,7 +65,7 @@ function setupHook({ checkGenerationImpl }) {
     settings: { saveMode: 'project', imageBatchCount: 1 },
     references: refs,
     setReferences,
-    flowAPI,
+    genAPI,
     addPendingSave: vi.fn(),
     openSettings: vi.fn(),
     t: (k) => k,
@@ -73,7 +74,7 @@ function setupHook({ checkGenerationImpl }) {
   // result.current is the hook's return object — expose it directly to callers
   hookHandle = result
 
-  return { result, setRefCalls, flowAPI }
+  return { result, setRefCalls, genAPI }
 }
 
 describe('useReferenceGeneration — prepare-phase stop cleanup (P1)', () => {
@@ -101,7 +102,7 @@ describe('useReferenceGeneration — prepare-phase stop cleanup (P1)', () => {
       settings: { saveMode: 'folder', imageBatchCount: 1 },
       references: refs,
       setReferences: vi.fn(),
-      flowAPI: { getAccessToken: vi.fn().mockResolvedValue('token') },
+      genAPI: { getAccessToken: vi.fn().mockResolvedValue('token') },
       addPendingSave: vi.fn(),
       openSettings: vi.fn(),
       t: (k) => k,
@@ -136,7 +137,7 @@ describe('useReferenceGeneration — prepare-phase stop cleanup (P1)', () => {
       settings: { saveMode: 'folder', imageBatchCount: 1 },
       references: refs,
       setReferences: vi.fn(),
-      flowAPI: { getAccessToken: vi.fn().mockResolvedValue('token') },
+      genAPI: { getAccessToken: vi.fn().mockResolvedValue('token') },
       addPendingSave: vi.fn(),
       openSettings: vi.fn(),
       t: (k) => k,
@@ -217,6 +218,76 @@ describe('useReferenceGeneration — stop during batch', () => {
       state.some(r => r.id === 1 && r.status === 'pending' && (r.errorMessage == null))
     )
     expect(revertedState).toBeTruthy()
+  })
+
+  it('#R23-5: checkGeneration authFailed stops batch (dispatches flow-login-expired, no Timed out)', async () => {
+    vi.useFakeTimers()
+    const authEvents = []
+    const onAuthExpired = () => authEvents.push(1)
+    window.addEventListener('flow-login-expired', onAuthExpired)
+
+    const { result, setRefCalls, genAPI } = setupHook({})
+    // checkGeneration surfaces a dead-token sentinel during collection polling
+    genAPI.checkGeneration.mockResolvedValue({
+      success: false, authFailed: true, error: 'Auth expired — please re-login to Flow',
+    })
+
+    let batchPromise
+    await act(async () => {
+      batchPromise = result.current.handleGenerateAllRefs()
+    })
+    // a single poll cycle is enough — must NOT need the 180s timeout
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000) })
+    await act(async () => { await batchPromise })
+
+    window.removeEventListener('flow-login-expired', onAuthExpired)
+    vi.useRealTimers()
+
+    expect(authEvents.length).toBeGreaterThanOrEqual(1)
+    // not a generic 'Timed out' error
+    const timedOut = setRefCalls.find(state =>
+      state.some(r => r.id === 1 && r.status === 'error' && r.errorMessage === 'Timed out')
+    )
+    expect(timedOut).toBeUndefined()
+    // #R24-4: auth-stop must NOT silently revert to clean pending — it marks errorKind:'auth'
+    //   so dead auth isn't hidden behind a re-runnable pending state.
+    const authMarked = setRefCalls.find(state =>
+      state.some(r => r.id === 1 && r.status === 'error' && r.errorKind === 'auth')
+    )
+    expect(authMarked).toBeTruthy()
+    const silentPending = setRefCalls.find(state =>
+      state.some(r => r.id === 1 && r.status === 'pending' && r.errorMessage == null)
+    )
+    expect(silentPending).toBeUndefined()
+  })
+
+  it('#R25-5: submit authFailed marks the failed ref errorKind:auth (not just pendingQueue refs)', async () => {
+    const refs = [{ id: 1, prompt: 'a portrait', type: 'character', status: 'pending' }]
+    const setRefCalls = []
+    const setReferences = (updater) => {
+      if (typeof updater === 'function') {
+        setRefCalls.push(updater([{ id: 1, prompt: 'a portrait', type: 'character', status: 'generating' }]))
+      }
+    }
+    const genAPI = {
+      getAccessToken: vi.fn().mockResolvedValue('token'),
+      clearTokenCache: vi.fn(),
+      submitGeneration: vi.fn().mockResolvedValue({ success: false, authFailed: true, error: 'Auth expired' }),
+      checkGeneration: vi.fn().mockResolvedValue({ success: true, completed: false }),
+      clearGenerations: vi.fn().mockResolvedValue(undefined),
+    }
+    const { result } = renderHook(() => useReferenceGeneration({
+      settings: { saveMode: 'project', imageBatchCount: 1 },
+      references: refs, setReferences, genAPI,
+      addPendingSave: vi.fn(), openSettings: vi.fn(), t: (k) => k, generationQueue: null,
+    }))
+
+    await act(async () => { await result.current.handleGenerateAllRefs() })
+
+    const authMarked = setRefCalls.find(state =>
+      state.some(r => r.id === 1 && r.status === 'error' && r.errorKind === 'auth')
+    )
+    expect(authMarked).toBeTruthy()
   })
 
   it('still marks refs as error/Timed out when no stop was requested (genuine timeout)', async () => {

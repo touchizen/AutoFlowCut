@@ -24,6 +24,8 @@ import { matchSrtLines } from '../utils/srtLineMatcher'
 import { trimTrailingEmptyScenes } from '../utils/sceneTrim'
 import { fileSystemAPI } from './useFileSystem'
 import { splitTags } from '../utils/tagMatch'
+import { resolveMentions } from '../utils/mentionParser'
+import { isStyleReference } from '../services/styleService'
 
 // snake_case → camelCase 변환 + 숫자 변환 + videoT2V/I2V prompt 필드 기본값 보장
 function normalizeScene(s, i) {
@@ -203,6 +205,9 @@ export function useScenes() {
           videoI2VPath: existing.videoI2VPath,
           videoT2VDuration: existing.videoT2VDuration,
           videoI2VDuration: existing.videoI2VDuration,
+          // per-clip export 토글 — 재파싱에도 보존
+          videoT2VDisabled: existing.videoT2VDisabled,
+          videoI2VDisabled: existing.videoI2VDisabled,
           // T2V 런타임 상태 — CSV 에는 안 실리는 항목들. 재파싱이 진행 중 generation/recovery/선택을 깨지 않도록 보존.
           //   - videoT2VStatus: ResultsTable 이 status === 'generating' 일 때만 타이머를 렌더 → 잃으면 타이머가 사라짐.
           //   - videoT2VMediaId / videoT2VGenerationId: videoRecovery 가 in-flight 분류에 사용 → 잃으면 reload 후 재제출(중복 quota).
@@ -214,6 +219,11 @@ export function useScenes() {
           videoT2VSelected: existing.videoT2VSelected,
           videoT2VGeneratingStartedAt: existing.videoT2VGeneratingStartedAt,
           videoT2VGeneratingEndedAt: existing.videoT2VGeneratingEndedAt,
+          // I2V 생성 상태 — 타임라인 generating(빈칸+shimmer) 판정용. 재파싱 중 generation 상태 보존.
+          //   - videoI2VGeneratingStartedAt/EndedAt: status 와 짝 — status 만 살리고 timestamp 잃으면 0:00 회귀(T2V 와 동일).
+          videoI2VStatus: existing.videoI2VStatus,
+          videoI2VGeneratingStartedAt: existing.videoI2VGeneratingStartedAt,
+          videoI2VGeneratingEndedAt: existing.videoI2VGeneratingEndedAt,
         }
       })
       // R4 review fix: parseSceneCSVToTracks 가 row 별 start_time/end_time 절대값을
@@ -613,9 +623,23 @@ export function useScenes() {
     if (scene.style_tag) {
       const styleTags = splitTags(scene.style_tag)
       for (const ref of references) {
-        if (ref.type === 'style' && styleTags.includes(ref.name.toLowerCase())) {
+        const refName = ref.name?.toLowerCase()
+        if (isStyleReference(ref) && refName && styleTags.includes(refName)) {
           matched.push(ref)
         }
+      }
+    }
+
+    // 프롬프트 본문의 `@name` 인라인 멘션도 함께 수집 — Google Flow 방식.
+    // CSV 태그와 합집합, id 우선 / name 보조로 dedup. 타입 무관 (캐릭터/씬/스타일 모두 가능).
+    if (scene.prompt) {
+      const { matched: mentionMatched } = resolveMentions(scene.prompt, references)
+      for (const ref of mentionMatched) {
+        const dup = matched.some((m) =>
+          (ref.id != null && m.id === ref.id) ||
+          (ref.name && m.name && String(m.name).toLowerCase() === String(ref.name).toLowerCase())
+        )
+        if (!dup) matched.push(ref)
       }
     }
 

@@ -41,6 +41,12 @@ export function syncVideosIntoScenes(scenes, _videoScenes, framePairs, logPrefix
           scene.videoI2VDuration = fp.duration
           synced = true
         }
+        // 캐시버스터 — 로드/복구 시에도 비디오 generatedAt 을 scene 에 동기화해야
+        // 타임라인/PreviewPanel 의 ?v= 가 비고 stale 비디오가 보이는 걸 막는다.
+        if (fp.generatedAt != null && scene.videoI2VGeneratedAt !== fp.generatedAt) {
+          scene.videoI2VGeneratedAt = fp.generatedAt
+          synced = true
+        }
         if (synced) console.log(`${logPrefix} Synced I2V video → ${fp.ownerSceneId}`)
       }
     }

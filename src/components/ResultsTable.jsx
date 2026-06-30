@@ -10,6 +10,7 @@ import { getRatioClass, resolveImageSrc, hasImageData, formatElapsed } from '../
 import { resolveVideoSrc } from '../utils/videoSrc'
 import { resolveDisplayError } from '../utils/errorDisplay'
 import { getVideoPoster } from '../utils/videoPoster'
+import { modelLabel } from '../config/genModels'
 import InfinityLoader from './InfinityLoader'
 import LazyImage from './LazyImage'
 import HoverImageBalloon from './HoverImageBalloon'
@@ -208,12 +209,12 @@ export default function ResultsTable({
     if (mediaType === 'video' && (item.video || item.videoPath)) {
       // 공용 utils/videoSrc — base64 우선, 없으면 file path (T2V path-only 모드 지원).
       // useProjectData 가 T2V 도 path-only 로 로드하므로 item.video 가 비어도 path 만으로 재생 가능.
-      const videoSrc = resolveVideoSrc(item.video, item.videoPath)
+      const videoSrc = resolveVideoSrc(item.video, item.videoPath, { version: item.generatedAt })
       return renderLazyVideo(videoSrc, `Video ${index + 1} poster`)
     }
 
     if (isPairType && (item.base64 || item.videoPath)) {
-      const videoSrc = resolveVideoSrc(item.base64, item.videoPath)
+      const videoSrc = resolveVideoSrc(item.base64, item.videoPath, { version: item.generatedAt })
       return renderLazyVideo(videoSrc, `Frame pair ${index + 1} poster`)
     }
 
@@ -318,6 +319,7 @@ export default function ResultsTable({
               <th className="col-id">#</th>
               <th className="col-img">{mediaHeader}</th>
               <th className="col-prompt">{t('results.prompt')}</th>
+              <th className="col-model">{t('results.model')}</th>
               <th className="col-status">{t('results.status')}</th>
             </tr>
           </thead>
@@ -387,6 +389,10 @@ export default function ResultsTable({
                     {String(getDisplayError(item))}
                   </div>
                 )}
+              </td>
+
+              <td className="col-model" title={item.model || ''}>
+                {modelLabel(item.model) || '—'}
               </td>
 
               <td className="col-status">

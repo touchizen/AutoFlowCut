@@ -154,9 +154,9 @@ describe('useWhiskAPI 로직', () => {
     })
   })
 
-  describe('generateImageDOM (Desktop: BrowserView)', () => {
+  describe('generateImage (Desktop: BrowserView)', () => {
     it('Desktop에서는 whiskDOMClient.js를 통해 BrowserView에 프롬프트 주입', () => {
-      // Desktop의 generateImageDOM은 whiskDOMClient를 통해 BrowserView 조작
+      // Desktop의 generateImage은 whiskDOMClient를 통해 BrowserView 조작
       const mockDomSendPrompt = vi.fn().mockResolvedValue({ success: true })
       window.electronAPI.domSendPrompt = mockDomSendPrompt
       expect(window.electronAPI.domSendPrompt).toBeDefined()
@@ -225,7 +225,7 @@ describe('훅 반환값', () => {
       whiskTabId: null,  // Desktop에서는 사용하지 않음
       getAccessToken: vi.fn(),
       generateImageAPI: vi.fn(),
-      generateImageDOM: vi.fn(),
+      generateImage: vi.fn(),
       uploadReference: vi.fn(),
       setStopRequested: vi.fn()
     }
@@ -234,7 +234,7 @@ describe('훅 반환값', () => {
     expect(hookReturn.whiskTabId).toBeNull()
     expect(hookReturn).toHaveProperty('getAccessToken')
     expect(hookReturn).toHaveProperty('generateImageAPI')
-    expect(hookReturn).toHaveProperty('generateImageDOM')
+    expect(hookReturn).toHaveProperty('generateImage')
     expect(hookReturn).toHaveProperty('uploadReference')
     expect(hookReturn).toHaveProperty('setStopRequested')
   })

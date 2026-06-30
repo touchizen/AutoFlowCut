@@ -11,28 +11,22 @@ import StorageTab from './settings/StorageTab'
 import SceneTab from './settings/SceneTab'
 import DisplayTab from './settings/DisplayTab'
 import McpTab from './settings/McpTab'
+import ApiKeyTab from './settings/ApiKeyTab'
 import './SettingsModal.css'
 
 const TABS = [
-  { id: 'storage', icon: '💾', labelKey: 'settings.tabStorage' },
+  { id: 'storage', icon: '📁', labelKey: 'settings.tabStorage' },
+  { id: 'apiKey', icon: '🔑', labelKey: 'settings.tabApiKey' },
   { id: 'scene', icon: '🎬', labelKey: 'settings.tabScene' },
   { id: 'display', icon: '🖥️', labelKey: 'settings.tabDisplay' },
   { id: 'mcp', icon: '🔌', labelKey: 'settings.tabMcp' }
 ]
 
-export default function SettingsModal({ settings, onSave, onClose, initialTab = null, onProjectChange }) {
+export default function SettingsModal({ settings, onSave, onClose, initialTab = null, onProjectChange, availableModels = {}, appMode }) {
   const { t } = useI18n()
+  // 모델 선택 옵션 — App 에서 라이브 /models 로 채워 내려줌(undefined 면 SceneTab 이 정적 폴백).
   const [activeTab, setActiveTab] = useState(initialTab || 'storage')
-  const [localSettings, setLocalSettings] = useState(() => {
-    const merged = { ...settings }
-    // layoutSettings는 Shell에서 별도 localStorage로 관리 → 현재 값 반영
-    try {
-      const layout = JSON.parse(localStorage.getItem('layoutSettings') || '{}')
-      if (layout.mode) merged.layoutMode = layout.mode
-      if (layout.ratio) merged.splitRatio = layout.ratio
-    } catch (e) { /* ignore */ }
-    return merged
-  })
+  const [localSettings, setLocalSettings] = useState(() => ({ ...settings }))
   const [workFolder, setWorkFolder] = useState({ name: '', error: null })
   const [highlight, setHighlight] = useState(!!initialTab)
 
@@ -67,13 +61,8 @@ export default function SettingsModal({ settings, onSave, onClose, initialTab = 
   }
 
   const handleSave = () => {
-    // 레이아웃 변경 시 main process에 알림
-    if (localSettings.layoutMode) {
-      window.electronAPI?.setLayout?.({
-        mode: localSettings.layoutMode,
-        ratio: localSettings.splitRatio || 0.5
-      })
-    }
+    // 레이아웃(디스플레이 탭)은 DisplayTab.handleLayout 이 클릭 즉시 라이브로 적용한다
+    // (main → layout-changed → Shell). localSettings 에는 기록되지 않으므로 여기서 재전송하지 않는다.
     onSave(localSettings)
   }
 
@@ -118,20 +107,23 @@ export default function SettingsModal({ settings, onSave, onClose, initialTab = 
           />
         )}
 
+        {activeTab === 'apiKey' && (
+          <ApiKeyTab t={t} />
+        )}
+
         {activeTab === 'scene' && (
           <SceneTab
             localSettings={localSettings}
             setLocalSettings={setLocalSettings}
             t={t}
+            appMode={appMode}
+            imageModels={availableModels.imageModels}
+            videoModels={availableModels.videoModels}
           />
         )}
 
         {activeTab === 'display' && (
-          <DisplayTab
-            localSettings={localSettings}
-            setLocalSettings={setLocalSettings}
-            t={t}
-          />
+          <DisplayTab t={t} appMode={appMode} />
         )}
 
         {activeTab === 'mcp' && (

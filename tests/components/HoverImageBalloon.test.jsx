@@ -116,4 +116,32 @@ describe('HoverImageBalloon', () => {
     expect(container.firstChild).toBeNull()
     expect(document.querySelector('.ref-hover-balloon')).toBeNull()
   })
+
+  // 회귀: Flow split 모드는 앱 컨텐츠 컨테이너가 .app-content-split 이다 (.app-content-full 아님).
+  // 풍선이 .app-content-full 만 찾으면 split 에서 패널 bounds 를 못 잡고 뷰포트로 폴백 → 왼쪽
+  // Flow 네이티브 뷰 위로 퍼져 가려진다. 두 컨테이너 모두 인식해야 한다.
+  it('split 모드(.app-content-split)에서 풍선을 앱 패널 영역 안으로 제한한다', () => {
+    const panel = document.createElement('div')
+    panel.className = 'app-content-split'
+    // 우측 패널(좌측은 Flow 뷰): left=500..right=1000. jsdom 은 layout 이 없어 rect 를 stub.
+    panel.getBoundingClientRect = () => ({ left: 500, top: 0, right: 1000, bottom: 600, width: 500, height: 600 })
+    document.body.appendChild(panel)
+    try {
+      // 마우스 앵커가 패널 왼쪽 근처(520) — 패널 bounds 면 오른쪽으로(left:528px) 배치된다.
+      render(
+        <HoverImageBalloon
+          anchorRect={{ left: 520, right: 520, top: 300, bottom: 300 }}
+          src={SRC}
+          className="ref-hover-balloon"
+        />
+      )
+      const balloon = document.querySelector('.ref-hover-balloon')
+      // 패널 bounds(right=1000)로 계산 → 오른쪽 배치 left=528px, 가용폭 472px.
+      // (.app-content-full 만 찾던 버그면 뷰포트 폴백 → left 대신 right 사용 → 이 단언 실패)
+      expect(balloon.style.left).toBe('528px')
+      expect(balloon.style.getPropertyValue('--balloon-avail-width')).toBe('472px')
+    } finally {
+      document.body.removeChild(panel)
+    }
+  })
 })

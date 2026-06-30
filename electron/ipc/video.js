@@ -5,7 +5,15 @@
  * and video status polling.
  */
 
+import { screen } from 'electron'
 import { extractServerErrorMessage } from './videoErrorExtractor.js'
+import { computeOffscreenBounds } from '../offscreen-bounds.js'
+import { GENERATED_VIDEO_PROBE } from '../flow-media-collect.js'
+import { collectAgentDomVideos } from '../flow-agent-collect.js'
+import { SUBMIT_PROBE, shouldProceed } from '../flow-submit-gate.js'
+import { COMPOSE_EDITOR_READY } from '../flow-compose-editor.js'
+import { AGENT_CHAT_CLOSE_SELECTOR } from '../flow-agent-toggle.js'
+import { isOmniFlashModel } from '../video-model-rules.js'
 
 /**
  * Register video-generation-related IPC handlers.
@@ -16,16 +24,19 @@ import { extractServerErrorMessage } from './videoErrorExtractor.js'
 export function registerVideoIPC(ipcMain, deps) {
   const {
     getFlowView, getMainWindow, trustedClickOnFlowView, sessionFetch, flowPageFetch,
-    parseFlowResponse, getRecaptchaToken, configureFlowMode, switchFlowToVideoMode,
+    parseFlowResponse, getRecaptchaToken, configureFlowMode, switchFlowToVideoMode, ensureAgentOff, ensureAgentOn, ensureOnProjectComposer, applyAgentDefaults,
+    getFlowAgentOn,
     getCapturedProjectId, setCapturedProjectId,
     getPendingVideoGeneration, setPendingVideoGeneration,
-    getPendingI2VInjection, setPendingI2VInjection,
-    setPendingSeedValue,
-    ensureDebuggerAttached,
     setFlowPageInject, clearFlowPageInject,
+    getCurrentMode,
     SESSION_URL, VIDEO_T2V_URL, VIDEO_I2V_URL, VIDEO_I2V_START_END_URL, VIDEO_STATUS_URL, VIDEO_UPSCALE_URL,
     API_HEADERS, FLOW_URL,
   } = deps
+
+  // #R25-4: API 모드 전환 후에도 flowView 는 보존되므로 stale 호출이 Flow quota 를 쓸 수 있다.
+  //   quota 를 쓰는 비디오 submit/upscale 핸들러는 현재 모드가 'flow' 일 때만 진행한다.
+  const flowActive = () => !getCurrentMode || getCurrentMode() === 'flow'
 
   // LOCAL helper — 비디오 응답에서 generation ID (UUID) 추출
   function extractVideoGenerationId(data) {
@@ -50,71 +61,147 @@ export function registerVideoIPC(ipcMain, deps) {
       || null
   }
 
+  // 공유 DOM 수집 de-dup(이미지 비동기/동기 경로와 같은 set — cross-grab 방지).
+  const collectedMediaIds = deps.collectedMediaIds || new Set()
+
+  // Agent ON idle-gate — 직전 에이전트 생성이 끝날 때까지(arrow_forward enable) 대기 후 챗 패널
+  //   가림을 해제한다. streamChat 은 순차라 직전 작업이 끝나야 컴포저가 보인다.
+  //   (character.js generate-scene 의 idle-gate 와 동일 패턴.)
+  async function waitAgentIdle(flowView, logTag) {
+    const SUBMIT_POLL = 1500
+    const SUBMIT_MAX_WAIT = 180000 // 에이전트 생성이 길 수 있어 최대 3분
+    let submitState = 'absent'
+    let gwaited = 0
+    while (gwaited <= SUBMIT_MAX_WAIT) {
+      submitState = await flowView.webContents.executeJavaScript(SUBMIT_PROBE).catch(() => 'error')
+      if (shouldProceed(submitState)) break
+      if (gwaited === 0) console.log(logTag + ' (Agent ON) agent not idle (' + submitState + ') — waiting for ready...')
+      await new Promise(r => setTimeout(r, SUBMIT_POLL))
+      gwaited += SUBMIT_POLL
+    }
+    if (submitState !== 'idle') {
+      console.warn(logTag + ' (Agent ON) agent never idle (last=' + submitState + ', ' + Math.round(gwaited / 1000) + 's)')
+      return { ok: false, error: 'Agent not ready (' + submitState + ') after 180s' }
+    }
+    if (gwaited > 0) console.log(logTag + ' (Agent ON) agent idle after', Math.round(gwaited / 1000), 's')
+    // idle 인데도 챗 패널이 컴포저를 가리면 닫는다(no-op if 없음).
+    for (let i = 0; i < 3; i++) {
+      const r = await flowView.webContents.executeJavaScript(COMPOSE_EDITOR_READY).catch(() => false)
+      if (r) break
+      await trustedClickOnFlowView(AGENT_CHAT_CLOSE_SELECTOR).catch(() => {})
+      await new Promise(r => setTimeout(r, 350))
+    }
+    return { ok: true }
+  }
+
   // Text-to-Video generation (DOM 자동화 — 페이지가 reCAPTCHA 자체 처리)
   ipcMain.handle('flow:generate-video-t2v', async (event, {
     token, prompt, projectId, model, aspectRatio, duration, videoBatchCount, seed
   }) => {
+    if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R25-4
     const flowView = getFlowView()
     const mainWindow = getMainWindow()
     if (!prompt) return { success: false, error: 'No prompt' }
     if (!flowView) return { success: false, error: 'Flow view not ready' }
-    try { await ensureDebuggerAttached() } catch (e) { console.warn('[Flow T2V] Debugger attach failed:', e.message) }
 
     // Seed: 숫자면 monkey-patch inject가 batchAsyncGenerateVideoText 요청에 주입,
     //       null/undefined면 Flow 자체 랜덤 seed 유지
     const hasUserSeed = typeof seed === 'number' && Number.isFinite(seed)
     const _seedValue  = hasUserSeed ? seed : null
-    setPendingSeedValue?.(_seedValue)  // also set legacy CDP var for AUTOFLOWCUT_ENABLE_CDP=1
 
-    // Monkey-patch path: write inject state into Flow page
-    await setFlowPageInject?.({
-      seed:        _seedValue,
-      aspectRatio: null,
-      references:  null,
-      i2v:         null,
-    })
+    // #R8-8: seed inject 는 ensureOnProjectComposer(아래)의 네비게이션이 페이지를 reload 해
+    //   __autoflowcut_inject__ 를 지운 뒤에 설정해야 한다 → 네비/모드전환 후로 이동.
 
-    // CDP path (only active when AUTOFLOWCUT_ENABLE_CDP=1): keep for compatibility
-    let cdpFetchEnabled = false
-    if (hasUserSeed) {
-      try {
-        await flowView.webContents.debugger.sendCommand('Fetch.enable', {
-          patterns: [
-            { urlPattern: '*batchGenerateImages*', requestStage: 'Request' },
-            { urlPattern: '*batchAsyncGenerateVideoText*', requestStage: 'Request' }
-          ]
-        })
-        cdpFetchEnabled = true
-      } catch (_) {
-        // Expected when CDP is disabled (default)
-      }
-    }
+    // R10-P2: arm-before-click 으로 둔 pending/timeout 을 try 밖에 선언 — 클릭/주입이 throw 하면
+    //   finally 에서 자기 pending(identity)만 정리한다. 안 그러면 stale pending 이 남아 다음 영상
+    //   응답을 잘못 받는다.
+    let videoTimeout = null
+    let videoOwnPending = null
+    // #R7-10(R6-13 sibling): hoist so the finally always restores temp-shown bounds, even on throw.
+    let promptWasHidden = false
+    let promptBounds = null
 
     console.log('[Flow Video T2V] Starting DOM-triggered video generation:', prompt?.substring(0, 50), hasUserSeed ? `(seed: ${seed})` : '(seed: random)')
 
     try {
-      // 0. Flow 프로젝트 페이지 확인
-      const currentUrl = flowView.webContents.getURL()
-      if (!currentUrl.includes('/project/') && !currentUrl.includes('/tools/flow/')) {
-        return { success: false, error: 'Not on Flow project page. Please open a Flow project first.' }
+      // 0. Codex #R4-4: enforce Flow page is on the TARGET project before DOM mutation.
+      const projectCheck = await ensureOnProjectComposer(flowView, projectId)
+      if (!projectCheck.ok) return { success: false, error: projectCheck.error }
+
+      // 1.5. Agent 토글 — flowAgentOn(설정) 이면 ON(autoApprove), 아니면 OFF(직접 API).
+      const agentOn = !!(getFlowAgentOn && getFlowAgentOn())
+      if (!agentOn) {
+      let agentOff = false
+      try { const r = await ensureAgentOff(); agentOff = !!(r && r.success) } catch (e) { console.warn('[Flow Video T2V] ensureAgentOff skipped:', e.message) }
+      // [P1] Agent OFF 보장 실패 시 중단(fail-closed) — Agent ON 이면 batchAsyncGenerateVideo*
+      //   캡처 전제가 깨져 timeout/오동작한다. (already_off 도 success=true 라 정상은 안 막음)
+      if (!agentOff) return { success: false, error: 'Flow Agent 를 OFF 로 전환하지 못했습니다. Flow 가 "모든 미디어" 화면인지 확인한 뒤 다시 시도해주세요. (캐릭터/장면 탭에는 Agent 토글이 없어 실패할 수 있음)' }
+
+      // 1.6. 동영상 모드로 전환 — 이미지/동영상 모드 탭은 컴포즈 하단 칩 팝오버
+      //      (button[aria-haspopup='menu'])  안에 있다. configureFlowMode 가 칩을 눌러
+      //      팝오버를 연 뒤 동영상 탭을 클릭한다(Step1~3). [P2] 배치 카운트(videoBatchCount) 전달.
+      // #R30-1: 모드 전환이 (내부 재시도 소진 후) 명시적 {success:false} 면 컴포저가 IMAGE 모드일 수
+      //   있어 비디오 제출이 이미지 요청으로 나가 잘못된 quota 소비 + capture timeout 을 유발한다 →
+      //   제출 전에 중단한다(아직 inject/pending 미설정이라 plain return 안전). throw 는 기존대로 관용.
+      // #R31-1: Flow 비디오 배치는 1 로 고정한다. configureFlowMode 가 N>1 칩을 켜면 Flow 가 N 개
+      //   영상을 생성하지만 extractVideoGenerationId 는 1 개 id 만 회수해 나머지 유료 결과가 추적/복구
+      //   불가로 유실된다(quota 낭비). 멀티-비디오 캡처가 구현되기 전까진 1 로 클램프.
+      let _vmodeRes = null
+      try { _vmodeRes = await configureFlowMode("VIDEO", 1) } catch (e) { console.warn("[Flow Video] configureFlowMode skipped:", e.message) }
+      if (_vmodeRes && _vmodeRes.success === false) {
+        return { success: false, error: `Flow VIDEO mode switch failed: ${_vmodeRes.error || 'unknown'}`, retry: true }
       }
 
-      // 1. 비디오 모드로 전환 (배치 카운트 적용)
-      const effectiveBatchCount = Math.max(1, Math.min(4, videoBatchCount || 1))
-      const modeResult = await configureFlowMode('VIDEO', effectiveBatchCount)
-      if (!modeResult.success) {
-        return { success: false, error: modeResult.error || 'Failed to switch to video mode' }
+      // (v2) Flow 비디오 모델 적용 — 에이전트 설정 패널에서 선택(동적 모델 목록 반영). 컴포즈 주입 전.
+      if (model && applyAgentDefaults) {
+        try { const _md = await applyAgentDefaults({ video: { model } }); if (!_md?.success) console.warn('[Flow Video] applyAgentDefaults(video model) failed:', _md?.error) } catch (e) { console.warn('[Flow Video] applyAgentDefaults(video model) error:', e.message) }
       }
-      console.log('[Flow Video T2V] Video mode active:', modeResult.method)
+      } else {
+        // [Agent ON — Maps 그라운딩/주소 기반] 토글 ON 유지 + autoApprove. 모드 탭 없어 configureFlowMode 생략.
+        // ⚠️ 라이브 검증 필요(셀렉터/타이밍/DOM 수집).
+        let onOk = false
+        try { const r = await ensureAgentOn(); onOk = !!(r && r.success) } catch (e) { console.warn('[Flow Video T2V] ensureAgentOn skipped:', e.message) }
+        if (!onOk) return { success: false, error: 'Flow Agent 를 ON 으로 전환하지 못했습니다. Flow 컴포즈에 Agent 토글이 있는지 확인해주세요.' }
+        if (applyAgentDefaults) {
+          try { await applyAgentDefaults({ ...(model ? { video: { model } } : {}), autoApprove: true }) } catch (e) { console.warn('[Flow Video T2V] applyAgentDefaults skipped:', e.message) }
+        }
+        // 타입 강제(이미지로 빠지지 않게) — 명시 지시로 감싼다.
+        prompt = `Generate a video: ${prompt}`
+        // 직전 에이전트 생성이 진행 중이면 컴포저가 가려진다 → idle 까지 대기 후 주입.
+        const idle = await waitAgentIdle(flowView, '[Flow Video T2V]')
+        if (!idle.ok) return { success: false, error: idle.error, retry: true }
+      }
+
+      // #R8-8: seed monkey-patch inject 는 네비게이션/모드전환 이후(reload 가 끝난 뒤)에 설정 —
+      //   클릭으로 발사될 batchAsyncGenerateVideoText 요청이 이 seed 를 확실히 싣는다.
+      // #R15-5: arming 실패 시 중단(미주입 seed 로 생성 방지).
+      { const _ir = await setFlowPageInject?.({ seed: _seedValue, aspectRatio: null, references: null, i2v: null, duration, videoModel: model })
+        if (_ir && _ir.success === false) return { success: false, error: `Flow inject arming failed: ${_ir.error || 'unknown'}`, retry: true } }
 
       // 2. 프롬프트 입력 (이미지와 동일한 Slate 에디터 사용)
-      const promptBounds = flowView.getBounds()
-      const promptWasHidden = (promptBounds.width === 0 || promptBounds.height === 0)
+      promptBounds = flowView.getBounds()
+      promptWasHidden = (promptBounds.width === 0 || promptBounds.height === 0)
       if (promptWasHidden) {
         const { width, height } = mainWindow.getContentBounds()
-        flowView.setBounds({ x: width + 5000, y: 0, width, height })
+        flowView.setBounds(computeOffscreenBounds(screen.getAllDisplays(), mainWindow.getBounds().x, width, height))
         await new Promise(r => setTimeout(r, 300))
       }
+
+      // 2-pre. 에디터 포커스 확보 (이미지와 동일) — webContents.focus() + 에디터 trusted-click.
+      // 이게 없으면 editor.focus()/execCommand 가 무시되어(activeEl=body) 프롬프트가 안 박힌다.
+      try { flowView.webContents.focus() } catch (e) { console.warn('[Flow Video T2V] webContents.focus failed:', e.message) }
+      await new Promise(r => setTimeout(r, 120))
+      const vEditorFocusSelector = `(function(){
+        return document.querySelector("[data-slate-editor='true']")
+          || document.querySelector("div[role='textbox'][contenteditable='true']:not(#af-bot-panel *)")
+          || document.querySelector('[contenteditable="true"]:not([aria-hidden])')
+          || document.querySelector('textarea');
+      })()`
+      try {
+        const ef = await trustedClickOnFlowView(vEditorFocusSelector)
+        console.log('[Flow Video T2V] Editor focus click:', ef?.success)
+      } catch (e) { console.warn('[Flow Video T2V] editor focus click failed:', e.message) }
+      await new Promise(r => setTimeout(r, 120))
 
       const promptResult = await flowView.webContents.executeJavaScript(`
         (async function() {
@@ -131,7 +218,10 @@ export function registerVideoIPC(ipcMain, deps) {
           const isSlate = !!(editor.matches?.("[data-slate-editor='true']") || editor.querySelector?.("[data-slate-node]"));
 
           // Slate React API로 프롬프트 주입
-          let injected = false;
+          // #R32-1: 프롬프트가 비어도(F2V 'none' 소스 → I2V) 유효하다 — 이미지가 생성을 주도.
+          //   빈 프롬프트는 주입할 게 없으니 injected=true 로 시작해, 비-빈 modelText 요구(아래 verifier)
+          //   때문에 'Prompt injection failed' 로 막히지 않게 한다(API 모드는 빈 프롬프트 허용 — 모드 일치).
+          let injected = !promptText;
           if (isSlate) {
             try {
               const reactKeys = Object.keys(editor).filter(k => k.startsWith('__react'));
@@ -215,20 +305,7 @@ export function registerVideoIPC(ipcMain, deps) {
       }
       console.log('[Flow Video T2V] Prompt injected successfully')
 
-      // 3. CDP 비디오 응답 캡처 Promise 설정
-      let resolveVideo = null
-      let videoTimeout = null
-      const videoResponsePromise = new Promise((resolve) => {
-        videoTimeout = setTimeout(() => {
-          if (getPendingVideoGeneration()) {
-            setPendingVideoGeneration(null)
-            resolve({ error: true, message: 'Video response timeout (30s)' })
-          }
-        }, 30000) // 비디오 제출은 이미지보다 빠름 (초기 응답만 캡처)
-        resolveVideo = resolve
-      })
-
-      // 4. Generate 버튼 Trusted Click
+      // 4. Generate 버튼 셀렉터 (Agent ON/OFF 공통)
       const generateBtnSelector = `(function() {
         try {
           const xr = document.evaluate("//button[.//i[text()='arrow_forward']]",
@@ -243,24 +320,61 @@ export function registerVideoIPC(ipcMain, deps) {
         return null;
       })()`
 
+      // [Agent ON] streamChat 은 batchAsyncGenerateVideoText 를 안 보내 intercept 로 못 받는다 →
+      //   제출 전 스냅샷 후 클릭하고 DOM 의 "새" 결과 <video>(media.getMediaUrlRedirect?name=) 를 수집한다.
+      //   base64 가 아닌 mediaId 를 generationId 로 반환 → 렌더러의 기존 check-video-status→download 파이프가 이어받는다.
+      if (agentOn) {
+        let existingGenMediaIds = []
+        try {
+          const _pre = await flowView.webContents.executeJavaScript(GENERATED_VIDEO_PROBE)
+          if (Array.isArray(_pre)) existingGenMediaIds = _pre.map(v => v && v.mediaId).filter(Boolean)
+        } catch {}
+        const aClick = await trustedClickOnFlowView(generateBtnSelector)
+        if (!aClick?.success) return { success: false, error: aClick?.error || 'Failed to click Generate button' }
+        console.log('[Flow Video T2V] (Agent ON) clicked, collecting DOM <video>...')
+        const col = await collectAgentDomVideos({
+          scan: () => flowView.webContents.executeJavaScript(GENERATED_VIDEO_PROBE),
+          sleep: (ms) => new Promise(r => setTimeout(r, ms)),
+          // 제출 전 스냅샷 + 다른 경로가 이미 수집한 것 제외 → 결과만.
+          existingMediaIds: [...existingGenMediaIds, ...collectedMediaIds], want: 1,
+          markCollected: (mid) => collectedMediaIds.add(mid),
+        })
+        if (!col.success) return { success: false, error: col.error, retry: true }
+        const mediaId = col.videos[0] && col.videos[0].mediaId
+        console.log('[Flow Video T2V] (Agent ON) collected video mediaId:', mediaId)
+        return { success: true, generationId: mediaId }
+      }
+
+      // 3. (Agent OFF) CDP 비디오 응답 캡처 Promise 설정 (resolve 만 캡처 — 타이머/arm 은 클릭 직전에)
+      let resolveVideo = null
+      const videoResponsePromise = new Promise((resolve) => { resolveVideo = resolve })
+
+      // R9-P1: arm-before-click — main 의 캡처는 pendingVideoGeneration 이 non-null 일 때만 동작한다.
+      //   클릭 후 arm 하면 매우 빠른 응답/에러가 arm 전에 도착해 캡처를 놓치고 false 30s timeout 으로 빠진다.
+      //   setAt=now(백데이트 제거): 클릭으로 시작될 요청은 이 setAt 이후 reqSentAt 을 가진다.
+      //   timeout/click 실패 정리는 자기 pending(videoOwnPending)만 identity 로 건드린다.
+      const videoSetAt = Date.now() / 1000
+      videoOwnPending = {
+        setAt: videoSetAt,
+        resolve: (result) => { clearTimeout(videoTimeout); resolveVideo(result) }
+      }
+      setPendingVideoGeneration(videoOwnPending)
+      videoTimeout = setTimeout(() => {
+        if (getPendingVideoGeneration() === videoOwnPending) {
+          setPendingVideoGeneration(null)
+          resolveVideo({ error: true, message: 'Video response timeout (30s)' })
+        }
+      }, 30000) // 비디오 제출은 이미지보다 빠름 (초기 응답만 캡처)
+
       const clickResult = await trustedClickOnFlowView(generateBtnSelector)
       console.log('[Flow Video T2V] Trusted click result:', clickResult)
 
       if (!clickResult?.success) {
         clearTimeout(videoTimeout)
+        if (getPendingVideoGeneration() === videoOwnPending) setPendingVideoGeneration(null)
         return { success: false, error: clickResult?.error || 'Failed to click Generate button' }
       }
-
-      // ★ 클릭 직후 pendingVideoGeneration 설정
-      const videoSetAt = Date.now() / 1000 - 2
-      setPendingVideoGeneration({
-        setAt: videoSetAt,
-        resolve: (result) => {
-          clearTimeout(videoTimeout)
-          resolveVideo(result)
-        }
-      })
-      console.log('[Flow Video T2V] pendingVideoGeneration set, waiting for CDP capture...')
+      console.log('[Flow Video T2V] pendingVideoGeneration armed BEFORE click, waiting for CDP capture...')
 
       // 5. 비디오 API 응답 대기
       const netResult = await videoResponsePromise
@@ -285,13 +399,14 @@ export function registerVideoIPC(ipcMain, deps) {
       console.error('[Flow Video T2V] Error:', e.message)
       return { success: false, error: e.message }
     } finally {
-      // Monkey-patch inject + legacy CDP vars 정리 (항상 실행)
-      setPendingSeedValue?.(null)
+      // R10-P2: throw 등 어떤 종료 경로든 arm 한 pending/timeout 을 정리 — 자기 pending(identity)만.
+      //   (성공 경로는 응답이 이미 pending 을 비웠으므로 no-op.)
+      if (videoTimeout) clearTimeout(videoTimeout)
+      if (videoOwnPending && getPendingVideoGeneration() === videoOwnPending) setPendingVideoGeneration(null)
+      // #R7-10: 주입 중 throw 해도 임시로 보인 flowView 를 원복(성공 경로는 이미 hidden → no-op).
+      if (promptWasHidden) { try { flowView.setBounds(promptBounds) } catch {} }
+      // Monkey-patch inject 정리 (항상 실행)
       await clearFlowPageInject?.()
-      // CDP Fetch 정리 (AUTOFLOWCUT_ENABLE_CDP=1 경로만)
-      if (cdpFetchEnabled) {
-        try { await flowView.webContents.debugger.sendCommand('Fetch.disable') } catch {}
-      }
     }
   })
 
@@ -301,46 +416,72 @@ export function registerVideoIPC(ipcMain, deps) {
   ipcMain.handle('flow:generate-video-i2v', async (event, {
     token, prompt, startImageMediaId, endImageMediaId, projectId, model, aspectRatio, duration, videoBatchCount, seed
   }) => {
+    if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R25-4
     const flowView = getFlowView()
     const mainWindow = getMainWindow()
     if (!startImageMediaId) return { success: false, error: 'No start image mediaId' }
     if (!flowView) return { success: false, error: 'Flow view not ready' }
-    try { await ensureDebuggerAttached() } catch (e) { console.warn('[Flow I2V] Debugger attach failed:', e.message) }
 
     // Seed: 숫자면 monkey-patch inject가 video 요청에 주입,
     //       null/undefined면 Flow 자체 랜덤 seed 유지
     const hasUserSeed = typeof seed === 'number' && Number.isFinite(seed)
     const _seedValue  = hasUserSeed ? seed : null
-    setPendingSeedValue?.(_seedValue)  // also set legacy CDP var
 
-    const hasEndImage = !!endImageMediaId
+    // OmniFlash i2v 는 종료프레임 미지원 — 종료이미지가 있어도 무시한다(start-only). 안 그러면
+    //   URL 은 StartAndEndImage 로 가는데 body 엔 endImage 가 없어 HTTP 400 INVALID_ARGUMENT.
+    if (endImageMediaId && isOmniFlashModel(model)) {
+      console.log('[Flow Video I2V] OmniFlash 는 종료프레임 미지원 → endImage 무시(start-only)')
+    }
+    const hasEndImage = !!endImageMediaId && !isOmniFlashModel(model)
     console.log('[Flow Video I2V] Starting DOM-triggered I2V generation, start:', startImageMediaId?.substring(0, 8),
       hasEndImage ? ', end: ' + endImageMediaId?.substring(0, 8) : '(start only)',
       hasUserSeed ? `(seed: ${seed})` : '(seed: random)')
 
-    let cdpFetchEnabled = false
+    // R10-P2: arm-before-click pending/timeout 을 try 밖에 선언 — throw 시 finally 에서 identity 정리.
+    let videoTimeout = null
+    let videoOwnPending = null
+    // #R7-10(R6-13 sibling): hoist so the finally always restores temp-shown bounds, even on throw.
+    let promptWasHidden = false
+    let promptBounds = null
 
     try {
-      // 0. Flow 프로젝트 페이지 확인
-      const currentUrl = flowView.webContents.getURL()
-      if (!currentUrl.includes('/project/') && !currentUrl.includes('/tools/flow/')) {
-        return { success: false, error: 'Not on Flow project page. Please open a Flow project first.' }
+      // 0. Codex #R4-4: enforce Flow page is on the TARGET project before DOM mutation.
+      const projectCheck = await ensureOnProjectComposer(flowView, projectId)
+      if (!projectCheck.ok) return { success: false, error: projectCheck.error }
+
+      // 1.5. Agent 토글 — i2v 는 시작 이미지(startImageMediaId)를 monkey-patch 로 비디오 요청에
+      //   주입하는데, Agent ON(streamChat)은 그 요청 자체를 안 보내 주입 통로가 없다(Agent ON 컴포저에
+      //   이미지 첨부 자동화도 없음). 그래서 사용자가 Agent ON 으로 설정했어도 i2v 는 항상 Agent OFF
+      //   경로(intercept)로 fallback 한다. t2v 와 달리 DOM 수집으로 살릴 수 없는 입력단 한계.
+      if (getFlowAgentOn && getFlowAgentOn()) {
+        console.log('[Flow Video I2V] Agent ON 설정이나 i2v 는 시작 이미지 주입(intercept) 필요 → Agent OFF 경로로 fallback')
+      }
+      let agentOff = false
+      try { const r = await ensureAgentOff(); agentOff = !!(r && r.success) } catch (e) { console.warn('[Flow Video I2V] ensureAgentOff skipped:', e.message) }
+      // [P1] Agent OFF 보장 실패 시 중단(fail-closed) — t2v 와 동일 이유.
+      if (!agentOff) return { success: false, error: 'Flow Agent 를 OFF 로 전환하지 못했습니다. Flow 가 "모든 미디어" 화면인지 확인한 뒤 다시 시도해주세요. (캐릭터/장면 탭에는 Agent 토글이 없어 실패할 수 있음)' }
+
+      // 1.6. 동영상 모드로 전환 — t2v 와 동일하게 configureFlowMode 가 컴포즈 칩 팝오버를
+      //      열고 동영상 탭을 클릭한다. [P2] 배치 카운트(videoBatchCount) 전달.
+      // #R30-1: 모드 전환 명시적 {success:false} 면 제출 중단(t2v 와 동일 — 잘못된 quota/timeout 방지).
+      // #R31-1: 배치 1 로 고정(멀티-비디오 결과 미추적 → 유료 유실 방지, t2v 와 동일).
+      let _vmodeRes = null
+      try { _vmodeRes = await configureFlowMode("VIDEO", 1) } catch (e) { console.warn("[Flow Video] configureFlowMode skipped:", e.message) }
+      if (_vmodeRes && _vmodeRes.success === false) {
+        return { success: false, error: `Flow VIDEO mode switch failed: ${_vmodeRes.error || 'unknown'}`, retry: true }
       }
 
-      // 1. 비디오 모드로 전환 (배치 카운트 적용)
-      const effectiveBatchCount = Math.max(1, Math.min(4, videoBatchCount || 1))
-      const modeResult = await configureFlowMode('VIDEO', effectiveBatchCount)
-      if (!modeResult.success) {
-        return { success: false, error: modeResult.error || 'Failed to switch to video mode' }
+      // (v2) Flow 비디오 모델 적용 (I2V — t2v 와 동일).
+      if (model && applyAgentDefaults) {
+        try { const _md = await applyAgentDefaults({ video: { model } }); if (!_md?.success) console.warn('[Flow Video I2V] applyAgentDefaults(video model) failed:', _md?.error) } catch (e) { console.warn('[Flow Video I2V] applyAgentDefaults error:', e.message) }
       }
-      console.log('[Flow Video I2V] Video mode active:', modeResult.method)
 
       // 2. 프롬프트 입력 (T2V와 동일한 Slate 에디터 사용)
-      const promptBounds = flowView.getBounds()
-      const promptWasHidden = (promptBounds.width === 0 || promptBounds.height === 0)
+      promptBounds = flowView.getBounds()
+      promptWasHidden = (promptBounds.width === 0 || promptBounds.height === 0)
       if (promptWasHidden) {
         const { width, height } = mainWindow.getContentBounds()
-        flowView.setBounds({ x: width + 5000, y: 0, width, height })
+        flowView.setBounds(computeOffscreenBounds(screen.getAllDisplays(), mainWindow.getBounds().x, width, height))
         await new Promise(r => setTimeout(r, 300))
       }
 
@@ -359,7 +500,10 @@ export function registerVideoIPC(ipcMain, deps) {
           const isSlate = !!(editor.matches?.("[data-slate-editor='true']") || editor.querySelector?.("[data-slate-node]"));
 
           // Slate React API로 프롬프트 주입
-          let injected = false;
+          // #R32-1: 프롬프트가 비어도(F2V 'none' 소스 → I2V) 유효하다 — 이미지가 생성을 주도.
+          //   빈 프롬프트는 주입할 게 없으니 injected=true 로 시작해, 비-빈 modelText 요구(아래 verifier)
+          //   때문에 'Prompt injection failed' 로 막히지 않게 한다(API 모드는 빈 프롬프트 허용 — 모드 일치).
+          let injected = !promptText;
           if (isSlate) {
             try {
               const reactKeys = Object.keys(editor).filter(k => k.startsWith('__react'));
@@ -443,44 +587,29 @@ export function registerVideoIPC(ipcMain, deps) {
       }
       console.log('[Flow Video I2V] Prompt injected successfully')
 
-      // 3. Set inject state for monkey-patch path + legacy CDP path
+      // 3. Set inject state for monkey-patch path
       const i2vConfig = {
         startImageMediaId,
         endImageMediaId: hasEndImage ? endImageMediaId : null,
         i2vUrl: VIDEO_I2V_URL,
         i2vStartEndUrl: VIDEO_I2V_START_END_URL,
+        duration,    // OmniFlash i2v 길이 접미사 최적화용
+        videoModel: model,  // 앱이 OmniFlash 면 injectI2VBody 가 abra i2v 키로 강제(패널 우회)
       }
-      // Monkey-patch path: write into Flow page
-      await setFlowPageInject?.({
+      // Monkey-patch path: write into Flow page — #R15-5: arming 실패 시 중단(미주입 i2v 방지).
+      const _i2vInjRes = await setFlowPageInject?.({
         seed:        _seedValue,
         aspectRatio: null,
         references:  null,
         i2v:         i2vConfig,
       })
-      // Legacy CDP path
-      setPendingI2VInjection(i2vConfig)
-      try {
-        await flowView.webContents.debugger.sendCommand('Fetch.enable', {
-          patterns: [{ urlPattern: '*batchAsyncGenerateVideo*', requestStage: 'Request' }]
-        })
-        cdpFetchEnabled = true
-        console.log('[Flow Video I2V] CDP Fetch interception also enabled (ENABLE_CDP mode)')
-      } catch (_) {
-        // Expected when CDP is disabled (default) — monkey-patch handles injection
+      if (_i2vInjRes && _i2vInjRes.success === false) {
+        return { success: false, error: `Flow inject arming failed: ${_i2vInjRes.error || 'unknown'}`, retry: true }
       }
 
-      // 4. CDP 비디오 응답 캡처 Promise 설정
+      // 4. 비디오 응답 캡처 Promise 설정 (resolve 만 캡처 — 타이머/arm 은 클릭 직전에)
       let resolveVideo = null
-      let videoTimeout = null
-      const videoResponsePromise = new Promise((resolve) => {
-        videoTimeout = setTimeout(() => {
-          if (getPendingVideoGeneration()) {
-            setPendingVideoGeneration(null)
-            resolve({ error: true, message: 'Video response timeout (30s)' })
-          }
-        }, 30000)
-        resolveVideo = resolve
-      })
+      const videoResponsePromise = new Promise((resolve) => { resolveVideo = resolve })
 
       // 5. Generate 버튼 Trusted Click
       const generateBtnSelector = `(function() {
@@ -497,24 +626,30 @@ export function registerVideoIPC(ipcMain, deps) {
         return null;
       })()`
 
+      // R9-P1: arm-before-click(이미지/ T2V 와 동일) — 클릭 후 arm 하면 빠른 응답/에러를 놓쳐
+      //   false 30s timeout 으로 빠진다. setAt=now, 정리는 자기 pending 만 identity 로.
+      const videoSetAt = Date.now() / 1000
+      videoOwnPending = {
+        setAt: videoSetAt,
+        resolve: (result) => { clearTimeout(videoTimeout); resolveVideo(result) }
+      }
+      setPendingVideoGeneration(videoOwnPending)
+      videoTimeout = setTimeout(() => {
+        if (getPendingVideoGeneration() === videoOwnPending) {
+          setPendingVideoGeneration(null)
+          resolveVideo({ error: true, message: 'Video response timeout (30s)' })
+        }
+      }, 30000)
+
       const clickResult = await trustedClickOnFlowView(generateBtnSelector)
       console.log('[Flow Video I2V] Trusted click result:', clickResult)
 
       if (!clickResult?.success) {
         clearTimeout(videoTimeout)
+        if (getPendingVideoGeneration() === videoOwnPending) setPendingVideoGeneration(null)
         return { success: false, error: clickResult?.error || 'Failed to click Generate button' }
       }
-
-      // ★ 클릭 직후 pendingVideoGeneration 설정
-      const videoSetAt = Date.now() / 1000 - 2
-      setPendingVideoGeneration({
-        setAt: videoSetAt,
-        resolve: (result) => {
-          clearTimeout(videoTimeout)
-          resolveVideo(result)
-        }
-      })
-      console.log('[Flow Video I2V] pendingVideoGeneration set, waiting for CDP capture...')
+      console.log('[Flow Video I2V] pendingVideoGeneration armed BEFORE click, waiting for CDP capture...')
 
       // 6. 비디오 API 응답 대기
       const netResult = await videoResponsePromise
@@ -539,14 +674,13 @@ export function registerVideoIPC(ipcMain, deps) {
       console.error('[Flow Video I2V] Error:', e.message)
       return { success: false, error: e.message }
     } finally {
-      // Monkey-patch inject + legacy CDP vars 정리 (항상 실행)
-      setPendingSeedValue?.(null)
-      setPendingI2VInjection(null)
+      // R10-P2: throw 등 어떤 종료 경로든 arm 한 pending/timeout 정리 — 자기 pending(identity)만.
+      if (videoTimeout) clearTimeout(videoTimeout)
+      if (videoOwnPending && getPendingVideoGeneration() === videoOwnPending) setPendingVideoGeneration(null)
+      // #R7-10: 주입 중 throw 해도 임시로 보인 flowView 를 원복(성공 경로는 이미 hidden → no-op).
+      if (promptWasHidden) { try { flowView.setBounds(promptBounds) } catch {} }
+      // Monkey-patch inject 정리 (항상 실행)
       await clearFlowPageInject?.()
-      // CDP Fetch 정리 (AUTOFLOWCUT_ENABLE_CDP=1 경로만)
-      if (cdpFetchEnabled) {
-        try { await flowView.webContents.debugger.sendCommand('Fetch.disable') } catch {}
-      }
     }
   })
 
@@ -555,7 +689,6 @@ export function registerVideoIPC(ipcMain, deps) {
     const flowView = getFlowView()
     if (!token) return { success: false, error: 'No token' }
     if (!flowView) return { success: false, error: 'Flow view not ready' }
-    try { await ensureDebuggerAttached() } catch (_) {}
 
     const pid = projectId || getCapturedProjectId() || ''
 
@@ -638,8 +771,15 @@ export function registerVideoIPC(ipcMain, deps) {
             statuses.push({ status: 'complete', mediaId, videoUrl })
           } else if (genStatus.includes('FAILED') || genStatus.includes('ERROR')) {
             console.warn('[Flow VideoStatus] ❌ FAILED media detail:', JSON.stringify(m).substring(0, 1000))
-            const failReason = m?.mediaMetadata?.mediaStatus?.failureReason
-              || m?.mediaMetadata?.mediaStatus?.errorMessage
+            // 실제 실패 사유를 우선 추출 ("Media not found." 등). 구조:
+            //   mediaMetadata.mediaStatus.error.message / .failureReasons[0]
+            // 이게 stale("Media not found") 자동복구 판정(isStaleVideoStatus)의 입력이므로
+            // enum(MEDIA_GENERATION_STATUS_FAILED)으로 폴백하면 복구가 안 된다.
+            const ms = m?.mediaMetadata?.mediaStatus
+            const failReason = ms?.error?.message
+              || (Array.isArray(ms?.failureReasons) ? ms.failureReasons[0] : null)
+              || ms?.failureReason
+              || ms?.errorMessage
               || m?.error?.message
               || genStatus
             statuses.push({ status: 'failed', error: failReason })
@@ -684,11 +824,11 @@ export function registerVideoIPC(ipcMain, deps) {
   // AutoFlow 10.7.58 역공학: upscaleVideoDirect (sidepanel.js:20223)
   // mediaId → workflowId 조회 → reCAPTCHA → upscale 제출 → resultMediaName 반환
   ipcMain.handle('flow:upscale-video', async (event, { token, mediaId, projectId, resolution, aspectRatio }) => {
+    if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R25-4
     const flowView = getFlowView()
     if (!token) return { success: false, error: 'No token' }
     if (!mediaId) return { success: false, error: 'No mediaId' }
     if (!flowView) return { success: false, error: 'Flow view not ready' }
-    try { await ensureDebuggerAttached() } catch (_) {}
 
     const normalizedRes = String(resolution || '1080p').toLowerCase()
     const resolutionEnum = normalizedRes === '4k' ? 'VIDEO_RESOLUTION_4K' : 'VIDEO_RESOLUTION_1080P'

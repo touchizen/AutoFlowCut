@@ -12,7 +12,8 @@ import { renderHook, act } from '@testing-library/react'
 
 vi.mock('../../src/utils/guards', () => ({
   checkAuthToken: vi.fn().mockResolvedValue(true),
-  checkFolderPermission: vi.fn().mockResolvedValue({ ok: true })
+  checkFolderPermission: vi.fn().mockResolvedValue({ ok: true }),
+  checkFlowProjectReady: vi.fn().mockReturnValue({ ok: true }),
 }))
 
 vi.mock('../../src/hooks/useFileSystem', () => ({
@@ -47,10 +48,10 @@ function setupHook({ references, flowOverrides = {}, statefulRefs = false }) {
 
   const submitOrder = []
   const submitCalls = []
-  const flowAPI = {
+  const genAPI = {
     getAccessToken: vi.fn().mockResolvedValue('token'),
     clearTokenCache: vi.fn(),
-    submitGenerationDOM: vi.fn(async (prompt, styleRefImages) => {
+    submitGeneration: vi.fn(async (prompt, styleRefImages) => {
       submitOrder.push(prompt)
       submitCalls.push({ prompt, styleRefImages })
       return { success: true, generationId: `g-${submitOrder.length}` }
@@ -74,7 +75,7 @@ function setupHook({ references, flowOverrides = {}, statefulRefs = false }) {
     settings: { saveMode: 'project', imageBatchCount: 1 },
     references: liveRefs,
     setReferences,
-    flowAPI,
+    genAPI,
     addPendingSave: vi.fn(),
     openSettings: vi.fn(),
     t: (k) => k,
@@ -82,7 +83,7 @@ function setupHook({ references, flowOverrides = {}, statefulRefs = false }) {
   }))
   rerenderRef.current = () => rerender()
 
-  return { result, flowAPI, submitOrder, submitCalls }
+  return { result, genAPI, submitOrder, submitCalls }
 }
 
 // Drives a batch run to completion, stepping through inter-submit delays and
@@ -107,7 +108,7 @@ async function runBatch(result) {
 
 describe('useReferenceGeneration — batch order (style first)', () => {
   it('includes style refs in the batch (both style and character submitted)', async () => {
-    const { result, flowAPI } = setupHook({
+    const { result, genAPI } = setupHook({
       references: [
         { id: 1, type: 'style', prompt: 'a style', status: 'pending' },
         { id: 2, type: 'character', prompt: 'a hero', status: 'pending' }
@@ -116,7 +117,7 @@ describe('useReferenceGeneration — batch order (style first)', () => {
 
     await runBatch(result)
 
-    expect(flowAPI.submitGenerationDOM).toHaveBeenCalledTimes(2)
+    expect(genAPI.submitGeneration).toHaveBeenCalledTimes(2)
   })
 
   it('submits the style ref before the non-style ref', async () => {
@@ -136,20 +137,16 @@ describe('useReferenceGeneration — batch order (style first)', () => {
     expect(styleIdx).toBeLessThan(charIdx)
   })
 
-  it('non-style phase submits the character ref WITH the fresh style card mediaId', async () => {
-    // P2 회귀: _processAndSaveImage가 mediaId를 setReferences로만 써서,
-    //   같은 batch flow의 non-style phase가 React 재렌더 전 stale한
-    //   referencesRef.current를 읽으면 style 카드의 mediaId 없이 제출됨.
+  it('non-style phase submits the character ref WITH the fresh style card (by name)', async () => {
+    // 회귀: 같은 batch flow의 non-style phase가 React 재렌더 전 stale한
+    //   referencesRef.current를 읽으면 방금 만든 style 카드 없이 제출됨.
+    // cloud(Veo): style 카드는 mediaId 가 아니라 name 으로 주입된다 (referenceResolver).
     const { result, submitCalls } = setupHook({
       statefulRefs: true,
       references: [
-        { id: 1, type: 'style', prompt: 'a style', status: 'pending' },
+        { id: 1, type: 'style', name: 'mystyle', prompt: 'a style', status: 'pending' },
         { id: 2, type: 'character', prompt: 'a hero', status: 'pending' }
-      ],
-      flowOverrides: {
-        // style 카드 업로드가 알려진 mediaId 산출
-        uploadReference: vi.fn().mockResolvedValue({ success: true, mediaId: 'style-media-xyz', caption: '' })
-      }
+      ]
     })
 
     await runBatch(result)
@@ -158,13 +155,56 @@ describe('useReferenceGeneration — batch order (style first)', () => {
     expect(submitCalls.length).toBe(2)
     const charSubmit = submitCalls.find(c => c.prompt.includes('a hero'))
     expect(charSubmit).toBeTruthy()
-    // 2번째 인자(styleRefImages)에 방금 만든 style 카드의 mediaId가 실려야 함
+    // 2번째 인자(styleRefImages)에 방금 만든 style 카드가 name + data 로 실려야 함
     expect(Array.isArray(charSubmit.styleRefImages)).toBe(true)
-    expect(charSubmit.styleRefImages.some(img => img.mediaId === 'style-media-xyz')).toBe(true)
+    expect(charSubmit.styleRefImages.some(img => img.name === 'mystyle' && img.data === 'img')).toBe(true)
+  })
+
+  it('non-style phase submits data-only auto style card WITH inline data payload', async () => {
+    const { result, submitCalls } = setupHook({
+      references: [
+        { id: 1, type: 'style', data: 'data:image/png;base64,STYLE_DATA', status: 'done' },
+        { id: 2, type: 'character', prompt: 'a hero', status: 'pending' }
+      ]
+    })
+
+    await runBatch(result)
+
+    const charSubmit = submitCalls.find(c => c.prompt.includes('a hero'))
+    expect(charSubmit).toBeTruthy()
+    expect(charSubmit.styleRefImages).toEqual([
+      expect.objectContaining({
+        id: 1,
+        data: 'data:image/png;base64,STYLE_DATA',
+        filePath: null,
+      })
+    ])
+  })
+
+  it('non-style phase submits file-backed auto style card WITH filePath payload', async () => {
+    const { result, submitCalls } = setupHook({
+      references: [
+        { id: 1, type: 'style', name: 'saved-style', filePath: '/refs/saved-style.png', status: 'done' },
+        { id: 2, type: 'character', prompt: 'a hero', status: 'pending' }
+      ]
+    })
+
+    await runBatch(result)
+
+    const charSubmit = submitCalls.find(c => c.prompt.includes('a hero'))
+    expect(charSubmit).toBeTruthy()
+    expect(charSubmit.styleRefImages).toEqual([
+      expect.objectContaining({
+        id: 1,
+        name: 'saved-style',
+        data: null,
+        filePath: '/refs/saved-style.png',
+      })
+    ])
   })
 
   it('with no style ref, still generates the non-style refs (behaves as before)', async () => {
-    const { result, flowAPI } = setupHook({
+    const { result, genAPI } = setupHook({
       references: [
         { id: 1, type: 'character', prompt: 'a hero', status: 'pending' },
         { id: 2, type: 'character', prompt: 'a villain', status: 'pending' }
@@ -173,6 +213,6 @@ describe('useReferenceGeneration — batch order (style first)', () => {
 
     await runBatch(result)
 
-    expect(flowAPI.submitGenerationDOM.mock.calls.length).toBeGreaterThanOrEqual(1)
+    expect(genAPI.submitGeneration.mock.calls.length).toBeGreaterThanOrEqual(1)
   })
 })

@@ -1,16 +1,51 @@
 import { useState, useRef, useEffect } from 'react'
 import Waveform from './Waveform'
 import TimelineFlagButton from './TimelineFlagButton'
+import TimelineVideoToggleButton from './TimelineVideoToggleButton'
+import { useElapsedTimer } from '../../hooks/useElapsedTimer'
+import { formatElapsed } from '../../utils/formatters'
+
+// 생성 중 스톱워치 아이콘 — Results(ResultsTable) 와 동일 마크업/CSS(.stopwatch-icon/-hand, App.css 전역).
+function StopwatchIcon({ size = 14 }) {
+  const r = size / 2
+  const cx = r, cy = r
+  const handLen = r * 0.6
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="stopwatch-icon">
+      <circle cx={cx} cy={cy} r={r - 1.5} fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <line x1={cx} y1={cy - r + 1.5} x2={cx} y2={cy - r + 3.5} stroke="currentColor" strokeWidth="1.2" />
+      <rect x={cx - 1} y={0} width={2} height={2} rx={0.5} fill="currentColor" />
+      <line className="stopwatch-hand" x1={cx} y1={cy} x2={cx} y2={cy - handLen}
+        stroke="var(--accent, #3b82f6)" strokeWidth="1.5" strokeLinecap="round"
+        style={{ transformOrigin: `${cx}px ${cy}px` }} />
+      <circle cx={cx} cy={cy} r={1.2} fill="var(--accent, #3b82f6)" />
+    </svg>
+  )
+}
+
+/** 생성 중 클립 위에 클록 + 경과시간(1초마다 갱신, endedAt 있으면 멈춤). */
+function ClipGeneratingTimer({ startedAt, endedAt }) {
+  const elapsed = useElapsedTimer(startedAt, endedAt)
+  return (
+    <div className="atl-clip-gentimer" aria-label="generating">
+      <StopwatchIcon size={14} />
+      <span>{formatElapsed(elapsed)}</span>
+    </div>
+  )
+}
 
 // 클립 — click vs drag 자동 구분, draggable이면 드래그로 timecode 보정
 // onFlag(audioPath, filename, event): hover ⚠️ 버튼 클릭 시 호출 (audioPath 있고 onFlag 전달된 경우만)
 // isFlagged(filePath): bool — flagged 시각 표시
-export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDragClip, totalDurationMs, isPlaying, onSceneHover, onFlag, isFlagged }) {
+export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDragClip, totalDurationMs, isPlaying, onSceneHover, onFlag, isFlagged, onToggleVideo }) {
   const [dragOffsetMs, setDragOffsetMs] = useState(null)
   const isDragging = dragOffsetMs !== null
   const flagged = !!(isFlagged && clip.audioPath && isFlagged(clip.audioPath))
   // audioPath 있으면 audio clip — sub-track은 variant가 없어서 audioPath로 판정
   const showActionable = !!clip.audioPath && !!onFlag
+  const isVideoClip = clip.role === 'video-i2v' || clip.role === 'video-t2v'
+  // 생성 중 클립엔 토글 숨김 — 완료 경로가 disabled 를 리셋하므로 선택이 조용히 되돌아감.
+  const showVideoToggle = isVideoClip && !!onToggleVideo && !clip.generating
   // 드래그 중 unmount되면 onUp 미발화 → 여기서 listener 강제 정리
   const dragCleanupRef = useRef(null)
   useEffect(() => () => {
@@ -37,7 +72,7 @@ export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDr
 
   const onMouseEnter = (e) => {
     if (clip.sceneRef && variant === 'block') {
-      onSceneHover?.({ x: e.clientX, y: e.clientY, scene: clip.sceneRef })
+      onSceneHover?.({ x: e.clientX, y: e.clientY, scene: clip.sceneRef, clip })
     }
   }
   const onMouseLeave = () => onSceneHover?.(null)
@@ -87,7 +122,7 @@ export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDr
 
   return (
     <div
-      className={`atl-clip atl-clip-${variant}${isPlaying ? ' atl-clip-playing' : ''}${isDragging ? ' atl-clip-dragging' : ''}${flagged ? ' atl-clip-flagged' : ''}`}
+      className={`atl-clip atl-clip-${variant}${isPlaying ? ' atl-clip-playing' : ''}${isDragging ? ' atl-clip-dragging' : ''}${flagged ? ' atl-clip-flagged' : ''}${clip.disabled ? ' atl-clip-disabled' : ''}`}
       style={style}
       onPointerDown={onPointerDown}
       onMouseEnter={onMouseEnter}
@@ -95,10 +130,16 @@ export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDr
       title={clip.filename || clip.label || ''}
     >
       {variant === 'block' && clip.imagePath && (
-        <img className="atl-clip-img" src={`file://${clip.imagePath}`} alt="" />
+        <img className="atl-clip-img" src={clip.imgSrc || `file://${clip.imagePath}`} alt="" />
       )}
       {variant === 'block' && !clip.imagePath && clip.posterDataUrl && (
         <img className="atl-clip-img" src={clip.posterDataUrl} alt="" />
+      )}
+      {/* 생성 중 클립 — shimmer(윤기/광택). placeholder(이미지 없음)면 빈 박스 위에. */}
+      {variant === 'block' && clip.generating && <div className="gen-shimmer" aria-hidden="true" />}
+      {/* 생성 중 클록 + 경과시간 (Results 와 동일) */}
+      {variant === 'block' && clip.generating && (
+        <ClipGeneratingTimer startedAt={clip.generatingStartedAt} endedAt={clip.generatingEndedAt} />
       )}
       {variant === 'text' && (
         <span className="atl-clip-text" style={{ color: clip.color }}>{clip.label}</span>
@@ -118,6 +159,14 @@ export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDr
           flagged={flagged}
           narrow={width < 40}
           onFlag={onFlag}
+        />
+      )}
+      {/* 영상 클립 export 포함/제외 토글 (호버 👁) */}
+      {showVideoToggle && !isDragging && (
+        <TimelineVideoToggleButton
+          disabled={!!clip.disabled}
+          narrow={width < 40}
+          onToggle={() => onToggleVideo(clip)}
         />
       )}
     </div>

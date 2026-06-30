@@ -7,7 +7,7 @@
  * 스킵 조건: path 없음 / duration 없음 / duration <= 0 / scene_dur <= 0
  */
 import { describe, it, expect } from 'vitest'
-import { computeVideoClipPlacement } from '../../../src/components/AudioTimeline/useAudioTimeline'
+import { computeVideoClipPlacement, isPreviewVideoVisible } from '../../../src/components/AudioTimeline/useAudioTimeline'
 
 describe('computeVideoClipPlacement', () => {
   describe('Case A — scene >= video → back-aligned', () => {
@@ -150,5 +150,48 @@ describe('computeVideoClipPlacement', () => {
       expect(computeVideoClipPlacement(null, 0, 5000)).toBeNull()
       expect(computeVideoClipPlacement(undefined, 0, 5000)).toBeNull()
     })
+  })
+})
+
+describe('isPreviewVideoVisible', () => {
+  const EMPTY = new Set()
+  it('disabled 없으면 보임', () => {
+    expect(isPreviewVideoVisible({}, 'i2v', EMPTY)).toBe(true)
+  })
+  it('videoI2VDisabled=true → i2v 안 보임', () => {
+    expect(isPreviewVideoVisible({ videoI2VDisabled: true }, 'i2v', EMPTY)).toBe(false)
+  })
+  it('hiddenRoles(View off) 도 안 보임', () => {
+    expect(isPreviewVideoVisible({}, 'i2v', new Set(['video-i2v']))).toBe(false)
+  })
+  it('t2v disabled 는 i2v 에 영향 없음', () => {
+    expect(isPreviewVideoVisible({ videoT2VDisabled: true }, 'i2v', EMPTY)).toBe(true)
+  })
+  it('videoT2VDisabled=true → t2v 안 보임(i2v 미러)', () => {
+    expect(isPreviewVideoVisible({ videoT2VDisabled: true }, 't2v', EMPTY)).toBe(false)
+  })
+  it('hiddenRoles=null 이어도 안전(가드) — disabled 만으로 판정', () => {
+    expect(isPreviewVideoVisible({}, 'i2v', null)).toBe(true)
+    expect(isPreviewVideoVisible({ videoI2VDisabled: true }, 'i2v', null)).toBe(false)
+  })
+})
+
+describe('computeVideoClipPlacement — source 분리 (i2v/t2v 트랙)', () => {
+  const both = { id: 's', videoI2VPath: '/i2v.mp4', videoI2VDuration: 2, videoT2VPath: '/t2v.mp4', videoT2VDuration: 4 }
+
+  it("source='i2v' → i2v 경로만 사용", () => {
+    expect(computeVideoClipPlacement(both, 0, 10_000, 'i2v').videoPath).toBe('/i2v.mp4')
+  })
+  it("source='t2v' → i2v 있어도 t2v 경로 사용", () => {
+    const r = computeVideoClipPlacement(both, 0, 10_000, 't2v')
+    expect(r.videoPath).toBe('/t2v.mp4')
+    expect(r.videoIn).toBe(6000) // 10s 씬 - 4s 비디오 = 6000 (Case A)
+  })
+  it("source='t2v' 인데 t2v 없으면 null (i2v 폴백 안 함)", () => {
+    const onlyI2v = { id: 's', videoI2VPath: '/i.mp4', videoI2VDuration: 2 }
+    expect(computeVideoClipPlacement(onlyI2v, 0, 10_000, 't2v')).toBeNull()
+  })
+  it("source 미지정 → 기존 동작(i2v 우선)", () => {
+    expect(computeVideoClipPlacement(both, 0, 10_000).videoPath).toBe('/i2v.mp4')
   })
 })

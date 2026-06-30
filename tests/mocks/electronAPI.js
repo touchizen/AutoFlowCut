@@ -36,8 +36,26 @@ export const mockElectronAPI = {
   // App lifecycle
   setLayout: vi.fn(),
   openCapcut: vi.fn(),
+  checkCapcutInstalled: vi.fn(),
   getAppVersion: vi.fn(),
   saveSrtFile: vi.fn(),
+  openExternal: vi.fn(),
+  writeVrewProject: vi.fn(),
+  openVrewProject: vi.fn(),
+  writePremiereProject: vi.fn(),
+  checkPremiereInstalled: vi.fn(),
+  openPremiereProject: vi.fn(),
+
+  // Google GenAI (BYOK)
+  genaiGetKeyStatus: vi.fn(),
+  genaiSetKey: vi.fn(),
+  genaiClearKey: vi.fn(),
+  genaiValidateKey: vi.fn(),
+  genaiListModels: vi.fn(),
+  genaiGenerateImage: vi.fn(),
+  genaiGenerateVideo: vi.fn(),
+  genaiCheckVideoStatus: vi.fn(),
+  genaiDownloadVideo: vi.fn(),
 }
 
 export function resetElectronAPI() {

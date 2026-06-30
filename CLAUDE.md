@@ -1,10 +1,15 @@
 # AutoCraft Studio (Flow2CapCut Desktop)
 
-Electron 데스크톱 앱 - Google Flow AI로 이미지/비디오 생성 후 CapCut 프로젝트로 내보내기
+Electron 데스크톱 앱 - Google 공식 생성 API(Gemini 이미지 / Veo 비디오)로 이미지/비디오 생성 후 CapCut 프로젝트로 내보내기
 
 ## 기반 프로젝트
-- whisk2capcut-desktop를 fork하여 Flow API로 교체
-- AutoFlow Chrome 확장 (10.7.58)에서 역공학한 API 사용
+- whisk2capcut-desktop를 fork
+- 생성 엔진: **Google 공식 API (BYOK — 사용자 자기 Gemini API 키)**.
+  - 이미지: `gemini-2.5-flash-image` (레퍼런스 이미지 inline base64 → 캐릭터 일관성)
+  - 비디오: Veo (`veo-3.1-fast-generate-preview`, predictLongRunning + 폴링)
+  - 호출부: `electron/api/genai.js` (엔진), `electron/ipc/genai-api.js` (IPC), `src/hooks/useGenAPI.js` (renderer)
+  - 키 저장: OS keychain 암호화 (`electron/api/keyStore.js`, safeStorage) — main process 전용, 평문 저장 안 함
+- (구) Flow 웹 역공학(DOM 자동화/WebContentsView)은 제거됨. 자세한 이력: `docs/superpowers/plans/2026-06-01-flow-to-official-api-migration.md`
 
 ## 개발 규칙
 

@@ -6,17 +6,17 @@ import { cleanBase64 } from './urls'
 
 /**
  * 이미지 업스케일 (설정에 따라 Flow API 호출)
- * @param {object} flowAPI - Flow API 인스턴스
+ * @param {object} genAPI - Flow API 인스턴스
  * @param {string} mediaId - 업스케일할 이미지의 mediaId
  * @param {string} upscaleRes - 업스케일 해상도 ('off', '2x', '4x' 등)
  * @param {string} logPrefix - 로그 접두사 (예: '[Scene]', '[Automation]')
  * @returns {Promise<string|null>} 업스케일된 이미지 데이터 또는 null (실패 시)
  */
-export async function tryUpscaleImage(flowAPI, mediaId, upscaleRes, logPrefix = '[Upscale]') {
+export async function tryUpscaleImage(genAPI, mediaId, upscaleRes, logPrefix = '[Upscale]') {
   if (upscaleRes === 'off' || !upscaleRes || !mediaId) return null
   try {
     console.log(logPrefix, 'Upscaling image to', upscaleRes, '...')
-    const upResult = await flowAPI.upscaleImage(mediaId, upscaleRes)
+    const upResult = await genAPI.upscaleImage(mediaId, upscaleRes)
     if (upResult.success && upResult.data) {
       console.log(logPrefix, 'Upscale success')
       return upResult.data

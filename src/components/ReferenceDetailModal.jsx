@@ -2,12 +2,14 @@
  * ReferenceDetailModal - 레퍼런스 상세 모달
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { REFERENCE_TYPES, STYLE_PRESETS, RESOURCE } from '../config/defaults'
 import { resolveImageSrc, hasImageData, formatElapsed } from '../utils/formatters'
 import { useImageUpload } from '../hooks/useImageUpload'
 import { useElapsedTimer } from '../hooks/useElapsedTimer'
 import { fileSystemAPI } from '../hooks/useFileSystem'
+import { applyEntityRegistrationPatch } from '../utils/refEntityRegistration'
+import PromptInput from './PromptInput'
 import { toast } from './Toast'
 import Modal from './Modal'
 import StylePicker from './StylePicker'
@@ -37,29 +39,58 @@ function ElapsedTime({ startedAt, endedAt }) {
   return <span>{formatElapsed(elapsed)}</span>
 }
 
-export default function ReferenceDetailModal({ reference, index, onUpdate, onUpload, onClose, onGenerate, isGenerating, t, isKo, projectName, thumbnails = {} }) {
+export default function ReferenceDetailModal({ reference, index, onUpdate, onUpload, onClose, onGenerate, isGenerating, t, isKo, projectName, appMode, thumbnails = {}, references = [] }) {
   const [editData, setEditData] = useState({ ...reference })
   const [showStyleDropdown, setShowStyleDropdown] = useState(false)
   const [histories, setHistories] = useState([])
   const [shouldReloadHistory, setShouldReloadHistory] = useState(0)
   const [imageSize, setImageSize] = useState(null)
-  
-  // reference prop이 변경되면 editData 업데이트 (재생성 완료 시)
+  // #R9-5: 사용자가 모달에서 이미지를 로컬로 바꿨는지(미저장). dirty 면 prop→local 미디어 동기화를
+  //   건너뛰어, 배경 자동화(on-demand 등록 등)가 reference.mediaId 를 바꿔도 미저장 편집을 덮지 않는다.
+  const mediaDirtyRef = useRef(false)
+
+  // 미디어 필드 동기화 (재생성/이미지 교체 완료 시) + 히스토리 재로드 트리거.
   useEffect(() => {
+    // #R9-5: 미저장 로컬 이미지 편집이 있으면 prop 으로 덮어쓰지 않는다.
+    if (mediaDirtyRef.current) return
     setEditData(prev => ({
       ...prev,
       data: reference.data,
       filePath: reference.filePath,
       mediaId: reference.mediaId,
-      caption: reference.caption
+      caption: reference.caption,
     }))
     // 히스토리 재로드 트리거
     setShouldReloadHistory(n => n + 1)
-  }, [reference.data, reference.filePath, reference.mediaId])
+  // #R14-7: caption 도 dep — caption-only prop 갱신이 저장 시 stale 로 덮이지 않게.
+  }, [reference.data, reference.filePath, reference.mediaId, reference.caption])
+
+  // #R6-17/#R8-9: entity 필드는 별도 effect 로 동기화. on-demand 등록(useAutomation)이 prop 의
+  //   entityId/registered/flowNameSyncStatus 만 갱신해도 모달 저장 시 fresh 등록이 유지되게 하되,
+  //   미디어 필드(미저장 이미지 편집)는 건드리지 않도록 분리한다(entity-only 갱신이 미디어를 덮지 않음).
+  useEffect(() => {
+    // #R17-1: 사용자가 미저장 미디어 편집(교체/제거/스타일 적용)을 한 상태(mediaDirtyRef)면
+    //   로컬에서 비운 entity 필드를 prop 의 옛 값으로 되돌리지 않는다(잘못된 캐릭터 멘션 방지).
+    if (mediaDirtyRef.current) return
+    setEditData(prev => ({
+      ...prev,
+      entityId: reference.entityId,
+      workflowId: reference.workflowId,
+      registered: reference.registered,
+      flowNameSyncStatus: reference.flowNameSyncStatus,
+    }))
+  }, [reference.entityId, reference.workflowId, reference.registered, reference.flowNameSyncStatus])
   
+  // #R28-3: 업로드 await 동안 mode/project 가 바뀌면 stale Flow 결과(mediaId/entity)를
+  //   현재 모달 상태에 적용하지 않도록 스코프 토큰을 제공한다.
+  const getScopeToken = useCallback(() => `${appMode ?? ''}::${projectName ?? ''}`, [appMode, projectName])
   const imageUpload = useImageUpload({
     uploadToFlow: onUpload,
+    getScopeToken,
     category: editData.category,
+    // Codex #3: pass type/name/refId so Flow character upload can route to
+    // flowUploadCharacterEntity and return entityId/workflowId/registered.
+    uploadMeta: { type: editData.type, name: editData.name, refId: editData.id },
     onUploadComplete: (result) => {
       // R31 review fix: 새 이미지로 교체 시 filePath/dataStorage 도 클리어 해야
       // handleSave 의 `!editData.filePath` 가드가 saveReference 를 새로 호출 →
@@ -69,6 +100,21 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
       // null) 시 옛 mediaId 유지하면 자동화 (useAutomation.js:428) 가 새 이미지를
       // 안 올리고 옛 mediaId 를 그대로 주입 → 새 이미지 무시. 새 result 가 있을
       // 때만 그 값으로 채움.
+      // Codex #3: propagate entity fields (entityId, workflowId, flowNameSyncStatus,
+      // registered) so a manually-replaced Flow character image becomes mention-eligible.
+      // #R16-3: entity 필드를 함께 처리한다. fresh 등록이 있으면 그 값으로, 없으면(새 이미지로
+      //   교체했는데 entity 미등록) 옛 entityId/workflowId/registered 를 비운다 — 안 그러면 새 이미지
+      //   ref 가 옛 캐릭터의 entityId 로 멘션돼 잘못된 캐릭터를 가리킨다(needsEntityRegistration 이
+      //   재등록하도록 entityId 를 null 로).
+      // #R17-2: 미디어 교체이므로 patch 의 base 를 "비운 ref"로 준다 — result 가 entityId 를 생략하면
+      //   옛 editData.entityId 가 보존(R12-9)되어 새 이미지가 옛 캐릭터를 가리키는 것을 막는다.
+      const hasEntityFields = result.entityId != null || result.workflowId != null
+      const clearedBase = { ...editData, entityId: null, workflowId: null, mediaId: null }
+      const entityPatch = hasEntityFields
+        ? applyEntityRegistrationPatch(clearedBase, result, true)
+        : { entityId: null, workflowId: null, registered: null, flowNameSyncStatus: null }
+      // #R9-5: 로컬 이미지 교체 = 미저장 편집 → prop 동기화가 덮지 않도록 dirty 표시.
+      mediaDirtyRef.current = true
       setEditData(prev => ({
         ...prev,
         data: result.data,
@@ -76,45 +122,66 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
         caption: result.caption || null,
         filePath: null,
         dataStorage: null,
+        // entity fields from Flow character upload
+        ...entityPatch,
         // cache bust (R27)
         generatedAt: Date.now(),
       }))
     }
   })
   
-  const loadHistory = async () => {
-    const result = await fileSystemAPI.getHistory(projectName, RESOURCE.REFERENCES, reference.name)
-    if (result.success && result.histories?.length > 0) {
-      const historiesWithData = await Promise.all(
-        result.histories.map(async (hist) => {
-          const fileResult = await fileSystemAPI.readHistoryFile(projectName, RESOURCE.REFERENCES, hist.filename)
-          return {
-            ...hist,
-            data: fileResult.success ? fileResult.data : null,
-            metadata: fileResult.metadata || null  // caption, mediaId 등
-          }
-        })
-      )
-      setHistories(historiesWithData.filter(h => h.data))
+  // #R12-15: isActive 가드로 stale 결과 적용 방지 + 예외 catch(unhandled rejection 방지).
+  const loadHistory = async (isActive = () => true) => {
+    try {
+      const result = await fileSystemAPI.getHistory(projectName, RESOURCE.REFERENCES, reference.name)
+      if (result.success && result.histories?.length > 0) {
+        const historiesWithData = await Promise.all(
+          result.histories.map(async (hist) => {
+            const fileResult = await fileSystemAPI.readHistoryFile(projectName, RESOURCE.REFERENCES, hist.filename)
+            return {
+              ...hist,
+              data: fileResult.success ? fileResult.data : null,
+              metadata: fileResult.metadata || null  // caption, mediaId 등
+            }
+          })
+        )
+        if (isActive()) setHistories(historiesWithData.filter(h => h.data))
+      } else if (isActive()) {
+        // #R13-16: 빈/실패 결과면 이전 ref 의 stale 썸네일이 남지 않게 비운다.
+        setHistories([])
+      }
+    } catch (e) {
+      console.warn('[ReferenceDetail] loadHistory failed:', e?.message)
+      if (isActive()) setHistories([])
     }
   }
-  
+
   // 히스토리 로드
   useEffect(() => {
+    let cancelled = false
     if (projectName && reference.name) {
-      loadHistory()
+      loadHistory(() => !cancelled)
     }
+    return () => { cancelled = true }
   }, [projectName, reference.name, shouldReloadHistory])
   
   // 히스토리 이미지 선택
   const handleRestoreHistory = (historyItem) => {
+    // #R9-5: 히스토리 복원도 미저장 로컬 미디어 변경 → dirty.
+    mediaDirtyRef.current = true
     setEditData(prev => ({
       ...prev,
       data: historyItem.data,
       mediaId: historyItem.metadata?.mediaId || null,
       caption: historyItem.metadata?.caption || null,
       filePath: null,  // 저장 시 새로 저장되도록
-      dataStorage: null
+      dataStorage: null,
+      // #R16-3: 다른 이미지로 복원 → 옛 entity 등록은 무효(새 미디어). 멘션이 옛 캐릭터를 가리키지
+      //   않게 entity 필드 클리어(재등록 대상이 되도록).
+      entityId: historyItem.metadata?.entityId ?? null,
+      workflowId: historyItem.metadata?.workflowId ?? null,
+      registered: null,
+      flowNameSyncStatus: null,
     }))
   }
   
@@ -147,12 +214,17 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
       }
     }
     
+    // #R9-5: 저장 완료 → 더 이상 미저장 편집 아님(이후 prop 동기화 허용).
+    mediaDirtyRef.current = false
     onUpdate(index, editData)
     onClose()
   }
-  
+
   // 스타일 선택 핸들러 (StylePicker에서 preset:ID 형식으로 옴)
   const handleStylePickerSelect = (id) => {
+    // #R10-8: 스타일 선택/해제도 media(data/mediaId/filePath) 를 바꾸는 로컬 편집 → dirty 표시
+    //   (배경 prop 동기화가 이 변경을 되돌리지 않게).
+    mediaDirtyRef.current = true
     if (!id || !id.startsWith('preset:')) {
       // 선택 해제 — 모든 ref 필드를 함께 클리어해 stale mediaId/filePath/caption이
       // findAutoStyle()에 잡히지 않도록 한다 (이름 빈 ref인데 mediaId 살아있는 상태 방지).
@@ -160,6 +232,8 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
         ...prev,
         name: '', prompt: '', description: '',
         data: null, filePath: null, mediaId: null, caption: null, dataStorage: null,
+        // #R16-3: 미디어/이름 클리어 시 옛 entity 등록도 무효화.
+        entityId: null, workflowId: null, registered: null, flowNameSyncStatus: null,
       }))
       return
     }
@@ -179,6 +253,8 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
       mediaId: null,
       caption: null,
       dataStorage: null,
+      // #R16-3: 프리셋 적용 시 옛 entity 등록도 무효화.
+      entityId: null, workflowId: null, registered: null, flowNameSyncStatus: null,
     }))
   }
 
@@ -201,20 +277,22 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
     }
   }
   
-  // 재생성 핸들러
+  // 재생성 핸들러 — 생성은 백그라운드로 계속되고 모달은 즉시 닫힘 (§3.8)
   const handleRegenerate = () => {
     console.log('[ReferenceDetail] Regenerate clicked', { index, editData, onGenerate: !!onGenerate })
+    if (!onGenerate) {
+      console.error('[ReferenceDetail] onGenerate is not defined!')
+      return
+    }
     try {
       // 부모 state에 편집 내용 반영 (다음 render에 commit)
       onUpdate(index, editData)
       // editData를 4번째 인자로 직접 넘겨서 React state commit race를 우회.
       // (그렇지 않으면 useReferenceGeneration이 옛 references[index]를 읽어
       // noPrompt 경로 또는 옛 prompt로 생성하는 race 발생)
-      if (onGenerate) {
-        onGenerate(index, false, null, editData)
-      } else {
-        console.error('[ReferenceDetail] onGenerate is not defined!')
-      }
+      // 주의: onUpdate → onGenerate 순서 유지 필수 (editData race-condition 우회)
+      onGenerate(index, false, null, editData)
+      onClose()
     } catch (err) {
       console.error('[ReferenceDetail] Regenerate error:', err)
     }
@@ -302,7 +380,10 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
                     className="btn-clear-image"
                     onClick={(e) => {
                       e.stopPropagation()
-                      setEditData(prev => ({ ...prev, data: null, filePath: null, mediaId: null, caption: null, dataStorage: null }))
+                      // #R10-8: 이미지 제거도 미저장 로컬 미디어 변경 → dirty(배경 prop 동기화가 되돌리지 않게).
+                      mediaDirtyRef.current = true
+                      // #R16-3: 이미지 제거 시 옛 entity 등록도 무효화(멘션이 옛 캐릭터를 가리키지 않게).
+                      setEditData(prev => ({ ...prev, data: null, filePath: null, mediaId: null, caption: null, dataStorage: null, entityId: null, workflowId: null, registered: null, flowNameSyncStatus: null }))
                       setImageSize(null)
                     }}
                     title={t('reference.clearImage') || '이미지 제거'}
@@ -386,11 +467,13 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
                 >⧉</button>
               )}
             </label>
-            <textarea
+            <PromptInput
               value={editData.prompt || ''}
-              onChange={(e) => setEditData({ ...editData, prompt: e.target.value })}
+              onChange={(text) => setEditData({ ...editData, prompt: text })}
               placeholder={t('reference.promptPlaceholder')}
-              rows={4}
+              // 장면(scene) 레퍼런스만 @로 캐릭터 지정 가능. 그 외 타입은 picking 없음(기존 chip 은 렌더).
+              references={editData.type === 'scene' ? (references || []).filter(r => r?.type === 'character') : []}
+              hideFooter
             />
           </div>
 

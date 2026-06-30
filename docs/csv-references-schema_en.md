@@ -1,7 +1,7 @@
 # References CSV Schema
 
 File that defines prompts for generating reference images of characters, scenes, and styles.
-Used in Flow2CapCut for generating reference images, and matches against the `scene_tag` and `characters` fields in the scenes CSV.
+Used in AutoFlowCut for generating reference images, and matches against the `scene_tag` and `characters` fields in the scenes CSV.
 
 ## Column Definitions
 

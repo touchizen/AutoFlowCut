@@ -6,8 +6,8 @@ import { useState, useRef, useEffect } from 'react'
 import { useI18n } from '../hooks/useI18n'
 import { formatTime, getRatioClass, resolveImageSrc, hasImageData } from '../utils/formatters'
 import { checkTagMatch } from '../utils/tagMatch'
-import { resolveExportMediaChoice } from '../utils/sceneMedia'
-import { resolveVideoSrc, ensureBase64DataUrl } from '../utils/videoSrc'
+import { resolveExportVideos, hasExportableMedia, buildVideoRestorePatch, buildFramePairVideoPatch } from '../utils/sceneMedia'
+import { resolveVideoSrc } from '../utils/videoSrc'
 import { getSceneSubtitle, getSceneDuration } from '../utils/srtTrack'
 import { UI, STYLE_PRESETS } from '../config/defaults'
 import SceneDetailModal from './SceneDetailModal'
@@ -45,14 +45,21 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
   const sceneMatch = checkTagMatch(scene.scene_tag, references, 'scene')
   const styleMatch = checkTagMatch(scene.style_tag, references, 'style')
 
-  // 현재 export 미디어 결정 (useExport 와 동일 로직 — 시각이 실제 export 결과를 정확히 반영)
-  const activeMedia = resolveExportMediaChoice(scene)
-  const isSelected = (type) => activeMedia === type ? 'selected' : ''
-
-  // 미디어 개수 (선택 UI 필요 여부)
   const hasImage = hasImageData(scene)
   const imgSrc = resolveImageSrc(scene)
-  const mediaCount = [hasImage, scene.videoT2V || scene.videoT2VPath, scene.videoI2V || scene.videoI2VPath].filter(Boolean).length
+  const mediaCount = [hasImage, scene.videoT2V || scene.videoT2VPath, scene.videoI2V || scene.videoI2VPath].filter(Boolean).length // 라벨 표시 여부
+
+  // B1: export 는 "있는 영상 다" 내보냄(어느 take 쓸지는 CapCut 에서 큐레이션).
+  // 이미지는 항상 베이스 트랙으로 나감. → Media 컬럼은 "export 에 포함됨"을 ✓/selected 로
+  // 보여주는 표시 전용이고, 클릭은 미리보기만(아래 onClick) — export 선택을 바꾸지 않는다.
+  // ⚠️ exporter contract: 이미지 없는 씬은 hasExportableMedia=false → useExport 가 통째로
+  // drop. 그러므로 export 불가 씬은 영상이 있어도 ✓ 표시 안 함(거짓 ✓ 방지).
+  const sceneExportable = hasExportableMedia(scene)
+  const exportedSources = new Set(resolveExportVideos(scene).map(v => v.source))
+  const imageOnly = exportedSources.size === 0 // 영상 없이 이미지만 (duration 핸들러용)
+  const isIncluded = (type) => sceneExportable && (type === 'image' ? hasImage : exportedSources.has(type))
+  const isSelected = (type) => isIncluded(type) ? 'selected' : ''
+  const exportMark = (type) => isIncluded(type) ? ' ✓' : ''
 
   // 매칭 상태 아이콘 (클릭 가능 — 태그 선택 모달 열기)
   const MatchIndicator = ({ match, tagType }) => {
@@ -79,25 +86,7 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
   }
 
   // 비디오 src 생성 헬퍼 — 공용 utils/videoSrc 로 통합 (cache busting/Windows 경로/data URL 일관 처리)
-  const toVideoSrc = (data, filePath) => resolveVideoSrc(data, filePath) || ''
-
-  // 비디오 duration 감지 (Promise) — base64 데이터에서 즉시 감지
-  const detectVideoDuration = (videoData) => {
-    return new Promise((resolve) => {
-      if (!videoData) return resolve(null)
-      const vid = document.createElement('video')
-      vid.preload = 'metadata'
-      vid.muted = true
-      vid.onloadedmetadata = () => {
-        const dur = Math.round(vid.duration * 10) / 10
-        resolve(dur > 0 ? dur : null)
-        vid.src = ''
-      }
-      vid.onerror = () => resolve(null)
-      vid.src = ensureBase64DataUrl(videoData) || ''
-      setTimeout(() => resolve(null), 3000) // 3초 타임아웃
-    })
-  }
+  const toVideoSrc = (data, filePath, version) => resolveVideoSrc(data, filePath, { version }) || ''
 
   // 비디오 메타데이터 로드 → duration 감지 및 저장 (썸네일 onLoadedMetadata 백업용)
   const handleVideoMetadata = (e, type) => {
@@ -117,23 +106,6 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
     }
 
     // 비디오 duration은 캐시만 하고, 씬 duration은 CSV 기준 유지
-    onUpdate(scene.id, updates)
-  }
-
-  // Export 미디어 전환 (duration은 CSV 기준 유지, 변경 안 함)
-  const switchExportMedia = async (type) => {
-    const updates = { exportMedia: type }
-
-    if (type !== 'image') {
-      // 비디오 duration 캐시만 (씬 duration은 건드리지 않음)
-      const videoData = type === 't2v' ? scene.videoT2V : scene.videoI2V
-      const durationField = type === 't2v' ? 'videoT2VDuration' : 'videoI2VDuration'
-      if (!scene[durationField] && videoData) {
-        const videoDur = await detectVideoDuration(videoData)
-        if (videoDur) updates[durationField] = videoDur
-      }
-    }
-
     onUpdate(scene.id, updates)
   }
 
@@ -157,8 +129,8 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
               duration,
               endTime: scene.startTime + duration
             }
-            // 이미지 모드에서 수동 변경 → imageDuration도 업데이트
-            if (activeMedia === 'image') {
+            // 이미지 모드(영상 export 없음)에서 수동 변경 → imageDuration도 업데이트
+            if (imageOnly) {
               updates.imageDuration = duration
             }
             onUpdate(scene.id, updates)
@@ -262,14 +234,10 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
               className={`media-thumb ${isSelected('image')} clickable`}
               onClick={(e) => {
                 e.stopPropagation()
-                if (mediaCount > 1) {
-                  switchExportMedia('image')
-                } else {
-                  onShowDetail(scene)
-                }
+                onShowDetail(scene)
               }}
               onDoubleClick={() => onShowDetail(scene)}
-              title={`IMG${activeMedia === 'image' ? ' ✓' : ''}`}
+              title={`IMG${exportMark('image')}`}
             >
               {/* R37 fix: LazyImage — 뷰포트 이탈 시 img 언마운트해 VRAM 회수 */}
               <LazyImage
@@ -295,31 +263,29 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
               onMouseLeave={() => setHoveredVideo(null)}
               onClick={(e) => {
                 e.stopPropagation()
-                if (mediaCount > 1) {
-                  switchExportMedia('t2v')
-                } else {
-                  onShowVideoDetail({
-                    id: `t2v_${scene.id.replace('scene_', '')}`,
-                    prompt: scene.prompt,
-                    video: scene.videoT2V,
-                    videoPath: scene.videoT2VPath,
-                    status: 'complete',
-                  })
-                }
+                onShowVideoDetail({
+                  id: `t2v_${scene.id.replace('scene_', '')}`,
+                  prompt: scene.videoT2VPrompt || '', // 이미지 프롬프트 아님 — T2V 전용 프롬프트로 seed
+                  video: scene.videoT2V,
+                  videoPath: scene.videoT2VPath,
+                  status: 'complete',
+                  sceneId: scene.id, source: 't2v', // 저장(history 복원) 시 disabled 리셋용
+                })
               }}
               onDoubleClick={() => onShowVideoDetail({
                 id: `t2v_${scene.id.replace('scene_', '')}`,
-                prompt: scene.prompt,
+                prompt: scene.videoT2VPrompt || '',
                 video: scene.videoT2V,
                 videoPath: scene.videoT2VPath,
                 status: 'complete',
+                sceneId: scene.id, source: 't2v',
               })}
-              title={`T2V${activeMedia === 't2v' ? ' ✓' : ''} — ${t('sceneList.dblClickToView') || 'Double-click to view'}`}
+              title={`T2V${exportMark('t2v')} — ${t('sceneList.dblClickToView') || 'Double-click to view'}`}
             >
               {/* R26 review fix: hover 시점에만 <video> mount. duration 추출도 hover
                   순간 onLoadedMetadata 로. 첫 로드 VRAM burst 없음. */}
               {hoveredVideo === 't2v' ? (
-                <video src={toVideoSrc(scene.videoT2V, scene.videoT2VPath)} muted preload="metadata" onLoadedMetadata={(e) => handleVideoMetadata(e, 't2v')} />
+                <video src={toVideoSrc(scene.videoT2V, scene.videoT2VPath, scene.videoT2VGeneratedAt)} muted preload="metadata" onLoadedMetadata={(e) => handleVideoMetadata(e, 't2v')} />
               ) : (
                 imgSrc ? <LazyImage src={imgSrc} alt="T2V poster" /> : <div className="video-placeholder" />
               )}
@@ -344,30 +310,28 @@ function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, o
               onMouseLeave={() => setHoveredVideo(null)}
               onClick={(e) => {
                 e.stopPropagation()
-                if (mediaCount > 1) {
-                  switchExportMedia('i2v')
-                } else {
-                  onShowVideoDetail({
-                    id: i2vId,
-                    prompt: scene.prompt,
-                    video: scene.videoI2V,
-                    videoPath: scene.videoI2VPath,
-                    status: 'complete',
-                  })
-                }
+                onShowVideoDetail({
+                  id: i2vId,
+                  prompt: scene.videoI2VPrompt ?? ownerFp?.prompt ?? '', // 이미지 프롬프트 아님 — I2V 전용 → owning framePair 순으로 seed
+                  video: scene.videoI2V,
+                  videoPath: scene.videoI2VPath,
+                  status: 'complete',
+                  sceneId: scene.id, source: 'i2v', fpId: ownerFp?.id, // 저장(복원) 시 disabled 리셋 + framePair 메타 갱신용
+                })
               }}
               onDoubleClick={() => onShowVideoDetail({
                 id: i2vId,
-                prompt: scene.prompt,
+                prompt: scene.videoI2VPrompt ?? ownerFp?.prompt ?? '',
                 video: scene.videoI2V,
                 videoPath: scene.videoI2VPath,
                 status: 'complete',
+                sceneId: scene.id, source: 'i2v', fpId: ownerFp?.id,
               })}
-              title={`I2V${activeMedia === 'i2v' ? ' ✓' : ''} — ${t('sceneList.dblClickToView') || 'Double-click to view'}`}
+              title={`I2V${exportMark('i2v')} — ${t('sceneList.dblClickToView') || 'Double-click to view'}`}
             >
               {/* R26 review fix: hover 시점에만 <video> mount (T2V 와 동일) */}
               {hoveredVideo === 'i2v' ? (
-                <video src={toVideoSrc(scene.videoI2V, scene.videoI2VPath)} muted preload="metadata" onLoadedMetadata={(e) => handleVideoMetadata(e, 'i2v')} />
+                <video src={toVideoSrc(scene.videoI2V, scene.videoI2VPath, scene.videoI2VGeneratedAt)} muted preload="metadata" onLoadedMetadata={(e) => handleVideoMetadata(e, 'i2v')} />
               ) : (
                 imgSrc ? <LazyImage src={imgSrc} alt="I2V poster" /> : <div className="video-placeholder" />
               )}
@@ -421,6 +385,7 @@ export default function SceneList({
   srtTrack = [],
   framePairs = [],
   onUpdate,
+  onUpdateFramePair = null,
   onUpdateSrtLine = null,
   onDelete,
   onAdd,
@@ -630,6 +595,33 @@ export default function SceneList({
           onClose={() => setVideoDetailModal({ open: false, video: null })}
           t={t}
           projectName={projectName}
+          references={references}
+          onPromptSave={(_videoId, prompt) => {
+            // 프롬프트 편집 저장 — 모달에 실어둔 sceneId/source 로 canonical prompt 필드 갱신.
+            const v = videoDetailModal.video
+            if (!v?.sceneId || typeof onUpdate !== 'function') return
+            const field = v.source === 'i2v' ? 'videoI2VPrompt' : 'videoT2VPrompt'
+            onUpdate(v.sceneId, { [field]: prompt })
+            if (v.source === 'i2v' && v.fpId && typeof onUpdateFramePair === 'function') {
+              onUpdateFramePair(v.fpId, { prompt })
+            }
+          }}
+          onUpdate={(_videoId, patch) => {
+            // history 복원 저장 → 해당 씬의 video* 갱신 + per-clip disabled 리셋(새 영상=enabled).
+            // 모달 open 시 실어둔 sceneId/source 로 바로 타겟(App id 라우팅 중복 회피).
+            // 메타는 buildVideoRestorePatch 가 source-specific(videoT2V*/videoI2V*)로 매핑 →
+            // scene 의 이미지 메타(seed/generatedAt/model) 오염 방지 + 캐시버스터 갱신.
+            const v = videoDetailModal.video
+            if (!v?.sceneId || typeof onUpdate !== 'function') return
+            onUpdate(v.sceneId, buildVideoRestorePatch(v.source, patch))
+            // I2V 의 권위 source 는 framePair. (1) reload 시 mediaSync 가 framePair.generatedAt 으로
+            // scene.videoI2VGeneratedAt 을 다시 덮으므로 영속을 위해, (2) F→V 결과표/fp 상세는 framePair
+            // base64 를 우선 렌더하므로 현재 세션 일관성을 위해 — video/base64/videoPath + 메타까지 갱신.
+            // (App fp_ 복원 경로와 동일 shape)
+            if (v.source === 'i2v' && v.fpId && typeof onUpdateFramePair === 'function') {
+              onUpdateFramePair(v.fpId, buildFramePairVideoPatch(patch))
+            }
+          }}
         />
       )}
 

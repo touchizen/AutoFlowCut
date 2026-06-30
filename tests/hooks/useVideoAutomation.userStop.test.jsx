@@ -62,11 +62,11 @@ describe('useVideoAutomation — user stop cleanup', () => {
       success: true,
       statuses: [{ status: 'pending' }],
     })
-    const flowAPI = buildFlowAPI({ generateVideoT2V, checkVideoStatus })
+    const genAPI = buildFlowAPI({ generateVideoT2V, checkVideoStatus })
     const onItemUpdate = vi.fn()
 
     const t = (k) => k
-    const hook = renderHook(() => useVideoAutomation(flowAPI, t, null))
+    const hook = renderHook(() => useVideoAutomation(genAPI, t, null))
 
     let startPromise
     await act(async () => {
@@ -113,11 +113,11 @@ describe('useVideoAutomation — user stop cleanup', () => {
       success: true,
       statuses: [{ status: 'pending' }],
     })
-    const flowAPI = buildFlowAPI({ generateVideoT2V, checkVideoStatus })
+    const genAPI = buildFlowAPI({ generateVideoT2V, checkVideoStatus })
     const onItemUpdate = vi.fn()
 
     const t = (k) => k
-    const hook = renderHook(() => useVideoAutomation(flowAPI, t, null))
+    const hook = renderHook(() => useVideoAutomation(genAPI, t, null))
 
     let startPromise
     await act(async () => {

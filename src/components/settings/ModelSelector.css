@@ -1,0 +1,62 @@
+/* 모델 선택 콤보 — 드롭다운 + 선택 모델 설명/링크 한 줄 */
+.model-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.model-select-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-select {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color, #2a2a2a);
+  border-radius: 8px;
+  background: #1b1b1b;
+  color: #ddd;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.model-select:hover {
+  border-color: #4a9eff;
+}
+.model-select:focus {
+  outline: none;
+  border-color: #4a9eff;
+}
+
+.model-select-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 2px;
+}
+
+.model-desc {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.78rem;
+  color: var(--text-secondary, #999);
+}
+
+.model-doc,
+.model-pricing-link {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  padding: 2px 0;
+  font-size: 0.74rem;
+  color: var(--text-secondary, #999);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.model-doc:hover,
+.model-pricing-link:hover {
+  color: #7fb3ff;
+  text-decoration: underline;
+}

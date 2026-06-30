@@ -121,6 +121,36 @@ describe('T2V 런타임 필드 — CSV 재파싱 시 보존', () => {
   })
 })
 
+describe('I2V 런타임 필드 — CSV 재파싱 시 보존', () => {
+  // 회귀: 타임라인은 videoI2VStatus==='generating' 일 때만 generating 클립을 그리고,
+  // 경과 타이머는 videoI2VGeneratingStartedAt/EndedAt 를 읽는다. 재파싱이 status 만 살리고
+  // timestamp 를 잃으면 타이머가 0:00 으로 회귀한다(T2V 와 동일 함정).
+  it('CSV 재import 가 videoI2VStatus + generating timestamp 를 보존한다', () => {
+    const csv1 = `scene,prompt,video_t2v_prompt,subtitle\n1,"image A","video A","s1"\n2,"image B","video B","s2"`
+    const csv2 = `scene,prompt,video_t2v_prompt,subtitle\n1,"image A2","video A2","s1"\n2,"image B2","video B2","s2"`
+
+    const { result } = renderHook(() => useScenes())
+    act(() => { result.current.parseFromCSV(csv1) })
+    const ids = result.current.scenes.map(s => s.id)
+
+    const startedAt = 1700000000000
+    act(() => {
+      result.current.updateScene(ids[0], {
+        videoI2VStatus: 'generating',
+        videoI2VGeneratingStartedAt: startedAt,
+        videoI2VGeneratingEndedAt: null,
+      })
+    })
+
+    act(() => { result.current.parseFromCSV(csv2) })
+
+    const s0 = result.current.scenes[0]
+    expect(s0.videoI2VStatus).toBe('generating')
+    expect(s0.videoI2VGeneratingStartedAt).toBe(startedAt)
+    expect(s0.videoI2VGeneratingEndedAt).toBeNull()
+  })
+})
+
 describe('C16 — smart-match 실패 시 scene.subtitle 클리어', () => {
   it('SRT 재import 텍스트 완전 변경 → 기존 씬 srtLineIds=[] + subtitle 클리어 (UI/export 일치)', () => {
     const { result } = renderHook(() => useScenes())

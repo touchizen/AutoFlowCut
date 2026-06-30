@@ -1,0 +1,84 @@
+/* ExportSplitButton — 진입 export split 드롭다운 (헤더 + 메인 액션 공용)
+   색상은 본체/트리거가 공유하는 className(btn-success / btn-export)이 담당하고,
+   이 파일은 레이아웃 + split seam(맞붙는 모서리) 만 처리한다. */
+
+.export-split {
+  position: relative;
+  display: inline-flex;
+}
+
+/* 메인 액션 영역: 행을 채움 (기존 'half' 역할) */
+.export-split.half {
+  flex: 1;
+}
+
+/* 본체 — 오른쪽 모서리만 평평 (seam) */
+.export-split-main {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 1;
+  border-top-right-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  white-space: nowrap;
+}
+
+/* ▾ 트리거 — 본체와 같은 색(className 공유), 왼쪽 모서리만 평평 + seam divider */
+.export-split-trigger {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-left: 8px;
+  padding-right: 8px;
+  border-left: 1px solid rgba(255, 255, 255, 0.25) !important;
+  border-top-left-radius: 0 !important;
+  border-bottom-left-radius: 0 !important;
+  font-size: 0.8rem;
+}
+
+/* 드롭다운 — 기본 아래로, --up 이면 위로 */
+.export-split-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 100%;
+  background: #33334d;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6);
+  padding: 6px;
+  z-index: 200;
+}
+
+.export-split--up .export-split-menu {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+.export-split-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.export-split-item:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.export-split-item[aria-current='true'] {
+  background: rgba(0, 132, 255, 0.22);
+}

@@ -90,6 +90,11 @@ export function I18nProvider({ children }) {
       saveLanguage(newLang)
     }
   }, [])
+
+  // 현재 언어를 main 프로세스에 push → 네이티브 앱 메뉴 라벨 현지화 (초기 + 변경 시).
+  useEffect(() => {
+    window.electronAPI?.setLocale?.({ lang })
+  }, [lang])
   
   // 문자열 가져오기 (dot notation 지원)
   const t = useCallback((key, params = {}) => {

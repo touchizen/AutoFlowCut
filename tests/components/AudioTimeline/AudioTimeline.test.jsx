@@ -2,7 +2,7 @@
  * AudioTimeline 컴포넌트 테스트
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render as rtlRender, screen, fireEvent } from '@testing-library/react'
+import { act, render as rtlRender, screen, fireEvent } from '@testing-library/react'
 import AudioTimeline from '../../../src/components/AudioTimeline/AudioTimeline'
 import { I18nProvider } from '../../../src/hooks/useI18n'
 
@@ -94,6 +94,76 @@ describe('AudioTimeline', () => {
       expect(screen.getByText('100%')).toBeInTheDocument()
       expect(screen.getByText('−')).toBeInTheDocument()
       expect(screen.getByText('+')).toBeInTheDocument()
+    })
+  })
+
+  describe('트랙 라벨 i18n (video-i2v/video-t2v)', () => {
+    it('한국어 UI 에서 비디오 트랙 라벨이 locale 경유 (하드코딩 폴백 아님)', () => {
+      localStorage.setItem('autoflowcut_lang', 'ko')
+      try {
+        const t2vScenes = [{ id: 'scene_1', image_path: '/i.png', start_time: '00:00', end_time: '00:03', videoT2VPath: '/v/t.mp4', videoT2VDuration: 2 }]
+        render(<AudioTimeline audioPackage={audioPackage} scenes={t2vScenes} srtEntries={srtEntries} />)
+        expect(screen.getByText('비디오 (T2V)')).toBeInTheDocument() // 'Video (T2V)' 하드코딩 아님
+      } finally {
+        localStorage.removeItem('autoflowcut_lang')
+      }
+    })
+  })
+
+  describe('트랙 토글 (View/Mute)', () => {
+    it('비주얼=view, 오디오=mute 토글이 라벨에 렌더', () => {
+      const { container } = render(
+        <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />
+      )
+      // 이미지/자막=view, narration/voice/sfx=mute
+      expect(container.querySelectorAll('.atl-track-toggle[aria-label="toggle view"]').length).toBeGreaterThanOrEqual(1)
+      expect(container.querySelectorAll('.atl-track-toggle[aria-label="toggle mute"]').length).toBeGreaterThanOrEqual(1)
+    })
+
+    it('토글 시 onHiddenRolesChange 로 disabledTracks 통보 (상단 모니터 동기화용)', () => {
+      const onHiddenRolesChange = vi.fn()
+      const { container } = render(
+        <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} onHiddenRolesChange={onHiddenRolesChange} />
+      )
+      const view = container.querySelector('.atl-track-toggle[aria-label="toggle view"]')
+      fireEvent.click(view)
+      const lastArg = onHiddenRolesChange.mock.calls.at(-1)[0]
+      expect(lastArg instanceof Set).toBe(true)
+      expect(lastArg.size).toBe(1)
+    })
+
+    it('재생 시 narration 트랙 오디오를 읽음 (Mute 기준선)', () => {
+      const { container } = render(
+        <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />
+      )
+      fireEvent.click(container.querySelector('.atl-play-btn'))
+      const paths = window.electronAPI.readFileAbsolute.mock.calls.map(c => c[0].filePath)
+      expect(paths).toContain('/audio/narration.mp3')
+      fireEvent.click(container.querySelector('.atl-stop-btn')) // RAF 정리
+    })
+
+    it('Mute 된 트랙(narration)은 재생에서 제외 — 오디오 안 읽음', () => {
+      const { container } = render(
+        <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />
+      )
+      // 첫 mute 토글 = narration
+      fireEvent.click(container.querySelectorAll('.atl-track-toggle[aria-label="toggle mute"]')[0])
+      fireEvent.click(container.querySelector('.atl-play-btn'))
+      const paths = window.electronAPI.readFileAbsolute.mock.calls.map(c => c[0].filePath)
+      expect(paths).not.toContain('/audio/narration.mp3')
+      fireEvent.click(container.querySelector('.atl-stop-btn'))
+    })
+
+    it('mute 토글 클릭 → is-off 활성', () => {
+      const { container } = render(
+        <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} />
+      )
+      const mute = container.querySelector('.atl-track-toggle[aria-label="toggle mute"]')
+      expect(mute.classList.contains('is-off')).toBe(false)
+      fireEvent.click(mute)
+      const after = container.querySelector('.atl-track-toggle[aria-label="toggle mute"]')
+      expect(after.classList.contains('is-off')).toBe(true)
+      expect(after.getAttribute('aria-pressed')).toBe('false')
     })
   })
 
@@ -358,6 +428,112 @@ describe('AudioTimeline', () => {
       const playhead = container.querySelector('.atl-playhead')
       expect(playhead).toBeInTheDocument()
       expect(playhead.style.left).toBe('0px')
+    })
+
+    it('재생 중 부모 playhead 콜백은 RAF 매 프레임 호출하지 않고 throttle', () => {
+      let now = 0
+      const rafQueue = []
+      const onPlayheadChange = vi.fn()
+      const perfSpy = vi.spyOn(performance, 'now').mockImplementation(() => now)
+      vi.stubGlobal('requestAnimationFrame', vi.fn((cb) => {
+        rafQueue.push(cb)
+        return rafQueue.length
+      }))
+      vi.stubGlobal('cancelAnimationFrame', vi.fn())
+
+      try {
+        const { container } = rtlRender(
+          <AudioTimeline
+            audioPackage={audioPackage}
+            scenes={scenes}
+            srtEntries={srtEntries}
+            onPlayheadChange={onPlayheadChange}
+          />,
+          { wrapper: I18nProvider }
+        )
+        onPlayheadChange.mockClear()
+
+        fireEvent.click(container.querySelector('.atl-play-btn'))
+
+        for (const t of [16, 32, 48, 64, 80]) {
+          now = t
+          act(() => {
+            const cb = rafQueue.shift()
+            cb?.()
+          })
+        }
+
+        expect(onPlayheadChange.mock.calls.length).toBeLessThanOrEqual(2)
+      } finally {
+        fireEvent.click(document.querySelector('.atl-stop-btn'))
+        perfSpy.mockRestore()
+        vi.unstubAllGlobals()
+      }
+    })
+
+    it('스크럽 중 부모 playhead 콜백도 pointermove 매번 호출하지 않고 throttle', () => {
+      let now = 0
+      const onPlayheadChange = vi.fn()
+      const perfSpy = vi.spyOn(performance, 'now').mockImplementation(() => now)
+
+      try {
+        const { container } = rtlRender(
+          <AudioTimeline
+            audioPackage={audioPackage}
+            scenes={scenes}
+            srtEntries={srtEntries}
+            onPlayheadChange={onPlayheadChange}
+          />,
+          { wrapper: I18nProvider }
+        )
+        onPlayheadChange.mockClear()
+
+        const scrollEl = container.querySelector('.atl-scroll')
+        Object.defineProperty(scrollEl, 'clientWidth', { configurable: true, value: 400 })
+        Object.defineProperty(scrollEl, 'clientHeight', { configurable: true, value: 240 })
+        scrollEl.getBoundingClientRect = () => ({
+          left: 0, top: 0, right: 400, bottom: 240, width: 400, height: 240,
+        })
+
+        fireEvent.pointerDown(scrollEl, { button: 0, clientX: 100, clientY: 20 })
+        for (const x of [110, 120, 130, 140, 150]) {
+          now += 16
+          fireEvent(window, new PointerEvent('pointermove', { clientX: x, clientY: 20 }))
+        }
+
+        expect(onPlayheadChange.mock.calls.length).toBeLessThanOrEqual(2)
+        fireEvent(window, new PointerEvent('pointerup', { clientX: 150, clientY: 20 }))
+      } finally {
+        perfSpy.mockRestore()
+      }
+    })
+
+    it('playhead 값이 같으면 부모 콜백 identity가 바뀌어도 다시 통보하지 않음', () => {
+      const first = vi.fn()
+      const second = vi.fn()
+      const { rerender } = rtlRender(
+        <AudioTimeline
+          audioPackage={audioPackage}
+          scenes={scenes}
+          srtEntries={srtEntries}
+          onPlayheadChange={first}
+        />,
+        { wrapper: I18nProvider }
+      )
+
+      expect(first).toHaveBeenCalledTimes(1)
+      expect(first).toHaveBeenCalledWith(0)
+
+      rerender(
+        <AudioTimeline
+          audioPackage={audioPackage}
+          scenes={scenes}
+          srtEntries={srtEntries}
+          onPlayheadChange={second}
+        />
+      )
+
+      expect(second).not.toHaveBeenCalled()
     })
   })
 
@@ -651,6 +827,49 @@ describe('AudioTimeline', () => {
       // 정상 pointerup으로 종료
       fireEvent(window, new PointerEvent('pointerup', { clientX: 250 }))
       expect(document.body.style.cursor).toBe('')
+    })
+  })
+
+  describe('영상 클립 export 토글 (per-clip eye)', () => {
+    it('영상 클립 eye 클릭 → onSceneUpdate(sceneId, { videoI2VDisabled: true })', () => {
+      const onSceneUpdate = vi.fn()
+      const scenes = [{ id: 'scene_1', startTime: 0, endTime: 3, duration: 3, imagePath: '/i.png', videoI2VPath: '/i.mp4', videoI2VDuration: 3 }]
+      const { container } = render(<AudioTimeline audioPackage={null} scenes={scenes} srtEntries={[]} onSceneUpdate={onSceneUpdate} />)
+      const eye = container.querySelector('.atl-clip-eye-btn')
+      expect(eye).toBeTruthy()
+      fireEvent.click(eye)
+      expect(onSceneUpdate).toHaveBeenCalledWith('scene_1', { videoI2VDisabled: true })
+    })
+  })
+
+  describe("compact '프리뷰' 타이틀 → 모니터 토글 버튼 (flow 모드)", () => {
+    it('onTitleClick 제공 시 타이틀이 버튼이고 클릭하면 핸들러 발화', () => {
+      const onTitleClick = vi.fn()
+      const { container } = render(
+        <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries}
+          compact onTitleClick={onTitleClick} titleActive={false} />
+      )
+      const title = container.querySelector('.atl-title')
+      expect(title).toBeTruthy()
+      expect(title.tagName).toBe('BUTTON')          // 버튼화됨
+      expect(title.textContent.trim().length).toBeGreaterThan(0) // 'Preview'/'프리뷰' (로케일)
+      fireEvent.click(title)
+      expect(onTitleClick).toHaveBeenCalledTimes(1)
+    })
+
+    it('titleActive=true 면 active 클래스가 붙는다', () => {
+      const { container } = render(
+        <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries}
+          compact onTitleClick={vi.fn()} titleActive={true} />
+      )
+      expect(container.querySelector('.atl-title').className).toContain('atl-title--active')
+    })
+
+    it('onTitleClick 없으면 (API 모드/audio) 타이틀은 plain DIV (버튼 아님)', () => {
+      const { container } = render(
+        <AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} compact />
+      )
+      expect(container.querySelector('.atl-title').tagName).toBe('DIV')
     })
   })
 })

@@ -93,28 +93,6 @@ export async function initializeUser() {
 }
 
 /**
- * 앱별 구독 상태 조회
- * @returns {Promise<Object>} - { status, exportCount, exportsRemaining, daysRemaining }
- */
-export async function getAppStatus() {
-  try {
-    const getStatusFn = httpsCallable(functions, `getAppStatus${FUNCTION_SUFFIX}`)
-    const result = await getStatusFn({ appId: APP_ID })
-    console.log('[Functions] App status:', result.data)
-    return result.data
-  } catch (error) {
-    console.error('[Functions] getAppStatus failed:', error)
-    // 기본값 반환
-    return {
-      status: 'trial',
-      exportCount: 0,
-      exportsRemaining: 5,
-      daysRemaining: 7
-    }
-  }
-}
-
-/**
  * Lemon Squeezy 체크아웃 세션 생성
  * @param {Object} options - { interval }
  * @param {string} options.interval - 'month' 또는 'year'
@@ -149,6 +127,21 @@ export async function createPortalSession() {
 }
 
 /**
+ * 씬 배치 다운로드 1회 과금 (멱등 batchId). 첫 다운로드/저장 직전 호출.
+ * 실패 시 fail-closed: { denied:true } 반환(낙관적 무료 금지). 절대 throw 하지 않는다.
+ */
+export async function consumeBatchDownload({ batchId, batchType }) {
+  try {
+    const fn = httpsCallable(functions, `consumeBatchDownload${FUNCTION_SUFFIX}`)
+    const result = await fn({ appId: APP_ID, batchId, batchType })
+    return result.data
+  } catch (error) {
+    console.error('[Functions] consumeBatchDownload failed (fail-closed):', error)
+    return { denied: true, charged: false, unlimited: false, remaining: 0, error: error?.message || String(error) }
+  }
+}
+
+/**
  * 가격 정보 조회
  * @returns {Promise<Object>} - { prices: [{ variantId, amount, currency, interval, productName }] }
  */
@@ -163,8 +156,8 @@ export async function getPricing() {
     // 기본값 반환
     return {
       prices: [
-        { variantId: null, amount: 4.99, currency: 'USD', interval: 'month', productName: 'Pro Monthly' },
-        { variantId: null, amount: 39.99, currency: 'USD', interval: 'year', productName: 'Pro Yearly' }
+        { variantId: null, amount: 9.99, currency: 'USD', interval: 'month', productName: 'Pro Monthly' },
+        { variantId: null, amount: 99.99, currency: 'USD', interval: 'year', productName: 'Pro Yearly' }
       ]
     }
   }

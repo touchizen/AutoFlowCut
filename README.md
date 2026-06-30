@@ -8,7 +8,7 @@
   </a>
 </p>
 
-A desktop app that **mass-generates** images and videos with Google Flow AI and exports them to CapCut projects in one click.
+A desktop app that **mass-generates** images and videos with Google Gemini / Veo APIs and exports them to CapCut projects in one click.
 
 [![Release](https://img.shields.io/github/v/release/touchizen/AutoFlowCut)](https://github.com/touchizen/AutoFlowCut/releases)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL%20v3-blue)](LICENSE)
@@ -17,15 +17,14 @@ A desktop app that **mass-generates** images and videos with Google Flow AI and 
 
 Still building AI videos one shot at a time?
 
-AutoFlowCut automates the entire AI video production pipeline. Generate images and videos with Google Flow AI (labs.google/fx), then convert them into ready-to-edit CapCut projects. Import your script, generate visuals, pick the best media per scene, and export in a single click.
+AutoFlowCut automates the entire AI video production pipeline. Generate images and videos with Google Gemini / Veo APIs, then convert them into ready-to-edit CapCut projects. Import your script, generate visuals, pick the best media per scene, and export in a single click.
 
 ## Features
 
 ### AI Image / Video Generation
-- **Batch image generation** — Generate 100+ AI images in a single batch via Google Flow AI, with automatic retry on errors.
+- **Batch image generation** — Generate 100+ AI images in a single batch via the official Google GenAI APIs, with automatic retry on errors.
 - **T2V (Text-to-Video)** — Generate video clips from text prompts (Veo 3.1).
 - **I2V (Image-to-Video)** — Convert generated images into videos.
-- **Image upscaling** — 2K / 4K upscale support.
 - **Per-scene media selection** — Automatically pick the best media among Image / T2V / I2V (priority: I2V > T2V > Image).
 
 ### Reference System
@@ -63,7 +62,7 @@ AutoFlowCut automates the entire AI video production pipeline. Generate images a
   - `/story-rewrite` → Improve an existing episode (engagement-gap diagnosis → fork → partial wave re-run).
 
 ### Miscellaneous
-- **Dual-view layouts** — Tab / horizontal-split / vertical-split modes.
+- **Full-width desktop workspace** — Focused React shell for batch generation and export.
 - **Multilingual UI** — Korean, English.
 - **Project management** — Manage multiple projects independently, backed by `project.json`.
 - **Flexible input formats** — Import TXT, CSV, and SRT files.
@@ -74,7 +73,7 @@ AutoFlowCut automates the entire AI video production pipeline. Generate images a
 |----------|-----------|
 | **Frontend** | React 18 + Vite 6 |
 | **Desktop** | Electron 36 |
-| **AI Engine** | Google Flow AI (labs.google/fx) |
+| **AI Engine** | Google Gemini / Veo APIs (BYOK) |
 | **Backend** | Firebase (Auth, Firestore, Cloud Functions) |
 | **MCP** | @modelcontextprotocol/sdk |
 | **Payments** | Lemon Squeezy |
@@ -85,9 +84,7 @@ AutoFlowCut automates the entire AI video production pipeline. Generate images a
 
 ```
 Electron BrowserWindow
-├── [Layout Mode] — Tab / horizontal-split / vertical-split (Shell.jsx)
-│
-├── [App View] — React (BrowserWindow webContents)
+├── [React Shell] — Full-width desktop app (Shell.jsx)
 │   ├── Header — project picker, Export, Settings
 │   ├── PromptInput — prompt entry
 │   ├── SceneList — scene list (image / video / subtitle)
@@ -95,8 +92,8 @@ Electron BrowserWindow
 │   ├── AudioPanel — audio / SFX import
 │   └── StatusBar — generation progress
 │
-├── [Flow View] — WebContentsView (labs.google/fx/tools/whisk)
-│   └── Google login + Flow AI embedded browser
+├── [GenAI IPC] — Gemini / Veo BYOK calls from the main process
+│   └── Local encrypted API key storage + REST client
 │
 └── [MCP Server] — stdio + HTTP (port 3210)
     └── Scene / reference / style / audio management tools
@@ -107,16 +104,14 @@ Electron BrowserWindow
 | Namespace | Role | File |
 |-----------|------|------|
 | `fs:*` | File I/O | `electron/ipc/filesystem.js` |
-| `flow:*` | Flow API (token, image / video generation) | `electron/ipc/flow-api.js` |
-| `flow:dom-*` | DOM automation (prompt injection, generation triggers) | `electron/ipc/dom.js` |
-| `flow:video-*` | Video generation (T2V, I2V, upscale) | `electron/ipc/video.js` |
+| `genai:*` | Google GenAI API (image / video generation) | `electron/ipc/genai-api.js` |
 | `capcut:*` | CapCut path detection, project write, app launch | `electron/ipc/capcut.js` |
 | `auth:*` | Google OAuth | `electron/ipc/auth.js` |
 
 ### Video Generation Pipeline (3-Phase Async)
 
 ```
-Phase 1: Submit     → Submit video requests sequentially (7–15s interval)
+Phase 1: Submit     → Submit video requests with a sliding in-flight concurrency window
 Phase 2: Poll       → Poll all generationIds in parallel (up to 20 min)
 Phase 3: Download   → Download + save completed videos sequentially
 ```
@@ -126,20 +121,20 @@ Phase 3: Download   → Download + save completed videos sequentially
 ```
 AutoFlowCut/
 ├── electron/                    # Electron main process
-│   ├── main.js                 # Main process + WebContentsView management
+│   ├── main.js                 # Main process, menus, IPC registration
 │   ├── preload.js              # Context bridge (window.electronAPI)
 │   └── ipc/                    # IPC handlers
 │       ├── filesystem.js       # File I/O
-│       ├── flow-api.js         # Flow API (image / video generation)
-│       ├── dom.js              # DOM automation (prompt injection, generation)
-│       ├── video.js            # Video (T2V, I2V, upscale)
+│       ├── genai-api.js        # Google GenAI API (image / video generation)
 │       ├── capcut.js           # CapCut path detection, project write
 │       ├── auth.js             # Google OAuth
-│       └── shared.js           # Shared utilities
+│       ├── layout.js           # Window/layout IPC
+│       ├── mcp.js              # MCP HTTP server bridge
+│       └── googleApiError.js   # Google API error formatting
 │
 ├── src/                        # React frontend
 │   ├── App.jsx                 # Main app logic
-│   ├── Shell.jsx               # Layout manager (tab / split)
+│   ├── Shell.jsx               # Full-width app shell
 │   ├── components/             # UI components (35+)
 │   │   ├── Header.jsx
 │   │   ├── SceneList.jsx
@@ -151,7 +146,7 @@ AutoFlowCut/
 │   │   ├── VideoDetailModal.jsx
 │   │   └── ...
 │   ├── hooks/                  # React hooks (15+)
-│   │   ├── useFlowAPI.js       # Flow API wrapper (token, image, video)
+│   │   ├── useGenAPI.js        # Google GenAI API wrapper (image, video)
 │   │   ├── useAutomation.js    # Batch image generation pipeline
 │   │   ├── useVideoAutomation.js # Video generation (3-phase async)
 │   │   ├── useSceneGeneration.js # Per-scene regeneration
@@ -195,7 +190,7 @@ AutoFlowCut/
 
 - Node.js 18+
 - npm
-- Google account (for Flow AI access)
+- Google account + Google API key (Gemini / Veo access)
 - CapCut desktop app
 
 ### Install
@@ -267,13 +262,12 @@ Cloud Functions are deployed with `_test` / `_prod` suffixes.
 
 ## How to Use
 
-1. Launch the app and sign in to Google from the **Flow tab**.
-2. Switch to the **App tab**.
-3. Enter prompts (type directly, or import from TXT / CSV / SRT).
-4. Configure reference images (character, background, style tags).
-5. Click **Generate Images** to start batch generation.
-6. (Optional) **Generate videos** via T2V or I2V.
-7. Click **Export** — the CapCut project is written to disk and CapCut launches automatically.
+1. Sign in to AutoFlowCut, then add your Google API key in **Settings**.
+2. Enter prompts (type directly, or import from TXT / CSV / SRT).
+3. Configure reference images (character, background, style tags).
+4. Click **Generate Images** to start batch generation with your Google API key.
+5. (Optional) **Generate videos** via T2V or I2V.
+6. Click **Export** — export requires an active AutoFlowCut trial or subscription, then writes the CapCut project to disk and launches CapCut automatically.
 
 ## MCP Server
 
@@ -300,9 +294,14 @@ When the HTTP server is enabled in settings (default port 3210):
 
 ```
 GET  /api/current-project  — Current project state
-POST /api/scenes           — Query scenes
-POST /api/references       — Query references
-POST /api/generate         — Trigger image generation
+GET  /api/scenes           — Query scenes
+GET  /api/references       — Query references
+POST /api/update           — Update scenes or references
+POST /api/generate-scene   — Trigger one scene image generation
+POST /api/generate-reference — Trigger one reference image generation
+POST /api/start-scene-batch — Start scene batch generation
+POST /api/start-ref-batch  — Start reference batch generation
+GET  /api/batch-status     — Query batch progress
 ```
 
 ## Download

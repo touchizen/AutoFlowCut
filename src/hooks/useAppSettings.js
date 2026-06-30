@@ -5,6 +5,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { DEFAULTS, UI } from '../config/defaults'
 import { generateProjectName } from '../utils/formatters'
+import { DEFAULT_IMAGE_MODEL_ID, DEFAULT_VIDEO_MODEL_ID } from '../config/genModels'
 
 const STORAGE_KEY = 'autoflowcut_settings'
 
@@ -16,11 +17,16 @@ function createDefaults() {
     aspectRatio: '16:9', // 프로젝트 화면비: '16:9' 롱폼 / '9:16' 숏폼
     saveMode: 'folder',
     concurrency: DEFAULTS.generation.concurrency,
+    videoConcurrency: DEFAULTS.generation.videoConcurrency,
+    flowAgentOn: DEFAULTS.generation.flowAgentOn,
     exportThreshold: UI.EXPORT_THRESHOLD,
     imageBatchCount: 1,
     imageUpscale: 'off',
     videoBatchCount: 1,
-    videoResolution: '1080p',
+    imageModel: DEFAULT_IMAGE_MODEL_ID,        // T2I 모델
+    videoModelT2V: DEFAULT_VIDEO_MODEL_ID,      // T2V 모델
+    videoModelF2V: DEFAULT_VIDEO_MODEL_ID,      // F2V 모델
+    videoResolution: '720p',
     requireStyle: false,
     seedNo: randomSeed(),
     seedLocked: true,
@@ -40,7 +46,14 @@ function loadSettings() {
     if (typeof parsed.seedNo !== 'number' || !Number.isFinite(parsed.seedNo)) {
       parsed.seedNo = defaults.seedNo
     }
-    return { ...defaults, ...parsed }
+    const merged = { ...defaults, ...parsed }
+    // 옛 Flow(none) 저장 모드 폐기 — 공식 API 는 base64 만 오므로 작업폴더 저장이 필수.
+    // 'none'/legacy 값은 'folder' 로 강제 (설정 UI 의 저장 방식 토글도 제거됨).
+    if (merged.saveMode !== 'folder') merged.saveMode = 'folder'
+    // 모델 id 는 coerce 하지 않고 저장값을 그대로 보존한다 — 정적 카탈로그에 없는 동적
+    // /models 모델을 선택·저장했을 때 reload 마다 기본값으로 되돌아가지 않도록(리뷰 P2).
+    // 실제 사용 가능 여부는 /models 로드 후 ModelSelector 가 조정(없으면 합성 옵션 노출).
+    return merged
   }
   return defaults
 }

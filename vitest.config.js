@@ -6,7 +6,8 @@ export default defineConfig({
   define: {
     // 빌드 시 vite.config.js가 이 상수를 치환함. 테스트에서도 동일하게 정의해야 함.
     '__FUNCTION_SUFFIX__': JSON.stringify('_test'),
-    '__APP_VERSION__': JSON.stringify('test')
+    '__APP_VERSION__': JSON.stringify('test'),
+    '__BUILD_TARGET__': JSON.stringify('nsis')
   },
   test: {
     globals: true,

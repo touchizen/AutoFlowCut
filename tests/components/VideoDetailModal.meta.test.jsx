@@ -39,6 +39,8 @@ vi.mock('../../src/components/ErrorSection', () => ({
   default: () => null
 }))
 
+vi.mock('../../src/components/PromptInput', () => ({ default: () => null }))
+
 import VideoDetailModal from '../../src/components/VideoDetailModal'
 
 const baseVideo = {
@@ -112,6 +114,8 @@ describe('VideoDetailModal — history 복원 시 메타 저장', () => {
       generatedAt: 1500000000000,
       model: 'veo_3_0_t2v_fast',
       mediaId: 'history-media',
+      // #R33-2: restore clears generationId so retry won't re-download the replaced generation
+      generationId: null,
     }))
   })
 

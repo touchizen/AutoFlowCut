@@ -273,6 +273,7 @@
 
 .setting-row input[type="text"],
 .setting-row input[type="number"],
+.setting-row input[type="password"],
 .setting-row select {
   width: 100%;
   padding: 8px 12px;

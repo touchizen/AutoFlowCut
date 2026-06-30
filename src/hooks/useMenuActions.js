@@ -12,15 +12,21 @@
  * @param {string?}  params.workFolder    - current work folder path (null in Flow mode)
  * @param {Function} params.onNewProject  - invoked for the "New Project" item
  * @param {Function} params.onOpenProject - invoked with a name for a Recent item
+ * @param {Function} [params.onShowModeSelector] - invoked for the "생성 모드 선택…" item (re-shows the picker)
+ * @param {boolean}  [params.busy] - true while a batch is running; the native
+ *   "생성 모드 선택…" item resets the mode (unmounts the running app via
+ *   ModeGate), so it is dropped while busy to avoid abandoning in-flight
+ *   generations. The in-app ModeToggle already disables switching while busy;
+ *   this closes the same hole on the native-menu path.
  */
 
 import { useEffect, useRef } from 'react'
 
-export function useMenuActions({ activeProject, workFolder, onNewProject, onOpenProject }) {
+export function useMenuActions({ activeProject, workFolder, onNewProject, onOpenProject, onShowModeSelector, busy }) {
   // Keep the latest callbacks reachable without re-subscribing the IPC listener
   // on every render (the callbacks are usually fresh closures each render).
-  const handlersRef = useRef({ onNewProject, onOpenProject })
-  handlersRef.current = { onNewProject, onOpenProject }
+  const handlersRef = useRef({ onNewProject, onOpenProject, onShowModeSelector, busy })
+  handlersRef.current = { onNewProject, onOpenProject, onShowModeSelector, busy }
 
   // Subscribe once to native menu actions.
   useEffect(() => {
@@ -30,6 +36,10 @@ export function useMenuActions({ activeProject, workFolder, onNewProject, onOpen
         handlersRef.current.onNewProject?.()
       } else if (data.action === 'open-project' && data.name) {
         handlersRef.current.onOpenProject?.(data.name)
+      } else if (data.action === 'show-mode-selector') {
+        // Destructive: resets mode → unmounts the running app. Refuse mid-run.
+        if (handlersRef.current.busy) return
+        handlersRef.current.onShowModeSelector?.()
       }
     })
     return () => {

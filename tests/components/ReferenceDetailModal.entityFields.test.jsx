@@ -1,0 +1,264 @@
+/**
+ * ReferenceDetailModal — Codex #3 entity field propagation
+ *
+ * Image-replace upload path: when Flow returns entityId/workflowId/registered,
+ * these must be merged into editData so the saved ref is mention-eligible.
+ *
+ * Also verifies that uploadMeta carries type/name/refId so Flow character entity
+ * routing can happen (uploadToFlow called with correct meta).
+ *
+ * API mode (no entity fields): editData gets mediaId only, no spurious entityId.
+ */
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, act } from '@testing-library/react'
+
+vi.mock('../../src/hooks/useFileSystem', () => ({
+  fileSystemAPI: {
+    getHistory: vi.fn().mockResolvedValue({ success: true, histories: [] }),
+    readHistoryFile: vi.fn().mockResolvedValue({ success: false }),
+    checkPermission: vi.fn().mockResolvedValue({ hasPermission: false }),
+    saveReference: vi.fn().mockResolvedValue({ success: false }),
+  },
+}))
+
+vi.mock('../../src/hooks/useI18n', () => ({
+  default: () => ({ t: (k) => k, lang: 'ko', setLang: vi.fn() }),
+  useI18n: () => ({ t: (k) => k, lang: 'ko', setLang: vi.fn() }),
+}))
+
+vi.mock('../../src/components/Toast', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
+}))
+
+vi.mock('../../src/components/Modal', () => ({
+  default: ({ children, footer }) => (
+    <div data-testid="modal">
+      {children}
+      <div data-testid="footer">{footer}</div>
+    </div>
+  ),
+}))
+
+vi.mock('../../src/components/ErrorSection', () => ({
+  default: () => null,
+}))
+
+// FileReader stub — synchronous
+class FakeFileReader {
+  readAsDataURL() {
+    this.result = 'data:image/png;base64,MODALBASE64'
+    this.onloadend?.()
+  }
+}
+global.FileReader = FakeFileReader
+
+import ReferenceDetailModal from '../../src/components/ReferenceDetailModal'
+
+const fakeFile = new File(['x'], 'hero.png', { type: 'image/png' })
+
+const baseRef = {
+  id: 7,
+  name: 'Alice',
+  type: 'character',
+  category: 'MEDIA_CATEGORY_SUBJECT',
+  data: null,
+  filePath: null,
+  mediaId: null,
+  status: null,
+}
+
+const baseProps = {
+  index: 0,
+  onUpdate: vi.fn(),
+  onClose: vi.fn(),
+  onGenerate: vi.fn(),
+  isGenerating: false,
+  t: (k) => k,
+  isKo: true,
+  projectName: null,
+  thumbnails: {},
+}
+
+async function triggerDropZoneUpload(container) {
+  const input = container.querySelector('input[type="file"]')
+  await act(async () => {
+    Object.defineProperty(input, 'files', { value: [fakeFile], configurable: true })
+    input.dispatchEvent(new Event('change', { bubbles: true }))
+    for (let i = 0; i < 8; i++) await Promise.resolve()
+  })
+}
+
+describe('ReferenceDetailModal — entity field propagation (Codex #3)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('Flow character upload: uploadToFlow called with type/name/refId meta', async () => {
+    const onUpload = vi.fn().mockResolvedValue({
+      success: true,
+      mediaId: 'med-m1',
+      entityId: 'ent-m1',
+      workflowId: 'wf-m1',
+      registered: true,
+      flowNameSyncStatus: 'synced',
+    })
+
+    const { container } = render(
+      <ReferenceDetailModal
+        {...baseProps}
+        reference={baseRef}
+        onUpload={onUpload}
+      />
+    )
+
+    await triggerDropZoneUpload(container)
+
+    expect(onUpload).toHaveBeenCalledWith(
+      'MODALBASE64',
+      expect.objectContaining({
+        type: 'character',
+        name: 'Alice',
+        refId: 7,
+      })
+    )
+  })
+
+  it('Flow character upload: editData gets entityId + flowNameSyncStatus=synced after upload', async () => {
+    // We capture what state editData ends up in by spying on the save flow.
+    // The cleanest way: provide onUpdate and trigger save after upload.
+    const onUpload = vi.fn().mockResolvedValue({
+      success: true,
+      mediaId: 'med-m2',
+      entityId: 'ent-m2',
+      workflowId: 'wf-m2',
+      registered: true,
+      flowNameSyncStatus: 'synced',
+    })
+    const onUpdate = vi.fn()
+
+    const { container, getByText } = render(
+      <ReferenceDetailModal
+        {...baseProps}
+        reference={baseRef}
+        onUpload={onUpload}
+        onUpdate={onUpdate}
+      />
+    )
+
+    await triggerDropZoneUpload(container)
+
+    // Click save to persist editData → onUpdate
+    const saveBtn = getByText('common.save')
+    await act(async () => {
+      saveBtn.click()
+      await Promise.resolve()
+    })
+
+    expect(onUpdate).toHaveBeenCalledWith(
+      0,
+      expect.objectContaining({
+        mediaId: 'med-m2',
+        entityId: 'ent-m2',
+        workflowId: 'wf-m2',
+        flowNameSyncStatus: 'synced',
+        registered: true,
+      })
+    )
+  })
+
+  it('#R6-17: on-demand entity registration updates prop while modal open → synced to editData, not clobbered on save', async () => {
+    // While the modal is open, useAutomation's on-demand registration updates the reference
+    // prop with entityId/flowNameSyncStatus. The prop→local sync must copy those fields, else
+    // saving the open modal overwrites the fresh registration with stale nulls.
+    const onUpdate = vi.fn()
+    const initialRef = { ...baseRef, mediaId: 'med-init', entityId: null, flowNameSyncStatus: undefined }
+
+    const { getByText, rerender } = render(
+      <ReferenceDetailModal {...baseProps} reference={initialRef} onUpdate={onUpdate} onUpload={vi.fn()} />
+    )
+
+    // Registration patch arrives via prop (only entity fields change — no media/file change)
+    const registeredRef = { ...initialRef, entityId: 'ent-ondemand', workflowId: 'wf-ondemand', registered: true, flowNameSyncStatus: 'synced' }
+    await act(async () => {
+      rerender(<ReferenceDetailModal {...baseProps} reference={registeredRef} onUpdate={onUpdate} onUpload={vi.fn()} />)
+      await Promise.resolve()
+    })
+
+    const saveBtn = getByText('common.save')
+    await act(async () => { saveBtn.click(); await Promise.resolve() })
+
+    const saved = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][1]
+    expect(saved.entityId).toBe('ent-ondemand')
+    expect(saved.workflowId).toBe('wf-ondemand')
+    expect(saved.flowNameSyncStatus).toBe('synced')
+    expect(saved.registered).toBe(true)
+  })
+
+  it('#R8-9: entity-only prop update does NOT clobber unsaved media edits (split media/entity sync)', async () => {
+    const onUpdate = vi.fn()
+    const initialRef = { ...baseRef, mediaId: 'med-init', data: null, filePath: null, entityId: null }
+
+    const { container, getByText, rerender } = render(
+      <ReferenceDetailModal {...baseProps} reference={initialRef} onUpdate={onUpdate} onUpload={vi.fn().mockResolvedValue({ success: true, data: 'MODALBASE64', mediaId: 'med-local', caption: null })} />
+    )
+
+    // User replaces the image locally (unsaved) → editData.data becomes the new base64
+    await triggerDropZoneUpload(container)
+
+    // A prop entity update arrives for the OLD media (entityPatched carries initialRef's mediaId).
+    // It is STALE relative to the just-replaced image, so it must NOT be applied (#R17-1).
+    const entityPatched = { ...initialRef, entityId: 'ent-x', workflowId: 'wf-x', registered: true, flowNameSyncStatus: 'synced' }
+    await act(async () => {
+      rerender(<ReferenceDetailModal {...baseProps} reference={entityPatched} onUpdate={onUpdate} onUpload={vi.fn()} />)
+      await Promise.resolve()
+    })
+
+    const saveBtn = getByText('common.save')
+    await act(async () => { saveBtn.click(); await Promise.resolve() })
+
+    const saved = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][1]
+    // #R8-9: unsaved media edit preserved (not clobbered by the entity-only sync).
+    expect(saved.data).toBeTruthy()
+    expect(saved.data).toContain('MODALBASE64')
+    // #R17-1: the stale entity (registered against the replaced image) is NOT applied while dirty —
+    //   it would make the new image's mention target the old character. It was cleared on replace.
+    expect(saved.entityId).toBeFalsy()
+  })
+
+  it('API upload (no entity fields): onUpdate has mediaId only, no spurious entityId', async () => {
+    const onUpload = vi.fn().mockResolvedValue({
+      success: true,
+      mediaId: 'med-api-m3',
+      caption: 'cap',
+      // no entityId / workflowId
+    })
+    const onUpdate = vi.fn()
+
+    const { container, getByText } = render(
+      <ReferenceDetailModal
+        {...baseProps}
+        reference={baseRef}
+        onUpload={onUpload}
+        onUpdate={onUpdate}
+      />
+    )
+
+    await triggerDropZoneUpload(container)
+
+    const saveBtn = getByText('common.save')
+    await act(async () => {
+      saveBtn.click()
+      await Promise.resolve()
+    })
+
+    expect(onUpdate).toHaveBeenCalledWith(
+      0,
+      expect.objectContaining({ mediaId: 'med-api-m3' })
+    )
+    // #R16-3: no SPURIOUS entityId — explicitly cleared to null on a media replace without
+    // fresh entity registration (was undefined; null is equivalent "no entity").
+    const saved = onUpdate.mock.calls[0][1]
+    expect(saved.entityId).toBeFalsy()
+    expect(saved.flowNameSyncStatus).toBeFalsy()
+  })
+})

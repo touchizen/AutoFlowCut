@@ -12,12 +12,16 @@ import { fileSystemAPI } from './useFileSystem'
 import { getTimestamp } from '../utils/formatters'
 import { cleanBase64 as stripBase64Prefix } from '../utils/urls'
 import { toast } from '../components/Toast'
-import { resetDOMSession, requestStopDOM } from '../utils/flowDOMClient'
-import { isRecaptchaError } from '../utils/recaptchaDetect'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
-import { useRecaptchaBackoff } from './useRecaptchaBackoff'
+import { clampInt } from '../utils/clampInt'
+import { resolveMentions } from '../utils/mentionParser'
+import { needsEntityRegistration, applyEntityRegistrationPatch, selectRefsToRegister } from '../utils/refEntityRegistration'
+import { makeBatchConsumeGate } from './batchConsumeGate'
+import { resolveProjectBatchId } from '../utils/batchId'
+import { consumeBatchDownload } from '../firebase/functions'
+import { batchStartGate } from './batchStartGate'
 
-export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings = null, addPendingSave = null, t = (key) => key, onAuthError = null, generationQueue = null, onComplete = null) {
+export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings = null, addPendingSave = null, t = (key) => key, onAuthError = null, generationQueue = null, onComplete = null, mode = 'api', flowProjectReady = true, flowAgentOn = false, subscriptionBatch = null, onPaywall = null, isAuthenticated = false, onLoginRequired = null, subscriptionStatus = undefined, refreshSubscription = null) {
   const [isRunning, setIsRunning] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
@@ -32,28 +36,24 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     }
   }, [t, status, isRunning])
   
-  // notifyOS 안정적 콜백으로 캡슐화 — backoff hook 의존성으로 안전.
-  const notifyOS = useCallback((payload) => {
-    try { window.electronAPI?.notifyOS?.(payload) } catch { /* 무시 */ }
-  }, [])
-  const recaptcha = useRecaptchaBackoff(t, {
-    notifyOS,
-    getStopRequested: () => stopRequestedRef.current,
-  })
-
   const stopRequestedRef = useRef(false)
   const pausedRef = useRef(false)
   const completedCountRef = useRef(0)
   const errorCountRef = useRef(0)
   const batchStartedAtRef = useRef(null)
+  // 논리적 배치 동안 유지되는 batchId. full start = 새 배치(새 id), retry/partial = 직전 배치 재사용
+  // → 저장 실패 후 재시도가 서버 멱등으로 재과금되지 않게 한다(이중과금 방지).
+  // 프로젝트별 batchId — projectName -> batchId. 같은 프로젝트의 retry 는 재사용(서버 멱등=무료),
+  // 다른 프로젝트는 분리돼 무임승차 불가. (resolveProjectBatchId 참고)
+  const batchIdByProjectRef = useRef(new Map())
   // Set true when batch stops due to authFailed sentinel — prevents the normal
   // stopRequestedRef final-status logic from overwriting 'error' with 'stopped'.
   const authStoppedRef = useRef(false)
 
-  // generateImageDOM 은 dead processScene 제거와 함께 호출 사이트가 사라져서 destructuring 에서도 제외.
-  // 단일 씬 동기 호출이 필요해지면 flowAPI.generateImageDOM 으로 직접 접근.
-  const { submitGenerationDOM, checkGeneration, collectGeneration, clearGenerations, uploadReference, getAccessToken } = flowAPI
-  const { scenes, references, updateScene, getMatchingReferences } = scenesHook
+  // generateImage 은 dead processScene 제거와 함께 호출 사이트가 사라져서 destructuring 에서도 제외.
+  // 단일 씬 동기 호출이 필요해지면 genAPI.generateImage 으로 직접 접근.
+  const { submitGeneration, checkGeneration, collectGeneration, clearGenerations, uploadReference, getAccessToken } = genAPI
+  const { scenes, references, updateScene, getMatchingReferences, updateReferences } = scenesHook
 
   // 씬이 모두 삭제되거나, 생성된 이미지가 없는 상태로 돌아가면 progress/status 리셋
   useEffect(() => {
@@ -76,16 +76,33 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
    * 비동기 배치 실행 (fire-and-forget + 폴링 수집)
    */
   const runConcurrentQueue = async (targetScenes, options, total) => {
-    let { projectName, saveMode, imageBatchCount, imageUpscale, aspectRatio, selectedStyleRefId, seed = null } = options
+    let { projectName, saveMode, imageBatchCount, imageUpscale, aspectRatio, imageModel, selectedStyleRefId, seed = null, concurrency: rawConcurrency, currentRefs, consumeGate } = options
     if (selectedStyleRefId != null && typeof selectedStyleRefId !== 'string') selectedStyleRefId = String(selectedStyleRefId)
+    // #R6-15: entity 패치가 반영된 refs (없으면 closure references 폴백 — 멘션 해석 일관성).
+    const effectiveRefs = currentRefs || references
+    // 동시 in-flight 상한. 잘못된 값(0/음수/NaN)은 무한대기를 유발하므로 기본 5 로 clamp(1~10).
+    const concurrency = clampInt(rawConcurrency, 1, 15, 5)
+    const GATE_POLL_MS = 600  // window full 일 때 재확인 간격 (busy-loop/checkGeneration 과호출 방지)
     // selectedStyleRefId 없으면 자동 매칭 모드 — 씬별 style_tag로만 결정.
     // 임의의 "첫 스타일 카드 자동 적용" fallback은 제거됨 — UI 라벨("자동")과 실행이 일치해야 함.
     completedCountRef.current = 0
-    recaptcha.reset()
     let pauseBudgetMs = 0  // 누적 wait — pollStart / submittedAt 보정용
     errorCountRef.current = 0
     const pendingQueue = [] // { generationId, scene, submittedAt }
     let consecutiveErrors = 0
+
+    // 사용자 일시정지 동안 대기하고, 재개 시 그 시간만큼 보정한다 — pause 가
+    // in-flight 의 ITEM_TIMEOUT(2분)이나 Phase2 drain 예산(3분)을 갉아먹지 않게.
+    const awaitUnpause = async () => {
+      if (!pausedRef.current) return
+      const pausedAt = Date.now()
+      while (pausedRef.current && !stopRequestedRef.current) {
+        await new Promise(r => setTimeout(r, 500))
+      }
+      const waited = Date.now() - pausedAt
+      for (const item of pendingQueue) item.submittedAt += waited
+      pauseBudgetMs += waited
+    }
     // quota stop 은 공통 모듈 — stopRequestedRef 마킹 + listeners (queue, 모달) 자동 발사.
     // queue clear 는 useGenerationQueue 가 자체 subscribe 해서 처리하므로 caller 책임 X.
     // 이미 submit 한 in-flight 는 마저 collect 시도 (운 좋게 결과 오면 살림).
@@ -95,50 +112,42 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       setProgress({ current, total, percent: Math.round((current / total) * 100), errorCount: errorCountRef.current, startedAt: batchStartedAtRef.current, endedAt: null })
     }
 
-    // reCAPTCHA error 마킹 (1 씬)
-    const markRecaptchaError = (scene) => {
-      updateScene(scene.id, { status: 'error', error: 'reCAPTCHA blocked', errorKind: 'recaptcha' })
-      errorCountRef.current++
-      completedCountRef.current++
-    }
-
-    // pause 후 backoff 등록, 결과에 따라 시간 보정 / pause 해제.
-    // - allowAbsorb=false: fresh probe → grace 우회, escalation 강제 (submit-path 또는 post-resume fresh collect)
-    // - allowAbsorb=true: in-flight 잔여 흡수 허용 (wave 시작 전에 submit된 씬의 collect-path)
-    const pauseAndRegisterRecaptcha = async ({ allowAbsorb }) => {
-      pausedRef.current = true
-      setIsPaused(true)
-      const { waitedMs, mode, resumed } = await recaptcha.registerBlock({ allowAbsorb })
-      if (mode === 'absorbed') {
-        // 다른 핸들러가 처리 중인 wave 흡수 — 추가 wait 없음, pause 해제 후 진행.
-        pausedRef.current = false
-        setIsPaused(false)
-        return
+    // #7: consume 이 denied 되면 새 씬 제출을 중단하고 paywall 을 띄운다.
+    // consumeGate.ensure() 는 결과를 캐시하므로 denied 후 모든 호출은 즉시 {ok:false} 반환.
+    // 이 ref 는 collectCompleted 가 denied 를 감지한 시점에 true 로 설정되고,
+    // Phase 1 루프가 stopRequestedRef 와 동일하게 취급해 새 제출을 차단한다.
+    let consumeDenied = false
+    const handleConsumeDenied = () => {
+      if (!consumeDenied) {
+        consumeDenied = true
+        stopRequestedRef.current = true
+        console.warn('[Automation] Consume denied mid-batch — stopping new submissions, triggering paywall')
+        onPaywall?.()
       }
-      if (waitedMs > 0) {
-        for (const item of pendingQueue) item.submittedAt += waitedMs
-        pauseBudgetMs += waitedMs
-      }
-      if (resumed) {
-        pausedRef.current = false
-        setIsPaused(false)
-      }
-      // !resumed (stop) 인 경우 pausedRef true 유지 — 메인 루프의 stopRequestedRef 가드가 break.
     }
 
     // 비동기 결과 후처리 (업스케일 + 저장) — 단위 테스트 가능한 standalone 헬퍼로 위임.
-    const processAsyncResult = (scene, result) => processAsyncSceneResult({
-      scene, result,
-      flowAPI, imageUpscale, saveMode, projectName, seed,
-      updateScene,
-      logPrefix: '[Automation]',
-    })
+    const processAsyncResult = async (scene, result) => {
+      const ok = await processAsyncSceneResult({
+        scene, result,
+        genAPI, imageUpscale, saveMode, projectName, seed, model: imageModel,
+        updateScene,
+        gate: consumeGate,  // 배치당 1회 consume 보장 (undefined 면 processAsyncSceneResult 가 no-op 사용)
+        logPrefix: '[Automation]',
+      })
+      // processAsyncSceneResult 가 denied 로 false 반환하면 → 새 제출 중단 + paywall.
+      // gate 가 denied 됐는지 확인 (ensure 결과 캐시를 재활용 — 추가 서버 호출 없음).
+      if (!ok) {
+        const gateCheck = await consumeGate.ensure()
+        if (!gateCheck.ok) handleConsumeDenied()
+      }
+      return ok
+    }
 
     // 완료된 결과 수집
     const ITEM_TIMEOUT = 120000 // 개별 아이템 2분 타임아웃
     const collectCompleted = async () => {
       const stillPending = []
-      const recaptchaScenes = []
       for (const item of pendingQueue) {
         if (stopRequestedRef.current) { stillPending.push(item); continue }
         const elapsed = Date.now() - item.submittedAt
@@ -152,6 +161,21 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
         }
         try {
           const st = await checkGeneration(item.generationId)
+          // #R23-4: checkGeneration 자체가 401/403 → authFailed 를 표면화할 수 있다(완료 안 돼도).
+          //   이걸 무시하면 죽은 인증으로 ITEM_TIMEOUT(2분)까지 pending 으로 매달린다 → 즉시 중단.
+          //   onAuthError 는 withAuthRetry wrapper 가 이미 발화 — 여기서 또 발화하지 않는다.
+          if (st.authFailed) {
+            console.warn('[Automation] checkGeneration authFailed — stopping batch:', st.error)
+            updateScene(item.scene.id, { status: 'error', error: st.error || t('status.authErrorStopped'), errorKind: 'auth' })
+            errorCountRef.current++
+            completedCountRef.current++
+            updateProgressMsg(completedCountRef.current)
+            stopRequestedRef.current = true
+            authStoppedRef.current = true
+            setStatus('error')
+            setStatusMessage(st.error || t('status.authErrorStopped'))
+            continue
+          }
           if (st.completed) {
             const result = await collectGeneration(item.generationId)
             // Auth failed sentinel — token is dead, stop batch immediately.
@@ -168,12 +192,6 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
               setStatusMessage(result.error || t('status.authErrorStopped'))
               continue
             }
-            if (!result.success && isRecaptchaError(result.error)) {
-              recaptchaScenes.push(item)
-              markRecaptchaError(item.scene)
-              updateProgressMsg(completedCountRef.current)
-              continue
-            }
             if (!result.success && isQuotaExhaustedError(result.error)) {
               updateScene(item.scene.id, { status: 'error', error: result.error, errorKind: null })
               errorCountRef.current++
@@ -183,12 +201,19 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
               continue
             }
             console.log('[Automation] Collected scene', item.scene.id, ':', result.success, result.images?.length || 0, 'images')
-            const finalizeOk = await processAsyncResult(item.scene, result)
-            if (finalizeOk) {
-              recaptcha.recordSuccess()
-            } else {
+            // #R12-7: finalize/save 를 check/collect 와 분리한다. 결과는 이미 수집(consume)됐으므로
+            //   finalize 가 throw 해도 item 을 requeue 하면 안 된다(이미 없는 generation 재폴링).
+            //   finalize 예외는 씬을 error 로 표시하고 완료로 카운트한다.
+            let finalizeOk = false
+            try {
+              finalizeOk = await processAsyncResult(item.scene, result)
+            } catch (finErr) {
+              console.error('[Automation] Finalize/save error for scene', item.scene.id, ':', finErr.message)
+              updateScene(item.scene.id, { status: 'error', error: finErr.message, errorKind: null })
+              finalizeOk = false
+            }
+            if (!finalizeOk) {
               errorCountRef.current++
-              recaptcha.recordFailure()
             }
             completedCountRef.current++
             updateProgressMsg(completedCountRef.current)
@@ -202,29 +227,24 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       }
       pendingQueue.length = 0
       pendingQueue.push(...stillPending)
-
-      // 한 cycle 의 모든 reCAPTCHA 실패는 한 incident 으로 묶어 처리.
-      if (recaptchaScenes.length > 0) {
-        const cutoff = recaptcha.getLastBlockStartedAt()
-        // cutoff > 0: 이전 wave 가 있음. 모든 reCAPTCHA 실패 씬이 그 wave 시작 전에 submit된
-        // in-flight 잔여일 때만 absorb 허용. 하나라도 wave 이후 submit됐으면 fresh post-resume
-        // probe 이므로 escalation 강제.
-        // Use originalSubmittedAt (never bumped) for the in-flight residual check.
-        // item.submittedAt is bumped by waitedMs after each wave to keep ITEM_TIMEOUT working,
-        // so comparing it against the wall-clock cutoff would always fail post-wave.
-        const allRemnant = cutoff > 0 && recaptchaScenes.every(item => (item.originalSubmittedAt ?? item.submittedAt) <= cutoff)
-        console.warn(
-          '[Automation] reCAPTCHA block detected on', recaptchaScenes.length,
-          'scenes this cycle (allRemnant:', allRemnant, ')'
-        )
-        await pauseAndRegisterRecaptcha({ allowAbsorb: allRemnant })
-      }
     }
 
     // Phase 1: 비동기 제출 + 중간 수집
     for (let i = 0; i < targetScenes.length; i++) {
-      while (pausedRef.current && !stopRequestedRef.current) {
-        await new Promise(r => setTimeout(r, 500))
+      await awaitUnpause()
+      if (stopRequestedRef.current) break
+
+      // 동시성 게이트 — in-flight(pendingQueue) 가 concurrency 이상이면 슬롯이 빌 때까지 대기.
+      // collect 로 완료분 회수 시도 → 여전히 full 이면 pause/stop 존중하며 GATE_POLL_MS 폴링
+      // (busy-loop / checkGeneration 과호출 방지). API 모드 전용 — Flow 는 아래 7~15초 페이싱으로
+      // throttle 하므로 게이트를 무시한다(원본 Flow 동작).
+      while (mode !== 'flow' && pendingQueue.length >= concurrency && !stopRequestedRef.current) {
+        await collectCompleted()
+        if (pendingQueue.length >= concurrency) {
+          await awaitUnpause()
+          if (stopRequestedRef.current) break
+          await new Promise(r => setTimeout(r, GATE_POLL_MS))
+        }
       }
       if (stopRequestedRef.current) break
 
@@ -232,34 +252,70 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       updateScene(scene.id, { status: 'generating', generatingStartedAt: Date.now() })
       setStatusMessage(t('status.generatingScene', { ids: scene.id, current: completedCountRef.current, total }))
 
-      // 매칭 레퍼런스
+      // 매칭 레퍼런스.
+      // 공식 API 모드는 mediaId 대신 name 으로 base64 를 해석하므로(useSceneGeneration
+      // 단일 씬 경로와 동일 계약) mediaId 또는 name 중 하나만 있어도 선택하고 name 을 보존한다.
+      // R37 review fix: data/filePath 도 보존 — memory-only ref 가 referenceResolver 의
+      // 디스크 fallback 도 못 타고 조용히 빠지는 회귀 차단. (useSceneGeneration 과 정책 동일.)
       const allMatched = getMatchingReferences(scene)
       const matchedRefs = allMatched
-        .filter(r => r.mediaId)
-        .map(r => ({ category: r.category, mediaId: r.mediaId, caption: r.caption || '' }))
+        .filter(r => r.mediaId || r.name || r.data || r.filePath)
+        .map(r => ({
+          category: r.category,
+          mediaId: r.mediaId || null,
+          caption: r.caption || '',
+          name: r.name,
+          data: r.data || null,
+          filePath: r.filePath || null,
+        }))
       if (matchedRefs.length > 0) {
         console.log('[Automation] Scene', scene.id, '→ injecting', matchedRefs.length, 'refs')
       }
 
+      // `@name` 인라인 멘션은 engineApi 내부에서 제거됨 (M4 T7). 여기선 로깅 전용.
+      const { missing: missingMentions } = resolveMentions(scene.prompt, effectiveRefs)
+      if (missingMentions.length > 0) console.warn('[Automation] Scene', scene.id, 'unknown @mentions:', missingMentions.join(', '))
       // 스타일 프롬프트 합치기 (태그 매칭 자동 + style_tag 프리셋 fallback + selectedStyleRefId 수동)
-      const { styledPrompt, appliedStyle } = resolveSceneStyle(scene.prompt, allMatched, selectedStyleRefId, references, matchedRefs, scene.style_tag)
+      // scene.prompt 그대로 전달 — strip은 engineApi.submitGeneration 내부에서 수행.
+      const { styledPrompt, appliedStyle } = resolveSceneStyle(scene.prompt, allMatched, selectedStyleRefId, effectiveRefs, matchedRefs, scene.style_tag)
 
       // 비동기 제출
       console.log('[Automation] Scene', scene.id, '→ prompt:', styledPrompt.substring(0, 80) + '...', '| style:', appliedStyle, '| refs:', matchedRefs.length)
-      const submitResult = await submitGenerationDOM(styledPrompt, matchedRefs, { batchCount: imageBatchCount, seed, aspectRatio })
+      const submitResult = await submitGeneration(styledPrompt, matchedRefs, { batchCount: imageBatchCount, seed, aspectRatio, model: imageModel, references: effectiveRefs })
       if (submitResult.success && submitResult.generationId) {
         const _now = Date.now()
         pendingQueue.push({ generationId: submitResult.generationId, scene, submittedAt: _now, originalSubmittedAt: _now })
         consecutiveErrors = 0
         console.log('[Automation] Submitted scene', scene.id, '→', submitResult.generationId)
+      } else if (submitResult.success && Array.isArray(submitResult.images) && submitResult.images.length > 0) {
+        // 동기 결과: Flow @멘션 씬(flow:generate-scene)은 generationId 없이 images 를 바로 반환한다.
+        //   이 분기가 없으면 generationId 없음 → 아래 else 의 '제출 실패'로 잘못 처리돼 생성된
+        //   이미지가 버려지고, 에러 씬으로 남아 다음 배치/재생성에서 또 생성된다(중복 생성).
+        consecutiveErrors = 0
+        let finalizeOk = false
+        try { finalizeOk = await processAsyncResult(scene, submitResult) }
+        catch (finErr) {
+          console.error('[Automation] Finalize error (sync) for scene', scene.id, ':', finErr.message)
+          updateScene(scene.id, { status: 'error', error: finErr.message, errorKind: null })
+        }
+        if (!finalizeOk) errorCountRef.current++
+        completedCountRef.current++
+        updateProgressMsg(completedCountRef.current)
+        console.log('[Automation] Scene', scene.id, 'finalized synchronously (', submitResult.images.length, 'image)')
       } else {
         console.error('[Automation] Submit failed for scene', scene.id, ':', submitResult.error)
-        if (isRecaptchaError(submitResult.error)) {
-          console.warn('[Automation] reCAPTCHA block on submit, scene', scene.id)
-          markRecaptchaError(scene)
+        // #R10-6: 인증 실패 센티넬 — 토큰이 죽었으니 즉시 배치 중단(collect/upload 경로와 동일 처리).
+        if (submitResult.authFailed) {
+          console.warn('[Automation] submitGeneration authFailed — stopping batch:', submitResult.error)
+          updateScene(scene.id, { status: 'error', error: submitResult.error || t('status.authErrorStopped'), errorKind: 'auth' })
+          errorCountRef.current++
+          completedCountRef.current++
           updateProgressMsg(completedCountRef.current)
-          await pauseAndRegisterRecaptcha({ allowAbsorb: false })
-          continue
+          stopRequestedRef.current = true
+          authStoppedRef.current = true
+          setStatus('error')
+          setStatusMessage(submitResult.error || t('status.authErrorStopped'))
+          break
         }
         if (isQuotaExhaustedError(submitResult.error)) {
           updateScene(scene.id, { status: 'error', error: submitResult.error, errorKind: null })
@@ -280,22 +336,36 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
         }
       }
 
-      // 씬 사이 대기 (7~15초) + 중간 수집
-      if (i < targetScenes.length - 1 && !stopRequestedRef.current) {
+      // Flow 반봇 페이싱 — 씬 사이 7~15초 랜덤 대기 + 중간 수집.
+      // Flow(Agent OFF)는 단일 웹 패널 DOM 자동화라 빠른 연속 제출이 봇 감지/레이트리밋을
+      // 유발한다. API 모드는 동시성 윈도우(위 게이트)로 충분하므로 대기 없음.
+      if (mode === 'flow' && i < targetScenes.length - 1 && !stopRequestedRef.current) {
         const waitMs = 7000 + Math.floor(Math.random() * 8000)
-        console.log('[Automation] Waiting', Math.round(waitMs / 1000), 's before next submit...')
+        console.log('[Automation] (Flow) Waiting', Math.round(waitMs / 1000), 's before next submit...')
         const waitEnd = Date.now() + waitMs
         while (Date.now() < waitEnd && !stopRequestedRef.current) {
-          while (pausedRef.current && !stopRequestedRef.current) {
-            await new Promise(r => setTimeout(r, 500))
-          }
+          await awaitUnpause()
+          if (stopRequestedRef.current) break
           await new Promise(r => setTimeout(r, 500))
         }
-        // 중간 수집
-        if (pendingQueue.length > 0 && !stopRequestedRef.current) {
+        if (flowAgentOn) {
+          // Flow Agent ON: 다음 씬 제출 전에 직전 비동기 씬(generate-image)을 끝까지 수집한다.
+          //   에이전트는 한 번에 하나만 처리(idle-gate)하고, 비동기 이미지와 동기 @멘션 씬이 같은
+          //   DOM 결과 풀을 "동시에" 긁으면 서로 가로채는 race 가 난다(첫 씬 타임아웃 / 둘째 씬이
+          //   옛 이미지). Agent ON 은 직렬 수집으로 그 동시성을 없앤다(최대 ~2분). Agent OFF 는
+          //   빠른 intercept 라 기존 파이프라인(단발 수집) 유지.
+          const drainStart = Date.now()
+          while (pendingQueue.length > 0 && !stopRequestedRef.current && (Date.now() - drainStart < 120000)) {
+            await awaitUnpause()
+            if (stopRequestedRef.current) break
+            await collectCompleted()
+            if (pendingQueue.length > 0) await new Promise(r => setTimeout(r, 3000))
+          }
+        } else if (pendingQueue.length > 0 && !stopRequestedRef.current) {
           await collectCompleted()
         }
       }
+
     }
 
     // Phase 2: 남은 결과 전부 수집 (3초 간격, 최대 3분)
@@ -305,10 +375,8 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       !stopRequestedRef.current &&
       (Date.now() - pollStart - pauseBudgetMs < 180000)
     ) {
-      // paused (reCAPTCHA backoff 등) 인식 — Phase 2 도 pause 동안 멈춤.
-      while (pausedRef.current && !stopRequestedRef.current) {
-        await new Promise(r => setTimeout(r, 500))
-      }
+      // paused (사용자 일시정지) 인식 — Phase 2 도 pause 동안 멈추고 시간 보정.
+      await awaitUnpause()
       if (stopRequestedRef.current) break
       setStatusMessage(t('status.collectingResults', { remaining: pendingQueue.length }))
       await collectCompleted()
@@ -352,24 +420,29 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       projectName = 'Untitled',
       saveMode = 'folder',
       sceneIndices = null,
+      sceneIds = null,  // 선호 — queue 지연 후에도 안정적으로 id 로 resolve (index staleness 회피)
       imageBatchCount = 1,
       imageUpscale = 'off',
       aspectRatio = '16:9',
+      imageModel = undefined,
       selectedStyleRefId: _selectedStyleRefId = null,
       seed = null,
+      concurrency = undefined,
       force = false
     } = options
     const selectedStyleRefId = (_selectedStyleRefId != null && typeof _selectedStyleRefId !== 'string') ? String(_selectedStyleRefId) : _selectedStyleRefId
 
     if (isRunning) return
 
+    if (mode === 'flow' && !flowProjectReady) {
+      toast.warning(t('toast.flowProjectNotReady', { defaultValue: 'Flow 프로젝트 로딩 중... 잠시 후 다시 시도해 주세요.' }))
+      return
+    }
+
     stopRequestedRef.current = false
     pausedRef.current = false
     authStoppedRef.current = false
     completedCountRef.current = 0
-
-    // 새 배치 시작: DOM 세션 리셋
-    resetDOMSession()
 
     setIsRunning(true)
     setIsPaused(false)
@@ -379,11 +452,13 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     //   - sceneIndices 명시: 그 인덱스들 (retry/partial 호출)
     //   - force=true (MCP 전용): prompt 있는 모든 씬 (완료된 씬도 포함, 새 스타일로 재생성)
     //   - 그 외: filterPendingScenes — 이미지 없는 씬 + pending/error 상태 (App.jsx 자동 매칭 검증과 일치)
-    const targetScenes = sceneIndices
-      ? sceneIndices.map(i => scenes[i]).filter(Boolean)
-      : force
-        ? scenes.filter(s => s.prompt)
-        : filterPendingScenes(scenes)
+    const targetScenes = sceneIds
+      ? sceneIds.map(id => scenes.find(s => s.id === id)).filter(Boolean)  // 실행 시점 현재 scenes 에서 id 로 resolve
+      : sceneIndices
+        ? sceneIndices.map(i => scenes[i]).filter(Boolean)
+        : force
+          ? scenes.filter(s => s.prompt)
+          : filterPendingScenes(scenes)
 
     const total = targetScenes.length
     if (total === 0) {
@@ -394,6 +469,36 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       return
     }
     setProgress({ current: 0, total, percent: 0, errorCount: 0, startedAt: null, endedAt: null })
+
+    // 배치 다운로드 구독 게이트 — 토큰/폴더/ref 업로드보다 먼저(요구사항: 로그아웃이면 로그인 모달 우선,
+    // 쿼터 소진이면 paywall). subscriptionBatch 가 null 이면 미게이트(개발/테스트/구독 미로드) → 통과.
+    // loading/error: 인증됐지만 Firestore doc 미확인 → 진행 금지 (서버 consume 거부 회피).
+    {
+      // #5: 부분 retry(sceneIds/sceneIndices)로 이 프로젝트의 기존 batchId 를 재사용하면 paywall 스킵
+      //   (서버 멱등 no-op/거부에 위임). 이 프로젝트에 기존 id 가 없으면(첫 실행/재로드) 새 배치 → paywall 적용.
+      //   프로젝트별 키라 다른 프로젝트의 과금된 id 에는 무임승차 불가.
+      const isReusingBatch = !!((sceneIds || sceneIndices) && batchIdByProjectRef.current.get(projectName))
+      const gate = batchStartGate({ subscriptionBatch, isAuthenticated, subscriptionStatus, isReusingBatch })
+      if (gate.action === 'login') {
+        onLoginRequired?.()
+        setIsRunning(false); setIsPaused(false); setIsStopping(false)
+        setStatus('ready'); setStatusMessage(t('status.ready'))
+        return
+      }
+      if (gate.action === 'paywall') {
+        onPaywall?.()
+        setIsRunning(false); setIsPaused(false); setIsStopping(false)
+        setStatus('ready'); setStatusMessage(t('status.ready'))
+        return
+      }
+      if (gate.action === 'loading') {
+        // subscription 아직 로드 중 / 에러 — 과금 안 함, paywall 모달 없음, 짧은 안내만.
+        toast.warning(t('toast.subscriptionLoading', { defaultValue: '구독 정보를 확인 중입니다. 잠시 후 다시 시도해 주세요.' }))
+        setIsRunning(false); setIsPaused(false); setIsStopping(false)
+        setStatus('ready'); setStatusMessage(t('status.ready'))
+        return
+      }
+    }
 
     // 폴더 저장 모드일 때 폴더 존재 확인
     if (saveMode === 'folder') {
@@ -415,17 +520,33 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     setStatusMessage(t('status.checkingAuth'))
     const token = await getAccessToken()
     if (!token) {
-      console.log('[Automation] No token found. Calling onAuthError.')
+      // BYOK 키 없음 → 생성 중단 + API 키 모달 안내 (handleStart 와 동일 UX).
+      // 'flow-login-expired' → App 의 useFlowEvents → showApiKeyModal.
+      console.log('[Automation] No API key — prompting setup.')
       setStatusMessage(`❌ ${t('status.loginRequired')}`)
       setStatus('error')
       setIsRunning(false)
-      onAuthError?.()
+      window.dispatchEvent(new CustomEvent('flow-login-expired'))
       return
     }
     
+    // #R6-15: on-demand entity 등록 패치를 같은 run 의 씬 제출에도 반영하기 위한 로컬 refs.
+    // updateReferences 는 React state 만 갱신할 뿐 이 실행 closure 의 `references` 는 stale 로
+    // 남는다 → 같은 배치의 씬이 entityId 없는 refs 로 제출돼 멘션이 다음 run 에서야 동작.
+    // 패치를 이 로컬 배열에 누적해 runConcurrentQueue 의 멘션/제출에 넘긴다(여러 ref 등록도 누적).
+    let currentRefs = references
     // 레퍼런스 업로드 (비동기 슬라이딩 윈도우 — 1초 간격 투입, 최대 5개 동시)
     console.log('[Automation] References check:', references.map(r => ({ name: r.name, hasData: !!(r.data || r.filePath || r.imagePath), mediaId: r.mediaId })))
-    const refsToUpload = references.filter(r => (r.data || r.filePath || r.imagePath) && !r.mediaId)
+    // 이번 run 의 타깃 씬들이 실제 쓰는 ref(캐릭터/씬/스타일 태그 + @멘션, getMatchingReferences
+    //   합집합)만 등록 대상으로 스코프 — 어떤 씬도 안 쓰는 character 를 매번 Flow 에 업로드하던
+    //   버그(멘션·태그 없는데 등록) 방지. 그중 미등록(!mediaId || needsEntityRegistration)만 올린다.
+    const usedRefIds = new Set()
+    for (const s of targetScenes) {
+      for (const r of getMatchingReferences(s)) {
+        if (r && r.id != null) usedRefIds.add(r.id)
+      }
+    }
+    const refsToUpload = selectRefsToRegister(references, usedRefIds, mode)
     console.log('[Automation] Refs to upload:', refsToUpload.length)
     if (refsToUpload.length > 0) {
       setStatus('uploading')
@@ -451,10 +572,27 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
         base64Data = stripBase64Prefix(base64Data)
 
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-          const result = await uploadReference(base64Data, ref.category)
+          const result = await uploadReference(base64Data, { category: ref.category, name: ref.name, type: ref.type, refId: ref.id })
           if (result.success) {
-            ref.mediaId = result.mediaId
+            // #R13-9: 변이 전 원본 ref 스냅샷 — applyEntityRegistrationPatch 가 result 에서 생략된
+            //   id 를 보존(R12-9)할 때 이미 덮어쓴 ref 가 아니라 원본 id 를 보게 한다.
+            const originalRef = { ...ref }
+            // result.mediaId 가 없으면(부분 응답) 기존 mediaId 를 보존(undefined 로 클로버 금지).
+            ref.mediaId = result.mediaId ?? ref.mediaId
             ref.caption = result.caption || ref.caption
+            // on-demand entity registration: character ref uploaded in flow mode → patch entityId
+            // so sceneMentions.js can include this ref as a mention candidate (F9 precondition).
+            if (needsEntityRegistration(ref, mode)) {
+              const entityPatch = applyEntityRegistrationPatch(originalRef, result, true)
+              // #R6-15: 패치를 로컬 currentRefs 에 누적(여러 ref 등록도 보존) → 같은 run 의 씬 제출
+              //   (runConcurrentQueue)에서 멘션 해석에 쓰여 entityId 가 이번 배치부터 즉시 후보가 된다.
+              currentRefs = currentRefs.map(r => r.id === ref.id ? { ...r, ...entityPatch } : r)
+              // #R10-7: React state 는 enqueue 시점 스냅샷(currentRefs) 통째 쓰기 대신, 해당 ref 만
+              //   최신 state 에 functional merge — 배치 도중 추가/편집된 다른 ref 를 덮어쓰지 않는다.
+              const patchId = ref.id
+              updateReferences(prev => prev.map(r => r.id === patchId ? { ...r, ...entityPatch } : r))
+              console.log('[Automation] on-demand entity registered for ref:', ref.name, entityPatch)
+            }
             return
           }
           // Auth failed sentinel — token is dead, stop batch immediately.
@@ -488,7 +626,8 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
           while (activeCount < MAX_CONCURRENT && nextIndex < refsToUpload.length && !stopRequestedRef.current) {
             const ref = refsToUpload[nextIndex++]
             activeCount++
-            uploadOne(ref).finally(() => {
+            // #R12-8: read/upload 예외가 unhandled rejection 으로 새지 않게 catch 후 finally.
+            uploadOne(ref).catch((e) => { console.warn('[Automation] uploadOne threw:', e?.message) }).finally(() => {
               activeCount--
               completedCount++
               uploadedCount = completedCount
@@ -521,6 +660,10 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
         setIsRunning(false)
         setIsPaused(false)
         setIsStopping(false)
+        // #R11-6: 공통 완료 콜백(즉시 저장)을 호출해 업로드 단계에서 멈춘 경우에도 저장/정리가 돈다.
+        if (onComplete) {
+          try { await onComplete({ completed: false }) } catch (e) { console.warn('[Automation] onComplete error:', e.message) }
+        }
         return
       }
     }
@@ -539,6 +682,16 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       }
     }
 
+    // (배치 구독 게이트는 위 preflight 이전으로 이동 — 로그인/paywall 우선)
+    // batchId: full start 면 이 프로젝트에 새 배치(새 id), retry/partial(sceneIds/sceneIndices) 이면
+    // 이 프로젝트의 직전 배치 재사용. 재사용 시 서버 consume 가 멱등 no-op → 재시도가 이중과금되지 않는다.
+    const isPartialRetry = !!(sceneIds || sceneIndices)
+    const { batchId } = resolveProjectBatchId(batchIdByProjectRef.current, projectName, isPartialRetry)
+    // #6: charged 성공 시 refreshSubscription 1회 호출 — Firestore mirror stale 방지.
+    const consumeGate = makeBatchConsumeGate(batchId, 'image', (a) => consumeBatchDownload(a), () => {
+      refreshSubscription?.().catch(e => console.warn('[Automation] refreshSubscription failed:', e?.message))
+    })
+
     // 씬 처리 (DOM 모드 — 반드시 순차)
     batchStartedAtRef.current = Date.now()
     setStatus('running')
@@ -549,8 +702,12 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       imageBatchCount,
       imageUpscale,
       aspectRatio,
+      imageModel,
       selectedStyleRefId,
       seed,
+      concurrency,
+      currentRefs, // #R6-15: entity 패치가 반영된 로컬 refs (멘션 해석에 사용)
+      consumeGate,  // 배치당 1회 consume 보장 게이트
     }, total)
     
     // 완료 — 즉시 저장 (auto-save debounce 전에 프로젝트 전환/종료 방지)
@@ -582,7 +739,9 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
       setStatusMessage(`${t('status.done')} — ${summary}`)
     }
 
-  }, [isRunning, scenes, references, submitGenerationDOM, checkGeneration, collectGeneration, clearGenerations, uploadReference, getAccessToken, updateScene, getMatchingReferences, t, onOpenSettings])
+  // #R8-10: onComplete 도 dep — 누락 시 완료 시점에 stale save 콜백을 호출할 수 있다.
+  // subscriptionBatch/onPaywall/isAuthenticated/onLoginRequired: 배치 게이트 — 구독/인증 상태 변경 시 최신값 반영.
+  }, [isRunning, scenes, references, submitGeneration, checkGeneration, collectGeneration, clearGenerations, uploadReference, getAccessToken, updateScene, getMatchingReferences, updateReferences, t, onOpenSettings, mode, flowProjectReady, onComplete, subscriptionBatch, onPaywall, isAuthenticated, onLoginRequired, subscriptionStatus, refreshSubscription])
   
   /**
    * 일시정지/재개
@@ -590,12 +749,8 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
   const togglePause = useCallback(() => {
     pausedRef.current = !pausedRef.current
     setIsPaused(pausedRef.current)
-    if (!pausedRef.current) {
-      // 사용자 재개 — reCAPTCHA wait 진행 중이면 즉시 종료.
-      recaptcha.cancelWait()
-    }
     setStatusMessage(pausedRef.current ? t('status.paused') : t('status.resuming'))
-  }, [t, recaptcha])
+  }, [t])
   
   /**
    * 중지
@@ -606,64 +761,75 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     setIsPaused(false)
     setIsStopping(true)
     setStatusMessage(t('status.stopping'))
-    recaptcha.cancelWait()  // reCAPTCHA wait 또는 grace 즉시 종료
-    // DOM 모드 폴링 루프도 즉시 중단
-    requestStopDOM()
     // 큐에 남은 작업 즉시 제거 (불필요한 API 요청 방지)
     if (generationQueue?.clearQueue) {
       generationQueue.clearQueue()
     }
-  }, [t, generationQueue, recaptcha])
+  }, [t, generationQueue])
   
-  /**
-   * 특정 씬 재시도
-   */
-  const retryScene = useCallback(async (sceneId, options = {}) => {
-    const sceneIdx = scenes.findIndex(s => s.id === sceneId)
-    if (sceneIdx === -1) return
-    
-    await start({ ...options, sceneIndices: [sceneIdx] })
-  }, [scenes, start])
-  
-  /**
-   * 에러 씬들만 재시도
-   *
-   * 호출자가 React SyntheticEvent(onClick={retryErrors})를 그대로 넘기면 options
-   * 자리가 이벤트 객체가 되어 projectName 이 누락 → start() 가 'Untitled' 폴백 →
-   * 새 이미지 저장이 잘못된 프로젝트로 가는 데이터 손실 회귀가 발생한다.
-   * 가드: SyntheticEvent 흔적이 보이면 options 을 비우는 대신 **즉시 return**.
-   * (비우기만 하고 start() 로 넘기면 그 안에서 'Untitled' 폴백을 타게 되어
-   *  같은 데이터 손실 경로가 살아있게 됨 — 절반-방어가 됨.)
-   */
-  const retryErrors = useCallback(async (options = {}) => {
-    if (options && typeof options.preventDefault === 'function') {
-      console.warn('[useAutomation] retryErrors called with SyntheticEvent — caller must pass an options object with projectName. Aborting.')
-      return
-    }
-    const errorIndices = scenes
-      .map((s, i) => s.status === 'error' ? i : -1)
-      .filter(i => i !== -1)
-
-    if (errorIndices.length === 0) return
-
-    await start({ ...options, sceneIndices: errorIndices })
-  }, [scenes, start])
-  
-  // 큐를 통한 시작
+  // 큐를 통한 시작 — 정상 Start 와 retry 가 모두 이 경로를 타 ref/video 작업과 직렬화한다.
+  // (queue 없으면 직접 start — 하위호환.)
   const startQueued = useCallback(async (options = {}) => {
+    // #R12-6: start() 가 예기치 못하게 throw 해도 running/stopping UI 가 고착되지 않도록 가드.
+    const guardedStart = async () => {
+      try {
+        return await start(options)
+      } catch (e) {
+        console.error('[Automation] start threw — resetting run state:', e?.message)
+        setStatus('error')
+        setStatusMessage(e?.message || t('status.error', { defaultValue: '오류' }))
+        setIsRunning(false)
+        setIsPaused(false)
+        setIsStopping(false)
+      }
+    }
     if (!generationQueue) {
-      return start(options)
+      return guardedStart()
     }
     try {
       await generationQueue.enqueue({
         type: 'scene_batch',
         label: 'Batch Scene Generation',
-        execute: () => start(options)
+        execute: guardedStart
       })
     } catch (err) {
       console.warn('[Automation] Queue rejected:', err.message)
     }
-  }, [generationQueue, start])
+  }, [generationQueue, start, t])
+
+  /**
+   * 특정 씬 재시도 — startQueued 경유(정상 Start 와 동일한 queue 직렬화).
+   */
+  const retryScene = useCallback(async (sceneId, options = {}) => {
+    if (!scenes.some(s => s.id === sceneId)) return
+    // id 로 전달 — queue 대기 중 scenes 재정렬/삭제가 있어도 실행 시점에 올바른 씬을 resolve.
+    await startQueued({ ...options, sceneIds: [sceneId] })
+  }, [scenes, startQueued])
+
+  /**
+   * 에러 씬들만 재시도 — startQueued 경유.
+   *
+   * 호출자가 React SyntheticEvent(onClick={retryErrors})를 그대로 넘기면 options
+   * 자리가 이벤트 객체가 되어 projectName 이 누락 → start() 가 'Untitled' 폴백 →
+   * 새 이미지 저장이 잘못된 프로젝트로 가는 데이터 손실 회귀가 발생한다.
+   * 가드: SyntheticEvent 흔적이 보이면 options 을 비우는 대신 **즉시 return**.
+   */
+  const retryErrors = useCallback(async (options = {}) => {
+    if (mode === 'flow' && !flowProjectReady) {
+      toast.warning(t('toast.flowProjectNotReady', { defaultValue: 'Flow 프로젝트 로딩 중... 잠시 후 다시 시도해 주세요.' }))
+      return
+    }
+    if (options && typeof options.preventDefault === 'function') {
+      console.warn('[useAutomation] retryErrors called with SyntheticEvent — caller must pass an options object with projectName. Aborting.')
+      return
+    }
+    // id 로 스냅샷 — queue 대기 중 재정렬돼도 실행 시점에 동일 씬을 resolve(index staleness 회피).
+    const errorIds = scenes.filter(s => s.status === 'error').map(s => s.id)
+
+    if (errorIds.length === 0) return
+
+    await startQueued({ ...options, sceneIds: errorIds })
+  }, [scenes, startQueued, mode, flowProjectReady, t])
 
   return {
     isRunning,
@@ -677,9 +843,6 @@ export function useAutomation(flowAPI, scenesHook, addToHistory, onOpenSettings 
     stop,
     retryScene,
     retryErrors,
-    recaptchaModal: recaptcha.modalState,
-    // 모달 [확인] 은 모달 내부 dismissed 로 처리 — onClose 는 noop 으로 둠.
-    closeRecaptchaModal: () => {},
   }
 }
 

@@ -277,9 +277,33 @@ export function migrateLegacyProject(project) {
  * audioPackage.srtEntries가 `[]` (빈 배열, truthy)일 때 srtTrack으로 fallback이
  * 안 일어나던 버그 방지용 헬퍼. 빈 배열은 1순위로 치지 않음.
  */
-export function resolveAudioSrtEntries(audioPackage, srtTrack) {
+export function resolveAudioSrtEntries(audioPackage, srtTrack, scenes) {
   if (audioPackage?.srtEntries?.length) return audioPackage.srtEntries
-  return srtTrackToEntries(srtTrack)
+  // srtTrack 우선. 비어 있으면 legacy scene.subtitle 로 폴백 — SceneList 와 동일한 폴백을
+  //   타임라인에도 줘서, srtTrack 미생성 프로젝트(scene.subtitle 만 있는 v2)의 자막도 표시한다.
+  return srtTrackToEntries(srtTrack) || scenesToSrtEntries(scenes)
+}
+
+/**
+ * legacy scene.subtitle + scene.startTime/endTime → 타임라인 자막 엔트리.
+ * srtTrack 이 비어있는(마이그레이션이 안 채운) v2 프로젝트의 폴백. SceneList 가 srtLineIds 없으면
+ * scene.subtitle 을 직접 보여주는 것과 동일한 정책을 타임라인에도 적용.
+ * @param {Array} scenes
+ * @returns {Array<{startMs:number,endMs:number,text:string}>|null}
+ */
+export function scenesToSrtEntries(scenes) {
+  if (!Array.isArray(scenes) || scenes.length === 0) return null
+  const entries = []
+  for (const s of scenes) {
+    const text = typeof s?.subtitle === 'string' ? s.subtitle.trim() : ''
+    if (!text) continue
+    entries.push({
+      startMs: Math.round((Number(s.startTime) || 0) * 1000),
+      endMs: Math.round((Number(s.endTime) || 0) * 1000),
+      text: s.subtitle,
+    })
+  }
+  return entries.length > 0 ? entries : null
 }
 
 export function srtTrackToEntries(srtTrack) {

@@ -1,6 +1,6 @@
 # Scenes CSV Schema
 
-Data file used by Flow2CapCut at the scene level.
+Data file used by AutoFlowCut at the scene level.
 Each row represents one scene and is used for image/video generation and subtitle display.
 
 ## Column Definitions

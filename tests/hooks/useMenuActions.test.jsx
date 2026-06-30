@@ -44,6 +44,62 @@ describe('useMenuActions', () => {
     expect(onNewProject).toHaveBeenCalledTimes(1)
   })
 
+  it('routes the "show-mode-selector" action to onShowModeSelector', () => {
+    const onShowModeSelector = vi.fn()
+    renderHook(() =>
+      useMenuActions({ activeProject: 'p', workFolder: '/wf', onNewProject: noop, onOpenProject: noop, onShowModeSelector }),
+    )
+
+    menuCallback({ action: 'show-mode-selector' })
+
+    expect(onShowModeSelector).toHaveBeenCalledTimes(1)
+  })
+
+  it('drops the destructive "show-mode-selector" action while busy', () => {
+    const onShowModeSelector = vi.fn()
+    const { rerender } = renderHook(
+      ({ busy }) =>
+        useMenuActions({
+          activeProject: 'p',
+          workFolder: '/wf',
+          onNewProject: noop,
+          onOpenProject: noop,
+          onShowModeSelector,
+          busy,
+        }),
+      { initialProps: { busy: true } },
+    )
+
+    // Native menu fires mid-run (busy) → must NOT abandon the in-flight batch.
+    menuCallback({ action: 'show-mode-selector' })
+    expect(onShowModeSelector).not.toHaveBeenCalled()
+
+    // Once idle, the same action is honored.
+    rerender({ busy: false })
+    menuCallback({ action: 'show-mode-selector' })
+    expect(onShowModeSelector).toHaveBeenCalledTimes(1)
+  })
+
+  it('still honors non-destructive actions while busy', () => {
+    const onNewProject = vi.fn()
+    const onOpenProject = vi.fn()
+    renderHook(() =>
+      useMenuActions({
+        activeProject: 'p',
+        workFolder: '/wf',
+        onNewProject,
+        onOpenProject,
+        busy: true,
+      }),
+    )
+
+    menuCallback({ action: 'new-project' })
+    menuCallback({ action: 'open-project', name: 'x' })
+
+    expect(onNewProject).toHaveBeenCalledTimes(1)
+    expect(onOpenProject).toHaveBeenCalledWith('x')
+  })
+
   it('routes the "open-project" action to onOpenProject with the name', () => {
     const onOpenProject = vi.fn()
     renderHook(() =>

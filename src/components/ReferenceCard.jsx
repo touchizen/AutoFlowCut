@@ -7,6 +7,7 @@ import { REFERENCE_TYPES } from '../config/defaults'
 import { getRatioClass, resolveImageSrc, hasImageData, formatElapsed } from '../utils/formatters'
 import { useElapsedTimer } from '../hooks/useElapsedTimer'
 import { fileSystemAPI } from '../hooks/useFileSystem'
+import { applyEntityRegistrationPatch } from '../utils/refEntityRegistration'
 import HoverImageBalloon from './HoverImageBalloon'
 import LazyImage from './LazyImage'
 
@@ -53,10 +54,15 @@ export default function ReferenceCard({
 }) {
   const cardRef = useRef(null)
   const fileInputRef = useRef(null)
+  // 빈 카드 단/더블 클릭 구분용 타이머 — 단일=상세(지연), 더블=업로드(타이머 취소).
+  const clickTimerRef = useRef(null)
   const [isUploading, setIsUploading] = useState(false)
   const [isDragOver, setIsDragOver] = useState(false)
   const [hoverPreview, setHoverPreview] = useState(null) // { x, y }
   const [showRemoveMenu, setShowRemoveMenu] = useState(false)
+
+  // 언마운트 시 대기 중인 단일클릭 타이머 정리
+  useEffect(() => () => { if (clickTimerRef.current) clearTimeout(clickTimerRef.current) }, [])
 
   // 생성 시작되면 카드가 보이도록 자동 스크롤
   useEffect(() => {
@@ -84,17 +90,6 @@ export default function ReferenceCard({
         mimeType: file.type,
       })
 
-      let uploadedMediaId = null
-      let uploadedCaption = null
-      if (onUpload) {
-        const cleanBase64 = base64.split(',')[1]
-        const result = await onUpload(cleanBase64, reference.category)
-        if (result.success) {
-          uploadedMediaId = result.mediaId
-          uploadedCaption = result.caption
-        }
-      }
-
       // R30 review fix: 디스크에도 저장해서 filePath 확보 — autosave 가 data 를
       // strip 해도 reload 시 references/{name} 파일에서 복구 가능. projectName
       // 이 없거나 권한이 없으면 기존 동작 (메모리만) 유지.
@@ -102,9 +97,29 @@ export default function ReferenceCard({
       // 이름 입력 전 업로드해도 디스크에 영속화되어 reload 시 복구 가능. ref.id 는
       // ReferencePanel.handleAdd 가 항상 발급. 이름은 patch 에도 반영해 후속 autosave
       // 가 같은 saveName 으로 일관 유지.
+      // M4 T7: effectiveName 을 업로드 *전*에 확정 — uploadReference 메타에도 포함.
       const effectiveName = (reference.name && String(reference.name).trim())
         ? reference.name
         : (reference.id != null ? `imported_${reference.id}` : null)
+
+      let uploadedMediaId = null
+      let uploadedCaption = null
+      let entityPatch = null
+      if (onUpload) {
+        const cleanBase64 = base64.split(',')[1]
+        const result = await onUpload(cleanBase64, { category: reference.category, name: effectiveName, type: reference.type, refId: reference.id })
+        if (result.success) {
+          uploadedMediaId = result.mediaId
+          uploadedCaption = result.caption
+          // Propagate Flow entity fields (entityId, workflowId, registered, flowNameSyncStatus)
+          // when the upload returned them (Flow character upload). API mode returns no entity
+          // fields → applyEntityRegistrationPatch produces only mediaId-ish / no entityId.
+          const hasEntityFields = result.entityId != null || result.workflowId != null
+          if (hasEntityFields) {
+            entityPatch = applyEntityRegistrationPatch(reference, result, true)
+          }
+        }
+      }
       let savedFilePath = null
       let saveAttempted = false
       let saveErrorMessage = null
@@ -153,6 +168,11 @@ export default function ReferenceCard({
         caption: uploadedCaption,
         filePath: savedFilePath,
         dataStorage: savedFilePath ? 'file' : 'base64',
+        // Codex #3: propagate Flow entity fields so manual upload yields mention-eligible ref.
+        // #R31-3: fresh entity 가 없으면(API 모드/엔티티 미반환 업로드) 옛 entityId/flowNameSyncStatus 를
+        //   비운다 — 안 그러면 ...reference 로 살아남아 새 이미지 ref 가 옛 캐릭터로 @mention 된다
+        //   (ReferenceDetailModal R16-3 정책과 동일).
+        ...(entityPatch || { entityId: null, workflowId: null, registered: null, flowNameSyncStatus: null }),
         // R27 review fix 와 일관: 캐시 무효화용 timestamp
         generatedAt: Date.now(),
         // R34 + R35 review fix: 성공/스킵 시 'done', 실패 시 'error'.
@@ -238,7 +258,9 @@ export default function ReferenceCard({
           </button>
           {showRemoveMenu && (
             <div className="remove-menu" onMouseLeave={() => setShowRemoveMenu(false)}>
-              <button onClick={() => { setShowRemoveMenu(false); onUpdate(index, { ...reference, data: null, filePath: null, mediaId: null, caption: null, dataStorage: null }) }}>
+              <button onClick={() => { setShowRemoveMenu(false); onUpdate(index, { ...reference, data: null, filePath: null, mediaId: null, caption: null, dataStorage: null, entityId: null, workflowId: null, registered: null, flowNameSyncStatus: null }) }}>
+                {/* #R29-1: 이미지 제거 시 Flow 캐릭터 엔티티 필드도 비운다 — 안 그러면 sceneMentions 가
+                    여전히 mention-eligible 로 보고 @name 이 옛 캐릭터를 주입한다(ReferenceDetailModal 과 동일 정책). */}
                 {t('reference.clearImage') || '이미지만 제거'}
               </button>
               <button onClick={() => { setShowRemoveMenu(false); onRemove(index) }}>
@@ -254,10 +276,20 @@ export default function ReferenceCard({
         onClick={() => {
           if (isBusy) return
           if (hasRefImage) {
-            onShowDetail(index) // 이미지 있으면 상세카드
-          } else {
-            fileInputRef.current?.click() // 없으면 파일 선택
+            onShowDetail(index) // 이미지 있으면 1클릭=상세카드
+            return
           }
+          // 빈 카드: 1클릭=상세(지연 — 더블클릭이면 취소), 더블클릭=업로드.
+          if (clickTimerRef.current) clearTimeout(clickTimerRef.current)
+          clickTimerRef.current = setTimeout(() => {
+            clickTimerRef.current = null
+            onShowDetail(index)
+          }, 250)
+        }}
+        onDoubleClick={() => {
+          if (isBusy || hasRefImage) return
+          if (clickTimerRef.current) { clearTimeout(clickTimerRef.current); clickTimerRef.current = null }
+          fileInputRef.current?.click() // 빈 카드 더블클릭=파일 선택
         }}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -292,7 +324,7 @@ export default function ReferenceCard({
         ) : (
           <div className="ref-placeholder">
             <span className="icon">{typeInfo.label.split(' ')[0]}</span>
-            <span>{t('reference.upload')}</span>
+            <span>{t('reference.uploadHint') || t('reference.upload')}</span>
           </div>
         )}
         

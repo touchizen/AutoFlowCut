@@ -2,16 +2,34 @@
  * useProjectData - 프로젝트 데이터 관리 (저장/로드/전환/복원)
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { fileSystemAPI } from './useFileSystem'
 import { syncVideosIntoScenes } from '../services/mediaSync'
 import { recoverInFlightVideos } from '../services/videoRecovery'
 import { migrateLegacyProject } from '../utils/srtTrack'
+import { stripReferencesForSave } from '../utils/projectPersist'
 
 // 프로젝트 화면비는 project.json 에 프로젝트별로 저장된다. project.json 에 값이
 // 없으면(기능 추가 전 프로젝트 등) 직전 프로젝트 값을 물려받지 않고 이 기본값으로
 // 떨어진다 — 그래야 화면비가 전역처럼 새지 않고 프로젝트별로 결정론적이다.
 const DEFAULT_ASPECT_RATIO = '16:9'
+
+/**
+ * 로드/복원 시 중단된 'generating' 상태를 'pending' 으로 정규화.
+ * item.status (image/videoScene/framePair 공통) 뿐 아니라 scene 의 비디오별 상태
+ * (videoT2VStatus/videoI2VStatus)도 함께 내린다 — 안 그러면 생성 중 종료/전환/크래시 후
+ * 재로드 시 그 status 가 generating 으로 남아, 타임라인이 멀쩡한 기존 비디오를 영구히
+ * 빈칸+shimmer 로 숨긴다(생성은 이미 끝났는데 복귀가 안 되는 회귀).
+ * @param {object} item
+ */
+export function resetGeneratingItem(item) {
+  if (!item) return item
+  let next = item
+  if (next.status === 'generating') next = { ...next, status: 'pending', generatingStartedAt: undefined }
+  if (next.videoT2VStatus === 'generating') next = { ...next, videoT2VStatus: 'pending', videoT2VGeneratingStartedAt: undefined }
+  if (next.videoI2VStatus === 'generating') next = { ...next, videoI2VStatus: 'pending', videoI2VGeneratingStartedAt: undefined }
+  return next
+}
 
 /**
  * Backfill ownerSceneId on legacy framePairs that pre-date the owner-scene binding.
@@ -229,7 +247,12 @@ export async function loadProjectWithResources(projectName) {
 
       // path 복구 성공 — base64 재로드 불필요 (path-only 로 재생/export 가능).
       // 메모리 절감 + folder rename 후에도 일관된 동작.
-      if (next.videoPath) return next
+      // #R13-17: videoPath 가 있으면 status 를 complete 로 정규화(framePairs 와 동일) — 안 그러면
+      //   복구된 영상이 있어도 pending/generating 으로 남아 타임라인이 빈칸+shimmer 로 표시한다.
+      if (next.videoPath) {
+        if (next.status !== 'complete') next = { ...next, status: 'complete', videoT2VStatus: undefined }
+        return next
+      }
 
       if (next.id && !next.video) {
         // 새 명명 규칙 (videoSaveId = t2v_N) 우선
@@ -300,9 +323,9 @@ export async function loadProjectWithResources(projectName) {
     }
   )
 
-  // 복원 시 'generating' 상태 리셋 → 'pending' (중단된 생성은 재시작 불가)
-  const resetGenerating = (item) =>
-    item.status === 'generating' ? { ...item, status: 'pending', generatingStartedAt: undefined } : item
+  // 복원 시 'generating' 상태 리셋 → 'pending' (중단된 생성은 재시작 불가).
+  // scene 비디오별 상태(videoT2VStatus/videoI2VStatus)까지 — 위 module helper 참조.
+  const resetGenerating = resetGeneratingItem
 
   // ── 완성된 비디오 → 씬에 동기화 (videoT2V / videoI2V) ──
   // 우선순위:
@@ -364,7 +387,52 @@ export async function loadProjectWithResources(projectName) {
     selectedStyleRefId: result.data.selectedStyleRefId || null,
     // 프로젝트별 화면비 — project.json 의 settings 에 저장됨 (없으면 null → 호출부에서 16:9 기본)
     aspectRatio: result.data.settings?.aspectRatio || null,
+    flowProjectId: pickFlowProjectId(result.data),
   }
+}
+
+/**
+ * project.json 저장 payload 빌드 (순수). flowProjectId 는 truthy 일 때만 포함
+ * (빈 값이면 생략 → 기존 저장값 보존, §3.3.1). camelCase canonical 필드.
+ */
+export function buildProjectSavePayload({ srtTrack, scenes, references, videoScenes, framePairs, settings, audioFolderPath, selectedStyleRefId, flowProjectId }) {
+  const payload = {
+    schemaVersion: 2,
+    srtTrack,
+    scenes,
+    references,
+    videoScenes,
+    framePairs,
+    settings: { aspectRatio: settings.aspectRatio, defaultDuration: settings.defaultDuration },
+    audioFolderPath,
+    selectedStyleRefId,
+  }
+  if (flowProjectId) payload.flowProjectId = flowProjectId
+  return payload
+}
+
+/** 로드 시 flowProjectId 복원 (없으면 null). §3.3.1 */
+export function pickFlowProjectId(data) {
+  return (data && data.flowProjectId) || null
+}
+
+/**
+ * R3-P1: flow:open-project 결과가 "대상 프로젝트로 실제 진입" 했는지 검증(순수).
+ *   result: { success?, url?, already? }. already(이미 그 프로젝트)거나 url 에 flowProjectId 가
+ *   포함되고 success!==false 면 confirmed. 검증 실패면 생성을 막아 잘못된 프로젝트 오염 방지.
+ */
+export function isFlowOpenConfirmed(result, flowProjectId) {
+  if (!result || result.success === false || !flowProjectId) return false
+  return !!(result.already || (typeof result.url === 'string' && result.url.includes(flowProjectId)))
+}
+
+/**
+ * open 결과가 "영구 에러 페이지"(재시도 후에도 진입 실패)인지 판정(순수).
+ *   true 면 저장된 flowProjectId 가 죽은 매핑이므로 제거 → 다음 생성이 새 Flow 프로젝트를 establish.
+ *   transient 실패(success:false 인데 errorPage 아님 — view 미준비 등)는 제거하지 않는다(매핑 보존).
+ */
+export function shouldClearFlowMapping(result) {
+  return !!(result && result.success === false && result.errorPage)
 }
 
 /**
@@ -375,7 +443,7 @@ export async function loadProjectWithResources(projectName) {
  *   결과. 저장 대상이 아니면(폴더 모드 아님 / 프로젝트 폴더 없음) undefined.
  */
 // 테스트용 export — hook 통합 없이 직접 호출 가능 (예: audioFolderPath fallback 검증)
-export async function saveCurrentProject(settings, scenes, references, videoScenes = [], framePairs = [], selectedStyleRefId = null, srtTrack = [], audioFolderPathArg = undefined) {
+export async function saveCurrentProject(settings, scenes, references, videoScenes = [], framePairs = [], selectedStyleRefId = null, srtTrack = [], audioFolderPathArg = undefined, flowProjectId = null) {
   if (!settings.projectName || settings.saveMode !== 'folder') return
   const exists = await fileSystemAPI.projectExists(settings.projectName)
   if (!exists) return
@@ -383,8 +451,9 @@ export async function saveCurrentProject(settings, scenes, references, videoScen
   // scenes에서 base64 데이터 제외 (image, videoT2V, videoI2V)
   const scenesWithoutImages = scenes.map(({ image, videoT2V, videoI2V, ...rest }) => rest)
 
-  // references에서 data(base64) 제외
-  const refsWithoutData = references.map(({ data, ...rest }) => rest)
+  // references에서 data(base64) 제외 — 단, 디스크 저장된(filePath 있는) ref 만.
+  // 저장 실패로 filePath 없는 ref 는 base64 를 보존해 재오픈 유실 방지 (projectPersist 참고).
+  const refsWithoutData = stripReferencesForSave(references)
 
   // videoScenes에서 video(base64) 제외
   const videoScenesWithoutMedia = videoScenes.map(({ video, ...rest }) => rest)
@@ -398,18 +467,17 @@ export async function saveCurrentProject(settings, scenes, references, videoScen
     ? audioFolderPathArg
     : (localStorage.getItem('audioFolderPath') || null)
 
-  return await fileSystemAPI.saveProjectData(settings.projectName, {
-    // Phase 7: 새 모델 마킹 + srtTrack 영속화
-    schemaVersion: 2,
+  return await fileSystemAPI.saveProjectData(settings.projectName, buildProjectSavePayload({
     srtTrack,
     scenes: scenesWithoutImages,
     references: refsWithoutData,
     videoScenes: videoScenesWithoutMedia,
     framePairs: framePairsWithoutMedia,
-    settings: { aspectRatio: settings.aspectRatio, defaultDuration: settings.defaultDuration },
+    settings,
     audioFolderPath,
-    selectedStyleRefId
-  })
+    selectedStyleRefId,
+    flowProjectId,
+  }))
 }
 
 export function useProjectData({
@@ -422,8 +490,9 @@ export function useProjectData({
   audioFolderPath = undefined, // React state로 추적된 audio 폴더; undefined면 localStorage fallback
   openSettings,
   onAudioSwitch,
-  flowAPI = null,
+  genAPI = null,
   onSaveError = null, // 프로젝트 저장 실패 시 호출 (인자: 에러 메시지)
+  mode = 'api', // 'flow' | 'api' — flow 모드에서만 Flow 프로젝트 진입 게이팅 활성화
 }) {
   // 복구 콜백 — framePairs state에 patch를 병합
   const applyFramePairPatch = (id, patch) => {
@@ -437,12 +506,20 @@ export function useProjectData({
     setVideoScenes(prev => prev.map(vs => vs.id === id ? { ...vs, ...patch } : vs))
   }
 
-  // 로드 직후 in-flight 비디오 복구 트리거 (flowAPI 필요).
+  // 로드 직후 in-flight 비디오 복구 트리거 (genAPI 필요).
   // T2V (videoScenes) + I2V (framePairs) 둘 다 같은 recoverInFlightVideos 경로를 타게 한다.
   // 분리하던 시절엔 T2V 가 영원히 'generating' 으로 남아 다음 start() 에서 fresh 생성 되어
   // quota 재소비 + 옛 generationId 폐기 회귀 발생.
   const triggerVideoRecovery = async (loadedVideoScenes, loadedFramePairs, projectName) => {
-    if (!flowAPI) return
+    if (!genAPI) return
+
+    // #R25-1: 복구는 비동기 다운로드라 도중에 프로젝트가 전환되면(loadEpoch 증가) 그 결과가
+    //   row-id 재사용 때문에 새 프로젝트 state 에 잘못 패치된다(디스크는 captured projectName 으로
+    //   올바르게 저장됨 — React state 패치만 위험). 시작 epoch 를 잡아 콜백에서 가드한다.
+    const myEpoch = loadEpochRef.current
+    const stillCurrent = () => myEpoch === loadEpochRef.current
+    const guardedVideoScenePatch = (id, patch) => { if (stillCurrent()) applyVideoScenePatch(id, patch) }
+    const guardedFramePairPatch = (id, patch) => { if (stillCurrent()) applyFramePairPatch(id, patch) }
 
     const t2vInFlight = (loadedVideoScenes || []).some(vs =>
       vs.generationId && !vs.videoPath && (vs.status === 'generating' || vs.status === 'pending')
@@ -456,9 +533,13 @@ export function useProjectData({
       projectName,
       saveMode: settings?.saveMode || 'folder',
       videoResolution: settings?.videoResolution || '1080p',
-      checkVideoStatus: flowAPI.checkVideoStatus,
-      fetchMedia: flowAPI.fetchMedia,
-      getAccessToken: flowAPI.getAccessToken,
+      checkVideoStatus: genAPI.checkVideoStatus,
+      downloadVideo: genAPI.downloadVideo,
+      fetchMedia: genAPI.fetchMedia,
+      getAccessToken: genAPI.getAccessToken,
+      // #R34-1: 현재 엔진 모드를 넘겨, 다른 엔진(Flow↔API)이 만든 generationId 를 잘못된 엔진으로
+      //   폴링해 영구 error 마킹(고아 잡)하는 것을 막는다.
+      mode: genAPI?.mode || modeRef.current,
       logPrefix: '[ProjectData]',
     }
 
@@ -469,14 +550,14 @@ export function useProjectData({
         await recoverInFlightVideos({
           ...commonOpts,
           framePairs: loadedVideoScenes,  // T2V items 도 동일 shape — 재사용
-          onFramePairUpdate: applyVideoScenePatch,
+          onFramePairUpdate: guardedVideoScenePatch,
         })
       }
       if (i2vInFlight) {
         await recoverInFlightVideos({
           ...commonOpts,
           framePairs: loadedFramePairs,
-          onFramePairUpdate: applyFramePairPatch,
+          onFramePairUpdate: guardedFramePairPatch,
         })
       }
     } catch (e) {
@@ -489,29 +570,271 @@ export function useProjectData({
 
   // 복원 진행 중 플래그 — auto-save가 복원 중에 project.json을 덮어쓰는 것을 방지
   const isRestoringRef = useRef(false)
+  // #R5-2: 빠른 프로젝트 전환 레이스 가드 — 최신 스위치만 상태를 적용하고 이전 스위치는 버린다.
+  const loadEpochRef = useRef(0)
+  // #R3-2: tryAutoRestore 완료 후 true. ref 에서 state 로 변환 — state 변경이
+  //   mode-entry effect 를 re-trigger 해서 "hydration 완료 + no saved id" 케이스에서도
+  //   create-new 가 실행될 수 있도록 한다. dep 배열에 포함됨.
+  const [hydrated, setHydrated] = useState(false)
+  // 하위 호환: hydratedRef 는 즉시 읽기(비동기 외부)에서 계속 쓸 수 있도록 유지.
+  const hydratedRef = useRef(false)
   const [projectLoading, setProjectLoading] = useState(false)
+  const [flowProjectId, setFlowProjectId] = useState(null)
+  // R3-P1: Flow 프로젝트 진입(open/new)이 확인되지 않으면 false — 생성(character/scene/image)을
+  //   막아 "이전/엉뚱한 Flow 프로젝트에 entity 가 들어가는" 것을 차단. 전환 성공 확인 시 true.
+  //   API 모드: 항상 true(default) — no-op.
+  const [flowProjectReady, setFlowProjectReady] = useState(true)
+  // #R8-3: 이번 flow 세션에서 confirmed 된 바인딩 {projectName, flowProjectId}. switch/restore 가
+  //   이미 연 프로젝트를 mode-entry effect 가 중복 재오픈하다 transient 실패로 readiness 를 false 로
+  //   뒤집는 것을 막는다(두 소유자 문제). mode 가 flow 를 떠나면 리셋해 재진입 시 재검증.
+  const confirmedBindingRef = useRef(null)
+  // #R14-3: restore/switch 의 flow 분기는 await 뒤에 실행되므로 closure `mode` 가 stale 일 수 있다.
+  //   modeRef 로 최신 mode 를 읽어, 그 사이 api 로 전환됐으면 flow readiness 를 적용하지 않게 한다.
+  const modeRef = useRef(mode)
+  useEffect(() => { modeRef.current = mode }, [mode])
+
+  // Flow 모드 전용: saved flowProjectId 를 main process 에 즉시 알림 (startup gate 용).
+  // main 이 없는 환경(jsdom, api 모드)에서는 optional-chaining 으로 no-op.
+  const declareStartup = (id) => {
+    // #R16-4: IPC rejection 이 unhandled 로 새지 않게 catch(startup gating 은 best-effort).
+    window.electronAPI?.setStartupProject?.({ flowProjectId: id ?? null })
+      ?.catch?.((e) => console.warn('[ProjectData] setStartupProject failed:', e?.message))
+  }
+
+  // #R14-1: disk 만 비운다(state 변이 분리). state(setFlowProjectId(null))는 호출부가 isCurrent
+  //   가드를 통과한 뒤에만 적용해야, stale open 이 현재 프로젝트의 바인딩을 지우지 않는다.
+  const clearDeadFlowMappingDisk = async (projectName) => {
+    try {
+      // #R8-1: atomic merge(main write-lock)로 flowProjectId 만 비운다 — renderer read+full save 의
+      //   stale-snapshot clobber(autosave 와 경합) 방지. pickFlowProjectId 가 null 을 '매핑 없음'으로
+      //   취급하므로 null 머지 = 제거와 동치(다음 full autosave 가 falsy 키를 완전히 생략).
+      const res = await fileSystemAPI.mergeProjectData(projectName, { flowProjectId: null })
+      if (res?.success === false) console.warn('[ProjectData] clearDeadFlowMapping merge 실패:', res.error)
+      else console.warn('[ProjectData] dead flowProjectId 제거(disk) → 새 프로젝트로 진입')
+    } catch (e) { console.warn('[ProjectData] clearDeadFlowMapping 실패:', e.message) }
+  }
+
+  // #R6-8/#R7-4: 새로 establish 한 flowProjectId 만 disk project.json 에 원자적으로 머지한다.
+  // mode-entry effect 의 closure 가 캡처한 STALE scenes/references 스냅샷으로 전체 project.json 을
+  // 덮어쓰지 않도록(R6-8), 그리고 autosave 와의 read-modify-write interleave clobber 가 없도록(R7-4),
+  // main 의 write-lock 안에서 read+merge+write 하는 mergeProjectData 를 쓴다.
+  const persistFlowProjectId = async (projectName, id) => {
+    if (!projectName || !id) return
+    try {
+      // #R8-2: 결과를 확인 — 실패해도 state 에 id 가 있어 autosave 가 재영속화하지만, 조용히 묻지 않는다.
+      const res = await fileSystemAPI.mergeProjectData(projectName, { flowProjectId: id })
+      if (res?.success === false) console.warn('[ProjectData] persistFlowProjectId merge 실패(auto-save 가 재시도):', res.error)
+    } catch (e) {
+      console.warn('[ProjectData] persistFlowProjectId 실패 (auto-save 가 재시도):', e.message)
+    }
+  }
+
+  // open 결과를 flowProjectReady 에 반영하고, 영구 에러(errorPage)면 죽은 매핑을 제거한다.
+  // #R4-1: confirmed boolean 반환 — 호출부가 triggerVideoRecovery를 조건부로 실행하는 데 사용.
+  // #R13-10: isCurrent — clearDeadFlowMapping 의 await 동안 더 새로운 전환이 시작됐으면(에폭 변경)
+  //   stale 상태 mutation(setFlowProjectReady/setFlowProjectId)을 건너뛰게 하는 가드(호출부가 주입).
+  const applyOpenResult = async (result, fProjectId, projectName, isCurrent = () => true) => {
+    // #R9-1: 이 (projectName, fProjectId) 가 현재 confirmed 바인딩과 같은지.
+    const matchesConfirmed = () => {
+      const cb = confirmedBindingRef.current
+      return !!(cb && cb.projectName === projectName && cb.flowProjectId === fProjectId)
+    }
+    if (shouldClearFlowMapping(result)) {
+      // #R9-1: 죽은 매핑 → confirmed 기록도 지워(다음 mode-entry 가 새 establish 를 막지 않게).
+      if (matchesConfirmed()) confirmedBindingRef.current = null
+      // disk 정리는 supersede 와 무관하게 안전(죽은 매핑 제거).
+      await clearDeadFlowMappingDisk(projectName)
+      // #R13-10/#R14-1: state 변이(setFlowProjectId/Ready)는 현재 소유일 때만 — stale open 이
+      //   사이에 시작된 전환의 flowProjectId 를 지우지 않게.
+      if (!isCurrent()) return false
+      setFlowProjectId(null)
+      // #R10-2: 교체 프로젝트(newFlowProject, mode-entry Case B)가 establish 될 때까지 생성 차단 유지.
+      setFlowProjectReady(false)
+      return false
+    }
+    if (!isCurrent()) return false
+    const confirmed = isFlowOpenConfirmed(result, fProjectId)
+    setFlowProjectReady(confirmed)
+    // #R8-3: confirmed 면 이번 세션의 바인딩으로 기록 → mode-entry 의 중복 재오픈을 건너뛴다.
+    if (confirmed) confirmedBindingRef.current = { projectName, flowProjectId: fProjectId }
+    // #R9-1: 재오픈이 실패(미확인)면 stale confirmed 기록을 지운다 — 다음 mode-entry 가 재오픈하게.
+    else if (matchesConfirmed()) confirmedBindingRef.current = null
+    return confirmed
+  }
+
+  // R2-3: API 모드 전환 시 flowProjectReady 리셋 — flow 모드에서 binding 실패(false)
+  //   상태로 API 모드로 전환해도 단일 ref/scene 가드가 계속 차단되는 문제 방지.
+  //   mode가 'flow'가 아닐 때는 flowProjectReady가 항상 true여야 한다.
+  useEffect(() => {
+    if (mode !== 'flow') {
+      setFlowProjectReady(true)
+      // #R8-3: flow 를 떠나면 confirmed 바인딩 리셋 — 재진입 시 Flow 뷰가 재연결되므로 재검증.
+      confirmedBindingRef.current = null
+    }
+  }, [mode])
+
+  // Codex #2 fix: mode-entry Flow project binding.
+  // When mode transitions to 'flow' with a project loaded:
+  //   - saved flowProjectId → open it (gate flowProjectReady until confirmed)
+  //   - no flowProjectId but project loaded → create new Flow project
+  //   - api mode → NO-OP (flowProjectReady stays true)
+  // Keyed on [mode, flowProjectId, settings.projectName] so this fires:
+  //   1. On initial mount in flow mode (if project already loaded)
+  //   2. On mode change → 'flow'
+  //   3. On project load while in flow mode (flowProjectId changes from null to value, or projectName changes)
+  // Guard: only fires when mode==='flow' and a project is loaded (settings.projectName truthy).
+  useEffect(() => {
+    if (mode !== 'flow') return
+    // #R7-1: 프로젝트 전환이 커밋 중(projectLoading)일 때는 바인딩하지 않는다. 전환은
+    //   flowProjectId 를 projectName 보다 먼저 set 하므로, 이 사이에 effect 가 돌면 새
+    //   flowProjectId 를 (아직 옛) projectName 에 바인딩/persist 하는 race 가 생긴다.
+    //   전환이 끝나면(projectLoading=false) dep 변경으로 effect 가 다시 돌아 일관 상태로 바인딩.
+    if (projectLoading) return
+    const currentProjectName = settings.projectName
+    if (!currentProjectName) return // no project loaded — nothing to bind
+
+    let cancelled = false
+
+    const bind = async () => {
+      if (flowProjectId) {
+        // #R8-3: 이미 이 (projectName, flowProjectId) 가 이번 세션에서 confirmed 면 재오픈하지 않는다 —
+        //   switch/restore 가 방금 열었고, 불필요한 재오픈의 transient 실패가 readiness 를 false 로
+        //   뒤집는 것을 막는다(두 소유자 문제).
+        const cb = confirmedBindingRef.current
+        if (cb && cb.projectName === currentProjectName && cb.flowProjectId === flowProjectId) {
+          setFlowProjectReady(true)
+          return
+        }
+        // Case A: saved flowProjectId — open it
+        setFlowProjectReady(false)
+        try {
+          const r = await window.electronAPI?.openFlowProject?.({ flowProjectId })
+          if (!cancelled) await applyOpenResult(r, flowProjectId, currentProjectName, () => !cancelled && modeRef.current === 'flow')
+        } catch {
+          if (!cancelled) {
+            setFlowProjectReady(false)
+            console.warn('[ProjectData] mode-entry openFlowProject failed — generation blocked')
+          }
+        }
+      } else {
+        // Case B: no saved flowProjectId — create a new Flow project.
+        // R2-1 / #R3-2: MUST wait until restore/hydration is complete. On app start,
+        // flowProjectId is null BEFORE tryAutoRestore resolves it from disk.
+        // #R3-2: `hydrated` is now STATE (not just a ref) so it is included in the dep
+        // array — when hydration completes with no saved flowProjectId, the effect
+        // re-runs and reaches this branch correctly.
+        // When truly no saved id (hydrated=true), proceed as normal.
+        if (!hydrated) {
+          console.log('[ProjectData] mode-entry: hydration not yet complete — deferring create-new')
+          return
+        }
+        // NOTE(live-tuning): The create call below fires correctly.
+        // Persist-back of the returned projectId to project.json disk is wired here;
+        // full end-to-end verification requires a live Flow session.
+        setFlowProjectReady(false)
+        try {
+          const r = await window.electronAPI?.newFlowProject?.()
+          if (!cancelled && r?.success && r?.projectId) {
+            // #R9-2: newFlowProject 가 새 프로젝트로 진입시켰으니 confirmed 로 기록 →
+            //   setFlowProjectId 로 인한 mode-entry 재실행(Case A)이 중복 재오픈하지 않게(transient flip 방지).
+            confirmedBindingRef.current = { projectName: currentProjectName, flowProjectId: r.projectId }
+            setFlowProjectId(r.projectId)
+            // flowProjectReady=true: creation succeeded, generation is now unblocked.
+            setFlowProjectReady(true)
+            console.log('[ProjectData] mode-entry: new Flow project created:', r.projectId)
+            // #R6-8: Persist ONLY the new flowProjectId by merging into disk JSON.
+            // saveCurrentProject would write this effect closure's STALE scenes/refs
+            // snapshot, clobbering edits made since the closure was created.
+            await persistFlowProjectId(currentProjectName, r.projectId)
+          } else if (!cancelled) {
+            // newFlowProject failed or not available (live-only path)
+            // Leave flowProjectReady=false so generation is blocked until next retry.
+            // NOTE(live-tuning): If newFlowProject returns success:false (e.g. view not ready),
+            // user must re-enter flow mode or manually retry. Consider adding a retry UI.
+            setFlowProjectReady(false)
+            console.warn('[ProjectData] mode-entry newFlowProject failed or unavailable')
+          }
+        } catch (e) {
+          if (!cancelled) {
+            setFlowProjectReady(false)
+            console.warn('[ProjectData] mode-entry newFlowProject threw:', e.message)
+          }
+        }
+      }
+    }
+
+    bind()
+
+    return () => { cancelled = true }
+  // #R3-2: hydrated 를 dep 에 추가 — tryAutoRestore 완료 후 state 변경이
+  // 이 effect 를 re-trigger → flow + no-saved-id 케이스에서 create-new 가 실행됨.
+  // #R7-1: projectLoading 도 dep — 전환 완료(false) 시 재실행해 일관 상태로 바인딩.
+  }, [mode, flowProjectId, settings.projectName, hydrated, projectLoading])
 
   // 마운트 시 자동 복원: 폴더가 설정되어 있으면 이전 프로젝트 로드
   useEffect(() => {
     const tryAutoRestore = async () => {
+      // R2-1: 이 함수가 어느 경로로 종료되든 hydration 완료로 표시한다.
+      // early-return 경로(저장 없음, 권한 없음, 프로젝트 없음)도 포함.
+      // #R11-1: 에폭을 try 밖(let)에 둬 finally 가 소유권을 확인할 수 있게 한다(0=아직 미클레임).
+      let myRestoreEpoch = 0
+      try {
       const saved = localStorage.getItem('autoflowcut_settings')
-      if (!saved) return
+      if (!saved) {
+        // 저장된 프로젝트 없음 — main 의 startup gate 를 null 로 즉시 해제
+        declareStartup(null)
+        return
+      }
 
       const parsed = JSON.parse(saved)
       const prevProjectName = parsed.projectName
-      if (!prevProjectName) return
+      if (!prevProjectName) {
+        declareStartup(null)
+        return
+      }
 
       // ensurePermission: workFolderPath가 null이면 기본 폴더(~/Documents/AutoFlowCut) 자동 설정
       const permResult = await fileSystemAPI.ensurePermission()
-      if (!permResult.success) return
+      if (!permResult.success) {
+        declareStartup(null)
+        return
+      }
 
       const exists = await fileSystemAPI.projectExists(prevProjectName)
-      if (!exists) return
+      if (!exists) {
+        declareStartup(null)
+        return
+      }
+
+      // 저장된 project.json 에서 flowProjectId 만 빠르게 읽어 main 에 선언 —
+      // 무거운 리소스 로드(loadProjectWithResources) 시작 전에 전달해야
+      // main 의 30s timeout 이 만료되어 중복 Flow 프로젝트가 생성되는 것을 방지.
+      try {
+        const metaResult = await fileSystemAPI.loadProjectData(prevProjectName)
+        const savedFlowId = pickFlowProjectId(metaResult?.data)
+        declareStartup(savedFlowId)
+      } catch {
+        declareStartup(null)
+      }
+
+      // #R5-2: 에폭 클레임 — tryAutoRestore 시작 전 캡처. handleProjectChange 가 사이에 호출되면
+      // loadEpochRef.current 가 바뀌어 myRestoreEpoch !== loadEpochRef.current 가 성립 → 상태 적용 건너뜀.
+      myRestoreEpoch = ++loadEpochRef.current
 
       // 복원 시작 — auto-save 차단
       isRestoringRef.current = true
+      // #R10-1: 복원이 Flow 바인딩의 단독 소유자가 되도록 projectLoading 으로 mode-entry 를 막는다.
+      //   (restore 가 setFlowProjectId 한 뒤 자기 openFlowProject 가 끝나기 전에 mode-entry 가
+      //    동시 재오픈해 readiness 를 뒤집는 race 차단. finally 에서 해제 → mode-entry 재실행 시
+      //    confirmedBindingRef 로 중복 오픈 skip.)
+      setProjectLoading(true)
       console.log('[App] Auto-restore: loading project:', prevProjectName)
       const loaded = await loadProjectWithResources(prevProjectName)
+      // #R5-2: 로드 완료 후 에폭 재확인 — 사이에 handleProjectChange 가 호출됐으면 버린다.
+      if (myRestoreEpoch !== loadEpochRef.current) {
+        console.log('[ProjectData] tryAutoRestore: superseded by newer switch, skipping state apply')
+        return
+      }
       if (loaded) {
         setScenes(loaded.scenes)
         setReferences(loaded.references)
@@ -519,6 +842,7 @@ export function useProjectData({
         setFramePairs?.(loaded.framePairs || [])
         setSelectedStyleRefId?.(loaded.selectedStyleRefId || null)
         setSrtTrack?.(loaded.srtTrack || [])
+        setFlowProjectId(loaded.flowProjectId || null)
         setSettings(s => ({
           ...s,
           projectName: prevProjectName,
@@ -527,19 +851,80 @@ export function useProjectData({
         }))
         console.log('[App] Auto-restore complete:', prevProjectName,
           `(${loaded.scenes.filter(s => s.image || s.imagePath).length} images, ${loaded.scenes.filter(s => s.subtitle).length} subtitles)`)
-        // In-flight 비디오 복구 (T2V videoScenes + I2V framePairs 둘 다 동일 경로로)
-        triggerVideoRecovery(loaded.videoScenes, loaded.framePairs, prevProjectName)
+        // R3-P1/§3.3.1: 복원 시 저장된 Flow 프로젝트로 진입 + ready gate.
+        // flow 모드에서만 활성화 — api 모드에서는 flowProjectReady 를 true 로 유지한다
+        // (openFlowProject 가 null 을 반환해 isFlowOpenConfirmed → false 로 생성이 막히는 것을 방지).
+        if (loaded.flowProjectId && modeRef.current === 'flow') {
+          setFlowProjectReady(false)
+          let confirmed = false
+          try {
+            const r = await window.electronAPI?.openFlowProject?.({ flowProjectId: loaded.flowProjectId })
+            // #R6-6: openFlowProject await 후 에폭 재확인 — 사이에 프로젝트 전환이 시작됐으면
+            // stale restore 가 readiness/recovery 를 뒤집지 않도록 중단한다(최신 전환이 소유).
+            if (myRestoreEpoch !== loadEpochRef.current) {
+              console.log('[ProjectData] tryAutoRestore: superseded after openFlowProject, skipping readiness/recovery')
+              return
+            }
+            confirmed = await applyOpenResult(r, loaded.flowProjectId, prevProjectName, () => myRestoreEpoch === loadEpochRef.current && modeRef.current === 'flow')
+          } catch {
+            // #R7-3: superseded(전환이 사이에 시작)면 readiness 를 건드리지 않는다 — 최신 전환이 소유.
+            if (myRestoreEpoch === loadEpochRef.current && modeRef.current === 'flow') setFlowProjectReady(false)
+            // #R10-3: 오픈이 throw 했으니 confirmed 기록(있다면)을 지워 mode-entry 가 재오픈하게 한다.
+            const cb = confirmedBindingRef.current
+            if (cb && cb.projectName === prevProjectName && cb.flowProjectId === loaded.flowProjectId) confirmedBindingRef.current = null
+            console.warn('[ProjectData] openFlowProject (restore) failed — generation blocked')
+          }
+          // #R4-1: Flow 모드에서는 open 확인된 경우에만 복구 실행 — 확인 안 되면 이전/죽은 프로젝트로 폴링할 위험.
+          if (confirmed) triggerVideoRecovery(loaded.videoScenes, loaded.framePairs, prevProjectName)
+        } else if (modeRef.current === 'flow') {
+          // #R6-5: Flow 모드 + 저장된 flowProjectId 없음 → mode-entry effect(Case B)가
+          // newFlowProject 로 새 Flow 프로젝트를 establish 할 때까지 생성 차단 유지.
+          // 여기서 true 로 열면 새 프로젝트가 생기기 전에 생성이 허용되는 race 가 생긴다.
+          // (#R5-1: 확인된 바인딩이 없으므로 복구도 실행하지 않는다.)
+          setFlowProjectReady(false)
+        } else {
+          // API 모드 → Flow 의존 없이 즉시 복구 (오늘과 동일 동작).
+          setFlowProjectReady(true)
+          // #R3-3: API 모드에서는 즉시 복구 (Flow 의존 없음, 오늘과 동일 동작).
+          triggerVideoRecovery(loaded.videoScenes, loaded.framePairs, prevProjectName)
+        }
+      } else {
+        setFlowProjectId(null)
+        setFlowProjectReady(true) // 프로젝트 없음 — 새 establish 허용
       }
       // 복원 완료 — auto-save 허용 (약간의 딜레이로 불필요한 auto-save 방지)
+      // #R12-10: 지연 클리어가 도착했을 때 더 새로운 전환이 시작됐으면(에폭 변경) 건드리지 않는다 —
+      //   그 전환의 isRestoringRef(autosave 가드)를 조기 해제하지 않게.
       setTimeout(() => {
-        isRestoringRef.current = false
-        console.log('[App] Auto-restore flag cleared, auto-save now allowed')
+        if (myRestoreEpoch === loadEpochRef.current) {
+          isRestoringRef.current = false
+          console.log('[App] Auto-restore flag cleared, auto-save now allowed')
+        }
       }, 500)
+      } catch (err) {
+        // #R13-13: 복원 중 예외 — isRestoringRef(autosave 가드) 해제는 현재 에폭 소유일 때만.
+        //   바깥 .catch 에서 무조건 해제하면 그 사이 시작된 더 새로운 전환의 가드를 풀어버린다.
+        console.warn('[App] Auto-restore error:', err?.message)
+        if (myRestoreEpoch === 0 || myRestoreEpoch === loadEpochRef.current) isRestoringRef.current = false
+      } finally {
+        // R2-1 / #R3-2: 성공/실패/early-return 어느 경로로 종료되든 hydration 완료로 표시.
+        // mode-entry 의 create-new 분기가 이제부터 실행될 수 있도록 허용한다.
+        // #R3-2: ref 뿐 아니라 state 도 설정 — state 변경이 mode-entry effect 를 re-trigger.
+        hydratedRef.current = true
+        setHydrated(true)
+        // #R10-1/#R11-1: 복원이 현재 로딩 소유자일 때만 projectLoading 해제. superseding
+        //   handleProjectChange 가 자기 전환을 위해 projectLoading(true) 를 켰다면(에폭 변경),
+        //   restore 가 그것을 끄면 그 전환의 mode-entry 게이트가 조기 해제된다. early-return
+        //   (myRestoreEpoch===0)은 애초에 projectLoading 을 켜지 않았으므로 건드리지 않는다.
+        if (myRestoreEpoch !== 0 && myRestoreEpoch === loadEpochRef.current) setProjectLoading(false)
+      }
     }
 
     tryAutoRestore().catch(e => {
-      console.warn('[App] Auto-restore failed:', e)
-      isRestoringRef.current = false
+      // #R13-13: 내부 catch 가 에폭-가드로 isRestoringRef 를 처리하므로 여기선 로그만 — 무조건 해제 금지.
+      console.warn('[App] Auto-restore failed (outer):', e)
+      // hydratedRef는 위의 finally 블록에서 이미 true로 설정됨.
+      // catch는 finally 이후에 실행되므로 여기서 재설정할 필요 없음.
     })
   }, [])
 
@@ -555,12 +940,28 @@ export function useProjectData({
   const handleProjectChange = async (newProjectName, opts = {}) => {
     if (newProjectName === settings.projectName) return { aspectRatio: settings.aspectRatio, success: true }
 
+    // #R5-2: 에폭 클레임 — BEFORE isRestoringRef(spec 요건: 에폭이 먼저라야 이전 restore 를 supersede).
+    const myEpoch = ++loadEpochRef.current
+    const superseded = () => myEpoch !== loadEpochRef.current
+
     isRestoringRef.current = true
     setProjectLoading(true)
+    // flow 모드에서만 전환 시작 시 생성 차단 — api 모드에서는 항상 true 유지
+    if (mode === 'flow') setFlowProjectReady(false)
     let switched = false // step 4(setSettings)까지 도달했는지 — 실패 반환값 판정용
     try {
       // 1. 현재 프로젝트 데이터 저장
-      await saveCurrentProject(settings, scenes, references, videoScenes, framePairs, selectedStyleRefId, srtTrack, audioFolderPath)
+      // #R4-2: flowProjectId (9th arg) 포함 — 누락 시 프로젝트 전환 때 바인딩이 지워짐
+      const _saveRes = await saveCurrentProject(settings, scenes, references, videoScenes, framePairs, selectedStyleRefId, srtTrack, audioFolderPath, flowProjectId)
+      // #R20-6: 현재 프로젝트 저장이 실패했으면 전환을 중단한다 — 그대로 전환하면 미저장 편집이
+      //   유실된다. onSaveError 로 알리고 switched=false 로 반환(호출부가 롤백).
+      if (_saveRes && _saveRes.success === false) {
+        console.warn('[App] Save-before-switch failed — aborting switch to avoid edit loss:', _saveRes.error)
+        onSaveError?.(_saveRes.error)
+        return { aspectRatio: settings.aspectRatio, success: false }
+      }
+      // #R5-2: 저장 후 에폭 확인 — 사이에 더 새로운 전환이 시작됐으면 버린다.
+      if (superseded()) return { aspectRatio: settings.aspectRatio, success: false }
 
       // 2. 새 프로젝트 데이터 로드
       let audioPath = null
@@ -569,8 +970,12 @@ export function useProjectData({
       let nextAspectRatio = opts.isNewProject ? (opts.aspectRatio || null) : null
       let isFreshProject = false
       const newExists = await fileSystemAPI.projectExists(newProjectName)
+      // #R5-2: projectExists await 후 확인
+      if (superseded()) return { aspectRatio: settings.aspectRatio, success: false }
       if (newExists) {
         const loaded = await loadProjectWithResources(newProjectName)
+        // #R5-2: 무거운 리소스 로드 후 확인 — 여기가 가장 오래 걸리는 지점
+        if (superseded()) return { aspectRatio: settings.aspectRatio, success: false }
         if (loaded) {
           setScenes(loaded.scenes)
           setReferences(loaded.references)
@@ -578,14 +983,46 @@ export function useProjectData({
           setFramePairs?.(loaded.framePairs || [])
           setSelectedStyleRefId?.(loaded.selectedStyleRefId || null)
           setSrtTrack?.(loaded.srtTrack || [])
+          setFlowProjectId(loaded.flowProjectId || null)
+          // #R24-1: main 의 startup-hint 도 현재 프로젝트로 동기화한다. 안 그러면 hint 가 앱 시작
+          //   시 auto-restore 가 선언한 (이전) 프로젝트에 멈춰 있다가, API 모드에서 프로젝트를
+          //   전환한 뒤 처음 Flow 로 들어갈 때 bootstrap 이 stale hint 로 이전 프로젝트를 연다.
+          declareStartup(loaded.flowProjectId || null)
           audioPath = loaded.audioFolderPath
           // 기존 프로젝트 전환일 때만 project.json 화면비를 복원한다 (신규 생성이면
           // 위에서 정한 opts.aspectRatio 를 유지 — duplicate-name 으로 기존 프로젝트가
           // 잡혀도 사용자가 명시한 isNewProject 의도가 우선).
           if (!opts.isNewProject && loaded.aspectRatio) nextAspectRatio = loaded.aspectRatio
           console.log('[App] Project loaded:', newProjectName)
-          // In-flight 비디오 복구 (T2V videoScenes + I2V framePairs 둘 다 동일 경로로)
-          triggerVideoRecovery(loaded.videoScenes, loaded.framePairs, newProjectName)
+          // R3-P1/§3.3.1: 저장된 Flow 프로젝트로 진입 + ready gate.
+          // 전환 시작 시 false 로 닫고, 진입 확인 후 true 로 연다.
+          // flow 모드에서만 활성화 — api 모드에서는 flowProjectReady 를 true 로 유지한다
+          // (openFlowProject 가 null 을 반환해 isFlowOpenConfirmed → false 로 생성이 막히는 것을 방지).
+          if (loaded.flowProjectId && modeRef.current === 'flow') {
+            let confirmed = false
+            try {
+              const r = await window.electronAPI?.openFlowProject?.({ flowProjectId: loaded.flowProjectId })
+              // #R5-2: openFlowProject await 후 확인
+              if (superseded()) return { aspectRatio: settings.aspectRatio, success: false }
+              confirmed = await applyOpenResult(r, loaded.flowProjectId, newProjectName, () => !superseded() && modeRef.current === 'flow')
+            } catch {
+              // #R7-3: superseded 면 readiness 를 건드리지 않는다 — 최신 전환이 소유.
+              if (!superseded() && modeRef.current === 'flow') setFlowProjectReady(false)
+              console.warn('[ProjectData] openFlowProject failed — generation blocked until retry')
+            }
+            // #R4-1: Flow 모드에서는 open 확인된 경우에만 복구 — 미확인이면 이전 프로젝트로 폴링 위험.
+            if (confirmed && !superseded()) triggerVideoRecovery(loaded.videoScenes, loaded.framePairs, newProjectName)
+          } else if (modeRef.current === 'flow') {
+            // #R7-2(R6-5 sibling): Flow 모드 + 저장된 flowProjectId 없음 → mode-entry effect(Case B)가
+            // newFlowProject 로 establish 할 때까지 생성 차단 유지(여기서 true 로 열면 새 프로젝트
+            // 생성 전 생성 허용 race). 확인된 바인딩이 없으므로 복구도 실행하지 않는다(#R5-1).
+            setFlowProjectReady(false)
+          } else {
+            // API 모드 → Flow 의존 없이 즉시 복구 (오늘과 동일 동작).
+            setFlowProjectReady(true)
+            // #R3-3: API 모드에서는 즉시 복구 (오늘과 동일 동작).
+            if (!superseded()) triggerVideoRecovery(loaded.videoScenes, loaded.framePairs, newProjectName)
+          }
         } else {
           setScenes([])
           setReferences([])
@@ -593,6 +1030,10 @@ export function useProjectData({
           setFramePairs?.([])
           setSelectedStyleRefId?.(null)
           setSrtTrack?.([])
+          setFlowProjectId(null)
+          declareStartup(null)  // #R24-1: hint 를 현재(매핑 없는) 프로젝트로 동기화
+          // #R7-2: api → 즉시 true; flow → mode-entry Case B 가 establish 할 때까지 false 유지.
+          setFlowProjectReady(modeRef.current !== 'flow')
           isFreshProject = true
           console.log('[App] Empty project:', newProjectName)
         }
@@ -605,18 +1046,24 @@ export function useProjectData({
         // C4 review fix: 새 프로젝트 분기에도 srtTrack 리셋 (안 그러면 직전 프로젝트의
         // srtTrack 이 새 프로젝트로 누수되어 autosave 가 잘못 영속화함)
         setSrtTrack?.([])
+        setFlowProjectId(null)
+        declareStartup(null)  // #R24-1: 새 프로젝트는 아직 Flow 매핑 없음 — hint 도 null 로 동기화
+        // #R7-2: api → 즉시 true; flow → mode-entry Case B 가 establish 할 때까지 false 유지.
+        setFlowProjectReady(modeRef.current !== 'flow')
         isFreshProject = true
         console.log('[App] New project created:', newProjectName)
       }
 
       // 3. 오디오 복원 (project.json의 audioFolderPath 사용)
-      if (onAudioSwitch) {
+      if (onAudioSwitch && !superseded()) {
         onAudioSwitch(audioPath)
       }
 
       // 4. 프로젝트명 + 화면비 업데이트
       // 화면비: 신규는 opts.aspectRatio, 기존은 project.json 값. 둘 다 없으면 직전
       // 프로젝트 값이 아니라 기본값으로 — 화면비가 전역처럼 새는 것을 막는다.
+      // #R5-2: step 4 직전 최종 확인 — 여기까지 superseded 되면 상태 업데이트 전체 skip.
+      if (superseded()) return { aspectRatio: settings.aspectRatio, success: false }
       const resolvedAspectRatio = nextAspectRatio || DEFAULT_ASPECT_RATIO
       setSettings(s => ({ ...s, projectName: newProjectName, aspectRatio: resolvedAspectRatio }))
       switched = true // 여기까지 왔으면 앱은 새 프로젝트로 전환됨
@@ -648,13 +1095,22 @@ export function useProjectData({
       // 전환 도중 예외 — 상태는 finally 에서 정리된다. switched 로 "실제로 전환됐는지"를
       // 알려, 호출부(StorageTab)가 optimistic 한 projectName 갱신을 롤백할 수 있게 한다.
       console.error('[App] Project change failed:', e)
+      // 예외 경로 — api 모드에선 항상 true 로 풀어 생성 차단 고착을 막는다.
+      // #R17-6: flow 모드에선 확인된 바인딩이 없으므로 true 로 풀지 않는다(미확인 프로젝트 생성 방지).
+      //   재바인딩은 mode-entry effect 가 처리한다.
+      // #R6-7: superseded(이전) 전환은 readiness 를 건드리지 않는다 — 최신 전환이 소유.
+      if (!superseded()) setFlowProjectReady(modeRef.current !== 'flow')
       return { aspectRatio: settings.aspectRatio, success: switched }
     } finally {
-      // throw 여부와 무관하게 복원/로딩 플래그를 반드시 해제한다. 안 그러면
-      // isRestoringRef 가 true 로 고착돼 autosave 가 영구 차단되고, 로딩
-      // 오버레이도 사라지지 않는다.
-      isRestoringRef.current = false
-      setProjectLoading(false)
+      // throw 여부와 무관하게 복원/로딩 플래그를 해제한다. 안 그러면 isRestoringRef 가
+      // true 로 고착돼 autosave 가 영구 차단되고, 로딩 오버레이도 사라지지 않는다.
+      // #R6-7: 단, superseded(이전) 전환은 플래그를 건드리지 않는다 — 진행 중인 최신
+      // 전환이 그 플래그의 소유자이며 자신의 finally 에서 정리한다. superseded 가 여기서
+      // 클리어하면 최신 전환의 로딩 오버레이/auto-save 가드가 조기 해제된다.
+      if (!superseded()) {
+        isRestoringRef.current = false
+        setProjectLoading(false)
+      }
     }
   }
 
@@ -664,8 +1120,11 @@ export function useProjectData({
     // settingsOverride: 설정 저장 시점처럼 setSettings 직후(아직 리렌더 전) 호출할 때
     // 최신 settings 를 명시로 넘겨 stale closure 를 피한다.
     saveCurrentProject: (settingsOverride) =>
-      saveCurrentProject(settingsOverride || settings, scenes, references, videoScenes, framePairs, selectedStyleRefId, srtTrack, audioFolderPath),
+      saveCurrentProject(settingsOverride || settings, scenes, references, videoScenes, framePairs, selectedStyleRefId, srtTrack, audioFolderPath, flowProjectId),
     isRestoringRef,  // auto-save 가드용
-    projectLoading   // 로딩 오버레이용
+    projectLoading,  // 로딩 오버레이용
+    flowProjectId,
+    setFlowProjectId,
+    flowProjectReady,  // R3-P1: Flow 프로젝트 진입 확인 게이트 — false면 생성 차단
   }
 }

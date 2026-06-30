@@ -14,7 +14,10 @@ echo [1/2] Running electron-builder to generate mapping.txt...
 call npx electron-builder --win appx 2>nul
 
 echo [2/2] Packing APPX v%VERSION% with makeappx...
-makeappx.exe pack /f "%MAPPING%" /p "%OUTPUT%" /o
+REM /l skips localized/scaled-resource semantic validation — required now that
+REM electron-builder emits resources.pri + scale-* resource packages (matches
+REM app-builder-lib's own makeappx invocation when scaled assets are present).
+makeappx.exe pack /l /f "%MAPPING%" /p "%OUTPUT%" /o
 if errorlevel 1 exit /b 1
 
 echo === APPX build succeeded: %OUTPUT% ===

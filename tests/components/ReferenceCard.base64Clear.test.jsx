@@ -122,6 +122,34 @@ describe('ReferenceCard — base64 clear after disk save (#3)', () => {
     expect(lastCall.filePath).toBeNull()
   })
 
+  it('#R29-1: clear-image clears Flow entity fields too (no stale @mention character)', async () => {
+    const { fireEvent } = await import('@testing-library/react')
+    const onUpdate = vi.fn()
+    const charRef = {
+      id: 1, name: 'hero', category: 'character', type: 'character',
+      data: 'data:image/png;base64,IMG', filePath: null, mediaId: 'med-1', caption: 'c',
+      entityId: 'ent-1', workflowId: 'wf-1', registered: true, flowNameSyncStatus: 'synced',
+      status: 'done',
+    }
+    const { container, getByText } = render(
+      <ReferenceCard reference={charRef} index={0} onUpdate={onUpdate} onRemove={vi.fn()}
+        onUpload={vi.fn()} t={(k) => k} projectName="MyProject" />
+    )
+    // open the remove menu (✕) then click "이미지만 제거"
+    const removeBtn = container.querySelector('.btn-remove')
+    await act(async () => { fireEvent.click(removeBtn) })
+    await act(async () => { fireEvent.click(getByText('reference.clearImage')) })
+
+    expect(onUpdate).toHaveBeenCalledTimes(1)
+    const patch = onUpdate.mock.calls[0][1]
+    expect(patch.data).toBeNull()
+    expect(patch.mediaId).toBeNull()
+    expect(patch.entityId).toBeNull()
+    expect(patch.workflowId).toBeNull()
+    expect(patch.registered).toBeNull()
+    expect(patch.flowNameSyncStatus).toBeNull()
+  })
+
   it('projectName 없으면 저장 시도 안 하고 data: base64 유지', async () => {
     const onUpdate = vi.fn()
 

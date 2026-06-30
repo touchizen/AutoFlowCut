@@ -1,0 +1,930 @@
+/**
+ * electron/ipc/character.js
+ *
+ * Flow 캐릭터 생성·등록 IPC — 하이브리드.
+ *
+ * 순수 API 직접 호출로는 캐릭터 "생성"이 불가능(주입 fetch 는 reCAPTCHA Enterprise
+ * 위험점수가 낮아 batchGenerateImages 가 영원히 400). 그래서:
+ *   1) /characters 컴포저로 네비 → 프롬프트 주입 → arrow_forward 트러스트 클릭으로 생성 트리거.
+ *      (서버가 진짜 UI 컨텍스트로 entity 를 만든다.)
+ *   2) batchGenerateImages 응답을 pendingGeneration 으로 가로채 entityId/workflowId 추출
+ *      (../flow-character-api.js parseCharacterGenerateResponse — entityId 는 workflows[].parentEntityId).
+ *   3) PATCH /v1/flow/entities 로 이름(멘션 토큰) 등록 (buildEntityRegisterBody, recaptcha 불필요).
+ *
+ * 트러스트 클릭/프롬프트 주입 패턴은 flow-api.js 의 flow:generate-image 와 동일(검증된 경로).
+ */
+
+import {
+  buildEntityRegisterBody,
+  buildEntityRenameBody,
+  buildEntityImageBody,
+  parseCharacterGenerateResponse,
+  buildCharacterResult,
+  downloadFifeAsBase64,
+  isStaleEntityErrorBody,
+  parseUploadImageResponse,
+  buildCharactersUrl,
+} from '../flow-character-api.js'
+import { COMPOSE_EDITOR_READY } from '../flow-compose-editor.js'
+import { screen } from 'electron'
+import { computeOffscreenBounds } from '../offscreen-bounds.js'
+import { GENERATED_IMG_PROBE } from '../flow-media-collect.js'
+import { collectAgentDomImages } from '../flow-agent-collect.js'
+import { AGENT_CHAT_CLOSE_SELECTOR } from '../flow-agent-toggle.js'
+import { SUBMIT_PROBE, shouldProceed } from '../flow-submit-gate.js'
+
+// 캡처(flow-net-capture.json)로 확인한 호스트. ⚠️ 후속: 가로챈 batchGenerateImages URL 의
+// origin 으로 동적화 고려(region/계정별 다를 가능성). 지금은 관찰된 글로벌 엔드포인트로 고정.
+const API_BASE = 'https://aisandbox-pa.googleapis.com/v1'
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+// Slate 컴포저 에디터 셀렉터 (generate-image 와 동일 우선순위).
+const EDITOR_SELECTOR = `(function(){
+  return document.querySelector("[data-slate-editor='true']")
+    || document.querySelector("div[role='textbox'][contenteditable='true']:not(#af-bot-panel *)")
+    || document.querySelector('[contenteditable="true"]:not([aria-hidden])')
+    || document.querySelector('textarea');
+})()`
+
+// arrow_forward(생성) 버튼 — /characters 컴포저도 동일 아이콘. disabled 면 선택 안 함.
+const GENERATE_BTN_SELECTOR = `(function(){
+  try {
+    const xr = document.evaluate("//button[.//i[text()='arrow_forward']]",
+      document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+    if (xr.singleNodeValue && !xr.singleNodeValue.disabled) return xr.singleNodeValue;
+  } catch {}
+  for (const b of document.querySelectorAll('button'))
+    for (const icon of b.querySelectorAll('i'))
+      if (icon.textContent.trim() === 'arrow_forward' && !b.disabled) return b;
+  return null;
+})()`
+
+export function registerCharacterIPC(ipcMain, deps) {
+  const {
+    getFlowView, getMainWindow, trustedClickOnFlowView, flowPageFetch,
+    parseFlowResponse, getCapturedProjectId, ensureOnProjectComposer,
+    // R10-P1: getPendingGeneration 은 clickAndCaptureGeneration 의 timeout identity 가드에서 쓴다 —
+    //   destructure 안 하면 free variable 이 되어 timeout 발생 시 ReferenceError 로 handler 가 hang.
+    getPendingGeneration, setPendingGeneration, SESSION_URL,
+    sessionFetch, getCurrentMode, getFlowAgentOn,
+  } = deps
+  // flow-api(비동기) 와 공유하는 DOM 수집 de-dup — 혼합 배치에서 서로의 이미지를 안 가로채게.
+  const collectedMediaIds = deps.collectedMediaIds || new Set()
+
+  // #R26-1: R25 의 flowActive() 게이트가 flow-api.js/video.js 만 덮고 character/scene 경로를 놓쳤다.
+  //   API 모드 전환 후에도 flowView 가 보존되므로 stale 호출이 Flow quota 를 쓰거나 상태를 바꿀 수
+  //   있다. quota/상태변경 핸들러는 현재 모드가 'flow' 일 때만 진행한다.
+  const flowActive = () => !getCurrentMode || getCurrentMode() === 'flow'
+
+  // Flow API 는 OAuth2 Bearer access token 을 요구(쿠키만으론 401). 세션 엔드포인트에서 추출.
+  async function getAccessToken() {
+    try {
+      const r = await flowPageFetch(SESSION_URL, { method: 'GET' })
+      let parsed = null
+      try { parsed = parseFlowResponse(r.text) } catch {}
+      if (!parsed) { try { parsed = JSON.parse(r.text) } catch {} }
+      return (parsed && (parsed.access_token || parsed.accessToken)) || null
+    } catch { return null }
+  }
+
+  function projectIdFromUrl() {
+    try {
+      const url = (getFlowView() && getFlowView().webContents.getURL()) || ''
+      const m = url.match(/\/project\/([0-9a-f-]{36})/)
+      return m ? m[1] : null
+    } catch { return null }
+  }
+
+  // 생성 버튼 트러스트 클릭 + batchGenerateImages 응답 캡처 (character/reroll/scene 공통).
+  //   P2-1: pendingGeneration 을 클릭 "직전"에 arm 한다 — 클릭 후 arm 하면 매우 빠른 400/실패
+  //   응답이 arm 전에 도착해 main 의 report-response 가 버릴 수 있다(미스). setAt -2s fudge 와
+  //   함께 클릭 직후 시작되는 요청을 안정적으로 잡는다.
+  //   반환: { clickError?, timeout?, resp0, body, status } (resp0 = responses[0]).
+  async function clickAndCaptureGeneration(flowView, { timeoutMs = 120000 } = {}) {
+    let timeout = null
+    let ownPending = null
+    // R11-P2: 자기 pending(identity)만 정리하는 헬퍼 — 클릭 실패/throw 공통.
+    const cleanupOwn = () => {
+      clearTimeout(timeout)
+      if (getPendingGeneration() === ownPending) setPendingGeneration(null)
+    }
+    const genPromise = new Promise((resolve) => {
+      // R5-P2: arm-before-click 구조라 backdate(-2s) 불필요 — 클릭으로 시작될 요청은 이 setAt
+      //   이후 reqStartedAt 을 가진다. 2초 창을 두면 그 안의 이전 응답이 새 요청을 만족시킬 수 있어 제거.
+      ownPending = { setAt: Date.now() / 1000, expectedCount: 1, responses: [], collectionTimer: null, resolve: (r) => { clearTimeout(timeout); resolve(r) } }
+      setPendingGeneration(ownPending)
+      // R9-P2: identity 가드 — 만료 시 "자기 pending(ownPending)" 이 여전히 현재일 때만 null/resolve.
+      //   옛 코드는 무조건 setPendingGeneration(null) 이라, 그 사이 새 생성이 arm 한 pending 을 지웠다.
+      //   (createGenerationTimeout 은 payload 가 달라 여기선 timeout:true 형태를 직접 유지.)
+      timeout = setTimeout(() => {
+        if (getPendingGeneration() === ownPending) {
+          setPendingGeneration(null)
+          resolve({ error: true, timeout: true })
+        }
+      }, timeoutMs)
+    })
+    // R11-P2: 클릭이 throw 하면(예외) cleanup 없이 빠져 stale pending 이 120초까지 남고 main 의 sync
+    //   캡처가 다음 batchGenerateImages 응답을 삼킨다. try/catch 로 자기 pending 을 정리한다.
+    let click
+    try {
+      click = await trustedClickOnFlowView(GENERATE_BTN_SELECTOR)
+    } catch (e) {
+      cleanupOwn()
+      return { clickError: e?.message || '생성 버튼 클릭 예외' }
+    }
+    // R7-P2: 클릭 실패 시 timeout 도 반드시 clear — 안 하면 120초 뒤 콜백이 그때 살아있는 다른
+    //   pendingGeneration 을 지운다(arm 한 pending 삭제 + 타이머 정리).
+    if (!click || !click.success) { cleanupOwn(); return { clickError: click?.error || '생성 버튼 클릭 실패' } }
+    const genResult = await genPromise
+    const resp0 = genResult && !genResult.error && genResult.responses && genResult.responses[0]
+    return { timeout: !!(genResult && genResult.timeout), resp0, body: resp0 && resp0.body, status: resp0 && resp0.status }
+  }
+
+  // #R20-5: projectIdOverride 우선 — 없으면 현재 URL 의 프로젝트 base. 드리프트한 페이지에서
+  //   현재 URL 로 detail URL 을 만들면 엉뚱한 프로젝트의 /character/{entityId} 로 간다.
+  function characterDetailUrl(entityId, projectIdOverride) {
+    const cur = (getFlowView() && getFlowView().webContents.getURL()) || ''
+    if (projectIdOverride) {
+      const fm = cur.match(/^(.*\/tools\/flow)(\/|$)/)
+      const base = fm ? fm[1] : 'https://labs.google/fx/tools/flow'
+      return `${base}/project/${projectIdOverride}/character/${entityId}`
+    }
+    const m = cur.match(/^(.*\/project\/[0-9a-f-]{36})/)
+    return m ? `${m[1]}/character/${entityId}` : null
+  }
+
+  // 상세페이지 진입 보장 — 아니면 loadURL 후 컴포저 에디터 대기(COMPOSE_EDITOR_READY).
+  async function ensureOnCharacterDetailPage(flowView, entityId, projectIdOverride) {
+    const url = flowView.webContents.getURL()
+    // #R20-5: projectId 지정 시 그 프로젝트의 detail 인지까지 확인.
+    const onPage = projectIdOverride
+      ? url.includes('/project/' + projectIdOverride + '/character/' + entityId)
+      : url.includes('/character/' + entityId)
+    if (!onPage) {
+      const target = characterDetailUrl(entityId, projectIdOverride)
+      if (!target) return false
+      console.log('[Flow Character] navigating to character detail:', target)
+      await flowView.webContents.loadURL(target)
+    }
+    for (let i = 0; i < 30; i++) {
+      await sleep(500)
+      const ready = await flowView.webContents.executeJavaScript(COMPOSE_EDITOR_READY).catch(() => false)
+      if (ready) { await sleep(600); return true }
+    }
+    return false
+  }
+
+  // 현재 URL 에서 로케일 보존하여 같은 프로젝트의 /characters 컴포저 URL 도출.
+  function charactersUrl(projectIdOverride) {
+    const url = (getFlowView() && getFlowView().webContents.getURL()) || ''
+    return buildCharactersUrl(url, projectIdOverride || null)
+  }
+
+  // /characters 컴포저 보장 — 아니면 loadURL(전체 로드 → monkey-patch 재주입) 후 에디터 대기.
+  //   projectIdOverride: A2 는 bound projectId 를 전달 — Flow 탭이 다른 프로젝트에 있으면 그 프로젝트의
+  //   /characters 로 강제 이동(엉뚱한 프로젝트에 entity 가 생기는 것 방지).
+  async function ensureOnCharactersPage(flowView, projectIdOverride) {
+    const url = flowView.webContents.getURL()
+    const onPage = projectIdOverride
+      ? new RegExp('/project/' + projectIdOverride + '/characters').test(url)
+      : /\/project\/[0-9a-f-]{36}\/characters/.test(url)
+    if (!onPage) {
+      const target = charactersUrl(projectIdOverride)
+      if (!target) return false
+      console.log('[Flow Character] navigating to characters compose:', target)
+      await flowView.webContents.loadURL(target)
+    }
+    // 진짜 Slate 컴포저 에디터가 마운트될 때까지 대기. EDITOR_SELECTOR(숨은 textarea 폴백
+    // 포함)로 판정하면 항상-존재하는 g-recaptcha-response textarea 때문에 너무 일찍 통과해
+    // 주입이 실패한다 → COMPOSE_EDITOR_READY(Slate/보이는 contenteditable 만) 로 폴링.
+    for (let i = 0; i < 30; i++) {
+      await sleep(500)
+      const ready = await flowView.webContents
+        .executeJavaScript(COMPOSE_EDITOR_READY)
+        .catch(() => false)
+      if (ready) { await sleep(600); return true }  // Slate React fiber attach settle
+    }
+    return false
+  }
+
+  // A2 헬퍼들 — Flow 는 synthetic 클릭(isTrusted:false)을 무시하므로 버튼은 trustedClickOnFlowView
+  //   (sendInputEvent)로 눌러야 한다. 파일 input 의 change 는 onChange 가 e.target.files 만 읽어 synthetic
+  //   으로도 동작. 네이티브 "업로드" 트러스트 클릭은 파일 대화상자를 여니 input.click 을 noop 으로 막는다.
+  const A2_FILE_SEL = 'input[type="file"][accept="image/*"]'
+  // 업로드/만들기 버튼을 텍스트로 찾는 JS 식 (trustedClickOnFlowView 에 그대로 전달).
+  const A2_UPLOAD_BTN_EXPR = `Array.prototype.find.call(document.querySelectorAll('button'),function(b){return /업로드|upload/i.test(b.textContent||'')})`
+  const A2_RUN_BTN_EXPR = `(Array.prototype.find.call(document.querySelectorAll('button'),function(b){var t=b.textContent||'';return /arrow_forward/.test(t)&&/만들기|만들$|실행/.test(t)})||Array.prototype.find.call(document.querySelectorAll('button'),function(b){return /arrow_forward/.test(b.textContent||'')&&!b.disabled}))`
+
+  // 파일 대화상자 방지: file input 의 click 을 noop 으로 막아둔다(업로드 버튼 트러스트 클릭 전).
+  async function neutralizeFileInputClick(flowView) {
+    return flowView.webContents.executeJavaScript(`(function(){
+      var i=document.querySelector(${JSON.stringify(A2_FILE_SEL)});
+      if(!i) return false;
+      if(!i.__afOrigClick){ i.__afOrigClick = i.click.bind(i); i.click = function(){}; }
+      return true;
+    })()`).catch(() => false)
+  }
+
+  // file input 에 base64 파일을 넣고 change 를 발생(+ click 복구). DataTransfer 로 input.files 세팅.
+  async function injectFileToInput(flowView, base64, fileName, mimeType) {
+    return flowView.webContents.executeJavaScript(`(function(){
+      try{
+        var i=document.querySelector(${JSON.stringify(A2_FILE_SEL)});
+        if(!i) return {success:false, error:'file input 없음'};
+        if(i.__afOrigClick){ try{ i.click=i.__afOrigClick }catch(_){}; try{ delete i.__afOrigClick }catch(_){} }
+        var bin=atob(${JSON.stringify(base64)}); var by=new Uint8Array(bin.length);
+        for(var k=0;k<bin.length;k++) by[k]=bin.charCodeAt(k);
+        var f=new File([by], ${JSON.stringify(fileName || 'upload.png')}, {type:${JSON.stringify(mimeType || 'image/png')}});
+        var dt=new DataTransfer(); dt.items.add(f); i.files=dt.files;
+        i.dispatchEvent(new Event('input',{bubbles:true}));
+        i.dispatchEvent(new Event('change',{bubbles:true}));
+        return {success:i.files.length===1};
+      }catch(e){ return {success:false, error:String(e&&e.message||e)}; }
+    })()`).catch(e => ({ success: false, error: e.message }))
+  }
+
+  // A2: SPA 가 보낸 uploadImage 응답을 네트워크 캡처 버퍼(window.__autoflowcut_net__)에서 회수.
+  //   - parentEntityId 있는 200 → { status:200, respBody } (성공: character entity 생성됨)
+  //   - 4xx/5xx → { status, respBody } 즉시 반환(auth/quota/server 에러를 timeout 으로 뭉개지 않게, P2)
+  //   - parentEntityId 없는 200(일반 media staging) → 무시하고 계속 대기.
+  async function waitForUploadImageResponse(flowView, timeoutMs = 60000) {
+    const wc = flowView.webContents
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      const r = await wc.executeJavaScript(`(function(){
+        var n = window.__autoflowcut_net__ || [];
+        for (var i = n.length - 1; i >= 0; i--) {
+          var x = n[i];
+          if (!x || !x.url || x.url.indexOf('/flow/uploadImage') === -1) continue;
+          if (x.status === 200 && x.respBody && x.respBody.indexOf('parentEntityId') !== -1)
+            return { status: 200, respBody: x.respBody };
+          if (x.status >= 400) return { status: x.status, respBody: x.respBody || '' };
+        }
+        return null;
+      })()`).catch(() => null)
+      if (r) return r
+      await sleep(500)
+    }
+    return null
+  }
+
+  // 프롬프트를 Slate 에디터에 주입 (React fiber apply → execCommand 폴백). generate-image 와 동일 전략.
+  async function injectPrompt(flowView, prompt) {
+    return flowView.webContents.executeJavaScript(`
+      (async function() {
+        const promptText = ${JSON.stringify(prompt)};
+        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+        let editor = ${EDITOR_SELECTOR};
+        if (!editor) return { success: false, error: 'Editor not found' };
+        const isSlate = !!(editor.matches?.("[data-slate-editor='true']") || editor.querySelector?.("[data-slate-node]"));
+
+        // 방법 1: Slate React API (editor.apply)
+        let ok = false;
+        if (isSlate) {
+          try {
+            const reactKeys = Object.keys(editor).filter(k => k.startsWith('__react'));
+            let se = null;
+            for (const key of reactKeys) {
+              const stack = [editor[key]]; const seen = new Set(); let guard = 0;
+              while (stack.length && guard < 5000) {
+                const n = stack.pop(); guard++;
+                if (!n || typeof n !== 'object' || seen.has(n)) continue;
+                seen.add(n);
+                const c = n?.memoizedProps?.node || n?.memoizedProps?.editor
+                  || n?.pendingProps?.node || n?.pendingProps?.editor
+                  || n?.stateNode?.editor || n?.editor;
+                if (c && typeof c.apply === 'function') { se = c; break; }
+                if (n.child) stack.push(n.child);
+                if (n.sibling) stack.push(n.sibling);
+                if (n.return) stack.push(n.return);
+                if (n.alternate) stack.push(n.alternate);
+              }
+              if (se) break;
+            }
+            if (se) {
+              try {
+                const ex = se.children?.[0]?.children?.[0]?.text || '';
+                if (ex) se.apply({ type: 'remove_text', path: [0, 0], offset: 0, text: ex });
+              } catch {}
+              se.apply({ type: 'insert_text', path: [0, 0], offset: 0, text: promptText });
+              if (typeof se.onChange === 'function') se.onChange();
+              editor.dispatchEvent(new Event('input', { bubbles: true }));
+              await sleep(200);
+              const t = (se.children?.[0]?.children?.[0]?.text || '').trim();
+              if (t && t.includes(promptText.slice(0, 40))) ok = true;
+            }
+          } catch (e) { /* fallthrough */ }
+        }
+
+        // 방법 2: execCommand insertText
+        if (!ok) {
+          try {
+            editor.focus(); editor.click(); await sleep(100);
+            if (isSlate) {
+              const sel = window.getSelection(); const range = document.createRange();
+              const nodes = Array.from(editor.querySelectorAll('[data-slate-string]'))
+                .map(n => n.firstChild).filter(n => n && n.nodeType === Node.TEXT_NODE);
+              if (nodes.length) {
+                range.setStart(nodes[0], 0);
+                const last = nodes[nodes.length - 1];
+                range.setEnd(last, (last.textContent || '').length);
+              } else { range.selectNodeContents(editor); }
+              sel.removeAllRanges(); sel.addRange(range);
+            } else { document.execCommand('selectAll', false, null); }
+            document.execCommand('delete', false, null); await sleep(50);
+            try { editor.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: promptText })); } catch {}
+            if (document.execCommand('insertText', false, promptText)) {
+              try { editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: promptText })); } catch {}
+              await sleep(200);
+              const vis = (editor.innerText || editor.textContent || '').trim();
+              if (editor.querySelector?.('[data-slate-string]') || vis.includes(promptText.slice(0, 20))) ok = true;
+            }
+          } catch (e) { /* fallthrough */ }
+        }
+
+        if (!ok) return { success: false, error: 'prompt injection failed' };
+        return { success: true };
+      })()
+    `).catch((e) => ({ success: false, error: e.message }))
+  }
+
+  ipcMain.handle('flow:generate-character', async (_e, opts = {}) => {
+    const { prompt, displayName } = opts
+    if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R26-1
+    const flowView = getFlowView()
+    if (!flowView) return { success: false, error: 'Flow view not ready' }
+    if (!prompt) return { success: false, error: 'No prompt' }
+    const projectId = opts.projectId || projectIdFromUrl() || (getCapturedProjectId && getCapturedProjectId())
+    if (!projectId) return { success: false, error: 'No projectId' }
+    console.log('[Flow Character] generate-character projectId:', projectId, 'name:', displayName)
+
+    // 1) /characters 컴포저 진입 — #R7-14(R4-4 sibling): TARGET projectId 를 넘겨 드리프트한
+    //    탭에서 엉뚱한 프로젝트의 characters 페이지에 엔티티를 만드는 것을 막는다(URL 검증+이동).
+    const onPage = await ensureOnCharactersPage(flowView, projectId)
+    if (!onPage) return { success: false, error: 'characters 컴포저 진입 실패(에디터 없음)' }
+
+    // 2) 프롬프트 주입 — execCommand 동작 위해 flowView 를 일시적으로 보이게 + 포커스 + 에디터 trusted click.
+    const mainWindow = getMainWindow && getMainWindow()
+    const bounds = flowView.getBounds()
+    const wasHidden = (bounds.width === 0 || bounds.height === 0)
+    if (wasHidden && mainWindow) {
+      const { width, height } = mainWindow.getContentBounds()
+      flowView.setBounds(computeOffscreenBounds(screen.getAllDisplays(), mainWindow.getBounds().x, width, height))
+      await sleep(300)
+    }
+    try {
+      try { flowView.webContents.focus() } catch {}
+      await sleep(120)
+      await trustedClickOnFlowView(EDITOR_SELECTOR)
+      await sleep(120)
+      const inj = await injectPrompt(flowView, prompt)
+      console.log('[Flow Character] prompt injection:', JSON.stringify(inj))
+      if (!inj.success) return { success: false, error: inj.error || 'prompt injection failed' }
+    } finally {
+      if (wasHidden) { flowView.setBounds(bounds); await sleep(200) }
+    }
+
+    // 3) 생성 버튼 enable 대기 (프롬프트 인식됨 확인)
+    let enabled = false
+    for (let i = 0; i < 20 && !enabled; i++) {
+      enabled = await flowView.webContents
+        .executeJavaScript(`!!(${GENERATE_BTN_SELECTOR})`)
+        .catch(() => false)
+      if (!enabled) await sleep(1000)
+    }
+    if (!enabled) return { success: false, error: '생성 버튼 enable 안 됨(프롬프트 미인식)', retry: true }
+
+    // 4) arrow_forward 트러스트 클릭 → batchGenerateImages 응답 캡처 (arm-before-click, P2-1).
+    const cap = await clickAndCaptureGeneration(flowView)
+    if (cap.clickError) return { success: false, error: cap.clickError }
+    const body = cap.resp0 && cap.resp0.body
+    // HTTP 오류 status 보존 — 안 그러면 401/429/500 이 "entityId/workflowId 없음" 으로 뭉개져
+    //   렌더러 quota/auth/server 처리가 안 먹는다(reroll/scene 과 동일 가드).
+    if (cap.resp0 && cap.resp0.status >= 400) {
+      console.warn('[Flow Character] generate HTTP', cap.resp0.status, ':', (body || '').slice(0, 160))
+      return { success: false, status: cap.resp0.status, error: 'generate HTTP ' + cap.resp0.status + ': ' + (body || '').slice(0, 160) }
+    }
+    if (!body) return { success: false, error: '생성 응답 캡처 실패' + (cap.timeout ? '(timeout 120s)' : '') }
+
+    // 5) 응답 파싱 — entityId(workflows[].parentEntityId) + workflowId/mediaId/fifeUrl
+    const parsed = parseCharacterGenerateResponse(body)
+    if (!parsed || !parsed.entityId || !parsed.workflowId) {
+      return { success: false, error: '응답 파싱 실패(entityId/workflowId 없음): ' + (body || '').slice(0, 160) }
+    }
+    console.log('[Flow Character] generated entityId:', parsed.entityId, 'workflowId:', parsed.workflowId)
+
+    // 6) fifeUrl → base64 (generateImageDOM 과 동일 images 형태로 반환해 ref 저장 흐름 재사용)
+    const base64Image = await downloadFifeAsBase64(sessionFetch, parsed.fifeUrl)
+    if (parsed.fifeUrl && !base64Image) console.warn('[Flow Character] fifeUrl download failed')
+
+    // 7) 이름 등록 (best-effort) — PATCH /flow/entities, Bearer, recaptcha 불필요.
+    let registered = false
+    if (displayName) {
+      try {
+        const token = await getAccessToken()
+        if (token) {
+          const regRes = await flowPageFetch(`${API_BASE}/flow/entities`, {
+            method: 'PATCH',
+            headers: { authorization: 'Bearer ' + token },
+            body: JSON.stringify(buildEntityRegisterBody({ projectId, entityId: parsed.entityId, displayName, workflowId: parsed.workflowId })),
+          })
+          registered = !!regRes.ok
+          console.log('[Flow Character] register entities:', regRes.status, registered ? '✓' : '✗')
+          if (!regRes.ok) console.warn('[Flow Character] register body:', (regRes.text || '').slice(0, 200))
+        } else {
+          console.warn('[Flow Character] access token 추출 실패 — 이름 등록 skip')
+        }
+      } catch (e) { console.warn('[Flow Character] register error:', e.message) }
+    }
+
+    return buildCharacterResult(parsed, base64Image, { displayName: displayName || null, registered })
+  })
+
+  // A1b: 기존 entity 이미지 재생성(reroll). 상세페이지(/character/{entityId})에서 프롬프트 주입
+  //   + arrow_forward → batchGenerateImages → 응답 parentEntityId 가 기존 entityId 로 유지된다
+  //   (flow-net-capture #34 확인). 새 workflowId 를 캐릭터 대표 이미지로 PATCH 한다.
+  //   ⚠️ inject/submit/capture 는 generate-character 와 동일 패턴(추후 공통 함수로 dedup TODO).
+  ipcMain.handle('flow:reroll-character', async (_e, opts = {}) => {
+    const { entityId, prompt, displayName } = opts
+    if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R26-1
+    const flowView = getFlowView()
+    if (!flowView) return { success: false, error: 'Flow view not ready' }
+    if (!entityId) return { success: false, error: 'No entityId' }
+    if (!prompt) return { success: false, error: 'No prompt' }
+    const projectId = opts.projectId || projectIdFromUrl() || (getCapturedProjectId && getCapturedProjectId())
+    if (!projectId) return { success: false, error: 'No projectId' }
+    console.log('[Flow Character] reroll entityId:', entityId)
+
+    const onPage = await ensureOnCharacterDetailPage(flowView, entityId, projectId) // #R20-5: projectId 전달
+    if (!onPage) return { success: false, error: 'character 상세페이지 진입 실패(에디터 없음)' }
+
+    // 프롬프트 주입 — execCommand 동작 위해 flowView 를 일시적으로 보이게 + 포커스 + 에디터 trusted click.
+    const mainWindow = getMainWindow && getMainWindow()
+    const bounds = flowView.getBounds()
+    const wasHidden = (bounds.width === 0 || bounds.height === 0)
+    if (wasHidden && mainWindow) {
+      const { width, height } = mainWindow.getContentBounds()
+      flowView.setBounds(computeOffscreenBounds(screen.getAllDisplays(), mainWindow.getBounds().x, width, height))
+      await sleep(300)
+    }
+    let inj
+    try {
+      try { flowView.webContents.focus() } catch {}
+      await sleep(120)
+      await trustedClickOnFlowView(EDITOR_SELECTOR)
+      await sleep(120)
+      inj = await injectPrompt(flowView, prompt)
+      console.log('[Flow Character] reroll prompt injection:', JSON.stringify(inj))
+      if (!inj.success) return { success: false, error: inj.error || 'prompt injection failed' }
+    } finally {
+      if (wasHidden) { flowView.setBounds(bounds); await sleep(200) }
+    }
+
+    let enabled = false
+    for (let i = 0; i < 20 && !enabled; i++) {
+      enabled = await flowView.webContents.executeJavaScript(`!!(${GENERATE_BTN_SELECTOR})`).catch(() => false)
+      if (!enabled) await sleep(1000)
+    }
+    if (!enabled) return { success: false, error: '생성 버튼 enable 안 됨', retry: true }
+
+    const cap = await clickAndCaptureGeneration(flowView)
+    if (cap.clickError) return { success: false, error: cap.clickError }
+    const resp0 = cap.resp0
+    const body = cap.body
+    // §2 staleEntity: entity 가 현재 Flow 프로젝트에 없으면(legacy/A0 격리) batchGenerateImages 가
+    // 400 INVALID_ARGUMENT. 이때만 렌더러가 generateCharacter 폴백으로 self-heal 하도록 신호한다.
+    // ⚠️ 400 한정 — 429(quota)/401(auth)/500(server) 까지 staleEntity 로 보면 폴백이 중복 entity 를
+    //    만들고 quota/auth/server 처리를 우회한다. 그 외 4xx/5xx 는 일반 실패로 반환해 렌더러
+    //    공통 핸들러(quota-stop/auth/server)가 error/status 로 처리하게 한다.
+    if (resp0 && resp0.status >= 400) {
+      console.warn('[Flow Character] reroll HTTP', resp0.status, ':', (body || '').slice(0, 160))
+      // 400 중에서도 stale entity(INVALID_ARGUMENT)만 self-heal 폴백. content-policy/validation
+      //   류 400 은 stale 아님 → generic 실패로(엉뚱한 새 character 생성 방지).
+      if (resp0.status === 400 && isStaleEntityErrorBody(body)) return { success: false, staleEntity: true, status: 400 }
+      return { success: false, status: resp0.status, error: 'reroll HTTP ' + resp0.status + ': ' + (body || '').slice(0, 160) }
+    }
+    if (!body) return { success: false, error: '생성 응답 캡처 실패' + (cap.timeout ? '(timeout 120s)' : '') }
+
+    const parsed = parseCharacterGenerateResponse(body)
+    if (!parsed || !parsed.workflowId) return { success: false, error: '응답 파싱 실패: ' + (body || '').slice(0, 160) }
+    console.log('[Flow Character] reroll new workflowId:', parsed.workflowId, 'parentEntityId:', parsed.entityId)
+
+    const base64Image = await downloadFifeAsBase64(sessionFetch, parsed.fifeUrl)
+    if (parsed.fifeUrl && !base64Image) console.warn('[Flow Character] reroll fifeUrl download failed')
+
+    // 새 workflowId 를 캐릭터 대표 이미지로 등록(기존 entity 유지). 이름은 그대로.
+    let registered = false
+    try {
+      const token = await getAccessToken()
+      if (token) {
+        const regRes = await flowPageFetch(`${API_BASE}/flow/entities`, {
+          method: 'PATCH',
+          headers: { authorization: 'Bearer ' + token },
+          body: JSON.stringify(buildEntityImageBody({ projectId, entityId, workflowId: parsed.workflowId })),
+        })
+        registered = !!regRes.ok
+        console.log('[Flow Character] reroll re-register:', regRes.status, registered ? '✓' : '✗')
+      }
+    } catch (e) { console.warn('[Flow Character] reroll re-register error:', e.message) }
+
+    // P1-8: reroll 은 기존 entity 의 이미지 교체이므로 항상 요청한 entityId 를 유지한다.
+    //   Flow 가 다른 parentEntityId 를 주더라도(이론상) local ref 가 엉뚱한 entity 로 rebind 되지
+    //   않게 — 차이가 나면 경고만 남기고 요청 entityId 를 쓴다.
+    if (parsed.entityId && parsed.entityId !== entityId) {
+      console.warn('[Flow Character] reroll parentEntityId differs from requested — keeping requested:', { requested: entityId, parsed: parsed.entityId })
+    }
+    return buildCharacterResult({ ...parsed, entityId }, base64Image, { displayName: displayName || null, registered })
+  })
+
+  // B1: 장면 생성 — 메인 컴포저에서 `@캐릭터` 멘션 + 텍스트로 생성.
+  //   장면은 entity 가 아니라 이미지만 만든다(컴포저 = 이미지 생성과 동일 페이지). 차이는
+  //   structuredPrompt 에 캐릭터 entity 참조가 들어가 인물 일관성을 얻는 것(캡처 확인:
+  //   parts:[{reference:{entity:{handle,entityId}}},{text}], imageInputs:[]).
+  //   요청 자체는 recaptcha 때문에 주입 fetch 불가 → UI 구동: @주입→피커(div[role=dialog])
+  //   에서 이름매칭 div[role=option] 트러스트 클릭→칩 삽입→텍스트 주입→arrow_forward→응답 캡처.
+  //   ⚠️ inject/submit/capture 는 generate-character 와 동일 패턴(추후 공통 엔진으로 dedup TODO).
+
+  // 컴포저 에디터에 텍스트를 "끝에 이어" 주입(injectPrompt 는 전체 교체라 별도). 멘션 칩 뒤 텍스트용.
+  async function appendSceneText(flowView, text) {
+    return flowView.webContents.executeJavaScript(`
+      (async function(){
+        const t = ${JSON.stringify(text)};
+        const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
+        const e = ${EDITOR_SELECTOR};
+        if(!e) return false;
+        e.focus();
+        try { const s=window.getSelection(); s.removeAllRanges(); const r=document.createRange(); r.selectNodeContents(e); r.collapse(false); s.addRange(r); } catch {}
+        try { e.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:t})); } catch {}
+        const ok = document.execCommand('insertText', false, t);
+        try { e.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:t})); } catch {}
+        await sleep(120);
+        return !!ok;
+      })()
+    `).catch(() => false)
+  }
+
+  // `@이름` 멘션 한 건 삽입: @ 트러스트 키입력 → 피커 → "캐릭터" 탭 → 이름매칭 option JS 디스패치 선택.
+  async function insertSceneMention(flowView, name) {
+    // 1) "@" 를 트러스트 키 입력으로 친다 — execCommand 주입은 멘션 피커를 트리거 못 함(isTrusted 필요).
+    try {
+      flowView.webContents.focus()
+      flowView.webContents.sendInputEvent({ type: 'keyDown', keyCode: '@' })
+      flowView.webContents.sendInputEvent({ type: 'char', keyCode: '@' })
+      flowView.webContents.sendInputEvent({ type: 'keyUp', keyCode: '@' })
+    } catch (e) { console.warn('[Flow Scene] sendInputEvent @ failed:', e.message) }
+
+    // 2) 피커(div[role=dialog]) 열림 대기.
+    let hasDialog = false
+    for (let i = 0; i < 20 && !hasDialog; i++) {
+      await sleep(250)
+      hasDialog = await flowView.webContents.executeJavaScript(`!!document.querySelector("div[role='dialog']")`).catch(() => false)
+    }
+    if (!hasDialog) { console.warn('[Flow Scene] mention picker(dialog) 안 열림:', name); return false }
+
+    // 3) "캐릭터" 탭 클릭 — 기본 "모두" 탭은 이미지가 다수라 가상화로 캐릭터 entity 가 렌더 안 됨
+    //    (DIAG 확인: 옵션 19개 전부 "...이미지", 회사원3캐릭터 없음). 탭으로 캐릭터만 좁힌다.
+    await flowView.webContents.executeJavaScript(`(function(){
+      const dlg = document.querySelector("div[role='dialog']"); if(!dlg) return false;
+      const tabs = dlg.querySelectorAll("[role='tab']");
+      for (const tb of tabs){ if((tb.textContent||'').indexOf('캐릭터')>=0){ tb.click(); return true; } }
+      return false;
+    })()`).catch(() => false)
+    await sleep(500)
+
+    // 3.5) 검색창("애셋 검색")에 이름 입력해 필터링 — 캐릭터가 많으면 탭만으론 가상화로 스크롤이
+    //      필요하다(사용자 제안). value 를 JS 로 직접 set(한글 IME 우회) + input 이벤트로 React 필터 트리거.
+    await flowView.webContents.executeJavaScript(`(function(){
+      const dlg = document.querySelector("div[role='dialog']"); if(!dlg) return false;
+      const inp = dlg.querySelector("input[type='text']") || dlg.querySelector("input");
+      if(!inp) return false;
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      setter.call(inp, ${JSON.stringify(name)});
+      inp.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    })()`).catch(() => false)
+    await sleep(600)
+
+    // 4) 이름매칭 option 폴링. 단일 매처(exact 우선 → prefix 폴백)로 dedup — prefix-only 면
+    //    "회사원"이 "회사원2" 를 잘못 고를 수 있어 정확매칭을 먼저 본다. "이미지" 옵션은 제외.
+    const findOpt = `(function(){
+      const dlg = document.querySelector("div[role='dialog']"); if(!dlg) return null;
+      const strip = s => (s||'').replace(/\\s+/g,'');
+      const NAME = strip(${JSON.stringify(name)}); // R4-P2: 요청 이름도 strip — 공백 포함 이름도 일관 매칭
+      const opts = Array.from(dlg.querySelectorAll("[role='option']"));
+      // 정확 매칭만 — prefix fallback 제거(P1: "회사원" 이 "회사원3캐릭터" 를 잘못 고르는 것 차단).
+      // 캐릭터 탭 라벨은 "이름" 또는 "이름캐릭터" 형태(캡처 확인).
+      return opts.find(o => { const t=strip(o.textContent); return t===NAME || t===NAME+'캐릭터'; }) || null;
+    })()`
+    let found = false
+    for (let i = 0; i < 16 && !found; i++) {
+      await sleep(300)
+      found = await flowView.webContents.executeJavaScript(`!!(${findOpt})`).catch(() => false)
+    }
+    if (!found) {
+      const diag = await flowView.webContents.executeJavaScript(`(function(){
+        const dlg = document.querySelector("div[role='dialog']");
+        const tabs = Array.from((dlg||document).querySelectorAll("[role='tab']")).map(t=>(t.textContent||'').replace(/\\s+/g,' ').trim().slice(0,20));
+        const allOpts = Array.from((dlg||document).querySelectorAll("[role='option']")).map(o => (o.textContent||'').replace(/\\s+/g,' ').trim().slice(0,40));
+        return { hasDialog: !!dlg, tabs, optionCount: allOpts.length, allOptionLabels: allOpts.slice(0,20) };
+      })()`).catch((e) => ({ diagError: e.message }))
+      console.warn('[Flow Scene] mention option not found:', name, '— DIAG:', JSON.stringify(diag))
+      return false
+    }
+
+    // 5) 매칭 옵션 요소에 직접 pointer/mouse/click 시퀀스 디스패치(Radix onSelect — 좌표 클릭은 안 먹음).
+    const dispatchOpt = `(function(){
+      const o = ${findOpt};
+      if(!o) return false;
+      o.scrollIntoView({block:'center'});
+      const r=o.getBoundingClientRect();
+      const opt={bubbles:true,cancelable:true,composed:true,clientX:r.left+r.width/2,clientY:r.top+r.height/2,view:window,button:0,pointerId:1};
+      try{ o.dispatchEvent(new PointerEvent('pointerover',opt)); o.dispatchEvent(new PointerEvent('pointerenter',opt)); }catch{}
+      try{ o.dispatchEvent(new PointerEvent('pointerdown',opt)); }catch{}
+      o.dispatchEvent(new MouseEvent('mousedown',opt));
+      try{ o.dispatchEvent(new PointerEvent('pointerup',opt)); }catch{}
+      o.dispatchEvent(new MouseEvent('mouseup',opt));
+      o.dispatchEvent(new MouseEvent('click',opt));
+      return true;
+    })()`
+    const dispatched = await flowView.webContents.executeJavaScript(dispatchOpt).catch(() => false)
+    await sleep(500)
+    let dialogClosed = !(await flowView.webContents.executeJavaScript(`!!document.querySelector("div[role='dialog']")`).catch(() => true))
+    if (!dialogClosed) {
+      console.warn('[Flow Scene] option dispatch did not close picker — trying Enter')
+      try {
+        flowView.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' })
+        flowView.webContents.sendInputEvent({ type: 'char', keyCode: '\r' })
+        flowView.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' })
+      } catch {}
+      await sleep(500)
+      dialogClosed = !(await flowView.webContents.executeJavaScript(`!!document.querySelector("div[role='dialog']")`).catch(() => true))
+    }
+    // 칩 삽입 검증: "@" 자체도 void 노드라 "void 노드 존재"만으론 부족 — 칩 텍스트에 이름이
+    //   들어갔는지로 판정한다(선택 성공 시 칩이 이름을 표시). Enter 폴백이 선택 없이 피커만 닫는
+    //   거짓 성공을 막는다(거짓 성공 시 @이름이 literal 텍스트로 남아 인물 일관성 깨짐).
+    const post = await flowView.webContents.executeJavaScript(`(function(){
+      const e = ${EDITOR_SELECTOR};
+      const strip = s => (s||'').replace(/\\s+/g,'');
+      const NAME = strip(${JSON.stringify(name)}); // R4-P2: 요청 이름도 strip(헬퍼와 동일 규칙)
+      const chips = e ? Array.from(e.querySelectorAll("[data-slate-void='true']")) : [];
+      // R5-P2: 정확 일치/@이름/이름캐릭터 만 인정 — substring 제거(앞쪽 경계 누락으로 "영업회사원"
+      //   칩이 "회사원" 으로 통과하던 것 차단). flow-character-api.chipMatchesMentionName 과 동일 규칙.
+      const matches = (t) => { const s=strip(t); return s===NAME||s==='@'+NAME||s===NAME+'캐릭터'||s==='@'+NAME+'캐릭터'; };
+      return {
+        editorText: (e && (e.innerText||e.textContent)||'').slice(0,80),
+        hasMentionChip: chips.some(c => matches(c.textContent)),
+        stillHasDialog: !!document.querySelector("div[role='dialog']"),
+      };
+    })()`).catch((e) => ({ diagError: e.message }))
+    const ok = !!(dialogClosed && post && post.hasMentionChip)
+    // 성공 경로는 조용히. 실패/이상일 때만 진단 로그(B1 검증 완료 — 상시 로그 제거).
+    if (!ok) console.warn('[Flow Scene] mention select incomplete — DIAG:', JSON.stringify({ dispatched, dialogClosed, ...post }))
+    return ok
+  }
+
+  ipcMain.handle('flow:generate-scene', async (_e, opts = {}) => {
+    const { prompt, segments } = opts
+    if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R26-1
+    const flowView = getFlowView()
+    if (!flowView) return { success: false, error: 'Flow view not ready' }
+    const segs = (segments && segments.length) ? segments : (prompt ? [{ type: 'text', text: prompt }] : null)
+    if (!segs) return { success: false, error: 'No prompt' }
+    const projectId = opts.projectId || projectIdFromUrl() || (getCapturedProjectId && getCapturedProjectId())
+    if (!projectId) return { success: false, error: 'No projectId' }
+    console.log('[Flow Scene] generate-scene projectId:', projectId, 'segments:', segs.length)
+
+    // Codex #R4-4: enforce Flow page is on the TARGET project before DOM mutation.
+    const projectCheck = await ensureOnProjectComposer(flowView, projectId)
+    if (!projectCheck.ok) return { success: false, error: projectCheck.error }
+
+    // Agent ON: 직전 씬 생성이 진행 중이면 제출 버튼이 stop(busy)이고 컴포저 에디터가 잠시
+    //   사라진다 → 에디터 없는 상태로 주입하다 '컴포저 에디터 진입 실패'. flow:generate-image
+    //   와 동일하게 (1) 에이전트가 idle(arrow_forward enable) 될 때까지 폴링한 뒤, (2) 그래도
+    //   챗 패널이 가리면 닫는다.
+    if (getFlowAgentOn && getFlowAgentOn()) {
+      const SUBMIT_POLL = 1500
+      const SUBMIT_MAX_WAIT = 180000 // 에이전트 생성이 길 수 있어 최대 3분
+      let submitState = 'absent'
+      let gwaited = 0
+      while (gwaited <= SUBMIT_MAX_WAIT) {
+        submitState = await flowView.webContents.executeJavaScript(SUBMIT_PROBE).catch(() => 'error')
+        if (shouldProceed(submitState)) break
+        if (gwaited === 0) console.log('[Flow Scene] (Agent ON) agent not idle (' + submitState + ') — waiting for ready...')
+        await sleep(SUBMIT_POLL)
+        gwaited += SUBMIT_POLL
+      }
+      if (submitState !== 'idle') {
+        console.warn('[Flow Scene] (Agent ON) agent never idle (last=' + submitState + ', ' + Math.round(gwaited / 1000) + 's)')
+        return { success: false, error: 'Agent not ready (' + submitState + ') after 180s', retry: true }
+      }
+      if (gwaited > 0) console.log('[Flow Scene] (Agent ON) agent idle after', Math.round(gwaited / 1000), 's')
+      // idle 인데도 챗 패널이 컴포저를 가리면 닫는다(no-op if 없음).
+      for (let i = 0; i < 3; i++) {
+        const r = await flowView.webContents.executeJavaScript(COMPOSE_EDITOR_READY).catch(() => false)
+        if (r) break
+        await trustedClickOnFlowView(AGENT_CHAT_CLOSE_SELECTOR).catch(() => {})
+        await sleep(350)
+      }
+    }
+
+    // 1) 컴포저 에디터 준비 대기(hook 이 ensureComposePage 로 컴포즈 복귀시킨 뒤 호출 — 여기선 ready 재확인).
+    let ready = false
+    for (let i = 0; i < 30 && !ready; i++) {
+      await sleep(500)
+      ready = await flowView.webContents.executeJavaScript(COMPOSE_EDITOR_READY).catch(() => false)
+    }
+    if (!ready) return { success: false, error: '컴포저 에디터 진입 실패' }
+    await sleep(400)
+
+    // 2) flowView 보이게 + 포커스 + 에디터 트러스트 클릭 + 기존 텍스트 클리어 후 segment 순서대로 주입.
+    const mainWindow = getMainWindow && getMainWindow()
+    const bounds = flowView.getBounds()
+    const wasHidden = (bounds.width === 0 || bounds.height === 0)
+    if (wasHidden && mainWindow) {
+      const { width, height } = mainWindow.getContentBounds()
+      flowView.setBounds(computeOffscreenBounds(screen.getAllDisplays(), mainWindow.getBounds().x, width, height))
+      await sleep(300)
+    }
+    try {
+      try { flowView.webContents.focus() } catch {}
+      await sleep(120)
+      await trustedClickOnFlowView(EDITOR_SELECTOR)
+      await sleep(150)
+      // 기존 텍스트 클리어(빈 컴포저에서 시작)
+      await flowView.webContents.executeJavaScript(`(function(){try{const e=${EDITOR_SELECTOR}; if(e){e.focus(); const s=window.getSelection(); s.removeAllRanges(); const r=document.createRange(); r.selectNodeContents(e); s.addRange(r); document.execCommand('delete',false,null);}}catch{}})()`).catch(() => {})
+      await sleep(100)
+      for (const seg of segs) {
+        if (seg.type === 'mention') {
+          const ok = await insertSceneMention(flowView, seg.name)
+          if (!ok) return { success: false, error: '멘션 선택 실패: ' + seg.name, retry: true }
+        } else if (seg.type === 'text' && seg.text) {
+          const ok = await appendSceneText(flowView, seg.text)
+          if (!ok) return { success: false, error: '텍스트 주입 실패' }
+        }
+      }
+    } finally {
+      if (wasHidden) { flowView.setBounds(bounds); await sleep(200) }
+    }
+
+    // 3) 생성 버튼 enable 대기 → 트러스트 클릭 → batchGenerateImages 응답 캡처.
+    let enabled = false
+    for (let i = 0; i < 20 && !enabled; i++) {
+      enabled = await flowView.webContents.executeJavaScript(`!!(${GENERATE_BTN_SELECTOR})`).catch(() => false)
+      if (!enabled) await sleep(1000)
+    }
+    if (!enabled) return { success: false, error: '생성 버튼 enable 안 됨', retry: true }
+
+    // Agent ON(streamChat): batchGenerateImages 가 안 나가 intercept 로 못 받는다 → 제출 전
+    //   스냅샷 후 클릭하고 DOM 의 "새" 결과 이미지(media.getMediaUrlRedirect?name=)를 수집한다.
+    //   스냅샷이 직전 업로드된 @멘션 캐릭터 이미지를 제외 → 결과만 받는다(공용 헬퍼).
+    if (getFlowAgentOn && getFlowAgentOn()) {
+      let existingGenMediaIds = []
+      try {
+        const _pre = await flowView.webContents.executeJavaScript(GENERATED_IMG_PROBE)
+        if (Array.isArray(_pre)) existingGenMediaIds = _pre.map(i => i && i.mediaId).filter(Boolean)
+      } catch {}
+      const aClick = await trustedClickOnFlowView(GENERATE_BTN_SELECTOR)
+      if (!aClick || !aClick.success) return { success: false, error: aClick?.error || '생성 버튼 클릭 실패', retry: true }
+      const col = await collectAgentDomImages({
+        scan: () => flowView.webContents.executeJavaScript(GENERATED_IMG_PROBE),
+        sessionFetch, sleep,
+        // 제출 전 스냅샷 + 다른 경로(비동기 generate-image)가 이미 수집한 것도 제외 → 결과만.
+        existingMediaIds: [...existingGenMediaIds, ...collectedMediaIds], want: 1,
+        // 수집한 mediaId 를 공유 set 에 등록 → 비동기 경로가 이 이미지를 다시 매칭하지 않게.
+        markCollected: (mid) => collectedMediaIds.add(mid),
+        logPrefix: '[Flow Scene] (Agent ON)', warn: (m) => console.warn(m),
+      })
+      if (!col.success) return { success: false, error: col.error, retry: true }
+      console.log('[Flow Scene] (Agent ON) collected', col.images.length, 'image(s) from DOM')
+      return { success: true, images: col.images, mediaId: col.images[0] && col.images[0].mediaId }
+    }
+
+    const cap = await clickAndCaptureGeneration(flowView)
+    if (cap.clickError) return { success: false, error: cap.clickError }
+    const resp0 = cap.resp0
+    const body = cap.body
+    if (resp0 && resp0.status >= 400) {
+      console.warn('[Flow Scene] generate failed (HTTP', resp0.status, '):', (body || '').slice(0, 160))
+      return { success: false, error: '장면 생성 실패(HTTP ' + resp0.status + ')', status: resp0.status }
+    }
+    if (!body) return { success: false, error: '생성 응답 캡처 실패' + (cap.timeout ? '(timeout 120s)' : '') }
+
+    const parsed = parseCharacterGenerateResponse(body)
+    if (!parsed || !parsed.workflowId) return { success: false, error: '응답 파싱 실패: ' + (body || '').slice(0, 160) }
+    console.log('[Flow Scene] generated workflowId:', parsed.workflowId, 'mediaId:', parsed.mediaId)
+
+    // fifeUrl → base64 (generateImageDOM 과 동일 images 형태로 반환해 ref 저장 흐름 재사용)
+    const base64Image = await downloadFifeAsBase64(sessionFetch, parsed.fifeUrl)
+    if (parsed.fifeUrl && !base64Image) console.warn('[Flow Scene] fifeUrl download failed')
+
+    return {
+      success: true,
+      images: base64Image ? [{ base64: base64Image, mediaId: parsed.mediaId }] : [],
+      workflowId: parsed.workflowId,
+      mediaId: parsed.mediaId,
+      fifeUrl: parsed.fifeUrl,
+    }
+  })
+
+  ipcMain.handle('flow:rename-character', async (_e, opts = {}) => {
+    const { entityId, displayName } = opts
+    if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R26-1
+    if (!entityId || !displayName) return { success: false, error: 'entityId/displayName required' }
+    const projectId = opts.projectId || projectIdFromUrl() || (getCapturedProjectId && getCapturedProjectId())
+    if (!projectId) return { success: false, error: 'No projectId' }
+    try {
+      const token = await getAccessToken()
+      if (!token) return { success: false, error: 'access token 추출 실패' }
+      const res = await flowPageFetch(`${API_BASE}/flow/entities`, {
+        method: 'PATCH',
+        headers: { authorization: 'Bearer ' + token },
+        body: JSON.stringify(buildEntityRenameBody({ projectId, entityId, displayName })),
+      })
+      console.log('[Flow Character] rename entities:', res.status, res.ok ? '✓' : '✗', '(name', displayName + ')')
+      if (!res.ok) console.warn('[Flow Character] rename body:', (res.text || '').slice(0, 200))
+      return { success: !!res.ok, status: res.status }
+    } catch (e) {
+      console.warn('[Flow Character] rename error:', e.message)
+      return { success: false, error: e.message }
+    }
+  })
+
+  // A2: 이미 있는 이미지를 Flow /characters 의 실제 "업로드" UI 로 올려 character entity 로 등록.
+  //   직접 uploadImage API 는 SPA 내부 entity 컨텍스트가 없어 404 → A1 처럼 DOM 을 구동한다:
+  //   0) /characters 진입. 1) file input(input[type=file][accept=image/*])에 임시파일을 debugger 로
+  //   주입 → SPA 의 onChange 가 entityContext 와 함께 uploadImage 실행(= 캐릭터 생성). 2) 가로챈
+  //   네트워크 버퍼에서 그 응답(parentEntityId/workflowId) 회수. 3) PATCH /flow/entities 로 이름 등록.
+  ipcMain.handle('flow:upload-character-entity', async (_e, opts = {}) => {
+    const { base64, displayName, mimeType, fileName } = opts
+    if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R26-1
+    if (!base64) return { success: false, error: 'base64 required' }
+    const projectId = opts.projectId || projectIdFromUrl() || (getCapturedProjectId && getCapturedProjectId())
+    if (!projectId) return { success: false, error: 'No projectId' }
+    const flowView = getFlowView && getFlowView()
+    if (!flowView) return { success: false, error: 'Flow view not ready' }
+    const b64 = base64.includes(',') ? base64.split(',')[1] : base64
+    try {
+      // P1: bound projectId 의 /characters 로 강제 — Flow 탭이 다른 프로젝트에 있어도 거기에 entity 가
+      //   생기지 않게(local ref 에 잘못된 entityId 저장 방지).
+      const onPage = await ensureOnCharactersPage(flowView, projectId)
+      if (!onPage) return { success: false, error: 'characters 진입 실패(에디터 없음)' }
+
+      // 이전 캡처 노이즈 제거 — 이 업로드로 생긴 응답만 보게.
+      await flowView.webContents.executeJavaScript('window.__autoflowcut_net__ = []').catch(() => {})
+
+      // 1) 대화상자 방지(input.click noop) → "업로드" 버튼 트러스트 클릭(= character upload 모드 진입).
+      const hasInput = await neutralizeFileInputClick(flowView)
+      if (!hasInput) return { success: false, error: 'file input 없음(' + A2_FILE_SEL + ')' }
+      const upClick = await trustedClickOnFlowView(A2_UPLOAD_BTN_EXPR)
+      console.log('[Flow Character] A2 업로드 버튼 trusted click:', JSON.stringify(upClick))
+      await sleep(500)
+
+      // 2) file input 에 파일 주입(synthetic change — onChange 가 읽음).
+      const inj = await injectFileToInput(flowView, b64, fileName, mimeType)
+      if (!inj || !inj.success) return { success: false, error: 'file 주입 실패: ' + (inj && inj.error) }
+      console.log('[Flow Character] A2 file injected')
+      await sleep(800)
+
+      // 3) "만들기"(실행) 버튼 트러스트 클릭 — 네이티브에선 파일 선택 후 자동 실행되며, 이때 entityContext
+      //    업로드가 트리거되고 spinner 가 돈다. (synthetic 클릭은 Flow 가 무시하므로 트러스트 클릭 필수.)
+      const runClick = await trustedClickOnFlowView(A2_RUN_BTN_EXPR)
+      console.log('[Flow Character] A2 만들기(실행) trusted click:', JSON.stringify(runClick))
+
+      // SPA 가 보낸 uploadImage 응답을 네트워크 버퍼에서 회수(성공 200 또는 4xx/5xx 실패 즉시).
+      const resp = await waitForUploadImageResponse(flowView, 60000)
+      if (!resp) return { success: false, error: 'uploadImage 응답 타임아웃(60s)' }
+      if (resp.status >= 400) {
+        console.warn('[Flow Character] A2 uploadImage HTTP', resp.status, ':', (resp.respBody || '').slice(0, 160))
+        return { success: false, status: resp.status, error: 'uploadImage HTTP ' + resp.status + ': ' + (resp.respBody || '').slice(0, 160) }
+      }
+      const parsed = parseUploadImageResponse(resp.respBody)
+      if (!parsed || !parsed.entityId || !parsed.workflowId) {
+        return { success: false, error: '업로드 응답 파싱 실패(entityId/workflowId 없음): ' + (resp.respBody || '').slice(0, 160) }
+      }
+      console.log('[Flow Character] A2 uploaded mediaId:', parsed.mediaId, 'workflowId:', parsed.workflowId, 'entityId:', parsed.entityId)
+
+      // 이름 등록 — SPA 가 만든 entity 에 displayName + 이미지 레퍼런스 PATCH (검증된 경로).
+      let registered = false
+      try {
+        const token = await getAccessToken()
+        if (token) {
+          const reg = await flowPageFetch(`${API_BASE}/flow/entities`, {
+            method: 'PATCH',
+            headers: { authorization: 'Bearer ' + token },
+            body: JSON.stringify(buildEntityRegisterBody({ projectId, entityId: parsed.entityId, displayName: displayName || '', workflowId: parsed.workflowId })),
+          })
+          registered = !!reg.ok
+          console.log('[Flow Character] A2 register entities:', reg.status, registered ? '✓' : '✗')
+          if (!reg.ok) console.warn('[Flow Character] A2 register body:', (reg.text || '').slice(0, 200))
+        }
+      } catch (e2) {
+        console.warn('[Flow Character] A2 register error:', e2.message)
+      }
+      return { success: true, entityId: parsed.entityId, workflowId: parsed.workflowId, mediaId: parsed.mediaId, registered }
+    } catch (e) {
+      console.warn('[Flow Character] A2 upload-character-entity error:', e.message)
+      return { success: false, error: e.message }
+    }
+  })
+}

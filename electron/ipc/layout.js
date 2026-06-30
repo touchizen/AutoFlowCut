@@ -101,10 +101,23 @@ export function registerLayoutIPC(ipcMain, getMainWindow, getFlowView) {
     return { enabled: powerSaveBlockerId !== null && powerSaveBlocker.isStarted(powerSaveBlockerId) }
   })
 
-  // Open external URL
-  ipcMain.handle('app:open-external', (event, { url }) => {
-    shell.openExternal(url)
-    return { success: true }
+  // Open external URL — #R12-14: http/https/mailto 만 허용(렌더러가 보낸 임의 URL 로
+  //   file://, javascript:, app-scheme 등이 shell.openExternal 로 새는 것을 막는다).
+  ipcMain.handle('app:open-external', async (event, { url }) => {
+    try {
+      const parsed = new URL(String(url))
+      const ALLOWED = ['http:', 'https:', 'mailto:']
+      if (!ALLOWED.includes(parsed.protocol)) {
+        console.warn('[Layout] open-external blocked (protocol):', parsed.protocol)
+        return { success: false, error: 'protocol_not_allowed' }
+      }
+      // #R15-9: await — OS open 실패가 success 로 보고되거나 unhandled rejection 으로 새지 않게.
+      await shell.openExternal(parsed.href)
+      return { success: true }
+    } catch (e) {
+      console.warn('[Layout] open-external failed:', e?.message)
+      return { success: false, error: e?.message || 'open_failed' }
+    }
   })
 
   // Reveal file in Finder / Explorer

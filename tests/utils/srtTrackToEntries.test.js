@@ -8,7 +8,7 @@
  * 그대로 GCF 자막 segment 에 전달하기 위한 변환.
  */
 import { describe, it, expect } from 'vitest'
-import { srtTrackToEntries, resolveAudioSrtEntries } from '../../src/utils/srtTrack'
+import { srtTrackToEntries, resolveAudioSrtEntries, scenesToSrtEntries } from '../../src/utils/srtTrack'
 
 describe('srtTrackToEntries', () => {
   it('비어있거나 null 입력 → null 반환 (GCF fallback 트리거)', () => {
@@ -87,5 +87,53 @@ describe('resolveAudioSrtEntries (Audio 탭 우선순위)', () => {
   it('둘 다 비면 null', () => {
     expect(resolveAudioSrtEntries(null, [])).toBeNull()
     expect(resolveAudioSrtEntries({ srtEntries: [] }, null)).toBeNull()
+  })
+
+  it('srtTrack 비고 scenes 에 legacy subtitle 있으면 scenes 로 fallback (타임라인 회귀)', () => {
+    const scenes = [
+      { id: 'scene_1', startTime: 0, endTime: 3, subtitle: '태양이 떠오릅니다.' },
+      { id: 'scene_2', startTime: 3, endTime: 6, subtitle: '여왕이 됐습니다.' },
+    ]
+    expect(resolveAudioSrtEntries(null, [], scenes)).toEqual([
+      { startMs: 0, endMs: 3000, text: '태양이 떠오릅니다.' },
+      { startMs: 3000, endMs: 6000, text: '여왕이 됐습니다.' },
+    ])
+  })
+
+  it('srtTrack 이 있으면 scenes 무시(srtTrack 우선)', () => {
+    const scenes = [{ id: 's', startTime: 0, endTime: 9, subtitle: 'scene sub' }]
+    expect(resolveAudioSrtEntries(null, srtTrack, scenes)).toEqual(expectedFromTrack)
+  })
+})
+
+describe('scenesToSrtEntries (legacy scene.subtitle → 타임라인 엔트리)', () => {
+  it('subtitle + startTime/endTime → ms 엔트리', () => {
+    const scenes = [
+      { id: 'a', startTime: 0, endTime: 1.5, subtitle: '첫' },
+      { id: 'b', startTime: 1.5, endTime: 3, subtitle: '둘' },
+    ]
+    expect(scenesToSrtEntries(scenes)).toEqual([
+      { startMs: 0, endMs: 1500, text: '첫' },
+      { startMs: 1500, endMs: 3000, text: '둘' },
+    ])
+  })
+
+  it('빈/공백 subtitle 인 씬은 제외', () => {
+    const scenes = [
+      { id: 'a', startTime: 0, endTime: 1, subtitle: '유효' },
+      { id: 'b', startTime: 1, endTime: 2, subtitle: '' },
+      { id: 'c', startTime: 2, endTime: 3, subtitle: '   ' },
+      { id: 'd', startTime: 3, endTime: 4 },
+    ]
+    expect(scenesToSrtEntries(scenes)).toEqual([{ startMs: 0, endMs: 1000, text: '유효' }])
+  })
+
+  it('빈 배열/null → null', () => {
+    expect(scenesToSrtEntries([])).toBeNull()
+    expect(scenesToSrtEntries(null)).toBeNull()
+  })
+
+  it('모든 씬 subtitle 없으면 null', () => {
+    expect(scenesToSrtEntries([{ id: 'a', startTime: 0, endTime: 1 }])).toBeNull()
   })
 })

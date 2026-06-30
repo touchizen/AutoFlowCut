@@ -8,6 +8,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import { STYLE_PRESETS } from '../config/defaults'
 import { toast } from '../components/Toast'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
+import { checkFlowProjectReady } from '../utils/guards'
 
 const THUMBNAIL_PROMPT_PREFIX = 'A serene landscape with mountains and a river'
 
@@ -81,7 +82,7 @@ export function toFileUrl(pathOrUrl, version = null) {
   return pathOrUrl
 }
 
-export function useStyleThumbnails(flowAPI) {
+export function useStyleThumbnails(genAPI, { flowProjectReady = true } = {}) {
   const [thumbnails, setThumbnails] = useState({})         // { presetId: filePath | blobUrl }
   const [generating, setGenerating] = useState(false)
   const [stopping, setStopping] = useState(false)
@@ -116,8 +117,12 @@ export function useStyleThumbnails(flowAPI) {
 
   // 썸네일 일괄 생성 (프리셋 + 커스텀 스타일 레퍼런스)
   const generateThumbnails = useCallback(async (presetIds, customRefs, t) => {
-    if (!flowAPI?.generateImageDOM) {
-      toast.error('Flow API not available')
+    // Flow 모드에서 프로젝트 미준비 시 차단. API 모드는 flowProjectReady=true → no-op.
+    const readyCheck = checkFlowProjectReady(flowProjectReady, t || ((k, opts) => opts?.defaultValue || k))
+    if (!readyCheck.ok) return
+
+    if (!genAPI?.generateImage) {
+      toast.error('GenAI API not available')
       return
     }
 
@@ -157,7 +162,7 @@ export function useStyleThumbnails(flowAPI) {
       console.log(`[StyleThumbnails] Generating preset ${presetId}: ${prompt}`)
 
       try {
-        const result = await flowAPI.generateImageDOM(prompt, [], { batchCount: 1 })
+        const result = await genAPI.generateImage(prompt, [], { batchCount: 1 })
 
         if (result.success && result.images?.length > 0) {
           const firstImage = result.images[0]
@@ -177,6 +182,12 @@ export function useStyleThumbnails(flowAPI) {
           generated++
         } else {
           console.warn(`[StyleThumbnails] Failed to generate ${presetId}:`, result.error)
+          // #R21-4: 인증 실패면 죽은 토큰이니 남은 스타일을 계속 돌리지 않고 즉시 중단.
+          if (result.authFailed) {
+            window.dispatchEvent(new CustomEvent('flow-login-expired'))
+            stopped = true
+            break
+          }
           if (isQuotaExhaustedError(result.error)) {
             emitQuotaStop({ scope: 'StyleThumbnails(preset)' })
             stopped = true
@@ -216,7 +227,7 @@ export function useStyleThumbnails(flowAPI) {
         console.log(`[StyleThumbnails] Generating custom style "${ref.name}": ${prompt}`)
 
         try {
-          const result = await flowAPI.generateImageDOM(prompt, [], { batchCount: 1 })
+          const result = await genAPI.generateImage(prompt, [], { batchCount: 1 })
 
           if (result.success && result.images?.length > 0) {
             const firstImage = result.images[0]
@@ -224,6 +235,11 @@ export function useStyleThumbnails(flowAPI) {
             const dataUrl = imageData.startsWith('data:') ? imageData : `data:image/png;base64,${imageData}`
             customResults.push({ refId: ref.id, data: dataUrl })
             generated++
+          } else if (!result.success && result.authFailed) {
+            // #R21-4: 인증 실패 → 즉시 중단.
+            window.dispatchEvent(new CustomEvent('flow-login-expired'))
+            stopped = true
+            break
           } else if (!result.success && isQuotaExhaustedError(result.error)) {
             emitQuotaStop({ scope: 'StyleThumbnails(custom)' })
             stopped = true
@@ -262,7 +278,7 @@ export function useStyleThumbnails(flowAPI) {
     }
 
     return customResults  // 커스텀 스타일 결과 반환 → App에서 References 업데이트
-  }, [flowAPI, thumbnails])
+  }, [genAPI, thumbnails, flowProjectReady])
 
   const stopGenerating = useCallback(() => {
     stopRequestedRef.current = true

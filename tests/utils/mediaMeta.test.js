@@ -78,6 +78,19 @@ describe('parseModelLabel', () => {
     expect(parseModelLabel('weird name with spaces'))
       .toEqual({ name: 'weird name with spaces', version: null })
   })
+
+  it('카탈로그(공식) 모델 id 는 큐레이션된 라벨 우선 (범용 파서 뭉갬 방지)', () => {
+    // 'veo-3.1-fast-generate-preview' 가 'veo / fast generate preview v3.1' 로 뭉개지지 않게.
+    expect(parseModelLabel('veo-3.1-fast-generate-preview'))
+      .toEqual({ name: 'Veo 3.1 Fast', version: null })
+    expect(parseModelLabel('veo-3.1-lite-generate-preview'))
+      .toEqual({ name: 'Veo 3.1 Lite', version: null })
+    // 이미지 공식 id 는 generic 파서로는 원본이 그대로 나오던 것 → 카탈로그 라벨로.
+    expect(parseModelLabel('gemini-2.5-flash-image'))
+      .toEqual({ name: 'Nano Banana', version: null })
+    expect(parseModelLabel('gemini-3-pro-image'))
+      .toEqual({ name: 'Nano Banana Pro', version: null })
+  })
 })
 
 describe('estimateBase64FileSize', () => {

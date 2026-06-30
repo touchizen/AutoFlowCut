@@ -101,7 +101,7 @@ export function SideDrawer({ isOpen, onClose }) {
     {
       icon: '🪄',
       label: t('drawer.flow'),
-      url: 'https://labs.google/fx/tools/flow',
+      url: 'https://aistudio.google.com/app/apikey',
       description: t('drawer.flowDesc')
     },
     {

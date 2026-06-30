@@ -36,7 +36,8 @@ export default function ReferencePanel({
   thumbnailProgress = { current: 0, total: 0 },
   onGenerateThumbnails,
   onStopThumbnailGeneration,
-  onDeleteThumbnail
+  onDeleteThumbnail,
+  appMode,  // #R28-3: 모달 업로드 stale-apply 가드용 스코프(mode) — getScopeToken 에 사용
 }) {
   const { t } = useI18n()
   const [collapsed, setCollapsed] = useState(false)
@@ -97,9 +98,24 @@ export default function ReferencePanel({
   }
   
   const handleUpdateRef = (index, updatedRef) => {
-    const newRefs = [...references]
-    newRefs[index] = updatedRef
-    onUpdate(newRefs)
+    // #R27-3: 업로드 등 async 작업 뒤 호출될 때 stale 'references' closure 로 전체 배열을
+    //   재구성해 onUpdate 하면(특히 프로젝트 전환 중) 현재 프로젝트 refs 가 옛 배열로 통째로
+    //   덮어써진다. 함수형 업데이트로 현재 state(prev)에 안정적 id 로 patch — 전환돼서 그 id 가
+    //   현재 배열에 없으면 no-op 으로 통째-clobber 를 막는다. (id 없는 레거시 ref 는 길이가
+    //   동일할 때만 index 폴백 — 전환되면 길이가 달라 clobber 안 됨.)
+    const targetId = references[index]?.id
+    onUpdate(prev => {
+      if (!Array.isArray(prev)) return prev
+      if (targetId != null) {
+        return prev.some(r => r.id === targetId)
+          ? prev.map(r => (r.id === targetId ? updatedRef : r))
+          : prev
+      }
+      if (prev.length !== references.length) return prev
+      const copy = [...prev]
+      copy[index] = updatedRef
+      return copy
+    })
   }
   
   const handleRemoveRef = (index) => {
@@ -190,7 +206,7 @@ export default function ReferencePanel({
         <div className={`ref-grid ${ratioClass}`}>
           {references.map((ref, index) => (
             <ReferenceCard
-              key={ref.id || index}
+              key={ref.id != null ? ref.id : `idx-${index}`}
               reference={ref}
               index={index}
               onUpdate={handleUpdateRef}
@@ -257,7 +273,11 @@ export default function ReferencePanel({
       {/* 상세 모달 */}
       {detailIndex !== null && references[detailIndex] && (
         <ReferenceDetailModal
+          // #R9: 다른 ref 로 바뀌면 remount → editData 가 stale(이전 ref 의 name/prompt 등)로
+          //   남지 않게 한다(editData 는 mount 시 1회 초기화되므로).
+          key={references[detailIndex].id ?? detailIndex}
           reference={references[detailIndex]}
+          references={references}
           index={detailIndex}
           onUpdate={handleUpdateRef}
           onUpload={onUpload}
@@ -267,6 +287,7 @@ export default function ReferencePanel({
           t={t}
           isKo={isKo}
           projectName={projectName}
+          appMode={appMode}
           thumbnails={thumbnails}
         />
       )}

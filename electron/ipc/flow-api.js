@@ -6,8 +6,14 @@
  */
 
 import path from 'node:path'
-import { net } from 'electron'
+import { net, screen } from 'electron'
+import { computeOffscreenBounds } from '../offscreen-bounds.js'
 import { formatGoogleApiError } from './googleApiError.js'
+import { SUBMIT_PROBE, shouldProceed, SUBMIT_ENABLED_PROBE } from '../flow-submit-gate.js'
+import { GENERATED_IMG_PROBE, planDomImageAssignments, clampImageBatchCount } from '../flow-media-collect.js'
+import { createGenerationTimeout } from '../flow-generation-timeout.js'
+import { createMutex } from '../asyncMutex.js'
+import { VIDEO_DOWNLOAD_TIMEOUT_MS, IMAGE_UPSCALE_TIMEOUT_MS } from '../flow-download-config.js'
 
 /**
  * Register all Flow API IPC handlers.
@@ -19,23 +25,63 @@ export function registerFlowAPIIPC(ipcMain, deps) {
   const {
     getFlowView, getMainWindow, trustedClickOnFlowView, sessionFetch, flowPageFetch,
     parseFlowResponse, getRecaptchaToken, extractMediaIds, extractFifeUrls,
-    extractBase64Images, fetchMediaAsBase64, configureFlowMode,
+    extractBase64Images, fetchMediaAsBase64, configureFlowMode, applyAgentDefaults, listAgentModels, ensureAgentOff, ensureAgentOn, selectFlowModeTab, ensureOnProjectComposer,
+    getFlowAgentOn,
     getCapturedProjectId, setCapturedProjectId,
     getPendingGeneration, setPendingGeneration,
     pendingGenerations,
-    getPendingReferenceImages, setPendingReferenceImages,
-    getPendingSeedValue, setPendingSeedValue,
-    setPendingImageAspectRatio,
     getEnterToolClicked, setEnterToolClicked,
-    ensureDebuggerAttached,
     setFlowPageInject, clearFlowPageInject,
+    getCurrentMode,
     SESSION_URL, TOKEN_INFO_URL, FLOW_URL, MEDIA_REDIRECT_URL, UPLOAD_URL,
     API_HEADERS, GENERATE_URL, BASE_API_URL,
   } = deps
 
+  // #R25-4: API 모드로 전환하면 flowView 인스턴스는 보존되므로(세션 유지) getFlowView() 만으론
+  //   stale 렌더러 호출이 Flow quota 를 소비/상태변경할 수 있다. quota 를 쓰는 submit/upscale/upload
+  //   핸들러는 현재 모드가 'flow' 일 때만 진행한다(읽기 전용 핸들러는 게이트 불필요).
+  const flowActive = () => !getCurrentMode || getCurrentMode() === 'flow'
+
+  // 에이전트 챗 DOM 에서 이미 수집(배정)한 생성 이미지 mediaId 집합.
+  // 같은 이미지를 다른 generation 에 중복 배정하지 않게 한다. clear-generations 시 리셋.
+  // main 이 공유 set 을 주입(character 동기 @멘션 수집과 공유) — 없으면 로컬(테스트).
+  const collectedMediaIds = deps.collectedMediaIds || new Set()
+
+  // R14-P1: DOM 비디오 다운로드 / 이미지 업스케일은 공유 Flow session 의 will-download 에 리스너를
+  //   붙여 setSavePath 를 건다. 동시 실행 시 파일이 섞이므로(마지막 리스너가 가로챔) 이 mutex 로 직렬화.
+  const downloadMutex = createMutex()
+
+  // DOM 에서 생성 이미지(<img ...media.getMediaUrlRedirect?name=UUID>)를 제출 순서대로
+  // 긁어, 아직 미배정인 것들을 "이미지가 필요한 pending generation"(제출 순서)에 1:1 매칭.
+  // Flow 가 batchGenerateImages 를 안 쓰고 streamChat(SSE)로 이미지를 주므로 응답 가로채기
+  // 대신 이 방식으로 수집한다.
+  async function assignDomImagesToPending() {
+    const flowView = getFlowView()
+    if (!flowView) return
+    let domImgs = []
+    try {
+      domImgs = await flowView.webContents.executeJavaScript(GENERATED_IMG_PROBE)
+    } catch { return }
+    if (!Array.isArray(domImgs) || domImgs.length === 0) return
+    // 제출 순서대로 1:1 매칭. Agent-OFF 로 제출된 gen(allowDomFallback:false)은 intercept(fifeUrl)
+    // 로 받으므로 여기서 제외 — 안 그러면 이전 Agent-OFF 씬의 DOM 잔상 이미지가 다음 gen 에
+    // 잘못 재배정된다("첫 이미지가 둘째에도"). 매칭 로직은 planDomImageAssignments(단위테스트 보유).
+    const assignments = planDomImageAssignments(domImgs, [...pendingGenerations.values()], collectedMediaIds)
+    for (const { gen, img } of assignments) {
+      collectedMediaIds.add(img.mediaId)
+      gen.domImages = [img]
+      gen.completed = true
+      console.log('[Flow API] [DOM Collect] matched image', img.mediaId.slice(0, 8), '→ generation', (gen.generationId || '').slice(-8))
+    }
+  }
+
   // Extract Flow access token from session
   ipcMain.handle('flow:extract-token', async () => {
     console.log('[Flow API] extract-token called')
+    // #R28-1: API 모드 전환 후에도 Flow view(=로그인 세션)는 보존되므로, gate 없으면 렌더러가
+    //   계속 Flow bearer token 을 읽을 수 있다(fail-open). API 모드는 BYOK 키를 쓰지 Flow token 을
+    //   안 쓰므로 mode 가 'flow' 일 때만 추출한다.
+    if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }
 
@@ -73,21 +119,29 @@ export function registerFlowAPIIPC(ipcMain, deps) {
   // Extract projectId from Flow page URL
   // (capturedProjectId는 파일 상단에서 선언)
 
-  ipcMain.handle('flow:extract-project-id', async () => {
+  ipcMain.handle('flow:extract-project-id', async (event, opts = {}) => {
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }
-
-    // 이미 캡처된 projectId가 있으면 반환
-    if (getCapturedProjectId()) {
-      return { success: true, projectId: getCapturedProjectId() }
-    }
+    // liveOnly: 캐시/JS 폴백 없이 "현재 URL 의 프로젝트"만 반환(아니면 null). drift 가드가 Flow 가
+    //   home/landing 인데 cache==bound 인 경우를 on-bound 로 오인하지 않게 하려면 진짜 라이브가 필요.
+    const { liveOnly = false } = opts || {}
 
     try {
-      // 방법 1: URL에서 추출 (project/UUID 패턴)
+      // 방법 1: 라이브 URL에서 추출 (project/UUID 패턴) — 캐시보다 우선.
+      //   ⚠️ 캐시(capturedProjectId)를 먼저 반환하면, 생성 중 Flow 가 다른 프로젝트로 옮겨가도
+      //   stale id 를 돌려줘 establish 가 갱신 id 를 못 잡는다(edce→b266 미반영 회귀). 라이브 URL 이
+      //   프로젝트면 그게 authoritative — 캐시도 갱신한다. URL 이 프로젝트가 아닐 때만 캐시 폴백.
       const url = flowView.webContents.getURL()
       const match = url.match(/project\/([a-f0-9-]{36})/)
       if (match) {
         setCapturedProjectId(match[1])
+        return { success: true, projectId: match[1] }
+      }
+
+      if (liveOnly) return { success: true, projectId: null }
+
+      // URL 이 프로젝트가 아니면(home/landing 등) 직전 캡처값으로 폴백.
+      if (getCapturedProjectId()) {
         return { success: true, projectId: getCapturedProjectId() }
       }
 
@@ -125,6 +179,19 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     return { success: !!token, token }
   })
 
+  // Apply Flow "에이전트 설정" panel defaults (image/video aspect+count+model) + 저장.
+  // Called once before a generation batch starts.
+  ipcMain.handle('flow:apply-agent-defaults', async (event, opts) => {
+    console.log('[Flow API] apply-agent-defaults:', JSON.stringify(opts))
+    return applyAgentDefaults(opts || {})
+  })
+
+  // 동적 모델 목록 — Flow 에이전트 설정 패널에서 이미지/비디오 모델 옵션을 긁어 반환.
+  ipcMain.handle('flow:list-agent-models', async () => {
+    if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }
+    return listAgentModels()
+  })
+
   // Generate image via Flow API
   ipcMain.handle('flow:generate-image', async (event, {
     token, prompt, aspectRatio, seed, model, projectId, referenceImages, batchCount,
@@ -132,27 +199,33 @@ export function registerFlowAPIIPC(ipcMain, deps) {
   }) => {
     console.log('[Flow API] generate-image:', { prompt: prompt?.substring(0, 50), model, aspectRatio, seed: (seed ?? 'random') })
     if (!prompt) return { success: false, error: 'No prompt' }
+    if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R25-4
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }
 
-    // (CDP path not needed for monkey-patch mode — ensureDebuggerAttached is a no-op when CDP disabled)
-    try { await ensureDebuggerAttached() } catch (e) { console.warn('[Flow API] generate-image: debugger attach skipped:', e.message) }
+    // Codex #R4-4: enforce Flow page is on the TARGET project before DOM mutation.
+    const projectCheck = await ensureOnProjectComposer(flowView, projectId)
+    if (!projectCheck.ok) return { success: false, error: projectCheck.error }
 
     // Seed / aspectRatio / references → set in page via monkey-patch inject
-    // (Also still set the old CDP vars as fallback for AUTOFLOWCUT_ENABLE_CDP=1 mode)
     const _seedValue = typeof seed === 'number' && Number.isFinite(seed) ? seed : null
-    setPendingSeedValue(_seedValue)
     const _aspectRatioEnum = (
       aspectRatio === '16:9' ? 'IMAGE_ASPECT_RATIO_LANDSCAPE'
         : aspectRatio === '9:16' ? 'IMAGE_ASPECT_RATIO_PORTRAIT'
           : null
     )
-    setPendingImageAspectRatio?.(_aspectRatioEnum)
 
     // === DOM 자동화 + 네트워크 응답 인터셉트 ===
     // 페이지가 자체적으로 reCAPTCHA를 처리하므로 가장 안정적인 방법
-    // ⚠️ cdpFetchEnabled를 try 밖에 선언 (esbuild가 try 안의 let을 finally에서 못 찾는 버그 회피)
-    let cdpFetchEnabled = false  // only used when AUTOFLOWCUT_ENABLE_CDP=1
+    // R9-P2: async pending id 를 try 밖에 선언 — submit 성공 반환 전 throw 시 catch 에서
+    //   pendingGenerations 의 stale entry 를 지우기 위함(try 안에 두면 catch 가 못 봄).
+    let generationId = null
+    // generationTimeout 도 try 밖 — finally 의 정리(clearTimeout)가 접근해야 한다(try 안에 두면
+    //   finally 가 못 봐 'generationTimeout is not defined' ReferenceError). generationId 와 동일 이유.
+    let generationTimeout = null
+    // #R7-9: sync 모드가 소유한 pendingGeneration — click 실패/throw 정리에서 identity 가드.
+    //   (동시 진행 중인 다른 sync 생성의 pending 을 무조건 null 로 지우지 않게.)
+    let syncOwnPending = null
     try {
       console.log('[Flow API] [DOM+Net] Starting DOM-triggered generation')
 
@@ -281,39 +354,35 @@ export function registerFlowAPIIPC(ipcMain, deps) {
         }
       }
 
-      // 0.8. 이미지 모드 + 배치 + 화면비 설정 (Settings에서 전달받은 값 사용, 기본 x2)
-      // aspectRatio 는 설정 메뉴가 열려 있는 동안 함께 적용된다 — 메뉴를 닫은 뒤
-      // 별도로 동기화하면 Radix 가 content 를 unmount 해서 동작하지 않기 때문.
-      const effectiveBatchCount = Math.max(1, Math.min(4, batchCount || 2))
-      const modeResult = await configureFlowMode('IMAGE', effectiveBatchCount, aspectRatio)
-      if (modeResult.success) {
-        console.log('[Flow API] Image mode configured:', modeResult.method, 'batch:', modeResult.batch)
-      } else {
-        console.warn('[Flow API] Image mode config failed (continuing anyway):', modeResult.error)
+      // 0.8. (제거됨) 옛 configureFlowMode 팝업메뉴 방식 — Flow 가 설정을 "에이전트 설정"
+      // 패널로 옮기면서 이 셀렉터는 매번 mode_tab_not_found 로 5회 실패하며 페이지를
+      // churn 시켰다. 배치 카운트는 configureFlowMode 로 전달한다(P2). 화면비/seed 는
+      // monkey-patch(injectImageBatchBody) 주입이 보장하나, 모델은 현재 미반영(P2 —
+      // configureFlowMode 확장 예정). applyAgentDefaults 호출은 주석처리됨.
+
+      // 0.85. (v2) Flow 이미지 모델 적용 — 에이전트 설정 패널에서 선택(동적 모델 목록 반영).
+      //   model 이 Flow 패널 모델명(예: 'Nano Banana 2')일 때만 의미가 있고, 매칭 실패 시 graceful
+      //   (패널 열고 닫음). applyAgentDefaults 는 패널이 닫힌 것을 확인(panelClosed)하므로 이후 컴포즈
+      //   주입을 가리지 않는다. 컴포즈 주입(아래) 전에 호출한다.
+      if (model && applyAgentDefaults) {
+        try {
+          const _md = await applyAgentDefaults({ image: { model } })
+          if (!_md?.success) console.warn('[Flow API] applyAgentDefaults(image model) failed:', _md?.error)
+        } catch (e) { console.warn('[Flow API] applyAgentDefaults(image model) error:', e.message) }
       }
 
       // 0.9. Inject pending values into Flow page (monkey-patch path)
       //   window.__autoflowcut_inject__ is read by the patched window.fetch on the page.
-      //   Also set legacy CDP vars in case AUTOFLOWCUT_ENABLE_CDP=1 is active.
-      if (referenceImages && referenceImages.length > 0) {
-        setPendingReferenceImages(referenceImages)
-      }
-      // Monkey-patch: set inject state on page
-      await setFlowPageInject?.({
+      // Monkey-patch: set inject state on page — #R15-5: arming 실패 시 중단(미주입 생성 방지).
+      const _injRes = await setFlowPageInject?.({
         seed:        _seedValue,
         aspectRatio: _aspectRatioEnum,
         references:  referenceImages?.length > 0 ? referenceImages : null,
         i2v:         null,
       })
-      // CDP path (only active when AUTOFLOWCUT_ENABLE_CDP=1): keep for compatibility
-      try {
-        await flowView.webContents.debugger.sendCommand('Fetch.enable', {
-          patterns: [{ urlPattern: '*batchGenerateImages*', requestStage: 'Request' }]
-        })
-        cdpFetchEnabled = true
-        console.log('[Flow API] [Fetch] CDP interception also enabled (ENABLE_CDP mode)')
-      } catch (e) {
-        // Expected when CDP is disabled (default) — not an error
+      if (_injRes && _injRes.success === false) {
+        clearTimeout(generationTimeout)
+        return { success: false, error: `Flow inject arming failed: ${_injRes.error || 'unknown'}`, retry: true }
       }
 
       // 1. 네트워크 응답 캡처 Promise 설정 (동기 모드만)
@@ -322,16 +391,15 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       //   pendingGeneration을 미리 설정하면 자동생성 응답이 캡처되고,
       //   실제 버튼 클릭의 응답은 무시되는 문제가 발생한다.
       let resolveGeneration = null
-      let generationTimeout = null
+      // generationTimeout 은 try 밖(핸들러 상위)에 선언됨 — 여기서 재선언하면 try 블록에 그림자
+      //   변수가 생겨 finally 의 정리가 다시 out-of-scope 가 된다. 여기선 할당만(아래 R8-P1 경로).
       let responsePromise = null
       if (!asyncMode) {
+        // [R8-P1] 타이머는 여기서 만들지 않는다 — pendingGeneration 을 arm 한 직후(클릭 직전)에
+        //   createGenerationTimeout 으로 만든다. 제출 게이트가 최대 180s 폴링할 수 있어, 여기서
+        //   미리 만들면 클릭(네트워크 대기) 전에 120s 가 만료되어 (1) 응답 대기가 무방비 hang,
+        //   (2) 만료 콜백이 그 사이 살아있는 다른 pending 을 지운다.
         responsePromise = new Promise((resolve) => {
-          generationTimeout = setTimeout(() => {
-            if (getPendingGeneration()) {
-              setPendingGeneration(null)
-              resolve({ error: true, message: 'Response timeout (120s)' })
-            }
-          }, 120000)
           resolveGeneration = resolve
         })
       }
@@ -344,6 +412,101 @@ export function registerFlowAPIIPC(ipcMain, deps) {
         ) || []
       } catch {}
 
+      // 2b. Agent ON(streamChat) 결과는 batchGenerateImages intercept 가 안 잡히고 DOM
+      //   <img>(media.getMediaUrlRedirect?name=UUID)로만 온다. 동기 모드 수집을 위해 제출 "전"
+      //   이미 떠 있는 생성 이미지 mediaId 를 스냅샷해, 제출 후 새로 나타난 것만 골라낸다.
+      let existingGenMediaIds = []
+      try {
+        const _pre = await flowView.webContents.executeJavaScript(GENERATED_IMG_PROBE)
+        if (Array.isArray(_pre)) existingGenMediaIds = _pre.map((i) => i && i.mediaId).filter(Boolean)
+      } catch {}
+
+      // 0.8. Agent 토글 — flowAgentOn(설정) 이면 ON(Maps 그라운딩/주소 기반, autoApprove),
+      //   아니면 OFF(직접 생성 API batchGenerateImages, intercept 수집).
+      const agentOn = !!(getFlowAgentOn && getFlowAgentOn())
+      // ⚠️ agentOff 는 함수 스코프에 선언한다 — 아래 async arming 의 `allowDomFallback: !agentOff`
+      //   가 이 변수를 읽기 때문. `if (!agentOn)` 블록 안에 `let` 으로 두면 블록 밖 arming 에서
+      //   ReferenceError('agentOff is not defined')가 나 두 모드(ON/OFF) 모두 async submit 이
+      //   arming 에서 throw 됐다. Agent ON 은 여기서 false 로 남아 allowDomFallback:true →
+      //   streamChat DOM(media.getMediaUrlRedirect) 수집이 켜진다.
+      let agentOff = false
+      if (!agentOn) {
+      try { const _r = await ensureAgentOff(); agentOff = !!(_r && _r.success) } catch (e) { console.warn('[Flow API] ensureAgentOff skipped:', e.message) }
+      // [P1] Agent OFF 보장 실패 시 생성 중단(fail-closed) — Agent ON 이면 프롬프트가
+      //   streamChat(SSE)으로 가서 직접 생성 API(batchGenerateImages) intercept 가 동작하지
+      //   않아 빈/오염 결과가 된다. ensureAgentOff 는 already_off 도 success=true 이므로
+      //   정상 케이스는 막지 않고 실패(토글 못 찾음/still ON)만 차단한다.
+      if (!agentOff) {
+        // R8-P1: 이 시점엔 아직 타이머를 만들지 않았으므로(arm 직후 생성) generationTimeout 은 null —
+        //   방어적으로 정리만 한다(no-op). 타이머가 arm 후로 미뤄져 옛 R7-P2 오삭제 위험은 사라졌다.
+        if (generationTimeout) clearTimeout(generationTimeout)
+        return { success: false, error: 'Flow Agent 를 OFF 로 전환하지 못했습니다. Flow 가 "모든 미디어" 화면인지 확인한 뒤 다시 시도해주세요. (캐릭터/장면 탭에는 Agent 토글이 없어 실패할 수 있음)' }
+      }
+      // 0.82. 이미지 모드로 전환 — 비디오와 동일하게 configureFlowMode 가 컴포즈 칩 팝오버를
+      //      열고 이미지 탭을 클릭한다 (모드 탭은 컴포즈 칩 팝오버 안에 있다). 이미지 모드를
+      //      확실히 보장해야 batchGenerateImages(intercept) 경로로 가고 fifeUrl 다운로드가 동작한다.
+      //      (Agent ON 이면 DOM getMediaUrlRedirect 로 빠져 다운로드 URL 이 달라짐.)
+      //      [P2] 배치 카운트(batchCount)를 전달 — 안 넘기면 칩 팝오버가 x1 로 고정된다.
+      // [보존] 옛 selectFlowModeTab 경로 — 팝오버를 안 열어 not_found 가능. 나중 대비 주석 유지.
+      // try { await selectFlowModeTab('IMAGE') } catch (e) { console.warn('[Flow API] selectFlowModeTab skipped:', e.message) }
+      let _modeRes = null
+      try { _modeRes = await configureFlowMode('IMAGE', batchCount) } catch (e) { console.warn('[Flow API] configureFlowMode skipped:', e.message) }
+      // #R30-1: 모드 전환이 (내부 재시도 소진 후) 명시적 {success:false} 면 컴포저가 반대 모드일 수
+      //   있어 이미지 제출이 비디오 요청으로 나가 잘못된 quota 소비 + pending capture timeout 을
+      //   유발한다 → 제출을 중단한다. (throw 는 기존대로 관용 — 모드 미확정이 아닐 수 있음.)
+      if (_modeRes && _modeRes.success === false) {
+        clearTimeout(generationTimeout)
+        await clearFlowPageInject?.()
+        return { success: false, error: `Flow IMAGE mode switch failed: ${_modeRes.error || 'unknown'}`, retry: true }
+      }
+      } else {
+        // [Agent ON — Maps 그라운딩 / 주소 기반 생성] 토글 ON 유지 + autoApprove(에이전트가 안 묻고
+        //   자동 생성). 위치/주소는 프롬프트에 포함한다. Agent ON 은 컴포즈 모드 탭이 없어
+        //   configureFlowMode('IMAGE') 생략. ⚠️ 라이브 검증 필요(셀렉터/타이밍/streamChat DOM 수집).
+        let onOk = false
+        try { const _r = await ensureAgentOn(); onOk = !!(_r && _r.success) } catch (e) { console.warn('[Flow API] ensureAgentOn skipped:', e.message) }
+        if (!onOk) {
+          if (generationTimeout) clearTimeout(generationTimeout)
+          return { success: false, error: 'Flow Agent 를 ON 으로 전환하지 못했습니다. Flow 컴포즈에 Agent 토글이 있는지 확인해주세요.' }
+        }
+        // 장수(count)도 함께 적용 — 안 넘기면 에이전트 설정 패널의 기존값(예: 2장)으로 생성된다.
+        try { await applyAgentDefaults({ image: { model, count: clampImageBatchCount(batchCount) }, autoApprove: true }) } catch (e) { console.warn('[Flow API] applyAgentDefaults(image) skipped:', e.message) }
+        // Agent 추론이 영상으로 빠지지 않게 명시 지시 프리펜드(타입 강제). 주소/위치는 그대로 유지.
+        prompt = `Generate a still image: ${prompt}`
+        console.log('[Flow API] (Agent ON) image prompt prefixed for type forcing')
+      }
+
+      // 0.85. 제출 버튼/에디터 준비 대기 — 제출 페이싱의 메인 게이트. (프롬프트 주입 전!)
+      // Flow 가 에이전트 챗 모델로 바뀌면서 이전 생성이 진행 중이면 제출 버튼이
+      //   'arrow_forward'(준비) → 'stop'(중지) 으로 토글되고 컴포즈 에디터도 잠시 사라진다.
+      // 따라서 "arrow_forward 가 enable 로 나타날 때까지"(= 에이전트가 다음 프롬프트를
+      //   받을 준비) 폴링한 뒤에야 프롬프트를 주입/제출한다. 이게 빠지면 다음 씬이
+      //   에디터가 없는 상태에서 주입하다 'Editor not found' 로 실패한다.
+      // 상태: ready(arrow_forward enable) / disabled / busy(stop) / absent.
+      {
+        const SUBMIT_POLL = 1500
+        const SUBMIT_MAX_WAIT = 180000  // 에이전트 생성이 길 수 있어 최대 3분
+        // 게이트 판정 로직은 flow-submit-gate.js (jsdom 단위테스트 보유). SUBMIT_PROBE 는
+        // 그 classifyAgentState 를 그대로 페이지에 주입한 것 — 단일 소스.
+        let submitState = 'absent'
+        let waited = 0
+        while (waited <= SUBMIT_MAX_WAIT) {
+          submitState = await flowView.webContents.executeJavaScript(SUBMIT_PROBE).catch(() => 'error')
+          if (shouldProceed(submitState)) break
+          if (waited === 0) {
+            console.log('[Flow API] [DOM+Net] Agent not idle (state=' + submitState + ') — polling until ready to accept prompt (max 180s)...')
+          }
+          await new Promise(r => setTimeout(r, SUBMIT_POLL))
+          waited += SUBMIT_POLL
+        }
+        if (submitState !== 'idle') {
+          clearTimeout(generationTimeout)
+          console.warn('[Flow API] [DOM+Net] Agent never idle (last state=' + submitState + ', waited ' + Math.round(waited / 1000) + 's)')
+          return { success: false, error: 'Agent not ready (' + submitState + ') after 180s', retry: true }
+        }
+        if (waited > 0) console.log('[Flow API] [DOM+Net] Agent idle after', Math.round(waited / 1000), 's — proceeding to inject')
+      }
+
       // 3. 프롬프트 입력 (Slate.js 에디터 — AutoFlow 역공학)
       // execCommand 방식이 작동하려면 flowView가 보여야 함 (focus 필요)
       const mainWindow = getMainWindow()
@@ -351,12 +514,40 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       const promptWasHidden = (promptBounds.width === 0 || promptBounds.height === 0)
       if (promptWasHidden) {
         const { width, height } = mainWindow.getContentBounds()
-        flowView.setBounds({ x: width + 5000, y: 0, width, height })
+        // 모든 디스플레이 너머로 — 멀티모니터에서 보조 모니터에 Flow 가 깜빡이지 않게.
+        flowView.setBounds(computeOffscreenBounds(screen.getAllDisplays(), mainWindow.getBounds().x, width, height))
         await new Promise(r => setTimeout(r, 300))
-        console.log('[Flow API] Temporarily showed flowView for Slate injection')
+        console.log('[Flow API] Temporarily showed flowView (offscreen) for Slate injection')
       }
 
-      const promptResult = await flowView.webContents.executeJavaScript(`
+      // #R6-13: 임시로 보인 flowView 의 bounds 는 주입이 중간에 throw 해도 finally 에서
+      //   반드시 원복한다 — 안 그러면 off-screen(width+5000)으로 보인 채 leak 된다.
+      let promptResult
+      try {
+      // WebContentsView 에 OS 포커스를 준다. 이게 없으면 editor.focus() 가 무시되고
+      // (document.hasFocus()=false) execCommand('insertText') 가 no-op 이 되어
+      // 프롬프트가 컴포즈에 안 박힌다 — 특히 applyAgentDefaults 가 패널을 열고 닫은
+      // (Escape 로 포커스가 body 로 빠진) 직후의 첫 제출에서 발생.
+      try { flowView.webContents.focus() } catch (e) { console.warn('[Flow API] webContents.focus failed:', e.message) }
+      await new Promise(r => setTimeout(r, 120))
+
+      // 에디터를 trusted click(실제 마우스 클릭)으로 포커스/캐럿 삽입.
+      // webContents.focus()/editor.focus() 만으론 Slate 가 포커스를 안 받는 경우가 있어
+      // 실제 클릭으로 캐럿을 넣어야 execCommand('insertText') 가 동작한다.
+      // 뷰가 이미 보이는 상태(위에서 show)라 trustedClick 이 끝나도 다시 숨기지 않는다.
+      const editorFocusSelector = `(function(){
+        return document.querySelector("[data-slate-editor='true']")
+          || document.querySelector("div[role='textbox'][contenteditable='true']:not(#af-bot-panel *)")
+          || document.querySelector('[contenteditable="true"]:not([aria-hidden])')
+          || document.querySelector('textarea');
+      })()`
+      try {
+        const ef = await trustedClickOnFlowView(editorFocusSelector)
+        console.log('[Flow API] [DOM+Net] Editor focus click:', ef?.success, ef?.coords ? '@' + ef.coords.x + ',' + ef.coords.y : '')
+      } catch (e) { console.warn('[Flow API] editor focus click failed:', e.message) }
+      await new Promise(r => setTimeout(r, 120))
+
+      promptResult = await flowView.webContents.executeJavaScript(`
         (async function() {
           const promptText = ${JSON.stringify(prompt)};
           const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -516,10 +707,12 @@ export function registerFlowAPIIPC(ipcMain, deps) {
         })()
       `)
 
-      // flowView 복원 (숨겨져 있었으면)
-      if (promptWasHidden) {
-        flowView.setBounds(promptBounds)
-        await new Promise(r => setTimeout(r, 200))
+      } finally {
+        // #R6-13: 주입 성공/실패/throw 와 무관하게 임시로 보인 flowView 를 원복.
+        if (promptWasHidden) {
+          flowView.setBounds(promptBounds)
+          await new Promise(r => setTimeout(r, 200))
+        }
       }
 
       console.log('[Flow API] [DOM+Net] Prompt injection result:', promptResult)
@@ -528,82 +721,58 @@ export function registerFlowAPIIPC(ipcMain, deps) {
         return { success: false, error: promptResult?.error || 'Prompt injection failed' }
       }
 
+      // 진단: 주입 직후 에디터 실제 내용 + 포커스 + 제출버튼 상태 확인
+      // (제출버튼이 disabled 로 남으면 = 컴포즈에 텍스트가 안 박힌 것)
+      try {
+        const diag = await flowView.webContents.executeJavaScript(`
+          (function() {
+            const ed = document.querySelector("[data-slate-editor='true']")
+              || document.querySelector("div[role='textbox'][contenteditable='true']:not(#af-bot-panel *)")
+              || document.querySelector('[contenteditable="true"]:not([aria-hidden])')
+              || document.querySelector('textarea');
+            const ae = document.activeElement;
+            const fwd = (function(){
+              for (const b of document.querySelectorAll('button'))
+                for (const i of b.querySelectorAll("i, [class*='material-symbols'], [class*='google-symbols']"))
+                  if ((i.textContent||'').trim()==='arrow_forward') return b;
+              return null;
+            })();
+            return {
+              editorFound: !!ed,
+              editorText: ed ? (ed.value !== undefined ? ed.value : ed.textContent || '').trim().slice(0, 60) : null,
+              activeEl: ae ? (ae.tagName.toLowerCase() + (ae.getAttribute && ae.getAttribute('contenteditable') ? '[ce]' : '')) : null,
+              editorIsActive: ed === ae,
+              fwdDisabled: fwd ? (fwd.disabled || fwd.getAttribute('aria-disabled')==='true') : 'no_fwd',
+            };
+          })()
+        `).catch((e) => ({ error: e.message }))
+        console.log('[Flow API] [DOM+Net] Post-inject diag:', JSON.stringify(diag))
+      } catch {}
+
       // 4. Generate 버튼 찾기 + Trusted Click
       // b.click()은 isTrusted: false라서 Flow 페이지가 무시함
       // → flowView를 일시적으로 보이게 한 후 sendInputEvent로 trusted click
 
-      // 먼저 버튼 존재여부 + disabled 확인
-      const btnCheck = await flowView.webContents.executeJavaScript(`
-        (function() {
-          // XPath (AutoFlow 검증된 방식)
-          try {
-            const xr = document.evaluate(
-              "//button[.//i[text()='arrow_forward']] | (//button[.//i[normalize-space(text())='arrow_forward']])",
-              document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null
-            );
-            if (xr.singleNodeValue) {
-              return { found: true, disabled: xr.singleNodeValue.disabled, method: 'xpath_arrow_forward' };
-            }
-          } catch {}
-
-          // icon 텍스트로 찾기
-          const iconNames = ['arrow_forward', 'send', 'play_arrow'];
-          for (const b of document.querySelectorAll('button')) {
-            const icons = b.querySelectorAll('i, span.material-icons, span.material-symbols-outlined, mat-icon');
-            for (const icon of icons) {
-              if (iconNames.includes(icon.textContent.trim())) {
-                return { found: true, disabled: b.disabled, method: 'icon:' + icon.textContent.trim() };
-              }
-            }
-          }
-
-          // aria-label
-          for (const b of document.querySelectorAll('button[aria-label]')) {
-            const label = (b.getAttribute('aria-label') || '').toLowerCase();
-            if (label.includes('generate') || label.includes('create') || label.includes('submit') || label.includes('send')) {
-              return { found: true, disabled: b.disabled, method: 'aria:' + label };
-            }
-          }
-
-          // 디버깅: 모든 버튼 아이콘 로깅
-          const allBtns = document.querySelectorAll('button');
-          const iconDebug = [];
-          allBtns.forEach(b => {
-            b.querySelectorAll('i, span.material-icons, span.material-symbols-outlined').forEach(icon => {
-              iconDebug.push(icon.textContent.trim());
-            });
-          });
-          console.log('[DOM] All button icons:', JSON.stringify(iconDebug));
-          return { found: false, totalButtons: allBtns.length, icons: iconDebug.slice(0, 20) };
-        })()
-      `)
-
-      console.log('[Flow API] [DOM+Net] Generate button check:', btnCheck)
-
-      if (!btnCheck?.found) {
-        clearTimeout(generationTimeout)
-        return { success: false, error: 'Generate button not found' }
-      }
-
-      if (btnCheck.disabled) {
-        // 버튼 disabled → 5초 대기 후 재확인
-        console.log('[Flow API] [DOM+Net] Button disabled, waiting 5s...')
-        await new Promise(r => setTimeout(r, 5000))
-        const stillDisabled = await flowView.webContents.executeJavaScript(`
-          (function() {
-            try {
-              const xr = document.evaluate(
-                "//button[.//i[text()='arrow_forward']]",
-                document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null
-              );
-              return xr.singleNodeValue?.disabled ?? true;
-            } catch { return true; }
-          })()
-        `)
-        if (stillDisabled) {
-          clearTimeout(generationTimeout)
-          return { success: false, error: 'Generate button remained disabled' }
+      // 4-pre. 주입 "후" 가드: 제출버튼이 실제로 enable(프롬프트 인식됨) 됐는지 확인하고
+      // 나서만 클릭한다. 빈/disabled 상태에서 클릭하면 잘못된/중복 동작이 될 수 있어
+      // 방어한다. 판정은 flow-submit-gate.isSubmitEnabled (단위테스트 보유).
+      {
+        const ENABLE_POLL = 1000
+        const ENABLE_MAX_WAIT = 20000  // 주입 반영은 보통 즉시 — 최대 20초
+        let enabled = false
+        let ew = 0
+        while (ew <= ENABLE_MAX_WAIT) {
+          enabled = await flowView.webContents.executeJavaScript(SUBMIT_ENABLED_PROBE).catch(() => false)
+          if (enabled) break
+          await new Promise(r => setTimeout(r, ENABLE_POLL))
+          ew += ENABLE_POLL
         }
+        if (!enabled) {
+          clearTimeout(generationTimeout)
+          console.warn('[Flow API] [DOM+Net] Submit button not enabled after inject (prompt may not have registered) — aborting submit')
+          return { success: false, error: 'Submit button not enabled after prompt injection', retry: true }
+        }
+        console.log('[Flow API] [DOM+Net] Submit button enabled — proceeding to click', ew > 0 ? '(after ' + Math.round(ew / 1000) + 's)' : '')
       }
 
       // Trusted click via sendInputEvent (flowView를 일시적으로 보이게)
@@ -625,31 +794,34 @@ export function registerFlowAPIIPC(ipcMain, deps) {
         return null;
       })()`
 
-      const clickResult = await trustedClickOnFlowView(generateBtnSelector)
-      console.log('[Flow API] [DOM+Net] Trusted click result:', clickResult)
-
-      if (!clickResult?.success) {
-        clearTimeout(generationTimeout)
-        return { success: false, error: clickResult?.error || 'Failed to click Generate button' }
-      }
-
-      // ★ Generate 버튼 클릭 성공 직후 즉시 pending 설정!
-      //   버튼 클릭이 batchGenerateImages 요청을 트리거하므로,
-      //   expectedImageCount 감지 전에 먼저 설정해야 CDP 핸들러가 응답을 캡처할 수 있다.
-      //   2초 버퍼: 클릭과 네트워크 요청 사이의 wallTime 차이를 보정
-      const generationSetAt = Date.now() / 1000 - 2  // 2초 전부터 유효 (stale 필터 보정)
-      let generationId = null  // 비동기 모드에서만 사용
+      // R6-P2: pending 을 클릭 "직전"에 arm + backdate 제거(setAt = now). arm-after-click + backdate(-2s)
+      //   는 직전 유사 요청의 늦은 응답이 2초 창 안에 새 pending 에 붙는 stale 버그가 있었다.
+      //   arm-before-click 이라 클릭으로 시작될 요청의 reqStartedAt >= setAt 이 보장된다.
+      //   클릭 실패 시 arm 한 pending 을 반드시 삭제한다(고아 pending 방지).
+      const generationSetAt = Date.now() / 1000
+      // generationId 는 위(try 밖)에서 선언됨 — 여기서 재선언하지 않는다(catch 정리용).
 
       if (asyncMode) {
         // === 비동기 모드: pendingGenerations Map에 등록 ===
+        // 제출 전 이미 DOM 에 떠 있던 결과 이미지(이전 런 잔상/캐릭터)는 이 gen 의 DOM 매칭에서
+        //   제외한다 — 안 그러면 fresh 세션(collectedMediaIds 빈 상태)에서 첫 폴링이 가장 오래된
+        //   잔상 이미지를 이 gen 에 잘못 배정해, 첫 씬에 "이미 생성한 옛 이미지"가 들어가고 진짜
+        //   새 결과는 버려진다. (동기 경로의 existingGenMediaIds 스냅샷과 동일 목적.)
+        for (const _mid of existingGenMediaIds) collectedMediaIds.add(_mid)
         generationId = `gen-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`
         pendingGenerations.set(generationId, {
           setAt: generationSetAt,
-          expectedCount: 1,
+          // R9-P1: arm 시 expectedCount 를 batchCount 로 확정 — 클릭 후 DOM 갱신을 기다리는
+          //   사이 첫 응답이 와도 1/N 로 조기완료되어 나머지가 버려지는 것을 막는다.
+          expectedCount: clampImageBatchCount(batchCount),
           responses: [],
           collectionTimer: null,
           completed: false,
           token,              // 나중에 이미지 fetch용
+          // Agent OFF 로 제출됐으면 intercept(fifeUrl)로 받으므로 DOM 폴백 제외 — 이전 씬의
+          // DOM 잔상 이미지가 이 gen 으로 잘못 재배정되는 것을 막는다. OFF 불확실(토글 못 찾음/
+          // still ON)이면 Agent ON 가능성이 있으므로 DOM 폴백을 안전망으로 남긴다.
+          allowDomFallback: !agentOff,
           // 응답↔gen 상관키 (generationMatch.js) — 요청 body 의 prompt/refs/seed/aspectRatio 와 대조
           promptKey: prompt,
           refMediaIds: Array.isArray(referenceImages)
@@ -658,13 +830,29 @@ export function registerFlowAPIIPC(ipcMain, deps) {
           reqSeed: _seedValue,
           reqAspectRatio: _aspectRatioEnum
         })
+        // #R12-12/#R13-3: owner orphan TTL — 렌더러가 크래시/폴링 중단해 collect/clear 가 안 오면
+        //   entry 가 영구 누수된다. 충분히 긴 TTL(10분) 후 자동 제거. 이 타이머는 collectionTimer 와
+        //   별개(orphanTimer)다 — reportResponseRouter 가 응답 완료 시 collectionTimer 만 clear 하므로
+        //   완료된 entry 도 collect/clear 전까지 orphanTimer 가 살아 누수를 막는다.
+        {
+          const _g = pendingGenerations.get(generationId)
+          if (_g) {
+            _g.orphanTimer = setTimeout(() => {
+              if (pendingGenerations.get(generationId) === _g) {
+                pendingGenerations.delete(generationId)
+                console.warn('[Flow API] [Async] pendingGeneration orphan TTL expired — removed:', generationId)
+              }
+            }, 10 * 60 * 1000)
+          }
+        }
         console.log('[Flow API] [Async] pendingGenerations set:', generationId,
           '(setAt:', generationSetAt.toFixed(3), ')')
       } else {
         // === 동기 모드: 기존 pendingGeneration 설정 ===
-        setPendingGeneration({
+        const pendingObj = {
           setAt: generationSetAt,
-          expectedCount: 1,
+          // R9-P1: arm 시 expectedCount 를 batchCount 로 확정(멀티 이미지 조기완료 방지).
+          expectedCount: clampImageBatchCount(batchCount),
           responses: [],
           collectionTimer: null,
           resolve: (result) => {
@@ -673,9 +861,39 @@ export function registerFlowAPIIPC(ipcMain, deps) {
             if (pg?.collectionTimer) clearTimeout(pg.collectionTimer)
             resolveGeneration(result)
           }
+        }
+        syncOwnPending = pendingObj
+        setPendingGeneration(pendingObj)
+        // [R8-P1] 응답 대기 타임아웃은 arm 직후(클릭 직전)에 시작 — 제출 게이트(최대 180s) 통과 후라
+        //   타이머가 실제 네트워크 대기 구간만 바운드한다. 자기 pending(pendingObj)만 identity 로 정리.
+        generationTimeout = createGenerationTimeout({
+          ownPending: pendingObj,
+          getPending: getPendingGeneration,
+          setPending: setPendingGeneration,
+          resolve: resolveGeneration,
         })
-        console.log('[Flow API] [DOM+Net] pendingGeneration set IMMEDIATELY after click (setAt:',
+        console.log('[Flow API] [DOM+Net] pendingGeneration armed BEFORE click (setAt:',
           generationSetAt.toFixed(3), ')')
+      }
+
+      // pending arm 직후 클릭 — 클릭이 batchGenerateImages 를 트리거한다(arm 이 먼저라 미스 없음).
+      const clickResult = await trustedClickOnFlowView(generateBtnSelector)
+      console.log('[Flow API] [DOM+Net] Trusted click result:', clickResult)
+      if (!clickResult?.success) {
+        clearTimeout(generationTimeout)
+        // R6-P2: arm 한 pending 삭제(고아 방지) — 다음 생성이 이 pending 에 잘못 붙지 않게.
+        // #R7-9: sync 는 자기 pending(identity)일 때만 클리어 — 동시 sync 생성 보호.
+        // #R14-9: async 삭제 전 orphanTimer/collectionTimer 정리(타이머 누수 방지).
+        if (asyncMode) {
+          if (generationId) {
+            const _ag = pendingGenerations.get(generationId)
+            if (_ag?.orphanTimer) clearTimeout(_ag.orphanTimer)
+            if (_ag?.collectionTimer) clearTimeout(_ag.collectionTimer)
+            pendingGenerations.delete(generationId)
+          }
+        }
+        else if (getPendingGeneration() === syncOwnPending) setPendingGeneration(null)
+        return { success: false, error: clickResult?.error || 'Failed to click Generate button' }
       }
 
       // 예상 이미지 개수 감지 (x1/x2/x3/x4 선택 버튼에서)
@@ -722,32 +940,71 @@ export function registerFlowAPIIPC(ipcMain, deps) {
         expectedImageCount = 1
       }
 
-      // expectedCount 업데이트
+      // expectedCount 업데이트 — R9-P1: DOM 감지값으로 "올리기만" 한다(낮추면 조기완료 위험).
+      //   arm 때 batchCount 로 이미 확정했으므로, 감지 실패(=1)나 과소감지가 덮어쓰지 못하게 max.
       if (asyncMode) {
         const ag = pendingGenerations.get(generationId)
-        if (ag) ag.expectedCount = expectedImageCount
-        console.log('[Flow API] [Async] expectedCount updated to', expectedImageCount,
+        if (ag) ag.expectedCount = Math.max(ag.expectedCount, expectedImageCount)
+        console.log('[Flow API] [Async] expectedCount updated to', ag ? ag.expectedCount : expectedImageCount,
           'for gen:', generationId)
 
         // 비동기 모드: inject 정리 후 즉시 반환
         await new Promise(r => setTimeout(r, 2000))  // 요청이 나갈 시간 확보
-        setPendingReferenceImages(null)
-        setPendingImageAspectRatio?.(null)
         await clearFlowPageInject?.()
-        if (cdpFetchEnabled) {
-          try { await flowView.webContents.debugger.sendCommand('Fetch.disable') } catch {}
-          cdpFetchEnabled = false
-        }
         return { success: true, generationId, submitted: true }
       }
 
       // === 동기 모드: 기존 대기 로직 ===
       const pg = getPendingGeneration()
       if (pg) {
-        pg.expectedCount = expectedImageCount
+        pg.expectedCount = Math.max(pg.expectedCount, expectedImageCount)  // R9-P1: 올리기만
       }
       console.log('[Flow API] [DOM+Net] expectedCount updated to', expectedImageCount,
         ', waiting for API response(s)...')
+
+      // 4-A. Agent ON(동기): streamChat 결과는 intercept 가 없으므로 응답 대기 대신 DOM 에
+      //   새 생성 이미지(media.getMediaUrlRedirect?name=UUID)가 뜰 때까지 폴링해 수집한다.
+      //   (제출 전 스냅샷 existingGenMediaIds 에 없는 = 이번 생성분만 골라 src 를 그대로 fetch.)
+      if (agentOn) {
+        const want = Math.max(1, expectedImageCount)
+        const POLL_MS = 2000
+        const MAX_WAIT = 180000  // Agent(Maps 그라운딩) 생성이 길 수 있음
+        let waited = 0
+        let lastFresh = []
+        while (waited < MAX_WAIT) {
+          await new Promise((r) => setTimeout(r, POLL_MS))
+          waited += POLL_MS
+          let imgs = []
+          try { imgs = await flowView.webContents.executeJavaScript(GENERATED_IMG_PROBE) } catch {}
+          if (!Array.isArray(imgs)) continue
+          lastFresh = imgs.filter((i) => i && i.mediaId && !existingGenMediaIds.includes(i.mediaId))
+          if (lastFresh.length < want) continue
+          const picked = lastFresh.slice(0, want)
+          const out = []
+          for (const { mediaId, src } of picked) {
+            try {
+              const res = await sessionFetch(src)
+              if (!res.ok) throw new Error(`media fetch HTTP ${res.status}`)
+              const buffer = await res.arrayBuffer()
+              const base64Raw = Buffer.from(buffer).toString('base64')
+              const contentType = (res.headers.get && res.headers.get('content-type')) || 'image/png'
+              out.push({ base64: `data:${contentType};base64,${base64Raw}`, mediaId })
+            } catch (e) {
+              console.warn('[Flow API] (Agent ON sync) image fetch failed:', e.message)
+            }
+          }
+          if (out.length > 0) {
+            clearTimeout(generationTimeout)
+            if (getPendingGeneration() === syncOwnPending) setPendingGeneration(null)
+            console.log('[Flow API] (Agent ON sync) collected', out.length, 'image(s) from DOM')
+            return { success: true, images: out }
+          }
+        }
+        clearTimeout(generationTimeout)
+        if (getPendingGeneration() === syncOwnPending) setPendingGeneration(null)
+        console.warn('[Flow API] (Agent ON sync) no fresh result image after', Math.round(MAX_WAIT / 1000), 's (fresh seen:', lastFresh.length, ')')
+        return { success: false, error: 'Agent 생성 결과 이미지를 찾지 못했습니다 (타임아웃).', retry: true }
+      }
 
       // 4. 네트워크 응답 대기
       const netResult = await responsePromise
@@ -796,9 +1053,15 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       const allErrors = []
 
       for (const resp of successResponses) {
+        // #R11-4: 401/403 은 파싱 가능 여부와 무관하게 인증 에러로 보존 — 렌더러(engineFlow)가
+        //   authFailed 로 인식해 배치를 즉시 중단할 수 있게 한다(상태 유실 방지).
+        if (resp.status === 401 || resp.status === 403) {
+          allErrors.push(`HTTP ${resp.status} Unauthorized`)
+          continue
+        }
         const data = parseFlowResponse(resp.body)
         if (!data) {
-          allErrors.push('Failed to parse response')
+          allErrors.push(`Failed to parse response (HTTP ${resp.status ?? '?'})`)
           continue
         }
 
@@ -873,41 +1136,54 @@ export function registerFlowAPIIPC(ipcMain, deps) {
 
     } catch (e) {
       console.error('[Flow API] [DOM+Net] Exception:', e.message)
-      setPendingGeneration(null)
+      // #R6-12: 자기 모드가 소유한 pending 만 정리한다. async 제출의 예외에서 sync 의
+      //   공유 pendingGeneration 을 무조건 null 로 지우면, 동시에 진행 중인 다른 sync
+      //   생성의 pending 까지 날려 그 생성이 영구 미수집된다.
+      if (asyncMode) {
+        // R9-P2: async pending 을 arm 한 뒤 submit 성공 반환 전에 throw 하면(클릭/DOM 감지 예외 등)
+        //   pendingGenerations 에 고아 entry 가 남는다 — 여기서 정리(stale 매칭 방지).
+        if (generationId && pendingGenerations.has(generationId)) {
+          // #R14-9: 삭제 전 타이머 정리(orphanTimer/collectionTimer 누수 방지).
+          const _tg = pendingGenerations.get(generationId)
+          if (_tg?.orphanTimer) clearTimeout(_tg.orphanTimer)
+          if (_tg?.collectionTimer) clearTimeout(_tg.collectionTimer)
+          pendingGenerations.delete(generationId)
+          console.warn('[Flow API] [Async] cleaned up stale pending on throw:', generationId)
+        }
+      } else if (getPendingGeneration() === syncOwnPending) {
+        // #R7-9: sync 는 자기 pending(identity)일 때만 클리어 — 동시 sync 생성 보호.
+        setPendingGeneration(null)
+      }
       return { success: false, error: e.message }
     } finally {
+      // R7-P2/R8-P1: 모든 종료 경로에서 generationTimeout 정리(idempotent) — 떠 있는 타이머가
+      //   나중에 깨어나지 않게 한다. (R8-P1 의 identity 가드로 남의 pending 오삭제는 이미 차단됨.)
+      if (generationTimeout) clearTimeout(generationTimeout)
       // Monkey-patch inject 정리 (다음 유기적 Flow 요청에 stale 값이 새지 않도록)
-      setPendingReferenceImages(null)
-      setPendingImageAspectRatio?.(null)
       await clearFlowPageInject?.()
-      // CDP Fetch 인터셉션 정리 (AUTOFLOWCUT_ENABLE_CDP=1 경로만)
-      if (cdpFetchEnabled) {
-        try {
-          const flowView = getFlowView()
-          await flowView.webContents.debugger.sendCommand('Fetch.disable')
-        } catch (_) {}
-        cdpFetchEnabled = false
-      }
     }
   })
 
   // ─── 비동기 생성 결과 조회 (폴링용) ───
   ipcMain.handle('flow:check-generation', async (event, { generationId }) => {
-    try { await ensureDebuggerAttached() } catch (_) {}
     if (!generationId) return { success: false, error: 'No generationId' }
     const gen = pendingGenerations.get(generationId)
     if (!gen) return { success: false, error: 'Generation not found', notFound: true }
+    // 응답 가로채기로 완료가 안 됐으면 DOM 에서 생성 이미지를 수집해 본다 (에이전트 모델).
+    if (!gen.completed) {
+      try { await assignDomImagesToPending() } catch (_) {}
+    }
     return {
       success: true,
       completed: gen.completed,
       responseCount: gen.responses.length,
-      expectedCount: gen.expectedCount
+      expectedCount: gen.expectedCount,
+      via: gen.domImages ? 'dom' : 'intercept',
     }
   })
 
   // ─── 비동기 생성 결과 수집 + 파싱 (완료 후 호출) ───
   ipcMain.handle('flow:collect-generation', async (event, { generationId, token }) => {
-    try { await ensureDebuggerAttached() } catch (_) {}
     if (!generationId) return { success: false, error: 'No generationId' }
     const gen = pendingGenerations.get(generationId)
     if (!gen) return { success: false, error: 'Generation not found', notFound: true }
@@ -915,6 +1191,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
 
     // 타이머 정리 + Map에서 제거
     if (gen.collectionTimer) clearTimeout(gen.collectionTimer)
+    if (gen.orphanTimer) clearTimeout(gen.orphanTimer) // #R13-3
     pendingGenerations.delete(generationId)
 
     console.log('[Flow API] [AsyncCollect] Parsing results for gen:', generationId,
@@ -928,9 +1205,36 @@ export function registerFlowAPIIPC(ipcMain, deps) {
 
     const useToken = token || gen.token || null
 
+    // 에이전트 모델: DOM 에서 매칭한 생성 이미지를 src(media.getMediaUrlRedirect?name=UUID)
+    // 그대로 페이지 컨텍스트 fetch(쿠키 포함, redirect 따라감)로 받아 base64 변환.
+    if (gen.domImages && gen.domImages.length > 0) {
+      for (const { mediaId, src } of gen.domImages) {
+        try {
+          // sessionFetch = Electron session.fetch (페이지 쿠키 포함, redirect 자동 추적,
+          // 실제 Response). <img> 가 렌더한 그 src 를 그대로 받아 바이너리 → base64.
+          const res = await sessionFetch(src)
+          if (!res.ok) throw new Error(`media fetch HTTP ${res.status}`)
+          const buffer = await res.arrayBuffer()
+          const base64Raw = Buffer.from(buffer).toString('base64')
+          const contentType = (res.headers.get && res.headers.get('content-type')) || 'image/png'
+          allImages.push({ base64: `data:${contentType};base64,${base64Raw}`, mediaId })
+        } catch (e) {
+          console.warn('[Flow API] [DOM Collect] image fetch failed:', e.message)
+          allErrors.push(e.message)
+        }
+      }
+      console.log('[Flow API] [DOM Collect] collected', allImages.length, 'image(s) for gen:', generationId)
+      if (allImages.length > 0) {
+        return { success: true, images: allImages }
+      }
+      // 실패 시 아래 응답-가로채기 경로로 폴백
+    }
+
     for (const resp of successResponses) {
+      // #R11-5: 401/403 인증 에러 보존(async collect 도 동일) — 렌더러 auth-stop.
+      if (resp.status === 401 || resp.status === 403) { allErrors.push(`HTTP ${resp.status} Unauthorized`); continue }
       const data = parseFlowResponse(resp.body)
-      if (!data) { allErrors.push('Failed to parse response'); continue }
+      if (!data) { allErrors.push(`Failed to parse response (HTTP ${resp.status ?? '?'})`); continue }
       if (data.error) { allErrors.push(formatGoogleApiError(data.error)); continue }
 
       // base64 이미지 직접 추출
@@ -982,9 +1286,9 @@ export function registerFlowAPIIPC(ipcMain, deps) {
 
   // ─── 비동기 생성 일괄 정리 (배치 종료 시) ───
   ipcMain.handle('flow:clear-generations', async () => {
-    try { await ensureDebuggerAttached() } catch (_) {}
     for (const [id, gen] of pendingGenerations) {
       if (gen.collectionTimer) clearTimeout(gen.collectionTimer)
+      if (gen.orphanTimer) clearTimeout(gen.orphanTimer) // #R13-3
     }
     const count = pendingGenerations.size
     pendingGenerations.clear()
@@ -994,7 +1298,6 @@ export function registerFlowAPIIPC(ipcMain, deps) {
 
   // Fetch media by ID (mediaId → redirect → base64)
   ipcMain.handle('flow:fetch-media', async (event, { token, mediaId }) => {
-    try { await ensureDebuggerAttached() } catch (_) {}
     if (!token) return { success: false, error: 'No token' }
     if (!mediaId) return { success: false, error: 'No mediaId' }
 
@@ -1008,7 +1311,6 @@ export function registerFlowAPIIPC(ipcMain, deps) {
 
   // 비디오 URL 직접 다운로드 (status 응답에서 추출한 fifeUri/url)
   ipcMain.handle('flow:download-video-url', async (event, { url, token }) => {
-    try { await ensureDebuggerAttached() } catch (_) {}
     if (!url) return { success: false, error: 'No URL' }
 
     try {
@@ -1037,6 +1339,10 @@ export function registerFlowAPIIPC(ipcMain, deps) {
   // 2. <video> 요소를 mediaId로 찾기 → hover → three-dot → download → 해상도 선택
   // 3. temp 파일 읽기 → base64 반환
   ipcMain.handle('flow:dom-download-video', async (event, { mediaId, resolution = '720p' }) => {
+    // #R27-5: 단순 fetch 가 아니라 Flow 다운로드 메뉴를 클릭하고 1080p/4K 선택 시 업스케일까지
+    //   돌 수 있어 Flow quota 를 쓴다. API 모드 전환 후 stale 호출이 보존된 Flow view 를 구동해
+    //   quota 를 소모하지 않도록 게이트한다. (API 모드 비디오 다운로드는 engineApi 경로라 무관.)
+    if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }
     if (!mediaId) return { success: false, error: 'No mediaId' }
@@ -1044,8 +1350,13 @@ export function registerFlowAPIIPC(ipcMain, deps) {
 
     console.log('[Flow DOMDownload] Starting DOM download — mediaId:', mediaId?.substring(0, 30), 'resolution:', resolution)
 
+    // R14-P1: 공유 session will-download 경합 방지 — 다운로드/업스케일을 직렬화.
+    const releaseDownloadLock = await downloadMutex.acquire()
+
     // session.will-download 핸들러 (CDP setDownloadBehavior 대체) — 함수 스코프 변수로 cleanup
     let willDownloadHandler = null
+    // #R11-8: tempDir 를 try 밖에 둬 finally 에서 항상 정리(예외 경로 누수 방지).
+    let tempDir = null
     const dlSession = flowView.webContents.session
 
     try {
@@ -1053,7 +1364,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       const os = await import('node:os')
 
       // Step 1: 다운로드 path 가로채기 (Electron session.will-download — CDP 무관)
-      const tempDir = path.join(os.tmpdir(), `flow-dl-${Date.now()}`)
+      tempDir = path.join(os.tmpdir(), `flow-dl-${Date.now()}`)
       fs.mkdirSync(tempDir, { recursive: true })
       console.log('[Flow DOMDownload] Download dir:', tempDir)
 
@@ -1396,7 +1707,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       // Step 3: temp 디렉토리에서 다운로드 파일 대기 (폴링)
       console.log('[Flow DOMDownload] Waiting for download file in:', tempDir)
       let downloadedFile = null
-      const maxWait = 120000 // 2분 (업스케일에 시간 걸릴 수 있음)
+      const maxWait = VIDEO_DOWNLOAD_TIMEOUT_MS // 5분 (동영상 4K 업스케일 포함)
       const pollInterval = 1000
       const startTime = Date.now()
 
@@ -1482,13 +1793,22 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     } catch (e) {
       console.error('[Flow DOMDownload] Error:', e.message)
       return { success: false, error: e.message }
+    } finally {
+      // R13-P2: early return(DOM 실패 등)/throw 경로에서도 will-download 리스너 누수 방지(idempotent).
+      if (willDownloadHandler) {
+        dlSession.off('will-download', willDownloadHandler)
+        willDownloadHandler = null
+      }
+      // #R11-8: 예외 등 어떤 종료 경로든 temp 디렉터리 정리(중간 rmSync 와 idempotent).
+      if (tempDir) { try { (await import('node:fs')).rmSync(tempDir, { recursive: true, force: true }) } catch { /* ignore */ } }
+      releaseDownloadLock()  // R14-P1
     }
   })
 
   // Upload image to Flow
   ipcMain.handle('flow:upload-reference', async (event, { token, base64, projectId }) => {
-    try { await ensureDebuggerAttached() } catch (_) {}
     if (!token) return { success: false, error: 'No token' }
+    if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R25-4
 
     // projectId가 없으면 flowView URL에서 추출 시도
     const flowView = getFlowView()
@@ -1568,7 +1888,6 @@ export function registerFlowAPIIPC(ipcMain, deps) {
   // 사용자의 Flow 프로젝트(=날짜별 세션) 목록을 가져온다.
   // 응답: result.data.json.result.projects[] → {projectId, projectInfo, creationTime}
   ipcMain.handle('flow:list-projects', async (event, { token, pageSize = 20 } = {}) => {
-    try { await ensureDebuggerAttached() } catch (_) {}
     try {
       const input = JSON.stringify({ json: { pageSize, toolName: 'PINHOLE' } })
       const url = `https://labs.google/fx/api/trpc/project.searchUserProjects?input=${encodeURIComponent(input)}`
@@ -1613,7 +1932,6 @@ export function registerFlowAPIIPC(ipcMain, deps) {
   // 이미지(image.userUploadedImage)와 생성 이미지(image.generatedImage)
   // 모두 반환한다. 비디오는 제외.
   ipcMain.handle('flow:fetch-gallery', async (event, { token, projectId }) => {
-    try { await ensureDebuggerAttached() } catch (_) {}
     try {
       if (!projectId) {
         projectId = getCapturedProjectId?.()
@@ -1779,6 +2097,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
   // ─── Image Upscale (DOM 방식: three-dots → download → 해상도 선택 → 파일 캡처) ───
   // 비디오 DOM 다운로드와 동일한 패턴. Flow UI가 reCAPTCHA를 내부적으로 처리.
   ipcMain.handle('flow:upscale-image', async (event, { token, mediaId, projectId, resolution }) => {
+    if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R25-4
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }
     if (!mediaId) return { success: false, error: 'No mediaId' }
@@ -1789,7 +2108,12 @@ export function registerFlowAPIIPC(ipcMain, deps) {
 
     console.log('[Flow Image Upscale] Starting DOM upscale — mediaId:', mediaId?.substring(0, 30), 'resolution:', resText)
 
+    // R14-P1: 공유 session will-download 경합 방지 — 다운로드/업스케일을 직렬화.
+    const releaseDownloadLock = await downloadMutex.acquire()
+
     let willDownloadHandler = null
+    // #R11-9: tempDir 를 try 밖에 둬 finally 에서 항상 정리(예외 경로 누수 방지).
+    let tempDir = null
     const dlSession = flowView.webContents.session
 
     try {
@@ -1797,7 +2121,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       const os = await import('node:os')
 
       // Step 1: 다운로드 path 가로채기 (Electron session.will-download — CDP 무관)
-      const tempDir = path.join(os.tmpdir(), `flow-img-up-${Date.now()}`)
+      tempDir = path.join(os.tmpdir(), `flow-img-up-${Date.now()}`)
       fs.mkdirSync(tempDir, { recursive: true })
       console.log('[Flow Image Upscale] Download dir:', tempDir)
 
@@ -2065,7 +2389,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       // Step 3: temp 디렉토리에서 다운로드 파일 대기 (폴링)
       console.log('[Flow Image Upscale] Waiting for download file in:', tempDir)
       let downloadedFile = null
-      const maxWait = 120000 // 2분 (업스케일 처리 시간 포함)
+      const maxWait = IMAGE_UPSCALE_TIMEOUT_MS // 2분 (이미지 업스케일)
       const startTime = Date.now()
 
       while (Date.now() - startTime < maxWait) {
@@ -2135,6 +2459,15 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     } catch (e) {
       console.error('[Flow Image Upscale] Error:', e.message)
       return { success: false, error: e.message }
+    } finally {
+      // R13-P2: early return(DOM 실패 등)/throw 경로에서도 will-download 리스너 누수 방지(idempotent).
+      if (willDownloadHandler) {
+        dlSession.off('will-download', willDownloadHandler)
+        willDownloadHandler = null
+      }
+      // #R11-9: 예외 등 어떤 종료 경로든 temp 디렉터리 정리(중간 rmSync 와 idempotent).
+      if (tempDir) { try { (await import('node:fs')).rmSync(tempDir, { recursive: true, force: true }) } catch { /* ignore */ } }
+      releaseDownloadLock()  // R14-P1
     }
   })
 }

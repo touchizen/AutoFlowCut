@@ -5,7 +5,7 @@
  * the batch stops immediately and the global quotaModal is invoked exactly once.
  *
  * Two scenarios:
- *   1. Submit-path quota → batch breaks, no further submitGenerationDOM calls
+ *   1. Submit-path quota → batch breaks, no further submitGeneration calls
  *   2. Collect-path quota → scene marked error, modal shown, no more submits
  */
 
@@ -22,10 +22,6 @@ vi.mock('../../src/hooks/useFileSystem', () => ({
   },
 }))
 
-vi.mock('../../src/utils/flowDOMClient', () => ({
-  resetDOMSession: vi.fn(),
-  requestStopDOM: vi.fn(),
-}))
 
 vi.mock('../../src/components/Toast', () => ({
   toast: { error: vi.fn(), warning: vi.fn(), success: vi.fn(), info: vi.fn() },
@@ -49,7 +45,7 @@ vi.mock('../../src/utils/sceneFilters', () => ({
 
 // Setup helper — mirrors useAutomation.integration.test.jsx
 function setupHook(overrides = {}) {
-  const submitGenerationDOM = vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' })
+  const submitGeneration = vi.fn().mockResolvedValue({ success: true, generationId: 'gen-1' })
   const checkGeneration = vi.fn().mockResolvedValue({ completed: false })
   const collectGeneration = vi.fn().mockResolvedValue({ success: true, images: [{ mediaId: 'm-1' }] })
   const clearGenerations = vi.fn().mockResolvedValue(undefined)
@@ -58,10 +54,10 @@ function setupHook(overrides = {}) {
   const updateScene = vi.fn()
   const getMatchingReferences = vi.fn(() => [])
 
-  const flowAPI = {
-    submitGenerationDOM, checkGeneration, collectGeneration,
+  const genAPI = {
+    submitGeneration, checkGeneration, collectGeneration,
     clearGenerations, uploadReference, getAccessToken,
-    ...(overrides.flowAPI || {}),
+    ...(overrides.genAPI || {}),
   }
 
   const scenes = overrides.scenes || [
@@ -77,9 +73,9 @@ function setupHook(overrides = {}) {
   }
 
   const t = (k) => k
-  const hook = renderHook(() => useAutomation(flowAPI, scenesHook, null, null, null, t, null, null, null))
+  const hook = renderHook(() => useAutomation(genAPI, scenesHook, null, null, null, t, null, null, null))
 
-  return { hook, flowAPI, updateScene, submitGenerationDOM, checkGeneration, collectGeneration }
+  return { hook, genAPI, updateScene, submitGeneration, checkGeneration, collectGeneration }
 }
 
 beforeEach(() => {
@@ -97,10 +93,10 @@ afterEach(() => {
 
 describe('useAutomation quota-exhausted stop', () => {
   it('submit-path quota error → batch stops, no further submits, modal shown once', async () => {
-    const { hook, submitGenerationDOM, updateScene } = setupHook()
+    const { hook, submitGeneration, updateScene } = setupHook()
 
     // First submit returns Flow quota error — should stop batch immediately.
-    submitGenerationDOM.mockResolvedValueOnce({
+    submitGeneration.mockResolvedValueOnce({
       success: false,
       error: 'Resource has been exhausted (e.g. check quota).',
     })
@@ -113,7 +109,7 @@ describe('useAutomation quota-exhausted stop', () => {
     await startPromise
 
     // Only 1 submit attempted before stop — s2/s3 never reached.
-    expect(submitGenerationDOM).toHaveBeenCalledTimes(1)
+    expect(submitGeneration).toHaveBeenCalledTimes(1)
     // Modal triggered exactly once.
     expect(showMock).toHaveBeenCalledTimes(1)
     // s1 marked as error with the quota error string.
@@ -125,7 +121,7 @@ describe('useAutomation quota-exhausted stop', () => {
   })
 
   it('collect-path quota error → scene marked error, modal shown, no further submits', async () => {
-    const { hook, submitGenerationDOM, checkGeneration, collectGeneration, updateScene } = setupHook({
+    const { hook, submitGeneration, checkGeneration, collectGeneration, updateScene } = setupHook({
       scenes: [
         { id: 's1', prompt: 'a', status: 'pending' },
         { id: 's2', prompt: 'b', status: 'pending' },
@@ -134,7 +130,7 @@ describe('useAutomation quota-exhausted stop', () => {
     })
 
     let gid = 0
-    submitGenerationDOM.mockImplementation(async () => ({ success: true, generationId: `gen-${++gid}` }))
+    submitGeneration.mockImplementation(async () => ({ success: true, generationId: `gen-${++gid}` }))
     checkGeneration.mockResolvedValue({ completed: true })
     collectGeneration.mockResolvedValue({
       success: false,
@@ -143,15 +139,16 @@ describe('useAutomation quota-exhausted stop', () => {
 
     let startPromise
     await act(async () => {
-      startPromise = hook.result.current.start({ projectName: 'p', saveMode: 'folder' })
+      // concurrency=1 → 게이트가 s1 제출 후 다음 제출 전에 collectCompleted 실행 →
+      // collect-path quota 감지 → stop. (동시성>1 이면 window 만큼 먼저 제출되는 게 정상)
+      startPromise = hook.result.current.start({ projectName: 'p', saveMode: 'folder', concurrency: 1 })
     })
-    // Advance past inter-scene wait so collectCompleted fires.
     await act(async () => { await vi.advanceTimersByTimeAsync(30 * 1000) })
     await startPromise
 
-    // s1 was submitted; collectCompleted (mid-wait) saw quota → stopRequestedRef=true,
-    // remaining s2/s3 never submitted.
-    expect(submitGenerationDOM).toHaveBeenCalledTimes(1)
+    // s1 제출 후 게이트의 collectCompleted 가 quota 감지 → stopRequestedRef=true,
+    // 남은 s2/s3 는 제출 안 됨.
+    expect(submitGeneration).toHaveBeenCalledTimes(1)
     expect(showMock).toHaveBeenCalledTimes(1)
     // s1 marked error with quota error string (via collect path, not finalize).
     const quotaMark = updateScene.mock.calls.find(
