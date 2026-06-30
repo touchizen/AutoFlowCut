@@ -17,7 +17,7 @@ A desktop app that **mass-generates** images and videos with Google Gemini / Veo
 
 Still building AI videos one shot at a time?
 
-AutoFlowCut automates the entire AI video production pipeline. Generate images and videos with Google Gemini / Veo APIs, then convert them into ready-to-edit CapCut projects. Import your script, generate visuals, pick the best media per scene, and export in a single click.
+AutoFlowCut automates the entire AI video production pipeline. Generate images and videos with Google Gemini / Veo APIs, then convert them into ready-to-edit projects for CapCut, Adobe Premiere Pro, or Vrew. Import your script, generate visuals, pick the best media per scene, and export in a single click.
 
 ## Features
 
@@ -32,10 +32,11 @@ AutoFlowCut automates the entire AI video production pipeline. Generate images a
 - **87 style presets** — Animation, photography, film, and 8 more categories.
 - **Auto-injected style prompts** — Reference styles are automatically merged into generation prompts.
 
-### CapCut Export
-- **One-click export** — Complete project with timeline, media, subtitles, and Ken Burns animation.
-- **Direct CapCut project folder write** — No ZIP download required.
-- **Auto-launch CapCut** — The CapCut app opens automatically after export.
+### Export (CapCut / Premiere Pro / Vrew)
+- **Multi-editor export** — One-click export to CapCut, Adobe Premiere Pro (`.prproj`), or Vrew (`.vrew`).
+- **Complete projects** — Timeline, media, subtitles, and Ken Burns animation included.
+- **Direct project write** — Writes the project file straight to disk (no manual ZIP / import step).
+- **Auto-launch + install guidance** — Opens the target editor after export; if it isn't installed, you're pointed to the download (or store) page.
 - **SRT subtitles** — Multilingual subtitles included in export.
 
 ### Audio / SFX Integration
@@ -54,7 +55,7 @@ AutoFlowCut automates the entire AI video production pipeline. Generate images a
 - **Built-in MCP server** — Edit scenes / references / prompts directly from Claude Code.
 - **HTTP API bridge** — Integrate with external tools (port 3210).
 - **Skill system** — Install and manage Claude Code skills; auto-installed on the app's first run.
-- **Story Engine v2** — End-to-end 9-wave pipeline from script to CapCut export.
+- **Story Engine v2** — End-to-end 9-wave pipeline from script to export.
   - `/story-new` → Initialize an episode + discuss the topic.
   - `/story-execute` → Run W1–W9 automatically (sub-agents + review loops, two user gates at W3/W7).
   - `/story-step` → Run the next single wave only and exit. Manual mode — no in-wave prompts; the user reviews each wave's deliverables and re-invokes for the next.
@@ -315,6 +316,26 @@ GET  /api/batch-status     — Query batch progress
 - **YouTube**: [@touchizen](https://youtube.com/@touchizen)
 - **Discord**: [touchizen](https://discord.gg/DTMMs8TZDN)
 - **Contact**: gordon.ahn@touchizen.com
+
+## Contributing & Rewards
+
+We actively reward community contributions to AutoFlowCut.
+
+### 🐞 Bug fixes → usage credits
+
+Find a bug in the app, fix it, and open a PR. Once it's reviewed and merged, you
+receive **usage credits** sized to the impact of your contribution — from a
+**minimum of 10 generations** up to **1 year of unlimited use**.
+
+### 🔌 Revenue-model plugins → merged
+
+Built a plugin that adds a revenue model? Open a PR. We **review and merge**
+well-built, secure plugins that fit the project, and work out the details with you.
+
+Open a PR or start a discussion on [Discord](https://discord.gg/DTMMs8TZDN). All
+contributions are accepted under AGPL v3 — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Reward amounts are granted at the maintainer's discretion based on the quality and
+impact of each contribution.
 
 ## License
 
