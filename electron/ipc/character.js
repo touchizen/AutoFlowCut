@@ -998,10 +998,12 @@ export function registerCharacterIPC(ipcMain, deps) {
       console.log('[Flow Character] A2 file injected')
       await sleep(800)
 
-      // 3) "만들기"(실행) 버튼 트러스트 클릭 — 네이티브에선 파일 선택 후 자동 실행되며, 이때 entityContext
-      //    업로드가 트리거되고 spinner 가 돈다. (synthetic 클릭은 Flow 가 무시하므로 트러스트 클릭 필수.)
+      // 3) "만들기"(실행) 버튼 best-effort 클릭. 단, Flow 는 파일 주입(onChange) 만으로 uploadImage 가
+      //    자동 트리거되는 경우가 많아 이 버튼이 아예 없을 수 있다 → "Button not found" 는 정상이며
+      //    실패가 아니다(아래 waitForUploadImageResponse 가 실제 성공/실패를 판정). 오해 방지용 로그.
       const runClick = await trustedClickOnFlowView(A2_RUN_BTN_EXPR)
-      console.log('[Flow Character] A2 만들기(실행) trusted click:', JSON.stringify(runClick))
+      if (runClick && runClick.success) console.log('[Flow Character] A2 만들기(실행) 버튼 클릭됨')
+      else console.log('[Flow Character] A2 만들기 버튼 없음 — 파일 선택으로 자동 업로드 진행(정상, 응답 대기)')
 
       // SPA 가 보낸 uploadImage 응답을 네트워크 버퍼에서 회수(성공 200 또는 4xx/5xx 실패 즉시).
       // #R33: 타임아웃을 CHARACTER_UPLOAD_TIMEOUT_MS(120s)로 — 60s 는 짧아 등록 실패 고착을 유발했다.
