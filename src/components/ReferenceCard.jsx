@@ -98,9 +98,12 @@ export default function ReferenceCard({
       // ReferencePanel.handleAdd 가 항상 발급. 이름은 patch 에도 반영해 후속 autosave
       // 가 같은 saveName 으로 일관 유지.
       // M4 T7: effectiveName 을 업로드 *전*에 확정 — uploadReference 메타에도 포함.
+      // #R34: 이름이 비어 있으면 업로드한 파일명(확장자 제외)을 이름으로 쓴다. 안 그러면
+      //   imported_<id> 같은 엉뚱한 이름으로 Flow 에 등록된다. 파일명도 없을 때만 imported fallback.
+      const fileBaseName = file?.name ? file.name.replace(/\.[^/.]+$/, '').trim() : ''
       const effectiveName = (reference.name && String(reference.name).trim())
         ? reference.name
-        : (reference.id != null ? `imported_${reference.id}` : null)
+        : (fileBaseName || (reference.id != null ? `imported_${reference.id}` : null))
 
       let uploadedMediaId = null
       let uploadedCaption = null

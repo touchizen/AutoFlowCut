@@ -169,6 +169,23 @@ describe('ReferenceCard — entity field propagation (Codex #3)', () => {
     expect(lastCall.flowNameSyncStatus).toBeNull()
   })
 
+  it('#R34: 이름이 빈 ref 업로드 → 파일명(확장자 제외)을 이름으로 사용', async () => {
+    const onUpload = vi.fn().mockResolvedValue({ success: true, mediaId: 'm', entityId: 'e', workflowId: 'w', registered: true, flowNameSyncStatus: 'synced' })
+    const onUpdate = vi.fn()
+    const emptyNameRef = { ...baseRef, name: '' }  // 이름 미입력 상태에서 'hero.png' 업로드
+
+    const { container } = render(
+      <ReferenceCard reference={emptyNameRef} index={0} onUpdate={onUpdate} onRemove={vi.fn()}
+        onUpload={onUpload} t={(k) => k} projectName={null} />
+    )
+    await triggerUpload(container)
+
+    // 파일명 'hero.png' → 'hero' 로 등록(imported_<id> 아님)
+    expect(onUpload).toHaveBeenCalledWith('FLOWBASE64', expect.objectContaining({ name: 'hero' }))
+    const lastCall = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][1]
+    expect(lastCall.name).toBe('hero')
+  })
+
   it('upload failure: onUpdate has no mediaId and no entity fields', async () => {
     const onUpload = vi.fn().mockResolvedValue({ success: false })
     const onUpdate = vi.fn()
