@@ -51,6 +51,7 @@ import { frameImageFor, stripOmniEndFrame } from './utils/framePairImages'
 import { saveGalleryFrame } from './utils/galleryUpload'
 import { isUsableVideoReference } from './utils/videoPromptReferences'
 import { toast } from './components/Toast'
+import { selectUnsyncedMentionedRefs, syncRefToFlow } from './utils/flowCharacterSync'
 
 // Components
 import Header from './components/Header'
@@ -92,6 +93,10 @@ import { useAuth } from './contexts/AuthContext'
 
 function App() {
   const { t } = useI18n()
+  const isKo = t('common.cancel') === '취소'  // 간단한 언어 감지 (ReferencePanel 과 동일)
+  // #R34: 생성 전 미동기화 @멘션 캐릭터 가드 모달 상태 — { refs, proceed } | null
+  const [syncGate, setSyncGate] = useState(null)
+  const [syncGateBusy, setSyncGateBusy] = useState(false)
   const { isAuthenticated, subscription, refreshSubscription } = useAuth()
   // 두 자동화 훅(useAutomation, useVideoAutomation)에 동일한 안정 레퍼런스를 전달.
   // 인라인 객체 리터럴은 매 렌더마다 새 참조를 만들어 useCallback deps 를 불필요하게 갱신함.
@@ -1140,6 +1145,23 @@ function App() {
           return
         }
 
+        // #R34: 생성 전 미동기화 @멘션 캐릭터 가드 — Flow 모드에서 멘션된 캐릭터 중 동기화 안 된 게
+        //   있으면 모달로 안내하고, '동기화 후 생성' 시 자동 일괄(직렬) 동기화 후 진행한다.
+        //   (캐릭터 동기화는 생성 배치에서 분리됐으므로 여기서 사전 점검한다.)
+        if (mode === 'flow') {
+          const unsyncedMentioned = selectUnsyncedMentionedRefs(targetScenes, scenesHook.references)
+          if (unsyncedMentioned.length > 0) {
+            setSyncGate({
+              refs: unsyncedMentioned,
+              proceed: () => {
+                setRunningStyle({ styleId: effectiveStyleId, label: styleResolver.resolveLabelForId(effectiveStyleId), applies: true })
+                setHasPendingBatch(true)
+                start(startOptions).finally(() => setHasPendingBatch(false))
+              },
+            })
+            return
+          }
+        }
         // Stop 버튼이 현재 돌고 있는 스타일을 표시할 수 있도록 id + 라벨 모두 시작 시점 snapshot
         setRunningStyle({ styleId: effectiveStyleId, label: styleResolver.resolveLabelForId(effectiveStyleId), applies: true })
         setHasPendingBatch(true)
@@ -1388,6 +1410,35 @@ function App() {
     setTagValidationErrors(null)
     setPendingStartOptions(null)
   }
+
+  // #R34: 생성 전 가드 — '동기화 후 생성'. 미동기화 @멘션 캐릭터를 직렬(1건씩)로 Flow 에 동기화한 뒤
+  //   SPA 새로고침하고, 원래 생성(proceed 클로저)을 이어서 실행한다. 동시 실행 금지(공유 flowView).
+  const handleSyncGateProceed = async () => {
+    if (!syncGate || syncGateBusy) return
+    setSyncGateBusy(true)
+    let ok = 0, fail = 0
+    try {
+      for (const ref of syncGate.refs) {
+        const res = await syncRefToFlow(ref, genAPI.uploadReference)
+        if (res.ok) {
+          ok++
+          updateReferences(prev => prev.map(r => r.id === ref.id ? { ...r, ...res.patch } : r))
+        } else {
+          fail++
+          console.warn('[App] sync-gate sync failed for', ref?.name, res.error)
+        }
+      }
+      try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
+      if (fail > 0) toast.warning(isKo ? `동기화 ${ok} 성공 · ${fail} 실패 — 생성을 계속합니다` : `Synced ${ok}, ${fail} failed — generating anyway`)
+      else toast.success(isKo ? `Flow 동기화 완료 (${ok}) — 생성 시작` : `Synced ${ok} — generating`)
+      const proceed = syncGate.proceed
+      setSyncGate(null)
+      proceed?.()
+    } finally {
+      setSyncGateBusy(false)
+    }
+  }
+  const handleSyncGateCancel = () => { if (!syncGateBusy) setSyncGate(null) }
 
   // ref batch는 generatingRefs.length만으로 부족 — preparingRefs(폴더/토큰 체크 ~ 첫 submit 사이)와
   // stoppingRefs(중지 진행 중)도 "실행 중"에 포함해야 한다. 안 그러면 그 구간에 MCP가 batch 다시
@@ -2351,6 +2402,36 @@ function App() {
           onCancel={handleTagValidationCancel}
           t={t}
         />
+      )}
+
+      {/* #R34: 생성 전 미동기화 @멘션 캐릭터 가드 — '동기화 후 생성' 시 자동 일괄 동기화 후 진행 */}
+      {syncGate && (
+        <Modal
+          isOpen={true}
+          onClose={handleSyncGateCancel}
+          title={`🔄 ${isKo ? 'Flow 동기화 필요' : 'Flow sync needed'}`}
+        >
+          <div style={{ padding: '4px 2px', maxWidth: 460 }}>
+            <p style={{ marginTop: 0 }}>
+              {isKo
+                ? '다음 캐릭터가 Flow 에 동기화되지 않았습니다. 동기화 후 생성하면 @멘션이 정상 동작합니다.'
+                : 'These characters are not synced to Flow. Sync first so @mentions resolve correctly.'}
+            </p>
+            <ul style={{ margin: '8px 0 14px', paddingLeft: 20 }}>
+              {syncGate.refs.map(r => (<li key={r.id}>{r.name || `#${r.id}`}</li>))}
+            </ul>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn-secondary" onClick={handleSyncGateCancel} disabled={syncGateBusy}>
+                {t('common.cancel')}
+              </button>
+              <button className="btn-primary" onClick={handleSyncGateProceed} disabled={syncGateBusy}>
+                {syncGateBusy
+                  ? `⏳ ${isKo ? '동기화 중' : 'Syncing'}…`
+                  : (isKo ? '동기화 후 생성' : 'Sync & generate')}
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
 
       <Modal

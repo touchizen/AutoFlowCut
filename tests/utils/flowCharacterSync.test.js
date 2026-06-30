@@ -7,7 +7,7 @@ vi.mock('../../src/hooks/useFileSystem', () => ({
   fileSystemAPI: { readFileByPath: vi.fn().mockResolvedValue({ success: true, data: 'data:image/png;base64,FROMFILE' }) },
 }))
 
-import { isRefSynced, selectUnsyncedRefs, syncRefToFlow } from '../../src/utils/flowCharacterSync'
+import { isRefSynced, selectUnsyncedRefs, selectUnsyncedMentionedRefs, syncRefToFlow } from '../../src/utils/flowCharacterSync'
 
 describe('#R34: isRefSynced', () => {
   it('character → entityId + synced', () => {
@@ -33,6 +33,23 @@ describe('#R34: selectUnsyncedRefs', () => {
   it('미동기화 + 이미지 + 이름 있는 character/scene 만', () => {
     const out = selectUnsyncedRefs(refs).map(r => r.id)
     expect(out).toEqual([1, 4])
+  })
+})
+
+describe('#R34: selectUnsyncedMentionedRefs (생성 전 가드)', () => {
+  const refs = [
+    { id: 1, type: 'character', name: 'king', data: 'x', entityId: null, flowNameSyncStatus: 'failed' },  // 미동기화
+    { id: 2, type: 'character', name: 'queen', data: 'x', entityId: 'e', flowNameSyncStatus: 'synced' },  // 동기화됨
+  ]
+  it('@멘션된 캐릭터 중 미동기화만 반환', () => {
+    const scenes = [{ prompt: '@king and @queen walk in' }]
+    expect(selectUnsyncedMentionedRefs(scenes, refs).map(r => r.id)).toEqual([1])
+  })
+  it('멘션 안 된 씬은 빈 배열', () => {
+    expect(selectUnsyncedMentionedRefs([{ prompt: 'no mention' }], refs)).toEqual([])
+  })
+  it('한국어 조사 멘션(@king이)도 인식', () => {
+    expect(selectUnsyncedMentionedRefs([{ prompt: '@king이 들어온다' }], refs).map(r => r.id)).toEqual([1])
   })
 })
 

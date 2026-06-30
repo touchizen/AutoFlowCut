@@ -12,6 +12,7 @@
 
 import { cleanBase64 } from './urls'
 import { applyEntityRegistrationPatch } from './refEntityRegistration'
+import { resolveMentions } from './mentionParser'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 
 /**
@@ -23,6 +24,24 @@ export function isRefSynced(ref) {
   if (!ref) return false
   if (ref.type === 'character') return !!(ref.entityId && ref.flowNameSyncStatus === 'synced')
   return !!ref.mediaId
+}
+
+/**
+ * #R34: 생성 대상 씬들의 @멘션 캐릭터 중 "미동기화" 인 것만 추린다.
+ *   생성 전 가드 모달에 쓴다 — 이 캐릭터들이 동기화 안 된 채 생성하면 멘션 실패/이미지 폴백이 된다.
+ * @param {Array<{prompt?:string}>} scenes - 생성 대상 씬
+ * @param {Array} references - 전체 ref
+ * @returns {Array} 미동기화 character ref (멘션된 것만)
+ */
+export function selectUnsyncedMentionedRefs(scenes = [], references = []) {
+  const ids = new Set()
+  for (const s of scenes || []) {
+    const { matched } = resolveMentions(s?.prompt || '', references)
+    for (const r of matched) {
+      if (r?.type === 'character' && r.id != null) ids.add(r.id)
+    }
+  }
+  return (references || []).filter(r => r && ids.has(r.id) && !isRefSynced(r))
 }
 
 /** 동기화 대상(미동기화 + 이미지 보유)인 character/scene ref 만 추린다. */
