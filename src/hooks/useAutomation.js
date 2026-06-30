@@ -304,6 +304,16 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
         console.log('[Automation] Scene', scene.id, 'finalized synchronously (', submitResult.images.length, 'image)')
       } else {
         console.error('[Automation] Submit failed for scene', scene.id, ':', submitResult.error)
+        // #R33 self-heal: 멘션 피커에 캐릭터가 없으면(Flow UI 에서 삭제 등) staleMention 이 실려 온다.
+        //   해당 ref 를 'failed' 로 마킹 → 다음 실행 선등록(needsEntityRegistration)에서 자동 재등록.
+        if (submitResult.staleMention) {
+          const staleName = String(submitResult.staleMention).toLowerCase()
+          const staleRef = (effectiveRefs || []).find(r => r?.name && String(r.name).toLowerCase() === staleName)
+          if (staleRef && staleRef.id != null) {
+            console.warn('[Automation] stale mention — marking ref for re-register (self-heal):', staleRef.name)
+            updateReferences(prev => prev.map(r => r.id === staleRef.id ? { ...r, flowNameSyncStatus: 'failed' } : r))
+          }
+        }
         // #R10-6: 인증 실패 센티넬 — 토큰이 죽었으니 즉시 배치 중단(collect/upload 경로와 동일 처리).
         if (submitResult.authFailed) {
           console.warn('[Automation] submitGeneration authFailed — stopping batch:', submitResult.error)

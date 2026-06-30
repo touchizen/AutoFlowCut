@@ -1136,6 +1136,36 @@ describe('useFlowEngine (#R33) — unresolved @mention image fallback', () => {
 })
 
 // ---------------------------------------------------------------------------
+// #R33: staleMention 전파 — Flow UI 에서 캐릭터 삭제 시 멘션 피커 누락 신호를 호출측에 전달
+//   (useAutomation 이 ref 를 'failed' 로 마킹해 self-heal 하도록).
+// ---------------------------------------------------------------------------
+describe('useFlowEngine (#R33) — staleMention propagation', () => {
+  const synced = { id: 1, name: 'king', type: 'character', entityId: 'e1', flowNameSyncStatus: 'synced', mediaId: 'm1' }
+
+  it('submitGeneration: flowGenerateScene staleMention → propagated on the failed result', async () => {
+    mockFlowGenerateScene.mockResolvedValue({ success: false, error: '멘션 선택 실패: king', retry: true, staleMention: 'king' })
+    const { result } = renderHook(() => useFlowEngine())
+    let res
+    await act(async () => {
+      res = await result.current.submitGeneration('@king walks', [], { references: [synced] })
+    })
+    expect(res.success).toBe(false)
+    expect(res.staleMention).toBe('king')
+  })
+
+  it('generateImage: flowGenerateScene staleMention → propagated', async () => {
+    mockFlowGenerateScene.mockResolvedValue({ success: false, error: '멘션 선택 실패: king', retry: true, staleMention: 'king' })
+    const { result } = renderHook(() => useFlowEngine())
+    let res
+    await act(async () => {
+      res = await result.current.generateImage('@king walks', [], { references: [synced] })
+    })
+    expect(res.success).toBe(false)
+    expect(res.staleMention).toBe('king')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // #R33: planMentionRouting / planUnresolvedMentionFallback — pure unit tests
 // ---------------------------------------------------------------------------
 describe('#R33: planMentionRouting (pure)', () => {

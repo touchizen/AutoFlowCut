@@ -802,7 +802,9 @@ export function registerCharacterIPC(ipcMain, deps) {
       for (const seg of segs) {
         if (seg.type === 'mention') {
           const ok = await insertSceneMention(flowView, seg.name)
-          if (!ok) return { success: false, error: '멘션 선택 실패: ' + seg.name, retry: true }
+          // #R33: 멘션 피커에 캐릭터가 없으면(Flow UI 에서 삭제됨 등) staleMention 신호를 실어 보낸다 →
+          //   렌더러가 해당 ref 의 flowNameSyncStatus 를 'failed' 로 마킹 → 다음 실행에 자동 재등록(self-heal).
+          if (!ok) return { success: false, error: '멘션 선택 실패: ' + seg.name, retry: true, staleMention: seg.name }
         } else if (seg.type === 'text' && seg.text) {
           const ok = await appendSceneText(flowView, seg.text)
           if (!ok) return { success: false, error: '텍스트 주입 실패' }

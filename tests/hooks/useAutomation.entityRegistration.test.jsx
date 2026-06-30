@@ -256,6 +256,39 @@ describe('useAutomation — on-demand entity registration (M6 §3.5.3)', () => {
     expect(updateReferences).not.toHaveBeenCalled()
   }, 30000)
 
+  it('#R33 self-heal: submit staleMention → ref marked flowNameSyncStatus=failed (re-register next run)', async () => {
+    // Flow UI 에서 캐릭터 삭제 → 멘션 피커 누락 → submitGeneration 이 staleMention 신호를 반환.
+    //   이미 synced 라 선등록은 스킵되지만, self-heal 이 ref 를 'failed' 로 마킹해 다음 실행 재등록.
+    const characterRef = { id: 'ref1', name: 'Alice', type: 'character', category: 'character', data: 'base64data==', mediaId: 'm', entityId: 'e', flowNameSyncStatus: 'synced' }
+    const updateReferences = vi.fn()
+    const scenesHook = makeScenesHook({
+      references: [characterRef],
+      updateReferences,
+      scenes: [{ id: 's1', prompt: 'hello @Alice', status: 'pending' }],
+    })
+    const genAPI = makeGenAPI({
+      submitGeneration: vi.fn().mockResolvedValue({ success: false, error: '멘션 선택 실패: Alice', staleMention: 'Alice' }),
+    })
+    const t = (k) => k
+
+    const { result } = renderHook(() =>
+      useAutomation(genAPI, scenesHook, null, null, null, t, vi.fn(), null, null, 'flow')
+    )
+    let startPromise
+    await act(async () => { startPromise = result.current.start({ projectName: 'p', saveMode: 'folder' }) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(60 * 1000) })
+    await act(async () => { await startPromise })
+
+    // self-heal 패치: ref 가 'failed' 로 마킹돼야 한다(functional updater).
+    expect(updateReferences).toHaveBeenCalled()
+    const patched = updateReferences.mock.calls
+      .map(c => c[0])
+      .filter(fn => typeof fn === 'function')
+      .map(fn => fn([characterRef]).find(r => r.id === 'ref1'))
+      .filter(Boolean)
+    expect(patched.some(r => r.flowNameSyncStatus === 'failed')).toBe(true)
+  }, 30000)
+
   it('flow mode: non-character ref (style) — no entity patch', async () => {
     const styleRef = { id: 'ref1', name: 'stylish', type: 'style', category: 'style', data: 'base64data==', mediaId: null, entityId: null }
     const updateReferences = vi.fn()

@@ -285,6 +285,8 @@ export function useFlowEngine(opts = {}) {
           success: !!res?.success,
           images: imgs,
           error: res?.error || undefined,
+          // #R33: 멘션 피커 누락(Flow 삭제) 신호 전파 → 호출측이 ref 를 'failed' 로 마킹(self-heal).
+          staleMention: res?.staleMention,
         })
       }
       // routing.kind === 'image' — 일반 생성 또는 #R33 미해결 멘션 이미지 폴백(@스트립 + ref 주입)
@@ -326,7 +328,8 @@ export function useFlowEngine(opts = {}) {
 
         if (!res?.success) {
           // #R8-11: 인증 에러면 authFailed 센티넬 부여(배치 즉시 중단).
-          return markAuth({ success: false, error: res?.error || 'Scene generation failed' })
+          // #R33: 멘션 피커 누락(Flow 삭제) 신호 전파 → 호출측이 ref 를 'failed' 로 마킹(self-heal).
+          return markAuth({ success: false, error: res?.error || 'Scene generation failed', staleMention: res?.staleMention })
         }
 
         // #R22-2: base64 이미지가 없으면 fail-closed(조용한 빈 success 방지). base64:null 복구 엔트리는
