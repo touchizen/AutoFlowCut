@@ -545,6 +545,12 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       for (const r of getMatchingReferences(s)) {
         if (r && r.id != null) usedRefIds.add(r.id)
       }
+      // #R33: 태그 매칭엔 안 걸려도 프롬프트에서 @멘션으로 참조된 캐릭터도 선등록 대상에 포함.
+      //   안 그러면 @멘션-only 캐릭터(king)는 선등록을 못 받아 미동기화 → "Unresolved @mention" 으로 고착.
+      const { matched } = resolveMentions(s.prompt, references)
+      for (const r of matched) {
+        if (r && r.id != null) usedRefIds.add(r.id)
+      }
     }
     const refsToUpload = selectRefsToRegister(references, usedRefIds, mode)
     console.log('[Automation] Refs to upload:', refsToUpload.length)

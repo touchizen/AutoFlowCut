@@ -24,6 +24,7 @@ import { registerFlowAPIIPC } from './ipc/flow-api.js'
 import { registerVideoIPC } from './ipc/video.js'
 import { registerCharacterIPC } from './ipc/character.js'
 import { buildFlowInjectPayload, flowInjectClearPayload } from './flow-inject-payload.js'
+import { captureApiOrigin, resolveApiBase } from './flow-api-base.js'
 import { registerDomIPC } from './ipc/dom.js'
 import { createSharedHelpers } from './ipc/shared.js'
 import { routeReportResponse, isFlowFrameOrigin } from './reportResponseRouter.js'
@@ -128,6 +129,7 @@ let mainWindow = null
 let mcpHttpServer = null // MCP HTTP 서버 인스턴스
 
 let capturedProjectId = null // Flow 네트워크에서 자동 캡처된 projectId
+let capturedApiOrigin = null // #R33: Flow 가 실제로 쓴 생성 API origin(region 대응). null 이면 BASE_API_URL fallback.
 let pendingGeneration = null // DOM-triggered generation 응답 캡처용 Promise resolver (이미지) — 동기 모드
 const pendingGenerations = new Map() // 비동기 모드용 다중 생성 추적 (key: generationId)
 // DOM 에서 이미 수집(배정)한 결과 이미지 mediaId 집합 — flow-api(비동기)와 character(동기 @멘션)
@@ -667,6 +669,26 @@ async function clearFlowPageInject() {
   } catch (_) {}
 }
 
+// #R33: Flow 생성 API base 를 region 에 맞춰 동적 해석한다(우리가 직접 호출하는 uploadImage/
+//   entities/video i2v·status·upscale 호스트). 우선순위:
+//   (1) report-response 로 캡처한 origin → (2) 페이지가 stash 한 window.__autoflowcut_api_origin__
+//   → (3) BASE_API_URL(하드코딩 fallback, 현재 동작과 동일 = 무회귀).
+async function getApiBase() {
+  if (!capturedApiOrigin) {
+    try {
+      const flowView = modeController.getFlowView()
+      if (flowView) {
+        const o = await flowView.webContents
+          .executeJavaScript('window.__autoflowcut_api_origin__ || null')
+          .catch(() => null)
+        const cap = captureApiOrigin(o)
+        if (cap) capturedApiOrigin = cap
+      }
+    } catch (_) {}
+  }
+  return resolveApiBase(capturedApiOrigin, BASE_API_URL)
+}
+
 // ─── flow:report-response — page monkey-patch → main ───────────────────────
 // NOTE: flow:set-startup-project is registered by modeController.register(ipcMain) in mode.js.
 // No duplicate handler here.
@@ -681,6 +703,9 @@ ipcMain.handle('flow:report-response', (event, payload) => {
   if (!isFlowFrameOrigin(event.senderFrame?.url)) {
     return { ok: false, error: 'unauthorized origin' }
   }
+  // #R33: 페이지가 보낸 생성 API 요청의 origin 을 캡처해 직접 호출 호스트를 region 에 맞춘다.
+  const _apiOrigin = captureApiOrigin(payload?.url)
+  if (_apiOrigin) capturedApiOrigin = _apiOrigin
   return routeReportResponse(payload, {
     getPendingGeneration: () => pendingGeneration,
     setPendingGeneration: (v) => { pendingGeneration = v },
@@ -708,6 +733,8 @@ const flowAPIDeps = {
   // Inject state helpers
   setFlowPageInject,
   clearFlowPageInject,
+  // #R33: region 대응 동적 API base (uploadImage/entities/video 직접 호출 호스트)
+  getApiBase,
   // Pending generation state
   pendingGenerations,
   collectedMediaIds, // 공유 DOM 수집 de-dup (flow-api 비동기 + character 동기)

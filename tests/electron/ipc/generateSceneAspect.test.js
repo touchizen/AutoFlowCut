@@ -1,0 +1,128 @@
+// @vitest-environment node
+//
+// #R33: flow:generate-scene (@멘션 씬 생성) 은 generate-image 와 동일하게
+//   (1) configureFlowMode('IMAGE', batchCount) 로 이미지 모드를 강제하고
+//   (2) setFlowPageInject 로 화면비(aspectRatio)/seed 를 batchGenerateImages 요청 body 에 주입하고
+//   (3) 캡처 후 clearFlowPageInject 로 inject 를 반드시 정리해야 한다.
+//
+// 회귀 재현: 이 배선이 없으면 컴포저의 직전 상태(영상/9:16)를 그대로 따라가
+//   "이미지 탭인데 9:16 동영상이 생성 + batchGenerateImages 미수신 → capture timeout 120s".
+//
+// DOM 코레오그래피(멘션 피커 등)를 피하려고 text-only 세그먼트 + Agent OFF 경로만 구동한다.
+// trustedClickOnFlowView(GENERATE_BTN) 가 pending 을 즉시 resolve 해 120s 타임아웃을 우회.
+import { describe, it, expect, vi } from 'vitest'
+import { registerCharacterIPC } from '../../../electron/ipc/character.js'
+
+function makeIpcMain() {
+  const handlers = new Map()
+  return {
+    handle: (channel, fn) => handlers.set(channel, fn),
+    invoke: (channel, payload) => handlers.get(channel)({}, payload),
+  }
+}
+
+function makeDeps({ agentOn = false } = {}) {
+  let pending = null
+  const flowView = {
+    webContents: {
+      // 모든 페이지 스크립트(COMPOSE_EDITOR_READY / clear-text / appendSceneText / GENERATE_BTN
+      //   enable 체크)를 truthy 로 통과시킨다 — text-only 경로라 멘션 피커 스크립트는 안 탄다.
+      executeJavaScript: vi.fn(async () => true),
+      focus: vi.fn(),
+      sendInputEvent: vi.fn(),
+      getURL: () => 'https://labs.google/fx/tools/flow/project/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    },
+    getBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }), // wasHidden=false → setBounds(show) 안 함
+    setBounds: vi.fn(),
+  }
+  const deps = {
+    getFlowView: () => flowView,
+    getMainWindow: () => null,
+    getCurrentMode: () => 'flow',
+    getFlowAgentOn: () => agentOn,
+    ensureOnProjectComposer: vi.fn(async () => ({ ok: true })),
+    configureFlowMode: vi.fn(async () => ({ success: true })),
+    setFlowPageInject: vi.fn(async () => ({ success: true })),
+    clearFlowPageInject: vi.fn(async () => {}),
+    trustedClickOnFlowView: vi.fn(async () => {
+      // 생성 버튼 클릭 시점에 arm 된 pending 을 즉시 resolve → clickAndCaptureGeneration 이
+      //   genPromise 로 바로 빠진다(120s timeout 우회). responses 비움 → 캡처는 실패하지만
+      //   배선(configureFlowMode/inject/clear)은 그대로 검증된다.
+      if (pending && typeof pending.resolve === 'function') pending.resolve({ responses: [] })
+      return { success: true }
+    }),
+    getPendingGeneration: () => pending,
+    setPendingGeneration: (v) => { pending = v },
+    sessionFetch: vi.fn(),
+    SESSION_URL: 'https://example/session',
+    flowPageFetch: vi.fn(),
+    parseFlowResponse: vi.fn(),
+    getCapturedProjectId: () => null,
+  }
+  return { deps, flowView }
+}
+
+const PID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+
+describe('#R33: flow:generate-scene forces IMAGE mode + injects aspectRatio', () => {
+  it('16:9 → configureFlowMode(IMAGE, batchCount) + inject LANDSCAPE, then clears inject', async () => {
+    const ipc = makeIpcMain()
+    const { deps } = makeDeps()
+    registerCharacterIPC(ipc, deps)
+
+    await ipc.invoke('flow:generate-scene', {
+      prompt: 'a cat',
+      segments: [{ type: 'text', text: 'a cat' }],
+      projectId: PID,
+      aspectRatio: '16:9',
+      seed: 42,
+      batchCount: 2,
+    })
+
+    // (1) 이미지 모드 강제 — 배치 카운트 전달
+    expect(deps.configureFlowMode).toHaveBeenCalledWith('IMAGE', 2)
+    // (2) 화면비/seed 주입 — 16:9 → LANDSCAPE enum
+    expect(deps.setFlowPageInject).toHaveBeenCalledTimes(1)
+    const injArg = deps.setFlowPageInject.mock.calls[0][0]
+    expect(injArg.aspectRatio).toBe('IMAGE_ASPECT_RATIO_LANDSCAPE')
+    expect(injArg.seed).toBe(42)
+    // (3) inject 정리 (finally)
+    expect(deps.clearFlowPageInject).toHaveBeenCalledTimes(1)
+    // 순서: 모드 전환 → 주입 → 정리
+    expect(deps.configureFlowMode.mock.invocationCallOrder[0])
+      .toBeLessThan(deps.setFlowPageInject.mock.invocationCallOrder[0])
+    expect(deps.setFlowPageInject.mock.invocationCallOrder[0])
+      .toBeLessThan(deps.clearFlowPageInject.mock.invocationCallOrder[0])
+  })
+
+  it('9:16 → injects PORTRAIT enum', async () => {
+    const ipc = makeIpcMain()
+    const { deps } = makeDeps()
+    registerCharacterIPC(ipc, deps)
+
+    await ipc.invoke('flow:generate-scene', {
+      segments: [{ type: 'text', text: 'a dog' }],
+      projectId: PID,
+      aspectRatio: '9:16',
+      batchCount: 1,
+    })
+
+    expect(deps.configureFlowMode).toHaveBeenCalledWith('IMAGE', 1)
+    expect(deps.setFlowPageInject.mock.calls[0][0].aspectRatio).toBe('IMAGE_ASPECT_RATIO_PORTRAIT')
+    expect(deps.clearFlowPageInject).toHaveBeenCalledTimes(1)
+  })
+
+  it('no aspectRatio → inject aspectRatio null (Flow default), still clears', async () => {
+    const ipc = makeIpcMain()
+    const { deps } = makeDeps()
+    registerCharacterIPC(ipc, deps)
+
+    await ipc.invoke('flow:generate-scene', {
+      segments: [{ type: 'text', text: 'a bird' }],
+      projectId: PID,
+    })
+
+    expect(deps.setFlowPageInject.mock.calls[0][0].aspectRatio).toBeNull()
+    expect(deps.clearFlowPageInject).toHaveBeenCalledTimes(1)
+  })
+})

@@ -29,8 +29,83 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { FLOW_MODELS } from './flowModels'
 import { parseSceneMentions } from '../utils/sceneMentions'
+import { resolveMentionPrefix, stripMentionPrefixes } from '../utils/mentionParser'
 
 const api = () => window.electronAPI
+
+/**
+ * #R33: 미해결 @멘션 이미지 폴백 (순수).
+ *
+ * 캐릭터가 Flow 에 동기화되지 않아 @멘션이 해결 안 될 때(king 케이스), 그 캐릭터의
+ * 레퍼런스가 "주입 가능한 mediaId"를 가졌다면 @ 를 떼어 일반 텍스트로 만들고 그 ref 이미지를
+ * 주입해 **일반 이미지 생성**으로 폴백한다 — 캐릭터 일관성은 ref 이미지로 유지된다(빈 이미지가
+ * 아님). 하나라도 mediaId 가 없어 주입 불가하면 null(=하드 실패 유지: 캐릭터 없는 생성 방지).
+ *
+ * 호출 측은 "해결된 멘션이 하나도 없을 때(hasMention===false)"만 이 폴백을 시도한다 —
+ * @synced 와 @unsynced 가 섞인 혼합 케이스는 scene-mention 과 image-inject 를 한 호출에
+ * 합칠 수 없어 기존대로 실패시킨다.
+ *
+ * @param {string} prompt
+ * @param {Array} referenceImages - 이미 주입 예정인 매칭 ref 이미지들
+ * @param {Array<{name:string}>} unresolved - parseSceneMentions 의 미해결 멘션
+ * @param {Array} references - 전체 ref 목록(effectiveRefs)
+ * @returns {{ prompt: string, referenceImages: Array } | null}
+ */
+export function planUnresolvedMentionFallback(prompt, referenceImages, unresolved, references) {
+  if (!unresolved || unresolved.length === 0) return null
+  const byName = new Map()
+  for (const r of references || []) { if (r?.name) byName.set(String(r.name).toLowerCase(), r) }
+  const fallbackRefs = []
+  for (const u of unresolved) {
+    const resolved = resolveMentionPrefix(u.name, byName)
+    const ref = resolved?.ref
+    if (!ref || !ref.mediaId) return null  // 주입 불가 → 폴백 포기(하드 실패 유지)
+    fallbackRefs.push(ref)
+  }
+  if (fallbackRefs.length === 0) return null
+  const strippedPrompt = stripMentionPrefixes(prompt, fallbackRefs)
+  const merged = [...(referenceImages || [])]
+  const seen = new Set(merged.map(r => r && r.mediaId).filter(Boolean))
+  for (const r of fallbackRefs) {
+    if (r.mediaId && !seen.has(r.mediaId)) {
+      seen.add(r.mediaId)
+      merged.push({ category: r.category, mediaId: r.mediaId, caption: r.caption || '', name: r.name, data: r.data || null, filePath: r.filePath || null })
+    }
+  }
+  return { prompt: strippedPrompt, referenceImages: merged }
+}
+
+/**
+ * #R33: @멘션 라우팅 단일 결정 함수 (순수) — generateImage/submitGeneration 공용.
+ *
+ * 한 곳에서 모든 경우를 판정해 분기 중복을 없앤다:
+ *   - 멘션 없음                         → { kind:'image' } (입력 그대로 일반 생성)
+ *   - 해결된 멘션 있음                  → { kind:'scene', segments } (flowGenerateScene)
+ *   - 미해결만 있고(해결된 멘션 없음)
+ *       · 모든 미해결이 mediaId 보유    → { kind:'image', prompt(스트립), referenceImages(주입) } 폴백
+ *       · 하나라도 주입 불가            → { kind:'error' } (하드 실패)
+ *   - 혼합(@synced + @unsynced)         → { kind:'error' } (두 경로를 한 호출에 못 합침)
+ *
+ * @param {string} prompt
+ * @param {Array} referenceImages - 매칭으로 이미 주입될 ref 이미지들
+ * @param {Array} references - 전체 ref 목록(effectiveRefs)
+ * @returns {{kind:'image', prompt:string, referenceImages:Array}
+ *          |{kind:'scene', segments:Array}
+ *          |{kind:'error', error:string}}
+ */
+export function planMentionRouting(prompt, referenceImages, references) {
+  const { hasMention, segments, unresolved } = parseSceneMentions(prompt, references || [])
+  if (unresolved.length > 0) {
+    // 해결된 멘션이 하나도 없을 때만 이미지 폴백 시도(혼합은 폴백 불가 → 실패).
+    if (!hasMention) {
+      const fb = planUnresolvedMentionFallback(prompt, referenceImages, unresolved, references)
+      if (fb) return { kind: 'image', prompt: fb.prompt, referenceImages: fb.referenceImages }
+    }
+    return { kind: 'error', error: `Unresolved @mention(s): ${unresolved.map(u => u.name).join(', ')}` }
+  }
+  if (hasMention) return { kind: 'scene', segments }
+  return { kind: 'image', prompt, referenceImages: referenceImages || [] }
+}
 
 /**
  * #R3-1: 바운드 flowProjectId(useProjectData 설정)와 추출된 projectId(live URL) 중
@@ -183,20 +258,15 @@ export function useFlowEngine(opts = {}) {
   const generateImage = useCallback(async (prompt, referenceImages = [], callOpts = {}) => {
     try {
       const pid = effectiveProjectId()
-      const { hasMention, segments, unresolved } = parseSceneMentions(prompt, callOpts.references || [])
+      // #R33: 멘션 라우팅을 단일 함수로 위임(멘션없음/scene/미해결폴백/실패).
+      const routing = planMentionRouting(prompt, referenceImages, callOpts.references || [])
+      if (routing.kind === 'error') return { success: false, error: routing.error }
 
-      // #R7-7(R6-4 sibling): fail early if any @mention could not be resolved (don't silently
-      //   fall back to a plain image without the referenced entities).
-      if (unresolved.length > 0) {
-        const names = unresolved.map(u => u.name).join(', ')
-        return { success: false, error: `Unresolved @mention(s): ${names}` }
-      }
-
-      if (hasMention) {
+      if (routing.kind === 'scene') {
         // #R7-7(R6-2 sibling): pass opts (aspectRatio/seed/model/batchCount/references) through.
         const res = await api().flowGenerateScene({
           prompt,
-          segments,
+          segments: routing.segments,
           projectId: pid,
           aspectRatio: callOpts.aspectRatio,
           seed: callOpts.seed,
@@ -217,14 +287,15 @@ export function useFlowEngine(opts = {}) {
           error: res?.error || undefined,
         })
       }
+      // routing.kind === 'image' — 일반 생성 또는 #R33 미해결 멘션 이미지 폴백(@스트립 + ref 주입)
       return markAuth(await api().flowGenerateImage({
         token: effectiveToken(),
-        prompt,
+        prompt: routing.prompt,
         aspectRatio: callOpts.aspectRatio,
         seed: callOpts.seed,
         model: callOpts.model,
         projectId: pid,
-        referenceImages: referenceImages || [],
+        referenceImages: routing.referenceImages,
         batchCount: callOpts.batchCount,
         asyncMode: false,
       }))
@@ -236,19 +307,15 @@ export function useFlowEngine(opts = {}) {
   const submitGeneration = useCallback(async (prompt, referenceImages = [], callOpts = {}) => {
     try {
       const pid = effectiveProjectId()
-      const { hasMention, segments, unresolved } = parseSceneMentions(prompt, callOpts.references || [])
+      // #R33: 멘션 라우팅 단일 함수 위임(generateImage 와 동일 결정).
+      const routing = planMentionRouting(prompt, referenceImages, callOpts.references || [])
+      if (routing.kind === 'error') return { success: false, error: routing.error }
 
-      // #R6-4: fail early if any @mention could not be resolved
-      if (unresolved.length > 0) {
-        const names = unresolved.map(u => u.name).join(', ')
-        return { success: false, error: `Unresolved @mention(s): ${names}` }
-      }
-
-      if (hasMention) {
+      if (routing.kind === 'scene') {
         // #R6-2: pass opts (aspectRatio, seed, model, batchCount) into flowGenerateScene
         const res = await api().flowGenerateScene({
           prompt,
-          segments,
+          segments: routing.segments,
           projectId: pid,
           aspectRatio: callOpts.aspectRatio,
           seed: callOpts.seed,
@@ -281,14 +348,15 @@ export function useFlowEngine(opts = {}) {
         return { success: true, generationId }
       }
 
+      // routing.kind === 'image' — 일반 생성 또는 #R33 미해결 멘션 이미지 폴백(@스트립 + ref 주입)
       return markAuth(await api().flowGenerateImage({
         token: effectiveToken(),
-        prompt,
+        prompt: routing.prompt,
         aspectRatio: callOpts.aspectRatio,
         seed: callOpts.seed,
         model: callOpts.model,
         projectId: pid,
-        referenceImages: referenceImages || [],
+        referenceImages: routing.referenceImages,
         batchCount: callOpts.batchCount,
         asyncMode: true,
       }))

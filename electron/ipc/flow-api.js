@@ -33,6 +33,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     getEnterToolClicked, setEnterToolClicked,
     setFlowPageInject, clearFlowPageInject,
     getCurrentMode,
+    getApiBase, // #R33: region 대응 동적 API base (uploadImage 호스트)
     SESSION_URL, TOKEN_INFO_URL, FLOW_URL, MEDIA_REDIRECT_URL, UPLOAD_URL,
     API_HEADERS, GENERATE_URL, BASE_API_URL,
   } = deps
@@ -469,8 +470,10 @@ export function registerFlowAPIIPC(ipcMain, deps) {
           if (generationTimeout) clearTimeout(generationTimeout)
           return { success: false, error: 'Flow Agent 를 ON 으로 전환하지 못했습니다. Flow 컴포즈에 Agent 토글이 있는지 확인해주세요.' }
         }
-        // 장수(count)도 함께 적용 — 안 넘기면 에이전트 설정 패널의 기존값(예: 2장)으로 생성된다.
-        try { await applyAgentDefaults({ image: { model, count: clampImageBatchCount(batchCount) }, autoApprove: true }) } catch (e) { console.warn('[Flow API] applyAgentDefaults(image) skipped:', e.message) }
+        // 장수(count)+화면비도 함께 적용 — 안 넘기면 패널 기존값으로 생성된다.
+        // #R33: Agent ON 은 streamChat 경로라 monkey-patch inject(imageAspectRatio)가 안 먹는다 →
+        //   화면비(설정>씬)를 이 패널(aspectSuffix)로 적용. (Agent OFF 는 inject 로 처리.)
+        try { await applyAgentDefaults({ image: { model, count: clampImageBatchCount(batchCount), aspectRatio }, autoApprove: true }) } catch (e) { console.warn('[Flow API] applyAgentDefaults(image) skipped:', e.message) }
         // Agent 추론이 영상으로 빠지지 않게 명시 지시 프리펜드(타입 강제). 주소/위치는 그대로 유지.
         prompt = `Generate a still image: ${prompt}`
         console.log('[Flow API] (Agent ON) image prompt prefixed for type forcing')
@@ -1835,9 +1838,11 @@ export function registerFlowAPIIPC(ipcMain, deps) {
         fileName: 'ref_image.png'
       }
 
-      console.log('[Flow API] upload-reference: sending to', UPLOAD_URL, 'projectId:', resolvedProjectId?.substring(0, 12), 'base64Len:', base64?.length)
+      // #R33: region 대응 — 캡처된 API origin 으로 uploadImage 호스트 해석(없으면 UPLOAD_URL fallback).
+      const _uploadUrl = getApiBase ? `${await getApiBase()}/flow/uploadImage` : UPLOAD_URL
+      console.log('[Flow API] upload-reference: sending to', _uploadUrl, 'projectId:', resolvedProjectId?.substring(0, 12), 'base64Len:', base64?.length)
 
-      const response = await sessionFetch(UPLOAD_URL, {
+      const response = await sessionFetch(_uploadUrl, {
         method: 'POST',
         headers: { ...API_HEADERS, 'Authorization': `Bearer ${token}` },
         body: JSON.stringify(body)

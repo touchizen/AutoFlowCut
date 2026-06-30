@@ -58,7 +58,7 @@ beforeEach(() => {
 })
 
 // Import after mocks are set up in beforeEach
-import { useFlowEngine, resolveEffectiveProjectId, isFlowAuthError, markFlowAuthFailure } from '../../src/engine/engineFlow'
+import { useFlowEngine, resolveEffectiveProjectId, isFlowAuthError, markFlowAuthFailure, planMentionRouting, planUnresolvedMentionFallback } from '../../src/engine/engineFlow'
 
 // #R8-11: Flow auth-error sentinel — pure unit tests
 describe('isFlowAuthError / markFlowAuthFailure (#R8-11)', () => {
@@ -1041,10 +1041,10 @@ describe('useFlowEngine (#R6-4) — unresolved @mention fails submitGeneration',
     id: 1, name: 'hero', type: 'character', category: 'character',
     entityId: 'ent-1', flowNameSyncStatus: 'synced', mediaId: 'm1',
   }
-  // An unsynced ref so @villain is unresolved
+  // An unsynced ref WITHOUT a usable mediaId → @villain is unresolved AND cannot image-fallback (#R33).
   const unsyncedRef = {
     id: 2, name: 'villain', type: 'character', category: 'character',
-    entityId: null, flowNameSyncStatus: 'pending', mediaId: 'm2',
+    entityId: null, flowNameSyncStatus: 'pending', mediaId: null,
   }
 
   it('returns { success:false, error } when prompt has an unresolved @mention', async () => {
@@ -1077,6 +1077,123 @@ describe('useFlowEngine (#R6-4) — unresolved @mention fails submitGeneration',
 
     expect(res.success).toBe(true)
     expect(mockFlowGenerateScene).toHaveBeenCalledTimes(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// #R33: 미해결 @멘션 이미지 폴백 — 미동기화 캐릭터라도 mediaId 가 있으면 @ 를 떼고
+//   ref 이미지를 주입해 일반 이미지로 생성(하드 실패 대신). mediaId 없으면 기존대로 실패.
+// ---------------------------------------------------------------------------
+describe('useFlowEngine (#R33) — unresolved @mention image fallback', () => {
+  // 미동기화지만 업로드는 됨(mediaId 보유) — king 케이스.
+  const unsyncedWithMedia = {
+    id: 9, name: 'king', type: 'character', category: 'character',
+    entityId: null, flowNameSyncStatus: 'failed', mediaId: 'king-m',
+  }
+
+  it('submitGeneration: unresolved mention with mediaId → flowGenerateImage (stripped prompt + injected ref)', async () => {
+    mockFlowGenerateImage.mockResolvedValue({ success: true, generationId: 'gen-fb' })
+    const { result } = renderHook(() => useFlowEngine())
+    let res
+    await act(async () => {
+      res = await result.current.submitGeneration('@king walks in', [], { references: [unsyncedWithMedia] })
+    })
+    expect(mockFlowGenerateScene).not.toHaveBeenCalled()
+    expect(mockFlowGenerateImage).toHaveBeenCalledTimes(1)
+    const call = mockFlowGenerateImage.mock.calls[0][0]
+    // @ 가 제거되어 일반 텍스트로
+    expect(call.prompt).toBe('king walks in')
+    // king 의 이미지가 mediaId 로 주입됨
+    expect(call.referenceImages.some(r => r.mediaId === 'king-m')).toBe(true)
+    expect(call.asyncMode).toBe(true)
+    expect(res.success).toBe(true)
+  })
+
+  it('generateImage: unresolved mention with mediaId → flowGenerateImage fallback (asyncMode:false)', async () => {
+    mockFlowGenerateImage.mockResolvedValue({ success: true, images: [{ base64: 'img', mediaId: 'x' }] })
+    const { result } = renderHook(() => useFlowEngine())
+    await act(async () => {
+      await result.current.generateImage('@king sits', [], { references: [unsyncedWithMedia] })
+    })
+    const call = mockFlowGenerateImage.mock.calls[0][0]
+    expect(call.prompt).toBe('king sits')
+    expect(call.referenceImages.some(r => r.mediaId === 'king-m')).toBe(true)
+    expect(call.asyncMode).toBe(false)
+  })
+
+  it('does NOT fall back (hard fails) when the unresolved ref has no mediaId', async () => {
+    const noMedia = { id: 10, name: 'ghost', type: 'character', entityId: null, flowNameSyncStatus: 'failed', mediaId: null }
+    const { result } = renderHook(() => useFlowEngine())
+    let res
+    await act(async () => {
+      res = await result.current.submitGeneration('@ghost appears', [], { references: [noMedia] })
+    })
+    expect(res.success).toBe(false)
+    expect(res.error).toMatch(/Unresolved @mention/)
+    expect(mockFlowGenerateImage).not.toHaveBeenCalled()
+    expect(mockFlowGenerateScene).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// #R33: planMentionRouting / planUnresolvedMentionFallback — pure unit tests
+// ---------------------------------------------------------------------------
+describe('#R33: planMentionRouting (pure)', () => {
+  const synced = { id: 1, name: 'hero', type: 'character', entityId: 'e1', flowNameSyncStatus: 'synced', mediaId: 'm1' }
+  const unsyncedMedia = { id: 2, name: 'king', type: 'character', entityId: null, flowNameSyncStatus: 'failed', mediaId: 'km' }
+  const unsyncedNoMedia = { id: 3, name: 'ghost', type: 'character', entityId: null, flowNameSyncStatus: 'failed', mediaId: null }
+
+  it('no mention → kind:image, prompt/refs unchanged', () => {
+    const r = planMentionRouting('a plain prompt', [{ mediaId: 'z' }], [])
+    expect(r.kind).toBe('image')
+    expect(r.prompt).toBe('a plain prompt')
+    expect(r.referenceImages).toEqual([{ mediaId: 'z' }])
+  })
+
+  it('resolved mention → kind:scene with segments', () => {
+    const r = planMentionRouting('@hero runs', [], [synced])
+    expect(r.kind).toBe('scene')
+    expect(r.segments.some(s => s.type === 'mention' && s.name === 'hero')).toBe(true)
+  })
+
+  it('unresolved-only with mediaId → kind:image fallback (stripped + injected)', () => {
+    const r = planMentionRouting('@king runs', [], [unsyncedMedia])
+    expect(r.kind).toBe('image')
+    expect(r.prompt).toBe('king runs')
+    expect(r.referenceImages.some(x => x.mediaId === 'km')).toBe(true)
+  })
+
+  it('unresolved-only without mediaId → kind:error', () => {
+    const r = planMentionRouting('@ghost runs', [], [unsyncedNoMedia])
+    expect(r.kind).toBe('error')
+    expect(r.error).toMatch(/Unresolved @mention/)
+  })
+
+  it('mixed (resolved + unresolved) → kind:error (cannot merge paths)', () => {
+    const r = planMentionRouting('@hero and @king', [], [synced, unsyncedMedia])
+    expect(r.kind).toBe('error')
+    expect(r.error).toContain('king')
+  })
+})
+
+describe('#R33: planUnresolvedMentionFallback (pure)', () => {
+  const unsyncedMedia = { id: 2, name: 'king', type: 'character', entityId: null, flowNameSyncStatus: 'failed', mediaId: 'km', category: 'character' }
+
+  it('returns stripped prompt + merged refs when all unresolved have mediaId', () => {
+    const fb = planUnresolvedMentionFallback('@king walks', [{ mediaId: 'pre' }], [{ name: 'king' }], [unsyncedMedia])
+    expect(fb).not.toBeNull()
+    expect(fb.prompt).toBe('king walks')
+    expect(fb.referenceImages.map(r => r.mediaId)).toEqual(['pre', 'km'])
+  })
+
+  it('returns null when any unresolved name has no usable mediaId', () => {
+    const noMedia = { name: 'ghost', mediaId: null }
+    expect(planUnresolvedMentionFallback('@ghost', [], [{ name: 'ghost' }], [noMedia])).toBeNull()
+  })
+
+  it('dedupes by mediaId (no duplicate injection)', () => {
+    const fb = planUnresolvedMentionFallback('@king', [{ mediaId: 'km' }], [{ name: 'king' }], [unsyncedMedia])
+    expect(fb.referenceImages.filter(r => r.mediaId === 'km')).toHaveLength(1)
   })
 })
 

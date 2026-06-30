@@ -39,6 +39,11 @@ const API_BASE = 'https://aisandbox-pa.googleapis.com/v1'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+// #R33: 캐릭터 entity 업로드(=on-demand @멘션 등록)의 uploadImage 응답 대기 한도.
+//   60s 는 큰 레퍼런스/혼잡 시 짧아 타임아웃→registered=false→flowNameSyncStatus='failed' 로
+//   고착돼 멘션 후보에서 빠졌다("Unresolved @mention"). 등록 완료 시간을 확보(+1분).
+export const CHARACTER_UPLOAD_TIMEOUT_MS = 120000
+
 // Slate 컴포저 에디터 셀렉터 (generate-image 와 동일 우선순위).
 const EDITOR_SELECTOR = `(function(){
   return document.querySelector("[data-slate-editor='true']")
@@ -68,7 +73,14 @@ export function registerCharacterIPC(ipcMain, deps) {
     //   destructure 안 하면 free variable 이 되어 timeout 발생 시 ReferenceError 로 handler 가 hang.
     getPendingGeneration, setPendingGeneration, SESSION_URL,
     sessionFetch, getCurrentMode, getFlowAgentOn,
+    // #R33: 씬(@멘션) 생성도 generate-image 와 동일하게 이미지 모드 강제 + 화면비 주입에 필요.
+    //   안 쓰면 컴포저의 직전 상태(영상/9:16)를 그대로 따라가 영상·잘못된 비율로 생성된다.
+    configureFlowMode, setFlowPageInject, clearFlowPageInject, applyAgentDefaults,
+    // #R33: entities PATCH 호스트를 region 에 맞춰 동적 해석(없으면 API_BASE fallback).
+    getApiBase,
   } = deps
+  // entities 직접 호출 base — region 캡처값(getApiBase) 우선, 없으면 하드코딩 fallback.
+  const apiBase = async () => (getApiBase ? await getApiBase() : API_BASE)
   // flow-api(비동기) 와 공유하는 DOM 수집 de-dup — 혼합 배치에서 서로의 이미지를 안 가로채게.
   const collectedMediaIds = deps.collectedMediaIds || new Set()
 
@@ -248,7 +260,7 @@ export function registerCharacterIPC(ipcMain, deps) {
   //   - parentEntityId 있는 200 → { status:200, respBody } (성공: character entity 생성됨)
   //   - 4xx/5xx → { status, respBody } 즉시 반환(auth/quota/server 에러를 timeout 으로 뭉개지 않게, P2)
   //   - parentEntityId 없는 200(일반 media staging) → 무시하고 계속 대기.
-  async function waitForUploadImageResponse(flowView, timeoutMs = 60000) {
+  async function waitForUploadImageResponse(flowView, timeoutMs = CHARACTER_UPLOAD_TIMEOUT_MS) {
     const wc = flowView.webContents
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
@@ -424,7 +436,7 @@ export function registerCharacterIPC(ipcMain, deps) {
       try {
         const token = await getAccessToken()
         if (token) {
-          const regRes = await flowPageFetch(`${API_BASE}/flow/entities`, {
+          const regRes = await flowPageFetch(`${await apiBase()}/flow/entities`, {
             method: 'PATCH',
             headers: { authorization: 'Bearer ' + token },
             body: JSON.stringify(buildEntityRegisterBody({ projectId, entityId: parsed.entityId, displayName, workflowId: parsed.workflowId })),
@@ -518,7 +530,7 @@ export function registerCharacterIPC(ipcMain, deps) {
     try {
       const token = await getAccessToken()
       if (token) {
-        const regRes = await flowPageFetch(`${API_BASE}/flow/entities`, {
+        const regRes = await flowPageFetch(`${await apiBase()}/flow/entities`, {
           method: 'PATCH',
           headers: { authorization: 'Bearer ' + token },
           body: JSON.stringify(buildEntityImageBody({ projectId, entityId, workflowId: parsed.workflowId })),
@@ -690,6 +702,16 @@ export function registerCharacterIPC(ipcMain, deps) {
     if (!flowView) return { success: false, error: 'Flow view not ready' }
     const segs = (segments && segments.length) ? segments : (prompt ? [{ type: 'text', text: prompt }] : null)
     if (!segs) return { success: false, error: 'No prompt' }
+    // #R33: 씬(@멘션) 생성도 generate-image 와 동일 계약 — 이미지 모드 강제 + 화면비/seed 주입.
+    //   opts.aspectRatio/seed/batchCount 는 engineFlow.flowGenerateScene 이 이미 넘긴다(미사용이던 값).
+    const _seedValue = typeof opts.seed === 'number' && Number.isFinite(opts.seed) ? opts.seed : null
+    const _aspectRatioEnum = (
+      opts.aspectRatio === '16:9' ? 'IMAGE_ASPECT_RATIO_LANDSCAPE'
+        : opts.aspectRatio === '9:16' ? 'IMAGE_ASPECT_RATIO_PORTRAIT'
+          : null
+    )
+    const _batchCount = opts.batchCount
+    const _agentOn = !!(getFlowAgentOn && getFlowAgentOn())
     const projectId = opts.projectId || projectIdFromUrl() || (getCapturedProjectId && getCapturedProjectId())
     if (!projectId) return { success: false, error: 'No projectId' }
     console.log('[Flow Scene] generate-scene projectId:', projectId, 'segments:', segs.length)
@@ -736,6 +758,29 @@ export function registerCharacterIPC(ipcMain, deps) {
     }
     if (!ready) return { success: false, error: '컴포저 에디터 진입 실패' }
     await sleep(400)
+
+    // 1.5) 이미지 모드 강제 — generate-image(flow-api.js #R30-1)와 동일. 컴포저가 직전에 영상
+    //   모드였으면 @멘션 씬 제출이 영상 요청으로 나가(영상 생성 + batchGenerateImages intercept
+    //   미동작 → capture timeout). Agent ON 은 컴포즈 모드 탭이 없어 생략(프롬프트 타입 강제는 아래).
+    if (!_agentOn && configureFlowMode) {
+      let _modeRes = null
+      try { _modeRes = await configureFlowMode('IMAGE', _batchCount) }
+      catch (e) { console.warn('[Flow Scene] configureFlowMode skipped:', e.message) }
+      if (_modeRes && _modeRes.success === false) {
+        return { success: false, error: `Flow IMAGE mode switch failed: ${_modeRes.error || 'unknown'}`, retry: true }
+      }
+    }
+
+    // #R33: Agent ON(streamChat)은 컴포즈 모드 탭/monkey-patch inject 가 안 먹는다 →
+    //   (1) 화면비(설정>씬)는 에이전트 설정 패널(aspectSuffix)로 적용 + autoApprove,
+    //   (2) 타입(이미지)은 프롬프트 프리펜드로 강제(영상으로 빠지지 않게). Agent OFF 는 위 IMAGE 모드+inject.
+    if (_agentOn) {
+      if (applyAgentDefaults) {
+        try { await applyAgentDefaults({ image: { aspectRatio: opts.aspectRatio }, autoApprove: true }) }
+        catch (e) { console.warn('[Flow Scene] (Agent ON) applyAgentDefaults skipped:', e.message) }
+      }
+      segs.unshift({ type: 'text', text: 'Generate a still image: ' })
+    }
 
     // 2) flowView 보이게 + 포커스 + 에디터 트러스트 클릭 + 기존 텍스트 클리어 후 segment 순서대로 주입.
     const mainWindow = getMainWindow && getMainWindow()
@@ -800,30 +845,43 @@ export function registerCharacterIPC(ipcMain, deps) {
       return { success: true, images: col.images, mediaId: col.images[0] && col.images[0].mediaId }
     }
 
-    const cap = await clickAndCaptureGeneration(flowView)
-    if (cap.clickError) return { success: false, error: cap.clickError }
-    const resp0 = cap.resp0
-    const body = cap.body
-    if (resp0 && resp0.status >= 400) {
-      console.warn('[Flow Scene] generate failed (HTTP', resp0.status, '):', (body || '').slice(0, 160))
-      return { success: false, error: '장면 생성 실패(HTTP ' + resp0.status + ')', status: resp0.status }
+    // 화면비/seed 주입 — generate-image(monkey-patch fetch)와 동일. 패치된 window.fetch 가
+    //   batchGenerateImages 요청 body 의 imageAspectRatio 를 이 값으로 덮어써 16:9/9:16 이 반영된다.
+    //   미주입 시 Flow 기본값(관측상 9:16)으로 나간다. 캡처 후 finally 에서 반드시 clear.
+    if (setFlowPageInject) {
+      const _inj = await setFlowPageInject({ seed: _seedValue, aspectRatio: _aspectRatioEnum, references: null, i2v: null })
+      if (_inj && _inj.success === false) {
+        return { success: false, error: `Flow inject arming failed: ${_inj.error || 'unknown'}`, retry: true }
+      }
     }
-    if (!body) return { success: false, error: '생성 응답 캡처 실패' + (cap.timeout ? '(timeout 120s)' : '') }
+    try {
+      const cap = await clickAndCaptureGeneration(flowView)
+      if (cap.clickError) return { success: false, error: cap.clickError }
+      const resp0 = cap.resp0
+      const body = cap.body
+      if (resp0 && resp0.status >= 400) {
+        console.warn('[Flow Scene] generate failed (HTTP', resp0.status, '):', (body || '').slice(0, 160))
+        return { success: false, error: '장면 생성 실패(HTTP ' + resp0.status + ')', status: resp0.status }
+      }
+      if (!body) return { success: false, error: '생성 응답 캡처 실패' + (cap.timeout ? '(timeout 120s)' : '') }
 
-    const parsed = parseCharacterGenerateResponse(body)
-    if (!parsed || !parsed.workflowId) return { success: false, error: '응답 파싱 실패: ' + (body || '').slice(0, 160) }
-    console.log('[Flow Scene] generated workflowId:', parsed.workflowId, 'mediaId:', parsed.mediaId)
+      const parsed = parseCharacterGenerateResponse(body)
+      if (!parsed || !parsed.workflowId) return { success: false, error: '응답 파싱 실패: ' + (body || '').slice(0, 160) }
+      console.log('[Flow Scene] generated workflowId:', parsed.workflowId, 'mediaId:', parsed.mediaId)
 
-    // fifeUrl → base64 (generateImageDOM 과 동일 images 형태로 반환해 ref 저장 흐름 재사용)
-    const base64Image = await downloadFifeAsBase64(sessionFetch, parsed.fifeUrl)
-    if (parsed.fifeUrl && !base64Image) console.warn('[Flow Scene] fifeUrl download failed')
+      // fifeUrl → base64 (generateImageDOM 과 동일 images 형태로 반환해 ref 저장 흐름 재사용)
+      const base64Image = await downloadFifeAsBase64(sessionFetch, parsed.fifeUrl)
+      if (parsed.fifeUrl && !base64Image) console.warn('[Flow Scene] fifeUrl download failed')
 
-    return {
-      success: true,
-      images: base64Image ? [{ base64: base64Image, mediaId: parsed.mediaId }] : [],
-      workflowId: parsed.workflowId,
-      mediaId: parsed.mediaId,
-      fifeUrl: parsed.fifeUrl,
+      return {
+        success: true,
+        images: base64Image ? [{ base64: base64Image, mediaId: parsed.mediaId }] : [],
+        workflowId: parsed.workflowId,
+        mediaId: parsed.mediaId,
+        fifeUrl: parsed.fifeUrl,
+      }
+    } finally {
+      try { await clearFlowPageInject?.() } catch {}
     }
   })
 
@@ -836,7 +894,7 @@ export function registerCharacterIPC(ipcMain, deps) {
     try {
       const token = await getAccessToken()
       if (!token) return { success: false, error: 'access token 추출 실패' }
-      const res = await flowPageFetch(`${API_BASE}/flow/entities`, {
+      const res = await flowPageFetch(`${await apiBase()}/flow/entities`, {
         method: 'PATCH',
         headers: { authorization: 'Bearer ' + token },
         body: JSON.stringify(buildEntityRenameBody({ projectId, entityId, displayName })),
@@ -892,8 +950,9 @@ export function registerCharacterIPC(ipcMain, deps) {
       console.log('[Flow Character] A2 만들기(실행) trusted click:', JSON.stringify(runClick))
 
       // SPA 가 보낸 uploadImage 응답을 네트워크 버퍼에서 회수(성공 200 또는 4xx/5xx 실패 즉시).
-      const resp = await waitForUploadImageResponse(flowView, 60000)
-      if (!resp) return { success: false, error: 'uploadImage 응답 타임아웃(60s)' }
+      // #R33: 타임아웃을 CHARACTER_UPLOAD_TIMEOUT_MS(120s)로 — 60s 는 짧아 등록 실패 고착을 유발했다.
+      const resp = await waitForUploadImageResponse(flowView, CHARACTER_UPLOAD_TIMEOUT_MS)
+      if (!resp) return { success: false, error: `uploadImage 응답 타임아웃(${Math.round(CHARACTER_UPLOAD_TIMEOUT_MS / 1000)}s)` }
       if (resp.status >= 400) {
         console.warn('[Flow Character] A2 uploadImage HTTP', resp.status, ':', (resp.respBody || '').slice(0, 160))
         return { success: false, status: resp.status, error: 'uploadImage HTTP ' + resp.status + ': ' + (resp.respBody || '').slice(0, 160) }
@@ -909,7 +968,7 @@ export function registerCharacterIPC(ipcMain, deps) {
       try {
         const token = await getAccessToken()
         if (token) {
-          const reg = await flowPageFetch(`${API_BASE}/flow/entities`, {
+          const reg = await flowPageFetch(`${await apiBase()}/flow/entities`, {
             method: 'PATCH',
             headers: { authorization: 'Bearer ' + token },
             body: JSON.stringify(buildEntityRegisterBody({ projectId, entityId: parsed.entityId, displayName: displayName || '', workflowId: parsed.workflowId })),

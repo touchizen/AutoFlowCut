@@ -167,6 +167,9 @@ export const FLOW_PAGE_INJECTION = /* js */ `
   // ─── Patched fetch ────────────────────────────────────────────
   window.fetch = async function(input, init) {
     let url      = typeof input === 'string' ? input : (input?.url || '')
+    // #R33: 페이지가 보낸 생성 API(googleapis) 요청의 origin 을 stash 한다 — main 이 이 값으로
+    //   직접 호출(uploadImage/entities/video i2v·status·upscale) 호스트를 region 에 맞춘다.
+    try { if (/googleapis\.com/i.test(url)) window.__autoflowcut_api_origin__ = new URL(url, location.href).origin } catch (_e) {}
     let _input   = input
     let _init    = init || {}
     const inject = window.__autoflowcut_inject__ || {}

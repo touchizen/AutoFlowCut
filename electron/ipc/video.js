@@ -30,9 +30,23 @@ export function registerVideoIPC(ipcMain, deps) {
     getPendingVideoGeneration, setPendingVideoGeneration,
     setFlowPageInject, clearFlowPageInject,
     getCurrentMode,
+    getApiBase, // #R33: region 대응 동적 API base (video i2v/status/upscale 호스트)
     SESSION_URL, VIDEO_T2V_URL, VIDEO_I2V_URL, VIDEO_I2V_START_END_URL, VIDEO_STATUS_URL, VIDEO_UPSCALE_URL,
     API_HEADERS, FLOW_URL,
   } = deps
+  // #R33: video 직접 호출 엔드포인트 — 캡처된 region origin 우선, 없으면 하드코딩 fallback.
+  const videoUrls = async () => {
+    const base = getApiBase ? await getApiBase() : null
+    return base ? {
+      i2v: `${base}/video:batchAsyncGenerateVideoStartImage`,
+      i2vStartEnd: `${base}/video:batchAsyncGenerateVideoStartAndEndImage`,
+      status: `${base}/video:batchCheckAsyncVideoGenerationStatus`,
+      upscale: `${base}/video:batchAsyncGenerateVideoUpsampleVideo`,
+    } : {
+      i2v: VIDEO_I2V_URL, i2vStartEnd: VIDEO_I2V_START_END_URL,
+      status: VIDEO_STATUS_URL, upscale: VIDEO_UPSCALE_URL,
+    }
+  }
 
   // #R25-4: API 모드 전환 후에도 flowView 는 보존되므로 stale 호출이 Flow quota 를 쓸 수 있다.
   //   quota 를 쓰는 비디오 submit/upscale 핸들러는 현재 모드가 'flow' 일 때만 진행한다.
@@ -152,9 +166,11 @@ export function registerVideoIPC(ipcMain, deps) {
         return { success: false, error: `Flow VIDEO mode switch failed: ${_vmodeRes.error || 'unknown'}`, retry: true }
       }
 
-      // (v2) Flow 비디오 모델 적용 — 에이전트 설정 패널에서 선택(동적 모델 목록 반영). 컴포즈 주입 전.
-      if (model && applyAgentDefaults) {
-        try { const _md = await applyAgentDefaults({ video: { model } }); if (!_md?.success) console.warn('[Flow Video] applyAgentDefaults(video model) failed:', _md?.error) } catch (e) { console.warn('[Flow Video] applyAgentDefaults(video model) error:', e.message) }
+      // (v2) Flow 비디오 모델 + 화면비 적용 — 에이전트 설정 패널(동적 모델 목록 반영). 컴포즈 주입 전.
+      // #R33: 화면비(설정>씬)는 이미지·비디오 공용. 이미지는 monkey-patch inject 로, 비디오는 이
+      //   패널(aspectSuffix)로 적용한다 — aspectRatio 를 안 넘기면 컴포저 기본값(잘못된 비율)으로 나간다.
+      if (applyAgentDefaults) {
+        try { const _md = await applyAgentDefaults({ video: { model, aspectRatio } }); if (!_md?.success) console.warn('[Flow Video] applyAgentDefaults(video) failed:', _md?.error) } catch (e) { console.warn('[Flow Video] applyAgentDefaults(video) error:', e.message) }
       }
       } else {
         // [Agent ON — Maps 그라운딩/주소 기반] 토글 ON 유지 + autoApprove. 모드 탭 없어 configureFlowMode 생략.
@@ -163,7 +179,8 @@ export function registerVideoIPC(ipcMain, deps) {
         try { const r = await ensureAgentOn(); onOk = !!(r && r.success) } catch (e) { console.warn('[Flow Video T2V] ensureAgentOn skipped:', e.message) }
         if (!onOk) return { success: false, error: 'Flow Agent 를 ON 으로 전환하지 못했습니다. Flow 컴포즈에 Agent 토글이 있는지 확인해주세요.' }
         if (applyAgentDefaults) {
-          try { await applyAgentDefaults({ ...(model ? { video: { model } } : {}), autoApprove: true }) } catch (e) { console.warn('[Flow Video T2V] applyAgentDefaults skipped:', e.message) }
+          // #R33: Agent ON 도 화면비(설정>씬) 적용 — video.aspectRatio 전달.
+          try { await applyAgentDefaults({ video: { model, aspectRatio }, autoApprove: true }) } catch (e) { console.warn('[Flow Video T2V] applyAgentDefaults skipped:', e.message) }
         }
         // 타입 강제(이미지로 빠지지 않게) — 명시 지시로 감싼다.
         prompt = `Generate a video: ${prompt}`
@@ -471,9 +488,9 @@ export function registerVideoIPC(ipcMain, deps) {
         return { success: false, error: `Flow VIDEO mode switch failed: ${_vmodeRes.error || 'unknown'}`, retry: true }
       }
 
-      // (v2) Flow 비디오 모델 적용 (I2V — t2v 와 동일).
-      if (model && applyAgentDefaults) {
-        try { const _md = await applyAgentDefaults({ video: { model } }); if (!_md?.success) console.warn('[Flow Video I2V] applyAgentDefaults(video model) failed:', _md?.error) } catch (e) { console.warn('[Flow Video I2V] applyAgentDefaults error:', e.message) }
+      // (v2) Flow 비디오 모델 + 화면비 적용 (I2V — t2v 와 동일). #R33: aspectRatio(설정>씬) 전달.
+      if (applyAgentDefaults) {
+        try { const _md = await applyAgentDefaults({ video: { model, aspectRatio } }); if (!_md?.success) console.warn('[Flow Video I2V] applyAgentDefaults(video) failed:', _md?.error) } catch (e) { console.warn('[Flow Video I2V] applyAgentDefaults error:', e.message) }
       }
 
       // 2. 프롬프트 입력 (T2V와 동일한 Slate 에디터 사용)
@@ -588,11 +605,13 @@ export function registerVideoIPC(ipcMain, deps) {
       console.log('[Flow Video I2V] Prompt injected successfully')
 
       // 3. Set inject state for monkey-patch path
+      // #R33: i2v 엔드포인트를 region 캡처 origin 으로 해석(없으면 하드코딩 fallback).
+      const _vu = await videoUrls()
       const i2vConfig = {
         startImageMediaId,
         endImageMediaId: hasEndImage ? endImageMediaId : null,
-        i2vUrl: VIDEO_I2V_URL,
-        i2vStartEndUrl: VIDEO_I2V_START_END_URL,
+        i2vUrl: _vu.i2v,
+        i2vStartEndUrl: _vu.i2vStartEnd,
         duration,    // OmniFlash i2v 길이 접미사 최적화용
         videoModel: model,  // 앱이 OmniFlash 면 injectI2VBody 가 abra i2v 키로 강제(패널 우회)
       }
@@ -691,6 +710,7 @@ export function registerVideoIPC(ipcMain, deps) {
     if (!flowView) return { success: false, error: 'Flow view not ready' }
 
     const pid = projectId || getCapturedProjectId() || ''
+    const _statusUrl = (await videoUrls()).status  // #R33: region 대응 status 엔드포인트
 
     try {
       // 페이지 컨텍스트에서 fetch 실행 (AutoFlow 동일 바디 구조)
@@ -702,7 +722,7 @@ export function registerVideoIPC(ipcMain, deps) {
             const pid = ${JSON.stringify(pid)};
             const media = ids.map(name => pid ? { name, projectId: pid } : { name });
             const body = { media };
-            const resp = await fetch('${VIDEO_STATUS_URL}', {
+            const resp = await fetch('${_statusUrl}', {
               method: 'POST',
               mode: 'cors',
               credentials: 'include',
@@ -835,6 +855,8 @@ export function registerVideoIPC(ipcMain, deps) {
     const modelKey = normalizedRes === '4k' ? 'veo_3_1_upsampler_4k' : 'veo_3_1_upsampler_1080p'
     const pid = projectId || getCapturedProjectId() || ''
 
+    const _upscaleUrl = (await videoUrls()).upscale  // #R33: region 대응 upscale 엔드포인트
+
     console.log('[Flow Upscale] Starting upscale — mediaId:', mediaId?.substring(0, 20),
       'resolution:', normalizedRes, 'projectId:', pid?.substring(0, 8))
 
@@ -846,7 +868,7 @@ export function registerVideoIPC(ipcMain, deps) {
             const mediaId = ${JSON.stringify(mediaId)};
             const pid = ${JSON.stringify(pid)};
             const token = ${JSON.stringify(token)};
-            const endpoint = ${JSON.stringify(VIDEO_UPSCALE_URL)};
+            const endpoint = ${JSON.stringify(_upscaleUrl)};
             const resolutionEnum = ${JSON.stringify(resolutionEnum)};
             const modelKey = ${JSON.stringify(modelKey)};
             const videoAspectRatio = ${JSON.stringify(aspectRatio || 'VIDEO_ASPECT_RATIO_LANDSCAPE')};
