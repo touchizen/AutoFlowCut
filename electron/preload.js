@@ -152,6 +152,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   flowListProjects: (payload) => ipcRenderer.invoke('flow:list-projects', payload),
   flowGenerateScene: (payload) => ipcRenderer.invoke('flow:generate-scene', payload),
   refreshFlowComposer: (payload) => ipcRenderer.invoke('flow:refresh-composer', payload),  // #R33: 등록/동기화 후 SPA 새로고침
+  renameFlowCharacter: (payload) => ipcRenderer.invoke('flow:rename-character', payload),  // #R34: 기존 entity displayName 재동기화(이름 변경)
   setStartupProject: (params) => ipcRenderer.invoke('flow:set-startup-project', params),
   openFlowProject: (params) => ipcRenderer.invoke('flow:open-project', params),
   newFlowProject: () => ipcRenderer.invoke('flow:new-project'),

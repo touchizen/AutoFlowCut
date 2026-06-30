@@ -220,8 +220,35 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
     
     // #R9-5: 저장 완료 → 더 이상 미저장 편집 아님(이후 prop 동기화 허용).
     mediaDirtyRef.current = false
+
+    // #R34: 이미 Flow 에 등록된(entityId) character 의 이름을 바꿔 저장하면 Flow entity 의
+    //   displayName 도 재동기화한다(PATCH /flow/entities). 안 하면 앱 이름만 바뀌고 Flow/멘션
+    //   피커는 옛 이름으로 남는다. 이름이 실제로 바뀐 경우에만, 백그라운드로 진행(저장은 즉시 닫힘).
+    const needsFlowRename = appMode === 'flow'
+      && editData.type === 'character'
+      && editData.entityId
+      && editData.name?.trim()
+      && editData.name !== reference.name
+    const renameSnapshot = needsFlowRename ? { entityId: editData.entityId, name: editData.name } : null
+
     onUpdate(index, editData)
     onClose()
+
+    if (renameSnapshot) {
+      ;(async () => {
+        try {
+          const res = await window.electronAPI?.renameFlowCharacter?.({ entityId: renameSnapshot.entityId, displayName: renameSnapshot.name })
+          if (res?.success) {
+            try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
+            toast.success(isKo ? `Flow 이름 동기화: ${renameSnapshot.name}` : `Renamed in Flow: ${renameSnapshot.name}`)
+          } else {
+            toast.error((isKo ? 'Flow 이름 동기화 실패: ' : 'Flow rename failed: ') + (res?.error || 'unknown'))
+          }
+        } catch (e) {
+          toast.error((isKo ? 'Flow 이름 동기화 오류: ' : 'Flow rename error: ') + (e?.message || String(e)))
+        }
+      })()
+    }
   }
 
   // 스타일 선택 핸들러 (StylePicker에서 preset:ID 형식으로 옴)

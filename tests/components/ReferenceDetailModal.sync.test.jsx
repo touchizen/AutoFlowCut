@@ -7,7 +7,7 @@
  *   - 클릭 → onUpload(cleanBase64, {type:'character',name,refId}) → 성공 시 entity 필드 patch + onUpdate
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, act } from '@testing-library/react'
+import { render, act, fireEvent } from '@testing-library/react'
 
 vi.mock('../../src/hooks/useFileSystem', () => ({
   fileSystemAPI: {
@@ -114,6 +114,44 @@ describe('#R33: ReferenceDetailModal Flow sync button', () => {
     const saved = onUpdate.mock.calls[0][1]
     expect(saved.mediaId).toBe('scene-media')
     expect(toast.success).toHaveBeenCalled()
+  })
+
+  it('#R34: 이름 변경 후 저장 → Flow entity displayName 재동기화(renameFlowCharacter) + refresh', async () => {
+    window.electronAPI.renameFlowCharacter = vi.fn().mockResolvedValue({ success: true })
+    const onUpdate = vi.fn()
+    const syncedChar = { ...charRef, name: 'king', entityId: 'ent-1', flowNameSyncStatus: 'synced' }
+    const { container, getByText } = render(
+      <ReferenceDetailModal {...baseProps} reference={syncedChar} appMode="flow" onUpdate={onUpdate} onUpload={vi.fn()} />
+    )
+    // 이름 변경
+    const nameInput = container.querySelector('input[type="text"]')
+    fireEvent.change(nameInput, { target: { value: 'kingnew' } })
+    // 저장
+    await act(async () => {
+      getByText('common.save').click()
+      for (let i = 0; i < 8; i++) await Promise.resolve()
+    })
+    // Flow entity displayName 재동기화
+    expect(window.electronAPI.renameFlowCharacter).toHaveBeenCalledWith(
+      expect.objectContaining({ entityId: 'ent-1', displayName: 'kingnew' })
+    )
+    expect(window.electronAPI.refreshFlowComposer).toHaveBeenCalled()
+    // 로컬에도 새 이름 반영
+    expect(onUpdate).toHaveBeenCalledWith(0, expect.objectContaining({ name: 'kingnew' }))
+  })
+
+  it('#R34: 이름이 그대로면 renameFlowCharacter 호출 안 함', async () => {
+    window.electronAPI.renameFlowCharacter = vi.fn()
+    const onUpdate = vi.fn()
+    const syncedChar = { ...charRef, name: 'king', entityId: 'ent-1', flowNameSyncStatus: 'synced' }
+    const { getByText } = render(
+      <ReferenceDetailModal {...baseProps} reference={syncedChar} appMode="flow" onUpdate={onUpdate} onUpload={vi.fn()} />
+    )
+    await act(async () => {
+      getByText('common.save').click()
+      for (let i = 0; i < 8; i++) await Promise.resolve()
+    })
+    expect(window.electronAPI.renameFlowCharacter).not.toHaveBeenCalled()
   })
 
   it('sync click → onUpload(cleanBase64, character meta) then onUpdate with synced patch', async () => {
