@@ -21,8 +21,9 @@ function makeIpcMain() {
   }
 }
 
-function makeDeps({ agentOn = false } = {}) {
+function makeDeps({ agentOn = false, captureResponses = [] } = {}) {
   let pending = null
+  let generateClicks = 0
   const flowView = {
     webContents: {
       // 모든 페이지 스크립트(COMPOSE_EDITOR_READY / clear-text / appendSceneText / GENERATE_BTN
@@ -46,9 +47,11 @@ function makeDeps({ agentOn = false } = {}) {
     clearFlowPageInject: vi.fn(async () => {}),
     trustedClickOnFlowView: vi.fn(async () => {
       // 생성 버튼 클릭 시점에 arm 된 pending 을 즉시 resolve → clickAndCaptureGeneration 이
-      //   genPromise 로 바로 빠진다(120s timeout 우회). responses 비움 → 캡처는 실패하지만
-      //   배선(configureFlowMode/inject/clear)은 그대로 검증된다.
-      if (pending && typeof pending.resolve === 'function') pending.resolve({ responses: [] })
+      //   genPromise 로 바로 빠진다(120s timeout 우회). captureResponses 로 응답 상태 제어.
+      if (pending && typeof pending.resolve === 'function') {
+        generateClicks++
+        pending.resolve({ responses: captureResponses })
+      }
       return { success: true }
     }),
     getPendingGeneration: () => pending,
@@ -59,7 +62,7 @@ function makeDeps({ agentOn = false } = {}) {
     parseFlowResponse: vi.fn(),
     getCapturedProjectId: () => null,
   }
-  return { deps, flowView }
+  return { deps, flowView, getGenerateClicks: () => generateClicks }
 }
 
 const PID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
@@ -124,5 +127,42 @@ describe('#R33: flow:generate-scene forces IMAGE mode + injects aspectRatio', ()
 
     expect(deps.setFlowPageInject.mock.calls[0][0].aspectRatio).toBeNull()
     expect(deps.clearFlowPageInject).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('#R33: flow:generate-scene 5xx (HTTP 500) transient retry', () => {
+  it('retries once on 500 then returns retry:true; inject cleared', async () => {
+    const ipc = makeIpcMain()
+    // 캡처 응답이 항상 500 → 1회 재시도 후에도 500 → 실패(retry:true)
+    const { deps, getGenerateClicks } = makeDeps({ captureResponses: [{ status: 500, body: 'Internal error encountered' }] })
+    registerCharacterIPC(ipc, deps)
+
+    const res = await ipc.invoke('flow:generate-scene', {
+      segments: [{ type: 'text', text: 'a cat' }],
+      projectId: PID,
+      aspectRatio: '16:9',
+    })
+
+    expect(res.success).toBe(false)
+    expect(res.status).toBe(500)
+    expect(res.retry).toBe(true)            // 5xx → 상위 재시도 신호
+    expect(getGenerateClicks()).toBe(2)     // 최초 + 1 재시도
+    expect(deps.clearFlowPageInject).toHaveBeenCalledTimes(1)  // finally 정리
+  })
+
+  it('does NOT retry on 4xx (e.g., 400)', async () => {
+    const ipc = makeIpcMain()
+    const { deps, getGenerateClicks } = makeDeps({ captureResponses: [{ status: 400, body: 'bad' }] })
+    registerCharacterIPC(ipc, deps)
+
+    const res = await ipc.invoke('flow:generate-scene', {
+      segments: [{ type: 'text', text: 'a cat' }],
+      projectId: PID,
+    })
+
+    expect(res.success).toBe(false)
+    expect(res.status).toBe(400)
+    expect(res.retry).toBeFalsy()
+    expect(getGenerateClicks()).toBe(1)     // 4xx → 재시도 없음
   })
 })

@@ -129,6 +129,9 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
         // cache bust (R27)
         generatedAt: Date.now(),
       }))
+      // #R33: 캐릭터 entity 등록(entityId 수신) 직후 Flow SPA 새로고침 — 새 이름이 'Untitled' 로
+      //   stale 하게 보이거나 멘션 피커가 옛 이름으로 뜨는 것을 방지(비차단).
+      if (result.entityId) { try { window.electronAPI?.refreshFlowComposer?.() } catch (_e) {} }
     }
   })
   
@@ -306,6 +309,8 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
           : { mediaId: result.mediaId ?? editData.mediaId, caption: result.caption ?? editData.caption }
         setEditData(prev => ({ ...prev, ...patch }))
         onUpdate(index, { ...editData, ...patch })
+        // #R33: 동기화 후 Flow SPA 새로고침 — 새 entity 이름이 멘션 피커/UI 에 반영되게(비차단).
+        try { window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
         if (isCharacter && patch.flowNameSyncStatus !== 'synced') {
           toast.error(isKo ? '등록됐지만 이름 동기화 실패' : 'Registered but name sync failed')
         } else {

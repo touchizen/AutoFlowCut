@@ -50,6 +50,7 @@ const QUOTA_CHARACTER = [
   ['flow:generate-character', { prompt: 'p', displayName: 'd', projectId: 'pid' }],
   ['flow:reroll-character', { entityId: 'e', prompt: 'p', projectId: 'pid' }],
   ['flow:generate-scene', { prompt: 'p', projectId: 'pid' }],
+  ['flow:refresh-composer', { projectId: 'pid' }],  // #R33: 등록/동기화 후 SPA 새로고침 (flow 모드 전용)
   ['flow:rename-character', { entityId: 'e', displayName: 'd', projectId: 'pid' }],
   ['flow:upload-character-entity', { base64: 'b', displayName: 'd', projectId: 'pid' }],
 ]

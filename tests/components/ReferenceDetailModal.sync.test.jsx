@@ -65,7 +65,11 @@ function getSyncButton(container) {
 }
 
 describe('#R33: ReferenceDetailModal Flow sync button', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    // #R33: 동기화 후 호출되는 Flow 새로고침 스파이
+    window.electronAPI = { ...(window.electronAPI || {}), refreshFlowComposer: vi.fn() }
+  })
 
   it('shows the sync button for character refs in flow mode', () => {
     const { container } = render(
@@ -136,6 +140,8 @@ describe('#R33: ReferenceDetailModal Flow sync button', () => {
       entityId: 'new-ent', mediaId: 'new-media', flowNameSyncStatus: 'synced', registered: true,
     }))
     expect(toast.success).toHaveBeenCalled()
+    // #R33: 동기화 후 Flow SPA 새로고침 호출
+    expect(window.electronAPI.refreshFlowComposer).toHaveBeenCalled()
   })
 
   it('sync failure → toast error, no synced patch', async () => {

@@ -857,13 +857,26 @@ export function registerCharacterIPC(ipcMain, deps) {
       }
     }
     try {
-      const cap = await clickAndCaptureGeneration(flowView)
-      if (cap.clickError) return { success: false, error: cap.clickError }
-      const resp0 = cap.resp0
-      const body = cap.body
+      // #R33: 5xx(예: 500 INTERNAL)는 Google 서버측 일시 오류 → 같은 컴포저 상태로 1회 재시도.
+      //   (프롬프트/멘션 칩이 그대로 남아 있어 재클릭=재제출. 4xx 는 재시도 안 함.)
+      const SCENE_5XX_RETRIES = 1
+      let cap, resp0, body
+      for (let attempt = 0; ; attempt++) {
+        cap = await clickAndCaptureGeneration(flowView)
+        if (cap.clickError) return { success: false, error: cap.clickError }
+        resp0 = cap.resp0
+        body = cap.body
+        if (resp0 && resp0.status >= 500 && attempt < SCENE_5XX_RETRIES) {
+          console.warn('[Flow Scene] HTTP', resp0.status, '(transient) — retrying', attempt + 1, '/', SCENE_5XX_RETRIES)
+          await sleep(1500 * (attempt + 1))
+          continue
+        }
+        break
+      }
       if (resp0 && resp0.status >= 400) {
         console.warn('[Flow Scene] generate failed (HTTP', resp0.status, '):', (body || '').slice(0, 160))
-        return { success: false, error: '장면 생성 실패(HTTP ' + resp0.status + ')', status: resp0.status }
+        // 5xx 는 재시도 소진 후에도 실패면 retry 신호(상위 배치/사용자 재시도 대상).
+        return { success: false, error: '장면 생성 실패(HTTP ' + resp0.status + ')', status: resp0.status, retry: resp0.status >= 500 }
       }
       if (!body) return { success: false, error: '생성 응답 캡처 실패' + (cap.timeout ? '(timeout 120s)' : '') }
 
@@ -884,6 +897,34 @@ export function registerCharacterIPC(ipcMain, deps) {
       }
     } finally {
       try { await clearFlowPageInject?.() } catch {}
+    }
+  })
+
+  // #R33: Flow 컴포저 새로고침 — 등록/동기화 직후 SPA 가 새 entity 이름을 다시 읽게 한다.
+  //   캐릭터 등록(PATCH displayName) 후 SPA 가 캐시된 'Untitled Character' 를 그대로 보여, 멘션
+  //   피커도 옛 이름으로 떠 매칭이 깨질 수 있다. 사용자가 프로젝트를 나갔다 들어오는 것과 동일하게
+  //   full reload → did-finish-load 가 FLOW_PAGE_INJECTION 재주입 + projectInitialData 재요청.
+  ipcMain.handle('flow:refresh-composer', async (_e, opts = {}) => {
+    if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }
+    const flowView = getFlowView()
+    if (!flowView) return { success: false, error: 'Flow view not ready' }
+    const pid = opts.projectId || projectIdFromUrl() || (getCapturedProjectId && getCapturedProjectId())
+    try {
+      await flowView.webContents.reload()
+      let ready = false
+      for (let i = 0; i < 40 && !ready; i++) {
+        await sleep(500)
+        ready = await flowView.webContents.executeJavaScript(COMPOSE_EDITOR_READY).catch(() => false)
+      }
+      // 타깃 프로젝트 컴포저 보장(reload 가 다른 경로로 떨어졌을 때 드리프트 방지).
+      if (pid && ensureOnProjectComposer) {
+        try { await ensureOnProjectComposer(flowView, pid) } catch (e) { console.warn('[Flow Refresh] ensureOnProjectComposer:', e.message) }
+      }
+      console.log('[Flow Refresh] composer refreshed, ready:', ready)
+      return { success: !!ready }
+    } catch (e) {
+      console.warn('[Flow Refresh] failed:', e.message)
+      return { success: false, error: e.message }
     }
   })
 

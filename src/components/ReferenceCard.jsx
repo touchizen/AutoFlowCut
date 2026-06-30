@@ -180,6 +180,10 @@ export default function ReferenceCard({
         errorMessage: finalErrorMessage,
       })
 
+      // #R33: 캐릭터 entity 등록(entityId 수신) 직후 Flow SPA 새로고침 — 'Untitled Character' stale
+      //   캐시/멘션 피커 옛 이름 방지(비차단).
+      if (entityPatch?.entityId) { try { window.electronAPI?.refreshFlowComposer?.() } catch (_e) {} }
+
       setIsUploading(false)
     }
     reader.readAsDataURL(file)
