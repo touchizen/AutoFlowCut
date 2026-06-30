@@ -92,12 +92,15 @@ export default function ReferencePanel({
     let ok = 0, fail = 0
     try {
       for (const ref of targets) {
+        // #R34: 처리 중인 카드에 업로드 스피너(⏳) 표시(직렬이라 1개씩).
+        onUpdate(prev => prev.map(r => r.id === ref.id ? { ...r, syncing: true } : r))
         const res = await syncRefToFlow(ref, onUpload)
         if (res.ok) {
           ok++
-          onUpdate(prev => prev.map(r => r.id === ref.id ? { ...r, ...res.patch } : r))
+          onUpdate(prev => prev.map(r => r.id === ref.id ? { ...r, ...res.patch, syncing: false } : r))
         } else {
           fail++
+          onUpdate(prev => prev.map(r => r.id === ref.id ? { ...r, syncing: false } : r))
           console.warn('[ReferencePanel] sync-all failed for', ref?.name, res.error)
         }
       }

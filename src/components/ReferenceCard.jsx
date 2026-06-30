@@ -222,7 +222,9 @@ export default function ReferenceCard({
   
   const typeInfo = REFERENCE_TYPES.find(t => t.value === reference.type) || REFERENCE_TYPES[0]
   const hasPrompt = reference.prompt && reference.prompt.trim().length > 0
-  const isBusy = isUploading || isGenerating
+  // #R34: reference.syncing 은 모달/일괄 동기화가 백그라운드로 업로드 중일 때 카드에 동일한
+  //   업로드 스피너(⏳)를 보이게 하는 전이 플래그(완료 시 false 로 해제).
+  const isBusy = isUploading || isGenerating || !!reference.syncing
   const hasRefImage = hasImageData(reference)
   const refImgSrc = resolveImageSrc(reference)
 

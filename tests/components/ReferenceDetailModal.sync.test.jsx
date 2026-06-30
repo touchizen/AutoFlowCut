@@ -111,8 +111,10 @@ describe('#R33: ReferenceDetailModal Flow sync button', () => {
       for (let i = 0; i < 8; i++) await Promise.resolve()
     })
     expect(onUpload).toHaveBeenCalledWith('KINGB64', expect.objectContaining({ type: 'scene', name: 'intro' }))
-    const saved = onUpdate.mock.calls[0][1]
+    // #R34: 첫 호출은 syncing:true(스피너), 마지막 호출이 결과 패치.
+    const saved = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][1]
     expect(saved.mediaId).toBe('scene-media')
+    expect(saved.syncing).toBe(false)
     expect(toast.success).toHaveBeenCalled()
   })
 
@@ -196,6 +198,10 @@ describe('#R33: ReferenceDetailModal Flow sync button', () => {
     })
     expect(onUpload).toHaveBeenCalled()
     expect(toast.error).toHaveBeenCalled()
-    expect(onUpdate).not.toHaveBeenCalled()
+    // #R34: onUpdate 는 syncing 플래그(true→false)용으로 호출되지만, 동기화 패치(synced)는 적용 안 됨.
+    const calls = onUpdate.mock.calls.map(c => c[1])
+    expect(calls.every(r => r.flowNameSyncStatus !== 'synced')).toBe(true)
+    // 마지막 호출은 스피너 해제(syncing:false)
+    expect(calls[calls.length - 1].syncing).toBe(false)
   })
 })

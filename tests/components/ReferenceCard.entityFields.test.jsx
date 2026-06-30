@@ -186,6 +186,14 @@ describe('ReferenceCard — entity field propagation (Codex #3)', () => {
     expect(lastCall.name).toBe('hero')
   })
 
+  it('#R34: reference.syncing=true → 업로드 스피너(ref-uploading) 표시(카드 업로드와 동일 반응)', () => {
+    const { container } = render(
+      <ReferenceCard reference={{ ...baseRef, syncing: true }} index={0} onUpdate={vi.fn()}
+        onRemove={vi.fn()} onUpload={vi.fn()} t={(k) => k} projectName={null} />
+    )
+    expect(container.querySelector('.ref-uploading')).toBeTruthy()
+  })
+
   it('upload failure: onUpdate has no mediaId and no entity fields', async () => {
     const onUpload = vi.fn().mockResolvedValue({ success: false })
     const onUpdate = vi.fn()

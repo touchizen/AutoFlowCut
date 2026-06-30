@@ -130,6 +130,7 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
         dataStorage: null,
         // entity fields from Flow character upload
         ...entityPatch,
+        syncing: false,  // #R34: 업로드 완료 → 카드 스피너 해제
         // cache bust (R27)
         generatedAt: Date.now(),
       }
@@ -152,6 +153,8 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
     onUploadStart: () => {
       uploadSnapshotRef.current = { ...editData }
       uploadClosingRef.current = true
+      // #R34: 카드에 업로드 스피너(⏳)를 즉시 표시 — 카드 자체 업로드와 동일 반응. 완료 시 해제.
+      onUpdate(index, { ...editData, syncing: true })
       onClose()
     },
   })
@@ -340,11 +343,13 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
     if (!editData.name?.trim()) { toast.error(isKo ? '이름을 먼저 입력하세요' : 'Name required'); return }
     const refSnapshot = { ...editData }
     const idx = index
-    onClose()  // 즉시 닫기 — 동기화는 백그라운드로
+    // #R34: 카드에 업로드 스피너(⏳) 표시 후 모달 즉시 닫기 — 동기화는 백그라운드로.
+    onUpdate(idx, { ...editData, syncing: true })
+    onClose()
     ;(async () => {
       const res = await syncRefToFlow(refSnapshot, onUpload)
       if (res.ok) {
-        onUpdate(idx, { ...refSnapshot, ...res.patch })
+        onUpdate(idx, { ...refSnapshot, ...res.patch, syncing: false })
         // 동기화 후 Flow SPA 새로고침(나갔다 재진입) — 새 entity 이름 반영(비차단).
         try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
         if (refSnapshot.type === 'character' && res.patch.flowNameSyncStatus !== 'synced') {
@@ -353,6 +358,7 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
           toast.success(isKo ? `Flow 동기화 완료: ${refSnapshot.name}` : `Synced to Flow: ${refSnapshot.name}`)
         }
       } else {
+        onUpdate(idx, { ...refSnapshot, syncing: false })  // 실패 시 스피너 해제
         toast.error((isKo ? '동기화 실패: ' : 'Sync failed: ') + (res.error || 'unknown'))
       }
     })()

@@ -29,6 +29,15 @@ describe('stripReferencesForSave', () => {
     expect(out[1].data).toBe('Y')
   })
 
+  it('#R34: syncing 전이 플래그는 항상 제거(저장 안 함)', () => {
+    const withPath = stripReferencesForSave([{ name: 'a', data: 'X', filePath: '/p/a.png', syncing: true }])
+    expect(withPath[0]).not.toHaveProperty('syncing')
+    expect(withPath[0]).not.toHaveProperty('data')
+    const noPath = stripReferencesForSave([{ name: 'b', data: 'Y', syncing: true }])
+    expect(noPath[0]).not.toHaveProperty('syncing')
+    expect(noPath[0].data).toBe('Y')  // 미저장 data 는 보존
+  })
+
   it('빈/널 입력 안전', () => {
     expect(stripReferencesForSave([])).toEqual([])
     expect(stripReferencesForSave(undefined)).toEqual([])

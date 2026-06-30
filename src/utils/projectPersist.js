@@ -15,12 +15,16 @@
  */
 export function stripReferencesForSave(references = []) {
   return (references || []).map((ref) => {
-    if (ref && ref.filePath) {
+    if (!ref) return ref
+    // #R34: syncing 은 백그라운드 업로드/동기화 진행표시용 전이 플래그 — 절대 저장하지 않는다
+    //   (저장 중 크래시 시 syncing:true 로 고착돼 reload 후 스피너가 안 사라지는 것 방지).
+    const { syncing, ...base } = ref
+    if (base.filePath) {
       // 디스크에 저장됨 → base64 제거 (로드 시 filePath 로 복원)
-      const { data, ...rest } = ref
+      const { data, ...rest } = base
       return rest
     }
     // 미저장(저장 실패 등) → base64 보존 (재오픈 유실 방지)
-    return ref
+    return base
   })
 }
