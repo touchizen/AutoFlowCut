@@ -125,6 +125,25 @@ describe('ReferenceDetailModal — entity field propagation (Codex #3)', () => {
     expect(baseProps.onClose).toHaveBeenCalled()
   })
 
+  it('#R34: 이름이 빈 ref 모달 업로드 → 파일명(hero)으로 Flow 등록 + onUpdate name=hero', async () => {
+    const onUpload = vi.fn().mockResolvedValue({
+      success: true, mediaId: 'm', entityId: 'e', workflowId: 'w', registered: true, flowNameSyncStatus: 'synced',
+    })
+    const onUpdate = vi.fn()
+    const emptyNameRef = { ...baseRef, name: '' }
+
+    const { container } = render(
+      <ReferenceDetailModal {...baseProps} reference={emptyNameRef} onUpload={onUpload} onUpdate={onUpdate} />
+    )
+    await triggerDropZoneUpload(container)
+
+    // 파일명 'hero.png' → 'hero' 로 Flow 등록(displayName)
+    expect(onUpload).toHaveBeenCalledWith('MODALBASE64', expect.objectContaining({ name: 'hero' }))
+    // close-on-upload → 결과가 onUpdate 로 반영되며 name 이 'hero' 로 채워진다
+    const calls = onUpdate.mock.calls.map(c => c[1])
+    expect(calls.some(r => r.name === 'hero')).toBe(true)
+  })
+
   it('Flow character upload: editData gets entityId + flowNameSyncStatus=synced after upload', async () => {
     // We capture what state editData ends up in by spying on the save flow.
     // The cleanest way: provide onUpdate and trigger save after upload.

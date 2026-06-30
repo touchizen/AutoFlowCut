@@ -45,11 +45,18 @@ export function useImageUpload(options = {}) {
       })
       
       const cleanB64 = cleanBase64(base64)
-      
+
+      // #R34: 이름이 비어 있으면 업로드 파일명(확장자 제외)을 이름으로 쓴다 — Flow 등록명(displayName)
+      //   과 결과 양쪽에 반영(상세 모달 업로드도 카드와 동일하게 파일명으로 등록).
+      const fileBaseName = file?.name ? file.name.replace(/\.[^/.]+$/, '').trim() : ''
+      const metaName = (uploadMeta.name && String(uploadMeta.name).trim()) ? uploadMeta.name : fileBaseName
+
       let result = {
         data: base64,
         mediaId: null,
         caption: null,
+        name: metaName || null,   // 호출측이 빈 이름을 채울 수 있게 effective name 제공
+        fileName: fileBaseName || null,
         // entity fields — populated when uploadResult carries them (Flow character upload)
         entityId: null,
         workflowId: null,
@@ -60,7 +67,7 @@ export function useImageUpload(options = {}) {
       // Flow에 업로드 (함수가 있으면)
       if (uploadToFlow) {
         try {
-          const uploadResult = await uploadToFlow(cleanB64, { category, ...uploadMeta })
+          const uploadResult = await uploadToFlow(cleanB64, { category, ...uploadMeta, name: metaName })
           if (uploadResult.success) {
             result.mediaId = uploadResult.mediaId
             result.caption = uploadResult.caption || null

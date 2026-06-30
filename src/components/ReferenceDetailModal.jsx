@@ -121,8 +121,11 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
       const entityPatch = hasEntityFields
         ? applyEntityRegistrationPatch(clearedBase, result, true)
         : { entityId: null, workflowId: null, registered: null, flowNameSyncStatus: null }
+      // #R34: 이름이 비어 있으면 업로드 파일명(result.name)으로 채운다(카드 업로드와 동일).
+      const baseNameTrim = base.name && String(base.name).trim()
       const merged = {
         ...base,
+        ...(baseNameTrim ? {} : (result.name ? { name: result.name } : {})),
         data: result.data,
         mediaId: result.mediaId || null,
         caption: result.caption || null,
