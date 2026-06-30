@@ -9,7 +9,7 @@ import { useImageUpload } from '../hooks/useImageUpload'
 import { useElapsedTimer } from '../hooks/useElapsedTimer'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { applyEntityRegistrationPatch } from '../utils/refEntityRegistration'
-import { cleanBase64 } from '../utils/urls'
+import { syncRefToFlow } from '../utils/flowCharacterSync'
 import PromptInput from './PromptInput'
 import { toast } from './Toast'
 import Modal from './Modal'
@@ -43,7 +43,6 @@ function ElapsedTime({ startedAt, endedAt }) {
 export default function ReferenceDetailModal({ reference, index, onUpdate, onUpload, onClose, onGenerate, isGenerating, t, isKo, projectName, appMode, thumbnails = {}, references = [] }) {
   const [editData, setEditData] = useState({ ...reference })
   const [showStyleDropdown, setShowStyleDropdown] = useState(false)
-  const [isSyncing, setIsSyncing] = useState(false)
   const [histories, setHistories] = useState([])
   const [shouldReloadHistory, setShouldReloadHistory] = useState(0)
   const [imageSize, setImageSize] = useState(null)
@@ -282,48 +281,32 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
     }
   }
   
-  // #R33: Flow 동기화 — 현재 이미지를 Flow 에 다시 업로드/등록한다.
+  // #R34: Flow 동기화 — 모달을 즉시 닫고 백그라운드로 진행(재생성 버튼과 동일 UX). 결과는 onUpdate
+  //   로 부모 state 에 반영되므로 모달이 닫혀도 안전하다.
   //   - character: entity 재등록(entityId/이름) → Flow UI 삭제(stale)·등록 실패('failed')로 @멘션이
-  //     안 될 때 복구. applyEntityRegistrationPatch 로 entityId/synced 갱신.
-  //   - scene 등: 일반 ref 업로드(entity 없음) → mediaId 재발급. (둘 다 이미지는 그대로 유지.)
-  const handleSync = async () => {
-    if (!onUpload || isSyncing) return
+  //     안 될 때 복구. - scene 등: 일반 ref 업로드 → mediaId 재발급. (둘 다 이미지는 그대로 유지.)
+  const handleSync = () => {
+    if (!onUpload) return
     if (!hasImageData(editData)) { toast.error(isKo ? '이미지가 없습니다' : 'No image to sync'); return }
     if (!editData.name?.trim()) { toast.error(isKo ? '이름을 먼저 입력하세요' : 'Name required'); return }
-    setIsSyncing(true)
-    try {
-      let b64 = editData.data
-      if (!b64 && (editData.filePath || editData.imagePath)) {
-        const fr = await fileSystemAPI.readFileByPath(editData.filePath || editData.imagePath)
-        if (fr?.success) b64 = fr.data
-      }
-      if (!b64) { toast.error(isKo ? '이미지 데이터를 읽지 못했습니다' : 'Cannot read image data'); return }
-      const result = await onUpload(cleanBase64(b64), {
-        category: editData.category, type: editData.type, name: editData.name, refId: editData.id,
-      })
-      if (result?.success) {
-        const isCharacter = editData.type === 'character'
-        // character 는 entity 패치(entityId 없으면 'failed'), 그 외는 mediaId/caption 만 갱신.
-        const patch = isCharacter
-          ? applyEntityRegistrationPatch(editData, result, true)
-          : { mediaId: result.mediaId ?? editData.mediaId, caption: result.caption ?? editData.caption }
-        setEditData(prev => ({ ...prev, ...patch }))
-        onUpdate(index, { ...editData, ...patch })
-        // #R33: 동기화 후 Flow SPA 새로고침 — 새 entity 이름이 멘션 피커/UI 에 반영되게(비차단).
-        try { window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
-        if (isCharacter && patch.flowNameSyncStatus !== 'synced') {
-          toast.error(isKo ? '등록됐지만 이름 동기화 실패' : 'Registered but name sync failed')
+    const refSnapshot = { ...editData }
+    const idx = index
+    onClose()  // 즉시 닫기 — 동기화는 백그라운드로
+    ;(async () => {
+      const res = await syncRefToFlow(refSnapshot, onUpload)
+      if (res.ok) {
+        onUpdate(idx, { ...refSnapshot, ...res.patch })
+        // 동기화 후 Flow SPA 새로고침(나갔다 재진입) — 새 entity 이름 반영(비차단).
+        try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
+        if (refSnapshot.type === 'character' && res.patch.flowNameSyncStatus !== 'synced') {
+          toast.error(isKo ? `${refSnapshot.name}: 등록됐지만 이름 동기화 실패` : `${refSnapshot.name}: registered but name sync failed`)
         } else {
-          toast.success(isKo ? 'Flow 동기화 완료' : 'Synced to Flow')
+          toast.success(isKo ? `Flow 동기화 완료: ${refSnapshot.name}` : `Synced to Flow: ${refSnapshot.name}`)
         }
       } else {
-        toast.error((isKo ? '동기화 실패: ' : 'Sync failed: ') + (result?.error || 'unknown'))
+        toast.error((isKo ? '동기화 실패: ' : 'Sync failed: ') + (res.error || 'unknown'))
       }
-    } catch (e) {
-      toast.error((isKo ? '동기화 오류: ' : 'Sync error: ') + (e?.message || String(e)))
-    } finally {
-      setIsSyncing(false)
-    }
+    })()
   }
 
   // 재생성 핸들러 — 생성은 백그라운드로 계속되고 모달은 즉시 닫힘 (§3.8)
@@ -553,10 +536,10 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
                     className="btn-secondary"
                     style={{ padding: '2px 8px', fontSize: '0.75rem' }}
                     onClick={handleSync}
-                    disabled={isSyncing || !hasImageData(editData)}
-                    title={isKo ? '현재 이미지를 Flow 에 다시 등록(@멘션/레퍼런스 복구)' : 'Re-register this image to Flow'}
+                    disabled={!hasImageData(editData)}
+                    title={isKo ? '동기화 후 모달이 닫히고 백그라운드로 진행(@멘션/레퍼런스 복구)' : 'Closes modal and syncs in background'}
                   >
-                    {isSyncing ? '⏳ ' : '🔄 '}{isKo ? '동기화' : 'Sync'}
+                    🔄 {isKo ? '동기화' : 'Sync'}
                   </button>
                 </div>
               )

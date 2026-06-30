@@ -142,6 +142,8 @@ describe('#R33: ReferenceDetailModal Flow sync button', () => {
     expect(toast.success).toHaveBeenCalled()
     // #R33: 동기화 후 Flow SPA 새로고침 호출
     expect(window.electronAPI.refreshFlowComposer).toHaveBeenCalled()
+    // #R34: 동기화 클릭 시 모달은 즉시 닫히고 백그라운드로 진행
+    expect(baseProps.onClose).toHaveBeenCalled()
   })
 
   it('sync failure → toast error, no synced patch', async () => {
