@@ -77,6 +77,8 @@ const VIDEO_SUBMIT_METHODS = new Set([
   'batchAsyncGenerateVideoText',          // T2V
   'batchAsyncGenerateVideoStartImage',    // I2V (start)
   'batchAsyncGenerateVideoStartAndEndImage', // I2V (start+end)
+  'batchAsyncGenerateVideoReferenceImages',  // #R36-ref: @멘션 R2V(캐릭터 entity → 비디오). 이게 없으면
+  //   pendingVideoGeneration 이 resolve 안 돼 응답 캡처 실패 → timeout → 완료감지/다운로드/upscale 못 함.
 ])
 
 export function isVideoSubmitEndpoint(url) {

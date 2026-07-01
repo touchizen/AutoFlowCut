@@ -179,12 +179,16 @@ describe('isVideoSubmitEndpoint', () => {
   const T2V = 'https://x/video:batchAsyncGenerateVideoText'
   const I2V = 'https://x/video:batchAsyncGenerateVideoStartImage'
   const I2V_END = 'https://x/video:batchAsyncGenerateVideoStartAndEndImage'
+  const REF = 'https://x/video:batchAsyncGenerateVideoReferenceImages'
   const UPSCALE = 'https://x/video:batchAsyncGenerateVideoUpsampleVideo'
 
   it('T2V/I2V/I2V_END submit endpoint 는 true', () => {
     expect(isVideoSubmitEndpoint(T2V)).toBe(true)
     expect(isVideoSubmitEndpoint(I2V)).toBe(true)
     expect(isVideoSubmitEndpoint(I2V_END)).toBe(true)
+  })
+  it('#R36-ref: @멘션 reference-to-video 제출(ReferenceImages) 도 submit endpoint 로 잡아 완료감지→다운로드로 넘어가게 한다', () => {
+    expect(isVideoSubmitEndpoint(REF)).toBe(true)
   })
   it('upscale(UpsampleVideo)·status 는 false (pending T2V/I2V 를 resolve 하면 안 됨)', () => {
     expect(isVideoSubmitEndpoint(UPSCALE)).toBe(false)

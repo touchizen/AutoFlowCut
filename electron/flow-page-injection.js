@@ -48,11 +48,14 @@ export function applyOmniDuration(modelKey, durationSec) {
 //   판별을 일치시키고, 아래 FLOW_PAGE_INJECTION 이 `${isOmniFlashModel.toString()}` 로 직렬화한다.
 
 // OmniFlash 강제 videoModelKey — Flow 패널 적용이 깨져도(panel_not_found) 주입이 모델키를
-//   직접 박아 OmniFlash 로 생성하게 한다. mode='t2v'|'i2v', 길이는 _Ns 접미사(기본 8).
+//   직접 박아 OmniFlash 로 생성하게 한다. mode='t2v'|'i2v'|'r2v', 길이는 _Ns 접미사(기본 8).
+//   #R36-ref: r2v = @멘션 reference-to-video(캐릭터 entity). t2v 키를 강제하면 엔드포인트/키 불일치가
+//     되므로 r2v 요청엔 r2v 키를 박는다.
 export function omniFlashKey(mode, durationSec) {
   var d = Math.round(Number(durationSec))
   if (!Number.isFinite(d) || d <= 0) d = 8
-  return 'abra_' + (mode === 'i2v' ? 'i2v' : 't2v') + '_' + d + 's'
+  var m = mode === 'i2v' ? 'i2v' : mode === 'r2v' ? 'r2v' : 't2v'
+  return 'abra_' + m + '_' + d + 's'
 }
 
 export const FLOW_PAGE_INJECTION = /* js */ `
@@ -75,6 +78,7 @@ export const FLOW_PAGE_INJECTION = /* js */ `
   const URL_VIDEO_T2V        = 'batchAsyncGenerateVideoText'
   const URL_VIDEO_I2V        = 'batchAsyncGenerateVideoStartImage'
   const URL_VIDEO_I2V_END    = 'batchAsyncGenerateVideoStartAndEndImage'
+  const URL_VIDEO_REF        = 'batchAsyncGenerateVideoReferenceImages'  // #R36-ref: @멘션 R2V
   const URL_VIDEO_UPSAMPLE   = 'batchAsyncGenerateVideoUpsampleVideo'
   const URL_VIDEO_STATUS     = 'batchCheckAsyncVideoGenerationStatus'
 
@@ -236,26 +240,30 @@ export const FLOW_PAGE_INJECTION = /* js */ `
 
         // T2V injection (i2v 아님): seed + OmniFlash 길이 접미사 최적화(applyOmniDuration).
         //   duration 만 있어도 동작하게 조건에 inject.duration 포함.
+        //   #R36-ref: @멘션 R2V(ReferenceImages) 도 여기서 처리 — 별도 엔드포인트라 이게 없으면 duration
+        //     주입이 스킵돼 Flow 기본 abra_r2v_8s(8초) 로 나간다. r2v 는 t2v 가 아닌 r2v 키를 강제한다.
         } else if (
           (inject.seed != null || inject.duration != null) && !inject.i2v && (
             url.includes(URL_VIDEO_T2V) ||
             url.includes(URL_VIDEO_I2V) ||
-            url.includes(URL_VIDEO_I2V_END)
+            url.includes(URL_VIDEO_I2V_END) ||
+            url.includes(URL_VIDEO_REF)
           )
         ) {
           injectionRequested = true
           const body = JSON.parse(_init.body)
           if (Array.isArray(body.requests)) {
             injectionApplied = true
-            const forceOmni = isOmniFlashModel(inject.videoModel)  // 앱이 OmniFlash 면 abra t2v 키 강제
+            const isRef = url.includes(URL_VIDEO_REF)  // @멘션 reference-to-video
+            const forceOmni = isOmniFlashModel(inject.videoModel)  // 앱이 OmniFlash 면 abra 키 강제
             for (const req of body.requests) {
               if (inject.seed != null) req.seed = inject.seed
               req.videoModelKey = forceOmni
-                ? omniFlashKey('t2v', inject.duration)
+                ? omniFlashKey(isRef ? 'r2v' : 't2v', inject.duration)
                 : applyOmniDuration(req.videoModelKey, inject.duration)  // OmniFlash 만 효과, 그 외 no-op
             }
             _init = { ..._init, body: JSON.stringify(body) }
-            console.log('[Flow Inject] video t2v:', body.requests[0] && body.requests[0].videoModelKey, 'seed', inject.seed, 'dur', inject.duration)
+            console.log('[Flow Inject] video', isRef ? 'r2v' : 't2v', ':', body.requests[0] && body.requests[0].videoModelKey, 'seed', inject.seed, 'dur', inject.duration)
           }
         }
       }
@@ -282,6 +290,7 @@ export const FLOW_PAGE_INJECTION = /* js */ `
         url.includes(URL_VIDEO_T2V)     ||
         url.includes(URL_VIDEO_I2V)     ||
         url.includes(URL_VIDEO_I2V_END) ||
+        url.includes(URL_VIDEO_REF)     ||  // #R36-ref: @멘션 R2V 응답도 캡처해야 generationId 회수됨
         url.includes(URL_VIDEO_UPSAMPLE)||
         url.includes(URL_VIDEO_STATUS)
       )) {

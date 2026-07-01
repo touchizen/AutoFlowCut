@@ -36,6 +36,11 @@ describe('omniFlashKey — OmniFlash 강제 videoModelKey (패널 우회)', () =
     expect(omniFlashKey('t2v', undefined)).toBe('abra_t2v_8s')
     expect(omniFlashKey('i2v', NaN)).toBe('abra_i2v_8s')
   })
+  it('#R36-ref: r2v(@멘션 reference-to-video) 모드 키 생성 — abra_r2v_Ns', () => {
+    expect(omniFlashKey('r2v', 4)).toBe('abra_r2v_4s')
+    expect(omniFlashKey('r2v', 10)).toBe('abra_r2v_10s')
+    expect(omniFlashKey('r2v', undefined)).toBe('abra_r2v_8s')
+  })
 })
 
 describe('toI2VModelKey — t2v 모델키 → i2v 모델키', () => {
@@ -60,6 +65,8 @@ describe('applyOmniDuration — OmniFlash 길이 접미사 최적화', () => {
     expect(applyOmniDuration('abra_t2v_8s', 4)).toBe('abra_t2v_4s')
     expect(applyOmniDuration('abra_i2v_8s', 6)).toBe('abra_i2v_6s')
     expect(applyOmniDuration('abra_t2v_8s', 10)).toBe('abra_t2v_10s')
+    // #R36-ref: @멘션 reference-to-video 키(abra_r2v_8s)도 길이 접미사 최적화 대상 — 8초 고정 회귀 방지
+    expect(applyOmniDuration('abra_r2v_8s', 4)).toBe('abra_r2v_4s')
   })
 
   it('Veo 등 abra 가 아니면 그대로 (8초 고정, 접미사 없음)', () => {
