@@ -154,9 +154,9 @@ export const FLOW_PAGE_INJECTION = /* js */ `
   // Forwards captured response to main process via preload-exposed IPC.
   // requestBody: the outgoing request body string — main uses it to correlate
   // the response to the generation that triggered it (prompt-based matching).
-  function reportResponse(url, body, status, requestBody, reqStartedAt) {
+  function reportResponse(url, body, status, requestBody, reqStartedAt, genTag) {
     try {
-      const p = window.electronAPI?.flowReportResponse?.({ url, body, status, requestBody, reqStartedAt })
+      const p = window.electronAPI?.flowReportResponse?.({ url, body, status, requestBody, reqStartedAt, genTag })
       // #R7-11: invoke 는 Promise — reject 시 unhandled rejection 이 페이지에 뜨지 않게 흡수.
       if (p && typeof p.catch === 'function') p.catch((e) => console.warn('[Flow Inject] reportResponse rejected:', e?.message))
     } catch (e) {
@@ -287,8 +287,11 @@ export const FLOW_PAGE_INJECTION = /* js */ `
       )) {
         const cloned = res.clone()
         const reqBody = typeof _init.body === 'string' ? _init.body : null
+        // #R35: 이 요청을 arm 한 inject 의 genTag(요청 시점 캡처된 로컬 inject 객체 — set/clear 는 객체를
+        //   교체하므로 응답 시점까지 이 값이 유지된다)를 응답 보고에 실어 정확한 async 생성에 correlate.
+        const _genTag = inject && inject.genTag ? inject.genTag : null
         cloned.text()
-          .then(body => reportResponse(url, body, res.status, reqBody, _reqStartedAt))
+          .then(body => reportResponse(url, body, res.status, reqBody, _reqStartedAt, _genTag))
           .catch(() => {})
       }
     } catch (e) {

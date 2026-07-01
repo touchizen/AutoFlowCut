@@ -6,11 +6,12 @@
  * 빠뜨리면) 주입이 조용히 no-op 된다 — 실제로 T2V OmniFlash 모델강제·길이최적화가 누락됐었다.
  *
  * 페이지측(electron/flow-page-injection.js)이 읽는 필드:
- *   seed, aspectRatio, references, i2v(객체), duration(t2v 길이접미사), videoModel(t2v OmniFlash 강제)
+ *   seed, aspectRatio, references, i2v(객체), duration(t2v 길이접미사), videoModel(t2v OmniFlash 강제),
+ *   genTag(#R35: 이 요청을 특정 async 생성에 correlate 하는 고유 태그 — 응답 보고에 실려 나감)
  */
 
 /** 주입 arm payload — 누락/undefined 필드는 null(= 미수정). */
-export function buildFlowInjectPayload({ seed, aspectRatio, references, i2v, duration, videoModel } = {}) {
+export function buildFlowInjectPayload({ seed, aspectRatio, references, i2v, duration, videoModel, genTag } = {}) {
   return {
     seed:        seed        ?? null,
     aspectRatio: aspectRatio ?? null,
@@ -18,6 +19,9 @@ export function buildFlowInjectPayload({ seed, aspectRatio, references, i2v, dur
     i2v:         i2v         ?? null,
     duration:    duration    ?? null,
     videoModel:  videoModel  ?? null,
+    // #R35: seed 를 건드리지 않고 요청↔생성 correlation 을 하기 위한 고유 태그. 페이지 monkey-patch 가
+    //   요청 처리 시 캡처해 batchGenerateImages 응답 보고(flowReportResponse)에 함께 실어 보낸다.
+    genTag:      genTag      ?? null,
   }
 }
 

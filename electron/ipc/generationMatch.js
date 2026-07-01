@@ -109,6 +109,8 @@ export function routeBatchImageResponse({ hasSyncPending, syncSetAt, pendingGene
     //   → 미완료 gen 에 매칭되면 async, "완료분 중복(늦은 응답)"이면 drop. 절대 sync 로 흘리지 않는다
     //   (matchGenerationForResponse 가 완료분 중복에 null 을 주는데, 그 null 을 sync fall-through 로
     //    오해하면 thumbnail 같은 sync 생성에 남의 늦은 응답이 붙는다 — fail-closed).
+    // #R35 note: async 멘션 씬은 genTag 로 reportResponseRouter 가 먼저 확정 매칭한다(여기 도달 전).
+    //   여기는 genTag 없는 응답(일반 async 이미지)만 promptKey 로 async 소유를 판정.
     const belongsToAsync = [...pendingGenerations].some(([, g]) => promptInBody(g?.promptKey, requestBody))
     if (belongsToAsync) {
       const matchId = matchGenerationForResponse(pendingGenerations, requestBody)
@@ -136,6 +138,11 @@ export function matchGenerationForResponse(pendingGenerations, requestBody) {
     return incomplete.length === 1 ? incomplete[0][0] : null
   }
 
+  const sig = parseSignature(requestBody)
+
+  // #R35 note: async 멘션 씬은 응답 보고에 실린 genTag 로 reportResponseRouter 가 이미 100% 매칭한다
+  //   (여기 도달 전). 이 함수는 genTag 가 없는 응답(일반 async 이미지 등)만 promptKey/signature 로 매칭.
+
   // 1차: promptKey 가 body 에 JSON 문자열 값으로 존재하는 gen (완료 gen 도 포함해 본다).
   const promptMatches = all.filter(([, gen]) => promptInBody(gen.promptKey, requestBody))
   const incompletePromptMatches = promptMatches.filter(([, gen]) => !gen.completed)
@@ -152,7 +159,10 @@ export function matchGenerationForResponse(pendingGenerations, requestBody) {
 
   // 2차: 시그니처로 한 번 더 거른다 (단일 prompt 매칭이어도 — signature 가 어긋나면
   // 늦게 온 다른 gen 의 응답이므로 반환하지 않는다).
-  const sig = parseSignature(requestBody)
+  // #R35 note: 멘션 씬은 refMediaIds 가 비어(entity 참조) signature tie-break 이 안 된다. 같은 "가장 긴
+  //   텍스트 세그먼트"를 가진 서로 다른 캐릭터 씬(@Alice smiles / @Bob smiles)이 동시 in-flight 면 여기서
+  //   2개+ 로 모호 → null(fail-closed) → 해당 씬들은 timeout 후 재시도된다. 잘못된 이미지 배정은 없다.
+  //   (텍스트 매칭이 안 되는 경우는 위 0차 seed 매칭이 씬을 고유 seed 로 구분한다.)
   const sigMatches = sig
     ? incompletePromptMatches.filter(([, gen]) => signatureMatches(gen, sig))
     : incompletePromptMatches

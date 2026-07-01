@@ -317,6 +317,9 @@ export function useFlowEngine(opts = {}) {
 
       if (routing.kind === 'scene') {
         // #R6-2: pass opts (aspectRatio, seed, model, batchCount) into flowGenerateScene
+        // #R35: 멘션 씬도 비동기 제출(asyncMode). Agent OFF 는 컴포저 블록 없이 클릭 후 즉시 반환 →
+        //   응답은 배경(pendingGenerations)에서 수집 → 씬들이 병렬로 생성된다. Agent ON 은 컴포저
+        //   monkey-patch intercept 가 안 먹어 여전히 동기 DOM 수집(images 반환).
         const res = await api().flowGenerateScene({
           prompt,
           segments: routing.segments,
@@ -326,6 +329,7 @@ export function useFlowEngine(opts = {}) {
           model: callOpts.model,
           batchCount: callOpts.batchCount,
           references: callOpts.references,
+          asyncMode: true,
         })
 
         if (!res?.success) {
@@ -334,8 +338,15 @@ export function useFlowEngine(opts = {}) {
           return markAuth({ success: false, error: res?.error || 'Scene generation failed', staleMention: res?.staleMention })
         }
 
-        // #R22-2: base64 이미지가 없으면 fail-closed(조용한 빈 success 방지). base64:null 복구 엔트리는
-        //   downstream finalize 가 실제 이미지 데이터를 기대해 깨지므로 만들지 않는다.
+        // #R35: Agent OFF 비동기 제출 → 서버 수집용 generationId 를 그대로 반환. checkGeneration/
+        //   collectGeneration 이 localResultsRef 미스 → flow:check/collect-generation(pendingGenerations)
+        //   폴링으로 이미지를 회수한다(멘션없는 async 이미지와 동일 경로).
+        if (res.generationId) {
+          return { success: true, generationId: res.generationId }
+        }
+
+        // Agent ON(또는 동기 폴백): images 를 바로 받음 → 로컬 맵에 저장(기존 동작, 즉시 완료).
+        // #R22-2: base64 이미지가 없으면 fail-closed(조용한 빈 success 방지).
         const images = res.images || []
         if (images.length === 0) {
           return { success: false, error: res.error || 'Scene generation returned no usable image' }

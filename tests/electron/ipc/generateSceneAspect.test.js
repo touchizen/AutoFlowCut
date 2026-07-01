@@ -68,7 +68,7 @@ function makeDeps({ agentOn = false, captureResponses = [] } = {}) {
 const PID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
 
 describe('#R33: flow:generate-scene forces IMAGE mode + injects aspectRatio', () => {
-  it('16:9 → configureFlowMode(IMAGE, batchCount) + inject LANDSCAPE, then clears inject', async () => {
+  it('16:9 → configureFlowMode(IMAGE, 1) + inject LANDSCAPE, then clears inject', async () => {
     const ipc = makeIpcMain()
     const { deps } = makeDeps()
     registerCharacterIPC(ipc, deps)
@@ -82,8 +82,8 @@ describe('#R33: flow:generate-scene forces IMAGE mode + injects aspectRatio', ()
       batchCount: 2,
     })
 
-    // (1) 이미지 모드 강제 — 배치 카운트 전달
-    expect(deps.configureFlowMode).toHaveBeenCalledWith('IMAGE', 2)
+    // (1) 이미지 모드 강제 — #R35-fix(Codex R7[2]): 씬은 항상 1장이라 batchCount 무관하게 1 로 고정.
+    expect(deps.configureFlowMode).toHaveBeenCalledWith('IMAGE', 1)
     // (2) 화면비/seed 주입 — 16:9 → LANDSCAPE enum
     expect(deps.setFlowPageInject).toHaveBeenCalledTimes(1)
     const injArg = deps.setFlowPageInject.mock.calls[0][0]

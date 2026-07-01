@@ -39,6 +39,24 @@ const API_BASE = 'https://aisandbox-pa.googleapis.com/v1'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+// #R35: 비동기 멘션 씬의 응답↔gen 상관키를 고른다(순수). 멘션 부분은 batchGenerateImages 요청 body 에서
+//   entity 참조로 치환돼 verbatim 이 아니므로, 요청 body 에 그대로 실리는 "가장 긴 텍스트 세그먼트"를
+//   키로 쓴다 — 씬마다 설명이 달라 고유하다. 텍스트 세그먼트가 없으면 원본 prompt 로 폴백.
+export function pickSceneCorrelationKey(segs, prompt) {
+  // #R35-fix(Codex[1]): 길이는 trim 기준으로 비교하되 키는 "원문"을 그대로 보존한다.
+  //   generationMatch.promptInBody 는 `"<key>"` 를 요청 body 에서 exact 검색하므로, trim 하면
+  //   실제 삽입된 세그먼트(예: leading space " walks")와 안 맞아 다중 pending 에서 drop→timeout 된다.
+  let key = ''
+  let keyLen = -1
+  for (const s of segs || []) {
+    if (s && s.type === 'text' && typeof s.text === 'string') {
+      const tl = s.text.trim().length
+      if (tl > keyLen) { key = s.text; keyLen = tl }
+    }
+  }
+  return key || (typeof prompt === 'string' ? prompt : '')
+}
+
 // #R33: 캐릭터 entity 업로드(=on-demand @멘션 등록)의 uploadImage 응답 대기 한도.
 //   60s 는 큰 레퍼런스/혼잡 시 짧아 타임아웃→registered=false→flowNameSyncStatus='failed' 로
 //   고착돼 멘션 후보에서 빠졌다("Unresolved @mention"). 등록 완료 시간을 확보(+1분).
@@ -78,6 +96,8 @@ export function registerCharacterIPC(ipcMain, deps) {
     configureFlowMode, setFlowPageInject, clearFlowPageInject, applyAgentDefaults,
     // #R33: entities PATCH 호스트를 region 에 맞춰 동적 해석(없으면 API_BASE fallback).
     getApiBase,
+    // #R35: 멘션 씬 비동기 제출용 — flow-api.js async 이미지와 동일한 다중 pending 추적 Map.
+    pendingGenerations,
   } = deps
   // entities 직접 호출 base — region 캡처값(getApiBase) 우선, 없으면 하드코딩 fallback.
   const apiBase = async () => (getApiBase ? await getApiBase() : API_BASE)
@@ -712,6 +732,8 @@ export function registerCharacterIPC(ipcMain, deps) {
     )
     const _batchCount = opts.batchCount
     const _agentOn = !!(getFlowAgentOn && getFlowAgentOn())
+    // #R35: 비동기 제출 여부 — Agent OFF 에서만 async(컴포저 intercept). Agent ON 은 DOM 수집이라 동기 유지.
+    const _asyncMode = opts.asyncMode === true && !_agentOn && !!pendingGenerations
     const projectId = opts.projectId || projectIdFromUrl() || (getCapturedProjectId && getCapturedProjectId())
     if (!projectId) return { success: false, error: 'No projectId' }
     console.log('[Flow Scene] generate-scene projectId:', projectId, 'segments:', segs.length)
@@ -763,8 +785,11 @@ export function registerCharacterIPC(ipcMain, deps) {
     //   모드였으면 @멘션 씬 제출이 영상 요청으로 나가(영상 생성 + batchGenerateImages intercept
     //   미동작 → capture timeout). Agent ON 은 컴포즈 모드 탭이 없어 생략(프롬프트 타입 강제는 아래).
     if (!_agentOn && configureFlowMode) {
+      // #R35-fix(Codex R7[2]): @멘션 씬은 항상 1장(async pending expectedCount:1)이다. batch 칩을 N>1 로
+      //   켜면 Flow 가 여러 이미지/응답을 만들어 첫 응답에 completed → 나머지 중복/유실(R31-1 멀티결과
+      //   미구현과 동일). 컴포저 batch 를 1 로 고정해 UI 설정(imageBatchCount)과 무관하게 씬=1장 계약 유지.
       let _modeRes = null
-      try { _modeRes = await configureFlowMode('IMAGE', _batchCount) }
+      try { _modeRes = await configureFlowMode('IMAGE', 1) }
       catch (e) { console.warn('[Flow Scene] configureFlowMode skipped:', e.message) }
       if (_modeRes && _modeRes.success === false) {
         return { success: false, error: `Flow IMAGE mode switch failed: ${_modeRes.error || 'unknown'}`, retry: true }
@@ -849,6 +874,81 @@ export function registerCharacterIPC(ipcMain, deps) {
       if (!col.success) return { success: false, error: col.error, retry: true }
       console.log('[Flow Scene] (Agent ON) collected', col.images.length, 'image(s) from DOM')
       return { success: true, images: col.images, mediaId: col.images[0] && col.images[0].mediaId }
+    }
+
+    // #R35: Agent OFF 비동기 제출 — 화면비/seed/genTag 주입 후 pendingGenerations 에 등록하고 생성버튼을
+    //   클릭한 뒤 "즉시" generationId 를 반환한다(응답 대기 안 함). batchGenerateImages 응답은
+    //   monkey-patch report-response(genTag 실림) → reportResponseRouter 가 genTag 로 이 gen 에 100%
+    //   매칭 → flow:collect-generation 이 fifeUrl→base64 로 회수한다(async 이미지와 동일 경로).
+    //   → 씬 제출이 블록되지 않아 배치가 병렬로 진행된다(컴포저 칩삽입 시간이 자연 페이싱).
+    if (_asyncMode) {
+      // @멘션 프롬프트는 컴포저 entity 로 치환돼 promptKey(텍스트)가 요청 body 에 verbatim 으로 안 실릴 수
+      //   있다(씬2 correlation 실패의 원인). seed 는 절대 건드리지 않고(UI 사용자 seed 그대로), 요청 arm
+      //   시 "고유 genTag"를 함께 inject 해 응답 보고에 실어 보내 정확히 correlate 한다(promptKey 는 보조).
+      const generationSetAt = Date.now() / 1000
+      const generationId = `scene-async-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      if (setFlowPageInject) {
+        // seed: _seedValue (사용자 seed 그대로), genTag: generationId (correlation 전용, seed 무관).
+        const _inj = await setFlowPageInject({ seed: _seedValue, aspectRatio: _aspectRatioEnum, references: null, i2v: null, genTag: generationId })
+        if (_inj && _inj.success === false) {
+          // #R35-fix(Codex R7[3]): arm 실패여도 페이지엔 payload 가 이미 써졌을 수 있다 → stale
+          //   seed/aspect/genTag 가 다음 요청을 오염시키지 않게 best-effort clear.
+          try { await clearFlowPageInject?.() } catch {}
+          return { success: false, error: `Flow inject arming failed: ${_inj.error || 'unknown'}`, retry: true }
+        }
+      }
+      // 보조 상관키: 씬의 가장 긴 텍스트 세그먼트(genTag 가 없을 때 promptInBody 매칭 대비).
+      const promptKey = pickSceneCorrelationKey(segs, prompt)
+      pendingGenerations.set(generationId, {
+        setAt: generationSetAt,
+        expectedCount: 1,          // 멘션 씬은 1 이미지(동기 경로와 동일)
+        responses: [],
+        collectionTimer: null,
+        completed: false,
+        token: null,               // collect 시 렌더러가 token 을 넘김(fifeUrl 은 sessionFetch 라 불필요)
+        allowDomFallback: false,   // intercept(fifeUrl)로 받으므로 DOM 잔상 재배정 방지
+        promptKey,                 // 보조 상관키(텍스트 세그먼트) — 주 매칭은 genTag(=generationId)
+        refMediaIds: [],           // 멘션은 entity 참조(mediaId 주입 아님)
+        reqSeed: _seedValue,       // 실제 사용자 seed 기록(override 안 함)
+        reqAspectRatio: _aspectRatioEnum,
+      })
+      const _g = pendingGenerations.get(generationId)
+      if (_g) {
+        _g.orphanTimer = setTimeout(() => {
+          if (pendingGenerations.get(generationId) === _g) {
+            pendingGenerations.delete(generationId)
+            console.warn('[Flow Scene] [Async] pendingGeneration orphan TTL expired — removed:', generationId)
+          }
+        }, 10 * 60 * 1000)
+      }
+      // #R35-fix(Codex[3]): 클릭이 반환 실패든 throw 든 stale pending 을 반드시 정리(10분 TTL 누수 방지).
+      const cleanupPending = () => {
+        const g = pendingGenerations.get(generationId)
+        if (g?.orphanTimer) clearTimeout(g.orphanTimer)
+        if (g?.collectionTimer) clearTimeout(g.collectionTimer)
+        pendingGenerations.delete(generationId)
+      }
+      let aClick
+      try {
+        aClick = await trustedClickOnFlowView(GENERATE_BTN_SELECTOR)
+      } catch (e) {
+        cleanupPending()
+        try { await clearFlowPageInject?.() } catch {}
+        return { success: false, error: e?.message || '생성 버튼 클릭 예외', retry: true }
+      }
+      if (!aClick || !aClick.success) {
+        cleanupPending()
+        try { await clearFlowPageInject?.() } catch {}
+        return { success: false, error: aClick?.error || '생성 버튼 클릭 실패', retry: true }
+      }
+      console.log('[Flow Scene] [Async] submitted:', generationId, '(promptKey:', JSON.stringify((promptKey || '').slice(0, 40)), ')')
+      // #R35-fix(Codex R1[4]/R2[2]): inject(seed/aspect) 를 clear 하기 전에 요청이 실제로 나갈 시간을
+      //   확보한다. trustedClickOnFlowView 는 mouseUp 후 ~200ms 만 대기하므로 즉시 clear 하면 Flow 가
+      //   fetch 를 늦게 시작할 때 window.__autoflowcut_inject__ 가 비어 원본 화면비/seed 로 나간다.
+      //   flow-api.js async 경로와 동일하게 2초 대기 후 clear.
+      await sleep(2000)
+      try { await clearFlowPageInject?.() } catch {}
+      return { success: true, generationId, submitted: true }
     }
 
     // 화면비/seed 주입 — generate-image(monkey-patch fetch)와 동일. 패치된 window.fetch 가

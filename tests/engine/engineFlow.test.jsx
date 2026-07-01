@@ -565,6 +565,54 @@ describe('useFlowEngine — submitGeneration: mention routing (C1)', () => {
     expect(call.segments.some(s => s.type === 'mention' && s.name === 'hero')).toBe(true)
   })
 
+  it('#R35: passes asyncMode:true to flowGenerateScene', async () => {
+    mockFlowGenerateScene.mockResolvedValue({ success: true, generationId: 'scene-async-1' })
+    const { result } = renderHook(() => useFlowEngine())
+    await act(async () => {
+      await result.current.submitGeneration('@hero walks', [], { references: [syncedRef] })
+    })
+    expect(mockFlowGenerateScene.mock.calls[0][0].asyncMode).toBe(true)
+  })
+
+  it('#R35: async scene → returns the SERVER generationId (background collect), not a local scene-N id', async () => {
+    // flowGenerateScene 이 generationId 를 주면(Agent OFF 비동기 제출) 그걸 그대로 반환 →
+    //   checkGeneration 은 localResultsRef 미스라 flow:check-generation 폴링 경로를 탄다.
+    mockFlowGenerateScene.mockResolvedValue({ success: true, generationId: 'scene-async-xyz' })
+    mockFlowCheckGeneration.mockResolvedValue({ success: true, completed: false })
+
+    const { result } = renderHook(() => useFlowEngine())
+    let res
+    await act(async () => {
+      res = await result.current.submitGeneration('@hero walks', [], { references: [syncedRef] })
+    })
+    expect(res.generationId).toBe('scene-async-xyz')
+
+    // checkGeneration 이 서버 폴링(flow:check-generation)으로 위임되는지 — 로컬 결과가 아님
+    await act(async () => {
+      await result.current.checkGeneration('scene-async-xyz')
+    })
+    expect(mockFlowCheckGeneration).toHaveBeenCalledWith({ generationId: 'scene-async-xyz' })
+  })
+
+  it('#R35: sync scene fallback (images, no generationId) still stored locally (Agent ON)', async () => {
+    // flowGenerateScene 이 images 만 주면(Agent ON DOM 수집) 기존대로 로컬 저장 + 즉시 완료.
+    mockFlowGenerateScene.mockResolvedValue({
+      success: true, images: [{ base64: 'data:img', mediaId: 'm-on' }], workflowId: 'wf-on',
+    })
+    mockFlowCheckGeneration.mockClear()
+    const { result } = renderHook(() => useFlowEngine())
+    let res
+    await act(async () => {
+      res = await result.current.submitGeneration('@hero walks', [], { references: [syncedRef] })
+    })
+    expect(res.generationId).toMatch(/^scene-/)
+    // 로컬 결과 → checkGeneration 은 서버 폴링 안 함(즉시 완료)
+    let st
+    await act(async () => { st = await result.current.checkGeneration(res.generationId) })
+    expect(st.completed).toBe(true)
+    expect(mockFlowCheckGeneration).not.toHaveBeenCalled()
+  })
+
   it('falls back to flowGenerateImage when prompt has no mentions', async () => {
     mockFlowGenerateImage.mockResolvedValue({ success: true, generationId: 'gen-plain' })
 

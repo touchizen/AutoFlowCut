@@ -123,6 +123,24 @@ describe('matchGenerationForResponse', () => {
     expect(matchGenerationForResponse(pending, body)).toBe(null)
   })
 
+  // === #R35: 멘션 씬 correlation (주 매칭은 genTag — reportResponseRouter 테스트 참조. 여기선 보조 promptKey) ===
+  it('#R35: 서로 다른 텍스트 씬은 promptKey 로 정확히 매칭(genTag 없을 때 보조 경로)', () => {
+    const pending = new Map()
+    pending.set('gen-a', gen(' walks toward the castle'))
+    pending.set('gen-b', gen(' rides through the forest'))
+    expect(matchGenerationForResponse(pending, reqBody(' walks toward the castle'))).toBe('gen-a')
+    expect(matchGenerationForResponse(pending, reqBody(' rides through the forest'))).toBe('gen-b')
+  })
+
+  it('#R35: 같은 텍스트/다른 캐릭터 씬이 promptKey 로만 남으면 fail-closed(null) — 잘못된 배정 없음', () => {
+    // genTag 가 없을 때의 보조 경로. 같은 longest-text 면 promptKey 로 구분 불가 → null(재시도).
+    //   (실제 async 멘션 씬은 genTag 로 확정되므로 이 모호함에 도달하지 않는다.)
+    const pending = new Map()
+    pending.set('gen-alice', gen(' smiles'))
+    pending.set('gen-bob', gen(' smiles'))
+    expect(matchGenerationForResponse(pending, reqBody(' smiles'))).toBe(null)
+  })
+
   // === imageInputs[] format (현재 정식) — 2026-05-26 regression fix ===
   // monkey-patch (flow-page-injection.js) 가 보내는 reference 필드는 protobuf
   // 정식 포맷인 imageInputs[]: [{ imageInputType: 'IMAGE_INPUT_TYPE_REFERENCE', name: <mediaId> }].

@@ -11,13 +11,17 @@ describe('buildFlowInjectPayload', () => {
 
   it('누락 필드는 null 로 채운다', () => {
     const p = buildFlowInjectPayload({ seed: 1 })
-    expect(p).toEqual({ seed: 1, aspectRatio: null, references: null, i2v: null, duration: null, videoModel: null })
+    expect(p).toEqual({ seed: 1, aspectRatio: null, references: null, i2v: null, duration: null, videoModel: null, genTag: null })
   })
 
-  it('인자 없이 호출해도 6개 필드 모두 null', () => {
+  it('인자 없이 호출해도 모든 필드 null', () => {
     expect(buildFlowInjectPayload()).toEqual({
-      seed: null, aspectRatio: null, references: null, i2v: null, duration: null, videoModel: null,
+      seed: null, aspectRatio: null, references: null, i2v: null, duration: null, videoModel: null, genTag: null,
     })
+  })
+
+  it('#R35: genTag 를 보존한다(seed 무관 correlation 태그)', () => {
+    expect(buildFlowInjectPayload({ seed: 5, genTag: 'scene-async-1' }).genTag).toBe('scene-async-1')
   })
 })
 

@@ -32,7 +32,7 @@ export function isFlowFrameOrigin(frameUrl) {
 }
 
 export function routeReportResponse(payload, ctx) {
-  const { url, body, status, requestBody, reqStartedAt } = payload || {}
+  const { url, body, status, requestBody, reqStartedAt, genTag } = payload || {}
   if (!url) return { ok: false }
   // #R31-4: 본문이 비어도 에러 status(>=400)면 계속 처리한다 — 안 그러면 빈 본문 401/403/429/5xx 가
   //   여기서 drop 되어 pending capture 가 timeout 까지 매달린다(인증/quota/서버 분류를 못 받음).
@@ -41,6 +41,31 @@ export function routeReportResponse(payload, ctx) {
 
   // ── batchGenerateImages → sync(pendingGeneration) vs async(pendingGenerations) ──
   if (url.includes('batchGenerateImages')) {
+    // #R35: genTag 최우선 매칭 — 페이지가 요청 시점의 inject.genTag 를 응답에 실어 보내면, seed/promptKey
+    //   와 무관하게 이 응답이 어느 async 생성(@멘션 씬)의 것인지 100% 확정된다. seed 는 사용자 값 그대로.
+    //   #R35-fix(Codex R7[1]): genTag 가 "있는" 응답은 특정 async 씬 소유다. pending 에 없으면(이미
+    //   collect/삭제된 늦은/중복 응답) 아래 promptKey/sync 라우팅으로 흘리지 않고 여기서 drop 한다
+    //   (sync 가 남의 tagged 응답을 받는 것 방지). 폴백 라우팅은 genTag 가 "아예 없는" 응답에만 허용.
+    if (genTag) {
+      const g = ctx.pendingGenerations && ctx.pendingGenerations.get(genTag)
+      if (!g) return { ok: true, stale: true }
+      if (typeof reqStartedAt === 'number' && g.setAt && reqStartedAt < g.setAt) {
+        return { ok: true, stale: true }
+      }
+      // #R35-fix(Codex R7[4]): 이미 완료된 gen 의 중복(늦은) 응답은 append 하지 않는다(초과 이미지 방지).
+      if (g.completed) return { ok: true, duplicate: true }
+      g.responses.push({ error: false, body, status })
+      if (g.responses.length >= g.expectedCount) {
+        g.completed = true
+        if (g.collectionTimer) clearTimeout(g.collectionTimer)
+      } else if (g.collectionTimer == null) {
+        g.collectionTimer = setTimeout(() => {
+          const gg = ctx.pendingGenerations.get(genTag)
+          if (gg && !gg.completed) gg.completed = true
+        }, 30000)
+      }
+      return { ok: true, matchedByGenTag: true }
+    }
     const route = routeBatchImageResponse({
       hasSyncPending: !!ctx.getPendingGeneration(),
       syncSetAt: ctx.getPendingGeneration()?.setAt,
