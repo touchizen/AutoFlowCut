@@ -340,6 +340,14 @@ html, body {
   border-color: #4a9eff;
   color: #fff;
 }
+/* 프리뷰 마스터 볼륨 슬라이더 — 도구모음에 컴팩트하게. accent-color 로 Chromium 트랙/썸 색만. */
+.content-monitor-volume {
+  width: 64px;
+  height: 24px;
+  cursor: pointer;
+  accent-color: #4a9eff;
+  vertical-align: middle;
+}
 /* 모니터 전체화면(CSS maximize) — 윈도우 전체를 덮는다. Flow 뷰는 setModalVisible 로 접혀 있어
    가리지 않는다. DOM Fullscreen API 미사용(복원 race 회피). */
 .content-monitor--max {
@@ -384,6 +392,26 @@ html, body {
 .content-monitor-tbtn:hover {
   border-color: #4a9eff;
   background: rgba(74, 158, 255, 0.2);
+}
+/* 전체화면 트랜스포트 안의 뮤트/볼륨 — 재생 버튼(40px 원형)과 정렬·크기 맞춤. */
+.content-monitor-transport {
+  align-items: center;
+}
+.content-monitor-transport .content-monitor-mute {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  font-size: 16px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+.content-monitor-transport .content-monitor-mute:hover {
+  border-color: #4a9eff;
+  background: rgba(74, 158, 255, 0.2);
+}
+.content-monitor-transport .content-monitor-volume {
+  width: 100px;
+  height: 40px;
 }
 /* 패널 ↔ 모니터 좌우 리사이저 */
 .content-monitor-resizer {

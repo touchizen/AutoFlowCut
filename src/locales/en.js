@@ -64,6 +64,9 @@ export default {
   },
   monitor: {
     fullscreen: 'Fullscreen',
+    mute: 'Mute',
+    unmute: 'Unmute',
+    volume: 'Volume',
   },
   apiKeyNeeded: {
     title: 'API key required',

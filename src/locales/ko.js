@@ -64,6 +64,9 @@ export default {
   },
   monitor: {
     fullscreen: '전체화면',
+    mute: '음소거',
+    unmute: '음소거 해제',
+    volume: '볼륨',
   },
   apiKeyNeeded: {
     title: 'API 키가 필요해요',

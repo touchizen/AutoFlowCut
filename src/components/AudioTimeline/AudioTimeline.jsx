@@ -11,6 +11,7 @@ import { useVideoPosters } from './useVideoPosters'
 import { useI18n } from '../../hooks/useI18n'
 import { formatDuration } from '../../utils/formatters'
 import { getVideoDisabledField } from '../../utils/sceneMedia'
+import { readMonitorMaster } from '../../utils/monitorAudioMaster'
 import { toast } from '../Toast'
 import TimeRuler from './TimeRuler'
 import TrackLane from './TrackLane'
@@ -266,6 +267,11 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   // compact 모드에선 AudioTimeline 자체 프리뷰가 접혀 보이는 건 App 모니터뿐이라 필수.
   useEffect(() => { onHiddenRolesChange?.(disabledTracks) }, [disabledTracks])
   const audioInstancesRef = useRef(new Map()) // clipId -> Audio
+  // 프리뷰 마스터 볼륨/뮤트 — 상단 모니터의 슬라이더가 window CustomEvent 'monitor-volume' 로 통보.
+  //   새로 만드는 Audio 는 startClipAt 에서 이 값으로 시작하고, 라이브 인스턴스는 이벤트로 즉시 갱신.
+  //   초기값은 저장값에서 읽는다 — useMonitor 브로드캐스트는 값이 "바뀔 때"만 발화하므로, 이 컴포넌트가
+  //   늦게 마운트되면 초기 dispatch 를 놓쳐 저장된 뮤트/볼륨이 무시된다(마운트 시 직접 읽어 방지).
+  const masterAudioRef = useRef(readMonitorMaster())
   const scheduledTimersRef = useRef([]) // setTimeout IDs (글로벌 재생 시 미래 클립 예약)
   const scrollRef = useRef(null)
   const rafRef = useRef(null)
@@ -572,6 +578,9 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
         return
       }
       const audio = new Audio(result.data)
+      // 프리뷰 마스터 볼륨/뮤트 적용 (모니터 슬라이더 값).
+      audio.muted = masterAudioRef.current.muted
+      audio.volume = Math.max(0, Math.min(1, masterAudioRef.current.volume))
       audio.onerror = (e) => console.error('[AudioTimeline] Audio error:', clip.audioPath, e)
       if (offsetMs > 0) audio.currentTime = offsetMs / 1000
       audioInstancesRef.current.set(clip.id, audio)
@@ -702,6 +711,22 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
     }
     window.addEventListener('monitor-transport', onTransport)
     return () => window.removeEventListener('monitor-transport', onTransport)
+  }, [])
+
+  // 프리뷰 마스터 볼륨/뮤트 — 모니터 슬라이더의 window CustomEvent 'monitor-volume' 수신.
+  //   최신값을 ref 에 저장(새 Audio 시작 시 사용)하고 라이브 인스턴스 전부에 즉시 반영.
+  useEffect(() => {
+    const onVolume = (e) => {
+      const volume = Math.max(0, Math.min(1, Number(e.detail?.volume)))
+      const muted = !!e.detail?.muted
+      masterAudioRef.current = { volume: Number.isFinite(volume) ? volume : 1, muted }
+      for (const audio of audioInstancesRef.current.values()) {
+        audio.muted = masterAudioRef.current.muted
+        audio.volume = masterAudioRef.current.volume
+      }
+    }
+    window.addEventListener('monitor-volume', onVolume)
+    return () => window.removeEventListener('monitor-volume', onVolume)
   }, [])
 
   // 컴포넌트 unmount 시 audio + 활성 드래그 정리

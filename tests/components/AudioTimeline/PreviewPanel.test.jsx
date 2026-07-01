@@ -31,6 +31,55 @@ describe('PreviewPanel — hiddenRoles (View off)', () => {
   })
 })
 
+describe('PreviewPanel — 마스터 볼륨/뮤트 (영상 오디오)', () => {
+  const activeVideoScene = [{
+    id: 's1', imagePath: '/a.png', start_time: 0, end_time: 10,
+    videoI2VPath: '/v/i2v_1.mp4', videoI2VDuration: 3,
+  }]
+  // playhead 9000 → [7000,10000) 활성 비디오
+  const renderVid = (props) =>
+    render(<PreviewPanel playheadMs={9000} scenes={activeVideoScene} srtEntries={[]} {...props} />)
+
+  it('기본(props 없음): 영상은 muted 유지 (기존 동작 보존, 이중음 방지)', () => {
+    const { container } = renderVid()
+    expect(container.querySelector('video.atl-preview-video').muted).toBe(true)
+  })
+
+  it('monitorMuted=false + monitorVolume=0.5 → 활성 영상 언뮤트 + 볼륨 반영', () => {
+    const { container } = renderVid({ monitorMuted: false, monitorVolume: 0.5 })
+    const v = container.querySelector('video.atl-preview-video')
+    expect(v.muted).toBe(false)
+    expect(v.volume).toBe(0.5)
+  })
+
+  it('monitorMuted=true → 영상 muted', () => {
+    const { container } = renderVid({ monitorMuted: true, monitorVolume: 1 })
+    expect(container.querySelector('video.atl-preview-video').muted).toBe(true)
+  })
+
+  it('재생 시작(play) 시점에 이미 muted 가 적용됨 — play-before-mute 순서 보장 (기본 muted)', () => {
+    const origPlay = window.HTMLMediaElement.prototype.play
+    const recorded = {}
+    window.HTMLMediaElement.prototype.play = vi.fn(function () { recorded.muted = this.muted; return Promise.resolve() })
+    try {
+      render(<PreviewPanel playheadMs={9000} scenes={activeVideoScene} srtEntries={[]} isPlaying />)
+      expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalled()
+      expect(recorded.muted).toBe(true) // 기본 monitorMuted=true — play 호출 순간 이미 muted
+    } finally {
+      window.HTMLMediaElement.prototype.play = origPlay
+    }
+  })
+
+  it('prefetch(숨김) 영상은 항상 muted (이중음 방지)', () => {
+    const { container } = render(
+      <PreviewPanel playheadMs={0} scenes={[{ id: 's1', imagePath: '/a.png', start_time: 0, end_time: 1, videoI2VPath: '/v/i2v_1.mp4', videoI2VDuration: 1 }]} srtEntries={[]} monitorMuted={false} monitorVolume={1} />
+    )
+    const videos = container.querySelectorAll('video')
+    const prefetch = videos[videos.length - 1]
+    expect(prefetch.muted).toBe(true)
+  })
+})
+
 describe('PreviewPanel — i2v/t2v 모니터 우선순위 (top-visible)', () => {
   const bothScene = [{
     id: 's1', imagePath: '/a.png', start_time: 0, end_time: 10,

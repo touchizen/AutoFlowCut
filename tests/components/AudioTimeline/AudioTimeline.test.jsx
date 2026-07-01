@@ -872,4 +872,70 @@ describe('AudioTimeline', () => {
       expect(container.querySelector('.atl-title').tagName).toBe('DIV')
     })
   })
+
+  // 프리뷰 마스터 볼륨/뮤트 — window CustomEvent 'monitor-volume' 로 트랙 오디오(Audio 인스턴스) 제어.
+  describe('monitor-volume — 트랙 오디오 마스터 볼륨/뮤트', () => {
+    // new Audio() 인스턴스를 캡처하는 스파이 (jsdom 실제 HTMLAudioElement 유지).
+    const spyAudio = () => {
+      const created = []
+      const Orig = window.Audio
+      window.Audio = function (...a) { const inst = new Orig(...a); created.push(inst); return inst }
+      return { created, restore: () => { window.Audio = Orig } }
+    }
+
+    it('재생 중인 오디오 인스턴스에 monitor-volume 이벤트가 볼륨/뮤트를 적용', async () => {
+      global.window.electronAPI.readFileAbsolute = vi.fn().mockResolvedValue({ success: true, data: 'data:audio/mpeg;base64,AAAA' })
+      const { created, restore } = spyAudio()
+      try {
+        rtlRender(<AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} disabled={false} />, { wrapper: I18nProvider })
+        fireEvent.keyDown(window, { code: 'Space' })
+        await act(async () => { await new Promise(r => setTimeout(r, 0)) })
+        expect(created.length).toBeGreaterThan(0)
+        act(() => window.dispatchEvent(new CustomEvent('monitor-volume', { detail: { volume: 0.3, muted: false } })))
+        for (const a of created) {
+          expect(a.volume).toBeCloseTo(0.3)
+          expect(a.muted).toBe(false)
+        }
+      } finally { restore() }
+    })
+
+    it('저장된 마스터(muted/volume)를 monitor-volume 이벤트 없이도 마운트 시 반영 (늦은 마운트 회귀)', async () => {
+      localStorage.setItem('autoflowcut_monitorVolume', '0.25')
+      localStorage.setItem('autoflowcut_monitorMuted', '1')
+      global.window.electronAPI.readFileAbsolute = vi.fn().mockResolvedValue({ success: true, data: 'data:audio/mpeg;base64,AAAA' })
+      const { created, restore } = spyAudio()
+      try {
+        // monitor-volume 이벤트를 한 번도 dispatch 하지 않는다 (AudioTimeline 이 저장값을 직접 읽어야 함).
+        rtlRender(<AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} disabled={false} />, { wrapper: I18nProvider })
+        fireEvent.keyDown(window, { code: 'Space' })
+        await act(async () => { await new Promise(r => setTimeout(r, 0)) })
+        expect(created.length).toBeGreaterThan(0)
+        for (const a of created) {
+          expect(a.volume).toBeCloseTo(0.25)
+          expect(a.muted).toBe(true)
+        }
+      } finally {
+        restore()
+        localStorage.removeItem('autoflowcut_monitorVolume')
+        localStorage.removeItem('autoflowcut_monitorMuted')
+      }
+    })
+
+    it('이벤트로 마스터를 먼저 설정하면, 이후 생성되는 오디오도 그 볼륨/뮤트로 시작', async () => {
+      global.window.electronAPI.readFileAbsolute = vi.fn().mockResolvedValue({ success: true, data: 'data:audio/mpeg;base64,AAAA' })
+      const { created, restore } = spyAudio()
+      try {
+        rtlRender(<AudioTimeline audioPackage={audioPackage} scenes={scenes} srtEntries={srtEntries} disabled={false} />, { wrapper: I18nProvider })
+        // 재생 전에 마스터 설정
+        act(() => window.dispatchEvent(new CustomEvent('monitor-volume', { detail: { volume: 0.4, muted: true } })))
+        fireEvent.keyDown(window, { code: 'Space' })
+        await act(async () => { await new Promise(r => setTimeout(r, 0)) })
+        expect(created.length).toBeGreaterThan(0)
+        for (const a of created) {
+          expect(a.volume).toBeCloseTo(0.4)
+          expect(a.muted).toBe(true)
+        }
+      } finally { restore() }
+    })
+  })
 })

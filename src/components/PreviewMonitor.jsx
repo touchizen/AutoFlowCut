@@ -20,6 +20,10 @@ export default function PreviewMonitor({
   monitorMs,
   monitorPlaying,
   monitorHiddenRoles,
+  monitorVolume,
+  monitorMuted,
+  setMonitorVolume,
+  toggleMonitorMuted,
   toggleMonitorFullscreen,
   onCloseOverlay,
   startMonitorResize,
@@ -40,9 +44,36 @@ export default function PreviewMonitor({
 }) {
   if (monitorMode !== 'inline') return null
 
+  // 전체화면 중엔 하단 타임라인이 가려져 재생/정지 트랜스포트를 모니터에 띄운다.
+  //   이때 뮤트/볼륨도 상단이 아니라 재생 버튼 옆(트랜스포트)에 둔다. 그 외(inline)엔 상단 도구모음.
+  const showTransport = monitorFullscreen && !anyRunning && bottomPanelView === 'timeline'
+
+  // 뮤트 버튼 + 볼륨 슬라이더 — inline=상단 도구모음 / 전체화면=트랜스포트, 한 곳에만 렌더.
+  const volumeControls = (
+    <>
+      <button
+        className="content-monitor-tool content-monitor-mute"
+        onClick={toggleMonitorMuted}
+        title={monitorMuted ? t('monitor.unmute') : t('monitor.mute')}
+      >{monitorMuted ? '🔇' : '🔊'}</button>
+      <input
+        className="content-monitor-volume"
+        type="range"
+        min={0}
+        max={1}
+        step={0.05}
+        value={monitorMuted ? 0 : monitorVolume}
+        onChange={(e) => setMonitorVolume(parseFloat(e.target.value))}
+        title={t('monitor.volume')}
+        aria-label={t('monitor.volume')}
+      />
+    </>
+  )
+
   const inner = (
     <>
       <div className="content-monitor-tools">
+        {!showTransport && volumeControls}
         <button
           className="content-monitor-tool"
           onClick={toggleMonitorFullscreen}
@@ -71,10 +102,12 @@ export default function PreviewMonitor({
           height="100%"
           isPlaying={monitorPlaying}
           hiddenRoles={monitorHiddenRoles}
+          monitorVolume={monitorVolume}
+          monitorMuted={monitorMuted}
         />
       )}
-      {monitorFullscreen && !anyRunning && bottomPanelView === 'timeline' && (
-        // 전체화면 중엔 하단 타임라인이 가려지므로 재생/정지 컨트롤을 모니터에 둔다.
+      {showTransport && (
+        // 전체화면 중엔 하단 타임라인이 가려지므로 재생/정지 + 뮤트/볼륨을 모니터 트랜스포트에 둔다.
         // 'timeline' 뷰일 때만(=AudioTimeline 마운트돼 이벤트 수신 가능). 명령은 window CustomEvent.
         <div className="content-monitor-transport">
           <button
@@ -87,6 +120,7 @@ export default function PreviewMonitor({
             onClick={() => window.dispatchEvent(new CustomEvent('monitor-transport', { detail: { action: 'stop' } }))}
             title={t('audioTimeline.stopLabel')}
           >⏹</button>
+          {volumeControls}
         </div>
       )}
     </>

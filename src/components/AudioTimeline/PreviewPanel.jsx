@@ -46,7 +46,7 @@ export function findRangeAt(ranges, t, inclusiveEnd = false) {
 // <video>는 DOM에 항상 1개만 존재 — 씬이 바뀔 때만 src swap (500씬 스케일 대응).
 const EMPTY_HIDDEN = new Set()
 
-export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 240, isPlaying = false, hiddenRoles = EMPTY_HIDDEN }) {
+export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 240, isPlaying = false, hiddenRoles = EMPTY_HIDDEN, monitorVolume = 1, monitorMuted = true }) {
   // 씬 ranges precompute — getSceneTimeRangeMs는 parseTimeToSeconds(regex+split)을 부르므로
   // playhead 매 tick (60fps) 마다 N회 반복하면 1시간/1500씬 기준 ~0.5% CPU 누적.
   // sort를 명시적으로 — binary search 정확성 보장.
@@ -176,6 +176,17 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
     try { el.load() } catch {}
   }, [prefetchSrc])
 
+  // 마스터 볼륨/뮤트 → 활성 <video> 오디오. 기본 muted=true(타임라인 인라인 등 다른 인스턴스는
+  //   무음 유지 → 모니터 영상과 이중음 방지). 모니터만 실제 monitorMuted/monitorVolume 를 넘긴다.
+  //   단일 영속 element 라 값은 src swap 후에도 유지된다. 아래 play effect "앞"에 선언 —
+  //   같은 flush 에서 이 effect 가 먼저 돌아 play() 호출 전에 muted 가 확정된다(첫 프레임 소리 방지).
+  useEffect(() => {
+    const el = videoRef.current
+    if (!el) return
+    el.muted = monitorMuted
+    el.volume = Math.max(0, Math.min(1, monitorVolume))
+  }, [monitorMuted, monitorVolume, isVideoActive])
+
   useEffect(() => {
     const el = videoRef.current
     if (!el) return
@@ -228,7 +239,6 @@ export default function PreviewPanel({ playheadMs, scenes, srtEntries, height = 
         <video
           ref={videoRef}
           className="atl-preview-video"
-          muted
           playsInline
           preload="metadata"
           style={{

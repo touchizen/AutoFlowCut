@@ -207,6 +207,7 @@ function App() {
     monitorPlaying, setMonitorPlaying,
     monitorHiddenRoles, setMonitorHiddenRoles,
     monitorWidth, startMonitorResize, resetMonitorWidth,
+    monitorVolume, setMonitorVolume, monitorMuted, toggleMonitorMuted,
     monitorOverlayOpen, setMonitorOverlayOpen,
     monitorFullscreen, toggleMonitorFullscreen,
     monitorMode,
@@ -2045,6 +2046,10 @@ function App() {
           monitorMs={monitorMs}
           monitorPlaying={monitorPlaying}
           monitorHiddenRoles={monitorHiddenRoles}
+          monitorVolume={monitorVolume}
+          monitorMuted={monitorMuted}
+          setMonitorVolume={setMonitorVolume}
+          toggleMonitorMuted={toggleMonitorMuted}
           toggleMonitorFullscreen={toggleMonitorFullscreen}
           onCloseOverlay={() => setMonitorOverlayOpen(false)}
           startMonitorResize={startMonitorResize}

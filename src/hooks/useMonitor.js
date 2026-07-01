@@ -2,8 +2,11 @@ import { useState, useEffect, useCallback } from 'react'
 import { monitorRenderMode } from '../utils/monitorVisibility'
 import { useMonitorOverlay } from './useMonitorOverlay'
 import { useModalVisibility } from './useModalVisibility'
+import { MONITOR_VOLUME_KEY as VOLUME_KEY, MONITOR_MUTED_KEY as MUTED_KEY, readMonitorMaster } from '../utils/monitorAudioMaster'
 
 const WIDTH_KEY = 'autoflowcut_monitorWidth'
+
+const clamp01 = (v) => Math.max(0, Math.min(1, v))
 
 /**
  * useMonitor — 상단 프리뷰 모니터의 표시 상태/효과/핸들러를 한곳에 모은 훅.
@@ -57,6 +60,32 @@ export function useMonitor({ mode, activeTab }) {
     try { localStorage.removeItem(WIDTH_KEY) } catch {}
   }, [])
 
+  // 프리뷰 마스터 볼륨/뮤트 — 영상 클립 오디오 + 오디오 트랙(내레이션/보이스/SFX)을 함께 스케일.
+  //   영상은 <PreviewPanel> 이 props 로, 트랙 오디오는 <AudioTimeline> 이 window CustomEvent
+  //   'monitor-volume' 로(트랜스포트와 동일 디커플링) 받아 적용한다. 둘 다 localStorage 영속.
+  const [monitorVolume, setMonitorVolumeRaw] = useState(() => readMonitorMaster().volume)
+  const [monitorMuted, setMonitorMuted] = useState(() => readMonitorMaster().muted)
+  // 슬라이더 0↔뮤트 연동: 0 으로 내리면 뮤트, 0 초과로 올리면 언뮤트.
+  const setMonitorVolume = useCallback((v) => {
+    const n = Number(v)
+    if (!Number.isFinite(n)) return // 비정상 입력(NaN 등) 무시 — NaN 영속/전파 방지
+    const nv = clamp01(n)
+    setMonitorVolumeRaw(nv)
+    setMonitorMuted(nv === 0)
+  }, [])
+  // 언뮤트인데 볼륨 0(슬라이더로 0 내린 경우)이면 무음이 되므로 볼륨을 복원(1)한다.
+  //   setMonitorVolume(1) 이 volume=1 + muted=false 를 함께 처리. 그 외엔 뮤트만 토글.
+  const toggleMonitorMuted = useCallback(() => {
+    if (monitorMuted && monitorVolume === 0) setMonitorVolume(1)
+    else setMonitorMuted(m => !m)
+  }, [monitorMuted, monitorVolume, setMonitorVolume])
+  useEffect(() => {
+    try { localStorage.setItem(VOLUME_KEY, String(monitorVolume)) } catch {}
+    try { localStorage.setItem(MUTED_KEY, monitorMuted ? '1' : '0') } catch {}
+    // 트랙 오디오(AudioTimeline)로 브로드캐스트 — props 결합 없이 최신 마스터값 동기화.
+    try { window.dispatchEvent(new CustomEvent('monitor-volume', { detail: { volume: monitorVolume, muted: monitorMuted } })) } catch {}
+  }, [monitorVolume, monitorMuted])
+
   // 전체화면 — DOM Fullscreen API 대신 CSS maximize. requestFullscreen 은 macOS 네이티브 윈도우
   //   풀스크린을 유발해 복귀 시 Flow 뷰 복원이 race 됐다. CSS maximize + setModalVisible 토글은
   //   모달과 동일 경로라 복원이 결정적.
@@ -93,6 +122,7 @@ export function useMonitor({ mode, activeTab }) {
     monitorPlaying, setMonitorPlaying,
     monitorHiddenRoles, setMonitorHiddenRoles,
     monitorWidth, startMonitorResize, resetMonitorWidth,
+    monitorVolume, setMonitorVolume, monitorMuted, toggleMonitorMuted,
     monitorOverlayOpen, setMonitorOverlayOpen,
     monitorFullscreen, toggleMonitorFullscreen,
     monitorMode,
