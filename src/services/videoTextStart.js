@@ -5,13 +5,15 @@ export function prepareVideoTextStartScenes({
   references = [],
   effectiveStyleId = null,
   srtTrack = [],
+  appMode = 'api',
   warn = console.warn,
   onReferenceLimitWarning = null,
 } = {}) {
   let didWarnReferenceLimit = false
-  const preparedVideoScenes = buildVideoPromptScenes(videoScenes, references, effectiveStyleId, srtTrack)
+  const allMissing = []  // #R36-fix(Codex R2[1]): 미해결 @멘션 집계 — Flow 모드는 이걸로 start 를 막는다.
+  const preparedVideoScenes = buildVideoPromptScenes(videoScenes, references, effectiveStyleId, srtTrack, appMode)
   const scenes = preparedVideoScenes.map(({ scene, missing, truncated }) => {
-    if (missing.length > 0) warn?.('[VideoText]', scene.id, 'unknown @mentions:', missing.join(', '))
+    if (missing.length > 0) { warn?.('[VideoText]', scene.id, 'unknown @mentions:', missing.join(', ')); allMissing.push(...missing) }
     if (truncated > 0) {
       warn?.('[VideoText]', scene.id, `Veo supports up to ${VIDEO_REFERENCE_LIMIT} reference images; using the first ${VIDEO_REFERENCE_LIMIT}.`)
       if (!didWarnReferenceLimit) {
@@ -22,7 +24,7 @@ export function prepareVideoTextStartScenes({
     return scene
   })
 
-  return { scenes, didWarnReferenceLimit }
+  return { scenes, didWarnReferenceLimit, missing: [...new Set(allMissing)] }
 }
 
 export function buildVideoTextStartPayload({
@@ -33,14 +35,16 @@ export function buildVideoTextStartPayload({
   settings = {},
   projectName = '',
   styleLabel = null,
+  appMode = 'api',
   warn = console.warn,
   onReferenceLimitWarning = null,
 } = {}) {
-  const { scenes } = prepareVideoTextStartScenes({
+  const { scenes, missing } = prepareVideoTextStartScenes({
     videoScenes,
     references,
     effectiveStyleId,
     srtTrack,
+    appMode,
     warn,
     onReferenceLimitWarning,
   })
@@ -50,6 +54,7 @@ export function buildVideoTextStartPayload({
 
   return {
     runningStyle: { styleId: effectiveStyleId, label: styleLabel, applies: true },
+    missing,  // #R36-fix(Codex R2[1]): Flow 모드 미해결 @멘션 — 호출측(App)이 start 를 막는다.
     startOptions: {
       mode: 't2v',
       scenes,

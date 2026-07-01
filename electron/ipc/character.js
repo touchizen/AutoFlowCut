@@ -26,6 +26,7 @@ import {
   buildCharactersUrl,
 } from '../flow-character-api.js'
 import { COMPOSE_EDITOR_READY } from '../flow-compose-editor.js'
+import { EDITOR_SELECTOR, appendSceneText, insertSceneMention, injectComposeSegments } from '../flow-compose-mention.js'
 import { screen } from 'electron'
 import { computeOffscreenBounds } from '../offscreen-bounds.js'
 import { GENERATED_IMG_PROBE } from '../flow-media-collect.js'
@@ -62,13 +63,8 @@ export function pickSceneCorrelationKey(segs, prompt) {
 //   고착돼 멘션 후보에서 빠졌다("Unresolved @mention"). 등록 완료 시간을 확보(+1분).
 export const CHARACTER_UPLOAD_TIMEOUT_MS = 120000
 
-// Slate 컴포저 에디터 셀렉터 (generate-image 와 동일 우선순위).
-const EDITOR_SELECTOR = `(function(){
-  return document.querySelector("[data-slate-editor='true']")
-    || document.querySelector("div[role='textbox'][contenteditable='true']:not(#af-bot-panel *)")
-    || document.querySelector('[contenteditable="true"]:not([aria-hidden])')
-    || document.querySelector('textarea');
-})()`
+// EDITOR_SELECTOR / appendSceneText / insertSceneMention / injectComposeSegments 는 flow-compose-mention.js 로
+//   추출(이미지 씬·T2V 비디오 공용). #R36.
 
 // arrow_forward(생성) 버튼 — /characters 컴포저도 동일 아이콘. disabled 면 선택 안 함.
 const GENERATE_BTN_SELECTOR = `(function(){
@@ -577,144 +573,6 @@ export function registerCharacterIPC(ipcMain, deps) {
   //   에서 이름매칭 div[role=option] 트러스트 클릭→칩 삽입→텍스트 주입→arrow_forward→응답 캡처.
   //   ⚠️ inject/submit/capture 는 generate-character 와 동일 패턴(추후 공통 엔진으로 dedup TODO).
 
-  // 컴포저 에디터에 텍스트를 "끝에 이어" 주입(injectPrompt 는 전체 교체라 별도). 멘션 칩 뒤 텍스트용.
-  async function appendSceneText(flowView, text) {
-    return flowView.webContents.executeJavaScript(`
-      (async function(){
-        const t = ${JSON.stringify(text)};
-        const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
-        const e = ${EDITOR_SELECTOR};
-        if(!e) return false;
-        e.focus();
-        try { const s=window.getSelection(); s.removeAllRanges(); const r=document.createRange(); r.selectNodeContents(e); r.collapse(false); s.addRange(r); } catch {}
-        try { e.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:t})); } catch {}
-        const ok = document.execCommand('insertText', false, t);
-        try { e.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:t})); } catch {}
-        await sleep(120);
-        return !!ok;
-      })()
-    `).catch(() => false)
-  }
-
-  // `@이름` 멘션 한 건 삽입: @ 트러스트 키입력 → 피커 → "캐릭터" 탭 → 이름매칭 option JS 디스패치 선택.
-  async function insertSceneMention(flowView, name) {
-    // 1) "@" 를 트러스트 키 입력으로 친다 — execCommand 주입은 멘션 피커를 트리거 못 함(isTrusted 필요).
-    try {
-      flowView.webContents.focus()
-      flowView.webContents.sendInputEvent({ type: 'keyDown', keyCode: '@' })
-      flowView.webContents.sendInputEvent({ type: 'char', keyCode: '@' })
-      flowView.webContents.sendInputEvent({ type: 'keyUp', keyCode: '@' })
-    } catch (e) { console.warn('[Flow Scene] sendInputEvent @ failed:', e.message) }
-
-    // 2) 피커(div[role=dialog]) 열림 대기.
-    let hasDialog = false
-    for (let i = 0; i < 20 && !hasDialog; i++) {
-      await sleep(250)
-      hasDialog = await flowView.webContents.executeJavaScript(`!!document.querySelector("div[role='dialog']")`).catch(() => false)
-    }
-    if (!hasDialog) { console.warn('[Flow Scene] mention picker(dialog) 안 열림:', name); return false }
-
-    // 3) "캐릭터" 탭 클릭 — 기본 "모두" 탭은 이미지가 다수라 가상화로 캐릭터 entity 가 렌더 안 됨
-    //    (DIAG 확인: 옵션 19개 전부 "...이미지", 회사원3캐릭터 없음). 탭으로 캐릭터만 좁힌다.
-    await flowView.webContents.executeJavaScript(`(function(){
-      const dlg = document.querySelector("div[role='dialog']"); if(!dlg) return false;
-      const tabs = dlg.querySelectorAll("[role='tab']");
-      for (const tb of tabs){ if((tb.textContent||'').indexOf('캐릭터')>=0){ tb.click(); return true; } }
-      return false;
-    })()`).catch(() => false)
-    await sleep(500)
-
-    // 3.5) 검색창("애셋 검색")에 이름 입력해 필터링 — 캐릭터가 많으면 탭만으론 가상화로 스크롤이
-    //      필요하다(사용자 제안). value 를 JS 로 직접 set(한글 IME 우회) + input 이벤트로 React 필터 트리거.
-    await flowView.webContents.executeJavaScript(`(function(){
-      const dlg = document.querySelector("div[role='dialog']"); if(!dlg) return false;
-      const inp = dlg.querySelector("input[type='text']") || dlg.querySelector("input");
-      if(!inp) return false;
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-      setter.call(inp, ${JSON.stringify(name)});
-      inp.dispatchEvent(new Event('input', { bubbles: true }));
-      return true;
-    })()`).catch(() => false)
-    await sleep(600)
-
-    // 4) 이름매칭 option 폴링. 단일 매처(exact 우선 → prefix 폴백)로 dedup — prefix-only 면
-    //    "회사원"이 "회사원2" 를 잘못 고를 수 있어 정확매칭을 먼저 본다. "이미지" 옵션은 제외.
-    const findOpt = `(function(){
-      const dlg = document.querySelector("div[role='dialog']"); if(!dlg) return null;
-      const strip = s => (s||'').replace(/\\s+/g,'');
-      const NAME = strip(${JSON.stringify(name)}); // R4-P2: 요청 이름도 strip — 공백 포함 이름도 일관 매칭
-      const opts = Array.from(dlg.querySelectorAll("[role='option']"));
-      // 정확 매칭만 — prefix fallback 제거(P1: "회사원" 이 "회사원3캐릭터" 를 잘못 고르는 것 차단).
-      // 캐릭터 탭 라벨은 "이름" 또는 "이름캐릭터" 형태(캡처 확인).
-      return opts.find(o => { const t=strip(o.textContent); return t===NAME || t===NAME+'캐릭터'; }) || null;
-    })()`
-    let found = false
-    for (let i = 0; i < 16 && !found; i++) {
-      await sleep(300)
-      found = await flowView.webContents.executeJavaScript(`!!(${findOpt})`).catch(() => false)
-    }
-    if (!found) {
-      const diag = await flowView.webContents.executeJavaScript(`(function(){
-        const dlg = document.querySelector("div[role='dialog']");
-        const tabs = Array.from((dlg||document).querySelectorAll("[role='tab']")).map(t=>(t.textContent||'').replace(/\\s+/g,' ').trim().slice(0,20));
-        const allOpts = Array.from((dlg||document).querySelectorAll("[role='option']")).map(o => (o.textContent||'').replace(/\\s+/g,' ').trim().slice(0,40));
-        return { hasDialog: !!dlg, tabs, optionCount: allOpts.length, allOptionLabels: allOpts.slice(0,20) };
-      })()`).catch((e) => ({ diagError: e.message }))
-      console.warn('[Flow Scene] mention option not found:', name, '— DIAG:', JSON.stringify(diag))
-      return false
-    }
-
-    // 5) 매칭 옵션 요소에 직접 pointer/mouse/click 시퀀스 디스패치(Radix onSelect — 좌표 클릭은 안 먹음).
-    const dispatchOpt = `(function(){
-      const o = ${findOpt};
-      if(!o) return false;
-      o.scrollIntoView({block:'center'});
-      const r=o.getBoundingClientRect();
-      const opt={bubbles:true,cancelable:true,composed:true,clientX:r.left+r.width/2,clientY:r.top+r.height/2,view:window,button:0,pointerId:1};
-      try{ o.dispatchEvent(new PointerEvent('pointerover',opt)); o.dispatchEvent(new PointerEvent('pointerenter',opt)); }catch{}
-      try{ o.dispatchEvent(new PointerEvent('pointerdown',opt)); }catch{}
-      o.dispatchEvent(new MouseEvent('mousedown',opt));
-      try{ o.dispatchEvent(new PointerEvent('pointerup',opt)); }catch{}
-      o.dispatchEvent(new MouseEvent('mouseup',opt));
-      o.dispatchEvent(new MouseEvent('click',opt));
-      return true;
-    })()`
-    const dispatched = await flowView.webContents.executeJavaScript(dispatchOpt).catch(() => false)
-    await sleep(500)
-    let dialogClosed = !(await flowView.webContents.executeJavaScript(`!!document.querySelector("div[role='dialog']")`).catch(() => true))
-    if (!dialogClosed) {
-      console.warn('[Flow Scene] option dispatch did not close picker — trying Enter')
-      try {
-        flowView.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' })
-        flowView.webContents.sendInputEvent({ type: 'char', keyCode: '\r' })
-        flowView.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' })
-      } catch {}
-      await sleep(500)
-      dialogClosed = !(await flowView.webContents.executeJavaScript(`!!document.querySelector("div[role='dialog']")`).catch(() => true))
-    }
-    // 칩 삽입 검증: "@" 자체도 void 노드라 "void 노드 존재"만으론 부족 — 칩 텍스트에 이름이
-    //   들어갔는지로 판정한다(선택 성공 시 칩이 이름을 표시). Enter 폴백이 선택 없이 피커만 닫는
-    //   거짓 성공을 막는다(거짓 성공 시 @이름이 literal 텍스트로 남아 인물 일관성 깨짐).
-    const post = await flowView.webContents.executeJavaScript(`(function(){
-      const e = ${EDITOR_SELECTOR};
-      const strip = s => (s||'').replace(/\\s+/g,'');
-      const NAME = strip(${JSON.stringify(name)}); // R4-P2: 요청 이름도 strip(헬퍼와 동일 규칙)
-      const chips = e ? Array.from(e.querySelectorAll("[data-slate-void='true']")) : [];
-      // R5-P2: 정확 일치/@이름/이름캐릭터 만 인정 — substring 제거(앞쪽 경계 누락으로 "영업회사원"
-      //   칩이 "회사원" 으로 통과하던 것 차단). flow-character-api.chipMatchesMentionName 과 동일 규칙.
-      const matches = (t) => { const s=strip(t); return s===NAME||s==='@'+NAME||s===NAME+'캐릭터'||s==='@'+NAME+'캐릭터'; };
-      return {
-        editorText: (e && (e.innerText||e.textContent)||'').slice(0,80),
-        hasMentionChip: chips.some(c => matches(c.textContent)),
-        stillHasDialog: !!document.querySelector("div[role='dialog']"),
-      };
-    })()`).catch((e) => ({ diagError: e.message }))
-    const ok = !!(dialogClosed && post && post.hasMentionChip)
-    // 성공 경로는 조용히. 실패/이상일 때만 진단 로그(B1 검증 완료 — 상시 로그 제거).
-    if (!ok) console.warn('[Flow Scene] mention select incomplete — DIAG:', JSON.stringify({ dispatched, dialogClosed, ...post }))
-    return ok
-  }
-
   ipcMain.handle('flow:generate-scene', async (_e, opts = {}) => {
     const { prompt, segments } = opts
     if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R26-1
@@ -825,19 +683,11 @@ export function registerCharacterIPC(ipcMain, deps) {
       await sleep(120)
       await trustedClickOnFlowView(EDITOR_SELECTOR)
       await sleep(150)
-      // 기존 텍스트 클리어(빈 컴포저에서 시작)
-      await flowView.webContents.executeJavaScript(`(function(){try{const e=${EDITOR_SELECTOR}; if(e){e.focus(); const s=window.getSelection(); s.removeAllRanges(); const r=document.createRange(); r.selectNodeContents(e); s.addRange(r); document.execCommand('delete',false,null);}}catch{}})()`).catch(() => {})
-      await sleep(100)
-      for (const seg of segs) {
-        if (seg.type === 'mention') {
-          const ok = await insertSceneMention(flowView, seg.name)
-          // #R33: 멘션 피커에 캐릭터가 없으면(Flow UI 에서 삭제됨 등) staleMention 신호를 실어 보낸다 →
-          //   렌더러가 해당 ref 의 flowNameSyncStatus 를 'failed' 로 마킹 → 다음 실행에 자동 재등록(self-heal).
-          if (!ok) return { success: false, error: '멘션 선택 실패: ' + seg.name, retry: true, staleMention: seg.name }
-        } else if (seg.type === 'text' && seg.text) {
-          const ok = await appendSceneText(flowView, seg.text)
-          if (!ok) return { success: false, error: '텍스트 주입 실패' }
-        }
+      // #R36: 컴포저 클리어 + segments(칩/텍스트) 주입 — 공용 헬퍼(injectComposeSegments)로 T2V 와 공유.
+      //   멘션 실패 시 staleMention 을 실어 렌더러가 flowNameSyncStatus='failed' 로 마킹(self-heal).
+      const _inj = await injectComposeSegments(flowView, segs)
+      if (!_inj.ok) {
+        return { success: false, error: _inj.error, retry: true, ...(_inj.staleMention ? { staleMention: _inj.staleMention } : {}) }
       }
     } finally {
       if (wasHidden) { flowView.setBounds(bounds); await sleep(200) }

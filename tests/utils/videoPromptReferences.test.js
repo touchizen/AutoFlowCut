@@ -67,6 +67,40 @@ describe('videoPromptReferences', () => {
     expect(out.truncated).toBe(0)
   })
 
+  // === #R36: Flow 모드 — @멘션을 ref 이미지가 아니라 컴포저 칩(segments)으로 ===
+  const syncedRefs = [{
+    id: 'king-id', type: 'character', category: 'character', name: 'king',
+    data: 'data:image/png;base64,KING', entityId: 'ent-king', flowNameSyncStatus: 'synced',
+  }]
+
+  it('#R36: Flow 모드는 @멘션을 segments(칩)로 만들고 referenceImages 를 비운다', () => {
+    const out = buildVideoPromptWithReferences('@king walks slowly', syncedRefs, null, 'flow')
+    expect(out.referenceImages).toEqual([])          // ref 이미지 주입 안 함
+    expect(Array.isArray(out.segments)).toBe(true)
+    expect(out.segments.some(s => s.type === 'mention' && s.name === 'king')).toBe(true)
+    expect(out.segments.some(s => s.type === 'text')).toBe(true)
+  })
+
+  it('#R36: Flow 모드 + 멘션 없으면 segments=null(일반 텍스트 T2V)', () => {
+    const out = buildVideoPromptWithReferences('a quiet street at night', syncedRefs, null, 'flow')
+    expect(out.segments).toBeNull()
+    expect(out.referenceImages).toEqual([])
+  })
+
+  it('#R36: API 모드(기본)는 기존대로 ref 이미지 + segments=null', () => {
+    const out = buildVideoPromptWithReferences('@hero walks', refs, null, 'api')
+    expect(out.segments).toBeNull()
+    expect(out.referenceImages.map(r => r.name)).toEqual(['hero'])
+  })
+
+  it('#R36: buildVideoPromptScenes 가 씬에 segments 를 붙인다(Flow)', () => {
+    const [{ scene }] = buildVideoPromptScenes(
+      [{ id: 1, prompt: '@king runs' }], syncedRefs, null, [], 'flow',
+    )
+    expect(scene.segments.some(s => s.type === 'mention' && s.name === 'king')).toBe(true)
+    expect(scene.referenceImages).toEqual([])
+  })
+
   it('does not send selected data-only style images as Veo asset references', () => {
     const dataOnlyStyle = {
       id: 'style-data-id',

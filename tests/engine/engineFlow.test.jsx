@@ -1359,3 +1359,45 @@ describe('useFlowEngine (#R4-3) — token ref prevents stale closure', () => {
     )
   })
 })
+
+// ---------------------------------------------------------------------------
+// #R36: Flow T2V @멘션 — segments(칩) 경로 vs ref 이미지 가드
+// ---------------------------------------------------------------------------
+describe('useFlowEngine — #R36 T2V @멘션 segments', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockFlowGenerateVideoT2V.mockResolvedValue({ success: true, generationId: 'gv1' })
+  })
+
+  it('segments 가 있으면 ref 가드 없이 flowGenerateVideoT2V 에 segments 를 넘긴다', async () => {
+    const { result } = renderHook(() => useFlowEngine())
+    const segs = [{ type: 'mention', name: 'king', entityId: 'e1' }, { type: 'text', text: ' walks' }]
+    let res
+    await act(async () => {
+      res = await result.current.generateVideoT2V('@king walks', 'veo', '16:9', 6, null, '720p', [], { segments: segs })
+    })
+    expect(res.success).toBe(true)
+    expect(mockFlowGenerateVideoT2V).toHaveBeenCalledWith(expect.objectContaining({ segments: segs }))
+  })
+
+  it('segments 없이 referenceImages 가 있으면 기존대로 fail-fast(ref 미지원)', async () => {
+    const { result } = renderHook(() => useFlowEngine())
+    let res
+    await act(async () => {
+      res = await result.current.generateVideoT2V('hero walks', 'veo', '16:9', 6, null, '720p', [{ mediaId: 'm1' }], {})
+    })
+    expect(res.success).toBe(false)
+    expect(res.error).toMatch(/레퍼런스 이미지를 지원하지 않습니다/)
+    expect(mockFlowGenerateVideoT2V).not.toHaveBeenCalled()
+  })
+
+  it('segments/ref 둘 다 없으면 일반 텍스트 T2V (정상 제출)', async () => {
+    const { result } = renderHook(() => useFlowEngine())
+    let res
+    await act(async () => {
+      res = await result.current.generateVideoT2V('a quiet street', 'veo', '16:9', 6, null, '720p', [], {})
+    })
+    expect(res.success).toBe(true)
+    expect(mockFlowGenerateVideoT2V).toHaveBeenCalledWith(expect.objectContaining({ segments: null }))
+  })
+})

@@ -1182,19 +1182,32 @@ function App() {
         // override → effective는 styleResolver.resolveEffectiveStyleId가 탭별로 처리.
         // video-text는 null override일 때 findAutoPromptStyle 결과로 변환됨 (resolver 내부 로직).
         const effectiveStyleId = styleResolver.resolveEffectiveStyleId(overrideStyleId)
-        const { startOptions: videoTextStartOptions, runningStyle: videoTextRunningStyle } = buildVideoTextStartPayload({
+        // #R36-fix(Codex R1[2]): build+start 를 클로저로 — sync gate 통과 후 patchedRefs 로 재빌드하기 위함.
+        const startVideoTextWith = (refsForBuild) => {
+        const { startOptions: videoTextStartOptions, runningStyle: videoTextRunningStyle, missing: videoTextMissing } = buildVideoTextStartPayload({
           videoScenes: selectedVideoScenes,
-          references: scenesHook.references || [],
+          references: refsForBuild || [],
           effectiveStyleId,
           srtTrack: scenesHook.srtTrack,
           settings,
           projectName,
+          appMode: mode,  // #R36: Flow 모드면 @멘션을 컴포저 칩(segments)으로 처리
           styleLabel: styleResolver.resolveLabelForId(effectiveStyleId),
           warn: console.warn,
           onReferenceLimitWarning: (limit) => {
             toast.warning(t('videoAutomation.referenceLimitWarning', { limit }))
           },
         })
+
+        // #R36-fix(Codex R2[1]): Flow 모드에서 미해결 @멘션(오타/없는 캐릭터/동기화 실패 잔여)이 남으면
+        //   chip/ref 없이 raw "@name" 텍스트로 나가 잘못된 영상+quota 낭비 → 시작을 막는다. sync gate
+        //   proceed 후 재빌드에도 동일 적용(이 클로저를 재사용하므로).
+        if (mode === 'flow' && Array.isArray(videoTextMissing) && videoTextMissing.length > 0) {
+          toast.error(isKo
+            ? `동기화되지 않았거나 알 수 없는 캐릭터 멘션: @${videoTextMissing.join(', @')} — Ref 탭에서 캐릭터를 확인/동기화한 뒤 다시 시도하세요.`
+            : `Unsynced or unknown @mention(s): @${videoTextMissing.join(', @')} — verify/sync the character in the Ref tab and retry.`)
+          return
+        }
 
         // Stop 버튼이 현재 실행 중인 스타일을 표시할 수 있도록 id + 라벨 모두 snapshot
         setRunningStyle(videoTextRunningStyle)
@@ -1224,6 +1237,13 @@ function App() {
               ...(result && 'errorKind' in result ? { errorKind: result.errorKind } : {}),
             })
 
+            // #R36-fix(Codex R1[3]): T2V @멘션 칩이 stale(Flow 에서 캐릭터 삭제 등)면 그 ref 를 'failed' 로
+            //   마킹 → 다음 실행 선등록(needsEntityRegistration)에서 자동 재등록(self-heal, 이미지와 동일).
+            if (result?.staleMention) {
+              const staleName = String(result.staleMention).toLowerCase()
+              updateReferences(prev => prev.map(r => (r?.name && String(r.name).toLowerCase() === staleName) ? { ...r, flowNameSyncStatus: 'failed' } : r))
+            }
+
             // ── T2V 완료 → 번호 매칭으로 씬에 videoT2V 동기화 ──
             // base64 또는 videoPath 중 하나라도 있으면 sync (DOM 다운로드 시 path만 있을 수 있음)
             if (newStatus === 'complete' && (result?.base64 || result?.videoPath)) {
@@ -1240,6 +1260,22 @@ function App() {
             // 데이터를 유지해야 에러/취소 시 기존 비디오로 복귀한다. 완료 시 위 블록이 새 걸로 교체.
           },
         }).finally(() => setHasPendingBatch(false))
+        }
+
+        // #R36-fix(Codex R1[2]): Flow 모드 T2V 도 이미지 씬과 동일한 미동기화 @멘션 가드. 미동기화 캐릭터를
+        //   먼저 동기화(칩으로 넣을 수 있게)한 뒤 patchedRefs 로 페이로드를 재빌드해 생성한다. 안 하면
+        //   미동기화 @king 이 chip/ref 없이 텍스트로 나가 잘못된 영상 + quota 낭비.
+        if (mode === 'flow') {
+          const unsyncedMentioned = selectUnsyncedMentionedRefs(selectedVideoScenes, scenesHook.references)
+          if (unsyncedMentioned.length > 0) {
+            setSyncGate({
+              refs: unsyncedMentioned,
+              proceed: (currentRefs) => startVideoTextWith(currentRefs || scenesHook.references),
+            })
+            return
+          }
+        }
+        startVideoTextWith(scenesHook.references)
         break
       }
 

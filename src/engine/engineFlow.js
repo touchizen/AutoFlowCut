@@ -459,14 +459,18 @@ export function useFlowEngine(opts = {}) {
 
   const generateVideoT2V = useCallback(async (prompt, model, aspectRatio, duration, seed, _resolution, _referenceImages, callOpts = {}) => {
     try {
-      // #R17-10: Flow DOM T2V 경로는 reference image 주입을 지원하지 않는다. API 모드는 refs 를
-      //   쓰므로, 조용히 drop 해 잘못된(레퍼런스 없는) 영상을 만들지 않고 fail-fast 한다.
-      if (Array.isArray(_referenceImages) && _referenceImages.length > 0) {
+      // #R36: Flow @멘션 T2V 는 레퍼런스 이미지 대신 컴포저 @칩(segments)으로 캐릭터 entity 를 넣는다
+      //   (이미지 씬과 동일). segments 가 있으면 chip 경로 → ref 미지원 가드를 건너뛴다.
+      const _segments = Array.isArray(callOpts.segments) && callOpts.segments.length > 0 ? callOpts.segments : null
+      // #R17-10: Flow DOM T2V 는 reference image 주입 미지원. segments(chip) 도 아닌 실제 ref 이미지가
+      //   넘어오면 잘못된(레퍼런스 없는) 영상 방지 위해 fail-fast.
+      if (!_segments && Array.isArray(_referenceImages) && _referenceImages.length > 0) {
         return { success: false, error: 'Flow 모드 T2V 는 레퍼런스 이미지를 지원하지 않습니다. I2V(프레임)로 생성하거나 레퍼런스를 제거해 주세요.' }
       }
       return markAuth(await api().flowGenerateVideoT2V({
         token: effectiveToken(),
         prompt,
+        segments: _segments,
         projectId: effectiveProjectId(),
         model,
         aspectRatio,

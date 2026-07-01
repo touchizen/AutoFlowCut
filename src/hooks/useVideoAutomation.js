@@ -91,7 +91,8 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     const { videoModel, aspectRatio, duration, seed = null, videoResolution, projectName = '', videoBatchCount = 1 } = options
     const prompt = item.prompt || ''
     // #R12-3: Flow 엔진은 callOpts.videoBatchCount 로 배치 수를 받는다 — 마지막 인자로 전달.
-    const callOpts = { videoBatchCount }
+    // #R36: Flow @멘션 T2V 는 컴포저 칩용 segments 를 함께 넘긴다(있으면 chip 경로, 없으면 일반 텍스트).
+    const callOpts = { videoBatchCount, segments: item.segments || null }
 
     switch (mode) {
       case 't2v': {
@@ -329,6 +330,9 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
             // 자동 길이용 — 씬 길이(SRT 기반). 제출 시 {4,6,8} 로 스냅됨.
             targetDuration: s.targetDuration ?? null,
             referenceImages: Array.isArray(s.referenceImages) ? s.referenceImages : [],
+            // #R36-fix(Codex R1[1]): Flow @멘션 T2V 의 컴포저 칩용 segments — 여기서 복사 안 하면
+            //   submitVideoItem 의 item.segments 가 항상 null 이 되어 칩 경로를 못 탄다.
+            segments: Array.isArray(s.segments) ? s.segments : null,
           }))
         break
       case 'i2v':
@@ -561,7 +565,9 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
           return
         } else {
           // 일반 실패 — 이 항목만 error 처리하고 다음 진행. quota 면 batch stop.
-          onItemUpdate?.(item.id, 'error', { error: genResult.error })
+          // #R36-fix(Codex R1[3]): @멘션 칩 삽입 실패(staleMention) 를 App 으로 전파 → ref 를 failed 로
+          //   마킹(self-heal, 이미지 자동화와 동일). 안 그러면 삭제된 캐릭터로 매번 같은 실패 반복.
+          onItemUpdate?.(item.id, 'error', { error: genResult.error, ...(genResult.staleMention ? { staleMention: genResult.staleMention } : {}) })
           videoErrorCount++
           nextFreshIdx++
           console.warn(`[VideoAutomation] ❌ Submit failed ${i + 1}/${total}:`, genResult.error)

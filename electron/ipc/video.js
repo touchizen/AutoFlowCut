@@ -14,6 +14,12 @@ import { SUBMIT_PROBE, shouldProceed } from '../flow-submit-gate.js'
 import { COMPOSE_EDITOR_READY } from '../flow-compose-editor.js'
 import { AGENT_CHAT_CLOSE_SELECTOR } from '../flow-agent-toggle.js'
 import { isOmniFlashModel } from '../video-model-rules.js'
+import { injectComposeSegments } from '../flow-compose-mention.js'
+
+// #R36: 비디오 제출 응답(batchAsyncGenerateVideo* → operation id) 캡처 타임아웃. 원래 30s 였으나
+//   @멘션(entity 참조) 비디오 등에서 초기 응답이 30s 를 넘겨 조기 실패(멈춤)하는 사례가 있어, 이미지
+//   캡처(120s)와 동일하게 여유를 둔다. (초기 ack 만 기다림 — 실제 생성/upscale 은 status 폴링이 처리.)
+const VIDEO_RESPONSE_TIMEOUT_MS = 120000
 
 /**
  * Register video-generation-related IPC handlers.
@@ -110,9 +116,11 @@ export function registerVideoIPC(ipcMain, deps) {
 
   // Text-to-Video generation (DOM 자동화 — 페이지가 reCAPTCHA 자체 처리)
   ipcMain.handle('flow:generate-video-t2v', async (event, {
-    token, prompt, projectId, model, aspectRatio, duration, videoBatchCount, seed
+    token, prompt, projectId, model, aspectRatio, duration, videoBatchCount, seed, segments
   }) => {
     if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R25-4
+    // #R36: @멘션 T2V — segments 가 있으면 컴포저 @칩(injectComposeSegments)으로 캐릭터 entity 를 넣는다.
+    const _segments = Array.isArray(segments) && segments.length > 0 ? segments : null
     const flowView = getFlowView()
     const mainWindow = getMainWindow()
     if (!prompt) return { success: false, error: 'No prompt' }
@@ -229,7 +237,21 @@ export function registerVideoIPC(ipcMain, deps) {
       } catch (e) { console.warn('[Flow Video T2V] editor focus click failed:', e.message) }
       await new Promise(r => setTimeout(r, 120))
 
-      const promptResult = await flowView.webContents.executeJavaScript(`
+      // #R36: @멘션 T2V — segments 가 있으면 컴포저 칩 삽입(이미지 씬과 동일 헬퍼). 없으면 기존 텍스트 주입.
+      //   #R36-fix(Codex R1[4]): Agent ON 은 모드 탭이 없어 "Generate a video:" 프리픽스로 타입을 강제한다.
+      //   plain 프롬프트 경로는 위에서 prompt 에 붙였지만, segments(칩) 경로엔 텍스트 세그먼트로 앞에 붙인다.
+      const _injSegments = _segments && agentOn
+        ? [{ type: 'text', text: 'Generate a video: ' }, ..._segments]
+        : _segments
+      const promptResult = _injSegments
+        ? await (async () => {
+            const _si = await injectComposeSegments(flowView, _injSegments)
+            console.log('[Flow Video T2V] segments injected (chips):', _segments.filter(s => s.type === 'mention').map(s => s.name).join(','), '→', _si.ok)
+            return _si.ok
+              ? { success: true }
+              : { success: false, error: _si.error, ...(_si.staleMention ? { staleMention: _si.staleMention } : {}) }
+          })()
+        : await flowView.webContents.executeJavaScript(`
         (async function() {
           const promptText = ${JSON.stringify(prompt)};
           const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -327,7 +349,8 @@ export function registerVideoIPC(ipcMain, deps) {
       }
 
       if (!promptResult?.success) {
-        return { success: false, error: promptResult?.error || 'Prompt injection failed' }
+        // #R36: @멘션 칩 삽입 실패면 staleMention 전파(렌더러 self-heal — ref 를 failed 로 마킹).
+        return { success: false, error: promptResult?.error || 'Prompt injection failed', ...(promptResult?.staleMention ? { staleMention: promptResult.staleMention, retry: true } : {}) }
       }
       console.log('[Flow Video T2V] Prompt injected successfully')
 
@@ -388,9 +411,9 @@ export function registerVideoIPC(ipcMain, deps) {
       videoTimeout = setTimeout(() => {
         if (getPendingVideoGeneration() === videoOwnPending) {
           setPendingVideoGeneration(null)
-          resolveVideo({ error: true, message: 'Video response timeout (30s)' })
+          resolveVideo({ error: true, message: `Video response timeout (${Math.round(VIDEO_RESPONSE_TIMEOUT_MS / 1000)}s)` })
         }
-      }, 30000) // 비디오 제출은 이미지보다 빠름 (초기 응답만 캡처)
+      }, VIDEO_RESPONSE_TIMEOUT_MS) // #R36: 초기 ack 캡처(생성/upscale 은 status 폴링)
 
       const clickResult = await trustedClickOnFlowView(generateBtnSelector)
       console.log('[Flow Video T2V] Trusted click result:', clickResult)
@@ -670,9 +693,9 @@ export function registerVideoIPC(ipcMain, deps) {
       videoTimeout = setTimeout(() => {
         if (getPendingVideoGeneration() === videoOwnPending) {
           setPendingVideoGeneration(null)
-          resolveVideo({ error: true, message: 'Video response timeout (30s)' })
+          resolveVideo({ error: true, message: `Video response timeout (${Math.round(VIDEO_RESPONSE_TIMEOUT_MS / 1000)}s)` })
         }
-      }, 30000)
+      }, VIDEO_RESPONSE_TIMEOUT_MS)
 
       const clickResult = await trustedClickOnFlowView(generateBtnSelector)
       console.log('[Flow Video I2V] Trusted click result:', clickResult)

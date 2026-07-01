@@ -15,6 +15,27 @@ describe('videoTextStart', () => {
     expect(warn).toHaveBeenCalledWith('[VideoText]', 'vscene_1', 'unknown @mentions:', 'ghost')
   })
 
+  it('#R36-fix(Codex R2[1]): aggregates unresolved @mentions in `missing` (Flow start guard)', () => {
+    const { missing } = prepareVideoTextStartScenes({
+      videoScenes: [{ id: 'v1', prompt: '@ghost runs' }, { id: 'v2', prompt: '@nobody sits' }],
+      references: [{ id: 'k', type: 'character', name: 'king', data: 'data:image/png;base64,K', entityId: 'e', flowNameSyncStatus: 'synced' }],
+      appMode: 'flow',
+      warn: () => {},
+    })
+    expect(missing).toContain('ghost')
+    expect(missing).toContain('nobody')
+  })
+
+  it('#R36: Flow 에서 동기화된 캐릭터만 멘션하면 missing 비어있음', () => {
+    const { missing } = prepareVideoTextStartScenes({
+      videoScenes: [{ id: 'v1', prompt: '@king walks' }],
+      references: [{ id: 'k', type: 'character', name: 'king', data: 'data:image/png;base64,K', entityId: 'e', flowNameSyncStatus: 'synced' }],
+      appMode: 'flow',
+      warn: () => {},
+    })
+    expect(missing).toEqual([])
+  })
+
   it('warns about the reference limit once and keeps the first three video refs', () => {
     const warn = vi.fn()
     const onReferenceLimitWarning = vi.fn()
