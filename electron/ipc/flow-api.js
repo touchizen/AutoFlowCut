@@ -366,12 +366,13 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       //   (패널 열고 닫음). applyAgentDefaults 는 패널이 닫힌 것을 확인(panelClosed)하므로 이후 컴포즈
       //   주입을 가리지 않는다. 컴포즈 주입(아래) 전에 호출한다.
       if (model && applyAgentDefaults) {
-        // #R34-fix: Agent OFF 이미지의 model 은 이 패널로만 적용된다(monkey-patch inject 보정 없음).
-        //   미적용이면 이전 Flow 모델로 생성돼 quota 낭비 → fail-closed(retry). (3회 내부 재시도로 일시 실패 흡수.)
+        // #R34-fix(2): best-effort. 패널 미발견/필드 미적용은 생성을 막지 않는다(warn) — Agent OFF/첫 씬 등
+        //   정상 상황에서도 패널이 없을 수 있어 하드 블록하면 생성 불가가 된다. applied:false 는 경고만.
         try {
           const _md = await applyAgentDefaults({ image: { model } })
-          if (!_md?.success) { if (generationTimeout) clearTimeout(generationTimeout); return { success: false, error: `Flow 이미지 모델 적용 실패: ${_md?.error || 'unknown'}`, retry: true } }
-        } catch (e) { if (generationTimeout) clearTimeout(generationTimeout); return { success: false, error: `Flow 이미지 모델 적용 오류: ${e.message}`, retry: true } }
+          if (!_md?.success) console.warn('[Flow API] applyAgentDefaults(image model) not applied:', _md?.error)
+          else if (_md.applied === false) console.warn('[Flow API] applyAgentDefaults(image model): panel found but model not applied')
+        } catch (e) { console.warn('[Flow API] applyAgentDefaults(image model) error:', e.message) }
       }
 
       // 0.9. Inject pending values into Flow page (monkey-patch path)
@@ -475,11 +476,12 @@ export function registerFlowAPIIPC(ipcMain, deps) {
         // 장수(count)+화면비도 함께 적용 — 안 넘기면 패널 기존값으로 생성된다.
         // #R33: Agent ON 은 streamChat 경로라 monkey-patch inject(imageAspectRatio)가 안 먹는다 →
         //   화면비(설정>씬)를 이 패널(aspectSuffix)로 적용. (Agent OFF 는 inject 로 처리.)
-        // #R34-fix: 화면비/모델 미적용이면 fail-closed(retry) — 잘못된 화면비/모델로 이미지가 나가 quota 낭비.
+        // #R34-fix(2): best-effort(warn) — 패널 미발견/필드 미적용으로 생성을 막지 않는다.
         try {
           const _md = await applyAgentDefaults({ image: { model, count: clampImageBatchCount(batchCount), aspectRatio }, autoApprove: true })
-          if (!_md?.success) { if (generationTimeout) clearTimeout(generationTimeout); return { success: false, error: `Flow 이미지 화면비/모델 적용 실패: ${_md?.error || 'unknown'}`, retry: true } }
-        } catch (e) { if (generationTimeout) clearTimeout(generationTimeout); return { success: false, error: `Flow 이미지 화면비/모델 적용 오류: ${e.message}`, retry: true } }
+          if (!_md?.success) console.warn('[Flow API] (Agent ON) applyAgentDefaults(image) not applied:', _md?.error)
+          else if (_md.applied === false) console.warn('[Flow API] (Agent ON) applyAgentDefaults(image): panel found but not fully applied')
+        } catch (e) { console.warn('[Flow API] (Agent ON) applyAgentDefaults(image) error:', e.message) }
         // Agent 추론이 영상으로 빠지지 않게 명시 지시 프리펜드(타입 강제). 주소/위치는 그대로 유지.
         prompt = `Generate a still image: ${prompt}`
         console.log('[Flow API] (Agent ON) image prompt prefixed for type forcing')

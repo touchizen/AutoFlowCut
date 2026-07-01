@@ -776,11 +776,12 @@ export function registerCharacterIPC(ipcMain, deps) {
     //   (2) 타입(이미지)은 프롬프트 프리펜드로 강제(영상으로 빠지지 않게). Agent OFF 는 위 IMAGE 모드+inject.
     if (_agentOn) {
       if (applyAgentDefaults) {
-        // #R34-fix: 화면비 미적용이면 fail-closed(retry) — 잘못된 화면비로 씬이 생성돼 quota 낭비 방지.
+        // #R34-fix(2): best-effort(warn) — 패널 미발견/필드 미적용으로 씬 생성을 막지 않는다.
         try {
           const _md = await applyAgentDefaults({ image: { aspectRatio: opts.aspectRatio }, autoApprove: true })
-          if (!_md?.success) return { success: false, error: `Flow 씬 화면비 적용 실패: ${_md?.error || 'unknown'}`, retry: true }
-        } catch (e) { return { success: false, error: `Flow 씬 화면비 적용 오류: ${e.message}`, retry: true } }
+          if (!_md?.success) console.warn('[Flow Scene] (Agent ON) applyAgentDefaults not applied:', _md?.error)
+          else if (_md.applied === false) console.warn('[Flow Scene] (Agent ON) applyAgentDefaults: panel found but aspect not applied')
+        } catch (e) { console.warn('[Flow Scene] (Agent ON) applyAgentDefaults error:', e.message) }
       }
       segs.unshift({ type: 'text', text: 'Generate a still image: ' })
     }

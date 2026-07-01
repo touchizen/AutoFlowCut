@@ -755,25 +755,39 @@ export function createSharedHelpers(ctx) {
 
     const script = buildAgentDefaultsScript(opts)
     const maxAttempts = 3
+    // #R34-fix(2): 패널을 찾았지만 요청 필드(aspect/model)가 미적용이면 재시도한다. 단 끝까지 미적용이어도
+    //   "패널을 찾은 경우"는 success:true 로 두되 applied:false 신호를 준다 — 호출측이 생성을 막지 않도록.
+    //   (패널이 상황에 따라 없을 수 있어(Agent OFF/첫 씬 등) 하드 블록하면 정상 생성까지 막힌다.
+    //    잘못된 화면비/모델은 복구 가능하지만 생성 불가는 아님.) 패널 자체를 못 찾은 경우만 success:false.
+    let lastPanelResult = null
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
         const result = await flowView.webContents.executeJavaScript(script)
-        // #R34-fix: result.ok(패널 발견)뿐 아니라 "요청한 aspect/model 이 실제로 적용됐는지"까지 확인.
-        //   미적용이면 재시도 → 끝까지 미적용이면 success:false (잘못된 화면비/모델 생성 방지).
-        if (result && result.ok && agentDefaultsApplied(opts, result)) {
-          console.log('[Flow AgentDefaults] applied:',
-            'approval=', result.approval,
-            'image=', JSON.stringify(result.image), 'video=', JSON.stringify(result.video),
-            'saved=', result.saved, 'panelClosed=', result.panelClosed)
-          return { success: true, result }
+        if (result && result.ok) {
+          lastPanelResult = result
+          if (agentDefaultsApplied(opts, result)) {
+            console.log('[Flow AgentDefaults] applied:',
+              'approval=', result.approval,
+              'image=', JSON.stringify(result.image), 'video=', JSON.stringify(result.video),
+              'saved=', result.saved, 'panelClosed=', result.panelClosed)
+            return { success: true, applied: true, result }
+          }
+          console.warn(`[Flow AgentDefaults] attempt ${attempt + 1}/${maxAttempts} panel found but requested field(s) not applied — retrying:`,
+            `image=${JSON.stringify(result.image)} video=${JSON.stringify(result.video)}`)
+        } else {
+          console.warn(`[Flow AgentDefaults] attempt ${attempt + 1}/${maxAttempts} failed:`, result && result.error)
         }
-        console.warn(`[Flow AgentDefaults] attempt ${attempt + 1}/${maxAttempts} not fully applied:`,
-          result && (result.error || `image=${JSON.stringify(result.image)} video=${JSON.stringify(result.video)}`))
       } catch (e) {
         console.warn(`[Flow AgentDefaults] attempt ${attempt + 1} error:`, e.message)
       }
       await new Promise(r => setTimeout(r, 500 + attempt * 300))
     }
+    // 패널은 찾았지만 필드가 끝내 미적용 → 생성은 막지 않는다(applied:false 로 신호만).
+    if (lastPanelResult) {
+      console.warn('[Flow AgentDefaults] panel found but requested defaults not fully applied after retries — proceeding')
+      return { success: true, applied: false, result: lastPanelResult }
+    }
+    // 패널 자체를 못 찾음(정상 상황일 수 있음) → success:false 지만 호출측은 경고 후 진행한다.
     return { success: false, error: 'panel not configured after retries' }
   }
 
