@@ -1480,7 +1480,30 @@ app.whenReady().then(() => {
   try {
     globalShortcut.register('CommandOrControl+Shift+E', () => { dumpFlowDomToFile() })
   } catch (e) { console.warn('[FlowDomDump] shortcut register failed:', e.message) }
+  // #R36-diag: Flow 페이지 네트워크 캡처(window.__autoflowcut_net__)를 바탕화면 파일로 덤프.
+  //   @멘션 T2V 응답 캡처 실패 진단용 — 실제 비디오 생성 요청의 url/reqBody 확인.
+  try {
+    globalShortcut.register('CommandOrControl+Shift+N', () => { dumpFlowNetToFile() })
+  } catch (e) { console.warn('[FlowNetDump] shortcut register failed:', e.message) }
 })
+
+// #R36-diag: window.__autoflowcut_net__ (Flow 페이지가 쌓은 google 요청 로그)를 바탕화면 JSON 으로 저장.
+async function dumpFlowNetToFile() {
+  const flowView = modeController.getFlowView()
+  if (!flowView) { console.warn('[FlowNetDump] Flow view not ready (flow 모드인지 확인)'); return }
+  try {
+    const net = await flowView.webContents.executeJavaScript('JSON.parse(JSON.stringify(window.__autoflowcut_net__ || []))')
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const filePath = path.join(app.getPath('desktop'), `autoflowcut-net-${stamp}.json`)
+    fsSync.writeFileSync(filePath, JSON.stringify(net, null, 2))
+    console.log('[FlowNetDump] wrote', net.length, 'entries →', filePath)
+    if (mainWindow) {
+      try { mainWindow.webContents.executeJavaScript(`console.log('[FlowNetDump] saved: ${filePath.replace(/'/g, "\\'")}')`) } catch {}
+    }
+  } catch (e) {
+    console.warn('[FlowNetDump] dump failed:', e.message)
+  }
+}
 
 async function dumpFlowDomToFile() {
   const flowView = modeController.getFlowView()
