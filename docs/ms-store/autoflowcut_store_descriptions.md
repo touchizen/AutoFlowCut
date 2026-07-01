@@ -15,8 +15,11 @@ Testing this app requires a free Google AI Studio API key. Steps:
 Image generation (Google Gemini) and video generation (Veo) are now available.
 All AI calls go directly from the app to Google's official API — no intermediary server.
 
-CapCut Export (the only paid feature) can be tested with the 5 free trial exports
-automatically credited to a new account. Create a free account at touchizen.com,
+Alternatively, you can generate without an API key by choosing "Flow Login" mode
+on the first screen and signing in with any Google account.
+
+Export (CapCut, Adobe Premiere, or Vrew — the only paid feature) can be tested with
+the 5 free trial exports automatically credited to a new account. Create a free account at touchizen.com,
 or use the existing test account below if one has been provided separately.
 ```
 
@@ -44,16 +47,16 @@ Notes:
 
 ### Short Description (100 chars)
 ```
-Bulk-generate AI images & videos with Google Gemini/Veo API; export full CapCut projects in one click.
+Bulk-generate AI images & videos and export to CapCut, Premiere & Vrew — free login or your key.
 ```
 
 ### Description
 ```
 A 200-image AI video used to take 4+ hours. With AutoFlowCut, one click — under a minute.
 
-Connect your Google AI Studio key once, load your script, and let AutoFlowCut handle the rest: batch-generate 100+ images and videos via Google Gemini & Veo, watch them appear in real time, then export a complete CapCut project — timeline, audio, subtitles, and Ken Burns animations — in one click.
+Choose how you generate — start free with a Google login, or bring your own Gemini & Veo API key for maximum speed. Load your script and AutoFlowCut handles the rest: batch-generate 100+ images and videos, watch them appear in real time, then export a complete project — timeline, audio, subtitles, and Ken Burns animations — to CapCut, Adobe Premiere, or Vrew in one click.
 
-No web automation. No logins. No reCAPTCHA. Just direct API calls from your machine to Google, as fast as your quota allows.
+Two ways to generate, three ways to export, zero busywork.
 
 
 🎬 COMPLETE AI VIDEO PIPELINE
@@ -61,12 +64,12 @@ No web automation. No logins. No reCAPTCHA. Just direct API calls from your mach
 AutoFlowCut covers the full workflow from script to timeline:
 
 1. Import prompts — Load scene prompts from TXT, CSV, or SRT files.
-2. Set references — Match character, background, and style references by tags for visual consistency.
+2. Set references — Match character, background, and style references by tags — or drop them into any prompt with the @ picker — for visual consistency.
 3. Generate images — Batch-create 100+ AI images via Google Gemini API. Auto-retry on errors, with smart re-download for server-success/client-fail cases.
 4. Generate videos — Create T2V (Text-to-Video) or I2V (Image-to-Video) for selected scenes via Veo API.
 5. Select media — Choose the best media (image, T2V, or I2V) per scene. Auto-priority: I2V > T2V > Image.
 6. Place audio — Drop narration, dialogue, and SFX files with timecoded names; AutoFlowCut places them on separate CapCut tracks automatically.
-7. Export to CapCut — One click exports a complete project with timeline, media, audio, subtitles, and Ken Burns animations.
+7. Export — One click writes a complete project — timeline, media, audio, subtitles, and Ken Burns animations — for CapCut, Adobe Premiere, or Vrew.
 
 
 🎙️ STORY ENGINE v2 — SCRIPT TO PRODUCTION, AUTOMATED
@@ -88,19 +91,20 @@ Three genres supported: Korean historical tales (yadam), Western dark history, a
 
 🔧 HOW TO USE
 
-1. Get a Google API key — Create a free key at Google AI Studio (aistudio.google.com). Enter it once in Settings.
+1. Choose a generation mode — Start free with a Google login, or paste your own Gemini / Veo API key in Settings for faster, pay-as-you-go generation.
 2. Prepare prompts — Type text, import CSV scene data, or load SRT subtitles. Each line or entry becomes a scene.
-3. Set reference images — Tag your reference images (character, background, style) and they auto-match to scenes.
+3. Set reference images — Tag references (character, background, style) to auto-match scenes, or type @ in any prompt to pick one and drop it in as a chip.
 4. Generate images — Gemini API creates consistent visuals across all scenes. Images auto-save locally.
 5. Generate videos (optional) — Select scenes for T2V or I2V video generation via Veo API. Videos are mapped back to their scenes automatically.
 6. Place audio (optional) — Drop TTS, dialogue, or SFX files with timecoded names; AutoFlowCut auto-tracks them in CapCut.
 7. Select export media — For each scene, choose image, T2V video, or I2V video. Or let auto-mode pick the best available.
-8. Export to CapCut — Generates a complete CapCut project. Open in CapCut and start editing immediately.
+8. Export — Generates a complete project for CapCut, Adobe Premiere, or Vrew. Premiere and Vrew open automatically, ready to edit.
 
 
 ⚡ KEY FEATURES
 
-- Google Gemini & Veo API — Direct API connection. Bring your own Google API key; no web automation, no login required.
+- Two Generation Modes — Start free with a Google Flow login (beginner-friendly), or bring your own Gemini / Veo API key (BYOK) for fast, bulk, pay-as-you-go generation. Switch anytime from the top toggle.
+- API Key Mode (BYOK) — Connect your own Gemini / Veo key for direct, login-free calls straight to Google — no web automation, as fast as your quota allows.
 - Per-Type Model Selection — Choose the exact Gemini model for image generation and Veo model for video, independently per generation type (T2I / T2V / F2V).
 - Batch Image Generation — Create 100+ images in minutes with reference-based style matching. Auto-retry on errors.
 - Live Generation Grid — Watch images populate in real time as each scene completes, with progress indicators per cell.
@@ -111,9 +115,10 @@ Three genres supported: Korean historical tales (yadam), Western dark history, a
 - Per-Scene Media Selection — Choose image, T2V, or I2V per scene. Smart auto-mode picks the best available media.
 - Audio Auto-Placement — Narration, dialogue, and SFX files with timecoded filenames are automatically placed on separate CapCut tracks. Bring your own audio or let Story Engine generate it.
 - AudioTimeline (Multi-Track Preview) — Remotion-style timeline view of every audio track with resizable rows, rich tooltips, and a playhead that stays visible across zoom changes. Preview the full audio mix before exporting.
-- One-Click CapCut Export — Timeline, media files, audio tracks, subtitles, and Ken Burns animations in one project file.
+- One-Click Multi-Editor Export — Write a complete project — timeline, media, audio tracks, subtitles, and Ken Burns animations — for CapCut, Adobe Premiere (.prproj), or Vrew (.vrew). Premiere and Vrew launch automatically after export.
 - Style Presets — Choose from 87 built-in style presets (anime, watercolor, cinematic, ink wash, etc.) to apply consistent visual styles across all scenes. Optional "Require Style" setting ensures a style is always selected before generation.
 - Auto Tag Matching — Tag references once, and they match to scenes automatically for visual consistency.
+- @ Reference Picker & Chips — Type @ in any prompt to pick a character, scene, or style reference from a menu; it drops in as an inline chip with a thumbnail and attaches to that generation. Works for images and Veo videos.
 - Ken Burns Effect — Auto zoom/pan animations on image clips to bring static images to life.
 - Live Progress Banner — Real-time top-strip banner shows generation status across the entire app, with completion rate and one-click dismiss.
 - Multiple Input Formats — TXT (one prompt per line), CSV (structured data), SRT (subtitles with timing).
@@ -149,7 +154,7 @@ Enable the HTTP API (port 3210) in Settings to allow external tools to interact 
 
 🎯 WHO IS THIS FOR?
 
-- AI Video Creators — Generate images AND videos via Google's official API, then export everything to CapCut in one click.
+- AI Video Creators — Generate images AND videos with a free Google login or your own API key, then export everything to CapCut, Premiere, or Vrew in one click.
 - Faceless YouTube Channels — Automate AI slideshow and narration video production with T2V/I2V support.
 - AI Story Channels — Keep characters, backgrounds, and styles consistent across 200+ scenes. Use Story Engine v2 to produce full episodes from a single topic.
 - Shorts & TikTok Creators — Quickly turn AI-generated scenes into short-form video projects.
@@ -160,8 +165,8 @@ Enable the HTTP API (port 3210) in Settings to allow external tools to interact 
 
 AutoFlowCut is free and open source.
 
-- All features are free — CapCut Export is the only paid feature
-- 5 free CapCut exports every month — refreshes monthly, no time limit
+- All features are free — Export (CapCut, Adobe Premiere, or Vrew) is the only paid feature
+- 5 free exports every month — refreshes monthly, no time limit
 - 5 signup bonus credits when you create an account
 - Pro: $4.99/month or $39.99/year (unlimited exports)
 - Google Gemini/Veo API usage billed directly by Google per your own account quota
@@ -170,8 +175,8 @@ AutoFlowCut is free and open source.
 
 📋 REQUIREMENTS
 
-- Google AI Studio API key (free at aistudio.google.com)
-- CapCut desktop app (free version works)
+- A Google account for free Flow-login generation — or a Google AI Studio API key (free) for BYOK mode
+- CapCut, Adobe Premiere, or Vrew (whichever you export to)
 - Internet connection for AI generation
 - Windows 10 or later
 
@@ -193,6 +198,14 @@ Disclaimer: This app is an independent product developed by Touchizen and is not
 
 ### What's New
 ```
+v2.1.0 — Two ways to generate, three ways to export.
+
+Generation modes. Start free with a Google Flow login (no API key needed), or switch to your own Gemini / Veo key for fast, pay-as-you-go bulk generation — toggle anytime from the top bar.
+
+Multi-editor export. Export a complete project to CapCut, Adobe Premiere (.prproj), or Vrew (.vrew) in one click. Premiere and Vrew open automatically, ready to edit.
+
+Reference picker & chips. Type @ in any prompt to pick a character, scene, or style reference from a menu — it drops in as an inline chip with a thumbnail and carries into that generation, for images and videos alike.
+
 v1.1.3 — More reliable generation and clearer English labels. Image generation now handles older Flow aspect-ratio values correctly, preventing failed requests when switching scene formats. English auto-style labels now stay fully in English, so presets are easier to scan and choose.
 
 v1.1.2 Store update — Updated the Microsoft Store package assets so Windows tiles and app listings use AutoFlowCut-branded icons instead of generic placeholder imagery.
@@ -222,7 +235,7 @@ Generate up to 5 scenes in parallel. Concurrency is configurable in Settings; de
 
 ### Keywords
 ```
-AI video automation, text to video, image to video, batch AI generation, BYOK, video timeline, subtitles, SRT, audio sync, Ken Burns, story engine, MCP, open source
+AI video automation, text to video, image to video, batch AI generation, BYOK, Flow login, Premiere export, Vrew export, reference chips, video timeline, subtitles, SRT, audio sync, Ken Burns, story engine, MCP, open source
 ```
 
 ---
@@ -236,16 +249,16 @@ AutoFlowCut
 
 ### Short Description (100자 이내)
 ```
-Google Gemini/Veo API로 이미지·비디오를 대량 생성하고 CapCut 프로젝트로 원클릭 내보내기하는 데스크톱 앱
+이미지·비디오를 대량 생성하고 CapCut·Premiere·Vrew 프로젝트로 원클릭 내보내기 — 무료 로그인 또는 내 API 키
 ```
 
 ### Description
 ```
 200장짜리 AI 영상, 4시간 이상 걸리던 작업이, 클릭 한번 - 1분 안에 끝납니다.
 
-Google AI Studio 키를 한 번 등록하고, 대본을 불러오면 AutoFlowCut이 나머지를 처리합니다. Gemini & Veo로 이미지·비디오를 일괄 생성하고, 실시간으로 결과를 확인하면서, 원클릭으로 타임라인·오디오·자막·Ken Burns 애니메이션이 모두 포함된 완성 CapCut 프로젝트를 내보냅니다.
+생성 방식을 고르세요 — 구글 로그인으로 무료 시작하거나, 내 Gemini & Veo API 키로 최대 속도로. 대본만 불러오면 AutoFlowCut이 나머지를 처리합니다. 이미지·비디오를 일괄 생성하고, 실시간으로 결과를 확인하면서, 원클릭으로 타임라인·오디오·자막·Ken Burns 애니메이션이 모두 포함된 완성 프로젝트를 CapCut·Premiere·Vrew로 내보냅니다.
 
-웹 자동화 없음. 로그인 없음. reCAPTCHA 없음. 내 기기에서 Google 공식 API로 직접, 쿼터가 허용하는 한 최대 속도로.
+생성은 두 가지 방식, 내보내기는 세 가지, 번거로움은 제로.
 
 
 🎬 AI 영상 제작 전체 파이프라인
@@ -253,12 +266,12 @@ Google AI Studio 키를 한 번 등록하고, 대본을 불러오면 AutoFlowCut
 AutoFlowCut은 대본부터 타임라인까지 전체 워크플로우를 커버합니다:
 
 1. 프롬프트 가져오기 — TXT, CSV, SRT 파일에서 씬 프롬프트를 로드합니다.
-2. 레퍼런스 설정 — 캐릭터, 배경, 스타일 레퍼런스를 태그별로 매칭하여 시각적 일관성을 유지합니다.
+2. 레퍼런스 설정 — 캐릭터·배경·스타일 레퍼런스를 태그로 매칭하거나, 프롬프트에서 @ picker로 골라 넣어 시각적 일관성을 유지합니다.
 3. 이미지 생성 — Google Gemini API로 100장 이상의 AI 이미지를 일괄 생성. 에러 자동 재시도, 서버 성공·다운로드 실패 시 스마트 재다운로드.
 4. 비디오 생성 — Veo API로 선택한 씬에 T2V(텍스트→비디오) 또는 I2V(이미지→비디오) 생성.
 5. 미디어 선택 — 씬별로 이미지, T2V, I2V 중 최적의 미디어 선택. 자동 우선순위: I2V > T2V > 이미지.
 6. 오디오 배치 — 타임코드 파일명을 가진 나레이션·대사·SFX 파일을 넣으면 CapCut의 별도 트랙에 자동 정렬.
-7. CapCut 내보내기 — 원클릭으로 타임라인, 미디어, 오디오, 자막, Ken Burns 애니메이션이 포함된 완성 프로젝트 내보내기.
+7. 내보내기 — 원클릭으로 타임라인·미디어·오디오·자막·Ken Burns 애니메이션이 포함된 완성 프로젝트를 CapCut·Premiere·Vrew로 기록.
 
 
 🎙️ STORY ENGINE v2 — 대본부터 프로덕션까지 자동화
@@ -280,19 +293,20 @@ AutoFlowCut은 대본부터 타임라인까지 전체 워크플로우를 커버�
 
 🔧 사용 방법
 
-1. Google API 키 준비 — Google AI Studio(aistudio.google.com)에서 무료 키를 발급받아 설정에서 한 번 입력.
+1. 생성 방식 선택 — 구글 로그인으로 무료 시작하거나, 설정에서 내 Gemini / Veo API 키를 입력해 더 빠른 종량제 생성 사용.
 2. 프롬프트 준비 — 텍스트 입력, CSV 씬 데이터 가져오기, SRT 자막 파일 로드. 각 줄 또는 항목이 하나의 씬이 됩니다.
-3. 레퍼런스 이미지 설정 — 레퍼런스 이미지에 태그를 붙이면 씬에 자동 매칭됩니다.
+3. 레퍼런스 이미지 설정 — 레퍼런스(캐릭터·배경·스타일)에 태그를 붙여 씬에 자동 매칭하거나, 프롬프트에서 @를 입력해 골라 칩으로 넣기.
 4. 이미지 생성 — Gemini API가 모든 씬에 걸쳐 일관된 비주얼을 생성. 이미지 자동 로컬 저장.
 5. 비디오 생성 (선택) — 모션이 필요한 씬에 Veo API로 T2V 또는 I2V 비디오 생성. 해당 씬에 자동 매핑.
 6. 오디오 배치 (선택) — 타임코드 파일명의 TTS/대사/SFX 파일을 넣으면 CapCut에 자동 트랙 배치.
 7. 내보낼 미디어 선택 — 씬별로 이미지, T2V, I2V 중 선택. 자동 모드도 가능.
-8. CapCut 내보내기 — CapCut 프로젝트를 생성. 바로 CapCut에서 열어 편집을 시작하세요.
+8. 내보내기 — CapCut·Premiere·Vrew용 완성 프로젝트를 생성. Premiere·Vrew는 자동으로 열려 바로 편집.
 
 
 ⚡ 주요 기능
 
-- Google Gemini & Veo 공식 API — 직접 API 연결. 내 Google API 키를 사용하며 웹 자동화·로그인 불필요.
+- 두 가지 생성 모드 — 구글 Flow 로그인으로 무료 시작(초보자 친화)하거나, 내 Gemini / Veo API 키(BYOK)로 빠르게 대량·종량제 생성. 상단 토글로 언제든 전환.
+- API 키 모드 (BYOK) — 내 Gemini / Veo 키로 Google에 직접 연결. 로그인·웹 자동화 없이 쿼터가 허용하는 한 최대 속도로.
 - 타입별 모델 선택 — 이미지 생성용 Gemini 모델과 비디오 생성용 Veo 모델을 T2I / T2V / F2V 별로 독립적으로 선택.
 - 일괄 이미지 생성 — 레퍼런스 기반 스타일 매칭으로 수 분 내에 100장 이상 생성. 에러 자동 재시도.
 - 라이브 생성 그리드 — 각 씬이 완료될 때마다 실시간으로 이미지가 채워지는 모습을 확인.
@@ -303,9 +317,10 @@ AutoFlowCut은 대본부터 타임라인까지 전체 워크플로우를 커버�
 - 씬별 미디어 선택 — 씬마다 이미지, T2V, I2V 중 선택. 스마트 자동 모드로 최적 미디어 자동 선택.
 - 오디오 자동 배치 — 타임코드 파일명의 나레이션·대사·SFX를 CapCut의 별도 트랙에 자동 정렬. 직접 준비한 오디오와 Story Engine 생성 오디오 모두 지원.
 - AudioTimeline (멀티 트랙 미리보기) — Remotion 스타일 타임라인 뷰로 모든 오디오 트랙을 한눈에 확인. 트랙 크기 조절, 풍부한 툴팁, 줌 변경 후에도 항상 보이는 플레이헤드. 내보내기 전에 전체 오디오 믹스를 미리보기.
-- 원클릭 CapCut 내보내기 — 타임라인, 미디어, 오디오 트랙, 자막, Ken Burns 애니메이션을 하나의 프로젝트 파일로.
+- 원클릭 멀티 에디터 내보내기 — 타임라인·미디어·오디오 트랙·자막·Ken Burns 애니메이션이 담긴 완성 프로젝트를 CapCut·Adobe Premiere(.prproj)·Vrew(.vrew)로 기록. Premiere·Vrew는 내보내기 후 자동 실행.
 - 스타일 프리셋 — 87가지 내장 스타일 프리셋(애니, 수채화, 시네마틱, 수묵화 등)으로 모든 씬에 일관된 비주얼 적용. '스타일 필수' 설정 가능.
 - 자동 태그 매칭 — 레퍼런스에 태그를 한 번 붙이면 씬에 자동 매칭되어 시각적 일관성 유지.
+- @ 레퍼런스 picker & 칩 — 프롬프트에서 @를 입력하면 캐릭터·장면·스타일 레퍼런스를 목록에서 골라 넣을 수 있고, 썸네일이 달린 인라인 칩으로 표시되어 해당 생성에 첨부됩니다. 이미지·Veo 비디오 공통.
 - Ken Burns 효과 — 이미지 클립에 자동 줌/팬 애니메이션 적용.
 - 실시간 진행 배너 — 앱 상단에 실시간 생성 상태 표시. 완료율 + 원클릭 닫기.
 - 다양한 입력 형식 — TXT(줄 단위 프롬프트), CSV(구조화 데이터), SRT(타이밍 포함 자막).
@@ -341,7 +356,7 @@ Claude Code에서 사용 가능한 Story Engine v2 명령:
 
 🎯 이런 분께 추천합니다
 
-- AI 영상 크리에이터 — Google 공식 API로 이미지와 비디오를 모두 생성하고, 원클릭으로 CapCut 프로젝트로 내보내기.
+- AI 영상 크리에이터 — 무료 구글 로그인 또는 내 API 키로 이미지·비디오를 모두 생성하고, 원클릭으로 CapCut·Premiere·Vrew로 내보내기.
 - 얼굴 없는 YouTube 채널 — T2V/I2V 지원으로 AI 슬라이드쇼/나레이션 영상 제작 자동화.
 - AI 스토리 채널 — 200개 이상의 씬에서도 캐릭터, 배경, 스타일 일관성 유지. Story Engine v2로 주제 하나에서 풀 에피소드 생산.
 - 숏폼 & TikTok 크리에이터 — AI 생성 장면을 빠르게 숏폼 영상 프로젝트로 변환.
@@ -352,8 +367,8 @@ Claude Code에서 사용 가능한 Story Engine v2 명령:
 
 AutoFlowCut은 무료 오픈소스입니다.
 
-- 모든 기능 무료 — CapCut 내보내기만 유료
-- 매월 5회 무료 CapCut 내보내기 — 매달 갱신, 기간 제한 없음
+- 모든 기능 무료 — 내보내기(CapCut·Premiere·Vrew)만 유료
+- 매월 5회 무료 내보내기 — 매달 갱신, 기간 제한 없음
 - 가입 보너스 5회 — 계정 생성 시 추가 크레딧 지급
 - Pro: $4.99/월 또는 $39.99/년 (무제한 내보내기)
 - Google Gemini/Veo API 사용량은 사용자 본인의 Google 계정 쿼터에 따라 Google에서 직접 청구
@@ -362,8 +377,8 @@ AutoFlowCut은 무료 오픈소스입니다.
 
 📋 필요 사항
 
-- Google AI Studio API 키 (aistudio.google.com에서 무료 발급)
-- CapCut 데스크톱 앱 (무료 버전 가능)
+- 무료 Flow 로그인 생성을 위한 구글 계정 — 또는 BYOK 모드용 Google AI Studio API 키 (무료)
+- CapCut·Adobe Premiere·Vrew 중 내보낼 편집기
 - AI 생성을 위한 인터넷 연결
 - Windows 10 이상
 
@@ -385,6 +400,14 @@ Touchizen 제작 — touchizen.com
 
 ### What's New (새로운 기능)
 ```
+v2.1.0 — 생성은 두 가지 방식, 내보내기는 세 가지.
+
+생성 모드. 구글 Flow 로그인으로 무료 시작(API 키 불필요)하거나, 내 Gemini / Veo 키로 빠른 종량제 대량 생성으로 전환 — 상단 바에서 언제든 토글.
+
+멀티 에디터 내보내기. 완성 프로젝트를 CapCut·Adobe Premiere(.prproj)·Vrew(.vrew)로 원클릭 내보내기. Premiere·Vrew는 자동으로 열려 바로 편집.
+
+레퍼런스 picker & 칩. 프롬프트에서 @를 입력해 캐릭터·장면·스타일 레퍼런스를 목록에서 선택 — 썸네일이 달린 인라인 칩으로 삽입되어 이미지·비디오 생성에 함께 반영됩니다.
+
 v1.1.3 — 생성 안정성과 영어 UI 라벨을 개선했습니다. 예전 Flow 화면비 값이 남아 있어도 이미지 생성 요청이 올바르게 처리되어 장면 포맷을 바꿀 때 실패가 줄어듭니다. 영어 UI의 자동 스타일 라벨도 영어로 일관되게 표시되어 프리셋을 더 쉽게 고를 수 있습니다.
 
 v1.1.2 Store 업데이트 — Windows 타일과 앱 목록에서 기본 자리표시자 이미지가 아닌 AutoFlowCut 브랜드 아이콘이 표시되도록 Microsoft Store 패키지 자산을 수정했습니다.
@@ -414,7 +437,7 @@ I2V + T2V 동시 내보내기. 이미지→비디오와 텍스트→비디오 �
 
 ### Keywords (한국어)
 ```
-AI 영상 자동화, 텍스트투비디오, 이미지투비디오, AI 이미지 생성, 일괄 생성, 영상 타임라인, 자막, SRT, 오디오 싱크, Ken Burns, AI 스토리텔링, Story Engine, MCP, 오픈소스
+AI 영상 자동화, 텍스트투비디오, 이미지투비디오, AI 이미지 생성, 일괄 생성, BYOK, Flow 로그인, Premiere 내보내기, Vrew 내보내기, 레퍼런스 칩, 영상 타임라인, 자막, SRT, 오디오 싱크, Ken Burns, AI 스토리텔링, Story Engine, MCP, 오픈소스
 ```
 
 ---
@@ -423,21 +446,22 @@ AI 영상 자동화, 텍스트투비디오, 이미지투비디오, AI 이미지 
 
 ### Short Description
 ```
-Google Gemini/Veo APIで画像・動画を一括生成し、CapCutプロジェクトをワンクリックでエクスポートするデスクトップアプリ
+画像・動画を一括生成し、CapCut・Premiere・Vrewプロジェクトへワンクリックでエクスポート — 無料ログインまたは自分のAPIキー
 ```
 
 ### Description
 ```
 200シーンのAI動画、丸一日かかっていた作業が1時間以内に終わります。
 
-Google AI StudioキーをSettings に一度登録してスクリプトを読み込めば、あとはAutoFlowCutが自動処理。Gemini & Veoで画像・動画を一括生成し、リアルタイムで結果を確認しながら、タイムライン・音声・字幕・Ken Burnsアニメーション込みの完成CapCutプロジェクトをワンクリックでエクスポート。
+生成方法を選べます — Googleログインで無料スタート、または自分のGemini & Veo APIキーで最速に。スクリプトを読み込めば、あとはAutoFlowCutが自動処理。画像・動画を一括生成し、リアルタイムで結果を確認しながら、タイムライン・音声・字幕・Ken Burnsアニメーション込みの完成プロジェクトをCapCut・Adobe Premiere・Vrewへワンクリックでエクスポート。
 
-ウェブ自動化なし。ログインなし。reCAPTCHAなし。デバイスからGoogle公式APIへ直接、クォータの許す限り最速で。公式APIベースの安定した生成ワークフローで、AutoFlowCutをスムーズに利用できます。
+生成は2通り、エクスポートは3通り、手間はゼロ。
 
 
 ⚡ 主な機能
 
-- Google Gemini & Veo公式API — 直接API接続。ご自身のAPIキーを使用。ウェブ自動化・ログイン不要
+- 2つの生成モード — Google Flowログインで無料スタート（初心者向け）、または自分のGemini / Veo APIキー（BYOK）で高速・大量・従量制の生成。上部トグルでいつでも切替
+- API接続（BYOK） — 自分のGemini / Veoキーでログイン不要の直接接続。ウェブ自動化なし、クォータの許す限り最速で
 - タイプ別モデル選択 — 画像生成用GeminiモデルとVeoモデルをT2I/T2V/F2Vごとに個別選択
 - 一括画像生成 — リファレンスベースのスタイルマッチングで100枚以上を数分で生成
 - ライブ生成グリッド — 各シーン完了時にリアルタイムで画像が表示
@@ -448,9 +472,10 @@ Google AI StudioキーをSettings に一度登録してスクリプトを読み�
 - シーン別メディア選択 — 画像、T2V、I2Vから選択。スマート自動モード搭載
 - 音声自動配置 — タイムコード付きファイル名のナレーション、セリフ、SFXをCapCutの別トラックに自動配置
 - AudioTimeline（マルチトラック・プレビュー） — Remotionスタイルのタイムラインビューで全オーディオトラックを一覧表示
-- ワンクリックCapCutエクスポート — タイムライン、メディア、音声、字幕、Ken Burnsアニメーション
+- ワンクリック・マルチエディターエクスポート — タイムライン・メディア・音声・字幕・Ken Burnsアニメーション込みの完成プロジェクトをCapCut・Adobe Premiere（.prproj）・Vrew（.vrew）へ書き出し。Premiere・Vrewはエクスポート後に自動起動
 - スタイルプリセット — 87種類の内蔵スタイルプリセット（アニメ、水彩画、シネマティックなど）
 - 自動タグマッチング — キャラクター、背景、スタイルの視覚的一貫性を維持
+- @リファレンスピッカー & チップ — プロンプトで@を入力してキャラクター・シーン・スタイルのリファレンスをメニューから選択。サムネイル付きインラインチップとして挿入され、その生成に添付（画像・Veo動画共通）
 - リアルタイム進捗バナー — アプリ全体で生成状態をリアルタイム表示
 - Story Engine v2 — 9-Wave自動パイプライン（スクリプト → TTS → ストーリーボード → 画像 → CapCut → アップロードメタデータ）
 - MCPサーバー（Claude Code連携） — 内蔵MCPサーバーでClaude Codeからシーン、プロンプト、リファレンスを直接編集・生成トリガー可能
@@ -467,21 +492,29 @@ Google AI StudioキーをSettings に一度登録してスクリプトを読み�
 
 
 💰 価格
-- 全機能無料 — CapCutエクスポートのみ有料
-- 毎月5回の無料CapCutエクスポート — 月次リフレッシュ、期間制限なし
+- 全機能無料 — エクスポート（CapCut・Premiere・Vrew）のみ有料
+- 毎月5回の無料エクスポート — 月次リフレッシュ、期間制限なし
 - 登録ボーナス5回 — アカウント作成時に追加クレジット
 - Pro: $4.99/月 または $39.99/年（無制限）
 - Google Gemini/Veo API利用料はご自身のGoogleアカウントのクォータに従いGoogleに直接請求
 - ソースコード: github.com/touchizen/AutoFlowCut
 
 
-📋 必要環境: Google AI Studio APIキー（aistudio.google.comで無料取得）、CapCutデスクトップアプリ、インターネット接続、Windows 10以降
+📋 必要環境: 無料Flowログイン生成用のGoogleアカウント（またはBYOK用のGoogle AI Studio APIキー・無料）、CapCut・Adobe Premiere・Vrewのいずれか、インターネット接続、Windows 10以降
 
 💬 サポート: gordon.ahn@touchizen.com
 ```
 
 ### What's New
 ```
+v2.1.0 — 生成は2通り、エクスポートは3通り。
+
+生成モード。Google Flowログインで無料スタート（APIキー不要）、または自分のGemini / Veoキーで高速・従量制の大量生成に切替 — 上部バーでいつでもトグル。
+
+マルチエディターエクスポート。完成プロジェクトをCapCut・Adobe Premiere（.prproj）・Vrew（.vrew）へワンクリックでエクスポート。Premiere・Vrewは自動で開いてすぐ編集。
+
+リファレンスピッカー & チップ。プロンプトで@を入力してキャラクター・シーン・スタイルのリファレンスを選択 — サムネイル付きインラインチップとして挿入され、画像・動画の生成に反映されます。
+
 v1.1.3 — 生成の安定性と英語UIのラベルを改善しました。古いFlow形式のアスペクト比が残っていても画像生成リクエストが正しく処理され、シーン形式を切り替えたときの失敗が減ります。英語UIの自動スタイルラベルも英語で統一され、プリセットを選びやすくなりました。
 
 v1.1.2 Store update — Microsoft Storeパッケージのアセットを更新し、Windowsタイルとアプリ一覧で汎用プレースホルダーではなくAutoFlowCutブランドのアイコンが表示されるようにしました。
@@ -515,21 +548,22 @@ I2V+T2V同時エクスポート。画像→動画とテキスト→動画の両�
 
 ### Short Description
 ```
-KI-Bilder und -Videos mit der Google Gemini/Veo API generieren und CapCut-Projekte mit einem Klick exportieren.
+KI-Bilder und -Videos generieren und per Klick nach CapCut, Premiere & Vrew exportieren — Gratis-Login oder eigener API-Schlüssel.
 ```
 
 ### Description
 ```
 Ein KI-Video mit 200 Szenen dauerte früher einen ganzen Tag. Mit AutoFlowCut schaffen Sie es in unter einer Stunde.
 
-Google AI Studio-Schlüssel einmal eintragen, Skript laden — der Rest läuft automatisch. Gemini & Veo generieren Bilder und Videos im Stapel, Sie verfolgen die Ergebnisse in Echtzeit, und mit einem Klick exportieren Sie ein vollständiges CapCut-Projekt inklusive Timeline, Audio, Untertiteln und Ken Burns-Animationen.
+Wählen Sie, wie Sie generieren — gratis starten mit einem Google-Login oder mit Ihrem eigenen Gemini & Veo API-Schlüssel für maximale Geschwindigkeit. Skript laden, den Rest erledigt AutoFlowCut: Bilder und Videos im Stapel generieren, Ergebnisse in Echtzeit verfolgen und mit einem Klick ein vollständiges Projekt — Timeline, Audio, Untertitel und Ken Burns-Animationen — nach CapCut, Adobe Premiere oder Vrew exportieren.
 
-Keine Web-Automatisierung. Keine Logins. Kein reCAPTCHA. Direkte API-Aufrufe von Ihrem Gerät zu Google — so schnell wie Ihr Kontingent es erlaubt.
+Zwei Wege zu generieren, drei Wege zu exportieren, null Aufwand.
 
 
 ⚡ HAUPTFUNKTIONEN
 
-- Google Gemini & Veo API — Direkte API-Verbindung. Eigener Google API-Schlüssel, keine Web-Automatisierung nötig
+- Zwei Generierungsmodi — Gratis starten mit einem Google-Flow-Login (anfängerfreundlich) oder mit eigenem Gemini / Veo API-Schlüssel (BYOK) für schnelle, stapelweise, nutzungsbasierte Generierung. Jederzeit über den oberen Umschalter wechseln
+- API-Modus (BYOK) — Eigener Gemini / Veo-Schlüssel für direkte, login-freie Aufrufe zu Google — keine Web-Automatisierung, so schnell wie Ihr Kontingent es erlaubt
 - Modellauswahl pro Typ — Gemini-Modell für Bilder und Veo-Modell für Videos unabhängig pro Generierungstyp wählen (T2I / T2V / F2V)
 - Stapelweise Bildgenerierung — 100+ Bilder in Minuten mit referenzbasiertem Style-Matching
 - Live-Generierungsraster — Bilder erscheinen in Echtzeit, sobald jede Szene fertig ist
@@ -540,9 +574,10 @@ Keine Web-Automatisierung. Keine Logins. Kein reCAPTCHA. Direkte API-Aufrufe von
 - Medienauswahl pro Szene — Bild, T2V oder I2V pro Szene wählen. Smart-Auto-Modus verfügbar
 - Audio-Auto-Platzierung — Narration, Dialog und SFX mit Timecode-Dateinamen werden automatisch auf separaten CapCut-Tracks platziert
 - AudioTimeline (Multi-Track-Vorschau) — Remotion-Stil Timeline-Ansicht aller Audio-Tracks
-- Ein-Klick CapCut-Export — Timeline, Medien, Audio, Untertitel und Ken Burns-Animationen
+- Ein-Klick Multi-Editor-Export — Vollständiges Projekt (Timeline, Medien, Audio, Untertitel, Ken Burns-Animationen) für CapCut, Adobe Premiere (.prproj) oder Vrew (.vrew). Premiere und Vrew starten nach dem Export automatisch
 - Stil-Presets — 87 integrierte Stil-Presets (Anime, Aquarell, Cinematic usw.)
 - Automatisches Tag-Matching — Visuelle Konsistenz über alle Szenen
+- @-Referenz-Picker & Chips — Tippen Sie @ in einem Prompt, um eine Charakter-, Szenen- oder Stilreferenz aus einem Menü zu wählen; sie wird als Inline-Chip mit Vorschaubild eingefügt und dieser Generierung angehängt (Bilder und Veo-Videos)
 - Live-Fortschrittsbanner — Echtzeit-Generierungsstatus über die gesamte App
 - Story Engine v2 — 9-Wave automatisierte Pipeline (Skript → TTS → Storyboard → Bilder → CapCut → Upload-Metadaten)
 - MCP-Server (Claude Code) — Integrierter MCP-Server für direkte Bearbeitung und Generierungssteuerung über Claude Code
@@ -559,21 +594,29 @@ Der integrierte MCP-Server (Model Context Protocol) verbindet sich direkt mit Cl
 
 
 💰 Preise
-- Alle Funktionen kostenlos — nur CapCut-Export ist kostenpflichtig
-- 5 kostenlose CapCut-Exporte pro Monat — monatliche Erneuerung, keine Zeitbeschränkung
+- Alle Funktionen kostenlos — nur der Export (CapCut, Adobe Premiere oder Vrew) ist kostenpflichtig
+- 5 kostenlose Exporte pro Monat — monatliche Erneuerung, keine Zeitbeschränkung
 - 5 Bonus-Credits bei Anmeldung — zusätzliches Guthaben bei Kontoerstellung
 - Pro: 4,99 $/Monat oder 39,99 $/Jahr (unbegrenzt)
 - Google Gemini/Veo API-Nutzung wird direkt von Google gemäß Ihrem eigenen Kontokontingent abgerechnet
 - Quellcode: github.com/touchizen/AutoFlowCut
 
 
-📋 Voraussetzungen: Google AI Studio API-Schlüssel (kostenlos unter aistudio.google.com), CapCut Desktop-App, Internetverbindung, Windows 10+
+📋 Voraussetzungen: Google-Konto für die kostenlose Flow-Login-Generierung (oder Google AI Studio API-Schlüssel für den BYOK-Modus, kostenlos), CapCut, Adobe Premiere oder Vrew, Internetverbindung, Windows 10+
 
 💬 Support: gordon.ahn@touchizen.com
 ```
 
 ### What's New
 ```
+v2.1.0 — Zwei Wege zu generieren, drei Wege zu exportieren.
+
+Generierungsmodi. Gratis starten mit einem Google-Flow-Login (kein API-Schlüssel nötig) oder zu Ihrem eigenen Gemini / Veo-Schlüssel für schnelle, nutzungsbasierte Stapelgenerierung wechseln — jederzeit über die obere Leiste umschalten.
+
+Multi-Editor-Export. Vollständiges Projekt nach CapCut, Adobe Premiere (.prproj) oder Vrew (.vrew) mit einem Klick exportieren. Premiere und Vrew öffnen sich automatisch, bereit zum Bearbeiten.
+
+Referenz-Picker & Chips. Tippen Sie @ in einem Prompt, um eine Charakter-, Szenen- oder Stilreferenz aus einem Menü zu wählen — sie wird als Inline-Chip mit Vorschaubild eingefügt und fließt in die Generierung ein, für Bilder und Videos.
+
 v1.1.3 — Zuverlässigere Generierung und klarere englische UI-Beschriftungen. Die Bildgenerierung verarbeitet ältere Flow-Seitenverhältniswerte jetzt korrekt, sodass beim Wechseln von Szenenformaten weniger Anfragen fehlschlagen. Englische Auto-Style-Labels bleiben nun vollständig auf Englisch, damit Presets leichter zu überblicken sind.
 
 v1.1.2 Store-Update — Die Microsoft Store-Paketassets wurden aktualisiert, damit Windows-Kacheln und App-Listen AutoFlowCut-Branding statt generischer Platzhalterbilder verwenden.

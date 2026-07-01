@@ -7,15 +7,15 @@ const CAPTION_HEIGHT = 120;
 
 const screenshots = [
   { file: '스크린샷 2026-06-06 202752.png', caption: 'Build a full video timeline from AI-generated scenes, audio, and subtitles' },
-  { file: '스크린샷 2026-06-06 203328.png', caption: 'Generate every scene in sequence with one guided workflow' },
-  { file: '스크린샷 2026-06-06 203345.png', caption: 'Review prompts, media, and status across the entire project' },
+  { file: '스크린샷 2026-07-01 201635.png', caption: 'Generate free with a Google login, or go fast with your own API key' },
   { file: '스크린샷 2026-06-06 203401.png', caption: 'Generate up to 100 images in about 2-5 minutes with batch selection' },
   { file: '스크린샷 2026-06-06 203415.png', caption: 'Keep characters consistent with reusable reference images' },
+  { file: '스크린샷 2026-07-01 192008.png', caption: 'Type @ to insert character, scene, or style references into any prompt' },
+  { file: '스크린샷 2026-07-01 192159.png', caption: 'Preview your generated video scenes instantly inside the app' },
   { file: '스크린샷 2026-06-06 203424.png', caption: 'Import scripts, scene CSV files, references, subtitles, and audio packages' },
-  { file: '스크린샷 2026-06-06 203438.png', caption: 'Export ready-to-edit CapCut projects with subtitles and Ken Burns motion' },
-  { file: '스크린샷 2026-06-06 203531.png', caption: 'Preview long-form stories with synchronized timeline tracks' },
-  { file: '스크린샷 2026-06-09 120954.png', caption: 'Use @mentions in video prompts to insert character references' },
+  { file: '스크린샷 2026-07-01 201538.png', caption: 'Export one project to CapCut, Premiere, or Vrew' },
   { file: '스크린샷 2026-06-06 203713.png', caption: 'Open the exported project directly in CapCut for final editing' },
+  { file: '스크린샷 2026-07-01 201453.png', caption: 'Your export opens automatically in Adobe Premiere' },
 ];
 
 function splitToLines(text, fontSize, maxWidth) {
