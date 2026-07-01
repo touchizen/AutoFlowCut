@@ -5,22 +5,28 @@
 ## 📋 Notes for Certification Testers
 
 ```
-Testing this app requires a free Google AI Studio API key. Steps:
+AutoFlowCut has TWO ways to generate — you can test with EITHER one. Pick whichever
+is easier; both call Google's official services directly from the app (no intermediary
+server), and you can switch between them anytime from the toggle in the top bar.
 
-1. Go to https://aistudio.google.com and sign in with any Google account.
-2. Click "Get API key" → "Create API key" → copy the key.
-3. Launch AutoFlowCut → click "API Key" in the top-right header.
-4. Paste the key and click Save. The header badge turns green.
+── Option A · Flow Login mode (easiest — no API key needed) ──
+1. Launch AutoFlowCut. On the first "Choose how to generate" screen, click "Flow Login".
+2. Sign in with any Google account when prompted.
+3. Enter a prompt and click Generate. Images (Gemini) and videos (Veo) are generated
+   through your Google Flow session.
 
-Image generation (Google Gemini) and video generation (Veo) are now available.
-All AI calls go directly from the app to Google's official API — no intermediary server.
+── Option B · API Key mode (BYOK) ──
+1. Get a free key: go to https://aistudio.google.com, sign in with any Google account,
+   then click "Get API key" → "Create API key" → copy the key.
+2. Launch AutoFlowCut and choose "API Key" on the first screen (or switch via the top toggle).
+3. Click "API Key" in the top-right header, paste the key, and click Save.
+   The header badge turns green.
+4. Enter a prompt and click Generate.
 
-Alternatively, you can generate without an API key by choosing "Flow Login" mode
-on the first screen and signing in with any Google account.
-
-Export (CapCut, Adobe Premiere, or Vrew — the only paid feature) can be tested with
-the 5 free trial exports automatically credited to a new account. Create a free account at touchizen.com,
-or use the existing test account below if one has been provided separately.
+── Export (the only paid feature) ──
+Export writes a ready-to-edit project for CapCut, Adobe Premiere (.prproj), or Vrew (.vrew).
+It can be tested with the 5 free trial exports automatically credited to a new account.
+Create a free account at touchizen.com, or use the test account provided separately.
 ```
 
 ---
@@ -193,7 +199,7 @@ GitHub Issues: github.com/touchizen/AutoFlowCut/issues
 
 Made by Touchizen — touchizen.com
 
-Disclaimer: This app is an independent product developed by Touchizen and is not affiliated with, endorsed by, or sponsored by Google or ByteDance (CapCut).
+Disclaimer: This app is an independent product developed by Touchizen and is not affiliated with, endorsed by, or sponsored by Google, ByteDance (CapCut), Adobe and VoyagerX
 ```
 
 ### What's New
