@@ -12,6 +12,7 @@ import { useVideoAutomation } from './hooks/useVideoAutomation'
 import { useVideoScenes } from './hooks/useVideoScenes'
 import { useI18n } from './hooks/useI18n'
 import { useProjectData } from './hooks/useProjectData'
+import { useStoryPipeline } from './hooks/useStoryPipeline'
 import { useReferenceGeneration } from './hooks/useReferenceGeneration'
 import { useStyleThumbnails } from './hooks/useStyleThumbnails'
 import { useSceneGeneration } from './hooks/useSceneGeneration'
@@ -437,7 +438,7 @@ function App() {
   })
 
   // Project Data 관리
-  const { addPendingSave, handleProjectChange, saveCurrentProject, isRestoringRef, projectLoading, flowProjectReady, flowProjectId: _flowProjectId } = useProjectData({
+  const { addPendingSave, handleProjectChange, saveCurrentProject, saveCurrentProjectWithPayload, isRestoringRef, projectLoading, flowProjectReady, flowProjectId: _flowProjectId } = useProjectData({
     settings, setSettings, scenes, references, setScenes, setReferences,
     videoScenes, setVideoScenes,
     framePairs, setFramePairs,
@@ -458,6 +459,21 @@ function App() {
   // #R3-1: flowProjectId ref 동기화 — engineFlow 가 IPC 호출 시 최신 bound id 를 사용한다.
   // (useEffect 대신 렌더 중 직접 갱신 — getFlowProjectId() 는 동기 호출이므로 최신값 필요)
   flowProjectIdRef.current = _flowProjectId ?? null
+
+  // Story 파이프라인 — projectPath 는 폴더 저장 모드의 프로젝트 루트
+  // (workFolder/projectName, useProjectData 의 audio 폴더 경로 계산과 동일 패턴).
+  const workFolder = localStorage.getItem('workFolderPath')
+  const storyProjectPath = settings.saveMode === 'folder' && workFolder && settings.projectName
+    ? `${workFolder}/${settings.projectName}`
+    : null
+  const storyPipeline = useStoryPipeline({
+    projectPath: storyProjectPath,
+    onPushScenes: async (payload) => {
+      const { nextScenes, nextSrtTrack } = scenesHook.importStoryScenes(payload)
+      const r = await saveCurrentProjectWithPayload({ scenes: nextScenes, srtTrack: nextSrtTrack })
+      if (!r.ok) throw new Error('project save failed')
+    },
+  })
 
   // Flow 프로젝트가 준비되면(컴포저 가시·settle) 모델 목록을 백그라운드로 미리 스크랩한다.
   //   이렇게 캐시해 두면 설정 모달을 열 때 느린 라이브 스크랩 없이 즉시 동적 목록이 뜬다.
