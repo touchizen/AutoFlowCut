@@ -103,11 +103,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
       const operationId = randomUUID()
       const myController = new AbortController()
       controller = myController
-      for (const d of DOWNSTREAM[step]) {
-        state.steps[d] = { status: 'pending' }
-        // 하류 prompts가 pending으로 리셋되면 보류 push도 되돌려 재발신 대상에서 제외한다
-        if (d === 'prompts') state.pendingPushRevision = state.lastPushedRevision
-      }
+      // 하류 리셋 — revision은 스펙대로 단조 증가 유지(빈 push 재발신은 maybeResendPush의 prompts-done 가드가 차단)
+      for (const d of DOWNSTREAM[step]) state.steps[d] = { status: 'pending' }
       state.steps[step] = { status: 'running', updatedAt: new Date().toISOString() }
       await flush(); send('story:state', { state }, operationId)
       try {
@@ -127,6 +124,13 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
     },
     async abort() {
       controller?.abort()
+      // 중단 시점에 running인 스텝은 동기적으로 terminal 마킹 — 이후 다른 스텝 시작으로
+      // controller가 교체돼도 running 잔류가 없도록. stale settle의 상태 쓰기는 캡처 가드가 차단.
+      for (const [name, s] of Object.entries(state?.steps || {})) {
+        if (s.status === 'running') {
+          state.steps[name] = { status: 'error', error: 'aborted', updatedAt: new Date().toISOString() }
+        }
+      }
       await flush()
     },
     async ackPush({ pushRevision, ok }) {

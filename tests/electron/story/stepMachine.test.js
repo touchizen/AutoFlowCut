@@ -131,4 +131,51 @@ describe('stepMachine', () => {
     const state = await machine.getState()
     expect(state.steps.script.status).toBe('done')
   })
+
+  it('하류 리셋 + 늦은 ack 후 prompts 재실행은 새 revision으로 push하고, 유실 시 재발신된다', async () => {
+    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await machine.start('scenes', {})
+    await machine.start('prompts', {})   // push rev1 발신 (pending=1, last=0), ack 아직 없음
+
+    await machine.start('scenes', {})    // 하류 리셋: prompts → pending
+    await machine.ackPush({ pushRevision: 1, ok: true })   // 늦은 옛 ack 도착 → last=1
+
+    emitted.length = 0
+    await machine.start('prompts', {})   // 재실행 push는 rev1 재사용이 아닌 rev2여야 함
+    const push = emitted.find((e) => e.ch === 'story:pushScenes')
+    expect(push).toBeTruthy()
+    expect(push.payload.pushRevision).toBe(2)
+
+    emitted.length = 0
+    await machine.open()                 // rev2 push 유실 가정 → 재발신되어야 함
+    const resend = emitted.find((e) => e.ch === 'story:pushScenes')
+    expect(resend).toBeTruthy()
+    expect(resend.payload.pushRevision).toBe(2)
+  })
+
+  it('abort 후 다른 스텝을 시작해도 중단된 스텝이 running으로 잔류하지 않는다', async () => {
+    // 1차 script는 정상 완료시켜 script.md를 만들어 둔다 (scenes 선행 조건)
+    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+
+    let rejectStale
+    llm.generateScript.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectStale = reject }))
+    const staleStart = machine.start('script', { input: { type: 'title', title: 'T2' }, options: { language: 'ko' } })
+    while (!rejectStale) { await new Promise((r) => setImmediate(r)) }
+
+    await machine.abort()                // abort 시점에 running이던 script는 동기적으로 terminal 처리
+    await machine.start('scenes', {})    // stale settle 전에 다른 스텝 시작 (controller 교체)
+    rejectStale(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+    await staleStart                     // stale settle — 가드로 상태 쓰기 차단
+
+    const state = await machine.getState()
+    expect(state.steps.script.status).toBe('error')
+    expect(state.steps.script.error).toContain('aborted')
+    expect(state.steps.scenes.status).toBe('done')
+
+    // 디스크 reopen에도 running 잔류 없음
+    const reopened = createStepMachine({ projectPath: dir, llm, emit: () => {}, getApiKey: () => 'k' })
+    const { state: diskState } = await reopened.open()
+    expect(diskState.steps.script.status).toBe('error')
+    expect(Object.values(diskState.steps).every((s) => s.status !== 'running')).toBe(true)
+  })
 })
