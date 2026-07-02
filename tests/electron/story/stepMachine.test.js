@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createStepMachine } from '../../../electron/story/stepMachine.js'
@@ -177,5 +177,37 @@ describe('stepMachine', () => {
     const { state: diskState } = await reopened.open()
     expect(diskState.steps.script.status).toBe('error')
     expect(Object.values(diskState.steps).every((s) => s.status !== 'running')).toBe(true)
+  })
+
+  it('ackPush(ok:false)는 lastPushedRevision을 갱신하지 않고 lastPushError를 저장하며, 이후 open()이 재발신한다', async () => {
+    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await machine.start('scenes', {})
+    await machine.start('prompts', {})
+    const push = emitted.find((e) => e.ch === 'story:pushScenes')
+
+    await machine.ackPush({ pushRevision: push.payload.pushRevision, ok: false, reason: 'transaction failed' })
+    const state = await machine.getState()
+    expect(state.lastPushedRevision).toBe(0)
+    expect(state.lastPushError).toMatchObject({ pushRevision: push.payload.pushRevision, reason: 'transaction failed' })
+    expect(state.lastPushError.at).toBeTruthy()
+
+    emitted.length = 0
+    await machine.open()
+    expect(emitted.some((e) => e.ch === 'story:pushScenes')).toBe(true)
+  })
+
+  it('open 없이 getState() 호출해도 throw하지 않는다 (방어적 폴백)', async () => {
+    const freshDir = await mkdtemp(path.join(tmpdir(), 'sm-fresh-'))
+    const fresh = createStepMachine({ projectPath: freshDir, llm, emit: () => {}, getApiKey: () => 'k' })
+    const state = await fresh.getState()
+    expect(state.steps.script.status).toBe('pending')
+  })
+
+  it('open 없이 abort() 호출해도 throw하지 않고 story.json에 null을 쓰지 않는다', async () => {
+    const freshDir = await mkdtemp(path.join(tmpdir(), 'sm-fresh2-'))
+    const fresh = createStepMachine({ projectPath: freshDir, llm, emit: () => {}, getApiKey: () => 'k' })
+    await fresh.abort()
+    const raw = await readFile(path.join(freshDir, 'story', 'story.json'), 'utf-8').catch(() => null)
+    expect(raw).toBeNull()
   })
 })

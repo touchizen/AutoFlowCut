@@ -52,4 +52,31 @@ describe('story IPC', () => {
     const r = await ipc.invoke('story:get-state', { projectToken: a.projectToken })
     expect(r.error).toBe('stale-token')
   })
+
+  it('동시 story:open 호출은 직렬화되어 마지막 토큰만 유효하다', async () => {
+    const p1 = ipc.invoke('story:open', { projectPath: dir })
+    const p2 = ipc.invoke('story:open', { projectPath: dir })
+    const [a, b] = await Promise.all([p1, p2])
+    expect(a.projectToken).not.toBe(b.projectToken)
+    const stale = await ipc.invoke('story:get-state', { projectToken: a.projectToken })
+    expect(stale.error).toBe('stale-token')
+    const fresh = await ipc.invoke('story:get-state', { projectToken: b.projectToken })
+    expect(fresh.error).toBeUndefined()
+  })
+
+  it('story:push-ack(ok:false)는 operationId/reason을 버리지 않고 lastPushError로 보존한다', async () => {
+    const { projectToken } = await ipc.invoke('story:open', { projectPath: dir })
+    await ipc.invoke('story:start', { projectToken, step: 'script', params: { input: { type: 'title', title: 'T' }, options: {} } })
+    await ipc.invoke('story:start', { projectToken, step: 'scenes', params: {} })
+    await ipc.invoke('story:start', { projectToken, step: 'prompts', params: {} })
+    const pushEvent = sent.find((e) => e.ch === 'story:pushScenes')
+
+    await ipc.invoke('story:push-ack', {
+      projectToken, operationId: 'op-1', pushRevision: pushEvent.p.pushRevision, ok: false, reason: 'save failed',
+    })
+
+    const state = await ipc.invoke('story:get-state', { projectToken })
+    expect(state.lastPushedRevision).toBe(0)
+    expect(state.lastPushError).toMatchObject({ pushRevision: pushEvent.p.pushRevision, reason: 'save failed' })
+  })
 })

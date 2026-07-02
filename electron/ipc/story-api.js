@@ -7,6 +7,7 @@ import * as llmGemini from '../api/llm/llmGemini.js'
 
 export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini }) {
   let machine = null
+  let openLock = Promise.resolve()
 
   const emit = (channel, payload) => {
     const win = getWindow?.()
@@ -18,14 +19,20 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
     return fn(payload)
   }
 
-  ipcMain.handle('story:open', async (_e, { projectPath } = {}) => {
-    if (machine) await machine.abort()
-    machine = createStepMachine({ projectPath, llm, emit, getApiKey: () => keyStore.getKey() })
-    return machine.open()
+  ipcMain.handle('story:open', (_e, { projectPath } = {}) => {
+    // 동시 open 레이스 방지 — 직렬화(promise 체인): 이전 open이 끝나야 다음 open이 실행된다
+    const task = openLock.then(async () => {
+      if (machine) await machine.abort()
+      machine = createStepMachine({ projectPath, llm, emit, getApiKey: () => keyStore.getKey() })
+      return machine.open()
+    })
+    openLock = task.then(() => undefined, () => undefined)
+    return task
   })
 
   ipcMain.handle('story:get-state', guarded(async () => machine.getState()))
   ipcMain.handle('story:start', guarded(({ step, params }) => machine.start(step, params)))
   ipcMain.handle('story:abort', guarded(() => machine.abort()))
-  ipcMain.handle('story:push-ack', guarded(({ pushRevision, ok }) => machine.ackPush({ pushRevision, ok })))
+  ipcMain.handle('story:push-ack', guarded(({ operationId, pushRevision, ok, reason }) =>
+    machine.ackPush({ operationId, pushRevision, ok, reason })))
 }

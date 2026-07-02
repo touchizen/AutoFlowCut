@@ -45,6 +45,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
   }
 
   async function maybeResendPush(operationId) {
+    if (!state) state = await store.load()
     if (state.steps.prompts.status === 'done' && state.pendingPushRevision > state.lastPushedRevision) {
       const scenesJson = JSON.parse((await store.loadText('scenes.json')) || '{"scenes":[]}')
       sendPush(scenesJson.scenes, operationId)
@@ -95,6 +96,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
       return { projectToken, state }
     },
     async getState() {
+      if (!state) state = await store.load()
       await maybeResendPush()
       return state
     },
@@ -131,12 +133,19 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
           state.steps[name] = { status: 'error', error: 'aborted', updatedAt: new Date().toISOString() }
         }
       }
-      await flush()
+      if (state) await flush()
     },
-    async ackPush({ pushRevision, ok }) {
-      if (ok && pushRevision > state.lastPushedRevision) {
-        state.lastPushedRevision = pushRevision
-        state.pushedAt = new Date().toISOString()
+    async ackPush({ pushRevision, ok, reason }) {
+      if (ok) {
+        if (pushRevision > state.lastPushedRevision) {
+          state.lastPushedRevision = pushRevision
+          state.pushedAt = new Date().toISOString()
+        }
+        state.lastPushError = null
+        await flush()
+      } else {
+        // revision 조건은 그대로라 open()/getState()의 maybeResendPush가 재발신한다
+        state.lastPushError = { pushRevision, reason, at: new Date().toISOString() }
         await flush()
       }
     },
