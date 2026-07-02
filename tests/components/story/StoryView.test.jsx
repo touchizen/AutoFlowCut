@@ -23,14 +23,31 @@ describe('StoryView', () => {
     expect(screen.getByText(/오디오/)).toBeTruthy()
     expect(screen.getByText(/프롬프트/)).toBeTruthy()
   })
-  it('제목 입력 후 시작하면 start("script")가 호출된다', () => {
+  it('제목 입력 후 시작하면 start("script")가 stepMachine이 기대하는 shape로 호출된다', () => {
     const p = pipeline()
     render(<StoryView pipeline={p} />)
     fireEvent.change(screen.getByPlaceholderText(/제목/), { target: { value: '운수 좋은 날' } })
+    fireEvent.change(screen.getByPlaceholderText(/장르/), { target: { value: '단편' } })
+    fireEvent.change(screen.getByPlaceholderText(/길이/), { target: { value: '5' } })
+    fireEvent.change(screen.getByPlaceholderText(/언어/), { target: { value: 'ko' } })
     fireEvent.click(screen.getByRole('button', { name: /대본 생성/ }))
-    expect(p.start).toHaveBeenCalledWith('script', expect.objectContaining({
-      input: expect.objectContaining({ title: '운수 좋은 날' }),
-    }))
+    // stepMachine.steps.script는 params.input(type/title)과 params.options(genre/targetMinutes/language)를
+    // 분리해서 읽는다 — input에 genre/length/language를 섞어 넣으면 LLM opts로 전달되지 않아 무시된다.
+    expect(p.start).toHaveBeenCalledWith('script', {
+      input: { type: 'title', title: '운수 좋은 날' },
+      options: { genre: '단편', targetMinutes: 5, language: 'ko' },
+    })
+  })
+
+  it('장르/길이 미입력 시 options에서 해당 필드가 undefined로 빠진다', () => {
+    const p = pipeline()
+    render(<StoryView pipeline={p} />)
+    fireEvent.change(screen.getByPlaceholderText(/제목/), { target: { value: '제목만' } })
+    fireEvent.click(screen.getByRole('button', { name: /대본 생성/ }))
+    expect(p.start).toHaveBeenCalledWith('script', {
+      input: { type: 'title', title: '제목만' },
+      options: { genre: undefined, targetMinutes: undefined, language: 'ko' },
+    })
   })
   it('script running이면 스트리밍 텍스트를 표시한다', () => {
     const p = pipeline({ streamingText: '옛날 옛적에...' })

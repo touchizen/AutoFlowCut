@@ -74,7 +74,13 @@ export default function StoryView({ pipeline }) {
 
   const handlePrimaryAction = () => {
     if (currentStep === 'script') {
-      start('script', { input: { title, genre, length, language } })
+      // stepMachine.steps.script는 params.input(대본 생성 소재)과 params.options(LLM 호출
+      // opts로 그대로 spread)를 분리해서 읽는다 — genre/length/language를 input에 섞으면
+      // options로 전달되지 않아 LLM이 이를 무시하고(예: 한국어 입력에도 영어 대본) 버그가 된다.
+      start('script', {
+        input: { type: 'title', title },
+        options: { genre: genre || undefined, targetMinutes: Number(length) || undefined, language },
+      })
     } else {
       start(currentStep, {})
     }
