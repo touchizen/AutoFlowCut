@@ -17,6 +17,7 @@ export default {
     unavailable: '지원되지 않는 지역',
     language: '언어',
     menu: '메뉴',
+    story: '스토리',
   },
   
   // 시작 화면

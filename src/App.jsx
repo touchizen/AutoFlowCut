@@ -13,6 +13,7 @@ import { useVideoScenes } from './hooks/useVideoScenes'
 import { useI18n } from './hooks/useI18n'
 import { useProjectData } from './hooks/useProjectData'
 import { useStoryPipeline } from './hooks/useStoryPipeline'
+import { useStoryAutoOpen } from './hooks/useStoryAutoOpen'
 import StoryView from './components/story/StoryView'
 import { useReferenceGeneration } from './hooks/useReferenceGeneration'
 import { useStyleThumbnails } from './hooks/useStyleThumbnails'
@@ -482,11 +483,10 @@ function App() {
   // Story 뷰 진입 시 세션을 연다 — 로컬 저장 모드(storyProjectPath null)면 open()이 실패할 수
   // 있으므로(Task 9 리뷰 노트) 폴더 저장 모드일 때만 호출한다. 로컬 저장 모드에서는 App 렌더부의
   // 가드가 "폴더 저장 모드에서만 사용 가능" 안내를 보여주고 open()을 아예 시도하지 않는다.
-  useEffect(() => {
-    if (activeView === 'story' && storyProjectPath && !storyPipeline.state) {
-      storyPipeline.open()
-    }
-  }, [activeView, storyProjectPath, storyPipeline.state, storyPipeline.open])
+  // storyProjectPath가 바뀌면(프로젝트 전환) state 유무와 무관하게 무조건 재open한다 — 그렇지
+  // 않으면 main의 story 머신이 이전 프로젝트 경로에 바인딩된 채 새 프로젝트 화면에서 쓰기가
+  // 발생하는 크로스 프로젝트 데이터 오염이 생긴다(Task 10 리뷰).
+  useStoryAutoOpen({ activeView, projectPath: storyProjectPath, open: storyPipeline.open })
 
   // Flow 프로젝트가 준비되면(컴포저 가시·settle) 모델 목록을 백그라운드로 미리 스크랩한다.
   //   이렇게 캐시해 두면 설정 모달을 열 때 느린 라이브 스크랩 없이 즉시 동적 목록이 뜬다.

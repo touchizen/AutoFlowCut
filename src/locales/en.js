@@ -17,6 +17,7 @@ export default {
     unavailable: 'Region not supported',
     language: 'Language',
     menu: 'Menu',
+    story: 'Story',
   },
   
   // Welcome screen
