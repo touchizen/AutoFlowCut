@@ -40,6 +40,12 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
     const r = await window.electronAPI.storyOpen({ projectPath })
     tokenRef.current = r.projectToken
     setState(r.state)
+    // main의 story:open 처리 중 maybeResendPush()가 재발신하는 story:pushScenes가 이
+    // storyOpen() resolve(=tokenRef 세팅) 전에 도착하면 토큰 불일치로 drop된다. 이제 토큰이
+    // 확정됐으니 storyGetState()를 한 번 호출해 동일한 재발신 로직(getState 핸들러)을 다시
+    // 태워 멱등 복구한다. 반환된 state로 setState도 함께 갱신.
+    const gs = await window.electronAPI.storyGetState({ projectToken: r.projectToken })
+    if (gs && !gs.error) setState(gs)
     return r
   }, [projectPath])
 
