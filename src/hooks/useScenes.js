@@ -683,11 +683,11 @@ export function useScenes() {
         return normalizeScene({ ...p, id: allocateSceneId() })
       }
       const merged = { ...prev, ...p, id: prev.id }
-      if (prev.prompt !== p.prompt && (prev.imageUrl || prev.images?.length)) {
+      if (prev.prompt !== p.prompt && (prev.image || prev.imagePath)) {
         merged.stalePrompt = true
         merged.stalePromptAt = now
       }
-      const hasVideo = prev.videoT2VUrl || prev.videoI2VUrl || prev.framePairs?.length
+      const hasVideo = prev.videoT2V || prev.videoT2VPath || prev.videoI2V || prev.videoI2VPath
       if (hasVideo && (prev.videoT2VPrompt !== p.videoT2VPrompt || Math.abs((prev.duration || 0) - p.duration) > 0.5)) {
         merged.staleVideo = true
         merged.staleVideoAt = now
@@ -702,7 +702,10 @@ export function useScenes() {
       : kept
 
     const nextScenes = [...keptAdjusted, ...upserted]
-    setScenes(nextScenes)
+    // 함수형 호출 — plain array 호출은 wholesale-replacement 로 취급돼 ID 카운터가
+    // max+1 로 reset 됨 (삭제 이력이 있으면 재발급 위험). 파일 내 다른 편집 함수와
+    // 동일하게 advance-only 경로를 타도록 함수형으로 호출.
+    setScenes(() => nextScenes)
     const nextSrtTrack = newSrtTrack ?? srtTrackRef.current
     if (newSrtTrack) setSrtTrack(newSrtTrack)
     return { nextScenes, nextSrtTrack }

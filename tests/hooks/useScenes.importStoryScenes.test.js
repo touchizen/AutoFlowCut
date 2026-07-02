@@ -22,15 +22,30 @@ describe('importStoryScenes', () => {
     const { result } = renderHook(() => useScenes())
     act(() => { result.current.importStoryScenes({ scenes: [pushScene('u1')] }) })
     act(() => {
-      // 이미지가 생성된 상태 시뮬레이션
-      result.current.setScenes(result.current.scenes.map((s) => ({ ...s, imageUrl: 'file://img.png' })))
+      // 이미지가 생성된 상태 시뮬레이션 (실제 씬 모델 필드: image/imagePath)
+      result.current.setScenes(result.current.scenes.map((s) => ({ ...s, image: 'file://img.png' })))
     })
     act(() => { result.current.importStoryScenes({ scenes: [pushScene('u1', { prompt: 'IMG2' })] }) })
     const s = result.current.scenes.find((x) => x.storyId === 'u1')
     expect(s.prompt).toBe('IMG2')
-    expect(s.imageUrl).toBe('file://img.png')
+    expect(s.image).toBe('file://img.png')
     expect(s.stalePrompt).toBe(true)
     expect(s.stalePromptAt).toBeTruthy()
+  })
+
+  it('재push: videoT2VPrompt 변경 + 기존 비디오 존재 시 staleVideo', () => {
+    const { result } = renderHook(() => useScenes())
+    act(() => { result.current.importStoryScenes({ scenes: [pushScene('u1')] }) })
+    act(() => {
+      // 비디오가 생성된 상태 시뮬레이션 (실제 씬 모델 필드: videoT2V/videoT2VPath)
+      result.current.setScenes(result.current.scenes.map((s) => ({ ...s, videoT2V: 'file://vid.mp4' })))
+    })
+    act(() => { result.current.importStoryScenes({ scenes: [pushScene('u1', { videoT2VPrompt: 'VID2' })] }) })
+    const s = result.current.scenes.find((x) => x.storyId === 'u1')
+    expect(s.videoT2VPrompt).toBe('VID2')
+    expect(s.videoT2V).toBe('file://vid.mp4')
+    expect(s.staleVideo).toBe(true)
+    expect(s.staleVideoAt).toBeTruthy()
   })
 
   it('non-story 씬은 보존된다', () => {
@@ -51,5 +66,24 @@ describe('importStoryScenes', () => {
     act(() => { result.current.importStoryScenes({ scenes: [pushScene('u1', { srtLineIds: ['story_1'] })], srtTrack: newTrack }) })
     expect(result.current.srtTrack).toEqual(newTrack)
     expect(result.current.scenes.find((s) => s.id === 'scene_1').srtLineIds).toEqual([])
+  })
+
+  it('씬 삭제 이력 후 importStoryScenes(갱신만, 신규 없음) → 이후 addScene이 삭제된 id를 재사용하지 않는다', () => {
+    const { result } = renderHook(() => useScenes())
+    // u1 신규 push → scene_1 생성
+    act(() => { result.current.importStoryScenes({ scenes: [pushScene('u1')] }) })
+    // addScene → scene_2 생성
+    let addedId
+    act(() => { addedId = result.current.addScene() })
+    expect(addedId).toBe('scene_2')
+    // scene_2 삭제 (삭제 이력 발생)
+    act(() => { result.current.deleteScene(addedId) })
+    // importStoryScenes 갱신만 (신규 story 씬 없음, 기존 u1 업데이트만)
+    act(() => { result.current.importStoryScenes({ scenes: [pushScene('u1', { prompt: 'IMG-UPDATED' })] }) })
+    // 카운터가 wholesale-replacement 경로로 reset 됐다면 다음 addScene 이 scene_2 를 재발급함 (버그)
+    let newId
+    act(() => { newId = result.current.addScene() })
+    expect(newId).not.toBe('scene_2')
+    expect(newId).toBe('scene_3')
   })
 })
