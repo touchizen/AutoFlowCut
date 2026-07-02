@@ -56,6 +56,8 @@ export default function StoryView({ pipeline }) {
   const [length, setLength] = useState('')
   const [language, setLanguage] = useState('ko')
   const [scriptDraft, setScriptDraft] = useState('')
+  // M1 스펙 §1 2번 경로 — 대본을 직접 붙여넣어 LLM 호출 없이 바로 시작.
+  const [pastedScript, setPastedScript] = useState('')
 
   // 버튼 aria-label(=접근성 이름)로 실제 라벨을 노출하고, 화면에 보이는 텍스트는 스텝 이름과
   // 겹치지 않는 짧은 문구로 둔다. 스테퍼의 단계명 텍스트(예: "대본")와 버튼 라벨(예: "대본 생성")이
@@ -84,6 +86,10 @@ export default function StoryView({ pipeline }) {
     } else {
       start(currentStep, {})
     }
+  }
+
+  const handlePasteStart = () => {
+    start('script', { pastedScript, options: { language } })
   }
 
   return (
@@ -139,6 +145,27 @@ export default function StoryView({ pipeline }) {
                 onChange={(e) => setScriptDraft(e.target.value)}
                 placeholder={t('story.form.scriptPlaceholder', '대본이 여기에 표시됩니다')}
               />
+            )}
+
+            {!isRunning && (
+              <div className="story-paste-form">
+                <textarea
+                  className="story-paste-textarea"
+                  value={pastedScript}
+                  onChange={(e) => setPastedScript(e.target.value)}
+                  placeholder={t('story.form.pastePlaceholder', '대본을 직접 붙여넣기')}
+                  disabled={isRunning}
+                />
+                <button
+                  type="button"
+                  className="story-btn-secondary"
+                  onClick={handlePasteStart}
+                  disabled={isRunning || !pastedScript.trim()}
+                  aria-label={t('story.action.pasteStart', '대본으로 시작')}
+                >
+                  {t('story.action.pasteStartIcon', '📝 붙여넣기로 진행')}
+                </button>
+              </div>
             )}
           </div>
         )}

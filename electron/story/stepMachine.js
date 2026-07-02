@@ -64,6 +64,12 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
 
   const steps = {
     async script(params, opId, signal) {
+      // M1 스펙 §1 2번 경로: 대본을 직접 붙여넣은 경우 LLM 호출 없이 그대로 저장한다.
+      if (params.pastedScript) {
+        state.input = { type: 'pasted', options: params.options }
+        await store.saveText('script.md', params.pastedScript)
+        return
+      }
       state.input = params.input ? { ...params.input, options: params.options } : state.input
       const opts = { apiKey: getApiKey(), model: state.engine.model || 'gemini-2.5-pro', ...(params.options || {}) }
       const { scriptMd } = await llm.generateScript(state.input, opts, {

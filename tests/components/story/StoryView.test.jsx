@@ -64,6 +64,24 @@ describe('StoryView', () => {
     fireEvent.click(btn)
     expect(p.start).toHaveBeenCalledWith('scenes', expect.anything())
   })
+  // M1 스펙 §1 2번 경로: 대본을 직접 붙여넣어 LLM 없이 바로 시작할 수 있어야 한다.
+  it('대본 붙여넣기 후 "대본으로 시작" 클릭하면 pastedScript로 start된다', () => {
+    const p = pipeline()
+    render(<StoryView pipeline={p} />)
+    fireEvent.change(screen.getByPlaceholderText(/직접 붙여넣기/), { target: { value: '내가 쓴 대본' } })
+    fireEvent.click(screen.getByRole('button', { name: /대본으로 시작/ }))
+    expect(p.start).toHaveBeenCalledWith('script', {
+      pastedScript: '내가 쓴 대본',
+      options: { language: 'ko' },
+    })
+  })
+
+  it('붙여넣기 텍스트가 비어 있으면 "대본으로 시작" 버튼이 비활성화된다', () => {
+    const p = pipeline()
+    render(<StoryView pipeline={p} />)
+    expect(screen.getByRole('button', { name: /대본으로 시작/ })).toBeDisabled()
+  })
+
   // Important: state.scenes/state.prompts는 존재하지 않는 필드였다 — pipeline.scenes(파생
   // 데이터, scenes.json 내용)를 별도로 받아 ②/④ 패널을 채운다.
   it('씬 분리 단계에서 scenes의 세그먼트(화자/텍스트) 행을 렌더한다', () => {

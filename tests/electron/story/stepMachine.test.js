@@ -35,6 +35,16 @@ describe('stepMachine', () => {
     expect(emitted.every((e) => e.payload.projectToken && e.payload.operationId)).toBe(true)
   })
 
+  // M1 스펙 §1 2번 경로: 대본을 직접 붙여넣기 — LLM 호출 없이 그대로 script.md에 저장한다.
+  it('script 스텝: pastedScript가 있으면 LLM 호출 없이 그대로 저장하고 done 처리한다', async () => {
+    await machine.start('script', { pastedScript: '내가 쓴 대본 원문', options: { language: 'ko' } })
+    const state = await machine.getState()
+    expect(state.steps.script.status).toBe('done')
+    expect(llm.generateScript).not.toHaveBeenCalled()
+    const saved = await readFile(path.join(dir, 'story', 'script.md'), 'utf-8')
+    expect(saved).toBe('내가 쓴 대본 원문')
+  })
+
   it('scenes 실행: storyId 발급 + speakers 시드', async () => {
     await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
     await machine.start('scenes', {})
