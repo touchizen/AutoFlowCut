@@ -30,6 +30,12 @@ describe('M1 통합: 제목 → 대본 → 씬 → 프롬프트 → 그리드 pu
 
     const push = emitted.find((e) => e.ch === 'story:pushScenes')
     expect(push.p.scenes).toHaveLength(2)
+    // push payload 검증 (필드 전수)
+    expect(push.p.scenes[0].storyId).toMatch(/^[0-9a-f-]{36}$/)
+    expect(push.p.scenes[0].videoT2VPrompt).toBe('VID1')
+    expect(push.p.scenes[0].srtLineIds).toEqual([])
+    expect(push.p.scenes[0].subtitle).toContain('가')
+    expect(push.p.scenes[0].endTime - push.p.scenes[0].startTime).toBeCloseTo(push.p.scenes[0].duration, 5)
 
     // renderer 측 적용
     const { result } = renderHook(() => useScenes())
@@ -38,6 +44,8 @@ describe('M1 통합: 제목 → 대본 → 씬 → 프롬프트 → 그리드 pu
     expect(result.current.scenes).toHaveLength(2)
     expect(result.current.scenes[0].prompt).toBe('IMG1')
     expect(result.current.scenes[1].startTime).toBeGreaterThan(0)  // 폴백 타이밍 순차 배치
+    expect(result.current.scenes[1].prompt).toBe('IMG2')
+    expect(ret.nextScenes).toHaveLength(2)
 
     // ack → revision 확정
     await machine.ackPush({ pushRevision: push.p.pushRevision, ok: true })
