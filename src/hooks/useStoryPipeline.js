@@ -17,18 +17,29 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
   const onPushRef = useRef(onPushScenes)
   onPushRef.current = onPushScenes
   const prevPathRef = useRef(projectPath)
+  // HIGH: projectPath 전환 시 tokenRef 무효화를 useEffect(passive)에만 맡기면 한 프레임 늦는다
+  // — rerender로 새 projectPath가 반영된 직후, effect가 아직 실행되기 전 틈에 옛 프로젝트의
+  // pushScenes가 도착하면 tokenRef가 여전히 옛 토큰이라 통과하고, onPushRef.current는 이미 새
+  // 프로젝트의 onPushScenes를 가리켜 옛 씬이 새 프로젝트에 저장될 수 있다. 그래서 토큰 무효화
+  // 자체는 렌더 본문에서 동기적으로 수행한다(onPushRef.current = onPushScenes와 같은 패턴).
+  // state/scenes 초기화와 storyAbort 호출 같은 부수효과는 아래 effect가 이어서 처리한다.
+  const pendingResetRef = useRef(null)
+  if (prevPathRef.current !== projectPath) {
+    pendingResetRef.current = { oldToken: tokenRef.current }
+    prevPathRef.current = projectPath
+    tokenRef.current = null
+  }
 
   // HIGH/Codex: useStoryAutoOpen은 story 뷰에서만 open()을 호출한다. 이 훅(useStoryPipeline)
   // 자체는 App 레벨에 계속 마운트돼 있으므로, story 뷰 밖에서 프로젝트를 전환하면 open()이
   // 호출되지 않아 tokenRef가 옛 프로젝트 토큰을 그대로 유지한다. 그 상태에서 옛 프로젝트의
   // 늦은 pushScenes가 도착하면 토큰이 여전히 일치해 새 프로젝트의 scenesHook에 잘못 적용될
-  // 수 있다. projectPath 변경을 감지해 즉시 토큰을 drop(이후 이벤트 전부 무시)하고, 옛 토큰으로
-  // main의 스텝 머신에 abort를 fire-and-forget으로 보내며, 화면 상태도 초기화한다.
+  // 수 있다. 토큰 무효화는 위 렌더 본문에서 이미 동기로 끝났으므로, 여기서는 화면 상태 초기화와
+  // 옛 토큰으로 main의 스텝 머신에 abort를 fire-and-forget으로 보내는 부수효과만 처리한다.
   useEffect(() => {
-    if (prevPathRef.current === projectPath) return
-    const oldToken = tokenRef.current
-    prevPathRef.current = projectPath
-    tokenRef.current = null
+    if (!pendingResetRef.current) return
+    const { oldToken } = pendingResetRef.current
+    pendingResetRef.current = null
     setState(null)
     setScenes([])
     setStreamingText('')
@@ -71,8 +82,8 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
     // 반영하면 옛 프로젝트의 토큰/state가 새 프로젝트 화면 위로 부활한다.
     const requestedPath = projectPath
     const r = await window.electronAPI.storyOpen({ projectPath })
-    // prevPathRef는 projectPath 변경 effect가 즉시 최신화한다 — 이 값과 다르면 그 사이에
-    // projectPath가 바뀐 것이므로 이 open() 응답은 stale이다.
+    // prevPathRef는 projectPath 변경 시 렌더 본문에서 즉시(동기) 최신화된다 — 이 값과 다르면
+    // 그 사이에 projectPath가 바뀐 것이므로 이 open() 응답은 stale이다.
     if (requestedPath !== prevPathRef.current) {
       if (r?.projectToken) {
         window.electronAPI?.storyAbort?.({ projectToken: r.projectToken })?.catch?.(() => {})
@@ -92,6 +103,9 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
     // 확정됐으니 storyGetState()를 한 번 호출해 동일한 재발신 로직(getState 핸들러)을 다시
     // 태워 멱등 복구한다. 반환된 state로 setState도 함께 갱신.
     const gs = await window.electronAPI.storyGetState({ projectToken: r.projectToken })
+    // storyGetState 대기 중에도 projectPath가 바뀔 수 있다 — 그 경우 렌더 동기 무효화 effect가
+    // 이미 tokenRef/state를 정리(및 abort)했으므로, 여기서 stale한 gs 결과로 되살리지 않는다.
+    if (requestedPath !== prevPathRef.current) return r
     if (gs && !gs.error) {
       const { scenes: gsScenes, ...rest } = gs
       setState(rest)

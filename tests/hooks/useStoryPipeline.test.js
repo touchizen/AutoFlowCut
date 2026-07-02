@@ -166,6 +166,28 @@ describe('useStoryPipeline', () => {
     expect(onPushScenes).not.toHaveBeenCalled()
   })
 
+  // HIGH: rerender(전환)와 effect flush 사이의 프레임에 옛 프로젝트의 pushScenes가 도착하면,
+  // tokenRef 무효화가 useEffect(passive)에 의존할 경우 아직 옛 토큰이 남아있어 이벤트가 통과하고
+  // onPushRef.current는 이미 새 프로젝트의 onPushScenes를 가리켜 옛 씬이 새 프로젝트에 저장될 수
+  // 있다. 렌더 본문에서 동기적으로 tokenRef를 무효화해야 이 창이 없어진다 — rerender 직후(=렌더는
+  // 이미 실행됐지만, act로 감싸지 않아 이 시점까지의 effect flush 여부와 무관하게) 옛 토큰으로
+  // pushScenes를 동기 발화해도 즉시 drop 되어야 한다.
+  it('rerender 직후 옛 토큰의 pushScenes를 동기적으로 drop한다 (렌더 동기 무효화)', async () => {
+    const onPushScenes = vi.fn(async () => {})
+    const { result, rerender } = renderHook(
+      ({ projectPath }) => useStoryPipeline({ projectPath, onPushScenes }),
+      { initialProps: { projectPath: '/A' } },
+    )
+    await act(() => result.current.open())
+
+    rerender({ projectPath: '/B' })
+    // act 밖에서 동기 발화 — rerender와 effect flush 사이 타이밍을 흉내낸다.
+    listeners['story:pushScenes']?.({ projectToken: 'tok1', operationId: 'op-race', pushRevision: 1, scenes: [] })
+
+    expect(onPushScenes).not.toHaveBeenCalled()
+    expect(window.electronAPI.storyPushAck).not.toHaveBeenCalled()
+  })
+
   it('projectPath가 변하지 않으면 토큰/상태를 초기화하지 않는다', async () => {
     const onPushScenes = vi.fn(async () => {})
     const { result, rerender } = renderHook(
