@@ -45,7 +45,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
   }
 
   async function maybeResendPush(operationId) {
-    if (state.pendingPushRevision > state.lastPushedRevision) {
+    if (state.steps.prompts.status === 'done' && state.pendingPushRevision > state.lastPushedRevision) {
       const scenesJson = JSON.parse((await store.loadText('scenes.json')) || '{"scenes":[]}')
       sendPush(scenesJson.scenes, operationId)
     }
@@ -101,17 +101,28 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
     async start(step, params = {}) {
       if (!steps[step]) throw new Error(`unknown step: ${step}`)
       const operationId = randomUUID()
-      controller = new AbortController()
-      for (const d of DOWNSTREAM[step]) state.steps[d] = { status: 'pending' }
+      const myController = new AbortController()
+      controller = myController
+      for (const d of DOWNSTREAM[step]) {
+        state.steps[d] = { status: 'pending' }
+        // 하류 prompts가 pending으로 리셋되면 보류 push도 되돌려 재발신 대상에서 제외한다
+        if (d === 'prompts') state.pendingPushRevision = state.lastPushedRevision
+      }
       state.steps[step] = { status: 'running', updatedAt: new Date().toISOString() }
       await flush(); send('story:state', { state }, operationId)
       try {
-        await steps[step](params, operationId, controller.signal)
-        state.steps[step] = { status: 'done', updatedAt: new Date().toISOString() }
+        await steps[step](params, operationId, myController.signal)
+        if (controller === myController) {
+          state.steps[step] = { status: 'done', updatedAt: new Date().toISOString() }
+        }
       } catch (e) {
-        state.steps[step] = { status: 'error', error: String(e.message || e), updatedAt: new Date().toISOString() }
+        if (controller === myController) {
+          state.steps[step] = { status: 'error', error: String(e.message || e), updatedAt: new Date().toISOString() }
+        }
       }
-      await flush(); send('story:state', { state }, operationId)
+      if (controller === myController) {
+        await flush(); send('story:state', { state }, operationId)
+      }
       return { operationId }
     },
     async abort() {

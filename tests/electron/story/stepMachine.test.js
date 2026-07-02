@@ -93,4 +93,42 @@ describe('stepMachine', () => {
     expect(state.steps.script.status).toBe('error')
     expect(state.steps.script.error).toContain('429')
   })
+
+  it('prompts 완료 후 ack 없이 scenes 재실행하면 빈 push를 재발신하지 않고, prompts 재실행 후에는 정상 push한다', async () => {
+    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await machine.start('scenes', {})
+    await machine.start('prompts', {})   // ack 없음 → prompts done, pendingPushRevision=1, lastPushedRevision=0
+
+    emitted.length = 0
+    await machine.start('scenes', {})    // 하류 리셋: prompts → pending
+    emitted.length = 0
+    await machine.open()                 // maybeResendPush: prompts가 pending이므로 재발신 없어야 함
+    expect(emitted.some((e) => e.ch === 'story:pushScenes')).toBe(false)
+
+    await machine.start('prompts', {})   // 정상 재실행 → 새 push 발신
+    const push = emitted.find((e) => e.ch === 'story:pushScenes')
+    expect(push).toBeTruthy()
+    expect(push.payload.scenes[0].prompt).toBe('IMG')
+  })
+
+  it('abort 후 즉시 재시작 시 stale 완료가 최신 status를 덮어쓰지 않는다', async () => {
+    let rejectFirst
+    llm.generateScript
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectFirst = reject }))
+      .mockImplementationOnce(async (_i, _o, { onDelta }) => { onDelta?.('2차'); return { scriptMd: '# 2차' } })
+
+    const firstStart = machine.start('script', { input: { type: 'title', title: 'T1' }, options: { language: 'ko' } })
+    // 첫 실행이 llm.generateScript 호출 지점(pending mock)에 도달할 때까지 대기
+    // (이 시점엔 첫 실행 자체의 초기 flush가 이미 끝나 있어 abort()의 flush와 충돌하지 않음)
+    while (!rejectFirst) { await new Promise((r) => setImmediate(r)) }
+    await machine.abort()   // 첫 실행 취소 신호
+    // 취소된 첫 실행이 뒤늦게 reject됨
+    rejectFirst(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+    // 곧바로 같은 스텝을 재시작 — 두 번째 실행은 성공해야 함
+    const secondStart = machine.start('script', { input: { type: 'title', title: 'T2' }, options: { language: 'ko' } })
+    await Promise.all([firstStart, secondStart])
+
+    const state = await machine.getState()
+    expect(state.steps.script.status).toBe('done')
+  })
 })
