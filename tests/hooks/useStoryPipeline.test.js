@@ -114,6 +114,51 @@ describe('useStoryPipeline', () => {
     expect(result.current.scenes).toEqual([{ storyId: 'b' }])
   })
 
+  // HIGH/Codex: Story 뷰 밖(useStoryAutoOpen이 동작하지 않는 상태)에서 프로젝트가 전환돼도
+  // useStoryPipeline은 App 레벨에 계속 마운트돼 있어 tokenRef가 옛 프로젝트 토큰을 유지한다.
+  // 이후 늦게 도착하는 옛 프로젝트의 pushScenes가 새 프로젝트에 잘못 적용될 수 있다 — projectPath
+  // 변경을 감지해 즉시 토큰을 drop하고 상태를 초기화해야 한다.
+  it('projectPath 변경 시 옛 토큰을 즉시 drop하고 state/scenes/streamingText를 초기화한다', async () => {
+    const onPushScenes = vi.fn(async () => {})
+    const { result, rerender } = renderHook(
+      ({ projectPath }) => useStoryPipeline({ projectPath, onPushScenes }),
+      { initialProps: { projectPath: '/A' } },
+    )
+    await act(() => result.current.open())
+    expect(result.current.state).toEqual({ steps: {} })
+
+    act(() => listeners['story:delta']({ projectToken: 'tok1', text: '스트리밍' }))
+    expect(result.current.streamingText).toBe('스트리밍')
+
+    rerender({ projectPath: '/B' })
+
+    expect(result.current.state).toBeNull()
+    expect(result.current.scenes).toEqual([])
+    expect(result.current.streamingText).toBe('')
+    expect(window.electronAPI.storyAbort).toHaveBeenCalledWith(expect.objectContaining({ projectToken: 'tok1' }))
+
+    // 옛 프로젝트(A) 토큰으로 늦게 도착하는 pushScenes는 drop 되어야 한다
+    await act(async () => {
+      await listeners['story:pushScenes']?.({ projectToken: 'tok1', operationId: 'op-late', pushRevision: 9, scenes: [] })
+    })
+    expect(onPushScenes).not.toHaveBeenCalled()
+  })
+
+  it('projectPath가 변하지 않으면 토큰/상태를 초기화하지 않는다', async () => {
+    const onPushScenes = vi.fn(async () => {})
+    const { result, rerender } = renderHook(
+      ({ projectPath }) => useStoryPipeline({ projectPath, onPushScenes }),
+      { initialProps: { projectPath: '/A' } },
+    )
+    await act(() => result.current.open())
+    window.electronAPI.storyAbort.mockClear()
+
+    rerender({ projectPath: '/A' })
+
+    expect(window.electronAPI.storyAbort).not.toHaveBeenCalled()
+    expect(result.current.state).toEqual({ steps: {} })
+  })
+
   it('unmount 시 이벤트 리스너를 해제한다 — 이후 이벤트 발화는 무해하다', async () => {
     const onPushScenes = vi.fn(async () => {})
     const { result, unmount } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes }))

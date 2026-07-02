@@ -13,6 +13,26 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
   const tokenRef = useRef(null)
   const onPushRef = useRef(onPushScenes)
   onPushRef.current = onPushScenes
+  const prevPathRef = useRef(projectPath)
+
+  // HIGH/Codex: useStoryAutoOpen은 story 뷰에서만 open()을 호출한다. 이 훅(useStoryPipeline)
+  // 자체는 App 레벨에 계속 마운트돼 있으므로, story 뷰 밖에서 프로젝트를 전환하면 open()이
+  // 호출되지 않아 tokenRef가 옛 프로젝트 토큰을 그대로 유지한다. 그 상태에서 옛 프로젝트의
+  // 늦은 pushScenes가 도착하면 토큰이 여전히 일치해 새 프로젝트의 scenesHook에 잘못 적용될
+  // 수 있다. projectPath 변경을 감지해 즉시 토큰을 drop(이후 이벤트 전부 무시)하고, 옛 토큰으로
+  // main의 스텝 머신에 abort를 fire-and-forget으로 보내며, 화면 상태도 초기화한다.
+  useEffect(() => {
+    if (prevPathRef.current === projectPath) return
+    const oldToken = tokenRef.current
+    prevPathRef.current = projectPath
+    tokenRef.current = null
+    setState(null)
+    setScenes([])
+    setStreamingText('')
+    if (oldToken) {
+      window.electronAPI?.storyAbort?.({ projectToken: oldToken })?.catch?.(() => {})
+    }
+  }, [projectPath])
 
   useEffect(() => {
     const api = window.electronAPI
