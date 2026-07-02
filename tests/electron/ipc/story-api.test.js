@@ -64,6 +64,42 @@ describe('story IPC', () => {
     expect(fresh.error).toBeUndefined()
   })
 
+  // HIGH/Codex: renderer가 준 projectPath를 무검증으로 사용하면 상대경로나 traversal 경로,
+  // 존재하지 않는 경로로도 스텝 머신이 만들어져 임의 파일시스템 위치에 쓰기가 발생할 수 있다.
+  it('story:open — 상대경로는 거부한다', async () => {
+    const r = await ipc.invoke('story:open', { projectPath: 'relative/path' })
+    expect(r.error).toBe('invalid-project-path')
+  })
+
+  it('story:open — traversal(".." 세그먼트) 경로는 거부한다', async () => {
+    const r = await ipc.invoke('story:open', { projectPath: `${dir}/../../etc` })
+    expect(r.error).toBe('invalid-project-path')
+  })
+
+  it('story:open — 존재하지 않는 디렉토리는 거부한다', async () => {
+    const r = await ipc.invoke('story:open', { projectPath: path.join(dir, 'does-not-exist') })
+    expect(r.error).toBe('invalid-project-path')
+  })
+
+  it('story:open — 파일(디렉토리 아님) 경로는 거부한다', async () => {
+    const { writeFile } = await import('node:fs/promises')
+    const filePath = path.join(dir, 'not-a-dir.txt')
+    await writeFile(filePath, 'x')
+    const r = await ipc.invoke('story:open', { projectPath: filePath })
+    expect(r.error).toBe('invalid-project-path')
+  })
+
+  it('story:open — projectPath 누락 시 거부한다', async () => {
+    const r = await ipc.invoke('story:open', {})
+    expect(r.error).toBe('invalid-project-path')
+  })
+
+  it('story:open — 검증 통과한 절대경로는 정상적으로 machine을 연다', async () => {
+    const r = await ipc.invoke('story:open', { projectPath: dir })
+    expect(r.error).toBeUndefined()
+    expect(r.projectToken).toBeTruthy()
+  })
+
   it('story:push-ack(ok:false)는 operationId/reason을 버리지 않고 lastPushError로 보존한다', async () => {
     const { projectToken } = await ipc.invoke('story:open', { projectPath: dir })
     await ipc.invoke('story:start', { projectToken, step: 'script', params: { input: { type: 'title', title: 'T' }, options: {} } })

@@ -2,8 +2,32 @@
  * Story 파이프라인 IPC — 스펙 §6. 프로젝트당 하나의 스텝 머신 인스턴스.
  * 모든 R→M 명령은 projectToken 검증, 불일치 시 { error: 'stale-token' }.
  */
+import { stat } from 'node:fs/promises'
+import path from 'node:path'
 import { createStepMachine } from '../story/stepMachine.js'
 import * as llmGemini from '../api/llm/llmGemini.js'
+
+// HIGH/Codex: renderer가 보낸 projectPath를 무검증으로 받으면 상대경로/traversal 경로로도
+// 스텝 머신이 만들어져 임의 파일시스템 위치에 script.md/scenes.json/story.json을 쓸 수 있다.
+// 절대경로 필수 + 원본 문자열에 ".." 세그먼트가 있으면 거부(정규화가 조용히 흡수해버리기
+// 전에 원본에서 걸러낸다) + 정규화된 경로 기준 디렉토리 존재 확인까지 통과해야 연다.
+function hasParentSegment(p) {
+  return p.split(/[\\/]/).includes('..')
+}
+
+async function validateProjectPath(projectPath) {
+  if (typeof projectPath !== 'string' || !projectPath) return false
+  if (!path.isAbsolute(projectPath)) return false
+  if (hasParentSegment(projectPath)) return false
+  const normalized = path.normalize(projectPath)
+  if (hasParentSegment(normalized)) return false
+  try {
+    const st = await stat(normalized)
+    return st.isDirectory()
+  } catch {
+    return false
+  }
+}
 
 export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini }) {
   let machine = null
@@ -22,6 +46,7 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
   ipcMain.handle('story:open', (_e, { projectPath } = {}) => {
     // 동시 open 레이스 방지 — 직렬화(promise 체인): 이전 open이 끝나야 다음 open이 실행된다
     const task = openLock.then(async () => {
+      if (!(await validateProjectPath(projectPath))) return { error: 'invalid-project-path' }
       if (machine) await machine.abort()
       machine = createStepMachine({ projectPath, llm, emit, getApiKey: () => keyStore.getKey() })
       return machine.open()
