@@ -52,6 +52,9 @@ describe('stepMachine', () => {
     expect(scene).toMatchObject({ prompt: 'IMG', videoT2VPrompt: 'VID', srtLineIds: [] })
     expect(scene.storyId).toMatch(/^[0-9a-f-]{36}$/)
     expect(scene.duration).toBeGreaterThan(0)   // 폴백 타이밍 (0~3 기본값 아님)
+    // 스펙 §4-④: project.json 씬 확장 필드는 storyId/stalePrompt/stalePromptAt/staleVideo/
+    // staleVideoAt 5개만 허용 — sceneNo(내부 scenes.json 필드)는 push payload에 새지 않아야 한다.
+    expect(scene).not.toHaveProperty('sceneNo')
     const state = await machine.getState()
     expect(state.pendingPushRevision).toBe(1)
     expect(state.lastPushedRevision).toBe(0)

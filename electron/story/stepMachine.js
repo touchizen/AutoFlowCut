@@ -21,9 +21,10 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
   async function flush() { await store.save(state) }
 
   function mapScene(s, timing) {
+    // 스펙 §4-④: project.json 씬 확장 필드는 storyId/stalePrompt/stalePromptAt/staleVideo/
+    // staleVideoAt 5개로 제한 — sceneNo(scenes.json 전용 표시용 순번)는 push payload에 넣지 않는다.
     return {
       storyId: s.storyId,
-      sceneNo: s.sceneNo,
       prompt: s.imagePrompt || '',
       videoT2VPrompt: s.videoPrompt || '',
       startTime: timing.startTime,

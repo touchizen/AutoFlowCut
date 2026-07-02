@@ -36,6 +36,7 @@ describe('M1 통합: 제목 → 대본 → 씬 → 프롬프트 → 그리드 pu
     expect(push.p.scenes[0].srtLineIds).toEqual([])
     expect(push.p.scenes[0].subtitle).toContain('가')
     expect(push.p.scenes[0].endTime - push.p.scenes[0].startTime).toBeCloseTo(push.p.scenes[0].duration, 5)
+    expect(push.p.scenes[0]).not.toHaveProperty('sceneNo')
 
     // renderer 측 적용
     const { result } = renderHook(() => useScenes())
