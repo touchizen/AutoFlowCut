@@ -41,7 +41,9 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
       api.onStoryEvent('story:state', (p) => {
         if (p.projectToken !== tokenRef.current) return
         setState(p.state)
-        setScenes(p.scenes || [])
+        // Minor: 스텝 running 전환 시 stepMachine.start()가 scenes 필드 없이 story:state를
+        // 먼저 emit한다(하류 리셋 알림용) — scenes가 undefined면 기존 값을 유지, 있을 때만 반영.
+        if (p.scenes !== undefined) setScenes(p.scenes)
       }),
       api.onStoryEvent('story:delta', (p) => {
         if (p.projectToken !== tokenRef.current) return
@@ -61,7 +63,19 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
   }, [])
 
   const open = useCallback(async () => {
+    // Minor: open() 호출 시점의 projectPath를 캡처 — resolve 시점에 projectPath가 이미
+    // 바뀌었다면(사용자가 open() 대기 중 다른 프로젝트로 전환) 이 응답은 stale이다. 그대로
+    // 반영하면 옛 프로젝트의 토큰/state가 새 프로젝트 화면 위로 부활한다.
+    const requestedPath = projectPath
     const r = await window.electronAPI.storyOpen({ projectPath })
+    // prevPathRef는 projectPath 변경 effect가 즉시 최신화한다 — 이 값과 다르면 그 사이에
+    // projectPath가 바뀐 것이므로 이 open() 응답은 stale이다.
+    if (requestedPath !== prevPathRef.current) {
+      if (r?.projectToken) {
+        window.electronAPI?.storyAbort?.({ projectToken: r.projectToken })?.catch?.(() => {})
+      }
+      return r
+    }
     tokenRef.current = r.projectToken
     setState(r.state)
     setScenes(r.scenes || [])

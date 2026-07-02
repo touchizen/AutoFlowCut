@@ -22,6 +22,28 @@ describe('useStoryPipeline', () => {
     act(() => listeners['story:state']({ projectToken: 'tok1', state: { steps: { script: { status: 'done' } } } }))
     expect(result.current.state.steps.script.status).toBe('done')
   })
+  // Minor: 스텝이 running으로 전환될 때 stepMachine.start()는 story:state를 scenes 필드
+  // 없이 먼저 emit한다(하류 리셋 알림용). scenes를 매번 p.scenes || []로 덮어쓰면 이미 표시
+  // 중이던 씬 목록이 running 전환 순간 화면에서 사라진다 — scenes가 없는(undefined) 이벤트는
+  // 기존 scenes를 유지해야 한다.
+  it('scenes 수신 후 scenes 없는 state 이벤트를 받아도 scenes를 유지한다', async () => {
+    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: vi.fn() }))
+    await act(() => result.current.open())
+    act(() => listeners['story:state']({
+      projectToken: 'tok1',
+      state: { steps: { scenes: { status: 'done' } } },
+      scenes: [{ storyId: 's1', segments: [{ speaker: 'a', text: 'hi' }] }],
+    }))
+    expect(result.current.scenes).toEqual([{ storyId: 's1', segments: [{ speaker: 'a', text: 'hi' }] }])
+
+    // running 전환 emit — scenes 필드가 아예 없다
+    act(() => listeners['story:state']({
+      projectToken: 'tok1',
+      state: { steps: { scenes: { status: 'pending' }, prompts: { status: 'running' } } },
+    }))
+    expect(result.current.scenes).toEqual([{ storyId: 's1', segments: [{ speaker: 'a', text: 'hi' }] }])
+  })
+
   it('토큰 불일치 이벤트는 drop', async () => {
     const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: vi.fn() }))
     await act(() => result.current.open())
@@ -157,6 +179,38 @@ describe('useStoryPipeline', () => {
 
     expect(window.electronAPI.storyAbort).not.toHaveBeenCalled()
     expect(result.current.state).toEqual({ steps: {} })
+  })
+
+  // Minor: open()이 in-flight인 동안 projectPath가 바뀌면(예: 사용자가 빠르게 다른 프로젝트로
+  // 전환) 늦게 resolve된 옛 open() 응답이 tokenRef/state를 새 프로젝트 위로 덮어써서는 안 된다.
+  // 호출 시점의 projectPath를 캡처해두고, resolve 시점에 현재 projectPath와 다르면 반영을 skip.
+  it('open() 진행 중 projectPath가 바뀌면 늦게 resolve된 결과로 tokenRef/state를 갱신하지 않는다', async () => {
+    let resolveOpen
+    window.electronAPI.storyOpen = vi.fn(() => new Promise((resolve) => { resolveOpen = resolve }))
+    const { result, rerender } = renderHook(
+      ({ projectPath }) => useStoryPipeline({ projectPath, onPushScenes: vi.fn() }),
+      { initialProps: { projectPath: '/A' } },
+    )
+
+    let openPromise
+    act(() => { openPromise = result.current.open() })
+
+    // open() 응답이 아직 안 왔는데 프로젝트가 바뀜 (예: 사용자가 목록에서 다른 프로젝트 클릭)
+    rerender({ projectPath: '/B' })
+    window.electronAPI.storyAbort.mockClear()
+
+    resolveOpen({ projectToken: 'tok-A-late', state: { steps: { script: { status: 'done' } } } })
+    await act(async () => { await openPromise })
+
+    // 늦게 도착한 A의 open 결과가 반영되지 않아야 한다
+    expect(result.current.state).toBeNull()
+    expect(result.current.scenes).toEqual([])
+    // 반환된 토큰으로 즉시 abort 정리를 시도한다
+    expect(window.electronAPI.storyAbort).toHaveBeenCalledWith(expect.objectContaining({ projectToken: 'tok-A-late' }))
+
+    // 늦은 토큰으로 도착하는 이후 이벤트도 drop 되어야 한다(tokenRef가 갱신되지 않았으므로)
+    act(() => listeners['story:state']?.({ projectToken: 'tok-A-late', state: { steps: { script: { status: 'error' } } } }))
+    expect(result.current.state).toBeNull()
   })
 
   it('unmount 시 이벤트 리스너를 해제한다 — 이후 이벤트 발화는 무해하다', async () => {
