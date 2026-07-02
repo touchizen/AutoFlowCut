@@ -43,7 +43,7 @@ function useSafeT() {
 
 export default function StoryView({ pipeline }) {
   const t = useSafeT()
-  const { state, streamingText, start, abort } = pipeline
+  const { state, streamingText, start, abort, scenes = [] } = pipeline
   const steps = state?.steps || {}
   const currentStep = computeCurrentStep(steps)
   const stepData = steps[currentStep] || { status: 'pending' }
@@ -149,21 +149,23 @@ export default function StoryView({ pipeline }) {
               <thead>
                 <tr>
                   <th>{t('story.scenes.no', '#')}</th>
-                  <th>{t('story.scenes.segment', '세그먼트')}</th>
                   <th>{t('story.scenes.speaker', '화자')}</th>
+                  <th>{t('story.scenes.segment', '세그먼트')}</th>
                 </tr>
               </thead>
               <tbody>
-                {(state?.scenes || []).map((sc, i) => (
-                  <tr key={sc.id ?? i}>
-                    <td>{i + 1}</td>
-                    <td>{sc.text}</td>
-                    <td>{sc.speaker}</td>
-                  </tr>
-                ))}
+                {scenes.flatMap((sc, si) =>
+                  (sc.segments || []).map((seg, gi) => (
+                    <tr key={`${sc.storyId ?? si}-${gi}`}>
+                      <td>{si + 1}</td>
+                      <td>{seg.speaker}</td>
+                      <td>{seg.text}</td>
+                    </tr>
+                  )),
+                )}
               </tbody>
             </table>
-            {(!state?.scenes || state.scenes.length === 0) && (
+            {scenes.length === 0 && (
               <div className="story-empty-hint">{t('story.scenes.empty', '씬 분리 결과가 아직 없습니다.')}</div>
             )}
           </div>
@@ -175,19 +177,21 @@ export default function StoryView({ pipeline }) {
               <thead>
                 <tr>
                   <th>{t('story.prompts.no', '#')}</th>
-                  <th>{t('story.prompts.prompt', '프롬프트')}</th>
+                  <th>{t('story.prompts.image', '이미지 프롬프트')}</th>
+                  <th>{t('story.prompts.video', '비디오 프롬프트')}</th>
                 </tr>
               </thead>
               <tbody>
-                {(state?.prompts || []).map((p, i) => (
-                  <tr key={p.id ?? i}>
+                {scenes.map((sc, i) => (
+                  <tr key={sc.storyId ?? i}>
                     <td>{i + 1}</td>
-                    <td>{p.text}</td>
+                    <td>{sc.imagePrompt}</td>
+                    <td>{sc.videoPrompt}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            {(!state?.prompts || state.prompts.length === 0) && (
+            {scenes.length === 0 && (
               <div className="story-empty-hint">{t('story.prompts.empty', '프롬프트 결과가 아직 없습니다.')}</div>
             )}
           </div>

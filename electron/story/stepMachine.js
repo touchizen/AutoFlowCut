@@ -45,6 +45,15 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
     }, operationId)
   }
 
+  // Important: Story 뷰 ②/④ 패널(씬 세그먼트·프롬프트)이 실데이터를 그리려면 scenes.json
+  // 내용이 필요하다. story.json에는 저장하지 않는 파생 데이터 — open/getState/스텝 완료 시
+  // payload에만 실어 보낸다.
+  async function loadScenesForPayload() {
+    const raw = await store.loadText('scenes.json')
+    if (!raw) return []
+    try { return JSON.parse(raw).scenes || [] } catch { return [] }
+  }
+
   async function maybeResendPush(operationId) {
     if (!state) state = await store.load()
     if (state.steps.prompts.status === 'done' && state.pendingPushRevision > state.lastPushedRevision) {
@@ -96,13 +105,17 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
     async open() {
       state = await store.load()
       await maybeResendPush()
-      send('story:state', { state })
-      return { projectToken, state }
+      const scenes = await loadScenesForPayload()
+      send('story:state', { state, scenes })
+      return { projectToken, state, scenes }
     },
     async getState() {
       if (!state) state = await store.load()
       await maybeResendPush()
-      return state
+      const scenes = await loadScenesForPayload()
+      // 기존 top-level 필드(steps/speakers/...)는 그대로 접근 가능하도록 spread — story.json에는
+      // scenes를 쓰지 않으므로(flush 시 이 반환값이 아니라 내부 state 변수를 저장) 안전하다.
+      return { ...state, scenes }
     },
     async start(step, params = {}) {
       if (!steps[step]) throw new Error(`unknown step: ${step}`)
@@ -129,7 +142,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
         // flush(store.save) 완료 후에만 pushScenes를 emit — 재발신 조건이 디스크에 먼저 반영되게.
         await flush()
         if (pushScenes) sendPush(pushScenes, operationId)
-        send('story:state', { state }, operationId)
+        send('story:state', { state, scenes: await loadScenesForPayload() }, operationId)
       }
       return { operationId }
     },

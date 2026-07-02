@@ -10,6 +10,7 @@ const pipeline = (over = {}) => ({
     },
     speakers: [],
   },
+  scenes: [],
   streamingText: '',
   start: vi.fn(), abort: vi.fn(),
   ...over,
@@ -63,6 +64,29 @@ describe('StoryView', () => {
     fireEvent.click(btn)
     expect(p.start).toHaveBeenCalledWith('scenes', expect.anything())
   })
+  // Important: state.scenes/state.prompts는 존재하지 않는 필드였다 — pipeline.scenes(파생
+  // 데이터, scenes.json 내용)를 별도로 받아 ②/④ 패널을 채운다.
+  it('씬 분리 단계에서 scenes의 세그먼트(화자/텍스트) 행을 렌더한다', () => {
+    const p = pipeline({
+      scenes: [{ storyId: 's1', segments: [{ speaker: '나레이션', text: '어느 날' }] }],
+    })
+    p.state.steps.script.status = 'done'
+    render(<StoryView pipeline={p} />)
+    expect(screen.getByText('나레이션')).toBeTruthy()
+    expect(screen.getByText('어느 날')).toBeTruthy()
+  })
+
+  it('프롬프트 단계에서 scenes의 imagePrompt/videoPrompt를 렌더한다', () => {
+    const p = pipeline({
+      scenes: [{ storyId: 's1', imagePrompt: 'IMG-1', videoPrompt: 'VID-1' }],
+    })
+    p.state.steps.script.status = 'done'
+    p.state.steps.scenes.status = 'done'
+    render(<StoryView pipeline={p} />)
+    expect(screen.getByText('IMG-1')).toBeTruthy()
+    expect(screen.getByText('VID-1')).toBeTruthy()
+  })
+
   it('에러 단계는 error 뱃지 + 재실행 버튼', () => {
     const p = pipeline()
     p.state.steps.script.status = 'error'

@@ -92,6 +92,28 @@ describe('useStoryPipeline', () => {
     ))
   })
 
+  // Important: Story 뷰 ②/④ 패널이 실데이터를 그리려면 scenes를 state와 별도 상태로 보관해야 한다.
+  it('story:state 이벤트의 scenes를 별도 상태로 반영한다', async () => {
+    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: vi.fn() }))
+    await act(() => result.current.open())
+    act(() => listeners['story:state']({
+      projectToken: 'tok1',
+      state: { steps: { scenes: { status: 'done' } } },
+      scenes: [{ storyId: 's1', segments: [{ speaker: 'a', text: 'hi' }] }],
+    }))
+    expect(result.current.scenes).toEqual([{ storyId: 's1', segments: [{ speaker: 'a', text: 'hi' }] }])
+    // state 자체에는 scenes가 섞이지 않는다 (별도 상태)
+    expect(result.current.state.scenes).toBeUndefined()
+  })
+
+  it('open()이 storyOpen/storyGetState가 반환한 scenes를 반영한다', async () => {
+    window.electronAPI.storyOpen = vi.fn(async () => ({ projectToken: 'tok1', state: { steps: {} }, scenes: [{ storyId: 'a' }] }))
+    window.electronAPI.storyGetState = vi.fn(async () => ({ steps: {}, scenes: [{ storyId: 'b' }] }))
+    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: vi.fn() }))
+    await act(() => result.current.open())
+    expect(result.current.scenes).toEqual([{ storyId: 'b' }])
+  })
+
   it('unmount 시 이벤트 리스너를 해제한다 — 이후 이벤트 발화는 무해하다', async () => {
     const onPushScenes = vi.fn(async () => {})
     const { result, unmount } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes }))

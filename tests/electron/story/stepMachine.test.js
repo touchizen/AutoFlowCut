@@ -233,6 +233,47 @@ describe('stepMachine', () => {
     expect(diskRevisionAtPushTime).toBe(1)
   })
 
+  // Important: Story 뷰 ②/④ 패널이 실데이터를 그리려면 state.scenes/state.prompts가 아니라
+  // scenes.json 내용이 open/getState/스텝 완료 시 별도 payload 필드로 와야 한다. story.json에는
+  // 저장하지 않는다(파생 데이터).
+  it('open()이 scenes.json 내용을 payload.scenes로 emit + 반환하고, story.json에는 저장하지 않는다', async () => {
+    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await machine.start('scenes', {})
+
+    emitted.length = 0
+    const r = await machine.open()
+    expect(r.scenes).toBeInstanceOf(Array)
+    expect(r.scenes.length).toBeGreaterThan(0)
+    expect(r.scenes[0].segments?.[0]?.text).toBeTruthy()
+
+    const openEvent = emitted.find((e) => e.ch === 'story:state')
+    expect(openEvent.payload.scenes).toEqual(r.scenes)
+
+    const raw = await readFile(path.join(dir, 'story', 'story.json'), 'utf-8')
+    expect(JSON.parse(raw).scenes).toBeUndefined()
+  })
+
+  it('getState()가 scenes.json 내용을 포함해 반환한다 (story.json에는 저장하지 않음)', async () => {
+    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await machine.start('scenes', {})
+    const state = await machine.getState()
+    expect(state.scenes.length).toBeGreaterThan(0)
+    expect(state.steps.scenes.status).toBe('done')   // 기존 필드는 여전히 top-level에서 접근 가능
+
+    const raw = await readFile(path.join(dir, 'story', 'story.json'), 'utf-8')
+    expect(JSON.parse(raw).scenes).toBeUndefined()
+  })
+
+  it('스텝 완료 시 story:state emit의 payload.scenes에 최신 scenes.json 내용(프롬프트 포함)이 실린다', async () => {
+    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await machine.start('scenes', {})
+    emitted.length = 0
+    await machine.start('prompts', {})
+
+    const doneEvent = emitted.filter((e) => e.ch === 'story:state').at(-1)
+    expect(doneEvent.payload.scenes[0]).toMatchObject({ imagePrompt: 'IMG', videoPrompt: 'VID' })
+  })
+
   it('open 없이 abort() 호출해도 throw하지 않고 story.json에 null을 쓰지 않는다', async () => {
     const freshDir = await mkdtemp(path.join(tmpdir(), 'sm-fresh2-'))
     const fresh = createStepMachine({ projectPath: freshDir, llm, emit: () => {}, getApiKey: () => 'k' })
