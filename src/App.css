@@ -184,6 +184,18 @@ html, body {
   container-name: main-panel;
 }
 
+/* Story 뷰 가드 (로컬 저장 모드 안내) */
+.story-guard {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  text-align: center;
+}
+
 /* Tabs */
 .tabs-header {
   display: flex;

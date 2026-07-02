@@ -350,6 +350,12 @@
   cursor: not-allowed;
 }
 
+.btn-settings.active {
+  background: var(--primary-color);
+  border-color: var(--primary-color);
+  color: white;
+}
+
 /* ============================================
    Responsive Header - Container Queries
    ============================================ */

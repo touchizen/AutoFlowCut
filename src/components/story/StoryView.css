@@ -1,0 +1,177 @@
+/* ============================================
+   Story View — 스텝퍼 + 단계 패널 (다크 테마)
+   ============================================ */
+
+.story-view {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  height: 100%;
+  overflow: auto;
+  color: var(--text-color);
+}
+
+/* ── 스텝퍼 ── */
+.story-stepper {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.story-step-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.story-step-pill.active {
+  border-color: var(--primary-color);
+  color: var(--text-color);
+}
+
+.story-step-pill.story-step-future {
+  opacity: 0.6;
+}
+
+.story-step-icon {
+  font-size: 0.8rem;
+}
+
+.story-step-name {
+  font-weight: 600;
+}
+
+.story-step-badge {
+  font-size: 0.72rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--border-color);
+  color: var(--text-secondary);
+}
+
+.story-badge-running { background: rgba(66, 153, 225, 0.25); color: var(--primary-color); }
+.story-badge-done { background: rgba(72, 187, 120, 0.25); color: var(--success-color); }
+.story-badge-error { background: rgba(245, 101, 101, 0.25); color: var(--error-color); }
+.story-badge-future { background: rgba(160, 174, 192, 0.2); color: var(--text-secondary); }
+
+/* ── 에러 배너 ── */
+.story-error-banner {
+  padding: 10px 14px;
+  border-radius: var(--border-radius);
+  background: rgba(245, 101, 101, 0.12);
+  border: 1px solid var(--error-color);
+  color: var(--error-color);
+  font-size: 0.9rem;
+}
+
+/* ── 단계 패널 ── */
+.story-step-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.story-script-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+}
+
+.story-title-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.story-input {
+  flex: 1 1 160px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  background: var(--bg-color);
+  color: var(--text-color);
+  font-family: var(--font-family);
+}
+
+.story-script-stream,
+.story-script-textarea {
+  flex: 1;
+  min-height: 200px;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  background: var(--bg-color);
+  color: var(--text-color);
+  font-family: var(--font-family);
+  white-space: pre-wrap;
+  overflow: auto;
+}
+
+.story-script-textarea {
+  resize: vertical;
+}
+
+/* ── 읽기 전용 테이블 (씬/프롬프트, M1) ── */
+.story-readonly-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.story-readonly-table th,
+.story-readonly-table td {
+  border: 1px solid var(--border-color);
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.story-empty-hint {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+/* ── 하단 컨트롤 ── */
+.story-controls {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.story-btn-primary {
+  padding: 8px 18px;
+  border: none;
+  border-radius: var(--border-radius);
+  background: var(--primary-color);
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.story-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.story-btn-primary.story-btn-error {
+  background: var(--error-color);
+}
+
+.story-btn-secondary {
+  padding: 8px 18px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  background: transparent;
+  color: var(--text-color);
+  cursor: pointer;
+}

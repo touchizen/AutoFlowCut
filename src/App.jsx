@@ -13,6 +13,7 @@ import { useVideoScenes } from './hooks/useVideoScenes'
 import { useI18n } from './hooks/useI18n'
 import { useProjectData } from './hooks/useProjectData'
 import { useStoryPipeline } from './hooks/useStoryPipeline'
+import StoryView from './components/story/StoryView'
 import { useReferenceGeneration } from './hooks/useReferenceGeneration'
 import { useStyleThumbnails } from './hooks/useStyleThumbnails'
 import { useSceneGeneration } from './hooks/useSceneGeneration'
@@ -147,6 +148,9 @@ function App() {
 
   // UI State
   const [activeTab, setActiveTab] = useState('text') // 'text' | 'video-text' | 'frame-to-video' | 'list' | 'audio'
+  // 뷰 전환: 기존 생성 화면 vs Story 파이프라인 화면. activeTab 과 별개 — Story 는 씬/이미지
+  // 생성과 무관한 별도 워크플로우(스텝퍼 + 단계 패널)라 탭 목록에 섞지 않는다.
+  const [activeView, setActiveView] = useState('generate') // 'generate' | 'story'
   const [framePairs, setFramePairs] = useState([])   // Frame to Video 매핑
   const [ftvPromptSource, setFtvPromptSource] = useState('image') // 'image' | 'video' | 'none'
   const [galleryItems, setGalleryItems] = useState([])
@@ -474,6 +478,15 @@ function App() {
       if (!r.ok) throw new Error('project save failed')
     },
   })
+
+  // Story 뷰 진입 시 세션을 연다 — 로컬 저장 모드(storyProjectPath null)면 open()이 실패할 수
+  // 있으므로(Task 9 리뷰 노트) 폴더 저장 모드일 때만 호출한다. 로컬 저장 모드에서는 App 렌더부의
+  // 가드가 "폴더 저장 모드에서만 사용 가능" 안내를 보여주고 open()을 아예 시도하지 않는다.
+  useEffect(() => {
+    if (activeView === 'story' && storyProjectPath && !storyPipeline.state) {
+      storyPipeline.open()
+    }
+  }, [activeView, storyProjectPath, storyPipeline.state, storyPipeline.open])
 
   // Flow 프로젝트가 준비되면(컴포저 가시·settle) 모델 목록을 백그라운드로 미리 스크랩한다.
   //   이렇게 캐시해 두면 설정 모달을 열 때 느린 라이브 스크랩 없이 즉시 동적 목록이 뜬다.
@@ -1632,6 +1645,8 @@ function App() {
         }}
         disabled={anyRunning || refBatchRunning || videoRetryRunning || !!generatingSceneId || thumbnailGenerating || galleryUploading}
         modeBusy={isRunning || videoAutomation.isRunning || refBatchRunning || hasPendingBatch || videoRetryRunning || !!generatingSceneId || thumbnailGenerating || galleryUploading}
+        storyActive={activeView === 'story'}
+        onStoryClick={() => setActiveView(v => v === 'story' ? 'generate' : 'story')}
       />
 
       {/* 구독 상태 배너 (Trial/만료 시에만 표시) */}
@@ -1645,7 +1660,7 @@ function App() {
       />
 
       {/* 메인 UI - 항상 표시. 키 없으면 생성(Start) 시 API 키 모달로 안내(시작 화면 게이트 제거). */}
-      {(
+      {activeView === 'generate' && (
       <>
       <div className="main-panel">
         {/* 탭 헤더 */}
@@ -2268,6 +2283,20 @@ function App() {
         )}
       </div>
       </>
+      )}
+
+      {/* Story 뷰 — 폴더 저장 모드 전용(로컬 저장 모드는 프로젝트 경로가 없어 open()이 실패할 수
+          있다, Task 9 리뷰 노트). 로컬 저장 모드면 안내만 보여주고 StoryView/파이프라인을 띄우지 않는다. */}
+      {activeView === 'story' && (
+        storyProjectPath ? (
+          <div className="main-panel">
+            <StoryView pipeline={storyPipeline} />
+          </div>
+        ) : (
+          <div className="story-guard">
+            <p>📁 폴더 저장 모드에서만 Story 기능을 사용할 수 있습니다. 설정에서 저장 모드를 폴더로 변경해주세요.</p>
+          </div>
+        )
       )}
 
       {/* 씬 상세 모달 (ResultsTable에서 열림) */}
