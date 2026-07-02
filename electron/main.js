@@ -128,6 +128,9 @@ const API_HEADERS = {
 
 let mainWindow = null
 let mcpHttpServer = null // MCP HTTP 서버 인스턴스
+// 렌더러가 app:project-activated로 마지막 보고한 작업 폴더 — story:open의 projectPath가
+// 이 하위인지 검증하는 데 쓰인다(story-api.js의 getActiveWorkFolder dep).
+let activeWorkFolder = null
 
 let capturedProjectId = null // Flow 네트워크에서 자동 캡처된 projectId
 let capturedApiOrigin = null // #R33: Flow 가 실제로 쓴 생성 API origin(region 대응). null 이면 BASE_API_URL fallback.
@@ -198,7 +201,11 @@ const genaiKeyStore = createKeyStore({
 registerGenaiIPC(ipcMain, { keyStore: genaiKeyStore })
 
 // Story pipeline IPC (script/scenes/prompts 스텝 머신 + preload 브릿지).
-registerStoryIPC(ipcMain, { keyStore: genaiKeyStore, getWindow: () => mainWindow })
+registerStoryIPC(ipcMain, {
+  keyStore: genaiKeyStore,
+  getWindow: () => mainWindow,
+  getActiveWorkFolder: () => activeWorkFolder,
+})
 
 // Auth IPC (Google OAuth) — opens its own BrowserWindow; no Flow view dependency.
 registerAuthIPC(ipcMain)
@@ -765,6 +772,7 @@ registerDomIPC(ipcMain, flowAPIDeps)
 // Renderer reports the active project (with its work folder) so the native
 // "Recent Projects" menu stays in MRU order and scoped to the current folder.
 ipcMain.handle('app:project-activated', (event, { name, workFolder }) => {
+  if (workFolder) activeWorkFolder = workFolder
   try { noteProjectActivated(name, workFolder) } catch (e) { console.warn('[AutoFlowCut] noteProjectActivated failed:', e.message) }
   return { success: true }
 })

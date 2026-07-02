@@ -29,7 +29,15 @@ async function validateProjectPath(projectPath) {
   }
 }
 
-export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini }) {
+// HIGH(부분): 절대경로/traversal/존재 검증을 통과해도 활성 workFolder(렌더러가 마지막으로
+// activate한 작업 폴더) 밖의 임의 경로면 여전히 임의 위치에 script.md/scenes.json을 쓸 수
+// 있다. workFolder가 알려져 있으면(활성화된 뒤) projectPath가 그 하위인지 확인한다.
+function isWithinWorkFolder(projectPath, workFolder) {
+  const rel = path.relative(workFolder, projectPath)
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
+}
+
+export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini, getActiveWorkFolder = () => null }) {
   let machine = null
   let openLock = Promise.resolve()
 
@@ -47,6 +55,11 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
     // 동시 open 레이스 방지 — 직렬화(promise 체인): 이전 open이 끝나야 다음 open이 실행된다
     const task = openLock.then(async () => {
       if (!(await validateProjectPath(projectPath))) return { error: 'invalid-project-path' }
+      const activeWorkFolder = getActiveWorkFolder()
+      // activeWorkFolder를 아직 모르면(활성화 전) 기존 검증만 적용 — 하위호환.
+      if (activeWorkFolder && !isWithinWorkFolder(projectPath, activeWorkFolder)) {
+        return { error: 'invalid-project-path' }
+      }
       if (machine) await machine.abort()
       machine = createStepMachine({ projectPath, llm, emit, getApiKey: () => keyStore.getKey() })
       return machine.open()

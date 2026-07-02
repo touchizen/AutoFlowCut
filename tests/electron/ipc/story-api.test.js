@@ -100,6 +100,46 @@ describe('story IPC', () => {
     expect(r.projectToken).toBeTruthy()
   })
 
+  // HIGH: projectPath 자체 검증(절대경로/존재)은 통과해도, 활성 workFolder 밖의 임의
+  // 디렉토리를 지정하면 그쪽에 story.md/scenes.json 등을 쓸 수 있다 — 렌더러가 activate한
+  // workFolder 하위로 범위를 제한한다.
+  it('story:open — activeWorkFolder가 설정되면 그 하위가 아닌 경로는 거부한다', async () => {
+    const outsideDir = await mkdtemp(path.join(tmpdir(), 'outside-'))
+    const workFolder = await mkdtemp(path.join(tmpdir(), 'work-'))
+    const ipc2 = fakeIpcMain()
+    registerStoryIPC(ipc2, {
+      keyStore: { getKey: () => 'k' },
+      getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
+      llm: { generateScript: vi.fn(), splitScenes: vi.fn(), writePrompts: vi.fn() },
+      getActiveWorkFolder: () => workFolder,
+    })
+    const r = await ipc2.invoke('story:open', { projectPath: outsideDir })
+    expect(r.error).toBe('invalid-project-path')
+  })
+
+  it('story:open — activeWorkFolder 하위 경로는 정상적으로 연다', async () => {
+    const { mkdir } = await import('node:fs/promises')
+    const workFolder = await mkdtemp(path.join(tmpdir(), 'work-'))
+    const projectDir = path.join(workFolder, 'my-project')
+    await mkdir(projectDir)
+    const ipc2 = fakeIpcMain()
+    registerStoryIPC(ipc2, {
+      keyStore: { getKey: () => 'k' },
+      getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
+      llm: { generateScript: vi.fn(), splitScenes: vi.fn(), writePrompts: vi.fn() },
+      getActiveWorkFolder: () => workFolder,
+    })
+    const r = await ipc2.invoke('story:open', { projectPath: projectDir })
+    expect(r.error).toBeUndefined()
+    expect(r.projectToken).toBeTruthy()
+  })
+
+  it('story:open — activeWorkFolder가 없으면(활성화 전) 기존 검증만 적용한다(하위호환)', async () => {
+    // 기본 beforeEach의 ipc는 getActiveWorkFolder를 넘기지 않는다 → 항상 null 취급
+    const r = await ipc.invoke('story:open', { projectPath: dir })
+    expect(r.error).toBeUndefined()
+  })
+
   it('story:push-ack(ok:false)는 operationId/reason을 버리지 않고 lastPushError로 보존한다', async () => {
     const { projectToken } = await ipc.invoke('story:open', { projectPath: dir })
     await ipc.invoke('story:start', { projectToken, step: 'script', params: { input: { type: 'title', title: 'T' }, options: {} } })
