@@ -9,6 +9,9 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
   // Important: scenes.json 파생 데이터(씬 세그먼트/이미지·비디오 프롬프트)는 story.json
   // 상태와 별도로 보관한다 — StoryView ②/④ 패널이 이 값을 직접 소비한다.
   const [scenes, setScenes] = useState([])
+  // Minor 7-⑵: story:open이 { error }를 반환하면(invalid-project-path 등) StoryView가
+  // 안내 배너를 렌더할 수 있게 노출한다.
+  const [openError, setOpenError] = useState(null)
   const [streamingText, setStreamingText] = useState('')
   const tokenRef = useRef(null)
   const onPushRef = useRef(onPushScenes)
@@ -76,6 +79,11 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
       }
       return r
     }
+    if (r?.error) {
+      setOpenError(r.error)
+      return r
+    }
+    setOpenError(null)
     tokenRef.current = r.projectToken
     setState(r.state)
     setScenes(r.scenes || [])
@@ -99,5 +107,5 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
 
   const abort = useCallback(() => window.electronAPI.storyAbort({ projectToken: tokenRef.current }), [])
 
-  return { state, scenes, streamingText, open, start, abort }
+  return { state, scenes, streamingText, open, start, abort, openError }
 }

@@ -43,12 +43,17 @@ function useSafeT() {
 
 export default function StoryView({ pipeline }) {
   const t = useSafeT()
-  const { state, streamingText, start, abort, scenes = [] } = pipeline
+  const { state, streamingText, start, abort, scenes = [], openError } = pipeline
   const steps = state?.steps || {}
   const currentStep = computeCurrentStep(steps)
   const stepData = steps[currentStep] || { status: 'pending' }
   const isRunning = stepData.status === 'running'
   const isError = stepData.status === 'error'
+
+  // 7-⑴: 스텝퍼에서 done 상태 스텝을 클릭하면 진행이 더 앞서가 있어도 해당 패널을 다시 볼 수
+  // 있다 — 실행 버튼/러닝 상태 등 액션은 여전히 실제 진행 단계(currentStep) 기준으로 동작한다.
+  const [viewedStep, setViewedStep] = useState(null)
+  const displayStep = (viewedStep && steps[viewedStep]?.status === 'done') ? viewedStep : currentStep
 
   // ① 제목 입력 폼 — M1은 편집 저장 없이 로컬 폼 상태만(대본 생성 시작 파라미터로 사용).
   const [title, setTitle] = useState('')
@@ -94,7 +99,13 @@ export default function StoryView({ pipeline }) {
 
   return (
     <div className="story-view">
-      <StoryStepper steps={steps} currentStep={currentStep} t={t} />
+      <StoryStepper steps={steps} currentStep={currentStep} t={t} onStepClick={setViewedStep} />
+
+      {openError && (
+        <div className="story-open-error-banner" role="alert">
+          ⚠️ {t('story.error.openFailed', '프로젝트 폴더를 열 수 없습니다')}: {openError}
+        </div>
+      )}
 
       {isError && (
         <div className="story-error-banner" role="alert">
@@ -103,7 +114,7 @@ export default function StoryView({ pipeline }) {
       )}
 
       <div className="story-step-panel">
-        {currentStep === 'script' && (
+        {displayStep === 'script' && (
           <div className="story-script-panel">
             <div className="story-title-form">
               <input
@@ -170,7 +181,7 @@ export default function StoryView({ pipeline }) {
           </div>
         )}
 
-        {currentStep === 'scenes' && (
+        {displayStep === 'scenes' && (
           <div className="story-scenes-panel">
             <table className="story-readonly-table">
               <thead>
@@ -198,7 +209,7 @@ export default function StoryView({ pipeline }) {
           </div>
         )}
 
-        {currentStep === 'prompts' && (
+        {displayStep === 'prompts' && (
           <div className="story-prompts-panel">
             <table className="story-readonly-table">
               <thead>

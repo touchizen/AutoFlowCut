@@ -213,6 +213,29 @@ describe('useStoryPipeline', () => {
     expect(result.current.state).toBeNull()
   })
 
+  // Minor 7-⑵: story:open이 { error }를 반환하면(예: invalid-project-path) tokenRef/state를
+  // 건드리지 않고 openError로 노출해 StoryView가 안내 배너를 렌더할 수 있게 한다.
+  it('storyOpen이 error를 반환하면 openError로 노출하고 state/tokenRef를 건드리지 않는다', async () => {
+    window.electronAPI.storyOpen = vi.fn(async () => ({ error: 'invalid-project-path' }))
+    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: vi.fn() }))
+    const r = await act(() => result.current.open())
+    expect(r.error).toBe('invalid-project-path')
+    expect(result.current.openError).toBe('invalid-project-path')
+    expect(result.current.state).toBeNull()
+    expect(window.electronAPI.storyGetState).not.toHaveBeenCalled()
+  })
+
+  it('open이 성공하면 이전 openError를 초기화한다', async () => {
+    window.electronAPI.storyOpen = vi.fn(async () => ({ error: 'invalid-project-path' }))
+    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: vi.fn() }))
+    await act(() => result.current.open())
+    expect(result.current.openError).toBe('invalid-project-path')
+
+    window.electronAPI.storyOpen = vi.fn(async () => ({ projectToken: 'tok1', state: { steps: {} } }))
+    await act(() => result.current.open())
+    expect(result.current.openError).toBeNull()
+  })
+
   it('unmount 시 이벤트 리스너를 해제한다 — 이후 이벤트 발화는 무해하다', async () => {
     const onPushScenes = vi.fn(async () => {})
     const { result, unmount } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes }))
