@@ -14,6 +14,7 @@ import { registerPremiereIPC } from './ipc/premiere.js'
 import { registerVrewIPC } from './ipc/vrew.js'
 import { registerMcpIPC } from './ipc/mcp.js'
 import { registerGenaiIPC } from './ipc/genai-api.js'
+import { registerStoryIPC } from './ipc/story-api.js'
 import { createKeyStore } from './api/keyStore.js'
 import { registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible, updateBounds } from './ipc/layout.js'
 import { createModeController } from './ipc/mode.js'
@@ -195,6 +196,9 @@ const genaiKeyStore = createKeyStore({
   fs: fsSync,
 })
 registerGenaiIPC(ipcMain, { keyStore: genaiKeyStore })
+
+// Story pipeline IPC (script/scenes/prompts 스텝 머신 + preload 브릿지).
+registerStoryIPC(ipcMain, { keyStore: genaiKeyStore, getWindow: () => mainWindow })
 
 // Auth IPC (Google OAuth) — opens its own BrowserWindow; no Flow view dependency.
 registerAuthIPC(ipcMain)

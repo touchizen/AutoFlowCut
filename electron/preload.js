@@ -108,6 +108,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   genaiCheckVideoStatus: (params) => ipcRenderer.invoke('genai:check-video-status', params),
   genaiDownloadVideo: (params) => ipcRenderer.invoke('genai:download-video', params),
 
+  // --- Story pipeline ---
+  storyOpen: (params) => ipcRenderer.invoke('story:open', params),
+  storyGetState: (params) => ipcRenderer.invoke('story:get-state', params),
+  storyStart: (params) => ipcRenderer.invoke('story:start', params),
+  storyAbort: (params) => ipcRenderer.invoke('story:abort', params),
+  storyPushAck: (params) => ipcRenderer.invoke('story:push-ack', params),
+  onStoryEvent: (channel, cb) => {
+    const valid = ['story:state', 'story:delta', 'story:progress', 'story:pushScenes']
+    if (!valid.includes(channel)) return () => {}
+    const listener = (_e, payload) => cb(payload)
+    ipcRenderer.on(channel, listener)
+    return () => ipcRenderer.removeListener(channel, listener)
+  },
+
   // Auth
   googleSignIn: () => ipcRenderer.invoke('auth:google-sign-in'),
   googleSignOut: () => ipcRenderer.invoke('auth:google-sign-out'),
