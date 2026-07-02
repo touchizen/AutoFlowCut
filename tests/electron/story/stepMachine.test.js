@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mkdtemp, readFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createStepMachine } from '../../../electron/story/stepMachine.js'
@@ -204,6 +205,32 @@ describe('stepMachine', () => {
     const fresh = createStepMachine({ projectPath: freshDir, llm, emit: () => {}, getApiKey: () => 'k' })
     const state = await fresh.getState()
     expect(state.steps.script.status).toBe('pending')
+  })
+
+  // HIGH/Codex: prompts()가 revision 증가 + push emit을 메모리 상태로만 하고 최종 flush
+  // 전 크래시하면, 재발신 조건(pendingPushRevision > lastPushedRevision)이 디스크에 없어
+  // 재발신 복구가 불가능하다. push emit은 반드시 flush(store.save) 완료 후에 발생해야 한다.
+  it('story:pushScenes emit 시점에 이미 story.json이 flush되어 있다 (save가 emit보다 먼저)', async () => {
+    const localEmitted = []
+    let diskRevisionAtPushTime = null
+    const m2 = createStepMachine({
+      projectPath: dir, llm,
+      emit: (ch, payload) => {
+        if (ch === 'story:pushScenes') {
+          const raw = readFileSync(path.join(dir, 'story', 'story.json'), 'utf-8')
+          diskRevisionAtPushTime = JSON.parse(raw).pendingPushRevision
+        }
+        localEmitted.push({ ch, payload })
+      },
+      getApiKey: () => 'k',
+    })
+    await m2.open()
+    await m2.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await m2.start('scenes', {})
+    await m2.start('prompts', {})
+
+    expect(localEmitted.some((e) => e.ch === 'story:pushScenes')).toBe(true)
+    expect(diskRevisionAtPushTime).toBe(1)
   })
 
   it('open 없이 abort() 호출해도 throw하지 않고 story.json에 null을 쓰지 않는다', async () => {

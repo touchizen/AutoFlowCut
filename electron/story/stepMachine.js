@@ -84,7 +84,10 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
       const { scenes } = await llm.writePrompts(scenesJson.scenes, { scriptMd, style: params.style || null }, opts, { signal })
       await store.saveText('scenes.json', JSON.stringify({ scenes }, null, 2))
       state.pendingPushRevision += 1
-      sendPush(scenes, opId)
+      // HIGH/Codex: push emit은 여기서 하지 않는다 — flush(story.json 저장) 전에 크래시하면
+      // 재발신 조건(pendingPushRevision > lastPushedRevision)이 디스크에 없어 복구 불가.
+      // start() 래퍼가 status=done 설정 + flush 완료 후에 pushScenes를 emit한다.
+      return { pushScenes: scenes }
     },
   }
 
@@ -110,10 +113,12 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
       for (const d of DOWNSTREAM[step]) state.steps[d] = { status: 'pending' }
       state.steps[step] = { status: 'running', updatedAt: new Date().toISOString() }
       await flush(); send('story:state', { state }, operationId)
+      let pushScenes = null
       try {
-        await steps[step](params, operationId, myController.signal)
+        const result = await steps[step](params, operationId, myController.signal)
         if (controller === myController) {
           state.steps[step] = { status: 'done', updatedAt: new Date().toISOString() }
+          pushScenes = result?.pushScenes || null
         }
       } catch (e) {
         if (controller === myController) {
@@ -121,7 +126,10 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
         }
       }
       if (controller === myController) {
-        await flush(); send('story:state', { state }, operationId)
+        // flush(store.save) 완료 후에만 pushScenes를 emit — 재발신 조건이 디스크에 먼저 반영되게.
+        await flush()
+        if (pushScenes) sendPush(pushScenes, operationId)
+        send('story:state', { state }, operationId)
       }
       return { operationId }
     },
