@@ -291,4 +291,62 @@ describe('stepMachine', () => {
     const raw = await readFile(path.join(freshDir, 'story', 'story.json'), 'utf-8').catch(() => null)
     expect(raw).toBeNull()
   })
+
+  // HIGH: abort()는 running 스텝을 동기적으로 error 마킹하지만, controller 참조 자체는
+  // 교체되지 않는다(같은 controller에 대한 abort). LLM mock이 signal을 무시하고 뒤늦게
+  // resolve하면, 기존 `controller === myController` 가드만으로는 이 늦은 resolve가 통과해
+  // status를 done으로 덮어쓰고 push까지 발신해버린다 — signal.aborted도 함께 검사해야 한다.
+  it('abort 후 signal 무시하고 뒤늦게 resolve해도 done/push를 기록·발신하지 않는다', async () => {
+    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await machine.start('scenes', {})
+
+    let resolvePrompts
+    llm.writePrompts.mockImplementationOnce(() => new Promise((resolve) => { resolvePrompts = resolve }))
+
+    const startP = machine.start('prompts', {})
+    while (!resolvePrompts) { await new Promise((r) => setImmediate(r)) }
+    await machine.abort()   // 동기적으로 prompts를 error(aborted)로 마킹
+
+    emitted.length = 0
+    resolvePrompts({ scenes: [{ storyId: 'x', imagePrompt: 'IMG', videoPrompt: 'VID' }] })   // signal 무시하고 뒤늦게 resolve
+    await startP
+
+    const state = await machine.getState()
+    expect(state.steps.prompts.status).toBe('error')
+    expect(state.steps.prompts.error).toBe('aborted')
+    expect(emitted.some((e) => e.ch === 'story:pushScenes')).toBe(false)
+    // 파일 쓰기 가드까지 확인: scenes.json도 aborted 이후 내용으로 갱신되지 않아야 한다
+    const raw = JSON.parse(await readFile(path.join(dir, 'story', 'scenes.json'), 'utf-8'))
+    expect(raw.scenes.some((s) => s.imagePrompt === 'IMG')).toBe(false)
+  })
+
+  // HIGH: 실행 중인 스텝이 있을 때 새 start()가 그대로 통과되면 두 번째 실행이 동일 파일에
+  // 동시에 쓰기 경쟁을 벌인다 — 어떤 스텝이든 running이면 새 start()는 실행하지 않고 busy를
+  // 반환해야 한다. abort 후에는 동기 error 마킹이라 running이 남지 않으므로 재시작은 정상 동작.
+  it('실행 중인 스텝이 있으면 새 start()는 busy를 반환하고 실행하지 않는다', async () => {
+    let resolveScript
+    llm.generateScript.mockImplementationOnce(() => new Promise((resolve) => { resolveScript = resolve }))
+    const p1 = machine.start('script', { input: { type: 'title', title: 'T1' }, options: { language: 'ko' } })
+    while (!resolveScript) { await new Promise((r) => setImmediate(r)) }
+
+    const busy = await machine.start('script', { input: { type: 'title', title: 'T2' }, options: { language: 'ko' } })
+    expect(busy).toEqual({ error: 'busy' })
+    expect(llm.generateScript).toHaveBeenCalledTimes(1)
+
+    resolveScript({ scriptMd: '# 1차' })
+    await p1
+    const state = await machine.getState()
+    expect(state.steps.script.status).toBe('done')
+  })
+
+  it('MED: pushAck는 정수 + lastPushedRevision보다 크고 pendingPushRevision 이하인 revision만 성공 처리한다', async () => {
+    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await machine.start('scenes', {})
+    await machine.start('prompts', {})   // pendingPushRevision=1, lastPushedRevision=0
+
+    await machine.ackPush({ pushRevision: 999, ok: true })   // future revision — 무시
+    const state = await machine.getState()
+    expect(state.lastPushedRevision).toBe(0)
+    expect(state.pushedAt).toBeFalsy()
+  })
 })

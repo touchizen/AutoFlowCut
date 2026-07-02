@@ -67,6 +67,9 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
       // M1 스펙 §1 2번 경로: 대본을 직접 붙여넣은 경우 LLM 호출 없이 그대로 저장한다.
       if (params.pastedScript) {
         state.input = { type: 'pasted', options: params.options }
+        // HIGH: abort 직후 파일 쓰기 자체를 막는 방어 가드 — start() 래퍼의 결과 처리 가드와
+        // 별개로, 취소된 스텝이 디스크에 흔적을 남기지 않도록 saveText 직전에 한 번 더 확인한다.
+        if (signal?.aborted) return
         await store.saveText('script.md', params.pastedScript)
         return
       }
@@ -75,6 +78,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
       const { scriptMd } = await llm.generateScript(state.input, opts, {
         onDelta: (text) => send('story:delta', { text }, opId), signal,
       })
+      if (signal?.aborted) return
       await store.saveText('script.md', scriptMd)
     },
     async scenes(params, opId, signal) {
@@ -82,6 +86,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
       if (!scriptMd) throw new Error('script.md not found — run script step first')
       const opts = { apiKey: getApiKey(), model: state.engine.model || 'gemini-2.5-pro', ...(state.input?.options || {}) }
       const { scenes, speakers } = await llm.splitScenes(scriptMd, opts, { signal })
+      if (signal?.aborted) return
       const prev = JSON.parse((await store.loadText('scenes.json')) || '{"scenes":[]}').scenes
       const { scenes: withIds } = inheritStoryIds(prev, scenes)
       assertUniqueStoryIds(withIds)
@@ -97,6 +102,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
       const scriptMd = await store.loadText('script.md')
       const opts = { apiKey: getApiKey(), model: state.engine.model || 'gemini-2.5-pro', ...(state.input?.options || {}) }
       const { scenes } = await llm.writePrompts(scenesJson.scenes, { scriptMd, style: params.style || null }, opts, { signal })
+      if (signal?.aborted) return
       await store.saveText('scenes.json', JSON.stringify({ scenes }, null, 2))
       state.pendingPushRevision += 1
       // HIGH/Codex: push emit은 여기서 하지 않는다 — flush(story.json 저장) 전에 크래시하면
@@ -125,6 +131,10 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
     },
     async start(step, params = {}) {
       if (!steps[step]) throw new Error(`unknown step: ${step}`)
+      // HIGH: 어떤 스텝이든 running이면 새 start()는 실행하지 않는다 — 동시 실행이 같은
+      // story.json/scenes.json에 경쟁적으로 쓰는 것을 막는다. abort()는 running을 동기적으로
+      // error로 마킹하므로, abort 후에는 이 가드에 걸리지 않고 정상 재시작할 수 있다.
+      if (Object.values(state.steps).some((s) => s.status === 'running')) return { error: 'busy' }
       const operationId = randomUUID()
       const myController = new AbortController()
       controller = myController
@@ -133,18 +143,23 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
       state.steps[step] = { status: 'running', updatedAt: new Date().toISOString() }
       await flush(); send('story:state', { state }, operationId)
       let pushScenes = null
+      // HIGH: abort()는 controller를 교체하지 않고(같은 controller에 abort 신호만 보냄) running
+      // 스텝을 동기적으로 error 마킹한다. 스텝 fn이 signal을 무시하고 뒤늦게 resolve/reject하면
+      // `controller === myController`만으로는 늦은 결과가 통과해 abort의 error 마킹을 done/다른
+      // error로 덮어쓴다 — signal.aborted를 함께 검사해 abort의 동기 마킹을 정본으로 지킨다.
+      const isStale = () => controller !== myController || myController.signal.aborted
       try {
         const result = await steps[step](params, operationId, myController.signal)
-        if (controller === myController) {
+        if (!isStale()) {
           state.steps[step] = { status: 'done', updatedAt: new Date().toISOString() }
           pushScenes = result?.pushScenes || null
         }
       } catch (e) {
-        if (controller === myController) {
+        if (!isStale()) {
           state.steps[step] = { status: 'error', error: String(e.message || e), updatedAt: new Date().toISOString() }
         }
       }
-      if (controller === myController) {
+      if (!isStale()) {
         // flush(store.save) 완료 후에만 pushScenes를 emit — 재발신 조건이 디스크에 먼저 반영되게.
         await flush()
         if (pushScenes) sendPush(pushScenes, operationId)
@@ -165,10 +180,15 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
     },
     async ackPush({ pushRevision, ok, reason }) {
       if (ok) {
-        if (pushRevision > state.lastPushedRevision) {
-          state.lastPushedRevision = pushRevision
-          state.pushedAt = new Date().toISOString()
-        }
+        // MED: renderer가 잘못되거나 지연된 ack를 보낼 수 있다 — 정수이면서 이미 확인된
+        // revision보다 크고, 아직 발신조차 안 된(pendingPushRevision 초과) future revision은
+        // 아님이 확인될 때만 성공 처리한다. 그 외에는 조용히 무시(상태 변경 없음).
+        const valid = Number.isInteger(pushRevision) &&
+          pushRevision > state.lastPushedRevision &&
+          pushRevision <= state.pendingPushRevision
+        if (!valid) return
+        state.lastPushedRevision = pushRevision
+        state.pushedAt = new Date().toISOString()
         state.lastPushError = null
         await flush()
       } else {
