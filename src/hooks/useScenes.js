@@ -661,7 +661,53 @@ export function useScenes() {
   const getErrorCount = useCallback(() => sceneStats.error.length, [sceneStats])
   const getErrorScenes = useCallback(() => sceneStats.error, [sceneStats])
   const getPendingScenes = useCallback(() => sceneStats.pending, [sceneStats])
-  
+
+  /**
+   * Story 파이프라인 push 수신 (스펙 §4-④). storyId 기준 upsert — 트랜잭션의
+   * 적용 결과를 동기 반환하므로 호출자(App)는 이 반환값으로 명시 payload 저장 후 ack.
+   *
+   * - 신규 storyId → allocateSceneId() 로 안전하게 ID 발급 (삭제 이력 있어도 충돌 없음)
+   * - 기존 storyId → 이미지/비디오 보존, prompt 변경 시 stalePrompt, videoT2VPrompt/duration
+   *   변경 + 기존 비디오 존재 시 staleVideo 플래그
+   * - payload 에 없는 기존 story 씬은 유지 (삭제는 M1 범위 밖)
+   * - srtTrack 인자가 있으면 wholesale 교체 + non-story 씬의 srtLineIds 비움
+   */
+  const importStoryScenes = useCallback(({ scenes: pushScenes, srtTrack: newSrtTrack }) => {
+    const now = new Date().toISOString()
+    const current = scenesRef.current
+    const byStoryId = new Map(current.filter((s) => s.storyId).map((s) => [s.storyId, s]))
+
+    const upserted = pushScenes.map((p) => {
+      const prev = byStoryId.get(p.storyId)
+      if (!prev) {
+        return normalizeScene({ ...p, id: allocateSceneId() })
+      }
+      const merged = { ...prev, ...p, id: prev.id }
+      if (prev.prompt !== p.prompt && (prev.imageUrl || prev.images?.length)) {
+        merged.stalePrompt = true
+        merged.stalePromptAt = now
+      }
+      const hasVideo = prev.videoT2VUrl || prev.videoI2VUrl || prev.framePairs?.length
+      if (hasVideo && (prev.videoT2VPrompt !== p.videoT2VPrompt || Math.abs((prev.duration || 0) - p.duration) > 0.5)) {
+        merged.staleVideo = true
+        merged.staleVideoAt = now
+      }
+      return normalizeScene(merged)
+    })
+
+    const pushedIds = new Set(pushScenes.map((p) => p.storyId))
+    const kept = current.filter((s) => !s.storyId || !pushedIds.has(s.storyId))
+    const keptAdjusted = newSrtTrack
+      ? kept.map((s) => (!s.storyId && s.srtLineIds?.length ? { ...s, srtLineIds: [] } : s))
+      : kept
+
+    const nextScenes = [...keptAdjusted, ...upserted]
+    setScenes(nextScenes)
+    const nextSrtTrack = newSrtTrack ?? srtTrackRef.current
+    if (newSrtTrack) setSrtTrack(newSrtTrack)
+    return { nextScenes, nextSrtTrack }
+  }, [])
+
   return {
     // State
     scenes,
@@ -678,7 +724,10 @@ export function useScenes() {
     parseFromCSV,
     parseFromSRT,
     parseReferencesFromCSV,
-    
+
+    // Story pipeline
+    importStoryScenes,
+
     // Scene actions
     updateScene,
     updateSrtLine,
