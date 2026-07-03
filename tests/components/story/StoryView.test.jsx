@@ -29,14 +29,14 @@ describe('StoryView', () => {
     render(<StoryView pipeline={p} />)
     fireEvent.change(screen.getByPlaceholderText(/제목/), { target: { value: '운수 좋은 날' } })
     fireEvent.change(screen.getByLabelText('장르'), { target: { value: 'yadam' } })
-    fireEvent.change(screen.getByPlaceholderText(/길이/), { target: { value: '5' } })
+    fireEvent.change(screen.getByLabelText('길이 값'), { target: { value: '5' } })
     fireEvent.change(screen.getByPlaceholderText(/언어/), { target: { value: 'ko' } })
     fireEvent.click(screen.getByRole('button', { name: /대본 생성/ }))
-    // stepMachine.steps.script는 params.input(type/title)과 params.options(genre/targetMinutes/language)를
+    // stepMachine.steps.script는 params.input(type/title)과 params.options(genre/model/language/length)를
     // 분리해서 읽는다 — input에 genre/length/language를 섞어 넣으면 LLM opts로 전달되지 않아 무시된다.
     expect(p.start).toHaveBeenCalledWith('script', {
       input: { type: 'title', title: '운수 좋은 날' },
-      options: { genre: 'yadam', targetMinutes: 5, language: 'ko' },
+      options: { genre: 'yadam', language: 'ko', model: 'claude-opus-4-8', lengthValue: '5', lengthUnit: 'min' },
     })
   })
 
@@ -47,7 +47,7 @@ describe('StoryView', () => {
     fireEvent.click(screen.getByRole('button', { name: /대본 생성/ }))
     expect(p.start).toHaveBeenCalledWith('script', {
       input: { type: 'title', title: '제목만' },
-      options: { genre: undefined, targetMinutes: undefined, language: 'ko' },
+      options: { genre: undefined, language: 'ko', model: 'claude-opus-4-8', lengthValue: '10', lengthUnit: 'min' },
     })
   })
   it('script running이면 스트리밍 텍스트를 표시한다', () => {
@@ -72,7 +72,7 @@ describe('StoryView', () => {
     fireEvent.click(screen.getByRole('button', { name: /대본으로 시작/ }))
     expect(p.start).toHaveBeenCalledWith('script', {
       pastedScript: '내가 쓴 대본',
-      options: { language: 'ko' },
+      options: { language: 'ko', model: 'claude-opus-4-8' },
     })
   })
 

@@ -58,7 +58,9 @@ export default function StoryView({ pipeline }) {
   // ① 제목 입력 폼 — M1은 편집 저장 없이 로컬 폼 상태만(대본 생성 시작 파라미터로 사용).
   const [title, setTitle] = useState('')
   const [genre, setGenre] = useState('')
-  const [length, setLength] = useState('')
+  const [length, setLength] = useState('10')          // 길이 값
+  const [lengthUnit, setLengthUnit] = useState('min') // 길이 단위
+  const [model, setModel] = useState('claude-opus-4-8')
   const [language, setLanguage] = useState('ko')
   const [scriptDraft, setScriptDraft] = useState('')
   // M1 스펙 §1 2번 경로 — 대본을 직접 붙여넣어 LLM 호출 없이 바로 시작.
@@ -86,7 +88,7 @@ export default function StoryView({ pipeline }) {
       // options로 전달되지 않아 LLM이 이를 무시하고(예: 한국어 입력에도 영어 대본) 버그가 된다.
       start('script', {
         input: { type: 'title', title },
-        options: { genre: genre || undefined, targetMinutes: Number(length) || undefined, language },
+        options: { genre: genre || undefined, language, model, lengthValue: length, lengthUnit },
       })
     } else {
       start(currentStep, {})
@@ -94,7 +96,7 @@ export default function StoryView({ pipeline }) {
   }
 
   const handlePasteStart = () => {
-    start('script', { pastedScript, options: { language } })
+    start('script', { pastedScript, options: { language, model } })
   }
 
   return (
@@ -116,14 +118,16 @@ export default function StoryView({ pipeline }) {
       <div className="story-step-panel">
         {displayStep === 'script' && (
           <div className="story-script-panel">
-            <div className="story-title-form">
+            <div className="story-title-row">
               <input
-                className="story-input"
+                className="story-input story-title-input"
                 placeholder={t('story.form.titlePlaceholder', '제목')}
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 disabled={isRunning}
               />
+            </div>
+            <div className="story-options-row">
               <select
                 className="story-input"
                 aria-label={t('story.form.genreLabel', '장르')}
@@ -136,13 +140,16 @@ export default function StoryView({ pipeline }) {
                 <option value="dark-history">dark-history</option>
                 <option value="bespoke">bespoke</option>
               </select>
-              <input
+              <select
                 className="story-input"
-                placeholder={t('story.form.lengthPlaceholder', '길이(분)')}
-                value={length}
-                onChange={(e) => setLength(e.target.value)}
+                aria-label={t('story.form.modelLabel', '모델')}
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
                 disabled={isRunning}
-              />
+              >
+                <option value="claude-opus-4-8">Opus 4.8</option>
+                <option value="claude-sonnet-5">Sonnet 5</option>
+              </select>
               <input
                 className="story-input"
                 placeholder={t('story.form.languagePlaceholder', '언어')}
@@ -150,6 +157,24 @@ export default function StoryView({ pipeline }) {
                 onChange={(e) => setLanguage(e.target.value)}
                 disabled={isRunning}
               />
+              <input
+                className="story-input story-length-value"
+                aria-label={t('story.form.lengthValueLabel', '길이 값')}
+                placeholder={t('story.form.lengthPlaceholder', '길이')}
+                value={length}
+                onChange={(e) => setLength(e.target.value)}
+                disabled={isRunning}
+              />
+              <select
+                className="story-input story-length-unit"
+                aria-label={t('story.form.lengthUnitLabel', '길이 단위')}
+                value={lengthUnit}
+                onChange={(e) => setLengthUnit(e.target.value)}
+                disabled={isRunning}
+              >
+                <option value="min">{language === 'en' ? 'min' : '분'}</option>
+                <option value={language === 'en' ? 'words' : 'chars'}>{language === 'en' ? 'words' : '자'}</option>
+              </select>
             </div>
 
             {isRunning ? (

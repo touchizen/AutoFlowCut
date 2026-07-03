@@ -86,11 +86,23 @@
   height: 100%;
 }
 
-.story-title-form {
+.story-title-row {
+  display: flex;
+}
+
+.story-title-input {
+  flex: 1 1 100%;
+}
+
+.story-options-row {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  margin-top: 8px;
 }
+
+.story-length-value { flex: 0 1 90px; }
+.story-length-unit { flex: 0 1 90px; }
 
 .story-input {
   flex: 1 1 160px;
