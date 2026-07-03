@@ -14,8 +14,8 @@ export function createTypecastAdapter({ getKey, fetch }) {
       if (!key) throw new Error('No Typecast API key')
       const res = await fetch(ENDPOINT, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-        body: JSON.stringify({ text, model: 'ssfm-v21', voice_id: voiceId, emotion, language: 'ko' }),
+        headers: { 'Content-Type': 'application/json', 'x-api-key': key },
+        body: JSON.stringify({ text, voice_id: voiceId, model: 'ssfm-v21', emotion }),
         signal,
       })
       if (!res.ok) {

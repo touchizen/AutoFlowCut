@@ -8,7 +8,7 @@ describe('createTypecastAdapter', () => {
     expect(a.capabilities().outputFormats).toContain('wav')
   })
 
-  it('synthesize: 키·voiceId·text·emotion을 요청에 싣고 오디오 Buffer 반환', async () => {
+  it('synthesize: x-api-key 헤더·voiceId·text·emotion을 요청에 싣고 오디오 Buffer 반환 (실제 Typecast 계약: scripts/generate_tts_typecast.py)', async () => {
     let captured
     const fetch = async (url, opts) => {
       captured = { url, opts }
@@ -19,12 +19,16 @@ describe('createTypecastAdapter', () => {
     expect(format).toBe('wav')
     expect(Buffer.isBuffer(audio)).toBe(true)
     expect([...audio]).toEqual([1, 2, 3])
-    expect(captured.opts.headers.Authorization).toContain('tc-key')
+    // 실제 계약: Authorization Bearer가 아니라 x-api-key 헤더
+    expect(captured.opts.headers['x-api-key']).toBe('tc-key')
+    expect(captured.opts.headers.Authorization).toBeUndefined()
     const body = JSON.parse(captured.opts.body)
     expect(body.voice_id).toBe('tc_abc')
     expect(body.text).toBe('안녕')
     expect(body.emotion).toBe('happy')
     expect(body.model).toBe('ssfm-v21')
+    // 실제 계약: language 필드 없음 (script와 동일한 body shape)
+    expect(body.language).toBeUndefined()
   })
 
   it('키 없으면 throw', async () => {

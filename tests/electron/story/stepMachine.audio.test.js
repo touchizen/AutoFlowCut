@@ -75,6 +75,25 @@ describe('audio 스텝', () => {
     expect(manifest.segments[1].startMs).toBe(2150) // 2000 + 150 gap
   })
 
+  // HIGH4: 세그먼트 파일 확장자는 어댑터가 반환한 format을 따라야 한다 — .wav 하드코딩 금지
+  // (미래 mp3 반환 프로바이더(ElevenLabs 등)가 붙어도 내용≠확장자 불일치가 나지 않게).
+  it('세그먼트 파일 확장자는 어댑터가 반환한 format을 따른다(.wav 하드코딩 금지)', async () => {
+    const { writeFile, mkdir } = await import('node:fs/promises')
+    await mkdir(path.join(projectPath, 'story'), { recursive: true })
+    await writeFile(path.join(projectPath, 'story', 'scenes.json'), JSON.stringify({
+      scenes: [{ segments: [{ id: 's1', type: 'narration', speaker: 'narrator', text: '첫 문장' }] }],
+    }))
+    const tts = { capabilities: () => ({ maxConcurrency: 2 }), synthesize: async ({ text }) => ({ audio: Buffer.from('AUDIO:' + text), format: 'mp3' }) }
+    const probe = async () => 2000
+    const machine = createStepMachine({
+      projectPath, llm: {}, emit: () => {}, getApiKey: () => 'k', tts, probe,
+    })
+    await machine.open()
+    await machine.start('audio', { speakers: [{ id: 'narrator', voice: { provider: 'elevenlabs', voiceId: 'el_x' } }] })
+    const s1 = await readFile(path.join(projectPath, 'story', 'audio', 'segments', 's1.mp3'))
+    expect(s1.toString()).toBe('AUDIO:첫 문장')
+  })
+
   // C1: scenes.json의 내레이션 세그먼트가 id 없이(혹은 중복 id로) 저장돼 있으면 TTS 파일명/
   // results 맵/manifest 키가 undefined로 조용히 붕괴한다 — audio 스텝 진입 시 fail-fast해야 한다.
   it('scenes.json 세그먼트에 id가 없으면 audio 스텝은 즉시 throw한다', async () => {

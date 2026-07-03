@@ -165,8 +165,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         await Promise.all(batch.map(async (seg) => {
           const voice = voiceOf(seg.speaker)
           if (!voice) throw new Error(`voice not assigned for speaker: ${seg.speaker}`)
-          const { audio } = await tts.synthesize({ text: seg.text, voiceId: voice.voiceId, emotion: seg.emotion, signal })
-          const rel = `audio/segments/${seg.id}.wav`
+          const { audio, format } = await tts.synthesize({ text: seg.text, voiceId: voice.voiceId, emotion: seg.emotion, signal })
+          const rel = `audio/segments/${seg.id}.${format}`
           await store.saveBinary(rel, audio)
           const durationMs = await probe(path.join(projectPath, 'story', rel))
           results.set(seg.id, { audioPath: path.join(projectPath, 'story', rel), durationMs })
