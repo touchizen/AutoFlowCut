@@ -4,24 +4,7 @@ import TimelineFlagButton from './TimelineFlagButton'
 import TimelineVideoToggleButton from './TimelineVideoToggleButton'
 import { useElapsedTimer } from '../../hooks/useElapsedTimer'
 import { formatElapsed } from '../../utils/formatters'
-
-// 생성 중 스톱워치 아이콘 — Results(ResultsTable) 와 동일 마크업/CSS(.stopwatch-icon/-hand, App.css 전역).
-function StopwatchIcon({ size = 14 }) {
-  const r = size / 2
-  const cx = r, cy = r
-  const handLen = r * 0.6
-  return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="stopwatch-icon">
-      <circle cx={cx} cy={cy} r={r - 1.5} fill="none" stroke="currentColor" strokeWidth="1.5" />
-      <line x1={cx} y1={cy - r + 1.5} x2={cx} y2={cy - r + 3.5} stroke="currentColor" strokeWidth="1.2" />
-      <rect x={cx - 1} y={0} width={2} height={2} rx={0.5} fill="currentColor" />
-      <line className="stopwatch-hand" x1={cx} y1={cy} x2={cx} y2={cy - handLen}
-        stroke="var(--accent, #3b82f6)" strokeWidth="1.5" strokeLinecap="round"
-        style={{ transformOrigin: `${cx}px ${cy}px` }} />
-      <circle cx={cx} cy={cy} r={1.2} fill="var(--accent, #3b82f6)" />
-    </svg>
-  )
-}
+import { StopwatchIcon } from '../StopwatchIcon'
 
 /** 생성 중 클립 위에 클록 + 경과시간(1초마다 갱신, endedAt 있으면 멈춤). */
 function ClipGeneratingTimer({ startedAt, endedAt }) {

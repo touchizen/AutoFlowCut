@@ -10,8 +10,7 @@
  */
 import { useState, useEffect, useRef } from 'react'
 import { useI18n, I18nProvider } from '../../hooks/useI18n'
-import { useElapsedTimer } from '../../hooks/useElapsedTimer'
-import { formatElapsed } from '../../utils/formatters'
+import { StopwatchIcon, ElapsedTime } from '../StopwatchIcon'
 import PromptInput from '../PromptInput'
 import { toast } from '../Toast'
 import StoryStepper, { STEP_META } from './StoryStepper'
@@ -20,38 +19,15 @@ import './StoryView.css'
 // audio(M2)는 M1 진행 흐름에서 제외 — done 여부를 따지지 않고 건너뛴다.
 const PROGRESSABLE_STEPS = ['script', 'scenes', 'prompts']
 
-/** 초시계 아이콘 — 초침이 실시간 회전(전역 .stopwatch-hand 애니메이션 재사용). ResultsTable 과 동일 패턴. */
-function StopwatchIcon({ size = 18 }) {
-  const r = size / 2
-  const cx = r, cy = r
-  const handLen = r * 0.6
-  return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="stopwatch-icon">
-      <circle cx={cx} cy={cy} r={r - 1.5} fill="none" stroke="currentColor" strokeWidth="1.5" />
-      <line x1={cx} y1={cy - r + 1.5} x2={cx} y2={cy - r + 3.5} stroke="currentColor" strokeWidth="1.2" />
-      <rect x={cx - 1} y={0} width={2} height={2} rx={0.5} fill="currentColor" />
-      <line
-        className="stopwatch-hand"
-        x1={cx} y1={cy}
-        x2={cx} y2={cy - handLen}
-        stroke="var(--accent, #3b82f6)" strokeWidth="1.5" strokeLinecap="round"
-        style={{ transformOrigin: `${cx}px ${cy}px` }}
-      />
-      <circle cx={cx} cy={cy} r={1.2} fill="var(--accent, #3b82f6)" />
-    </svg>
-  )
-}
-
 /** 스텝 진행 중 표시 — (선택) 옵션·기준 요약 + 초시계 + 라벨 + 경과 시간(updatedAt 기준, 1초 갱신). */
 function StoryRunning({ label, startedAt, detail }) {
-  const elapsed = useElapsedTimer(startedAt || null, null)
   return (
     <div className="story-running" aria-live="polite">
       {detail && <div className="story-running-detail">{detail}</div>}
       <div className="story-running-main">
         <StopwatchIcon size={18} />
         <span className="story-running-label">{label}</span>
-        <span className="story-running-elapsed">{formatElapsed(elapsed)}</span>
+        <span className="story-running-elapsed"><ElapsedTime startedAt={startedAt || null} /></span>
       </div>
     </div>
   )
@@ -142,14 +118,22 @@ export default function StoryView({ pipeline }) {
   // §1 표시 라우팅 (R3-1) — scriptPhase가 남아 있는 동안(setup/editor)은 script done이어도
   // displayStep을 'script'로 강제해 대본 작업 화면을 유지한다. 다음 스텝 실행(분리시작)이나
   // 스텝퍼에서 다른 스텝 클릭 시 scriptPhase를 벗고(null) scenes/prompts 패널로 진행.
-  const displayStep = scriptPhase
+  // F1: 재오픈 등으로 scenes/prompts가 running 상태로 복원됐고 사용자가 아직 탭을 안 눌렀으면(viewedStep null),
+  // scriptPhase 초기값(scriptText 있으면 editor)이 진행 표시를 가리지 않도록 진행 화면(currentStep)을 우선한다.
+  const hydratedRunning = viewedStep == null && currentStep !== 'script' && stepData.status === 'running'
+  const displayStep = (scriptPhase && !hydratedRunning)
     ? 'script'
     : (viewedStep && steps[viewedStep]?.status === 'done') ? viewedStep : currentStep
 
   const handleStepClick = (key) => {
     setViewedStep(key)
-    // done된 script를 다시 클릭하면 대본 작업 화면(editor)으로 복귀, 다른 스텝은 phase 해제.
-    setScriptPhase(key === 'script' ? 'editor' : null)
+    if (key === 'script') {
+      // 대본이 아직 없는(fresh/pending) 상태에서 대본 탭을 누르면 setup(제목/옵션/파일선택)을 유지한다.
+      // scriptText가 있거나 script done일 때만 editor로 복귀 — 무조건 editor면 setup이 사라지고 빈 편집기만 남는다.
+      setScriptPhase(scriptText.trim() || steps.script?.status === 'done' ? 'editor' : 'setup')
+    } else {
+      setScriptPhase(null)
+    }
   }
 
   // ① 제목/옵션 폼 — R4-2 폼 hydrate: 재오픈 시 state.input.title/options에서 복원(없으면 기본값).
@@ -209,7 +193,7 @@ export default function StoryView({ pipeline }) {
       setBaseScript('') // 이어쓰기 아님 — preview 접두 초기화
       start('script', {
         input: { type: 'title', title },
-        options: { genre: genre || undefined, language, model, lengthValue: length, lengthUnit },
+        options: { genre: genre || undefined, language, model, lengthValue: length, lengthUnit, sceneGranularity },
       })
       // §1 전환 — '시작' 명시 트리거로 대본 작업 화면(editor)에 진입.
       setScriptPhase('editor')
@@ -230,7 +214,7 @@ export default function StoryView({ pipeline }) {
     start('script', {
       pastedScript: scriptText,
       input: { type: 'pasted', title },
-      options: { genre: genre || undefined, language, model, lengthValue: length, lengthUnit },
+      options: { genre: genre || undefined, language, model, lengthValue: length, lengthUnit, sceneGranularity },
     })
     // 임포트/붙여넣기 대본으로 시작 → editor phase (scriptText 유지).
     setScriptPhase('editor')

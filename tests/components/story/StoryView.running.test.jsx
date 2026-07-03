@@ -59,6 +59,17 @@ describe('StoryView 진행 중 표시(.story-running: 초시계 + 경과시간)'
     expect(document.querySelector('.story-running').textContent).toMatch(/문장 기준/)
   })
 
+  // F1(Codex): scenes/prompts가 running 상태로 재오픈되면(scriptText 있어 scriptPhase 초기 editor)
+  // 대본 스트리밍 화면이 아니라 진행 표시(.story-running)를 우선 보여야 한다. 사용자 클릭(viewedStep) 전 기준.
+  it('scenes running 상태로 재오픈되면(클릭 전) 대본 화면이 아니라 진행 표시가 보인다', () => {
+    const p = pipeline({ scriptText: '이미 쓴 대본' })
+    p.state.steps.script = { status: 'done' }
+    p.state.steps.scenes = { status: 'running', updatedAt: new Date(Date.now() - 2000).toISOString() }
+    render(<StoryView pipeline={p} />)
+    expect(document.querySelector('.story-running')).toBeTruthy()
+    expect(screen.queryByTestId('story-editor')).toBeNull()
+  })
+
   it('프롬프트 running 이면 패널에 초시계와 경과 시간을 표시한다', () => {
     const p = pipeline()
     p.state.steps.script = { status: 'done' }

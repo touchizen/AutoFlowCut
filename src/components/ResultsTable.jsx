@@ -5,8 +5,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useI18n } from '../hooks/useI18n'
-import { useElapsedTimer } from '../hooks/useElapsedTimer'
-import { getRatioClass, resolveImageSrc, hasImageData, formatElapsed } from '../utils/formatters'
+import { getRatioClass, resolveImageSrc, hasImageData } from '../utils/formatters'
 import { resolveVideoSrc } from '../utils/videoSrc'
 import { resolveDisplayError } from '../utils/errorDisplay'
 import { getVideoPoster } from '../utils/videoPoster'
@@ -14,39 +13,7 @@ import { modelLabel } from '../config/genModels'
 import InfinityLoader from './InfinityLoader'
 import LazyImage from './LazyImage'
 import HoverImageBalloon from './HoverImageBalloon'
-
-/** 초시계 아이콘 — 초침이 실시간 회전 */
-function StopwatchIcon({ size = 18 }) {
-  const r = size / 2
-  const cx = r, cy = r
-  const handLen = r * 0.6
-  return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="stopwatch-icon">
-      {/* 외곽 원 */}
-      <circle cx={cx} cy={cy} r={r - 1.5} fill="none" stroke="currentColor" strokeWidth="1.5" />
-      {/* 12시 눈금 */}
-      <line x1={cx} y1={cy - r + 1.5} x2={cx} y2={cy - r + 3.5} stroke="currentColor" strokeWidth="1.2" />
-      {/* 꼭지 버튼 */}
-      <rect x={cx - 1} y={0} width={2} height={2} rx={0.5} fill="currentColor" />
-      {/* 초침 — CSS로 회전 */}
-      <line
-        className="stopwatch-hand"
-        x1={cx} y1={cy}
-        x2={cx} y2={cy - handLen}
-        stroke="var(--accent, #3b82f6)" strokeWidth="1.5" strokeLinecap="round"
-        style={{ transformOrigin: `${cx}px ${cy}px` }}
-      />
-      {/* 중심점 */}
-      <circle cx={cx} cy={cy} r={1.2} fill="var(--accent, #3b82f6)" />
-    </svg>
-  )
-}
-
-/** 경과 시간 표시 (1초마다 업데이트, endedAt 있으면 멈춤) */
-function ElapsedTime({ startedAt, endedAt }) {
-  const elapsed = useElapsedTimer(startedAt, endedAt)
-  return <span>{formatElapsed(elapsed)}</span>
-}
+import { StopwatchIcon, ElapsedTime } from './StopwatchIcon'
 
 function VideoPosterThumbnail({ videoSrc, fallbackSrc, alt }) {
   const [posterSrc, setPosterSrc] = useState(null)

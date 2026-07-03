@@ -39,7 +39,7 @@ describe('StoryView', () => {
     // 분리해서 읽는다 — input에 genre/length/language를 섞어 넣으면 LLM opts로 전달되지 않아 무시된다.
     expect(p.start).toHaveBeenCalledWith('script', {
       input: { type: 'title', title: '운수 좋은 날' },
-      options: { genre: 'yadam', language: 'ko', model: 'claude-opus-4-8', lengthValue: '5', lengthUnit: 'min' },
+      options: { genre: 'yadam', language: 'ko', model: 'claude-opus-4-8', lengthValue: '5', lengthUnit: 'min', sceneGranularity: 'scene' },
     })
   })
 
@@ -50,7 +50,7 @@ describe('StoryView', () => {
     fireEvent.click(screen.getByRole('button', { name: '시작' }))
     expect(p.start).toHaveBeenCalledWith('script', {
       input: { type: 'title', title: '제목만' },
-      options: { genre: 'bespoke', language: 'ko', model: 'claude-opus-4-8', lengthValue: '10', lengthUnit: 'min' },
+      options: { genre: 'bespoke', language: 'ko', model: 'claude-opus-4-8', lengthValue: '10', lengthUnit: 'min', sceneGranularity: 'scene' },
     })
   })
   it('script running이면 스트리밍 텍스트를 표시한다', () => {
@@ -77,7 +77,7 @@ describe('StoryView', () => {
     expect(p.start).toHaveBeenCalledWith('script', {
       pastedScript: '내가 쓴 대본',
       input: { type: 'pasted', title: '' },
-      options: { genre: 'bespoke', language: 'ko', model: 'claude-opus-4-8', lengthValue: '10', lengthUnit: 'min' },
+      options: { genre: 'bespoke', language: 'ko', model: 'claude-opus-4-8', lengthValue: '10', lengthUnit: 'min', sceneGranularity: 'scene' },
     })
   })
 
@@ -231,6 +231,41 @@ describe('StoryView', () => {
     // 씬 분리(currentStep, pending) 재클릭 → scenes 패널
     fireEvent.click(screen.getByRole('button', { name: '씬 분리' }))
     expect(screen.getByText('화자')).toBeTruthy()
+  })
+
+  // F3(Codex): setup에서 문장 기준 선택 후 대본 생성/붙여넣기 시작 시에도 options에 sceneGranularity가
+  // 실려야 한다 — 안 그러면 대본만 만들고 재오픈 시 기본 scene으로 hydrate되어 선택이 유실된다.
+  it('대본 생성 시작(시작)에도 sceneGranularity가 options에 실린다', () => {
+    const p = pipeline()
+    render(<StoryView pipeline={p} />)
+    fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
+    fireEvent.change(screen.getByLabelText('씬 분리 단위'), { target: { value: 'segment' } })
+    fireEvent.click(screen.getByRole('button', { name: '시작' }))
+    expect(p.start).toHaveBeenCalledWith('script', expect.objectContaining({
+      options: expect.objectContaining({ sceneGranularity: 'segment' }),
+    }))
+  })
+
+  // F2(Codex): 새 프로젝트(대본 대기)에서 '대본' 탭이 currentStep이라 클릭 가능해졌는데,
+  // 클릭 시 무조건 editor로 보내면 제목/옵션/파일선택 setup이 사라지고 빈 editor만 남는 회귀.
+  it('대본 대기(fresh) 상태에서 대본 탭을 눌러도 setup 화면이 유지된다(빈 editor로 안 감)', () => {
+    const p = pipeline() // script pending, scriptText 없음
+    render(<StoryView pipeline={p} />)
+    fireEvent.click(screen.getByRole('button', { name: '대본' }))
+    expect(screen.getByTestId('story-setup')).toBeTruthy()
+    expect(screen.queryByTestId('story-editor')).toBeNull()
+  })
+
+  it('대본 done 상태에서 대본 탭을 누르면 editor로 복귀한다', () => {
+    const p = pipeline({ scriptText: '이미 쓴 대본' })
+    p.state.steps.script.status = 'done'
+    p.state.steps.scenes.status = 'done'
+    render(<StoryView pipeline={p} />)
+    // 씬 분리 탭으로 갔다가
+    fireEvent.click(screen.getByRole('button', { name: '씬 분리' }))
+    // 대본(done) 탭 클릭 → editor 복귀
+    fireEvent.click(screen.getByRole('button', { name: '대본' }))
+    expect(screen.getByTestId('story-editor')).toBeTruthy()
   })
 
   // 10번: 씬 분리 탭(완료)에서 그 탭에 필요한 옵션(씬 분리 단위)을 바꿔 재분리할 수 있다.
