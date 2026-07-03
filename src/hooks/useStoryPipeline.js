@@ -30,7 +30,12 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
   // 자체는 렌더 본문에서 동기적으로 수행한다(onPushRef.current = onPushScenes와 같은 패턴).
   // state/scenes 초기화와 storyAbort 호출 같은 부수효과는 아래 effect가 이어서 처리한다.
   const pendingResetRef = useRef(null)
-  if (prevPathRef.current !== projectPath) {
+  // Blocking/Codex: <StoryView key={projectPath}>는 전환을 감지한 이 render의 반환값으로
+  // 즉시 재마운트돼 초기 phase/폼을 잡는다. state/scenes/scriptText 리셋은 아래 effect(다음
+  // tick)에서 일어나므로, 전환 감지 render가 옛 프로젝트 값을 그대로 반환하면 새 프로젝트가
+  // 옛 editor/title/options로 뜬다. 그래서 이 render에서만 반환값도 빈 값으로 override한다.
+  const justSwitched = prevPathRef.current !== projectPath
+  if (justSwitched) {
     pendingResetRef.current = { oldToken: tokenRef.current }
     prevPathRef.current = projectPath
     tokenRef.current = null
@@ -136,5 +141,11 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
 
   const generateTitle = useCallback((scriptMd) => window.electronAPI.storyGenerateTitle({ projectToken: tokenRef.current, scriptMd }), [])
 
+  // 전환 감지 render에서는 옛 프로젝트의 state/scenes/scriptText/openError 대신 빈 값을 반환해
+  // key로 재마운트되는 StoryView가 setup + 폼 기본값으로 초기화되게 한다(effect가 다음 tick에
+  // useState를 정리하기 전 한 프레임의 stale 값 유출 방지).
+  if (justSwitched) {
+    return { state: null, scenes: [], streamingText, scriptText: '', open, start, abort, openError: null, generateTitle }
+  }
   return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle }
 }
