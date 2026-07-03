@@ -2,7 +2,7 @@
  * Claude Agent SDK 대본 엔진 — llmGemini와 동일 시그니처. 대본은 스트리밍,
  * 씬분리/프롬프트는 outputFormat structured(다음 Task). 인증은 로컬 Claude 로그인.
  */
-import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt } from './prompts.js'
+import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt, buildTitlePrompt, buildContinuePrompt } from './prompts.js'
 import { buildClaudeSdkOptions, extractClaudeSdkResult, bridgeAbortSignal, extractTextDelta, readStructuredResult } from './claudeSdk.js'
 import { toJsonSchema } from './toJsonSchema.js'
 import { SCENES_SCHEMA, PROMPTS_SCHEMA } from './schemas.js'
@@ -38,6 +38,41 @@ export async function generateScript(input, opts = {}, { onDelta, signal, queryI
   } finally {
     cleanup()
   }
+}
+
+export async function generateTitle(scriptMd, opts = {}, { signal, queryImpl = defaultQuery } = {}) {
+  const prompt = buildTitlePrompt(scriptMd, opts)
+  const { abortController, cleanup } = bridgeAbortSignal(signal)
+  try {
+    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController)
+    for await (const m of queryImpl({ prompt, options })) {
+      if (m.type === 'result') return { title: extractClaudeSdkResult(m).split('\n')[0].trim() }
+    }
+    throw new Error('no result message returned')
+  } catch (err) {
+    if (signal?.aborted) throw new Error('Aborted')
+    throw new Error(`Claude SDK failed: ${err.message}`)
+  } finally { cleanup() }
+}
+
+export async function continueScript(existingScript, opts = {}, { onDelta, signal, queryImpl = defaultQuery } = {}) {
+  const prompt = buildContinuePrompt(existingScript, opts)
+  const { abortController, cleanup } = bridgeAbortSignal(signal)
+  let added = ''
+  try {
+    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, { includePartialMessages: true })
+    for await (const m of queryImpl({ prompt, options })) {
+      if (signal?.aborted) break
+      const delta = extractTextDelta(m)
+      if (delta != null) { added += delta; onDelta?.(delta); if (signal?.aborted) break; continue }
+      if (m.type === 'result') return { scriptMd: `${existingScript}\n\n${extractClaudeSdkResult(m)}` }
+    }
+    if (signal?.aborted) throw new Error('Aborted')
+    return { scriptMd: `${existingScript}\n\n${added}` }
+  } catch (err) {
+    if (signal?.aborted) throw new Error('Aborted')
+    throw new Error(`Claude SDK failed: ${err.message}`)
+  } finally { cleanup() }
 }
 
 function parseJsonLoose(text) {
