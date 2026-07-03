@@ -267,6 +267,7 @@ export default function PromptInput({
   disableMentions = false,  // 대본 스텝: `@` 멘션 chip/빨간 밑줄 끔 — plain text 로만.
   showCharCount = false,    // 대본 스텝: footer 에 문자 수(text.length) 추가 표시.
   hideTip = false,          // 대본 스텝: footer 의 💡 tip span 숨김 (줄 수·문자 수는 유지).
+  countLabelKey = 'prompt.count',  // 대본 스텝: 카운트 라벨 키 교체(기본 "N개 프롬프트" → "N줄").
 }) {
   const { t } = useI18n()
 
@@ -374,7 +375,7 @@ export default function PromptInput({
 
         {!hideFooter && (
         <div className="prompt-input-footer">
-          <span className="line-count">{t('prompt.count', { count: lineCount })}</span>
+          <span className="line-count">{t(countLabelKey, { count: lineCount })}</span>
           {showCharCount && <span className="char-count" data-testid="char-count">{text.length}</span>}
 
           {showSeedUI && (

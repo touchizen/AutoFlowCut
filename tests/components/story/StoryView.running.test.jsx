@@ -1,0 +1,62 @@
+/**
+ * 씬 분리 / 프롬프트 스텝이 running 일 때 진행 중 표시(.story-running: 초시계 애니메이션 +
+ * 경과 시간)를 패널에 렌더한다. 시작 시각은 running 스텝의 updatedAt(stepMachine 이 running
+ * 진입 시 기록)을 쓴다. "진행 중" 텍스트는 스텝퍼 배지에도 있으므로 패널 컨테이너(.story-running)로 검증한다.
+ */
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, fireEvent } from '@testing-library/react'
+import StoryView from '../../../src/components/story/StoryView.jsx'
+
+const pipeline = (over = {}) => ({
+  state: {
+    steps: {
+      script: { status: 'pending' }, scenes: { status: 'pending' },
+      audio: { status: 'pending' }, prompts: { status: 'pending' },
+    },
+  },
+  scenes: [],
+  streamingText: '',
+  scriptText: '',
+  start: vi.fn(), abort: vi.fn(), openError: null,
+  ...over,
+})
+
+// running 스텝을 주입한 새 pipeline 을 만든다(불변 업데이트 — rerender 로 상태 전이 시뮬레이션).
+const withRunning = (p, step, agoMs) => ({
+  ...p,
+  state: {
+    ...p.state,
+    steps: { ...p.state.steps, [step]: { status: 'running', updatedAt: new Date(Date.now() - agoMs).toISOString() } },
+  },
+})
+
+describe('StoryView 진행 중 표시(.story-running: 초시계 + 경과시간)', () => {
+  it('씬 분리 running 이면 패널에 초시계와 경과 시간을 표시한다', () => {
+    const p = pipeline()
+    p.state.steps.script = { status: 'done' }
+    // setup 화면에서 하단 '씬 분리 실행'(scenes pending → 활성) 클릭 → scriptPhase 해제, scenes 패널로
+    const { rerender } = render(<StoryView pipeline={p} />)
+    fireEvent.click(screen.getByRole('button', { name: '씬 분리 실행' }))
+    // start 는 mock 이므로 running 상태를 rerender 로 주입한다
+    rerender(<StoryView pipeline={withRunning(p, 'scenes', 3000)} />)
+
+    const running = document.querySelector('.story-running')
+    expect(running).toBeTruthy()
+    expect(running.querySelector('.stopwatch-icon')).toBeTruthy()
+    // 진행 중이면 "결과 없음" 힌트는 나오지 않는다
+    expect(screen.queryByText(/씬 분리 결과가 아직 없습니다/)).toBeNull()
+  })
+
+  it('프롬프트 running 이면 패널에 초시계와 경과 시간을 표시한다', () => {
+    const p = pipeline()
+    p.state.steps.script = { status: 'done' }
+    p.state.steps.scenes = { status: 'done' }
+    const { rerender } = render(<StoryView pipeline={p} />)
+    fireEvent.click(screen.getByRole('button', { name: '프롬프트 실행' }))
+    rerender(<StoryView pipeline={withRunning(p, 'prompts', 5000)} />)
+
+    const running = document.querySelector('.story-running')
+    expect(running).toBeTruthy()
+    expect(running.querySelector('.stopwatch-icon')).toBeTruthy()
+  })
+})

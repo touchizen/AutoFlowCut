@@ -26,12 +26,12 @@ describe('StoryView 대본 편집기 I18nProvider 중첩', () => {
         <StoryView pipeline={pipelineWith({ scriptText: '대본 본문' })} />
       </I18nProvider>,
     )
-    // 초기(ko): "1개 프롬프트"
-    expect(screen.getByText('1개 프롬프트')).toBeInTheDocument()
+    // 초기(ko): 대본 편집기는 "N줄" 라벨(countLabelKey=prompt.lineCount)
+    expect(screen.getByText('1줄')).toBeInTheDocument()
     // 상위 provider 로 언어 전환
     fireEvent.click(screen.getByText('to-en'))
     // 중첩 provider 가 없으면 상위 전환이 전파돼 영어 라벨로 바뀐다.
-    expect(screen.getByText('1 prompts')).toBeInTheDocument()
-    expect(screen.queryByText('1개 프롬프트')).toBeNull()
+    expect(screen.getByText('1 lines')).toBeInTheDocument()
+    expect(screen.queryByText('1줄')).toBeNull()
   })
 })

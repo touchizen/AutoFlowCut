@@ -16,6 +16,17 @@ describe('PromptInput story mode', () => {
     renderPI({ value: '가나다' })
     expect(screen.queryByTestId('char-count')).toBeNull()
   })
+  // 대본 편집기는 "N개 프롬프트"가 아니라 "N줄"이 맞다 — 카운트 라벨 키를 prop으로 바꿀 수 있어야 한다.
+  it('countLabelKey를 주면 그 라벨(대본=줄 수)로 카운트를 표시한다', () => {
+    const { container } = renderPI({ value: '한 줄\n두 줄', countLabelKey: 'prompt.lineCount' })
+    const lc = container.querySelector('.line-count')
+    expect(lc.textContent).toMatch(/줄|lines/)
+    expect(lc.textContent).not.toMatch(/프롬프트|prompts/)
+  })
+  it('기본(countLabelKey 없음)이면 프롬프트 라벨을 유지한다', () => {
+    const { container } = renderPI({ value: '한 줄' })
+    expect(container.querySelector('.line-count').textContent).toMatch(/프롬프트|prompts/)
+  })
   // SyncPlugin 은 $applyTextToRoot 를 queueMicrotask 로 defer 하므로 render 직후엔
   // 에디터에 텍스트 노드가 아직 하나도 없다. 따라서 hydrate 를 waitFor 로 기다린 뒤에
   // 검증해야 plain 분기가 실제로 unknown 노드를 차단하는지 확인할 수 있다.

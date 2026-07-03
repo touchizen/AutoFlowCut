@@ -2,8 +2,9 @@
  * StoryStepper — Story 파이프라인 4단계 진행 상태 표시 (스펙 §6).
  * ① 대본 → ② 씬 분리 → ③ 오디오(M1: 미구현, "M2 예정" 비활성) → ④ 프롬프트
  *
- * 프레젠테이션 컴포넌트 — 상태만 렌더. done 상태 스텝은 onStepClick으로 클릭해
- * 해당 패널을 다시 볼 수 있다(미완료 스텝은 아직 데이터가 없어 클릭 불가).
+ * 프레젠테이션 컴포넌트 — 상태만 렌더. done 상태 스텝과 현재 진행 단계(currentStep)는
+ * onStepClick으로 클릭해 해당 패널을 다시 볼 수 있다 — 진행 대기(pending)·진행 중인 현재
+ * 단계도 다른 탭을 보다가 돌아올 수 있어야 하기 때문. (아직 시작 안 한 미래 단계·오디오만 비클릭.)
  */
 export const STEP_ORDER = ['script', 'scenes', 'audio', 'prompts']
 
@@ -24,7 +25,7 @@ export default function StoryStepper({ steps, currentStep, t = (key, fallback) =
         const isAudio = key === 'audio'
         const status = steps?.[key]?.status || 'pending'
         const label = t(`story.step.${key}`, meta.label)
-        const clickable = !isAudio && status === 'done' && typeof onStepClick === 'function'
+        const clickable = !isAudio && (status === 'done' || key === currentStep) && typeof onStepClick === 'function'
         return (
           <div
             key={key}

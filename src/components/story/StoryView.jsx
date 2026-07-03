@@ -10,6 +10,8 @@
  */
 import { useState, useEffect, useRef } from 'react'
 import { useI18n, I18nProvider } from '../../hooks/useI18n'
+import { useElapsedTimer } from '../../hooks/useElapsedTimer'
+import { formatElapsed } from '../../utils/formatters'
 import PromptInput from '../PromptInput'
 import { toast } from '../Toast'
 import StoryStepper, { STEP_META } from './StoryStepper'
@@ -17,6 +19,40 @@ import './StoryView.css'
 
 // audio(M2)는 M1 진행 흐름에서 제외 — done 여부를 따지지 않고 건너뛴다.
 const PROGRESSABLE_STEPS = ['script', 'scenes', 'prompts']
+
+/** 초시계 아이콘 — 초침이 실시간 회전(전역 .stopwatch-hand 애니메이션 재사용). ResultsTable 과 동일 패턴. */
+function StopwatchIcon({ size = 18 }) {
+  const r = size / 2
+  const cx = r, cy = r
+  const handLen = r * 0.6
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="stopwatch-icon">
+      <circle cx={cx} cy={cy} r={r - 1.5} fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <line x1={cx} y1={cy - r + 1.5} x2={cx} y2={cy - r + 3.5} stroke="currentColor" strokeWidth="1.2" />
+      <rect x={cx - 1} y={0} width={2} height={2} rx={0.5} fill="currentColor" />
+      <line
+        className="stopwatch-hand"
+        x1={cx} y1={cy}
+        x2={cx} y2={cy - handLen}
+        stroke="var(--accent, #3b82f6)" strokeWidth="1.5" strokeLinecap="round"
+        style={{ transformOrigin: `${cx}px ${cy}px` }}
+      />
+      <circle cx={cx} cy={cy} r={1.2} fill="var(--accent, #3b82f6)" />
+    </svg>
+  )
+}
+
+/** 스텝 진행 중 표시 — 초시계 + 라벨 + 경과 시간(running 스텝 updatedAt 기준, 1초마다 갱신). */
+function StoryRunning({ label, startedAt }) {
+  const elapsed = useElapsedTimer(startedAt || null, null)
+  return (
+    <div className="story-running" aria-live="polite">
+      <StopwatchIcon size={18} />
+      <span className="story-running-label">{label}</span>
+      <span className="story-running-elapsed">{formatElapsed(elapsed)}</span>
+    </div>
+  )
+}
 
 function computeCurrentStep(steps) {
   for (const key of PROGRESSABLE_STEPS) {
@@ -176,6 +212,9 @@ export default function StoryView({ pipeline }) {
       start(currentStep, {})
       // §1 — 다음 스텝(분리시작 등)을 실행하면 scriptPhase를 벗고 스텝퍼가 진행한다.
       setScriptPhase(null)
+      // 진행 액션은 현재 단계로 화면을 되돌린다 — done 스텝을 보던 중이면 viewedStep이
+      // 그 스텝에 고정돼 진행해도 화면이 안 따라온다(대기/진행 표시를 못 봄).
+      setViewedStep(null)
     }
   }
 
@@ -234,6 +273,7 @@ export default function StoryView({ pipeline }) {
     start('scenes', { scriptOverride: scriptText, options: currentOptions(), title: resolved })
     // §1 — scenes 실행으로 scriptPhase를 벗고 스텝퍼가 진행한다.
     setScriptPhase(null)
+    setViewedStep(null) // 씬 분리 진행 시 현재 단계(scenes) 패널로 화면 이동
   }
 
   const handleGoSetup = () => {
@@ -273,6 +313,7 @@ export default function StoryView({ pipeline }) {
         disableMentions
         showCharCount
         hideTip
+        countLabelKey="prompt.lineCount"
         placeholder={t('story.form.scriptPlaceholder', '대본이 여기에 표시됩니다')}
       />
     </div>
@@ -356,6 +397,7 @@ export default function StoryView({ pipeline }) {
               // §1-A 설정 화면 — 세로 옵션(라벨+설명) + 제목 + 대본 임포트(drag&drop/붙여넣기) + [✨ 시작].
               <div className="story-setup-phase" data-testid="story-setup">
                 <div className="story-opt-row">
+                  <span className="story-opt-label">{t('story.form.genreDesc', '이야기 유형')}</span>
                   <select
                     className="story-input"
                     aria-label={t('story.form.genreLabel', '장르')}
@@ -367,10 +409,10 @@ export default function StoryView({ pipeline }) {
                     <option value="dark-history">dark-history</option>
                     <option value="bespoke">bespoke</option>
                   </select>
-                  <span className="story-opt-desc">{t('story.form.genreDesc', '이야기 유형(bespoke=범용)')}</span>
                 </div>
 
                 <div className="story-opt-row">
+                  <span className="story-opt-label">{t('story.form.modelDesc', '생성 AI')}</span>
                   <select
                     className="story-input"
                     aria-label={t('story.form.modelLabel', '모델')}
@@ -381,10 +423,10 @@ export default function StoryView({ pipeline }) {
                     <option value="claude-opus-4-8">Opus 4.8</option>
                     <option value="claude-sonnet-5">Sonnet 5</option>
                   </select>
-                  <span className="story-opt-desc">{t('story.form.modelDesc', '생성 AI')}</span>
                 </div>
 
                 <div className="story-opt-row">
+                  <span className="story-opt-label">{t('story.form.languageDesc', '출력 언어')}</span>
                   <select
                     className="story-input"
                     aria-label={t('story.form.languageLabel', '언어')}
@@ -402,10 +444,10 @@ export default function StoryView({ pipeline }) {
                     <option value="ko">한국어 (ko)</option>
                     <option value="en">English (en)</option>
                   </select>
-                  <span className="story-opt-desc">{t('story.form.languageDesc', '출력 언어')}</span>
                 </div>
 
                 <div className="story-opt-row">
+                  <span className="story-opt-label">{t('story.form.lengthDesc', '대본 분량')}</span>
                   <div className="story-length-group">
                     <input
                       className="story-input story-length-value"
@@ -426,10 +468,10 @@ export default function StoryView({ pipeline }) {
                       <option value={language === 'en' ? 'words' : 'chars'}>{language === 'en' ? 'words' : '자'}</option>
                     </select>
                   </div>
-                  <span className="story-opt-desc">{t('story.form.lengthDesc', '대본 분량')}</span>
                 </div>
 
-                <div className="story-title-row">
+                <div className="story-opt-row">
+                  <span className="story-opt-label">{t('story.form.titleLabel', '제목')}</span>
                   <input
                     className="story-input story-title-input"
                     placeholder={t('story.form.titlePlaceholder', '제목')}
@@ -470,54 +512,72 @@ export default function StoryView({ pipeline }) {
 
         {displayStep === 'scenes' && (
           <div className="story-scenes-panel">
-            <table className="story-readonly-table">
-              <thead>
-                <tr>
-                  <th>{t('story.scenes.no', '#')}</th>
-                  <th>{t('story.scenes.speaker', '화자')}</th>
-                  <th>{t('story.scenes.segment', '세그먼트')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {scenes.flatMap((sc, si) =>
-                  (sc.segments || []).map((seg, gi) => (
-                    <tr key={`${sc.storyId ?? si}-${gi}`}>
-                      <td>{si + 1}</td>
-                      <td>{seg.speaker}</td>
-                      <td>{seg.text}</td>
+            {steps.scenes?.status === 'running' ? (
+              <StoryRunning
+                label={t('story.scenes.running', '씬 분리 진행 중')}
+                startedAt={Date.parse(steps.scenes.updatedAt)}
+              />
+            ) : (
+              <>
+                <table className="story-readonly-table">
+                  <thead>
+                    <tr>
+                      <th>{t('story.scenes.no', '#')}</th>
+                      <th>{t('story.scenes.speaker', '화자')}</th>
+                      <th>{t('story.scenes.segment', '세그먼트')}</th>
                     </tr>
-                  )),
+                  </thead>
+                  <tbody>
+                    {scenes.flatMap((sc, si) =>
+                      (sc.segments || []).map((seg, gi) => (
+                        <tr key={`${sc.storyId ?? si}-${gi}`}>
+                          <td>{si + 1}</td>
+                          <td>{seg.speaker}</td>
+                          <td>{seg.text}</td>
+                        </tr>
+                      )),
+                    )}
+                  </tbody>
+                </table>
+                {scenes.length === 0 && (
+                  <div className="story-empty-hint">{t('story.scenes.empty', '씬 분리 결과가 아직 없습니다.')}</div>
                 )}
-              </tbody>
-            </table>
-            {scenes.length === 0 && (
-              <div className="story-empty-hint">{t('story.scenes.empty', '씬 분리 결과가 아직 없습니다.')}</div>
+              </>
             )}
           </div>
         )}
 
         {displayStep === 'prompts' && (
           <div className="story-prompts-panel">
-            <table className="story-readonly-table">
-              <thead>
-                <tr>
-                  <th>{t('story.prompts.no', '#')}</th>
-                  <th>{t('story.prompts.image', '이미지 프롬프트')}</th>
-                  <th>{t('story.prompts.video', '비디오 프롬프트')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {scenes.map((sc, i) => (
-                  <tr key={sc.storyId ?? i}>
-                    <td>{i + 1}</td>
-                    <td>{sc.imagePrompt}</td>
-                    <td>{sc.videoPrompt}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {scenes.length === 0 && (
-              <div className="story-empty-hint">{t('story.prompts.empty', '프롬프트 결과가 아직 없습니다.')}</div>
+            {steps.prompts?.status === 'running' ? (
+              <StoryRunning
+                label={t('story.prompts.running', '프롬프트 생성 중')}
+                startedAt={Date.parse(steps.prompts.updatedAt)}
+              />
+            ) : (
+              <>
+                <table className="story-readonly-table">
+                  <thead>
+                    <tr>
+                      <th>{t('story.prompts.no', '#')}</th>
+                      <th>{t('story.prompts.image', '이미지 프롬프트')}</th>
+                      <th>{t('story.prompts.video', '비디오 프롬프트')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {scenes.map((sc, i) => (
+                      <tr key={sc.storyId ?? i}>
+                        <td>{i + 1}</td>
+                        <td>{sc.imagePrompt}</td>
+                        <td>{sc.videoPrompt}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {scenes.length === 0 && (
+                  <div className="story-empty-hint">{t('story.prompts.empty', '프롬프트 결과가 아직 없습니다.')}</div>
+                )}
+              </>
             )}
           </div>
         )}

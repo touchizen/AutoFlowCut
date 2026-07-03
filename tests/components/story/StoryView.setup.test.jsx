@@ -33,6 +33,26 @@ describe('StoryView 설정 화면(setup)', () => {
     expect(screen.getByText('대본 분량')).toBeInTheDocument()
   })
 
+  // 레이아웃: 라벨(제목)이 왼쪽, 값(컨트롤)이 오른쪽. DOM 순서로 라벨이 컨트롤보다 앞에 오게 해
+  // CSS 그리드(라벨 열 | 값 열)가 성립하도록 한다. 설명이 컨트롤 뒤(오른쪽)에 흩어져 있던 구조 회귀 방지.
+  it('레이아웃: 각 옵션 행에서 라벨(.story-opt-label)이 컨트롤보다 앞에 온다', () => {
+    render(<StoryView pipeline={pipeline()} />)
+    const cases = [
+      ['장르', 'select'],
+      ['모델', 'select'],
+      ['언어', 'select'],
+      ['길이 값', 'input'],
+    ]
+    for (const [aria, tag] of cases) {
+      const row = screen.getByLabelText(aria).closest('.story-opt-row')
+      const label = row.querySelector('.story-opt-label')
+      const control = row.querySelector(tag)
+      expect(label).toBeTruthy()
+      // 라벨이 컨트롤보다 문서상 앞(=왼쪽 열)에 있어야 한다
+      expect(label.compareDocumentPosition(control) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    }
+  })
+
   it('언어는 ko/en select 이고 기본 ko', () => {
     render(<StoryView pipeline={pipeline()} />)
     const lang = screen.getByLabelText('언어')

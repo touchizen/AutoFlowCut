@@ -163,4 +163,72 @@ describe('StoryView', () => {
     render(<StoryView pipeline={pipeline()} />)
     expect(screen.queryByText(/프로젝트 폴더를 열 수 없습니다/)).toBeNull()
   })
+
+  // 레이아웃 회귀 방지: 스텝퍼(상단 탭)와 하단 컨트롤(▶ 진행 등)은 스크롤 컨테이너
+  // (.story-step-panel) 바깥의 story-view 직접 자식으로 렌더돼야 한다 — 그래야 CSS에서
+  // 스텝퍼/컨트롤은 flex-shrink:0으로 고정, 패널만 overflow-y:auto로 스크롤할 수 있다.
+  // 컨트롤을 패널 안으로 옮기면 다시 콘텐츠와 함께 스크롤되는 버그(스크롤 시 탭/버튼이 밀림)가 재발한다.
+  it('레이아웃: 스텝퍼·하단 컨트롤은 스크롤 패널 바깥(story-view 직접 자식)에 분리 렌더된다', () => {
+    const p = pipeline({ scenes: [{ storyId: 's1', imagePrompt: 'IMG-1', videoPrompt: 'VID-1' }] })
+    p.state.steps.script.status = 'done'
+    p.state.steps.scenes.status = 'done'
+    const { container } = render(<StoryView pipeline={p} />)
+    // scriptPhase 해제 → 하단 제네릭 컨트롤(story-controls) 노출 상태로 전환
+    fireEvent.click(screen.getByRole('button', { name: '씬 분리' }))
+
+    const view = container.querySelector('.story-view')
+    const stepper = container.querySelector('.story-stepper')
+    const panel = container.querySelector('.story-step-panel')
+    const controls = container.querySelector('.story-controls')
+
+    // 고정 영역(스텝퍼·컨트롤)과 스크롤 영역(패널)은 모두 story-view의 직접 자식(형제)이어야 한다
+    expect(stepper.parentElement).toBe(view)
+    expect(panel.parentElement).toBe(view)
+    expect(controls.parentElement).toBe(view)
+    // 스크롤 대상 테이블은 패널 안에만 있고, 고정 컨트롤 영역에는 없어야 한다
+    expect(panel.querySelector('.story-readonly-table')).toBeTruthy()
+    expect(controls.querySelector('.story-readonly-table')).toBeNull()
+  })
+
+  // 네비게이션 회귀: 진행 대기(pending)인 현재 단계는 done 스텝을 보다가도 다시 볼 수 있어야 한다.
+  // (버그: done 스텝만 clickable + 진행 액션이 viewedStep 미리셋 → 대기 단계로 못 돌아옴.)
+  it('done 스텝을 보다가 하단 진행을 누르면 진행 단계 패널로 화면이 이동한다', () => {
+    const p = pipeline()
+    p.state.steps.script.status = 'done'
+    p.state.steps.scenes.status = 'done'
+    // currentStep=prompts(pending)
+    render(<StoryView pipeline={p} />)
+    // 씬 분리(done) 탭으로 이동 → scenes 패널
+    fireEvent.click(screen.getByRole('button', { name: '씬 분리' }))
+    expect(screen.getByText('화자')).toBeTruthy()
+    // 하단 '프롬프트 실행'(진행) → viewedStep 리셋되어 prompts 패널로 이동해야 한다
+    fireEvent.click(screen.getByRole('button', { name: '프롬프트 실행' }))
+    expect(screen.getByText('이미지 프롬프트')).toBeTruthy()
+    expect(screen.queryByText('화자')).toBeNull()
+  })
+
+  it('진행 대기(pending)인 현재 단계 탭(프롬프트)도 스텝퍼에서 눌러 다시 볼 수 있다', () => {
+    const p = pipeline()
+    p.state.steps.script.status = 'done'
+    p.state.steps.scenes.status = 'done'
+    render(<StoryView pipeline={p} />)
+    fireEvent.click(screen.getByRole('button', { name: '씬 분리' }))
+    expect(screen.getByText('화자')).toBeTruthy()
+    // prompts 는 pending(currentStep) — 이제 클릭 가능해야 한다
+    fireEvent.click(screen.getByRole('button', { name: '프롬프트' }))
+    expect(screen.getByText('이미지 프롬프트')).toBeTruthy()
+  })
+
+  it('씬 분리(대기)도 대본(완료)을 본 뒤 다시 눌러 볼 수 있다', () => {
+    const p = pipeline()
+    p.state.steps.script.status = 'done'
+    // scenes pending, currentStep=scenes
+    render(<StoryView pipeline={p} />)
+    // 대본(done) 탭 → editor
+    fireEvent.click(screen.getByRole('button', { name: '대본' }))
+    expect(screen.getByTestId('story-editor')).toBeTruthy()
+    // 씬 분리(currentStep, pending) 재클릭 → scenes 패널
+    fireEvent.click(screen.getByRole('button', { name: '씬 분리' }))
+    expect(screen.getByText('화자')).toBeTruthy()
+  })
 })
