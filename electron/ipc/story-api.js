@@ -73,4 +73,5 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
   ipcMain.handle('story:abort', guarded(() => machine.abort()))
   ipcMain.handle('story:push-ack', guarded(({ operationId, pushRevision, ok, reason }) =>
     machine.ackPush({ operationId, pushRevision, ok, reason })))
+  ipcMain.handle('story:generate-title', guarded(({ scriptMd }) => machine.generateTitle(scriptMd)))
 }

@@ -114,6 +114,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   storyStart: (params) => ipcRenderer.invoke('story:start', params),
   storyAbort: (params) => ipcRenderer.invoke('story:abort', params),
   storyPushAck: (params) => ipcRenderer.invoke('story:push-ack', params),
+  storyGenerateTitle: (params) => ipcRenderer.invoke('story:generate-title', params),
   onStoryEvent: (channel, cb) => {
     const valid = ['story:state', 'story:delta', 'story:progress', 'story:pushScenes']
     if (!valid.includes(channel)) return () => {}
