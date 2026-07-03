@@ -311,4 +311,57 @@ describe('audio 스텝', () => {
     // s1(narrator)은 배정돼 있어도 s2(ghost) 검증 실패로 아예 호출되면 안 됨 — 비용 낭비 방지
     expect(synthesize).not.toHaveBeenCalled()
   })
+
+  // Codex-3 LOW: 화자의 voice 객체가 존재해도 voiceId가 없으면(또는 빈 문자열이면) 사전
+  // 검증이 통과해 루프 중간에 tts.synthesize(voiceId:undefined)로 낭비된다 —
+  // voiceId가 non-empty string인지 확인해야 한다(발급된 id는 그런 특성을 가짐).
+  it('voice 객체가 있어도 voiceId가 없으면 TTS 호출 전에 즉시 throw한다 (말형 voice 검증)', async () => {
+    const { writeFile, mkdir } = await import('node:fs/promises')
+    await mkdir(path.join(projectPath, 'story'), { recursive: true })
+    await writeFile(path.join(projectPath, 'story', 'scenes.json'), JSON.stringify({
+      scenes: [{ segments: [
+        { id: 's1', type: 'narration', speaker: 'narrator', text: '첫 문장' },
+      ] }],
+    }))
+    const synthesize = vi.fn(async ({ text }) => ({ audio: Buffer.from('AUDIO:' + text), format: 'wav' }))
+    const tts = { capabilities: () => ({ maxConcurrency: 2 }), synthesize }
+    const probe = async () => 2000
+    const machine = createStepMachine({
+      projectPath, llm: {}, emit: () => {}, getApiKey: () => 'k', tts, probe,
+    })
+    await machine.open()
+    // narrator에 voice는 주어졌으나 voiceId가 없다 — 말형 voice 객체
+    await machine.start('audio', { speakers: [{ id: 'narrator', voice: { provider: 'typecast' } }] })
+    const state = await machine.getState()
+    expect(state.steps.audio.status).toBe('error')
+    expect(state.steps.audio.error).toMatch(/narrator/)
+    expect(state.steps.audio.error).toMatch(/voice not assigned/)
+    // 사전 검증에서 실패했으므로 TTS가 전혀 호출되면 안 됨
+    expect(synthesize).not.toHaveBeenCalled()
+  })
+
+  // Codex-3 LOW: voiceId가 빈 문자열('')인 경우도 마찬가지로 사전 검증에서 거부돼야 한다.
+  it('voiceId가 빈 문자열이면 TTS 호출 전에 즉시 throw한다', async () => {
+    const { writeFile, mkdir } = await import('node:fs/promises')
+    await mkdir(path.join(projectPath, 'story'), { recursive: true })
+    await writeFile(path.join(projectPath, 'story', 'scenes.json'), JSON.stringify({
+      scenes: [{ segments: [
+        { id: 's1', type: 'narration', speaker: 'narrator', text: '첫 문장' },
+      ] }],
+    }))
+    const synthesize = vi.fn(async ({ text }) => ({ audio: Buffer.from('AUDIO:' + text), format: 'wav' }))
+    const tts = { capabilities: () => ({ maxConcurrency: 2 }), synthesize }
+    const probe = async () => 2000
+    const machine = createStepMachine({
+      projectPath, llm: {}, emit: () => {}, getApiKey: () => 'k', tts, probe,
+    })
+    await machine.open()
+    // narrator의 voiceId가 빈 문자열
+    await machine.start('audio', { speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: '' } }] })
+    const state = await machine.getState()
+    expect(state.steps.audio.status).toBe('error')
+    expect(state.steps.audio.error).toMatch(/narrator/)
+    expect(state.steps.audio.error).toMatch(/voice not assigned/)
+    expect(synthesize).not.toHaveBeenCalled()
+  })
 })

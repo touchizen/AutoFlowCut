@@ -165,7 +165,13 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // 0) 사전 검증: 배치 루프를 시작하기 전에 모든 narration 세그먼트의 화자에 voice가
       // 배정돼 있는지 먼저 확인한다 — 루프 중간에 던지면 이미 앞선 세그먼트들의 TTS 비용을
       // 지불한 뒤라 낭비된다(스펙 §6 "미배정 화자 있으면 실행 불가").
-      const missingSpeakers = [...new Set(narration.map((s) => s.speaker))].filter((spk) => !voiceOf(spk))
+      // Codex-3 LOW: voice 객체가 존재해도 voiceId가 없으면(또는 빈 문자열이면) 사전 검증이
+      // 통과해 루프 중간에 tts.synthesize(voiceId:undefined)로 낭비된다 — voiceId가
+      // non-empty string인지 확인해야 한다.
+      const missingSpeakers = [...new Set(narration.map((s) => s.speaker))].filter((spk) => {
+        const voice = voiceOf(spk)
+        return !voice || typeof voice.voiceId !== 'string' || voice.voiceId === ''
+      })
       if (missingSpeakers.length) throw new Error(`voice not assigned for speaker: ${missingSpeakers[0]}`)
 
       // 1) 세그먼트별 TTS 생성 + 실측 (동시성 제한)
