@@ -114,8 +114,7 @@
   font-family: var(--font-family);
 }
 
-.story-script-stream,
-.story-script-textarea {
+.story-script-stream {
   flex: 1;
   min-height: 200px;
   padding: 12px;
@@ -126,10 +125,6 @@
   font-family: var(--font-family);
   white-space: pre-wrap;
   overflow: auto;
-}
-
-.story-script-textarea {
-  resize: vertical;
 }
 
 /* ── 대본 편집 영역 (PromptInput 래퍼, M2) ── */

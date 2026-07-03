@@ -42,8 +42,22 @@ function useSafeT() {
   }
 }
 
+// 상위에 I18nProvider 가 이미 있는지 감지한다. 있으면(실제 앱: Shell.jsx 상위 provider) 편집기
+// PromptInput 을 다시 감싸지 않고 상위 provider 를 재사용해 Header 언어 전환이 전파되게 하고,
+// 없으면(단위 테스트 단독 렌더) 폴백으로만 감싼다.
+function useHasI18n() {
+  try {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    useI18n()
+    return true
+  } catch {
+    return false
+  }
+}
+
 export default function StoryView({ pipeline }) {
   const t = useSafeT()
+  const hasI18n = useHasI18n()
   const { state, streamingText, start, abort, scenes = [], openError } = pipeline
   const steps = state?.steps || {}
   const currentStep = computeCurrentStep(steps)
@@ -99,6 +113,19 @@ export default function StoryView({ pipeline }) {
   const handlePasteStart = () => {
     start('script', { pastedScript, options: { language, model } })
   }
+
+  const scriptEditor = (
+    <div className="story-script-editor">
+      <PromptInput
+        value={scriptDraft || streamingText}
+        onChange={setScriptDraft}
+        references={[]}
+        disableMentions
+        showCharCount
+        placeholder={t('story.form.scriptPlaceholder', '대본이 여기에 표시됩니다')}
+      />
+    </div>
+  )
 
   return (
     <div className="story-view">
@@ -181,22 +208,12 @@ export default function StoryView({ pipeline }) {
             {isRunning ? (
               <div className="story-script-stream" aria-live="polite">{streamingText}</div>
             ) : (
-              // PromptInput 은 useI18n() provider 를 요구한다. StoryView 는 provider 없이도
-              // 렌더 가능한 프레젠테이션 컴포넌트이므로 여기서 I18nProvider 로 감싼다(앱에선 중첩,
-              // 단위 테스트에선 단독 렌더 보장). 대본은 @멘션이 필요 없어 disableMentions 로 빨간
-              // 밑줄을 끄고, showCharCount 로 줄 수+문자 수를 노출한다.
-              <div className="story-script-editor">
-                <I18nProvider>
-                  <PromptInput
-                    value={scriptDraft || streamingText}
-                    onChange={setScriptDraft}
-                    references={[]}
-                    disableMentions
-                    showCharCount
-                    placeholder={t('story.form.scriptPlaceholder', '대본이 여기에 표시됩니다')}
-                  />
-                </I18nProvider>
-              </div>
+              // PromptInput 은 useI18n() provider 를 요구한다. 실제 앱에선 상위(Shell.jsx)
+              // provider 가 이미 있으므로 재사용해 Header 언어 전환이 그대로 전파되게 하고,
+              // provider 가 없는 단위 테스트에서만 폴백으로 감싼다(중첩·중복 setLocale 방지).
+              // 대본은 @멘션이 필요 없어 disableMentions 로 빨간 밑줄을 끄고, showCharCount 로
+              // 줄 수+문자 수를 노출한다.
+              hasI18n ? scriptEditor : <I18nProvider>{scriptEditor}</I18nProvider>
             )}
 
             {!isRunning && (
