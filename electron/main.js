@@ -15,6 +15,8 @@ import { registerVrewIPC } from './ipc/vrew.js'
 import { registerMcpIPC } from './ipc/mcp.js'
 import { registerGenaiIPC } from './ipc/genai-api.js'
 import { registerStoryIPC } from './ipc/story-api.js'
+import * as llmClaude from './api/llm/llmClaude.js'
+import { loadMetaPrompt } from './api/llm/metaPrompts.js'
 import { createKeyStore } from './api/keyStore.js'
 import { registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible, updateBounds } from './ipc/layout.js'
 import { createModeController } from './ipc/mode.js'
@@ -204,6 +206,8 @@ registerGenaiIPC(ipcMain, { keyStore: genaiKeyStore })
 registerStoryIPC(ipcMain, {
   keyStore: genaiKeyStore,
   getWindow: () => mainWindow,
+  llm: llmClaude,
+  loadMetaPrompt,
   getActiveWorkFolder: () => activeWorkFolder,
 })
 

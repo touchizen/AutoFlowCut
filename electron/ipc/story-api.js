@@ -37,7 +37,7 @@ function isWithinWorkFolder(projectPath, workFolder) {
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
 }
 
-export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini, getActiveWorkFolder = () => null }) {
+export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini, loadMetaPrompt, getActiveWorkFolder = () => null }) {
   let machine = null
   let openLock = Promise.resolve()
 
@@ -61,7 +61,7 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
         return { error: 'invalid-project-path' }
       }
       if (machine) await machine.abort()
-      machine = createStepMachine({ projectPath, llm, emit, getApiKey: () => keyStore.getKey() })
+      machine = createStepMachine({ projectPath, llm, emit, getApiKey: () => keyStore.getKey(), loadMetaPrompt })
       return machine.open()
     })
     openLock = task.then(() => undefined, () => undefined)

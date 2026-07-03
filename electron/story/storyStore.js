@@ -10,7 +10,7 @@ export function defaultStoryState() {
   return {
     version: 1,
     input: null,
-    engine: { llm: 'gemini' },
+    engine: { llm: 'claude' },
     steps: {
       script: { status: 'pending' },
       scenes: { status: 'pending' },

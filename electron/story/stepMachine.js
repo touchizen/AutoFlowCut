@@ -9,7 +9,7 @@ import { buildFallbackTimeline } from './timing.js'
 
 const DOWNSTREAM = { script: ['scenes', 'prompts'], scenes: ['prompts'], prompts: [] }
 
-export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
+export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt }) {
   const store = createStoryStore(projectPath)
   const projectToken = randomUUID()
   let state = null
@@ -74,7 +74,11 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
         return
       }
       state.input = params.input ? { ...params.input, options: params.options } : state.input
-      const opts = { apiKey: getApiKey(), model: state.engine.model || 'gemini-2.5-pro', ...(params.options || {}) }
+      const language = params.options?.language || state.input?.options?.language || 'ko'
+      const metaPrompt = loadMetaPrompt
+        ? await loadMetaPrompt({ genre: params.options?.genre, wave: 'script', language })
+        : ''
+      const opts = { apiKey: getApiKey(), model: state.engine.model, metaPrompt, ...(params.options || {}) }
       const { scriptMd } = await llm.generateScript(state.input, opts, {
         onDelta: (text) => send('story:delta', { text }, opId), signal,
       })
@@ -84,7 +88,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
     async scenes(params, opId, signal) {
       const scriptMd = await store.loadText('script.md')
       if (!scriptMd) throw new Error('script.md not found — run script step first')
-      const opts = { apiKey: getApiKey(), model: state.engine.model || 'gemini-2.5-pro', ...(state.input?.options || {}) }
+      const opts = { apiKey: getApiKey(), model: state.engine.model, ...(state.input?.options || {}) }
       const { scenes, speakers } = await llm.splitScenes(scriptMd, opts, { signal })
       if (signal?.aborted) return
       const prev = JSON.parse((await store.loadText('scenes.json')) || '{"scenes":[]}').scenes
@@ -100,7 +104,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey }) {
       const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
       if (!scenesJson) throw new Error('scenes.json not found — run scenes step first')
       const scriptMd = await store.loadText('script.md')
-      const opts = { apiKey: getApiKey(), model: state.engine.model || 'gemini-2.5-pro', ...(state.input?.options || {}) }
+      const opts = { apiKey: getApiKey(), model: state.engine.model, ...(state.input?.options || {}) }
       const { scenes } = await llm.writePrompts(scenesJson.scenes, { scriptMd, style: params.style || null }, opts, { signal })
       if (signal?.aborted) return
       await store.saveText('scenes.json', JSON.stringify({ scenes }, null, 2))
