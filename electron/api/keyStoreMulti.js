@@ -17,8 +17,8 @@ export function createMultiKeyStore({ safeStorage, keysDir, fs, path }) {
   fs.mkdirSync?.(keysDir, { recursive: true })
   const cache = new Map()
   function storeFor(provider) {
+    if (!PROVIDERS.includes(provider)) return null // allowlist 밖(프로토타입 멤버 포함) → 경로 생성 안 함
     const filename = FILENAME_BY_PROVIDER[provider]
-    if (!filename) return null // allowlist 밖 → 경로 생성 안 함
     if (!cache.has(provider)) {
       cache.set(provider, createKeyStore({ safeStorage, filePath: path.join(keysDir, filename), fs }))
     }

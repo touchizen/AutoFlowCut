@@ -48,4 +48,15 @@ describe('createMultiKeyStore', () => {
     expect(ks.getKey('typecast')).toBe('tc')
     expect(ks.getKey('elevenlabs')).toBe('el')
   })
+
+  it('Object.prototype 멤버명 provider도 거부 (prototype 오염 방지)', () => {
+    const ks = createMultiKeyStore(deps)
+    for (const evil of ['constructor', '__proto__', 'toString', 'hasOwnProperty', 'valueOf']) {
+      expect(ks.setKey(evil, 'x').success).toBe(false)
+      expect(ks.getKey(evil)).toBe(null)
+      expect(ks.hasKey(evil)).toBe(false)
+      expect(ks.clearKey(evil).success).toBe(false)
+    }
+    expect(deps.files.size).toBe(0)
+  })
 })
