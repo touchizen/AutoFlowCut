@@ -8,6 +8,9 @@ import { createStepMachine } from '../../../electron/story/stepMachine.js'
 // 얇게 감싸 saveText 호출 순서를 기록한다. 실제 쓰기는 그대로 위임하므로 다른 테스트의 동작에는
 // 영향이 없다.
 const writeOrder = vi.hoisted(() => [])
+// Codex-2 MED: abort recheck 테스트용 훅 — 특정 relPath 쓰기 직후 콜백을 실행할 수 있게 한다
+// (real saveText 완료 후에 호출해 "그 쓰기는 이미 커밋됐고, 그 다음 재체크가 막아야 한다"를 재현).
+const afterWriteHooks = vi.hoisted(() => ({ current: null }))
 vi.mock('../../../electron/story/storyStore.js', async (importOriginal) => {
   const actual = await importOriginal()
   return {
@@ -16,7 +19,12 @@ vi.mock('../../../electron/story/storyStore.js', async (importOriginal) => {
       const real = actual.createStoryStore(projectPath)
       return {
         ...real,
-        saveText: (relPath, text) => { writeOrder.push(relPath); return real.saveText(relPath, text) },
+        saveText: async (relPath, text) => {
+          writeOrder.push(relPath)
+          const result = await real.saveText(relPath, text)
+          if (afterWriteHooks.current) await afterWriteHooks.current(relPath)
+          return result
+        },
       }
     },
   }
@@ -43,7 +51,7 @@ function makeMachine(projectPath) {
 
 describe('audio 스텝', () => {
   let projectPath
-  beforeEach(async () => { projectPath = await tmpProject(); writeOrder.length = 0 })
+  beforeEach(async () => { projectPath = await tmpProject(); writeOrder.length = 0; afterWriteHooks.current = null })
 
   it('세그먼트 TTS 생성 → 실측 → SRT → 재그룹 → manifest 저장', async () => {
     // scenes.json 준비: narrator 화자 2 세그먼트
@@ -127,6 +135,94 @@ describe('audio 스텝', () => {
     const state = await machine.getState()
     expect(state.steps.audio.status).toBe('error')
     expect(state.steps.audio.error).toMatch(/segment id/)
+  })
+
+  // Codex-2 HIGH: segment id가 파일명에 그대로 쓰이는데(audio/segments/${id}.${format}),
+  // storyStore.writeAtomic은 경로 포함 검증을 하지 않는다 — id에 `../`가 섞이면 segments 밖으로
+  // 쓸 수 있다. audio 진입 시점에 안전 패턴(영숫자/`_`/`-`)이 아닌 id는 즉시 거부해야 하고,
+  // TTS/파일쓰기가 전혀 일어나지 않아야 한다.
+  it('scenes.json 세그먼트 id가 안전 패턴(영숫자/_/-)을 벗어나면 audio 스텝은 즉시 throw하고 TTS를 호출하지 않는다', async () => {
+    const { writeFile, mkdir } = await import('node:fs/promises')
+    await mkdir(path.join(projectPath, 'story'), { recursive: true })
+    await writeFile(path.join(projectPath, 'story', 'scenes.json'), JSON.stringify({
+      scenes: [{ segments: [
+        { id: '../evil', type: 'narration', speaker: 'narrator', text: '첫 문장' },
+      ] }],
+    }))
+    const synthesize = vi.fn(async ({ text }) => ({ audio: Buffer.from('AUDIO:' + text), format: 'wav' }))
+    const tts = { capabilities: () => ({ maxConcurrency: 2 }), synthesize }
+    const probe = async () => 2000
+    const machine = createStepMachine({
+      projectPath, llm: {}, emit: () => {}, getApiKey: () => 'k', tts, probe,
+    })
+    await machine.open()
+    await machine.start('audio', { speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }] })
+    const state = await machine.getState()
+    expect(state.steps.audio.status).toBe('error')
+    expect(state.steps.audio.error).toMatch(/segment id/)
+    expect(state.steps.audio.error).toMatch(/evil/)
+    expect(synthesize).not.toHaveBeenCalled()
+    // segments 디렉터리 밖으로 아무 파일도 써지지 않았어야 한다
+    const evilPath = path.join(projectPath, 'evil.wav')
+    await expect(readFile(evilPath)).rejects.toThrow()
+  })
+
+  it('세그먼트 id에 슬래시가 섞여도(a/b) audio 스텝은 즉시 throw한다', async () => {
+    const { writeFile, mkdir } = await import('node:fs/promises')
+    await mkdir(path.join(projectPath, 'story'), { recursive: true })
+    await writeFile(path.join(projectPath, 'story', 'scenes.json'), JSON.stringify({
+      scenes: [{ segments: [
+        { id: 'a/b', type: 'narration', speaker: 'narrator', text: '첫 문장' },
+      ] }],
+    }))
+    const synthesize = vi.fn(async ({ text }) => ({ audio: Buffer.from('AUDIO:' + text), format: 'wav' }))
+    const tts = { capabilities: () => ({ maxConcurrency: 2 }), synthesize }
+    const probe = async () => 2000
+    const machine = createStepMachine({
+      projectPath, llm: {}, emit: () => {}, getApiKey: () => 'k', tts, probe,
+    })
+    await machine.open()
+    await machine.start('audio', { speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }] })
+    const state = await machine.getState()
+    expect(state.steps.audio.status).toBe('error')
+    expect(state.steps.audio.error).toMatch(/segment id/)
+    expect(synthesize).not.toHaveBeenCalled()
+  })
+
+  // Codex-2 MED: signal.aborted는 최종 쓰기 시퀀스 시작 전 한 번만 체크됐다 — abort가
+  // final.srt 쓰기와 manifest.json 쓰기 사이에 도착하면 이후 커밋들이 그대로 진행됐다.
+  // 각 최종 커밋 직전에 재체크해야 한다. afterWriteHooks로 final.srt 쓰기 "직후"(이미 커밋된 뒤)
+  // machine.abort()를 걸어, 그 다음 재체크가 manifest.json/scenes.json 쓰기를 막는지 검증한다.
+  it('final.srt 쓰기 직후 abort되면 manifest.json/scenes.json은 쓰이지 않는다 (각 커밋 직전 재체크)', async () => {
+    const { writeFile, mkdir } = await import('node:fs/promises')
+    await mkdir(path.join(projectPath, 'story'), { recursive: true })
+    await writeFile(path.join(projectPath, 'story', 'scenes.json'), JSON.stringify({
+      scenes: [{ segments: [{ id: 's1', type: 'narration', speaker: 'narrator', text: 'x' }] }],
+    }))
+    const { machine } = makeMachine(projectPath)
+    afterWriteHooks.current = async (relPath) => {
+      if (relPath === 'audio/final.srt') await machine.abort()
+    }
+    await machine.open()
+    await machine.start('audio', { speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }] })
+
+    expect(writeOrder).toContain('audio/final.srt')
+    expect(writeOrder).not.toContain('audio/manifest.json')
+    // scenes.json은 audio 스텝 시작 전 setup 단계에서 한 번 쓰였다(위 writeFile) — audio 스텝의
+    // 최종 커밋 재쓰기는 없어야 하므로 writeOrder에는 딱 1번만 나타나야 한다(스텝 내부 mock 경유분 0회).
+    const scenesWritesDuringStep = writeOrder.filter((p) => p === 'scenes.json').length
+    expect(scenesWritesDuringStep).toBe(0)
+    // 디스크상 scenes.json도 원본(pre-audio) 그대로 — finalScenes로 덮어써지지 않았다
+    const scenesOnDisk = JSON.parse(await readFile(path.join(projectPath, 'story', 'scenes.json'), 'utf-8'))
+    expect(scenesOnDisk.scenes[0].segments[0].id).toBe('s1')
+    expect(scenesOnDisk.scenes[0].storyId).toBeUndefined() // finalScenes였다면 storyId가 부여됐을 것
+
+    const manifestExists = await readFile(path.join(projectPath, 'story', 'audio', 'manifest.json')).then(() => true, () => false)
+    expect(manifestExists).toBe(false)
+
+    const state = await machine.getState()
+    expect(state.steps.audio.status).toBe('error')
+    expect(state.steps.audio.error).toBe('aborted')
   })
 
   it('audio 완료 시 steps.audio.status=done, prompts는 pending 리셋', async () => {

@@ -24,11 +24,16 @@ function assignSegmentIds(scenes) {
 
 // audio 스텝 fail-fast: scenes.json의 내레이션 세그먼트가 id 없이(또는 중복 id로) 넘어오면
 // TTS 파일명/results 맵/manifest 키가 조용히 undefined로 붕괴한다 — 여기서 즉시 던진다.
+// Codex-2 HIGH: id는 audio/segments/${id}.${format} 파일명에 그대로 쓰이고 storyStore.writeAtomic은
+// 경로 포함 검증을 하지 않는다 — `../` 등이 섞인 id(변조된/스키마 밖 필드가 실린 scenes.json)가
+// segments 디렉터리 밖에 쓰는 걸 막기 위해 안전한 파일명 토큰만 허용한다(발급 id 패턴 s{i}-{j} 포함).
+const SAFE_SEGMENT_ID = /^[A-Za-z0-9_-]+$/
 function assertSegmentIdsValid(scenes) {
   const narration = (scenes || []).flatMap((sc) => sc.segments || []).filter((s) => (s.type || 'narration') === 'narration')
   const seen = new Set()
   for (const seg of narration) {
     if (!seg.id || seen.has(seg.id)) throw new Error('segment id missing or duplicate — rerun scenes step')
+    if (!SAFE_SEGMENT_ID.test(seg.id)) throw new Error(`unsafe segment id (must match ${SAFE_SEGMENT_ID}): ${seg.id}`)
     seen.add(seg.id)
   }
 }
@@ -232,9 +237,14 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // 8) 산출 저장: 세그먼트 파일은 이미 저장됨 → SRT → manifest → scenes.json 순서 원자 쓰기.
       // I1/스펙 §5: manifest가 scenes.json보다 먼저 확정돼야 스텝 중간 크래시가 "새 씬 +
       // 옛 manifest" 조합(export가 씬-오디오 불일치를 감지 못하는 상태)을 남기지 않는다.
+      // Codex-2 MED: abort는 이 세 커밋 사이 어디서든 도착할 수 있다 — 시퀀스 진입 전 한 번만
+      // 체크하면 그 뒤 커밋들이 그대로 진행돼 "abort 이후 쓰기"가 남는다. 각 커밋 직전에 재체크한다
+      // (첫 커밋 직전 체크는 위 line의 signal?.aborted 가드가 이미 겸함).
       await store.saveText('audio/final.srt', srt)
+      if (signal?.aborted) return
       const manifest = buildManifest(timed, { pushRevision: null }) // 최초 정밀: null (prompts가 재스탬프)
       await store.saveText('audio/manifest.json', JSON.stringify(manifest, null, 2))
+      if (signal?.aborted) return
       await store.saveText('scenes.json', JSON.stringify({ scenes: finalScenes }, null, 2))
     },
     async prompts(params, opId, signal) {
