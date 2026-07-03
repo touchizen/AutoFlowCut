@@ -13,6 +13,8 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
   // 안내 배너를 렌더할 수 있게 노출한다.
   const [openError, setOpenError] = useState(null)
   const [streamingText, setStreamingText] = useState('')
+  // Task 5: 복원/스트림된 대본 마크다운. open 응답·story:state로 동기화, projectPath 전환 시 리셋.
+  const [scriptText, setScriptText] = useState('')
   const tokenRef = useRef(null)
   const onPushRef = useRef(onPushScenes)
   onPushRef.current = onPushScenes
@@ -47,6 +49,7 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
     setState(null)
     setScenes([])
     setStreamingText('')
+    setScriptText('')
     if (oldToken) {
       window.electronAPI?.storyAbort?.({ projectToken: oldToken })?.catch?.(() => {})
     }
@@ -64,6 +67,7 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
         // Minor: 스텝 running 전환 시 stepMachine.start()가 scenes 필드 없이 story:state를
         // 먼저 emit한다(하류 리셋 알림용) — scenes가 undefined면 기존 값을 유지, 있을 때만 반영.
         if (p.scenes !== undefined) setScenes(p.scenes)
+        if (p.scriptText !== undefined) setScriptText(p.scriptText)
       }),
       api.onStoryEvent('story:delta', (p) => {
         if (p.projectToken !== tokenRef.current) return
@@ -105,6 +109,7 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
     tokenRef.current = r.projectToken
     setState(r.state)
     setScenes(r.scenes || [])
+    if (r.scriptText !== undefined) setScriptText(r.scriptText)
     // main의 story:open 처리 중 maybeResendPush()가 재발신하는 story:pushScenes가 이
     // storyOpen() resolve(=tokenRef 세팅) 전에 도착하면 토큰 불일치로 drop된다. 이제 토큰이
     // 확정됐으니 storyGetState()를 한 번 호출해 동일한 재발신 로직(getState 핸들러)을 다시
@@ -114,9 +119,10 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
     // 이미 tokenRef/state를 정리(및 abort)했으므로, 여기서 stale한 gs 결과로 되살리지 않는다.
     if (requestedPath !== prevPathRef.current) return r
     if (gs && !gs.error) {
-      const { scenes: gsScenes, ...rest } = gs
+      const { scenes: gsScenes, scriptText: gsScriptText, ...rest } = gs
       setState(rest)
       setScenes(gsScenes || [])
+      if (gsScriptText !== undefined) setScriptText(gsScriptText)
     }
     return r
   }, [projectPath])
@@ -128,5 +134,7 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
 
   const abort = useCallback(() => window.electronAPI.storyAbort({ projectToken: tokenRef.current }), [])
 
-  return { state, scenes, streamingText, open, start, abort, openError }
+  const generateTitle = useCallback((scriptMd) => window.electronAPI.storyGenerateTitle({ projectToken: tokenRef.current, scriptMd }), [])
+
+  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle }
 }
