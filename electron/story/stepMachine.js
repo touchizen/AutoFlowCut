@@ -3,13 +3,16 @@
  * LLM 어댑터는 DI(테스트 mock). emit은 모든 payload에 projectToken/operationId 포함.
  */
 import { randomUUID } from 'node:crypto'
+import path from 'node:path'
 import { createStoryStore } from './storyStore.js'
-import { inheritStoryIds, assertUniqueStoryIds } from './sceneIdentity.js'
-import { buildFallbackTimeline } from './timing.js'
+import { inheritStoryIds, assertUniqueStoryIds, assignStoryIdsByMembership } from './sceneIdentity.js'
+import { buildFallbackTimeline, buildSegmentTimeline, buildSrt } from './timing.js'
+import { regroupScenes } from './regroup.js'
+import { buildManifest } from './manifest.js'
 
-const DOWNSTREAM = { script: ['scenes', 'prompts'], scenes: ['prompts'], prompts: [] }
+const DOWNSTREAM = { script: ['scenes', 'audio', 'prompts'], scenes: ['audio', 'prompts'], audio: ['prompts'], prompts: [] }
 
-export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt }) {
+export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt, tts, probe }) {
   const store = createStoryStore(projectPath)
   const projectToken = randomUUID()
   let state = null
@@ -120,6 +123,63 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const norm = (n) => (n || '').replace(/\s/g, '')
       const prevSpeakers = new Map(state.speakers.map((sp) => [norm(sp.name), sp]))
       state.speakers = speakers.map((sp) => ({ ...sp, voice: prevSpeakers.get(norm(sp.name))?.voice ?? null }))
+    },
+    async audio(params, opId, signal) {
+      const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
+      if (!scenesJson) throw new Error('scenes.json not found — run scenes step first')
+      // 화자 voice 배정 (params.speakers 우선, 없으면 state.speakers)
+      const speakers = params.speakers || state.speakers || []
+      const voiceOf = (spk) => (speakers.find((s) => s.id === spk)?.voice) || null
+      // 모든 씬의 세그먼트를 순서대로 평탄화
+      const segments = scenesJson.scenes.flatMap((sc) => sc.segments || [])
+      const narration = segments.filter((s) => (s.type || 'narration') === 'narration')
+
+      // 1) 세그먼트별 TTS 생성 + 실측 (동시성 제한)
+      const conc = tts.capabilities?.().maxConcurrency || 2
+      const results = new Map()
+      for (let i = 0; i < narration.length; i += conc) {
+        const batch = narration.slice(i, i + conc)
+        await Promise.all(batch.map(async (seg) => {
+          const voice = voiceOf(seg.speaker)
+          if (!voice) throw new Error(`voice not assigned for speaker: ${seg.speaker}`)
+          const { audio } = await tts.synthesize({ text: seg.text, voiceId: voice.voiceId, emotion: seg.emotion, signal })
+          const rel = `audio/segments/${seg.id}.wav`
+          await store.saveBinary(rel, audio)
+          const durationMs = await probe(path.join(projectPath, 'story', rel))
+          results.set(seg.id, { audioPath: path.join(projectPath, 'story', rel), durationMs })
+        }))
+        if (signal?.aborted) return
+      }
+      if (signal?.aborted) return
+
+      // 2) 세그먼트에 실측 durationMs·audioPath 병합 (원 순서 보존)
+      const measured = segments.map((s) => {
+        const r = results.get(s.id)
+        return { ...s, durationMs: r?.durationMs || 0, audioPath: r?.audioPath || null }
+      })
+      // 3) 타임라인(startMs) + 4) SRT
+      const timed = buildSegmentTimeline(measured, { gapMs: 150 })
+      const srt = buildSrt(timed)
+      // 5) 재그룹 + 6) storyId 발급 (이전 확정 씬은 scenes.json에 segmentIds 있으면 사용)
+      const prevScenes = (scenesJson.scenes || []).filter((s) => s.storyId).map((s) => ({ storyId: s.storyId, segmentIds: (s.segments || []).map((g) => g.id) }))
+      const groups = regroupScenes(timed, { minMs: 6000, maxMs: 10000 })
+      const withIds = assignStoryIdsByMembership(prevScenes, groups)
+      // 7) 확정 씬 재구성 (그룹의 segmentIds로 timed 세그먼트를 묶음)
+      const byId = new Map(timed.map((s) => [s.id, s]))
+      const finalScenes = withIds.map((g) => ({
+        storyId: g.storyId,
+        startSec: g.startMs / 1000,
+        endSec: g.endMs / 1000,
+        segments: g.segmentIds.map((id) => byId.get(id)),
+        // 프롬프트는 audio 단계에서 건드리지 않음 (M2a-2/prompts 소유)
+      }))
+      if (signal?.aborted) return
+      if (params.speakers) state.speakers = params.speakers
+      // 8) 산출 저장: 세그먼트 파일은 이미 저장됨 → SRT, scenes.json, manifest 순서 원자 쓰기
+      await store.saveText('audio/final.srt', srt)
+      await store.saveText('scenes.json', JSON.stringify({ scenes: finalScenes }, null, 2))
+      const manifest = buildManifest(timed, { pushRevision: null }) // 최초 정밀: null (prompts가 재스탬프)
+      await store.saveText('audio/manifest.json', JSON.stringify(manifest, null, 2))
     },
     async prompts(params, opId, signal) {
       const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
