@@ -19,7 +19,9 @@ const pipeline = (over = {}) => ({
 describe('StoryView', () => {
   it('스텝퍼에 4단계와 상태 뱃지를 렌더한다', () => {
     render(<StoryView pipeline={pipeline()} />)
-    expect(screen.getByText(/대본/)).toBeTruthy()
+    // 대본 편집이 PromptInput 으로 바뀌며 placeholder("대본이 여기에 표시됩니다")도 "대본"을
+    // 포함한다 — 스텝퍼 라벨만 겨냥하도록 정확 일치로 좁힌다.
+    expect(screen.getByText('대본')).toBeTruthy()
     expect(screen.getByText(/씬 분리/)).toBeTruthy()
     expect(screen.getByText(/오디오/)).toBeTruthy()
     expect(screen.getByText(/프롬프트/)).toBeTruthy()

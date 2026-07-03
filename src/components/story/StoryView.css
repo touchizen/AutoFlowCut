@@ -132,6 +132,14 @@
   resize: vertical;
 }
 
+/* ── 대본 편집 영역 (PromptInput 래퍼, M2) ── */
+.story-script-editor {
+  flex: 1;
+  min-height: 200px;
+  display: flex;
+  flex-direction: column;
+}
+
 /* ── 읽기 전용 테이블 (씬/프롬프트, M1) ── */
 .story-readonly-table {
   width: 100%;

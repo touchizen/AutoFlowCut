@@ -9,7 +9,8 @@
  * 인라인 편집 · autoRun 토글은 M1 범위 밖(버튼 자리만 없음, 다음 마일스톤에서 추가).
  */
 import { useState } from 'react'
-import { useI18n } from '../../hooks/useI18n'
+import { useI18n, I18nProvider } from '../../hooks/useI18n'
+import PromptInput from '../PromptInput'
 import StoryStepper, { STEP_META } from './StoryStepper'
 import './StoryView.css'
 
@@ -180,12 +181,22 @@ export default function StoryView({ pipeline }) {
             {isRunning ? (
               <div className="story-script-stream" aria-live="polite">{streamingText}</div>
             ) : (
-              <textarea
-                className="story-script-textarea"
-                value={scriptDraft || streamingText}
-                onChange={(e) => setScriptDraft(e.target.value)}
-                placeholder={t('story.form.scriptPlaceholder', '대본이 여기에 표시됩니다')}
-              />
+              // PromptInput 은 useI18n() provider 를 요구한다. StoryView 는 provider 없이도
+              // 렌더 가능한 프레젠테이션 컴포넌트이므로 여기서 I18nProvider 로 감싼다(앱에선 중첩,
+              // 단위 테스트에선 단독 렌더 보장). 대본은 @멘션이 필요 없어 disableMentions 로 빨간
+              // 밑줄을 끄고, showCharCount 로 줄 수+문자 수를 노출한다.
+              <div className="story-script-editor">
+                <I18nProvider>
+                  <PromptInput
+                    value={scriptDraft || streamingText}
+                    onChange={setScriptDraft}
+                    references={[]}
+                    disableMentions
+                    showCharCount
+                    placeholder={t('story.form.scriptPlaceholder', '대본이 여기에 표시됩니다')}
+                  />
+                </I18nProvider>
+              </div>
             )}
 
             {!isRunning && (
