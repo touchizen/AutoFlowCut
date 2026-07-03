@@ -92,6 +92,18 @@ describe('StoryView 진행 중 표시(.story-running: 초시계 + 경과시간)'
     expect(screen.getByTestId('story-editor')).toBeTruthy()
   })
 
+  // 재리뷰3: scenes running 중 대본 탭 → 편집기는 보이되(F2), downstream이 도는 중이므로 하단은
+  // 3버튼(새 start)이 아니라 중단(abort) 이어야 한다. (editor controls는 isRunning 기준)
+  it('scenes running 중 대본 탭에서 3버튼이 아니라 중단 버튼이 보인다(abort 유지)', () => {
+    const p = pipeline({ scriptText: '대본' })
+    p.state.steps.script = { status: 'done' }
+    p.state.steps.scenes = { status: 'running', updatedAt: new Date().toISOString() }
+    render(<StoryView pipeline={p} />)
+    fireEvent.click(screen.getByRole('button', { name: '대본' }))
+    expect(screen.getByRole('button', { name: /중단/ })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '분리시작' })).toBeNull()
+  })
+
   it('프롬프트 running 이면 패널에 초시계와 경과 시간을 표시한다', () => {
     const p = pipeline()
     p.state.steps.script = { status: 'done' }

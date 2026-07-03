@@ -358,7 +358,9 @@ export default function StoryView({ pipeline }) {
                   hasI18n ? scriptEditor : <I18nProvider>{scriptEditor}</I18nProvider>
                 )}
                 <div className="story-editor-controls">
-                  {scriptRunning ? (
+                  {/* 중단/3버튼 분기는 isRunning(currentStep) 기준 — script뿐 아니라 scenes/prompts가
+                      도는 중에도 대본 탭에서 abort를 잃지 않도록(재리뷰3). stream 렌더 분기만 scriptRunning. */}
+                  {isRunning ? (
                     <button type="button" className="story-btn-secondary" onClick={() => abort()}>
                       {t('story.action.abort', '⏹ 중단')}
                     </button>
