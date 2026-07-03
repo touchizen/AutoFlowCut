@@ -42,14 +42,17 @@ function StopwatchIcon({ size = 18 }) {
   )
 }
 
-/** 스텝 진행 중 표시 — 초시계 + 라벨 + 경과 시간(running 스텝 updatedAt 기준, 1초마다 갱신). */
-function StoryRunning({ label, startedAt }) {
+/** 스텝 진행 중 표시 — (선택) 옵션·기준 요약 + 초시계 + 라벨 + 경과 시간(updatedAt 기준, 1초 갱신). */
+function StoryRunning({ label, startedAt, detail }) {
   const elapsed = useElapsedTimer(startedAt || null, null)
   return (
     <div className="story-running" aria-live="polite">
-      <StopwatchIcon size={18} />
-      <span className="story-running-label">{label}</span>
-      <span className="story-running-elapsed">{formatElapsed(elapsed)}</span>
+      {detail && <div className="story-running-detail">{detail}</div>}
+      <div className="story-running-main">
+        <StopwatchIcon size={18} />
+        <span className="story-running-label">{label}</span>
+        <span className="story-running-elapsed">{formatElapsed(elapsed)}</span>
+      </div>
     </div>
   )
 }
@@ -314,6 +317,11 @@ export default function StoryView({ pipeline }) {
     e.target.value = '' // 같은 파일 재선택도 change 가 다시 발화하도록 초기화
   }
 
+  // 씬 분리 진행 표시용 — 그 탭에 필요한 옵션(씬 분리 단위)과 기준 요약만 보여준다.
+  const splitSummary = sceneGranularity === 'segment'
+    ? t('story.scenes.summarySegment', '씬 분리 단위: 문장 기준 · 문장마다 씬 · 화자 전환 시 분리 · 짧은 조각 병합 · 10초↑ 분할')
+    : t('story.scenes.summaryScene', '씬 분리 단위: 씬 기준 · 5~10초 의미 단위')
+
   const scriptEditor = (
     <div className="story-script-editor">
       <PromptInput
@@ -558,6 +566,7 @@ export default function StoryView({ pipeline }) {
               <StoryRunning
                 label={t('story.scenes.running', '씬 분리 진행 중')}
                 startedAt={Date.parse(steps.scenes.updatedAt)}
+                detail={splitSummary}
               />
             ) : (
               <>

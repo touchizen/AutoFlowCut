@@ -43,8 +43,20 @@ describe('StoryView 진행 중 표시(.story-running: 초시계 + 경과시간)'
     const running = document.querySelector('.story-running')
     expect(running).toBeTruthy()
     expect(running.querySelector('.stopwatch-icon')).toBeTruthy()
+    // 선택된 씬 분리 단위(기본 scene)와 기준 요약을 함께 보여준다
+    expect(running.textContent).toMatch(/씬 기준/)
     // 진행 중이면 "결과 없음" 힌트는 나오지 않는다
     expect(screen.queryByText(/씬 분리 결과가 아직 없습니다/)).toBeNull()
+  })
+
+  it('문장 기준(segment)이면 씬 분리 진행 화면에 문장 기준 요약을 표시한다', () => {
+    const p = pipeline()
+    p.state.input = { options: { sceneGranularity: 'segment' } }
+    p.state.steps.script = { status: 'done' }
+    const { rerender } = render(<StoryView pipeline={p} />)
+    fireEvent.click(screen.getByRole('button', { name: '씬 분리 실행' }))
+    rerender(<StoryView pipeline={withRunning(p, 'scenes', 2000)} />)
+    expect(document.querySelector('.story-running').textContent).toMatch(/문장 기준/)
   })
 
   it('프롬프트 running 이면 패널에 초시계와 경과 시간을 표시한다', () => {
