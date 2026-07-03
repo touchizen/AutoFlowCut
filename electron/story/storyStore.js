@@ -39,11 +39,11 @@ export function createStoryStore(projectPath) {
     return result
   }
 
-  async function writeAtomic(relPath, data) {
+  async function writeAtomic(relPath, data, encoding = 'utf-8') {
     await mkdir(path.dirname(path.join(storyDir, relPath)), { recursive: true })
     const target = path.join(storyDir, relPath)
     const tmp = `${target}.tmp-${process.pid}-${randomUUID().slice(0, 8)}`
-    await writeFile(tmp, data, 'utf-8')
+    await writeFile(tmp, data, encoding)
     await rename(tmp, target)
   }
 
@@ -57,6 +57,7 @@ export function createStoryStore(projectPath) {
     },
     async save(state) { return enqueueWrite(() => writeAtomic('story.json', JSON.stringify(state, null, 2))) },
     async saveText(relPath, text) { return enqueueWrite(() => writeAtomic(relPath, text)) },
+    async saveBinary(relPath, buffer) { return enqueueWrite(() => writeAtomic(relPath, buffer, null)) },
     async loadText(relPath) {
       try { return await readFile(path.join(storyDir, relPath), 'utf-8') } catch { return null }
     },
