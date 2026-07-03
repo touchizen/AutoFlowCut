@@ -70,9 +70,15 @@ export function $editorStateToText(editorState) {
  *
  * @param {string} line
  * @param {Map<string, object>} refByLowerName - lowercase name → ref object
+ * @param {{ plain?: boolean }} [options] - plain=true 면 멘션 매칭을 건너뛰고 라인을
+ *   단일 일반 TextNode 로 (chip / unknown-mention 밑줄 없이 plain text). 대본 스텝용.
  * @returns {Array<import('lexical').LexicalNode>}
  */
-export function buildNodesForLine(line, refByLowerName) {
+export function buildNodesForLine(line, refByLowerName, { plain = false } = {}) {
+  if (plain) {
+    // 대본 모드: `@` 를 멘션으로 해석하지 않고 그대로 plain text 로 둔다.
+    return line ? [$createTextNode(line)] : []
+  }
   const nodes = []
   let lastIdx = 0
   let m
@@ -121,8 +127,10 @@ function refDataPayload(ref) {
  *
  * @param {string} text
  * @param {Array} references
+ * @param {{ plain?: boolean }} [options] - plain=true 면 `@` 를 멘션으로 해석하지 않고
+ *   plain text 로 (대본 스텝 disableMentions 용).
  */
-export function $applyTextToRoot(text, references = []) {
+export function $applyTextToRoot(text, references = [], { plain = false } = {}) {
   const refByLowerName = new Map()
   for (const r of references || []) {
     if (r?.name) refByLowerName.set(String(r.name).toLowerCase(), r)
@@ -134,7 +142,7 @@ export function $applyTextToRoot(text, references = []) {
   if (lines.length === 0) lines.push('')
   for (const line of lines) {
     const para = $createParagraphNode()
-    const nodes = buildNodesForLine(line, refByLowerName)
+    const nodes = buildNodesForLine(line, refByLowerName, { plain })
     for (const n of nodes) para.append(n)
     root.append(para)
   }

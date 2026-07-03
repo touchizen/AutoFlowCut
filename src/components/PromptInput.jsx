@@ -104,7 +104,7 @@ const MentionMenu = forwardRef(function MentionMenu({ loading, ...rest }, ref) {
 // ── SyncPlugin: 외부 value ↔ editor state 양방향 sync.
 //   round-trip 무한루프 방지: 최근 직렬화/적용한 텍스트를 ref 로 기억하고 동일하면 skip.
 //   references 는 ref 로 캡쳐 — 사용자 타이핑 중 references 가 갱신돼도 editor reset 안 되도록.
-function SyncPlugin({ value, onChange, references }) {
+function SyncPlugin({ value, onChange, references, disableMentions = false }) {
   const [editor] = useLexicalComposerContext()
   const lastTextRef = useRef('')
   const pendingValueTextRef = useRef(null)
@@ -119,7 +119,7 @@ function SyncPlugin({ value, onChange, references }) {
     if (incoming === lastTextRef.current) return
     pendingValueTextRef.current = incoming
     const cancel = deferEditorUpdate(editor, () => {
-      $applyTextToRoot(incoming, referencesRef.current)
+      $applyTextToRoot(incoming, referencesRef.current, { plain: disableMentions })
       lastTextRef.current = incoming
       if (pendingValueTextRef.current === incoming) {
         pendingValueTextRef.current = null
@@ -157,7 +157,7 @@ function SyncPlugin({ value, onChange, references }) {
     return deferEditorUpdate(editor, () => {
       const latestText = pendingValueTextRef.current ?? lastTextRef.current
       if (latestText !== currentText) return
-      $applyTextToRoot(currentText, references)
+      $applyTextToRoot(currentText, references, { plain: disableMentions })
     })
   }, [editor, references])
 
@@ -173,7 +173,7 @@ function SyncPlugin({ value, onChange, references }) {
         pendingRehydrateRef.current = false
         return
       }
-      editor.update(() => $applyTextToRoot(currentText, referencesRef.current))
+      editor.update(() => $applyTextToRoot(currentText, referencesRef.current, { plain: disableMentions }))
       pendingRehydrateRef.current = false
     }
     rootEl.addEventListener('blur', handler)
@@ -263,6 +263,8 @@ export default function PromptInput({
   onSeedLockToggle,
   onSeedRandom,
   hideFooter = false,  // 상세/Ref 모달: footer(줄 수+Seed+Tip) 전체 숨김 — chip 에디터만.
+  disableMentions = false,  // 대본 스텝: `@` 멘션 chip/빨간 밑줄 끔 — plain text 로만.
+  showCharCount = false,    // 대본 스텝: footer 에 문자 수(text.length) 추가 표시.
 }) {
   const { t } = useI18n()
 
@@ -345,30 +347,33 @@ export default function PromptInput({
             <HistoryPlugin />
             <PasteNormalizationPlugin />
             <EditablePlugin editable={!disabled} />
-            <MentionLiveTransformPlugin references={references} />
-            <SyncPlugin value={value} onChange={handleChange} references={references} />
-            <BeautifulMentionsPlugin
-              items={mentionItems}
-              triggers={['@']}
-              menuComponent={MentionMenu}
-              menuItemComponent={MentionMenuItem}
-              allowSpaces={false}
-              insertOnBlur={false}
-              creatable={false}
-              autoSpace={false}
-              // false = 전체 노출 (메뉴 컨테이너에서 자체 스크롤). 기본 5 는 ref 6+ 일 때 회귀.
-              menuItemLimit={false}
-              // mentionParser regex 의 boundary 클래스와 정렬 — `.,@alice` 같은 케이스도 트리거.
-              preTriggerChars={MENTION_PRE_TRIGGER_CHARS}
-              // 기본값에서 `_` 만 제외 — `@main_hero` 가 `@main` 으로 짤리는 버그 회피.
-              punctuation={MENTION_PUNCTUATION}
-            />
+            {!disableMentions && <MentionLiveTransformPlugin references={references} />}
+            <SyncPlugin value={value} onChange={handleChange} references={references} disableMentions={disableMentions} />
+            {!disableMentions && (
+              <BeautifulMentionsPlugin
+                items={mentionItems}
+                triggers={['@']}
+                menuComponent={MentionMenu}
+                menuItemComponent={MentionMenuItem}
+                allowSpaces={false}
+                insertOnBlur={false}
+                creatable={false}
+                autoSpace={false}
+                // false = 전체 노출 (메뉴 컨테이너에서 자체 스크롤). 기본 5 는 ref 6+ 일 때 회귀.
+                menuItemLimit={false}
+                // mentionParser regex 의 boundary 클래스와 정렬 — `.,@alice` 같은 케이스도 트리거.
+                preTriggerChars={MENTION_PRE_TRIGGER_CHARS}
+                // 기본값에서 `_` 만 제외 — `@main_hero` 가 `@main` 으로 짤리는 버그 회피.
+                punctuation={MENTION_PUNCTUATION}
+              />
+            )}
           </LexicalComposer>
         </div>
 
         {!hideFooter && (
         <div className="prompt-input-footer">
           <span className="line-count">{t('prompt.count', { count: lineCount })}</span>
+          {showCharCount && <span className="char-count" data-testid="char-count">{text.length}</span>}
 
           {showSeedUI && (
             <div className="seed-control" title={t('prompt.seedTitle') || 'Seed (locked = reuse same image)'}>
