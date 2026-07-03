@@ -193,6 +193,22 @@ describe('stepMachine', () => {
     expect(Object.values(diskState.steps).every((s) => s.status !== 'running')).toBe(true)
   })
 
+  it('abort()가 running→error 상태 변화를 story:state로 renderer에 통지한다', async () => {
+    let rejectFirst
+    llm.generateScript.mockImplementationOnce(() => new Promise((_r, reject) => { rejectFirst = reject }))
+    const start = machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    // 첫 실행이 pending mock(running)에 도달할 때까지 대기
+    while (!rejectFirst) { await new Promise((r) => setImmediate(r)) }
+    emitted.length = 0                        // abort 이전 emit 제거
+    await machine.abort()                     // running → error 마킹 + 통지 기대
+    rejectFirst(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+    await start
+    // renderer가 running 상태에 갇히지 않도록, abort는 상태 변화를 story:state로 통지해야 한다
+    const stateEvt = emitted.find((e) => e.ch === 'story:state')
+    expect(stateEvt).toBeTruthy()
+    expect(stateEvt.payload.state.steps.script.status).toBe('error')
+  })
+
   it('ackPush(ok:false)는 lastPushedRevision을 갱신하지 않고 lastPushError를 저장하며, 이후 open()이 재발신한다', async () => {
     await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
     await machine.start('scenes', {})

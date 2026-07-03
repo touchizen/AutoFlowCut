@@ -180,7 +180,12 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
           state.steps[name] = { status: 'error', error: 'aborted', updatedAt: new Date().toISOString() }
         }
       }
-      if (state) await flush()
+      if (state) {
+        await flush()
+        // 상태 변화(running → error)를 renderer에 통지 — 없으면 isRunning이 true로 갇혀
+        // 중단 버튼이 사라지지 않고 "생성 중"이 유지된다(작업 자체는 controller.abort로 멈춤).
+        send('story:state', { state })
+      }
     },
     async ackPush({ pushRevision, ok, reason }) {
       if (ok) {
