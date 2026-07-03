@@ -266,6 +266,7 @@ export default function PromptInput({
   hideFooter = false,  // 상세/Ref 모달: footer(줄 수+Seed+Tip) 전체 숨김 — chip 에디터만.
   disableMentions = false,  // 대본 스텝: `@` 멘션 chip/빨간 밑줄 끔 — plain text 로만.
   showCharCount = false,    // 대본 스텝: footer 에 문자 수(text.length) 추가 표시.
+  hideTip = false,          // 대본 스텝: footer 의 💡 tip span 숨김 (줄 수·문자 수는 유지).
 }) {
   const { t } = useI18n()
 
@@ -414,7 +415,7 @@ export default function PromptInput({
             </div>
           )}
 
-          <span className="hint">💡 {t('prompt.tip')}</span>
+          {!hideTip && <span className="hint">💡 {t('prompt.tip')}</span>}
         </div>
         )}
       </div>
