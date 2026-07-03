@@ -12,6 +12,27 @@ import { buildManifest } from './manifest.js'
 
 const DOWNSTREAM = { script: ['scenes', 'audio', 'prompts'], scenes: ['audio', 'prompts'], audio: ['prompts'], prompts: [] }
 
+// C1: LLM splitScenes 출력에는 segment.id가 없다(schemas.js SCENES_SCHEMA에 id 필드 없음) — scenes
+// 스텝이 여기서 결정적 id를 발급해야 audio 스텝의 파일명/results 맵/manifest 키가 undefined로
+// 붕괴하지 않는다. 이미 id가 있으면(재실행 idempotent) 보존한다.
+function assignSegmentIds(scenes) {
+  return scenes.map((s, i) => ({
+    ...s,
+    segments: (s.segments || []).map((seg, j) => ({ ...seg, id: seg.id || `s${i + 1}-${j + 1}` })),
+  }))
+}
+
+// audio 스텝 fail-fast: scenes.json의 내레이션 세그먼트가 id 없이(또는 중복 id로) 넘어오면
+// TTS 파일명/results 맵/manifest 키가 조용히 undefined로 붕괴한다 — 여기서 즉시 던진다.
+function assertSegmentIdsValid(scenes) {
+  const narration = (scenes || []).flatMap((sc) => sc.segments || []).filter((s) => (s.type || 'narration') === 'narration')
+  const seen = new Set()
+  for (const seg of narration) {
+    if (!seg.id || seen.has(seg.id)) throw new Error('segment id missing or duplicate — rerun scenes step')
+    seen.add(seg.id)
+  }
+}
+
 export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt, tts, probe }) {
   const store = createStoryStore(projectPath)
   const projectToken = randomUUID()
@@ -118,7 +139,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const prev = JSON.parse((await store.loadText('scenes.json')) || '{"scenes":[]}').scenes
       const { scenes: withIds } = inheritStoryIds(prev, scenes)
       assertUniqueStoryIds(withIds)
-      await store.saveText('scenes.json', JSON.stringify({ scenes: withIds }, null, 2))
+      const withSegmentIds = assignSegmentIds(withIds)
+      await store.saveText('scenes.json', JSON.stringify({ scenes: withSegmentIds }, null, 2))
       // speakers 병합 (스펙 §4-②): 정규화 이름 완전 일치만 voice 승계
       const norm = (n) => (n || '').replace(/\s/g, '')
       const prevSpeakers = new Map(state.speakers.map((sp) => [norm(sp.name), sp]))
@@ -127,6 +149,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     async audio(params, opId, signal) {
       const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
       if (!scenesJson) throw new Error('scenes.json not found — run scenes step first')
+      assertSegmentIdsValid(scenesJson.scenes)
       // 화자 voice 배정 (params.speakers 우선, 없으면 state.speakers)
       const speakers = params.speakers || state.speakers || []
       const voiceOf = (spk) => (speakers.find((s) => s.id === spk)?.voice) || null

@@ -12,8 +12,10 @@ beforeEach(async () => {
   emitted = []
   llm = {
     generateScript: vi.fn(async (_i, _o, { onDelta }) => { onDelta?.('부분'); return { scriptMd: '# 대본' } }),
+    // C1: 실제 SCENES_SCHEMA(electron/api/llm/schemas.js)에는 segment.id 필드가 없다 — LLM
+    // mock도 id 없이 반환해 scenes 스텝이 id를 발급하는 실제 경로를 그대로 태운다.
     splitScenes: vi.fn(async () => ({
-      scenes: [{ sceneNo: 1, summary: 's', segments: [{ id: 'seg1', speaker: 'narrator', text: '가'.repeat(40), emotion: 'normal' }] }],
+      scenes: [{ sceneNo: 1, summary: 's', segments: [{ speaker: 'narrator', text: '가'.repeat(40), emotion: 'normal' }] }],
       speakers: [{ id: 'narrator', name: '나레이션' }],
     })),
     writePrompts: vi.fn(async (scenes) => ({ scenes: scenes.map((s) => ({ ...s, imagePrompt: 'IMG', videoPrompt: 'VID' })) })),
@@ -53,6 +55,33 @@ describe('stepMachine', () => {
     const state = await machine.getState()
     expect(state.steps.scenes.status).toBe('done')
     expect(state.speakers[0].id).toBe('narrator')
+  })
+
+  // C1: SCENES_SCHEMA에는 segment.id가 없어 실제 LLM 경로는 id 없는 세그먼트를 반환한다.
+  // scenes 스텝이 scenes.json을 쓰기 전에 반드시 고유하고 비어있지 않은 id를 발급해야
+  // audio 스텝의 파일명/results 맵/manifest 키가 undefined로 붕괴하지 않는다.
+  it('scenes 실행: LLM이 id 없는 세그먼트를 반환해도 scenes.json에는 고유·비어있지 않은 id가 발급된다', async () => {
+    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await machine.start('scenes', {})
+    const raw = await readFile(path.join(dir, 'story', 'scenes.json'), 'utf-8')
+    const { scenes } = JSON.parse(raw)
+    const ids = scenes.flatMap((s) => s.segments.map((g) => g.id))
+    expect(ids.length).toBeGreaterThan(0)
+    expect(ids.every((id) => typeof id === 'string' && id.length > 0)).toBe(true)
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  // C1 idempotent: 이미 id가 붙은 세그먼트(재실행)는 새 id로 덮어쓰지 않고 보존한다.
+  it('scenes 재실행 시 이미 id가 있는 세그먼트는 그대로 보존한다', async () => {
+    llm.splitScenes.mockResolvedValueOnce({
+      scenes: [{ sceneNo: 1, summary: 's', segments: [{ id: 'keep-me', speaker: 'narrator', text: '가'.repeat(40), emotion: 'normal' }] }],
+      speakers: [{ id: 'narrator', name: '나레이션' }],
+    })
+    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await machine.start('scenes', {})
+    const raw = await readFile(path.join(dir, 'story', 'scenes.json'), 'utf-8')
+    const { scenes } = JSON.parse(raw)
+    expect(scenes[0].segments[0].id).toBe('keep-me')
   })
 
   it('prompts 실행: 폴백 타이밍 push 발신 + pendingPushRevision 증가', async () => {
