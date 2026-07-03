@@ -76,7 +76,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       }
       // M1 스펙 §1 2번 경로: 대본을 직접 붙여넣은 경우 LLM 호출 없이 그대로 저장한다.
       if (params.pastedScript) {
-        state.input = { type: 'pasted', options: params.options }
+        // title 보존 — 재오픈 hydrate가 제목/옵션을 복원하려면 main source of truth에 남겨야 한다.
+        state.input = { type: 'pasted', title: params.input?.title, options: params.options }
         // HIGH: abort 직후 파일 쓰기 자체를 막는 방어 가드 — start() 래퍼의 결과 처리 가드와
         // 별개로, 취소된 스텝이 디스크에 흔적을 남기지 않도록 saveText 직전에 한 번 더 확인한다.
         if (signal?.aborted) return
@@ -103,6 +104,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         state.input = state.input
           ? { ...state.input, options: params.options || state.input.options }
           : { type: 'manual', options: params.options }
+        // 분리시작이 넘긴 title(자동생성 포함)을 보존 — 재오픈 hydrate가 제목을 복원하려면 필요.
+        if (params.title) state.input.title = params.title
       }
       const scriptMd = await store.loadText('script.md')
       if (!scriptMd) throw new Error('script.md not found — run script step first')

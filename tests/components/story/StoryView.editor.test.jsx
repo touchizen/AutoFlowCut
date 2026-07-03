@@ -162,7 +162,7 @@ describe('StoryView 분리시작 (§2/§0.4)', () => {
     render(<StoryView pipeline={p} />)
     fireEvent.click(screen.getByRole('button', { name: '분리시작' }))
     await waitFor(() =>
-      expect(p.start).toHaveBeenCalledWith('scenes', { scriptOverride: '대본 본문', options: defaultOptions }))
+      expect(p.start).toHaveBeenCalledWith('scenes', { scriptOverride: '대본 본문', options: defaultOptions, title: '기존 제목' }))
     expect(p.generateTitle).not.toHaveBeenCalled()
     // scriptPhase 해제 → scenes 패널로 진행
     expect(screen.queryByTestId('story-editor')).toBeNull()
@@ -175,7 +175,7 @@ describe('StoryView 분리시작 (§2/§0.4)', () => {
     render(<StoryView pipeline={p} />)
     fireEvent.click(screen.getByRole('button', { name: '분리시작' }))
     await waitFor(() => expect(p.start).toHaveBeenCalledWith('scenes', {
-      scriptOverride: '대본 본문', options: defaultOptions,
+      scriptOverride: '대본 본문', options: defaultOptions, title: '자동 제목',
     }))
     expect(p.generateTitle).toHaveBeenCalledWith('대본 본문')
   })

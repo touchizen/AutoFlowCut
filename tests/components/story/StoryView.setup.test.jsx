@@ -59,14 +59,21 @@ describe('StoryView 설정 화면(setup)', () => {
     expect(screen.getByTestId('story-editor')).toBeInTheDocument()
   })
 
-  it('[✨ 시작] — scriptText 있으면 pastedScript 경로로 start 하고 editor로 전환한다', () => {
+  it('[✨ 시작] — scriptText 있으면 pastedScript 경로로 전체 옵션+제목을 실어 start 하고 editor로 전환한다', () => {
     const p = pipeline()
     render(<StoryView pipeline={p} />)
+    fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: '가져온 제목' } })
+    fireEvent.change(screen.getByLabelText('장르'), { target: { value: 'yadam' } })
     fireEvent.change(screen.getByTestId('story-import-drop').querySelector('textarea'), {
       target: { value: '내가 쓴 대본' },
     })
     fireEvent.click(screen.getByRole('button', { name: '시작' }))
-    expect(p.start).toHaveBeenCalledWith('script', expect.objectContaining({ pastedScript: '내가 쓴 대본' }))
+    // 임포트/붙여넣기 시작도 현재 설정(genre/length/…)과 제목을 버리지 않고 그대로 커밋한다.
+    expect(p.start).toHaveBeenCalledWith('script', {
+      pastedScript: '내가 쓴 대본',
+      input: { type: 'pasted', title: '가져온 제목' },
+      options: { genre: 'yadam', language: 'ko', model: 'claude-opus-4-8', lengthValue: '10', lengthUnit: 'min' },
+    })
     expect(screen.getByTestId('story-editor')).toBeInTheDocument()
   })
 

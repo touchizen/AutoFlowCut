@@ -72,9 +72,11 @@ describe('StoryView', () => {
     render(<StoryView pipeline={p} />)
     fireEvent.change(screen.getByPlaceholderText(/붙여넣/), { target: { value: '내가 쓴 대본' } })
     fireEvent.click(screen.getByRole('button', { name: '시작' }))
+    // 임포트/붙여넣기 시작도 현재 설정+제목을 전부 커밋한다(기본값: genre bespoke, title 빈값).
     expect(p.start).toHaveBeenCalledWith('script', {
       pastedScript: '내가 쓴 대본',
-      options: { language: 'ko', model: 'claude-opus-4-8' },
+      input: { type: 'pasted', title: '' },
+      options: { genre: 'bespoke', language: 'ko', model: 'claude-opus-4-8', lengthValue: '10', lengthUnit: 'min' },
     })
   })
 

@@ -2290,7 +2290,10 @@ function App() {
       {activeView === 'story' && (
         storyProjectPath ? (
           <div className="main-panel">
-            <StoryView pipeline={storyPipeline} />
+            {/* key={storyProjectPath}: 프로젝트 전환 시 재마운트해 StoryView 로컬 state
+                (scriptPhase/title/genre/length/... 폼)를 새 프로젝트의 pipeline 값 기준으로
+                초기화한다 — 없으면 A(editor)→B(빈) 전환에서 B가 A의 제목/옵션과 빈 editor로 열림. */}
+            <StoryView key={storyProjectPath} pipeline={storyPipeline} />
           </div>
         ) : (
           <div className="story-guard">

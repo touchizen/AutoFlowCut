@@ -88,6 +88,26 @@ describe('StoryView scriptPhase (Task 7)', () => {
   })
 })
 
+describe('StoryView 재마운트 격리 (App key={storyProjectPath} 근거)', () => {
+  // App.jsx가 StoryView에 key={storyProjectPath}를 주는 이유: 프로젝트 전환 시 재마운트해
+  // scriptPhase/폼 로컬 state를 새 프로젝트의 pipeline 값 기준으로 초기화한다. rerender(같은
+  // 인스턴스)로는 리셋 안 되지만, key 변경은 새 인스턴스 마운트 = 아래처럼 각각 독립 계산이다.
+  it('대본 있는 프로젝트(editor)와 빈 프로젝트(setup+기본폼)를 각각 독립 마운트하면 phase/폼이 섞이지 않는다', () => {
+    // 프로젝트 A: 대본 + 제목/장르 채워짐 → editor
+    const A = pipeline({ scriptText: 'A의 대본' })
+    A.state.input = { type: 'title', title: 'A 제목', options: { genre: 'yadam' } }
+    const { unmount } = render(<StoryView pipeline={A} />)
+    expect(screen.getByTestId('story-editor')).toBeInTheDocument()
+    unmount()
+    // 프로젝트 B(빈): key 변경으로 새 인스턴스 마운트 → setup + 기본 폼(A 제목/장르 누수 없음)
+    render(<StoryView pipeline={pipeline()} />)
+    expect(screen.getByTestId('story-setup')).toBeInTheDocument()
+    expect(screen.queryByTestId('story-editor')).toBeNull()
+    expect(screen.getByPlaceholderText('제목')).toHaveValue('')
+    expect(screen.getByLabelText('장르')).toHaveValue('bespoke')
+  })
+})
+
 describe('StoryView scriptText 단일 상태 (Task 7)', () => {
   it('editor의 PromptInput은 pipeline.scriptText를 초기값으로 렌더한다', () => {
     const text = '복원된 대본'

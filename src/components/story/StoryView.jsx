@@ -181,7 +181,13 @@ export default function StoryView({ pipeline }) {
 
   const handlePasteStart = () => {
     setBaseScript('')
-    start('script', { pastedScript: scriptText, options: { language, model } })
+    // 임포트/붙여넣기 시작도 현재 설정(genre/length/…)과 제목을 버리지 않고 전부 커밋한다 —
+    // 안 그러면 재오픈 hydrate 시 기본값(bespoke/10분/제목없음)으로 되돌아간다.
+    start('script', {
+      pastedScript: scriptText,
+      input: { type: 'pasted', title },
+      options: { genre: genre || undefined, language, model, lengthValue: length, lengthUnit },
+    })
     // 임포트/붙여넣기 대본으로 시작 → editor phase (scriptText 유지).
     setScriptPhase('editor')
   }
@@ -224,7 +230,8 @@ export default function StoryView({ pipeline }) {
   const handleSplit = async () => {
     const resolved = await resolveTitle()
     if (resolved == null) return
-    start('scenes', { scriptOverride: scriptText, options: currentOptions() })
+    // resolveTitle이 생성한 title을 main source of truth에 커밋 — 없으면 재오픈 hydrate가 제목을 잃는다.
+    start('scenes', { scriptOverride: scriptText, options: currentOptions(), title: resolved })
     // §1 — scenes 실행으로 scriptPhase를 벗고 스텝퍼가 진행한다.
     setScriptPhase(null)
   }

@@ -45,6 +45,28 @@ describe('stepMachine 대본 재설계', () => {
     expect(llm.continueScript).toHaveBeenCalled()
     expect(await readFile(path.join(projectPath, 'story', 'script.md'), 'utf8')).toBe('앞\n\n뒤')
   })
+  it('pastedScript 분기는 input.title을 보존한다(재오픈 hydrate용)', async () => {
+    const projectPath = await tmp(); const llm = mkLlm()
+    const m = createStepMachine({ projectPath, llm, emit: () => {}, getApiKey: () => null })
+    await m.open()
+    await m.start('script', {
+      pastedScript: '붙여넣은 대본',
+      input: { type: 'pasted', title: '가져온 제목' },
+      options: { genre: 'yadam', language: 'en', model: 'claude-sonnet-5' },
+    })
+    const st = await m.getState()
+    expect(st.input.title).toBe('가져온 제목')
+    expect(st.input.options.genre).toBe('yadam')
+    expect(st.input.type).toBe('pasted')
+  })
+  it('scenes scriptOverride에 title이 오면 state.input.title에 저장한다(재오픈 hydrate용)', async () => {
+    const projectPath = await tmp(); const llm = mkLlm()
+    const m = createStepMachine({ projectPath, llm, emit: () => {}, getApiKey: () => null })
+    await m.open()
+    await m.start('scenes', { scriptOverride: '편집본 대본', options: { language: 'ko' }, title: '분리 제목' })
+    const st = await m.getState()
+    expect(st.input.title).toBe('분리 제목')
+  })
   it('generateTitle 액션이 title을 반환', async () => {
     const projectPath = await tmp(); const llm = mkLlm()
     const m = createStepMachine({ projectPath, llm, emit: () => {}, getApiKey: () => null })
