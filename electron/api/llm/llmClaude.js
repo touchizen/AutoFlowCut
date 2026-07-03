@@ -49,26 +49,51 @@ function parseJsonLoose(text) {
   return JSON.parse(t)
 }
 
+// Gemini 대문자 스키마(SCENES_SCHEMA/PROMPTS_SCHEMA) 기준 재귀 검증. required 미충족 시 throw.
+function assertSchema(data, schema, path = 'root') {
+  const type = schema.type
+  if (type === 'OBJECT') {
+    if (data == null || typeof data !== 'object' || Array.isArray(data)) throw new Error(`structured output: ${path} expected object`)
+    for (const key of schema.required || []) {
+      if (!(key in data)) throw new Error(`structured output: missing required '${key}' at ${path}`)
+      if (schema.properties?.[key]) assertSchema(data[key], schema.properties[key], `${path}.${key}`)
+    }
+  } else if (type === 'ARRAY') {
+    if (!Array.isArray(data)) throw new Error(`structured output: ${path} expected array`)
+    if (schema.items) data.forEach((item, i) => assertSchema(item, schema.items, `${path}[${i}]`))
+  }
+}
+
 async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryImpl = defaultQuery }) {
   const schema = toJsonSchema(geminiSchema)
   const { abortController, cleanup } = bridgeAbortSignal(signal)
   try {
-    // 1차: outputFormat(json_schema) 강제
+    // 1차: outputFormat(json_schema) 강제. 파싱 후 스키마 검증 통과 시 반환, 실패/retry면 폴백.
     const opt1 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, { outputFormat: { type: 'json_schema', schema } })
     let needFallback = false
     for await (const m of queryImpl({ prompt, options: opt1 })) {
       if (m.type !== 'result') continue
       const r = readStructuredResult(m)
-      if (r.kind === 'structured') return r.data
-      if (r.kind === 'text') return parseJsonLoose(r.text)
+      if (r.kind === 'structured' || r.kind === 'text') {
+        try {
+          const data = r.kind === 'structured' ? r.data : parseJsonLoose(r.text)
+          assertSchema(data, geminiSchema)
+          return data
+        } catch { needFallback = true; break }
+      }
       if (r.kind === 'retry') { needFallback = true; break }
     }
     if (signal?.aborted) throw new Error('Aborted')
-    // 2차 폴백: outputFormat 없이 JSON-only 재요청
+    if (!needFallback) throw new Error('no result message returned')
+    // 2차 폴백: outputFormat 없이 JSON-only 재요청. 파싱 결과도 검증, 실패하면 그대로 throw.
     const jsonPrompt = `${prompt}\n\n반드시 아래 JSON 스키마에 맞는 JSON만 출력하라(설명/코드펜스 금지):\n${JSON.stringify(schema)}`
     const opt2 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController)
     for await (const m of queryImpl({ prompt: jsonPrompt, options: opt2 })) {
-      if (m.type === 'result') return parseJsonLoose(extractClaudeSdkResult(m))
+      if (m.type === 'result') {
+        const data = parseJsonLoose(extractClaudeSdkResult(m))
+        assertSchema(data, geminiSchema)
+        return data
+      }
     }
     throw new Error('no result message returned')
   } catch (err) {

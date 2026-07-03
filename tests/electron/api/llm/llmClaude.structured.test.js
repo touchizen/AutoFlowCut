@@ -28,6 +28,16 @@ describe('llmClaude.splitScenes', () => {
     expect(call).toBe(2)
     expect(out.scenes.length).toBe(1)
   })
+  it('폴백 경로에서 result가 {} 이면 스키마 검증 실패로 throw', async () => {
+    let call = 0
+    const queryImpl = async function* () {
+      call += 1
+      if (call === 1) { yield { type: 'result', subtype: 'error_max_structured_output_retries', errors: [] }; return }
+      yield { type: 'result', subtype: 'success', is_error: false, result: '{}' }
+    }
+    await expect(splitScenes('SCRIPT', {}, { queryImpl })).rejects.toThrow(/structured output/)
+    expect(call).toBe(2)
+  })
 })
 
 describe('llmClaude.writePrompts', () => {
@@ -38,5 +48,16 @@ describe('llmClaude.writePrompts', () => {
     const out = await writePrompts(scenes, {}, {}, { queryImpl })
     expect(out.scenes[0].imagePrompt).toBe('IMG')
     expect(out.scenes[0].videoPrompt).toBe('VID')
+  })
+  it('imagePrompt/videoPrompt 누락이면 1차 검증 실패→폴백→2차 검증 실패로 throw', async () => {
+    let call = 0
+    const invalid = { scenes: [{ sceneNo: 1 }] }
+    const queryImpl = async function* () {
+      call += 1
+      if (call === 1) { yield { type: 'result', subtype: 'success', is_error: false, structured_output: invalid }; return }
+      yield { type: 'result', subtype: 'success', is_error: false, result: JSON.stringify(invalid) }
+    }
+    await expect(writePrompts([{ sceneNo: 1 }], {}, {}, { queryImpl })).rejects.toThrow(/structured output/)
+    expect(call).toBe(2)
   })
 })

@@ -20,7 +20,7 @@ const W3_FILES = {
 const COMMON_FILES = ['_common/hook_principles.md']
 
 export async function loadMetaPrompt({ genre, wave, language = 'ko', skillsDir } = {}) {
-  if (wave !== 'script' || !genre || !W3_FILES[genre]) return ''
+  if (wave !== 'script' || !genre || !Object.hasOwn(W3_FILES, genre)) return ''
   const dir = skillsDir ?? resolveSkillsDir()
   const lang = language === 'en' ? 'en' : 'ko'
   const rels = [...W3_FILES[genre](lang), ...COMMON_FILES]
