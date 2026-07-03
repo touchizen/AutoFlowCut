@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import StoryView from '../../../src/components/story/StoryView.jsx'
 
 const pipeline = (over = {}) => ({
@@ -231,5 +231,26 @@ describe('StoryView', () => {
     // 씬 분리(currentStep, pending) 재클릭 → scenes 패널
     fireEvent.click(screen.getByRole('button', { name: '씬 분리' }))
     expect(screen.getByText('화자')).toBeTruthy()
+  })
+
+  // 10번: 씬 분리 탭(완료)에서 그 탭에 필요한 옵션(씬 분리 단위)을 바꿔 재분리할 수 있다.
+  it('씬 분리 탭(완료)에서 씬 분리 단위를 바꿔 "다시 분리"하면 새 단위로 start된다', async () => {
+    const p = pipeline({
+      scenes: [{ storyId: 's1', segments: [{ speaker: 'narrator', text: '어느 날' }] }],
+      scriptText: '대본 본문',
+    })
+    p.state.input = { title: '제목', options: {} }
+    p.state.steps.script.status = 'done'
+    p.state.steps.scenes.status = 'done'
+    render(<StoryView pipeline={p} />)
+    fireEvent.click(screen.getByRole('button', { name: '씬 분리' }))
+    // 씬 분리 탭 안의 재분리용 단위 드롭다운을 문장 기준으로 변경
+    fireEvent.change(screen.getByLabelText('씬 분리 단위 (재분리)'), { target: { value: 'segment' } })
+    fireEvent.click(screen.getByRole('button', { name: '다시 분리' }))
+    await waitFor(() => {
+      expect(p.start).toHaveBeenCalledWith('scenes', expect.objectContaining({
+        options: expect.objectContaining({ sceneGranularity: 'segment' }),
+      }))
+    })
   })
 })

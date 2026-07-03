@@ -210,6 +210,20 @@
   justify-content: flex-end;
 }
 
+/* ── 재분리 바 (씬 분리 탭: 단위 변경 + 다시 분리) ── */
+.story-rerun-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.story-rerun-bar .story-input {
+  flex: 0 1 200px;
+}
+
 /* ── 읽기 전용 테이블 (씬/프롬프트, M1) ── */
 .story-readonly-table {
   width: 100%;

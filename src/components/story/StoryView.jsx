@@ -570,6 +570,28 @@ export default function StoryView({ pipeline }) {
               />
             ) : (
               <>
+                {/* 10번: 씬 분리 탭에 필요한 옵션(씬 분리 단위)만 노출 — 바꿔서 다시 분리. */}
+                <div className="story-rerun-bar">
+                  <span className="story-opt-label">{t('story.form.granularityLabel', '씬 분리 단위')}</span>
+                  <select
+                    className="story-input"
+                    aria-label={t('story.scenes.rerunGranularity', '씬 분리 단위 (재분리)')}
+                    value={sceneGranularity}
+                    onChange={(e) => setSceneGranularity(e.target.value)}
+                    disabled={isRunning}
+                  >
+                    <option value="scene">{t('story.form.granularityScene', '씬 기준 (5~10초)')}</option>
+                    <option value="segment">{t('story.form.granularitySegment', '문장 기준')}</option>
+                  </select>
+                  <button
+                    type="button"
+                    className="story-btn-secondary"
+                    onClick={handleSplit}
+                    disabled={isRunning || !scriptText.trim()}
+                  >
+                    {t('story.scenes.rerun', '다시 분리')}
+                  </button>
+                </div>
                 <table className="story-readonly-table">
                   <thead>
                     <tr>
