@@ -2,8 +2,10 @@
  * Claude Agent SDK 대본 엔진 — llmGemini와 동일 시그니처. 대본은 스트리밍,
  * 씬분리/프롬프트는 outputFormat structured(다음 Task). 인증은 로컬 Claude 로그인.
  */
-import { buildScriptPrompt } from './prompts.js'
-import { buildClaudeSdkOptions, extractClaudeSdkResult, bridgeAbortSignal, extractTextDelta } from './claudeSdk.js'
+import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt } from './prompts.js'
+import { buildClaudeSdkOptions, extractClaudeSdkResult, bridgeAbortSignal, extractTextDelta, readStructuredResult } from './claudeSdk.js'
+import { toJsonSchema } from './toJsonSchema.js'
+import { SCENES_SCHEMA, PROMPTS_SCHEMA } from './schemas.js'
 
 export const DEFAULT_MODEL = 'claude-opus-4-8'
 
@@ -35,5 +37,63 @@ export async function generateScript(input, opts = {}, { onDelta, signal, queryI
     throw new Error(`Claude SDK failed: ${err.message}`)
   } finally {
     cleanup()
+  }
+}
+
+function parseJsonLoose(text) {
+  let t = (text || '').trim()
+  const fence = t.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/)
+  if (fence) t = fence[1].trim()
+  const s = t.indexOf('{'); const e = t.lastIndexOf('}')
+  if (s >= 0 && e > s) t = t.slice(s, e + 1)
+  return JSON.parse(t)
+}
+
+async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryImpl = defaultQuery }) {
+  const schema = toJsonSchema(geminiSchema)
+  const { abortController, cleanup } = bridgeAbortSignal(signal)
+  try {
+    // 1차: outputFormat(json_schema) 강제
+    const opt1 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, { outputFormat: { type: 'json_schema', schema } })
+    let needFallback = false
+    for await (const m of queryImpl({ prompt, options: opt1 })) {
+      if (m.type !== 'result') continue
+      const r = readStructuredResult(m)
+      if (r.kind === 'structured') return r.data
+      if (r.kind === 'text') return parseJsonLoose(r.text)
+      if (r.kind === 'retry') { needFallback = true; break }
+    }
+    if (signal?.aborted) throw new Error('Aborted')
+    // 2차 폴백: outputFormat 없이 JSON-only 재요청
+    const jsonPrompt = `${prompt}\n\n반드시 아래 JSON 스키마에 맞는 JSON만 출력하라(설명/코드펜스 금지):\n${JSON.stringify(schema)}`
+    const opt2 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController)
+    for await (const m of queryImpl({ prompt: jsonPrompt, options: opt2 })) {
+      if (m.type === 'result') return parseJsonLoose(extractClaudeSdkResult(m))
+    }
+    throw new Error('no result message returned')
+  } catch (err) {
+    if (signal?.aborted) throw new Error('Aborted')
+    throw err
+  } finally {
+    cleanup()
+  }
+}
+
+export async function splitScenes(scriptMd, opts = {}, { signal, queryImpl } = {}) {
+  const prompt = buildSplitPrompt(scriptMd, opts)
+  const out = await structuredClaudeCall(prompt, SCENES_SCHEMA, opts, { signal, queryImpl })
+  return { scenes: out.scenes || [], speakers: out.speakers || [] }
+}
+
+export async function writePrompts(scenes, context, opts = {}, { signal, queryImpl } = {}) {
+  const prompt = buildPromptsPrompt(scenes, context, opts)
+  const out = await structuredClaudeCall(prompt, PROMPTS_SCHEMA, opts, { signal, queryImpl })
+  const byNo = new Map((out.scenes || []).map((s) => [s.sceneNo, s]))
+  return {
+    scenes: scenes.map((s) => ({
+      ...s,
+      imagePrompt: byNo.get(s.sceneNo)?.imagePrompt ?? s.imagePrompt ?? null,
+      videoPrompt: byNo.get(s.sceneNo)?.videoPrompt ?? s.videoPrompt ?? null,
+    })),
   }
 }
