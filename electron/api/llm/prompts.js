@@ -20,12 +20,31 @@ export function buildScriptPrompt(input, opts) {
 
 export function buildSplitPrompt(scriptMd, opts) {
   return [
-    `아래 대본을 씬으로 분리하라. 각 씬은 낭독 시 6~10초(${opts.language === 'ko' ? '한국어 기준 약 33~55자' : 'about 90~150 chars in English'}) 분량이어야 한다. 초과하면 씬을 분할하라.`,
+    `아래 대본을 의미 단위로 나누되 각 씬은 낭독 시 5~10초(${opts.language === 'ko' ? '한국어 기준 약 28~55자' : 'about 75~150 chars in English'}) 분량이어야 한다. 의미가 바뀌거나 길이를 초과하면 씬을 분할하라.`,
     `각 씬의 세그먼트마다 speaker(나레이션은 "narrator", 대사는 인물 식별자)와 emotion(normal/happy/sad/angry)을 지정하라.`,
     `등장 화자 전체 목록을 speakers로 반환하라.`,
     `--- 대본 ---`,
     scriptMd,
   ].join('\n')
+}
+
+export function buildTitlePrompt(scriptMd, opts = {}) {
+  const lang = opts.language === 'en' ? '영어' : '한국어'
+  return [
+    `아래 나레이션 대본에 어울리는 유튜브 영상 제목을 ${lang}로 한 줄만 출력하라. 따옴표·설명·번호 없이 제목 텍스트만.`,
+    `--- 대본 ---`,
+    scriptMd,
+  ].join('\n')
+}
+
+export function buildContinuePrompt(existingScript, opts = {}) {
+  return [
+    `아래는 지금까지 작성된 나레이션 대본이다. 이 대본의 톤·문체·흐름을 그대로 유지하며 자연스럽게 이어서 계속 써라.`,
+    `이미 쓴 앞부분을 반복하지 말고, 이어지는 새 내용만 출력하라(전체 대본을 다시 출력하지 말 것).`,
+    opts.genre ? `장르: ${opts.genre}` : '',
+    `--- 지금까지의 대본 ---`,
+    existingScript,
+  ].filter(Boolean).join('\n')
 }
 
 export function buildPromptsPrompt(scenes, context, opts) {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt } from '../../../../electron/api/llm/prompts.js'
+import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt, buildTitlePrompt, buildContinuePrompt } from '../../../../electron/api/llm/prompts.js'
 
 describe('buildScriptPrompt 길이 단위', () => {
   it('min 단위는 "약 N분"', () => {
@@ -40,5 +40,25 @@ describe('buildSplitPrompt / buildPromptsPrompt', () => {
   it('prompts는 씬 요약을 포함', () => {
     const p = buildPromptsPrompt([{ sceneNo: 1, summary: 'S1', segments: [{ text: 'hi' }] }], {}, { language: 'en' })
     expect(p).toContain('1. S1')
+  })
+})
+
+describe('buildTitlePrompt', () => {
+  it('대본을 포함하고 한 줄 제목을 지시', () => {
+    const p = buildTitlePrompt('대본 본문', { language: 'ko' })
+    expect(p).toContain('대본 본문')
+    expect(p).toContain('한 줄')
+  })
+})
+describe('buildContinuePrompt', () => {
+  it('기존 대본을 포함하고 이어쓰기를 지시', () => {
+    const p = buildContinuePrompt('앞부분', { genre: 'yadam' })
+    expect(p).toContain('앞부분')
+    expect(p).toContain('이어서')
+  })
+})
+describe('buildSplitPrompt 5~10초', () => {
+  it('5~10초 기준을 포함', () => {
+    expect(buildSplitPrompt('S', { language: 'ko' })).toContain('5~10초')
   })
 })
