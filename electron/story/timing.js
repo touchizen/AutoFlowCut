@@ -26,8 +26,7 @@ export function buildSegmentTimeline(segments, { gapMs = 150 } = {}) {
   let cursor = 0
   return segments.map((s) => {
     const startMs = cursor
-    const nextGap = s.type === 'sfx' ? s.durationMs : gapMs
-    cursor = startMs + (s.durationMs || 0) + nextGap
+    cursor = startMs + (s.durationMs || 0) + gapMs
     return { ...s, startMs }
   })
 }
