@@ -13,13 +13,15 @@ beforeEach(async () => {
   llm = {
     generateScript: vi.fn(async (_i, _o, { onDelta }) => { onDelta?.('부분'); return { scriptMd: '# 대본' } }),
     splitScenes: vi.fn(async () => ({
-      scenes: [{ sceneNo: 1, summary: 's', segments: [{ speaker: 'narrator', text: '가'.repeat(40), emotion: 'normal' }] }],
+      scenes: [{ sceneNo: 1, summary: 's', segments: [{ id: 'seg1', speaker: 'narrator', text: '가'.repeat(40), emotion: 'normal' }] }],
       speakers: [{ id: 'narrator', name: '나레이션' }],
     })),
     writePrompts: vi.fn(async (scenes) => ({ scenes: scenes.map((s) => ({ ...s, imagePrompt: 'IMG', videoPrompt: 'VID' })) })),
   }
+  const tts = { capabilities: () => ({ maxConcurrency: 2 }), synthesize: async ({ text }) => ({ audio: Buffer.from('AUDIO:' + text), format: 'wav' }) }
+  const probe = async () => 2000
   machine = createStepMachine({
-    projectPath: dir, llm,
+    projectPath: dir, llm, tts, probe,
     emit: (ch, payload) => emitted.push({ ch, payload }),
     getApiKey: () => 'k',
   })
@@ -91,12 +93,29 @@ describe('stepMachine', () => {
     expect(emitted.some((e) => e.ch === 'story:pushScenes')).toBe(true)
   })
 
-  it('script 재실행은 scenes/prompts를 pending으로 리셋한다', async () => {
+  it('script 재실행은 scenes/audio/prompts를 pending으로 리셋한다', async () => {
     await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
     await machine.start('scenes', {})
     await machine.start('script', { input: { type: 'title', title: 'T2' }, options: { language: 'ko' } })
     const state = await machine.getState()
     expect(state.steps.scenes.status).toBe('pending')
+    expect(state.steps.audio.status).toBe('pending')
+    expect(state.steps.prompts.status).toBe('pending')
+  })
+
+  it('scenes 재실행은 audio/prompts를 pending으로 리셋한다', async () => {
+    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await machine.start('scenes', {})
+    // audio step을 실행하여 audio.status를 done으로 만든다
+    await machine.start('audio', { speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }] })
+    const stateAfterAudio = await machine.getState()
+    expect(stateAfterAudio.steps.audio.status).toBe('done')
+    expect(stateAfterAudio.steps.prompts.status).toBe('pending')
+
+    // scenes 재실행 시 audio와 prompts가 pending으로 리셋되어야 한다
+    await machine.start('scenes', {})
+    const state = await machine.getState()
+    expect(state.steps.audio.status).toBe('pending')
     expect(state.steps.prompts.status).toBe('pending')
   })
 
