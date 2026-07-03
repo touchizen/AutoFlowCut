@@ -53,6 +53,29 @@ describe('StoryView 설정 화면(setup)', () => {
     }
   })
 
+  it('씬 분리 단위 드롭다운을 렌더한다(기본 scene)', () => {
+    render(<StoryView pipeline={pipeline()} />)
+    const sel = screen.getByLabelText('씬 분리 단위')
+    expect(sel.tagName).toBe('SELECT')
+    expect(sel).toHaveValue('scene')
+  })
+
+  it('씬 분리 단위 segment 선택 후 분리시작하면 start options에 sceneGranularity=segment 가 실린다', async () => {
+    const p = pipeline()
+    render(<StoryView pipeline={p} />)
+    fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
+    fireEvent.change(screen.getByTestId('story-import-drop').querySelector('textarea'), { target: { value: '대본 본문' } })
+    fireEvent.change(screen.getByLabelText('씬 분리 단위'), { target: { value: 'segment' } })
+    // 붙여넣기 시작 → editor, 이어서 분리시작 → start('scenes')
+    fireEvent.click(screen.getByRole('button', { name: '시작' }))
+    fireEvent.click(screen.getByRole('button', { name: '분리시작' }))
+    await waitFor(() => {
+      expect(p.start).toHaveBeenCalledWith('scenes', expect.objectContaining({
+        options: expect.objectContaining({ sceneGranularity: 'segment' }),
+      }))
+    })
+  })
+
   it('언어는 ko/en select 이고 기본 ko', () => {
     render(<StoryView pipeline={pipeline()} />)
     const lang = screen.getByLabelText('언어')
@@ -100,6 +123,30 @@ describe('StoryView 설정 화면(setup)', () => {
   it('[✨ 시작] — 제목·scriptText 둘 다 없으면 비활성', () => {
     render(<StoryView pipeline={pipeline()} />)
     expect(screen.getByRole('button', { name: '시작' })).toBeDisabled()
+  })
+
+  it('파일 선택 버튼과 숨김 file input을 렌더한다', () => {
+    render(<StoryView pipeline={pipeline()} />)
+    expect(screen.getByRole('button', { name: /파일 선택/ })).toBeInTheDocument()
+    expect(screen.getByTestId('story-file-input')).toBeInTheDocument()
+  })
+
+  it('파일 선택(input change)으로 .txt 파일을 고르면 scriptText 에 채워진다', async () => {
+    render(<StoryView pipeline={pipeline()} />)
+    const input = screen.getByTestId('story-file-input')
+    const file = new File(['고른 대본 내용'], 'a.txt', { type: 'text/plain' })
+    fireEvent.change(input, { target: { files: [file] } })
+    await waitFor(() => {
+      expect(screen.getByTestId('story-import-drop').querySelector('textarea')).toHaveValue('고른 대본 내용')
+    })
+  })
+
+  it('파일 선택도 지원하지 않는 확장자는 무시한다', () => {
+    render(<StoryView pipeline={pipeline()} />)
+    const input = screen.getByTestId('story-file-input')
+    const file = new File(['bin'], 'a.pdf', { type: 'application/pdf' })
+    fireEvent.change(input, { target: { files: [file] } })
+    expect(screen.getByTestId('story-import-drop').querySelector('textarea')).toHaveValue('')
   })
 
   it('drag&drop 으로 .txt 파일을 놓으면 scriptText 에 채워진다', async () => {

@@ -62,3 +62,17 @@ describe('buildSplitPrompt 5~10초', () => {
     expect(buildSplitPrompt('S', { language: 'ko' })).toContain('5~10초')
   })
 })
+
+describe('buildSplitPrompt 입도 옵션(sceneGranularity)', () => {
+  it('기본(미지정)은 5~10초 씬 기준', () => {
+    expect(buildSplitPrompt('S', { language: 'ko' })).toContain('5~10초')
+  })
+  it("'scene'도 5~10초 씬 기준", () => {
+    expect(buildSplitPrompt('S', { language: 'ko', sceneGranularity: 'scene' })).toContain('5~10초')
+  })
+  it("'segment'면 문장(세그먼트)마다 개별 씬으로 분할 지시하고 5~10초 기준은 쓰지 않는다", () => {
+    const p = buildSplitPrompt('S', { language: 'ko', sceneGranularity: 'segment' })
+    expect(p).toContain('문장')
+    expect(p).not.toContain('5~10초')
+  })
+})

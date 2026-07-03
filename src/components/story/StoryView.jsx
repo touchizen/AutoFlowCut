@@ -158,6 +158,7 @@ export default function StoryView({ pipeline }) {
   const [lengthUnit, setLengthUnit] = useState(hydrateOpts.lengthUnit || 'min') // 길이 단위
   const [model, setModel] = useState(hydrateOpts.model || 'claude-opus-4-8')
   const [language, setLanguage] = useState(hydrateOpts.language || 'ko')
+  const [sceneGranularity, setSceneGranularity] = useState(hydrateOpts.sceneGranularity || 'scene') // 씬 분리 단위: scene(5~10초)/segment(문장별)
 
   // open()/getState() 응답은 마운트 뒤에 도착한다(useStoryAutoOpen이 story 뷰 표시와 동시에
   // open을 호출) — state.input이 늦게 오면 한 번만 폼을 hydrate한다. 이미 초기값으로 hydrate된
@@ -179,6 +180,7 @@ export default function StoryView({ pipeline }) {
     if (o.language) setLanguage(o.language)
     if (o.lengthValue) setLength(o.lengthValue)
     if (o.lengthUnit) setLengthUnit(o.lengthUnit)
+    if (o.sceneGranularity) setSceneGranularity(o.sceneGranularity)
   }, [state])
 
   // 버튼 aria-label(=접근성 이름)로 실제 라벨을 노출하고, 화면에 보이는 텍스트는 스텝 이름과
@@ -232,7 +234,7 @@ export default function StoryView({ pipeline }) {
   }
 
   // §2 editor 핸들러 공통 — options는 "현재 설정 반영"(R3-3): 폼의 현재 값을 그대로 싣는다.
-  const currentOptions = () => ({ genre, language, model, lengthValue: length, lengthUnit })
+  const currentOptions = () => ({ genre, language, model, lengthValue: length, lengthUnit, sceneGranularity })
 
   // §3 제목 자동생성 — 제목이 비고 대본이 있으면 generateTitle로 확정. 반환 title을
   // 로컬 변수로 돌려줘 이어지는 start payload에 직접 쓴다(React state 순서 비의존).
@@ -288,10 +290,10 @@ export default function StoryView({ pipeline }) {
     else handlePrimaryAction() // currentStep==='script' → 제목 생성 경로
   }
 
-  // 대본 임포트 drag&drop — .txt/.md 파일만 FileReader 로 읽어 scriptText 에 채운다(그 외 무시).
-  const handleImportDrop = (e) => {
-    e.preventDefault()
-    const file = e.dataTransfer?.files?.[0]
+  // 대본 임포트 공통 — .txt/.md 파일만 FileReader 로 읽어 scriptText 에 채운다(그 외 무시).
+  // drag&drop 과 파일 선택(picker) 이 같은 경로를 쓴다.
+  const importFileRef = useRef(null)
+  const readImportFile = (file) => {
     if (!file) return
     const name = (file.name || '').toLowerCase()
     if (!name.endsWith('.txt') && !name.endsWith('.md')) return
@@ -302,6 +304,14 @@ export default function StoryView({ pipeline }) {
       if (reader.result != null) setScriptText(String(reader.result))
     }
     reader.readAsText(file)
+  }
+  const handleImportDrop = (e) => {
+    e.preventDefault()
+    readImportFile(e.dataTransfer?.files?.[0])
+  }
+  const handleFilePick = (e) => {
+    readImportFile(e.target.files?.[0])
+    e.target.value = '' // 같은 파일 재선택도 change 가 다시 발화하도록 초기화
   }
 
   const scriptEditor = (
@@ -471,6 +481,20 @@ export default function StoryView({ pipeline }) {
                 </div>
 
                 <div className="story-opt-row">
+                  <span className="story-opt-label">{t('story.form.granularityLabel', '씬 분리 단위')}</span>
+                  <select
+                    className="story-input"
+                    aria-label={t('story.form.granularityLabel', '씬 분리 단위')}
+                    value={sceneGranularity}
+                    onChange={(e) => setSceneGranularity(e.target.value)}
+                    disabled={isRunning}
+                  >
+                    <option value="scene">{t('story.form.granularityScene', '씬 기준 (5~10초)')}</option>
+                    <option value="segment">{t('story.form.granularitySegment', '문장 기준')}</option>
+                  </select>
+                </div>
+
+                <div className="story-opt-row">
                   <span className="story-opt-label">{t('story.form.titleLabel', '제목')}</span>
                   <input
                     className="story-input story-title-input"
@@ -494,6 +518,24 @@ export default function StoryView({ pipeline }) {
                     placeholder={t('story.form.pastePlaceholder', '대본을 붙여넣거나 .txt/.md 파일을 끌어다 놓으세요')}
                     disabled={isRunning}
                   />
+                  <div className="story-import-actions">
+                    <button
+                      type="button"
+                      className="story-btn-secondary"
+                      onClick={() => importFileRef.current?.click()}
+                      disabled={isRunning}
+                    >
+                      📁 {t('story.form.pickFile', '파일 선택')}
+                    </button>
+                    <input
+                      ref={importFileRef}
+                      type="file"
+                      accept=".txt,.md"
+                      data-testid="story-file-input"
+                      style={{ display: 'none' }}
+                      onChange={handleFilePick}
+                    />
+                  </div>
                 </div>
 
                 <button

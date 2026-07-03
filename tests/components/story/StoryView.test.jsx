@@ -22,7 +22,8 @@ describe('StoryView', () => {
     // 대본 편집이 PromptInput 으로 바뀌며 placeholder("대본이 여기에 표시됩니다")도 "대본"을
     // 포함한다 — 스텝퍼 라벨만 겨냥하도록 정확 일치로 좁힌다.
     expect(screen.getByText('대본')).toBeTruthy()
-    expect(screen.getByText(/씬 분리/)).toBeTruthy()
+    // '씬 분리'는 스텝퍼 라벨 — setup 의 '씬 분리 단위' 드롭다운 라벨과 겹치지 않게 정확 일치로 좁힌다.
+    expect(screen.getByText('씬 분리')).toBeTruthy()
     expect(screen.getByText(/오디오/)).toBeTruthy()
     expect(screen.getByText(/프롬프트/)).toBeTruthy()
   })

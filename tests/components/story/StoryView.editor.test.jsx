@@ -23,7 +23,7 @@ const pipeline = (over = {}) => ({
 
 // 폼 미변경 시 editor 핸들러가 실어 보내는 "현재 설정" options (스펙 R3-3).
 const defaultOptions = {
-  genre: 'bespoke', language: 'ko', model: 'claude-opus-4-8', lengthValue: '10', lengthUnit: 'min',
+  genre: 'bespoke', language: 'ko', model: 'claude-opus-4-8', lengthValue: '10', lengthUnit: 'min', sceneGranularity: 'scene',
 }
 
 describe('StoryView editor 버튼 상태 (§1.B)', () => {

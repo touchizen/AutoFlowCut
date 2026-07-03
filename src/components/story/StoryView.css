@@ -147,6 +147,12 @@
   outline: none;
 }
 
+.story-import-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 6px;
+}
+
 .story-setup-start {
   align-self: flex-end;
 }

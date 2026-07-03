@@ -19,8 +19,13 @@ export function buildScriptPrompt(input, opts) {
 }
 
 export function buildSplitPrompt(scriptMd, opts) {
+  // 입도 옵션: 'segment' = 문장(대사/나레이션 한 줄)마다 개별 씬(이미지/비디오 1:1),
+  // 그 외/'scene'(기본) = 5~10초 의미 단위 묶음. UI setup 의 sceneGranularity 로 전달된다.
+  const splitRule = opts.sceneGranularity === 'segment'
+    ? `아래 대본을 문장 단위로 나눠 각 문장(대사·나레이션)을 개별 씬으로 만들어라. 화자가 바뀌면 새 씬으로 나눈다. 다만 한 단어·감탄사·말줄임표(예: "…", "에잇.")처럼 그 자체로 너무 짧은 조각은 마침표만으로 쪼개지 말고 앞뒤 문장과 한 씬으로 합쳐라(단, 화자가 다르면 짧아도 나눈다). 반대로 한 문장이 낭독 10초(${opts.language === 'ko' ? '한국어 약 55자' : 'about 150 chars in English'})를 넘을 만큼 길면 의미 단위로 더 분할하라.`
+    : `아래 대본을 의미 단위로 나누되 각 씬은 낭독 시 5~10초(${opts.language === 'ko' ? '한국어 기준 약 28~55자' : 'about 75~150 chars in English'}) 분량이어야 한다. 의미가 바뀌거나 길이를 초과하면 씬을 분할하라.`
   return [
-    `아래 대본을 의미 단위로 나누되 각 씬은 낭독 시 5~10초(${opts.language === 'ko' ? '한국어 기준 약 28~55자' : 'about 75~150 chars in English'}) 분량이어야 한다. 의미가 바뀌거나 길이를 초과하면 씬을 분할하라.`,
+    splitRule,
     `각 씬의 세그먼트마다 speaker(나레이션은 "narrator", 대사는 인물 식별자)와 emotion(normal/happy/sad/angry)을 지정하라.`,
     `등장 화자 전체 목록을 speakers로 반환하라.`,
     `--- 대본 ---`,
