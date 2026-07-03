@@ -61,6 +61,14 @@ function assertSchema(data, schema, path = 'root') {
   } else if (type === 'ARRAY') {
     if (!Array.isArray(data)) throw new Error(`structured output: ${path} expected array`)
     if (schema.items) data.forEach((item, i) => assertSchema(item, schema.items, `${path}[${i}]`))
+  } else if (type === 'STRING') {
+    if (typeof data !== 'string') throw new Error(`structured output: ${path} expected string`)
+  } else if (type === 'INTEGER') {
+    if (!Number.isInteger(data)) throw new Error(`structured output: ${path} expected integer`)
+  } else if (type === 'NUMBER') {
+    if (typeof data !== 'number') throw new Error(`structured output: ${path} expected number`)
+  } else if (type === 'BOOLEAN') {
+    if (typeof data !== 'boolean') throw new Error(`structured output: ${path} expected boolean`)
   }
 }
 
@@ -114,6 +122,14 @@ export async function writePrompts(scenes, context, opts = {}, { signal, queryIm
   const prompt = buildPromptsPrompt(scenes, context, opts)
   const out = await structuredClaudeCall(prompt, PROMPTS_SCHEMA, opts, { signal, queryImpl })
   const byNo = new Map((out.scenes || []).map((s) => [s.sceneNo, s]))
+  // 계약 검증: 입력 씬 전체가 커버되고 각 프롬프트가 non-empty string인지 (병합 폴백 전에 실패시킴)
+  for (const s of scenes) {
+    const p = byNo.get(s.sceneNo)
+    if (!p || typeof p.imagePrompt !== 'string' || !p.imagePrompt.trim()
+          || typeof p.videoPrompt !== 'string' || !p.videoPrompt.trim()) {
+      throw new Error(`writePrompts: scene ${s.sceneNo} missing/empty prompt`)
+    }
+  }
   return {
     scenes: scenes.map((s) => ({
       ...s,

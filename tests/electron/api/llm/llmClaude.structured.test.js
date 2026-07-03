@@ -38,6 +38,17 @@ describe('llmClaude.splitScenes', () => {
     await expect(splitScenes('SCRIPT', {}, { queryImpl })).rejects.toThrow(/structured output/)
     expect(call).toBe(2)
   })
+  it('Fix A: sceneNo가 문자열이면 INTEGER 타입 검증 실패로 throw', async () => {
+    let call = 0
+    const bad = { scenes: [{ sceneNo: '1', summary: 'S', segments: [{ speaker: 'narrator', text: 'hi' }] }], speakers: [{ id: 'narrator', name: '내레이터' }] }
+    const queryImpl = async function* () {
+      call += 1
+      if (call === 1) { yield { type: 'result', subtype: 'success', is_error: false, structured_output: bad }; return }
+      yield { type: 'result', subtype: 'success', is_error: false, result: JSON.stringify(bad) }
+    }
+    await expect(splitScenes('SCRIPT', {}, { queryImpl })).rejects.toThrow(/expected integer/)
+    expect(call).toBe(2)
+  })
 })
 
 describe('llmClaude.writePrompts', () => {
@@ -59,5 +70,26 @@ describe('llmClaude.writePrompts', () => {
     }
     await expect(writePrompts([{ sceneNo: 1 }], {}, {}, { queryImpl })).rejects.toThrow(/structured output/)
     expect(call).toBe(2)
+  })
+  it('Fix A: sceneNo가 문자열이면 INTEGER 타입 검증 실패로 throw', async () => {
+    let call = 0
+    const bad = { scenes: [{ sceneNo: '1', imagePrompt: 'IMG', videoPrompt: 'VID' }] }
+    const queryImpl = async function* () {
+      call += 1
+      if (call === 1) { yield { type: 'result', subtype: 'success', is_error: false, structured_output: bad }; return }
+      yield { type: 'result', subtype: 'success', is_error: false, result: JSON.stringify(bad) }
+    }
+    await expect(writePrompts([{ sceneNo: 1 }], {}, {}, { queryImpl })).rejects.toThrow(/expected integer/)
+    expect(call).toBe(2)
+  })
+  it('Fix B: 입력 씬이 있는데 결과가 빈 배열이면 커버리지 계약 위반으로 throw', async () => {
+    const empty = { scenes: [] }
+    const queryImpl = resultOf({ type: 'result', subtype: 'success', is_error: false, structured_output: empty })
+    await expect(writePrompts([{ sceneNo: 1 }], {}, {}, { queryImpl })).rejects.toThrow(/scene 1 missing\/empty prompt/)
+  })
+  it('Fix B: 입력 씬 일부만 커버해도 throw', async () => {
+    const partial = { scenes: [{ sceneNo: 1, imagePrompt: 'IMG', videoPrompt: 'VID' }] }
+    const queryImpl = resultOf({ type: 'result', subtype: 'success', is_error: false, structured_output: partial })
+    await expect(writePrompts([{ sceneNo: 1 }, { sceneNo: 2 }], {}, {}, { queryImpl })).rejects.toThrow(/scene 2 missing\/empty prompt/)
   })
 })
