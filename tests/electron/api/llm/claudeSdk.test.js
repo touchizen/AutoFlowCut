@@ -1,0 +1,60 @@
+import { describe, it, expect, vi } from 'vitest'
+import {
+  buildClaudeSdkOptions, extractClaudeSdkResult, bridgeAbortSignal,
+  extractTextDelta, readStructuredResult,
+} from '../../../../electron/api/llm/claudeSdk.js'
+
+describe('buildClaudeSdkOptions', () => {
+  it('격리 옵션을 고정하고 model/extra를 병합한다', () => {
+    const o = buildClaudeSdkOptions('claude-opus-4-8', undefined, { includePartialMessages: true })
+    expect(o).toMatchObject({
+      model: 'claude-opus-4-8', tools: [], settingSources: [], skills: [],
+      thinking: { type: 'disabled' }, maxTurns: 2, includePartialMessages: true,
+    })
+  })
+  it('model 없으면 model 키를 넣지 않는다', () => {
+    expect('model' in buildClaudeSdkOptions()).toBe(false)
+  })
+})
+
+describe('extractClaudeSdkResult', () => {
+  it('success면 result를 trim해 반환', () => {
+    expect(extractClaudeSdkResult({ subtype: 'success', is_error: false, result: '  hi ' })).toBe('hi')
+  })
+  it('에러 result면 throw', () => {
+    expect(() => extractClaudeSdkResult({ subtype: 'error_during_execution', errors: ['boom'] })).toThrow('boom')
+  })
+})
+
+describe('bridgeAbortSignal', () => {
+  it('signal abort 시 controller가 abort된다', () => {
+    const ac = new AbortController()
+    const { abortController, cleanup } = bridgeAbortSignal(ac.signal)
+    ac.abort()
+    expect(abortController.signal.aborted).toBe(true)
+    cleanup()
+  })
+})
+
+describe('extractTextDelta', () => {
+  it('text_delta면 텍스트, 아니면 null', () => {
+    expect(extractTextDelta({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'ab' } } })).toBe('ab')
+    expect(extractTextDelta({ type: 'stream_event', event: { type: 'content_block_start' } })).toBeNull()
+    expect(extractTextDelta({ type: 'result' })).toBeNull()
+  })
+})
+
+describe('readStructuredResult', () => {
+  it('success + structured_output', () => {
+    expect(readStructuredResult({ type: 'result', subtype: 'success', structured_output: { a: 1 } })).toEqual({ kind: 'structured', data: { a: 1 } })
+  })
+  it('success + structured_output 없음 → text', () => {
+    expect(readStructuredResult({ type: 'result', subtype: 'success', result: '{"a":1}' })).toEqual({ kind: 'text', text: '{"a":1}' })
+  })
+  it('retries 에러 → retry', () => {
+    expect(readStructuredResult({ type: 'result', subtype: 'error_max_structured_output_retries', errors: [] })).toEqual({ kind: 'retry' })
+  })
+  it('그 외 에러 → throw', () => {
+    expect(() => readStructuredResult({ type: 'result', subtype: 'error_during_execution', errors: ['x'] })).toThrow('x')
+  })
+})
