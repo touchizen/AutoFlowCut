@@ -72,7 +72,7 @@ export default function StoryView({ pipeline }) {
 
   // ① 제목 입력 폼 — M1은 편집 저장 없이 로컬 폼 상태만(대본 생성 시작 파라미터로 사용).
   const [title, setTitle] = useState('')
-  const [genre, setGenre] = useState('')
+  const [genre, setGenre] = useState('bespoke') // story-engine 기본: 장르 불명확 시 bespoke(범용)
   const [length, setLength] = useState('10')          // 길이 값
   const [lengthUnit, setLengthUnit] = useState('min') // 길이 단위
   const [model, setModel] = useState('claude-opus-4-8')
@@ -163,7 +163,6 @@ export default function StoryView({ pipeline }) {
                 onChange={(e) => setGenre(e.target.value)}
                 disabled={isRunning}
               >
-                <option value="">{t('story.form.genrePlaceholder', '장르')}</option>
                 <option value="yadam">yadam (야담)</option>
                 <option value="dark-history">dark-history</option>
                 <option value="bespoke">bespoke</option>

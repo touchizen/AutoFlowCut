@@ -42,14 +42,14 @@ describe('StoryView', () => {
     })
   })
 
-  it('장르/길이 미입력 시 options에서 해당 필드가 undefined로 빠진다', () => {
+  it('옵션 미변경 시 기본값(장르 bespoke, 길이 10 min)이 options로 전달된다', () => {
     const p = pipeline()
     render(<StoryView pipeline={p} />)
     fireEvent.change(screen.getByPlaceholderText(/제목/), { target: { value: '제목만' } })
     fireEvent.click(screen.getByRole('button', { name: /대본 생성/ }))
     expect(p.start).toHaveBeenCalledWith('script', {
       input: { type: 'title', title: '제목만' },
-      options: { genre: undefined, language: 'ko', model: 'claude-opus-4-8', lengthValue: '10', lengthUnit: 'min' },
+      options: { genre: 'bespoke', language: 'ko', model: 'claude-opus-4-8', lengthValue: '10', lengthUnit: 'min' },
     })
   })
   it('script running이면 스트리밍 텍스트를 표시한다', () => {
