@@ -124,13 +124,18 @@ export default function StoryView({ pipeline }) {
                 onChange={(e) => setTitle(e.target.value)}
                 disabled={isRunning}
               />
-              <input
+              <select
                 className="story-input"
-                placeholder={t('story.form.genrePlaceholder', '장르')}
+                aria-label={t('story.form.genreLabel', '장르')}
                 value={genre}
                 onChange={(e) => setGenre(e.target.value)}
                 disabled={isRunning}
-              />
+              >
+                <option value="">{t('story.form.genrePlaceholder', '장르')}</option>
+                <option value="yadam">yadam (야담)</option>
+                <option value="dark-history">dark-history</option>
+                <option value="bespoke">bespoke</option>
+              </select>
               <input
                 className="story-input"
                 placeholder={t('story.form.lengthPlaceholder', '길이(분)')}

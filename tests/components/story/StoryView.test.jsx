@@ -28,7 +28,7 @@ describe('StoryView', () => {
     const p = pipeline()
     render(<StoryView pipeline={p} />)
     fireEvent.change(screen.getByPlaceholderText(/제목/), { target: { value: '운수 좋은 날' } })
-    fireEvent.change(screen.getByPlaceholderText(/장르/), { target: { value: '단편' } })
+    fireEvent.change(screen.getByLabelText('장르'), { target: { value: 'yadam' } })
     fireEvent.change(screen.getByPlaceholderText(/길이/), { target: { value: '5' } })
     fireEvent.change(screen.getByPlaceholderText(/언어/), { target: { value: 'ko' } })
     fireEvent.click(screen.getByRole('button', { name: /대본 생성/ }))
@@ -36,7 +36,7 @@ describe('StoryView', () => {
     // 분리해서 읽는다 — input에 genre/length/language를 섞어 넣으면 LLM opts로 전달되지 않아 무시된다.
     expect(p.start).toHaveBeenCalledWith('script', {
       input: { type: 'title', title: '운수 좋은 날' },
-      options: { genre: '단편', targetMinutes: 5, language: 'ko' },
+      options: { genre: 'yadam', targetMinutes: 5, language: 'ko' },
     })
   })
 
