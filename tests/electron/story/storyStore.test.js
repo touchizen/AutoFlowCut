@@ -3,6 +3,7 @@ import { mkdtemp, readFile, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createStoryStore, defaultStoryState } from '../../../electron/story/storyStore.js'
+import { existsSync } from 'node:fs'
 
 let dir
 beforeEach(async () => { dir = await mkdtemp(path.join(tmpdir(), 'story-')) })
@@ -58,5 +59,31 @@ describe('storyStore', () => {
     expect(texts).toContain(raw)
     const files = await readdir(path.join(dir, 'story'))
     expect(files.filter((f) => f.includes('.tmp'))).toEqual([])
+  })
+
+  it('saveBinary 왕복 — non-UTF8 바이트도 손상 없이 저장/읽기', async () => {
+    const store = createStoryStore(dir)
+    const buf = Buffer.from([0x00, 0xff, 0x10, 0xfe, 0x42])
+    await store.saveBinary('audio/segments/s1.wav', buf)
+    const read = await readFile(path.join(dir, 'story', 'audio/segments/s1.wav'))
+    expect(Buffer.compare(read, buf)).toBe(0)
+  })
+
+  it('saveBinary 원자적 쓰기 — tmp 파일이 남지 않는다', async () => {
+    const store = createStoryStore(dir)
+    const buf = Buffer.from([0xde, 0xad, 0xbe, 0xef])
+    await store.saveBinary('audio/output.bin', buf)
+    const files = await readdir(path.join(dir, 'story'))
+    expect(files.filter((f) => f.includes('.tmp'))).toEqual([])
+  })
+
+  it('saveBinary는 없는 중첩 디렉토리를 생성한다', async () => {
+    const store = createStoryStore(dir)
+    const buf = Buffer.from([0x11, 0x22, 0x33])
+    const relPath = 'audio/segments/nested/deep/file.bin'
+    await store.saveBinary(relPath, buf)
+    expect(existsSync(path.join(dir, 'story', relPath))).toBe(true)
+    const read = await readFile(path.join(dir, 'story', relPath))
+    expect(Buffer.compare(read, buf)).toBe(0)
   })
 })
