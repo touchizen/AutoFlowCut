@@ -12,7 +12,7 @@ describe('StoryView 장르 드롭다운', () => {
     render(<StoryView pipeline={makePipeline(start)} />)
     fireEvent.change(screen.getByLabelText('장르'), { target: { value: 'dark-history' } })
     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
-    fireEvent.click(screen.getByRole('button', { name: '대본 생성' }))
+    fireEvent.click(screen.getByRole('button', { name: '시작' }))
     expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
       options: expect.objectContaining({ genre: 'dark-history' }),
     }))

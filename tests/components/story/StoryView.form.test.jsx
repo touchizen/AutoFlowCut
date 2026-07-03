@@ -12,7 +12,7 @@ describe('StoryView 폼 재구성', () => {
     render(<StoryView pipeline={makePipeline(start)} />)
     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
     fireEvent.change(screen.getByLabelText('모델'), { target: { value: 'claude-sonnet-5' } })
-    fireEvent.click(screen.getByRole('button', { name: '대본 생성' }))
+    fireEvent.click(screen.getByRole('button', { name: '시작' }))
     expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
       options: expect.objectContaining({ model: 'claude-sonnet-5' }),
     }))
@@ -23,7 +23,7 @@ describe('StoryView 폼 재구성', () => {
     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
     fireEvent.change(screen.getByLabelText('길이 값'), { target: { value: '6000' } })
     fireEvent.change(screen.getByLabelText('길이 단위'), { target: { value: 'chars' } })
-    fireEvent.click(screen.getByRole('button', { name: '대본 생성' }))
+    fireEvent.click(screen.getByRole('button', { name: '시작' }))
     expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
       options: expect.objectContaining({ lengthValue: '6000', lengthUnit: 'chars' }),
     }))
@@ -32,7 +32,7 @@ describe('StoryView 폼 재구성', () => {
     const start = vi.fn()
     render(<StoryView pipeline={makePipeline(start)} />)
     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
-    fireEvent.click(screen.getByRole('button', { name: '대본 생성' }))
+    fireEvent.click(screen.getByRole('button', { name: '시작' }))
     expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
       options: expect.objectContaining({ model: 'claude-opus-4-8', lengthValue: '10', lengthUnit: 'min' }),
     }))
@@ -43,8 +43,8 @@ describe('StoryView 폼 재구성', () => {
     render(<StoryView pipeline={makePipeline(start)} />)
     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
     fireEvent.change(screen.getByLabelText('길이 단위'), { target: { value: 'chars' } })
-    fireEvent.change(screen.getByPlaceholderText('언어'), { target: { value: 'en' } })
-    fireEvent.click(screen.getByRole('button', { name: '대본 생성' }))
+    fireEvent.change(screen.getByLabelText('언어'), { target: { value: 'en' } })
+    fireEvent.click(screen.getByRole('button', { name: '시작' }))
     expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
       options: expect.objectContaining({ lengthUnit: 'words' }),
     }))
@@ -54,10 +54,10 @@ describe('StoryView 폼 재구성', () => {
     const start = vi.fn()
     render(<StoryView pipeline={makePipeline(start)} />)
     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
-    fireEvent.change(screen.getByPlaceholderText('언어'), { target: { value: 'en' } })
+    fireEvent.change(screen.getByLabelText('언어'), { target: { value: 'en' } })
     fireEvent.change(screen.getByLabelText('길이 단위'), { target: { value: 'words' } })
-    fireEvent.change(screen.getByPlaceholderText('언어'), { target: { value: 'ko' } })
-    fireEvent.click(screen.getByRole('button', { name: '대본 생성' }))
+    fireEvent.change(screen.getByLabelText('언어'), { target: { value: 'ko' } })
+    fireEvent.click(screen.getByRole('button', { name: '시작' }))
     expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
       options: expect.objectContaining({ lengthUnit: 'chars' }),
     }))
@@ -67,8 +67,8 @@ describe('StoryView 폼 재구성', () => {
     const start = vi.fn()
     render(<StoryView pipeline={makePipeline(start)} />)
     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
-    fireEvent.change(screen.getByPlaceholderText('언어'), { target: { value: 'en' } })
-    fireEvent.click(screen.getByRole('button', { name: '대본 생성' }))
+    fireEvent.change(screen.getByLabelText('언어'), { target: { value: 'en' } })
+    fireEvent.click(screen.getByRole('button', { name: '시작' }))
     expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
       options: expect.objectContaining({ lengthUnit: 'min' }),
     }))

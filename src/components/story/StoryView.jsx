@@ -166,6 +166,25 @@ export default function StoryView({ pipeline }) {
     setScriptPhase('editor')
   }
 
+  // §1-A setup primary [✨ 시작] — scriptText(임포트/붙여넣기) 있으면 임포트 경로, 없고 제목 있으면
+  // 대본 생성 경로. 둘 다 없으면 버튼 자체가 disabled(아래)이므로 여기 도달하지 않는다.
+  const handleSetupStart = () => {
+    if (scriptText.trim()) handlePasteStart()
+    else handlePrimaryAction() // currentStep==='script' → 제목 생성 경로
+  }
+
+  // 대본 임포트 drag&drop — .txt/.md 파일만 FileReader 로 읽어 scriptText 에 채운다(그 외 무시).
+  const handleImportDrop = (e) => {
+    e.preventDefault()
+    const file = e.dataTransfer?.files?.[0]
+    if (!file) return
+    const name = (file.name || '').toLowerCase()
+    if (!name.endsWith('.txt') && !name.endsWith('.md')) return
+    const reader = new FileReader()
+    reader.onloadend = () => setScriptText(String(reader.result || ''))
+    reader.readAsText(file)
+  }
+
   const scriptEditor = (
     <div className="story-script-editor">
       <PromptInput
@@ -210,91 +229,116 @@ export default function StoryView({ pipeline }) {
                 {hasI18n ? scriptEditor : <I18nProvider>{scriptEditor}</I18nProvider>}
               </div>
             ) : (
-              // §1-A 설정 화면 골격 — 기존 제목/옵션 폼 + 붙여넣기. 세로 배치/임포트 drop은 Task 8.
+              // §1-A 설정 화면 — 세로 옵션(라벨+설명) + 제목 + 대본 임포트(drag&drop/붙여넣기) + [✨ 시작].
               <div className="story-setup-phase" data-testid="story-setup">
-            <div className="story-title-row">
-              <input
-                className="story-input story-title-input"
-                placeholder={t('story.form.titlePlaceholder', '제목')}
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                disabled={isRunning}
-              />
-            </div>
-            <div className="story-options-row">
-              <select
-                className="story-input"
-                aria-label={t('story.form.genreLabel', '장르')}
-                value={genre}
-                onChange={(e) => setGenre(e.target.value)}
-                disabled={isRunning}
-              >
-                <option value="yadam">yadam (야담)</option>
-                <option value="dark-history">dark-history</option>
-                <option value="bespoke">bespoke</option>
-              </select>
-              <select
-                className="story-input"
-                aria-label={t('story.form.modelLabel', '모델')}
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                disabled={isRunning}
-              >
-                <option value="claude-opus-4-8">Opus 4.8</option>
-                <option value="claude-sonnet-5">Sonnet 5</option>
-              </select>
-              <input
-                className="story-input"
-                placeholder={t('story.form.languagePlaceholder', '언어')}
-                value={language}
-                onChange={(e) => {
-                  // 언어 변경 시 길이 단위를 새 언어 허용 목록(en: min/words, 그 외: min/chars)으로
-                  // 정규화 — 안 하면 옛 단위(chars↔words)가 남아 영어 대본에 "약 N자" 같은 불일치가 생긴다.
-                  const v = e.target.value
-                  setLanguage(v)
-                  if (v === 'en' && lengthUnit === 'chars') setLengthUnit('words')
-                  else if (v !== 'en' && lengthUnit === 'words') setLengthUnit('chars')
-                }}
-                disabled={isRunning}
-              />
-              <input
-                className="story-input story-length-value"
-                aria-label={t('story.form.lengthValueLabel', '길이 값')}
-                placeholder={t('story.form.lengthPlaceholder', '길이')}
-                value={length}
-                onChange={(e) => setLength(e.target.value)}
-                disabled={isRunning}
-              />
-              <select
-                className="story-input story-length-unit"
-                aria-label={t('story.form.lengthUnitLabel', '길이 단위')}
-                value={lengthUnit}
-                onChange={(e) => setLengthUnit(e.target.value)}
-                disabled={isRunning}
-              >
-                <option value="min">{language === 'en' ? 'min' : '분'}</option>
-                <option value={language === 'en' ? 'words' : 'chars'}>{language === 'en' ? 'words' : '자'}</option>
-              </select>
-            </div>
+                <div className="story-opt-row">
+                  <select
+                    className="story-input"
+                    aria-label={t('story.form.genreLabel', '장르')}
+                    value={genre}
+                    onChange={(e) => setGenre(e.target.value)}
+                    disabled={isRunning}
+                  >
+                    <option value="yadam">yadam (야담)</option>
+                    <option value="dark-history">dark-history</option>
+                    <option value="bespoke">bespoke</option>
+                  </select>
+                  <span className="story-opt-desc">{t('story.form.genreDesc', '이야기 유형(bespoke=범용)')}</span>
+                </div>
 
-              <div className="story-paste-form">
-                <textarea
-                  className="story-paste-textarea"
-                  value={scriptText}
-                  onChange={(e) => setScriptText(e.target.value)}
-                  placeholder={t('story.form.pastePlaceholder', '대본을 직접 붙여넣기')}
-                  disabled={isRunning}
-                />
+                <div className="story-opt-row">
+                  <select
+                    className="story-input"
+                    aria-label={t('story.form.modelLabel', '모델')}
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    disabled={isRunning}
+                  >
+                    <option value="claude-opus-4-8">Opus 4.8</option>
+                    <option value="claude-sonnet-5">Sonnet 5</option>
+                  </select>
+                  <span className="story-opt-desc">{t('story.form.modelDesc', '생성 AI')}</span>
+                </div>
+
+                <div className="story-opt-row">
+                  <select
+                    className="story-input"
+                    aria-label={t('story.form.languageLabel', '언어')}
+                    value={language}
+                    onChange={(e) => {
+                      // 언어 변경 시 길이 단위를 새 언어 허용 목록(en: min/words, 그 외: min/chars)으로
+                      // 정규화 — 안 하면 옛 단위(chars↔words)가 남아 영어 대본에 "약 N자" 같은 불일치가 생긴다.
+                      const v = e.target.value
+                      setLanguage(v)
+                      if (v === 'en' && lengthUnit === 'chars') setLengthUnit('words')
+                      else if (v !== 'en' && lengthUnit === 'words') setLengthUnit('chars')
+                    }}
+                    disabled={isRunning}
+                  >
+                    <option value="ko">한국어 (ko)</option>
+                    <option value="en">English (en)</option>
+                  </select>
+                  <span className="story-opt-desc">{t('story.form.languageDesc', '출력 언어')}</span>
+                </div>
+
+                <div className="story-opt-row">
+                  <div className="story-length-group">
+                    <input
+                      className="story-input story-length-value"
+                      aria-label={t('story.form.lengthValueLabel', '길이 값')}
+                      placeholder={t('story.form.lengthPlaceholder', '길이')}
+                      value={length}
+                      onChange={(e) => setLength(e.target.value)}
+                      disabled={isRunning}
+                    />
+                    <select
+                      className="story-input story-length-unit"
+                      aria-label={t('story.form.lengthUnitLabel', '길이 단위')}
+                      value={lengthUnit}
+                      onChange={(e) => setLengthUnit(e.target.value)}
+                      disabled={isRunning}
+                    >
+                      <option value="min">{language === 'en' ? 'min' : '분'}</option>
+                      <option value={language === 'en' ? 'words' : 'chars'}>{language === 'en' ? 'words' : '자'}</option>
+                    </select>
+                  </div>
+                  <span className="story-opt-desc">{t('story.form.lengthDesc', '대본 분량')}</span>
+                </div>
+
+                <div className="story-title-row">
+                  <input
+                    className="story-input story-title-input"
+                    placeholder={t('story.form.titlePlaceholder', '제목')}
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    disabled={isRunning}
+                  />
+                </div>
+
+                <div
+                  className="story-import-drop"
+                  data-testid="story-import-drop"
+                  onDrop={handleImportDrop}
+                  onDragOver={(e) => e.preventDefault()}
+                >
+                  <textarea
+                    className="story-paste-textarea"
+                    value={scriptText}
+                    onChange={(e) => setScriptText(e.target.value)}
+                    placeholder={t('story.form.pastePlaceholder', '대본을 붙여넣거나 .txt/.md 파일을 끌어다 놓으세요')}
+                    disabled={isRunning}
+                  />
+                </div>
+
                 <button
                   type="button"
-                  className="story-btn-secondary"
-                  onClick={handlePasteStart}
-                  disabled={isRunning || !scriptText.trim()}
-                  aria-label={t('story.action.pasteStart', '대본으로 시작')}
+                  className="story-btn-primary story-setup-start"
+                  onClick={handleSetupStart}
+                  disabled={isRunning || (!scriptText.trim() && !title.trim())}
+                  aria-label={t('story.action.setupStart', '시작')}
                 >
-                  {t('story.action.pasteStartIcon', '📝 붙여넣기로 진행')}
+                  {t('story.action.setupStartIcon', '✨ 시작')}
                 </button>
-              </div>
               </div>
             )}
           </div>
@@ -356,15 +400,19 @@ export default function StoryView({ pipeline }) {
       </div>
 
       <div className="story-controls">
-        <button
-          type="button"
-          className={`story-btn-primary ${isError ? 'story-btn-error' : ''}`}
-          onClick={handlePrimaryAction}
-          disabled={isRunning}
-          aria-label={actionAriaLabel}
-        >
-          {actionVisibleLabel}
-        </button>
+        {/* 설정 화면(신규 대본 생성)에서는 in-panel [✨ 시작]이 primary — 하단 제네릭 버튼을 감춘다.
+            script done(씬 분리 진행) · 에러(재실행) · editor phase(Task 9)에서는 그대로 노출. */}
+        {!(scriptPhase === 'setup' && currentStep === 'script' && !isError) && (
+          <button
+            type="button"
+            className={`story-btn-primary ${isError ? 'story-btn-error' : ''}`}
+            onClick={handlePrimaryAction}
+            disabled={isRunning}
+            aria-label={actionAriaLabel}
+          >
+            {actionVisibleLabel}
+          </button>
+        )}
         {isRunning && (
           <button type="button" className="story-btn-secondary" onClick={() => abort()}>
             {t('story.action.abort', '⏹ 중단')}

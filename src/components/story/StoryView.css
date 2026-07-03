@@ -86,6 +86,36 @@
   height: 100%;
 }
 
+/* ── 설정 화면(setup): 세로 옵션 + 설명 ── */
+.story-setup-phase {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.story-opt-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.story-opt-row > .story-input,
+.story-opt-row .story-length-group {
+  flex: 0 1 220px;
+}
+
+.story-length-group {
+  display: flex;
+  gap: 8px;
+}
+
+.story-opt-desc {
+  flex: 1 1 auto;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
 .story-title-row {
   display: flex;
 }
@@ -94,15 +124,37 @@
   flex: 1 1 100%;
 }
 
-.story-options-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 8px;
-}
-
 .story-length-value { flex: 0 1 90px; }
 .story-length-unit { flex: 0 1 90px; }
+
+/* ── 대본 임포트(drag&drop / 붙여넣기 겸용) ── */
+.story-import-drop {
+  border: 1px dashed var(--border-color);
+  border-radius: var(--border-radius);
+  padding: 6px;
+  background: var(--bg-color);
+}
+
+.story-import-drop .story-paste-textarea {
+  width: 100%;
+  min-height: 96px;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--border-radius);
+  background: transparent;
+  color: var(--text-color);
+  font-family: var(--font-family);
+  resize: vertical;
+}
+
+.story-import-drop .story-paste-textarea:focus {
+  outline: none;
+}
+
+.story-setup-start {
+  align-self: flex-end;
+}
 
 .story-input {
   flex: 1 1 160px;

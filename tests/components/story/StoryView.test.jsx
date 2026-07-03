@@ -32,8 +32,8 @@ describe('StoryView', () => {
     fireEvent.change(screen.getByPlaceholderText(/제목/), { target: { value: '운수 좋은 날' } })
     fireEvent.change(screen.getByLabelText('장르'), { target: { value: 'yadam' } })
     fireEvent.change(screen.getByLabelText('길이 값'), { target: { value: '5' } })
-    fireEvent.change(screen.getByPlaceholderText(/언어/), { target: { value: 'ko' } })
-    fireEvent.click(screen.getByRole('button', { name: /대본 생성/ }))
+    fireEvent.change(screen.getByLabelText('언어'), { target: { value: 'ko' } })
+    fireEvent.click(screen.getByRole('button', { name: '시작' }))
     // stepMachine.steps.script는 params.input(type/title)과 params.options(genre/model/language/length)를
     // 분리해서 읽는다 — input에 genre/length/language를 섞어 넣으면 LLM opts로 전달되지 않아 무시된다.
     expect(p.start).toHaveBeenCalledWith('script', {
@@ -46,7 +46,7 @@ describe('StoryView', () => {
     const p = pipeline()
     render(<StoryView pipeline={p} />)
     fireEvent.change(screen.getByPlaceholderText(/제목/), { target: { value: '제목만' } })
-    fireEvent.click(screen.getByRole('button', { name: /대본 생성/ }))
+    fireEvent.click(screen.getByRole('button', { name: '시작' }))
     expect(p.start).toHaveBeenCalledWith('script', {
       input: { type: 'title', title: '제목만' },
       options: { genre: 'bespoke', language: 'ko', model: 'claude-opus-4-8', lengthValue: '10', lengthUnit: 'min' },
@@ -67,21 +67,21 @@ describe('StoryView', () => {
     expect(p.start).toHaveBeenCalledWith('scenes', expect.anything())
   })
   // M1 스펙 §1 2번 경로: 대본을 직접 붙여넣어 LLM 없이 바로 시작할 수 있어야 한다.
-  it('대본 붙여넣기 후 "대본으로 시작" 클릭하면 pastedScript로 start된다', () => {
+  it('대본 붙여넣기 후 [시작] 클릭하면 pastedScript로 start된다', () => {
     const p = pipeline()
     render(<StoryView pipeline={p} />)
-    fireEvent.change(screen.getByPlaceholderText(/직접 붙여넣기/), { target: { value: '내가 쓴 대본' } })
-    fireEvent.click(screen.getByRole('button', { name: /대본으로 시작/ }))
+    fireEvent.change(screen.getByPlaceholderText(/붙여넣/), { target: { value: '내가 쓴 대본' } })
+    fireEvent.click(screen.getByRole('button', { name: '시작' }))
     expect(p.start).toHaveBeenCalledWith('script', {
       pastedScript: '내가 쓴 대본',
       options: { language: 'ko', model: 'claude-opus-4-8' },
     })
   })
 
-  it('붙여넣기 텍스트가 비어 있으면 "대본으로 시작" 버튼이 비활성화된다', () => {
+  it('제목·붙여넣기 둘 다 비어 있으면 [시작] 버튼이 비활성화된다', () => {
     const p = pipeline()
     render(<StoryView pipeline={p} />)
-    expect(screen.getByRole('button', { name: /대본으로 시작/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '시작' })).toBeDisabled()
   })
 
   // Important: state.scenes/state.prompts는 존재하지 않는 필드였다 — pipeline.scenes(파생
