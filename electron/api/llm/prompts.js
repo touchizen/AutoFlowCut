@@ -2,9 +2,15 @@
 
 export function buildScriptPrompt(input, opts) {
   const meta = opts.metaPrompt ? `## CUSTOM INSTRUCTIONS\n${opts.metaPrompt}\n` : ''
+  const n = opts.lengthValue || 10
+  const unit = opts.lengthUnit || 'min'
+  const lengthText =
+    unit === 'chars' ? `약 ${n}자` :
+    unit === 'words' ? `about ${n} words` :
+    `약 ${n}분`
   return [
     meta,
-    `당신은 유튜브 스토리 채널 작가다. 아래 제목으로 ${opts.targetMinutes || 10}분 분량의 나레이션 대본을 ${opts.language === 'ko' ? '한국어' : '영어'}로 작성하라.`,
+    `당신은 유튜브 스토리 채널 작가다. 아래 제목으로 ${lengthText} 분량의 나레이션 대본을 ${opts.language === 'ko' ? '한국어' : '영어'}로 작성하라.`,
     opts.genre ? `장르: ${opts.genre}` : '',
     opts.tone ? `톤: ${opts.tone}` : '',
     `제목: ${input.title}`,

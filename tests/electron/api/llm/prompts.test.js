@@ -1,13 +1,27 @@
 import { describe, it, expect } from 'vitest'
 import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt } from '../../../../electron/api/llm/prompts.js'
 
-describe('buildScriptPrompt', () => {
-  it('제목/장르/언어를 템플릿에 채운다', () => {
-    const p = buildScriptPrompt({ title: 'T' }, { targetMinutes: 8, language: 'ko', genre: 'yadam' })
-    expect(p).toContain('8분')
+describe('buildScriptPrompt 길이 단위', () => {
+  it('min 단위는 "약 N분"', () => {
+    const p = buildScriptPrompt({ title: 'T' }, { lengthValue: 8, lengthUnit: 'min', language: 'ko', genre: 'yadam' })
+    expect(p).toContain('약 8분')
     expect(p).toContain('제목: T')
-    expect(p).toContain('한국어')
   })
+  it('chars 단위는 "약 N자"', () => {
+    const p = buildScriptPrompt({ title: 'T' }, { lengthValue: 6000, lengthUnit: 'chars', language: 'ko' })
+    expect(p).toContain('약 6000자')
+  })
+  it('words 단위는 "about N words"', () => {
+    const p = buildScriptPrompt({ title: 'T' }, { lengthValue: 1500, lengthUnit: 'words', language: 'en' })
+    expect(p).toContain('about 1500 words')
+  })
+  it('길이 미지정 시 기본 10분', () => {
+    const p = buildScriptPrompt({ title: 'T' }, { language: 'ko' })
+    expect(p).toContain('약 10분')
+  })
+})
+
+describe('buildScriptPrompt', () => {
   it('metaPrompt가 있으면 CUSTOM INSTRUCTIONS 블록을 앞에 넣는다', () => {
     const p = buildScriptPrompt({ title: 'T' }, { language: 'ko', metaPrompt: 'META-XYZ' })
     expect(p).toContain('## CUSTOM INSTRUCTIONS')
