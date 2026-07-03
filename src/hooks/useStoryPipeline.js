@@ -17,6 +17,10 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
   const onPushRef = useRef(onPushScenes)
   onPushRef.current = onPushScenes
   const prevPathRef = useRef(projectPath)
+  // Task 9: renderer stale-delta 필터. running 스텝을 실은 story:state의 operationId를
+  // 활성 op로 저장 → 그와 다른 operationId의 story:delta는 drop(엔진 abort가 늦게 끊길 때
+  // 이전 실행의 델타가 새 streamingText에 섞이는 것 방지). 엔진 레벨 가드(Task 6)의 renderer 겹.
+  const activeOpRef = useRef(null)
   // HIGH: projectPath 전환 시 tokenRef 무효화를 useEffect(passive)에만 맡기면 한 프레임 늦는다
   // — rerender로 새 projectPath가 반영된 직후, effect가 아직 실행되기 전 틈에 옛 프로젝트의
   // pushScenes가 도착하면 tokenRef가 여전히 옛 토큰이라 통과하고, onPushRef.current는 이미 새
@@ -54,6 +58,8 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
     const offs = [
       api.onStoryEvent('story:state', (p) => {
         if (p.projectToken !== tokenRef.current) return
+        const anyRunning = p.state?.steps && Object.values(p.state.steps).some((s) => s?.status === 'running')
+        if (anyRunning && p.operationId) activeOpRef.current = p.operationId
         setState(p.state)
         // Minor: 스텝 running 전환 시 stepMachine.start()가 scenes 필드 없이 story:state를
         // 먼저 emit한다(하류 리셋 알림용) — scenes가 undefined면 기존 값을 유지, 있을 때만 반영.
@@ -61,6 +67,7 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
       }),
       api.onStoryEvent('story:delta', (p) => {
         if (p.projectToken !== tokenRef.current) return
+        if (activeOpRef.current && p.operationId !== activeOpRef.current) return
         setStreamingText((t) => t + p.text)
       }),
       api.onStoryEvent('story:pushScenes', async (p) => {
