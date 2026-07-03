@@ -8,7 +8,8 @@ function pipelineWith(overrides) {
 
 describe('StoryView 대본 영역', () => {
   it('생성 중이 아니면 대본 편집을 PromptInput으로 렌더한다', () => {
-    render(<StoryView pipeline={pipelineWith({ streamingText: '대본 본문' })} />)
+    // Task 7: 대본 편집기는 editor phase에서 렌더 — scriptText가 있으면 editor로 진입한다.
+    render(<StoryView pipeline={pipelineWith({ scriptText: '대본 본문' })} />)
     // PromptInput은 data-testid="prompt-textarea-wrap"를 렌더
     expect(screen.getByTestId('prompt-textarea-wrap')).toBeInTheDocument()
   })

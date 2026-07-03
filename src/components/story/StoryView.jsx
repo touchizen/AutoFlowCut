@@ -8,7 +8,7 @@
  *
  * 인라인 편집 · autoRun 토글은 M1 범위 밖(버튼 자리만 없음, 다음 마일스톤에서 추가).
  */
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useI18n, I18nProvider } from '../../hooks/useI18n'
 import PromptInput from '../PromptInput'
 import StoryStepper, { STEP_META } from './StoryStepper'
@@ -65,21 +65,67 @@ export default function StoryView({ pipeline }) {
   const isRunning = stepData.status === 'running'
   const isError = stepData.status === 'error'
 
+  // 재설계 §0.1 — 대본 단일 source of truth. pipeline.scriptText(main이 story/script.md에서
+  // 복원/커밋한 값)를 초기값으로 하는 controlled state. 편집(PromptInput)·붙여넣기(setup)가
+  // 모두 이 하나를 쓴다(기존 scriptDraft/pastedScript 혼재 제거).
+  const [scriptText, setScriptText] = useState(pipeline.scriptText || '')
+  // §0.3 — 생성 완료/재오픈 지연 도착 시 main 저장값이 진실. pipeline.scriptText가 바뀌면
+  // 로컬 편집 상태를 그 값으로 커밋한다(편집 중에는 pipeline 값이 안 바뀌므로 안 덮음).
+  useEffect(() => {
+    setScriptText(pipeline.scriptText || '')
+  }, [pipeline.scriptText])
+
+  // 재설계 §1 — script 스텝 2-phase. 재오픈 복원 시 scriptText가 있으면 바로 대본 작업
+  // 화면(editor). setup→editor 승격은 명시 트리거(시작/붙여넣기 시작/스텝퍼 script 클릭)에서만.
+  const [scriptPhase, setScriptPhase] = useState(pipeline.scriptText?.trim() ? 'editor' : 'setup')
+
   // 7-⑴: 스텝퍼에서 done 상태 스텝을 클릭하면 진행이 더 앞서가 있어도 해당 패널을 다시 볼 수
   // 있다 — 실행 버튼/러닝 상태 등 액션은 여전히 실제 진행 단계(currentStep) 기준으로 동작한다.
   const [viewedStep, setViewedStep] = useState(null)
-  const displayStep = (viewedStep && steps[viewedStep]?.status === 'done') ? viewedStep : currentStep
+  // §1 표시 라우팅 (R3-1) — scriptPhase가 남아 있는 동안(setup/editor)은 script done이어도
+  // displayStep을 'script'로 강제해 대본 작업 화면을 유지한다. 다음 스텝 실행(분리시작)이나
+  // 스텝퍼에서 다른 스텝 클릭 시 scriptPhase를 벗고(null) scenes/prompts 패널로 진행.
+  const displayStep = scriptPhase
+    ? 'script'
+    : (viewedStep && steps[viewedStep]?.status === 'done') ? viewedStep : currentStep
 
-  // ① 제목 입력 폼 — M1은 편집 저장 없이 로컬 폼 상태만(대본 생성 시작 파라미터로 사용).
-  const [title, setTitle] = useState('')
-  const [genre, setGenre] = useState('bespoke') // story-engine 기본: 장르 불명확 시 bespoke(범용)
-  const [length, setLength] = useState('10')          // 길이 값
-  const [lengthUnit, setLengthUnit] = useState('min') // 길이 단위
-  const [model, setModel] = useState('claude-opus-4-8')
-  const [language, setLanguage] = useState('ko')
-  const [scriptDraft, setScriptDraft] = useState('')
-  // M1 스펙 §1 2번 경로 — 대본을 직접 붙여넣어 LLM 호출 없이 바로 시작.
-  const [pastedScript, setPastedScript] = useState('')
+  const handleStepClick = (key) => {
+    setViewedStep(key)
+    // done된 script를 다시 클릭하면 대본 작업 화면(editor)으로 복귀, 다른 스텝은 phase 해제.
+    setScriptPhase(key === 'script' ? 'editor' : null)
+  }
+
+  // ① 제목/옵션 폼 — R4-2 폼 hydrate: 재오픈 시 state.input.title/options에서 복원(없으면 기본값).
+  const hydrateInput = pipeline.state?.input
+  const hydrateOpts = hydrateInput?.options || {}
+  const [title, setTitle] = useState(hydrateInput?.title || '')
+  const [genre, setGenre] = useState(hydrateOpts.genre || 'bespoke') // story-engine 기본: 장르 불명확 시 bespoke(범용)
+  const [length, setLength] = useState(hydrateOpts.lengthValue || '10')          // 길이 값
+  const [lengthUnit, setLengthUnit] = useState(hydrateOpts.lengthUnit || 'min') // 길이 단위
+  const [model, setModel] = useState(hydrateOpts.model || 'claude-opus-4-8')
+  const [language, setLanguage] = useState(hydrateOpts.language || 'ko')
+
+  // open()/getState() 응답은 마운트 뒤에 도착한다(useStoryAutoOpen이 story 뷰 표시와 동시에
+  // open을 호출) — state.input이 늦게 오면 한 번만 폼을 hydrate한다. 이미 초기값으로 hydrate된
+  // 경우에도 같은 값을 다시 세팅할 뿐이라 무해하고, 이후 사용자의 폼 편집은 덮지 않는다.
+  const hydratedRef = useRef(!!hydrateInput)
+  useEffect(() => {
+    const input = state?.input
+    if (!input) {
+      // 프로젝트 전환 등으로 state가 리셋되면 다음 도착분을 다시 hydrate할 수 있게 해제.
+      if (!state) hydratedRef.current = false
+      return
+    }
+    if (hydratedRef.current) return
+    hydratedRef.current = true
+    if (input.title) setTitle(input.title)
+    const o = input.options || {}
+    if (o.genre) setGenre(o.genre)
+    if (o.model) setModel(o.model)
+    if (o.language) setLanguage(o.language)
+    if (o.lengthValue) setLength(o.lengthValue)
+    if (o.lengthUnit) setLengthUnit(o.lengthUnit)
+  }, [state])
 
   // 버튼 aria-label(=접근성 이름)로 실제 라벨을 노출하고, 화면에 보이는 텍스트는 스텝 이름과
   // 겹치지 않는 짧은 문구로 둔다. 스테퍼의 단계명 텍스트(예: "대본")와 버튼 라벨(예: "대본 생성")이
@@ -105,20 +151,26 @@ export default function StoryView({ pipeline }) {
         input: { type: 'title', title },
         options: { genre: genre || undefined, language, model, lengthValue: length, lengthUnit },
       })
+      // §1 전환 — '시작' 명시 트리거로 대본 작업 화면(editor)에 진입.
+      setScriptPhase('editor')
     } else {
       start(currentStep, {})
+      // §1 — 다음 스텝(분리시작 등)을 실행하면 scriptPhase를 벗고 스텝퍼가 진행한다.
+      setScriptPhase(null)
     }
   }
 
   const handlePasteStart = () => {
-    start('script', { pastedScript, options: { language, model } })
+    start('script', { pastedScript: scriptText, options: { language, model } })
+    // 임포트/붙여넣기 대본으로 시작 → editor phase (scriptText 유지).
+    setScriptPhase('editor')
   }
 
   const scriptEditor = (
     <div className="story-script-editor">
       <PromptInput
-        value={scriptDraft || streamingText}
-        onChange={setScriptDraft}
+        value={scriptText}
+        onChange={setScriptText}
         references={[]}
         disableMentions
         showCharCount
@@ -129,7 +181,7 @@ export default function StoryView({ pipeline }) {
 
   return (
     <div className="story-view">
-      <StoryStepper steps={steps} currentStep={currentStep} t={t} onStepClick={setViewedStep} />
+      <StoryStepper steps={steps} currentStep={currentStep} t={t} onStepClick={handleStepClick} />
 
       {openError && (
         <div className="story-open-error-banner" role="alert">
@@ -146,6 +198,20 @@ export default function StoryView({ pipeline }) {
       <div className="story-step-panel">
         {displayStep === 'script' && (
           <div className="story-script-panel">
+            {isRunning ? (
+              // 생성 중 스트리밍 preview — phase와 무관하게 스트림만 표시(§B).
+              <div className="story-script-stream" aria-live="polite">{streamingText}</div>
+            ) : scriptPhase === 'editor' ? (
+              // §1-B 대본 작업 화면 골격 — 마커만. 버튼(다시쓰기/이어쓰기/분리시작/설정으로)은 Task 8·9.
+              // PromptInput 은 useI18n() provider 를 요구한다. 실제 앱에선 상위(Shell.jsx)
+              // provider 가 이미 있으므로 재사용해 Header 언어 전환이 그대로 전파되게 하고,
+              // provider 가 없는 단위 테스트에서만 폴백으로 감싼다(중첩·중복 setLocale 방지).
+              <div className="story-editor-phase" data-testid="story-editor">
+                {hasI18n ? scriptEditor : <I18nProvider>{scriptEditor}</I18nProvider>}
+              </div>
+            ) : (
+              // §1-A 설정 화면 골격 — 기존 제목/옵션 폼 + 붙여넣기. 세로 배치/임포트 drop은 Task 8.
+              <div className="story-setup-phase" data-testid="story-setup">
             <div className="story-title-row">
               <input
                 className="story-input story-title-input"
@@ -211,23 +277,11 @@ export default function StoryView({ pipeline }) {
               </select>
             </div>
 
-            {isRunning ? (
-              <div className="story-script-stream" aria-live="polite">{streamingText}</div>
-            ) : (
-              // PromptInput 은 useI18n() provider 를 요구한다. 실제 앱에선 상위(Shell.jsx)
-              // provider 가 이미 있으므로 재사용해 Header 언어 전환이 그대로 전파되게 하고,
-              // provider 가 없는 단위 테스트에서만 폴백으로 감싼다(중첩·중복 setLocale 방지).
-              // 대본은 @멘션이 필요 없어 disableMentions 로 빨간 밑줄을 끄고, showCharCount 로
-              // 줄 수+문자 수를 노출한다.
-              hasI18n ? scriptEditor : <I18nProvider>{scriptEditor}</I18nProvider>
-            )}
-
-            {!isRunning && (
               <div className="story-paste-form">
                 <textarea
                   className="story-paste-textarea"
-                  value={pastedScript}
-                  onChange={(e) => setPastedScript(e.target.value)}
+                  value={scriptText}
+                  onChange={(e) => setScriptText(e.target.value)}
                   placeholder={t('story.form.pastePlaceholder', '대본을 직접 붙여넣기')}
                   disabled={isRunning}
                 />
@@ -235,11 +289,12 @@ export default function StoryView({ pipeline }) {
                   type="button"
                   className="story-btn-secondary"
                   onClick={handlePasteStart}
-                  disabled={isRunning || !pastedScript.trim()}
+                  disabled={isRunning || !scriptText.trim()}
                   aria-label={t('story.action.pasteStart', '대본으로 시작')}
                 >
                   {t('story.action.pasteStartIcon', '📝 붙여넣기로 진행')}
                 </button>
+              </div>
               </div>
             )}
           </div>

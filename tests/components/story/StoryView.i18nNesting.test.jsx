@@ -22,7 +22,8 @@ describe('StoryView 대본 편집기 I18nProvider 중첩', () => {
     render(
       <I18nProvider>
         <LangSwitcher />
-        <StoryView pipeline={pipelineWith({ streamingText: '대본 본문' })} />
+        {/* Task 7: PromptInput 편집기는 editor phase(scriptText 있음)에서 렌더된다 */}
+        <StoryView pipeline={pipelineWith({ scriptText: '대본 본문' })} />
       </I18nProvider>,
     )
     // 초기(ko): "1개 프롬프트"
