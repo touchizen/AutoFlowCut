@@ -15,4 +15,9 @@ describe('probeDurationMs', () => {
     const ms = await probeDurationMs('/x/y.mp3', { parseFile: async () => ({ format: {} }) })
     expect(ms).toBe(0)
   })
+
+  it('parseFile가 실패(reject)해도 0 반환 (측정 실패 안전값)', async () => {
+    const ms = await probeDurationMs('/x/corrupt.mp3', { parseFile: async () => { throw new Error('bad file') } })
+    expect(ms).toBe(0)
+  })
 })
