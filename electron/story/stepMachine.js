@@ -175,6 +175,15 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       }
       if (signal?.aborted) return
 
+      // I2: probe 실패(0)의 안전값을 그대로 받아들이면 SRT 0ms 줄·클립 겹침·manifest.durationMs=0
+      // ≠ 실제 wav 길이로 조용히 붕괴한다 — 실제로 합성·저장된 narration 세그먼트인데 실측이
+      // 0이면 재시도를 유도하도록 즉시 실패시킨다. (sfx는 이 스텝 범위 밖 — M2a-1엔 없음.)
+      for (const seg of narration) {
+        if (results.get(seg.id)?.durationMs === 0) {
+          throw new Error(`audio measurement failed for segment ${seg.id} — retry`)
+        }
+      }
+
       // 2) 세그먼트에 실측 durationMs·audioPath 병합 (원 순서 보존)
       const measured = segments.map((s) => {
         const r = results.get(s.id)
@@ -188,21 +197,38 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const groups = regroupScenes(timed, { minMs: 6000, maxMs: 10000 })
       const withIds = assignStoryIdsByMembership(prevScenes, groups)
       // 7) 확정 씬 재구성 (그룹의 segmentIds로 timed 세그먼트를 묶음)
+      // C2: 재그룹 경계는 원래 scenes.json 씬 경계와 다를 수 있어 옛 sceneNo/summary를 그대로
+      // 옮길 수 없다 — prompts 스텝(prompts.js/llmClaude.js/llmGemini.js)이 sceneNo로 프롬프트를
+      // 병합하므로(byNo.get(s.sceneNo)) 여기서 1-based 순번 sceneNo를 새로 발급하고, summary는
+      // 그룹 내 narration 세그먼트 텍스트에서 파생한다(스펙 §7 프롬프트 컨텍스트 제공 취지).
       const byId = new Map(timed.map((s) => [s.id, s]))
-      const finalScenes = withIds.map((g) => ({
-        storyId: g.storyId,
-        startSec: g.startMs / 1000,
-        endSec: g.endMs / 1000,
-        segments: g.segmentIds.map((id) => byId.get(id)),
-        // 프롬프트는 audio 단계에서 건드리지 않음 (M2a-2/prompts 소유)
-      }))
+      const finalScenes = withIds.map((g, i) => {
+        const groupSegments = g.segmentIds.map((id) => byId.get(id))
+        const summaryText = groupSegments
+          .filter((s) => (s.type || 'narration') === 'narration')
+          .map((s) => (s.text || '').trim())
+          .filter(Boolean)
+          .join(' ')
+        const summary = summaryText.length > 200 ? `${summaryText.slice(0, 200)}…` : summaryText
+        return {
+          storyId: g.storyId,
+          sceneNo: i + 1,
+          summary,
+          startSec: g.startMs / 1000,
+          endSec: g.endMs / 1000,
+          segments: groupSegments,
+          // 프롬프트는 audio 단계에서 건드리지 않음 (M2a-2/prompts 소유)
+        }
+      })
       if (signal?.aborted) return
       if (params.speakers) state.speakers = params.speakers
-      // 8) 산출 저장: 세그먼트 파일은 이미 저장됨 → SRT, scenes.json, manifest 순서 원자 쓰기
+      // 8) 산출 저장: 세그먼트 파일은 이미 저장됨 → SRT → manifest → scenes.json 순서 원자 쓰기.
+      // I1/스펙 §5: manifest가 scenes.json보다 먼저 확정돼야 스텝 중간 크래시가 "새 씬 +
+      // 옛 manifest" 조합(export가 씬-오디오 불일치를 감지 못하는 상태)을 남기지 않는다.
       await store.saveText('audio/final.srt', srt)
-      await store.saveText('scenes.json', JSON.stringify({ scenes: finalScenes }, null, 2))
       const manifest = buildManifest(timed, { pushRevision: null }) // 최초 정밀: null (prompts가 재스탬프)
       await store.saveText('audio/manifest.json', JSON.stringify(manifest, null, 2))
+      await store.saveText('scenes.json', JSON.stringify({ scenes: finalScenes }, null, 2))
     },
     async prompts(params, opId, signal) {
       const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
