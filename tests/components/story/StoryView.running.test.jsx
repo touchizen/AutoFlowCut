@@ -70,6 +70,28 @@ describe('StoryView 진행 중 표시(.story-running: 초시계 + 경과시간)'
     expect(screen.queryByTestId('story-editor')).toBeNull()
   })
 
+  // 재리뷰 F1: scenes running 재오픈 시 진행 화면 + 하단 컨트롤(중단)이 함께 보여야 한다.
+  it('scenes running 재오픈 시 하단 컨트롤(중단 버튼)이 보인다', () => {
+    const p = pipeline({ scriptText: '대본' })
+    p.state.steps.script = { status: 'done' }
+    p.state.steps.scenes = { status: 'running', updatedAt: new Date(Date.now() - 1000).toISOString() }
+    render(<StoryView pipeline={p} />)
+    expect(document.querySelector('.story-controls')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /중단/ })).toBeTruthy()
+  })
+
+  // 재리뷰 F2: scenes running 중 대본 탭을 눌러도 빈 스트리밍이 아니라 편집기가 보여야 한다.
+  it('scenes running 중 대본 탭을 누르면 빈 스트리밍이 아니라 대본 편집기가 보인다', () => {
+    const p = pipeline({ scriptText: '이미 쓴 대본' })
+    p.state.steps.script = { status: 'done' }
+    p.state.steps.scenes = { status: 'running', updatedAt: new Date().toISOString() }
+    render(<StoryView pipeline={p} />)
+    fireEvent.click(screen.getByRole('button', { name: '대본' }))
+    // script는 running이 아니므로 스트리밍 preview가 아니라 편집기(PromptInput)여야 한다
+    expect(document.querySelector('.story-script-stream')).toBeNull()
+    expect(screen.getByTestId('story-editor')).toBeTruthy()
+  })
+
   it('프롬프트 running 이면 패널에 초시계와 경과 시간을 표시한다', () => {
     const p = pipeline()
     p.state.steps.script = { status: 'done' }

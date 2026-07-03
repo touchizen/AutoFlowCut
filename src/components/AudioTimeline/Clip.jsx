@@ -2,17 +2,14 @@ import { useState, useRef, useEffect } from 'react'
 import Waveform from './Waveform'
 import TimelineFlagButton from './TimelineFlagButton'
 import TimelineVideoToggleButton from './TimelineVideoToggleButton'
-import { useElapsedTimer } from '../../hooks/useElapsedTimer'
-import { formatElapsed } from '../../utils/formatters'
-import { StopwatchIcon } from '../StopwatchIcon'
+import { StopwatchIcon, ElapsedTime } from '../StopwatchIcon'
 
-/** 생성 중 클립 위에 클록 + 경과시간(1초마다 갱신, endedAt 있으면 멈춤). */
+/** 생성 중 클립 위에 클록 + 경과시간(1초마다 갱신, endedAt 있으면 멈춤). 공통 컴포넌트 재사용. */
 function ClipGeneratingTimer({ startedAt, endedAt }) {
-  const elapsed = useElapsedTimer(startedAt, endedAt)
   return (
     <div className="atl-clip-gentimer" aria-label="generating">
       <StopwatchIcon size={14} />
-      <span>{formatElapsed(elapsed)}</span>
+      <ElapsedTime startedAt={startedAt} endedAt={endedAt} />
     </div>
   )
 }

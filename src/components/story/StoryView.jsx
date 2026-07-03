@@ -79,6 +79,9 @@ export default function StoryView({ pipeline }) {
   const currentStep = computeCurrentStep(steps)
   const stepData = steps[currentStep] || { status: 'pending' }
   const isRunning = stepData.status === 'running'
+  // script 패널(대본 스트리밍/편집기·중단)은 "지금 진행 스텝(currentStep)"이 아니라 "script 스텝 자체"의
+  // running 여부로 판단해야 한다 — 안 그러면 scenes/prompts running 중 대본 탭에서 빈 스트리밍이 뜬다(F2재검토).
+  const scriptRunning = steps.script?.status === 'running'
   const isError = stepData.status === 'error'
 
   // 재설계 §0.1 — 대본 단일 source of truth. pipeline.scriptText(main이 story/script.md에서
@@ -347,7 +350,7 @@ export default function StoryView({ pipeline }) {
               // provider 가 이미 있으므로 재사용해 Header 언어 전환이 그대로 전파되게 하고,
               // provider 가 없는 단위 테스트에서만 폴백으로 감싼다(중첩·중복 setLocale 방지).
               <div className="story-editor-phase" data-testid="story-editor">
-                {isRunning ? (
+                {scriptRunning ? (
                   <div className="story-script-stream" aria-live="polite">
                     {baseScript ? baseScript + streamingText : streamingText}
                   </div>
@@ -355,7 +358,7 @@ export default function StoryView({ pipeline }) {
                   hasI18n ? scriptEditor : <I18nProvider>{scriptEditor}</I18nProvider>
                 )}
                 <div className="story-editor-controls">
-                  {isRunning ? (
+                  {scriptRunning ? (
                     <button type="button" className="story-btn-secondary" onClick={() => abort()}>
                       {t('story.action.abort', '⏹ 중단')}
                     </button>
@@ -392,7 +395,7 @@ export default function StoryView({ pipeline }) {
                   )}
                 </div>
               </div>
-            ) : isRunning ? (
+            ) : scriptRunning ? (
               // 생성 중 스트리밍 preview (setup에서 시작 직후 등 editor 외 phase).
               <div className="story-script-stream" aria-live="polite">{streamingText}</div>
             ) : (
@@ -641,8 +644,10 @@ export default function StoryView({ pipeline }) {
       </div>
 
       {/* editor phase는 패널 내 전용 버튼(다시쓰기/이어쓰기/분리시작/설정으로·중단)을 쓴다 —
-          하단 제네릭 컨트롤은 editor 밖(setup·scenes/prompts 진행)에서만 렌더. */}
-      {scriptPhase !== 'editor' && (
+          하단 제네릭 컨트롤은 editor 밖(setup·scenes/prompts 진행)에서만 렌더.
+          F1재검토: scriptPhase가 editor로 남아도 실제로 표시 중인 게 대본 editor가 아니면(재오픈 running →
+          displayStep=scenes/prompts) 하단 컨트롤(중단)을 보여야 하므로 "실제 editor 표시 중"을 기준으로 판단. */}
+      {!(displayStep === 'script' && scriptPhase === 'editor') && (
         <div className="story-controls">
           {/* 설정 화면(신규 대본 생성)에서는 in-panel [✨ 시작]이 primary — 하단 제네릭 버튼을 감춘다.
               script done(씬 분리 진행) · 에러(재실행)에서는 그대로 노출. */}
