@@ -118,6 +118,7 @@ function SyncPlugin({ value, onChange, references, disableMentions = false }) {
     const incoming = value || ''
     if (incoming === lastTextRef.current) return
     pendingValueTextRef.current = incoming
+    // disableMentions 는 마운트 후 변경되지 않는다고 가정 — deps 에 넣지 않음 (stale closure 아님).
     const cancel = deferEditorUpdate(editor, () => {
       $applyTextToRoot(incoming, referencesRef.current, { plain: disableMentions })
       lastTextRef.current = incoming
