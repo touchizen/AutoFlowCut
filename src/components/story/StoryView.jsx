@@ -182,7 +182,14 @@ export default function StoryView({ pipeline }) {
                 className="story-input"
                 placeholder={t('story.form.languagePlaceholder', '언어')}
                 value={language}
-                onChange={(e) => setLanguage(e.target.value)}
+                onChange={(e) => {
+                  // 언어 변경 시 길이 단위를 새 언어 허용 목록(en: min/words, 그 외: min/chars)으로
+                  // 정규화 — 안 하면 옛 단위(chars↔words)가 남아 영어 대본에 "약 N자" 같은 불일치가 생긴다.
+                  const v = e.target.value
+                  setLanguage(v)
+                  if (v === 'en' && lengthUnit === 'chars') setLengthUnit('words')
+                  else if (v !== 'en' && lengthUnit === 'words') setLengthUnit('chars')
+                }}
                 disabled={isRunning}
               />
               <input

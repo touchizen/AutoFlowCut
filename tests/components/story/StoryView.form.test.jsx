@@ -37,4 +37,40 @@ describe('StoryView 폼 재구성', () => {
       options: expect.objectContaining({ model: 'claude-opus-4-8', lengthValue: '10', lengthUnit: 'min' }),
     }))
   })
+
+  it('언어를 en으로 바꾸면 chars 단위가 words로 정규화된다', () => {
+    const start = vi.fn()
+    render(<StoryView pipeline={makePipeline(start)} />)
+    fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
+    fireEvent.change(screen.getByLabelText('길이 단위'), { target: { value: 'chars' } })
+    fireEvent.change(screen.getByPlaceholderText('언어'), { target: { value: 'en' } })
+    fireEvent.click(screen.getByRole('button', { name: '대본 생성' }))
+    expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
+      options: expect.objectContaining({ lengthUnit: 'words' }),
+    }))
+  })
+
+  it('언어를 ko로 바꾸면 words 단위가 chars로 정규화된다', () => {
+    const start = vi.fn()
+    render(<StoryView pipeline={makePipeline(start)} />)
+    fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
+    fireEvent.change(screen.getByPlaceholderText('언어'), { target: { value: 'en' } })
+    fireEvent.change(screen.getByLabelText('길이 단위'), { target: { value: 'words' } })
+    fireEvent.change(screen.getByPlaceholderText('언어'), { target: { value: 'ko' } })
+    fireEvent.click(screen.getByRole('button', { name: '대본 생성' }))
+    expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
+      options: expect.objectContaining({ lengthUnit: 'chars' }),
+    }))
+  })
+
+  it('min 단위는 언어를 바꿔도 유지된다', () => {
+    const start = vi.fn()
+    render(<StoryView pipeline={makePipeline(start)} />)
+    fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
+    fireEvent.change(screen.getByPlaceholderText('언어'), { target: { value: 'en' } })
+    fireEvent.click(screen.getByRole('button', { name: '대본 생성' }))
+    expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
+      options: expect.objectContaining({ lengthUnit: 'min' }),
+    }))
+  })
 })
