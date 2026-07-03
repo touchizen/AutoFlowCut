@@ -11,6 +11,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useI18n, I18nProvider } from '../../hooks/useI18n'
 import PromptInput from '../PromptInput'
+import { toast } from '../Toast'
 import StoryStepper, { STEP_META } from './StoryStepper'
 import './StoryView.css'
 
@@ -78,6 +79,23 @@ export default function StoryView({ pipeline }) {
   // 재설계 §1 — script 스텝 2-phase. 재오픈 복원 시 scriptText가 있으면 바로 대본 작업
   // 화면(editor). setup→editor 승격은 명시 트리거(시작/붙여넣기 시작/스텝퍼 script 클릭)에서만.
   const [scriptPhase, setScriptPhase] = useState(pipeline.scriptText?.trim() ? 'editor' : 'setup')
+
+  // §4 이어쓰기 — 시작 시점의 대본 스냅샷. 생성 중 preview에 `baseScript + streamingText`로
+  // 접두 표시하는 용도(완료 커밋은 main payload.scriptText — delta 재조립 금지, §0.3).
+  const [baseScript, setBaseScript] = useState('')
+
+  // 재오픈 phase 승격 — open() 응답이 마운트 뒤 도착해 pipeline.scriptText가 늦게 채워지면
+  // 초기 phase가 setup으로 굳어 있다. 사용자가 [⚙ 설정으로]를 눌러 명시적으로 setup에 온
+  // 경우(ref)가 아니면 editor로 승격해 재오픈 복원(§1 초기 규칙)과 일치시킨다.
+  const userWentToSetupRef = useRef(false)
+  useEffect(() => {
+    if (!pipeline.scriptText?.trim()) {
+      // 프로젝트 전환 등으로 대본이 비면 다음 프로젝트의 지연 도착분을 다시 승격할 수 있게 해제.
+      userWentToSetupRef.current = false
+      return
+    }
+    if (scriptPhase === 'setup' && !userWentToSetupRef.current) setScriptPhase('editor')
+  }, [pipeline.scriptText]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 7-⑴: 스텝퍼에서 done 상태 스텝을 클릭하면 진행이 더 앞서가 있어도 해당 패널을 다시 볼 수
   // 있다 — 실행 버튼/러닝 상태 등 액션은 여전히 실제 진행 단계(currentStep) 기준으로 동작한다.
@@ -147,6 +165,7 @@ export default function StoryView({ pipeline }) {
       // stepMachine.steps.script는 params.input(대본 생성 소재)과 params.options(LLM 호출
       // opts로 그대로 spread)를 분리해서 읽는다 — genre/length/language를 input에 섞으면
       // options로 전달되지 않아 LLM이 이를 무시하고(예: 한국어 입력에도 영어 대본) 버그가 된다.
+      setBaseScript('') // 이어쓰기 아님 — preview 접두 초기화
       start('script', {
         input: { type: 'title', title },
         options: { genre: genre || undefined, language, model, lengthValue: length, lengthUnit },
@@ -161,9 +180,58 @@ export default function StoryView({ pipeline }) {
   }
 
   const handlePasteStart = () => {
+    setBaseScript('')
     start('script', { pastedScript: scriptText, options: { language, model } })
     // 임포트/붙여넣기 대본으로 시작 → editor phase (scriptText 유지).
     setScriptPhase('editor')
+  }
+
+  // §2 editor 핸들러 공통 — options는 "현재 설정 반영"(R3-3): 폼의 현재 값을 그대로 싣는다.
+  const currentOptions = () => ({ genre, language, model, lengthValue: length, lengthUnit })
+
+  // §3 제목 자동생성 — 제목이 비고 대본이 있으면 generateTitle로 확정. 반환 title을
+  // 로컬 변수로 돌려줘 이어지는 start payload에 직접 쓴다(React state 순서 비의존).
+  // 실패 시 toast + null 반환(호출측 진행 중단 — 제목 없이 분리/재생성 안 함).
+  const resolveTitle = async () => {
+    if (title.trim() || !scriptText.trim()) return title
+    try {
+      const res = await pipeline.generateTitle(scriptText)
+      if (!res?.title) throw new Error(res?.error || 'empty-title')
+      setTitle(res.title)
+      return res.title
+    } catch (err) {
+      toast.error(`${t('story.error.titleGenFailed', '제목 자동생성 실패')}: ${err?.message || err}`)
+      return null
+    }
+  }
+
+  // §5 다시쓰기 — 현재 제목/옵션으로 재생성(스트리밍). 성공 시 main 커밋으로 교체, 실패 시 옛 대본 유지.
+  const handleRewrite = async () => {
+    const resolved = await resolveTitle()
+    if (resolved == null) return
+    setBaseScript('')
+    start('script', { input: { type: 'title', title: resolved }, options: currentOptions() })
+  }
+
+  // §4 이어쓰기 — 시작 시점 대본을 스냅샷하고 continue로 스트리밍.
+  const handleContinue = () => {
+    const base = scriptText
+    setBaseScript(base)
+    start('script', { continue: base, options: currentOptions() })
+  }
+
+  // §0.4 분리시작 — 편집본 저장 + 씬 분리 단일 액션. 제목 비면 자동생성 먼저(§3).
+  const handleSplit = async () => {
+    const resolved = await resolveTitle()
+    if (resolved == null) return
+    start('scenes', { scriptOverride: scriptText, options: currentOptions() })
+    // §1 — scenes 실행으로 scriptPhase를 벗고 스텝퍼가 진행한다.
+    setScriptPhase(null)
+  }
+
+  const handleGoSetup = () => {
+    userWentToSetupRef.current = true
+    setScriptPhase('setup')
   }
 
   // §1-A setup primary [✨ 시작] — scriptText(임포트/붙여넣기) 있으면 임포트 경로, 없고 제목 있으면
@@ -181,7 +249,11 @@ export default function StoryView({ pipeline }) {
     const name = (file.name || '').toLowerCase()
     if (!name.endsWith('.txt') && !name.endsWith('.md')) return
     const reader = new FileReader()
-    reader.onloadend = () => setScriptText(String(reader.result || ''))
+    // onload 는 성공 시에만 온다 — onloadend 를 쓰면 읽기 실패(result=null)에도 불려
+    // 기존 붙여넣은 대본을 빈 문자열로 덮어버린다. null 가드까지 이중 방어.
+    reader.onload = () => {
+      if (reader.result != null) setScriptText(String(reader.result))
+    }
     reader.readAsText(file)
   }
 
@@ -193,6 +265,7 @@ export default function StoryView({ pipeline }) {
         references={[]}
         disableMentions
         showCharCount
+        hideTip
         placeholder={t('story.form.scriptPlaceholder', '대본이 여기에 표시됩니다')}
       />
     </div>
@@ -217,17 +290,61 @@ export default function StoryView({ pipeline }) {
       <div className="story-step-panel">
         {displayStep === 'script' && (
           <div className="story-script-panel">
-            {isRunning ? (
-              // 생성 중 스트리밍 preview — phase와 무관하게 스트림만 표시(§B).
-              <div className="story-script-stream" aria-live="polite">{streamingText}</div>
-            ) : scriptPhase === 'editor' ? (
-              // §1-B 대본 작업 화면 골격 — 마커만. 버튼(다시쓰기/이어쓰기/분리시작/설정으로)은 Task 8·9.
+            {scriptPhase === 'editor' ? (
+              // §1-B 대본 작업 화면 — 생성 중엔 스트리밍 preview(이어쓰기는 baseScript 접두),
+              // 그 외 PromptInput 편집기 + 3버튼/설정으로.
               // PromptInput 은 useI18n() provider 를 요구한다. 실제 앱에선 상위(Shell.jsx)
               // provider 가 이미 있으므로 재사용해 Header 언어 전환이 그대로 전파되게 하고,
               // provider 가 없는 단위 테스트에서만 폴백으로 감싼다(중첩·중복 setLocale 방지).
               <div className="story-editor-phase" data-testid="story-editor">
-                {hasI18n ? scriptEditor : <I18nProvider>{scriptEditor}</I18nProvider>}
+                {isRunning ? (
+                  <div className="story-script-stream" aria-live="polite">
+                    {baseScript ? baseScript + streamingText : streamingText}
+                  </div>
+                ) : (
+                  hasI18n ? scriptEditor : <I18nProvider>{scriptEditor}</I18nProvider>
+                )}
+                <div className="story-editor-controls">
+                  {isRunning ? (
+                    <button type="button" className="story-btn-secondary" onClick={() => abort()}>
+                      {t('story.action.abort', '⏹ 중단')}
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="story-btn-secondary"
+                        onClick={handleRewrite}
+                        disabled={!scriptText.trim()}
+                      >
+                        {t('story.action.rewrite', '다시쓰기')}
+                      </button>
+                      <button
+                        type="button"
+                        className="story-btn-secondary"
+                        onClick={handleContinue}
+                        disabled={!scriptText.trim()}
+                      >
+                        {t('story.action.continue', '이어쓰기')}
+                      </button>
+                      <button
+                        type="button"
+                        className="story-btn-primary"
+                        onClick={handleSplit}
+                        disabled={!scriptText.trim()}
+                      >
+                        {t('story.action.split', '분리시작')}
+                      </button>
+                      <button type="button" className="story-btn-secondary" onClick={handleGoSetup}>
+                        {t('story.action.toSetup', '⚙ 설정으로')}
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
+            ) : isRunning ? (
+              // 생성 중 스트리밍 preview (setup에서 시작 직후 등 editor 외 phase).
+              <div className="story-script-stream" aria-live="polite">{streamingText}</div>
             ) : (
               // §1-A 설정 화면 — 세로 옵션(라벨+설명) + 제목 + 대본 임포트(drag&drop/붙여넣기) + [✨ 시작].
               <div className="story-setup-phase" data-testid="story-setup">
@@ -399,26 +516,30 @@ export default function StoryView({ pipeline }) {
         )}
       </div>
 
-      <div className="story-controls">
-        {/* 설정 화면(신규 대본 생성)에서는 in-panel [✨ 시작]이 primary — 하단 제네릭 버튼을 감춘다.
-            script done(씬 분리 진행) · 에러(재실행) · editor phase(Task 9)에서는 그대로 노출. */}
-        {!(scriptPhase === 'setup' && currentStep === 'script' && !isError) && (
-          <button
-            type="button"
-            className={`story-btn-primary ${isError ? 'story-btn-error' : ''}`}
-            onClick={handlePrimaryAction}
-            disabled={isRunning}
-            aria-label={actionAriaLabel}
-          >
-            {actionVisibleLabel}
-          </button>
-        )}
-        {isRunning && (
-          <button type="button" className="story-btn-secondary" onClick={() => abort()}>
-            {t('story.action.abort', '⏹ 중단')}
-          </button>
-        )}
-      </div>
+      {/* editor phase는 패널 내 전용 버튼(다시쓰기/이어쓰기/분리시작/설정으로·중단)을 쓴다 —
+          하단 제네릭 컨트롤은 editor 밖(setup·scenes/prompts 진행)에서만 렌더. */}
+      {scriptPhase !== 'editor' && (
+        <div className="story-controls">
+          {/* 설정 화면(신규 대본 생성)에서는 in-panel [✨ 시작]이 primary — 하단 제네릭 버튼을 감춘다.
+              script done(씬 분리 진행) · 에러(재실행)에서는 그대로 노출. */}
+          {!(scriptPhase === 'setup' && currentStep === 'script' && !isError) && (
+            <button
+              type="button"
+              className={`story-btn-primary ${isError ? 'story-btn-error' : ''}`}
+              onClick={handlePrimaryAction}
+              disabled={isRunning}
+              aria-label={actionAriaLabel}
+            >
+              {actionVisibleLabel}
+            </button>
+          )}
+          {isRunning && (
+            <button type="button" className="story-btn-secondary" onClick={() => abort()}>
+              {t('story.action.abort', '⏹ 중단')}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }

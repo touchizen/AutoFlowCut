@@ -4,7 +4,7 @@
  * (data-testid="story-setup"/"story-editor")와 라우팅/hydrate만 검증한다.
  */
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import StoryView from '../../../src/components/story/StoryView.jsx'
 
 const pipeline = (over = {}) => ({
@@ -46,15 +46,17 @@ describe('StoryView scriptPhase (Task 7)', () => {
     expect(screen.queryByText('화자')).toBeNull()
   })
 
-  it('다음 스텝 실행(씬 분리)을 시작하면 scriptPhase가 해제돼 scenes 패널로 진행한다', () => {
+  it('다음 스텝 실행(분리시작)을 하면 scriptPhase가 해제돼 scenes 패널로 진행한다', async () => {
+    // Task 9: editor phase에서는 하단 제네릭 버튼 대신 패널 내 [분리시작]이 scenes를 실행한다.
     const p = pipeline({
       scriptText: '완성 대본',
       scenes: [{ storyId: 's1', segments: [{ speaker: '나레이션', text: '어느 날' }] }],
+      generateTitle: vi.fn().mockResolvedValue({ title: '자동 제목' }),
     })
     p.state.steps.script.status = 'done'
     render(<StoryView pipeline={p} />)
-    fireEvent.click(screen.getByRole('button', { name: /씬 분리 실행/ }))
-    expect(p.start).toHaveBeenCalledWith('scenes', expect.anything())
+    fireEvent.click(screen.getByRole('button', { name: '분리시작' }))
+    await waitFor(() => expect(p.start).toHaveBeenCalledWith('scenes', expect.anything()))
     expect(screen.queryByTestId('story-editor')).toBeNull()
     expect(screen.getByText('화자')).toBeTruthy()
   })

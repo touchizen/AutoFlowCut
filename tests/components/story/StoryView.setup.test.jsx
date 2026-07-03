@@ -105,4 +105,29 @@ describe('StoryView 설정 화면(setup)', () => {
     fireEvent.drop(drop, { dataTransfer: { files: [file] } })
     expect(drop.querySelector('textarea')).toHaveValue('')
   })
+
+  it('파일 읽기 실패 시 기존 scriptText 를 지우지 않는다', async () => {
+    // FileReader 가 실패하면 onload 없이 onerror/onloadend(result=null)만 온다 —
+    // 붙여넣어 둔 대본이 빈 문자열로 날아가면 안 된다.
+    const RealFileReader = globalThis.FileReader
+    class FailingFileReader {
+      readAsText() {
+        this.result = null
+        this.onerror?.(new Error('read-fail'))
+        this.onloadend?.()
+      }
+    }
+    globalThis.FileReader = FailingFileReader
+    try {
+      render(<StoryView pipeline={pipeline()} />)
+      const drop = screen.getByTestId('story-import-drop')
+      fireEvent.change(drop.querySelector('textarea'), { target: { value: '기존 붙여넣은 대본' } })
+      const file = new File(['x'], 'script.txt', { type: 'text/plain' })
+      fireEvent.drop(drop, { dataTransfer: { files: [file] } })
+      await new Promise((r) => setTimeout(r, 0))
+      expect(drop.querySelector('textarea')).toHaveValue('기존 붙여넣은 대본')
+    } finally {
+      globalThis.FileReader = RealFileReader
+    }
+  })
 })

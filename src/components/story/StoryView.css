@@ -187,6 +187,20 @@
   flex-direction: column;
 }
 
+/* ── 대본 작업 화면 (editor phase, Task 9) ── */
+.story-editor-phase {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+}
+
+.story-editor-controls {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 /* ── 읽기 전용 테이블 (씬/프롬프트, M1) ── */
 .story-readonly-table {
   width: 100%;
