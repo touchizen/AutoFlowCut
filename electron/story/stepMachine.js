@@ -64,6 +64,16 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
 
   const steps = {
     async script(params, opId, signal) {
+      // 대본 재설계: 이어쓰기 — 편집 중 대본을 받아 LLM이 이어서 완성한 전체 대본을 저장한다.
+      if (params.continue) {
+        const opts = { apiKey: getApiKey(), model: state.engine.model, ...(params.options || {}) }
+        const { scriptMd } = await llm.continueScript(params.continue, opts, {
+          onDelta: (text) => send('story:delta', { text }, opId), signal,
+        })
+        if (signal?.aborted) return
+        await store.saveText('script.md', scriptMd)
+        return
+      }
       // M1 스펙 §1 2번 경로: 대본을 직접 붙여넣은 경우 LLM 호출 없이 그대로 저장한다.
       if (params.pastedScript) {
         state.input = { type: 'pasted', options: params.options }
@@ -86,6 +96,14 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       await store.saveText('script.md', scriptMd)
     },
     async scenes(params, opId, signal) {
+      // 대본 재설계: 편집된 대본으로 씬 분리 — 공백이면 기존 script.md를 보존하고 실패시킨다.
+      if (typeof params.scriptOverride === 'string') {
+        if (!params.scriptOverride.trim()) throw new Error('빈 대본으로 씬 분리할 수 없습니다')
+        await store.saveText('script.md', params.scriptOverride)
+        state.input = state.input
+          ? { ...state.input, options: params.options || state.input.options }
+          : { type: 'manual', options: params.options }
+      }
       const scriptMd = await store.loadText('script.md')
       if (!scriptMd) throw new Error('script.md not found — run script step first')
       const opts = { apiKey: getApiKey(), model: state.engine.model, ...(state.input?.options || {}) }
@@ -122,16 +140,22 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       state = await store.load()
       await maybeResendPush()
       const scenes = await loadScenesForPayload()
-      send('story:state', { state, scenes })
-      return { projectToken, state, scenes }
+      const scriptText = (await store.loadText('script.md')) || ''
+      send('story:state', { state, scenes, scriptText })
+      return { projectToken, state, scenes, scriptText }
     },
     async getState() {
       if (!state) state = await store.load()
       await maybeResendPush()
       const scenes = await loadScenesForPayload()
+      const scriptText = (await store.loadText('script.md')) || ''
       // 기존 top-level 필드(steps/speakers/...)는 그대로 접근 가능하도록 spread — story.json에는
       // scenes를 쓰지 않으므로(flush 시 이 반환값이 아니라 내부 state 변수를 저장) 안전하다.
-      return { ...state, scenes }
+      return { ...state, scenes, scriptText }
+    },
+    async generateTitle(scriptMd) {
+      const opts = { apiKey: getApiKey(), model: state?.engine?.model, ...(state?.input?.options || {}) }
+      return llm.generateTitle(scriptMd, opts, {})
     },
     async start(step, params = {}) {
       if (!steps[step]) throw new Error(`unknown step: ${step}`)
@@ -167,7 +191,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         // flush(store.save) 완료 후에만 pushScenes를 emit — 재발신 조건이 디스크에 먼저 반영되게.
         await flush()
         if (pushScenes) sendPush(pushScenes, operationId)
-        send('story:state', { state, scenes: await loadScenesForPayload() }, operationId)
+        send('story:state', { state, scenes: await loadScenesForPayload(), scriptText: (await store.loadText('script.md')) || '' }, operationId)
       }
       return { operationId }
     },
