@@ -55,3 +55,20 @@ export function assertUniqueStoryIds(scenes) {
     seen.add(s.storyId)
   }
 }
+
+/**
+ * 멤버십(세그먼트 id 집합) 기반 storyId 발급 — 스펙 §4.
+ * 이전 씬과 집합 완전 동일 → 승계, 아니면 신규 uuid. 결과 유일성 보장.
+ */
+export function assignStoryIdsByMembership(prevScenes, nextGroups, { randomUUID: uuid = randomUUID } = {}) {
+  const keyOf = (ids) => [...ids].sort().join('|')
+  const prevByKey = new Map((prevScenes || []).map((s) => [keyOf(s.segmentIds || []), s.storyId]))
+  const used = new Set()
+  return nextGroups.map((g) => {
+    let storyId = prevByKey.get(keyOf(g.segmentIds || []))
+    if (!storyId || used.has(storyId)) storyId = uuid()
+    while (used.has(storyId)) storyId = uuid() // 유일성 보장
+    used.add(storyId)
+    return { ...g, storyId }
+  })
+}
