@@ -189,4 +189,30 @@ describe('audio 스텝', () => {
     expect(state.steps.audio.error).toMatch(/audio measurement failed/)
     expect(state.steps.audio.error).toMatch(/s2/)
   })
+
+  // Minor M2: 미배정 화자가 있으면 배치 루프를 시작하기 전에 즉시 실패해야 한다 —
+  // 루프 중간에 던지면 이미 앞선 세그먼트들의 TTS 비용을 지불한 뒤다(스펙 §6).
+  it('미배정 화자가 있으면 TTS 호출 전에 즉시 throw한다 (사전 검증)', async () => {
+    const { writeFile, mkdir } = await import('node:fs/promises')
+    await mkdir(path.join(projectPath, 'story'), { recursive: true })
+    await writeFile(path.join(projectPath, 'story', 'scenes.json'), JSON.stringify({
+      scenes: [{ segments: [
+        { id: 's1', type: 'narration', speaker: 'narrator', text: '첫 문장' },
+        { id: 's2', type: 'narration', speaker: 'ghost', text: '둘째 문장' }, // ghost 화자는 미배정
+      ] }],
+    }))
+    const synthesize = vi.fn(async ({ text }) => ({ audio: Buffer.from('AUDIO:' + text), format: 'wav' }))
+    const tts = { capabilities: () => ({ maxConcurrency: 2 }), synthesize }
+    const probe = async () => 2000
+    const machine = createStepMachine({
+      projectPath, llm: {}, emit: () => {}, getApiKey: () => 'k', tts, probe,
+    })
+    await machine.open()
+    await machine.start('audio', { speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }] })
+    const state = await machine.getState()
+    expect(state.steps.audio.status).toBe('error')
+    expect(state.steps.audio.error).toMatch(/ghost/)
+    // s1(narrator)은 배정돼 있어도 s2(ghost) 검증 실패로 아예 호출되면 안 됨 — 비용 낭비 방지
+    expect(synthesize).not.toHaveBeenCalled()
+  })
 })

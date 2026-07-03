@@ -157,15 +157,22 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const segments = scenesJson.scenes.flatMap((sc) => sc.segments || [])
       const narration = segments.filter((s) => (s.type || 'narration') === 'narration')
 
+      // 0) 사전 검증: 배치 루프를 시작하기 전에 모든 narration 세그먼트의 화자에 voice가
+      // 배정돼 있는지 먼저 확인한다 — 루프 중간에 던지면 이미 앞선 세그먼트들의 TTS 비용을
+      // 지불한 뒤라 낭비된다(스펙 §6 "미배정 화자 있으면 실행 불가").
+      const missingSpeakers = [...new Set(narration.map((s) => s.speaker))].filter((spk) => !voiceOf(spk))
+      if (missingSpeakers.length) throw new Error(`voice not assigned for speaker: ${missingSpeakers[0]}`)
+
       // 1) 세그먼트별 TTS 생성 + 실측 (동시성 제한)
-      const conc = tts.capabilities?.().maxConcurrency || 2
+      const conc = (tts.capabilities?.()?.maxConcurrency) || 2
       const results = new Map()
       for (let i = 0; i < narration.length; i += conc) {
         const batch = narration.slice(i, i + conc)
         await Promise.all(batch.map(async (seg) => {
           const voice = voiceOf(seg.speaker)
-          if (!voice) throw new Error(`voice not assigned for speaker: ${seg.speaker}`)
+          if (!voice) throw new Error(`voice not assigned for speaker: ${seg.speaker}`) // safety net — 사전 검증이 이미 막지만 방어적으로 유지
           const { audio, format } = await tts.synthesize({ text: seg.text, voiceId: voice.voiceId, emotion: seg.emotion, signal })
+          if (signal?.aborted) return
           const rel = `audio/segments/${seg.id}.${format}`
           await store.saveBinary(rel, audio)
           const durationMs = await probe(path.join(projectPath, 'story', rel))
