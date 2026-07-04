@@ -5,7 +5,7 @@
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { createStoryStore } from './storyStore.js'
-import { inheritStoryIds, assertUniqueStoryIds, assignStoryIdsByMembership } from './sceneIdentity.js'
+import { inheritStoryIds, assertUniqueStoryIds, assignStoryIdsByMembership, inheritSegmentIds } from './sceneIdentity.js'
 import { buildFallbackTimeline, buildSegmentTimeline, buildSrt, srtLineId } from './timing.js'
 import { regroupScenes } from './regroup.js'
 import { buildManifest } from './manifest.js'
@@ -15,10 +15,21 @@ const DOWNSTREAM = { script: ['scenes', 'audio', 'prompts'], scenes: ['audio', '
 // C1: LLM splitScenes 출력에는 segment.id가 없다(schemas.js SCENES_SCHEMA에 id 필드 없음) — scenes
 // 스텝이 여기서 결정적 id를 발급해야 audio 스텝의 파일명/results 맵/manifest 키가 undefined로
 // 붕괴하지 않는다. 이미 id가 있으면(재실행 idempotent) 보존한다.
+// IP4(M2a-2b): inheritSegmentIds가 승계한 id는 이전 위치(다른 s{i}-{j})라, 위치기반으로 미매칭
+// 세그먼트를 채우면 승계 id와 충돌할 수 있다(예: 앞에 삽입된 새 세그먼트가 s1-1을 받는데 승계된
+// 세그먼트도 s1-1). 이미 쓰인 id를 피해 결정적으로 유일한 위치 id를 발급한다.
 function assignSegmentIds(scenes) {
+  const used = new Set((scenes || []).flatMap((s) => (s.segments || []).map((g) => g.id).filter(Boolean)))
   return scenes.map((s, i) => ({
     ...s,
-    segments: (s.segments || []).map((seg, j) => ({ ...seg, id: seg.id || `s${i + 1}-${j + 1}` })),
+    segments: (s.segments || []).map((seg, j) => {
+      if (seg.id) return seg
+      let id = `s${i + 1}-${j + 1}`
+      let k = 2
+      while (used.has(id)) { id = `s${i + 1}-${j + 1}-${k}`; k++ }
+      used.add(id)
+      return { ...seg, id }
+    }),
   }))
 }
 
@@ -178,7 +189,9 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const prev = JSON.parse((await store.loadText('scenes.json')) || '{"scenes":[]}').scenes
       const { scenes: withIds } = inheritStoryIds(prev, scenes)
       assertUniqueStoryIds(withIds)
-      const withSegmentIds = assignSegmentIds(withIds)
+      // IP4: 위치기반 발급 전에 이전 세그먼트 id를 정규화 텍스트 1:1로 승계 — 재실행 identity 안정.
+      const { scenes: withInheritedSegs } = inheritSegmentIds(prev, withIds)
+      const withSegmentIds = assignSegmentIds(withInheritedSegs)
       await store.saveText('scenes.json', JSON.stringify({ scenes: withSegmentIds }, null, 2))
       // speakers 병합 (스펙 §4-②): 정규화 이름 완전 일치만 voice 승계
       const norm = (n) => (n || '').replace(/\s/g, '')
