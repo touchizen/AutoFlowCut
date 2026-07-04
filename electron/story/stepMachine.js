@@ -239,6 +239,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const conc = (tts.capabilities?.()?.maxConcurrency) || 2
       const results = new Map()
       const errored = new Set()
+      const errorMsgs = new Map() // 세그먼트별 실패 사유(인증/설정 등) — generic retry로 묻지 않기 위함
       const toSynth = []
       for (const seg of narration) {
         if (await canReuse(seg)) results.set(seg.id, { audioPath: reusePathOf(seg), durationMs: seg.durationMs })
@@ -258,8 +259,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
             // I2: probe 실패(0)면 SRT 0ms·클립 겹침으로 조용히 붕괴 → 실패로 취급(재시도 유도).
             if (durationMs <= 0) { errored.add(seg.id); return }
             results.set(seg.id, { audioPath: path.join(projectPath, 'story', rel), durationMs })
-          } catch {
-            if (!signal?.aborted) errored.add(seg.id) // 개별 세그먼트 실패 — 전체 중단 대신 표시(부분재시도)
+          } catch (e) {
+            if (!signal?.aborted) { errored.add(seg.id); errorMsgs.set(seg.id, e?.message || String(e)) } // 개별 실패 — 사유 보존(부분재시도)
           }
         }))
         if (signal?.aborted) return
@@ -282,7 +283,10 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         }))
         if (!signal?.aborted) await store.saveText('scenes.json', JSON.stringify({ scenes: updated }, null, 2))
         const firstFail = narration.find((seg) => !results.has(seg.id))
-        throw new Error(`audio failed for segment ${firstFail.id} — retry`)
+        // 인증/설정 등 실제 예외 사유가 있으면 보존(예: "No Typecast API key" → UI가 키 설정 안내).
+        // probe=0(측정 실패)은 예외가 아니라 사유 없음 → generic retry.
+        const detail = errorMsgs.get(firstFail.id)
+        throw new Error(detail ? `audio failed for segment ${firstFail.id}: ${detail}` : `audio failed for segment ${firstFail.id} — retry`)
       }
 
       // 2) 세그먼트에 실측 durationMs·audioPath 병합 (원 순서 보존). IP5-a: narration은 status:'done'

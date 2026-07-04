@@ -291,6 +291,24 @@ describe('audio 스텝', () => {
     expect(seg1.status).toBe('done')
   })
 
+  // Codex M2a-3 MED: 합성 실패가 인증/설정 사유(예: Typecast 키 없음)일 때, generic "retry"로
+  // 묻지 말고 그 사유를 스텝 에러에 보존해야 한다 — UI에서 "키를 설정하세요"로 안내 가능.
+  it('합성이 인증 에러로 실패하면 그 사유를 스텝 에러에 보존한다', async () => {
+    const { writeFile, mkdir } = await import('node:fs/promises')
+    await mkdir(path.join(projectPath, 'story'), { recursive: true })
+    await writeFile(path.join(projectPath, 'story', 'scenes.json'), JSON.stringify({
+      scenes: [{ segments: [{ id: 's1', type: 'narration', speaker: 'narrator', text: '첫 문장' }] }],
+    }))
+    const tts = { capabilities: () => ({ maxConcurrency: 2 }), synthesize: async () => { throw new Error('No Typecast API key') } }
+    const probe = async () => 2000
+    const machine = createStepMachine({ projectPath, llm: {}, emit: () => {}, getApiKey: () => 'k', tts, probe })
+    await machine.open()
+    await machine.start('audio', { speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }] })
+    const state = await machine.getState()
+    expect(state.steps.audio.status).toBe('error')
+    expect(state.steps.audio.error).toMatch(/No Typecast API key/)
+  })
+
   // Minor M2: 미배정 화자가 있으면 배치 루프를 시작하기 전에 즉시 실패해야 한다 —
   // 루프 중간에 던지면 이미 앞선 세그먼트들의 TTS 비용을 지불한 뒤다(스펙 §6).
   it('미배정 화자가 있으면 TTS 호출 전에 즉시 throw한다 (사전 검증)', async () => {

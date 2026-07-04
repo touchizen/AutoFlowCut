@@ -48,4 +48,15 @@ describe('tts/keys IPC (M2a-3b)', () => {
     const r = await ipc.invoke('tts:list-voices', { provider: 'typecast' })
     expect(r).toEqual([{ id: 'v1', name: 'V', language: 'ko', previewUrl: null }])
   })
+
+  // Codex M2a-3 LOW: null/비객체 payload에도 throw하지 않고 안전하게 처리한다.
+  it('null payload에도 throw하지 않는다', async () => {
+    const r1 = await ipc.invoke('keys:status', null)
+    expect(r1.hasKey).toBe(false)
+    const r2 = await ipc.invoke('tts:list-voices', null) // provider 기본 typecast
+    expect(Array.isArray(r2)).toBe(true)
+    await ipc.invoke('keys:set', null) // provider undefined → keyStoreMulti가 거부(throw 안 함)
+    await ipc.invoke('keys:delete', null)
+    expect(keyStore.setKey).toHaveBeenCalledWith(undefined, undefined)
+  })
 })

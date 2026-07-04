@@ -204,10 +204,16 @@ export default function StoryView({ pipeline, voices = [] }) {
     const sps = state?.speakers || []
     if (sps.length) {
       params.speakers = sps.map((sp) => {
-        const vid = voiceBySpeaker[sp.id] ?? sp.voice?.voiceId ?? ''
-        if (!vid) return { ...sp, voice: sp.voice ?? null }
-        const v = voices.find((x) => x.id === vid)
-        return { ...sp, voice: v ? { provider: v.provider || 'typecast', voiceId: v.id } : (sp.voice ?? null) }
+        // Codex M2a-3: 드롭다운 오버라이드가 있으면(빈문자열 포함) 그걸 우선한다 — 빈문자열('기본 성우')은
+        // voice를 null로 비워 backend defaultVoice로 폴백. 오버라이드가 없을 때만 기존 sp.voice 유지.
+        const overridden = Object.prototype.hasOwnProperty.call(voiceBySpeaker, sp.id)
+        if (overridden) {
+          const vid = voiceBySpeaker[sp.id]
+          if (!vid) return { ...sp, voice: null }
+          const v = voices.find((x) => x.id === vid)
+          return { ...sp, voice: v ? { provider: v.provider || 'typecast', voiceId: v.id } : null }
+        }
+        return { ...sp, voice: sp.voice ?? null }
       })
     }
     if (regenerate?.length) params.regenerate = regenerate

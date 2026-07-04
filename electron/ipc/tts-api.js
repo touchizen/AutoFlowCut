@@ -11,19 +11,26 @@
  * @param {(provider: string) => Array} deps.listVoices - provider → 성우 목록
  */
 export function registerTtsIPC(ipcMain, { keyStore, safeStorage, listVoices }) {
+  // payload는 null/비객체일 수 있다(Codex LOW) — 구조분해 전 객체로 정규화한다.
   // 키 존재 여부 + 암호화 가용성. 평문 키는 반환 안 함.
-  ipcMain.handle('keys:status', (_e, { provider } = {}) => ({
-    provider,
-    hasKey: keyStore.hasKey(provider),
-    encryptionAvailable: safeStorage?.isEncryptionAvailable?.() ?? false,
-  }))
+  ipcMain.handle('keys:status', (_e, payload) => {
+    const { provider } = payload || {}
+    return {
+      provider,
+      hasKey: keyStore.hasKey(provider),
+      encryptionAvailable: safeStorage?.isEncryptionAvailable?.() ?? false,
+    }
+  })
 
   // 키 저장(암호화). keyStoreMulti가 allowlist 밖 provider는 {success:false}로 거부.
-  ipcMain.handle('keys:set', async (_e, { provider, apiKey } = {}) => keyStore.setKey(provider, apiKey))
+  ipcMain.handle('keys:set', async (_e, payload) => {
+    const { provider, apiKey } = payload || {}
+    return keyStore.setKey(provider, apiKey)
+  })
 
   // 키 삭제.
-  ipcMain.handle('keys:delete', (_e, { provider } = {}) => keyStore.clearKey(provider))
+  ipcMain.handle('keys:delete', (_e, payload) => keyStore.clearKey((payload || {}).provider))
 
   // provider 성우 목록 [{ id, name, language, previewUrl }].
-  ipcMain.handle('tts:list-voices', async (_e, { provider = 'typecast' } = {}) => listVoices(provider))
+  ipcMain.handle('tts:list-voices', async (_e, payload) => listVoices((payload || {}).provider || 'typecast'))
 }
