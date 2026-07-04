@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { splitScenes, writePrompts } from '../../../../electron/api/llm/llmClaude.js'
+import { describe, it, expect, vi } from 'vitest'
+import { splitScenes, writePrompts, reviewScript, reviseScript } from '../../../../electron/api/llm/llmClaude.js'
 
 const SCENES = { scenes: [{ sceneNo: 1, summary: 'S', segments: [{ speaker: 'narrator', text: 'hi' }] }], speakers: [{ id: 'narrator', name: '내레이터' }] }
 
@@ -110,5 +110,27 @@ describe('llmClaude.writePrompts', () => {
     const partial = { scenes: [{ sceneNo: 1, imagePrompt: 'IMG', videoPrompt: 'VID' }] }
     const queryImpl = resultOf({ type: 'result', subtype: 'success', is_error: false, structured_output: partial })
     await expect(writePrompts([{ sceneNo: 1 }, { sceneNo: 2 }], {}, {}, { queryImpl })).rejects.toThrow(/scene 2 missing\/empty prompt/)
+  })
+})
+
+describe('llmClaude.reviewScript (M3)', () => {
+  const R = (msg) => async function* () { yield msg }
+  it('structured verdict/critique를 반환', async () => {
+    const queryImpl = R({ type: 'result', subtype: 'success', is_error: false, structured_output: { verdict: 'revise', critique: '도입이 약함' } })
+    const out = await reviewScript('대본', {}, { queryImpl })
+    expect(out).toEqual({ verdict: 'revise', critique: '도입이 약함' })
+  })
+  it("verdict가 pass/revise 외 값이면 'pass'로 정규화", async () => {
+    const queryImpl = R({ type: 'result', subtype: 'success', is_error: false, structured_output: { verdict: 'maybe', critique: '' } })
+    const out = await reviewScript('대본', {}, { queryImpl })
+    expect(out.verdict).toBe('pass')
+  })
+})
+
+describe('llmClaude.reviseScript (M3)', () => {
+  it('NON-streaming으로 개선된 scriptMd 반환(onDelta 미사용)', async () => {
+    const queryImpl = async function* () { yield { type: 'result', subtype: 'success', is_error: false, result: '개선된 대본' } }
+    const out = await reviseScript('원본', '도입 강화', {}, { queryImpl })
+    expect(out.scriptMd).toBe('개선된 대본')
   })
 })

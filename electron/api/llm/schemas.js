@@ -66,6 +66,16 @@ export function validateScenesSegments(scenes) {
   }
 }
 
+// M3: 대본 검토 structured output — verdict(pass/revise) + critique.
+export const REVIEW_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    verdict: { type: 'STRING' }, // 'pass' | 'revise'
+    critique: { type: 'STRING' },
+  },
+  required: ['verdict', 'critique'],
+}
+
 export const PROMPTS_SCHEMA = {
   type: 'OBJECT',
   properties: {

@@ -6,8 +6,8 @@
  * 1회 재시도 / 그 외 HTTP 에러(400 등) → 재시도 없이 throw / abort → 즉시 throw.
  * 키는 헤더(x-goog-api-key)로만 전달.
  */
-import { SCENES_SCHEMA, PROMPTS_SCHEMA, validateScenesSegments } from './schemas.js'
-import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt } from './prompts.js'
+import { SCENES_SCHEMA, PROMPTS_SCHEMA, REVIEW_SCHEMA, validateScenesSegments } from './schemas.js'
+import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt, buildReviewPrompt, buildRevisePrompt } from './prompts.js'
 
 const BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
 
@@ -103,6 +103,28 @@ export async function splitScenes(scriptMd, opts, ctx = {}) {
   const scenes = out.scenes || []
   validateScenesSegments(scenes) // M2b: loose 스키마 → type별(narration/sfx) 필수 필드 검증
   return { scenes, speakers: out.speakers || [] }
+}
+
+// M3: 대본 자체검토 — REVIEW_SCHEMA structured output. verdict pass/revise 외면 'pass' 정규화.
+export async function reviewScript(scriptMd, opts, ctx = {}) {
+  const prompt = buildReviewPrompt(scriptMd, opts)
+  const out = await structuredCall(prompt, REVIEW_SCHEMA, opts, ctx)
+  const verdict = out.verdict === 'revise' ? 'revise' : 'pass'
+  return { verdict, critique: out.critique || '' }
+}
+
+// M3: critique 반영 재작성 — NON-streaming generateContent(텍스트). SSE 스트리밍 아님.
+export async function reviseScript(scriptMd, critique, opts, { signal, fetchImpl = fetch } = {}) {
+  const prompt = buildRevisePrompt(scriptMd, critique, opts)
+  const res = await fetchImpl(`${BASE}/${opts.model}:generateContent`, {
+    method: 'POST',
+    headers: headers(opts.apiKey),
+    body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }] }),
+    signal,
+  })
+  if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`)
+  const data = await res.json()
+  return { scriptMd: data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '' }
 }
 
 export async function writePrompts(scenes, context, opts, ctx = {}) {

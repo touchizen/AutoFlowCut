@@ -42,3 +42,49 @@ describe('useStoryPipeline — segmentProgress(story:progress)', () => {
     expect(result.current.segmentProgress).toEqual({})
   })
 })
+
+describe('useStoryPipeline — reviewProgress(M3 script-review)', () => {
+  beforeEach(() => installApi())
+
+  const runningState = (op) => ({ projectToken: 'TOK', operationId: op, state: { steps: { script: { status: 'running' } } } })
+  const doneState = (op) => ({ projectToken: 'TOK', operationId: op, state: { steps: { script: { status: 'done' } } } })
+
+  it('script-review progress를 reviewProgress로 노출(round/of/phase)', async () => {
+    const handlers = installApi()
+    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: async () => {} }))
+    await act(async () => { await result.current.open() })
+    act(() => handlers['story:state'](runningState('op1'))) // activeOp = op1
+    act(() => handlers['story:progress']({ projectToken: 'TOK', operationId: 'op1', kind: 'script-review', round: 2, of: 3, phase: 'reviewing' }))
+    expect(result.current.reviewProgress).toMatchObject({ round: 2, of: 3, phase: 'reviewing' })
+  })
+
+  it('terminal story:state(진행 없음)이면 reviewProgress를 지운다', async () => {
+    const handlers = installApi()
+    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: async () => {} }))
+    await act(async () => { await result.current.open() })
+    act(() => handlers['story:state'](runningState('op1')))
+    act(() => handlers['story:progress']({ projectToken: 'TOK', operationId: 'op1', kind: 'script-review', round: 1, of: 3, phase: 'revising' }))
+    act(() => handlers['story:state'](doneState('op1')))
+    expect(result.current.reviewProgress).toBeNull()
+  })
+
+  it("phase='error'는 terminal story:state에도 남는다(검토 중단 배지 유지)", async () => {
+    const handlers = installApi()
+    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: async () => {} }))
+    await act(async () => { await result.current.open() })
+    act(() => handlers['story:state'](runningState('op1')))
+    act(() => handlers['story:progress']({ projectToken: 'TOK', operationId: 'op1', kind: 'script-review', phase: 'error', error: 'boom' }))
+    act(() => handlers['story:state'](doneState('op1')))
+    expect(result.current.reviewProgress).toMatchObject({ phase: 'error' })
+  })
+
+  it('start()는 reviewProgress를 초기화한다', async () => {
+    const handlers = installApi()
+    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: async () => {} }))
+    await act(async () => { await result.current.open() })
+    act(() => handlers['story:state'](runningState('op1')))
+    act(() => handlers['story:progress']({ projectToken: 'TOK', operationId: 'op1', kind: 'script-review', phase: 'error' }))
+    await act(async () => { await result.current.start('script', {}) })
+    expect(result.current.reviewProgress).toBeNull()
+  })
+})

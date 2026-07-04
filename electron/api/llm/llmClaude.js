@@ -2,10 +2,10 @@
  * Claude Agent SDK 대본 엔진 — llmGemini와 동일 시그니처. 대본은 스트리밍,
  * 씬분리/프롬프트는 outputFormat structured(다음 Task). 인증은 로컬 Claude 로그인.
  */
-import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt, buildTitlePrompt, buildContinuePrompt } from './prompts.js'
+import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt, buildTitlePrompt, buildContinuePrompt, buildReviewPrompt, buildRevisePrompt } from './prompts.js'
 import { buildClaudeSdkOptions, extractClaudeSdkResult, bridgeAbortSignal, extractTextDelta, readStructuredResult } from './claudeSdk.js'
 import { toJsonSchema } from './toJsonSchema.js'
-import { SCENES_SCHEMA, PROMPTS_SCHEMA, validateScenesSegments } from './schemas.js'
+import { SCENES_SCHEMA, PROMPTS_SCHEMA, REVIEW_SCHEMA, validateScenesSegments } from './schemas.js'
 
 export const DEFAULT_MODEL = 'claude-opus-4-8'
 
@@ -153,6 +153,31 @@ export async function splitScenes(scriptMd, opts = {}, { signal, queryImpl } = {
   const scenes = out.scenes || []
   validateScenesSegments(scenes) // M2b: loose 스키마 → type별(narration/sfx) 필수 필드 검증
   return { scenes, speakers: out.speakers || [] }
+}
+
+// M3: 대본 자체검토 — REVIEW_SCHEMA structured output. verdict는 pass/revise 외면 'pass'로 정규화.
+export async function reviewScript(scriptMd, opts = {}, { signal, queryImpl } = {}) {
+  const prompt = buildReviewPrompt(scriptMd, opts)
+  const out = await structuredClaudeCall(prompt, REVIEW_SCHEMA, opts, { signal, queryImpl })
+  const verdict = out.verdict === 'revise' ? 'revise' : 'pass'
+  return { verdict, critique: out.critique || '' }
+}
+
+// M3: critique 반영 재작성 — NON-streaming(완성본만). generateScript 스트리밍 경로와 분리.
+export async function reviseScript(scriptMd, critique, opts = {}, { signal, queryImpl = defaultQuery } = {}) {
+  const prompt = buildRevisePrompt(scriptMd, critique, opts)
+  const { abortController, cleanup } = bridgeAbortSignal(signal)
+  try {
+    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController)
+    for await (const m of queryImpl({ prompt, options })) {
+      if (m.type === 'result') return { scriptMd: extractClaudeSdkResult(m) }
+    }
+    if (signal?.aborted) throw new Error('Aborted')
+    throw new Error('no result message returned')
+  } catch (err) {
+    if (signal?.aborted) throw new Error('Aborted')
+    throw new Error(`Claude SDK failed: ${err.message}`)
+  } finally { cleanup() }
 }
 
 export async function writePrompts(scenes, context, opts = {}, { signal, queryImpl } = {}) {

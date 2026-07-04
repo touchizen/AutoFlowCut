@@ -2,7 +2,7 @@
  * @vitest-environment node
  */
 import { describe, it, expect, vi } from 'vitest'
-import { generateScript, splitScenes, writePrompts } from '../../../../electron/api/llm/llmGemini.js'
+import { generateScript, splitScenes, writePrompts, reviewScript, reviseScript } from '../../../../electron/api/llm/llmGemini.js'
 
 // SSE 응답 mock: streamGenerateContent는 "data: {json}\n\n" 라인 스트림
 function sseResponse(chunks) {
@@ -142,5 +142,29 @@ describe('writePrompts', () => {
     const fetchImpl = vi.fn(async () => jsonResponse({ scenes: [{ sceneNo: 1, imagePrompt: 'IMG', videoPrompt: 'VID' }] }))
     const r = await writePrompts(scenes, { scriptMd: '#', style: null }, OPTS, { fetchImpl })
     expect(r.scenes[0]).toMatchObject({ storyId: 'u1', imagePrompt: 'IMG', videoPrompt: 'VID' })
+  })
+})
+
+describe('reviewScript / reviseScript (M3)', () => {
+  const textResponse = (text) => new Response(
+    JSON.stringify({ candidates: [{ content: { parts: [{ text }] } }] }), { status: 200 })
+
+  it('reviewScript: responseSchema로 verdict/critique 반환', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ verdict: 'revise', critique: '도입 약함' }))
+    const out = await reviewScript('대본', OPTS, { fetchImpl })
+    expect(out).toEqual({ verdict: 'revise', critique: '도입 약함' })
+  })
+  it("reviewScript: verdict가 pass/revise 외면 'pass'로 정규화", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ verdict: 'x', critique: '' }))
+    const out = await reviewScript('대본', OPTS, { fetchImpl })
+    expect(out.verdict).toBe('pass')
+  })
+  it('reviseScript: 개선된 대본 텍스트 반환(non-streaming generateContent)', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(textResponse('개선된 대본'))
+    const out = await reviseScript('원본', '도입 강화', OPTS, { fetchImpl })
+    expect(out.scriptMd).toBe('개선된 대본')
+    // streamGenerateContent(SSE)가 아니라 generateContent 호출
+    expect(fetchImpl.mock.calls[0][0]).toContain(':generateContent')
+    expect(fetchImpl.mock.calls[0][0]).not.toContain('streamGenerateContent')
   })
 })

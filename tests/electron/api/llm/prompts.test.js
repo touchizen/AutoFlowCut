@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt, buildTitlePrompt, buildContinuePrompt } from '../../../../electron/api/llm/prompts.js'
+import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt, buildTitlePrompt, buildContinuePrompt, buildReviewPrompt, buildRevisePrompt } from '../../../../electron/api/llm/prompts.js'
 
 describe('buildScriptPrompt 길이 단위', () => {
   it('min 단위는 "약 N분"', () => {
@@ -86,5 +86,36 @@ describe('buildSplitPrompt 입도 옵션(sceneGranularity)', () => {
     const p = buildSplitPrompt('S', { language: 'ko', sceneGranularity: 'segment' })
     expect(p).toContain('문장')
     expect(p).not.toContain('5~10초')
+  })
+})
+
+describe('buildReviewPrompt (M3 검토)', () => {
+  it('내장 루브릭 관점 + 본문 포함', () => {
+    const p = buildReviewPrompt('대본-본문-XYZ', { language: 'ko' })
+    expect(p).toContain('대본-본문-XYZ')
+    expect(p).toMatch(/훅|도입/)
+    expect(p).toMatch(/구조/)
+    expect(p).toMatch(/일관성/)
+    expect(p).toMatch(/pass/)
+    expect(p).toMatch(/revise/)
+  })
+  it('metaPrompt(장르)가 있으면 컨텍스트로 포함', () => {
+    const p = buildReviewPrompt('S', { language: 'ko', metaPrompt: 'GENRE-META-123' })
+    expect(p).toContain('GENRE-META-123')
+  })
+  it('사소한 취향으로 revise 남발 금지 지시', () => {
+    expect(buildReviewPrompt('S', {})).toMatch(/취향|사소|남발|경미/)
+  })
+})
+
+describe('buildRevisePrompt (M3 수정)', () => {
+  it('critique와 본문을 포함하고 톤·언어·길이 유지 지시', () => {
+    const p = buildRevisePrompt('원본-대본-ABC', '지적사항-DEF', { language: 'ko' })
+    expect(p).toContain('원본-대본-ABC')
+    expect(p).toContain('지적사항-DEF')
+    expect(p).toMatch(/유지/)
+  })
+  it('전체 대본만 출력(설명 금지) 지시', () => {
+    expect(buildRevisePrompt('S', 'C', {})).toMatch(/전체|설명|만 출력/)
   })
 })

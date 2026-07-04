@@ -55,6 +55,37 @@ export function buildContinuePrompt(existingScript, opts = {}) {
   ].filter(Boolean).join('\n')
 }
 
+// M3: 대본 자체검토 — 내장 루브릭 + 장르 metaPrompt 기준으로 채점, verdict(pass/revise)+critique 반환.
+export function buildReviewPrompt(scriptMd, opts = {}) {
+  const meta = opts.metaPrompt ? `## 장르 기준(참고)\n${opts.metaPrompt}\n` : ''
+  return [
+    `당신은 유튜브 스토리 채널의 냉정한 대본 편집자다. 아래 대본을 다음 관점(루브릭)으로 검토하라:`,
+    `- 훅/도입부: 초반에 시청자를 붙잡는가`,
+    `- 구조: 기승전결이 뚜렷한가`,
+    `- 페이싱: 늘어지거나 급전개되는 구간이 없는가`,
+    `- 일관성: 설정·인물·시점이 어긋나지 않는가`,
+    `- 화자 구분: 대사가 인물별로 자연스러운가`,
+    `- 결말: 여운/마무리가 충분한가`,
+    meta,
+    `심각하게 개선이 필요하면 verdict="revise"와 구체적이고 실행 가능한 critique(무엇을 어떻게 고칠지)를 내라.`,
+    `충분히 좋으면 verdict="pass". 사소한 취향 차이나 경미한 문제로 revise를 남발하지 마라.`,
+    `--- 대본 ---`,
+    scriptMd,
+  ].filter(Boolean).join('\n')
+}
+
+// M3: 검토 critique를 반영해 대본 전체를 재작성. 톤·언어·길이·화자 표기 유지, 전체 대본만 출력.
+export function buildRevisePrompt(scriptMd, critique, opts = {}) {
+  return [
+    `아래 대본을 비평(critique)을 반영해 개선하라. 톤·문체·언어·분량·화자 표기는 그대로 유지한다.`,
+    `설명이나 머리말 없이 개선된 대본 전체만 출력하라.`,
+    `--- 비평(critique) ---`,
+    critique,
+    `--- 대본 ---`,
+    scriptMd,
+  ].join('\n')
+}
+
 export function buildPromptsPrompt(scenes, context, opts) {
   const sceneLines = scenes.map((s) => `${s.sceneNo}. ${s.summary} :: ${(s.segments || []).map((g) => g.text).join(' ')}`)
   return [

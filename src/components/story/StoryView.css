@@ -44,6 +44,29 @@
   cursor: pointer;
 }
 
+/* M3: 대본 자동 검토 토글 + 진행 배지 */
+.story-review-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85em;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.story-review-badge {
+  display: inline-block;
+  margin-bottom: 8px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--primary-color, #4a7cff);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.story-review-badge.error {
+  background: var(--error-color, #d9534f);
+}
+
 /* 0번 설정 탭 — 상태 배지가 없는 진입 탭(대본 앞). 살짝 구분되게 점선 테두리. */
 .story-step-setup {
   border-style: dashed;

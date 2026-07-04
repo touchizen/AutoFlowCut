@@ -13,6 +13,12 @@ import { buildManifest } from './manifest.js'
 
 const DOWNSTREAM = { script: ['scenes', 'audio', 'prompts'], scenes: ['audio', 'prompts'], audio: ['prompts'], prompts: [] }
 
+// M3: 검토 루프 최대 라운드 — Claude는 3회, 그 외(Gemini 등)는 1회(스펙 §124-125).
+// effective model(opts.model) 기준 — story state.engine엔 model이 없다(Codex-R2).
+function reviewRounds(model) {
+  return String(model || '').startsWith('claude') ? 3 : 1
+}
+
 // C1: LLM splitScenes 출력에는 segment.id가 없다(schemas.js SCENES_SCHEMA에 id 필드 없음) — scenes
 // 스텝이 여기서 결정적 id를 발급해야 audio 스텝의 파일명/results 맵/manifest 키가 undefined로
 // 붕괴하지 않는다. 이미 id가 있으면(재실행 idempotent) 보존한다.
@@ -192,11 +198,38 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         ? await loadMetaPrompt({ genre: params.options?.genre, wave: 'script', language })
         : ''
       const opts = { apiKey: getApiKey(), model: state.engine.model, metaPrompt, ...(params.options || {}) }
-      const { scriptMd } = await llm.generateScript(state.input, opts, {
+      const gen = await llm.generateScript(state.input, opts, {
         onDelta: (text) => send('story:delta', { text }, opId), signal,
       })
       if (signal?.aborted) return
+      let scriptMd = gen.scriptMd
       await store.saveText('script.md', scriptMd)
+
+      // M3: 대본 자동 검토·수정 루프(옵션). 검토는 non-streaming — 진행은 progress로 표시.
+      // 실패해도 마지막 저장본을 유지하고 스텝은 정상(done)으로 둔다(품질 옵션이 본 생성을 깨지 않음).
+      if (opts.reviewLoop && llm.reviewScript && llm.reviseScript && !signal?.aborted) {
+        const max = reviewRounds(opts.model || state.engine?.model)
+        try {
+          for (let round = 1; round <= max; round++) {
+            send('story:progress', { kind: 'script-review', round, of: max, phase: 'reviewing' }, opId)
+            const { verdict, critique } = await llm.reviewScript(scriptMd, opts, { signal })
+            if (signal?.aborted) return
+            if (verdict !== 'revise' || !critique?.trim()) break // pass 또는 지적 없음 → 종료
+            send('story:progress', { kind: 'script-review', round, of: max, phase: 'revising' }, opId)
+            const r = await llm.reviseScript(scriptMd, critique, opts, { signal })
+            if (signal?.aborted) return
+            // Codex-High: 빈/공백 수정본은 저장하지 않는다 — 안 그러면 draft를 빈 대본으로 덮어써
+            // "실패 시 원본 유지" 보장이 깨진다(Gemini safety block/빈 응답, Claude 빈 result).
+            if (!r?.scriptMd?.trim()) throw new Error('reviseScript returned empty script')
+            scriptMd = r.scriptMd
+            await store.saveText('script.md', scriptMd)
+          }
+        } catch (e) {
+          if (signal?.aborted) return // 취소는 조용히 중단(마지막 저장본 유지)
+          send('story:progress', { kind: 'script-review', phase: 'error', error: String(e?.message || e) }, opId)
+          // return 없이 진행 → 스텝 done, 마지막 저장본 유지.
+        }
+      }
     },
     async scenes(params, opId, signal) {
       // 대본 재설계: 편집된 대본으로 씬 분리 — 공백이면 기존 script.md를 보존하고 실패시킨다.

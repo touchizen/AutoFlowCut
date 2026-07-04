@@ -97,7 +97,7 @@ describe('StoryView 설정 화면(setup)', () => {
     fireEvent.click(screen.getByRole('button', { name: '시작' }))
     expect(p.start).toHaveBeenCalledWith('script', {
       input: { type: 'title', title: '운수 좋은 날' },
-      options: { genre: 'bespoke', language: 'ko', model: 'claude-opus-4-8', lengthValue: '10', lengthUnit: 'min', sceneGranularity: 'scene' },
+      options: { genre: 'bespoke', language: 'ko', model: 'claude-opus-4-8', lengthValue: '10', lengthUnit: 'min', sceneGranularity: 'scene', reviewLoop: false },
     })
     expect(screen.getByTestId('story-editor')).toBeInTheDocument()
   })
@@ -115,7 +115,7 @@ describe('StoryView 설정 화면(setup)', () => {
     expect(p.start).toHaveBeenCalledWith('script', {
       pastedScript: '내가 쓴 대본',
       input: { type: 'pasted', title: '가져온 제목' },
-      options: { genre: 'yadam', language: 'ko', model: 'claude-opus-4-8', lengthValue: '10', lengthUnit: 'min', sceneGranularity: 'scene' },
+      options: { genre: 'yadam', language: 'ko', model: 'claude-opus-4-8', lengthValue: '10', lengthUnit: 'min', sceneGranularity: 'scene', reviewLoop: false },
     })
     expect(screen.getByTestId('story-editor')).toBeInTheDocument()
   })

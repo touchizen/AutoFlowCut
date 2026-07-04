@@ -87,7 +87,7 @@ function useHasI18n() {
 export default function StoryView({ pipeline, voices = [], onClose = null }) {
   const t = useSafeT()
   const hasI18n = useHasI18n()
-  const { state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {} } = pipeline
+  const { state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {}, reviewProgress = null } = pipeline
   const steps = state?.steps || {}
   const currentStep = computeCurrentStep(steps)
   const stepData = steps[currentStep] || { status: 'pending' }
@@ -175,6 +175,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
   const [model, setModel] = useState(hydrateOpts.model || 'claude-opus-4-8')
   const [language, setLanguage] = useState(hydrateOpts.language || 'ko')
   const [sceneGranularity, setSceneGranularity] = useState(hydrateOpts.sceneGranularity || 'scene') // 씬 분리 단위: scene(5~10초)/segment(문장별)
+  const [reviewLoop, setReviewLoop] = useState(!!hydrateOpts.reviewLoop) // M3: 대본 자동 검토·수정(기본 off)
 
   // open()/getState() 응답은 마운트 뒤에 도착한다(useStoryAutoOpen이 story 뷰 표시와 동시에
   // open을 호출) — state.input이 늦게 오면 한 번만 폼을 hydrate한다. 이미 초기값으로 hydrate된
@@ -197,6 +198,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
     if (o.lengthValue) setLength(o.lengthValue)
     if (o.lengthUnit) setLengthUnit(o.lengthUnit)
     if (o.sceneGranularity) setSceneGranularity(o.sceneGranularity)
+    if (o.reviewLoop != null) setReviewLoop(!!o.reviewLoop)
   }, [state])
 
   // 버튼 aria-label(=접근성 이름)로 실제 라벨을 노출하고, 화면에 보이는 텍스트는 스텝 이름과
@@ -312,7 +314,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
       setBaseScript('') // 이어쓰기 아님 — preview 접두 초기화
       start('script', {
         input: { type: 'title', title },
-        options: { genre: genre || undefined, language, model, lengthValue: length, lengthUnit, sceneGranularity },
+        options: { genre: genre || undefined, language, model, lengthValue: length, lengthUnit, sceneGranularity, reviewLoop },
       })
       // §1 전환 — '시작' 명시 트리거로 대본 작업 화면(editor)에 진입.
       setScriptPhase('editor')
@@ -340,14 +342,14 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
     start('script', {
       pastedScript: scriptText,
       input: { type: 'pasted', title },
-      options: { genre: genre || undefined, language, model, lengthValue: length, lengthUnit, sceneGranularity },
+      options: { genre: genre || undefined, language, model, lengthValue: length, lengthUnit, sceneGranularity, reviewLoop },
     })
     // 임포트/붙여넣기 대본으로 시작 → editor phase (scriptText 유지).
     setScriptPhase('editor')
   }
 
   // §2 editor 핸들러 공통 — options는 "현재 설정 반영"(R3-3): 폼의 현재 값을 그대로 싣는다.
-  const currentOptions = () => ({ genre, language, model, lengthValue: length, lengthUnit, sceneGranularity })
+  const currentOptions = () => ({ genre, language, model, lengthValue: length, lengthUnit, sceneGranularity, reviewLoop })
 
   // §3 제목 자동생성 — 제목이 비고 대본이 있으면 generateTitle로 확정. 반환 title을
   // 로컬 변수로 돌려줘 이어지는 start payload에 직접 쓴다(React state 순서 비의존).
@@ -424,6 +426,17 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
   }
 
   // 씬 분리 진행 표시용 — 그 탭에 필요한 옵션(씬 분리 단위)과 기준 요약만 보여준다.
+  // M3: 검토 루프 진행 배지 — 검토는 non-streaming이라 이게 없으면 멈춘 것처럼 보인다.
+  const reviewBadge = reviewProgress ? (
+    <div className={`story-review-badge${reviewProgress.phase === 'error' ? ' error' : ''}`} aria-live="polite">
+      {reviewProgress.phase === 'error'
+        ? t('story.review.stopped', '검토 중단')
+        : reviewProgress.phase === 'revising'
+          ? t('story.review.revising', `수정 중 ${reviewProgress.round}/${reviewProgress.of}`)
+          : t('story.review.reviewing', `검토 중 ${reviewProgress.round}/${reviewProgress.of}`)}
+    </div>
+  ) : null
+
   const splitSummary = sceneGranularity === 'segment'
     ? t('story.scenes.summarySegment', '씬 분리 단위: 문장 기준 · 문장마다 씬 · 화자 전환 시 분리 · 짧은 조각 병합 · 10초↑ 분할')
     : t('story.scenes.summaryScene', '씬 분리 단위: 씬 기준 · 5~10초 의미 단위')
@@ -469,6 +482,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
               // provider 가 이미 있으므로 재사용해 Header 언어 전환이 그대로 전파되게 하고,
               // provider 가 없는 단위 테스트에서만 폴백으로 감싼다(중첩·중복 setLocale 방지).
               <div className="story-editor-phase" data-testid="story-editor">
+                {reviewBadge}
                 {scriptRunning ? (
                   <div className="story-script-stream" aria-live="polite">
                     {baseScript ? baseScript + streamingText : streamingText}
@@ -515,7 +529,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
               </div>
             ) : scriptRunning ? (
               // 생성 중 스트리밍 preview (setup에서 시작 직후 등 editor 외 phase).
-              <div className="story-script-stream" aria-live="polite">{streamingText}</div>
+              <div className="story-script-stream" aria-live="polite">{reviewBadge}{streamingText}</div>
             ) : (
               // §1-A 설정 화면 — 세로 옵션(라벨+설명) + 제목 + 대본 임포트(drag&drop/붙여넣기) + [✨ 시작].
               <div className="story-setup-phase" data-testid="story-setup">
@@ -605,6 +619,21 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
                     <option value="scene">{t('story.form.granularityScene', '씬 기준 (5~10초)')}</option>
                     <option value="segment">{t('story.form.granularitySegment', '문장 기준')}</option>
                   </select>
+                </div>
+
+                {/* M3: 대본 자동 검토·수정 토글(기본 off) — 켜면 생성 후 검토→수정 루프(Claude 최대 3회). */}
+                <div className="story-opt-row">
+                  <span className="story-opt-label">{t('story.form.reviewLoopLabel', '대본 자동 검토·수정')}</span>
+                  <label className="story-review-toggle">
+                    <input
+                      type="checkbox"
+                      aria-label={t('story.form.reviewLoopLabel', '대본 자동 검토·수정')}
+                      checked={reviewLoop}
+                      onChange={(e) => setReviewLoop(e.target.checked)}
+                      disabled={isRunning}
+                    />
+                    <span>{t('story.form.reviewLoopHint', '생성 후 AI가 스스로 검토·수정 (Claude 최대 3회, 느려짐)')}</span>
+                  </label>
                 </div>
 
                 <div className="story-opt-row">
