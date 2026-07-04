@@ -15,9 +15,13 @@ import { registerVrewIPC } from './ipc/vrew.js'
 import { registerMcpIPC } from './ipc/mcp.js'
 import { registerGenaiIPC } from './ipc/genai-api.js'
 import { registerStoryIPC } from './ipc/story-api.js'
+import { registerTtsIPC } from './ipc/tts-api.js'
 import * as llmClaude from './api/llm/llmClaude.js'
 import { loadMetaPrompt } from './api/llm/metaPrompts.js'
 import { createKeyStore } from './api/keyStore.js'
+import { createMultiKeyStore } from './api/keyStoreMulti.js'
+import { createTtsAdapter } from './api/tts/index.js'
+import { getTypecastKey } from './api/tts/typecastKey.js'
 import { registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible, updateBounds } from './ipc/layout.js'
 import { createModeController } from './ipc/mode.js'
 import { openApiSpec, getSwaggerHtml } from './api-docs.js'
@@ -202,13 +206,33 @@ const genaiKeyStore = createKeyStore({
 })
 registerGenaiIPC(ipcMain, { keyStore: genaiKeyStore })
 
-// Story pipeline IPC (script/scenes/prompts 스텝 머신 + preload 브릿지).
+// TTS provider 멀티 키 저장소 (스펙 §6, M2a-3b) — genai|elevenlabs|typecast|anthropic.
+const multiKeyStore = createMultiKeyStore({
+  safeStorage,
+  keysDir: path.join(app.getPath('userData'), 'keys'),
+  fs: fsSync,
+  path,
+})
+// Typecast TTS 어댑터: 키는 설정 입력(multiKeyStore) 우선, 없으면 env/~/.typecast/credentials 폴백.
+// 같은 어댑터를 story audio(합성)와 tts IPC(listVoices)가 공유한다.
+const typecastTts = createTtsAdapter('typecast', {
+  getKey: () => multiKeyStore.getKey('typecast') || getTypecastKey(),
+  fetch: (...a) => globalThis.fetch(...a),
+})
+registerTtsIPC(ipcMain, {
+  keyStore: multiKeyStore,
+  safeStorage,
+  listVoices: (provider) => (provider === 'typecast' ? typecastTts.listVoices() : []),
+})
+
+// Story pipeline IPC (script/scenes/audio/prompts 스텝 머신 + preload 브릿지).
 registerStoryIPC(ipcMain, {
   keyStore: genaiKeyStore,
   getWindow: () => mainWindow,
   llm: llmClaude,
   loadMetaPrompt,
   getActiveWorkFolder: () => activeWorkFolder,
+  tts: typecastTts, // 설정 입력 키를 audio 합성에 사용(env/creds 폴백)
 })
 
 // Auth IPC (Google OAuth) — opens its own BrowserWindow; no Flow view dependency.

@@ -31,6 +31,22 @@ describe('createTypecastAdapter', () => {
     expect(body.language).toBeUndefined()
   })
 
+  it('listVoices: 알려진 Typecast 성우 목록을 {id,name,language,previewUrl} 형태로 반환한다', () => {
+    const a = createTypecastAdapter({ getKey: () => 'tc', fetch: async () => {} })
+    const voices = a.listVoices()
+    expect(Array.isArray(voices)).toBe(true)
+    expect(voices.length).toBeGreaterThan(0)
+    for (const v of voices) {
+      expect(typeof v.id).toBe('string')
+      expect(typeof v.name).toBe('string')
+      expect(typeof v.language).toBe('string')
+      expect('previewUrl' in v).toBe(true)
+    }
+    // CLAUDE.md 성우(Joonkyu/Piljae)가 포함된다
+    expect(voices.some((v) => v.id === 'tc_6436dbbb602bde66c6b39504')).toBe(true) // Joonkyu
+    expect(voices.some((v) => v.id === 'tc_68257f68bc6e3c161ab5078d')).toBe(true) // Piljae
+  })
+
   it('키 없으면 throw', async () => {
     const a = createTypecastAdapter({ getKey: () => null, fetch: async () => {} })
     await expect(a.synthesize({ text: 'x', voiceId: 'v' })).rejects.toThrow(/Typecast API key/)

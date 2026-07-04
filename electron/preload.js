@@ -108,6 +108,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   genaiCheckVideoStatus: (params) => ipcRenderer.invoke('genai:check-video-status', params),
   genaiDownloadVideo: (params) => ipcRenderer.invoke('genai:download-video', params),
 
+  // --- TTS provider keys + voices (M2a-3b) — 평문 키는 renderer로 반환하지 않는다 ---
+  keysStatus: (params) => ipcRenderer.invoke('keys:status', params),
+  keysSet: (params) => ipcRenderer.invoke('keys:set', params),
+  keysDelete: (params) => ipcRenderer.invoke('keys:delete', params),
+  ttsListVoices: (params) => ipcRenderer.invoke('tts:list-voices', params),
+
   // --- Story pipeline ---
   storyOpen: (params) => ipcRenderer.invoke('story:open', params),
   storyGetState: (params) => ipcRenderer.invoke('story:get-state', params),
