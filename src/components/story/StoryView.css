@@ -333,6 +333,20 @@
   gap: 6px;
   white-space: nowrap;
 }
+/* M2b-5: sfx 세그먼트 행 — 효과음 description + 소스 선택 */
+.story-sfx-row {
+  background: color-mix(in srgb, var(--accent-color, #ffb74d) 8%, transparent);
+}
+.story-sfx-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.story-sfx-desc {
+  font-style: italic;
+  opacity: 0.85;
+}
 .story-seg-btn {
   background: var(--border-color);
   border: none;

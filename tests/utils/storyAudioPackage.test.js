@@ -85,6 +85,36 @@ describe('buildStoryAudioPackage', () => {
     const scenes = [{ segments: [{ id: 's1', speaker: 'narrator', startMs: 0, durationMs: 500, audioPath: '/a/s1.mp3' }] }]
     expect(buildStoryAudioPackage(scenes).voices).toHaveLength(1)
   })
+
+  it('M2b: sfx 세그먼트는 pkg.sfx[{ category:"story", files }] 로 변환', () => {
+    const scenes = [{ segments: [
+      seg('s1', 'narrator', 0, 1000, '/a/s1.mp3'),
+      { id: 's2', type: 'sfx', description: 'thunder', startMs: 1000, durationMs: 800, audioPath: '/a/s2.mp3' },
+    ] }]
+    const pkg = buildStoryAudioPackage(scenes)
+    expect(pkg.voices).toHaveLength(1) // narration만 voices
+    expect(pkg.sfx).toHaveLength(1)
+    expect(pkg.sfx[0].category).toBe('story')
+    expect(pkg.sfx[0].files).toHaveLength(1)
+    expect(pkg.sfx[0].files[0]).toMatchObject({
+      path: '/a/s2.mp3', filename: 's2.mp3', timecodeMs: 1000, durationMs: 800,
+    })
+  })
+
+  it('M2b: audioPath 없는 sfx 는 제외, sfx files 는 timecodeMs 오름차순', () => {
+    const scenes = [{ segments: [
+      { id: 's2', type: 'sfx', description: 'b', startMs: 2000, durationMs: 300, audioPath: '/a/s2.mp3' },
+      { id: 's1', type: 'sfx', description: 'a', startMs: 500, durationMs: 300, audioPath: '/a/s1.mp3' },
+      { id: 's3', type: 'sfx', description: 'no-audio', startMs: 3000, durationMs: 300, audioPath: null },
+    ] }]
+    const pkg = buildStoryAudioPackage(scenes)
+    expect(pkg.sfx[0].files.map(f => f.timecodeMs)).toEqual([500, 2000])
+  })
+
+  it('M2b: sfx 없으면 pkg.sfx 는 빈 배열', () => {
+    const scenes = [{ segments: [seg('s1', 'narrator', 0, 1000, '/a/s1.mp3')] }]
+    expect(buildStoryAudioPackage(scenes).sfx).toEqual([])
+  })
 })
 
 describe('withStoryAudio — 메인 audioPackage에 story 오디오 합류(프리뷰 반영)', () => {
@@ -108,5 +138,19 @@ describe('withStoryAudio — 메인 audioPackage에 story 오디오 합류(프�
     const base = { voices: [], sfx: [] }
     expect(withStoryAudio(base, [])).toBe(base)
     expect(withStoryAudio(null, [])).toBeNull()
+  })
+
+  it('M2b: story sfx 를 audioPackage.sfx 에 합류', () => {
+    const withSfx = [{ segments: [{ id: 's2', type: 'sfx', description: 'thunder', startMs: 0, durationMs: 500, audioPath: '/a/s2.mp3' }] }]
+    const base = { voices: [], sfx: [{ category: 'imported', files: [{ path: '/i.mp3', filename: 'i.mp3', timecodeMs: 0, durationMs: 100 }] }] }
+    const merged = withStoryAudio(base, withSfx)
+    expect(merged.sfx.some(s => s.category === 'imported')).toBe(true)
+    expect(merged.sfx.some(s => s.category === 'story')).toBe(true)
+  })
+
+  it('M2b: narration 없이 sfx만 있어도 합류(voices 비어도 sfx 반영)', () => {
+    const onlySfx = [{ segments: [{ id: 's2', type: 'sfx', description: 'thunder', startMs: 0, durationMs: 500, audioPath: '/a/s2.mp3' }] }]
+    const merged = withStoryAudio(null, onlySfx)
+    expect(merged.sfx.some(s => s.category === 'story')).toBe(true)
   })
 })

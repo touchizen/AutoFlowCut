@@ -6,7 +6,7 @@
  * 1회 재시도 / 그 외 HTTP 에러(400 등) → 재시도 없이 throw / abort → 즉시 throw.
  * 키는 헤더(x-goog-api-key)로만 전달.
  */
-import { SCENES_SCHEMA, PROMPTS_SCHEMA } from './schemas.js'
+import { SCENES_SCHEMA, PROMPTS_SCHEMA, validateScenesSegments } from './schemas.js'
 import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt } from './prompts.js'
 
 const BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
@@ -100,7 +100,9 @@ async function structuredCall(prompt, schema, opts, { signal, fetchImpl = fetch,
 export async function splitScenes(scriptMd, opts, ctx = {}) {
   const prompt = buildSplitPrompt(scriptMd, opts)
   const out = await structuredCall(prompt, SCENES_SCHEMA, opts, ctx)
-  return { scenes: out.scenes || [], speakers: out.speakers || [] }
+  const scenes = out.scenes || []
+  validateScenesSegments(scenes) // M2b: loose 스키마 → type별(narration/sfx) 필수 필드 검증
+  return { scenes, speakers: out.speakers || [] }
 }
 
 export async function writePrompts(scenes, context, opts, ctx = {}) {

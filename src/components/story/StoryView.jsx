@@ -28,6 +28,10 @@ const SEG_STATUS_LABEL = { pending: '대기', running: '진행 중', done: '완�
 // TTS provider 표시명 (화자별 엔진 드롭다운).
 const PROVIDER_LABEL = { typecast: 'Typecast', gemini: 'Gemini TTS', googletts: 'Google TTS', elevenlabs: 'ElevenLabs' }
 
+// M2b-5: SFX 소스 선택(세그먼트별). library는 아직 stub(생성 시 에러) — 인터페이스만 노출.
+const SFX_SOURCES = ['elevenlabs', 'library']
+const SFX_SOURCE_LABEL = { elevenlabs: 'ElevenLabs', library: 'Library' }
+
 /** 스텝 진행 중 표시 — (선택) 옵션·기준 요약 + 초시계 + 라벨 + 경과 시간(updatedAt 기준, 1초 갱신). */
 function StoryRunning({ label, startedAt, detail }) {
   return (
@@ -130,6 +134,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
   // M2a-3b/슬라이스3: 화자별 엔진(provider)·목소리 선택(로컬). 초기값은 state.speakers[].voice.
   const [voiceBySpeaker, setVoiceBySpeaker] = useState({})
   const [providerBySpeaker, setProviderBySpeaker] = useState({})
+  // M2b-5: sfx 세그먼트별 소스(로컬 오버라이드). 기본은 세그먼트 영속값(seg.sourceMode) > elevenlabs.
+  const [sourceModeBySegment, setSourceModeBySegment] = useState({})
   // M2a-3c: 세그먼트 오디오 미리듣기(단일 재생 토글).
   const { playingFile, playAudio, stopAudio } = useAudioPlayback()
   // §1 표시 라우팅 (R3-1) — scriptPhase가 남아 있는 동안(setup/editor)은 script done이어도
@@ -223,6 +229,18 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
     return sp.voice?.provider === providerForSpeaker(sp) ? (sp.voice?.voiceId ?? '') : ''
   }
 
+  // M2b-5: sfx 세그먼트의 현재 소스 — 로컬 오버라이드 > 세그먼트 영속값 > elevenlabs.
+  // Codex-Med: segId는 재분리/프로젝트 전환으로 재사용될 수 있다 — 오버라이드에 당시 description을
+  // 함께 저장하고, 현재 세그먼트의 description과 일치할 때만 적용해 옛 선택이 다른 효과음에 새는 것을 막는다.
+  const sfxOverrideForSeg = (seg) => {
+    const o = sourceModeBySegment[seg.id]
+    return o && o.desc === seg.description ? o.source : undefined
+  }
+  const sfxSourceForSeg = (seg) =>
+    sfxOverrideForSeg(seg) ?? seg.sourceMode ?? 'elevenlabs'
+  const setSfxSource = (seg, source) =>
+    setSourceModeBySegment((m) => ({ ...m, [seg.id]: { source, desc: seg.description } }))
+
   const buildAudioParams = (regenerate = null) => {
     const params = {}
     const sps = state?.speakers || []
@@ -233,6 +251,17 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
         return { ...sp, voice: { provider: providerForSpeaker(sp), voiceId: vid } }
       })
     }
+    // 현재 sfx 세그먼트 중 로컬 오버라이드(description 일치)가 있는 것만 sfxSources로 전달.
+    // 없으면 backend가 세그먼트 영속값/기본(elevenlabs) 사용.
+    const sfxSources = {}
+    for (const sc of scenes) {
+      for (const seg of (sc.segments || [])) {
+        if (seg.type !== 'sfx') continue
+        const src = sfxOverrideForSeg(seg)
+        if (src) sfxSources[seg.id] = src
+      }
+    }
+    if (Object.keys(sfxSources).length) params.sfxSources = sfxSources
     if (regenerate?.length) params.regenerate = regenerate
     return params
   }
@@ -247,7 +276,9 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
   // audio 타임라인 프리뷰 — story 세그먼트를 화자별 voices audioPackage로 변환해 기존 AudioTimeline
   // (LiveTimeline)에 넘긴다(디스크 재배치 없이 메모리 변환). audio done일 때만 렌더.
   const storyAudioPkg = useMemo(() => buildStoryAudioPackage(scenes), [scenes])
+  // Codex-Low: sfx만 있는 story(narration 없음)도 타임라인에 나오도록 sfx도 포함해 판정.
   const hasStoryAudio = storyAudioPkg.voices.some((v) => v.files.length > 0)
+    || storyAudioPkg.sfx.some((s) => s.files.length > 0)
 
   // 슬라이스1: 세그먼트 단건 테스트 — 배치와 분리해 그 세그먼트만 합성(화자 매핑 반영) 후 바로 재생.
   const [previewBusy, setPreviewBusy] = useState(false)
@@ -762,14 +793,34 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
                   </thead>
                   <tbody>
                     {scenes.flatMap((sc, si) =>
-                      (sc.segments || []).map((seg, gi) => (
-                        <tr key={`${sc.storyId ?? si}-${gi}`}>
+                      (sc.segments || []).map((seg, gi) => {
+                       const isSfx = seg.type === 'sfx'
+                       return (
+                        <tr key={`${sc.storyId ?? si}-${gi}`} className={isSfx ? 'story-sfx-row' : undefined}>
                           <td>{si + 1}</td>
-                          <td>{seg.speaker}</td>
-                          <td>{seg.text}</td>
+                          <td>{isSfx ? t('story.audio.sfxLabel', 'SFX') : seg.speaker}</td>
+                          <td>
+                            {isSfx ? (
+                              <div className="story-sfx-cell">
+                                <span className="story-sfx-desc">{seg.description}</span>
+                                {/* M2b-5: 소스 선택(elevenlabs/library) — library는 아직 stub */}
+                                <select
+                                  className="story-input"
+                                  aria-label={t('story.audio.sfxSourceFor', `${seg.id} 소스`)}
+                                  value={sfxSourceForSeg(seg)}
+                                  onChange={(e) => setSfxSource(seg, e.target.value)}
+                                >
+                                  {SFX_SOURCES.map((s) => (
+                                    <option key={s} value={s}>{SFX_SOURCE_LABEL[s] || s}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            ) : seg.text}
+                          </td>
                           <td>{t(`story.status.${segmentProgress[seg.id] || seg.status || 'pending'}`, SEG_STATUS_LABEL[segmentProgress[seg.id] || seg.status] || SEG_STATUS_LABEL.pending)}</td>
                           <td className="story-audio-actions">
-                            {/* 슬라이스1: 세그먼트 단건 테스트(배치와 분리) */}
+                            {/* 슬라이스1: 세그먼트 단건 테스트(배치와 분리) — narration 전용(sfx는 미지원) */}
+                            {!isSfx && (
                             <button
                               type="button"
                               className="story-seg-btn"
@@ -779,6 +830,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
                             >
                               ▶{t('story.audio.testLabel', '테스트')}
                             </button>
+                            )}
                             {/* M2a-3c 미리듣기 (오디오 있을 때) */}
                             {seg.audioPath && (
                               <button
@@ -805,7 +857,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
                             )}
                           </td>
                         </tr>
-                      )),
+                       )
+                      }),
                     )}
                   </tbody>
                 </table>

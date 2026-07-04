@@ -13,22 +13,25 @@ function basename(p) {
   return parts[parts.length - 1] || ''
 }
 
-export function buildStoryAudioPackage(scenes) {
-  const segments = (Array.isArray(scenes) ? scenes : [])
-    .flatMap((sc) => sc?.segments || [])
-    .filter((s) => s && s.audioPath && (s.type || 'narration') === 'narration')
+const fileOf = (s) => ({
+  path: s.audioPath,
+  filename: basename(s.audioPath),
+  timecodeMs: s.startMs || 0,
+  durationMs: s.durationMs || 0,
+})
 
-  // 화자별 그룹 (등장 순서 보존)
+export function buildStoryAudioPackage(scenes) {
+  const allSegs = (Array.isArray(scenes) ? scenes : [])
+    .flatMap((sc) => sc?.segments || [])
+    .filter((s) => s && s.audioPath)
+
+  // 화자별 그룹 (등장 순서 보존) — narration만
   const byChar = new Map()
-  for (const s of segments) {
+  for (const s of allSegs) {
+    if ((s.type || 'narration') !== 'narration') continue
     const character = s.speaker || 'narrator'
     if (!byChar.has(character)) byChar.set(character, [])
-    byChar.get(character).push({
-      path: s.audioPath,
-      filename: basename(s.audioPath),
-      timecodeMs: s.startMs || 0,
-      durationMs: s.durationMs || 0,
-    })
+    byChar.get(character).push(fileOf(s))
   }
 
   const voices = [...byChar.entries()].map(([character, files]) => ({
@@ -36,7 +39,12 @@ export function buildStoryAudioPackage(scenes) {
     files: files.sort((a, b) => a.timecodeMs - b.timecodeMs),
   }))
 
-  return { voices, sfx: [] }
+  // M2b: sfx 세그먼트 → 단일 'story' 카테고리 트랙(useAudioTimeline pkg.sfx 형식).
+  const sfxFiles = allSegs.filter((s) => s.type === 'sfx').map(fileOf)
+    .sort((a, b) => a.timecodeMs - b.timecodeMs)
+  const sfx = sfxFiles.length ? [{ category: 'story', files: sfxFiles }] : []
+
+  return { voices, sfx }
 }
 
 /**
@@ -46,10 +54,13 @@ export function buildStoryAudioPackage(scenes) {
  */
 export function withStoryAudio(audioPackage, scenes) {
   const story = buildStoryAudioPackage(scenes)
-  if (!story.voices.some((v) => v.files.length > 0)) return audioPackage
+  const hasVoices = story.voices.some((v) => v.files.length > 0)
+  const hasSfx = story.sfx.some((s) => s.files.length > 0)
+  if (!hasVoices && !hasSfx) return audioPackage
   return {
     ...(audioPackage || {}),
     voices: [...(audioPackage?.voices || []), ...story.voices],
+    sfx: [...(audioPackage?.sfx || []), ...story.sfx],
   }
 }
 

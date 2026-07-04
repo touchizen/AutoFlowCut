@@ -26,7 +26,10 @@ export function buildSplitPrompt(scriptMd, opts) {
     : `아래 대본을 의미 단위로 나누되 각 씬은 낭독 시 5~10초(${opts.language === 'ko' ? '한국어 기준 약 28~55자' : 'about 75~150 chars in English'}) 분량이어야 한다. 의미가 바뀌거나 길이를 초과하면 씬을 분할하라.`
   return [
     splitRule,
-    `각 씬의 세그먼트마다 speaker(나레이션은 "narrator", 대사는 인물 식별자)와 emotion(normal/happy/sad/angry)을 지정하라.`,
+    `각 나레이션/대사 세그먼트마다 speaker(나레이션은 "narrator", 대사는 인물 식별자)와 text, emotion(normal/happy/sad/angry)을 지정하라.`,
+    // M2b: 효과음 큐를 세그먼트 단위로 삽입. 단어 단위(문장 내부) 금지 — 시퀀스의 한 자리를 차지한다.
+    `대본 흐름상 효과음(문 여는 소리·천둥·발소리·비명 등)이 꼭 필요한 지점에는 그 자리에 { "type": "sfx", "description": "..." } 세그먼트를 삽입하라. description은 효과음을 생성할 짧은 영어 묘사(예: "door creaking open", "distant thunder")로 쓴다. sfx 세그먼트에는 speaker/text/emotion을 넣지 않는다. 나레이션/대사 세그먼트는 type을 생략해도 된다(기본 narration).`,
+    `효과음은 꼭 필요한 순간(장면 전환·긴장·중요한 사건)에만 절제해서 넣어라 — 과도하게 넣으면 흐름을 해친다.`,
     `등장 화자 전체 목록을 speakers로 반환하라.`,
     `--- 대본 ---`,
     scriptMd,

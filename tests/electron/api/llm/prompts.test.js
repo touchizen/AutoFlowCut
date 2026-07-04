@@ -63,6 +63,18 @@ describe('buildSplitPrompt 5~10초', () => {
   })
 })
 
+describe('buildSplitPrompt sfx 큐(M2b-2)', () => {
+  it('sfx 세그먼트 지시(type:"sfx"/description)를 포함', () => {
+    const p = buildSplitPrompt('S', { language: 'ko' })
+    expect(p).toContain('sfx')
+    expect(p).toContain('description')
+  })
+  it('segment 입도에서도 sfx 지시를 포함', () => {
+    const p = buildSplitPrompt('S', { language: 'ko', sceneGranularity: 'segment' })
+    expect(p).toContain('sfx')
+  })
+})
+
 describe('buildSplitPrompt 입도 옵션(sceneGranularity)', () => {
   it('기본(미지정)은 5~10초 씬 기준', () => {
     expect(buildSplitPrompt('S', { language: 'ko' })).toContain('5~10초')

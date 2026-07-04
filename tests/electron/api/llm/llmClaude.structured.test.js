@@ -49,6 +49,25 @@ describe('llmClaude.splitScenes', () => {
     await expect(splitScenes('SCRIPT', {}, { queryImpl })).rejects.toThrow(/expected integer/)
     expect(call).toBe(2)
   })
+  it('M2b: sfx 세그먼트(type/description)가 그대로 통과한다', async () => {
+    const withSfx = { scenes: [{ sceneNo: 1, summary: 'S', segments: [
+      { speaker: 'narrator', text: '문이 열렸다' },
+      { type: 'sfx', description: 'door creaking open' },
+    ] }], speakers: [{ id: 'narrator', name: '내레이터' }] }
+    const queryImpl = resultOf({ type: 'result', subtype: 'success', is_error: false, structured_output: withSfx })
+    const out = await splitScenes('SCRIPT', {}, { queryImpl })
+    expect(out.scenes[0].segments[1]).toMatchObject({ type: 'sfx', description: 'door creaking open' })
+  })
+  it('M2b: sfx인데 description이 없으면 post-validation으로 throw', async () => {
+    let call = 0
+    const bad = { scenes: [{ sceneNo: 1, summary: 'S', segments: [{ type: 'sfx' }] }], speakers: [] }
+    const queryImpl = async function* () {
+      call += 1
+      // structured/fallback 둘 다 같은 bad → post-validation이 최종적으로 throw
+      yield { type: 'result', subtype: 'success', is_error: false, structured_output: bad }
+    }
+    await expect(splitScenes('SCRIPT', {}, { queryImpl })).rejects.toThrow(/sfx/)
+  })
 })
 
 describe('llmClaude.writePrompts', () => {

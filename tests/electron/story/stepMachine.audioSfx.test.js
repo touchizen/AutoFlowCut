@@ -14,9 +14,9 @@ function makeMachine(projectPath) {
   const emitted = []
   const tts = { capabilities: () => ({ maxConcurrency: 1 }), synthesize: async ({ text }) => ({ audio: Buffer.from('A:' + text), format: 'wav' }) }
   const sfxCalls = []
-  const sfxFor = () => ({
+  const sfxFor = (provider) => ({
     capabilities: () => ({ maxConcurrency: 2 }),
-    generate: async ({ description, durationSeconds }) => { sfxCalls.push({ description, durationSeconds }); return { audio: Buffer.from('SFX:' + description), format: 'mp3' } },
+    generate: async ({ description, durationSeconds }) => { sfxCalls.push({ provider, description, durationSeconds }); return { audio: Buffer.from('SFX:' + description), format: 'mp3' } },
   })
   const probe = async () => 2000
   const machine = createStepMachine({ projectPath, llm: {}, emit: (c, p) => emitted.push({ c, p }), getApiKey: () => 'k', tts, sfxFor, probe })
@@ -63,5 +63,48 @@ describe('audio 스텝 — sfx 생성', () => {
     await machine.open()
     await machine.start('audio', { speakers: [] })
     expect(sfxCalls.find((c) => c.description === '천둥').durationSeconds).toBe(3)
+  })
+
+  it('기본 source는 elevenlabs로 sfxFor 호출', async () => {
+    await seedScenes(projectPath, [{ id: 's2', type: 'sfx', description: '천둥' }])
+    const { machine, sfxCalls } = makeMachine(projectPath)
+    await machine.open()
+    await machine.start('audio', { speakers: [] })
+    expect(sfxCalls.find((c) => c.description === '천둥').provider).toBe('elevenlabs')
+  })
+
+  it('params.sfxSources[segId]가 seg.sourceMode보다 우선 → 해당 source로 생성 + scenes.json에 sourceMode 영속', async () => {
+    await seedScenes(projectPath, [{ id: 's2', type: 'sfx', description: '천둥' }])
+    const { machine, sfxCalls } = makeMachine(projectPath)
+    await machine.open()
+    await machine.start('audio', { speakers: [], sfxSources: { s2: 'library' } })
+    expect(sfxCalls.find((c) => c.description === '천둥').provider).toBe('library')
+    // 영속된 sourceMode/sfxKey가 재실행 reuse와 일치해야 한다(재생성 안 됨).
+    const scenes = JSON.parse(await readFile(path.join(projectPath, 'story', 'scenes.json'), 'utf8')).scenes
+    const seg = scenes[0].segments.find((s) => s.id === 's2')
+    expect(seg.sourceMode).toBe('library')
+    expect(seg.sfxKey).toBe('library:천둥:auto')
+  })
+
+  it('sourceMode 영속 후 재실행은 sfxKey 일치로 reuse(재생성 안 함)', async () => {
+    await seedScenes(projectPath, [{ id: 's2', type: 'sfx', description: '천둥' }])
+    const { machine, sfxCalls } = makeMachine(projectPath)
+    await machine.open()
+    await machine.start('audio', { speakers: [], sfxSources: { s2: 'library' } })
+    const before = sfxCalls.length
+    // 파라미터 없이 재실행 — 영속된 sourceMode='library'로 sfxKey 일치 → 재생성 스킵.
+    await machine.start('audio', { speakers: [] })
+    expect(sfxCalls.length).toBe(before)
+  })
+
+  it('sfx 세그먼트 id가 안전하지 않으면(path traversal) audio 스텝이 error로 차단', async () => {
+    // sfx도 audio/segments/${id}.${format} 파일명에 id를 쓴다 → narration과 동일하게 검증돼야 한다.
+    await seedScenes(projectPath, [{ id: '../evil', type: 'sfx', description: '천둥' }])
+    const { machine } = makeMachine(projectPath)
+    await machine.open()
+    await machine.start('audio', { speakers: [] })
+    const st = await machine.getState()
+    expect(st.steps.audio.status).toBe('error')
+    expect(st.steps.audio.error).toMatch(/unsafe segment id/)
   })
 })

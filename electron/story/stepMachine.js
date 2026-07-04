@@ -41,9 +41,13 @@ function assignSegmentIds(scenes) {
 // segments 디렉터리 밖에 쓰는 걸 막기 위해 안전한 파일명 토큰만 허용한다(발급 id 패턴 s{i}-{j} 포함).
 const SAFE_SEGMENT_ID = /^[A-Za-z0-9_-]+$/
 function assertSegmentIdsValid(scenes) {
-  const narration = (scenes || []).flatMap((sc) => sc.segments || []).filter((s) => (s.type || 'narration') === 'narration')
+  // M2b: sfx도 audio/segments/${id}.${format} 파일명에 id를 쓴다 → narration과 함께 검증(traversal 방어).
+  const audioBearing = (scenes || []).flatMap((sc) => sc.segments || []).filter((s) => {
+    const t = s.type || 'narration'
+    return t === 'narration' || t === 'sfx'
+  })
   const seen = new Set()
-  for (const seg of narration) {
+  for (const seg of audioBearing) {
     if (!seg.id || seen.has(seg.id)) throw new Error('segment id missing or duplicate — rerun scenes step')
     if (!SAFE_SEGMENT_ID.test(seg.id)) throw new Error(`unsafe segment id (must match ${SAFE_SEGMENT_ID}): ${seg.id}`)
     seen.add(seg.id)
@@ -265,7 +269,9 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         try { return (await stat(reusePathOf(seg))).isFile() } catch { return false }
       }
       // M2b sfx reuse: 지문 sfxKey(source:description:durationHint) 일치 + 파일 실재.
-      const sfxKeyOf = (seg) => `${seg.sourceMode || 'elevenlabs'}:${seg.description || ''}:${seg.durationHint ?? 'auto'}`
+      // source는 UI 오버라이드(params.sfxSources[segId]) > 세그먼트 영속값 > 기본 elevenlabs.
+      const sfxSourceOf = (seg) => params.sfxSources?.[seg.id] || seg.sourceMode || 'elevenlabs'
+      const sfxKeyOf = (seg) => `${sfxSourceOf(seg)}:${seg.description || ''}:${seg.durationHint ?? 'auto'}`
       const canReuseSfx = async (seg) => {
         if (forceRegen.has(seg.id) || seg.status !== 'done' || !seg.audioPath || (seg.durationMs || 0) <= 0) return false
         if (seg.sfxKey !== sfxKeyOf(seg)) return false
@@ -317,13 +323,15 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         await Promise.all(batch.map(async (seg) => {
           send('story:progress', { kind: 'audio-segment', segId: seg.id, status: 'running' }, opId)
           try {
-            const { audio, format } = await sfxFor(seg.sourceMode || 'elevenlabs').generate({ description: seg.description, durationSeconds: seg.durationHint ?? null, signal })
+            const source = sfxSourceOf(seg)
+            const { audio, format } = await sfxFor(source).generate({ description: seg.description, durationSeconds: seg.durationHint ?? null, signal })
             if (signal?.aborted) return
             const rel = `audio/segments/${seg.id}.${format}`
             await store.saveBinary(rel, audio)
             const durationMs = await probe(path.join(projectPath, 'story', rel))
             if (durationMs <= 0) { errored.add(seg.id); send('story:progress', { kind: 'audio-segment', segId: seg.id, status: 'error' }, opId); return }
-            results.set(seg.id, { audioPath: path.join(projectPath, 'story', rel), durationMs, sfxKey: sfxKeyOf(seg) })
+            // sourceMode를 함께 영속 → 다음 실행의 sfxKeyOf(seg)가 오버라이드 없이도 일치(reuse 안정).
+            results.set(seg.id, { audioPath: path.join(projectPath, 'story', rel), durationMs, sfxKey: sfxKeyOf(seg), sourceMode: source })
             send('story:progress', { kind: 'audio-segment', segId: seg.id, status: 'done' }, opId)
           } catch (e) {
             if (!signal?.aborted) { errored.add(seg.id); errorMsgs.set(seg.id, e?.message || String(e)); send('story:progress', { kind: 'audio-segment', segId: seg.id, status: 'error' }, opId) }
@@ -344,7 +352,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
           ...sc,
           segments: (sc.segments || []).map((g) => {
             const r = results.get(g.id)
-            if (r) return { ...g, status: 'done', audioPath: r.audioPath, durationMs: r.durationMs, ...(r.voiceKey != null ? { voiceKey: r.voiceKey } : {}), ...(r.sfxKey != null ? { sfxKey: r.sfxKey } : {}) }
+            if (r) return { ...g, status: 'done', audioPath: r.audioPath, durationMs: r.durationMs, ...(r.voiceKey != null ? { voiceKey: r.voiceKey } : {}), ...(r.sfxKey != null ? { sfxKey: r.sfxKey } : {}), ...(r.sourceMode != null ? { sourceMode: r.sourceMode } : {}) }
             if (errored.has(g.id)) return { ...g, status: 'error' }
             return g
           }),
@@ -361,7 +369,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // 기록(재실행 재사용 기준). sfx 등 results에 없는 세그먼트는 기존 상태 유지.
       const measured = segments.map((s) => {
         const r = results.get(s.id)
-        return { ...s, durationMs: r?.durationMs || 0, audioPath: r?.audioPath || null, status: r ? 'done' : s.status, voiceKey: r ? (r.voiceKey ?? s.voiceKey) : s.voiceKey, sfxKey: r ? (r.sfxKey ?? s.sfxKey) : s.sfxKey }
+        return { ...s, durationMs: r?.durationMs || 0, audioPath: r?.audioPath || null, status: r ? 'done' : s.status, voiceKey: r ? (r.voiceKey ?? s.voiceKey) : s.voiceKey, sfxKey: r ? (r.sfxKey ?? s.sfxKey) : s.sfxKey, sourceMode: r ? (r.sourceMode ?? s.sourceMode) : s.sourceMode }
       })
       // 3) 타임라인(startMs) + 4) SRT
       const timed = buildSegmentTimeline(measured, { gapMs: 150 })

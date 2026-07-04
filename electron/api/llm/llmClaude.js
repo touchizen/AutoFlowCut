@@ -5,7 +5,7 @@
 import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt, buildTitlePrompt, buildContinuePrompt } from './prompts.js'
 import { buildClaudeSdkOptions, extractClaudeSdkResult, bridgeAbortSignal, extractTextDelta, readStructuredResult } from './claudeSdk.js'
 import { toJsonSchema } from './toJsonSchema.js'
-import { SCENES_SCHEMA, PROMPTS_SCHEMA } from './schemas.js'
+import { SCENES_SCHEMA, PROMPTS_SCHEMA, validateScenesSegments } from './schemas.js'
 
 export const DEFAULT_MODEL = 'claude-opus-4-8'
 
@@ -150,7 +150,9 @@ async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryI
 export async function splitScenes(scriptMd, opts = {}, { signal, queryImpl } = {}) {
   const prompt = buildSplitPrompt(scriptMd, opts)
   const out = await structuredClaudeCall(prompt, SCENES_SCHEMA, opts, { signal, queryImpl })
-  return { scenes: out.scenes || [], speakers: out.speakers || [] }
+  const scenes = out.scenes || []
+  validateScenesSegments(scenes) // M2b: loose 스키마 → type별(narration/sfx) 필수 필드 검증
+  return { scenes, speakers: out.speakers || [] }
 }
 
 export async function writePrompts(scenes, context, opts = {}, { signal, queryImpl } = {}) {
