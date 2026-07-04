@@ -170,6 +170,26 @@ describe('StoryView', () => {
     await waitFor(() => expect(window.electronAPI.readFileAbsolute).toHaveBeenCalledWith({ filePath: '/x/s1-1.wav' }))
   })
 
+  // 슬라이스2/3: 화자별로 엔진(provider)을 바꿔 선택 → 그 provider+voice로 start.
+  it('화자별로 엔진(provider)을 바꿔 선택하면 그 provider+voice로 start된다', () => {
+    const p = pipeline({ scenes: [{ storyId: 's1', segments: [{ speaker: 'narrator', text: 'x' }] }] })
+    p.state.steps.script.status = 'done'
+    p.state.steps.scenes.status = 'done'
+    p.state.speakers = [{ id: 'narrator', name: '나레이션', voice: null }]
+    const voices = [
+      { id: 'tc_a', name: 'Joonkyu', language: 'ko', provider: 'typecast' },
+      { id: 'Kore', name: 'Kore', language: 'multi', provider: 'gemini' },
+    ]
+    render(<StoryView pipeline={p} voices={voices} />)
+    fireEvent.click(screen.getByRole('button', { name: '오디오' }))
+    fireEvent.change(screen.getByLabelText('나레이션 엔진'), { target: { value: 'gemini' } })
+    fireEvent.change(screen.getByLabelText('나레이션 목소리'), { target: { value: 'Kore' } })
+    fireEvent.click(screen.getByRole('button', { name: /오디오 실행/ }))
+    expect(p.start).toHaveBeenCalledWith('audio', {
+      speakers: [{ id: 'narrator', name: '나레이션', voice: { provider: 'gemini', voiceId: 'Kore' } }],
+    })
+  })
+
   // M2a-3b: 화자(state.speakers)가 없으면(빈) start('audio',{}) — 빈 speakers로 덮어쓰지 않는다.
   it('화자가 없으면 오디오 실행은 start("audio", {})로 호출한다(빈 speakers 미전달)', () => {
     const p = pipeline()

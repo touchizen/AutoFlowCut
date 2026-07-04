@@ -43,4 +43,14 @@ describe('TtsKeyTab', () => {
     fireEvent.click(screen.getByText('settings.ttsKeyRemove'))
     await waitFor(() => expect(window.electronAPI.keysDelete).toHaveBeenCalledWith({ provider: 'typecast' }))
   })
+
+  it('provider를 바꾸면 그 provider의 키로 저장한다', async () => {
+    render(<TtsKeyTab t={t} />)
+    await waitFor(() => screen.getByText('settings.ttsKeyNotSet'))
+    fireEvent.change(screen.getByLabelText('settings.ttsKeyProvider'), { target: { value: 'elevenlabs' } })
+    await waitFor(() => expect(window.electronAPI.keysStatus).toHaveBeenCalledWith({ provider: 'elevenlabs' }))
+    fireEvent.change(screen.getByPlaceholderText('settings.ttsKeyPlaceholder'), { target: { value: 'el-secret' } })
+    fireEvent.click(screen.getByText('settings.ttsKeySave'))
+    await waitFor(() => expect(window.electronAPI.keysSet).toHaveBeenCalledWith({ provider: 'elevenlabs', apiKey: 'el-secret' }))
+  })
 })

@@ -376,7 +376,10 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     mcpApiDocsHint: 'View API documentation in Swagger UI',
 
     // TTS (Typecast) key — Story audio narration synthesis (M2a-3b)
-    ttsKeyTitle: 'Typecast API Key (BYOK)',
+    ttsKeyTitle: 'TTS API Key (BYOK)',
+    ttsKeyProviderLabel: 'Engine (Provider)',
+    ttsKeyProvider: 'TTS provider',
+    ttsKeyGeminiNote: '※ Gemini TTS reuses the "API Key" (Google) above — no separate key needed.',
     ttsKeyStatusLabel: 'Status',
     ttsKeySet: '✓ Key saved',
     ttsKeyNotSet: 'No key saved',

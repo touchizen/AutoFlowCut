@@ -23,6 +23,9 @@ const PROGRESSABLE_STEPS = ['script', 'scenes', 'audio', 'prompts']
 // 세그먼트 오디오 상태 라벨 (stepMachine이 세그먼트별 status를 pending/done/error로 기록).
 const SEG_STATUS_LABEL = { pending: '대기', running: '진행 중', done: '완료', error: '오류' }
 
+// TTS provider 표시명 (화자별 엔진 드롭다운).
+const PROVIDER_LABEL = { typecast: 'Typecast', gemini: 'Gemini TTS', googletts: 'Google TTS', elevenlabs: 'ElevenLabs', polly: 'Amazon Polly' }
+
 /** 스텝 진행 중 표시 — (선택) 옵션·기준 요약 + 초시계 + 라벨 + 경과 시간(updatedAt 기준, 1초 갱신). */
 function StoryRunning({ label, startedAt, detail }) {
   return (
@@ -122,8 +125,9 @@ export default function StoryView({ pipeline, voices = [] }) {
   // 7-⑴: 스텝퍼에서 done 상태 스텝을 클릭하면 진행이 더 앞서가 있어도 해당 패널을 다시 볼 수
   // 있다 — 실행 버튼/러닝 상태 등 액션은 여전히 실제 진행 단계(currentStep) 기준으로 동작한다.
   const [viewedStep, setViewedStep] = useState(null)
-  // M2a-3b: 화자별 목소리 선택(로컬). 초기값은 state.speakers[].voice.voiceId, 사용자가 드롭다운으로 덮어씀.
+  // M2a-3b/슬라이스3: 화자별 엔진(provider)·목소리 선택(로컬). 초기값은 state.speakers[].voice.
   const [voiceBySpeaker, setVoiceBySpeaker] = useState({})
+  const [providerBySpeaker, setProviderBySpeaker] = useState({})
   // M2a-3c: 세그먼트 오디오 미리듣기(단일 재생 토글).
   const { playingFile, playAudio, stopAudio } = useAudioPlayback()
   // §1 표시 라우팅 (R3-1) — scriptPhase가 남아 있는 동안(setup/editor)은 script done이어도
@@ -199,21 +203,25 @@ export default function StoryView({ pipeline, voices = [] }) {
   // M2a-3b: 화자→목소리 매핑을 audio 스텝 params로. state.speakers가 없으면 {} (빈 speakers로
   // 덮어써 state.speakers를 지우는 것 방지 — 미배정은 backend defaultVoice 폴백). 선택 목소리는
   // 드롭다운(voiceBySpeaker) 우선, 없으면 기존 sp.voice 유지.
+  // 사용 가능한 provider 목록(voices에서 파생). 화자별 엔진 드롭다운 옵션.
+  const providerList = [...new Set(voices.map((v) => v.provider).filter(Boolean))]
+  // 화자의 현재 provider(엔진): 로컬 선택 > 기존 voice.provider > voices의 첫 provider > typecast.
+  const providerForSpeaker = (sp) =>
+    providerBySpeaker[sp.id] ?? sp.voice?.provider ?? voices[0]?.provider ?? 'typecast'
+  // 화자의 현재 voiceId: 로컬 오버라이드(빈문자열 포함) > 기존 voice(같은 provider일 때만) > ''.
+  const voiceIdForSpeaker = (sp) => {
+    if (Object.prototype.hasOwnProperty.call(voiceBySpeaker, sp.id)) return voiceBySpeaker[sp.id]
+    return sp.voice?.provider === providerForSpeaker(sp) ? (sp.voice?.voiceId ?? '') : ''
+  }
+
   const buildAudioParams = (regenerate = null) => {
     const params = {}
     const sps = state?.speakers || []
     if (sps.length) {
       params.speakers = sps.map((sp) => {
-        // Codex M2a-3: 드롭다운 오버라이드가 있으면(빈문자열 포함) 그걸 우선한다 — 빈문자열('기본 성우')은
-        // voice를 null로 비워 backend defaultVoice로 폴백. 오버라이드가 없을 때만 기존 sp.voice 유지.
-        const overridden = Object.prototype.hasOwnProperty.call(voiceBySpeaker, sp.id)
-        if (overridden) {
-          const vid = voiceBySpeaker[sp.id]
-          if (!vid) return { ...sp, voice: null }
-          const v = voices.find((x) => x.id === vid)
-          return { ...sp, voice: v ? { provider: v.provider || 'typecast', voiceId: v.id } : null }
-        }
-        return { ...sp, voice: sp.voice ?? null }
+        const vid = voiceIdForSpeaker(sp)
+        if (!vid) return { ...sp, voice: null } // '기본 성우' → backend defaultVoice 폴백
+        return { ...sp, voice: { provider: providerForSpeaker(sp), voiceId: vid } }
       })
     }
     if (regenerate?.length) params.regenerate = regenerate
@@ -672,22 +680,43 @@ export default function StoryView({ pipeline, voices = [] }) {
                 {/* M2a-3b: 화자별 목소리 매핑 — ttsListVoices로 채운 voices에서 선택. 미배정은 backend 기본 성우. */}
                 {(state?.speakers || []).length > 0 && (
                   <div className="story-voice-map">
-                    {(state.speakers || []).map((sp) => (
-                      <div key={sp.id} className="story-voice-row">
-                        <span className="story-voice-speaker">{sp.name || sp.id}</span>
-                        <select
-                          className="story-input"
-                          aria-label={t('story.audio.voiceFor', `${sp.name || sp.id} 목소리`)}
-                          value={voiceBySpeaker[sp.id] ?? sp.voice?.voiceId ?? ''}
-                          onChange={(e) => setVoiceBySpeaker((m) => ({ ...m, [sp.id]: e.target.value }))}
-                        >
-                          <option value="">{t('story.audio.voiceDefault', '기본 성우')}</option>
-                          {voices.map((v) => (
-                            <option key={v.id} value={v.id}>{v.name}{v.language ? ` (${v.language})` : ''}</option>
-                          ))}
-                        </select>
-                      </div>
-                    ))}
+                    {(state.speakers || []).map((sp) => {
+                      const provider = providerForSpeaker(sp)
+                      const providerVoices = voices.filter((v) => v.provider === provider)
+                      return (
+                        <div key={sp.id} className="story-voice-row">
+                          <span className="story-voice-speaker">{sp.name || sp.id}</span>
+                          {/* 화자별 엔진(provider) — 슬라이스3 */}
+                          {providerList.length > 0 && (
+                            <select
+                              className="story-input"
+                              aria-label={t('story.audio.engineFor', `${sp.name || sp.id} 엔진`)}
+                              value={provider}
+                              onChange={(e) => {
+                                const np = e.target.value
+                                setProviderBySpeaker((m) => ({ ...m, [sp.id]: np }))
+                                setVoiceBySpeaker((m) => ({ ...m, [sp.id]: '' })) // provider 바뀌면 목소리 초기화
+                              }}
+                            >
+                              {providerList.map((p) => (
+                                <option key={p} value={p}>{PROVIDER_LABEL[p] || p}</option>
+                              ))}
+                            </select>
+                          )}
+                          <select
+                            className="story-input"
+                            aria-label={t('story.audio.voiceFor', `${sp.name || sp.id} 목소리`)}
+                            value={voiceIdForSpeaker(sp)}
+                            onChange={(e) => setVoiceBySpeaker((m) => ({ ...m, [sp.id]: e.target.value }))}
+                          >
+                            <option value="">{t('story.audio.voiceDefault', '기본 성우')}</option>
+                            {providerVoices.map((v) => (
+                              <option key={v.id} value={v.id}>{v.name}{v.language ? ` (${v.language})` : ''}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
                 <table className="story-readonly-table">

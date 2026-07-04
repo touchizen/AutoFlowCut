@@ -488,17 +488,22 @@ function App() {
   // 발생하는 크로스 프로젝트 데이터 오염이 생긴다(Task 10 리뷰).
   useStoryAutoOpen({ activeView, projectPath: storyProjectPath, open: storyPipeline.open })
 
-  // M2a-3b: Story 오디오 화자 매핑용 성우 목록 — story 뷰 진입 시 한 번 로드(Typecast).
-  // provider 태그를 붙여 StoryView가 voice={provider,voiceId}로 speakers를 만들 수 있게 한다.
+  // Story 오디오 화자 매핑용 성우 목록 — story 뷰 진입 시 provider별로 로드해 합쳐 내려준다.
+  // 각 provider 태그를 붙여 StoryView가 화자별 엔진(provider)+목소리를 고를 수 있게 한다.
+  const TTS_PROVIDERS = ['typecast', 'gemini', 'googletts', 'elevenlabs']
   const [ttsVoices, setTtsVoices] = useState([])
   useEffect(() => {
     if (activeView !== 'story') return
     let alive = true
-    window.electronAPI?.ttsListVoices?.({ provider: 'typecast' })
-      ?.then((vs) => { if (alive && Array.isArray(vs)) setTtsVoices(vs.map((v) => ({ ...v, provider: 'typecast' }))) })
-      ?.catch(() => {})
+    Promise.all(
+      TTS_PROVIDERS.map((p) =>
+        Promise.resolve(window.electronAPI?.ttsListVoices?.({ provider: p }))
+          .then((vs) => (Array.isArray(vs) ? vs.map((v) => ({ ...v, provider: p })) : []))
+          .catch(() => []),
+      ),
+    ).then((lists) => { if (alive) setTtsVoices(lists.flat()) })
     return () => { alive = false }
-  }, [activeView])
+  }, [activeView]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Flow 프로젝트가 준비되면(컴포저 가시·settle) 모델 목록을 백그라운드로 미리 스크랩한다.
   //   이렇게 캐시해 두면 설정 모달을 열 때 느린 라이브 스크랩 없이 즉시 동적 목록이 뜬다.
