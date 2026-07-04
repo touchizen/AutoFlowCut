@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import StoryView from '../../../src/components/story/StoryView.jsx'
 
 const pipeline = (over = {}) => ({
@@ -59,6 +59,33 @@ describe('StoryView', () => {
     render(<StoryView pipeline={p} />)
     expect(screen.getByText(/옛날 옛적에/)).toBeTruthy()
   })
+  // M2a-3a: audio가 파이프라인 1급 스텝 — 씬 분리 done이면 다음 진행이 오디오 단계다.
+  it('씬 분리 done이면 "오디오 실행"이 활성화되고 start("audio")를 호출한다', () => {
+    const p = pipeline()
+    p.state.steps.script.status = 'done'
+    p.state.steps.scenes.status = 'done'
+    render(<StoryView pipeline={p} />)
+    const btn = screen.getByRole('button', { name: /오디오 실행/ })
+    fireEvent.click(btn)
+    expect(p.start).toHaveBeenCalledWith('audio', {})
+  })
+
+  // M2a-3a: 오디오 패널은 세그먼트(화자/텍스트/상태)를 렌더한다.
+  it('오디오 단계에서 세그먼트의 화자/텍스트/상태를 렌더한다', () => {
+    const p = pipeline({
+      scenes: [{ storyId: 's1', segments: [{ speaker: '나레이션', text: '어느 날', status: 'done' }] }],
+    })
+    p.state.steps.script.status = 'done'
+    p.state.steps.scenes.status = 'done'
+    const { container } = render(<StoryView pipeline={p} />)
+    fireEvent.click(screen.getByRole('button', { name: '오디오' }))  // 스텝퍼 오디오 탭(currentStep)
+    const panel = container.querySelector('.story-audio-panel')
+    expect(panel).toBeTruthy()
+    expect(within(panel).getByText('나레이션')).toBeTruthy()
+    expect(within(panel).getByText('어느 날')).toBeTruthy()
+    expect(within(panel).getByText('완료')).toBeTruthy()  // seg.status done → 완료
+  })
+
   it('script done이면 다음 단계(씬 분리) 버튼이 활성화된다', () => {
     const p = pipeline()
     p.state.steps.script.status = 'done'
@@ -137,8 +164,9 @@ describe('StoryView', () => {
     // Task 7: scriptPhase가 남아 있으므로 기본은 대본(script) 패널이다
     expect(screen.queryByText('IMG-1')).toBeNull()
 
-    // 미완료(pending) 스텝인 '오디오'는 클릭 가능한 요소가 아니다
-    expect(screen.queryByRole('button', { name: '오디오' })).toBeNull()
+    // M2a-3: '오디오'는 현재 진행 단계(currentStep)라 클릭 가능하고, 그보다 뒤인 미완료 '프롬프트'는 클릭 불가.
+    expect(screen.getByRole('button', { name: '오디오' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '프롬프트' })).toBeNull()
 
     // done 상태인 '씬 분리' 스텝 클릭 → scriptPhase 해제 + 씬 분리 패널로 전환
     fireEvent.click(screen.getByRole('button', { name: '씬 분리' }))
@@ -197,7 +225,7 @@ describe('StoryView', () => {
     const p = pipeline()
     p.state.steps.script.status = 'done'
     p.state.steps.scenes.status = 'done'
-    // currentStep=prompts(pending)
+    p.state.steps.audio.status = 'done'  // M2a-3: audio까지 done이라야 currentStep=prompts
     render(<StoryView pipeline={p} />)
     // 씬 분리(done) 탭으로 이동 → scenes 패널
     fireEvent.click(screen.getByRole('button', { name: '씬 분리' }))
@@ -212,6 +240,7 @@ describe('StoryView', () => {
     const p = pipeline()
     p.state.steps.script.status = 'done'
     p.state.steps.scenes.status = 'done'
+    p.state.steps.audio.status = 'done'  // M2a-3: audio done → prompts가 currentStep(pending)
     render(<StoryView pipeline={p} />)
     fireEvent.click(screen.getByRole('button', { name: '씬 분리' }))
     expect(screen.getByText('화자')).toBeTruthy()

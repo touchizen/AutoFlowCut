@@ -16,8 +16,11 @@ import { toast } from '../Toast'
 import StoryStepper, { STEP_META } from './StoryStepper'
 import './StoryView.css'
 
-// audio(M2)는 M1 진행 흐름에서 제외 — done 여부를 따지지 않고 건너뛴다.
-const PROGRESSABLE_STEPS = ['script', 'scenes', 'prompts']
+// M2a-3: audio가 파이프라인 1급 스텝 — script→scenes→audio→prompts 순서로 진행한다.
+const PROGRESSABLE_STEPS = ['script', 'scenes', 'audio', 'prompts']
+
+// 세그먼트 오디오 상태 라벨 (stepMachine이 세그먼트별 status를 pending/done/error로 기록).
+const SEG_STATUS_LABEL = { pending: '대기', running: '진행 중', done: '완료', error: '오류' }
 
 /** 스텝 진행 중 표시 — (선택) 옵션·기준 요약 + 초시계 + 라벨 + 경과 시간(updatedAt 기준, 1초 갱신). */
 function StoryRunning({ label, startedAt, detail }) {
@@ -603,6 +606,45 @@ export default function StoryView({ pipeline }) {
                 </table>
                 {scenes.length === 0 && (
                   <div className="story-empty-hint">{t('story.scenes.empty', '씬 분리 결과가 아직 없습니다.')}</div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {displayStep === 'audio' && (
+          <div className="story-audio-panel">
+            {steps.audio?.status === 'running' ? (
+              <StoryRunning
+                label={t('story.audio.running', '오디오 생성 중')}
+                startedAt={Date.parse(steps.audio.updatedAt)}
+              />
+            ) : (
+              <>
+                <table className="story-readonly-table">
+                  <thead>
+                    <tr>
+                      <th>{t('story.audio.no', '#')}</th>
+                      <th>{t('story.audio.speaker', '화자')}</th>
+                      <th>{t('story.audio.segment', '세그먼트')}</th>
+                      <th>{t('story.audio.status', '상태')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {scenes.flatMap((sc, si) =>
+                      (sc.segments || []).map((seg, gi) => (
+                        <tr key={`${sc.storyId ?? si}-${gi}`}>
+                          <td>{si + 1}</td>
+                          <td>{seg.speaker}</td>
+                          <td>{seg.text}</td>
+                          <td>{t(`story.status.${seg.status || 'pending'}`, SEG_STATUS_LABEL[seg.status] || SEG_STATUS_LABEL.pending)}</td>
+                        </tr>
+                      )),
+                    )}
+                  </tbody>
+                </table>
+                {scenes.length === 0 && (
+                  <div className="story-empty-hint">{t('story.audio.empty', '세그먼트가 아직 없습니다. 씬 분리를 먼저 실행하세요.')}</div>
                 )}
               </>
             )}

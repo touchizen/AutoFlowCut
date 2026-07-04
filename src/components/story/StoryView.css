@@ -40,10 +40,6 @@
   color: var(--text-color);
 }
 
-.story-step-pill.story-step-future {
-  opacity: 0.6;
-}
-
 .story-step-icon {
   font-size: 0.8rem;
 }
@@ -63,7 +59,6 @@
 .story-badge-running { background: rgba(66, 153, 225, 0.25); color: var(--primary-color); }
 .story-badge-done { background: rgba(72, 187, 120, 0.25); color: var(--success-color); }
 .story-badge-error { background: rgba(245, 101, 101, 0.25); color: var(--error-color); }
-.story-badge-future { background: rgba(160, 174, 192, 0.2); color: var(--text-secondary); }
 
 /* ── 에러 배너 ── */
 .story-error-banner {

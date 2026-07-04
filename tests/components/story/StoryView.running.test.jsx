@@ -108,6 +108,7 @@ describe('StoryView 진행 중 표시(.story-running: 초시계 + 경과시간)'
     const p = pipeline()
     p.state.steps.script = { status: 'done' }
     p.state.steps.scenes = { status: 'done' }
+    p.state.steps.audio = { status: 'done' }  // M2a-3: audio done → currentStep=prompts
     const { rerender } = render(<StoryView pipeline={p} />)
     fireEvent.click(screen.getByRole('button', { name: '프롬프트 실행' }))
     rerender(<StoryView pipeline={withRunning(p, 'prompts', 5000)} />)
