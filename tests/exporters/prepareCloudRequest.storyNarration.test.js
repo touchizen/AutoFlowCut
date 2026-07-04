@@ -61,7 +61,7 @@ describe('prepareCloudRequest — story_narration 분기', () => {
     expect(pathMap['s001-1.mp3']).toBe('/proj/story/audio/segments/s001-1.mp3')
   })
 
-  it('narration 이 아닌 세그먼트(sfx)는 story_narration 에서 제외', async () => {
+  it('narration 은 story_narration, sfx 는 sfx_timed 로 분리 배치(M2b)', async () => {
     const project = { name: 'p', scenes: [sceneBase] }
     const storyAudio = {
       manifest: manifest(2, [
@@ -71,8 +71,12 @@ describe('prepareCloudRequest — story_narration 분기', () => {
       lastPushedRevision: 2,
     }
     const { cloudRequest } = await prepareCloudRequest(project, { storyAudio })
-    expect(cloudRequest.audioTracks).toHaveLength(1)
-    expect(cloudRequest.audioTracks[0].filename).toBe('s001-1.mp3')
+    const narr = cloudRequest.audioTracks.filter((t) => t.type === 'story_narration')
+    expect(narr).toHaveLength(1)
+    expect(narr[0].filename).toBe('s001-1.mp3')
+    const sfx = cloudRequest.audioTracks.filter((t) => t.type === 'sfx_timed')
+    expect(sfx).toHaveLength(1)
+    expect(sfx[0].filename).toBe('s001-sfx.mp3')
   })
 
   it('trackIndex 없는 세그먼트는 0 으로 폴백', async () => {
@@ -104,6 +108,30 @@ describe('prepareCloudRequest — story_narration 분기', () => {
     // audioPackage.media.video(narration full mp3)가 아니라 story_narration 만 나와야
     expect(cloudRequest.audioTracks.every(t => t.type === 'story_narration')).toBe(true)
     expect(cloudRequest.audioTracks.find(t => t.filename === 'full.mp3')).toBeUndefined()
+  })
+
+  it('M2b: manifest sfx 세그먼트 → sfx_timed audioTrack (timecodeMs/durationMs/category) + audioFiles/pathMap', async () => {
+    const project = { name: 'p', scenes: [sceneBase] }
+    const storyAudio = {
+      manifest: manifest(4, [
+        narrSeg('s001-1', 0, 2000),
+        { id: 's001-2', type: 'sfx', speaker: null, audioPath: '/proj/story/audio/segments/s001-2.mp3', startMs: 2000, durationMs: 800 },
+      ]),
+      lastPushedRevision: 4,
+    }
+    const { cloudRequest, audioFiles, pathMap } = await prepareCloudRequest(project, { storyAudio })
+    const tracks = cloudRequest.audioTracks
+    // narration + sfx 각 1
+    expect(tracks.find((t) => t.type === 'story_narration' && t.filename === 's001-1.mp3')).toBeTruthy()
+    const sfx = tracks.find((t) => t.type === 'sfx_timed')
+    expect(sfx).toBeTruthy()
+    expect(sfx.filename).toBe('s001-2.mp3')
+    expect(sfx.timecodeMs).toBe(2000)
+    expect(sfx.durationMs).toBe(800)
+    expect(sfx.category).toBe('story')
+    // 파일 등록
+    expect(audioFiles.find((a) => a.type === 'sfx' && a.filename === 's001-2.mp3')).toBeTruthy()
+    expect(pathMap['s001-2.mp3']).toBe('/proj/story/audio/segments/s001-2.mp3')
   })
 
   it('배타: storyAudio 있으면 srtEntries/audioDurationSec 도 audioPackage 를 무시', async () => {

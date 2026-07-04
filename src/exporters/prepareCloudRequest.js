@@ -250,7 +250,21 @@ export async function prepareCloudRequest(project, options = {}) {
       );
     }
     for (const seg of (manifest.segments || [])) {
-      if ((seg.type || 'narration') !== 'narration') continue; // sfx 등은 M2b
+      if (!seg.audioPath) continue;
+      // M2b: sfx 세그먼트 → sfx_timed(기존 GCF 처리). category는 story 파생.
+      if (seg.type === 'sfx') {
+        const filename = getFilename(seg.audioPath, seg.id, 'sfx');
+        cloudAudioTracks.push({
+          type: 'sfx_timed',
+          filename,
+          timecodeMs: seg.startMs,
+          durationMs: seg.durationMs,
+          category: 'story',
+        });
+        audioFiles.push({ type: 'sfx', filename, path: seg.audioPath });
+        continue;
+      }
+      if ((seg.type || 'narration') !== 'narration') continue;
       const filename = getFilename(seg.audioPath, seg.id, 'narration');
       cloudAudioTracks.push({
         type: 'story_narration',
