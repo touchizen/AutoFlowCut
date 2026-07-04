@@ -13,6 +13,7 @@ import { useI18n, I18nProvider } from '../../hooks/useI18n'
 import { StopwatchIcon, ElapsedTime } from '../StopwatchIcon'
 import PromptInput from '../PromptInput'
 import { toast } from '../Toast'
+import { useAudioPlayback } from '../../hooks/useAudioPlayback'
 import StoryStepper, { STEP_META } from './StoryStepper'
 import './StoryView.css'
 
@@ -123,6 +124,8 @@ export default function StoryView({ pipeline, voices = [] }) {
   const [viewedStep, setViewedStep] = useState(null)
   // M2a-3b: 화자별 목소리 선택(로컬). 초기값은 state.speakers[].voice.voiceId, 사용자가 드롭다운으로 덮어씀.
   const [voiceBySpeaker, setVoiceBySpeaker] = useState({})
+  // M2a-3c: 세그먼트 오디오 미리듣기(단일 재생 토글).
+  const { playingFile, playAudio, stopAudio } = useAudioPlayback()
   // §1 표시 라우팅 (R3-1) — scriptPhase가 남아 있는 동안(setup/editor)은 script done이어도
   // displayStep을 'script'로 강제해 대본 작업 화면을 유지한다. 다음 스텝 실행(분리시작)이나
   // 스텝퍼에서 다른 스텝 클릭 시 scriptPhase를 벗고(null) scenes/prompts 패널로 진행.
@@ -196,17 +199,26 @@ export default function StoryView({ pipeline, voices = [] }) {
   // M2a-3b: 화자→목소리 매핑을 audio 스텝 params로. state.speakers가 없으면 {} (빈 speakers로
   // 덮어써 state.speakers를 지우는 것 방지 — 미배정은 backend defaultVoice 폴백). 선택 목소리는
   // 드롭다운(voiceBySpeaker) 우선, 없으면 기존 sp.voice 유지.
-  const buildAudioParams = () => {
+  const buildAudioParams = (regenerate = null) => {
+    const params = {}
     const sps = state?.speakers || []
-    if (!sps.length) return {}
-    return {
-      speakers: sps.map((sp) => {
+    if (sps.length) {
+      params.speakers = sps.map((sp) => {
         const vid = voiceBySpeaker[sp.id] ?? sp.voice?.voiceId ?? ''
         if (!vid) return { ...sp, voice: sp.voice ?? null }
         const v = voices.find((x) => x.id === vid)
         return { ...sp, voice: v ? { provider: v.provider || 'typecast', voiceId: v.id } : (sp.voice ?? null) }
-      }),
+      })
     }
+    if (regenerate?.length) params.regenerate = regenerate
+    return params
+  }
+
+  // M2a-3d/3c: 세그먼트 재생성(강제 re-TTS)·미리듣기.
+  const regenerateSegment = (segId) => {
+    start('audio', buildAudioParams([segId]))
+    setScriptPhase(null)
+    setViewedStep(null)
   }
 
   const handlePrimaryAction = () => {
@@ -668,6 +680,7 @@ export default function StoryView({ pipeline, voices = [] }) {
                       <th>{t('story.audio.speaker', '화자')}</th>
                       <th>{t('story.audio.segment', '세그먼트')}</th>
                       <th>{t('story.audio.status', '상태')}</th>
+                      <th>{t('story.audio.actions', '')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -678,6 +691,32 @@ export default function StoryView({ pipeline, voices = [] }) {
                           <td>{seg.speaker}</td>
                           <td>{seg.text}</td>
                           <td>{t(`story.status.${seg.status || 'pending'}`, SEG_STATUS_LABEL[seg.status] || SEG_STATUS_LABEL.pending)}</td>
+                          <td className="story-audio-actions">
+                            {/* M2a-3c 미리듣기 (오디오 있을 때) */}
+                            {seg.audioPath && (
+                              <button
+                                type="button"
+                                className="story-seg-btn"
+                                aria-label={t('story.audio.preview', `${seg.id} 미리듣기`)}
+                                onClick={() => (playingFile === seg.audioPath ? stopAudio() : playAudio(seg.audioPath))}
+                                disabled={isRunning}
+                              >
+                                {playingFile === seg.audioPath ? '⏹' : '▶'}
+                              </button>
+                            )}
+                            {/* M2a-3d 재생성 (한 번이라도 생성/실패한 세그먼트) */}
+                            {(seg.status === 'done' || seg.status === 'error') && (
+                              <button
+                                type="button"
+                                className="story-seg-btn"
+                                aria-label={t('story.audio.regenerate', `${seg.id} 재생성`)}
+                                onClick={() => regenerateSegment(seg.id)}
+                                disabled={isRunning}
+                              >
+                                ↻
+                              </button>
+                            )}
+                          </td>
                         </tr>
                       )),
                     )}

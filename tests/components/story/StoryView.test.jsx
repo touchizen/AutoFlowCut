@@ -104,6 +104,37 @@ describe('StoryView', () => {
     })
   })
 
+  // M2a-3d: 세그먼트별 "재생성" 버튼 → start('audio', { regenerate:[id], speakers }).
+  it('세그먼트 재생성 버튼은 해당 세그먼트만 regenerate로 start한다', () => {
+    const p = pipeline({
+      scenes: [{ storyId: 's1', segments: [{ id: 's1-1', speaker: 'narrator', text: '어느 날', status: 'done', audioPath: '/x/s1-1.wav' }] }],
+    })
+    p.state.steps.script.status = 'done'
+    p.state.steps.scenes.status = 'done'
+    p.state.speakers = [{ id: 'narrator', name: '나레이션', voice: { provider: 'typecast', voiceId: 'tc_a' } }]
+    render(<StoryView pipeline={p} />)
+    fireEvent.click(screen.getByRole('button', { name: '오디오' }))
+    fireEvent.click(screen.getByRole('button', { name: 's1-1 재생성' }))
+    expect(p.start).toHaveBeenCalledWith('audio', {
+      speakers: [{ id: 'narrator', name: '나레이션', voice: { provider: 'typecast', voiceId: 'tc_a' } }],
+      regenerate: ['s1-1'],
+    })
+  })
+
+  // M2a-3c: 세그먼트 미리듣기 버튼 → audioPath를 readFileAbsolute로 읽어 재생.
+  it('세그먼트 미리듣기 버튼은 audioPath를 읽어 재생한다', async () => {
+    window.electronAPI.readFileAbsolute.mockResolvedValue({ success: true, data: 'data:audio/wav;base64,AAA' })
+    const p = pipeline({
+      scenes: [{ storyId: 's1', segments: [{ id: 's1-1', speaker: 'narrator', text: '어느 날', status: 'done', audioPath: '/x/s1-1.wav' }] }],
+    })
+    p.state.steps.script.status = 'done'
+    p.state.steps.scenes.status = 'done'
+    render(<StoryView pipeline={p} />)
+    fireEvent.click(screen.getByRole('button', { name: '오디오' }))
+    fireEvent.click(screen.getByRole('button', { name: 's1-1 미리듣기' }))
+    await waitFor(() => expect(window.electronAPI.readFileAbsolute).toHaveBeenCalledWith({ filePath: '/x/s1-1.wav' }))
+  })
+
   // M2a-3b: 화자(state.speakers)가 없으면(빈) start('audio',{}) — 빈 speakers로 덮어쓰지 않는다.
   it('화자가 없으면 오디오 실행은 start("audio", {})로 호출한다(빈 speakers 미전달)', () => {
     const p = pipeline()

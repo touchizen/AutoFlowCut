@@ -62,6 +62,7 @@ export const mockElectronAPI = {
   keysSet: vi.fn(),
   keysDelete: vi.fn(),
   ttsListVoices: vi.fn(),
+  readFileAbsolute: vi.fn(),
 }
 
 export function resetElectronAPI() {
