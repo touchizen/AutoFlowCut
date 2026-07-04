@@ -27,9 +27,10 @@ export function createGoogleTtsAdapter({ getKey, fetch }) {
       const key = getKey()
       if (!key) throw new Error('No Google TTS API key')
       const languageCode = (voiceId || '').split('-').slice(0, 2).join('-') || 'ko-KR'
-      const res = await fetch(`${ENDPOINT}?key=${encodeURIComponent(key)}`, {
+      // API 키는 URL 쿼리(?key=, 로그/URL 노출) 대신 x-goog-api-key 헤더로 전달(Google 권장).
+      const res = await fetch(ENDPOINT, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
         body: JSON.stringify({ input: { text }, voice: { languageCode, name: voiceId }, audioConfig: { audioEncoding: 'MP3' } }),
         signal,
       })
