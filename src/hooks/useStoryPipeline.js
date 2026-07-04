@@ -15,6 +15,8 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
   const [streamingText, setStreamingText] = useState('')
   // Task 5: 복원/스트림된 대본 마크다운. open 응답·story:state로 동기화, projectPath 전환 시 리셋.
   const [scriptText, setScriptText] = useState('')
+  // D: audio 생성 중 세그먼트별 실시간 status(segId→'running'|'done'|'error').
+  const [segmentProgress, setSegmentProgress] = useState({})
   const tokenRef = useRef(null)
   const onPushRef = useRef(onPushScenes)
   onPushRef.current = onPushScenes
@@ -88,6 +90,13 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
           await api.storyPushAck({ projectToken: p.projectToken, operationId: p.operationId, pushRevision: p.pushRevision, ok: false, reason: String(e.message || e) })
         }
       }),
+      // D: audio 세그먼트별 실시간 진행 — segId→status로 누적해 목록이 생성 상태를 실시간 표시한다.
+      api.onStoryEvent('story:progress', (p) => {
+        if (p.projectToken !== tokenRef.current) return
+        if (p.kind === 'audio-segment' && p.segId) {
+          setSegmentProgress((m) => ({ ...m, [p.segId]: p.status }))
+        }
+      }),
     ]
     return () => offs.forEach((off) => off?.())
   }, [])
@@ -147,7 +156,7 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
   // key로 재마운트되는 StoryView가 setup + 폼 기본값으로 초기화되게 한다(effect가 다음 tick에
   // useState를 정리하기 전 한 프레임의 stale 값 유출 방지).
   if (justSwitched) {
-    return { state: null, scenes: [], streamingText, scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview }
+    return { state: null, scenes: [], streamingText, scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview, segmentProgress: {} }
   }
-  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview }
+  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, segmentProgress }
 }

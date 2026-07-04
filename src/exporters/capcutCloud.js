@@ -9,6 +9,16 @@ import { prepareCloudRequest } from './prepareCloudRequest';
 import { callExportFunction } from './callExportFunction';
 
 /**
+ * sidecar SRT 로 legacy audioPackage.srtContent(narration-aligned)를 쓸지 여부.
+ * story 프로젝트(storyAudio)면 옛 import MP3 의 SRT 가 자막으로 새지 않도록 무시하고
+ * project.srtTrack(실측 pushScenes) 기반으로 생성한다. (M2a-4 Codex finding 2)
+ */
+export function shouldUsePackageSrt(options = {}) {
+  const { audioPackage, storyAudio } = options;
+  return !storyAudio && !!audioPackage?.srtContent;
+}
+
+/**
  * Cloud Functions를 호출하여 CapCut JSON 생성
  */
 // GCF 응답 검증 — draftInfo/draftMetaInfo 는 아래에서 그대로 디스크에 쓰인다.
@@ -104,7 +114,7 @@ export async function exportCapcutPackageCloud(project, options = {}) {
   // scene 시간 기반 srtTrack 이 narration SRT 를 덮어쓰는 회귀가 있었음.
   if (subtitleOption === 'ko' || subtitleOption === 'both') {
     let srtKo;
-    if (audioPackage?.srtContent) {
+    if (shouldUsePackageSrt(options)) {
       srtKo = audioPackage.srtContent;
       console.log('[CapCut Cloud] Using narration SRT from audio package (priority)');
     } else {

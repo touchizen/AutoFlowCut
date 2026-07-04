@@ -423,6 +423,88 @@ describe('handleExportConfirm — 성공 후 refreshSubscription 호출 (P2-1)',
   })
 })
 
+describe('story 프로젝트 storyAudio 배선 (M2a-4 IP-A2)', () => {
+  const storyHook = (extra = {}) => renderHook(() =>
+    useExport({
+      settings: baseSettings,
+      scenes: baseScenes,
+      openSettings: vi.fn(),
+      isAuthenticated: true,
+      subscription: { status: 'trial', canExport: true },
+      refreshSubscription: vi.fn(),
+      onLoginRequired: vi.fn(),
+      onPaywallRequired: vi.fn(),
+      ...extra,
+    })
+  )
+
+  it('CapCut: storyProjectPath 있으면 storyLoadAudioPackage → options.storyAudio 전달', async () => {
+    const pkg = { manifest: { version: 1, pushRevision: 3, segments: [] }, lastPushedRevision: 3 }
+    window.electronAPI = { storyLoadAudioPackage: vi.fn().mockResolvedValue(pkg), openCapcut: vi.fn().mockResolvedValue() }
+    const { result } = storyHook({ storyProjectPath: '/proj' })
+
+    await act(async () => { await result.current.handleExportConfirm(baseConfirmArgs) })
+
+    expect(window.electronAPI.storyLoadAudioPackage).toHaveBeenCalledTimes(1)
+    expect(mockExportCapcut.mock.calls[0][1].storyAudio).toEqual(pkg)
+  })
+
+  it('CapCut: storyLoadAudioPackage 를 storyProjectPath 인자로 호출 (교차 프로젝트 방지)', async () => {
+    const pkg = { manifest: { version: 1, pushRevision: 1, segments: [] }, lastPushedRevision: 1 }
+    window.electronAPI = { storyLoadAudioPackage: vi.fn().mockResolvedValue(pkg), openCapcut: vi.fn().mockResolvedValue() }
+    const { result } = storyHook({ storyProjectPath: '/proj' })
+
+    await act(async () => { await result.current.handleExportConfirm(baseConfirmArgs) })
+
+    expect(window.electronAPI.storyLoadAudioPackage).toHaveBeenCalledWith('/proj')
+  })
+
+  it('CapCut: 손상 manifest 로 storyLoadAudioPackage 가 reject 하면 export 차단(fail-fast)', async () => {
+    window.electronAPI = { storyLoadAudioPackage: vi.fn().mockRejectedValue(new Error('manifest corrupt')), openCapcut: vi.fn() }
+    const { result } = storyHook({ storyProjectPath: '/proj' })
+
+    let res
+    await act(async () => { res = await result.current.handleExportConfirm(baseConfirmArgs) })
+
+    expect(mockExportCapcut).not.toHaveBeenCalled()
+    expect(res.success).toBe(false)
+    expect(mockToastError).toHaveBeenCalled()
+  })
+
+  it('CapCut: storyProjectPath 없으면 IPC 미호출 + storyAudio null', async () => {
+    window.electronAPI = { storyLoadAudioPackage: vi.fn(), openCapcut: vi.fn().mockResolvedValue() }
+    const { result } = storyHook() // storyProjectPath 없음
+
+    await act(async () => { await result.current.handleExportConfirm(baseConfirmArgs) })
+
+    expect(window.electronAPI.storyLoadAudioPackage).not.toHaveBeenCalled()
+    expect(mockExportCapcut.mock.calls[0][1].storyAudio ?? null).toBeNull()
+  })
+
+  it('Premiere: storyProjectPath 있으면 options.storyAudio 전달', async () => {
+    const pkg = { manifest: { version: 1, pushRevision: 2, segments: [] }, lastPushedRevision: 2 }
+    mockExportPremiere.mockResolvedValue({ success: true, targetPath: '/tmp/p.prproj' })
+    window.electronAPI = { storyLoadAudioPackage: vi.fn().mockResolvedValue(pkg), openPremiereProject: vi.fn().mockResolvedValue({ success: true }) }
+    const { result } = storyHook({ storyProjectPath: '/proj' })
+
+    await act(async () => { await result.current.handleExportPremiere(baseConfirmArgs) })
+
+    expect(window.electronAPI.storyLoadAudioPackage).toHaveBeenCalledTimes(1)
+    expect(mockExportPremiere.mock.calls[0][1].storyAudio).toEqual(pkg)
+  })
+
+  it('Vrew: 오디오 미배치 — storyProjectPath 있어도 storyAudio 미전달(IP-A3)', async () => {
+    mockExportVrew.mockResolvedValue({ success: true, targetPath: '/tmp/p.vrew' })
+    window.electronAPI = { storyLoadAudioPackage: vi.fn(), openVrewProject: vi.fn().mockResolvedValue({ success: true }) }
+    const { result } = storyHook({ storyProjectPath: '/proj' })
+
+    await act(async () => { await result.current.handleExportVrew(baseConfirmArgs) })
+
+    expect(window.electronAPI.storyLoadAudioPackage).not.toHaveBeenCalled()
+    expect(mockExportVrew.mock.calls[0][1].storyAudio ?? null).toBeNull()
+  })
+})
+
 describe('handleExportClick — terminal error 상태 처리 (구독 정보 로드 실패)', () => {
   // 회귀 방지: subscription.status === 'error' 이면 paywall 이 아니라
   // 에러 토스트 + refreshSubscription 재시도로 처리되어야 한다.

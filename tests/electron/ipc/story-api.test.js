@@ -4,6 +4,7 @@ import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { registerStoryIPC } from '../../../electron/ipc/story-api.js'
+import { defaultStoryState } from '../../../electron/story/storyStore.js'
 
 function fakeIpcMain() {
   const handlers = new Map()
@@ -197,6 +198,84 @@ describe('story IPC', () => {
     await ipc2.invoke('story:start', { projectToken, step: 'audio', params: {} }) // speakers 없음 — 실앱 경로
     const state = await ipc2.invoke('story:get-state', { projectToken })
     expect(state.steps.audio.status).toBe('done')
+  })
+
+  // M2a-4 IP-A2: export(renderer)가 story 나레이션 배치에 쓸 { manifest, lastPushedRevision }.
+  // guarded 아님 — export 는 projectToken 없이 현재 열린 프로젝트 것을 로드한다.
+  it('story:load-audio-package — 열린 machine의 manifest+lastPushedRevision 반환', async () => {
+    const { mkdir, writeFile } = await import('node:fs/promises')
+    await mkdir(path.join(dir, 'story', 'audio'), { recursive: true })
+    await writeFile(path.join(dir, 'story', 'audio', 'manifest.json'),
+      JSON.stringify({ version: 1, pushRevision: 2, segments: [{ id: 's1', type: 'narration', startMs: 0, durationMs: 500 }] }))
+    await writeFile(path.join(dir, 'story', 'story.json'),
+      JSON.stringify({ ...defaultStoryState(), lastPushedRevision: 2 }))
+    await ipc.invoke('story:open', { projectPath: dir })
+    const pkg = await ipc.invoke('story:load-audio-package', {})
+    expect(pkg.manifest.pushRevision).toBe(2)
+    expect(pkg.lastPushedRevision).toBe(2)
+    expect(pkg.manifest.segments).toHaveLength(1)
+  })
+
+  it('story:load-audio-package — projectPath 없고 machine 도 없으면 null', async () => {
+    const pkg = await ipc.invoke('story:load-audio-package', {})
+    expect(pkg).toBeNull()
+  })
+
+  // Codex finding 1(round3): fresh session — story view 미진입이라 machine 이 없어도 projectPath
+  // 만으로 디스크 manifest 를 읽어야 export 가 나레이션을 놓치지 않는다.
+  it('story:load-audio-package — machine 안 열려도 projectPath 로 디스크 읽기', async () => {
+    const { mkdir, writeFile } = await import('node:fs/promises')
+    await mkdir(path.join(dir, 'story', 'audio'), { recursive: true })
+    await writeFile(path.join(dir, 'story', 'audio', 'manifest.json'),
+      JSON.stringify({ version: 1, pushRevision: 4, segments: [] }))
+    await writeFile(path.join(dir, 'story', 'story.json'),
+      JSON.stringify({ ...defaultStoryState(), lastPushedRevision: 4 }))
+    // open 하지 않음(machine null)
+    const pkg = await ipc.invoke('story:load-audio-package', { projectPath: dir })
+    expect(pkg.manifest.pushRevision).toBe(4)
+    expect(pkg.lastPushedRevision).toBe(4)
+  })
+
+  // Codex finding 2(round3): projectPath 도 story:open 과 동일하게 검증한다(상대/traversal 거부).
+  it('story:load-audio-package — 상대경로/traversal 은 null', async () => {
+    expect(await ipc.invoke('story:load-audio-package', { projectPath: 'relative/path' })).toBeNull()
+    expect(await ipc.invoke('story:load-audio-package', { projectPath: `${dir}/../etc` })).toBeNull()
+  })
+
+  it('story:load-audio-package — activeWorkFolder 밖 경로는 null', async () => {
+    const { mkdir, writeFile } = await import('node:fs/promises')
+    const outside = await mkdtemp(path.join(tmpdir(), 'lap-outside-'))
+    const workFolder = await mkdtemp(path.join(tmpdir(), 'lap-work-'))
+    await mkdir(path.join(outside, 'story', 'audio'), { recursive: true })
+    await writeFile(path.join(outside, 'story', 'audio', 'manifest.json'),
+      JSON.stringify({ version: 1, pushRevision: 1, segments: [] }))
+    await writeFile(path.join(outside, 'story', 'story.json'),
+      JSON.stringify({ ...defaultStoryState(), lastPushedRevision: 1 }))
+    const ipc2 = fakeIpcMain()
+    registerStoryIPC(ipc2, {
+      keyStore: { getKey: () => 'k' },
+      getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
+      llm: { generateScript: vi.fn(), splitScenes: vi.fn(), writePrompts: vi.fn() },
+      getActiveWorkFolder: () => workFolder,
+    })
+    expect(await ipc2.invoke('story:load-audio-package', { projectPath: outside })).toBeNull()
+  })
+
+  // Codex finding 1: 요청된 projectPath 의 manifest 를 읽는다 — machine 이 다른 프로젝트로 열려
+  // 있어도 교차 주입 없이 요청 경로 것만(누락도 없음).
+  it('story:load-audio-package — 요청 projectPath 의 manifest 를 읽는다(machine 독립)', async () => {
+    const { mkdir, writeFile } = await import('node:fs/promises')
+    const other = await mkdtemp(path.join(tmpdir(), 'ipc-other-'))
+    await mkdir(path.join(other, 'story', 'audio'), { recursive: true })
+    await writeFile(path.join(other, 'story', 'audio', 'manifest.json'),
+      JSON.stringify({ version: 1, pushRevision: 7, segments: [{ id: 'x', type: 'narration', startMs: 0, durationMs: 1 }] }))
+    await writeFile(path.join(other, 'story', 'story.json'),
+      JSON.stringify({ ...defaultStoryState(), lastPushedRevision: 7 }))
+    // machine 은 dir(A) 로 열고, other(B) manifest 를 요청
+    await ipc.invoke('story:open', { projectPath: dir })
+    const pkg = await ipc.invoke('story:load-audio-package', { projectPath: other })
+    expect(pkg.manifest.pushRevision).toBe(7)
+    expect(pkg.lastPushedRevision).toBe(7)
   })
 
   it('story:push-ack(ok:false)는 operationId/reason을 버리지 않고 lastPushError로 보존한다', async () => {

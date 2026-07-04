@@ -4,7 +4,7 @@
  */
 import { stat } from 'node:fs/promises'
 import path from 'node:path'
-import { createStepMachine } from '../story/stepMachine.js'
+import { createStepMachine, readAudioPackage } from '../story/stepMachine.js'
 import * as llmGemini from '../api/llm/llmGemini.js'
 import { createTtsAdapter } from '../api/tts/index.js'
 import { getTypecastKey } from '../api/tts/typecastKey.js'
@@ -89,6 +89,21 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
   ipcMain.handle('story:abort', guarded(() => machine.abort()))
   ipcMain.handle('story:push-ack', guarded(({ operationId, pushRevision, ok, reason }) =>
     machine.ackPush({ operationId, pushRevision, ok, reason })))
+  // M2a-4 IP-A2: export(renderer)가 story 나레이션 배치에 쓸 { manifest, lastPushedRevision }.
+  // guarded 아님 — export 는 현재 열린 프로젝트를 내보내므로 projectToken 없이 그 machine 것을 로드.
+  ipcMain.handle('story:load-audio-package', async (_e, { projectPath } = {}) => {
+    // projectPath 가 오면 그 경로 디스크를 직접 읽는다 — fresh session(story view 미진입, machine
+    // 없음)에서도 동작. 경로는 story:open 과 동일하게 검증(절대/traversal/workFolder)해 임의 위치
+    // 읽기를 막는다(Codex round3). projectPath 가 없으면 열린 machine 의 프로젝트(open 시 이미 검증됨).
+    if (projectPath) {
+      if (!(await validateProjectPath(projectPath))) return null
+      const activeWorkFolder = getActiveWorkFolder()
+      if (activeWorkFolder && !isWithinWorkFolder(projectPath, activeWorkFolder)) return null
+      return readAudioPackage(projectPath)
+    }
+    if (!machine) return null
+    return machine.loadAudioPackage()
+  })
   ipcMain.handle('story:generate-title', guarded(({ scriptMd }) => machine.generateTitle(scriptMd)))
   // 슬라이스1: 세그먼트 단건 TTS 테스트(배치와 분리, 스텝 상태 미변경).
   ipcMain.handle('story:tts-preview', guarded(({ segmentIds, speakers }) => machine.synthPreview({ segmentIds, speakers })))

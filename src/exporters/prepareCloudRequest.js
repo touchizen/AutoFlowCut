@@ -92,7 +92,8 @@ export async function prepareCloudRequest(project, options = {}) {
     subtitleOption = 'both',
     subtitleFontSize = 8,
     capcutProjectNumber = '',
-    audioPackage = null
+    audioPackage = null,
+    storyAudio = null  // { manifest, lastPushedRevision } — story 나레이션(세그먼트) 배치. 있으면 audioPackage 배타 무시.
   } = options;
 
   const scenes = project.scenes || [];
@@ -237,7 +238,34 @@ export async function prepareCloudRequest(project, options = {}) {
   const cloudAudioTracks = [];
   const audioFiles = [];
 
-  if (audioPackage) {
+  if (storyAudio) {
+    // Story 나레이션(세그먼트) 배치 — audio 스텝이 써둔 manifest 를 전용 audioTrack 으로.
+    // 정합 검사(§7): manifest.pushRevision 이 확정(=lastPushedRevision)일 때만 사용. 미ack(null)/
+    // 불일치면 타이밍이 어긋나므로 export 차단(throw). 세 exporter 공유라 자동 차단됨.
+    const { manifest, lastPushedRevision } = storyAudio;
+    const pushRevision = manifest?.pushRevision;
+    if (pushRevision == null || pushRevision !== lastPushedRevision) {
+      throw new Error(
+        `story audio out of sync: manifest.pushRevision(${pushRevision}) !== lastPushedRevision(${lastPushedRevision}) — export blocked`
+      );
+    }
+    for (const seg of (manifest.segments || [])) {
+      if ((seg.type || 'narration') !== 'narration') continue; // sfx 등은 M2b
+      const filename = getFilename(seg.audioPath, seg.id, 'narration');
+      cloudAudioTracks.push({
+        type: 'story_narration',
+        filename,
+        timecodeMs: seg.startMs,
+        durationMs: seg.durationMs,
+        trackIndex: seg.trackIndex ?? 0,  // vol 은 GCF 서 1.0
+      });
+      audioFiles.push({
+        type: 'narration',
+        filename,
+        path: seg.audioPath
+      });
+    }
+  } else if (audioPackage) {
     // 원본 오디오 (나레이션 트랙)
     if (audioPackage.media?.video) {
       const mediaFilename = audioPackage.media.video.filename;
@@ -333,10 +361,12 @@ export async function prepareCloudRequest(project, options = {}) {
       // 그대로 박혀야 함. pruneSrtTrackToScenes 가 validScenes 의 used 라인만
       // 남기는 동작이 8~10번 자막 (이미지 없는 orphan scene 의 라인) 을 죽이는
       // 문제 회피.
-      srtEntries: (Array.isArray(audioPackage?.srtEntries) && audioPackage.srtEntries.length > 0)
+      // storyAudio 분기와 배타: story 면 SRT/duration 도 audioPackage 를 무시하고 project.srtTrack
+      // (실측 pushScenes 반영)만 쓴다. audioDurationSec 는 개별 클립이라 null.
+      srtEntries: (!storyAudio && Array.isArray(audioPackage?.srtEntries) && audioPackage.srtEntries.length > 0)
         ? audioPackage.srtEntries
         : (srtTrackToEntries(project.rawSrtTrack || project.srtTrack) || null),
-      audioDurationSec: audioPackage?.media?.video?.durationMs
+      audioDurationSec: (!storyAudio && audioPackage?.media?.video?.durationMs)
         ? audioPackage.media.video.durationMs / 1000
         : null,
       scenes: cloudScenes,

@@ -50,6 +50,23 @@ function assertSegmentIdsValid(scenes) {
   }
 }
 
+// M2a-4 IP-A2: export(renderer)가 story 나레이션 배치에 쓸 { manifest, lastPushedRevision }.
+// machine 인스턴스와 독립 — fresh session(story view 미진입, machine 미생성)에서도 IPC 가
+// projectPath 만으로 부를 수 있다. 경로 검증(traversal/workFolder)은 호출측 IPC 책임.
+//   - manifest 없으면(audio 미실행) null → 오디오 없이 export.
+//   - 손상(파싱 불가)이면 throw → export 차단(fail-fast, Codex finding 3).
+export async function readAudioPackage(projectPath) {
+  const store = createStoryStore(projectPath)
+  const raw = await store.loadText('audio/manifest.json')
+  if (!raw) return null
+  let manifest
+  try { manifest = JSON.parse(raw) } catch (e) {
+    throw new Error(`story audio manifest corrupt: ${e.message} — export blocked`)
+  }
+  const st = await store.load()
+  return { manifest, lastPushedRevision: st.lastPushedRevision ?? 0 }
+}
+
 export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt, tts, ttsFor, probe, defaultVoice = null }) {
   const store = createStoryStore(projectPath)
   // 화자별 엔진(슬라이스2): voice.provider별로 어댑터 선택. ttsFor 미주입(기존 단일 tts)이면 tts 사용.
@@ -260,6 +277,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         await Promise.all(batch.map(async (seg) => {
           const voice = voiceOf(seg.speaker)
           if (!voice) throw new Error(`voice not assigned for speaker: ${seg.speaker}`) // safety net — 사전 검증이 이미 막지만 방어적으로 유지
+          // D: 세그먼트별 실시간 진행 — 시작/완료/실패마다 progress emit(목록 실시간 표시용).
+          send('story:progress', { kind: 'audio-segment', segId: seg.id, status: 'running' }, opId)
           try {
             const { audio, format } = await resolveTts(voice.provider).synthesize({ text: seg.text, voiceId: voice.voiceId, emotion: seg.emotion, signal })
             if (signal?.aborted) return
@@ -267,10 +286,11 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
             await store.saveBinary(rel, audio)
             const durationMs = await probe(path.join(projectPath, 'story', rel))
             // I2: probe 실패(0)면 SRT 0ms·클립 겹침으로 조용히 붕괴 → 실패로 취급(재시도 유도).
-            if (durationMs <= 0) { errored.add(seg.id); return }
+            if (durationMs <= 0) { errored.add(seg.id); send('story:progress', { kind: 'audio-segment', segId: seg.id, status: 'error' }, opId); return }
             results.set(seg.id, { audioPath: path.join(projectPath, 'story', rel), durationMs, voiceKey: ttsVoiceKey(voice, seg.emotion) })
+            send('story:progress', { kind: 'audio-segment', segId: seg.id, status: 'done' }, opId)
           } catch (e) {
-            if (!signal?.aborted) { errored.add(seg.id); errorMsgs.set(seg.id, e?.message || String(e)) } // 개별 실패 — 사유 보존(부분재시도)
+            if (!signal?.aborted) { errored.add(seg.id); errorMsgs.set(seg.id, e?.message || String(e)); send('story:progress', { kind: 'audio-segment', segId: seg.id, status: 'error' }, opId) } // 개별 실패 — 사유 보존(부분재시도)
           }
         }))
         if (signal?.aborted) return
@@ -428,6 +448,15 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const scriptText = (await store.loadText('script.md')) || ''
       send('story:state', { state, scenes, scriptText })
       return { projectToken, state, scenes, scriptText }
+    },
+    // M2a-4 IP-A2: export(renderer)가 story 나레이션 배치에 쓸 { manifest, lastPushedRevision }.
+    // renderer 엔 둘 다 없어 main 이 실어 준다. 정합 판단(pushRevision 일치)은 renderer 몫 — 여기선
+    // raw 값만. manifest 없으면(audio 미실행) null → 오디오 없이 export.
+    // 요청된 projectPath(기본=자기) 의 디스크를 직접 읽는다. machine 이 다른 프로젝트로 열려
+    // 있어도 요청 경로 것만 반환하므로 교차 주입/누락이 없다(Codex finding 1). 실제 읽기는
+    // 모듈 함수 readAudioPackage 에 위임 — IPC 가 machine 없이도(fresh session) 부를 수 있게.
+    async loadAudioPackage(requestedProjectPath = null) {
+      return readAudioPackage(requestedProjectPath || projectPath)
     },
     async getState() {
       if (!state) state = await store.load()

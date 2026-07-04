@@ -8,13 +8,15 @@
  *
  * 인라인 편집 · autoRun 토글은 M1 범위 밖(버튼 자리만 없음, 다음 마일스톤에서 추가).
  */
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useI18n, I18nProvider } from '../../hooks/useI18n'
 import { StopwatchIcon, ElapsedTime } from '../StopwatchIcon'
 import PromptInput from '../PromptInput'
 import { toast } from '../Toast'
 import { useAudioPlayback } from '../../hooks/useAudioPlayback'
 import StoryStepper, { STEP_META } from './StoryStepper'
+import LiveTimeline from '../LiveTimeline'
+import { buildStoryAudioPackage } from '../../utils/storyAudioPackage'
 import './StoryView.css'
 
 // M2a-3: audio가 파이프라인 1급 스텝 — script→scenes→audio→prompts 순서로 진행한다.
@@ -78,10 +80,10 @@ function useHasI18n() {
   }
 }
 
-export default function StoryView({ pipeline, voices = [] }) {
+export default function StoryView({ pipeline, voices = [], onClose = null }) {
   const t = useSafeT()
   const hasI18n = useHasI18n()
-  const { state, streamingText, start, abort, scenes = [], openError, ttsPreview } = pipeline
+  const { state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {} } = pipeline
   const steps = state?.steps || {}
   const currentStep = computeCurrentStep(steps)
   const stepData = steps[currentStep] || { status: 'pending' }
@@ -200,6 +202,11 @@ export default function StoryView({ pipeline, voices = [] }) {
       ? t('story.action.generateIcon', '✨ 시작')
       : t('story.action.runIcon', '▶ 진행')
 
+  // B: audio 스텝이 done인데 오디오 탭을 보고 있으면(displayStep=audio) 하단 primary가 마지막
+  // 스텝(prompts)으로 새지 않고 "오디오 다시 생성"(audio 재실행)으로 동작한다. canReuse가 엔진/
+  // 성우 바뀐 세그먼트만 재생성하므로 전체 강제가 아니다. + '닫기'로 파이프라인을 나간다.
+  const isAudioRedo = displayStep === 'audio' && steps.audio?.status === 'done' && !isRunning
+
   // M2a-3b: 화자→목소리 매핑을 audio 스텝 params로. state.speakers가 없으면 {} (빈 speakers로
   // 덮어써 state.speakers를 지우는 것 방지 — 미배정은 backend defaultVoice 폴백). 선택 목소리는
   // 드롭다운(voiceBySpeaker) 우선, 없으면 기존 sp.voice 유지.
@@ -234,6 +241,11 @@ export default function StoryView({ pipeline, voices = [] }) {
     setScriptPhase(null)
     setViewedStep(null)
   }
+
+  // audio 타임라인 프리뷰 — story 세그먼트를 화자별 voices audioPackage로 변환해 기존 AudioTimeline
+  // (LiveTimeline)에 넘긴다(디스크 재배치 없이 메모리 변환). audio done일 때만 렌더.
+  const storyAudioPkg = useMemo(() => buildStoryAudioPackage(scenes), [scenes])
+  const hasStoryAudio = storyAudioPkg.voices.some((v) => v.files.length > 0)
 
   // 슬라이스1: 세그먼트 단건 테스트 — 배치와 분리해 그 세그먼트만 합성(화자 매핑 반영) 후 바로 재생.
   const [previewBusy, setPreviewBusy] = useState(false)
@@ -273,6 +285,12 @@ export default function StoryView({ pipeline, voices = [] }) {
       // 그 스텝에 고정돼 진행해도 화면이 안 따라온다(대기/진행 표시를 못 봄).
       setViewedStep(null)
     }
+  }
+
+  // B: 오디오 다시 생성 — audio 스텝 재실행(현재 화자 매핑 반영). canReuse가 변경/미완성 세그먼트만 재생성.
+  const handleAudioRedo = () => {
+    start('audio', buildAudioParams())
+    setViewedStep(null)
   }
 
   const handlePasteStart = () => {
@@ -676,15 +694,15 @@ export default function StoryView({ pipeline, voices = [] }) {
 
         {displayStep === 'audio' && (
           <div className="story-audio-panel">
-            {steps.audio?.status === 'running' ? (
+            {/* D: 생성 중엔 전체 진행(초시계) + 아래 세그먼트 목록을 함께 보여준다(실시간 진행). */}
+            {steps.audio?.status === 'running' && (
               <StoryRunning
                 label={t('story.audio.running', '오디오 생성 중')}
                 startedAt={Date.parse(steps.audio.updatedAt)}
               />
-            ) : (
-              <>
-                {/* M2a-3b: 화자별 목소리 매핑 — ttsListVoices로 채운 voices에서 선택. 미배정은 backend 기본 성우. */}
-                {(state?.speakers || []).length > 0 && (
+            )}
+            {/* 화자 매핑은 생성 중이 아닐 때만 노출(생성 중 변경 방지) */}
+            {steps.audio?.status !== 'running' && (state?.speakers || []).length > 0 && (
                   <div className="story-voice-map">
                     {(state.speakers || []).map((sp) => {
                       const provider = providerForSpeaker(sp)
@@ -725,6 +743,11 @@ export default function StoryView({ pipeline, voices = [] }) {
                     })}
                   </div>
                 )}
+                {steps.audio?.status === 'done' && hasStoryAudio && (
+                  <div className="story-audio-timeline">
+                    <LiveTimeline audioPackage={storyAudioPkg} scenes={[]} srtEntries={null} />
+                  </div>
+                )}
                 <table className="story-readonly-table">
                   <thead>
                     <tr>
@@ -742,7 +765,7 @@ export default function StoryView({ pipeline, voices = [] }) {
                           <td>{si + 1}</td>
                           <td>{seg.speaker}</td>
                           <td>{seg.text}</td>
-                          <td>{t(`story.status.${seg.status || 'pending'}`, SEG_STATUS_LABEL[seg.status] || SEG_STATUS_LABEL.pending)}</td>
+                          <td>{t(`story.status.${segmentProgress[seg.id] || seg.status || 'pending'}`, SEG_STATUS_LABEL[segmentProgress[seg.id] || seg.status] || SEG_STATUS_LABEL.pending)}</td>
                           <td className="story-audio-actions">
                             {/* 슬라이스1: 세그먼트 단건 테스트(배치와 분리) */}
                             <button
@@ -787,8 +810,6 @@ export default function StoryView({ pipeline, voices = [] }) {
                 {scenes.length === 0 && (
                   <div className="story-empty-hint">{t('story.audio.empty', '세그먼트가 아직 없습니다. 씬 분리를 먼저 실행하세요.')}</div>
                 )}
-              </>
-            )}
           </div>
         )}
 
@@ -840,11 +861,16 @@ export default function StoryView({ pipeline, voices = [] }) {
             <button
               type="button"
               className={`story-btn-primary ${isError ? 'story-btn-error' : ''}`}
-              onClick={handlePrimaryAction}
+              onClick={isAudioRedo ? handleAudioRedo : handlePrimaryAction}
               disabled={isRunning}
-              aria-label={actionAriaLabel}
+              aria-label={isAudioRedo ? t('story.action.audioRedo', '오디오 다시 생성') : actionAriaLabel}
             >
-              {actionVisibleLabel}
+              {isAudioRedo ? t('story.action.audioRedoIcon', '↻ 오디오 다시 생성') : actionVisibleLabel}
+            </button>
+          )}
+          {isAudioRedo && onClose && (
+            <button type="button" className="story-btn-secondary" onClick={onClose}>
+              {t('story.action.close', '닫기')}
             </button>
           )}
           {isRunning && (

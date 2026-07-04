@@ -86,6 +86,7 @@ import LiveTimeline from './components/LiveTimeline'
 import { useMonitor } from './hooks/useMonitor'
 import PreviewMonitor from './components/PreviewMonitor'
 import { getSceneTimeRangeMs } from './components/AudioTimeline/useAudioTimeline'
+import { withStoryAudio } from './utils/storyAudioPackage'
 import { hasImageData } from './utils/formatters'
 import { SubscriptionBanner } from './components/SubscriptionBanner'
 import StylePicker from './components/StylePicker'
@@ -488,6 +489,13 @@ function App() {
   // 발생하는 크로스 프로젝트 데이터 오염이 생긴다(Task 10 리뷰).
   useStoryAutoOpen({ activeView, projectPath: storyProjectPath, open: storyPipeline.open })
 
+  // 일반 생성 화면의 프리뷰(LiveTimeline)들은 메인 audioPackage만 본다 — story 프로젝트면 story
+  // 세그먼트 오디오(화자별 voices)를 얹어 프리뷰(상단/ResultsTable)에도 오디오 트랙이 보이게 한다.
+  const effectiveAudioPackage = useMemo(
+    () => withStoryAudio(audioPackage, storyPipeline.scenes || []),
+    [audioPackage, storyPipeline.scenes]
+  )
+
   // Story 오디오 화자 매핑용 성우 목록 — story 뷰 진입 시 provider별로 로드해 합쳐 내려준다.
   // 각 provider 태그를 붙여 StoryView가 화자별 엔진(provider)+목소리를 고를 수 있게 한다.
   const TTS_PROVIDERS = ['typecast', 'gemini', 'googletts', 'elevenlabs']
@@ -613,6 +621,7 @@ function App() {
   const { showExportModal, setShowExportModal, exporting, exportPhase, exportFormat, handleExportClick, handleExportConfirm, handleExportPremiere, handleExportVrew } = useExport({
     settings, scenes, srtTrack: scenesHook.srtTrack, videoScenes, framePairs, openSettings,
     audioPackage,
+    storyProjectPath,  // M2a-4: story 프로젝트면 export 시 나레이션 manifest 배치
     isAuthenticated,
     subscription,
     refreshSubscription,
@@ -2143,7 +2152,7 @@ function App() {
               <LiveTimeline
                 scenes={scenes}
                 srtEntries={resolveAudioSrtEntries(audioPackage, scenesHook.srtTrack, scenes)}
-                audioPackage={audioPackage}
+                audioPackage={effectiveAudioPackage}
                 framePairs={framePairs}
                 onSceneSelect={(scene) => setSelectedScene(scene)}
                 onVideoSelect={(item) => setSelectedVideo(item)}
@@ -2310,7 +2319,7 @@ function App() {
             {/* key={storyProjectPath}: 프로젝트 전환 시 재마운트해 StoryView 로컬 state
                 (scriptPhase/title/genre/length/... 폼)를 새 프로젝트의 pipeline 값 기준으로
                 초기화한다 — 없으면 A(editor)→B(빈) 전환에서 B가 A의 제목/옵션과 빈 editor로 열림. */}
-            <StoryView key={storyProjectPath} pipeline={storyPipeline} voices={ttsVoices} />
+            <StoryView key={storyProjectPath} pipeline={storyPipeline} voices={ttsVoices} onClose={() => setActiveView('generate')} />
           </div>
         ) : (
           <div className="story-guard">

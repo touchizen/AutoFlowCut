@@ -22,6 +22,7 @@ import { createKeyStore } from './api/keyStore.js'
 import { createMultiKeyStore } from './api/keyStoreMulti.js'
 import { createTtsAdapter } from './api/tts/index.js'
 import { getTypecastKey } from './api/tts/typecastKey.js'
+import { readCredentialsKey } from './api/tts/credentialsKey.js'
 import { registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible, updateBounds } from './ipc/layout.js'
 import { createModeController } from './ipc/mode.js'
 import { openApiSpec, getSwaggerHtml } from './api-docs.js'
@@ -215,14 +216,14 @@ const multiKeyStore = createMultiKeyStore({
 })
 // TTS 어댑터 라우팅(화자별 엔진). provider별 키 소스:
 //  - typecast: multiKeyStore 우선, 없으면 env/~/.typecast/credentials 폴백
-//  - elevenlabs/googletts: multiKeyStore
+//  - elevenlabs/googletts: multiKeyStore 우선, 없으면 env/~/.{service}/credentials 폴백
 //  - gemini: genai(Gemini) 키 재사용
 // 같은 어댑터를 story audio(합성)와 tts IPC(listVoices)가 공유(메모이즈).
 const ttsFetch = (...a) => globalThis.fetch(...a)
 const ttsKeyFor = {
   typecast: () => multiKeyStore.getKey('typecast') || getTypecastKey(),
-  elevenlabs: () => multiKeyStore.getKey('elevenlabs'),
-  googletts: () => multiKeyStore.getKey('googletts'),
+  elevenlabs: () => multiKeyStore.getKey('elevenlabs') || readCredentialsKey('elevenlabs', 'ELEVENLABS_API_KEY'),
+  googletts: () => multiKeyStore.getKey('googletts') || readCredentialsKey('googletts', 'GOOGLE_TTS_API_KEY'),
   gemini: () => genaiKeyStore.getKey(),
 }
 const ttsAdapters = {}
