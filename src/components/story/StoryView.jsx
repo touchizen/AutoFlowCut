@@ -147,16 +147,22 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
   const displayStep = (scriptPhase && !hydratedRunning)
     ? 'script'
     : (viewedStep && steps[viewedStep]?.status === 'done') ? viewedStep : currentStep
+  // 스텝퍼 active pill: 대본 패널을 설정 phase로 보고 있으면 0번 '설정' 탭이 active, 그 외엔 displayStep.
+  const stepperActive = (displayStep === 'script' && scriptPhase === 'setup') ? 'setup' : displayStep
 
   const handleStepClick = (key) => {
-    setViewedStep(key)
-    if (key === 'script') {
-      // 대본이 아직 없는(fresh/pending) 상태에서 대본 탭을 누르면 setup(제목/옵션/파일선택)을 유지한다.
-      // scriptText가 있거나 script done일 때만 editor로 복귀 — 무조건 editor면 setup이 사라지고 빈 편집기만 남는다.
-      setScriptPhase(scriptText.trim() || steps.script?.status === 'done' ? 'editor' : 'setup')
-    } else {
-      setScriptPhase(null)
+    // 0번 설정 탭 — 대본 탭과 분리된 진입 탭. 설정 폼(scriptPhase='setup')으로. displayStep이
+    // 'script'로 잡히도록 viewedStep='script'을 두고, 명시 진입이라 자동 editor 승격을 막는다.
+    if (key === 'setup') {
+      setViewedStep('script')
+      userWentToSetupRef.current = true
+      setScriptPhase('setup')
+      return
     }
+    setViewedStep(key)
+    // 대본 탭은 항상 편집기(설정은 이제 0번 탭이 담당).
+    if (key === 'script') setScriptPhase('editor')
+    else setScriptPhase(null)
   }
 
   // ① 제목/옵션 폼 — R4-2 폼 hydrate: 재오픈 시 state.input.title/options에서 복원(없으면 기본값).
@@ -385,10 +391,6 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
     setViewedStep(null) // 씬 분리 진행 시 현재 단계(scenes) 패널로 화면 이동
   }
 
-  const handleGoSetup = () => {
-    userWentToSetupRef.current = true
-    setScriptPhase('setup')
-  }
 
   // §1-A setup primary [✨ 시작] — scriptText(임포트/붙여넣기) 있으면 임포트 경로, 없고 제목 있으면
   // 대본 생성 경로. 둘 다 없으면 버튼 자체가 disabled(아래)이므로 여기 도달하지 않는다.
@@ -443,7 +445,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
 
   return (
     <div className="story-view">
-      <StoryStepper steps={steps} currentStep={currentStep} activeStep={displayStep} t={t} onStepClick={handleStepClick} />
+      <StoryStepper steps={steps} currentStep={currentStep} activeStep={stepperActive} t={t} onStepClick={handleStepClick} />
 
       {openError && (
         <div className="story-open-error-banner" role="alert">
@@ -506,9 +508,6 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
                         disabled={!scriptText.trim()}
                       >
                         {t('story.action.split', '분리시작')}
-                      </button>
-                      <button type="button" className="story-btn-secondary" onClick={handleGoSetup}>
-                        {t('story.action.toSetup', '⚙ 설정으로')}
                       </button>
                     </>
                   )}

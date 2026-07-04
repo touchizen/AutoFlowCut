@@ -40,6 +40,18 @@
   color: var(--text-color);
 }
 
+.story-step-clickable {
+  cursor: pointer;
+}
+
+/* 0번 설정 탭 — 상태 배지가 없는 진입 탭(대본 앞). 살짝 구분되게 점선 테두리. */
+.story-step-setup {
+  border-style: dashed;
+}
+.story-step-setup.active {
+  border-style: solid;
+}
+
 .story-step-icon {
   font-size: 0.8rem;
 }

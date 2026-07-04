@@ -8,6 +8,10 @@
  */
 export const STEP_ORDER = ['script', 'scenes', 'audio', 'prompts']
 
+// 설정(setup)은 실행 스텝이 아니라 진입 탭 — 상태 배지 없이 스텝퍼 맨 앞(0번)에 둔다.
+export const SETUP_KEY = 'setup'
+export const SETUP_META = { icon: '0', label: '설정' }
+
 export const STEP_META = {
   script: { icon: '①', label: '대본' },
   scenes: { icon: '②', label: '씬 분리' },
@@ -21,8 +25,28 @@ export default function StoryStepper({ steps, currentStep, activeStep, t = (key,
   // active(파란색)는 사용자가 보고 있는 스텝(activeStep=displayStep)을 따른다 — 클릭한 탭이 active.
   // 미지정이면 currentStep 폴백(하위호환).
   const activeKey = activeStep ?? currentStep
+  const setupClickable = typeof onStepClick === 'function'
+  const setupLabel = t(`story.step.${SETUP_KEY}`, SETUP_META.label)
   return (
     <div className="story-stepper">
+      {/* 0번 설정 탭 — 실행 스텝이 아니라 진입 탭이라 상태 배지 없음, 항상 클릭 가능. */}
+      <div
+        key={SETUP_KEY}
+        role={setupClickable ? 'button' : undefined}
+        tabIndex={setupClickable ? 0 : undefined}
+        aria-label={setupClickable ? setupLabel : undefined}
+        onClick={setupClickable ? () => onStepClick(SETUP_KEY) : undefined}
+        onKeyDown={setupClickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') onStepClick(SETUP_KEY) } : undefined}
+        className={[
+          'story-step-pill',
+          'story-step-setup',
+          SETUP_KEY === activeKey ? 'active' : '',
+          setupClickable ? 'story-step-clickable' : '',
+        ].filter(Boolean).join(' ')}
+      >
+        <span className="story-step-icon">{SETUP_META.icon}</span>
+        <span className="story-step-name">{setupLabel}</span>
+      </div>
       {STEP_ORDER.map((key) => {
         const meta = STEP_META[key]
         const status = steps?.[key]?.status || 'pending'

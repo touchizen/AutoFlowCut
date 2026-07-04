@@ -27,12 +27,12 @@ const defaultOptions = {
 }
 
 describe('StoryView editor 버튼 상태 (§1.B)', () => {
-  it('대기 상태: [다시쓰기][이어쓰기][분리시작][설정으로] 4버튼, 중단 없음', () => {
+  it('대기 상태: [다시쓰기][이어쓰기][분리시작] 3버튼(설정으로는 0번 설정 탭으로 대체), 중단 없음', () => {
     render(<StoryView pipeline={pipeline()} />)
     expect(screen.getByRole('button', { name: '다시쓰기' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '이어쓰기' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '분리시작' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /설정으로/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /설정으로/ })).toBeNull()
     expect(screen.queryByRole('button', { name: /중단/ })).toBeNull()
   })
 
@@ -49,7 +49,7 @@ describe('StoryView editor 버튼 상태 (§1.B)', () => {
     expect(p.abort).toHaveBeenCalled()
   })
 
-  it('scriptText가 공백뿐이면 [다시쓰기][이어쓰기][분리시작] 비활성, [설정으로]는 활성 (R4-1)', () => {
+  it('scriptText가 공백뿐이면 [다시쓰기][이어쓰기][분리시작] 비활성 (R4-1)', () => {
     // 대본 없이 제목으로 시작 직후(아직 대본 커밋 전)의 editor 상태 — 빈 대본 가드.
     const p = pipeline({ scriptText: '' })
     render(<StoryView pipeline={p} />)
@@ -59,12 +59,11 @@ describe('StoryView editor 버튼 상태 (§1.B)', () => {
     expect(screen.getByRole('button', { name: '다시쓰기' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '이어쓰기' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '분리시작' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: /설정으로/ })).toBeEnabled()
   })
 
-  it('[설정으로] 클릭 → setup 화면으로, scriptText는 유지된다', () => {
+  it('0번 설정 탭 클릭 → setup 화면으로, scriptText는 유지된다', () => {
     render(<StoryView pipeline={pipeline()} />)
-    fireEvent.click(screen.getByRole('button', { name: /설정으로/ }))
+    fireEvent.click(screen.getByRole('button', { name: '설정' }))
     expect(screen.getByTestId('story-setup')).toBeInTheDocument()
     // setup의 붙여넣기 textarea에 기존 대본 유지
     expect(screen.getByPlaceholderText(/붙여넣/)).toHaveValue('대본 본문')
@@ -99,8 +98,8 @@ describe('StoryView 다시쓰기 (§2/§3/§5)', () => {
       options: defaultOptions,
     }))
     expect(p.generateTitle).toHaveBeenCalledWith('대본 본문')
-    // 제목 state에도 반영 — 설정 화면에서 확인
-    fireEvent.click(screen.getByRole('button', { name: /설정으로/ }))
+    // 제목 state에도 반영 — 0번 설정 탭에서 확인
+    fireEvent.click(screen.getByRole('button', { name: '설정' }))
     expect(screen.getByPlaceholderText('제목')).toHaveValue('자동 제목')
   })
 
@@ -199,9 +198,9 @@ describe('StoryView 재오픈 phase 승격 (Task 7 인계)', () => {
     expect(screen.queryByTestId('story-setup')).toBeNull()
   })
 
-  it('사용자가 [설정으로]로 명시적으로 setup에 온 경우에는 승격하지 않는다', () => {
+  it('사용자가 0번 설정 탭으로 명시적으로 setup에 온 경우에는 승격하지 않는다', () => {
     const { rerender } = render(<StoryView pipeline={pipeline({ scriptText: '대본 v1' })} />)
-    fireEvent.click(screen.getByRole('button', { name: /설정으로/ }))
+    fireEvent.click(screen.getByRole('button', { name: '설정' }))
     expect(screen.getByTestId('story-setup')).toBeInTheDocument()
     // 뒤늦은 커밋으로 pipeline.scriptText가 바뀌어도 setup 유지
     rerender(<StoryView pipeline={pipeline({ scriptText: '대본 v2' })} />)

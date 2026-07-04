@@ -391,10 +391,16 @@ describe('StoryView', () => {
 
   // F2(Codex): 새 프로젝트(대본 대기)에서 '대본' 탭이 currentStep이라 클릭 가능해졌는데,
   // 클릭 시 무조건 editor로 보내면 제목/옵션/파일선택 setup이 사라지고 빈 editor만 남는 회귀.
-  it('대본 대기(fresh) 상태에서 대본 탭을 눌러도 setup 화면이 유지된다(빈 editor로 안 감)', () => {
+  it('대본 대기(fresh) 상태: 처음엔 설정 폼, 대본 탭 클릭 → editor / 설정 탭 클릭 → setup', () => {
     const p = pipeline() // script pending, scriptText 없음
     render(<StoryView pipeline={p} />)
+    // fresh 초기: 0번 설정 폼
+    expect(screen.getByTestId('story-setup')).toBeTruthy()
+    // 대본 탭은 이제 항상 editor(설정은 0번 탭이 담당)
     fireEvent.click(screen.getByRole('button', { name: '대본' }))
+    expect(screen.getByTestId('story-editor')).toBeTruthy()
+    // 설정 탭으로 다시 설정 폼
+    fireEvent.click(screen.getByRole('button', { name: '설정' }))
     expect(screen.getByTestId('story-setup')).toBeTruthy()
     expect(screen.queryByTestId('story-editor')).toBeNull()
   })
