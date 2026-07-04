@@ -515,7 +515,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     },
     // 슬라이스1(세그먼트 단건 테스트): 지정 세그먼트만 합성·저장하고 스텝 상태·push·regroup은
     // 건드리지 않는다. 배치(start('audio'))와 분리된 미리듣기/테스트 경로. 저장 오디오는 배치가 재사용.
-    async synthPreview({ segmentIds = [], speakers } = {}) {
+    async synthPreview({ segmentIds = [], speakers, sfxSources } = {}) {
       // Codex-TTS HIGH2: preview는 스텝 밖 mutation이라 배치/다른 preview와 경쟁하면 scenes.json을
       // 옛 스냅샷으로 덮어쓸 수 있다 — 진행 중 스텝/preview가 있으면 거부하고, 커밋 직전 최신
       // scenes.json에 세그먼트 단위로 병합한다.
@@ -528,9 +528,10 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         const ids = new Set(segmentIds)
         const spks = speakers || state?.speakers || []
         const voiceOf = (spk) => (spks.find((s) => s.id === spk)?.voice) || defaultVoice || null
-        const targets = scenesJson.scenes
-          .flatMap((sc) => sc.segments || [])
-          .filter((s) => ids.has(s.id) && (s.type || 'narration') === 'narration')
+        const allTargets = scenesJson.scenes.flatMap((sc) => sc.segments || []).filter((s) => ids.has(s.id))
+        const targets = allTargets.filter((s) => (s.type || 'narration') === 'narration')
+        // M2b: sfx 세그먼트도 단건 테스트(배치 audio와 동일 계약 — sfxFor로 생성, sfxKey/sourceMode 영속).
+        const sfxTargets = sfxFor ? allTargets.filter((s) => s.type === 'sfx') : []
         const results = new Map()
         for (const seg of targets) {
           const voice = voiceOf(seg.speaker)
@@ -542,13 +543,30 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
           if (durationMs <= 0) throw new Error(`audio measurement failed for segment ${seg.id}`)
           results.set(seg.id, { audioPath: path.join(projectPath, 'story', rel), durationMs, voiceKey: ttsVoiceKey(voice, seg.emotion) })
         }
+        for (const seg of sfxTargets) {
+          // 배치 audio 스텝과 동일한 소스 해석/지문(reuse가 배치와 호환되도록).
+          const source = sfxSources?.[seg.id] || seg.sourceMode || 'elevenlabs'
+          const sfxKey = `${source}:${seg.description || ''}:${seg.durationHint ?? 'auto'}`
+          const { audio, format } = await sfxFor(source).generate({ description: seg.description, durationSeconds: seg.durationHint ?? null })
+          const rel = `audio/segments/${seg.id}.${format}`
+          await store.saveBinary(rel, audio)
+          const durationMs = await probe(path.join(projectPath, 'story', rel))
+          if (durationMs <= 0) throw new Error(`audio measurement failed for segment ${seg.id}`)
+          results.set(seg.id, { audioPath: path.join(projectPath, 'story', rel), durationMs, sfxKey, sourceMode: source })
+        }
         // 커밋 직전 최신 scenes.json 재로드 후 세그먼트 단위 병합(동시 변경 클로버 방지, 재그룹 없음).
         const latest = JSON.parse((await store.loadText('scenes.json')) || 'null') || scenesJson
         const updated = latest.scenes.map((sc) => ({
           ...sc,
           segments: (sc.segments || []).map((g) => {
             const r = results.get(g.id)
-            return r ? { ...g, status: 'done', audioPath: r.audioPath, durationMs: r.durationMs, voiceKey: r.voiceKey } : g
+            if (!r) return g
+            return {
+              ...g, status: 'done', audioPath: r.audioPath, durationMs: r.durationMs,
+              ...(r.voiceKey != null ? { voiceKey: r.voiceKey } : {}),
+              ...(r.sfxKey != null ? { sfxKey: r.sfxKey } : {}),
+              ...(r.sourceMode != null ? { sourceMode: r.sourceMode } : {}),
+            }
           }),
         }))
         await store.saveText('scenes.json', JSON.stringify({ scenes: updated }, null, 2))

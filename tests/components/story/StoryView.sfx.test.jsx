@@ -95,4 +95,13 @@ describe('StoryView M2b-5 — sfx 세그먼트 표시/소스선택', () => {
     renderAudio(p)
     expect(screen.getByTestId('lt')).toBeTruthy()
   })
+
+  it('sfx 행에도 테스트 버튼이 있고, 선택 소스를 sfxSources로 ttsPreview에 전달', async () => {
+    const ttsPreview = vi.fn().mockResolvedValue({ segments: [] })
+    renderAudio(pipeline({ ttsPreview }))
+    const row = sfxRow()
+    fireEvent.change(within(row).getByRole('combobox'), { target: { value: 'library' } })
+    fireEvent.click(within(row).getByRole('button', { name: /테스트/ }))
+    expect(ttsPreview).toHaveBeenCalledWith(expect.objectContaining({ segmentIds: ['s2'], sfxSources: { s2: 'library' } }))
+  })
 })

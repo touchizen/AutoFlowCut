@@ -2,7 +2,7 @@
 // 슬라이스1(세그먼트 단건 테스트): synthPreview는 지정 세그먼트만 합성·저장하고 스텝 상태·push를
 // 건드리지 않는다. 배치(start('audio'))와 분리된 테스트용 경로. 저장된 오디오는 배치가 재사용(IP5-a).
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createStepMachine } from '../../../electron/story/stepMachine.js'
@@ -66,5 +66,45 @@ describe('synthPreview (세그먼트 단건 테스트)', () => {
     const r2 = await machine.synthPreview({ segmentIds: [target], speakers: spk })
     expect(r2.busy).toBe(true)
     await p1 // 정상 종료
+  })
+})
+
+describe('synthPreview — sfx 단건 테스트(M2b)', () => {
+  it('sfx 세그먼트를 sfxFor로 생성·저장하고 sourceMode/sfxKey를 영속(배치 reuse 가능)', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'sm-preview-sfx-'))
+    const sfxCalls = []
+    const sfxFor = (provider) => ({
+      capabilities: () => ({ maxConcurrency: 2 }),
+      generate: async ({ description, durationSeconds }) => { sfxCalls.push({ provider, description, durationSeconds }); return { audio: Buffer.from('SFX:' + description), format: 'mp3' } },
+    })
+    const machine = createStepMachine({ projectPath: dir, llm: {}, tts: {}, sfxFor, probe: async () => 1500, emit: () => {}, getApiKey: () => 'k' })
+    await mkdir(path.join(dir, 'story'), { recursive: true })
+    await writeFile(path.join(dir, 'story', 'scenes.json'), JSON.stringify({ scenes: [{ segments: [{ id: 's2', type: 'sfx', description: 'thunder' }] }] }))
+    await machine.open()
+
+    const r = await machine.synthPreview({ segmentIds: ['s2'], sfxSources: { s2: 'library' } })
+    expect(r.ok).toBe(true)
+    expect(sfxCalls).toEqual([{ provider: 'library', description: 'thunder', durationSeconds: null }])
+    // 파일 저장 + description으로 생성
+    const s2 = await readFile(path.join(dir, 'story', 'audio', 'segments', 's2.mp3'))
+    expect(s2.toString()).toBe('SFX:thunder')
+    // scenes.json에 status/sourceMode/sfxKey 영속
+    const seg = JSON.parse(await readFile(path.join(dir, 'story', 'scenes.json'), 'utf8')).scenes[0].segments[0]
+    expect(seg.status).toBe('done')
+    expect(seg.durationMs).toBe(1500)
+    expect(seg.sourceMode).toBe('library')
+    expect(seg.sfxKey).toBe('library:thunder:auto')
+  })
+
+  it('sfxSources 없으면 기본 elevenlabs로 생성', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'sm-preview-sfx2-'))
+    const sfxCalls = []
+    const sfxFor = (provider) => ({ generate: async ({ description }) => { sfxCalls.push({ provider, description }); return { audio: Buffer.from('x'), format: 'mp3' } } })
+    const machine = createStepMachine({ projectPath: dir, llm: {}, tts: {}, sfxFor, probe: async () => 1000, emit: () => {}, getApiKey: () => 'k' })
+    await mkdir(path.join(dir, 'story'), { recursive: true })
+    await writeFile(path.join(dir, 'story', 'scenes.json'), JSON.stringify({ scenes: [{ segments: [{ id: 's2', type: 'sfx', description: '문소리' }] }] }))
+    await machine.open()
+    await machine.synthPreview({ segmentIds: ['s2'] })
+    expect(sfxCalls[0].provider).toBe('elevenlabs')
   })
 })

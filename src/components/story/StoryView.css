@@ -346,6 +346,21 @@
 .story-sfx-desc {
   font-style: italic;
   opacity: 0.85;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* 소스 드롭다운은 내용 폭만 차지(자리 최소화) */
+.story-sfx-source {
+  flex: 0 0 auto;
+  width: auto;
+  max-width: 120px;
+  padding: 2px 6px;
+  font-size: 0.85em;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  background: var(--bg-color);
+  color: var(--text-color);
+  font-family: var(--font-family);
 }
 .story-seg-btn {
   background: var(--border-color);
