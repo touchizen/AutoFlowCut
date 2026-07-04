@@ -74,7 +74,7 @@ function useHasI18n() {
   }
 }
 
-export default function StoryView({ pipeline }) {
+export default function StoryView({ pipeline, voices = [] }) {
   const t = useSafeT()
   const hasI18n = useHasI18n()
   const { state, streamingText, start, abort, scenes = [], openError } = pipeline
@@ -121,6 +121,8 @@ export default function StoryView({ pipeline }) {
   // 7-⑴: 스텝퍼에서 done 상태 스텝을 클릭하면 진행이 더 앞서가 있어도 해당 패널을 다시 볼 수
   // 있다 — 실행 버튼/러닝 상태 등 액션은 여전히 실제 진행 단계(currentStep) 기준으로 동작한다.
   const [viewedStep, setViewedStep] = useState(null)
+  // M2a-3b: 화자별 목소리 선택(로컬). 초기값은 state.speakers[].voice.voiceId, 사용자가 드롭다운으로 덮어씀.
+  const [voiceBySpeaker, setVoiceBySpeaker] = useState({})
   // §1 표시 라우팅 (R3-1) — scriptPhase가 남아 있는 동안(setup/editor)은 script done이어도
   // displayStep을 'script'로 강제해 대본 작업 화면을 유지한다. 다음 스텝 실행(분리시작)이나
   // 스텝퍼에서 다른 스텝 클릭 시 scriptPhase를 벗고(null) scenes/prompts 패널로 진행.
@@ -191,6 +193,22 @@ export default function StoryView({ pipeline }) {
       ? t('story.action.generateIcon', '✨ 시작')
       : t('story.action.runIcon', '▶ 진행')
 
+  // M2a-3b: 화자→목소리 매핑을 audio 스텝 params로. state.speakers가 없으면 {} (빈 speakers로
+  // 덮어써 state.speakers를 지우는 것 방지 — 미배정은 backend defaultVoice 폴백). 선택 목소리는
+  // 드롭다운(voiceBySpeaker) 우선, 없으면 기존 sp.voice 유지.
+  const buildAudioParams = () => {
+    const sps = state?.speakers || []
+    if (!sps.length) return {}
+    return {
+      speakers: sps.map((sp) => {
+        const vid = voiceBySpeaker[sp.id] ?? sp.voice?.voiceId ?? ''
+        if (!vid) return { ...sp, voice: sp.voice ?? null }
+        const v = voices.find((x) => x.id === vid)
+        return { ...sp, voice: v ? { provider: v.provider || 'typecast', voiceId: v.id } : (sp.voice ?? null) }
+      }),
+    }
+  }
+
   const handlePrimaryAction = () => {
     if (currentStep === 'script') {
       // stepMachine.steps.script는 params.input(대본 생성 소재)과 params.options(LLM 호출
@@ -204,7 +222,8 @@ export default function StoryView({ pipeline }) {
       // §1 전환 — '시작' 명시 트리거로 대본 작업 화면(editor)에 진입.
       setScriptPhase('editor')
     } else {
-      start(currentStep, {})
+      // M2a-3b: audio는 화자→목소리 매핑을 실어 보낸다(그 외 스텝은 params 없음).
+      start(currentStep, currentStep === 'audio' ? buildAudioParams() : {})
       // §1 — 다음 스텝(분리시작 등)을 실행하면 scriptPhase를 벗고 스텝퍼가 진행한다.
       setScriptPhase(null)
       // 진행 액션은 현재 단계로 화면을 되돌린다 — done 스텝을 보던 중이면 viewedStep이
@@ -621,6 +640,27 @@ export default function StoryView({ pipeline }) {
               />
             ) : (
               <>
+                {/* M2a-3b: 화자별 목소리 매핑 — ttsListVoices로 채운 voices에서 선택. 미배정은 backend 기본 성우. */}
+                {(state?.speakers || []).length > 0 && (
+                  <div className="story-voice-map">
+                    {(state.speakers || []).map((sp) => (
+                      <div key={sp.id} className="story-voice-row">
+                        <span className="story-voice-speaker">{sp.name || sp.id}</span>
+                        <select
+                          className="story-input"
+                          aria-label={t('story.audio.voiceFor', `${sp.name || sp.id} 목소리`)}
+                          value={voiceBySpeaker[sp.id] ?? sp.voice?.voiceId ?? ''}
+                          onChange={(e) => setVoiceBySpeaker((m) => ({ ...m, [sp.id]: e.target.value }))}
+                        >
+                          <option value="">{t('story.audio.voiceDefault', '기본 성우')}</option>
+                          {voices.map((v) => (
+                            <option key={v.id} value={v.id}>{v.name}{v.language ? ` (${v.language})` : ''}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <table className="story-readonly-table">
                   <thead>
                     <tr>

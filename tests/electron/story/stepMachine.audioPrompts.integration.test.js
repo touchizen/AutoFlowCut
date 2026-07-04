@@ -175,12 +175,10 @@ describe('audio → prompts 통합 (C2: sceneNo/summary 보존)', () => {
     await machine.start('scenes', {})
     await machine.start('audio', { speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }] })
 
-    let release
-    llm.writePrompts = vi.fn(() => new Promise((res) => { release = () => res({ scenes: [] }) }))
-    const p = machine.start('prompts', {})
-    await machine.abort()   // in-flight prompts 취소
-    release()               // writePrompts는 abort 후 resolve
-    await p
+    // 결정론적: writePrompts 안에서 abort를 호출해 스텝 진행 중 signal이 확실히 aborted되게 한다
+    // (deferred+외부 abort 타이밍 경쟁 회피). 이후 스텝의 signal.aborted 가드가 manifest 재스탬프를 막는다.
+    llm.writePrompts = vi.fn(async () => { await machine.abort(); return { scenes: [] } })
+    await machine.start('prompts', {})
 
     const manifest = JSON.parse(await readFile(path.join(dir, 'story/audio/manifest.json'), 'utf8'))
     expect(manifest.pushRevision).toBeNull()

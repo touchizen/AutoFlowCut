@@ -488,6 +488,18 @@ function App() {
   // 발생하는 크로스 프로젝트 데이터 오염이 생긴다(Task 10 리뷰).
   useStoryAutoOpen({ activeView, projectPath: storyProjectPath, open: storyPipeline.open })
 
+  // M2a-3b: Story 오디오 화자 매핑용 성우 목록 — story 뷰 진입 시 한 번 로드(Typecast).
+  // provider 태그를 붙여 StoryView가 voice={provider,voiceId}로 speakers를 만들 수 있게 한다.
+  const [ttsVoices, setTtsVoices] = useState([])
+  useEffect(() => {
+    if (activeView !== 'story') return
+    let alive = true
+    window.electronAPI?.ttsListVoices?.({ provider: 'typecast' })
+      ?.then((vs) => { if (alive && Array.isArray(vs)) setTtsVoices(vs.map((v) => ({ ...v, provider: 'typecast' }))) })
+      ?.catch(() => {})
+    return () => { alive = false }
+  }, [activeView])
+
   // Flow 프로젝트가 준비되면(컴포저 가시·settle) 모델 목록을 백그라운드로 미리 스크랩한다.
   //   이렇게 캐시해 두면 설정 모달을 열 때 느린 라이브 스크랩 없이 즉시 동적 목록이 뜬다.
   //   아직 dynamic 을 못 받았을 때만 — 이미 받았으면 반복 스크랩 생략.
@@ -2293,7 +2305,7 @@ function App() {
             {/* key={storyProjectPath}: 프로젝트 전환 시 재마운트해 StoryView 로컬 state
                 (scriptPhase/title/genre/length/... 폼)를 새 프로젝트의 pipeline 값 기준으로
                 초기화한다 — 없으면 A(editor)→B(빈) 전환에서 B가 A의 제목/옵션과 빈 editor로 열림. */}
-            <StoryView key={storyProjectPath} pipeline={storyPipeline} />
+            <StoryView key={storyProjectPath} pipeline={storyPipeline} voices={ttsVoices} />
           </div>
         ) : (
           <div className="story-guard">

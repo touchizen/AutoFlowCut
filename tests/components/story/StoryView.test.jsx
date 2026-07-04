@@ -86,6 +86,34 @@ describe('StoryView', () => {
     expect(within(panel).getByText('완료')).toBeTruthy()  // seg.status done → 완료
   })
 
+  // M2a-3b: audio 패널에서 화자별 목소리를 선택하면 speakers가 start('audio')에 실린다.
+  it('화자별 목소리를 선택해 오디오 실행하면 speakers가 start("audio")에 전달된다', () => {
+    const p = pipeline({
+      scenes: [{ storyId: 's1', segments: [{ speaker: 'narrator', text: '어느 날', status: 'pending' }] }],
+    })
+    p.state.steps.script.status = 'done'
+    p.state.steps.scenes.status = 'done'
+    p.state.speakers = [{ id: 'narrator', name: '나레이션', voice: null }]
+    const voices = [{ id: 'tc_joon', name: 'Joonkyu', language: 'ko', provider: 'typecast' }]
+    render(<StoryView pipeline={p} voices={voices} />)
+    fireEvent.click(screen.getByRole('button', { name: '오디오' }))  // audio 패널로
+    fireEvent.change(screen.getByLabelText('나레이션 목소리'), { target: { value: 'tc_joon' } })
+    fireEvent.click(screen.getByRole('button', { name: /오디오 실행/ }))
+    expect(p.start).toHaveBeenCalledWith('audio', {
+      speakers: [{ id: 'narrator', name: '나레이션', voice: { provider: 'typecast', voiceId: 'tc_joon' } }],
+    })
+  })
+
+  // M2a-3b: 화자(state.speakers)가 없으면(빈) start('audio',{}) — 빈 speakers로 덮어쓰지 않는다.
+  it('화자가 없으면 오디오 실행은 start("audio", {})로 호출한다(빈 speakers 미전달)', () => {
+    const p = pipeline()
+    p.state.steps.script.status = 'done'
+    p.state.steps.scenes.status = 'done'
+    render(<StoryView pipeline={p} />)
+    fireEvent.click(screen.getByRole('button', { name: /오디오 실행/ }))
+    expect(p.start).toHaveBeenCalledWith('audio', {})
+  })
+
   it('script done이면 다음 단계(씬 분리) 버튼이 활성화된다', () => {
     const p = pipeline()
     p.state.steps.script.status = 'done'

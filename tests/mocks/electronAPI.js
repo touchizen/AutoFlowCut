@@ -56,6 +56,12 @@ export const mockElectronAPI = {
   genaiGenerateVideo: vi.fn(),
   genaiCheckVideoStatus: vi.fn(),
   genaiDownloadVideo: vi.fn(),
+
+  // TTS provider keys + voices (M2a-3b)
+  keysStatus: vi.fn(),
+  keysSet: vi.fn(),
+  keysDelete: vi.fn(),
+  ttsListVoices: vi.fn(),
 }
 
 export function resetElectronAPI() {

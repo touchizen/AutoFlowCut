@@ -308,3 +308,21 @@
   color: var(--text-color);
   cursor: pointer;
 }
+
+/* ── 오디오 화자→목소리 매핑 (M2a-3b) ── */
+.story-voice-map {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.story-voice-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.story-voice-speaker {
+  min-width: 96px;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
