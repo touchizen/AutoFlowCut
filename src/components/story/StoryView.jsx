@@ -24,7 +24,7 @@ const PROGRESSABLE_STEPS = ['script', 'scenes', 'audio', 'prompts']
 const SEG_STATUS_LABEL = { pending: '대기', running: '진행 중', done: '완료', error: '오류' }
 
 // TTS provider 표시명 (화자별 엔진 드롭다운).
-const PROVIDER_LABEL = { typecast: 'Typecast', gemini: 'Gemini TTS', googletts: 'Google TTS', elevenlabs: 'ElevenLabs', polly: 'Amazon Polly' }
+const PROVIDER_LABEL = { typecast: 'Typecast', gemini: 'Gemini TTS', googletts: 'Google TTS', elevenlabs: 'ElevenLabs' }
 
 /** 스텝 진행 중 표시 — (선택) 옵션·기준 요약 + 초시계 + 라벨 + 경과 시간(updatedAt 기준, 1초 갱신). */
 function StoryRunning({ label, startedAt, detail }) {
