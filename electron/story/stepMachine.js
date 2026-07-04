@@ -428,6 +428,41 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // scenes를 쓰지 않으므로(flush 시 이 반환값이 아니라 내부 state 변수를 저장) 안전하다.
       return { ...state, scenes, scriptText }
     },
+    // 슬라이스1(세그먼트 단건 테스트): 지정 세그먼트만 합성·저장하고 스텝 상태·push·regroup은
+    // 건드리지 않는다. 배치(start('audio'))와 분리된 미리듣기/테스트 경로. 저장 오디오는 배치가 재사용.
+    async synthPreview({ segmentIds = [], speakers } = {}) {
+      const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
+      if (!scenesJson) throw new Error('scenes.json not found — run scenes step first')
+      const ids = new Set(segmentIds)
+      const spks = speakers || state?.speakers || []
+      const voiceOf = (spk) => (spks.find((s) => s.id === spk)?.voice) || defaultVoice || null
+      const targets = scenesJson.scenes
+        .flatMap((sc) => sc.segments || [])
+        .filter((s) => ids.has(s.id) && (s.type || 'narration') === 'narration')
+      const results = new Map()
+      for (const seg of targets) {
+        const voice = voiceOf(seg.speaker)
+        if (!voice || typeof voice.voiceId !== 'string' || !voice.voiceId) throw new Error(`voice not assigned for speaker: ${seg.speaker}`)
+        const { audio, format } = await tts.synthesize({ text: seg.text, voiceId: voice.voiceId, emotion: seg.emotion })
+        const rel = `audio/segments/${seg.id}.${format}`
+        await store.saveBinary(rel, audio)
+        const durationMs = await probe(path.join(projectPath, 'story', rel))
+        if (durationMs <= 0) throw new Error(`audio measurement failed for segment ${seg.id}`)
+        results.set(seg.id, { audioPath: path.join(projectPath, 'story', rel), durationMs })
+      }
+      // 원 씬 구조에 status/audioPath/durationMs만 병합(재그룹 없음). renderer 갱신용 story:state emit.
+      const updated = scenesJson.scenes.map((sc) => ({
+        ...sc,
+        segments: (sc.segments || []).map((g) => {
+          const r = results.get(g.id)
+          return r ? { ...g, status: 'done', audioPath: r.audioPath, durationMs: r.durationMs } : g
+        }),
+      }))
+      await store.saveText('scenes.json', JSON.stringify({ scenes: updated }, null, 2))
+      if (!state) state = await store.load()
+      send('story:state', { state, scenes: updated, scriptText: (await store.loadText('script.md')) || '' })
+      return { ok: true, segments: [...results.entries()].map(([id, r]) => ({ id, ...r })) }
+    },
     async generateTitle(scriptMd) {
       const opts = { apiKey: getApiKey(), model: state?.engine?.model, ...(state?.input?.options || {}) }
       return llm.generateTitle(scriptMd, opts, {})

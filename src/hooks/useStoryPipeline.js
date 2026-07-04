@@ -140,12 +140,14 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
   const abort = useCallback(() => window.electronAPI.storyAbort({ projectToken: tokenRef.current }), [])
 
   const generateTitle = useCallback((scriptMd) => window.electronAPI.storyGenerateTitle({ projectToken: tokenRef.current, scriptMd }), [])
+  // 슬라이스1: 세그먼트 단건 TTS 테스트(배치 진행버튼과 분리). 저장된 오디오는 story:state로 반영.
+  const ttsPreview = useCallback((params) => window.electronAPI.storyTtsPreview({ projectToken: tokenRef.current, ...params }), [])
 
   // 전환 감지 render에서는 옛 프로젝트의 state/scenes/scriptText/openError 대신 빈 값을 반환해
   // key로 재마운트되는 StoryView가 setup + 폼 기본값으로 초기화되게 한다(effect가 다음 tick에
   // useState를 정리하기 전 한 프레임의 stale 값 유출 방지).
   if (justSwitched) {
-    return { state: null, scenes: [], streamingText, scriptText: '', open, start, abort, openError: null, generateTitle }
+    return { state: null, scenes: [], streamingText, scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview }
   }
-  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle }
+  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview }
 }

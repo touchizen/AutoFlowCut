@@ -90,4 +90,6 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
   ipcMain.handle('story:push-ack', guarded(({ operationId, pushRevision, ok, reason }) =>
     machine.ackPush({ operationId, pushRevision, ok, reason })))
   ipcMain.handle('story:generate-title', guarded(({ scriptMd }) => machine.generateTitle(scriptMd)))
+  // 슬라이스1: 세그먼트 단건 TTS 테스트(배치와 분리, 스텝 상태 미변경).
+  ipcMain.handle('story:tts-preview', guarded(({ segmentIds, speakers }) => machine.synthPreview({ segmentIds, speakers })))
 }

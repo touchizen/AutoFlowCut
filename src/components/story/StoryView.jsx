@@ -78,7 +78,7 @@ function useHasI18n() {
 export default function StoryView({ pipeline, voices = [] }) {
   const t = useSafeT()
   const hasI18n = useHasI18n()
-  const { state, streamingText, start, abort, scenes = [], openError } = pipeline
+  const { state, streamingText, start, abort, scenes = [], openError, ttsPreview } = pipeline
   const steps = state?.steps || {}
   const currentStep = computeCurrentStep(steps)
   const stepData = steps[currentStep] || { status: 'pending' }
@@ -225,6 +225,17 @@ export default function StoryView({ pipeline, voices = [] }) {
     start('audio', buildAudioParams([segId]))
     setScriptPhase(null)
     setViewedStep(null)
+  }
+
+  // 슬라이스1: 세그먼트 단건 테스트 — 배치와 분리해 그 세그먼트만 합성(화자 매핑 반영) 후 바로 재생.
+  const testSegment = async (segId) => {
+    try {
+      const r = await ttsPreview?.({ segmentIds: [segId], speakers: buildAudioParams().speakers })
+      const seg = r?.segments?.find((s) => s.id === segId)
+      if (seg?.audioPath) playAudio(seg.audioPath)
+    } catch (e) {
+      toast.error(t('story.audio.testFailed', `테스트 실패: ${e?.message || e}`))
+    }
   }
 
   const handlePrimaryAction = () => {
@@ -698,6 +709,16 @@ export default function StoryView({ pipeline, voices = [] }) {
                           <td>{seg.text}</td>
                           <td>{t(`story.status.${seg.status || 'pending'}`, SEG_STATUS_LABEL[seg.status] || SEG_STATUS_LABEL.pending)}</td>
                           <td className="story-audio-actions">
+                            {/* 슬라이스1: 세그먼트 단건 테스트(배치와 분리) */}
+                            <button
+                              type="button"
+                              className="story-seg-btn"
+                              aria-label={t('story.audio.test', `${seg.id} 테스트`)}
+                              onClick={() => testSegment(seg.id)}
+                              disabled={isRunning}
+                            >
+                              ▶{t('story.audio.testLabel', '테스트')}
+                            </button>
                             {/* M2a-3c 미리듣기 (오디오 있을 때) */}
                             {seg.audioPath && (
                               <button

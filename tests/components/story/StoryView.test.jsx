@@ -13,6 +13,7 @@ const pipeline = (over = {}) => ({
   scenes: [],
   streamingText: '',
   start: vi.fn(), abort: vi.fn(),
+  ttsPreview: vi.fn(async () => ({ ok: true, segments: [] })),
   ...over,
 })
 
@@ -136,6 +137,23 @@ describe('StoryView', () => {
       speakers: [{ id: 'narrator', name: '나레이션', voice: { provider: 'typecast', voiceId: 'tc_a' } }],
       regenerate: ['s1-1'],
     })
+  })
+
+  // 슬라이스1: 세그먼트 "테스트" 버튼 → 그 세그먼트만 ttsPreview로 합성(배치와 분리).
+  it('세그먼트 테스트 버튼은 그 세그먼트만 화자 매핑과 함께 ttsPreview로 합성한다', async () => {
+    const p = pipeline({
+      scenes: [{ storyId: 's1', segments: [{ id: 's1-1', speaker: 'narrator', text: '어느 날', status: 'pending' }] }],
+    })
+    p.state.steps.script.status = 'done'
+    p.state.steps.scenes.status = 'done'
+    p.state.speakers = [{ id: 'narrator', name: '나레이션', voice: { provider: 'typecast', voiceId: 'tc_a' } }]
+    render(<StoryView pipeline={p} />)
+    fireEvent.click(screen.getByRole('button', { name: '오디오' }))
+    fireEvent.click(screen.getByRole('button', { name: 's1-1 테스트' }))
+    await waitFor(() => expect(p.ttsPreview).toHaveBeenCalledWith({
+      segmentIds: ['s1-1'],
+      speakers: [{ id: 'narrator', name: '나레이션', voice: { provider: 'typecast', voiceId: 'tc_a' } }],
+    }))
   })
 
   // M2a-3c: 세그먼트 미리듣기 버튼 → audioPath를 readFileAbsolute로 읽어 재생.
