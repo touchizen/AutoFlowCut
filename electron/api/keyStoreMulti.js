@@ -9,6 +9,7 @@ const FILENAME_BY_PROVIDER = {
   genai: 'genai-key.enc',
   elevenlabs: 'elevenlabs-key.enc',
   typecast: 'typecast-key.enc',
+  googletts: 'googletts-key.enc',
   anthropic: 'anthropic-key.enc',
 }
 export const PROVIDERS = Object.keys(FILENAME_BY_PROVIDER)

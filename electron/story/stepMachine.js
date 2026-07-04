@@ -50,8 +50,10 @@ function assertSegmentIdsValid(scenes) {
   }
 }
 
-export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt, tts, probe, defaultVoice = null }) {
+export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt, tts, ttsFor, probe, defaultVoice = null }) {
   const store = createStoryStore(projectPath)
+  // 화자별 엔진(슬라이스2): voice.provider별로 어댑터 선택. ttsFor 미주입(기존 단일 tts)이면 tts 사용.
+  const resolveTts = (provider) => (ttsFor ? ttsFor(provider) : tts)
   const projectToken = randomUUID()
   let state = null
   let controller = null
@@ -236,7 +238,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         if (forceRegen.has(seg.id) || seg.status !== 'done' || !seg.audioPath || (seg.durationMs || 0) <= 0) return false
         try { return (await stat(reusePathOf(seg))).isFile() } catch { return false }
       }
-      const conc = (tts.capabilities?.()?.maxConcurrency) || 2
+      // 동시성: 기본 tts(단일) 또는 첫 세그먼트 화자 어댑터에서. 없으면 2.
+      const conc = (tts?.capabilities?.()?.maxConcurrency) || (resolveTts(voiceOf(narration[0]?.speaker)?.provider)?.capabilities?.()?.maxConcurrency) || 2
       const results = new Map()
       const errored = new Set()
       const errorMsgs = new Map() // 세그먼트별 실패 사유(인증/설정 등) — generic retry로 묻지 않기 위함
@@ -251,7 +254,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
           const voice = voiceOf(seg.speaker)
           if (!voice) throw new Error(`voice not assigned for speaker: ${seg.speaker}`) // safety net — 사전 검증이 이미 막지만 방어적으로 유지
           try {
-            const { audio, format } = await tts.synthesize({ text: seg.text, voiceId: voice.voiceId, emotion: seg.emotion, signal })
+            const { audio, format } = await resolveTts(voice.provider).synthesize({ text: seg.text, voiceId: voice.voiceId, emotion: seg.emotion, signal })
             if (signal?.aborted) return
             const rel = `audio/segments/${seg.id}.${format}`
             await store.saveBinary(rel, audio)
@@ -443,7 +446,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       for (const seg of targets) {
         const voice = voiceOf(seg.speaker)
         if (!voice || typeof voice.voiceId !== 'string' || !voice.voiceId) throw new Error(`voice not assigned for speaker: ${seg.speaker}`)
-        const { audio, format } = await tts.synthesize({ text: seg.text, voiceId: voice.voiceId, emotion: seg.emotion })
+        const { audio, format } = await resolveTts(voice.provider).synthesize({ text: seg.text, voiceId: voice.voiceId, emotion: seg.emotion })
         const rel = `audio/segments/${seg.id}.${format}`
         await store.saveBinary(rel, audio)
         const durationMs = await probe(path.join(projectPath, 'story', rel))

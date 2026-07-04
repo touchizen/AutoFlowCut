@@ -213,16 +213,29 @@ const multiKeyStore = createMultiKeyStore({
   fs: fsSync,
   path,
 })
-// Typecast TTS 어댑터: 키는 설정 입력(multiKeyStore) 우선, 없으면 env/~/.typecast/credentials 폴백.
-// 같은 어댑터를 story audio(합성)와 tts IPC(listVoices)가 공유한다.
-const typecastTts = createTtsAdapter('typecast', {
-  getKey: () => multiKeyStore.getKey('typecast') || getTypecastKey(),
-  fetch: (...a) => globalThis.fetch(...a),
-})
+// TTS 어댑터 라우팅(화자별 엔진). provider별 키 소스:
+//  - typecast: multiKeyStore 우선, 없으면 env/~/.typecast/credentials 폴백
+//  - elevenlabs/googletts: multiKeyStore
+//  - gemini: genai(Gemini) 키 재사용
+// 같은 어댑터를 story audio(합성)와 tts IPC(listVoices)가 공유(메모이즈).
+const ttsFetch = (...a) => globalThis.fetch(...a)
+const ttsKeyFor = {
+  typecast: () => multiKeyStore.getKey('typecast') || getTypecastKey(),
+  elevenlabs: () => multiKeyStore.getKey('elevenlabs'),
+  googletts: () => multiKeyStore.getKey('googletts'),
+  gemini: () => genaiKeyStore.getKey(),
+}
+const ttsAdapters = {}
+const ttsFor = (provider) => {
+  const p = provider || 'typecast'
+  if (!ttsKeyFor[p]) throw new Error(`Unsupported TTS provider: ${p}`)
+  if (!ttsAdapters[p]) ttsAdapters[p] = createTtsAdapter(p, { getKey: ttsKeyFor[p], fetch: ttsFetch })
+  return ttsAdapters[p]
+}
 registerTtsIPC(ipcMain, {
   keyStore: multiKeyStore,
   safeStorage,
-  listVoices: (provider) => (provider === 'typecast' ? typecastTts.listVoices() : []),
+  listVoices: (provider) => { try { return ttsFor(provider).listVoices() } catch { return [] } },
 })
 
 // Story pipeline IPC (script/scenes/audio/prompts 스텝 머신 + preload 브릿지).
@@ -232,7 +245,8 @@ registerStoryIPC(ipcMain, {
   llm: llmClaude,
   loadMetaPrompt,
   getActiveWorkFolder: () => activeWorkFolder,
-  tts: typecastTts, // 설정 입력 키를 audio 합성에 사용(env/creds 폴백)
+  tts: ttsFor('typecast'), // 기본 어댑터(동시성/폴백)
+  ttsFor, // 화자별 provider 라우팅
 })
 
 // Auth IPC (Google OAuth) — opens its own BrowserWindow; no Flow view dependency.
