@@ -236,13 +236,19 @@ export default function StoryView({ pipeline, voices = [] }) {
   }
 
   // 슬라이스1: 세그먼트 단건 테스트 — 배치와 분리해 그 세그먼트만 합성(화자 매핑 반영) 후 바로 재생.
+  const [previewBusy, setPreviewBusy] = useState(false)
   const testSegment = async (segId) => {
+    if (previewBusy) return
+    setPreviewBusy(true)
     try {
       const r = await ttsPreview?.({ segmentIds: [segId], speakers: buildAudioParams().speakers })
+      if (r?.busy) { toast.error(t('story.audio.busy', '진행 중입니다. 잠시 후 다시 시도하세요.')); return }
       const seg = r?.segments?.find((s) => s.id === segId)
       if (seg?.audioPath) playAudio(seg.audioPath)
     } catch (e) {
       toast.error(t('story.audio.testFailed', `테스트 실패: ${e?.message || e}`))
+    } finally {
+      setPreviewBusy(false)
     }
   }
 
@@ -744,7 +750,7 @@ export default function StoryView({ pipeline, voices = [] }) {
                               className="story-seg-btn"
                               aria-label={t('story.audio.test', `${seg.id} 테스트`)}
                               onClick={() => testSegment(seg.id)}
-                              disabled={isRunning}
+                              disabled={isRunning || previewBusy}
                             >
                               ▶{t('story.audio.testLabel', '테스트')}
                             </button>
@@ -755,7 +761,7 @@ export default function StoryView({ pipeline, voices = [] }) {
                                 className="story-seg-btn"
                                 aria-label={t('story.audio.preview', `${seg.id} 미리듣기`)}
                                 onClick={() => (playingFile === seg.audioPath ? stopAudio() : playAudio(seg.audioPath))}
-                                disabled={isRunning}
+                                disabled={isRunning || previewBusy}
                               >
                                 {playingFile === seg.audioPath ? '⏹' : '▶'}
                               </button>
@@ -767,7 +773,7 @@ export default function StoryView({ pipeline, voices = [] }) {
                                 className="story-seg-btn"
                                 aria-label={t('story.audio.regenerate', `${seg.id} 재생성`)}
                                 onClick={() => regenerateSegment(seg.id)}
-                                disabled={isRunning}
+                                disabled={isRunning || previewBusy}
                               >
                                 ↻
                               </button>

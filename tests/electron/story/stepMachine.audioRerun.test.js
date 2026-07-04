@@ -66,6 +66,21 @@ describe('audio 재실행 세그먼트 재사용 (IP5-a)', () => {
     expect(synthCalls).toEqual(['둘째 문장'])  // 지정분만
   })
 
+  // Codex-TTS HIGH: 화자 voice/provider를 바꾸면 done이어도 재합성해야 한다(옛 오디오 재사용 금지).
+  it('화자 voice가 바뀌면 done이어도 재합성한다', async () => {
+    await runAudio() // voiceId tc_x
+    synthCalls.length = 0
+    await machine.start('audio', { speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_DIFFERENT' } }] })
+    expect(synthCalls.sort()).toEqual(['둘째 문장', '첫 문장']) // 전부 재합성
+  })
+
+  it('화자 voice가 그대로면 재합성하지 않는다(지문 일치 재사용)', async () => {
+    await runAudio()
+    synthCalls.length = 0
+    await runAudio() // 동일 tc_x
+    expect(synthCalls).toEqual([])
+  })
+
   // Codex-M2a-2b MED: 재사용은 파일 실재를 확인해야 한다 — 오디오 파일이 삭제되면 status가 done
   // 이어도 재합성한다(그러지 않으면 manifest가 없는 파일을 가리킨다).
   it('done이어도 오디오 파일이 없으면 재합성한다', async () => {

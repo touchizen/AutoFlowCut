@@ -56,4 +56,15 @@ describe('synthPreview (세그먼트 단건 테스트)', () => {
     const target = (await readSegs())[0].id
     await expect(machine.synthPreview({ segmentIds: [target], speakers: [] })).rejects.toThrow(/voice not assigned/)
   })
+
+  // Codex-TTS HIGH2: preview 진행 중 두 번째 preview는 busy를 반환(직렬화, scenes.json 클로버 방지).
+  it('preview 진행 중 두 번째 preview는 busy를 반환한다', async () => {
+    const target = (await readSegs())[0].id
+    const spk = [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }]
+    // previewing은 동기적으로 set되므로, p1을 await하기 전 호출한 두 번째는 즉시 busy.
+    const p1 = machine.synthPreview({ segmentIds: [target], speakers: spk })
+    const r2 = await machine.synthPreview({ segmentIds: [target], speakers: spk })
+    expect(r2.busy).toBe(true)
+    await p1 // 정상 종료
+  })
 })
