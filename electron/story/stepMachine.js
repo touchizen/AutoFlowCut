@@ -67,7 +67,7 @@ export async function readAudioPackage(projectPath) {
   return { manifest, lastPushedRevision: st.lastPushedRevision ?? 0 }
 }
 
-export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt, tts, ttsFor, probe, defaultVoice = null }) {
+export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt, tts, ttsFor, probe, defaultVoice = null, sfxFor = null }) {
   const store = createStoryStore(projectPath)
   // 화자별 엔진(슬라이스2): voice.provider별로 어댑터 선택. ttsFor 미주입(기존 단일 tts)이면 tts 사용.
   const resolveTts = (provider) => (ttsFor ? ttsFor(provider) : tts)
@@ -234,6 +234,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // 모든 씬의 세그먼트를 순서대로 평탄화
       const segments = scenesJson.scenes.flatMap((sc) => sc.segments || [])
       const narration = segments.filter((s) => (s.type || 'narration') === 'narration')
+      // M2b: sfx 세그먼트(효과음) — narration과 같은 시퀀스 자리를 차지, sfxFor로 생성.
+      const sfxSegs = sfxFor ? segments.filter((s) => s.type === 'sfx') : []
 
       // 0) 사전 검증: 배치 루프를 시작하기 전에 모든 narration 세그먼트의 화자에 voice가
       // 배정돼 있는지 먼저 확인한다 — 루프 중간에 던지면 이미 앞선 세그먼트들의 TTS 비용을
@@ -260,6 +262,13 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         // Codex-TTS HIGH: 화자 voice/provider/emotion이 바뀌면(또는 지문 없는 옛 오디오면) 재사용 금지.
         const intended = voiceOf(seg.speaker)
         if (!intended?.voiceId || seg.voiceKey !== ttsVoiceKey(intended, seg.emotion)) return false
+        try { return (await stat(reusePathOf(seg))).isFile() } catch { return false }
+      }
+      // M2b sfx reuse: 지문 sfxKey(source:description:durationHint) 일치 + 파일 실재.
+      const sfxKeyOf = (seg) => `${seg.sourceMode || 'elevenlabs'}:${seg.description || ''}:${seg.durationHint ?? 'auto'}`
+      const canReuseSfx = async (seg) => {
+        if (forceRegen.has(seg.id) || seg.status !== 'done' || !seg.audioPath || (seg.durationMs || 0) <= 0) return false
+        if (seg.sfxKey !== sfxKeyOf(seg)) return false
         try { return (await stat(reusePathOf(seg))).isFile() } catch { return false }
       }
       // 동시성: 기본 tts(단일) 또는 첫 세그먼트 화자 어댑터에서. 없으면 2.
@@ -297,22 +306,51 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       }
       if (signal?.aborted) return
 
+      // M2b: sfx 세그먼트 생성 — narration과 같은 results/errored를 공유해 measured/timeline에 함께
+      // 자리잡는다(sfx도 startMs 실측). sourceMode별 어댑터(sfxFor), 지문 sfxKey로 재사용.
+      for (const seg of sfxSegs) {
+        if (await canReuseSfx(seg)) results.set(seg.id, { audioPath: reusePathOf(seg), durationMs: seg.durationMs, sfxKey: seg.sfxKey })
+      }
+      const sfxToSynth = sfxSegs.filter((seg) => !results.has(seg.id))
+      for (let i = 0; i < sfxToSynth.length; i += conc) {
+        const batch = sfxToSynth.slice(i, i + conc)
+        await Promise.all(batch.map(async (seg) => {
+          send('story:progress', { kind: 'audio-segment', segId: seg.id, status: 'running' }, opId)
+          try {
+            const { audio, format } = await sfxFor(seg.sourceMode || 'elevenlabs').generate({ description: seg.description, durationSeconds: seg.durationHint ?? null, signal })
+            if (signal?.aborted) return
+            const rel = `audio/segments/${seg.id}.${format}`
+            await store.saveBinary(rel, audio)
+            const durationMs = await probe(path.join(projectPath, 'story', rel))
+            if (durationMs <= 0) { errored.add(seg.id); send('story:progress', { kind: 'audio-segment', segId: seg.id, status: 'error' }, opId); return }
+            results.set(seg.id, { audioPath: path.join(projectPath, 'story', rel), durationMs, sfxKey: sfxKeyOf(seg) })
+            send('story:progress', { kind: 'audio-segment', segId: seg.id, status: 'done' }, opId)
+          } catch (e) {
+            if (!signal?.aborted) { errored.add(seg.id); errorMsgs.set(seg.id, e?.message || String(e)); send('story:progress', { kind: 'audio-segment', segId: seg.id, status: 'error' }, opId) }
+          }
+        }))
+        if (signal?.aborted) return
+      }
+      if (signal?.aborted) return
+
       // Codex-M2a-2b MED/스펙 §5 부분재시도: 일부 세그먼트가 실패해도 M2a-1처럼 전체를 버리지
       // 않는다 — 성공분은 status:'done', 실패분은 status:'error'로 원 씬 구조에 영속(재그룹 없이)한
       // 뒤 실패시킨다. 다음 실행이 done을 재사용하고 error/pending만 재합성한다.
-      const anyFailed = narration.some((seg) => !results.has(seg.id))
+      // 오디오 보유 세그먼트(narration+sfx) 중 하나라도 실패면 부분재시도(성공분 done 영속 후 실패).
+      const audioBearing = [...narration, ...sfxSegs]
+      const anyFailed = audioBearing.some((seg) => !results.has(seg.id))
       if (anyFailed) {
         const updated = (scenesJson.scenes || []).map((sc) => ({
           ...sc,
           segments: (sc.segments || []).map((g) => {
             const r = results.get(g.id)
-            if (r) return { ...g, status: 'done', audioPath: r.audioPath, durationMs: r.durationMs, voiceKey: r.voiceKey }
+            if (r) return { ...g, status: 'done', audioPath: r.audioPath, durationMs: r.durationMs, ...(r.voiceKey != null ? { voiceKey: r.voiceKey } : {}), ...(r.sfxKey != null ? { sfxKey: r.sfxKey } : {}) }
             if (errored.has(g.id)) return { ...g, status: 'error' }
             return g
           }),
         }))
         if (!signal?.aborted) await store.saveText('scenes.json', JSON.stringify({ scenes: updated }, null, 2))
-        const firstFail = narration.find((seg) => !results.has(seg.id))
+        const firstFail = audioBearing.find((seg) => !results.has(seg.id))
         // 인증/설정 등 실제 예외 사유가 있으면 보존(예: "No Typecast API key" → UI가 키 설정 안내).
         // probe=0(측정 실패)은 예외가 아니라 사유 없음 → generic retry.
         const detail = errorMsgs.get(firstFail.id)
@@ -323,7 +361,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // 기록(재실행 재사용 기준). sfx 등 results에 없는 세그먼트는 기존 상태 유지.
       const measured = segments.map((s) => {
         const r = results.get(s.id)
-        return { ...s, durationMs: r?.durationMs || 0, audioPath: r?.audioPath || null, status: r ? 'done' : s.status, voiceKey: r ? r.voiceKey : s.voiceKey }
+        return { ...s, durationMs: r?.durationMs || 0, audioPath: r?.audioPath || null, status: r ? 'done' : s.status, voiceKey: r ? (r.voiceKey ?? s.voiceKey) : s.voiceKey, sfxKey: r ? (r.sfxKey ?? s.sfxKey) : s.sfxKey }
       })
       // 3) 타임라인(startMs) + 4) SRT
       const timed = buildSegmentTimeline(measured, { gapMs: 150 })

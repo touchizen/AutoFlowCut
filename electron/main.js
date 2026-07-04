@@ -23,6 +23,7 @@ import { createMultiKeyStore } from './api/keyStoreMulti.js'
 import { createTtsAdapter } from './api/tts/index.js'
 import { getTypecastKey } from './api/tts/typecastKey.js'
 import { readCredentialsKey } from './api/tts/credentialsKey.js'
+import { createSfxAdapter } from './api/sfx/index.js'
 import { registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible, updateBounds } from './ipc/layout.js'
 import { createModeController } from './ipc/mode.js'
 import { openApiSpec, getSwaggerHtml } from './api-docs.js'
@@ -239,6 +240,19 @@ registerTtsIPC(ipcMain, {
   listVoices: (provider) => { try { return ttsFor(provider).listVoices() } catch { return [] } },
 })
 
+// M2b: SFX 어댑터 라우팅(sourceMode별). 키는 provider별 소스(elevenlabs는 tts와 동일 키 재사용).
+const sfxKeyFor = {
+  elevenlabs: () => multiKeyStore.getKey('elevenlabs') || readCredentialsKey('elevenlabs', 'ELEVENLABS_API_KEY'),
+  library: () => null,
+}
+const sfxAdapters = {}
+const sfxFor = (provider) => {
+  const p = provider || 'elevenlabs'
+  if (!sfxKeyFor[p]) throw new Error(`Unsupported SFX provider: ${p}`)
+  if (!sfxAdapters[p]) sfxAdapters[p] = createSfxAdapter(p, { getKey: sfxKeyFor[p], fetch: ttsFetch })
+  return sfxAdapters[p]
+}
+
 // Story pipeline IPC (script/scenes/audio/prompts 스텝 머신 + preload 브릿지).
 registerStoryIPC(ipcMain, {
   keyStore: genaiKeyStore,
@@ -248,6 +262,7 @@ registerStoryIPC(ipcMain, {
   getActiveWorkFolder: () => activeWorkFolder,
   tts: ttsFor('typecast'), // 기본 어댑터(동시성/폴백)
   ttsFor, // 화자별 provider 라우팅
+  sfxFor, // M2b: sfx sourceMode별 라우팅
 })
 
 // Auth IPC (Google OAuth) — opens its own BrowserWindow; no Flow view dependency.
