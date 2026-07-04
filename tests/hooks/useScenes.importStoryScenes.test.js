@@ -48,6 +48,36 @@ describe('importStoryScenes', () => {
     expect(s.staleVideoAt).toBeTruthy()
   })
 
+  // 버그(Untitled 프로젝트 자막 중첩): 씬 재분할→프롬프트 재실행을 반복하면 storyId가 churn되고,
+  // 옛 storyId 씬이 "payload에 없는 기존 씬"으로 잔류해 새 push의 0-기준 타임라인과 겹친다.
+  // story push는 현재 스토리의 완전한 집합이므로, push에 없는 story 씬은 전량 제거해야 한다.
+  it('재실행 push(storyId churn): payload에 없는 옛 story 씬은 제거된다(잔재 타임라인 누적 방지)', () => {
+    const { result } = renderHook(() => useScenes())
+    // 1차 스토리: old1(0~20), old2(20~46)
+    act(() => {
+      result.current.importStoryScenes({ scenes: [
+        pushScene('old1', { startTime: 0, endTime: 20 }),
+        pushScene('old2', { startTime: 20, endTime: 46 }),
+      ] })
+    })
+    // 2차 스토리(재분할로 storyId 바뀜): new1(0~15), new2(15~30)
+    act(() => {
+      result.current.importStoryScenes({ scenes: [
+        pushScene('new1', { startTime: 0, endTime: 15 }),
+        pushScene('new2', { startTime: 15, endTime: 30 }),
+      ] })
+    })
+    expect(result.current.scenes.map((s) => s.storyId)).toEqual(['new1', 'new2'])
+    expect(result.current.scenes.find((s) => s.storyId === 'old1')).toBeUndefined()
+  })
+
+  it('빈 push는 기존 story 씬을 지우지 않는다(방어)', () => {
+    const { result } = renderHook(() => useScenes())
+    act(() => { result.current.importStoryScenes({ scenes: [pushScene('u1')] }) })
+    act(() => { result.current.importStoryScenes({ scenes: [] }) })
+    expect(result.current.scenes.find((s) => s.storyId === 'u1')).toBeTruthy()
+  })
+
   it('non-story 씬은 보존된다', () => {
     const { result } = renderHook(() => useScenes())
     act(() => { result.current.setScenes([{ id: 'scene_1', prompt: '기존' }]) })

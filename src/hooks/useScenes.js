@@ -696,7 +696,13 @@ export function useScenes() {
     })
 
     const pushedIds = new Set(pushScenes.map((p) => p.storyId))
-    const kept = current.filter((s) => !s.storyId || !pushedIds.has(s.storyId))
+    // story push는 현재 스토리 씬의 완전한 집합이다. 씬 재분할→프롬프트 재실행을 반복하면 storyId가
+    // churn되는데(스펙 §4 identity), payload에 없는 옛 storyId 씬을 유지하면 그 옛 0-기준 타임라인이
+    // 새 push와 겹쳐 자막이 중첩된다(버그). 스토리 씬은 전량 교체하고 수동(비-story) 씬만 보존한다.
+    // 방어: 빈 push는 전체를 지우지 않는다(복구/레이스 시 기존 씬 보존).
+    const kept = pushScenes.length > 0
+      ? current.filter((s) => !s.storyId)
+      : current.filter((s) => !s.storyId || !pushedIds.has(s.storyId))
     const keptAdjusted = newSrtTrack
       ? kept.map((s) => (!s.storyId && s.srtLineIds?.length ? { ...s, srtLineIds: [] } : s))
       : kept
