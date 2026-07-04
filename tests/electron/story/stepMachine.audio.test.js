@@ -282,8 +282,13 @@ describe('audio 스텝', () => {
     await machine.start('audio', { speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }] })
     const state = await machine.getState()
     expect(state.steps.audio.status).toBe('error')
-    expect(state.steps.audio.error).toMatch(/audio measurement failed/)
+    // M2a-2b: probe 0은 해당 세그먼트를 실패로 표시하고 스텝을 실패시킨다(부분재시도: 성공분은 done 영속).
+    expect(state.steps.audio.error).toMatch(/audio failed for segment/)
     expect(state.steps.audio.error).toMatch(/s2/)
+    // 성공분(s1)은 done으로 영속돼 재실행 시 재사용된다(전체 재-TTS 아님).
+    const persisted = JSON.parse(await (await import('node:fs/promises')).readFile(path.join(projectPath, 'story', 'scenes.json'), 'utf8'))
+    const seg1 = persisted.scenes.flatMap((s) => s.segments).find((g) => g.id === 's1')
+    expect(seg1.status).toBe('done')
   })
 
   // Minor M2: 미배정 화자가 있으면 배치 루프를 시작하기 전에 즉시 실패해야 한다 —

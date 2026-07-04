@@ -4,6 +4,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
+import { stat } from 'node:fs/promises'
 import { createStoryStore } from './storyStore.js'
 import { inheritStoryIds, assertUniqueStoryIds, assignStoryIdsByMembership, inheritSegmentIds } from './sceneIdentity.js'
 import { buildFallbackTimeline, buildSegmentTimeline, buildSrt, srtLineId } from './timing.js'
@@ -224,37 +225,71 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       if (missingSpeakers.length) throw new Error(`voice not assigned for speaker: ${missingSpeakers[0]}`)
 
       // 1) 세그먼트별 TTS 생성 + 실측 (동시성 제한)
+      // IP5-a: 이미 status:'done'이고 오디오 파일이 현 프로젝트에 실재하면 재합성하지 않는다
+      // (resume/부분재시도). params.regenerate에 든 id는 강제 재합성(re-TTS 트리거).
+      // Codex-M2a-2b MED: audioPath는 절대경로라 프로젝트 이동/복사·파일 삭제 시 stale/타프로젝트를
+      // 가리킬 수 있다 — basename을 현 프로젝트 segments 디렉터리 기준으로 재구성 + 실재(stat) 확인.
+      const forceRegen = new Set(params.regenerate || [])
+      const segmentsDir = path.join(projectPath, 'story', 'audio', 'segments')
+      const reusePathOf = (seg) => path.join(segmentsDir, path.basename(seg.audioPath))
+      const canReuse = async (seg) => {
+        if (forceRegen.has(seg.id) || seg.status !== 'done' || !seg.audioPath || (seg.durationMs || 0) <= 0) return false
+        try { return (await stat(reusePathOf(seg))).isFile() } catch { return false }
+      }
       const conc = (tts.capabilities?.()?.maxConcurrency) || 2
       const results = new Map()
-      for (let i = 0; i < narration.length; i += conc) {
-        const batch = narration.slice(i, i + conc)
+      const errored = new Set()
+      const toSynth = []
+      for (const seg of narration) {
+        if (await canReuse(seg)) results.set(seg.id, { audioPath: reusePathOf(seg), durationMs: seg.durationMs })
+        else toSynth.push(seg)
+      }
+      for (let i = 0; i < toSynth.length; i += conc) {
+        const batch = toSynth.slice(i, i + conc)
         await Promise.all(batch.map(async (seg) => {
           const voice = voiceOf(seg.speaker)
           if (!voice) throw new Error(`voice not assigned for speaker: ${seg.speaker}`) // safety net — 사전 검증이 이미 막지만 방어적으로 유지
-          const { audio, format } = await tts.synthesize({ text: seg.text, voiceId: voice.voiceId, emotion: seg.emotion, signal })
-          if (signal?.aborted) return
-          const rel = `audio/segments/${seg.id}.${format}`
-          await store.saveBinary(rel, audio)
-          const durationMs = await probe(path.join(projectPath, 'story', rel))
-          results.set(seg.id, { audioPath: path.join(projectPath, 'story', rel), durationMs })
+          try {
+            const { audio, format } = await tts.synthesize({ text: seg.text, voiceId: voice.voiceId, emotion: seg.emotion, signal })
+            if (signal?.aborted) return
+            const rel = `audio/segments/${seg.id}.${format}`
+            await store.saveBinary(rel, audio)
+            const durationMs = await probe(path.join(projectPath, 'story', rel))
+            // I2: probe 실패(0)면 SRT 0ms·클립 겹침으로 조용히 붕괴 → 실패로 취급(재시도 유도).
+            if (durationMs <= 0) { errored.add(seg.id); return }
+            results.set(seg.id, { audioPath: path.join(projectPath, 'story', rel), durationMs })
+          } catch {
+            if (!signal?.aborted) errored.add(seg.id) // 개별 세그먼트 실패 — 전체 중단 대신 표시(부분재시도)
+          }
         }))
         if (signal?.aborted) return
       }
       if (signal?.aborted) return
 
-      // I2: probe 실패(0)의 안전값을 그대로 받아들이면 SRT 0ms 줄·클립 겹침·manifest.durationMs=0
-      // ≠ 실제 wav 길이로 조용히 붕괴한다 — 실제로 합성·저장된 narration 세그먼트인데 실측이
-      // 0이면 재시도를 유도하도록 즉시 실패시킨다. (sfx는 이 스텝 범위 밖 — M2a-1엔 없음.)
-      for (const seg of narration) {
-        if (results.get(seg.id)?.durationMs === 0) {
-          throw new Error(`audio measurement failed for segment ${seg.id} — retry`)
-        }
+      // Codex-M2a-2b MED/스펙 §5 부분재시도: 일부 세그먼트가 실패해도 M2a-1처럼 전체를 버리지
+      // 않는다 — 성공분은 status:'done', 실패분은 status:'error'로 원 씬 구조에 영속(재그룹 없이)한
+      // 뒤 실패시킨다. 다음 실행이 done을 재사용하고 error/pending만 재합성한다.
+      const anyFailed = narration.some((seg) => !results.has(seg.id))
+      if (anyFailed) {
+        const updated = (scenesJson.scenes || []).map((sc) => ({
+          ...sc,
+          segments: (sc.segments || []).map((g) => {
+            const r = results.get(g.id)
+            if (r) return { ...g, status: 'done', audioPath: r.audioPath, durationMs: r.durationMs }
+            if (errored.has(g.id)) return { ...g, status: 'error' }
+            return g
+          }),
+        }))
+        if (!signal?.aborted) await store.saveText('scenes.json', JSON.stringify({ scenes: updated }, null, 2))
+        const firstFail = narration.find((seg) => !results.has(seg.id))
+        throw new Error(`audio failed for segment ${firstFail.id} — retry`)
       }
 
-      // 2) 세그먼트에 실측 durationMs·audioPath 병합 (원 순서 보존)
+      // 2) 세그먼트에 실측 durationMs·audioPath 병합 (원 순서 보존). IP5-a: narration은 status:'done'
+      // 기록(재실행 재사용 기준). sfx 등 results에 없는 세그먼트는 기존 상태 유지.
       const measured = segments.map((s) => {
         const r = results.get(s.id)
-        return { ...s, durationMs: r?.durationMs || 0, audioPath: r?.audioPath || null }
+        return { ...s, durationMs: r?.durationMs || 0, audioPath: r?.audioPath || null, status: r ? 'done' : s.status }
       })
       // 3) 타임라인(startMs) + 4) SRT
       const timed = buildSegmentTimeline(measured, { gapMs: 150 })
@@ -289,6 +324,36 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       })
       if (signal?.aborted) return
       if (params.speakers) state.speakers = params.speakers
+
+      // IP5-b/c(스펙 §4 재TTS 정책): prompts가 이미 있었고(=re-TTS) 재그룹 멤버십이 불변이면
+      // audio가 push를 소유해 timing-only로 갱신하고 프롬프트를 보존한다. 멤버십이 변했거나 최초
+      // 정밀 실행이면 audio는 push하지 않는다(전자=no-push 대기 전이[prompts는 wrapper가 pending으로
+      // 리셋], 후자=prompts가 첫 push 소유). 멤버십 = 확정 씬 storyId 집합(= 세그먼트 id 집합에서 파생).
+      const hadPrompts = (scenesJson.scenes || []).some((s) => s.imagePrompt)
+      const prevStoryIds = new Set(prevScenes.map((s) => s.storyId))
+      const newStoryIds = new Set(finalScenes.map((s) => s.storyId))
+      const membershipUnchanged = prevStoryIds.size === newStoryIds.size && [...newStoryIds].every((id) => prevStoryIds.has(id))
+      const timingOnly = hadPrompts && membershipUnchanged
+
+      // 최초 정밀/멤버십 변화: manifestRevision null (export 차단 → prompts 재실행이 소유/재스탬프).
+      // timing-only: audio가 다음 revision 소유. Codex-M2a-2b HIGH: state(pendingPushRevision/prompts)
+      // 변경은 write 커밋이 모두 성공한 뒤로 미룬다 — 커밋 사이 abort 시 abort()가 변경된 state를
+      // flush하고 maybeResendPush가 커밋 안 된 revision을 재발신하는 것을 막는다. nextRevision은 로컬.
+      let manifestRevision = null
+      let scenesToSave = finalScenes
+      let nextRevision = null
+      if (timingOnly) {
+        // 프롬프트/이미지 보존: 확정 씬에 이전 프롬프트를 storyId로 병합(빈값으로 덮어써 renderer가
+        // 프롬프트를 날리는 것 방지 — 멤버십 불변이라 모든 씬이 이전 프롬프트를 가짐).
+        const prevByStory = new Map((scenesJson.scenes || []).map((s) => [s.storyId, s]))
+        scenesToSave = finalScenes.map((s) => {
+          const p = prevByStory.get(s.storyId)
+          return { ...s, imagePrompt: p?.imagePrompt, videoPrompt: p?.videoPrompt }
+        })
+        nextRevision = state.pendingPushRevision + 1
+        manifestRevision = nextRevision
+      }
+
       // 8) 산출 저장: 세그먼트 파일은 이미 저장됨 → SRT → manifest → scenes.json 순서 원자 쓰기.
       // I1/스펙 §5: manifest가 scenes.json보다 먼저 확정돼야 스텝 중간 크래시가 "새 씬 +
       // 옛 manifest" 조합(export가 씬-오디오 불일치를 감지 못하는 상태)을 남기지 않는다.
@@ -297,10 +362,17 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // (첫 커밋 직전 체크는 위 line의 signal?.aborted 가드가 이미 겸함).
       await store.saveText('audio/final.srt', srt)
       if (signal?.aborted) return
-      const manifest = buildManifest(timed, { pushRevision: null }) // 최초 정밀: null (prompts가 재스탬프)
+      const manifest = buildManifest(timed, { pushRevision: manifestRevision })
       await store.saveText('audio/manifest.json', JSON.stringify(manifest, null, 2))
       if (signal?.aborted) return
-      await store.saveText('scenes.json', JSON.stringify({ scenes: finalScenes }, null, 2))
+      await store.saveText('scenes.json', JSON.stringify({ scenes: scenesToSave }, null, 2))
+      if (signal?.aborted) return
+      // 커밋 성공 + 미-abort 확인 후에만 state 변경(중간 await 없이) → push emit.
+      if (timingOnly) {
+        state.pendingPushRevision = nextRevision
+        state.steps.prompts = { status: 'done' } // wrapper DOWNSTREAM 리셋 복원 — 프롬프트 유효(재실행 강제 안 함)
+        return { pushScenes: scenesToSave } // wrapper가 flush 후 sendPush — 프롬프트 보존 + 새 timing/srt
+      }
     },
     async prompts(params, opId, signal) {
       const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
