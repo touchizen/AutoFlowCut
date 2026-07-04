@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { createStoryStore } from './storyStore.js'
 import { inheritStoryIds, assertUniqueStoryIds, assignStoryIdsByMembership } from './sceneIdentity.js'
-import { buildFallbackTimeline, buildSegmentTimeline, buildSrt } from './timing.js'
+import { buildFallbackTimeline, buildSegmentTimeline, buildSrt, srtLineId } from './timing.js'
 import { regroupScenes } from './regroup.js'
 import { buildManifest } from './manifest.js'
 
@@ -38,7 +38,7 @@ function assertSegmentIdsValid(scenes) {
   }
 }
 
-export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt, tts, probe }) {
+export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt, tts, probe, defaultVoice = null }) {
   const store = createStoryStore(projectPath)
   const projectToken = randomUUID()
   let state = null
@@ -52,26 +52,60 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   function mapScene(s, timing) {
     // 스펙 §4-④: project.json 씬 확장 필드는 storyId/stalePrompt/stalePromptAt/staleVideo/
     // staleVideoAt 5개로 제한 — sceneNo(scenes.json 전용 표시용 순번)는 push payload에 넣지 않는다.
+    const measured = typeof s.startSec === 'number' && typeof s.endSec === 'number'
     return {
       storyId: s.storyId,
       prompt: s.imagePrompt || '',
       videoT2VPrompt: s.videoPrompt || '',
-      startTime: timing.startTime,
-      endTime: timing.endTime,
-      duration: timing.duration,
-      srtLineIds: [],                                  // M1: 오디오 없음 (스펙 §4-④ 폴백)
+      // IP1: audio 실측(finalScenes startSec/endSec)이 있으면 timing의 유일 소스. 없으면(대략 모드)
+      // buildFallbackTimeline 글자수 추정으로 폴백(스펙 §3 대략 모드 / §7 흐름A).
+      startTime: measured ? s.startSec : timing.startTime,
+      endTime: measured ? s.endSec : timing.endTime,
+      duration: measured ? s.endSec - s.startSec : timing.duration,
+      // IP2: 실측이면 그룹 내 narration 세그먼트 라인 id(sub_<segId>, 순서 보존), 아니면 폴백은 오디오 없음.
+      srtLineIds: measured ? narrationLineIds(s) : [],
       subtitle: (s.segments || []).map((g) => g.text).join(' '),
     }
+  }
+
+  // IP2: 씬 그룹 내 narration 세그먼트의 SRT 라인 id 배열(순서 보존, sfx 제외).
+  function narrationLineIds(s) {
+    return (s.segments || [])
+      .filter((g) => (g.type || 'narration') === 'narration')
+      .map((g) => srtLineId(g.id))
+  }
+
+  // IP2: 세그먼트 실측 타임라인 → srtTrack payload(초 단위, 스펙 §7 흐름A wholesale 교체용).
+  // startMs 없는(대략 모드) 세그먼트는 제외 → 라인 0개면 sendPush가 srtTrack을 안 실어 폴백 보존.
+  function buildSrtTrackPayload(scenes) {
+    const lines = []
+    for (const s of scenes) {
+      for (const g of s.segments || []) {
+        if ((g.type || 'narration') !== 'narration') continue
+        if (typeof g.startMs !== 'number') continue
+        lines.push({
+          id: srtLineId(g.id),
+          startTime: g.startMs / 1000,
+          endTime: (g.startMs + (g.durationMs || 0)) / 1000,
+          text: g.text || '',
+        })
+      }
+    }
+    return lines
   }
 
   function sendPush(scenes, operationId) {
     assertUniqueStoryIds(scenes)
     const timeline = buildFallbackTimeline(scenes, state.input?.options?.language || 'ko')
     const byId = new Map(timeline.map((t) => [t.storyId, t]))
-    send('story:pushScenes', {
+    const srtTrack = buildSrtTrackPayload(scenes)
+    const payload = {
       pushRevision: state.pendingPushRevision,
       scenes: scenes.map((s) => mapScene(s, byId.get(s.storyId))),
-    }, operationId)
+    }
+    // 실측 라인이 있을 때만 srtTrack 전송 — renderer가 wholesale 교체(대략 모드는 미전송→기존 유지).
+    if (srtTrack.length) payload.srtTrack = srtTrack
+    send('story:pushScenes', payload, operationId)
   }
 
   // Important: Story 뷰 ②/④ 패널(씬 세그먼트·프롬프트)이 실데이터를 그리려면 scenes.json
@@ -157,7 +191,9 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       assertSegmentIdsValid(scenesJson.scenes)
       // 화자 voice 배정 (params.speakers 우선, 없으면 state.speakers)
       const speakers = params.speakers || state.speakers || []
-      const voiceOf = (spk) => (speakers.find((s) => s.id === spk)?.voice) || null
+      // C1-a: 화자 매핑 UI(M2a-3) 전에는 미배정 화자를 주입된 기본 voice로 폴백해 audio가 앱에서
+      // 돌게 한다. defaultVoice 미주입(정식 흐름)이면 null → 아래 미배정 검증이 그대로 실행 차단(스펙 §6).
+      const voiceOf = (spk) => (speakers.find((s) => s.id === spk)?.voice) || defaultVoice || null
       // 모든 씬의 세그먼트를 순서대로 평탄화
       const segments = scenesJson.scenes.flatMap((sc) => sc.segments || [])
       const narration = segments.filter((s) => (s.type || 'narration') === 'narration')
@@ -262,6 +298,21 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       if (signal?.aborted) return
       await store.saveText('scenes.json', JSON.stringify({ scenes }, null, 2))
       state.pendingPushRevision += 1
+      // IP3/스펙 §7 revision 소유: 최초 정밀 실행의 push는 prompts가 소유한다 — audio가 null로 둔
+      // manifest.pushRevision을 이 revision으로 재스탬프해야 export 정합 검사
+      // (manifest.pushRevision === lastPushedRevision)가 ack 후 성립한다. 대략 모드(manifest 없음)면 skip.
+      // Codex Medium/스펙 §5: 재스탬프도 하나의 커밋 — abort가 이 사이에 도착하면 push는 wrapper
+      // isStale로 막히므로 manifest도 스탬프하지 않아 "manifest만 앞선" 불일치를 만들지 않는다.
+      if (!signal?.aborted) {
+        const manifestRaw = await store.loadText('audio/manifest.json')
+        // Codex-2 MED: loadText await 사이에도 abort가 도착할 수 있다 — 커밋(saveText) 직전에
+        // 한 번 더 재검사해 abort 이후 스탬프를 막는다(audio 스텝의 각-커밋-전 재검사와 동일).
+        if (manifestRaw && !signal?.aborted) {
+          const m = JSON.parse(manifestRaw)
+          m.pushRevision = state.pendingPushRevision
+          await store.saveText('audio/manifest.json', JSON.stringify(m, null, 2))
+        }
+      }
       // HIGH/Codex: push emit은 여기서 하지 않는다 — flush(story.json 저장) 전에 크래시하면
       // 재발신 조건(pendingPushRevision > lastPushedRevision)이 디스크에 없어 복구 불가.
       // start() 래퍼가 status=done 설정 + flush 완료 후에 pushScenes를 emit한다.

@@ -6,6 +6,9 @@ import { stat } from 'node:fs/promises'
 import path from 'node:path'
 import { createStepMachine } from '../story/stepMachine.js'
 import * as llmGemini from '../api/llm/llmGemini.js'
+import { createTtsAdapter } from '../api/tts/index.js'
+import { getTypecastKey } from '../api/tts/typecastKey.js'
+import { probeDurationMs } from '../story/audioProbe.js'
 
 // HIGH/Codex: renderer가 보낸 projectPath를 무검증으로 받으면 상대경로/traversal 경로로도
 // 스텝 머신이 만들어져 임의 파일시스템 위치에 script.md/scenes.json/story.json을 쓸 수 있다.
@@ -37,9 +40,22 @@ function isWithinWorkFolder(projectPath, workFolder) {
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
 }
 
-export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini, loadMetaPrompt, getActiveWorkFolder = () => null }) {
+export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini, loadMetaPrompt, getActiveWorkFolder = () => null, tts, probe, defaultVoice }) {
   let machine = null
   let openLock = Promise.resolve()
+
+  // C1-a: audio 스텝은 tts/probe 주입이 필수(없으면 실앱에서 tts.capabilities() 크래시).
+  // 테스트/커스텀 provider는 주입 우선, 기본은 Typecast 어댑터 + music-metadata probe.
+  // 화자매핑 UI·멀티 provider 선택은 M2a-3. 키는 typecastKey(env→~/.typecast/credentials).
+  let cachedTtsKey
+  const ttsAdapter = tts || createTtsAdapter('typecast', {
+    getKey: () => (cachedTtsKey ??= getTypecastKey()),
+    fetch: (...a) => globalThis.fetch(...a),
+  })
+  const probeFn = probe || ((filePath) => probeDurationMs(filePath))
+  // C1-a: 화자 매핑 UI(M2a-3) 전에는 미배정 화자를 기본 voice로 폴백해 audio가 앱에서 돌게 한다.
+  // Typecast Joonkyu(CLAUDE.md). 정식 화자매핑이 들어오면(M2a-3) 화자별 voice가 우선한다.
+  const defaultVoiceCfg = defaultVoice || { provider: 'typecast', voiceId: 'tc_6436dbbb602bde66c6b39504' }
 
   const emit = (channel, payload) => {
     const win = getWindow?.()
@@ -61,7 +77,7 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
         return { error: 'invalid-project-path' }
       }
       if (machine) await machine.abort()
-      machine = createStepMachine({ projectPath, llm, emit, getApiKey: () => keyStore.getKey(), loadMetaPrompt })
+      machine = createStepMachine({ projectPath, llm, emit, getApiKey: () => keyStore.getKey(), loadMetaPrompt, tts: ttsAdapter, probe: probeFn, defaultVoice: defaultVoiceCfg })
       return machine.open()
     })
     openLock = task.then(() => undefined, () => undefined)

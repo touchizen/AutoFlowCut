@@ -6,7 +6,7 @@
 // 파이프라인을 실제 계약대로(mock splitScenes가 id 없는 SCENES_SCHEMA 모양 반환, mock
 // writePrompts가 sceneNo로 병합) 태워 회귀를 잡는다.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createStepMachine } from '../../../electron/story/stepMachine.js'
@@ -82,5 +82,107 @@ describe('audio → prompts 통합 (C2: sceneNo/summary 보존)', () => {
       expect(scene.videoPrompt).toBeTruthy()
       expect(scene.summary).toBeTruthy()
     }
+  })
+
+  // IP1: prompts push payload의 씬 timing은 audio 실측(finalScenes startSec/endSec)에서 와야 한다.
+  // 현재 sendPush는 buildFallbackTimeline(글자수 추정)을 쓰므로 짧은 텍스트가 ~1.5s로 나가
+  // 실측 7.0s와 어긋난다 — 실측이 push까지 흐르게 하는 게 M2a-2a 1번 과제.
+  it('push payload timing이 글자수 추정이 아니라 audio 실측(startSec/endSec)을 반영한다', async () => {
+    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await machine.start('scenes', {})
+    await machine.start('audio', { speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }] })
+    await machine.start('prompts', {})
+    const state = await machine.getState()
+
+    const push = emitted.filter((e) => e.ch === 'story:pushScenes').pop()
+    expect(push).toBeTruthy()
+    const byStory = new Map(state.scenes.map((s) => [s.storyId, s]))
+    for (const p of push.payload.scenes) {
+      const src = byStory.get(p.storyId)
+      expect(src).toBeTruthy()
+      // push timing === 실측 finalScenes timing (초)
+      expect(p.startTime).toBeCloseTo(src.startSec, 3)
+      expect(p.endTime).toBeCloseTo(src.endSec, 3)
+      expect(p.duration).toBeCloseTo(src.endSec - src.startSec, 3)
+    }
+    // 실측 반영 증거: 각 세그먼트 7000ms라 씬 duration이 6초 초과 — 글자수 추정(짧은 문장 ~1.5s)이면 불가능.
+    for (const p of push.payload.scenes) {
+      expect(p.duration).toBeGreaterThan(6)
+    }
+  })
+
+  // IP2: audio 실측 push는 세그먼트 SRT 라인(sub_<segId>)을 srtTrack으로 wholesale 전송하고,
+  // 각 씬의 srtLineIds가 그 라인들을 참조해야 한다(스펙 §7 흐름A). 현재 mapScene은 srtLineIds:[]
+  // 하드코딩 + sendPush가 srtTrack을 아예 안 보낸다.
+  it('push payload가 srtLineIds를 채우고 srtTrack(초 단위)을 wholesale 전송한다', async () => {
+    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await machine.start('scenes', {})
+    await machine.start('audio', { speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }] })
+    await machine.start('prompts', {})
+    const state = await machine.getState()
+
+    const push = emitted.filter((e) => e.ch === 'story:pushScenes').pop()
+    expect(Array.isArray(push.payload.srtTrack)).toBe(true)
+    const lineById = new Map(push.payload.srtTrack.map((l) => [l.id, l]))
+    const byStory = new Map(state.scenes.map((s) => [s.storyId, s]))
+
+    for (const p of push.payload.scenes) {
+      const src = byStory.get(p.storyId)
+      const narr = (src.segments || []).filter((g) => (g.type || 'narration') === 'narration')
+      // srtLineIds = 그룹 내 narration 세그먼트 라인 id, 순서 보존
+      expect(p.srtLineIds).toEqual(narr.map((g) => `sub_${g.id}`))
+      for (const g of narr) {
+        const line = lineById.get(`sub_${g.id}`)
+        expect(line).toBeTruthy()
+        expect(line.text).toBe(g.text)
+        expect(line.startTime).toBeCloseTo(g.startMs / 1000, 3)
+        expect(line.endTime).toBeCloseTo((g.startMs + g.durationMs) / 1000, 3)
+      }
+    }
+    // srtTrack 라인 총수 = 전체 narration 세그먼트 수
+    const totalNarr = state.scenes.flatMap((s) => (s.segments || []).filter((g) => (g.type || 'narration') === 'narration')).length
+    expect(push.payload.srtTrack.length).toBe(totalNarr)
+  })
+
+  // IP3: 최초 정밀 실행에서 audio는 manifest.pushRevision=null로 두고(export 차단), prompts가
+  // full push를 소유하며 pendingPushRevision++ 후 그 값으로 manifest를 재스탬프해야 한다(스펙 §7
+  // revision 소유 프로토콜). 재스탬프가 없으면 manifest.pushRevision이 영원히 null → export 항상 차단.
+  it('prompts가 manifest.pushRevision을 pendingPushRevision으로 재스탬프한다', async () => {
+    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await machine.start('scenes', {})
+    await machine.start('audio', { speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }] })
+
+    // audio 직후: manifest.pushRevision은 null (prompts가 소유)
+    const afterAudio = JSON.parse(await readFile(path.join(dir, 'story/audio/manifest.json'), 'utf8'))
+    expect(afterAudio.pushRevision).toBeNull()
+
+    await machine.start('prompts', {})
+    const state = await machine.getState()
+
+    const afterPrompts = JSON.parse(await readFile(path.join(dir, 'story/audio/manifest.json'), 'utf8'))
+    expect(afterPrompts.pushRevision).toBe(state.pendingPushRevision)
+    expect(Number.isInteger(afterPrompts.pushRevision)).toBe(true)
+    // push payload의 pushRevision과도 일치해야 export 정합(manifest.pushRevision===lastPushedRevision) 성립
+    const push = emitted.filter((e) => e.ch === 'story:pushScenes').pop()
+    expect(push.payload.pushRevision).toBe(afterPrompts.pushRevision)
+  })
+
+  // Codex Medium: prompts가 abort되면 manifest는 재스탬프되지 않아야 한다(스펙 §5 커밋 전 abort 재검사).
+  // manifest만 앞서고 push는 안 나가는 불일치를 막는다 — export 정합 검사가 그래도 차단하므로 안전하되,
+  // 재스탬프 자체를 하지 않는 게 정합적. writePrompts를 abort 시점까지 붙잡아 in-flight 취소를 재현.
+  it('prompts가 abort되면 manifest.pushRevision을 재스탬프하지 않는다(null 유지)', async () => {
+    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await machine.start('scenes', {})
+    await machine.start('audio', { speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }] })
+
+    let release
+    llm.writePrompts = vi.fn(() => new Promise((res) => { release = () => res({ scenes: [] }) }))
+    const p = machine.start('prompts', {})
+    await machine.abort()   // in-flight prompts 취소
+    release()               // writePrompts는 abort 후 resolve
+    await p
+
+    const manifest = JSON.parse(await readFile(path.join(dir, 'story/audio/manifest.json'), 'utf8'))
+    expect(manifest.pushRevision).toBeNull()
   })
 })

@@ -140,6 +140,65 @@ describe('story IPC', () => {
     expect(r.error).toBeUndefined()
   })
 
+  // C1-a: audio 스텝은 tts/probe를 필요로 한다(stepMachine.js). story-api가 createStepMachine에
+  // 이 둘을 주입하지 않으면 실앱에서 audio가 tts.capabilities() 접근 시 즉시 크래시한다 —
+  // M2a-1은 테스트가 직접 machine에 mock을 넣어 통과했을 뿐 IPC 경로엔 배선이 없었다.
+  it('story:open이 주입된 tts/probe를 machine에 전달해 audio 스텝이 IPC 경로로 동작한다', async () => {
+    const ipc2 = fakeIpcMain()
+    const tts = { capabilities: () => ({ maxConcurrency: 2 }), synthesize: async ({ text }) => ({ audio: Buffer.from('A:' + text), format: 'wav' }) }
+    const probe = async () => 7000
+    registerStoryIPC(ipc2, {
+      keyStore: { getKey: () => 'k' },
+      getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
+      llm: {
+        generateScript: vi.fn(async () => ({ scriptMd: '#' })),
+        splitScenes: vi.fn(async () => ({
+          scenes: [{ sceneNo: 1, summary: 's', segments: [{ speaker: 'narrator', text: '한 문장입니다.', emotion: 'normal' }] }],
+          speakers: [{ id: 'narrator', name: '나레이션' }],
+        })),
+        writePrompts: vi.fn(async (s) => ({ scenes: s.map((x) => ({ ...x, imagePrompt: 'i', videoPrompt: 'v' })) })),
+      },
+      tts,
+      probe,
+    })
+    const { projectToken } = await ipc2.invoke('story:open', { projectPath: dir })
+    await ipc2.invoke('story:start', { projectToken, step: 'script', params: { input: { type: 'title', title: 'T' }, options: { language: 'ko' } } })
+    await ipc2.invoke('story:start', { projectToken, step: 'scenes', params: {} })
+    await ipc2.invoke('story:start', { projectToken, step: 'audio', params: { speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }] } })
+    const state = await ipc2.invoke('story:get-state', { projectToken })
+    expect(state.steps.audio.status).toBe('done')
+  })
+
+  // C1-a(하드 default voice): 실앱 경로는 화자 매핑 UI(M2a-3) 전이라 audio를 speakers 없이 실행한다.
+  // story-api가 기본 화자 voice를 주입하지 않으면 audio가 "voice not assigned"로 error → 앱에서 못 돈다.
+  // Codex High: 이전 테스트는 speakers를 수동으로 넘겨 이 블로커를 놓쳤다 — speakers 없이 검증한다.
+  it('story:start audio를 speakers 없이 실행해도 주입된 기본 voice로 동작한다', async () => {
+    const ipc2 = fakeIpcMain()
+    const tts = { capabilities: () => ({ maxConcurrency: 2 }), synthesize: async ({ text }) => ({ audio: Buffer.from('A:' + text), format: 'wav' }) }
+    const probe = async () => 7000
+    registerStoryIPC(ipc2, {
+      keyStore: { getKey: () => 'k' },
+      getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
+      llm: {
+        generateScript: vi.fn(async () => ({ scriptMd: '#' })),
+        splitScenes: vi.fn(async () => ({
+          scenes: [{ sceneNo: 1, summary: 's', segments: [{ speaker: 'narrator', text: '한 문장입니다.', emotion: 'normal' }] }],
+          speakers: [{ id: 'narrator', name: '나레이션' }],
+        })),
+        writePrompts: vi.fn(async (s) => ({ scenes: s.map((x) => ({ ...x, imagePrompt: 'i', videoPrompt: 'v' })) })),
+      },
+      tts,
+      probe,
+      defaultVoice: { provider: 'typecast', voiceId: 'tc_default' },
+    })
+    const { projectToken } = await ipc2.invoke('story:open', { projectPath: dir })
+    await ipc2.invoke('story:start', { projectToken, step: 'script', params: { input: { type: 'title', title: 'T' }, options: { language: 'ko' } } })
+    await ipc2.invoke('story:start', { projectToken, step: 'scenes', params: {} })
+    await ipc2.invoke('story:start', { projectToken, step: 'audio', params: {} }) // speakers 없음 — 실앱 경로
+    const state = await ipc2.invoke('story:get-state', { projectToken })
+    expect(state.steps.audio.status).toBe('done')
+  })
+
   it('story:push-ack(ok:false)는 operationId/reason을 버리지 않고 lastPushError로 보존한다', async () => {
     const { projectToken } = await ipc.invoke('story:open', { projectPath: dir })
     await ipc.invoke('story:start', { projectToken, step: 'script', params: { input: { type: 'title', title: 'T' }, options: {} } })
