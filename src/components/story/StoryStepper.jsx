@@ -17,7 +17,10 @@ export const STEP_META = {
 
 const STATUS_LABEL = { pending: '대기', running: '진행 중', done: '완료', error: '오류' }
 
-export default function StoryStepper({ steps, currentStep, t = (key, fallback) => fallback, onStepClick }) {
+export default function StoryStepper({ steps, currentStep, activeStep, t = (key, fallback) => fallback, onStepClick }) {
+  // active(파란색)는 사용자가 보고 있는 스텝(activeStep=displayStep)을 따른다 — 클릭한 탭이 active.
+  // 미지정이면 currentStep 폴백(하위호환).
+  const activeKey = activeStep ?? currentStep
   return (
     <div className="story-stepper">
       {STEP_ORDER.map((key) => {
@@ -36,7 +39,7 @@ export default function StoryStepper({ steps, currentStep, t = (key, fallback) =
             className={[
               'story-step-pill',
               `story-step-${status}`,
-              key === currentStep ? 'active' : '',
+              key === activeKey ? 'active' : '',
               clickable ? 'story-step-clickable' : '',
             ].filter(Boolean).join(' ')}
           >

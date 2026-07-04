@@ -47,6 +47,23 @@ describe('StoryView B — audio done 재생성/닫기', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
+  it('prompts done + 프롬프트 탭 → "프롬프트 다시 생성" 클릭 시 prompts 재실행 + 닫기', () => {
+    const start = vi.fn()
+    const onClose = vi.fn()
+    const p = pipeline({
+      start,
+      state: { steps: { script: { status: 'done' }, scenes: { status: 'done' }, audio: { status: 'done' }, prompts: { status: 'done' } }, speakers: [{ id: 'narrator', name: 'n' }] },
+    })
+    render(<StoryView pipeline={p} voices={[]} onClose={onClose} />)
+    fireEvent.click(screen.getByRole('button', { name: '프롬프트' })) // 스텝퍼 → viewedStep=prompts
+
+    fireEvent.click(screen.getByRole('button', { name: /프롬프트 다시 생성/ }))
+    expect(start).toHaveBeenCalledWith('prompts', expect.anything())
+
+    fireEvent.click(screen.getByRole('button', { name: /닫기/ }))
+    expect(onClose).toHaveBeenCalled()
+  })
+
   it('audio 진행 중(running)이면 "오디오 다시 생성" 대신 기존 동작', () => {
     const p = pipeline({
       state: { steps: { script: { status: 'done' }, scenes: { status: 'done' }, audio: { status: 'running' }, prompts: { status: 'pending' } }, speakers: [{ id: 'narrator', name: 'n' }] },

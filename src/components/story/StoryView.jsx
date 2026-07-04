@@ -202,10 +202,12 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
       ? t('story.action.generateIcon', '✨ 시작')
       : t('story.action.runIcon', '▶ 진행')
 
-  // B: audio 스텝이 done인데 오디오 탭을 보고 있으면(displayStep=audio) 하단 primary가 마지막
-  // 스텝(prompts)으로 새지 않고 "오디오 다시 생성"(audio 재실행)으로 동작한다. canReuse가 엔진/
-  // 성우 바뀐 세그먼트만 재생성하므로 전체 강제가 아니다. + '닫기'로 파이프라인을 나간다.
-  const isAudioRedo = displayStep === 'audio' && steps.audio?.status === 'done' && !isRunning
+  // B: done 스텝(audio/prompts)을 보고 있으면 하단 primary가 다음 스텝으로 새지 않고 "다시 생성"
+  // (그 스텝 재실행)으로 동작한다 + '닫기'로 파이프라인을 나간다. audio 재실행은 canReuse가 엔진/
+  // 성우 바뀐 세그먼트만 재생성. (script/scenes는 파이프라인 진행이라 제외.)
+  const redoStep = (['audio', 'prompts'].includes(displayStep) && steps[displayStep]?.status === 'done' && !isRunning)
+    ? displayStep : null
+  const isAudioRedo = redoStep != null // (닫기 버튼 노출 조건 겸용)
 
   // M2a-3b: 화자→목소리 매핑을 audio 스텝 params로. state.speakers가 없으면 {} (빈 speakers로
   // 덮어써 state.speakers를 지우는 것 방지 — 미배정은 backend defaultVoice 폴백). 선택 목소리는
@@ -287,9 +289,9 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
     }
   }
 
-  // B: 오디오 다시 생성 — audio 스텝 재실행(현재 화자 매핑 반영). canReuse가 변경/미완성 세그먼트만 재생성.
-  const handleAudioRedo = () => {
-    start('audio', buildAudioParams())
+  // B: 현재 보고 있는 done 스텝(audio/prompts)을 재실행. audio는 화자 매핑 반영, prompts는 params 없음.
+  const handleStepRedo = () => {
+    start(redoStep, redoStep === 'audio' ? buildAudioParams() : {})
     setViewedStep(null)
   }
 
@@ -409,7 +411,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
 
   return (
     <div className="story-view">
-      <StoryStepper steps={steps} currentStep={currentStep} t={t} onStepClick={handleStepClick} />
+      <StoryStepper steps={steps} currentStep={currentStep} activeStep={displayStep} t={t} onStepClick={handleStepClick} />
 
       {openError && (
         <div className="story-open-error-banner" role="alert">
@@ -861,11 +863,11 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
             <button
               type="button"
               className={`story-btn-primary ${isError ? 'story-btn-error' : ''}`}
-              onClick={isAudioRedo ? handleAudioRedo : handlePrimaryAction}
+              onClick={redoStep ? handleStepRedo : handlePrimaryAction}
               disabled={isRunning}
-              aria-label={isAudioRedo ? t('story.action.audioRedo', '오디오 다시 생성') : actionAriaLabel}
+              aria-label={redoStep === 'prompts' ? t('story.action.promptsRedo', '프롬프트 다시 생성') : redoStep === 'audio' ? t('story.action.audioRedo', '오디오 다시 생성') : actionAriaLabel}
             >
-              {isAudioRedo ? t('story.action.audioRedoIcon', '↻ 오디오 다시 생성') : actionVisibleLabel}
+              {redoStep === 'prompts' ? t('story.action.promptsRedoIcon', '↻ 프롬프트 다시 생성') : redoStep === 'audio' ? t('story.action.audioRedoIcon', '↻ 오디오 다시 생성') : actionVisibleLabel}
             </button>
           )}
           {isAudioRedo && onClose && (
