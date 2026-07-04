@@ -1,6 +1,14 @@
 import { describe, it, expect } from 'vitest'
 import { SCENES_SCHEMA, validateScenesSegments } from '../../../../electron/api/llm/schemas.js'
 
+describe('SCENES_SCHEMA speakers.appearance (V2 캐릭터 레퍼런스)', () => {
+  it('speakers 아이템에 appearance 필드가 있고 required는 id/name만', () => {
+    const sp = SCENES_SCHEMA.properties.speakers.items
+    expect(sp.properties.appearance).toBeTruthy()
+    expect(sp.required).toEqual(['id', 'name'])
+  })
+})
+
 describe('SCENES_SCHEMA segment loosening (M2b-2)', () => {
   it('segment는 speaker/text를 required로 강제하지 않는다(sfx 세그먼트 수용)', () => {
     const segReq = SCENES_SCHEMA.properties.scenes.items.properties.segments.items.required

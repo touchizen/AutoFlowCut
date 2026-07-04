@@ -168,3 +168,12 @@ describe('reviewScript / reviseScript (M3)', () => {
     expect(fetchImpl.mock.calls[0][0]).not.toContain('streamGenerateContent')
   })
 })
+
+describe('splitScenes appearance 통과(V2)', () => {
+  it('speakers[].appearance가 그대로 반환된다', async () => {
+    const payload = { scenes: [{ sceneNo: 1, summary: 's', segments: [{ speaker: 'a', text: 'hi', emotion: 'normal' }] }], speakers: [{ id: 'a', name: '민수', appearance: 'tall man' }] }
+    const fetchImpl = vi.fn(async () => jsonResponse(payload))
+    const r = await splitScenes('# 대본', OPTS, { fetchImpl })
+    expect(r.speakers[0].appearance).toBe('tall man')
+  })
+})

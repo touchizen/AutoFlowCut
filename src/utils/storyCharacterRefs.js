@@ -1,0 +1,51 @@
+/**
+ * V2: 스토리 캐릭터(name, appearance)를 Ref 탭 character 레퍼런스 카드로 upsert.
+ *
+ * type-aware upsert(스펙 §3.1):
+ *  - 같은 name + type==='character' 있으면 → 보존(사용자 생성/편집 이미지·status·prompt 불변).
+ *  - 같은 name인데 type≠character(scene/style) → 추가 안 하고 collision 반환(태그만 있고 카드 없는
+ *    조용한 실패 방지 — App이 토스트).
+ *  - 없으면 → 전체 기본 필드 + numeric id로 추가(status:'pending', data:null).
+ *
+ * id는 numeric(앱이 ref.id를 숫자로 가정 — ReferencePanel Math.max, Number(id)). 문자열 id는 NaN을
+ * 전파시키므로 금지. idempotency는 id가 아니라 name 보존으로 확보.
+ */
+export function upsertStoryCharacterRefs(existing, storyCharacters) {
+  const refs = Array.isArray(existing) ? existing : []
+  const chars = Array.isArray(storyCharacters) ? storyCharacters : []
+  if (chars.length === 0) return { references: refs, collisions: [] }
+
+  const byName = new Map(refs.map((r) => [r.name, r]))
+  let nextId = refs.reduce((max, r) => (typeof r.id === 'number' && r.id > max ? r.id : max), 0)
+  const added = []
+  const collisions = []
+
+  for (const c of chars) {
+    const existingRef = byName.get(c.name)
+    if (existingRef) {
+      if (existingRef.type !== 'character') collisions.push(c.name) // 동명 비-character 충돌
+      continue // character 동명은 보존(추가 안 함)
+    }
+    nextId += 1
+    const card = {
+      id: nextId,
+      name: c.name,
+      type: 'character',
+      category: 'MEDIA_CATEGORY_SUBJECT',
+      prompt: c.appearance || '',
+      imagePath: '',
+      data: null,
+      mediaId: null,
+      caption: '',
+      status: 'pending',
+      errorMessage: null,
+    }
+    byName.set(c.name, card)
+    added.push(card)
+  }
+
+  const references = added.length ? [...refs, ...added] : refs
+  return { references, collisions }
+}
+
+export default { upsertStoryCharacterRefs }

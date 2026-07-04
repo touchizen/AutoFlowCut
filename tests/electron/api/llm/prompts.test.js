@@ -119,3 +119,20 @@ describe('buildRevisePrompt (M3 수정)', () => {
     expect(buildRevisePrompt('S', 'C', {})).toMatch(/전체|설명|만 출력/)
   })
 })
+
+describe('buildSplitPrompt appearance(V2)', () => {
+  it('등장인물 appearance(외형)를 speakers에 넣으라는 지시 포함', () => {
+    const p = buildSplitPrompt('S', { language: 'ko' })
+    expect(p).toContain('appearance')
+    expect(p).toMatch(/외형|생김새/)
+  })
+})
+
+describe('buildPromptsPrompt appearance 컨텍스트(V2)', () => {
+  it('speakers[].appearance를 프롬프트 컨텍스트로 포함', () => {
+    const scenes = [{ sceneNo: 1, summary: 'S1', segments: [{ speaker: 'a', text: 'hi' }] }]
+    const p = buildPromptsPrompt(scenes, { style: null, speakers: [{ id: 'a', name: '민수', appearance: 'tall man in black coat' }] }, { language: 'en' })
+    expect(p).toContain('tall man in black coat')
+    expect(p).toContain('민수')
+  })
+})

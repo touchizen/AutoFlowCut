@@ -1117,11 +1117,11 @@ export function useProjectData({
   // saveCurrentProject 래퍼와 saveCurrentProjectWithPayload 가 공유하는 내부 헬퍼.
   // scenes/srtTrack(및 settings) 을 명시로 넘기면 그 값을, 안 넘기면(undefined) 현재
   // closure 값(hook 의 최신 render 상태)을 사용해 표준 saveCurrentProject 를 호출한다.
-  const buildProjectPayload = ({ settingsOverride, scenes: scenesArg, srtTrack: srtTrackArg } = {}) =>
+  const buildProjectPayload = ({ settingsOverride, scenes: scenesArg, srtTrack: srtTrackArg, references: referencesArg } = {}) =>
     saveCurrentProject(
       settingsOverride || settings,
       scenesArg !== undefined ? scenesArg : scenes,
-      references,
+      referencesArg !== undefined ? referencesArg : references,
       videoScenes,
       framePairs,
       selectedStyleRefId,
@@ -1142,8 +1142,8 @@ export function useProjectData({
     // closure 값 사용). 반환값은 { ok } 로 단순화 — 저장 skip(undefined, 예: 폴더
     // 모드 아님)도 ok:true 로 취급한다. 실패({success:false})면 ok:false, throw 는
     // 그대로 전파(기존 saveCurrentProject 관행과 동일 — 여기서 삼키지 않는다).
-    saveCurrentProjectWithPayload: async ({ scenes: scenesArg, srtTrack: srtTrackArg } = {}) => {
-      const res = await buildProjectPayload({ scenes: scenesArg, srtTrack: srtTrackArg })
+    saveCurrentProjectWithPayload: async ({ scenes: scenesArg, srtTrack: srtTrackArg, references: referencesArg } = {}) => {
+      const res = await buildProjectPayload({ scenes: scenesArg, srtTrack: srtTrackArg, references: referencesArg })
       return { ok: !(res && res.success === false) }
     },
     isRestoringRef,  // auto-save 가드용

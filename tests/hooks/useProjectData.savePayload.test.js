@@ -88,6 +88,27 @@ describe('saveCurrentProjectWithPayload', () => {
     expect(payload.srtTrack).not.toEqual(staleSrtTrack)
   })
 
+  it('V2: references override를 저장 payload에 반영(stale closure references 아님)', async () => {
+    const staleRefs = [{ id: 1, name: 'stale' }]
+    const { result } = setup({ references: staleRefs })
+    const freshRefs = [{ id: 1, name: 'stale' }, { id: 2, name: '민수', type: 'character' }]
+    await act(async () => {
+      await result.current.saveCurrentProjectWithPayload({ scenes: [{ id: 's' }], srtTrack: [], references: freshRefs })
+    })
+    const [, payload] = fileSystemAPI.saveProjectData.mock.calls[0]
+    expect(payload.references.some((r) => r.name === '민수')).toBe(true)
+  })
+
+  it('V2: references 미지정이면 기존 closure references 사용(하위호환)', async () => {
+    const closureRefs = [{ id: 9, name: 'closure' }]
+    const { result } = setup({ references: closureRefs })
+    await act(async () => {
+      await result.current.saveCurrentProjectWithPayload({ scenes: [{ id: 's' }], srtTrack: [] })
+    })
+    const [, payload] = fileSystemAPI.saveProjectData.mock.calls[0]
+    expect(payload.references).toEqual(closureRefs)
+  })
+
   it('returns { ok: false } when the underlying save fails', async () => {
     fileSystemAPI.saveProjectData.mockResolvedValue({ success: false, error: 'disk full' })
     const { result } = setup()

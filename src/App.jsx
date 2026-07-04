@@ -30,6 +30,7 @@ import { useAutoSave } from './hooks/useAutoSave'
 import { useFlowEvents } from './hooks/useFlowEvents'
 import { useMcpServer } from './hooks/useMcpServer'
 import { useMenuActions } from './hooks/useMenuActions'
+import { upsertStoryCharacterRefs } from './utils/storyCharacterRefs'
 import { syncVideosIntoScenes } from './services/mediaSync'
 import { retryVideoDownload } from './services/videoRecovery'
 import { isStyleReference, previewStyleMatching } from './services/styleService'
@@ -472,12 +473,44 @@ function App() {
   const storyProjectPath = settings.saveMode === 'folder' && workFolder && settings.projectName
     ? `${workFolder}/${settings.projectName}`
     : null
+  // V2/Codex-High: story push 핸들러는 직렬화돼야 한다 — 연속 push가 겹치면 (a) 렌더 클로저의
+  // 옛 references로 upsert해 중복 id/카드 유실, (b) whole-snapshot 저장이 순서 역전돼 옛 저장이
+  // 새 저장을 덮어씀. referencesRef(동기 최신)로 upsert하고, pushQueueRef로 한 번에 하나씩 처리한다.
+  const referencesRef = useRef(scenesHook.references)
+  referencesRef.current = scenesHook.references
+  const pushQueueRef = useRef(Promise.resolve())
+  // Codex-High: 큐에 대기 중인 push가 dequeue될 때 프로젝트가 이미 바뀌었으면 폐기 —
+  // 안 그러면 옛 프로젝트 씬/카드가 새 프로젝트에 유입된다(토큰 무효화는 accept 전 이벤트만 커버).
+  const storyProjectPathRef = useRef(storyProjectPath)
+  storyProjectPathRef.current = storyProjectPath
   const storyPipeline = useStoryPipeline({
     projectPath: storyProjectPath,
-    onPushScenes: async (payload) => {
-      const { nextScenes, nextSrtTrack } = scenesHook.importStoryScenes(payload)
-      const r = await saveCurrentProjectWithPayload({ scenes: nextScenes, srtTrack: nextSrtTrack })
-      if (!r.ok) throw new Error('project save failed')
+    onPushScenes: (payload) => {
+      const enqueuedPath = storyProjectPathRef.current
+      const run = async () => {
+        // 프로젝트 전환됨 — stale push 폐기. return이 아니라 throw: hook이 ok:true ack로 옛 프로젝트
+        // lastPushedRevision을 잘못 advance(재발신 억제)하지 않도록, ok:false가 나가게 한다(Codex).
+        if (storyProjectPathRef.current !== enqueuedPath) throw new Error('stale story push discarded (project switched)')
+        const { nextScenes, nextSrtTrack } = scenesHook.importStoryScenes(payload)
+        // V2: 스토리 캐릭터 → Ref 탭 character 카드 upsert. push 트랜잭션에서 refs도 함께 영속
+        // (autosave 디바운스 전 crash 시 story.json은 pushRevision 기록됐는데 카드 유실 방지).
+        let nextReferences
+        if (payload.storyCharacters?.length) {
+          const { references: upserted, collisions } = upsertStoryCharacterRefs(referencesRef.current, payload.storyCharacters)
+          if (upserted !== referencesRef.current) {
+            nextReferences = upserted
+            referencesRef.current = upserted // 동기 최신 — 다음 push가 이 카드를 본다
+            scenesHook.setReferences(upserted)
+          }
+          if (collisions.length) toast.warning(t('story.charRef.collision', `동명 레퍼런스가 있어 캐릭터 카드를 건너뜀: ${collisions.join(', ')}`))
+        }
+        const r = await saveCurrentProjectWithPayload({ scenes: nextScenes, srtTrack: nextSrtTrack, references: nextReferences })
+        if (!r.ok) throw new Error('project save failed')
+      }
+      // 직렬화: 이전 push 완료 후 실행(성공/실패 무관). 반환 promise를 훅이 await 후 ack.
+      const p = pushQueueRef.current.then(run, run)
+      pushQueueRef.current = p.catch(() => {})
+      return p
     },
   })
 

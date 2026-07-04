@@ -33,7 +33,8 @@ export const SCENES_SCHEMA = {
       type: 'ARRAY',
       items: {
         type: 'OBJECT',
-        properties: { id: { type: 'STRING' }, name: { type: 'STRING' } },
+        // V2: appearance = 이미지 생성용 영어 외형 묘사(얼굴·헤어·의상). narrator/비가시 화자는 생략(optional).
+        properties: { id: { type: 'STRING' }, name: { type: 'STRING' }, appearance: { type: 'STRING' } },
         required: ['id', 'name'],
       },
     },

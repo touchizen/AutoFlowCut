@@ -94,6 +94,25 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
 
   async function flush() { await store.save(state) }
 
+  // V2: narrator/비가시 화자 판정(정규화 id/name). 이 화자는 캐릭터 카드/태그에서 제외.
+  const isNarratorSpeaker = (sp) => {
+    const t = (v) => String(v || '').replace(/\s/g, '').toLowerCase()
+    return t(sp?.id) === 'narrator' || t(sp?.name) === 'narrator' || t(sp?.name) === '내레이터'
+  }
+  // V2: appearance 있는 non-narrator speaker만 캐릭터로 취급(태그·카드 일관 — omit 정책).
+  const characterSpeakers = () => (state.speakers || []).filter((sp) => !isNarratorSpeaker(sp) && sp.appearance && String(sp.appearance).trim())
+
+  // V2: 씬 characters 태그 — 그 씬 세그먼트의 speaker id를 speaker.name으로 변환(캐릭터만, 유일).
+  function sceneCharacters(s) {
+    const chars = new Map(characterSpeakers().map((sp) => [sp.id, sp.name]))
+    const names = []
+    for (const g of s.segments || []) {
+      const name = chars.get(g.speaker)
+      if (name && !names.includes(name)) names.push(name)
+    }
+    return names.join(', ')
+  }
+
   function mapScene(s, timing) {
     // 스펙 §4-④: project.json 씬 확장 필드는 storyId/stalePrompt/stalePromptAt/staleVideo/
     // staleVideoAt 5개로 제한 — sceneNo(scenes.json 전용 표시용 순번)는 push payload에 넣지 않는다.
@@ -110,6 +129,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // IP2: 실측이면 그룹 내 narration 세그먼트 라인 id(sub_<segId>, 순서 보존), 아니면 폴백은 오디오 없음.
       srtLineIds: measured ? narrationLineIds(s) : [],
       subtitle: (s.segments || []).map((g) => g.text).join(' '),
+      // V2: 캐릭터 레퍼런스 매칭용 태그(speaker.name 콤마조인). renderer getMatchingReferences가 소비.
+      characters: sceneCharacters(s),
     }
   }
 
@@ -147,6 +168,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     const payload = {
       pushRevision: state.pendingPushRevision,
       scenes: scenes.map((s) => mapScene(s, byId.get(s.storyId))),
+      // V2: 캐릭터 레퍼런스 카드 등록용 — appearance 있는 non-narrator speaker(이름+외형).
+      storyCharacters: characterSpeakers().map((sp) => ({ name: sp.name, appearance: sp.appearance })),
     }
     // 실측 라인이 있을 때만 srtTrack 전송 — renderer가 wholesale 교체(대략 모드는 미전송→기존 유지).
     if (srtTrack.length) payload.srtTrack = srtTrack
@@ -257,7 +280,11 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // speakers 병합 (스펙 §4-②): 정규화 이름 완전 일치만 voice 승계
       const norm = (n) => (n || '').replace(/\s/g, '')
       const prevSpeakers = new Map(state.speakers.map((sp) => [norm(sp.name), sp]))
-      state.speakers = speakers.map((sp) => ({ ...sp, voice: prevSpeakers.get(norm(sp.name))?.voice ?? null }))
+      // V2: appearance도 이름 일치 승계(재실행 보존) — 생성된 캐릭터 카드 prompt와 텍스트 일관.
+      state.speakers = speakers.map((sp) => {
+        const prev = prevSpeakers.get(norm(sp.name))
+        return { ...sp, appearance: prev?.appearance ?? sp.appearance, voice: prev?.voice ?? null }
+      })
     },
     async audio(params, opId, signal) {
       const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
@@ -492,7 +519,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       if (!scenesJson) throw new Error('scenes.json not found — run scenes step first')
       const scriptMd = await store.loadText('script.md')
       const opts = { apiKey: getApiKey(), model: state.engine.model, ...(state.input?.options || {}) }
-      const { scenes } = await llm.writePrompts(scenesJson.scenes, { scriptMd, style: params.style || null }, opts, { signal })
+      // V2: 프롬프트 컨텍스트엔 캐릭터(non-narrator·appearance 보유)만 전달 — narrator 외형 누수 방지(Codex-Low).
+      const { scenes } = await llm.writePrompts(scenesJson.scenes, { scriptMd, style: params.style || null, speakers: characterSpeakers() }, opts, { signal })
       if (signal?.aborted) return
       await store.saveText('scenes.json', JSON.stringify({ scenes }, null, 2))
       state.pendingPushRevision += 1

@@ -117,3 +117,19 @@ describe('importStoryScenes', () => {
     expect(newId).toBe('scene_3')
   })
 })
+
+describe('importStoryScenes characters 보존 (V2)', () => {
+  it('push의 characters 태그를 씬에 보존한다(빈 문자열로 안 덮음)', () => {
+    const { result } = renderHook(() => useScenes())
+    act(() => { result.current.importStoryScenes({ scenes: [pushScene('u1', { characters: '민수, 서준' })] }) })
+    const s = result.current.scenes.find((x) => x.storyId === 'u1')
+    expect(s.characters).toBe('민수, 서준')
+  })
+  it('재push로 characters가 바뀌면 새 값으로 교체된다', () => {
+    const { result } = renderHook(() => useScenes())
+    act(() => { result.current.importStoryScenes({ scenes: [pushScene('u1', { characters: '민수' })] }) })
+    act(() => { result.current.importStoryScenes({ scenes: [pushScene('u1', { characters: '서준' })] }) })
+    const s = result.current.scenes.find((x) => x.storyId === 'u1')
+    expect(s.characters).toBe('서준')
+  })
+})

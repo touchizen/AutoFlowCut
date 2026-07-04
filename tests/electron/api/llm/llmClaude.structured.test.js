@@ -134,3 +134,12 @@ describe('llmClaude.reviseScript (M3)', () => {
     expect(out.scriptMd).toBe('개선된 대본')
   })
 })
+
+describe('llmClaude.splitScenes appearance 통과(V2)', () => {
+  it('speakers[].appearance가 그대로 반환된다', async () => {
+    const withApp = { scenes: [{ sceneNo: 1, summary: 'S', segments: [{ speaker: 'a', text: 'hi' }] }], speakers: [{ id: 'a', name: '민수', appearance: 'tall man' }] }
+    const queryImpl = async function* () { yield { type: 'result', subtype: 'success', is_error: false, structured_output: withApp } }
+    const out = await splitScenes('SCRIPT', {}, { queryImpl })
+    expect(out.speakers[0].appearance).toBe('tall man')
+  })
+})
