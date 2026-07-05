@@ -93,15 +93,15 @@ describe('buildReviewPrompt (M3 검토)', () => {
   it('내장 루브릭 관점 + 본문 포함', () => {
     const p = buildReviewPrompt('대본-본문-XYZ', { language: 'ko' })
     expect(p).toContain('대본-본문-XYZ')
-    expect(p).toMatch(/훅|도입/)
-    expect(p).toMatch(/구조/)
-    expect(p).toMatch(/일관성/)
+    expect(p).toMatch(/몰입도/)
+    expect(p).toMatch(/궁금증/)
+    expect(p).toMatch(/기대감/)
     expect(p).toMatch(/pass/)
     expect(p).toMatch(/revise/)
   })
-  it('metaPrompt(장르)가 있으면 컨텍스트로 포함', () => {
+  it('metaPrompt(장르)는 검수 컨텍스트에 포함하지 않는다', () => {
     const p = buildReviewPrompt('S', { language: 'ko', metaPrompt: 'GENRE-META-123' })
-    expect(p).toContain('GENRE-META-123')
+    expect(p).not.toContain('GENRE-META-123')
   })
   it('사소한 취향으로 revise 남발 금지 지시', () => {
     expect(buildReviewPrompt('S', {})).toMatch(/취향|사소|남발|경미/)

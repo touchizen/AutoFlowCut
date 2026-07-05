@@ -5,6 +5,10 @@ import {
   generateTitle,
   reviewScript,
   reviseScript,
+  reviewScenes,
+  reviseScenes,
+  reviewPrompts,
+  revisePrompts,
   splitScenes,
   writePrompts,
 } from '../../../../electron/api/llm/llmCodex.js'
@@ -86,5 +90,30 @@ describe('llmCodex adapter', () => {
 
     runJson.mockResolvedValueOnce({ scenes: [] })
     await expect(writePrompts(scenes, { scriptMd: '#' }, OPTS, { runJson })).rejects.toThrow(/scene 1 missing\/empty prompt/)
+  })
+
+  it('reviewScenes/reviewPrompts는 Codex JSON runner와 backend guard를 사용한다', async () => {
+    const runJson = vi.fn(async () => ({ verdict: 'revise', critique: 'fix' }))
+    await expect(reviewScenes('SCRIPT', [{ sceneNo: 1, segments: [] }], [], OPTS, { runJson }))
+      .resolves.toEqual({ verdict: 'revise', critique: 'fix' })
+    await expect(reviewPrompts([{ sceneNo: 1, imagePrompt: 'IMG', videoPrompt: 'VID' }], { scriptMd: 'SCRIPT' }, OPTS, { runJson }))
+      .resolves.toEqual({ verdict: 'revise', critique: 'fix' })
+    expect(runJson.mock.calls[0][0]).toContain('Do not inspect local files')
+    expect(runJson.mock.calls[0][1]).toMatchObject({ type: 'object' })
+    expect(runJson.mock.calls[0][2]).toEqual({ model: 'gpt-5.5', reasoningEffort: 'high' })
+    expect(runJson.mock.calls[1][2]).toEqual({ model: 'gpt-5.5', reasoningEffort: 'high' })
+  })
+
+  it('reviseScenes/revisePrompts는 수정 JSON을 검증하고 병합한다', async () => {
+    const scenesPayload = {
+      scenes: [{ sceneNo: 1, summary: 'S', segments: [{ speaker: 'narrator', text: '안녕', emotion: 'normal' }] }],
+      speakers: [{ id: 'narrator', name: '내레이터' }],
+    }
+    const runScenesJson = vi.fn(async () => scenesPayload)
+    await expect(reviseScenes('SCRIPT', [], [], 'fix', OPTS, { runJson: runScenesJson })).resolves.toEqual(scenesPayload)
+
+    const runPromptsJson = vi.fn(async () => ({ scenes: [{ sceneNo: 1, imagePrompt: 'IMG2', videoPrompt: 'VID2' }] }))
+    await expect(revisePrompts([{ sceneNo: 1, storyId: 's1' }], { scriptMd: 'SCRIPT' }, 'fix', OPTS, { runJson: runPromptsJson }))
+      .resolves.toEqual({ scenes: [{ sceneNo: 1, storyId: 's1', imagePrompt: 'IMG2', videoPrompt: 'VID2' }] })
   })
 })

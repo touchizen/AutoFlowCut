@@ -58,6 +58,15 @@ describe('useStoryPipeline — reviewProgress(M3 script-review)', () => {
     expect(result.current.reviewProgress).toMatchObject({ round: 2, of: 3, phase: 'reviewing' })
   })
 
+  it('generic review progress를 target과 함께 노출한다', async () => {
+    const handlers = installApi()
+    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: async () => {} }))
+    await act(async () => { await result.current.open() })
+    act(() => handlers['story:state'](runningState('op1'))) // activeOp = op1
+    act(() => handlers['story:progress']({ projectToken: 'TOK', operationId: 'op1', kind: 'review', target: 'scenes', round: 1, of: 2, phase: 'reviewing' }))
+    expect(result.current.reviewProgress).toMatchObject({ target: 'scenes', round: 1, of: 2, phase: 'reviewing' })
+  })
+
   it('terminal story:state(진행 없음)이면 reviewProgress를 지운다', async () => {
     const handlers = installApi()
     const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: async () => {} }))

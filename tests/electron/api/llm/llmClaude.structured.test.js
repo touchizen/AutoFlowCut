@@ -1,5 +1,14 @@
 import { describe, it, expect, vi } from 'vitest'
-import { splitScenes, writePrompts, reviewScript, reviseScript } from '../../../../electron/api/llm/llmClaude.js'
+import {
+  splitScenes,
+  writePrompts,
+  reviewScript,
+  reviseScript,
+  reviewScenes,
+  reviseScenes,
+  reviewPrompts,
+  revisePrompts,
+} from '../../../../electron/api/llm/llmClaude.js'
 
 const SCENES = { scenes: [{ sceneNo: 1, summary: 'S', segments: [{ speaker: 'narrator', text: 'hi' }] }], speakers: [{ id: 'narrator', name: '내레이터' }] }
 
@@ -138,6 +147,17 @@ describe('llmClaude.reviewScript (M3)', () => {
     const out = await reviewScript('대본', {}, { queryImpl })
     expect(out.verdict).toBe('pass')
   })
+  it('몰입도 중심 루브릭을 쓰고 장르 metaPrompt를 프롬프트에 넣지 않는다', async () => {
+    let promptText = ''
+    const queryImpl = async function* (args) {
+      promptText = args.prompt
+      yield { type: 'result', subtype: 'success', is_error: false, structured_output: { verdict: 'pass', critique: '' } }
+    }
+    await reviewScript('대본', { metaPrompt: '야담 전용 공식', genre: 'yadam' }, { queryImpl })
+    expect(promptText).toContain('궁금증')
+    expect(promptText).toContain('기대감')
+    expect(promptText).not.toContain('야담 전용 공식')
+  })
 })
 
 describe('llmClaude.reviseScript (M3)', () => {
@@ -145,6 +165,31 @@ describe('llmClaude.reviseScript (M3)', () => {
     const queryImpl = async function* () { yield { type: 'result', subtype: 'success', is_error: false, result: '개선된 대본' } }
     const out = await reviseScript('원본', '도입 강화', {}, { queryImpl })
     expect(out.scriptMd).toBe('개선된 대본')
+  })
+})
+
+describe('llmClaude scenes/prompts review controls', () => {
+  it('reviewScenes는 verdict/critique를 반환한다', async () => {
+    const queryImpl = resultOf({ type: 'result', subtype: 'success', is_error: false, structured_output: { verdict: 'revise', critique: '씬 2가 너무 김' } })
+    const out = await reviewScenes('SCRIPT', SCENES.scenes, SCENES.speakers, {}, { queryImpl })
+    expect(out).toEqual({ verdict: 'revise', critique: '씬 2가 너무 김' })
+  })
+  it('reviseScenes는 revised scenes/speakers를 반환하고 세그먼트를 검증한다', async () => {
+    const queryImpl = resultOf({ type: 'result', subtype: 'success', is_error: false, structured_output: SCENES })
+    const out = await reviseScenes('SCRIPT', SCENES.scenes, SCENES.speakers, 'fix', {}, { queryImpl })
+    expect(out.scenes[0].sceneNo).toBe(1)
+    expect(out.speakers[0].id).toBe('narrator')
+  })
+  it('reviewPrompts는 verdict/critique를 반환한다', async () => {
+    const queryImpl = resultOf({ type: 'result', subtype: 'success', is_error: false, structured_output: { verdict: 'pass', critique: '' } })
+    const out = await reviewPrompts([{ sceneNo: 1, imagePrompt: 'IMG', videoPrompt: 'VID' }], { scriptMd: 'SCRIPT' }, {}, { queryImpl })
+    expect(out).toEqual({ verdict: 'pass', critique: '' })
+  })
+  it('revisePrompts는 sceneNo 기준 prompt 필드를 병합한다', async () => {
+    const scenes = [{ sceneNo: 1, storyId: 's1', imagePrompt: 'old', videoPrompt: 'old' }]
+    const queryImpl = resultOf({ type: 'result', subtype: 'success', is_error: false, structured_output: { scenes: [{ sceneNo: 1, imagePrompt: 'IMG2', videoPrompt: 'VID2' }] } })
+    const out = await revisePrompts(scenes, { scriptMd: 'SCRIPT' }, 'fix prompts', {}, { queryImpl })
+    expect(out.scenes).toEqual([{ sceneNo: 1, storyId: 's1', imagePrompt: 'IMG2', videoPrompt: 'VID2' }])
   })
 })
 

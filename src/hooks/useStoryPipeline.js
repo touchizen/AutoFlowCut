@@ -122,8 +122,8 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
         if (p.operationId && activeOpRef.current && p.operationId !== activeOpRef.current) return
         if (p.kind === 'audio-segment' && p.segId) {
           setSegmentProgress((m) => ({ ...m, [p.segId]: p.status }))
-        } else if (p.kind === 'script-review') {
-          setReviewProgress({ operationId: p.operationId, round: p.round, of: p.of, phase: p.phase, error: p.error })
+        } else if (p.kind === 'script-review' || p.kind === 'review') {
+          setReviewProgress({ operationId: p.operationId, target: p.target || 'script', round: p.round, of: p.of, phase: p.phase, error: p.error })
         }
       }),
     ]

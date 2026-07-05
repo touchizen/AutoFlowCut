@@ -7,6 +7,10 @@ import {
   buildPromptsPrompt,
   buildReviewPrompt,
   buildRevisePrompt,
+  buildScenesReviewPrompt,
+  buildScenesRevisePrompt,
+  buildPromptsReviewPrompt,
+  buildPromptsRevisePrompt,
   buildScriptPrompt,
   buildSplitPrompt,
   buildTitlePrompt,
@@ -70,6 +74,48 @@ export async function reviseScript(scriptMd, critique, opts = {}, { signal, runT
   const prompt = guardPrompt(buildRevisePrompt(scriptMd, critique, opts))
   const revised = await runText(prompt, runtimeOptions(opts), { signal })
   return { scriptMd: revised }
+}
+
+export async function reviewScenes(scriptMd, scenes, speakers, opts = {}, { signal, runJson = runCodexJson } = {}) {
+  const prompt = guardPrompt(buildScenesReviewPrompt(scriptMd, scenes, speakers, opts))
+  const out = await runJson(prompt, toJsonSchema(REVIEW_SCHEMA), runtimeOptions(opts), { signal })
+  const verdict = out.verdict === 'revise' ? 'revise' : 'pass'
+  return { verdict, critique: out.critique || '' }
+}
+
+export async function reviseScenes(scriptMd, scenes, speakers, critique, opts = {}, { signal, runJson = runCodexJson } = {}) {
+  const prompt = guardPrompt(buildScenesRevisePrompt(scriptMd, scenes, speakers, critique, opts))
+  const out = await runJson(prompt, toJsonSchema(SCENES_SCHEMA), runtimeOptions(opts), { signal })
+  const revisedScenes = out.scenes || []
+  validateScenesSegments(revisedScenes)
+  return { scenes: revisedScenes, speakers: out.speakers || [] }
+}
+
+export async function reviewPrompts(scenes, context, opts = {}, { signal, runJson = runCodexJson } = {}) {
+  const prompt = guardPrompt(buildPromptsReviewPrompt(scenes, context, opts))
+  const out = await runJson(prompt, toJsonSchema(REVIEW_SCHEMA), runtimeOptions(opts), { signal })
+  const verdict = out.verdict === 'revise' ? 'revise' : 'pass'
+  return { verdict, critique: out.critique || '' }
+}
+
+export async function revisePrompts(scenes, context, critique, opts = {}, { signal, runJson = runCodexJson } = {}) {
+  const prompt = guardPrompt(buildPromptsRevisePrompt(scenes, context, critique, opts))
+  const out = await runJson(prompt, toJsonSchema(PROMPTS_SCHEMA), runtimeOptions(opts), { signal })
+  const byNo = new Map((out.scenes || []).map((s) => [s.sceneNo, s]))
+  for (const s of scenes) {
+    const p = byNo.get(s.sceneNo)
+    if (!p || typeof p.imagePrompt !== 'string' || !p.imagePrompt.trim()
+        || typeof p.videoPrompt !== 'string' || !p.videoPrompt.trim()) {
+      throw new Error(`revisePrompts: scene ${s.sceneNo} missing/empty prompt`)
+    }
+  }
+  return {
+    scenes: scenes.map((s) => ({
+      ...s,
+      imagePrompt: byNo.get(s.sceneNo).imagePrompt,
+      videoPrompt: byNo.get(s.sceneNo).videoPrompt,
+    })),
+  }
 }
 
 export async function writePrompts(scenes, context, opts = {}, { signal, runJson = runCodexJson } = {}) {

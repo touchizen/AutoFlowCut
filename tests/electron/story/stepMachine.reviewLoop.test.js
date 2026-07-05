@@ -68,6 +68,46 @@ describe('script 검토 루프 (M3)', () => {
     expect(reviseScript).toHaveBeenCalledTimes(1)
   })
 
+  it('explicit review.script.rounds는 provider 기본값보다 우선한다', async () => {
+    const reviewScript = vi.fn(async () => ({ verdict: 'revise', critique: 'fix' }))
+    const reviseScript = vi.fn(async () => ({ scriptMd: 'rev' }))
+    const { machine } = makeMachine(dir, { reviewScript, reviseScript })
+    await machine.open()
+    await run(machine, { model: 'gemini-2.5-pro', review: { script: { enabled: true, rounds: 2 } } })
+    expect(reviewScript).toHaveBeenCalledTimes(2)
+    expect(reviseScript).toHaveBeenCalledTimes(2)
+  })
+
+  it('explicit review 객체가 있으면 누락된 script 설정은 legacy reviewLoop보다 우선해 비활성이다', async () => {
+    const reviewScript = vi.fn(async () => ({ verdict: 'revise', critique: 'fix' }))
+    const reviseScript = vi.fn(async () => ({ scriptMd: 'rev' }))
+    const { machine } = makeMachine(dir, { reviewScript, reviseScript })
+    await machine.open()
+    await run(machine, { reviewLoop: true, model: 'claude-opus-4-8', review: { scenes: { enabled: true, rounds: 1 } } })
+    expect(reviewScript).not.toHaveBeenCalled()
+    expect(reviseScript).not.toHaveBeenCalled()
+  })
+
+  it('검수용 opts에는 생성용 metaPrompt를 넘기지 않는다', async () => {
+    const reviewScript = vi.fn(async () => ({ verdict: 'pass', critique: '' }))
+    const withMeta = createStepMachine({
+      projectPath: dir,
+      llm: {
+        generateScript: vi.fn(async () => ({ scriptMd: 'draft' })),
+        reviewScript,
+        reviseScript: vi.fn(async () => ({ scriptMd: 'rev' })),
+        splitScenes: vi.fn(),
+        writePrompts: vi.fn(),
+      },
+      emit: () => {},
+      getApiKey: () => 'k',
+      loadMetaPrompt: vi.fn(async () => '장르별 공식'),
+    })
+    await withMeta.open()
+    await run(withMeta, { reviewLoop: true, model: 'claude-opus-4-8', genre: 'yadam' })
+    expect(reviewScript.mock.calls[0][1]).not.toHaveProperty('metaPrompt')
+  })
+
   it('(c) verdict=revise인데 critique가 비면 종료(revise 미호출)', async () => {
     const { machine, llm } = makeMachine(dir, { reviewScript: vi.fn(async () => ({ verdict: 'revise', critique: '   ' })) })
     await machine.open()

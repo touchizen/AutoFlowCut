@@ -19,14 +19,9 @@ const pipeline = (over = {}) => ({
 
 describe('StoryView', () => {
   it('스텝퍼에 4단계와 상태 뱃지를 렌더한다', () => {
-    render(<StoryView pipeline={pipeline()} />)
-    // 대본 편집이 PromptInput 으로 바뀌며 placeholder("대본이 여기에 표시됩니다")도 "대본"을
-    // 포함한다 — 스텝퍼 라벨만 겨냥하도록 정확 일치로 좁힌다.
-    expect(screen.getByText('대본')).toBeTruthy()
-    // '씬 분리'는 스텝퍼 라벨 — setup 의 '씬 분리 단위' 드롭다운 라벨과 겹치지 않게 정확 일치로 좁힌다.
-    expect(screen.getByText('씬 분리')).toBeTruthy()
-    expect(screen.getByText(/오디오/)).toBeTruthy()
-    expect(screen.getByText(/프롬프트/)).toBeTruthy()
+    const { container } = render(<StoryView pipeline={pipeline()} />)
+    const labels = [...container.querySelectorAll('.story-step-name')].map((el) => el.textContent)
+    expect(labels).toEqual(['설정', '대본', '씬 분리', '오디오', '프롬프트'])
   })
   it('제목 입력 후 시작하면 start("script")가 stepMachine이 기대하는 shape로 호출된다', () => {
     const p = pipeline()
@@ -200,13 +195,21 @@ describe('StoryView', () => {
     expect(p.start).toHaveBeenCalledWith('audio', {})
   })
 
-  it('script done이면 다음 단계(씬 분리) 버튼이 활성화된다', () => {
-    const p = pipeline()
+  it('script done이면 다음 단계(씬 분리) 버튼이 현재 대본과 옵션으로 실행된다', async () => {
+    const p = pipeline({ scriptText: '대본 본문' })
+    p.state.input = { title: '기존 제목', options: {} }
     p.state.steps.script.status = 'done'
     render(<StoryView pipeline={p} />)
+    fireEvent.click(screen.getByRole('button', { name: '씬 분리' }))
     const btn = screen.getByRole('button', { name: /씬 분리 실행/ })
     fireEvent.click(btn)
-    expect(p.start).toHaveBeenCalledWith('scenes', expect.anything())
+    await waitFor(() => {
+      expect(p.start).toHaveBeenCalledWith('scenes', expect.objectContaining({
+        scriptOverride: '대본 본문',
+        title: '기존 제목',
+        options: expect.objectContaining({ sceneGranularity: 'scene', reviewLoop: false }),
+      }))
+    })
   })
   // M1 스펙 §1 2번 경로: 대본을 직접 붙여넣어 LLM 없이 바로 시작할 수 있어야 한다.
   it('대본 붙여넣기 후 [시작] 클릭하면 pastedScript로 start된다', () => {

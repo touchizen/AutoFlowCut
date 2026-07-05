@@ -2,7 +2,19 @@
  * Claude Agent SDK 대본 엔진 — llmGemini와 동일 시그니처. 대본은 스트리밍,
  * 씬분리/프롬프트는 outputFormat structured(다음 Task). 인증은 로컬 Claude 로그인.
  */
-import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt, buildTitlePrompt, buildContinuePrompt, buildReviewPrompt, buildRevisePrompt } from './prompts.js'
+import {
+  buildScriptPrompt,
+  buildSplitPrompt,
+  buildPromptsPrompt,
+  buildTitlePrompt,
+  buildContinuePrompt,
+  buildReviewPrompt,
+  buildRevisePrompt,
+  buildScenesReviewPrompt,
+  buildScenesRevisePrompt,
+  buildPromptsReviewPrompt,
+  buildPromptsRevisePrompt,
+} from './prompts.js'
 import { buildClaudeSdkOptions, extractClaudeSdkResult, bridgeAbortSignal, extractTextDelta, readStructuredResult } from './claudeSdk.js'
 import { toJsonSchema } from './toJsonSchema.js'
 import { SCENES_SCHEMA, PROMPTS_SCHEMA, REVIEW_SCHEMA, validateScenesSegments } from './schemas.js'
@@ -182,6 +194,48 @@ export async function reviseScript(scriptMd, critique, opts = {}, { signal, quer
     if (signal?.aborted) throw new Error('Aborted')
     throw new Error(`Claude SDK failed: ${err.message}`)
   } finally { cleanup() }
+}
+
+export async function reviewScenes(scriptMd, scenes, speakers, opts = {}, { signal, queryImpl } = {}) {
+  const prompt = buildScenesReviewPrompt(scriptMd, scenes, speakers, opts)
+  const out = await structuredClaudeCall(prompt, REVIEW_SCHEMA, opts, { signal, queryImpl })
+  const verdict = out.verdict === 'revise' ? 'revise' : 'pass'
+  return { verdict, critique: out.critique || '' }
+}
+
+export async function reviseScenes(scriptMd, scenes, speakers, critique, opts = {}, { signal, queryImpl } = {}) {
+  const prompt = buildScenesRevisePrompt(scriptMd, scenes, speakers, critique, opts)
+  const out = await structuredClaudeCall(prompt, SCENES_SCHEMA, opts, { signal, queryImpl })
+  const revisedScenes = out.scenes || []
+  validateScenesSegments(revisedScenes)
+  return { scenes: revisedScenes, speakers: out.speakers || [] }
+}
+
+export async function reviewPrompts(scenes, context, opts = {}, { signal, queryImpl } = {}) {
+  const prompt = buildPromptsReviewPrompt(scenes, context, opts)
+  const out = await structuredClaudeCall(prompt, REVIEW_SCHEMA, opts, { signal, queryImpl })
+  const verdict = out.verdict === 'revise' ? 'revise' : 'pass'
+  return { verdict, critique: out.critique || '' }
+}
+
+export async function revisePrompts(scenes, context, critique, opts = {}, { signal, queryImpl } = {}) {
+  const prompt = buildPromptsRevisePrompt(scenes, context, critique, opts)
+  const out = await structuredClaudeCall(prompt, PROMPTS_SCHEMA, opts, { signal, queryImpl })
+  const byNo = new Map((out.scenes || []).map((s) => [s.sceneNo, s]))
+  for (const s of scenes) {
+    const p = byNo.get(s.sceneNo)
+    if (!p || typeof p.imagePrompt !== 'string' || !p.imagePrompt.trim()
+          || typeof p.videoPrompt !== 'string' || !p.videoPrompt.trim()) {
+      throw new Error(`revisePrompts: scene ${s.sceneNo} missing/empty prompt`)
+    }
+  }
+  return {
+    scenes: scenes.map((s) => ({
+      ...s,
+      imagePrompt: byNo.get(s.sceneNo).imagePrompt,
+      videoPrompt: byNo.get(s.sceneNo).videoPrompt,
+    })),
+  }
 }
 
 export async function writePrompts(scenes, context, opts = {}, { signal, queryImpl } = {}) {

@@ -57,18 +57,16 @@ export function buildContinuePrompt(existingScript, opts = {}) {
   ].filter(Boolean).join('\n')
 }
 
-// M3: 대본 자체검토 — 내장 루브릭 + 장르 metaPrompt 기준으로 채점, verdict(pass/revise)+critique 반환.
+// M3: 대본 자체검토 — 몰입도/궁금증/기대감 중심 루브릭, verdict(pass/revise)+critique 반환.
 export function buildReviewPrompt(scriptMd, opts = {}) {
-  const meta = opts.metaPrompt ? `## 장르 기준(참고)\n${opts.metaPrompt}\n` : ''
   return [
-    `당신은 유튜브 스토리 채널의 냉정한 대본 편집자다. 아래 대본을 다음 관점(루브릭)으로 검토하라:`,
-    `- 훅/도입부: 초반에 시청자를 붙잡는가`,
-    `- 구조: 기승전결이 뚜렷한가`,
-    `- 페이싱: 늘어지거나 급전개되는 구간이 없는가`,
-    `- 일관성: 설정·인물·시점이 어긋나지 않는가`,
-    `- 화자 구분: 대사가 인물별로 자연스러운가`,
-    `- 결말: 여운/마무리가 충분한가`,
-    meta,
+    `당신은 유튜브 스토리 채널의 냉정한 대본 편집자다. 아래 대본을 몰입도 중심으로 검토하라:`,
+    `- 궁금증: 도입과 각 비트가 시청자가 답을 알고 싶어지는 질문을 만드는가`,
+    `- 기대감: 다음 장면/다음 고백/다음 사건을 기다리게 만드는가`,
+    `- 추진력: 설명이 늘어지거나 긴장이 식는 구간이 없는가`,
+    `- 명료성: 누가 무엇을 원하고 왜 움직이는지 따라갈 수 있는가`,
+    `- 보상감: 결말이 도입의 궁금증을 충분히 회수하거나 더 깊은 여운을 남기는가`,
+    opts.genre ? `장르(약한 참고용): ${opts.genre}` : '',
     `심각하게 개선이 필요하면 verdict="revise"와 구체적이고 실행 가능한 critique(무엇을 어떻게 고칠지)를 내라.`,
     `충분히 좋으면 verdict="pass". 사소한 취향 차이나 경미한 문제로 revise를 남발하지 마라.`,
     `--- 대본 ---`,
@@ -86,6 +84,58 @@ export function buildRevisePrompt(scriptMd, critique, opts = {}) {
     `--- 대본 ---`,
     scriptMd,
   ].join('\n')
+}
+
+export function buildScenesReviewPrompt(scriptMd, scenes, speakers, opts = {}) {
+  return [
+    `당신은 유튜브 스토리 영상의 씬 분리 감수자다. 대본과 현재 scenes JSON을 비교해 씬 분리 자체를 검토하라.`,
+    `검토 기준: 중요한 대본 비트 누락 여부, 의미/행동 전환에 맞는 씬 경계, 설정된 분리 단위(${opts.sceneGranularity || 'scene'}), 화자 식별, 캐릭터 외형 일관성, SFX 위치의 필요성, 씬 흐름의 궁금증과 기대감.`,
+    `수정이 필요하면 verdict="revise"와 구체적인 critique를 반환하라. 충분하면 verdict="pass".`,
+    `--- 대본 ---`,
+    scriptMd,
+    `--- 현재 scenes ---`,
+    JSON.stringify({ scenes, speakers }, null, 2),
+  ].join('\n')
+}
+
+export function buildScenesRevisePrompt(scriptMd, scenes, speakers, critique, opts = {}) {
+  return [
+    `아래 critique를 반영해 scenes JSON 전체를 수정하라.`,
+    `반드시 SCENES_SCHEMA 형태의 JSON만 반환하라. 설명/코드펜스 금지.`,
+    `sceneNo, summary, segments, speakers를 포함하고, narration 세그먼트는 speaker/text/emotion을 유지하며, sfx 세그먼트는 description을 유지한다.`,
+    `장르 공식보다 대본의 몰입도, 궁금증, 기대감 흐름을 우선한다.`,
+    `--- critique ---`,
+    critique,
+    `--- 대본 ---`,
+    scriptMd,
+    `--- 현재 scenes ---`,
+    JSON.stringify({ scenes, speakers }, null, 2),
+  ].join('\n')
+}
+
+export function buildPromptsReviewPrompt(scenes, context = {}, opts = {}) {
+  return [
+    `당신은 이미지/비디오 생성 프롬프트 감수자다. 현재 프롬프트가 각 씬의 핵심 사건과 캐릭터 일관성을 잘 담는지 검토하라.`,
+    `검토 기준: 모든 씬의 imagePrompt/videoPrompt 존재, 영어 프롬프트 품질, 캐릭터 외형 일관성, imagePrompt와 videoPrompt의 역할 구분, videoPrompt의 움직임/행동성, 씬의 궁금증과 기대감 표현.`,
+    `프롬프트만 검토하라. 씬 구조, 세그먼트, 화자, storyId 변경은 금지다.`,
+    `수정이 필요하면 verdict="revise"와 구체적인 critique를 반환하라. 충분하면 verdict="pass".`,
+    context.scriptMd ? `--- 대본 ---\n${context.scriptMd}` : '',
+    `--- 현재 scenes/prompts ---`,
+    JSON.stringify({ scenes }, null, 2),
+  ].filter(Boolean).join('\n')
+}
+
+export function buildPromptsRevisePrompt(scenes, context = {}, critique, opts = {}) {
+  return [
+    `아래 critique를 반영해 imagePrompt/videoPrompt만 수정하라.`,
+    `반드시 PROMPTS_SCHEMA 형태의 JSON만 반환하라. sceneNo, imagePrompt, videoPrompt만 포함한다. 설명/코드펜스 금지.`,
+    `씬 구조, 세그먼트, 화자, storyId는 변경하지 않는다.`,
+    `--- critique ---`,
+    critique,
+    context.scriptMd ? `--- 대본 ---\n${context.scriptMd}` : '',
+    `--- 현재 scenes/prompts ---`,
+    JSON.stringify({ scenes }, null, 2),
+  ].filter(Boolean).join('\n')
 }
 
 export function buildPromptsPrompt(scenes, context, opts) {

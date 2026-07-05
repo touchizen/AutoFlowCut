@@ -8,6 +8,10 @@ const METHOD_OPTION_INDEX = {
   continueScript: 1,
   reviewScript: 1,
   reviseScript: 2,
+  reviewScenes: 3,
+  reviseScenes: 4,
+  reviewPrompts: 2,
+  revisePrompts: 3,
 }
 
 function pickAdapter(adapters, opts) {

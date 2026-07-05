@@ -7,7 +7,17 @@
  * 키는 헤더(x-goog-api-key)로만 전달.
  */
 import { SCENES_SCHEMA, PROMPTS_SCHEMA, REVIEW_SCHEMA, validateScenesSegments } from './schemas.js'
-import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt, buildReviewPrompt, buildRevisePrompt } from './prompts.js'
+import {
+  buildScriptPrompt,
+  buildSplitPrompt,
+  buildPromptsPrompt,
+  buildReviewPrompt,
+  buildRevisePrompt,
+  buildScenesReviewPrompt,
+  buildScenesRevisePrompt,
+  buildPromptsReviewPrompt,
+  buildPromptsRevisePrompt,
+} from './prompts.js'
 
 const BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
 
@@ -125,6 +135,48 @@ export async function reviseScript(scriptMd, critique, opts, { signal, fetchImpl
   if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`)
   const data = await res.json()
   return { scriptMd: data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '' }
+}
+
+export async function reviewScenes(scriptMd, scenes, speakers, opts, ctx = {}) {
+  const prompt = buildScenesReviewPrompt(scriptMd, scenes, speakers, opts)
+  const out = await structuredCall(prompt, REVIEW_SCHEMA, opts, ctx)
+  const verdict = out.verdict === 'revise' ? 'revise' : 'pass'
+  return { verdict, critique: out.critique || '' }
+}
+
+export async function reviseScenes(scriptMd, scenes, speakers, critique, opts, ctx = {}) {
+  const prompt = buildScenesRevisePrompt(scriptMd, scenes, speakers, critique, opts)
+  const out = await structuredCall(prompt, SCENES_SCHEMA, opts, ctx)
+  const revisedScenes = out.scenes || []
+  validateScenesSegments(revisedScenes)
+  return { scenes: revisedScenes, speakers: out.speakers || [] }
+}
+
+export async function reviewPrompts(scenes, context, opts, ctx = {}) {
+  const prompt = buildPromptsReviewPrompt(scenes, context, opts)
+  const out = await structuredCall(prompt, REVIEW_SCHEMA, opts, ctx)
+  const verdict = out.verdict === 'revise' ? 'revise' : 'pass'
+  return { verdict, critique: out.critique || '' }
+}
+
+export async function revisePrompts(scenes, context, critique, opts, ctx = {}) {
+  const prompt = buildPromptsRevisePrompt(scenes, context, critique, opts)
+  const out = await structuredCall(prompt, PROMPTS_SCHEMA, opts, ctx)
+  const byNo = new Map((out.scenes || []).map((s) => [s.sceneNo, s]))
+  for (const s of scenes) {
+    const p = byNo.get(s.sceneNo)
+    if (!p || typeof p.imagePrompt !== 'string' || !p.imagePrompt.trim()
+        || typeof p.videoPrompt !== 'string' || !p.videoPrompt.trim()) {
+      throw new Error(`revisePrompts: scene ${s.sceneNo} missing/empty prompt`)
+    }
+  }
+  return {
+    scenes: scenes.map((s) => ({
+      ...s,
+      imagePrompt: byNo.get(s.sceneNo).imagePrompt,
+      videoPrompt: byNo.get(s.sceneNo).videoPrompt,
+    })),
+  }
 }
 
 export async function writePrompts(scenes, context, opts, ctx = {}) {

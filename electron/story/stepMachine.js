@@ -11,6 +11,7 @@ import { buildFallbackTimeline, buildSegmentTimeline, buildSrt, srtLineId } from
 import { regroupScenes } from './regroup.js'
 import { buildManifest } from './manifest.js'
 import { normalizeStoryLlmOptions } from '../api/llm/storyLlmCatalog.js'
+import { validateScenesSegments } from '../api/llm/schemas.js'
 
 const DOWNSTREAM = { script: ['scenes', 'audio', 'prompts'], scenes: ['audio', 'prompts'], audio: ['prompts'], prompts: [] }
 
@@ -102,6 +103,195 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   function buildLlmOptions(options = {}, extras = {}) {
     return { apiKey: getApiKey(), ...normalizeLlmOptions({ ...(options || {}), ...(extras || {}) }) }
   }
+
+  function effectiveOptions(params = {}) {
+    return normalizeLlmOptions({
+      ...(state?.input?.options || {}),
+      ...(params.options || {}),
+      ...(params.review ? { review: params.review } : {}),
+    })
+  }
+
+  function reviewConfig(options = {}, target) {
+    if (options?.review && typeof options.review === 'object') {
+      const explicit = options.review[target]
+      if (!explicit || typeof explicit !== 'object') return { enabled: false, rounds: 0 }
+      const rounds = Number.isFinite(Number(explicit.rounds)) ? Math.max(0, Math.floor(Number(explicit.rounds))) : 1
+      return { enabled: explicit.enabled !== false && rounds > 0, rounds }
+    }
+    if (target === 'script' && options?.reviewLoop) {
+      const rounds = reviewRounds(options.model || state?.engine?.model)
+      return { enabled: rounds > 0, rounds }
+    }
+    return { enabled: false, rounds: 0 }
+  }
+
+  function reviewLlmOptions(options = {}) {
+    const { metaPrompt, ...rest } = options || {}
+    return rest
+  }
+
+  function sendReviewProgress(target, payload, operationId) {
+    send('story:progress', { kind: 'review', target, ...payload }, operationId)
+    // 기존 renderer/tests가 script-review를 소비한다. 새 generic event와 병행 송신한다.
+    if (target === 'script') send('story:progress', { kind: 'script-review', ...payload }, operationId)
+  }
+
+  function normalizeScenes(prev, scenes) {
+    validateScenesSegments(scenes)
+    const { scenes: withIds } = inheritStoryIds(prev, scenes)
+    assertUniqueStoryIds(withIds)
+    const { scenes: withInheritedSegs } = inheritSegmentIds(prev, withIds)
+    return assignSegmentIds(withInheritedSegs)
+  }
+
+  const speakerKey = (v) => String(v || '').replace(/\s/g, '').toLowerCase()
+  function mergeSpeakers(nextSpeakers = [], { preferNewAppearance = false } = {}) {
+    const prevSpeakers = new Map()
+    for (const sp of state.speakers || []) {
+      if (sp.id) prevSpeakers.set(`id:${speakerKey(sp.id)}`, sp)
+      if (sp.name) prevSpeakers.set(`name:${speakerKey(sp.name)}`, sp)
+    }
+    return (nextSpeakers || []).map((sp) => {
+      const prev = prevSpeakers.get(`id:${speakerKey(sp.id)}`) || prevSpeakers.get(`name:${speakerKey(sp.name)}`)
+      return { ...sp, appearance: preferNewAppearance ? (sp.appearance ?? prev?.appearance) : (prev?.appearance ?? sp.appearance), voice: prev?.voice ?? null }
+    })
+  }
+
+  function ensureReferencedSpeakers(nextSpeakers = [], scenes = [], fallbackSpeakers = []) {
+    const out = [...(nextSpeakers || [])]
+    const seen = new Set(out.flatMap((sp) => [sp.id, sp.name].filter(Boolean).map(speakerKey)))
+    const fallbackByKey = new Map()
+    for (const sp of fallbackSpeakers || []) {
+      if (sp.id) fallbackByKey.set(speakerKey(sp.id), sp)
+      if (sp.name) fallbackByKey.set(speakerKey(sp.name), sp)
+    }
+    for (const seg of (scenes || []).flatMap((s) => s.segments || [])) {
+      if ((seg.type || 'narration') !== 'narration') continue
+      const key = speakerKey(seg.speaker)
+      if (!key || seen.has(key)) continue
+      const prev = fallbackByKey.get(key)
+      if (!prev) continue
+      out.push(prev)
+      seen.add(key)
+    }
+    return out
+  }
+
+  async function reviewScriptCandidate(scriptMd, opts, rounds, opId, signal) {
+    if (!llm.reviewScript || !llm.reviseScript || rounds <= 0) return { scriptMd, changed: false }
+    const reviewOpts = reviewLlmOptions(opts)
+    let current = scriptMd
+    let changed = false
+    try {
+      for (let round = 1; round <= rounds; round++) {
+        sendReviewProgress('script', { round, of: rounds, phase: 'reviewing' }, opId)
+        const { verdict, critique } = await llm.reviewScript(current, reviewOpts, { signal })
+        if (signal?.aborted) return { scriptMd: current, changed }
+        if (verdict !== 'revise' || !critique?.trim()) break
+        sendReviewProgress('script', { round, of: rounds, phase: 'revising' }, opId)
+        const r = await llm.reviseScript(current, critique, reviewOpts, { signal })
+        if (signal?.aborted) return { scriptMd: current, changed }
+        if (!r?.scriptMd?.trim()) throw new Error('reviseScript returned empty script')
+        changed = changed || r.scriptMd !== current
+        current = r.scriptMd
+      }
+    } catch (e) {
+      if (signal?.aborted) return { scriptMd: current, changed }
+      sendReviewProgress('script', { phase: 'error', error: String(e?.message || e) }, opId)
+    }
+    return { scriptMd: current, changed }
+  }
+
+  async function reviewScenesCandidate(scriptMd, scenes, speakers, opts, rounds, opId, signal) {
+    if (!llm.reviewScenes || !llm.reviseScenes || rounds <= 0) return { scenes, speakers, changed: false }
+    const reviewOpts = reviewLlmOptions(opts)
+    let currentScenes = scenes
+    let currentSpeakers = speakers
+    let changed = false
+    try {
+      for (let round = 1; round <= rounds; round++) {
+        sendReviewProgress('scenes', { round, of: rounds, phase: 'reviewing' }, opId)
+        const { verdict, critique } = await llm.reviewScenes(scriptMd, currentScenes, currentSpeakers, reviewOpts, { signal })
+        if (signal?.aborted) return { scenes: currentScenes, speakers: currentSpeakers, changed }
+        if (verdict !== 'revise' || !critique?.trim()) break
+        sendReviewProgress('scenes', { round, of: rounds, phase: 'revising' }, opId)
+        const r = await llm.reviseScenes(scriptMd, currentScenes, currentSpeakers, critique, reviewOpts, { signal })
+        if (signal?.aborted) return { scenes: currentScenes, speakers: currentSpeakers, changed }
+        const nextScenes = normalizeScenes(currentScenes, r?.scenes || [])
+        const nextSpeakers = mergeSpeakers(ensureReferencedSpeakers(r?.speakers || [], nextScenes, currentSpeakers), { preferNewAppearance: true })
+        changed = changed ||
+          !sameJson(sceneReviewSignature(nextScenes), sceneReviewSignature(currentScenes)) ||
+          !sameJson(speakerReviewSignature(nextSpeakers), speakerReviewSignature(currentSpeakers))
+        currentScenes = nextScenes
+        currentSpeakers = nextSpeakers
+      }
+    } catch (e) {
+      if (signal?.aborted) return { scenes: currentScenes, speakers: currentSpeakers, changed }
+      sendReviewProgress('scenes', { phase: 'error', error: String(e?.message || e) }, opId)
+    }
+    return { scenes: currentScenes, speakers: currentSpeakers, changed }
+  }
+
+  async function reviewPromptsCandidate(scenes, context, opts, rounds, opId, signal) {
+    if (!llm.reviewPrompts || !llm.revisePrompts || rounds <= 0) return { scenes, changed: false }
+    const reviewOpts = reviewLlmOptions(opts)
+    let currentScenes = scenes
+    let changed = false
+    try {
+      for (let round = 1; round <= rounds; round++) {
+        sendReviewProgress('prompts', { round, of: rounds, phase: 'reviewing' }, opId)
+        const { verdict, critique } = await llm.reviewPrompts(currentScenes, context, reviewOpts, { signal })
+        if (signal?.aborted) return { scenes: currentScenes, changed }
+        if (verdict !== 'revise' || !critique?.trim()) break
+        sendReviewProgress('prompts', { round, of: rounds, phase: 'revising' }, opId)
+        const r = await llm.revisePrompts(currentScenes, context, critique, reviewOpts, { signal })
+        if (signal?.aborted) return { scenes: currentScenes, changed }
+        const nextScenes = r?.scenes || []
+        changed = changed || !sameJson(promptSignature(nextScenes), promptSignature(currentScenes))
+        currentScenes = nextScenes
+      }
+    } catch (e) {
+      if (signal?.aborted) return { scenes: currentScenes, changed }
+      sendReviewProgress('prompts', { phase: 'error', error: String(e?.message || e) }, opId)
+    }
+    return { scenes: currentScenes, changed }
+  }
+
+  async function restampManifestRevision(signal) {
+    if (signal?.aborted) return
+    const manifestRaw = await store.loadText('audio/manifest.json')
+    if (manifestRaw && !signal?.aborted) {
+      const m = JSON.parse(manifestRaw)
+      m.pushRevision = state.pendingPushRevision
+      await store.saveText('audio/manifest.json', JSON.stringify(m, null, 2))
+    }
+  }
+
+  const sameJson = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
+  const sceneReviewSignature = (scenes = []) => scenes.map((s) => ({
+    storyId: s.storyId || null,
+    sceneNo: s.sceneNo ?? null,
+    summary: s.summary || '',
+    segments: (s.segments || []).map((g) => ({
+      id: g.id || null,
+      type: g.type || 'narration',
+      speaker: g.speaker || '',
+      text: g.text || '',
+      emotion: g.emotion || '',
+      description: g.description || '',
+    })),
+  }))
+  const speakerReviewSignature = (speakers = []) => speakers.map((sp) => ({
+    id: sp.id || '',
+    name: sp.name || '',
+    appearance: sp.appearance || '',
+  }))
+  const promptSignature = (scenes = []) => scenes.map((s) => ({
+    sceneNo: s.sceneNo,
+    imagePrompt: s.imagePrompt || '',
+    videoPrompt: s.videoPrompt || '',
+  }))
 
   // V2: narrator/비가시 화자 판정(정규화 id/name). 이 화자는 캐릭터 카드/태그에서 제외.
   const isNarratorSpeaker = (sp) => {
@@ -214,6 +404,21 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
 
   const steps = {
     async script(params, opId, signal) {
+      if (params.reviewOnly) {
+        const storedScript = await store.loadText('script.md')
+        const scriptMd = typeof params.scriptOverride === 'string' ? params.scriptOverride : storedScript
+        if (!scriptMd?.trim()) throw new Error('script.md not found — run script step first')
+        const opts = buildLlmOptions(effectiveOptions(params))
+        const cfg = reviewConfig(opts, 'script')
+        if (!cfg.enabled) return { changed: false }
+        const reviewed = await reviewScriptCandidate(scriptMd, opts, cfg.rounds, opId, signal)
+        if (signal?.aborted) return
+        const finalScript = reviewed.scriptMd
+        const changed = reviewed.changed || finalScript !== storedScript
+        if (changed) await store.saveText('script.md', finalScript)
+        return { changed }
+      }
+
       // 대본 재설계: 이어쓰기 — 편집 중 대본을 받아 LLM이 이어서 완성한 전체 대본을 저장한다.
       if (params.continue) {
         const opts = buildLlmOptions(params.options)
@@ -250,31 +455,31 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
 
       // M3: 대본 자동 검토·수정 루프(옵션). 검토는 non-streaming — 진행은 progress로 표시.
       // 실패해도 마지막 저장본을 유지하고 스텝은 정상(done)으로 둔다(품질 옵션이 본 생성을 깨지 않음).
-      if (opts.reviewLoop && llm.reviewScript && llm.reviseScript && !signal?.aborted) {
-        const max = reviewRounds(opts.model || state.engine?.model)
-        try {
-          for (let round = 1; round <= max; round++) {
-            send('story:progress', { kind: 'script-review', round, of: max, phase: 'reviewing' }, opId)
-            const { verdict, critique } = await llm.reviewScript(scriptMd, opts, { signal })
-            if (signal?.aborted) return
-            if (verdict !== 'revise' || !critique?.trim()) break // pass 또는 지적 없음 → 종료
-            send('story:progress', { kind: 'script-review', round, of: max, phase: 'revising' }, opId)
-            const r = await llm.reviseScript(scriptMd, critique, opts, { signal })
-            if (signal?.aborted) return
-            // Codex-High: 빈/공백 수정본은 저장하지 않는다 — 안 그러면 draft를 빈 대본으로 덮어써
-            // "실패 시 원본 유지" 보장이 깨진다(Gemini safety block/빈 응답, Claude 빈 result).
-            if (!r?.scriptMd?.trim()) throw new Error('reviseScript returned empty script')
-            scriptMd = r.scriptMd
-            await store.saveText('script.md', scriptMd)
-          }
-        } catch (e) {
-          if (signal?.aborted) return // 취소는 조용히 중단(마지막 저장본 유지)
-          send('story:progress', { kind: 'script-review', phase: 'error', error: String(e?.message || e) }, opId)
-          // return 없이 진행 → 스텝 done, 마지막 저장본 유지.
-        }
+      const cfg = reviewConfig(opts, 'script')
+      if (cfg.enabled && !signal?.aborted) {
+        const reviewed = await reviewScriptCandidate(scriptMd, opts, cfg.rounds, opId, signal)
+        if (signal?.aborted) return
+        if (reviewed.changed) await store.saveText('script.md', reviewed.scriptMd)
       }
     },
     async scenes(params, opId, signal) {
+      if (params.reviewOnly) {
+        const scriptMd = await store.loadText('script.md')
+        if (!scriptMd) throw new Error('script.md not found — run script step first')
+        const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
+        if (!scenesJson) throw new Error('scenes.json not found — run scenes step first')
+        const opts = buildLlmOptions(effectiveOptions(params))
+        const cfg = reviewConfig(opts, 'scenes')
+        if (!cfg.enabled) return { changed: false }
+        const reviewed = await reviewScenesCandidate(scriptMd, scenesJson.scenes || [], state.speakers || [], opts, cfg.rounds, opId, signal)
+        if (signal?.aborted) return
+        if (reviewed.changed) {
+          await store.saveText('scenes.json', JSON.stringify({ scenes: reviewed.scenes }, null, 2))
+          state.speakers = reviewed.speakers
+        }
+        return { changed: reviewed.changed }
+      }
+
       // 대본 재설계: 편집된 대본으로 씬 분리 — 공백이면 기존 script.md를 보존하고 실패시킨다.
       if (typeof params.scriptOverride === 'string') {
         if (!params.scriptOverride.trim()) throw new Error('빈 대본으로 씬 분리할 수 없습니다')
@@ -288,24 +493,21 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       }
       const scriptMd = await store.loadText('script.md')
       if (!scriptMd) throw new Error('script.md not found — run script step first')
-      const opts = buildLlmOptions(state.input?.options)
+      const opts = buildLlmOptions(effectiveOptions(params))
       const { scenes, speakers } = await llm.splitScenes(scriptMd, opts, { signal })
       if (signal?.aborted) return
       const prev = JSON.parse((await store.loadText('scenes.json')) || '{"scenes":[]}').scenes
-      const { scenes: withIds } = inheritStoryIds(prev, scenes)
-      assertUniqueStoryIds(withIds)
-      // IP4: 위치기반 발급 전에 이전 세그먼트 id를 정규화 텍스트 1:1로 승계 — 재실행 identity 안정.
-      const { scenes: withInheritedSegs } = inheritSegmentIds(prev, withIds)
-      const withSegmentIds = assignSegmentIds(withInheritedSegs)
-      await store.saveText('scenes.json', JSON.stringify({ scenes: withSegmentIds }, null, 2))
-      // speakers 병합 (스펙 §4-②): 정규화 이름 완전 일치만 voice 승계
-      const norm = (n) => (n || '').replace(/\s/g, '')
-      const prevSpeakers = new Map(state.speakers.map((sp) => [norm(sp.name), sp]))
-      // V2: appearance도 이름 일치 승계(재실행 보존) — 생성된 캐릭터 카드 prompt와 텍스트 일관.
-      state.speakers = speakers.map((sp) => {
-        const prev = prevSpeakers.get(norm(sp.name))
-        return { ...sp, appearance: prev?.appearance ?? sp.appearance, voice: prev?.voice ?? null }
-      })
+      let nextScenes = normalizeScenes(prev, scenes)
+      let nextSpeakers = mergeSpeakers(speakers)
+      const cfg = reviewConfig(opts, 'scenes')
+      if (cfg.enabled && !signal?.aborted) {
+        const reviewed = await reviewScenesCandidate(scriptMd, nextScenes, nextSpeakers, opts, cfg.rounds, opId, signal)
+        if (signal?.aborted) return
+        nextScenes = reviewed.scenes
+        nextSpeakers = reviewed.speakers
+      }
+      await store.saveText('scenes.json', JSON.stringify({ scenes: nextScenes }, null, 2))
+      state.speakers = nextSpeakers
     },
     async audio(params, opId, signal) {
       const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
@@ -539,9 +741,28 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
       if (!scenesJson) throw new Error('scenes.json not found — run scenes step first')
       const scriptMd = await store.loadText('script.md')
-      const opts = buildLlmOptions(state.input?.options)
+      const opts = buildLlmOptions(effectiveOptions(params))
+      const context = { scriptMd, style: params.style || null, speakers: characterSpeakers() }
+      if (params.reviewOnly) {
+        const cfg = reviewConfig(opts, 'prompts')
+        if (!cfg.enabled) return { changed: false }
+        const reviewed = await reviewPromptsCandidate(scenesJson.scenes || [], context, opts, cfg.rounds, opId, signal)
+        if (signal?.aborted) return
+        if (!reviewed.changed) return { changed: false }
+        await store.saveText('scenes.json', JSON.stringify({ scenes: reviewed.scenes }, null, 2))
+        state.pendingPushRevision += 1
+        await restampManifestRevision(signal)
+        return { changed: true, pushScenes: reviewed.scenes }
+      }
+
       // V2: 프롬프트 컨텍스트엔 캐릭터(non-narrator·appearance 보유)만 전달 — narrator 외형 누수 방지(Codex-Low).
-      const { scenes } = await llm.writePrompts(scenesJson.scenes, { scriptMd, style: params.style || null, speakers: characterSpeakers() }, opts, { signal })
+      let { scenes } = await llm.writePrompts(scenesJson.scenes, context, opts, { signal })
+      const cfg = reviewConfig(opts, 'prompts')
+      if (cfg.enabled && !signal?.aborted) {
+        const reviewed = await reviewPromptsCandidate(scenes, context, opts, cfg.rounds, opId, signal)
+        if (signal?.aborted) return
+        scenes = reviewed.scenes
+      }
       if (signal?.aborted) return
       await store.saveText('scenes.json', JSON.stringify({ scenes }, null, 2))
       state.pendingPushRevision += 1
@@ -550,16 +771,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // (manifest.pushRevision === lastPushedRevision)가 ack 후 성립한다. 대략 모드(manifest 없음)면 skip.
       // Codex Medium/스펙 §5: 재스탬프도 하나의 커밋 — abort가 이 사이에 도착하면 push는 wrapper
       // isStale로 막히므로 manifest도 스탬프하지 않아 "manifest만 앞선" 불일치를 만들지 않는다.
-      if (!signal?.aborted) {
-        const manifestRaw = await store.loadText('audio/manifest.json')
-        // Codex-2 MED: loadText await 사이에도 abort가 도착할 수 있다 — 커밋(saveText) 직전에
-        // 한 번 더 재검사해 abort 이후 스탬프를 막는다(audio 스텝의 각-커밋-전 재검사와 동일).
-        if (manifestRaw && !signal?.aborted) {
-          const m = JSON.parse(manifestRaw)
-          m.pushRevision = state.pendingPushRevision
-          await store.saveText('audio/manifest.json', JSON.stringify(m, null, 2))
-        }
-      }
+      await restampManifestRevision(signal)
       // HIGH/Codex: push emit은 여기서 하지 않는다 — flush(story.json 저장) 전에 크래시하면
       // 재발신 조건(pendingPushRevision > lastPushedRevision)이 디스크에 없어 복구 불가.
       // start() 래퍼가 status=done 설정 + flush 완료 후에 pushScenes를 emit한다.
@@ -672,8 +884,11 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const operationId = randomUUID()
       const myController = new AbortController()
       controller = myController
+      const deferDownstreamReset = params.reviewOnly === true
       // 하류 리셋 — revision은 스펙대로 단조 증가 유지(빈 push 재발신은 maybeResendPush의 prompts-done 가드가 차단)
-      for (const d of DOWNSTREAM[step]) state.steps[d] = { status: 'pending' }
+      if (!deferDownstreamReset) {
+        for (const d of DOWNSTREAM[step]) state.steps[d] = { status: 'pending' }
+      }
       state.steps[step] = { status: 'running', updatedAt: new Date().toISOString() }
       await flush(); send('story:state', { state }, operationId)
       let pushScenes = null
@@ -685,6 +900,9 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       try {
         const result = await steps[step](params, operationId, myController.signal)
         if (!isStale()) {
+          if (deferDownstreamReset && result?.changed) {
+            for (const d of DOWNSTREAM[step]) state.steps[d] = { status: 'pending' }
+          }
           state.steps[step] = { status: 'done', updatedAt: new Date().toISOString() }
           pushScenes = result?.pushScenes || null
         }

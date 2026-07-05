@@ -49,9 +49,43 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  flex: 0 0 auto;
   font-size: 0.85em;
   color: var(--text-secondary);
   cursor: pointer;
+  white-space: nowrap;
+}
+.story-review-settings {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.story-review-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  min-width: max-content;
+  min-height: 34px;
+  white-space: nowrap;
+}
+.story-review-rounds {
+  flex: 0 0 56px;
+  width: 56px;
+  min-width: 56px;
+  height: 34px;
+  padding: 6px 8px;
+  text-align: center;
+}
+.story-review-run {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 72px;
+  height: 34px;
+  padding: 6px 12px;
 }
 .story-review-badge {
   display: inline-block;
@@ -265,8 +299,11 @@
 
 .story-editor-controls {
   display: flex;
+  align-items: center;
   gap: 8px;
   justify-content: flex-end;
+  flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
 /* ── 재분리 바 (씬 분리 탭: 단위 변경 + 다시 분리) ── */
@@ -340,8 +377,10 @@
 /* ── 하단 컨트롤 (하단 고정) ── */
 .story-controls {
   display: flex;
+  align-items: center;
   gap: 8px;
   justify-content: flex-end;
+  flex-wrap: wrap;
   flex-shrink: 0;
 }
 

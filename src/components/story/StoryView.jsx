@@ -47,6 +47,20 @@ function reasoningEffortFor(option, requestedReasoning = null) {
     : (option.defaultReasoningEffort || allowed[0] || '')
 }
 
+const REVIEW_TARGET_LABEL = { script: '대본', scenes: '씬', prompts: '프롬프트' }
+const REVIEW_TARGET_ORDER = ['script', 'scenes', 'prompts']
+
+function defaultReviewRounds(target, model) {
+  if (target === 'script') return String(model || '').startsWith('claude') ? 3 : 1
+  return 1
+}
+
+function clampReviewRounds(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return 1
+  return Math.max(1, Math.min(5, Math.floor(n)))
+}
+
 /** 스텝 진행 중 표시 — (선택) 옵션·기준 요약 + 초시계 + 라벨 + 경과 시간(updatedAt 기준, 1초 갱신). */
 function StoryRunning({ label, startedAt, detail }) {
   return (
@@ -68,9 +82,15 @@ function computeCurrentStep(steps) {
   return 'prompts'
 }
 
+function interpolateFallback(value, params = {}) {
+  return String(value).replace(/\{(\w+)\}/g, (match, key) => (
+    params[key] !== undefined ? params[key] : match
+  ))
+}
+
 // StoryView는 I18nProvider 없이도(단위 테스트) 렌더 가능해야 하는 프레젠테이션 컴포넌트다.
-// useI18n()은 provider가 없으면 throw하므로 감싸서 안전한 t()로 노출하고, 키가 없으면(현재는
-// 로케일 파일에 story.* 키가 없음) 항상 한국어 fallback 문자열을 그대로 보여준다.
+// useI18n()은 provider가 없으면 throw하므로 감싸서 안전한 t()로 노출하고, 키가 없으면
+// 한국어 fallback 문자열을 그대로 보여준다.
 function useSafeT() {
   let i18nT = null
   try {
@@ -79,10 +99,11 @@ function useSafeT() {
   } catch {
     i18nT = null
   }
-  return (key, fallback) => {
-    if (!i18nT) return fallback
-    const v = i18nT(key)
-    return v === key ? fallback : v
+  return (key, fallback, params = {}) => {
+    const fallbackValue = interpolateFallback(fallback, params)
+    if (!i18nT) return fallbackValue
+    const v = i18nT(key, params)
+    return v === key ? fallbackValue : v
   }
 }
 
@@ -200,12 +221,32 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
   const [reasoningEffort, setReasoningEffort] = useState(() => reasoningEffortFor(selectedLlm, hydrateOpts.reasoningEffort))
   const [language, setLanguage] = useState(hydrateOpts.language || 'ko')
   const [sceneGranularity, setSceneGranularity] = useState(hydrateOpts.sceneGranularity || 'scene') // 씬 분리 단위: scene(5~10초)/segment(문장별)
-  const [reviewLoop, setReviewLoop] = useState(!!hydrateOpts.reviewLoop) // M3: 대본 자동 검토·수정(기본 off)
+  const initialReview = hydrateOpts.review || null
+  const makeReviewSettings = (opts = {}, model = selectedLlm.model) => ({
+    script: {
+      enabled: !!(opts.review?.script?.enabled ?? (!opts.review && opts.reviewLoop)),
+      rounds: clampReviewRounds(opts.review?.script?.rounds ?? defaultReviewRounds('script', model)),
+    },
+    scenes: {
+      enabled: !!opts.review?.scenes?.enabled,
+      rounds: clampReviewRounds(opts.review?.scenes?.rounds ?? defaultReviewRounds('scenes', model)),
+    },
+    prompts: {
+      enabled: !!opts.review?.prompts?.enabled,
+      rounds: clampReviewRounds(opts.review?.prompts?.rounds ?? defaultReviewRounds('prompts', model)),
+    },
+  })
+  const [reviewSettings, setReviewSettings] = useState(() => makeReviewSettings(hydrateOpts, selectedLlm.model))
+  const [reviewTouched, setReviewTouched] = useState(!!initialReview)
+  const [legacyReviewLoop, setLegacyReviewLoop] = useState(!initialReview && !!hydrateOpts.reviewLoop)
 
   const setLlmSelection = (id, requestedReasoning = null) => {
     const option = findStoryLlmOptionById(id, llmOptions) || defaultLlmOption
     setSelectedLlmId(option.id)
     setReasoningEffort(reasoningEffortFor(option, requestedReasoning))
+    setReviewSettings((settings) => (
+      reviewTouched ? settings : { ...settings, script: { ...settings.script, rounds: defaultReviewRounds('script', option.model) } }
+    ))
   }
 
   const currentOptions = () => normalizeStoryLlmOptions({
@@ -217,8 +258,85 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
     lengthValue: length,
     lengthUnit,
     sceneGranularity,
-    reviewLoop,
+    ...(reviewTouched
+      ? { review: reviewSettings }
+      : { reviewLoop: legacyReviewLoop }),
   }, llmOptions)
+
+  const setReviewStage = (target, patch) => {
+    setReviewTouched(true)
+    setLegacyReviewLoop(false)
+    setReviewSettings((settings) => ({
+      ...settings,
+      [target]: {
+        ...settings[target],
+        ...patch,
+        ...(patch.rounds != null ? { rounds: clampReviewRounds(patch.rounds) } : {}),
+      },
+    }))
+  }
+
+  const manualReviewParams = (target) => ({
+    reviewOnly: true,
+    options: currentOptions(),
+    ...(target === 'script' ? { scriptOverride: scriptText } : {}),
+    review: { [target]: { enabled: true, rounds: reviewSettings[target].rounds } },
+  })
+
+  const handleManualReview = (target) => {
+    start(target, manualReviewParams(target))
+    if (target === 'script') {
+      setScriptPhase('editor')
+      setViewedStep('script')
+    } else {
+      setScriptPhase(null)
+      setViewedStep(target)
+    }
+  }
+
+  const renderReviewControl = (target, { manual = false, disabled = false, canReview = true } = {}) => {
+    const label = t(`story.review.target.${target}`, REVIEW_TARGET_LABEL[target])
+    const settings = reviewSettings[target]
+    return (
+      <div key={target} className="story-review-control">
+        <label className="story-review-toggle">
+          <input
+            type="checkbox"
+            aria-label={t('story.review.autoAria', `${label} 자동 검수`, { target: label })}
+            checked={settings.enabled}
+            onChange={(e) => setReviewStage(target, { enabled: e.target.checked })}
+            disabled={disabled}
+          />
+          <span>
+            {manual
+              ? t('story.review.autoToggleShort', '자동검수')
+              : t('story.review.toggleLabel', `${label} 검수`, { target: label })}
+          </span>
+        </label>
+        <input
+          type="number"
+          className="story-input story-review-rounds"
+          aria-label={t('story.review.roundsAria', `${label} 검수 횟수`, { target: label })}
+          min="1"
+          max="5"
+          value={settings.rounds}
+          onChange={(e) => setReviewStage(target, { rounds: e.target.value })}
+          disabled={disabled}
+        />
+        {manual && (
+          <button
+            type="button"
+            className="story-btn-secondary story-review-run"
+            aria-label={t('story.review.runAria', `${label} 검수`, { target: label })}
+            onClick={() => handleManualReview(target)}
+            disabled={disabled || !canReview}
+          >
+            {t('story.review.run', '검수')}
+          </button>
+        )}
+      </div>
+    )
+  }
 
   // open()/getState() 응답은 마운트 뒤에 도착한다(useStoryAutoOpen이 story 뷰 표시와 동시에
   // open을 호출) — state.input이 늦게 오면 한 번만 폼을 hydrate한다. 이미 초기값으로 hydrate된
@@ -244,7 +362,15 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
     if (o.lengthValue) setLength(o.lengthValue)
     if (o.lengthUnit) setLengthUnit(o.lengthUnit)
     if (o.sceneGranularity) setSceneGranularity(o.sceneGranularity)
-    if (o.reviewLoop != null) setReviewLoop(!!o.reviewLoop)
+    if (o.review) {
+      setReviewSettings(makeReviewSettings(o, (findStoryLlmOptionById(hydrateStoryLlmSelection(o, llmOptions), llmOptions) || selectedLlm).model))
+      setReviewTouched(true)
+      setLegacyReviewLoop(false)
+    } else if (o.reviewLoop != null) {
+      setReviewSettings(makeReviewSettings(o, (findStoryLlmOptionById(hydrateStoryLlmSelection(o, llmOptions), llmOptions) || selectedLlm).model))
+      setReviewTouched(false)
+      setLegacyReviewLoop(!!o.reviewLoop)
+    }
   }, [state, llmOptions])
 
   useEffect(() => {
@@ -255,11 +381,12 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
   // 버튼 aria-label(=접근성 이름)로 실제 라벨을 노출하고, 화면에 보이는 텍스트는 스텝 이름과
   // 겹치지 않는 짧은 문구로 둔다. 스테퍼의 단계명 텍스트(예: "대본")와 버튼 라벨(예: "대본 생성")이
   // 동시에 렌더되면 텍스트 검색(getByText)이 두 노드를 모두 찾아 모호해지기 때문.
+  const currentStepLabel = t(`story.step.${currentStep}`, STEP_META[currentStep].label)
   const actionAriaLabel = isError
     ? t('story.action.retry', '재실행')
     : currentStep === 'script'
       ? t('story.action.generateScript', '대본 생성')
-      : t('story.action.run', `${STEP_META[currentStep].label} 실행`)
+      : t('story.action.run', `${currentStepLabel} 실행`, { step: currentStepLabel })
 
   const actionVisibleLabel = isError
     ? t('story.action.retryIcon', '↻ 다시 시도')
@@ -325,6 +452,12 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
     return params
   }
 
+  const buildStepParams = (step) => {
+    if (step === 'audio') return buildAudioParams()
+    if (step === 'prompts') return { options: currentOptions() }
+    return {}
+  }
+
   // M2a-3d/3c: 세그먼트 재생성(강제 re-TTS)·미리듣기.
   const regenerateSegment = (segId) => {
     start('audio', buildAudioParams([segId]))
@@ -351,13 +484,13 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
       const seg = r?.segments?.find((s) => s.id === segId)
       if (seg?.audioPath) playAudio(seg.audioPath)
     } catch (e) {
-      toast.error(t('story.audio.testFailed', `테스트 실패: ${e?.message || e}`))
+      toast.error(t('story.audio.testFailed', `테스트 실패: ${e?.message || e}`, { error: e?.message || e }))
     } finally {
       setPreviewBusy(false)
     }
   }
 
-  const handlePrimaryAction = () => {
+  const handlePrimaryAction = async () => {
     if (currentStep === 'script') {
       // stepMachine.steps.script는 params.input(대본 생성 소재)과 params.options(LLM 호출
       // opts로 그대로 spread)를 분리해서 읽는다 — genre/length/language를 input에 섞으면
@@ -369,9 +502,11 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
       })
       // §1 전환 — '시작' 명시 트리거로 대본 작업 화면(editor)에 진입.
       setScriptPhase('editor')
+    } else if (currentStep === 'scenes') {
+      await handleSplit()
     } else {
       // M2a-3b: audio는 화자→목소리 매핑을 실어 보낸다(그 외 스텝은 params 없음).
-      start(currentStep, currentStep === 'audio' ? buildAudioParams() : {})
+      start(currentStep, buildStepParams(currentStep))
       // §1 — 다음 스텝(분리시작 등)을 실행하면 scriptPhase를 벗고 스텝퍼가 진행한다.
       setScriptPhase(null)
       // 진행 액션은 현재 단계로 화면을 되돌린다 — done 스텝을 보던 중이면 viewedStep이
@@ -382,9 +517,13 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
 
   // B: 현재 보고 있는 done 스텝(audio/prompts)을 재실행. audio는 화자 매핑 반영, prompts는 params 없음.
   const handleStepRedo = () => {
-    start(redoStep, redoStep === 'audio' ? buildAudioParams() : {})
+    start(redoStep, buildStepParams(redoStep))
     setViewedStep(null)
   }
+
+  const manualReviewTarget = !isRunning && ['scenes', 'prompts'].includes(displayStep)
+    ? displayStep
+    : null
 
   const handlePasteStart = () => {
     setBaseScript('')
@@ -480,8 +619,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
       {reviewProgress.phase === 'error'
         ? t('story.review.stopped', '검토 중단')
         : reviewProgress.phase === 'revising'
-          ? t('story.review.revising', `수정 중 ${reviewProgress.round}/${reviewProgress.of}`)
-          : t('story.review.reviewing', `검토 중 ${reviewProgress.round}/${reviewProgress.of}`)}
+          ? t('story.review.revising', `수정 중 ${reviewProgress.round}/${reviewProgress.of}`, { round: reviewProgress.round, of: reviewProgress.of })
+          : t('story.review.reviewing', `검토 중 ${reviewProgress.round}/${reviewProgress.of}`, { round: reviewProgress.round, of: reviewProgress.of })}
     </div>
   ) : null
 
@@ -547,6 +686,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
                     </button>
                   ) : (
                     <>
+                      {renderReviewControl('script', { manual: true, disabled: isRunning, canReview: !!scriptText.trim() })}
                       <button
                         type="button"
                         className="story-btn-secondary"
@@ -688,19 +828,11 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
                   </select>
                 </div>
 
-                {/* M3: 대본 자동 검토·수정 토글(기본 off) — 켜면 생성 후 검토→수정 루프(Claude 최대 3회). */}
-                <div className="story-opt-row">
-                  <span className="story-opt-label">{t('story.form.reviewLoopLabel', '대본 자동 검토·수정')}</span>
-                  <label className="story-review-toggle">
-                    <input
-                      type="checkbox"
-                      aria-label={t('story.form.reviewLoopLabel', '대본 자동 검토·수정')}
-                      checked={reviewLoop}
-                      onChange={(e) => setReviewLoop(e.target.checked)}
-                      disabled={isRunning}
-                    />
-                    <span>{t('story.form.reviewLoopHint', '생성 후 AI가 스스로 검토·수정 (Claude 최대 3회, 느려짐)')}</span>
-                  </label>
+                <div className="story-opt-row story-review-opt-row">
+                  <span className="story-opt-label">{t('story.form.reviewLabel', '검수')}</span>
+                  <div className="story-review-settings">
+                    {REVIEW_TARGET_ORDER.map((target) => renderReviewControl(target, { disabled: isRunning }))}
+                  </div>
                 </div>
 
                 <div className="story-opt-row">
@@ -764,11 +896,14 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
         {displayStep === 'scenes' && (
           <div className="story-scenes-panel">
             {steps.scenes?.status === 'running' ? (
-              <StoryRunning
-                label={t('story.scenes.running', '씬 분리 진행 중')}
-                startedAt={Date.parse(steps.scenes.updatedAt)}
-                detail={splitSummary}
-              />
+              <>
+                {reviewBadge}
+                <StoryRunning
+                  label={t('story.scenes.running', '씬 분리 진행 중')}
+                  startedAt={Date.parse(steps.scenes.updatedAt)}
+                  detail={splitSummary}
+                />
+              </>
             ) : (
               <>
                 {/* 10번: 씬 분리 탭에 필요한 옵션(씬 분리 단위)만 노출 — 바꿔서 다시 분리. */}
@@ -843,7 +978,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
                           {providerList.length > 0 && (
                             <select
                               className="story-input"
-                              aria-label={t('story.audio.engineFor', `${sp.name || sp.id} 엔진`)}
+                              aria-label={t('story.audio.engineFor', `${sp.name || sp.id} 엔진`, { speaker: sp.name || sp.id })}
                               value={provider}
                               onChange={(e) => {
                                 const np = e.target.value
@@ -858,7 +993,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
                           )}
                           <select
                             className="story-input"
-                            aria-label={t('story.audio.voiceFor', `${sp.name || sp.id} 목소리`)}
+                            aria-label={t('story.audio.voiceFor', `${sp.name || sp.id} 목소리`, { speaker: sp.name || sp.id })}
                             value={voiceIdForSpeaker(sp)}
                             onChange={(e) => setVoiceBySpeaker((m) => ({ ...m, [sp.id]: e.target.value }))}
                           >
@@ -902,7 +1037,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
                                 {/* M2b-5: 소스 선택(elevenlabs/library) — library는 아직 stub. 컴팩트 폭. */}
                                 <select
                                   className="story-sfx-source"
-                                  aria-label={t('story.audio.sfxSourceFor', `${seg.id} 소스`)}
+                                  aria-label={t('story.audio.sfxSourceFor', `${seg.id} 소스`, { id: seg.id })}
                                   value={sfxSourceForSeg(seg)}
                                   onChange={(e) => setSfxSource(seg, e.target.value)}
                                 >
@@ -919,7 +1054,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
                             <button
                               type="button"
                               className="story-seg-btn"
-                              aria-label={t('story.audio.test', `${seg.id} 테스트`)}
+                              aria-label={t('story.audio.test', `${seg.id} 테스트`, { id: seg.id })}
                               onClick={() => testSegment(seg.id)}
                               disabled={isRunning || previewBusy}
                             >
@@ -930,7 +1065,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
                               <button
                                 type="button"
                                 className="story-seg-btn"
-                                aria-label={t('story.audio.preview', `${seg.id} 미리듣기`)}
+                                aria-label={t('story.audio.preview', `${seg.id} 미리듣기`, { id: seg.id })}
                                 onClick={() => (playingFile === seg.audioPath ? stopAudio() : playAudio(seg.audioPath))}
                                 disabled={isRunning || previewBusy}
                               >
@@ -942,7 +1077,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
                               <button
                                 type="button"
                                 className="story-seg-btn"
-                                aria-label={t('story.audio.regenerate', `${seg.id} 재생성`)}
+                                aria-label={t('story.audio.regenerate', `${seg.id} 재생성`, { id: seg.id })}
                                 onClick={() => regenerateSegment(seg.id)}
                                 disabled={isRunning || previewBusy}
                               >
@@ -965,10 +1100,13 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
         {displayStep === 'prompts' && (
           <div className="story-prompts-panel">
             {steps.prompts?.status === 'running' ? (
-              <StoryRunning
-                label={t('story.prompts.running', '프롬프트 생성 중')}
-                startedAt={Date.parse(steps.prompts.updatedAt)}
-              />
+              <>
+                {reviewBadge}
+                <StoryRunning
+                  label={t('story.prompts.running', '프롬프트 생성 중')}
+                  startedAt={Date.parse(steps.prompts.updatedAt)}
+                />
+              </>
             ) : (
               <>
                 <table className="story-readonly-table">
@@ -1004,6 +1142,11 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
           displayStep=scenes/prompts) 하단 컨트롤(중단)을 보여야 하므로 "실제 editor 표시 중"을 기준으로 판단. */}
       {!(displayStep === 'script' && scriptPhase === 'editor') && (
         <div className="story-controls">
+          {manualReviewTarget && renderReviewControl(manualReviewTarget, {
+            manual: true,
+            disabled: isRunning,
+            canReview: scenes.length > 0,
+          })}
           {/* 설정 화면(신규 대본 생성)에서는 in-panel [✨ 시작]이 primary — 하단 제네릭 버튼을 감춘다.
               script done(씬 분리 진행) · 에러(재실행)에서는 그대로 노출. */}
           {!(scriptPhase === 'setup' && currentStep === 'script' && !isError) && (

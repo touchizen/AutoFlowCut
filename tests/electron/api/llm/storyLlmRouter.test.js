@@ -11,6 +11,10 @@ function adapters() {
       continueScript: vi.fn(async () => ({ scriptMd: 'claude continued' })),
       reviewScript: vi.fn(async () => ({ verdict: 'pass', critique: '' })),
       reviseScript: vi.fn(async () => ({ scriptMd: 'claude revised' })),
+      reviewScenes: vi.fn(async () => ({ verdict: 'pass', critique: '' })),
+      reviseScenes: vi.fn(async () => ({ scenes: [], speakers: [] })),
+      reviewPrompts: vi.fn(async () => ({ verdict: 'pass', critique: '' })),
+      revisePrompts: vi.fn(async (scenes) => ({ scenes })),
     },
     codex: {
       generateScript: vi.fn(async () => ({ scriptMd: 'codex script' })),
@@ -20,6 +24,10 @@ function adapters() {
       continueScript: vi.fn(async () => ({ scriptMd: 'codex continued' })),
       reviewScript: vi.fn(async () => ({ verdict: 'pass', critique: '' })),
       reviseScript: vi.fn(async () => ({ scriptMd: 'codex revised' })),
+      reviewScenes: vi.fn(async () => ({ verdict: 'revise', critique: 'codex scene fix' })),
+      reviseScenes: vi.fn(async () => ({ scenes: [{ sceneNo: 1 }], speakers: [] })),
+      reviewPrompts: vi.fn(async () => ({ verdict: 'revise', critique: 'codex prompt fix' })),
+      revisePrompts: vi.fn(async (scenes) => ({ scenes })),
     },
   }
 }
@@ -50,6 +58,21 @@ describe('storyLlmRouter', () => {
     const router = createStoryLlmRouter(a)
     await expect(router.reviewScript('대본', { engine: 'codex', model: 'gpt-5.5' }, {}))
       .rejects.toThrow(/does not implement reviewScript/)
+  })
+
+  it('새 review 메서드들의 옵션 인덱스를 유지하고 Codex로 라우팅한다', async () => {
+    const a = adapters()
+    const router = createStoryLlmRouter(a)
+    const opts = { engine: 'codex', model: 'gpt-5.4', reasoningEffort: 'high' }
+    await expect(router.reviewScenes('SCRIPT', [], [], opts, { signal: 's' })).resolves.toEqual({ verdict: 'revise', critique: 'codex scene fix' })
+    await expect(router.reviseScenes('SCRIPT', [], [], 'fix', opts, { signal: 's' })).resolves.toEqual({ scenes: [{ sceneNo: 1 }], speakers: [] })
+    await expect(router.reviewPrompts([], {}, opts, { signal: 's' })).resolves.toEqual({ verdict: 'revise', critique: 'codex prompt fix' })
+    await expect(router.revisePrompts([], {}, 'fix', opts, { signal: 's' })).resolves.toEqual({ scenes: [] })
+    expect(a.codex.reviewScenes).toHaveBeenCalledWith('SCRIPT', [], [], expect.objectContaining({ engine: 'codex', model: 'gpt-5.4', reasoningEffort: 'high' }), { signal: 's' })
+    expect(a.codex.reviseScenes).toHaveBeenCalledWith('SCRIPT', [], [], 'fix', expect.objectContaining({ engine: 'codex', model: 'gpt-5.4', reasoningEffort: 'high' }), { signal: 's' })
+    expect(a.codex.reviewPrompts).toHaveBeenCalledWith([], {}, expect.objectContaining({ engine: 'codex', model: 'gpt-5.4', reasoningEffort: 'high' }), { signal: 's' })
+    expect(a.codex.revisePrompts).toHaveBeenCalledWith([], {}, 'fix', expect.objectContaining({ engine: 'codex', model: 'gpt-5.4', reasoningEffort: 'high' }), { signal: 's' })
+    expect(a.claude.reviewScenes).not.toHaveBeenCalled()
   })
 
   it('알 수 없는 explicit Codex 모델은 Claude로 fallback하지 않고 실패한다', async () => {

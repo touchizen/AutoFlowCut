@@ -2,7 +2,17 @@
  * @vitest-environment node
  */
 import { describe, it, expect, vi } from 'vitest'
-import { generateScript, splitScenes, writePrompts, reviewScript, reviseScript } from '../../../../electron/api/llm/llmGemini.js'
+import {
+  generateScript,
+  splitScenes,
+  writePrompts,
+  reviewScript,
+  reviseScript,
+  reviewScenes,
+  reviseScenes,
+  reviewPrompts,
+  revisePrompts,
+} from '../../../../electron/api/llm/llmGemini.js'
 
 // SSE 응답 mock: streamGenerateContent는 "data: {json}\n\n" 라인 스트림
 function sseResponse(chunks) {
@@ -166,6 +176,35 @@ describe('reviewScript / reviseScript (M3)', () => {
     // streamGenerateContent(SSE)가 아니라 generateContent 호출
     expect(fetchImpl.mock.calls[0][0]).toContain(':generateContent')
     expect(fetchImpl.mock.calls[0][0]).not.toContain('streamGenerateContent')
+  })
+
+  it('reviewScript: 몰입도 중심 루브릭이며 metaPrompt를 포함하지 않는다', async () => {
+    let body = ''
+    const fetchImpl = vi.fn(async (_url, init) => {
+      body = init.body
+      return jsonResponse({ verdict: 'pass', critique: '' })
+    })
+    await reviewScript('대본', { ...OPTS, metaPrompt: '장르별 공식' }, { fetchImpl })
+    expect(body).toContain('궁금증')
+    expect(body).toContain('기대감')
+    expect(body).not.toContain('장르별 공식')
+  })
+})
+
+describe('scenes/prompts review controls', () => {
+  it('reviewScenes/reviewPrompts: verdict/critique 반환', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ verdict: 'revise', critique: 'fix' }))
+    await expect(reviewScenes('SCRIPT', [{ sceneNo: 1, segments: [] }], [], OPTS, { fetchImpl })).resolves.toEqual({ verdict: 'revise', critique: 'fix' })
+    await expect(reviewPrompts([{ sceneNo: 1, imagePrompt: 'IMG', videoPrompt: 'VID' }], { scriptMd: 'SCRIPT' }, OPTS, { fetchImpl })).resolves.toEqual({ verdict: 'revise', critique: 'fix' })
+  })
+  it('reviseScenes/revisePrompts: structured 수정 결과 반환', async () => {
+    const scenesPayload = { scenes: [{ sceneNo: 1, summary: 's', segments: [{ speaker: 'narrator', text: 'hi', emotion: 'normal' }] }], speakers: [{ id: 'narrator', name: '내레이터' }] }
+    const scenesFetch = vi.fn(async () => jsonResponse(scenesPayload))
+    await expect(reviseScenes('SCRIPT', [], [], 'fix scenes', OPTS, { fetchImpl: scenesFetch })).resolves.toEqual(scenesPayload)
+
+    const promptsFetch = vi.fn(async () => jsonResponse({ scenes: [{ sceneNo: 1, imagePrompt: 'IMG2', videoPrompt: 'VID2' }] }))
+    await expect(revisePrompts([{ sceneNo: 1, storyId: 's1' }], { scriptMd: 'SCRIPT' }, 'fix prompts', OPTS, { fetchImpl: promptsFetch }))
+      .resolves.toEqual({ scenes: [{ sceneNo: 1, storyId: 's1', imagePrompt: 'IMG2', videoPrompt: 'VID2' }] })
   })
 })
 
