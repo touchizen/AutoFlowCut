@@ -27,6 +27,7 @@
  *                         찾을 수 없으면 null (호출 측은 conditional render).
  */
 export function resolveDisplayError(t, errorKind, error) {
+  if (errorKind === 'auth' && error) return error
   if (errorKind) {
     const key = `errorSection.kind.${errorKind}`
     const translated = typeof t === 'function' ? t(key) : null

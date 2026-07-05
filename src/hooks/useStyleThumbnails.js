@@ -9,6 +9,7 @@ import { STYLE_PRESETS } from '../config/defaults'
 import { toast } from '../components/Toast'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 import { checkFlowProjectReady } from '../utils/guards'
+import { getAuthErrorMessage } from '../utils/authMessages'
 
 const THUMBNAIL_PROMPT_PREFIX = 'A serene landscape with mountains and a river'
 
@@ -147,6 +148,7 @@ export function useStyleThumbnails(genAPI, { flowProjectReady = true } = {}) {
 
     let generated = 0
     let stopped = false
+    const authErrorMessage = () => getAuthErrorMessage(genAPI?.mode, t)
 
     // Phase 1: 프리셋 썸네일 생성
     for (const presetId of targetIds) {
@@ -184,6 +186,7 @@ export function useStyleThumbnails(genAPI, { flowProjectReady = true } = {}) {
           console.warn(`[StyleThumbnails] Failed to generate ${presetId}:`, result.error)
           // #R21-4: 인증 실패면 죽은 토큰이니 남은 스타일을 계속 돌리지 않고 즉시 중단.
           if (result.authFailed) {
+            toast.error(authErrorMessage())
             window.dispatchEvent(new CustomEvent('flow-login-expired'))
             stopped = true
             break
@@ -202,7 +205,7 @@ export function useStyleThumbnails(genAPI, { flowProjectReady = true } = {}) {
           break
         }
         if (e.message?.includes('401') || e.message?.includes('auth')) {
-          toast.error(t?.('toast.authErrorStop') || 'Authentication error')
+          toast.error(authErrorMessage())
           stopped = true
           break
         }
@@ -237,6 +240,7 @@ export function useStyleThumbnails(genAPI, { flowProjectReady = true } = {}) {
             generated++
           } else if (!result.success && result.authFailed) {
             // #R21-4: 인증 실패 → 즉시 중단.
+            toast.error(authErrorMessage())
             window.dispatchEvent(new CustomEvent('flow-login-expired'))
             stopped = true
             break
@@ -253,7 +257,7 @@ export function useStyleThumbnails(genAPI, { flowProjectReady = true } = {}) {
             break
           }
           if (e.message?.includes('401') || e.message?.includes('auth')) {
-            toast.error(t?.('toast.authErrorStop') || 'Authentication error')
+            toast.error(authErrorMessage())
             stopped = true
             break
           }

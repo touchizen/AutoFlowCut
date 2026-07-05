@@ -27,6 +27,7 @@ import { resolveProjectBatchId } from '../utils/batchId'
 import { consumeBatchDownload } from '../firebase/functions'
 import { partitionDownloadOnly } from './downloadOnlyGate'
 import { batchStartGate } from './batchStartGate'
+import { getAuthErrorMessage, getAuthRequiredMessage } from '../utils/authMessages'
 
 // 실제 제출되는 비디오 길이(초). submitVideo(engine)의 제약과 동일하게 계산해 제출값과
 // 완료-메타가 일치하도록 한다(어긋나면 history 길이가 실제와 불일치).
@@ -63,6 +64,8 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
   const [progress, setProgress] = useState({ current: 0, total: 0, percent: 0, errorCount: 0, startedAt: null })
   const [status, setStatus] = useState('ready')
   const [statusMessage, setStatusMessage] = useState('')
+  const authErrorMessage = () => getAuthErrorMessage(appMode, t)
+  const authRequiredMessage = () => getAuthRequiredMessage(appMode, t)
 
   const stopRequestedRef = useRef(false)
   const pausedRef = useRef(false)
@@ -289,6 +292,8 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
     // 토큰 확인 — 키 없으면 API 키 모달 안내(handleStart 와 동일 UX, 토스트 대신).
     const token = await getAccessToken()
     if (!token) {
+      setStatus('error')
+      setStatusMessage(`🔐 ${authRequiredMessage()}`)
       window.dispatchEvent(new CustomEvent('flow-login-expired'))
       return
     }
@@ -475,7 +480,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
       if (authStopped) {
         // #R25-3: download-only 전부였고 Phase 0 에서 인증이 죽은 경우 — 'done' 으로 묻지 않는다.
         setStatus('error')
-        setStatusMessage(`🔐 ${t('toast.authErrorStop') || 'API key was rejected. Check your API key in Settings and try again.'}`)
+        setStatusMessage(`🔐 ${authErrorMessage()}`)
       } else if (stopRequestedRef.current) {
         setStatus('stopped')
         setStatusMessage(t('status.stopped'))
@@ -552,7 +557,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
         } else if (genResult?.authFailed) {
           // Auth errors handled via withAuthRetry's authFailed sentinel.
           // 토큰 사망 — 이 항목 + 남은 freshGen 전부 auth error. 이미 제출된 pending 은 post-loop 에서 마감.
-          const authErr = genResult.error || 'API key was rejected. Check your API key in Settings and try again.'
+          const authErr = genResult.error || authErrorMessage()
           for (let j = i; j < freshGen.length; j++) {
             onItemUpdate?.(freshGen[j].id, 'error', { error: authErr, errorKind: 'auth' })
             videoErrorCount++
@@ -560,7 +565,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
           nextFreshIdx = freshGen.length
           authStopped = true
           setStatus('error')
-          setStatusMessage(`🔐 ${t('toast.authErrorStop') || 'API key was rejected. Check your API key in Settings and try again.'}`)
+          setStatusMessage(`🔐 ${authErrorMessage()}`)
           console.warn(`[VideoAutomation] ❌ Submit authFailed: token dead, stopping batch`)
           return
         } else {
@@ -639,7 +644,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
       // The wrapper already fired onAuthError + cleared cache. Mark all pending items
       // as auth-error and break immediately — no point polling on a dead token.
       if (result?.authFailed) {
-        const authErr = result.error || 'API key was rejected. Check your API key in Settings and try again.'
+        const authErr = result.error || authErrorMessage()
         for (const [itemId] of pending) {
           onItemUpdate?.(itemId, 'error', { error: authErr, errorKind: 'auth' })
           videoErrorCount++  // fillWindow auth 경로·아래 freshGen 루프와 동일하게 집계 (progress.errorCount 일관성)
@@ -653,7 +658,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
         pending.clear()
         authStopped = true
         setStatus('error')
-        setStatusMessage(`🔐 ${t('toast.authErrorStop') || 'API key was rejected. Check your API key in Settings and try again.'}`)
+        setStatusMessage(`🔐 ${authErrorMessage()}`)
         break
       }
       // Top-level fail (예: { success: false, error: "RESOURCE_EXHAUSTED..." }) — quota 검사 후 break.
@@ -801,7 +806,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
       if (authStopped) {
         // auth 가 fillWindow 제출 중 터진 경우 — 이미 제출된 in-flight 도 auth error 로 마감.
         // (auth 가 폴링 중 터지면 위에서 pending.clear() 했으므로 여기 안 옴.)
-        const authMsg = t('toast.authErrorStop') || 'API key was rejected. Check your API key in Settings and try again.'
+        const authMsg = authErrorMessage()
         for (const [itemId] of pending) {
           onItemUpdate?.(itemId, 'error', { error: authMsg, errorKind: 'auth' })
           videoErrorCount++

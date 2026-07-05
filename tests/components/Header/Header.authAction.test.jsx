@@ -13,7 +13,16 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 
 vi.mock('../../../src/hooks/useI18n', () => ({
   useI18n: () => ({
-    t: (k) => k,
+    t: (k) => ({
+      'header.apiKey': 'API 키',
+      'header.flowLogin': '로그인',
+      'header.login': 'SHARED_LOGIN',
+      'header.checking': '확인 중',
+      'header.authenticated': '인증됨',
+      'header.unavailable': '지원 안 됨',
+      'header.waitingLogin': '로그인 대기',
+      'toast.flowLoginHint': 'Flow 창에서 로그인',
+    }[k] || k),
     lang: 'ko',
     changeLang: vi.fn(),
     languages: [{ code: 'ko', name: 'KO', country: 'kr' }],
@@ -118,11 +127,25 @@ describe('Header auth action — mode-aware (#R5-3 / #R6-9)', () => {
     const onSettings = vi.fn()
     renderHeader(onSettings)
 
-    // The unauth button shows a key icon and 'header.login' text
-    const btn = screen.getByRole('button', { name: /header\.login/i })
+    const btn = screen.getByRole('button', { name: /API 키/i })
     fireEvent.click(btn)
 
     expect(onSettings).toHaveBeenCalledWith('apiKey')
+  })
+
+  it('Flow mode: unauth button is labeled Login, not API Key', () => {
+    mockMode = 'flow'
+    renderHeader()
+
+    expect(screen.getByRole('button', { name: /로그인/i })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /API 키/i })).toBeNull()
+  })
+
+  it('API mode: unauth button is labeled API Key, not shared Login', () => {
+    renderHeader()
+
+    expect(screen.getByRole('button', { name: /API 키/i })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /SHARED_LOGIN/i })).toBeNull()
   })
 
   it('API mode: unauth button does NOT dispatch flow-login-expired', () => {
@@ -131,7 +154,7 @@ describe('Header auth action — mode-aware (#R5-3 / #R6-9)', () => {
     const onSettings = vi.fn()
     renderHeader(onSettings)
 
-    fireEvent.click(screen.getByRole('button', { name: /header\.login/i }))
+    fireEvent.click(screen.getByRole('button', { name: /API 키/i }))
 
     expect(listener).not.toHaveBeenCalled()
     window.removeEventListener('flow-login-expired', listener)
@@ -144,7 +167,7 @@ describe('Header auth action — mode-aware (#R5-3 / #R6-9)', () => {
     const onSettings = vi.fn()
     renderHeader(onSettings)
 
-    fireEvent.click(screen.getByRole('button', { name: /header\.login/i }))
+    fireEvent.click(screen.getByRole('button', { name: /로그인/i }))
 
     // #R14-10: openFlow 가 setMode/setLayout 을 await 하므로 microtask flush 후 검증.
     // Must call setMode to re-attach Flow WebContentsView
@@ -160,7 +183,7 @@ describe('Header auth action — mode-aware (#R5-3 / #R6-9)', () => {
     mockMode = 'flow'
     renderHeader()
 
-    fireEvent.click(screen.getByRole('button', { name: /header\.login/i }))
+    fireEvent.click(screen.getByRole('button', { name: /로그인/i }))
 
     await waitFor(() => expect(toastInfo).toHaveBeenCalledTimes(1))
   })
@@ -170,7 +193,7 @@ describe('Header auth action — mode-aware (#R5-3 / #R6-9)', () => {
     const onSettings = vi.fn()
     renderHeader(onSettings)
 
-    fireEvent.click(screen.getByRole('button', { name: /header\.login/i }))
+    fireEvent.click(screen.getByRole('button', { name: /로그인/i }))
 
     expect(onSettings).not.toHaveBeenCalledWith('apiKey')
   })

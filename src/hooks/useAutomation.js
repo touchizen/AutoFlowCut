@@ -20,6 +20,7 @@ import { makeBatchConsumeGate } from './batchConsumeGate'
 import { resolveProjectBatchId } from '../utils/batchId'
 import { consumeBatchDownload } from '../firebase/functions'
 import { batchStartGate } from './batchStartGate'
+import { getAuthErrorMessage, getAuthRequiredMessage } from '../utils/authMessages'
 
 export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings = null, addPendingSave = null, t = (key) => key, onAuthError = null, generationQueue = null, onComplete = null, mode = 'api', flowProjectReady = true, flowAgentOn = false, subscriptionBatch = null, onPaywall = null, isAuthenticated = false, onLoginRequired = null, subscriptionStatus = undefined, refreshSubscription = null) {
   const [isRunning, setIsRunning] = useState(false)
@@ -28,6 +29,8 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
   const [progress, setProgress] = useState({ current: 0, total: 0, percent: 0, errorCount: 0, startedAt: null, endedAt: null })
   const [status, setStatus] = useState('ready')
   const [statusMessage, setStatusMessage] = useState('')
+  const authErrorMessage = () => getAuthErrorMessage(mode, t)
+  const authRequiredMessage = () => getAuthRequiredMessage(mode, t)
 
   // t 함수가 변경되면 초기 상태 메시지 업데이트
   useEffect(() => {
@@ -166,14 +169,14 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
           //   onAuthError 는 withAuthRetry wrapper 가 이미 발화 — 여기서 또 발화하지 않는다.
           if (st.authFailed) {
             console.warn('[Automation] checkGeneration authFailed — stopping batch:', st.error)
-            updateScene(item.scene.id, { status: 'error', error: st.error || t('status.authErrorStopped'), errorKind: 'auth' })
+            updateScene(item.scene.id, { status: 'error', error: st.error || authErrorMessage(), errorKind: 'auth' })
             errorCountRef.current++
             completedCountRef.current++
             updateProgressMsg(completedCountRef.current)
             stopRequestedRef.current = true
             authStoppedRef.current = true
             setStatus('error')
-            setStatusMessage(st.error || t('status.authErrorStopped'))
+            setStatusMessage(st.error || authErrorMessage())
             continue
           }
           if (st.completed) {
@@ -182,14 +185,14 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
             // onAuthError was already fired by the withAuthRetry wrapper; don't fire again.
             if (result.authFailed) {
               console.warn('[Automation] collectGeneration authFailed — stopping batch:', result.error)
-              updateScene(item.scene.id, { status: 'error', error: result.error || t('status.authErrorStopped'), errorKind: 'auth' })
+              updateScene(item.scene.id, { status: 'error', error: result.error || authErrorMessage(), errorKind: 'auth' })
               errorCountRef.current++
               completedCountRef.current++
               updateProgressMsg(completedCountRef.current)
               stopRequestedRef.current = true
               authStoppedRef.current = true
               setStatus('error')
-              setStatusMessage(result.error || t('status.authErrorStopped'))
+              setStatusMessage(result.error || authErrorMessage())
               continue
             }
             if (!result.success && isQuotaExhaustedError(result.error)) {
@@ -317,14 +320,14 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
         // #R10-6: 인증 실패 센티넬 — 토큰이 죽었으니 즉시 배치 중단(collect/upload 경로와 동일 처리).
         if (submitResult.authFailed) {
           console.warn('[Automation] submitGeneration authFailed — stopping batch:', submitResult.error)
-          updateScene(scene.id, { status: 'error', error: submitResult.error || t('status.authErrorStopped'), errorKind: 'auth' })
+          updateScene(scene.id, { status: 'error', error: submitResult.error || authErrorMessage(), errorKind: 'auth' })
           errorCountRef.current++
           completedCountRef.current++
           updateProgressMsg(completedCountRef.current)
           stopRequestedRef.current = true
           authStoppedRef.current = true
           setStatus('error')
-          setStatusMessage(submitResult.error || t('status.authErrorStopped'))
+          setStatusMessage(submitResult.error || authErrorMessage())
           break
         }
         if (isQuotaExhaustedError(submitResult.error)) {
@@ -535,8 +538,8 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     if (!token) {
       // BYOK 키 없음 → 생성 중단 + API 키 모달 안내 (handleStart 와 동일 UX).
       // 'flow-login-expired' → App 의 useFlowEvents → showApiKeyModal.
-      console.log('[Automation] No API key — prompting setup.')
-      setStatusMessage(`❌ ${t('status.loginRequired')}`)
+      console.log('[Automation] No auth token — prompting setup.')
+      setStatusMessage(`❌ ${authRequiredMessage()}`)
       setStatus('error')
       setIsRunning(false)
       window.dispatchEvent(new CustomEvent('flow-login-expired'))
@@ -622,7 +625,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
             stopRequestedRef.current = true
             authStoppedRef.current = true
             setStatus('error')
-            setStatusMessage(result.error || t('status.authErrorStopped'))
+            setStatusMessage(result.error || authErrorMessage())
             return
           }
           if (result.error?.includes('429') && attempt < MAX_RETRIES) {

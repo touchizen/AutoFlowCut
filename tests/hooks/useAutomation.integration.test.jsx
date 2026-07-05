@@ -80,10 +80,11 @@ function setupHook(overrides = {}) {
     ...(overrides.scenesHook || {}),
   }
 
-  const t = (k) => k
+  const t = overrides.t || ((k) => k)
+  const mode = overrides.mode || 'api'
 
   const hook = renderHook(() =>
-    useAutomation(genAPI, scenesHook, null, null, null, t, null, null, null)
+    useAutomation(genAPI, scenesHook, null, null, null, t, null, null, null, mode)
   )
 
   return {
@@ -191,6 +192,28 @@ describe('useAutomation — force regenerate status reset ordering', () => {
       ([, patch]) => patch && patch.status === 'pending'
     )
     expect(resetToPending).toEqual([])
+  })
+
+  it('flow mode no-token preflight shows Flow login guidance, not API-key guidance', async () => {
+    const { hook, submitGeneration } = setupHook({
+      mode: 'flow',
+      genAPI: { getAccessToken: vi.fn().mockResolvedValue(null) },
+      t: (k) => ({
+        'toast.flowLoginRequired': 'Flow 창에서 로그인해주세요.',
+        'status.loginRequired': 'API 키가 필요합니다.',
+        'status.checkingAuth': '인증 확인 중',
+      }[k] || k),
+      scenes: [{ id: 's1', prompt: 'a', status: 'pending' }],
+    })
+
+    await act(async () => {
+      await hook.result.current.start({ projectName: 'X', saveMode: 'memory' })
+    })
+
+    expect(submitGeneration).not.toHaveBeenCalled()
+    expect(hook.result.current.status).toBe('error')
+    expect(hook.result.current.statusMessage).toContain('Flow 창에서 로그인해주세요.')
+    expect(hook.result.current.statusMessage).not.toContain('API 키')
   })
 
   it('force=true: does not reset scene status when Stop is pressed during pre-flight', async () => {

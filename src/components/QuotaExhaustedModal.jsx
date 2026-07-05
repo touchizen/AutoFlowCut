@@ -10,12 +10,13 @@
 
 import { useEffect, useState } from 'react'
 import Modal from './Modal'
-import { useI18n } from '../hooks/useI18n'
+import { useOptionalI18n } from '../hooks/useI18n'
 import { subscribeQuotaStop, notifyQuotaModalDismissed } from '../utils/quotaStop'
 
 export function QuotaExhaustedModalProvider({ children }) {
   const [isOpen, setIsOpen] = useState(false)
-  const { t } = useI18n()
+  const i18n = useOptionalI18n()
+  const t = i18n?.t || ((key) => key)
 
   useEffect(() => {
     const unsubscribe = subscribeQuotaStop(() => setIsOpen(true))

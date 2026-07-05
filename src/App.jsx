@@ -58,6 +58,7 @@ import { saveGalleryFrame } from './utils/galleryUpload'
 import { isUsableVideoReference } from './utils/videoPromptReferences'
 import { toast } from './components/Toast'
 import { selectUnsyncedMentionedRefs, syncRefToFlow, isRefSynced } from './utils/flowCharacterSync'
+import { getAuthErrorMessage, getAuthRequiredMessage } from './utils/authMessages'
 
 // Components
 import Header from './components/Header'
@@ -245,7 +246,7 @@ function App() {
   const handleAuthError = useCallback(() => {
     setAuthReady(false)
     authInvalidatedRef.current = true  // prevent auto-recovery effect from flipping us back
-    toast.error(t('status.authErrorStopped') || 'API key was rejected. Check your API key in Settings and try again.', TIMING.AUTH_ERROR_TOAST)
+    toast.error(getAuthErrorMessage(modeRef.current, t), TIMING.AUTH_ERROR_TOAST)
   }, [t])
 
   // Called by Header when the user explicitly re-authenticates (login badge click or
@@ -1110,7 +1111,11 @@ function App() {
       if (!(await genAPI.getAccessToken(false, true))) {
         videoRetryInFlightRef.current = false
         setVideoRetryRunning(false)
-        window.dispatchEvent(new CustomEvent('flow-login-expired'))
+        if (modeRef.current === 'flow') {
+          toast.warning(getAuthRequiredMessage('flow', t))
+        } else {
+          window.dispatchEvent(new CustomEvent('flow-login-expired'))
+        }
         return
       }
       // #R17-7: auth await 동안 모드가 바뀌었으면 stale 엔진으로 다운로드하지 않는다.
@@ -1179,6 +1184,8 @@ function App() {
       //   아니라 현재 모드(modeRef)로 BYOK 모달 여부를 판단한다(flow 에서 BYOK 모달 방지).
       if (modeRef.current !== 'flow') {
         setShowApiKeyModal(true)
+      } else {
+        toast.warning(getAuthRequiredMessage('flow', t))
       }
       return
     }
@@ -1562,7 +1569,11 @@ function App() {
       }
       // #R9-4: 인증 재확인(모달 사이 키 변경/만료 가능). flow 는 BYOK 모달 대신 Flow 뷰가 처리.
       if (!(await genAPI.getAccessToken(false, true))) {
-        if (modeRef.current !== 'flow') setShowApiKeyModal(true)
+        if (modeRef.current !== 'flow') {
+          setShowApiKeyModal(true)
+        } else {
+          toast.warning(getAuthRequiredMessage('flow', t))
+        }
         setPendingStartOptions(null)
         return
       }

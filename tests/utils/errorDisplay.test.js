@@ -49,6 +49,12 @@ describe('resolveDisplayError', () => {
     )
   })
 
+  it('auth errorKind preserves free-form mode-specific auth guidance when present', () => {
+    expect(resolveDisplayError(T_EN, 'auth', 'Auth expired — please re-login to Flow')).toBe(
+      'Auth expired — please re-login to Flow',
+    )
+  })
+
   it('unknown errorKind falls back to free-form error (no raw key leakage)', () => {
     // useI18n's t() returns the key itself when the path is missing. Without
     // the guard, the user would see literal 'errorSection.kind.foo' in the UI.

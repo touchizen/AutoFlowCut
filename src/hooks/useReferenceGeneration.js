@@ -13,6 +13,7 @@ import { createStyleResolver } from '../services/styleResolver'
 import { isStyleReference } from '../services/styleService'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 import { clampInt } from '../utils/clampInt'
+import { getAuthErrorMessage, getAuthRequiredMessage } from '../utils/authMessages'
 
 // 1~3초 랜덤 딜레이
 const randomDelay = () => new Promise(r => setTimeout(r, 1000 + Math.random() * 2000))
@@ -43,6 +44,8 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
   // #R24-4: 배치가 '인증 실패'로 멈췄는지 구분. user-stop 정리는 pending(재실행 가능)으로
   //   되돌리지만, auth-stop 은 죽은 인증을 숨긴 채 재시도 루프가 돌지 않도록 error(auth)로 남긴다.
   const authStoppedRef = useRef(false)
+  const authErrorMessage = () => getAuthErrorMessage(genAPI?.mode, t)
+  const authRequiredMessage = () => getAuthRequiredMessage(genAPI?.mode, t)
 
   // quota stop 공통 모듈 위임 — queue clear 는 useGenerationQueue 가 직접 subscribe 함.
   const _maybeTriggerQuotaStop = (err) => {
@@ -252,8 +255,9 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       if (!readyCheck.ok) { releasePreflightBusy(); return { success: false } }
     }
     if (!(await checkAuthToken(genAPI, t))) {
+      const message = authRequiredMessage()
       releasePreflightBusy()
-      setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: 'Auth required' } : r))
+      setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: message, errorKind: 'auth' } : r))
       return { success: false, authError: true }
     }
 
@@ -393,7 +397,10 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     }
 
     // 토큰 확인
-    if (!(await checkAuthToken(genAPI, t))) return
+    if (!(await checkAuthToken(genAPI, t))) {
+      toast.warning(authRequiredMessage())
+      return
+    }
 
     // Flow 프로젝트 준비 확인
     const readyCheck = checkFlowProjectReady(flowProjectReady, t)
@@ -610,7 +617,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
             //   숨긴 채 다음 배치가 같은 인증으로 재시도(silent loop). error(auth)로 남겨 사용자가
             //   재로그인을 인지하게 한다. user-stop 은 기존대로 재실행 가능한 pending.
             if (authStoppedRef.current) {
-              return { ...r, status: 'error', errorMessage: t('status.authErrorStopped'), errorKind: 'auth' }
+              return { ...r, status: 'error', errorMessage: authErrorMessage(), errorKind: 'auth' }
             }
             return userStopped
               ? { ...r, status: 'pending', errorMessage: null }

@@ -37,6 +37,8 @@ vi.mock('../../src/utils/urls', () => ({
 }))
 
 import { useReferenceGeneration } from '../../src/hooks/useReferenceGeneration'
+import { checkAuthToken } from '../../src/utils/guards'
+import { toast } from '../../src/components/Toast'
 
 function setupHook({ checkGenerationImpl }) {
   const refs = [{ id: 1, prompt: 'a portrait', type: 'character', status: 'pending' }]
@@ -152,6 +154,68 @@ describe('useReferenceGeneration — prepare-phase stop cleanup (P1)', () => {
     // 핵심 가드: throw에도 flags가 false로 정리됨
     expect(result.current.preparingRefs).toBe(false)
     expect(result.current.stoppingRefs).toBe(false)
+  })
+})
+
+describe('useReferenceGeneration — Flow no-token guidance', () => {
+  it('single reference generation stores Flow login guidance, not generic auth text', async () => {
+    checkAuthToken.mockResolvedValueOnce(false)
+    const refs = [{ id: 1, prompt: 'a portrait', type: 'character', status: 'pending' }]
+    const setRefCalls = []
+    const setReferences = (updater) => {
+      if (typeof updater === 'function') setRefCalls.push(updater(refs))
+    }
+
+    const { result } = renderHook(() => useReferenceGeneration({
+      settings: { saveMode: 'project', imageBatchCount: 1 },
+      references: refs,
+      setReferences,
+      genAPI: { mode: 'flow', getAccessToken: vi.fn().mockResolvedValue(null), clearTokenCache: vi.fn() },
+      addPendingSave: vi.fn(),
+      openSettings: vi.fn(),
+      t: (k) => ({
+        'toast.flowLoginRequired': 'Flow 창에서 로그인해주세요.',
+        'status.loginRequired': 'API 키가 필요합니다.',
+      }[k] || k),
+      generationQueue: null,
+    }))
+
+    let res
+    await act(async () => {
+      res = await result.current.handleGenerateRef(0)
+    })
+
+    expect(res.authError).toBe(true)
+    const authState = setRefCalls.find(state =>
+      state.some(r => r.id === 1 && r.status === 'error')
+    )
+    expect(authState?.[0]?.errorMessage).toContain('Flow 창에서 로그인해주세요.')
+    expect(authState?.[0]?.errorMessage).not.toContain('API 키')
+  })
+
+  it('batch reference generation warns with Flow login guidance when token preflight fails', async () => {
+    checkAuthToken.mockResolvedValueOnce(false)
+    const refs = [{ id: 1, prompt: 'a portrait', type: 'character', status: 'pending' }]
+
+    const { result } = renderHook(() => useReferenceGeneration({
+      settings: { saveMode: 'project', imageBatchCount: 1 },
+      references: refs,
+      setReferences: vi.fn(),
+      genAPI: { mode: 'flow', getAccessToken: vi.fn().mockResolvedValue(null), clearTokenCache: vi.fn() },
+      addPendingSave: vi.fn(),
+      openSettings: vi.fn(),
+      t: (k) => ({
+        'toast.flowLoginRequired': 'Flow 창에서 로그인해주세요.',
+        'status.loginRequired': 'API 키가 필요합니다.',
+      }[k] || k),
+      generationQueue: null,
+    }))
+
+    await act(async () => {
+      await result.current.handleGenerateAllRefs()
+    })
+
+    expect(toast.warning).toHaveBeenCalledWith('Flow 창에서 로그인해주세요.')
   })
 })
 

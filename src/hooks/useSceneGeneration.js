@@ -9,6 +9,7 @@ import { finalizeGeneratedImage } from '../services/imageFinalize'
 import { toast } from '../components/Toast'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 import { resolveMentions } from '../utils/mentionParser'
+import { getAuthRequiredMessage } from '../utils/authMessages'
 
 export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openSettings, setSelectedScene, t, generationQueue, flowProjectReady = true }) {
   const [generatingSceneId, setGeneratingSceneId] = useState(null)
@@ -39,7 +40,13 @@ export function useSceneGeneration({ settings, scenes, scenesHook, genAPI, openS
     }
     const readyCheck = checkFlowProjectReady(flowProjectReady, t)
     if (!readyCheck.ok) { setGeneratingSceneId(null); return }
-    if (!(await checkAuthToken(genAPI, t))) { setGeneratingSceneId(null); return }
+    if (!(await checkAuthToken(genAPI, t))) {
+      const message = getAuthRequiredMessage(genAPI?.mode, t)
+      scenesHook.updateScene(sceneId, { status: 'error', errorKind: 'auth', error: message })
+      toast.warning(message)
+      setGeneratingSceneId(null)
+      return
+    }
 
     // generatingStartedAt 을 새로 찍는다 — 안 그러면 이전 생성의 stale 시작시각이 남아
     //   경과시간이 엉뚱하게(예: 1분인데 1시간 25분) 표시된다. (배치/레퍼런스 경로는 이미 세팅.)

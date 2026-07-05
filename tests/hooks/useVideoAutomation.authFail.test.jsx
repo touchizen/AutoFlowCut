@@ -199,7 +199,7 @@ describe('useVideoAutomation — auth failure during polling', () => {
       getAccessToken: vi.fn().mockResolvedValue('token'),
     }
     // Realistic translator: returns a translated string for known keys, the key for unknown.
-    const t = (k) => k === 'toast.authErrorStop' ? 'Auth error. Stopping.' : k
+    const t = (k) => k === 'status.authErrorStopped' ? 'API auth failed.' : k
     const hook = renderHook(() => useVideoAutomation(genAPI, t, null))
 
     let startPromise
@@ -215,8 +215,8 @@ describe('useVideoAutomation — auth failure during polling', () => {
     await act(async () => { await startPromise })
 
     // Must contain the translated string, NOT contain the bare key
-    expect(hook.result.current.statusMessage).toContain('Auth error. Stopping.')
-    expect(hook.result.current.statusMessage).not.toContain('videoAutomation.authErrorStop')
+    expect(hook.result.current.statusMessage).toContain('API auth failed.')
+    expect(hook.result.current.statusMessage).not.toContain('status.authErrorStopped')
   })
 })
 

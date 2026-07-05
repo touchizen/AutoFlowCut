@@ -259,6 +259,10 @@ export default function Header({
     setDeleteTarget(null)
     setShowProjectDropdown(false)
   }
+
+  const authActionLabel = mode === 'flow' ? t('header.flowLogin') : t('header.apiKey')
+  const authActionIcon = mode === 'flow' ? '👤' : '🔑'
+  const authenticatedLabel = mode === 'flow' ? t('header.flowAuthenticated') : t('header.apiAuthenticated')
   
   return (
     <>
@@ -329,7 +333,7 @@ export default function Header({
             <span className="auth-badge checking" data-tooltip={t('header.checking')}>⏳</span>
           )}
           {authStatus === 'authenticated' && (
-            <span className="auth-badge authenticated" data-tooltip={t('header.authenticated')} onClick={checkAuth}>🟢</span>
+            <span className="auth-badge authenticated" data-tooltip={authenticatedLabel} onClick={checkAuth}>🟢</span>
           )}
           {authStatus === 'unavailable' && (
             <span className="auth-badge unavailable" data-tooltip={t('header.unavailable')}>
@@ -342,8 +346,8 @@ export default function Header({
             </span>
           )}
           {authStatus === 'unauthenticated' && (
-            <button className="auth-btn" onClick={openFlow} data-tooltip={t('header.login')}>
-              🔑 {t('header.login')}
+            <button className="auth-btn" onClick={openFlow} data-tooltip={authActionLabel}>
+              {authActionIcon} {authActionLabel}
             </button>
           )}
         </div>

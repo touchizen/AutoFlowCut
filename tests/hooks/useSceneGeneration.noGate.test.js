@@ -35,6 +35,8 @@ vi.mock('../../src/utils/quotaStop', () => ({
 
 import { useSceneGeneration } from '../../src/hooks/useSceneGeneration'
 import { consumeBatchDownload } from '../../src/firebase/functions'
+import { checkAuthToken } from '../../src/utils/guards'
+import { toast } from '../../src/components/Toast'
 
 describe('useSceneGeneration — 단일 씬 경로는 consumeBatchDownload 미호출 (ungated)', () => {
   beforeEach(() => vi.clearAllMocks())
@@ -67,5 +69,43 @@ describe('useSceneGeneration — 단일 씬 경로는 consumeBatchDownload 미�
 
     // 핵심 계약: 단일 씬 경로에서 consumeBatchDownload 는 절대 호출되면 안 된다.
     expect(consumeBatchDownload).not.toHaveBeenCalled()
+  })
+
+  it('flow mode no-token preflight marks scene auth-error with Flow login guidance', async () => {
+    checkAuthToken.mockResolvedValueOnce(false)
+    const scenes = [{ id: 'scene_1', prompt: 'a hero' }]
+    const scenesHook = {
+      references: [],
+      updateScene: vi.fn(),
+      getMatchingReferences: vi.fn(() => []),
+    }
+    const settings = {
+      imageModel: 'gemini-2.5-flash-image',
+      aspectRatio: '16:9',
+      imageBatchCount: 1,
+      saveMode: 'memory',
+    }
+
+    const { result } = renderHook(() =>
+      useSceneGeneration({
+        settings, scenes, scenesHook,
+        genAPI: { mode: 'flow', generateImage: vi.fn() },
+        openSettings: vi.fn(), setSelectedScene: vi.fn(),
+        t: (k) => ({
+          'toast.flowLoginRequired': 'Flow 창에서 로그인해주세요.',
+          'status.loginRequired': 'API 키가 필요합니다.',
+        }[k] || k),
+        generationQueue: null,
+      })
+    )
+
+    await act(async () => { await result.current.handleGenerateScene('scene_1') })
+
+    expect(scenesHook.updateScene).toHaveBeenCalledWith('scene_1', expect.objectContaining({
+      status: 'error',
+      errorKind: 'auth',
+      error: 'Flow 창에서 로그인해주세요.',
+    }))
+    expect(toast.warning).toHaveBeenCalledWith('Flow 창에서 로그인해주세요.')
   })
 })

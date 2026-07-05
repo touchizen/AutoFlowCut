@@ -10,6 +10,7 @@ import {
 // useI18n mock — t(key) → key 그대로 통과 (locale 텍스트 의존성 제거)
 vi.mock('../../src/hooks/useI18n', () => ({
   useI18n: () => ({ t: (k) => k, lang: 'ko', setLang: vi.fn() }),
+  useOptionalI18n: () => ({ t: (k) => k, lang: 'ko', setLang: vi.fn() }),
 }))
 
 beforeEach(() => {

@@ -155,4 +155,8 @@ export function useI18n() {
   return context
 }
 
+export function useOptionalI18n() {
+  return useContext(I18nContext)
+}
+
 export default useI18n

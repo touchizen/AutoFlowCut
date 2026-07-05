@@ -84,6 +84,34 @@ describe('useVideoAutomation.start — flowProjectReady guard', () => {
     expect(toast.warning).toHaveBeenCalled()
   }, 10000)
 
+  it('flow mode no-token preflight shows Flow login guidance, not API-key guidance', async () => {
+    const genAPI = makeGenAPI({ getAccessToken: vi.fn().mockResolvedValue(null) })
+    const t = (k) => ({
+      'toast.flowLoginRequired': 'Flow 창에서 로그인해주세요.',
+      'status.loginRequired': 'API 키가 필요합니다.',
+    }[k] || k)
+
+    const hook = renderHook(() =>
+      useVideoAutomation(genAPI, t, null, null, 'flow', true)
+    )
+
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({
+        mode: 't2v',
+        scenes: [{ id: 'vscene_1', prompt: 'test' }],
+        projectName: 'p',
+        saveMode: 'folder',
+      })
+    })
+    await act(async () => { await startPromise })
+
+    expect(genAPI.generateVideoT2V).not.toHaveBeenCalled()
+    expect(hook.result.current.status).toBe('error')
+    expect(hook.result.current.statusMessage).toContain('Flow 창에서 로그인해주세요.')
+    expect(hook.result.current.statusMessage).not.toContain('API 키')
+  })
+
   it('proceeds normally when mode=flow && flowProjectReady=true', async () => {
     const genAPI = makeGenAPI()
     const t = (k) => k
