@@ -109,6 +109,35 @@ describe('prepareCloudRequest — story_narration 분기', () => {
     expect(cloudRequest.audioTracks.map((t) => t.trackIndex)).toEqual([0, 1, 0, 1, 2])
   })
 
+  it('legacy manifest 의 non-narrator trackIndex 0 은 speaker 기준으로 재계산한다', async () => {
+    const project = { name: 'p', scenes: [sceneBase] }
+    const storyAudio = {
+      manifest: manifest(11, [
+        narrSeg('s001-1', 0, 1000, { speaker: 'narrator', trackIndex: 0 }),
+        narrSeg('s001-2', 1000, 1000, { speaker: '서준', trackIndex: 0 }),
+        narrSeg('s001-3', 2000, 1000, { speaker: 'narrator', trackIndex: 0 }),
+        narrSeg('s001-4', 3000, 1000, { speaker: '서준', trackIndex: 0 }),
+        narrSeg('s001-5', 4000, 1000, { speaker: '미나', trackIndex: 0 }),
+      ]),
+      lastPushedRevision: 11,
+    }
+    const { cloudRequest } = await prepareCloudRequest(project, { storyAudio })
+    expect(cloudRequest.audioTracks.map((t) => t.trackIndex)).toEqual([0, 1, 0, 1, 2])
+  })
+
+  it('narrator 의 이상한 positive trackIndex 는 새 화자 트랙 예약에 쓰지 않는다', async () => {
+    const project = { name: 'p', scenes: [sceneBase] }
+    const storyAudio = {
+      manifest: manifest(12, [
+        narrSeg('s001-1', 0, 1000, { speaker: 'narrator', trackIndex: 1 }),
+        narrSeg('s001-2', 1000, 1000, { speaker: '서준', trackIndex: 0 }),
+      ]),
+      lastPushedRevision: 12,
+    }
+    const { cloudRequest } = await prepareCloudRequest(project, { storyAudio })
+    expect(cloudRequest.audioTracks.map((t) => t.trackIndex)).toEqual([0, 1])
+  })
+
   it('trackIndex 가 일부만 없으면 같은 speaker 의 명시 trackIndex 를 우선 재사용하고 새 트랙은 충돌을 피한다', async () => {
     const project = { name: 'p', scenes: [sceneBase] }
     const missingTrackSeg = (id, startMs, durationMs, speaker) => {

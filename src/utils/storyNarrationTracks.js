@@ -29,18 +29,24 @@ function usableExplicitTrackIndex(trackIndex) {
   return n;
 }
 
+export function resolveNarrationTrackIndex(speaker, trackIndex, fallbackTrackIndex) {
+  if (isNarratorSpeaker(speaker)) return 0;
+  return usableExplicitTrackIndex(trackIndex) ?? fallbackTrackIndex;
+}
+
 export function createNarrationTrackFallbackResolver(segments = []) {
   const explicitBySpeaker = new Map();
   const usedExplicitTracks = new Set();
 
   for (const seg of segments) {
     if (!seg || (seg.type || 'narration') !== 'narration' || seg.trackIndex == null) continue;
-    const key = storySpeakerKey(seg.speaker);
-    if (!isNarratorSpeaker(seg.speaker) && !explicitBySpeaker.has(key)) {
-      explicitBySpeaker.set(key, seg.trackIndex);
-    }
     const explicitTrack = usableExplicitTrackIndex(seg.trackIndex);
-    if (explicitTrack != null) usedExplicitTracks.add(explicitTrack);
+    const key = storySpeakerKey(seg.speaker);
+    const isNarrator = isNarratorSpeaker(seg.speaker);
+    if (!isNarrator && explicitTrack != null && !explicitBySpeaker.has(key)) {
+      explicitBySpeaker.set(key, explicitTrack);
+    }
+    if (!isNarrator && explicitTrack != null) usedExplicitTracks.add(explicitTrack);
   }
 
   const speakerTracks = new Map();

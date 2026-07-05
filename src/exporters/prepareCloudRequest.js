@@ -8,7 +8,7 @@
 
 import { srtTrackToEntries } from '../utils/srtTrack';
 import { rawMediaExtension, isRawBase64Media } from './mediaSignatures';
-import { createNarrationTrackFallbackResolver } from '../utils/storyNarrationTracks';
+import { createNarrationTrackFallbackResolver, resolveNarrationTrackIndex } from '../utils/storyNarrationTracks';
 
 /**
  * base64 데이터에서 이미지 크기 추출
@@ -274,7 +274,7 @@ export async function prepareCloudRequest(project, options = {}) {
         filename,
         timecodeMs: seg.startMs,
         durationMs: seg.durationMs,
-        trackIndex: seg.trackIndex ?? fallbackTrackIndex,  // vol 은 GCF 서 1.0
+        trackIndex: resolveNarrationTrackIndex(seg.speaker, seg.trackIndex, fallbackTrackIndex),  // vol 은 GCF 서 1.0
       });
       audioFiles.push({
         type: 'narration',
