@@ -3,6 +3,15 @@ import { createElevenLabsAdapter } from '../../../../electron/api/tts/elevenlabs
 import { createGoogleTtsAdapter } from '../../../../electron/api/tts/googletts.js'
 import { createGeminiAdapter } from '../../../../electron/api/tts/gemini.js'
 
+function expectVoiceMetadata(voice) {
+  expect(typeof voice.id).toBe('string')
+  expect(typeof voice.name).toBe('string')
+  expect(typeof voice.language).toBe('string')
+  expect('previewUrl' in voice).toBe(true)
+  expect(Array.isArray(voice.traits)).toBe(true)
+  expect(typeof voice.source).toBe('string')
+}
+
 describe('ElevenLabs 어댑터', () => {
   it('synthesize: voice_id 경로 + xi-api-key 헤더 + model_id, mp3 Buffer 반환', async () => {
     let cap
@@ -21,8 +30,66 @@ describe('ElevenLabs 어댑터', () => {
     const fetch = async () => ({ ok: false, status: 401, text: async () => 'nope' })
     await expect(createElevenLabsAdapter({ getKey: () => 'k', fetch }).synthesize({ text: 'x', voiceId: 'v' })).rejects.toThrow(/401/)
   })
-  it('listVoices 비어있지 않음', () => {
-    expect(createElevenLabsAdapter({ getKey: () => 'k', fetch: async () => {} }).listVoices().length).toBeGreaterThan(0)
+  it('listVoices: Liam/Adam seed와 검색용 metadata를 반환한다', async () => {
+    const voices = await createElevenLabsAdapter({ getKey: () => 'k', fetch: async () => {} }).listVoices()
+    expect(voices.length).toBeGreaterThan(0)
+    voices.forEach(expectVoiceMetadata)
+    expect(voices.find((v) => v.id === 'TX3LPaxmHKxFdv7VOQHJ')).toMatchObject({
+      name: 'Liam',
+      language: 'en',
+      source: 'seed',
+    })
+    expect(voices.find((v) => v.id === 'pNInz6obpgDQGcFmaJgB')).toMatchObject({
+      name: 'Adam',
+      source: 'seed',
+    })
+  })
+  it('listVoices: 계정 보이스와 shared voices를 live API에서 가져와 정규화한다', async () => {
+    const calls = []
+    const fetch = async (url, opts = {}) => {
+      calls.push({ url, opts })
+      if (String(url).includes('/v2/voices')) {
+        return {
+          ok: true,
+          json: async () => ({
+            voices: [{
+              voice_id: 'acct_voice',
+              name: 'My Clone',
+              preview_url: 'https://example.com/acct.mp3',
+              labels: { gender: 'female', accent: 'american' },
+              verified_languages: [{ language: 'en', locale: 'en-US' }],
+            }],
+          }),
+        }
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          voices: [{
+            voice_id: 'shared_liam',
+            name: 'Liam Shared',
+            language: 'en',
+            preview_url: 'https://example.com/liam.mp3',
+            gender: 'Male',
+            age: 'young',
+            accent: 'american',
+            descriptive: 'energetic',
+            use_case: 'social_media',
+          }],
+          has_more: false,
+        }),
+      }
+    }
+    const voices = await createElevenLabsAdapter({ getKey: () => 'el-key', fetch }).listVoices({ query: 'Liam', includeShared: true, limit: 100 })
+    expect(calls[0].url).toBe('https://api.elevenlabs.io/v2/voices')
+    expect(calls[0].opts.headers['xi-api-key']).toBe('el-key')
+    expect(String(calls[1].url)).toContain('https://api.elevenlabs.io/v1/shared-voices')
+    expect(String(calls[1].url)).toContain('page_size=100')
+    expect(String(calls[1].url)).toContain('search=Liam')
+    expect(voices).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'acct_voice', name: 'My Clone', language: 'en-US', previewUrl: 'https://example.com/acct.mp3', source: 'account', traits: expect.arrayContaining(['female', 'american']) }),
+      expect.objectContaining({ id: 'shared_liam', name: 'Liam Shared', language: 'en', previewUrl: 'https://example.com/liam.mp3', source: 'shared', traits: expect.arrayContaining(['male', 'young', 'american', 'energetic', 'social_media']) }),
+    ]))
   })
 })
 
@@ -45,6 +112,41 @@ describe('Google Cloud TTS 어댑터', () => {
     await expect(createGoogleTtsAdapter({ getKey: () => null, fetch: async () => {} }).synthesize({ text: 'x', voiceId: 'ko-KR-Neural2-A' })).rejects.toThrow(/Google TTS API key/)
     const noContent = async () => ({ ok: true, json: async () => ({}) })
     await expect(createGoogleTtsAdapter({ getKey: () => 'k', fetch: noContent }).synthesize({ text: 'x', voiceId: 'ko-KR-Neural2-A' })).rejects.toThrow(/audioContent/)
+  })
+  it('listVoices: fallback voices도 검색용 metadata를 포함한다', async () => {
+    const voices = await createGoogleTtsAdapter({ getKey: () => null, fetch: async () => {} }).listVoices()
+    expect(voices.length).toBeGreaterThan(0)
+    voices.forEach(expectVoiceMetadata)
+    expect(voices[0].source).toBe('seed')
+  })
+  it('listVoices: Google voices:list live 응답을 정규화한다', async () => {
+    let captured
+    const fetch = async (url, opts = {}) => {
+      captured = { url, opts }
+      return {
+        ok: true,
+        json: async () => ({
+          voices: [{
+            name: 'en-US-Chirp3-HD-Charon',
+            languageCodes: ['en-US'],
+            ssmlGender: 'MALE',
+            naturalSampleRateHertz: 24000,
+          }],
+        }),
+      }
+    }
+    const voices = await createGoogleTtsAdapter({ getKey: () => 'g-key', fetch }).listVoices({ language: 'en-US' })
+    expect(captured.url).toBe('https://texttospeech.googleapis.com/v1/voices?languageCode=en-US')
+    expect(captured.opts.headers['x-goog-api-key']).toBe('g-key')
+    expect(voices).toEqual([
+      expect.objectContaining({
+        id: 'en-US-Chirp3-HD-Charon',
+        name: 'Chirp3-HD-Charon',
+        language: 'en-US',
+        source: 'google',
+        traits: expect.arrayContaining(['male', '24000hz']),
+      }),
+    ])
   })
 })
 
@@ -71,5 +173,12 @@ describe('Gemini TTS 어댑터', () => {
     await expect(createGeminiAdapter({ getKey: () => null, fetch: async () => {} }).synthesize({ text: 'x', voiceId: 'Kore' })).rejects.toThrow(/Gemini API key/)
     const noData = async () => ({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{}] } }] }) })
     await expect(createGeminiAdapter({ getKey: () => 'k', fetch: noData }).synthesize({ text: 'x', voiceId: 'Kore' })).rejects.toThrow(/no audio/)
+  })
+  it('listVoices: 공식 Gemini TTS 30개 보이스와 trait metadata를 반환한다', async () => {
+    const voices = await createGeminiAdapter({ getKey: () => 'k', fetch: async () => {} }).listVoices()
+    expect(voices).toHaveLength(30)
+    voices.forEach(expectVoiceMetadata)
+    expect(voices.find((v) => v.id === 'Zephyr')).toMatchObject({ name: 'Zephyr', traits: ['bright'] })
+    expect(voices.find((v) => v.id === 'Kore')).toMatchObject({ name: 'Kore', traits: ['firm'] })
   })
 })

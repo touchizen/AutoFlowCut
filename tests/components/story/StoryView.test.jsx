@@ -100,6 +100,39 @@ describe('StoryView', () => {
     })
   })
 
+  it('화자별 목소리 검색은 이름/언어/특징으로 옵션을 필터링하고 metadata를 표시한다', () => {
+    const p = pipeline({
+      scenes: [{ storyId: 's1', segments: [{ speaker: 'narrator', text: '어느 날', status: 'pending' }] }],
+    })
+    p.state.steps.script.status = 'done'
+    p.state.steps.scenes.status = 'done'
+    p.state.speakers = [{ id: 'narrator', name: '나레이션', voice: null }]
+    const voices = [
+      { id: 'liam', name: 'Liam', language: 'en', provider: 'elevenlabs', traits: ['male', 'energetic creator'] },
+      { id: 'rachel', name: 'Rachel', language: 'multi', provider: 'elevenlabs', traits: ['female'] },
+    ]
+    render(<StoryView pipeline={p} voices={voices} />)
+    fireEvent.click(screen.getByRole('button', { name: '오디오' }))
+    fireEvent.change(screen.getByLabelText('나레이션 성우 검색'), { target: { value: 'energetic' } })
+    expect(screen.getByRole('option', { name: /Liam.*en.*male.*energetic creator/ })).toBeTruthy()
+    expect(screen.queryByRole('option', { name: /Rachel/ })).toBeNull()
+  })
+
+  it('ElevenLabs 성우 검색어는 live search 콜백으로 전달한다', async () => {
+    const p = pipeline({
+      scenes: [{ storyId: 's1', segments: [{ speaker: 'narrator', text: '어느 날', status: 'pending' }] }],
+    })
+    p.state.steps.script.status = 'done'
+    p.state.steps.scenes.status = 'done'
+    p.state.speakers = [{ id: 'narrator', name: '나레이션', voice: null }]
+    const onVoiceSearch = vi.fn(async () => {})
+    const voices = [{ id: 'liam', name: 'Liam', language: 'en', provider: 'elevenlabs', traits: ['male'] }]
+    render(<StoryView pipeline={p} voices={voices} onVoiceSearch={onVoiceSearch} />)
+    fireEvent.click(screen.getByRole('button', { name: '오디오' }))
+    fireEvent.change(screen.getByLabelText('나레이션 성우 검색'), { target: { value: 'Liam' } })
+    await waitFor(() => expect(onVoiceSearch).toHaveBeenCalledWith({ provider: 'elevenlabs', query: 'Liam' }))
+  })
+
   // Codex M2a-3: 기본 성우(빈 옵션) 명시 선택은 기존 voice를 유지하지 말고 null로 비워야 한다
   // (backend defaultVoice로 폴백). `??`가 빈문자열을 "오버라이드 없음"으로 오인하던 버그.
   it('기본 성우(빈 옵션) 선택은 화자 voice를 null로 비운다', () => {

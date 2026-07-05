@@ -96,6 +96,31 @@ function stableJson(value) {
   return JSON.stringify(stableSnapshot(value))
 }
 
+function voiceSearchText(voice) {
+  return [
+    voice?.name,
+    voice?.id,
+    voice?.language,
+    voice?.provider,
+    ...(Array.isArray(voice?.traits) ? voice.traits : []),
+  ].filter(Boolean).join(' ').toLowerCase()
+}
+
+function filterVoicesForSearch(voices, query) {
+  const q = String(query || '').trim().toLowerCase()
+  if (!q) return voices
+  return voices.filter((voice) => voiceSearchText(voice).includes(q))
+}
+
+function voiceOptionLabel(voice) {
+  const traits = Array.isArray(voice?.traits) ? voice.traits.filter(Boolean) : []
+  const suffix = [
+    voice?.language ? `(${voice.language})` : '',
+    traits.length ? `- ${traits.join(', ')}` : '',
+  ].filter(Boolean).join(' ')
+  return `${voice.name}${suffix ? ` ${suffix}` : ''}`
+}
+
 function interpolateFallback(value, params = {}) {
   return String(value).replace(/\{(\w+)\}/g, (match, key) => (
     params[key] !== undefined ? params[key] : match
@@ -134,7 +159,7 @@ function useHasI18n() {
   }
 }
 
-export default function StoryView({ pipeline, voices = [], onClose = null }) {
+export default function StoryView({ pipeline, voices = [], onClose = null, onVoiceSearch = null }) {
   const t = useSafeT()
   const hasI18n = useHasI18n()
   const { state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {}, reviewProgress = null } = pipeline
@@ -184,6 +209,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
   // M2a-3b/슬라이스3: 화자별 엔진(provider)·목소리 선택(로컬). 초기값은 state.speakers[].voice.
   const [voiceBySpeaker, setVoiceBySpeaker] = useState({})
   const [providerBySpeaker, setProviderBySpeaker] = useState({})
+  const [voiceSearchBySpeaker, setVoiceSearchBySpeaker] = useState({})
   // M2b-5: sfx 세그먼트별 소스(로컬 오버라이드). 기본은 세그먼트 영속값(seg.sourceMode) > elevenlabs.
   const [sourceModeBySegment, setSourceModeBySegment] = useState({})
   // M2a-3c: 세그먼트 오디오 미리듣기(단일 재생 토글).
@@ -1020,6 +1046,15 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
                     {(state.speakers || []).map((sp) => {
                       const provider = providerForSpeaker(sp)
                       const providerVoices = voices.filter((v) => v.provider === provider)
+                      const voiceSearch = voiceSearchBySpeaker[sp.id] || ''
+                      const filteredProviderVoices = filterVoicesForSearch(providerVoices, voiceSearch)
+                      const selectedVoiceId = voiceIdForSpeaker(sp)
+                      const selectedVoice = selectedVoiceId
+                        ? providerVoices.find((v) => v.id === selectedVoiceId)
+                        : null
+                      const visibleVoices = selectedVoice && !filteredProviderVoices.some((v) => v.id === selectedVoice.id)
+                        ? [selectedVoice, ...filteredProviderVoices]
+                        : filteredProviderVoices
                       return (
                         <div key={sp.id} className="story-voice-row">
                           <span className="story-voice-speaker">{sp.name || sp.id}</span>
@@ -1033,6 +1068,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
                                 const np = e.target.value
                                 setProviderBySpeaker((m) => ({ ...m, [sp.id]: np }))
                                 setVoiceBySpeaker((m) => ({ ...m, [sp.id]: '' })) // provider 바뀌면 목소리 초기화
+                                setVoiceSearchBySpeaker((m) => ({ ...m, [sp.id]: '' }))
                               }}
                             >
                               {providerList.map((p) => (
@@ -1040,15 +1076,28 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
                               ))}
                             </select>
                           )}
+                          <input
+                            className="story-input story-voice-search"
+                            aria-label={t('story.audio.voiceSearchFor', `${sp.name || sp.id} 성우 검색`, { speaker: sp.name || sp.id })}
+                            value={voiceSearch}
+                            placeholder={t('story.audio.voiceSearchPlaceholder', '성우 검색')}
+                            onChange={(e) => {
+                              const q = e.target.value
+                              setVoiceSearchBySpeaker((m) => ({ ...m, [sp.id]: q }))
+                              if (provider === 'elevenlabs' && q.trim().length >= 2) {
+                                onVoiceSearch?.({ provider, query: q.trim() })
+                              }
+                            }}
+                          />
                           <select
                             className="story-input"
                             aria-label={t('story.audio.voiceFor', `${sp.name || sp.id} 목소리`, { speaker: sp.name || sp.id })}
-                            value={voiceIdForSpeaker(sp)}
+                            value={selectedVoiceId}
                             onChange={(e) => setVoiceBySpeaker((m) => ({ ...m, [sp.id]: e.target.value }))}
                           >
                             <option value="">{t('story.audio.voiceDefault', '기본 성우')}</option>
-                            {providerVoices.map((v) => (
-                              <option key={v.id} value={v.id}>{v.name}{v.language ? ` (${v.language})` : ''}</option>
+                            {visibleVoices.map((v) => (
+                              <option key={v.id} value={v.id}>{voiceOptionLabel(v)}</option>
                             ))}
                           </select>
                         </div>

@@ -41,10 +41,15 @@ describe('createTypecastAdapter', () => {
       expect(typeof v.name).toBe('string')
       expect(typeof v.language).toBe('string')
       expect('previewUrl' in v).toBe(true)
+      expect(Array.isArray(v.traits)).toBe(true)
+      expect(typeof v.source).toBe('string')
     }
     // CLAUDE.md 성우(Joonkyu/Piljae)가 포함된다
     expect(voices.some((v) => v.id === 'tc_6436dbbb602bde66c6b39504')).toBe(true) // Joonkyu
     expect(voices.some((v) => v.id === 'tc_68257f68bc6e3c161ab5078d')).toBe(true) // Piljae
+    expect(voices.find((v) => v.id === 'tc_68257f68bc6e3c161ab5078d').traits).toContain('male')
+    expect(voices.find((v) => v.id === 'tc_6800a387534948f191cc952b')).toMatchObject({ name: 'Taewoo' })
+    expect(voices.find((v) => v.id === 'tc_6731b3ac075b04a944644234')).toMatchObject({ name: 'Hanyoung', traits: expect.arrayContaining(['female']) })
   })
 
   it('키 없으면 throw', async () => {

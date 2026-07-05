@@ -423,11 +423,15 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
 }
 .story-voice-speaker {
   min-width: 96px;
   font-weight: 600;
   font-size: 0.85rem;
+}
+.story-voice-search {
+  flex: 0 1 180px;
 }
 
 /* ── 세그먼트 미리듣기/재생성 액션 (M2a-3c/3d) ── */

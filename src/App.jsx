@@ -544,6 +544,16 @@ function App() {
   // 각 provider 태그를 붙여 StoryView가 화자별 엔진(provider)+목소리를 고를 수 있게 한다.
   const TTS_PROVIDERS = ['typecast', 'gemini', 'googletts', 'elevenlabs']
   const [ttsVoices, setTtsVoices] = useState([])
+  const mergeTtsVoices = useCallback((incoming) => {
+    setTtsVoices((prev) => {
+      const byKey = new Map(prev.map((voice) => [`${voice.provider}:${voice.id}`, voice]))
+      for (const voice of incoming || []) {
+        if (!voice?.provider || !voice?.id) continue
+        byKey.set(`${voice.provider}:${voice.id}`, { ...byKey.get(`${voice.provider}:${voice.id}`), ...voice })
+      }
+      return [...byKey.values()]
+    })
+  }, [])
   useEffect(() => {
     if (activeView !== 'story') return
     let alive = true
@@ -556,6 +566,21 @@ function App() {
     ).then((lists) => { if (alive) setTtsVoices(lists.flat()) })
     return () => { alive = false }
   }, [activeView]) // eslint-disable-line react-hooks/exhaustive-deps
+  const handleTtsVoiceSearch = useCallback(async ({ provider, query }) => {
+    const q = String(query || '').trim()
+    if (!provider || q.length < 2) return
+    try {
+      const vs = await window.electronAPI?.ttsListVoices?.({
+        provider,
+        query: q,
+        includeShared: provider === 'elevenlabs',
+        limit: 100,
+      })
+      if (Array.isArray(vs)) mergeTtsVoices(vs.map((v) => ({ ...v, provider })))
+    } catch {
+      // Search is opportunistic; existing seed/account voices remain usable.
+    }
+  }, [mergeTtsVoices])
 
   // Flow 프로젝트가 준비되면(컴포저 가시·settle) 모델 목록을 백그라운드로 미리 스크랩한다.
   //   이렇게 캐시해 두면 설정 모달을 열 때 느린 라이브 스크랩 없이 즉시 동적 목록이 뜬다.
@@ -2363,7 +2388,13 @@ function App() {
             {/* key={storyProjectPath}: 프로젝트 전환 시 재마운트해 StoryView 로컬 state
                 (scriptPhase/title/genre/length/... 폼)를 새 프로젝트의 pipeline 값 기준으로
                 초기화한다 — 없으면 A(editor)→B(빈) 전환에서 B가 A의 제목/옵션과 빈 editor로 열림. */}
-            <StoryView key={storyProjectPath} pipeline={storyPipeline} voices={ttsVoices} onClose={() => setActiveView('generate')} />
+            <StoryView
+              key={storyProjectPath}
+              pipeline={storyPipeline}
+              voices={ttsVoices}
+              onVoiceSearch={handleTtsVoiceSearch}
+              onClose={() => setActiveView('generate')}
+            />
           </div>
         ) : (
           <div className="story-guard">

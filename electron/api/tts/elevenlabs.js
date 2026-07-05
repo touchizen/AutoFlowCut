@@ -4,22 +4,105 @@
  * 계약: https://elevenlabs.io/docs/api-reference/text-to-speech/convert
  */
 const BASE = 'https://api.elevenlabs.io/v1/text-to-speech'
+const VOICES_ENDPOINT = 'https://api.elevenlabs.io/v2/voices'
+const SHARED_VOICES_ENDPOINT = 'https://api.elevenlabs.io/v1/shared-voices'
 
-// ElevenLabs 기본 공용 보이스(안정 id). 다국어 모델(eleven_multilingual_v2)로 한국어 합성 가능.
+// ElevenLabs 기본/검증된 seed 보이스. 라이브 목록 실패 시 이 목록으로 폴백한다.
 const KNOWN_VOICES = [
-  { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel', language: 'multi', previewUrl: null },
-  { id: 'AZnzlk1XvdvUeBnXmlld', name: 'Domi', language: 'multi', previewUrl: null },
-  { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Bella', language: 'multi', previewUrl: null },
-  { id: 'ErXwobaYiN019PkySvjV', name: 'Antoni', language: 'multi', previewUrl: null },
+  { id: 'TX3LPaxmHKxFdv7VOQHJ', name: 'Liam', language: 'en', previewUrl: null, traits: ['male', 'energetic creator'], source: 'seed' },
+  { id: 'pNInz6obpgDQGcFmaJgB', name: 'Adam', language: 'multi', previewUrl: null, traits: ['male'], source: 'seed' },
+  { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel', language: 'multi', previewUrl: null, traits: ['female'], source: 'seed' },
+  { id: 'AZnzlk1XvdvUeBnXmlld', name: 'Domi', language: 'multi', previewUrl: null, traits: ['female'], source: 'seed' },
+  { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Bella', language: 'multi', previewUrl: null, traits: ['female'], source: 'seed' },
+  { id: 'ErXwobaYiN019PkySvjV', name: 'Antoni', language: 'multi', previewUrl: null, traits: ['male'], source: 'seed' },
 ]
+
+function cleanTrait(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
+function compactTraits(values) {
+  return [...new Set(values.map(cleanTrait).filter(Boolean))]
+}
+
+function firstLanguage(voice) {
+  const verified = Array.isArray(voice?.verified_languages) ? voice.verified_languages[0] : null
+  return verified?.locale || verified?.language || voice?.language || 'multi'
+}
+
+function normalizeAccountVoice(voice) {
+  const labels = voice?.labels || {}
+  return {
+    id: voice.voice_id,
+    name: voice.name || voice.voice_id,
+    language: firstLanguage(voice),
+    previewUrl: voice.preview_url || null,
+    traits: compactTraits([labels.gender, labels.accent, labels.age, voice.category]),
+    source: 'account',
+  }
+}
+
+function normalizeSharedVoice(voice) {
+  return {
+    id: voice.voice_id,
+    name: voice.name || voice.voice_id,
+    language: voice.language || voice.locale || firstLanguage(voice),
+    previewUrl: voice.preview_url || null,
+    traits: compactTraits([voice.gender, voice.age, voice.accent, voice.descriptive, voice.use_case, voice.category]),
+    source: 'shared',
+  }
+}
+
+function uniqueVoices(voices) {
+  const seen = new Set()
+  const out = []
+  for (const voice of voices) {
+    if (!voice?.id || seen.has(voice.id)) continue
+    seen.add(voice.id)
+    out.push(voice)
+  }
+  return out
+}
 
 export function createElevenLabsAdapter({ getKey, fetch }) {
   return {
     capabilities() {
       return { supportsEmotion: false, maxCharsPerRequest: 5000, outputFormats: ['mp3'], supportsPreview: true, maxConcurrency: 2 }
     },
-    listVoices() {
-      return KNOWN_VOICES.map((v) => ({ ...v }))
+    async listVoices({ query = '', includeShared = false, page = 0, limit = 100 } = {}) {
+      const key = getKey()
+      const voices = []
+      const headers = key ? { 'xi-api-key': key } : {}
+
+      if (key) {
+        try {
+          const res = await fetch(VOICES_ENDPOINT, { headers })
+          if (res?.ok) {
+            const json = await res.json()
+            voices.push(...(json?.voices || []).map(normalizeAccountVoice))
+          }
+        } catch {
+          // Seed fallback below keeps the picker usable offline or with expired keys.
+        }
+      }
+
+      if (includeShared || query) {
+        try {
+          const url = new URL(SHARED_VOICES_ENDPOINT)
+          url.searchParams.set('page_size', String(Math.max(1, Math.min(100, Number(limit) || 100))))
+          url.searchParams.set('page', String(Math.max(0, Number(page) || 0)))
+          if (query) url.searchParams.set('search', query)
+          const res = await fetch(url.toString(), { headers })
+          if (res?.ok) {
+            const json = await res.json()
+            voices.push(...(json?.voices || []).map(normalizeSharedVoice))
+          }
+        } catch {
+          // Seed fallback below keeps the picker usable if shared search is unavailable.
+        }
+      }
+
+      return uniqueVoices([...voices, ...KNOWN_VOICES.map((v) => ({ ...v }))])
     },
     async synthesize({ text, voiceId, signal }) {
       const key = getKey()

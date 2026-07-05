@@ -4,24 +4,65 @@
  * getKey/fetch 주입. 계약: https://docs.cloud.google.com/text-to-speech/docs/reference/rest/v1/text/synthesize
  */
 const ENDPOINT = 'https://texttospeech.googleapis.com/v1/text:synthesize'
+const VOICES_ENDPOINT = 'https://texttospeech.googleapis.com/v1/voices'
 
 // 한국어 보이스(문서화된 안정 name). voiceId = name, languageCode는 name 접두(ko-KR)에서 파생.
 const KNOWN_VOICES = [
-  { id: 'ko-KR-Neural2-A', name: 'Neural2-A (여)', language: 'ko-KR', previewUrl: null },
-  { id: 'ko-KR-Neural2-B', name: 'Neural2-B (여)', language: 'ko-KR', previewUrl: null },
-  { id: 'ko-KR-Neural2-C', name: 'Neural2-C (남)', language: 'ko-KR', previewUrl: null },
-  { id: 'ko-KR-Wavenet-A', name: 'Wavenet-A (여)', language: 'ko-KR', previewUrl: null },
-  { id: 'ko-KR-Wavenet-C', name: 'Wavenet-C (남)', language: 'ko-KR', previewUrl: null },
-  { id: 'ko-KR-Wavenet-D', name: 'Wavenet-D (남)', language: 'ko-KR', previewUrl: null },
+  { id: 'ko-KR-Neural2-A', name: 'Neural2-A', language: 'ko-KR', previewUrl: null, traits: ['female', 'neural2'], source: 'seed' },
+  { id: 'ko-KR-Neural2-B', name: 'Neural2-B', language: 'ko-KR', previewUrl: null, traits: ['female', 'neural2'], source: 'seed' },
+  { id: 'ko-KR-Neural2-C', name: 'Neural2-C', language: 'ko-KR', previewUrl: null, traits: ['male', 'neural2'], source: 'seed' },
+  { id: 'ko-KR-Wavenet-A', name: 'Wavenet-A', language: 'ko-KR', previewUrl: null, traits: ['female', 'wavenet'], source: 'seed' },
+  { id: 'ko-KR-Wavenet-C', name: 'Wavenet-C', language: 'ko-KR', previewUrl: null, traits: ['male', 'wavenet'], source: 'seed' },
+  { id: 'ko-KR-Wavenet-D', name: 'Wavenet-D', language: 'ko-KR', previewUrl: null, traits: ['male', 'wavenet'], source: 'seed' },
 ]
+
+function genderTrait(gender) {
+  const g = String(gender || '').toLowerCase()
+  return g === 'male' || g === 'female' ? g : ''
+}
+
+function displayName(id) {
+  const parts = String(id || '').split('-')
+  return parts.length > 2 ? parts.slice(2).join('-') : id
+}
+
+function normalizeGoogleVoice(voice) {
+  const id = voice?.name
+  const language = Array.isArray(voice?.languageCodes) && voice.languageCodes.length
+    ? voice.languageCodes[0]
+    : String(id || '').split('-').slice(0, 2).join('-') || 'multi'
+  return {
+    id,
+    name: displayName(id),
+    language,
+    previewUrl: null,
+    traits: [
+      genderTrait(voice?.ssmlGender),
+      voice?.naturalSampleRateHertz ? `${voice.naturalSampleRateHertz}hz` : '',
+    ].filter(Boolean),
+    source: 'google',
+  }
+}
 
 export function createGoogleTtsAdapter({ getKey, fetch }) {
   return {
     capabilities() {
       return { supportsEmotion: false, maxCharsPerRequest: 5000, outputFormats: ['mp3'], supportsPreview: true, maxConcurrency: 4 }
     },
-    listVoices() {
-      return KNOWN_VOICES.map((v) => ({ ...v }))
+    async listVoices({ language } = {}) {
+      const key = getKey()
+      if (!key) return KNOWN_VOICES.map((v) => ({ ...v }))
+      try {
+        const url = new URL(VOICES_ENDPOINT)
+        if (language) url.searchParams.set('languageCode', language)
+        const res = await fetch(url.toString(), { headers: { 'x-goog-api-key': key } })
+        if (!res?.ok) return KNOWN_VOICES.map((v) => ({ ...v }))
+        const json = await res.json()
+        const voices = (json?.voices || []).map(normalizeGoogleVoice).filter((v) => v.id)
+        return voices.length ? voices : KNOWN_VOICES.map((v) => ({ ...v }))
+      } catch {
+        return KNOWN_VOICES.map((v) => ({ ...v }))
+      }
     },
     async synthesize({ text, voiceId, signal }) {
       const key = getKey()

@@ -239,7 +239,7 @@ const ttsFor = (provider) => {
 registerTtsIPC(ipcMain, {
   keyStore: multiKeyStore,
   safeStorage,
-  listVoices: (provider) => { try { return ttsFor(provider).listVoices() } catch { return [] } },
+  listVoices: async (provider, options) => { try { return await ttsFor(provider).listVoices(options) } catch { return [] } },
 })
 
 // M2b: SFX 어댑터 라우팅(sourceMode별). 키는 provider별 소스(elevenlabs는 tts와 동일 키 재사용).

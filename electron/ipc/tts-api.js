@@ -8,7 +8,7 @@
  * @param {object} deps
  * @param {ReturnType<import('../api/keyStoreMulti.js').createMultiKeyStore>} deps.keyStore
  * @param {Electron.SafeStorage} deps.safeStorage
- * @param {(provider: string) => Array} deps.listVoices - provider → 성우 목록
+ * @param {(provider: string, options?: object) => Promise<Array>|Array} deps.listVoices - provider → 성우 목록
  */
 export function registerTtsIPC(ipcMain, { keyStore, safeStorage, listVoices }) {
   // payload는 null/비객체일 수 있다(Codex LOW) — 구조분해 전 객체로 정규화한다.
@@ -31,6 +31,15 @@ export function registerTtsIPC(ipcMain, { keyStore, safeStorage, listVoices }) {
   // 키 삭제.
   ipcMain.handle('keys:delete', (_e, payload) => keyStore.clearKey((payload || {}).provider))
 
-  // provider 성우 목록 [{ id, name, language, previewUrl }].
-  ipcMain.handle('tts:list-voices', async (_e, payload) => listVoices((payload || {}).provider || 'typecast'))
+  // provider 성우 목록 [{ id, name, language, previewUrl, traits, source }].
+  ipcMain.handle('tts:list-voices', async (_e, payload) => {
+    const p = payload || {}
+    return listVoices(p.provider || 'typecast', {
+      query: p.query,
+      language: p.language,
+      includeShared: p.includeShared,
+      page: p.page,
+      limit: p.limit,
+    })
+  })
 }

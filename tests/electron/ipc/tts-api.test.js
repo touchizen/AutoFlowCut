@@ -49,6 +49,25 @@ describe('tts/keys IPC (M2a-3b)', () => {
     expect(r).toEqual([{ id: 'v1', name: 'V', language: 'ko', previewUrl: null }])
   })
 
+  it('tts:list-voices는 검색 옵션을 async listVoices에 전달한다', async () => {
+    const listVoices = vi.fn(async (_provider, _opts) => [{ id: 'liam', name: 'Liam', language: 'en', previewUrl: null }])
+    ipc = fakeIpcMain()
+    registerTtsIPC(ipc, {
+      keyStore,
+      safeStorage: { isEncryptionAvailable: () => true },
+      listVoices,
+    })
+    const r = await ipc.invoke('tts:list-voices', { provider: 'elevenlabs', query: 'Liam', includeShared: true, page: 1, limit: 50 })
+    expect(r[0].name).toBe('Liam')
+    expect(listVoices).toHaveBeenCalledWith('elevenlabs', {
+      query: 'Liam',
+      language: undefined,
+      includeShared: true,
+      page: 1,
+      limit: 50,
+    })
+  })
+
   // Codex M2a-3 LOW: null/비객체 payload에도 throw하지 않고 안전하게 처리한다.
   it('null payload에도 throw하지 않는다', async () => {
     const r1 = await ipc.invoke('keys:status', null)
