@@ -82,6 +82,20 @@ function computeCurrentStep(steps) {
   return 'prompts'
 }
 
+function stableSnapshot(value) {
+  if (Array.isArray(value)) return value.map(stableSnapshot)
+  if (!value || typeof value !== 'object') return value
+  return Object.keys(value).sort().reduce((acc, key) => {
+    const next = stableSnapshot(value[key])
+    if (next !== undefined) acc[key] = next
+    return acc
+  }, {})
+}
+
+function stableJson(value) {
+  return JSON.stringify(stableSnapshot(value))
+}
+
 function interpolateFallback(value, params = {}) {
   return String(value).replace(/\{(\w+)\}/g, (match, key) => (
     params[key] !== undefined ? params[key] : match
@@ -401,6 +415,44 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
     ? displayStep : null
   const isAudioRedo = redoStep != null // (닫기 버튼 노출 조건 겸용)
 
+  const baselineLlmId = hydrateStoryLlmSelection(initialLlmSource, llmOptions)
+  const baselineLlm = findStoryLlmOptionById(baselineLlmId, llmOptions) || defaultLlmOption
+  const setupBaselineOptions = normalizeStoryLlmOptions({
+    genre: hydrateOpts.genre || 'bespoke',
+    language: hydrateOpts.language || 'ko',
+    engine: baselineLlm.engine,
+    model: baselineLlm.model,
+    reasoningEffort: reasoningEffortFor(baselineLlm, hydrateOpts.reasoningEffort),
+    lengthValue: hydrateOpts.lengthValue || '10',
+    lengthUnit: hydrateOpts.lengthUnit || 'min',
+    sceneGranularity: hydrateOpts.sceneGranularity || 'scene',
+    ...(hydrateOpts.review
+      ? { review: makeReviewSettings(hydrateOpts, baselineLlm.model) }
+      : { reviewLoop: !!hydrateOpts.reviewLoop }),
+  }, llmOptions)
+  const setupAlreadyApplied = steps.script?.status === 'done'
+  const setupDirty = scriptText !== (pipeline.scriptText || '')
+    || title !== (hydrateInput?.title || '')
+    || stableJson(currentOptions()) !== stableJson(setupBaselineOptions)
+  const setupHasSeed = !!(scriptText.trim() || title.trim())
+  const isSetupActionView = displayStep === 'script'
+    && scriptPhase === 'setup'
+    && !isError
+    && (currentStep === 'script' || userWentToSetupRef.current)
+  const setupActionAriaLabel = setupAlreadyApplied
+    ? setupDirty
+      ? t('story.action.setupRestart', '변경사항으로 다시 시작')
+      : t('story.action.setupComplete', '완료됨')
+    : t('story.action.setupStart', '시작')
+  const setupActionVisibleLabel = setupAlreadyApplied
+    ? setupDirty
+      ? t('story.action.setupRestartIcon', '↻ 변경사항으로 다시 시작')
+      : t('story.action.setupComplete', '완료됨')
+    : t('story.action.setupStartIcon', '✨ 시작')
+  const setupActionDisabled = isRunning || !setupHasSeed || (setupAlreadyApplied && !setupDirty)
+  const showSetupClose = isSetupActionView && setupAlreadyApplied && !!onClose
+  const showPrimaryAction = !(showSetupClose && !setupDirty)
+
   // M2a-3b: 화자→목소리 매핑을 audio 스텝 params로. state.speakers가 없으면 {} (빈 speakers로
   // 덮어써 state.speakers를 지우는 것 방지 — 미배정은 backend defaultVoice 폴백). 선택 목소리는
   // 드롭다운(voiceBySpeaker) 우선, 없으면 기존 sp.voice 유지.
@@ -490,18 +542,21 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
     }
   }
 
+  const startScriptFromTitle = () => {
+    setBaseScript('')
+    start('script', {
+      input: { type: 'title', title },
+      options: currentOptions(),
+    })
+    setScriptPhase('editor')
+  }
+
   const handlePrimaryAction = async () => {
     if (currentStep === 'script') {
       // stepMachine.steps.script는 params.input(대본 생성 소재)과 params.options(LLM 호출
       // opts로 그대로 spread)를 분리해서 읽는다 — genre/length/language를 input에 섞으면
       // options로 전달되지 않아 LLM이 이를 무시하고(예: 한국어 입력에도 영어 대본) 버그가 된다.
-      setBaseScript('') // 이어쓰기 아님 — preview 접두 초기화
-      start('script', {
-        input: { type: 'title', title },
-        options: currentOptions(),
-      })
-      // §1 전환 — '시작' 명시 트리거로 대본 작업 화면(editor)에 진입.
-      setScriptPhase('editor')
+      startScriptFromTitle()
     } else if (currentStep === 'scenes') {
       await handleSplit()
     } else {
@@ -584,8 +639,11 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
   // §1-A setup primary [✨ 시작] — scriptText(임포트/붙여넣기) 있으면 임포트 경로, 없고 제목 있으면
   // 대본 생성 경로. 둘 다 없으면 버튼 자체가 disabled(아래)이므로 여기 도달하지 않는다.
   const handleSetupStart = () => {
-    if (scriptText.trim()) handlePasteStart()
-    else handlePrimaryAction() // currentStep==='script' → 제목 생성 경로
+    const originalScript = pipeline.scriptText || ''
+    const shouldUsePastedScript = scriptText.trim()
+      && (hydrateInput?.type === 'pasted' || !title.trim() || scriptText !== originalScript)
+    if (shouldUsePastedScript) handlePasteStart()
+    else startScriptFromTitle()
   }
 
   // 대본 임포트 공통 — .txt/.md 파일만 FileReader 로 읽어 scriptText 에 채운다(그 외 무시).
@@ -879,15 +937,6 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  className="story-btn-primary story-setup-start"
-                  onClick={handleSetupStart}
-                  disabled={isRunning || (!scriptText.trim() && !title.trim())}
-                  aria-label={t('story.action.setupStart', '시작')}
-                >
-                  {t('story.action.setupStartIcon', '✨ 시작')}
-                </button>
               </div>
             )}
           </div>
@@ -1147,20 +1196,22 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
             disabled: isRunning,
             canReview: scenes.length > 0,
           })}
-          {/* 설정 화면(신규 대본 생성)에서는 in-panel [✨ 시작]이 primary — 하단 제네릭 버튼을 감춘다.
-              script done(씬 분리 진행) · 에러(재실행)에서는 그대로 노출. */}
-          {!(scriptPhase === 'setup' && currentStep === 'script' && !isError) && (
+          {showPrimaryAction && (
             <button
               type="button"
               className={`story-btn-primary ${isError ? 'story-btn-error' : ''}`}
-              onClick={redoStep ? handleStepRedo : handlePrimaryAction}
-              disabled={isRunning}
-              aria-label={redoStep === 'prompts' ? t('story.action.promptsRedo', '프롬프트 다시 생성') : redoStep === 'audio' ? t('story.action.audioRedo', '오디오 다시 생성') : actionAriaLabel}
+              onClick={isSetupActionView ? handleSetupStart : redoStep ? handleStepRedo : handlePrimaryAction}
+              disabled={isSetupActionView ? setupActionDisabled : isRunning}
+              aria-label={isSetupActionView
+                ? setupActionAriaLabel
+                : redoStep === 'prompts' ? t('story.action.promptsRedo', '프롬프트 다시 생성') : redoStep === 'audio' ? t('story.action.audioRedo', '오디오 다시 생성') : actionAriaLabel}
             >
-              {redoStep === 'prompts' ? t('story.action.promptsRedoIcon', '↻ 프롬프트 다시 생성') : redoStep === 'audio' ? t('story.action.audioRedoIcon', '↻ 오디오 다시 생성') : actionVisibleLabel}
+              {isSetupActionView
+                ? setupActionVisibleLabel
+                : redoStep === 'prompts' ? t('story.action.promptsRedoIcon', '↻ 프롬프트 다시 생성') : redoStep === 'audio' ? t('story.action.audioRedoIcon', '↻ 오디오 다시 생성') : actionVisibleLabel}
             </button>
           )}
-          {isAudioRedo && onClose && (
+          {((isAudioRedo || showSetupClose) && onClose) && (
             <button type="button" className="story-btn-secondary" onClick={onClose}>
               {t('story.action.close', '닫기')}
             </button>

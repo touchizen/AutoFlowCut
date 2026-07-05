@@ -15,6 +15,34 @@ const pipeline = (over = {}) => ({
   ...over,
 })
 
+const completedPipeline = (over = {}) => pipeline({
+  scriptText: '완성된 대본',
+  state: {
+    input: {
+      title: '완성된 제목',
+      options: {
+        genre: 'bespoke',
+        language: 'ko',
+        engine: 'claude',
+        model: 'claude-opus-4-8',
+        reasoningEffort: 'off',
+        lengthValue: '10',
+        lengthUnit: 'min',
+        sceneGranularity: 'scene',
+        reviewLoop: false,
+      },
+    },
+    steps: {
+      script: { status: 'done' },
+      scenes: { status: 'done' },
+      audio: { status: 'done' },
+      prompts: { status: 'done' },
+    },
+  },
+  scenes: [{ storyId: 's1', imagePrompt: 'IMG', videoPrompt: 'VID', segments: [] }],
+  ...over,
+})
+
 describe('StoryView 설정 화면(setup)', () => {
   it('세로 옵션 각 항목에 라벨+설명을 렌더한다', () => {
     render(<StoryView pipeline={pipeline()} />)
@@ -123,6 +151,38 @@ describe('StoryView 설정 화면(setup)', () => {
   it('[✨ 시작] — 제목·scriptText 둘 다 없으면 비활성', () => {
     render(<StoryView pipeline={pipeline()} />)
     expect(screen.getByRole('button', { name: '시작' })).toBeDisabled()
+  })
+
+  it('설정 primary 버튼은 패널 안이 아니라 하단 컨트롤에 하나만 렌더된다', () => {
+    const { container } = render(<StoryView pipeline={pipeline()} />)
+    const start = screen.getByRole('button', { name: '시작' })
+    expect(container.querySelector('.story-controls')).toContainElement(start)
+    expect(screen.getByTestId('story-setup')).not.toContainElement(start)
+    expect(screen.getAllByRole('button', { name: '시작' })).toHaveLength(1)
+  })
+
+  it('완료된 설정은 변경 전엔 닫기만 보이고, 설정을 바꾸면 "변경사항으로 다시 시작"과 닫기를 같이 보여준다', () => {
+    const p = completedPipeline()
+    const onClose = vi.fn()
+    render(<StoryView pipeline={p} onClose={onClose} />)
+    fireEvent.click(screen.getByRole('button', { name: '설정' }))
+
+    expect(screen.queryByRole('button', { name: '완료됨' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '시작' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /프롬프트 실행/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '닫기' }))
+    expect(onClose).toHaveBeenCalledTimes(1)
+
+    fireEvent.change(screen.getByLabelText('길이 값'), { target: { value: '12' } })
+    const changed = screen.getByRole('button', { name: '변경사항으로 다시 시작' })
+    expect(changed).not.toBeDisabled()
+    expect(screen.getByRole('button', { name: '닫기' })).not.toBeDisabled()
+
+    fireEvent.click(changed)
+    expect(p.start).toHaveBeenCalledWith('script', expect.objectContaining({
+      input: { type: 'title', title: '완성된 제목' },
+      options: expect.objectContaining({ lengthValue: '12' }),
+    }))
   })
 
   it('파일 선택 버튼과 숨김 file input을 렌더한다', () => {
