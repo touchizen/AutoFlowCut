@@ -102,7 +102,7 @@ function setupHook(overrides = {}) {
 
 beforeEach(() => {
   vi.useFakeTimers()
-  // Pin Math.random to 0 to eliminate inter-scene wait variance (7000 + 0*8000 = 7000ms).
+  // Pin Math.random to 0 to eliminate inter-scene wait variance (20_000ms).
   vi.spyOn(Math, 'random').mockReturnValue(0)
 })
 

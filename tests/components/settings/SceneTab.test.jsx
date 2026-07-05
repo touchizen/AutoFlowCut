@@ -101,7 +101,7 @@ describe('SceneTab — model selectors (T2I/T2V/F2V)', () => {
     expect(screen.queryByLabelText('settings.videoConcurrency')).toBeInTheDocument()
   })
 
-  it('Flow 모드: concurrency 슬라이더 숨김 (7~15초 페이싱이 throttle)', () => {
+  it('Flow 모드: concurrency 슬라이더 숨김 (20~40초 페이싱이 throttle)', () => {
     render(<SceneTab localSettings={baseSettings} setLocalSettings={vi.fn()} t={t} appMode="flow" />)
     expect(screen.queryByLabelText('settings.concurrency')).toBeNull()
     expect(screen.queryByLabelText('settings.videoConcurrency')).toBeNull()

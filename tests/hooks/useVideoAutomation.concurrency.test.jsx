@@ -1,7 +1,7 @@
 /**
  * useVideoAutomation — concurrency (sliding window)
  *
- * 7-15초 랜덤 딜레이 제거 + concurrency 슬라이딩 윈도우 검증.
+ * Flow 20~40초 랜덤 딜레이 없이 concurrency 슬라이딩 윈도우 검증.
  * 동시 in-flight Veo job 을 concurrency 개로 제한하고, 완료될 때마다 다음 항목 제출.
  */
 
@@ -69,7 +69,7 @@ function makeProgressivePoll(getSubmitCount, captureFirst) {
 }
 
 describe('useVideoAutomation — concurrency', () => {
-  it('배치 제출 시 7000ms 이상 setTimeout 호출 없음 (랜덤 딜레이 제거)', { timeout: 20000 }, async () => {
+  it('API 모드 배치 제출 시 20000ms 이상 setTimeout 호출 없음 (Flow 페이싱 없음)', { timeout: 20000 }, async () => {
     let submitCount = 0
     const generateVideoT2V = vi.fn().mockImplementation(async () => ({
       success: true, generationId: `gen_${++submitCount}`
@@ -108,13 +108,13 @@ describe('useVideoAutomation — concurrency', () => {
       })
     })
 
-    // Phase 1: 각 항목 제출 사이 딜레이(최대 15000ms) + Phase 2 poll(10000ms) 포함
+    // Phase 1 제출은 대기 없음. Phase 2 poll(10000ms) 을 충분히 진행.
     for (let i = 0; i < 10; i++) {
       await act(async () => { await vi.advanceTimersByTimeAsync(15000) })
     }
     await act(async () => { await startPromise })
 
-    const largeSleeps = setTimeoutSpy.mock.calls.filter(([, delay]) => delay >= 7000)
+    const largeSleeps = setTimeoutSpy.mock.calls.filter(([, delay]) => delay >= 20000)
     expect(largeSleeps).toHaveLength(0)
     expect(generateVideoT2V).toHaveBeenCalledTimes(3)
   })

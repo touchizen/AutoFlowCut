@@ -64,7 +64,7 @@ export default function SceneTab({ localSettings, setLocalSettings, t, imageMode
         <span className="setting-sublabel">{t('settings.exportThresholdHint')}</span>
       </div>
 
-      {/* 이미지/비디오 동시 생성 수 — API 모드 전용. Flow 는 7~15초 안티봇 페이싱이 throttle 이라
+      {/* 이미지/비디오 동시 생성 수 — API 모드 전용. Flow 는 20~40초 안티봇 페이싱이 throttle 이라
           동시성 설정이 무의미해 숨긴다. */}
       {appMode !== 'flow' && (
         <>

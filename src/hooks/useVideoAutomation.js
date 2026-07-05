@@ -28,6 +28,7 @@ import { consumeBatchDownload } from '../firebase/functions'
 import { partitionDownloadOnly } from './downloadOnlyGate'
 import { batchStartGate } from './batchStartGate'
 import { getAuthErrorMessage, getAuthRequiredMessage } from '../utils/authMessages'
+import { getFlowSubmitPacingDelayMs } from '../utils/flowSubmitPacing'
 
 // 실제 제출되는 비디오 길이(초). submitVideo(engine)의 제약과 동일하게 계산해 제출값과
 // 완료-메타가 일치하도록 한다(어긋나면 history 길이가 실제와 불일치).
@@ -510,7 +511,7 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
 
     // 슬롯이 빌 때까지 freshGen 제출. auth → authStopped, quota → stopRequested 설정 후 반환.
     const fillWindow = async () => {
-      // Flow(Agent OFF)는 동시성 윈도우 대신 제출 사이 7~15초 페이싱으로 throttle → 캡 무시.
+      // Flow(Agent OFF)는 동시성 윈도우 대신 제출 사이 20~40초 페이싱으로 throttle → 캡 무시.
       const ignoreCap = appMode === 'flow'
       while ((ignoreCap || pending.size < concurrency) && nextFreshIdx < freshGen.length) {
         if (stopRequestedRef.current || authStopped) return
@@ -579,9 +580,9 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
           if (_maybeTriggerQuotaStop(genResult.error)) return
         }
 
-        // Flow 반봇 페이싱 — 다음 제출 전 7~15초 랜덤 대기(이미지 자동화와 동일). API 는 대기 없음.
+        // Flow 반봇 페이싱 — 다음 제출 전 20~40초 랜덤 대기(이미지 자동화와 동일). API 는 대기 없음.
         if (appMode === 'flow' && nextFreshIdx < freshGen.length && !stopRequestedRef.current && !authStopped) {
-          const waitMs = 7000 + Math.floor(Math.random() * 8000)
+          const waitMs = getFlowSubmitPacingDelayMs()
           const waitEnd = Date.now() + waitMs
           while (Date.now() < waitEnd && !stopRequestedRef.current) {
             await waitIfPaused()

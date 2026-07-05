@@ -21,6 +21,7 @@ import { resolveProjectBatchId } from '../utils/batchId'
 import { consumeBatchDownload } from '../firebase/functions'
 import { batchStartGate } from './batchStartGate'
 import { getAuthErrorMessage, getAuthRequiredMessage } from '../utils/authMessages'
+import { getFlowSubmitPacingDelayMs } from '../utils/flowSubmitPacing'
 
 export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings = null, addPendingSave = null, t = (key) => key, onAuthError = null, generationQueue = null, onComplete = null, mode = 'api', flowProjectReady = true, flowAgentOn = false, subscriptionBatch = null, onPaywall = null, isAuthenticated = false, onLoginRequired = null, subscriptionStatus = undefined, refreshSubscription = null) {
   const [isRunning, setIsRunning] = useState(false)
@@ -239,7 +240,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
 
       // 동시성 게이트 — in-flight(pendingQueue) 가 concurrency 이상이면 슬롯이 빌 때까지 대기.
       // collect 로 완료분 회수 시도 → 여전히 full 이면 pause/stop 존중하며 GATE_POLL_MS 폴링
-      // (busy-loop / checkGeneration 과호출 방지). API 모드 전용 — Flow 는 아래 7~15초 페이싱으로
+      // (busy-loop / checkGeneration 과호출 방지). API 모드 전용 — Flow 는 아래 20~40초 페이싱으로
       // throttle 하므로 게이트를 무시한다(원본 Flow 동작).
       while (mode !== 'flow' && pendingQueue.length >= concurrency && !stopRequestedRef.current) {
         await collectCompleted()
@@ -349,11 +350,11 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
         }
       }
 
-      // Flow 반봇 페이싱 — 씬 사이 7~15초 랜덤 대기 + 중간 수집.
+      // Flow 반봇 페이싱 — 씬 사이 20~40초 랜덤 대기 + 중간 수집.
       // Flow(Agent OFF)는 단일 웹 패널 DOM 자동화라 빠른 연속 제출이 봇 감지/레이트리밋을
       // 유발한다. API 모드는 동시성 윈도우(위 게이트)로 충분하므로 대기 없음.
       if (mode === 'flow' && i < targetScenes.length - 1 && !stopRequestedRef.current) {
-        const waitMs = 7000 + Math.floor(Math.random() * 8000)
+        const waitMs = getFlowSubmitPacingDelayMs()
         console.log('[Automation] (Flow) Waiting', Math.round(waitMs / 1000), 's before next submit...')
         const waitEnd = Date.now() + waitMs
         while (Date.now() < waitEnd && !stopRequestedRef.current) {

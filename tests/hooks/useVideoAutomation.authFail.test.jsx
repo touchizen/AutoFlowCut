@@ -264,9 +264,9 @@ describe('useVideoAutomation — auth failure during submit', () => {
       })
     })
 
-    // Advance past inter-item submit delay (7000ms with Math.random mocked to 0)
+    // Advance past inter-item submit delay (20_000ms with Math.random mocked to 0)
     // so item 2 gets submitted and authFails.
-    await act(async () => { await vi.advanceTimersByTimeAsync(8000) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(21000) })
     await act(async () => { await startPromise })
 
     // All three items end in error state with errorKind:'auth' — no silent abandonment.
@@ -366,7 +366,7 @@ describe('useVideoAutomation — auth failure on i2v (F→V) mode', () => {
     })
 
     // Advance past inter-item submit delay so fp_2 gets submitted and authFails.
-    await act(async () => { await vi.advanceTimersByTimeAsync(8000) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(21000) })
     await act(async () => { await startPromise })
 
     // All 3 framePairs must end with errorKind:'auth' — fp_1 (submitted), fp_2 (failed),

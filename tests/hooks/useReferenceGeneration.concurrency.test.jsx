@@ -1,7 +1,7 @@
 /**
  * useReferenceGeneration — concurrency gate
  *
- * 7-15초 랜덤 딜레이 제거 + settings.concurrency 슬라이딩 윈도우 게이트 검증.
+ * 장시간 랜덤 딜레이 제거 + settings.concurrency 슬라이딩 윈도우 게이트 검증.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'

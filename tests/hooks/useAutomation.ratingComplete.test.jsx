@@ -35,7 +35,7 @@ vi.mock('../../src/utils/sceneFilters', () => ({
 
 beforeEach(() => {
   vi.useFakeTimers()
-  vi.spyOn(Math, 'random').mockReturnValue(0) // 인터-씬 대기 7000ms 고정
+  vi.spyOn(Math, 'random').mockReturnValue(0) // 인터-씬 대기 20_000ms 고정
 })
 afterEach(() => {
   vi.useRealTimers()

@@ -1,7 +1,7 @@
 /**
  * useAutomation — 동시성 윈도우 (Stage 2)
  *
- * Flow 반봇 페이싱(씬 사이 7~15초 대기)을 제거하고, 제출 전 동시성 게이트로
+ * Flow 반봇 페이싱(씬 사이 20~40초 대기)을 적용하지 않고, 제출 전 동시성 게이트로
  * in-flight 를 concurrency 개로 제한한다. 공식 API 모드 전용.
  */
 import { renderHook, act } from '@testing-library/react'
@@ -72,8 +72,8 @@ describe('useAutomation 동시성 윈도우', () => {
     await startPromise
   })
 
-  it('씬 사이 7~15초 대기 제거 — 즉시 완료되면 배치가 빠르게 끝남', async () => {
-    // 모두 즉시 완료. 옛 코드면 (N-1)*~7s 대기가 필요했음.
+  it('씬 사이 Flow 페이싱 없음 — 즉시 완료되면 배치가 빠르게 끝남', async () => {
+    // 모두 즉시 완료. Flow 페이싱이 잘못 적용되면 (N-1)*20s 이상 대기가 필요함.
     const { hook, submitGeneration } = setupHook(FOUR, {
       checkGeneration: vi.fn().mockResolvedValue({ completed: true }),
       collectGeneration: vi.fn().mockResolvedValue({ success: true, images: [{ id: 'i', mediaId: 'm' }] }),
@@ -82,7 +82,7 @@ describe('useAutomation 동시성 윈도우', () => {
     await act(async () => {
       startPromise = hook.result.current.start({ projectName: 'p', saveMode: 'memory', concurrency: 5 })
     })
-    // 4*7s=28s 보다 훨씬 짧은 5s 안에 완료돼야 함 (대기 제거 증명)
+    // 20s 페이싱보다 훨씬 짧은 5s 안에 완료돼야 함 (API 모드 대기 없음 증명)
     await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
     await startPromise
     expect(submitGeneration).toHaveBeenCalledTimes(4)

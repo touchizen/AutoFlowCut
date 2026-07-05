@@ -86,15 +86,15 @@ function setupHook({ references, flowOverrides = {}, statefulRefs = false }) {
   return { result, genAPI, submitOrder, submitCalls }
 }
 
-// Drives a batch run to completion, stepping through inter-submit delays and
-// drain polls (mirrors batchStop.test.jsx).
+// Drives a batch run to completion, stepping through gate waits and drain polls
+// (mirrors batchStop.test.jsx).
 async function runBatch(result) {
   vi.useFakeTimers()
   let batchPromise
   await act(async () => {
     batchPromise = result.current.handleGenerateAllRefs()
   })
-  // step through inter-submit delays (7-15s) + drain polls (3s) generously
+  // Step through gate waits + drain polls generously.
   for (let i = 0; i < 20; i++) {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(16000)

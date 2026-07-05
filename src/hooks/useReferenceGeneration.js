@@ -338,7 +338,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
   }
 
   // ─── 배치 생성 (비동기 fire-and-forget 방식) ───
-  // AutoFlow 패턴: 제출 → 7~15초 대기 → 다음 제출, 결과는 별도 수집
+  // 제출 → 동시성 게이트 → 다음 제출, 결과는 별도 수집
   //
   // force=true (MCP 전용): 이미 완료된(image/filePath/status=done) ref도 재생성 대상에 포함.
   //                       prompt 있고 style 이 아닌 모든 ref가 대상.
