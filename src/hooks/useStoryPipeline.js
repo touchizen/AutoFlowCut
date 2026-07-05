@@ -47,12 +47,11 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
     tokenRef.current = null
   }
 
-  // HIGH/Codex: useStoryAutoOpen은 story 뷰에서만 open()을 호출한다. 이 훅(useStoryPipeline)
-  // 자체는 App 레벨에 계속 마운트돼 있으므로, story 뷰 밖에서 프로젝트를 전환하면 open()이
-  // 호출되지 않아 tokenRef가 옛 프로젝트 토큰을 그대로 유지한다. 그 상태에서 옛 프로젝트의
-  // 늦은 pushScenes가 도착하면 토큰이 여전히 일치해 새 프로젝트의 scenesHook에 잘못 적용될
-  // 수 있다. 토큰 무효화는 위 렌더 본문에서 이미 동기로 끝났으므로, 여기서는 화면 상태 초기화와
-  // 옛 토큰으로 main의 스텝 머신에 abort를 fire-and-forget으로 보내는 부수효과만 처리한다.
+  // HIGH/Codex: useStoryAutoOpen은 projectPath가 있으면 story 뷰 밖에서도 open()을 호출해
+  // 일반 타임라인 프리뷰용 scenes를 hydrate한다. 그래도 프로젝트 전환 render와 open 응답 사이
+  // 틈에는 옛 pushScenes가 늦게 올 수 있으므로, 토큰 무효화는 위 렌더 본문에서 동기로 끝낸다.
+  // 여기서는 화면 상태 초기화와 옛 토큰으로 main의 스텝 머신에 abort를 fire-and-forget으로
+  // 보내는 부수효과만 처리한다.
   useEffect(() => {
     if (!pendingResetRef.current) return
     const { oldToken } = pendingResetRef.current

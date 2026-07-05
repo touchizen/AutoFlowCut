@@ -28,10 +28,10 @@ describe('useStoryAutoOpen', () => {
     expect(open).not.toHaveBeenCalled()
   })
 
-  it('다른 뷰 → open 안 함', () => {
+  it('다른 뷰라도 path 있으면 타임라인 hydration 을 위해 open', () => {
     const open = vi.fn()
     renderHook(() => useStoryAutoOpen({ activeView: 'settings', projectPath: '/A', state: null, open }))
-    expect(open).not.toHaveBeenCalled()
+    expect(open).toHaveBeenCalledTimes(1)
   })
 
   it('같은 path로 재렌더 → open 재호출 안 함', () => {
@@ -44,5 +44,20 @@ describe('useStoryAutoOpen', () => {
 
     rerender({ activeView: 'story', projectPath: '/A', state: { steps: { script: { status: 'done' } } } })
     expect(open).toHaveBeenCalledTimes(1)
+  })
+
+  it('path가 null로 초기화된 뒤 같은 path로 돌아오면 다시 open', () => {
+    const open = vi.fn()
+    const { rerender } = renderHook(
+      ({ activeView, projectPath, state }) => useStoryAutoOpen({ activeView, projectPath, state, open }),
+      { initialProps: { activeView: 'story', projectPath: '/A', state: null } },
+    )
+    expect(open).toHaveBeenCalledTimes(1)
+
+    rerender({ activeView: 'story', projectPath: null, state: null })
+    expect(open).toHaveBeenCalledTimes(1)
+
+    rerender({ activeView: 'settings', projectPath: '/A', state: null })
+    expect(open).toHaveBeenCalledTimes(2)
   })
 })

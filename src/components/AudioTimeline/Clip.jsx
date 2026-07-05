@@ -3,6 +3,7 @@ import Waveform from './Waveform'
 import TimelineFlagButton from './TimelineFlagButton'
 import TimelineVideoToggleButton from './TimelineVideoToggleButton'
 import { StopwatchIcon, ElapsedTime } from '../StopwatchIcon'
+import { AUDIO_CLIP_CLICK_DELAY_MS, AUDIO_CLIP_DOUBLE_CLICK_DEDUPE_MS } from './interactionTiming'
 
 /** 생성 중 클립 위에 클록 + 경과시간(1초마다 갱신, endedAt 있으면 멈춤). 공통 컴포넌트 재사용. */
 function ClipGeneratingTimer({ startedAt, endedAt }) {
@@ -17,7 +18,7 @@ function ClipGeneratingTimer({ startedAt, endedAt }) {
 // 클립 — click vs drag 자동 구분, draggable이면 드래그로 timecode 보정
 // onFlag(audioPath, filename, event): hover ⚠️ 버튼 클릭 시 호출 (audioPath 있고 onFlag 전달된 경우만)
 // isFlagged(filePath): bool — flagged 시각 표시
-export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDragClip, totalDurationMs, isPlaying, onSceneHover, onFlag, isFlagged, onToggleVideo }) {
+export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDoubleClickClip, onDragClip, totalDurationMs, isPlaying, onSceneHover, onFlag, isFlagged, onToggleVideo }) {
   const [dragOffsetMs, setDragOffsetMs] = useState(null)
   const isDragging = dragOffsetMs !== null
   const flagged = !!(isFlagged && clip.audioPath && isFlagged(clip.audioPath))
@@ -28,10 +29,39 @@ export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDr
   const showVideoToggle = isVideoClip && !!onToggleVideo && !clip.generating
   // 드래그 중 unmount되면 onUp 미발화 → 여기서 listener 강제 정리
   const dragCleanupRef = useRef(null)
+  const clickTimerRef = useRef(null)
+  const lastDoubleClickAtRef = useRef(-Infinity)
   useEffect(() => () => {
     dragCleanupRef.current?.()
     dragCleanupRef.current = null
+    if (clickTimerRef.current) {
+      clearTimeout(clickTimerRef.current)
+      clickTimerRef.current = null
+    }
   }, [])
+
+  const cancelPendingClick = () => {
+    if (!clickTimerRef.current) return
+    clearTimeout(clickTimerRef.current)
+    clickTimerRef.current = null
+  }
+
+  const dispatchClick = () => {
+    setDragOffsetMs(null)
+    onClickClip?.(clip)
+  }
+
+  const dispatchDoubleClick = (e) => {
+    if (!clip.audioPath || !onDoubleClickClip) return
+    e?.stopPropagation?.()
+    if (e?.target?.closest?.('.atl-clip-action-btn')) return
+    const now = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
+    if (now - lastDoubleClickAtRef.current < AUDIO_CLIP_DOUBLE_CLICK_DEDUPE_MS) return
+    lastDoubleClickAtRef.current = now
+    cancelPendingClick()
+    setDragOffsetMs(null)
+    onDoubleClickClip(clip)
+  }
 
   const visualStartMs = clip.startMs + (dragOffsetMs || 0)
   const left = visualStartMs * pxPerMs
@@ -70,6 +100,7 @@ export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDr
       const dx = mv.clientX - startX
       lastDx = dx
       if (Math.abs(dx) > 4) {
+        if (!didDrag) cancelPendingClick()
         didDrag = true
         if (clip.draggable) {
           // 좌측 0 이하로 못 가게 클램프
@@ -91,8 +122,19 @@ export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDr
         setDragOffsetMs(null)
       } else {
         // 클릭으로 처리
-        setDragOffsetMs(null)
-        onClickClip?.(clip)
+        if (clip.audioPath && onDoubleClickClip) {
+          if (clickTimerRef.current) {
+            dispatchDoubleClick()
+          } else {
+            setDragOffsetMs(null)
+            clickTimerRef.current = setTimeout(() => {
+              clickTimerRef.current = null
+              onClickClip?.(clip)
+            }, AUDIO_CLIP_CLICK_DELAY_MS)
+          }
+        } else {
+          dispatchClick()
+        }
       }
     }
     dragCleanupRef.current = cleanup
@@ -105,6 +147,7 @@ export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDr
       className={`atl-clip atl-clip-${variant}${isPlaying ? ' atl-clip-playing' : ''}${isDragging ? ' atl-clip-dragging' : ''}${flagged ? ' atl-clip-flagged' : ''}${clip.disabled ? ' atl-clip-disabled' : ''}`}
       style={style}
       onPointerDown={onPointerDown}
+      onDoubleClick={dispatchDoubleClick}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       title={clip.filename || clip.label || ''}

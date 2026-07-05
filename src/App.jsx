@@ -527,9 +527,10 @@ function App() {
     },
   })
 
-  // Story 뷰 진입 시 세션을 연다 — 로컬 저장 모드(storyProjectPath null)면 open()이 실패할 수
-  // 있으므로(Task 9 리뷰 노트) 폴더 저장 모드일 때만 호출한다. 로컬 저장 모드에서는 App 렌더부의
-  // 가드가 "폴더 저장 모드에서만 사용 가능" 안내를 보여주고 open()을 아예 시도하지 않는다.
+  // Story 프로젝트 경로가 준비되면 세션을 연다 — 일반 타임라인도 story audio/SFX를
+  // `storyPipeline.scenes`에서 합류하므로 Story 화면 진입 전에도 hydrate가 필요하다.
+  // 로컬 저장 모드(storyProjectPath null)면 open()이 실패할 수 있으므로(Task 9 리뷰 노트)
+  // 폴더 저장 모드일 때만 호출한다.
   // storyProjectPath가 바뀌면(프로젝트 전환) state 유무와 무관하게 무조건 재open한다 — 그렇지
   // 않으면 main의 story 머신이 이전 프로젝트 경로에 바인딩된 채 새 프로젝트 화면에서 쓰기가
   // 발생하는 크로스 프로젝트 데이터 오염이 생긴다(Task 10 리뷰).

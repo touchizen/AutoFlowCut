@@ -16,6 +16,10 @@ export default function TimelineFlagButton({ audioPath, filename, flagged, narro
     e.preventDefault()
     onFlag?.(audioPath, filename, e)
   }
+  const stopActionDoubleClick = (e) => {
+    e.stopPropagation()
+    e.preventDefault()
+  }
 
   return (
     <button
@@ -23,6 +27,7 @@ export default function TimelineFlagButton({ audioPath, filename, flagged, narro
       className={`atl-clip-action-btn atl-clip-flag-btn${flagged ? ' is-flagged' : ''}${narrow ? ' is-narrow' : ''}`}
       onPointerDown={(e) => e.stopPropagation()}
       onClick={handleClick}
+      onDoubleClick={stopActionDoubleClick}
       title={label}
       aria-label={label}
       aria-pressed={flagged ? 'true' : 'false'}

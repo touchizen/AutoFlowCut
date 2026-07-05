@@ -4,6 +4,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, render as rtlRender, screen, fireEvent } from '@testing-library/react'
 import AudioTimeline from '../../../src/components/AudioTimeline/AudioTimeline'
+import { AUDIO_CLIP_CLICK_DELAY_MS } from '../../../src/components/AudioTimeline/interactionTiming'
 import { I18nProvider } from '../../../src/hooks/useI18n'
 
 // I18nProvider로 감싸는 render 헬퍼
@@ -55,6 +56,10 @@ beforeEach(() => {
   // HTMLMediaElement.play 무력화 (jsdom은 audio 재생 미지원)
   window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined)
   window.HTMLMediaElement.prototype.pause = vi.fn()
+})
+
+afterEach(() => {
+  vi.useRealTimers()
 })
 
 describe('AudioTimeline', () => {
@@ -230,7 +235,7 @@ describe('AudioTimeline', () => {
       expect(lefts[1]).toBeCloseTo(200, 0) // 5000 * 0.04
     })
 
-    it('mini-clip 클릭 시 onClipSelect 호출 + playhead 이동', () => {
+    it('mini-clip 클릭 시 onClipSelect 호출 + playhead 이동', async () => {
       const onClipSelect = vi.fn()
       const { container } = render(
         <AudioTimeline
@@ -248,6 +253,7 @@ describe('AudioTimeline', () => {
 
       // pointerdown으로 클릭 (스크럽 트리거 차단되어야 함 — stopPropagation)
       fireEvent.pointerDown(markers[0], { button: 0, clientX: 50 })
+      await act(async () => { await new Promise(r => setTimeout(r, AUDIO_CLIP_CLICK_DELAY_MS + 20)) })
 
       expect(onClipSelect).toHaveBeenCalledTimes(1)
       const clip = onClipSelect.mock.calls[0][0]
@@ -259,7 +265,32 @@ describe('AudioTimeline', () => {
       expect(playhead.style.left).toBe('40px')
     })
 
-    it('SFX sub-track 펼쳐도 file row에 mini-clip 마커 표시 (Voice와 동일 동작)', () => {
+    it('mini-clip 더블클릭 시 해당 오디오만 재생하고 상세 선택은 열지 않음', async () => {
+      const onClipSelect = vi.fn()
+      global.window.electronAPI.readFileAbsolute = vi.fn().mockResolvedValue({ success: true, data: 'data:audio/mpeg;base64,AAAA' })
+      const { container } = render(
+        <AudioTimeline
+          audioPackage={audioPackage}
+          scenes={scenes}
+          srtEntries={srtEntries}
+          onClipSelect={onClipSelect}
+        />
+      )
+      fireEvent.click(screen.getByText('Voice'))
+      fireEvent.click(screen.getByText('소은'))
+      const markers = container.querySelectorAll('.atl-file-mini-clip')
+      expect(markers.length).toBeGreaterThan(0)
+
+      fireEvent.pointerDown(markers[0], { button: 0, clientX: 50 })
+      fireEvent.pointerDown(markers[0], { button: 0, clientX: 50 })
+      await act(async () => { await new Promise(r => setTimeout(r, 0)) })
+
+      expect(global.window.electronAPI.readFileAbsolute).toHaveBeenCalledTimes(1)
+      expect(global.window.electronAPI.readFileAbsolute.mock.calls[0][0].filePath).toBe('/audio/소은/s_01.mp3')
+      expect(onClipSelect).not.toHaveBeenCalled()
+    })
+
+    it('SFX sub-track 펼쳐도 file row에 mini-clip 마커 표시 (Voice와 동일 동작)', async () => {
       const onClipSelect = vi.fn()
       const { container } = render(
         <AudioTimeline
@@ -280,6 +311,7 @@ describe('AudioTimeline', () => {
 
       // 클릭하면 sfx clip이 onClipSelect로 들어와야 함
       fireEvent.pointerDown(markers[0], { button: 0, clientX: 100 })
+      await act(async () => { await new Promise(r => setTimeout(r, AUDIO_CLIP_CLICK_DELAY_MS + 20)) })
       expect(onClipSelect).toHaveBeenCalledTimes(1)
       const clip = onClipSelect.mock.calls[0][0]
       expect(clip.audioPath).toBe('/sfx/a.mp3')
@@ -341,6 +373,206 @@ describe('AudioTimeline', () => {
       fireEvent(window, new PointerEvent('pointerup', { clientX: 100 }))
       expect(onClipSelect).toHaveBeenCalled()
       expect(onClipSelect.mock.calls[0][0]).toHaveProperty('startMs')
+    })
+
+    it('오디오 클립 더블클릭 시 해당 클립만 재생하고 상세 선택은 열지 않음', async () => {
+      const onClipSelect = vi.fn()
+      global.window.electronAPI.readFileAbsolute = vi.fn().mockResolvedValue({ success: true, data: 'data:audio/mpeg;base64,AAAA' })
+      const { container } = render(
+        <AudioTimeline
+          audioPackage={audioPackage}
+          scenes={scenes}
+          srtEntries={srtEntries}
+          onClipSelect={onClipSelect}
+        />
+      )
+      const audioClips = container.querySelectorAll('.atl-clip-audio')
+      expect(audioClips.length).toBeGreaterThan(0)
+
+      fireEvent.pointerDown(audioClips[0], { button: 0, clientX: 100 })
+      fireEvent(window, new PointerEvent('pointerup', { clientX: 100 }))
+      fireEvent.pointerDown(audioClips[0], { button: 0, clientX: 100 })
+      fireEvent(window, new PointerEvent('pointerup', { clientX: 100 }))
+      await act(async () => { await new Promise(r => setTimeout(r, 0)) })
+
+      expect(global.window.electronAPI.readFileAbsolute).toHaveBeenCalledTimes(1)
+      expect(global.window.electronAPI.readFileAbsolute.mock.calls[0][0].filePath).toBe('/audio/narration.mp3')
+      expect(onClipSelect).not.toHaveBeenCalled()
+      expect(audioClips[0].className).toContain('atl-clip-playing')
+    })
+
+    it('오디오 클립 더블클릭이 느려도 상세 선택을 먼저 열지 않고 단독 재생', async () => {
+      vi.useFakeTimers()
+      const onClipSelect = vi.fn()
+      global.window.electronAPI.readFileAbsolute = vi.fn().mockResolvedValue({ success: true, data: 'data:audio/mpeg;base64,AAAA' })
+      const { container } = render(
+        <AudioTimeline
+          audioPackage={audioPackage}
+          scenes={scenes}
+          srtEntries={srtEntries}
+          onClipSelect={onClipSelect}
+        />
+      )
+      const audioClip = container.querySelector('.atl-clip-audio')
+      expect(audioClip).toBeTruthy()
+
+      fireEvent.pointerDown(audioClip, { button: 0, clientX: 100 })
+      fireEvent(window, new PointerEvent('pointerup', { clientX: 100 }))
+      act(() => { vi.advanceTimersByTime(AUDIO_CLIP_CLICK_DELAY_MS - 100) })
+      fireEvent.pointerDown(audioClip, { button: 0, clientX: 100 })
+      fireEvent(window, new PointerEvent('pointerup', { clientX: 100 }))
+      await act(async () => { await Promise.resolve() })
+
+      expect(onClipSelect).not.toHaveBeenCalled()
+      expect(global.window.electronAPI.readFileAbsolute).toHaveBeenCalledTimes(1)
+    })
+
+    it('오디오 클립 flag 버튼 더블클릭은 단독 재생으로 버블되지 않음', async () => {
+      const onFlag = vi.fn()
+      global.window.electronAPI.readFileAbsolute = vi.fn().mockResolvedValue({ success: true, data: 'data:audio/mpeg;base64,AAAA' })
+      const { container } = render(
+        <AudioTimeline
+          audioPackage={audioPackage}
+          scenes={scenes}
+          srtEntries={srtEntries}
+          onFlag={onFlag}
+        />
+      )
+      const flagButton = container.querySelector('.atl-clip-audio .atl-clip-flag-btn')
+      expect(flagButton).toBeTruthy()
+
+      fireEvent.doubleClick(flagButton)
+      await act(async () => { await Promise.resolve() })
+
+      expect(global.window.electronAPI.readFileAbsolute).not.toHaveBeenCalled()
+    })
+
+    it('오디오 단일 클릭 대기 중 드래그를 시작하면 pending 상세 선택을 취소', () => {
+      vi.useFakeTimers()
+      const onClipSelect = vi.fn()
+      const onSaveTimecodeOverride = vi.fn()
+      const { container } = render(
+        <AudioTimeline
+          audioPackage={audioPackage}
+          scenes={scenes}
+          srtEntries={srtEntries}
+          onClipSelect={onClipSelect}
+          onSaveTimecodeOverride={onSaveTimecodeOverride}
+        />
+      )
+      const voiceClip = container.querySelector('.atl-clip-audio[title="s_01.mp3"]')
+      expect(voiceClip).toBeTruthy()
+
+      fireEvent.pointerDown(voiceClip, { button: 0, clientX: 100 })
+      fireEvent(window, new PointerEvent('pointerup', { clientX: 100 }))
+      act(() => { vi.advanceTimersByTime(100) })
+
+      fireEvent.pointerDown(voiceClip, { button: 0, clientX: 100 })
+      fireEvent(window, new PointerEvent('pointermove', { clientX: 180 }))
+      fireEvent(window, new PointerEvent('pointerup', { clientX: 180 }))
+      act(() => { vi.advanceTimersByTime(AUDIO_CLIP_CLICK_DELAY_MS + 20) })
+
+      expect(onSaveTimecodeOverride).toHaveBeenCalled()
+      expect(onClipSelect).not.toHaveBeenCalled()
+    })
+
+    it('mini-clip pointer 더블클릭 후 native doubleClick이 와도 단독 재생은 한 번만 시작', async () => {
+      vi.useFakeTimers()
+      const onClipSelect = vi.fn()
+      global.window.electronAPI.readFileAbsolute = vi.fn().mockResolvedValue({ success: true, data: 'data:audio/mpeg;base64,AAAA' })
+      const { container } = render(
+        <AudioTimeline
+          audioPackage={audioPackage}
+          scenes={scenes}
+          srtEntries={srtEntries}
+          onClipSelect={onClipSelect}
+        />
+      )
+      fireEvent.click(screen.getByText('Voice'))
+      fireEvent.click(screen.getByText('소은'))
+      const marker = container.querySelector('.atl-file-mini-clip')
+      expect(marker).toBeTruthy()
+
+      fireEvent.pointerDown(marker, { button: 0, clientX: 50 })
+      act(() => { vi.advanceTimersByTime(120) })
+      fireEvent.pointerDown(marker, { button: 0, clientX: 50 })
+      await act(async () => { await Promise.resolve() })
+      act(() => { vi.advanceTimersByTime(120) })
+      fireEvent.doubleClick(marker)
+      await act(async () => { await Promise.resolve() })
+
+      expect(global.window.electronAPI.readFileAbsolute).toHaveBeenCalledTimes(1)
+      expect(onClipSelect).not.toHaveBeenCalled()
+    })
+
+    it('더블클릭 단독 재생은 이전 글로벌 재생의 지연 read 완료를 무시', async () => {
+      const reads = []
+      global.window.electronAPI.readFileAbsolute = vi.fn(({ filePath }) => new Promise(resolve => {
+        reads.push({ filePath, resolve })
+      }))
+      const created = []
+      const OrigAudio = window.Audio
+      window.Audio = function (src) {
+        const inst = new OrigAudio(src)
+        created.push(src)
+        return inst
+      }
+
+      try {
+        const { container } = render(
+          <AudioTimeline
+            audioPackage={audioPackage}
+            scenes={scenes}
+            srtEntries={srtEntries}
+          />
+        )
+
+        fireEvent.click(container.querySelector('.atl-play-btn'))
+        expect(reads.map(r => r.filePath)).toContain('/audio/narration.mp3')
+
+        fireEvent.click(screen.getByText('Voice'))
+        fireEvent.click(screen.getByText('소은'))
+        const targetClip = container.querySelector('.atl-file-mini-clip')
+        fireEvent.pointerDown(targetClip, { button: 0, clientX: 50 })
+        fireEvent.pointerDown(targetClip, { button: 0, clientX: 50 })
+
+        const targetRead = reads.find(r => r.filePath === '/audio/소은/s_01.mp3')
+        expect(targetRead).toBeTruthy()
+        await act(async () => {
+          targetRead.resolve({ success: true, data: 'data:audio/mpeg;base64,TARGET' })
+          await Promise.resolve()
+        })
+
+        const staleRead = reads.find(r => r.filePath === '/audio/narration.mp3')
+        await act(async () => {
+          staleRead.resolve({ success: true, data: 'data:audio/mpeg;base64,STALE' })
+          await Promise.resolve()
+        })
+
+        expect(created).toEqual(['data:audio/mpeg;base64,TARGET'])
+      } finally {
+        window.Audio = OrigAudio
+      }
+    })
+
+    it('비오디오 클립 더블클릭은 단독 재생하지 않음', async () => {
+      const onClipSelect = vi.fn()
+      global.window.electronAPI.readFileAbsolute = vi.fn().mockResolvedValue({ success: true, data: 'data:audio/mpeg;base64,AAAA' })
+      const { container } = render(
+        <AudioTimeline
+          audioPackage={audioPackage}
+          scenes={scenes}
+          srtEntries={srtEntries}
+          onClipSelect={onClipSelect}
+        />
+      )
+      const imageClip = container.querySelector('.atl-clip-block')
+      expect(imageClip).toBeTruthy()
+
+      fireEvent.doubleClick(imageClip)
+      await act(async () => { await new Promise(r => setTimeout(r, 0)) })
+
+      expect(global.window.electronAPI.readFileAbsolute).not.toHaveBeenCalled()
     })
 
     it('클립 드래그 시 onSaveTimecodeOverride가 호출됨 (relPath 있는 voice/sfx)', () => {

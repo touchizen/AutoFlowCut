@@ -6,7 +6,7 @@ const SRT_EXT_RE = /\.srt$/i
 
 export default function TrackLane({
   track, width, height, pxPerMs, renderClips = true,
-  onClipClick, onClipDrag, totalDurationMs, playingClipIds, onSceneHover, onFlag, isFlagged, onToggleVideo,
+  onClipClick, onClipDoubleClick, onClipDrag, totalDurationMs, playingClipIds, onSceneHover, onFlag, isFlagged, onToggleVideo,
   // 드래그앤드롭 (Phase 2)
   onTrackDrop, onTrackDragOver, onTrackDragLeave, dragOverTrackId,
 }) {
@@ -75,6 +75,7 @@ export default function TrackLane({
           pxPerMs={pxPerMs}
           height={h}
           onClickClip={onClipClick}
+          onDoubleClickClip={onClipDoubleClick}
           onDragClip={onClipDrag}
           totalDurationMs={totalDurationMs}
           isPlaying={playingClipIds?.has(clip.id)}

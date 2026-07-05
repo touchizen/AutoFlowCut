@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render as rtlRender, fireEvent, waitFor, act } from '@testing-library/react'
 import AudioTimeline from '../../src/components/AudioTimeline/AudioTimeline'
+import { AUDIO_CLIP_CLICK_DELAY_MS } from '../../src/components/AudioTimeline/interactionTiming'
 import AudioPanel from '../../src/components/AudioPanel'
 import { I18nProvider } from '../../src/hooks/useI18n'
 
@@ -90,7 +91,7 @@ describe('onClipSelect contract — 클립 타입별 audioPath 유무', () => {
     expect(clip.label).toBeTruthy()
   })
 
-  it('Audio 클립 클릭 → onClipSelect는 audioPath 있는 clip 전달', () => {
+  it('Audio 클립 클릭 → onClipSelect는 audioPath 있는 clip 전달', async () => {
     const onClipSelect = vi.fn()
     const { container } = render(
       <AudioTimeline
@@ -103,6 +104,7 @@ describe('onClipSelect contract — 클립 타입별 audioPath 유무', () => {
     const audioClips = container.querySelectorAll('.atl-clip-audio')
     expect(audioClips.length).toBeGreaterThan(0)
     clickClip(audioClips[0])
+    await act(async () => { await new Promise(r => setTimeout(r, AUDIO_CLIP_CLICK_DELAY_MS + 20)) })
     expect(onClipSelect).toHaveBeenCalled()
     const clip = onClipSelect.mock.calls[0][0]
     expect(clip.audioPath).toBeTruthy()      // ★ 핵심
@@ -157,7 +159,7 @@ describe('AudioPanel integration — 실제 모달 DOM 동작', () => {
     expect(audioClips.length).toBeGreaterThan(0)
     await act(async () => {
       clickClip(audioClips[0])
-      await new Promise(r => setTimeout(r, 50))
+      await new Promise(r => setTimeout(r, AUDIO_CLIP_CLICK_DELAY_MS + 20))
     })
     expect(queryModal()).toBeInTheDocument()
   })

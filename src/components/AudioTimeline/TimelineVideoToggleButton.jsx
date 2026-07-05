@@ -13,12 +13,17 @@ export default function TimelineVideoToggleButton({ disabled, narrow, onToggle }
     e.preventDefault()
     onToggle?.()
   }
+  const stopActionDoubleClick = (e) => {
+    e.stopPropagation()
+    e.preventDefault()
+  }
   return (
     <button
       type="button"
       className={`atl-clip-action-btn atl-clip-eye-btn${disabled ? ' is-off' : ''}${narrow ? ' is-narrow' : ''}`}
       onPointerDown={(e) => e.stopPropagation()}
       onClick={handleClick}
+      onDoubleClick={stopActionDoubleClick}
       title={label}
       aria-label={label}
       aria-pressed={disabled ? 'false' : 'true'}

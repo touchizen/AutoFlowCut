@@ -29,6 +29,7 @@ import {
   TRACK_LABEL_KEYS,
   POSTER_VIEWPORT_BUFFER_MS,
 } from './constants'
+import { AUDIO_CLIP_CLICK_DELAY_MS, AUDIO_CLIP_DOUBLE_CLICK_DEDUPE_MS } from './interactionTiming'
 import './AudioTimeline.css'
 
 // 트랙 토글: 비주얼=View(눈, off→프리뷰에서 숨김), 오디오=Mute(스피커, off→재생 제외).
@@ -277,6 +278,9 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   const rafRef = useRef(null)
   const playStartTimeRef = useRef(0) // performance.now() 시점
   const playStartMsRef = useRef(0)   // 재생 시작 시 playhead 위치 (ms)
+  const playbackSessionRef = useRef(0)
+  const fileClickTimersRef = useRef(new Map()) // expanded file row mini-clip single/double click 분기
+  const fileDoubleClickAtRef = useRef(new Map())
   // 활성 드래그 cleanup. pointerup 정상 종료 시 / 컴포넌트 unmount 시 모두 호출됨 (idempotent).
   // 드래그 중 프로젝트 전환 등으로 onUp이 안 와도 listener/cursor 잔류 방지.
   const activeDragCleanupRef = useRef(null)
@@ -551,6 +555,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
 
   // 모든 audio 정지 + RAF/timer 정리
   const stopAll = () => {
+    playbackSessionRef.current += 1
     isGlobalPlayingRef.current = false
     setIsGlobalPlaying(false)
     for (const audio of audioInstancesRef.current.values()) {
@@ -567,12 +572,14 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   }
 
   // 한 클립 시작 (offsetMs는 클립 시작 시점 기준 오프셋)
-  const startClipAt = async (clip, offsetMs = 0) => {
+  const startClipAt = async (clip, offsetMs = 0, { ignoreMute = false, sessionId = playbackSessionRef.current } = {}) => {
     if (!clip?.audioPath) return
+    if (sessionId !== playbackSessionRef.current) return
     // 예약(setTimeout) 발화 시점에 트랙이 음소거됐으면 재생 안 함 (ref로 최신값 읽기).
-    if (disabledTracksRef.current.has(clipTrackMap.get(clip.id))) return
+    if (!ignoreMute && disabledTracksRef.current.has(clipTrackMap.get(clip.id))) return
     try {
       const result = await window.electronAPI?.readFileAbsolute({ filePath: clip.audioPath })
+      if (sessionId !== playbackSessionRef.current) return
       if (!result?.success) {
         console.error('[AudioTimeline] Failed to read audio file:', clip.audioPath, result?.error)
         return
@@ -583,9 +590,11 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
       audio.volume = Math.max(0, Math.min(1, masterAudioRef.current.volume))
       audio.onerror = (e) => console.error('[AudioTimeline] Audio error:', clip.audioPath, e)
       if (offsetMs > 0) audio.currentTime = offsetMs / 1000
+      if (sessionId !== playbackSessionRef.current) return
       audioInstancesRef.current.set(clip.id, audio)
       setPlayingClipIds(prev => new Set(prev).add(clip.id))
       audio.onended = () => {
+        if (audioInstancesRef.current.get(clip.id) !== audio) return
         audioInstancesRef.current.delete(clip.id)
         setPlayingClipIds(prev => {
           const n = new Set(prev); n.delete(clip.id); return n
@@ -605,6 +614,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   const playGlobal = () => {
     if (!data) return
     stopAll()
+    const sessionId = playbackSessionRef.current
     isGlobalPlayingRef.current = true
     setIsGlobalPlaying(true)
     const startMs = playheadMs
@@ -615,19 +625,21 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
       if (clip.endMs <= startMs) continue
       if (clip.startMs <= startMs) {
         // 현재 진행 중인 클립 — 오프셋부터 재생
-        startClipAt(clip, startMs - clip.startMs)
+        startClipAt(clip, startMs - clip.startMs, { sessionId })
       } else {
         // 미래 클립 — 시작 시점에 setTimeout 예약
         const delay = clip.startMs - startMs
         const id = setTimeout(() => {
-          if (isGlobalPlayingRef.current) startClipAt(clip, 0)
+          if (isGlobalPlayingRef.current && playbackSessionRef.current === sessionId) {
+            startClipAt(clip, 0, { sessionId })
+          }
         }, delay)
         scheduledTimersRef.current.push(id)
       }
     }
 
     const tick = () => {
-      if (!isGlobalPlayingRef.current) return
+      if (!isGlobalPlayingRef.current || playbackSessionRef.current !== sessionId) return
       const elapsed = performance.now() - playStartTimeRef.current
       const cur = playStartMsRef.current + elapsed
       setPlayheadMs(cur)
@@ -733,6 +745,8 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
   // 드래그 중 unmount되면 onUp이 안 와서 listener/cursor 잔류 → 여기서 cleanup 강제 실행
   useEffect(() => () => {
     stopAll()
+    for (const timer of fileClickTimersRef.current.values()) clearTimeout(timer)
+    fileClickTimersRef.current.clear()
     activeDragCleanupRef.current?.()
     activeDragCleanupRef.current = null
   }, [])
@@ -832,6 +846,52 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
     // 단독 재생은 모달이 담당 (auto-play). 여기선 playhead만 이동시키고 모달 띄움
     setPlayheadMs(clip.startMs)
     onClipSelect?.(clip)
+  }
+
+  const onClipDoubleClick = (clip) => {
+    if (!clip?.audioPath || disabled) return
+    stopAll()
+    const sessionId = playbackSessionRef.current
+    jumpToClip(clip)
+    startClipAt(clip, 0, { ignoreMute: true, sessionId })
+  }
+
+  const cancelFileClick = (clipId) => {
+    const timer = fileClickTimersRef.current.get(clipId)
+    if (!timer) return
+    clearTimeout(timer)
+    fileClickTimersRef.current.delete(clipId)
+  }
+
+  const dispatchFileDoubleClick = (clip, e) => {
+    if (!clip?.audioPath) return
+    e?.stopPropagation?.()
+    if (e?.target?.closest?.('.atl-clip-action-btn')) return
+    const now = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
+    const last = fileDoubleClickAtRef.current.get(clip.id) ?? -Infinity
+    if (now - last < AUDIO_CLIP_DOUBLE_CLICK_DEDUPE_MS) return
+    fileDoubleClickAtRef.current.set(clip.id, now)
+    cancelFileClick(clip.id)
+    onClipDoubleClick(clip)
+  }
+
+  const handleFileClipPointerDown = (e, clip) => {
+    if (e.button !== 0) return
+    e.stopPropagation() // 스크럽 트리거 차단
+    jumpToClip(clip)
+    if (!clip.audioPath) {
+      onClipSelect?.(clip)
+      return
+    }
+    if (fileClickTimersRef.current.has(clip.id)) {
+      dispatchFileDoubleClick(clip)
+      return
+    }
+    const timer = setTimeout(() => {
+      fileClickTimersRef.current.delete(clip.id)
+      onClipSelect?.(clip)
+    }, AUDIO_CLIP_CLICK_DELAY_MS)
+    fileClickTimersRef.current.set(clip.id, timer)
   }
 
   // 클립 드래그 → timecode 보정 저장
@@ -1170,12 +1230,8 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
                     <div
                       className={`atl-file-mini-clip${fileFlagged ? ' atl-clip-flagged' : ''}`}
                       style={{ left, width, backgroundColor: track.color }}
-                      onPointerDown={(e) => {
-                        if (e.button !== 0) return
-                        e.stopPropagation() // 스크럽 트리거 차단
-                        jumpToClip(clip)
-                        if (clip.audioPath) onClipSelect?.(clip)
-                      }}
+                      onPointerDown={(e) => handleFileClipPointerDown(e, clip)}
+                      onDoubleClick={(e) => dispatchFileDoubleClick(clip, e)}
                       title={clip.filename}
                     >
                       {fileFlagged && (
@@ -1205,6 +1261,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
                   pxPerMs={pxPerMs}
                   renderClips={renderClips}
                   onClipClick={onClipClick}
+                  onClipDoubleClick={onClipDoubleClick}
                   onClipDrag={onClipDrag}
                   totalDurationMs={data.totalDurationMs}
                   playingClipIds={playingClipIds}
