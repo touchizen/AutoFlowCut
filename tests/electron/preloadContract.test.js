@@ -126,6 +126,12 @@ describe('preload contract', () => {
     expect(preloadKeys.has('setMode')).toBe(true)
   })
 
+  it('storyListLlmOptions is in preload (Story LLM catalog bridge)', () => {
+    const preloadText = fs.readFileSync(preloadPath, 'utf8')
+    const preloadKeys = extractPreloadKeys(preloadText)
+    expect(preloadKeys.has('storyListLlmOptions')).toBe(true)
+  })
+
   it('allowlist entries are documented (not silently growing)', () => {
     // Ensure the allowlist is small and intentional — this test will fail if
     // someone adds new entries without updating this comment.

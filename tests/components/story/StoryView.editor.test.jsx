@@ -23,7 +23,7 @@ const pipeline = (over = {}) => ({
 
 // 폼 미변경 시 editor 핸들러가 실어 보내는 "현재 설정" options (스펙 R3-3).
 const defaultOptions = {
-  genre: 'bespoke', language: 'ko', model: 'claude-opus-4-8', lengthValue: '10', lengthUnit: 'min', sceneGranularity: 'scene', reviewLoop: false,
+  genre: 'bespoke', language: 'ko', engine: 'claude', model: 'claude-opus-4-8', lengthValue: '10', lengthUnit: 'min', sceneGranularity: 'scene', reviewLoop: false,
 }
 
 describe('StoryView editor 버튼 상태 (§1.B)', () => {
@@ -89,7 +89,7 @@ describe('StoryView 다시쓰기 (§2/§3/§5)', () => {
     expect(p.generateTitle).not.toHaveBeenCalled()
   })
 
-  it('제목이 비면 generateTitle(scriptText) 먼저 → 반환 title(로컬 변수)로 start', async () => {
+  it('제목이 비면 generateTitle(scriptText, currentOptions) 먼저 → 반환 title(로컬 변수)로 start', async () => {
     const p = pipeline()
     render(<StoryView pipeline={p} />)
     fireEvent.click(screen.getByRole('button', { name: '다시쓰기' }))
@@ -97,7 +97,7 @@ describe('StoryView 다시쓰기 (§2/§3/§5)', () => {
       input: { type: 'title', title: '자동 제목' },
       options: defaultOptions,
     }))
-    expect(p.generateTitle).toHaveBeenCalledWith('대본 본문')
+    expect(p.generateTitle).toHaveBeenCalledWith('대본 본문', defaultOptions)
     // 제목 state에도 반영 — 0번 설정 탭에서 확인
     fireEvent.click(screen.getByRole('button', { name: '설정' }))
     expect(screen.getByPlaceholderText('제목')).toHaveValue('자동 제목')
@@ -168,7 +168,7 @@ describe('StoryView 분리시작 (§2/§0.4)', () => {
     expect(screen.getByText('화자')).toBeTruthy()
   })
 
-  it('제목이 비면 generateTitle 먼저 → setTitle 후 start("scenes")', async () => {
+  it('제목이 비면 generateTitle에 현재 options를 전달한 뒤 start("scenes")', async () => {
     const p = pipeline()
     p.state.steps.script.status = 'done'
     render(<StoryView pipeline={p} />)
@@ -176,7 +176,7 @@ describe('StoryView 분리시작 (§2/§0.4)', () => {
     await waitFor(() => expect(p.start).toHaveBeenCalledWith('scenes', {
       scriptOverride: '대본 본문', options: defaultOptions, title: '자동 제목',
     }))
-    expect(p.generateTitle).toHaveBeenCalledWith('대본 본문')
+    expect(p.generateTitle).toHaveBeenCalledWith('대본 본문', defaultOptions)
   })
 
   it('generateTitle 실패 시 start를 부르지 않고 editor에 머문다', async () => {

@@ -48,12 +48,13 @@ describe('useStoryPipeline scriptText/generateTitle', () => {
     expect(result.current.scriptText).toBe('')
   })
 
-  it('generateTitle이 storyGenerateTitle을 projectToken/scriptMd로 호출하고 {title}을 반환한다', async () => {
+  it('generateTitle이 storyGenerateTitle을 projectToken/scriptMd/options로 호출하고 {title}을 반환한다', async () => {
     const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: vi.fn() }))
     await act(() => result.current.open())
     let ret
-    await act(async () => { ret = await result.current.generateTitle('# 대본 마크다운') })
-    expect(window.electronAPI.storyGenerateTitle).toHaveBeenCalledWith({ projectToken: 'tok1', scriptMd: '# 대본 마크다운' })
+    const options = { engine: 'codex', model: 'gpt-5.5', reasoningEffort: 'high' }
+    await act(async () => { ret = await result.current.generateTitle('# 대본 마크다운', options) })
+    expect(window.electronAPI.storyGenerateTitle).toHaveBeenCalledWith({ projectToken: 'tok1', scriptMd: '# 대본 마크다운', options })
     expect(ret).toEqual({ title: '생성된 제목' })
   })
 })

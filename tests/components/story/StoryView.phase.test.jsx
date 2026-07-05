@@ -147,7 +147,7 @@ describe('StoryView 폼 hydrate (Task 7)', () => {
     render(<StoryView pipeline={p} />)
     expect(screen.getByPlaceholderText('제목')).toHaveValue('복원 제목')
     expect(screen.getByLabelText('장르')).toHaveValue('yadam')
-    expect(screen.getByLabelText('모델')).toHaveValue('claude-sonnet-5')
+    expect(screen.getByLabelText('모델')).toHaveValue('claude:claude-sonnet-5')
     expect(screen.getByLabelText('언어')).toHaveValue('en')
     expect(screen.getByLabelText('길이 값')).toHaveValue('7')
     expect(screen.getByLabelText('길이 단위')).toHaveValue('words')
@@ -159,14 +159,14 @@ describe('StoryView 폼 hydrate (Task 7)', () => {
     p.state.input = input
     rerender(<StoryView pipeline={p} />)
     expect(screen.getByPlaceholderText('제목')).toHaveValue('복원 제목')
-    expect(screen.getByLabelText('모델')).toHaveValue('claude-sonnet-5')
+    expect(screen.getByLabelText('모델')).toHaveValue('claude:claude-sonnet-5')
   })
 
   it('state.input이 없으면 기존 기본값(bespoke/opus/ko/10/min)을 유지한다', () => {
     render(<StoryView pipeline={pipeline()} />)
     expect(screen.getByPlaceholderText('제목')).toHaveValue('')
     expect(screen.getByLabelText('장르')).toHaveValue('bespoke')
-    expect(screen.getByLabelText('모델')).toHaveValue('claude-opus-4-8')
+    expect(screen.getByLabelText('모델')).toHaveValue('claude:claude-opus-4-8')
     expect(screen.getByLabelText('언어')).toHaveValue('ko')
     expect(screen.getByLabelText('길이 값')).toHaveValue('10')
     expect(screen.getByLabelText('길이 단위')).toHaveValue('min')

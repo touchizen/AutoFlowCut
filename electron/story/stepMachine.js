@@ -10,6 +10,7 @@ import { inheritStoryIds, assertUniqueStoryIds, assignStoryIdsByMembership, inhe
 import { buildFallbackTimeline, buildSegmentTimeline, buildSrt, srtLineId } from './timing.js'
 import { regroupScenes } from './regroup.js'
 import { buildManifest } from './manifest.js'
+import { normalizeStoryLlmOptions } from '../api/llm/storyLlmCatalog.js'
 
 const DOWNSTREAM = { script: ['scenes', 'audio', 'prompts'], scenes: ['audio', 'prompts'], audio: ['prompts'], prompts: [] }
 
@@ -93,6 +94,14 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     emit(ch, { projectToken, operationId: operationId || randomUUID(), ...payload })
 
   async function flush() { await store.save(state) }
+
+  function normalizeLlmOptions(options = {}) {
+    return normalizeStoryLlmOptions({ model: state?.engine?.model, ...(options || {}) })
+  }
+
+  function buildLlmOptions(options = {}, extras = {}) {
+    return { apiKey: getApiKey(), ...normalizeLlmOptions({ ...(options || {}), ...(extras || {}) }) }
+  }
 
   // V2: narrator/비가시 화자 판정(정규화 id/name). 이 화자는 캐릭터 카드/태그에서 제외.
   const isNarratorSpeaker = (sp) => {
@@ -207,7 +216,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     async script(params, opId, signal) {
       // 대본 재설계: 이어쓰기 — 편집 중 대본을 받아 LLM이 이어서 완성한 전체 대본을 저장한다.
       if (params.continue) {
-        const opts = { apiKey: getApiKey(), model: state.engine.model, ...(params.options || {}) }
+        const opts = buildLlmOptions(params.options)
         const { scriptMd } = await llm.continueScript(params.continue, opts, {
           onDelta: (text) => send('story:delta', { text }, opId), signal,
         })
@@ -218,19 +227,20 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // M1 스펙 §1 2번 경로: 대본을 직접 붙여넣은 경우 LLM 호출 없이 그대로 저장한다.
       if (params.pastedScript) {
         // title 보존 — 재오픈 hydrate가 제목/옵션을 복원하려면 main source of truth에 남겨야 한다.
-        state.input = { type: 'pasted', title: params.input?.title, options: params.options }
+        state.input = { type: 'pasted', title: params.input?.title, options: normalizeLlmOptions(params.options) }
         // HIGH: abort 직후 파일 쓰기 자체를 막는 방어 가드 — start() 래퍼의 결과 처리 가드와
         // 별개로, 취소된 스텝이 디스크에 흔적을 남기지 않도록 saveText 직전에 한 번 더 확인한다.
         if (signal?.aborted) return
         await store.saveText('script.md', params.pastedScript)
         return
       }
-      state.input = params.input ? { ...params.input, options: params.options } : state.input
-      const language = params.options?.language || state.input?.options?.language || 'ko'
+      const inputOptions = normalizeLlmOptions(params.options)
+      state.input = params.input ? { ...params.input, options: inputOptions } : state.input
+      const language = inputOptions.language || state.input?.options?.language || 'ko'
       const metaPrompt = loadMetaPrompt
-        ? await loadMetaPrompt({ genre: params.options?.genre, wave: 'script', language })
+        ? await loadMetaPrompt({ genre: inputOptions.genre, wave: 'script', language })
         : ''
-      const opts = { apiKey: getApiKey(), model: state.engine.model, metaPrompt, ...(params.options || {}) }
+      const opts = buildLlmOptions(inputOptions, { metaPrompt })
       const gen = await llm.generateScript(state.input, opts, {
         onDelta: (text) => send('story:delta', { text }, opId), signal,
       })
@@ -269,15 +279,16 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       if (typeof params.scriptOverride === 'string') {
         if (!params.scriptOverride.trim()) throw new Error('빈 대본으로 씬 분리할 수 없습니다')
         await store.saveText('script.md', params.scriptOverride)
+        const inputOptions = normalizeLlmOptions(params.options || state.input?.options)
         state.input = state.input
-          ? { ...state.input, options: params.options || state.input.options }
-          : { type: 'manual', options: params.options }
+          ? { ...state.input, options: inputOptions }
+          : { type: 'manual', options: inputOptions }
         // 분리시작이 넘긴 title(자동생성 포함)을 보존 — 재오픈 hydrate가 제목을 복원하려면 필요.
         if (params.title) state.input.title = params.title
       }
       const scriptMd = await store.loadText('script.md')
       if (!scriptMd) throw new Error('script.md not found — run script step first')
-      const opts = { apiKey: getApiKey(), model: state.engine.model, ...(state.input?.options || {}) }
+      const opts = buildLlmOptions(state.input?.options)
       const { scenes, speakers } = await llm.splitScenes(scriptMd, opts, { signal })
       if (signal?.aborted) return
       const prev = JSON.parse((await store.loadText('scenes.json')) || '{"scenes":[]}').scenes
@@ -528,7 +539,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
       if (!scenesJson) throw new Error('scenes.json not found — run scenes step first')
       const scriptMd = await store.loadText('script.md')
-      const opts = { apiKey: getApiKey(), model: state.engine.model, ...(state.input?.options || {}) }
+      const opts = buildLlmOptions(state.input?.options)
       // V2: 프롬프트 컨텍스트엔 캐릭터(non-narrator·appearance 보유)만 전달 — narrator 외형 누수 방지(Codex-Low).
       const { scenes } = await llm.writePrompts(scenesJson.scenes, { scriptMd, style: params.style || null, speakers: characterSpeakers() }, opts, { signal })
       if (signal?.aborted) return
@@ -648,8 +659,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         previewing = false
       }
     },
-    async generateTitle(scriptMd) {
-      const opts = { apiKey: getApiKey(), model: state?.engine?.model, ...(state?.input?.options || {}) }
+    async generateTitle(scriptMd, options = {}) {
+      const opts = buildLlmOptions({ ...(state?.input?.options || {}), ...(options || {}) })
       return llm.generateTitle(scriptMd, opts, {})
     },
     async start(step, params = {}) {

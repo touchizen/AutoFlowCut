@@ -67,10 +67,12 @@ describe('stepMachine 대본 재설계', () => {
     const st = await m.getState()
     expect(st.input.title).toBe('분리 제목')
   })
-  it('generateTitle 액션이 title을 반환', async () => {
+  it('generateTitle 액션이 renderer options를 llm에 전달하고 title을 반환', async () => {
     const projectPath = await tmp(); const llm = mkLlm()
     const m = createStepMachine({ projectPath, llm, emit: () => {}, getApiKey: () => null })
     await m.open()
-    expect(await m.generateTitle('대본')).toEqual({ title: '자동제목' })
+    const options = { engine: 'codex', model: 'gpt-5.5', reasoningEffort: 'high', language: 'ko' }
+    expect(await m.generateTitle('대본', options)).toEqual({ title: '자동제목' })
+    expect(llm.generateTitle).toHaveBeenCalledWith('대본', expect.objectContaining(options), {})
   })
 })

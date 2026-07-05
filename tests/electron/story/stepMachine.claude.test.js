@@ -19,7 +19,7 @@ describe('stepMachine + Claude 엔진', () => {
     await machine.start('script', { input: { type: 'title', title: 'T' }, options: { genre: 'yadam', language: 'ko' } })
     expect(loadMetaPrompt).toHaveBeenCalledWith({ genre: 'yadam', wave: 'script', language: 'ko' })
     expect(llm.generateScript.mock.calls[0][1].metaPrompt).toBe('META')
-    // 모델 fallback 'gemini-2.5-pro'가 새지 않음(엔진 미지정 → undefined)
-    expect(llm.generateScript.mock.calls[0][1].model).toBeUndefined()
+    // 엔진 미지정 → Story LLM catalog 기본값(Claude Opus)으로 정규화된다.
+    expect(llm.generateScript.mock.calls[0][1]).toMatchObject({ engine: 'claude', model: 'claude-opus-4-8' })
   })
 })

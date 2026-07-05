@@ -17,6 +17,13 @@ import { useAudioPlayback } from '../../hooks/useAudioPlayback'
 import StoryStepper, { STEP_META } from './StoryStepper'
 import LiveTimeline from '../LiveTimeline'
 import { buildStoryAudioPackage } from '../../utils/storyAudioPackage'
+import {
+  DEFAULT_STORY_LLM,
+  STORY_LLM_OPTIONS,
+  findStoryLlmOptionById,
+  hydrateStoryLlmSelection,
+  normalizeStoryLlmOptions,
+} from '../../utils/storyLlmCatalog'
 import './StoryView.css'
 
 // M2a-3: audio가 파이프라인 1급 스텝 — script→scenes→audio→prompts 순서로 진행한다.
@@ -168,14 +175,46 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
   // ① 제목/옵션 폼 — R4-2 폼 hydrate: 재오픈 시 state.input.title/options에서 복원(없으면 기본값).
   const hydrateInput = pipeline.state?.input
   const hydrateOpts = hydrateInput?.options || {}
+  const llmOptions = useMemo(
+    () => (Array.isArray(pipeline.llmOptions) && pipeline.llmOptions.length ? pipeline.llmOptions : STORY_LLM_OPTIONS),
+    [pipeline.llmOptions],
+  )
+  const defaultLlmOption = findStoryLlmOptionById(pipeline.defaultLlmOption?.id, llmOptions)
+    || llmOptions[0]
+    || DEFAULT_STORY_LLM
+  const initialLlmSource = (hydrateOpts.engine || hydrateOpts.model) ? hydrateOpts : defaultLlmOption
   const [title, setTitle] = useState(hydrateInput?.title || '')
   const [genre, setGenre] = useState(hydrateOpts.genre || 'bespoke') // story-engine 기본: 장르 불명확 시 bespoke(범용)
   const [length, setLength] = useState(hydrateOpts.lengthValue || '10')          // 길이 값
   const [lengthUnit, setLengthUnit] = useState(hydrateOpts.lengthUnit || 'min') // 길이 단위
-  const [model, setModel] = useState(hydrateOpts.model || 'claude-opus-4-8')
+  const [selectedLlmId, setSelectedLlmId] = useState(() => hydrateStoryLlmSelection(initialLlmSource, llmOptions))
+  const selectedLlm = findStoryLlmOptionById(selectedLlmId, llmOptions) || defaultLlmOption
+  const [reasoningEffort, setReasoningEffort] = useState(() => (
+    selectedLlm.engine === 'codex' ? (hydrateOpts.reasoningEffort || selectedLlm.defaultReasoningEffort || '') : ''
+  ))
   const [language, setLanguage] = useState(hydrateOpts.language || 'ko')
   const [sceneGranularity, setSceneGranularity] = useState(hydrateOpts.sceneGranularity || 'scene') // 씬 분리 단위: scene(5~10초)/segment(문장별)
   const [reviewLoop, setReviewLoop] = useState(!!hydrateOpts.reviewLoop) // M3: 대본 자동 검토·수정(기본 off)
+
+  const setLlmSelection = (id, requestedReasoning = null) => {
+    const option = findStoryLlmOptionById(id, llmOptions) || defaultLlmOption
+    setSelectedLlmId(option.id)
+    setReasoningEffort(option.engine === 'codex'
+      ? (requestedReasoning || option.defaultReasoningEffort || option.reasoningEfforts?.[0] || '')
+      : '')
+  }
+
+  const currentOptions = () => normalizeStoryLlmOptions({
+    genre: genre || undefined,
+    language,
+    engine: selectedLlm.engine,
+    model: selectedLlm.model,
+    reasoningEffort,
+    lengthValue: length,
+    lengthUnit,
+    sceneGranularity,
+    reviewLoop,
+  }, llmOptions)
 
   // open()/getState() 응답은 마운트 뒤에 도착한다(useStoryAutoOpen이 story 뷰 표시와 동시에
   // open을 호출) — state.input이 늦게 오면 한 번만 폼을 hydrate한다. 이미 초기값으로 hydrate된
@@ -193,13 +232,21 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
     if (input.title) setTitle(input.title)
     const o = input.options || {}
     if (o.genre) setGenre(o.genre)
-    if (o.model) setModel(o.model)
+    if (o.engine || o.model) {
+      const id = hydrateStoryLlmSelection(o, llmOptions)
+      setLlmSelection(id, o.reasoningEffort)
+    }
     if (o.language) setLanguage(o.language)
     if (o.lengthValue) setLength(o.lengthValue)
     if (o.lengthUnit) setLengthUnit(o.lengthUnit)
     if (o.sceneGranularity) setSceneGranularity(o.sceneGranularity)
     if (o.reviewLoop != null) setReviewLoop(!!o.reviewLoop)
-  }, [state])
+  }, [state, llmOptions])
+
+  useEffect(() => {
+    if (findStoryLlmOptionById(selectedLlmId, llmOptions)) return
+    setLlmSelection(defaultLlmOption.id)
+  }, [selectedLlmId, llmOptions, defaultLlmOption.id])
 
   // 버튼 aria-label(=접근성 이름)로 실제 라벨을 노출하고, 화면에 보이는 텍스트는 스텝 이름과
   // 겹치지 않는 짧은 문구로 둔다. 스테퍼의 단계명 텍스트(예: "대본")와 버튼 라벨(예: "대본 생성")이
@@ -314,7 +361,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
       setBaseScript('') // 이어쓰기 아님 — preview 접두 초기화
       start('script', {
         input: { type: 'title', title },
-        options: { genre: genre || undefined, language, model, lengthValue: length, lengthUnit, sceneGranularity, reviewLoop },
+        options: currentOptions(),
       })
       // §1 전환 — '시작' 명시 트리거로 대본 작업 화면(editor)에 진입.
       setScriptPhase('editor')
@@ -342,14 +389,11 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
     start('script', {
       pastedScript: scriptText,
       input: { type: 'pasted', title },
-      options: { genre: genre || undefined, language, model, lengthValue: length, lengthUnit, sceneGranularity, reviewLoop },
+      options: currentOptions(),
     })
     // 임포트/붙여넣기 대본으로 시작 → editor phase (scriptText 유지).
     setScriptPhase('editor')
   }
-
-  // §2 editor 핸들러 공통 — options는 "현재 설정 반영"(R3-3): 폼의 현재 값을 그대로 싣는다.
-  const currentOptions = () => ({ genre, language, model, lengthValue: length, lengthUnit, sceneGranularity, reviewLoop })
 
   // §3 제목 자동생성 — 제목이 비고 대본이 있으면 generateTitle로 확정. 반환 title을
   // 로컬 변수로 돌려줘 이어지는 start payload에 직접 쓴다(React state 순서 비의존).
@@ -357,7 +401,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
   const resolveTitle = async () => {
     if (title.trim() || !scriptText.trim()) return title
     try {
-      const res = await pipeline.generateTitle(scriptText)
+      const res = await pipeline.generateTitle(scriptText, currentOptions())
       if (!res?.title) throw new Error(res?.error || 'empty-title')
       setTitle(res.title)
       return res.title
@@ -553,14 +597,32 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
                   <select
                     className="story-input"
                     aria-label={t('story.form.modelLabel', '모델')}
-                    value={model}
-                    onChange={(e) => setModel(e.target.value)}
+                    value={selectedLlm.id}
+                    onChange={(e) => setLlmSelection(e.target.value)}
                     disabled={isRunning}
                   >
-                    <option value="claude-opus-4-8">Opus 4.8</option>
-                    <option value="claude-sonnet-5">Sonnet 5</option>
+                    {llmOptions.map((option) => (
+                      <option key={option.id} value={option.id}>{option.label}</option>
+                    ))}
                   </select>
                 </div>
+
+                {selectedLlm.engine === 'codex' && (
+                  <div className="story-opt-row">
+                    <span className="story-opt-label">{t('story.form.reasoningDesc', '추론 수준')}</span>
+                    <select
+                      className="story-input"
+                      aria-label={t('story.form.reasoningLabel', '추론 수준')}
+                      value={reasoningEffort || selectedLlm.defaultReasoningEffort || ''}
+                      onChange={(e) => setReasoningEffort(e.target.value)}
+                      disabled={isRunning}
+                    >
+                      {(selectedLlm.reasoningEfforts || []).map((effort) => (
+                        <option key={effort} value={effort}>{effort}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
                 <div className="story-opt-row">
                   <span className="story-opt-label">{t('story.form.languageDesc', '출력 언어')}</span>

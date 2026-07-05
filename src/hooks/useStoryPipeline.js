@@ -19,6 +19,8 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
   const [segmentProgress, setSegmentProgress] = useState({})
   // M3: 대본 검토 루프 진행 — { operationId, round, of, phase:'reviewing'|'revising'|'error', error? } | null.
   const [reviewProgress, setReviewProgress] = useState(null)
+  const [llmOptions, setLlmOptions] = useState(null)
+  const [defaultLlmOption, setDefaultLlmOption] = useState(null)
   const tokenRef = useRef(null)
   const onPushRef = useRef(onPushScenes)
   onPushRef.current = onPushScenes
@@ -64,6 +66,24 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
       window.electronAPI?.storyAbort?.({ projectToken: oldToken })?.catch?.(() => {})
     }
   }, [projectPath])
+
+  useEffect(() => {
+    const api = window.electronAPI
+    if (!api?.storyListLlmOptions) return
+    let alive = true
+    api.storyListLlmOptions()
+      .then((r) => {
+        if (!alive) return
+        setLlmOptions(Array.isArray(r?.options) ? r.options : null)
+        setDefaultLlmOption(r?.defaultOption || null)
+      })
+      .catch(() => {
+        if (!alive) return
+        setLlmOptions(null)
+        setDefaultLlmOption(null)
+      })
+    return () => { alive = false }
+  }, [])
 
   useEffect(() => {
     const api = window.electronAPI
@@ -158,7 +178,8 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
 
   const abort = useCallback(() => window.electronAPI.storyAbort({ projectToken: tokenRef.current }), [])
 
-  const generateTitle = useCallback((scriptMd) => window.electronAPI.storyGenerateTitle({ projectToken: tokenRef.current, scriptMd }), [])
+  const generateTitle = useCallback((scriptMd, options = {}) =>
+    window.electronAPI.storyGenerateTitle({ projectToken: tokenRef.current, scriptMd, options }), [])
   // 슬라이스1: 세그먼트 단건 TTS 테스트(배치 진행버튼과 분리). 저장된 오디오는 story:state로 반영.
   const ttsPreview = useCallback((params) => window.electronAPI.storyTtsPreview({ projectToken: tokenRef.current, ...params }), [])
 
@@ -166,7 +187,7 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
   // key로 재마운트되는 StoryView가 setup + 폼 기본값으로 초기화되게 한다(effect가 다음 tick에
   // useState를 정리하기 전 한 프레임의 stale 값 유출 방지).
   if (justSwitched) {
-    return { state: null, scenes: [], streamingText, scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview, segmentProgress: {}, reviewProgress: null }
+    return { state: null, scenes: [], streamingText, scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview, segmentProgress: {}, reviewProgress: null, llmOptions, defaultLlmOption }
   }
-  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, segmentProgress, reviewProgress }
+  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, segmentProgress, reviewProgress, llmOptions, defaultLlmOption }
 }

@@ -11,15 +11,16 @@ function fakeIpcMain() {
   return { handle: (ch, fn) => handlers.set(ch, fn), invoke: (ch, payload) => handlers.get(ch)(null, payload), handlers }
 }
 
-let ipc, sent, dir
+let ipc, sent, dir, llm
 beforeEach(async () => {
   dir = await mkdtemp(path.join(tmpdir(), 'ipc-'))
   ipc = fakeIpcMain()
   sent = []
-  const llm = {
+  llm = {
     generateScript: vi.fn(async () => ({ scriptMd: '#' })),
     splitScenes: vi.fn(async () => ({ scenes: [], speakers: [] })),
     writePrompts: vi.fn(async (s) => ({ scenes: s })),
+    generateTitle: vi.fn(async () => ({ title: '자동제목' })),
   }
   registerStoryIPC(ipc, {
     keyStore: { getKey: () => 'k' },
@@ -29,6 +30,17 @@ beforeEach(async () => {
 })
 
 describe('story IPC', () => {
+  it('story:list-llm-options → Story LLM catalog 반환', async () => {
+    const r = await ipc.invoke('story:list-llm-options', {})
+    expect(r.defaultOption).toMatchObject({ id: 'claude:claude-opus-4-8' })
+    expect(r.options.map((o) => o.id)).toEqual([
+      'claude:claude-opus-4-8',
+      'claude:claude-sonnet-5',
+      'codex:gpt-5.5',
+      'codex:gpt-5.4',
+    ])
+  })
+
   it('story:open → projectToken 발급 + state 반환', async () => {
     const r = await ipc.invoke('story:open', { projectPath: dir })
     expect(r.projectToken).toBeTruthy()
@@ -38,6 +50,13 @@ describe('story IPC', () => {
     await ipc.invoke('story:open', { projectPath: dir })
     const r = await ipc.invoke('story:start', { projectToken: 'wrong', step: 'script', params: {} })
     expect(r.error).toBe('stale-token')
+  })
+  it('story:generate-title은 renderer options를 machine에 전달한다', async () => {
+    const { projectToken } = await ipc.invoke('story:open', { projectPath: dir })
+    const options = { engine: 'codex', model: 'gpt-5.5', reasoningEffort: 'xhigh', language: 'ko' }
+    const r = await ipc.invoke('story:generate-title', { projectToken, scriptMd: '대본', options })
+    expect(r).toEqual({ title: '자동제목' })
+    expect(llm.generateTitle).toHaveBeenCalledWith('대본', expect.objectContaining(options), {})
   })
   it('start 실행 시 story:state 이벤트가 window로 발신된다', async () => {
     const { projectToken } = await ipc.invoke('story:open', { projectPath: dir })

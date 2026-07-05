@@ -9,6 +9,7 @@ import * as llmGemini from '../api/llm/llmGemini.js'
 import { createTtsAdapter } from '../api/tts/index.js'
 import { getTypecastKey } from '../api/tts/typecastKey.js'
 import { probeDurationMs } from '../story/audioProbe.js'
+import { DEFAULT_STORY_LLM, STORY_LLM_OPTIONS } from '../api/llm/storyLlmCatalog.js'
 
 // HIGH/Codex: renderer가 보낸 projectPath를 무검증으로 받으면 상대경로/traversal 경로로도
 // 스텝 머신이 만들어져 임의 파일시스템 위치에 script.md/scenes.json/story.json을 쓸 수 있다.
@@ -67,6 +68,11 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
     return fn(payload)
   }
 
+  ipcMain.handle('story:list-llm-options', async () => ({
+    options: STORY_LLM_OPTIONS.map((o) => ({ ...o, ...(o.reasoningEfforts ? { reasoningEfforts: [...o.reasoningEfforts] } : {}) })),
+    defaultOption: { ...DEFAULT_STORY_LLM },
+  }))
+
   ipcMain.handle('story:open', (_e, { projectPath } = {}) => {
     // 동시 open 레이스 방지 — 직렬화(promise 체인): 이전 open이 끝나야 다음 open이 실행된다
     const task = openLock.then(async () => {
@@ -104,7 +110,7 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
     if (!machine) return null
     return machine.loadAudioPackage()
   })
-  ipcMain.handle('story:generate-title', guarded(({ scriptMd }) => machine.generateTitle(scriptMd)))
+  ipcMain.handle('story:generate-title', guarded(({ scriptMd, options }) => machine.generateTitle(scriptMd, options || {})))
   // 슬라이스1: 세그먼트 단건 TTS 테스트(배치와 분리, 스텝 상태 미변경).
   ipcMain.handle('story:tts-preview', guarded(({ segmentIds, speakers, sfxSources }) => machine.synthPreview({ segmentIds, speakers, sfxSources })))
 }

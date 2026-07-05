@@ -123,6 +123,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   storyGenerateTitle: (params) => ipcRenderer.invoke('story:generate-title', params),
   storyTtsPreview: (params) => ipcRenderer.invoke('story:tts-preview', params),
   storyLoadAudioPackage: (projectPath) => ipcRenderer.invoke('story:load-audio-package', { projectPath }),
+  storyListLlmOptions: () => ipcRenderer.invoke('story:list-llm-options'),
   onStoryEvent: (channel, cb) => {
     const valid = ['story:state', 'story:delta', 'story:progress', 'story:pushScenes']
     if (!valid.includes(channel)) return () => {}

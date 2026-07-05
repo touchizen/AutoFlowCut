@@ -11,11 +11,30 @@ beforeEach(() => {
     storyStart: vi.fn(async () => ({ operationId: 'op1' })),
     storyAbort: vi.fn(async () => ({})),
     storyPushAck: vi.fn(async () => ({})),
+    storyListLlmOptions: vi.fn(async () => ({
+      options: [{ id: 'codex:gpt-5.5', engine: 'codex', model: 'gpt-5.5', label: 'Codex GPT-5.5' }],
+      defaultOption: { id: 'codex:gpt-5.5', engine: 'codex', model: 'gpt-5.5', label: 'Codex GPT-5.5' },
+    })),
     onStoryEvent: vi.fn((ch, cb) => { listeners[ch] = cb; return () => delete listeners[ch] }),
   }
 })
 
 describe('useStoryPipeline', () => {
+  it('storyListLlmOptions 결과를 pipeline catalog로 노출한다', async () => {
+    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: vi.fn() }))
+    await waitFor(() => expect(result.current.llmOptions).toEqual([
+      { id: 'codex:gpt-5.5', engine: 'codex', model: 'gpt-5.5', label: 'Codex GPT-5.5' },
+    ]))
+    expect(result.current.defaultLlmOption).toEqual({ id: 'codex:gpt-5.5', engine: 'codex', model: 'gpt-5.5', label: 'Codex GPT-5.5' })
+  })
+
+  it('storyListLlmOptions 브릿지가 없어도 hook이 동작한다', async () => {
+    delete window.electronAPI.storyListLlmOptions
+    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: vi.fn() }))
+    expect(result.current.llmOptions).toBeNull()
+    expect(result.current.defaultLlmOption).toBeNull()
+  })
+
   it('open 후 state 이벤트를 반영한다', async () => {
     const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: vi.fn() }))
     await act(() => result.current.open())

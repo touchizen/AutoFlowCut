@@ -17,6 +17,8 @@ import { registerGenaiIPC } from './ipc/genai-api.js'
 import { registerStoryIPC } from './ipc/story-api.js'
 import { registerTtsIPC } from './ipc/tts-api.js'
 import * as llmClaude from './api/llm/llmClaude.js'
+import * as llmCodex from './api/llm/llmCodex.js'
+import { createStoryLlmRouter } from './api/llm/storyLlmRouter.js'
 import { loadMetaPrompt } from './api/llm/metaPrompts.js'
 import { createKeyStore } from './api/keyStore.js'
 import { createMultiKeyStore } from './api/keyStoreMulti.js'
@@ -253,11 +255,13 @@ const sfxFor = (provider) => {
   return sfxAdapters[p]
 }
 
+const storyLlm = createStoryLlmRouter({ claude: llmClaude, codex: llmCodex })
+
 // Story pipeline IPC (script/scenes/audio/prompts 스텝 머신 + preload 브릿지).
 registerStoryIPC(ipcMain, {
   keyStore: genaiKeyStore,
   getWindow: () => mainWindow,
-  llm: llmClaude,
+  llm: storyLlm,
   loadMetaPrompt,
   getActiveWorkFolder: () => activeWorkFolder,
   tts: ttsFor('typecast'), // 기본 어댑터(동시성/폴백)
