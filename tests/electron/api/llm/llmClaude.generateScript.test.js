@@ -18,6 +18,20 @@ describe('llmClaude.generateScript', () => {
     expect(scriptMd).toBe('ABC')
   })
 
+  it('reasoningEffort를 Claude SDK query options로 전달한다', async () => {
+    const queryImpl = vi.fn(async function* () {
+      yield { type: 'result', subtype: 'success', is_error: false, result: 'ABC' }
+    })
+    await generateScript({ title: 'T' }, { model: 'claude-sonnet-5', reasoningEffort: 'high' }, { queryImpl })
+    expect(queryImpl.mock.calls[0][0].options).toMatchObject({
+      model: 'claude-sonnet-5',
+      thinking: { type: 'adaptive' },
+      effort: 'high',
+      includePartialMessages: true,
+    })
+    expect(queryImpl.mock.calls[0][0].options).not.toHaveProperty('reasoningEffort')
+  })
+
   it('signal.aborted면 onDelta 방출을 멈추고 Aborted throw', async () => {
     const ac = new AbortController()
     const onDelta = vi.fn((t) => { if (t === 'A') ac.abort() })

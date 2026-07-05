@@ -14,12 +14,16 @@ async function* defaultQuery(args) {
   yield* query(args)
 }
 
+function withReasoningEffort(opts = {}, extra = {}) {
+  return { ...extra, reasoningEffort: opts.reasoningEffort }
+}
+
 export async function generateScript(input, opts = {}, { onDelta, signal, queryImpl = defaultQuery } = {}) {
   const prompt = buildScriptPrompt(input, opts)
   const { abortController, cleanup } = bridgeAbortSignal(signal)
   let full = ''
   try {
-    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, { includePartialMessages: true })
+    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { includePartialMessages: true }))
     for await (const m of queryImpl({ prompt, options })) {
       const delta = extractTextDelta(m)
       if (delta != null) {
@@ -44,7 +48,7 @@ export async function generateTitle(scriptMd, opts = {}, { signal, queryImpl = d
   const prompt = buildTitlePrompt(scriptMd, opts)
   const { abortController, cleanup } = bridgeAbortSignal(signal)
   try {
-    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController)
+    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts))
     for await (const m of queryImpl({ prompt, options })) {
       if (m.type === 'result') return { title: extractClaudeSdkResult(m).split('\n')[0].trim() }
     }
@@ -60,7 +64,7 @@ export async function continueScript(existingScript, opts = {}, { onDelta, signa
   const { abortController, cleanup } = bridgeAbortSignal(signal)
   let added = ''
   try {
-    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, { includePartialMessages: true })
+    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { includePartialMessages: true }))
     for await (const m of queryImpl({ prompt, options })) {
       if (signal?.aborted) break
       const delta = extractTextDelta(m)
@@ -112,7 +116,7 @@ async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryI
   const { abortController, cleanup } = bridgeAbortSignal(signal)
   try {
     // 1차: outputFormat(json_schema) 강제. 파싱 후 스키마 검증 통과 시 반환, 실패/retry면 폴백.
-    const opt1 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, { outputFormat: { type: 'json_schema', schema } })
+    const opt1 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { outputFormat: { type: 'json_schema', schema } }))
     let needFallback = false
     for await (const m of queryImpl({ prompt, options: opt1 })) {
       if (m.type !== 'result') continue
@@ -130,7 +134,7 @@ async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryI
     if (!needFallback) throw new Error('no result message returned')
     // 2차 폴백: outputFormat 없이 JSON-only 재요청. 파싱 결과도 검증, 실패하면 그대로 throw.
     const jsonPrompt = `${prompt}\n\n반드시 아래 JSON 스키마에 맞는 JSON만 출력하라(설명/코드펜스 금지):\n${JSON.stringify(schema)}`
-    const opt2 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController)
+    const opt2 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts))
     for await (const m of queryImpl({ prompt: jsonPrompt, options: opt2 })) {
       if (m.type === 'result') {
         const data = parseJsonLoose(extractClaudeSdkResult(m))
@@ -168,7 +172,7 @@ export async function reviseScript(scriptMd, critique, opts = {}, { signal, quer
   const prompt = buildRevisePrompt(scriptMd, critique, opts)
   const { abortController, cleanup } = bridgeAbortSignal(signal)
   try {
-    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController)
+    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts))
     for await (const m of queryImpl({ prompt, options })) {
       if (m.type === 'result') return { scriptMd: extractClaudeSdkResult(m) }
     }

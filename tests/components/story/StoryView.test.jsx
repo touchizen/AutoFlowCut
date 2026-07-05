@@ -40,7 +40,7 @@ describe('StoryView', () => {
     // 분리해서 읽는다 — input에 genre/length/language를 섞어 넣으면 LLM opts로 전달되지 않아 무시된다.
     expect(p.start).toHaveBeenCalledWith('script', {
       input: { type: 'title', title: '운수 좋은 날' },
-      options: { genre: 'yadam', language: 'ko', engine: 'claude', model: 'claude-opus-4-8', lengthValue: '5', lengthUnit: 'min', sceneGranularity: 'scene', reviewLoop: false },
+      options: { genre: 'yadam', language: 'ko', engine: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'off', lengthValue: '5', lengthUnit: 'min', sceneGranularity: 'scene', reviewLoop: false },
     })
   })
 
@@ -51,7 +51,7 @@ describe('StoryView', () => {
     fireEvent.click(screen.getByRole('button', { name: '시작' }))
     expect(p.start).toHaveBeenCalledWith('script', {
       input: { type: 'title', title: '제목만' },
-      options: { genre: 'bespoke', language: 'ko', engine: 'claude', model: 'claude-opus-4-8', lengthValue: '10', lengthUnit: 'min', sceneGranularity: 'scene', reviewLoop: false },
+      options: { genre: 'bespoke', language: 'ko', engine: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'off', lengthValue: '10', lengthUnit: 'min', sceneGranularity: 'scene', reviewLoop: false },
     })
   })
   it('script running이면 스트리밍 텍스트를 표시한다', () => {
@@ -218,7 +218,7 @@ describe('StoryView', () => {
     expect(p.start).toHaveBeenCalledWith('script', {
       pastedScript: '내가 쓴 대본',
       input: { type: 'pasted', title: '' },
-      options: { genre: 'bespoke', language: 'ko', engine: 'claude', model: 'claude-opus-4-8', lengthValue: '10', lengthUnit: 'min', sceneGranularity: 'scene', reviewLoop: false },
+      options: { genre: 'bespoke', language: 'ko', engine: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'off', lengthValue: '10', lengthUnit: 'min', sceneGranularity: 'scene', reviewLoop: false },
     })
   })
 

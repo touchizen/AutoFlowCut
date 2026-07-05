@@ -1,22 +1,29 @@
+const CLAUDE_REASONING_EFFORTS = Object.freeze(['off', 'low', 'medium', 'high', 'max'])
+const CODEX_REASONING_EFFORTS = Object.freeze(['minimal', 'low', 'medium', 'high', 'xhigh'])
+
 export const STORY_LLM_OPTIONS = Object.freeze([
   Object.freeze({
     id: 'claude:claude-opus-4-8',
     engine: 'claude',
     model: 'claude-opus-4-8',
     label: 'Claude Opus 4.8',
+    reasoningEfforts: CLAUDE_REASONING_EFFORTS,
+    defaultReasoningEffort: 'off',
   }),
   Object.freeze({
     id: 'claude:claude-sonnet-5',
     engine: 'claude',
     model: 'claude-sonnet-5',
     label: 'Claude Sonnet 5',
+    reasoningEfforts: CLAUDE_REASONING_EFFORTS,
+    defaultReasoningEffort: 'off',
   }),
   Object.freeze({
     id: 'codex:gpt-5.5',
     engine: 'codex',
     model: 'gpt-5.5',
     label: 'Codex GPT-5.5',
-    reasoningEfforts: Object.freeze(['minimal', 'low', 'medium', 'high', 'xhigh']),
+    reasoningEfforts: CODEX_REASONING_EFFORTS,
     defaultReasoningEffort: 'xhigh',
   }),
   Object.freeze({
@@ -24,7 +31,7 @@ export const STORY_LLM_OPTIONS = Object.freeze([
     engine: 'codex',
     model: 'gpt-5.4',
     label: 'Codex GPT-5.4',
-    reasoningEfforts: Object.freeze(['minimal', 'low', 'medium', 'high', 'xhigh']),
+    reasoningEfforts: CODEX_REASONING_EFFORTS,
     defaultReasoningEffort: 'high',
   }),
 ])
@@ -48,6 +55,10 @@ const STORY_LLM_RUNTIME_CONTROL_KEYS = Object.freeze([
   'config',
   'env',
   'authCheck',
+  'thinking',
+  'effort',
+  'maxThinkingTokens',
+  'max_thinking_tokens',
   'runtimeHomeFactory',
   'workingDirectoryFactory',
   'CodexImpl',
@@ -109,8 +120,8 @@ export function normalizeStoryLlmOptions(options = {}, catalog = STORY_LLM_OPTIO
   delete normalized.llmId
   delete normalized.id
 
-  if (selected.engine === 'codex') {
-    const allowed = selected.reasoningEfforts || []
+  const allowed = selected.reasoningEfforts || []
+  if (allowed.length) {
     normalized.reasoningEffort = allowed.includes(options.reasoningEffort)
       ? options.reasoningEffort
       : selected.defaultReasoningEffort

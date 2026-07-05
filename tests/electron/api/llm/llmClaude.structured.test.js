@@ -12,6 +12,19 @@ describe('llmClaude.splitScenes', () => {
     expect(out.scenes[0].sceneNo).toBe(1)
     expect(out.speakers[0].id).toBe('narrator')
   })
+  it('reasoningEffort를 structured Claude SDK query options로 전달한다', async () => {
+    const queryImpl = vi.fn(async function* () {
+      yield { type: 'result', subtype: 'success', is_error: false, structured_output: SCENES }
+    })
+    await splitScenes('SCRIPT', { model: 'claude-sonnet-5', reasoningEffort: 'max' }, { queryImpl })
+    expect(queryImpl.mock.calls[0][0].options).toMatchObject({
+      model: 'claude-sonnet-5',
+      thinking: { type: 'adaptive' },
+      effort: 'max',
+      outputFormat: expect.objectContaining({ type: 'json_schema' }),
+    })
+    expect(queryImpl.mock.calls[0][0].options).not.toHaveProperty('reasoningEffort')
+  })
   it('structured 없으면 result 텍스트(코드펜스 포함)를 파싱', async () => {
     const queryImpl = resultOf({ type: 'result', subtype: 'success', is_error: false, result: '```json\n' + JSON.stringify(SCENES) + '\n```' })
     const out = await splitScenes('SCRIPT', { language: 'ko' }, { queryImpl })

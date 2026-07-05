@@ -39,6 +39,14 @@ const PROVIDER_LABEL = { typecast: 'Typecast', gemini: 'Gemini TTS', googletts: 
 const SFX_SOURCES = ['elevenlabs', 'library']
 const SFX_SOURCE_LABEL = { elevenlabs: 'ElevenLabs', library: 'Library' }
 
+function reasoningEffortFor(option, requestedReasoning = null) {
+  const allowed = option?.reasoningEfforts || []
+  if (!allowed.length) return ''
+  return allowed.includes(requestedReasoning)
+    ? requestedReasoning
+    : (option.defaultReasoningEffort || allowed[0] || '')
+}
+
 /** 스텝 진행 중 표시 — (선택) 옵션·기준 요약 + 초시계 + 라벨 + 경과 시간(updatedAt 기준, 1초 갱신). */
 function StoryRunning({ label, startedAt, detail }) {
   return (
@@ -189,9 +197,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
   const [lengthUnit, setLengthUnit] = useState(hydrateOpts.lengthUnit || 'min') // 길이 단위
   const [selectedLlmId, setSelectedLlmId] = useState(() => hydrateStoryLlmSelection(initialLlmSource, llmOptions))
   const selectedLlm = findStoryLlmOptionById(selectedLlmId, llmOptions) || defaultLlmOption
-  const [reasoningEffort, setReasoningEffort] = useState(() => (
-    selectedLlm.engine === 'codex' ? (hydrateOpts.reasoningEffort || selectedLlm.defaultReasoningEffort || '') : ''
-  ))
+  const [reasoningEffort, setReasoningEffort] = useState(() => reasoningEffortFor(selectedLlm, hydrateOpts.reasoningEffort))
   const [language, setLanguage] = useState(hydrateOpts.language || 'ko')
   const [sceneGranularity, setSceneGranularity] = useState(hydrateOpts.sceneGranularity || 'scene') // 씬 분리 단위: scene(5~10초)/segment(문장별)
   const [reviewLoop, setReviewLoop] = useState(!!hydrateOpts.reviewLoop) // M3: 대본 자동 검토·수정(기본 off)
@@ -199,9 +205,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
   const setLlmSelection = (id, requestedReasoning = null) => {
     const option = findStoryLlmOptionById(id, llmOptions) || defaultLlmOption
     setSelectedLlmId(option.id)
-    setReasoningEffort(option.engine === 'codex'
-      ? (requestedReasoning || option.defaultReasoningEffort || option.reasoningEfforts?.[0] || '')
-      : '')
+    setReasoningEffort(reasoningEffortFor(option, requestedReasoning))
   }
 
   const currentOptions = () => normalizeStoryLlmOptions({
@@ -592,37 +596,38 @@ export default function StoryView({ pipeline, voices = [], onClose = null }) {
                   </select>
                 </div>
 
-                <div className="story-opt-row">
+                <div className="story-opt-row story-llm-row">
                   <span className="story-opt-label">{t('story.form.modelDesc', '생성 AI')}</span>
-                  <select
-                    className="story-input"
-                    aria-label={t('story.form.modelLabel', '모델')}
-                    value={selectedLlm.id}
-                    onChange={(e) => setLlmSelection(e.target.value)}
-                    disabled={isRunning}
-                  >
-                    {llmOptions.map((option) => (
-                      <option key={option.id} value={option.id}>{option.label}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {selectedLlm.engine === 'codex' && (
-                  <div className="story-opt-row">
-                    <span className="story-opt-label">{t('story.form.reasoningDesc', '추론 수준')}</span>
+                  <div className="story-llm-controls">
                     <select
-                      className="story-input"
-                      aria-label={t('story.form.reasoningLabel', '추론 수준')}
-                      value={reasoningEffort || selectedLlm.defaultReasoningEffort || ''}
-                      onChange={(e) => setReasoningEffort(e.target.value)}
+                      className="story-input story-model-select"
+                      aria-label={t('story.form.modelLabel', '모델')}
+                      value={selectedLlm.id}
+                      onChange={(e) => setLlmSelection(e.target.value)}
                       disabled={isRunning}
                     >
-                      {(selectedLlm.reasoningEfforts || []).map((effort) => (
-                        <option key={effort} value={effort}>{effort}</option>
+                      {llmOptions.map((option) => (
+                        <option key={option.id} value={option.id}>{option.label}</option>
                       ))}
                     </select>
+                    {!!(selectedLlm.reasoningEfforts || []).length && (
+                      <label className="story-llm-reasoning">
+                        <span className="story-opt-label story-llm-inline-label">{t('story.form.reasoningDesc', '추론 수준')}</span>
+                        <select
+                          className="story-input story-reasoning-select"
+                          aria-label={t('story.form.reasoningLabel', '추론 수준')}
+                          value={reasoningEffort || selectedLlm.defaultReasoningEffort || ''}
+                          onChange={(e) => setReasoningEffort(e.target.value)}
+                          disabled={isRunning}
+                        >
+                          {(selectedLlm.reasoningEfforts || []).map((effort) => (
+                            <option key={effort} value={effort}>{effort}</option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
                   </div>
-                )}
+                </div>
 
                 <div className="story-opt-row">
                   <span className="story-opt-label">{t('story.form.languageDesc', '출력 언어')}</span>

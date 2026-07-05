@@ -15,6 +15,29 @@ describe('buildClaudeSdkOptions', () => {
   it('model 없으면 model 키를 넣지 않는다', () => {
     expect('model' in buildClaudeSdkOptions()).toBe(false)
   })
+  it('reasoningEffort=off는 기존처럼 thinking disabled만 사용한다', () => {
+    const o = buildClaudeSdkOptions('claude-opus-4-8', undefined, { reasoningEffort: 'off' })
+    expect(o).toMatchObject({
+      model: 'claude-opus-4-8',
+      thinking: { type: 'disabled' },
+    })
+    expect(o).not.toHaveProperty('effort')
+    expect(o).not.toHaveProperty('reasoningEffort')
+  })
+  it('Claude reasoning effort는 adaptive thinking과 SDK effort로 변환한다', () => {
+    const o = buildClaudeSdkOptions('claude-opus-4-8', undefined, { reasoningEffort: 'high' })
+    expect(o).toMatchObject({
+      model: 'claude-opus-4-8',
+      thinking: { type: 'adaptive' },
+      effort: 'high',
+    })
+    expect(o).not.toHaveProperty('reasoningEffort')
+  })
+  it('알 수 없는 Claude reasoning effort는 off처럼 처리한다', () => {
+    const o = buildClaudeSdkOptions('claude-opus-4-8', undefined, { reasoningEffort: 'xhigh' })
+    expect(o.thinking).toEqual({ type: 'disabled' })
+    expect(o).not.toHaveProperty('effort')
+  })
 })
 
 describe('extractClaudeSdkResult', () => {

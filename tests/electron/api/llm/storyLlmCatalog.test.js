@@ -24,6 +24,8 @@ describe('storyLlmCatalog', () => {
       id: 'claude:claude-opus-4-8',
       engine: 'claude',
       model: 'claude-opus-4-8',
+      reasoningEfforts: ['off', 'low', 'medium', 'high', 'max'],
+      defaultReasoningEffort: 'off',
     })
   })
 
@@ -78,6 +80,10 @@ describe('storyLlmCatalog', () => {
       config: { mcp_servers: { local: {} } },
       env: { OPENAI_API_KEY: 'x' },
       apiKey: 'x',
+      thinking: { type: 'enabled', budgetTokens: 20000 },
+      effort: 'max',
+      maxThinkingTokens: 20000,
+      max_thinking_tokens: 20000,
     })).toEqual({
       engine: 'codex',
       model: 'gpt-5.5',
@@ -86,11 +92,34 @@ describe('storyLlmCatalog', () => {
     })
   })
 
-  it('normalizes Claude options and strips reasoning effort', () => {
-    expect(normalizeStoryLlmOptions({ model: 'claude-sonnet-5', reasoningEffort: 'xhigh', genre: 'yadam' })).toEqual({
+  it('normalizes Claude options with default/validated reasoning effort', () => {
+    expect(normalizeStoryLlmOptions({ model: 'claude-sonnet-5', reasoningEffort: 'high', genre: 'yadam' })).toEqual({
       engine: 'claude',
       model: 'claude-sonnet-5',
+      reasoningEffort: 'high',
       genre: 'yadam',
+    })
+    expect(normalizeStoryLlmOptions({ model: 'claude-sonnet-5', reasoningEffort: 'xhigh', genre: 'yadam' })).toMatchObject({
+      engine: 'claude',
+      model: 'claude-sonnet-5',
+      reasoningEffort: 'off',
+    })
+    expect(normalizeStoryLlmOptions({ model: 'claude-opus-4-8', genre: 'yadam' })).toMatchObject({
+      engine: 'claude',
+      model: 'claude-opus-4-8',
+      reasoningEffort: 'off',
+    })
+    expect(normalizeStoryLlmOptions({
+      model: 'claude-sonnet-5',
+      reasoningEffort: 'low',
+      thinking: { type: 'enabled', budgetTokens: 20000 },
+      effort: 'max',
+      maxThinkingTokens: 20000,
+      max_thinking_tokens: 20000,
+    })).toEqual({
+      engine: 'claude',
+      model: 'claude-sonnet-5',
+      reasoningEffort: 'low',
     })
   })
 
