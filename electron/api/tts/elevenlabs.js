@@ -69,7 +69,7 @@ export function createElevenLabsAdapter({ getKey, fetch }) {
     capabilities() {
       return { supportsEmotion: false, maxCharsPerRequest: 5000, outputFormats: ['mp3'], supportsPreview: true, maxConcurrency: 2 }
     },
-    async listVoices({ query = '', includeShared = false, page = 0, limit = 100 } = {}) {
+    async listVoices({ query = '', includeShared = false, page = 0, limit = 100, maxSharedPages = 10 } = {}) {
       const key = getKey()
       const voices = []
       const headers = key ? { 'xi-api-key': key } : {}
@@ -87,18 +87,23 @@ export function createElevenLabsAdapter({ getKey, fetch }) {
       }
 
       if (includeShared || query) {
-        try {
-          const url = new URL(SHARED_VOICES_ENDPOINT)
-          url.searchParams.set('page_size', String(Math.max(1, Math.min(100, Number(limit) || 100))))
-          url.searchParams.set('page', String(Math.max(0, Number(page) || 0)))
-          if (query) url.searchParams.set('search', query)
-          const res = await fetch(url.toString(), { headers })
-          if (res?.ok) {
+        const startPage = Math.max(0, Number(page) || 0)
+        const pageSize = String(Math.max(1, Math.min(100, Number(limit) || 100)))
+        const pagesToFetch = Math.max(1, Math.min(20, Number(maxSharedPages) || 10))
+        for (let offset = 0; offset < pagesToFetch; offset += 1) {
+          try {
+            const url = new URL(SHARED_VOICES_ENDPOINT)
+            url.searchParams.set('page_size', pageSize)
+            url.searchParams.set('page', String(startPage + offset))
+            if (query) url.searchParams.set('search', query)
+            const res = await fetch(url.toString(), { headers })
+            if (!res?.ok) break
             const json = await res.json()
             voices.push(...(json?.voices || []).map(normalizeSharedVoice))
+            if (!json?.has_more) break
+          } catch {
+            break
           }
-        } catch {
-          // Seed fallback below keeps the picker usable if shared search is unavailable.
         }
       }
 

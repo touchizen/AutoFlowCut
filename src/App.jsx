@@ -559,7 +559,12 @@ function App() {
     let alive = true
     Promise.all(
       TTS_PROVIDERS.map((p) =>
-        Promise.resolve(window.electronAPI?.ttsListVoices?.({ provider: p }))
+        Promise.resolve(window.electronAPI?.ttsListVoices?.({
+          provider: p,
+          includeShared: p === 'elevenlabs',
+          limit: 100,
+          maxSharedPages: p === 'elevenlabs' ? 10 : 1,
+        }))
           .then((vs) => (Array.isArray(vs) ? vs.map((v) => ({ ...v, provider: p })) : []))
           .catch(() => []),
       ),
@@ -575,6 +580,7 @@ function App() {
         query: q,
         includeShared: provider === 'elevenlabs',
         limit: 100,
+        maxSharedPages: provider === 'elevenlabs' ? 5 : 1,
       })
       if (Array.isArray(vs)) mergeTtsVoices(vs.map((v) => ({ ...v, provider })))
     } catch {

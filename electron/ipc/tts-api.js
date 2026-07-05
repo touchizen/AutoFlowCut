@@ -40,6 +40,7 @@ export function registerTtsIPC(ipcMain, { keyStore, safeStorage, listVoices }) {
       includeShared: p.includeShared,
       page: p.page,
       limit: p.limit,
+      maxSharedPages: p.maxSharedPages,
     })
   })
 }

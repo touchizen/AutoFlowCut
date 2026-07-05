@@ -65,6 +65,7 @@ describe('tts/keys IPC (M2a-3b)', () => {
       includeShared: true,
       page: 1,
       limit: 50,
+      maxSharedPages: undefined,
     })
   })
 

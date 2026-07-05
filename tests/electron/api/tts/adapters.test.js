@@ -91,6 +91,27 @@ describe('ElevenLabs 어댑터', () => {
       expect.objectContaining({ id: 'shared_liam', name: 'Liam Shared', language: 'en', previewUrl: 'https://example.com/liam.mp3', source: 'shared', traits: expect.arrayContaining(['male', 'young', 'american', 'energetic', 'social_media']) }),
     ]))
   })
+  it('listVoices: includeShared=true면 shared voices를 여러 페이지 가져온다', async () => {
+    const sharedPages = {
+      0: { voices: [{ voice_id: 'shared_0', name: 'Shared 0', language: 'en' }], has_more: true },
+      1: { voices: [{ voice_id: 'shared_1', name: 'Shared 1', language: 'en' }], has_more: true },
+      2: { voices: [{ voice_id: 'shared_2', name: 'Shared 2', language: 'en' }], has_more: false },
+    }
+    const calls = []
+    const fetch = async (url, opts = {}) => {
+      calls.push({ url, opts })
+      if (String(url).includes('/v2/voices')) return { ok: true, json: async () => ({ voices: [] }) }
+      const page = new URL(String(url)).searchParams.get('page')
+      return { ok: true, json: async () => sharedPages[page] }
+    }
+    const voices = await createElevenLabsAdapter({ getKey: () => 'el-key', fetch }).listVoices({ includeShared: true, limit: 2, maxSharedPages: 3 })
+    expect(calls.filter((c) => String(c.url).includes('/v1/shared-voices'))).toHaveLength(3)
+    expect(voices).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'shared_0' }),
+      expect.objectContaining({ id: 'shared_1' }),
+      expect.objectContaining({ id: 'shared_2' }),
+    ]))
+  })
 })
 
 describe('Google Cloud TTS 어댑터', () => {
