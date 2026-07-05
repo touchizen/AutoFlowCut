@@ -3,7 +3,7 @@
  * 순서 보존, 세그먼트 안 쪼갬. 누적 minMs 도달 시 마감. 다음 추가가 maxMs 초과면 먼저 마감.
  * 단일 세그먼트가 maxMs 초과면 단독 씬.
  *
- * MED7: durationMs 합(gap 150ms 제외)이 아니라 startMs 기반 실제 span(gap 포함 실제
+ * MED7: durationMs 합(명시적 gap 제외)이 아니라 startMs 기반 실제 span(gap 포함 실제
  * wall-clock 구간)으로 min/max 판정한다.
  *
  * Codex-2 LOW: 화자 변경 시 "이미 minMs 도달했으면 추가 전에 마감" 분기는 도달 불가능한 죽은

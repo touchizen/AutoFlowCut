@@ -11,7 +11,6 @@ import { createPortal } from 'react-dom'
 import LiveGenerationGrid from './LiveGenerationGrid'
 import PreviewPanel from './AudioTimeline/PreviewPanel'
 import { buildGenerationItems, sortGenerationItems } from '../utils/generationItems'
-import { resolveAudioSrtEntries } from '../utils/srtTrack'
 
 export default function PreviewMonitor({
   monitorMode,
@@ -36,8 +35,7 @@ export default function PreviewMonitor({
   videoScenes,
   framePairs,
   settings,
-  audioPackage,
-  srtTrack,
+  srtEntries,
   onSelectVideo,
   onSelectScene,
   t,
@@ -98,7 +96,7 @@ export default function PreviewMonitor({
         <PreviewPanel
           playheadMs={monitorMs}
           scenes={scenes}
-          srtEntries={resolveAudioSrtEntries(audioPackage, srtTrack, scenes)}
+          srtEntries={srtEntries}
           height="100%"
           isPlaying={monitorPlaying}
           hiddenRoles={monitorHiddenRoles}

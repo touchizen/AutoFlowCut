@@ -21,8 +21,8 @@ export function buildFallbackTimeline(scenes, language) {
   })
 }
 
-/** 세그먼트 순서대로 gap 포함 누적 startMs 부여 (원본 불변). 스펙 §5-3. */
-export function buildSegmentTimeline(segments, { gapMs = 150 } = {}) {
+/** 세그먼트 순서대로 누적 startMs 부여 (원본 불변). gapMs를 주면 클립 사이에 명시적 빈 구간을 둔다. */
+export function buildSegmentTimeline(segments, { gapMs = 0 } = {}) {
   let cursor = 0
   return segments.map((s) => {
     const startMs = cursor

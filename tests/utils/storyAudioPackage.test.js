@@ -5,7 +5,7 @@
  *   { character, files: [{ path, filename, timecodeMs, durationMs }] }
  */
 import { describe, it, expect } from 'vitest'
-import { buildStoryAudioPackage, withStoryAudio } from '../../src/utils/storyAudioPackage'
+import { buildStoryAudioPackage, buildStorySrtEntries, resolveStorySrtEntries, withStoryAudio } from '../../src/utils/storyAudioPackage'
 
 const seg = (id, speaker, startMs, durationMs, audioPath, extra = {}) => ({
   id, speaker, startMs, durationMs, audioPath, type: 'narration', ...extra,
@@ -114,6 +114,79 @@ describe('buildStoryAudioPackage', () => {
   it('M2b: sfx 없으면 pkg.sfx 는 빈 배열', () => {
     const scenes = [{ segments: [seg('s1', 'narrator', 0, 1000, '/a/s1.mp3')] }]
     expect(buildStoryAudioPackage(scenes).sfx).toEqual([])
+  })
+})
+
+describe('buildStorySrtEntries', () => {
+  it('narration 세그먼트의 startMs/durationMs로 자막 entries를 만든다', () => {
+    const scenes = [{ segments: [
+      seg('s1', 'narrator', 0, 2000, '/a/s1.mp3', { text: '첫 문장' }),
+      seg('s2', 'narrator', 2000, 800, '/a/s2.mp3', { text: '둘째 문장' }),
+    ] }]
+    expect(buildStorySrtEntries(scenes)).toEqual([
+      { startMs: 0, endMs: 2000, text: '첫 문장' },
+      { startMs: 2000, endMs: 2800, text: '둘째 문장' },
+    ])
+  })
+
+  it('sfx/audioPath 없음/빈 텍스트는 제외한다', () => {
+    const scenes = [{ segments: [
+      seg('s1', 'narrator', 0, 1000, '/a/s1.mp3', { text: 'A' }),
+      seg('s2', 'narrator', 1000, 500, null, { text: 'B' }),
+      seg('s3', 'narrator', 1500, 500, '/a/s3.mp3', { text: '   ' }),
+      { id: 's4', type: 'sfx', startMs: 2000, durationMs: 300, audioPath: '/a/s4.mp3', text: 'boom' },
+    ] }]
+    expect(buildStorySrtEntries(scenes)).toEqual([{ startMs: 0, endMs: 1000, text: 'A' }])
+  })
+})
+
+describe('resolveStorySrtEntries', () => {
+  it('fallback srtTrack 이 같은 story 라인이면 stale timing보다 story timing을 우선한다', () => {
+    const scenes = [{ segments: [
+      seg('s1', 'narrator', 0, 1000, '/a/s1.mp3', { text: 'A' }),
+      seg('s2', 'narrator', 1000, 700, '/a/s2.mp3', { text: 'B' }),
+    ] }]
+    const staleFallback = [{ startMs: 0, endMs: 1000, text: 'old A' }, { startMs: 1150, endMs: 1850, text: 'old B' }]
+    const staleStoryTrack = [
+      { id: 'sub_s1', startTime: 0, endTime: 1, text: 'A' },
+      { id: 'sub_s2', startTime: 1.15, endTime: 1.85, text: 'B' },
+    ]
+    expect(resolveStorySrtEntries(scenes, staleFallback, { srtTrack: staleStoryTrack })).toEqual([
+      { startMs: 0, endMs: 1000, text: 'A' },
+      { startMs: 1000, endMs: 1700, text: 'B' },
+    ])
+  })
+
+  it('사용자 srtTrack 이면 story 세그먼트가 있어도 fallback을 보존한다', () => {
+    const scenes = [{ segments: [
+      seg('s1', 'narrator', 0, 1000, '/a/s1.mp3', { text: 'A' }),
+    ] }]
+    const userFallback = [{ startMs: 0, endMs: 900, text: '사용자 자막' }]
+    const userTrack = [{ id: 'sub_1', startTime: 0, endTime: 0.9, text: '사용자 자막' }]
+    expect(resolveStorySrtEntries(scenes, userFallback, { srtTrack: userTrack })).toBe(userFallback)
+  })
+
+  it('story-generated srtTrack 이 일부 라인만 남은 경우 fallback을 보존한다', () => {
+    const scenes = [{ segments: [
+      seg('s1', 'narrator', 0, 1000, '/a/s1.mp3', { text: 'A' }),
+      seg('s2', 'narrator', 1000, 700, '/a/s2.mp3', { text: 'B' }),
+    ] }]
+    const partialFallback = [{ startMs: 0, endMs: 1000, text: 'A' }]
+    const partialStoryTrack = [{ id: 'sub_s1', startTime: 0, endTime: 1, text: 'A' }]
+    expect(resolveStorySrtEntries(scenes, partialFallback, { srtTrack: partialStoryTrack })).toBe(partialFallback)
+  })
+
+  it('audio package SRT 가 있으면 story 세그먼트가 있어도 fallback을 보존한다', () => {
+    const scenes = [{ segments: [
+      seg('s1', 'narrator', 0, 1000, '/a/s1.mp3', { text: 'A' }),
+    ] }]
+    const audioPackageFallback = [{ startMs: 0, endMs: 900, text: 'audio folder srt' }]
+    expect(resolveStorySrtEntries(scenes, audioPackageFallback, { audioPackageHasSrt: true })).toBe(audioPackageFallback)
+  })
+
+  it('story 세그먼트 자막이 없으면 fallback을 그대로 쓴다', () => {
+    const fallback = [{ startMs: 0, endMs: 1000, text: 'fallback' }]
+    expect(resolveStorySrtEntries([], fallback)).toBe(fallback)
   })
 })
 

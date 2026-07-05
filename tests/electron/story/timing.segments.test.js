@@ -8,7 +8,13 @@ const segs = [
 ]
 
 describe('buildSegmentTimeline', () => {
-  it('gap 포함 누적 startMs (0, 2150, 3100)', () => {
+  it('기본은 gap 없이 누적 startMs (0, 2000, 2800)', () => {
+    const out = buildSegmentTimeline(segs)
+    expect(out.map((s) => s.startMs)).toEqual([0, 2000, 2800])
+    expect(segs[0].startMs).toBeUndefined() // 원본 불변
+  })
+
+  it('gapMs를 주면 gap 포함 누적 startMs (0, 2150, 3100)', () => {
     const out = buildSegmentTimeline(segs, { gapMs: 150 })
     expect(out.map((s) => s.startMs)).toEqual([0, 2150, 3100])
     expect(segs[0].startMs).toBeUndefined() // 원본 불변

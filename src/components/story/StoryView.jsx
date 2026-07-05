@@ -16,7 +16,7 @@ import { toast } from '../Toast'
 import { useAudioPlayback } from '../../hooks/useAudioPlayback'
 import StoryStepper, { STEP_META } from './StoryStepper'
 import LiveTimeline from '../LiveTimeline'
-import { buildStoryAudioPackage } from '../../utils/storyAudioPackage'
+import { buildStoryAudioPackage, buildStorySrtEntries } from '../../utils/storyAudioPackage'
 import {
   DEFAULT_STORY_LLM,
   STORY_LLM_OPTIONS,
@@ -549,6 +549,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onVoi
   // audio 타임라인 프리뷰 — story 세그먼트를 화자별 voices audioPackage로 변환해 기존 AudioTimeline
   // (LiveTimeline)에 넘긴다(디스크 재배치 없이 메모리 변환). audio done일 때만 렌더.
   const storyAudioPkg = useMemo(() => buildStoryAudioPackage(scenes), [scenes])
+  const storySrtEntries = useMemo(() => buildStorySrtEntries(scenes), [scenes])
   // Codex-Low: sfx만 있는 story(narration 없음)도 타임라인에 나오도록 sfx도 포함해 판정.
   const hasStoryAudio = storyAudioPkg.voices.some((v) => v.files.length > 0)
     || storyAudioPkg.sfx.some((s) => s.files.length > 0)
@@ -1110,7 +1111,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onVoi
                 )}
                 {steps.audio?.status === 'done' && hasStoryAudio && (
                   <div className="story-audio-timeline">
-                    <LiveTimeline audioPackage={storyAudioPkg} scenes={[]} srtEntries={null} />
+                    <LiveTimeline audioPackage={storyAudioPkg} scenes={[]} srtEntries={storySrtEntries} />
                   </div>
                 )}
                 <table className="story-readonly-table">

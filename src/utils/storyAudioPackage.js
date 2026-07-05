@@ -20,10 +20,14 @@ const fileOf = (s) => ({
   durationMs: s.durationMs || 0,
 })
 
-export function buildStoryAudioPackage(scenes) {
-  const allSegs = (Array.isArray(scenes) ? scenes : [])
+function audioSegments(scenes) {
+  return (Array.isArray(scenes) ? scenes : [])
     .flatMap((sc) => sc?.segments || [])
     .filter((s) => s && s.audioPath)
+}
+
+export function buildStoryAudioPackage(scenes) {
+  const allSegs = audioSegments(scenes)
 
   // 화자별 그룹 (등장 순서 보존) — narration만
   const byChar = new Map()
@@ -47,6 +51,49 @@ export function buildStoryAudioPackage(scenes) {
   return { voices, sfx }
 }
 
+export function buildStorySrtEntries(scenes) {
+  return audioSegments(scenes)
+    .filter((s) => (s.type || 'narration') === 'narration')
+    .filter((s) => typeof s.text === 'string' && s.text.trim())
+    .filter((s) => Number.isFinite(s.startMs) && Number.isFinite(s.durationMs) && s.durationMs > 0)
+    .map((s) => ({
+      startMs: s.startMs,
+      endMs: s.startMs + s.durationMs,
+      text: s.text,
+    }))
+    .sort((a, b) => a.startMs - b.startMs)
+}
+
+function storyNarrationSegments(scenes) {
+  return audioSegments(scenes)
+    .filter((s) => (s.type || 'narration') === 'narration')
+    .filter((s) => typeof s.text === 'string' && s.text.trim())
+}
+
+function isStoryGeneratedSrtTrack(storyScenes, srtTrack) {
+  if (!Array.isArray(srtTrack) || srtTrack.length === 0) return false
+  const storySegs = storyNarrationSegments(storyScenes)
+  if (storySegs.length === 0) return false
+  if (srtTrack.length !== storySegs.length) return false
+  const storyTextByLineId = new Map(storySegs.map((s) => [`sub_${s.id}`, String(s.text)]))
+  let matched = 0
+  for (const line of srtTrack) {
+    if (!storyTextByLineId.has(line?.id)) continue
+    if (String(line.text ?? '') !== storyTextByLineId.get(line.id)) return false
+    matched += 1
+  }
+  return matched > 0 && matched === srtTrack.length
+}
+
+export function resolveStorySrtEntries(storyScenes, fallbackEntries, options = {}) {
+  const storyEntries = buildStorySrtEntries(storyScenes)
+  if (storyEntries.length === 0) return fallbackEntries
+  if (options.audioPackageHasSrt) return fallbackEntries
+  if (!fallbackEntries?.length) return storyEntries
+  if (isStoryGeneratedSrtTrack(storyScenes, options.srtTrack)) return storyEntries
+  return fallbackEntries
+}
+
 /**
  * 메인 audioPackage에 story 오디오(화자별 voices)를 합류시킨다 — 일반 생성 화면의 프리뷰
  * (LiveTimeline)들이 메인 audioPackage만 보므로, story 프로젝트면 여기서 story voices를 얹어
@@ -64,4 +111,4 @@ export function withStoryAudio(audioPackage, scenes) {
   }
 }
 
-export default { buildStoryAudioPackage, withStoryAudio }
+export default { buildStoryAudioPackage, buildStorySrtEntries, resolveStorySrtEntries, withStoryAudio }

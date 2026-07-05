@@ -655,7 +655,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         return { ...s, durationMs: r?.durationMs || 0, audioPath: r?.audioPath || null, status: r ? 'done' : s.status, voiceKey: r ? (r.voiceKey ?? s.voiceKey) : s.voiceKey, sfxKey: r ? (r.sfxKey ?? s.sfxKey) : s.sfxKey, sourceMode: r ? (r.sourceMode ?? s.sourceMode) : s.sourceMode }
       })
       // 3) 타임라인(startMs) + 4) SRT
-      const timed = buildSegmentTimeline(measured, { gapMs: 150 })
+      const timed = buildSegmentTimeline(measured)
       const srt = buildSrt(timed)
       // 5) 재그룹 + 6) storyId 발급 (이전 확정 씬은 scenes.json에 segmentIds 있으면 사용)
       const prevScenes = (scenesJson.scenes || []).filter((s) => s.storyId).map((s) => ({ storyId: s.storyId, segmentIds: (s.segments || []).map((g) => g.id) }))

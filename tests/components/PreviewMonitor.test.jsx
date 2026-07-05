@@ -4,6 +4,17 @@
  */
 import { describe, it, expect, vi } from 'vitest'
 import { render, fireEvent } from '@testing-library/react'
+
+vi.mock('../../src/components/AudioTimeline/PreviewPanel', () => ({
+  default: ({ srtEntries }) => (
+    <div
+      data-testid="preview-panel"
+      data-srt-count={String(srtEntries?.length ?? 0)}
+      data-first-srt-text={String(srtEntries?.[0]?.text ?? '')}
+    />
+  ),
+}))
+
 import PreviewMonitor from '../../src/components/PreviewMonitor'
 
 const baseProps = {
@@ -82,5 +93,16 @@ describe('PreviewMonitor — 마스터 볼륨/뮤트 컨트롤', () => {
     expect(transport.querySelector('input.content-monitor-volume')).toBeTruthy()
     // 상단 도구모음엔 뮤트/볼륨이 없어야 한다(중복 방지).
     expect(document.querySelector('.content-monitor-tools .content-monitor-mute')).toBeNull()
+  })
+
+  it('상단 프리뷰는 전달받은 effective srtEntries 를 그대로 쓴다', () => {
+    const { getByTestId } = renderMon({
+      srtEntries: [{ startMs: 0, endMs: 1000, text: 'story-derived' }],
+      audioPackage: { srtEntries: [{ startMs: 0, endMs: 1000, text: 'audio-package' }] },
+      srtTrack: [{ id: 'sub_1', startTime: 0, endTime: 1, text: 'project-track' }],
+    })
+    const panel = getByTestId('preview-panel')
+    expect(panel.getAttribute('data-srt-count')).toBe('1')
+    expect(panel.getAttribute('data-first-srt-text')).toBe('story-derived')
   })
 })

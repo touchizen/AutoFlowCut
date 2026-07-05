@@ -80,7 +80,7 @@ describe('audio 스텝', () => {
     const manifest = JSON.parse(await readFile(path.join(projectPath, 'story', 'audio', 'manifest.json'), 'utf-8'))
     expect(manifest.pushRevision).toBe(null)
     expect(manifest.segments[0].startMs).toBe(0)
-    expect(manifest.segments[1].startMs).toBe(2150) // 2000 + 150 gap
+    expect(manifest.segments[1].startMs).toBe(2000) // no silent gap between narration clips
   })
 
   // HIGH4: 세그먼트 파일 확장자는 어댑터가 반환한 format을 따라야 한다 — .wav 하드코딩 금지

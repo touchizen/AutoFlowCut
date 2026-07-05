@@ -8,7 +8,12 @@ import { render, screen, fireEvent } from '@testing-library/react'
 
 vi.mock('../../../src/components/LiveTimeline', () => ({
   default: (props) => (
-    <div data-testid="story-live-timeline" data-voices={String(props.audioPackage?.voices?.length ?? 0)} />
+    <div
+      data-testid="story-live-timeline"
+      data-voices={String(props.audioPackage?.voices?.length ?? 0)}
+      data-srt={String(props.srtEntries?.length ?? 0)}
+      data-second-srt-start={String(props.srtEntries?.[1]?.startMs ?? '')}
+    />
   ),
 }))
 
@@ -38,6 +43,20 @@ describe('StoryView audio 타임라인', () => {
     expect(tl).toBeTruthy()
     // narrator 1명 → voice 트랙 1개
     expect(tl.getAttribute('data-voices')).toBe('1')
+  })
+
+  it('오디오 탭 타임라인에 story 세그먼트 기준 자막 위치를 넘긴다', () => {
+    const p = pipeline({
+      scenes: [{ storyId: 'a', segments: [
+        { ...doneSeg('s1', 'narrator'), text: 'A', startMs: 0, durationMs: 1000 },
+        { ...doneSeg('s2', 'narrator'), text: 'B', startMs: 1000, durationMs: 700 },
+      ] }],
+    })
+    render(<StoryView pipeline={p} voices={[]} />)
+    fireEvent.click(screen.getByRole('button', { name: '오디오' }))
+    const tl = screen.getByTestId('story-live-timeline')
+    expect(tl.getAttribute('data-srt')).toBe('2')
+    expect(tl.getAttribute('data-second-srt-start')).toBe('1000')
   })
 
   it('audio 미완료(running)면 타임라인 미렌더', () => {

@@ -89,7 +89,7 @@ import LiveTimeline from './components/LiveTimeline'
 import { useMonitor } from './hooks/useMonitor'
 import PreviewMonitor from './components/PreviewMonitor'
 import { getSceneTimeRangeMs } from './components/AudioTimeline/useAudioTimeline'
-import { withStoryAudio } from './utils/storyAudioPackage'
+import { resolveStorySrtEntries, withStoryAudio } from './utils/storyAudioPackage'
 import { hasImageData } from './utils/formatters'
 import { SubscriptionBanner } from './components/SubscriptionBanner'
 import StylePicker from './components/StylePicker'
@@ -539,6 +539,17 @@ function App() {
   const effectiveAudioPackage = useMemo(
     () => withStoryAudio(audioPackage, storyPipeline.scenes || []),
     [audioPackage, storyPipeline.scenes]
+  )
+  const effectiveSrtEntries = useMemo(
+    () => resolveStorySrtEntries(
+      storyPipeline.scenes || [],
+      resolveAudioSrtEntries(audioPackage, scenesHook.srtTrack, scenes),
+      {
+        srtTrack: scenesHook.srtTrack,
+        audioPackageHasSrt: !!audioPackage?.srtEntries?.length,
+      },
+    ),
+    [storyPipeline.scenes, audioPackage, scenesHook.srtTrack, scenes],
   )
 
   // Story 오디오 화자 매핑용 성우 목록 — story 뷰 진입 시 provider별로 로드해 합쳐 내려준다.
@@ -1988,7 +1999,7 @@ function App() {
               onBulkReview={saveBulkReviews}
               onRefresh={refreshReviews}
               onSaveTimecodeOverride={saveTimecodeOverride}
-              srtEntries={resolveAudioSrtEntries(audioPackage, scenesHook.srtTrack, scenes)}
+              srtEntries={effectiveSrtEntries}
               scenes={scenes}
               onImportMp3={async (params) => {
                 // 드롭한 mp3는 audioFolderPath/media[/sfx]/로 복사되어 영속화.
@@ -2194,8 +2205,7 @@ function App() {
           videoScenes={videoScenes}
           framePairs={framePairs}
           settings={settings}
-          audioPackage={audioPackage}
-          srtTrack={scenesHook.srtTrack}
+          srtEntries={effectiveSrtEntries}
           onSelectVideo={setSelectedVideo}
           onSelectScene={setSelectedScene}
           t={t}
@@ -2226,7 +2236,7 @@ function App() {
             {bottomPanelView === 'timeline' ? (
               <LiveTimeline
                 scenes={scenes}
-                srtEntries={resolveAudioSrtEntries(audioPackage, scenesHook.srtTrack, scenes)}
+                srtEntries={effectiveSrtEntries}
                 audioPackage={effectiveAudioPackage}
                 framePairs={framePairs}
                 onSceneSelect={(scene) => setSelectedScene(scene)}
