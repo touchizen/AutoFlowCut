@@ -8,6 +8,7 @@
 
 import { srtTrackToEntries } from '../utils/srtTrack';
 import { rawMediaExtension, isRawBase64Media } from './mediaSignatures';
+import { createNarrationTrackFallbackResolver } from '../utils/storyNarrationTracks';
 
 /**
  * base64 데이터에서 이미지 크기 추출
@@ -249,6 +250,7 @@ export async function prepareCloudRequest(project, options = {}) {
         `story audio out of sync: manifest.pushRevision(${pushRevision}) !== lastPushedRevision(${lastPushedRevision}) — export blocked`
       );
     }
+    const trackIndexForSpeaker = createNarrationTrackFallbackResolver(manifest.segments || []);
     for (const seg of (manifest.segments || [])) {
       if (!seg.audioPath) continue;
       // M2b: sfx 세그먼트 → sfx_timed(기존 GCF 처리). category는 story 파생.
@@ -265,13 +267,14 @@ export async function prepareCloudRequest(project, options = {}) {
         continue;
       }
       if ((seg.type || 'narration') !== 'narration') continue;
+      const fallbackTrackIndex = trackIndexForSpeaker(seg.speaker);
       const filename = getFilename(seg.audioPath, seg.id, 'narration');
       cloudAudioTracks.push({
         type: 'story_narration',
         filename,
         timecodeMs: seg.startMs,
         durationMs: seg.durationMs,
-        trackIndex: seg.trackIndex ?? 0,  // vol 은 GCF 서 1.0
+        trackIndex: seg.trackIndex ?? fallbackTrackIndex,  // vol 은 GCF 서 1.0
       });
       audioFiles.push({
         type: 'narration',

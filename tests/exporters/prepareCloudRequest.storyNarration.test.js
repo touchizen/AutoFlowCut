@@ -88,6 +88,49 @@ describe('prepareCloudRequest — story_narration 분기', () => {
     expect(cloudRequest.audioTracks[0].trackIndex).toBe(0)
   })
 
+  it('legacy manifest 에 trackIndex 가 없어도 speaker 기준으로 story_narration trackIndex 를 재계산한다', async () => {
+    const project = { name: 'p', scenes: [sceneBase] }
+    const legacySeg = (id, startMs, durationMs, speaker) => {
+      const seg = narrSeg(id, startMs, durationMs, { speaker })
+      delete seg.trackIndex
+      return seg
+    }
+    const storyAudio = {
+      manifest: manifest(8, [
+        legacySeg('s001-1', 0, 1000, 'narrator'),
+        legacySeg('s001-2', 1000, 1000, '서준'),
+        legacySeg('s001-3', 2000, 1000, 'narrator'),
+        legacySeg('s001-4', 3000, 1000, '서준'),
+        legacySeg('s001-5', 4000, 1000, '미나'),
+      ]),
+      lastPushedRevision: 8,
+    }
+    const { cloudRequest } = await prepareCloudRequest(project, { storyAudio })
+    expect(cloudRequest.audioTracks.map((t) => t.trackIndex)).toEqual([0, 1, 0, 1, 2])
+  })
+
+  it('trackIndex 가 일부만 없으면 같은 speaker 의 명시 trackIndex 를 우선 재사용하고 새 트랙은 충돌을 피한다', async () => {
+    const project = { name: 'p', scenes: [sceneBase] }
+    const missingTrackSeg = (id, startMs, durationMs, speaker) => {
+      const seg = narrSeg(id, startMs, durationMs, { speaker })
+      delete seg.trackIndex
+      return seg
+    }
+    const storyAudio = {
+      manifest: manifest(10, [
+        narrSeg('s001-1', 0, 1000, { speaker: '서준', trackIndex: 2 }),
+        narrSeg('s001-2', 1000, 1000, { speaker: '미나', trackIndex: 1 }),
+        missingTrackSeg('s001-3', 2000, 1000, '서준'),
+        missingTrackSeg('s001-4', 3000, 1000, '지우'),
+        missingTrackSeg('s001-5', 4000, 1000, '미나'),
+        missingTrackSeg('s001-6', 5000, 1000, 'narrator'),
+      ]),
+      lastPushedRevision: 10,
+    }
+    const { cloudRequest } = await prepareCloudRequest(project, { storyAudio })
+    expect(cloudRequest.audioTracks.map((t) => t.trackIndex)).toEqual([2, 1, 2, 3, 1, 0])
+  })
+
   it('manifest 의 화자별 trackIndex(0,1,2,1)를 story_narration audioTracks 에 보존한다', async () => {
     const project = { name: 'p', scenes: [sceneBase] }
     const storyAudio = {
