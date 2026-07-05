@@ -88,6 +88,21 @@ describe('prepareCloudRequest — story_narration 분기', () => {
     expect(cloudRequest.audioTracks[0].trackIndex).toBe(0)
   })
 
+  it('manifest 의 화자별 trackIndex(0,1,2,1)를 story_narration audioTracks 에 보존한다', async () => {
+    const project = { name: 'p', scenes: [sceneBase] }
+    const storyAudio = {
+      manifest: manifest(9, [
+        narrSeg('s001-1', 0, 1000, { speaker: 'narrator', trackIndex: 0 }),
+        narrSeg('s001-2', 1000, 1000, { speaker: 'mina', trackIndex: 1 }),
+        narrSeg('s001-3', 2000, 1000, { speaker: 'jun', trackIndex: 2 }),
+        narrSeg('s001-4', 3000, 1000, { speaker: 'mina', trackIndex: 1 }),
+      ]),
+      lastPushedRevision: 9,
+    }
+    const { cloudRequest } = await prepareCloudRequest(project, { storyAudio })
+    expect(cloudRequest.audioTracks.map((t) => t.trackIndex)).toEqual([0, 1, 2, 1])
+  })
+
   it('정합 불일치(pushRevision !== lastPushedRevision) 면 export 차단(throw)', async () => {
     const project = { name: 'p', scenes: [sceneBase] }
     const storyAudio = { manifest: manifest(5, [narrSeg('s001-1', 0, 1000)]), lastPushedRevision: 4 }
