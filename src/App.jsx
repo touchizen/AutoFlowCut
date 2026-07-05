@@ -14,6 +14,7 @@ import { useI18n } from './hooks/useI18n'
 import { useProjectData } from './hooks/useProjectData'
 import { useStoryPipeline } from './hooks/useStoryPipeline'
 import { useStoryAutoOpen } from './hooks/useStoryAutoOpen'
+import { STORY_TTS_PROVIDERS } from './config/storyTtsProviders'
 import StoryView from './components/story/StoryView'
 import { useReferenceGeneration } from './hooks/useReferenceGeneration'
 import { useStyleThumbnails } from './hooks/useStyleThumbnails'
@@ -542,7 +543,6 @@ function App() {
 
   // Story 오디오 화자 매핑용 성우 목록 — story 뷰 진입 시 provider별로 로드해 합쳐 내려준다.
   // 각 provider 태그를 붙여 StoryView가 화자별 엔진(provider)+목소리를 고를 수 있게 한다.
-  const TTS_PROVIDERS = ['typecast', 'gemini', 'googletts', 'elevenlabs']
   const [ttsVoices, setTtsVoices] = useState([])
   const mergeTtsVoices = useCallback((incoming) => {
     setTtsVoices((prev) => {
@@ -558,7 +558,7 @@ function App() {
     if (activeView !== 'story') return
     let alive = true
     Promise.all(
-      TTS_PROVIDERS.map((p) =>
+      STORY_TTS_PROVIDERS.map((p) =>
         Promise.resolve(window.electronAPI?.ttsListVoices?.({
           provider: p,
           includeShared: p === 'elevenlabs',

@@ -218,6 +218,22 @@ describe('StoryView', () => {
     })
   })
 
+  it('Story 오디오 엔진 목록에서는 Google TTS를 숨긴다', () => {
+    const p = pipeline({ scenes: [{ storyId: 's1', segments: [{ speaker: 'narrator', text: 'x' }] }] })
+    p.state.steps.script.status = 'done'
+    p.state.steps.scenes.status = 'done'
+    p.state.speakers = [{ id: 'narrator', name: '나레이션', voice: null }]
+    const voices = [
+      { id: 'tc_a', name: 'Joonkyu', language: 'ko', provider: 'typecast' },
+      { id: 'ko-KR-Neural2-A', name: 'Neural2-A', language: 'ko-KR', provider: 'googletts' },
+    ]
+    render(<StoryView pipeline={p} voices={voices} />)
+    fireEvent.click(screen.getByRole('button', { name: '오디오' }))
+    const engineSelect = screen.getByLabelText('나레이션 엔진')
+    expect(within(engineSelect).getByRole('option', { name: 'Typecast' })).toBeTruthy()
+    expect(within(engineSelect).queryByRole('option', { name: 'Google TTS' })).toBeNull()
+  })
+
   // M2a-3b: 화자(state.speakers)가 없으면(빈) start('audio',{}) — 빈 speakers로 덮어쓰지 않는다.
   it('화자가 없으면 오디오 실행은 start("audio", {})로 호출한다(빈 speakers 미전달)', () => {
     const p = pipeline()

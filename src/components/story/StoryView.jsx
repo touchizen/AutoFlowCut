@@ -24,6 +24,7 @@ import {
   hydrateStoryLlmSelection,
   normalizeStoryLlmOptions,
 } from '../../utils/storyLlmCatalog'
+import { STORY_TTS_PROVIDER_LABEL, isStoryTtsProvider } from '../../config/storyTtsProviders'
 import './StoryView.css'
 
 // M2a-3: audio가 파이프라인 1급 스텝 — script→scenes→audio→prompts 순서로 진행한다.
@@ -31,9 +32,6 @@ const PROGRESSABLE_STEPS = ['script', 'scenes', 'audio', 'prompts']
 
 // 세그먼트 오디오 상태 라벨 (stepMachine이 세그먼트별 status를 pending/done/error로 기록).
 const SEG_STATUS_LABEL = { pending: '대기', running: '진행 중', done: '완료', error: '오류' }
-
-// TTS provider 표시명 (화자별 엔진 드롭다운).
-const PROVIDER_LABEL = { typecast: 'Typecast', gemini: 'Gemini TTS', googletts: 'Google TTS', elevenlabs: 'ElevenLabs' }
 
 // M2b-5: SFX 소스 선택(세그먼트별). library는 아직 stub(생성 시 에러) — 인터페이스만 노출.
 const SFX_SOURCES = ['elevenlabs', 'library']
@@ -483,10 +481,15 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onVoi
   // 덮어써 state.speakers를 지우는 것 방지 — 미배정은 backend defaultVoice 폴백). 선택 목소리는
   // 드롭다운(voiceBySpeaker) 우선, 없으면 기존 sp.voice 유지.
   // 사용 가능한 provider 목록(voices에서 파생). 화자별 엔진 드롭다운 옵션.
-  const providerList = [...new Set(voices.map((v) => v.provider).filter(Boolean))]
+  const storyVoices = voices.filter((v) => isStoryTtsProvider(v.provider))
+  const providerList = [...new Set(storyVoices.map((v) => v.provider).filter(Boolean))]
   // 화자의 현재 provider(엔진): 로컬 선택 > 기존 voice.provider > voices의 첫 provider > typecast.
-  const providerForSpeaker = (sp) =>
-    providerBySpeaker[sp.id] ?? sp.voice?.provider ?? voices[0]?.provider ?? 'typecast'
+  const providerForSpeaker = (sp) => {
+    const localProvider = providerBySpeaker[sp.id]
+    if (isStoryTtsProvider(localProvider)) return localProvider
+    if (isStoryTtsProvider(sp.voice?.provider)) return sp.voice.provider
+    return providerList[0] ?? 'typecast'
+  }
   // 화자의 현재 voiceId: 로컬 오버라이드(빈문자열 포함) > 기존 voice(같은 provider일 때만) > ''.
   const voiceIdForSpeaker = (sp) => {
     if (Object.prototype.hasOwnProperty.call(voiceBySpeaker, sp.id)) return voiceBySpeaker[sp.id]
@@ -1072,7 +1075,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onVoi
                               }}
                             >
                               {providerList.map((p) => (
-                                <option key={p} value={p}>{PROVIDER_LABEL[p] || p}</option>
+                                <option key={p} value={p}>{STORY_TTS_PROVIDER_LABEL[p] || p}</option>
                               ))}
                             </select>
                           )}
