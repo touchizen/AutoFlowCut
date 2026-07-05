@@ -3,6 +3,7 @@ import {
   extractMentionNames,
   resolveMentions,
   stripMentionPrefixes,
+  stripMentionsForNames,
 } from '../../src/utils/mentionParser'
 
 describe('extractMentionNames', () => {
@@ -146,5 +147,21 @@ describe('stripMentionPrefixes', () => {
   it('handles non-string input safely', () => {
     expect(stripMentionPrefixes(null, refs)).toBe('')
     expect(stripMentionPrefixes(undefined, refs)).toBe('')
+  })
+})
+
+describe('stripMentionsForNames (V2 collision)', () => {
+  it('지정 이름의 @만 떼고 다른 멘션은 보존', () => {
+    expect(stripMentionsForNames('@민수 와 @서준 이 걷는다', ['민수'])).toBe('민수 와 @서준 이 걷는다')
+  })
+  it('한글 조사 붙은 멘션도 이름만 매칭해 @ 제거', () => {
+    expect(stripMentionsForNames('@민수가 갔다', ['민수'])).toBe('민수가 갔다')
+  })
+  it('대상 없으면 원본 그대로', () => {
+    expect(stripMentionsForNames('@민수 걷는다', [])).toBe('@민수 걷는다')
+    expect(stripMentionsForNames('@서준 걷는다', ['민수'])).toBe('@서준 걷는다')
+  })
+  it('non-string 안전', () => {
+    expect(stripMentionsForNames(null, ['민수'])).toBe('')
   })
 })

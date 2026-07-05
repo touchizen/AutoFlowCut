@@ -47,6 +47,26 @@ describe('stepMachine 캐릭터 레퍼런스 브리지 (V2)', () => {
     expect(p.storyCharacters).toEqual([{ name: '민수', appearance: 'tall man in black coat' }])
   })
 
+  it('씬 prompt/videoT2VPrompt에 @이름 멘션이 주입된다(Flow 레퍼런스 지정 방식)', () => {
+    const scene = lastPush().scenes[0]
+    // 등장 캐릭터 민수 → @민수 멘션(단어경계). LLM 본문 img0는 그대로 뒤에.
+    expect(scene.prompt).toMatch(/(^|\s)@민수(\s|$)/)
+    expect(scene.prompt).toContain('img0')
+    expect(scene.videoT2VPrompt).toMatch(/(^|\s)@민수(\s|$)/)
+  })
+
+  it('멘션-불가 이름(공백 포함)은 멘션 생략(태그로 폴백, @는 안 넣음)', async () => {
+    llm.splitScenes.mockResolvedValueOnce(splitOut([
+      { id: 'narrator', name: 'narrator' },
+      { id: 'a', name: 'John Smith', appearance: 'tall' },
+    ]))
+    await machine.start('scenes', {})
+    await machine.start('prompts', {})
+    const scene = lastPush().scenes[0]
+    expect(scene.prompt).not.toContain('@John') // 공백 이름은 멘션 안 함
+    expect(scene.characters).toBe('John Smith') // 태그는 유지(폴백)
+  })
+
   it('appearance 없는 speaker는 태그/카드에서 제외(narrator 및 무외형 단역)', async () => {
     // narrator는 appearance 없음 → 태그/스토리캐릭터 제외 확인(위에서 민수만)
     expect(lastPush().scenes[0].characters).not.toContain('narrator')

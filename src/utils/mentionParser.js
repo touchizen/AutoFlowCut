@@ -111,6 +111,24 @@ export function resolveMentions(text, references = []) {
  * @param {Array} references
  * @returns {string}
  */
+/**
+ * 지정한 이름들의 `@name` 멘션만 `@`를 떼서 평문으로 만든다(다른 멘션·텍스트는 보존).
+ * 용도(V2): 동명 비-character ref와 충돌해 캐릭터 카드가 안 만들어진 이름의 멘션이 엉뚱한
+ * 타입 ref에 바인딩되는 것을 막는다 — 그 이름은 레퍼런스로 첨부되지 않고 평문으로만 남는다.
+ * @param {string} text
+ * @param {string[]} names - `@`를 뗄 대상 이름들
+ * @returns {string}
+ */
+export function stripMentionsForNames(text, names = []) {
+  if (!text || typeof text !== 'string' || !names?.length) return text || ''
+  const targets = new Set(names.map((n) => String(n).toLowerCase()))
+  return text.replace(MENTION_RE, (full, lead, name) => {
+    const resolved = resolveMentionPrefix(name, new Map([...targets].map((t) => [t, true])))
+    if (!resolved) return full // 대상 아님 → 그대로(다른 멘션 보존)
+    return `${lead}${resolved.matched}${name.slice(resolved.matched.length)}`
+  })
+}
+
 export function stripMentionPrefixes(text, references = []) {
   if (!text || typeof text !== 'string') return text || ''
   const byName = new Map()

@@ -31,6 +31,7 @@ import { useFlowEvents } from './hooks/useFlowEvents'
 import { useMcpServer } from './hooks/useMcpServer'
 import { useMenuActions } from './hooks/useMenuActions'
 import { upsertStoryCharacterRefs } from './utils/storyCharacterRefs'
+import { stripMentionsForNames } from './utils/mentionParser'
 import { syncVideosIntoScenes } from './services/mediaSync'
 import { retryVideoDownload } from './services/videoRecovery'
 import { isStyleReference, previewStyleMatching } from './services/styleService'
@@ -491,10 +492,10 @@ function App() {
         // 프로젝트 전환됨 — stale push 폐기. return이 아니라 throw: hook이 ok:true ack로 옛 프로젝트
         // lastPushedRevision을 잘못 advance(재발신 억제)하지 않도록, ok:false가 나가게 한다(Codex).
         if (storyProjectPathRef.current !== enqueuedPath) throw new Error('stale story push discarded (project switched)')
-        const { nextScenes, nextSrtTrack } = scenesHook.importStoryScenes(payload)
-        // V2: 스토리 캐릭터 → Ref 탭 character 카드 upsert. push 트랜잭션에서 refs도 함께 영속
-        // (autosave 디바운스 전 crash 시 story.json은 pushRevision 기록됐는데 카드 유실 방지).
+        // V2: 스토리 캐릭터 → Ref 탭 character 카드 upsert(먼저 — collision을 알아야 씬 멘션을 정리).
+        // push 트랜잭션에서 refs도 함께 영속(autosave 디바운스 전 crash 시 카드 유실 방지).
         let nextReferences
+        let importPayload = payload
         if (payload.storyCharacters?.length) {
           const { references: upserted, collisions } = upsertStoryCharacterRefs(referencesRef.current, payload.storyCharacters)
           if (upserted !== referencesRef.current) {
@@ -502,8 +503,18 @@ function App() {
             referencesRef.current = upserted // 동기 최신 — 다음 push가 이 카드를 본다
             scenesHook.setReferences(upserted)
           }
-          if (collisions.length) toast.warning(t('story.charRef.collision', `동명 레퍼런스가 있어 캐릭터 카드를 건너뜀: ${collisions.join(', ')}`))
+          // Codex: 동명 비-character ref와 충돌해 카드가 없는 이름은 씬 프롬프트의 @멘션을 평문화한다
+          // — 안 그러면 그 @이름이 엉뚱한 타입 ref(scene/style)에 바인딩된다.
+          if (collisions.length) {
+            importPayload = { ...payload, scenes: payload.scenes.map((sc) => ({
+              ...sc,
+              prompt: stripMentionsForNames(sc.prompt, collisions),
+              videoT2VPrompt: stripMentionsForNames(sc.videoT2VPrompt, collisions),
+            })) }
+            toast.warning(t('story.charRef.collision', `동명 레퍼런스가 있어 캐릭터 카드를 건너뜀: ${collisions.join(', ')}`))
+          }
         }
+        const { nextScenes, nextSrtTrack } = scenesHook.importStoryScenes(importPayload)
         const r = await saveCurrentProjectWithPayload({ scenes: nextScenes, srtTrack: nextSrtTrack, references: nextReferences })
         if (!r.ok) throw new Error('project save failed')
       }

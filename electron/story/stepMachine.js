@@ -102,25 +102,35 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   // V2: appearance 있는 non-narrator speaker만 캐릭터로 취급(태그·카드 일관 — omit 정책).
   const characterSpeakers = () => (state.speakers || []).filter((sp) => !isNarratorSpeaker(sp) && sp.appearance && String(sp.appearance).trim())
 
-  // V2: 씬 characters 태그 — 그 씬 세그먼트의 speaker id를 speaker.name으로 변환(캐릭터만, 유일).
-  function sceneCharacters(s) {
+  // V2: 그 씬에 등장하는 캐릭터 이름 배열(speaker id→name, 캐릭터만, 유일, 등장순).
+  function sceneCharacterNames(s) {
     const chars = new Map(characterSpeakers().map((sp) => [sp.id, sp.name]))
     const names = []
     for (const g of s.segments || []) {
       const name = chars.get(g.speaker)
       if (name && !names.includes(name)) names.push(name)
     }
-    return names.join(', ')
+    return names
+  }
+  // V2: 멘션 문법(mentionParser.MENTION_RE)에 맞는 이름만 @멘션 가능 — 공백 포함 이름은 불가.
+  const MENTION_SAFE = /^[A-Za-z0-9_\-가-힣]+$/
+  // V2: 프롬프트에 @이름 멘션 주입(Flow·API 공통 레퍼런스 지정). 멘션-불가 이름은 생략(태그 폴백).
+  function withMentions(prompt, names) {
+    const mentions = names.filter((n) => MENTION_SAFE.test(n)).map((n) => `@${n}`)
+    if (!mentions.length) return prompt || ''
+    return prompt ? `${mentions.join(' ')} ${prompt}` : mentions.join(' ')
   }
 
   function mapScene(s, timing) {
     // 스펙 §4-④: project.json 씬 확장 필드는 storyId/stalePrompt/stalePromptAt/staleVideo/
     // staleVideoAt 5개로 제한 — sceneNo(scenes.json 전용 표시용 순번)는 push payload에 넣지 않는다.
     const measured = typeof s.startSec === 'number' && typeof s.endSec === 'number'
+    const charNames = sceneCharacterNames(s)
     return {
       storyId: s.storyId,
-      prompt: s.imagePrompt || '',
-      videoT2VPrompt: s.videoPrompt || '',
+      // V2: 등장 캐릭터 @멘션 주입 → Flow/API 둘 다 캐릭터 레퍼런스 이미지를 conditioning으로 붙인다.
+      prompt: withMentions(s.imagePrompt || '', charNames),
+      videoT2VPrompt: withMentions(s.videoPrompt || '', charNames),
       // IP1: audio 실측(finalScenes startSec/endSec)이 있으면 timing의 유일 소스. 없으면(대략 모드)
       // buildFallbackTimeline 글자수 추정으로 폴백(스펙 §3 대략 모드 / §7 흐름A).
       startTime: measured ? s.startSec : timing.startTime,
@@ -129,8 +139,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // IP2: 실측이면 그룹 내 narration 세그먼트 라인 id(sub_<segId>, 순서 보존), 아니면 폴백은 오디오 없음.
       srtLineIds: measured ? narrationLineIds(s) : [],
       subtitle: (s.segments || []).map((g) => g.text).join(' '),
-      // V2: 캐릭터 레퍼런스 매칭용 태그(speaker.name 콤마조인). renderer getMatchingReferences가 소비.
-      characters: sceneCharacters(s),
+      // V2: 캐릭터 레퍼런스 매칭용 태그(speaker.name 콤마조인) — 멘션 매칭의 폴백. getMatchingReferences 소비.
+      characters: charNames.join(', '),
     }
   }
 
