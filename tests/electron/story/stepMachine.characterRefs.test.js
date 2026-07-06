@@ -105,6 +105,50 @@ describe('stepMachine 캐릭터 레퍼런스 브리지 (V2)', () => {
     expect(scene.characters).toBe('John Smith') // 태그는 유지(폴백)
   })
 
+  it('appearance 없는 캐릭터는 @멘션에서 제외되지만 characters 태그/storyCharacters엔 남는다 (regression 7d77a0d)', async () => {
+    // 김첨지(appearance 없음)와 민수(appearance 있음)가 같은 씬에 함께 등장.
+    // characterSpeakers()는 둘 다 포함(Ref 탭 pending 카드용, 넓게 유지)해야 하지만
+    // @멘션 주입은 appearance가 있는 민수에게만 해야 한다.
+    const localEmitted = []
+    const localLlm = {
+      generateScript: vi.fn(async () => ({ scriptMd: '#' })),
+      splitScenes: vi.fn(async () => ({
+        scenes: [{ sceneNo: 1, summary: '', segments: [
+          { speaker: 'narrator', text: '한밤중이었다', emotion: 'normal' },
+          { speaker: 'a', text: '누구세요?', emotion: 'normal' },
+          { speaker: 'kim', text: '나요, 김첨지요', emotion: 'normal' },
+        ] }],
+        speakers: [
+          { id: 'narrator', name: 'narrator' },
+          { id: 'a', name: '민수', appearance: 'tall man in black coat' },
+          { id: 'kim', name: '김첨지' }, // appearance 없음 → pending 카드 대상
+        ],
+      })),
+      writePrompts: vi.fn(async (scenes) => ({ scenes: scenes.map((s, i) => ({ ...s, imagePrompt: `img${i}`, videoPrompt: `vid${i}` })) })),
+    }
+    const localDir = await mkdtemp(path.join(tmpdir(), 'sm-charref-mixed-'))
+    const localMachine = createStepMachine({
+      projectPath: localDir,
+      llm: localLlm,
+      emit: (ch, p) => localEmitted.push({ ch, p }),
+      getApiKey: () => 'k',
+    })
+    await localMachine.open()
+    await localMachine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await localMachine.start('scenes', {})
+    await localMachine.start('prompts', {})
+
+    const push = localEmitted.filter((e) => e.ch === 'story:pushScenes').pop()
+    const scene = push.p.scenes[0]
+
+    // appearance 있는 민수만 @멘션 주입
+    expect(scene.prompt).toMatch(/(^|\s)@민수(\s|$)/)
+    expect(scene.prompt).not.toContain('@김첨지')
+
+    // 하지만 김첨지는 여전히 storyCharacters(Ref pending 카드)에는 남는다
+    expect(push.p.storyCharacters.some((c) => c.name === '김첨지')).toBe(true)
+  })
+
   it('appearance 없는 speaker는 태그/카드에서 제외(narrator 및 무외형 단역)', async () => {
     // narrator는 appearance 없음 → 태그/스토리캐릭터 제외 확인(위에서 민수만)
     expect(lastPush().scenes[0].characters).not.toContain('narrator')

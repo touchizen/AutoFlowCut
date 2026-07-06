@@ -335,7 +335,13 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
 
   // V2: 그 씬에 등장하는 캐릭터 이름 배열(speaker id→name, 캐릭터만, 유일, 등장순).
   function sceneCharacterNames(s) {
-    const chars = new Map(characterSpeakers().map((sp) => [sp.id, sp.name]))
+    // @멘션은 레퍼런스 이미지에 바인딩되므로 appearance가 있는 캐릭터만 대상으로 한다.
+    // appearance가 없는(Ref 탭 pending 상태) 캐릭터는 characterSpeakers()엔 남아있지만 멘션 대상에서 제외.
+    const chars = new Map(
+      characterSpeakers()
+        .filter((sp) => sp.appearance && String(sp.appearance).trim())
+        .map((sp) => [sp.id, sp.name])
+    )
     const names = []
     for (const g of s.segments || []) {
       const name = chars.get(g.speaker)
