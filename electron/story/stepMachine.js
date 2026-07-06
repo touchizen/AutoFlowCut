@@ -12,6 +12,7 @@ import { regroupScenes } from './regroup.js'
 import { buildManifest } from './manifest.js'
 import { normalizeStoryLlmOptions } from '../api/llm/storyLlmCatalog.js'
 import { validateScenesSegments } from '../api/llm/schemas.js'
+import { isNarratorSpeaker as isNarratorTrackSpeaker } from '../../src/utils/storyNarrationTracks.js'
 
 const DOWNSTREAM = { script: ['scenes', 'audio', 'prompts'], scenes: ['audio', 'prompts'], audio: ['prompts'], prompts: [] }
 
@@ -146,6 +147,13 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   }
 
   const speakerKey = (v) => String(v || '').replace(/\s/g, '').toLowerCase()
+  const referencedSpeakerKey = (v) => isNarratorTrackSpeaker(v) ? 'narrator' : speakerKey(v)
+  const speakerReferenceKeys = (sp) => [sp?.id, sp?.name].filter(Boolean).map(referencedSpeakerKey)
+  const findSpeakerByRef = (speakers = [], ref) => {
+    const key = referencedSpeakerKey(ref)
+    if (!key) return null
+    return (speakers || []).find((sp) => speakerReferenceKeys(sp).includes(key)) || null
+  }
   function mergeSpeakers(nextSpeakers = [], { preferNewAppearance = false } = {}) {
     const prevSpeakers = new Map()
     for (const sp of state.speakers || []) {
@@ -160,19 +168,19 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
 
   function ensureReferencedSpeakers(nextSpeakers = [], scenes = [], fallbackSpeakers = []) {
     const out = [...(nextSpeakers || [])]
-    const seen = new Set(out.flatMap((sp) => [sp.id, sp.name].filter(Boolean).map(speakerKey)))
+    const seen = new Set(out.flatMap(speakerReferenceKeys))
     const fallbackByKey = new Map()
     for (const sp of fallbackSpeakers || []) {
-      if (sp.id) fallbackByKey.set(speakerKey(sp.id), sp)
-      if (sp.name) fallbackByKey.set(speakerKey(sp.name), sp)
+      for (const key of speakerReferenceKeys(sp)) fallbackByKey.set(key, sp)
     }
     for (const seg of (scenes || []).flatMap((s) => s.segments || [])) {
       if ((seg.type || 'narration') !== 'narration') continue
-      const key = speakerKey(seg.speaker)
+      const key = referencedSpeakerKey(seg.speaker)
       if (!key || seen.has(key)) continue
       const prev = fallbackByKey.get(key)
-      if (!prev) continue
-      out.push(prev)
+      if (prev) out.push(prev)
+      else if (key === 'narrator') out.push({ id: 'narrator', name: '나레이션' })
+      else out.push({ id: String(seg.speaker).trim(), name: String(seg.speaker).trim() })
       seen.add(key)
     }
     return out
@@ -388,6 +396,20 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   // Important: Story 뷰 ②/④ 패널(씬 세그먼트·프롬프트)이 실데이터를 그리려면 scenes.json
   // 내용이 필요하다. story.json에는 저장하지 않는 파생 데이터 — open/getState/스텝 완료 시
   // payload에만 실어 보낸다.
+  // 세그먼트가 참조하는 화자(특히 narrator)가 state.speakers에 없으면 오디오 탭 성우 매핑에서
+  // 누락된다(voice map은 state.speakers만 렌더). open 시 scenes.json 기준으로 self-heal —
+  // 스플릿 당시 누락(LLM이 narrator를 speakers에서 빠뜨림 등)된 stale 프로젝트를 재분리 없이 복구.
+  async function healReferencedSpeakers() {
+    if (!state) return
+    const scenes = await loadScenesForPayload()
+    if (!scenes.length) return
+    const healed = ensureReferencedSpeakers(state.speakers || [], scenes, state.speakers || [])
+    if (healed.length !== (state.speakers || []).length) {
+      state.speakers = healed
+      await flush()
+    }
+  }
+
   async function loadScenesForPayload() {
     const raw = await store.loadText('scenes.json')
     if (!raw) return []
@@ -498,7 +520,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       if (signal?.aborted) return
       const prev = JSON.parse((await store.loadText('scenes.json')) || '{"scenes":[]}').scenes
       let nextScenes = normalizeScenes(prev, scenes)
-      let nextSpeakers = mergeSpeakers(speakers)
+      let nextSpeakers = mergeSpeakers(ensureReferencedSpeakers(speakers, nextScenes, state.speakers || []))
       const cfg = reviewConfig(opts, 'scenes')
       if (cfg.enabled && !signal?.aborted) {
         const reviewed = await reviewScenesCandidate(scriptMd, nextScenes, nextSpeakers, opts, cfg.rounds, opId, signal)
@@ -517,7 +539,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const speakers = params.speakers || state.speakers || []
       // C1-a: 화자 매핑 UI(M2a-3) 전에는 미배정 화자를 주입된 기본 voice로 폴백해 audio가 앱에서
       // 돌게 한다. defaultVoice 미주입(정식 흐름)이면 null → 아래 미배정 검증이 그대로 실행 차단(스펙 §6).
-      const voiceOf = (spk) => (speakers.find((s) => s.id === spk)?.voice) || defaultVoice || null
+      const voiceOf = (spk) => findSpeakerByRef(speakers, spk)?.voice || defaultVoice || null
       // 모든 씬의 세그먼트를 순서대로 평탄화
       const segments = scenesJson.scenes.flatMap((sc) => sc.segments || [])
       const narration = segments.filter((s) => (s.type || 'narration') === 'narration')
@@ -783,6 +805,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     projectToken,
     async open() {
       state = await store.load()
+      await healReferencedSpeakers()
       await maybeResendPush()
       const scenes = await loadScenesForPayload()
       const scriptText = (await store.loadText('script.md')) || ''
@@ -800,6 +823,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     },
     async getState() {
       if (!state) state = await store.load()
+      await healReferencedSpeakers()
       await maybeResendPush()
       const scenes = await loadScenesForPayload()
       const scriptText = (await store.loadText('script.md')) || ''
@@ -821,7 +845,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         assertSegmentIdsValid(scenesJson.scenes) // Codex-TTS MED4: 파일명에 seg.id 사용 → path traversal 방어
         const ids = new Set(segmentIds)
         const spks = speakers || state?.speakers || []
-        const voiceOf = (spk) => (spks.find((s) => s.id === spk)?.voice) || defaultVoice || null
+        const voiceOf = (spk) => findSpeakerByRef(spks, spk)?.voice || defaultVoice || null
         const allTargets = scenesJson.scenes.flatMap((sc) => sc.segments || []).filter((s) => ids.has(s.id))
         const targets = allTargets.filter((s) => (s.type || 'narration') === 'narration')
         // M2b: sfx 세그먼트도 단건 테스트(배치 audio와 동일 계약 — sfxFor로 생성, sfxKey/sourceMode 영속).

@@ -32,7 +32,7 @@ export function buildSplitPrompt(scriptMd, opts) {
     // M2b: 효과음 큐를 세그먼트 단위로 삽입. 단어 단위(문장 내부) 금지 — 시퀀스의 한 자리를 차지한다.
     `대본 흐름상 효과음(문 여는 소리·천둥·발소리·비명 등)이 꼭 필요한 지점에는 그 자리에 { "type": "sfx", "description": "..." } 세그먼트를 삽입하라. description은 효과음을 생성할 짧은 영어 묘사(예: "door creaking open", "distant thunder")로 쓴다. sfx 세그먼트에는 speaker/text/emotion을 넣지 않는다. 나레이션/대사 세그먼트는 type을 생략해도 된다(기본 narration).`,
     `효과음은 꼭 필요한 순간(장면 전환·긴장·중요한 사건)에만 절제해서 넣어라 — 과도하게 넣으면 흐름을 해친다.`,
-    `등장 화자 전체 목록을 speakers로 반환하라.`,
+    `등장 화자 전체 목록을 speakers로 반환하라. narrator(나레이션)도 반드시 speakers에 포함한다(narrator는 appearance 없이).`,
     `--- 대본 ---`,
     scriptMd,
   ].join('\n')
