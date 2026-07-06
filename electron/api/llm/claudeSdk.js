@@ -27,9 +27,17 @@ export function buildClaudeSdkOptions(model, abortController, extra = {}) {
   }
 }
 
+function sdkResultErrorMessage(message) {
+  const errors = Array.isArray(message?.errors) ? message.errors.filter(Boolean).join('; ') : ''
+  const result = typeof message?.result === 'string' ? message.result.trim() : ''
+  const text = errors || result
+  if (text) return text
+  return `Claude SDK result marked error (subtype: ${message?.subtype || 'error'})`
+}
+
 export function extractClaudeSdkResult(message) {
   if (message.subtype === 'success' && !message.is_error) return (message.result || '').trim()
-  throw new Error(message.errors?.join('; ') || `result ${message.subtype || 'error'}`)
+  throw new Error(sdkResultErrorMessage(message))
 }
 
 export function bridgeAbortSignal(signal) {
@@ -56,5 +64,5 @@ export function readStructuredResult(message) {
     return { kind: 'text', text: (message.result || '').trim() }
   }
   if (message.subtype === 'error_max_structured_output_retries') return { kind: 'retry' }
-  throw new Error(message.errors?.join('; ') || `result ${message.subtype || 'error'}`)
+  throw new Error(sdkResultErrorMessage(message))
 }

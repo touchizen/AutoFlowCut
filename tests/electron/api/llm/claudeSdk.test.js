@@ -47,6 +47,10 @@ describe('extractClaudeSdkResult', () => {
   it('에러 result면 throw', () => {
     expect(() => extractClaudeSdkResult({ subtype: 'error_during_execution', errors: ['boom'] })).toThrow('boom')
   })
+  it('success subtype이어도 is_error=true면 result 본문을 에러로 보여준다', () => {
+    expect(() => extractClaudeSdkResult({ subtype: 'success', is_error: true, result: 'schema validation failed' })).toThrow('schema validation failed')
+    expect(() => extractClaudeSdkResult({ subtype: 'success', is_error: true, result: 'schema validation failed' })).not.toThrow('result success')
+  })
 })
 
 describe('bridgeAbortSignal', () => {
@@ -79,5 +83,9 @@ describe('readStructuredResult', () => {
   })
   it('그 외 에러 → throw', () => {
     expect(() => readStructuredResult({ type: 'result', subtype: 'error_during_execution', errors: ['x'] })).toThrow('x')
+  })
+  it('success subtype + is_error=true면 result success 대신 result 본문을 던진다', () => {
+    expect(() => readStructuredResult({ type: 'result', subtype: 'success', is_error: true, result: 'structured output failed' })).toThrow('structured output failed')
+    expect(() => readStructuredResult({ type: 'result', subtype: 'success', is_error: true, result: 'structured output failed' })).not.toThrow('result success')
   })
 })

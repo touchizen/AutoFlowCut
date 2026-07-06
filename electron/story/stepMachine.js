@@ -140,6 +140,18 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     if (target === 'script') send('story:progress', { kind: 'script-review', ...payload }, operationId)
   }
 
+  function sendStepLog(step, phase, message, operationId, extra = {}) {
+    send('story:progress', {
+      kind: 'step-log',
+      step,
+      phase,
+      message,
+      level: extra.level || 'info',
+      at: new Date().toISOString(),
+      ...extra,
+    }, operationId)
+  }
+
   function normalizeScenes(prev, scenes) {
     validateScenesSegments(scenes)
     const { scenes: withIds } = inheritStoryIds(prev, scenes)
@@ -156,6 +168,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     if (!key) return null
     return (speakers || []).find((sp) => speakerReferenceKeys(sp).includes(key)) || null
   }
+  const nonEmptyString = (v) => (typeof v === 'string' && v.trim()) ? v : undefined
   function mergeSpeakers(nextSpeakers = [], { preferNewAppearance = false } = {}) {
     const prevSpeakers = new Map()
     for (const sp of state.speakers || []) {
@@ -164,7 +177,10 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     }
     return (nextSpeakers || []).map((sp) => {
       const prev = prevSpeakers.get(`id:${speakerKey(sp.id)}`) || prevSpeakers.get(`name:${speakerKey(sp.name)}`)
-      return { ...sp, appearance: preferNewAppearance ? (sp.appearance ?? prev?.appearance) : (prev?.appearance ?? sp.appearance), voice: prev?.voice ?? null }
+      const appearance = preferNewAppearance
+        ? (nonEmptyString(sp.appearance) ?? nonEmptyString(prev?.appearance) ?? sp.appearance ?? prev?.appearance)
+        : (nonEmptyString(prev?.appearance) ?? nonEmptyString(sp.appearance) ?? prev?.appearance ?? sp.appearance)
+      return { ...sp, appearance, voice: prev?.voice ?? null }
     })
   }
 
@@ -308,8 +324,11 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     const t = (v) => String(v || '').replace(/\s/g, '').toLowerCase()
     return t(sp?.id) === 'narrator' || t(sp?.name) === 'narrator' || t(sp?.name) === '내레이터'
   }
-  // V2: appearance 있는 non-narrator speaker만 캐릭터로 취급(태그·카드 일관 — omit 정책).
-  const characterSpeakers = () => (state.speakers || []).filter((sp) => !isNarratorSpeaker(sp) && sp.appearance && String(sp.appearance).trim())
+  // V2: non-narrator speaker를 캐릭터 후보로 취급한다. appearance가 없어도 Ref 탭에 pending
+  // 카드가 먼저 생겨야 사용자가 외형/이미지를 보강할 수 있다.
+  const characterSpeakers = () => (state.speakers || [])
+    .filter((sp) => !isNarratorSpeaker(sp) && (sp?.name || sp?.id))
+    .map((sp) => ({ ...sp, name: sp.name || sp.id, appearance: sp.appearance || '' }))
 
   // V2: 그 씬에 등장하는 캐릭터 이름 배열(speaker id→name, 캐릭터만, 유일, 등장순).
   function sceneCharacterNames(s) {
@@ -393,6 +412,15 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     // 실측 라인이 있을 때만 srtTrack 전송 — renderer가 wholesale 교체(대략 모드는 미전송→기존 유지).
     if (srtTrack.length) payload.srtTrack = srtTrack
     send('story:pushScenes', payload, operationId)
+  }
+
+  function sendCharacters(operationId) {
+    const storyCharacters = characterSpeakers().map((sp) => ({ name: sp.name, appearance: sp.appearance || '' }))
+    if (storyCharacters.length) send('story:pushCharacters', { storyCharacters }, operationId)
+  }
+
+  function maybeSendCharacters(operationId) {
+    if (state?.steps?.scenes?.status === 'done') sendCharacters(operationId)
   }
 
   // Important: Story 뷰 ②/④ 패널(씬 세그먼트·프롬프트)이 실데이터를 그리려면 scenes.json
@@ -488,6 +516,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     },
     async scenes(params, opId, signal) {
       if (params.reviewOnly) {
+        sendStepLog('scenes', 'review-load', '기존 씬 검수 준비', opId)
         const scriptMd = await store.loadText('script.md')
         if (!scriptMd) throw new Error('script.md not found — run script step first')
         const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
@@ -495,18 +524,22 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         const opts = buildLlmOptions(effectiveOptions(params))
         const cfg = reviewConfig(opts, 'scenes')
         if (!cfg.enabled) return { changed: false }
+        sendStepLog('scenes', 'review-start', '씬 분리 검수 시작', opId)
         const reviewed = await reviewScenesCandidate(scriptMd, scenesJson.scenes || [], state.speakers || [], opts, cfg.rounds, opId, signal)
         if (signal?.aborted) return
         if (reviewed.changed) {
+          sendStepLog('scenes', 'review-save', '검수 반영 씬 저장', opId)
           await store.saveText('scenes.json', JSON.stringify({ scenes: reviewed.scenes }, null, 2))
           state.speakers = reviewed.speakers
         }
+        sendStepLog('scenes', 'review-complete', reviewed.changed ? '씬 검수 반영 완료' : '씬 검수 변경 없음', opId)
         return { changed: reviewed.changed }
       }
 
       // 대본 재설계: 편집된 대본으로 씬 분리 — 공백이면 기존 script.md를 보존하고 실패시킨다.
       if (typeof params.scriptOverride === 'string') {
         if (!params.scriptOverride.trim()) throw new Error('빈 대본으로 씬 분리할 수 없습니다')
+        sendStepLog('scenes', 'script-save', '편집 대본 저장', opId)
         await store.saveText('script.md', params.scriptOverride)
         const inputOptions = normalizeLlmOptions(params.options || state.input?.options)
         state.input = state.input
@@ -518,20 +551,28 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const scriptMd = await store.loadText('script.md')
       if (!scriptMd) throw new Error('script.md not found — run script step first')
       const opts = buildLlmOptions(effectiveOptions(params))
+      sendStepLog('scenes', 'split-request', 'LLM 씬 분리 요청', opId)
       const { scenes, speakers } = await llm.splitScenes(scriptMd, opts, { signal })
       if (signal?.aborted) return
+      sendStepLog('scenes', 'split-response', `씬 ${scenes?.length || 0}개 응답 수신`, opId, { count: scenes?.length || 0 })
       const prev = JSON.parse((await store.loadText('scenes.json')) || '{"scenes":[]}').scenes
       let nextScenes = normalizeScenes(prev, scenes)
+      sendStepLog('scenes', 'normalize', '씬/세그먼트 ID 정리', opId, { count: nextScenes.length })
       let nextSpeakers = mergeSpeakers(ensureReferencedSpeakers(speakers, nextScenes, state.speakers || []))
+      sendStepLog('scenes', 'speakers', `화자 ${nextSpeakers.length}명 정리`, opId, { count: nextSpeakers.length })
       const cfg = reviewConfig(opts, 'scenes')
       if (cfg.enabled && !signal?.aborted) {
+        sendStepLog('scenes', 'review-start', '씬 분리 검수 시작', opId)
         const reviewed = await reviewScenesCandidate(scriptMd, nextScenes, nextSpeakers, opts, cfg.rounds, opId, signal)
         if (signal?.aborted) return
         nextScenes = reviewed.scenes
         nextSpeakers = reviewed.speakers
+        sendStepLog('scenes', 'review-complete', '씬 분리 검수 완료', opId)
       }
+      sendStepLog('scenes', 'save', 'scenes.json 저장', opId)
       await store.saveText('scenes.json', JSON.stringify({ scenes: nextScenes }, null, 2))
       state.speakers = nextSpeakers
+      sendStepLog('scenes', 'complete', '씬 분리 완료', opId)
     },
     async audio(params, opId, signal) {
       const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
@@ -809,6 +850,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       state = await store.load()
       await healReferencedSpeakers()
       await maybeResendPush()
+      maybeSendCharacters()
       const scenes = await loadScenesForPayload()
       const scriptText = (await store.loadText('script.md')) || ''
       send('story:state', { state, scenes, scriptText })
@@ -827,6 +869,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       if (!state) state = await store.load()
       await healReferencedSpeakers()
       await maybeResendPush()
+      maybeSendCharacters()
       const scenes = await loadScenesForPayload()
       const scriptText = (await store.loadText('script.md')) || ''
       // 기존 top-level 필드(steps/speakers/...)는 그대로 접근 가능하도록 spread — story.json에는
@@ -940,6 +983,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       if (!isStale()) {
         // flush(store.save) 완료 후에만 pushScenes를 emit — 재발신 조건이 디스크에 먼저 반영되게.
         await flush()
+        if (step === 'scenes' && state.steps[step]?.status === 'done') sendCharacters(operationId)
         if (pushScenes) sendPush(pushScenes, operationId)
         send('story:state', { state, scenes: await loadScenesForPayload(), scriptText: (await store.loadText('script.md')) || '' }, operationId)
       }

@@ -21,6 +21,53 @@ function installApi() {
 describe('useStoryPipeline — segmentProgress(story:progress)', () => {
   beforeEach(() => installApi())
 
+  it('step-log progress를 progressLog로 누적한다', async () => {
+    const handlers = installApi()
+    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: async () => {} }))
+    await act(async () => { await result.current.open() })
+    act(() => handlers['story:state']({ projectToken: 'TOK', operationId: 'op1', state: { steps: { scenes: { status: 'running' } } } }))
+
+    act(() => handlers['story:progress']({
+      projectToken: 'TOK',
+      operationId: 'op1',
+      kind: 'step-log',
+      step: 'scenes',
+      phase: 'split-request',
+      message: 'LLM 씬 분리 요청',
+      at: '2026-07-06T00:00:00.000Z',
+    }))
+
+    expect(result.current.progressLog).toEqual([
+      expect.objectContaining({ step: 'scenes', phase: 'split-request', message: 'LLM 씬 분리 요청' }),
+    ])
+  })
+
+  it('start()는 progressLog를 초기화한다', async () => {
+    const handlers = installApi()
+    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: async () => {} }))
+    await act(async () => { await result.current.open() })
+    act(() => handlers['story:state']({ projectToken: 'TOK', operationId: 'op1', state: { steps: { scenes: { status: 'running' } } } }))
+    act(() => handlers['story:progress']({ projectToken: 'TOK', operationId: 'op1', kind: 'step-log', step: 'scenes', phase: 'x', message: '로그' }))
+    expect(result.current.progressLog).toHaveLength(1)
+
+    await act(async () => { await result.current.start('scenes', {}) })
+    expect(result.current.progressLog).toEqual([])
+  })
+
+  it('start() 후 새 running state 전에도 이전 operationId가 새 로그를 막지 않는다', async () => {
+    const handlers = installApi()
+    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: async () => {} }))
+    await act(async () => { await result.current.open() })
+    act(() => handlers['story:state']({ projectToken: 'TOK', operationId: 'old-op', state: { steps: { scenes: { status: 'running' } } } }))
+
+    await act(async () => { await result.current.start('scenes', {}) })
+    act(() => handlers['story:progress']({ projectToken: 'TOK', operationId: 'new-op', kind: 'step-log', step: 'scenes', phase: 'split-request', message: '새 로그' }))
+
+    expect(result.current.progressLog).toEqual([
+      expect.objectContaining({ operationId: 'new-op', message: '새 로그' }),
+    ])
+  })
+
   it('audio-segment progress를 segId→status로 누적한다', async () => {
     const handlers = installApi()
     const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: async () => {} }))

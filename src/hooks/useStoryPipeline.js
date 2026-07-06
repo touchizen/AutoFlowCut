@@ -4,7 +4,7 @@
  */
 import { useState, useCallback, useRef, useEffect } from 'react'
 
-export function useStoryPipeline({ projectPath, onPushScenes }) {
+export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }) {
   const [state, setState] = useState(null)
   // Important: scenes.json 파생 데이터(씬 세그먼트/이미지·비디오 프롬프트)는 story.json
   // 상태와 별도로 보관한다 — StoryView ②/④ 패널이 이 값을 직접 소비한다.
@@ -19,11 +19,14 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
   const [segmentProgress, setSegmentProgress] = useState({})
   // M3: 대본 검토 루프 진행 — { operationId, round, of, phase:'reviewing'|'revising'|'error', error? } | null.
   const [reviewProgress, setReviewProgress] = useState(null)
+  const [progressLog, setProgressLog] = useState([])
   const [llmOptions, setLlmOptions] = useState(null)
   const [defaultLlmOption, setDefaultLlmOption] = useState(null)
   const tokenRef = useRef(null)
   const onPushRef = useRef(onPushScenes)
   onPushRef.current = onPushScenes
+  const onPushCharactersRef = useRef(onPushCharacters)
+  onPushCharactersRef.current = onPushCharacters
   const prevPathRef = useRef(projectPath)
   // Task 9: renderer stale-delta 필터. running 스텝을 실은 story:state의 operationId를
   // 활성 op로 저장 → 그와 다른 operationId의 story:delta는 drop(엔진 abort가 늦게 끊길 때
@@ -60,6 +63,8 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
     setScenes([])
     setStreamingText('')
     setScriptText('')
+    setProgressLog([])
+    activeOpRef.current = null
     setReviewProgress(null) // M3: 프로젝트 전환 시 검토 배지 정리
     if (oldToken) {
       window.electronAPI?.storyAbort?.({ projectToken: oldToken })?.catch?.(() => {})
@@ -114,15 +119,46 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
           await api.storyPushAck({ projectToken: p.projectToken, operationId: p.operationId, pushRevision: p.pushRevision, ok: false, reason: String(e.message || e) })
         }
       }),
+      api.onStoryEvent('story:pushCharacters', async (p) => {
+        if (p.projectToken !== tokenRef.current) return
+        try {
+          await onPushCharactersRef.current?.(p)
+        } catch (e) {
+          console.warn('[StoryPipeline] pushCharacters failed:', e?.message || e)
+        }
+      }),
       // D: audio 세그먼트별 실시간 진행 — segId→status로 누적해 목록이 생성 상태를 실시간 표시한다.
       api.onStoryEvent('story:progress', (p) => {
         if (p.projectToken !== tokenRef.current) return
         // 진행 중인 op와 다른 operationId의 progress는 drop(늦게 끊긴 이전 실행 잔여 방지).
         if (p.operationId && activeOpRef.current && p.operationId !== activeOpRef.current) return
-        if (p.kind === 'audio-segment' && p.segId) {
+        if (p.kind === 'step-log') {
+          setProgressLog((logs) => [...logs, {
+            id: `${p.operationId || 'op'}-${logs.length}`,
+            operationId: p.operationId || null,
+            step: p.step || null,
+            phase: p.phase || null,
+            message: p.message || '',
+            level: p.level || 'info',
+            at: p.at || new Date().toISOString(),
+          }].slice(-120))
+        } else if (p.kind === 'audio-segment' && p.segId) {
           setSegmentProgress((m) => ({ ...m, [p.segId]: p.status }))
         } else if (p.kind === 'script-review' || p.kind === 'review') {
           setReviewProgress({ operationId: p.operationId, target: p.target || 'script', round: p.round, of: p.of, phase: p.phase, error: p.error })
+          if (p.kind === 'review') {
+            const targetLabel = p.target === 'scenes' ? '씬 검수' : p.target === 'prompts' ? '프롬프트 검수' : '대본 검수'
+            const phaseLabel = p.phase === 'revising' ? '수정 중' : p.phase === 'error' ? '검토 중단' : '검토 중'
+            setProgressLog((logs) => [...logs, {
+              id: `${p.operationId || 'op'}-${logs.length}`,
+              operationId: p.operationId || null,
+              step: p.target || 'script',
+              phase: p.phase || null,
+              message: p.error ? `${targetLabel}: ${phaseLabel} (${p.error})` : `${targetLabel}: ${phaseLabel}${p.round ? ` ${p.round}/${p.of}` : ''}`,
+              level: p.phase === 'error' ? 'error' : 'info',
+              at: new Date().toISOString(),
+            }].slice(-120))
+          }
         }
       }),
     ]
@@ -148,6 +184,8 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
       return r
     }
     setOpenError(null)
+    setProgressLog([])
+    activeOpRef.current = null
     tokenRef.current = r.projectToken
     setState(r.state)
     setScenes(r.scenes || [])
@@ -171,6 +209,8 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
 
   const start = useCallback(async (step, params) => {
     setStreamingText('')
+    setProgressLog([])
+    activeOpRef.current = null
     setReviewProgress(null) // M3: 새 실행 시 검토 배지 초기화(이전 error 배지 포함)
     return window.electronAPI.storyStart({ projectToken: tokenRef.current, step, params })
   }, [])
@@ -186,7 +226,7 @@ export function useStoryPipeline({ projectPath, onPushScenes }) {
   // key로 재마운트되는 StoryView가 setup + 폼 기본값으로 초기화되게 한다(effect가 다음 tick에
   // useState를 정리하기 전 한 프레임의 stale 값 유출 방지).
   if (justSwitched) {
-    return { state: null, scenes: [], streamingText, scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview, segmentProgress: {}, reviewProgress: null, llmOptions, defaultLlmOption }
+    return { state: null, scenes: [], streamingText, scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview, segmentProgress: {}, reviewProgress: null, progressLog: [], llmOptions, defaultLlmOption }
   }
-  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, segmentProgress, reviewProgress, llmOptions, defaultLlmOption }
+  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, segmentProgress, reviewProgress, progressLog, llmOptions, defaultLlmOption }
 }

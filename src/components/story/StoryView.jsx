@@ -63,8 +63,20 @@ function clampReviewRounds(value) {
   return Math.max(1, Math.min(5, Math.floor(n)))
 }
 
+function formatProgressLogTime(value) {
+  if (!value) return ''
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
 /** 스텝 진행 중 표시 — (선택) 옵션·기준 요약 + 초시계 + 라벨 + 경과 시간(updatedAt 기준, 1초 갱신). */
-function StoryRunning({ label, startedAt, detail }) {
+function StoryRunning({ label, startedAt, detail, log = [] }) {
+  const logRef = useRef(null)
+  useEffect(() => {
+    const el = logRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [log.length])
   return (
     <div className="story-running" aria-live="polite">
       {detail && <div className="story-running-detail">{detail}</div>}
@@ -73,6 +85,16 @@ function StoryRunning({ label, startedAt, detail }) {
         <span className="story-running-label">{label}</span>
         <span className="story-running-elapsed"><ElapsedTime startedAt={startedAt || null} /></span>
       </div>
+      {log.length > 0 && (
+        <div className="story-progress-log" ref={logRef} role="log" aria-live="polite">
+          {log.map((entry, i) => (
+            <div key={entry.id || `${entry.phase || 'log'}-${i}`} className={`story-progress-log-row ${entry.level || 'info'}`}>
+              <span className="story-progress-log-time">{formatProgressLogTime(entry.at)}</span>
+              <span className="story-progress-log-message">{entry.message}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -169,7 +191,7 @@ function useHasI18n() {
 export default function StoryView({ pipeline, voices = [], onClose = null, onVoiceSearch = null }) {
   const t = useSafeT()
   const hasI18n = useHasI18n()
-  const { state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {}, reviewProgress = null } = pipeline
+  const { state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {}, reviewProgress = null, progressLog = [] } = pipeline
   const steps = state?.steps || {}
   const currentStep = computeCurrentStep(steps)
   const stepData = steps[currentStep] || { status: 'pending' }
@@ -775,6 +797,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onVoi
   const splitSummary = sceneGranularity === 'segment'
     ? t('story.scenes.summarySegment', '씬 분리 단위: 문장 기준 · 문장마다 씬 · 화자 전환 시 분리 · 짧은 조각 병합 · 10초↑ 분할')
     : t('story.scenes.summaryScene', '씬 분리 단위: 씬 기준 · 5~10초 의미 단위')
+  const scenesProgressLog = progressLog.filter((entry) => !entry.step || entry.step === 'scenes')
 
   const scriptEditor = (
     <div className="story-script-editor">
@@ -1042,6 +1065,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onVoi
                   label={t('story.scenes.running', '씬 분리 진행 중')}
                   startedAt={Date.parse(steps.scenes.updatedAt)}
                   detail={splitSummary}
+                  log={scenesProgressLog}
                 />
               </>
             ) : (

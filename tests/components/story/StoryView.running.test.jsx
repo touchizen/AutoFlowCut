@@ -49,6 +49,24 @@ describe('StoryView 진행 중 표시(.story-running: 초시계 + 경과시간)'
     expect(screen.queryByText(/씬 분리 결과가 아직 없습니다/)).toBeNull()
   })
 
+  it('씬 분리 running 이면 상세 진행 로그를 스크롤 패널에 표시한다', () => {
+    const p = pipeline({
+      progressLog: [
+        { step: 'scenes', phase: 'script-save', message: '편집 대본 저장', at: '2026-07-06T00:00:00.000Z' },
+        { step: 'scenes', phase: 'split-request', message: 'LLM 씬 분리 요청', at: '2026-07-06T00:00:01.000Z' },
+      ],
+    })
+    p.state.steps.script = { status: 'done' }
+    p.state.steps.scenes = { status: 'running', updatedAt: new Date(Date.now() - 3000).toISOString() }
+
+    render(<StoryView pipeline={p} />)
+
+    const log = document.querySelector('.story-progress-log')
+    expect(log).toBeTruthy()
+    expect(log.textContent).toContain('편집 대본 저장')
+    expect(log.textContent).toContain('LLM 씬 분리 요청')
+  })
+
   it('문장 기준(segment)이면 씬 분리 진행 화면에 문장 기준 요약을 표시한다', () => {
     const p = pipeline()
     p.state.input = { options: { sceneGranularity: 'segment' } }

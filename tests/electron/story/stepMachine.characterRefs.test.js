@@ -47,6 +47,44 @@ describe('stepMachine 캐릭터 레퍼런스 브리지 (V2)', () => {
     expect(p.storyCharacters).toEqual([{ name: '민수', appearance: 'tall man in black coat' }])
   })
 
+  it('scenes 완료 직후 prompts 전에도 name-only character refs 이벤트를 보낸다', async () => {
+    const localEmitted = []
+    const localLlm = {
+      generateScript: vi.fn(async () => ({ scriptMd: '#' })),
+      splitScenes: vi.fn(async () => splitOut([
+        { id: 'narrator', name: 'narrator' },
+        { id: 'a', name: '서준' },
+      ])),
+      writePrompts: vi.fn(async (scenes) => ({ scenes })),
+    }
+    const localDir = await mkdtemp(path.join(tmpdir(), 'sm-charref-scenes-'))
+    const localMachine = createStepMachine({
+      projectPath: localDir,
+      llm: localLlm,
+      emit: (ch, p) => localEmitted.push({ ch, p }),
+      getApiKey: () => 'k',
+    })
+    await localMachine.open()
+    await localMachine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await localMachine.start('scenes', {})
+
+    const ev = localEmitted.find((e) => e.ch === 'story:pushCharacters')
+    expect(ev?.p.storyCharacters).toEqual([{ name: '서준', appearance: '' }])
+    expect(localEmitted.some((e) => e.ch === 'story:pushScenes')).toBe(false)
+  })
+
+  it('씬 재분리 실패 시 이전 speakers 기준 pushCharacters를 다시 보내지 않는다', async () => {
+    const before = emitted.filter((e) => e.ch === 'story:pushCharacters').length
+    llm.splitScenes.mockRejectedValueOnce(new Error('split failed'))
+
+    await machine.start('scenes', {})
+
+    const after = emitted.filter((e) => e.ch === 'story:pushCharacters').length
+    expect(after).toBe(before)
+    const st = await machine.getState()
+    expect(st.steps.scenes.status).toBe('error')
+  })
+
   it('씬 prompt/videoT2VPrompt에 @이름 멘션이 주입된다(Flow 레퍼런스 지정 방식)', () => {
     const scene = lastPush().scenes[0]
     // 등장 캐릭터 민수 → @민수 멘션(단어경계). LLM 본문 img0는 그대로 뒤에.
@@ -86,6 +124,36 @@ describe('stepMachine 캐릭터 레퍼런스 브리지 (V2)', () => {
     ]))
     await machine.start('scenes', {})
     const st = await machine.getState()
+    expect(st.speakers.find((s) => s.name === '민수').appearance).toBe('tall man in black coat')
+  })
+
+  it('재실행 시 이전 appearance가 빈 문자열이면 새 non-empty appearance로 보강한다', async () => {
+    const localLlm = {
+      generateScript: vi.fn(async () => ({ scriptMd: '#' })),
+      splitScenes: vi.fn()
+        .mockResolvedValueOnce(splitOut([
+          { id: 'narrator', name: 'narrator' },
+          { id: 'a', name: '민수', appearance: '' },
+        ]))
+        .mockResolvedValueOnce(splitOut([
+          { id: 'narrator', name: 'narrator' },
+          { id: 'a', name: '민수', appearance: 'tall man in black coat' },
+        ])),
+      writePrompts: vi.fn(async (scenes) => ({ scenes })),
+    }
+    const localDir = await mkdtemp(path.join(tmpdir(), 'sm-charref-appearance-'))
+    const localMachine = createStepMachine({
+      projectPath: localDir,
+      llm: localLlm,
+      emit: () => {},
+      getApiKey: () => 'k',
+    })
+    await localMachine.open()
+    await localMachine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await localMachine.start('scenes', {})
+    await localMachine.start('scenes', {})
+
+    const st = await localMachine.getState()
     expect(st.speakers.find((s) => s.name === '민수').appearance).toBe('tall man in black coat')
   })
 })

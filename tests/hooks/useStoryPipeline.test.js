@@ -88,6 +88,21 @@ describe('useStoryPipeline', () => {
     ))
   })
 
+  it('pushCharacters 수신 → onPushCharacters 호출(ack 없음)', async () => {
+    const onPushCharacters = vi.fn(async () => {})
+    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: vi.fn(), onPushCharacters }))
+    await act(() => result.current.open())
+    await act(() => listeners['story:pushCharacters']({
+      projectToken: 'tok1',
+      operationId: 'op-char',
+      storyCharacters: [{ name: '민수', appearance: '' }],
+    }))
+    expect(onPushCharacters).toHaveBeenCalledWith(expect.objectContaining({
+      storyCharacters: [{ name: '민수', appearance: '' }],
+    }))
+    expect(window.electronAPI.storyPushAck).not.toHaveBeenCalled()
+  })
+
   // 회귀: main의 story:open 처리 중 maybeResendPush()가 재발신하는 story:pushScenes가
   // renderer의 storyOpen() resolve(=tokenRef 세팅) 전에 도착하면 토큰 불일치로 drop된다.
   // open() 완료 후 storyGetState()를 한 번 호출해 동일한 재발신 로직을 재실행시켜 복구한다.

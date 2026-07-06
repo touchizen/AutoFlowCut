@@ -385,6 +385,7 @@
   gap: 10px;
   padding: 32px 24px;
   color: var(--text-secondary);
+  width: 100%;
 }
 
 .story-running-detail {
@@ -408,6 +409,47 @@
 .story-running-elapsed {
   font-variant-numeric: tabular-nums;
   color: var(--primary-color);
+}
+
+.story-progress-log {
+  width: min(720px, 100%);
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  padding: 8px 10px;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  text-align: left;
+}
+
+.story-progress-log-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.12);
+}
+
+.story-progress-log-row:last-child {
+  border-bottom: none;
+}
+
+.story-progress-log-row.error .story-progress-log-message {
+  color: var(--error-color);
+}
+
+.story-progress-log-time {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  opacity: 0.75;
+}
+
+.story-progress-log-message {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
 }
 
 /* ── 하단 컨트롤 (하단 고정) ── */

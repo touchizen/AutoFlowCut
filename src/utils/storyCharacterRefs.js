@@ -19,11 +19,16 @@ export function upsertStoryCharacterRefs(existing, storyCharacters) {
   let nextId = refs.reduce((max, r) => (typeof r.id === 'number' && r.id > max ? r.id : max), 0)
   const added = []
   const collisions = []
+  let patched = false
 
   for (const c of chars) {
     const existingRef = byName.get(c.name)
     if (existingRef) {
       if (existingRef.type !== 'character') collisions.push(c.name) // 동명 비-character 충돌
+      else if (!existingRef.prompt && c.appearance && existingRef.status === 'pending' && !existingRef.data && !existingRef.filePath && !existingRef.mediaId) {
+        byName.set(c.name, { ...existingRef, prompt: c.appearance })
+        patched = true
+      }
       continue // character 동명은 보존(추가 안 함)
     }
     nextId += 1
@@ -44,8 +49,13 @@ export function upsertStoryCharacterRefs(existing, storyCharacters) {
     added.push(card)
   }
 
-  const references = added.length ? [...refs, ...added] : refs
+  const patchedRefs = patched ? refs.map((r) => byName.get(r.name) || r) : refs
+  const references = added.length ? [...patchedRefs, ...added] : patched ? patchedRefs : refs
   return { references, collisions }
 }
 
-export default { upsertStoryCharacterRefs }
+export function assertStoryProjectCurrent(currentPath, enqueuedPath, message = 'stale story push discarded') {
+  if (currentPath !== enqueuedPath) throw new Error(message)
+}
+
+export default { upsertStoryCharacterRefs, assertStoryProjectCurrent }

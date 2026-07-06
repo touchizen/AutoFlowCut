@@ -125,7 +125,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   storyLoadAudioPackage: (projectPath) => ipcRenderer.invoke('story:load-audio-package', { projectPath }),
   storyListLlmOptions: () => ipcRenderer.invoke('story:list-llm-options'),
   onStoryEvent: (channel, cb) => {
-    const valid = ['story:state', 'story:delta', 'story:progress', 'story:pushScenes']
+    const valid = ['story:state', 'story:delta', 'story:progress', 'story:pushScenes', 'story:pushCharacters']
     if (!valid.includes(channel)) return () => {}
     const listener = (_e, payload) => cb(payload)
     ipcRenderer.on(channel, listener)
