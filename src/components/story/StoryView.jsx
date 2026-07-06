@@ -74,6 +74,11 @@ function StoryRunning({ label, startedAt, detail }) {
 }
 
 function computeCurrentStep(steps) {
+  // 진행 중인 스텝을 우선(자동 진행이 자동=false 스텝을 건너뛰어 뒤 스텝이 먼저 running일 수 있다 —
+  // 그 경우에도 isRunning/디스플레이/중단 버튼이 실제 running 스텝을 가리키게).
+  for (const key of PROGRESSABLE_STEPS) {
+    if ((steps?.[key]?.status) === 'running') return key
+  }
   for (const key of PROGRESSABLE_STEPS) {
     if ((steps?.[key]?.status || 'pending') !== 'done') return key
   }
@@ -165,6 +170,9 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onVoi
   const currentStep = computeCurrentStep(steps)
   const stepData = steps[currentStep] || { status: 'pending' }
   const isRunning = stepData.status === 'running'
+  // 자동 진행 — 스텝별 '자동' 토글(오디오는 TTS 비용이라 기본 off) + '전체 진행'(자동=true 순차실행).
+  const [autoSteps, setAutoSteps] = useState({ scenes: true, audio: false, prompts: true })
+  const [autoRunning, setAutoRunning] = useState(false)
   // script 패널(대본 스트리밍/편집기·중단)은 "지금 진행 스텝(currentStep)"이 아니라 "script 스텝 자체"의
   // running 여부로 판단해야 한다 — 안 그러면 scenes/prompts running 중 대본 탭에서 빈 스트리밍이 뜬다(F2재검토).
   const scriptRunning = steps.script?.status === 'running'
@@ -660,13 +668,45 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onVoi
   // §0.4 분리시작 — 편집본 저장 + 씬 분리 단일 액션. 제목 비면 자동생성 먼저(§3).
   const handleSplit = async () => {
     const resolved = await resolveTitle()
-    if (resolved == null) return
+    if (resolved == null) return false // 제목 자동생성 실패 → 실행 안 함(자동 진행이 이걸로 멈춤)
     // resolveTitle이 생성한 title을 main source of truth에 커밋 — 없으면 재오픈 hydrate가 제목을 잃는다.
-    start('scenes', { scriptOverride: scriptText, options: currentOptions(), title: resolved })
+    const res = await start('scenes', { scriptOverride: scriptText, options: currentOptions(), title: resolved })
     // §1 — scenes 실행으로 scriptPhase를 벗고 스텝퍼가 진행한다.
     setScriptPhase(null)
     setViewedStep(null) // 씬 분리 진행 시 현재 단계(scenes) 패널로 화면 이동
+    return !res?.error // busy 등 enqueue 실패면 false
   }
+
+  // ── 자동 진행 오케스트레이션 ──────────────────────────────────────────────
+  const AUTO_ORDER = ['scenes', 'audio', 'prompts']
+  const handleToggleAuto = (step) => setAutoSteps((m) => ({ ...m, [step]: !m[step] }))
+  // 다음 실행할 자동 스텝: 순서상 자동=true & 아직 done/running 아닌 첫 스텝(자동=false는 건너뜀).
+  const nextAutoStep = () => AUTO_ORDER.find((s) => autoSteps[s] && steps[s]?.status !== 'done' && steps[s]?.status !== 'running')
+  // 전체 진행 가능: 대본 done + 남은 자동 스텝 존재 + 실행 중 아님.
+  const canRunAll = steps.script?.status === 'done' && !isRunning && !!nextAutoStep()
+  // 스텝을 실행하되 enqueue 실패(제목 실패/busy)면 자동 진행을 멈춘다(stuck 방지, Codex).
+  const triggerAutoStep = async (step) => {
+    if (step === 'scenes') {
+      const ok = await handleSplit()
+      if (!ok) setAutoRunning(false)
+      return
+    }
+    setScriptPhase(null); setViewedStep(null)
+    const res = await start(step, buildStepParams(step))
+    if (res?.error) setAutoRunning(false) // busy 등 상태전이 없음 → 멈춤
+  }
+  const handleRunAll = () => { if (canRunAll) setAutoRunning(true) }
+  // 실행 중이면 대기, 완료되면 다음 자동 스텝, 에러/남은 스텝 없으면 종료.
+  useEffect(() => {
+    if (!autoRunning) return
+    const anyRunning = ['script', ...AUTO_ORDER].some((s) => steps[s]?.status === 'running')
+    if (anyRunning) return
+    const anyError = ['script', ...AUTO_ORDER].some((s) => steps[s]?.status === 'error')
+    if (anyError) { setAutoRunning(false); return }
+    const next = nextAutoStep()
+    if (!next) { setAutoRunning(false); return }
+    triggerAutoStep(next)
+  }, [autoRunning, steps]) // eslint-disable-line react-hooks/exhaustive-deps
 
 
   // §1-A setup primary [✨ 시작] — scriptText(임포트/붙여넣기) 있으면 임포트 경로, 없고 제목 있으면
@@ -736,7 +776,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onVoi
 
   return (
     <div className="story-view">
-      <StoryStepper steps={steps} currentStep={currentStep} activeStep={stepperActive} t={t} onStepClick={handleStepClick} />
+      <StoryStepper steps={steps} currentStep={currentStep} activeStep={stepperActive} t={t} onStepClick={handleStepClick}
+        autoSteps={autoSteps} onToggleAuto={handleToggleAuto} onRunAll={handleRunAll} canRunAll={canRunAll} autoRunning={autoRunning} />
 
       {openError && (
         <div className="story-open-error-banner" role="alert">

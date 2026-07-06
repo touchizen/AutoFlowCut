@@ -46,3 +46,34 @@ describe('StoryStepper active', () => {
     expect(pillOf('오디오').classList.contains('active')).toBe(false)
   })
 })
+
+describe('StoryStepper 자동 진행(자동 체크박스 + 전체 진행)', () => {
+  const steps = { script: { status: 'done' }, scenes: { status: 'pending' }, audio: { status: 'pending' }, prompts: { status: 'pending' } }
+  it('scenes/audio/prompts 각 pill에 자동 체크박스, 상태는 autoSteps 반영', () => {
+    render(<StoryStepper steps={steps} currentStep="scenes" onStepClick={vi.fn()}
+      autoSteps={{ scenes: true, audio: false, prompts: true }} onToggleAuto={vi.fn()} onRunAll={vi.fn()} canRunAll autoRunning={false} />)
+    expect(pillOf('씬 분리').querySelector('input[type=checkbox]').checked).toBe(true)
+    expect(pillOf('오디오').querySelector('input[type=checkbox]').checked).toBe(false)
+    expect(pillOf('프롬프트').querySelector('input[type=checkbox]').checked).toBe(true)
+    // 대본/설정엔 자동 체크박스 없음
+    expect(pillOf('대본').querySelector('input[type=checkbox]')).toBeNull()
+  })
+  it('자동 체크박스 클릭 시 onToggleAuto(step) 호출, 탭 이동(onStepClick)은 안 함', () => {
+    const onToggleAuto = vi.fn(); const onStepClick = vi.fn()
+    render(<StoryStepper steps={steps} currentStep="scenes" onStepClick={onStepClick}
+      autoSteps={{ scenes: false, audio: false, prompts: true }} onToggleAuto={onToggleAuto} onRunAll={vi.fn()} canRunAll autoRunning={false} />)
+    fireEvent.click(pillOf('오디오').querySelector('input[type=checkbox]'))
+    expect(onToggleAuto).toHaveBeenCalledWith('audio')
+    expect(onStepClick).not.toHaveBeenCalled()
+  })
+  it('전체 진행 버튼 클릭 → onRunAll, canRunAll=false면 disabled', () => {
+    const onRunAll = vi.fn()
+    const { rerender } = render(<StoryStepper steps={steps} currentStep="scenes" onStepClick={vi.fn()}
+      autoSteps={{ scenes: true, audio: false, prompts: true }} onToggleAuto={vi.fn()} onRunAll={onRunAll} canRunAll autoRunning={false} />)
+    fireEvent.click(screen.getByRole('button', { name: /전체 진행/ }))
+    expect(onRunAll).toHaveBeenCalled()
+    rerender(<StoryStepper steps={steps} currentStep="scenes" onStepClick={vi.fn()}
+      autoSteps={{ scenes: true, audio: false, prompts: true }} onToggleAuto={vi.fn()} onRunAll={onRunAll} canRunAll={false} autoRunning={false} />)
+    expect(screen.getByRole('button', { name: /전체 진행/ })).toBeDisabled()
+  })
+})

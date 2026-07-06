@@ -21,7 +21,13 @@ export const STEP_META = {
 
 const STATUS_LABEL = { pending: '대기', running: '진행 중', done: '완료', error: '오류' }
 
-export default function StoryStepper({ steps, currentStep, activeStep, t = (key, fallback) => fallback, onStepClick }) {
+// 자동 진행 대상 스텝(script/setup은 제외 — 대본은 사용자 설정/작성 필요).
+const AUTO_STEPS = ['scenes', 'audio', 'prompts']
+
+export default function StoryStepper({
+  steps, currentStep, activeStep, t = (key, fallback) => fallback, onStepClick,
+  autoSteps = null, onToggleAuto, onRunAll, canRunAll = false, autoRunning = false,
+}) {
   // active(파란색)는 사용자가 보고 있는 스텝(activeStep=displayStep)을 따른다 — 클릭한 탭이 active.
   // 미지정이면 currentStep 폴백(하위호환).
   const activeKey = activeStep ?? currentStep
@@ -72,9 +78,37 @@ export default function StoryStepper({ steps, currentStep, activeStep, t = (key,
             <span className={`story-step-badge story-badge-${status}`}>
               {t(`story.status.${status}`, STATUS_LABEL[status] || status)}
             </span>
+            {/* 자동 진행 대상 스텝의 '자동' 체크박스 — 클릭이 탭 이동으로 번지지 않게 stopPropagation. */}
+            {autoSteps && AUTO_STEPS.includes(key) && typeof onToggleAuto === 'function' && (
+              <label
+                className="story-step-auto"
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
+              >
+                <input
+                  type="checkbox"
+                  aria-label={t('story.auto.for', `${label} 자동`, { step: label })}
+                  checked={!!autoSteps[key]}
+                  onChange={() => onToggleAuto(key)}
+                />
+                <span>{t('story.auto.label', '자동')}</span>
+              </label>
+            )}
           </div>
         )
       })}
+      {/* 스텝퍼 오른쪽 끝 — 자동=true 스텝들을 순서대로 자동 실행. */}
+      {typeof onRunAll === 'function' && (
+        <button
+          type="button"
+          className="story-step-runall"
+          onClick={onRunAll}
+          disabled={!canRunAll || autoRunning}
+          aria-label={t('story.auto.runAll', '전체 진행')}
+        >
+          {autoRunning ? t('story.auto.running', '⏳ 자동 진행 중') : t('story.auto.runAllIcon', '▶ 전체 진행')}
+        </button>
+      )}
     </div>
   )
 }

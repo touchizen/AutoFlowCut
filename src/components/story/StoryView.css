@@ -44,6 +44,32 @@
   cursor: pointer;
 }
 
+/* 자동 진행 — pill 내 '자동' 체크박스 + 스텝퍼 오른쪽 끝 '전체 진행' */
+.story-step-auto {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 6px;
+  font-size: 0.72rem;
+  cursor: pointer;
+  opacity: 0.85;
+}
+.story-step-auto input { cursor: pointer; margin: 0; }
+.story-step-runall {
+  margin-left: auto;
+  align-self: center;
+  padding: 6px 14px;
+  border: 1px solid var(--primary-color, #4a7cff);
+  border-radius: 999px;
+  background: var(--primary-color, #4a7cff);
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.story-step-runall:disabled { opacity: 0.5; cursor: default; }
+
 /* M3: 대본 자동 검토 토글 + 진행 배지 */
 .story-review-toggle {
   display: flex;
