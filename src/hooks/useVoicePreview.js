@@ -53,8 +53,9 @@ export function useVoicePreview() {
     setState({ voiceId: voice.voiceId, status: 'playing' })
     audio.play().catch(() => { if (seq === seqRef.current) setState({ voiceId: voice.voiceId, status: 'error' }) })
 
-    // F0 gender only for non-fixed voices
-    if (voice.genderSource !== 'adapter' && voice.genderSource !== 'seed') {
+    // F0 gender only for genuinely unknown voices — skip adapter/seed (fixed) and manual
+    // (user override) so a preview replay never overwrites what the user already set.
+    if (voice.genderSource !== 'adapter' && voice.genderSource !== 'seed' && voice.genderSource !== 'manual') {
       try {
         if (!ctxRef.current) ctxRef.current = new AudioContext()
         const buf = await ctxRef.current.decodeAudioData(bytes.buffer.slice(0))

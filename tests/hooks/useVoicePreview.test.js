@@ -75,6 +75,24 @@ it('does not throw when ttsTagVoiceGender rejects', async () => {
   expect(window.electronAPI.ttsTagVoiceGender).toHaveBeenCalled()
 })
 
+it('does not run F0 gender estimation for a voice already tagged genderSource "manual" (manual override protected)', async () => {
+  // Regression: a user's manual gender override must not be flipped by a later F0 preview guess.
+  const decodeSpy = vi.fn()
+  globalThis.AudioContext = class {
+    decodeAudioData(...args) {
+      decodeSpy(...args)
+      return Promise.resolve({ numberOfChannels: 1, sampleRate: 16000, getChannelData: () => new Float32Array(16000) })
+    }
+    close() {}
+  }
+  const { result } = renderHook(() => useVoicePreview())
+  await act(async () => { await result.current.play({ provider: 'typecast', voiceId: 'v1', language: 'ko', genderSource: 'manual' }) })
+  await waitFor(() => expect(result.current.state.status).toBe('playing'))
+  expect(decodeSpy).not.toHaveBeenCalled()
+  expect(window.electronAPI.ttsTagVoiceGender).not.toHaveBeenCalled()
+  expect(result.current.lastGender).toBeNull()
+})
+
 it('in-flight play does not proceed after unmount (seq invalidation)', async () => {
   // Control when ttsPreviewVoice resolves
   let resolvePreview

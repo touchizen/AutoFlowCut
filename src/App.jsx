@@ -586,6 +586,8 @@ function App() {
   // Story 오디오 화자 매핑용 성우 목록 — story 뷰 진입 시 provider별로 로드해 합쳐 내려준다.
   // 각 provider 태그를 붙여 StoryView가 화자별 엔진(provider)+목소리를 고를 수 있게 한다.
   const [ttsVoices, setTtsVoices] = useState([])
+  const ttsVoicesRef = useRef(ttsVoices)
+  useEffect(() => { ttsVoicesRef.current = ttsVoices }, [ttsVoices])
   const mergeTtsVoices = useCallback((incoming) => {
     setTtsVoices((prev) => {
       const byKey = new Map(prev.map((voice) => [`${voice.provider}:${voice.id}`, voice]))
@@ -634,6 +636,12 @@ function App() {
   // 항상 renderer의 ttsVoices를 낙관적으로 갱신하고, manual만 main에 영속 저장한다
   // (f0는 useVoicePreview.play()가 이미 ttsTagVoiceGender로 저장 — 여기서 또 저장하면 중복 IPC).
   const handleTagGender = useCallback(({ provider, voiceId, gender, f0, confidence, source }) => {
+    // 방어선: useVoicePreview 쪽 가드(genderSource!=='manual')가 이미 F0 추정 자체를 건너뛰지만,
+    // 혹시 남아있는 f0 태그가 도착하더라도 이미 manual인 voice는 여기서 다시 한 번 보호한다.
+    if (source === 'f0') {
+      const existing = ttsVoicesRef.current.find((v) => v.provider === provider && v.id === voiceId)
+      if (existing?.genderSource === 'manual') return
+    }
     mergeTtsVoices([{ provider, id: voiceId, gender, genderSource: source, f0: f0 ?? null, confidence: confidence ?? null }])
     if (source === 'manual') {
       window.electronAPI?.ttsTagVoiceGender?.({ provider, voiceId, gender, f0: f0 ?? null, confidence: confidence ?? null, source: 'manual' })?.catch?.(() => {})
