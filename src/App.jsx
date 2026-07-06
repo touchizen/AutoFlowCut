@@ -620,7 +620,7 @@ function App() {
           .then((vs) => (Array.isArray(vs) ? vs.map((v) => ({ ...v, provider: p })) : []))
           .catch(() => []),
       ),
-    ).then((lists) => { if (alive) setTtsVoices(lists.flat()) })
+    ).then((lists) => { if (alive) mergeTtsVoices(lists.flat()) })
     return () => { alive = false }
   }, [activeView]) // eslint-disable-line react-hooks/exhaustive-deps
 
