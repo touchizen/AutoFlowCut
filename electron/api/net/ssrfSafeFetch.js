@@ -1,0 +1,35 @@
+const ALLOW_HOSTS = [
+  'api.elevenlabs.io',
+  'storage.googleapis.com', // ElevenLabs public preview CDN
+]
+const PRIVATE_RE = /^(10\.|127\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1|fc|fd|fe80)/i
+
+export function isPreviewUrlAllowed(rawUrl) {
+  let u
+  try { u = new URL(rawUrl) } catch { return false }
+  if (u.protocol !== 'https:') return false
+  if (PRIVATE_RE.test(u.hostname)) return false
+  return ALLOW_HOSTS.includes(u.hostname)
+}
+
+const MAX_BYTES = 5 * 1024 * 1024
+
+export async function ssrfSafeFetch(url, { fetch, timeoutMs = 15000 } = {}) {
+  if (!isPreviewUrlAllowed(url)) throw new Error('preview url not allowed')
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), timeoutMs)
+  try {
+    const res = await fetch(url, { redirect: 'manual', signal: ctrl.signal })
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get('location')
+      if (!loc || !isPreviewUrlAllowed(loc)) throw new Error('redirect not allowed')
+      return ssrfSafeFetch(loc, { fetch, timeoutMs })
+    }
+    if (!res.ok) throw new Error(`preview fetch ${res.status}`)
+    const mimeType = res.headers.get('content-type') || 'audio/mpeg'
+    if (!/^audio\//.test(mimeType)) throw new Error('unexpected content-type')
+    const buf = Buffer.from(await res.arrayBuffer())
+    if (buf.length > MAX_BYTES) throw new Error('preview too large')
+    return { audio: buf, mimeType }
+  } finally { clearTimeout(t) }
+}
