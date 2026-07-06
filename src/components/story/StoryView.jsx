@@ -435,7 +435,9 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onVoi
   // B: done 스텝(audio/prompts)을 보고 있으면 하단 primary가 다음 스텝으로 새지 않고 "다시 생성"
   // (그 스텝 재실행)으로 동작한다 + '닫기'로 파이프라인을 나간다. audio 재실행은 canReuse가 엔진/
   // 성우 바뀐 세그먼트만 재생성. (script/scenes는 파이프라인 진행이라 제외.)
-  const redoStep = (['audio', 'prompts'].includes(displayStep) && steps[displayStep]?.status === 'done' && !isRunning)
+  // 보고 있는 done 스텝을 재실행하는 탭별 액션(하단 primary가 currentStep으로 새지 않게).
+  // scenes 포함 — 씬분리 done 탭에서 '씬 재분리'(오디오로 안 샘), audio/prompts는 '다시 생성'.
+  const redoStep = (['scenes', 'audio', 'prompts'].includes(displayStep) && steps[displayStep]?.status === 'done' && !isRunning)
     ? displayStep : null
   const isAudioRedo = redoStep != null // (닫기 버튼 노출 조건 겸용)
 
@@ -602,6 +604,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onVoi
 
   // B: 현재 보고 있는 done 스텝(audio/prompts)을 재실행. audio는 화자 매핑 반영, prompts는 params 없음.
   const handleStepRedo = () => {
+    if (redoStep === 'scenes') { handleSplit(); return } // 씬 재분리(제목 확정+분리, 자체 viewedStep 처리)
     start(redoStep, buildStepParams(redoStep))
     setViewedStep(null)
   }
@@ -985,7 +988,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onVoi
               </>
             ) : (
               <>
-                {/* 10번: 씬 분리 탭에 필요한 옵션(씬 분리 단위)만 노출 — 바꿔서 다시 분리. */}
+                {/* 10번: 씬 분리 탭에 필요한 옵션(씬 분리 단위)만 노출 — 바꾸고 하단 '씬 재분리'로 재분리. */}
                 <div className="story-rerun-bar">
                   <span className="story-opt-label">{t('story.form.granularityLabel', '씬 분리 단위')}</span>
                   <select
@@ -998,14 +1001,6 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onVoi
                     <option value="scene">{t('story.form.granularityScene', '씬 기준 (5~10초)')}</option>
                     <option value="segment">{t('story.form.granularitySegment', '문장 기준')}</option>
                   </select>
-                  <button
-                    type="button"
-                    className="story-btn-secondary"
-                    onClick={handleSplit}
-                    disabled={isRunning || !scriptText.trim()}
-                  >
-                    {t('story.scenes.rerun', '다시 분리')}
-                  </button>
                 </div>
                 <table className="story-readonly-table">
                   <thead>
@@ -1257,11 +1252,11 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onVoi
               disabled={isSetupActionView ? setupActionDisabled : isRunning}
               aria-label={isSetupActionView
                 ? setupActionAriaLabel
-                : redoStep === 'prompts' ? t('story.action.promptsRedo', '프롬프트 다시 생성') : redoStep === 'audio' ? t('story.action.audioRedo', '오디오 다시 생성') : actionAriaLabel}
+                : redoStep === 'scenes' ? t('story.action.scenesRedo', '씬 재분리') : redoStep === 'prompts' ? t('story.action.promptsRedo', '프롬프트 다시 생성') : redoStep === 'audio' ? t('story.action.audioRedo', '오디오 다시 생성') : actionAriaLabel}
             >
               {isSetupActionView
                 ? setupActionVisibleLabel
-                : redoStep === 'prompts' ? t('story.action.promptsRedoIcon', '↻ 프롬프트 다시 생성') : redoStep === 'audio' ? t('story.action.audioRedoIcon', '↻ 오디오 다시 생성') : actionVisibleLabel}
+                : redoStep === 'scenes' ? t('story.action.scenesRedoIcon', '↻ 씬 재분리') : redoStep === 'prompts' ? t('story.action.promptsRedoIcon', '↻ 프롬프트 다시 생성') : redoStep === 'audio' ? t('story.action.audioRedoIcon', '↻ 오디오 다시 생성') : actionVisibleLabel}
             </button>
           )}
           {((isAudioRedo || showSetupClose) && onClose) && (

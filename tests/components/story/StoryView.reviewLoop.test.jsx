@@ -95,7 +95,8 @@ describe('StoryView 대본 검토 토글 (M3)', () => {
     expect(within(controls).getByText('자동검수')).toBeInTheDocument()
     expect(within(controls).getByText('검수')).toBeInTheDocument()
     expect(controls.contains(screen.getByRole('button', { name: '씬 검수' }))).toBe(true)
-    expect(controls.contains(screen.getByRole('button', { name: '오디오 실행' }))).toBe(true)
+    // 씬분리(done) 탭의 하단 primary는 그 탭 액션(씬 재분리) — 오디오 실행으로 안 샘
+    expect(controls.contains(screen.getByRole('button', { name: /씬 재분리/ }))).toBe(true)
   })
 
   it('대본 탭 수동 검수는 현재 editor 대본을 scriptOverride로 전달', () => {

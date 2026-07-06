@@ -387,17 +387,19 @@ describe('StoryView', () => {
 
   // 네비게이션 회귀: 진행 대기(pending)인 현재 단계는 done 스텝을 보다가도 다시 볼 수 있어야 한다.
   // (버그: done 스텝만 clickable + 진행 액션이 viewedStep 미리셋 → 대기 단계로 못 돌아옴.)
-  it('done 스텝을 보다가 하단 진행을 누르면 진행 단계 패널로 화면이 이동한다', () => {
+  it('done 스텝(씬분리) 탭의 하단 버튼은 그 탭 액션(씬 재분리)이고, 다음 단계는 탭으로 이동한다', () => {
     const p = pipeline()
     p.state.steps.script.status = 'done'
     p.state.steps.scenes.status = 'done'
-    p.state.steps.audio.status = 'done'  // M2a-3: audio까지 done이라야 currentStep=prompts
+    p.state.steps.audio.status = 'done'  // currentStep=prompts
     render(<StoryView pipeline={p} />)
-    // 씬 분리(done) 탭으로 이동 → scenes 패널
+    // 씬 분리(done) 탭 → scenes 패널. 하단은 '씬 재분리'(currentStep=prompts로 새지 않음)
     fireEvent.click(screen.getByRole('button', { name: '씬 분리' }))
     expect(screen.getByText('화자')).toBeTruthy()
-    // 하단 '프롬프트 실행'(진행) → viewedStep 리셋되어 prompts 패널로 이동해야 한다
-    fireEvent.click(screen.getByRole('button', { name: '프롬프트 실행' }))
+    expect(screen.getByRole('button', { name: /씬 재분리/ })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '프롬프트 실행' })).toBeNull()
+    // 프롬프트로 가려면 프롬프트 탭 클릭
+    fireEvent.click(screen.getByRole('button', { name: '프롬프트' }))
     expect(screen.getByText('이미지 프롬프트')).toBeTruthy()
     expect(screen.queryByText('화자')).toBeNull()
   })
@@ -480,9 +482,9 @@ describe('StoryView', () => {
     p.state.steps.scenes.status = 'done'
     render(<StoryView pipeline={p} />)
     fireEvent.click(screen.getByRole('button', { name: '씬 분리' }))
-    // 씬 분리 탭 안의 재분리용 단위 드롭다운을 문장 기준으로 변경
+    // 씬 분리 탭 안의 재분리용 단위 드롭다운을 문장 기준으로 변경 → 하단 '씬 재분리'로 재분리
     fireEvent.change(screen.getByLabelText('씬 분리 단위 (재분리)'), { target: { value: 'segment' } })
-    fireEvent.click(screen.getByRole('button', { name: '다시 분리' }))
+    fireEvent.click(screen.getByRole('button', { name: /씬 재분리/ }))
     await waitFor(() => {
       expect(p.start).toHaveBeenCalledWith('scenes', expect.objectContaining({
         options: expect.objectContaining({ sceneGranularity: 'segment' }),
