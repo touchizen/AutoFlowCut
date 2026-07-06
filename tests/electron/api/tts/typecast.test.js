@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createTypecastAdapter } from '../../../../electron/api/tts/typecast.js'
+import fixture from '../../../fixtures/typecast-voices.json'
 
 describe('createTypecastAdapter', () => {
   it('capabilities: 감정 지원·wav', () => {
@@ -31,9 +32,9 @@ describe('createTypecastAdapter', () => {
     expect(body.language).toBeUndefined()
   })
 
-  it('listVoices: 알려진 Typecast 성우 목록을 {id,name,language,previewUrl} 형태로 반환한다', () => {
+  it('listVoices: 알려진 Typecast 성우 목록을 {id,name,language,previewUrl} 형태로 반환한다', async () => {
     const a = createTypecastAdapter({ getKey: () => 'tc', fetch: async () => {} })
-    const voices = a.listVoices()
+    const voices = await a.listVoices()
     expect(Array.isArray(voices)).toBe(true)
     expect(voices.length).toBeGreaterThan(0)
     for (const v of voices) {
@@ -50,6 +51,30 @@ describe('createTypecastAdapter', () => {
     expect(voices.find((v) => v.id === 'tc_68257f68bc6e3c161ab5078d').traits).toContain('male')
     expect(voices.find((v) => v.id === 'tc_6800a387534948f191cc952b')).toMatchObject({ name: 'Taewoo' })
     expect(voices.find((v) => v.id === 'tc_6731b3ac075b04a944644234')).toMatchObject({ name: 'Hanyoung', traits: expect.arrayContaining(['female']) })
+  })
+
+  it('listVoices fetches live list and normalizes', async () => {
+    const fetch = async () => ({ ok: true, json: async () => fixture })
+    const a = createTypecastAdapter({ getKey: () => 'k', fetch })
+    const voices = await a.listVoices()
+    expect(voices.length).toBe(fixture.length)
+    const s = voices.find((v) => v.id === 'tc_69fc0cff784968297fb45daa')
+    expect(s).toMatchObject({ name: 'Sanghyun', language: 'ko', gender: null, source: 'live' })
+  })
+
+  it('listVoices overlays seed gender for known ids', async () => {
+    const fetch = async () => ({ ok: true, json: async () => fixture })
+    const a = createTypecastAdapter({ getKey: () => 'k', fetch })
+    const voices = await a.listVoices()
+    const seed = voices.find((v) => v.id === 'tc_6436dbbb602bde66c6b39504')
+    expect(seed).toMatchObject({ gender: 'male', genderSource: 'seed' })
+  })
+
+  it('listVoices falls back to seeds when no key', async () => {
+    const a = createTypecastAdapter({ getKey: () => null, fetch: async () => { throw new Error('nope') } })
+    const voices = await a.listVoices()
+    expect(voices.length).toBeGreaterThan(0)
+    expect(voices.every((v) => v.source === 'seed')).toBe(true)
   })
 
   it('키 없으면 throw', async () => {

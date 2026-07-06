@@ -1,0 +1,5 @@
+[
+  { "voice_id": "tc_6436dbbb602bde66c6b39504", "voice_name": "Joonkyu", "model": "ssfm-v21", "emotions": ["normal", "happy", "sad", "angry"], "voice_type": "original" },
+  { "voice_id": "tc_69fc0cff784968297fb45daa", "voice_name": "Sanghyun", "model": "ssfm-v30", "emotions": ["normal", "happy", "sad", "angry", "whisper", "toneup", "tonedown"], "voice_type": "original" },
+  { "voice_id": "tc_69f2e455ea79fd197aa0476f", "voice_name": "Seohyeon", "model": "ssfm-v30", "emotions": ["normal", "happy"], "voice_type": "original" }
+]
