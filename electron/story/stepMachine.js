@@ -320,10 +320,9 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   }))
 
   // V2: narrator/비가시 화자 판정(정규화 id/name). 이 화자는 캐릭터 카드/태그에서 제외.
-  const isNarratorSpeaker = (sp) => {
-    const t = (v) => String(v || '').replace(/\s/g, '').toLowerCase()
-    return t(sp?.id) === 'narrator' || t(sp?.name) === 'narrator' || t(sp?.name) === '내레이터'
-  }
+  // storyNarrationTracks.isNarratorSpeaker(별칭 narration/nar/na/나레이션/해설/화자 포함)에 위임 —
+  // 로컬에서 'narrator'/'내레이터'만 판정하면 별칭 화자가 캐릭터 후보로 잘못 새어나간다.
+  const isNarratorSpeaker = (sp) => isNarratorTrackSpeaker(sp?.id) || isNarratorTrackSpeaker(sp?.name)
   // V2: non-narrator speaker를 캐릭터 후보로 취급한다. appearance가 없어도 Ref 탭에 pending
   // 카드가 먼저 생겨야 사용자가 외형/이미지를 보강할 수 있다.
   const characterSpeakers = () => (state.speakers || [])

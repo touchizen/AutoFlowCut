@@ -127,6 +127,37 @@ describe('stepMachine 캐릭터 레퍼런스 브리지 (V2)', () => {
     expect(st.speakers.find((s) => s.name === '민수').appearance).toBe('tall man in black coat')
   })
 
+  it('narrator 별칭 화자(narration/해설)는 characterSpeakers/storyCharacters에서 제외된다 (BUG #2 회귀)', async () => {
+    const localEmitted = []
+    const localLlm = {
+      generateScript: vi.fn(async () => ({ scriptMd: '#' })),
+      splitScenes: vi.fn(async () => splitOut([
+        { id: 'narrator', name: 'narrator' },
+        { id: 'narration', name: 'Narration' },
+        { id: 'x', name: '해설' },
+        { id: 'c1', name: 'Alice', appearance: 'tall woman' },
+      ])),
+      writePrompts: vi.fn(async (scenes) => ({ scenes: scenes.map((s, i) => ({ ...s, imagePrompt: `img${i}`, videoPrompt: `vid${i}` })) })),
+    }
+    const localDir = await mkdtemp(path.join(tmpdir(), 'sm-charref-narralias-'))
+    const localMachine = createStepMachine({
+      projectPath: localDir,
+      llm: localLlm,
+      emit: (ch, p) => localEmitted.push({ ch, p }),
+      getApiKey: () => 'k',
+    })
+    await localMachine.open()
+    await localMachine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await localMachine.start('scenes', {})
+    await localMachine.start('prompts', {})
+
+    const push = localEmitted.filter((e) => e.ch === 'story:pushScenes').pop()
+    const names = push.p.storyCharacters.map((c) => c.name)
+    expect(names).toContain('Alice')
+    expect(names).not.toContain('Narration')
+    expect(names).not.toContain('해설')
+  })
+
   it('재실행 시 이전 appearance가 빈 문자열이면 새 non-empty appearance로 보강한다', async () => {
     const localLlm = {
       generateScript: vi.fn(async () => ({ scriptMd: '#' })),

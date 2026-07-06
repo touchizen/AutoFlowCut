@@ -537,7 +537,11 @@ function App() {
           }
         }
         const { nextScenes, nextSrtTrack } = scenesHook.importStoryScenes(importPayload)
-        const r = await saveCurrentProjectWithPayload({ scenes: nextScenes, srtTrack: nextSrtTrack, references: nextReferences })
+        // BUG #1 고침: nextReferences가 undefined(이번 push에서 refs 변경 없음, 예: 직전
+        // onPushCharacters가 이미 반영)면 useProjectData.buildProjectPayload가 undefined를
+        // stale render-closure `references`로 폴백해 방금 추가된 캐릭터 카드가 저장에서
+        // 빠질 수 있다(재로드 시 카드 소실). referencesRef.current(동기 최신 스냅샷)로 대체.
+        const r = await saveCurrentProjectWithPayload({ scenes: nextScenes, srtTrack: nextSrtTrack, references: nextReferences ?? referencesRef.current })
         if (!r.ok) throw new Error('project save failed')
         assertCurrent()
         if (nextReferences) {
