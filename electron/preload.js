@@ -113,6 +113,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   keysSet: (params) => ipcRenderer.invoke('keys:set', params),
   keysDelete: (params) => ipcRenderer.invoke('keys:delete', params),
   ttsListVoices: (params) => ipcRenderer.invoke('tts:list-voices', params),
+  ttsPreviewVoice: (params) => ipcRenderer.invoke('tts:preview-voice', params),
+  ttsTagVoiceGender: (params) => ipcRenderer.invoke('tts:tag-voice-gender', params),
 
   // --- Story pipeline ---
   storyOpen: (params) => ipcRenderer.invoke('story:open', params),

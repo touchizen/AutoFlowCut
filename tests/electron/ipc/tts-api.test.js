@@ -80,3 +80,60 @@ describe('tts/keys IPC (M2a-3b)', () => {
     expect(keyStore.setKey).toHaveBeenCalledWith(undefined, undefined)
   })
 })
+
+describe('tts:preview-voice / tts:tag-voice-gender IPC (Task 8)', () => {
+  let ipc, keyStore, previewVoice, tagVoiceGender
+
+  beforeEach(() => {
+    ipc = fakeIpcMain()
+    keyStore = { setKey: vi.fn(), hasKey: vi.fn(), clearKey: vi.fn() }
+    previewVoice = vi.fn(async () => ({ audioBase64: 'AAA', mimeType: 'audio/wav' }))
+    tagVoiceGender = vi.fn()
+    registerTtsIPC(ipc, {
+      keyStore,
+      safeStorage: { isEncryptionAvailable: () => true },
+      listVoices: async () => [],
+      previewVoice,
+      tagVoiceGender,
+    })
+  })
+
+  it('tts:preview-voice validates provider and delegates', async () => {
+    const ok = await ipc.invoke('tts:preview-voice', { provider: 'typecast', voiceId: 'v1', language: 'ko' })
+    expect(ok.audioBase64).toBe('AAA')
+    const bad = await ipc.invoke('tts:preview-voice', { provider: 'evil', voiceId: 'v1' })
+    expect(bad.error).toBeTruthy()
+    expect(previewVoice).toHaveBeenCalledTimes(1)
+    expect(previewVoice).toHaveBeenCalledWith({ provider: 'typecast', voiceId: 'v1', language: 'ko' })
+  })
+
+  it('tts:preview-voice rejects missing/oversized voiceId', async () => {
+    const noId = await ipc.invoke('tts:preview-voice', { provider: 'typecast' })
+    expect(noId.error).toBeTruthy()
+    const tooLong = await ipc.invoke('tts:preview-voice', { provider: 'typecast', voiceId: 'x'.repeat(129) })
+    expect(tooLong.error).toBeTruthy()
+    expect(previewVoice).not.toHaveBeenCalled()
+  })
+
+  it('tts:preview-voice defaults language to ko when not en', async () => {
+    await ipc.invoke('tts:preview-voice', { provider: 'gemini', voiceId: 'v1', language: 'fr' })
+    expect(previewVoice).toHaveBeenCalledWith({ provider: 'gemini', voiceId: 'v1', language: 'ko' })
+  })
+
+  it('tts:tag-voice-gender validates provider/gender/source and delegates', async () => {
+    const ok = await ipc.invoke('tts:tag-voice-gender', { provider: 'typecast', voiceId: 'v1', gender: 'male', source: 'f0', f0: 110, confidence: 0.9 })
+    expect(ok).toEqual({ ok: true })
+    expect(tagVoiceGender).toHaveBeenCalledWith({ provider: 'typecast', voiceId: 'v1', gender: 'male', f0: 110, confidence: 0.9, source: 'f0' })
+
+    const badProvider = await ipc.invoke('tts:tag-voice-gender', { provider: 'evil', voiceId: 'v1', gender: 'male', source: 'manual' })
+    expect(badProvider).toEqual({ ok: false })
+
+    const badGender = await ipc.invoke('tts:tag-voice-gender', { provider: 'typecast', voiceId: 'v1', gender: 'other', source: 'manual' })
+    expect(badGender).toEqual({ ok: false })
+
+    const badSource = await ipc.invoke('tts:tag-voice-gender', { provider: 'typecast', voiceId: 'v1', gender: 'male', source: 'guess' })
+    expect(badSource).toEqual({ ok: false })
+
+    expect(tagVoiceGender).toHaveBeenCalledTimes(1)
+  })
+})

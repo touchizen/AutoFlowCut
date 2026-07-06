@@ -26,6 +26,10 @@ import { createTtsAdapter } from './api/tts/index.js'
 import { getTypecastKey } from './api/tts/typecastKey.js'
 import { readCredentialsKey } from './api/tts/credentialsKey.js'
 import { createSfxAdapter } from './api/sfx/index.js'
+import { createVoiceGenderCache } from './api/tts/voiceGenderCache.js'
+import { applyGenderOverlay } from './api/tts/genderOverlay.js'
+import { createVoicePreviewService } from './api/tts/voicePreviewService.js'
+import { ssrfSafeFetch } from './api/net/ssrfSafeFetch.js'
 import { registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible, updateBounds } from './ipc/layout.js'
 import { createModeController } from './ipc/mode.js'
 import { openApiSpec, getSwaggerHtml } from './api-docs.js'
@@ -236,10 +240,27 @@ const ttsFor = (provider) => {
   if (!ttsAdapters[p]) ttsAdapters[p] = createTtsAdapter(p, { getKey: ttsKeyFor[p], fetch: ttsFetch })
   return ttsAdapters[p]
 }
+// 성우 성별 캐시(app-global, provider:voiceId → gender) + 미리듣기 메타/서비스 (Task 8).
+const voiceGenderCache = createVoiceGenderCache({ filePath: path.join(app.getPath('userData'), 'voice-gender.json') })
+const voiceMetaCache = new Map() // 'provider:voiceId' -> { previewUrl, language }
+const voicePreviewService = createVoicePreviewService({
+  cacheDir: path.join(app.getPath('userData'), 'voice-preview'),
+  ttsFor,
+  voiceMeta: (provider, voiceId) => voiceMetaCache.get(`${provider}:${voiceId}`) || {},
+  ssrfSafeFetch,
+  fetch: globalThis.fetch,
+})
 registerTtsIPC(ipcMain, {
   keyStore: multiKeyStore,
   safeStorage,
-  listVoices: async (provider, options) => { try { return await ttsFor(provider).listVoices(options) } catch { return [] } },
+  listVoices: async (provider, options) => {
+    let raw
+    try { raw = await ttsFor(provider).listVoices(options) } catch { return [] }
+    for (const v of raw) voiceMetaCache.set(`${provider}:${v.id}`, { previewUrl: v.previewUrl || null, language: v.language || 'ko' })
+    try { return applyGenderOverlay(provider, raw, voiceGenderCache.get()) } catch { return raw }
+  },
+  previewVoice: (args) => voicePreviewService.getPreview(args),
+  tagVoiceGender: (args) => voiceGenderCache.tag(args),
 })
 
 // M2b: SFX 어댑터 라우팅(sourceMode별). 키는 provider별 소스(elevenlabs는 tts와 동일 키 재사용).
