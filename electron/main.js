@@ -243,6 +243,7 @@ const ttsFor = (provider) => {
 // 성우 성별 캐시(app-global, provider:voiceId → gender) + 미리듣기 메타/서비스 (Task 8).
 const voiceGenderCache = createVoiceGenderCache({ filePath: path.join(app.getPath('userData'), 'voice-gender.json') })
 const voiceMetaCache = new Map() // 'provider:voiceId' -> { previewUrl, language }
+const VOICE_META_CACHE_MAX = 5000
 const voicePreviewService = createVoicePreviewService({
   cacheDir: path.join(app.getPath('userData'), 'voice-preview'),
   ttsFor,
@@ -256,6 +257,8 @@ registerTtsIPC(ipcMain, {
   listVoices: async (provider, options) => {
     let raw
     try { raw = await ttsFor(provider).listVoices(options) } catch { return [] }
+    // Simple bound: clear the whole cache once it grows past the cap; entries refill on next listVoices.
+    if (voiceMetaCache.size > VOICE_META_CACHE_MAX) voiceMetaCache.clear()
     for (const v of raw) voiceMetaCache.set(`${provider}:${v.id}`, { previewUrl: v.previewUrl || null, language: v.language || 'ko' })
     try { return applyGenderOverlay(provider, raw, voiceGenderCache.get()) } catch { return raw }
   },

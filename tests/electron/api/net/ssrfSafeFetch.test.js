@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { isPreviewUrlAllowed } from '../../../../electron/api/net/ssrfSafeFetch.js'
+import { describe, it, expect, vi } from 'vitest'
+import { isPreviewUrlAllowed, ssrfSafeFetch } from '../../../../electron/api/net/ssrfSafeFetch.js'
 
 describe('isPreviewUrlAllowed', () => {
   it('allows elevenlabs cdn https', () => {
@@ -11,5 +11,48 @@ describe('isPreviewUrlAllowed', () => {
     expect(isPreviewUrlAllowed('https://evil.example.com/x.mp3')).toBe(false)
     expect(isPreviewUrlAllowed('https://127.0.0.1/x')).toBe(false)
     expect(isPreviewUrlAllowed('https://169.254.169.254/latest')).toBe(false)
+  })
+})
+
+describe('ssrfSafeFetch — byte cap', () => {
+  it('rejects up-front via content-length before reading the body', async () => {
+    const arrayBuffer = vi.fn(async () => new ArrayBuffer(0))
+    const fetch = vi.fn(async () => ({
+      status: 200,
+      ok: true,
+      headers: {
+        get: (k) => (k === 'content-type' ? 'audio/mpeg' : k === 'content-length' ? String(6 * 1024 * 1024) : null),
+      },
+      arrayBuffer,
+    }))
+    await expect(ssrfSafeFetch('https://api.elevenlabs.io/v1/voices/x/preview', { fetch }))
+      .rejects.toThrow('preview too large')
+    expect(arrayBuffer).not.toHaveBeenCalled()
+  })
+
+  it('still rejects oversized body when content-length is missing/lying (backstop)', async () => {
+    const bigBuf = new ArrayBuffer(6 * 1024 * 1024)
+    const fetch = vi.fn(async () => ({
+      status: 200,
+      ok: true,
+      headers: { get: (k) => (k === 'content-type' ? 'audio/mpeg' : null) },
+      arrayBuffer: async () => bigBuf,
+    }))
+    await expect(ssrfSafeFetch('https://api.elevenlabs.io/v1/voices/x/preview', { fetch }))
+      .rejects.toThrow('preview too large')
+  })
+})
+
+describe('ssrfSafeFetch — redirect bound', () => {
+  it('throws too many redirects instead of looping forever', async () => {
+    const fetch = vi.fn(async () => ({
+      status: 302,
+      ok: false,
+      headers: { get: (k) => (k === 'location' ? 'https://api.elevenlabs.io/v1/voices/x/preview' : null) },
+      arrayBuffer: async () => new ArrayBuffer(0),
+    }))
+    await expect(ssrfSafeFetch('https://api.elevenlabs.io/v1/voices/x/preview', { fetch }))
+      .rejects.toThrow('too many redirects')
+    expect(fetch.mock.calls.length).toBeLessThanOrEqual(6)
   })
 })

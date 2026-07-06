@@ -136,4 +136,17 @@ describe('tts:preview-voice / tts:tag-voice-gender IPC (Task 8)', () => {
 
     expect(tagVoiceGender).toHaveBeenCalledTimes(1)
   })
+
+  it('tts:tag-voice-gender rejects missing/oversized voiceId without calling tagVoiceGender', async () => {
+    const missing = await ipc.invoke('tts:tag-voice-gender', { provider: 'typecast', gender: 'male', source: 'manual' })
+    expect(missing).toEqual({ ok: false })
+
+    const nonString = await ipc.invoke('tts:tag-voice-gender', { provider: 'typecast', voiceId: 42, gender: 'male', source: 'manual' })
+    expect(nonString).toEqual({ ok: false })
+
+    const tooLong = await ipc.invoke('tts:tag-voice-gender', { provider: 'typecast', voiceId: 'x'.repeat(129), gender: 'male', source: 'manual' })
+    expect(tooLong).toEqual({ ok: false })
+
+    expect(tagVoiceGender).not.toHaveBeenCalled()
+  })
 })

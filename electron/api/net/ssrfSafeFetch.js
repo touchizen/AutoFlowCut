@@ -13,22 +13,28 @@ export function isPreviewUrlAllowed(rawUrl) {
 }
 
 const MAX_BYTES = 5 * 1024 * 1024
+const MAX_REDIRECTS = 5
 
-export async function ssrfSafeFetch(url, { fetch, timeoutMs = 15000 } = {}) {
+export async function ssrfSafeFetch(url, { fetch, timeoutMs = 15000, hops = 0 } = {}) {
   if (!isPreviewUrlAllowed(url)) throw new Error('preview url not allowed')
   const ctrl = new AbortController()
   const t = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
     const res = await fetch(url, { redirect: 'manual', signal: ctrl.signal })
     if (res.status >= 300 && res.status < 400) {
+      if (hops >= MAX_REDIRECTS) throw new Error('too many redirects')
       const loc = res.headers.get('location')
       if (!loc || !isPreviewUrlAllowed(loc)) throw new Error('redirect not allowed')
-      return ssrfSafeFetch(loc, { fetch, timeoutMs })
+      return ssrfSafeFetch(loc, { fetch, timeoutMs, hops: hops + 1 })
     }
     if (!res.ok) throw new Error(`preview fetch ${res.status}`)
     const mimeType = res.headers.get('content-type') || 'audio/mpeg'
     if (!/^audio\//.test(mimeType)) throw new Error('unexpected content-type')
+    // Up-front check using content-length so we never buffer an oversized body.
+    const declaredLength = Number(res.headers.get('content-length'))
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_BYTES) throw new Error('preview too large')
     const buf = Buffer.from(await res.arrayBuffer())
+    // Backstop for missing/lying content-length.
     if (buf.length > MAX_BYTES) throw new Error('preview too large')
     return { audio: buf, mimeType }
   } finally { clearTimeout(t) }

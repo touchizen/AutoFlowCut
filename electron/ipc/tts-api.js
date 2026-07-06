@@ -61,6 +61,7 @@ export function registerTtsIPC(ipcMain, { keyStore, safeStorage, listVoices, pre
   ipcMain.handle('tts:tag-voice-gender', async (_e, payload) => {
     const p = payload || {}
     if (!STORY_TTS_PROVIDERS.includes(p.provider)) return { ok: false }
+    if (!p.voiceId || typeof p.voiceId !== 'string' || p.voiceId.length > 128) return { ok: false }
     if (!['male', 'female'].includes(p.gender)) return { ok: false }
     if (!['f0', 'manual'].includes(p.source)) return { ok: false }
     tagVoiceGender({ provider: p.provider, voiceId: p.voiceId, gender: p.gender, f0: p.f0 ?? null, confidence: p.confidence ?? null, source: p.source })
