@@ -97,4 +97,49 @@ describe('createTypecastAdapter', () => {
     const a = createTypecastAdapter({ getKey: () => 'k', fetch })
     await expect(a.synthesize({ text: 'x', voiceId: 'v' })).rejects.toThrow(/401/)
   })
+
+  it('synthesize resolves the per-voice model discovered via listVoices (BUG 1: v30 voices 422 with hardcoded v21)', async () => {
+    const calls = []
+    const fetch = async (url, opts) => {
+      calls.push({ url, opts })
+      if (url.endsWith('/voices')) return { ok: true, json: async () => fixture }
+      return { ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1]).buffer }
+    }
+    const a = createTypecastAdapter({ getKey: () => 'k', fetch })
+    await a.listVoices()
+    await a.synthesize({ text: 'hi', voiceId: 'tc_69fc0cff784968297fb45daa' })
+    const synthCall = calls.find((c) => !c.url.endsWith('/voices'))
+    const body = JSON.parse(synthCall.opts.body)
+    expect(body.model).toBe('ssfm-v30')
+  })
+
+  it('synthesize uses an explicit model argument over the discovered/default model', async () => {
+    const calls = []
+    const fetch = async (url, opts) => {
+      calls.push({ url, opts })
+      if (url.endsWith('/voices')) return { ok: true, json: async () => fixture }
+      return { ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1]).buffer }
+    }
+    const a = createTypecastAdapter({ getKey: () => 'k', fetch })
+    await a.listVoices()
+    await a.synthesize({ text: 'hi', voiceId: 'tc_69fc0cff784968297fb45daa', model: 'ssfm-v99-override' })
+    const synthCall = calls.find((c) => !c.url.endsWith('/voices'))
+    const body = JSON.parse(synthCall.opts.body)
+    expect(body.model).toBe('ssfm-v99-override')
+  })
+
+  it('synthesize falls back to ssfm-v21 for an unknown/unlisted voiceId', async () => {
+    const calls = []
+    const fetch = async (url, opts) => {
+      calls.push({ url, opts })
+      if (url.endsWith('/voices')) return { ok: true, json: async () => fixture }
+      return { ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1]).buffer }
+    }
+    const a = createTypecastAdapter({ getKey: () => 'k', fetch })
+    await a.listVoices()
+    await a.synthesize({ text: 'hi', voiceId: 'tc_never_seen' })
+    const synthCall = calls.find((c) => !c.url.endsWith('/voices'))
+    const body = JSON.parse(synthCall.opts.body)
+    expect(body.model).toBe('ssfm-v21')
+  })
 })

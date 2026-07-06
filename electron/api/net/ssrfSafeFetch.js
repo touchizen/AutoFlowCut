@@ -1,7 +1,3 @@
-const ALLOW_HOSTS = [
-  'api.elevenlabs.io',
-  'storage.googleapis.com', // ElevenLabs public preview CDN
-]
 const PRIVATE_RE = /^(10\.|127\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1|fc|fd|fe80)/i
 
 export function isPreviewUrlAllowed(rawUrl) {
@@ -9,7 +5,10 @@ export function isPreviewUrlAllowed(rawUrl) {
   try { u = new URL(rawUrl) } catch { return false }
   if (u.protocol !== 'https:') return false
   if (PRIVATE_RE.test(u.hostname)) return false
-  return ALLOW_HOSTS.includes(u.hostname)
+  const host = u.hostname
+  // storage.googleapis.com: ElevenLabs public preview CDN (exact match).
+  // elevenlabs.io + regional API subdomains (e.g. api.us.elevenlabs.io) serve preview_urls too.
+  return host === 'storage.googleapis.com' || host === 'elevenlabs.io' || host.endsWith('.elevenlabs.io')
 }
 
 const MAX_BYTES = 5 * 1024 * 1024

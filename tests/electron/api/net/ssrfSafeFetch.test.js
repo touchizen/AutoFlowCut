@@ -12,6 +12,19 @@ describe('isPreviewUrlAllowed', () => {
     expect(isPreviewUrlAllowed('https://127.0.0.1/x')).toBe(false)
     expect(isPreviewUrlAllowed('https://169.254.169.254/latest')).toBe(false)
   })
+
+  it('allows ElevenLabs regional API subdomains (BUG 2: api.us.elevenlabs.io preview_urls were rejected)', () => {
+    expect(isPreviewUrlAllowed('https://api.us.elevenlabs.io/v1/voices/x/preview')).toBe(true)
+    expect(isPreviewUrlAllowed('https://elevenlabs.io/x')).toBe(true)
+  })
+
+  it('rejects a lookalike host that merely has elevenlabs.io as a prefix', () => {
+    expect(isPreviewUrlAllowed('https://elevenlabs.io.attacker.com/x')).toBe(false)
+  })
+
+  it('rejects http even for an otherwise-allowed elevenlabs regional host', () => {
+    expect(isPreviewUrlAllowed('http://api.us.elevenlabs.io/x')).toBe(false)
+  })
 })
 
 describe('ssrfSafeFetch — byte cap', () => {

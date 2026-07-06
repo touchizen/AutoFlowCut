@@ -35,6 +35,7 @@ function normalizeTypecastVoice(v) {
 }
 
 export function createTypecastAdapter({ getKey, fetch }) {
+  const voiceModelById = new Map()
   return {
     capabilities() {
       return { supportsEmotion: true, maxCharsPerRequest: 2000, outputFormats: ['wav'], supportsPreview: true, maxConcurrency: 2 }
@@ -52,6 +53,7 @@ export function createTypecastAdapter({ getKey, fetch }) {
         if (!Array.isArray(json)) return KNOWN_VOICES.map((v) => ({ ...v }))
         const seedById = new Map(KNOWN_VOICES.map((v) => [v.id, v]))
         return json.map((raw) => {
+          voiceModelById.set(raw.voice_id, raw.model)
           const nv = normalizeTypecastVoice(raw)
           const seed = seedById.get(nv.id)
           if (seed) return { ...nv, gender: seed.gender, genderSource: 'seed', source: 'seed' }
@@ -61,13 +63,14 @@ export function createTypecastAdapter({ getKey, fetch }) {
         return KNOWN_VOICES.map((v) => ({ ...v }))
       }
     },
-    async synthesize({ text, voiceId, emotion = 'normal', signal }) {
+    async synthesize({ text, voiceId, emotion = 'normal', signal, model }) {
       const key = getKey()
       if (!key) throw new Error('No Typecast API key')
+      const useModel = model || voiceModelById.get(voiceId) || 'ssfm-v21'
       const res = await fetch(ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': key },
-        body: JSON.stringify({ text, voice_id: voiceId, model: 'ssfm-v21', emotion }),
+        body: JSON.stringify({ text, voice_id: voiceId, model: useModel, emotion }),
         signal,
       })
       if (!res.ok) {
