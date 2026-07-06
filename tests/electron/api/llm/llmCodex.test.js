@@ -68,7 +68,36 @@ describe('llmCodex adapter', () => {
     await expect(splitScenes('SCRIPT', OPTS, { runJson })).resolves.toEqual(out)
     expect(runJson.mock.calls[0][0]).toContain('--- 대본 ---')
     expect(runJson.mock.calls[0][0]).toContain('Return only the requested story content')
-    expect(runJson.mock.calls[0][1]).toMatchObject({ type: 'object' })
+    expect(runJson.mock.calls[0][0]).toContain('Codex strict JSON')
+    expect(runJson.mock.calls[0][0]).toContain('speaker/text/emotion')
+    expect(runJson.mock.calls[0][0]).toContain('non-narrator')
+    expect(runJson.mock.calls[0][0]).not.toContain('off-screen')
+    const schema = runJson.mock.calls[0][1]
+    expect(schema).toMatchObject({ type: 'object', additionalProperties: false })
+    expect(schema.required).toEqual(['scenes', 'speakers'])
+    expect(schema.properties.scenes.items.additionalProperties).toBe(false)
+    const segmentSchema = schema.properties.scenes.items.properties.segments.items
+    expect(segmentSchema.additionalProperties).toBe(false)
+    expect(segmentSchema.required).toEqual(['type', 'speaker', 'text', 'emotion', 'description'])
+    expect(segmentSchema.properties.description.type).toEqual(['string', 'null'])
+  })
+
+  it('splitScenes는 non-narrator speaker appearance 누락을 실패시킨다', async () => {
+    const out = {
+      scenes: [{ sceneNo: 1, summary: 's', segments: [{ speaker: 'a', text: '안녕', emotion: 'normal' }] }],
+      speakers: [{ id: 'a', name: '민수', appearance: null }],
+    }
+    const runJson = vi.fn(async () => out)
+    await expect(splitScenes('SCRIPT', OPTS, { runJson })).rejects.toThrow(/appearance.*민수/)
+  })
+
+  it('splitScenes는 나레이션 별칭 speaker를 narrator로 취급해 appearance 없이 허용한다', async () => {
+    const out = {
+      scenes: [{ sceneNo: 1, summary: 's', segments: [{ speaker: '나레이션', text: '안녕', emotion: 'normal' }] }],
+      speakers: [{ id: 'narrator', name: '나레이션', appearance: null }],
+    }
+    const runJson = vi.fn(async () => out)
+    await expect(splitScenes('SCRIPT', OPTS, { runJson })).resolves.toEqual(out)
   })
 
   it('reviewScript는 pass/revise 외 verdict를 pass로 정규화한다', async () => {
@@ -99,7 +128,7 @@ describe('llmCodex adapter', () => {
     await expect(reviewPrompts([{ sceneNo: 1, imagePrompt: 'IMG', videoPrompt: 'VID' }], { scriptMd: 'SCRIPT' }, OPTS, { runJson }))
       .resolves.toEqual({ verdict: 'revise', critique: 'fix' })
     expect(runJson.mock.calls[0][0]).toContain('Do not inspect local files')
-    expect(runJson.mock.calls[0][1]).toMatchObject({ type: 'object' })
+    expect(runJson.mock.calls[0][1]).toMatchObject({ type: 'object', additionalProperties: false })
     expect(runJson.mock.calls[0][2]).toEqual({ model: 'gpt-5.5', reasoningEffort: 'high' })
     expect(runJson.mock.calls[1][2]).toEqual({ model: 'gpt-5.5', reasoningEffort: 'high' })
   })
@@ -115,5 +144,25 @@ describe('llmCodex adapter', () => {
     const runPromptsJson = vi.fn(async () => ({ scenes: [{ sceneNo: 1, imagePrompt: 'IMG2', videoPrompt: 'VID2' }] }))
     await expect(revisePrompts([{ sceneNo: 1, storyId: 's1' }], { scriptMd: 'SCRIPT' }, 'fix', OPTS, { runJson: runPromptsJson }))
       .resolves.toEqual({ scenes: [{ sceneNo: 1, storyId: 's1', imagePrompt: 'IMG2', videoPrompt: 'VID2' }] })
+  })
+
+  it('reviseScenes는 기존 speaker appearance가 있으면 수정 JSON의 null appearance를 허용한다', async () => {
+    const scenesPayload = {
+      scenes: [{ sceneNo: 1, summary: 'S', segments: [{ speaker: 'a', text: '안녕', emotion: 'normal' }] }],
+      speakers: [{ id: 'a', name: '민수', appearance: null }],
+    }
+    const runJson = vi.fn(async () => scenesPayload)
+    await expect(reviseScenes('SCRIPT', [], [{ id: 'a', name: '민수', appearance: 'tall man in black coat' }], 'fix', OPTS, { runJson }))
+      .resolves.toEqual(scenesPayload)
+  })
+
+  it('reviseScenes는 수정 JSON speakers에서 기존 speaker가 빠져도 fallback appearance가 있으면 허용한다', async () => {
+    const scenesPayload = {
+      scenes: [{ sceneNo: 1, summary: 'S', segments: [{ speaker: 'a', text: '안녕', emotion: 'normal' }] }],
+      speakers: [],
+    }
+    const runJson = vi.fn(async () => scenesPayload)
+    await expect(reviseScenes('SCRIPT', [], [{ id: 'a', name: '민수', appearance: 'tall man in black coat' }], 'fix', OPTS, { runJson }))
+      .resolves.toEqual(scenesPayload)
   })
 })

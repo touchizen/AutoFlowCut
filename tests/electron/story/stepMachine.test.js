@@ -57,6 +57,48 @@ describe('stepMachine', () => {
     expect(state.speakers[0].id).toBe('narrator')
   })
 
+  it('scenes 실행: LLM speakers 목록에서 narrator가 빠져도 세그먼트 참조로 나레이터 화자를 보정한다', async () => {
+    llm.splitScenes.mockResolvedValueOnce({
+      scenes: [{ sceneNo: 1, summary: 's', segments: [
+        { speaker: 'narrator', text: '가'.repeat(40), emotion: 'normal' },
+        { speaker: 'char1', text: '대사', emotion: 'normal' },
+      ] }],
+      speakers: [{ id: 'char1', name: '한사라', appearance: 'young Korean woman in a blue jacket' }],
+    })
+    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await machine.start('scenes', {})
+    const state = await machine.getState()
+    expect(state.speakers.map((sp) => sp.id)).toEqual(['char1', 'narrator'])
+    expect(state.speakers.find((sp) => sp.id === 'narrator')).toMatchObject({ name: '나레이션' })
+  })
+
+  it('audio 실행: 나레이션 별칭 segment는 narrator voice로 합성된다', async () => {
+    llm.splitScenes.mockResolvedValueOnce({
+      scenes: [{ sceneNo: 1, summary: 's', segments: [{ speaker: '나레이션', text: '가'.repeat(40), emotion: 'normal' }] }],
+      speakers: [],
+    })
+    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await machine.start('scenes', {})
+    await machine.start('audio', { speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }] })
+    const state = await machine.getState()
+    expect(state.steps.audio.status).toBe('done')
+  })
+
+  it('synthPreview: 나레이션 별칭 segment는 narrator voice로 단건 합성된다', async () => {
+    llm.splitScenes.mockResolvedValueOnce({
+      scenes: [{ sceneNo: 1, summary: 's', segments: [{ speaker: '나레이션', text: '가'.repeat(40), emotion: 'normal' }] }],
+      speakers: [],
+    })
+    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await machine.start('scenes', {})
+    const raw = await readFile(path.join(dir, 'story', 'scenes.json'), 'utf-8')
+    const id = JSON.parse(raw).scenes[0].segments[0].id
+    await expect(machine.synthPreview({
+      segmentIds: [id],
+      speakers: [{ id: 'narrator', voice: { provider: 'typecast', voiceId: 'tc_x' } }],
+    })).resolves.toMatchObject({ ok: true })
+  })
+
   // C1: SCENES_SCHEMA에는 segment.id가 없어 실제 LLM 경로는 id 없는 세그먼트를 반환한다.
   // scenes 스텝이 scenes.json을 쓰기 전에 반드시 고유하고 비어있지 않은 id를 발급해야
   // audio 스텝의 파일명/results 맵/manifest 키가 undefined로 붕괴하지 않는다.
