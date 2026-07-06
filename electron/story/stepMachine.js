@@ -330,7 +330,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   // V2: non-narrator speaker를 캐릭터 후보로 취급한다. appearance가 없어도 Ref 탭에 pending
   // 카드가 먼저 생겨야 사용자가 외형/이미지를 보강할 수 있다.
   const characterSpeakers = () => (state.speakers || [])
-    .filter((sp) => !isNarratorSpeaker(sp) && (sp?.name || sp?.id))
+    .filter((sp) => !isNarratorSpeaker(sp) && (String(sp?.name || '').trim() || String(sp?.id || '').trim()))
     .map((sp) => ({ ...sp, name: sp.name || sp.id, appearance: sp.appearance || '' }))
 
   // V2: 그 씬에 등장하는 캐릭터 이름 배열(speaker id→name, 캐릭터만, 유일, 등장순).

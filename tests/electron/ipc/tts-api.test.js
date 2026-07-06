@@ -121,9 +121,9 @@ describe('tts:preview-voice / tts:tag-voice-gender IPC (Task 8)', () => {
   })
 
   it('tts:tag-voice-gender validates provider/gender/source and delegates', async () => {
-    const ok = await ipc.invoke('tts:tag-voice-gender', { provider: 'typecast', voiceId: 'v1', gender: 'male', source: 'f0', f0: 110, confidence: 0.9 })
+    const ok = await ipc.invoke('tts:tag-voice-gender', { provider: 'typecast', voiceId: 'v1', gender: 'male', source: 'f0', f0: 110, confidence: 'high' })
     expect(ok).toEqual({ ok: true })
-    expect(tagVoiceGender).toHaveBeenCalledWith({ provider: 'typecast', voiceId: 'v1', gender: 'male', f0: 110, confidence: 0.9, source: 'f0' })
+    expect(tagVoiceGender).toHaveBeenCalledWith({ provider: 'typecast', voiceId: 'v1', gender: 'male', f0: 110, confidence: 'high', source: 'f0' })
 
     const badProvider = await ipc.invoke('tts:tag-voice-gender', { provider: 'evil', voiceId: 'v1', gender: 'male', source: 'manual' })
     expect(badProvider).toEqual({ ok: false })

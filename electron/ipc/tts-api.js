@@ -12,7 +12,7 @@ import { STORY_TTS_PROVIDERS } from '../../src/config/storyTtsProviders.js'
  * @param {Electron.SafeStorage} deps.safeStorage
  * @param {(provider: string, options?: object) => Promise<Array>|Array} deps.listVoices - provider → 성우 목록
  * @param {(args: {provider: string, voiceId: string, language: string}) => Promise<object>} [deps.previewVoice] - 성우 미리듣기 오디오
- * @param {(args: {provider: string, voiceId: string, gender: string, f0: ?number, confidence: ?number, source: string}) => void} [deps.tagVoiceGender] - 성별 수동/f0 태깅
+ * @param {(args: {provider: string, voiceId: string, gender: string, f0: ?number, confidence: 'high'|'low'|null, source: string}) => void} [deps.tagVoiceGender] - 성별 수동/f0 태깅
  */
 export function registerTtsIPC(ipcMain, { keyStore, safeStorage, listVoices, previewVoice, tagVoiceGender }) {
   // payload는 null/비객체일 수 있다(Codex LOW) — 구조분해 전 객체로 정규화한다.

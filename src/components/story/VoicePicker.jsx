@@ -9,6 +9,7 @@
  */
 
 import { useMemo, useState } from 'react'
+import { voiceKey } from '../../utils/voiceKey'
 import './VoicePicker.css'
 
 const RENDER_CAP = 120
@@ -187,10 +188,10 @@ export default function VoicePicker({
         </div>
 
         {visible.map(v => {
-          const key = `${v.provider}:${v.id}`
+          const key = voiceKey(v.provider, v.id)
           const gInfo = genderInfo(v.gender, t, isKo)
           const isSelected = selected?.provider === v.provider && selected?.voiceId === v.id
-          const previewStatus = previewState?.voiceId === v.id ? (previewState.status || 'idle') : 'idle'
+          const previewStatus = previewState?.provider === v.provider && previewState?.voiceId === v.id ? (previewState.status || 'idle') : 'idle'
           const canOverride = OVERRIDABLE_SOURCES.has(v.genderSource)
 
           return (

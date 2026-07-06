@@ -1,5 +1,6 @@
 import nodeFs from 'node:fs'
 import path from 'node:path'
+import { voiceKey } from '../../../src/utils/voiceKey.js'
 
 // app-global 성별 캐시. 프로젝트 무관. corrupt/missing → {} degrade.
 export function createVoiceGenderCache({ filePath, fs = nodeFs }) {
@@ -13,7 +14,7 @@ export function createVoiceGenderCache({ filePath, fs = nodeFs }) {
   }
   function tag({ provider, voiceId, gender, f0 = null, confidence = null, source }) {
     const data = get()
-    const key = `${provider}:${voiceId}`
+    const key = voiceKey(provider, voiceId)
     const existing = data[key]
     if (existing?.source === 'manual' && source === 'f0') return
     data[key] = { gender, f0, confidence, source }

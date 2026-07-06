@@ -10,11 +10,15 @@ function deps(over = {}) {
     renameSync: (a, b) => { files[b] = files[a]; delete files[a] },
     mkdirSync: () => {},
   }
+  // Stable across calls so ttsFor(provider) always returns the SAME adapter object/spy —
+  // otherwise a "synthesize not called again" assertion can't observe the real call count.
+  const synthesize = vi.fn(async () => ({ audio: Buffer.from('WAVDATA'), format: 'wav' }))
   return {
     cacheDir: '/cache',
     fs,
     files,
-    ttsFor: () => ({ synthesize: vi.fn(async () => ({ audio: Buffer.from('WAVDATA'), format: 'wav' })) }),
+    synthesize,
+    ttsFor: () => ({ synthesize }),
     voiceMeta: () => ({ previewUrl: null, language: 'ko' }),
     ssrfSafeFetch: vi.fn(async () => ({ audio: Buffer.from('MP3'), mimeType: 'audio/mpeg' })),
     ...over,
@@ -29,8 +33,8 @@ describe('voicePreviewService', () => {
     expect(r.mimeType).toBe('audio/wav')
     expect(Buffer.from(r.audioBase64, 'base64').toString()).toBe('WAVDATA')
     // second call hits disk cache (synthesize not called again)
-    const spy = d.ttsFor().synthesize
     await svc.getPreview({ provider: 'typecast', voiceId: 'v1', language: 'ko' })
+    expect(d.synthesize).toHaveBeenCalledTimes(1)
     // cached file exists
     expect(Object.keys(d.files).length).toBeGreaterThan(0)
   })

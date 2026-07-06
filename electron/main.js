@@ -30,6 +30,7 @@ import { createVoiceGenderCache } from './api/tts/voiceGenderCache.js'
 import { applyGenderOverlay } from './api/tts/genderOverlay.js'
 import { createVoicePreviewService } from './api/tts/voicePreviewService.js'
 import { ssrfSafeFetch } from './api/net/ssrfSafeFetch.js'
+import { voiceKey } from '../src/utils/voiceKey.js'
 import { registerLayoutIPC, setLayoutMode, setSplitRatio, setModalVisible, updateBounds } from './ipc/layout.js'
 import { createModeController } from './ipc/mode.js'
 import { openApiSpec, getSwaggerHtml } from './api-docs.js'
@@ -247,7 +248,7 @@ const VOICE_META_CACHE_MAX = 5000
 const voicePreviewService = createVoicePreviewService({
   cacheDir: path.join(app.getPath('userData'), 'voice-preview'),
   ttsFor,
-  voiceMeta: (provider, voiceId) => voiceMetaCache.get(`${provider}:${voiceId}`) || {},
+  voiceMeta: (provider, voiceId) => voiceMetaCache.get(voiceKey(provider, voiceId)) || {},
   ssrfSafeFetch,
   fetch: globalThis.fetch,
 })
@@ -259,7 +260,7 @@ registerTtsIPC(ipcMain, {
     try { raw = await ttsFor(provider).listVoices(options) } catch { return [] }
     // Enforce cap before filling so the just-fetched list's metadata always survives
     if (voiceMetaCache.size + raw.length > VOICE_META_CACHE_MAX) voiceMetaCache.clear()
-    for (const v of raw) voiceMetaCache.set(`${provider}:${v.id}`, { previewUrl: v.previewUrl || null, language: v.language || 'ko' })
+    for (const v of raw) voiceMetaCache.set(voiceKey(provider, v.id), { previewUrl: v.previewUrl || null, language: v.language || 'ko' })
     try { return applyGenderOverlay(provider, raw, voiceGenderCache.get()) } catch { return raw }
   },
   previewVoice: (args) => voicePreviewService.getPreview(args),

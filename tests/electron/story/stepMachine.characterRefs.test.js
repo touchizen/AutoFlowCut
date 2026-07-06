@@ -237,6 +237,39 @@ describe('stepMachine 캐릭터 레퍼런스 브리지 (V2)', () => {
     expect(names).not.toContain('Narration') // BUG #2 회귀는 그대로 유지
   })
 
+  it('id/name이 공백뿐인 화자는 캐릭터 후보(storyCharacters)에서 제외된다', async () => {
+    const localEmitted = []
+    const localLlm = {
+      generateScript: vi.fn(async () => ({ scriptMd: '#' })),
+      splitScenes: vi.fn(async () => ({
+        scenes: [{ sceneNo: 1, summary: '', segments: [
+          { speaker: 'narration', text: '한밤중이었다', emotion: 'normal' },
+        ] }],
+        speakers: [
+          { id: '  ', name: '  ' },
+          { id: 'narration', name: 'Narration' },
+        ],
+      })),
+      writePrompts: vi.fn(async (scenes) => ({ scenes: scenes.map((s, i) => ({ ...s, imagePrompt: `img${i}`, videoPrompt: `vid${i}` })) })),
+    }
+    const localDir = await mkdtemp(path.join(tmpdir(), 'sm-charref-blankid-'))
+    const localMachine = createStepMachine({
+      projectPath: localDir,
+      llm: localLlm,
+      emit: (ch, p) => localEmitted.push({ ch, p }),
+      getApiKey: () => 'k',
+    })
+    await localMachine.open()
+    await localMachine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await localMachine.start('scenes', {})
+    await localMachine.start('prompts', {})
+
+    const push = localEmitted.filter((e) => e.ch === 'story:pushScenes').pop()
+    // 공백뿐인 화자는 blank storyCharacters 엔트리를 만들면 안 됨
+    expect(push.p.storyCharacters.some((c) => !c.name.trim())).toBe(false)
+    expect(push.p.storyCharacters).toEqual([])
+  })
+
   it('재실행 시 이전 appearance가 빈 문자열이면 새 non-empty appearance로 보강한다', async () => {
     const localLlm = {
       generateScript: vi.fn(async () => ({ scriptMd: '#' })),

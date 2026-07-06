@@ -184,7 +184,7 @@ function useSafeIsKo() {
   }
 }
 
-export default function StoryView({ pipeline, voices = [], onClose = null, onVoiceSearch = null, onTagGender = null }) {
+export default function StoryView({ pipeline, voices = [], onClose = null, onTagGender = null }) {
   const t = useSafeT()
   const hasI18n = useHasI18n()
   const isKo = useSafeIsKo()

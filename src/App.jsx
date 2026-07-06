@@ -32,6 +32,7 @@ import { useFlowEvents } from './hooks/useFlowEvents'
 import { useMcpServer } from './hooks/useMcpServer'
 import { useMenuActions } from './hooks/useMenuActions'
 import { upsertStoryCharacterRefs, assertStoryProjectCurrent } from './utils/storyCharacterRefs'
+import { voiceKey } from './utils/voiceKey'
 import { stripMentionsForNames } from './utils/mentionParser'
 import { syncVideosIntoScenes } from './services/mediaSync'
 import { retryVideoDownload } from './services/videoRecovery'
@@ -596,10 +597,11 @@ function App() {
   const manualGenderKeysRef = useRef(new Set())
   const mergeTtsVoices = useCallback((incoming) => {
     setTtsVoices((prev) => {
-      const byKey = new Map(prev.map((voice) => [`${voice.provider}:${voice.id}`, voice]))
+      const byKey = new Map(prev.map((voice) => [voiceKey(voice.provider, voice.id), voice]))
       for (const voice of incoming || []) {
         if (!voice?.provider || !voice?.id) continue
-        byKey.set(`${voice.provider}:${voice.id}`, { ...byKey.get(`${voice.provider}:${voice.id}`), ...voice })
+        const k = voiceKey(voice.provider, voice.id)
+        byKey.set(k, { ...byKey.get(k), ...voice })
       }
       return [...byKey.values()]
     })
@@ -621,35 +623,19 @@ function App() {
     ).then((lists) => { if (alive) setTtsVoices(lists.flat()) })
     return () => { alive = false }
   }, [activeView]) // eslint-disable-line react-hooks/exhaustive-deps
-  const handleTtsVoiceSearch = useCallback(async ({ provider, query }) => {
-    const q = String(query || '').trim()
-    if (!provider || q.length < 2) return
-    try {
-      const vs = await window.electronAPI?.ttsListVoices?.({
-        provider,
-        query: q,
-        includeShared: provider === 'elevenlabs',
-        limit: 100,
-        maxSharedPages: provider === 'elevenlabs' ? 5 : 1,
-      })
-      if (Array.isArray(vs)) mergeTtsVoices(vs.map((v) => ({ ...v, provider })))
-    } catch {
-      // Search is opportunistic; existing seed/account voices remain usable.
-    }
-  }, [mergeTtsVoices])
 
   // 성우 성별 태그 — VoicePicker 우클릭 수동 지정(manual)과 미리듣기 F0 추정(f0) 공통 진입점.
   // 항상 renderer의 ttsVoices를 낙관적으로 갱신하고, manual만 main에 영속 저장한다
   // (f0는 useVoicePreview.play()가 이미 ttsTagVoiceGender로 저장 — 여기서 또 저장하면 중복 IPC).
   const handleTagGender = useCallback(({ provider, voiceId, gender, f0, confidence, source }) => {
-    const voiceKey = `${provider}:${voiceId}`
+    const vKey = voiceKey(provider, voiceId)
     // manual은 항상 동기적으로 먼저 기록 — 뒤이어 도착하는 stale f0가 이 tick 안에서도 걸러지도록.
-    if (source === 'manual') manualGenderKeysRef.current.add(voiceKey)
+    if (source === 'manual') manualGenderKeysRef.current.add(vKey)
     // 방어선: useVoicePreview 쪽 가드(genderSource!=='manual')가 이미 F0 추정 자체를 건너뛰지만,
     // 혹시 남아있는 f0 태그가 도착하더라도 이미 manual인 voice는 여기서 다시 한 번 보호한다.
     if (shouldSkipStaleF0Gender({
       source,
-      voiceKey,
+      voiceKey: vKey,
       manualGenderKeys: manualGenderKeysRef.current,
       existingGenderSource: ttsVoicesRef.current.find((v) => v.provider === provider && v.id === voiceId)?.genderSource,
     })) return
@@ -2478,7 +2464,6 @@ function App() {
               key={storyProjectPath}
               pipeline={storyPipeline}
               voices={ttsVoices}
-              onVoiceSearch={handleTtsVoiceSearch}
               onTagGender={handleTagGender}
               onClose={() => setActiveView('generate')}
             />
