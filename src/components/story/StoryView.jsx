@@ -14,7 +14,7 @@ import { StopwatchIcon, ElapsedTime } from '../StopwatchIcon'
 import PromptInput from '../PromptInput'
 import { toast } from '../Toast'
 import { useAudioPlayback } from '../../hooks/useAudioPlayback'
-import { useVoicePreview } from '../../hooks/useVoicePreview'
+import { useStoryVoiceSelection } from '../../hooks/useStoryVoiceSelection'
 import StoryStepper, { STEP_META } from './StoryStepper'
 import VoicePicker from './VoicePicker'
 import Modal from '../Modal'
@@ -235,20 +235,9 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   // 7-⑴: 스텝퍼에서 done 상태 스텝을 클릭하면 진행이 더 앞서가 있어도 해당 패널을 다시 볼 수
   // 있다 — 실행 버튼/러닝 상태 등 액션은 여전히 실제 진행 단계(currentStep) 기준으로 동작한다.
   const [viewedStep, setViewedStep] = useState(null)
-  // M2a-3b/슬라이스3: 화자별 엔진(provider)·목소리 선택(로컬). 초기값은 state.speakers[].voice.
-  const [voiceBySpeaker, setVoiceBySpeaker] = useState({})
-  const [providerBySpeaker, setProviderBySpeaker] = useState({})
-  // Task 11: 드롭다운 대신 모달 — 어떤 화자의 VoicePicker가 열려 있는지(speaker id|null)와
-  // 확정 전 임시 선택값. 취소 시 providerBySpeaker/voiceBySpeaker는 건드리지 않는다.
-  const [voicePickerSpeaker, setVoicePickerSpeaker] = useState(null)
-  const [pickerSelection, setPickerSelection] = useState({ provider: '', voiceId: '' })
-  const preview = useVoicePreview()
-  // 미리듣기 F0 성별 추정 — useVoicePreview가 이미 main에 저장(ttsTagVoiceGender)까지 하므로
-  // 여기선 renderer voice 목록만 갱신(onTagGender가 source:'f0'는 낙관적 merge만 하도록 App에서 분기).
-  useEffect(() => {
-    if (!preview.lastGender) return
-    onTagGender?.({ ...preview.lastGender, source: 'f0' })
-  }, [preview.lastGender]) // eslint-disable-line react-hooks/exhaustive-deps
+  // M2a-3b/슬라이스3, Task 11: 화자별 엔진(provider)·목소리 선택 + VoicePicker 모달 상태.
+  // useStoryVoiceSelection 훅으로 분리(순수 리팩터) — src/hooks/useStoryVoiceSelection.js 참고.
+  const voiceSel = useStoryVoiceSelection({ speakers: state?.speakers || [], voices, onTagGender })
   // M2b-5: sfx 세그먼트별 소스(로컬 오버라이드). 기본은 세그먼트 영속값(seg.sourceMode) > elevenlabs.
   const [sourceModeBySegment, setSourceModeBySegment] = useState({})
   // M2a-3c: 세그먼트 오디오 미리듣기(단일 재생 토글).
@@ -522,42 +511,9 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
   // M2a-3b: 화자→목소리 매핑을 audio 스텝 params로. state.speakers가 없으면 {} (빈 speakers로
   // 덮어써 state.speakers를 지우는 것 방지 — 미배정은 backend defaultVoice 폴백). 선택 목소리는
-  // 드롭다운(voiceBySpeaker) 우선, 없으면 기존 sp.voice 유지.
-  // 사용 가능한 provider 목록(voices에서 파생). 화자별 엔진 드롭다운 옵션.
+  // 드롭다운(voiceBySpeaker) 우선, 없으면 기존 sp.voice 유지 — 로직은 useStoryVoiceSelection 훅으로 이전.
+  // VoicePicker 모달에 넘길 목록만 여기서 유지(사용 가능한 provider로 필터).
   const storyVoices = voices.filter((v) => isStoryTtsProvider(v.provider))
-  const providerList = [...new Set(storyVoices.map((v) => v.provider).filter(Boolean))]
-  // 화자의 현재 provider(엔진): 로컬 선택 > 기존 voice.provider > voices의 첫 provider > typecast.
-  const providerForSpeaker = (sp) => {
-    const localProvider = providerBySpeaker[sp.id]
-    if (isStoryTtsProvider(localProvider)) return localProvider
-    if (isStoryTtsProvider(sp.voice?.provider)) return sp.voice.provider
-    return providerList[0] ?? 'typecast'
-  }
-  // 화자의 현재 voiceId: 로컬 오버라이드(빈문자열 포함) > 기존 voice(같은 provider일 때만) > ''.
-  const voiceIdForSpeaker = (sp) => {
-    if (Object.prototype.hasOwnProperty.call(voiceBySpeaker, sp.id)) return voiceBySpeaker[sp.id]
-    return sp.voice?.provider === providerForSpeaker(sp) ? (sp.voice?.voiceId ?? '') : ''
-  }
-
-  // Task 11: [성우 선택] 버튼 → 해당 화자의 현재 provider/voiceId를 임시 선택값으로 채우고 모달 오픈.
-  const openVoicePicker = (sp) => {
-    setPickerSelection({ provider: providerForSpeaker(sp), voiceId: voiceIdForSpeaker(sp) })
-    setVoicePickerSpeaker(sp.id)
-  }
-  // 모달 footer [이 성우로 지정] → 임시 선택값을 실제 화자 매핑(voiceBySpeaker/providerBySpeaker)에 커밋.
-  // voiceId가 빈 문자열이어도 그대로 저장(기본 성우 선택) — buildAudioParams에서 null 폴백 처리(L553 부근).
-  const confirmVoice = () => {
-    const spId = voicePickerSpeaker
-    if (spId != null) {
-      setProviderBySpeaker((m) => ({ ...m, [spId]: pickerSelection.provider }))
-      setVoiceBySpeaker((m) => ({ ...m, [spId]: pickerSelection.voiceId }))
-    }
-    setVoicePickerSpeaker(null)
-  }
-  // VoicePicker 카드 우클릭 성별 수동 지정 → App으로 올려 renderer 목록 갱신 + main 영속 저장.
-  const handleOverrideGender = ({ provider, voiceId, gender }) => {
-    onTagGender?.({ provider, voiceId, gender, source: 'manual' })
-  }
 
   // M2b-5: sfx 세그먼트의 현재 소스 — 로컬 오버라이드 > 세그먼트 영속값 > elevenlabs.
   // Codex-Med: segId는 재분리/프로젝트 전환으로 재사용될 수 있다 — 오버라이드에 당시 description을
@@ -576,9 +532,9 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     const sps = state?.speakers || []
     if (sps.length) {
       params.speakers = sps.map((sp) => {
-        const vid = voiceIdForSpeaker(sp)
+        const vid = voiceSel.voiceIdForSpeaker(sp)
         if (!vid) return { ...sp, voice: null } // '기본 성우' → backend defaultVoice 폴백
-        return { ...sp, voice: { provider: providerForSpeaker(sp), voiceId: vid } }
+        return { ...sp, voice: { provider: voiceSel.providerForSpeaker(sp), voiceId: vid } }
       })
     }
     // 현재 sfx 세그먼트 중 로컬 오버라이드(description 일치)가 있는 것만 sfxSources로 전달.
@@ -1152,8 +1108,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
             {steps.audio?.status !== 'running' && (state?.speakers || []).length > 0 && (
                   <div className="story-voice-map">
                     {(state.speakers || []).map((sp) => {
-                      const provider = providerForSpeaker(sp)
-                      const selectedVoiceId = voiceIdForSpeaker(sp)
+                      const provider = voiceSel.providerForSpeaker(sp)
+                      const selectedVoiceId = voiceSel.voiceIdForSpeaker(sp)
                       const selectedVoiceObj = selectedVoiceId
                         ? voices.find((v) => v.provider === provider && v.id === selectedVoiceId)
                         : null
@@ -1174,7 +1130,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                             type="button"
                             className="story-input story-voice-picker-btn"
                             aria-label={t('story.audio.voiceFor', `${sp.name || sp.id} 목소리`, { speaker: sp.name || sp.id })}
-                            onClick={() => openVoicePicker(sp)}
+                            onClick={() => voiceSel.openVoicePicker(sp)}
                           >
                             🎙 {voiceLabel}
                           </button>
@@ -1183,25 +1139,25 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                     })}
                   </div>
                 )}
-                {voicePickerSpeaker != null && (() => {
-                  const sp = (state.speakers || []).find((s) => s.id === voicePickerSpeaker)
+                {voiceSel.voicePickerSpeaker != null && (() => {
+                  const sp = (state.speakers || []).find((s) => s.id === voiceSel.voicePickerSpeaker)
                   if (!sp) return null
                   return (
                     <Modal
                       isOpen
-                      onClose={() => setVoicePickerSpeaker(null)}
+                      onClose={voiceSel.closeVoicePicker}
                       title={t('story.audio.voicePickerTitle', `${sp.name || sp.id} 성우 선택`, { speaker: sp.name || sp.id })}
                       className="voice-picker-modal"
                     >
                       <VoicePicker
                         voices={storyVoices}
-                        selected={pickerSelection}
-                        onSelect={setPickerSelection}
-                        onPreview={(voice) => preview.play(voice)}
-                        onOverrideGender={handleOverrideGender}
-                        onConfirm={confirmVoice}
-                        onCancel={() => setVoicePickerSpeaker(null)}
-                        previewState={preview.state}
+                        selected={voiceSel.pickerSelection}
+                        onSelect={voiceSel.setPickerSelection}
+                        onPreview={(voice) => voiceSel.preview.play(voice)}
+                        onOverrideGender={voiceSel.handleOverrideGender}
+                        onConfirm={voiceSel.confirmVoice}
+                        onCancel={voiceSel.closeVoicePicker}
+                        previewState={voiceSel.preview.state}
                         t={t}
                         isKo={isKo}
                       />
