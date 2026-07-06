@@ -37,25 +37,36 @@ function firstLanguage(voice) {
   return verified?.locale || verified?.language || voice?.language || 'multi'
 }
 
+function structuredGender(raw) {
+  const g = String(raw || '').toLowerCase()
+  return g === 'male' || g === 'female' ? g : null
+}
+
 function normalizeAccountVoice(voice) {
   const labels = voice?.labels || {}
+  const gender = structuredGender(labels.gender)
   return {
     id: voice.voice_id,
     name: voice.name || voice.voice_id,
     language: firstLanguage(voice),
     previewUrl: voice.preview_url || null,
     traits: compactTraits([labels.gender, labels.accent, labels.age, voice.category]),
+    gender,
+    genderSource: gender ? 'adapter' : null,
     source: 'account',
   }
 }
 
 function normalizeSharedVoice(voice) {
+  const gender = structuredGender(voice.gender)
   return {
     id: voice.voice_id,
     name: voice.name || voice.voice_id,
     language: voice.language || voice.locale || firstLanguage(voice),
     previewUrl: voice.preview_url || null,
     traits: compactTraits([voice.gender, voice.age, voice.accent, voice.descriptive, voice.use_case, voice.category]),
+    gender,
+    genderSource: gender ? 'adapter' : null,
     source: 'shared',
   }
 }
