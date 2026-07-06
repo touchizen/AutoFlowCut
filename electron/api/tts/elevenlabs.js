@@ -7,6 +7,13 @@ const BASE = 'https://api.elevenlabs.io/v1/text-to-speech'
 const VOICES_ENDPOINT = 'https://api.elevenlabs.io/v2/voices'
 const SHARED_VOICES_ENDPOINT = 'https://api.elevenlabs.io/v1/shared-voices'
 
+// eleven_multilingual_v2는 discrete emotion 파라미터가 없어 voice_settings(stability↓=억양 변화↑, style↑=표현 과장↑)로 톤을 근사한다. normal은 생략(기존 동작).
+const EMOTION_VOICE_SETTINGS = {
+  happy: { stability: 0.35, similarity_boost: 0.75, style: 0.55 },
+  sad: { stability: 0.3, similarity_boost: 0.75, style: 0.7 },
+  angry: { stability: 0.2, similarity_boost: 0.75, style: 0.85 },
+}
+
 // ElevenLabs 기본/검증된 seed 보이스. 라이브 목록 실패 시 이 목록으로 폴백한다.
 const KNOWN_VOICES = [
   { id: 'TX3LPaxmHKxFdv7VOQHJ', name: 'Liam', language: 'en', previewUrl: null, traits: ['male', 'energetic creator'], source: 'seed' },
@@ -67,7 +74,7 @@ function uniqueVoices(voices) {
 export function createElevenLabsAdapter({ getKey, fetch }) {
   return {
     capabilities() {
-      return { supportsEmotion: false, maxCharsPerRequest: 5000, outputFormats: ['mp3'], supportsPreview: true, maxConcurrency: 2 }
+      return { supportsEmotion: true, maxCharsPerRequest: 5000, outputFormats: ['mp3'], supportsPreview: true, maxConcurrency: 2 }
     },
     async listVoices({ query = '', includeShared = false, page = 0, limit = 100, maxSharedPages = 10 } = {}) {
       const key = getKey()
@@ -109,13 +116,14 @@ export function createElevenLabsAdapter({ getKey, fetch }) {
 
       return uniqueVoices([...voices, ...KNOWN_VOICES.map((v) => ({ ...v }))])
     },
-    async synthesize({ text, voiceId, signal }) {
+    async synthesize({ text, voiceId, emotion = 'normal', signal }) {
       const key = getKey()
       if (!key) throw new Error('No ElevenLabs API key')
+      const voiceSettings = EMOTION_VOICE_SETTINGS[emotion]
       const res = await fetch(`${BASE}/${voiceId}?output_format=mp3_44100_128`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'xi-api-key': key },
-        body: JSON.stringify({ text, model_id: 'eleven_multilingual_v2' }),
+        body: JSON.stringify({ text, model_id: 'eleven_multilingual_v2', ...(voiceSettings ? { voice_settings: voiceSettings } : {}) }),
         signal,
       })
       if (!res.ok) {

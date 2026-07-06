@@ -30,6 +30,38 @@ describe('ElevenLabs 어댑터', () => {
     const fetch = async () => ({ ok: false, status: 401, text: async () => 'nope' })
     await expect(createElevenLabsAdapter({ getKey: () => 'k', fetch }).synthesize({ text: 'x', voiceId: 'v' })).rejects.toThrow(/401/)
   })
+  it('synthesize: emotion=happy/sad/angry면 emotion별로 다른 voice_settings를 body에 싣는다', async () => {
+    const captured = []
+    const fetch = async (url, opts) => { captured.push(JSON.parse(opts.body)); return { ok: true, arrayBuffer: async () => new Uint8Array([1]).buffer } }
+    const a = createElevenLabsAdapter({ getKey: () => 'el-key', fetch })
+    await a.synthesize({ text: '안녕', voiceId: 'v', emotion: 'happy' })
+    await a.synthesize({ text: '안녕', voiceId: 'v', emotion: 'sad' })
+    await a.synthesize({ text: '안녕', voiceId: 'v', emotion: 'angry' })
+    const [happy, sad, angry] = captured
+    for (const body of captured) {
+      expect(body.text).toBe('안녕')
+      expect(body.model_id).toBe('eleven_multilingual_v2')
+      expect(body.voice_settings).toBeTruthy()
+      expect(typeof body.voice_settings.stability).toBe('number')
+      expect(typeof body.voice_settings.style).toBe('number')
+    }
+    // emotion별로 설정이 실제로 달라야 한다
+    expect(happy.voice_settings).not.toEqual(sad.voice_settings)
+    expect(sad.voice_settings).not.toEqual(angry.voice_settings)
+    expect(happy.voice_settings).not.toEqual(angry.voice_settings)
+    expect(a.capabilities().supportsEmotion).toBe(true)
+  })
+  it('synthesize: emotion=normal 또는 미지정이면 기존과 동일한 body(voice_settings 없음)', async () => {
+    const captured = []
+    const fetch = async (url, opts) => { captured.push(JSON.parse(opts.body)); return { ok: true, arrayBuffer: async () => new Uint8Array([1]).buffer } }
+    const a = createElevenLabsAdapter({ getKey: () => 'el-key', fetch })
+    await a.synthesize({ text: '안녕', voiceId: 'v', emotion: 'normal' })
+    await a.synthesize({ text: '안녕', voiceId: 'v' })
+    for (const body of captured) {
+      expect(body).toEqual({ text: '안녕', model_id: 'eleven_multilingual_v2' })
+      expect('voice_settings' in body).toBe(false)
+    }
+  })
   it('listVoices: Liam/Adam seed와 검색용 metadata를 반환한다', async () => {
     const voices = await createElevenLabsAdapter({ getKey: () => 'k', fetch: async () => {} }).listVoices()
     expect(voices.length).toBeGreaterThan(0)
@@ -189,6 +221,51 @@ describe('Gemini TTS 어댑터', () => {
     const body = JSON.parse(cap.opts.body)
     expect(body.generationConfig.responseModalities).toEqual(['AUDIO'])
     expect(body.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName).toBe('Kore')
+  })
+  it('synthesize: emotion=happy/sad/angry면 emotion별 스타일 지시가 텍스트 앞에 붙는다', async () => {
+    const pcm = Buffer.from([0, 1])
+    const captured = []
+    const fetch = async (url, opts) => {
+      captured.push(JSON.parse(opts.body))
+      return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/L16;rate=24000', data: pcm.toString('base64') } }] } }] }) }
+    }
+    const a = createGeminiAdapter({ getKey: () => 'gm-key', fetch })
+    await a.synthesize({ text: '안녕', voiceId: 'Kore', emotion: 'happy' })
+    await a.synthesize({ text: '안녕', voiceId: 'Kore', emotion: 'sad' })
+    await a.synthesize({ text: '안녕', voiceId: 'Kore', emotion: 'angry' })
+    const texts = captured.map((b) => b.contents[0].parts[0].text)
+    for (const t of texts) {
+      expect(t).not.toBe('안녕') // 스타일 지시가 추가됨
+      expect(t).toContain('안녕') // 원문은 보존
+    }
+    // emotion별로 지시문이 달라야 한다
+    expect(new Set(texts).size).toBe(3)
+    // 보이스/모달리티는 그대로
+    for (const body of captured) {
+      expect(body.generationConfig.responseModalities).toEqual(['AUDIO'])
+      expect(body.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName).toBe('Kore')
+    }
+    expect(a.capabilities().supportsEmotion).toBe(true)
+  })
+  it('synthesize: emotion=normal 또는 미지정이면 기존과 동일한 body(원문 그대로)', async () => {
+    const pcm = Buffer.from([0, 1])
+    const captured = []
+    const fetch = async (url, opts) => {
+      captured.push(JSON.parse(opts.body))
+      return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/L16;rate=24000', data: pcm.toString('base64') } }] } }] }) }
+    }
+    const a = createGeminiAdapter({ getKey: () => 'gm-key', fetch })
+    await a.synthesize({ text: '안녕', voiceId: 'Kore', emotion: 'normal' })
+    await a.synthesize({ text: '안녕', voiceId: 'Kore' })
+    for (const body of captured) {
+      expect(body).toEqual({
+        contents: [{ parts: [{ text: '안녕' }] }],
+        generationConfig: {
+          responseModalities: ['AUDIO'],
+          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
+        },
+      })
+    }
   })
   it('키 없음/데이터 없음 throw', async () => {
     await expect(createGeminiAdapter({ getKey: () => null, fetch: async () => {} }).synthesize({ text: 'x', voiceId: 'Kore' })).rejects.toThrow(/Gemini API key/)

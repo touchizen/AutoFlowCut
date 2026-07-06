@@ -104,6 +104,19 @@ export default {
       done: 'Done',
       error: 'Error',
     },
+    emotion: {
+      normal: 'Normal',
+      happy: 'Happy',
+      sad: 'Sad',
+      angry: 'Angry',
+    },
+    auto: {
+      label: 'Auto',
+      for: '{step} auto',
+      runAll: 'Run all',
+      runAllIcon: '▶ Run all',
+      running: '⏳ Auto-running',
+    },
     review: {
       target: {
         script: 'Script',
@@ -138,8 +151,10 @@ export default {
       setupRestartIcon: '↻ Restart with changes',
       promptsRedo: 'Regenerate prompts',
       audioRedo: 'Regenerate audio',
+      scenesRedo: 'Re-split scenes',
       promptsRedoIcon: '↻ Regenerate prompts',
       audioRedoIcon: '↻ Regenerate audio',
+      scenesRedoIcon: '↻ Re-split scenes',
       close: 'Close',
     },
     form: {

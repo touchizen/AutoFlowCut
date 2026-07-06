@@ -87,6 +87,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   // 세그먼트 오디오의 합성 지문 — provider/voiceId/emotion. 재사용 시 현재 배정과 일치해야 함
   // (Codex-TTS HIGH: 화자 voice/엔진을 바꿔도 옛 오디오가 재사용되던 버그 방지).
   const ttsVoiceKey = (voice, emotion) => (voice?.voiceId ? `${voice.provider || 'typecast'}:${voice.voiceId}:${emotion || 'normal'}` : '')
+  // 감정은 화자(대사)만 — narrator는 normal로 고정(나레이션에 감정 안 실림). TTS·reuse 지문에 공통.
+  const effectiveEmotion = (seg) => (isNarratorTrackSpeaker(seg?.speaker) ? 'normal' : seg?.emotion)
   const projectToken = randomUUID()
   let state = null
   let controller = null
@@ -570,7 +572,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         if (forceRegen.has(seg.id) || seg.status !== 'done' || !seg.audioPath || (seg.durationMs || 0) <= 0) return false
         // Codex-TTS HIGH: 화자 voice/provider/emotion이 바뀌면(또는 지문 없는 옛 오디오면) 재사용 금지.
         const intended = voiceOf(seg.speaker)
-        if (!intended?.voiceId || seg.voiceKey !== ttsVoiceKey(intended, seg.emotion)) return false
+        if (!intended?.voiceId || seg.voiceKey !== ttsVoiceKey(intended, effectiveEmotion(seg))) return false
         try { return (await stat(reusePathOf(seg))).isFile() } catch { return false }
       }
       // M2b sfx reuse: 지문 sfxKey(source:description:durationHint) 일치 + 파일 실재.
@@ -600,14 +602,14 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
           // D: 세그먼트별 실시간 진행 — 시작/완료/실패마다 progress emit(목록 실시간 표시용).
           send('story:progress', { kind: 'audio-segment', segId: seg.id, status: 'running' }, opId)
           try {
-            const { audio, format } = await resolveTts(voice.provider).synthesize({ text: seg.text, voiceId: voice.voiceId, emotion: seg.emotion, signal })
+            const { audio, format } = await resolveTts(voice.provider).synthesize({ text: seg.text, voiceId: voice.voiceId, emotion: effectiveEmotion(seg), signal })
             if (signal?.aborted) return
             const rel = `audio/segments/${seg.id}.${format}`
             await store.saveBinary(rel, audio)
             const durationMs = await probe(path.join(projectPath, 'story', rel))
             // I2: probe 실패(0)면 SRT 0ms·클립 겹침으로 조용히 붕괴 → 실패로 취급(재시도 유도).
             if (durationMs <= 0) { errored.add(seg.id); send('story:progress', { kind: 'audio-segment', segId: seg.id, status: 'error' }, opId); return }
-            results.set(seg.id, { audioPath: path.join(projectPath, 'story', rel), durationMs, voiceKey: ttsVoiceKey(voice, seg.emotion) })
+            results.set(seg.id, { audioPath: path.join(projectPath, 'story', rel), durationMs, voiceKey: ttsVoiceKey(voice, effectiveEmotion(seg)) })
             send('story:progress', { kind: 'audio-segment', segId: seg.id, status: 'done' }, opId)
           } catch (e) {
             if (!signal?.aborted) { errored.add(seg.id); errorMsgs.set(seg.id, e?.message || String(e)); send('story:progress', { kind: 'audio-segment', segId: seg.id, status: 'error' }, opId) } // 개별 실패 — 사유 보존(부분재시도)
@@ -854,12 +856,12 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         for (const seg of targets) {
           const voice = voiceOf(seg.speaker)
           if (!voice || typeof voice.voiceId !== 'string' || !voice.voiceId) throw new Error(`voice not assigned for speaker: ${seg.speaker}`)
-          const { audio, format } = await resolveTts(voice.provider).synthesize({ text: seg.text, voiceId: voice.voiceId, emotion: seg.emotion })
+          const { audio, format } = await resolveTts(voice.provider).synthesize({ text: seg.text, voiceId: voice.voiceId, emotion: effectiveEmotion(seg) })
           const rel = `audio/segments/${seg.id}.${format}`
           await store.saveBinary(rel, audio)
           const durationMs = await probe(path.join(projectPath, 'story', rel))
           if (durationMs <= 0) throw new Error(`audio measurement failed for segment ${seg.id}`)
-          results.set(seg.id, { audioPath: path.join(projectPath, 'story', rel), durationMs, voiceKey: ttsVoiceKey(voice, seg.emotion) })
+          results.set(seg.id, { audioPath: path.join(projectPath, 'story', rel), durationMs, voiceKey: ttsVoiceKey(voice, effectiveEmotion(seg)) })
         }
         for (const seg of sfxTargets) {
           // 배치 audio 스텝과 동일한 소스 해석/지문(reuse가 배치와 호환되도록).

@@ -104,6 +104,19 @@ export default {
       done: '완료',
       error: '오류',
     },
+    emotion: {
+      normal: '평범',
+      happy: '기쁨',
+      sad: '슬픔',
+      angry: '화남',
+    },
+    auto: {
+      label: '자동',
+      for: '{step} 자동',
+      runAll: '전체 진행',
+      runAllIcon: '▶ 전체 진행',
+      running: '⏳ 자동 진행 중',
+    },
     review: {
       target: {
         script: '대본',
@@ -138,8 +151,10 @@ export default {
       setupRestartIcon: '↻ 변경사항으로 다시 시작',
       promptsRedo: '프롬프트 다시 생성',
       audioRedo: '오디오 다시 생성',
+      scenesRedo: '씬 재분리',
       promptsRedoIcon: '↻ 프롬프트 다시 생성',
       audioRedoIcon: '↻ 오디오 다시 생성',
+      scenesRedoIcon: '↻ 씬 재분리',
       close: '닫기',
     },
     form: {

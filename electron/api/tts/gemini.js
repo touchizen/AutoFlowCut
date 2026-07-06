@@ -41,6 +41,13 @@ const KNOWN_VOICES = [
   { id: 'Sulafat', name: 'Sulafat', language: 'multi', previewUrl: null, traits: ['warm'], source: 'gemini' },
 ]
 
+// Gemini TTS는 자연어 스타일 지시로 말투/감정을 제어한다(공식 문서 controllable style prompt). normal은 지시 없이 원문 그대로(기존 동작).
+const EMOTION_STYLE_PROMPTS = {
+  happy: 'Say the following in a cheerful, happy tone:',
+  sad: 'Say the following in a sad, somber tone:',
+  angry: 'Say the following in an angry, intense tone:',
+}
+
 function parseRate(mimeType) {
   const m = /rate=(\d+)/.exec(mimeType || '')
   return m ? parseInt(m[1], 10) : 24000
@@ -70,19 +77,21 @@ function pcmToWav(pcm, { rate = 24000, channels = 1, bits = 16 } = {}) {
 export function createGeminiAdapter({ getKey, fetch }) {
   return {
     capabilities() {
-      return { supportsEmotion: false, maxCharsPerRequest: 5000, outputFormats: ['wav'], supportsPreview: true, maxConcurrency: 2 }
+      return { supportsEmotion: true, maxCharsPerRequest: 5000, outputFormats: ['wav'], supportsPreview: true, maxConcurrency: 2 }
     },
     listVoices() {
       return KNOWN_VOICES.map((v) => ({ ...v }))
     },
-    async synthesize({ text, voiceId, signal }) {
+    async synthesize({ text, voiceId, emotion = 'normal', signal }) {
       const key = getKey()
       if (!key) throw new Error('No Gemini API key')
+      const stylePrompt = EMOTION_STYLE_PROMPTS[emotion]
+      const promptText = stylePrompt ? `${stylePrompt} ${text}` : text
       const res = await fetch(`${ENDPOINT}?key=${encodeURIComponent(key)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contents: [{ parts: [{ text }] }],
+          contents: [{ parts: [{ text: promptText }] }],
           generationConfig: {
             responseModalities: ['AUDIO'],
             speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceId || 'Kore' } } },

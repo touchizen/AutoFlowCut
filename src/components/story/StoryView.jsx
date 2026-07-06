@@ -25,6 +25,7 @@ import {
   normalizeStoryLlmOptions,
 } from '../../utils/storyLlmCatalog'
 import { STORY_TTS_PROVIDER_LABEL, isStoryTtsProvider } from '../../config/storyTtsProviders'
+import { isNarratorSpeaker } from '../../utils/storyNarrationTracks'
 import './StoryView.css'
 
 // M2a-3: audio가 파이프라인 1급 스텝 — script→scenes→audio→prompts 순서로 진행한다.
@@ -552,8 +553,10 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onVoi
     return {}
   }
 
-  // 나레이션 세그먼트 셀 — 윗줄 대화, 아랫줄 (감정). 감정은 TTS·프롬프트 작성에도 쓰인다.
+  // 세그먼트 셀 — 윗줄 대화. 감정은 화자(대사)만 아랫줄 (감정)으로, 나레이터는 제외.
+  // 감정은 TTS·프롬프트 작성에도 쓰인다.
   const renderNarrationCell = (seg) => {
+    if (isNarratorSpeaker(seg.speaker)) return seg.text
     const emo = seg.emotion || 'normal'
     return (
       <div className="story-seg-cell">
