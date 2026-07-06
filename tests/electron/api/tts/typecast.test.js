@@ -77,6 +77,16 @@ describe('createTypecastAdapter', () => {
     expect(voices.every((v) => v.source === 'seed')).toBe(true)
   })
 
+  it('listVoices falls back to seeds when getKey throws (production no-key behavior)', async () => {
+    const a = createTypecastAdapter({
+      getKey: () => { throw new Error('no key configured') },
+      fetch: async () => { throw new Error('should not be called') },
+    })
+    const voices = await a.listVoices()
+    expect(voices.length).toBeGreaterThan(0)
+    expect(voices.every((v) => v.source === 'seed')).toBe(true)
+  })
+
   it('키 없으면 throw', async () => {
     const a = createTypecastAdapter({ getKey: () => null, fetch: async () => {} })
     await expect(a.synthesize({ text: 'x', voiceId: 'v' })).rejects.toThrow(/Typecast API key/)

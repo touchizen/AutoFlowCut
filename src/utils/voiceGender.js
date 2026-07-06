@@ -40,8 +40,9 @@ export function estimateGenderFromPcm(samples, sampleRate) {
   }
   if (f0s.length < 3) return { gender: null, f0: null, confidence: null }
   f0s.sort((a, b) => a - b)
-  const f0 = f0s[Math.floor(f0s.length / 2)] // 중앙값
-  const gender = f0 < 165 ? 'male' : 'female'
-  const confidence = (f0 < 150 || f0 > 185) ? 'high' : 'low'
-  return { gender, f0: Math.round(f0), confidence }
+  const median = f0s[Math.floor(f0s.length / 2)] // 중앙값
+  const f0r = Math.round(median)
+  const gender = f0r < 165 ? 'male' : 'female'
+  const confidence = (f0r < 150 || f0r > 185) ? 'high' : 'low'
+  return { gender, f0: f0r, confidence }
 }

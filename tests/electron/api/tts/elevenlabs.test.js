@@ -10,4 +10,12 @@ describe('ElevenLabs 어댑터 gender 필드', () => {
     const r = voices.find((v) => v.id === 'e1')
     expect(r).toMatchObject({ gender: 'female', genderSource: 'adapter' })
   })
+
+  it('seed fallback voices carry structured gender (e.g. Rachel)', async () => {
+    const fetch = async () => { throw new Error('nope') }
+    const a = createElevenLabsAdapter({ getKey: () => null, fetch })
+    const voices = await a.listVoices()
+    const rachel = voices.find((v) => v.name === 'Rachel')
+    expect(rachel).toMatchObject({ gender: 'female', genderSource: 'seed' })
+  })
 })

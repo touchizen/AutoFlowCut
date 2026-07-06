@@ -40,7 +40,8 @@ export function createTypecastAdapter({ getKey, fetch }) {
       return { supportsEmotion: true, maxCharsPerRequest: 2000, outputFormats: ['wav'], supportsPreview: true, maxConcurrency: 2 }
     },
     async listVoices() {
-      const key = getKey()
+      let key
+      try { key = getKey() } catch { key = null }
       if (!key) return KNOWN_VOICES.map((v) => ({ ...v }))
       try {
         const ctrl = new AbortController()

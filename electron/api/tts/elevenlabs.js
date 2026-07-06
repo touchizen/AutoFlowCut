@@ -16,12 +16,12 @@ const EMOTION_VOICE_SETTINGS = {
 
 // ElevenLabs 기본/검증된 seed 보이스. 라이브 목록 실패 시 이 목록으로 폴백한다.
 const KNOWN_VOICES = [
-  { id: 'TX3LPaxmHKxFdv7VOQHJ', name: 'Liam', language: 'en', previewUrl: null, traits: ['male', 'energetic creator'], source: 'seed' },
-  { id: 'pNInz6obpgDQGcFmaJgB', name: 'Adam', language: 'multi', previewUrl: null, traits: ['male'], source: 'seed' },
-  { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel', language: 'multi', previewUrl: null, traits: ['female'], source: 'seed' },
-  { id: 'AZnzlk1XvdvUeBnXmlld', name: 'Domi', language: 'multi', previewUrl: null, traits: ['female'], source: 'seed' },
-  { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Bella', language: 'multi', previewUrl: null, traits: ['female'], source: 'seed' },
-  { id: 'ErXwobaYiN019PkySvjV', name: 'Antoni', language: 'multi', previewUrl: null, traits: ['male'], source: 'seed' },
+  { id: 'TX3LPaxmHKxFdv7VOQHJ', name: 'Liam', language: 'en', previewUrl: null, traits: ['male', 'energetic creator'], gender: 'male', genderSource: 'seed', source: 'seed' },
+  { id: 'pNInz6obpgDQGcFmaJgB', name: 'Adam', language: 'multi', previewUrl: null, traits: ['male'], gender: 'male', genderSource: 'seed', source: 'seed' },
+  { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel', language: 'multi', previewUrl: null, traits: ['female'], gender: 'female', genderSource: 'seed', source: 'seed' },
+  { id: 'AZnzlk1XvdvUeBnXmlld', name: 'Domi', language: 'multi', previewUrl: null, traits: ['female'], gender: 'female', genderSource: 'seed', source: 'seed' },
+  { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Bella', language: 'multi', previewUrl: null, traits: ['female'], gender: 'female', genderSource: 'seed', source: 'seed' },
+  { id: 'ErXwobaYiN019PkySvjV', name: 'Antoni', language: 'multi', previewUrl: null, traits: ['male'], gender: 'male', genderSource: 'seed', source: 'seed' },
 ]
 
 function cleanTrait(value) {

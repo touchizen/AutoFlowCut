@@ -31,4 +31,16 @@ describe('voiceGenderCache', () => {
     c.tag({ provider: 'typecast', voiceId: 'v1', gender: 'female', source: 'manual' })
     expect(c.get()['typecast:v1']).toMatchObject({ gender: 'female', source: 'manual' })
   })
+  it('f0 does not override an existing manual entry', () => {
+    const fs = memFs()
+    const c = createVoiceGenderCache({ filePath: '/x/gender.json', fs })
+    c.tag({ provider: 'typecast', voiceId: 'v1', gender: 'female', source: 'manual' })
+    c.tag({ provider: 'typecast', voiceId: 'v1', gender: 'male', f0: 132, confidence: 'high', source: 'f0' })
+    expect(c.get()['typecast:v1']).toMatchObject({ gender: 'female', source: 'manual' })
+  })
+  it.each(['[]', '42', '"x"'])('degrades to {} for valid-but-wrong JSON: %s', (content) => {
+    const fs = memFs({ '/x/gender.json': content })
+    const c = createVoiceGenderCache({ filePath: '/x/gender.json', fs })
+    expect(c.get()).toEqual({})
+  })
 })
