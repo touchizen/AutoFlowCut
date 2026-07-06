@@ -58,33 +58,31 @@ export default function StoryStepper({
         const status = steps?.[key]?.status || 'pending'
         const label = t(`story.step.${key}`, meta.label)
         const clickable = (status === 'done' || key === currentStep) && typeof onStepClick === 'function'
+        const showAuto = autoSteps && AUTO_STEPS.includes(key) && typeof onToggleAuto === 'function'
         return (
-          <div
-            key={key}
-            role={clickable ? 'button' : undefined}
-            tabIndex={clickable ? 0 : undefined}
-            aria-label={clickable ? label : undefined}
-            onClick={clickable ? () => onStepClick(key) : undefined}
-            onKeyDown={clickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') onStepClick(key) } : undefined}
-            className={[
-              'story-step-pill',
-              `story-step-${status}`,
-              key === activeKey ? 'active' : '',
-              clickable ? 'story-step-clickable' : '',
-            ].filter(Boolean).join(' ')}
-          >
-            <span className="story-step-icon">{meta.icon}</span>
-            <span className="story-step-name">{label}</span>
-            <span className={`story-step-badge story-badge-${status}`}>
-              {t(`story.status.${status}`, STATUS_LABEL[status] || status)}
-            </span>
-            {/* 자동 진행 대상 스텝의 '자동' 체크박스 — 클릭이 탭 이동으로 번지지 않게 stopPropagation. */}
-            {autoSteps && AUTO_STEPS.includes(key) && typeof onToggleAuto === 'function' && (
-              <label
-                className="story-step-auto"
-                onClick={(e) => e.stopPropagation()}
-                onKeyDown={(e) => e.stopPropagation()}
-              >
+          // pill(캡슐) + 그 아래 '자동' 체크박스를 한 열로 — '자동'을 캡슐 밖 둘째 줄에 둔다.
+          <div key={key} className="story-step-col">
+            <div
+              role={clickable ? 'button' : undefined}
+              tabIndex={clickable ? 0 : undefined}
+              aria-label={clickable ? label : undefined}
+              onClick={clickable ? () => onStepClick(key) : undefined}
+              onKeyDown={clickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') onStepClick(key) } : undefined}
+              className={[
+                'story-step-pill',
+                `story-step-${status}`,
+                key === activeKey ? 'active' : '',
+                clickable ? 'story-step-clickable' : '',
+              ].filter(Boolean).join(' ')}
+            >
+              <span className="story-step-icon">{meta.icon}</span>
+              <span className="story-step-name">{label}</span>
+              <span className={`story-step-badge story-badge-${status}`}>
+                {t(`story.status.${status}`, STATUS_LABEL[status] || status)}
+              </span>
+            </div>
+            {showAuto && (
+              <label className="story-step-auto">
                 <input
                   type="checkbox"
                   aria-label={t('story.auto.for', `${label} 자동`, { step: label })}

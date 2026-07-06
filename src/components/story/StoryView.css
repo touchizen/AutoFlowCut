@@ -49,12 +49,17 @@
 .story-seg-text { }
 .story-seg-emotion { font-size: 0.8em; opacity: 0.7; }
 
-/* 자동 진행 — pill 내 '자동' 체크박스 + 스텝퍼 오른쪽 끝 '전체 진행' */
+/* 자동 진행 — pill(캡슐) 아래 둘째 줄 '자동' 체크박스 + 스텝퍼 오른쪽 끝 '전체 진행' */
+.story-step-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
 .story-step-auto {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  margin-left: 6px;
   font-size: 0.72rem;
   cursor: pointer;
   opacity: 0.85;

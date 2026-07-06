@@ -188,7 +188,7 @@ export default {
       rerun: 'Split again',
       no: '#',
       speaker: 'Speaker',
-      segment: 'Segment',
+      segment: 'Segment (emotion)',
       empty: 'No scene split results yet.',
     },
     audio: {
@@ -200,7 +200,7 @@ export default {
       voiceDefault: 'Default voice',
       no: '#',
       speaker: 'Speaker',
-      segment: 'Segment',
+      segment: 'Segment (emotion)',
       status: 'Status',
       actions: '',
       sfxLabel: 'SFX',

@@ -1065,7 +1065,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onVoi
                     <tr>
                       <th>{t('story.scenes.no', '#')}</th>
                       <th>{t('story.scenes.speaker', '화자')}</th>
-                      <th>{t('story.scenes.segment', '세그먼트')}</th>
+                      <th>{t('story.scenes.segment', '세그먼트(감정)')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1172,7 +1172,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onVoi
                     <tr>
                       <th>{t('story.audio.no', '#')}</th>
                       <th>{t('story.audio.speaker', '화자')}</th>
-                      <th>{t('story.audio.segment', '세그먼트')}</th>
+                      <th>{t('story.audio.segment', '세그먼트(감정)')}</th>
                       <th>{t('story.audio.status', '상태')}</th>
                       <th>{t('story.audio.actions', '')}</th>
                     </tr>

@@ -188,7 +188,7 @@ export default {
       rerun: '다시 분리',
       no: '#',
       speaker: '화자',
-      segment: '세그먼트',
+      segment: '세그먼트(감정)',
       empty: '씬 분리 결과가 아직 없습니다.',
     },
     audio: {
@@ -200,7 +200,7 @@ export default {
       voiceDefault: '기본 성우',
       no: '#',
       speaker: '화자',
-      segment: '세그먼트',
+      segment: '세그먼트(감정)',
       status: '상태',
       actions: '',
       sfxLabel: 'SFX',

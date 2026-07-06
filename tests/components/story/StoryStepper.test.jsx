@@ -52,17 +52,17 @@ describe('StoryStepper 자동 진행(자동 체크박스 + 전체 진행)', () =
   it('scenes/audio/prompts 각 pill에 자동 체크박스, 상태는 autoSteps 반영', () => {
     render(<StoryStepper steps={steps} currentStep="scenes" onStepClick={vi.fn()}
       autoSteps={{ scenes: true, audio: false, prompts: true }} onToggleAuto={vi.fn()} onRunAll={vi.fn()} canRunAll autoRunning={false} />)
-    expect(pillOf('씬 분리').querySelector('input[type=checkbox]').checked).toBe(true)
-    expect(pillOf('오디오').querySelector('input[type=checkbox]').checked).toBe(false)
-    expect(pillOf('프롬프트').querySelector('input[type=checkbox]').checked).toBe(true)
+    expect(screen.getByText('씬 분리').closest('.story-step-col').querySelector('input[type=checkbox]').checked).toBe(true)
+    expect(screen.getByText('오디오').closest('.story-step-col').querySelector('input[type=checkbox]').checked).toBe(false)
+    expect(screen.getByText('프롬프트').closest('.story-step-col').querySelector('input[type=checkbox]').checked).toBe(true)
     // 대본/설정엔 자동 체크박스 없음
-    expect(pillOf('대본').querySelector('input[type=checkbox]')).toBeNull()
+    expect(screen.getByText('대본').closest('.story-step-col').querySelector('input[type=checkbox]')).toBeNull()
   })
   it('자동 체크박스 클릭 시 onToggleAuto(step) 호출, 탭 이동(onStepClick)은 안 함', () => {
     const onToggleAuto = vi.fn(); const onStepClick = vi.fn()
     render(<StoryStepper steps={steps} currentStep="scenes" onStepClick={onStepClick}
       autoSteps={{ scenes: false, audio: false, prompts: true }} onToggleAuto={onToggleAuto} onRunAll={vi.fn()} canRunAll autoRunning={false} />)
-    fireEvent.click(pillOf('오디오').querySelector('input[type=checkbox]'))
+    fireEvent.click(screen.getByText('오디오').closest('.story-step-col').querySelector('input[type=checkbox]'))
     expect(onToggleAuto).toHaveBeenCalledWith('audio')
     expect(onStepClick).not.toHaveBeenCalled()
   })
