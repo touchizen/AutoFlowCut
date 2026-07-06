@@ -26,6 +26,7 @@ export function useVoicePreview() {
   // Unmount cleanup: stop audio, revoke url, close the shared AudioContext.
   useEffect(() => {
     return () => {
+      seqRef.current += 1 // Invalidate in-flight plays before cleanup
       cleanup()
       ctxRef.current?.close?.()
     }

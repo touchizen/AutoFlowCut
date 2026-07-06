@@ -74,3 +74,44 @@ it('does not throw when ttsTagVoiceGender rejects', async () => {
   await waitFor(() => expect(result.current.lastGender).toBeTruthy())
   expect(window.electronAPI.ttsTagVoiceGender).toHaveBeenCalled()
 })
+
+it('in-flight play does not proceed after unmount (seq invalidation)', async () => {
+  // Control when ttsPreviewVoice resolves
+  let resolvePreview
+  window.electronAPI.ttsPreviewVoice = vi.fn(() => new Promise(resolve => { resolvePreview = resolve }))
+
+  const audioConstructorSpy = vi.fn()
+  globalThis.Audio = class {
+    constructor(src) { audioConstructorSpy(src) }
+    play() { return Promise.resolve() }
+    pause() {}
+    set onended(fn) { this._e = fn }
+    get onended() { return this._e }
+    set onerror(fn) { this._er = fn }
+    get onerror() { return this._er }
+  }
+
+  const { result, unmount } = renderHook(() => useVoicePreview())
+
+  // Start play() but ttsPreviewVoice won't resolve until we call resolvePreview
+  act(() => { result.current.play({ provider: 'typecast', voiceId: 'v1', language: 'ko', genderSource: 'adapter' }) })
+
+  // Verify we're in loading state and Audio hasn't been constructed yet
+  expect(result.current.state.status).toBe('loading')
+  expect(audioConstructorSpy).not.toHaveBeenCalled()
+
+  // Unmount while play() is still awaiting ttsPreviewVoice
+  unmount()
+
+  // Record spy call count before resolving post-unmount
+  const callCountBeforeResolve = audioConstructorSpy.mock.calls.length
+
+  // Now resolve the promise (after unmount)
+  await act(async () => {
+    resolvePreview({ audioBase64: btoa('x'), mimeType: 'audio/wav' })
+    await Promise.resolve()
+  })
+
+  // Assert: Audio constructor should not be called after unmount (seq guard prevents it)
+  expect(audioConstructorSpy.mock.calls.length).toBe(callCountBeforeResolve)
+})
