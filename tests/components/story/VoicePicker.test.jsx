@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import VoicePicker from '../../../src/components/story/VoicePicker.jsx'
 
@@ -55,4 +55,54 @@ it('footer [이 성우로 지정] calls onConfirm and [취소] calls onCancel', 
   expect(onConfirm).toHaveBeenCalledTimes(1)
   fireEvent.click(screen.getByRole('button', { name: /취소|cancel/i }))
   expect(onCancel).toHaveBeenCalledTimes(1)
+})
+
+describe('remote voice search (debounced)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('calls onVoiceSearch with elevenlabs provider after debounce when ElevenLabs chip is active and query >= 2 chars', () => {
+    const onVoiceSearch = vi.fn()
+    render(<VoicePicker voices={voices} selected={{}} onSelect={vi.fn()} onPreview={vi.fn()} onOverrideGender={vi.fn()} previewState={{ status: 'idle' }} onVoiceSearch={onVoiceSearch} t={t} isKo />)
+    fireEvent.click(screen.getByRole('button', { name: /ElevenLabs/i }))
+    const input = screen.getByPlaceholderText(/이름·특성 검색|Search name or traits/i)
+    fireEvent.change(input, { target: { value: 'ab' } })
+    expect(onVoiceSearch).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(300)
+    expect(onVoiceSearch).toHaveBeenCalledWith({ provider: 'elevenlabs', query: 'ab' })
+  })
+
+  it('does not call onVoiceSearch for a query shorter than 2 chars', () => {
+    const onVoiceSearch = vi.fn()
+    render(<VoicePicker voices={voices} selected={{}} onSelect={vi.fn()} onPreview={vi.fn()} onOverrideGender={vi.fn()} previewState={{ status: 'idle' }} onVoiceSearch={onVoiceSearch} t={t} isKo />)
+    fireEvent.click(screen.getByRole('button', { name: /ElevenLabs/i }))
+    const input = screen.getByPlaceholderText(/이름·특성 검색|Search name or traits/i)
+    fireEvent.change(input, { target: { value: 'a' } })
+    vi.advanceTimersByTime(300)
+    expect(onVoiceSearch).not.toHaveBeenCalled()
+  })
+
+  it('does not call onVoiceSearch when the Gemini chip is active (remote search is elevenlabs-only)', () => {
+    const onVoiceSearch = vi.fn()
+    render(<VoicePicker voices={voices} selected={{}} onSelect={vi.fn()} onPreview={vi.fn()} onOverrideGender={vi.fn()} previewState={{ status: 'idle' }} onVoiceSearch={onVoiceSearch} t={t} isKo />)
+    fireEvent.click(screen.getByRole('button', { name: /^Gemini/i }))
+    const input = screen.getByPlaceholderText(/이름·특성 검색|Search name or traits/i)
+    fireEvent.change(input, { target: { value: 'ab' } })
+    vi.advanceTimersByTime(300)
+    expect(onVoiceSearch).not.toHaveBeenCalled()
+  })
+
+  it('calls onVoiceSearch targeting elevenlabs when the "all" provider chip is active', () => {
+    const onVoiceSearch = vi.fn()
+    render(<VoicePicker voices={voices} selected={{}} onSelect={vi.fn()} onPreview={vi.fn()} onOverrideGender={vi.fn()} previewState={{ status: 'idle' }} onVoiceSearch={onVoiceSearch} t={t} isKo />)
+    const input = screen.getByPlaceholderText(/이름·특성 검색|Search name or traits/i)
+    fireEvent.change(input, { target: { value: 'ab' } })
+    vi.advanceTimersByTime(300)
+    expect(onVoiceSearch).toHaveBeenCalledWith({ provider: 'elevenlabs', query: 'ab' })
+  })
 })

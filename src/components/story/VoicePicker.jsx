@@ -8,7 +8,7 @@
  *   우클릭 메뉴로 onOverrideGender({ provider, voiceId, gender })
  */
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { voiceKey } from '../../utils/voiceKey'
 import './VoicePicker.css'
 
@@ -17,6 +17,7 @@ const PROVIDERS = ['typecast', 'gemini', 'elevenlabs']
 const PROVIDER_BADGE = { typecast: 'TC', gemini: 'GM', elevenlabs: '11' }
 const PROVIDER_CLASS = { typecast: 'tc', gemini: 'gm', elevenlabs: 'el' }
 const OVERRIDABLE_SOURCES = new Set([null, undefined, 'f0', 'manual'])
+const SEARCH_DEBOUNCE_MS = 300
 
 function shortVpId(id) {
   if (!id) return id
@@ -55,6 +56,7 @@ export default function VoicePicker({
   onOverrideGender,
   onConfirm,
   onCancel,
+  onVoiceSearch = null,
   previewState = { voiceId: null, status: 'idle' },
   t,
   isKo
@@ -64,6 +66,23 @@ export default function VoicePicker({
   const [query, setQuery] = useState('')
   const [visibleCount, setVisibleCount] = useState(RENDER_CAP)
   const [overrideKey, setOverrideKey] = useState(null)
+  const searchTimerRef = useRef(null)
+
+  // Remote search: ElevenLabs has thousands of shared voices, only the first preload page is
+  // loaded locally. Debounce the search box and fetch more from the main process, merging into
+  // the voice list. Typecast/Gemini are already fully loaded, so remote search only targets
+  // elevenlabs (including when the "all" chip is active).
+  useEffect(() => {
+    if (!onVoiceSearch) return undefined
+    const provider = activeProvider === 'all' ? 'elevenlabs' : activeProvider
+    if (provider !== 'elevenlabs') return undefined
+    const q = query.trim()
+    if (q.length < 2) return undefined
+    searchTimerRef.current = setTimeout(() => {
+      onVoiceSearch({ provider, query: q })
+    }, SEARCH_DEBOUNCE_MS)
+    return () => clearTimeout(searchTimerRef.current)
+  }, [query, activeProvider, onVoiceSearch])
 
   const providerCounts = useMemo(() => {
     const counts = { all: voices.length }

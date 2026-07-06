@@ -645,6 +645,25 @@ function App() {
     }
   }, [mergeTtsVoices])
 
+  // VoicePicker 검색창 디바운스 원격 검색 — ElevenLabs shared voice가 수천 개라 preload로는
+  // 못 찾는 보이스를 검색어로 추가 조회해 ttsVoices에 병합한다(Typecast/Gemini는 이미 전량 로드).
+  const handleTtsVoiceSearch = useCallback(async ({ provider, query }) => {
+    const q = String(query || '').trim()
+    if (!provider || q.length < 2) return
+    try {
+      const vs = await window.electronAPI?.ttsListVoices?.({
+        provider,
+        query: q,
+        includeShared: provider === 'elevenlabs',
+        limit: 100,
+        maxSharedPages: provider === 'elevenlabs' ? 5 : 1,
+      })
+      if (Array.isArray(vs)) mergeTtsVoices(vs.map((v) => ({ ...v, provider })))
+    } catch {
+      // Search is opportunistic; existing seed/account voices remain usable.
+    }
+  }, [mergeTtsVoices])
+
   // Flow 프로젝트가 준비되면(컴포저 가시·settle) 모델 목록을 백그라운드로 미리 스크랩한다.
   //   이렇게 캐시해 두면 설정 모달을 열 때 느린 라이브 스크랩 없이 즉시 동적 목록이 뜬다.
   //   아직 dynamic 을 못 받았을 때만 — 이미 받았으면 반복 스크랩 생략.
@@ -2465,6 +2484,7 @@ function App() {
               pipeline={storyPipeline}
               voices={ttsVoices}
               onTagGender={handleTagGender}
+              onVoiceSearch={handleTtsVoiceSearch}
               onClose={() => setActiveView('generate')}
             />
           </div>

@@ -184,7 +184,7 @@ function useSafeIsKo() {
   }
 }
 
-export default function StoryView({ pipeline, voices = [], onClose = null, onTagGender = null }) {
+export default function StoryView({ pipeline, voices = [], onClose = null, onTagGender = null, onVoiceSearch = null }) {
   const t = useSafeT()
   const hasI18n = useHasI18n()
   const isKo = useSafeIsKo()
@@ -1157,6 +1157,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                         onOverrideGender={voiceSel.handleOverrideGender}
                         onConfirm={voiceSel.confirmVoice}
                         onCancel={voiceSel.closeVoicePicker}
+                        onVoiceSearch={onVoiceSearch}
                         previewState={voiceSel.preview.state}
                         t={t}
                         isKo={isKo}
