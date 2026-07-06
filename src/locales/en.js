@@ -553,6 +553,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     ttsKeyRemoved: 'Typecast key removed',
     ttsKeyEmpty: 'Enter your Typecast API key first',
     ttsKeyGetKey: 'Get an API key from Typecast →',
+    elevenlabsVoicesReadHint: 'Enable the \'Voices: Read\' permission on your API key to load the full voice list.',
 
     // BYOK Google API key
     apiKeyTitle: 'Google API Key (BYOK)',

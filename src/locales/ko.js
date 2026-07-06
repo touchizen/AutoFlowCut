@@ -552,6 +552,7 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     ttsKeyRemoved: 'Typecast 키를 삭제했습니다',
     ttsKeyEmpty: 'Typecast API 키를 먼저 입력하세요',
     ttsKeyGetKey: 'Typecast 에서 API 키 발급받기 →',
+    elevenlabsVoicesReadHint: '성우 목록을 모두 불러오려면 API 키에 \'Voices: Read\' 권한을 켜세요.',
 
     // BYOK Google API 키
     apiKeyTitle: 'Google API 키 (BYOK)',

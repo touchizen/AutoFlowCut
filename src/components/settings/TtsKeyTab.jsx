@@ -98,6 +98,9 @@ export default function TtsKeyTab({ t }) {
             )}
           </div>
           <span className="setting-sublabel">{t('settings.apiKeySecurityNote')}</span>
+          {provider === 'elevenlabs' && (
+            <span className="setting-sublabel">{t('settings.elevenlabsVoicesReadHint')}</span>
+          )}
           <span className="setting-sublabel">{t('settings.ttsKeyGeminiNote')}</span>
         </div>
       </div>
