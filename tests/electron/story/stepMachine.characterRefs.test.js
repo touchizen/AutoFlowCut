@@ -158,6 +158,41 @@ describe('stepMachine 캐릭터 레퍼런스 브리지 (V2)', () => {
     expect(names).not.toContain('해설')
   })
 
+  it('id가 빈 문자열인 실제 캐릭터 화자는 narrator로 오분류되지 않는다 (BUG #3 회귀)', async () => {
+    const localEmitted = []
+    const localLlm = {
+      generateScript: vi.fn(async () => ({ scriptMd: '#' })),
+      // segment speaker는 일부러 narration으로만 참조(splitOut의 하드코딩된 'a' 참조를 피해
+      // ensureReferencedSpeakers가 낯선 화자를 fallback으로 끼워넣는 오염을 방지).
+      splitScenes: vi.fn(async () => ({
+        scenes: [{ sceneNo: 1, summary: '', segments: [
+          { speaker: 'narration', text: '한밤중이었다', emotion: 'normal' },
+        ] }],
+        speakers: [
+          { id: '', name: '민수' },
+          { id: 'narration', name: 'Narration' },
+        ],
+      })),
+      writePrompts: vi.fn(async (scenes) => ({ scenes: scenes.map((s, i) => ({ ...s, imagePrompt: `img${i}`, videoPrompt: `vid${i}` })) })),
+    }
+    const localDir = await mkdtemp(path.join(tmpdir(), 'sm-charref-emptyid-'))
+    const localMachine = createStepMachine({
+      projectPath: localDir,
+      llm: localLlm,
+      emit: (ch, p) => localEmitted.push({ ch, p }),
+      getApiKey: () => 'k',
+    })
+    await localMachine.open()
+    await localMachine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await localMachine.start('scenes', {})
+    await localMachine.start('prompts', {})
+
+    const push = localEmitted.filter((e) => e.ch === 'story:pushScenes').pop()
+    const names = push.p.storyCharacters.map((c) => c.name)
+    expect(names).toContain('민수') // 빈 id는 narrator 오분류 금지
+    expect(names).not.toContain('Narration') // BUG #2 회귀는 그대로 유지
+  })
+
   it('재실행 시 이전 appearance가 빈 문자열이면 새 non-empty appearance로 보강한다', async () => {
     const localLlm = {
       generateScript: vi.fn(async () => ({ scriptMd: '#' })),
