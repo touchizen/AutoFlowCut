@@ -28,3 +28,12 @@ it('calls onPreview when play clicked', () => {
   fireEvent.click(screen.getAllByRole('button', { name: /preview|미리듣기/i })[0])
   expect(onPreview).toHaveBeenCalled()
 })
+
+it('footer confirm is enabled for the default voice when selected={}', () => {
+  const onSelect = vi.fn()
+  render(<VoicePicker voices={voices} selected={{}} onSelect={onSelect} onPreview={vi.fn()} onOverrideGender={vi.fn()} previewState={{ status: 'idle' }} t={t} isKo />)
+  const confirmBtn = screen.getByRole('button', { name: /이 성우로 지정|use this voice/i })
+  expect(confirmBtn).not.toBeDisabled()
+  fireEvent.click(confirmBtn)
+  expect(onSelect).toHaveBeenCalledWith({ provider: 'typecast', voiceId: '' })
+})

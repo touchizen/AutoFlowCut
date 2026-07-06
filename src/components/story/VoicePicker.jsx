@@ -71,6 +71,10 @@ export default function VoicePicker({
     [voices, selected]
   )
 
+  // Default-voice card selection and footer confirm must agree on the same fallback provider,
+  // otherwise selected={} shows the default card as selected while confirm stays disabled.
+  const effectiveProvider = selected?.provider || 'typecast'
+
   const setFilter = (setter, value) => {
     setter(value)
     setVisibleCount(RENDER_CAP)
@@ -150,7 +154,7 @@ export default function VoicePicker({
       <div className="vp-grid">
         <div
           className={`vp-card vp-default ${!selected?.voiceId ? 'selected' : ''}`}
-          onClick={() => onSelect({ provider: selected?.provider || 'typecast', voiceId: '' })}
+          onClick={() => onSelect({ provider: effectiveProvider, voiceId: '' })}
         >
           <div className="vp-card-top">
             <div className="vp-default-icon">★</div>
@@ -255,8 +259,8 @@ export default function VoicePicker({
           <button
             type="button"
             className="vp-btn primary"
-            disabled={!selected?.provider}
-            onClick={() => selected?.provider && onSelect({ provider: selected.provider, voiceId: selected.voiceId ?? '' })}
+            disabled={!effectiveProvider}
+            onClick={() => onSelect({ provider: effectiveProvider, voiceId: selected?.voiceId ?? '' })}
           >
             {t('story.voicePicker.confirm', isKo ? '이 성우로 지정' : 'Use this voice')}
           </button>
