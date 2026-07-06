@@ -38,6 +38,7 @@ import { retryVideoDownload } from './services/videoRecovery'
 import { isStyleReference, previewStyleMatching } from './services/styleService'
 import { isSceneGenerationDone } from './services/generationStatus'
 import { computeGuardAvailable } from './services/startGuard'
+import { shouldSkipStaleF0Gender } from './services/genderGuard'
 import { createStyleResolver } from './services/styleResolver'
 import { buildVideoTextStartPayload } from './services/videoTextStart'
 import { filterPendingScenes } from './utils/sceneFilters'
@@ -588,6 +589,11 @@ function App() {
   const [ttsVoices, setTtsVoices] = useState([])
   const ttsVoicesRef = useRef(ttsVoices)
   useEffect(() => { ttsVoicesRef.current = ttsVoices }, [ttsVoices])
+  // Codex 최종 리뷰 Finding 2: ttsVoicesRef는 useEffect로 갱신되는 패시브 ref라, 미리듣기
+  // F0 추정이 in-flight인 상태에서 사용자가 수동 지정 → stale f0 도착이 같은 tick에 몰리면
+  // ttsVoicesRef만으로는 늦을 수 있다(genderSource==='manual' 체크가 아직 반영 전). manual
+  // 지정은 handleTagGender 안에서 동기적으로 이 Set에 기록해 그 레이스를 막는다.
+  const manualGenderKeysRef = useRef(new Set())
   const mergeTtsVoices = useCallback((incoming) => {
     setTtsVoices((prev) => {
       const byKey = new Map(prev.map((voice) => [`${voice.provider}:${voice.id}`, voice]))
@@ -636,12 +642,17 @@ function App() {
   // 항상 renderer의 ttsVoices를 낙관적으로 갱신하고, manual만 main에 영속 저장한다
   // (f0는 useVoicePreview.play()가 이미 ttsTagVoiceGender로 저장 — 여기서 또 저장하면 중복 IPC).
   const handleTagGender = useCallback(({ provider, voiceId, gender, f0, confidence, source }) => {
+    const voiceKey = `${provider}:${voiceId}`
+    // manual은 항상 동기적으로 먼저 기록 — 뒤이어 도착하는 stale f0가 이 tick 안에서도 걸러지도록.
+    if (source === 'manual') manualGenderKeysRef.current.add(voiceKey)
     // 방어선: useVoicePreview 쪽 가드(genderSource!=='manual')가 이미 F0 추정 자체를 건너뛰지만,
     // 혹시 남아있는 f0 태그가 도착하더라도 이미 manual인 voice는 여기서 다시 한 번 보호한다.
-    if (source === 'f0') {
-      const existing = ttsVoicesRef.current.find((v) => v.provider === provider && v.id === voiceId)
-      if (existing?.genderSource === 'manual') return
-    }
+    if (shouldSkipStaleF0Gender({
+      source,
+      voiceKey,
+      manualGenderKeys: manualGenderKeysRef.current,
+      existingGenderSource: ttsVoicesRef.current.find((v) => v.provider === provider && v.id === voiceId)?.genderSource,
+    })) return
     mergeTtsVoices([{ provider, id: voiceId, gender, genderSource: source, f0: f0 ?? null, confidence: confidence ?? null }])
     if (source === 'manual') {
       window.electronAPI?.ttsTagVoiceGender?.({ provider, voiceId, gender, f0: f0 ?? null, confidence: confidence ?? null, source: 'manual' })?.catch?.(() => {})

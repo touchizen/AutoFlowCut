@@ -144,6 +144,22 @@ describe('StoryView', () => {
     })
   })
 
+  // 최종 리뷰 Finding 1: 저장된 voiceId가 현재 voices 목록에 없으면(예: 이전 세션의 ElevenLabs
+  // shared voice가 이번 preload에 없음) "기본 성우"로 잘못 표시되던 버그. buildAudioParams는
+  // 여전히 저장된 voiceId를 그대로 내보내므로, UI 라벨은 "미로드"임을 구분해서 보여줘야 한다.
+  it('저장된 성우가 현재 voices 목록에 없으면 "기본 성우"가 아니라 미로드 라벨을 보여준다', () => {
+    const p = pipeline({ scenes: [{ storyId: 's1', segments: [{ speaker: 'narrator', text: 'x' }] }] })
+    p.state.steps.script.status = 'done'
+    p.state.steps.scenes.status = 'done'
+    p.state.speakers = [{ id: 'narrator', name: '나레이션', voice: { provider: 'elevenlabs', voiceId: 'el_missing_123' } }]
+    const voices = [{ id: 'el_other', name: 'Other', language: 'en', provider: 'elevenlabs' }]
+    render(<StoryView pipeline={p} voices={voices} />)
+    fireEvent.click(screen.getByRole('button', { name: '오디오' }))
+    const btn = screen.getByLabelText('나레이션 목소리')
+    expect(btn.textContent).not.toMatch(/기본 성우/)
+    expect(btn.textContent).toMatch(/미로드/)
+  })
+
   // M2a-3d: 세그먼트별 "재생성" 버튼 → start('audio', { regenerate:[id], speakers }).
   it('세그먼트 재생성 버튼은 해당 세그먼트만 regenerate로 start한다', () => {
     const p = pipeline({

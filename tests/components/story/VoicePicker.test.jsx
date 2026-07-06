@@ -38,6 +38,15 @@ it('footer confirm is enabled for the default voice when selected={}', () => {
   expect(onSelect).toHaveBeenCalledWith({ provider: 'typecast', voiceId: '' })
 })
 
+// 최종 리뷰 Finding 1: selected.voiceId가 현재 voices 목록에 없으면 footer가 "기본 성우"로
+// 잘못 읽히던 버그 — 저장된 id가 있음을 구분해서 보여줘야 한다.
+it('footer shows a distinct "not loaded" label (not default) when selected voiceId is missing from voices', () => {
+  render(<VoicePicker voices={voices} selected={{ provider: 'elevenlabs', voiceId: 'el_missing' }} onSelect={vi.fn()} onPreview={vi.fn()} onOverrideGender={vi.fn()} previewState={{ status: 'idle' }} t={t} isKo />)
+  const footer = screen.getByText(/선택됨|selected/i).closest('.sel')
+  expect(footer.textContent).not.toMatch(/기본 성우/)
+  expect(footer.textContent).toMatch(/미로드|el_missing/)
+})
+
 it('footer [이 성우로 지정] calls onConfirm and [취소] calls onCancel', () => {
   const onConfirm = vi.fn()
   const onCancel = vi.fn()

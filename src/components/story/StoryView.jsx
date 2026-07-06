@@ -134,6 +134,13 @@ function interpolateFallback(value, params = {}) {
   ))
 }
 
+// 저장된 성우 id가 길면(ElevenLabs shared voice 해시 등) "미로드" 라벨에 그대로 붙이기엔
+// 너무 길어서 표시용으로만 줄인다.
+function shortVoiceId(id) {
+  if (!id) return id
+  return id.length > 12 ? `${id.slice(0, 10)}…` : id
+}
+
 // StoryView는 I18nProvider 없이도(단위 테스트) 렌더 가능해야 하는 프레젠테이션 컴포넌트다.
 // useI18n()은 provider가 없으면 throw하므로 감싸서 안전한 t()로 노출하고, 키가 없으면
 // 한국어 fallback 문자열을 그대로 보여준다.
@@ -1150,7 +1157,15 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onVoi
                       const selectedVoiceObj = selectedVoiceId
                         ? voices.find((v) => v.provider === provider && v.id === selectedVoiceId)
                         : null
-                      const voiceLabel = selectedVoiceObj ? selectedVoiceObj.name : t('story.audio.voiceDefault', '기본 성우')
+                      // Codex 최종 리뷰 Finding 1: selectedVoiceId가 있는데 현재 voices 목록에 없으면
+                      // (예: 이전 세션의 ElevenLabs shared voice가 이번 preload에 없음) "기본 성우"가
+                      // 아니라 "저장은 됐지만 미로드"임을 구분해서 보여준다. buildAudioParams()는
+                      // 여전히 저장된 voiceId를 그대로 내보내므로 라벨을 default로 보이면 안 된다.
+                      const voiceLabel = !selectedVoiceId
+                        ? t('story.audio.voiceDefault', '기본 성우')
+                        : selectedVoiceObj
+                          ? selectedVoiceObj.name
+                          : t('story.audio.voiceUnloaded', `저장된 성우 (미로드) · ${shortVoiceId(selectedVoiceId)}`, { id: shortVoiceId(selectedVoiceId) })
                       return (
                         <div key={sp.id} className="story-voice-row">
                           <span className="story-voice-speaker">{sp.name || sp.id}</span>

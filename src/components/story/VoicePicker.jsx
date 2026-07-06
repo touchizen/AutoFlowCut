@@ -17,6 +17,25 @@ const PROVIDER_BADGE = { typecast: 'TC', gemini: 'GM', elevenlabs: '11' }
 const PROVIDER_CLASS = { typecast: 'tc', gemini: 'gm', elevenlabs: 'el' }
 const OVERRIDABLE_SOURCES = new Set([null, undefined, 'f0', 'manual'])
 
+function shortVpId(id) {
+  if (!id) return id
+  return id.length > 12 ? `${id.slice(0, 10)}…` : id
+}
+
+// Codex 최종 리뷰 Finding 1: selected.voiceId가 있는데 현재 voices 목록(selectedVoice)에서 못
+// 찾으면(예: 이전 세션의 ElevenLabs shared voice가 이번 preload에 없음) "기본 성우"로 잘못
+// 읽히던 버그 — 저장된 id가 실제로 있음을 구분해서 보여준다.
+function selectedSummaryLabel(selected, selectedVoice, t, isKo) {
+  if (!selected?.voiceId) return t('story.voicePicker.defaultVoice', isKo ? '기본 성우' : 'Default voice')
+  if (selectedVoice) return selectedVoice.name
+  const id = shortVpId(selected.voiceId)
+  return t(
+    'story.voicePicker.unloadedVoice',
+    isKo ? `저장된 성우 (미로드) · ${id}` : `Saved voice (not loaded) · ${id}`,
+    { id },
+  )
+}
+
 function genderInfo(gender, t, isKo) {
   if (gender === 'female') {
     return { cls: 'f', icon: '♀', label: t('story.voicePicker.genderFemaleShort', isKo ? '여성' : 'Female') }
@@ -252,7 +271,7 @@ export default function VoicePicker({
       <div className="vp-foot">
         <div className="sel">
           {t('story.voicePicker.selectedLabel', isKo ? '선택됨' : 'Selected')} ·{' '}
-          <b>{selectedVoice ? selectedVoice.name : t('story.voicePicker.defaultVoice', isKo ? '기본 성우' : 'Default voice')}</b>
+          <b>{selectedSummaryLabel(selected, selectedVoice, t, isKo)}</b>
         </div>
         <div className="vp-actions">
           <button type="button" className="vp-btn" onClick={() => onCancel?.()}>
