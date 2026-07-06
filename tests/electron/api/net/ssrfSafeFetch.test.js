@@ -41,6 +41,51 @@ describe('ssrfSafeFetch — byte cap', () => {
     await expect(ssrfSafeFetch('https://api.elevenlabs.io/v1/voices/x/preview', { fetch }))
       .rejects.toThrow('preview too large')
   })
+
+  it('does not reject up-front on a malformed content-length header (falls to backstop)', async () => {
+    const arrayBuffer = vi.fn(async () => new ArrayBuffer(0))
+    const fetch = vi.fn(async () => ({
+      status: 200,
+      ok: true,
+      headers: {
+        get: (k) => (k === 'content-type' ? 'audio/mpeg' : k === 'content-length' ? 'abc' : null),
+      },
+      arrayBuffer,
+    }))
+    const result = await ssrfSafeFetch('https://api.elevenlabs.io/v1/voices/x/preview', { fetch })
+    expect(result.mimeType).toBe('audio/mpeg')
+    expect(arrayBuffer).toHaveBeenCalled()
+  })
+
+  it('rejects up-front on a strictly-parsed oversized content-length', async () => {
+    const arrayBuffer = vi.fn(async () => new ArrayBuffer(0))
+    const fetch = vi.fn(async () => ({
+      status: 200,
+      ok: true,
+      headers: {
+        get: (k) => (k === 'content-type' ? 'audio/mpeg' : k === 'content-length' ? '99999999' : null),
+      },
+      arrayBuffer,
+    }))
+    await expect(ssrfSafeFetch('https://api.elevenlabs.io/v1/voices/x/preview', { fetch }))
+      .rejects.toThrow('preview too large')
+    expect(arrayBuffer).not.toHaveBeenCalled()
+  })
+})
+
+describe('ssrfSafeFetch — MIME canonicalization', () => {
+  it('accepts case-variant content-type with charset param and returns canonical mimeType', async () => {
+    const fetch = vi.fn(async () => ({
+      status: 200,
+      ok: true,
+      headers: {
+        get: (k) => (k === 'content-type' ? 'Audio/Mpeg; charset=binary' : null),
+      },
+      arrayBuffer: async () => new ArrayBuffer(0),
+    }))
+    const result = await ssrfSafeFetch('https://api.elevenlabs.io/v1/voices/x/preview', { fetch })
+    expect(result.mimeType).toBe('audio/mpeg')
+  })
 })
 
 describe('ssrfSafeFetch — redirect bound', () => {

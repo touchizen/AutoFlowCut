@@ -28,11 +28,17 @@ export async function ssrfSafeFetch(url, { fetch, timeoutMs = 15000, hops = 0 } 
       return ssrfSafeFetch(loc, { fetch, timeoutMs, hops: hops + 1 })
     }
     if (!res.ok) throw new Error(`preview fetch ${res.status}`)
-    const mimeType = res.headers.get('content-type') || 'audio/mpeg'
+    const rawCt = res.headers.get('content-type') || 'audio/mpeg'
+    const mimeType = rawCt.split(';')[0].trim().toLowerCase()
     if (!/^audio\//.test(mimeType)) throw new Error('unexpected content-type')
     // Up-front check using content-length so we never buffer an oversized body.
-    const declaredLength = Number(res.headers.get('content-length'))
-    if (Number.isFinite(declaredLength) && declaredLength > MAX_BYTES) throw new Error('preview too large')
+    // Only honor a strictly-formed unsigned decimal integer; anything malformed
+    // (non-numeric, negative, signed) falls through to the post-read backstop.
+    const clRaw = res.headers.get('content-length')
+    if (clRaw != null && /^\d+$/.test(clRaw.trim())) {
+      const declaredLength = Number(clRaw.trim())
+      if (declaredLength > MAX_BYTES) throw new Error('preview too large')
+    }
     const buf = Buffer.from(await res.arrayBuffer())
     // Backstop for missing/lying content-length.
     if (buf.length > MAX_BYTES) throw new Error('preview too large')
