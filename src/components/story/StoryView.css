@@ -44,6 +44,11 @@
   cursor: pointer;
 }
 
+/* 세그먼트 2줄 — 대화 + (감정) */
+.story-seg-cell { display: flex; flex-direction: column; gap: 2px; }
+.story-seg-text { }
+.story-seg-emotion { font-size: 0.8em; opacity: 0.7; }
+
 /* 자동 진행 — pill 내 '자동' 체크박스 + 스텝퍼 오른쪽 끝 '전체 진행' */
 .story-step-auto {
   display: inline-flex;

@@ -30,6 +30,9 @@ import './StoryView.css'
 // M2a-3: audio가 파이프라인 1급 스텝 — script→scenes→audio→prompts 순서로 진행한다.
 const PROGRESSABLE_STEPS = ['script', 'scenes', 'audio', 'prompts']
 
+// 세그먼트 감정 라벨 — SCENES_SCHEMA emotion(normal/happy/sad/angry). TTS(Typecast 등)에도 쓰인다.
+const EMOTION_LABEL = { normal: '평범', happy: '기쁨', sad: '슬픔', angry: '화남' }
+
 // 세그먼트 오디오 상태 라벨 (stepMachine이 세그먼트별 status를 pending/done/error로 기록).
 const SEG_STATUS_LABEL = { pending: '대기', running: '진행 중', done: '완료', error: '오류' }
 
@@ -549,6 +552,17 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onVoi
     return {}
   }
 
+  // 나레이션 세그먼트 셀 — 윗줄 대화, 아랫줄 (감정). 감정은 TTS·프롬프트 작성에도 쓰인다.
+  const renderNarrationCell = (seg) => {
+    const emo = seg.emotion || 'normal'
+    return (
+      <div className="story-seg-cell">
+        <div className="story-seg-text">{seg.text}</div>
+        <div className="story-seg-emotion">({t(`story.emotion.${emo}`, EMOTION_LABEL[emo] || EMOTION_LABEL.normal)})</div>
+      </div>
+    )
+  }
+
   // M2a-3d/3c: 세그먼트 재생성(강제 re-TTS)·미리듣기.
   const regenerateSegment = (segId) => {
     start('audio', buildAudioParams([segId]))
@@ -1054,10 +1068,10 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onVoi
                   <tbody>
                     {scenes.flatMap((sc, si) =>
                       (sc.segments || []).map((seg, gi) => (
-                        <tr key={`${sc.storyId ?? si}-${gi}`}>
+                        <tr key={`${sc.storyId ?? si}-${gi}`} className={seg.type === 'sfx' ? 'story-sfx-row' : undefined}>
                           <td>{si + 1}</td>
-                          <td>{seg.speaker}</td>
-                          <td>{seg.text}</td>
+                          <td>{seg.type === 'sfx' ? t('story.audio.sfxLabel', 'SFX') : seg.speaker}</td>
+                          <td>{seg.type === 'sfx' ? <span className="story-sfx-desc">{seg.description}</span> : renderNarrationCell(seg)}</td>
                         </tr>
                       )),
                     )}
@@ -1184,7 +1198,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onVoi
                                   ))}
                                 </select>
                               </div>
-                            ) : seg.text}
+                            ) : renderNarrationCell(seg)}
                           </td>
                           <td>{t(`story.status.${segmentProgress[seg.id] || seg.status || 'pending'}`, SEG_STATUS_LABEL[segmentProgress[seg.id] || seg.status] || SEG_STATUS_LABEL.pending)}</td>
                           <td className="story-audio-actions">
