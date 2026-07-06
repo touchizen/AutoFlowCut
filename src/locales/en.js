@@ -198,6 +198,7 @@ export default {
       engineFor: '{speaker} engine',
       voiceFor: '{speaker} voice',
       voiceDefault: 'Default voice',
+      voicePickerTitle: '{speaker} voice picker',
       no: '#',
       speaker: 'Speaker',
       segment: 'Segment (emotion)',

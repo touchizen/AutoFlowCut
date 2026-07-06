@@ -61,7 +61,7 @@ export function useVoicePreview() {
         const ch = buf.getChannelData(0)
         const g = estimateGenderFromPcm(ch, buf.sampleRate)
         if (seq === seqRef.current && g.gender) {
-          setLastGender({ voiceId: voice.voiceId, ...g })
+          setLastGender({ provider: voice.provider, voiceId: voice.voiceId, ...g })
           window.electronAPI.ttsTagVoiceGender?.({ provider: voice.provider, voiceId: voice.voiceId, gender: g.gender, f0: g.f0, confidence: g.confidence, source: 'f0' })?.catch?.(() => {})
         }
       } catch { /* decode failed — skip tagging */ }

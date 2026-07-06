@@ -508,8 +508,10 @@
   font-weight: 600;
   font-size: 0.85rem;
 }
-.story-voice-search {
-  flex: 0 1 180px;
+/* Task 11: 드롭다운 3종(엔진/검색/목소리) → [성우 선택] 버튼(모달 오픈) */
+.story-voice-picker-btn {
+  text-align: left;
+  cursor: pointer;
 }
 
 /* ── 세그먼트 미리듣기/재생성 액션 (M2a-3c/3d) ── */

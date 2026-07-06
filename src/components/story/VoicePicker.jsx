@@ -33,6 +33,8 @@ export default function VoicePicker({
   onSelect,
   onPreview,
   onOverrideGender,
+  onConfirm,
+  onCancel,
   previewState = { voiceId: null, status: 'idle' },
   t,
   isKo
@@ -253,14 +255,17 @@ export default function VoicePicker({
           <b>{selectedVoice ? selectedVoice.name : t('story.voicePicker.defaultVoice', isKo ? '기본 성우' : 'Default voice')}</b>
         </div>
         <div className="vp-actions">
-          <button type="button" className="vp-btn">
+          <button type="button" className="vp-btn" onClick={() => onCancel?.()}>
             {t('story.voicePicker.cancel', isKo ? '취소' : 'Cancel')}
           </button>
           <button
             type="button"
             className="vp-btn primary"
             disabled={!effectiveProvider}
-            onClick={() => onSelect({ provider: effectiveProvider, voiceId: selected?.voiceId ?? '' })}
+            onClick={() => {
+              onSelect({ provider: effectiveProvider, voiceId: selected?.voiceId ?? '' })
+              onConfirm?.()
+            }}
           >
             {t('story.voicePicker.confirm', isKo ? '이 성우로 지정' : 'Use this voice')}
           </button>

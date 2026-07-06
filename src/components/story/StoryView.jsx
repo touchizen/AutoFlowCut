@@ -14,7 +14,10 @@ import { StopwatchIcon, ElapsedTime } from '../StopwatchIcon'
 import PromptInput from '../PromptInput'
 import { toast } from '../Toast'
 import { useAudioPlayback } from '../../hooks/useAudioPlayback'
+import { useVoicePreview } from '../../hooks/useVoicePreview'
 import StoryStepper, { STEP_META } from './StoryStepper'
+import VoicePicker from './VoicePicker'
+import Modal from '../Modal'
 import LiveTimeline from '../LiveTimeline'
 import { buildStoryAudioPackage, buildStorySrtEntries } from '../../utils/storyAudioPackage'
 import {
@@ -24,7 +27,7 @@ import {
   hydrateStoryLlmSelection,
   normalizeStoryLlmOptions,
 } from '../../utils/storyLlmCatalog'
-import { STORY_TTS_PROVIDER_LABEL, isStoryTtsProvider } from '../../config/storyTtsProviders'
+import { isStoryTtsProvider } from '../../config/storyTtsProviders'
 import { isNarratorSpeaker } from '../../utils/storyNarrationTracks'
 import './StoryView.css'
 
@@ -125,31 +128,6 @@ function stableJson(value) {
   return JSON.stringify(stableSnapshot(value))
 }
 
-function voiceSearchText(voice) {
-  return [
-    voice?.name,
-    voice?.id,
-    voice?.language,
-    voice?.provider,
-    ...(Array.isArray(voice?.traits) ? voice.traits : []),
-  ].filter(Boolean).join(' ').toLowerCase()
-}
-
-function filterVoicesForSearch(voices, query) {
-  const q = String(query || '').trim().toLowerCase()
-  if (!q) return voices
-  return voices.filter((voice) => voiceSearchText(voice).includes(q))
-}
-
-function voiceOptionLabel(voice) {
-  const traits = Array.isArray(voice?.traits) ? voice.traits.filter(Boolean) : []
-  const suffix = [
-    voice?.language ? `(${voice.language})` : '',
-    traits.length ? `- ${traits.join(', ')}` : '',
-  ].filter(Boolean).join(' ')
-  return `${voice.name}${suffix ? ` ${suffix}` : ''}`
-}
-
 function interpolateFallback(value, params = {}) {
   return String(value).replace(/\{(\w+)\}/g, (match, key) => (
     params[key] !== undefined ? params[key] : match
@@ -188,9 +166,21 @@ function useHasI18n() {
   }
 }
 
-export default function StoryView({ pipeline, voices = [], onClose = null, onVoiceSearch = null }) {
+// VoicePicker 등 자식 컴포넌트의 isKo 분기용. i18n provider가 없는 단독 렌더(테스트)에서는
+// useSafeT 폴백 정책(한국어 기본 문자열)과 맞춰 true를 기본값으로 둔다.
+function useSafeIsKo() {
+  try {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    return useI18n().lang === 'ko'
+  } catch {
+    return true
+  }
+}
+
+export default function StoryView({ pipeline, voices = [], onClose = null, onVoiceSearch = null, onTagGender = null }) {
   const t = useSafeT()
   const hasI18n = useHasI18n()
+  const isKo = useSafeIsKo()
   const { state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {}, reviewProgress = null, progressLog = [] } = pipeline
   const steps = state?.steps || {}
   const currentStep = computeCurrentStep(steps)
@@ -241,7 +231,17 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onVoi
   // M2a-3b/슬라이스3: 화자별 엔진(provider)·목소리 선택(로컬). 초기값은 state.speakers[].voice.
   const [voiceBySpeaker, setVoiceBySpeaker] = useState({})
   const [providerBySpeaker, setProviderBySpeaker] = useState({})
-  const [voiceSearchBySpeaker, setVoiceSearchBySpeaker] = useState({})
+  // Task 11: 드롭다운 대신 모달 — 어떤 화자의 VoicePicker가 열려 있는지(speaker id|null)와
+  // 확정 전 임시 선택값. 취소 시 providerBySpeaker/voiceBySpeaker는 건드리지 않는다.
+  const [voicePickerSpeaker, setVoicePickerSpeaker] = useState(null)
+  const [pickerSelection, setPickerSelection] = useState({ provider: '', voiceId: '' })
+  const preview = useVoicePreview()
+  // 미리듣기 F0 성별 추정 — useVoicePreview가 이미 main에 저장(ttsTagVoiceGender)까지 하므로
+  // 여기선 renderer voice 목록만 갱신(onTagGender가 source:'f0'는 낙관적 merge만 하도록 App에서 분기).
+  useEffect(() => {
+    if (!preview.lastGender) return
+    onTagGender?.({ ...preview.lastGender, source: 'f0' })
+  }, [preview.lastGender]) // eslint-disable-line react-hooks/exhaustive-deps
   // M2b-5: sfx 세그먼트별 소스(로컬 오버라이드). 기본은 세그먼트 영속값(seg.sourceMode) > elevenlabs.
   const [sourceModeBySegment, setSourceModeBySegment] = useState({})
   // M2a-3c: 세그먼트 오디오 미리듣기(단일 재생 토글).
@@ -530,6 +530,26 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onVoi
   const voiceIdForSpeaker = (sp) => {
     if (Object.prototype.hasOwnProperty.call(voiceBySpeaker, sp.id)) return voiceBySpeaker[sp.id]
     return sp.voice?.provider === providerForSpeaker(sp) ? (sp.voice?.voiceId ?? '') : ''
+  }
+
+  // Task 11: [성우 선택] 버튼 → 해당 화자의 현재 provider/voiceId를 임시 선택값으로 채우고 모달 오픈.
+  const openVoicePicker = (sp) => {
+    setPickerSelection({ provider: providerForSpeaker(sp), voiceId: voiceIdForSpeaker(sp) })
+    setVoicePickerSpeaker(sp.id)
+  }
+  // 모달 footer [이 성우로 지정] → 임시 선택값을 실제 화자 매핑(voiceBySpeaker/providerBySpeaker)에 커밋.
+  // voiceId가 빈 문자열이어도 그대로 저장(기본 성우 선택) — buildAudioParams에서 null 폴백 처리(L553 부근).
+  const confirmVoice = () => {
+    const spId = voicePickerSpeaker
+    if (spId != null) {
+      setProviderBySpeaker((m) => ({ ...m, [spId]: pickerSelection.provider }))
+      setVoiceBySpeaker((m) => ({ ...m, [spId]: pickerSelection.voiceId }))
+    }
+    setVoicePickerSpeaker(null)
+  }
+  // VoicePicker 카드 우클릭 성별 수동 지정 → App으로 올려 renderer 목록 갱신 + main 영속 저장.
+  const handleOverrideGender = ({ provider, voiceId, gender }) => {
+    onTagGender?.({ provider, voiceId, gender, source: 'manual' })
   }
 
   // M2b-5: sfx 세그먼트의 현재 소스 — 로컬 오버라이드 > 세그먼트 영속값 > elevenlabs.
@@ -1126,66 +1146,53 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onVoi
                   <div className="story-voice-map">
                     {(state.speakers || []).map((sp) => {
                       const provider = providerForSpeaker(sp)
-                      const providerVoices = voices.filter((v) => v.provider === provider)
-                      const voiceSearch = voiceSearchBySpeaker[sp.id] || ''
-                      const filteredProviderVoices = filterVoicesForSearch(providerVoices, voiceSearch)
                       const selectedVoiceId = voiceIdForSpeaker(sp)
-                      const selectedVoice = selectedVoiceId
-                        ? providerVoices.find((v) => v.id === selectedVoiceId)
+                      const selectedVoiceObj = selectedVoiceId
+                        ? voices.find((v) => v.provider === provider && v.id === selectedVoiceId)
                         : null
-                      const visibleVoices = selectedVoice && !filteredProviderVoices.some((v) => v.id === selectedVoice.id)
-                        ? [selectedVoice, ...filteredProviderVoices]
-                        : filteredProviderVoices
+                      const voiceLabel = selectedVoiceObj ? selectedVoiceObj.name : t('story.audio.voiceDefault', '기본 성우')
                       return (
                         <div key={sp.id} className="story-voice-row">
                           <span className="story-voice-speaker">{sp.name || sp.id}</span>
-                          {/* 화자별 엔진(provider) — 슬라이스3 */}
-                          {providerList.length > 0 && (
-                            <select
-                              className="story-input"
-                              aria-label={t('story.audio.engineFor', `${sp.name || sp.id} 엔진`, { speaker: sp.name || sp.id })}
-                              value={provider}
-                              onChange={(e) => {
-                                const np = e.target.value
-                                setProviderBySpeaker((m) => ({ ...m, [sp.id]: np }))
-                                setVoiceBySpeaker((m) => ({ ...m, [sp.id]: '' })) // provider 바뀌면 목소리 초기화
-                                setVoiceSearchBySpeaker((m) => ({ ...m, [sp.id]: '' }))
-                              }}
-                            >
-                              {providerList.map((p) => (
-                                <option key={p} value={p}>{STORY_TTS_PROVIDER_LABEL[p] || p}</option>
-                              ))}
-                            </select>
-                          )}
-                          <input
-                            className="story-input story-voice-search"
-                            aria-label={t('story.audio.voiceSearchFor', `${sp.name || sp.id} 성우 검색`, { speaker: sp.name || sp.id })}
-                            value={voiceSearch}
-                            placeholder={t('story.audio.voiceSearchPlaceholder', '성우 검색')}
-                            onChange={(e) => {
-                              const q = e.target.value
-                              setVoiceSearchBySpeaker((m) => ({ ...m, [sp.id]: q }))
-                              if (provider === 'elevenlabs' && q.trim().length >= 2) {
-                                onVoiceSearch?.({ provider, query: q.trim() })
-                              }
-                            }}
-                          />
-                          <select
-                            className="story-input"
+                          {/* Task 11: 드롭다운 3종(엔진/검색/목소리) → 버튼 1개 + VoicePicker 모달 */}
+                          <button
+                            type="button"
+                            className="story-input story-voice-picker-btn"
                             aria-label={t('story.audio.voiceFor', `${sp.name || sp.id} 목소리`, { speaker: sp.name || sp.id })}
-                            value={selectedVoiceId}
-                            onChange={(e) => setVoiceBySpeaker((m) => ({ ...m, [sp.id]: e.target.value }))}
+                            onClick={() => openVoicePicker(sp)}
                           >
-                            <option value="">{t('story.audio.voiceDefault', '기본 성우')}</option>
-                            {visibleVoices.map((v) => (
-                              <option key={v.id} value={v.id}>{voiceOptionLabel(v)}</option>
-                            ))}
-                          </select>
+                            🎙 {voiceLabel}
+                          </button>
                         </div>
                       )
                     })}
                   </div>
                 )}
+                {voicePickerSpeaker != null && (() => {
+                  const sp = (state.speakers || []).find((s) => s.id === voicePickerSpeaker)
+                  if (!sp) return null
+                  return (
+                    <Modal
+                      isOpen
+                      onClose={() => setVoicePickerSpeaker(null)}
+                      title={t('story.audio.voicePickerTitle', `${sp.name || sp.id} 성우 선택`, { speaker: sp.name || sp.id })}
+                      className="voice-picker-modal"
+                    >
+                      <VoicePicker
+                        voices={storyVoices}
+                        selected={pickerSelection}
+                        onSelect={setPickerSelection}
+                        onPreview={(voice) => preview.play(voice)}
+                        onOverrideGender={handleOverrideGender}
+                        onConfirm={confirmVoice}
+                        onCancel={() => setVoicePickerSpeaker(null)}
+                        previewState={preview.state}
+                        t={t}
+                        isKo={isKo}
+                      />
+                    </Modal>
+                  )
+                })()}
                 {steps.audio?.status === 'done' && hasStoryAudio && (
                   <div className="story-audio-timeline">
                     <LiveTimeline audioPackage={storyAudioPkg} scenes={[]} srtEntries={storySrtEntries} />

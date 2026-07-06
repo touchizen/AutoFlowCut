@@ -198,6 +198,7 @@ export default {
       engineFor: '{speaker} 엔진',
       voiceFor: '{speaker} 목소리',
       voiceDefault: '기본 성우',
+      voicePickerTitle: '{speaker} 성우 선택',
       no: '#',
       speaker: '화자',
       segment: '세그먼트(감정)',

@@ -82,7 +82,8 @@ describe('StoryView', () => {
     expect(within(panel).getByText('완료')).toBeTruthy()  // seg.status done → 완료
   })
 
-  // M2a-3b: audio 패널에서 화자별 목소리를 선택하면 speakers가 start('audio')에 실린다.
+  // M2a-3b/Task 11: audio 패널에서 [성우 선택] 버튼 → VoicePicker 모달 → 카드 선택 →
+  // [이 성우로 지정]으로 확정하면 speakers가 start('audio')에 실린다.
   it('화자별 목소리를 선택해 오디오 실행하면 speakers가 start("audio")에 전달된다', () => {
     const p = pipeline({
       scenes: [{ storyId: 's1', segments: [{ speaker: 'narrator', text: '어느 날', status: 'pending' }] }],
@@ -93,14 +94,17 @@ describe('StoryView', () => {
     const voices = [{ id: 'tc_joon', name: 'Joonkyu', language: 'ko', provider: 'typecast' }]
     render(<StoryView pipeline={p} voices={voices} />)
     fireEvent.click(screen.getByRole('button', { name: '오디오' }))  // audio 패널로
-    fireEvent.change(screen.getByLabelText('나레이션 목소리'), { target: { value: 'tc_joon' } })
+    fireEvent.click(screen.getByLabelText('나레이션 목소리'))  // [성우 선택] 버튼 → 모달 오픈
+    fireEvent.click(screen.getByText('Joonkyu'))  // 카드 선택(임시)
+    fireEvent.click(screen.getByRole('button', { name: /이 성우로 지정/ }))  // 확정 → 모달 닫힘
     fireEvent.click(screen.getByRole('button', { name: /오디오 실행/ }))
     expect(p.start).toHaveBeenCalledWith('audio', {
       speakers: [{ id: 'narrator', name: '나레이션', voice: { provider: 'typecast', voiceId: 'tc_joon' } }],
     })
   })
 
-  it('화자별 목소리 검색은 이름/언어/특징으로 옵션을 필터링하고 metadata를 표시한다', () => {
+  // Task 11: 성우 검색(이름/특징)은 VoicePicker 내부 기능 — StoryView는 voices를 그대로 넘겨준다.
+  it('VoicePicker 모달의 검색은 이름/특징으로 카드를 필터링한다', () => {
     const p = pipeline({
       scenes: [{ storyId: 's1', segments: [{ speaker: 'narrator', text: '어느 날', status: 'pending' }] }],
     })
@@ -113,24 +117,10 @@ describe('StoryView', () => {
     ]
     render(<StoryView pipeline={p} voices={voices} />)
     fireEvent.click(screen.getByRole('button', { name: '오디오' }))
-    fireEvent.change(screen.getByLabelText('나레이션 성우 검색'), { target: { value: 'energetic' } })
-    expect(screen.getByRole('option', { name: /Liam.*en.*male.*energetic creator/ })).toBeTruthy()
-    expect(screen.queryByRole('option', { name: /Rachel/ })).toBeNull()
-  })
-
-  it('ElevenLabs 성우 검색어는 live search 콜백으로 전달한다', async () => {
-    const p = pipeline({
-      scenes: [{ storyId: 's1', segments: [{ speaker: 'narrator', text: '어느 날', status: 'pending' }] }],
-    })
-    p.state.steps.script.status = 'done'
-    p.state.steps.scenes.status = 'done'
-    p.state.speakers = [{ id: 'narrator', name: '나레이션', voice: null }]
-    const onVoiceSearch = vi.fn(async () => {})
-    const voices = [{ id: 'liam', name: 'Liam', language: 'en', provider: 'elevenlabs', traits: ['male'] }]
-    render(<StoryView pipeline={p} voices={voices} onVoiceSearch={onVoiceSearch} />)
-    fireEvent.click(screen.getByRole('button', { name: '오디오' }))
-    fireEvent.change(screen.getByLabelText('나레이션 성우 검색'), { target: { value: 'Liam' } })
-    await waitFor(() => expect(onVoiceSearch).toHaveBeenCalledWith({ provider: 'elevenlabs', query: 'Liam' }))
+    fireEvent.click(screen.getByLabelText('나레이션 목소리'))
+    fireEvent.change(screen.getByPlaceholderText(/검색|search/i), { target: { value: 'energetic' } })
+    expect(screen.getByText('Liam')).toBeInTheDocument()
+    expect(screen.queryByText('Rachel')).not.toBeInTheDocument()
   })
 
   // Codex M2a-3: 기본 성우(빈 옵션) 명시 선택은 기존 voice를 유지하지 말고 null로 비워야 한다
@@ -143,7 +133,11 @@ describe('StoryView', () => {
     const voices = [{ id: 'tc_new', name: 'New', language: 'ko', provider: 'typecast' }]
     render(<StoryView pipeline={p} voices={voices} />)
     fireEvent.click(screen.getByRole('button', { name: '오디오' }))
-    fireEvent.change(screen.getByLabelText('나레이션 목소리'), { target: { value: '' } }) // 기본 성우
+    fireEvent.click(screen.getByLabelText('나레이션 목소리'))
+    // '기본 성우' 텍스트는 카드(grid 첫 항목)와 footer 선택 요약(<b>) 둘 다에 나타난다 —
+    // DOM 순서상 카드가 먼저이므로 [0]이 클릭 대상 카드.
+    fireEvent.click(screen.getAllByText('기본 성우')[0])
+    fireEvent.click(screen.getByRole('button', { name: /이 성우로 지정/ }))
     fireEvent.click(screen.getByRole('button', { name: /오디오 실행/ }))
     expect(p.start).toHaveBeenCalledWith('audio', {
       speakers: [{ id: 'narrator', name: '나레이션', voice: null }],
@@ -198,7 +192,8 @@ describe('StoryView', () => {
     await waitFor(() => expect(window.electronAPI.readFileAbsolute).toHaveBeenCalledWith({ filePath: '/x/s1-1.wav' }))
   })
 
-  // 슬라이스2/3: 화자별로 엔진(provider)을 바꿔 선택 → 그 provider+voice로 start.
+  // 슬라이스2/3/Task 11: 화자별로 엔진(provider)이 다른 카드를 선택 → 그 provider+voice로 start.
+  // (모달에서는 카드 클릭 한 번이 엔진+목소리를 동시에 확정한다 — 별도 엔진 select 없음.)
   it('화자별로 엔진(provider)을 바꿔 선택하면 그 provider+voice로 start된다', () => {
     const p = pipeline({ scenes: [{ storyId: 's1', segments: [{ speaker: 'narrator', text: 'x' }] }] })
     p.state.steps.script.status = 'done'
@@ -210,15 +205,16 @@ describe('StoryView', () => {
     ]
     render(<StoryView pipeline={p} voices={voices} />)
     fireEvent.click(screen.getByRole('button', { name: '오디오' }))
-    fireEvent.change(screen.getByLabelText('나레이션 엔진'), { target: { value: 'gemini' } })
-    fireEvent.change(screen.getByLabelText('나레이션 목소리'), { target: { value: 'Kore' } })
+    fireEvent.click(screen.getByLabelText('나레이션 목소리'))
+    fireEvent.click(screen.getByText('Kore'))
+    fireEvent.click(screen.getByRole('button', { name: /이 성우로 지정/ }))
     fireEvent.click(screen.getByRole('button', { name: /오디오 실행/ }))
     expect(p.start).toHaveBeenCalledWith('audio', {
       speakers: [{ id: 'narrator', name: '나레이션', voice: { provider: 'gemini', voiceId: 'Kore' } }],
     })
   })
 
-  it('Story 오디오 엔진 목록에서는 Google TTS를 숨긴다', () => {
+  it('Story 오디오 성우 선택 모달에는 Google TTS 카드가 나타나지 않는다', () => {
     const p = pipeline({ scenes: [{ storyId: 's1', segments: [{ speaker: 'narrator', text: 'x' }] }] })
     p.state.steps.script.status = 'done'
     p.state.steps.scenes.status = 'done'
@@ -229,9 +225,10 @@ describe('StoryView', () => {
     ]
     render(<StoryView pipeline={p} voices={voices} />)
     fireEvent.click(screen.getByRole('button', { name: '오디오' }))
-    const engineSelect = screen.getByLabelText('나레이션 엔진')
-    expect(within(engineSelect).getByRole('option', { name: 'Typecast' })).toBeTruthy()
-    expect(within(engineSelect).queryByRole('option', { name: 'Google TTS' })).toBeNull()
+    fireEvent.click(screen.getByLabelText('나레이션 목소리'))
+    expect(screen.getByText('Joonkyu')).toBeInTheDocument()
+    expect(screen.queryByText('Neural2-A')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Google TTS/i)).not.toBeInTheDocument()
   })
 
   // M2a-3b: 화자(state.speakers)가 없으면(빈) start('audio',{}) — 빈 speakers로 덮어쓰지 않는다.

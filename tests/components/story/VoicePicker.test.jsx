@@ -37,3 +37,13 @@ it('footer confirm is enabled for the default voice when selected={}', () => {
   fireEvent.click(confirmBtn)
   expect(onSelect).toHaveBeenCalledWith({ provider: 'typecast', voiceId: '' })
 })
+
+it('footer [이 성우로 지정] calls onConfirm and [취소] calls onCancel', () => {
+  const onConfirm = vi.fn()
+  const onCancel = vi.fn()
+  render(<VoicePicker voices={voices} selected={{ provider: 'gemini', voiceId: 'Kore' }} onSelect={vi.fn()} onPreview={vi.fn()} onOverrideGender={vi.fn()} previewState={{ status: 'idle' }} onConfirm={onConfirm} onCancel={onCancel} t={t} isKo />)
+  fireEvent.click(screen.getByRole('button', { name: /이 성우로 지정|use this voice/i }))
+  expect(onConfirm).toHaveBeenCalledTimes(1)
+  fireEvent.click(screen.getByRole('button', { name: /취소|cancel/i }))
+  expect(onCancel).toHaveBeenCalledTimes(1)
+})

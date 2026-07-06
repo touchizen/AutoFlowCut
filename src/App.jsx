@@ -630,6 +630,16 @@ function App() {
     }
   }, [mergeTtsVoices])
 
+  // 성우 성별 태그 — VoicePicker 우클릭 수동 지정(manual)과 미리듣기 F0 추정(f0) 공통 진입점.
+  // 항상 renderer의 ttsVoices를 낙관적으로 갱신하고, manual만 main에 영속 저장한다
+  // (f0는 useVoicePreview.play()가 이미 ttsTagVoiceGender로 저장 — 여기서 또 저장하면 중복 IPC).
+  const handleTagGender = useCallback(({ provider, voiceId, gender, f0, confidence, source }) => {
+    mergeTtsVoices([{ provider, id: voiceId, gender, genderSource: source, f0: f0 ?? null, confidence: confidence ?? null }])
+    if (source === 'manual') {
+      window.electronAPI?.ttsTagVoiceGender?.({ provider, voiceId, gender, f0: f0 ?? null, confidence: confidence ?? null, source: 'manual' })?.catch?.(() => {})
+    }
+  }, [mergeTtsVoices])
+
   // Flow 프로젝트가 준비되면(컴포저 가시·settle) 모델 목록을 백그라운드로 미리 스크랩한다.
   //   이렇게 캐시해 두면 설정 모달을 열 때 느린 라이브 스크랩 없이 즉시 동적 목록이 뜬다.
   //   아직 dynamic 을 못 받았을 때만 — 이미 받았으면 반복 스크랩 생략.
@@ -2450,6 +2460,7 @@ function App() {
               pipeline={storyPipeline}
               voices={ttsVoices}
               onVoiceSearch={handleTtsVoiceSearch}
+              onTagGender={handleTagGender}
               onClose={() => setActiveView('generate')}
             />
           </div>
