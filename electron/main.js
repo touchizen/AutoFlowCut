@@ -257,9 +257,9 @@ registerTtsIPC(ipcMain, {
   listVoices: async (provider, options) => {
     let raw
     try { raw = await ttsFor(provider).listVoices(options) } catch { return [] }
+    // Enforce cap before filling so the just-fetched list's metadata always survives
+    if (voiceMetaCache.size + raw.length > VOICE_META_CACHE_MAX) voiceMetaCache.clear()
     for (const v of raw) voiceMetaCache.set(`${provider}:${v.id}`, { previewUrl: v.previewUrl || null, language: v.language || 'ko' })
-    // Simple bound: clear the whole cache once it ends up past the cap; entries refill on next listVoices.
-    if (voiceMetaCache.size > VOICE_META_CACHE_MAX) voiceMetaCache.clear()
     try { return applyGenderOverlay(provider, raw, voiceGenderCache.get()) } catch { return raw }
   },
   previewVoice: (args) => voicePreviewService.getPreview(args),
