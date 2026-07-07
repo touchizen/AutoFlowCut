@@ -128,13 +128,74 @@ describe('리서치 pill 활성/비활성 + 라우팅 (§2.1/§3.6)', () => {
     expect(pill.classList.contains('active')).toBe(true)
   })
 
-  it('신규 pasted 경로: 붙여넣기 [✨ 시작] 직후에도 리서치 pill 활성 (M1)', async () => {
+  // 버그픽스(2026-07-08): 리서치는 "이미 있는 대본"에 무의미 — 붙여넣기(pasted)는 시놉시스와
+  // 달리 리서치 비활성(imported/legacy와 동일 판정). M1 시점의 "pasted도 활성"을 개정.
+  it('신규 pasted 경로: 붙여넣기 [✨ 시작] 후 리서치 pill 비활성(대본이 이미 있음)', async () => {
     const p = pipeline()
     render(<StoryView pipeline={p} />)
     fireEvent.change(screen.getByPlaceholderText(/붙여넣거나/), { target: { value: '붙여넣은 대본' } })
     fireEvent.click(screen.getByRole('button', { name: '시작' }))
     expect(await screen.findByTestId('story-synopsis')).toBeInTheDocument()
-    expect(pillOf('리서치').classList.contains('story-step-disabled')).toBe(false)
+    expect(pillOf('리서치').classList.contains('story-step-disabled')).toBe(true)
+  })
+
+  it('재오픈 pasted 미확정 프로젝트: 시놉시스 pill은 활성이지만 리서치 pill은 비활성', () => {
+    const p = pipeline({ scriptText: '붙여넣은 대본', charactersConfirmed: false })
+    p.state.input = { type: 'pasted', title: 'T', options: {} }
+    render(<StoryView pipeline={p} />)
+    expect(pillOf('시놉시스').classList.contains('story-step-disabled')).toBe(false)
+    expect(pillOf('리서치').classList.contains('story-step-disabled')).toBe(true)
+  })
+})
+
+// 버그픽스(2026-07-08): 리서치는 ① 첫 실행 스텝(설정 다음·시놉시스 앞)이고 키워드로 검색하므로
+// 제목·[✨ 시작]이 불필요하다 — 신규(title 경로) 프로젝트는 setup phase(제목/시작 전)부터
+// 리서치 pill이 활성이어야 한다. pasted/imported/legacy는 비활성 유지.
+describe('신규 프로젝트 setup phase 리서치 진입 — 제목·시작 전 (버그픽스)', () => {
+  it('순수 신규 프로젝트(setup, 제목/시작 전): 리서치 pill 활성 — 클릭 시 research phase 진입', () => {
+    render(<StoryView pipeline={pipeline()} />)
+    const pill = pillOf('리서치')
+    expect(pill.classList.contains('story-step-disabled')).toBe(false)
+    fireEvent.click(pill)
+    expect(screen.getByTestId('story-research')).toBeInTheDocument()
+    expect(pill.classList.contains('active')).toBe(true)
+  })
+
+  it('setup에서 대본을 붙여넣으면(로컬 입력) 리서치 pill 비활성 — 붙여넣기 경로는 리서치 무의미', () => {
+    render(<StoryView pipeline={pipeline()} />)
+    fireEvent.change(screen.getByPlaceholderText(/붙여넣거나/), { target: { value: '붙여넣을 대본' } })
+    expect(pillOf('리서치').classList.contains('story-step-disabled')).toBe(true)
+  })
+
+  it('setup에서 리서치 진입 → [건너뛰기] → synopsis phase(기존 흐름 유지)', async () => {
+    const p = pipeline({ research: researchDraft() })
+    render(<StoryView pipeline={p} />)
+    fireEvent.click(pillOf('리서치'))
+    fireEvent.click(screen.getByRole('button', { name: '건너뛰기' }))
+    await waitFor(() => expect(p.researchSkip).toHaveBeenCalled())
+    await waitFor(() => expect(screen.getByTestId('story-synopsis')).toBeInTheDocument())
+  })
+
+  // 리서치는 제목 없이 완료 가능 — 단 시놉시스 생성(generateSynopsis)/확정(start script)은
+  // 제목이 필요하므로, 제목이 비어 있으면 안내를 띄우고 생성/확정 버튼을 비활성한다
+  // (사용자가 [설정으로]로 돌아가 기존 setup 제목란에 입력 — 제목 강제 생성은 하지 않음).
+  it('제목 없이 리서치 확정 → synopsis phase 전이 + 제목 입력 안내 + 생성/확정 비활성', async () => {
+    const p = pipeline({ research: researchDraft({ analysis: ANALYSIS }) })
+    render(<StoryView pipeline={p} />)
+    fireEvent.click(pillOf('리서치'))
+    fireEvent.click(screen.getByRole('button', { name: '이 리서치로 확정' }))
+    await waitFor(() => expect(p.researchCommit).toHaveBeenCalled())
+    await waitFor(() => expect(screen.getByTestId('story-synopsis')).toBeInTheDocument())
+    expect(screen.getByText(/설정.*제목을 입력/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '시놉시스 다시' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '이 시놉시스로 시나리오 생성' })).toBeDisabled()
+  })
+
+  it('제목이 있으면(재오픈 title) synopsis phase에 안내 없음 + 생성 버튼 활성(회귀)', () => {
+    render(<StoryView pipeline={reopenedTitle()} />)
+    expect(screen.getByTestId('story-synopsis')).toBeInTheDocument()
+    expect(screen.queryByText(/설정.*제목을 입력/)).toBeNull()
+    expect(screen.getByRole('button', { name: '시놉시스 다시' })).not.toBeDisabled()
   })
 })
 

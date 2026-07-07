@@ -408,11 +408,19 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const synopsisEnabled = scriptPhase === 'synopsis'
     || ((synopsisInputType === 'title' || synopsisInputType === 'pasted') && pipeline.charactersConfirmed !== undefined)
 
-  // 리서치 spec §3.6: researchEnabled — synopsisEnabled 재사용(M1). 신규 프로젝트는
-  // charactersConfirmed가 in-session 전파되지 않아(undefined) 별도 조건으로는 리서치 phase에
-  // 도달 불능(순환) — 시놉시스 게이트가 활성인 시점(setup [✨ 시작] 직후 포함)부터 리서치 pill도
-  // 함께 활성화한다(스텝 순서 ①리서치→②시놉시스, opt-in §D14). legacy/imported는 기존대로 비활성.
-  const researchEnabled = scriptPhase === 'research' || synopsisEnabled
+  // 리서치 spec §3.6(개정 2026-07-08): 리서치는 ① 첫 실행 스텝(설정 다음·시놉시스 앞)이고
+  // 키워드로 검색하므로 제목·[✨ 시작]이 불필요하다 — 신규 title 경로는 setup phase(제목/시작 전)부터
+  // 활성. 조건 3분기:
+  //  (a) 게이트 안(scriptPhase==='research') — 진입 후 active 유지.
+  //  (b) title 경로 신규(durable input.type==='title' && charactersConfirmed≠undefined) —
+  //      재오픈/시작 후. synopsisEnabled 미러에서 pasted만 제외한 형태.
+  //  (c) 순수 신규(durable input 없음 + 대본 없음) — 제목/시작 전 setup부터 진입 가능.
+  //      scriptText는 로컬 상태(붙여넣기 입력 미러 §0.1) — setup에서 대본을 붙여넣는 즉시 비활성.
+  // pasted/imported/legacy는 비활성 유지 — 이미 대본이 있어 리서치가 무의미하다(시놉시스의
+  // imported 비활성 판정과 정합: legacy=charactersConfirmed undefined, imported=type∉{title,pasted}).
+  const researchEnabled = scriptPhase === 'research'
+    || (synopsisInputType === 'title' && pipeline.charactersConfirmed !== undefined)
+    || (synopsisInputType == null && !scriptText.trim())
 
   // FIX-2(UI 이중 방어): 신규(title/pasted) 미확정(charactersConfirmed===false)이면 synopsis 확정
   // 전까지 하류(scenes/audio/prompts) 진행 UI를 disable — main start()의 'unconfirmed' 가드와 이중.
@@ -859,6 +867,12 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   // research.confirmed일 때만 노출, 켠 상태의 시놉시스 생성만 useResearch:true로 호출.
   const [useResearchContext, setUseResearchContext] = useState(false)
 
+  // 리서치 선행 흐름(개정 2026-07-08): 리서치는 제목 없이 확정 가능하지만 시놉시스 생성
+  // (generateSynopsis type:'title')과 확정(start script)은 제목이 필요하다 — title 모드에서
+  // 제목이 비어 있으면 안내를 띄우고 생성/확정을 비활성한다(제목 강제 생성은 하지 않음 —
+  // 사용자가 [설정으로]로 기존 setup 제목란에 입력 후 돌아온다). pasted 모드는 제목 불필요.
+  const synopsisTitleMissing = synopsisMode !== 'pasted' && !title.trim()
+
   const handleSynopsisRegenerate = () => {
     const researchParams = useResearchContext && pipeline.research?.confirmed ? { useResearch: true } : {}
     if (synopsisMode === 'pasted') runGenerateSynopsis({ type: 'pasted', pastedScript: scriptText, options: currentOptions(), ...researchParams })
@@ -1162,6 +1176,13 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                   <span className="story-opt-label">{t('story.synopsis.charactersTitle', '등장인물')}</span>
                   <CharacterCards characters={characterDrafts} onChange={setCharacterDrafts} disabled={synopsisGenerating} t={t} />
                 </div>
+                {/* 리서치 선행 흐름(개정): title 모드에서 제목이 비어 있으면 안내 — 리서치는
+                    제목 없이 확정 가능하나 시놉시스 생성/확정은 제목이 필요하다(설정 탭 재사용). */}
+                {synopsisTitleMissing && (
+                  <div className="story-synopsis-title-hint" role="note">
+                    {t('story.synopsis.titleRequired', '제목이 필요합니다 — [설정] 탭에서 제목을 입력한 뒤 시놉시스를 생성하세요')}
+                  </div>
+                )}
                 {/* 리서치 spec §3.6(M2/Q5): 확정된 리서치가 있을 때만 수동 주입 토글 노출 —
                     켜면 시놉시스 생성이 useResearch:true로 research.json을 주입한다. */}
                 {pipeline.research?.confirmed && (
@@ -1181,7 +1202,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                     type="button"
                     className="story-btn-primary"
                     onClick={handleSynopsisConfirm}
-                    disabled={synopsisGenerating || isRunning || (synopsisMode !== 'pasted' && !synopsisDraft.trim())}
+                    disabled={synopsisGenerating || isRunning || synopsisTitleMissing || (synopsisMode !== 'pasted' && !synopsisDraft.trim())}
                   >
                     {synopsisMode === 'pasted'
                       ? t('story.synopsis.confirmCharacters', '등장인물 확정')
@@ -1191,7 +1212,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                     type="button"
                     className="story-btn-secondary"
                     onClick={handleSynopsisRegenerate}
-                    disabled={synopsisGenerating || isRunning}
+                    disabled={synopsisGenerating || isRunning || synopsisTitleMissing}
                   >
                     {t('story.synopsis.regenerate', '시놉시스 다시')}
                   </button>
