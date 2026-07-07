@@ -142,4 +142,60 @@ describe('createTypecastAdapter', () => {
     const body = JSON.parse(synthCall.opts.body)
     expect(body.model).toBe('ssfm-v21')
   })
+
+  it('synthesize lazily populates voiceModelById on cache miss (v30 voice before listVoices called)', async () => {
+    const calls = []
+    const fetch = async (url, opts) => {
+      calls.push({ url, opts })
+      if (url.endsWith('/voices')) return { ok: true, json: async () => fixture }
+      return { ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1]).buffer }
+    }
+    const a = createTypecastAdapter({ getKey: () => 'k', fetch })
+    // DO NOT call listVoices first — synthesize should lazy-fetch
+    await a.synthesize({ text: 'hi', voiceId: 'tc_69fc0cff784968297fb45daa' })
+    // Assert /voices was fetched during synthesize
+    expect(calls.some((c) => c.url.endsWith('/voices'))).toBe(true)
+    const synthCall = calls.find((c) => !c.url.endsWith('/voices'))
+    const body = JSON.parse(synthCall.opts.body)
+    // tc_69fc0cff784968297fb45daa has model: 'ssfm-v30' in fixture
+    expect(body.model).toBe('ssfm-v30')
+  })
+
+  it('synthesize with explicit model does NOT trigger lazy fetch', async () => {
+    const calls = []
+    const fetch = async (url, opts) => {
+      calls.push({ url, opts })
+      if (url.endsWith('/voices')) return { ok: true, json: async () => fixture }
+      return { ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1]).buffer }
+    }
+    const a = createTypecastAdapter({ getKey: () => 'k', fetch })
+    // Explicit model passed → no lazy fetch needed
+    await a.synthesize({ text: 'hi', voiceId: 'tc_69fc0cff784968297fb45daa', model: 'ssfm-v99' })
+    // Assert /voices was NOT fetched
+    expect(calls.some((c) => c.url.endsWith('/voices'))).toBe(false)
+    const synthCall = calls[0]
+    const body = JSON.parse(synthCall.opts.body)
+    expect(body.model).toBe('ssfm-v99')
+  })
+
+  it('synthesize for already-cached voiceId does NOT re-fetch', async () => {
+    const calls = []
+    const fetch = async (url, opts) => {
+      calls.push({ url, opts })
+      if (url.endsWith('/voices')) return { ok: true, json: async () => fixture }
+      return { ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1]).buffer }
+    }
+    const a = createTypecastAdapter({ getKey: () => 'k', fetch })
+    // First call: list voices (populates cache)
+    await a.listVoices()
+    const voicesCallCount = calls.filter((c) => c.url.endsWith('/voices')).length
+    expect(voicesCallCount).toBe(1)
+    // Second call: synthesize with cached id → should NOT re-fetch
+    await a.synthesize({ text: 'hi', voiceId: 'tc_69fc0cff784968297fb45daa' })
+    const voicesCallCountAfter = calls.filter((c) => c.url.endsWith('/voices')).length
+    expect(voicesCallCountAfter).toBe(1) // No additional /voices call
+    const synthCall = calls.find((c) => !c.url.endsWith('/voices'))
+    const body = JSON.parse(synthCall.opts.body)
+    expect(body.model).toBe('ssfm-v30')
+  })
 })

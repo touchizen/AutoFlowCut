@@ -36,36 +36,50 @@ function normalizeTypecastVoice(v) {
 
 export function createTypecastAdapter({ getKey, fetch }) {
   const voiceModelById = new Map()
+
+  // Core logic for fetching and caching voices — used by listVoices() and synthesize() lazy-populate
+  async function fetchAndCacheVoices() {
+    let key
+    try { key = getKey() } catch { key = null }
+    if (!key) return KNOWN_VOICES.map((v) => ({ ...v }))
+    try {
+      const ctrl = new AbortController()
+      const t = setTimeout(() => ctrl.abort(), 15000)
+      const res = await fetch(VOICES_ENDPOINT, { headers: { 'x-api-key': key }, signal: ctrl.signal }).finally(() => clearTimeout(t))
+      if (!res.ok) return KNOWN_VOICES.map((v) => ({ ...v }))
+      const json = await res.json()
+      if (!Array.isArray(json)) return KNOWN_VOICES.map((v) => ({ ...v }))
+      const seedById = new Map(KNOWN_VOICES.map((v) => [v.id, v]))
+      return json.map((raw) => {
+        voiceModelById.set(raw.voice_id, raw.model)
+        const nv = normalizeTypecastVoice(raw)
+        const seed = seedById.get(nv.id)
+        if (seed) return { ...nv, gender: seed.gender, genderSource: 'seed', source: 'seed' }
+        return nv
+      })
+    } catch {
+      return KNOWN_VOICES.map((v) => ({ ...v }))
+    }
+  }
+
   return {
     capabilities() {
       return { supportsEmotion: true, maxCharsPerRequest: 2000, outputFormats: ['wav'], supportsPreview: true, maxConcurrency: 2 }
     },
     async listVoices() {
-      let key
-      try { key = getKey() } catch { key = null }
-      if (!key) return KNOWN_VOICES.map((v) => ({ ...v }))
-      try {
-        const ctrl = new AbortController()
-        const t = setTimeout(() => ctrl.abort(), 15000)
-        const res = await fetch(VOICES_ENDPOINT, { headers: { 'x-api-key': key }, signal: ctrl.signal }).finally(() => clearTimeout(t))
-        if (!res.ok) return KNOWN_VOICES.map((v) => ({ ...v }))
-        const json = await res.json()
-        if (!Array.isArray(json)) return KNOWN_VOICES.map((v) => ({ ...v }))
-        const seedById = new Map(KNOWN_VOICES.map((v) => [v.id, v]))
-        return json.map((raw) => {
-          voiceModelById.set(raw.voice_id, raw.model)
-          const nv = normalizeTypecastVoice(raw)
-          const seed = seedById.get(nv.id)
-          if (seed) return { ...nv, gender: seed.gender, genderSource: 'seed', source: 'seed' }
-          return nv
-        })
-      } catch {
-        return KNOWN_VOICES.map((v) => ({ ...v }))
-      }
+      return fetchAndCacheVoices()
     },
     async synthesize({ text, voiceId, emotion = 'normal', signal, model }) {
       const key = getKey()
       if (!key) throw new Error('No Typecast API key')
+      // Lazy-populate voiceModelById on cache miss: if no explicit model and id not in cache, fetch voices
+      if (!model && !voiceModelById.has(voiceId)) {
+        try {
+          await fetchAndCacheVoices()
+        } catch {
+          // Best-effort: if lazy fetch fails, fall back to default model resolution
+        }
+      }
       const useModel = model || voiceModelById.get(voiceId) || 'ssfm-v21'
       const res = await fetch(ENDPOINT, {
         method: 'POST',
