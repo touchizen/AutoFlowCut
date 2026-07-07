@@ -524,8 +524,12 @@
 }
 
 /* ── 세그먼트 미리듣기/재생성 액션 (M2a-3c/3d) ── */
+.story-audio-actions-cell {
+  white-space: nowrap;
+}
 .story-audio-actions {
   display: flex;
+  align-items: center;
   gap: 6px;
   white-space: nowrap;
 }

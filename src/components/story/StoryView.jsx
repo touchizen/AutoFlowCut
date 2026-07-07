@@ -1340,41 +1340,43 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                             ) : renderNarrationCell(seg)}
                           </td>
                           <td>{t(`story.status.${segmentProgress[seg.id] || seg.status || 'pending'}`, SEG_STATUS_LABEL[segmentProgress[seg.id] || seg.status] || SEG_STATUS_LABEL.pending)}</td>
-                          <td className="story-audio-actions">
-                            {/* 세그먼트 단건 테스트(배치와 분리) — narration은 TTS, sfx는 sfxFor로 단건 생성 */}
-                            <button
-                              type="button"
-                              className="story-seg-btn"
-                              aria-label={t('story.audio.test', `${seg.id} 테스트`, { id: seg.id })}
-                              onClick={() => testSegment(seg.id)}
-                              disabled={isRunning || previewBusy}
-                            >
-                              ▶{t('story.audio.testLabel', '테스트')}
-                            </button>
-                            {/* M2a-3c 미리듣기 (오디오 있을 때) */}
-                            {seg.audioPath && (
+                          <td className="story-audio-actions-cell">
+                            <div className="story-audio-actions">
+                              {/* 세그먼트 단건 테스트(배치와 분리) — narration은 TTS, sfx는 sfxFor로 단건 생성 */}
                               <button
                                 type="button"
                                 className="story-seg-btn"
-                                aria-label={t('story.audio.preview', `${seg.id} 미리듣기`, { id: seg.id })}
-                                onClick={() => (playingFile === seg.audioPath ? stopAudio() : playAudio(seg.audioPath))}
+                                aria-label={t('story.audio.test', `${seg.id} 테스트`, { id: seg.id })}
+                                onClick={() => testSegment(seg.id)}
                                 disabled={isRunning || previewBusy}
                               >
-                                {playingFile === seg.audioPath ? '⏹' : '▶'}
+                                ▶{t('story.audio.testLabel', '테스트')}
                               </button>
-                            )}
-                            {/* M2a-3d 재생성 (한 번이라도 생성/실패한 세그먼트) */}
-                            {(seg.status === 'done' || seg.status === 'error') && (
-                              <button
-                                type="button"
-                                className="story-seg-btn"
-                                aria-label={t('story.audio.regenerate', `${seg.id} 재생성`, { id: seg.id })}
-                                onClick={() => regenerateSegment(seg.id)}
-                                disabled={isRunning || previewBusy}
-                              >
-                                ↻
-                              </button>
-                            )}
+                              {/* M2a-3c 미리듣기 (오디오 있을 때) */}
+                              {seg.audioPath && (
+                                <button
+                                  type="button"
+                                  className="story-seg-btn"
+                                  aria-label={t('story.audio.preview', `${seg.id} 미리듣기`, { id: seg.id })}
+                                  onClick={() => (playingFile === seg.audioPath ? stopAudio() : playAudio(seg.audioPath))}
+                                  disabled={isRunning || previewBusy}
+                                >
+                                  {playingFile === seg.audioPath ? '⏹' : '▶'}
+                                </button>
+                              )}
+                              {/* M2a-3d 재생성 (한 번이라도 생성/실패한 세그먼트) */}
+                              {(seg.status === 'done' || seg.status === 'error') && (
+                                <button
+                                  type="button"
+                                  className="story-seg-btn"
+                                  aria-label={t('story.audio.regenerate', `${seg.id} 재생성`, { id: seg.id })}
+                                  onClick={() => regenerateSegment(seg.id)}
+                                  disabled={isRunning || previewBusy}
+                                >
+                                  ↻
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                        )

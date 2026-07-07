@@ -82,6 +82,21 @@ describe('StoryView', () => {
     expect(within(panel).getByText('완료')).toBeTruthy()  // seg.status done → 완료
   })
 
+  it('오디오 액션 버튼은 테이블 셀 내부 래퍼에서 정렬한다', () => {
+    const p = pipeline({
+      scenes: [{ storyId: 's1', segments: [{ id: 's1-1', speaker: 'narrator', text: '어느 날', status: 'pending' }] }],
+    })
+    p.state.steps.script.status = 'done'
+    p.state.steps.scenes.status = 'done'
+    const { container } = render(<StoryView pipeline={p} />)
+    fireEvent.click(screen.getByRole('button', { name: '오디오' }))
+
+    const actions = container.querySelector('.story-audio-actions')
+    expect(actions?.tagName).toBe('DIV')
+    expect(actions.closest('td')).toHaveClass('story-audio-actions-cell')
+    expect(actions.closest('td')).not.toHaveClass('story-audio-actions')
+  })
+
   // M2a-3b/Task 11: audio 패널에서 [성우 선택] 버튼 → VoicePicker 모달 → 카드 선택 →
   // [이 성우로 지정]으로 확정하면 speakers가 start('audio')에 실린다.
   it('화자별 목소리를 선택해 오디오 실행하면 speakers가 start("audio")에 전달된다', () => {
