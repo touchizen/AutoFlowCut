@@ -123,11 +123,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   storyAbort: (params) => ipcRenderer.invoke('story:abort', params),
   storyPushAck: (params) => ipcRenderer.invoke('story:push-ack', params),
   storyGenerateTitle: (params) => ipcRenderer.invoke('story:generate-title', params),
+  storyGenerateSynopsis: (params) => ipcRenderer.invoke('story:generate-synopsis', params),
+  storyConfirmSynopsis: (params) => ipcRenderer.invoke('story:confirm-synopsis', params),
   storyTtsPreview: (params) => ipcRenderer.invoke('story:tts-preview', params),
   storyLoadAudioPackage: (projectPath) => ipcRenderer.invoke('story:load-audio-package', { projectPath }),
   storyListLlmOptions: () => ipcRenderer.invoke('story:list-llm-options'),
   onStoryEvent: (channel, cb) => {
-    const valid = ['story:state', 'story:delta', 'story:progress', 'story:pushScenes', 'story:pushCharacters']
+    const valid = ['story:state', 'story:delta', 'story:progress', 'story:pushScenes', 'story:pushCharacters', 'story:synopsis-delta']
     if (!valid.includes(channel)) return () => {}
     const listener = (_e, payload) => cb(payload)
     ipcRenderer.on(channel, listener)

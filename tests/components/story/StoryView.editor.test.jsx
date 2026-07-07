@@ -50,11 +50,11 @@ describe('StoryView editor 버튼 상태 (§1.B)', () => {
   })
 
   it('scriptText가 공백뿐이면 [다시쓰기][이어쓰기][분리시작] 비활성 (R4-1)', () => {
-    // 대본 없이 제목으로 시작 직후(아직 대본 커밋 전)의 editor 상태 — 빈 대본 가드.
+    // 빈 대본 상태의 editor — 빈 대본 가드. (슬라이스5: 제목 [시작]은 synopsis 게이트로 가므로
+    // 스텝퍼의 시나리오 탭으로 editor에 직접 진입해 검증한다.)
     const p = pipeline({ scriptText: '' })
     render(<StoryView pipeline={p} />)
-    fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
-    fireEvent.click(screen.getByRole('button', { name: '시작' }))
+    fireEvent.click(screen.getByRole('button', { name: '시나리오' }))
     expect(screen.getByTestId('story-editor')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '다시쓰기' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '이어쓰기' })).toBeDisabled()

@@ -104,7 +104,7 @@ describe('StoryView 진행 중 표시(.story-running: 초시계 + 경과시간)'
     p.state.steps.script = { status: 'done' }
     p.state.steps.scenes = { status: 'running', updatedAt: new Date().toISOString() }
     render(<StoryView pipeline={p} />)
-    fireEvent.click(screen.getByRole('button', { name: '대본' }))
+    fireEvent.click(screen.getByRole('button', { name: '시나리오' }))
     // script는 running이 아니므로 스트리밍 preview가 아니라 편집기(PromptInput)여야 한다
     expect(document.querySelector('.story-script-stream')).toBeNull()
     expect(screen.getByTestId('story-editor')).toBeTruthy()
@@ -117,7 +117,7 @@ describe('StoryView 진행 중 표시(.story-running: 초시계 + 경과시간)'
     p.state.steps.script = { status: 'done' }
     p.state.steps.scenes = { status: 'running', updatedAt: new Date().toISOString() }
     render(<StoryView pipeline={p} />)
-    fireEvent.click(screen.getByRole('button', { name: '대본' }))
+    fireEvent.click(screen.getByRole('button', { name: '시나리오' }))
     expect(screen.getByRole('button', { name: /중단/ })).toBeTruthy()
     expect(screen.queryByRole('button', { name: '분리시작' })).toBeNull()
   })

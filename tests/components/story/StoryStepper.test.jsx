@@ -9,12 +9,12 @@ import StoryStepper from '../../../src/components/story/StoryStepper.jsx'
 const allDone = { script: { status: 'done' }, scenes: { status: 'done' }, audio: { status: 'done' }, prompts: { status: 'done' } }
 const pillOf = (label) => screen.getByText(label).closest('.story-step-pill')
 
-describe('StoryStepper 설정 탭(0번, 대본 앞)', () => {
-  it('설정 pill을 대본 앞에 렌더 — 상태 배지 없음, 항상 클릭 가능', () => {
+describe('StoryStepper 설정 탭(0번, 시나리오 앞)', () => {
+  it('설정 pill을 시나리오 앞에 렌더 — 상태 배지 없음, 항상 클릭 가능', () => {
     render(<StoryStepper steps={allDone} currentStep="script" activeStep="setup" onStepClick={vi.fn()} />)
     const setup = pillOf('설정')
     expect(setup).toBeTruthy()
-    // 대본 앞 순서
+    // 시나리오 앞 순서
     const pills = [...document.querySelectorAll('.story-step-pill')]
     expect(pills.indexOf(setup)).toBe(0)
     // 상태 배지 없음(설정은 실행 스텝 아님)
@@ -29,7 +29,58 @@ describe('StoryStepper 설정 탭(0번, 대본 앞)', () => {
   it('activeStep="setup"이면 설정 pill이 active', () => {
     render(<StoryStepper steps={allDone} currentStep="script" activeStep="setup" onStepClick={vi.fn()} />)
     expect(pillOf('설정').classList.contains('active')).toBe(true)
-    expect(pillOf('대본').classList.contains('active')).toBe(false)
+    expect(pillOf('시나리오').classList.contains('active')).toBe(false)
+  })
+})
+
+// §v2.12 B: synopsis 정식 번호 스텝(UI) — pill 자리는 항상 렌더(숨김 폐지),
+// synopsisEnabled prop이 활성(클릭 가능)/비활성(회색, 클릭 불가)을 가른다.
+describe('StoryStepper 시놉시스 스텝(항상 렌더 + synopsisEnabled)', () => {
+  it('설정 뒤·시나리오 앞에 무배지 pill을 항상 렌더한다(prop 미지정 포함)', () => {
+    render(<StoryStepper steps={allDone} currentStep="script" onStepClick={vi.fn()} />)
+    const pill = pillOf('시놉시스')
+    expect(pill).toBeTruthy()
+    const pills = [...document.querySelectorAll('.story-step-pill')]
+    expect(pills.indexOf(pillOf('설정'))).toBe(0)
+    expect(pills.indexOf(pill)).toBe(1)
+    expect(pills.indexOf(pillOf('시나리오'))).toBe(2)
+    expect(pill.querySelector('.story-step-badge')).toBeNull()
+  })
+  it('synopsisEnabled 미지정(기본)이면 비활성 — 회색(disabled) 스타일 + 클릭 불가', () => {
+    const onStepClick = vi.fn()
+    render(<StoryStepper steps={allDone} currentStep="script" onStepClick={onStepClick} />)
+    const pill = pillOf('시놉시스')
+    expect(pill.classList.contains('story-step-disabled')).toBe(true)
+    expect(pill.classList.contains('story-step-clickable')).toBe(false)
+    fireEvent.click(pill)
+    expect(onStepClick).not.toHaveBeenCalled()
+  })
+  it('synopsisEnabled=true면 활성 — 클릭 시 onStepClick("synopsis") 호출', () => {
+    const onStepClick = vi.fn()
+    render(<StoryStepper steps={allDone} currentStep="script" synopsisEnabled onStepClick={onStepClick} />)
+    const pill = pillOf('시놉시스')
+    expect(pill.classList.contains('story-step-disabled')).toBe(false)
+    fireEvent.click(pill)
+    expect(onStepClick).toHaveBeenCalledWith('synopsis')
+  })
+  it('activeStep="synopsis"면 시놉시스 pill이 active', () => {
+    render(<StoryStepper steps={allDone} currentStep="script" activeStep="synopsis" synopsisEnabled onStepClick={vi.fn()} />)
+    expect(pillOf('시놉시스').classList.contains('active')).toBe(true)
+    expect(pillOf('시나리오').classList.contains('active')).toBe(false)
+  })
+})
+
+// §v2.12 B: 정식 번호 시프트 — setup 0, synopsis ①, script ②, scenes ③, audio ④, prompts ⑤.
+describe('StoryStepper 스텝 번호(§v2.12)', () => {
+  it('setup=0, synopsis=①, script=②, scenes=③, audio=④, prompts=⑤', () => {
+    render(<StoryStepper steps={allDone} currentStep="script" onStepClick={vi.fn()} />)
+    const iconOf = (label) => pillOf(label).querySelector('.story-step-icon').textContent
+    expect(iconOf('설정')).toBe('0')
+    expect(iconOf('시놉시스')).toBe('①')
+    expect(iconOf('시나리오')).toBe('②')
+    expect(iconOf('씬 분리')).toBe('③')
+    expect(iconOf('오디오')).toBe('④')
+    expect(iconOf('프롬프트')).toBe('⑤')
   })
 })
 
@@ -55,8 +106,8 @@ describe('StoryStepper 자동 진행(자동 체크박스 + 전체 진행)', () =
     expect(screen.getByText('씬 분리').closest('.story-step-col').querySelector('input[type=checkbox]').checked).toBe(true)
     expect(screen.getByText('오디오').closest('.story-step-col').querySelector('input[type=checkbox]').checked).toBe(false)
     expect(screen.getByText('프롬프트').closest('.story-step-col').querySelector('input[type=checkbox]').checked).toBe(true)
-    // 대본/설정엔 자동 체크박스 없음
-    expect(screen.getByText('대본').closest('.story-step-col').querySelector('input[type=checkbox]')).toBeNull()
+    // 시나리오/설정엔 자동 체크박스 없음
+    expect(screen.getByText('시나리오').closest('.story-step-col').querySelector('input[type=checkbox]')).toBeNull()
   })
   it('자동 체크박스 클릭 시 onToggleAuto(step) 호출, 탭 이동(onStepClick)은 안 함', () => {
     const onToggleAuto = vi.fn(); const onStepClick = vi.fn()

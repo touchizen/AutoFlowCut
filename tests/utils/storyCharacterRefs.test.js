@@ -37,6 +37,49 @@ describe('upsertStoryCharacterRefs', () => {
     expect(references[0]).toMatchObject({ id: 3, prompt: 'tall man in black coat', status: 'pending' })
   })
 
+  // §v2.12 A: Ref 카드 prompt = `${ethnicity}, ${appearance}` 조합 — 캐릭터 이미지가 인종/출신을 반영.
+  it('§v2.12: ethnicity가 있으면 신규 카드 prompt를 "ethnicity, appearance"로 조합한다', () => {
+    const { references } = upsertStoryCharacterRefs([], [{ name: '민수', ethnicity: 'Korean', appearance: 'tall man' }])
+    expect(references[0].prompt).toBe('Korean, tall man')
+  })
+
+  it('§v2.12: ethnicity가 빈 값이면 appearance만(현행 동일, 앞에 콤마 없음)', () => {
+    const { references } = upsertStoryCharacterRefs([], [{ name: '민수', ethnicity: '', appearance: 'tall man' }])
+    expect(references[0].prompt).toBe('tall man')
+  })
+
+  it('§v2.12: appearance 없이 ethnicity만 있으면 뒤 콤마 없이 ethnicity만', () => {
+    const { references } = upsertStoryCharacterRefs([], [{ name: '민수', ethnicity: '한국인', appearance: '' }])
+    expect(references[0].prompt).toBe('한국인')
+  })
+
+  it('§v2.12: name-only pending 카드의 prompt 보강도 ethnicity 조합을 쓴다', () => {
+    const existing = [{ id: 3, name: '민수', type: 'character', category: 'MEDIA_CATEGORY_SUBJECT', prompt: '', status: 'pending', data: null, filePath: '', mediaId: null }]
+    const { references } = upsertStoryCharacterRefs(existing, [{ name: '민수', ethnicity: 'Korean', appearance: 'tall man' }])
+    expect(references[0]).toMatchObject({ id: 3, prompt: 'Korean, tall man', status: 'pending' })
+  })
+
+  // §v2.12 코드리뷰 FIX(MINOR): 보강 조건이 c.appearance truthy에 묶여 있으면
+  // ethnicity-only 캐릭터({ethnicity:'Korean', appearance:''})가 pending 카드 prompt를 못 채운다.
+  it('§v2.12 FIX: ethnicity-only 캐릭터도 name-only pending 카드 prompt를 보강한다', () => {
+    const existing = [{ id: 3, name: '민수', type: 'character', category: 'MEDIA_CATEGORY_SUBJECT', prompt: '', status: 'pending', data: null, filePath: '', mediaId: null }]
+    const { references } = upsertStoryCharacterRefs(existing, [{ name: '민수', ethnicity: 'Korean', appearance: '' }])
+    expect(references[0]).toMatchObject({ id: 3, prompt: 'Korean', status: 'pending' })
+  })
+
+  it('§v2.12 FIX: ethnicity/appearance 둘 다 빈 값이면 pending 카드 prompt를 건드리지 않는다(회귀 고정)', () => {
+    const existing = [{ id: 3, name: '민수', type: 'character', category: 'MEDIA_CATEGORY_SUBJECT', prompt: '', status: 'pending', data: null, filePath: '', mediaId: null }]
+    const { references } = upsertStoryCharacterRefs(existing, [{ name: '민수', ethnicity: '', appearance: '' }])
+    expect(references[0].prompt).toBe('')
+  })
+
+  it('§v2.12: 동명 character 카드(사용자 prompt 보유)는 ethnicity가 와도 덮지 않는다(idempotency)', () => {
+    const existing = [charRef(3, '민수')]
+    const { references } = upsertStoryCharacterRefs(existing, [{ name: '민수', ethnicity: 'Korean', appearance: 'new look' }])
+    expect(references).toHaveLength(1)
+    expect(references[0].prompt).toBe('old')
+  })
+
   it('동명 비-character(scene/style)면 추가 안 하고 collision 반환', () => {
     const existing = [charRef(2, '민수', { type: 'scene' })]
     const { references, collisions } = upsertStoryCharacterRefs(existing, [{ name: '민수', appearance: 'x' }])

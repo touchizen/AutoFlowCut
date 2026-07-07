@@ -21,7 +21,7 @@ const pipeline = (over = {}) => ({
 describe('StoryView 대본 검토 토글 (M3)', () => {
   it('setup 폼에 단계별 검수 토글과 횟수 입력이 있고 기본 off', () => {
     render(<StoryView pipeline={pipeline()} />)
-    for (const label of ['대본', '씬', '프롬프트']) {
+    for (const label of ['시나리오', '씬', '프롬프트']) {
       const cb = screen.getByRole('checkbox', { name: `${label} 자동 검수` })
       expect(cb).toBeInTheDocument()
       expect(cb.checked).toBe(false)
@@ -29,43 +29,46 @@ describe('StoryView 대본 검토 토글 (M3)', () => {
     }
   })
 
-  it('검수 컨트롤을 수정하면 options.review 객체로 script start', () => {
-    const start = vi.fn()
-    render(<StoryView pipeline={pipeline({ start })} />)
+  // 슬라이스5(§v2.8 B1): 제목 경로 [시작]은 이제 synopsis 게이트(generateSynopsis)로 진입한다 —
+  // options 플럼빙 검증도 generateSynopsis 페이로드로 이동.
+  it('검수 컨트롤을 수정하면 options.review 객체로 시놉시스 생성 진입', () => {
+    const generateSynopsis = vi.fn().mockResolvedValue({})
+    render(<StoryView pipeline={pipeline({ generateSynopsis })} />)
     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
-    fireEvent.click(screen.getByRole('checkbox', { name: '대본 자동 검수' }))
-    fireEvent.change(screen.getByRole('spinbutton', { name: '대본 검수 횟수' }), { target: { value: '2' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: '시나리오 자동 검수' }))
+    fireEvent.change(screen.getByRole('spinbutton', { name: '시나리오 검수 횟수' }), { target: { value: '2' } })
     fireEvent.click(screen.getByRole('button', { name: '시작' }))
-    expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
+    expect(generateSynopsis).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'title',
       options: expect.objectContaining({
         review: expect.objectContaining({
           script: { enabled: true, rounds: 2 },
         }),
       }),
     }))
-    expect(start.mock.calls[0][1].options.reviewLoop).toBeUndefined()
+    expect(generateSynopsis.mock.calls[0][0].options.reviewLoop).toBeUndefined()
   })
 
   it('검수 컨트롤을 안 만지면 options.reviewLoop=false를 유지하고 review는 생략', () => {
-    const start = vi.fn()
-    render(<StoryView pipeline={pipeline({ start })} />)
+    const generateSynopsis = vi.fn().mockResolvedValue({})
+    render(<StoryView pipeline={pipeline({ generateSynopsis })} />)
     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
     fireEvent.click(screen.getByRole('button', { name: '시작' }))
-    expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
+    expect(generateSynopsis).toHaveBeenCalledWith(expect.objectContaining({
       options: expect.objectContaining({ reviewLoop: false }),
     }))
-    expect(start.mock.calls[0][1].options.review).toBeUndefined()
+    expect(generateSynopsis.mock.calls[0][0].options.review).toBeUndefined()
   })
 
   it('hydrate legacy reviewLoop=true는 사용자가 안 만지면 그대로 보존', () => {
-    const start = vi.fn()
-    const p = pipeline({ start })
+    const generateSynopsis = vi.fn().mockResolvedValue({})
+    const p = pipeline({ generateSynopsis })
     p.state.input = { type: 'title', title: 'T', options: { reviewLoop: true } }
     render(<StoryView pipeline={p} />)
-    expect(screen.getByRole('checkbox', { name: '대본 자동 검수' }).checked).toBe(true)
+    expect(screen.getByRole('checkbox', { name: '시나리오 자동 검수' }).checked).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: '시작' }))
-    expect(start.mock.calls[0][1].options.reviewLoop).toBe(true)
-    expect(start.mock.calls[0][1].options.review).toBeUndefined()
+    expect(generateSynopsis.mock.calls[0][0].options.reviewLoop).toBe(true)
+    expect(generateSynopsis.mock.calls[0][0].options.review).toBeUndefined()
   })
 
   it('씬 분리 탭에서 수동 검수를 실행하면 reviewOnly와 횟수를 전달', () => {
@@ -104,7 +107,7 @@ describe('StoryView 대본 검토 토글 (M3)', () => {
     const p = pipeline({ start, scriptText: '편집 중인 대본' })
     p.state.steps.script.status = 'done'
     render(<StoryView pipeline={p} />)
-    fireEvent.click(screen.getByRole('button', { name: '대본 검수' }))
+    fireEvent.click(screen.getByRole('button', { name: '시나리오 검수' }))
     expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
       reviewOnly: true,
       scriptOverride: '편집 중인 대본',
@@ -152,9 +155,9 @@ describe('StoryView 대본 검토 토글 (M3)', () => {
         <StoryView pipeline={pipeline()} />
       </I18nProvider>,
     )
-    expect(screen.getByRole('checkbox', { name: 'Script auto review' })).toBeInTheDocument()
-    expect(screen.getByRole('spinbutton', { name: 'Script review rounds' })).toBeInTheDocument()
-    expect(screen.getByText('Script review')).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'Scenario auto review' })).toBeInTheDocument()
+    expect(screen.getByRole('spinbutton', { name: 'Scenario review rounds' })).toBeInTheDocument()
+    expect(screen.getByText('Scenario review')).toBeInTheDocument()
   })
 
   it('프롬프트 자동 검수 설정 후 프롬프트 다시 생성하면 currentOptions를 전달', () => {

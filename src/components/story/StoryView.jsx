@@ -29,7 +29,8 @@ import {
 } from '../../utils/storyLlmCatalog'
 import { isStoryTtsProvider } from '../../config/storyTtsProviders'
 import { isNarratorSpeaker } from '../../utils/storyNarrationTracks'
-import { guessGenderFromAppearance } from '../../services/appearanceGender'
+import { normalizeStoryCharacter, resolveCharacterGender } from '../../services/storyCharacter'
+import CharacterCards from './CharacterCards'
 import './StoryView.css'
 
 // M2a-3: audio가 파이프라인 1급 스텝 — script→scenes→audio→prompts 순서로 진행한다.
@@ -151,7 +152,7 @@ function reasoningEffortFor(option, requestedReasoning = null) {
     : (option.defaultReasoningEffort || allowed[0] || '')
 }
 
-const REVIEW_TARGET_LABEL = { script: '대본', scenes: '씬', prompts: '프롬프트' }
+const REVIEW_TARGET_LABEL = { script: '시나리오', scenes: '씬', prompts: '프롬프트' }
 const REVIEW_TARGET_ORDER = ['script', 'scenes', 'prompts']
 
 function defaultReviewRounds(target, model) {
@@ -287,7 +288,11 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const t = useSafeT()
   const hasI18n = useHasI18n()
   const isKo = useSafeIsKo()
-  const { state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {}, reviewProgress = null, progressLog = [] } = pipeline
+  const {
+    state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {}, reviewProgress = null, progressLog = [],
+    // 슬라이스5(§v2.5): synopsis 게이트 상태 — useStoryPipeline(S4)이 공급.
+    synopsisStreamingText = '', synopsisGenerating = false, synopsisError = null,
+  } = pipeline
   const steps = state?.steps || {}
   const currentStep = computeCurrentStep(steps)
   const stepData = steps[currentStep] || { status: 'pending' }
@@ -331,6 +336,40 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     if (scriptPhase === 'setup' && !userWentToSetupRef.current) setScriptPhase('editor')
   }, [pipeline.scriptText]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 슬라이스5(§v2.8 B1): synopsis 게이트 모드 — setup 시작 시 로컬로 확정(title/pasted),
+  // 재오픈 hydrate는 durable input.type에서 파생(로컬 미지정 시 폴백).
+  const [synopsisLocalMode, setSynopsisLocalMode] = useState(null)
+  const synopsisMode = synopsisLocalMode ?? (state?.input?.type === 'pasted' ? 'pasted' : 'title')
+
+  // 슬라이스5(§v2.11): 재오픈 hydrate phase 판정(3-state) —
+  //   ① input.type∉{title,pasted} → 현행 그대로(synopsis 미적용)
+  //   ② charactersConfirmed===true → 기존 규칙(script done→editor 등, 초기값 유지)
+  //   ③ charactersConfirmed===false → synopsis phase(script done 여부 무관 — pasted 게이트 보존)
+  //   ④ undefined(legacy) → 기존 규칙 유지(FIX-1: 스텝머신 migrate 없음 — scriptText 기반
+  //      초기 phase 규칙이 script done을 editor로 복원한다. synopsis 강제 안 함)
+  // hydrate 1회 전용(ref 잠금) — in-session 확정→editor 전이가 늦게 도착한 stale
+  // charactersConfirmed=false 이벤트로 되돌려지지 않게 한다.
+  const synopsisPhaseHydratedRef = useRef(false)
+  useEffect(() => {
+    if (synopsisPhaseHydratedRef.current) return
+    if (pipeline.charactersConfirmed === undefined) return // ④ legacy/미도착 → 기존 규칙 유지
+    synopsisPhaseHydratedRef.current = true
+    const type = state?.input?.type
+    if (type !== 'title' && type !== 'pasted') return // ① 현행 유지
+    if (pipeline.charactersConfirmed === false) setScriptPhase('synopsis') // ③ (②는 초기값 유지)
+  }, [pipeline.charactersConfirmed, state?.input?.type]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 슬라이스5: 시놉시스 줄거리/등장인물 로컬 편집 상태 — scriptText 단일 상태 패턴 미러(§0.3).
+  // main 저장값(synopsisText/characters)이 바뀌면 로컬 편집 상태를 그 값으로 커밋한다.
+  const [synopsisDraft, setSynopsisDraft] = useState(pipeline.synopsisText || '')
+  useEffect(() => {
+    setSynopsisDraft(pipeline.synopsisText || '')
+  }, [pipeline.synopsisText])
+  const [characterDrafts, setCharacterDrafts] = useState(() => (pipeline.characters || []).map(normalizeStoryCharacter))
+  useEffect(() => {
+    setCharacterDrafts((pipeline.characters || []).map(normalizeStoryCharacter))
+  }, [pipeline.characters])
+
   // 7-⑴: 스텝퍼에서 done 상태 스텝을 클릭하면 진행이 더 앞서가 있어도 해당 패널을 다시 볼 수
   // 있다 — 실행 버튼/러닝 상태 등 액션은 여전히 실제 진행 단계(currentStep) 기준으로 동작한다.
   const [viewedStep, setViewedStep] = useState(null)
@@ -350,8 +389,24 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const displayStep = (scriptPhase && !hydratedRunning)
     ? 'script'
     : (viewedStep && steps[viewedStep]?.status === 'done') ? viewedStep : currentStep
-  // 스텝퍼 active pill: 대본 패널을 설정 phase로 보고 있으면 0번 '설정' 탭이 active, 그 외엔 displayStep.
-  const stepperActive = (displayStep === 'script' && scriptPhase === 'setup') ? 'setup' : displayStep
+  // 스텝퍼 active pill: 대본 패널을 설정/시놉시스 phase로 보고 있으면 해당 게이트 탭이 active, 그 외엔 displayStep.
+  const stepperActive = (displayStep === 'script' && scriptPhase === 'setup') ? 'setup'
+    : (displayStep === 'script' && scriptPhase === 'synopsis') ? 'synopsis'
+      : displayStep
+
+  // §v2.12 B: synopsis pill 자리는 항상 렌더(Stepper가 무조건 그림 — "설정 탭 진입 시 사라짐" 해소).
+  // 활성(클릭 가능) 조건만 상태로 판단 — 기존 showSynopsis(§v2.10) 조건 그대로:
+  // durable input.type ∈ {title,pasted} 신규(charactersConfirmed ≠ undefined — legacy 아님),
+  // 또는 지금 게이트 안(scriptPhase='synopsis'). imported/continue/manual·legacy는 회색 비활성.
+  const synopsisInputType = state?.input?.type
+  const synopsisEnabled = scriptPhase === 'synopsis'
+    || ((synopsisInputType === 'title' || synopsisInputType === 'pasted') && pipeline.charactersConfirmed !== undefined)
+
+  // FIX-2(UI 이중 방어): 신규(title/pasted) 미확정(charactersConfirmed===false)이면 synopsis 확정
+  // 전까지 하류(scenes/audio/prompts) 진행 UI를 disable — main start()의 'unconfirmed' 가드와 이중.
+  // legacy(undefined)는 게이트 미적용(FIX-1).
+  const unconfirmedGate = (synopsisInputType === 'title' || synopsisInputType === 'pasted')
+    && pipeline.charactersConfirmed === false
 
   const handleStepClick = (key) => {
     // 0번 설정 탭 — 대본 탭과 분리된 진입 탭. 설정 폼(scriptPhase='setup')으로. displayStep이
@@ -362,9 +417,16 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
       setScriptPhase('setup')
       return
     }
+    // 시놉시스 게이트 탭 — generic 경로로 새면 scriptPhase가 clear되므로 명시 분기(setup 미러, §3.5).
+    if (key === 'synopsis') {
+      setViewedStep('script')
+      setScriptPhase('synopsis')
+      return
+    }
     setViewedStep(key)
-    // 대본 탭은 항상 편집기(설정은 이제 0번 탭이 담당).
-    if (key === 'script') setScriptPhase('editor')
+    // 대본 탭은 편집기(설정은 이제 0번 탭이 담당). FIX-6: 미확정(unconfirmedGate) 중엔 editor로
+    // 열지 않고 synopsis phase로 라우팅 — editor의 다시쓰기/이어쓰기가 게이트를 우회하지 못한다(§v2.8 B1).
+    if (key === 'script') setScriptPhase(unconfirmedGate ? 'synopsis' : 'editor')
     else setScriptPhase(null)
   }
 
@@ -575,7 +637,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const actionAriaLabel = isError
     ? t('story.action.retry', '재실행')
     : currentStep === 'script'
-      ? t('story.action.generateScript', '대본 생성')
+      ? t('story.action.generateScript', '시나리오 생성')
       : t('story.action.run', `${currentStepLabel} 실행`, { step: currentStepLabel })
 
   const actionVisibleLabel = isError
@@ -737,6 +799,54 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     setScriptPhase('editor')
   }
 
+  // ── 슬라이스5: 시놉시스 게이트(§v2.5/§v2.8 B1/§v2.9) ──────────────────────
+  // 생성/역추출 side action 호출 + 완료 결과({synopsisMd, characters})로 로컬 편집 상태 채움.
+  const runGenerateSynopsis = async (params) => {
+    const r = await pipeline.generateSynopsis?.(params)
+    if (r && !r.error) {
+      if (r.synopsisMd !== undefined) setSynopsisDraft(r.synopsisMd || '')
+      if (Array.isArray(r.characters)) setCharacterDrafts(r.characters.map(normalizeStoryCharacter))
+    }
+    return r
+  }
+
+  // 제목 경로 setup [✨ 시작] — 대본을 바로 생성하지 않고 synopsis 게이트로 진입한다(§v2.8 B1).
+  const startSynopsisFromTitle = () => {
+    setBaseScript('')
+    synopsisPhaseHydratedRef.current = true // in-session 전이 시작 — hydrate 판정이 덮지 않게 잠금
+    setSynopsisLocalMode('title')
+    setScriptPhase('synopsis')
+    runGenerateSynopsis({ type: 'title', title, options: currentOptions() })
+  }
+
+  // 확정(§v2.9): confirm-synopsis가 title·pasted 공통 커밋 채널 — 커밋이 재생성보다 선행.
+  const handleSynopsisConfirm = async () => {
+    const chars = characterDrafts.map(normalizeStoryCharacter)
+    if (synopsisMode === 'pasted') {
+      // pasted [등장인물 확정] — script는 이미 done, 재생성/덮어쓰기 없음(§v2.8 B1).
+      const r = await pipeline.confirmSynopsis?.({ synopsisMd: '', characters: chars })
+      if (r?.error) { toast.error(`${t('story.error.prefix', '오류')}: ${r.error}`); return }
+      setScriptPhase('editor')
+      return
+    }
+    // title [이 시놉시스로 시나리오 생성] — confirm(커밋) 완료 후 start('script') 순차 호출(§v2.10).
+    const r = await pipeline.confirmSynopsis?.({ synopsisMd: synopsisDraft, characters: chars })
+    if (r?.error) { toast.error(`${t('story.error.prefix', '오류')}: ${r.error}`); return }
+    setBaseScript('')
+    await start('script', { input: { type: 'title', title }, options: currentOptions(), synopsis: synopsisDraft })
+    setScriptPhase('editor')
+  }
+
+  const handleSynopsisRegenerate = () => {
+    if (synopsisMode === 'pasted') runGenerateSynopsis({ type: 'pasted', pastedScript: scriptText, options: currentOptions() })
+    else runGenerateSynopsis({ type: 'title', title, options: currentOptions() })
+  }
+
+  const handleSynopsisBackToSetup = () => {
+    userWentToSetupRef.current = true
+    setScriptPhase('setup')
+  }
+
   const handlePrimaryAction = async () => {
     if (currentStep === 'script') {
       // stepMachine.steps.script는 params.input(대본 생성 소재)과 params.options(LLM 호출
@@ -767,17 +877,20 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     ? displayStep
     : null
 
-  const handlePasteStart = () => {
+  const handlePasteStart = async () => {
     setBaseScript('')
     // 임포트/붙여넣기 시작도 현재 설정(genre/length/…)과 제목을 버리지 않고 전부 커밋한다 —
     // 안 그러면 재오픈 hydrate 시 기본값(bespoke/10분/제목없음)으로 되돌아간다.
-    start('script', {
+    await start('script', {
       pastedScript: scriptText,
       input: { type: 'pasted', title },
       options: currentOptions(),
     })
-    // 임포트/붙여넣기 대본으로 시작 → editor phase (scriptText 유지).
-    setScriptPhase('editor')
+    // §v2.8 B1: 대본 영속(start 선행, script done) 직후 synopsis 게이트로 — 등장인물 역추출·확인.
+    synopsisPhaseHydratedRef.current = true
+    setSynopsisLocalMode('pasted')
+    setScriptPhase('synopsis')
+    runGenerateSynopsis({ type: 'pasted', pastedScript: scriptText, options: currentOptions() })
   }
 
   // §3 제목 자동생성 — 제목이 비고 대본이 있으면 generateTitle로 확정. 반환 title을
@@ -828,8 +941,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const handleToggleAuto = (step) => setAutoSteps((m) => ({ ...m, [step]: !m[step] }))
   // 다음 실행할 자동 스텝: 순서상 자동=true & 아직 done/running 아닌 첫 스텝(자동=false는 건너뜀).
   const nextAutoStep = () => AUTO_ORDER.find((s) => autoSteps[s] && steps[s]?.status !== 'done' && steps[s]?.status !== 'running')
-  // 전체 진행 가능: 대본 done + 남은 자동 스텝 존재 + 실행 중 아님.
-  const canRunAll = steps.script?.status === 'done' && !isRunning && !!nextAutoStep()
+  // 전체 진행 가능: 대본 done + 남은 자동 스텝 존재 + 실행 중 아님 + 미확정 게이트 아님(FIX-2).
+  const canRunAll = !unconfirmedGate && steps.script?.status === 'done' && !isRunning && !!nextAutoStep()
   // 스텝을 실행하되 enqueue 실패(제목 실패/busy)면 자동 진행을 멈춘다(stuck 방지, Codex).
   const triggerAutoStep = async (step) => {
     if (step === 'scenes') {
@@ -856,13 +969,14 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
 
   // §1-A setup primary [✨ 시작] — scriptText(임포트/붙여넣기) 있으면 임포트 경로, 없고 제목 있으면
-  // 대본 생성 경로. 둘 다 없으면 버튼 자체가 disabled(아래)이므로 여기 도달하지 않는다.
+  // 시나리오 생성 경로. 둘 다 없으면 버튼 자체가 disabled(아래)이므로 여기 도달하지 않는다.
+  // 슬라이스5(§v2.8 B1): 두 경로 모두 synopsis 게이트로 진입한다(pasted는 start 선행 후 역추출).
   const handleSetupStart = () => {
     const originalScript = pipeline.scriptText || ''
     const shouldUsePastedScript = scriptText.trim()
       && (hydrateInput?.type === 'pasted' || !title.trim() || scriptText !== originalScript)
     if (shouldUsePastedScript) handlePasteStart()
-    else startScriptFromTitle()
+    else startSynopsisFromTitle()
   }
 
   // 대본 임포트 공통 — .txt/.md 파일만 FileReader 로 읽어 scriptText 에 채운다(그 외 무시).
@@ -919,7 +1033,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
         showCharCount
         hideTip
         countLabelKey="prompt.lineCount"
-        placeholder={t('story.form.scriptPlaceholder', '대본이 여기에 표시됩니다')}
+        placeholder={t('story.form.scriptPlaceholder', '시나리오가 여기에 표시됩니다')}
       />
     </div>
   )
@@ -927,7 +1041,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   return (
     <div className="story-view">
       <StoryStepper steps={steps} currentStep={currentStep} activeStep={stepperActive} t={t} onStepClick={handleStepClick}
-        autoSteps={autoSteps} onToggleAuto={handleToggleAuto} onRunAll={handleRunAll} canRunAll={canRunAll} autoRunning={autoRunning} />
+        autoSteps={autoSteps} onToggleAuto={handleToggleAuto} onRunAll={handleRunAll} canRunAll={canRunAll} autoRunning={autoRunning}
+        synopsisEnabled={synopsisEnabled} />
 
       {openError && (
         <div className="story-open-error-banner" role="alert">
@@ -944,7 +1059,77 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
       <div className="story-step-panel">
         {displayStep === 'script' && (
           <div className="story-script-panel">
-            {scriptPhase === 'editor' ? (
+            {scriptPhase === 'synopsis' ? (
+              // 슬라이스5(§v2.5/§v2.8 B1): 시놉시스 게이트 패널 — 줄거리 편집(title 경로) +
+              // 등장인물 카드 편집 + 확정/다시/설정으로. pasted 모드는 줄거리 편집 비노출
+              // (등장인물 역추출·확인 중심). 하단 generic 컨트롤은 suppress(게이트 우회 방지).
+              <div className="story-synopsis-phase" data-testid="story-synopsis">
+                {synopsisError && (
+                  <div className="story-error-banner" role="alert">
+                    ⚠️ {t('story.error.prefix', '오류')}: {synopsisError}
+                  </div>
+                )}
+                {synopsisMode !== 'pasted' && (
+                  synopsisGenerating ? (
+                    // 생성 중 — 대본 편집기 스트리밍 UX 미러(story:synopsis-delta 누적).
+                    <div className="story-script-stream" aria-live="polite">{synopsisStreamingText}</div>
+                  ) : (
+                    <textarea
+                      className="story-synopsis-textarea"
+                      aria-label={t('story.synopsis.editorLabel', '줄거리')}
+                      value={synopsisDraft}
+                      onChange={(e) => setSynopsisDraft(e.target.value)}
+                      placeholder={t('story.synopsis.placeholder', '시놉시스가 여기에 표시됩니다')}
+                    />
+                  )
+                )}
+                {synopsisMode === 'pasted' && synopsisGenerating && (
+                  // pasted 역추출은 non-streaming(§v2.8 M4) — 진행 안내만.
+                  <div className="story-running-detail" aria-live="polite">
+                    {t('story.synopsis.extracting', '등장인물 추출 중')}
+                  </div>
+                )}
+                <div className="story-synopsis-characters">
+                  <span className="story-opt-label">{t('story.synopsis.charactersTitle', '등장인물')}</span>
+                  <CharacterCards characters={characterDrafts} onChange={setCharacterDrafts} disabled={synopsisGenerating} t={t} />
+                </div>
+                <div className="story-synopsis-controls">
+                  <button
+                    type="button"
+                    className="story-btn-primary"
+                    onClick={handleSynopsisConfirm}
+                    disabled={synopsisGenerating || isRunning || (synopsisMode !== 'pasted' && !synopsisDraft.trim())}
+                  >
+                    {synopsisMode === 'pasted'
+                      ? t('story.synopsis.confirmCharacters', '등장인물 확정')
+                      : t('story.synopsis.confirmTitle', '이 시놉시스로 시나리오 생성')}
+                  </button>
+                  <button
+                    type="button"
+                    className="story-btn-secondary"
+                    onClick={handleSynopsisRegenerate}
+                    disabled={synopsisGenerating || isRunning}
+                  >
+                    {t('story.synopsis.regenerate', '시놉시스 다시')}
+                  </button>
+                  <button
+                    type="button"
+                    className="story-btn-secondary"
+                    onClick={handleSynopsisBackToSetup}
+                    disabled={synopsisGenerating}
+                  >
+                    {t('story.synopsis.backToSetup', '설정으로')}
+                  </button>
+                  {/* FIX-4(§3.3 abort 대칭): 생성 중 중단 — main abort()가 synopsisController를
+                      대칭 중단하므로 호출만 하면 된다. */}
+                  {synopsisGenerating && (
+                    <button type="button" className="story-btn-secondary" onClick={() => abort()}>
+                      {t('story.action.abort', '⏹ 중단')}
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : scriptPhase === 'editor' ? (
               // §1-B 대본 작업 화면 — 생성 중엔 스트리밍 preview(이어쓰기는 baseScript 접두),
               // 그 외 PromptInput 편집기 + 3버튼/설정으로.
               // PromptInput 은 useI18n() provider 를 요구한다. 실제 앱에선 상위(Shell.jsx)
@@ -989,7 +1174,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                         type="button"
                         className="story-btn-primary"
                         onClick={handleSplit}
-                        disabled={!scriptText.trim()}
+                        disabled={!scriptText.trim() || unconfirmedGate}
                       >
                         {t('story.action.split', '분리시작')}
                       </button>
@@ -1145,7 +1330,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                     className="story-paste-textarea"
                     value={scriptText}
                     onChange={(e) => setScriptText(e.target.value)}
-                    placeholder={t('story.form.pastePlaceholder', '대본을 붙여넣거나 .txt/.md 파일을 끌어다 놓으세요')}
+                    placeholder={t('story.form.pastePlaceholder', '시나리오를 붙여넣거나 .txt/.md 파일을 끌어다 놓으세요')}
                     disabled={isRunning}
                   />
                   <div className="story-import-actions">
@@ -1256,8 +1441,9 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                         : selectedVoiceObj
                           ? selectedVoiceObj.name
                           : t('story.audio.voiceUnloaded', `저장된 성우 (미로드) · ${shortVoiceId(selectedVoiceId)}`, { id: shortVoiceId(selectedVoiceId) })
-                      // C(성우 추천): appearance에서 캐릭터 성별 추정. 못 뽑으면 null → 배지·경고 없음(폴백).
-                      const charGender = guessGenderFromAppearance(sp.appearance)
+                      // C(성우 추천): gender 확정값(male/female) 우선, unknown이면 appearance 추정 폴백.
+                      // 못 뽑으면 null → 배지·경고 없음(§v2.8 M5 / m1).
+                      const charGender = resolveCharacterGender(sp)
                       // 캐릭터·성우 성별이 둘 다 확실하고 서로 다르면 불일치 경고.
                       const genderMismatch = charGender && selectedVoiceObj?.gender && charGender !== selectedVoiceObj.gender
                       return (
@@ -1314,7 +1500,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                       <VoicePicker
                         voices={storyVoices}
                         selected={voiceSel.pickerSelection}
-                        initialGender={guessGenderFromAppearance(sp.appearance)}
+                        initialGender={resolveCharacterGender(sp)}
                         onSelect={voiceSel.setPickerSelection}
                         onPreview={(voice) => voiceSel.preview.play(voice)}
                         onOverrideGender={voiceSel.handleOverrideGender}
@@ -1471,8 +1657,9 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
       {/* editor phase는 패널 내 전용 버튼(다시쓰기/이어쓰기/분리시작/설정으로·중단)을 쓴다 —
           하단 제네릭 컨트롤은 editor 밖(setup·scenes/prompts 진행)에서만 렌더.
           F1재검토: scriptPhase가 editor로 남아도 실제로 표시 중인 게 대본 editor가 아니면(재오픈 running →
-          displayStep=scenes/prompts) 하단 컨트롤(중단)을 보여야 하므로 "실제 editor 표시 중"을 기준으로 판단. */}
-      {!(displayStep === 'script' && scriptPhase === 'editor') && (
+          displayStep=scenes/prompts) 하단 컨트롤(중단)을 보여야 하므로 "실제 editor 표시 중"을 기준으로 판단.
+          슬라이스5(§3.5): synopsis phase에서도 suppress — generic [시나리오 생성]이 게이트를 우회하지 못하게. */}
+      {!(displayStep === 'script' && (scriptPhase === 'editor' || scriptPhase === 'synopsis')) && (
         <div className="story-controls">
           {manualReviewTarget && renderReviewControl(manualReviewTarget, {
             manual: true,
@@ -1484,7 +1671,11 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
               type="button"
               className={`story-btn-primary ${isError ? 'story-btn-error' : ''}`}
               onClick={isSetupActionView ? handleSetupStart : redoStep ? handleStepRedo : handlePrimaryAction}
-              disabled={isSetupActionView ? setupActionDisabled : isRunning}
+              // FIX-2: 미확정이면 하류(scenes/audio/prompts) 진행·재실행을 disable — script 액션
+              // (시작/시나리오 생성)은 게이트 전 단계라 허용.
+              disabled={isSetupActionView
+                ? setupActionDisabled
+                : (isRunning || (unconfirmedGate && (redoStep != null || currentStep !== 'script')))}
               aria-label={isSetupActionView
                 ? setupActionAriaLabel
                 : redoStep === 'scenes' ? t('story.action.scenesRedo', '씬 재분리') : redoStep === 'prompts' ? t('story.action.promptsRedo', '프롬프트 다시 생성') : redoStep === 'audio' ? t('story.action.audioRedo', '오디오 다시 생성') : actionAriaLabel}

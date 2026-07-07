@@ -20,6 +20,17 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   // M3: 대본 검토 루프 진행 — { operationId, round, of, phase:'reviewing'|'revising'|'error', error? } | null.
   const [reviewProgress, setReviewProgress] = useState(null)
   const [progressLog, setProgressLog] = useState([])
+  // 슬라이스4(§3.4): synopsis side action 로컬 상태 — 스트리밍 누적은 대본(streamingText)과
+  // 별도 채널/상태(story:synopsis-delta → synopsisStreamingText)로 분리.
+  const [synopsisStreamingText, setSynopsisStreamingText] = useState('')
+  const [synopsisGenerating, setSynopsisGenerating] = useState(false)
+  const [synopsisError, setSynopsisError] = useState(null)
+  // hydrate 필드(§v2.9/v2.11): story:state·open 응답의 synopsisText/hasSynopsis/characters/
+  // charactersConfirmed. charactersConfirmed는 3-state(undefined=legacy) 그대로 노출.
+  const [synopsisText, setSynopsisText] = useState('')
+  const [hasSynopsis, setHasSynopsis] = useState(false)
+  const [characters, setCharacters] = useState([])
+  const [charactersConfirmed, setCharactersConfirmed] = useState(undefined)
   const [llmOptions, setLlmOptions] = useState(null)
   const [defaultLlmOption, setDefaultLlmOption] = useState(null)
   const tokenRef = useRef(null)
@@ -32,6 +43,10 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   // 활성 op로 저장 → 그와 다른 operationId의 story:delta는 drop(엔진 abort가 늦게 끊길 때
   // 이전 실행의 델타가 새 streamingText에 섞이는 것 방지). 엔진 레벨 가드(Task 6)의 renderer 겹.
   const activeOpRef = useRef(null)
+  // 슬라이스4(Codex #1): synopsis 전용 op 필터. side action은 running step을 안 만들어 위
+  // activeOpRef(story:state running 기반)에 안 잡힌다 — 재사용 금지. started 신호(phase:'started',
+  // operationId)로 세팅되고, 그와 다른 op의 delta는 drop(regenerate 시 이전 실행 잔여 방지).
+  const synopsisActiveOpRef = useRef(null)
   // HIGH: projectPath 전환 시 tokenRef 무효화를 useEffect(passive)에만 맡기면 한 프레임 늦는다
   // — rerender로 새 projectPath가 반영된 직후, effect가 아직 실행되기 전 틈에 옛 프로젝트의
   // pushScenes가 도착하면 tokenRef가 여전히 옛 토큰이라 통과하고, onPushRef.current는 이미 새
@@ -66,6 +81,15 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
     setProgressLog([])
     activeOpRef.current = null
     setReviewProgress(null) // M3: 프로젝트 전환 시 검토 배지 정리
+    // 슬라이스4: synopsis 로컬 상태·전용 op도 함께 리셋(옛 프로젝트 시놉이 새 화면에 남지 않게).
+    synopsisActiveOpRef.current = null
+    setSynopsisStreamingText('')
+    setSynopsisGenerating(false)
+    setSynopsisError(null)
+    setSynopsisText('')
+    setHasSynopsis(false)
+    setCharacters([])
+    setCharactersConfirmed(undefined)
     if (oldToken) {
       window.electronAPI?.storyAbort?.({ projectToken: oldToken })?.catch?.(() => {})
     }
@@ -104,6 +128,22 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
         // 먼저 emit한다(하류 리셋 알림용) — scenes가 undefined면 기존 값을 유지, 있을 때만 반영.
         if (p.scenes !== undefined) setScenes(p.scenes)
         if (p.scriptText !== undefined) setScriptText(p.scriptText)
+        // 슬라이스4: hydrate 필드 — 없는(undefined) 이벤트는 기존 값 유지(scenes 패턴 미러).
+        if (p.synopsisText !== undefined) setSynopsisText(p.synopsisText)
+        if (p.hasSynopsis !== undefined) setHasSynopsis(p.hasSynopsis)
+        if (p.characters !== undefined) setCharacters(p.characters)
+        if ('charactersConfirmed' in p) setCharactersConfirmed(p.charactersConfirmed)
+      }),
+      // 슬라이스4(§3.3 op lifecycle): started 신호로 전용 op 세팅 + 누적 리셋, 그 op의 delta만 누적.
+      api.onStoryEvent('story:synopsis-delta', (p) => {
+        if (p.projectToken !== tokenRef.current) return
+        if (p.phase === 'started') {
+          synopsisActiveOpRef.current = p.operationId || null
+          setSynopsisStreamingText('')
+          return
+        }
+        if (synopsisActiveOpRef.current && p.operationId !== synopsisActiveOpRef.current) return
+        setSynopsisStreamingText((t) => t + (p.text || ''))
       }),
       api.onStoryEvent('story:delta', (p) => {
         if (p.projectToken !== tokenRef.current) return
@@ -147,7 +187,7 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
         } else if (p.kind === 'script-review' || p.kind === 'review') {
           setReviewProgress({ operationId: p.operationId, target: p.target || 'script', round: p.round, of: p.of, phase: p.phase, error: p.error })
           if (p.kind === 'review') {
-            const targetLabel = p.target === 'scenes' ? '씬 검수' : p.target === 'prompts' ? '프롬프트 검수' : '대본 검수'
+            const targetLabel = p.target === 'scenes' ? '씬 검수' : p.target === 'prompts' ? '프롬프트 검수' : '시나리오 검수'
             const phaseLabel = p.phase === 'revising' ? '수정 중' : p.phase === 'error' ? '검토 중단' : '검토 중'
             setProgressLog((logs) => [...logs, {
               id: `${p.operationId || 'op'}-${logs.length}`,
@@ -190,6 +230,11 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
     setState(r.state)
     setScenes(r.scenes || [])
     if (r.scriptText !== undefined) setScriptText(r.scriptText)
+    // 슬라이스4: open 응답의 synopsis hydrate 필드 반영(story:state 핸들러와 동일 규칙).
+    if (r.synopsisText !== undefined) setSynopsisText(r.synopsisText)
+    if (r.hasSynopsis !== undefined) setHasSynopsis(r.hasSynopsis)
+    if (r.characters !== undefined) setCharacters(r.characters)
+    if ('charactersConfirmed' in r) setCharactersConfirmed(r.charactersConfirmed)
     // main의 story:open 처리 중 maybeResendPush()가 재발신하는 story:pushScenes가 이
     // storyOpen() resolve(=tokenRef 세팅) 전에 도착하면 토큰 불일치로 drop된다. 이제 토큰이
     // 확정됐으니 storyGetState()를 한 번 호출해 동일한 재발신 로직(getState 핸들러)을 다시
@@ -199,10 +244,20 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
     // 이미 tokenRef/state를 정리(및 abort)했으므로, 여기서 stale한 gs 결과로 되살리지 않는다.
     if (requestedPath !== prevPathRef.current) return r
     if (gs && !gs.error) {
-      const { scenes: gsScenes, scriptText: gsScriptText, ...rest } = gs
+      // 슬라이스4: getState의 hydrate extras(synopsisText 등)도 scenes/scriptText처럼 전용 상태로
+      // 분리 — state 객체(story.json 미러)에 섞이지 않게 한다.
+      const {
+        scenes: gsScenes, scriptText: gsScriptText,
+        synopsisText: gsSynopsisText, hasSynopsis: gsHasSynopsis, characters: gsCharacters,
+        ...rest
+      } = gs
       setState(rest)
       setScenes(gsScenes || [])
       if (gsScriptText !== undefined) setScriptText(gsScriptText)
+      if (gsSynopsisText !== undefined) setSynopsisText(gsSynopsisText)
+      if (gsHasSynopsis !== undefined) setHasSynopsis(gsHasSynopsis)
+      if (gsCharacters !== undefined) setCharacters(gsCharacters)
+      if ('charactersConfirmed' in gs) setCharactersConfirmed(gs.charactersConfirmed)
     }
     return r
   }, [projectPath])
@@ -219,6 +274,28 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
 
   const generateTitle = useCallback((scriptMd, options = {}) =>
     window.electronAPI.storyGenerateTitle({ projectToken: tokenRef.current, scriptMd, options }), [])
+  // 슬라이스4(§3.4 + §v2.8 M4): 시놉시스 생성 side action. 스트리밍 누적 자체는
+  // story:synopsis-delta 구독(started→synopsisActiveOpRef)이 담당하고, 여기선 호출/에러 상태만.
+  const generateSynopsis = useCallback(async (params = {}) => {
+    setSynopsisError(null)
+    setSynopsisGenerating(true)
+    try {
+      const r = await window.electronAPI.storyGenerateSynopsis({ projectToken: tokenRef.current, ...params })
+      if (r?.error) setSynopsisError(r.error)
+      return r
+    } catch (e) {
+      const msg = String(e?.message || e)
+      setSynopsisError(msg)
+      return { error: msg }
+    } finally {
+      setSynopsisGenerating(false)
+    }
+  }, [])
+  // 슬라이스4(§v2.8 M1 + §v2.9): 시놉시스 확정 커밋(title·pasted 공통) — main이 speakers 반영
+  // + charactersConfirmed=true + pushCharacters emit. title 경로의 start('script')는 호출측이
+  // confirm 완료 후 순차 호출한다(§v2.10).
+  const confirmSynopsis = useCallback((params = {}) =>
+    window.electronAPI.storyConfirmSynopsis({ projectToken: tokenRef.current, ...params }), [])
   // 슬라이스1: 세그먼트 단건 TTS 테스트(배치 진행버튼과 분리). 저장된 오디오는 story:state로 반영.
   const ttsPreview = useCallback((params) => window.electronAPI.storyTtsPreview({ projectToken: tokenRef.current, ...params }), [])
 
@@ -226,7 +303,7 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   // key로 재마운트되는 StoryView가 setup + 폼 기본값으로 초기화되게 한다(effect가 다음 tick에
   // useState를 정리하기 전 한 프레임의 stale 값 유출 방지).
   if (justSwitched) {
-    return { state: null, scenes: [], streamingText, scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview, segmentProgress: {}, reviewProgress: null, progressLog: [], llmOptions, defaultLlmOption }
+    return { state: null, scenes: [], streamingText, scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview, segmentProgress: {}, reviewProgress: null, progressLog: [], llmOptions, defaultLlmOption, generateSynopsis, confirmSynopsis, synopsisStreamingText: '', synopsisGenerating: false, synopsisError: null, synopsisText: '', hasSynopsis: false, characters: [], charactersConfirmed: undefined }
   }
-  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, segmentProgress, reviewProgress, progressLog, llmOptions, defaultLlmOption }
+  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, segmentProgress, reviewProgress, progressLog, llmOptions, defaultLlmOption, generateSynopsis, confirmSynopsis, synopsisStreamingText, synopsisGenerating, synopsisError, synopsisText, hasSynopsis, characters, charactersConfirmed }
 }

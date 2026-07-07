@@ -12,7 +12,11 @@ const pipeline = (over = {}) => ({
   scenes: [],
   streamingText: '',
   scriptText: '',
-  start: vi.fn(), abort: vi.fn(), openError: null,
+  start: vi.fn().mockResolvedValue({}), abort: vi.fn(), openError: null,
+  // 슬라이스5(§v2.8 B1): [시작]은 synopsis 게이트로 진입 — 제목 경로는 generateSynopsis,
+  // 붙여넣기 경로는 start('script') 선행 후 역추출 + [등장인물 확정] 게이트.
+  generateSynopsis: vi.fn().mockResolvedValue({}),
+  confirmSynopsis: vi.fn().mockResolvedValue({}),
   ...over,
 })
 
@@ -99,8 +103,11 @@ describe('StoryView 설정 화면(setup)', () => {
     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
     fireEvent.change(screen.getByTestId('story-import-drop').querySelector('textarea'), { target: { value: '대본 본문' } })
     fireEvent.change(screen.getByLabelText('씬 분리 단위'), { target: { value: 'segment' } })
-    // 붙여넣기 시작 → editor, 이어서 분리시작 → start('scenes')
+    // 붙여넣기 시작 → synopsis 게이트(등장인물 확정) → editor, 이어서 분리시작 → start('scenes')
     fireEvent.click(screen.getByRole('button', { name: '시작' }))
+    await waitFor(() => expect(screen.getByTestId('story-synopsis')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: '등장인물 확정' }))
+    await waitFor(() => expect(screen.getByTestId('story-editor')).toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: '분리시작' }))
     await waitFor(() => {
       expect(p.start).toHaveBeenCalledWith('scenes', expect.objectContaining({
@@ -204,7 +211,7 @@ describe('StoryView 설정 화면(setup)', () => {
     fireEvent.change(screen.getByLabelText('대본 분량 단위'), { target: { value: 'chars' } })
     fireEvent.change(screen.getByLabelText('대본 분량 값'), { target: { value: '4200' } })
     fireEvent.click(screen.getByRole('button', { name: '시작' }))
-    expect(p.start).toHaveBeenCalledWith('script', expect.objectContaining({
+    expect(p.generateSynopsis).toHaveBeenCalledWith(expect.objectContaining({
       options: expect.objectContaining({ lengthValue: '4200', lengthUnit: 'chars', lengthMode: 'unit' }),
     }))
   })
@@ -227,7 +234,7 @@ describe('StoryView 설정 화면(setup)', () => {
     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
     fireEvent.change(screen.getByLabelText('대본 분량 값'), { target: { value: raw } })
     fireEvent.click(screen.getByRole('button', { name: '시작' }))
-    expect(p.start).toHaveBeenCalledWith('script', expect.objectContaining({
+    expect(p.generateSynopsis).toHaveBeenCalledWith(expect.objectContaining({
       options: expect.objectContaining({ lengthValue: expected, lengthUnit: 'min' }),
     }))
   })
@@ -237,19 +244,21 @@ describe('StoryView 설정 화면(setup)', () => {
     expect(screen.getByPlaceholderText('제목')).toBeInTheDocument()
   })
 
-  it('[✨ 시작] — 제목만 있으면 title 생성 경로로 start 하고 editor로 전환한다', () => {
+  it('[✨ 시작] — 제목만 있으면 synopsis 게이트로 진입해 generateSynopsis를 호출한다(§v2.8 B1)', () => {
     const p = pipeline()
     render(<StoryView pipeline={p} />)
     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: '운수 좋은 날' } })
     fireEvent.click(screen.getByRole('button', { name: '시작' }))
-    expect(p.start).toHaveBeenCalledWith('script', {
-      input: { type: 'title', title: '운수 좋은 날' },
+    expect(p.generateSynopsis).toHaveBeenCalledWith({
+      type: 'title',
+      title: '운수 좋은 날',
       options: { genre: 'bespoke', language: 'ko', engine: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'off', lengthValue: '10', lengthUnit: 'min', sceneGranularity: 'scene', reviewLoop: false },
     })
-    expect(screen.getByTestId('story-editor')).toBeInTheDocument()
+    expect(p.start).not.toHaveBeenCalled()
+    expect(screen.getByTestId('story-synopsis')).toBeInTheDocument()
   })
 
-  it('[✨ 시작] — scriptText 있으면 pastedScript 경로로 전체 옵션+제목을 실어 start 하고 editor로 전환한다', () => {
+  it('[✨ 시작] — scriptText 있으면 pastedScript 경로로 전체 옵션+제목을 실어 start 하고 synopsis 게이트로 전환한다', async () => {
     const p = pipeline()
     render(<StoryView pipeline={p} />)
     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: '가져온 제목' } })
@@ -264,7 +273,9 @@ describe('StoryView 설정 화면(setup)', () => {
       input: { type: 'pasted', title: '가져온 제목' },
       options: { genre: 'yadam', language: 'ko', engine: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'off', lengthValue: '10', lengthUnit: 'min', sceneGranularity: 'scene', reviewLoop: false },
     })
-    expect(screen.getByTestId('story-editor')).toBeInTheDocument()
+    // §v2.8 B1: 대본 영속 직후 등장인물 역추출 게이트로.
+    await waitFor(() => expect(screen.getByTestId('story-synopsis')).toBeInTheDocument())
+    expect(p.generateSynopsis).toHaveBeenCalledWith(expect.objectContaining({ type: 'pasted', pastedScript: '내가 쓴 대본' }))
   })
 
   it('[✨ 시작] — 제목·scriptText 둘 다 없으면 비활성', () => {
@@ -298,8 +309,10 @@ describe('StoryView 설정 화면(setup)', () => {
     expect(screen.getByRole('button', { name: '닫기' })).not.toBeDisabled()
 
     fireEvent.click(changed)
-    expect(p.start).toHaveBeenCalledWith('script', expect.objectContaining({
-      input: { type: 'title', title: '완성된 제목' },
+    // 슬라이스5: 제목 경로 재시작도 synopsis 게이트로 진입한다.
+    expect(p.generateSynopsis).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'title',
+      title: '완성된 제목',
       options: expect.objectContaining({ lengthValue: '12' }),
     }))
   })

@@ -132,6 +132,25 @@ describe('preload contract', () => {
     expect(preloadKeys.has('storyListLlmOptions')).toBe(true)
   })
 
+  // 슬라이스4(§3.4 + §v2.8 M1): synopsis IPC 브릿지 + 이벤트 화이트리스트
+  it('storyGenerateSynopsis / storyConfirmSynopsis are in preload (synopsis IPC bridges)', () => {
+    const preloadText = fs.readFileSync(preloadPath, 'utf8')
+    const preloadKeys = extractPreloadKeys(preloadText)
+    expect(preloadKeys.has('storyGenerateSynopsis')).toBe(true)
+    expect(preloadKeys.has('storyConfirmSynopsis')).toBe(true)
+  })
+
+  it('onStoryEvent whitelist includes story:synopsis-delta (and keeps existing channels)', () => {
+    const preloadText = fs.readFileSync(preloadPath, 'utf8')
+    const m = preloadText.match(/const valid = \[([^\]]*)\]/)
+    expect(m, 'onStoryEvent valid whitelist not found in preload.js').toBeTruthy()
+    const channels = [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1])
+    expect(channels).toEqual(expect.arrayContaining([
+      'story:state', 'story:delta', 'story:progress', 'story:pushScenes', 'story:pushCharacters',
+      'story:synopsis-delta',
+    ]))
+  })
+
   it('allowlist entries are documented (not silently growing)', () => {
     // Ensure the allowlist is small and intentional — this test will fail if
     // someone adds new entries without updating this comment.

@@ -74,16 +74,16 @@ describe('StoryView scriptPhase (Task 7)', () => {
     expect(screen.queryByTestId('story-editor')).toBeNull()
     expect(screen.getByText('화자')).toBeTruthy()
     // done된 대본 스텝 클릭 → editor 복귀
-    fireEvent.click(screen.getByRole('button', { name: '대본' }))
+    fireEvent.click(screen.getByRole('button', { name: '시나리오' }))
     expect(screen.getByTestId('story-editor')).toBeInTheDocument()
   })
 
-  it('setup 시작(대본 생성)을 누르면 editor phase로 전환된다', () => {
-    const p = pipeline()
+  it('setup 시작(제목 경로)을 누르면 synopsis phase로 전환된다(§v2.8 B1)', () => {
+    const p = pipeline({ generateSynopsis: vi.fn().mockResolvedValue({}) })
     render(<StoryView pipeline={p} />)
     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
     fireEvent.click(screen.getByRole('button', { name: '시작' }))
-    expect(screen.getByTestId('story-editor')).toBeInTheDocument()
+    expect(screen.getByTestId('story-synopsis')).toBeInTheDocument()
     expect(screen.queryByTestId('story-setup')).toBeNull()
   })
 })
@@ -123,14 +123,14 @@ describe('StoryView scriptText 단일 상태 (Task 7)', () => {
     expect(screen.getByTestId('char-count')).toHaveTextContent(String(committed.length))
   })
 
-  it('setup의 붙여넣기 텍스트도 scriptText 하나로 — 붙여넣고 시작하면 그 값이 pastedScript로 간다', () => {
-    const p = pipeline()
+  it('setup의 붙여넣기 텍스트도 scriptText 하나로 — 붙여넣고 시작하면 그 값이 pastedScript로 간다', async () => {
+    const p = pipeline({ start: vi.fn().mockResolvedValue({}), generateSynopsis: vi.fn().mockResolvedValue({}) })
     render(<StoryView pipeline={p} />)
     fireEvent.change(screen.getByPlaceholderText(/붙여넣/), { target: { value: '내가 쓴 대본' } })
     fireEvent.click(screen.getByRole('button', { name: '시작' }))
     expect(p.start).toHaveBeenCalledWith('script', expect.objectContaining({ pastedScript: '내가 쓴 대본' }))
-    // 붙여넣기로 시작 → editor phase 전환
-    expect(screen.getByTestId('story-editor')).toBeInTheDocument()
+    // 붙여넣기로 시작 → 등장인물 역추출 게이트(synopsis phase, §v2.8 B1)
+    await waitFor(() => expect(screen.getByTestId('story-synopsis')).toBeInTheDocument())
   })
 })
 

@@ -84,3 +84,72 @@ describe('StoryView 오디오 탭 — 캐릭터 특징 표시 + 성우 추천', 
     expect(screen.queryByText('Joon')).not.toBeInTheDocument()
   })
 })
+
+// §v2.8 M5 / §v2.11: 캐릭터 gender 확정값이 성우 추천의 상위 소스.
+// 확정 male/female → 그대로 사용, 'unknown'/없음 → 기존 appearance 추정 폴백(m1: null 가능).
+describe('StoryView 오디오 탭 — 캐릭터 gender 확정값 우선 (슬라이스1 접합)', () => {
+  it("확정 gender:'female'이면 appearance가 남성 단서여도 여성 배지(♀)를 표시한다", () => {
+    const p = pipeline()
+    p.state.speakers = [{ id: '강리안', name: '강리안', gender: 'female', appearance: '28-year-old man, short dark hair', voice: null }]
+    const { container } = render(<StoryView pipeline={p} voices={[]} />)
+    openAudioPanel()
+    const row = container.querySelector('.story-voice-row')
+    const badge = row.querySelector('.story-voice-gender')
+    expect(badge).not.toBeNull()
+    expect(badge.className).toContain('female')
+    expect(badge.textContent).toBe('♀')
+  })
+
+  it("확정 gender:'female' + 남성 성우 선택 → appearance가 남성 단서여도 불일치 경고(⚠)", () => {
+    const p = pipeline()
+    p.state.speakers = [{
+      id: '강리안', name: '강리안', gender: 'female',
+      appearance: '28-year-old man, short dark hair',
+      voice: { provider: 'typecast', voiceId: 'tc_male' },
+    }]
+    const voices = [{ id: 'tc_male', name: 'Joon', provider: 'typecast', gender: 'male', language: 'ko' }]
+    const { container } = render(<StoryView pipeline={p} voices={voices} />)
+    openAudioPanel()
+    const row = container.querySelector('.story-voice-row')
+    expect(within(row).getByText('⚠')).toBeInTheDocument()
+  })
+
+  it("확정 gender:'female'이면 성우 모달 프리셋도 여성 세그먼트(여성 성우만 노출) — appearance 무시", () => {
+    const p = pipeline()
+    p.state.speakers = [{ id: '강리안', name: '강리안', gender: 'female', appearance: 'young man, tall', voice: null }]
+    const voices = [
+      { id: 'tc_fem', name: 'Yuna', provider: 'typecast', gender: 'female', language: 'ko' },
+      { id: 'tc_male', name: 'Joon', provider: 'typecast', gender: 'male', language: 'ko' },
+    ]
+    render(<StoryView pipeline={p} voices={voices} />)
+    openAudioPanel()
+    fireEvent.click(screen.getByLabelText('강리안 목소리'))
+    expect(screen.getByText('Yuna')).toBeInTheDocument()
+    expect(screen.queryByText('Joon')).not.toBeInTheDocument()
+  })
+
+  it("gender:'unknown'이면 기존 appearance 폴백으로 배지를 표시한다", () => {
+    const p = pipeline()
+    p.state.speakers = [{ id: '강리안', name: '강리안', gender: 'unknown', appearance: 'young woman, elegant', voice: null }]
+    const { container } = render(<StoryView pipeline={p} voices={[]} />)
+    openAudioPanel()
+    const badge = container.querySelector('.story-voice-row .story-voice-gender')
+    expect(badge).not.toBeNull()
+    expect(badge.textContent).toBe('♀')
+  })
+
+  it("gender:'unknown' + appearance 단서 없음 → 배지·경고 없음(null 계약 유지)", () => {
+    const p = pipeline()
+    p.state.speakers = [{
+      id: '서윤', name: '서윤', gender: 'unknown',
+      appearance: 'young low-rank staff officer, tired face',
+      voice: { provider: 'typecast', voiceId: 'tc_male' },
+    }]
+    const voices = [{ id: 'tc_male', name: 'Joon', provider: 'typecast', gender: 'male', language: 'ko' }]
+    const { container } = render(<StoryView pipeline={p} voices={voices} />)
+    openAudioPanel()
+    const row = container.querySelector('.story-voice-row')
+    expect(row.querySelector('.story-voice-gender')).toBeNull()
+    expect(within(row).queryByText('⚠')).toBeNull()
+  })
+})

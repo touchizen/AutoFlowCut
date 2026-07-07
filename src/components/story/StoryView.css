@@ -145,6 +145,12 @@
   border-style: solid;
 }
 
+/* §v2.12 B: 비활성 pill(시놉시스 — imported/legacy 경로) — 회색, 클릭 불가. */
+.story-step-disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .story-step-icon {
   font-size: 0.8rem;
 }
@@ -318,6 +324,64 @@
   font-family: var(--font-family);
   white-space: pre-wrap;
   overflow: auto;
+}
+
+/* ── 시놉시스 게이트 패널 (슬라이스5, spec §v2.5) ── */
+.story-synopsis-phase {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+}
+
+.story-synopsis-textarea {
+  flex: 1;
+  min-height: 160px;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  background: var(--bg-color);
+  color: var(--text-color);
+  font-family: var(--font-family);
+  resize: vertical;
+}
+
+.story-synopsis-characters {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.story-character-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: auto;
+}
+
+.story-character-card {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.story-character-card .story-character-name { flex: 1 1 90px; }
+.story-character-card .story-character-gender { flex: 0 1 80px; }
+.story-character-card .story-character-age { flex: 0 1 70px; }
+.story-character-card .story-character-role { flex: 1 1 90px; }
+.story-character-card .story-character-appearance { flex: 3 1 200px; }
+
+.story-character-add {
+  align-self: flex-start;
+}
+
+.story-synopsis-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 6px;
 }
 
 /* ── 대본 편집 영역 (PromptInput 래퍼, M2) ── */

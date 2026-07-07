@@ -14,6 +14,9 @@ const pipeline = (over = {}) => ({
   streamingText: '',
   start: vi.fn(), abort: vi.fn(),
   ttsPreview: vi.fn(async () => ({ ok: true, segments: [] })),
+  // 슬라이스5(§v2.8 B1): 제목 경로 [시작]은 synopsis 게이트(generateSynopsis)로 진입한다.
+  generateSynopsis: vi.fn().mockResolvedValue({}),
+  confirmSynopsis: vi.fn().mockResolvedValue({}),
   ...over,
 })
 
@@ -21,9 +24,9 @@ describe('StoryView', () => {
   it('스텝퍼에 4단계와 상태 뱃지를 렌더한다', () => {
     const { container } = render(<StoryView pipeline={pipeline()} />)
     const labels = [...container.querySelectorAll('.story-step-name')].map((el) => el.textContent)
-    expect(labels).toEqual(['설정', '대본', '씬 분리', '오디오', '프롬프트'])
+    expect(labels).toEqual(['설정', '시놉시스', '시나리오', '씬 분리', '오디오', '프롬프트'])
   })
-  it('제목 입력 후 시작하면 start("script")가 stepMachine이 기대하는 shape로 호출된다', () => {
+  it('제목 입력 후 시작하면 generateSynopsis가 stepMachine이 기대하는 shape로 호출된다', () => {
     const p = pipeline()
     render(<StoryView pipeline={p} />)
     fireEvent.change(screen.getByPlaceholderText(/제목/), { target: { value: '운수 좋은 날' } })
@@ -31,12 +34,14 @@ describe('StoryView', () => {
     fireEvent.change(screen.getByLabelText('대본 분량 값'), { target: { value: '5' } })
     fireEvent.change(screen.getByLabelText('언어'), { target: { value: 'ko' } })
     fireEvent.click(screen.getByRole('button', { name: '시작' }))
-    // stepMachine.steps.script는 params.input(type/title)과 params.options(genre/model/language/length)를
-    // 분리해서 읽는다 — input에 genre/length/language를 섞어 넣으면 LLM opts로 전달되지 않아 무시된다.
-    expect(p.start).toHaveBeenCalledWith('script', {
-      input: { type: 'title', title: '운수 좋은 날' },
+    // 슬라이스5: 제목 경로는 synopsis 게이트 선행 — generateSynopsis({type,title,options})로 진입.
+    // options 분리는 그대로(§v2.8 M4 IPC 시그니처).
+    expect(p.generateSynopsis).toHaveBeenCalledWith({
+      type: 'title',
+      title: '운수 좋은 날',
       options: { genre: 'yadam', language: 'ko', engine: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'off', lengthValue: '5', lengthUnit: 'min', sceneGranularity: 'scene', reviewLoop: false },
     })
+    expect(p.start).not.toHaveBeenCalled()
   })
 
   it('옵션 미변경 시 기본값(장르 bespoke, 길이 10 min)이 options로 전달된다', () => {
@@ -44,8 +49,9 @@ describe('StoryView', () => {
     render(<StoryView pipeline={p} />)
     fireEvent.change(screen.getByPlaceholderText(/제목/), { target: { value: '제목만' } })
     fireEvent.click(screen.getByRole('button', { name: '시작' }))
-    expect(p.start).toHaveBeenCalledWith('script', {
-      input: { type: 'title', title: '제목만' },
+    expect(p.generateSynopsis).toHaveBeenCalledWith({
+      type: 'title',
+      title: '제목만',
       options: { genre: 'bespoke', language: 'ko', engine: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'off', lengthValue: '10', lengthUnit: 'min', sceneGranularity: 'scene', reviewLoop: false },
     })
   })
@@ -368,7 +374,7 @@ describe('StoryView', () => {
     expect(screen.getByText('화자')).toBeTruthy()
 
     // done 상태인 '대본' 스텝 클릭 → 대본 작업 화면(editor)으로 복귀
-    fireEvent.click(screen.getByRole('button', { name: '대본' }))
+    fireEvent.click(screen.getByRole('button', { name: '시나리오' }))
     expect(screen.getByTestId('story-editor')).toBeTruthy()
     expect(screen.queryByText('화자')).toBeNull()
   })
@@ -451,7 +457,7 @@ describe('StoryView', () => {
     // scenes pending, currentStep=scenes
     render(<StoryView pipeline={p} />)
     // 대본(done) 탭 → editor
-    fireEvent.click(screen.getByRole('button', { name: '대본' }))
+    fireEvent.click(screen.getByRole('button', { name: '시나리오' }))
     expect(screen.getByTestId('story-editor')).toBeTruthy()
     // 씬 분리(currentStep, pending) 재클릭 → scenes 패널
     fireEvent.click(screen.getByRole('button', { name: '씬 분리' }))
@@ -466,7 +472,8 @@ describe('StoryView', () => {
     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
     fireEvent.change(screen.getByLabelText('씬 분리 단위'), { target: { value: 'segment' } })
     fireEvent.click(screen.getByRole('button', { name: '시작' }))
-    expect(p.start).toHaveBeenCalledWith('script', expect.objectContaining({
+    // 슬라이스5: 제목 경로는 synopsis 게이트로 — options 플럼빙은 generateSynopsis 페이로드 기준.
+    expect(p.generateSynopsis).toHaveBeenCalledWith(expect.objectContaining({
       options: expect.objectContaining({ sceneGranularity: 'segment' }),
     }))
   })
@@ -479,7 +486,7 @@ describe('StoryView', () => {
     // fresh 초기: 0번 설정 폼
     expect(screen.getByTestId('story-setup')).toBeTruthy()
     // 대본 탭은 이제 항상 editor(설정은 0번 탭이 담당)
-    fireEvent.click(screen.getByRole('button', { name: '대본' }))
+    fireEvent.click(screen.getByRole('button', { name: '시나리오' }))
     expect(screen.getByTestId('story-editor')).toBeTruthy()
     // 설정 탭으로 다시 설정 폼
     fireEvent.click(screen.getByRole('button', { name: '설정' }))
@@ -495,7 +502,7 @@ describe('StoryView', () => {
     // 씬 분리 탭으로 갔다가
     fireEvent.click(screen.getByRole('button', { name: '씬 분리' }))
     // 대본(done) 탭 클릭 → editor 복귀
-    fireEvent.click(screen.getByRole('button', { name: '대본' }))
+    fireEvent.click(screen.getByRole('button', { name: '시나리오' }))
     expect(screen.getByTestId('story-editor')).toBeTruthy()
   })
 

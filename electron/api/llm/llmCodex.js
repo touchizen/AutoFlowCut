@@ -13,9 +13,12 @@ import {
   buildPromptsRevisePrompt,
   buildScriptPrompt,
   buildSplitPrompt,
+  buildSynopsisPrompt,
+  buildCharacterExtractPrompt,
   buildTitlePrompt,
 } from './prompts.js'
 import { runCodexJson, runCodexText } from './codexSdk.js'
+import { splitSynopsisOutput, parseCharactersJson, createSynopsisDeltaGate } from './synopsisOutput.js'
 import { toOpenAiJsonSchema } from './toJsonSchema.js'
 import { PROMPTS_SCHEMA, REVIEW_SCHEMA, SCENES_SCHEMA, validateScenesSegments } from './schemas.js'
 import { isNarratorSpeaker as isNarratorTrackSpeaker } from '../../../src/utils/storyNarrationTracks.js'
@@ -87,6 +90,20 @@ export async function generateScript(input, opts = {}, { onDelta, signal, runTex
   const prompt = guardPrompt(buildScriptPrompt(input, opts))
   const scriptMd = await runText(prompt, runtimeOptions(opts), { onDelta, signal })
   return { scriptMd }
+}
+
+// §3.1 / §v2.8 M4: 시놉시스 게이트 — title은 스트리밍(줄거리+등장인물 JSON),
+// pasted는 non-streaming 등장인물 역추출만. 마커 없음/JSON 깨짐은 characters=[] 폴백.
+export async function generateSynopsis(input, opts = {}, { onDelta, signal, runText = runCodexText } = {}) {
+  if (input?.type === 'pasted') {
+    const prompt = guardPrompt(buildCharacterExtractPrompt(input.pastedScript, opts))
+    const text = await runText(prompt, runtimeOptions(opts), { signal })
+    return { synopsisMd: '', characters: parseCharactersJson(text) }
+  }
+  const prompt = guardPrompt(buildSynopsisPrompt(input, opts))
+  const gate = createSynopsisDeltaGate(onDelta)
+  const full = await runText(prompt, runtimeOptions(opts), { onDelta: gate, signal })
+  return splitSynopsisOutput(full)
 }
 
 export async function generateTitle(scriptMd, opts = {}, { signal, runText = runCodexText } = {}) {

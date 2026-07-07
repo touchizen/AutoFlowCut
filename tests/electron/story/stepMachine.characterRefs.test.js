@@ -42,9 +42,12 @@ describe('stepMachine 캐릭터 레퍼런스 브리지 (V2)', () => {
     expect(scene.characters).toBe('민수')
   })
 
-  it('push 페이로드에 storyCharacters(appearance 있는 non-narrator)가 실린다', () => {
+  it('push 페이로드에 storyCharacters(non-narrator, §v2.2 구조화 필드)가 실린다', () => {
     const p = lastPush()
-    expect(p.storyCharacters).toEqual([{ name: '민수', appearance: 'tall man in black coat' }])
+    // §v2.2: {name, appearance} → {name, gender, age, role, appearance} 확장(없으면 기본값)
+    expect(p.storyCharacters).toEqual([
+      { name: '민수', gender: 'unknown', age: '', role: '', ethnicity: '', appearance: 'tall man in black coat' },
+    ])
   })
 
   it('scenes 완료 직후 prompts 전에도 name-only character refs 이벤트를 보낸다', async () => {
@@ -69,7 +72,7 @@ describe('stepMachine 캐릭터 레퍼런스 브리지 (V2)', () => {
     await localMachine.start('scenes', {})
 
     const ev = localEmitted.find((e) => e.ch === 'story:pushCharacters')
-    expect(ev?.p.storyCharacters).toEqual([{ name: '서준', appearance: '' }])
+    expect(ev?.p.storyCharacters).toEqual([{ name: '서준', gender: 'unknown', age: '', role: '', ethnicity: '', appearance: '' }])
     expect(localEmitted.some((e) => e.ch === 'story:pushScenes')).toBe(false)
   })
 
@@ -147,6 +150,39 @@ describe('stepMachine 캐릭터 레퍼런스 브리지 (V2)', () => {
 
     // 하지만 김첨지는 여전히 storyCharacters(Ref pending 카드)에는 남는다
     expect(push.p.storyCharacters.some((c) => c.name === '김첨지')).toBe(true)
+  })
+
+  // §v2.12 코드리뷰 FIX(MAJOR): sceneCharacterNames가 appearance truthy에만 묶이면
+  // ethnicity-only 캐릭터({ethnicity:'Korean', appearance:''})가 @멘션(레퍼런스 바인딩)에서
+  // 누락된다 — Ref 카드(prompt='Korean')엔 있는데 씬 프롬프트엔 없는 불일치.
+  it('§v2.12 FIX: appearance가 비어도 ethnicity가 있으면 @멘션이 주입된다', async () => {
+    const localEmitted = []
+    const localLlm = {
+      generateScript: vi.fn(async () => ({ scriptMd: '#' })),
+      splitScenes: vi.fn(async () => splitOut([
+        { id: 'narrator', name: 'narrator' },
+        { id: 'a', name: '민수', ethnicity: 'Korean', appearance: '' },
+      ])),
+      writePrompts: vi.fn(async (scenes) => ({ scenes: scenes.map((s, i) => ({ ...s, imagePrompt: `img${i}`, videoPrompt: `vid${i}` })) })),
+    }
+    const localDir = await mkdtemp(path.join(tmpdir(), 'sm-charref-ethnicity-'))
+    const localMachine = createStepMachine({
+      projectPath: localDir,
+      llm: localLlm,
+      emit: (ch, p) => localEmitted.push({ ch, p }),
+      getApiKey: () => 'k',
+    })
+    await localMachine.open()
+    await localMachine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    await localMachine.start('scenes', {})
+    await localMachine.start('prompts', {})
+
+    const push = localEmitted.filter((e) => e.ch === 'story:pushScenes').pop()
+    const scene = push.p.scenes[0]
+    expect(scene.prompt).toMatch(/(^|\s)@민수(\s|$)/)
+    expect(scene.videoT2VPrompt).toMatch(/(^|\s)@민수(\s|$)/)
+    // push payload에도 ethnicity가 실린다(renderer Ref 카드 조합용)
+    expect(push.p.storyCharacters.find((c) => c.name === '민수').ethnicity).toBe('Korean')
   })
 
   it('appearance 없는 speaker는 태그/카드에서 제외(narrator 및 무외형 단역)', async () => {

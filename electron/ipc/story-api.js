@@ -111,6 +111,13 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
     return machine.loadAudioPackage()
   })
   ipcMain.handle('story:generate-title', guarded(({ scriptMd, options }) => machine.generateTitle(scriptMd, options || {})))
+  // 슬라이스4(§3.4 + §v2.8 M4): 시놉시스 생성 side action — title/pasted 분기는 machine이 처리.
+  ipcMain.handle('story:generate-synopsis', guarded(({ type, title, pastedScript, options }) =>
+    machine.generateSynopsis({ type, title, pastedScript, options: options || {} })))
+  // 슬라이스4(§v2.8 M1 + §v2.9): 시놉시스 확정 커밋 채널(title·pasted 공통) — characters→speakers
+  // 반영 + charactersConfirmed=true + pushCharacters emit은 machine.confirmSynopsis가 수행.
+  ipcMain.handle('story:confirm-synopsis', guarded(({ synopsisMd, characters }) =>
+    machine.confirmSynopsis({ synopsisMd, characters })))
   // 슬라이스1: 세그먼트 단건 TTS 테스트(배치와 분리, 스텝 상태 미변경).
   ipcMain.handle('story:tts-preview', guarded(({ segmentIds, speakers, sfxSources }) => machine.synthPreview({ segmentIds, speakers, sfxSources })))
 }

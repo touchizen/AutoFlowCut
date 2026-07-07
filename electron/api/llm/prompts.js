@@ -1,5 +1,9 @@
 /** 프롬프트 빌더 — Gemini/Claude 두 엔진 공유. (구 llmGemini.js 내부 빌더 이관) */
 
+// §v2.12: Ref 카드 prompt와 동일한 `${ethnicity}, ${appearance}` 조합 규칙(공유 helper) —
+// electron→src import는 stepMachine의 기존 관례(storyCharacter.js는 순수 모듈, 순환 없음).
+import { characterVisualPrompt } from '../../../src/services/storyCharacter.js'
+
 const KOREAN_CHARS_PER_MINUTE = 330
 const ENGLISH_WORDS_PER_MINUTE = 150
 
@@ -27,17 +31,81 @@ function buildLengthText(opts = {}) {
   return `약 ${minuteText}분(대략 ${formatEstimate(minutes * KOREAN_CHARS_PER_MINUTE)}자)`
 }
 
+// 등장인물 구조화 스키마(§v2.2 + §v2.12 ethnicity) — 시놉시스 생성/붙여넣기 역추출이 공유하는 JSON 필드 지시.
+const CHARACTER_JSON_SHAPE = `[{ "name": "이름", "gender": "male|female|unknown", "age": "나이대(예: 20대)", "role": "극중 역할", "ethnicity": "출신/인종(예: 한국인, Korean, East Asian — 자유 표기)", "appearance": "이미지 생성용 짧은 영어 외형 묘사(나이·성별·헤어·의상·분위기)" }]`
+
+// §v2.8 B2 / §v2.9 MINOR②: 확정 등장인물 명단(roster: {id,name,role})을 씬 분리/검토 프롬프트에 주입.
+// roster 미주입(undefined/null)이면 빈 문자열 — 현행 프롬프트 무변경(회귀 고정).
+// FIX-7: 확정 빈 명단(roster=[], 나레이션-only)은 "등장인물 없음 — narrator만" 제약을 주입한다.
+function buildRosterBlock(roster) {
+  const lines = (roster || [])
+    .filter((sp) => sp && sp.id && String(sp.id).trim())
+    .map((sp) => {
+      const name = sp.name && sp.name !== sp.id ? ` (이름: ${sp.name})` : ''
+      const role = sp.role ? ` — ${sp.role}` : ''
+      return `- id: "${sp.id}"${name}${role}`
+    })
+  if (!lines.length) {
+    if (!Array.isArray(roster)) return ''
+    return `확정 등장인물 명단: 없음(나레이션 단독 작품).\nspeaker에는 "narrator"만 사용하라. 명단에 없는 새 인물을 만들지 마라.`
+  }
+  return [
+    `확정 등장인물 명단:`,
+    ...lines,
+    `speaker에는 이 명단의 id만 문자열 그대로 사용하라. 명단에 없는 새 인물을 만들지 마라. 나레이션은 "narrator"를 쓴다.`,
+  ].join('\n')
+}
+
 export function buildScriptPrompt(input, opts) {
   const meta = opts.metaPrompt ? `## CUSTOM INSTRUCTIONS\n${opts.metaPrompt}\n` : ''
   const lengthText = buildLengthText(opts)
+  // §v2.8 M3: 확정 등장인물 명단 주입 — 대본 첫 소비자부터 이름 어긋남 차단.
+  const charLines = (opts.characters || [])
+    .filter((c) => c && c.name && String(c.name).trim())
+    .map((c) => {
+      // §v2.12: ethnicity(출신/인종)도 있으면 표기 — 인물 배경 일관성.
+      const traits = [c.gender, c.age, c.role, c.ethnicity].filter(Boolean).join('/')
+      return `- ${c.name}${traits ? ` (${traits})` : ''}${c.appearance ? `: ${c.appearance}` : ''}`
+    })
   return [
     meta,
     `당신은 유튜브 스토리 채널 작가다. 아래 제목으로 ${lengthText} 분량의 나레이션 대본을 ${opts.language === 'ko' ? '한국어' : '영어'}로 작성하라.`,
     opts.genre ? `장르: ${opts.genre}` : '',
     opts.tone ? `톤: ${opts.tone}` : '',
     `제목: ${input.title}`,
+    // §3.2: 시놉시스 게이트에서 확정한 줄거리를 따라 작성.
+    opts.synopsis ? `아래 시놉시스를 따라 대본을 작성하라:\n--- 시놉시스 ---\n${opts.synopsis}\n--- 시놉시스 끝 ---` : '',
+    charLines.length ? `등장인물은 아래 명단과 정확한 이름만 사용하라. 명단에 없는 새 인물을 만들거나 이름을 바꾸지 마라:\n${charLines.join('\n')}` : '',
     `마크다운으로, 챕터 구분과 (대사가 있으면) 화자 표기를 포함하라.`,
   ].filter(Boolean).join('\n')
+}
+
+// §v2.4: 시놉시스 게이트(제목 경로) — 줄거리 개요 + 등장인물[] 구조화 JSON을 함께 산출.
+export function buildSynopsisPrompt(input, opts = {}) {
+  const meta = opts.metaPrompt ? `## CUSTOM INSTRUCTIONS\n${opts.metaPrompt}\n` : ''
+  const lengthText = buildLengthText(opts)
+  return [
+    meta,
+    `당신은 유튜브 스토리 채널 작가다. 아래 제목으로 만들 ${lengthText} 분량 영상의 시놉시스를 ${opts.language === 'ko' ? '한국어' : '영어'}로 써라.`,
+    `로그라인 1줄 + 도입/전개/전환/결말 방향을 담은 3~5문장 줄거리 개요를 쓴다. 대사·씬 번호 없이 줄글 개요만.`,
+    opts.genre ? `장르: ${opts.genre}` : '',
+    opts.tone ? `톤: ${opts.tone}` : '',
+    `제목: ${input.title}`,
+    `줄거리를 다 쓴 뒤 마지막에 CHARACTERS_JSON 이라고 한 줄 쓰고, 다음 줄부터 등장인물 전체를 아래 형식의 JSON 배열로만 출력하라(설명·코드펜스 금지):`,
+    CHARACTER_JSON_SHAPE,
+    `gender는 male/female/unknown 중 하나만 쓴다. 나레이션(narrator)은 등장인물에 넣지 않는다.`,
+  ].filter(Boolean).join('\n')
+}
+
+// §v2.4 / §v2.8 M4: 붙여넣기 경로 — 붙여넣은 대본에서 등장인물[]만 같은 스키마로 역추출(줄거리 생성 없음).
+export function buildCharacterExtractPrompt(pastedScript, opts = {}) {
+  return [
+    `아래 대본에 등장하는 인물 전체를 추출하라. 요약이나 설명 없이 아래 형식의 JSON 배열만 출력하라(코드펜스 금지):`,
+    CHARACTER_JSON_SHAPE,
+    `gender는 male/female/unknown 중 하나만 쓴다. name은 대본 표기 그대로 쓴다. 나레이션(narrator)은 인물에 넣지 않는다.`,
+    `--- 대본 ---`,
+    pastedScript,
+  ].join('\n')
 }
 
 export function buildSplitPrompt(scriptMd, opts) {
@@ -49,6 +117,8 @@ export function buildSplitPrompt(scriptMd, opts) {
   return [
     splitRule,
     `각 나레이션/대사 세그먼트마다 speaker(나레이션은 "narrator", 대사는 인물 식별자)와 text, emotion(normal/happy/sad/angry)을 지정하라.`,
+    // §v2.8 B2: 확정 명단이 있으면 배정을 명단에 묶는다(새 인물 생성 금지).
+    buildRosterBlock(opts.roster),
     // V2: 가시 등장인물의 외형을 speakers에 담아 캐릭터 레퍼런스로 등록 → 씬 이미지 일관성.
     `화면에 보이는 등장인물(narrator 제외)은 speakers 항목에 appearance(이미지 생성용 짧은 영어 외형/생김새 묘사: 나이·성별·헤어·의상·분위기)를 넣어라. narrator나 화면에 안 나오는 화자는 appearance를 생략한다.`,
     // M2b: 효과음 큐를 세그먼트 단위로 삽입. 단어 단위(문장 내부) 금지 — 시퀀스의 한 자리를 차지한다.
@@ -57,7 +127,7 @@ export function buildSplitPrompt(scriptMd, opts) {
     `등장 화자 전체 목록을 speakers로 반환하라. narrator(나레이션)도 반드시 speakers에 포함한다(narrator는 appearance 없이).`,
     `--- 대본 ---`,
     scriptMd,
-  ].join('\n')
+  ].filter(Boolean).join('\n')
 }
 
 export function buildTitlePrompt(scriptMd, opts = {}) {
@@ -126,13 +196,15 @@ export function buildScenesRevisePrompt(scriptMd, scenes, speakers, critique, op
     `반드시 SCENES_SCHEMA 형태의 JSON만 반환하라. 설명/코드펜스 금지.`,
     `sceneNo, summary, segments, speakers를 포함하고, narration 세그먼트는 speaker/text/emotion을 유지하며, sfx 세그먼트는 description을 유지한다.`,
     `장르 공식보다 대본의 몰입도, 궁금증, 기대감 흐름을 우선한다.`,
+    // §v2.9 MINOR②: 검토루프에도 roster 제약 — 검토 중 명단 밖 인물 재유입 차단.
+    buildRosterBlock(opts.roster),
     `--- critique ---`,
     critique,
     `--- 대본 ---`,
     scriptMd,
     `--- 현재 scenes ---`,
     JSON.stringify({ scenes, speakers }, null, 2),
-  ].join('\n')
+  ].filter(Boolean).join('\n')
 }
 
 export function buildPromptsReviewPrompt(scenes, context = {}, opts = {}) {
@@ -163,9 +235,12 @@ export function buildPromptsRevisePrompt(scenes, context = {}, critique, opts = 
 export function buildPromptsPrompt(scenes, context, opts) {
   const sceneLines = scenes.map((s) => `${s.sceneNo}. ${s.summary} :: ${(s.segments || []).map((g) => g.text).join(' ')}`)
   // V2: 캐릭터별 정본 외형(appearance)을 컨텍스트로 줘서 씬마다 외형을 새로 지어내지 않고 일관 서술.
+  // §v2.12 FIX(MAJOR): 포함 기준·조합 모두 characterVisualPrompt(ethnicity, appearance 조합,
+  // 빈 쪽 콤마 생략) — ethnicity-only 캐릭터도 Ref 카드와 동일하게 씬 프롬프트에 반영.
   const charLines = (context.speakers || [])
-    .filter((sp) => sp && sp.appearance && String(sp.appearance).trim())
-    .map((sp) => `- ${sp.name}: ${sp.appearance}`)
+    .map((sp) => ({ sp, desc: characterVisualPrompt(sp) }))
+    .filter(({ sp, desc }) => sp && desc)
+    .map(({ sp, desc }) => `- ${sp.name}: ${desc}`)
   return [
     `아래 씬들에 대해 이미지 생성 프롬프트(imagePrompt)와 비디오 생성 프롬프트(videoPrompt)를 영어로 작성하라.`,
     `캐릭터가 등장하면 외형 묘사를 프롬프트에 직접 포함해 씬 간 일관성을 유지하라 (레퍼런스 참조 문법 금지 — 플레인 텍스트).`,

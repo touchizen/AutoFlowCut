@@ -7,8 +7,11 @@
  * 키는 헤더(x-goog-api-key)로만 전달.
  */
 import { SCENES_SCHEMA, PROMPTS_SCHEMA, REVIEW_SCHEMA, validateScenesSegments } from './schemas.js'
+import { splitSynopsisOutput, parseCharactersJson, createSynopsisDeltaGate } from './synopsisOutput.js'
 import {
   buildScriptPrompt,
+  buildSynopsisPrompt,
+  buildCharacterExtractPrompt,
   buildSplitPrompt,
   buildPromptsPrompt,
   buildReviewPrompt,
@@ -75,6 +78,34 @@ export async function generateScript(input, opts, { onDelta, signal, fetchImpl =
   if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`)
   const scriptMd = await readSse(res, onDelta)
   return { scriptMd }
+}
+
+// §3.1 / §v2.8 M4: 시놉시스 게이트 — title은 SSE 스트리밍(줄거리+등장인물 JSON),
+// pasted는 non-streaming generateContent 등장인물 역추출만. 마커 없음/JSON 깨짐은 characters=[] 폴백.
+// (프로덕션 라우팅 대상 아님 — claude/codex와 계약 호환/테스트용.)
+export async function generateSynopsis(input, opts = {}, { onDelta, signal, fetchImpl = fetch } = {}) {
+  if (input?.type === 'pasted') {
+    const prompt = buildCharacterExtractPrompt(input.pastedScript, opts)
+    const res = await fetchImpl(`${BASE}/${opts.model}:generateContent`, {
+      method: 'POST',
+      headers: headers(opts.apiKey),
+      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }] }),
+      signal,
+    })
+    if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`)
+    const data = await res.json()
+    return { synopsisMd: '', characters: parseCharactersJson(data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '') }
+  }
+  const prompt = buildSynopsisPrompt(input, opts)
+  const res = await fetchImpl(`${BASE}/${opts.model}:streamGenerateContent?alt=sse`, {
+    method: 'POST',
+    headers: headers(opts.apiKey),
+    body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }] }),
+    signal,
+  })
+  if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`)
+  const full = await readSse(res, createSynopsisDeltaGate(onDelta))
+  return splitSynopsisOutput(full)
 }
 
 async function structuredCall(prompt, schema, opts, { signal, fetchImpl = fetch, delay = defaultDelay }) {

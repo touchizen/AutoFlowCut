@@ -7,6 +7,8 @@ import {
   buildSplitPrompt,
   buildPromptsPrompt,
   buildTitlePrompt,
+  buildSynopsisPrompt,
+  buildCharacterExtractPrompt,
   buildContinuePrompt,
   buildReviewPrompt,
   buildRevisePrompt,
@@ -16,6 +18,7 @@ import {
   buildPromptsRevisePrompt,
 } from './prompts.js'
 import { buildClaudeSdkOptions, extractClaudeSdkResult, bridgeAbortSignal, extractTextDelta, readStructuredResult } from './claudeSdk.js'
+import { splitSynopsisOutput, parseCharactersJson, createSynopsisDeltaGate } from './synopsisOutput.js'
 import { toJsonSchema } from './toJsonSchema.js'
 import { SCENES_SCHEMA, PROMPTS_SCHEMA, REVIEW_SCHEMA, validateScenesSegments } from './schemas.js'
 
@@ -48,6 +51,43 @@ export async function generateScript(input, opts = {}, { onDelta, signal, queryI
     }
     if (signal?.aborted) throw new Error('Aborted')
     return { scriptMd: full } // result 없이 스트림 종료 시 누적 델타 반환
+  } catch (err) {
+    if (signal?.aborted) throw new Error('Aborted')
+    throw new Error(`Claude SDK failed: ${err.message}`)
+  } finally {
+    cleanup()
+  }
+}
+
+// §3.1 / §v2.8 M4: 시놉시스 게이트 — title은 스트리밍(줄거리+등장인물 JSON),
+// pasted는 non-streaming 등장인물 역추출만. 마커 없음/JSON 깨짐은 characters=[] 폴백.
+export async function generateSynopsis(input, opts = {}, { onDelta, signal, queryImpl = defaultQuery } = {}) {
+  const { abortController, cleanup } = bridgeAbortSignal(signal)
+  try {
+    if (input?.type === 'pasted') {
+      const prompt = buildCharacterExtractPrompt(input.pastedScript, opts)
+      const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts))
+      for await (const m of queryImpl({ prompt, options })) {
+        if (m.type === 'result') return { synopsisMd: '', characters: parseCharactersJson(extractClaudeSdkResult(m)) }
+      }
+      throw new Error('no result message returned')
+    }
+    const prompt = buildSynopsisPrompt(input, opts)
+    const gate = createSynopsisDeltaGate(onDelta)
+    let full = ''
+    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { includePartialMessages: true }))
+    for await (const m of queryImpl({ prompt, options })) {
+      const delta = extractTextDelta(m)
+      if (delta != null) {
+        if (signal?.aborted) break
+        full += delta
+        gate?.(delta)
+        continue
+      }
+      if (m.type === 'result') return splitSynopsisOutput(extractClaudeSdkResult(m))
+    }
+    if (signal?.aborted) throw new Error('Aborted')
+    return splitSynopsisOutput(full) // result 없이 스트림 종료 시 누적 델타 기준
   } catch (err) {
     if (signal?.aborted) throw new Error('Aborted')
     throw new Error(`Claude SDK failed: ${err.message}`)

@@ -13,6 +13,7 @@ import { buildManifest } from './manifest.js'
 import { normalizeStoryLlmOptions } from '../api/llm/storyLlmCatalog.js'
 import { validateScenesSegments } from '../api/llm/schemas.js'
 import { isNarratorSpeaker as isNarratorTrackSpeaker } from '../../src/utils/storyNarrationTracks.js'
+import { normalizeStoryCharacter, characterVisualPrompt } from '../../src/services/storyCharacter.js'
 
 const DOWNSTREAM = { script: ['scenes', 'audio', 'prompts'], scenes: ['audio', 'prompts'], audio: ['prompts'], prompts: [] }
 
@@ -93,6 +94,9 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   let state = null
   let controller = null
   let previewing = false // synthPreview 진행 중 — 배치/다른 preview와의 경쟁 직렬화(Codex-TTS HIGH2)
+  // §3.3/§v2.8 M4: generateSynopsis side action 전용 controller — step/preview/synopsis 상호배제 +
+  // abort 대칭(machine.abort()가 synopsis도 중단)의 기준.
+  let synopsisController = null
 
   const send = (ch, payload, operationId) =>
     emit(ch, { projectToken, operationId: operationId || randomUUID(), ...payload })
@@ -169,22 +173,62 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     return (speakers || []).find((sp) => speakerReferenceKeys(sp).includes(key)) || null
   }
   const nonEmptyString = (v) => (typeof v === 'string' && v.trim()) ? v : undefined
+  // §v2.8 B3: 확정 명단(state.speakers)이 base인 superset 병합 — scenes 스텝이 speakers를
+  // 전체 교체하지 않는다. ①확정 gender/age/role(및 name/id) 보존, ②LLM 참조 인물 voice 승계,
+  // ③씬에서 미참조된 확정 인물도 삭제 금지. rosterEnforced(FIX-1) 상태에선 명단 밖 LLM 신규
+  // 인물을 추가하지 않는다(§v2.2 "명단에 없는 새 인물 금지" — narrator 시딩만 예외).
   function mergeSpeakers(nextSpeakers = [], { preferNewAppearance = false } = {}) {
-    const prevSpeakers = new Map()
-    for (const sp of state.speakers || []) {
-      if (sp.id) prevSpeakers.set(`id:${speakerKey(sp.id)}`, sp)
-      if (sp.name) prevSpeakers.set(`name:${speakerKey(sp.name)}`, sp)
+    const enforced = rosterEnforced()
+    const nextByKey = new Map()
+    for (const sp of nextSpeakers || []) {
+      if (sp.id && !nextByKey.has(`id:${speakerKey(sp.id)}`)) nextByKey.set(`id:${speakerKey(sp.id)}`, sp)
+      if (sp.name && !nextByKey.has(`name:${speakerKey(sp.name)}`)) nextByKey.set(`name:${speakerKey(sp.name)}`, sp)
     }
-    return (nextSpeakers || []).map((sp) => {
-      const prev = prevSpeakers.get(`id:${speakerKey(sp.id)}`) || prevSpeakers.get(`name:${speakerKey(sp.name)}`)
-      const appearance = preferNewAppearance
-        ? (nonEmptyString(sp.appearance) ?? nonEmptyString(prev?.appearance) ?? sp.appearance ?? prev?.appearance)
-        : (nonEmptyString(prev?.appearance) ?? nonEmptyString(sp.appearance) ?? prev?.appearance ?? sp.appearance)
-      return { ...sp, appearance, voice: prev?.voice ?? null }
+    const pickAppearance = (prev, next) => preferNewAppearance
+      ? (nonEmptyString(next?.appearance) ?? nonEmptyString(prev?.appearance) ?? next?.appearance ?? prev?.appearance)
+      : (nonEmptyString(prev?.appearance) ?? nonEmptyString(next?.appearance) ?? prev?.appearance ?? next?.appearance)
+    const matched = new Set()
+    const out = (state.speakers || []).map((prev) => {
+      const next = (prev.id && nextByKey.get(`id:${speakerKey(prev.id)}`)) ||
+        (prev.name && nextByKey.get(`name:${speakerKey(prev.name)}`)) || null
+      if (!next) return prev // ③ 미참조 확정 인물 보존 (voice/필드 그대로)
+      matched.add(next)
+      // FIX-3: rosterEnforced면 확정 id/name/gender/age/role을 그대로 보존하고 LLM 출력에서는
+      // appearance 보강만 받는다(§v2.9 id=name.trim() 고정 — React key/voice/roster id 안정).
+      if (enforced) {
+        return { ...prev, appearance: pickAppearance(prev, next), voice: prev.voice ?? null }
+      }
+      return {
+        ...next, // id/name은 LLM 출력 우선(미확정 기존 rename 동작 유지 — ①은 구조화 필드 한정)
+        // ① 확정 구조화 필드(gender/age/role/ethnicity/appearance) 보존 — LLM 출력이 덮어쓰지 못한다
+        ...((prev.gender === 'male' || prev.gender === 'female') ? { gender: prev.gender } : {}),
+        ...(nonEmptyString(prev.age) ? { age: prev.age } : {}),
+        ...(nonEmptyString(prev.role) ? { role: prev.role } : {}),
+        ...(nonEmptyString(prev.ethnicity) ? { ethnicity: prev.ethnicity } : {}), // §v2.12
+
+        appearance: pickAppearance(prev, next),
+        voice: prev.voice ?? null, // ② voice 승계
+      }
     })
+    const seen = new Set(out.flatMap(speakerReferenceKeys))
+    const allowNew = !enforced // FIX-1: 확정 마커 단독이 아니라 roster 강제 기준
+    for (const sp of nextSpeakers || []) {
+      if (matched.has(sp)) continue
+      const keys = speakerReferenceKeys(sp)
+      if (keys.some((k) => seen.has(k))) continue
+      if (!allowNew && !keys.includes('narrator')) continue // 확정 명단 밖 신규 금지(narrator 예외)
+      out.push({ ...sp, voice: sp.voice ?? null })
+      for (const k of keys) seen.add(k)
+    }
+    return out
   }
 
+  // §v2.8 B2 + FIX-5: rosterEnforced(확정 명단)일 때만 명단 밖 speaker의 *새 speaker 생성*을
+  // 폐지(검증화) — 명단 밖 seg.speaker는 scenes 스텝 최종 정규화(rewriteUnknownSegmentSpeakers)가
+  // narrator로 재기록해 흡수한다. 미확정/legacy(자유 모드)는 base HEAD처럼 referenced speaker를
+  // auto-add해 scenes와 speakers를 일치시킨다(audio voice 조회/voice 매핑 UI/Ref 후보 정합).
   function ensureReferencedSpeakers(nextSpeakers = [], scenes = [], fallbackSpeakers = []) {
+    const enforced = rosterEnforced()
     const out = [...(nextSpeakers || [])]
     const seen = new Set(out.flatMap(speakerReferenceKeys))
     const fallbackByKey = new Map()
@@ -198,9 +242,69 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const prev = fallbackByKey.get(key)
       if (prev) out.push(prev)
       else if (key === 'narrator') out.push({ id: 'narrator', name: '나레이션' })
-      else out.push({ id: String(seg.speaker).trim(), name: String(seg.speaker).trim() })
+      else if (!enforced) out.push({ id: String(seg.speaker).trim(), name: String(seg.speaker).trim() }) // FIX-5: 자유 모드 auto-add 복원
+      else continue // 확정 명단 밖 — 생성하지 않음(검증화). 최종 정규화가 narrator로 재기록.
       seen.add(key)
     }
+    return out
+  }
+
+  // §v2.9 MAJOR②: scenes 최종 정규화 — 명단 밖 seg.speaker를 'narrator'로 재기록(fuzzy 금지,
+  // findSpeakerByRef의 공백/대소문자 정규화 매칭만) + story:progress warn. scenes.json의 데이터
+  // 자체를 고쳐 audio 사전검증(voice not assigned) 하드실패를 막는다.
+  function rewriteUnknownSegmentSpeakers(scenes = [], speakers = [], opId) {
+    const unknown = new Set()
+    const out = (scenes || []).map((s) => ({
+      ...s,
+      segments: (s.segments || []).map((g) => {
+        if ((g.type || 'narration') !== 'narration') return g
+        if (findSpeakerByRef(speakers, g.speaker)) return g
+        unknown.add(String(g.speaker ?? '').trim())
+        return { ...g, speaker: 'narrator' }
+      }),
+    }))
+    if (unknown.size) {
+      sendStepLog('scenes', 'speaker-fallback',
+        `명단 밖 화자 → narrator 재기록: ${[...unknown].join(', ')}`, opId,
+        { level: 'warn', speakers: [...unknown] })
+    }
+    return { scenes: out, changed: unknown.size > 0 }
+  }
+
+  // FIX-1 + FIX-7: roster 강제(신규 speaker 금지 + 명단 밖 seg.speaker → narrator 재기록)의 단일 기준.
+  // charactersConfirmed는 phase 판정 마커일 뿐 — 강제는 "확정 + title/pasted 경로"가 성립할 때다.
+  // 확정된 빈 명단(나레이션-only)도 강제 대상(FIX-7 — 명단 밖 non-narrator는 narrator로 흡수).
+  // legacy(undefined)·미확정(false)·imported/manual은 자유 모드(FIX-5 auto-add 포함, 현행 유지).
+  function rosterEnforced() {
+    return state?.charactersConfirmed === true
+      && ['title', 'pasted'].includes(state?.input?.type)
+  }
+
+  // §v2.8 B2/§v2.9 MINOR②: splitScenes/reviseScenes에 주입할 확정 명단(id/name/role).
+  // rosterEnforced가 아니면(legacy 포함) null — 현행 프롬프트 무변경(회귀 고정).
+  // FIX-7: 확정 빈 명단은 null이 아닌 []를 반환 — buildRosterBlock이 "등장인물 없음, narrator만"을 주입.
+  function confirmedRoster() {
+    if (!rosterEnforced()) return null
+    return characterSpeakers().map((sp) => ({ id: sp.id || sp.name, name: sp.name, role: sp.role || '' }))
+  }
+
+  // characters[] → state.speakers 반영(§v2.2/§v2.8 B3/M2): 정규화(normalizeStoryCharacter) +
+  // 기존 speaker의 voice 승계(id/name 매칭) + narrator 시딩(기존 narrator는 voice째 보존).
+  function speakersFromCharacters(characters = []) {
+    const prev = state?.speakers || []
+    const out = []
+    const seen = new Set()
+    for (const raw of characters || []) {
+      const c = normalizeStoryCharacter(raw)
+      if (!c.id || isNarratorSpeaker(c)) continue
+      const key = referencedSpeakerKey(c.id)
+      if (seen.has(key)) continue
+      seen.add(key)
+      const p = findSpeakerByRef(prev, c.id) || findSpeakerByRef(prev, c.name)
+      out.push({ ...c, voice: p?.voice ?? null })
+    }
+    const prevNarrator = (prev || []).find((sp) => isNarratorSpeaker(sp))
+    out.push(prevNarrator || { id: 'narrator', name: '나레이션' })
     return out
   }
 
@@ -333,13 +437,22 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     .filter((sp) => !isNarratorSpeaker(sp) && (String(sp?.name || '').trim() || String(sp?.id || '').trim()))
     .map((sp) => ({ ...sp, name: sp.name || sp.id, appearance: sp.appearance || '' }))
 
+  // §v2.2/§v2.12: push payload용 구조화 캐릭터 — {name, gender, age, role, ethnicity, appearance}.
+  // characterSpeakers 소스. ethnicity는 renderer Ref upsert의 prompt 조합(인종 반영)에 쓰인다.
+  const structuredCharacter = (sp) => {
+    const c = normalizeStoryCharacter(sp)
+    return { name: c.name, gender: c.gender, age: c.age, role: c.role, ethnicity: c.ethnicity, appearance: c.appearance }
+  }
+
   // V2: 그 씬에 등장하는 캐릭터 이름 배열(speaker id→name, 캐릭터만, 유일, 등장순).
   function sceneCharacterNames(s) {
-    // @멘션은 레퍼런스 이미지에 바인딩되므로 appearance가 있는 캐릭터만 대상으로 한다.
-    // appearance가 없는(Ref 탭 pending 상태) 캐릭터는 characterSpeakers()엔 남아있지만 멘션 대상에서 제외.
+    // @멘션은 레퍼런스 이미지에 바인딩되므로 시각 정보(ethnicity/appearance 중 하나라도)가 있는
+    // 캐릭터만 대상으로 한다 — Ref 카드 prompt(characterVisualPrompt)와 동일 기준(§v2.12 FIX MAJOR:
+    // ethnicity-only 캐릭터가 카드엔 있는데 멘션에서 빠지는 불일치 방지). 둘 다 빈(Ref 탭 pending)
+    // 캐릭터는 characterSpeakers()엔 남아있지만 멘션 대상에서 제외.
     const chars = new Map(
       characterSpeakers()
-        .filter((sp) => sp.appearance && String(sp.appearance).trim())
+        .filter((sp) => characterVisualPrompt(sp))
         .map((sp) => [sp.id, sp.name])
     )
     const names = []
@@ -415,8 +528,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     const payload = {
       pushRevision: state.pendingPushRevision,
       scenes: scenes.map((s) => mapScene(s, byId.get(s.storyId))),
-      // V2: 캐릭터 레퍼런스 카드 등록용 — appearance 있는 non-narrator speaker(이름+외형).
-      storyCharacters: characterSpeakers().map((sp) => ({ name: sp.name, appearance: sp.appearance })),
+      // V2/§v2.2: 캐릭터 레퍼런스 카드 등록용 — 확정 speakers 파생 구조화 필드(name/gender/age/role/appearance).
+      storyCharacters: characterSpeakers().map(structuredCharacter),
     }
     // 실측 라인이 있을 때만 srtTrack 전송 — renderer가 wholesale 교체(대략 모드는 미전송→기존 유지).
     if (srtTrack.length) payload.srtTrack = srtTrack
@@ -424,12 +537,14 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   }
 
   function sendCharacters(operationId) {
-    const storyCharacters = characterSpeakers().map((sp) => ({ name: sp.name, appearance: sp.appearance || '' }))
+    const storyCharacters = characterSpeakers().map(structuredCharacter)
     if (storyCharacters.length) send('story:pushCharacters', { storyCharacters }, operationId)
   }
 
+  // §v2.8 M1: 게이트를 "characters 확정됨"으로 앞당김 — 확정 시점부터 Ref 카드가 생긴다.
+  // legacy(미확정)는 기존 scenes-done 게이트 유지.
   function maybeSendCharacters(operationId) {
-    if (state?.steps?.scenes?.status === 'done') sendCharacters(operationId)
+    if (state?.charactersConfirmed === true || state?.steps?.scenes?.status === 'done') sendCharacters(operationId)
   }
 
   // Important: Story 뷰 ②/④ 패널(씬 세그먼트·프롬프트)이 실데이터를 그리려면 scenes.json
@@ -454,6 +569,24 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     if (!raw) return []
     try { return JSON.parse(raw).scenes || [] } catch { return [] }
   }
+
+  // §3.3 + §v2.10: hydrate payload — renderer가 synopsis phase/게이트 복원을 판단할 재료.
+  // characters는 state.speakers 단일 저장에서 파생(m3). charactersConfirmed는 3-state 그대로
+  // 노출(undefined=legacy) — phase 판정 로직은 renderer(S5) 소관.
+  async function hydrateExtras() {
+    const synopsisText = (await store.loadText('synopsis.md')) || ''
+    return {
+      synopsisText,
+      hasSynopsis: !!synopsisText.trim(),
+      characters: characterSpeakers().map((sp) => normalizeStoryCharacter(sp)),
+      charactersConfirmed: state?.charactersConfirmed,
+    }
+  }
+
+  // FIX-1: (§v2.10 legacy migrate 폐기) legacy(charactersConfirmed=undefined)는 undefined
+  // 그대로 둔다 — true를 durable 기록하면 rosterEnforced가 legacy를 roster 강제로 오해석해
+  // scenes 재실행 시 LLM speaker를 narrator로 뭉갠다(회귀). "undefined + script done → editor"
+  // phase 판정은 renderer(StoryView hydrate ④분기)가 직접 수행한다.
 
   async function maybeResendPush(operationId) {
     if (!state) state = await store.load()
@@ -494,6 +627,9 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       if (params.pastedScript) {
         // title 보존 — 재오픈 hydrate가 제목/옵션을 복원하려면 main source of truth에 남겨야 한다.
         state.input = { type: 'pasted', title: params.input?.title, options: normalizeLlmOptions(params.options) }
+        // §v2.11: 신규 pasted는 등장인물 미확정 마커를 durable로 남긴다 — script done이 되어도
+        // 재오픈 시 역추출 게이트(synopsis phase)가 유지된다. undefined(legacy)와 구분되는 false.
+        state.charactersConfirmed = false
         // HIGH: abort 직후 파일 쓰기 자체를 막는 방어 가드 — start() 래퍼의 결과 처리 가드와
         // 별개로, 취소된 스텝이 디스크에 흔적을 남기지 않도록 saveText 직전에 한 번 더 확인한다.
         if (signal?.aborted) return
@@ -506,7 +642,29 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const metaPrompt = loadMetaPrompt
         ? await loadMetaPrompt({ genre: inputOptions.genre, wave: 'script', language })
         : ''
-      const opts = buildLlmOptions(inputOptions, { metaPrompt })
+      // §3.3 (Codex #5/R2 #4): synopsis 결정 — params.synopsis의 present 여부로 분기.
+      // present면 그 값만 신뢰(trim, blank면 폴백 없이 미주입), absent면 effective type이
+      // 'title'일 때만 synopsis.md 폴백(pasted/manual/continue에 stale 누출 금지).
+      let synopsis
+      if ('synopsis' in params) {
+        const eff = typeof params.synopsis === 'string' ? params.synopsis.trim() : ''
+        if (eff) {
+          await store.saveText('synopsis.md', eff)
+          synopsis = eff
+        }
+      } else if ((params.input?.type ?? state.input?.type) === 'title') {
+        synopsis = ((await store.loadText('synopsis.md')) || '').trim() || undefined
+      }
+      // §v2.8 M3: 확정 등장인물 명단(state.speakers 파생)을 시나리오 프롬프트에 주입 —
+      // 대본 첫 소비자부터 이름 어긋남 차단. 미확정(legacy)은 현행 그대로.
+      const characters = state.charactersConfirmed === true
+        ? characterSpeakers().map((sp) => normalizeStoryCharacter(sp))
+        : []
+      const opts = buildLlmOptions(inputOptions, {
+        metaPrompt,
+        ...(synopsis ? { synopsis } : {}),
+        ...(characters.length ? { characters } : {}),
+      })
       const gen = await llm.generateScript(state.input, opts, {
         onDelta: (text) => send('story:delta', { text }, opId), signal,
       })
@@ -530,19 +688,32 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         if (!scriptMd) throw new Error('script.md not found — run script step first')
         const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
         if (!scenesJson) throw new Error('scenes.json not found — run scenes step first')
-        const opts = buildLlmOptions(effectiveOptions(params))
+        const roster = confirmedRoster()
+        const opts = buildLlmOptions(effectiveOptions(params), roster ? { roster } : {})
         const cfg = reviewConfig(opts, 'scenes')
         if (!cfg.enabled) return { changed: false }
         sendStepLog('scenes', 'review-start', '씬 분리 검수 시작', opId)
         const reviewed = await reviewScenesCandidate(scriptMd, scenesJson.scenes || [], state.speakers || [], opts, cfg.rounds, opId, signal)
         if (signal?.aborted) return
-        if (reviewed.changed) {
-          sendStepLog('scenes', 'review-save', '검수 반영 씬 저장', opId)
-          await store.saveText('scenes.json', JSON.stringify({ scenes: reviewed.scenes }, null, 2))
-          state.speakers = reviewed.speakers
+        // §v2.9 MAJOR② + FIX-1: 최종 정규화(명단 밖 → narrator)는 rosterEnforced일 때만 —
+        // legacy(미확정)는 자유 speaker를 유지한다(재기록 없음).
+        let reviewedSpeakers = reviewed.speakers
+        let reviewedScenes = reviewed.scenes
+        let rewriteChanged = false
+        if (rosterEnforced()) {
+          const rewritten = rewriteUnknownSegmentSpeakers(reviewedScenes, reviewedSpeakers, opId)
+          reviewedScenes = rewritten.scenes
+          rewriteChanged = rewritten.changed
+          if (rewritten.changed) reviewedSpeakers = ensureReferencedSpeakers(reviewedSpeakers, reviewedScenes, state.speakers || [])
         }
-        sendStepLog('scenes', 'review-complete', reviewed.changed ? '씬 검수 반영 완료' : '씬 검수 변경 없음', opId)
-        return { changed: reviewed.changed }
+        const changed = reviewed.changed || rewriteChanged
+        if (changed) {
+          sendStepLog('scenes', 'review-save', '검수 반영 씬 저장', opId)
+          await store.saveText('scenes.json', JSON.stringify({ scenes: reviewedScenes }, null, 2))
+          state.speakers = reviewedSpeakers
+        }
+        sendStepLog('scenes', 'review-complete', changed ? '씬 검수 반영 완료' : '씬 검수 변경 없음', opId)
+        return { changed }
       }
 
       // 대본 재설계: 편집된 대본으로 씬 분리 — 공백이면 기존 script.md를 보존하고 실패시킨다.
@@ -559,7 +730,9 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       }
       const scriptMd = await store.loadText('script.md')
       if (!scriptMd) throw new Error('script.md not found — run script step first')
-      const opts = buildLlmOptions(effectiveOptions(params))
+      // §v2.8 B2: 확정 명단을 분리/검토 프롬프트에 주입 — 배정을 명단에 묶는다(새 인물 생성 금지).
+      const roster = confirmedRoster()
+      const opts = buildLlmOptions(effectiveOptions(params), roster ? { roster } : {})
       sendStepLog('scenes', 'split-request', 'LLM 씬 분리 요청', opId)
       const { scenes, speakers } = await llm.splitScenes(scriptMd, opts, { signal })
       if (signal?.aborted) return
@@ -577,6 +750,14 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         nextScenes = reviewed.scenes
         nextSpeakers = reviewed.speakers
         sendStepLog('scenes', 'review-complete', '씬 분리 검수 완료', opId)
+      }
+      // §v2.9 MAJOR② + FIX-1: 최종 정규화(검토루프 이후, 저장/sendPush 전) — 명단 밖
+      // seg.speaker의 narrator 재기록은 rosterEnforced(확정 명단)일 때만. legacy(미확정)는
+      // 자유 speaker 유지. 재기록이 있었으면 narrator 시딩을 재보장한다(§v2.8 B2 예외 유지).
+      if (rosterEnforced()) {
+        const rewritten = rewriteUnknownSegmentSpeakers(nextScenes, nextSpeakers, opId)
+        nextScenes = rewritten.scenes
+        if (rewritten.changed) nextSpeakers = ensureReferencedSpeakers(nextSpeakers, nextScenes, state.speakers || [])
       }
       sendStepLog('scenes', 'save', 'scenes.json 저장', opId)
       await store.saveText('scenes.json', JSON.stringify({ scenes: nextScenes }, null, 2))
@@ -862,8 +1043,9 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       maybeSendCharacters()
       const scenes = await loadScenesForPayload()
       const scriptText = (await store.loadText('script.md')) || ''
-      send('story:state', { state, scenes, scriptText })
-      return { projectToken, state, scenes, scriptText }
+      const extras = await hydrateExtras()
+      send('story:state', { state, scenes, scriptText, ...extras })
+      return { projectToken, state, scenes, scriptText, ...extras }
     },
     // M2a-4 IP-A2: export(renderer)가 story 나레이션 배치에 쓸 { manifest, lastPushedRevision }.
     // renderer 엔 둘 다 없어 main 이 실어 준다. 정합 판단(pushRevision 일치)은 renderer 몫 — 여기선
@@ -883,7 +1065,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const scriptText = (await store.loadText('script.md')) || ''
       // 기존 top-level 필드(steps/speakers/...)는 그대로 접근 가능하도록 spread — story.json에는
       // scenes를 쓰지 않으므로(flush 시 이 반환값이 아니라 내부 state 변수를 저장) 안전하다.
-      return { ...state, scenes, scriptText }
+      return { ...state, scenes, scriptText, ...(await hydrateExtras()) }
     },
     // 슬라이스1(세그먼트 단건 테스트): 지정 세그먼트만 합성·저장하고 스텝 상태·push·regroup은
     // 건드리지 않는다. 배치(start('audio'))와 분리된 미리듣기/테스트 경로. 저장 오디오는 배치가 재사용.
@@ -891,7 +1073,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // Codex-TTS HIGH2: preview는 스텝 밖 mutation이라 배치/다른 preview와 경쟁하면 scenes.json을
       // 옛 스냅샷으로 덮어쓸 수 있다 — 진행 중 스텝/preview가 있으면 거부하고, 커밋 직전 최신
       // scenes.json에 세그먼트 단위로 병합한다.
-      if (previewing || (state && Object.values(state.steps || {}).some((s) => s.status === 'running'))) return { busy: true }
+      if (previewing || synopsisController || (state && Object.values(state.steps || {}).some((s) => s.status === 'running'))) return { busy: true }
       previewing = true
       try {
         const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
@@ -953,12 +1135,91 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const opts = buildLlmOptions({ ...(state?.input?.options || {}), ...(options || {}) })
       return llm.generateTitle(scriptMd, opts, {})
     },
+    // §3.3 + §v2.8 M4 + §v2.11: 시놉시스 생성 side action — 실행 스텝이 아니다(step status 불변).
+    // 전용 operationId 라이프사이클: delta 전에 started 신호를 같은 채널(story:synopsis-delta)로
+    // 단일 계약 송신 → renderer가 synopsisActiveOpRef를 세팅한다. busy/abort는 step/preview와 대칭.
+    async generateSynopsis(params = {}) {
+      if (!state) state = await store.load()
+      if (previewing || synopsisController || Object.values(state.steps || {}).some((s) => s.status === 'running')) {
+        return { error: 'busy' }
+      }
+      const type = params.type === 'pasted' ? 'pasted' : 'title'
+      const operationId = randomUUID()
+      const myController = new AbortController()
+      synopsisController = myController
+      try {
+        send('story:synopsis-delta', { phase: 'started', text: '' }, operationId)
+        const inputOptions = normalizeLlmOptions(params.options)
+        if (type === 'title') {
+          // §v2.11: title 경로 진입 시점에 미확정 마커를 durable 기록 — undefined(legacy)와 구분.
+          state.charactersConfirmed = false
+          await flush()
+        }
+        // 옵션 빌드는 script 스텝 미러 — metaPrompt는 wave:'script' 재사용(Codex R2 #3, 신규 wave 없음).
+        const language = inputOptions.language || state.input?.options?.language || 'ko'
+        const metaPrompt = loadMetaPrompt
+          ? await loadMetaPrompt({ genre: inputOptions.genre, wave: 'script', language })
+          : ''
+        const opts = buildLlmOptions(inputOptions, { metaPrompt })
+        const input = type === 'pasted'
+          ? { type: 'pasted', pastedScript: params.pastedScript } // B1: state.input은 script 분기가 이미 저장 — 덮어쓰지 않음
+          : { type: 'title', title: params.title }
+        const { synopsisMd, characters } = await llm.generateSynopsis(input, opts, {
+          onDelta: (text) => send('story:synopsis-delta', { text }, operationId),
+          signal: myController.signal,
+        })
+        if (myController.signal.aborted) throw new Error('aborted')
+        if (type === 'title') {
+          // 게이트 후 script 전에 종료해도 title/options가 유실되지 않게 durable 저장(Codex #2).
+          await store.saveText('synopsis.md', synopsisMd || '')
+          state.input = { type: 'title', title: params.title, options: inputOptions }
+        }
+        // characters는 state.speakers 단일 저장(m3 — characters.json 없음). 재오픈 hydrate가
+        // 여기서 파생하고, 기존 voice 배정은 승계된다. step status는 안 건드림.
+        state.speakers = speakersFromCharacters(characters)
+        await flush()
+        return { synopsisMd, characters }
+      } finally {
+        if (synopsisController === myController) synopsisController = null
+      }
+    },
+    // §v2.8 M1 + §v2.9(title·pasted 공통 커밋 채널) + §v2.10(동시성 가드): 시놉시스 확정.
+    // characters→state.speakers 반영(정규화 + narrator 시딩 + voice 보존) + charactersConfirmed=true
+    // + flush + story:pushCharacters emit(Ref 카드 생성 시점을 확정으로 앞당김). script는 건드리지
+    // 않는다 — title 경로의 재생성은 renderer가 confirm 완료 후 start('script')를 순차 호출(§v2.10).
+    async confirmSynopsis({ synopsisMd, characters = [] } = {}) {
+      if (!state) state = await store.load()
+      if (previewing || synopsisController || Object.values(state.steps || {}).some((s) => s.status === 'running')) {
+        return { error: 'busy' }
+      }
+      const operationId = randomUUID()
+      state.speakers = speakersFromCharacters(characters)
+      state.charactersConfirmed = true
+      if (typeof synopsisMd === 'string' && synopsisMd.trim()) await store.saveText('synopsis.md', synopsisMd)
+      await flush()
+      sendCharacters(operationId)
+      return { ok: true, operationId }
+    },
     async start(step, params = {}) {
       if (!steps[step]) throw new Error(`unknown step: ${step}`)
       // HIGH: 어떤 스텝이든 running이면 새 start()는 실행하지 않는다 — 동시 실행이 같은
       // story.json/scenes.json에 경쟁적으로 쓰는 것을 막는다. abort()는 running을 동기적으로
       // error로 마킹하므로, abort 후에는 이 가드에 걸리지 않고 정상 재시작할 수 있다.
-      if (previewing || Object.values(state.steps).some((s) => s.status === 'running')) return { error: 'busy' }
+      // §3.3(Codex R2 #2): synopsis side action 진행 중에도 busy — step/preview/synopsis 상호배제.
+      if (previewing || synopsisController || Object.values(state.steps).some((s) => s.status === 'running')) return { error: 'busy' }
+      // FIX-2: 미확정 게이트 — 신규(title/pasted) 프로젝트(charactersConfirmed===false)는 synopsis
+      // 확정 전까지 하류(scenes/audio/prompts)를 거부한다(§v2.8 B1/§v2.11 게이트 우회 차단).
+      // script(붙여넣기 저장/제목 생성)는 게이트 전 단계라 허용. legacy(undefined)는 미적용(FIX-1).
+      if (step !== 'script'
+        && ['title', 'pasted'].includes(state?.input?.type)
+        && state.charactersConfirmed === false) return { error: 'unconfirmed' }
+      // FIX-6: pasted 미확정은 script *재생성*(이어쓰기/다시쓰기/검토)도 게이트 대상 — §v2.8 B1:
+      // 확정 전 붙여넣은 script는 건드리지 않는다. 재붙여넣기(pastedScript)는 게이트 전 저장이라 허용.
+      // title 미확정의 최초 script 생성은 기존대로 허용(FIX-2 — script 스텝은 게이트 전 단계).
+      if (step === 'script'
+        && state?.input?.type === 'pasted'
+        && state.charactersConfirmed === false
+        && !params.pastedScript) return { error: 'unconfirmed' }
       const operationId = randomUUID()
       const myController = new AbortController()
       controller = myController
@@ -994,12 +1255,14 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         await flush()
         if (step === 'scenes' && state.steps[step]?.status === 'done') sendCharacters(operationId)
         if (pushScenes) sendPush(pushScenes, operationId)
-        send('story:state', { state, scenes: await loadScenesForPayload(), scriptText: (await store.loadText('script.md')) || '' }, operationId)
+        send('story:state', { state, scenes: await loadScenesForPayload(), scriptText: (await store.loadText('script.md')) || '', ...(await hydrateExtras()) }, operationId)
       }
       return { operationId }
     },
     async abort() {
       controller?.abort()
+      // §3.3: synopsis side action도 대칭 중단 — 프로젝트 전환/open cleanup 경로 공용.
+      synopsisController?.abort()
       // 중단 시점에 running인 스텝은 동기적으로 terminal 마킹 — 이후 다른 스텝 시작으로
       // controller가 교체돼도 running 잔류가 없도록. stale settle의 상태 쓰기는 캡처 가드가 차단.
       for (const [name, s] of Object.entries(state?.steps || {})) {

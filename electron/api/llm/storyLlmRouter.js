@@ -2,6 +2,7 @@ import { normalizeStoryLlmOptions } from './storyLlmCatalog.js'
 
 const METHOD_OPTION_INDEX = {
   generateScript: 1,
+  generateSynopsis: 1,
   splitScenes: 1,
   writePrompts: 2,
   generateTitle: 1,

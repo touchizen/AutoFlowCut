@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt, buildTitlePrompt, buildContinuePrompt, buildReviewPrompt, buildRevisePrompt } from '../../../../electron/api/llm/prompts.js'
+import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt, buildTitlePrompt, buildContinuePrompt, buildReviewPrompt, buildRevisePrompt, buildScenesRevisePrompt, buildSynopsisPrompt, buildCharacterExtractPrompt } from '../../../../electron/api/llm/prompts.js'
 
 describe('buildScriptPrompt 길이 단위', () => {
   it('min 단위는 "약 N분"', () => {
@@ -152,5 +152,207 @@ describe('buildPromptsPrompt appearance 컨텍스트(V2)', () => {
     const p = buildPromptsPrompt(scenes, { style: null, speakers: [{ id: 'a', name: '민수', appearance: 'tall man in black coat' }] }, { language: 'en' })
     expect(p).toContain('tall man in black coat')
     expect(p).toContain('민수')
+  })
+
+  it('§v2.12: speakers[].ethnicity가 있으면 외형 앞에 조합해 씬 프롬프트에 인종을 반영한다', () => {
+    const scenes = [{ sceneNo: 1, summary: 'S1', segments: [{ speaker: 'a', text: 'hi' }] }]
+    const p = buildPromptsPrompt(scenes, {
+      style: null,
+      speakers: [{ id: 'a', name: '민수', ethnicity: 'Korean', appearance: 'tall man in black coat' }],
+    }, { language: 'en' })
+    expect(p).toContain('민수: Korean, tall man in black coat')
+  })
+
+  it('§v2.12: ethnicity가 없으면 appearance만(현행 동일)', () => {
+    const scenes = [{ sceneNo: 1, summary: 'S1', segments: [{ speaker: 'a', text: 'hi' }] }]
+    const p = buildPromptsPrompt(scenes, { style: null, speakers: [{ id: 'a', name: '민수', appearance: 'tall man in black coat' }] }, { language: 'en' })
+    expect(p).toContain('민수: tall man in black coat')
+  })
+
+  // §v2.12 코드리뷰 FIX(MAJOR): appearance truthy에만 묶인 필터는 ethnicity-only 캐릭터를
+  // 씬 프롬프트 컨텍스트에서 누락시킨다(Ref 카드엔 있는데 씬엔 없음 — 인종 미반영).
+  it('§v2.12 FIX: appearance가 비어도 ethnicity만 있으면 등장인물 컨텍스트에 포함한다', () => {
+    const scenes = [{ sceneNo: 1, summary: 'S1', segments: [{ speaker: 'a', text: 'hi' }] }]
+    const p = buildPromptsPrompt(scenes, { style: null, speakers: [{ id: 'a', name: '민수', ethnicity: 'Korean', appearance: '' }] }, { language: 'en' })
+    expect(p).toContain('민수: Korean')
+  })
+
+  it('§v2.12 FIX: ethnicity/appearance 둘 다 빈 값이면 기존대로 제외(회귀 고정)', () => {
+    const scenes = [{ sceneNo: 1, summary: 'S1', segments: [{ speaker: 'a', text: 'hi' }] }]
+    const p = buildPromptsPrompt(scenes, { style: null, speakers: [{ id: 'a', name: '민수', ethnicity: '', appearance: '' }] }, { language: 'en' })
+    expect(p).not.toContain('민수:')
+    expect(p).not.toContain('등장인물 외형')
+  })
+})
+
+describe('buildSynopsisPrompt (시놉시스 게이트 §v2.4)', () => {
+  it('제목·로그라인·도입/전개/전환/결말 방향 지시를 포함', () => {
+    const p = buildSynopsisPrompt({ title: '사라진 왕의 반지' }, { language: 'ko' })
+    expect(p).toContain('제목: 사라진 왕의 반지')
+    expect(p).toContain('로그라인')
+    expect(p).toContain('도입')
+    expect(p).toContain('전개')
+    expect(p).toContain('전환')
+    expect(p).toContain('결말')
+    expect(p).toContain('한국어')
+  })
+  it('영어 지정 시 영어 작성 지시', () => {
+    expect(buildSynopsisPrompt({ title: 'T' }, { language: 'en' })).toContain('영어')
+  })
+  it('대사·씬 번호 없이 줄글 개요만 지시', () => {
+    const p = buildSynopsisPrompt({ title: 'T' }, { language: 'ko' })
+    expect(p).toMatch(/대사/)
+    expect(p).toMatch(/씬 번호/)
+    expect(p).toMatch(/줄글/)
+  })
+  it('등장인물 구조화 필드(name/gender/age/role/ethnicity/appearance) JSON 산출 지시', () => {
+    const p = buildSynopsisPrompt({ title: 'T' }, { language: 'ko' })
+    expect(p).toContain('CHARACTERS_JSON')
+    expect(p).toContain('"name"')
+    expect(p).toContain('"gender"')
+    expect(p).toContain('"age"')
+    expect(p).toContain('"role"')
+    expect(p).toContain('"ethnicity"')
+    expect(p).toContain('"appearance"')
+    expect(p).toMatch(/male.*female.*unknown/)
+  })
+  it('장르·톤·길이를 반영', () => {
+    const p = buildSynopsisPrompt({ title: 'T' }, { language: 'ko', genre: 'yadam', tone: '음산한', lengthValue: 8, lengthUnit: 'min' })
+    expect(p).toContain('장르: yadam')
+    expect(p).toContain('톤: 음산한')
+    expect(p).toContain('약 8분')
+  })
+  it('metaPrompt가 있으면 CUSTOM INSTRUCTIONS 블록을 앞에 넣는다', () => {
+    const p = buildSynopsisPrompt({ title: 'T' }, { language: 'ko', metaPrompt: 'META-SYN-1' })
+    expect(p).toContain('## CUSTOM INSTRUCTIONS')
+    expect(p).toContain('META-SYN-1')
+    expect(p.indexOf('META-SYN-1')).toBeLessThan(p.indexOf('제목: T'))
+  })
+  it('metaPrompt가 없으면 CUSTOM INSTRUCTIONS 블록이 없다', () => {
+    expect(buildSynopsisPrompt({ title: 'T' }, { language: 'ko' })).not.toContain('CUSTOM INSTRUCTIONS')
+  })
+})
+
+describe('buildCharacterExtractPrompt (붙여넣기 역추출 §v2.4/§v2.8 M4)', () => {
+  it('붙여넣은 대본 본문을 포함', () => {
+    expect(buildCharacterExtractPrompt('PASTED-SCRIPT-BODY', { language: 'ko' })).toContain('PASTED-SCRIPT-BODY')
+  })
+  it('같은 구조화 스키마(name/gender/age/role/ethnicity/appearance)로 JSON 배열만 반환 지시', () => {
+    const p = buildCharacterExtractPrompt('S', { language: 'ko' })
+    expect(p).toContain('"name"')
+    expect(p).toContain('"gender"')
+    expect(p).toContain('"age"')
+    expect(p).toContain('"role"')
+    expect(p).toContain('"ethnicity"')
+    expect(p).toContain('"appearance"')
+    expect(p).toMatch(/male.*female.*unknown/)
+    expect(p).toContain('JSON')
+  })
+  it('줄거리(시놉시스) 생성 지시를 포함하지 않는다', () => {
+    const p = buildCharacterExtractPrompt('S', { language: 'ko' })
+    expect(p).not.toContain('로그라인')
+    expect(p).not.toContain('시놉시스')
+    expect(p).not.toContain('줄거리')
+  })
+})
+
+describe('buildScriptPrompt synopsis 주입(§3.2)', () => {
+  it('opts.synopsis가 있으면 시놉시스 컨텍스트 블록을 포함', () => {
+    const p = buildScriptPrompt({ title: 'T' }, { language: 'ko', synopsis: 'SYNOPSIS-BODY-42' })
+    expect(p).toContain('SYNOPSIS-BODY-42')
+    expect(p).toMatch(/시놉시스를 따라/)
+  })
+  it('opts.synopsis가 없으면 현행과 동일(시놉시스 미언급)', () => {
+    const p = buildScriptPrompt({ title: 'T' }, { language: 'ko' })
+    expect(p).not.toContain('시놉시스')
+  })
+})
+
+describe('buildScriptPrompt characters 주입(§v2.8 M3)', () => {
+  it('opts.characters가 있으면 명단과 정확한 이름만 사용 지시를 포함', () => {
+    const p = buildScriptPrompt({ title: 'T' }, {
+      language: 'ko',
+      characters: [
+        { name: '강리안', gender: 'male', age: '20대', role: '주인공', appearance: 'young man in hanbok' },
+        { name: '월향', gender: 'female', age: '30대', role: '기생', appearance: 'woman in silk dress' },
+      ],
+    })
+    expect(p).toContain('강리안')
+    expect(p).toContain('월향')
+    expect(p).toMatch(/정확한 이름/)
+    expect(p).toMatch(/새 인물|새로운 인물/)
+  })
+  it('§v2.12: characters에 ethnicity가 있으면 명단 블록에 표기한다', () => {
+    const p = buildScriptPrompt({ title: 'T' }, {
+      language: 'ko',
+      characters: [
+        { name: '강리안', gender: 'male', age: '20대', role: '주인공', ethnicity: '한국인', appearance: 'young man in hanbok' },
+      ],
+    })
+    expect(p).toContain('한국인')
+  })
+  it('opts.characters가 없으면 현행과 동일(명단 블록 없음)', () => {
+    const p = buildScriptPrompt({ title: 'T' }, { language: 'ko' })
+    expect(p).not.toMatch(/정확한 이름/)
+    expect(p).not.toContain('명단')
+  })
+  it('opts.characters가 빈 배열이면 명단 블록을 넣지 않는다', () => {
+    const p = buildScriptPrompt({ title: 'T' }, { language: 'ko', characters: [] })
+    expect(p).not.toMatch(/정확한 이름/)
+  })
+})
+
+describe('buildSplitPrompt roster 주입(§v2.8 B2)', () => {
+  const roster = [
+    { id: '강리안', name: '강리안', role: '주인공' },
+    { id: 'narrator', name: '나레이션' },
+  ]
+  it('opts.roster가 있으면 명단 id만 speaker로 사용·새 인물 금지 지시를 포함', () => {
+    const p = buildSplitPrompt('S', { language: 'ko', roster })
+    expect(p).toContain('강리안')
+    expect(p).toMatch(/명단/)
+    expect(p).toMatch(/id만/)
+    expect(p).toMatch(/새 인물/)
+  })
+  it('roster의 id를 문자열 그대로 쓰라고 지시(id 표기 포함)', () => {
+    const p = buildSplitPrompt('S', { language: 'ko', roster })
+    expect(p).toContain('"강리안"')
+    expect(p).toContain('그대로')
+  })
+  it('opts.roster가 없으면 현행과 동일(명단 블록 없음)', () => {
+    const p = buildSplitPrompt('S', { language: 'ko' })
+    expect(p).not.toMatch(/명단/)
+  })
+  // FIX-7: 확정 빈 명단(나레이션-only)은 roster=[]로 주입된다 — "등장인물 없음, narrator만" 제약.
+  it('opts.roster가 빈 배열(확정 빈 명단)이면 narrator-only 제약을 넣는다', () => {
+    const p = buildSplitPrompt('S', { language: 'ko', roster: [] })
+    expect(p).toMatch(/명단.*없음/)
+    expect(p).toContain('"narrator"만')
+    expect(p).toMatch(/새 인물을 만들지 마라/)
+  })
+})
+
+describe('buildScenesRevisePrompt roster 주입(§v2.9 MINOR②)', () => {
+  const args = ['SCRIPT-MD', [{ sceneNo: 1 }], [{ id: 'a', name: 'A' }], 'CRITIQUE-1']
+  it('critique·대본·scenes를 포함(현행 유지)', () => {
+    const p = buildScenesRevisePrompt(...args, { language: 'ko' })
+    expect(p).toContain('CRITIQUE-1')
+    expect(p).toContain('SCRIPT-MD')
+    expect(p).toContain('SCENES_SCHEMA')
+  })
+  it('opts.roster가 있으면 명단 id 제약을 포함', () => {
+    const p = buildScenesRevisePrompt(...args, { language: 'ko', roster: [{ id: '강리안', role: '주인공' }] })
+    expect(p).toContain('"강리안"')
+    expect(p).toMatch(/명단/)
+    expect(p).toMatch(/새 인물/)
+  })
+  it('opts.roster가 없으면 명단 블록 없음(회귀)', () => {
+    const p = buildScenesRevisePrompt(...args, { language: 'ko' })
+    expect(p).not.toMatch(/명단/)
+  })
+  it('opts.roster가 빈 배열이면 narrator-only 제약 포함 (FIX-7)', () => {
+    const p = buildScenesRevisePrompt(...args, { language: 'ko', roster: [] })
+    expect(p).toMatch(/명단.*없음/)
+    expect(p).toContain('"narrator"만')
   })
 })

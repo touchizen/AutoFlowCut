@@ -15,6 +15,7 @@ function adapters() {
       reviseScenes: vi.fn(async () => ({ scenes: [], speakers: [] })),
       reviewPrompts: vi.fn(async () => ({ verdict: 'pass', critique: '' })),
       revisePrompts: vi.fn(async (scenes) => ({ scenes })),
+      generateSynopsis: vi.fn(async () => ({ synopsisMd: 'claude synopsis', characters: [] })),
     },
     codex: {
       generateScript: vi.fn(async () => ({ scriptMd: 'codex script' })),
@@ -28,6 +29,7 @@ function adapters() {
       reviseScenes: vi.fn(async () => ({ scenes: [{ sceneNo: 1 }], speakers: [] })),
       reviewPrompts: vi.fn(async () => ({ verdict: 'revise', critique: 'codex prompt fix' })),
       revisePrompts: vi.fn(async (scenes) => ({ scenes })),
+      generateSynopsis: vi.fn(async () => ({ synopsisMd: 'codex synopsis', characters: [{ id: '강리안', name: '강리안' }] })),
     },
   }
 }
@@ -73,6 +75,37 @@ describe('storyLlmRouter', () => {
     expect(a.codex.reviewPrompts).toHaveBeenCalledWith([], {}, expect.objectContaining({ engine: 'codex', model: 'gpt-5.4', reasoningEffort: 'high' }), { signal: 's' })
     expect(a.codex.revisePrompts).toHaveBeenCalledWith([], {}, 'fix', expect.objectContaining({ engine: 'codex', model: 'gpt-5.4', reasoningEffort: 'high' }), { signal: 's' })
     expect(a.claude.reviewScenes).not.toHaveBeenCalled()
+  })
+
+  it('generateSynopsis를 노출하고 opts(index 1) 기준으로 engine dispatch한다', async () => {
+    const a = adapters()
+    const router = createStoryLlmRouter(a)
+    const ctx = { onDelta: vi.fn(), signal: 's' }
+
+    const r1 = await router.generateSynopsis({ type: 'title', title: 'T' }, { model: 'claude-opus-4-8' }, ctx)
+    expect(r1).toEqual({ synopsisMd: 'claude synopsis', characters: [] })
+    expect(a.claude.generateSynopsis).toHaveBeenCalledWith(
+      { type: 'title', title: 'T' },
+      expect.objectContaining({ engine: 'claude', model: 'claude-opus-4-8' }),
+      ctx,
+    )
+    expect(a.codex.generateSynopsis).not.toHaveBeenCalled()
+
+    const r2 = await router.generateSynopsis({ type: 'pasted', pastedScript: 'S' }, { engine: 'codex', model: 'gpt-5.5', reasoningEffort: 'high' }, ctx)
+    expect(r2).toEqual({ synopsisMd: 'codex synopsis', characters: [{ id: '강리안', name: '강리안' }] })
+    expect(a.codex.generateSynopsis).toHaveBeenCalledWith(
+      { type: 'pasted', pastedScript: 'S' },
+      expect.objectContaining({ engine: 'codex', model: 'gpt-5.5', reasoningEffort: 'high' }),
+      ctx,
+    )
+  })
+
+  it('generateSynopsis 미구현 adapter는 명확한 에러로 실패한다', async () => {
+    const a = adapters()
+    delete a.codex.generateSynopsis
+    const router = createStoryLlmRouter(a)
+    await expect(router.generateSynopsis({ type: 'title', title: 'T' }, { engine: 'codex', model: 'gpt-5.5' }, {}))
+      .rejects.toThrow(/does not implement generateSynopsis/)
   })
 
   it('알 수 없는 explicit Codex 모델은 Claude로 fallback하지 않고 실패한다', async () => {
