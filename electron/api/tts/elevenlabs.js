@@ -37,6 +37,14 @@ function firstLanguage(voice) {
   return verified?.locale || verified?.language || voice?.language || 'multi'
 }
 
+function previewUrl(voice) {
+  if (voice?.preview_url) return voice.preview_url
+  const verified = Array.isArray(voice?.verified_languages)
+    ? voice.verified_languages.find((lang) => lang?.preview_url)
+    : null
+  return verified?.preview_url || null
+}
+
 function structuredGender(raw) {
   const g = String(raw || '').toLowerCase()
   return g === 'male' || g === 'female' ? g : null
@@ -49,7 +57,7 @@ function normalizeAccountVoice(voice) {
     id: voice.voice_id,
     name: voice.name || voice.voice_id,
     language: firstLanguage(voice),
-    previewUrl: voice.preview_url || null,
+    previewUrl: previewUrl(voice),
     traits: compactTraits([labels.gender, labels.accent, labels.age, voice.category]),
     gender,
     genderSource: gender ? 'adapter' : null,
@@ -63,7 +71,7 @@ function normalizeSharedVoice(voice) {
     id: voice.voice_id,
     name: voice.name || voice.voice_id,
     language: voice.language || voice.locale || firstLanguage(voice),
-    previewUrl: voice.preview_url || null,
+    previewUrl: previewUrl(voice),
     traits: compactTraits([voice.gender, voice.age, voice.accent, voice.descriptive, voice.use_case, voice.category]),
     gender,
     genderSource: gender ? 'adapter' : null,

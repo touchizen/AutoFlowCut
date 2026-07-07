@@ -31,6 +31,27 @@ it('play() rejection sets status to error', async () => {
   await waitFor(() => expect(result.current.state.status).toBe('error'))
 })
 
+it('empty preview audio sets status to error instead of playing silence', async () => {
+  window.electronAPI.ttsPreviewVoice = vi.fn(async () => ({ audioBase64: '', mimeType: 'audio/mpeg' }))
+  const audioConstructorSpy = vi.fn()
+  globalThis.Audio = class {
+    constructor(src) { audioConstructorSpy(src) }
+    play() { return Promise.resolve() }
+    pause() {}
+  }
+  const { result } = renderHook(() => useVoicePreview())
+  await act(async () => { await result.current.play({ provider: 'elevenlabs', voiceId: 'empty', language: 'ko', genderSource: 'adapter' }) })
+  await waitFor(() => expect(result.current.state.status).toBe('error'))
+  expect(audioConstructorSpy).not.toHaveBeenCalled()
+})
+
+it('invalid base64 preview audio sets status to error instead of throwing', async () => {
+  window.electronAPI.ttsPreviewVoice = vi.fn(async () => ({ audioBase64: '***', mimeType: 'audio/mpeg' }))
+  const { result } = renderHook(() => useVoicePreview())
+  await act(async () => { await result.current.play({ provider: 'elevenlabs', voiceId: 'bad-b64', language: 'ko', genderSource: 'adapter' }) })
+  await waitFor(() => expect(result.current.state.status).toBe('error'))
+})
+
 it('unmount pauses audio, revokes the object URL, and closes the AudioContext', async () => {
   const pauseSpy = vi.fn()
   const closeSpy = vi.fn()

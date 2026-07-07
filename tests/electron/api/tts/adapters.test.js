@@ -123,6 +123,60 @@ describe('ElevenLabs 어댑터', () => {
       expect.objectContaining({ id: 'shared_liam', name: 'Liam Shared', language: 'en', previewUrl: 'https://example.com/liam.mp3', source: 'shared', traits: expect.arrayContaining(['male', 'young', 'american', 'energetic', 'social_media']) }),
     ]))
   })
+  it('listVoices: account voice previewUrl falls back to verified_languages preview_url', async () => {
+    const fetch = async (url) => {
+      if (String(url).includes('/v2/voices')) {
+        return {
+          ok: true,
+          json: async () => ({
+            voices: [{
+              voice_id: 'acct_ko_voice',
+              name: 'Rumi Oh',
+              labels: { gender: 'female' },
+              verified_languages: [{
+                language: 'ko',
+                locale: 'ko-KR',
+                preview_url: 'https://storage.googleapis.com/eleven-public-prod/account-rumi.mp3',
+              }],
+            }],
+          }),
+        }
+      }
+      return { ok: true, json: async () => ({ voices: [], has_more: false }) }
+    }
+    const voices = await createElevenLabsAdapter({ getKey: () => 'el-key', fetch }).listVoices({ includeShared: true })
+    expect(voices.find((v) => v.id === 'acct_ko_voice')).toMatchObject({
+      language: 'ko-KR',
+      previewUrl: 'https://storage.googleapis.com/eleven-public-prod/account-rumi.mp3',
+    })
+  })
+  it('listVoices: shared voice previewUrl falls back to verified_languages preview_url', async () => {
+    const fetch = async (url) => {
+      if (String(url).includes('/v2/voices')) return { ok: true, json: async () => ({ voices: [] }) }
+      return {
+        ok: true,
+        json: async () => ({
+          voices: [{
+            voice_id: 'shared_ko_voice',
+            name: 'Seonguk',
+            language: 'ko',
+            gender: 'Male',
+            verified_languages: [{
+              language: 'ko',
+              locale: 'ko-KR',
+              preview_url: 'https://storage.googleapis.com/eleven-public-prod/shared-seonguk.mp3',
+            }],
+          }],
+          has_more: false,
+        }),
+      }
+    }
+    const voices = await createElevenLabsAdapter({ getKey: () => 'el-key', fetch }).listVoices({ includeShared: true })
+    expect(voices.find((v) => v.id === 'shared_ko_voice')).toMatchObject({
+      language: 'ko',
+      previewUrl: 'https://storage.googleapis.com/eleven-public-prod/shared-seonguk.mp3',
+    })
+  })
   it('listVoices: includeShared=true면 shared voices를 여러 페이지 가져온다', async () => {
     const sharedPages = {
       0: { voices: [{ voice_id: 'shared_0', name: 'Shared 0', language: 'en' }], has_more: true },

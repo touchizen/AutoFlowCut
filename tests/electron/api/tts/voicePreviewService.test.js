@@ -81,6 +81,31 @@ describe('voicePreviewService', () => {
     expect(Object.keys(d.files).length).toBe(0)
   })
 
+  it('treats an empty preview_url response as an error and does not cache it', async () => {
+    const d = deps({
+      voiceMeta: () => ({ previewUrl: 'https://api.elevenlabs.io/x', language: 'en' }),
+      ssrfSafeFetch: vi.fn(async () => ({ audio: Buffer.alloc(0), mimeType: 'audio/mpeg' })),
+    })
+    const svc = createVoicePreviewService(d)
+    const r = await svc.getPreview({ provider: 'elevenlabs', voiceId: 'empty-preview', language: 'en' })
+    expect(r).toEqual({ error: 'failed', provider: 'elevenlabs' })
+    expect(Object.keys(d.files)).toHaveLength(0)
+  })
+
+  it('ignores an empty cache file and regenerates preview audio', async () => {
+    const d = deps()
+    const svc = createVoicePreviewService(d)
+    const first = await svc.getPreview({ provider: 'typecast', voiceId: 'v-empty-cache', language: 'ko' })
+    expect(Buffer.from(first.audioBase64, 'base64').toString()).toBe('WAVDATA')
+
+    const cachedPath = Object.keys(d.files).find((p) => p.endsWith('.wav'))
+    d.files[cachedPath] = Buffer.alloc(0)
+
+    const second = await svc.getPreview({ provider: 'typecast', voiceId: 'v-empty-cache', language: 'ko' })
+    expect(Buffer.from(second.audioBase64, 'base64').toString()).toBe('WAVDATA')
+    expect(d.synthesize).toHaveBeenCalledTimes(2)
+  })
+
   it('canonicalizes content-type params/case before matching (e.g. "Audio/Mpeg; charset=utf-8")', async () => {
     const d = deps({
       voiceMeta: () => ({ previewUrl: 'https://api.elevenlabs.io/x', language: 'en' }),

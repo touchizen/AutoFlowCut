@@ -21,6 +21,13 @@ function canonicalizeMime(raw) {
   return String(raw || '').split(';')[0].trim().toLowerCase()
 }
 
+function toAudioBuffer(audio) {
+  if (Buffer.isBuffer(audio)) return audio
+  if (audio instanceof ArrayBuffer) return Buffer.from(audio)
+  if (ArrayBuffer.isView(audio)) return Buffer.from(audio.buffer, audio.byteOffset, audio.byteLength)
+  return Buffer.from(audio || [])
+}
+
 export function createVoicePreviewService({ cacheDir, fs = nodeFs, ttsFor, voiceMeta, ssrfSafeFetch, fetch }) {
   const inflight = new Map()
 
@@ -35,7 +42,10 @@ export function createVoicePreviewService({ cacheDir, fs = nodeFs, ttsFor, voice
     // 1) disk cache (all known ext)
     for (const ext of Object.keys(EXT_TO_MIME)) {
       const p = cachePath(provider, voiceId, lang, ext)
-      if (fs.existsSync(p)) return { audioBase64: fs.readFileSync(p).toString('base64'), mimeType: EXT_TO_MIME[ext] }
+      if (fs.existsSync(p)) {
+        const cached = toAudioBuffer(fs.readFileSync(p))
+        if (cached.length > 0) return { audioBase64: cached.toString('base64'), mimeType: EXT_TO_MIME[ext] }
+      }
     }
     // 2) elevenlabs preview_url
     let audio, mimeType
@@ -48,16 +58,18 @@ export function createVoicePreviewService({ cacheDir, fs = nodeFs, ttsFor, voice
       const r = await ttsFor(provider).synthesize({ text: SAMPLE[lang] || SAMPLE.ko, voiceId, emotion: 'normal' })
       audio = r.audio; mimeType = FORMAT_TO_MIME[r.format] || 'audio/wav'
     }
+    const audioBuffer = toAudioBuffer(audio)
+    if (audioBuffer.length <= 0) throw new Error('empty preview audio')
     // 3) atomic write cache — cache extension always matches the returned mimeType.
     const ext = MIME_TO_EXT[mimeType] || 'wav'
     const p = cachePath(provider, voiceId, lang, ext)
     try {
       fs.mkdirSync(cacheDir, { recursive: true })
       const tmp = p + '.tmp'
-      fs.writeFileSync(tmp, audio)
+      fs.writeFileSync(tmp, audioBuffer)
       fs.renameSync(tmp, p)
     } catch { /* best-effort */ }
-    return { audioBase64: audio.toString('base64'), mimeType }
+    return { audioBase64: audioBuffer.toString('base64'), mimeType }
   }
 
   async function getPreview({ provider, voiceId, language }) {

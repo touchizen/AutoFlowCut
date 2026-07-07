@@ -43,7 +43,15 @@ export function useVoicePreview() {
     if (seq !== seqRef.current) return // stale
     if (!res || res.error) { setState({ provider: voice.provider, voiceId: voice.voiceId, status: 'error' }); return }
 
-    const bytes = Uint8Array.from(atob(res.audioBase64), (c) => c.charCodeAt(0))
+    let bytes
+    try {
+      if (!res.audioBase64) throw new Error('empty preview audio')
+      bytes = Uint8Array.from(atob(res.audioBase64), (c) => c.charCodeAt(0))
+      if (bytes.length <= 0) throw new Error('empty preview audio')
+    } catch {
+      if (seq === seqRef.current) setState({ provider: voice.provider, voiceId: voice.voiceId, status: 'error' })
+      return
+    }
     const url = URL.createObjectURL(new Blob([bytes], { type: res.mimeType }))
     urlRef.current = url
     const audio = new Audio(url)

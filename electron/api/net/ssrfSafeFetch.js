@@ -14,6 +14,16 @@ export function isPreviewUrlAllowed(rawUrl) {
 const MAX_BYTES = 5 * 1024 * 1024
 const MAX_REDIRECTS = 5
 
+function sniffAudioMime(buf) {
+  if (!buf || buf.length < 4) return null
+  if (buf.subarray(0, 3).toString('latin1') === 'ID3') return 'audio/mpeg'
+  if (buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0) return 'audio/mpeg'
+  if (buf.length >= 12 && buf.subarray(0, 4).toString('latin1') === 'RIFF' && buf.subarray(8, 12).toString('latin1') === 'WAVE') return 'audio/wav'
+  if (buf.subarray(0, 4).toString('latin1') === 'OggS') return 'audio/ogg'
+  if (buf.length >= 12 && buf.subarray(4, 8).toString('latin1') === 'ftyp') return 'audio/mp4'
+  return null
+}
+
 export async function ssrfSafeFetch(url, { fetch, timeoutMs = 15000, hops = 0 } = {}) {
   if (!isPreviewUrlAllowed(url)) throw new Error('preview url not allowed')
   const ctrl = new AbortController()
@@ -28,8 +38,7 @@ export async function ssrfSafeFetch(url, { fetch, timeoutMs = 15000, hops = 0 } 
     }
     if (!res.ok) throw new Error(`preview fetch ${res.status}`)
     const rawCt = res.headers.get('content-type') || 'audio/mpeg'
-    const mimeType = rawCt.split(';')[0].trim().toLowerCase()
-    if (!/^audio\//.test(mimeType)) throw new Error('unexpected content-type')
+    let mimeType = rawCt.split(';')[0].trim().toLowerCase()
     // Up-front check using content-length so we never buffer an oversized body.
     // Only honor a strictly-formed unsigned decimal integer; anything malformed
     // (non-numeric, negative, signed) falls through to the post-read backstop.
@@ -41,6 +50,11 @@ export async function ssrfSafeFetch(url, { fetch, timeoutMs = 15000, hops = 0 } 
     const buf = Buffer.from(await res.arrayBuffer())
     // Backstop for missing/lying content-length.
     if (buf.length > MAX_BYTES) throw new Error('preview too large')
+    if (!/^audio\//.test(mimeType)) {
+      const sniffed = sniffAudioMime(buf)
+      if (!sniffed) throw new Error('unexpected content-type')
+      mimeType = sniffed
+    }
     return { audio: buf, mimeType }
   } finally { clearTimeout(t) }
 }

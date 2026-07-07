@@ -99,6 +99,24 @@ describe('ssrfSafeFetch — MIME canonicalization', () => {
     const result = await ssrfSafeFetch('https://api.elevenlabs.io/v1/voices/x/preview', { fetch })
     expect(result.mimeType).toBe('audio/mpeg')
   })
+
+  it('sniffs MP3 bytes when an allowed preview host mislabels them as text/plain', async () => {
+    const mp3 = Buffer.concat([
+      Buffer.from('ID3\x04\x00\x00\x00\x00\x00#', 'latin1'),
+      Buffer.from('MP3DATA'),
+    ])
+    const fetch = vi.fn(async () => ({
+      status: 200,
+      ok: true,
+      headers: {
+        get: (k) => (k === 'content-type' ? 'text/plain' : k === 'content-length' ? String(mp3.length) : null),
+      },
+      arrayBuffer: async () => mp3.buffer.slice(mp3.byteOffset, mp3.byteOffset + mp3.byteLength),
+    }))
+    const result = await ssrfSafeFetch('https://storage.googleapis.com/eleven-public-prod/x.mp3', { fetch })
+    expect(result.mimeType).toBe('audio/mpeg')
+    expect(Buffer.from(result.audio).subarray(0, 3).toString('latin1')).toBe('ID3')
+  })
 })
 
 describe('ssrfSafeFetch — redirect bound', () => {
