@@ -85,15 +85,15 @@ describe('StoryView 폼 재구성', () => {
       options: expect.objectContaining({ engine: 'claude', model: 'claude-sonnet-5', reasoningEffort: 'max' }),
     }))
   })
-  it('길이 값+단위가 options.lengthValue/lengthUnit으로 전달된다', () => {
+  it('대본 분량은 값 combobox와 단위 select로 options.lengthValue/unit을 전달한다', () => {
     const start = vi.fn()
     render(<StoryView pipeline={makePipeline(start)} />)
     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
-    fireEvent.change(screen.getByLabelText('길이 값'), { target: { value: '6000' } })
-    fireEvent.change(screen.getByLabelText('길이 단위'), { target: { value: 'chars' } })
+    fireEvent.change(screen.getByLabelText('대본 분량 단위'), { target: { value: 'chars' } })
+    fireEvent.change(screen.getByLabelText('대본 분량 값'), { target: { value: '4200' } })
     fireEvent.click(screen.getByRole('button', { name: '시작' }))
     expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
-      options: expect.objectContaining({ lengthValue: '6000', lengthUnit: 'chars' }),
+      options: expect.objectContaining({ lengthValue: '4200', lengthUnit: 'chars', lengthMode: 'unit' }),
     }))
   })
   it('기본 모델은 claude-opus-4-8, 기본 길이 10 min', () => {
@@ -106,28 +106,100 @@ describe('StoryView 폼 재구성', () => {
     }))
   })
 
-  it('언어를 en으로 바꾸면 chars 단위가 words로 정규화된다', () => {
+  it('언어를 en으로 바꾸면 words/chars 단위를 선택할 수 있다', () => {
     const start = vi.fn()
     render(<StoryView pipeline={makePipeline(start)} />)
     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
-    fireEvent.change(screen.getByLabelText('길이 단위'), { target: { value: 'chars' } })
     fireEvent.change(screen.getByLabelText('언어'), { target: { value: 'en' } })
+    fireEvent.change(screen.getByLabelText('대본 분량 단위'), { target: { value: 'words' } })
     fireEvent.click(screen.getByRole('button', { name: '시작' }))
     expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
-      options: expect.objectContaining({ lengthUnit: 'words' }),
+      options: expect.objectContaining({ language: 'en', lengthValue: '1500', lengthUnit: 'words', lengthMode: 'unit' }),
     }))
   })
 
-  it('언어를 ko로 바꾸면 words 단위가 chars로 정규화된다', () => {
+  it('한국어 자수 단위에서 영어로 바꿔도 chars 단위는 유지된다', () => {
+    const start = vi.fn()
+    render(<StoryView pipeline={makePipeline(start)} />)
+    fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
+    fireEvent.change(screen.getByLabelText('대본 분량 단위'), { target: { value: 'chars' } })
+    fireEvent.change(screen.getByLabelText('대본 분량 값'), { target: { value: '6600' } })
+    fireEvent.change(screen.getByLabelText('언어'), { target: { value: 'en' } })
+    fireEvent.click(screen.getByRole('button', { name: '시작' }))
+    expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
+      options: expect.objectContaining({ language: 'en', lengthValue: '6600', lengthUnit: 'chars', lengthMode: 'unit' }),
+    }))
+  })
+
+  it('영어 words 단위에서 한국어로 바꾸면 같은 분량의 자수로 변환된다', () => {
     const start = vi.fn()
     render(<StoryView pipeline={makePipeline(start)} />)
     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
     fireEvent.change(screen.getByLabelText('언어'), { target: { value: 'en' } })
-    fireEvent.change(screen.getByLabelText('길이 단위'), { target: { value: 'words' } })
+    fireEvent.change(screen.getByLabelText('대본 분량 단위'), { target: { value: 'words' } })
+    fireEvent.change(screen.getByLabelText('대본 분량 값'), { target: { value: '3000' } })
     fireEvent.change(screen.getByLabelText('언어'), { target: { value: 'ko' } })
     fireEvent.click(screen.getByRole('button', { name: '시작' }))
     expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
-      options: expect.objectContaining({ lengthUnit: 'chars' }),
+      options: expect.objectContaining({ language: 'ko', lengthValue: '6600', lengthUnit: 'chars', lengthMode: 'unit' }),
+    }))
+  })
+
+  it('1분 미만 words 값을 한국어로 바꿔도 같은 분량 비율을 유지한다', () => {
+    const start = vi.fn()
+    render(<StoryView pipeline={makePipeline(start)} />)
+    fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
+    fireEvent.change(screen.getByLabelText('언어'), { target: { value: 'en' } })
+    fireEvent.change(screen.getByLabelText('대본 분량 단위'), { target: { value: 'words' } })
+    fireEvent.change(screen.getByLabelText('대본 분량 값'), { target: { value: '100' } })
+    fireEvent.change(screen.getByLabelText('언어'), { target: { value: 'ko' } })
+    expect(screen.getByLabelText('대본 분량 값')).toHaveValue('220')
+    expect(screen.getByLabelText('대본 분량 단위')).toHaveValue('chars')
+    fireEvent.click(screen.getByRole('button', { name: '시작' }))
+    expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
+      options: expect.objectContaining({ language: 'ko', lengthValue: '220', lengthUnit: 'chars', lengthMode: 'unit' }),
+    }))
+  })
+
+  it('1분 미만 words 값을 min으로 바꿔도 같은 분량 비율을 유지한다', () => {
+    const start = vi.fn()
+    render(<StoryView pipeline={makePipeline(start)} />)
+    fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
+    fireEvent.change(screen.getByLabelText('언어'), { target: { value: 'en' } })
+    fireEvent.change(screen.getByLabelText('대본 분량 단위'), { target: { value: 'words' } })
+    fireEvent.change(screen.getByLabelText('대본 분량 값'), { target: { value: '100' } })
+    fireEvent.change(screen.getByLabelText('대본 분량 단위'), { target: { value: 'min' } })
+    expect(screen.getByLabelText('대본 분량 값')).toHaveValue('0.6667')
+    fireEvent.click(screen.getByRole('button', { name: '시작' }))
+    expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
+      options: expect.objectContaining({ language: 'en', lengthValue: '0.6667', lengthUnit: 'min' }),
+    }))
+  })
+
+  it.each([
+    ['en', 'words', '1', '0.0067'],
+    ['ko', 'chars', '2', '0.0061'],
+  ])('아주 작은 %s %s 값을 min으로 바꿔도 비율을 보존한다', (language, unit, value, expected) => {
+    render(<StoryView pipeline={makePipeline(vi.fn())} />)
+    fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
+    if (language === 'en') fireEvent.change(screen.getByLabelText('언어'), { target: { value: 'en' } })
+    fireEvent.change(screen.getByLabelText('대본 분량 단위'), { target: { value: unit } })
+    fireEvent.change(screen.getByLabelText('대본 분량 값'), { target: { value } })
+    fireEvent.change(screen.getByLabelText('대본 분량 단위'), { target: { value: 'min' } })
+    expect(screen.getByLabelText('대본 분량 값')).toHaveValue(expected)
+  })
+
+  it('아주 작은 자수 값을 min으로 바꿔도 0으로 떨어뜨리지 않는다', () => {
+    const start = vi.fn()
+    render(<StoryView pipeline={makePipeline(start)} />)
+    fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
+    fireEvent.change(screen.getByLabelText('대본 분량 단위'), { target: { value: 'chars' } })
+    fireEvent.change(screen.getByLabelText('대본 분량 값'), { target: { value: '1' } })
+    fireEvent.change(screen.getByLabelText('대본 분량 단위'), { target: { value: 'min' } })
+    expect(screen.getByLabelText('대본 분량 값')).toHaveValue('0.003')
+    fireEvent.click(screen.getByRole('button', { name: '시작' }))
+    expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
+      options: expect.objectContaining({ language: 'ko', lengthValue: '0.003', lengthUnit: 'min' }),
     }))
   })
 

@@ -28,7 +28,7 @@ describe('StoryView', () => {
     render(<StoryView pipeline={p} />)
     fireEvent.change(screen.getByPlaceholderText(/제목/), { target: { value: '운수 좋은 날' } })
     fireEvent.change(screen.getByLabelText('장르'), { target: { value: 'yadam' } })
-    fireEvent.change(screen.getByLabelText('길이 값'), { target: { value: '5' } })
+    fireEvent.change(screen.getByLabelText('대본 분량 값'), { target: { value: '5' } })
     fireEvent.change(screen.getByLabelText('언어'), { target: { value: 'ko' } })
     fireEvent.click(screen.getByRole('button', { name: '시작' }))
     // stepMachine.steps.script는 params.input(type/title)과 params.options(genre/model/language/length)를

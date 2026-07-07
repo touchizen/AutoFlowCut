@@ -43,6 +43,104 @@ const SEG_STATUS_LABEL = { pending: '대기', running: '진행 중', done: '완�
 // M2b-5: SFX 소스 선택(세그먼트별). library는 아직 stub(생성 시 에러) — 인터페이스만 노출.
 const SFX_SOURCES = ['elevenlabs', 'library']
 const SFX_SOURCE_LABEL = { elevenlabs: 'ElevenLabs', library: 'Library' }
+const DEFAULT_STORY_LENGTH_MINUTES = 10
+const MAX_STORY_LENGTH_MINUTES = 60
+const KOREAN_CHARS_PER_MINUTE = 330
+const ENGLISH_WORDS_PER_MINUTE = 150
+const STORY_LENGTH_MODE_UNIT = 'unit'
+const STORY_LENGTH_UNITS = {
+  ko: [
+    { value: 'min', label: '분' },
+    { value: 'chars', label: '자수' },
+  ],
+  en: [
+    { value: 'min', label: 'min' },
+    { value: 'words', label: 'words' },
+    { value: 'chars', label: 'chars' },
+  ],
+}
+
+function storyLengthUnitsForLanguage(language) {
+  return language === 'en' ? STORY_LENGTH_UNITS.en : STORY_LENGTH_UNITS.ko
+}
+
+function storyLengthFactor(unit) {
+  if (unit === 'chars') return KOREAN_CHARS_PER_MINUTE
+  if (unit === 'words') return ENGLISH_WORDS_PER_MINUTE
+  return 1
+}
+
+function coerceStoryLengthUnit(unit, language) {
+  const allowed = storyLengthUnitsForLanguage(language).map((option) => option.value)
+  if (allowed.includes(unit)) return unit
+  if (unit === 'words') return 'chars'
+  return 'min'
+}
+
+function normalizeStoryLengthValue(value, unit = 'min') {
+  const raw = String(value ?? '').trim()
+  const factor = storyLengthFactor(unit)
+  const fallback = DEFAULT_STORY_LENGTH_MINUTES * factor
+  const max = MAX_STORY_LENGTH_MINUTES * factor
+  if (!raw) return String(fallback)
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) return String(fallback)
+  if (unit === 'min' && n < 1) return formatStoryLengthValue(Math.min(MAX_STORY_LENGTH_MINUTES, n))
+  const rounded = Math.round(n)
+  return String(Math.max(1, Math.min(max, rounded)))
+}
+
+function formatStoryLengthValue(value) {
+  if (Number.isInteger(value)) return String(value)
+  return value.toFixed(4).replace(/\.?0+$/, '')
+}
+
+function convertStoryLengthValue(value, fromUnit, toUnit) {
+  const normalized = Number(normalizeStoryLengthValue(value, fromUnit))
+  const minutes = Math.min(MAX_STORY_LENGTH_MINUTES, normalized / storyLengthFactor(fromUnit))
+  return normalizeStoryLengthValue(minutes * storyLengthFactor(toUnit), toUnit)
+}
+
+function hydrateStoryLengthSettings(options = {}, language = 'ko') {
+  const sourceUnit = ['min', 'chars', 'words'].includes(options?.lengthUnit) ? options.lengthUnit : 'min'
+  const displayUnit = coerceStoryLengthUnit(sourceUnit, language)
+  const isUnitMode = options?.lengthMode === STORY_LENGTH_MODE_UNIT
+  const raw = String(options?.lengthValue ?? '').trim()
+  const n = Number(raw)
+
+  if (!isUnitMode && (sourceUnit === 'chars' || sourceUnit === 'words')) {
+    if (Number.isFinite(n) && n >= 1 && n <= MAX_STORY_LENGTH_MINUTES) {
+      return {
+        lengthValue: convertStoryLengthValue(raw, 'min', displayUnit),
+        lengthUnit: displayUnit,
+      }
+    }
+  }
+
+  return {
+    lengthValue: sourceUnit === displayUnit
+      ? normalizeStoryLengthValue(raw, displayUnit)
+      : convertStoryLengthValue(raw, sourceUnit, displayUnit),
+    lengthUnit: displayUnit,
+  }
+}
+
+function storyLengthOptionValues(unit) {
+  const factor = storyLengthFactor(unit)
+  return Array.from({ length: MAX_STORY_LENGTH_MINUTES }, (_, i) => String((i + 1) * factor))
+}
+
+function storyLengthOptionLabel(value, unit, language) {
+  if (unit === 'min') return language === 'en' ? `${value} min` : `${value}분`
+  if (unit === 'words') return `${value} words`
+  return language === 'en' ? `${value} chars` : `${value}자`
+}
+
+function storyLengthPlaceholder(unit, language) {
+  if (unit === 'min') return language === 'en' ? 'min' : '분'
+  if (unit === 'words') return 'words'
+  return language === 'en' ? 'chars' : '자수'
+}
 
 function reasoningEffortFor(option, requestedReasoning = null) {
   const allowed = option?.reasoningEfforts || []
@@ -280,10 +378,11 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     || llmOptions[0]
     || DEFAULT_STORY_LLM
   const initialLlmSource = (hydrateOpts.engine || hydrateOpts.model) ? hydrateOpts : defaultLlmOption
+  const initialLengthSettings = hydrateStoryLengthSettings(hydrateOpts, hydrateOpts.language || 'ko')
   const [title, setTitle] = useState(hydrateInput?.title || '')
   const [genre, setGenre] = useState(hydrateOpts.genre || 'bespoke') // story-engine 기본: 장르 불명확 시 bespoke(범용)
-  const [length, setLength] = useState(hydrateOpts.lengthValue || '10')          // 길이 값
-  const [lengthUnit, setLengthUnit] = useState(hydrateOpts.lengthUnit || 'min') // 길이 단위
+  const [length, setLength] = useState(() => initialLengthSettings.lengthValue)
+  const [lengthUnit, setLengthUnit] = useState(() => initialLengthSettings.lengthUnit)
   const [selectedLlmId, setSelectedLlmId] = useState(() => hydrateStoryLlmSelection(initialLlmSource, llmOptions))
   const selectedLlm = findStoryLlmOptionById(selectedLlmId, llmOptions) || defaultLlmOption
   const [reasoningEffort, setReasoningEffort] = useState(() => reasoningEffortFor(selectedLlm, hydrateOpts.reasoningEffort))
@@ -317,19 +416,38 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     ))
   }
 
-  const currentOptions = () => normalizeStoryLlmOptions({
-    genre: genre || undefined,
-    language,
-    engine: selectedLlm.engine,
-    model: selectedLlm.model,
-    reasoningEffort,
-    lengthValue: length,
-    lengthUnit,
-    sceneGranularity,
-    ...(reviewTouched
-      ? { review: reviewSettings }
-      : { reviewLoop: legacyReviewLoop }),
-  }, llmOptions)
+  const currentOptions = () => {
+    const resolvedLengthUnit = coerceStoryLengthUnit(lengthUnit, language)
+    return normalizeStoryLlmOptions({
+      genre: genre || undefined,
+      language,
+      engine: selectedLlm.engine,
+      model: selectedLlm.model,
+      reasoningEffort,
+      lengthValue: normalizeStoryLengthValue(length, resolvedLengthUnit),
+      lengthUnit: resolvedLengthUnit,
+      ...(resolvedLengthUnit === 'min' ? {} : { lengthMode: STORY_LENGTH_MODE_UNIT }),
+      sceneGranularity,
+      ...(reviewTouched
+        ? { review: reviewSettings }
+        : { reviewLoop: legacyReviewLoop }),
+    }, llmOptions)
+  }
+
+  const changeLengthUnit = (nextUnit) => {
+    const resolvedNextUnit = coerceStoryLengthUnit(nextUnit, language)
+    setLength(convertStoryLengthValue(length, lengthUnit, resolvedNextUnit))
+    setLengthUnit(resolvedNextUnit)
+  }
+
+  const changeLanguage = (nextLanguage) => {
+    const nextUnit = coerceStoryLengthUnit(lengthUnit, nextLanguage)
+    setLanguage(nextLanguage)
+    if (nextUnit !== lengthUnit) {
+      setLength(convertStoryLengthValue(length, lengthUnit, nextUnit))
+      setLengthUnit(nextUnit)
+    }
+  }
 
   const setReviewStage = (target, patch) => {
     setReviewTouched(true)
@@ -427,8 +545,11 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
       setLlmSelection(id, o.reasoningEffort)
     }
     if (o.language) setLanguage(o.language)
-    if (o.lengthValue) setLength(o.lengthValue)
-    if (o.lengthUnit) setLengthUnit(o.lengthUnit)
+    if (o.lengthValue != null || o.lengthUnit != null) {
+      const settings = hydrateStoryLengthSettings(o, o.language || 'ko')
+      setLength(settings.lengthValue)
+      setLengthUnit(settings.lengthUnit)
+    }
     if (o.sceneGranularity) setSceneGranularity(o.sceneGranularity)
     if (o.review) {
       setReviewSettings(makeReviewSettings(o, (findStoryLlmOptionById(hydrateStoryLlmSelection(o, llmOptions), llmOptions) || selectedLlm).model))
@@ -473,14 +594,16 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
   const baselineLlmId = hydrateStoryLlmSelection(initialLlmSource, llmOptions)
   const baselineLlm = findStoryLlmOptionById(baselineLlmId, llmOptions) || defaultLlmOption
+  const baselineLengthSettings = hydrateStoryLengthSettings(hydrateOpts, hydrateOpts.language || 'ko')
   const setupBaselineOptions = normalizeStoryLlmOptions({
     genre: hydrateOpts.genre || 'bespoke',
     language: hydrateOpts.language || 'ko',
     engine: baselineLlm.engine,
     model: baselineLlm.model,
     reasoningEffort: reasoningEffortFor(baselineLlm, hydrateOpts.reasoningEffort),
-    lengthValue: hydrateOpts.lengthValue || '10',
-    lengthUnit: hydrateOpts.lengthUnit || 'min',
+    lengthValue: baselineLengthSettings.lengthValue,
+    lengthUnit: baselineLengthSettings.lengthUnit,
+    ...(baselineLengthSettings.lengthUnit === 'min' ? {} : { lengthMode: STORY_LENGTH_MODE_UNIT }),
     sceneGranularity: hydrateOpts.sceneGranularity || 'scene',
     ...(hydrateOpts.review
       ? { review: makeReviewSettings(hydrateOpts, baselineLlm.model) }
@@ -781,6 +904,9 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     ? t('story.scenes.summarySegment', '씬 분리 단위: 문장 기준 · 문장마다 씬 · 화자 전환 시 분리 · 짧은 조각 병합 · 10초↑ 분할')
     : t('story.scenes.summaryScene', '씬 분리 단위: 씬 기준 · 5~10초 의미 단위')
   const scenesProgressLog = progressLog.filter((entry) => !entry.step || entry.step === 'scenes')
+  const activeLengthUnit = coerceStoryLengthUnit(lengthUnit, language)
+  const lengthUnitOptions = storyLengthUnitsForLanguage(language)
+  const lengthOptionValues = storyLengthOptionValues(activeLengthUnit)
 
   const scriptEditor = (
     <div className="story-script-editor">
@@ -930,14 +1056,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                     className="story-input"
                     aria-label={t('story.form.languageLabel', '언어')}
                     value={language}
-                    onChange={(e) => {
-                      // 언어 변경 시 길이 단위를 새 언어 허용 목록(en: min/words, 그 외: min/chars)으로
-                      // 정규화 — 안 하면 옛 단위(chars↔words)가 남아 영어 대본에 "약 N자" 같은 불일치가 생긴다.
-                      const v = e.target.value
-                      setLanguage(v)
-                      if (v === 'en' && lengthUnit === 'chars') setLengthUnit('words')
-                      else if (v !== 'en' && lengthUnit === 'words') setLengthUnit('chars')
-                    }}
+                    onChange={(e) => changeLanguage(e.target.value)}
                     disabled={isRunning}
                   >
                     <option value="ko">한국어 (ko)</option>
@@ -950,22 +1069,36 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                   <div className="story-length-group">
                     <input
                       className="story-input story-length-value"
-                      aria-label={t('story.form.lengthValueLabel', '길이 값')}
-                      placeholder={t('story.form.lengthPlaceholder', '길이')}
+                      aria-label={t('story.form.lengthValueLabel', '대본 분량 값')}
+                      placeholder={storyLengthPlaceholder(activeLengthUnit, language)}
                       value={length}
                       onChange={(e) => setLength(e.target.value)}
                       disabled={isRunning}
+                      inputMode="numeric"
+                      list="story-length-minutes"
                     />
                     <select
                       className="story-input story-length-unit"
-                      aria-label={t('story.form.lengthUnitLabel', '길이 단위')}
-                      value={lengthUnit}
-                      onChange={(e) => setLengthUnit(e.target.value)}
+                      aria-label={t('story.form.lengthUnitLabel', '대본 분량 단위')}
+                      value={activeLengthUnit}
+                      onChange={(e) => changeLengthUnit(e.target.value)}
                       disabled={isRunning}
                     >
-                      <option value="min">{language === 'en' ? 'min' : '분'}</option>
-                      <option value={language === 'en' ? 'words' : 'chars'}>{language === 'en' ? 'words' : '자'}</option>
+                      {lengthUnitOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
                     </select>
+                    <datalist id="story-length-minutes">
+                      {lengthOptionValues.map((value) => (
+                        <option
+                          key={value}
+                          value={value}
+                          label={storyLengthOptionLabel(value, activeLengthUnit, language)}
+                        >
+                          {storyLengthOptionLabel(value, activeLengthUnit, language)}
+                        </option>
+                      ))}
+                    </datalist>
                   </div>
                 </div>
 

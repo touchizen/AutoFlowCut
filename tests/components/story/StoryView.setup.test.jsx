@@ -2,9 +2,10 @@
  * Task 8 — StoryView 설정 화면(setup) 마크업.
  * 세로 옵션+설명, 제목, 대본 임포트(drag&drop / 붙여넣기), [✨ 시작] 분기.
  */
-import { describe, it, expect, vi } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import StoryView from '../../../src/components/story/StoryView.jsx'
+import { I18nProvider } from '../../../src/hooks/useI18n.jsx'
 
 const pipeline = (over = {}) => ({
   state: { steps: { script: { status: 'pending' } } },
@@ -43,6 +44,10 @@ const completedPipeline = (over = {}) => pipeline({
   ...over,
 })
 
+afterEach(() => {
+  localStorage.removeItem('autoflowcut_lang')
+})
+
 describe('StoryView 설정 화면(setup)', () => {
   it('세로 옵션 각 항목에 라벨+설명을 렌더한다', () => {
     render(<StoryView pipeline={pipeline()} />)
@@ -52,8 +57,8 @@ describe('StoryView 설정 화면(setup)', () => {
     expect(screen.getByLabelText('장르')).toBeInTheDocument()
     expect(screen.getByLabelText('모델')).toBeInTheDocument()
     expect(screen.getByLabelText('언어')).toBeInTheDocument()
-    expect(screen.getByLabelText('길이 값')).toBeInTheDocument()
-    expect(screen.getByLabelText('길이 단위')).toBeInTheDocument()
+    expect(screen.getByLabelText('대본 분량 값')).toBeInTheDocument()
+    expect(screen.getByLabelText('대본 분량 단위')).toBeInTheDocument()
     // 설명
     expect(screen.getByText(/이야기 유형/)).toBeInTheDocument()
     expect(screen.getByText('생성 AI')).toBeInTheDocument()
@@ -69,7 +74,7 @@ describe('StoryView 설정 화면(setup)', () => {
       ['장르', 'select'],
       ['모델', 'select'],
       ['언어', 'select'],
-      ['길이 값', 'input'],
+      ['대본 분량 값', 'input'],
     ]
     for (const [aria, tag] of cases) {
       const row = screen.getByLabelText(aria).closest('.story-opt-row')
@@ -111,6 +116,120 @@ describe('StoryView 설정 화면(setup)', () => {
     expect(lang).toHaveValue('ko')
     fireEvent.change(lang, { target: { value: 'en' } })
     expect(lang).toHaveValue('en')
+  })
+
+  it('대본 분량은 값 combobox와 언어별 단위 select를 함께 렌더한다', () => {
+    const { container } = render(<StoryView pipeline={pipeline()} />)
+    const input = screen.getByLabelText('대본 분량 값')
+    const unit = screen.getByLabelText('대본 분량 단위')
+    expect(input).toHaveAttribute('list', 'story-length-minutes')
+    expect(input).toHaveAttribute('inputmode', 'numeric')
+    expect(input).toHaveValue('10')
+    expect(unit.tagName).toBe('SELECT')
+    expect(unit).toHaveValue('min')
+    expect([...unit.querySelectorAll('option')].map((el) => [el.value, el.textContent])).toEqual([
+      ['min', '분'],
+      ['chars', '자수'],
+    ])
+    const options = [...container.querySelectorAll('#story-length-minutes option')].map((el) => el.value)
+    expect(options[0]).toBe('1')
+    expect(options.at(-1)).toBe('60')
+    expect(options).toHaveLength(60)
+    const optionLabels = [...container.querySelectorAll('#story-length-minutes option')].map((el) => (
+      el.getAttribute('label') || el.textContent
+    ))
+    expect(optionLabels[0]).toBe('1분')
+    expect(optionLabels.at(-1)).toBe('60분')
+
+    fireEvent.change(input, { target: { value: '42' } })
+    expect(input).toHaveValue('42')
+  })
+
+  it('I18nProvider가 있어도 대본 분량 접근성 라벨은 새 라벨로 렌더한다', () => {
+    localStorage.setItem('autoflowcut_lang', 'ko')
+    render(
+      <I18nProvider>
+        <StoryView pipeline={pipeline()} />
+      </I18nProvider>,
+    )
+    expect(screen.getByLabelText('대본 분량 값')).toBeInTheDocument()
+    expect(screen.getByLabelText('대본 분량 단위')).toBeInTheDocument()
+  })
+
+  it('한국어 단위를 자수로 바꾸면 같은 분량의 자수 값과 추천값으로 바뀐다', () => {
+    const { container } = render(<StoryView pipeline={pipeline()} />)
+    const input = screen.getByLabelText('대본 분량 값')
+    fireEvent.change(screen.getByLabelText('대본 분량 단위'), { target: { value: 'chars' } })
+    expect(input).toHaveValue('3300')
+
+    const options = [...container.querySelectorAll('#story-length-minutes option')]
+    expect(options[0]).toHaveValue('330')
+    expect(options[0].getAttribute('label')).toBe('330자')
+    expect(options.at(-1)).toHaveValue('19800')
+    expect(options.at(-1).getAttribute('label')).toBe('19800자')
+    expect(options).toHaveLength(60)
+  })
+
+  it('영어에서는 단위를 min/words/chars로 고를 수 있다', () => {
+    const { container } = render(<StoryView pipeline={pipeline()} />)
+    fireEvent.change(screen.getByLabelText('언어'), { target: { value: 'en' } })
+    const unit = screen.getByLabelText('대본 분량 단위')
+    expect([...unit.querySelectorAll('option')].map((el) => [el.value, el.textContent])).toEqual([
+      ['min', 'min'],
+      ['words', 'words'],
+      ['chars', 'chars'],
+    ])
+
+    fireEvent.change(unit, { target: { value: 'words' } })
+    expect(screen.getByLabelText('대본 분량 값')).toHaveValue('1500')
+    const options = [...container.querySelectorAll('#story-length-minutes option')]
+    expect(options[0]).toHaveValue('150')
+    expect(options[0].getAttribute('label')).toBe('150 words')
+    expect(options.at(-1)).toHaveValue('9000')
+    expect(options.at(-1).getAttribute('label')).toBe('9000 words')
+
+    fireEvent.change(unit, { target: { value: 'chars' } })
+    expect(screen.getByLabelText('대본 분량 값')).toHaveValue('3300')
+    const charOptions = [...container.querySelectorAll('#story-length-minutes option')]
+    expect(charOptions[0]).toHaveValue('330')
+    expect(charOptions[0].getAttribute('label')).toBe('330 chars')
+    expect(charOptions.at(-1)).toHaveValue('19800')
+    expect(charOptions.at(-1).getAttribute('label')).toBe('19800 chars')
+  })
+
+  it('자수 단위로 시작하면 자수 값을 그대로 저장한다', () => {
+    const p = pipeline()
+    render(<StoryView pipeline={p} />)
+    fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
+    fireEvent.change(screen.getByLabelText('대본 분량 단위'), { target: { value: 'chars' } })
+    fireEvent.change(screen.getByLabelText('대본 분량 값'), { target: { value: '4200' } })
+    fireEvent.click(screen.getByRole('button', { name: '시작' }))
+    expect(p.start).toHaveBeenCalledWith('script', expect.objectContaining({
+      options: expect.objectContaining({ lengthValue: '4200', lengthUnit: 'chars', lengthMode: 'unit' }),
+    }))
+  })
+
+  it.each([
+    ['42', '42'],
+    ['', '10'],
+    ['   ', '10'],
+    ['abc', '10'],
+    ['7abc', '10'],
+    ['0', '10'],
+    ['-3', '10'],
+    ['7.4', '7'],
+    ['7.5', '8'],
+    ['60.6', '60'],
+    ['99', '60'],
+  ])('대본 분량 "%s" 입력 후 시작하면 "%s"분으로 정규화해 저장한다', (raw, expected) => {
+    const p = pipeline()
+    render(<StoryView pipeline={p} />)
+    fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
+    fireEvent.change(screen.getByLabelText('대본 분량 값'), { target: { value: raw } })
+    fireEvent.click(screen.getByRole('button', { name: '시작' }))
+    expect(p.start).toHaveBeenCalledWith('script', expect.objectContaining({
+      options: expect.objectContaining({ lengthValue: expected, lengthUnit: 'min' }),
+    }))
   })
 
   it('제목 input(placeholder "제목")을 렌더한다', () => {
@@ -173,7 +292,7 @@ describe('StoryView 설정 화면(setup)', () => {
     fireEvent.click(screen.getByRole('button', { name: '닫기' }))
     expect(onClose).toHaveBeenCalledTimes(1)
 
-    fireEvent.change(screen.getByLabelText('길이 값'), { target: { value: '12' } })
+    fireEvent.change(screen.getByLabelText('대본 분량 값'), { target: { value: '12' } })
     const changed = screen.getByRole('button', { name: '변경사항으로 다시 시작' })
     expect(changed).not.toBeDisabled()
     expect(screen.getByRole('button', { name: '닫기' })).not.toBeDisabled()

@@ -245,11 +245,20 @@
 
 .story-length-group {
   display: flex;
+  align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 
-.story-length-value { flex: 0 1 90px; }
-.story-length-unit { flex: 0 1 90px; }
+.story-length-value {
+  flex: 1 1 120px;
+  min-width: 0;
+}
+
+.story-length-unit {
+  flex: 0 1 96px;
+  min-width: 84px;
+}
 
 /* ── 대본 임포트(drag&drop / 붙여넣기 겸용) ── */
 .story-import-drop {

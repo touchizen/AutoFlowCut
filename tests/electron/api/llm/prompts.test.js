@@ -5,11 +5,29 @@ describe('buildScriptPrompt 길이 단위', () => {
   it('min 단위는 "약 N분"', () => {
     const p = buildScriptPrompt({ title: 'T' }, { lengthValue: 8, lengthUnit: 'min', language: 'ko', genre: 'yadam' })
     expect(p).toContain('약 8분')
+    expect(p).toContain('대략 2,640자')
     expect(p).toContain('제목: T')
+  })
+  it('영어 min 단위는 시간과 예상 단어수를 함께 지시한다', () => {
+    const p = buildScriptPrompt({ title: 'T' }, { lengthValue: 10, lengthUnit: 'min', language: 'en' })
+    expect(p).toContain('about 10 minutes')
+    expect(p).toContain('about 1,500 words')
+  })
+  it('1분 미만 min 단위는 소수 분량을 유지한다', () => {
+    const ko = buildScriptPrompt({ title: 'T' }, { lengthValue: '0.67', lengthUnit: 'min', language: 'ko' })
+    expect(ko).toContain('약 0.67분')
+    expect(ko).toContain('대략 221자')
+    const en = buildScriptPrompt({ title: 'T' }, { lengthValue: '0.67', lengthUnit: 'min', language: 'en' })
+    expect(en).toContain('about 0.67 minutes')
+    expect(en).toContain('about 101 words')
   })
   it('chars 단위는 "약 N자"', () => {
     const p = buildScriptPrompt({ title: 'T' }, { lengthValue: 6000, lengthUnit: 'chars', language: 'ko' })
     expect(p).toContain('약 6000자')
+  })
+  it('영어 chars 단위는 "about N characters"', () => {
+    const p = buildScriptPrompt({ title: 'T' }, { lengthValue: 6000, lengthUnit: 'chars', language: 'en' })
+    expect(p).toContain('about 6000 characters')
   })
   it('words 단위는 "about N words"', () => {
     const p = buildScriptPrompt({ title: 'T' }, { lengthValue: 1500, lengthUnit: 'words', language: 'en' })

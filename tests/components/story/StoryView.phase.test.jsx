@@ -149,8 +149,55 @@ describe('StoryView 폼 hydrate (Task 7)', () => {
     expect(screen.getByLabelText('장르')).toHaveValue('yadam')
     expect(screen.getByLabelText('모델')).toHaveValue('claude:claude-sonnet-5')
     expect(screen.getByLabelText('언어')).toHaveValue('en')
-    expect(screen.getByLabelText('길이 값')).toHaveValue('7')
-    expect(screen.getByLabelText('길이 단위')).toHaveValue('words')
+    expect(screen.getByLabelText('대본 분량 값')).toHaveValue('1050')
+    expect(screen.getByLabelText('대본 분량 단위')).toHaveValue('words')
+  })
+
+  it.each([
+    ['words', '1', '150'],
+    ['words', '7', '1050'],
+    ['words', '10', '1500'],
+    ['words', '60', '9000'],
+    ['chars', '1', '330'],
+    ['chars', '7', '2310'],
+    ['chars', '10', '3300'],
+    ['chars', '60', '19800'],
+    ['words', '1500', '1500'],
+    ['chars', '3300', '3300'],
+  ])('legacy %s:%s hydrate → %s', (unit, value, expected) => {
+    const p = pipeline()
+    p.state.input = {
+      type: 'title',
+      title: '복원 제목',
+      options: { language: unit === 'words' ? 'en' : 'ko', lengthValue: value, lengthUnit: unit },
+    }
+    render(<StoryView pipeline={p} />)
+    expect(screen.getByLabelText('대본 분량 값')).toHaveValue(expected)
+    expect(screen.getByLabelText('대본 분량 단위')).toHaveValue(unit)
+  })
+
+  it.each(['0', '-2', '', 'abc'])('legacy min:%s hydrate → 10분', (value) => {
+    const p = pipeline()
+    p.state.input = {
+      type: 'title',
+      title: '복원 제목',
+      options: { language: 'ko', lengthValue: value, lengthUnit: 'min' },
+    }
+    render(<StoryView pipeline={p} />)
+    expect(screen.getByLabelText('대본 분량 값')).toHaveValue('10')
+    expect(screen.getByLabelText('대본 분량 단위')).toHaveValue('min')
+  })
+
+  it('새 UI가 저장한 1..60 words 값은 legacy minute-shaped 값으로 오인하지 않는다', () => {
+    const p = pipeline()
+    p.state.input = {
+      type: 'title',
+      title: '복원 제목',
+      options: { language: 'en', lengthValue: '30', lengthUnit: 'words', lengthMode: 'unit' },
+    }
+    render(<StoryView pipeline={p} />)
+    expect(screen.getByLabelText('대본 분량 값')).toHaveValue('30')
+    expect(screen.getByLabelText('대본 분량 단위')).toHaveValue('words')
   })
 
   it('open 응답이 늦게 와도(state.input이 마운트 후 도착) 폼이 hydrate된다', () => {
@@ -168,7 +215,7 @@ describe('StoryView 폼 hydrate (Task 7)', () => {
     expect(screen.getByLabelText('장르')).toHaveValue('bespoke')
     expect(screen.getByLabelText('모델')).toHaveValue('claude:claude-opus-4-8')
     expect(screen.getByLabelText('언어')).toHaveValue('ko')
-    expect(screen.getByLabelText('길이 값')).toHaveValue('10')
-    expect(screen.getByLabelText('길이 단위')).toHaveValue('min')
+    expect(screen.getByLabelText('대본 분량 값')).toHaveValue('10')
+    expect(screen.getByLabelText('대본 분량 단위')).toHaveValue('min')
   })
 })

@@ -1,13 +1,35 @@
 /** 프롬프트 빌더 — Gemini/Claude 두 엔진 공유. (구 llmGemini.js 내부 빌더 이관) */
 
-export function buildScriptPrompt(input, opts) {
-  const meta = opts.metaPrompt ? `## CUSTOM INSTRUCTIONS\n${opts.metaPrompt}\n` : ''
+const KOREAN_CHARS_PER_MINUTE = 330
+const ENGLISH_WORDS_PER_MINUTE = 150
+
+function formatEstimate(value) {
+  return String(Math.round(Number(value) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+}
+
+function formatMinutes(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n <= 0) return '10'
+  return Number.isInteger(n) ? String(n) : String(n).replace(/\.?0+$/, '')
+}
+
+function buildLengthText(opts = {}) {
   const n = opts.lengthValue || 10
   const unit = opts.lengthUnit || 'min'
-  const lengthText =
-    unit === 'chars' ? `약 ${n}자` :
-    unit === 'words' ? `about ${n} words` :
-    `약 ${n}분`
+  if (unit === 'chars') return opts.language === 'en' ? `about ${n} characters` : `약 ${n}자`
+  if (unit === 'words') return `about ${n} words`
+
+  const minutes = Number(n) || 10
+  const minuteText = formatMinutes(n)
+  if (opts.language === 'en') {
+    return `about ${minuteText} minutes (about ${formatEstimate(minutes * ENGLISH_WORDS_PER_MINUTE)} words)`
+  }
+  return `약 ${minuteText}분(대략 ${formatEstimate(minutes * KOREAN_CHARS_PER_MINUTE)}자)`
+}
+
+export function buildScriptPrompt(input, opts) {
+  const meta = opts.metaPrompt ? `## CUSTOM INSTRUCTIONS\n${opts.metaPrompt}\n` : ''
+  const lengthText = buildLengthText(opts)
   return [
     meta,
     `당신은 유튜브 스토리 채널 작가다. 아래 제목으로 ${lengthText} 분량의 나레이션 대본을 ${opts.language === 'ko' ? '한국어' : '영어'}로 작성하라.`,
