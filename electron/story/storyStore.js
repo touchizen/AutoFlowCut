@@ -2,7 +2,7 @@
  * story.json / story 산출물 영속화 — 스펙 §2, §3.
  * 소유자는 main process 스텝 머신. temp 파일 + rename으로 원자적 쓰기.
  */
-import { mkdir, readFile, writeFile, rename } from 'node:fs/promises'
+import { mkdir, readFile, writeFile, rename, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 
@@ -61,5 +61,19 @@ export function createStoryStore(projectPath) {
     async loadText(relPath) {
       try { return await readFile(path.join(storyDir, relPath), 'utf-8') } catch { return null }
     },
+    // 리서치 m5-잔여: read-modify-write를 write 큐 안에서 원자화한다. updater가 "현재 파일 내용
+    // (없으면 null)"을 받아 새 텍스트를 반환하면 저장, null이면 no-op. 읽기가 큐 task 안에 있어
+    // 다른 write와의 lost-update(stale 스냅샷 덮어쓰기)가 발생하지 않는다.
+    async updateText(relPath, updater) {
+      return enqueueWrite(async () => {
+        let current = null
+        try { current = await readFile(path.join(storyDir, relPath), 'utf-8') } catch { current = null }
+        const next = await updater(current)
+        if (next == null) return
+        await writeAtomic(relPath, next)
+      })
+    },
+    // 리서치 §3.8: draft/research.json/transcripts 정리(researchSkip). 없는 경로는 no-op(force).
+    async remove(relPath) { return enqueueWrite(() => rm(path.join(storyDir, relPath), { recursive: true, force: true })) },
   }
 }

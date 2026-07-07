@@ -128,8 +128,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   storyTtsPreview: (params) => ipcRenderer.invoke('story:tts-preview', params),
   storyLoadAudioPackage: (projectPath) => ipcRenderer.invoke('story:load-audio-package', { projectPath }),
   storyListLlmOptions: () => ipcRenderer.invoke('story:list-llm-options'),
+  // 리서치 side actions (spec §5) — 진행(research-fetch)은 기존 story:progress 채널 재사용.
+  storyResearchSearch: (params) => ipcRenderer.invoke('story:research-search', params),
+  storyResearchFetch: (params) => ipcRenderer.invoke('story:research-fetch', params),
+  storyResearchAnalyze: (params) => ipcRenderer.invoke('story:research-analyze', params),
+  storyResearchFactCheck: (params) => ipcRenderer.invoke('story:research-factcheck', params),
+  storyResearchCommit: (params) => ipcRenderer.invoke('story:research-commit', params),
+  storyResearchSkip: (params) => ipcRenderer.invoke('story:research-skip', params),
+  storyResearchSelect: (params) => ipcRenderer.invoke('story:research-select', params),
   onStoryEvent: (channel, cb) => {
-    const valid = ['story:state', 'story:delta', 'story:progress', 'story:pushScenes', 'story:pushCharacters', 'story:synopsis-delta']
+    const valid = ['story:state', 'story:delta', 'story:progress', 'story:pushScenes', 'story:pushCharacters', 'story:synopsis-delta', 'story:research-state']
     if (!valid.includes(channel)) return () => {}
     const listener = (_e, payload) => cb(payload)
     ipcRenderer.on(channel, listener)

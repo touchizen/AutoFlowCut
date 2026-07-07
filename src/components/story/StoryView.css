@@ -384,6 +384,154 @@
   padding-top: 6px;
 }
 
+/* ── 리서치 게이트 패널 (리서치 spec §3.6) ── */
+.story-research-phase {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.story-research-tos {
+  font-size: 0.78rem;
+  opacity: 0.65;
+}
+
+.story-research-searchbar {
+  display: flex;
+  gap: 8px;
+}
+
+.story-research-searchbar .story-input {
+  flex: 1;
+}
+
+/* 영상 카드 그리드 — 썸네일·제목·조회수·채널 + 체크박스 선택 */
+.story-research-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+.story-research-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  cursor: pointer;
+}
+
+.story-research-card.selected {
+  border-color: #4a9eff;
+}
+
+.story-research-card-check {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 1;
+}
+
+.story-research-card img {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+.story-research-card-title {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.story-research-card-meta {
+  font-size: 0.75rem;
+  opacity: 0.7;
+}
+
+/* 카드 자막 상태 배지(running/done/error) */
+.story-research-transcript {
+  align-self: flex-start;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 0.72rem;
+}
+.story-research-transcript-running { background: rgba(88, 166, 255, 0.18); color: #58a6ff; }
+.story-research-transcript-done { background: rgba(46, 160, 67, 0.18); color: #2ea043; }
+.story-research-transcript-error { background: rgba(139, 148, 158, 0.18); color: #8b949e; }
+
+.story-research-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.story-research-analysis,
+.story-research-factcheck {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+}
+
+.story-research-beat {
+  display: flex;
+  gap: 8px;
+  font-size: 0.85rem;
+}
+
+.story-research-beat-name {
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+
+.story-research-themes,
+.story-research-claim {
+  font-size: 0.82rem;
+  opacity: 0.85;
+}
+
+.story-research-verdict-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+}
+
+/* 팩트체크 verdict 배지 — supported=녹색 / refuted=빨강 / unverified=회색(§3.6) */
+.story-verdict-badge {
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 0.75rem;
+  flex: 0 0 auto;
+}
+.story-verdict-supported { background: rgba(46, 160, 67, 0.2); color: #2ea043; }
+.story-verdict-refuted { background: rgba(248, 81, 73, 0.2); color: #f85149; }
+.story-verdict-unverified { background: rgba(139, 148, 158, 0.2); color: #8b949e; }
+
+.story-research-evidence {
+  font-size: 0.75rem;
+  color: #58a6ff;
+  word-break: break-all;
+}
+
+/* 시놉시스 게이트 "리서치 컨텍스트 포함" 토글(M2/Q5) */
+.story-research-use-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+}
+
 /* ── 대본 편집 영역 (PromptInput 래퍼, M2) ── */
 .story-script-editor {
   flex: 1;

@@ -38,6 +38,14 @@ describe('buildClaudeSdkOptions', () => {
     expect(o.thinking).toEqual({ type: 'disabled' })
     expect(o).not.toHaveProperty('effort')
   })
+  it('sdkExtra로 tools/maxTurns를 오버라이드할 수 있다 (D11 — 팩트체크 WebSearch 경로)', () => {
+    const o = buildClaudeSdkOptions('claude-opus-4-8', undefined, { tools: ['WebSearch'], maxTurns: 8 })
+    expect(o.tools).toEqual(['WebSearch'])
+    expect(o.maxTurns).toBe(8)
+    // 격리 옵션은 유지(오염 차단)
+    expect(o.settingSources).toEqual([])
+    expect(o.skills).toEqual([])
+  })
 })
 
 describe('extractClaudeSdkResult', () => {

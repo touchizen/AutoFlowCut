@@ -77,6 +77,62 @@ export const REVIEW_SCHEMA = {
   required: ['verdict', 'critique'],
 }
 
+// 리서치 §3.4: 다수 자막 종합 구조분석 — 공통 서사 구조(structure) + 핵심 사실 주장(claims,
+// sources=videoId) + 공통 논점(commonThemes). 교차검증(여러 영상 공통 주장 가중)은 프롬프트가 지시.
+export const RESEARCH_ANALYSIS_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    structure: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: { beat: { type: 'STRING' }, summary: { type: 'STRING' } },
+        required: ['beat', 'summary'],
+      },
+    },
+    claims: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          claim: { type: 'STRING' },
+          sources: { type: 'ARRAY', items: { type: 'STRING' } }, // 주장이 나온 videoId들
+        },
+        required: ['claim', 'sources'],
+      },
+    },
+    commonThemes: { type: 'ARRAY', items: { type: 'STRING' } },
+  },
+  required: ['structure', 'claims', 'commonThemes'],
+}
+
+// 리서치 §3.5: 주장별 웹검색 팩트체크 — verdict(supported/refuted/unverified) + evidence(url/note).
+export const FACTCHECK_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    claims: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          claim: { type: 'STRING' },
+          verdict: { type: 'STRING' }, // 'supported' | 'refuted' | 'unverified'
+          evidence: {
+            type: 'ARRAY',
+            items: {
+              type: 'OBJECT',
+              properties: { url: { type: 'STRING' }, note: { type: 'STRING' } },
+              required: ['url', 'note'],
+            },
+          },
+        },
+        required: ['claim', 'verdict', 'evidence'],
+      },
+    },
+  },
+  required: ['claims'],
+}
+
 export const PROMPTS_SCHEMA = {
   type: 'OBJECT',
   properties: {

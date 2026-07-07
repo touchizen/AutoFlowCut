@@ -31,6 +31,12 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   const [hasSynopsis, setHasSynopsis] = useState(false)
   const [characters, setCharacters] = useState([])
   const [charactersConfirmed, setCharactersConfirmed] = useState(undefined)
+  // 리서치 슬라이스(spec §3.6/§3.8): main hydrate(research 필드/story:research-state)의 research
+  // 상태(검색결과·선택·자막 메타·분석·팩트체크·confirmed). 미사용/legacy 프로젝트는 null.
+  const [research, setResearch] = useState(null)
+  // research-fetch 진행(videoId→{status:'running'|'done'|'error', error?}) — audio segmentProgress
+  // 패턴 미러. m2: error 코드(binary-not-found/aborted 등)도 보존해 UI가 설치 안내/중단 배지로 구분.
+  const [researchFetchProgress, setResearchFetchProgress] = useState({})
   const [llmOptions, setLlmOptions] = useState(null)
   const [defaultLlmOption, setDefaultLlmOption] = useState(null)
   const tokenRef = useRef(null)
@@ -90,6 +96,9 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
     setHasSynopsis(false)
     setCharacters([])
     setCharactersConfirmed(undefined)
+    // 리서치: 전환 시 옛 프로젝트 리서치 상태가 새 화면에 남지 않게 리셋.
+    setResearch(null)
+    setResearchFetchProgress({})
     if (oldToken) {
       window.electronAPI?.storyAbort?.({ projectToken: oldToken })?.catch?.(() => {})
     }
@@ -133,6 +142,13 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
         if (p.hasSynopsis !== undefined) setHasSynopsis(p.hasSynopsis)
         if (p.characters !== undefined) setCharacters(p.characters)
         if ('charactersConfirmed' in p) setCharactersConfirmed(p.charactersConfirmed)
+        // 리서치: hydrate 필드 — 없는(undefined) 이벤트는 기존 값 유지(scenes 패턴 미러).
+        if (p.research !== undefined) setResearch(p.research)
+      }),
+      // 리서치(§5): hydrate/복원용 신규 채널 — research side action 완료 시 main이 최신 상태를 push.
+      api.onStoryEvent('story:research-state', (p) => {
+        if (p.projectToken !== tokenRef.current) return
+        if (p.research !== undefined) setResearch(p.research)
       }),
       // 슬라이스4(§3.3 op lifecycle): started 신호로 전용 op 세팅 + 누적 리셋, 그 op의 delta만 누적.
       api.onStoryEvent('story:synopsis-delta', (p) => {
@@ -170,6 +186,20 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
       // D: audio 세그먼트별 실시간 진행 — segId→status로 누적해 목록이 생성 상태를 실시간 표시한다.
       api.onStoryEvent('story:progress', (p) => {
         if (p.projectToken !== tokenRef.current) return
+        // 리서치(§3.6): research side action은 running step을 만들지 않아 activeOpRef(step 기반)에
+        // 안 잡힌다 — op 필터 전에 처리(synopsisActiveOpRef 분리와 동일 이유). 맵 리셋은
+        // researchFetchTranscripts 호출측이 수행.
+        if (p.kind === 'research-fetch') {
+          // m2: error 코드(binary-not-found 등)를 status와 함께 저장 — ResearchPanel이
+          // 설치 안내/중단 배지로 구분 표시한다(버리면 전부 "자막 없음"으로만 보임).
+          if (p.videoId) {
+            setResearchFetchProgress((m) => ({
+              ...m,
+              [p.videoId]: { status: p.status, ...(p.error ? { error: p.error } : {}) },
+            }))
+          }
+          return
+        }
         // 진행 중인 op와 다른 operationId의 progress는 drop(늦게 끊긴 이전 실행 잔여 방지).
         if (p.operationId && activeOpRef.current && p.operationId !== activeOpRef.current) return
         if (p.kind === 'step-log') {
@@ -235,6 +265,7 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
     if (r.hasSynopsis !== undefined) setHasSynopsis(r.hasSynopsis)
     if (r.characters !== undefined) setCharacters(r.characters)
     if ('charactersConfirmed' in r) setCharactersConfirmed(r.charactersConfirmed)
+    if (r.research !== undefined) setResearch(r.research)
     // main의 story:open 처리 중 maybeResendPush()가 재발신하는 story:pushScenes가 이
     // storyOpen() resolve(=tokenRef 세팅) 전에 도착하면 토큰 불일치로 drop된다. 이제 토큰이
     // 확정됐으니 storyGetState()를 한 번 호출해 동일한 재발신 로직(getState 핸들러)을 다시
@@ -249,6 +280,7 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
       const {
         scenes: gsScenes, scriptText: gsScriptText,
         synopsisText: gsSynopsisText, hasSynopsis: gsHasSynopsis, characters: gsCharacters,
+        research: gsResearch,
         ...rest
       } = gs
       setState(rest)
@@ -258,6 +290,7 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
       if (gsHasSynopsis !== undefined) setHasSynopsis(gsHasSynopsis)
       if (gsCharacters !== undefined) setCharacters(gsCharacters)
       if ('charactersConfirmed' in gs) setCharactersConfirmed(gs.charactersConfirmed)
+      if (gsResearch !== undefined) setResearch(gsResearch)
     }
     return r
   }, [projectPath])
@@ -298,12 +331,30 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
     window.electronAPI.storyConfirmSynopsis({ projectToken: tokenRef.current, ...params }), [])
   // 슬라이스1: 세그먼트 단건 TTS 테스트(배치 진행버튼과 분리). 저장된 오디오는 story:state로 반영.
   const ttsPreview = useCallback((params) => window.electronAPI.storyTtsPreview({ projectToken: tokenRef.current, ...params }), [])
+  // 리서치 side actions(spec §3.1/§5) — machine 위임. 상태 갱신은 story:research-state 구독이 담당.
+  const researchSearch = useCallback((params = {}) =>
+    window.electronAPI.storyResearchSearch({ projectToken: tokenRef.current, ...params }), [])
+  const researchFetchTranscripts = useCallback((params = {}) => {
+    setResearchFetchProgress({}) // 새 취득 시작 — 이전 실행 진행 잔여 정리
+    return window.electronAPI.storyResearchFetch({ projectToken: tokenRef.current, ...params })
+  }, [])
+  const researchAnalyze = useCallback((params = {}) =>
+    window.electronAPI.storyResearchAnalyze({ projectToken: tokenRef.current, ...params }), [])
+  const researchFactCheck = useCallback((params = {}) =>
+    window.electronAPI.storyResearchFactCheck({ projectToken: tokenRef.current, ...params }), [])
+  const researchCommit = useCallback((params = {}) =>
+    window.electronAPI.storyResearchCommit({ projectToken: tokenRef.current, ...params }), [])
+  const researchSkip = useCallback(() =>
+    window.electronAPI.storyResearchSkip({ projectToken: tokenRef.current }), [])
+  // m5: 수동 URL 카드·fetch 전 선택 영속 — 선택 변경/URL 추가 즉시 draft에 저장(탭전환/재오픈 유실 방지).
+  const researchSelect = useCallback((params = {}) =>
+    window.electronAPI.storyResearchSelect({ projectToken: tokenRef.current, ...params }), [])
 
   // 전환 감지 render에서는 옛 프로젝트의 state/scenes/scriptText/openError 대신 빈 값을 반환해
   // key로 재마운트되는 StoryView가 setup + 폼 기본값으로 초기화되게 한다(effect가 다음 tick에
   // useState를 정리하기 전 한 프레임의 stale 값 유출 방지).
   if (justSwitched) {
-    return { state: null, scenes: [], streamingText, scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview, segmentProgress: {}, reviewProgress: null, progressLog: [], llmOptions, defaultLlmOption, generateSynopsis, confirmSynopsis, synopsisStreamingText: '', synopsisGenerating: false, synopsisError: null, synopsisText: '', hasSynopsis: false, characters: [], charactersConfirmed: undefined }
+    return { state: null, scenes: [], streamingText, scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview, segmentProgress: {}, reviewProgress: null, progressLog: [], llmOptions, defaultLlmOption, generateSynopsis, confirmSynopsis, synopsisStreamingText: '', synopsisGenerating: false, synopsisError: null, synopsisText: '', hasSynopsis: false, characters: [], charactersConfirmed: undefined, research: null, researchFetchProgress: {}, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect }
   }
-  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, segmentProgress, reviewProgress, progressLog, llmOptions, defaultLlmOption, generateSynopsis, confirmSynopsis, synopsisStreamingText, synopsisGenerating, synopsisError, synopsisText, hasSynopsis, characters, charactersConfirmed }
+  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, segmentProgress, reviewProgress, progressLog, llmOptions, defaultLlmOption, generateSynopsis, confirmSynopsis, synopsisStreamingText, synopsisGenerating, synopsisError, synopsisText, hasSynopsis, characters, charactersConfirmed, research, researchFetchProgress, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect }
 }

@@ -16,11 +16,12 @@ import {
   buildSynopsisPrompt,
   buildCharacterExtractPrompt,
   buildTitlePrompt,
+  buildResearchAnalyzePrompt,
 } from './prompts.js'
 import { runCodexJson, runCodexText } from './codexSdk.js'
 import { splitSynopsisOutput, parseCharactersJson, createSynopsisDeltaGate } from './synopsisOutput.js'
 import { toOpenAiJsonSchema } from './toJsonSchema.js'
-import { PROMPTS_SCHEMA, REVIEW_SCHEMA, SCENES_SCHEMA, validateScenesSegments } from './schemas.js'
+import { PROMPTS_SCHEMA, REVIEW_SCHEMA, SCENES_SCHEMA, RESEARCH_ANALYSIS_SCHEMA, validateScenesSegments } from './schemas.js'
 import { isNarratorSpeaker as isNarratorTrackSpeaker } from '../../../src/utils/storyNarrationTracks.js'
 
 export const DEFAULT_MODEL = 'gpt-5.5'
@@ -181,6 +182,14 @@ export async function revisePrompts(scenes, context, critique, opts = {}, { sign
       videoPrompt: byNo.get(s.sceneNo).videoPrompt,
     })),
   }
+}
+
+// 리서치 §3.4 (D10/N1): 구조분석은 웹검색이 불필요해 Codex도 지원 — 라우터 등록 메서드라
+// llmClaude와 양쪽 필수 구현. factCheckClaims는 Codex에 만들지 않는다(M1 — 팩트체크는 Claude 강제).
+export async function analyzeResearch(transcripts, opts = {}, { signal, runJson = runCodexJson } = {}) {
+  const prompt = guardPrompt(buildResearchAnalyzePrompt(transcripts, opts))
+  const out = await runJson(prompt, codexSchema(RESEARCH_ANALYSIS_SCHEMA), runtimeOptions(opts), { signal })
+  return { structure: out.structure || [], claims: out.claims || [], commonThemes: out.commonThemes || [] }
 }
 
 export async function writePrompts(scenes, context, opts = {}, { signal, runJson = runCodexJson } = {}) {

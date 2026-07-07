@@ -6,6 +6,9 @@ import { stat } from 'node:fs/promises'
 import path from 'node:path'
 import { createStepMachine, readAudioPackage } from '../story/stepMachine.js'
 import * as llmGemini from '../api/llm/llmGemini.js'
+import * as llmClaude from '../api/llm/llmClaude.js'
+import { searchVideos } from '../api/youtube/searchVideos.js'
+import { fetchTranscript } from '../api/youtube/fetchTranscript.js'
 import { createTtsAdapter } from '../api/tts/index.js'
 import { getTypecastKey } from '../api/tts/typecastKey.js'
 import { probeDurationMs } from '../story/audioProbe.js'
@@ -41,9 +44,14 @@ function isWithinWorkFolder(projectPath, workFolder) {
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
 }
 
-export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini, loadMetaPrompt, getActiveWorkFolder = () => null, tts, ttsFor, probe, defaultVoice, sfxFor }) {
+export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini, loadMetaPrompt, getActiveWorkFolder = () => null, tts, ttsFor, probe, defaultVoice, sfxFor, youtube, factCheck }) {
   let machine = null
   let openLock = Promise.resolve()
+
+  // 리서치(spec §3.1/§3.5): 검색·자막은 yt-dlp 모듈 직접 배선, 팩트체크는 Claude 강제라 라우터
+  // 우회 — llmClaude.factCheckClaims를 machine deps로 주입(N4 DI seam, 테스트는 mock 주입).
+  const youtubeApi = youtube || { searchVideos, fetchTranscript }
+  const factCheckFn = factCheck || llmClaude.factCheckClaims
 
   // C1-a: audio 스텝은 tts/probe 주입이 필수(없으면 실앱에서 tts.capabilities() 크래시).
   // 테스트/커스텀 provider는 주입 우선, 기본은 Typecast 어댑터 + music-metadata probe.
@@ -83,7 +91,7 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
         return { error: 'invalid-project-path' }
       }
       if (machine) await machine.abort()
-      machine = createStepMachine({ projectPath, llm, emit, getApiKey: () => keyStore.getKey(), loadMetaPrompt, tts: ttsAdapter, ttsFor, probe: probeFn, defaultVoice: defaultVoiceCfg, sfxFor })
+      machine = createStepMachine({ projectPath, llm, emit, getApiKey: () => keyStore.getKey(), loadMetaPrompt, tts: ttsAdapter, ttsFor, probe: probeFn, defaultVoice: defaultVoiceCfg, sfxFor, youtube: youtubeApi, factCheck: factCheckFn })
       return machine.open()
     })
     openLock = task.then(() => undefined, () => undefined)
@@ -112,12 +120,29 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
   })
   ipcMain.handle('story:generate-title', guarded(({ scriptMd, options }) => machine.generateTitle(scriptMd, options || {})))
   // 슬라이스4(§3.4 + §v2.8 M4): 시놉시스 생성 side action — title/pasted 분기는 machine이 처리.
-  ipcMain.handle('story:generate-synopsis', guarded(({ type, title, pastedScript, options }) =>
-    machine.generateSynopsis({ type, title, pastedScript, options: options || {} })))
+  // 리서치 §5 M2: 기존 채널에 useResearch 필드 추가(신규 채널 아님) — true일 때만 research.json 주입.
+  ipcMain.handle('story:generate-synopsis', guarded(({ type, title, pastedScript, options, useResearch }) =>
+    machine.generateSynopsis({ type, title, pastedScript, useResearch, options: options || {} })))
   // 슬라이스4(§v2.8 M1 + §v2.9): 시놉시스 확정 커밋 채널(title·pasted 공통) — characters→speakers
   // 반영 + charactersConfirmed=true + pushCharacters emit은 machine.confirmSynopsis가 수행.
   ipcMain.handle('story:confirm-synopsis', guarded(({ synopsisMd, characters }) =>
     machine.confirmSynopsis({ synopsisMd, characters })))
   // 슬라이스1: 세그먼트 단건 TTS 테스트(배치와 분리, 스텝 상태 미변경).
   ipcMain.handle('story:tts-preview', guarded(({ segmentIds, speakers, sfxSources }) => machine.synthPreview({ segmentIds, speakers, sfxSources })))
+
+  // 리서치(spec §5): story:research-* guarded 핸들러 — machine research side action 위임.
+  ipcMain.handle('story:research-search', guarded(({ query, keyword, maxResults }) =>
+    machine.researchSearch({ keyword: query ?? keyword, ...(maxResults ? { maxResults } : {}) })))
+  ipcMain.handle('story:research-fetch', guarded(({ videoIds }) =>
+    machine.researchFetchTranscripts({ videoIds: videoIds || [] })))
+  ipcMain.handle('story:research-analyze', guarded(({ videoIds, options }) =>
+    machine.researchAnalyze({ videoIds, options: options || {} })))
+  ipcMain.handle('story:research-factcheck', guarded(({ options }) =>
+    machine.researchFactCheck({ options: options || {} })))
+  ipcMain.handle('story:research-commit', guarded(({ analysis, verifiedClaims }) =>
+    machine.researchCommit({ analysis, verifiedClaims })))
+  ipcMain.handle('story:research-skip', guarded(() => machine.researchSkip()))
+  // m5: 수동 URL 카드·fetch 전 선택 영속(draft) — 탭전환/재오픈 유실 방지.
+  ipcMain.handle('story:research-select', guarded(({ selectedVideoIds, manualVideos }) =>
+    machine.researchSelect({ selectedVideoIds, manualVideos })))
 }

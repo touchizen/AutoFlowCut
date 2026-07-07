@@ -1,6 +1,6 @@
 /**
- * StoryStepper — Story 파이프라인 진행 상태 표시 (스펙 §6 + §v2.12 B).
- * ① 시놉시스 → ② 시나리오 → ③ 씬 분리 → ④ 오디오 → ⑤ 프롬프트 (설정은 0번)
+ * StoryStepper — Story 파이프라인 진행 상태 표시 (스펙 §6 + §v2.12 B + 리서치 spec §2.1).
+ * ① 리서치 → ② 시놉시스 → ③ 시나리오 → ④ 씬 분리 → ⑤ 오디오 → ⑥ 프롬프트 (설정은 0번)
  *
  * 프레젠테이션 컴포넌트 — 상태만 렌더. done 상태 스텝과 현재 진행 단계(currentStep)는
  * onStepClick으로 클릭해 해당 패널을 다시 볼 수 있다 — 진행 대기(pending)·진행 중인 현재
@@ -12,17 +12,23 @@ export const STEP_ORDER = ['script', 'scenes', 'audio', 'prompts']
 export const SETUP_KEY = 'setup'
 export const SETUP_META = { icon: '0', label: '설정' }
 
+// 리서치(research)는 시놉시스 앞의 선택적 게이트 탭(리서치 spec §2.1/D1) — 시놉시스 §v2.12 B
+// 패턴 미러로 정식 번호(①) 자리를 항상 렌더하고, 활성/비활성은 researchEnabled prop이 가른다.
+export const RESEARCH_KEY = 'research'
+export const RESEARCH_META = { icon: '①', label: '리서치' }
+
 // 시놉시스(synopsis)는 실행 스텝이 아닌 게이트 탭(script pre-phase, spec §v2.5)이지만
-// §v2.12 B: 정식 번호(①)로 자리를 항상 렌더한다(숨김 폐지 — "설정 탭 진입 시 사라짐" 해소).
+// §v2.12 B: 정식 번호로 자리를 항상 렌더한다(숨김 폐지 — "설정 탭 진입 시 사라짐" 해소).
 // 활성/비활성은 synopsisEnabled prop이 가른다(비활성 = 회색, 클릭 불가). 스텝머신 코어 불변.
+// 리서치(①) 삽입으로 ②로 시프트(리서치 spec §2.1 — 라벨/키 불변, icon만).
 export const SYNOPSIS_KEY = 'synopsis'
-export const SYNOPSIS_META = { icon: '①', label: '시놉시스' }
+export const SYNOPSIS_META = { icon: '②', label: '시놉시스' }
 
 export const STEP_META = {
-  script: { icon: '②', label: '시나리오' },
-  scenes: { icon: '③', label: '씬 분리' },
-  audio: { icon: '④', label: '오디오' },
-  prompts: { icon: '⑤', label: '프롬프트' },
+  script: { icon: '③', label: '시나리오' },
+  scenes: { icon: '④', label: '씬 분리' },
+  audio: { icon: '⑤', label: '오디오' },
+  prompts: { icon: '⑥', label: '프롬프트' },
 }
 
 const STATUS_LABEL = { pending: '대기', running: '진행 중', done: '완료', error: '오류' }
@@ -33,7 +39,7 @@ const AUTO_STEPS = ['scenes', 'audio', 'prompts']
 export default function StoryStepper({
   steps, currentStep, activeStep, t = (key, fallback) => fallback, onStepClick,
   autoSteps = null, onToggleAuto, onRunAll, canRunAll = false, autoRunning = false,
-  synopsisEnabled = false,
+  synopsisEnabled = false, researchEnabled = false,
 }) {
   // active(파란색)는 사용자가 보고 있는 스텝(activeStep=displayStep)을 따른다 — 클릭한 탭이 active.
   // 미지정이면 currentStep 폴백(하위호환).
@@ -42,6 +48,8 @@ export default function StoryStepper({
   const setupLabel = t(`story.step.${SETUP_KEY}`, SETUP_META.label)
   const synopsisLabel = t(`story.step.${SYNOPSIS_KEY}`, SYNOPSIS_META.label)
   const synopsisClickable = synopsisEnabled && setupClickable
+  const researchLabel = t(`story.step.${RESEARCH_KEY}`, RESEARCH_META.label)
+  const researchClickable = researchEnabled && setupClickable
   return (
     <div className="story-stepper">
       {/* 0번 설정 탭 — 실행 스텝이 아니라 진입 탭이라 상태 배지 없음, 항상 클릭 가능. */}
@@ -62,7 +70,27 @@ export default function StoryStepper({
         <span className="story-step-icon">{SETUP_META.icon}</span>
         <span className="story-step-name">{setupLabel}</span>
       </div>
-      {/* 시놉시스 스텝(①) — §v2.12 B: 자리는 항상 렌더(설정 뒤·시나리오 앞), 무배지(게이트 탭).
+      {/* 리서치 스텝(①) — 리서치 spec §2.1/§3.6: 자리는 항상 렌더(설정 뒤·시놉시스 앞), 무배지(게이트 탭).
+          신규 title/pasted 흐름에서만 활성(researchEnabled) — imported/legacy는 회색 비활성. */}
+      <div
+        key={RESEARCH_KEY}
+        role={researchClickable ? 'button' : undefined}
+        tabIndex={researchClickable ? 0 : undefined}
+        aria-label={researchClickable ? researchLabel : undefined}
+        aria-disabled={researchClickable ? undefined : true}
+        onClick={researchClickable ? () => onStepClick(RESEARCH_KEY) : undefined}
+        onKeyDown={researchClickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') onStepClick(RESEARCH_KEY) } : undefined}
+        className={[
+          'story-step-pill',
+          'story-step-research',
+          RESEARCH_KEY === activeKey ? 'active' : '',
+          researchClickable ? 'story-step-clickable' : 'story-step-disabled',
+        ].filter(Boolean).join(' ')}
+      >
+        <span className="story-step-icon">{RESEARCH_META.icon}</span>
+        <span className="story-step-name">{researchLabel}</span>
+      </div>
+      {/* 시놉시스 스텝(②) — §v2.12 B: 자리는 항상 렌더(리서치 뒤·시나리오 앞), 무배지(게이트 탭).
           title/pasted 신규 경로만 활성(synopsisEnabled) — imported/legacy는 회색 비활성(클릭 불가). */}
       <div
         key={SYNOPSIS_KEY}

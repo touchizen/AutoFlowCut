@@ -36,14 +36,15 @@ describe('StoryStepper 설정 탭(0번, 시나리오 앞)', () => {
 // §v2.12 B: synopsis 정식 번호 스텝(UI) — pill 자리는 항상 렌더(숨김 폐지),
 // synopsisEnabled prop이 활성(클릭 가능)/비활성(회색, 클릭 불가)을 가른다.
 describe('StoryStepper 시놉시스 스텝(항상 렌더 + synopsisEnabled)', () => {
-  it('설정 뒤·시나리오 앞에 무배지 pill을 항상 렌더한다(prop 미지정 포함)', () => {
+  it('리서치 뒤·시나리오 앞에 무배지 pill을 항상 렌더한다(prop 미지정 포함)', () => {
     render(<StoryStepper steps={allDone} currentStep="script" onStepClick={vi.fn()} />)
     const pill = pillOf('시놉시스')
     expect(pill).toBeTruthy()
     const pills = [...document.querySelectorAll('.story-step-pill')]
     expect(pills.indexOf(pillOf('설정'))).toBe(0)
-    expect(pills.indexOf(pill)).toBe(1)
-    expect(pills.indexOf(pillOf('시나리오'))).toBe(2)
+    expect(pills.indexOf(pillOf('리서치'))).toBe(1)
+    expect(pills.indexOf(pill)).toBe(2)
+    expect(pills.indexOf(pillOf('시나리오'))).toBe(3)
     expect(pill.querySelector('.story-step-badge')).toBeNull()
   })
   it('synopsisEnabled 미지정(기본)이면 비활성 — 회색(disabled) 스타일 + 클릭 불가', () => {
@@ -70,17 +71,54 @@ describe('StoryStepper 시놉시스 스텝(항상 렌더 + synopsisEnabled)', ()
   })
 })
 
-// §v2.12 B: 정식 번호 시프트 — setup 0, synopsis ①, script ②, scenes ③, audio ④, prompts ⑤.
-describe('StoryStepper 스텝 번호(§v2.12)', () => {
-  it('setup=0, synopsis=①, script=②, scenes=③, audio=④, prompts=⑤', () => {
+// 리서치 spec §2.1/D1: 리서치(①) 삽입으로 번호 재시프트 —
+// setup 0, research ①, synopsis ②, script ③, scenes ④, audio ⑤, prompts ⑥.
+describe('StoryStepper 스텝 번호(리서치 D1)', () => {
+  it('setup=0, research=①, synopsis=②, script=③, scenes=④, audio=⑤, prompts=⑥', () => {
     render(<StoryStepper steps={allDone} currentStep="script" onStepClick={vi.fn()} />)
     const iconOf = (label) => pillOf(label).querySelector('.story-step-icon').textContent
     expect(iconOf('설정')).toBe('0')
-    expect(iconOf('시놉시스')).toBe('①')
-    expect(iconOf('시나리오')).toBe('②')
-    expect(iconOf('씬 분리')).toBe('③')
-    expect(iconOf('오디오')).toBe('④')
-    expect(iconOf('프롬프트')).toBe('⑤')
+    expect(iconOf('리서치')).toBe('①')
+    expect(iconOf('시놉시스')).toBe('②')
+    expect(iconOf('시나리오')).toBe('③')
+    expect(iconOf('씬 분리')).toBe('④')
+    expect(iconOf('오디오')).toBe('⑤')
+    expect(iconOf('프롬프트')).toBe('⑥')
+  })
+})
+
+// 리서치 spec §2.1/§3.6: research pill(①) — 자리는 항상 렌더(설정 뒤·시놉시스 앞), 무배지 게이트 탭.
+// researchEnabled prop이 활성/비활성을 가른다(시놉시스 synopsisEnabled 미러).
+describe('StoryStepper 리서치 스텝(항상 렌더 + researchEnabled)', () => {
+  it('설정 뒤·시놉시스 앞에 무배지 pill을 항상 렌더한다(prop 미지정 포함)', () => {
+    render(<StoryStepper steps={allDone} currentStep="script" onStepClick={vi.fn()} />)
+    const pill = pillOf('리서치')
+    expect(pill).toBeTruthy()
+    const pills = [...document.querySelectorAll('.story-step-pill')]
+    expect(pills.indexOf(pill)).toBe(1)
+    expect(pill.querySelector('.story-step-badge')).toBeNull()
+  })
+  it('researchEnabled 미지정(기본)이면 비활성 — 회색(disabled) 스타일 + 클릭 불가', () => {
+    const onStepClick = vi.fn()
+    render(<StoryStepper steps={allDone} currentStep="script" onStepClick={onStepClick} />)
+    const pill = pillOf('리서치')
+    expect(pill.classList.contains('story-step-disabled')).toBe(true)
+    expect(pill.classList.contains('story-step-clickable')).toBe(false)
+    fireEvent.click(pill)
+    expect(onStepClick).not.toHaveBeenCalled()
+  })
+  it('researchEnabled=true면 활성 — 클릭 시 onStepClick("research") 호출', () => {
+    const onStepClick = vi.fn()
+    render(<StoryStepper steps={allDone} currentStep="script" researchEnabled onStepClick={onStepClick} />)
+    const pill = pillOf('리서치')
+    expect(pill.classList.contains('story-step-disabled')).toBe(false)
+    fireEvent.click(pill)
+    expect(onStepClick).toHaveBeenCalledWith('research')
+  })
+  it('activeStep="research"면 리서치 pill이 active', () => {
+    render(<StoryStepper steps={allDone} currentStep="script" activeStep="research" researchEnabled onStepClick={vi.fn()} />)
+    expect(pillOf('리서치').classList.contains('active')).toBe(true)
+    expect(pillOf('시놉시스').classList.contains('active')).toBe(false)
   })
 })
 

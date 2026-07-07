@@ -56,6 +56,27 @@ function buildRosterBlock(roster) {
   ].join('\n')
 }
 
+// 리서치 §3.8 (M2/Q5): 검증된 리서치 컨텍스트 블록 — opts.research(research.json: analysis +
+// verifiedClaims) 있으면 검증된 구조/논점/사실을 주입한다. 없으면 빈 문자열(현행 무변경, §D14 회귀 고정).
+// supported만 사실로 채택(§3.5)하고 원문 문장 복사 금지를 명시(§7).
+function buildResearchBlock(research) {
+  if (!research || typeof research !== 'object') return ''
+  const structure = (research.analysis?.structure || [])
+    .filter((b) => b && (b.beat || b.summary))
+    .map((b) => `- ${[b.beat, b.summary].filter(Boolean).join(': ')}`)
+  const themes = (research.analysis?.commonThemes || []).filter(Boolean).map((t) => `- ${t}`)
+  const claims = (research.verifiedClaims || [])
+    .filter((c) => c && c.claim && (!c.verdict || c.verdict === 'supported'))
+    .map((c) => `- ${c.claim}`)
+  if (!structure.length && !themes.length && !claims.length) return ''
+  return [
+    `아래는 인기 영상 리서치로 검증한 컨텍스트다. 참고·재구성 용도로만 사용하고, 원본 자막의 문장을 그대로 복사하지 마라:`,
+    structure.length ? `[공통 서사 구조]\n${structure.join('\n')}` : '',
+    themes.length ? `[공통 논점]\n${themes.join('\n')}` : '',
+    claims.length ? `[검증된 사실]\n${claims.join('\n')}` : '',
+  ].filter(Boolean).join('\n')
+}
+
 export function buildScriptPrompt(input, opts) {
   const meta = opts.metaPrompt ? `## CUSTOM INSTRUCTIONS\n${opts.metaPrompt}\n` : ''
   const lengthText = buildLengthText(opts)
@@ -74,6 +95,7 @@ export function buildScriptPrompt(input, opts) {
     opts.tone ? `톤: ${opts.tone}` : '',
     `제목: ${input.title}`,
     // §3.2: 시놉시스 게이트에서 확정한 줄거리를 따라 작성.
+    // (리서치 블록은 synopsis 전용(D12) — script 경로엔 opts.research 주입 호출자가 없어 m1에서 제거.)
     opts.synopsis ? `아래 시놉시스를 따라 대본을 작성하라:\n--- 시놉시스 ---\n${opts.synopsis}\n--- 시놉시스 끝 ---` : '',
     charLines.length ? `등장인물은 아래 명단과 정확한 이름만 사용하라. 명단에 없는 새 인물을 만들거나 이름을 바꾸지 마라:\n${charLines.join('\n')}` : '',
     `마크다운으로, 챕터 구분과 (대사가 있으면) 화자 표기를 포함하라.`,
@@ -91,6 +113,8 @@ export function buildSynopsisPrompt(input, opts = {}) {
     opts.genre ? `장르: ${opts.genre}` : '',
     opts.tone ? `톤: ${opts.tone}` : '',
     `제목: ${input.title}`,
+    // 리서치 §3.8 (M2/Q5): generateSynopsis({useResearch:true})가 주입한 검증 컨텍스트(있으면).
+    buildResearchBlock(opts.research),
     `줄거리를 다 쓴 뒤 마지막에 CHARACTERS_JSON 이라고 한 줄 쓰고, 다음 줄부터 등장인물 전체를 아래 형식의 JSON 배열로만 출력하라(설명·코드펜스 금지):`,
     CHARACTER_JSON_SHAPE,
     `gender는 male/female/unknown 중 하나만 쓴다. 나레이션(narrator)은 등장인물에 넣지 않는다.`,
@@ -230,6 +254,42 @@ export function buildPromptsRevisePrompt(scenes, context = {}, critique, opts = 
     `--- 현재 scenes/prompts ---`,
     JSON.stringify({ scenes }, null, 2),
   ].filter(Boolean).join('\n')
+}
+
+// 리서치 §3.4: 선택된 다수 영상 자막을 종합해 공통 서사 구조 + 핵심 주장 + 공통 논점 추출.
+// 교차검증은 프롬프트로 흡수(여러 영상에 공통으로 나오는 주장 가중). 원문 문장 복사 금지(§7).
+export function buildResearchAnalyzePrompt(transcripts = [], opts = {}) {
+  const lang = opts.language === 'en' ? '영어' : '한국어'
+  const blocks = (transcripts || []).map((t, i) => [
+    `--- 자막 ${i + 1} (videoId: ${t.videoId}${t.title ? ` / 제목: ${t.title}` : ''}) ---`,
+    t.plainText || t.text || '',
+  ].join('\n'))
+  return [
+    `당신은 유튜브 스토리 채널의 리서치 분석가다. 아래 여러 영상의 자막을 하나로 종합해 공통 서사 구조와 핵심 논점을 ${lang}로 분석하라.`,
+    `- structure: 영상들이 공유하는 서사 구조를 순서대로 beat(구간 이름)와 summary(그 구간에서 벌어지는 일 요약)로 정리하라.`,
+    `- claims: 영상들이 제시하는 핵심 사실 주장(인물·연도·사건·수치 등 검증 가능한 진술)을 추출하라. 각 주장의 sources에는 그 주장이 등장한 videoId를 모두 넣는다. 여러 영상에 공통으로 나오는 주장을 우선하라(교차검증).`,
+    `- commonThemes: 여러 영상에 반복해서 나타나는 공통 논점/테마를 정리하라.`,
+    `자막 원문 문장을 그대로 복사하지 말고 반드시 재구성해 서술하라(참고·재구성 용도).`,
+    ...blocks,
+  ].join('\n')
+}
+
+// 리서치 §3.5: 구조분석이 뽑은 핵심 주장을 웹검색(WebSearch)으로 검증 — 주장별
+// verdict(supported/refuted/unverified) + evidence(url/note) 산출 지시.
+export function buildFactCheckPrompt(claims = [], opts = {}) {
+  const lang = opts.language === 'en' ? '영어' : '한국어'
+  const lines = (claims || []).map((c, i) => `${i + 1}. ${typeof c === 'string' ? c : c?.claim || ''}`)
+  return [
+    `당신은 팩트체커다. 아래 각 주장(claim)을 웹검색(WebSearch 도구)으로 검증하라.`,
+    `주장마다 신뢰할 수 있는 출처를 검색해 확인한 뒤 verdict를 판정한다:`,
+    `- supported: 신뢰할 수 있는 출처가 주장을 뒷받침함`,
+    `- refuted: 신뢰할 수 있는 출처가 주장과 모순됨`,
+    `- unverified: 출처를 찾지 못했거나 근거가 불충분함`,
+    `각 주장의 evidence에는 판정 근거를 { url: 출처 URL, note: 근거 요약(${lang}) } 배열로 넣는다. 출처 원문 문장을 그대로 복사하지 말고 요약하라.`,
+    `주장 텍스트(claim)는 입력 그대로 유지하고, 모든 주장에 대해 결과를 반환하라.`,
+    `--- 주장 목록 ---`,
+    ...lines,
+  ].join('\n')
 }
 
 export function buildPromptsPrompt(scenes, context, opts) {

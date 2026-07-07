@@ -31,6 +31,7 @@ import { isStoryTtsProvider } from '../../config/storyTtsProviders'
 import { isNarratorSpeaker } from '../../utils/storyNarrationTracks'
 import { normalizeStoryCharacter, resolveCharacterGender } from '../../services/storyCharacter'
 import CharacterCards from './CharacterCards'
+import ResearchPanel from './ResearchPanel'
 import './StoryView.css'
 
 // M2a-3: audio가 파이프라인 1급 스텝 — script→scenes→audio→prompts 순서로 진행한다.
@@ -345,6 +346,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   //   ① input.type∉{title,pasted} → 현행 그대로(synopsis 미적용)
   //   ② charactersConfirmed===true → 기존 규칙(script done→editor 등, 초기값 유지)
   //   ③ charactersConfirmed===false → synopsis phase(script done 여부 무관 — pasted 게이트 보존)
+  //      리서치 spec §3.8(M6): 진행 중 리서치 draft(research 있음 + 미확정)가 있으면 research
+  //      phase로 복원 — 검색/선택/자막을 이어간다(commit/skip 후엔 confirmed/null이라 synopsis).
   //   ④ undefined(legacy) → 기존 규칙 유지(FIX-1: 스텝머신 migrate 없음 — scriptText 기반
   //      초기 phase 규칙이 script done을 editor로 복원한다. synopsis 강제 안 함)
   // hydrate 1회 전용(ref 잠금) — in-session 확정→editor 전이가 늦게 도착한 stale
@@ -356,7 +359,9 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     synopsisPhaseHydratedRef.current = true
     const type = state?.input?.type
     if (type !== 'title' && type !== 'pasted') return // ① 현행 유지
-    if (pipeline.charactersConfirmed === false) setScriptPhase('synopsis') // ③ (②는 초기값 유지)
+    if (pipeline.charactersConfirmed === false) {
+      setScriptPhase(pipeline.research && !pipeline.research.confirmed ? 'research' : 'synopsis') // ③ (②는 초기값 유지)
+    }
   }, [pipeline.charactersConfirmed, state?.input?.type]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 슬라이스5: 시놉시스 줄거리/등장인물 로컬 편집 상태 — scriptText 단일 상태 패턴 미러(§0.3).
@@ -389,10 +394,11 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const displayStep = (scriptPhase && !hydratedRunning)
     ? 'script'
     : (viewedStep && steps[viewedStep]?.status === 'done') ? viewedStep : currentStep
-  // 스텝퍼 active pill: 대본 패널을 설정/시놉시스 phase로 보고 있으면 해당 게이트 탭이 active, 그 외엔 displayStep.
+  // 스텝퍼 active pill: 대본 패널을 설정/리서치/시놉시스 phase로 보고 있으면 해당 게이트 탭이 active, 그 외엔 displayStep.
   const stepperActive = (displayStep === 'script' && scriptPhase === 'setup') ? 'setup'
     : (displayStep === 'script' && scriptPhase === 'synopsis') ? 'synopsis'
-      : displayStep
+      : (displayStep === 'script' && scriptPhase === 'research') ? 'research'
+        : displayStep
 
   // §v2.12 B: synopsis pill 자리는 항상 렌더(Stepper가 무조건 그림 — "설정 탭 진입 시 사라짐" 해소).
   // 활성(클릭 가능) 조건만 상태로 판단 — 기존 showSynopsis(§v2.10) 조건 그대로:
@@ -401,6 +407,12 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const synopsisInputType = state?.input?.type
   const synopsisEnabled = scriptPhase === 'synopsis'
     || ((synopsisInputType === 'title' || synopsisInputType === 'pasted') && pipeline.charactersConfirmed !== undefined)
+
+  // 리서치 spec §3.6: researchEnabled — synopsisEnabled 재사용(M1). 신규 프로젝트는
+  // charactersConfirmed가 in-session 전파되지 않아(undefined) 별도 조건으로는 리서치 phase에
+  // 도달 불능(순환) — 시놉시스 게이트가 활성인 시점(setup [✨ 시작] 직후 포함)부터 리서치 pill도
+  // 함께 활성화한다(스텝 순서 ①리서치→②시놉시스, opt-in §D14). legacy/imported는 기존대로 비활성.
+  const researchEnabled = scriptPhase === 'research' || synopsisEnabled
 
   // FIX-2(UI 이중 방어): 신규(title/pasted) 미확정(charactersConfirmed===false)이면 synopsis 확정
   // 전까지 하류(scenes/audio/prompts) 진행 UI를 disable — main start()의 'unconfirmed' 가드와 이중.
@@ -421,6 +433,12 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     if (key === 'synopsis') {
       setViewedStep('script')
       setScriptPhase('synopsis')
+      return
+    }
+    // 리서치 게이트 탭 — 시놉시스 분기 미러(리서치 spec §3.6).
+    if (key === 'research') {
+      setViewedStep('script')
+      setScriptPhase('research')
       return
     }
     setViewedStep(key)
@@ -837,14 +855,43 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     setScriptPhase('editor')
   }
 
+  // 리서치 spec §3.6(M2/Q5 수동 주입): 시놉시스 게이트 "리서치 컨텍스트 포함" 토글 —
+  // research.confirmed일 때만 노출, 켠 상태의 시놉시스 생성만 useResearch:true로 호출.
+  const [useResearchContext, setUseResearchContext] = useState(false)
+
   const handleSynopsisRegenerate = () => {
-    if (synopsisMode === 'pasted') runGenerateSynopsis({ type: 'pasted', pastedScript: scriptText, options: currentOptions() })
-    else runGenerateSynopsis({ type: 'title', title, options: currentOptions() })
+    const researchParams = useResearchContext && pipeline.research?.confirmed ? { useResearch: true } : {}
+    if (synopsisMode === 'pasted') runGenerateSynopsis({ type: 'pasted', pastedScript: scriptText, options: currentOptions(), ...researchParams })
+    else runGenerateSynopsis({ type: 'title', title, options: currentOptions(), ...researchParams })
   }
 
   const handleSynopsisBackToSetup = () => {
     userWentToSetupRef.current = true
     setScriptPhase('setup')
+  }
+
+  // ── 리서치 게이트(리서치 spec §3.6/§3.8) ──────────────────────────────────
+  // commit: research.json 저장(main) 후 시놉시스 phase로 전이. 자동 주입은 하지 않는다(M2) —
+  // 시놉시스 게이트의 useResearchContext 토글이 유일 스위치. skip: draft 정리 후 리서치 없이 시놉시스로.
+  const handleResearchCommit = async ({ analysis, verifiedClaims } = {}) => {
+    const r = await pipeline.researchCommit?.({ analysis, verifiedClaims })
+    if (r?.error) {
+      toast.error(`${t('story.error.prefix', '오류')}: ${r.error}`)
+      return r
+    }
+    setScriptPhase('synopsis')
+    return r
+  }
+
+  const handleResearchSkip = async () => {
+    const r = await pipeline.researchSkip?.()
+    if (r?.error) {
+      toast.error(`${t('story.error.prefix', '오류')}: ${r.error}`)
+      return r
+    }
+    setUseResearchContext(false)
+    setScriptPhase('synopsis')
+    return r
   }
 
   const handlePrimaryAction = async () => {
@@ -1042,7 +1089,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     <div className="story-view">
       <StoryStepper steps={steps} currentStep={currentStep} activeStep={stepperActive} t={t} onStepClick={handleStepClick}
         autoSteps={autoSteps} onToggleAuto={handleToggleAuto} onRunAll={handleRunAll} canRunAll={canRunAll} autoRunning={autoRunning}
-        synopsisEnabled={synopsisEnabled} />
+        synopsisEnabled={synopsisEnabled} researchEnabled={researchEnabled} />
 
       {openError && (
         <div className="story-open-error-banner" role="alert">
@@ -1059,7 +1106,29 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
       <div className="story-step-panel">
         {displayStep === 'script' && (
           <div className="story-script-panel">
-            {scriptPhase === 'synopsis' ? (
+            {scriptPhase === 'research' ? (
+              // 리서치 spec §3.6: 리서치 게이트 패널 — 키워드 검색·카드 선택·자막 취득·구조분석·
+              // 팩트체크·확정/건너뛰기. 하단 generic 컨트롤은 suppress(N2 게이트 우회 방지).
+              <ResearchPanel
+                t={t}
+                research={pipeline.research}
+                fetchProgress={pipeline.researchFetchProgress || {}}
+                disabled={isRunning}
+                onSearch={pipeline.researchSearch}
+                onFetch={pipeline.researchFetchTranscripts}
+                // M2(D10): 구조분석/팩트체크도 시놉시스·스크립트처럼 현재 UI 옵션을 매번 전달 —
+                // 안 실으면 machine이 state.input.options 폴백(리서치는 시놉시스보다 앞서 대부분
+                // null) → DEFAULT_STORY_LLM/ko 고정으로 엔진·언어 선택이 무시된다.
+                // 팩트체크 엔진은 main이 Claude 강제(§3.5) — 여기 options에선 language만 소비된다.
+                onAnalyze={(p) => pipeline.researchAnalyze({ ...(p || {}), options: currentOptions() })}
+                onFactCheck={() => pipeline.researchFactCheck({ options: currentOptions() })}
+                // m5: 수동 URL 카드·fetch 전 선택을 draft에 영속(탭전환/재오픈 유실 방지).
+                onSelect={pipeline.researchSelect}
+                onCommit={handleResearchCommit}
+                onSkip={handleResearchSkip}
+                onAbort={() => abort()}
+              />
+            ) : scriptPhase === 'synopsis' ? (
               // 슬라이스5(§v2.5/§v2.8 B1): 시놉시스 게이트 패널 — 줄거리 편집(title 경로) +
               // 등장인물 카드 편집 + 확정/다시/설정으로. pasted 모드는 줄거리 편집 비노출
               // (등장인물 역추출·확인 중심). 하단 generic 컨트롤은 suppress(게이트 우회 방지).
@@ -1093,6 +1162,20 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                   <span className="story-opt-label">{t('story.synopsis.charactersTitle', '등장인물')}</span>
                   <CharacterCards characters={characterDrafts} onChange={setCharacterDrafts} disabled={synopsisGenerating} t={t} />
                 </div>
+                {/* 리서치 spec §3.6(M2/Q5): 확정된 리서치가 있을 때만 수동 주입 토글 노출 —
+                    켜면 시놉시스 생성이 useResearch:true로 research.json을 주입한다. */}
+                {pipeline.research?.confirmed && (
+                  <label className="story-research-use-toggle">
+                    <input
+                      type="checkbox"
+                      aria-label={t('story.synopsis.useResearch', '리서치 컨텍스트 포함')}
+                      checked={useResearchContext}
+                      onChange={(e) => setUseResearchContext(e.target.checked)}
+                      disabled={synopsisGenerating}
+                    />
+                    <span>{t('story.synopsis.useResearch', '리서치 컨텍스트 포함')}</span>
+                  </label>
+                )}
                 <div className="story-synopsis-controls">
                   <button
                     type="button"
@@ -1658,8 +1741,9 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
           하단 제네릭 컨트롤은 editor 밖(setup·scenes/prompts 진행)에서만 렌더.
           F1재검토: scriptPhase가 editor로 남아도 실제로 표시 중인 게 대본 editor가 아니면(재오픈 running →
           displayStep=scenes/prompts) 하단 컨트롤(중단)을 보여야 하므로 "실제 editor 표시 중"을 기준으로 판단.
-          슬라이스5(§3.5): synopsis phase에서도 suppress — generic [시나리오 생성]이 게이트를 우회하지 못하게. */}
-      {!(displayStep === 'script' && (scriptPhase === 'editor' || scriptPhase === 'synopsis')) && (
+          슬라이스5(§3.5): synopsis phase에서도 suppress — generic [시나리오 생성]이 게이트를 우회하지 못하게.
+          리서치 spec §3.6(N2): research phase도 동일 suppress — 안 넣으면 게이트 누출 회귀. */}
+      {!(displayStep === 'script' && (scriptPhase === 'editor' || scriptPhase === 'synopsis' || scriptPhase === 'research')) && (
         <div className="story-controls">
           {manualReviewTarget && renderReviewControl(manualReviewTarget, {
             manual: true,

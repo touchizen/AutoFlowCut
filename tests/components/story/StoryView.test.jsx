@@ -24,7 +24,8 @@ describe('StoryView', () => {
   it('스텝퍼에 4단계와 상태 뱃지를 렌더한다', () => {
     const { container } = render(<StoryView pipeline={pipeline()} />)
     const labels = [...container.querySelectorAll('.story-step-name')].map((el) => el.textContent)
-    expect(labels).toEqual(['설정', '시놉시스', '시나리오', '씬 분리', '오디오', '프롬프트'])
+    // 리서치 spec §2.1: 리서치(①) 게이트 pill 삽입(설정 뒤·시놉시스 앞).
+    expect(labels).toEqual(['설정', '리서치', '시놉시스', '시나리오', '씬 분리', '오디오', '프롬프트'])
   })
   it('제목 입력 후 시작하면 generateSynopsis가 stepMachine이 기대하는 shape로 호출된다', () => {
     const p = pipeline()

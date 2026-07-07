@@ -16,11 +16,13 @@ import {
   buildScenesRevisePrompt,
   buildPromptsReviewPrompt,
   buildPromptsRevisePrompt,
+  buildResearchAnalyzePrompt,
+  buildFactCheckPrompt,
 } from './prompts.js'
 import { buildClaudeSdkOptions, extractClaudeSdkResult, bridgeAbortSignal, extractTextDelta, readStructuredResult } from './claudeSdk.js'
 import { splitSynopsisOutput, parseCharactersJson, createSynopsisDeltaGate } from './synopsisOutput.js'
 import { toJsonSchema } from './toJsonSchema.js'
-import { SCENES_SCHEMA, PROMPTS_SCHEMA, REVIEW_SCHEMA, validateScenesSegments } from './schemas.js'
+import { SCENES_SCHEMA, PROMPTS_SCHEMA, REVIEW_SCHEMA, RESEARCH_ANALYSIS_SCHEMA, FACTCHECK_SCHEMA, validateScenesSegments } from './schemas.js'
 
 export const DEFAULT_MODEL = 'claude-opus-4-8'
 
@@ -163,12 +165,13 @@ function assertSchema(data, schema, path = 'root') {
   }
 }
 
-async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryImpl = defaultQuery }) {
+async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryImpl = defaultQuery, sdkExtra = {} }) {
   const schema = toJsonSchema(geminiSchema)
   const { abortController, cleanup } = bridgeAbortSignal(signal)
   try {
     // 1차: outputFormat(json_schema) 강제. 파싱 후 스키마 검증 통과 시 반환, 실패/retry면 폴백.
-    const opt1 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { outputFormat: { type: 'json_schema', schema } }))
+    // sdkExtra(D11 — 팩트체크의 tools:['WebSearch']/maxTurns 등)는 1차·폴백 모두에 적용된다.
+    const opt1 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { ...sdkExtra, outputFormat: { type: 'json_schema', schema } }))
     let needFallback = false
     for await (const m of queryImpl({ prompt, options: opt1 })) {
       if (m.type !== 'result') continue
@@ -186,7 +189,7 @@ async function structuredClaudeCall(prompt, geminiSchema, opts, { signal, queryI
     if (!needFallback) throw new Error('no result message returned')
     // 2차 폴백: outputFormat 없이 JSON-only 재요청. 파싱 결과도 검증, 실패하면 그대로 throw.
     const jsonPrompt = `${prompt}\n\n반드시 아래 JSON 스키마에 맞는 JSON만 출력하라(설명/코드펜스 금지):\n${JSON.stringify(schema)}`
-    const opt2 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts))
+    const opt2 = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts, { ...sdkExtra }))
     for await (const m of queryImpl({ prompt: jsonPrompt, options: opt2 })) {
       if (m.type === 'result') {
         const data = parseJsonLoose(extractClaudeSdkResult(m))
@@ -274,6 +277,32 @@ export async function revisePrompts(scenes, context, critique, opts = {}, { sign
       ...s,
       imagePrompt: byNo.get(s.sceneNo).imagePrompt,
       videoPrompt: byNo.get(s.sceneNo).videoPrompt,
+    })),
+  }
+}
+
+// 리서치 §3.4 (D10): 다수 자막 종합 구조분석 — 라우터 등록 메서드(양 어댑터 공통).
+export async function analyzeResearch(transcripts, opts = {}, { signal, queryImpl } = {}) {
+  const prompt = buildResearchAnalyzePrompt(transcripts, opts)
+  const out = await structuredClaudeCall(prompt, RESEARCH_ANALYSIS_SCHEMA, opts, { signal, queryImpl })
+  return { structure: out.structure || [], claims: out.claims || [], commonThemes: out.commonThemes || [] }
+}
+
+// 리서치 §3.5 (D11/M1/N5): 팩트체크는 Claude 전용 — 라우터 우회, machine에 `factCheck` deps로 주입.
+// 사용자가 고른 engine/model과 무관하게 강제 Claude 조합만 명시 구성(스프레드 금지 — normalize
+// `claude:gpt-5.5` throw 회귀 차단). WebSearch 내장 도구 + 검색 왕복용 maxTurns 상향(sdkExtra).
+const FACTCHECK_LLM = Object.freeze({ engine: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'off' })
+const FACTCHECK_SDK_EXTRA = Object.freeze({ tools: ['WebSearch'], maxTurns: 8 })
+const FACTCHECK_VERDICTS = new Set(['supported', 'refuted', 'unverified'])
+
+export async function factCheckClaims(claims, opts = {}, { signal, queryImpl } = {}) {
+  const prompt = buildFactCheckPrompt(claims, opts) // opts는 프롬프트(언어 등)에만 반영
+  const out = await structuredClaudeCall(prompt, FACTCHECK_SCHEMA, FACTCHECK_LLM, { signal, queryImpl, sdkExtra: { ...FACTCHECK_SDK_EXTRA } })
+  return {
+    claims: (out.claims || []).map((c) => ({
+      claim: c.claim,
+      verdict: FACTCHECK_VERDICTS.has(c.verdict) ? c.verdict : 'unverified',
+      evidence: c.evidence || [],
     })),
   }
 }

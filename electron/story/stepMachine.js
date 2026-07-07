@@ -81,7 +81,7 @@ export async function readAudioPackage(projectPath) {
   return { manifest, lastPushedRevision: st.lastPushedRevision ?? 0 }
 }
 
-export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt, tts, ttsFor, probe, defaultVoice = null, sfxFor = null }) {
+export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt, tts, ttsFor, probe, defaultVoice = null, sfxFor = null, youtube = null, factCheck = null }) {
   const store = createStoryStore(projectPath)
   // 화자별 엔진(슬라이스2): voice.provider별로 어댑터 선택. ttsFor 미주입(기존 단일 tts)이면 tts 사용.
   const resolveTts = (provider) => (ttsFor ? ttsFor(provider) : tts)
@@ -97,6 +97,9 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   // §3.3/§v2.8 M4: generateSynopsis side action 전용 controller — step/preview/synopsis 상호배제 +
   // abort 대칭(machine.abort()가 synopsis도 중단)의 기준.
   let synopsisController = null
+  // 리서치 §3.1/§5: research side action 전용 controller — step/preview/synopsis/confirm과
+  // 상호배제(MINOR 5), abort 대칭. generateSynopsis 패턴 미러.
+  let researchController = null
 
   const send = (ch, payload, operationId) =>
     emit(ch, { projectToken, operationId: operationId || randomUUID(), ...payload })
@@ -570,6 +573,67 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     try { return JSON.parse(raw).scenes || [] } catch { return [] }
   }
 
+  // ---------- 리서치 영속 (§3.8 M6) ----------
+  // machine은 story:open마다 재생성되므로(story-api.js) 진행 중 리서치는 research.draft.json,
+  // 확정본은 research.json으로 durable 저장한다. 자막 원문은 research/transcripts/<id>.srt(로컬
+  // 참고·검증용 — export 미포함, §4/§7).
+  const RESEARCH_DRAFT = 'research.draft.json'
+  const RESEARCH_FILE = 'research.json'
+
+  async function loadResearchDraft() {
+    const raw = await store.loadText(RESEARCH_DRAFT)
+    if (!raw) return {}
+    try { return JSON.parse(raw) || {} } catch { return {} }
+  }
+  async function saveResearchDraft(draft) {
+    await store.saveText(RESEARCH_DRAFT, JSON.stringify(draft, null, 2))
+  }
+  async function loadResearchFinal() {
+    const raw = await store.loadText(RESEARCH_FILE)
+    if (!raw) return null
+    try { return JSON.parse(raw) } catch { return null }
+  }
+
+  // hydrate용 research 상태 — 자막 원문(plainText)은 대용량이라 페이로드에서 제외(메타만).
+  // 리서치 흔적이 전혀 없으면(legacy/미사용) null — renderer가 현행 흐름을 유지한다(§D14).
+  // m6: draftRaw 재파싱 중복 제거 — loadResearchDraft() 단일 경로.
+  async function researchHydrate() {
+    const draft = await loadResearchDraft()
+    const committed = await loadResearchFinal()
+    const confirmed = state?.research?.hasResearch === true
+    if (!Object.keys(draft).length && !committed && !confirmed) return null
+    const transcripts = Object.fromEntries(Object.entries(draft.transcripts || {}).map(([id, t]) => {
+      const { plainText, ...meta } = t || {}
+      return [id, meta]
+    }))
+    // m5: 수동 URL 카드(draft.manualVideos)를 검색 결과에 병합 — 재오픈 시 "카드 없는 유령 선택" 방지.
+    const searchVideos = draft.videos || []
+    const manualVideos = (draft.manualVideos || [])
+      .filter((m) => m?.videoId && !searchVideos.some((v) => v.videoId === m.videoId))
+    // m7-잔여: 재검색 세션(draft.dirty)이면 committed analysis/verifiedClaims 폴백을 무효화한다 —
+    // 새 keyword 위에 옛 committed analysis가 되살아나 불일치 commit되는 것을 막는다.
+    const dirty = draft.dirty === true
+    return {
+      confirmed,
+      keyword: draft.keyword || committed?.keyword || '',
+      videos: [...searchVideos, ...manualVideos],
+      selectedVideoIds: draft.selectedVideoIds || committed?.sources || [],
+      transcripts,
+      analysis: draft.analysis || (dirty ? null : committed?.analysis) || null,
+      verifiedClaims: draft.verifiedClaims || (dirty ? [] : committed?.verifiedClaims) || [],
+    }
+  }
+
+  async function sendResearchState(operationId) {
+    send('story:research-state', { research: await researchHydrate() }, operationId)
+  }
+
+  // 리서치 side action 공통 busy 판정 — step/preview/synopsis/research 상호배제(§5).
+  function researchBusy() {
+    return previewing || synopsisController || researchController ||
+      Object.values(state?.steps || {}).some((s) => s.status === 'running')
+  }
+
   // §3.3 + §v2.10: hydrate payload — renderer가 synopsis phase/게이트 복원을 판단할 재료.
   // characters는 state.speakers 단일 저장에서 파생(m3). charactersConfirmed는 3-state 그대로
   // 노출(undefined=legacy) — phase 판정 로직은 renderer(S5) 소관.
@@ -580,6 +644,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       hasSynopsis: !!synopsisText.trim(),
       characters: characterSpeakers().map((sp) => normalizeStoryCharacter(sp)),
       charactersConfirmed: state?.charactersConfirmed,
+      // 리서치 §3.8: 재오픈 복원용 research 상태(검색결과·선택·자막 메타·분석·팩트체크·confirmed).
+      research: await researchHydrate(),
     }
   }
 
@@ -1073,7 +1139,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // Codex-TTS HIGH2: preview는 스텝 밖 mutation이라 배치/다른 preview와 경쟁하면 scenes.json을
       // 옛 스냅샷으로 덮어쓸 수 있다 — 진행 중 스텝/preview가 있으면 거부하고, 커밋 직전 최신
       // scenes.json에 세그먼트 단위로 병합한다.
-      if (previewing || synopsisController || (state && Object.values(state.steps || {}).some((s) => s.status === 'running'))) return { busy: true }
+      if (previewing || synopsisController || researchController || (state && Object.values(state.steps || {}).some((s) => s.status === 'running'))) return { busy: true }
       previewing = true
       try {
         const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
@@ -1140,7 +1206,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     // 단일 계약 송신 → renderer가 synopsisActiveOpRef를 세팅한다. busy/abort는 step/preview와 대칭.
     async generateSynopsis(params = {}) {
       if (!state) state = await store.load()
-      if (previewing || synopsisController || Object.values(state.steps || {}).some((s) => s.status === 'running')) {
+      if (previewing || synopsisController || researchController || Object.values(state.steps || {}).some((s) => s.status === 'running')) {
         return { error: 'busy' }
       }
       const type = params.type === 'pasted' ? 'pasted' : 'title'
@@ -1160,7 +1226,11 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         const metaPrompt = loadMetaPrompt
           ? await loadMetaPrompt({ genre: inputOptions.genre, wave: 'script', language })
           : ''
-        const opts = buildLlmOptions(inputOptions, { metaPrompt })
+        // 리서치 §3.8 (M2/Q5 수동): params.useResearch === true일 때만 research.json 로드·주입.
+        // falsy면 research.json이 있어도 미주입 — 시놉시스 게이트의 토글이 유일한 스위치.
+        // `research` 키는 normalize denylist(STORY_LLM_RUNTIME_CONTROL_KEYS)에 없어 통과한다.
+        const research = params.useResearch === true ? await loadResearchFinal() : null
+        const opts = buildLlmOptions(inputOptions, { metaPrompt, ...(research ? { research } : {}) })
         const input = type === 'pasted'
           ? { type: 'pasted', pastedScript: params.pastedScript } // B1: state.input은 script 분기가 이미 저장 — 덮어쓰지 않음
           : { type: 'title', title: params.title }
@@ -1189,7 +1259,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     // 않는다 — title 경로의 재생성은 renderer가 confirm 완료 후 start('script')를 순차 호출(§v2.10).
     async confirmSynopsis({ synopsisMd, characters = [] } = {}) {
       if (!state) state = await store.load()
-      if (previewing || synopsisController || Object.values(state.steps || {}).some((s) => s.status === 'running')) {
+      if (previewing || synopsisController || researchController || Object.values(state.steps || {}).some((s) => s.status === 'running')) {
         return { error: 'busy' }
       }
       const operationId = randomUUID()
@@ -1200,13 +1270,237 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       sendCharacters(operationId)
       return { ok: true, operationId }
     },
+    // ---------- 리서치 side actions (spec §3.1/§3.8/§5) ----------
+    // generateSynopsis 미러: 실행 스텝이 아니다(step status 불변). 전용 researchController로
+    // step/preview/synopsis/confirm과 상호배제(§5), abort 대칭. 백엔드(yt-dlp)·factCheck는
+    // DI(youtube/factCheck deps — N4 seam, 라우터 우회). 각 단계 산출은 research.draft.json에
+    // durable 저장해 재오픈(machine 재생성) 시 유실을 막는다(M6).
+    async researchSearch({ keyword, maxResults = 10 } = {}) {
+      if (!state) state = await store.load()
+      if (researchBusy()) return { error: 'busy' }
+      const operationId = randomUUID()
+      const myController = new AbortController()
+      researchController = myController
+      try {
+        const r = await youtube.searchVideos({ query: keyword, maxResults })
+        if (r?.error) return { error: r.error }
+        if (myController.signal.aborted) return { error: 'aborted' }
+        const draft = await loadResearchDraft()
+        draft.keyword = keyword
+        draft.videos = r.videos || []
+        // m7: 새 검색은 이전 분석/팩트체크/선택과 짝이 안 맞는다 — 함께 클리어해
+        // "새 keyword + 옛 analysis" commit으로 research.json이 불일치하는 것을 막는다.
+        // (transcripts는 videoId 키라 새 결과에 같은 영상이 있으면 재사용 가능 — 유지.)
+        draft.selectedVideoIds = []
+        delete draft.analysis
+        delete draft.verifiedClaims
+        // m7-잔여(R2): 이미 commit된 프로젝트가 재검색하면 draft.analysis는 지웠지만 hydrate가
+        // committed.analysis로 폴백해 옛 analysis가 되살아난다 — dirty 마커로 "재검색 세션"임을
+        // 표시해 hydrate가 committed analysis/verifiedClaims 폴백을 무효화하게 한다(재분석 전까지 null 유지).
+        draft.dirty = true
+        await saveResearchDraft(draft)
+        await sendResearchState(operationId)
+        return { videos: draft.videos }
+      } finally {
+        if (researchController === myController) researchController = null
+      }
+    },
+    // §3.1: videoId별 순차 fetch(YAGNI — 병렬 다중 프로세스 비목표) + videoId별 progress emit.
+    // 각 videoId 완료 즉시 draft durable 저장(§3.8 — 부분 진행도 재오픈 복원). 개별 실패는
+    // 나머지 진행(부분 성공 허용, §6). 자막 원문 srt는 research/transcripts/<id>.srt 로컬 저장.
+    async researchFetchTranscripts({ videoIds = [] } = {}) {
+      if (!state) state = await store.load()
+      if (researchBusy()) return { error: 'busy' }
+      const operationId = randomUUID()
+      const myController = new AbortController()
+      researchController = myController
+      try {
+        const draft = await loadResearchDraft()
+        draft.selectedVideoIds = [...videoIds]
+        draft.transcripts = draft.transcripts || {}
+        const out = []
+        for (const videoId of videoIds) {
+          if (myController.signal.aborted) break
+          // srt 파일명에 videoId를 그대로 쓴다 — segment id와 동일한 traversal 방어(Codex-2 패턴).
+          if (!SAFE_SEGMENT_ID.test(String(videoId || ''))) {
+            draft.transcripts[videoId] = { ok: false, error: 'invalid-video-id' }
+            out.push({ videoId, ok: false, error: 'invalid-video-id' })
+            send('story:progress', { kind: 'research-fetch', videoId, status: 'error', error: 'invalid-video-id' }, operationId)
+            await saveResearchDraft(draft)
+            continue
+          }
+          send('story:progress', { kind: 'research-fetch', videoId, status: 'running' }, operationId)
+          let t
+          try { t = await youtube.fetchTranscript(videoId) } catch (e) {
+            t = { videoId, ok: false, error: String(e?.message || e) }
+          }
+          if (myController.signal.aborted) {
+            // m3: in-flight videoId가 running 배지로 잔류하지 않게 abort 시 error(aborted)로
+            // terminal 마킹 — 결과는 무시(§6)하고 draft에도 기록하지 않는다(재시도 가능).
+            send('story:progress', { kind: 'research-fetch', videoId, status: 'error', error: 'aborted' }, operationId)
+            break
+          }
+          if (t?.ok) {
+            draft.transcripts[videoId] = { ok: true, lang: t.lang, isAuto: t.isAuto, plainText: t.plainText || '' }
+            await store.saveText(`research/transcripts/${videoId}.srt`, t.srt || '')
+            send('story:progress', { kind: 'research-fetch', videoId, status: 'done', lang: t.lang, isAuto: t.isAuto }, operationId)
+            out.push({ videoId, ok: true, lang: t.lang, isAuto: t.isAuto })
+          } else {
+            const error = t?.error || 'fetch-failed'
+            draft.transcripts[videoId] = { ok: false, error }
+            send('story:progress', { kind: 'research-fetch', videoId, status: 'error', error }, operationId)
+            out.push({ videoId, ok: false, error })
+          }
+          // §3.8 M6: videoId 단위 즉시 durable — 중간 크래시/재오픈에도 취득분 유실 방지.
+          await saveResearchDraft(draft)
+        }
+        await sendResearchState(operationId)
+        return { transcripts: out }
+      } finally {
+        if (researchController === myController) researchController = null
+      }
+    },
+    // §3.4: 선택 자막들의 plainText를 라우터(llm.analyzeResearch — 선택 엔진)로 종합 분석.
+    async researchAnalyze(params = {}) {
+      if (!state) state = await store.load()
+      if (researchBusy()) return { error: 'busy' }
+      const operationId = randomUUID()
+      const myController = new AbortController()
+      researchController = myController
+      try {
+        const draft = await loadResearchDraft()
+        const ids = (params.videoIds?.length ? params.videoIds : draft.selectedVideoIds) || []
+        const titleOf = new Map((draft.videos || []).map((v) => [v.videoId, v.title || '']))
+        const transcripts = ids
+          .map((videoId) => ({ videoId, t: draft.transcripts?.[videoId] }))
+          .filter(({ t }) => t?.ok && t.plainText)
+          .map(({ videoId, t }) => ({ videoId, title: titleOf.get(videoId) || '', plainText: t.plainText }))
+        if (!transcripts.length) return { error: 'no-transcripts-selected' }
+        const opts = buildLlmOptions(effectiveOptions(params))
+        const analysis = await llm.analyzeResearch(transcripts, opts, { signal: myController.signal })
+        if (myController.signal.aborted) return { error: 'aborted' }
+        draft.analysis = analysis
+        await saveResearchDraft(draft)
+        await sendResearchState(operationId)
+        return { analysis }
+      } finally {
+        if (researchController === myController) researchController = null
+      }
+    },
+    // §3.5 (M1/N4): 팩트체크 — 라우터 우회, 주입된 factCheck 어댑터(=llmClaude.factCheckClaims,
+    // Claude 강제 조합은 어댑터 내부 소관). 사용자 선택 엔진과 무관하게 항상 실행 가능.
+    async researchFactCheck(params = {}) {
+      if (!state) state = await store.load()
+      if (researchBusy()) return { error: 'busy' }
+      if (typeof factCheck !== 'function') return { error: 'factcheck-unavailable' }
+      const operationId = randomUUID()
+      const myController = new AbortController()
+      researchController = myController
+      try {
+        const draft = await loadResearchDraft()
+        const claims = draft.analysis?.claims || []
+        if (!claims.length) return { error: 'no-claims' }
+        const language = params.options?.language || state?.input?.options?.language || 'ko'
+        const r = await factCheck(claims, { language }, { signal: myController.signal })
+        if (myController.signal.aborted) return { error: 'aborted' }
+        const verifiedClaims = r?.claims || []
+        draft.verifiedClaims = verifiedClaims
+        await saveResearchDraft(draft)
+        await sendResearchState(operationId)
+        return { verifiedClaims }
+      } finally {
+        if (researchController === myController) researchController = null
+      }
+    },
+    // §3.8: 확정 — research.json(구조 + supported 사실만 §3.5 + 출처 videoId §7) 저장 +
+    // state.research 마커 durable(charactersConfirmed 패턴 미러 — storyStore.load 통과).
+    // 자동 주입은 하지 않는다(M2) — 시놉시스 토글(useResearch)이 유일 스위치.
+    // m4: commit도 researchController 뮤텍스를 설정하고(저장 중 다른 액션 진입 차단),
+    // §6 "abort 중 커밋" — signal.aborted 검사 후에만 research.json을 저장한다.
+    async researchCommit({ analysis, verifiedClaims } = {}) {
+      if (!state) state = await store.load()
+      if (researchBusy()) return { error: 'busy' }
+      const operationId = randomUUID()
+      const myController = new AbortController()
+      researchController = myController
+      try {
+        const draft = await loadResearchDraft()
+        const finalAnalysis = analysis ?? draft.analysis ?? null
+        if (!finalAnalysis) return { error: 'no-analysis' }
+        if (myController.signal.aborted) return { error: 'aborted' }
+        const all = verifiedClaims ?? draft.verifiedClaims ?? []
+        const research = {
+          committedAt: new Date().toISOString(),
+          keyword: draft.keyword || '',
+          sources: draft.selectedVideoIds || [],
+          analysis: finalAnalysis,
+          // 팩트체크 미실행 commit 허용(§6) — 그 경우 [].
+          verifiedClaims: all.filter((c) => c?.verdict === 'supported'),
+        }
+        await store.saveText(RESEARCH_FILE, JSON.stringify(research, null, 2))
+        state.research = { hasResearch: true }
+        await flush()
+        await sendResearchState(operationId)
+        return { ok: true, operationId }
+      } finally {
+        if (researchController === myController) researchController = null
+      }
+    },
+    // §3.8: 건너뛰기 — draft/research.json/자막 원문 정리 + state.research 클리어.
+    // m4: commit과 대칭 — researchController 설정 + abort 중이면 정리하지 않는다.
+    async researchSkip() {
+      if (!state) state = await store.load()
+      if (researchBusy()) return { error: 'busy' }
+      const operationId = randomUUID()
+      const myController = new AbortController()
+      researchController = myController
+      try {
+        await Promise.resolve() // abort()가 같은 tick에 오면 아래 가드가 잡도록 양보
+        if (myController.signal.aborted) return { error: 'aborted' }
+        await store.remove(RESEARCH_DRAFT)
+        await store.remove(RESEARCH_FILE)
+        await store.remove('research') // transcripts 디렉토리
+        delete state.research
+        await flush()
+        await sendResearchState(operationId)
+        return { ok: true, operationId }
+      } finally {
+        if (researchController === myController) researchController = null
+      }
+    },
+    // m5: 수동 URL 카드·fetch 전 선택 영속 — 탭전환/재오픈(machine 재생성) 시 소실과
+    // "카드 없는 유령 선택"을 막는다. hydrate가 manualVideos를 videos에 병합 복원(§3.8).
+    // m5-잔여(R2): researchController를 동기 설정해 fetch 등 다른 write와 상호배제하고,
+    // 저장은 store.updateText로 write 큐 안에서 최신 draft를 재읽어 selectedVideoIds/manualVideos
+    // 두 필드만 부분 병합한다 — concurrent write의 transcripts/analysis를 stale 스냅샷으로 덮지 않게.
+    async researchSelect({ selectedVideoIds, manualVideos } = {}) {
+      if (!state) state = await store.load()
+      if (researchBusy()) return { error: 'busy' }
+      const operationId = randomUUID()
+      const myController = new AbortController()
+      researchController = myController
+      try {
+        await store.updateText(RESEARCH_DRAFT, (raw) => {
+          let draft = {}
+          try { draft = raw ? (JSON.parse(raw) || {}) : {} } catch { draft = {} }
+          if (Array.isArray(selectedVideoIds)) draft.selectedVideoIds = [...selectedVideoIds]
+          if (Array.isArray(manualVideos)) draft.manualVideos = manualVideos
+          return JSON.stringify(draft, null, 2)
+        })
+        await sendResearchState(operationId)
+        return { ok: true, operationId }
+      } finally {
+        if (researchController === myController) researchController = null
+      }
+    },
     async start(step, params = {}) {
       if (!steps[step]) throw new Error(`unknown step: ${step}`)
       // HIGH: 어떤 스텝이든 running이면 새 start()는 실행하지 않는다 — 동시 실행이 같은
       // story.json/scenes.json에 경쟁적으로 쓰는 것을 막는다. abort()는 running을 동기적으로
       // error로 마킹하므로, abort 후에는 이 가드에 걸리지 않고 정상 재시작할 수 있다.
       // §3.3(Codex R2 #2): synopsis side action 진행 중에도 busy — step/preview/synopsis 상호배제.
-      if (previewing || synopsisController || Object.values(state.steps).some((s) => s.status === 'running')) return { error: 'busy' }
+      // 리서치 §5: research side action 진행 중에도 busy(상호배제 대칭).
+      if (previewing || synopsisController || researchController || Object.values(state.steps).some((s) => s.status === 'running')) return { error: 'busy' }
       // FIX-2: 미확정 게이트 — 신규(title/pasted) 프로젝트(charactersConfirmed===false)는 synopsis
       // 확정 전까지 하류(scenes/audio/prompts)를 거부한다(§v2.8 B1/§v2.11 게이트 우회 차단).
       // script(붙여넣기 저장/제목 생성)는 게이트 전 단계라 허용. legacy(undefined)는 미적용(FIX-1).
@@ -1263,6 +1557,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       controller?.abort()
       // §3.3: synopsis side action도 대칭 중단 — 프로젝트 전환/open cleanup 경로 공용.
       synopsisController?.abort()
+      // 리서치 §5: research side action도 대칭 중단(진행 중 fetch/analyze 등).
+      researchController?.abort()
       // 중단 시점에 running인 스텝은 동기적으로 terminal 마킹 — 이후 다른 스텝 시작으로
       // controller가 교체돼도 running 잔류가 없도록. stale settle의 상태 쓰기는 캡처 가드가 차단.
       for (const [name, s] of Object.entries(state?.steps || {})) {

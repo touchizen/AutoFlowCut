@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { createStoryLlmRouter } from '../../../../electron/api/llm/storyLlmRouter.js'
+import * as llmClaude from '../../../../electron/api/llm/llmClaude.js'
+import * as llmCodex from '../../../../electron/api/llm/llmCodex.js'
 
 function adapters() {
   return {
@@ -16,6 +18,7 @@ function adapters() {
       reviewPrompts: vi.fn(async () => ({ verdict: 'pass', critique: '' })),
       revisePrompts: vi.fn(async (scenes) => ({ scenes })),
       generateSynopsis: vi.fn(async () => ({ synopsisMd: 'claude synopsis', characters: [] })),
+      analyzeResearch: vi.fn(async () => ({ structure: [], claims: [{ claim: 'claude claim', sources: [] }], commonThemes: [] })),
     },
     codex: {
       generateScript: vi.fn(async () => ({ scriptMd: 'codex script' })),
@@ -30,6 +33,7 @@ function adapters() {
       reviewPrompts: vi.fn(async () => ({ verdict: 'revise', critique: 'codex prompt fix' })),
       revisePrompts: vi.fn(async (scenes) => ({ scenes })),
       generateSynopsis: vi.fn(async () => ({ synopsisMd: 'codex synopsis', characters: [{ id: '강리안', name: '강리안' }] })),
+      analyzeResearch: vi.fn(async () => ({ structure: [], claims: [{ claim: 'codex claim', sources: [] }], commonThemes: [] })),
     },
   }
 }
@@ -106,6 +110,46 @@ describe('storyLlmRouter', () => {
     const router = createStoryLlmRouter(a)
     await expect(router.generateSynopsis({ type: 'title', title: 'T' }, { engine: 'codex', model: 'gpt-5.5' }, {}))
       .rejects.toThrow(/does not implement generateSynopsis/)
+  })
+
+  it('analyzeResearch를 노출하고 opts(index 1) 기준으로 engine dispatch한다 (D10)', async () => {
+    const a = adapters()
+    const router = createStoryLlmRouter(a)
+    const ctx = { signal: 's' }
+
+    const r1 = await router.analyzeResearch([{ videoId: 'v1', plainText: 'T' }], { model: 'claude-opus-4-8' }, ctx)
+    expect(r1.claims[0].claim).toBe('claude claim')
+    expect(a.claude.analyzeResearch).toHaveBeenCalledWith(
+      [{ videoId: 'v1', plainText: 'T' }],
+      expect.objectContaining({ engine: 'claude', model: 'claude-opus-4-8' }),
+      ctx,
+    )
+
+    const r2 = await router.analyzeResearch([{ videoId: 'v1', plainText: 'T' }], { engine: 'codex', model: 'gpt-5.5', reasoningEffort: 'high' }, ctx)
+    expect(r2.claims[0].claim).toBe('codex claim')
+    expect(a.codex.analyzeResearch).toHaveBeenCalledWith(
+      [{ videoId: 'v1', plainText: 'T' }],
+      expect.objectContaining({ engine: 'codex', model: 'gpt-5.5', reasoningEffort: 'high' }),
+      ctx,
+    )
+  })
+
+  it('analyzeResearch 미구현 adapter는 명확한 에러로 실패한다 (N1)', async () => {
+    const a = adapters()
+    delete a.codex.analyzeResearch
+    const router = createStoryLlmRouter(a)
+    await expect(router.analyzeResearch([], { engine: 'codex', model: 'gpt-5.5' }, {}))
+      .rejects.toThrow(/does not implement analyzeResearch/)
+  })
+
+  it('실제 두 어댑터 모두 analyzeResearch를 구현한다 (N1 회귀)', () => {
+    expect(typeof llmClaude.analyzeResearch).toBe('function')
+    expect(typeof llmCodex.analyzeResearch).toBe('function')
+  })
+
+  it('M1: factCheckClaims는 라우터에 노출하지 않는다 (라우터 우회 — Claude 직접 호출)', () => {
+    const router = createStoryLlmRouter(adapters())
+    expect(router.factCheckClaims).toBeUndefined()
   })
 
   it('알 수 없는 explicit Codex 모델은 Claude로 fallback하지 않고 실패한다', async () => {
