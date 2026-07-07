@@ -366,18 +366,87 @@
 }
 
 /* ── 읽기 전용 테이블 (씬/프롬프트, M1) ── */
+/* ResultsTable 룩: 격자 대신 헤더 배경 + 행 구분선 + zebra + 호버 */
+/* 주의: border-collapse:collapse 테이블에 border-radius+overflow:hidden을 함께 주면
+   Chromium(Electron)에서 행 구분선이 sub-pixel로 어긋나 아래로 갈수록 누적된다. 라운드 미적용. */
 .story-readonly-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.85rem;
+  border: 1px solid var(--border-color);
 }
 
-.story-readonly-table th,
-.story-readonly-table td {
-  border: 1px solid var(--border-color);
-  padding: 6px 8px;
+.story-readonly-table th {
+  padding: 9px 10px;
   text-align: left;
+  font-weight: 600;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
 }
+
+.story-readonly-table td {
+  padding: 7px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color);
+  /* 기본 baseline이면 2줄 세그먼트 행에서 pill·버튼이 위로 떠 어긋나 보인다 → 세로 중앙 통일 */
+  vertical-align: middle;
+}
+
+.story-readonly-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* zebra + 호버 — sfx 등 특수 행 배경은 아래에서 override */
+.story-readonly-table tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--text-color) 3%, transparent);
+}
+
+.story-readonly-table tbody tr:hover {
+  background: color-mix(in srgb, var(--primary-color) 8%, transparent);
+}
+
+/* 상태 배지 (ResultsTable의 .status 룩) — 세그먼트 상태를 색깔 pill로 */
+.story-status {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.story-status-pending {
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-color) 8%, transparent);
+}
+.story-status-running {
+  color: var(--primary-color);
+  background: color-mix(in srgb, var(--primary-color) 15%, transparent);
+}
+.story-status-done {
+  color: var(--success-color);
+  background: color-mix(in srgb, var(--success-color) 15%, transparent);
+}
+.story-status-error {
+  color: var(--error-color);
+  background: color-mix(in srgb, var(--error-color) 15%, transparent);
+}
+
+/* 세그먼트 테이블: 열 폭 고정(ResultsTable처럼) — auto 레이아웃이면 행마다 마지막 열 폭이
+   흔들려 구분선 오른쪽 끝이 어긋난다. fixed + 열 width로 모든 행 열 폭을 통일. */
+.story-audio-table {
+  table-layout: fixed;
+}
+.story-audio-table th:nth-child(1),
+.story-audio-table td:nth-child(1) { width: 40px; }
+.story-audio-table th:nth-child(2),
+.story-audio-table td:nth-child(2) { width: 96px; }
+/* 3번(세그먼트)은 지정하지 않아 남는 폭을 모두 차지 */
+.story-audio-table th:nth-child(4),
+.story-audio-table td:nth-child(4) { width: 74px; }
+.story-audio-table th:nth-child(5),
+.story-audio-table td:nth-child(5) { width: 148px; }
+/* 고정 폭에서 긴 대사가 셀을 넘치지 않게 줄바꿈 */
+.story-audio-table td { overflow-wrap: break-word; }
 
 .story-empty-hint {
   padding: 24px;
@@ -511,14 +580,47 @@
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  padding: 6px 8px;
+  border-radius: var(--border-radius);
+}
+/* 지브라 스트라이프 — 인물 항목을 번갈아 배경색으로 구분 */
+.story-voice-row:nth-child(even) {
+  background: var(--bg-secondary);
+}
+.story-voice-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 96px;
+  /* 성우 버튼이 안 먹는 남는 가로 공간을 인물 설명이 차지 → 설명이 넓게 표시된다. */
+  flex: 1 1 auto;
 }
 .story-voice-speaker {
-  min-width: 96px;
   font-weight: 600;
   font-size: 0.85rem;
 }
+/* A1: 캐릭터 특징(appearance) — 표시 전용, 이름 아래 회색 작은 글씨 */
+.story-voice-appearance {
+  font-size: 0.72rem;
+  color: var(--text-secondary, #8a8a8a);
+  line-height: 1.3;
+}
+/* C: 캐릭터 성별 배지 + 성우 성별 불일치 경고 */
+.story-voice-gender {
+  margin-left: 6px;
+  font-size: 0.8rem;
+}
+.story-voice-gender.female { color: #e05a9c; }
+.story-voice-gender.male { color: #4a90d9; }
+.story-voice-gender-warn {
+  margin-left: 6px;
+  color: #e6a23c;
+}
 /* Task 11: 드롭다운 3종(엔진/검색/목소리) → [성우 선택] 버튼(모달 오픈) */
 .story-voice-picker-btn {
+  /* .story-input의 flex:1 1 160px을 덮어써 행 전체로 늘어나지 않게. 내용폭 + 상한만. */
+  flex: 0 1 auto;
+  max-width: 240px;
   text-align: left;
   cursor: pointer;
 }

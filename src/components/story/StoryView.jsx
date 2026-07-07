@@ -29,6 +29,7 @@ import {
 } from '../../utils/storyLlmCatalog'
 import { isStoryTtsProvider } from '../../config/storyTtsProviders'
 import { isNarratorSpeaker } from '../../utils/storyNarrationTracks'
+import { guessGenderFromAppearance } from '../../services/appearanceGender'
 import './StoryView.css'
 
 // M2a-3: audio가 파이프라인 1급 스텝 — script→scenes→audio→prompts 순서로 진행한다.
@@ -1255,9 +1256,29 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                         : selectedVoiceObj
                           ? selectedVoiceObj.name
                           : t('story.audio.voiceUnloaded', `저장된 성우 (미로드) · ${shortVoiceId(selectedVoiceId)}`, { id: shortVoiceId(selectedVoiceId) })
+                      // C(성우 추천): appearance에서 캐릭터 성별 추정. 못 뽑으면 null → 배지·경고 없음(폴백).
+                      const charGender = guessGenderFromAppearance(sp.appearance)
+                      // 캐릭터·성우 성별이 둘 다 확실하고 서로 다르면 불일치 경고.
+                      const genderMismatch = charGender && selectedVoiceObj?.gender && charGender !== selectedVoiceObj.gender
                       return (
                         <div key={sp.id} className="story-voice-row">
-                          <span className="story-voice-speaker">{sp.name || sp.id}</span>
+                          <div className="story-voice-info">
+                            <span className="story-voice-speaker">
+                              {sp.name || sp.id}
+                              {charGender && (
+                                <span
+                                  className={`story-voice-gender ${charGender}`}
+                                  title={charGender === 'female' ? t('story.audio.genderFemale', '여성') : t('story.audio.genderMale', '남성')}
+                                >
+                                  {charGender === 'female' ? '♀' : '♂'}
+                                </span>
+                              )}
+                            </span>
+                            {/* A1: 캐릭터 특징(Ref prompt와 동일 소스) 표시 전용. 없으면 렌더 안 함. */}
+                            {sp.appearance && (
+                              <span className="story-voice-appearance">{sp.appearance}</span>
+                            )}
+                          </div>
                           {/* Task 11: 드롭다운 3종(엔진/검색/목소리) → 버튼 1개 + VoicePicker 모달 */}
                           <button
                             type="button"
@@ -1266,6 +1287,14 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                             onClick={() => voiceSel.openVoicePicker(sp)}
                           >
                             🎙 {voiceLabel}
+                            {genderMismatch && (
+                              <span
+                                className="story-voice-gender-warn"
+                                title={t('story.audio.genderMismatch', '캐릭터 성별과 성우 성별이 다릅니다')}
+                              >
+                                ⚠
+                              </span>
+                            )}
                           </button>
                         </div>
                       )
@@ -1285,6 +1314,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                       <VoicePicker
                         voices={storyVoices}
                         selected={voiceSel.pickerSelection}
+                        initialGender={guessGenderFromAppearance(sp.appearance)}
                         onSelect={voiceSel.setPickerSelection}
                         onPreview={(voice) => voiceSel.preview.play(voice)}
                         onOverrideGender={voiceSel.handleOverrideGender}
@@ -1303,7 +1333,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                     <LiveTimeline audioPackage={storyAudioPkg} scenes={[]} srtEntries={storySrtEntries} />
                   </div>
                 )}
-                <table className="story-readonly-table">
+                <table className="story-readonly-table story-audio-table">
                   <thead>
                     <tr>
                       <th>{t('story.audio.no', '#')}</th>
@@ -1339,7 +1369,16 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                               </div>
                             ) : renderNarrationCell(seg)}
                           </td>
-                          <td>{t(`story.status.${segmentProgress[seg.id] || seg.status || 'pending'}`, SEG_STATUS_LABEL[segmentProgress[seg.id] || seg.status] || SEG_STATUS_LABEL.pending)}</td>
+                          <td>
+                            {(() => {
+                              const st = segmentProgress[seg.id] || seg.status || 'pending'
+                              return (
+                                <span className={`story-status story-status-${st}`}>
+                                  {t(`story.status.${st}`, SEG_STATUS_LABEL[st] || SEG_STATUS_LABEL.pending)}
+                                </span>
+                              )
+                            })()}
+                          </td>
                           <td className="story-audio-actions-cell">
                             <div className="story-audio-actions">
                               {/* 세그먼트 단건 테스트(배치와 분리) — narration은 TTS, sfx는 sfxFor로 단건 생성 */}

@@ -15,6 +15,25 @@ it('filters by gender segment', () => {
   expect(screen.queryByText('Sanghyun')).not.toBeInTheDocument()
 })
 
+// C(성우 추천): 캐릭터 성별이 잡히면 모달을 그 성별 세그먼트로 열어 추천한다.
+it('initialGender="female"면 처음부터 여성 세그먼트로 열린다 (추천 프리셋)', () => {
+  render(<VoicePicker voices={voices} selected={{}} initialGender="female" onSelect={vi.fn()} onPreview={vi.fn()} onOverrideGender={vi.fn()} previewState={{ status: 'idle' }} t={t} isKo />)
+  expect(screen.getByText('Kore')).toBeInTheDocument()
+  expect(screen.queryByText('Sanghyun')).not.toBeInTheDocument()
+})
+
+it('initialGender 없으면 전체로 열린다 (폴백)', () => {
+  render(<VoicePicker voices={voices} selected={{}} onSelect={vi.fn()} onPreview={vi.fn()} onOverrideGender={vi.fn()} previewState={{ status: 'idle' }} t={t} isKo />)
+  expect(screen.getByText('Kore')).toBeInTheDocument()
+  expect(screen.getByText('Sanghyun')).toBeInTheDocument()
+})
+
+it('initialGender=null이면 전체로 열린다 (폴백, 잘못된 값 방어)', () => {
+  render(<VoicePicker voices={voices} selected={{}} initialGender={null} onSelect={vi.fn()} onPreview={vi.fn()} onOverrideGender={vi.fn()} previewState={{ status: 'idle' }} t={t} isKo />)
+  expect(screen.getByText('Kore')).toBeInTheDocument()
+  expect(screen.getByText('Sanghyun')).toBeInTheDocument()
+})
+
 it('calls onSelect with provider+voiceId on card click', () => {
   const onSelect = vi.fn()
   render(<VoicePicker voices={voices} selected={{}} onSelect={onSelect} onPreview={vi.fn()} onOverrideGender={vi.fn()} previewState={{ status: 'idle' }} t={t} isKo />)

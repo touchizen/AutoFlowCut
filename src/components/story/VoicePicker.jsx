@@ -18,6 +18,7 @@ const PROVIDER_BADGE = { typecast: 'TC', gemini: 'GM', elevenlabs: '11' }
 const PROVIDER_CLASS = { typecast: 'tc', gemini: 'gm', elevenlabs: 'el' }
 const OVERRIDABLE_SOURCES = new Set([null, undefined, 'f0', 'manual'])
 const SEARCH_DEBOUNCE_MS = 300
+const GENDER_SEGMENTS = new Set(['male', 'female'])
 
 function shortVpId(id) {
   if (!id) return id
@@ -58,11 +59,14 @@ export default function VoicePicker({
   onCancel,
   onVoiceSearch = null,
   previewState = { voiceId: null, status: 'idle' },
+  initialGender = null,
   t,
   isKo
 }) {
   const [activeProvider, setActiveProvider] = useState('all')
-  const [activeGender, setActiveGender] = useState('all')
+  // C(성우 추천): 캐릭터 성별이 잡히면(initialGender) 그 세그먼트로 시작. 없거나 잘못된 값이면
+  // 'all'로 폴백해 기존 동작을 유지한다.
+  const [activeGender, setActiveGender] = useState(GENDER_SEGMENTS.has(initialGender) ? initialGender : 'all')
   const [query, setQuery] = useState('')
   const [visibleCount, setVisibleCount] = useState(RENDER_CAP)
   const [overrideKey, setOverrideKey] = useState(null)
