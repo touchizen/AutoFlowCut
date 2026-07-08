@@ -1,5 +1,5 @@
 /**
- * BottomPanelTabs — 하단 패널 뷰 토글 ([▶ 타임라인 | ▦ 결과표 | ⊞ 그리드]).
+ * BottomPanelTabs — 하단 패널 뷰 토글 ([▶ 타임라인 | ☰ 결과표 | ⊞ 그리드]).
  *
  * 생성 탭(text/video-text/frame-to-video/list)의 하단 패널에서 라이브 타임라인,
  * 기존 결과표(ResultsTable table), 카드형 그리드(ResultsTable grid) 사이를 전환한다.
@@ -8,7 +8,7 @@
 
 const VIEWS = [
   { value: 'timeline', icon: '▶', labelKey: 'bottomPanel.timeline' },
-  { value: 'results', icon: '▦', labelKey: 'bottomPanel.results' },
+  { value: 'results', icon: '☰', labelKey: 'bottomPanel.results' },
   { value: 'grid', icon: '⊞', labelKey: 'bottomPanel.grid' },
 ]
 
