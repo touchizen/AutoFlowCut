@@ -75,6 +75,7 @@ export default function ResultsTable({
   onPromptEdit,             // (id, newPrompt) => void — 프롬프트 인라인 편집
   onClearMedia,             // (id) => void — 미디어만 제거
   disabled = false,         // 생성 중 편집 비활성화
+  layout = 'table',         // 'table'(기본 결과표) | 'grid'(카드형 그리드)
 }) {
   const { t } = useI18n()
   const [hoverPreview, setHoverPreview] = useState(null)
@@ -259,6 +260,97 @@ export default function ResultsTable({
     }
 
     return null
+  }
+
+  // ── 그리드 레이아웃 ──
+  // 테이블과 동일한 데이터/핸들러를 카드형으로 렌더. renderMedia/renderStatus/hasMedia 등
+  // 헬퍼를 그대로 재사용 — 호버 비디오/미디어 제거/재시도/체크박스 동작이 결과표와 일치한다.
+  if (layout === 'grid') {
+    return (
+      <div className="results-table-container results-grid-container">
+        {selectable && (
+          <div className="results-summary">
+            <label className="grid-select-all">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                onChange={onToggleAll}
+                disabled={disabled}
+              />
+              <span>☑ {selectedCount}/{data.length}</span>
+            </label>
+          </div>
+        )}
+        <div className={`results-grid ${ratioClass}`} role="list">
+          {data.map((item, index) => {
+            const cardKey = item.id ?? `card-${index}`
+            return (
+              <div
+                key={cardKey}
+                role="listitem"
+                ref={el => { if (el) rowRefs.current[cardKey] = el }}
+                className={`result-card status-${item.status} ${selectable && item.selected === false ? 'deselected' : ''}`}
+                title={item.prompt || ''}
+              >
+                {selectable && (
+                  <input
+                    className="card-check"
+                    type="checkbox"
+                    checked={item.selected !== false}
+                    onChange={() => onToggle(item.id)}
+                    disabled={disabled}
+                  />
+                )}
+                <div
+                  className={`image-cell ${ratioClass} ${hasMedia(item) ? 'clickable' : ''}`}
+                  onMouseEnter={isVideoType && hasMedia(item) ? () => setHoveredVideoKey(cardKey) : undefined}
+                  onMouseLeave={isVideoType && hasMedia(item) ? () => setHoveredVideoKey(null) : undefined}
+                  onClick={() => onShowDetail && onShowDetail(item)}
+                  title={t('headerExtra.clickToDetail')}
+                >
+                  {hasMedia(item) ? (
+                    <>
+                      {renderMedia(item, index, hoveredVideoKey === cardKey)}
+                      {onClearMedia && !disabled && (
+                        <button
+                          className="btn-clear-media"
+                          onClick={(e) => { e.stopPropagation(); if (window.confirm(t('results.confirmClear') || 'Remove this media?')) onClearMedia(item.id) }}
+                          title={t('results.clearMedia') || '미디어 제거'}
+                        >✕</button>
+                      )}
+                    </>
+                  ) : item.status === 'generating' ? (
+                    <div className="generating-indicator">
+                      <InfinityLoader />
+                    </div>
+                  ) : (
+                    <div className="empty-cell">-</div>
+                  )}
+                </div>
+                <div className="card-footer">
+                  <span className="card-id">#{index + 1}</span>
+                  <span className="card-status">{renderStatus(item)}</span>
+                </div>
+                {item.status === 'error' && getDisplayError(item) && (
+                  <div className="prompt-error card-error" title={String(getDisplayError(item))}>
+                    {String(getDisplayError(item))}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+        {/* 호버 풍선 프리뷰 */}
+        {hoverPreview && (
+          <HoverImageBalloon
+            anchorRect={hoverPreview.rect}
+            src={hoverPreview.src}
+            className="ref-hover-balloon"
+          />
+        )}
+      </div>
+    )
   }
 
   return (

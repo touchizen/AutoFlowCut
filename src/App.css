@@ -1769,6 +1769,94 @@ html, body {
   cursor: pointer;
 }
 
+/* ============================================
+   결과 그리드 (ResultsTable layout="grid")
+   결과표와 동일한 데이터를 카드형으로. .image-cell/.btn-clear-media/
+   .play-button-overlay 등은 SceneList.css(전역)에서 재사용.
+   ============================================ */
+.results-grid-container {
+  padding: 0;
+}
+
+.results-grid {
+  flex: 1;
+  overflow-y: auto;
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  align-content: start;
+}
+
+.results-grid.ratio-landscape { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+.results-grid.ratio-portrait  { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); }
+.results-grid.ratio-square    { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); }
+
+.result-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: #1a1a2e;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  padding: 6px;
+}
+
+.result-card.status-generating { animation: gold-glow 1.5s ease-in-out infinite; }
+.result-card.status-done  { border-color: rgba(72, 187, 120, 0.3); }
+.result-card.status-error { border-color: rgba(245, 101, 101, 0.35); }
+.result-card.deselected { opacity: 0.45; }
+
+/* 카드 안에서 셀은 카드 폭을 채우고 종횡비를 따른다.
+   SceneList.css 의 .image-cell.ratio-* (고정 px) 와 specificity 동점이 되지 않도록
+   ratio 클래스까지 셀렉터에 포함해 확실히 오버라이드한다. */
+.results-grid.ratio-landscape .image-cell.ratio-landscape,
+.results-grid.ratio-portrait  .image-cell.ratio-portrait,
+.results-grid.ratio-square    .image-cell.ratio-square {
+  width: 100%;
+  height: auto;
+}
+.results-grid.ratio-landscape .image-cell.ratio-landscape { aspect-ratio: 16 / 9; }
+.results-grid.ratio-portrait  .image-cell.ratio-portrait  { aspect-ratio: 9 / 16; }
+.results-grid.ratio-square    .image-cell.ratio-square    { aspect-ratio: 1 / 1; }
+
+.result-card .card-check {
+  position: absolute;
+  top: 11px;
+  left: 11px;
+  z-index: 3;
+  cursor: pointer;
+}
+
+.result-card .card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 0.75rem;
+}
+
+.result-card .card-id {
+  color: var(--text-secondary, #9aa0b4);
+  flex-shrink: 0;
+}
+
+.result-card .card-error {
+  margin-top: 0;
+}
+
+.results-grid-container .results-summary {
+  padding: 8px 10px 0;
+  margin-bottom: 0;
+}
+
+.grid-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
 .generating-indicator {
   width: 100%;
   height: 100%;

@@ -62,6 +62,7 @@ export default {
   bottomPanel: {
     timeline: '타임라인',
     results: '결과표',
+    grid: '그리드',
     preview: '프리뷰',
     previewToggleLabel: '프리뷰 모니터',
     previewToggleShow: '클릭하면 타임라인 재생 모니터를 표시합니다',

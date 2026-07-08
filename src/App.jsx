@@ -187,13 +187,15 @@ function App() {
     const saved = localStorage.getItem('autoflowcut_bottomPanelHeight')
     return saved ? parseInt(saved, 10) : UI.DEFAULT_BOTTOM_PANEL_HEIGHT // 기본 높이
   })
-  // 하단 패널 뷰: 'timeline'(라이브 NLE 프리뷰) | 'results'(기존 결과표). 기본 타임라인.
+  // 하단 패널 뷰: 'timeline'(라이브 NLE 프리뷰) | 'results'(결과표) | 'grid'(카드 그리드). 기본 타임라인.
   const [bottomPanelView, setBottomPanelView] = useState(() =>
     localStorage.getItem('autoflowcut_bottomPanelView') || 'timeline'
   )
   useEffect(() => {
     localStorage.setItem('autoflowcut_bottomPanelView', bottomPanelView)
   }, [bottomPanelView])
+  // results/grid 둘 다 ResultsTable 로 렌더 — layout 만 다르다.
+  const resultsLayout = bottomPanelView === 'grid' ? 'grid' : 'table'
 
   // Notify main process when mode changes (or on mount) so it can attach/detach the Flow view.
   // Optional-chaining keeps this a no-op in jsdom/test environments where electronAPI is absent.
@@ -2332,6 +2334,7 @@ function App() {
             <ResultsTable
               items={scenes}
               mediaType="image"
+              layout={resultsLayout}
               aspectRatio={settings.aspectRatio}
               onRetry={(id) => {
                 // 실행 중·큐 대기(hasPendingBatch) 중엔 retryScene→start() 가 무시되거나 큐에
@@ -2369,6 +2372,7 @@ function App() {
           <ResultsTable
             items={videoScenes}
             mediaType="video"
+            layout={resultsLayout}
             aspectRatio={settings.aspectRatio}
             onShowDetail={(item) => setSelectedVideo(item)}
             onVideoRetry={handleVideoRetry}
@@ -2403,7 +2407,7 @@ function App() {
           <ResultsTable items={framePairs.map(p => ({
             ...p,
             prompt: getFramePairEffectivePrompt(p, ftvPromptSource, videoScenes, scenes),
-          }))} mediaType="frame-pair" aspectRatio={settings.aspectRatio} onShowDetail={(item) => setSelectedVideo(item)} onVideoRetry={handleVideoRetry} onClearMedia={(id) => {
+          }))} mediaType="frame-pair" layout={resultsLayout} aspectRatio={settings.aspectRatio} onShowDetail={(item) => setSelectedVideo(item)} onVideoRetry={handleVideoRetry} onClearMedia={(id) => {
             // FramePair clear — 전체 미디어/recovery 식별자/메타 정리.
             // generationId/mediaId 가 남으면 useProjectData reload 시 in-flight 로 오인되어
             // videoRecovery 가 서버 결과를 다시 attach (= clear 무효화). 옛 error/timing 메타가
@@ -2430,6 +2434,7 @@ function App() {
           <ResultsTable
             items={scenes}
             mediaType="image"
+            layout={resultsLayout}
             aspectRatio={settings.aspectRatio}
             onRetry={(id) => {
               // 실행 중·큐 대기(hasPendingBatch) 중엔 retryScene→start() 가 무시되거나 큐에

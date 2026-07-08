@@ -27,4 +27,19 @@ describe('BottomPanelTabs', () => {
     const results = screen.getAllByRole('tab').find((b) => b.textContent.includes('bottomPanel.results'))
     expect(results.className).toContain('active')
   })
+
+  it('grid 탭을 노출하고 클릭 시 onChange("grid") 호출', () => {
+    const onChange = vi.fn()
+    render(<BottomPanelTabs view="timeline" onChange={onChange} t={t} />)
+    const grid = screen.getAllByRole('tab').find((b) => b.textContent.includes('bottomPanel.grid'))
+    expect(grid).toBeTruthy()
+    fireEvent.click(grid)
+    expect(onChange).toHaveBeenCalledWith('grid')
+  })
+
+  it('grid 뷰일 때 grid 탭이 active', () => {
+    render(<BottomPanelTabs view="grid" onChange={vi.fn()} t={t} />)
+    const grid = screen.getAllByRole('tab').find((b) => b.textContent.includes('bottomPanel.grid'))
+    expect(grid.className).toContain('active')
+  })
 })

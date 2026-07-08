@@ -62,6 +62,7 @@ export default {
   bottomPanel: {
     timeline: 'Timeline',
     results: 'Results',
+    grid: 'Grid',
     preview: 'Preview',
     previewToggleLabel: 'Preview monitor',
     previewToggleShow: 'Click to show the timeline playback monitor',
