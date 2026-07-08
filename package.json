@@ -32,7 +32,7 @@
     "dist:win:appx": "npm run bump:build && npm run mcp:install && set VITE_BUILD_TARGET=appx&& set VITE_FUNCTION_ENV=prod&& vite build --mode production && npm run build:preloads && scripts\\buildappx.bat",
     "dist:win:all": "npm run bump:build && npm run mcp:install && set VITE_FUNCTION_ENV=prod&& vite build --mode production && npm run build:preloads && electron-builder --win",
     "dist:linux": "npm run bump:build && npm run mcp:install && VITE_FUNCTION_ENV=prod vite build --mode production && npm run build:preloads && electron-builder --linux",
-    "dist:mac:prod": "npm run bump:build && npm run mcp:install && VITE_FUNCTION_ENV=prod vite build --mode production && npm run build:preloads && electron-builder --mac",
+    "dist:mac:prod": "npm run bump:build && npm run mcp:install && VITE_FUNCTION_ENV=prod vite build --mode production && npm run build:preloads && electron-builder --mac --x64 --arm64",
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage"
