@@ -221,12 +221,37 @@ describe('재오픈 hydrate — research phase 복원 (§3.8 M6)', () => {
 })
 
 describe('키워드 검색 → 영상 카드 그리드 (§3.6)', () => {
-  it('키워드 입력 + [검색] → researchSearch({keyword}) 호출', async () => {
+  it('키워드 입력 + [검색] → researchSearch({keyword, maxResults}) 호출 (개선1 — 개수 기본 10)', async () => {
     const p = reopenedTitle({ research: researchDraft({ videos: [], keyword: '' }) })
     render(<StoryView pipeline={p} />)
     fireEvent.change(screen.getByPlaceholderText(/키워드/), { target: { value: '조선 괴담' } })
     fireEvent.click(screen.getByRole('button', { name: '검색' }))
-    await waitFor(() => expect(p.researchSearch).toHaveBeenCalledWith({ keyword: '조선 괴담' }))
+    await waitFor(() => expect(p.researchSearch).toHaveBeenCalledWith({ keyword: '조선 괴담', maxResults: 10 }))
+  })
+
+  // 개선1/2(2026-07-08): 개수·업로드 기간 컨트롤이 hook(researchSearch)까지 배선된다.
+  it('개수 30 + 최근 30일 선택 → researchSearch({keyword, maxResults:30, dateFilter:"month"}) (개선1/2)', async () => {
+    const p = reopenedTitle({ research: researchDraft({ videos: [], keyword: '' }) })
+    render(<StoryView pipeline={p} />)
+    fireEvent.change(screen.getByPlaceholderText(/키워드/), { target: { value: '괴담' } })
+    fireEvent.change(screen.getByRole('combobox', { name: '검색 개수' }), { target: { value: '30' } })
+    fireEvent.change(screen.getByRole('combobox', { name: '업로드 기간' }), { target: { value: 'month' } })
+    fireEvent.click(screen.getByRole('button', { name: '검색' }))
+    await waitFor(() => expect(p.researchSearch).toHaveBeenCalledWith({ keyword: '괴담', maxResults: 30, dateFilter: 'month' }))
+  })
+
+  // 개선3(2026-07-08): 프로젝트 언어가 ResearchPanel까지 배선돼 자막 언어 배지가 뜬다.
+  it('설정 언어(en)와 다른 자막(ko) 확보 시 "영어 자막 없음" 배지 (개선3 배선)', () => {
+    const p = reopenedTitle({
+      research: researchDraft({
+        videos: [{ videoId: 'vidENG00001', title: 'English Video', channelTitle: 'Ch', viewCount: 1, thumbnailUrl: '' }],
+        selectedVideoIds: ['vidENG00001'],
+        transcripts: { vidENG00001: { ok: true, lang: 'ko' } },
+      }),
+    })
+    p.state.input.options = { language: 'en' }
+    render(<StoryView pipeline={p} />)
+    expect(screen.getByText('영어 자막 없음')).toBeInTheDocument()
   })
 
   it('research.videos를 카드로 렌더 — 썸네일 img·제목·채널·조회수·체크박스', () => {
@@ -264,12 +289,26 @@ describe('자막 가져오기 + 진행 표시 (§3.6)', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: '야담 영상 A 선택' }))
     fireEvent.click(screen.getByRole('checkbox', { name: '야담 영상 B 선택' }))
     fireEvent.click(screen.getByRole('button', { name: '자막 가져오기' }))
-    await waitFor(() => expect(p.researchFetchTranscripts).toHaveBeenCalledWith({ videoIds: ['vidAAA0001', 'vidBBB0002'] }))
+    // M4 배선: options(언어)가 함께 실린다 — videoIds만 계약으로 고정.
+    await waitFor(() => expect(p.researchFetchTranscripts).toHaveBeenCalledWith(expect.objectContaining({ videoIds: ['vidAAA0001', 'vidBBB0002'] })))
   })
 
   it('선택 0개면 [자막 가져오기] 비활성', () => {
     render(<StoryView pipeline={reopenedTitle({ research: researchDraft() })} />)
     expect(screen.getByRole('button', { name: '자막 가져오기' })).toBeDisabled()
+  })
+
+  // M4(R1): 자막 취득도 현재 UI 언어 옵션을 전달해야 fetchTranscript가 프로젝트 언어를 1순위로
+  // 자막을 고른다(analyze/factcheck 미러). 안 실으면 main이 ko 고정 → 언어 배지·분석 오류.
+  it('[자막 가져오기]에 현재 언어 옵션이 전달된다 (M4 배선)', async () => {
+    const p = reopenedTitle({ research: researchDraft({ selectedVideoIds: ['vidAAA0001'] }) })
+    p.state.input.options = { language: 'en' }
+    render(<StoryView pipeline={p} />)
+    fireEvent.click(screen.getByRole('button', { name: '자막 가져오기' }))
+    await waitFor(() => expect(p.researchFetchTranscripts).toHaveBeenCalledWith(expect.objectContaining({
+      videoIds: ['vidAAA0001'],
+      options: expect.objectContaining({ language: 'en' }),
+    })))
   })
 
   it('researchFetchProgress를 videoId별 카드 배지로 표시(running/done/error)', () => {
@@ -391,14 +430,30 @@ describe('구조분석 · 팩트체크 (§3.4/§3.5)', () => {
 })
 
 describe('확정/건너뛰기 → synopsis 전이 (§3.6/§3.8)', () => {
-  it('[이 리서치로 확정] → researchCommit({analysis, verifiedClaims}) → synopsis phase', async () => {
+  it('[이 리서치로 확정] → researchCommit({analysis, verifiedClaims, adoptedIndices}) → synopsis phase', async () => {
     const verifiedClaims = [{ claim: '사실1', verdict: 'supported', evidence: [] }]
     const p = reopenedTitle({ research: researchDraft({ analysis: ANALYSIS, verifiedClaims }) })
     render(<StoryView pipeline={p} />)
     fireEvent.click(screen.getByRole('button', { name: '이 리서치로 확정' }))
-    await waitFor(() => expect(p.researchCommit).toHaveBeenCalledWith({ analysis: ANALYSIS, verifiedClaims }))
+    // 개선4/m3: 채택 인덱스(기본 supported)가 함께 커밋된다.
+    await waitFor(() => expect(p.researchCommit).toHaveBeenCalledWith({ analysis: ANALYSIS, verifiedClaims, adoptedIndices: [0] }))
     await waitFor(() => expect(screen.getByTestId('story-synopsis')).toBeInTheDocument())
     expect(screen.queryByTestId('story-research')).toBeNull()
+  })
+
+  // 개선4/m3(2026-07-08): 미검증 주장을 체크하면 commit adoptedIndices에 포함된다(StoryView 배선).
+  it('미검증 주장 채택 체크 → researchCommit adoptedIndices에 포함 (개선4/m3)', async () => {
+    const verifiedClaims = [
+      { claim: '사실1', verdict: 'supported', evidence: [] },
+      { claim: '사실2', verdict: 'unverified', evidence: [] },
+    ]
+    const p = reopenedTitle({ research: researchDraft({ analysis: ANALYSIS, verifiedClaims }) })
+    render(<StoryView pipeline={p} />)
+    fireEvent.click(screen.getByRole('checkbox', { name: '사실2 채택' }))
+    fireEvent.click(screen.getByRole('button', { name: '이 리서치로 확정' }))
+    await waitFor(() => expect(p.researchCommit).toHaveBeenCalledWith(
+      expect.objectContaining({ adoptedIndices: [0, 1] }),
+    ))
   })
 
   it('[건너뛰기] → researchSkip → synopsis phase(리서치 없이)', async () => {

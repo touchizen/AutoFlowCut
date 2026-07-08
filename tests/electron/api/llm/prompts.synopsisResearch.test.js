@@ -12,9 +12,11 @@ const RESEARCH = {
     claims: [],
     commonThemes: ['권선징악'],
   },
+  // B1(R1): research.json.verifiedClaims는 commit이 이미 큐레이션한 "채택 목록"이다 —
+  // verdict는 정보성으로 보존될 뿐, buildResearchBlock은 재필터하지 않고 그대로 신뢰한다.
   verifiedClaims: [
     { claim: '사건은 1592년에 일어났다', verdict: 'supported', evidence: [{ url: 'https://ex', note: 'n' }] },
-    { claim: '허구 주장', verdict: 'refuted', evidence: [] },
+    { claim: '민간 전승으로 채택한 미검증 사실', verdict: 'unverified', evidence: [] },
   ],
 }
 const INPUT = { type: 'title', title: '흥부전' }
@@ -33,8 +35,13 @@ describe('buildSynopsisPrompt 리서치 블록 (§3.8)', () => {
     expect(p).toContain('권선징악')
     expect(p).toContain('사건은 1592년에 일어났다')
     expect(p).toContain('복사하지')
-    // supported만 주입 — refuted 주장은 제외(§3.5)
-    expect(p).not.toContain('허구 주장')
+  })
+
+  // B1(R1): commit이 채택한 비-supported(unverified/refuted) 주장도 verdict 재필터 없이
+  // [검증된 사실] 블록에 주입된다(개선4가 프롬프트 단계에서 no-op이 되지 않게).
+  it('채택된 unverified 주장도 재필터 없이 블록에 포함된다 (B1)', () => {
+    const p = buildSynopsisPrompt(INPUT, { ...BASE, research: RESEARCH })
+    expect(p).toContain('민간 전승으로 채택한 미검증 사실')
   })
 
   it('빈 research(구조/사실 없음)는 블록을 만들지 않는다', () => {

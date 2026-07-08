@@ -193,9 +193,10 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
           // m2: error 코드(binary-not-found 등)를 status와 함께 저장 — ResearchPanel이
           // 설치 안내/중단 배지로 구분 표시한다(버리면 전부 "자막 없음"으로만 보임).
           if (p.videoId) {
+            // 개선3: done의 lang도 저장 — research-state 도착 전 실시간 자막 언어 배지 재료.
             setResearchFetchProgress((m) => ({
               ...m,
-              [p.videoId]: { status: p.status, ...(p.error ? { error: p.error } : {}) },
+              [p.videoId]: { status: p.status, ...(p.error ? { error: p.error } : {}), ...(p.lang ? { lang: p.lang } : {}) },
             }))
           }
           return

@@ -86,6 +86,44 @@ describe('story:research-* IPC (guarded)', () => {
     expect(gs.research.confirmed).toBe(true)
   })
 
+  it('search(개선2): dateFilter가 machine.researchSearch → searchVideos까지 전달된다', async () => {
+    const { projectToken } = await ipc.invoke('story:open', { projectPath: dir })
+    await ipc.invoke('story:research-search', { projectToken, query: 'q', maxResults: 20, dateFilter: 'month' })
+    expect(youtube.searchVideos).toHaveBeenCalledWith({ query: 'q', maxResults: 20, dateFilter: 'month' })
+  })
+
+  // m5(R1): maxResults는 1~50으로 클램프한다(과대 pool로 인한 상세조회 폭주/타임아웃 방지).
+  it('search(m5): maxResults를 1~50으로 클램프한다', async () => {
+    const { projectToken } = await ipc.invoke('story:open', { projectPath: dir })
+    await ipc.invoke('story:research-search', { projectToken, query: 'q', maxResults: 999 })
+    expect(youtube.searchVideos).toHaveBeenCalledWith({ query: 'q', maxResults: 50 })
+    await ipc.invoke('story:research-search', { projectToken, query: 'q', maxResults: 0 })
+    expect(youtube.searchVideos).toHaveBeenCalledWith({ query: 'q', maxResults: 1 })
+  })
+
+  // M4(R1): fetch options(언어)가 machine → fetchTranscript langs까지 흐른다.
+  it('fetch(M4): options.language가 machine.researchFetchTranscripts로 전달된다', async () => {
+    const { projectToken } = await ipc.invoke('story:open', { projectPath: dir })
+    await ipc.invoke('story:research-search', { projectToken, query: 'q' })
+    await ipc.invoke('story:research-fetch', { projectToken, videoIds: ['vidA'], options: { language: 'en' } })
+    expect(youtube.fetchTranscript).toHaveBeenCalledWith('vidA', expect.objectContaining({ langs: ['en', 'ko'] }))
+  })
+
+  it('commit(개선4/m3): adoptedIndices 페이로드가 machine으로 전달돼 인덱스 채택 주장이 저장된다', async () => {
+    const { projectToken } = await ipc.invoke('story:open', { projectPath: dir })
+    await ipc.invoke('story:research-search', { projectToken, query: 'q' })
+    await ipc.invoke('story:research-fetch', { projectToken, videoIds: ['vidA'] })
+    await ipc.invoke('story:research-analyze', { projectToken, videoIds: ['vidA'] })
+    const claims = [
+      { claim: 'S', verdict: 'supported', evidence: [] },
+      { claim: 'U', verdict: 'unverified', evidence: [] },
+    ]
+    const c = await ipc.invoke('story:research-commit', { projectToken, verifiedClaims: claims, adoptedIndices: [0, 1] })
+    expect(c.ok).toBe(true)
+    const research = JSON.parse(await readFile(path.join(dir, 'story', 'research.json'), 'utf-8'))
+    expect(research.verifiedClaims).toEqual(claims)
+  })
+
   it('select(m5): selectedVideoIds/manualVideos를 machine.researchSelect로 위임해 draft에 영속한다', async () => {
     const { projectToken } = await ipc.invoke('story:open', { projectPath: dir })
     const manual = [{ videoId: 'manualV0001', title: 'manualV0001' }]

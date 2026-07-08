@@ -58,7 +58,9 @@ function buildRosterBlock(roster) {
 
 // 리서치 §3.8 (M2/Q5): 검증된 리서치 컨텍스트 블록 — opts.research(research.json: analysis +
 // verifiedClaims) 있으면 검증된 구조/논점/사실을 주입한다. 없으면 빈 문자열(현행 무변경, §D14 회귀 고정).
-// supported만 사실로 채택(§3.5)하고 원문 문장 복사 금지를 명시(§7).
+// B1(R1): research.json.verifiedClaims는 commit이 이미 큐레이션한 "채택 목록"이다(개선4 —
+// 사용자가 미검증/반박도 채택 가능). 여기서 verdict로 재필터하면 채택이 프롬프트 단계에서
+// no-op이 되므로, 재필터하지 않고 저장된 채택 주장을 그대로 신뢰한다. 원문 문장 복사 금지 명시(§7).
 function buildResearchBlock(research) {
   if (!research || typeof research !== 'object') return ''
   const structure = (research.analysis?.structure || [])
@@ -66,7 +68,7 @@ function buildResearchBlock(research) {
     .map((b) => `- ${[b.beat, b.summary].filter(Boolean).join(': ')}`)
   const themes = (research.analysis?.commonThemes || []).filter(Boolean).map((t) => `- ${t}`)
   const claims = (research.verifiedClaims || [])
-    .filter((c) => c && c.claim && (!c.verdict || c.verdict === 'supported'))
+    .filter((c) => c && c.claim)
     .map((c) => `- ${c.claim}`)
   if (!structure.length && !themes.length && !claims.length) return ''
   return [

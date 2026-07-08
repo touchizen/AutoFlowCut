@@ -887,8 +887,13 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   // ── 리서치 게이트(리서치 spec §3.6/§3.8) ──────────────────────────────────
   // commit: research.json 저장(main) 후 시놉시스 phase로 전이. 자동 주입은 하지 않는다(M2) —
   // 시놉시스 게이트의 useResearchContext 토글이 유일 스위치. skip: draft 정리 후 리서치 없이 시놉시스로.
-  const handleResearchCommit = async ({ analysis, verifiedClaims } = {}) => {
-    const r = await pipeline.researchCommit?.({ analysis, verifiedClaims })
+  const handleResearchCommit = async ({ analysis, verifiedClaims, adoptedIndices } = {}) => {
+    // 개선4/m3: adoptedIndices(채택 체크 인덱스)가 오면 그대로 전달 — 미전달이면 main이 supported만 저장.
+    const r = await pipeline.researchCommit?.({
+      analysis,
+      verifiedClaims,
+      ...(adoptedIndices !== undefined ? { adoptedIndices } : {}),
+    })
     if (r?.error) {
       toast.error(`${t('story.error.prefix', '오류')}: ${r.error}`)
       return r
@@ -1128,8 +1133,12 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                 research={pipeline.research}
                 fetchProgress={pipeline.researchFetchProgress || {}}
                 disabled={isRunning}
+                // 개선3: 프로젝트 언어 — 카드 1차 언어 필터 + "설정 언어 자막 없음" 배지 기준.
+                language={language}
                 onSearch={pipeline.researchSearch}
-                onFetch={pipeline.researchFetchTranscripts}
+                // M4(R1): 자막 취득도 현재 UI 언어 옵션을 전달 — main이 프로젝트 언어를 자막 1순위로
+                // 골라야 언어 배지·분석이 정확하다(안 실으면 ko 고정).
+                onFetch={(p) => pipeline.researchFetchTranscripts({ ...(p || {}), options: currentOptions() })}
                 // M2(D10): 구조분석/팩트체크도 시놉시스·스크립트처럼 현재 UI 옵션을 매번 전달 —
                 // 안 실으면 machine이 state.input.options 폴백(리서치는 시놉시스보다 앞서 대부분
                 // null) → DEFAULT_STORY_LLM/ko 고정으로 엔진·언어 선택이 무시된다.

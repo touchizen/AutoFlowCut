@@ -125,6 +125,14 @@ describe('useStoryPipeline research-fetch 진행 표시', () => {
     expect(result.current.researchFetchProgress).toEqual({ vidA: { status: 'error', error: 'binary-not-found' } })
   })
 
+  // 개선3(2026-07-08): done 이벤트의 lang을 저장해야 research-state 도착 전에도 카드가
+  // "자막 확보 (lang)" / 설정 언어 불일치 배지를 실시간 표시할 수 있다.
+  it('progress done의 lang을 함께 저장한다 (개선3 — 자막 언어 배지 재료)', async () => {
+    const { result } = await openHook()
+    act(() => listeners['story:progress']({ projectToken: 'tok1', kind: 'research-fetch', videoId: 'vidA', status: 'done', lang: 'en' }))
+    expect(result.current.researchFetchProgress).toEqual({ vidA: { status: 'done', lang: 'en' } })
+  })
+
   it('새 researchFetchTranscripts 호출 시 진행 맵을 리셋한다', async () => {
     const { result } = await openHook()
     act(() => listeners['story:progress']({ projectToken: 'tok1', kind: 'research-fetch', videoId: 'vidA', status: 'done' }))

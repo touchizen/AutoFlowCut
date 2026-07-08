@@ -1275,14 +1275,15 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     // step/preview/synopsis/confirm과 상호배제(§5), abort 대칭. 백엔드(yt-dlp)·factCheck는
     // DI(youtube/factCheck deps — N4 seam, 라우터 우회). 각 단계 산출은 research.draft.json에
     // durable 저장해 재오픈(machine 재생성) 시 유실을 막는다(M6).
-    async researchSearch({ keyword, maxResults = 10 } = {}) {
+    async researchSearch({ keyword, maxResults = 10, dateFilter } = {}) {
       if (!state) state = await store.load()
       if (researchBusy()) return { error: 'busy' }
       const operationId = randomUUID()
       const myController = new AbortController()
       researchController = myController
       try {
-        const r = await youtube.searchVideos({ query: keyword, maxResults })
+        // 개선2: dateFilter(none|week|month)는 지정 시에만 실어 기존 계약을 유지한다.
+        const r = await youtube.searchVideos({ query: keyword, maxResults, ...(dateFilter ? { dateFilter } : {}) })
         if (r?.error) return { error: r.error }
         if (myController.signal.aborted) return { error: 'aborted' }
         const draft = await loadResearchDraft()
@@ -1300,7 +1301,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         draft.dirty = true
         await saveResearchDraft(draft)
         await sendResearchState(operationId)
-        return { videos: draft.videos }
+        // R2 MINOR: 일자필터 상세조회 실패로 flat 폴백했으면 UI 안내용 플래그를 전달(비영속 — 검색 반환에만).
+        return { videos: draft.videos, ...(r.dateFilterFallback ? { dateFilterFallback: true } : {}) }
       } finally {
         if (researchController === myController) researchController = null
       }
@@ -1308,7 +1310,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     // §3.1: videoId별 순차 fetch(YAGNI — 병렬 다중 프로세스 비목표) + videoId별 progress emit.
     // 각 videoId 완료 즉시 draft durable 저장(§3.8 — 부분 진행도 재오픈 복원). 개별 실패는
     // 나머지 진행(부분 성공 허용, §6). 자막 원문 srt는 research/transcripts/<id>.srt 로컬 저장.
-    async researchFetchTranscripts({ videoIds = [] } = {}) {
+    async researchFetchTranscripts({ videoIds = [], options } = {}) {
       if (!state) state = await store.load()
       if (researchBusy()) return { error: 'busy' }
       const operationId = randomUUID()
@@ -1318,6 +1320,10 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         const draft = await loadResearchDraft()
         draft.selectedVideoIds = [...videoIds]
         draft.transcripts = draft.transcripts || {}
+        // M4(R1): 프로젝트 언어를 자막 1순위로 — 안 주면 ko 고정이라 en 프로젝트에서 ko 자막이
+        // 잡혀 "언어 자막 없음" 거짓 배지 + 분석이 다른 언어 자막으로 진행된다. ko/en 폴백을 뒤에 붙인다.
+        const language = options?.language || state?.input?.options?.language || 'ko'
+        const langs = [...new Set([language, 'ko', 'en'])]
         const out = []
         for (const videoId of videoIds) {
           if (myController.signal.aborted) break
@@ -1331,7 +1337,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
           }
           send('story:progress', { kind: 'research-fetch', videoId, status: 'running' }, operationId)
           let t
-          try { t = await youtube.fetchTranscript(videoId) } catch (e) {
+          try { t = await youtube.fetchTranscript(videoId, { langs }) } catch (e) {
             t = { videoId, ok: false, error: String(e?.message || e) }
           }
           if (myController.signal.aborted) {
@@ -1355,7 +1361,9 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
           await saveResearchDraft(draft)
         }
         await sendResearchState(operationId)
-        return { transcripts: out }
+        // M2(R1): abort로 중단되면 aborted:true를 실어 [한꺼번에 분석] 오케스트레이션이 다음
+        // 단계를 멈출 수 있게 한다(수동 흐름의 부분성공 배열 반환은 그대로 유지).
+        return { transcripts: out, ...(myController.signal.aborted ? { aborted: true } : {}) }
       } finally {
         if (researchController === myController) researchController = null
       }
@@ -1417,7 +1425,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     // 자동 주입은 하지 않는다(M2) — 시놉시스 토글(useResearch)이 유일 스위치.
     // m4: commit도 researchController 뮤텍스를 설정하고(저장 중 다른 액션 진입 차단),
     // §6 "abort 중 커밋" — signal.aborted 검사 후에만 research.json을 저장한다.
-    async researchCommit({ analysis, verifiedClaims } = {}) {
+    async researchCommit({ analysis, verifiedClaims, adoptedIndices } = {}) {
       if (!state) state = await store.load()
       if (researchBusy()) return { error: 'busy' }
       const operationId = randomUUID()
@@ -1429,13 +1437,18 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         if (!finalAnalysis) return { error: 'no-analysis' }
         if (myController.signal.aborted) return { error: 'aborted' }
         const all = verifiedClaims ?? draft.verifiedClaims ?? []
+        // 개선4(2026-07-08) + m3(R1): adoptedIndices(채택 체크박스의 인덱스 목록)가 배열로 오면
+        // 그 인덱스 항목만 저장 — 미검증/반박도 채택 가능, 해제한 supported 제외. 인덱스 기반이라
+        // 동일 claim 문자열이 중복돼도 정확히 그 항목만 채택된다. 미전달이면 supported만(§3.5) 유지.
         const research = {
           committedAt: new Date().toISOString(),
           keyword: draft.keyword || '',
           sources: draft.selectedVideoIds || [],
           analysis: finalAnalysis,
           // 팩트체크 미실행 commit 허용(§6) — 그 경우 [].
-          verifiedClaims: all.filter((c) => c?.verdict === 'supported'),
+          verifiedClaims: Array.isArray(adoptedIndices)
+            ? all.filter((_, i) => adoptedIndices.includes(i))
+            : all.filter((c) => c?.verdict === 'supported'),
         }
         await store.saveText(RESEARCH_FILE, JSON.stringify(research, null, 2))
         state.research = { hasResearch: true }

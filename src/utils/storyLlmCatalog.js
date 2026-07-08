@@ -19,6 +19,14 @@ export const STORY_LLM_OPTIONS = Object.freeze([
     defaultReasoningEffort: 'off',
   }),
   Object.freeze({
+    id: 'claude:claude-fable-5',
+    engine: 'claude',
+    model: 'claude-fable-5',
+    label: 'Fable 5',
+    reasoningEfforts: CLAUDE_REASONING_EFFORTS,
+    defaultReasoningEffort: 'off',
+  }),
+  Object.freeze({
     id: 'codex:gpt-5.5',
     engine: 'codex',
     model: 'gpt-5.5',

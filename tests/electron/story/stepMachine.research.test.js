@@ -76,6 +76,22 @@ describe('researchSearch (side action)', () => {
     expect((await machine.getState()).steps.script.status).toBe('pending')
   })
 
+  // 개선2(2026-07-08): 일자 필터 — UI의 dateFilter(none|week|month)가 searchVideos까지 전달돼야
+  // 상세조회 분기가 동작한다. 미지정이면 안 실어 기존 계약({query,maxResults})을 유지한다.
+  it('dateFilter가 오면 searchVideos에 전달한다 (개선2)', async () => {
+    await machine.researchSearch({ keyword: 'k', maxResults: 20, dateFilter: 'week' })
+    expect(youtube.searchVideos).toHaveBeenCalledWith({ query: 'k', maxResults: 20, dateFilter: 'week' })
+  })
+
+  // R2 MINOR: searchVideos의 dateFilterFallback 플래그를 검색 반환에 전달(UI 안내용). 없으면 미전달.
+  it('searchVideos.dateFilterFallback를 검색 반환에 실어 전달한다 (R2)', async () => {
+    youtube.searchVideos.mockResolvedValueOnce({ videos: VIDEOS, dateFilterFallback: true })
+    const r = await machine.researchSearch({ keyword: 'k', dateFilter: 'week' })
+    expect(r.dateFilterFallback).toBe(true)
+    const plain = await machine.researchSearch({ keyword: 'k2' })
+    expect(plain.dateFilterFallback).toBeUndefined()
+  })
+
   it('searchVideos가 {error}를 반환하면 그대로 전달하고 draft를 쓰지 않는다', async () => {
     youtube.searchVideos.mockResolvedValueOnce({ error: 'binary-not-found' })
     const r = await machine.researchSearch({ keyword: 'x' })
@@ -212,6 +228,20 @@ describe('researchFetchTranscripts (side action, §3.8 즉시 durable)', () => {
     expect(r.transcripts).toEqual([{ videoId: '../evil', ok: false, error: 'invalid-video-id' }])
     expect(youtube.fetchTranscript).not.toHaveBeenCalled()
   })
+
+  // M4(R1): fetchTranscript가 langs 미전달이면 ko 고정 → en 프로젝트에서 ko 자막이 잡혀
+  // "영어 자막 없음" 거짓 배지 + 분석이 한국어 자막으로. 프로젝트 언어를 1순위로 전달한다.
+  it('프로젝트 언어를 1순위로 fetchTranscript langs에 전달한다 (M4)', async () => {
+    await machine.researchSearch({ keyword: 'k' })
+    await machine.researchFetchTranscripts({ videoIds: ['vidA'], options: { language: 'en' } })
+    expect(youtube.fetchTranscript).toHaveBeenCalledWith('vidA', expect.objectContaining({ langs: ['en', 'ko'] }))
+  })
+
+  it('language 미지정이면 ko 우선 langs(현행 회귀)', async () => {
+    await machine.researchSearch({ keyword: 'k' })
+    await machine.researchFetchTranscripts({ videoIds: ['vidA'] })
+    expect(youtube.fetchTranscript).toHaveBeenCalledWith('vidA', expect.objectContaining({ langs: ['ko', 'en'] }))
+  })
 })
 
 // ---------- researchAnalyze ----------
@@ -315,6 +345,38 @@ describe('researchCommit / researchSkip (§3.8 영속)', () => {
     const research = await loadJson(dir, 'research.json')
     expect(research.analysis).toEqual(analysis)
     expect(research.verifiedClaims).toEqual([{ claim: 'c', verdict: 'supported', evidence: [] }])
+  })
+
+  // 개선4(2026-07-08) + m3(R1): 팩트체크 미검증/반박 주장도 채택 가능. 채택은 **인덱스 기반**
+  // (adoptedIndices) — 동일 claim 문자열이 여럿이어도 개별 토글되고 정확히 그 항목만 저장된다.
+  it('commit: adoptedIndices 배열이 오면 해당 인덱스 주장만 저장 — 미검증 채택 포함, 해제한 supported 제외 (개선4/m3)', async () => {
+    const claims = [
+      { claim: 'A(검증)', verdict: 'supported', evidence: [] },
+      { claim: 'B(미검증)', verdict: 'unverified', evidence: [] },
+      { claim: 'C(반박)', verdict: 'refuted', evidence: [] },
+    ]
+    const r = await machine.researchCommit({ verifiedClaims: claims, adoptedIndices: [1, 2] })
+    expect(r.ok).toBe(true)
+    expect((await loadJson(dir, 'research.json')).verifiedClaims).toEqual([claims[1], claims[2]])
+  })
+
+  it('commit: 동일 claim 문자열이 중복돼도 인덱스로 정확히 하나만 채택된다 (m3 — includes 중복 버그 방지)', async () => {
+    const claims = [
+      { claim: '같은문장', verdict: 'supported', evidence: [{ url: 'https://a' }] },
+      { claim: '같은문장', verdict: 'unverified', evidence: [] },
+    ]
+    await machine.researchCommit({ verifiedClaims: claims, adoptedIndices: [0] })
+    expect((await loadJson(dir, 'research.json')).verifiedClaims).toEqual([claims[0]])
+  })
+
+  it('commit: adoptedIndices=[]이면 아무 주장도 저장하지 않는다 (전체 해제)', async () => {
+    await machine.researchCommit({ adoptedIndices: [] })
+    expect((await loadJson(dir, 'research.json')).verifiedClaims).toEqual([])
+  })
+
+  it('commit: adoptedIndices 미전달 → draft의 supported만 (기본 동작 회귀)', async () => {
+    await machine.researchCommit({})
+    expect((await loadJson(dir, 'research.json')).verifiedClaims).toEqual([FACTCHECK_RESULT.claims[0]])
   })
 
   it('analysis가 없으면 commit 거부(no-analysis)', async () => {
@@ -499,6 +561,26 @@ describe('research busy 뮤텍스 / abort 대칭', () => {
     // 마지막 이벤트가 running으로 남지 않는다 — error(aborted)로 terminal 마킹.
     expect(evs.map((e) => e.status)).toEqual(['running', 'error'])
     expect(evs[evs.length - 1].error).toBe('aborted')
+  })
+
+  // M2(R1): fetch가 abort돼도 {transcripts}(부분성공)를 반환해 auto 오케스트레이션이 error만
+  // 보면 다음 단계를 실행한다 — abort 시 반환에 aborted:true를 실어 auto가 중단할 수 있게 한다.
+  it('abort 시 반환에 aborted:true 플래그를 싣는다 (M2 — 부분성공은 유지)', async () => {
+    let resolveFirst
+    youtube.fetchTranscript.mockImplementationOnce(() => new Promise((r) => { resolveFirst = r }))
+    const p = machine.researchFetchTranscripts({ videoIds: ['vidA', 'vidB'] })
+    while (!resolveFirst) { await new Promise((r) => setImmediate(r)) }
+    await machine.abort()
+    resolveFirst({ videoId: 'vidA', ok: true, lang: 'ko', isAuto: false, srt: 's', plainText: 'p' })
+    const r = await p
+    expect(r.aborted).toBe(true)
+    expect(Array.isArray(r.transcripts)).toBe(true) // 부분성공 배열은 그대로
+  })
+
+  it('정상 완료 fetch에는 aborted 플래그가 없다 (M2 회귀)', async () => {
+    await machine.researchSearch({ keyword: 'k' })
+    const r = await machine.researchFetchTranscripts({ videoIds: ['vidA'] })
+    expect(r.aborted).toBeUndefined()
   })
 })
 

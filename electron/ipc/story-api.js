@@ -131,16 +131,24 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
   ipcMain.handle('story:tts-preview', guarded(({ segmentIds, speakers, sfxSources }) => machine.synthPreview({ segmentIds, speakers, sfxSources })))
 
   // 리서치(spec §5): story:research-* guarded 핸들러 — machine research side action 위임.
-  ipcMain.handle('story:research-search', guarded(({ query, keyword, maxResults }) =>
-    machine.researchSearch({ keyword: query ?? keyword, ...(maxResults ? { maxResults } : {}) })))
-  ipcMain.handle('story:research-fetch', guarded(({ videoIds }) =>
-    machine.researchFetchTranscripts({ videoIds: videoIds || [] })))
+  ipcMain.handle('story:research-search', guarded(({ query, keyword, maxResults, dateFilter }) =>
+    machine.researchSearch({
+      keyword: query ?? keyword,
+      // m5(R1): maxResults를 1~50으로 클램프 — 과대 pool로 인한 상세조회 폭주/타임아웃 방지.
+      ...(maxResults != null ? { maxResults: Math.min(Math.max(1, Math.floor(maxResults)), 50) } : {}),
+      // 개선2: 일자 필터(none|week|month) — 지정 시에만 전달.
+      ...(dateFilter ? { dateFilter } : {}),
+    })))
+  // M4(R1): fetch도 언어 옵션을 받아 자막 1순위 언어를 프로젝트 언어로(analyze/factcheck 미러).
+  ipcMain.handle('story:research-fetch', guarded(({ videoIds, options }) =>
+    machine.researchFetchTranscripts({ videoIds: videoIds || [], options: options || {} })))
   ipcMain.handle('story:research-analyze', guarded(({ videoIds, options }) =>
     machine.researchAnalyze({ videoIds, options: options || {} })))
   ipcMain.handle('story:research-factcheck', guarded(({ options }) =>
     machine.researchFactCheck({ options: options || {} })))
-  ipcMain.handle('story:research-commit', guarded(({ analysis, verifiedClaims }) =>
-    machine.researchCommit({ analysis, verifiedClaims })))
+  // 개선4/m3: adoptedIndices — 팩트체크 주장의 수동 채택 인덱스 목록(미전달 시 supported만).
+  ipcMain.handle('story:research-commit', guarded(({ analysis, verifiedClaims, adoptedIndices }) =>
+    machine.researchCommit({ analysis, verifiedClaims, adoptedIndices })))
   ipcMain.handle('story:research-skip', guarded(() => machine.researchSkip()))
   // m5: 수동 URL 카드·fetch 전 선택 영속(draft) — 탭전환/재오픈 유실 방지.
   ipcMain.handle('story:research-select', guarded(({ selectedVideoIds, manualVideos }) =>

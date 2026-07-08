@@ -13,6 +13,7 @@ describe('storyLlmCatalog', () => {
     expect(STORY_LLM_OPTIONS.map((o) => o.id)).toEqual([
       'claude:claude-opus-4-8',
       'claude:claude-sonnet-5',
+      'claude:claude-fable-5',
       'codex:gpt-5.5',
       'codex:gpt-5.4',
     ])
