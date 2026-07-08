@@ -453,23 +453,38 @@
   background: color-mix(in srgb, var(--primary-color) 8%, var(--bg-secondary));
 }
 
-.story-research-card-check {
-  position: absolute;
-  top: 14px;
-  left: 14px;
-  z-index: 1;
-  width: 16px;
-  height: 16px;
-  accent-color: var(--primary-color);
+.story-research-card-thumb {
+  line-height: 0;
 }
 
-.story-research-card img {
+.story-research-card-thumb img {
   width: 100%;
   max-width: 100%;
   aspect-ratio: 16 / 9;
   object-fit: cover;
   border-radius: calc(var(--border-radius) - 4px);
   background: var(--bg-color);
+  display: block;
+}
+
+/* 카드 하단 — 자막확보 배지(좌) + 선택 체크박스(우하단) */
+.story-research-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.story-research-card-footer .story-research-card-badges {
+  flex: 1 1 auto;
+}
+
+.story-research-card-check {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--primary-color);
+  cursor: pointer;
 }
 
 .story-research-card-title {
@@ -1022,3 +1037,73 @@
 }
 .story-seg-btn:hover:not(:disabled) { background: var(--primary-color); color: #fff; }
 .story-seg-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* ── 영상 상세 모달(2026-07-08): 카드 더블클릭 → 상세+임베드 자동재생 ──
+   공용 Modal(.modal-overlay/.modal, App.css) 위에 뜬다 — 여기선 폭 확장 + 본문 스타일만. */
+.modal.story-video-modal {
+  max-width: 760px;
+  width: 90%;
+}
+
+.story-video-embed-wrap {
+  aspect-ratio: 16 / 9;
+  width: 100%;
+  background: #000;
+  border-radius: calc(var(--border-radius) - 4px);
+  overflow: hidden;
+}
+.story-video-embed {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+
+.story-video-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+.story-video-mute {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 30px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  background: var(--bg-secondary);
+  cursor: pointer;
+}
+.story-video-mute:hover { background: var(--border-color); }
+.story-video-volume { flex: 1 1 auto; accent-color: var(--primary-color); cursor: pointer; }
+
+.story-video-loading { margin-top: 14px; color: var(--text-secondary, var(--text-color)); font-size: 0.9rem; }
+
+.story-video-detail { margin-top: 14px; }
+.story-video-detail-title { font-size: 1.05rem; font-weight: 600; margin-bottom: 10px; }
+
+/* 바이럴 지수 — 등급별 강조 */
+.story-video-viral {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 10px 12px;
+  border-radius: var(--border-radius);
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  margin-bottom: 12px;
+}
+.story-video-viral-tier { font-weight: 700; }
+.story-video-viral-ratio,
+.story-video-viral-vpd,
+.story-video-viral-eng { font-size: 0.85rem; color: var(--text-secondary, var(--text-color)); }
+.story-video-viral-explosive { border-color: #e0483d; background: color-mix(in srgb, #e0483d 12%, var(--bg-secondary)); }
+.story-video-viral-high { border-color: #e8853a; background: color-mix(in srgb, #e8853a 12%, var(--bg-secondary)); }
+.story-video-viral-ok { border-color: color-mix(in srgb, var(--primary-color) 55%, var(--border-color)); }
+
+.story-video-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; margin: 0; }
+.story-video-meta-row { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--border-color); }
+.story-video-meta-label { color: var(--text-secondary, var(--text-color)); font-size: 0.85rem; }
+.story-video-meta-value { font-weight: 600; font-size: 0.9rem; }
+@media (max-width: 520px) { .story-video-meta { grid-template-columns: 1fr; } }

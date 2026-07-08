@@ -13,6 +13,8 @@
  */
 import { useState, useEffect } from 'react'
 import { StopwatchIcon, ElapsedTime } from '../StopwatchIcon'
+import VideoDetailModal from './VideoDetailModal.jsx'
+import { detectOS, ytDlpInstallCommand } from '../../utils/ytdlpInstall.js'
 
 // URL 수동 추가 보조(§3.6) — watch?v= / youtu.be/ / shorts/ 에서 videoId 추출. 실패 시 null.
 export function parseVideoIdFromUrl(url) {
@@ -54,7 +56,7 @@ export default function ResearchPanel({
   fetchProgress = {},
   disabled = false,
   language = null,
-  onSearch, onFetch, onAnalyze, onFactCheck, onCommit, onSkip, onAbort, onSelect,
+  onSearch, onFetch, onAnalyze, onFactCheck, onCommit, onSkip, onAbort, onSelect, onVideoDetails,
 }) {
   const [keyword, setKeyword] = useState(research?.keyword || '')
   const [url, setUrl] = useState('')
@@ -74,6 +76,8 @@ export default function ResearchPanel({
   const [autoRun, setAutoRun] = useState(null)
   // R2 MINOR(M3 잔여): 일자필터 상세조회 실패로 flat 폴백했을 때 안내(검색마다 갱신 — transient).
   const [dateFilterFallback, setDateFilterFallback] = useState(false)
+  // 상세 모달(2026-07-08): 카드 더블클릭 시 열 videoId. null=닫힘.
+  const [detailVideoId, setDetailVideoId] = useState(null)
 
   const rawSearchVideos = research?.videos || []
   // 개선3: 설정 언어 1차 필터 — 전부 불일치면 필터를 풀어 빈 그리드를 막는다(보조 안전망).
@@ -167,6 +171,9 @@ export default function ResearchPanel({
     // m5: fetch 전 선택도 즉시 영속(researchFetchTranscripts만으로는 fetch 전 선택이 비영속).
     onSelect?.({ selectedVideoIds: next, manualVideos })
   }
+  // 선택은 체크박스로만, 더블클릭=상세 모달(리뷰 MINOR A/B: 본문클릭-선택 + 더블클릭-미리보기를
+  // 타이머로 공존시키면 OS 더블클릭 임계·카드간 타이머 충돌 엣지가 생긴다 — 아예 분리해 제거).
+  const handleCardDoubleClick = (videoId) => setDetailVideoId(videoId)
 
   const handleFetch = () => runAction('fetch', () => onFetch?.({ videoIds: selected }))
   const handleAnalyze = () => runAction('analyze', () => onAnalyze?.({ videoIds: selected }))
@@ -267,7 +274,7 @@ export default function ResearchPanel({
       {/* m2: yt-dlp 미설치 안내 — 검색 에러뿐 아니라 fetch progress/복원 메타의 error에서도 노출 */}
       {binaryNotFound && (
         <div className="story-error-banner" role="alert">
-          ⚠️ {t('story.research.binaryNotFound', 'yt-dlp가 설치되어 있지 않습니다. 터미널에서 `brew install yt-dlp`로 설치하세요.')}
+          ⚠️ {t('story.research.binaryNotFound', 'yt-dlp가 설치되어 있지 않습니다. 터미널에서 `{cmd}`로 설치하세요.', { cmd: ytDlpInstallCommand(detectOS()) })}
         </div>
       )}
       {actionError && actionError !== 'binary-not-found' && (
@@ -360,27 +367,38 @@ export default function ResearchPanel({
             const langMiss = langMissBadge(v.videoId)
             const uploadDate = formatUploadDate(v.uploadDate)
             return (
-              <label key={v.videoId} className={`story-research-card${checked ? ' selected' : ''}`}>
-                <input
-                  type="checkbox"
-                  className="story-research-card-check"
-                  aria-label={t('story.research.selectVideo', `${v.title || v.videoId} 선택`, { title: v.title || v.videoId })}
-                  checked={checked}
-                  onChange={() => toggleSelect(v.videoId)}
-                  disabled={actionsDisabled}
-                />
-                <img src={thumbnailOf(v)} alt={v.title || v.videoId} loading="lazy" />
+              <div
+                key={v.videoId}
+                className={`story-research-card${checked ? ' selected' : ''}`}
+                title={t('story.research.openDetail', `${v.title || v.videoId} 상세 보기`, { title: v.title || v.videoId })}
+                onDoubleClick={() => handleCardDoubleClick(v.videoId)}
+              >
+                <div className="story-research-card-thumb">
+                  <img src={thumbnailOf(v)} alt={v.title || v.videoId} loading="lazy" />
+                </div>
                 <div className="story-research-card-title">{v.title || v.videoId}</div>
                 <div className="story-research-card-meta">
                   {v.channelTitle}
                   {v.viewCount != null && ` · ${t('story.research.views', `조회수 ${Number(v.viewCount).toLocaleString()}`, { count: Number(v.viewCount).toLocaleString() })}`}
                   {uploadDate && ` · ${uploadDate}`}
                 </div>
-                <div className="story-research-card-badges">
-                  {badge && <span className={`story-research-transcript story-research-transcript-${badge.cls}`}>{badge.text}</span>}
-                  {langMiss && <span className="story-research-transcript story-research-transcript-langmiss">{langMiss}</span>}
+                <div className="story-research-card-footer">
+                  <div className="story-research-card-badges">
+                    {badge && <span className={`story-research-transcript story-research-transcript-${badge.cls}`}>{badge.text}</span>}
+                    {langMiss && <span className="story-research-transcript story-research-transcript-langmiss">{langMiss}</span>}
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="story-research-card-check"
+                    aria-label={t('story.research.selectVideo', `${v.title || v.videoId} 선택`, { title: v.title || v.videoId })}
+                    checked={checked}
+                    onChange={() => toggleSelect(v.videoId)}
+                    // 체크박스 더블클릭이 카드 onDoubleClick(모달)로 새지 않게 차단.
+                    onDoubleClick={(e) => e.stopPropagation()}
+                    disabled={actionsDisabled}
+                  />
                 </div>
-              </label>
+              </div>
             )
           })}
         </div>
@@ -496,6 +514,16 @@ export default function ResearchPanel({
             </div>
           ))}
         </div>
+      )}
+
+      {/* 상세 모달(2026-07-08): 카드 더블클릭 → 구독자·게시일·바이럴 지수 + 임베드 자동재생 */}
+      {detailVideoId && (
+        <VideoDetailModal
+          videoId={detailVideoId}
+          t={t}
+          fetchDetails={onVideoDetails}
+          onClose={() => setDetailVideoId(null)}
+        />
       )}
     </div>
   )

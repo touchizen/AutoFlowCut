@@ -9,6 +9,7 @@ import * as llmGemini from '../api/llm/llmGemini.js'
 import * as llmClaude from '../api/llm/llmClaude.js'
 import { searchVideos } from '../api/youtube/searchVideos.js'
 import { fetchTranscript } from '../api/youtube/fetchTranscript.js'
+import { getVideoDetails } from '../api/youtube/getVideoDetails.js'
 import { createTtsAdapter } from '../api/tts/index.js'
 import { getTypecastKey } from '../api/tts/typecastKey.js'
 import { probeDurationMs } from '../story/audioProbe.js'
@@ -50,7 +51,7 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
 
   // 리서치(spec §3.1/§3.5): 검색·자막은 yt-dlp 모듈 직접 배선, 팩트체크는 Claude 강제라 라우터
   // 우회 — llmClaude.factCheckClaims를 machine deps로 주입(N4 DI seam, 테스트는 mock 주입).
-  const youtubeApi = youtube || { searchVideos, fetchTranscript }
+  const youtubeApi = youtube || { searchVideos, fetchTranscript, getVideoDetails }
   const factCheckFn = factCheck || llmClaude.factCheckClaims
 
   // C1-a: audio 스텝은 tts/probe 주입이 필수(없으면 실앱에서 tts.capabilities() 크래시).
@@ -153,4 +154,8 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
   // m5: 수동 URL 카드·fetch 전 선택 영속(draft) — 탭전환/재오픈 유실 방지.
   ipcMain.handle('story:research-select', guarded(({ selectedVideoIds, manualVideos }) =>
     machine.researchSelect({ selectedVideoIds, manualVideos })))
+  // 상세 모달(2026-07-08): 영상 카드 더블클릭 시 단일 영상 상세 조회(구독자·게시일·바이럴 지수).
+  // 파이프라인 상태 불변 — 온디맨드 읽기 전용.
+  ipcMain.handle('story:research-video-details', guarded(({ videoId }) =>
+    machine.researchVideoDetails({ videoId })))
 }

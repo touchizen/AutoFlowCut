@@ -138,7 +138,8 @@ describe('StoryView 폼 hydrate (Task 7)', () => {
   const input = {
     type: 'title',
     title: '복원 제목',
-    options: { genre: 'yadam', model: 'claude-sonnet-5', language: 'en', lengthValue: '7', lengthUnit: 'words' },
+    // 언어 en → 장르는 en 유효값(dark-history). yadam은 ko 전용이라 en에선 리셋된다.
+    options: { genre: 'dark-history', model: 'claude-sonnet-5', language: 'en', lengthValue: '7', lengthUnit: 'words' },
   }
 
   it('재오픈 시 state.input.title/options로 폼을 초기화한다', () => {
@@ -146,7 +147,7 @@ describe('StoryView 폼 hydrate (Task 7)', () => {
     p.state.input = input
     render(<StoryView pipeline={p} />)
     expect(screen.getByPlaceholderText('제목')).toHaveValue('복원 제목')
-    expect(screen.getByLabelText('장르')).toHaveValue('yadam')
+    expect(screen.getByLabelText('장르')).toHaveValue('dark-history')
     expect(screen.getByLabelText('모델')).toHaveValue('claude:claude-sonnet-5')
     expect(screen.getByLabelText('언어')).toHaveValue('en')
     expect(screen.getByLabelText('대본 분량 값')).toHaveValue('1050')

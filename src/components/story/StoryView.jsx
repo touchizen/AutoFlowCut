@@ -285,6 +285,23 @@ function useSafeIsKo() {
   }
 }
 
+// 이야기 유형(genre) — 프로젝트 출력 언어별 노출 옵션. yadam은 한국 야담(ko 전용), dark-history
+// 가이드는 영어권(en 전용), bespoke는 언어별 공용(bespoke/<lang>). 값은 백엔드 프롬프트 키
+// (metaPrompts.W3_FILES)와 반드시 일치해야 하므로 고정 — 라벨만 i18n한다.
+const GENRE_BY_LANG = Object.freeze({
+  ko: ['yadam', 'bespoke'],
+  en: ['dark-history', 'bespoke'],
+})
+function genresForLanguage(language) {
+  return GENRE_BY_LANG[language] || GENRE_BY_LANG.en
+}
+// genre 값(하이픈 포함) → i18n 키 세그먼트 + 한국어 폴백(useSafeT 폴백 정책).
+const GENRE_I18N_KEY = Object.freeze({ yadam: 'yadam', 'dark-history': 'darkHistory', bespoke: 'bespoke' })
+const GENRE_FALLBACK = Object.freeze({ yadam: '야담', 'dark-history': '다크 히스토리', bespoke: '맞춤형' })
+function genreLabel(g, t) {
+  return t(`story.form.genre.${GENRE_I18N_KEY[g] || g}`, GENRE_FALLBACK[g] || g)
+}
+
 export default function StoryView({ pipeline, voices = [], onClose = null, onTagGender = null, onVoiceSearch = null }) {
   const t = useSafeT()
   const hasI18n = useHasI18n()
@@ -537,6 +554,13 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
       setLengthUnit(nextUnit)
     }
   }
+
+  // 언어 전환(또는 hydrate)으로 현재 genre가 새 언어에 없는 값(yadam↔dark-history)이 되면
+  // 기본 bespoke로 보정 — 유령 값이 select에 남거나 백엔드로 넘어가는 것 방지.
+  useEffect(() => {
+    if (!genresForLanguage(language).includes(genre)) setGenre('bespoke')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [language])
 
   const setReviewStage = (target, patch) => {
     setReviewTouched(true)
@@ -1147,6 +1171,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                 onFactCheck={() => pipeline.researchFactCheck({ options: currentOptions() })}
                 // m5: 수동 URL 카드·fetch 전 선택을 draft에 영속(탭전환/재오픈 유실 방지).
                 onSelect={pipeline.researchSelect}
+                // 상세 모달(2026-07-08): 카드 더블클릭 시 단일 영상 상세(구독자·게시일·바이럴).
+                onVideoDetails={pipeline.researchVideoDetails}
                 onCommit={handleResearchCommit}
                 onSkip={handleResearchSkip}
                 onAbort={() => abort()}
@@ -1310,9 +1336,9 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                     onChange={(e) => setGenre(e.target.value)}
                     disabled={isRunning}
                   >
-                    <option value="yadam">yadam (야담)</option>
-                    <option value="dark-history">dark-history</option>
-                    <option value="bespoke">bespoke</option>
+                    {genresForLanguage(language).map((g) => (
+                      <option key={g} value={g}>{genreLabel(g, t)}</option>
+                    ))}
                   </select>
                 </div>
 

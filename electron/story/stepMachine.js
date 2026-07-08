@@ -1307,6 +1307,12 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         if (researchController === myController) researchController = null
       }
     },
+    // 상세 모달(2026-07-08): 영상 카드 더블클릭 시 단일 영상 상세 조회. 파이프라인 상태 불변
+    // (mutex/draft 미사용) — 온디맨드 읽기 전용이라 진행 중 검색/분석과 무관하게 항상 응답한다.
+    async researchVideoDetails({ videoId } = {}) {
+      if (!youtube?.getVideoDetails) return { error: 'unsupported' }
+      return youtube.getVideoDetails({ videoId })
+    },
     // §3.1: videoId별 순차 fetch(YAGNI — 병렬 다중 프로세스 비목표) + videoId별 progress emit.
     // 각 videoId 완료 즉시 draft durable 저장(§3.8 — 부분 진행도 재오픈 복원). 개별 실패는
     // 나머지 진행(부분 성공 허용, §6). 자막 원문 srt는 research/transcripts/<id>.srt 로컬 저장.

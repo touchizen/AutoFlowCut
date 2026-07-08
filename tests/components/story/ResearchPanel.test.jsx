@@ -132,6 +132,29 @@ describe('선택·수동카드 영속 콜백 (m5)', () => {
   })
 })
 
+// 카드 더블클릭=상세 모달. 선택은 체크박스 전담(리뷰 MINOR A/B: 타이머 휴리스틱 제거).
+describe('영상 카드 더블클릭 상세 모달', () => {
+  it('더블클릭 시 상세 모달을 열고 선택은 토글하지 않는다', async () => {
+    const onVideoDetails = vi.fn(async () => ({ details: { videoId: VIDEO.videoId, title: '영상X', viral: { tier: 'ok' } } }))
+    const p = baseProps({ research: researchWith(), onVideoDetails, onSelect: vi.fn(noop) })
+    render(<ResearchPanel {...p} />)
+    fireEvent.doubleClick(screen.getByTitle(/상세 보기/))
+    await screen.findByRole('dialog')
+    expect(onVideoDetails).toHaveBeenCalledWith({ videoId: VIDEO.videoId })
+    expect(p.onSelect).not.toHaveBeenCalled()
+  })
+
+  it('본문 단일클릭은 선택을 바꾸지 않는다(체크박스 전담)', () => {
+    const p = baseProps({ research: researchWith(), onSelect: vi.fn(noop) })
+    render(<ResearchPanel {...p} />)
+    fireEvent.click(screen.getByTitle(/상세 보기/))
+    expect(p.onSelect).not.toHaveBeenCalled()
+    // 체크박스는 즉시 선택
+    fireEvent.click(screen.getByRole('checkbox', { name: '영상X 선택' }))
+    expect(p.onSelect).toHaveBeenCalledWith({ selectedVideoIds: [VIDEO.videoId], manualVideos: [] })
+  })
+})
+
 // m7(Fable R1) 미러: 새 검색이 draft의 선택을 클리어하므로 패널 로컬 선택도 함께 클리어 —
 // 새 결과 위에 옛 선택(유령 선택)이 남지 않는다.
 describe('새 검색 시 선택 클리어 (m7)', () => {

@@ -350,12 +350,15 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   // m5: 수동 URL 카드·fetch 전 선택 영속 — 선택 변경/URL 추가 즉시 draft에 저장(탭전환/재오픈 유실 방지).
   const researchSelect = useCallback((params = {}) =>
     window.electronAPI.storyResearchSelect({ projectToken: tokenRef.current, ...params }), [])
+  // 상세 모달(2026-07-08): 카드 더블클릭 시 단일 영상 상세 조회(온디맨드, 파이프라인 상태 불변).
+  const researchVideoDetails = useCallback((params = {}) =>
+    window.electronAPI.storyResearchVideoDetails({ projectToken: tokenRef.current, ...params }), [])
 
   // 전환 감지 render에서는 옛 프로젝트의 state/scenes/scriptText/openError 대신 빈 값을 반환해
   // key로 재마운트되는 StoryView가 setup + 폼 기본값으로 초기화되게 한다(effect가 다음 tick에
   // useState를 정리하기 전 한 프레임의 stale 값 유출 방지).
   if (justSwitched) {
-    return { state: null, scenes: [], streamingText, scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview, segmentProgress: {}, reviewProgress: null, progressLog: [], llmOptions, defaultLlmOption, generateSynopsis, confirmSynopsis, synopsisStreamingText: '', synopsisGenerating: false, synopsisError: null, synopsisText: '', hasSynopsis: false, characters: [], charactersConfirmed: undefined, research: null, researchFetchProgress: {}, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect }
+    return { state: null, scenes: [], streamingText, scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview, segmentProgress: {}, reviewProgress: null, progressLog: [], llmOptions, defaultLlmOption, generateSynopsis, confirmSynopsis, synopsisStreamingText: '', synopsisGenerating: false, synopsisError: null, synopsisText: '', hasSynopsis: false, characters: [], charactersConfirmed: undefined, research: null, researchFetchProgress: {}, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
   }
-  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, segmentProgress, reviewProgress, progressLog, llmOptions, defaultLlmOption, generateSynopsis, confirmSynopsis, synopsisStreamingText, synopsisGenerating, synopsisError, synopsisText, hasSynopsis, characters, charactersConfirmed, research, researchFetchProgress, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect }
+  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, segmentProgress, reviewProgress, progressLog, llmOptions, defaultLlmOption, generateSynopsis, confirmSynopsis, synopsisStreamingText, synopsisGenerating, synopsisError, synopsisText, hasSynopsis, characters, charactersConfirmed, research, researchFetchProgress, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
 }

@@ -30,6 +30,7 @@ beforeEach(async () => {
   youtube = {
     searchVideos: vi.fn(async () => ({ videos: VIDEOS })),
     fetchTranscript: vi.fn(async (videoId) => ({ videoId, ok: true, lang: 'ko', isAuto: false, srt: 's', plainText: '본문' })),
+    getVideoDetails: vi.fn(async ({ videoId }) => ({ details: { videoId, title: 't', viral: { tier: 'high' } } })),
   }
   factCheck = vi.fn(async () => ({ claims: [{ claim: 'c', verdict: 'supported', evidence: [] }] }))
   registerStoryIPC(ipc, {
@@ -39,11 +40,29 @@ beforeEach(async () => {
   })
 })
 
-const CHANNELS = ['story:research-search', 'story:research-fetch', 'story:research-analyze', 'story:research-factcheck', 'story:research-commit', 'story:research-skip', 'story:research-select']
+const CHANNELS = ['story:research-search', 'story:research-fetch', 'story:research-analyze', 'story:research-factcheck', 'story:research-commit', 'story:research-skip', 'story:research-select', 'story:research-video-details']
 
 describe('story:research-* IPC (guarded)', () => {
-  it('일곱 핸들러가 모두 등록된다', () => {
+  it('여덟 핸들러가 모두 등록된다', () => {
     for (const ch of CHANNELS) expect(ipc.handlers.get(ch), ch).toBeDefined()
+  })
+
+  it('video-details: videoId를 machine.researchVideoDetails → getVideoDetails로 위임한다', async () => {
+    const { projectToken } = await ipc.invoke('story:open', { projectPath: dir })
+    const r = await ipc.invoke('story:research-video-details', { projectToken, videoId: 'vidA' })
+    expect(youtube.getVideoDetails).toHaveBeenCalledWith({ videoId: 'vidA' })
+    expect(r.details).toMatchObject({ videoId: 'vidA', viral: { tier: 'high' } })
+  })
+
+  it('video-details: 진행 중 검색과 무관하게 응답한다(mutex 미사용)', async () => {
+    const { projectToken } = await ipc.invoke('story:open', { projectPath: dir })
+    let release
+    youtube.searchVideos.mockImplementationOnce(() => new Promise((res) => { release = () => res({ videos: VIDEOS }) }))
+    const searching = ipc.invoke('story:research-search', { projectToken, query: 'q' })
+    const details = await ipc.invoke('story:research-video-details', { projectToken, videoId: 'vidB' })
+    expect(details.details).toMatchObject({ videoId: 'vidB' }) // busy로 안 막힘
+    release()
+    await searching
   })
 
   it('stale token은 전부 거부한다', async () => {
