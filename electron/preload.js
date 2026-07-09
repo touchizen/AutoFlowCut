@@ -126,6 +126,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   storyPushAck: (params) => ipcRenderer.invoke('story:push-ack', params),
   storyGenerateTitle: (params) => ipcRenderer.invoke('story:generate-title', params),
   storyGenerateSynopsis: (params) => ipcRenderer.invoke('story:generate-synopsis', params),
+  storyReviewSynopsis: (params) => ipcRenderer.invoke('story:review-synopsis', params),
   storyConfirmSynopsis: (params) => ipcRenderer.invoke('story:confirm-synopsis', params),
   storyTtsPreview: (params) => ipcRenderer.invoke('story:tts-preview', params),
   storyLoadAudioPackage: (projectPath) => ipcRenderer.invoke('story:load-audio-package', { projectPath }),

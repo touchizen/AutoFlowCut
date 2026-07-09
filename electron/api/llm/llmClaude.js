@@ -13,6 +13,8 @@ import {
   buildContinuePrompt,
   buildReviewPrompt,
   buildRevisePrompt,
+  buildSynopsisReviewPrompt,
+  buildSynopsisRevisePrompt,
   buildScenesReviewPrompt,
   buildScenesRevisePrompt,
   buildPromptsReviewPrompt,
@@ -232,6 +234,33 @@ export async function reviseScript(scriptMd, critique, opts = {}, { signal, quer
     const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts))
     for await (const m of queryImpl({ prompt, options })) {
       if (m.type === 'result') return { scriptMd: extractClaudeSdkResult(m) }
+    }
+    if (signal?.aborted) throw new Error('Aborted')
+    throw new Error('no result message returned')
+  } catch (err) {
+    if (signal?.aborted) throw new Error('Aborted')
+    throw new Error(`Claude SDK failed: ${err.message}`)
+  } finally { cleanup() }
+}
+
+// 시놉시스 검수(spec 2026-07-10) — reviewScript 미러. REVIEW_SCHEMA 구조화 호출.
+export async function reviewSynopsis(synopsisMd, characters = [], opts = {}, { signal, queryImpl } = {}) {
+  const prompt = buildSynopsisReviewPrompt(synopsisMd, characters, opts)
+  const out = await structuredClaudeCall(prompt, REVIEW_SCHEMA, opts, { signal, queryImpl })
+  const verdict = out.verdict === 'revise' ? 'revise' : 'pass'
+  return { verdict, critique: out.critique || '' }
+}
+
+// 시놉시스는 구조화 스키마가 없다 — CHARACTERS_JSON 마커 텍스트를 splitSynopsisOutput으로 분해한다.
+// reviseScript와 같은 NON-streaming 경로.
+export async function reviseSynopsis(synopsisMd, characters = [], critique, opts = {}, { signal, queryImpl = defaultQuery } = {}) {
+  const prompt = buildSynopsisRevisePrompt(synopsisMd, characters, critique, opts)
+  const { abortController, cleanup } = bridgeAbortSignal(signal)
+  try {
+    if (signal?.aborted) throw new Error('Aborted')
+    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts))
+    for await (const m of queryImpl({ prompt, options })) {
+      if (m.type === 'result') return splitSynopsisOutput(extractClaudeSdkResult(m))
     }
     if (signal?.aborted) throw new Error('Aborted')
     throw new Error('no result message returned')

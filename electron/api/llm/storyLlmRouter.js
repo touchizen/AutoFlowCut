@@ -9,6 +9,10 @@ const METHOD_OPTION_INDEX = {
   continueScript: 1,
   reviewScript: 1,
   reviseScript: 2,
+  // 시놉시스 검수(spec 2026-07-10): reviewSynopsis(synopsisMd, characters, opts, ctx),
+  // reviseSynopsis(synopsisMd, characters, critique, opts, ctx).
+  reviewSynopsis: 2,
+  reviseSynopsis: 3,
   reviewScenes: 3,
   reviseScenes: 4,
   reviewPrompts: 2,

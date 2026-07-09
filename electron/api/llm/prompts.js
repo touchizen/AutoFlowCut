@@ -271,6 +271,49 @@ export function buildRevisePrompt(scriptMd, critique, opts = {}) {
   ].join('\n')
 }
 
+// 시놉시스 검수(spec 2026-07-10): 산문 다듬기가 아니라 '전제(premise)'를 본다. 등장인물 카드가
+// 본문에서 파생되므로 둘의 정합성도 함께 검토한다.
+export function buildSynopsisReviewPrompt(synopsisMd, characters = [], opts = {}) {
+  return [
+    `당신은 유튜브 스토리 채널의 냉정한 기획 편집자다. 아래 시놉시스를 '이야기 전제'로서 검토하라:`,
+    `- 훅: 전제가 한 편을 끝까지 볼 만한 질문을 만드는가`,
+    `- 스테이크: 누가 무엇을 잃거나 얻는지 분명한가`,
+    `- 구조: 상황만 있는 게 아니라 시작·전환·보상이 있는가`,
+    `- 인물 근거: 등장인물마다 원하는 것이 있고, 시놉시스가 그 존재 이유를 설명하는가`,
+    `- 정합성: 등장인물 카드(이름·외형·성별·역할)가 본문과 일치하는가`,
+    `- 제작 범위: 설정된 분량으로 만들 수 있는가, 3부작짜리 플롯은 아닌가`,
+    opts.genre ? `장르(약한 참고용): ${opts.genre}` : '',
+    `심각하게 개선이 필요하면 verdict="revise"와 구체적이고 실행 가능한 critique를 내라.`,
+    `충분히 좋으면 verdict="pass". 사소한 취향 차이로 revise를 남발하지 마라.`,
+    `--- 시놉시스 ---`,
+    synopsisMd,
+    `--- 등장인물 ---`,
+    JSON.stringify(characters),
+  ].filter(Boolean).join('\n')
+}
+
+// 비평 반영 재작성. 출력 계약은 buildSynopsisPrompt와 동일 — 줄거리 + CHARACTERS_JSON 마커 + JSON 배열.
+// (시놉시스는 구조화 스키마가 없다. splitSynopsisOutput이 이 마커로 분해한다.)
+export function buildSynopsisRevisePrompt(synopsisMd, characters = [], critique, opts = {}) {
+  const ko = opts.language !== 'en'
+  return [
+    `아래 시놉시스를 비평(critique)을 반영해 개선하라. 언어·소제목 구성·분량은 그대로 유지한다.`,
+    `본문을 고치면서 등장인물이 달라졌다면 등장인물 배열도 함께 갱신하라.`,
+    `설명이나 머리말 없이 개선된 시놉시스 전체만 출력하라.`,
+    `--- 비평(critique) ---`,
+    critique,
+    `--- 시놉시스 ---`,
+    synopsisMd,
+    `--- 등장인물 ---`,
+    JSON.stringify(characters),
+    ko
+      ? `줄거리를 다 쓴 뒤 마지막에 CHARACTERS_JSON 이라고 한 줄 쓰고, 다음 줄부터 등장인물 전체를 아래 형식의 JSON 배열로만 출력하라(설명·코드펜스 금지):`
+      : `After the synopsis, write CHARACTERS_JSON on its own line, followed by all characters as a JSON array in the format below (no prose, no code fence):`,
+    CHARACTER_JSON_SHAPE,
+    `gender는 male/female/unknown 중 하나만 쓴다. 나레이션(narrator)은 등장인물에 넣지 않는다.`,
+  ].filter(Boolean).join('\n')
+}
+
 export function buildScenesReviewPrompt(scriptMd, scenes, speakers, opts = {}) {
   return [
     `당신은 유튜브 스토리 영상의 씬 분리 감수자다. 대본과 현재 scenes JSON을 비교해 씬 분리 자체를 검토하라.`,

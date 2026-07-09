@@ -1201,6 +1201,57 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const opts = buildLlmOptions({ ...(state?.input?.options || {}), ...(options || {}) })
       return llm.generateTitle(scriptMd, opts, {})
     },
+    // 시놉시스 검수 side action (spec 2026-07-10) — generateSynopsis 미러.
+    // 시놉시스는 실행 스텝이 아닌 게이트라 reviewOnly 스텝 경로를 못 쓴다. steps.* 불변.
+    // draft-only: 결과를 renderer에 돌려줄 뿐 디스크에 쓰지 않는다(확정은 confirmSynopsis 담당).
+    async reviewSynopsis(params = {}) {
+      if (!state) state = await store.load()
+      if (previewing || synopsisController || researchController || Object.values(state.steps || {}).some((s) => s.status === 'running')) {
+        return { error: 'busy' }
+      }
+      const operationId = randomUUID()
+      const myController = new AbortController()
+      synopsisController = myController
+      try {
+        // started 신호가 renderer의 synopsisActiveOpRef를 세팅한다 — 이게 없으면 이어지는
+        // review progress가 step 기반 op 필터에 전부 버려진다.
+        send('story:synopsis-delta', { phase: 'started', text: '' }, operationId)
+        const opts = buildLlmOptions(effectiveOptions(params))
+        const cfg = reviewConfig(opts, 'synopsis')
+        if (!cfg.enabled) return { changed: false }
+        // reviewConfig는 Math.max(0, ...)만 한다 — 상한은 renderer의 clampReviewRounds뿐이라
+        // IPC 직접 호출로 우회된다. 여기서 다시 5로 막는다.
+        const rounds = Math.min(5, cfg.rounds)
+        const reviewOpts = reviewLlmOptions(opts)
+        let synopsisMd = typeof params.synopsisMd === 'string' && params.synopsisMd.trim()
+          ? params.synopsisMd
+          : ((await store.loadText('synopsis.md')) || '')
+        if (!synopsisMd.trim()) throw new Error('synopsis not found — generate a synopsis first')
+        let characters = Array.isArray(params.characters) ? params.characters : []
+        let changed = false
+        for (let round = 1; round <= rounds; round++) {
+          sendReviewProgress('synopsis', { round, of: rounds, phase: 'reviewing' }, operationId)
+          const { verdict, critique } = await llm.reviewSynopsis(synopsisMd, characters, reviewOpts, { signal: myController.signal })
+          if (myController.signal.aborted) throw new Error('aborted')
+          if (verdict !== 'revise' || !critique?.trim()) break
+          sendReviewProgress('synopsis', { round, of: rounds, phase: 'revising' }, operationId)
+          const r = await llm.reviseSynopsis(synopsisMd, characters, critique, reviewOpts, { signal: myController.signal })
+          if (myController.signal.aborted) throw new Error('aborted')
+          if (!r?.synopsisMd?.trim()) throw new Error('reviseSynopsis returned empty synopsis')
+          // 본문이 동일해도 characters만 바뀔 수 있다 — 텍스트 비교로 정의하지 않는다.
+          changed = true
+          synopsisMd = r.synopsisMd
+          characters = r.characters || []
+        }
+        return { synopsisMd, characters, changed }
+      } catch (e) {
+        const msg = String(e?.message || e)
+        if (!/abort/i.test(msg)) sendReviewProgress('synopsis', { phase: 'error', error: msg }, operationId)
+        throw e
+      } finally {
+        if (synopsisController === myController) synopsisController = null
+      }
+    },
     // §3.3 + §v2.8 M4 + §v2.11: 시놉시스 생성 side action — 실행 스텝이 아니다(step status 불변).
     // 전용 operationId 라이프사이클: delta 전에 started 신호를 같은 채널(story:synopsis-delta)로
     // 단일 계약 송신 → renderer가 synopsisActiveOpRef를 세팅한다. busy/abort는 step/preview와 대칭.

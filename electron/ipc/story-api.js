@@ -124,6 +124,9 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
   // 리서치 §5 M2: 기존 채널에 useResearch 필드 추가(신규 채널 아님) — true일 때만 research.json 주입.
   ipcMain.handle('story:generate-synopsis', guarded(({ type, title, pastedScript, options, useResearch }) =>
     machine.generateSynopsis({ type, title, pastedScript, useResearch, options: options || {} })))
+  // 시놉시스 검수(spec 2026-07-10): draft-only — 결과를 돌려줄 뿐 저장하지 않는다.
+  ipcMain.handle('story:review-synopsis', guarded(({ synopsisMd, characters, options, review }) =>
+    machine.reviewSynopsis({ synopsisMd, characters, options: options || {}, review })))
   // 슬라이스4(§v2.8 M1 + §v2.9): 시놉시스 확정 커밋 채널(title·pasted 공통) — characters→speakers
   // 반영 + charactersConfirmed=true + pushCharacters emit은 machine.confirmSynopsis가 수행.
   ipcMain.handle('story:confirm-synopsis', guarded(({ synopsisMd, characters }) =>

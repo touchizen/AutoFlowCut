@@ -154,7 +154,8 @@ function reasoningEffortFor(option, requestedReasoning = null) {
     : (option.defaultReasoningEffort || allowed[0] || '')
 }
 
-const REVIEW_TARGET_LABEL = { script: '시나리오', scenes: '씬', prompts: '프롬프트' }
+// synopsis는 라벨/기본값만 갖고 ORDER엔 없다 — 수동 전용이라 설정 탭에 노출하지 않는다(spec 2026-07-10).
+const REVIEW_TARGET_LABEL = { synopsis: '시놉시스', script: '시나리오', scenes: '씬', prompts: '프롬프트' }
 const REVIEW_TARGET_ORDER = ['script', 'scenes', 'prompts']
 
 function defaultReviewRounds(target, model) {
@@ -324,6 +325,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {}, reviewProgress = null, progressLog = [],
     // 슬라이스5(§v2.5): synopsis 게이트 상태 — useStoryPipeline(S4)이 공급.
     synopsisStreamingText = '', synopsisGenerating = false, synopsisError = null,
+    // 시놉시스 검수(spec 2026-07-10) — generating과 분리(스트림 뷰 전환 방지).
+    synopsisReviewing = false,
   } = pipeline
   const steps = state?.steps || {}
   const currentStep = computeCurrentStep(steps)
@@ -355,12 +358,19 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   // 인라인 시계(GenClock)의 경과시간에 쓴다. 생성 끝나면 null.
   const [synopsisStartedAt, setSynopsisStartedAt] = useState(null)
   useEffect(() => { setSynopsisStartedAt(synopsisGenerating ? Date.now() : null) }, [synopsisGenerating])
+  // 검수 로그창(StoryRunning)의 경과시간.
+  const [synopsisReviewStartedAt, setSynopsisReviewStartedAt] = useState(null)
+  useEffect(() => { setSynopsisReviewStartedAt(synopsisReviewing ? Date.now() : null) }, [synopsisReviewing])
 
   // 중단(⏹) 즉각 피드백 — SDK 취소는 몇 초 걸릴 수 있어(특히 reasoning=max) 버튼을 '중단 중…'으로
   // 바꿔 응답성을 준다. 생성/스텝이 실제로 멈추면(둘 다 not running) 해제.
   const [aborting, setAborting] = useState(false)
   const handleAbort = () => { setAborting(true); abort() }
-  useEffect(() => { if (!synopsisGenerating && !isRunning) setAborting(false) }, [synopsisGenerating, isRunning])
+  // 검수 중에는 synopsisGenerating/isRunning이 둘 다 false라 deps가 안 바뀐다 — synopsisReviewing을
+  // 빼면 setAborting(true) 이후 영영 리셋되지 않아 [⏹ 중단]이 '중단 중…'에 박제된다(spec 2026-07-10).
+  useEffect(() => {
+    if (!synopsisGenerating && !synopsisReviewing && !isRunning) setAborting(false)
+  }, [synopsisGenerating, synopsisReviewing, isRunning])
 
   // §4 이어쓰기 — 시작 시점의 대본 스냅샷. 생성 중 preview에 `baseScript + streamingText`로
   // 접두 표시하는 용도(완료 커밋은 main payload.scriptText — delta 재조립 금지, §0.3).
@@ -524,6 +534,12 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const [sceneMaxSec, setSceneMaxSec] = useState(hydrateOpts.sceneMaxSec != null ? String(hydrateOpts.sceneMaxSec) : '10')
   const initialReview = hydrateOpts.review || null
   const makeReviewSettings = (opts = {}, model = selectedLlm.model) => ({
+    // 수동 전용 — enabled는 안 읽는다(handleManualReview가 항상 true로 넘긴다). rounds는
+    // 세션 로컬: confirmSynopsis가 options를 저장하지 않아 재오픈 복원은 보장되지 않는다.
+    synopsis: {
+      enabled: false,
+      rounds: clampReviewRounds(opts.review?.synopsis?.rounds ?? defaultReviewRounds('synopsis', model)),
+    },
     script: {
       enabled: !!(opts.review?.script?.enabled ?? (!opts.review && opts.reviewLoop)),
       rounds: clampReviewRounds(opts.review?.script?.rounds ?? defaultReviewRounds('script', model)),
@@ -614,7 +630,24 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     review: { [target]: { enabled: true, rounds: reviewSettings[target].rounds } },
   })
 
+  // 시놉시스는 side action이라 start(step)이 아니라 pipeline.reviewSynopsis를 탄다(spec 2026-07-10).
+  // busy({error}) / 중단({aborted}) / 조기반환(undefined) 어느 것도 draft를 덮어쓰면 안 된다 —
+  // {aborted:true}에는 error 키가 없어서 r.error만 보면 통과해버린다.
+  const handleSynopsisReview = async () => {
+    const r = await pipeline.reviewSynopsis?.({
+      synopsisMd: synopsisDraft,
+      characters: characterDrafts.map(normalizeStoryCharacter),
+      options: currentOptions(),
+      review: { synopsis: { enabled: true, rounds: reviewSettings.synopsis.rounds } },
+    })
+    if (!r || r.error || r.aborted) return
+    if (typeof r.synopsisMd !== 'string') return
+    setSynopsisDraft(r.synopsisMd)
+    setCharacterDrafts((r.characters || []).map(normalizeStoryCharacter))
+  }
+
   const handleManualReview = (target) => {
+    if (target === 'synopsis') { handleSynopsisReview(); return }
     start(target, manualReviewParams(target))
     if (target === 'script') {
       setScriptPhase('editor')
@@ -625,11 +658,12 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     }
   }
 
-  const renderReviewControl = (target, { manual = false, disabled = false, canReview = true } = {}) => {
+  const renderReviewControl = (target, { manual = false, disabled = false, canReview = true, autoToggle = true } = {}) => {
     const label = t(`story.review.target.${target}`, REVIEW_TARGET_LABEL[target])
     const settings = reviewSettings[target]
     return (
       <div key={target} className="story-review-control">
+        {autoToggle && (
         <label className="story-review-toggle">
           <input
             type="checkbox"
@@ -644,6 +678,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
               : t('story.review.toggleLabel', `${label} 검수`, { target: label })}
           </span>
         </label>
+        )}
         <input
           type="number"
           className="story-input story-review-rounds"
@@ -1167,6 +1202,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     </div>
   )
   const scenesProgressLog = progressLog.filter((entry) => !entry.step || entry.step === 'scenes')
+  // 검수 로그 행은 step:'synopsis'로 찍힌다 — scenes 로그로 새지 않는다.
+  const synopsisProgressLog = progressLog.filter((entry) => entry.step === 'synopsis')
   const activeLengthUnit = coerceStoryLengthUnit(lengthUnit, language)
   const lengthUnitOptions = storyLengthUnitsForLanguage(language)
   const lengthOptionValues = storyLengthOptionValues(activeLengthUnit)
@@ -1251,11 +1288,14 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                 {synopsisGenerating ? (
                   <div className="story-script-stream" aria-live="polite">{synopsisStreamingText}</div>
                 ) : (
+                  // 검수 중에도 textarea를 유지한다(스트림 뷰로 바꾸면 정작 검수 대상이 안 보인다).
+                  // 대신 readOnly로 동결 — 검수 중 편집이 결과에 덮어써지는 걸 막는다.
                   <textarea
                     className="story-synopsis-textarea"
                     aria-label={t('story.synopsis.editorLabel', '줄거리')}
                     value={synopsisDraft}
                     onChange={(e) => setSynopsisDraft(e.target.value)}
+                    readOnly={synopsisReviewing}
                     placeholder={t('story.synopsis.placeholder', '시놉시스가 여기에 표시됩니다')}
                   />
                 )}
@@ -1265,8 +1305,18 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                 )}
                 <div className="story-synopsis-characters">
                   <span className="story-opt-label">{t('story.synopsis.charactersTitle', '등장인물')}</span>
-                  <CharacterCards characters={characterDrafts} onChange={setCharacterDrafts} disabled={synopsisGenerating} t={t} />
+                  <CharacterCards characters={characterDrafts} onChange={setCharacterDrafts} disabled={synopsisGenerating || synopsisReviewing} t={t} />
                 </div>
+                {/* 검수 진행 — scenes 패널 미러({reviewBadge} + StoryRunning). 배지는 error를 sticky로
+                    남기고, StoryRunning이 시계+로그창을 제공한다(신규 컴포넌트/CSS 없음). */}
+                {reviewBadge}
+                {synopsisReviewing && (
+                  <StoryRunning
+                    label={t('story.review.running', '검수 중')}
+                    startedAt={synopsisReviewStartedAt}
+                    log={synopsisProgressLog}
+                  />
+                )}
                 {/* 리서치 선행 흐름(개정): title 모드에서 제목이 비어 있으면 안내 — 리서치는
                     제목 없이 확정 가능하나 시놉시스 생성/확정은 제목이 필요하다(설정 탭 재사용). */}
                 {synopsisTitleMissing && (
@@ -1293,7 +1343,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                     type="button"
                     className="story-btn-primary"
                     onClick={handleSynopsisConfirm}
-                    disabled={synopsisGenerating || isRunning || synopsisTitleMissing || (synopsisMode !== 'pasted' && !synopsisDraft.trim())}
+                    disabled={synopsisGenerating || synopsisReviewing || isRunning || synopsisTitleMissing || (synopsisMode !== 'pasted' && !synopsisDraft.trim())}
                   >
                     {synopsisMode === 'pasted'
                       ? t('story.synopsis.confirmCharacters', '등장인물 확정')
@@ -1303,14 +1353,22 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                     type="button"
                     className="story-btn-secondary"
                     onClick={handleSynopsisRegenerate}
-                    disabled={synopsisGenerating || isRunning || synopsisTitleMissing}
+                    disabled={synopsisGenerating || synopsisReviewing || isRunning || synopsisTitleMissing}
                   >
                     {t('story.synopsis.regenerate', '시놉시스 다시')}
                   </button>
+                  {/* 수동 검수 — 자동검수 체크박스는 없다(게이트는 사람이 보고 확정하는 자리라
+                      생성 직후 자동 재작성하면 게이트의 취지가 무너진다). */}
+                  {renderReviewControl('synopsis', {
+                    manual: true,
+                    autoToggle: false,
+                    disabled: synopsisGenerating || synopsisReviewing || isRunning,
+                    canReview: !!synopsisDraft.trim(),
+                  })}
                   {/* '설정으로' 버튼 제거 — 상단 스텝퍼의 [0 설정] 탭으로 이동하면 되므로 중복. */}
                   {/* FIX-4(§3.3 abort 대칭): 생성 중 중단 — main abort()가 synopsisController를
-                      대칭 중단하므로 호출만 하면 된다. */}
-                  {synopsisGenerating && (
+                      대칭 중단하므로 호출만 하면 된다. 검수도 같은 컨트롤러를 잡으므로 동일. */}
+                  {(synopsisGenerating || synopsisReviewing) && (
                     <button type="button" className="story-btn-secondary" onClick={handleAbort} disabled={aborting}>
                       {aborting ? t('story.action.aborting', '⏹ 중단 중…') : t('story.action.abort', '⏹ 중단')}
                     </button>
