@@ -200,7 +200,7 @@ export default {
       charEthnicity: '출신',
       charAge: '나이',
       charRole: '역할',
-      charAppearance: '외모',
+      charAppearance: '프롬프트',
       genderMale: '남성',
       genderFemale: '여성',
       genderUnknown: '미상',

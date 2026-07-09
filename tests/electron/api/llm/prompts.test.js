@@ -216,18 +216,25 @@ describe('buildPromptsPrompt appearance 컨텍스트(V2)', () => {
 })
 
 describe('buildSynopsisPrompt (시놉시스 게이트 §v2.4)', () => {
-  it('제목·로그라인·도입/전개/전환/결말 방향 지시를 포함', () => {
+  it('제목·로그라인·훅·기승전결·몰입감 점수 지시를 포함', () => {
     const p = buildSynopsisPrompt({ title: '사라진 왕의 반지' }, { language: 'ko' })
     expect(p).toContain('제목: 사라진 왕의 반지')
     expect(p).toContain('로그라인')
-    expect(p).toContain('도입')
-    expect(p).toContain('전개')
-    expect(p).toContain('전환')
-    expect(p).toContain('결말')
+    expect(p).toContain('훅')
+    expect(p).toContain('기승전결')
+    expect(p).toContain('몰입감 점수')
     expect(p).toContain('한국어')
   })
   it('영어 지정 시 영어 작성 지시', () => {
     expect(buildSynopsisPrompt({ title: 'T' }, { language: 'en' })).toContain('영어')
+  })
+  it('서사 구조는 언어권에 맞춘다 — 한국어는 기승전결, 영어는 서구식 story arc', () => {
+    const ko = buildSynopsisPrompt({ title: 'T' }, { language: 'ko' })
+    expect(ko).toContain('기승전결')
+    const en = buildSynopsisPrompt({ title: 'T' }, { language: 'en' })
+    expect(en).not.toContain('기승전결')
+    expect(en).toContain('Story arc')
+    expect(en).toContain('Immersion score')
   })
   it('대사·씬 번호 없이 줄글 개요만 지시', () => {
     const p = buildSynopsisPrompt({ title: 'T' }, { language: 'ko' })

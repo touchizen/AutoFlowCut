@@ -200,7 +200,7 @@ export default {
       charEthnicity: 'Ethnicity',
       charAge: 'Age',
       charRole: 'Role',
-      charAppearance: 'Appearance',
+      charAppearance: 'Prompt',
       genderMale: 'Male',
       genderFemale: 'Female',
       genderUnknown: 'Unknown',

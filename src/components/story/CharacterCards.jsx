@@ -19,6 +19,18 @@ export default function CharacterCards({ characters = [], onChange, disabled = f
   }
   return (
     <div className="story-character-cards">
+      {/* 컬럼 헤더 — 각 입력칸이 무엇인지 알려준다(카드와 동일 flex로 정렬). 행이 있을 때만. */}
+      {characters.length > 0 && (
+        <div className="story-character-header" aria-hidden="true">
+          <span className="story-character-col-name">{t('story.synopsis.charName', '이름')}</span>
+          <span className="story-character-col-gender">{t('story.synopsis.charGender', '성별')}</span>
+          <span className="story-character-col-ethnicity">{t('story.synopsis.charEthnicity', '출신')}</span>
+          <span className="story-character-col-age">{t('story.synopsis.charAge', '나이')}</span>
+          <span className="story-character-col-role">{t('story.synopsis.charRole', '역할')}</span>
+          <span className="story-character-col-appearance">{t('story.synopsis.charAppearance', '프롬프트')}</span>
+          <span className="story-character-col-remove" aria-hidden="true" />
+        </div>
+      )}
       {characters.map((c, i) => (
         // key는 index — id가 name 파생이라 이름 편집 중 key가 바뀌면 포커스를 잃는다.
         <div key={i} className="story-character-card">
@@ -68,8 +80,8 @@ export default function CharacterCards({ characters = [], onChange, disabled = f
           />
           <input
             className="story-input story-character-appearance"
-            aria-label={t('story.synopsis.charAppearance', '외모')}
-            placeholder={t('story.synopsis.charAppearance', '외모')}
+            aria-label={t('story.synopsis.charAppearance', '프롬프트')}
+            placeholder={t('story.synopsis.charAppearance', '프롬프트')}
             value={c.appearance}
             disabled={disabled}
             onChange={(e) => update(i, { appearance: e.target.value })}

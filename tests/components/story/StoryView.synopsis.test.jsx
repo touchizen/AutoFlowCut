@@ -282,9 +282,11 @@ describe('확정 버튼 (§v2.9)', () => {
     expect(p.generateSynopsis).toHaveBeenCalledWith(expect.objectContaining({ type: 'title', title: '복원 제목' }))
   })
 
-  it('[설정으로] → setup phase', () => {
+  it("'설정으로' 버튼은 없고 상단 스텝퍼 [설정] 탭으로 setup 에 간다", () => {
     render(<StoryView pipeline={reopenedTitleUnconfirmed()} />)
-    fireEvent.click(screen.getByRole('button', { name: '설정으로' }))
+    // 중복 제거: synopsis phase의 '설정으로' 버튼은 없다(스텝퍼 0번 설정 탭으로 대체).
+    expect(screen.queryByRole('button', { name: /설정으로/ })).toBeNull()
+    fireEvent.click(document.querySelector('.story-step-setup'))
     expect(screen.getByTestId('story-setup')).toBeInTheDocument()
     expect(screen.queryByTestId('story-synopsis')).toBeNull()
   })

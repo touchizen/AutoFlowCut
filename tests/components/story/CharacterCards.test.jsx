@@ -12,14 +12,14 @@ const char = (over = {}) => ({
 })
 
 describe('CharacterCards 렌더', () => {
-  it('각 카드에 이름/성별/출신/나이/역할/외모 필드를 값과 함께 렌더한다', () => {
+  it('각 카드에 이름/성별/출신/나이/역할/프롬프트 필드를 값과 함께 렌더한다', () => {
     render(<CharacterCards characters={[char()]} onChange={vi.fn()} />)
     expect(screen.getByLabelText('이름')).toHaveValue('리안')
     expect(screen.getByLabelText('성별')).toHaveValue('unknown')
     expect(screen.getByLabelText('출신')).toHaveValue('한국인')
     expect(screen.getByLabelText('나이')).toHaveValue('20대')
     expect(screen.getByLabelText('역할')).toHaveValue('주인공')
-    expect(screen.getByLabelText('외모')).toHaveValue('young woman')
+    expect(screen.getByLabelText('프롬프트')).toHaveValue('young woman')
   })
 
   it('성별 select는 male/female/unknown 3개 enum 값을 가진다(표시만 한국어)', () => {

@@ -466,6 +466,25 @@
 .story-character-card .story-character-role { flex: 1 1 90px; }
 .story-character-card .story-character-appearance { flex: 3 1 200px; }
 
+/* 컬럼 헤더 — 카드와 동일 flex로 각 칸 위에 라벨 정렬. */
+.story-character-header {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 2px 0 0;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.story-character-header > span { padding-left: 10px; }   /* 입력칸 좌패딩(10px)에 맞춰 라벨 시작 정렬 */
+.story-character-col-name { flex: 1 1 90px; }
+.story-character-col-gender { flex: 0 1 80px; }
+.story-character-col-ethnicity { flex: 1 1 160px; }       /* 기본 .story-input flex 와 동일 */
+.story-character-col-age { flex: 0 1 70px; }
+.story-character-col-role { flex: 1 1 90px; }
+.story-character-col-appearance { flex: 3 1 200px; }
+.story-character-col-remove { flex: 0 0 auto; width: 32px; padding-left: 0; }  /* ✕ 버튼 자리 */
+
 .story-character-add {
   align-self: flex-start;
 }

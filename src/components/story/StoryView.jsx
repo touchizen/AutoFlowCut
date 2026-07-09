@@ -941,10 +941,6 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     else runGenerateSynopsis({ type: 'title', title, options: currentOptions(), ...researchParams })
   }
 
-  const handleSynopsisBackToSetup = () => {
-    userWentToSetupRef.current = true
-    setScriptPhase('setup')
-  }
 
   // ── 리서치 게이트(리서치 spec §3.6/§3.8) ──────────────────────────────────
   // commit: research.json 저장(main) 후 시놉시스 phase로 전이. 자동 주입은 하지 않는다(M2) —
@@ -1316,14 +1312,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                   >
                     {t('story.synopsis.regenerate', '시놉시스 다시')}
                   </button>
-                  <button
-                    type="button"
-                    className="story-btn-secondary"
-                    onClick={handleSynopsisBackToSetup}
-                    disabled={synopsisGenerating}
-                  >
-                    {t('story.synopsis.backToSetup', '설정으로')}
-                  </button>
+                  {/* '설정으로' 버튼 제거 — 상단 스텝퍼의 [0 설정] 탭으로 이동하면 되므로 중복. */}
                   {/* FIX-4(§3.3 abort 대칭): 생성 중 중단 — main abort()가 synopsisController를
                       대칭 중단하므로 호출만 하면 된다. */}
                   {synopsisGenerating && (

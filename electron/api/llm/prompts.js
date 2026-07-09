@@ -93,6 +93,9 @@ export function buildScriptPrompt(input, opts) {
   return [
     meta,
     `당신은 유튜브 스토리 채널 작가다. 아래 제목으로 ${lengthText} 분량의 나레이션 대본을 ${opts.language === 'ko' ? '한국어' : '영어'}로 작성하라.`,
+    opts.language === 'ko'
+      ? `첫 문장(첫 3초)에서 강력한 훅으로 시청자를 사로잡고, 기승전결(설정→갈등 전개→반전·절정→해소·여운)의 리듬으로 긴장과 몰입을 끝까지 유지하라.`
+      : `Grab the viewer with a strong hook in the very first sentence (first 3 seconds), and sustain tension and immersion throughout with a clear story arc: setup → rising conflict → climax/twist → resolution.`,
     opts.genre ? `장르: ${opts.genre}` : '',
     opts.tone ? `톤: ${opts.tone}` : '',
     `제목: ${input.title}`,
@@ -111,7 +114,22 @@ export function buildSynopsisPrompt(input, opts = {}) {
   return [
     meta,
     `당신은 유튜브 스토리 채널 작가다. 아래 제목으로 만들 ${lengthText} 분량 영상의 시놉시스를 ${opts.language === 'ko' ? '한국어' : '영어'}로 써라.`,
-    `로그라인 1줄 + 도입/전개/전환/결말 방향을 담은 3~5문장 줄거리 개요를 쓴다. 대사·씬 번호 없이 줄글 개요만.`,
+    // 서사 구조는 언어권에 맞춘다 — 한국어는 기승전결, 영어권은 서구식 story arc.
+    opts.language === 'ko'
+      ? [
+          `아래를 순서대로, 각 항목을 소제목(예: "## 훅")으로 구분해 써라(대사·씬 번호 없이 줄글):`,
+          `1) 로그라인: 한 줄.`,
+          `2) 훅(Hook): 시청자를 초반 3초에 붙잡을 강력한 도입 1~2문장 — 충격·미스터리·강한 공감 중 하나로, 답을 미뤄 궁금증을 남긴다.`,
+          `3) 기승전결: 기(인물·상황 설정) → 승(갈등 전개) → 전(반전·최대 위기) → 결(해소·여운)을 각 1~2문장.`,
+          `4) 몰입감 점수: 마지막에 "몰입감 점수: N/100" 형식으로, 후킹·긴장 유지·감정이입을 냉정하게 자기평가하고 한 줄 근거를 붙인다.`,
+        ].join('\n')
+      : [
+          `Write the following in order, each as its own subheading (no dialogue or scene numbers, prose outline):`,
+          `1) Logline: one line.`,
+          `2) Hook: a 1-2 sentence opening that grabs the viewer in the first 3 seconds (shock, mystery, or deep empathy; leave a question open).`,
+          `3) Story arc: setup (characters & situation) → rising conflict → climax/twist → resolution, 1-2 sentences each.`,
+          `4) Immersion score: end with "Immersion score: N/100" and a one-line rationale (judge hook, tension, and empathy honestly).`,
+        ].join('\n'),
     opts.genre ? `장르: ${opts.genre}` : '',
     opts.tone ? `톤: ${opts.tone}` : '',
     `제목: ${input.title}`,
