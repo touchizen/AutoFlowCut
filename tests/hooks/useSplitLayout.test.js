@@ -158,5 +158,22 @@ describe('useSplitLayout — Flow 분할 리사이저 (jitter 회귀)', () => {
       expect(result.current.splitRatio).toBe(0.5)
       expect(updateSplit).toHaveBeenLastCalledWith({ ratio: 0.5 })
     })
+
+    it('더블클릭의 두 번째 클릭(e.detail≥2)은 큰 불규칙 이동이 와도 드래그하지 않는다', () => {
+      // Flow 네이티브 뷰 경계에서 clientX 가 튀어 4px dead-zone 을 넘어도, 더블클릭 클릭 자체를
+      // 드래그로 취급하지 않으므로 스플릿터/Flow 뷰가 리사이즈되지 않는다.
+      const shellRef = makeShellRef()
+      const { result } = renderHook(() => useSplitLayout({ isFlow: true, shellRef }))
+      const before = result.current.splitRatio
+      // 1차 클릭(제자리)
+      act(() => { result.current.handleMouseDown({ preventDefault() {}, clientX: 500, clientY: 0, detail: 1 }) })
+      endDrag()
+      // 2차 클릭: e.detail=2 → 드래그 진입 자체를 막는다
+      act(() => { result.current.handleMouseDown({ preventDefault() {}, clientX: 500, clientY: 0, detail: 2 }) })
+      expect(result.current.isDragging).toBe(false)
+      move(720)   // 경계 튐을 흉내낸 큰 이동
+      expect(result.current.splitRatio).toBe(before)
+      expect(updateSplit).not.toHaveBeenCalled()
+    })
   })
 })

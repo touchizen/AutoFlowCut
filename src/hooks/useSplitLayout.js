@@ -63,6 +63,11 @@ export function useSplitLayout({ isFlow, shellRef }) {
   // ── 드래그 리사이저 ──
   const handleMouseDown = useCallback((e) => {
     e.preventDefault()
+    // 더블클릭의 두 번째+ 클릭(e.detail>=2)은 드래그로 취급하지 않는다. Flow 는 네이티브
+    // WebContentsView 라 z-index 오버레이로 못 가려서, 더블클릭 중 경계 위 커서의 불규칙한
+    // 이동이 onMove 로 커밋돼(4px dead-zone 초과) 스플릿터·Flow 뷰가 좌우로 튀었다. 리셋은
+    // handleDoubleClick 이 담당하므로 드래그는 첫 클릭만.
+    if (e.detail >= 2) return
     dragStartRef.current = { x: e.clientX, y: e.clientY, moved: false }
     setIsDragging(true)
   }, [])
