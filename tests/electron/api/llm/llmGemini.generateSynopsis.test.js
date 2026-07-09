@@ -62,22 +62,22 @@ describe('llmGemini.generateSynopsis (title)', () => {
 })
 
 describe('llmGemini.generateSynopsis (pasted)', () => {
-  it('non-streaming generateContent로 characters만 역추출한다', async () => {
-    const fetchImpl = vi.fn(async () => textResponse(CHAR_JSON))
+  it('non-streaming generateContent로 시놉시스+등장인물을 함께 역추출한다', async () => {
+    const fetchImpl = vi.fn(async () => textResponse(`대본 시놉시스 개요.\nCHARACTERS_JSON\n${CHAR_JSON}`))
     const onDelta = vi.fn()
     const r = await generateSynopsis({ type: 'pasted', pastedScript: '# 붙여넣은 대본' }, OPTS, { fetchImpl, onDelta })
-    expect(r.synopsisMd).toBe('')
+    expect(r.synopsisMd).toBe('대본 시놉시스 개요.')
     expect(r.characters.map((c) => c.name)).toEqual(['강리안', '소월'])
-    expect(onDelta).not.toHaveBeenCalled() // M4: pasted는 non-streaming
+    expect(onDelta).not.toHaveBeenCalled() // pasted는 non-streaming
     const url = fetchImpl.mock.calls[0][0]
     expect(url).toContain(':generateContent')
     expect(url).not.toContain('streamGenerateContent')
     expect(JSON.parse(fetchImpl.mock.calls[0][1].body).contents[0].parts[0].text).toContain('# 붙여넣은 대본')
   })
 
-  it('pasted 결과 JSON이 깨져도 throw하지 않고 characters=[] 폴백', async () => {
-    const fetchImpl = vi.fn(async () => textResponse('not json at all'))
+  it('pasted 등장인물 JSON이 깨져도 throw하지 않고 시놉시스는 유지·characters=[] 폴백', async () => {
+    const fetchImpl = vi.fn(async () => textResponse('개요.\nCHARACTERS_JSON\n[{"name": broken'))
     await expect(generateSynopsis({ type: 'pasted', pastedScript: 'S' }, OPTS, { fetchImpl }))
-      .resolves.toEqual({ synopsisMd: '', characters: [] })
+      .resolves.toEqual({ synopsisMd: '개요.', characters: [] })
   })
 })

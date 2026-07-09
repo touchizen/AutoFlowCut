@@ -99,16 +99,17 @@ describe('machine.generateSynopsis (side action)', () => {
     await p
   })
 
-  it('pasted: state.input 미덮어쓰기 + synopsis.md 미저장 + 역추출 characters를 speakers에 반영', async () => {
+  it('pasted: state.input 미덮어쓰기 + 역추출 시놉시스 저장 + characters를 speakers에 반영', async () => {
     await machine.start('script', { pastedScript: '붙여넣은 대본', options: { language: 'ko' } })
-    llm.generateSynopsis.mockResolvedValueOnce({ synopsisMd: '', characters: [{ name: '민수', gender: 'male' }] })
+    llm.generateSynopsis.mockResolvedValueOnce({ synopsisMd: '대본 역추출 시놉시스', characters: [{ name: '민수', gender: 'male' }] })
     await machine.generateSynopsis({ type: 'pasted', pastedScript: '붙여넣은 대본', options: { language: 'ko' } })
 
     const saved = await readStory(dir)
-    expect(saved.input.type).toBe('pasted')
+    expect(saved.input.type).toBe('pasted') // script 분기가 저장한 input 을 덮지 않는다
     expect(saved.charactersConfirmed).toBe(false)
     expect(saved.speakers.map((sp) => sp.id)).toEqual(['민수', 'narrator'])
-    expect(await loadText(dir, 'synopsis.md')).toBeNull()
+    // pasted 도 대본에서 역추출한 시놉시스를 저장한다(리뷰용).
+    expect(await loadText(dir, 'synopsis.md')).toBe('대본 역추출 시놉시스')
     const [input] = llm.generateSynopsis.mock.calls[0]
     expect(input).toEqual({ type: 'pasted', pastedScript: '붙여넣은 대본' })
   })

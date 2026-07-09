@@ -72,26 +72,27 @@ describe('llmClaude.generateSynopsis (title)', () => {
 })
 
 describe('llmClaude.generateSynopsis (pasted)', () => {
-  it('buildCharacterExtractPrompt로 non-streaming 호출하고 characters만 반환한다', async () => {
+  it('buildSynopsisFromScriptPrompt로 non-streaming 호출해 시놉시스+등장인물을 함께 역추출한다', async () => {
     const onDelta = vi.fn()
+    const RESULT = `대본 시놉시스 개요.\nCHARACTERS_JSON\n${CHAR_JSON}`
     const queryImpl = vi.fn(async function* () {
-      yield { type: 'result', subtype: 'success', is_error: false, result: CHAR_JSON }
+      yield { type: 'result', subtype: 'success', is_error: false, result: RESULT }
     })
     const r = await generateSynopsis({ type: 'pasted', pastedScript: '# 붙여넣은 대본' }, { language: 'ko' }, { onDelta, queryImpl })
-    expect(r.synopsisMd).toBe('')
+    expect(r.synopsisMd).toBe('대본 시놉시스 개요.')
     expect(r.characters.map((c) => c.name)).toEqual(['강리안', '소월'])
-    expect(onDelta).not.toHaveBeenCalled() // M4: pasted는 non-streaming
+    expect(onDelta).not.toHaveBeenCalled() // pasted는 non-streaming
     expect(queryImpl.mock.calls[0][0].prompt).toContain('--- 대본 ---')
     expect(queryImpl.mock.calls[0][0].prompt).toContain('# 붙여넣은 대본')
-    expect(queryImpl.mock.calls[0][0].options).not.toHaveProperty('includePartialMessages')
   })
 
-  it('pasted 결과 JSON이 깨져도 throw하지 않고 characters=[] 폴백', async () => {
+  it('pasted 등장인물 JSON이 깨져도 throw하지 않고 시놉시스는 유지·characters=[] 폴백', async () => {
     const queryImpl = vi.fn(async function* () {
-      yield { type: 'result', subtype: 'success', is_error: false, result: 'not json at all' }
+      yield { type: 'result', subtype: 'success', is_error: false, result: '개요.\nCHARACTERS_JSON\n[{"name": broken' }
     })
     const r = await generateSynopsis({ type: 'pasted', pastedScript: 'S' }, {}, { queryImpl })
-    expect(r).toEqual({ synopsisMd: '', characters: [] })
+    expect(r.synopsisMd).toBe('개요.')
+    expect(r.characters).toEqual([])
   })
 
   it('pasted도 signal abort 시 Aborted throw', async () => {

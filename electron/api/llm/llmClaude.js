@@ -9,6 +9,7 @@ import {
   buildTitlePrompt,
   buildSynopsisPrompt,
   buildCharacterExtractPrompt,
+  buildSynopsisFromScriptPrompt,
   buildContinuePrompt,
   buildReviewPrompt,
   buildRevisePrompt,
@@ -67,10 +68,11 @@ export async function generateSynopsis(input, opts = {}, { onDelta, signal, quer
   const { abortController, cleanup } = bridgeAbortSignal(signal)
   try {
     if (input?.type === 'pasted') {
-      const prompt = buildCharacterExtractPrompt(input.pastedScript, opts)
+      // 대본에서 시놉시스(로그라인/훅/구조/몰입감)+등장인물을 함께 역추출(비스트리밍 단일 result).
+      const prompt = buildSynopsisFromScriptPrompt(input.pastedScript, opts)
       const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts))
       for await (const m of queryImpl({ prompt, options })) {
-        if (m.type === 'result') return { synopsisMd: '', characters: parseCharactersJson(extractClaudeSdkResult(m)) }
+        if (m.type === 'result') return splitSynopsisOutput(extractClaudeSdkResult(m))
       }
       throw new Error('no result message returned')
     }

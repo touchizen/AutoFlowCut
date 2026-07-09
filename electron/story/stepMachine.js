@@ -1239,9 +1239,10 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
           signal: myController.signal,
         })
         if (myController.signal.aborted) throw new Error('aborted')
+        // title·pasted 모두 뽑은 시놉시스를 durable 저장 — pasted도 대본에서 역추출한 시놉시스를
+        // 리뷰용으로 보여준다(재오픈 hasSynopsis 복원). 게이트 후 script 전 종료에도 유실 방지(Codex #2).
+        await store.saveText('synopsis.md', synopsisMd || '')
         if (type === 'title') {
-          // 게이트 후 script 전에 종료해도 title/options가 유실되지 않게 durable 저장(Codex #2).
-          await store.saveText('synopsis.md', synopsisMd || '')
           state.input = { type: 'title', title: params.title, options: inputOptions }
         }
         // characters는 state.speakers 단일 저장(m3 — characters.json 없음). 재오픈 hydrate가

@@ -152,6 +152,43 @@ export function buildCharacterExtractPrompt(pastedScript, opts = {}) {
   ].join('\n')
 }
 
+// 붙여넣기 경로 — 대본을 분석해 시놉시스(로그라인/훅/구조/몰입감 점수)를 역추출하고 등장인물 JSON도 함께
+// 산출한다(buildSynopsisPrompt 출력 계약과 동일: 줄글 + CHARACTERS_JSON + JSON 배열 → splitSynopsisOutput).
+export function buildSynopsisFromScriptPrompt(pastedScript, opts = {}) {
+  const meta = opts.metaPrompt ? `## CUSTOM INSTRUCTIONS\n${opts.metaPrompt}\n` : ''
+  const ko = opts.language === 'ko'
+  return [
+    meta,
+    ko
+      ? `아래 대본을 분석해 그 대본의 시놉시스를 한국어로 정리하라(대본을 새로 쓰지 말고 요약·분석).`
+      : `Analyze the script below and write a synopsis of it in English (summarize/analyze — do not rewrite the script).`,
+    ko
+      ? [
+          `아래를 순서대로, 각 항목을 소제목(예: "## 훅")으로 구분해 써라(대사·씬 번호 없이 줄글):`,
+          `1) 로그라인: 한 줄.`,
+          `2) 훅(Hook): 대본 도입이 시청자를 붙잡는 방식 1~2문장(약하면 보완 제안).`,
+          `3) 기승전결: 기·승·전·결로 대본의 흐름을 각 1~2문장 요약.`,
+          `4) 몰입감 점수: 마지막에 "몰입감 점수: N/100" 형식으로, 후킹·긴장 유지·감정이입을 냉정하게 평가하고 한 줄 근거.`,
+        ].join('\n')
+      : [
+          `Write the following in order, each as its own subheading (no dialogue or scene numbers, prose):`,
+          `1) Logline: one line.`,
+          `2) Hook: how the opening grabs the viewer, 1-2 sentences (suggest an improvement if weak).`,
+          `3) Story arc: setup → rising conflict → climax/twist → resolution, summarizing the script, 1-2 sentences each.`,
+          `4) Immersion score: end with "Immersion score: N/100" and a one-line rationale (judge hook, tension, and empathy).`,
+        ].join('\n'),
+    ko
+      ? `그 뒤 마지막에 CHARACTERS_JSON 이라고 한 줄 쓰고, 다음 줄부터 대본 등장인물 전체를 아래 형식의 JSON 배열로만 출력하라(설명·코드펜스 금지):`
+      : `Then write CHARACTERS_JSON on its own line, followed by all characters from the script as a JSON array in the format below (no prose, no code fence):`,
+    CHARACTER_JSON_SHAPE,
+    ko
+      ? `gender는 male/female/unknown 중 하나만. name은 대본 표기 그대로. 나레이션(narrator)은 인물에 넣지 않는다.`
+      : `gender must be one of male/female/unknown. Use the exact names from the script. Do not include the narrator.`,
+    `--- 대본 ---`,
+    pastedScript,
+  ].filter(Boolean).join('\n')
+}
+
 export function buildSplitPrompt(scriptMd, opts) {
   // 입도 옵션: 'segment' = 문장(대사/나레이션 한 줄)마다 개별 씬(이미지/비디오 1:1),
   // 그 외/'scene'(기본) = min~max초 의미 단위 묶음. UI setup 의 sceneGranularity·sceneMinSec·

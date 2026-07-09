@@ -52,23 +52,23 @@ describe('llmCodex.generateSynopsis (title)', () => {
 })
 
 describe('llmCodex.generateSynopsis (pasted)', () => {
-  it('buildCharacterExtractPrompt로 non-streaming 호출하고 characters만 반환한다', async () => {
-    const runText = vi.fn(async () => CHAR_JSON)
+  it('buildSynopsisFromScriptPrompt로 non-streaming 호출해 시놉시스+등장인물을 함께 역추출한다', async () => {
+    const runText = vi.fn(async () => `대본 시놉시스 개요.\nCHARACTERS_JSON\n${CHAR_JSON}`)
     const onDelta = vi.fn()
     const r = await generateSynopsis({ type: 'pasted', pastedScript: '# 붙여넣은 대본' }, OPTS, { runText, onDelta, signal: 'sig' })
-    expect(r.synopsisMd).toBe('')
+    expect(r.synopsisMd).toBe('대본 시놉시스 개요.')
     expect(r.characters.map((c) => c.name)).toEqual(['강리안', '소월'])
     expect(onDelta).not.toHaveBeenCalled()
     expect(runText.mock.calls[0][0]).toContain('--- 대본 ---')
     expect(runText.mock.calls[0][0]).toContain('# 붙여넣은 대본')
     expect(runText.mock.calls[0][0]).toContain('Do not inspect local files')
-    expect(runText.mock.calls[0][2].onDelta).toBeUndefined() // M4: pasted는 스트리밍 안 함
+    expect(runText.mock.calls[0][2].onDelta).toBeUndefined() // pasted는 스트리밍 안 함
     expect(runText.mock.calls[0][2]).toMatchObject({ signal: 'sig' })
   })
 
-  it('pasted 결과 JSON이 깨져도 throw하지 않고 characters=[] 폴백', async () => {
-    const runText = vi.fn(async () => 'not json at all')
+  it('pasted 등장인물 JSON이 깨져도 throw하지 않고 시놉시스는 유지·characters=[] 폴백', async () => {
+    const runText = vi.fn(async () => '개요.\nCHARACTERS_JSON\n[{"name": broken')
     await expect(generateSynopsis({ type: 'pasted', pastedScript: 'S' }, OPTS, { runText }))
-      .resolves.toEqual({ synopsisMd: '', characters: [] })
+      .resolves.toEqual({ synopsisMd: '개요.', characters: [] })
   })
 })

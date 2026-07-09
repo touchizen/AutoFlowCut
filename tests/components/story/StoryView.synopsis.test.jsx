@@ -169,13 +169,14 @@ describe('setup 시작 → synopsis phase 전이 (§v2.8 B1)', () => {
     expect(p.start.mock.invocationCallOrder[0]).toBeLessThan(p.generateSynopsis.mock.invocationCallOrder[0])
   })
 
-  it('붙여넣기 모드 synopsis 패널은 줄거리 편집 비노출(등장인물 확인 중심) + [등장인물 확정] 버튼', async () => {
+  it('붙여넣기 모드 synopsis 패널도 (대본 역추출) 줄거리를 편집 노출 + [등장인물 확정] 버튼', async () => {
     const p = pipeline()
     render(<StoryView pipeline={p} />)
     fireEvent.change(screen.getByPlaceholderText(/붙여넣/), { target: { value: '내가 쓴 대본' } })
     fireEvent.click(screen.getByRole('button', { name: '시작' }))
     await waitFor(() => expect(screen.getByTestId('story-synopsis')).toBeInTheDocument())
-    expect(screen.queryByLabelText('줄거리')).toBeNull() // 줄거리 편집기 비노출
+    // pasted 도 대본에서 역추출한 시놉시스를 편집 가능하게 노출한다(구조/hook/몰입감 리뷰).
+    await waitFor(() => expect(screen.getByLabelText('줄거리')).toBeInTheDocument())
     expect(screen.getByRole('button', { name: '등장인물 확정' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '이 시놉시스로 시나리오 생성' })).toBeNull()
   })

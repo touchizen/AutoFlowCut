@@ -12,6 +12,7 @@ import {
   buildScriptPrompt,
   buildSynopsisPrompt,
   buildCharacterExtractPrompt,
+  buildSynopsisFromScriptPrompt,
   buildSplitPrompt,
   buildPromptsPrompt,
   buildReviewPrompt,
@@ -85,7 +86,8 @@ export async function generateScript(input, opts, { onDelta, signal, fetchImpl =
 // (프로덕션 라우팅 대상 아님 — claude/codex와 계약 호환/테스트용.)
 export async function generateSynopsis(input, opts = {}, { onDelta, signal, fetchImpl = fetch } = {}) {
   if (input?.type === 'pasted') {
-    const prompt = buildCharacterExtractPrompt(input.pastedScript, opts)
+    // 대본에서 시놉시스(로그라인/훅/구조/몰입감)+등장인물을 함께 역추출.
+    const prompt = buildSynopsisFromScriptPrompt(input.pastedScript, opts)
     const res = await fetchImpl(`${BASE}/${opts.model}:generateContent`, {
       method: 'POST',
       headers: headers(opts.apiKey),
@@ -94,7 +96,7 @@ export async function generateSynopsis(input, opts = {}, { onDelta, signal, fetc
     })
     if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`)
     const data = await res.json()
-    return { synopsisMd: '', characters: parseCharactersJson(data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '') }
+    return splitSynopsisOutput(data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '')
   }
   const prompt = buildSynopsisPrompt(input, opts)
   const res = await fetchImpl(`${BASE}/${opts.model}:streamGenerateContent?alt=sse`, {

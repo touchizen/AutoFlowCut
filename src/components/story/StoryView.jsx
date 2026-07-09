@@ -909,8 +909,9 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const handleSynopsisConfirm = async () => {
     const chars = characterDrafts.map(normalizeStoryCharacter)
     if (synopsisMode === 'pasted') {
-      // pasted [등장인물 확정] — script는 이미 done, 재생성/덮어쓰기 없음(§v2.8 B1).
-      const r = await pipeline.confirmSynopsis?.({ synopsisMd: '', characters: chars })
+      // pasted [등장인물 확정] — script는 이미 done(재생성 없음, §v2.8 B1). 대본에서 역추출한(편집 가능한)
+      // 시놉시스는 함께 저장한다.
+      const r = await pipeline.confirmSynopsis?.({ synopsisMd: synopsisDraft, characters: chars })
       if (r?.error) { toast.error(`${t('story.error.prefix', '오류')}: ${r.error}`); return }
       setScriptPhase('editor')
       return
@@ -1245,25 +1246,18 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                     ⚠️ {t('story.error.prefix', '오류')}: {synopsisError}
                   </div>
                 )}
-                {synopsisMode !== 'pasted' && (
-                  synopsisGenerating ? (
-                    // 생성 중 — 대본 편집기 스트리밍 UX 미러(story:synopsis-delta 누적).
-                    <div className="story-script-stream" aria-live="polite">{synopsisStreamingText}</div>
-                  ) : (
-                    <textarea
-                      className="story-synopsis-textarea"
-                      aria-label={t('story.synopsis.editorLabel', '줄거리')}
-                      value={synopsisDraft}
-                      onChange={(e) => setSynopsisDraft(e.target.value)}
-                      placeholder={t('story.synopsis.placeholder', '시놉시스가 여기에 표시됩니다')}
-                    />
-                  )
-                )}
-                {synopsisMode === 'pasted' && synopsisGenerating && (
-                  // pasted 역추출은 non-streaming(§v2.8 M4) — 진행 안내만.
-                  <div className="story-running-detail" aria-live="polite">
-                    {t('story.synopsis.extracting', '등장인물 추출 중')}
-                  </div>
+                {/* title·pasted 공통 — 생성 중엔 스트림(pasted는 델타 없어 빈 채 시계만), 완료 후 편집 가능한
+                    시놉시스. pasted도 대본에서 역추출한 시놉시스(로그라인/훅/구조/몰입감)를 보여준다. */}
+                {synopsisGenerating ? (
+                  <div className="story-script-stream" aria-live="polite">{synopsisStreamingText}</div>
+                ) : (
+                  <textarea
+                    className="story-synopsis-textarea"
+                    aria-label={t('story.synopsis.editorLabel', '줄거리')}
+                    value={synopsisDraft}
+                    onChange={(e) => setSynopsisDraft(e.target.value)}
+                    placeholder={t('story.synopsis.placeholder', '시놉시스가 여기에 표시됩니다')}
+                  />
                 )}
                 {/* 생성 중 시계+경과 — 첫 출력(특히 reasoning=max)이 늦어도 진행 중임을 보인다. */}
                 {synopsisGenerating && (
