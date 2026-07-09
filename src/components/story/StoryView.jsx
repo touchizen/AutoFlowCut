@@ -29,6 +29,7 @@ import {
 } from '../../utils/storyLlmCatalog'
 import { isStoryTtsProvider } from '../../config/storyTtsProviders'
 import { isNarratorSpeaker } from '../../utils/storyNarrationTracks'
+import { clampInt } from '../../utils/clampInt'
 import { normalizeStoryCharacter, resolveCharacterGender } from '../../services/storyCharacter'
 import CharacterCards from './CharacterCards'
 import ResearchPanel from './ResearchPanel'
@@ -493,7 +494,10 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const selectedLlm = findStoryLlmOptionById(selectedLlmId, llmOptions) || defaultLlmOption
   const [reasoningEffort, setReasoningEffort] = useState(() => reasoningEffortFor(selectedLlm, hydrateOpts.reasoningEffort))
   const [language, setLanguage] = useState(hydrateOpts.language || 'ko')
-  const [sceneGranularity, setSceneGranularity] = useState(hydrateOpts.sceneGranularity || 'scene') // 씬 분리 단위: scene(5~10초)/segment(문장별)
+  const [sceneGranularity, setSceneGranularity] = useState(hydrateOpts.sceneGranularity || 'scene') // 씬 분리 단위: scene(min~max초)/segment(문장별)
+  // 씬 기준 목표 길이(초) — 사용자 조정. 편집 UX 위해 문자열 state, 옵션 구성 시 clampInt 로 정수화(기본 5/10).
+  const [sceneMinSec, setSceneMinSec] = useState(hydrateOpts.sceneMinSec != null ? String(hydrateOpts.sceneMinSec) : '5')
+  const [sceneMaxSec, setSceneMaxSec] = useState(hydrateOpts.sceneMaxSec != null ? String(hydrateOpts.sceneMaxSec) : '10')
   const initialReview = hydrateOpts.review || null
   const makeReviewSettings = (opts = {}, model = selectedLlm.model) => ({
     script: {
@@ -524,6 +528,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
   const currentOptions = () => {
     const resolvedLengthUnit = coerceStoryLengthUnit(lengthUnit, language)
+    const minSec = clampInt(sceneMinSec, 1, 120, 5)
+    const maxSec = Math.max(minSec, clampInt(sceneMaxSec, 1, 120, 10))
     return normalizeStoryLlmOptions({
       genre: genre || undefined,
       language,
@@ -534,6 +540,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
       lengthUnit: resolvedLengthUnit,
       ...(resolvedLengthUnit === 'min' ? {} : { lengthMode: STORY_LENGTH_MODE_UNIT }),
       sceneGranularity,
+      sceneMinSec: minSec,
+      sceneMaxSec: maxSec,
       ...(reviewTouched
         ? { review: reviewSettings }
         : { reviewLoop: legacyReviewLoop }),
@@ -664,6 +672,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
       setLengthUnit(settings.lengthUnit)
     }
     if (o.sceneGranularity) setSceneGranularity(o.sceneGranularity)
+    if (o.sceneMinSec != null) setSceneMinSec(String(o.sceneMinSec))
+    if (o.sceneMaxSec != null) setSceneMaxSec(String(o.sceneMaxSec))
     if (o.review) {
       setReviewSettings(makeReviewSettings(o, (findStoryLlmOptionById(hydrateStoryLlmSelection(o, llmOptions), llmOptions) || selectedLlm).model))
       setReviewTouched(true)
@@ -718,6 +728,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     lengthUnit: baselineLengthSettings.lengthUnit,
     ...(baselineLengthSettings.lengthUnit === 'min' ? {} : { lengthMode: STORY_LENGTH_MODE_UNIT }),
     sceneGranularity: hydrateOpts.sceneGranularity || 'scene',
+    sceneMinSec: clampInt(hydrateOpts.sceneMinSec, 1, 120, 5),
+    sceneMaxSec: Math.max(clampInt(hydrateOpts.sceneMinSec, 1, 120, 5), clampInt(hydrateOpts.sceneMaxSec, 1, 120, 10)),
     ...(hydrateOpts.review
       ? { review: makeReviewSettings(hydrateOpts, baselineLlm.model) }
       : { reviewLoop: !!hydrateOpts.reviewLoop }),
@@ -1107,7 +1119,30 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
   const splitSummary = sceneGranularity === 'segment'
     ? t('story.scenes.summarySegment', '씬 분리 단위: 문장 기준 · 문장마다 씬 · 화자 전환 시 분리 · 짧은 조각 병합 · 10초↑ 분할')
-    : t('story.scenes.summaryScene', '씬 분리 단위: 씬 기준 · 5~10초 의미 단위')
+    : `${t('story.scenes.summaryScene', '씬 분리 단위: 씬 기준')} · ${sceneMinSec}~${sceneMaxSec}${t('story.form.sceneSecUnit', '초')}`
+  // 씬 기준 목표 길이(min~max초) 입력 — 설정 폼과 '씬 재분리' 바에서 공용. segment 모드에선 숨김.
+  const renderSceneSec = () => sceneGranularity !== 'scene' ? null : (
+    <div className="story-scene-sec">
+      <input
+        className="story-sec-input"
+        aria-label={t('story.form.sceneMinSec', '씬 최소 길이(초)')}
+        value={sceneMinSec}
+        onChange={(e) => setSceneMinSec(e.target.value)}
+        disabled={isRunning}
+        inputMode="numeric"
+      />
+      <span className="story-sec-sep">~</span>
+      <input
+        className="story-sec-input"
+        aria-label={t('story.form.sceneMaxSec', '씬 최대 길이(초)')}
+        value={sceneMaxSec}
+        onChange={(e) => setSceneMaxSec(e.target.value)}
+        disabled={isRunning}
+        inputMode="numeric"
+      />
+      <span className="story-sec-unit">{t('story.form.sceneSecUnit', '초')}</span>
+    </div>
+  )
   const scenesProgressLog = progressLog.filter((entry) => !entry.step || entry.step === 'scenes')
   const activeLengthUnit = coerceStoryLengthUnit(lengthUnit, language)
   const lengthUnitOptions = storyLengthUnitsForLanguage(language)
@@ -1429,16 +1464,19 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
                 <div className="story-opt-row">
                   <span className="story-opt-label">{t('story.form.granularityLabel', '씬 분리 단위')}</span>
-                  <select
-                    className="story-input"
-                    aria-label={t('story.form.granularityLabel', '씬 분리 단위')}
-                    value={sceneGranularity}
-                    onChange={(e) => setSceneGranularity(e.target.value)}
-                    disabled={isRunning}
-                  >
-                    <option value="scene">{t('story.form.granularityScene', '씬 기준 (5~10초)')}</option>
-                    <option value="segment">{t('story.form.granularitySegment', '문장 기준')}</option>
-                  </select>
+                  <div className="story-granularity-group">
+                    <select
+                      className="story-input story-granularity-select"
+                      aria-label={t('story.form.granularityLabel', '씬 분리 단위')}
+                      value={sceneGranularity}
+                      onChange={(e) => setSceneGranularity(e.target.value)}
+                      disabled={isRunning}
+                    >
+                      <option value="scene">{t('story.form.granularityScene', '씬 기준')}</option>
+                      <option value="segment">{t('story.form.granularitySegment', '문장 기준')}</option>
+                    </select>
+                    {renderSceneSec()}
+                  </div>
                 </div>
 
                 <div className="story-opt-row story-review-opt-row">
@@ -1521,9 +1559,10 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                     onChange={(e) => setSceneGranularity(e.target.value)}
                     disabled={isRunning}
                   >
-                    <option value="scene">{t('story.form.granularityScene', '씬 기준 (5~10초)')}</option>
+                    <option value="scene">{t('story.form.granularityScene', '씬 기준')}</option>
                     <option value="segment">{t('story.form.granularitySegment', '문장 기준')}</option>
                   </select>
+                  {renderSceneSec()}
                 </div>
                 <table className="story-readonly-table">
                   <thead>

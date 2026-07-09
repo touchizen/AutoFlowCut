@@ -17,8 +17,8 @@ describe('StoryStepper 설정 탭(0번, 시나리오 앞)', () => {
     // 시나리오 앞 순서
     const pills = [...document.querySelectorAll('.story-step-pill')]
     expect(pills.indexOf(setup)).toBe(0)
-    // 상태 배지 없음(설정은 실행 스텝 아님)
-    expect(setup.querySelector('.story-step-badge')).toBeNull()
+    // 상태 점 없음(설정은 실행 스텝 아님)
+    expect(setup.querySelector('.story-step-dot')).toBeNull()
   })
   it('설정 pill 클릭 시 onStepClick("setup") 호출', () => {
     const onStepClick = vi.fn()
@@ -45,7 +45,7 @@ describe('StoryStepper 시놉시스 스텝(항상 렌더 + synopsisEnabled)', ()
     expect(pills.indexOf(pillOf('리서치'))).toBe(1)
     expect(pills.indexOf(pill)).toBe(2)
     expect(pills.indexOf(pillOf('시나리오'))).toBe(3)
-    expect(pill.querySelector('.story-step-badge')).toBeNull()
+    expect(pill.querySelector('.story-step-dot')).toBeNull()
   })
   it('synopsisEnabled 미지정(기본)이면 비활성 — 회색(disabled) 스타일 + 클릭 불가', () => {
     const onStepClick = vi.fn()
@@ -96,7 +96,7 @@ describe('StoryStepper 리서치 스텝(항상 렌더 + researchEnabled)', () =>
     expect(pill).toBeTruthy()
     const pills = [...document.querySelectorAll('.story-step-pill')]
     expect(pills.indexOf(pill)).toBe(1)
-    expect(pill.querySelector('.story-step-badge')).toBeNull()
+    expect(pill.querySelector('.story-step-dot')).toBeNull()
   })
   it('researchEnabled 미지정(기본)이면 비활성 — 회색(disabled) 스타일 + 클릭 불가', () => {
     const onStepClick = vi.fn()
@@ -136,23 +136,26 @@ describe('StoryStepper active', () => {
   })
 })
 
-describe('StoryStepper 자동 진행(자동 체크박스 + 전체 진행)', () => {
+describe('StoryStepper 자동 진행(칩 안 인라인 자동 토글 + 전체 진행)', () => {
   const steps = { script: { status: 'done' }, scenes: { status: 'pending' }, audio: { status: 'pending' }, prompts: { status: 'pending' } }
-  it('scenes/audio/prompts 각 pill에 자동 체크박스, 상태는 autoSteps 반영', () => {
+  const autoOf = (label) => pillOf(label).querySelector('input[type=checkbox]')
+  it('scenes/audio/prompts 칩 안에 자동 체크박스, 상태는 autoSteps 반영', () => {
     render(<StoryStepper steps={steps} currentStep="scenes" onStepClick={vi.fn()}
       autoSteps={{ scenes: true, audio: false, prompts: true }} onToggleAuto={vi.fn()} onRunAll={vi.fn()} canRunAll autoRunning={false} />)
-    expect(screen.getByText('씬 분리').closest('.story-step-col').querySelector('input[type=checkbox]').checked).toBe(true)
-    expect(screen.getByText('오디오').closest('.story-step-col').querySelector('input[type=checkbox]').checked).toBe(false)
-    expect(screen.getByText('프롬프트').closest('.story-step-col').querySelector('input[type=checkbox]').checked).toBe(true)
+    expect(autoOf('씬 분리').checked).toBe(true)
+    expect(autoOf('오디오').checked).toBe(false)
+    expect(autoOf('프롬프트').checked).toBe(true)
     // 시나리오/설정엔 자동 체크박스 없음
-    expect(screen.getByText('시나리오').closest('.story-step-col').querySelector('input[type=checkbox]')).toBeNull()
+    expect(autoOf('시나리오')).toBeNull()
+    expect(autoOf('설정')).toBeNull()
   })
-  it('자동 체크박스 클릭 시 onToggleAuto(step) 호출, 탭 이동(onStepClick)은 안 함', () => {
+  it('자동 토글 클릭 시 onToggleAuto(step) 호출, 클릭 가능 스텝이어도 탭 이동(onStepClick)은 안 함', () => {
     const onToggleAuto = vi.fn(); const onStepClick = vi.fn()
     render(<StoryStepper steps={steps} currentStep="scenes" onStepClick={onStepClick}
       autoSteps={{ scenes: false, audio: false, prompts: true }} onToggleAuto={onToggleAuto} onRunAll={vi.fn()} canRunAll autoRunning={false} />)
-    fireEvent.click(screen.getByText('오디오').closest('.story-step-col').querySelector('input[type=checkbox]'))
-    expect(onToggleAuto).toHaveBeenCalledWith('audio')
+    // scenes 는 currentStep 이라 클릭 가능(role=button) — 자동 토글이 칩 안에 있어도 stopPropagation 으로 탭 이동 방지.
+    fireEvent.click(autoOf('씬 분리'))
+    expect(onToggleAuto).toHaveBeenCalledWith('scenes')
     expect(onStepClick).not.toHaveBeenCalled()
   })
   it('전체 진행 버튼 클릭 → onRunAll, canRunAll=false면 disabled', () => {
@@ -164,5 +167,29 @@ describe('StoryStepper 자동 진행(자동 체크박스 + 전체 진행)', () =
     rerender(<StoryStepper steps={steps} currentStep="scenes" onStepClick={vi.fn()}
       autoSteps={{ scenes: true, audio: false, prompts: true }} onToggleAuto={vi.fn()} onRunAll={onRunAll} canRunAll={false} autoRunning={false} />)
     expect(screen.getByRole('button', { name: /전체 진행/ })).toBeDisabled()
+  })
+})
+
+// UI: 세그먼트 칩 — 칩은 한 줄 track 안, 'Run all'은 track 밖 오른쪽 고정. 상태는 텍스트 배지 대신 색 점.
+describe('StoryStepper 세그먼트 칩 구조', () => {
+  it('모든 칩은 한 줄 track(.story-stepper-track) 안, Run all 은 track 밖', () => {
+    render(<StoryStepper steps={allDone} currentStep="prompts" onStepClick={vi.fn()} onRunAll={vi.fn()} canRunAll />)
+    const track = document.querySelector('.story-stepper-track')
+    expect(track).toBeTruthy()
+    expect(pillOf('설정').closest('.story-stepper-track')).toBe(track)
+    expect(pillOf('프롬프트').closest('.story-stepper-track')).toBe(track)
+    // Run all 은 track 밖(오른쪽 고정)
+    expect(screen.getByRole('button', { name: /전체 진행/ }).closest('.story-stepper-track')).toBeNull()
+  })
+  it('실행 스텝은 상태 점(.story-step-dot)을 상태 클래스와 함께, 게이트 탭엔 점 없음', () => {
+    const steps = { script: { status: 'done' }, scenes: { status: 'running' }, audio: { status: 'pending' }, prompts: { status: 'error' } }
+    render(<StoryStepper steps={steps} currentStep="scenes" researchEnabled synopsisEnabled onStepClick={vi.fn()} />)
+    expect(pillOf('시나리오').querySelector('.story-step-dot.story-dot-done')).toBeTruthy()
+    expect(pillOf('씬 분리').querySelector('.story-step-dot.story-dot-running')).toBeTruthy()
+    expect(pillOf('오디오').querySelector('.story-step-dot.story-dot-pending')).toBeTruthy()
+    expect(pillOf('프롬프트').querySelector('.story-step-dot.story-dot-error')).toBeTruthy()
+    for (const gate of ['설정', '리서치', '시놉시스']) {
+      expect(pillOf(gate).querySelector('.story-step-dot')).toBeNull()
+    }
   })
 })

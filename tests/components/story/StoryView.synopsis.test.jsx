@@ -60,7 +60,7 @@ describe('시놉시스 pill 렌더/활성 조건 (§v2.10/§v2.11 → §v2.12 B)
     render(<StoryView pipeline={reopenedTitleUnconfirmed()} />)
     const pill = pillOf('시놉시스')
     expect(pill).toBeTruthy()
-    expect(pill.querySelector('.story-step-badge')).toBeNull()
+    expect(pill.querySelector('.story-step-dot')).toBeNull()
     expect(pill.classList.contains('story-step-disabled')).toBe(false)
     // 설정(0)·리서치(1) 뒤 · 시나리오 앞(2)
     const pills = [...document.querySelectorAll('.story-step-pill')]

@@ -15,58 +15,105 @@
   color: var(--text-color);
 }
 
-/* ── 스텝퍼 (상단 고정) ── */
+/* ── 스텝퍼 (상단 고정) — 세그먼트 칩: 한 줄 track(좌우 스크롤) + 오른쪽 고정 'Run all' ── */
 .story-stepper {
   display: flex;
+  align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
   flex-shrink: 0;
+  margin-bottom: 8px;        /* 아래 내용과 분리 — 스크롤바가 붙어 답답해 보이지 않게 */
 }
 
-.story-step-pill {
+/* 칩 한 줄 — 줄바꿈 없이 좌우 스크롤. 넘치면 얇은 스크롤바만. */
+.story-stepper-track {
   display: flex;
   align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex-wrap: nowrap;
+  padding-bottom: 8px;        /* 스크롤바(6px) 전용 여백 — 스크롤바가 칩을 침범하지 않게 */
+  scrollbar-width: thin;
+}
+.story-stepper-track::-webkit-scrollbar { height: 6px; }
+.story-stepper-track::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 999px; }
+.story-stepper-track::-webkit-scrollbar-track { background: transparent; }
+
+.story-step-pill {
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
-  padding: 6px 12px;
+  flex: 0 0 auto;             /* 높이/폭 고정 → track 에서 스크롤 */
+  height: 34px;              /* 모든 칩 높이 통일 */
+  padding: 0 12px;
   border: 1px solid var(--border-color);
   border-radius: 999px;
   background: var(--bg-secondary);
   font-size: 0.85rem;
   color: var(--text-secondary);
+  white-space: nowrap;
 }
 
 .story-step-pill.active {
   border-color: var(--primary-color);
   color: var(--text-color);
+  background: rgba(66, 153, 225, 0.14);                        /* 폴백(= --primary-color) */
+  background: color-mix(in srgb, var(--primary-color) 14%, transparent);
 }
 
 .story-step-clickable {
   cursor: pointer;
 }
+.story-step-clickable:hover {
+  border-color: var(--primary-color);
+  color: var(--text-color);
+}
+
+/* 상태 점 — 텍스트 배지 대신(대기/진행/완료/오류). 실행 스텝(시나리오~프롬프트)에만. */
+.story-step-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: #7a8290;
+}
+.story-dot-pending { background: #7a8290; }
+.story-dot-running { background: var(--primary-color, #4299e1); }
+.story-dot-done { background: var(--success-color, #48bb78); }
+.story-dot-error { background: var(--error-color, #f56565); }
 
 /* 세그먼트 2줄 — 대화 + (감정) */
 .story-seg-cell { display: flex; flex-direction: column; gap: 2px; }
 .story-seg-text { }
 .story-seg-emotion { font-size: 0.8em; opacity: 0.7; }
 
-/* 자동 진행 — pill(캡슐) 아래 둘째 줄 '자동' 체크박스 + 스텝퍼 오른쪽 끝 '전체 진행' */
-.story-step-col {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-}
+/* 자동 진행 — 칩 안 인라인 미니 토글(대기 스텝의 자동 실행 on/off). on 이면 파란 강조. */
 .story-step-auto {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  font-size: 0.72rem;
+  margin-left: 2px;
+  padding: 1px 7px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  background: var(--bg-color);
   cursor: pointer;
-  opacity: 0.85;
+  line-height: 1.4;
 }
-.story-step-auto input { cursor: pointer; margin: 0; }
+.story-step-auto.on {
+  color: var(--primary-color);
+  border-color: var(--primary-color);
+  background: rgba(66, 153, 225, 0.12);              /* = --primary-color */
+}
+.story-step-auto input { cursor: pointer; margin: 0; width: 11px; height: 11px; }
+
+/* 'Run all' — track 밖 오른쪽 고정(track flex:1 이 밀어냄). */
 .story-step-runall {
-  margin-left: auto;
+  flex: 0 0 auto;
   align-self: center;
   padding: 6px 14px;
   border: 1px solid var(--primary-color, #4a7cff);
@@ -159,18 +206,6 @@
   font-weight: 600;
 }
 
-.story-step-badge {
-  font-size: 0.72rem;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--border-color);
-  color: var(--text-secondary);
-}
-
-.story-badge-running { background: rgba(66, 153, 225, 0.25); color: var(--primary-color); }
-.story-badge-done { background: rgba(72, 187, 120, 0.25); color: var(--success-color); }
-.story-badge-error { background: rgba(245, 101, 101, 0.25); color: var(--error-color); }
-
 /* ── 에러 배너 ── */
 .story-error-banner {
   padding: 10px 14px;
@@ -201,7 +236,7 @@
 .story-setup-phase {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
   max-width: 640px;
   margin: 0 auto;
   width: 100%;
@@ -210,14 +245,38 @@
 /* 각 옵션 행: [라벨 열 | 값 열] — 라벨 폭 고정으로 값 컬럼이 세로로 줄맞춰 정렬된다. */
 .story-opt-row {
   display: grid;
-  grid-template-columns: 96px 1fr;
+  grid-template-columns: 120px 1fr;
   align-items: center;
   gap: 12px;
+  min-height: 38px;          /* 행 높이 통일 — 컨트롤 종류가 달라도 세로 리듬 유지 */
 }
 
 .story-opt-label {
   font-size: 0.85rem;
+  line-height: 1.3;
   color: var(--text-secondary);
+}
+
+/* 각 설정 항목 라벨 앞 링(○) 마커 — 항목 구분. 행 선두 라벨만(인라인 '추론 수준' 라벨 제외).
+   스텝퍼의 꽉 찬 상태 점과 구분되게 속 빈 링으로. */
+.story-opt-row > .story-opt-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.story-opt-row > .story-opt-label::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1.5px solid var(--primary-color);
+  opacity: 0.65;
+}
+
+/* 폼 컨트롤 높이 통일 — select/input 이 같은 높이로 줄맞춰 정렬된다. */
+.story-opt-row .story-input {
+  height: 38px;
 }
 
 .story-llm-controls {
@@ -259,11 +318,46 @@
 .story-length-value {
   flex: 1 1 120px;
   min-width: 0;
+  text-align: right;              /* 숫자 값 — 우측 정렬로 단위(분/초)에 붙게 */
+  font-variant-numeric: tabular-nums;
 }
 
 .story-length-unit {
   flex: 0 1 96px;
   min-width: 84px;
+}
+
+/* 씬 분리 단위 select + 씬 기준 목표 길이(min~max초) 입력. segment 모드에선 초 입력 숨김. */
+.story-granularity-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.story-granularity-group .story-granularity-select {
+  flex: 1 1 auto;
+}
+.story-scene-sec {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.story-sec-sep { color: var(--text-secondary); }
+.story-sec-unit { color: var(--text-secondary); font-size: 0.85rem; white-space: nowrap; }
+.story-sec-input {
+  flex: 0 0 52px;
+  width: 52px;
+  height: 38px;
+  box-sizing: border-box;
+  padding: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  background: var(--bg-color);
+  color: var(--text-color);
+  font-family: var(--font-family);
+  text-align: right;                /* 숫자 값 — 우측 정렬 */
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── 대본 임포트(drag&drop / 붙여넣기 겸용) ── */

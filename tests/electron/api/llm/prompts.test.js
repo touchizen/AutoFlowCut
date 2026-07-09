@@ -107,6 +107,36 @@ describe('buildSplitPrompt 입도 옵션(sceneGranularity)', () => {
   })
 })
 
+describe('buildSplitPrompt 씬 길이 min/max(sceneMinSec/sceneMaxSec)', () => {
+  it('커스텀 min/max 초를 씬 기준에 반영(한국어 ≈5.5자/초 환산)', () => {
+    const p = buildSplitPrompt('S', { language: 'ko', sceneMinSec: 3, sceneMaxSec: 8 })
+    expect(p).toContain('3~8초')
+    expect(p).toContain('약 17~44자')   // round(3*5.5)=17, round(8*5.5)=44
+  })
+  it('영어는 15자/초로 환산', () => {
+    const p = buildSplitPrompt('S', { language: 'en', sceneMinSec: 4, sceneMaxSec: 6 })
+    expect(p).toContain('4~6초')
+    expect(p).toContain('about 60~90 chars')   // 4*15=60, 6*15=90
+  })
+  it('기본(미지정)은 5~10초(28~55자) — 하위호환', () => {
+    const p = buildSplitPrompt('S', { language: 'ko' })
+    expect(p).toContain('5~10초')
+    expect(p).toContain('28~55자')
+  })
+  it("segment 모드는 max초를 '너무 길면 분할' 기준으로 사용", () => {
+    const p = buildSplitPrompt('S', { language: 'ko', sceneGranularity: 'segment', sceneMaxSec: 7 })
+    expect(p).toContain('7초')
+  })
+  it('max < min 이면 max를 min으로 보정(역전 방지)', () => {
+    const p = buildSplitPrompt('S', { language: 'ko', sceneMinSec: 9, sceneMaxSec: 4 })
+    expect(p).toContain('9~9초')
+  })
+  it('잘못된 값(0/음수/NaN)은 기본 5/10으로 폴백', () => {
+    const p = buildSplitPrompt('S', { language: 'ko', sceneMinSec: 0, sceneMaxSec: 'x' })
+    expect(p).toContain('5~10초')
+  })
+})
+
 describe('buildReviewPrompt (M3 검토)', () => {
   it('내장 루브릭 관점 + 본문 포함', () => {
     const p = buildReviewPrompt('대본-본문-XYZ', { language: 'ko' })

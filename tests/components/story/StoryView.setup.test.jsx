@@ -116,6 +116,39 @@ describe('StoryView 설정 화면(setup)', () => {
     })
   })
 
+  it('씬 기준(scene)이면 min/max 초 입력을 렌더(기본 5/10), segment면 숨긴다', () => {
+    render(<StoryView pipeline={pipeline()} />)
+    expect(screen.getByLabelText('씬 최소 길이(초)')).toHaveValue('5')
+    expect(screen.getByLabelText('씬 최대 길이(초)')).toHaveValue('10')
+    fireEvent.change(screen.getByLabelText('씬 분리 단위'), { target: { value: 'segment' } })
+    expect(screen.queryByLabelText('씬 최소 길이(초)')).toBeNull()
+    expect(screen.queryByLabelText('씬 최대 길이(초)')).toBeNull()
+  })
+
+  it('min/max 초를 바꿔 시작하면 options에 sceneMinSec/sceneMaxSec가 실린다', () => {
+    const p = pipeline()
+    render(<StoryView pipeline={p} />)
+    fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
+    fireEvent.change(screen.getByLabelText('씬 최소 길이(초)'), { target: { value: '3' } })
+    fireEvent.change(screen.getByLabelText('씬 최대 길이(초)'), { target: { value: '8' } })
+    fireEvent.click(screen.getByRole('button', { name: '시작' }))
+    expect(p.generateSynopsis).toHaveBeenCalledWith(expect.objectContaining({
+      options: expect.objectContaining({ sceneMinSec: 3, sceneMaxSec: 8 }),
+    }))
+  })
+
+  it('max < min 이면 옵션에서 max를 min으로 보정한다(역전 방지)', () => {
+    const p = pipeline()
+    render(<StoryView pipeline={p} />)
+    fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
+    fireEvent.change(screen.getByLabelText('씬 최소 길이(초)'), { target: { value: '9' } })
+    fireEvent.change(screen.getByLabelText('씬 최대 길이(초)'), { target: { value: '4' } })
+    fireEvent.click(screen.getByRole('button', { name: '시작' }))
+    expect(p.generateSynopsis).toHaveBeenCalledWith(expect.objectContaining({
+      options: expect.objectContaining({ sceneMinSec: 9, sceneMaxSec: 9 }),
+    }))
+  })
+
   it('언어는 ko/en select 이고 기본 ko', () => {
     render(<StoryView pipeline={pipeline()} />)
     const lang = screen.getByLabelText('언어')
@@ -252,7 +285,7 @@ describe('StoryView 설정 화면(setup)', () => {
     expect(p.generateSynopsis).toHaveBeenCalledWith({
       type: 'title',
       title: '운수 좋은 날',
-      options: { genre: 'bespoke', language: 'ko', engine: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'off', lengthValue: '10', lengthUnit: 'min', sceneGranularity: 'scene', reviewLoop: false },
+      options: { genre: 'bespoke', language: 'ko', engine: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'off', lengthValue: '10', lengthUnit: 'min', sceneGranularity: 'scene', sceneMinSec: 5, sceneMaxSec: 10, reviewLoop: false },
     })
     expect(p.start).not.toHaveBeenCalled()
     expect(screen.getByTestId('story-synopsis')).toBeInTheDocument()
@@ -271,7 +304,7 @@ describe('StoryView 설정 화면(setup)', () => {
     expect(p.start).toHaveBeenCalledWith('script', {
       pastedScript: '내가 쓴 대본',
       input: { type: 'pasted', title: '가져온 제목' },
-      options: { genre: 'yadam', language: 'ko', engine: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'off', lengthValue: '10', lengthUnit: 'min', sceneGranularity: 'scene', reviewLoop: false },
+      options: { genre: 'yadam', language: 'ko', engine: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'off', lengthValue: '10', lengthUnit: 'min', sceneGranularity: 'scene', sceneMinSec: 5, sceneMaxSec: 10, reviewLoop: false },
     })
     // §v2.8 B1: 대본 영속 직후 등장인물 역추출 게이트로.
     await waitFor(() => expect(screen.getByTestId('story-synopsis')).toBeInTheDocument())

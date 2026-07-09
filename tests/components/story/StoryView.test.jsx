@@ -40,7 +40,7 @@ describe('StoryView', () => {
     expect(p.generateSynopsis).toHaveBeenCalledWith({
       type: 'title',
       title: '운수 좋은 날',
-      options: { genre: 'yadam', language: 'ko', engine: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'off', lengthValue: '5', lengthUnit: 'min', sceneGranularity: 'scene', reviewLoop: false },
+      options: { genre: 'yadam', language: 'ko', engine: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'off', lengthValue: '5', lengthUnit: 'min', sceneGranularity: 'scene', sceneMinSec: 5, sceneMaxSec: 10, reviewLoop: false },
     })
     expect(p.start).not.toHaveBeenCalled()
   })
@@ -53,7 +53,7 @@ describe('StoryView', () => {
     expect(p.generateSynopsis).toHaveBeenCalledWith({
       type: 'title',
       title: '제목만',
-      options: { genre: 'bespoke', language: 'ko', engine: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'off', lengthValue: '10', lengthUnit: 'min', sceneGranularity: 'scene', reviewLoop: false },
+      options: { genre: 'bespoke', language: 'ko', engine: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'off', lengthValue: '10', lengthUnit: 'min', sceneGranularity: 'scene', sceneMinSec: 5, sceneMaxSec: 10, reviewLoop: false },
     })
   })
   it('script running이면 스트리밍 텍스트를 표시한다', () => {
@@ -291,7 +291,7 @@ describe('StoryView', () => {
       expect(p.start).toHaveBeenCalledWith('scenes', expect.objectContaining({
         scriptOverride: '대본 본문',
         title: '기존 제목',
-        options: expect.objectContaining({ sceneGranularity: 'scene', reviewLoop: false }),
+        options: expect.objectContaining({ sceneGranularity: 'scene', sceneMinSec: 5, sceneMaxSec: 10, reviewLoop: false }),
       }))
     })
   })
@@ -305,7 +305,7 @@ describe('StoryView', () => {
     expect(p.start).toHaveBeenCalledWith('script', {
       pastedScript: '내가 쓴 대본',
       input: { type: 'pasted', title: '' },
-      options: { genre: 'bespoke', language: 'ko', engine: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'off', lengthValue: '10', lengthUnit: 'min', sceneGranularity: 'scene', reviewLoop: false },
+      options: { genre: 'bespoke', language: 'ko', engine: 'claude', model: 'claude-opus-4-8', reasoningEffort: 'off', lengthValue: '10', lengthUnit: 'min', sceneGranularity: 'scene', sceneMinSec: 5, sceneMaxSec: 10, reviewLoop: false },
     })
   })
 
