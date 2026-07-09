@@ -1189,7 +1189,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     <div className="story-view">
       <StoryStepper steps={steps} currentStep={currentStep} activeStep={stepperActive} t={t} onStepClick={handleStepClick}
         autoSteps={autoSteps} onToggleAuto={handleToggleAuto} onRunAll={handleRunAll} canRunAll={canRunAll} autoRunning={autoRunning}
-        synopsisEnabled={synopsisEnabled} researchEnabled={researchEnabled} />
+        synopsisEnabled={synopsisEnabled} researchEnabled={researchEnabled}
+        synopsisDone={pipeline.charactersConfirmed === true} researchDone={pipeline.research?.confirmed === true} />
 
       {openError && (
         <div className="story-open-error-banner" role="alert">

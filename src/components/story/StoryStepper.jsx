@@ -47,6 +47,7 @@ export default function StoryStepper({
   steps, currentStep, activeStep, t = (key, fallback) => fallback, onStepClick,
   autoSteps = null, onToggleAuto, onRunAll, canRunAll = false, autoRunning = false,
   synopsisEnabled = false, researchEnabled = false,
+  synopsisDone = false, researchDone = false,
 }) {
   // active(파란색)는 사용자가 보고 있는 스텝(activeStep=displayStep)을 따른다 — 클릭한 탭이 active.
   // 미지정이면 currentStep 폴백(하위호환).
@@ -55,16 +56,16 @@ export default function StoryStepper({
 
   // 게이트 탭(설정/리서치/시놉시스) — 상태 점 없는 진입 탭. setup은 항상 활성, 나머지는 *Enabled가 가른다.
   const gateChips = [
-    { key: SETUP_KEY, meta: SETUP_META, enabled: true },
-    { key: RESEARCH_KEY, meta: RESEARCH_META, enabled: researchEnabled },
-    { key: SYNOPSIS_KEY, meta: SYNOPSIS_META, enabled: synopsisEnabled },
+    { key: SETUP_KEY, meta: SETUP_META, enabled: true, done: false },
+    { key: RESEARCH_KEY, meta: RESEARCH_META, enabled: researchEnabled, done: researchDone },
+    { key: SYNOPSIS_KEY, meta: SYNOPSIS_META, enabled: synopsisEnabled, done: synopsisDone },
   ]
 
   return (
     <div className="story-stepper">
       {/* 칩 한 줄 — 좌우 스크롤(줄바꿈 없음). */}
       <div className="story-stepper-track">
-        {gateChips.map(({ key, meta, enabled }) => {
+        {gateChips.map(({ key, meta, enabled, done }) => {
           const clickable = enabled && clickableBase
           const disabled = !enabled
           const label = t(`story.step.${key}`, meta.label)
@@ -87,6 +88,8 @@ export default function StoryStepper({
             >
               <span className="story-step-icon">{meta.icon}</span>
               <span className="story-step-name">{label}</span>
+              {/* 게이트 탭 완료 표시 — 리서치 확정·시놉시스 확정 시 done 점(시나리오 등 실행 스텝과 일관). */}
+              {done && <span className="story-step-dot story-dot-done" title={t('story.status.done', '완료')} aria-label={t('story.status.done', '완료')} />}
             </div>
           )
         })}

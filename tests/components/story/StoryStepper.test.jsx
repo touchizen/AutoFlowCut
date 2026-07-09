@@ -193,3 +193,20 @@ describe('StoryStepper 세그먼트 칩 구조', () => {
     }
   })
 })
+
+// 게이트 완료 표시 — 리서치/시놉시스 확정 시 done 점(시나리오 등 실행 스텝과 일관).
+describe('StoryStepper 게이트 완료 표시(done)', () => {
+  it('researchDone/synopsisDone 이면 해당 게이트 칩에 완료 점(.story-dot-done)', () => {
+    render(<StoryStepper steps={allDone} currentStep="script" researchEnabled synopsisEnabled researchDone synopsisDone onStepClick={vi.fn()} />)
+    expect(pillOf('리서치').querySelector('.story-step-dot.story-dot-done')).toBeTruthy()
+    expect(pillOf('시놉시스').querySelector('.story-step-dot.story-dot-done')).toBeTruthy()
+    // 설정은 완료 개념 없음
+    expect(pillOf('설정').querySelector('.story-step-dot')).toBeNull()
+  })
+  it('done 미지정(기본)이면 게이트 점 없음', () => {
+    render(<StoryStepper steps={allDone} currentStep="script" researchEnabled synopsisEnabled onStepClick={vi.fn()} />)
+    for (const g of ['설정', '리서치', '시놉시스']) {
+      expect(pillOf(g).querySelector('.story-step-dot')).toBeNull()
+    }
+  })
+})
