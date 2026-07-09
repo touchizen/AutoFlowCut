@@ -208,6 +208,9 @@ export default {
       removeCharacter: '행 삭제',
       useResearch: '리서치 컨텍스트 포함',
     },
+    gen: {
+      generating: '생성 중',
+    },
     status: {
       pending: '대기',
       running: '진행 중',
@@ -251,6 +254,7 @@ export default {
       generateIcon: '✨ 시작',
       runIcon: '▶ 진행',
       abort: '⏹ 중단',
+      aborting: '⏹ 중단 중…',
       rewrite: '다시쓰기',
       continue: '이어쓰기',
       split: '분리시작',

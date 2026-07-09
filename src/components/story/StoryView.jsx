@@ -204,6 +204,19 @@ function StoryRunning({ label, startedAt, detail, log = [] }) {
   )
 }
 
+/** 생성 중 인라인 시계 — 스트리밍(시놉시스/시나리오)처럼 텍스트만 뜨는 뷰 하단 우측에 붙여
+ *  "돌고 있음 + 경과 시간"을 보인다(초시계 애니메이션 + 1초 갱신). reasoning=max 등 첫 출력이
+ *  늦을 때 화면이 텅 비어 멈춘 것처럼 보이던 문제를 해소. */
+function GenClock({ startedAt, label }) {
+  return (
+    <div className="story-gen-clock" aria-live="polite">
+      <StopwatchIcon size={14} />
+      {label && <span className="story-gen-clock-label">{label}</span>}
+      <span className="story-running-elapsed"><ElapsedTime startedAt={startedAt || null} /></span>
+    </div>
+  )
+}
+
 function computeCurrentStep(steps) {
   // 진행 중인 스텝을 우선(자동 진행이 자동=false 스텝을 건너뛰어 뒤 스텝이 먼저 running일 수 있다 —
   // 그 경우에도 isRunning/디스플레이/중단 버튼이 실제 running 스텝을 가리키게).
@@ -337,6 +350,17 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   // 재설계 §1 — script 스텝 2-phase. 재오픈 복원 시 scriptText가 있으면 바로 대본 작업
   // 화면(editor). setup→editor 승격은 명시 트리거(시작/붙여넣기 시작/스텝퍼 script 클릭)에서만.
   const [scriptPhase, setScriptPhase] = useState(pipeline.scriptText?.trim() ? 'editor' : 'setup')
+
+  // 시놉시스 생성은 side action이라 steps.X.updatedAt 같은 시작시각이 없다 — 생성 시작 순간을 로컬로 잡아
+  // 인라인 시계(GenClock)의 경과시간에 쓴다. 생성 끝나면 null.
+  const [synopsisStartedAt, setSynopsisStartedAt] = useState(null)
+  useEffect(() => { setSynopsisStartedAt(synopsisGenerating ? Date.now() : null) }, [synopsisGenerating])
+
+  // 중단(⏹) 즉각 피드백 — SDK 취소는 몇 초 걸릴 수 있어(특히 reasoning=max) 버튼을 '중단 중…'으로
+  // 바꿔 응답성을 준다. 생성/스텝이 실제로 멈추면(둘 다 not running) 해제.
+  const [aborting, setAborting] = useState(false)
+  const handleAbort = () => { setAborting(true); abort() }
+  useEffect(() => { if (!synopsisGenerating && !isRunning) setAborting(false) }, [synopsisGenerating, isRunning])
 
   // §4 이어쓰기 — 시작 시점의 대본 스냅샷. 생성 중 preview에 `baseScript + streamingText`로
   // 접두 표시하는 용도(완료 커밋은 main payload.scriptText — delta 재조립 금지, §0.3).
@@ -1242,6 +1266,10 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                     {t('story.synopsis.extracting', '등장인물 추출 중')}
                   </div>
                 )}
+                {/* 생성 중 시계+경과 — 첫 출력(특히 reasoning=max)이 늦어도 진행 중임을 보인다. */}
+                {synopsisGenerating && (
+                  <GenClock startedAt={synopsisStartedAt} label={t('story.gen.generating', '생성 중')} />
+                )}
                 <div className="story-synopsis-characters">
                   <span className="story-opt-label">{t('story.synopsis.charactersTitle', '등장인물')}</span>
                   <CharacterCards characters={characterDrafts} onChange={setCharacterDrafts} disabled={synopsisGenerating} t={t} />
@@ -1297,8 +1325,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                   {/* FIX-4(§3.3 abort 대칭): 생성 중 중단 — main abort()가 synopsisController를
                       대칭 중단하므로 호출만 하면 된다. */}
                   {synopsisGenerating && (
-                    <button type="button" className="story-btn-secondary" onClick={() => abort()}>
-                      {t('story.action.abort', '⏹ 중단')}
+                    <button type="button" className="story-btn-secondary" onClick={handleAbort} disabled={aborting}>
+                      {aborting ? t('story.action.aborting', '⏹ 중단 중…') : t('story.action.abort', '⏹ 중단')}
                     </button>
                   )}
                 </div>
@@ -1312,9 +1340,13 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
               <div className="story-editor-phase" data-testid="story-editor">
                 {reviewBadge}
                 {scriptRunning ? (
-                  <div className="story-script-stream" aria-live="polite">
-                    {baseScript ? baseScript + streamingText : streamingText}
-                  </div>
+                  <>
+                    <div className="story-script-stream" aria-live="polite">
+                      {baseScript ? baseScript + streamingText : streamingText}
+                    </div>
+                    {/* 생성 중 시계+경과 (시나리오) — 첫 출력이 늦어도 진행 중임을 보인다. */}
+                    <GenClock startedAt={Date.parse(steps.script?.updatedAt)} label={t('story.gen.generating', '생성 중')} />
+                  </>
                 ) : (
                   hasI18n ? scriptEditor : <I18nProvider>{scriptEditor}</I18nProvider>
                 )}
@@ -1322,8 +1354,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                   {/* 중단/3버튼 분기는 isRunning(currentStep) 기준 — script뿐 아니라 scenes/prompts가
                       도는 중에도 대본 탭에서 abort를 잃지 않도록(재리뷰3). stream 렌더 분기만 scriptRunning. */}
                   {isRunning ? (
-                    <button type="button" className="story-btn-secondary" onClick={() => abort()}>
-                      {t('story.action.abort', '⏹ 중단')}
+                    <button type="button" className="story-btn-secondary" onClick={handleAbort} disabled={aborting}>
+                      {aborting ? t('story.action.aborting', '⏹ 중단 중…') : t('story.action.abort', '⏹ 중단')}
                     </button>
                   ) : (
                     <>
@@ -1870,8 +1902,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
             </button>
           )}
           {isRunning && (
-            <button type="button" className="story-btn-secondary" onClick={() => abort()}>
-              {t('story.action.abort', '⏹ 중단')}
+            <button type="button" className="story-btn-secondary" onClick={handleAbort} disabled={aborting}>
+              {aborting ? t('story.action.aborting', '⏹ 중단 중…') : t('story.action.abort', '⏹ 중단')}
             </button>
           )}
         </div>

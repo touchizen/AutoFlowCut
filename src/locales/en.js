@@ -208,6 +208,9 @@ export default {
       removeCharacter: 'Remove row',
       useResearch: 'Include research context',
     },
+    gen: {
+      generating: 'Generating',
+    },
     status: {
       pending: 'Pending',
       running: 'Running',
@@ -251,6 +254,7 @@ export default {
       generateIcon: '✨ Start',
       runIcon: '▶ Continue',
       abort: '⏹ Stop',
+      aborting: '⏹ Stopping…',
       rewrite: 'Rewrite',
       continue: 'Continue',
       split: 'Split scenes',

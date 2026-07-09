@@ -315,10 +315,13 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
     setSynopsisGenerating(true)
     try {
       const r = await window.electronAPI.storyGenerateSynopsis({ projectToken: tokenRef.current, ...params })
-      if (r?.error) setSynopsisError(r.error)
+      // 사용자가 중단(⏹)한 경우 main이 {error:'aborted'}로 응답할 수 있다 — 에러가 아니라 취소이므로 조용히.
+      if (r?.error && !/abort/i.test(String(r.error))) setSynopsisError(r.error)
       return r
     } catch (e) {
       const msg = String(e?.message || e)
+      // 중단(abort)은 사용자 의도적 취소 — 에러 배너로 띄우지 않는다.
+      if (/abort/i.test(msg)) return { aborted: true }
       setSynopsisError(msg)
       return { error: msg }
     } finally {

@@ -945,6 +945,21 @@
   color: var(--primary-color);
 }
 
+/* 생성 중 인라인 시계 — 스트리밍 뷰(시놉시스/시나리오) 하단 우측. 초시계 애니메이션 + 경과시간. */
+.story-gen-clock {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.story-gen-clock-label {
+  font-weight: 600;
+}
+
 .story-progress-log {
   width: min(720px, 100%);
   max-height: 220px;
