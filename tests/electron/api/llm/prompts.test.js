@@ -154,6 +154,12 @@ describe('buildReviewPrompt (M3 검토)', () => {
   it('사소한 취향으로 revise 남발 금지 지시', () => {
     expect(buildReviewPrompt('S', {})).toMatch(/취향|사소|남발|경미/)
   })
+  it('몰입감 점수(0~100)를 score 필드로 매기라고 지시한다', () => {
+    const p = buildReviewPrompt('S', { language: 'ko' })
+    expect(p).toMatch(/몰입감 점수/)
+    expect(p).toMatch(/score/)
+    expect(p).toMatch(/0~100|0-100/)
+  })
 })
 
 describe('buildRevisePrompt (M3 수정)', () => {

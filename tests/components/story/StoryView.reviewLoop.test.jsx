@@ -240,3 +240,33 @@ describe('StoryView 검수 중 대본 유지 + 하단 로그창', () => {
     expect(screen.getByText('검수 준비 중…')).toBeInTheDocument()
   })
 })
+
+describe('StoryView 몰입감 점수 배지 (검수 채점)', () => {
+  const withScore = (score) => {
+    const p = pipeline({ scriptText: '대본' })
+    p.state.steps.script.status = 'done'
+    p.state.scriptScore = { score, at: '2026-07-10T00:00:00.000Z' }
+    return p
+  }
+
+  it('state.scriptScore가 있으면 입력창 하단에 몰입감 점수 배지를 보여준다', () => {
+    const { container } = render(<StoryView pipeline={withScore(85)} />)
+    const badge = container.querySelector('.story-score-badge')
+    expect(badge).toBeTruthy()
+    expect(within(badge).getByText('몰입감')).toBeInTheDocument()
+    expect(within(badge).getByText('85')).toBeInTheDocument()
+    expect(badge.className).toMatch(/high/) // 80+ = high tier
+  })
+
+  it('점수 티어(high/mid/low)를 점수대에 따라 준다', () => {
+    const { container } = render(<StoryView pipeline={withScore(50)} />)
+    expect(container.querySelector('.story-score-badge').className).toMatch(/low/)
+  })
+
+  it('점수가 없으면 배지를 렌더하지 않는다', () => {
+    const p = pipeline({ scriptText: '대본' })
+    p.state.steps.script.status = 'done'
+    const { container } = render(<StoryView pipeline={p} />)
+    expect(container.querySelector('.story-score-badge')).toBeNull()
+  })
+})

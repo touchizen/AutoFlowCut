@@ -254,6 +254,7 @@ export function buildReviewPrompt(scriptMd, opts = {}) {
     opts.genre ? `장르(약한 참고용): ${opts.genre}` : '',
     `심각하게 개선이 필요하면 verdict="revise"와 구체적이고 실행 가능한 critique(무엇을 어떻게 고칠지)를 내라.`,
     `충분히 좋으면 verdict="pass". 사소한 취향 차이나 경미한 문제로 revise를 남발하지 마라.`,
+    `또한 위 5개 기준(궁금증·기대감·추진력·명료성·보상감)을 종합해 몰입감 점수를 0~100 정수로 score 필드에 냉정하게 매겨라.`,
     `--- 대본 ---`,
     scriptMd,
   ].filter(Boolean).join('\n')

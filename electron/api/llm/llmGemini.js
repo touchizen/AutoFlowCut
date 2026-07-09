@@ -153,7 +153,7 @@ export async function reviewScript(scriptMd, opts, ctx = {}) {
   const prompt = buildReviewPrompt(scriptMd, opts)
   const out = await structuredCall(prompt, REVIEW_SCHEMA, opts, ctx)
   const verdict = out.verdict === 'revise' ? 'revise' : 'pass'
-  return { verdict, critique: out.critique || '' }
+  return { verdict, critique: out.critique || '', ...(Number.isFinite(out.score) ? { score: out.score } : {}) }
 }
 
 // M3: critique 반영 재작성 — NON-streaming generateContent(텍스트). SSE 스트리밍 아님.

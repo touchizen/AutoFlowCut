@@ -1173,6 +1173,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const scriptReviewLog = lastScriptOp ? scriptLogAll.filter((entry) => entry.operationId === lastScriptOp) : scriptLogAll
   // 검수(reviewOnly)는 델타 스트리밍이 없어 빈 스트림만 뜬다 → 검수 중엔 대본을 유지하고 하단 로그만 보여준다.
   const scriptReviewing = scriptRunning && reviewProgress?.target === 'script'
+  // 몰입감 점수 — 검수가 매긴 0~100. state에 durable 저장되어 재오픈에도 입력창 하단에 보인다.
+  const scriptScore = state?.scriptScore && Number.isFinite(state.scriptScore.score) ? state.scriptScore : null
   const activeLengthUnit = coerceStoryLengthUnit(lengthUnit, language)
   const lengthUnitOptions = storyLengthUnitsForLanguage(language)
   const lengthOptionValues = storyLengthOptionValues(activeLengthUnit)
@@ -1343,6 +1345,17 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                   </>
                 ) : (
                   hasI18n ? scriptEditor : <I18nProvider>{scriptEditor}</I18nProvider>
+                )}
+                {/* 몰입감 점수 — 입력창 하단. 검수가 매긴 0~100(검수 버튼으로 갱신). */}
+                {scriptScore && (
+                  <div
+                    className={`story-score-badge ${scriptScore.score >= 80 ? 'high' : scriptScore.score >= 60 ? 'mid' : 'low'}`}
+                    title={t('story.review.scoreHint', '검수가 매긴 몰입감 점수입니다 (0~100). 검수 버튼으로 갱신됩니다.')}
+                  >
+                    <span className="story-score-label">{t('story.review.scoreLabel', '몰입감')}</span>
+                    <span className="story-score-value">{scriptScore.score}</span>
+                    <span className="story-score-max">/ 100</span>
+                  </div>
                 )}
                 <div className="story-editor-controls">
                   {/* 중단/3버튼 분기는 isRunning(currentStep) 기준 — script뿐 아니라 scenes/prompts가

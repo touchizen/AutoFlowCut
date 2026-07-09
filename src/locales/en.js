@@ -247,6 +247,8 @@ export default {
       reviewing: 'Reviewing {round}/{of}',
       logTitle: 'Review log',
       logWaiting: 'Preparing review…',
+      scoreLabel: 'Immersion',
+      scoreHint: 'Immersion score from the review (0–100). Updated by the Review button.',
     },
     action: {
       retry: 'Retry',

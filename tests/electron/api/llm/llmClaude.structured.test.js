@@ -158,6 +158,12 @@ describe('llmClaude.reviewScript (M3)', () => {
     expect(promptText).toContain('기대감')
     expect(promptText).not.toContain('야담 전용 공식')
   })
+  it('몰입감 score가 있으면 함께 반환하고, 없으면 score 키를 두지 않는다', async () => {
+    const withScore = R({ type: 'result', subtype: 'success', is_error: false, structured_output: { verdict: 'pass', critique: '', score: 72 } })
+    expect(await reviewScript('대본', {}, { queryImpl: withScore })).toEqual({ verdict: 'pass', critique: '', score: 72 })
+    const noScore = R({ type: 'result', subtype: 'success', is_error: false, structured_output: { verdict: 'pass', critique: '' } })
+    expect(await reviewScript('대본', {}, { queryImpl: noScore })).toEqual({ verdict: 'pass', critique: '' })
+  })
 })
 
 describe('llmClaude.reviseScript (M3)', () => {

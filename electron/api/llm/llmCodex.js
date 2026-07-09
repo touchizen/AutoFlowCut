@@ -134,7 +134,7 @@ export async function reviewScript(scriptMd, opts = {}, { signal, runJson = runC
   const prompt = guardPrompt(buildReviewPrompt(scriptMd, opts))
   const out = await runJson(prompt, codexSchema(REVIEW_SCHEMA), runtimeOptions(opts), { signal })
   const verdict = out.verdict === 'revise' ? 'revise' : 'pass'
-  return { verdict, critique: out.critique || '' }
+  return { verdict, critique: out.critique || '', ...(Number.isFinite(out.score) ? { score: out.score } : {}) }
 }
 
 export async function reviseScript(scriptMd, critique, opts = {}, { signal, runText = runCodexText } = {}) {

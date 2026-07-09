@@ -247,6 +247,8 @@ export default {
       reviewing: '검토 중 {round}/{of}',
       logTitle: '검수 로그',
       logWaiting: '검수 준비 중…',
+      scoreLabel: '몰입감',
+      scoreHint: '검수가 매긴 몰입감 점수입니다 (0~100). 검수 버튼으로 갱신됩니다.',
     },
     action: {
       retry: '재실행',

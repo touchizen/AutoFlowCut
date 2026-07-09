@@ -162,4 +162,31 @@ describe('script 검토 루프 (M3)', () => {
     expect(revising?.p.critique).toBe('주인공 동기가 약함') // 무엇을 지적했는지 로그로 흘린다
     expect(evs.some((e) => e.p.phase === 'passed')).toBe(true) // 통과도 로깅되도록 emit
   })
+
+  it('검수자가 매긴 몰입감 score를 state.scriptScore로 durable 저장하고 progress에 싣는다', async () => {
+    const reviewScript = vi.fn(async () => ({ verdict: 'pass', critique: '', score: 87 }))
+    const { machine, emitted } = makeMachine(dir, { reviewScript })
+    await machine.open()
+    await run(machine, { reviewLoop: true, model: 'claude-opus-4-8' })
+    const st = await machine.getState()
+    expect(st.scriptScore).toMatchObject({ score: 87 })
+    expect(progressOf(emitted).some((e) => e.p.score === 87)).toBe(true)
+  })
+
+  it('score는 0~100으로 클램프하고 반올림한다', async () => {
+    const reviewScript = vi.fn(async () => ({ verdict: 'pass', critique: '', score: 150.6 }))
+    const { machine } = makeMachine(dir, { reviewScript })
+    await machine.open()
+    await run(machine, { reviewLoop: true, model: 'claude-opus-4-8' })
+    expect((await machine.getState()).scriptScore.score).toBe(100)
+  })
+
+  it('새 대본 생성은 이전 몰입감 점수를 무효화한다(검수 없으면 null)', async () => {
+    const { machine } = makeMachine(dir, { reviewScript: vi.fn(async () => ({ verdict: 'pass', critique: '', score: 90 })) })
+    await machine.open()
+    await run(machine, { reviewLoop: true, model: 'claude-opus-4-8' })
+    expect((await machine.getState()).scriptScore.score).toBe(90)
+    await run(machine, { reviewLoop: false }) // 검수 없이 재생성 → 점수 클리어
+    expect((await machine.getState()).scriptScore).toBeNull()
+  })
 })

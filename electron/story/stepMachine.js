@@ -316,16 +316,19 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     const reviewOpts = reviewLlmOptions(opts)
     let current = scriptMd
     let changed = false
+    let latestScore = null // 검수자 몰입감 점수(0~100) — 마지막 라운드 값을 durable 저장한다.
+    const withScore = (extra) => (latestScore != null ? { ...extra, score: latestScore } : extra)
     try {
       for (let round = 1; round <= rounds; round++) {
         sendReviewProgress('script', { round, of: rounds, phase: 'reviewing' }, opId)
-        const { verdict, critique } = await llm.reviewScript(current, reviewOpts, { signal })
+        const { verdict, critique, score } = await llm.reviewScript(current, reviewOpts, { signal })
         if (signal?.aborted) return { scriptMd: current, changed }
+        if (Number.isFinite(score)) latestScore = Math.max(0, Math.min(100, Math.round(score)))
         if (verdict !== 'revise' || !critique?.trim()) {
-          sendReviewProgress('script', { round, of: rounds, phase: 'passed' }, opId)
+          sendReviewProgress('script', withScore({ round, of: rounds, phase: 'passed' }), opId)
           break
         }
-        sendReviewProgress('script', { round, of: rounds, phase: 'revising', critique: critique.trim() }, opId)
+        sendReviewProgress('script', withScore({ round, of: rounds, phase: 'revising', critique: critique.trim() }), opId)
         const r = await llm.reviseScript(current, critique, reviewOpts, { signal })
         if (signal?.aborted) return { scriptMd: current, changed }
         if (!r?.scriptMd?.trim()) throw new Error('reviseScript returned empty script')
@@ -336,7 +339,9 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       if (signal?.aborted) return { scriptMd: current, changed }
       sendReviewProgress('script', { phase: 'error', error: String(e?.message || e) }, opId)
     }
-    return { scriptMd: current, changed }
+    // 몰입감 점수를 state에 durable 저장 → flush/story:state로 전파, 재오픈에도 입력창 하단 배지 유지.
+    if (latestScore != null) state.scriptScore = { score: latestScore, at: new Date().toISOString() }
+    return { scriptMd: current, changed, score: latestScore }
   }
 
   async function reviewScenesCandidate(scriptMd, scenes, speakers, opts, rounds, opId, signal) {
@@ -746,6 +751,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       if (signal?.aborted) return
       let scriptMd = gen.scriptMd
       await store.saveText('script.md', scriptMd)
+      state.scriptScore = null // 새 대본 — 이전 검수 몰입감 점수는 무효(검수하면 갱신).
 
       // M3: 대본 자동 검토·수정 루프(옵션). 검토는 non-streaming — 진행은 progress로 표시.
       // 실패해도 마지막 저장본을 유지하고 스텝은 정상(done)으로 둔다(품질 옵션이 본 생성을 깨지 않음).

@@ -1043,6 +1043,44 @@
   width: 100%;
 }
 
+/* 몰입감 점수 배지 — 입력창 하단. tier(high/mid/low)로 점수 색을 구분한다. */
+.story-score-badge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  align-self: flex-start;
+  margin-top: 8px;
+  padding: 3px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+
+.story-score-label,
+.story-score-max {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.story-score-value {
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.story-score-badge.high .story-score-value {
+  color: var(--success-color, #2e9e5b);
+}
+
+.story-score-badge.mid .story-score-value {
+  color: var(--warning-color, #c8860a);
+}
+
+.story-score-badge.low .story-score-value {
+  color: var(--error-color, #d9534f);
+}
+
 /* ── 하단 컨트롤 (하단 고정) ── */
 .story-controls {
   display: flex;

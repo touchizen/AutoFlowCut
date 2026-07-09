@@ -67,12 +67,14 @@ export function validateScenesSegments(scenes) {
   }
 }
 
-// M3: 대본 검토 structured output — verdict(pass/revise) + critique.
+// M3: 대본 검토 structured output — verdict(pass/revise) + critique + 몰입감 점수(선택).
+// score는 대본 검수(reviewScript)에서만 채운다(0~100). 옛 모델/누락 대비 required 아님.
 export const REVIEW_SCHEMA = {
   type: 'OBJECT',
   properties: {
     verdict: { type: 'STRING' }, // 'pass' | 'revise'
     critique: { type: 'STRING' },
+    score: { type: 'NUMBER' }, // 몰입감 0~100 (선택)
   },
   required: ['verdict', 'critique'],
 }
