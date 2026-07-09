@@ -10,7 +10,6 @@
  */
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useI18n, I18nProvider } from '../../hooks/useI18n'
-import { StopwatchIcon, ElapsedTime } from '../StopwatchIcon'
 import PromptInput from '../PromptInput'
 import { toast } from '../Toast'
 import { useAudioPlayback } from '../../hooks/useAudioPlayback'
@@ -33,10 +32,31 @@ import { clampInt } from '../../utils/clampInt'
 import { normalizeStoryCharacter, resolveCharacterGender } from '../../services/storyCharacter'
 import CharacterCards from './CharacterCards'
 import ResearchPanel from './ResearchPanel'
+import { StoryRunning, GenClock } from './StoryProgress'
+import {
+  STORY_LENGTH_MODE_UNIT,
+  storyLengthUnitsForLanguage,
+  coerceStoryLengthUnit,
+  normalizeStoryLengthValue,
+  convertStoryLengthValue,
+  hydrateStoryLengthSettings,
+  storyLengthOptionValues,
+  storyLengthOptionLabel,
+  storyLengthPlaceholder,
+  reasoningEffortFor,
+  REVIEW_TARGET_LABEL,
+  REVIEW_TARGET_ORDER,
+  defaultReviewRounds,
+  clampReviewRounds,
+  formatProgressLogTime,
+  computeCurrentStep,
+  stableJson,
+  interpolateFallback,
+  shortVoiceId,
+  genresForLanguage,
+  genreLabel,
+} from './storyViewUtils'
 import './StoryView.css'
-
-// M2a-3: audio가 파이프라인 1급 스텝 — script→scenes→audio→prompts 순서로 진행한다.
-const PROGRESSABLE_STEPS = ['script', 'scenes', 'audio', 'prompts']
 
 // 세그먼트 감정 라벨 — SCENES_SCHEMA emotion(normal/happy/sad/angry). TTS(Typecast 등)에도 쓰인다.
 const EMOTION_LABEL = { normal: '평범', happy: '기쁨', sad: '슬픔', angry: '화남' }
@@ -47,214 +67,6 @@ const SEG_STATUS_LABEL = { pending: '대기', running: '진행 중', done: '완�
 // M2b-5: SFX 소스 선택(세그먼트별). library는 아직 stub(생성 시 에러) — 인터페이스만 노출.
 const SFX_SOURCES = ['elevenlabs', 'library']
 const SFX_SOURCE_LABEL = { elevenlabs: 'ElevenLabs', library: 'Library' }
-const DEFAULT_STORY_LENGTH_MINUTES = 10
-const MAX_STORY_LENGTH_MINUTES = 60
-const KOREAN_CHARS_PER_MINUTE = 330
-const ENGLISH_WORDS_PER_MINUTE = 150
-const STORY_LENGTH_MODE_UNIT = 'unit'
-const STORY_LENGTH_UNITS = {
-  ko: [
-    { value: 'min', label: '분' },
-    { value: 'chars', label: '자수' },
-  ],
-  en: [
-    { value: 'min', label: 'min' },
-    { value: 'words', label: 'words' },
-    { value: 'chars', label: 'chars' },
-  ],
-}
-
-function storyLengthUnitsForLanguage(language) {
-  return language === 'en' ? STORY_LENGTH_UNITS.en : STORY_LENGTH_UNITS.ko
-}
-
-function storyLengthFactor(unit) {
-  if (unit === 'chars') return KOREAN_CHARS_PER_MINUTE
-  if (unit === 'words') return ENGLISH_WORDS_PER_MINUTE
-  return 1
-}
-
-function coerceStoryLengthUnit(unit, language) {
-  const allowed = storyLengthUnitsForLanguage(language).map((option) => option.value)
-  if (allowed.includes(unit)) return unit
-  if (unit === 'words') return 'chars'
-  return 'min'
-}
-
-function normalizeStoryLengthValue(value, unit = 'min') {
-  const raw = String(value ?? '').trim()
-  const factor = storyLengthFactor(unit)
-  const fallback = DEFAULT_STORY_LENGTH_MINUTES * factor
-  const max = MAX_STORY_LENGTH_MINUTES * factor
-  if (!raw) return String(fallback)
-  const n = Number(raw)
-  if (!Number.isFinite(n) || n <= 0) return String(fallback)
-  if (unit === 'min' && n < 1) return formatStoryLengthValue(Math.min(MAX_STORY_LENGTH_MINUTES, n))
-  const rounded = Math.round(n)
-  return String(Math.max(1, Math.min(max, rounded)))
-}
-
-function formatStoryLengthValue(value) {
-  if (Number.isInteger(value)) return String(value)
-  return value.toFixed(4).replace(/\.?0+$/, '')
-}
-
-function convertStoryLengthValue(value, fromUnit, toUnit) {
-  const normalized = Number(normalizeStoryLengthValue(value, fromUnit))
-  const minutes = Math.min(MAX_STORY_LENGTH_MINUTES, normalized / storyLengthFactor(fromUnit))
-  return normalizeStoryLengthValue(minutes * storyLengthFactor(toUnit), toUnit)
-}
-
-function hydrateStoryLengthSettings(options = {}, language = 'ko') {
-  const sourceUnit = ['min', 'chars', 'words'].includes(options?.lengthUnit) ? options.lengthUnit : 'min'
-  const displayUnit = coerceStoryLengthUnit(sourceUnit, language)
-  const isUnitMode = options?.lengthMode === STORY_LENGTH_MODE_UNIT
-  const raw = String(options?.lengthValue ?? '').trim()
-  const n = Number(raw)
-
-  if (!isUnitMode && (sourceUnit === 'chars' || sourceUnit === 'words')) {
-    if (Number.isFinite(n) && n >= 1 && n <= MAX_STORY_LENGTH_MINUTES) {
-      return {
-        lengthValue: convertStoryLengthValue(raw, 'min', displayUnit),
-        lengthUnit: displayUnit,
-      }
-    }
-  }
-
-  return {
-    lengthValue: sourceUnit === displayUnit
-      ? normalizeStoryLengthValue(raw, displayUnit)
-      : convertStoryLengthValue(raw, sourceUnit, displayUnit),
-    lengthUnit: displayUnit,
-  }
-}
-
-function storyLengthOptionValues(unit) {
-  const factor = storyLengthFactor(unit)
-  return Array.from({ length: MAX_STORY_LENGTH_MINUTES }, (_, i) => String((i + 1) * factor))
-}
-
-function storyLengthOptionLabel(value, unit, language) {
-  if (unit === 'min') return language === 'en' ? `${value} min` : `${value}분`
-  if (unit === 'words') return `${value} words`
-  return language === 'en' ? `${value} chars` : `${value}자`
-}
-
-function storyLengthPlaceholder(unit, language) {
-  if (unit === 'min') return language === 'en' ? 'min' : '분'
-  if (unit === 'words') return 'words'
-  return language === 'en' ? 'chars' : '자수'
-}
-
-function reasoningEffortFor(option, requestedReasoning = null) {
-  const allowed = option?.reasoningEfforts || []
-  if (!allowed.length) return ''
-  return allowed.includes(requestedReasoning)
-    ? requestedReasoning
-    : (option.defaultReasoningEffort || allowed[0] || '')
-}
-
-const REVIEW_TARGET_LABEL = { script: '시나리오', scenes: '씬', prompts: '프롬프트' }
-const REVIEW_TARGET_ORDER = ['script', 'scenes', 'prompts']
-
-function defaultReviewRounds(target, model) {
-  if (target === 'script') return String(model || '').startsWith('claude') ? 3 : 1
-  return 1
-}
-
-function clampReviewRounds(value) {
-  const n = Number(value)
-  if (!Number.isFinite(n)) return 1
-  return Math.max(1, Math.min(5, Math.floor(n)))
-}
-
-function formatProgressLogTime(value) {
-  if (!value) return ''
-  const d = new Date(value)
-  if (Number.isNaN(d.getTime())) return ''
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-}
-
-/** 스텝 진행 중 표시 — (선택) 옵션·기준 요약 + 초시계 + 라벨 + 경과 시간(updatedAt 기준, 1초 갱신). */
-function StoryRunning({ label, startedAt, detail, log = [] }) {
-  const logRef = useRef(null)
-  useEffect(() => {
-    const el = logRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [log.length])
-  return (
-    <div className="story-running" aria-live="polite">
-      {detail && <div className="story-running-detail">{detail}</div>}
-      <div className="story-running-main">
-        <StopwatchIcon size={18} />
-        <span className="story-running-label">{label}</span>
-        <span className="story-running-elapsed"><ElapsedTime startedAt={startedAt || null} /></span>
-      </div>
-      {log.length > 0 && (
-        <div className="story-progress-log" ref={logRef} role="log" aria-live="polite">
-          {log.map((entry, i) => (
-            <div key={entry.id || `${entry.phase || 'log'}-${i}`} className={`story-progress-log-row ${entry.level || 'info'}`}>
-              <span className="story-progress-log-time">{formatProgressLogTime(entry.at)}</span>
-              <span className="story-progress-log-message">{entry.message}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-/** 생성 중 인라인 시계 — 스트리밍(시놉시스/시나리오)처럼 텍스트만 뜨는 뷰 하단 우측에 붙여
- *  "돌고 있음 + 경과 시간"을 보인다(초시계 애니메이션 + 1초 갱신). reasoning=max 등 첫 출력이
- *  늦을 때 화면이 텅 비어 멈춘 것처럼 보이던 문제를 해소. */
-function GenClock({ startedAt, label }) {
-  return (
-    <div className="story-gen-clock" aria-live="polite">
-      <StopwatchIcon size={14} />
-      {label && <span className="story-gen-clock-label">{label}</span>}
-      <span className="story-running-elapsed"><ElapsedTime startedAt={startedAt || null} /></span>
-    </div>
-  )
-}
-
-function computeCurrentStep(steps) {
-  // 진행 중인 스텝을 우선(자동 진행이 자동=false 스텝을 건너뛰어 뒤 스텝이 먼저 running일 수 있다 —
-  // 그 경우에도 isRunning/디스플레이/중단 버튼이 실제 running 스텝을 가리키게).
-  for (const key of PROGRESSABLE_STEPS) {
-    if ((steps?.[key]?.status) === 'running') return key
-  }
-  for (const key of PROGRESSABLE_STEPS) {
-    if ((steps?.[key]?.status || 'pending') !== 'done') return key
-  }
-  return 'prompts'
-}
-
-function stableSnapshot(value) {
-  if (Array.isArray(value)) return value.map(stableSnapshot)
-  if (!value || typeof value !== 'object') return value
-  return Object.keys(value).sort().reduce((acc, key) => {
-    const next = stableSnapshot(value[key])
-    if (next !== undefined) acc[key] = next
-    return acc
-  }, {})
-}
-
-function stableJson(value) {
-  return JSON.stringify(stableSnapshot(value))
-}
-
-function interpolateFallback(value, params = {}) {
-  return String(value).replace(/\{(\w+)\}/g, (match, key) => (
-    params[key] !== undefined ? params[key] : match
-  ))
-}
-
-// 저장된 성우 id가 길면(ElevenLabs shared voice 해시 등) "미로드" 라벨에 그대로 붙이기엔
-// 너무 길어서 표시용으로만 줄인다.
-function shortVoiceId(id) {
-  if (!id) return id
-  return id.length > 12 ? `${id.slice(0, 10)}…` : id
-}
 
 // StoryView는 I18nProvider 없이도(단위 테스트) 렌더 가능해야 하는 프레젠테이션 컴포넌트다.
 // useI18n()은 provider가 없으면 throw하므로 감싸서 안전한 t()로 노출하고, 키가 없으면
@@ -297,23 +109,6 @@ function useSafeIsKo() {
   } catch {
     return true
   }
-}
-
-// 이야기 유형(genre) — 프로젝트 출력 언어별 노출 옵션. yadam은 한국 야담(ko 전용), dark-history
-// 가이드는 영어권(en 전용), bespoke는 언어별 공용(bespoke/<lang>). 값은 백엔드 프롬프트 키
-// (metaPrompts.W3_FILES)와 반드시 일치해야 하므로 고정 — 라벨만 i18n한다.
-const GENRE_BY_LANG = Object.freeze({
-  ko: ['yadam', 'bespoke'],
-  en: ['dark-history', 'bespoke'],
-})
-function genresForLanguage(language) {
-  return GENRE_BY_LANG[language] || GENRE_BY_LANG.en
-}
-// genre 값(하이픈 포함) → i18n 키 세그먼트 + 한국어 폴백(useSafeT 폴백 정책).
-const GENRE_I18N_KEY = Object.freeze({ yadam: 'yadam', 'dark-history': 'darkHistory', bespoke: 'bespoke' })
-const GENRE_FALLBACK = Object.freeze({ yadam: '야담', 'dark-history': '다크 히스토리', bespoke: '맞춤형' })
-function genreLabel(g, t) {
-  return t(`story.form.genre.${GENRE_I18N_KEY[g] || g}`, GENRE_FALLBACK[g] || g)
 }
 
 export default function StoryView({ pipeline, voices = [], onClose = null, onTagGender = null, onVoiceSearch = null }) {
