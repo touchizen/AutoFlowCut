@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect, vi } from 'vitest'
+import path from 'node:path'
 import { getTypecastKey } from '../../../../electron/api/tts/typecastKey.js'
 
 // 스펙: CLAUDE.md 보안 — 키 로드 우선순위 env → ~/.typecast/credentials → 명시적 에러(silent fallback 금지).
@@ -18,7 +19,7 @@ describe('getTypecastKey', () => {
     const readFile = vi.fn(() => 'file-key\n')
     const key = getTypecastKey({ env: {}, readFile, homedir })
     expect(key).toBe('file-key')
-    expect(readFile).toHaveBeenCalledWith('/home/u/.typecast/credentials', 'utf8')
+    expect(readFile).toHaveBeenCalledWith(path.join('/home/u', '.typecast', 'credentials'), 'utf8')
   })
 
   it('credentials가 KEY=VALUE(dotenv) 형식이면 값만 파싱한다', () => {

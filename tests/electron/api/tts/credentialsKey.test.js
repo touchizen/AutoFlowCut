@@ -4,6 +4,7 @@
  * 아니라 null 반환(keychain 우선 뒤 폴백이라 최종 판단은 어댑터가). CLAUDE.md 보안: 키 평문 소스 금지.
  */
 import { describe, it, expect } from 'vitest'
+import path from 'node:path'
 import { readCredentialsKey } from '../../../../electron/api/tts/credentialsKey.js'
 
 const opts = (over = {}) => ({ env: {}, readFile: () => { throw new Error('no file') }, homedir: () => '/home/u', ...over })
@@ -37,6 +38,6 @@ describe('readCredentialsKey', () => {
   it('service별 경로는 ~/.{service}/credentials', () => {
     let readPath = null
     readCredentialsKey('googletts', 'GOOGLE_TTS_API_KEY', opts({ readFile: (p) => { readPath = p; return 'k' } }))
-    expect(readPath).toBe('/home/u/.googletts/credentials')
+    expect(readPath).toBe(path.join('/home/u', '.googletts', 'credentials'))
   })
 })

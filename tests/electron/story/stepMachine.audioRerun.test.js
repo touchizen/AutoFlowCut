@@ -119,7 +119,7 @@ describe('audio 부분 실패 재시도 (IP5-a / §5)', () => {
       capabilities: () => ({ maxConcurrency: 2 }),
       synthesize: async ({ text }) => { synthCalls.push(text); return { audio: Buffer.from(text), format: 'wav' } },
     }
-    const probe = async (fp) => { const m = fp.match(/segments\/(.+)\.\w+$/); return durById[m?.[1]] ?? 7000 }
+    const probe = async (fp) => { const m = fp.match(/segments[\\/](.+)\.\w+$/); return durById[m?.[1]] ?? 7000 }
     machine = createStepMachine({ projectPath: dir, llm, tts, probe, emit: () => {}, getApiKey: () => 'k' })
     await machine.open()
     await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })

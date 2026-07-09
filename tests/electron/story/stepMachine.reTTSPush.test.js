@@ -36,7 +36,7 @@ describe('re-TTS push 정책 (IP5-b/c)', () => {
       writePrompts: vi.fn(async (scenes) => ({ scenes: scenes.map((s, i) => ({ ...s, imagePrompt: `img${i}`, videoPrompt: `vid${i}` })) })),
     }
     const tts = { capabilities: () => ({ maxConcurrency: 2 }), synthesize: async ({ text }) => ({ audio: Buffer.from(text), format: 'wav' }) }
-    const probe = async (fp) => { const m = fp.match(/segments\/(.+)\.\w+$/); return durById[m?.[1]] ?? 7000 }
+    const probe = async (fp) => { const m = fp.match(/segments[\\/](.+)\.\w+$/); return durById[m?.[1]] ?? 7000 }
     machine = createStepMachine({ projectPath: dir, llm, tts, probe, emit: (ch, p) => emitted.push({ ch, p }), getApiKey: () => 'k' })
     await machine.open()
     // 최초 정밀 실행: script→scenes→audio→prompts (prompts가 첫 push rev 소유)
