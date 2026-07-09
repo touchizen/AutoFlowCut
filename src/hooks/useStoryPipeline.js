@@ -342,13 +342,13 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
     setSynopsisGenerating(true)
     try {
       const r = await window.electronAPI.storyGenerateSynopsis({ projectToken: tokenRef.current, ...params })
-      // 사용자가 중단(⏹)한 경우 main이 {error:'aborted'}로 응답할 수 있다 — 에러가 아니라 취소이므로 조용히.
-      if (r?.error && !/abort/i.test(String(r.error))) setSynopsisError(r.error)
+      // 사용자가 중단(⏹)하면 main이 {aborted:true}로 resolve한다 — error 키가 없어 배너도 안 뜬다.
+      if (r?.error) setSynopsisError(r.error)
       return r
     } catch (e) {
+      // 진짜 취소는 resolve로 오므로, 여기 오는 rejection은 전부 실제 에러다. 메시지에 'abort'가
+      // 들었다고 삼키면 "Claude SDK failed: request aborted" 같은 실패가 조용히 묻힌다.
       const msg = String(e?.message || e)
-      // 중단(abort)은 사용자 의도적 취소 — 에러 배너로 띄우지 않는다.
-      if (/abort/i.test(msg)) return { aborted: true }
       setSynopsisError(msg)
       return { error: msg }
     } finally {
@@ -370,11 +370,13 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
     setSynopsisReviewing(true)
     try {
       const r = await window.electronAPI.storyReviewSynopsis({ projectToken: tokenRef.current, ...params })
-      if (isOwner() && r?.error && !/abort/i.test(String(r.error))) setSynopsisError(r.error)
+      if (isOwner() && r?.error) setSynopsisError(r.error)
       return r
     } catch (e) {
+      // 진짜 취소는 main이 {aborted:true}로 resolve한다 — 여기 오는 rejection은 전부 실제 에러다.
+      // 메시지에 'abort'가 들었다고 삼키면 "Claude SDK failed: request aborted" 같은 실패가
+      // 조용히 묻힌다.
       const msg = String(e?.message || e)
-      if (/abort/i.test(msg)) return { aborted: true }
       if (isOwner()) setSynopsisError(msg)
       return { error: msg }
     } finally {

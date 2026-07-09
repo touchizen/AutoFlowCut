@@ -47,11 +47,11 @@ describe('llmGemini.generateSynopsis (title)', () => {
   it('마커 없음/깨진 JSON은 throw 없이 characters=[] 폴백, synopsisMd는 유지', async () => {
     const noMarker = vi.fn(async () => sseResponse(['개요만 있다']))
     await expect(generateSynopsis({ type: 'title', title: 'T' }, OPTS, { fetchImpl: noMarker }))
-      .resolves.toEqual({ synopsisMd: '개요만 있다', characters: [] })
+      .resolves.toEqual({ synopsisMd: '개요만 있다', characters: [], charactersParsed: false })
 
     const broken = vi.fn(async () => sseResponse(['개요.\nCHARACTERS_JSON\n[{"name": broken']))
     await expect(generateSynopsis({ type: 'title', title: 'T' }, OPTS, { fetchImpl: broken }))
-      .resolves.toEqual({ synopsisMd: '개요.', characters: [] })
+      .resolves.toEqual({ synopsisMd: '개요.', characters: [], charactersParsed: false })
   })
 
   it('HTTP 에러는 throw한다', async () => {
@@ -78,6 +78,6 @@ describe('llmGemini.generateSynopsis (pasted)', () => {
   it('pasted 등장인물 JSON이 깨져도 throw하지 않고 시놉시스는 유지·characters=[] 폴백', async () => {
     const fetchImpl = vi.fn(async () => textResponse('개요.\nCHARACTERS_JSON\n[{"name": broken'))
     await expect(generateSynopsis({ type: 'pasted', pastedScript: 'S' }, OPTS, { fetchImpl }))
-      .resolves.toEqual({ synopsisMd: '개요.', characters: [] })
+      .resolves.toEqual({ synopsisMd: '개요.', characters: [], charactersParsed: false })
   })
 })

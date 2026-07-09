@@ -1241,12 +1241,19 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
           // 본문이 동일해도 characters만 바뀔 수 있다 — 텍스트 비교로 정의하지 않는다.
           changed = true
           synopsisMd = r.synopsisMd
-          characters = r.characters || []
+          // charactersParsed=false는 "캐스트를 읽지 못했다"(마커 누락/JSON 깨짐)이지 "캐스트가
+          // 없다"가 아니다. 그 []를 채택하면 기존 등장인물이 사라지고, 그대로 확정하면
+          // speakersFromCharacters([])가 roster를 narrator만 남긴다. 명시적 빈 배열(파싱 성공)은
+          // 정당한 결과이므로 그대로 반영한다.
+          if (r.charactersParsed !== false) characters = r.characters || []
         }
         return { synopsisMd, characters, changed }
       } catch (e) {
+        // 취소 판정은 컨트롤러 상태로 한다 — 메시지에 'abort'가 든 진짜 SDK 에러
+        // (예: "Claude SDK failed: request aborted")를 취소로 오인해 조용히 삼키면 안 된다.
+        if (myController.signal.aborted) return { aborted: true }
         const msg = String(e?.message || e)
-        if (!/abort/i.test(msg)) sendReviewProgress('synopsis', { phase: 'error', error: msg }, operationId)
+        sendReviewProgress('synopsis', { phase: 'error', error: msg }, operationId)
         throw e
       } finally {
         if (synopsisController === myController) synopsisController = null
@@ -1285,11 +1292,14 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         const input = type === 'pasted'
           ? { type: 'pasted', pastedScript: params.pastedScript } // B1: state.input은 script 분기가 이미 저장 — 덮어쓰지 않음
           : { type: 'title', title: params.title }
-        const { synopsisMd, characters } = await llm.generateSynopsis(input, opts, {
+        const { synopsisMd, characters, charactersParsed } = await llm.generateSynopsis(input, opts, {
           onDelta: (text) => send('story:synopsis-delta', { text }, operationId),
           signal: myController.signal,
         })
-        if (myController.signal.aborted) throw new Error('aborted')
+        if (myController.signal.aborted) return { aborted: true }
+        // charactersParsed=false → 캐스트를 읽지 못했다(마커 누락/JSON 깨짐). 재생성에서 그 []를
+        // 채택하면 사용자가 편집해둔 등장인물 카드와 speakers가 통째로 날아간다.
+        const castReadable = charactersParsed !== false
         // title·pasted 모두 뽑은 시놉시스를 durable 저장 — pasted도 대본에서 역추출한 시놉시스를
         // 리뷰용으로 보여준다(재오픈 hasSynopsis 복원). 게이트 후 script 전 종료에도 유실 방지(Codex #2).
         await store.saveText('synopsis.md', synopsisMd || '')
@@ -1298,7 +1308,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         }
         // characters는 state.speakers 단일 저장(m3 — characters.json 없음). 재오픈 hydrate가
         // 여기서 파생하고, 기존 voice 배정은 승계된다. step status는 안 건드림.
-        state.speakers = speakersFromCharacters(characters)
+        if (castReadable) state.speakers = speakersFromCharacters(characters)
         await flush()
         // 렌더러 state 미러 동기화 — generateSynopsis 는 state.input(type)·charactersConfirmed 를
         // 바꾸므로 story:state 를 보낸다. 없으면 재오픈 전 세션에서 설정 탭으로 돌아갔을 때
@@ -1309,7 +1319,15 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
           scriptText: (await store.loadText('script.md')) || '',
           ...(await hydrateExtras()),
         }, operationId)
-        return { synopsisMd, characters }
+        // 못 읽었으면 characters를 아예 빼고 돌려준다 — renderer의 Array.isArray 가드가
+        // 기존 카드를 그대로 두게 된다(runGenerateSynopsis).
+        return castReadable ? { synopsisMd, characters } : { synopsisMd }
+      } catch (e) {
+        // 취소 판정은 컨트롤러 상태로. 메시지에 'abort'가 든 진짜 SDK 실패
+        // ("Claude SDK failed: request aborted")를 취소로 오인해 삼키면 안 된다 —
+        // 취소는 resolve, 실패는 reject로 갈라서 renderer가 문자열 매칭에 기대지 않게 한다.
+        if (myController.signal.aborted) return { aborted: true }
+        throw e
       } finally {
         if (synopsisController === myController) synopsisController = null
       }

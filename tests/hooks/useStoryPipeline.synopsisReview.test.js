@@ -69,13 +69,23 @@ describe('useStoryPipeline.reviewSynopsis', () => {
     expect(result.current.synopsisError).toBe('boom')
   })
 
-  it('abort rejection은 {aborted:true}로 변환하고 synopsisError를 세우지 않는다', async () => {
-    window.electronAPI.storyReviewSynopsis = vi.fn(async () => { throw new Error('aborted') })
+  it('진짜 취소는 main이 {aborted:true}로 resolve한다 — synopsisError 없음', async () => {
+    window.electronAPI.storyReviewSynopsis = vi.fn(async () => ({ aborted: true }))
     const { result } = await openHook()
     let r
     await act(async () => { r = await result.current.reviewSynopsis({ synopsisMd: 'S' }) })
     expect(r).toEqual({ aborted: true })
     expect(result.current.synopsisError).toBeNull()
+  })
+
+  // rejection은 전부 실제 에러다. 메시지에 'abort'가 들었다고 삼키면 SDK 실패가 조용히 묻힌다.
+  it('메시지에 abort가 든 rejection도 에러로 노출한다', async () => {
+    window.electronAPI.storyReviewSynopsis = vi.fn(async () => { throw new Error('Claude SDK failed: request aborted') })
+    const { result } = await openHook()
+    let r
+    await act(async () => { r = await result.current.reviewSynopsis({ synopsisMd: 'S' }) })
+    expect(r).toEqual({ error: 'Claude SDK failed: request aborted' })
+    expect(result.current.synopsisError).toBe('Claude SDK failed: request aborted')
   })
 
   it('in-flight 중 재진입은 IPC 없이 {error:busy}를 돌려주고 synopsisReviewing을 유지한다', async () => {

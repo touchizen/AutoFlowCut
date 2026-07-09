@@ -8,31 +8,45 @@ import { normalizeStoryCharacter } from '../../../src/services/storyCharacter.js
 
 export const CHARACTERS_MARKER = 'CHARACTERS_JSON'
 
-// 텍스트에서 JSON 배열을 관대하게 추출·파싱해 storyCharacter로 정규화. 실패 시 [] (throw 금지).
-export function parseCharactersJson(text) {
+// 파싱 성공 여부까지 돌려준다. `[]`만으로는 "빈 캐스트"와 "읽기 실패"를 구분할 수 없는데,
+// 재작성·재생성 경로에선 그 차이가 기존 등장인물을 지키느냐 지우느냐를 가른다.
+function tryParseCharactersJson(text) {
   let t = String(text || '').trim()
   const fence = t.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/)
   if (fence) t = fence[1].trim()
   const s = t.indexOf('[')
   const e = t.lastIndexOf(']')
-  if (s < 0 || e <= s) return []
+  if (s < 0 || e <= s) return { ok: false, characters: [] }
   try {
     const arr = JSON.parse(t.slice(s, e + 1))
-    if (!Array.isArray(arr)) return []
-    return arr.map(normalizeStoryCharacter).filter((c) => c.name.trim())
+    if (!Array.isArray(arr)) return { ok: false, characters: [] }
+    const characters = arr.map(normalizeStoryCharacter).filter((c) => c.name.trim())
+    // 항목은 왔는데 하나도 못 살렸다 = 스키마 불일치(예: name 대신 fullName). 빈 캐스트가 아니라
+    // 읽기 실패다 — ok는 필터링 '뒤'에 판정해야 이 둘이 갈린다.
+    if (arr.length > 0 && characters.length === 0) return { ok: false, characters: [] }
+    return { ok: true, characters }
   } catch {
-    return []
+    return { ok: false, characters: [] }
   }
 }
 
-// 전체 텍스트를 마커 기준으로 { synopsisMd, characters }로 분리.
+// 텍스트에서 JSON 배열을 관대하게 추출·파싱해 storyCharacter로 정규화. 실패 시 [] (throw 금지).
+export function parseCharactersJson(text) {
+  return tryParseCharactersJson(text).characters
+}
+
+// 전체 텍스트를 마커 기준으로 { synopsisMd, characters, charactersParsed }로 분리.
+// charactersParsed=false → 마커가 없거나 JSON이 깨졌다(= 캐스트를 '읽지 못했다'). 호출측은
+// 이 경우 빈 배열을 권위 있는 값으로 취급하면 안 된다.
 export function splitSynopsisOutput(fullText) {
   const text = String(fullText || '')
   const idx = text.indexOf(CHARACTERS_MARKER)
-  if (idx < 0) return { synopsisMd: text, characters: [] }
+  if (idx < 0) return { synopsisMd: text, characters: [], charactersParsed: false }
+  const { ok, characters } = tryParseCharactersJson(text.slice(idx + CHARACTERS_MARKER.length))
   return {
     synopsisMd: text.slice(0, idx).trimEnd(),
-    characters: parseCharactersJson(text.slice(idx + CHARACTERS_MARKER.length)),
+    characters,
+    charactersParsed: ok,
   }
 }
 

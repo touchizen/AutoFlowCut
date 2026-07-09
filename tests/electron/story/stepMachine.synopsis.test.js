@@ -143,21 +143,28 @@ describe('machine.generateSynopsis (side action)', () => {
     expect(r.error).toBeUndefined()
   })
 
-  it('abort(): synopsis 전용 controller를 중단하고, 이후 재시작 가능', async () => {
+  // 취소는 {aborted:true}로 resolve한다(에러 아님). renderer가 메시지 문자열 매칭에 기대지
+  // 않게 하려는 것 — 'abort'가 든 진짜 SDK 실패를 취소로 오인해 삼키던 문제.
+  it('abort(): synopsis 전용 controller를 중단하고 {aborted:true}로 resolve, 이후 재시작 가능', async () => {
     let seenSignal
     llm.generateSynopsis.mockImplementationOnce((_i, _o, { signal }) => new Promise((_resolve, reject) => {
       seenSignal = signal
       signal.addEventListener('abort', () => reject(new Error('Aborted')))
     }))
     const p = machine.generateSynopsis({ type: 'title', title: 'T', options: {} })
-    const rejection = expect(p).rejects.toThrow('Aborted') // abort() 동기 reject 전에 핸들러 부착
     while (!seenSignal) { await new Promise((r) => setImmediate(r)) }
     await machine.abort()
     expect(seenSignal.aborted).toBe(true)
-    await rejection
+    await expect(p).resolves.toEqual({ aborted: true })
     // controller 정리 후 재호출 가능
     const r = await machine.generateSynopsis({ type: 'title', title: 'T2', options: {} })
     expect(r.synopsisMd).toBe('로그라인 이야기')
+  })
+
+  it('중단하지 않았는데 메시지에 abort가 든 SDK 실패는 취소로 오인하지 않고 rethrow한다', async () => {
+    llm.generateSynopsis.mockRejectedValueOnce(new Error('Claude SDK failed: request aborted'))
+    await expect(machine.generateSynopsis({ type: 'title', title: 'T', options: {} }))
+      .rejects.toThrow(/request aborted/)
   })
 })
 

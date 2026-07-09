@@ -40,7 +40,7 @@ describe('llmClaude.generateSynopsis (title)', () => {
   it('마커가 없으면 characters=[] 폴백하고 synopsisMd는 원문 유지', async () => {
     const queryImpl = fakeQuery(['개요만 있다'], '개요만 있다')
     const r = await generateSynopsis({ type: 'title', title: 'T' }, {}, { queryImpl })
-    expect(r).toEqual({ synopsisMd: '개요만 있다', characters: [] })
+    expect(r).toEqual({ synopsisMd: '개요만 있다', characters: [], charactersParsed: false })
   })
 
   it('마커 뒤 JSON이 깨져도 throw하지 않고 characters=[] 폴백, synopsisMd는 유지', async () => {

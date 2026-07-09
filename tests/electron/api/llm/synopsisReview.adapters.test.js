@@ -41,18 +41,39 @@ describe('llmClaude.reviewSynopsis', () => {
 })
 
 describe('llmClaude.reviseSynopsis', () => {
-  it('CHARACTERS_JSON 마커로 {synopsisMd, characters}를 분해한다', async () => {
+  it('CHARACTERS_JSON 마커로 {synopsisMd, characters}를 분해하고 charactersParsed=true', async () => {
     const queryImpl = claudeText('개선된 줄거리\nCHARACTERS_JSON\n[{"name":"강리안","gender":"male"}]')
     const r = await claudeReviseSynopsis('SYN', CHARS, 'critique', CLAUDE_OPTS, { queryImpl })
     expect(r.synopsisMd).toBe('개선된 줄거리')
     expect(r.characters).toHaveLength(1)
     expect(r.characters[0].name).toBe('강리안')
+    expect(r.charactersParsed).toBe(true)
   })
 
-  it('마커가 없으면 characters=[]로 폴백하고 본문은 유지한다', async () => {
+  it('마커가 없으면 charactersParsed=false로 알린다 (호출측이 캐스트를 지키게)', async () => {
     const queryImpl = claudeText('마커 없는 줄거리')
     await expect(claudeReviseSynopsis('SYN', CHARS, 'c', CLAUDE_OPTS, { queryImpl }))
-      .resolves.toEqual({ synopsisMd: '마커 없는 줄거리', characters: [] })
+      .resolves.toEqual({ synopsisMd: '마커 없는 줄거리', characters: [], charactersParsed: false })
+  })
+
+  it('마커는 있는데 JSON이 깨지면 charactersParsed=false', async () => {
+    const queryImpl = claudeText('줄거리\nCHARACTERS_JSON\n[{"name": 깨짐')
+    const r = await claudeReviseSynopsis('SYN', CHARS, 'c', CLAUDE_OPTS, { queryImpl })
+    expect(r.charactersParsed).toBe(false)
+  })
+
+  it('마커 + 명시적 빈 배열은 charactersParsed=true (정당한 0명)', async () => {
+    const queryImpl = claudeText('줄거리\nCHARACTERS_JSON\n[]')
+    const r = await claudeReviseSynopsis('SYN', CHARS, 'c', CLAUDE_OPTS, { queryImpl })
+    expect(r).toEqual({ synopsisMd: '줄거리', characters: [], charactersParsed: true })
+  })
+
+  // 파싱은 됐지만 스키마가 어긋나 항목이 전부 걸러지면 '빈 캐스트'가 아니라 '읽기 실패'다.
+  it('배열은 왔는데 항목을 하나도 못 살리면 charactersParsed=false', async () => {
+    const queryImpl = claudeText('줄거리\nCHARACTERS_JSON\n[{"fullName":"강리안"}]')
+    const r = await claudeReviseSynopsis('SYN', CHARS, 'c', CLAUDE_OPTS, { queryImpl })
+    expect(r.characters).toEqual([])
+    expect(r.charactersParsed).toBe(false)
   })
 
   it('abort된 signal이면 Aborted를 던진다', async () => {
@@ -84,11 +105,12 @@ describe('llmCodex.reviseSynopsis', () => {
     const r = await codexReviseSynopsis('SYN', CHARS, 'critique', CODEX_OPTS, { runText })
     expect(r.synopsisMd).toBe('개선본')
     expect(r.characters[0].name).toBe('보라')
+    expect(r.charactersParsed).toBe(true)
   })
 
-  it('마커가 없으면 characters=[]로 폴백한다', async () => {
+  it('마커가 없으면 charactersParsed=false', async () => {
     const runText = vi.fn(async () => '마커 없음')
     await expect(codexReviseSynopsis('SYN', CHARS, 'c', CODEX_OPTS, { runText }))
-      .resolves.toEqual({ synopsisMd: '마커 없음', characters: [] })
+      .resolves.toEqual({ synopsisMd: '마커 없음', characters: [], charactersParsed: false })
   })
 })
