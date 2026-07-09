@@ -149,4 +149,17 @@ describe('script 검토 루프 (M3)', () => {
     expect(phases).toContain('reviewing')
     expect(phases).toContain('revising')
   })
+
+  it('progress emit: revising에 critique를 싣고, pass 시 passed phase를 emit한다(검수 로그용)', async () => {
+    const reviewScript = vi.fn()
+      .mockResolvedValueOnce({ verdict: 'revise', critique: '주인공 동기가 약함' })
+      .mockResolvedValueOnce({ verdict: 'pass', critique: '' })
+    const { machine, emitted } = makeMachine(dir, { reviewScript })
+    await machine.open()
+    await run(machine, { reviewLoop: true, model: 'claude-opus-4-8' })
+    const evs = progressOf(emitted)
+    const revising = evs.find((e) => e.p.phase === 'revising')
+    expect(revising?.p.critique).toBe('주인공 동기가 약함') // 무엇을 지적했는지 로그로 흘린다
+    expect(evs.some((e) => e.p.phase === 'passed')).toBe(true) // 통과도 로깅되도록 emit
+  })
 })

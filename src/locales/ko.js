@@ -245,6 +245,8 @@ export default {
       stopped: '검토 중단',
       revising: '수정 중 {round}/{of}',
       reviewing: '검토 중 {round}/{of}',
+      logTitle: '검수 로그',
+      logWaiting: '검수 준비 중…',
     },
     action: {
       retry: '재실행',

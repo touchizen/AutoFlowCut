@@ -205,3 +205,38 @@ describe('StoryView 검토 진행 배지 (M3)', () => {
     expect(screen.queryByText(/검토 중|수정 중|검토 중단/)).toBeNull()
   })
 })
+
+describe('StoryView 검수 중 대본 유지 + 하단 로그창', () => {
+  const scriptReviewing = (over = {}) => {
+    const p = pipeline({
+      scriptText: '검토 대상 대본',
+      reviewProgress: { target: 'script', round: 1, of: 2, phase: 'revising', critique: '주인공 동기 약함' },
+      progressLog: [{
+        id: 'l1', step: 'script', operationId: 'op1',
+        message: '시나리오 검수 1/2: 수정 필요 — 주인공 동기 약함', level: 'warn', at: '2026-07-10T00:00:00.000Z',
+      }],
+      ...over,
+    })
+    p.state.steps.script.status = 'running'
+    return p
+  }
+
+  it('시나리오 검수(reviewOnly) 중에는 빈 스트림 대신 대본 편집기를 유지한다', () => {
+    const { container } = render(<StoryView pipeline={scriptReviewing()} />)
+    expect(screen.getByTestId('story-editor')).toBeInTheDocument()
+    // 검수는 델타 스트리밍이 없어 예전엔 빈 스트림이 대본을 가렸다 — 이제 스트림을 렌더하지 않는다.
+    expect(container.querySelector('.story-script-stream')).toBeNull()
+  })
+
+  it('검수 로그창에 무엇을 지적했는지(critique)를 대본 하단에 보여준다', () => {
+    render(<StoryView pipeline={scriptReviewing()} />)
+    expect(screen.getByText('검수 로그')).toBeInTheDocument()
+    expect(screen.getByText(/주인공 동기 약함/)).toBeInTheDocument()
+  })
+
+  it('로그가 아직 없어도 검수 중이면 로그창(준비 중)을 띄운다', () => {
+    render(<StoryView pipeline={scriptReviewing({ progressLog: [] })} />)
+    expect(screen.getByText('검수 로그')).toBeInTheDocument()
+    expect(screen.getByText('검수 준비 중…')).toBeInTheDocument()
+  })
+})

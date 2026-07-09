@@ -1020,6 +1020,29 @@
   color: var(--text-primary);
 }
 
+.story-progress-log-row.warn .story-progress-log-message {
+  color: var(--warning-color, #c8860a);
+}
+
+/* 검수 로그 — 대본 하단. 검수가 무엇을 지적/수정했는지(critique) 그대로 남긴다. */
+.story-review-log {
+  margin-top: 10px;
+  flex-shrink: 0;
+}
+
+.story-review-log-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.02em;
+  margin-bottom: 4px;
+}
+
+.story-review-log .story-progress-log {
+  max-height: 160px;
+  width: 100%;
+}
+
 /* ── 하단 컨트롤 (하단 고정) ── */
 .story-controls {
   display: flex;

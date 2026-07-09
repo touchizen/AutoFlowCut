@@ -245,6 +245,8 @@ export default {
       stopped: 'Review stopped',
       revising: 'Revising {round}/{of}',
       reviewing: 'Reviewing {round}/{of}',
+      logTitle: 'Review log',
+      logWaiting: 'Preparing review…',
     },
     action: {
       retry: 'Retry',

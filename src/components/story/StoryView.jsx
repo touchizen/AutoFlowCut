@@ -1167,6 +1167,12 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     </div>
   )
   const scenesProgressLog = progressLog.filter((entry) => !entry.step || entry.step === 'scenes')
+  // 시나리오(script) 검수 로그 — 가장 최근 실행분만 보여 이전 검수 로그와 섞이지 않게 한다.
+  const scriptLogAll = progressLog.filter((entry) => entry.step === 'script')
+  const lastScriptOp = scriptLogAll.length ? scriptLogAll[scriptLogAll.length - 1].operationId : null
+  const scriptReviewLog = lastScriptOp ? scriptLogAll.filter((entry) => entry.operationId === lastScriptOp) : scriptLogAll
+  // 검수(reviewOnly)는 델타 스트리밍이 없어 빈 스트림만 뜬다 → 검수 중엔 대본을 유지하고 하단 로그만 보여준다.
+  const scriptReviewing = scriptRunning && reviewProgress?.target === 'script'
   const activeLengthUnit = coerceStoryLengthUnit(lengthUnit, language)
   const lengthUnitOptions = storyLengthUnitsForLanguage(language)
   const lengthOptionValues = storyLengthOptionValues(activeLengthUnit)
@@ -1325,7 +1331,9 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
               // provider 가 없는 단위 테스트에서만 폴백으로 감싼다(중첩·중복 setLocale 방지).
               <div className="story-editor-phase" data-testid="story-editor">
                 {reviewBadge}
-                {scriptRunning ? (
+                {/* 검수(reviewOnly)는 스트리밍이 없어 빈 스트림만 뜬다 → 검수 중엔 대본 편집기를 그대로 두고
+                    하단 로그창만 보여준다. 스트림은 실제 생성(재생성/이어쓰기) 중일 때만. */}
+                {scriptRunning && !scriptReviewing ? (
                   <>
                     <div className="story-script-stream" aria-live="polite">
                       {baseScript ? baseScript + streamingText : streamingText}
@@ -1373,6 +1381,24 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                     </>
                   )}
                 </div>
+                {/* 검수 로그 — 검수가 무엇을 지적/수정했는지 대본 하단에 남긴다(대본은 그대로 유지). */}
+                {(scriptReviewing || scriptReviewLog.length > 0) && (
+                  <div className="story-review-log" role="log" aria-live="polite">
+                    <div className="story-review-log-title">{t('story.review.logTitle', '검수 로그')}</div>
+                    <div className="story-progress-log">
+                      {scriptReviewLog.length === 0 ? (
+                        <div className="story-progress-log-row info">
+                          <span className="story-progress-log-message">{t('story.review.logWaiting', '검수 준비 중…')}</span>
+                        </div>
+                      ) : scriptReviewLog.map((entry, i) => (
+                        <div key={entry.id || i} className={`story-progress-log-row ${entry.level || 'info'}`}>
+                          <span className="story-progress-log-time">{formatProgressLogTime(entry.at)}</span>
+                          <span className="story-progress-log-message">{entry.message}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             ) : scriptRunning ? (
               // 생성 중 스트리밍 preview (setup에서 시작 직후 등 editor 외 phase).

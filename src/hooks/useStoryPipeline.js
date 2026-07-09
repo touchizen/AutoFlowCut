@@ -216,17 +216,20 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
         } else if (p.kind === 'audio-segment' && p.segId) {
           setSegmentProgress((m) => ({ ...m, [p.segId]: p.status }))
         } else if (p.kind === 'script-review' || p.kind === 'review') {
-          setReviewProgress({ operationId: p.operationId, target: p.target || 'script', round: p.round, of: p.of, phase: p.phase, error: p.error })
+          setReviewProgress({ operationId: p.operationId, target: p.target || 'script', round: p.round, of: p.of, phase: p.phase, error: p.error, critique: p.critique })
           if (p.kind === 'review') {
             const targetLabel = p.target === 'scenes' ? '씬 검수' : p.target === 'prompts' ? '프롬프트 검수' : '시나리오 검수'
-            const phaseLabel = p.phase === 'revising' ? '수정 중' : p.phase === 'error' ? '검토 중단' : '검토 중'
+            const phaseLabel = p.phase === 'revising' ? '수정 필요' : p.phase === 'passed' ? '통과' : p.phase === 'error' ? '검토 중단' : '검토 중'
+            const roundLabel = p.round ? ` ${p.round}/${p.of}` : ''
+            // 검수가 무엇을 지적했는지(critique)를 그대로 로그에 남긴다 — "무엇을 했는지" 가시화.
+            const detail = p.error ? ` (${p.error})` : p.critique ? ` — ${p.critique}` : ''
             setProgressLog((logs) => [...logs, {
               id: `${p.operationId || 'op'}-${logs.length}`,
               operationId: p.operationId || null,
               step: p.target || 'script',
               phase: p.phase || null,
-              message: p.error ? `${targetLabel}: ${phaseLabel} (${p.error})` : `${targetLabel}: ${phaseLabel}${p.round ? ` ${p.round}/${p.of}` : ''}`,
-              level: p.phase === 'error' ? 'error' : 'info',
+              message: `${targetLabel}${roundLabel}: ${phaseLabel}${detail}`,
+              level: p.phase === 'error' ? 'error' : p.phase === 'revising' ? 'warn' : 'info',
               at: new Date().toISOString(),
             }].slice(-120))
           }

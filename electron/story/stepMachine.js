@@ -321,8 +321,11 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         sendReviewProgress('script', { round, of: rounds, phase: 'reviewing' }, opId)
         const { verdict, critique } = await llm.reviewScript(current, reviewOpts, { signal })
         if (signal?.aborted) return { scriptMd: current, changed }
-        if (verdict !== 'revise' || !critique?.trim()) break
-        sendReviewProgress('script', { round, of: rounds, phase: 'revising' }, opId)
+        if (verdict !== 'revise' || !critique?.trim()) {
+          sendReviewProgress('script', { round, of: rounds, phase: 'passed' }, opId)
+          break
+        }
+        sendReviewProgress('script', { round, of: rounds, phase: 'revising', critique: critique.trim() }, opId)
         const r = await llm.reviseScript(current, critique, reviewOpts, { signal })
         if (signal?.aborted) return { scriptMd: current, changed }
         if (!r?.scriptMd?.trim()) throw new Error('reviseScript returned empty script')
@@ -347,8 +350,11 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         sendReviewProgress('scenes', { round, of: rounds, phase: 'reviewing' }, opId)
         const { verdict, critique } = await llm.reviewScenes(scriptMd, currentScenes, currentSpeakers, reviewOpts, { signal })
         if (signal?.aborted) return { scenes: currentScenes, speakers: currentSpeakers, changed }
-        if (verdict !== 'revise' || !critique?.trim()) break
-        sendReviewProgress('scenes', { round, of: rounds, phase: 'revising' }, opId)
+        if (verdict !== 'revise' || !critique?.trim()) {
+          sendReviewProgress('scenes', { round, of: rounds, phase: 'passed' }, opId)
+          break
+        }
+        sendReviewProgress('scenes', { round, of: rounds, phase: 'revising', critique: critique.trim() }, opId)
         const r = await llm.reviseScenes(scriptMd, currentScenes, currentSpeakers, critique, reviewOpts, { signal })
         if (signal?.aborted) return { scenes: currentScenes, speakers: currentSpeakers, changed }
         const nextScenes = normalizeScenes(currentScenes, r?.scenes || [])
@@ -376,8 +382,11 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         sendReviewProgress('prompts', { round, of: rounds, phase: 'reviewing' }, opId)
         const { verdict, critique } = await llm.reviewPrompts(currentScenes, context, reviewOpts, { signal })
         if (signal?.aborted) return { scenes: currentScenes, changed }
-        if (verdict !== 'revise' || !critique?.trim()) break
-        sendReviewProgress('prompts', { round, of: rounds, phase: 'revising' }, opId)
+        if (verdict !== 'revise' || !critique?.trim()) {
+          sendReviewProgress('prompts', { round, of: rounds, phase: 'passed' }, opId)
+          break
+        }
+        sendReviewProgress('prompts', { round, of: rounds, phase: 'revising', critique: critique.trim() }, opId)
         const r = await llm.revisePrompts(currentScenes, context, critique, reviewOpts, { signal })
         if (signal?.aborted) return { scenes: currentScenes, changed }
         const nextScenes = r?.scenes || []
