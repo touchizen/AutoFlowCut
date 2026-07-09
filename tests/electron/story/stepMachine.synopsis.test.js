@@ -75,6 +75,20 @@ describe('machine.generateSynopsis (side action)', () => {
     expect(saved.steps.script.status).toBe('pending')
   })
 
+  // 회귀: 시놉시스 생성 후 렌더러 state 미러가 동기화돼야 한다. main 은 state.input(type)·
+  // charactersConfirmed 를 flush(디스크)만 하고 story:state 를 안 보내면, 재오픈 전 세션에서
+  // 설정 탭으로 돌아갔을 때 synopsisEnabled 판정(input.type∈{title,pasted} && charactersConfirmed≠undefined)이
+  // 실패해 시놉시스 탭이 비활성된다.
+  it('title: 끝나면 story:state 를 emit 해 state.input·charactersConfirmed 를 렌더러에 동기화한다', async () => {
+    emitted.length = 0
+    await machine.generateSynopsis({ type: 'title', title: 'T', options: { language: 'ko' } })
+    const states = emitted.filter((e) => e.ch === 'story:state')
+    expect(states.length).toBeGreaterThan(0)
+    const last = states[states.length - 1].payload
+    expect(last.state?.input).toMatchObject({ type: 'title', title: 'T' })
+    expect(last.charactersConfirmed).toBe(false)
+  })
+
   it('§v2.11: title 진입 시점에 charactersConfirmed=false가 durable 기록된다 (LLM 완료 전)', async () => {
     let resolveGen
     llm.generateSynopsis.mockImplementationOnce(() => new Promise((resolve) => { resolveGen = resolve }))

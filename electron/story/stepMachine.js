@@ -1248,6 +1248,15 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         // 여기서 파생하고, 기존 voice 배정은 승계된다. step status는 안 건드림.
         state.speakers = speakersFromCharacters(characters)
         await flush()
+        // 렌더러 state 미러 동기화 — generateSynopsis 는 state.input(type)·charactersConfirmed 를
+        // 바꾸므로 story:state 를 보낸다. 없으면 재오픈 전 세션에서 설정 탭으로 돌아갔을 때
+        // synopsisEnabled 판정이 stale(input.type=undefined)이라 시놉시스 탭이 비활성됐다.
+        send('story:state', {
+          state,
+          scenes: await loadScenesForPayload(),
+          scriptText: (await store.loadText('script.md')) || '',
+          ...(await hydrateExtras()),
+        }, operationId)
         return { synopsisMd, characters }
       } finally {
         if (synopsisController === myController) synopsisController = null
