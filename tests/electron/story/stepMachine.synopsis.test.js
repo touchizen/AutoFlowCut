@@ -179,6 +179,16 @@ describe('machine.confirmSynopsis (§v2.8 M1 + §v2.9 공통 커밋 채널)', ()
     ])
   })
 
+  // 회귀: 확정 후 story:state 를 emit 해 charactersConfirmed=true 를 렌더러에 동기화해야 한다.
+  // 안 그러면 렌더러가 계속 미확정으로 알아 시나리오 탭/화면 라우팅이 synopsis 로 되돌아간다("반응 없음").
+  it('확정 후 story:state 로 charactersConfirmed=true 를 동기화한다', async () => {
+    emitted.length = 0
+    await machine.confirmSynopsis({ synopsisMd: 's', characters: [{ name: '강리안', gender: 'male' }] })
+    const states = emitted.filter((e) => e.ch === 'story:state')
+    expect(states.length).toBeGreaterThan(0)
+    expect(states[states.length - 1].payload.charactersConfirmed).toBe(true)
+  })
+
   it('재확정: 같은 인물의 voice 배정을 보존하고, narrator voice도 유지한다', async () => {
     await mkdir(path.join(dir, 'story'), { recursive: true })
     await writeFile(path.join(dir, 'story', 'story.json'), JSON.stringify({

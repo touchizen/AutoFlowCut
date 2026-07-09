@@ -1277,6 +1277,14 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       if (typeof synopsisMd === 'string' && synopsisMd.trim()) await store.saveText('synopsis.md', synopsisMd)
       await flush()
       sendCharacters(operationId)
+      // 렌더러 state 미러 동기화 — charactersConfirmed=true 를 반영해야 미확정 게이트가 풀려 시나리오
+      // 탭/화면 라우팅이 editor 로 간다(안 그러면 확정 후에도 synopsis 로 되돌아가 "반응 없음").
+      send('story:state', {
+        state,
+        scenes: await loadScenesForPayload(),
+        scriptText: (await store.loadText('script.md')) || '',
+        ...(await hydrateExtras()),
+      }, operationId)
       return { ok: true, operationId }
     },
     // ---------- 리서치 side actions (spec §3.1/§3.8/§5) ----------

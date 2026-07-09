@@ -919,8 +919,10 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     const r = await pipeline.confirmSynopsis?.({ synopsisMd: synopsisDraft, characters: chars })
     if (r?.error) { toast.error(`${t('story.error.prefix', '오류')}: ${r.error}`); return }
     setBaseScript('')
-    await start('script', { input: { type: 'title', title }, options: currentOptions(), synopsis: synopsisDraft })
+    // 시나리오 화면(editor)으로 먼저 전환 — start('script')를 await 하면 생성이 끝날 때까지 화면이 안
+    // 바뀌어 "시나리오 화면이 안 나온다". 전환 후 생성이 스트리밍으로 editor 뷰에 들어온다(§v2.10: confirm→start 순서 유지).
     setScriptPhase('editor')
+    start('script', { input: { type: 'title', title }, options: currentOptions(), synopsis: synopsisDraft })
   }
 
   // 리서치 spec §3.6(M2/Q5 수동 주입): 시놉시스 게이트 "리서치 컨텍스트 포함" 토글 —
