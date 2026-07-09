@@ -29,11 +29,15 @@ export function useSplitLayout({ isFlow, shellRef }) {
   const [layoutMode, setLayoutMode] = useState(DEFAULT_SPLIT_MODE)
   const [splitRatio, setSplitRatio] = useState(DEFAULT_SPLIT_RATIO)
   const [isDragging, setIsDragging] = useState(false)
+  // 드래그 중 Flow 정지 스냅샷(A′) — electron 이 접기 직전 뜬 이미지. 렌더러가 Flow 자리에 그린다.
+  const [dragSnapshot, setDragSnapshot] = useState(null)
   // 드래그 여부를 안정적인 IPC 구독 콜백 안에서 읽기 위한 ref 미러.
   const isDraggingRef = useRef(false)
   useEffect(() => { isDraggingRef.current = isDragging }, [isDragging])
   // mousedown 시작 좌표 + 임계값 통과 여부 — dead zone 판정용.
   const dragStartRef = useRef(null)
+  // Flow 접기(A′) 세션 활성 여부 — 실제 드래그 시작~종료 사이 true. 종료/언마운트 시 복원 판정.
+  const flowDragRef = useRef(false)
 
   // 저장된 레이아웃 로드 + main 의 layout-changed 구독 (단일 소스 동기화)
   useEffect(() => {
@@ -88,6 +92,15 @@ export function useSplitLayout({ isFlow, shellRef }) {
         const dist = Math.abs((horizontal ? e.clientX : e.clientY) - (horizontal ? start.x : start.y))
         if (dist < DRAG_THRESHOLD_PX) return
         start.moved = true
+        // 실제 드래그 시작 — Flow 를 접어(네이티브 간섭 제거) 스냅샷으로 대체. 접히면 오버레이가
+        // 전 영역을 덮어 mousemove 가 안정적으로 들어온다 → 경계 추격 진동 제거.
+        if (isFlow && !flowDragRef.current) {
+          flowDragRef.current = true
+          // Promise.resolve 로 감싸 flowDragStart 미정의(구버전 preload/테스트)에도 안전.
+          Promise.resolve(window.electronAPI?.flowDragStart?.())
+            .then((res) => { if (flowDragRef.current && res?.snapshot) setDragSnapshot(res.snapshot) })
+            .catch(() => {})
+        }
       }
       const rect = el.getBoundingClientRect()
       const total = horizontal ? rect.width : rect.height
@@ -96,16 +109,24 @@ export function useSplitLayout({ isFlow, shellRef }) {
       setSplitRatio(next)
       window.electronAPI?.updateSplit?.({ ratio: next })
     }
-    const onUp = () => setIsDragging(false)
+    // 드래그 종료 — Flow 접기 해제(복원) + 스냅샷 제거.
+    const endFlowDrag = () => {
+      if (!flowDragRef.current) return
+      flowDragRef.current = false
+      setDragSnapshot(null)
+      window.electronAPI?.flowDragEnd?.()
+    }
+    const onUp = () => { setIsDragging(false); endFlowDrag() }
     document.addEventListener('mousemove', onMove)
     document.addEventListener('mouseup', onUp)
     return () => {
       document.removeEventListener('mousemove', onMove)
       document.removeEventListener('mouseup', onUp)
+      endFlowDrag()   // 언마운트·모드 전환 등 onUp 없이 끝나도 Flow 를 복원(접힌 채 남지 않게).
     }
-  }, [isDragging, layoutMode, shellRef])
+  }, [isDragging, layoutMode, shellRef, isFlow])
 
-  return { layoutMode, splitRatio, isDragging, handleMouseDown, handleDoubleClick }
+  return { layoutMode, splitRatio, isDragging, dragSnapshot, handleMouseDown, handleDoubleClick }
 }
 
 export default useSplitLayout

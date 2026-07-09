@@ -7,6 +7,11 @@ import { powerSaveBlocker, shell } from 'electron'
 let layoutMode = 'split-left'
 let splitRatio = 0.5
 let modalVisible = false
+// 드래그 중 Flow 뷰 접기(A′) — 네이티브 뷰가 마우스 이벤트를 가로채 리사이즈가 흔들리므로,
+// 드래그 동안 Flow 를 0×0 으로 접고 렌더러가 정지 스냅샷을 대신 그린다. dragToken 은 캡처(async)
+// 도중 drag-end 가 와서 Flow 가 접힌 채 남는 레이스를 막는다.
+let dragging = false
+let dragToken = 0
 let powerSaveBlockerId = null
 
 /**
@@ -17,7 +22,7 @@ let powerSaveBlockerId = null
 export function updateBounds(mainWindow, flowView) {
   if (!mainWindow || !flowView) return
 
-  if (modalVisible) {
+  if (modalVisible || dragging) {
     flowView.setBounds({ x: 0, y: 0, width: 0, height: 0 })
     return
   }
@@ -63,6 +68,30 @@ export function registerLayoutIPC(ipcMain, getMainWindow, getFlowView) {
     splitRatio = Math.max(0.2, Math.min(0.8, ratio))
     updateBounds(getMainWindow(), getFlowView())
     return { success: true, splitRatio }
+  })
+
+  // A′: 드래그 시작 — Flow 를 스냅샷으로 뜬 뒤 0×0 으로 접어 흔들림을 없앤다. 렌더러가 이 스냅샷을
+  //   DOM 으로 그려 드래그 중에도 Flow 가 그대로 있는 것처럼 보이게 한다. 접기 전에 캡처(0×0 캡처 방지).
+  ipcMain.handle('app:flow-drag-start', async () => {
+    const flowView = getFlowView()
+    const token = ++dragToken
+    let snapshot = null
+    if (flowView) {
+      try { snapshot = (await flowView.webContents.capturePage()).toDataURL() } catch { /* 캡처 실패 시 스냅샷 없이 접기만 */ }
+    }
+    // 캡처 도중 drag-end(또는 새 start)가 오면 token 이 바뀐다 → 접지 않는다(Flow 가 접힌 채 남는 것 방지).
+    if (token !== dragToken) return { snapshot }
+    dragging = true
+    updateBounds(getMainWindow(), getFlowView())
+    return { snapshot }
+  })
+
+  // A′: 드래그 종료 — 접기 해제 후 최종 비율로 Flow 복원. 진행 중인 start 의 지연 접기도 무효화(token++).
+  ipcMain.handle('app:flow-drag-end', () => {
+    dragToken++
+    dragging = false
+    updateBounds(getMainWindow(), getFlowView())
+    return { success: true }
   })
 
   ipcMain.handle('app:get-layout', () => {

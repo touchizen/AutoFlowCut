@@ -19,7 +19,7 @@ import { QuotaExhaustedModalProvider } from './components/QuotaExhaustedModal'
 import { ModeProvider, useMode } from './contexts/ModeContext'
 import ModeGate from './components/ModeGate'
 import App from './App'
-import { isHorizontalSplit, splitAppStyle, splitResizerStyle } from './utils/appLayout'
+import { isHorizontalSplit, splitAppStyle, splitFlowStyle, splitResizerStyle } from './utils/appLayout'
 import { useSplitLayout } from './hooks/useSplitLayout'
 
 function ShellContent() {
@@ -28,7 +28,7 @@ function ShellContent() {
 
   const shellRef = useRef(null)
   const {
-    layoutMode, splitRatio, isDragging, handleMouseDown, handleDoubleClick,
+    layoutMode, splitRatio, isDragging, dragSnapshot, handleMouseDown, handleDoubleClick,
   } = useSplitLayout({ isFlow, shellRef })
 
   // api 모드: split 없이 전체폭.
@@ -53,6 +53,24 @@ function ShellContent() {
       <div className="app-content-split" style={splitAppStyle(layoutMode, splitRatio)}>
         <App />
       </div>
+
+      {/* A′: 드래그 중 접힌 Flow 자리에 정지 스냅샷을 그려 "그대로 있는 것처럼" 보이게 한다.
+          object-fit:cover + left/top 고정 → 크기만 따라가고 콘텐츠는 왜곡 없이 클리핑. */}
+      {dragSnapshot && (
+        <img
+          className="split-flow-snapshot"
+          src={dragSnapshot}
+          alt=""
+          draggable={false}
+          style={{
+            ...splitFlowStyle(layoutMode, splitRatio),
+            objectFit: 'cover',
+            objectPosition: 'left top',
+            zIndex: 1,
+            pointerEvents: 'none',
+          }}
+        />
+      )}
 
       {/* 드래그 리사이저 (Flow/App 경계) */}
       <div

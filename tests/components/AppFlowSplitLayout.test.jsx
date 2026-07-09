@@ -16,7 +16,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, act } from '@testing-library/react'
 import { useEffect } from 'react'
-import { computeAppClass, flowLayoutForMode, isHorizontalSplit, clampSplitRatio, ratioFromDrag, splitAppStyle, splitResizerStyle } from '../../src/utils/appLayout'
+import { computeAppClass, flowLayoutForMode, isHorizontalSplit, clampSplitRatio, ratioFromDrag, splitAppStyle, splitFlowStyle, splitResizerStyle } from '../../src/utils/appLayout'
 
 /**
  * ModeEffectProbe: minimal component that calls the REAL flowLayoutForMode helper
@@ -107,6 +107,14 @@ describe('split layout pure helpers (Flow split resizer 복원)', () => {
   it('splitResizerStyle: split-left 경계 = flow%(=ratio), col-resize', () => {
     expect(splitResizerStyle('split-left', 0.4)).toMatchObject({ left: '40%', cursor: 'col-resize' })
     expect(splitResizerStyle('split-top', 0.4)).toMatchObject({ top: '40%', cursor: 'row-resize' })
+  })
+
+  it('splitFlowStyle: Flow 영역은 App 반대편 — split-left → 왼쪽(left:0, width=flow%)', () => {
+    expect(splitFlowStyle('split-left', 0.4)).toMatchObject({ position: 'absolute', left: 0, width: '40%', height: '100%' })
+    // split-right → Flow 오른쪽(left=app%)
+    expect(splitFlowStyle('split-right', 0.4)).toMatchObject({ left: '60%', width: '40%' })
+    // App 박스와 상보: splitAppStyle(left=flow%, width=app%) 의 반대
+    expect(splitFlowStyle('split-left', 0.4).width).toBe(splitAppStyle('split-left', 0.4).left)
   })
 })
 

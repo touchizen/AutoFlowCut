@@ -26,15 +26,19 @@ function makeShellRef() {
 
 describe('useSplitLayout — Flow 분할 리사이저 (jitter 회귀)', () => {
   let layoutChangedCb   // main 이 되쏘는 layout-changed 를 흉내내기 위해 캡처한 구독 콜백
-  let setLayout, updateSplit
+  let setLayout, updateSplit, flowDragStart, flowDragEnd
 
   beforeEach(() => {
     layoutChangedCb = null
     setLayout = vi.fn()
     updateSplit = vi.fn()
+    flowDragStart = vi.fn().mockResolvedValue({ snapshot: 'data:image/png;base64,SNAP' })
+    flowDragEnd = vi.fn().mockResolvedValue({ success: true })
     window.electronAPI = {
       setLayout,
       updateSplit,
+      flowDragStart,
+      flowDragEnd,
       onLayoutChanged: (cb) => { layoutChangedCb = cb; return () => {} },
     }
     localStorage.clear()
@@ -174,6 +178,60 @@ describe('useSplitLayout — Flow 분할 리사이저 (jitter 회귀)', () => {
       move(720)   // 경계 튐을 흉내낸 큰 이동
       expect(result.current.splitRatio).toBe(before)
       expect(updateSplit).not.toHaveBeenCalled()
+    })
+  })
+
+  // A′: 실제 드래그 시작 시 Flow 를 접고(electron) 정지 스냅샷을 렌더한다 — 네이티브 뷰 간섭 제거.
+  describe('A′ Flow 접기 + 스냅샷', () => {
+    const realDrag = (result, clientX = 700) =>
+      act(async () => { document.dispatchEvent(new MouseEvent('mousemove', { clientX })) })
+
+    it('임계값을 넘겨 실제 드래그가 시작되면 flowDragStart 를 부르고 스냅샷을 상태에 반영한다', async () => {
+      const shellRef = makeShellRef()
+      const { result } = renderHook(() => useSplitLayout({ isFlow: true, shellRef }))
+      startDrag(result, 500)
+      await realDrag(result, 700)
+      expect(flowDragStart).toHaveBeenCalledTimes(1)
+      expect(result.current.dragSnapshot).toBe('data:image/png;base64,SNAP')
+    })
+
+    it('임계값 미만 이동(클릭·미세 흔들림)에서는 flowDragStart 를 부르지 않는다', () => {
+      const shellRef = makeShellRef()
+      const { result } = renderHook(() => useSplitLayout({ isFlow: true, shellRef }))
+      startDrag(result, 500)
+      move(502)
+      expect(flowDragStart).not.toHaveBeenCalled()
+      expect(result.current.dragSnapshot).toBeNull()
+    })
+
+    it('드래그를 여러 번 움직여도 flowDragStart 는 한 번만(세션당 1회)', async () => {
+      const shellRef = makeShellRef()
+      const { result } = renderHook(() => useSplitLayout({ isFlow: true, shellRef }))
+      startDrag(result, 500)
+      await realDrag(result, 700)
+      await realDrag(result, 650)
+      await realDrag(result, 720)
+      expect(flowDragStart).toHaveBeenCalledTimes(1)
+    })
+
+    it('mouseup 시 flowDragEnd 로 Flow 복원 + 스냅샷 해제', async () => {
+      const shellRef = makeShellRef()
+      const { result } = renderHook(() => useSplitLayout({ isFlow: true, shellRef }))
+      startDrag(result, 500)
+      await realDrag(result, 700)
+      expect(result.current.dragSnapshot).toBe('data:image/png;base64,SNAP')
+      endDrag()
+      expect(flowDragEnd).toHaveBeenCalledTimes(1)
+      expect(result.current.dragSnapshot).toBeNull()
+    })
+
+    it('api 모드(isFlow=false)에서는 실제 드래그해도 Flow 접기를 하지 않는다', async () => {
+      const shellRef = makeShellRef()
+      const { result } = renderHook(() => useSplitLayout({ isFlow: false, shellRef }))
+      startDrag(result, 500)
+      await realDrag(result, 700)   // 실제 드래그(임계값 초과)
+      expect(flowDragStart).not.toHaveBeenCalled()
+      expect(result.current.dragSnapshot).toBeNull()
     })
   })
 })

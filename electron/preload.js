@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Layout
   setLayout: (params) => ipcRenderer.invoke('app:set-layout', params),
   updateSplit: (params) => ipcRenderer.invoke('app:update-split', params),
+  flowDragStart: () => ipcRenderer.invoke('app:flow-drag-start'),
+  flowDragEnd: () => ipcRenderer.invoke('app:flow-drag-end'),
   getLayout: () => ipcRenderer.invoke('app:get-layout'),
   onLayoutChanged: (callback) => {
     const handler = (_, data) => callback(data)

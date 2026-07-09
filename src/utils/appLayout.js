@@ -68,6 +68,19 @@ export function splitAppStyle(mode, ratio) {
   return { ...base, inset: 0 }  // split 아님 → 전체
 }
 
+/** Flow 콘텐츠 박스 스타일(absolute) — App 콘텐츠 박스의 반대편. 드래그 중 Flow 스냅샷 배치용(A′). */
+export function splitFlowStyle(mode, ratio) {
+  const r = clampSplitRatio(ratio)
+  const flowPct = `${r * 100}%`
+  const appPct = `${(1 - r) * 100}%`
+  const base = { position: 'absolute', overflow: 'hidden' }
+  if (mode === 'split-left') return { ...base, top: 0, left: 0, width: flowPct, height: '100%' }
+  if (mode === 'split-right') return { ...base, top: 0, left: appPct, width: flowPct, height: '100%' }
+  if (mode === 'split-top') return { ...base, top: 0, left: 0, width: '100%', height: flowPct }
+  if (mode === 'split-bottom') return { ...base, top: appPct, left: 0, width: '100%', height: flowPct }
+  return { ...base, inset: 0 }
+}
+
 /** 드래그 리사이저 스타일(absolute, Flow/App 경계). */
 export function splitResizerStyle(mode, ratio) {
   const r = clampSplitRatio(ratio)
