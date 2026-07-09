@@ -11,7 +11,7 @@
  * 콘텐츠 박스를 그 반대편에 배치하고(splitAppStyle) 리사이저로 setLayout/updateSplit 을 호출한다.
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useRef } from 'react'
 import { I18nProvider } from './hooks/useI18n'
 import { AuthProvider } from './contexts/AuthContext'
 import { ToastProvider } from './components/Toast'
@@ -19,70 +19,17 @@ import { QuotaExhaustedModalProvider } from './components/QuotaExhaustedModal'
 import { ModeProvider, useMode } from './contexts/ModeContext'
 import ModeGate from './components/ModeGate'
 import App from './App'
-import {
-  DEFAULT_SPLIT_MODE, DEFAULT_SPLIT_RATIO, isHorizontalSplit,
-  splitAppStyle, splitResizerStyle, ratioFromDrag,
-} from './utils/appLayout'
+import { isHorizontalSplit, splitAppStyle, splitResizerStyle } from './utils/appLayout'
+import { useSplitLayout } from './hooks/useSplitLayout'
 
 function ShellContent() {
   const { mode } = useMode()
   const isFlow = mode === 'flow'
 
-  const [layoutMode, setLayoutMode] = useState(DEFAULT_SPLIT_MODE)
-  const [splitRatio, setSplitRatio] = useState(DEFAULT_SPLIT_RATIO)
-  const [isDragging, setIsDragging] = useState(false)
   const shellRef = useRef(null)
-
-  // 저장된 레이아웃 로드 + main 의 layout-changed 구독 (단일 소스 동기화)
-  useEffect(() => {
-    const offLayoutChanged = window.electronAPI?.onLayoutChanged?.(({ mode: m, splitRatio: ratio }) => {
-      if (m) setLayoutMode(m)
-      if (typeof ratio === 'number') setSplitRatio(ratio)
-    })
-    try {
-      const saved = JSON.parse(localStorage.getItem('layoutSettings') || 'null')
-      if (saved?.mode && saved.mode !== 'tab') {
-        setLayoutMode(saved.mode)
-        setSplitRatio(saved.ratio || DEFAULT_SPLIT_RATIO)
-      }
-    } catch { /* ignore */ }
-    return () => { offLayoutChanged?.() }
-  }, [])
-
-  // 레이아웃 영속 + flow 모드에서 electron 으로 동기화(Flow 뷰 bounds 갱신)
-  useEffect(() => {
-    localStorage.setItem('layoutSettings', JSON.stringify({ mode: layoutMode, ratio: splitRatio }))
-    if (isFlow) window.electronAPI?.setLayout?.({ mode: layoutMode, ratio: splitRatio })
-  }, [layoutMode, splitRatio, isFlow])
-
-  // ── 드래그 리사이저 ──
-  const handleMouseDown = useCallback((e) => { e.preventDefault(); setIsDragging(true) }, [])
-  const handleDoubleClick = useCallback(() => {
-    setSplitRatio(DEFAULT_SPLIT_RATIO)
-    window.electronAPI?.updateSplit?.({ ratio: DEFAULT_SPLIT_RATIO })
-  }, [])
-
-  useEffect(() => {
-    if (!isDragging) return
-    const horizontal = isHorizontalSplit(layoutMode)
-    const onMove = (e) => {
-      const el = shellRef.current
-      if (!el) return
-      const rect = el.getBoundingClientRect()
-      const total = horizontal ? rect.width : rect.height
-      const pos = horizontal ? (e.clientX - rect.left) : (e.clientY - rect.top)
-      const next = ratioFromDrag(layoutMode, pos, total)
-      setSplitRatio(next)
-      window.electronAPI?.updateSplit?.({ ratio: next })
-    }
-    const onUp = () => setIsDragging(false)
-    document.addEventListener('mousemove', onMove)
-    document.addEventListener('mouseup', onUp)
-    return () => {
-      document.removeEventListener('mousemove', onMove)
-      document.removeEventListener('mouseup', onUp)
-    }
-  }, [isDragging, layoutMode])
+  const {
+    layoutMode, splitRatio, isDragging, handleMouseDown, handleDoubleClick,
+  } = useSplitLayout({ isFlow, shellRef })
 
   // api 모드: split 없이 전체폭.
   if (!isFlow) {
