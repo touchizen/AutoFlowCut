@@ -628,9 +628,16 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const renderReviewControl = (target, { manual = false, disabled = false, canReview = true } = {}) => {
     const label = t(`story.review.target.${target}`, REVIEW_TARGET_LABEL[target])
     const settings = reviewSettings[target]
+    // 풍선(tooltip) — 검수는 "무엇을 하는지". script는 채점(몰입감 점수)도 한다는 점을 명시한다.
+    const reviewHint = target === 'script'
+      ? t('story.review.runHintScript', '대본을 몰입도(궁금증·기대감·추진력·명료성·보상감) 기준으로 검토·수정하고, 몰입감 점수(0~100)를 매깁니다.')
+      : t('story.review.runHint', `${label}을(를) 검토하고 필요하면 지정 횟수만큼 수정합니다.`, { target: label })
+    const autoHint = target === 'script'
+      ? t('story.review.autoHintScript', '대본 생성 직후 자동으로 검토·수정하고 몰입감 점수를 매깁니다.')
+      : t('story.review.autoHint', `생성 직후 ${label}을(를) 자동으로 검토·수정합니다.`, { target: label })
     return (
       <div key={target} className="story-review-control">
-        <label className="story-review-toggle">
+        <label className="story-review-toggle" title={autoHint}>
           <input
             type="checkbox"
             aria-label={t('story.review.autoAria', `${label} 자동 검수`, { target: label })}
@@ -648,6 +655,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
           type="number"
           className="story-input story-review-rounds"
           aria-label={t('story.review.roundsAria', `${label} 검수 횟수`, { target: label })}
+          title={t('story.review.roundsHint', '검토·수정을 반복할 최대 횟수 (1~5)')}
           min="1"
           max="5"
           value={settings.rounds}
@@ -659,6 +667,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
             type="button"
             className="story-btn-secondary story-review-run"
             aria-label={t('story.review.runAria', `${label} 검수`, { target: label })}
+            title={reviewHint}
             onClick={() => handleManualReview(target)}
             disabled={disabled || !canReview}
           >
@@ -1300,6 +1309,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                   <button
                     type="button"
                     className="story-btn-primary"
+                    title={t('story.synopsis.confirmHint', '등장인물을 확정하고 이 시놉시스로 대본(시나리오) 생성을 시작합니다.')}
                     onClick={handleSynopsisConfirm}
                     disabled={synopsisGenerating || isRunning || synopsisTitleMissing || (synopsisMode !== 'pasted' && !synopsisDraft.trim())}
                   >
@@ -1361,7 +1371,13 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                   {/* 중단/3버튼 분기는 isRunning(currentStep) 기준 — script뿐 아니라 scenes/prompts가
                       도는 중에도 대본 탭에서 abort를 잃지 않도록(재리뷰3). stream 렌더 분기만 scriptRunning. */}
                   {isRunning ? (
-                    <button type="button" className="story-btn-secondary" onClick={handleAbort} disabled={aborting}>
+                    <button
+                      type="button"
+                      className="story-btn-secondary"
+                      title={t('story.action.abortHint', '진행 중인 생성/검수를 중단합니다.')}
+                      onClick={handleAbort}
+                      disabled={aborting}
+                    >
                       {aborting ? t('story.action.aborting', '⏹ 중단 중…') : t('story.action.abort', '⏹ 중단')}
                     </button>
                   ) : (
@@ -1370,6 +1386,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                       <button
                         type="button"
                         className="story-btn-secondary"
+                        title={t('story.action.rewriteHint', '현재 대본을 버리고 처음부터 새로 생성합니다.')}
                         onClick={handleRewrite}
                         disabled={!scriptText.trim()}
                       >
@@ -1378,6 +1395,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                       <button
                         type="button"
                         className="story-btn-secondary"
+                        title={t('story.action.continueHint', '현재 대본 끝에 이어서 더 생성합니다.')}
                         onClick={handleContinue}
                         disabled={!scriptText.trim()}
                       >
@@ -1386,6 +1404,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                       <button
                         type="button"
                         className="story-btn-primary"
+                        title={t('story.action.splitHint', '대본을 화자·장면 단위의 씬으로 분리합니다.')}
                         onClick={handleSplit}
                         disabled={!scriptText.trim() || unconfirmedGate}
                       >
@@ -1906,6 +1925,12 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
             <button
               type="button"
               className={`story-btn-primary ${isError ? 'story-btn-error' : ''}`}
+              title={isSetupActionView
+                ? t('story.action.setupStartHint', '제목만 입력했으면 시놉시스 생성을, 대본을 붙여넣었으면 그 대본으로 진행을 시작합니다.')
+                : redoStep === 'scenes' ? t('story.action.scenesRedoHint', '현재 대본으로 씬 분리를 다시 실행합니다.')
+                  : redoStep === 'prompts' ? t('story.action.promptsRedoHint', '각 씬의 이미지·비디오 프롬프트를 다시 생성합니다.')
+                    : redoStep === 'audio' ? t('story.action.audioRedoHint', '각 씬의 오디오(내레이션·효과음)를 다시 생성합니다.')
+                      : undefined}
               onClick={isSetupActionView ? handleSetupStart : redoStep ? handleStepRedo : handlePrimaryAction}
               // FIX-2: 미확정이면 하류(scenes/audio/prompts) 진행·재실행을 disable — script 액션
               // (시작/시나리오 생성)은 게이트 전 단계라 허용.

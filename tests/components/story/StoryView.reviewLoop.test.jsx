@@ -269,4 +269,12 @@ describe('StoryView 몰입감 점수 배지 (검수 채점)', () => {
     const { container } = render(<StoryView pipeline={p} />)
     expect(container.querySelector('.story-score-badge')).toBeNull()
   })
+
+  it('시나리오 검수 버튼 tooltip은 채점(몰입감 점수)도 한다고 설명한다', () => {
+    const p = pipeline({ scriptText: '대본' })
+    p.state.steps.script.status = 'done'
+    render(<StoryView pipeline={p} />)
+    const btn = screen.getByRole('button', { name: '시나리오 검수' })
+    expect(btn.title).toMatch(/몰입감 점수|채점/)
+  })
 })
