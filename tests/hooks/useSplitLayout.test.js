@@ -40,8 +40,8 @@ describe('useSplitLayout — Flow 분할 리사이저 (jitter 회귀)', () => {
     localStorage.clear()
   })
 
-  const startDrag = (result) =>
-    act(() => { result.current.handleMouseDown({ preventDefault: () => {} }) })
+  const startDrag = (result, clientX = 500) =>
+    act(() => { result.current.handleMouseDown({ preventDefault: () => {}, clientX, clientY: 0 }) })
   const move = (clientX) =>
     act(() => { document.dispatchEvent(new MouseEvent('mousemove', { clientX })) })
   const endDrag = () =>
@@ -115,5 +115,48 @@ describe('useSplitLayout — Flow 분할 리사이저 (jitter 회귀)', () => {
     move(250)   // 250/1000 = 0.25
     expect(updateSplit).toHaveBeenLastCalledWith({ ratio: 0.25 })
     expect(result.current.splitRatio).toBeCloseTo(0.25)
+  })
+
+  // 더블클릭 jitter 회귀: 더블클릭의 mousedown 들이 isDragging 을 켜고, 클릭 사이 미세한 커서
+  // 이동이 onMove 를 발동시켜 스플릿터가 커서 위치로 튄 뒤 dblclick 이 되돌려 좌우로 튀었다.
+  // 임계값(dead zone) 으로 미세 이동은 비율을 바꾸지 않게 한다.
+  describe('드래그 임계값(더블클릭·미세 흔들림 방지)', () => {
+    it('임계값(4px) 미만 이동은 비율을 바꾸지 않고 updateSplit 도 안 부른다', () => {
+      const shellRef = makeShellRef()
+      const { result } = renderHook(() => useSplitLayout({ isFlow: true, shellRef }))
+      const before = result.current.splitRatio
+      startDrag(result, 500)   // mousedown at x=500
+      move(502)                // +2px — 임계값 미만
+      move(499)                // -1px — 여전히 미만
+      expect(result.current.splitRatio).toBe(before)
+      expect(updateSplit).not.toHaveBeenCalled()
+    })
+
+    it('임계값을 넘으면 그 뒤로는 정상적으로 비율을 갱신한다', () => {
+      const shellRef = makeShellRef()
+      const { result } = renderHook(() => useSplitLayout({ isFlow: true, shellRef }))
+      startDrag(result, 500)
+      move(503)                // +3px — 미만, 무시
+      expect(updateSplit).not.toHaveBeenCalled()
+      move(700)                // +200px — 초과 → 갱신 시작
+      expect(result.current.splitRatio).toBeCloseTo(0.7)
+      expect(updateSplit).toHaveBeenLastCalledWith({ ratio: 0.7 })
+    })
+
+    it('더블클릭(미세 이동 포함)은 스플릿터를 커서로 튀게 하지 않는다', () => {
+      const shellRef = makeShellRef()
+      const { result } = renderHook(() => useSplitLayout({ isFlow: true, shellRef }))
+      const before = result.current.splitRatio
+      // 1차 클릭 + 미세 흔들림
+      startDrag(result, 500); move(501); endDrag()
+      // 2차 클릭 + 미세 흔들림
+      startDrag(result, 500); move(499); endDrag()
+      expect(result.current.splitRatio).toBe(before)   // 커서 위치로 안 튐
+      expect(updateSplit).not.toHaveBeenCalled()
+      // 그 뒤 더블클릭 리셋은 그대로 동작
+      act(() => { result.current.handleDoubleClick() })
+      expect(result.current.splitRatio).toBe(0.5)
+      expect(updateSplit).toHaveBeenLastCalledWith({ ratio: 0.5 })
+    })
   })
 })

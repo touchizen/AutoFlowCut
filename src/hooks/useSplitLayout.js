@@ -21,6 +21,9 @@ import {
 } from '../utils/appLayout'
 
 const STORAGE_KEY = 'layoutSettings'
+// 드래그 dead zone(px) — mousedown 지점에서 이만큼 넘게 움직이기 전엔 비율을 바꾸지 않는다.
+// 더블클릭·클릭 시 미세한 커서 흔들림이 onMove 를 발동시켜 스플릿터가 좌우로 튀는 것을 막는다.
+const DRAG_THRESHOLD_PX = 4
 
 export function useSplitLayout({ isFlow, shellRef }) {
   const [layoutMode, setLayoutMode] = useState(DEFAULT_SPLIT_MODE)
@@ -29,6 +32,8 @@ export function useSplitLayout({ isFlow, shellRef }) {
   // 드래그 여부를 안정적인 IPC 구독 콜백 안에서 읽기 위한 ref 미러.
   const isDraggingRef = useRef(false)
   useEffect(() => { isDraggingRef.current = isDragging }, [isDragging])
+  // mousedown 시작 좌표 + 임계값 통과 여부 — dead zone 판정용.
+  const dragStartRef = useRef(null)
 
   // 저장된 레이아웃 로드 + main 의 layout-changed 구독 (단일 소스 동기화)
   useEffect(() => {
@@ -56,7 +61,11 @@ export function useSplitLayout({ isFlow, shellRef }) {
   }, [layoutMode, splitRatio, isFlow, isDragging])
 
   // ── 드래그 리사이저 ──
-  const handleMouseDown = useCallback((e) => { e.preventDefault(); setIsDragging(true) }, [])
+  const handleMouseDown = useCallback((e) => {
+    e.preventDefault()
+    dragStartRef.current = { x: e.clientX, y: e.clientY, moved: false }
+    setIsDragging(true)
+  }, [])
   const handleDoubleClick = useCallback(() => {
     setSplitRatio(DEFAULT_SPLIT_RATIO)
     window.electronAPI?.updateSplit?.({ ratio: DEFAULT_SPLIT_RATIO })
@@ -68,6 +77,13 @@ export function useSplitLayout({ isFlow, shellRef }) {
     const onMove = (e) => {
       const el = shellRef.current
       if (!el) return
+      // dead zone: mousedown 지점에서 임계값 넘게 움직이기 전엔 무시(더블클릭·미세 흔들림 방지).
+      const start = dragStartRef.current
+      if (start && !start.moved) {
+        const dist = Math.abs((horizontal ? e.clientX : e.clientY) - (horizontal ? start.x : start.y))
+        if (dist < DRAG_THRESHOLD_PX) return
+        start.moved = true
+      }
       const rect = el.getBoundingClientRect()
       const total = horizontal ? rect.width : rect.height
       const pos = horizontal ? (e.clientX - rect.left) : (e.clientY - rect.top)
