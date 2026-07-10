@@ -4,11 +4,19 @@
  */
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { app } from 'electron'
+
+// dev(vite-plugin-electron)에서 app.getAppPath()는 프로젝트 루트가 아니라 electron 바이너리의
+// 번들 Resources 를 반환한다(실측 확인). 거기엔 skills 가 없다. main.js 가 쓰는 검증된 패턴대로
+// 모듈 위치(dist-electron/main.js 로 번들됨)의 부모에서 잡는다.
+export function devSkillsDir(moduleDir) {
+  return path.join(moduleDir, '..', 'skills')
+}
 
 export function resolveSkillsDir() {
   if (app?.isPackaged) return path.join(process.resourcesPath, 'skills')
-  return path.join(app?.getAppPath?.() ?? process.cwd(), 'skills')
+  return devSkillsDir(path.dirname(fileURLToPath(import.meta.url)))
 }
 
 // 장르 → 대본(W3) 파일 (리터럴 고정). bespoke는 language 서브폴더.
