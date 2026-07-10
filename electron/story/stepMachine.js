@@ -1653,7 +1653,15 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       if (!deferDownstreamReset) {
         for (const d of DOWNSTREAM[step]) state.steps[d] = { status: 'pending' }
       }
-      state.steps[step] = { status: 'running', updatedAt: new Date().toISOString() }
+      // reviewOnly 마커 — renderer가 "지금 도는 게 검수인지 생성인지"를 알아야 패널을 다르게
+      // 그린다(검수는 델타가 없어 스트림 뷰가 빈 상자가 된다). reviewProgress로 유추하면 첫
+      // progress 이벤트 전까지 한 프레임 어긋나므로 status와 같은 story:state에 함께 싣는다.
+      // done/error 마킹은 객체를 통째 교체하므로 마커가 남지 않는다.
+      state.steps[step] = {
+        status: 'running',
+        updatedAt: new Date().toISOString(),
+        ...(params.reviewOnly === true ? { reviewOnly: true } : {}),
+      }
       await flush(); send('story:state', { state }, operationId)
       let pushScenes = null
       // HIGH: abort()는 controller를 교체하지 않고(같은 controller에 abort 신호만 보냄) running

@@ -1209,7 +1209,24 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
       <span className="story-sec-unit">{t('story.form.sceneSecUnit', '초')}</span>
     </div>
   )
+  // 검수(reviewOnly) 실행인지 — main이 running 마킹과 같은 story:state에 실어 보낸다. 검수는
+  // 델타가 없어 생성용 스트림 뷰로 갈아끼우면 빈 상자가 된다(대본이 사라졌다 돌아오는 증상).
+  const isReviewRun = (step) => steps[step]?.status === 'running' && steps[step]?.reviewOnly === true
+  const scriptReviewRun = isReviewRun('script')
+  const scenesReviewRun = isReviewRun('scenes')
+  const promptsReviewRun = isReviewRun('prompts')
+
   const scenesProgressLog = progressLog.filter((entry) => !entry.step || entry.step === 'scenes')
+  const scriptProgressLog = progressLog.filter((entry) => entry.step === 'script')
+  const promptsProgressLog = progressLog.filter((entry) => entry.step === 'prompts')
+  // 검수 진행 표시 — 시놉시스 패널과 같은 모양(콘텐츠는 그대로 두고 하단에 시계+로그창).
+  const reviewRunning = (step, log) => (
+    <StoryRunning
+      label={t('story.review.running', '검수 중')}
+      startedAt={Date.parse(steps[step]?.updatedAt)}
+      log={log}
+    />
+  )
   // 검수 로그 행은 step:'synopsis'로 찍힌다 — scenes 로그로 새지 않는다.
   const synopsisProgressLog = progressLog.filter((entry) => entry.step === 'synopsis')
   const activeLengthUnit = coerceStoryLengthUnit(lengthUnit, language)
@@ -1221,6 +1238,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
       <PromptInput
         value={scriptText}
         onChange={setScriptText}
+        // 검수 중 편집은 재작성 결과에 덮어써진다 — 시놉시스 게이트와 같은 이유로 동결한다.
+        disabled={scriptReviewRun}
         references={[]}
         disableMentions
         showCharCount
@@ -1391,7 +1410,9 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
               // provider 가 없는 단위 테스트에서만 폴백으로 감싼다(중첩·중복 setLocale 방지).
               <div className="story-editor-phase" data-testid="story-editor">
                 {reviewBadge}
-                {scriptRunning ? (
+                {/* 검수는 델타가 없다 — 생성용 스트림 뷰로 갈아끼우면 빈 상자가 뜨고 대본이 사라진다.
+                    대본은 그대로 두고(동결) 하단에 로그창을 붙인다(시놉시스 패널 미러). */}
+                {scriptRunning && !scriptReviewRun ? (
                   <>
                     <div className="story-script-stream" aria-live="polite" ref={scriptEditorStream.ref} onScroll={scriptEditorStream.onScroll}>
                       {baseScript ? baseScript + streamingText : streamingText}
@@ -1400,7 +1421,10 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                     <GenClock startedAt={Date.parse(steps.script?.updatedAt)} label={t('story.gen.generating', '생성 중')} />
                   </>
                 ) : (
-                  hasI18n ? scriptEditor : <I18nProvider>{scriptEditor}</I18nProvider>
+                  <>
+                    {hasI18n ? scriptEditor : <I18nProvider>{scriptEditor}</I18nProvider>}
+                    {scriptReviewRun && reviewRunning('script', scriptProgressLog)}
+                  </>
                 )}
                 <div className="story-editor-controls">
                   {/* 중단/3버튼 분기는 isRunning(currentStep) 기준 — script뿐 아니라 scenes/prompts가
@@ -1621,7 +1645,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
         {displayStep === 'scenes' && (
           <div className="story-scenes-panel">
-            {steps.scenes?.status === 'running' ? (
+            {/* 검수는 씬 테이블을 그대로 두고 하단에 로그창만 붙인다. 생성은 현행 유지. */}
+            {steps.scenes?.status === 'running' && !scenesReviewRun ? (
               <>
                 {reviewBadge}
                 <StoryRunning
@@ -1671,6 +1696,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                 {scenes.length === 0 && (
                   <div className="story-empty-hint">{t('story.scenes.empty', '씬 분리 결과가 아직 없습니다.')}</div>
                 )}
+                {scenesReviewRun && reviewRunning('scenes', scenesProgressLog)}
               </>
             )}
           </div>
@@ -1879,7 +1905,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
         {displayStep === 'prompts' && (
           <div className="story-prompts-panel">
-            {steps.prompts?.status === 'running' ? (
+            {/* 검수는 프롬프트 표를 그대로 두고 하단에 로그창만 붙인다. 생성은 현행 유지. */}
+            {steps.prompts?.status === 'running' && !promptsReviewRun ? (
               <>
                 {reviewBadge}
                 <StoryRunning
@@ -1910,6 +1937,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                 {scenes.length === 0 && (
                   <div className="story-empty-hint">{t('story.prompts.empty', '프롬프트 결과가 아직 없습니다.')}</div>
                 )}
+                {promptsReviewRun && reviewRunning('prompts', promptsProgressLog)}
               </>
             )}
           </div>
