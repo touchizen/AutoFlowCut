@@ -18,8 +18,12 @@ const THINKING_PRE_ADAPTIVE = /^claude-haiku-4-5/
 
 function thinkingConfigFor(model, sdkEffort, resolvedModel) {
   const id = String(resolvedModel || model || '')
-  if (THINKING_PRE_ADAPTIVE.test(id)) return {}
+  // Haiku(pre-adaptive): adaptive/effort 는 미지원이지만 thinking:disabled 는 Agent SDK 에서 먹는다
+  // (직접 확인: 생략 → thinking 블록 + 8s / disabled → 텍스트 1.8s). 생략하면 SDK 가 thinking 을
+  // 켜서 시놉시스가 8~18초+ 무음이 된다 — 반드시 명시적으로 끈다. effort 는 싣지 않는다.
+  if (THINKING_PRE_ADAPTIVE.test(id)) return { thinking: { type: 'disabled' } }
   if (sdkEffort) return { thinking: { type: 'adaptive' }, effort: sdkEffort }
+  // Fable/Mythos: effort 없으면 thinking 을 끌 수 없어 생략(disabled 는 400, = 항상 켜짐).
   if (THINKING_ALWAYS_ON.test(id)) return {}
   return { thinking: { type: 'disabled' } }
 }

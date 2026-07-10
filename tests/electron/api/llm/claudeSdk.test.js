@@ -47,10 +47,13 @@ describe('buildClaudeSdkOptions', () => {
       expect(o).toMatchObject({ thinking: { type: 'adaptive' }, effort: 'high' })
     })
 
-    it('Haiku 4.5는 adaptive/effort/disabled 어느 것도 싣지 않는다 (4.6 이전 세대)', () => {
+    // Haiku 4.5는 adaptive/effort 미지원이지만 thinking:disabled 는 Agent SDK 에서 먹는다(직접 확인:
+    // 생략 → thinking 블록 8s / disabled → 텍스트 1.8s). thinking 을 생략하면 SDK 가 켜버려서
+    // 시놉시스가 8~18초+ 무음이 된다 — 그래서 명시적으로 끈다. effort 는 여전히 안 싣는다.
+    it('Haiku 4.5는 thinking을 명시적으로 끈다 (생략하면 SDK가 켬), effort는 안 싣는다', () => {
       for (const effort of ['off', 'high', undefined]) {
         const o = buildClaudeSdkOptions('claude-haiku-4-5', undefined, { reasoningEffort: effort })
-        expect(o).not.toHaveProperty('thinking')
+        expect(o).toMatchObject({ thinking: { type: 'disabled' } })
         expect(o).not.toHaveProperty('effort')
       }
     })
@@ -134,7 +137,7 @@ describe('readStructuredResult', () => {
 })
 
 // 카탈로그가 동적이 되면 model 은 정규 id 가 아니라 SDK 별칭('haiku', 'opus[1m]')으로 온다.
-// 정규식이 별칭을 못 잡으면 haiku 에 4.6+ 전용 thinking:disabled 를 보내 400 이 난다.
+// resolvedModel 로 세대를 판별해야 haiku 에도 thinking:disabled 를 정확히 붙인다.
 describe('buildClaudeSdkOptions — 동적 카탈로그 별칭', () => {
   it('xhigh effort 를 버리지 않는다', () => {
     const o = buildClaudeSdkOptions('opus[1m]', null, { reasoningEffort: 'xhigh' })
@@ -142,9 +145,9 @@ describe('buildClaudeSdkOptions — 동적 카탈로그 별칭', () => {
     expect(o.thinking).toEqual({ type: 'adaptive' })
   })
 
-  it("별칭 'haiku' 에는 thinking 을 아예 안 붙인다 (4.6 이전 세대)", () => {
+  it("별칭 'haiku' 도 thinking 을 명시적으로 끈다 (생략 시 SDK가 켜 무음 8~18초)", () => {
     const o = buildClaudeSdkOptions('haiku', null, { resolvedModel: 'claude-haiku-4-5-20251001' })
-    expect(o.thinking).toBeUndefined()
+    expect(o.thinking).toEqual({ type: 'disabled' })
     expect(o.effort).toBeUndefined()
   })
 
