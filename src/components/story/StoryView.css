@@ -1235,3 +1235,24 @@
 .story-video-meta-label { color: var(--text-secondary, var(--text-color)); font-size: 0.85rem; }
 .story-video-meta-value { font-weight: 600; font-size: 0.9rem; }
 @media (max-width: 520px) { .story-video-meta { grid-template-columns: 1fr; } }
+
+/* 검수 채점 배지 — 텍스트창 하단. 라운드가 여럿이면 첫→마지막 변화. */
+.story-review-score {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 4px 10px;
+  margin-top: 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-color);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.story-review-score-label { color: var(--text-secondary, #888); }
+.story-review-score-from { color: var(--text-secondary, #888); text-decoration: line-through; }
+.story-review-score-arrow { color: var(--text-secondary, #888); }
+.story-review-score-to { font-weight: 600; }
+.story-review-score-to.up { color: #22c55e; }
+.story-review-score-to.down { color: #ef4444; }

@@ -24,13 +24,13 @@ describe('llmClaude.reviewSynopsis', () => {
   it('pass/revise 외 verdict를 pass로 정규화한다', async () => {
     const queryImpl = claudeJson({ verdict: 'maybe', critique: 'c' })
     await expect(claudeReviewSynopsis('SYN', CHARS, CLAUDE_OPTS, { queryImpl }))
-      .resolves.toEqual({ verdict: 'pass', critique: 'c' })
+      .resolves.toEqual({ verdict: 'pass', critique: 'c', score: null })
   })
 
   it('present-but-empty critique는 ""로 정규화한다', async () => {
     const queryImpl = claudeJson({ verdict: 'revise', critique: '' })
     await expect(claudeReviewSynopsis('SYN', CHARS, CLAUDE_OPTS, { queryImpl }))
-      .resolves.toEqual({ verdict: 'revise', critique: '' })
+      .resolves.toEqual({ verdict: 'revise', critique: '', score: null })
   })
 
   it('critique 누락은 REVIEW_SCHEMA 위반 — assertSchema가 throw한다', async () => {
@@ -103,13 +103,13 @@ describe('llmCodex.reviewSynopsis', () => {
   it('pass/revise 외 verdict를 pass로 정규화한다', async () => {
     const runJson = vi.fn(async () => ({ verdict: 'maybe', critique: 'c' }))
     await expect(codexReviewSynopsis('SYN', CHARS, CODEX_OPTS, { runJson }))
-      .resolves.toEqual({ verdict: 'pass', critique: 'c' })
+      .resolves.toEqual({ verdict: 'pass', critique: 'c', score: null })
   })
 
   it('critique 누락은 throw하지 않고 ""로 정규화한다 (runJson 주입 — 로컬 스키마 검증 없음)', async () => {
     const runJson = vi.fn(async () => ({ verdict: 'pass' }))
     await expect(codexReviewSynopsis('SYN', CHARS, CODEX_OPTS, { runJson }))
-      .resolves.toEqual({ verdict: 'pass', critique: '' })
+      .resolves.toEqual({ verdict: 'pass', critique: '', score: null })
   })
 })
 

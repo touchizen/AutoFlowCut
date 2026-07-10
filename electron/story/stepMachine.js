@@ -319,8 +319,10 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     try {
       for (let round = 1; round <= rounds; round++) {
         sendReviewProgress('script', { round, of: rounds, phase: 'reviewing' }, opId)
-        const { verdict, critique } = await llm.reviewScript(current, reviewOpts, { signal })
+        const { verdict, critique, score } = await llm.reviewScript(current, reviewOpts, { signal })
         if (signal?.aborted) return { scriptMd: current, changed }
+        // 몰입감 점수는 verdict와 독립 — pass로 끝나는 라운드도 채점 결과를 흘린다.
+        if (score != null) sendReviewProgress('script', { round, of: rounds, phase: 'scored', score }, opId)
         if (verdict !== 'revise' || !critique?.trim()) break
         sendReviewProgress('script', { round, of: rounds, phase: 'revising' }, opId)
         const r = await llm.reviseScript(current, critique, reviewOpts, { signal })
@@ -1253,8 +1255,10 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         let changed = false
         for (let round = 1; round <= rounds; round++) {
           sendReviewProgress('synopsis', { round, of: rounds, phase: 'reviewing' }, operationId)
-          const { verdict, critique } = await llm.reviewSynopsis(synopsisMd, characters, reviewOpts, { signal: myController.signal })
+          const { verdict, critique, score } = await llm.reviewSynopsis(synopsisMd, characters, reviewOpts, { signal: myController.signal })
           if (myController.signal.aborted) throw new Error('aborted')
+          // 몰입감 점수는 verdict와 독립 — pass로 끝나는 라운드도 채점 결과를 흘린다.
+          if (score != null) sendReviewProgress('synopsis', { round, of: rounds, phase: 'scored', score }, operationId)
           if (verdict !== 'revise' || !critique?.trim()) break
           sendReviewProgress('synopsis', { round, of: rounds, phase: 'revising' }, operationId)
           const r = await llm.reviseSynopsis(synopsisMd, characters, critique, reviewOpts, { signal: myController.signal })

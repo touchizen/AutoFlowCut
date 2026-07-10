@@ -243,6 +243,9 @@ export function buildContinuePrompt(existingScript, opts = {}) {
 }
 
 // M3: 대본 자체검토 — 몰입도/궁금증/기대감 중심 루브릭, verdict(pass/revise)+critique 반환.
+// 검수 채점 — 몰입감 단일 지표. verdict/critique와 독립이라 pass여도 점수는 낸다.
+const SCORE_INSTRUCTION = `score에는 몰입감을 0~100 정수로 담아라 — 후킹·긴장 유지·감정이입을 냉정하게 평가한다(관대한 점수 금지). verdict와 무관하게 항상 채점한다.`
+
 export function buildReviewPrompt(scriptMd, opts = {}) {
   return [
     `당신은 유튜브 스토리 채널의 냉정한 대본 편집자다. 아래 대본을 몰입도 중심으로 검토하라:`,
@@ -254,6 +257,7 @@ export function buildReviewPrompt(scriptMd, opts = {}) {
     opts.genre ? `장르(약한 참고용): ${opts.genre}` : '',
     `심각하게 개선이 필요하면 verdict="revise"와 구체적이고 실행 가능한 critique(무엇을 어떻게 고칠지)를 내라.`,
     `충분히 좋으면 verdict="pass". 사소한 취향 차이나 경미한 문제로 revise를 남발하지 마라.`,
+    SCORE_INSTRUCTION,
     `--- 대본 ---`,
     scriptMd,
   ].filter(Boolean).join('\n')
@@ -285,6 +289,7 @@ export function buildSynopsisReviewPrompt(synopsisMd, characters = [], opts = {}
     opts.genre ? `장르(약한 참고용): ${opts.genre}` : '',
     `심각하게 개선이 필요하면 verdict="revise"와 구체적이고 실행 가능한 critique를 내라.`,
     `충분히 좋으면 verdict="pass". 사소한 취향 차이로 revise를 남발하지 마라.`,
+    SCORE_INSTRUCTION,
     `--- 시놉시스 ---`,
     synopsisMd,
     `--- 등장인물 ---`,

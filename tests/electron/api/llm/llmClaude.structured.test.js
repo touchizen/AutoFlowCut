@@ -140,7 +140,7 @@ describe('llmClaude.reviewScript (M3)', () => {
   it('structured verdict/critique를 반환', async () => {
     const queryImpl = R({ type: 'result', subtype: 'success', is_error: false, structured_output: { verdict: 'revise', critique: '도입이 약함' } })
     const out = await reviewScript('대본', {}, { queryImpl })
-    expect(out).toEqual({ verdict: 'revise', critique: '도입이 약함' })
+    expect(out).toEqual({ verdict: 'revise', critique: '도입이 약함', score: null })
   })
   it("verdict가 pass/revise 외 값이면 'pass'로 정규화", async () => {
     const queryImpl = R({ type: 'result', subtype: 'success', is_error: false, structured_output: { verdict: 'maybe', critique: '' } })

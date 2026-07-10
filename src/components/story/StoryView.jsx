@@ -170,6 +170,28 @@ function clampReviewRounds(value) {
   return Math.max(1, Math.min(5, Math.floor(n)))
 }
 
+// 검수 채점 배지 — 텍스트창 하단. 라운드가 여럿이고 점수가 달라졌으면 첫→마지막 변화를 보인다.
+function ReviewScore({ scores = [] }) {
+  if (!scores.length) return null
+  const first = scores[0]
+  const last = scores[scores.length - 1]
+  const moved = scores.length > 1 && first !== last
+  return (
+    <div className="story-review-score" data-testid="review-score" aria-live="polite">
+      <span className="story-review-score-label">몰입감</span>
+      {moved ? (
+        <>
+          <span className="story-review-score-from">{first}</span>
+          <span className="story-review-score-arrow" aria-hidden="true">→</span>
+          <span className={`story-review-score-to ${last > first ? 'up' : 'down'}`}>{last}</span>
+        </>
+      ) : (
+        <span className="story-review-score-to">{last}</span>
+      )}
+    </div>
+  )
+}
+
 function formatProgressLogTime(value) {
   if (!value) return ''
   const d = new Date(value)
@@ -323,7 +345,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const hasI18n = useHasI18n()
   const isKo = useSafeIsKo()
   const {
-    state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {}, reviewProgress = null, progressLog = [],
+    state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {}, reviewProgress = null, reviewScores = null, progressLog = [],
     // 슬라이스5(§v2.5): synopsis 게이트 상태 — useStoryPipeline(S4)이 공급.
     synopsisStreamingText = '', synopsisGenerating = false, synopsisError = null,
     // 시놉시스 검수(spec 2026-07-10) — generating과 분리(스트림 뷰 전환 방지).
@@ -1219,6 +1241,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const scenesProgressLog = progressLog.filter((entry) => !entry.step || entry.step === 'scenes')
   const scriptProgressLog = progressLog.filter((entry) => entry.step === 'script')
   const promptsProgressLog = progressLog.filter((entry) => entry.step === 'prompts')
+  // 해당 타겟의 검수 점수만 — 다른 스텝 점수가 새지 않게.
+  const scoresFor = (target) => (reviewScores?.target === target ? reviewScores.scores : [])
   // 검수 진행 표시 — 시놉시스 패널과 같은 모양(콘텐츠는 그대로 두고 하단에 시계+로그창).
   const reviewRunning = (step, log) => (
     <StoryRunning
@@ -1326,6 +1350,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                     placeholder={t('story.synopsis.placeholder', '시놉시스가 여기에 표시됩니다')}
                   />
                 )}
+                <ReviewScore scores={scoresFor('synopsis')} />
                 {/* 생성 중 시계+경과 — 첫 출력(특히 reasoning=max)이 늦어도 진행 중임을 보인다. */}
                 {synopsisGenerating && (
                   <GenClock startedAt={synopsisStartedAt} label={t('story.gen.generating', '생성 중')} />
@@ -1423,6 +1448,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                 ) : (
                   <>
                     {hasI18n ? scriptEditor : <I18nProvider>{scriptEditor}</I18nProvider>}
+                    <ReviewScore scores={scoresFor('script')} />
                     {scriptReviewRun && reviewRunning('script', scriptProgressLog)}
                   </>
                 )}

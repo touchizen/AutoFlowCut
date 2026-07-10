@@ -25,7 +25,7 @@ import {
 import { buildClaudeSdkOptions, extractClaudeSdkResult, bridgeAbortSignal, extractTextDelta, readStructuredResult } from './claudeSdk.js'
 import { splitSynopsisOutput, parseCharactersJson, createSynopsisDeltaGate } from './synopsisOutput.js'
 import { toJsonSchema } from './toJsonSchema.js'
-import { SCENES_SCHEMA, PROMPTS_SCHEMA, REVIEW_SCHEMA, RESEARCH_ANALYSIS_SCHEMA, FACTCHECK_SCHEMA, validateScenesSegments } from './schemas.js'
+import { SCENES_SCHEMA, PROMPTS_SCHEMA, REVIEW_SCHEMA, SCORED_REVIEW_SCHEMA, clampReviewScore, RESEARCH_ANALYSIS_SCHEMA, FACTCHECK_SCHEMA, validateScenesSegments } from './schemas.js'
 
 export const DEFAULT_MODEL = 'claude-opus-4-8'
 
@@ -221,9 +221,9 @@ export async function splitScenes(scriptMd, opts = {}, { signal, queryImpl } = {
 // M3: 대본 자체검토 — REVIEW_SCHEMA structured output. verdict는 pass/revise 외면 'pass'로 정규화.
 export async function reviewScript(scriptMd, opts = {}, { signal, queryImpl } = {}) {
   const prompt = buildReviewPrompt(scriptMd, opts)
-  const out = await structuredClaudeCall(prompt, REVIEW_SCHEMA, opts, { signal, queryImpl })
+  const out = await structuredClaudeCall(prompt, SCORED_REVIEW_SCHEMA, opts, { signal, queryImpl })
   const verdict = out.verdict === 'revise' ? 'revise' : 'pass'
-  return { verdict, critique: out.critique || '' }
+  return { verdict, critique: out.critique || '', score: clampReviewScore(out.score) }
 }
 
 // M3: critique 반영 재작성 — NON-streaming(완성본만). generateScript 스트리밍 경로와 분리.
@@ -246,9 +246,9 @@ export async function reviseScript(scriptMd, critique, opts = {}, { signal, quer
 // 시놉시스 검수(spec 2026-07-10) — reviewScript 미러. REVIEW_SCHEMA 구조화 호출.
 export async function reviewSynopsis(synopsisMd, characters = [], opts = {}, { signal, queryImpl } = {}) {
   const prompt = buildSynopsisReviewPrompt(synopsisMd, characters, opts)
-  const out = await structuredClaudeCall(prompt, REVIEW_SCHEMA, opts, { signal, queryImpl })
+  const out = await structuredClaudeCall(prompt, SCORED_REVIEW_SCHEMA, opts, { signal, queryImpl })
   const verdict = out.verdict === 'revise' ? 'revise' : 'pass'
-  return { verdict, critique: out.critique || '' }
+  return { verdict, critique: out.critique || '', score: clampReviewScore(out.score) }
 }
 
 // 시놉시스는 구조화 스키마가 없다 — CHARACTERS_JSON 마커 텍스트를 splitSynopsisOutput으로 분해한다.
