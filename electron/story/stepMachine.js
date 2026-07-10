@@ -687,7 +687,11 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   async function maybeResendPush(operationId) {
     if (!state) state = await store.load()
     if (state.steps.prompts.status === 'done' && state.pendingPushRevision > state.lastPushedRevision) {
-      const scenesJson = JSON.parse((await store.loadText('scenes.json')) || '{"scenes":[]}')
+      // 씬을 못 읽었으면 재발신을 미룬다. 빈 씬을 밀면 renderer가 그 revision을 ack해
+      // lastPushedRevision이 올라가고, 파일이 다시 읽혀도 진짜 씬은 영영 안 간다.
+      let raw
+      try { raw = await store.loadTextStrict('scenes.json') } catch { return }
+      const scenesJson = JSON.parse(raw || '{"scenes":[]}')
       sendPush(scenesJson.scenes, operationId)
     }
   }

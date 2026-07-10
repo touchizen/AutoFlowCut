@@ -132,5 +132,27 @@ describe('open(): step 상태 ↔ 산출물 정합성', () => {
       await makeMachine().open()
       expect(statusOf(await readState())).toEqual({ script: 'done', scenes: 'done', audio: 'done', prompts: 'done' })
     })
+
+    // 되돌리지 않기로 한 대가: prompts가 done으로 남아 maybeResendPush가 돈다. 씬을 못 읽었는데도
+    // 빈 배열로 재발신하면 renderer가 그 revision을 ack하고 lastPushedRevision이 올라가, 파일이
+    // 다시 읽히게 돼도 진짜 씬은 영영 안 간다. 못 읽었으면 발신 자체를 미뤄야 한다.
+    it('씬을 못 읽으면 pending push를 빈 씬으로 재발신하지 않는다', async () => {
+      await writeFile(path.join(storyDir, 'script.md'), '# 대본', 'utf-8')
+      await mkdir(path.join(storyDir, 'scenes.json'))
+      await writeState({
+        steps: { script: DONE(), scenes: DONE(), audio: DONE(), prompts: DONE() },
+        pendingPushRevision: 2,
+        lastPushedRevision: 1,
+      })
+      const emit = vi.fn()
+      await createStepMachine({
+        projectPath: dir,
+        llm: { generateScript: vi.fn(), splitScenes: vi.fn(), writePrompts: vi.fn(), generateSynopsis: vi.fn() },
+        emit,
+        getApiKey: () => 'k',
+      }).open()
+      const pushed = emit.mock.calls.filter(([ch]) => ch === 'story:pushScenes')
+      expect(pushed).toEqual([])
+    })
   })
 })
