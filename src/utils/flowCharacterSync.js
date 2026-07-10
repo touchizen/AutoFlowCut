@@ -59,6 +59,21 @@ export function selectUnsyncedRefs(references = []) {
 }
 
 /**
+ * 등록/동기화/이름변경 뒤 Flow SPA 를 새로고침해야 하는가.
+ *
+ * main 이 상세페이지 이름칸 타이핑으로 SPA 스토어를 갱신했으면(result.nameApplied) 프로젝트를
+ * 나갔다 재진입하는 refreshFlowComposer(loadURL 2회 + 1s 대기)가 필요 없다. 실패했을 때만 폴백한다.
+ * nameApplied 를 안 싣는 옛 응답은 refresh 필요로 본다 — 이름이 안 보이는 쪽이 헛수고보다 나쁘다.
+ * 캐릭터가 아닌 ref(scene 등)는 entity 이름 자체가 없으므로 해당 없음.
+ */
+export function needsComposerRefresh(ref, result) {
+  if (!result || result.success === false) return false
+  if (ref?.type !== 'character') return false
+  if (!result.entityId) return false
+  return result.nameApplied !== true
+}
+
+/**
  * ref 한 건을 Flow 에 동기화한다.
  * @returns {Promise<{ ok: boolean, patch?: object, result?: object, error?: string }>}
  */

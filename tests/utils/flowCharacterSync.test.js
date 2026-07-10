@@ -7,7 +7,7 @@ vi.mock('../../src/hooks/useFileSystem', () => ({
   fileSystemAPI: { readFileByPath: vi.fn().mockResolvedValue({ success: true, data: 'data:image/png;base64,FROMFILE' }) },
 }))
 
-import { isRefSynced, selectUnsyncedRefs, selectUnsyncedMentionedRefs, syncRefToFlow } from '../../src/utils/flowCharacterSync'
+import { isRefSynced, selectUnsyncedRefs, selectUnsyncedMentionedRefs, syncRefToFlow, needsComposerRefresh } from '../../src/utils/flowCharacterSync'
 
 describe('#R34: isRefSynced', () => {
   it('character → entityId + synced', () => {
@@ -93,5 +93,36 @@ describe('#R34: syncRefToFlow', () => {
   it('이름 없으면 ok:false', async () => {
     const res = await syncRefToFlow({ id: 1, type: 'character', name: '', data: 'x' }, vi.fn())
     expect(res.ok).toBe(false)
+  })
+})
+
+// main 이 상세페이지 이름칸 타이핑으로 SPA 스토어를 갱신했으면(nameApplied) 프로젝트를 나갔다
+// 재진입하는 refreshFlowComposer(loadURL 2회 + 1s 대기)가 필요 없다. 실패했을 때만 폴백한다.
+describe('needsComposerRefresh', () => {
+  const CHAR = { type: 'character' }
+
+  it('이름이 SPA 에 반영됐으면 refresh 불필요', () => {
+    expect(needsComposerRefresh(CHAR, { success: true, entityId: 'e1', nameApplied: true })).toBe(false)
+  })
+
+  it('반영 실패면 refresh 필요', () => {
+    expect(needsComposerRefresh(CHAR, { success: true, entityId: 'e1', nameApplied: false })).toBe(true)
+  })
+
+  it('nameApplied 를 안 주는 옛 응답은 refresh 필요 (안전한 쪽)', () => {
+    expect(needsComposerRefresh(CHAR, { success: true, entityId: 'e1' })).toBe(true)
+  })
+
+  it('캐릭터가 아니면 이름 자체가 없다 — refresh 불필요', () => {
+    expect(needsComposerRefresh({ type: 'scene' }, { success: true, mediaId: 'm' })).toBe(false)
+  })
+
+  it('entity 가 안 생겼으면 refresh 해봐야 소용없다', () => {
+    expect(needsComposerRefresh(CHAR, { success: true, nameApplied: false })).toBe(false)
+  })
+
+  it('실패한 결과는 refresh 하지 않는다', () => {
+    expect(needsComposerRefresh(CHAR, { success: false })).toBe(false)
+    expect(needsComposerRefresh(CHAR, null)).toBe(false)
   })
 })

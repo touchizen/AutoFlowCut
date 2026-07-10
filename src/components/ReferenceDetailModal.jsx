@@ -8,7 +8,7 @@ import { resolveImageSrc, hasImageData } from '../utils/formatters'
 import { useImageUpload } from '../hooks/useImageUpload'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { applyEntityRegistrationPatch } from '../utils/refEntityRegistration'
-import { syncRefToFlow } from '../utils/flowCharacterSync'
+import { syncRefToFlow, needsComposerRefresh } from '../utils/flowCharacterSync'
 import PromptInput from './PromptInput'
 import { toast } from './Toast'
 import Modal from './Modal'
@@ -40,11 +40,14 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
       filePath: reference.filePath,
       mediaId: reference.mediaId,
       caption: reference.caption,
+      // 생성이 카드에 찍는 스타일 기억. 모달이 열린 채 배치가 돌면 prev 에는 없어서, 저장/재생성이
+      //   editData 로 ref 를 통째로 교체할 때 기억이 지워진다(그럼 재생성이 전역 스타일로 샌다).
+      styleId: reference.styleId,
     }))
     // 히스토리 재로드 트리거
     setShouldReloadHistory(n => n + 1)
   // #R14-7: caption 도 dep — caption-only prop 갱신이 저장 시 stale 로 덮이지 않게.
-  }, [reference.data, reference.filePath, reference.mediaId, reference.caption])
+  }, [reference.data, reference.filePath, reference.mediaId, reference.caption, reference.styleId])
 
   // #R6-17/#R8-9: entity 필드는 별도 effect 로 동기화. on-demand 등록(useAutomation)이 prop 의
   //   entityId/registered/flowNameSyncStatus 만 갱신해도 모달 저장 시 fresh 등록이 유지되게 하되,
@@ -264,7 +267,8 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
         try {
           const res = await window.electronAPI?.renameFlowCharacter?.({ entityId: renameSnapshot.entityId, displayName: renameSnapshot.name })
           if (res?.success) {
-            try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
+            // main 이 상세페이지 이름칸에 타이핑했으면(nameApplied) 재진입 왕복이 불필요하다.
+            if (!res.nameApplied) { try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {} }
             toast.success(isKo ? `Flow 이름 동기화: ${renameSnapshot.name}` : `Renamed in Flow: ${renameSnapshot.name}`)
           } else {
             markFailed()
@@ -360,8 +364,10 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
       }
       if (res.ok) {
         onUpdate(idx, { ...refSnapshot, ...res.patch, syncing: false })
-        // 동기화 후 Flow SPA 새로고침(나갔다 재진입) — 새 entity 이름 반영(비차단).
-        try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
+        // 이름을 SPA 에 못 넣었을 때만 새로고침(나갔다 재진입)한다.
+        if (needsComposerRefresh(refSnapshot, res.result)) {
+          try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
+        }
         if (refSnapshot.type === 'character' && res.patch.flowNameSyncStatus !== 'synced') {
           toast.error(isKo ? `${refSnapshot.name}: 등록됐지만 이름 동기화 실패` : `${refSnapshot.name}: registered but name sync failed`)
         } else {

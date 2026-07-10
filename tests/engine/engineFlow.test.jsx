@@ -1401,3 +1401,76 @@ describe('useFlowEngine — #R36 T2V @멘션 segments', () => {
     expect(mockFlowGenerateVideoT2V).toHaveBeenCalledWith(expect.objectContaining({ segments: null }))
   })
 })
+
+// Ref 탭 캐릭터 카드는 Flow 의 /characters 컴포저에서 바로 생성한다. 메인 컴포저("모든 미디어")로
+// 만들면 그냥 미디어일 뿐이라, entity 로 만들려면 그 이미지를 /characters 에 다시 업로드해야 한다
+// (= '동기화' 버튼). flowGenerateCharacter 는 생성과 동시에 entityId 를 돌려줘 그 왕복을 없앤다.
+describe('useFlowEngine — 캐릭터 ref 는 /characters 에서 생성한다', () => {
+  const charOpts = { purpose: 'reference', ref: { id: 7, name: '준호', type: 'character' }, aspectRatio: '16:9', seed: 42, model: 'Nano Banana 2' }
+  const charResult = {
+    success: true,
+    images: [{ base64: 'data:img', mediaId: 'm-char' }],
+    entityId: 'e-1', workflowId: 'w-1', mediaId: 'm-char', registered: true,
+  }
+
+  it('generateImage: 캐릭터 ref 면 flowGenerateCharacter 를 부른다', async () => {
+    mockFlowGenerateCharacter.mockResolvedValue(charResult)
+    const { result } = renderHook(() => useFlowEngine())
+    let res
+    await act(async () => { res = await result.current.generateImage('한국인, male, tall', [], charOpts) })
+
+    expect(mockFlowGenerateImage).not.toHaveBeenCalled()
+    expect(mockFlowGenerateCharacter).toHaveBeenCalledTimes(1)
+    const call = mockFlowGenerateCharacter.mock.calls[0][0]
+    expect(call.prompt).toBe('한국인, male, tall')
+    expect(call.displayName).toBe('준호')
+    expect(call.aspectRatio).toBe('16:9') // 미주입 시 Flow 기본값(9:16)으로 나간다
+    expect(call.seed).toBe(42)
+    expect(call.model).toBe('Nano Banana 2') // 선택된 이미지 모델은 캐릭터 경로도 따라야 한다
+    expect(res).toMatchObject({ success: true, entityId: 'e-1', workflowId: 'w-1', registered: true })
+  })
+
+  it('scene/style ref 는 그대로 메인 컴포저(flowGenerateImage)로 간다', async () => {
+    mockFlowGenerateImage.mockResolvedValue({ success: true, images: [{ base64: 'i', mediaId: 'm' }] })
+    const { result } = renderHook(() => useFlowEngine())
+    await act(async () => {
+      await result.current.generateImage('p', [], { purpose: 'reference', ref: { id: 1, name: 's', type: 'style' } })
+    })
+    expect(mockFlowGenerateCharacter).not.toHaveBeenCalled()
+    expect(mockFlowGenerateImage).toHaveBeenCalledTimes(1)
+  })
+
+  it('씬 생성(purpose 미지정)은 캐릭터 경로로 새지 않는다', async () => {
+    mockFlowGenerateImage.mockResolvedValue({ success: true, images: [{ base64: 'i', mediaId: 'm' }] })
+    const { result } = renderHook(() => useFlowEngine())
+    await act(async () => { await result.current.generateImage('p', [], {}) })
+    expect(mockFlowGenerateCharacter).not.toHaveBeenCalled()
+  })
+
+  // flowGenerateCharacter 는 동기 반환(생성 완료된 images)이다. 배치는 submit→collect 계약이라
+  // scene 동기 폴백과 같은 방식으로 로컬 맵에 담아 generationId 를 돌려준다.
+  it('submitGeneration: 캐릭터 ref 는 동기 생성 후 generationId 를 돌려주고 collect 로 회수된다', async () => {
+    mockFlowGenerateCharacter.mockResolvedValue(charResult)
+    const { result } = renderHook(() => useFlowEngine())
+    let sub
+    await act(async () => { sub = await result.current.submitGeneration('p', [], charOpts) })
+    expect(sub.success).toBe(true)
+    expect(sub.generationId).toBeTruthy()
+    expect(mockFlowGenerateImage).not.toHaveBeenCalled()
+
+    let col
+    await act(async () => { col = await result.current.collectGeneration(sub.generationId) })
+    expect(col).toMatchObject({ success: true, entityId: 'e-1', workflowId: 'w-1', registered: true })
+    expect(col.images[0].mediaId).toBe('m-char')
+    expect(mockFlowCollectGeneration).not.toHaveBeenCalled() // 로컬 맵에서 회수
+  })
+
+  it('생성이 실패하면 그대로 실패를 전파한다 (entity 없는 카드를 done 으로 만들지 않는다)', async () => {
+    mockFlowGenerateCharacter.mockResolvedValue({ success: false, error: 'generate HTTP 400' })
+    const { result } = renderHook(() => useFlowEngine())
+    let res
+    await act(async () => { res = await result.current.generateImage('p', [], charOpts) })
+    expect(res.success).toBe(false)
+    expect(res.error).toContain('400')
+  })
+})

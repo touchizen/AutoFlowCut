@@ -118,7 +118,7 @@ export function chipMatchesMentionName(chipText, name) {
 }
 
 /** generate-character IPC 의 최종 반환 객체 빌더(순수) — 렌더러 generateImageDOM 과 동일한 images 형태. */
-export function buildCharacterResult(parsed, base64Image, { displayName = null, registered = false } = {}) {
+export function buildCharacterResult(parsed, base64Image, { displayName = null, registered = false, nameApplied = false } = {}) {
   return {
     success: true,
     images: base64Image ? [{ base64: base64Image, mediaId: parsed.mediaId }] : [],
@@ -128,6 +128,8 @@ export function buildCharacterResult(parsed, base64Image, { displayName = null, 
     fifeUrl: parsed.fifeUrl,
     displayName,
     registered,
+    // SPA 스토어에 이름을 반영했는가. false 면 호출측이 refreshFlowComposer 로 폴백해야 한다.
+    nameApplied,
   }
 }
 

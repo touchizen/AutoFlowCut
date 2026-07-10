@@ -181,6 +181,25 @@ describe('ReferenceDetailModal — regenerate race guard', () => {
   })
 })
 
+describe('ReferenceDetailModal — styleId 기억 보존', () => {
+  it('모달이 열린 뒤 카드에 styleId 가 찍히면 editData 에 반영한다', () => {
+    // 모달은 저장/재생성 시 editData 로 ref 를 통째로 교체한다. 모달이 열린 채 배치가 돌아
+    // styleId 를 찍으면, 동기화되지 않은 editData 가 그 기억을 지워버린다 → 재생성이 전역
+    // 스타일로 샌다(카드별 스타일 기억이 무력화).
+    const onGenerate = vi.fn()
+    const reference = { id: 1, type: 'character', name: '히어로', prompt: 'hero prompt' }
+    const { rerender } = render(
+      <ReferenceDetailModal {...baseProps} reference={reference} onGenerate={onGenerate} />
+    )
+    // 배치가 카드에 스타일을 찍는다(부모 prop 갱신)
+    rerender(
+      <ReferenceDetailModal {...baseProps} reference={{ ...reference, styleId: 'ref:3' }} onGenerate={onGenerate} />
+    )
+    fireEvent.click(screen.getByRole('button', { name: /재생성/ }))
+    expect(onGenerate).toHaveBeenCalledWith(0, false, null, expect.objectContaining({ styleId: 'ref:3' }))
+  })
+})
+
 describe('ReferenceDetailModal — §3.8 close-on-regenerate', () => {
   it('재생성 클릭 시 onGenerate AND onClose 모두 호출됨 (onUpdate→onGenerate→onClose 순서)', () => {
     // §3.8: 모달은 재생성 dispatch 후 즉시 닫혀야 한다.

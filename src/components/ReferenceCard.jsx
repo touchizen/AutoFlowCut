@@ -7,6 +7,7 @@ import { REFERENCE_TYPES } from '../config/defaults'
 import { getRatioClass, resolveImageSrc, hasImageData } from '../utils/formatters'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { applyEntityRegistrationPatch } from '../utils/refEntityRegistration'
+import { needsComposerRefresh } from '../utils/flowCharacterSync'
 import HoverImageBalloon from './HoverImageBalloon'
 import LazyImage from './LazyImage'
 import { StopwatchIcon, ElapsedTime } from './StopwatchIcon'
@@ -93,9 +94,11 @@ export default function ReferenceCard({
       let uploadedMediaId = null
       let uploadedCaption = null
       let entityPatch = null
+      let uploadResult = null
       if (onUpload) {
         const cleanBase64 = base64.split(',')[1]
         const result = await onUpload(cleanBase64, { category: reference.category, name: effectiveName, type: reference.type, refId: reference.id })
+        uploadResult = result
         if (result.success) {
           uploadedMediaId = result.mediaId
           uploadedCaption = result.caption
@@ -175,9 +178,9 @@ export default function ReferenceCard({
         errorMessage: finalErrorMessage,
       })
 
-      // #R33: 캐릭터 entity 등록(entityId 수신) 직후 Flow SPA 새로고침 — 'Untitled Character' stale
-      //   캐시/멘션 피커 옛 이름 방지(비차단).
-      if (entityPatch?.entityId) { try { window.electronAPI?.refreshFlowComposer?.() } catch (_e) {} }
+      // #R33: 캐릭터 entity 등록 직후 'Untitled Character' stale 캐시/멘션 피커 옛 이름 방지(비차단).
+      //   main 이 상세페이지 이름칸에 타이핑했으면(nameApplied) 재진입 왕복이 불필요하다.
+      if (needsComposerRefresh(reference, uploadResult)) { try { window.electronAPI?.refreshFlowComposer?.() } catch (_e) {} }
      } catch (e) {
        console.warn('[ReferenceCard] upload processing failed:', e?.message || e)
      } finally {
