@@ -154,5 +154,23 @@ describe('open(): step 상태 ↔ 산출물 정합성', () => {
       const pushed = emit.mock.calls.filter(([ch]) => ch === 'story:pushScenes')
       expect(pushed).toEqual([])
     })
+
+    // open()의 heal이 없는 경로(getState). 산출물이 open 뒤에 사라져도 마찬가지로 빈 씬을 밀면
+    // 안 된다 — 없는 것과 못 읽은 것 모두, 실을 씬이 없으면 발신할 게 없는 것이다.
+    it('scenes.json이 아예 없어도 getState()가 빈 씬을 재발신하지 않는다', async () => {
+      await writeState({
+        steps: { script: DONE(), scenes: DONE(), audio: DONE(), prompts: DONE() },
+        pendingPushRevision: 2,
+        lastPushedRevision: 1,
+      })
+      const emit = vi.fn()
+      await createStepMachine({
+        projectPath: dir,
+        llm: { generateScript: vi.fn(), splitScenes: vi.fn(), writePrompts: vi.fn(), generateSynopsis: vi.fn() },
+        emit,
+        getApiKey: () => 'k',
+      }).getState()
+      expect(emit.mock.calls.filter(([ch]) => ch === 'story:pushScenes')).toEqual([])
+    })
   })
 })

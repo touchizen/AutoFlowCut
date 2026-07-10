@@ -687,12 +687,13 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   async function maybeResendPush(operationId) {
     if (!state) state = await store.load()
     if (state.steps.prompts.status === 'done' && state.pendingPushRevision > state.lastPushedRevision) {
-      // 씬을 못 읽었으면 재발신을 미룬다. 빈 씬을 밀면 renderer가 그 revision을 ack해
-      // lastPushedRevision이 올라가고, 파일이 다시 읽혀도 진짜 씬은 영영 안 간다.
+      // 씬을 못 읽었으면(없거나·읽기 실패) 재발신을 미룬다. 빈 씬을 밀면 renderer가 그 revision을
+      // ack해 lastPushedRevision이 올라가고, 산출물이 돌아와도 진짜 씬은 영영 안 간다. open()의
+      // heal은 done을 되돌려 이 경로를 막아 주지만 getState()에는 heal이 없다.
       let raw
       try { raw = await store.loadTextStrict('scenes.json') } catch { return }
-      const scenesJson = JSON.parse(raw || '{"scenes":[]}')
-      sendPush(scenesJson.scenes, operationId)
+      if (raw == null) return
+      sendPush(JSON.parse(raw).scenes, operationId)
     }
   }
 
