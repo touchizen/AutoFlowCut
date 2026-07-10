@@ -121,11 +121,14 @@ async function runCodexTurn(prompt, opts = {}, {
     // 아래 race 로 처리한다. 핸들러가 없으면 이른 reject 가 unhandled rejection 이 된다.
     turnDone.catch(() => {})
 
-    // 한 턴에 agentMessage 아이템이 여러 개일 수 있다. 아이템별로 모아 순서대로 잇는다.
-    // item/completed 가 오면 그 아이템의 확정 텍스트로 덮고, 안 오면 흘린 델타를 그대로 쓴다
-    // — 델타는 UI 에 흘렀는데 반환값이 비면 저장되는 대본/시놉시스가 통째로 빈다.
-    const messages = new Map()
-    const collected = () => [...messages.values()].join('')
+    // 한 턴에 agentMessage 아이템이 여러 개일 수 있다.
+    // 완료 알림(item/completed)이 하나라도 오면 그게 확정 텍스트이고 완료 순서가 곧 출력 순서다.
+    // 하나도 안 오면 흘린 델타를 이어 붙인다 — 델타는 UI 에 흘렀는데 반환값이 비면 저장되는
+    // 대본/시놉시스가 통째로 빈다.
+    // 두 출처를 섞지 않는다: 섞으면 id 가 어긋날 때 텍스트가 조용히 중복된다.
+    const completedTexts = new Map()
+    const deltaTexts = new Map()
+    const collected = () => [...(completedTexts.size ? completedTexts : deltaTexts).values()].join('')
 
     session = openAppServer({
       spawnImpl,
@@ -139,11 +142,11 @@ async function runCodexTurn(prompt, opts = {}, {
           if (method === 'item/agentMessage/delta') {
             if (!params?.delta) return
             const id = params.itemId ?? ''
-            messages.set(id, (messages.get(id) || '') + params.delta)
+            deltaTexts.set(id, (deltaTexts.get(id) || '') + params.delta)
             onDelta?.(params.delta)
           } else if (method === 'item/completed' && params?.item?.type === 'agentMessage') {
             const id = params.item.id ?? ''
-            messages.set(id, params.item.text || messages.get(id) || '')
+            completedTexts.set(id, params.item.text || deltaTexts.get(id) || '')
           } else if (method === 'turn/completed') {
             const turn = params?.turn
             if (turn?.status === 'failed') settle.reject(new Error(turn.error?.message || 'Codex turn failed'))

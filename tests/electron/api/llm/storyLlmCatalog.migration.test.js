@@ -121,3 +121,26 @@ describe('별칭 저장 → 정적 폴백 실행', () => {
     expect(() => normalizeStoryLlmOptions({ engine: 'claude', model: 'claude-nope-9' }, STATIC)).toThrow(/Unknown Story LLM option/)
   })
 })
+
+// 두 항목이 같은 정규 id 로 접힐 수 있다(opus 200k vs opus[1m]). 정규화 매칭이 먼저 걸리면
+// 컨텍스트 윈도가 다른 모델을 조용히 고른다 — 정확 일치를 항상 우선해야 한다.
+describe('정규화 충돌', () => {
+  const COLLIDING = [
+    { id: 'claude:opus', engine: 'claude', model: 'opus', resolvedModel: 'claude-opus-4-8', reasoningEfforts: [], defaultReasoningEffort: '' },
+    { id: 'claude:opus[1m]', engine: 'claude', model: 'opus[1m]', resolvedModel: 'claude-opus-4-8[1m]', reasoningEfforts: [], defaultReasoningEffort: '' },
+  ]
+
+  it('저장된 resolvedModel 과 정확히 일치하는 항목을 고른다', () => {
+    expect(findStoryLlmOption('claude', 'claude-opus-4-8[1m]', COLLIDING).id).toBe('claude:opus[1m]')
+    expect(findStoryLlmOption('claude', 'claude-opus-4-8', COLLIDING).id).toBe('claude:opus')
+  })
+
+  it('hydrate 도 1m 프로젝트를 200k 로 강등하지 않는다', () => {
+    const p = { engine: 'claude', model: 'opus[1m]', resolvedModel: 'claude-opus-4-8[1m]' }
+    expect(hydrateStoryLlmSelection(p, COLLIDING)).toBe('claude:opus[1m]')
+  })
+
+  it('정확 일치가 없을 때만 정규화로 떨어진다', () => {
+    expect(findStoryLlmOption('claude', 'claude-opus-4-8-20260101', COLLIDING).id).toBe('claude:opus')
+  })
+})

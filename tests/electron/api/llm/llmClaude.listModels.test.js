@@ -62,3 +62,28 @@ describe('listClaudeModels — 타임아웃 범위', () => {
     expect(await listClaudeModels({ queryImpl, timeoutMs: 20 })).toEqual([])
   })
 })
+
+// 타임아웃이 이길 때 q 는 아직 null 이라 finally 의 interrupt() 가 안 돈다. 그 뒤 queryImpl 이
+// 늦게 resolve 하면 Query(=CLI 서브프로세스)가 주인 없이 남는다.
+describe('listClaudeModels — 타임아웃 이후 늦게 온 Query', () => {
+  it('늦게 도착한 Query 도 interrupt 한다 (프로세스를 남기지 않는다)', async () => {
+    const interrupt = vi.fn()
+    let resolveQuery
+    const queryImpl = () => new Promise((res) => { resolveQuery = res })
+    const p = listClaudeModels({ queryImpl, timeoutMs: 20 })
+    expect(await p).toEqual([])
+    resolveQuery({ supportedModels: async () => MODELS, interrupt })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(interrupt).toHaveBeenCalled()
+  })
+
+  it('늦게 도착해도 supportedModels 를 부르지 않는다', async () => {
+    const supportedModels = vi.fn(async () => MODELS)
+    let resolveQuery
+    const queryImpl = () => new Promise((res) => { resolveQuery = res })
+    await listClaudeModels({ queryImpl, timeoutMs: 20 })
+    resolveQuery({ supportedModels, interrupt: vi.fn() })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(supportedModels).not.toHaveBeenCalled()
+  })
+})

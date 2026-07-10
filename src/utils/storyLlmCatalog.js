@@ -109,14 +109,18 @@ function canonicalModelId(model) {
 }
 
 export function findStoryLlmOption(engine, model, catalog = STORY_LLM_OPTIONS) {
-  const exact = catalog.find((o) => o.engine === engine && o.model === model)
+  const ofEngine = catalog.filter((o) => o.engine === engine)
+  const exact = ofEngine.find((o) => o.model === model)
   if (exact) return exact
+  if (!model) return null
+  // 정확 일치를 먼저. 두 항목이 같은 정규 id 로 접힐 수 있어서(opus 200k vs opus[1m]) 정규화
+  // 매칭이 먼저 걸리면 컨텍스트 윈도가 다른 모델을 조용히 고른다.
+  const exactResolved = ofEngine.find((o) => o.resolvedModel === model)
+  if (exactResolved) return exactResolved
   const wanted = canonicalModelId(model)
   if (!wanted) return null
   // 항목의 정규 id 는 resolvedModel(동적) 또는 model(정적) 이다. 양쪽 다 태그를 떼고 비교한다.
-  return catalog.find(
-    (o) => o.engine === engine && canonicalModelId(o.resolvedModel || o.model) === wanted,
-  ) || null
+  return ofEngine.find((o) => canonicalModelId(o.resolvedModel || o.model) === wanted) || null
 }
 
 export function findStoryLlmOptionById(id, catalog = STORY_LLM_OPTIONS) {

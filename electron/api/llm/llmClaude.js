@@ -47,16 +47,21 @@ async function rawQuery(args) {
 export async function listClaudeModels({ queryImpl = rawQuery, timeoutMs = 15000 } = {}) {
   let q = null
   let timer = null
+  let abandoned = false
+  const interrupt = (query) => { try { query?.interrupt?.() } catch { /* 이미 끝난 쿼리 */ } }
   try {
     // 타임아웃은 조회 전체를 감싼다 — queryImpl()(SDK 로드 + CLI spawn) 단계에서 멈출 수도 있다.
     const timeout = new Promise((_, reject) => {
       timer = setTimeout(() => reject(new Error('listClaudeModels timeout')), timeoutMs)
     })
     const fetchModels = (async () => {
-      q = await queryImpl({
+      const query = await queryImpl({
         prompt: 'list models',
         options: { maxTurns: 1, tools: [], settingSources: [], skills: [] },
       })
+      // 타임아웃이 이미 이겼으면 여기서 정리한다 — finally 는 q 가 null 이라 못 잡는다.
+      if (abandoned) { interrupt(query); return [] }
+      q = query
       if (typeof q?.supportedModels !== 'function') return []
       return q.supportedModels()
     })()
@@ -66,8 +71,9 @@ export async function listClaudeModels({ queryImpl = rawQuery, timeoutMs = 15000
   } catch {
     return []
   } finally {
+    abandoned = true
     if (timer) clearTimeout(timer)
-    try { q?.interrupt?.() } catch { /* 이미 끝난 쿼리 */ }
+    interrupt(q)
   }
 }
 
