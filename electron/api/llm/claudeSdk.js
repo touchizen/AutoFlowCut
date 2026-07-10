@@ -2,7 +2,7 @@
  * Claude Agent SDK 순수 헬퍼 — query 결과/스트림/취소 처리. (AutoMovie vision.mjs 이식 + 확장)
  * SDK 자체는 llmClaude가 동적 import — 여기는 SDK에 의존하지 않는 순수 함수만 둔다(테스트 용이).
  */
-const CLAUDE_SDK_EFFORTS = new Set(['low', 'medium', 'high', 'max'])
+const CLAUDE_SDK_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max'])
 
 // thinking 파라미터의 유효한 모양은 모델 세대마다 다르고, "생략"의 의미도 다르다:
 //   Opus 4.8  — disabled 허용, 생략 시 thinking 없음
@@ -10,11 +10,14 @@ const CLAUDE_SDK_EFFORTS = new Set(['low', 'medium', 'high', 'max'])
 //   Fable 5   — thinking을 끌 수 없다. disabled는 거부되므로 생략한다(= 항상 켜짐)
 //   Haiku 4.5 — 4.6 이전 세대. adaptive/effort 미지원이고 disabled는 4.6+ 형태다. 전부 생략한다
 // 따라서 일괄 생략도, 일괄 disabled도 안 된다 — 못 끄는 모델만 골라 생략한다.
+//
+// 동적 카탈로그에서 model은 SDK 호출용 별칭('haiku', 'opus[1m]')으로 온다. 별칭엔 세대 정보가
+// 없으므로 판별은 resolvedModel(정규 id)로 한다 — 없으면 model 로 폴백(정적 카탈로그 경로).
 const THINKING_ALWAYS_ON = /^claude-(fable|mythos)-/
 const THINKING_PRE_ADAPTIVE = /^claude-haiku-4-5/
 
-function thinkingConfigFor(model, sdkEffort) {
-  const id = String(model || '')
+function thinkingConfigFor(model, sdkEffort, resolvedModel) {
+  const id = String(resolvedModel || model || '')
   if (THINKING_PRE_ADAPTIVE.test(id)) return {}
   if (sdkEffort) return { thinking: { type: 'adaptive' }, effort: sdkEffort }
   if (THINKING_ALWAYS_ON.test(id)) return {}
@@ -24,6 +27,7 @@ function thinkingConfigFor(model, sdkEffort) {
 export function buildClaudeSdkOptions(model, abortController, extra = {}) {
   const {
     reasoningEffort,
+    resolvedModel,
     thinking,
     effort,
     maxThinkingTokens,
@@ -35,7 +39,7 @@ export function buildClaudeSdkOptions(model, abortController, extra = {}) {
     ...(model ? { model } : {}),
     ...(abortController ? { abortController } : {}),
     maxTurns: 2,
-    ...thinkingConfigFor(model, sdkEffort),
+    ...thinkingConfigFor(model, sdkEffort, resolvedModel),
     tools: [],
     settingSources: [],
     skills: [], // 빈 배열 = 활성 skill 없음(오염 차단). string[]|'all' 중 [] 유효.

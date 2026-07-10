@@ -34,8 +34,39 @@ async function* defaultQuery(args) {
   yield* query(args)
 }
 
+// defaultQuery는 async generator라 Query 객체(=supportedModels 보유)를 잃는다. 조회는 직접 부른다.
+async function rawQuery(args) {
+  const { query } = await import('@anthropic-ai/claude-agent-sdk')
+  return query(args)
+}
+
+/**
+ * 설치된 Claude Agent SDK가 보고하는 모델 목록(ModelInfo[]).
+ * CLI 프로세스를 띄우므로 실패/지연이 설정 화면을 막으면 안 된다 — 던지지 않고 []로 떨어진다.
+ */
+export async function listClaudeModels({ queryImpl = rawQuery, timeoutMs = 15000 } = {}) {
+  let q = null
+  try {
+    q = await queryImpl({
+      prompt: 'list models',
+      options: { maxTurns: 1, tools: [], settingSources: [], skills: [] },
+    })
+    if (typeof q?.supportedModels !== 'function') return []
+    const models = await Promise.race([
+      q.supportedModels(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('supportedModels timeout')), timeoutMs)),
+    ])
+    return Array.isArray(models) ? models : []
+  } catch {
+    return []
+  } finally {
+    try { q?.interrupt?.() } catch { /* 이미 끝난 쿼리 */ }
+  }
+}
+
 function withReasoningEffort(opts = {}, extra = {}) {
-  return { ...extra, reasoningEffort: opts.reasoningEffort }
+  // resolvedModel: model 이 SDK 별칭일 때 thinking 세대를 판별하려면 정규 id 가 필요하다.
+  return { ...extra, reasoningEffort: opts.reasoningEffort, resolvedModel: opts.resolvedModel }
 }
 
 export async function generateScript(input, opts = {}, { onDelta, signal, queryImpl = defaultQuery } = {}) {

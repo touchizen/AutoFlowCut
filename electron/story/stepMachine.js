@@ -10,7 +10,7 @@ import { inheritStoryIds, assertUniqueStoryIds, assignStoryIdsByMembership, inhe
 import { buildFallbackTimeline, buildSegmentTimeline, buildSrt, srtLineId } from './timing.js'
 import { regroupScenes } from './regroup.js'
 import { buildManifest } from './manifest.js'
-import { normalizeStoryLlmOptions } from '../api/llm/storyLlmCatalog.js'
+import { normalizeActiveStoryLlmOptions as normalizeStoryLlmOptions } from '../api/llm/storyLlmCatalog.js'
 import { validateScenesSegments } from '../api/llm/schemas.js'
 import { isNarratorSpeaker as isNarratorTrackSpeaker } from '../../src/utils/storyNarrationTracks.js'
 import { normalizeStoryCharacter, characterVisualPrompt } from '../../src/services/storyCharacter.js'

@@ -1,4 +1,4 @@
-import { normalizeStoryLlmOptions } from './storyLlmCatalog.js'
+import { normalizeActiveStoryLlmOptions as normalizeStoryLlmOptions } from './storyLlmCatalog.js'
 
 const METHOD_OPTION_INDEX = {
   generateScript: 1,

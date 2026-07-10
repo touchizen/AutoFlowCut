@@ -66,8 +66,10 @@ describe('buildClaudeSdkOptions', () => {
     })
   })
 
+  // 'xhigh'는 실제로 지원되는 값이다(supportedModels() 가 opus/sonnet/fable 에 대해 보고한다).
+  // 예전엔 이 테스트가 xhigh를 "알 수 없는 값" 예시로 써서 버그를 고정하고 있었다.
   it('알 수 없는 Claude reasoning effort는 off처럼 처리한다', () => {
-    const o = buildClaudeSdkOptions('claude-opus-4-8', undefined, { reasoningEffort: 'xhigh' })
+    const o = buildClaudeSdkOptions('claude-opus-4-8', undefined, { reasoningEffort: 'turbo' })
     expect(o.thinking).toEqual({ type: 'disabled' })
     expect(o).not.toHaveProperty('effort')
   })
@@ -128,5 +130,36 @@ describe('readStructuredResult', () => {
   it('success subtype + is_error=true면 result success 대신 result 본문을 던진다', () => {
     expect(() => readStructuredResult({ type: 'result', subtype: 'success', is_error: true, result: 'structured output failed' })).toThrow('structured output failed')
     expect(() => readStructuredResult({ type: 'result', subtype: 'success', is_error: true, result: 'structured output failed' })).not.toThrow('result success')
+  })
+})
+
+// 카탈로그가 동적이 되면 model 은 정규 id 가 아니라 SDK 별칭('haiku', 'opus[1m]')으로 온다.
+// 정규식이 별칭을 못 잡으면 haiku 에 4.6+ 전용 thinking:disabled 를 보내 400 이 난다.
+describe('buildClaudeSdkOptions — 동적 카탈로그 별칭', () => {
+  it('xhigh effort 를 버리지 않는다', () => {
+    const o = buildClaudeSdkOptions('opus[1m]', null, { reasoningEffort: 'xhigh' })
+    expect(o.effort).toBe('xhigh')
+    expect(o.thinking).toEqual({ type: 'adaptive' })
+  })
+
+  it("별칭 'haiku' 에는 thinking 을 아예 안 붙인다 (4.6 이전 세대)", () => {
+    const o = buildClaudeSdkOptions('haiku', null, { resolvedModel: 'claude-haiku-4-5-20251001' })
+    expect(o.thinking).toBeUndefined()
+    expect(o.effort).toBeUndefined()
+  })
+
+  it("별칭 'claude-fable-5[1m]' 은 thinking 을 못 끄므로 disabled 를 안 붙인다", () => {
+    const o = buildClaudeSdkOptions('claude-fable-5[1m]', null, { resolvedModel: 'claude-fable-5' })
+    expect(o.thinking).toBeUndefined()
+  })
+
+  it("별칭 'opus[1m]' 은 effort 없으면 disabled 를 붙인다", () => {
+    const o = buildClaudeSdkOptions('opus[1m]', null, { resolvedModel: 'claude-opus-4-8[1m]' })
+    expect(o.thinking).toEqual({ type: 'disabled' })
+  })
+
+  it('resolvedModel 은 SDK 옵션으로 새지 않는다 (SDK 가 모르는 키)', () => {
+    const o = buildClaudeSdkOptions('sonnet', null, { resolvedModel: 'claude-sonnet-5' })
+    expect(o).not.toHaveProperty('resolvedModel')
   })
 })

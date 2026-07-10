@@ -87,6 +87,8 @@ const STORY_LLM_RUNTIME_CONTROL_KEYS = Object.freeze([
   'runJson',
   'outputSchema',
   'signal',
+  // 카탈로그가 결정한다 — 호출측이 넘긴 값은 버린다.
+  'resolvedModel',
 ])
 
 function stripRuntimeControlOptions(options = {}) {
@@ -95,8 +97,23 @@ function stripRuntimeControlOptions(options = {}) {
   return normalized
 }
 
+// 동적 카탈로그의 model 은 SDK 호출용 별칭('opus[1m]', 'sonnet')인데 프로젝트에 저장된 건 예전
+// 정규 id('claude-opus-4-8')다. resolvedModel 로 이어 준다 — 컨텍스트 태그([1m])와 날짜 접미사
+// (-20251001)는 같은 모델을 가리키므로 비교 전에 떼어낸다.
+function canonicalModelId(model) {
+  return String(model || '')
+    .replace(/\[[^\]]*\]$/, '')
+    .replace(/-\d{8}$/, '')
+}
+
 export function findStoryLlmOption(engine, model, catalog = STORY_LLM_OPTIONS) {
-  return catalog.find((o) => o.engine === engine && o.model === model) || null
+  const exact = catalog.find((o) => o.engine === engine && o.model === model)
+  if (exact) return exact
+  const wanted = canonicalModelId(model)
+  if (!wanted) return null
+  return catalog.find(
+    (o) => o.engine === engine && o.resolvedModel && canonicalModelId(o.resolvedModel) === wanted,
+  ) || null
 }
 
 export function findStoryLlmOptionById(id, catalog = STORY_LLM_OPTIONS) {
@@ -138,6 +155,11 @@ export function normalizeStoryLlmOptions(options = {}, catalog = STORY_LLM_OPTIO
     return normalized
   }
   const normalized = { ...stripRuntimeControlOptions(options), engine: selected.engine, model: selected.model }
+  // model 이 SDK 별칭('haiku')이면 세대 판별용 정규 id 를 함께 넘긴다(claudeSdk 가 쓴다).
+  // 둘이 같은 엔진(codex)에는 아무것도 붙지 않는다.
+  if (selected.resolvedModel && selected.resolvedModel !== selected.model) {
+    normalized.resolvedModel = selected.resolvedModel
+  }
   delete normalized.llmId
   delete normalized.id
 

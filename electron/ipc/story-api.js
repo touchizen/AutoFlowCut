@@ -13,7 +13,8 @@ import { getVideoDetails } from '../api/youtube/getVideoDetails.js'
 import { createTtsAdapter } from '../api/tts/index.js'
 import { getTypecastKey } from '../api/tts/typecastKey.js'
 import { probeDurationMs } from '../story/audioProbe.js'
-import { DEFAULT_STORY_LLM, STORY_LLM_OPTIONS } from '../api/llm/storyLlmCatalog.js'
+import { DEFAULT_STORY_LLM, STORY_LLM_OPTIONS, setActiveStoryLlmCatalog } from '../api/llm/storyLlmCatalog.js'
+import { buildClaudeStoryLlmOptions, resolveStoryLlmCatalog } from '../api/llm/storyLlmDiscovery.js'
 
 // HIGH/Codex: renderer가 보낸 projectPath를 무검증으로 받으면 상대경로/traversal 경로로도
 // 스텝 머신이 만들어져 임의 파일시스템 위치에 script.md/scenes.json/story.json을 쓸 수 있다.
@@ -45,7 +46,7 @@ function isWithinWorkFolder(projectPath, workFolder) {
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
 }
 
-export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini, loadMetaPrompt, getActiveWorkFolder = () => null, tts, ttsFor, probe, defaultVoice, sfxFor, youtube, factCheck }) {
+export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini, loadMetaPrompt, getActiveWorkFolder = () => null, tts, ttsFor, probe, defaultVoice, sfxFor, youtube, factCheck, listClaudeModels = llmClaude.listClaudeModels }) {
   let machine = null
   let openLock = Promise.resolve()
 
@@ -77,10 +78,36 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
     return fn(payload)
   }
 
-  ipcMain.handle('story:list-llm-options', async () => ({
-    options: STORY_LLM_OPTIONS.map((o) => ({ ...o, ...(o.reasoningEfforts ? { reasoningEfforts: [...o.reasoningEfforts] } : {}) })),
-    defaultOption: { ...DEFAULT_STORY_LLM },
-  }))
+  // 엔진이 보고하는 모델 목록으로 카탈로그를 만든다. CLI 프로세스를 띄우므로 한 번만 하고 캐시한다.
+  // 조회에 실패한 엔진은 정적 목록으로 메운다(다른 엔진까지 되돌리지 않는다).
+  // TODO(codex): app-server `model/list` 를 붙이면 codex 도 동적으로 — 지금은 정적 폴백만 탄다.
+  let llmCatalogPromise = null
+  const loadLlmCatalog = () => {
+    if (!llmCatalogPromise) {
+      llmCatalogPromise = Promise.resolve()
+        .then(() => listClaudeModels())
+        .then((models) => {
+          const catalog = resolveStoryLlmCatalog({
+            claude: buildClaudeStoryLlmOptions(models),
+            fallback: STORY_LLM_OPTIONS,
+          })
+          // 라우터/스텝머신도 같은 카탈로그로 검증해야 렌더러가 보낸 별칭 model 이 통과한다.
+          setActiveStoryLlmCatalog(catalog)
+          return catalog
+        })
+        .catch(() => [...STORY_LLM_OPTIONS])
+    }
+    return llmCatalogPromise
+  }
+
+  ipcMain.handle('story:list-llm-options', async () => {
+    const catalog = await loadLlmCatalog()
+    const options = catalog.map((o) => ({ ...o, reasoningEfforts: [...(o.reasoningEfforts || [])] }))
+    return {
+      options,
+      defaultOption: options[0] || { ...DEFAULT_STORY_LLM },
+    }
+  })
 
   ipcMain.handle('story:open', (_e, { projectPath } = {}) => {
     // 동시 open 레이스 방지 — 직렬화(promise 체인): 이전 open이 끝나야 다음 open이 실행된다
