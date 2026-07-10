@@ -1148,6 +1148,9 @@ export function useProjectData({
     },
     isRestoringRef,  // auto-save 가드용
     projectLoading,  // 로딩 오버레이용
+    // 하이드레이션 완료 신호(즉시 읽기). 스토리 캐릭터 푸시가 references 가 올라오기 전에
+    //   도착하면 빈 배열 위에 upsert 해 디스크의 카드를 새 카드로 덮어쓴다 — 그걸 막는 게이트용.
+    hydratedRef,
     flowProjectId,
     setFlowProjectId,
     flowProjectReady,  // R3-P1: Flow 프로젝트 진입 확인 게이트 — false면 생성 차단
