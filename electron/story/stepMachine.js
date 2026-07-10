@@ -556,6 +556,27 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   // 세그먼트가 참조하는 화자(특히 narrator)가 state.speakers에 없으면 오디오 탭 성우 매핑에서
   // 누락된다(voice map은 state.speakers만 렌더). open 시 scenes.json 기준으로 self-heal —
   // 스플릿 당시 누락(LLM이 narrator를 speakers에서 빠뜨림 등)된 stale 프로젝트를 재분리 없이 복구.
+  // 진행 상황의 유일한 근거가 state.steps라, 산출물이 사라져도(폴더 정리·부분 복사 등) done이
+  // 그대로 남는다. 그러면 computeCurrentStep이 하류로 건너뛰고, audio/prompts가 제일 먼저
+  // scenes.json을 열다가 "scenes.json not found"로 터진다 — 원인에서 두 스텝 떨어진 곳에서.
+  // open()에서 done 스텝의 산출물을 확인해, 없으면 그 스텝과 하류를 pending으로 되돌린다.
+  async function healMissingStepArtifacts() {
+    if (!state?.steps) return
+    const scriptMd = await store.loadText('script.md')
+    const scenesJson = await store.loadText('scenes.json')
+    const missing = { script: !scriptMd?.trim(), scenes: !scenesJson?.trim() }
+
+    let changed = false
+    for (const step of ['script', 'scenes']) {
+      if (state.steps[step]?.status !== 'done' || !missing[step]) continue
+      // 되살린 스텝은 stale error도 함께 버린다 — {status:'pending'}로 통째 교체.
+      state.steps[step] = { status: 'pending' }
+      for (const d of DOWNSTREAM[step]) state.steps[d] = { status: 'pending' }
+      changed = true
+    }
+    if (changed) await flush()
+  }
+
   async function healReferencedSpeakers() {
     if (!state) return
     const scenes = await loadScenesForPayload()
@@ -1104,6 +1125,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     projectToken,
     async open() {
       state = await store.load()
+      await healMissingStepArtifacts()
       await healReferencedSpeakers()
       await maybeResendPush()
       maybeSendCharacters()
