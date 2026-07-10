@@ -14,6 +14,7 @@ import { StopwatchIcon, ElapsedTime } from '../StopwatchIcon'
 import PromptInput from '../PromptInput'
 import { toast } from '../Toast'
 import { useAudioPlayback } from '../../hooks/useAudioPlayback'
+import { useStickToBottom } from '../../hooks/useStickToBottom'
 import { useStoryVoiceSelection } from '../../hooks/useStoryVoiceSelection'
 import StoryStepper, { STEP_META } from './StoryStepper'
 import VoicePicker from './VoicePicker'
@@ -362,6 +363,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const [synopsisReviewStartedAt, setSynopsisReviewStartedAt] = useState(null)
   useEffect(() => { setSynopsisReviewStartedAt(synopsisReviewing ? Date.now() : null) }, [synopsisReviewing])
 
+
   // 중단(⏹) 즉각 피드백 — SDK 취소는 몇 초 걸릴 수 있어(특히 reasoning=max) 버튼을 '중단 중…'으로
   // 바꿔 응답성을 준다. 생성/스텝이 실제로 멈추면(둘 다 not running) 해제.
   const [aborting, setAborting] = useState(false)
@@ -375,6 +377,12 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   // §4 이어쓰기 — 시작 시점의 대본 스냅샷. 생성 중 preview에 `baseScript + streamingText`로
   // 접두 표시하는 용도(완료 커밋은 main payload.scriptText — delta 재조립 금지, §0.3).
   const [baseScript, setBaseScript] = useState('')
+
+  // SSE 스트리밍 뷰는 새 델타를 따라 내려가야 한다 — 안 그러면 텍스트가 접힌 아래로 쌓이고
+  // 스크롤바만 줄어든다. 세 컨테이너가 서로 다른 분기에 있어 각각 자기 ref를 갖는다.
+  const synopsisStream = useStickToBottom(synopsisStreamingText)
+  const scriptEditorStream = useStickToBottom(baseScript + streamingText)
+  const scriptPreviewStream = useStickToBottom(streamingText)
 
   // 재오픈 phase 승격 — open() 응답이 마운트 뒤 도착해 pipeline.scriptText가 늦게 채워지면
   // 초기 phase가 setup으로 굳어 있다. 사용자가 [⚙ 설정으로]를 눌러 명시적으로 setup에 온
@@ -1286,7 +1294,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                 {/* title·pasted 공통 — 생성 중엔 스트림(pasted는 델타 없어 빈 채 시계만), 완료 후 편집 가능한
                     시놉시스. pasted도 대본에서 역추출한 시놉시스(로그라인/훅/구조/몰입감)를 보여준다. */}
                 {synopsisGenerating ? (
-                  <div className="story-script-stream" aria-live="polite">{synopsisStreamingText}</div>
+                  <div className="story-script-stream" aria-live="polite" ref={synopsisStream.ref} onScroll={synopsisStream.onScroll}>{synopsisStreamingText}</div>
                 ) : (
                   // 검수 중에도 textarea를 유지한다(스트림 뷰로 바꾸면 정작 검수 대상이 안 보인다).
                   // 대신 readOnly로 동결 — 검수 중 편집이 결과에 덮어써지는 걸 막는다.
@@ -1385,7 +1393,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                 {reviewBadge}
                 {scriptRunning ? (
                   <>
-                    <div className="story-script-stream" aria-live="polite">
+                    <div className="story-script-stream" aria-live="polite" ref={scriptEditorStream.ref} onScroll={scriptEditorStream.onScroll}>
                       {baseScript ? baseScript + streamingText : streamingText}
                     </div>
                     {/* 생성 중 시계+경과 (시나리오) — 첫 출력이 늦어도 진행 중임을 보인다. */}
@@ -1434,7 +1442,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
               </div>
             ) : scriptRunning ? (
               // 생성 중 스트리밍 preview (setup에서 시작 직후 등 editor 외 phase).
-              <div className="story-script-stream" aria-live="polite">{reviewBadge}{streamingText}</div>
+              <div className="story-script-stream" aria-live="polite" ref={scriptPreviewStream.ref} onScroll={scriptPreviewStream.onScroll}>{reviewBadge}{streamingText}</div>
             ) : (
               // §1-A 설정 화면 — 세로 옵션(라벨+설명) + 제목 + 대본 임포트(drag&drop/붙여넣기) + [✨ 시작].
               <div className="story-setup-phase" data-testid="story-setup">
