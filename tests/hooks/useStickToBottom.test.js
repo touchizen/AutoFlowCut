@@ -13,7 +13,7 @@ beforeEach(() => {
 
 function mount(initial = 'a') {
   const r = renderHook(({ dep }) => useStickToBottom(dep), { initialProps: { dep: initial } })
-  r.result.current.ref.current = el
+  act(() => r.result.current.ref(el)) // React가 컨테이너에 ref를 붙이는 것과 같은 경로
   return r
 }
 
@@ -76,5 +76,31 @@ describe('useStickToBottom', () => {
       r.result.current.onScroll()
       r.rerender({ dep: 'ab' })
     }).not.toThrow()
+  })
+
+  // 스트림 div는 조건부 렌더라 생성이 끝나면 언마운트된다. 훅은 StoryView에 남아 살아 있으므로
+  // 위로 올려 읽다 끝낸 run의 stuck=false가 그대로 굳는다 — 다음 run은 영영 안 따라간다.
+  // 새 컨테이너가 붙으면(=새 run) 바닥에서 다시 시작해야 한다.
+  it('언마운트 뒤 새 컨테이너가 붙으면 따라가기를 재개한다', () => {
+    const { result, rerender } = mount()
+    el.scrollTop = 0 // 위로 올려 읽는 중
+    act(() => result.current.onScroll())
+    rerender({ dep: 'ab' })
+    expect(el.scrollTop).toBe(0) // 이 run 동안은 끌려가지 않는다
+
+    act(() => result.current.ref(null)) // 생성 끝 → 스트림 div 언마운트
+    const next = { scrollTop: 0, scrollHeight: 1000, clientHeight: 200 }
+    act(() => result.current.ref(next)) // 다음 run → 새 div 마운트
+    rerender({ dep: 'abc' })
+    expect(next.scrollTop).toBe(800)
+  })
+
+  it('같은 컨테이너가 붙어 있는 동안엔 stuck 상태를 유지한다', () => {
+    const { result, rerender } = mount()
+    el.scrollTop = 0
+    act(() => result.current.onScroll())
+    rerender({ dep: 'ab' })
+    rerender({ dep: 'abc' })
+    expect(el.scrollTop).toBe(0) // 리렌더가 stuck을 되돌리지 않는다
   })
 })
