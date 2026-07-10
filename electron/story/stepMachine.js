@@ -562,11 +562,18 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   // 그대로 남는다. 그러면 computeCurrentStep이 하류로 건너뛰고, audio/prompts가 제일 먼저
   // scenes.json을 열다가 "scenes.json not found"로 터진다 — 원인에서 두 스텝 떨어진 곳에서.
   // open()에서 done 스텝의 산출물을 확인해, 없으면 그 스텝과 하류를 pending으로 되돌린다.
+  // 확실히 없을(또는 비어 있을) 때만 true. 읽기가 실패하면(권한·IO 오류) 판단하지 않는다 —
+  // 잠깐 못 읽은 산출물을 없다고 보면 done을 pending으로 내려 굳혀서, 원인이 사라져도 진행은 안 돌아온다.
+  async function artifactMissing(relPath) {
+    try { return !(await store.loadTextStrict(relPath))?.trim() } catch { return false }
+  }
+
   async function healMissingStepArtifacts() {
     if (!state?.steps) return
-    const scriptMd = await store.loadText('script.md')
-    const scenesJson = await store.loadText('scenes.json')
-    const missing = { script: !scriptMd?.trim(), scenes: !scenesJson?.trim() }
+    const missing = {
+      script: await artifactMissing('script.md'),
+      scenes: await artifactMissing('scenes.json'),
+    }
 
     let changed = false
     for (const step of ['script', 'scenes']) {

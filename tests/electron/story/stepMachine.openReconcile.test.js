@@ -104,4 +104,33 @@ describe('open(): step 상태 ↔ 산출물 정합성', () => {
     const r = await makeMachine().open()
     expect(statusOf(r.state)).toMatchObject({ script: 'pending' })
   })
+
+  // "없다"와 "못 읽었다"는 다르다. 권한/IO 오류로 잠깐 못 읽은 산출물을 없다고 보면 done을
+  // pending으로 내리고 그걸 디스크에 굳혀 버린다 — 원인이 사라져도 진행 상태는 안 돌아온다.
+  // (여기선 디렉토리를 만들어 EISDIR로 읽기를 실패시킨다. uid와 무관하게 재현된다.)
+  describe('읽을 수 없는 산출물은 없는 것으로 보지 않는다', () => {
+    it('scenes.json을 읽을 수 없으면 scenes/하류의 done을 유지한다', async () => {
+      await writeFile(path.join(storyDir, 'script.md'), '# 대본', 'utf-8')
+      await mkdir(path.join(storyDir, 'scenes.json')) // readFile → EISDIR
+      await writeState({ steps: { script: DONE(), scenes: DONE(), audio: DONE(), prompts: DONE() } })
+      const r = await makeMachine().open()
+      expect(statusOf(r.state)).toEqual({ script: 'done', scenes: 'done', audio: 'done', prompts: 'done' })
+    })
+
+    it('script.md를 읽을 수 없으면 script/하류의 done을 유지한다', async () => {
+      await mkdir(path.join(storyDir, 'script.md'))
+      await writeFile(path.join(storyDir, 'scenes.json'), JSON.stringify({ scenes: [{ sceneNo: 1 }] }), 'utf-8')
+      await writeState({ steps: { script: DONE(), scenes: DONE(), audio: DONE(), prompts: DONE() } })
+      const r = await makeMachine().open()
+      expect(statusOf(r.state).script).toBe('done')
+    })
+
+    it('되돌리지 않았으니 story.json도 그대로다', async () => {
+      await writeFile(path.join(storyDir, 'script.md'), '# 대본', 'utf-8')
+      await mkdir(path.join(storyDir, 'scenes.json'))
+      await writeState({ steps: { script: DONE(), scenes: DONE(), audio: DONE(), prompts: DONE() } })
+      await makeMachine().open()
+      expect(statusOf(await readState())).toEqual({ script: 'done', scenes: 'done', audio: 'done', prompts: 'done' })
+    })
+  })
 })

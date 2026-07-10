@@ -61,6 +61,14 @@ export function createStoryStore(projectPath) {
     async loadText(relPath) {
       try { return await readFile(path.join(storyDir, relPath), 'utf-8') } catch { return null }
     },
+    // loadText는 모든 읽기 실패를 null로 접는다. "없다"와 "못 읽었다"를 갈라야 하는 호출자용:
+    // 없으면 null, 그 외 실패(EACCES/EISDIR/EIO…)는 그대로 던진다.
+    async loadTextStrict(relPath) {
+      try { return await readFile(path.join(storyDir, relPath), 'utf-8') } catch (e) {
+        if (e?.code === 'ENOENT') return null
+        throw e
+      }
+    },
     // 리서치 m5-잔여: read-modify-write를 write 큐 안에서 원자화한다. updater가 "현재 파일 내용
     // (없으면 null)"을 받아 새 텍스트를 반환하면 저장, null이면 no-op. 읽기가 큐 task 안에 있어
     // 다른 write와의 lost-update(stale 스냅샷 덮어쓰기)가 발생하지 않는다.
