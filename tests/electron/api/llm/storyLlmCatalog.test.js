@@ -14,10 +14,36 @@ describe('storyLlmCatalog', () => {
       'claude:claude-opus-4-8',
       'claude:claude-sonnet-5',
       'claude:claude-fable-5',
+      'claude:claude-haiku-4-5',
       'codex:gpt-5.5',
       'codex:gpt-5.4',
     ])
     expect(new Set(STORY_LLM_OPTIONS.map((o) => o.id)).size).toBe(STORY_LLM_OPTIONS.length)
+  })
+
+  it('Claude 옵션 라벨은 모두 "Claude"로 시작한다', () => {
+    const claudeLabels = STORY_LLM_OPTIONS.filter((o) => o.engine === 'claude').map((o) => o.label)
+    expect(claudeLabels).toEqual(['Claude Opus 4.8', 'Claude Sonnet 5', 'Claude Fable 5', 'Claude Haiku 4.5'])
+  })
+
+  // Haiku 4.5는 effort 파라미터를 지원하지 않는다(다른 Claude 모델과 달리 4.6 이전 세대).
+  // reasoningEfforts를 비우면 normalizeStoryLlmOptions가 reasoningEffort를 아예 제거하고,
+  // buildClaudeSdkOptions는 effort를 싣지 않는다.
+  it('Claude Haiku 4.5는 effort 선택지를 노출하지 않는다', () => {
+    const haiku = findStoryLlmOptionById('claude:claude-haiku-4-5')
+    expect(haiku).toMatchObject({ engine: 'claude', model: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' })
+    expect(haiku.reasoningEfforts).toEqual([])
+  })
+
+  it('Haiku 4.5를 고르면 normalize가 reasoningEffort를 지운다', () => {
+    const out = normalizeStoryLlmOptions({ engine: 'claude', model: 'claude-haiku-4-5', reasoningEffort: 'high' })
+    expect(out).toMatchObject({ engine: 'claude', model: 'claude-haiku-4-5' })
+    expect('reasoningEffort' in out).toBe(false)
+  })
+
+  it('Haiku 4.5도 id/engine+model 양쪽으로 hydrate된다', () => {
+    expect(hydrateStoryLlmSelection({ model: 'claude:claude-haiku-4-5' })).toBe('claude:claude-haiku-4-5')
+    expect(hydrateStoryLlmSelection({ engine: 'claude', model: 'claude-haiku-4-5' })).toBe('claude:claude-haiku-4-5')
   })
 
   it('keeps Claude Opus 4.8 as the compatibility default', () => {

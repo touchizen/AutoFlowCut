@@ -37,6 +37,7 @@ describe('story IPC', () => {
       'claude:claude-opus-4-8',
       'claude:claude-sonnet-5',
       'claude:claude-fable-5',
+      'claude:claude-haiku-4-5',
       'codex:gpt-5.5',
       'codex:gpt-5.4',
     ])
