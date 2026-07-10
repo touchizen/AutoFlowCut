@@ -1269,6 +1269,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
         showCharCount
         hideTip
         countLabelKey="prompt.lineCount"
+        // 검수 점수는 줄 수·자 수 행에 얹는다 — 별도 줄을 만들면 편집 영역만 좁아진다.
+        footerExtra={scoresFor('script').length ? <ReviewScore scores={scoresFor('script')} /> : null}
         placeholder={t('story.form.scriptPlaceholder', '시나리오가 여기에 표시됩니다')}
       />
     </div>
@@ -1448,7 +1450,6 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                 ) : (
                   <>
                     {hasI18n ? scriptEditor : <I18nProvider>{scriptEditor}</I18nProvider>}
-                    <ReviewScore scores={scoresFor('script')} />
                     {scriptReviewRun && reviewRunning('script', scriptProgressLog)}
                   </>
                 )}

@@ -1256,3 +1256,10 @@
 .story-review-score-to { font-weight: 600; }
 .story-review-score-to.up { color: #22c55e; }
 .story-review-score-to.down { color: #ef4444; }
+
+/* 카운트 행(줄 수·자 수) 안에 얹힐 땐 콤팩트하게 — 별도 줄을 차지하지 않는다. */
+.prompt-input-footer .story-review-score {
+  margin-top: 0;
+  padding: 2px 8px;
+  font-size: inherit;
+}

@@ -782,6 +782,11 @@ html, body {
   color: var(--text-secondary);
 }
 
+.prompt-input-footer .prompt-footer-extra {
+  display: inline-flex;
+  align-items: center;
+}
+
 .prompt-input-footer .line-count {
   flex: 0 0 auto;
   white-space: nowrap;

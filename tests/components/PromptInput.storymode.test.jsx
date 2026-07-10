@@ -49,3 +49,20 @@ describe('PromptInput story mode', () => {
     expect(container.querySelector('.unknown-mention').textContent).toContain('@ghost')
   })
 })
+
+// 대본 편집기는 검수 점수를 하단 카운트 행에 얹는다 — 별도 줄을 만들면 공간 낭비.
+describe('PromptInput footerExtra 슬롯', () => {
+  it('footerExtra를 카운트 행 안에 렌더한다', () => {
+    renderPI({ value: '가나다', showCharCount: true, footerExtra: <span data-testid="extra">몰입감 85</span> })
+    const extra = screen.getByTestId('extra')
+    expect(extra.closest('.prompt-input-footer')).not.toBeNull()
+  })
+  it('footerExtra가 없으면 아무것도 더 그리지 않는다', () => {
+    renderPI({ value: '가나다', showCharCount: true })
+    expect(screen.queryByTestId('extra')).toBeNull()
+  })
+  it('hideFooter면 footerExtra도 숨는다', () => {
+    renderPI({ value: '가', hideFooter: true, footerExtra: <span data-testid="extra">x</span> })
+    expect(screen.queryByTestId('extra')).toBeNull()
+  })
+})

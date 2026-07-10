@@ -26,6 +26,12 @@ describe('시나리오 검수 점수', () => {
     expect(scoreText()).toBe('몰입감72→85')
   })
 
+  // 별도 줄을 만들지 않고 편집기 하단 카운트 행(줄 수·자 수)에 얹는다.
+  it('점수는 편집기 하단 카운트 행 안에 있다', () => {
+    render(<StoryView pipeline={pipeline({ reviewScores: { target: 'script', scores: [72, 85] } })} />)
+    expect(screen.getByTestId('review-score').closest('.prompt-input-footer')).not.toBeNull()
+  })
+
   it('한 라운드면 점수 하나만 보여준다', () => {
     render(<StoryView pipeline={pipeline({ reviewScores: { target: 'script', scores: [91] } })} />)
     expect(scoreText()).toBe('몰입감91')
