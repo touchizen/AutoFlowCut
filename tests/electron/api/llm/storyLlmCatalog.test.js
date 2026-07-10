@@ -92,19 +92,19 @@ describe('storyLlmCatalog', () => {
     expect(normalizeStoryLlmOptions({ engine: 'codex', model: 'gpt-5.5', language: 'ko' })).toMatchObject({
       engine: 'codex',
       model: 'gpt-5.5',
-      reasoningEffort: 'xhigh',
+      reasoningEffort: 'medium',
       language: 'ko',
     })
     // 'minimal'은 어떤 codex 모델도 지원하지 않는다(model/list) — 이제 무효값이라 기본값으로 떨어진다.
     expect(normalizeStoryLlmOptions({ engine: 'codex', model: 'gpt-5.4', reasoningEffort: 'minimal' })).toMatchObject({
       engine: 'codex',
       model: 'gpt-5.4',
-      reasoningEffort: 'high',
+      reasoningEffort: 'medium',
     })
     expect(normalizeStoryLlmOptions({ engine: 'codex', model: 'gpt-5.4', reasoningEffort: 'ultra' })).toMatchObject({
       engine: 'codex',
       model: 'gpt-5.4',
-      reasoningEffort: 'high',
+      reasoningEffort: 'medium',
     })
   })
 
@@ -129,7 +129,7 @@ describe('storyLlmCatalog', () => {
       engine: 'codex',
       model: 'gpt-5.5',
       language: 'ko',
-      reasoningEffort: 'xhigh',
+      reasoningEffort: 'medium',
     })
   })
 

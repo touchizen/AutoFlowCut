@@ -47,7 +47,7 @@ export const STORY_LLM_OPTIONS = Object.freeze([
     model: 'gpt-5.5',
     label: 'Codex GPT-5.5',
     reasoningEfforts: CODEX_REASONING_EFFORTS,
-    defaultReasoningEffort: 'xhigh',
+    defaultReasoningEffort: 'medium',
   }),
   Object.freeze({
     id: 'codex:gpt-5.4',
@@ -55,7 +55,7 @@ export const STORY_LLM_OPTIONS = Object.freeze([
     model: 'gpt-5.4',
     label: 'Codex GPT-5.4',
     reasoningEfforts: CODEX_REASONING_EFFORTS,
-    defaultReasoningEffort: 'high',
+    defaultReasoningEffort: 'medium',
   }),
 ])
 

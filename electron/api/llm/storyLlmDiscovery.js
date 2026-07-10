@@ -56,12 +56,14 @@ function codexEffortLevels(raw) {
     .filter(Boolean)
 }
 
-// 서버 기본값은 medium 이지만, 스토리 작업엔 xhigh 를 쓴다(기존 카탈로그의 제품 결정).
+// 서버가 알려준 기본값(대개 medium)을 존중한다. xhigh 강제는 속도용 mini·짧은 숏폼에서 첫 토큰만
+// 느리게 만든다(mini + 1분 숏폼 실사용에서 드러남) — 더 깊은 추론은 사용자가 설정에서 올린다.
+// 서버 기본값이 없거나 미지원이면 medium, 그것도 없으면 중간 단계로(양극단 회피).
 function codexDefaultEffort(levels, serverDefault) {
   if (!levels.length) return ''
-  if (levels.includes('xhigh')) return 'xhigh'
-  if (levels.includes(serverDefault)) return serverDefault
-  return levels[levels.length - 1]
+  if (serverDefault && levels.includes(serverDefault)) return serverDefault
+  if (levels.includes('medium')) return 'medium'
+  return levels[Math.floor((levels.length - 1) / 2)]
 }
 
 export function buildCodexStoryLlmOptions(models) {

@@ -133,14 +133,11 @@ describe('buildCodexStoryLlmOptions', () => {
     }
   })
 
-  it('xhigh 를 지원하면 기본값은 xhigh', () => {
+  // 서버 기본값(medium)을 존중한다 — 속도용 mini/짧은 숏폼에 xhigh 강제는 첫 토큰만 느리게 한다.
+  // 단 이 픽스처엔 defaultReasoningEffort 가 없어 폴백(중간 단계)로 떨어진다.
+  it('서버 기본값이 없으면 중간 단계를 기본값으로 (양극단 회피)', () => {
     const o = buildCodexStoryLlmOptions(CODEX_MODELS).find((x) => x.model === 'gpt-5.5')
-    expect(o.defaultReasoningEffort).toBe('xhigh')
-  })
-
-  it('xhigh 가 없으면 지원 목록의 마지막(가장 높은 단계)을 기본값으로', () => {
-    const o = buildCodexStoryLlmOptions(CODEX_MODELS).find((x) => x.model === 'gpt-5.4-mini')
-    expect(o.defaultReasoningEffort).toBe('high')
+    expect(o.defaultReasoningEffort).toBe('medium')
   })
 
   it('effort 를 안 주면 빈 목록', () => {
@@ -225,28 +222,34 @@ describe('buildCodexStoryLlmOptions — app-server 실제 응답 모양', () => 
     expect(buildCodexStoryLlmOptions(REAL)[0].label).toBe('Codex GPT-5.5')
   })
 
-  // 서버 기본값은 medium 이지만 스토리 작업엔 xhigh 를 쓴다(기존 카탈로그의 제품 결정).
-  it('xhigh 를 지원하면 서버 기본값(medium)보다 xhigh 를 택한다', () => {
+  // 서버가 준 defaultReasoningEffort(medium)를 존중한다 — xhigh 강제는 속도용 모델·짧은 숏폼에서
+  // 첫 토큰만 느리게 만든다(mini + 1분 숏폼 실사용에서 드러남). 더 깊은 추론은 설정에서 올린다.
+  it('서버 기본값(medium)을 그대로 쓴다', () => {
     const o = buildCodexStoryLlmOptions(REAL).find((x) => x.model === 'gpt-5.5')
-    expect(o.defaultReasoningEffort).toBe('xhigh')
+    expect(o.defaultReasoningEffort).toBe('medium')
   })
 
-  it('xhigh 가 없으면 서버가 준 기본값을 쓴다 (지원 목록 안에 있을 때만)', () => {
+  it('서버 기본값이 high 면 high 를 쓴다', () => {
     const o = buildCodexStoryLlmOptions([
       { id: 'a', supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }], defaultReasoningEffort: 'high' },
     ])[0]
     expect(o.defaultReasoningEffort).toBe('high')
   })
 
-  it('서버 기본값이 지원 목록에 없으면 마지막 단계로 떨어진다', () => {
+  it('서버 기본값이 지원 목록에 없으면 중간 단계로 떨어진다', () => {
     const o = buildCodexStoryLlmOptions([
-      { id: 'a', supportedReasoningEfforts: [{ reasoningEffort: 'low' }], defaultReasoningEffort: 'turbo' },
+      { id: 'a', supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'medium' }, { reasoningEffort: 'high' }], defaultReasoningEffort: 'turbo' },
     ])[0]
-    expect(o.defaultReasoningEffort).toBe('low')
+    expect(o.defaultReasoningEffort).toBe('medium')
   })
 
-  it('xhigh 도 서버 기본값도 없으면 마지막 단계 (gpt-5.4-mini)', () => {
-    const o = buildCodexStoryLlmOptions([{ id: 'a', supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }] }])[0]
+  it('서버 기본값이 없으면 medium (양극단 회피)', () => {
+    const o = buildCodexStoryLlmOptions([{ id: 'a', supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'medium' }, { reasoningEffort: 'high' }, { reasoningEffort: 'xhigh' }] }])[0]
+    expect(o.defaultReasoningEffort).toBe('medium')
+  })
+
+  it('medium 이 없으면 중간 단계로 (양극단 회피)', () => {
+    const o = buildCodexStoryLlmOptions([{ id: 'a', supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }, { reasoningEffort: 'xhigh' }] }])[0]
     expect(o.defaultReasoningEffort).toBe('high')
   })
 })
