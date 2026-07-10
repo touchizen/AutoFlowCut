@@ -25,3 +25,14 @@ describe('reference.* 스타일 키', () => {
     }
   })
 })
+
+// App.jsx 는 story/ 컴포넌트와 달리 useI18n 의 raw t(key, params) 를 쓴다 — 두 번째 인자를 폴백으로
+// 넘겨도 무시되고, 키가 없으면 키가 그대로 토스트에 뜬다.
+describe('story.charRef.collision', () => {
+  it('ko 에 있다', () => expect(ko.story?.charRef?.collision).toBeTruthy())
+  it('en 에 있다', () => expect(en.story?.charRef?.collision).toBeTruthy())
+  it('{names} 치환자를 쓴다 (충돌한 이름을 보여줘야 한다)', () => {
+    expect(ko.story.charRef.collision).toContain('{names}')
+    expect(en.story.charRef.collision).toContain('{names}')
+  })
+})

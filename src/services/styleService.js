@@ -57,7 +57,8 @@ function hasGenAIStyleImage(ref) {
  * 생성된다. 사용자가 의도적으로 다른 걸 고르지 않는 한 프로젝트가 쓰던 스타일을 물려받아야 한다.
  *
  * 가장 최근에 생성된 카드의 기억을 쓴다(배치는 모두 같은 값을 찍으므로 대개 동일).
- * styleId:null 은 "무스타일로 생성됨"이라는 정당한 기억이라 키 존재 여부로 판정한다.
+ * styleId:undefined 는 기억 없음, null 은 "무스타일로 생성됨"이라는 정당한 기억이다 — 값으로 판정한다
+ * (상세 모달의 prop 동기화가 styleId:undefined 로 키를 만들기 때문에 키 존재로 판정하면 안 된다).
  * 스타일 카드 자신은 배치에서 null 을 찍히므로 제외한다 — 물려받으면 전부 무스타일이 된다.
  *
  * @returns {{found: boolean, styleId: string|null}}
@@ -66,10 +67,12 @@ export function inheritStyleIdFromCards(references) {
   let best = null
   for (const r of references || []) {
     if (!r || isStyleReference(r)) continue
-    if (!Object.prototype.hasOwnProperty.call(r, 'styleId')) continue
+    // 키 존재가 아니라 값으로 판정한다 — 상세 모달의 prop 동기화가 styleId:undefined 로 키를 만든다.
+    //   undefined = 기억 없음, null = '무스타일로 생성됨'이라는 정당한 기억.
+    if (r.styleId === undefined) continue
     if (!best || (r.generatedAt || 0) >= (best.generatedAt || 0)) best = r
   }
-  return best ? { found: true, styleId: best.styleId ?? null } : { found: false, styleId: null }
+  return best ? { found: true, styleId: best.styleId } : { found: false, styleId: null }
 }
 
 export function findAutoStyle(references) {

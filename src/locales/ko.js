@@ -92,6 +92,9 @@ export default {
 
   // Story pipeline
   story: {
+    charRef: {
+      collision: '동명 레퍼런스가 있어 캐릭터 카드를 건너뜀: {names}',
+    },
     step: {
       setup: '설정',
       research: '리서치',

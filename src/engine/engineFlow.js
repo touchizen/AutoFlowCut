@@ -346,7 +346,9 @@ export function useFlowEngine(opts = {}) {
           model: callOpts.model,
           workflowId: res.workflowId,
           // entity 정보는 collectGeneration 이 그대로 흘려보내 ref 카드에 저장된다.
-          entity: { entityId: res.entityId, workflowId: res.workflowId, mediaId: res.mediaId, registered: res.registered },
+          // nameApplied 를 빠뜨리면 배치 캐릭터가 렌더러의 refresh 폴백을 못 탄다 — 이름이 SPA 에
+          //   안 들어간 채 synced 로 마킹되고 멘션 피커엔 옛 이름이 남는다.
+          entity: { entityId: res.entityId, workflowId: res.workflowId, mediaId: res.mediaId, registered: res.registered, nameApplied: res.nameApplied },
         })
         return { success: true, generationId }
       }

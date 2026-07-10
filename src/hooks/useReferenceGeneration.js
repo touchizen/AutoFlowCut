@@ -276,7 +276,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
 
     // 재생성은 이 카드가 실제로 쓴 스타일을 따른다 — 그 사이 전역 선택(selectedStyleRefId)이 바뀌거나
     //   findAutoStyle 의 자동 추정 대상이 달라져도 결과가 흔들리면 안 된다. styleId===null 은
-    //   "무스타일로 생성했다"는 기록이므로 전역으로 새지 않게 키 존재 여부로 판정한다.
+    //   "무스타일로 생성했다"는 기록이므로 전역으로 새지 않게 값으로 판정한다(undefined = 기억 없음).
     //   명시적 overrideStyleId 는 그보다 우선(상세 모달의 스타일 지정 재생성).
     //   스타일 카드에는 스타일을 적용하지 않는다(_prepareStyleRefs 조기 반환) — findAutoStyle 이
     //   그 카드 자신을 고른 값을 찍으면 "ref:1 로 생성됨"이라는 거짓 기록이 남는다(배치는 null).

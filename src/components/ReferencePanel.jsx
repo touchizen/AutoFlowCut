@@ -33,6 +33,9 @@ export default function ReferencePanel({
   onStyleRefChange,
   projectName,
   thumbnails = {},
+  // 모달의 rename 이 bound projectId 를 main 에 넘겨야 한다 — 안 넘기면 projectIdFromUrl() 폴백으로
+  //   드리프트한 Flow 프로젝트를 건드린다.
+  flowProjectId = null,
   thumbnailGenerating = false,
   thumbnailStopping = false,
   thumbnailProgress = { current: 0, total: 0 },
@@ -355,6 +358,7 @@ export default function ReferencePanel({
           getScopeToken={getScopeToken}
           thumbnails={thumbnails}
           selectedStyleRefId={selectedStyleRefId}
+          flowProjectId={flowProjectId}
         />
       )}
     </div>

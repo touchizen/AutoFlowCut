@@ -18,7 +18,7 @@ import { isStyleReference } from '../services/styleService'
 import ErrorSection from './ErrorSection'
 import { StopwatchIcon, ElapsedTime } from './StopwatchIcon'
 
-export default function ReferenceDetailModal({ reference, index, onUpdate, onUpload, onClose, onGenerate, isGenerating, t, isKo, projectName, appMode, getScopeToken: getScopeTokenProp, thumbnails = {}, references = [], selectedStyleRefId = null }) {
+export default function ReferenceDetailModal({ reference, index, onUpdate, onUpload, onClose, onGenerate, isGenerating, t, isKo, projectName, appMode, getScopeToken: getScopeTokenProp, thumbnails = {}, references = [], selectedStyleRefId = null, flowProjectId = null }) {
   const [editData, setEditData] = useState({ ...reference })
   // 스타일 팝업은 두 뜻으로 쓰인다: 스타일 카드의 '프리셋에서 채우기' vs 그 외 카드의 '적용할 스타일'.
   //   같은 위젯이 다른 뜻으로 동시에 뜨면 헷갈리므로 타입에 따라 하나만 연다.
@@ -270,7 +270,9 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
           onUpdate(renameIdx, { ...renameBase, flowNameSyncStatus: 'failed', registered: false })
         }
         try {
-          const res = await window.electronAPI?.renameFlowCharacter?.({ entityId: renameSnapshot.entityId, displayName: renameSnapshot.name })
+          // bound projectId 를 넘긴다 — 안 넘기면 main 이 projectIdFromUrl() 로 폴백해, Flow 웹뷰가
+          //   다른 프로젝트로 드리프트했을 때 엉뚱한 프로젝트 컨텍스트로 PATCH/navigate 한다.
+          const res = await window.electronAPI?.renameFlowCharacter?.({ entityId: renameSnapshot.entityId, displayName: renameSnapshot.name, projectId: flowProjectId })
           if (res?.success) {
             // main 이 상세페이지 이름칸에 타이핑했으면(nameApplied) 재진입 왕복이 불필요하다.
             if (!res.nameApplied) { try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {} }

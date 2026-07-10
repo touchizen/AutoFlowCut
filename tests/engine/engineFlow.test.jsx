@@ -1449,6 +1449,17 @@ describe('useFlowEngine — 캐릭터 ref 는 /characters 에서 생성한다', 
 
   // flowGenerateCharacter 는 동기 반환(생성 완료된 images)이다. 배치는 submit→collect 계약이라
   // scene 동기 폴백과 같은 방식으로 로컬 맵에 담아 generationId 를 돌려준다.
+  // nameApplied 를 안 실으면 배치 캐릭터는 렌더러의 refresh 폴백을 못 타 — 이름이 SPA 에 안 들어간
+  // 채로 synced 로 마킹되고 멘션 피커엔 옛 이름이 남는다.
+  it('submitGeneration→collect 가 nameApplied 를 그대로 전달한다', async () => {
+    mockFlowGenerateCharacter.mockResolvedValue({ ...charResult, nameApplied: false })
+    const { result } = renderHook(() => useFlowEngine())
+    let sub, col
+    await act(async () => { sub = await result.current.submitGeneration('p', [], charOpts) })
+    await act(async () => { col = await result.current.collectGeneration(sub.generationId) })
+    expect(col.nameApplied).toBe(false)
+  })
+
   it('submitGeneration: 캐릭터 ref 는 동기 생성 후 generationId 를 돌려주고 collect 로 회수된다', async () => {
     mockFlowGenerateCharacter.mockResolvedValue(charResult)
     const { result } = renderHook(() => useFlowEngine())

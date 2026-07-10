@@ -25,6 +25,13 @@ describe('mergeReferencesPreservingRuntime', () => {
     expect(merged().prompt).toBe('새 프롬프트')
   })
 
+  // generatedAt 은 CSV 에 없다. 떨어뜨리면 inheritStyleIdFromCards 의 '가장 최근 카드' 선택이
+  // 전부 0 으로 tie 나고, resolveImageSrc 의 ?v= 캐시 키가 바뀌어 이미지가 재디코딩된다.
+  it('생성 시각(generatedAt)을 보존한다', () => {
+    const m = mergeReferencesPreservingRuntime([{ ...existing, generatedAt: 12345 }], [incoming])[0]
+    expect(m.generatedAt).toBe(12345)
+  })
+
   it('이미지 포인터를 보존한다 (기존 계약)', () => {
     expect(merged()).toMatchObject({ data: 'BASE64', filePath: '/p/준호.png', mediaId: 'media-1', status: 'done' })
   })

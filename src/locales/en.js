@@ -92,6 +92,9 @@ export default {
 
   // Story pipeline
   story: {
+    charRef: {
+      collision: 'Skipped character cards with a same-named reference: {names}',
+    },
     step: {
       setup: 'Setup',
       research: 'Research',

@@ -308,3 +308,27 @@ describe('ReferenceDetailModal — 적용할 스타일', () => {
     expect(onGenerate).toHaveBeenCalledWith(0, false, null, expect.objectContaining({ styleId: 'ref:1' }))
   })
 })
+
+// Flow 웹뷰가 다른 프로젝트로 드리프트했을 때, rename 이 projectId 를 안 넘기면 main 이
+// projectIdFromUrl() 로 폴백해 엉뚱한 Flow 프로젝트의 컨텍스트로 PATCH/navigate 한다.
+describe('ReferenceDetailModal — rename 은 바운드 projectId 를 넘긴다', () => {
+  it('저장 시 이름이 바뀌면 flowProjectId 를 함께 보낸다', async () => {
+    const renameFlowCharacter = vi.fn().mockResolvedValue({ success: true, nameApplied: true })
+    const prev = window.electronAPI
+    window.electronAPI = { ...(prev || {}), renameFlowCharacter, refreshFlowComposer: vi.fn() }
+
+    const reference = {
+      id: 1, type: 'character', name: '옛이름', prompt: 'p',
+      entityId: 'ent-1', flowNameSyncStatus: 'synced', registered: true,
+    }
+    render(<ReferenceDetailModal {...baseProps} reference={reference} appMode="flow" flowProjectId="proj-42" />)
+    fireEvent.change(screen.getByPlaceholderText('이름 (태그 매칭용)'), { target: { value: '새이름' } })
+    fireEvent.click(screen.getByRole('button', { name: /저장/ }))
+
+    await vi.waitFor(() => expect(renameFlowCharacter).toHaveBeenCalled())
+    expect(renameFlowCharacter).toHaveBeenCalledWith(
+      expect.objectContaining({ entityId: 'ent-1', displayName: '새이름', projectId: 'proj-42' }),
+    )
+    window.electronAPI = prev
+  })
+})

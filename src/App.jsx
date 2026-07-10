@@ -518,7 +518,7 @@ function App() {
         assertCurrent()
         const { references: upserted, collisions } = upsertStoryCharacterRefs(referencesRef.current, payload.storyCharacters)
         if (collisions.length) {
-          toast.warning(t('story.charRef.collision', `동명 레퍼런스가 있어 캐릭터 카드를 건너뜀: ${collisions.join(', ')}`))
+          toast.warning(t('story.charRef.collision', { names: collisions.join(', ') }))
         }
         if (upserted === referencesRef.current) return
         const r = await saveCurrentProjectWithPayload({ references: upserted })
@@ -542,11 +542,17 @@ function App() {
         // push 트랜잭션에서 refs도 함께 영속(autosave 디바운스 전 crash 시 카드 유실 방지).
         let nextReferences
         let importPayload = payload
-        // references 가 올라오기 전 upsert 하면 디스크의 카드를 새 카드로 덮어쓴다(캐릭터 푸시와 동일).
-        //   씬 자체는 그대로 반영하고 캐릭터 카드 생성만 건너뛴다 — main 이 다음 open/getState 에서 재전송한다.
-        const skipCharacterUpsert = !!payload.storyCharacters?.length && !(await awaitProjectHydration())
-        if (skipCharacterUpsert) console.warn('[App] project not hydrated — skipping character upsert in scene push')
-        if (!skipCharacterUpsert && payload.storyCharacters?.length) {
+        // 하이드레이션 전에는 scenesRef/referencesRef 가 비어 있다. 그 위에서 씬을 임포트하고
+        //   saveCurrentProjectWithPayload 로 확정 저장하면 수동 씬과 카드(entityId/이미지 포인터/
+        //   스타일 기억)가 통째로 사라진다. 캐릭터가 없는 푸시(내레이터-온리)도 똑같이 파괴적이라
+        //   storyCharacters 유무와 무관하게 막는다.
+        //   씬만 저장하고 캐릭터 upsert 만 건너뛰는 것도 안 된다 — @멘션이 가리킬 카드가 없는 채로
+        //   확정되고 ok:true ack 때문에 재전송도 안 된다. 통째로 실패시켜 ok:false ack 을 내보낸다.
+        if (!(await awaitProjectHydration())) {
+          throw new Error('project not hydrated — story scene push deferred')
+        }
+        assertCurrent()
+        if (payload.storyCharacters?.length) {
           const { references: upserted, collisions } = upsertStoryCharacterRefs(referencesRef.current, payload.storyCharacters)
           if (upserted !== referencesRef.current) {
             nextReferences = upserted
@@ -559,7 +565,7 @@ function App() {
               prompt: stripMentionsForNames(sc.prompt, collisions),
               videoT2VPrompt: stripMentionsForNames(sc.videoT2VPrompt, collisions),
             })) }
-            toast.warning(t('story.charRef.collision', `동명 레퍼런스가 있어 캐릭터 카드를 건너뜀: ${collisions.join(', ')}`))
+            toast.warning(t('story.charRef.collision', { names: collisions.join(', ') }))
           }
         }
         const { nextScenes, nextSrtTrack } = scenesHook.importStoryScenes(importPayload)
@@ -1964,6 +1970,7 @@ function App() {
             preparingRefs={preparingRefs}
             selectedStyleRefId={selectedStyleRefId}
             onStyleRefChange={setSelectedStyleRefId}
+            flowProjectId={_flowProjectId}
             projectName={settings.projectName}
             thumbnails={styleThumbnails}
             thumbnailGenerating={thumbnailGenerating}

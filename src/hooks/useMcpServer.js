@@ -22,7 +22,7 @@ import { isSceneGenerationDone, isReferenceUploadedDone } from '../services/gene
  *    모든 ref 를 재생성 대상으로 본다.
  *  - Flow entity 바인딩(entityId/workflowId/registered/flowNameSyncStatus): 지우면 @멘션이 끊기고
  *    사용자가 Ref 탭에서 다시 동기화해야 한다.
- *  - styleId: 지우면 카드가 "레거시(미기록)"로 되돌아가 재생성이 전역 스타일로 샌다.
+ *  - styleId/generatedAt: 지우면 카드가 "레거시(미기록)"로 되돌아가 재생성이 전역 스타일로 샌다.
  *    null("무스타일로 생성됨")과 undefined("기록 없음")는 다른 뜻이라 키째 보존한다.
  */
 export function mergeReferencesPreservingRuntime(prev, incomingRefs) {
@@ -55,6 +55,9 @@ export function mergeReferencesPreservingRuntime(prev, incomingRefs) {
       registered: existing.registered,
       flowNameSyncStatus: existing.flowNameSyncStatus,
       styleId: existing.styleId,        // preserve which style this card was generated with
+      // CSV 에 없는 생성 시각. 떨어뜨리면 inheritStyleIdFromCards 의 '가장 최근 카드' 선택이 tie 되고
+      //   resolveImageSrc 의 ?v= 캐시 키가 바뀌어 이미지가 불필요하게 재디코딩된다.
+      generatedAt: existing.generatedAt,
     }
   })
 }

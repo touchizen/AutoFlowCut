@@ -379,6 +379,21 @@ describe('createStyleResolver — 새 카드는 프로젝트가 쓰던 스타일
     expect(r.resolveEffectiveStyleIdForRef('preset:noir')).toBe('preset:noir')
   })
 
+  // 상세 모달의 prop 동기화 effect 는 styleId:undefined 로 키를 만든다. 그 카드를 저장하면
+  // own-property 는 있지만 값은 undefined 다 — 이걸 '무스타일로 생성됨'(null)으로 오해하면
+  // 다음 새 카드가 스타일을 잃는다.
+  it('styleId:undefined 는 기억이 아니다 (키만 있고 값이 없다)', () => {
+    const r = createStyleResolver({
+      ...baseDeps,
+      selectedStyleRefId: null,
+      references: [styleA, styleB,
+        card({ id: 2, styleId: undefined, generatedAt: 300 }),   // 모달에서 저장된 레거시 카드
+        card({ id: 3, styleId: 'ref:9', generatedAt: 100 }),
+      ],
+    })
+    expect(r.resolveEffectiveStyleIdForRef(null)).toBe('ref:9')
+  })
+
   it('기억하는 카드가 하나도 없으면 기존대로 findAutoStyle', () => {
     const r = createStyleResolver({
       ...baseDeps,
