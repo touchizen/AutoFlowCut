@@ -1,7 +1,9 @@
 const CLAUDE_REASONING_EFFORTS = Object.freeze(['off', 'low', 'medium', 'high', 'max'])
 // Fable 5는 thinking이 항상 켜져 있어 끌 수 없다 — 'off'는 효과 없는 선택지라 제외한다.
 const FABLE_REASONING_EFFORTS = Object.freeze(['low', 'medium', 'high', 'max'])
-const CODEX_REASONING_EFFORTS = Object.freeze(['minimal', 'low', 'medium', 'high', 'xhigh'])
+// app-server model/list 조회 실패 시의 폴백. 'minimal'은 gpt-5.5/5.4/5.4-mini 어느 것도
+// 지원하지 않는다(2026-07-10 model/list 확인) — 고르면 깨지는 값이라 노출하지 않는다.
+const CODEX_REASONING_EFFORTS = Object.freeze(['low', 'medium', 'high', 'xhigh'])
 const EMPTY_REASONING_EFFORTS = Object.freeze([])
 
 export const STORY_LLM_OPTIONS = Object.freeze([

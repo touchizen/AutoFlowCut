@@ -250,3 +250,14 @@ describe('buildCodexStoryLlmOptions — app-server 실제 응답 모양', () => 
     expect(o.defaultReasoningEffort).toBe('high')
   })
 })
+
+// 정적 폴백(app-server 조회 실패 시)도 실제로 지원되는 effort 만 노출해야 한다.
+// 'minimal'은 gpt-5.5/5.4/5.4-mini 어느 것도 지원하지 않는다(model/list 로 확인).
+describe('정적 폴백 카탈로그의 codex effort', () => {
+  it('minimal 을 노출하지 않는다', async () => {
+    const { STORY_LLM_OPTIONS } = await import('../../../../src/utils/storyLlmCatalog')
+    for (const o of STORY_LLM_OPTIONS.filter((x) => x.engine === 'codex')) {
+      expect(o.reasoningEfforts).not.toContain('minimal')
+    }
+  })
+})

@@ -95,10 +95,11 @@ describe('storyLlmCatalog', () => {
       reasoningEffort: 'xhigh',
       language: 'ko',
     })
+    // 'minimal'은 어떤 codex 모델도 지원하지 않는다(model/list) — 이제 무효값이라 기본값으로 떨어진다.
     expect(normalizeStoryLlmOptions({ engine: 'codex', model: 'gpt-5.4', reasoningEffort: 'minimal' })).toMatchObject({
       engine: 'codex',
       model: 'gpt-5.4',
-      reasoningEffort: 'minimal',
+      reasoningEffort: 'high',
     })
     expect(normalizeStoryLlmOptions({ engine: 'codex', model: 'gpt-5.4', reasoningEffort: 'ultra' })).toMatchObject({
       engine: 'codex',
