@@ -1,6 +1,6 @@
 // @vitest-environment node
 //
-// codexSdk(@openai/codex-sdk) 트랜스포트를 app-server JSON-RPC 로 교체한다.
+// story codex 엔진의 트랜스포트: app-server JSON-RPC.
 // 라이브로 확인한 흐름(codex-cli 0.142.5):
 //   initialize → thread/start → turn/start(즉시 반환, status=inProgress)
 //   → item/agentMessage/delta* → item/completed(agentMessage) → turn/completed(status)

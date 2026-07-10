@@ -1,8 +1,9 @@
 /**
- * `codex app-server` 프로세스 배선. 인증은 ~/.codex 를 그대로 쓴다(ChatGPT 구독 플랜, API 키 없음).
+ * `codex app-server` 프로세스 배선 — story codex 엔진의 트랜스포트.
+ * 인증은 ~/.codex 를 그대로 쓴다(ChatGPT 구독 플랜, API 키 없음).
  *
- * 지금은 model/list 만 쓴다. 트랜스포트 교체(thread/start + turn/start + item/agentMessage/delta)는
- * 같은 createJsonRpcClient 위에 올린다 — docs/superpowers/plans/2026-07-10-codex-appserver-*.md
+ * model/list 로 모델 목록을, thread/start + turn/start 로 한 턴을 돌린다. 진짜 증분 스트리밍은
+ * item/agentMessage/delta 알림으로 온다.
  */
 import { spawn as nodeSpawn } from 'node:child_process'
 import { createNdjsonDecoder, createJsonRpcClient } from './codexJsonRpc.js'
@@ -78,8 +79,6 @@ export async function listCodexModels(deps = {}) {
 // 스토리 어댑터는 codex 가 워크스페이스를 건드리면 안 된다. thread 단위로 도구를 전부 끄고
 // read-only 샌드박스로 연다. baseInstructions 덕분에 지시문 파일을 만들 필요가 없다.
 function buildThreadStartParams({ model, workingDirectory, config }) {
-  // model_instructions_file 은 SDK 경로에서 쓰던 파일 트릭이다 — app-server 는 baseInstructions 를 쓴다.
-  const { model_instructions_file: _unusedFile, ...threadConfig } = config
   return {
     ...(model ? { model } : {}),
     cwd: workingDirectory,
@@ -87,7 +86,7 @@ function buildThreadStartParams({ model, workingDirectory, config }) {
     approvalPolicy: 'never',
     ephemeral: true,
     baseInstructions: STORY_INSTRUCTIONS_TEXT,
-    config: threadConfig,
+    config,
   }
 }
 
