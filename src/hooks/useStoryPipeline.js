@@ -4,8 +4,8 @@
  */
 import { useState, useCallback, useRef, useEffect } from 'react'
 
-// 로그 라벨 — 알 수 없는 타겟은 '시나리오'로 폴백(기존 동작 유지).
-const REVIEW_TARGET_LOG_LABEL = { synopsis: '시놉시스', script: '시나리오', scenes: '씬', prompts: '프롬프트' }
+// 로그 라벨 — 알 수 없는 타겟은 '대본'로 폴백(기존 동작 유지).
+const REVIEW_TARGET_LOG_LABEL = { synopsis: '시놉시스', script: '대본', scenes: '씬', prompts: '프롬프트' }
 
 export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }) {
   const [state, setState] = useState(null)
@@ -271,12 +271,12 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
         } else if (p.kind === 'script-review' || p.kind === 'review') {
           if (p.phase === 'scored') {
             // script-review는 legacy 병행 송신이라 중복 수집을 막는다(generic 'review'만 센다).
-            if (p.kind === 'review') collectScore(p, REVIEW_TARGET_LOG_LABEL[p.target] || '시나리오')
+            if (p.kind === 'review') collectScore(p, REVIEW_TARGET_LOG_LABEL[p.target] || '대본')
             return
           }
           setReviewProgress({ operationId: p.operationId, target: p.target || 'script', round: p.round, of: p.of, phase: p.phase, error: p.error })
           if (p.kind === 'review') {
-            const targetLabel = `${REVIEW_TARGET_LOG_LABEL[p.target] || '시나리오'} 검수`
+            const targetLabel = `${REVIEW_TARGET_LOG_LABEL[p.target] || '대본'} 검수`
             const phaseLabel = p.phase === 'revising' ? '수정 중' : p.phase === 'error' ? '검토 중단' : '검토 중'
             setProgressLog((logs) => [...logs, {
               id: `${p.operationId || 'op'}-${logs.length}`,

@@ -1,6 +1,6 @@
 /**
  * StoryStepper — Story 파이프라인 진행 상태 표시 (스펙 §6 + §v2.12 B + 리서치 spec §2.1).
- * ① 리서치 → ② 시놉시스 → ③ 시나리오 → ④ 씬 분리 → ⑤ 오디오 → ⑥ 프롬프트 (설정은 0번)
+ * ① 리서치 → ② 시놉시스 → ③ 대본 → ④ 씬 분리 → ⑤ 오디오 → ⑥ 프롬프트 (설정은 0번)
  *
  * 프레젠테이션 컴포넌트 — 상태만 렌더. done 상태 스텝과 현재 진행 단계(currentStep)는
  * onStepClick으로 클릭해 해당 패널을 다시 볼 수 있다 — 진행 대기(pending)·진행 중인 현재
@@ -30,7 +30,7 @@ export const SYNOPSIS_KEY = 'synopsis'
 export const SYNOPSIS_META = { icon: '②', label: '시놉시스' }
 
 export const STEP_META = {
-  script: { icon: '③', label: '시나리오' },
+  script: { icon: '③', label: '대본' },
   scenes: { icon: '④', label: '씬 분리' },
   audio: { icon: '⑤', label: '오디오' },
   prompts: { icon: '⑥', label: '프롬프트' },
@@ -88,7 +88,7 @@ export default function StoryStepper({
             >
               <span className="story-step-icon">{meta.icon}</span>
               <span className="story-step-name">{label}</span>
-              {/* 게이트 탭 완료 표시 — 리서치 확정·시놉시스 확정 시 done 점(시나리오 등 실행 스텝과 일관). */}
+              {/* 게이트 탭 완료 표시 — 리서치 확정·시놉시스 확정 시 done 점(대본 등 실행 스텝과 일관). */}
               {done && <span className="story-step-dot story-dot-done" title={t('story.status.done', '완료')} aria-label={t('story.status.done', '완료')} />}
             </div>
           )

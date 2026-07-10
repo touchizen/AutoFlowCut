@@ -6,7 +6,7 @@
  * - 확정 버튼: title = confirm→start('script',{synopsis}) 순서 + 공백 비활성, pasted = confirm만
  * - 재오픈 hydrate 4분기(§v2.11)
  * - synopsis phase에서 bottom generic 컨트롤 suppress
- * - 리네임: 스텝퍼 '대본'→'시나리오'
+ * - 리네임: 스텝퍼 '대본'→'대본'
  */
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
@@ -62,7 +62,7 @@ describe('시놉시스 pill 렌더/활성 조건 (§v2.10/§v2.11 → §v2.12 B)
     expect(pill).toBeTruthy()
     expect(pill.querySelector('.story-step-dot')).toBeNull()
     expect(pill.classList.contains('story-step-disabled')).toBe(false)
-    // 설정(0)·리서치(1) 뒤 · 시나리오 앞(2)
+    // 설정(0)·리서치(1) 뒤 · 대본 앞(2)
     const pills = [...document.querySelectorAll('.story-step-pill')]
     expect(pills.indexOf(pill)).toBe(2)
   })
@@ -178,7 +178,7 @@ describe('setup 시작 → synopsis phase 전이 (§v2.8 B1)', () => {
     // pasted 도 대본에서 역추출한 시놉시스를 편집 가능하게 노출한다(구조/hook/몰입감 리뷰).
     await waitFor(() => expect(screen.getByLabelText('줄거리')).toBeInTheDocument())
     expect(screen.getByRole('button', { name: '등장인물 확정' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '이 시놉시스로 시나리오 생성' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '이 시놉시스로 대본 생성' })).toBeNull()
   })
 })
 
@@ -196,7 +196,7 @@ describe('synopsis 패널 — 줄거리/등장인물 편집', () => {
     const p = reopenedTitleUnconfirmed()
     render(<StoryView pipeline={p} />)
     fireEvent.change(screen.getByLabelText('출신'), { target: { value: 'Korean' } })
-    fireEvent.click(screen.getByRole('button', { name: '이 시놉시스로 시나리오 생성' }))
+    fireEvent.click(screen.getByRole('button', { name: '이 시놉시스로 대본 생성' }))
     await waitFor(() => expect(p.confirmSynopsis).toHaveBeenCalledWith({
       synopsisMd: '저장된 줄거리',
       characters: [expect.objectContaining({ id: '리안', ethnicity: 'Korean' })],
@@ -233,11 +233,11 @@ describe('synopsis 패널 — 줄거리/등장인물 편집', () => {
 })
 
 describe('확정 버튼 (§v2.9)', () => {
-  it('title: [이 시놉시스로 시나리오 생성] = confirmSynopsis 선행 → start(script,{synopsis}) + editor 전이', async () => {
+  it('title: [이 시놉시스로 대본 생성] = confirmSynopsis 선행 → start(script,{synopsis}) + editor 전이', async () => {
     const p = reopenedTitleUnconfirmed({ scriptText: '' })
     render(<StoryView pipeline={p} />)
     fireEvent.change(screen.getByLabelText('성별'), { target: { value: 'female' } })
-    fireEvent.click(screen.getByRole('button', { name: '이 시놉시스로 시나리오 생성' }))
+    fireEvent.click(screen.getByRole('button', { name: '이 시놉시스로 대본 생성' }))
     await waitFor(() => expect(p.start).toHaveBeenCalled())
     expect(p.confirmSynopsis).toHaveBeenCalledWith({
       synopsisMd: '저장된 줄거리',
@@ -255,7 +255,7 @@ describe('확정 버튼 (§v2.9)', () => {
 
   it('title: 줄거리가 공백이면 확정 버튼 비활성', () => {
     render(<StoryView pipeline={reopenedTitleUnconfirmed({ synopsisText: '   ' })} />)
-    expect(screen.getByRole('button', { name: '이 시놉시스로 시나리오 생성' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '이 시놉시스로 대본 생성' })).toBeDisabled()
   })
 
   it('pasted: [등장인물 확정] = confirmSynopsis만(synopsisMd:"") — start 재호출 없음 + editor 전이', async () => {
@@ -299,7 +299,7 @@ describe('synopsis phase bottom generic 컨트롤 suppress', () => {
     const { container } = render(<StoryView pipeline={reopenedTitleUnconfirmed()} />)
     expect(screen.getByTestId('story-synopsis')).toBeInTheDocument()
     expect(container.querySelector('.story-controls')).toBeNull()
-    expect(screen.queryByRole('button', { name: '시나리오 생성' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '대본 생성' })).toBeNull()
     expect(screen.queryByRole('button', { name: '시작' })).toBeNull()
   })
 })
@@ -396,12 +396,12 @@ describe('미확정 게이트 UI (FIX-2)', () => {
     expect(screen.getByRole('button', { name: '씬 분리 실행' })).toBeDisabled()
   })
 
-  // FIX-6(R2): 미확정 중 시나리오 탭은 editor로 열리지 않고 synopsis phase로 라우팅된다 —
+  // FIX-6(R2): 미확정 중 대본 탭은 editor로 열리지 않고 synopsis phase로 라우팅된다 —
   // editor의 다시쓰기/이어쓰기(start('script',{rewrite|continue}))로 게이트를 우회하지 못한다(§v2.8 B1).
-  it('미확정이면 시나리오 탭 클릭 → synopsis phase 유지(editor 미진입 — rewrite/continue 접근 불가)', () => {
+  it('미확정이면 대본 탭 클릭 → synopsis phase 유지(editor 미진입 — rewrite/continue 접근 불가)', () => {
     const p = reopenedPastedUnconfirmed()
     render(<StoryView pipeline={p} />)
-    fireEvent.click(screen.getByRole('button', { name: '시나리오' }))
+    fireEvent.click(screen.getByRole('button', { name: '대본' }))
     expect(screen.getByTestId('story-synopsis')).toBeInTheDocument()
     expect(screen.queryByTestId('story-editor')).toBeNull()
     expect(screen.queryByRole('button', { name: '다시쓰기' })).toBeNull()
@@ -414,7 +414,7 @@ describe('미확정 게이트 UI (FIX-2)', () => {
     p.charactersConfirmed = true
     render(<StoryView pipeline={p} />)
     expect(screen.getByRole('button', { name: '전체 진행' })).toBeEnabled()
-    fireEvent.click(screen.getByRole('button', { name: '시나리오' }))
+    fireEvent.click(screen.getByRole('button', { name: '대본' }))
     expect(screen.getByRole('button', { name: '분리시작' })).toBeEnabled()
   })
 
@@ -446,10 +446,12 @@ describe('synopsis 생성 중 [중단] (FIX-4)', () => {
   })
 })
 
-describe('리네임 — 대본→시나리오 (§v2.5/m2)', () => {
-  it('스텝퍼 script 라벨이 "시나리오"로 렌더된다("대본" 라벨 없음)', () => {
+// '시나리오'는 영화 시나리오 형식(씬 번호·슬러그라인·지문)을 가리킨다. 이 스텝의 산출물은
+// 나레이션·대사가 흐르는 산문이고 씬 분리는 다음 스텝이라, '대본'이 맞다.
+describe('리네임 — 시나리오→대본', () => {
+  it('스텝퍼 script 라벨이 "대본"으로 렌더된다("시나리오" 라벨 없음)', () => {
     render(<StoryView pipeline={pipeline()} />)
-    expect(pillOf('시나리오')).toBeTruthy()
-    expect(screen.queryByText('대본')).toBeNull()
+    expect(pillOf('대본')).toBeTruthy()
+    expect(screen.queryByText('시나리오')).toBeNull()
   })
 })

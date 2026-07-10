@@ -123,12 +123,12 @@ describe('시놉시스 review progress 이벤트', () => {
     expect(result.current.progressLog).toHaveLength(0)
   })
 
-  it('로그 라벨이 "시놉시스 검수"다 (기본 폴백인 "시나리오 검수"가 아니라)', async () => {
+  it('로그 라벨이 "시놉시스 검수"다 (기본 폴백인 "대본 검수"가 아니라)', async () => {
     const { result } = await openHook()
     startSynopsisOp('syn-op')
     sendReview({ operationId: 'syn-op', round: 1, of: 1, phase: 'reviewing' })
     expect(result.current.progressLog[0].message).toContain('시놉시스 검수')
-    expect(result.current.progressLog[0].message).not.toContain('시나리오')
+    expect(result.current.progressLog[0].message).not.toContain('대본')
   })
 
   it('로그 행의 step은 synopsis — scenes 로그로 새지 않는다', async () => {

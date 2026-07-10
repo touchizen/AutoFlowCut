@@ -1,5 +1,5 @@
 /**
- * SSE 스트리밍 중 뷰가 새 텍스트를 따라 내려간다(시놉시스 / 시나리오 둘 다).
+ * SSE 스트리밍 중 뷰가 새 텍스트를 따라 내려간다(시놉시스 / 대본 둘 다).
  * 안 그러면 scrollTop이 0에 머물러 텍스트는 가만히 있고 스크롤바만 줄어든다.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
@@ -23,7 +23,7 @@ const basePipeline = (over = {}) => ({
   ...over,
 })
 
-// 시나리오: script 스텝이 running이면 스트림 뷰가 뜬다.
+// 대본: script 스텝이 running이면 스트림 뷰가 뜬다.
 const scriptPipeline = (streamingText) => basePipeline({
   state: { steps: { script: { status: 'running', updatedAt: '2026-07-10T00:00:00Z' }, scenes: { status: 'pending' }, audio: { status: 'pending' }, prompts: { status: 'pending' } } },
   streamingText,
@@ -35,7 +35,7 @@ const synopsisPipeline = (synopsisStreamingText) => basePipeline({
   generateSynopsis: vi.fn().mockResolvedValue({}),
 })
 
-describe('시나리오 스트리밍 자동 스크롤', () => {
+describe('대본 스트리밍 자동 스크롤', () => {
   it('델타가 들어오면 바닥으로 따라간다', () => {
     const { container, rerender } = render(<StoryView pipeline={scriptPipeline('한 줄')} />)
     const el = stream(container)

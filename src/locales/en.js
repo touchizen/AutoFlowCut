@@ -96,7 +96,7 @@ export default {
       setup: 'Setup',
       research: 'Research',
       synopsis: 'Synopsis',
-      script: 'Scenario',
+      script: 'Script',
       scenes: 'Scene Split',
       audio: 'Audio',
       prompts: 'Prompts',
@@ -190,7 +190,7 @@ export default {
       placeholder: 'The synopsis will appear here',
       generating: 'Generating synopsis',
       extracting: 'Extracting characters',
-      confirmTitle: 'Generate scenario from this synopsis',
+      confirmTitle: 'Generate script from this synopsis',
       confirmCharacters: 'Confirm characters',
       regenerate: 'Regenerate synopsis',
       backToSetup: 'Back to setup',
@@ -232,7 +232,7 @@ export default {
     },
     review: {
       target: {
-        script: 'Scenario',
+        script: 'Script',
         scenes: 'Scenes',
         prompts: 'Prompts',
       },
@@ -248,7 +248,7 @@ export default {
     },
     action: {
       retry: 'Retry',
-      generateScript: 'Generate scenario',
+      generateScript: 'Generate script',
       run: 'Run {step}',
       retryIcon: '↻ Retry',
       generateIcon: '✨ Start',
@@ -298,9 +298,9 @@ export default {
       reviewLabel: 'Review',
       titleLabel: 'Title',
       titlePlaceholder: 'Title',
-      pastePlaceholder: 'Paste a scenario or drop a .txt/.md file here',
+      pastePlaceholder: 'Paste a script or drop a .txt/.md file here',
       pickFile: 'Choose file',
-      scriptPlaceholder: 'The scenario will appear here',
+      scriptPlaceholder: 'The script will appear here',
     },
     scenes: {
       summarySegment: 'Scene split unit: sentence-based · one scene per sentence · split on speaker changes · merge short fragments · split over 10 sec',

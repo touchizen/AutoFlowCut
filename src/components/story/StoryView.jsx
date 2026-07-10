@@ -156,7 +156,7 @@ function reasoningEffortFor(option, requestedReasoning = null) {
 }
 
 // synopsis는 라벨/기본값만 갖고 ORDER엔 없다 — 수동 전용이라 설정 탭에 노출하지 않는다(spec 2026-07-10).
-const REVIEW_TARGET_LABEL = { synopsis: '시놉시스', script: '시나리오', scenes: '씬', prompts: '프롬프트' }
+const REVIEW_TARGET_LABEL = { synopsis: '시놉시스', script: '대본', scenes: '씬', prompts: '프롬프트' }
 const REVIEW_TARGET_ORDER = ['script', 'scenes', 'prompts']
 
 function defaultReviewRounds(target, model) {
@@ -228,7 +228,7 @@ function StoryRunning({ label, startedAt, detail, log = [] }) {
   )
 }
 
-/** 생성 중 인라인 시계 — 스트리밍(시놉시스/시나리오)처럼 텍스트만 뜨는 뷰 하단 우측에 붙여
+/** 생성 중 인라인 시계 — 스트리밍(시놉시스/대본)처럼 텍스트만 뜨는 뷰 하단 우측에 붙여
  *  "돌고 있음 + 경과 시간"을 보인다(초시계 애니메이션 + 1초 갱신). reasoning=max 등 첫 출력이
  *  늦을 때 화면이 텅 비어 멈춘 것처럼 보이던 문제를 해소. */
 function GenClock({ startedAt, label }) {
@@ -786,7 +786,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const actionAriaLabel = isError
     ? t('story.action.retry', '재실행')
     : currentStep === 'script'
-      ? t('story.action.generateScript', '시나리오 생성')
+      ? t('story.action.generateScript', '대본 생성')
       : t('story.action.run', `${currentStepLabel} 실행`, { step: currentStepLabel })
 
   const actionVisibleLabel = isError
@@ -981,12 +981,12 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
       setScriptPhase('editor')
       return
     }
-    // title [이 시놉시스로 시나리오 생성] — confirm(커밋) 완료 후 start('script') 순차 호출(§v2.10).
+    // title [이 시놉시스로 대본 생성] — confirm(커밋) 완료 후 start('script') 순차 호출(§v2.10).
     const r = await pipeline.confirmSynopsis?.({ synopsisMd: synopsisDraft, characters: chars })
     if (r?.error) { toast.error(`${t('story.error.prefix', '오류')}: ${r.error}`); return }
     setBaseScript('')
-    // 시나리오 화면(editor)으로 먼저 전환 — start('script')를 await 하면 생성이 끝날 때까지 화면이 안
-    // 바뀌어 "시나리오 화면이 안 나온다". 전환 후 생성이 스트리밍으로 editor 뷰에 들어온다(§v2.10: confirm→start 순서 유지).
+    // 대본 화면(editor)으로 먼저 전환 — start('script')를 await 하면 생성이 끝날 때까지 화면이 안
+    // 바뀌어 "대본 화면이 안 나온다". 전환 후 생성이 스트리밍으로 editor 뷰에 들어온다(§v2.10: confirm→start 순서 유지).
     setScriptPhase('editor')
     start('script', { input: { type: 'title', title }, options: currentOptions(), synopsis: synopsisDraft })
   }
@@ -1159,7 +1159,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
 
   // §1-A setup primary [✨ 시작] — scriptText(임포트/붙여넣기) 있으면 임포트 경로, 없고 제목 있으면
-  // 시나리오 생성 경로. 둘 다 없으면 버튼 자체가 disabled(아래)이므로 여기 도달하지 않는다.
+  // 대본 생성 경로. 둘 다 없으면 버튼 자체가 disabled(아래)이므로 여기 도달하지 않는다.
   // 슬라이스5(§v2.8 B1): 두 경로 모두 synopsis 게이트로 진입한다(pasted는 start 선행 후 역추출).
   const handleSetupStart = () => {
     const originalScript = pipeline.scriptText || ''
@@ -1271,7 +1271,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
         countLabelKey="prompt.lineCount"
         // 검수 점수는 줄 수·자 수 행에 얹는다 — 별도 줄을 만들면 편집 영역만 좁아진다.
         footerExtra={scoresFor('script').length ? <ReviewScore scores={scoresFor('script')} /> : null}
-        placeholder={t('story.form.scriptPlaceholder', '시나리오가 여기에 표시됩니다')}
+        placeholder={t('story.form.scriptPlaceholder', '대본이 여기에 표시됩니다')}
       />
     </div>
   )
@@ -1413,7 +1413,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                   >
                     {synopsisMode === 'pasted'
                       ? t('story.synopsis.confirmCharacters', '등장인물 확정')
-                      : t('story.synopsis.confirmTitle', '이 시놉시스로 시나리오 생성')}
+                      : t('story.synopsis.confirmTitle', '이 시놉시스로 대본 생성')}
                   </button>
                   <button
                     type="button"
@@ -1456,7 +1456,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                     <div className="story-script-stream" aria-live="polite" ref={scriptEditorStream.ref} onScroll={scriptEditorStream.onScroll}>
                       {baseScript ? baseScript + streamingText : streamingText}
                     </div>
-                    {/* 생성 중 시계+경과 (시나리오) — 첫 출력이 늦어도 진행 중임을 보인다. */}
+                    {/* 생성 중 시계+경과 (대본) — 첫 출력이 늦어도 진행 중임을 보인다. */}
                     <GenClock startedAt={Date.parse(steps.script?.updatedAt)} label={t('story.gen.generating', '생성 중')} />
                   </>
                 ) : (
@@ -1654,7 +1654,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                     className="story-paste-textarea"
                     value={scriptText}
                     onChange={(e) => setScriptText(e.target.value)}
-                    placeholder={t('story.form.pastePlaceholder', '시나리오를 붙여넣거나 .txt/.md 파일을 끌어다 놓으세요')}
+                    placeholder={t('story.form.pastePlaceholder', '대본을 붙여넣거나 .txt/.md 파일을 끌어다 놓으세요')}
                     disabled={isRunning}
                   />
                   <div className="story-import-actions">
@@ -1987,7 +1987,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
           하단 제네릭 컨트롤은 editor 밖(setup·scenes/prompts 진행)에서만 렌더.
           F1재검토: scriptPhase가 editor로 남아도 실제로 표시 중인 게 대본 editor가 아니면(재오픈 running →
           displayStep=scenes/prompts) 하단 컨트롤(중단)을 보여야 하므로 "실제 editor 표시 중"을 기준으로 판단.
-          슬라이스5(§3.5): synopsis phase에서도 suppress — generic [시나리오 생성]이 게이트를 우회하지 못하게.
+          슬라이스5(§3.5): synopsis phase에서도 suppress — generic [대본 생성]이 게이트를 우회하지 못하게.
           리서치 spec §3.6(N2): research phase도 동일 suppress — 안 넣으면 게이트 누출 회귀. */}
       {!(displayStep === 'script' && (scriptPhase === 'editor' || scriptPhase === 'synopsis' || scriptPhase === 'research')) && (
         <div className="story-controls">
@@ -2002,7 +2002,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
               className={`story-btn-primary ${isError ? 'story-btn-error' : ''}`}
               onClick={isSetupActionView ? handleSetupStart : redoStep ? handleStepRedo : handlePrimaryAction}
               // FIX-2: 미확정이면 하류(scenes/audio/prompts) 진행·재실행을 disable — script 액션
-              // (시작/시나리오 생성)은 게이트 전 단계라 허용.
+              // (시작/대본 생성)은 게이트 전 단계라 허용.
               disabled={isSetupActionView
                 ? setupActionDisabled
                 : (isRunning || (unconfirmedGate && (redoStep != null || currentStep !== 'script')))}

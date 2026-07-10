@@ -77,7 +77,7 @@ export const REVIEW_SCHEMA = {
   required: ['verdict', 'critique'],
 }
 
-// 시나리오·시놉시스 검수 전용 — 몰입감 점수(0~100)를 함께 낸다. 씬/프롬프트는 몰입감이 무의미해
+// 대본·시놉시스 검수 전용 — 몰입감 점수(0~100)를 함께 낸다. 씬/프롬프트는 몰입감이 무의미해
 // REVIEW_SCHEMA를 그대로 쓴다. score는 required가 아니다: 모델이 빠뜨렸다고 assertSchema가 검수
 // 전체를 실패시키면 안 된다(점수가 없으면 배지만 숨긴다).
 export const SCORED_REVIEW_SCHEMA = {

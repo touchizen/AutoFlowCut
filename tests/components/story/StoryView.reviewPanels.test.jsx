@@ -16,7 +16,7 @@ const SCENES = [{ sceneNo: 1, summary: '첫 씬', imagePrompt: 'IMG', videoPromp
 
 const pipeline = (over = {}) => ({
   state: { steps: STEP(), speakers: [{ id: 'narrator', name: '나레이션' }] },
-  scenes: SCENES, streamingText: '', scriptText: '# 내 시나리오 본문', start: vi.fn(), abort: vi.fn(), openError: null,
+  scenes: SCENES, streamingText: '', scriptText: '# 내 대본 본문', start: vi.fn(), abort: vi.fn(), openError: null,
   progressLog: [], reviewProgress: null,
   ...over,
 })
@@ -28,10 +28,10 @@ const LOG = (step, message) => ({ id: `${step}-1`, step, message, level: 'info',
 
 const stream = (c) => c.querySelector('.story-script-stream')
 
-describe('시나리오 검수 중', () => {
+describe('대본 검수 중', () => {
   const p = (over = {}) => pipeline({
     state: { steps: STEP({ script: RUNNING_REVIEW }), speakers: [] },
-    progressLog: [LOG('script', '시나리오 검수: 검토 중 1/3')],
+    progressLog: [LOG('script', '대본 검수: 검토 중 1/3')],
     reviewProgress: { target: 'script', round: 1, of: 3, phase: 'reviewing' },
     ...over,
   })
@@ -44,17 +44,17 @@ describe('시나리오 검수 중', () => {
 
   it('하단에 진행 로그창이 뜬다', () => {
     render(<StoryView pipeline={p()} />)
-    expect(screen.getByText('시나리오 검수: 검토 중 1/3')).toBeInTheDocument()
+    expect(screen.getByText('대본 검수: 검토 중 1/3')).toBeInTheDocument()
     expect(screen.getByText('검수 중')).toBeInTheDocument()
   })
 
   it('다른 스텝의 로그는 섞이지 않는다', () => {
-    render(<StoryView pipeline={p({ progressLog: [LOG('script', '시나리오 검수: 검토 중 1/3'), LOG('scenes', '씬 검수: 검토 중 1/1')] })} />)
+    render(<StoryView pipeline={p({ progressLog: [LOG('script', '대본 검수: 검토 중 1/3'), LOG('scenes', '씬 검수: 검토 중 1/1')] })} />)
     expect(screen.queryByText('씬 검수: 검토 중 1/1')).toBeNull()
   })
 })
 
-describe('시나리오 생성 중 (현행 유지)', () => {
+describe('대본 생성 중 (현행 유지)', () => {
   it('스트림 뷰가 뜨고 검수 로그창은 없다', () => {
     const { container } = render(<StoryView pipeline={pipeline({
       state: { steps: STEP({ script: RUNNING_GEN }), speakers: [] },

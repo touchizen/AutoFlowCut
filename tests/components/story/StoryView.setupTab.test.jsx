@@ -38,7 +38,7 @@ describe('StoryView 설정 탭', () => {
     render(<StoryView pipeline={pipeline({ scriptText: '복원된 대본' })} />)
     fireEvent.click(pillOf('설정'))
     expect(screen.getByTestId('story-setup')).toBeInTheDocument()
-    fireEvent.click(pillOf('시나리오'))
+    fireEvent.click(pillOf('대본'))
     expect(screen.getByTestId('story-editor')).toBeInTheDocument()
   })
 

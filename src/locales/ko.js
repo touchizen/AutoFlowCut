@@ -96,7 +96,7 @@ export default {
       setup: '설정',
       research: '리서치',
       synopsis: '시놉시스',
-      script: '시나리오',
+      script: '대본',
       scenes: '씬 분리',
       audio: '오디오',
       prompts: '프롬프트',
@@ -190,7 +190,7 @@ export default {
       placeholder: '시놉시스가 여기에 표시됩니다',
       generating: '시놉시스 생성 중',
       extracting: '등장인물 추출 중',
-      confirmTitle: '이 시놉시스로 시나리오 생성',
+      confirmTitle: '이 시놉시스로 대본 생성',
       confirmCharacters: '등장인물 확정',
       regenerate: '시놉시스 다시',
       backToSetup: '설정으로',
@@ -232,7 +232,7 @@ export default {
     },
     review: {
       target: {
-        script: '시나리오',
+        script: '대본',
         scenes: '씬',
         prompts: '프롬프트',
       },
@@ -248,7 +248,7 @@ export default {
     },
     action: {
       retry: '재실행',
-      generateScript: '시나리오 생성',
+      generateScript: '대본 생성',
       run: '{step} 실행',
       retryIcon: '↻ 다시 시도',
       generateIcon: '✨ 시작',
@@ -298,9 +298,9 @@ export default {
       reviewLabel: '검수',
       titleLabel: '제목',
       titlePlaceholder: '제목',
-      pastePlaceholder: '시나리오를 붙여넣거나 .txt/.md 파일을 끌어다 놓으세요',
+      pastePlaceholder: '대본을 붙여넣거나 .txt/.md 파일을 끌어다 놓으세요',
       pickFile: '파일 선택',
-      scriptPlaceholder: '시나리오가 여기에 표시됩니다',
+      scriptPlaceholder: '대본이 여기에 표시됩니다',
     },
     scenes: {
       summarySegment: '씬 분리 단위: 문장 기준 · 문장마다 씬 · 화자 전환 시 분리 · 짧은 조각 병합 · 10초↑ 분할',

@@ -9,12 +9,12 @@ import StoryStepper from '../../../src/components/story/StoryStepper.jsx'
 const allDone = { script: { status: 'done' }, scenes: { status: 'done' }, audio: { status: 'done' }, prompts: { status: 'done' } }
 const pillOf = (label) => screen.getByText(label).closest('.story-step-pill')
 
-describe('StoryStepper 설정 탭(0번, 시나리오 앞)', () => {
-  it('설정 pill을 시나리오 앞에 렌더 — 상태 배지 없음, 항상 클릭 가능', () => {
+describe('StoryStepper 설정 탭(0번, 대본 앞)', () => {
+  it('설정 pill을 대본 앞에 렌더 — 상태 배지 없음, 항상 클릭 가능', () => {
     render(<StoryStepper steps={allDone} currentStep="script" activeStep="setup" onStepClick={vi.fn()} />)
     const setup = pillOf('설정')
     expect(setup).toBeTruthy()
-    // 시나리오 앞 순서
+    // 대본 앞 순서
     const pills = [...document.querySelectorAll('.story-step-pill')]
     expect(pills.indexOf(setup)).toBe(0)
     // 상태 점 없음(설정은 실행 스텝 아님)
@@ -29,14 +29,14 @@ describe('StoryStepper 설정 탭(0번, 시나리오 앞)', () => {
   it('activeStep="setup"이면 설정 pill이 active', () => {
     render(<StoryStepper steps={allDone} currentStep="script" activeStep="setup" onStepClick={vi.fn()} />)
     expect(pillOf('설정').classList.contains('active')).toBe(true)
-    expect(pillOf('시나리오').classList.contains('active')).toBe(false)
+    expect(pillOf('대본').classList.contains('active')).toBe(false)
   })
 })
 
 // §v2.12 B: synopsis 정식 번호 스텝(UI) — pill 자리는 항상 렌더(숨김 폐지),
 // synopsisEnabled prop이 활성(클릭 가능)/비활성(회색, 클릭 불가)을 가른다.
 describe('StoryStepper 시놉시스 스텝(항상 렌더 + synopsisEnabled)', () => {
-  it('리서치 뒤·시나리오 앞에 무배지 pill을 항상 렌더한다(prop 미지정 포함)', () => {
+  it('리서치 뒤·대본 앞에 무배지 pill을 항상 렌더한다(prop 미지정 포함)', () => {
     render(<StoryStepper steps={allDone} currentStep="script" onStepClick={vi.fn()} />)
     const pill = pillOf('시놉시스')
     expect(pill).toBeTruthy()
@@ -44,7 +44,7 @@ describe('StoryStepper 시놉시스 스텝(항상 렌더 + synopsisEnabled)', ()
     expect(pills.indexOf(pillOf('설정'))).toBe(0)
     expect(pills.indexOf(pillOf('리서치'))).toBe(1)
     expect(pills.indexOf(pill)).toBe(2)
-    expect(pills.indexOf(pillOf('시나리오'))).toBe(3)
+    expect(pills.indexOf(pillOf('대본'))).toBe(3)
     expect(pill.querySelector('.story-step-dot')).toBeNull()
   })
   it('synopsisEnabled 미지정(기본)이면 비활성 — 회색(disabled) 스타일 + 클릭 불가', () => {
@@ -67,7 +67,7 @@ describe('StoryStepper 시놉시스 스텝(항상 렌더 + synopsisEnabled)', ()
   it('activeStep="synopsis"면 시놉시스 pill이 active', () => {
     render(<StoryStepper steps={allDone} currentStep="script" activeStep="synopsis" synopsisEnabled onStepClick={vi.fn()} />)
     expect(pillOf('시놉시스').classList.contains('active')).toBe(true)
-    expect(pillOf('시나리오').classList.contains('active')).toBe(false)
+    expect(pillOf('대본').classList.contains('active')).toBe(false)
   })
 })
 
@@ -80,7 +80,7 @@ describe('StoryStepper 스텝 번호(리서치 D1)', () => {
     expect(iconOf('설정')).toBe('0')
     expect(iconOf('리서치')).toBe('①')
     expect(iconOf('시놉시스')).toBe('②')
-    expect(iconOf('시나리오')).toBe('③')
+    expect(iconOf('대본')).toBe('③')
     expect(iconOf('씬 분리')).toBe('④')
     expect(iconOf('오디오')).toBe('⑤')
     expect(iconOf('프롬프트')).toBe('⑥')
@@ -145,8 +145,8 @@ describe('StoryStepper 자동 진행(칩 안 인라인 자동 토글 + 전체 �
     expect(autoOf('씬 분리').checked).toBe(true)
     expect(autoOf('오디오').checked).toBe(false)
     expect(autoOf('프롬프트').checked).toBe(true)
-    // 시나리오/설정엔 자동 체크박스 없음
-    expect(autoOf('시나리오')).toBeNull()
+    // 대본/설정엔 자동 체크박스 없음
+    expect(autoOf('대본')).toBeNull()
     expect(autoOf('설정')).toBeNull()
   })
   it('자동 토글 클릭 시 onToggleAuto(step) 호출, 클릭 가능 스텝이어도 탭 이동(onStepClick)은 안 함', () => {
@@ -184,7 +184,7 @@ describe('StoryStepper 세그먼트 칩 구조', () => {
   it('실행 스텝은 상태 점(.story-step-dot)을 상태 클래스와 함께, 게이트 탭엔 점 없음', () => {
     const steps = { script: { status: 'done' }, scenes: { status: 'running' }, audio: { status: 'pending' }, prompts: { status: 'error' } }
     render(<StoryStepper steps={steps} currentStep="scenes" researchEnabled synopsisEnabled onStepClick={vi.fn()} />)
-    expect(pillOf('시나리오').querySelector('.story-step-dot.story-dot-done')).toBeTruthy()
+    expect(pillOf('대본').querySelector('.story-step-dot.story-dot-done')).toBeTruthy()
     expect(pillOf('씬 분리').querySelector('.story-step-dot.story-dot-running')).toBeTruthy()
     expect(pillOf('오디오').querySelector('.story-step-dot.story-dot-pending')).toBeTruthy()
     expect(pillOf('프롬프트').querySelector('.story-step-dot.story-dot-error')).toBeTruthy()
@@ -194,7 +194,7 @@ describe('StoryStepper 세그먼트 칩 구조', () => {
   })
 })
 
-// 게이트 완료 표시 — 리서치/시놉시스 확정 시 done 점(시나리오 등 실행 스텝과 일관).
+// 게이트 완료 표시 — 리서치/시놉시스 확정 시 done 점(대본 등 실행 스텝과 일관).
 describe('StoryStepper 게이트 완료 표시(done)', () => {
   it('researchDone/synopsisDone 이면 해당 게이트 칩에 완료 점(.story-dot-done)', () => {
     render(<StoryStepper steps={allDone} currentStep="script" researchEnabled synopsisEnabled researchDone synopsisDone onStepClick={vi.fn()} />)

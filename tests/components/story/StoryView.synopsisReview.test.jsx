@@ -46,7 +46,7 @@ describe('시놉시스 패널 검수 컨트롤', () => {
 
   it('설정 탭의 자동검수 타겟은 여전히 3개다 (시놉시스 미포함)', () => {
     render(<StoryView pipeline={pipeline()} />)
-    for (const label of ['시나리오', '씬', '프롬프트']) {
+    for (const label of ['대본', '씬', '프롬프트']) {
       expect(screen.getByRole('checkbox', { name: `${label} 자동 검수` })).toBeInTheDocument()
     }
     expect(screen.queryByRole('checkbox', { name: '시놉시스 자동 검수' })).toBeNull()
@@ -61,7 +61,7 @@ describe('시놉시스 패널 검수 컨트롤', () => {
     await enterSynopsis(pipeline({ synopsisReviewing: true }))
     expect(reviewBtn()).toBeDisabled()
     expect(screen.getByRole('button', { name: '시놉시스 다시' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: /시나리오 생성/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /대본 생성/ })).toBeDisabled()
     expect(draftFrozen()).toBe(true)
   })
 

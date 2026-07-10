@@ -1,6 +1,6 @@
 /**
  * 검수 채점 배지 — 텍스트창 하단에 몰입감 점수. 라운드가 여럿이면 첫→마지막 변화를 보여준다.
- * 시놉시스 / 시나리오 두 곳.
+ * 시놉시스 / 대본 두 곳.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
@@ -20,7 +20,7 @@ const pipeline = (over = {}) => ({
   ...over,
 })
 
-describe('시나리오 검수 점수', () => {
+describe('대본 검수 점수', () => {
   it('여러 라운드면 첫→마지막 변화를 보여준다', () => {
     render(<StoryView pipeline={pipeline({ reviewScores: { target: 'script', scores: [72, 85] } })} />)
     expect(scoreText()).toBe('몰입감72→85')
@@ -47,7 +47,7 @@ describe('시나리오 검수 점수', () => {
     expect(screen.queryByTestId('review-score')).toBeNull()
   })
 
-  it('다른 타겟(씬)의 점수는 시나리오에 뜨지 않는다', () => {
+  it('다른 타겟(씬)의 점수는 대본에 뜨지 않는다', () => {
     render(<StoryView pipeline={pipeline({ reviewScores: { target: 'scenes', scores: [70] } })} />)
     expect(screen.queryByTestId('review-score')).toBeNull()
   })
@@ -74,7 +74,7 @@ describe('시놉시스 검수 점수', () => {
   })
 
   // 시놉시스도 대본과 같은 편집기 — 라인번호 gutter + 하단 줄 수·자 수 행, 점수도 그 행에.
-  it('점수는 시나리오와 같은 카운트 행 안에 있다', async () => {
+  it('점수는 대본와 같은 카운트 행 안에 있다', async () => {
     await enterSynopsis({ reviewScores: { target: 'synopsis', scores: [60, 88] } })
     expect(screen.getByTestId('review-score').closest('.prompt-input-footer')).not.toBeNull()
   })
@@ -87,7 +87,7 @@ describe('시놉시스 검수 점수', () => {
     expect(footer.querySelector('[data-testid="char-count"]')).not.toBeNull()
   })
 
-  it('시나리오 타겟 점수는 시놉시스 패널에 뜨지 않는다', async () => {
+  it('대본 타겟 점수는 시놉시스 패널에 뜨지 않는다', async () => {
     await enterSynopsis({ reviewScores: { target: 'script', scores: [72] } })
     expect(screen.queryByTestId('review-score')).toBeNull()
   })

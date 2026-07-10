@@ -74,7 +74,7 @@ describe('StoryView scriptPhase (Task 7)', () => {
     expect(screen.queryByTestId('story-editor')).toBeNull()
     expect(screen.getByText('화자')).toBeTruthy()
     // done된 대본 스텝 클릭 → editor 복귀
-    fireEvent.click(screen.getByRole('button', { name: '시나리오' }))
+    fireEvent.click(screen.getByRole('button', { name: '대본' }))
     expect(screen.getByTestId('story-editor')).toBeInTheDocument()
   })
 

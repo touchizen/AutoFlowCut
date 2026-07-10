@@ -744,7 +744,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       } else if ((params.input?.type ?? state.input?.type) === 'title') {
         synopsis = ((await store.loadText('synopsis.md')) || '').trim() || undefined
       }
-      // §v2.8 M3: 확정 등장인물 명단(state.speakers 파생)을 시나리오 프롬프트에 주입 —
+      // §v2.8 M3: 확정 등장인물 명단(state.speakers 파생)을 대본 프롬프트에 주입 —
       // 대본 첫 소비자부터 이름 어긋남 차단. 미확정(legacy)은 현행 그대로.
       const characters = state.charactersConfirmed === true
         ? characterSpeakers().map((sp) => normalizeStoryCharacter(sp))
@@ -1376,7 +1376,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       if (typeof synopsisMd === 'string' && synopsisMd.trim()) await store.saveText('synopsis.md', synopsisMd)
       await flush()
       sendCharacters(operationId)
-      // 렌더러 state 미러 동기화 — charactersConfirmed=true 를 반영해야 미확정 게이트가 풀려 시나리오
+      // 렌더러 state 미러 동기화 — charactersConfirmed=true 를 반영해야 미확정 게이트가 풀려 대본
       // 탭/화면 라우팅이 editor 로 간다(안 그러면 확정 후에도 synopsis 로 되돌아가 "반응 없음").
       send('story:state', {
         state,
