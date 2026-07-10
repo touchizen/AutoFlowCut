@@ -121,14 +121,12 @@ export function buildSynopsisPrompt(input, opts = {}) {
           `1) 로그라인: 한 줄.`,
           `2) 훅(Hook): 시청자를 초반 3초에 붙잡을 강력한 도입 1~2문장 — 충격·미스터리·강한 공감 중 하나로, 답을 미뤄 궁금증을 남긴다.`,
           `3) 기승전결: 기(인물·상황 설정) → 승(갈등 전개) → 전(반전·최대 위기) → 결(해소·여운)을 각 1~2문장.`,
-          `4) 몰입감 점수: 마지막에 "몰입감 점수: N/100" 형식으로, 후킹·긴장 유지·감정이입을 냉정하게 자기평가하고 한 줄 근거를 붙인다.`,
         ].join('\n')
       : [
           `Write the following in order, each as its own subheading (no dialogue or scene numbers, prose outline):`,
           `1) Logline: one line.`,
           `2) Hook: a 1-2 sentence opening that grabs the viewer in the first 3 seconds (shock, mystery, or deep empathy; leave a question open).`,
           `3) Story arc: setup (characters & situation) → rising conflict → climax/twist → resolution, 1-2 sentences each.`,
-          `4) Immersion score: end with "Immersion score: N/100" and a one-line rationale (judge hook, tension, and empathy honestly).`,
         ].join('\n'),
     opts.genre ? `장르: ${opts.genre}` : '',
     opts.tone ? `톤: ${opts.tone}` : '',
@@ -152,7 +150,7 @@ export function buildCharacterExtractPrompt(pastedScript, opts = {}) {
   ].join('\n')
 }
 
-// 붙여넣기 경로 — 대본을 분석해 시놉시스(로그라인/훅/구조/몰입감 점수)를 역추출하고 등장인물 JSON도 함께
+// 붙여넣기 경로 — 대본을 분석해 시놉시스(로그라인/훅/구조)를 역추출하고 등장인물 JSON도 함께
 // 산출한다(buildSynopsisPrompt 출력 계약과 동일: 줄글 + CHARACTERS_JSON + JSON 배열 → splitSynopsisOutput).
 export function buildSynopsisFromScriptPrompt(pastedScript, opts = {}) {
   const meta = opts.metaPrompt ? `## CUSTOM INSTRUCTIONS\n${opts.metaPrompt}\n` : ''
@@ -168,14 +166,12 @@ export function buildSynopsisFromScriptPrompt(pastedScript, opts = {}) {
           `1) 로그라인: 한 줄.`,
           `2) 훅(Hook): 대본 도입이 시청자를 붙잡는 방식 1~2문장(약하면 보완 제안).`,
           `3) 기승전결: 기·승·전·결로 대본의 흐름을 각 1~2문장 요약.`,
-          `4) 몰입감 점수: 마지막에 "몰입감 점수: N/100" 형식으로, 후킹·긴장 유지·감정이입을 냉정하게 평가하고 한 줄 근거.`,
         ].join('\n')
       : [
           `Write the following in order, each as its own subheading (no dialogue or scene numbers, prose):`,
           `1) Logline: one line.`,
           `2) Hook: how the opening grabs the viewer, 1-2 sentences (suggest an improvement if weak).`,
           `3) Story arc: setup → rising conflict → climax/twist → resolution, summarizing the script, 1-2 sentences each.`,
-          `4) Immersion score: end with "Immersion score: N/100" and a one-line rationale (judge hook, tension, and empathy).`,
         ].join('\n'),
     ko
       ? `그 뒤 마지막에 CHARACTERS_JSON 이라고 한 줄 쓰고, 다음 줄부터 대본 등장인물 전체를 아래 형식의 JSON 배열로만 출력하라(설명·코드펜스 금지):`

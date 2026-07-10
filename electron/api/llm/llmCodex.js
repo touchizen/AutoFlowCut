@@ -100,7 +100,7 @@ export async function generateScript(input, opts = {}, { onDelta, signal, runTex
 // pasted는 non-streaming 등장인물 역추출만. 마커 없음/JSON 깨짐은 characters=[] 폴백.
 export async function generateSynopsis(input, opts = {}, { onDelta, signal, runText = runCodexText } = {}) {
   if (input?.type === 'pasted') {
-    // 대본에서 시놉시스(로그라인/훅/구조/몰입감)+등장인물을 함께 역추출.
+    // 대본에서 시놉시스(로그라인/훅/구조)+등장인물을 함께 역추출.
     const prompt = guardPrompt(buildSynopsisFromScriptPrompt(input.pastedScript, opts))
     const text = await runText(prompt, runtimeOptions(opts), { signal })
     return splitSynopsisOutput(text)

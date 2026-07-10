@@ -86,7 +86,7 @@ export async function generateScript(input, opts, { onDelta, signal, fetchImpl =
 // (프로덕션 라우팅 대상 아님 — claude/codex와 계약 호환/테스트용.)
 export async function generateSynopsis(input, opts = {}, { onDelta, signal, fetchImpl = fetch } = {}) {
   if (input?.type === 'pasted') {
-    // 대본에서 시놉시스(로그라인/훅/구조/몰입감)+등장인물을 함께 역추출.
+    // 대본에서 시놉시스(로그라인/훅/구조)+등장인물을 함께 역추출.
     const prompt = buildSynopsisFromScriptPrompt(input.pastedScript, opts)
     const res = await fetchImpl(`${BASE}/${opts.model}:generateContent`, {
       method: 'POST',

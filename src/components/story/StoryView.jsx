@@ -1357,7 +1357,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                   </div>
                 )}
                 {/* title·pasted 공통 — 생성 중엔 스트림(pasted는 델타 없어 빈 채 시계만), 완료 후 편집 가능한
-                    시놉시스. pasted도 대본에서 역추출한 시놉시스(로그라인/훅/구조/몰입감)를 보여준다. */}
+                    시놉시스. pasted도 대본에서 역추출한 시놉시스(로그라인/훅/구조)를 보여준다. */}
                 {synopsisGenerating ? (
                   <div className="story-script-stream" aria-live="polite" ref={synopsisStream.ref} onScroll={synopsisStream.onScroll}>{synopsisStreamingText}</div>
                 ) : (
