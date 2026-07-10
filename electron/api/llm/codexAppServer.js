@@ -116,26 +116,41 @@ async function runCodexTurn(prompt, opts = {}, {
     const clientOptions = buildCodexClientOptions({ env: runtime.env, config })
     await assertCodexChatGptLogin({ env: clientOptions.env, authCheck })
 
-    let finalText = ''
     let settle
     const turnDone = new Promise((resolve, reject) => { settle = { resolve, reject } })
     // 아래 race 로 처리한다. 핸들러가 없으면 이른 reject 가 unhandled rejection 이 된다.
     turnDone.catch(() => {})
 
+    // 한 턴에 agentMessage 아이템이 여러 개일 수 있다. 아이템별로 모아 순서대로 잇는다.
+    // item/completed 가 오면 그 아이템의 확정 텍스트로 덮고, 안 오면 흘린 델타를 그대로 쓴다
+    // — 델타는 UI 에 흘렀는데 반환값이 비면 저장되는 대본/시놉시스가 통째로 빈다.
+    const messages = new Map()
+    const collected = () => [...messages.values()].join('')
+
     session = openAppServer({
       spawnImpl,
       codexPath,
       env: clientOptions.env,
+      // 이 콜백은 stdout 이벤트 핸들러 안에서 돈다 — 여기서 던지면 uncaught 가 되고 정리(finally)도
+      // 건너뛴다. 반드시 턴 실패로 바꿔 준다.
       onNotification: (message) => {
-        const { method, params } = message
-        if (method === 'item/agentMessage/delta') {
-          if (params?.delta) onDelta?.(params.delta)
-        } else if (method === 'item/completed' && params?.item?.type === 'agentMessage') {
-          finalText = params.item.text || ''
-        } else if (method === 'turn/completed') {
-          const turn = params?.turn
-          if (turn?.status === 'failed') settle.reject(new Error(turn.error?.message || 'Codex turn failed'))
-          else settle.resolve(finalText)
+        try {
+          const { method, params } = message
+          if (method === 'item/agentMessage/delta') {
+            if (!params?.delta) return
+            const id = params.itemId ?? ''
+            messages.set(id, (messages.get(id) || '') + params.delta)
+            onDelta?.(params.delta)
+          } else if (method === 'item/completed' && params?.item?.type === 'agentMessage') {
+            const id = params.item.id ?? ''
+            messages.set(id, params.item.text || messages.get(id) || '')
+          } else if (method === 'turn/completed') {
+            const turn = params?.turn
+            if (turn?.status === 'failed') settle.reject(new Error(turn.error?.message || 'Codex turn failed'))
+            else settle.resolve(collected())
+          }
+        } catch (err) {
+          settle.reject(err)
         }
       },
     })

@@ -4,7 +4,6 @@ import os from 'node:os'
 import path from 'node:path'
 import {
   buildCodexClientOptions,
-  buildCodexThreadOptions,
   defaultAuthCheck,
   mapCodexError,
   parseCodexJson,

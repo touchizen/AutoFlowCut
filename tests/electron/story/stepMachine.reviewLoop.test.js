@@ -2,11 +2,12 @@
  * M3: 대본 검토 루프 — script 스텝이 opts.reviewLoop면 검토→수정을 최대 N회(claude 3/기타 1) 돈다.
  * verdict='pass' 또는 critique 빈값이면 조기종료. 실패는 원본 유지 + 스텝 done + progress error.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createStepMachine } from '../../../electron/story/stepMachine.js'
+import { setActiveStoryLlmCatalog } from '../../../electron/api/llm/storyLlmCatalog.js'
 
 const readScript = async (dir) => readFile(path.join(dir, 'story', 'script.md'), 'utf8')
 const progressOf = (emitted) => emitted.filter((e) => e.c === 'story:progress' && e.p?.kind === 'script-review')
@@ -150,5 +151,47 @@ describe('script 검토 루프 (M3)', () => {
     const phases = progressOf(emitted).map((e) => e.p.phase)
     expect(phases).toContain('reviewing')
     expect(phases).toContain('revising')
+  })
+})
+
+// 카탈로그가 동적이 되면서 model 은 정규 id 가 아니라 SDK 별칭('sonnet', 'opus[1m]', 'haiku')으로 온다.
+// model.startsWith('claude') 로 판별하면 기본 모델에서 검토 라운드가 조용히 3 → 1 로 줄어든다.
+describe('검토 라운드 판별 — 동적 카탈로그 별칭', () => {
+  let dir
+  const DYNAMIC = [
+    { id: 'claude:opus[1m]', engine: 'claude', model: 'opus[1m]', resolvedModel: 'claude-opus-4-8[1m]', reasoningEfforts: [], defaultReasoningEffort: '' },
+    { id: 'claude:sonnet', engine: 'claude', model: 'sonnet', resolvedModel: 'claude-sonnet-5', reasoningEfforts: [], defaultReasoningEffort: '' },
+    { id: 'claude:haiku', engine: 'claude', model: 'haiku', resolvedModel: 'claude-haiku-4-5-20251001', reasoningEfforts: [], defaultReasoningEffort: '' },
+    { id: 'codex:gpt-5.5', engine: 'codex', model: 'gpt-5.5', resolvedModel: 'gpt-5.5', reasoningEfforts: [], defaultReasoningEffort: '' },
+  ]
+
+  beforeEach(async () => {
+    dir = await mkdtemp(path.join(tmpdir(), 'sm-review-alias-'))
+    setActiveStoryLlmCatalog(DYNAMIC)
+  })
+  afterEach(() => setActiveStoryLlmCatalog(null))
+
+  // reviseScript 가 매번 같은 텍스트를 내면 "수렴"으로 조기 종료돼 라운드 수를 구분할 수 없다.
+  const neverPass = () => {
+    let n = 0
+    return {
+      reviewScript: vi.fn(async () => ({ verdict: 'revise', critique: 'c' })),
+      reviseScript: vi.fn(async () => ({ scriptMd: `revised-${++n}` })),
+    }
+  }
+
+  // 루프는 review(원본) 뒤 라운드마다 revise → review(수정본) 을 돈다 → reviewScript 는 rounds+1 회.
+  it.each(['opus[1m]', 'sonnet', 'haiku'])('별칭 %s 도 claude 로 보고 3라운드를 돈다', async (model) => {
+    const { machine, llm } = makeMachine(dir, neverPass())
+    await machine.open()
+    await run(machine, { reviewLoop: true, engine: 'claude', model })
+    expect(llm.reviewScript).toHaveBeenCalledTimes(4)
+  })
+
+  it('codex 는 여전히 1라운드', async () => {
+    const { machine, llm } = makeMachine(dir, neverPass())
+    await machine.open()
+    await run(machine, { reviewLoop: true, engine: 'codex', model: 'gpt-5.5' })
+    expect(llm.reviewScript).toHaveBeenCalledTimes(2)
   })
 })

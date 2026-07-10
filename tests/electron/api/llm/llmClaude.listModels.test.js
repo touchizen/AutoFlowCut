@@ -53,3 +53,12 @@ describe('listClaudeModels', () => {
     expect(await listClaudeModels({ queryImpl, timeoutMs: 20 })).toEqual([])
   })
 })
+
+// 타임아웃이 supportedModels() 만 감싸면, Query 객체를 만드는 단계(query())가 멈출 때 무한 대기한다.
+// 그러면 story:list-llm-options 가 영원히 안 돌아와 설정 화면이 통째로 막힌다.
+describe('listClaudeModels — 타임아웃 범위', () => {
+  it('query() 자체가 멈춰도 타임아웃으로 [] 를 돌려준다', async () => {
+    const queryImpl = () => new Promise(() => {})
+    expect(await listClaudeModels({ queryImpl, timeoutMs: 20 })).toEqual([])
+  })
+})

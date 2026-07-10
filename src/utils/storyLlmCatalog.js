@@ -113,8 +113,9 @@ export function findStoryLlmOption(engine, model, catalog = STORY_LLM_OPTIONS) {
   if (exact) return exact
   const wanted = canonicalModelId(model)
   if (!wanted) return null
+  // 항목의 정규 id 는 resolvedModel(동적) 또는 model(정적) 이다. 양쪽 다 태그를 떼고 비교한다.
   return catalog.find(
-    (o) => o.engine === engine && o.resolvedModel && canonicalModelId(o.resolvedModel) === wanted,
+    (o) => o.engine === engine && canonicalModelId(o.resolvedModel || o.model) === wanted,
   ) || null
 }
 
@@ -122,12 +123,20 @@ export function findStoryLlmOptionById(id, catalog = STORY_LLM_OPTIONS) {
   return catalog.find((o) => o.id === id) || null
 }
 
+// 저장된 model 이 별칭('opus[1m]')인데 지금 카탈로그가 정적 폴백이면 매칭이 깨진다.
+// 함께 저장해 둔 정규 id(resolvedModel)로 이어 준다 — 없으면(옛 저장본) 단서가 없다.
+function findStoryLlmOptionForOptions(options, catalog) {
+  if (!options?.engine) return null
+  return findStoryLlmOption(options.engine, options.model, catalog)
+    || findStoryLlmOption(options.engine, options.resolvedModel, catalog)
+}
+
 export function hydrateStoryLlmSelection(options = {}, catalog = STORY_LLM_OPTIONS) {
   const defaultId = (catalog[0] || DEFAULT_STORY_LLM).id
   if (!options || typeof options !== 'object') return defaultId
 
   const byExplicit = options.engine && options.model
-    ? findStoryLlmOption(options.engine, options.model, catalog)
+    ? findStoryLlmOptionForOptions(options, catalog)
     : null
   if (byExplicit) return byExplicit.id
 
@@ -145,7 +154,7 @@ export function hydrateStoryLlmSelection(options = {}, catalog = STORY_LLM_OPTIO
 }
 
 export function normalizeStoryLlmOptions(options = {}, catalog = STORY_LLM_OPTIONS) {
-  if (options.engine && options.model && !findStoryLlmOption(options.engine, options.model, catalog)) {
+  if (options.engine && options.model && !findStoryLlmOptionForOptions(options, catalog)) {
     throw new Error(`Unknown Story LLM option: ${options.engine}:${options.model}`)
   }
   const selectionId = hydrateStoryLlmSelection(options, catalog)

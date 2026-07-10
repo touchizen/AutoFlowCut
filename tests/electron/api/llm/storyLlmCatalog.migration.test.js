@@ -84,3 +84,40 @@ describe('normalizeStoryLlmOptions — resolvedModel 힌트', () => {
     expect(out.resolvedModel).toBe('claude-sonnet-5')
   })
 })
+
+// 역방향: 동적 실행에서 별칭 model('opus[1m]')이 story.json 에 저장된 뒤, 나중에 조회가 실패해
+// 정적 폴백으로 뜨면 매칭이 깨진다 → 렌더러는 첫 옵션으로 조용히 리셋되고, 메인은 예외를 던진다.
+// 정규 id 를 함께 저장(resolvedModel)해 이어 준다.
+describe('별칭 저장 → 정적 폴백 실행', () => {
+  const STATIC = [
+    { id: 'claude:claude-opus-4-8', engine: 'claude', model: 'claude-opus-4-8', reasoningEfforts: ['off', 'high'], defaultReasoningEffort: 'off' },
+    { id: 'claude:claude-sonnet-5', engine: 'claude', model: 'claude-sonnet-5', reasoningEfforts: ['off', 'high'], defaultReasoningEffort: 'off' },
+  ]
+  const persisted = { engine: 'claude', model: 'opus[1m]', resolvedModel: 'claude-opus-4-8[1m]', reasoningEffort: 'off' }
+
+  // opus 는 STATIC[0] 이라 기본값 폴백과 구분이 안 된다 — sonnet 케이스가 진짜 판별식이다.
+  it('저장된 resolvedModel 로 정적 항목을 찾아낸다', () => {
+    expect(findStoryLlmOption('claude', persisted.resolvedModel, STATIC)?.id).toBe('claude:claude-opus-4-8')
+    expect(hydrateStoryLlmSelection(persisted, STATIC)).toBe('claude:claude-opus-4-8')
+  })
+
+  it('normalize 가 던지지 않고 정적 model 로 바꿔 준다', () => {
+    expect(normalizeStoryLlmOptions(persisted, STATIC).model).toBe('claude-opus-4-8')
+  })
+
+  it('sonnet 을 골랐으면 opus 로 바뀌지 않는다', () => {
+    const p = { engine: 'claude', model: 'sonnet', resolvedModel: 'claude-sonnet-5' }
+    expect(hydrateStoryLlmSelection(p, STATIC)).toBe('claude:claude-sonnet-5')
+  })
+
+  // resolvedModel 없이 별칭만 저장된 옛 프로젝트는 이어 줄 단서가 없다. throw 는
+  // "조용히 다른 프로바이더로 갈아타지 않는다"는 계약이라 유지한다 — 조용한 오작동보다 낫다.
+  it('resolvedModel 이 없는 옛 저장본은 큰 소리로 실패한다 (조용한 프로바이더 전환 금지)', () => {
+    const legacy = { engine: 'claude', model: 'opus[1m]' }
+    expect(() => normalizeStoryLlmOptions(legacy, STATIC)).toThrow(/Unknown Story LLM option/)
+  })
+
+  it('진짜 모르는 모델은 여전히 던진다', () => {
+    expect(() => normalizeStoryLlmOptions({ engine: 'claude', model: 'claude-nope-9' }, STATIC)).toThrow(/Unknown Story LLM option/)
+  })
+})

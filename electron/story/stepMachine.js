@@ -18,8 +18,10 @@ import { normalizeStoryCharacter, characterVisualPrompt } from '../../src/servic
 const DOWNSTREAM = { script: ['scenes', 'audio', 'prompts'], scenes: ['audio', 'prompts'], audio: ['prompts'], prompts: [] }
 
 // M3: 검토 루프 최대 라운드 — Claude는 3회, 그 외(Gemini 등)는 1회(스펙 §124-125).
-// effective model(opts.model) 기준 — story state.engine엔 model이 없다(Codex-R2).
-function reviewRounds(model) {
+// 동적 카탈로그에서 model 은 SDK 별칭('sonnet', 'opus[1m]')이라 접두사로 판별할 수 없다.
+// engine 이 있으면 그걸 쓰고, 없으면(gemini 등 engine 미지정 경로) model 접두사로 폴백한다.
+function reviewRounds(engine, model) {
+  if (engine) return engine === 'claude' ? 3 : 1
   return String(model || '').startsWith('claude') ? 3 : 1
 }
 
@@ -130,7 +132,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       return { enabled: explicit.enabled !== false && rounds > 0, rounds }
     }
     if (target === 'script' && options?.reviewLoop) {
-      const rounds = reviewRounds(options.model || state?.engine?.model)
+      const rounds = reviewRounds(options?.engine, options.model || state?.engine?.model)
       return { enabled: rounds > 0, rounds }
     }
     return { enabled: false, rounds: 0 }

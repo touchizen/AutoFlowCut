@@ -250,3 +250,62 @@ describe('runCodexText — turn/start 응답 전에 취소', () => {
     await expect(runCodexText('p', { timeoutMs: 30 }, deps(() => child))).rejects.toThrow(/timed out/i)
   })
 })
+
+// stdout 이벤트 핸들러 안에서 던지면 runCodexTurn 이 못 잡는다 → Electron main uncaught,
+// 프로세스/임시 디렉토리 정리도 건너뛴다. (구 SDK 경로는 for-await 루프라 try/catch 에 잡혔다.)
+describe('runCodexText — 알림 핸들러의 예외/누락', () => {
+  it('onDelta 가 던지면 uncaught 가 아니라 그 에러로 reject 한다', async () => {
+    const { spawnImpl } = fakeAppServer({ deltas: ['a'], finalText: 'a' })
+    const onDelta = () => { throw new Error('renderer destroyed') }
+    await expect(runCodexText('p', {}, deps(spawnImpl, { onDelta }))).rejects.toThrow('renderer destroyed')
+  })
+
+  it('onDelta 가 던져도 프로세스와 임시 디렉토리를 정리한다', async () => {
+    const runtime = { env: {}, cleanup: vi.fn() }
+    const work = { workingDirectory: '/w', cleanup: vi.fn() }
+    const { spawnImpl, child } = fakeAppServer({ deltas: ['a'], finalText: 'a' })
+    await expect(runCodexText('p', {}, deps(spawnImpl, {
+      onDelta: () => { throw new Error('boom') },
+      runtimeHomeFactory: async () => runtime,
+      workingDirectoryFactory: async () => work,
+    }))).rejects.toThrow('boom')
+    expect(child.kill).toHaveBeenCalled()
+    expect(runtime.cleanup).toHaveBeenCalled()
+    expect(work.cleanup).toHaveBeenCalled()
+  })
+
+  // 델타는 UI 에 흘렀는데 반환값이 비면 저장되는 대본/시놉시스가 통째로 빈다.
+  it('item/completed 가 없으면 흘린 델타를 이어 붙여 돌려준다', async () => {
+    const { spawnImpl } = fakeAppServer({ deltas: ['hello', ' world'], dropAgentMessage: true })
+    expect(await runCodexText('p', {}, deps(spawnImpl))).toBe('hello world')
+  })
+
+  it('agentMessage 가 여러 개면 모두 이어 붙인다 (마지막 것만 남기지 않는다)', async () => {
+    const child = new EventEmitter()
+    child.stdout = new EventEmitter()
+    child.kill = vi.fn()
+    const push = (o) => queueMicrotask(() => child.stdout.emit('data', `${JSON.stringify(o)}\n`))
+    child.stdin = {
+      write: (line) => {
+        const m = JSON.parse(line)
+        if (m.method === 'initialize') return push({ id: m.id, result: {} })
+        if (m.method === 'thread/start') return push({ id: m.id, result: { thread: { id: THREAD_ID } } })
+        if (m.method === 'turn/start') {
+          push({ id: m.id, result: { turn: { id: TURN_ID } } })
+          push({ method: 'item/completed', params: { item: { type: 'agentMessage', id: 'i1', text: 'part1 ' } } })
+          push({ method: 'item/completed', params: { item: { type: 'agentMessage', id: 'i2', text: 'part2' } } })
+          push({ method: 'turn/completed', params: { turn: { id: TURN_ID, status: 'completed' } } })
+          return undefined
+        }
+        return undefined
+      },
+      end: vi.fn(),
+    }
+    expect(await runCodexText('p', {}, deps(() => child))).toBe('part1 part2')
+  })
+
+  it('델타와 item/completed 가 같은 아이템에 오면 중복되지 않는다', async () => {
+    const { spawnImpl } = fakeAppServer({ deltas: ['hello', ' world'], finalText: 'hello world' })
+    expect(await runCodexText('p', {}, deps(spawnImpl))).toBe('hello world')
+  })
+})
