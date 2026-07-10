@@ -1,4 +1,6 @@
 const CLAUDE_REASONING_EFFORTS = Object.freeze(['off', 'low', 'medium', 'high', 'max'])
+// Fable 5는 thinking이 항상 켜져 있어 끌 수 없다 — 'off'는 효과 없는 선택지라 제외한다.
+const FABLE_REASONING_EFFORTS = Object.freeze(['low', 'medium', 'high', 'max'])
 const CODEX_REASONING_EFFORTS = Object.freeze(['minimal', 'low', 'medium', 'high', 'xhigh'])
 const EMPTY_REASONING_EFFORTS = Object.freeze([])
 
@@ -24,8 +26,8 @@ export const STORY_LLM_OPTIONS = Object.freeze([
     engine: 'claude',
     model: 'claude-fable-5',
     label: 'Claude Fable 5',
-    reasoningEfforts: CLAUDE_REASONING_EFFORTS,
-    defaultReasoningEffort: 'off',
+    reasoningEfforts: FABLE_REASONING_EFFORTS,
+    defaultReasoningEffort: 'high',
   }),
   // Haiku 4.5는 4.6 이전 세대라 effort 파라미터를 받지 않는다(다른 Claude 옵션과 유일하게 다른 점).
   // 목록을 비워 두면 normalizeStoryLlmOptions가 reasoningEffort를 지우고 설정 UI도 선택지를 숨긴다.

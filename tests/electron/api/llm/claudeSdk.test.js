@@ -33,6 +33,39 @@ describe('buildClaudeSdkOptions', () => {
     })
     expect(o).not.toHaveProperty('reasoningEffort')
   })
+  // thinking 파라미터의 유효한 모양은 모델 세대마다 다르다. "생략"의 의미도 모델마다 달라서
+  // (Sonnet 5는 생략하면 adaptive로 돈다) 일괄 생략은 안 되고, 못 끄는 모델만 생략해야 한다.
+  describe('모델별 thinking 형태', () => {
+    it('Fable 5는 thinking을 끌 수 없다 — disabled 대신 생략한다', () => {
+      const o = buildClaudeSdkOptions('claude-fable-5', undefined, { reasoningEffort: 'off' })
+      expect(o).not.toHaveProperty('thinking')
+      expect(o).not.toHaveProperty('effort')
+    })
+
+    it('Fable 5도 effort를 주면 adaptive + effort를 싣는다', () => {
+      const o = buildClaudeSdkOptions('claude-fable-5', undefined, { reasoningEffort: 'high' })
+      expect(o).toMatchObject({ thinking: { type: 'adaptive' }, effort: 'high' })
+    })
+
+    it('Haiku 4.5는 adaptive/effort/disabled 어느 것도 싣지 않는다 (4.6 이전 세대)', () => {
+      for (const effort of ['off', 'high', undefined]) {
+        const o = buildClaudeSdkOptions('claude-haiku-4-5', undefined, { reasoningEffort: effort })
+        expect(o).not.toHaveProperty('thinking')
+        expect(o).not.toHaveProperty('effort')
+      }
+    })
+
+    it('Sonnet 5는 off일 때 disabled를 명시한다 (생략하면 adaptive로 돈다)', () => {
+      const o = buildClaudeSdkOptions('claude-sonnet-5', undefined, { reasoningEffort: 'off' })
+      expect(o).toMatchObject({ thinking: { type: 'disabled' } })
+    })
+
+    it('Opus 4.8은 기존 동작 그대로', () => {
+      const o = buildClaudeSdkOptions('claude-opus-4-8', undefined, { reasoningEffort: 'off' })
+      expect(o).toMatchObject({ thinking: { type: 'disabled' } })
+    })
+  })
+
   it('알 수 없는 Claude reasoning effort는 off처럼 처리한다', () => {
     const o = buildClaudeSdkOptions('claude-opus-4-8', undefined, { reasoningEffort: 'xhigh' })
     expect(o.thinking).toEqual({ type: 'disabled' })
