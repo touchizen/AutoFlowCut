@@ -47,24 +47,39 @@ export function buildClaudeStoryLlmOptions(models) {
   return options
 }
 
+// app-server 의 supportedReasoningEfforts 는 { reasoningEffort, description } 객체 배열이다.
+// (문자열 배열도 받아 준다 — 테스트/구버전 대비.)
+function codexEffortLevels(raw) {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((e) => (typeof e === 'string' ? e : str(e?.reasoningEffort)))
+    .filter(Boolean)
+}
+
+// 서버 기본값은 medium 이지만, 스토리 작업엔 xhigh 를 쓴다(기존 카탈로그의 제품 결정).
+function codexDefaultEffort(levels, serverDefault) {
+  if (!levels.length) return ''
+  if (levels.includes('xhigh')) return 'xhigh'
+  if (levels.includes(serverDefault)) return serverDefault
+  return levels[levels.length - 1]
+}
+
 export function buildCodexStoryLlmOptions(models) {
   if (!Array.isArray(models)) return []
   const options = []
   for (const m of models) {
     const id = str(m?.id).trim()
-    if (!id) continue
-    const levels = Array.isArray(m?.supportedReasoningEfforts)
-      ? m.supportedReasoningEfforts.filter((l) => typeof l === 'string')
-      : []
+    if (!id || m?.hidden) continue
+    const levels = codexEffortLevels(m?.supportedReasoningEfforts)
     options.push({
       id: `codex:${id}`,
       engine: 'codex',
       model: id,
       resolvedModel: id,
-      label: `Codex ${id}`,
-      description: '',
-      reasoningEfforts: [...levels],
-      defaultReasoningEffort: levels.includes('xhigh') ? 'xhigh' : (levels[levels.length - 1] || ''),
+      label: `Codex ${str(m?.displayName).trim() || id}`,
+      description: str(m?.description).trim(),
+      reasoningEfforts: levels,
+      defaultReasoningEffort: codexDefaultEffort(levels, str(m?.defaultReasoningEffort)),
     })
   }
   return options

@@ -14,7 +14,8 @@ import { createTtsAdapter } from '../api/tts/index.js'
 import { getTypecastKey } from '../api/tts/typecastKey.js'
 import { probeDurationMs } from '../story/audioProbe.js'
 import { DEFAULT_STORY_LLM, STORY_LLM_OPTIONS, setActiveStoryLlmCatalog } from '../api/llm/storyLlmCatalog.js'
-import { buildClaudeStoryLlmOptions, resolveStoryLlmCatalog } from '../api/llm/storyLlmDiscovery.js'
+import { buildClaudeStoryLlmOptions, buildCodexStoryLlmOptions, resolveStoryLlmCatalog } from '../api/llm/storyLlmDiscovery.js'
+import { listCodexModels as defaultListCodexModels } from '../api/llm/codexAppServer.js'
 
 // HIGH/Codex: renderer가 보낸 projectPath를 무검증으로 받으면 상대경로/traversal 경로로도
 // 스텝 머신이 만들어져 임의 파일시스템 위치에 script.md/scenes.json/story.json을 쓸 수 있다.
@@ -46,7 +47,7 @@ function isWithinWorkFolder(projectPath, workFolder) {
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
 }
 
-export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini, loadMetaPrompt, getActiveWorkFolder = () => null, tts, ttsFor, probe, defaultVoice, sfxFor, youtube, factCheck, listClaudeModels = llmClaude.listClaudeModels }) {
+export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini, loadMetaPrompt, getActiveWorkFolder = () => null, tts, ttsFor, probe, defaultVoice, sfxFor, youtube, factCheck, listClaudeModels = llmClaude.listClaudeModels, listCodexModels = defaultListCodexModels }) {
   let machine = null
   let openLock = Promise.resolve()
 
@@ -79,16 +80,18 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
   }
 
   // 엔진이 보고하는 모델 목록으로 카탈로그를 만든다. CLI 프로세스를 띄우므로 한 번만 하고 캐시한다.
-  // 조회에 실패한 엔진은 정적 목록으로 메운다(다른 엔진까지 되돌리지 않는다).
-  // TODO(codex): app-server `model/list` 를 붙이면 codex 도 동적으로 — 지금은 정적 폴백만 탄다.
+  // 두 엔진을 동시에 조회하고, 실패한 엔진만 정적 목록으로 메운다(다른 엔진까지 되돌리지 않는다).
   let llmCatalogPromise = null
   const loadLlmCatalog = () => {
     if (!llmCatalogPromise) {
-      llmCatalogPromise = Promise.resolve()
-        .then(() => listClaudeModels())
-        .then((models) => {
+      llmCatalogPromise = Promise.all([
+        Promise.resolve().then(() => listClaudeModels()).catch(() => []),
+        Promise.resolve().then(() => listCodexModels()).catch(() => []),
+      ])
+        .then(([claudeModels, codexModels]) => {
           const catalog = resolveStoryLlmCatalog({
-            claude: buildClaudeStoryLlmOptions(models),
+            claude: buildClaudeStoryLlmOptions(claudeModels),
+            codex: buildCodexStoryLlmOptions(codexModels),
             fallback: STORY_LLM_OPTIONS,
           })
           // 라우터/스텝머신도 같은 카탈로그로 검증해야 렌더러가 보낸 별칭 model 이 통과한다.

@@ -26,8 +26,9 @@ beforeEach(async () => {
     keyStore: { getKey: () => 'k' },
     getWindow: () => ({ webContents: { send: (ch, p) => sent.push({ ch, p }) }, isDestroyed: () => false }),
     llm,
-    // 실제 Claude CLI를 띄우지 않는다. []는 "조회 실패" → 정적 카탈로그 폴백.
+    // 실제 CLI/app-server 를 띄우지 않는다. []는 "조회 실패" → 정적 카탈로그 폴백.
     listClaudeModels: async () => [],
+    listCodexModels: async () => [],
   })
 })
 
@@ -334,6 +335,7 @@ describe('story:list-llm-options — 동적 카탈로그', () => {
       getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
       llm,
       listClaudeModels,
+      listCodexModels: async () => [],
     })
     return ipc2
   }
@@ -370,5 +372,54 @@ describe('story:list-llm-options — 동적 카탈로그', () => {
     expect(() => normalizeActiveStoryLlmOptions({ engine: 'claude', model: 'haiku' })).not.toThrow()
     expect(normalizeActiveStoryLlmOptions({ engine: 'claude', model: 'haiku' }).resolvedModel)
       .toBe('claude-haiku-4-5-20251001')
+  })
+})
+
+// codex 는 app-server model/list 로 동적 조회한다. 한쪽 엔진이 죽어도 다른 쪽은 동적으로 남는다.
+describe('story:list-llm-options — codex 동적 카탈로그', () => {
+  const CODEX = [{ id: 'gpt-5.5', displayName: 'GPT-5.5', hidden: false, supportedReasoningEfforts: [{ reasoningEffort: 'xhigh' }] }]
+
+  function register({ listClaudeModels = async () => [], listCodexModels = async () => [] }) {
+    const ipc2 = fakeIpcMain()
+    registerStoryIPC(ipc2, {
+      keyStore: { getKey: () => 'k' },
+      getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
+      llm,
+      listClaudeModels,
+      listCodexModels,
+    })
+    return ipc2
+  }
+
+  it('codex 만 조회되면 claude 는 정적, codex 는 동적', async () => {
+    const r = await register({ listCodexModels: async () => CODEX }).invoke('story:list-llm-options', {})
+    const ids = r.options.map((o) => o.id)
+    expect(ids).toContain('claude:claude-opus-4-8') // 정적 폴백
+    expect(ids.filter((i) => i.startsWith('codex:'))).toEqual(['codex:gpt-5.5'])
+  })
+
+  it('codex 라벨/effort 를 app-server 응답에서 만든다', async () => {
+    const r = await register({ listCodexModels: async () => CODEX }).invoke('story:list-llm-options', {})
+    const o = r.options.find((x) => x.id === 'codex:gpt-5.5')
+    expect(o.label).toBe('Codex GPT-5.5')
+    expect(o.reasoningEfforts).toEqual(['xhigh'])
+  })
+
+  it('codex 조회가 던져도 claude 동적 목록은 살아 있다', async () => {
+    const claude = [{ value: 'sonnet', resolvedModel: 'claude-sonnet-5', displayName: 'Sonnet' }]
+    const r = await register({
+      listClaudeModels: async () => claude,
+      listCodexModels: async () => { throw new Error('app-server ENOENT') },
+    }).invoke('story:list-llm-options', {})
+    expect(r.options.map((o) => o.id)).toEqual(['claude:sonnet', 'codex:gpt-5.5', 'codex:gpt-5.4'])
+  })
+
+  it('두 엔진을 동시에 조회한다 (직렬로 기다리지 않는다)', async () => {
+    let claudeStarted = false
+    let codexStartedBeforeClaudeResolved = false
+    const listClaudeModels = () => new Promise((res) => { claudeStarted = true; setTimeout(() => res([]), 20) })
+    const listCodexModels = async () => { if (claudeStarted) codexStartedBeforeClaudeResolved = true; return [] }
+    await register({ listClaudeModels, listCodexModels }).invoke('story:list-llm-options', {})
+    expect(codexStartedBeforeClaudeResolved).toBe(true)
   })
 })

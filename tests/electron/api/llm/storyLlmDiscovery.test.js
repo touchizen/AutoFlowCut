@@ -189,3 +189,64 @@ describe('resolveStoryLlmCatalog', () => {
     expect(resolveStoryLlmCatalog({ fallback: FALLBACK })).toEqual(FALLBACK)
   })
 })
+
+// app-server `model/list` 의 실제 응답 모양(2026-07-10, codex-cli 0.142.5).
+// supportedReasoningEfforts 는 문자열이 아니라 { reasoningEffort, description } 객체 배열이다.
+describe('buildCodexStoryLlmOptions — app-server 실제 응답 모양', () => {
+  const REAL = [
+    {
+      id: 'gpt-5.5', model: 'gpt-5.5', displayName: 'GPT-5.5', hidden: false, isDefault: true,
+      defaultReasoningEffort: 'medium',
+      supportedReasoningEfforts: [
+        { reasoningEffort: 'low', description: 'Fast' },
+        { reasoningEffort: 'medium', description: 'Balanced' },
+        { reasoningEffort: 'high', description: 'Deep' },
+        { reasoningEffort: 'xhigh', description: 'Deepest' },
+      ],
+    },
+    {
+      id: 'gpt-5.4-mini', model: 'gpt-5.4-mini', displayName: 'GPT-5.4 mini', hidden: false,
+      defaultReasoningEffort: 'medium',
+      supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }],
+    },
+    { id: 'gpt-internal', displayName: 'Internal', hidden: true, supportedReasoningEfforts: [] },
+  ]
+
+  it('객체 배열 effort 를 문자열로 편다', () => {
+    const o = buildCodexStoryLlmOptions(REAL).find((x) => x.model === 'gpt-5.5')
+    expect(o.reasoningEfforts).toEqual(['low', 'medium', 'high', 'xhigh'])
+  })
+
+  it('hidden 모델은 목록에서 뺀다', () => {
+    expect(buildCodexStoryLlmOptions(REAL).map((o) => o.model)).not.toContain('gpt-internal')
+  })
+
+  it('displayName 이 있으면 라벨에 쓴다', () => {
+    expect(buildCodexStoryLlmOptions(REAL)[0].label).toBe('Codex GPT-5.5')
+  })
+
+  // 서버 기본값은 medium 이지만 스토리 작업엔 xhigh 를 쓴다(기존 카탈로그의 제품 결정).
+  it('xhigh 를 지원하면 서버 기본값(medium)보다 xhigh 를 택한다', () => {
+    const o = buildCodexStoryLlmOptions(REAL).find((x) => x.model === 'gpt-5.5')
+    expect(o.defaultReasoningEffort).toBe('xhigh')
+  })
+
+  it('xhigh 가 없으면 서버가 준 기본값을 쓴다 (지원 목록 안에 있을 때만)', () => {
+    const o = buildCodexStoryLlmOptions([
+      { id: 'a', supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }], defaultReasoningEffort: 'high' },
+    ])[0]
+    expect(o.defaultReasoningEffort).toBe('high')
+  })
+
+  it('서버 기본값이 지원 목록에 없으면 마지막 단계로 떨어진다', () => {
+    const o = buildCodexStoryLlmOptions([
+      { id: 'a', supportedReasoningEfforts: [{ reasoningEffort: 'low' }], defaultReasoningEffort: 'turbo' },
+    ])[0]
+    expect(o.defaultReasoningEffort).toBe('low')
+  })
+
+  it('xhigh 도 서버 기본값도 없으면 마지막 단계 (gpt-5.4-mini)', () => {
+    const o = buildCodexStoryLlmOptions([{ id: 'a', supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }] }])[0]
+    expect(o.defaultReasoningEffort).toBe('high')
+  })
+})
