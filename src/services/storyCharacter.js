@@ -33,18 +33,28 @@ export function normalizeStoryCharacter(raw) {
 }
 
 /**
- * §v2.12 이미지 프롬프트 조합 규칙(공유 helper) — Ref 카드 prompt(upsertStoryCharacterRefs)와
+ * 이미지 프롬프트 조합 규칙(공유 helper) — Ref 카드 prompt(upsertStoryCharacterRefs)와
  * 씬 프롬프트 컨텍스트(buildPromptsPrompt)/@멘션 포함 기준(sceneCharacterNames)이 공유한다:
- *   `${ethnicity}, ${appearance}` — 빈 쪽은 콤마 없이 생략.
+ *   `${ethnicity}, ${age}, ${gender}, ${appearance}` — 빈 항목은 콤마 없이 생략.
+ *
+ * age/gender는 구조화 필드에 있는데도 프롬프트에서 빠져 있었다. LLM은 appearance에 나이·성별을
+ * 넣으라는 지시를 지킬 때도 안 지킬 때도 있어서, 레퍼런스 이미지가 성별·연령을 잃곤 했다.
+ * 이미 appearance가 나이·성별을 담고 있으면 중복되지만, 이미지 모델은 같은 속성의 반복을
+ * 무해하게 처리한다 — 빠지는 것보다 낫다. role은 극중 역할(줄거리)이라 넣지 않는다.
+ *
  * truthy ⇔ ethnicity/appearance 중 하나라도 있음 — ethnicity-only 캐릭터가 Ref 카드엔 있는데
- * 씬 프롬프트/멘션에서 빠지는 불일치를 막는 단일 기준(§v2.12 코드리뷰 FIX MAJOR).
+ * 씬 프롬프트/멘션에서 빠지는 불일치를 막는 단일 기준(§v2.12 코드리뷰 FIX MAJOR). gender/age만
+ * 있는 캐릭터는 시각 정보가 없으므로 여기서도 빈 문자열이어야 한다 — 아니면 레퍼런스 이미지가
+ * 없는 인물에 @멘션이 붙는다.
  * renderer(src)와 electron 양쪽에서 import한다(stepMachine의 기존 src import 관례).
  */
 export function characterVisualPrompt(c) {
   const ethnicity = str(c?.ethnicity).trim()
   const appearance = str(c?.appearance).trim()
-  if (!ethnicity) return appearance
-  return appearance ? `${ethnicity}, ${appearance}` : ethnicity
+  if (!ethnicity && !appearance) return ''
+  const age = str(c?.age).trim()
+  const gender = c?.gender === 'male' || c?.gender === 'female' ? c.gender : ''
+  return [ethnicity, age, gender, appearance].filter(Boolean).join(', ')
 }
 
 /**

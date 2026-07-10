@@ -1,6 +1,6 @@
 /** 프롬프트 빌더 — Gemini/Claude 두 엔진 공유. (구 llmGemini.js 내부 빌더 이관) */
 
-// §v2.12: Ref 카드 prompt와 동일한 `${ethnicity}, ${appearance}` 조합 규칙(공유 helper) —
+// Ref 카드 prompt와 동일한 `${ethnicity}, ${age}, ${gender}, ${appearance}` 조합 규칙(공유 helper) —
 // electron→src import는 stepMachine의 기존 관례(storyCharacter.js는 순수 모듈, 순환 없음).
 import { characterVisualPrompt } from '../../../src/services/storyCharacter.js'
 
@@ -408,8 +408,8 @@ export function buildFactCheckPrompt(claims = [], opts = {}) {
 export function buildPromptsPrompt(scenes, context, opts) {
   const sceneLines = scenes.map((s) => `${s.sceneNo}. ${s.summary} :: ${(s.segments || []).map((g) => g.text).join(' ')}`)
   // V2: 캐릭터별 정본 외형(appearance)을 컨텍스트로 줘서 씬마다 외형을 새로 지어내지 않고 일관 서술.
-  // §v2.12 FIX(MAJOR): 포함 기준·조합 모두 characterVisualPrompt(ethnicity, appearance 조합,
-  // 빈 쪽 콤마 생략) — ethnicity-only 캐릭터도 Ref 카드와 동일하게 씬 프롬프트에 반영.
+  // §v2.12 FIX(MAJOR): 포함 기준·조합 모두 characterVisualPrompt(ethnicity/age/gender/appearance
+  // 조합, 빈 항목 콤마 생략) — ethnicity-only 캐릭터도 Ref 카드와 동일하게 씬 프롬프트에 반영.
   const charLines = (context.speakers || [])
     .map((sp) => ({ sp, desc: characterVisualPrompt(sp) }))
     .filter(({ sp, desc }) => sp && desc)
