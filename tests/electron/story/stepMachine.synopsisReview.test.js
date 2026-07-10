@@ -78,9 +78,13 @@ describe('machine.reviewSynopsis (side action)', () => {
   })
 
   it('rounds 상한을 5로 clamp한다 (reviewConfig는 상한이 없어 IPC로 우회 가능)', async () => {
+    // 매 라운드 다른 본문을 내야 수정 시도가 계속된다 — 같은 본문이면 수렴으로 조기 종료한다.
+    let n = 0
     llm.reviewSynopsis.mockResolvedValue({ verdict: 'revise', critique: 'c' })
+    llm.reviseSynopsis.mockImplementation(async () => ({ synopsisMd: `개선본${++n}`, characters: CHARS }))
     await run({ review: { synopsis: { enabled: true, rounds: 999 } } })
-    expect(llm.reviewSynopsis).toHaveBeenCalledTimes(5)
+    expect(llm.reviseSynopsis).toHaveBeenCalledTimes(5) // 수정 시도가 5로 막힌다
+    expect(llm.reviewSynopsis).toHaveBeenCalledTimes(6) // 후보 6개(원본 + 수정본 5)
   })
 
   it('본문이 그대로여도 characters만 바뀌면 changed=true', async () => {

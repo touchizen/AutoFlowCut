@@ -7,6 +7,22 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 // 로그 라벨 — 알 수 없는 타겟은 '대본'로 폴백(기존 동작 유지).
 const REVIEW_TARGET_LOG_LABEL = { synopsis: '시놉시스', script: '대본', scenes: '씬', prompts: '프롬프트' }
 
+// 검수 진행 한 줄. rejected(점수 게이트가 수정본을 버림)는 에러가 아니지만 info로 묻히면
+// "검수를 돌렸는데 왜 그대로지?"가 설명되지 않는다 — warn으로 폐기 전후 점수까지 남긴다.
+// 폐기된 수정본의 점수는 배지(reviewScores)에 올리지 않으므로 여기가 유일한 노출 지점이다.
+function reviewLogLine(p, prefix) {
+  const round = p.round && p.of ? ` ${p.round}/${p.of}` : ''
+  if (p.phase === 'rejected') {
+    const delta = p.from != null && p.to != null ? ` — 몰입감 ${p.from} → ${p.to}` : ''
+    return { message: `${prefix}: 수정본 폐기${round}${delta}`, level: 'warn' }
+  }
+  const phaseLabel = p.phase === 'revising' ? '수정 중' : p.phase === 'error' ? '검토 중단' : '검토 중'
+  return {
+    message: p.error ? `${prefix}: ${phaseLabel} (${p.error})` : `${prefix}: ${phaseLabel}${round}`,
+    level: p.phase === 'error' ? 'error' : 'info',
+  }
+}
+
 export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }) {
   const [state, setState] = useState(null)
   // Important: scenes.json 파생 데이터(씬 세그먼트/이미지·비디오 프롬프트)는 story.json
@@ -242,14 +258,14 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
           if (synopsisActiveOpRef.current && p.operationId !== synopsisActiveOpRef.current) return
           if (p.phase === 'scored') { collectScore(p, '시놉시스'); return }
           setReviewProgress({ operationId: p.operationId, target: 'synopsis', round: p.round, of: p.of, phase: p.phase, error: p.error })
-          const phaseLabel = p.phase === 'revising' ? '수정 중' : p.phase === 'error' ? '검토 중단' : '검토 중'
+          const line = reviewLogLine(p, '시놉시스 검수')
           setProgressLog((logs) => [...logs, {
             id: `${p.operationId || 'op'}-${logs.length}`,
             operationId: p.operationId || null,
             step: 'synopsis',
             phase: p.phase || null,
-            message: p.error ? `시놉시스 검수: ${phaseLabel} (${p.error})` : `시놉시스 검수: ${phaseLabel}${p.round ? ` ${p.round}/${p.of}` : ''}`,
-            level: p.phase === 'error' ? 'error' : 'info',
+            message: line.message,
+            level: line.level,
             at: new Date().toISOString(),
           }].slice(-120))
           return
@@ -277,14 +293,14 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
           setReviewProgress({ operationId: p.operationId, target: p.target || 'script', round: p.round, of: p.of, phase: p.phase, error: p.error })
           if (p.kind === 'review') {
             const targetLabel = `${REVIEW_TARGET_LOG_LABEL[p.target] || '대본'} 검수`
-            const phaseLabel = p.phase === 'revising' ? '수정 중' : p.phase === 'error' ? '검토 중단' : '검토 중'
+            const line = reviewLogLine(p, targetLabel)
             setProgressLog((logs) => [...logs, {
               id: `${p.operationId || 'op'}-${logs.length}`,
               operationId: p.operationId || null,
               step: p.target || 'script',
               phase: p.phase || null,
-              message: p.error ? `${targetLabel}: ${phaseLabel} (${p.error})` : `${targetLabel}: ${phaseLabel}${p.round ? ` ${p.round}/${p.of}` : ''}`,
-              level: p.phase === 'error' ? 'error' : 'info',
+              message: line.message,
+              level: line.level,
               at: new Date().toISOString(),
             }].slice(-120))
           }

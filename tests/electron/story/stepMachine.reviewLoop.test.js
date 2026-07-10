@@ -46,6 +46,8 @@ describe('script 검토 루프 (M3)', () => {
     expect(await readScript(dir)).toBe('draft')
   })
 
+  // rounds = 최대 수정 시도 횟수. 검토는 후보 수만큼(원본 + 수정본 rounds개) 최대 rounds+1회다 —
+  // 점수 게이트가 채택 전에 수정본을 채점해야 하므로 마지막 수정본도 검토를 거친다.
   it('(b) 계속 revise면 claude(model)에서 정확히 3라운드 후 강제종료', async () => {
     let n = 0
     const reviewScript = vi.fn(async () => ({ verdict: 'revise', critique: 'fix' }))
@@ -53,7 +55,7 @@ describe('script 검토 루프 (M3)', () => {
     const { machine } = makeMachine(dir, { reviewScript, reviseScript })
     await machine.open()
     await run(machine, { reviewLoop: true, model: 'claude-sonnet-5' })
-    expect(reviewScript).toHaveBeenCalledTimes(3)
+    expect(reviewScript).toHaveBeenCalledTimes(4)
     expect(reviseScript).toHaveBeenCalledTimes(3)
     expect(await readScript(dir)).toBe('rev3')
   })
@@ -64,7 +66,7 @@ describe('script 검토 루프 (M3)', () => {
     const { machine } = makeMachine(dir, { reviewScript, reviseScript })
     await machine.open()
     await run(machine, { reviewLoop: true, model: 'gemini-2.5-pro' })
-    expect(reviewScript).toHaveBeenCalledTimes(1)
+    expect(reviewScript).toHaveBeenCalledTimes(2) // 원본 + 수정본(게이트)
     expect(reviseScript).toHaveBeenCalledTimes(1)
   })
 

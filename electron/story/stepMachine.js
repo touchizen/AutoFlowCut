@@ -311,25 +311,53 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     return out
   }
 
+  // 채택 게이트: 수정본의 몰입감 점수가 직전 대본보다 높을 때만 채택한다. 동점은 폐기 —
+  // 나아졌다는 증거가 없는데 전면 재작성본을 받아들이면 좋았던 문장만 잃는다.
+  // 어느 한쪽이라도 채점을 못 냈으면(어댑터가 score 미지원) 게이트를 열어 기존 동작을 유지한다.
+  function scoreImproved(prev, next) {
+    if (prev == null || next == null) return true
+    return next > prev
+  }
+
+  // 채택되는 대본은 반드시 채점을 거친다. 수정 직후 수정본을 검토(=채점)해 직전 점수보다 높을
+  // 때만 갈아끼우고, 그 검토 결과를 다음 라운드의 critique로 재사용한다 — 그래서 추가 비용은
+  // 마지막 수정본 검토 1회뿐이다(예전엔 마지막 수정본이 검토 없이 저장됐다).
+  // rounds = 최대 수정 시도 횟수. 검토는 후보 수만큼(원본 + 수정본 rounds개) 최대 rounds+1회.
   async function reviewScriptCandidate(scriptMd, opts, rounds, opId, signal) {
     if (!llm.reviewScript || !llm.reviseScript || rounds <= 0) return { scriptMd, changed: false }
     const reviewOpts = reviewLlmOptions(opts)
+    const of = rounds + 1
     let current = scriptMd
     let changed = false
     try {
+      sendReviewProgress('script', { round: 1, of, phase: 'reviewing' }, opId)
+      let r = await llm.reviewScript(current, reviewOpts, { signal })
+      if (signal?.aborted) return { scriptMd: current, changed }
+      // 몰입감 점수는 verdict와 독립 — pass로 끝나는 라운드도 채점 결과를 흘린다.
+      if (r.score != null) sendReviewProgress('script', { round: 1, of, phase: 'scored', score: r.score }, opId)
+
       for (let round = 1; round <= rounds; round++) {
-        sendReviewProgress('script', { round, of: rounds, phase: 'reviewing' }, opId)
-        const { verdict, critique, score } = await llm.reviewScript(current, reviewOpts, { signal })
+        if (r.verdict !== 'revise' || !r.critique?.trim()) break
+        sendReviewProgress('script', { round, of, phase: 'revising' }, opId)
+        const rev = await llm.reviseScript(current, r.critique, reviewOpts, { signal })
         if (signal?.aborted) return { scriptMd: current, changed }
-        // 몰입감 점수는 verdict와 독립 — pass로 끝나는 라운드도 채점 결과를 흘린다.
-        if (score != null) sendReviewProgress('script', { round, of: rounds, phase: 'scored', score }, opId)
-        if (verdict !== 'revise' || !critique?.trim()) break
-        sendReviewProgress('script', { round, of: rounds, phase: 'revising' }, opId)
-        const r = await llm.reviseScript(current, critique, reviewOpts, { signal })
+        if (!rev?.scriptMd?.trim()) throw new Error('reviseScript returned empty script')
+        // 수정기가 원문을 그대로 돌려줬다 = 수렴. 채점해봐야 동점이고, 다음 라운드는 같은
+        // 입력에 같은 비평을 반복할 뿐이다.
+        if (rev.scriptMd === current) break
+
+        sendReviewProgress('script', { round: round + 1, of, phase: 'reviewing' }, opId)
+        const next = await llm.reviewScript(rev.scriptMd, reviewOpts, { signal })
         if (signal?.aborted) return { scriptMd: current, changed }
-        if (!r?.scriptMd?.trim()) throw new Error('reviseScript returned empty script')
-        changed = changed || r.scriptMd !== current
-        current = r.scriptMd
+        if (!scoreImproved(r.score, next.score)) {
+          // 폐기된 수정본의 점수는 scored로 흘리지 않는다 — 배지는 저장된 대본만 따라간다.
+          sendReviewProgress('script', { round, of, phase: 'rejected', from: r.score, to: next.score }, opId)
+          break
+        }
+        if (next.score != null) sendReviewProgress('script', { round: round + 1, of, phase: 'scored', score: next.score }, opId)
+        current = rev.scriptMd
+        changed = true
+        r = next
       }
     } catch (e) {
       if (signal?.aborted) return { scriptMd: current, changed }
@@ -1265,25 +1293,45 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         if (!synopsisMd.trim()) throw new Error('synopsis not found — generate a synopsis first')
         let characters = Array.isArray(params.characters) ? params.characters : []
         let changed = false
+        // charactersParsed=false는 "캐스트를 읽지 못했다"(마커 누락/JSON 깨짐)이지 "캐스트가
+        // 없다"가 아니다. 그 []를 채택하면 기존 등장인물이 사라지고, 그대로 확정하면
+        // speakersFromCharacters([])가 roster를 narrator만 남긴다. 명시적 빈 배열(파싱 성공)은
+        // 정당한 결과이므로 그대로 반영한다.
+        const castOf = (r) => (r.charactersParsed !== false ? (r.characters || []) : characters)
+        const of = rounds + 1
+
+        sendReviewProgress('synopsis', { round: 1, of, phase: 'reviewing' }, operationId)
+        let r = await llm.reviewSynopsis(synopsisMd, characters, reviewOpts, { signal: myController.signal })
+        if (myController.signal.aborted) throw new Error('aborted')
+        // 몰입감 점수는 verdict와 독립 — pass로 끝나는 라운드도 채점 결과를 흘린다.
+        if (r.score != null) sendReviewProgress('synopsis', { round: 1, of, phase: 'scored', score: r.score }, operationId)
+
         for (let round = 1; round <= rounds; round++) {
-          sendReviewProgress('synopsis', { round, of: rounds, phase: 'reviewing' }, operationId)
-          const { verdict, critique, score } = await llm.reviewSynopsis(synopsisMd, characters, reviewOpts, { signal: myController.signal })
+          if (r.verdict !== 'revise' || !r.critique?.trim()) break
+          sendReviewProgress('synopsis', { round, of, phase: 'revising' }, operationId)
+          const rev = await llm.reviseSynopsis(synopsisMd, characters, r.critique, reviewOpts, { signal: myController.signal })
           if (myController.signal.aborted) throw new Error('aborted')
-          // 몰입감 점수는 verdict와 독립 — pass로 끝나는 라운드도 채점 결과를 흘린다.
-          if (score != null) sendReviewProgress('synopsis', { round, of: rounds, phase: 'scored', score }, operationId)
-          if (verdict !== 'revise' || !critique?.trim()) break
-          sendReviewProgress('synopsis', { round, of: rounds, phase: 'revising' }, operationId)
-          const r = await llm.reviseSynopsis(synopsisMd, characters, critique, reviewOpts, { signal: myController.signal })
+          if (!rev?.synopsisMd?.trim()) throw new Error('reviseSynopsis returned empty synopsis')
+          // 점수는 산문만 본다. 본문이 그대로면 재채점도 동점일 수밖에 없어, 캐릭터 카드만 고친
+          // 정당한 수정까지 게이트에 걸려 버려진다. 채점하지 않고 캐스트만 반영하고 끝낸다.
+          if (rev.synopsisMd === synopsisMd) {
+            changed = true
+            characters = castOf(rev)
+            break
+          }
+
+          sendReviewProgress('synopsis', { round: round + 1, of, phase: 'reviewing' }, operationId)
+          const next = await llm.reviewSynopsis(rev.synopsisMd, castOf(rev), reviewOpts, { signal: myController.signal })
           if (myController.signal.aborted) throw new Error('aborted')
-          if (!r?.synopsisMd?.trim()) throw new Error('reviseSynopsis returned empty synopsis')
-          // 본문이 동일해도 characters만 바뀔 수 있다 — 텍스트 비교로 정의하지 않는다.
+          if (!scoreImproved(r.score, next.score)) {
+            sendReviewProgress('synopsis', { round, of, phase: 'rejected', from: r.score, to: next.score }, operationId)
+            break
+          }
+          if (next.score != null) sendReviewProgress('synopsis', { round: round + 1, of, phase: 'scored', score: next.score }, operationId)
           changed = true
-          synopsisMd = r.synopsisMd
-          // charactersParsed=false는 "캐스트를 읽지 못했다"(마커 누락/JSON 깨짐)이지 "캐스트가
-          // 없다"가 아니다. 그 []를 채택하면 기존 등장인물이 사라지고, 그대로 확정하면
-          // speakersFromCharacters([])가 roster를 narrator만 남긴다. 명시적 빈 배열(파싱 성공)은
-          // 정당한 결과이므로 그대로 반영한다.
-          if (r.charactersParsed !== false) characters = r.characters || []
+          synopsisMd = rev.synopsisMd
+          characters = castOf(rev)
+          r = next
         }
         return { synopsisMd, characters, changed }
       } catch (e) {

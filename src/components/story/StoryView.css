@@ -997,6 +997,10 @@
   color: var(--error-color);
 }
 
+.story-progress-log-row.warn .story-progress-log-message {
+  color: var(--warning-color, #d98a2b);
+}
+
 .story-progress-log-time {
   font-variant-numeric: tabular-nums;
   color: var(--text-secondary);
