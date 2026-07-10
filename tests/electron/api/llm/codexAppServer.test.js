@@ -17,7 +17,8 @@ function fakeSpawn({ respond, onSpawn } = {}) {
     child.stdout = new EventEmitter()
     child.stderr = new EventEmitter()
     child.killed = false
-    child.kill = vi.fn(() => { child.killed = true })
+    // 실제 프로세스는 kill 하면 exit 한다 — close() 가 exit 을 기다리므로 흉내내야 매달리지 않는다.
+    child.kill = vi.fn(() => { child.killed = true; queueMicrotask(() => child.emit('exit', 0, 'SIGTERM')) })
     child.stdin = {
       write: (line) => {
         const msg = JSON.parse(line)

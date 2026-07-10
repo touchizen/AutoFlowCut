@@ -22,23 +22,34 @@ import {
 const DEFAULT_TIMEOUT_MS = 20 * 1000
 const CLIENT_INFO = { name: 'autoflowcut', title: 'AutoFlowCut', version: '0.0.0' }
 
+const KILL_TIMEOUT_MS = 5 * 1000
+
 /** stdout 배선까지 끝난 app-server 프로세스. close() 는 대기 요청을 정리하고 프로세스를 내린다. */
-function openAppServer({ spawnImpl = nodeSpawn, codexPath = resolveCodexExecutablePath, env = process.env, onNotification } = {}) {
+function openAppServer({ spawnImpl = nodeSpawn, codexPath = resolveCodexExecutablePath, env = process.env, onNotification, killTimeoutMs = KILL_TIMEOUT_MS } = {}) {
   const executable = typeof codexPath === 'function' ? codexPath() : codexPath
   const child = spawnImpl(executable, ['app-server'], { env, stdio: ['pipe', 'pipe', 'ignore'] })
   const client = createJsonRpcClient({ write: (line) => child.stdin.write(line), onNotification })
   const decode = createNdjsonDecoder()
+  let exited = false
   child.stdout.on('data', (chunk) => {
     for (const message of decode(chunk)) client.handle(message)
   })
   // 프로세스가 죽으면 대기 중인 요청이 영원히 매달린다.
   child.on('error', (err) => client.rejectAll(err))
-  child.on('exit', (code) => client.rejectAll(new Error(`codex app-server exited (${code})`)))
+  child.on('exit', (code) => { exited = true; client.rejectAll(new Error(`codex app-server exited (${code})`)) })
   return {
     client,
-    close() {
+    // 자식이 실제로 exit 할 때까지 기다린다 — 안 그러면 아직 임시 CODEX_HOME 에 plugins 를 클론하는
+    // 중인 자식과 rm -rf 가 경쟁해 ENOTEMPTY 로 던진다(실 프로세스에서 재현됨).
+    async close() {
       client.rejectAll(new Error('codex app-server closed'))
-      try { child.kill() } catch { /* 이미 죽음 */ }
+      if (exited) return
+      await new Promise((resolve) => {
+        const done = () => { clearTimeout(t); resolve() }
+        const t = setTimeout(done, killTimeoutMs) // 안 죽어도 무한 대기하지 않는다
+        child.once('exit', done)
+        try { child.kill() } catch { done() /* 이미 죽음 */ }
+      })
     },
   }
 }
@@ -64,7 +75,7 @@ async function withAppServer(run, { timeoutMs = DEFAULT_TIMEOUT_MS, fallback, ..
     return fallback
   } finally {
     if (timer) clearTimeout(timer)
-    session?.close()
+    await session?.close()
   }
 }
 
@@ -103,6 +114,7 @@ async function runCodexTurn(prompt, opts = {}, {
   env = process.env,
   config,
   authCheck,
+  killTimeoutMs,
   runtimeHomeFactory = prepareCodexRuntimeHome,
   workingDirectoryFactory = prepareCodexWorkingDirectory,
 } = {}) {
@@ -121,18 +133,30 @@ async function runCodexTurn(prompt, opts = {}, {
     // 아래 race 로 처리한다. 핸들러가 없으면 이른 reject 가 unhandled rejection 이 된다.
     turnDone.catch(() => {})
 
-    // 한 턴에 agentMessage 아이템이 여러 개일 수 있다.
-    // 완료 알림(item/completed)이 하나라도 오면 그게 확정 텍스트이고 완료 순서가 곧 출력 순서다.
-    // 하나도 안 오면 흘린 델타를 이어 붙인다 — 델타는 UI 에 흘렀는데 반환값이 비면 저장되는
-    // 대본/시놉시스가 통째로 빈다.
-    // 두 출처를 섞지 않는다: 섞으면 id 가 어긋날 때 텍스트가 조용히 중복된다.
-    const completedTexts = new Map()
+    // 한 턴에 agentMessage 아이템이 여러 개일 수 있다. 아이템 단위로 합친다:
+    //  - 완료 알림(item/completed)이 그 아이템의 확정 텍스트다. 빈 문자열도 확정이다
+    //    (모델이 진짜 빈 답을 냈을 수 있다) — 델타로 되살리지 않는다.
+    //  - 완료가 안 온 아이템은 흘린 델타를 쓴다. 버리면 저장되는 대본이 조용히 잘린다.
+    //  - itemId 없는 델타는 어느 아이템 것인지 귀속할 수 없다. 완료 텍스트가 하나라도 있으면
+    //    그쪽만 믿는다(안 그러면 같은 텍스트가 두 번 나간다).
+    const ANONYMOUS = ''
+    const order = []
     const deltaTexts = new Map()
-    const collected = () => [...(completedTexts.size ? completedTexts : deltaTexts).values()].join('')
+    const completedTexts = new Map()
+    const touch = (id) => { if (!deltaTexts.has(id) && !completedTexts.has(id)) order.push(id) }
+    const collected = () => {
+      const hasCompleted = completedTexts.size > 0
+      return order.map((id) => {
+        if (completedTexts.has(id)) return completedTexts.get(id)
+        if (hasCompleted && id === ANONYMOUS) return ''
+        return deltaTexts.get(id) || ''
+      }).join('')
+    }
 
     session = openAppServer({
       spawnImpl,
       codexPath,
+      killTimeoutMs,
       env: clientOptions.env,
       // 이 콜백은 stdout 이벤트 핸들러 안에서 돈다 — 여기서 던지면 uncaught 가 되고 정리(finally)도
       // 건너뛴다. 반드시 턴 실패로 바꿔 준다.
@@ -141,12 +165,14 @@ async function runCodexTurn(prompt, opts = {}, {
           const { method, params } = message
           if (method === 'item/agentMessage/delta') {
             if (!params?.delta) return
-            const id = params.itemId ?? ''
+            const id = params.itemId ?? ANONYMOUS
+            touch(id)
             deltaTexts.set(id, (deltaTexts.get(id) || '') + params.delta)
             onDelta?.(params.delta)
           } else if (method === 'item/completed' && params?.item?.type === 'agentMessage') {
-            const id = params.item.id ?? ''
-            completedTexts.set(id, params.item.text || deltaTexts.get(id) || '')
+            const id = params.item.id ?? ANONYMOUS
+            touch(id)
+            completedTexts.set(id, params.item.text ?? '')
           } else if (method === 'turn/completed') {
             const turn = params?.turn
             if (turn?.status === 'failed') settle.reject(new Error(turn.error?.message || 'Codex turn failed'))
@@ -193,7 +219,7 @@ async function runCodexTurn(prompt, opts = {}, {
     throw mapCodexError(err, { timedOut: runSignal.timedOut(), parentSignal: signal })
   } finally {
     runSignal.cleanup()
-    session?.close()
+    await session?.close()
     await runtime?.cleanup?.()
     await work?.cleanup?.()
   }

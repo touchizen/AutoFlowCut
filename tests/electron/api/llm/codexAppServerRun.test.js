@@ -20,7 +20,7 @@ function fakeAppServer({ deltas = [], finalText = '', status = 'completed', erro
   const sent = []
   const child = new EventEmitter()
   child.stdout = new EventEmitter()
-  child.kill = vi.fn()
+  child.kill = vi.fn(() => queueMicrotask(() => child.emit("exit", 0)))
   const push = (obj) => queueMicrotask(() => child.stdout.emit('data', `${JSON.stringify(obj)}\n`))
 
   child.stdin = {
@@ -167,7 +167,7 @@ describe('runCodexText — app-server 트랜스포트', () => {
   it('app-server 가 죽으면 매달리지 않고 던진다', async () => {
     const child = new EventEmitter()
     child.stdout = new EventEmitter()
-    child.kill = vi.fn()
+    child.kill = vi.fn(() => queueMicrotask(() => child.emit("exit", 0)))
     child.stdin = { write: () => queueMicrotask(() => child.emit('exit', 1)), end: vi.fn() }
     await expect(runCodexText('p', {}, deps(() => child))).rejects.toThrow()
   })
@@ -203,7 +203,7 @@ describe('runCodexText — turn/start 응답 전에 취소', () => {
   function stallingServer(controller) {
     const child = new EventEmitter()
     child.stdout = new EventEmitter()
-    child.kill = vi.fn()
+    child.kill = vi.fn(() => queueMicrotask(() => child.emit("exit", 0)))
     const push = (o) => queueMicrotask(() => child.stdout.emit('data', `${JSON.stringify(o)}\n`))
     child.stdin = {
       write: (line) => {
@@ -283,7 +283,7 @@ describe('runCodexText — 알림 핸들러의 예외/누락', () => {
   it('agentMessage 가 여러 개면 모두 이어 붙인다 (마지막 것만 남기지 않는다)', async () => {
     const child = new EventEmitter()
     child.stdout = new EventEmitter()
-    child.kill = vi.fn()
+    child.kill = vi.fn(() => queueMicrotask(() => child.emit("exit", 0)))
     const push = (o) => queueMicrotask(() => child.stdout.emit('data', `${JSON.stringify(o)}\n`))
     child.stdin = {
       write: (line) => {
@@ -316,7 +316,7 @@ describe('runCodexText — 델타/완료 아이템 id 불일치', () => {
   function scriptedServer(events) {
     const child = new EventEmitter()
     child.stdout = new EventEmitter()
-    child.kill = vi.fn()
+    child.kill = vi.fn(() => queueMicrotask(() => child.emit("exit", 0)))
     const push = (o) => queueMicrotask(() => child.stdout.emit('data', `${JSON.stringify(o)}\n`))
     child.stdin = {
       write: (line) => {
@@ -338,26 +338,96 @@ describe('runCodexText — 델타/완료 아이템 id 불일치', () => {
   const delta = (text, itemId) => ({ method: 'item/agentMessage/delta', params: { delta: text, ...(itemId !== undefined ? { itemId } : {}) } })
   const completed = (id, text) => ({ method: 'item/completed', params: { item: { type: 'agentMessage', id, text } } })
 
+  // itemId 없는 델타는 어느 아이템 것인지 귀속할 수 없다. 완료 텍스트가 있으면 그쪽만 믿는다.
   it('delta 에 itemId 가 없어도 텍스트가 중복되지 않는다', async () => {
     const child = scriptedServer([delta('hello '), delta('world'), completed('i1', 'hello world')])
     expect(await runCodexText('p', {}, deps(() => child))).toBe('hello world')
   })
 
-  it('완료 알림이 하나라도 오면 그게 정답이다 (델타 버퍼는 버린다)', async () => {
-    const child = scriptedServer([delta('draft', 'x'), completed('i1', 'final')])
+  it('같은 아이템은 완료 텍스트가 델타를 이긴다', async () => {
+    const child = scriptedServer([delta('draft', 'i1'), completed('i1', 'final')])
     expect(await runCodexText('p', {}, deps(() => child))).toBe('final')
   })
 
-  it('여러 아이템은 완료 순서대로 잇는다 (델타 도착 순서가 뒤섞여도)', async () => {
+  // 부분 완료: 아이템 하나만 완료 안 됐다고 그 텍스트를 버리면 저장된 대본이 조용히 잘린다.
+  it('완료되지 않은 아이템의 델타도 순서대로 살린다', async () => {
+    const child = scriptedServer([delta('A', 'i1'), completed('i2', 'B')])
+    expect(await runCodexText('p', {}, deps(() => child))).toBe('AB')
+  })
+
+  it('빈 문자열로 완료된 아이템은 델타로 되살리지 않는다 (모델이 진짜 빈 답을 냈을 수 있다)', async () => {
+    const child = scriptedServer([delta('x', 'i1'), completed('i1', '')])
+    expect(await runCodexText('p', {}, deps(() => child))).toBe('')
+  })
+
+  // 실제 스트림은 아이템마다 delta* → item/completed 가 순차다. 등장 순서가 곧 생성 순서.
+  it('아이템 순서는 스트림 등장 순서를 따른다', async () => {
     const child = scriptedServer([
-      delta('b', 'i2'), delta('a', 'i1'),
-      completed('i1', 'A'), completed('i2', 'B'),
+      delta('a', 'i1'), completed('i1', 'A'),
+      delta('b', 'i2'), completed('i2', 'B'),
     ])
+    expect(await runCodexText('p', {}, deps(() => child))).toBe('AB')
+  })
+
+  it('델타 없이 완료만 온 아이템도 등장 순서대로 잇는다', async () => {
+    const child = scriptedServer([completed('i1', 'A'), completed('i2', 'B')])
     expect(await runCodexText('p', {}, deps(() => child))).toBe('AB')
   })
 
   it('완료가 하나도 없으면 델타를 이어 붙인다', async () => {
     const child = scriptedServer([delta('he', 'i1'), delta('llo', 'i1')])
     expect(await runCodexText('p', {}, deps(() => child))).toBe('hello')
+  })
+})
+
+// runtime.cleanup 의 rm -rf 가 아직 죽는 중인 codex 자식이 쓰는 파일과 경쟁하면 ENOTEMPTY 로
+// 던진다(실 프로세스에서 재현됨). close() 는 자식 exit 까지 기다린 뒤에야 정리로 넘어가야 한다.
+describe('runCodexText — 정리 순서 (kill → exit → rm)', () => {
+  function lingeringServer() {
+    const child = new EventEmitter()
+    child.stdout = new EventEmitter()
+    child.exited = false
+    const push = (o) => queueMicrotask(() => child.stdout.emit('data', `${JSON.stringify(o)}\n`))
+    child.kill = vi.fn(() => { queueMicrotask(() => { child.exited = true; child.emit('exit', 0) }) })
+    child.stdin = {
+      write: (line) => {
+        const m = JSON.parse(line)
+        if (m.method === 'initialize') return push({ id: m.id, result: {} })
+        if (m.method === 'thread/start') return push({ id: m.id, result: { thread: { id: THREAD_ID } } })
+        if (m.method === 'turn/start') {
+          push({ id: m.id, result: { turn: { id: TURN_ID } } })
+          push({ method: 'item/completed', params: { item: { type: 'agentMessage', id: 'i1', text: 'x' } } })
+          push({ method: 'turn/completed', params: { turn: { id: TURN_ID, status: 'completed' } } })
+          return undefined
+        }
+        return undefined
+      },
+      end: vi.fn(),
+    }
+    return child
+  }
+
+  it('cleanup 은 자식이 exit 한 뒤에 돈다', async () => {
+    const child = lingeringServer()
+    let childExitedAtCleanup = null
+    const runtime = { env: {}, cleanup: vi.fn(() => { childExitedAtCleanup = child.exited }) }
+    await runCodexText('p', {}, deps(() => child, {
+      runtimeHomeFactory: async () => runtime,
+      workingDirectoryFactory: async () => ({ workingDirectory: '/w', cleanup: vi.fn() }),
+    }))
+    expect(child.kill).toHaveBeenCalled()
+    expect(childExitedAtCleanup).toBe(true)
+  })
+
+  it('자식이 kill 후에도 안 죽으면 무한 대기하지 않는다', async () => {
+    const child = lingeringServer()
+    child.kill = vi.fn() // exit 을 절대 안 emit
+    const runtime = { env: {}, cleanup: vi.fn() }
+    await runCodexText('p', {}, deps(() => child, {
+      killTimeoutMs: 30,
+      runtimeHomeFactory: async () => runtime,
+      workingDirectoryFactory: async () => ({ workingDirectory: '/w', cleanup: vi.fn() }),
+    }))
+    expect(runtime.cleanup).toHaveBeenCalled()
   })
 })
