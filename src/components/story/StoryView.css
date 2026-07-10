@@ -429,17 +429,6 @@
   min-height: 0;
 }
 
-.story-synopsis-textarea {
-  flex: 1;
-  min-height: 160px;
-  padding: 12px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--border-radius);
-  background: var(--bg-color);
-  color: var(--text-color);
-  font-family: var(--font-family);
-  resize: vertical;
-}
 
 .story-synopsis-characters {
   display: flex;

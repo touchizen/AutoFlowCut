@@ -1276,6 +1276,26 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     </div>
   )
 
+  // 시놉시스도 대본과 같은 편집기 — 라인번호 gutter + 하단 줄 수·자 수 행을 공짜로 얻는다.
+  // 검수 점수도 같은 자리(카운트 행)에 얹어 두 화면의 모양을 맞춘다.
+  const synopsisEditor = (
+    <div className="story-synopsis-editor">
+      <PromptInput
+        value={synopsisDraft}
+        onChange={setSynopsisDraft}
+        disabled={synopsisReviewing}
+        references={[]}
+        disableMentions
+        showCharCount
+        hideTip
+        countLabelKey="prompt.lineCount"
+        ariaLabel={t('story.synopsis.editorLabel', '줄거리')}
+        footerExtra={scoresFor('synopsis').length ? <ReviewScore scores={scoresFor('synopsis')} /> : null}
+        placeholder={t('story.synopsis.placeholder', '시놉시스가 여기에 표시됩니다')}
+      />
+    </div>
+  )
+
   return (
     <div className="story-view">
       <StoryStepper steps={steps} currentStep={currentStep} activeStep={stepperActive} t={t} onStepClick={handleStepClick}
@@ -1341,18 +1361,10 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                 {synopsisGenerating ? (
                   <div className="story-script-stream" aria-live="polite" ref={synopsisStream.ref} onScroll={synopsisStream.onScroll}>{synopsisStreamingText}</div>
                 ) : (
-                  // 검수 중에도 textarea를 유지한다(스트림 뷰로 바꾸면 정작 검수 대상이 안 보인다).
-                  // 대신 readOnly로 동결 — 검수 중 편집이 결과에 덮어써지는 걸 막는다.
-                  <textarea
-                    className="story-synopsis-textarea"
-                    aria-label={t('story.synopsis.editorLabel', '줄거리')}
-                    value={synopsisDraft}
-                    onChange={(e) => setSynopsisDraft(e.target.value)}
-                    readOnly={synopsisReviewing}
-                    placeholder={t('story.synopsis.placeholder', '시놉시스가 여기에 표시됩니다')}
-                  />
+                  // 검수 중에도 편집기를 유지한다(스트림 뷰로 바꾸면 정작 검수 대상이 안 보인다).
+                  // 대신 disabled로 동결 — 검수 중 편집이 재작성 결과에 덮어써지는 걸 막는다.
+                  hasI18n ? synopsisEditor : <I18nProvider>{synopsisEditor}</I18nProvider>
                 )}
-                <ReviewScore scores={scoresFor('synopsis')} />
                 {/* 생성 중 시계+경과 — 첫 출력(특히 reasoning=max)이 늦어도 진행 중임을 보인다. */}
                 {synopsisGenerating && (
                   <GenClock startedAt={synopsisStartedAt} label={t('story.gen.generating', '생성 중')} />

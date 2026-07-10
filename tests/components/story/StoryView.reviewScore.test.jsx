@@ -73,6 +73,20 @@ describe('시놉시스 검수 점수', () => {
     expect(scoreText()).toBe('몰입감60→88')
   })
 
+  // 시놉시스도 대본과 같은 편집기 — 라인번호 gutter + 하단 줄 수·자 수 행, 점수도 그 행에.
+  it('점수는 시나리오와 같은 카운트 행 안에 있다', async () => {
+    await enterSynopsis({ reviewScores: { target: 'synopsis', scores: [60, 88] } })
+    expect(screen.getByTestId('review-score').closest('.prompt-input-footer')).not.toBeNull()
+  })
+
+  it('시놉시스 편집기도 줄 수·자 수를 보여준다', async () => {
+    await enterSynopsis()
+    const footer = screen.getByTestId('story-synopsis').querySelector('.prompt-input-footer')
+    expect(footer).not.toBeNull()
+    expect(footer.querySelector('.line-count')).not.toBeNull()
+    expect(footer.querySelector('[data-testid="char-count"]')).not.toBeNull()
+  })
+
   it('시나리오 타겟 점수는 시놉시스 패널에 뜨지 않는다', async () => {
     await enterSynopsis({ reviewScores: { target: 'script', scores: [72] } })
     expect(screen.queryByTestId('review-score')).toBeNull()

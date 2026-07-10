@@ -183,10 +183,11 @@ describe('setup 시작 → synopsis phase 전이 (§v2.8 B1)', () => {
 })
 
 describe('synopsis 패널 — 줄거리/등장인물 편집', () => {
-  it('재오픈(title 미확정): 저장된 줄거리와 등장인물 카드가 편집 가능하게 표시된다', () => {
+  it('재오픈(title 미확정): 저장된 줄거리와 등장인물 카드가 편집 가능하게 표시된다', async () => {
     render(<StoryView pipeline={reopenedTitleUnconfirmed()} />)
     expect(screen.getByTestId('story-synopsis')).toBeInTheDocument()
-    expect(screen.getByLabelText('줄거리')).toHaveValue('저장된 줄거리')
+    // 줄거리는 대본과 같은 Lexical 편집기 — value가 아니라 textContent이고, SyncPlugin이 effect에서 채운다.
+    await waitFor(() => expect(screen.getByLabelText('줄거리')).toHaveTextContent('저장된 줄거리'))
     expect(screen.getByLabelText('이름')).toHaveValue('리안')
     expect(screen.getByLabelText('출신')).toHaveValue('한국인') // §v2.12 ethnicity 칸
   })
@@ -225,7 +226,7 @@ describe('synopsis 패널 — 줄거리/등장인물 편집', () => {
     render(<StoryView pipeline={p} />)
     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
     fireEvent.click(screen.getByRole('button', { name: '시작' }))
-    await waitFor(() => expect(screen.getByLabelText('줄거리')).toHaveValue('생성된 줄거리'))
+    await waitFor(() => expect(screen.getByLabelText('줄거리')).toHaveTextContent('생성된 줄거리'))
     expect(screen.getByLabelText('이름')).toHaveValue('강산')
     expect(screen.getByLabelText('성별')).toHaveValue('male')
   })

@@ -30,7 +30,10 @@ async function enterSynopsis(p) {
   await waitFor(() => expect(screen.getByTestId('story-synopsis')).toBeInTheDocument())
 }
 
+// 줄거리 편집기는 대본과 같은 Lexical 편집기다 — value 대신 textContent, readonly 대신 contenteditable.
 const draft = () => screen.getByRole('textbox', { name: '줄거리' })
+const draftText = () => draft().textContent
+const draftFrozen = () => draft().getAttribute('contenteditable') === 'false'
 const reviewBtn = () => screen.getByRole('button', { name: '시놉시스 검수' })
 
 describe('시놉시스 패널 검수 컨트롤', () => {
@@ -59,7 +62,7 @@ describe('시놉시스 패널 검수 컨트롤', () => {
     expect(reviewBtn()).toBeDisabled()
     expect(screen.getByRole('button', { name: '시놉시스 다시' })).toBeDisabled()
     expect(screen.getByRole('button', { name: /시나리오 생성/ })).toBeDisabled()
-    expect(draft()).toHaveAttribute('readonly')
+    expect(draftFrozen()).toBe(true)
   })
 
   it('검수 중에도 textarea는 보인다 (스트림 뷰로 바뀌지 않는다)', async () => {
@@ -94,7 +97,7 @@ describe('검수 실행', () => {
     const p = pipeline()
     await enterSynopsis(p)
     fireEvent.click(reviewBtn())
-    await waitFor(() => expect(draft()).toHaveValue('개선된 줄거리'))
+    await waitFor(() => expect(draftText()).toBe('개선된 줄거리'))
     expect(screen.getByDisplayValue('보라')).toBeInTheDocument()
   })
 
@@ -103,7 +106,7 @@ describe('검수 실행', () => {
     await enterSynopsis(p)
     fireEvent.click(reviewBtn())
     await waitFor(() => expect(p.reviewSynopsis).toHaveBeenCalled())
-    expect(draft()).toHaveValue('원본 줄거리')
+    expect(draftText()).toBe('원본 줄거리')
     expect(screen.getByDisplayValue('강리안')).toBeInTheDocument()
   })
 
@@ -112,7 +115,7 @@ describe('검수 실행', () => {
     await enterSynopsis(p)
     fireEvent.click(reviewBtn())
     await waitFor(() => expect(p.reviewSynopsis).toHaveBeenCalled())
-    expect(draft()).toHaveValue('원본 줄거리')
+    expect(draftText()).toBe('원본 줄거리')
   })
 
   it('undefined 응답도 draft를 건드리지 않는다', async () => {
@@ -120,7 +123,7 @@ describe('검수 실행', () => {
     await enterSynopsis(p)
     fireEvent.click(reviewBtn())
     await waitFor(() => expect(p.reviewSynopsis).toHaveBeenCalled())
-    expect(draft()).toHaveValue('원본 줄거리')
+    expect(draftText()).toBe('원본 줄거리')
   })
 })
 

@@ -269,6 +269,7 @@ export default function PromptInput({
   hideTip = false,          // 대본 스텝: footer 의 💡 tip span 숨김 (줄 수·문자 수는 유지).
   countLabelKey = 'prompt.count',  // 대본 스텝: 카운트 라벨 키 교체(기본 "N개 프롬프트" → "N줄").
   footerExtra = null,       // 대본 스텝: 카운트 행(줄 수·자 수)에 얹을 노드(검수 점수 등). hideFooter면 함께 숨는다.
+  ariaLabel,                // 접근성 라벨 — 한 화면에 편집기가 둘 이상일 때 구분(대본/줄거리).
 }) {
   const { t } = useI18n()
 
@@ -337,6 +338,7 @@ export default function PromptInput({
                   <ContentEditable
                     className="prompt-textarea"
                     data-testid="prompt-textarea"
+                    aria-label={ariaLabel}
                     aria-placeholder={placeholder || t('prompt.placeholder')}
                   />
                 </div>
