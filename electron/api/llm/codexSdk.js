@@ -17,7 +17,7 @@ const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000
 const AUTH_CHECK_TIMEOUT_MS = 15 * 1000
 const LOGIN_HINT = 'Codex login required: run `codex login` and choose Sign in with ChatGPT.'
 const STORY_INSTRUCTIONS_FILENAME = 'AUTOFLOWCUT_STORY_INSTRUCTIONS.md'
-const STORY_INSTRUCTIONS_TEXT = [
+export const STORY_INSTRUCTIONS_TEXT = [
   'AutoFlowCut Story backend.',
   'Return only the requested story content or JSON.',
   'Do not inspect files, call tools, browse, or modify the workspace.',
@@ -193,7 +193,7 @@ export function mapCodexError(err, { timedOut = false, parentSignal } = {}) {
   return err instanceof Error ? err : new Error(msg || 'Codex SDK failed')
 }
 
-async function assertCodexChatGptLogin({ env, authCheck, CodexImpl }) {
+export async function assertCodexChatGptLogin({ env, authCheck, CodexImpl }) {
   if (!authCheck && CodexImpl) return
   const check = authCheck || defaultAuthCheck
   let status
@@ -205,7 +205,7 @@ async function assertCodexChatGptLogin({ env, authCheck, CodexImpl }) {
   if (!isAuthStatusOk(status)) throw new Error(LOGIN_HINT)
 }
 
-function createRunSignal(parentSignal, timeoutMs = DEFAULT_TIMEOUT_MS) {
+export function createRunSignal(parentSignal, timeoutMs = DEFAULT_TIMEOUT_MS) {
   const controller = new AbortController()
   let timedOut = false
   const onAbort = () => controller.abort(parentSignal?.reason)

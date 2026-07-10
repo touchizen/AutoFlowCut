@@ -21,7 +21,7 @@ import {
   buildTitlePrompt,
   buildResearchAnalyzePrompt,
 } from './prompts.js'
-import { runCodexJson, runCodexText } from './codexSdk.js'
+import { runCodexJson, runCodexText } from './codexAppServer.js'
 import { splitSynopsisOutput, parseCharactersJson, createSynopsisDeltaGate } from './synopsisOutput.js'
 import { toOpenAiJsonSchema } from './toJsonSchema.js'
 import { PROMPTS_SCHEMA, REVIEW_SCHEMA, SCORED_REVIEW_SCHEMA, clampReviewScore, SCENES_SCHEMA, RESEARCH_ANALYSIS_SCHEMA, validateScenesSegments } from './schemas.js'
