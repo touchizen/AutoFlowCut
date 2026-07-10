@@ -172,5 +172,25 @@ describe('open(): step 상태 ↔ 산출물 정합성', () => {
       }).getState()
       expect(emit.mock.calls.filter(([ch]) => ch === 'story:pushScenes')).toEqual([])
     })
+
+    // 빈 파일은 heal이 이미 "없음"으로 본다(artifactMissing의 trim). 재발신도 같아야 한다 —
+    // JSON.parse('')로 터져 getState가 통째로 실패하면 안 된다.
+    it('scenes.json이 비어 있으면 터지지 않고 재발신을 보류한다', async () => {
+      await writeFile(path.join(storyDir, 'scenes.json'), '   \n', 'utf-8')
+      await writeState({
+        steps: { script: DONE(), scenes: DONE(), audio: DONE(), prompts: DONE() },
+        pendingPushRevision: 2,
+        lastPushedRevision: 1,
+      })
+      const emit = vi.fn()
+      const m = createStepMachine({
+        projectPath: dir,
+        llm: { generateScript: vi.fn(), splitScenes: vi.fn(), writePrompts: vi.fn(), generateSynopsis: vi.fn() },
+        emit,
+        getApiKey: () => 'k',
+      })
+      await expect(m.getState()).resolves.toBeDefined()
+      expect(emit.mock.calls.filter(([ch]) => ch === 'story:pushScenes')).toEqual([])
+    })
   })
 })

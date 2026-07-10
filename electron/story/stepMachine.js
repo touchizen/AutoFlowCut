@@ -692,7 +692,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // heal은 done을 되돌려 이 경로를 막아 주지만 getState()에는 heal이 없다.
       let raw
       try { raw = await store.loadTextStrict('scenes.json') } catch { return }
-      if (raw == null) return
+      if (!raw?.trim()) return // 빈 파일도 heal과 같게 "없음"으로 본다
       sendPush(JSON.parse(raw).scenes, operationId)
     }
   }
