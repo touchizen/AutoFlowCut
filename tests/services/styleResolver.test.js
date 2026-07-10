@@ -319,3 +319,82 @@ describe('createStyleResolver — resolveEffectiveStyleIdForRef (reference gener
     expect(r.resolveEffectiveStyleIdForRef(null)).toBe('ref:7')
   })
 })
+
+// 새로 추가한 카드는 styleId 기억이 없다. 마지막 폴백이 findAutoStyle(references 의 "첫 번째"
+// 스타일 카드)이면, 스타일 카드를 추가하거나 순서가 바뀌는 것만으로 새 카드가 조용히 다른
+// 스타일로 생성된다. 사용자가 의도적으로 다른 걸 고르지 않는 한, 프로젝트가 이미 쓰던 스타일을
+// 물려받아야 한다 — 그 기억은 다른 카드들의 styleId 에 남아 있다.
+describe('createStyleResolver — 새 카드는 프로젝트가 쓰던 스타일을 물려받는다', () => {
+  const styleA = { id: 1, type: 'style', name: 'A', prompt: 'watercolor' }
+  const styleB = { id: 9, type: 'style', name: 'B', prompt: 'oil' }
+  const card = (over) => ({ id: 2, type: 'character', prompt: 'hero', ...over })
+
+  it('전역 선택이 없으면 기존 카드의 styleId 를 따른다 (findAutoStyle 이 아니라)', () => {
+    const r = createStyleResolver({
+      ...baseDeps,
+      selectedStyleRefId: null,
+      // findAutoStyle 은 배열 첫 스타일 카드인 ref:1 을 집는다 — 카드들은 ref:9 를 썼다.
+      references: [styleA, styleB, card({ styleId: 'ref:9', generatedAt: 100 })],
+    })
+    expect(r.resolveEffectiveStyleIdForRef(null)).toBe('ref:9')
+  })
+
+  it('가장 최근에 생성된 카드의 기억을 따른다', () => {
+    const r = createStyleResolver({
+      ...baseDeps,
+      selectedStyleRefId: null,
+      references: [
+        styleA, styleB,
+        card({ id: 2, styleId: 'ref:1', generatedAt: 100 }),
+        card({ id: 3, styleId: 'ref:9', generatedAt: 200 }),
+      ],
+    })
+    expect(r.resolveEffectiveStyleIdForRef(null)).toBe('ref:9')
+  })
+
+  it("styleId:null('무스타일로 생성됨')도 정당한 기억 — 자동 폴백으로 새지 않는다", () => {
+    const r = createStyleResolver({
+      ...baseDeps,
+      selectedStyleRefId: null,
+      references: [styleA, card({ styleId: null, generatedAt: 100 })],
+    })
+    expect(r.resolveEffectiveStyleIdForRef(null)).toBeNull()
+  })
+
+  it('전역 선택(사용자의 명시적 의사)이 카드 기억보다 우선한다', () => {
+    const r = createStyleResolver({
+      ...baseDeps,
+      selectedStyleRefId: 'ref:1',
+      references: [styleA, styleB, card({ styleId: 'ref:9', generatedAt: 100 })],
+    })
+    expect(r.resolveEffectiveStyleIdForRef(null)).toBe('ref:1')
+  })
+
+  it('override 는 그 무엇보다 우선한다', () => {
+    const r = createStyleResolver({
+      ...baseDeps,
+      selectedStyleRefId: 'ref:1',
+      references: [styleA, styleB, card({ styleId: 'ref:9' })],
+    })
+    expect(r.resolveEffectiveStyleIdForRef('preset:noir')).toBe('preset:noir')
+  })
+
+  it('기억하는 카드가 하나도 없으면 기존대로 findAutoStyle', () => {
+    const r = createStyleResolver({
+      ...baseDeps,
+      selectedStyleRefId: null,
+      references: [styleA, card({})], // styleId 키 자체가 없음
+    })
+    expect(r.resolveEffectiveStyleIdForRef(null)).toBe('ref:1')
+  })
+
+  it('스타일 카드 자신의 styleId(null)를 기억으로 오해하지 않는다', () => {
+    const r = createStyleResolver({
+      ...baseDeps,
+      selectedStyleRefId: null,
+      // 스타일 카드는 배치에서 styleId:null 을 찍힌다 — 이걸 물려받으면 모두 무스타일이 된다.
+      references: [{ ...styleA, styleId: null, generatedAt: 300 }, card({ styleId: 'ref:1', generatedAt: 100 })],
+    })
+    expect(r.resolveEffectiveStyleIdForRef(null)).toBe('ref:1')
+  })
+})

@@ -13,12 +13,17 @@ import PromptInput from './PromptInput'
 import { toast } from './Toast'
 import Modal from './Modal'
 import StylePicker from './StylePicker'
+import { createStyleResolver } from '../services/styleResolver'
+import { isStyleReference } from '../services/styleService'
 import ErrorSection from './ErrorSection'
 import { StopwatchIcon, ElapsedTime } from './StopwatchIcon'
 
-export default function ReferenceDetailModal({ reference, index, onUpdate, onUpload, onClose, onGenerate, isGenerating, t, isKo, projectName, appMode, getScopeToken: getScopeTokenProp, thumbnails = {}, references = [] }) {
+export default function ReferenceDetailModal({ reference, index, onUpdate, onUpload, onClose, onGenerate, isGenerating, t, isKo, projectName, appMode, getScopeToken: getScopeTokenProp, thumbnails = {}, references = [], selectedStyleRefId = null }) {
   const [editData, setEditData] = useState({ ...reference })
+  // 스타일 팝업은 두 뜻으로 쓰인다: 스타일 카드의 '프리셋에서 채우기' vs 그 외 카드의 '적용할 스타일'.
+  //   같은 위젯이 다른 뜻으로 동시에 뜨면 헷갈리므로 타입에 따라 하나만 연다.
   const [showStyleDropdown, setShowStyleDropdown] = useState(false)
+  const [styleDropdownMode, setStyleDropdownMode] = useState('preset')
   const [histories, setHistories] = useState([])
   const [shouldReloadHistory, setShouldReloadHistory] = useState(0)
   const [imageSize, setImageSize] = useState(null)
@@ -327,6 +332,30 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
   const typeInfo = REFERENCE_TYPES.find(t => t.value === editData.type) || REFERENCE_TYPES[0]
   const isStyle = editData.type === 'style'
 
+  // 이 카드가 어떤 스타일로 생성될지. styleId 키가 있으면 그게 카드의 기억이고(null = 무스타일),
+  //   없으면(새 카드) 전역 스타일 → 다른 카드들의 기억 → 자동 탐색 순으로 결정된다.
+  //   기억이 없을 땐 '자동: X' 로 표시해 지금 무엇이 적용될지 보이게 한다.
+  const styleRefs = references.filter(isStyleReference)
+  // 키 존재가 아니라 값으로 판정한다 — prop 동기화 effect 가 styleId:undefined 로 키를 만든다.
+  //   (undefined = 기억 없음, null = '무스타일로 생성됨'이라는 정당한 기억)
+  const hasStyleMemory = editData.styleId !== undefined
+  const resolvedStyleId = hasStyleMemory
+    ? editData.styleId
+    : createStyleResolver({ activeTab: 'list', scenes: [], references, selectedStyleRefId, t, isKo })
+      .resolveEffectiveStyleIdForRef(null)
+  const styleLabelFor = (id) => {
+    if (!id || id === 'none') return t('reference.styleNone')
+    if (String(id).startsWith('preset:')) {
+      const preset = STYLE_PRESETS?.styles?.find((x) => x.id === String(id).slice(7))
+      return preset ? (isKo ? preset.name_ko : preset.name_en) : String(id)
+    }
+    const refId = String(id).slice(4)
+    return styleRefs.find((r) => String(r.id) === refId)?.name || String(id)
+  }
+  const applyStyleLabel = hasStyleMemory
+    ? styleLabelFor(resolvedStyleId)
+    : `${t('reference.styleAuto')}: ${styleLabelFor(resolvedStyleId)}`
+
   // 클립보드에 복사
   const handleCopy = async (text, fieldName) => {
     if (!text) return
@@ -528,7 +557,7 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
                 <button
                   type="button"
                   className="btn-fill-preset"
-                  onClick={() => setShowStyleDropdown(true)}
+                  onClick={() => { setStyleDropdownMode('preset'); setShowStyleDropdown(true) }}
                   title={t('reference.fillFromPreset')}
                 >
                   {t('reference.fillFromPreset')} ▼
@@ -536,6 +565,21 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
               )}
             </div>
           </div>
+
+          {/* 적용할 스타일 — 스타일 카드에는 없다(자기 자신에 스타일을 적용하지 않는다). */}
+          {!isStyle && (
+            <div className="detail-field">
+              <label>{t('reference.applyStyle')}</label>
+              <button
+                type="button"
+                className="btn-fill-preset"
+                data-testid="apply-style"
+                onClick={() => { setStyleDropdownMode('apply'); setShowStyleDropdown(true) }}
+              >
+                {applyStyleLabel} ▼
+              </button>
+            </div>
+          )}
 
           {/* 타입 */}
           <div className="form-group">
@@ -669,11 +713,18 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
               <button onClick={() => setShowStyleDropdown(false)}>✕</button>
             </div>
             <StylePicker
-              selectedId={selectedStylePickerId}
+              selectedId={styleDropdownMode === 'apply' ? (resolvedStyleId || null) : selectedStylePickerId}
               onSelect={(id) => {
-                handleStylePickerSelect(id)
+                if (styleDropdownMode === 'apply') {
+                  // 카드의 스타일 기억을 바꾼다. 재생성은 ref.styleId 를 전역 선택보다 우선하므로
+                  //   저장만 하면 그대로 따라온다(override 를 따로 넘길 필요 없다).
+                  setEditData((prev) => ({ ...prev, styleId: id ?? null }))
+                } else {
+                  handleStylePickerSelect(id)
+                }
                 setShowStyleDropdown(false)
               }}
+              uploadedStyleRefs={styleDropdownMode === 'apply' ? styleRefs : []}
               thumbnails={thumbnails}
               t={t}
               isKo={isKo}

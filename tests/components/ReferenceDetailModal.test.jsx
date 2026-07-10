@@ -64,6 +64,9 @@ const t = (k, vars) => {
     'common.close': '닫기',
     'common.save': '저장',
     'reference.regenerate': '재생성',
+    'reference.applyStyle': '적용할 스타일',
+    'reference.styleAuto': '자동',
+    'reference.styleNone': '스타일 없음',
     'reference.promptPlaceholder': '이미지 생성용 프롬프트를 입력하세요',
   }
   let s = map[k] || k
@@ -247,5 +250,61 @@ describe('ReferenceDetailModal — §3.8 close-on-regenerate', () => {
 
     expect(screen.queryByRole('button', { name: /재생성/ })).not.toBeInTheDocument()
     expect(onClose).not.toHaveBeenCalled()
+  })
+})
+
+// 카드가 어떤 스타일로 생성될지 모달에서 보이고 고를 수 있어야 한다. 지금은 project.json 을
+// 열어봐야만 알 수 있다. 스타일 카드의 "프리셋에서 채우기"와는 뜻이 완전히 다르므로 같은
+// 모달에 함께 띄우지 않는다 — 타입에 따라 하나만 보인다.
+describe('ReferenceDetailModal — 적용할 스타일', () => {
+  // 프리셋 목록에도 '수채화'가 있어 getByText 가 중복 매칭된다 — 카드 이름을 구분한다.
+  const STYLE_A = { id: 1, type: 'style', name: '내 수채화', prompt: 'watercolor' }
+  const STYLE_B = { id: 9, type: 'style', name: '유화', prompt: 'oil' }
+
+  const open = (reference, over = {}) => render(
+    <ReferenceDetailModal
+      {...baseProps}
+      reference={reference}
+      references={[STYLE_A, STYLE_B, reference]}
+      selectedStyleRefId={null}
+      {...over}
+    />
+  )
+
+  it('캐릭터 카드에는 "적용할 스타일"이 보인다', () => {
+    open({ id: 2, type: 'character', name: '준호', prompt: 'hero', styleId: 'ref:9' })
+    expect(screen.getByTestId('apply-style')).toBeTruthy()
+    expect(screen.getByTestId('apply-style').textContent).toContain('유화')
+  })
+
+  it('스타일 카드에는 "적용할 스타일"이 안 보인다 (프리셋 선택과 뜻이 다르다)', () => {
+    open({ id: 1, type: 'style', name: '내 수채화', prompt: 'watercolor' })
+    expect(screen.queryByTestId('apply-style')).toBeNull()
+    expect(screen.getByRole('button', { name: /프리셋에서 채우기/ })).toBeTruthy()
+  })
+
+  it('캐릭터 카드에는 "프리셋에서 채우기"가 안 보인다', () => {
+    open({ id: 2, type: 'character', name: '준호', prompt: 'hero', styleId: 'ref:9' })
+    expect(screen.queryByRole('button', { name: /프리셋에서 채우기/ })).toBeNull()
+  })
+
+  it('기억이 없는 새 카드는 지금 무엇이 적용될지 자동 라벨로 보여준다', () => {
+    // styleId 키 없음 + 전역 선택 없음 → 다른 카드의 기억(ref:9)을 물려받는다
+    open({ id: 3, type: 'character', name: '태수', prompt: 'p' }, {
+      references: [STYLE_A, STYLE_B, { id: 2, type: 'character', styleId: 'ref:9', generatedAt: 100 }],
+    })
+    const el = screen.getByTestId('apply-style')
+    expect(el.textContent).toContain('자동')
+    expect(el.textContent).toContain('유화')
+  })
+
+  it('선택하면 editData.styleId 에 담겨 저장/재생성으로 흘러간다', () => {
+    const onGenerate = vi.fn()
+    open({ id: 2, type: 'character', name: '준호', prompt: 'hero', styleId: 'ref:9' }, { onGenerate })
+    fireEvent.click(screen.getByTestId('apply-style'))
+    // StylePicker 의 스타일 카드는 div(sp-card) 다 — 이름으로 찾아 그 카드를 클릭한다.
+    fireEvent.click(screen.getByText('내 수채화').closest('.sp-card'))
+    fireEvent.click(screen.getByRole('button', { name: /재생성/ }))
+    expect(onGenerate).toHaveBeenCalledWith(0, false, null, expect.objectContaining({ styleId: 'ref:1' }))
   })
 })

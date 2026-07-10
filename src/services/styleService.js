@@ -49,6 +49,29 @@ function hasGenAIStyleImage(ref) {
  * @param {Array} references - 레퍼런스 배열
  * @returns {string|null} 'ref:{id}' 형태 또는 null
  */
+/**
+ * 카드들이 이미 기억하는 프로젝트의 스타일.
+ *
+ * 새로 추가한 카드는 styleId 기억이 없다. 그때 findAutoStyle(references 의 "첫 번째" 스타일 카드)
+ * 로 떨어지면, 스타일 카드를 추가하거나 순서가 바뀌는 것만으로 새 카드가 조용히 다른 스타일로
+ * 생성된다. 사용자가 의도적으로 다른 걸 고르지 않는 한 프로젝트가 쓰던 스타일을 물려받아야 한다.
+ *
+ * 가장 최근에 생성된 카드의 기억을 쓴다(배치는 모두 같은 값을 찍으므로 대개 동일).
+ * styleId:null 은 "무스타일로 생성됨"이라는 정당한 기억이라 키 존재 여부로 판정한다.
+ * 스타일 카드 자신은 배치에서 null 을 찍히므로 제외한다 — 물려받으면 전부 무스타일이 된다.
+ *
+ * @returns {{found: boolean, styleId: string|null}}
+ */
+export function inheritStyleIdFromCards(references) {
+  let best = null
+  for (const r of references || []) {
+    if (!r || isStyleReference(r)) continue
+    if (!Object.prototype.hasOwnProperty.call(r, 'styleId')) continue
+    if (!best || (r.generatedAt || 0) >= (best.generatedAt || 0)) best = r
+  }
+  return best ? { found: true, styleId: best.styleId ?? null } : { found: false, styleId: null }
+}
+
 export function findAutoStyle(references) {
   const autoStyle = references.find(r => isStyleReference(r) && (
     r.prompt || hasGenAIStyleImage(r)

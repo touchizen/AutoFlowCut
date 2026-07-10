@@ -354,6 +354,7 @@ export default function ReferencePanel({
           appMode={appMode}
           getScopeToken={getScopeToken}
           thumbnails={thumbnails}
+          selectedStyleRefId={selectedStyleRefId}
         />
       )}
     </div>
