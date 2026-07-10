@@ -56,10 +56,12 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   // activeOpRef(story:state running 기반)에 안 잡힌다 — 재사용 금지. started 신호(phase:'started',
   // operationId)로 세팅되고, 그와 다른 op의 delta는 drop(regenerate 시 이전 실행 잔여 방지).
   const synopsisActiveOpRef = useRef(null)
-  // 시놉시스 검수 소유권 토큰. boolean으로는 부족하다 — 이 훅은 App에 살아 프로젝트 전환에도
-  // 재마운트되지 않으므로(StoryView만 key로 remount), 전환 후 도착한 옛 검수의 finally가
-  // 새 검수의 상태를 지워버린다. main의 "synopsisController === myController일 때만 반납"과 대칭.
-  const reviewOwnerRef = useRef(null)
+  // 시놉시스 side action(생성·검수) 공용 소유권 토큰. main이 synopsisController 하나로 둘을
+  // 상호배제하므로 renderer도 같은 불변식을 갖는다. boolean으로는 부족하다 — 이 훅은 App에 살아
+  // 프로젝트 전환에도 재마운트되지 않으므로(StoryView만 key로 remount), 전환 후 도착한 옛 호출의
+  // finally가 새 호출의 상태를 지워버린다. main의 "synopsisController === myController일 때만
+  // 반납"과 대칭.
+  const synopsisOwnerRef = useRef(null)
   // HIGH: projectPath 전환 시 tokenRef 무효화를 useEffect(passive)에만 맡기면 한 프레임 늦는다
   // — rerender로 새 projectPath가 반영된 직후, effect가 아직 실행되기 전 틈에 옛 프로젝트의
   // pushScenes가 도착하면 tokenRef가 여전히 옛 토큰이라 통과하고, onPushRef.current는 이미 새
@@ -99,7 +101,7 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
     setSynopsisStreamingText('')
     setSynopsisGenerating(false)
     setSynopsisReviewing(false)
-    reviewOwnerRef.current = null
+    synopsisOwnerRef.current = null
     setSynopsisError(null)
     setSynopsisText('')
     setHasSynopsis(false)
@@ -338,21 +340,30 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   // 슬라이스4(§3.4 + §v2.8 M4): 시놉시스 생성 side action. 스트리밍 누적 자체는
   // story:synopsis-delta 구독(started→synopsisActiveOpRef)이 담당하고, 여기선 호출/에러 상태만.
   const generateSynopsis = useCallback(async (params = {}) => {
+    if (synopsisOwnerRef.current) return { error: 'busy' }
+    const myToken = Symbol('synopsis-generate')
+    synopsisOwnerRef.current = myToken
+    const isOwner = () => synopsisOwnerRef.current === myToken
     setSynopsisError(null)
     setSynopsisGenerating(true)
     try {
       const r = await window.electronAPI.storyGenerateSynopsis({ projectToken: tokenRef.current, ...params })
       // 사용자가 중단(⏹)하면 main이 {aborted:true}로 resolve한다 — error 키가 없어 배너도 안 뜬다.
-      if (r?.error) setSynopsisError(r.error)
+      // await 이후의 공유 상태 쓰기는 소유권 검사로 감싼다: 프로젝트 전환 후 도착한 orphan은
+      // guarded()가 {error:'stale-token'}로 응답하는데, 무방비면 새 프로젝트에 그 배너가 뜬다.
+      if (isOwner() && r?.error) setSynopsisError(r.error)
       return r
     } catch (e) {
       // 진짜 취소는 resolve로 오므로, 여기 오는 rejection은 전부 실제 에러다. 메시지에 'abort'가
       // 들었다고 삼키면 "Claude SDK failed: request aborted" 같은 실패가 조용히 묻힌다.
       const msg = String(e?.message || e)
-      setSynopsisError(msg)
+      if (isOwner()) setSynopsisError(msg)
       return { error: msg }
     } finally {
-      setSynopsisGenerating(false)
+      if (isOwner()) {
+        synopsisOwnerRef.current = null
+        setSynopsisGenerating(false)
+      }
     }
   }, [])
   // 시놉시스 검수(spec 2026-07-10) — generateSynopsis 래퍼 미러. main이 실패를 rethrow하므로
@@ -360,10 +371,11 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   // await 이후의 공유 상태 쓰기는 전부 소유권 검사로 감싼다: 프로젝트 전환 후 도착한 orphan은
   // guarded()가 {error:'stale-token'}로 응답하는데, 무방비면 새 프로젝트에 그 배너가 뜬다.
   const reviewSynopsis = useCallback(async (params = {}) => {
-    if (reviewOwnerRef.current) return { error: 'busy' } // 재진입 — disabled는 커밋 후에야 먹는다
+    // 재진입/생성과의 충돌 — disabled는 React 커밋 후에야 먹으므로 ref가 유일한 락이다.
+    if (synopsisOwnerRef.current) return { error: 'busy' }
     const myToken = Symbol('synopsis-review')
-    reviewOwnerRef.current = myToken
-    const isOwner = () => reviewOwnerRef.current === myToken
+    synopsisOwnerRef.current = myToken
+    const isOwner = () => synopsisOwnerRef.current === myToken
     setSynopsisError(null)
     setProgressLog([]) // start() 미러 — 안 지우면 2회차가 1회차 로그 위에서 열린다
     setReviewProgress(null)
@@ -381,7 +393,7 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
       return { error: msg }
     } finally {
       if (isOwner()) {
-        reviewOwnerRef.current = null
+        synopsisOwnerRef.current = null
         setSynopsisReviewing(false)
         setReviewProgress((rp) => (rp?.phase === 'error' ? rp : null))
       }

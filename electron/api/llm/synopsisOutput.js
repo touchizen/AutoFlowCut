@@ -21,9 +21,10 @@ function tryParseCharactersJson(text) {
     const arr = JSON.parse(t.slice(s, e + 1))
     if (!Array.isArray(arr)) return { ok: false, characters: [] }
     const characters = arr.map(normalizeStoryCharacter).filter((c) => c.name.trim())
-    // 항목은 왔는데 하나도 못 살렸다 = 스키마 불일치(예: name 대신 fullName). 빈 캐스트가 아니라
-    // 읽기 실패다 — ok는 필터링 '뒤'에 판정해야 이 둘이 갈린다.
-    if (arr.length > 0 && characters.length === 0) return { ok: false, characters: [] }
+    // 항목이 하나라도 걸러졌다 = 스키마 불일치(예: name 대신 fullName). 빈 캐스트가 아니라 읽기
+    // 실패다 — ok는 필터링 '뒤'에 판정한다. 부분 실패가 특히 위험하다: 살아남은 것만 권위 있는
+    // 캐스트로 채택되면 나머지 인물이 조용히 삭제된다. 빈 배열([])은 length가 같아 ok=true다.
+    if (characters.length !== arr.length) return { ok: false, characters: [] }
     return { ok: true, characters }
   } catch {
     return { ok: false, characters: [] }

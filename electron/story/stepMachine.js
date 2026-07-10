@@ -1319,8 +1319,11 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
           scriptText: (await store.loadText('script.md')) || '',
           ...(await hydrateExtras()),
         }, operationId)
-        // 못 읽었으면 characters를 아예 빼고 돌려준다 — renderer의 Array.isArray 가드가
-        // 기존 카드를 그대로 두게 된다(runGenerateSynopsis).
+        // 못 읽었으면 characters를 빼고 돌려준다 — 이 반환값이 권위 있는 캐스트로 쓰이지 않게
+        // (runGenerateSynopsis의 Array.isArray 가드). 다만 카드가 편집 상태 그대로 남지는
+        // 않는다: 위 story:state가 durable speakers에서 파생한 캐스트를 실어 보내므로 카드는
+        // '마지막 저장본'으로 되돌아간다. 성공한 재생성이 카드를 새 캐스트로 갈아끼우는 것과
+        // 같은 semantics이고, 수정 전처럼 통째로 비워지는 것보다 낫다.
         return castReadable ? { synopsisMd, characters } : { synopsisMd }
       } catch (e) {
         // 취소 판정은 컨트롤러 상태로. 메시지에 'abort'가 든 진짜 SDK 실패

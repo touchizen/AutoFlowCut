@@ -169,6 +169,63 @@ describe('시놉시스 review progress 이벤트', () => {
   })
 })
 
+// generateSynopsis도 같은 App-수명 훅에 살아 있어 review와 똑같은 경쟁에 노출된다.
+describe('generateSynopsis 소유권', () => {
+  it('전환 후 도착한 옛 generateSynopsis가 새 프로젝트의 synopsisGenerating/에러를 건드리지 않는다', async () => {
+    let release
+    window.electronAPI.storyGenerateSynopsis = vi.fn(() => new Promise((r) => { release = r }))
+    const rendered = await openHook()
+    let stale
+    act(() => { stale = rendered.result.current.generateSynopsis({ type: 'title', title: 'A' }) })
+    expect(rendered.result.current.synopsisGenerating).toBe(true)
+
+    window.electronAPI.storyOpen = vi.fn(async () => ({ projectToken: 'tok2', state: { steps: {} } }))
+    rendered.rerender({ projectPath: '/q' })
+    await act(() => rendered.result.current.open())
+    expect(rendered.result.current.synopsisGenerating).toBe(false)
+
+    let release2
+    window.electronAPI.storyGenerateSynopsis = vi.fn(() => new Promise((r) => { release2 = r }))
+    let fresh
+    act(() => { fresh = rendered.result.current.generateSynopsis({ type: 'title', title: 'B' }) })
+    expect(rendered.result.current.synopsisGenerating).toBe(true)
+
+    await act(async () => { release({ error: 'stale-token' }); await stale })
+    expect(rendered.result.current.synopsisError).toBeNull()
+    expect(rendered.result.current.synopsisGenerating).toBe(true) // 새 생성이 아직 소유
+
+    await act(async () => { release2({ synopsisMd: 'z', characters: [] }); await fresh })
+    expect(rendered.result.current.synopsisGenerating).toBe(false)
+  })
+
+  it('in-flight 중 재진입은 IPC 없이 {error:busy}', async () => {
+    let release
+    window.electronAPI.storyGenerateSynopsis = vi.fn(() => new Promise((r) => { release = r }))
+    const { result } = await openHook()
+    let first
+    act(() => { first = result.current.generateSynopsis({ type: 'title', title: 'A' }) })
+    let second
+    await act(async () => { second = await result.current.generateSynopsis({ type: 'title', title: 'A' }) })
+    expect(second).toEqual({ error: 'busy' })
+    expect(window.electronAPI.storyGenerateSynopsis).toHaveBeenCalledTimes(1)
+    await act(async () => { release({ synopsisMd: 'x', characters: [] }); await first })
+  })
+
+  // main은 synopsisController 하나로 생성/검수를 상호배제한다 — renderer도 같은 불변식을 갖는다.
+  it('생성 중 검수를 누르면 IPC 없이 {error:busy}', async () => {
+    let release
+    window.electronAPI.storyGenerateSynopsis = vi.fn(() => new Promise((r) => { release = r }))
+    const { result } = await openHook()
+    let gen
+    act(() => { gen = result.current.generateSynopsis({ type: 'title', title: 'A' }) })
+    let rev
+    await act(async () => { rev = await result.current.reviewSynopsis({ synopsisMd: 'S' }) })
+    expect(rev).toEqual({ error: 'busy' })
+    expect(window.electronAPI.storyReviewSynopsis).not.toHaveBeenCalled()
+    await act(async () => { release({ synopsisMd: 'x', characters: [] }); await gen })
+  })
+})
+
 describe('프로젝트 전환 경쟁', () => {
   it('전환 후 도착한 옛 프로젝트의 결과가 새 프로젝트 상태를 건드리지 않는다', async () => {
     let release

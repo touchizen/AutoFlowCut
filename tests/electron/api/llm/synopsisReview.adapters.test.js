@@ -68,12 +68,26 @@ describe('llmClaude.reviseSynopsis', () => {
     expect(r).toEqual({ synopsisMd: '줄거리', characters: [], charactersParsed: true })
   })
 
-  // 파싱은 됐지만 스키마가 어긋나 항목이 전부 걸러지면 '빈 캐스트'가 아니라 '읽기 실패'다.
+  // 파싱은 됐지만 스키마가 어긋나 항목이 걸러지면 '빈 캐스트'가 아니라 '읽기 실패'다.
   it('배열은 왔는데 항목을 하나도 못 살리면 charactersParsed=false', async () => {
     const queryImpl = claudeText('줄거리\nCHARACTERS_JSON\n[{"fullName":"강리안"}]')
     const r = await claudeReviseSynopsis('SYN', CHARS, 'c', CLAUDE_OPTS, { queryImpl })
     expect(r.characters).toEqual([])
     expect(r.charactersParsed).toBe(false)
+  })
+
+  // 부분 실패가 더 위험하다 — 살아남은 항목만 권위 있는 캐스트로 채택되면 나머지가 조용히 삭제된다.
+  it('항목 일부만 살아남아도 charactersParsed=false (부분 스키마 불일치)', async () => {
+    const queryImpl = claudeText('줄거리\nCHARACTERS_JSON\n[{"fullName":"Alice"},{"name":"Bob"}]')
+    const r = await claudeReviseSynopsis('SYN', CHARS, 'c', CLAUDE_OPTS, { queryImpl })
+    expect(r.charactersParsed).toBe(false)
+  })
+
+  it('모든 항목이 살아남으면 charactersParsed=true', async () => {
+    const queryImpl = claudeText('줄거리\nCHARACTERS_JSON\n[{"name":"Alice"},{"name":"Bob"}]')
+    const r = await claudeReviseSynopsis('SYN', CHARS, 'c', CLAUDE_OPTS, { queryImpl })
+    expect(r.characters.map((c) => c.name)).toEqual(['Alice', 'Bob'])
+    expect(r.charactersParsed).toBe(true)
   })
 
   it('abort된 signal이면 Aborted를 던진다', async () => {
