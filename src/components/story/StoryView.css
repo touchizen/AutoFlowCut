@@ -1061,8 +1061,12 @@
 .story-voice-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
+  /* 설명 텍스트와 성우 버튼 사이 여백 — 설명이 행 전체를 채우므로 gap이 유일한 분리선이다. */
+  gap: 16px;
+  /* wrap이면 flexbox가 축소보다 줄바꿈을 먼저 택한다: 긴 appearance의 max-content 폭이
+     행을 넘기는 순간 버튼이 아래 줄로 떨어져 인물마다 위치가 달라 보인다. 한 줄에 묶어두고
+     설명이 여러 줄로 늘어나게 둔다(행 높이는 늘어나도 된다). */
+  flex-wrap: nowrap;
   padding: 6px 8px;
   border-radius: var(--border-radius);
 }
@@ -1101,8 +1105,9 @@
 }
 /* Task 11: 드롭다운 3종(엔진/검색/목소리) → [성우 선택] 버튼(모달 오픈) */
 .story-voice-picker-btn {
-  /* .story-input의 flex:1 1 160px을 덮어써 행 전체로 늘어나지 않게. 내용폭 + 상한만. */
-  flex: 0 1 auto;
+  /* .story-input의 flex:1 1 160px을 덮어써 행 전체로 늘어나지 않게. 내용폭 + 상한만.
+     shrink=0: 축소는 전부 설명 텍스트가 흡수한다 — 버튼 폭이 인물마다 달라지면 안 된다. */
+  flex: 0 0 auto;
   max-width: 240px;
   text-align: left;
   cursor: pointer;
