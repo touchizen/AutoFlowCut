@@ -204,6 +204,18 @@ Disclaimer: This app is an independent product developed by Touchizen and is not
 
 ### What's New
 ```
+v3.0.0 — Story mode. From a blank page to a finished video, without leaving the app.
+
+Write the story. Let the AI draft your script (Claude, Codex, or Gemini) — pick a genre, auto-generate a title, and continue where you left off — or paste in your own. Still looking for a subject? Research YouTube topics and check their viral score first.
+
+Synopsis, characters, and self-review. Pull a logline, hook, and story arc out of the script along with the full cast. The AI scores immersion and runs its own review-and-revise loop until the story holds up.
+
+Scenes and voices. Split the script into scenes by sentence or duration, and re-split whenever you want. Assign a voice per speaker (Typecast, ElevenLabs, or Gemini), search and preview voices, apply emotion to character lines, and get a separate narration track for each speaker. Sound effects are lifted from the script and placed on scenes for you.
+
+Run it all. Tick "auto" on the steps you trust, press Run all, and the pipeline carries itself to the end — then export to CapCut, Premiere, or Vrew in one click.
+
+Also: characters register themselves as reference cards you can @mention into any scene, a new Grid view in the results panel, and a download that's about 110MB smaller.
+
 v2.1.0 — Two ways to generate, three ways to export.
 
 Generation modes. Start free with a Google Flow login (no API key needed), or switch to your own Gemini / Veo key for fast, pay-as-you-go bulk generation — toggle anytime from the top bar.
@@ -406,6 +418,18 @@ Touchizen 제작 — touchizen.com
 
 ### What's New (새로운 기능)
 ```
+v3.0.0 — Story 모드. 빈 페이지에서 완성된 영상까지, 앱 하나로.
+
+대본 쓰기. AI가 대본을 써줍니다(Claude · Codex · Gemini) — 장르를 고르고, 제목을 자동 생성하고, 이어쓰기까지. 직접 쓴 대본을 붙여넣어도 됩니다. 소재가 아직 없다면 YouTube 리서치로 바이럴 지수와 상세 정보를 먼저 확인하세요.
+
+시놉시스 · 등장인물 · 자체 검수. 대본에서 로그라인, 훅, 기승전결과 등장인물을 통째로 뽑아냅니다. AI가 몰입도 점수를 매기고, 스스로 검토·수정하는 루프를 돌려 완성도를 끌어올립니다.
+
+씬 분리와 성우. 문장 단위 또는 시간 단위로 씬을 자동 분리하고, 마음에 안 들면 언제든 다시 분리하세요. 화자별로 성우를 따로 지정하고(Typecast · ElevenLabs · Gemini), 검색·미리듣기로 고르고, 캐릭터 대사에는 감정을 반영합니다. 화자마다 나레이션 트랙이 분리되고, 효과음도 대본에서 자동으로 뽑아 씬에 배치합니다.
+
+전체 자동 실행. 믿고 맡길 스텝에 '자동'을 켜고 '전체 진행'을 누르면 파이프라인이 끝까지 알아서 돕니다 — 완성되면 CapCut · Premiere · Vrew로 한 번에 내보내기.
+
+그 밖에: 대본 속 인물이 레퍼런스 카드로 자동 등록되어 @멘션으로 씬에 넣을 수 있고, 결과 패널에 그리드 보기가 추가됐으며, 다운로드 용량이 약 110MB 줄었습니다.
+
 v2.1.0 — 생성은 두 가지 방식, 내보내기는 세 가지.
 
 생성 모드. 구글 Flow 로그인으로 무료 시작(API 키 불필요)하거나, 내 Gemini / Veo 키로 빠른 종량제 대량 생성으로 전환 — 상단 바에서 언제든 토글.
@@ -513,6 +537,18 @@ AI 영상 자동화, 텍스트투비디오, 이미지투비디오, AI 이미지 
 
 ### What's New
 ```
+v3.0.0 — Storyモード。白紙から完成した動画まで、アプリひとつで。
+
+脚本を書く。AIが脚本を書きます（Claude・Codex・Gemini）— ジャンルを選び、タイトルを自動生成し、続きから書き足せます。自分で書いた脚本の貼り付けも可能。題材が決まっていなければ、YouTubeリサーチでバイラル指数と詳細を先に確認できます。
+
+シノプシス・登場人物・自己レビュー。脚本からログライン、フック、起承転結と登場人物をまとめて抽出します。AIが没入度をスコア化し、自ら推敲・修正するループを回して完成度を高めます。
+
+シーン分割と音声。文単位または時間単位でシーンを自動分割し、気に入らなければ何度でも再分割できます。話者ごとに音声を指定でき（Typecast・ElevenLabs・Gemini）、検索とプレビューで選び、キャラクターのセリフには感情を反映します。話者ごとにナレーショントラックが分かれ、効果音も脚本から自動抽出してシーンに配置します。
+
+まとめて実行。任せたいステップに「自動」を入れて「全実行」を押せば、パイプラインが最後まで進みます — 完成したらCapCut・Premiere・Vrewへワンクリックで書き出し。
+
+その他：脚本の登場人物がリファレンスカードとして自動登録され、@メンションでシーンに指定できます。結果パネルにグリッド表示を追加。ダウンロードサイズが約110MB軽くなりました。
+
 v2.1.0 — 生成は2通り、エクスポートは3通り。
 
 生成モード。Google Flowログインで無料スタート（APIキー不要）、または自分のGemini / Veoキーで高速・従量制の大量生成に切替 — 上部バーでいつでもトグル。
