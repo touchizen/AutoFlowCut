@@ -28,11 +28,24 @@ describe('validateScenesSegments (M2b-2 post-validation)', () => {
   it('narration은 speaker+text가 있으면 통과', () => {
     expect(() => validateScenesSegments(scene([{ speaker: 'narrator', text: 'hi' }]))).not.toThrow()
   })
-  it('type 없는 세그먼트는 narration으로 취급 — text 없으면 throw', () => {
-    expect(() => validateScenesSegments(scene([{ speaker: 'narrator' }]))).toThrow(/narration/)
+  it('type 없는 세그먼트는 narration으로 취급 — text 없으면 버린다(복구)', () => {
+    const scenes = scene([{ speaker: 'narrator' }, { speaker: 'narrator', text: 'hi' }])
+    expect(() => validateScenesSegments(scenes)).not.toThrow() // 한 세그먼트 결함으로 split 전체가 죽지 않음
+    expect(scenes[0].segments).toEqual([{ speaker: 'narrator', text: 'hi' }]) // 알맹이 없는 narration 제거
   })
-  it('narration에 speaker 없으면 throw', () => {
-    expect(() => validateScenesSegments(scene([{ text: 'hi' }]))).toThrow(/narration/)
+  it('narration에 speaker만 없으면 narrator로 복구', () => {
+    const scenes = scene([{ text: 'hi' }])
+    expect(() => validateScenesSegments(scenes)).not.toThrow()
+    expect(scenes[0].segments[0].speaker).toBe('narrator')
+  })
+  it('유효 세그먼트 사이에 빈 narration이 섞여도 그것만 제거하고 통과(실제 씬35 케이스)', () => {
+    const scenes = scene([
+      { speaker: 'a', text: '누구세요?' },
+      { speaker: '', text: '' }, // LLM 결함 세그먼트
+      { type: 'sfx', description: 'door creaking' },
+    ])
+    expect(() => validateScenesSegments(scenes)).not.toThrow()
+    expect(scenes[0].segments).toHaveLength(2) // 빈 것만 드롭
   })
   it('sfx는 description이 있으면 통과(speaker/text 불필요)', () => {
     expect(() => validateScenesSegments(scene([{ type: 'sfx', description: 'thunder' }]))).not.toThrow()

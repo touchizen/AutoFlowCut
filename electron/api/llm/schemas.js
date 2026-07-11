@@ -43,15 +43,28 @@ export const SCENES_SCHEMA = {
 }
 
 /**
- * M2b post-validation — SCENES_SCHEMA가 loose(oneOf 미지원 우회)라 스키마만으로는
- * narration/sfx 세그먼트의 필수 필드를 강제할 수 없다. splitScenes 반환 후 type별로 검증:
- * narration은 speaker+text, sfx는 description. 알 수 없는 type은 거부한다.
+ * M2b post-processing — SCENES_SCHEMA가 loose(oneOf 미지원 우회)라 스키마만으로는
+ * narration/sfx 세그먼트의 필수 필드를 강제할 수 없다. splitScenes/reviseScenes 반환 후:
+ *  1) 복구(in place): LLM 출력의 흔한 결함을 고쳐 한 세그먼트 때문에 split 전체가 죽지 않게 한다 —
+ *     text 없는 narration은 알맹이가 없으므로 제거, speaker만 빈 narration은 'narrator'로 채운다.
+ *  2) 검증: 복구 후에도 남는 실질 오류(sfx description 누락, 알 수 없는 type)만 throw한다.
  */
 export function validateScenesSegments(scenes) {
   for (const sc of scenes || []) {
+    if (Array.isArray(sc.segments)) {
+      // 복구: narration 흔한 결함(빈 text/ speaker)을 정리 — 이전엔 이게 split 전체를 중단시켰다.
+      sc.segments = sc.segments.filter((seg) => {
+        const type = seg.type || 'narration'
+        if (type !== 'narration') return true
+        if (typeof seg.text !== 'string' || !seg.text.trim()) return false // 알맹이 없는 narration 제거
+        if (typeof seg.speaker !== 'string' || !seg.speaker.trim()) seg.speaker = 'narrator' // speaker만 비면 보정
+        return true
+      })
+    }
     for (const seg of sc.segments || []) {
       const type = seg.type || 'narration'
       if (type === 'narration') {
+        // 복구로 speaker/text는 보장되지만, 예상 못 한 경우를 위한 방어적 재확인.
         if (typeof seg.speaker !== 'string' || !seg.speaker.trim()
           || typeof seg.text !== 'string' || !seg.text.trim()) {
           throw new Error(`invalid narration segment (speaker/text required) in scene ${sc.sceneNo}`)
