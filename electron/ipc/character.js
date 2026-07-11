@@ -27,6 +27,7 @@ import {
 } from '../flow-character-api.js'
 import { COMPOSE_EDITOR_READY } from '../flow-compose-editor.js'
 import { EDITOR_SELECTOR, appendSceneText, insertSceneMention, injectComposeSegments } from '../flow-compose-mention.js'
+import { FLOW_APPLY_NAME_PROBE, FLOW_BACK_BTN_EXPR } from '../flow-character-name.js'
 import { screen } from 'electron'
 import { computeOffscreenBounds } from '../offscreen-bounds.js'
 import { GENERATED_IMG_PROBE } from '../flow-media-collect.js'
@@ -201,6 +202,46 @@ export function registerCharacterIPC(ipcMain, deps) {
       if (ready) { await sleep(600); return true }
     }
     return false
+  }
+
+  // 서버 진실은 PATCH /v1/flow/entities 가 쓴다. 하지만 SPA 는 페이지 로드 시점의 이름
+  //   ('제목 없는 캐릭터' 또는 옛 이름)을 캐시한 채라, 프로젝트를 나갔다 재진입(refreshFlowComposer)
+  //   해야 반영됐다. 상세 페이지 이름칸에 타이핑하면 SPA 스토어가 갱신돼 그 왕복이 사라진다.
+  //   (라이브 캡처 2026-07-10: 타이핑은 네트워크 요청을 내지 않는 순수 로컬 갱신이고, 상세 페이지의
+  //    '완료' 는 저장이 아니라 뒤로가기다.)
+  //   생성/동기화/이름변경 세 경로가 공유한다. false 를 돌려주면 호출측이 refresh 로 폴백한다.
+  async function applyEntityNameToSpa(flowView, { entityId, projectId, displayName }) {
+    if (!displayName || !entityId) return false
+    try {
+      const onDetail = await ensureOnCharacterDetailPage(flowView, entityId, projectId)
+      if (!onDetail) {
+        console.warn('[Flow Character] character detail page not ready — name left to refresh fallback')
+        return false
+      }
+      const r = await flowView.webContents.executeJavaScript(FLOW_APPLY_NAME_PROBE(displayName))
+      if (!(r && r.ok)) {
+        console.warn('[Flow Character] name not applied to SPA:', r && (r.error || r.value))
+        return false
+      }
+      // 타이핑만 하고 상세 페이지에 남으면, 다음 동작의 ensureOnCharactersPage 가 loadURL(전체 로드)로
+      //   SPA 스토어를 다시 받아 갱신한 이름이 날아간다. back 은 SPA 클라이언트 라우팅이라 스토어를
+      //   유지한 채 목록으로 돌아간다 — 이름이 살아서 멘션 피커까지 간다. 덤으로 다음 캐릭터 생성이
+      //   시작할 /characters 에 이미 도착해 있다. 못 나가면 성공이라 말하지 않는다(refresh 폴백).
+      const back = await trustedClickOnFlowView(FLOW_BACK_BTN_EXPR)
+      if (back && back.success === false) {
+        console.warn('[Flow Character] back button click failed:', back.error)
+        return false
+      }
+      for (let i = 0; i < 20; i++) {
+        await sleep(200)
+        if (!(flowView.webContents.getURL() || '').includes('/character/' + entityId)) return true
+      }
+      console.warn('[Flow Character] still on character detail after back — refresh fallback')
+      return false
+    } catch (e) {
+      console.warn('[Flow Character] applyName error:', e.message)
+      return false
+    }
   }
 
   // 현재 URL 에서 로케일 보존하여 같은 프로젝트의 /characters 컴포저 URL 도출.
@@ -379,6 +420,15 @@ export function registerCharacterIPC(ipcMain, deps) {
 
   ipcMain.handle('flow:generate-character', async (_e, opts = {}) => {
     const { prompt, displayName } = opts
+    // generate-image/generate-scene 과 동일 계약 — 화면비/seed 를 batchGenerateImages body 에 주입한다.
+    //   미주입 시 /characters 컴포저의 직전 상태(관측상 9:16)를 그대로 따라가 프로젝트 화면비와 어긋난다.
+    //   스타일은 호출측 styledPrompt(텍스트)에 이미 반영돼 있어 references 는 주입하지 않는다.
+    const _seedValue = typeof opts.seed === 'number' && Number.isFinite(opts.seed) ? opts.seed : null
+    const _aspectRatioEnum = (
+      opts.aspectRatio === '16:9' ? 'IMAGE_ASPECT_RATIO_LANDSCAPE'
+        : opts.aspectRatio === '9:16' ? 'IMAGE_ASPECT_RATIO_PORTRAIT'
+          : null
+    )
     if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R26-1
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }
@@ -423,7 +473,36 @@ export function registerCharacterIPC(ipcMain, deps) {
     }
     if (!enabled) return { success: false, error: '생성 버튼 enable 안 됨(프롬프트 미인식)', retry: true }
 
-    // 4) arrow_forward 트러스트 클릭 → batchGenerateImages 응답 캡처 (arm-before-click, P2-1).
+    // 3.5) 선택된 이미지 모델 적용 — 에이전트 설정 패널 경유(generate-image 와 동일 best-effort).
+    //   패널 미발견/미적용은 생성을 막지 않는다(경고만). arm 전에 호출해야 패널 개폐가 주입을 가리지 않는다.
+    if (opts.model && applyAgentDefaults) {
+      try {
+        const _md = await applyAgentDefaults({ image: { model: opts.model } })
+        if (!_md?.success) console.warn('[Flow Character] applyAgentDefaults(image model) not applied:', _md?.error)
+        else if (_md.applied === false) console.warn('[Flow Character] applyAgentDefaults(image model): panel found but model not applied')
+      } catch (e) { console.warn('[Flow Character] applyAgentDefaults(image model) error:', e.message) }
+    }
+
+    // 4) 화면비/seed arm — 캡처 후 finally 에서 반드시 clear(다음 요청 오염 방지).
+    if (setFlowPageInject) {
+      const _inj = await setFlowPageInject({ seed: _seedValue, aspectRatio: _aspectRatioEnum, references: null, i2v: null })
+      if (_inj && _inj.success === false) {
+        // arm 실패여도 페이지엔 payload 가 이미 써졌을 수 있다 → stale seed/aspect 가 다음 요청을
+        //   오염시키지 않게 best-effort clear (generate-scene 과 동일).
+        try { await clearFlowPageInject?.() } catch {}
+        return { success: false, error: `Flow inject arming failed: ${_inj.error || 'unknown'}`, retry: true }
+      }
+    }
+    try {
+      return await _generateCharacterAfterArm(flowView, { projectId, displayName })
+    } finally {
+      try { await clearFlowPageInject?.() } catch {}
+    }
+  })
+
+  // 5~7) arrow_forward 트러스트 클릭 → 응답 캡처 → 파싱 → 이미지 다운로드 → 이름 등록.
+  //   arm/clear 는 호출부(finally)가 책임진다.
+  async function _generateCharacterAfterArm(flowView, { projectId, displayName }) {
     const cap = await clickAndCaptureGeneration(flowView)
     if (cap.clickError) return { success: false, error: cap.clickError }
     const body = cap.resp0 && cap.resp0.body
@@ -466,8 +545,14 @@ export function registerCharacterIPC(ipcMain, deps) {
       } catch (e) { console.warn('[Flow Character] register error:', e.message) }
     }
 
-    return buildCharacterResult(parsed, base64Image, { displayName: displayName || null, registered })
-  })
+    // 8) SPA 캐시에 이름 반영 — 서버는 위 PATCH 가 이미 썼지만, SPA 는 페이지 로드 시점의
+    //    '제목 없는 캐릭터' 를 들고 있어 나갔다 재진입해야 새 이름이 보인다. 상세 페이지 이름칸에
+    //    타이핑하면 스토어가 갱신돼 refresh 가 필요 없어진다(라이브 캡처: 요청을 내지 않는 순수 로컬 갱신).
+    //    실패하면 nameApplied:false — 호출측이 refreshFlowComposer 로 폴백한다.
+    const nameApplied = await applyEntityNameToSpa(flowView, { entityId: parsed.entityId, projectId, displayName })
+
+    return buildCharacterResult(parsed, base64Image, { displayName: displayName || null, registered, nameApplied })
+  }
 
   // A1b: 기존 entity 이미지 재생성(reroll). 상세페이지(/character/{entityId})에서 프롬프트 주입
   //   + arrow_forward → batchGenerateImages → 응답 parentEntityId 가 기존 entityId 로 유지된다
@@ -931,7 +1016,10 @@ export function registerCharacterIPC(ipcMain, deps) {
       })
       console.log('[Flow Character] rename entities:', res.status, res.ok ? '✓' : '✗', '(name', displayName + ')')
       if (!res.ok) console.warn('[Flow Character] rename body:', (res.text || '').slice(0, 200))
-      return { success: !!res.ok, status: res.status }
+      // PATCH 가 실패했으면 SPA 를 건드리지 않는다 — 서버와 화면이 어긋나는 게 더 나쁘다.
+      if (!res.ok) return { success: false, status: res.status, nameApplied: false }
+      const nameApplied = await applyEntityNameToSpa(getFlowView(), { entityId, projectId, displayName })
+      return { success: true, status: res.status, nameApplied }
     } catch (e) {
       console.warn('[Flow Character] rename error:', e.message)
       return { success: false, error: e.message }
@@ -1012,7 +1100,10 @@ export function registerCharacterIPC(ipcMain, deps) {
       } catch (e2) {
         console.warn('[Flow Character] A2 register error:', e2.message)
       }
-      return { success: true, entityId: parsed.entityId, workflowId: parsed.workflowId, mediaId: parsed.mediaId, registered }
+      const nameApplied = registered
+        ? await applyEntityNameToSpa(flowView, { entityId: parsed.entityId, projectId, displayName })
+        : false
+      return { success: true, entityId: parsed.entityId, workflowId: parsed.workflowId, mediaId: parsed.mediaId, registered, nameApplied }
     } catch (e) {
       console.warn('[Flow Character] A2 upload-character-entity error:', e.message)
       return { success: false, error: e.message }

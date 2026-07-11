@@ -188,7 +188,7 @@ describe('신규 프로젝트 setup phase 리서치 진입 — 제목·시작 �
     await waitFor(() => expect(screen.getByTestId('story-synopsis')).toBeInTheDocument())
     expect(screen.getByText(/설정.*제목을 입력/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '시놉시스 다시' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '이 시놉시스로 시나리오 생성' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '이 시놉시스로 대본 생성' })).toBeDisabled()
   })
 
   it('제목이 있으면(재오픈 title) synopsis phase에 안내 없음 + 생성 버튼 활성(회귀)', () => {
@@ -489,13 +489,13 @@ describe('선택·수동 URL 영속 (m5)', () => {
   })
 })
 
-// N2(필수): research phase에서 하단 제네릭 컨트롤이 렌더되면 [시나리오 생성]으로 게이트가 우회된다.
+// N2(필수): research phase에서 하단 제네릭 컨트롤이 렌더되면 [대본 생성]으로 게이트가 우회된다.
 describe('research phase 하단 제네릭 컨트롤 suppress (N2)', () => {
   it('research phase에서는 .story-controls가 렌더되지 않는다', () => {
     const { container } = render(<StoryView pipeline={reopenedTitle({ research: researchDraft() })} />)
     expect(screen.getByTestId('story-research')).toBeInTheDocument()
     expect(container.querySelector('.story-controls')).toBeNull()
-    expect(screen.queryByRole('button', { name: '시나리오 생성' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '대본 생성' })).toBeNull()
     expect(screen.queryByRole('button', { name: '시작' })).toBeNull()
   })
 })

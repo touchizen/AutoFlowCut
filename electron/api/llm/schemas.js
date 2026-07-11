@@ -67,16 +67,35 @@ export function validateScenesSegments(scenes) {
   }
 }
 
-// M3: 대본 검토 structured output — verdict(pass/revise) + critique + 몰입감 점수(선택).
-// score는 대본 검수(reviewScript)에서만 채운다(0~100). 옛 모델/누락 대비 required 아님.
+// M3: 대본 검토 structured output — verdict(pass/revise) + critique.
 export const REVIEW_SCHEMA = {
   type: 'OBJECT',
   properties: {
     verdict: { type: 'STRING' }, // 'pass' | 'revise'
     critique: { type: 'STRING' },
-    score: { type: 'NUMBER' }, // 몰입감 0~100 (선택)
   },
   required: ['verdict', 'critique'],
+}
+
+// 대본·시놉시스 검수 전용 — 몰입감 점수(0~100)를 함께 낸다. 씬/프롬프트는 몰입감이 무의미해
+// REVIEW_SCHEMA를 그대로 쓴다. score는 required가 아니다: 모델이 빠뜨렸다고 assertSchema가 검수
+// 전체를 실패시키면 안 된다(점수가 없으면 배지만 숨긴다).
+export const SCORED_REVIEW_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    verdict: { type: 'STRING' },
+    critique: { type: 'STRING' },
+    score: { type: 'NUMBER' },
+  },
+  required: ['verdict', 'critique'],
+}
+
+// 0~100 정수로 정규화. 숫자가 아니면 null.
+export function clampReviewScore(value) {
+  if (value == null || value === '') return null
+  const n = Number(value)
+  if (!Number.isFinite(n)) return null
+  return Math.max(0, Math.min(100, Math.round(n)))
 }
 
 // 리서치 §3.4: 다수 자막 종합 구조분석 — 공통 서사 구조(structure) + 핵심 사실 주장(claims,

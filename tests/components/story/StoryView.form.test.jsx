@@ -5,8 +5,8 @@ import StoryView from '../../../src/components/story/StoryView.jsx'
 const LLM_OPTIONS = [
   { id: 'claude:claude-opus-4-8', engine: 'claude', model: 'claude-opus-4-8', label: 'Claude Opus 4.8', reasoningEfforts: ['off', 'low', 'medium', 'high', 'max'], defaultReasoningEffort: 'off' },
   { id: 'claude:claude-sonnet-5', engine: 'claude', model: 'claude-sonnet-5', label: 'Claude Sonnet 5', reasoningEfforts: ['off', 'low', 'medium', 'high', 'max'], defaultReasoningEffort: 'off' },
-  { id: 'codex:gpt-5.5', engine: 'codex', model: 'gpt-5.5', label: 'Codex GPT-5.5', reasoningEfforts: ['minimal', 'low', 'medium', 'high', 'xhigh'], defaultReasoningEffort: 'xhigh' },
-  { id: 'codex:gpt-5.4', engine: 'codex', model: 'gpt-5.4', label: 'Codex GPT-5.4', reasoningEfforts: ['minimal', 'low', 'medium', 'high', 'xhigh'], defaultReasoningEffort: 'high' },
+  { id: 'codex:gpt-5.5', engine: 'codex', model: 'gpt-5.5', label: 'Codex GPT-5.5', reasoningEfforts: ['low', 'medium', 'high', 'xhigh'], defaultReasoningEffort: 'xhigh' },
+  { id: 'codex:gpt-5.4', engine: 'codex', model: 'gpt-5.4', label: 'Codex GPT-5.4', reasoningEfforts: ['low', 'medium', 'high', 'xhigh'], defaultReasoningEffort: 'high' },
 ]
 
 // 슬라이스5(§v2.8 B1): 제목 경로 [시작]은 synopsis 게이트(generateSynopsis)로 진입한다 —

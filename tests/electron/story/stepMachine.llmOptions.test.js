@@ -47,13 +47,13 @@ describe('stepMachine Story LLM option normalization', () => {
     expect(llm.generateScript.mock.calls[0][1]).toMatchObject({
       engine: 'codex',
       model: 'gpt-5.5',
-      reasoningEffort: 'xhigh',
+      reasoningEffort: 'medium',
     })
     await machine.start('scenes', {})
     expect(llm.splitScenes.mock.calls[0][1]).toMatchObject({
       engine: 'codex',
       model: 'gpt-5.5',
-      reasoningEffort: 'xhigh',
+      reasoningEffort: 'medium',
     })
   })
 })

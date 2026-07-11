@@ -291,6 +291,13 @@ async function writeWorkFolderConfig(workFolderPath, workFolderName) {
   }
 }
 
+// 리소스 파일명 정규화. 저장(fs:save-resource)·읽기(fs:read-resource)·history 조회(fs:get-history)가
+// 반드시 같은 규칙을 써야 한다 — 다르면 '석준의 딸' 처럼 공백/특수문자가 든 이름의 파일을
+// 디스크에 써놓고도 앱이 못 찾는다(카드 이미지·history 가 사라진 것처럼 보인다).
+export function safeResourceName(name) {
+  return String(name).replace(/[^a-zA-Z0-9\uAC00-\uD7A3_-]/g, '_')
+}
+
 export function registerFilesystemIPC(ipcMain) {
 
   // ----------------------------------------------------------
@@ -437,7 +444,7 @@ export function registerFilesystemIPC(ipcMain) {
     try {
       // Detect MIME type and extension
       const { mimeType, ext } = detectMimeType(data)
-      const safeName = String(name).replace(/[^a-zA-Z0-9\uAC00-\uD7A3_-]/g, '_')
+      const safeName = safeResourceName(name)
       const filename = `${safeName}.${ext}`
 
       // Ensure resource and history directories exist
@@ -489,7 +496,7 @@ export function registerFilesystemIPC(ipcMain) {
   // ----------------------------------------------------------
   ipcMain.handle('fs:read-resource', async (_event, { workFolder, project, resourceType, name }) => {
     try {
-      const safeName = String(name).replace(/[^a-zA-Z0-9\uAC00-\uD7A3_-]/g, '_')
+      const safeName = safeResourceName(name)
       const resourceDir = path.join(workFolder, project, resourceType)
 
       // Try common image + video extensions
@@ -513,7 +520,7 @@ export function registerFilesystemIPC(ipcMain) {
   // ----------------------------------------------------------
   ipcMain.handle('fs:get-resource-path', async (_event, { workFolder, project, resourceType, name }) => {
     try {
-      const safeName = String(name).replace(/[^a-zA-Z0-9\uAC00-\uD7A3_-]/g, '_')
+      const safeName = safeResourceName(name)
       const resourceDir = path.join(workFolder, project, resourceType)
 
       for (const ext of ['png', 'jpg', 'jpeg', 'webp', 'gif', 'mp4', 'webm']) {
@@ -560,7 +567,9 @@ export function registerFilesystemIPC(ipcMain) {
         return { success: true, histories: [] }
       }
 
-      const prefix = baseName.replace(/\.[^/.]+$/, '') // strip extension if present
+      // 저장 파일명은 safeResourceName 로 정규화돼 있다 — 원본 이름으로 매칭하면 공백/특수문자가
+      //   든 카드의 history 가 영영 안 잡힌다.
+      const prefix = safeResourceName(baseName.replace(/\.[^/.]+$/, '')) // strip extension if present
       const mediaExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.mp4', '.webm']
       const entries = await fs.readdir(historyDir)
 

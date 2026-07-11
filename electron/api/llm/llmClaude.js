@@ -13,6 +13,8 @@ import {
   buildContinuePrompt,
   buildReviewPrompt,
   buildRevisePrompt,
+  buildSynopsisReviewPrompt,
+  buildSynopsisRevisePrompt,
   buildScenesReviewPrompt,
   buildScenesRevisePrompt,
   buildPromptsReviewPrompt,
@@ -23,7 +25,7 @@ import {
 import { buildClaudeSdkOptions, extractClaudeSdkResult, bridgeAbortSignal, extractTextDelta, readStructuredResult } from './claudeSdk.js'
 import { splitSynopsisOutput, parseCharactersJson, createSynopsisDeltaGate } from './synopsisOutput.js'
 import { toJsonSchema } from './toJsonSchema.js'
-import { SCENES_SCHEMA, PROMPTS_SCHEMA, REVIEW_SCHEMA, RESEARCH_ANALYSIS_SCHEMA, FACTCHECK_SCHEMA, validateScenesSegments } from './schemas.js'
+import { SCENES_SCHEMA, PROMPTS_SCHEMA, REVIEW_SCHEMA, SCORED_REVIEW_SCHEMA, clampReviewScore, RESEARCH_ANALYSIS_SCHEMA, FACTCHECK_SCHEMA, validateScenesSegments } from './schemas.js'
 
 export const DEFAULT_MODEL = 'claude-opus-4-8'
 
@@ -32,8 +34,52 @@ async function* defaultQuery(args) {
   yield* query(args)
 }
 
+// defaultQuery는 async generator라 Query 객체(=supportedModels 보유)를 잃는다. 조회는 직접 부른다.
+async function rawQuery(args) {
+  const { query } = await import('@anthropic-ai/claude-agent-sdk')
+  return query(args)
+}
+
+/**
+ * 설치된 Claude Agent SDK가 보고하는 모델 목록(ModelInfo[]).
+ * CLI 프로세스를 띄우므로 실패/지연이 설정 화면을 막으면 안 된다 — 던지지 않고 []로 떨어진다.
+ */
+export async function listClaudeModels({ queryImpl = rawQuery, timeoutMs = 15000 } = {}) {
+  let q = null
+  let timer = null
+  let abandoned = false
+  const interrupt = (query) => { try { query?.interrupt?.() } catch { /* 이미 끝난 쿼리 */ } }
+  try {
+    // 타임아웃은 조회 전체를 감싼다 — queryImpl()(SDK 로드 + CLI spawn) 단계에서 멈출 수도 있다.
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('listClaudeModels timeout')), timeoutMs)
+    })
+    const fetchModels = (async () => {
+      const query = await queryImpl({
+        prompt: 'list models',
+        options: { maxTurns: 1, tools: [], settingSources: [], skills: [] },
+      })
+      // 타임아웃이 이미 이겼으면 여기서 정리한다 — finally 는 q 가 null 이라 못 잡는다.
+      if (abandoned) { interrupt(query); return [] }
+      q = query
+      if (typeof q?.supportedModels !== 'function') return []
+      return q.supportedModels()
+    })()
+    fetchModels.catch(() => {}) // 타임아웃이 이기면 이쪽 reject 가 unhandled 가 된다
+    const models = await Promise.race([fetchModels, timeout])
+    return Array.isArray(models) ? models : []
+  } catch {
+    return []
+  } finally {
+    abandoned = true
+    if (timer) clearTimeout(timer)
+    interrupt(q)
+  }
+}
+
 function withReasoningEffort(opts = {}, extra = {}) {
-  return { ...extra, reasoningEffort: opts.reasoningEffort }
+  // resolvedModel: model 이 SDK 별칭일 때 thinking 세대를 판별하려면 정규 id 가 필요하다.
+  return { ...extra, reasoningEffort: opts.reasoningEffort, resolvedModel: opts.resolvedModel }
 }
 
 export async function generateScript(input, opts = {}, { onDelta, signal, queryImpl = defaultQuery } = {}) {
@@ -68,7 +114,7 @@ export async function generateSynopsis(input, opts = {}, { onDelta, signal, quer
   const { abortController, cleanup } = bridgeAbortSignal(signal)
   try {
     if (input?.type === 'pasted') {
-      // 대본에서 시놉시스(로그라인/훅/구조/몰입감)+등장인물을 함께 역추출(비스트리밍 단일 result).
+      // 대본에서 시놉시스(로그라인/훅/구조)+등장인물을 함께 역추출(비스트리밍 단일 result).
       const prompt = buildSynopsisFromScriptPrompt(input.pastedScript, opts)
       const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts))
       for await (const m of queryImpl({ prompt, options })) {
@@ -219,9 +265,9 @@ export async function splitScenes(scriptMd, opts = {}, { signal, queryImpl } = {
 // M3: 대본 자체검토 — REVIEW_SCHEMA structured output. verdict는 pass/revise 외면 'pass'로 정규화.
 export async function reviewScript(scriptMd, opts = {}, { signal, queryImpl } = {}) {
   const prompt = buildReviewPrompt(scriptMd, opts)
-  const out = await structuredClaudeCall(prompt, REVIEW_SCHEMA, opts, { signal, queryImpl })
+  const out = await structuredClaudeCall(prompt, SCORED_REVIEW_SCHEMA, opts, { signal, queryImpl })
   const verdict = out.verdict === 'revise' ? 'revise' : 'pass'
-  return { verdict, critique: out.critique || '', ...(Number.isFinite(out.score) ? { score: out.score } : {}) }
+  return { verdict, critique: out.critique || '', score: clampReviewScore(out.score) }
 }
 
 // M3: critique 반영 재작성 — NON-streaming(완성본만). generateScript 스트리밍 경로와 분리.
@@ -232,6 +278,33 @@ export async function reviseScript(scriptMd, critique, opts = {}, { signal, quer
     const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts))
     for await (const m of queryImpl({ prompt, options })) {
       if (m.type === 'result') return { scriptMd: extractClaudeSdkResult(m) }
+    }
+    if (signal?.aborted) throw new Error('Aborted')
+    throw new Error('no result message returned')
+  } catch (err) {
+    if (signal?.aborted) throw new Error('Aborted')
+    throw new Error(`Claude SDK failed: ${err.message}`)
+  } finally { cleanup() }
+}
+
+// 시놉시스 검수(spec 2026-07-10) — reviewScript 미러. REVIEW_SCHEMA 구조화 호출.
+export async function reviewSynopsis(synopsisMd, characters = [], opts = {}, { signal, queryImpl } = {}) {
+  const prompt = buildSynopsisReviewPrompt(synopsisMd, characters, opts)
+  const out = await structuredClaudeCall(prompt, SCORED_REVIEW_SCHEMA, opts, { signal, queryImpl })
+  const verdict = out.verdict === 'revise' ? 'revise' : 'pass'
+  return { verdict, critique: out.critique || '', score: clampReviewScore(out.score) }
+}
+
+// 시놉시스는 구조화 스키마가 없다 — CHARACTERS_JSON 마커 텍스트를 splitSynopsisOutput으로 분해한다.
+// reviseScript와 같은 NON-streaming 경로.
+export async function reviseSynopsis(synopsisMd, characters = [], critique, opts = {}, { signal, queryImpl = defaultQuery } = {}) {
+  const prompt = buildSynopsisRevisePrompt(synopsisMd, characters, critique, opts)
+  const { abortController, cleanup } = bridgeAbortSignal(signal)
+  try {
+    if (signal?.aborted) throw new Error('Aborted')
+    const options = buildClaudeSdkOptions(opts.model || DEFAULT_MODEL, abortController, withReasoningEffort(opts))
+    for await (const m of queryImpl({ prompt, options })) {
+      if (m.type === 'result') return splitSynopsisOutput(extractClaudeSdkResult(m))
     }
     if (signal?.aborted) throw new Error('Aborted')
     throw new Error('no result message returned')

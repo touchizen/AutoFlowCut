@@ -18,7 +18,7 @@
  */
 
 import { STYLE_PRESETS } from '../config/defaults'
-import { findAutoPromptStyle, findAutoStyle, isStyleReference, previewStyleMatching } from './styleService'
+import { findAutoPromptStyle, findAutoStyle, inheritStyleIdFromCards, isStyleReference, previewStyleMatching } from './styleService'
 import { filterPendingScenes } from '../utils/sceneFilters'
 
 export function createStyleResolver({ activeTab, scenes = [], references = [], selectedStyleRefId, t, isKo }) {
@@ -125,8 +125,16 @@ export function createStyleResolver({ activeTab, scenes = [], references = [], s
     return selectedStyleForContext ?? (isVideoText ? autoEffectiveStyleId : null)
   }
 
+  // 우선순위: override(명시적) → selectedStyleRefId(프로젝트 전체 스타일) → 카드들의 기억 →
+  //   findAutoStyle. 기억을 건너뛰고 findAutoStyle 로 가면, 스타일 카드를 추가하거나 순서가
+  //   바뀌는 것만으로 새 카드가 조용히 다른 스타일로 생성된다.
   const resolveEffectiveStyleIdForRef = (override) => {
-    return override ?? selectedStyleRefId ?? findAutoStyle(references)
+    if (override != null) return override
+    if (selectedStyleRefId != null) return selectedStyleRefId
+    // styleId:null 도 정당한 기억("무스타일로 생성됨")이라 ?? 로 건너뛰면 안 된다.
+    const inherited = inheritStyleIdFromCards(references)
+    if (inherited.found) return inherited.styleId
+    return findAutoStyle(references)
   }
 
   return {

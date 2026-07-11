@@ -140,7 +140,7 @@ describe('llmClaude.reviewScript (M3)', () => {
   it('structured verdict/critique를 반환', async () => {
     const queryImpl = R({ type: 'result', subtype: 'success', is_error: false, structured_output: { verdict: 'revise', critique: '도입이 약함' } })
     const out = await reviewScript('대본', {}, { queryImpl })
-    expect(out).toEqual({ verdict: 'revise', critique: '도입이 약함' })
+    expect(out).toEqual({ verdict: 'revise', critique: '도입이 약함', score: null })
   })
   it("verdict가 pass/revise 외 값이면 'pass'로 정규화", async () => {
     const queryImpl = R({ type: 'result', subtype: 'success', is_error: false, structured_output: { verdict: 'maybe', critique: '' } })
@@ -157,12 +157,6 @@ describe('llmClaude.reviewScript (M3)', () => {
     expect(promptText).toContain('궁금증')
     expect(promptText).toContain('기대감')
     expect(promptText).not.toContain('야담 전용 공식')
-  })
-  it('몰입감 score가 있으면 함께 반환하고, 없으면 score 키를 두지 않는다', async () => {
-    const withScore = R({ type: 'result', subtype: 'success', is_error: false, structured_output: { verdict: 'pass', critique: '', score: 72 } })
-    expect(await reviewScript('대본', {}, { queryImpl: withScore })).toEqual({ verdict: 'pass', critique: '', score: 72 })
-    const noScore = R({ type: 'result', subtype: 'success', is_error: false, structured_output: { verdict: 'pass', critique: '' } })
-    expect(await reviewScript('대본', {}, { queryImpl: noScore })).toEqual({ verdict: 'pass', critique: '' })
   })
 })
 

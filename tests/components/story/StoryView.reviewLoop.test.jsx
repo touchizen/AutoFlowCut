@@ -21,7 +21,7 @@ const pipeline = (over = {}) => ({
 describe('StoryView 대본 검토 토글 (M3)', () => {
   it('setup 폼에 단계별 검수 토글과 횟수 입력이 있고 기본 off', () => {
     render(<StoryView pipeline={pipeline()} />)
-    for (const label of ['시나리오', '씬', '프롬프트']) {
+    for (const label of ['대본', '씬', '프롬프트']) {
       const cb = screen.getByRole('checkbox', { name: `${label} 자동 검수` })
       expect(cb).toBeInTheDocument()
       expect(cb.checked).toBe(false)
@@ -35,8 +35,8 @@ describe('StoryView 대본 검토 토글 (M3)', () => {
     const generateSynopsis = vi.fn().mockResolvedValue({})
     render(<StoryView pipeline={pipeline({ generateSynopsis })} />)
     fireEvent.change(screen.getByPlaceholderText('제목'), { target: { value: 'T' } })
-    fireEvent.click(screen.getByRole('checkbox', { name: '시나리오 자동 검수' }))
-    fireEvent.change(screen.getByRole('spinbutton', { name: '시나리오 검수 횟수' }), { target: { value: '2' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: '대본 자동 검수' }))
+    fireEvent.change(screen.getByRole('spinbutton', { name: '대본 검수 횟수' }), { target: { value: '2' } })
     fireEvent.click(screen.getByRole('button', { name: '시작' }))
     expect(generateSynopsis).toHaveBeenCalledWith(expect.objectContaining({
       type: 'title',
@@ -65,7 +65,7 @@ describe('StoryView 대본 검토 토글 (M3)', () => {
     const p = pipeline({ generateSynopsis })
     p.state.input = { type: 'title', title: 'T', options: { reviewLoop: true } }
     render(<StoryView pipeline={p} />)
-    expect(screen.getByRole('checkbox', { name: '시나리오 자동 검수' }).checked).toBe(true)
+    expect(screen.getByRole('checkbox', { name: '대본 자동 검수' }).checked).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: '시작' }))
     expect(generateSynopsis.mock.calls[0][0].options.reviewLoop).toBe(true)
     expect(generateSynopsis.mock.calls[0][0].options.review).toBeUndefined()
@@ -107,7 +107,7 @@ describe('StoryView 대본 검토 토글 (M3)', () => {
     const p = pipeline({ start, scriptText: '편집 중인 대본' })
     p.state.steps.script.status = 'done'
     render(<StoryView pipeline={p} />)
-    fireEvent.click(screen.getByRole('button', { name: '시나리오 검수' }))
+    fireEvent.click(screen.getByRole('button', { name: '대본 검수' }))
     expect(start).toHaveBeenCalledWith('script', expect.objectContaining({
       reviewOnly: true,
       scriptOverride: '편집 중인 대본',
@@ -155,9 +155,9 @@ describe('StoryView 대본 검토 토글 (M3)', () => {
         <StoryView pipeline={pipeline()} />
       </I18nProvider>,
     )
-    expect(screen.getByRole('checkbox', { name: 'Scenario auto review' })).toBeInTheDocument()
-    expect(screen.getByRole('spinbutton', { name: 'Scenario review rounds' })).toBeInTheDocument()
-    expect(screen.getByText('Scenario review')).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'Script auto review' })).toBeInTheDocument()
+    expect(screen.getByRole('spinbutton', { name: 'Script review rounds' })).toBeInTheDocument()
+    expect(screen.getByText('Script review')).toBeInTheDocument()
   })
 
   it('프롬프트 자동 검수 설정 후 프롬프트 다시 생성하면 currentOptions를 전달', () => {
@@ -203,78 +203,5 @@ describe('StoryView 검토 진행 배지 (M3)', () => {
   it('reviewProgress 없으면 배지 없음', () => {
     render(<StoryView pipeline={running(null)} />)
     expect(screen.queryByText(/검토 중|수정 중|검토 중단/)).toBeNull()
-  })
-})
-
-describe('StoryView 검수 중 대본 유지 + 하단 로그창', () => {
-  const scriptReviewing = (over = {}) => {
-    const p = pipeline({
-      scriptText: '검토 대상 대본',
-      reviewProgress: { target: 'script', round: 1, of: 2, phase: 'revising', critique: '주인공 동기 약함' },
-      progressLog: [{
-        id: 'l1', step: 'script', operationId: 'op1',
-        message: '시나리오 검수 1/2: 수정 필요 — 주인공 동기 약함', level: 'warn', at: '2026-07-10T00:00:00.000Z',
-      }],
-      ...over,
-    })
-    p.state.steps.script.status = 'running'
-    return p
-  }
-
-  it('시나리오 검수(reviewOnly) 중에는 빈 스트림 대신 대본 편집기를 유지한다', () => {
-    const { container } = render(<StoryView pipeline={scriptReviewing()} />)
-    expect(screen.getByTestId('story-editor')).toBeInTheDocument()
-    // 검수는 델타 스트리밍이 없어 예전엔 빈 스트림이 대본을 가렸다 — 이제 스트림을 렌더하지 않는다.
-    expect(container.querySelector('.story-script-stream')).toBeNull()
-  })
-
-  it('검수 로그창에 무엇을 지적했는지(critique)를 대본 하단에 보여준다', () => {
-    render(<StoryView pipeline={scriptReviewing()} />)
-    expect(screen.getByText('검수 로그')).toBeInTheDocument()
-    expect(screen.getByText(/주인공 동기 약함/)).toBeInTheDocument()
-  })
-
-  it('로그가 아직 없어도 검수 중이면 로그창(준비 중)을 띄운다', () => {
-    render(<StoryView pipeline={scriptReviewing({ progressLog: [] })} />)
-    expect(screen.getByText('검수 로그')).toBeInTheDocument()
-    expect(screen.getByText('검수 준비 중…')).toBeInTheDocument()
-  })
-})
-
-describe('StoryView 몰입감 점수 배지 (검수 채점)', () => {
-  const withScore = (score) => {
-    const p = pipeline({ scriptText: '대본' })
-    p.state.steps.script.status = 'done'
-    p.state.scriptScore = { score, at: '2026-07-10T00:00:00.000Z' }
-    return p
-  }
-
-  it('state.scriptScore가 있으면 입력창 하단에 몰입감 점수 배지를 보여준다', () => {
-    const { container } = render(<StoryView pipeline={withScore(85)} />)
-    const badge = container.querySelector('.story-score-badge')
-    expect(badge).toBeTruthy()
-    expect(within(badge).getByText('몰입감')).toBeInTheDocument()
-    expect(within(badge).getByText('85')).toBeInTheDocument()
-    expect(badge.className).toMatch(/high/) // 80+ = high tier
-  })
-
-  it('점수 티어(high/mid/low)를 점수대에 따라 준다', () => {
-    const { container } = render(<StoryView pipeline={withScore(50)} />)
-    expect(container.querySelector('.story-score-badge').className).toMatch(/low/)
-  })
-
-  it('점수가 없으면 배지를 렌더하지 않는다', () => {
-    const p = pipeline({ scriptText: '대본' })
-    p.state.steps.script.status = 'done'
-    const { container } = render(<StoryView pipeline={p} />)
-    expect(container.querySelector('.story-score-badge')).toBeNull()
-  })
-
-  it('시나리오 검수 버튼 tooltip은 채점(몰입감 점수)도 한다고 설명한다', () => {
-    const p = pipeline({ scriptText: '대본' })
-    p.state.steps.script.status = 'done'
-    render(<StoryView pipeline={p} />)
-    const btn = screen.getByRole('button', { name: '시나리오 검수' })
-    expect(btn.title).toMatch(/몰입감 점수|채점/)
   })
 })

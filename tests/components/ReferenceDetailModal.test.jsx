@@ -64,6 +64,9 @@ const t = (k, vars) => {
     'common.close': '닫기',
     'common.save': '저장',
     'reference.regenerate': '재생성',
+    'reference.applyStyle': '적용할 스타일',
+    'reference.styleAuto': '자동',
+    'reference.styleNone': '스타일 없음',
     'reference.promptPlaceholder': '이미지 생성용 프롬프트를 입력하세요',
   }
   let s = map[k] || k
@@ -181,6 +184,25 @@ describe('ReferenceDetailModal — regenerate race guard', () => {
   })
 })
 
+describe('ReferenceDetailModal — styleId 기억 보존', () => {
+  it('모달이 열린 뒤 카드에 styleId 가 찍히면 editData 에 반영한다', () => {
+    // 모달은 저장/재생성 시 editData 로 ref 를 통째로 교체한다. 모달이 열린 채 배치가 돌아
+    // styleId 를 찍으면, 동기화되지 않은 editData 가 그 기억을 지워버린다 → 재생성이 전역
+    // 스타일로 샌다(카드별 스타일 기억이 무력화).
+    const onGenerate = vi.fn()
+    const reference = { id: 1, type: 'character', name: '히어로', prompt: 'hero prompt' }
+    const { rerender } = render(
+      <ReferenceDetailModal {...baseProps} reference={reference} onGenerate={onGenerate} />
+    )
+    // 배치가 카드에 스타일을 찍는다(부모 prop 갱신)
+    rerender(
+      <ReferenceDetailModal {...baseProps} reference={{ ...reference, styleId: 'ref:3' }} onGenerate={onGenerate} />
+    )
+    fireEvent.click(screen.getByRole('button', { name: /재생성/ }))
+    expect(onGenerate).toHaveBeenCalledWith(0, false, null, expect.objectContaining({ styleId: 'ref:3' }))
+  })
+})
+
 describe('ReferenceDetailModal — §3.8 close-on-regenerate', () => {
   it('재생성 클릭 시 onGenerate AND onClose 모두 호출됨 (onUpdate→onGenerate→onClose 순서)', () => {
     // §3.8: 모달은 재생성 dispatch 후 즉시 닫혀야 한다.
@@ -228,5 +250,85 @@ describe('ReferenceDetailModal — §3.8 close-on-regenerate', () => {
 
     expect(screen.queryByRole('button', { name: /재생성/ })).not.toBeInTheDocument()
     expect(onClose).not.toHaveBeenCalled()
+  })
+})
+
+// 카드가 어떤 스타일로 생성될지 모달에서 보이고 고를 수 있어야 한다. 지금은 project.json 을
+// 열어봐야만 알 수 있다. 스타일 카드의 "프리셋에서 채우기"와는 뜻이 완전히 다르므로 같은
+// 모달에 함께 띄우지 않는다 — 타입에 따라 하나만 보인다.
+describe('ReferenceDetailModal — 적용할 스타일', () => {
+  // 프리셋 목록에도 '수채화'가 있어 getByText 가 중복 매칭된다 — 카드 이름을 구분한다.
+  const STYLE_A = { id: 1, type: 'style', name: '내 수채화', prompt: 'watercolor' }
+  const STYLE_B = { id: 9, type: 'style', name: '유화', prompt: 'oil' }
+
+  const open = (reference, over = {}) => render(
+    <ReferenceDetailModal
+      {...baseProps}
+      reference={reference}
+      references={[STYLE_A, STYLE_B, reference]}
+      selectedStyleRefId={null}
+      {...over}
+    />
+  )
+
+  it('캐릭터 카드에는 "적용할 스타일"이 보인다', () => {
+    open({ id: 2, type: 'character', name: '준호', prompt: 'hero', styleId: 'ref:9' })
+    expect(screen.getByTestId('apply-style')).toBeTruthy()
+    expect(screen.getByTestId('apply-style').textContent).toContain('유화')
+  })
+
+  it('스타일 카드에는 "적용할 스타일"이 안 보인다 (프리셋 선택과 뜻이 다르다)', () => {
+    open({ id: 1, type: 'style', name: '내 수채화', prompt: 'watercolor' })
+    expect(screen.queryByTestId('apply-style')).toBeNull()
+    expect(screen.getByRole('button', { name: /프리셋에서 채우기/ })).toBeTruthy()
+  })
+
+  it('캐릭터 카드에는 "프리셋에서 채우기"가 안 보인다', () => {
+    open({ id: 2, type: 'character', name: '준호', prompt: 'hero', styleId: 'ref:9' })
+    expect(screen.queryByRole('button', { name: /프리셋에서 채우기/ })).toBeNull()
+  })
+
+  it('기억이 없는 새 카드는 지금 무엇이 적용될지 자동 라벨로 보여준다', () => {
+    // styleId 키 없음 + 전역 선택 없음 → 다른 카드의 기억(ref:9)을 물려받는다
+    open({ id: 3, type: 'character', name: '태수', prompt: 'p' }, {
+      references: [STYLE_A, STYLE_B, { id: 2, type: 'character', styleId: 'ref:9', generatedAt: 100 }],
+    })
+    const el = screen.getByTestId('apply-style')
+    expect(el.textContent).toContain('자동')
+    expect(el.textContent).toContain('유화')
+  })
+
+  it('선택하면 editData.styleId 에 담겨 저장/재생성으로 흘러간다', () => {
+    const onGenerate = vi.fn()
+    open({ id: 2, type: 'character', name: '준호', prompt: 'hero', styleId: 'ref:9' }, { onGenerate })
+    fireEvent.click(screen.getByTestId('apply-style'))
+    // StylePicker 의 스타일 카드는 div(sp-card) 다 — 이름으로 찾아 그 카드를 클릭한다.
+    fireEvent.click(screen.getByText('내 수채화').closest('.sp-card'))
+    fireEvent.click(screen.getByRole('button', { name: /재생성/ }))
+    expect(onGenerate).toHaveBeenCalledWith(0, false, null, expect.objectContaining({ styleId: 'ref:1' }))
+  })
+})
+
+// Flow 웹뷰가 다른 프로젝트로 드리프트했을 때, rename 이 projectId 를 안 넘기면 main 이
+// projectIdFromUrl() 로 폴백해 엉뚱한 Flow 프로젝트의 컨텍스트로 PATCH/navigate 한다.
+describe('ReferenceDetailModal — rename 은 바운드 projectId 를 넘긴다', () => {
+  it('저장 시 이름이 바뀌면 flowProjectId 를 함께 보낸다', async () => {
+    const renameFlowCharacter = vi.fn().mockResolvedValue({ success: true, nameApplied: true })
+    const prev = window.electronAPI
+    window.electronAPI = { ...(prev || {}), renameFlowCharacter, refreshFlowComposer: vi.fn() }
+
+    const reference = {
+      id: 1, type: 'character', name: '옛이름', prompt: 'p',
+      entityId: 'ent-1', flowNameSyncStatus: 'synced', registered: true,
+    }
+    render(<ReferenceDetailModal {...baseProps} reference={reference} appMode="flow" flowProjectId="proj-42" />)
+    fireEvent.change(screen.getByPlaceholderText('이름 (태그 매칭용)'), { target: { value: '새이름' } })
+    fireEvent.click(screen.getByRole('button', { name: /저장/ }))
+
+    await vi.waitFor(() => expect(renameFlowCharacter).toHaveBeenCalled())
+    expect(renameFlowCharacter).toHaveBeenCalledWith(
+      expect.objectContaining({ entityId: 'ent-1', displayName: '새이름', projectId: 'proj-42' }),
+    )
+    window.electronAPI = prev
   })
 })

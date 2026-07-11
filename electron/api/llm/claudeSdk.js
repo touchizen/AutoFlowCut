@@ -2,11 +2,36 @@
  * Claude Agent SDK 순수 헬퍼 — query 결과/스트림/취소 처리. (AutoMovie vision.mjs 이식 + 확장)
  * SDK 자체는 llmClaude가 동적 import — 여기는 SDK에 의존하지 않는 순수 함수만 둔다(테스트 용이).
  */
-const CLAUDE_SDK_EFFORTS = new Set(['low', 'medium', 'high', 'max'])
+const CLAUDE_SDK_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max'])
+
+// thinking 파라미터의 유효한 모양은 모델 세대마다 다르고, "생략"의 의미도 다르다:
+//   Opus 4.8  — disabled 허용, 생략 시 thinking 없음
+//   Sonnet 5  — disabled 허용, 생략 시 adaptive로 돈다(그래서 끄려면 명시해야 한다)
+//   Fable 5   — thinking을 끌 수 없다. disabled는 거부되므로 생략한다(= 항상 켜짐)
+//   Haiku 4.5 — 4.6 이전 세대. adaptive/effort 미지원이고 disabled는 4.6+ 형태다. 전부 생략한다
+// 따라서 일괄 생략도, 일괄 disabled도 안 된다 — 못 끄는 모델만 골라 생략한다.
+//
+// 동적 카탈로그에서 model은 SDK 호출용 별칭('haiku', 'opus[1m]')으로 온다. 별칭엔 세대 정보가
+// 없으므로 판별은 resolvedModel(정규 id)로 한다 — 없으면 model 로 폴백(정적 카탈로그 경로).
+const THINKING_ALWAYS_ON = /^claude-(fable|mythos)-/
+const THINKING_PRE_ADAPTIVE = /^claude-haiku-4-5/
+
+function thinkingConfigFor(model, sdkEffort, resolvedModel) {
+  const id = String(resolvedModel || model || '')
+  // Haiku(pre-adaptive): adaptive/effort 는 미지원이지만 thinking:disabled 는 Agent SDK 에서 먹는다
+  // (직접 확인: 생략 → thinking 블록 + 8s / disabled → 텍스트 1.8s). 생략하면 SDK 가 thinking 을
+  // 켜서 시놉시스가 8~18초+ 무음이 된다 — 반드시 명시적으로 끈다. effort 는 싣지 않는다.
+  if (THINKING_PRE_ADAPTIVE.test(id)) return { thinking: { type: 'disabled' } }
+  if (sdkEffort) return { thinking: { type: 'adaptive' }, effort: sdkEffort }
+  // Fable/Mythos: effort 없으면 thinking 을 끌 수 없어 생략(disabled 는 400, = 항상 켜짐).
+  if (THINKING_ALWAYS_ON.test(id)) return {}
+  return { thinking: { type: 'disabled' } }
+}
 
 export function buildClaudeSdkOptions(model, abortController, extra = {}) {
   const {
     reasoningEffort,
+    resolvedModel,
     thinking,
     effort,
     maxThinkingTokens,
@@ -18,8 +43,7 @@ export function buildClaudeSdkOptions(model, abortController, extra = {}) {
     ...(model ? { model } : {}),
     ...(abortController ? { abortController } : {}),
     maxTurns: 2,
-    thinking: sdkEffort ? { type: 'adaptive' } : { type: 'disabled' },
-    ...(sdkEffort ? { effort: sdkEffort } : {}),
+    ...thinkingConfigFor(model, sdkEffort, resolvedModel),
     tools: [],
     settingSources: [],
     skills: [], // 빈 배열 = 활성 skill 없음(오염 차단). string[]|'all' 중 [] 유효.

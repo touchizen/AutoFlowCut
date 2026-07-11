@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt, buildTitlePrompt, buildContinuePrompt, buildReviewPrompt, buildRevisePrompt, buildScenesRevisePrompt, buildSynopsisPrompt, buildCharacterExtractPrompt } from '../../../../electron/api/llm/prompts.js'
+import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt, buildTitlePrompt, buildContinuePrompt, buildReviewPrompt, buildRevisePrompt, buildScenesRevisePrompt, buildSynopsisPrompt, buildSynopsisFromScriptPrompt, buildCharacterExtractPrompt } from '../../../../electron/api/llm/prompts.js'
 
 describe('buildScriptPrompt 길이 단위', () => {
   it('min 단위는 "약 N분"', () => {
@@ -154,12 +154,6 @@ describe('buildReviewPrompt (M3 검토)', () => {
   it('사소한 취향으로 revise 남발 금지 지시', () => {
     expect(buildReviewPrompt('S', {})).toMatch(/취향|사소|남발|경미/)
   })
-  it('몰입감 점수(0~100)를 score 필드로 매기라고 지시한다', () => {
-    const p = buildReviewPrompt('S', { language: 'ko' })
-    expect(p).toMatch(/몰입감 점수/)
-    expect(p).toMatch(/score/)
-    expect(p).toMatch(/0~100|0-100/)
-  })
 })
 
 describe('buildRevisePrompt (M3 수정)', () => {
@@ -222,14 +216,24 @@ describe('buildPromptsPrompt appearance 컨텍스트(V2)', () => {
 })
 
 describe('buildSynopsisPrompt (시놉시스 게이트 §v2.4)', () => {
-  it('제목·로그라인·훅·기승전결·몰입감 점수 지시를 포함', () => {
+  it('제목·로그라인·훅·기승전결 지시를 포함', () => {
     const p = buildSynopsisPrompt({ title: '사라진 왕의 반지' }, { language: 'ko' })
     expect(p).toContain('제목: 사라진 왕의 반지')
     expect(p).toContain('로그라인')
     expect(p).toContain('훅')
     expect(p).toContain('기승전결')
-    expect(p).toContain('몰입감 점수')
     expect(p).toContain('한국어')
+  })
+
+  // 몰입감은 검수가 채점해 배지로 보여준다 — 시놉시스 본문에 점수를 섞으면 편집 대상과 평가가 뒤엉킨다.
+  it('본문에 몰입감 점수를 쓰라고 지시하지 않는다', () => {
+    expect(buildSynopsisPrompt({ title: 'T' }, { language: 'ko' })).not.toContain('몰입감')
+    expect(buildSynopsisPrompt({ title: 'T' }, { language: 'en' })).not.toContain('Immersion')
+  })
+
+  it('붙여넣기 역추출 프롬프트도 본문 점수를 요구하지 않는다', () => {
+    expect(buildSynopsisFromScriptPrompt('대본', { language: 'ko' })).not.toContain('몰입감')
+    expect(buildSynopsisFromScriptPrompt('script', { language: 'en' })).not.toContain('Immersion')
   })
   it('영어 지정 시 영어 작성 지시', () => {
     expect(buildSynopsisPrompt({ title: 'T' }, { language: 'en' })).toContain('영어')
@@ -240,7 +244,6 @@ describe('buildSynopsisPrompt (시놉시스 게이트 §v2.4)', () => {
     const en = buildSynopsisPrompt({ title: 'T' }, { language: 'en' })
     expect(en).not.toContain('기승전결')
     expect(en).toContain('Story arc')
-    expect(en).toContain('Immersion score')
   })
   it('대사·씬 번호 없이 줄글 개요만 지시', () => {
     const p = buildSynopsisPrompt({ title: 'T' }, { language: 'ko' })

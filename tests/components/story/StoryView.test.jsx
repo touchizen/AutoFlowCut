@@ -25,7 +25,7 @@ describe('StoryView', () => {
     const { container } = render(<StoryView pipeline={pipeline()} />)
     const labels = [...container.querySelectorAll('.story-step-name')].map((el) => el.textContent)
     // 리서치 spec §2.1: 리서치(①) 게이트 pill 삽입(설정 뒤·시놉시스 앞).
-    expect(labels).toEqual(['설정', '리서치', '시놉시스', '시나리오', '씬 분리', '오디오', '프롬프트'])
+    expect(labels).toEqual(['설정', '리서치', '시놉시스', '대본', '씬 분리', '오디오', '프롬프트'])
   })
   it('제목 입력 후 시작하면 generateSynopsis가 stepMachine이 기대하는 shape로 호출된다', () => {
     const p = pipeline()
@@ -375,7 +375,7 @@ describe('StoryView', () => {
     expect(screen.getByText('화자')).toBeTruthy()
 
     // done 상태인 '대본' 스텝 클릭 → 대본 작업 화면(editor)으로 복귀
-    fireEvent.click(screen.getByRole('button', { name: '시나리오' }))
+    fireEvent.click(screen.getByRole('button', { name: '대본' }))
     expect(screen.getByTestId('story-editor')).toBeTruthy()
     expect(screen.queryByText('화자')).toBeNull()
   })
@@ -458,7 +458,7 @@ describe('StoryView', () => {
     // scenes pending, currentStep=scenes
     render(<StoryView pipeline={p} />)
     // 대본(done) 탭 → editor
-    fireEvent.click(screen.getByRole('button', { name: '시나리오' }))
+    fireEvent.click(screen.getByRole('button', { name: '대본' }))
     expect(screen.getByTestId('story-editor')).toBeTruthy()
     // 씬 분리(currentStep, pending) 재클릭 → scenes 패널
     fireEvent.click(screen.getByRole('button', { name: '씬 분리' }))
@@ -487,7 +487,7 @@ describe('StoryView', () => {
     // fresh 초기: 0번 설정 폼
     expect(screen.getByTestId('story-setup')).toBeTruthy()
     // 대본 탭은 이제 항상 editor(설정은 0번 탭이 담당)
-    fireEvent.click(screen.getByRole('button', { name: '시나리오' }))
+    fireEvent.click(screen.getByRole('button', { name: '대본' }))
     expect(screen.getByTestId('story-editor')).toBeTruthy()
     // 설정 탭으로 다시 설정 폼
     fireEvent.click(screen.getByRole('button', { name: '설정' }))
@@ -503,7 +503,7 @@ describe('StoryView', () => {
     // 씬 분리 탭으로 갔다가
     fireEvent.click(screen.getByRole('button', { name: '씬 분리' }))
     // 대본(done) 탭 클릭 → editor 복귀
-    fireEvent.click(screen.getByRole('button', { name: '시나리오' }))
+    fireEvent.click(screen.getByRole('button', { name: '대본' }))
     expect(screen.getByTestId('story-editor')).toBeTruthy()
   })
 

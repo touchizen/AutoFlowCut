@@ -14,7 +14,7 @@ import ReferenceCard from './ReferenceCard'
 import ReferenceDetailModal from './ReferenceDetailModal'
 import StylePicker from './StylePicker'
 import { toast } from './Toast'
-import { selectUnsyncedRefs, syncRefToFlow } from '../utils/flowCharacterSync'
+import { selectUnsyncedRefs, syncRefToFlow, needsComposerRefresh } from '../utils/flowCharacterSync'
 import './ReferencePanel.css'
 
 export default function ReferencePanel({
@@ -33,6 +33,9 @@ export default function ReferencePanel({
   onStyleRefChange,
   projectName,
   thumbnails = {},
+  // 모달의 rename 이 bound projectId 를 main 에 넘겨야 한다 — 안 넘기면 projectIdFromUrl() 폴백으로
+  //   드리프트한 Flow 프로젝트를 건드린다.
+  flowProjectId = null,
   thumbnailGenerating = false,
   thumbnailStopping = false,
   thumbnailProgress = { current: 0, total: 0 },
@@ -96,6 +99,8 @@ export default function ReferencePanel({
     if (targets.length === 0) return
     setSyncingAll(true)
     let ok = 0, fail = 0
+    // main 이 이름을 SPA 스토어에 반영했으면(nameApplied) 나갔다 재진입할 필요가 없다.
+    let needsRefresh = false
     // #R34-fix: 직렬 동기화 도중 프로젝트/모드가 바뀌면 이후 결과를 현재(새) 프로젝트 refs 에 반영하지 않는다.
     const startScope = getScopeToken()
     try {
@@ -107,6 +112,7 @@ export default function ReferencePanel({
         if (getScopeToken() !== startScope) { console.warn('[ReferencePanel] scope changed mid-sync — skipping stale apply'); break }
         if (res.ok) {
           ok++
+          if (needsComposerRefresh(ref, res.result)) needsRefresh = true
           onUpdate(prev => prev.map(r => r.id === ref.id ? { ...r, ...res.patch, syncing: false } : r))
         } else {
           fail++
@@ -114,8 +120,8 @@ export default function ReferencePanel({
           console.warn('[ReferencePanel] sync-all failed for', ref?.name, res.error)
         }
       }
-      // 모두 끝나면 Flow SPA 새로고침(나갔다 재진입) — 새 entity 이름 반영.
-      try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
+      // 이름을 SPA 에 못 넣은 카드가 하나라도 있을 때만 새로고침(나갔다 재진입)한다.
+      if (needsRefresh) { try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {} }
       if (fail === 0) toast.success(isKo ? `Flow 동기화 완료 (${ok})` : `Synced ${ok} to Flow`)
       else toast.error(isKo ? `동기화 ${ok} 성공 · ${fail} 실패` : `Synced ${ok}, ${fail} failed`)
     } finally {
@@ -351,6 +357,8 @@ export default function ReferencePanel({
           appMode={appMode}
           getScopeToken={getScopeToken}
           thumbnails={thumbnails}
+          selectedStyleRefId={selectedStyleRefId}
+          flowProjectId={flowProjectId}
         />
       )}
     </div>

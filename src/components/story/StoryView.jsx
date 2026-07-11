@@ -10,9 +10,11 @@
  */
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useI18n, I18nProvider } from '../../hooks/useI18n'
+import { StopwatchIcon, ElapsedTime } from '../StopwatchIcon'
 import PromptInput from '../PromptInput'
 import { toast } from '../Toast'
 import { useAudioPlayback } from '../../hooks/useAudioPlayback'
+import { useStickToBottom } from '../../hooks/useStickToBottom'
 import { useStoryVoiceSelection } from '../../hooks/useStoryVoiceSelection'
 import StoryStepper, { STEP_META } from './StoryStepper'
 import VoicePicker from './VoicePicker'
@@ -32,31 +34,10 @@ import { clampInt } from '../../utils/clampInt'
 import { normalizeStoryCharacter, resolveCharacterGender } from '../../services/storyCharacter'
 import CharacterCards from './CharacterCards'
 import ResearchPanel from './ResearchPanel'
-import { StoryRunning, GenClock } from './StoryProgress'
-import {
-  STORY_LENGTH_MODE_UNIT,
-  storyLengthUnitsForLanguage,
-  coerceStoryLengthUnit,
-  normalizeStoryLengthValue,
-  convertStoryLengthValue,
-  hydrateStoryLengthSettings,
-  storyLengthOptionValues,
-  storyLengthOptionLabel,
-  storyLengthPlaceholder,
-  reasoningEffortFor,
-  REVIEW_TARGET_LABEL,
-  REVIEW_TARGET_ORDER,
-  defaultReviewRounds,
-  clampReviewRounds,
-  formatProgressLogTime,
-  computeCurrentStep,
-  stableJson,
-  interpolateFallback,
-  shortVoiceId,
-  genresForLanguage,
-  genreLabel,
-} from './storyViewUtils'
 import './StoryView.css'
+
+// M2a-3: audio가 파이프라인 1급 스텝 — script→scenes→audio→prompts 순서로 진행한다.
+const PROGRESSABLE_STEPS = ['script', 'scenes', 'audio', 'prompts']
 
 // 세그먼트 감정 라벨 — SCENES_SCHEMA emotion(normal/happy/sad/angry). TTS(Typecast 등)에도 쓰인다.
 const EMOTION_LABEL = { normal: '평범', happy: '기쁨', sad: '슬픔', angry: '화남' }
@@ -67,6 +48,237 @@ const SEG_STATUS_LABEL = { pending: '대기', running: '진행 중', done: '완�
 // M2b-5: SFX 소스 선택(세그먼트별). library는 아직 stub(생성 시 에러) — 인터페이스만 노출.
 const SFX_SOURCES = ['elevenlabs', 'library']
 const SFX_SOURCE_LABEL = { elevenlabs: 'ElevenLabs', library: 'Library' }
+const DEFAULT_STORY_LENGTH_MINUTES = 10
+const MAX_STORY_LENGTH_MINUTES = 60
+const KOREAN_CHARS_PER_MINUTE = 330
+const ENGLISH_WORDS_PER_MINUTE = 150
+const STORY_LENGTH_MODE_UNIT = 'unit'
+const STORY_LENGTH_UNITS = {
+  ko: [
+    { value: 'min', label: '분' },
+    { value: 'chars', label: '자수' },
+  ],
+  en: [
+    { value: 'min', label: 'min' },
+    { value: 'words', label: 'words' },
+    { value: 'chars', label: 'chars' },
+  ],
+}
+
+function storyLengthUnitsForLanguage(language) {
+  return language === 'en' ? STORY_LENGTH_UNITS.en : STORY_LENGTH_UNITS.ko
+}
+
+function storyLengthFactor(unit) {
+  if (unit === 'chars') return KOREAN_CHARS_PER_MINUTE
+  if (unit === 'words') return ENGLISH_WORDS_PER_MINUTE
+  return 1
+}
+
+function coerceStoryLengthUnit(unit, language) {
+  const allowed = storyLengthUnitsForLanguage(language).map((option) => option.value)
+  if (allowed.includes(unit)) return unit
+  if (unit === 'words') return 'chars'
+  return 'min'
+}
+
+function normalizeStoryLengthValue(value, unit = 'min') {
+  const raw = String(value ?? '').trim()
+  const factor = storyLengthFactor(unit)
+  const fallback = DEFAULT_STORY_LENGTH_MINUTES * factor
+  const max = MAX_STORY_LENGTH_MINUTES * factor
+  if (!raw) return String(fallback)
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) return String(fallback)
+  if (unit === 'min' && n < 1) return formatStoryLengthValue(Math.min(MAX_STORY_LENGTH_MINUTES, n))
+  const rounded = Math.round(n)
+  return String(Math.max(1, Math.min(max, rounded)))
+}
+
+function formatStoryLengthValue(value) {
+  if (Number.isInteger(value)) return String(value)
+  return value.toFixed(4).replace(/\.?0+$/, '')
+}
+
+function convertStoryLengthValue(value, fromUnit, toUnit) {
+  const normalized = Number(normalizeStoryLengthValue(value, fromUnit))
+  const minutes = Math.min(MAX_STORY_LENGTH_MINUTES, normalized / storyLengthFactor(fromUnit))
+  return normalizeStoryLengthValue(minutes * storyLengthFactor(toUnit), toUnit)
+}
+
+function hydrateStoryLengthSettings(options = {}, language = 'ko') {
+  const sourceUnit = ['min', 'chars', 'words'].includes(options?.lengthUnit) ? options.lengthUnit : 'min'
+  const displayUnit = coerceStoryLengthUnit(sourceUnit, language)
+  const isUnitMode = options?.lengthMode === STORY_LENGTH_MODE_UNIT
+  const raw = String(options?.lengthValue ?? '').trim()
+  const n = Number(raw)
+
+  if (!isUnitMode && (sourceUnit === 'chars' || sourceUnit === 'words')) {
+    if (Number.isFinite(n) && n >= 1 && n <= MAX_STORY_LENGTH_MINUTES) {
+      return {
+        lengthValue: convertStoryLengthValue(raw, 'min', displayUnit),
+        lengthUnit: displayUnit,
+      }
+    }
+  }
+
+  return {
+    lengthValue: sourceUnit === displayUnit
+      ? normalizeStoryLengthValue(raw, displayUnit)
+      : convertStoryLengthValue(raw, sourceUnit, displayUnit),
+    lengthUnit: displayUnit,
+  }
+}
+
+function storyLengthOptionValues(unit) {
+  const factor = storyLengthFactor(unit)
+  return Array.from({ length: MAX_STORY_LENGTH_MINUTES }, (_, i) => String((i + 1) * factor))
+}
+
+function storyLengthOptionLabel(value, unit, language) {
+  if (unit === 'min') return language === 'en' ? `${value} min` : `${value}분`
+  if (unit === 'words') return `${value} words`
+  return language === 'en' ? `${value} chars` : `${value}자`
+}
+
+function storyLengthPlaceholder(unit, language) {
+  if (unit === 'min') return language === 'en' ? 'min' : '분'
+  if (unit === 'words') return 'words'
+  return language === 'en' ? 'chars' : '자수'
+}
+
+function reasoningEffortFor(option, requestedReasoning = null) {
+  const allowed = option?.reasoningEfforts || []
+  if (!allowed.length) return ''
+  return allowed.includes(requestedReasoning)
+    ? requestedReasoning
+    : (option.defaultReasoningEffort || allowed[0] || '')
+}
+
+// synopsis는 라벨/기본값만 갖고 ORDER엔 없다 — 수동 전용이라 설정 탭에 노출하지 않는다(spec 2026-07-10).
+const REVIEW_TARGET_LABEL = { synopsis: '시놉시스', script: '대본', scenes: '씬', prompts: '프롬프트' }
+const REVIEW_TARGET_ORDER = ['script', 'scenes', 'prompts']
+
+function defaultReviewRounds(target, model) {
+  if (target === 'script') return String(model || '').startsWith('claude') ? 3 : 1
+  return 1
+}
+
+function clampReviewRounds(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return 1
+  return Math.max(1, Math.min(5, Math.floor(n)))
+}
+
+// 검수 채점 배지 — 텍스트창 하단. 라운드가 여럿이고 점수가 달라졌으면 첫→마지막 변화를 보인다.
+function ReviewScore({ scores = [] }) {
+  if (!scores.length) return null
+  const first = scores[0]
+  const last = scores[scores.length - 1]
+  const moved = scores.length > 1 && first !== last
+  return (
+    <div className="story-review-score" data-testid="review-score" aria-live="polite">
+      <span className="story-review-score-label">몰입감</span>
+      {moved ? (
+        <>
+          <span className="story-review-score-from">{first}</span>
+          <span className="story-review-score-arrow" aria-hidden="true">→</span>
+          <span className={`story-review-score-to ${last > first ? 'up' : 'down'}`}>{last}</span>
+        </>
+      ) : (
+        <span className="story-review-score-to">{last}</span>
+      )}
+    </div>
+  )
+}
+
+function formatProgressLogTime(value) {
+  if (!value) return ''
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+/** 스텝 진행 중 표시 — (선택) 옵션·기준 요약 + 초시계 + 라벨 + 경과 시간(updatedAt 기준, 1초 갱신). */
+function StoryRunning({ label, startedAt, detail, log = [] }) {
+  const logRef = useRef(null)
+  useEffect(() => {
+    const el = logRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [log.length])
+  return (
+    <div className="story-running" aria-live="polite">
+      {detail && <div className="story-running-detail">{detail}</div>}
+      <div className="story-running-main">
+        <StopwatchIcon size={18} />
+        <span className="story-running-label">{label}</span>
+        <span className="story-running-elapsed"><ElapsedTime startedAt={startedAt || null} /></span>
+      </div>
+      {log.length > 0 && (
+        <div className="story-progress-log" ref={logRef} role="log" aria-live="polite">
+          {log.map((entry, i) => (
+            <div key={entry.id || `${entry.phase || 'log'}-${i}`} className={`story-progress-log-row ${entry.level || 'info'}`}>
+              <span className="story-progress-log-time">{formatProgressLogTime(entry.at)}</span>
+              <span className="story-progress-log-message">{entry.message}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** 생성 중 인라인 시계 — 스트리밍(시놉시스/대본)처럼 텍스트만 뜨는 뷰 하단 우측에 붙여
+ *  "돌고 있음 + 경과 시간"을 보인다(초시계 애니메이션 + 1초 갱신). reasoning=max 등 첫 출력이
+ *  늦을 때 화면이 텅 비어 멈춘 것처럼 보이던 문제를 해소. */
+function GenClock({ startedAt, label }) {
+  return (
+    <div className="story-gen-clock" aria-live="polite">
+      <StopwatchIcon size={14} />
+      {label && <span className="story-gen-clock-label">{label}</span>}
+      <span className="story-running-elapsed"><ElapsedTime startedAt={startedAt || null} /></span>
+    </div>
+  )
+}
+
+function computeCurrentStep(steps) {
+  // 진행 중인 스텝을 우선(자동 진행이 자동=false 스텝을 건너뛰어 뒤 스텝이 먼저 running일 수 있다 —
+  // 그 경우에도 isRunning/디스플레이/중단 버튼이 실제 running 스텝을 가리키게).
+  for (const key of PROGRESSABLE_STEPS) {
+    if ((steps?.[key]?.status) === 'running') return key
+  }
+  for (const key of PROGRESSABLE_STEPS) {
+    if ((steps?.[key]?.status || 'pending') !== 'done') return key
+  }
+  return 'prompts'
+}
+
+function stableSnapshot(value) {
+  if (Array.isArray(value)) return value.map(stableSnapshot)
+  if (!value || typeof value !== 'object') return value
+  return Object.keys(value).sort().reduce((acc, key) => {
+    const next = stableSnapshot(value[key])
+    if (next !== undefined) acc[key] = next
+    return acc
+  }, {})
+}
+
+function stableJson(value) {
+  return JSON.stringify(stableSnapshot(value))
+}
+
+function interpolateFallback(value, params = {}) {
+  return String(value).replace(/\{(\w+)\}/g, (match, key) => (
+    params[key] !== undefined ? params[key] : match
+  ))
+}
+
+// 저장된 성우 id가 길면(ElevenLabs shared voice 해시 등) "미로드" 라벨에 그대로 붙이기엔
+// 너무 길어서 표시용으로만 줄인다.
+function shortVoiceId(id) {
+  if (!id) return id
+  return id.length > 12 ? `${id.slice(0, 10)}…` : id
+}
 
 // StoryView는 I18nProvider 없이도(단위 테스트) 렌더 가능해야 하는 프레젠테이션 컴포넌트다.
 // useI18n()은 provider가 없으면 throw하므로 감싸서 안전한 t()로 노출하고, 키가 없으면
@@ -111,14 +323,33 @@ function useSafeIsKo() {
   }
 }
 
+// 이야기 유형(genre) — 프로젝트 출력 언어별 노출 옵션. yadam은 한국 야담(ko 전용), dark-history
+// 가이드는 영어권(en 전용), bespoke는 언어별 공용(bespoke/<lang>). 값은 백엔드 프롬프트 키
+// (metaPrompts.W3_FILES)와 반드시 일치해야 하므로 고정 — 라벨만 i18n한다.
+const GENRE_BY_LANG = Object.freeze({
+  ko: ['yadam', 'bespoke'],
+  en: ['dark-history', 'bespoke'],
+})
+function genresForLanguage(language) {
+  return GENRE_BY_LANG[language] || GENRE_BY_LANG.en
+}
+// genre 값(하이픈 포함) → i18n 키 세그먼트 + 한국어 폴백(useSafeT 폴백 정책).
+const GENRE_I18N_KEY = Object.freeze({ yadam: 'yadam', 'dark-history': 'darkHistory', bespoke: 'bespoke' })
+const GENRE_FALLBACK = Object.freeze({ yadam: '야담', 'dark-history': '다크 히스토리', bespoke: '맞춤형' })
+function genreLabel(g, t) {
+  return t(`story.form.genre.${GENRE_I18N_KEY[g] || g}`, GENRE_FALLBACK[g] || g)
+}
+
 export default function StoryView({ pipeline, voices = [], onClose = null, onTagGender = null, onVoiceSearch = null }) {
   const t = useSafeT()
   const hasI18n = useHasI18n()
   const isKo = useSafeIsKo()
   const {
-    state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {}, reviewProgress = null, progressLog = [],
+    state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {}, reviewProgress = null, reviewScores = null, progressLog = [],
     // 슬라이스5(§v2.5): synopsis 게이트 상태 — useStoryPipeline(S4)이 공급.
     synopsisStreamingText = '', synopsisGenerating = false, synopsisError = null,
+    // 시놉시스 검수(spec 2026-07-10) — generating과 분리(스트림 뷰 전환 방지).
+    synopsisReviewing = false,
   } = pipeline
   const steps = state?.steps || {}
   const currentStep = computeCurrentStep(steps)
@@ -150,16 +381,30 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   // 인라인 시계(GenClock)의 경과시간에 쓴다. 생성 끝나면 null.
   const [synopsisStartedAt, setSynopsisStartedAt] = useState(null)
   useEffect(() => { setSynopsisStartedAt(synopsisGenerating ? Date.now() : null) }, [synopsisGenerating])
+  // 검수 로그창(StoryRunning)의 경과시간.
+  const [synopsisReviewStartedAt, setSynopsisReviewStartedAt] = useState(null)
+  useEffect(() => { setSynopsisReviewStartedAt(synopsisReviewing ? Date.now() : null) }, [synopsisReviewing])
+
 
   // 중단(⏹) 즉각 피드백 — SDK 취소는 몇 초 걸릴 수 있어(특히 reasoning=max) 버튼을 '중단 중…'으로
   // 바꿔 응답성을 준다. 생성/스텝이 실제로 멈추면(둘 다 not running) 해제.
   const [aborting, setAborting] = useState(false)
   const handleAbort = () => { setAborting(true); abort() }
-  useEffect(() => { if (!synopsisGenerating && !isRunning) setAborting(false) }, [synopsisGenerating, isRunning])
+  // 검수 중에는 synopsisGenerating/isRunning이 둘 다 false라 deps가 안 바뀐다 — synopsisReviewing을
+  // 빼면 setAborting(true) 이후 영영 리셋되지 않아 [⏹ 중단]이 '중단 중…'에 박제된다(spec 2026-07-10).
+  useEffect(() => {
+    if (!synopsisGenerating && !synopsisReviewing && !isRunning) setAborting(false)
+  }, [synopsisGenerating, synopsisReviewing, isRunning])
 
   // §4 이어쓰기 — 시작 시점의 대본 스냅샷. 생성 중 preview에 `baseScript + streamingText`로
   // 접두 표시하는 용도(완료 커밋은 main payload.scriptText — delta 재조립 금지, §0.3).
   const [baseScript, setBaseScript] = useState('')
+
+  // SSE 스트리밍 뷰는 새 델타를 따라 내려가야 한다 — 안 그러면 텍스트가 접힌 아래로 쌓이고
+  // 스크롤바만 줄어든다. 세 컨테이너가 서로 다른 분기에 있어 각각 자기 ref를 갖는다.
+  const synopsisStream = useStickToBottom(synopsisStreamingText)
+  const scriptEditorStream = useStickToBottom(baseScript + streamingText)
+  const scriptPreviewStream = useStickToBottom(streamingText)
 
   // 재오픈 phase 승격 — open() 응답이 마운트 뒤 도착해 pipeline.scriptText가 늦게 채워지면
   // 초기 phase가 setup으로 굳어 있다. 사용자가 [⚙ 설정으로]를 눌러 명시적으로 setup에 온
@@ -319,6 +564,12 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const [sceneMaxSec, setSceneMaxSec] = useState(hydrateOpts.sceneMaxSec != null ? String(hydrateOpts.sceneMaxSec) : '10')
   const initialReview = hydrateOpts.review || null
   const makeReviewSettings = (opts = {}, model = selectedLlm.model) => ({
+    // 수동 전용 — enabled는 안 읽는다(handleManualReview가 항상 true로 넘긴다). rounds는
+    // 세션 로컬: confirmSynopsis가 options를 저장하지 않아 재오픈 복원은 보장되지 않는다.
+    synopsis: {
+      enabled: false,
+      rounds: clampReviewRounds(opts.review?.synopsis?.rounds ?? defaultReviewRounds('synopsis', model)),
+    },
     script: {
       enabled: !!(opts.review?.script?.enabled ?? (!opts.review && opts.reviewLoop)),
       rounds: clampReviewRounds(opts.review?.script?.rounds ?? defaultReviewRounds('script', model)),
@@ -409,7 +660,24 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     review: { [target]: { enabled: true, rounds: reviewSettings[target].rounds } },
   })
 
+  // 시놉시스는 side action이라 start(step)이 아니라 pipeline.reviewSynopsis를 탄다(spec 2026-07-10).
+  // busy({error}) / 중단({aborted}) / 조기반환(undefined) 어느 것도 draft를 덮어쓰면 안 된다 —
+  // {aborted:true}에는 error 키가 없어서 r.error만 보면 통과해버린다.
+  const handleSynopsisReview = async () => {
+    const r = await pipeline.reviewSynopsis?.({
+      synopsisMd: synopsisDraft,
+      characters: characterDrafts.map(normalizeStoryCharacter),
+      options: currentOptions(),
+      review: { synopsis: { enabled: true, rounds: reviewSettings.synopsis.rounds } },
+    })
+    if (!r || r.error || r.aborted) return
+    if (typeof r.synopsisMd !== 'string') return
+    setSynopsisDraft(r.synopsisMd)
+    setCharacterDrafts((r.characters || []).map(normalizeStoryCharacter))
+  }
+
   const handleManualReview = (target) => {
+    if (target === 'synopsis') { handleSynopsisReview(); return }
     start(target, manualReviewParams(target))
     if (target === 'script') {
       setScriptPhase('editor')
@@ -420,19 +688,13 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     }
   }
 
-  const renderReviewControl = (target, { manual = false, disabled = false, canReview = true } = {}) => {
+  const renderReviewControl = (target, { manual = false, disabled = false, canReview = true, autoToggle = true } = {}) => {
     const label = t(`story.review.target.${target}`, REVIEW_TARGET_LABEL[target])
     const settings = reviewSettings[target]
-    // 풍선(tooltip) — 검수는 "무엇을 하는지". script는 채점(몰입감 점수)도 한다는 점을 명시한다.
-    const reviewHint = target === 'script'
-      ? t('story.review.runHintScript', '대본을 몰입도(궁금증·기대감·추진력·명료성·보상감) 기준으로 검토·수정하고, 몰입감 점수(0~100)를 매깁니다.')
-      : t('story.review.runHint', `${label}을(를) 검토하고 필요하면 지정 횟수만큼 수정합니다.`, { target: label })
-    const autoHint = target === 'script'
-      ? t('story.review.autoHintScript', '대본 생성 직후 자동으로 검토·수정하고 몰입감 점수를 매깁니다.')
-      : t('story.review.autoHint', `생성 직후 ${label}을(를) 자동으로 검토·수정합니다.`, { target: label })
     return (
       <div key={target} className="story-review-control">
-        <label className="story-review-toggle" title={autoHint}>
+        {autoToggle && (
+        <label className="story-review-toggle">
           <input
             type="checkbox"
             aria-label={t('story.review.autoAria', `${label} 자동 검수`, { target: label })}
@@ -446,11 +708,11 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
               : t('story.review.toggleLabel', `${label} 검수`, { target: label })}
           </span>
         </label>
+        )}
         <input
           type="number"
           className="story-input story-review-rounds"
           aria-label={t('story.review.roundsAria', `${label} 검수 횟수`, { target: label })}
-          title={t('story.review.roundsHint', '검토·수정을 반복할 최대 횟수 (1~5)')}
           min="1"
           max="5"
           value={settings.rounds}
@@ -462,7 +724,6 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
             type="button"
             className="story-btn-secondary story-review-run"
             aria-label={t('story.review.runAria', `${label} 검수`, { target: label })}
-            title={reviewHint}
             onClick={() => handleManualReview(target)}
             disabled={disabled || !canReview}
           >
@@ -525,7 +786,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const actionAriaLabel = isError
     ? t('story.action.retry', '재실행')
     : currentStep === 'script'
-      ? t('story.action.generateScript', '시나리오 생성')
+      ? t('story.action.generateScript', '대본 생성')
       : t('story.action.run', `${currentStepLabel} 실행`, { step: currentStepLabel })
 
   const actionVisibleLabel = isError
@@ -720,12 +981,12 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
       setScriptPhase('editor')
       return
     }
-    // title [이 시놉시스로 시나리오 생성] — confirm(커밋) 완료 후 start('script') 순차 호출(§v2.10).
+    // title [이 시놉시스로 대본 생성] — confirm(커밋) 완료 후 start('script') 순차 호출(§v2.10).
     const r = await pipeline.confirmSynopsis?.({ synopsisMd: synopsisDraft, characters: chars })
     if (r?.error) { toast.error(`${t('story.error.prefix', '오류')}: ${r.error}`); return }
     setBaseScript('')
-    // 시나리오 화면(editor)으로 먼저 전환 — start('script')를 await 하면 생성이 끝날 때까지 화면이 안
-    // 바뀌어 "시나리오 화면이 안 나온다". 전환 후 생성이 스트리밍으로 editor 뷰에 들어온다(§v2.10: confirm→start 순서 유지).
+    // 대본 화면(editor)으로 먼저 전환 — start('script')를 await 하면 생성이 끝날 때까지 화면이 안
+    // 바뀌어 "대본 화면이 안 나온다". 전환 후 생성이 스트리밍으로 editor 뷰에 들어온다(§v2.10: confirm→start 순서 유지).
     setScriptPhase('editor')
     start('script', { input: { type: 'title', title }, options: currentOptions(), synopsis: synopsisDraft })
   }
@@ -898,7 +1159,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
 
   // §1-A setup primary [✨ 시작] — scriptText(임포트/붙여넣기) 있으면 임포트 경로, 없고 제목 있으면
-  // 시나리오 생성 경로. 둘 다 없으면 버튼 자체가 disabled(아래)이므로 여기 도달하지 않는다.
+  // 대본 생성 경로. 둘 다 없으면 버튼 자체가 disabled(아래)이므로 여기 도달하지 않는다.
   // 슬라이스5(§v2.8 B1): 두 경로 모두 synopsis 게이트로 진입한다(pasted는 start 선행 후 역추출).
   const handleSetupStart = () => {
     const originalScript = pipeline.scriptText || ''
@@ -970,15 +1231,28 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
       <span className="story-sec-unit">{t('story.form.sceneSecUnit', '초')}</span>
     </div>
   )
+  // 검수(reviewOnly) 실행인지 — main이 running 마킹과 같은 story:state에 실어 보낸다. 검수는
+  // 델타가 없어 생성용 스트림 뷰로 갈아끼우면 빈 상자가 된다(대본이 사라졌다 돌아오는 증상).
+  const isReviewRun = (step) => steps[step]?.status === 'running' && steps[step]?.reviewOnly === true
+  const scriptReviewRun = isReviewRun('script')
+  const scenesReviewRun = isReviewRun('scenes')
+  const promptsReviewRun = isReviewRun('prompts')
+
   const scenesProgressLog = progressLog.filter((entry) => !entry.step || entry.step === 'scenes')
-  // 시나리오(script) 검수 로그 — 가장 최근 실행분만 보여 이전 검수 로그와 섞이지 않게 한다.
-  const scriptLogAll = progressLog.filter((entry) => entry.step === 'script')
-  const lastScriptOp = scriptLogAll.length ? scriptLogAll[scriptLogAll.length - 1].operationId : null
-  const scriptReviewLog = lastScriptOp ? scriptLogAll.filter((entry) => entry.operationId === lastScriptOp) : scriptLogAll
-  // 검수(reviewOnly)는 델타 스트리밍이 없어 빈 스트림만 뜬다 → 검수 중엔 대본을 유지하고 하단 로그만 보여준다.
-  const scriptReviewing = scriptRunning && reviewProgress?.target === 'script'
-  // 몰입감 점수 — 검수가 매긴 0~100. state에 durable 저장되어 재오픈에도 입력창 하단에 보인다.
-  const scriptScore = state?.scriptScore && Number.isFinite(state.scriptScore.score) ? state.scriptScore : null
+  const scriptProgressLog = progressLog.filter((entry) => entry.step === 'script')
+  const promptsProgressLog = progressLog.filter((entry) => entry.step === 'prompts')
+  // 해당 타겟의 검수 점수만 — 다른 스텝 점수가 새지 않게.
+  const scoresFor = (target) => (reviewScores?.target === target ? reviewScores.scores : [])
+  // 검수 진행 표시 — 시놉시스 패널과 같은 모양(콘텐츠는 그대로 두고 하단에 시계+로그창).
+  const reviewRunning = (step, log) => (
+    <StoryRunning
+      label={t('story.review.running', '검수 중')}
+      startedAt={Date.parse(steps[step]?.updatedAt)}
+      log={log}
+    />
+  )
+  // 검수 로그 행은 step:'synopsis'로 찍힌다 — scenes 로그로 새지 않는다.
+  const synopsisProgressLog = progressLog.filter((entry) => entry.step === 'synopsis')
   const activeLengthUnit = coerceStoryLengthUnit(lengthUnit, language)
   const lengthUnitOptions = storyLengthUnitsForLanguage(language)
   const lengthOptionValues = storyLengthOptionValues(activeLengthUnit)
@@ -988,12 +1262,36 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
       <PromptInput
         value={scriptText}
         onChange={setScriptText}
+        // 검수 중 편집은 재작성 결과에 덮어써진다 — 시놉시스 게이트와 같은 이유로 동결한다.
+        disabled={scriptReviewRun}
         references={[]}
         disableMentions
         showCharCount
         hideTip
         countLabelKey="prompt.lineCount"
-        placeholder={t('story.form.scriptPlaceholder', '시나리오가 여기에 표시됩니다')}
+        // 검수 점수는 줄 수·자 수 행에 얹는다 — 별도 줄을 만들면 편집 영역만 좁아진다.
+        footerExtra={scoresFor('script').length ? <ReviewScore scores={scoresFor('script')} /> : null}
+        placeholder={t('story.form.scriptPlaceholder', '대본이 여기에 표시됩니다')}
+      />
+    </div>
+  )
+
+  // 시놉시스도 대본과 같은 편집기 — 라인번호 gutter + 하단 줄 수·자 수 행을 공짜로 얻는다.
+  // 검수 점수도 같은 자리(카운트 행)에 얹어 두 화면의 모양을 맞춘다.
+  const synopsisEditor = (
+    <div className="story-synopsis-editor">
+      <PromptInput
+        value={synopsisDraft}
+        onChange={setSynopsisDraft}
+        disabled={synopsisReviewing}
+        references={[]}
+        disableMentions
+        showCharCount
+        hideTip
+        countLabelKey="prompt.lineCount"
+        ariaLabel={t('story.synopsis.editorLabel', '줄거리')}
+        footerExtra={scoresFor('synopsis').length ? <ReviewScore scores={scoresFor('synopsis')} /> : null}
+        placeholder={t('story.synopsis.placeholder', '시놉시스가 여기에 표시됩니다')}
       />
     </div>
   )
@@ -1059,17 +1357,13 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                   </div>
                 )}
                 {/* title·pasted 공통 — 생성 중엔 스트림(pasted는 델타 없어 빈 채 시계만), 완료 후 편집 가능한
-                    시놉시스. pasted도 대본에서 역추출한 시놉시스(로그라인/훅/구조/몰입감)를 보여준다. */}
+                    시놉시스. pasted도 대본에서 역추출한 시놉시스(로그라인/훅/구조)를 보여준다. */}
                 {synopsisGenerating ? (
-                  <div className="story-script-stream" aria-live="polite">{synopsisStreamingText}</div>
+                  <div className="story-script-stream" aria-live="polite" ref={synopsisStream.ref} onScroll={synopsisStream.onScroll}>{synopsisStreamingText}</div>
                 ) : (
-                  <textarea
-                    className="story-synopsis-textarea"
-                    aria-label={t('story.synopsis.editorLabel', '줄거리')}
-                    value={synopsisDraft}
-                    onChange={(e) => setSynopsisDraft(e.target.value)}
-                    placeholder={t('story.synopsis.placeholder', '시놉시스가 여기에 표시됩니다')}
-                  />
+                  // 검수 중에도 편집기를 유지한다(스트림 뷰로 바꾸면 정작 검수 대상이 안 보인다).
+                  // 대신 disabled로 동결 — 검수 중 편집이 재작성 결과에 덮어써지는 걸 막는다.
+                  hasI18n ? synopsisEditor : <I18nProvider>{synopsisEditor}</I18nProvider>
                 )}
                 {/* 생성 중 시계+경과 — 첫 출력(특히 reasoning=max)이 늦어도 진행 중임을 보인다. */}
                 {synopsisGenerating && (
@@ -1077,8 +1371,18 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                 )}
                 <div className="story-synopsis-characters">
                   <span className="story-opt-label">{t('story.synopsis.charactersTitle', '등장인물')}</span>
-                  <CharacterCards characters={characterDrafts} onChange={setCharacterDrafts} disabled={synopsisGenerating} t={t} />
+                  <CharacterCards characters={characterDrafts} onChange={setCharacterDrafts} disabled={synopsisGenerating || synopsisReviewing} t={t} />
                 </div>
+                {/* 검수 진행 — scenes 패널 미러({reviewBadge} + StoryRunning). 배지는 error를 sticky로
+                    남기고, StoryRunning이 시계+로그창을 제공한다(신규 컴포넌트/CSS 없음). */}
+                {reviewBadge}
+                {synopsisReviewing && (
+                  <StoryRunning
+                    label={t('story.review.running', '검수 중')}
+                    startedAt={synopsisReviewStartedAt}
+                    log={synopsisProgressLog}
+                  />
+                )}
                 {/* 리서치 선행 흐름(개정): title 모드에서 제목이 비어 있으면 안내 — 리서치는
                     제목 없이 확정 가능하나 시놉시스 생성/확정은 제목이 필요하다(설정 탭 재사용). */}
                 {synopsisTitleMissing && (
@@ -1104,26 +1408,33 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                   <button
                     type="button"
                     className="story-btn-primary"
-                    title={t('story.synopsis.confirmHint', '등장인물을 확정하고 이 시놉시스로 대본(시나리오) 생성을 시작합니다.')}
                     onClick={handleSynopsisConfirm}
-                    disabled={synopsisGenerating || isRunning || synopsisTitleMissing || (synopsisMode !== 'pasted' && !synopsisDraft.trim())}
+                    disabled={synopsisGenerating || synopsisReviewing || isRunning || synopsisTitleMissing || (synopsisMode !== 'pasted' && !synopsisDraft.trim())}
                   >
                     {synopsisMode === 'pasted'
                       ? t('story.synopsis.confirmCharacters', '등장인물 확정')
-                      : t('story.synopsis.confirmTitle', '이 시놉시스로 시나리오 생성')}
+                      : t('story.synopsis.confirmTitle', '이 시놉시스로 대본 생성')}
                   </button>
                   <button
                     type="button"
                     className="story-btn-secondary"
                     onClick={handleSynopsisRegenerate}
-                    disabled={synopsisGenerating || isRunning || synopsisTitleMissing}
+                    disabled={synopsisGenerating || synopsisReviewing || isRunning || synopsisTitleMissing}
                   >
                     {t('story.synopsis.regenerate', '시놉시스 다시')}
                   </button>
+                  {/* 수동 검수 — 자동검수 체크박스는 없다(게이트는 사람이 보고 확정하는 자리라
+                      생성 직후 자동 재작성하면 게이트의 취지가 무너진다). */}
+                  {renderReviewControl('synopsis', {
+                    manual: true,
+                    autoToggle: false,
+                    disabled: synopsisGenerating || synopsisReviewing || isRunning,
+                    canReview: !!synopsisDraft.trim(),
+                  })}
                   {/* '설정으로' 버튼 제거 — 상단 스텝퍼의 [0 설정] 탭으로 이동하면 되므로 중복. */}
                   {/* FIX-4(§3.3 abort 대칭): 생성 중 중단 — main abort()가 synopsisController를
-                      대칭 중단하므로 호출만 하면 된다. */}
-                  {synopsisGenerating && (
+                      대칭 중단하므로 호출만 하면 된다. 검수도 같은 컨트롤러를 잡으므로 동일. */}
+                  {(synopsisGenerating || synopsisReviewing) && (
                     <button type="button" className="story-btn-secondary" onClick={handleAbort} disabled={aborting}>
                       {aborting ? t('story.action.aborting', '⏹ 중단 중…') : t('story.action.abort', '⏹ 중단')}
                     </button>
@@ -1138,41 +1449,27 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
               // provider 가 없는 단위 테스트에서만 폴백으로 감싼다(중첩·중복 setLocale 방지).
               <div className="story-editor-phase" data-testid="story-editor">
                 {reviewBadge}
-                {/* 검수(reviewOnly)는 스트리밍이 없어 빈 스트림만 뜬다 → 검수 중엔 대본 편집기를 그대로 두고
-                    하단 로그창만 보여준다. 스트림은 실제 생성(재생성/이어쓰기) 중일 때만. */}
-                {scriptRunning && !scriptReviewing ? (
+                {/* 검수는 델타가 없다 — 생성용 스트림 뷰로 갈아끼우면 빈 상자가 뜨고 대본이 사라진다.
+                    대본은 그대로 두고(동결) 하단에 로그창을 붙인다(시놉시스 패널 미러). */}
+                {scriptRunning && !scriptReviewRun ? (
                   <>
-                    <div className="story-script-stream" aria-live="polite">
+                    <div className="story-script-stream" aria-live="polite" ref={scriptEditorStream.ref} onScroll={scriptEditorStream.onScroll}>
                       {baseScript ? baseScript + streamingText : streamingText}
                     </div>
-                    {/* 생성 중 시계+경과 (시나리오) — 첫 출력이 늦어도 진행 중임을 보인다. */}
+                    {/* 생성 중 시계+경과 (대본) — 첫 출력이 늦어도 진행 중임을 보인다. */}
                     <GenClock startedAt={Date.parse(steps.script?.updatedAt)} label={t('story.gen.generating', '생성 중')} />
                   </>
                 ) : (
-                  hasI18n ? scriptEditor : <I18nProvider>{scriptEditor}</I18nProvider>
-                )}
-                {/* 몰입감 점수 — 입력창 하단. 검수가 매긴 0~100(검수 버튼으로 갱신). */}
-                {scriptScore && (
-                  <div
-                    className={`story-score-badge ${scriptScore.score >= 80 ? 'high' : scriptScore.score >= 60 ? 'mid' : 'low'}`}
-                    title={t('story.review.scoreHint', '검수가 매긴 몰입감 점수입니다 (0~100). 검수 버튼으로 갱신됩니다.')}
-                  >
-                    <span className="story-score-label">{t('story.review.scoreLabel', '몰입감')}</span>
-                    <span className="story-score-value">{scriptScore.score}</span>
-                    <span className="story-score-max">/ 100</span>
-                  </div>
+                  <>
+                    {hasI18n ? scriptEditor : <I18nProvider>{scriptEditor}</I18nProvider>}
+                    {scriptReviewRun && reviewRunning('script', scriptProgressLog)}
+                  </>
                 )}
                 <div className="story-editor-controls">
                   {/* 중단/3버튼 분기는 isRunning(currentStep) 기준 — script뿐 아니라 scenes/prompts가
                       도는 중에도 대본 탭에서 abort를 잃지 않도록(재리뷰3). stream 렌더 분기만 scriptRunning. */}
                   {isRunning ? (
-                    <button
-                      type="button"
-                      className="story-btn-secondary"
-                      title={t('story.action.abortHint', '진행 중인 생성/검수를 중단합니다.')}
-                      onClick={handleAbort}
-                      disabled={aborting}
-                    >
+                    <button type="button" className="story-btn-secondary" onClick={handleAbort} disabled={aborting}>
                       {aborting ? t('story.action.aborting', '⏹ 중단 중…') : t('story.action.abort', '⏹ 중단')}
                     </button>
                   ) : (
@@ -1181,7 +1478,6 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                       <button
                         type="button"
                         className="story-btn-secondary"
-                        title={t('story.action.rewriteHint', '현재 대본을 버리고 처음부터 새로 생성합니다.')}
                         onClick={handleRewrite}
                         disabled={!scriptText.trim()}
                       >
@@ -1190,7 +1486,6 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                       <button
                         type="button"
                         className="story-btn-secondary"
-                        title={t('story.action.continueHint', '현재 대본 끝에 이어서 더 생성합니다.')}
                         onClick={handleContinue}
                         disabled={!scriptText.trim()}
                       >
@@ -1199,7 +1494,6 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                       <button
                         type="button"
                         className="story-btn-primary"
-                        title={t('story.action.splitHint', '대본을 화자·장면 단위의 씬으로 분리합니다.')}
                         onClick={handleSplit}
                         disabled={!scriptText.trim() || unconfirmedGate}
                       >
@@ -1208,28 +1502,10 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                     </>
                   )}
                 </div>
-                {/* 검수 로그 — 검수가 무엇을 지적/수정했는지 대본 하단에 남긴다(대본은 그대로 유지). */}
-                {(scriptReviewing || scriptReviewLog.length > 0) && (
-                  <div className="story-review-log" role="log" aria-live="polite">
-                    <div className="story-review-log-title">{t('story.review.logTitle', '검수 로그')}</div>
-                    <div className="story-progress-log">
-                      {scriptReviewLog.length === 0 ? (
-                        <div className="story-progress-log-row info">
-                          <span className="story-progress-log-message">{t('story.review.logWaiting', '검수 준비 중…')}</span>
-                        </div>
-                      ) : scriptReviewLog.map((entry, i) => (
-                        <div key={entry.id || i} className={`story-progress-log-row ${entry.level || 'info'}`}>
-                          <span className="story-progress-log-time">{formatProgressLogTime(entry.at)}</span>
-                          <span className="story-progress-log-message">{entry.message}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             ) : scriptRunning ? (
               // 생성 중 스트리밍 preview (setup에서 시작 직후 등 editor 외 phase).
-              <div className="story-script-stream" aria-live="polite">{reviewBadge}{streamingText}</div>
+              <div className="story-script-stream" aria-live="polite" ref={scriptPreviewStream.ref} onScroll={scriptPreviewStream.onScroll}>{reviewBadge}{streamingText}</div>
             ) : (
               // §1-A 설정 화면 — 세로 옵션(라벨+설명) + 제목 + 대본 임포트(drag&drop/붙여넣기) + [✨ 시작].
               <div className="story-setup-phase" data-testid="story-setup">
@@ -1378,7 +1654,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                     className="story-paste-textarea"
                     value={scriptText}
                     onChange={(e) => setScriptText(e.target.value)}
-                    placeholder={t('story.form.pastePlaceholder', '시나리오를 붙여넣거나 .txt/.md 파일을 끌어다 놓으세요')}
+                    placeholder={t('story.form.pastePlaceholder', '대본을 붙여넣거나 .txt/.md 파일을 끌어다 놓으세요')}
                     disabled={isRunning}
                   />
                   <div className="story-import-actions">
@@ -1408,7 +1684,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
         {displayStep === 'scenes' && (
           <div className="story-scenes-panel">
-            {steps.scenes?.status === 'running' ? (
+            {/* 검수는 씬 테이블을 그대로 두고 하단에 로그창만 붙인다. 생성은 현행 유지. */}
+            {steps.scenes?.status === 'running' && !scenesReviewRun ? (
               <>
                 {reviewBadge}
                 <StoryRunning
@@ -1458,6 +1735,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                 {scenes.length === 0 && (
                   <div className="story-empty-hint">{t('story.scenes.empty', '씬 분리 결과가 아직 없습니다.')}</div>
                 )}
+                {scenesReviewRun && reviewRunning('scenes', scenesProgressLog)}
               </>
             )}
           </div>
@@ -1666,7 +1944,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
         {displayStep === 'prompts' && (
           <div className="story-prompts-panel">
-            {steps.prompts?.status === 'running' ? (
+            {/* 검수는 프롬프트 표를 그대로 두고 하단에 로그창만 붙인다. 생성은 현행 유지. */}
+            {steps.prompts?.status === 'running' && !promptsReviewRun ? (
               <>
                 {reviewBadge}
                 <StoryRunning
@@ -1697,6 +1976,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                 {scenes.length === 0 && (
                   <div className="story-empty-hint">{t('story.prompts.empty', '프롬프트 결과가 아직 없습니다.')}</div>
                 )}
+                {promptsReviewRun && reviewRunning('prompts', promptsProgressLog)}
               </>
             )}
           </div>
@@ -1707,7 +1987,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
           하단 제네릭 컨트롤은 editor 밖(setup·scenes/prompts 진행)에서만 렌더.
           F1재검토: scriptPhase가 editor로 남아도 실제로 표시 중인 게 대본 editor가 아니면(재오픈 running →
           displayStep=scenes/prompts) 하단 컨트롤(중단)을 보여야 하므로 "실제 editor 표시 중"을 기준으로 판단.
-          슬라이스5(§3.5): synopsis phase에서도 suppress — generic [시나리오 생성]이 게이트를 우회하지 못하게.
+          슬라이스5(§3.5): synopsis phase에서도 suppress — generic [대본 생성]이 게이트를 우회하지 못하게.
           리서치 spec §3.6(N2): research phase도 동일 suppress — 안 넣으면 게이트 누출 회귀. */}
       {!(displayStep === 'script' && (scriptPhase === 'editor' || scriptPhase === 'synopsis' || scriptPhase === 'research')) && (
         <div className="story-controls">
@@ -1720,15 +2000,9 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
             <button
               type="button"
               className={`story-btn-primary ${isError ? 'story-btn-error' : ''}`}
-              title={isSetupActionView
-                ? t('story.action.setupStartHint', '제목만 입력했으면 시놉시스 생성을, 대본을 붙여넣었으면 그 대본으로 진행을 시작합니다.')
-                : redoStep === 'scenes' ? t('story.action.scenesRedoHint', '현재 대본으로 씬 분리를 다시 실행합니다.')
-                  : redoStep === 'prompts' ? t('story.action.promptsRedoHint', '각 씬의 이미지·비디오 프롬프트를 다시 생성합니다.')
-                    : redoStep === 'audio' ? t('story.action.audioRedoHint', '각 씬의 오디오(내레이션·효과음)를 다시 생성합니다.')
-                      : undefined}
               onClick={isSetupActionView ? handleSetupStart : redoStep ? handleStepRedo : handlePrimaryAction}
               // FIX-2: 미확정이면 하류(scenes/audio/prompts) 진행·재실행을 disable — script 액션
-              // (시작/시나리오 생성)은 게이트 전 단계라 허용.
+              // (시작/대본 생성)은 게이트 전 단계라 허용.
               disabled={isSetupActionView
                 ? setupActionDisabled
                 : (isRunning || (unconfirmedGate && (redoStep != null || currentStep !== 'script')))}

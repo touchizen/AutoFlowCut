@@ -33,8 +33,46 @@ describe('buildClaudeSdkOptions', () => {
     })
     expect(o).not.toHaveProperty('reasoningEffort')
   })
+  // thinking 파라미터의 유효한 모양은 모델 세대마다 다르다. "생략"의 의미도 모델마다 달라서
+  // (Sonnet 5는 생략하면 adaptive로 돈다) 일괄 생략은 안 되고, 못 끄는 모델만 생략해야 한다.
+  describe('모델별 thinking 형태', () => {
+    it('Fable 5는 thinking을 끌 수 없다 — disabled 대신 생략한다', () => {
+      const o = buildClaudeSdkOptions('claude-fable-5', undefined, { reasoningEffort: 'off' })
+      expect(o).not.toHaveProperty('thinking')
+      expect(o).not.toHaveProperty('effort')
+    })
+
+    it('Fable 5도 effort를 주면 adaptive + effort를 싣는다', () => {
+      const o = buildClaudeSdkOptions('claude-fable-5', undefined, { reasoningEffort: 'high' })
+      expect(o).toMatchObject({ thinking: { type: 'adaptive' }, effort: 'high' })
+    })
+
+    // Haiku 4.5는 adaptive/effort 미지원이지만 thinking:disabled 는 Agent SDK 에서 먹는다(직접 확인:
+    // 생략 → thinking 블록 8s / disabled → 텍스트 1.8s). thinking 을 생략하면 SDK 가 켜버려서
+    // 시놉시스가 8~18초+ 무음이 된다 — 그래서 명시적으로 끈다. effort 는 여전히 안 싣는다.
+    it('Haiku 4.5는 thinking을 명시적으로 끈다 (생략하면 SDK가 켬), effort는 안 싣는다', () => {
+      for (const effort of ['off', 'high', undefined]) {
+        const o = buildClaudeSdkOptions('claude-haiku-4-5', undefined, { reasoningEffort: effort })
+        expect(o).toMatchObject({ thinking: { type: 'disabled' } })
+        expect(o).not.toHaveProperty('effort')
+      }
+    })
+
+    it('Sonnet 5는 off일 때 disabled를 명시한다 (생략하면 adaptive로 돈다)', () => {
+      const o = buildClaudeSdkOptions('claude-sonnet-5', undefined, { reasoningEffort: 'off' })
+      expect(o).toMatchObject({ thinking: { type: 'disabled' } })
+    })
+
+    it('Opus 4.8은 기존 동작 그대로', () => {
+      const o = buildClaudeSdkOptions('claude-opus-4-8', undefined, { reasoningEffort: 'off' })
+      expect(o).toMatchObject({ thinking: { type: 'disabled' } })
+    })
+  })
+
+  // 'xhigh'는 실제로 지원되는 값이다(supportedModels() 가 opus/sonnet/fable 에 대해 보고한다).
+  // 예전엔 이 테스트가 xhigh를 "알 수 없는 값" 예시로 써서 버그를 고정하고 있었다.
   it('알 수 없는 Claude reasoning effort는 off처럼 처리한다', () => {
-    const o = buildClaudeSdkOptions('claude-opus-4-8', undefined, { reasoningEffort: 'xhigh' })
+    const o = buildClaudeSdkOptions('claude-opus-4-8', undefined, { reasoningEffort: 'turbo' })
     expect(o.thinking).toEqual({ type: 'disabled' })
     expect(o).not.toHaveProperty('effort')
   })
@@ -95,5 +133,36 @@ describe('readStructuredResult', () => {
   it('success subtype + is_error=true면 result success 대신 result 본문을 던진다', () => {
     expect(() => readStructuredResult({ type: 'result', subtype: 'success', is_error: true, result: 'structured output failed' })).toThrow('structured output failed')
     expect(() => readStructuredResult({ type: 'result', subtype: 'success', is_error: true, result: 'structured output failed' })).not.toThrow('result success')
+  })
+})
+
+// 카탈로그가 동적이 되면 model 은 정규 id 가 아니라 SDK 별칭('haiku', 'opus[1m]')으로 온다.
+// resolvedModel 로 세대를 판별해야 haiku 에도 thinking:disabled 를 정확히 붙인다.
+describe('buildClaudeSdkOptions — 동적 카탈로그 별칭', () => {
+  it('xhigh effort 를 버리지 않는다', () => {
+    const o = buildClaudeSdkOptions('opus[1m]', null, { reasoningEffort: 'xhigh' })
+    expect(o.effort).toBe('xhigh')
+    expect(o.thinking).toEqual({ type: 'adaptive' })
+  })
+
+  it("별칭 'haiku' 도 thinking 을 명시적으로 끈다 (생략 시 SDK가 켜 무음 8~18초)", () => {
+    const o = buildClaudeSdkOptions('haiku', null, { resolvedModel: 'claude-haiku-4-5-20251001' })
+    expect(o.thinking).toEqual({ type: 'disabled' })
+    expect(o.effort).toBeUndefined()
+  })
+
+  it("별칭 'claude-fable-5[1m]' 은 thinking 을 못 끄므로 disabled 를 안 붙인다", () => {
+    const o = buildClaudeSdkOptions('claude-fable-5[1m]', null, { resolvedModel: 'claude-fable-5' })
+    expect(o.thinking).toBeUndefined()
+  })
+
+  it("별칭 'opus[1m]' 은 effort 없으면 disabled 를 붙인다", () => {
+    const o = buildClaudeSdkOptions('opus[1m]', null, { resolvedModel: 'claude-opus-4-8[1m]' })
+    expect(o.thinking).toEqual({ type: 'disabled' })
+  })
+
+  it('resolvedModel 은 SDK 옵션으로 새지 않는다 (SDK 가 모르는 키)', () => {
+    const o = buildClaudeSdkOptions('sonnet', null, { resolvedModel: 'claude-sonnet-5' })
+    expect(o).not.toHaveProperty('resolvedModel')
   })
 })

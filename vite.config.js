@@ -13,7 +13,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf8'))
 const BUILD_NUMBER = Number(pkg.buildNumber ?? 0)
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ command, mode }) => {
   // 환경변수 로드 (mode에 따라 .env 또는 .env.production)
   const env = loadEnv(mode, process.cwd(), '')
   const functionEnv = env.VITE_FUNCTION_ENV || 'test'
@@ -45,6 +45,12 @@ export default defineConfig(({ mode }) => {
             define: mainDefine,
             build: {
               outDir: 'dist-electron',
+              // vite-plugin-electron 은 emptyOutDir 기본값이 false 라, 빌드마다 해시가 바뀌는
+              // main-<hash>.js 청크가 계속 쌓인다 (실측: 196개 / 645MB). files 글롭이
+              // dist-electron/** 을 통째로 넣으므로 그 잔해가 전부 패키지에 실린다.
+              // dev(serve) 에서는 켜면 안 된다 — vite 기동 전에 esbuild 로 만들어 둔
+              // preload.cjs / flow-preload.cjs 가 main 리빌드마다 지워진다.
+              emptyOutDir: command === 'build',
               rollupOptions: {
                 external: ['electron']
               }

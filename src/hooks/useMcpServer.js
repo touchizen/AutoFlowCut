@@ -14,6 +14,56 @@ import { syncExplicitStyleId } from '../services/mcpStyle'
 import { isSceneGenerationDone, isReferenceUploadedDone } from '../services/generationStatus'
 
 /**
+ * MCP load_csv(update-references) 병합. CSV 는 prompt/type/category 의 authoritative 소스지만,
+ * 생성이 카드에 남긴 런타임 사실은 CSV 에 없다 — 여기서 보존하지 않으면 조용히 지워진다.
+ * 스토리 파이프라인 W6/W7 QA 루프가 생성 도중 load_csv 를 부르므로 실제로 밟는 경로다.
+ *
+ *  - 이미지 포인터(data/filePath/mediaId/dataStorage/status/errorMessage): 지우면 배치 필터가
+ *    모든 ref 를 재생성 대상으로 본다.
+ *  - Flow entity 바인딩(entityId/workflowId/registered/flowNameSyncStatus): 지우면 @멘션이 끊기고
+ *    사용자가 Ref 탭에서 다시 동기화해야 한다.
+ *  - styleId/generatedAt: 지우면 카드가 "레거시(미기록)"로 되돌아가 재생성이 전역 스타일로 샌다.
+ *    null("무스타일로 생성됨")과 undefined("기록 없음")는 다른 뜻이라 키째 보존한다.
+ */
+export function mergeReferencesPreservingRuntime(prev, incomingRefs) {
+  const byName = new Map((prev || []).map(r => [r.name, r]))
+  // load_csv 는 {name,type,category,prompt} 만 보낸다 — incoming 에 id 가 없다. 보존하지 않으면
+  //   모든 ref 의 id 가 undefined 가 되어, styleId:'ref:N' 이 가리킬 스타일 카드를 못 찾고
+  //   (조용히 무스타일 생성) ReferencePanel 의 id 기반 갱신이 모든 ref 에 매칭된다.
+  //   씬 병합(R9)이 이미 같은 이유로 id:matched.id 를 유지한다.
+  let maxId = (prev || []).reduce((max, r) => (typeof r?.id === 'number' && r.id > max ? r.id : max), 0)
+  const freshId = () => (maxId += 1)
+  return (incomingRefs || []).map(incoming => {
+    const existing = incoming.name ? byName.get(incoming.name) : null
+    // 매칭된 카드는 소비한다 — CSV 에 같은 이름이 두 번 나오면 두 행이 같은 id 와 같은 런타임
+    //   필드를 복제받아, ReferencePanel 의 id 기반 갱신이 두 카드를 동시에 건드린다(씬 병합 R15).
+    if (existing) byName.delete(incoming.name)
+    // incoming.id 는 신뢰하지 않는다 — 매칭 카드가 이미 쓰는 id 와 충돌할 수 있고, 유일한
+    //   in-repo 생산자(load_csv)는 애초에 id 를 보내지 않는다.
+    if (!existing) return { ...incoming, id: freshId() }
+    return {
+      ...incoming,                      // CSV-authoritative: prompt, type, category, caption(if in CSV)
+      id: existing.id,                  // 기존 stable id 유지 (incoming.id 무시 — 씬 병합 R9 와 동일)
+      data: existing.data,              // preserve runtime-generated image payload
+      filePath: existing.filePath,      // preserve saved image path
+      mediaId: existing.mediaId,        // preserve uploaded Flow mediaId
+      dataStorage: existing.dataStorage,
+      status: existing.status,          // preserve generation status
+      errorMessage: existing.errorMessage,
+      entityId: existing.entityId,      // preserve Flow character entity binding
+      workflowId: existing.workflowId,
+      registered: existing.registered,
+      flowNameSyncStatus: existing.flowNameSyncStatus,
+      styleId: existing.styleId,        // preserve which style this card was generated with
+      // CSV 에 없는 생성 시각. 떨어뜨리면 inheritStyleIdFromCards 의 '가장 최근 카드' 선택이 tie 되고
+      //   resolveImageSrc 의 ?v= 캐시 키가 바뀌어 이미지가 불필요하게 재디코딩된다.
+      generatedAt: existing.generatedAt,
+    }
+  })
+}
+
+
+/**
  * @param {object} params
  * @param {object} params.settings - 앱 설정 (mcpHttpEnabled, mcpHttpPort)
  * @param {Array}  params.scenes - 씬 배열
@@ -233,27 +283,7 @@ export function useMcpServer({
   useEffect(() => {
     const cleanup = window.electronAPI?.onMcpUpdate?.((data) => {
       if (data.type === 'update-references') {
-        // Merge CSV/API data over existing in-memory refs by name so that
-        // runtime fields (data, filePath, mediaId, dataStorage, caption,
-        // status, errorMessage) survive a CSV reload. Without this merge,
-        // load_csv during W6/W7 wipes generated-image pointers and the
-        // batch filter treats every ref as regeneratable → full regen.
-        setReferences(prev => {
-          const byName = new Map(prev.map(r => [r.name, r]))
-          return (data.references || []).map(incoming => {
-            const existing = incoming.name ? byName.get(incoming.name) : null
-            if (!existing) return incoming
-            return {
-              ...incoming,                      // CSV-authoritative: prompt, type, category, caption(if in CSV)
-              data: existing.data,              // preserve runtime-generated image payload
-              filePath: existing.filePath,      // preserve saved image path
-              mediaId: existing.mediaId,        // preserve uploaded Flow mediaId
-              dataStorage: existing.dataStorage,
-              status: existing.status,          // preserve generation status
-              errorMessage: existing.errorMessage,
-            }
-          })
-        })
+        setReferences(prev => mergeReferencesPreservingRuntime(prev, data.references))
         console.log('[MCP] References merged via HTTP:', data.references.length)
       } else if (data.type === 'update-reference') {
         setReferences(prev => prev.map((ref, i) => i === data.index ? { ...prev[i], ...data.fields } : ref))

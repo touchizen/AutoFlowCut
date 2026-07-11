@@ -26,6 +26,9 @@ beforeEach(async () => {
     keyStore: { getKey: () => 'k' },
     getWindow: () => ({ webContents: { send: (ch, p) => sent.push({ ch, p }) }, isDestroyed: () => false }),
     llm,
+    // 실제 CLI/app-server 를 띄우지 않는다. []는 "조회 실패" → 정적 카탈로그 폴백.
+    listClaudeModels: async () => [],
+    listCodexModels: async () => [],
   })
 })
 
@@ -37,6 +40,7 @@ describe('story IPC', () => {
       'claude:claude-opus-4-8',
       'claude:claude-sonnet-5',
       'claude:claude-fable-5',
+      'claude:claude-haiku-4-5',
       'codex:gpt-5.5',
       'codex:gpt-5.4',
     ])
@@ -312,5 +316,110 @@ describe('story IPC', () => {
     const state = await ipc.invoke('story:get-state', { projectToken })
     expect(state.lastPushedRevision).toBe(0)
     expect(state.lastPushError).toMatchObject({ pushRevision: pushEvent.p.pushRevision, reason: 'save failed' })
+  })
+})
+
+// 동적 카탈로그 경로: supportedModels() 가 응답하면 그걸로 목록을 만들고, 메인 라우터/스텝머신이
+// 쓰는 활성 카탈로그도 같이 바꿔야 렌더러가 보낸 별칭 model('sonnet')이 검증을 통과한다.
+describe('story:list-llm-options — 동적 카탈로그', () => {
+  const MODELS = [
+    { value: 'default', resolvedModel: 'claude-opus-4-8[1m]', displayName: 'Default', supportsEffort: true, supportedEffortLevels: ['low', 'xhigh'], supportsAdaptiveThinking: true },
+    { value: 'opus[1m]', resolvedModel: 'claude-opus-4-8[1m]', displayName: 'Opus', supportsEffort: true, supportedEffortLevels: ['low', 'xhigh'], supportsAdaptiveThinking: true },
+    { value: 'haiku', resolvedModel: 'claude-haiku-4-5-20251001', displayName: 'Haiku' },
+  ]
+
+  function register(listClaudeModels) {
+    const ipc2 = fakeIpcMain()
+    registerStoryIPC(ipc2, {
+      keyStore: { getKey: () => 'k' },
+      getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
+      llm,
+      listClaudeModels,
+      listCodexModels: async () => [],
+    })
+    return ipc2
+  }
+
+  it('SDK 가 보고한 모델로 목록을 만든다 (codex 는 정적 폴백)', async () => {
+    const r = await register(async () => MODELS).invoke('story:list-llm-options', {})
+    expect(r.options.map((o) => o.id)).toEqual([
+      'claude:opus[1m]', 'claude:haiku', 'codex:gpt-5.5', 'codex:gpt-5.4',
+    ])
+    expect(r.defaultOption.id).toBe('claude:opus[1m]')
+  })
+
+  it('xhigh 를 살린다', async () => {
+    const r = await register(async () => MODELS).invoke('story:list-llm-options', {})
+    expect(r.options[0].reasoningEfforts).toContain('xhigh')
+  })
+
+  it('조회 결과를 캐시한다 (CLI 를 매번 띄우지 않는다)', async () => {
+    const spy = vi.fn(async () => MODELS)
+    const ipc2 = register(spy)
+    await ipc2.invoke('story:list-llm-options', {})
+    await ipc2.invoke('story:list-llm-options', {})
+    expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  it('조회가 던져도 정적 카탈로그를 돌려준다', async () => {
+    const r = await register(async () => { throw new Error('spawn ENOENT') }).invoke('story:list-llm-options', {})
+    expect(r.options.map((o) => o.id)).toContain('claude:claude-opus-4-8')
+  })
+
+  it('활성 카탈로그가 갱신돼 별칭 model 이 검증을 통과한다', async () => {
+    await register(async () => MODELS).invoke('story:list-llm-options', {})
+    const { normalizeActiveStoryLlmOptions } = await import('../../../electron/api/llm/storyLlmCatalog.js')
+    expect(() => normalizeActiveStoryLlmOptions({ engine: 'claude', model: 'haiku' })).not.toThrow()
+    expect(normalizeActiveStoryLlmOptions({ engine: 'claude', model: 'haiku' }).resolvedModel)
+      .toBe('claude-haiku-4-5-20251001')
+  })
+})
+
+// codex 는 app-server model/list 로 동적 조회한다. 한쪽 엔진이 죽어도 다른 쪽은 동적으로 남는다.
+describe('story:list-llm-options — codex 동적 카탈로그', () => {
+  const CODEX = [{ id: 'gpt-5.5', displayName: 'GPT-5.5', hidden: false, supportedReasoningEfforts: [{ reasoningEffort: 'xhigh' }] }]
+
+  function register({ listClaudeModels = async () => [], listCodexModels = async () => [] }) {
+    const ipc2 = fakeIpcMain()
+    registerStoryIPC(ipc2, {
+      keyStore: { getKey: () => 'k' },
+      getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
+      llm,
+      listClaudeModels,
+      listCodexModels,
+    })
+    return ipc2
+  }
+
+  it('codex 만 조회되면 claude 는 정적, codex 는 동적', async () => {
+    const r = await register({ listCodexModels: async () => CODEX }).invoke('story:list-llm-options', {})
+    const ids = r.options.map((o) => o.id)
+    expect(ids).toContain('claude:claude-opus-4-8') // 정적 폴백
+    expect(ids.filter((i) => i.startsWith('codex:'))).toEqual(['codex:gpt-5.5'])
+  })
+
+  it('codex 라벨/effort 를 app-server 응답에서 만든다', async () => {
+    const r = await register({ listCodexModels: async () => CODEX }).invoke('story:list-llm-options', {})
+    const o = r.options.find((x) => x.id === 'codex:gpt-5.5')
+    expect(o.label).toBe('Codex GPT-5.5')
+    expect(o.reasoningEfforts).toEqual(['xhigh'])
+  })
+
+  it('codex 조회가 던져도 claude 동적 목록은 살아 있다', async () => {
+    const claude = [{ value: 'sonnet', resolvedModel: 'claude-sonnet-5', displayName: 'Sonnet' }]
+    const r = await register({
+      listClaudeModels: async () => claude,
+      listCodexModels: async () => { throw new Error('app-server ENOENT') },
+    }).invoke('story:list-llm-options', {})
+    expect(r.options.map((o) => o.id)).toEqual(['claude:sonnet', 'codex:gpt-5.5', 'codex:gpt-5.4'])
+  })
+
+  it('두 엔진을 동시에 조회한다 (직렬로 기다리지 않는다)', async () => {
+    let claudeStarted = false
+    let codexStartedBeforeClaudeResolved = false
+    const listClaudeModels = () => new Promise((res) => { claudeStarted = true; setTimeout(() => res([]), 20) })
+    const listCodexModels = async () => { if (claudeStarted) codexStartedBeforeClaudeResolved = true; return [] }
+    await register({ listClaudeModels, listCodexModels }).invoke('story:list-llm-options', {})
+    expect(codexStartedBeforeClaudeResolved).toBe(true)
   })
 })

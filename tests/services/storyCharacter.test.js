@@ -67,8 +67,8 @@ describe('normalizeStoryCharacter', () => {
 })
 
 // §v2.12 코드리뷰 FIX: characterVisualPrompt — Ref 카드 prompt와 씬 프롬프트 컨텍스트가 공유하는
-// `${ethnicity}, ${appearance}` 조합 규칙(빈 쪽 콤마 생략). truthy ⇔ ethnicity/appearance 중
-// 하나라도 있음 — 씬 포함 기준으로도 쓰인다.
+// `${ethnicity}, ${age}, ${gender}, ${appearance}` 조합(빈 쪽 콤마 생략).
+// truthy ⇔ ethnicity/appearance 중 하나라도 있음 — 씬 포함 기준으로도 쓰인다.
 describe('characterVisualPrompt', () => {
   it('ethnicity + appearance → "ethnicity, appearance"', () => {
     expect(characterVisualPrompt({ ethnicity: 'Korean', appearance: 'tall man' })).toBe('Korean, tall man')
@@ -91,6 +91,37 @@ describe('characterVisualPrompt', () => {
   it('null-safe + 비문자열 무시', () => {
     expect(characterVisualPrompt(null)).toBe('')
     expect(characterVisualPrompt({ ethnicity: 42, appearance: null })).toBe('')
+  })
+
+  // 구조화 필드(age/gender)가 프롬프트에서 통째로 빠져 있었다. LLM은 appearance에 나이·성별을
+  // 넣으라는 지시를 지킬 때도, 안 지킬 때도 있다 — 그 결과 레퍼런스 이미지가 성별·연령을 잃었다.
+  // 컬럼에 있는 값은 프롬프트로 나가야 한다.
+  it('age와 gender를 ethnicity 다음, appearance 앞에 넣는다', () => {
+    expect(characterVisualPrompt({
+      ethnicity: '한국인', age: '40대 초', gender: 'male', appearance: 'weathered face',
+    })).toBe('한국인, 40대 초, male, weathered face')
+  })
+
+  it("gender 'unknown'은 생략한다 (미상은 이미지 단서가 아니다)", () => {
+    expect(characterVisualPrompt({ age: '30대', gender: 'unknown', appearance: 'tall' })).toBe('30대, tall')
+  })
+
+  it('age가 비면 생략한다', () => {
+    expect(characterVisualPrompt({ gender: 'female', appearance: 'tall' })).toBe('female, tall')
+  })
+
+  // role은 극중 역할(줄거리)이지 외형이 아니다 — 이미지 모델에 넣으면 노이즈다.
+  it('role은 넣지 않는다', () => {
+    const p = characterVisualPrompt({ role: '주인공 - 일용직에서 부자가 된 남자', appearance: 'tall' })
+    expect(p).toBe('tall')
+  })
+
+  // 이 함수의 truthy는 "@멘션 대상"·"씬 프롬프트 포함" 판정에도 쓰인다(§v2.12 FIX MAJOR).
+  // 시각 정보(ethnicity/appearance) 없이 gender/age만 있는 캐릭터가 truthy가 되면, 레퍼런스
+  // 이미지가 없는데도 멘션이 붙는다.
+  it('시각 정보(ethnicity/appearance) 없이 gender/age만 있으면 빈 문자열', () => {
+    expect(characterVisualPrompt({ gender: 'male', age: '40대' })).toBe('')
+    expect(characterVisualPrompt({ gender: 'female' })).toBe('')
   })
 })
 

@@ -1,10 +1,14 @@
+/**
+ * codex 런타임 헬퍼 — 바이너리 경로, 격리된 CODEX_HOME/작업 폴더, 로그인 검증, 에러 매핑.
+ * 트랜스포트는 codexAppServer.js(app-server JSON-RPC)가 담당한다.
+ */
 import os from 'node:os'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { promisify } from 'node:util'
 import { createRequire } from 'node:module'
-import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdtemp, rm } from 'node:fs/promises'
 
 const execFileAsync = promisify(execFile)
 
@@ -12,12 +16,10 @@ const SAFE_ENV_KEYS = [
   'HOME', 'PATH', 'Path', 'SHELL', 'LANG', 'LC_ALL', 'TMPDIR', 'TEMP', 'TMP', 'USER', 'USERNAME', 'LOGNAME',
   'CODEX_HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'SystemRoot', 'ComSpec',
 ]
-const DEFAULT_WORKING_DIRECTORY = path.join(os.tmpdir(), 'autoflowcut-story-codex')
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000
 const AUTH_CHECK_TIMEOUT_MS = 15 * 1000
 const LOGIN_HINT = 'Codex login required: run `codex login` and choose Sign in with ChatGPT.'
-const STORY_INSTRUCTIONS_FILENAME = 'AUTOFLOWCUT_STORY_INSTRUCTIONS.md'
-const STORY_INSTRUCTIONS_TEXT = [
+export const STORY_INSTRUCTIONS_TEXT = [
   'AutoFlowCut Story backend.',
   'Return only the requested story content or JSON.',
   'Do not inspect files, call tools, browse, or modify the workspace.',
@@ -73,7 +75,6 @@ export function buildCodexClientOptions({ env = process.env, config = {} } = {})
         include_instructions: false,
       },
       forced_login_method: 'chatgpt',
-      model_instructions_file: STORY_INSTRUCTIONS_FILENAME,
       include_permissions_instructions: false,
       include_environment_context: false,
       include_apps_instructions: false,
@@ -84,25 +85,6 @@ export function buildCodexClientOptions({ env = process.env, config = {} } = {})
       shell_environment_policy: { inherit: 'none' },
     },
   }
-}
-
-export function buildCodexThreadOptions(opts = {}, { workingDirectory = DEFAULT_WORKING_DIRECTORY } = {}) {
-  return {
-    model: opts.model,
-    modelReasoningEffort: opts.reasoningEffort || opts.modelReasoningEffort || 'xhigh',
-    workingDirectory,
-    skipGitRepoCheck: true,
-    approvalPolicy: 'never',
-    sandboxMode: 'read-only',
-    networkAccessEnabled: false,
-    webSearchMode: 'disabled',
-    webSearchEnabled: false,
-  }
-}
-
-async function defaultCodexImpl() {
-  const { Codex } = await import('@openai/codex-sdk')
-  return Codex
 }
 
 function resolveCodexHome(env = process.env) {
@@ -193,8 +175,7 @@ export function mapCodexError(err, { timedOut = false, parentSignal } = {}) {
   return err instanceof Error ? err : new Error(msg || 'Codex SDK failed')
 }
 
-async function assertCodexChatGptLogin({ env, authCheck, CodexImpl }) {
-  if (!authCheck && CodexImpl) return
+export async function assertCodexChatGptLogin({ env, authCheck }) {
   const check = authCheck || defaultAuthCheck
   let status
   try {
@@ -205,7 +186,7 @@ async function assertCodexChatGptLogin({ env, authCheck, CodexImpl }) {
   if (!isAuthStatusOk(status)) throw new Error(LOGIN_HINT)
 }
 
-function createRunSignal(parentSignal, timeoutMs = DEFAULT_TIMEOUT_MS) {
+export function createRunSignal(parentSignal, timeoutMs = DEFAULT_TIMEOUT_MS) {
   const controller = new AbortController()
   let timedOut = false
   const onAbort = () => controller.abort(parentSignal?.reason)
@@ -229,10 +210,6 @@ function createRunSignal(parentSignal, timeoutMs = DEFAULT_TIMEOUT_MS) {
   }
 }
 
-async function ensureStoryInstructionsFile(workingDirectory) {
-  await writeFile(path.join(workingDirectory, STORY_INSTRUCTIONS_FILENAME), `${STORY_INSTRUCTIONS_TEXT}\n`, 'utf8')
-}
-
 export async function prepareCodexWorkingDirectory({
   mkdtempImpl = mkdtemp,
   rmImpl = rm,
@@ -244,89 +221,6 @@ export async function prepareCodexWorkingDirectory({
   }
 }
 
-async function createThread(
-  opts,
-  {
-    CodexImpl,
-    env,
-    config,
-    authCheck,
-    runtimeHomeFactory = prepareCodexRuntimeHome,
-    workingDirectoryFactory = prepareCodexWorkingDirectory,
-  } = {},
-) {
-  const CodexClass = CodexImpl || await defaultCodexImpl()
-  const work = await workingDirectoryFactory()
-  let runtime
-  try {
-    const threadOptions = buildCodexThreadOptions(opts, { workingDirectory: work.workingDirectory })
-    await mkdir(threadOptions.workingDirectory, { recursive: true })
-    await ensureStoryInstructionsFile(threadOptions.workingDirectory)
-    runtime = await runtimeHomeFactory({ env })
-    const clientOptions = buildCodexClientOptions({ env: runtime.env, config })
-    await assertCodexChatGptLogin({ env: clientOptions.env, authCheck, CodexImpl })
-    const codex = new CodexClass(clientOptions)
-    return {
-      thread: codex.startThread(threadOptions),
-      cleanup: async () => {
-        await runtime.cleanup?.()
-        await work.cleanup?.()
-      },
-    }
-  } catch (err) {
-    await runtime?.cleanup?.()
-    await work.cleanup?.()
-    throw err
-  }
-}
-
-function deltaFromFullText(previous, next) {
-  if (!next) return ''
-  return next.startsWith(previous) ? next.slice(previous.length) : next
-}
-
-export async function runCodexText(
-  prompt,
-  opts = {},
-  { CodexImpl, env, config, signal, onDelta, authCheck, runtimeHomeFactory, workingDirectoryFactory } = {},
-) {
-  const { thread, cleanup } = await createThread(opts, {
-    CodexImpl,
-    env,
-    config,
-    authCheck,
-    runtimeHomeFactory,
-    workingDirectoryFactory,
-  })
-  const runSignal = createRunSignal(signal, opts.timeoutMs)
-  try {
-    if (!onDelta) {
-      const turn = await thread.run(prompt, { signal: runSignal.signal })
-      return turn.finalResponse || ''
-    }
-
-    const { events } = await thread.runStreamed(prompt, { signal: runSignal.signal })
-    let full = ''
-    for await (const event of events) {
-      if (event.type === 'turn.failed') throw new Error(event.error?.message || 'Codex turn failed')
-      if (event.type === 'error') throw new Error(event.message || 'Codex stream failed')
-      if ((event.type === 'item.completed' || event.type === 'item.updated')
-        && event.item?.type === 'agent_message') {
-        const next = event.item.text || ''
-        const delta = deltaFromFullText(full, next)
-        full = next
-        if (delta) onDelta(delta)
-      }
-    }
-    return full
-  } catch (err) {
-    throw mapCodexError(err, { timedOut: runSignal.timedOut(), parentSignal: signal })
-  } finally {
-    runSignal.cleanup()
-    await cleanup()
-  }
-}
-
 export function parseCodexJson(text) {
   let t = String(text || '').trim()
   const fence = t.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/)
@@ -335,30 +229,4 @@ export function parseCodexJson(text) {
   const end = t.lastIndexOf('}')
   if (start >= 0 && end > start) t = t.slice(start, end + 1)
   return JSON.parse(t)
-}
-
-export async function runCodexJson(
-  prompt,
-  outputSchema,
-  opts = {},
-  { CodexImpl, env, config, signal, authCheck, runtimeHomeFactory, workingDirectoryFactory } = {},
-) {
-  const { thread, cleanup } = await createThread(opts, {
-    CodexImpl,
-    env,
-    config,
-    authCheck,
-    runtimeHomeFactory,
-    workingDirectoryFactory,
-  })
-  const runSignal = createRunSignal(signal, opts.timeoutMs)
-  try {
-    const turn = await thread.run(prompt, { outputSchema, signal: runSignal.signal })
-    return parseCodexJson(turn.finalResponse)
-  } catch (err) {
-    throw mapCodexError(err, { timedOut: runSignal.timedOut(), parentSignal: signal })
-  } finally {
-    runSignal.cleanup()
-    await cleanup()
-  }
 }

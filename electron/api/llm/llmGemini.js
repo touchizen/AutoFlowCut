@@ -86,7 +86,7 @@ export async function generateScript(input, opts, { onDelta, signal, fetchImpl =
 // (프로덕션 라우팅 대상 아님 — claude/codex와 계약 호환/테스트용.)
 export async function generateSynopsis(input, opts = {}, { onDelta, signal, fetchImpl = fetch } = {}) {
   if (input?.type === 'pasted') {
-    // 대본에서 시놉시스(로그라인/훅/구조/몰입감)+등장인물을 함께 역추출.
+    // 대본에서 시놉시스(로그라인/훅/구조)+등장인물을 함께 역추출.
     const prompt = buildSynopsisFromScriptPrompt(input.pastedScript, opts)
     const res = await fetchImpl(`${BASE}/${opts.model}:generateContent`, {
       method: 'POST',
@@ -153,7 +153,7 @@ export async function reviewScript(scriptMd, opts, ctx = {}) {
   const prompt = buildReviewPrompt(scriptMd, opts)
   const out = await structuredCall(prompt, REVIEW_SCHEMA, opts, ctx)
   const verdict = out.verdict === 'revise' ? 'revise' : 'pass'
-  return { verdict, critique: out.critique || '', ...(Number.isFinite(out.score) ? { score: out.score } : {}) }
+  return { verdict, critique: out.critique || '' }
 }
 
 // M3: critique 반영 재작성 — NON-streaming generateContent(텍스트). SSE 스트리밍 아님.

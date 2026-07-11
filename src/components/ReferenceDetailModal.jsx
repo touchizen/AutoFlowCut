@@ -8,17 +8,22 @@ import { resolveImageSrc, hasImageData } from '../utils/formatters'
 import { useImageUpload } from '../hooks/useImageUpload'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { applyEntityRegistrationPatch } from '../utils/refEntityRegistration'
-import { syncRefToFlow } from '../utils/flowCharacterSync'
+import { syncRefToFlow, needsComposerRefresh } from '../utils/flowCharacterSync'
 import PromptInput from './PromptInput'
 import { toast } from './Toast'
 import Modal from './Modal'
 import StylePicker from './StylePicker'
+import { createStyleResolver } from '../services/styleResolver'
+import { isStyleReference } from '../services/styleService'
 import ErrorSection from './ErrorSection'
 import { StopwatchIcon, ElapsedTime } from './StopwatchIcon'
 
-export default function ReferenceDetailModal({ reference, index, onUpdate, onUpload, onClose, onGenerate, isGenerating, t, isKo, projectName, appMode, getScopeToken: getScopeTokenProp, thumbnails = {}, references = [] }) {
+export default function ReferenceDetailModal({ reference, index, onUpdate, onUpload, onClose, onGenerate, isGenerating, t, isKo, projectName, appMode, getScopeToken: getScopeTokenProp, thumbnails = {}, references = [], selectedStyleRefId = null, flowProjectId = null }) {
   const [editData, setEditData] = useState({ ...reference })
+  // 스타일 팝업은 두 뜻으로 쓰인다: 스타일 카드의 '프리셋에서 채우기' vs 그 외 카드의 '적용할 스타일'.
+  //   같은 위젯이 다른 뜻으로 동시에 뜨면 헷갈리므로 타입에 따라 하나만 연다.
   const [showStyleDropdown, setShowStyleDropdown] = useState(false)
+  const [styleDropdownMode, setStyleDropdownMode] = useState('preset')
   const [histories, setHistories] = useState([])
   const [shouldReloadHistory, setShouldReloadHistory] = useState(0)
   const [imageSize, setImageSize] = useState(null)
@@ -40,11 +45,14 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
       filePath: reference.filePath,
       mediaId: reference.mediaId,
       caption: reference.caption,
+      // 생성이 카드에 찍는 스타일 기억. 모달이 열린 채 배치가 돌면 prev 에는 없어서, 저장/재생성이
+      //   editData 로 ref 를 통째로 교체할 때 기억이 지워진다(그럼 재생성이 전역 스타일로 샌다).
+      styleId: reference.styleId,
     }))
     // 히스토리 재로드 트리거
     setShouldReloadHistory(n => n + 1)
   // #R14-7: caption 도 dep — caption-only prop 갱신이 저장 시 stale 로 덮이지 않게.
-  }, [reference.data, reference.filePath, reference.mediaId, reference.caption])
+  }, [reference.data, reference.filePath, reference.mediaId, reference.caption, reference.styleId])
 
   // #R6-17/#R8-9: entity 필드는 별도 effect 로 동기화. on-demand 등록(useAutomation)이 prop 의
   //   entityId/registered/flowNameSyncStatus 만 갱신해도 모달 저장 시 fresh 등록이 유지되게 하되,
@@ -262,9 +270,12 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
           onUpdate(renameIdx, { ...renameBase, flowNameSyncStatus: 'failed', registered: false })
         }
         try {
-          const res = await window.electronAPI?.renameFlowCharacter?.({ entityId: renameSnapshot.entityId, displayName: renameSnapshot.name })
+          // bound projectId 를 넘긴다 — 안 넘기면 main 이 projectIdFromUrl() 로 폴백해, Flow 웹뷰가
+          //   다른 프로젝트로 드리프트했을 때 엉뚱한 프로젝트 컨텍스트로 PATCH/navigate 한다.
+          const res = await window.electronAPI?.renameFlowCharacter?.({ entityId: renameSnapshot.entityId, displayName: renameSnapshot.name, projectId: flowProjectId })
           if (res?.success) {
-            try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
+            // main 이 상세페이지 이름칸에 타이핑했으면(nameApplied) 재진입 왕복이 불필요하다.
+            if (!res.nameApplied) { try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {} }
             toast.success(isKo ? `Flow 이름 동기화: ${renameSnapshot.name}` : `Renamed in Flow: ${renameSnapshot.name}`)
           } else {
             markFailed()
@@ -323,6 +334,30 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
   const typeInfo = REFERENCE_TYPES.find(t => t.value === editData.type) || REFERENCE_TYPES[0]
   const isStyle = editData.type === 'style'
 
+  // 이 카드가 어떤 스타일로 생성될지. styleId 키가 있으면 그게 카드의 기억이고(null = 무스타일),
+  //   없으면(새 카드) 전역 스타일 → 다른 카드들의 기억 → 자동 탐색 순으로 결정된다.
+  //   기억이 없을 땐 '자동: X' 로 표시해 지금 무엇이 적용될지 보이게 한다.
+  const styleRefs = references.filter(isStyleReference)
+  // 키 존재가 아니라 값으로 판정한다 — prop 동기화 effect 가 styleId:undefined 로 키를 만든다.
+  //   (undefined = 기억 없음, null = '무스타일로 생성됨'이라는 정당한 기억)
+  const hasStyleMemory = editData.styleId !== undefined
+  const resolvedStyleId = hasStyleMemory
+    ? editData.styleId
+    : createStyleResolver({ activeTab: 'list', scenes: [], references, selectedStyleRefId, t, isKo })
+      .resolveEffectiveStyleIdForRef(null)
+  const styleLabelFor = (id) => {
+    if (!id || id === 'none') return t('reference.styleNone')
+    if (String(id).startsWith('preset:')) {
+      const preset = STYLE_PRESETS?.styles?.find((x) => x.id === String(id).slice(7))
+      return preset ? (isKo ? preset.name_ko : preset.name_en) : String(id)
+    }
+    const refId = String(id).slice(4)
+    return styleRefs.find((r) => String(r.id) === refId)?.name || String(id)
+  }
+  const applyStyleLabel = hasStyleMemory
+    ? styleLabelFor(resolvedStyleId)
+    : `${t('reference.styleAuto')}: ${styleLabelFor(resolvedStyleId)}`
+
   // 클립보드에 복사
   const handleCopy = async (text, fieldName) => {
     if (!text) return
@@ -360,8 +395,10 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
       }
       if (res.ok) {
         onUpdate(idx, { ...refSnapshot, ...res.patch, syncing: false })
-        // 동기화 후 Flow SPA 새로고침(나갔다 재진입) — 새 entity 이름 반영(비차단).
-        try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
+        // 이름을 SPA 에 못 넣었을 때만 새로고침(나갔다 재진입)한다.
+        if (needsComposerRefresh(refSnapshot, res.result)) {
+          try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
+        }
         if (refSnapshot.type === 'character' && res.patch.flowNameSyncStatus !== 'synced') {
           toast.error(isKo ? `${refSnapshot.name}: 등록됐지만 이름 동기화 실패` : `${refSnapshot.name}: registered but name sync failed`)
         } else {
@@ -522,7 +559,7 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
                 <button
                   type="button"
                   className="btn-fill-preset"
-                  onClick={() => setShowStyleDropdown(true)}
+                  onClick={() => { setStyleDropdownMode('preset'); setShowStyleDropdown(true) }}
                   title={t('reference.fillFromPreset')}
                 >
                   {t('reference.fillFromPreset')} ▼
@@ -530,6 +567,21 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
               )}
             </div>
           </div>
+
+          {/* 적용할 스타일 — 스타일 카드에는 없다(자기 자신에 스타일을 적용하지 않는다). */}
+          {!isStyle && (
+            <div className="detail-field">
+              <label>{t('reference.applyStyle')}</label>
+              <button
+                type="button"
+                className="btn-fill-preset"
+                data-testid="apply-style"
+                onClick={() => { setStyleDropdownMode('apply'); setShowStyleDropdown(true) }}
+              >
+                {applyStyleLabel} ▼
+              </button>
+            </div>
+          )}
 
           {/* 타입 */}
           <div className="form-group">
@@ -663,11 +715,18 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
               <button onClick={() => setShowStyleDropdown(false)}>✕</button>
             </div>
             <StylePicker
-              selectedId={selectedStylePickerId}
+              selectedId={styleDropdownMode === 'apply' ? (resolvedStyleId || null) : selectedStylePickerId}
               onSelect={(id) => {
-                handleStylePickerSelect(id)
+                if (styleDropdownMode === 'apply') {
+                  // 카드의 스타일 기억을 바꾼다. 재생성은 ref.styleId 를 전역 선택보다 우선하므로
+                  //   저장만 하면 그대로 따라온다(override 를 따로 넘길 필요 없다).
+                  setEditData((prev) => ({ ...prev, styleId: id ?? null }))
+                } else {
+                  handleStylePickerSelect(id)
+                }
                 setShowStyleDropdown(false)
               }}
+              uploadedStyleRefs={styleDropdownMode === 'apply' ? styleRefs : []}
               thumbnails={thumbnails}
               t={t}
               isKo={isKo}

@@ -603,6 +603,12 @@ html, body {
   position: absolute;
   top: 13px;
   left: calc(var(--gutter-w, 2rem) + 13px);
+  /* 플레이스홀더는 여러 줄(예시 3줄)이다. 아래/오른쪽 경계와 클리핑이 없으면 wrap 을 넘쳐
+     바로 아래 .prompt-input-footer(줄 수 · Seed · Tip) 글자 위에 겹쳐 그려진다.
+     textarea 안쪽 여백(padding 12px + border 1px)에 맞춰 가둔다. */
+  right: 13px;
+  bottom: 13px;
+  overflow: hidden;
   pointer-events: none;
   user-select: none;
   color: var(--text-secondary, #888);
@@ -780,6 +786,19 @@ html, body {
   padding: 8px 0;
   font-size: 0.8rem;
   color: var(--text-secondary);
+  /* 창이 짧아지면 footer 가 눌려(flex-shrink 기본 1) 내용이 박스 밖으로 넘치고, align-items:center
+     때문에 위로 넘친 부분이 프롬프트 박스 뒤로 숨는다. 줄어들지 않게 고정한다. */
+  flex: 0 0 auto;
+  /* .prompt-textarea-wrap 은 position:relative(positioned)라 페인트 순서상 비-positioned 형제인
+     footer 의 인라인 콘텐츠보다 나중에 그려진다(DOM 순서 무관). 겹치는 순간 Seed 행이 박스 뒤로
+     사라지므로 footer 도 stacking 에 참여시켜 위로 올린다. */
+  position: relative;
+  z-index: 2;
+}
+
+.prompt-input-footer .prompt-footer-extra {
+  display: inline-flex;
+  align-items: center;
 }
 
 .prompt-input-footer .line-count {

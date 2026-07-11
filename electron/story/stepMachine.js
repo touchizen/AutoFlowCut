@@ -10,7 +10,7 @@ import { inheritStoryIds, assertUniqueStoryIds, assignStoryIdsByMembership, inhe
 import { buildFallbackTimeline, buildSegmentTimeline, buildSrt, srtLineId } from './timing.js'
 import { regroupScenes } from './regroup.js'
 import { buildManifest } from './manifest.js'
-import { normalizeStoryLlmOptions } from '../api/llm/storyLlmCatalog.js'
+import { normalizeActiveStoryLlmOptions as normalizeStoryLlmOptions } from '../api/llm/storyLlmCatalog.js'
 import { validateScenesSegments } from '../api/llm/schemas.js'
 import { isNarratorSpeaker as isNarratorTrackSpeaker } from '../../src/utils/storyNarrationTracks.js'
 import { normalizeStoryCharacter, characterVisualPrompt } from '../../src/services/storyCharacter.js'
@@ -18,8 +18,10 @@ import { normalizeStoryCharacter, characterVisualPrompt } from '../../src/servic
 const DOWNSTREAM = { script: ['scenes', 'audio', 'prompts'], scenes: ['audio', 'prompts'], audio: ['prompts'], prompts: [] }
 
 // M3: 검토 루프 최대 라운드 — Claude는 3회, 그 외(Gemini 등)는 1회(스펙 §124-125).
-// effective model(opts.model) 기준 — story state.engine엔 model이 없다(Codex-R2).
-function reviewRounds(model) {
+// 동적 카탈로그에서 model 은 SDK 별칭('sonnet', 'opus[1m]')이라 접두사로 판별할 수 없다.
+// engine 이 있으면 그걸 쓰고, 없으면(gemini 등 engine 미지정 경로) model 접두사로 폴백한다.
+function reviewRounds(engine, model) {
+  if (engine) return engine === 'claude' ? 3 : 1
   return String(model || '').startsWith('claude') ? 3 : 1
 }
 
@@ -130,7 +132,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       return { enabled: explicit.enabled !== false && rounds > 0, rounds }
     }
     if (target === 'script' && options?.reviewLoop) {
-      const rounds = reviewRounds(options.model || state?.engine?.model)
+      const rounds = reviewRounds(options?.engine, options.model || state?.engine?.model)
       return { enabled: rounds > 0, rounds }
     }
     return { enabled: false, rounds: 0 }
@@ -311,37 +313,59 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     return out
   }
 
+  // 채택 게이트: 수정본의 몰입감 점수가 직전 대본보다 높을 때만 채택한다. 동점은 폐기 —
+  // 나아졌다는 증거가 없는데 전면 재작성본을 받아들이면 좋았던 문장만 잃는다.
+  // 어느 한쪽이라도 채점을 못 냈으면(어댑터가 score 미지원) 게이트를 열어 기존 동작을 유지한다.
+  function scoreImproved(prev, next) {
+    if (prev == null || next == null) return true
+    return next > prev
+  }
+
+  // 채택되는 대본은 반드시 채점을 거친다. 수정 직후 수정본을 검토(=채점)해 직전 점수보다 높을
+  // 때만 갈아끼우고, 그 검토 결과를 다음 라운드의 critique로 재사용한다 — 그래서 추가 비용은
+  // 마지막 수정본 검토 1회뿐이다(예전엔 마지막 수정본이 검토 없이 저장됐다).
+  // rounds = 최대 수정 시도 횟수. 검토는 후보 수만큼(원본 + 수정본 rounds개) 최대 rounds+1회.
   async function reviewScriptCandidate(scriptMd, opts, rounds, opId, signal) {
     if (!llm.reviewScript || !llm.reviseScript || rounds <= 0) return { scriptMd, changed: false }
     const reviewOpts = reviewLlmOptions(opts)
+    const of = rounds + 1
     let current = scriptMd
     let changed = false
-    let latestScore = null // 검수자 몰입감 점수(0~100) — 마지막 라운드 값을 durable 저장한다.
-    const withScore = (extra) => (latestScore != null ? { ...extra, score: latestScore } : extra)
     try {
+      sendReviewProgress('script', { round: 1, of, phase: 'reviewing' }, opId)
+      let r = await llm.reviewScript(current, reviewOpts, { signal })
+      if (signal?.aborted) return { scriptMd: current, changed }
+      // 몰입감 점수는 verdict와 독립 — pass로 끝나는 라운드도 채점 결과를 흘린다.
+      if (r.score != null) sendReviewProgress('script', { round: 1, of, phase: 'scored', score: r.score }, opId)
+
       for (let round = 1; round <= rounds; round++) {
-        sendReviewProgress('script', { round, of: rounds, phase: 'reviewing' }, opId)
-        const { verdict, critique, score } = await llm.reviewScript(current, reviewOpts, { signal })
+        if (r.verdict !== 'revise' || !r.critique?.trim()) break
+        sendReviewProgress('script', { round, of, phase: 'revising' }, opId)
+        const rev = await llm.reviseScript(current, r.critique, reviewOpts, { signal })
         if (signal?.aborted) return { scriptMd: current, changed }
-        if (Number.isFinite(score)) latestScore = Math.max(0, Math.min(100, Math.round(score)))
-        if (verdict !== 'revise' || !critique?.trim()) {
-          sendReviewProgress('script', withScore({ round, of: rounds, phase: 'passed' }), opId)
+        if (!rev?.scriptMd?.trim()) throw new Error('reviseScript returned empty script')
+        // 수정기가 원문을 그대로 돌려줬다 = 수렴. 채점해봐야 동점이고, 다음 라운드는 같은
+        // 입력에 같은 비평을 반복할 뿐이다.
+        if (rev.scriptMd === current) break
+
+        sendReviewProgress('script', { round: round + 1, of, phase: 'reviewing' }, opId)
+        const next = await llm.reviewScript(rev.scriptMd, reviewOpts, { signal })
+        if (signal?.aborted) return { scriptMd: current, changed }
+        if (!scoreImproved(r.score, next.score)) {
+          // 폐기된 수정본의 점수는 scored로 흘리지 않는다 — 배지는 저장된 대본만 따라간다.
+          sendReviewProgress('script', { round, of, phase: 'rejected', from: r.score, to: next.score }, opId)
           break
         }
-        sendReviewProgress('script', withScore({ round, of: rounds, phase: 'revising', critique: critique.trim() }), opId)
-        const r = await llm.reviseScript(current, critique, reviewOpts, { signal })
-        if (signal?.aborted) return { scriptMd: current, changed }
-        if (!r?.scriptMd?.trim()) throw new Error('reviseScript returned empty script')
-        changed = changed || r.scriptMd !== current
-        current = r.scriptMd
+        if (next.score != null) sendReviewProgress('script', { round: round + 1, of, phase: 'scored', score: next.score }, opId)
+        current = rev.scriptMd
+        changed = true
+        r = next
       }
     } catch (e) {
       if (signal?.aborted) return { scriptMd: current, changed }
       sendReviewProgress('script', { phase: 'error', error: String(e?.message || e) }, opId)
     }
-    // 몰입감 점수를 state에 durable 저장 → flush/story:state로 전파, 재오픈에도 입력창 하단 배지 유지.
-    if (latestScore != null) state.scriptScore = { score: latestScore, at: new Date().toISOString() }
-    return { scriptMd: current, changed, score: latestScore }
+    return { scriptMd: current, changed }
   }
 
   async function reviewScenesCandidate(scriptMd, scenes, speakers, opts, rounds, opId, signal) {
@@ -355,11 +379,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         sendReviewProgress('scenes', { round, of: rounds, phase: 'reviewing' }, opId)
         const { verdict, critique } = await llm.reviewScenes(scriptMd, currentScenes, currentSpeakers, reviewOpts, { signal })
         if (signal?.aborted) return { scenes: currentScenes, speakers: currentSpeakers, changed }
-        if (verdict !== 'revise' || !critique?.trim()) {
-          sendReviewProgress('scenes', { round, of: rounds, phase: 'passed' }, opId)
-          break
-        }
-        sendReviewProgress('scenes', { round, of: rounds, phase: 'revising', critique: critique.trim() }, opId)
+        if (verdict !== 'revise' || !critique?.trim()) break
+        sendReviewProgress('scenes', { round, of: rounds, phase: 'revising' }, opId)
         const r = await llm.reviseScenes(scriptMd, currentScenes, currentSpeakers, critique, reviewOpts, { signal })
         if (signal?.aborted) return { scenes: currentScenes, speakers: currentSpeakers, changed }
         const nextScenes = normalizeScenes(currentScenes, r?.scenes || [])
@@ -387,11 +408,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         sendReviewProgress('prompts', { round, of: rounds, phase: 'reviewing' }, opId)
         const { verdict, critique } = await llm.reviewPrompts(currentScenes, context, reviewOpts, { signal })
         if (signal?.aborted) return { scenes: currentScenes, changed }
-        if (verdict !== 'revise' || !critique?.trim()) {
-          sendReviewProgress('prompts', { round, of: rounds, phase: 'passed' }, opId)
-          break
-        }
-        sendReviewProgress('prompts', { round, of: rounds, phase: 'revising', critique: critique.trim() }, opId)
+        if (verdict !== 'revise' || !critique?.trim()) break
+        sendReviewProgress('prompts', { round, of: rounds, phase: 'revising' }, opId)
         const r = await llm.revisePrompts(currentScenes, context, critique, reviewOpts, { signal })
         if (signal?.aborted) return { scenes: currentScenes, changed }
         const nextScenes = r?.scenes || []
@@ -570,6 +588,34 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   // 세그먼트가 참조하는 화자(특히 narrator)가 state.speakers에 없으면 오디오 탭 성우 매핑에서
   // 누락된다(voice map은 state.speakers만 렌더). open 시 scenes.json 기준으로 self-heal —
   // 스플릿 당시 누락(LLM이 narrator를 speakers에서 빠뜨림 등)된 stale 프로젝트를 재분리 없이 복구.
+  // 진행 상황의 유일한 근거가 state.steps라, 산출물이 사라져도(폴더 정리·부분 복사 등) done이
+  // 그대로 남는다. 그러면 computeCurrentStep이 하류로 건너뛰고, audio/prompts가 제일 먼저
+  // scenes.json을 열다가 "scenes.json not found"로 터진다 — 원인에서 두 스텝 떨어진 곳에서.
+  // open()에서 done 스텝의 산출물을 확인해, 없으면 그 스텝과 하류를 pending으로 되돌린다.
+  // 확실히 없을(또는 비어 있을) 때만 true. 읽기가 실패하면(권한·IO 오류) 판단하지 않는다 —
+  // 잠깐 못 읽은 산출물을 없다고 보면 done을 pending으로 내려 굳혀서, 원인이 사라져도 진행은 안 돌아온다.
+  async function artifactMissing(relPath) {
+    try { return !(await store.loadTextStrict(relPath))?.trim() } catch { return false }
+  }
+
+  async function healMissingStepArtifacts() {
+    if (!state?.steps) return
+    const missing = {
+      script: await artifactMissing('script.md'),
+      scenes: await artifactMissing('scenes.json'),
+    }
+
+    let changed = false
+    for (const step of ['script', 'scenes']) {
+      if (state.steps[step]?.status !== 'done' || !missing[step]) continue
+      // 되살린 스텝은 stale error도 함께 버린다 — {status:'pending'}로 통째 교체.
+      state.steps[step] = { status: 'pending' }
+      for (const d of DOWNSTREAM[step]) state.steps[d] = { status: 'pending' }
+      changed = true
+    }
+    if (changed) await flush()
+  }
+
   async function healReferencedSpeakers() {
     if (!state) return
     const scenes = await loadScenesForPayload()
@@ -671,8 +717,13 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   async function maybeResendPush(operationId) {
     if (!state) state = await store.load()
     if (state.steps.prompts.status === 'done' && state.pendingPushRevision > state.lastPushedRevision) {
-      const scenesJson = JSON.parse((await store.loadText('scenes.json')) || '{"scenes":[]}')
-      sendPush(scenesJson.scenes, operationId)
+      // 씬을 못 읽었으면(없거나·읽기 실패) 재발신을 미룬다. 빈 씬을 밀면 renderer가 그 revision을
+      // ack해 lastPushedRevision이 올라가고, 산출물이 돌아와도 진짜 씬은 영영 안 간다. open()의
+      // heal은 done을 되돌려 이 경로를 막아 주지만 getState()에는 heal이 없다.
+      let raw
+      try { raw = await store.loadTextStrict('scenes.json') } catch { return }
+      if (!raw?.trim()) return // 빈 파일도 heal과 같게 "없음"으로 본다
+      sendPush(JSON.parse(raw).scenes, operationId)
     }
   }
 
@@ -735,7 +786,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       } else if ((params.input?.type ?? state.input?.type) === 'title') {
         synopsis = ((await store.loadText('synopsis.md')) || '').trim() || undefined
       }
-      // §v2.8 M3: 확정 등장인물 명단(state.speakers 파생)을 시나리오 프롬프트에 주입 —
+      // §v2.8 M3: 확정 등장인물 명단(state.speakers 파생)을 대본 프롬프트에 주입 —
       // 대본 첫 소비자부터 이름 어긋남 차단. 미확정(legacy)은 현행 그대로.
       const characters = state.charactersConfirmed === true
         ? characterSpeakers().map((sp) => normalizeStoryCharacter(sp))
@@ -751,7 +802,6 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       if (signal?.aborted) return
       let scriptMd = gen.scriptMd
       await store.saveText('script.md', scriptMd)
-      state.scriptScore = null // 새 대본 — 이전 검수 몰입감 점수는 무효(검수하면 갱신).
 
       // M3: 대본 자동 검토·수정 루프(옵션). 검토는 non-streaming — 진행은 progress로 표시.
       // 실패해도 마지막 저장본을 유지하고 스텝은 정상(done)으로 둔다(품질 옵션이 본 생성을 깨지 않음).
@@ -1119,6 +1169,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     projectToken,
     async open() {
       state = await store.load()
+      await healMissingStepArtifacts()
       await healReferencedSpeakers()
       await maybeResendPush()
       maybeSendCharacters()
@@ -1216,6 +1267,86 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const opts = buildLlmOptions({ ...(state?.input?.options || {}), ...(options || {}) })
       return llm.generateTitle(scriptMd, opts, {})
     },
+    // 시놉시스 검수 side action (spec 2026-07-10) — generateSynopsis 미러.
+    // 시놉시스는 실행 스텝이 아닌 게이트라 reviewOnly 스텝 경로를 못 쓴다. steps.* 불변.
+    // draft-only: 결과를 renderer에 돌려줄 뿐 디스크에 쓰지 않는다(확정은 confirmSynopsis 담당).
+    async reviewSynopsis(params = {}) {
+      if (!state) state = await store.load()
+      if (previewing || synopsisController || researchController || Object.values(state.steps || {}).some((s) => s.status === 'running')) {
+        return { error: 'busy' }
+      }
+      const operationId = randomUUID()
+      const myController = new AbortController()
+      synopsisController = myController
+      try {
+        // started 신호가 renderer의 synopsisActiveOpRef를 세팅한다 — 이게 없으면 이어지는
+        // review progress가 step 기반 op 필터에 전부 버려진다.
+        send('story:synopsis-delta', { phase: 'started', text: '' }, operationId)
+        const opts = buildLlmOptions(effectiveOptions(params))
+        const cfg = reviewConfig(opts, 'synopsis')
+        if (!cfg.enabled) return { changed: false }
+        // reviewConfig는 Math.max(0, ...)만 한다 — 상한은 renderer의 clampReviewRounds뿐이라
+        // IPC 직접 호출로 우회된다. 여기서 다시 5로 막는다.
+        const rounds = Math.min(5, cfg.rounds)
+        const reviewOpts = reviewLlmOptions(opts)
+        let synopsisMd = typeof params.synopsisMd === 'string' && params.synopsisMd.trim()
+          ? params.synopsisMd
+          : ((await store.loadText('synopsis.md')) || '')
+        if (!synopsisMd.trim()) throw new Error('synopsis not found — generate a synopsis first')
+        let characters = Array.isArray(params.characters) ? params.characters : []
+        let changed = false
+        // charactersParsed=false는 "캐스트를 읽지 못했다"(마커 누락/JSON 깨짐)이지 "캐스트가
+        // 없다"가 아니다. 그 []를 채택하면 기존 등장인물이 사라지고, 그대로 확정하면
+        // speakersFromCharacters([])가 roster를 narrator만 남긴다. 명시적 빈 배열(파싱 성공)은
+        // 정당한 결과이므로 그대로 반영한다.
+        const castOf = (r) => (r.charactersParsed !== false ? (r.characters || []) : characters)
+        const of = rounds + 1
+
+        sendReviewProgress('synopsis', { round: 1, of, phase: 'reviewing' }, operationId)
+        let r = await llm.reviewSynopsis(synopsisMd, characters, reviewOpts, { signal: myController.signal })
+        if (myController.signal.aborted) throw new Error('aborted')
+        // 몰입감 점수는 verdict와 독립 — pass로 끝나는 라운드도 채점 결과를 흘린다.
+        if (r.score != null) sendReviewProgress('synopsis', { round: 1, of, phase: 'scored', score: r.score }, operationId)
+
+        for (let round = 1; round <= rounds; round++) {
+          if (r.verdict !== 'revise' || !r.critique?.trim()) break
+          sendReviewProgress('synopsis', { round, of, phase: 'revising' }, operationId)
+          const rev = await llm.reviseSynopsis(synopsisMd, characters, r.critique, reviewOpts, { signal: myController.signal })
+          if (myController.signal.aborted) throw new Error('aborted')
+          if (!rev?.synopsisMd?.trim()) throw new Error('reviseSynopsis returned empty synopsis')
+          // 점수는 산문만 본다. 본문이 그대로면 재채점도 동점일 수밖에 없어, 캐릭터 카드만 고친
+          // 정당한 수정까지 게이트에 걸려 버려진다. 채점하지 않고 캐스트만 반영하고 끝낸다.
+          if (rev.synopsisMd === synopsisMd) {
+            changed = true
+            characters = castOf(rev)
+            break
+          }
+
+          sendReviewProgress('synopsis', { round: round + 1, of, phase: 'reviewing' }, operationId)
+          const next = await llm.reviewSynopsis(rev.synopsisMd, castOf(rev), reviewOpts, { signal: myController.signal })
+          if (myController.signal.aborted) throw new Error('aborted')
+          if (!scoreImproved(r.score, next.score)) {
+            sendReviewProgress('synopsis', { round, of, phase: 'rejected', from: r.score, to: next.score }, operationId)
+            break
+          }
+          if (next.score != null) sendReviewProgress('synopsis', { round: round + 1, of, phase: 'scored', score: next.score }, operationId)
+          changed = true
+          synopsisMd = rev.synopsisMd
+          characters = castOf(rev)
+          r = next
+        }
+        return { synopsisMd, characters, changed }
+      } catch (e) {
+        // 취소 판정은 컨트롤러 상태로 한다 — 메시지에 'abort'가 든 진짜 SDK 에러
+        // (예: "Claude SDK failed: request aborted")를 취소로 오인해 조용히 삼키면 안 된다.
+        if (myController.signal.aborted) return { aborted: true }
+        const msg = String(e?.message || e)
+        sendReviewProgress('synopsis', { phase: 'error', error: msg }, operationId)
+        throw e
+      } finally {
+        if (synopsisController === myController) synopsisController = null
+      }
+    },
     // §3.3 + §v2.8 M4 + §v2.11: 시놉시스 생성 side action — 실행 스텝이 아니다(step status 불변).
     // 전용 operationId 라이프사이클: delta 전에 started 신호를 같은 채널(story:synopsis-delta)로
     // 단일 계약 송신 → renderer가 synopsisActiveOpRef를 세팅한다. busy/abort는 step/preview와 대칭.
@@ -1249,11 +1380,14 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         const input = type === 'pasted'
           ? { type: 'pasted', pastedScript: params.pastedScript } // B1: state.input은 script 분기가 이미 저장 — 덮어쓰지 않음
           : { type: 'title', title: params.title }
-        const { synopsisMd, characters } = await llm.generateSynopsis(input, opts, {
+        const { synopsisMd, characters, charactersParsed } = await llm.generateSynopsis(input, opts, {
           onDelta: (text) => send('story:synopsis-delta', { text }, operationId),
           signal: myController.signal,
         })
-        if (myController.signal.aborted) throw new Error('aborted')
+        if (myController.signal.aborted) return { aborted: true }
+        // charactersParsed=false → 캐스트를 읽지 못했다(마커 누락/JSON 깨짐). 재생성에서 그 []를
+        // 채택하면 사용자가 편집해둔 등장인물 카드와 speakers가 통째로 날아간다.
+        const castReadable = charactersParsed !== false
         // title·pasted 모두 뽑은 시놉시스를 durable 저장 — pasted도 대본에서 역추출한 시놉시스를
         // 리뷰용으로 보여준다(재오픈 hasSynopsis 복원). 게이트 후 script 전 종료에도 유실 방지(Codex #2).
         await store.saveText('synopsis.md', synopsisMd || '')
@@ -1262,7 +1396,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         }
         // characters는 state.speakers 단일 저장(m3 — characters.json 없음). 재오픈 hydrate가
         // 여기서 파생하고, 기존 voice 배정은 승계된다. step status는 안 건드림.
-        state.speakers = speakersFromCharacters(characters)
+        if (castReadable) state.speakers = speakersFromCharacters(characters)
         await flush()
         // 렌더러 state 미러 동기화 — generateSynopsis 는 state.input(type)·charactersConfirmed 를
         // 바꾸므로 story:state 를 보낸다. 없으면 재오픈 전 세션에서 설정 탭으로 돌아갔을 때
@@ -1273,7 +1407,18 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
           scriptText: (await store.loadText('script.md')) || '',
           ...(await hydrateExtras()),
         }, operationId)
-        return { synopsisMd, characters }
+        // 못 읽었으면 characters를 빼고 돌려준다 — 이 반환값이 권위 있는 캐스트로 쓰이지 않게
+        // (runGenerateSynopsis의 Array.isArray 가드). 다만 카드가 편집 상태 그대로 남지는
+        // 않는다: 위 story:state가 durable speakers에서 파생한 캐스트를 실어 보내므로 카드는
+        // '마지막 저장본'으로 되돌아간다. 성공한 재생성이 카드를 새 캐스트로 갈아끼우는 것과
+        // 같은 semantics이고, 수정 전처럼 통째로 비워지는 것보다 낫다.
+        return castReadable ? { synopsisMd, characters } : { synopsisMd }
+      } catch (e) {
+        // 취소 판정은 컨트롤러 상태로. 메시지에 'abort'가 든 진짜 SDK 실패
+        // ("Claude SDK failed: request aborted")를 취소로 오인해 삼키면 안 된다 —
+        // 취소는 resolve, 실패는 reject로 갈라서 renderer가 문자열 매칭에 기대지 않게 한다.
+        if (myController.signal.aborted) return { aborted: true }
+        throw e
       } finally {
         if (synopsisController === myController) synopsisController = null
       }
@@ -1293,7 +1438,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       if (typeof synopsisMd === 'string' && synopsisMd.trim()) await store.saveText('synopsis.md', synopsisMd)
       await flush()
       sendCharacters(operationId)
-      // 렌더러 state 미러 동기화 — charactersConfirmed=true 를 반영해야 미확정 게이트가 풀려 시나리오
+      // 렌더러 state 미러 동기화 — charactersConfirmed=true 를 반영해야 미확정 게이트가 풀려 대본
       // 탭/화면 라우팅이 editor 로 간다(안 그러면 확정 후에도 synopsis 로 되돌아가 "반응 없음").
       send('story:state', {
         state,
@@ -1574,7 +1719,15 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       if (!deferDownstreamReset) {
         for (const d of DOWNSTREAM[step]) state.steps[d] = { status: 'pending' }
       }
-      state.steps[step] = { status: 'running', updatedAt: new Date().toISOString() }
+      // reviewOnly 마커 — renderer가 "지금 도는 게 검수인지 생성인지"를 알아야 패널을 다르게
+      // 그린다(검수는 델타가 없어 스트림 뷰가 빈 상자가 된다). reviewProgress로 유추하면 첫
+      // progress 이벤트 전까지 한 프레임 어긋나므로 status와 같은 story:state에 함께 싣는다.
+      // done/error 마킹은 객체를 통째 교체하므로 마커가 남지 않는다.
+      state.steps[step] = {
+        status: 'running',
+        updatedAt: new Date().toISOString(),
+        ...(params.reviewOnly === true ? { reviewOnly: true } : {}),
+      }
       await flush(); send('story:state', { state }, operationId)
       let pushScenes = null
       // HIGH: abort()는 controller를 교체하지 않고(같은 controller에 abort 신호만 보냄) running

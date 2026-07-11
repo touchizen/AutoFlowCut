@@ -3,6 +3,7 @@
  */
 
 import { useState, useRef, useCallback } from 'react'
+import { applyEntityRegistrationPatch } from '../utils/refEntityRegistration'
 import { RESOURCE, STYLE_PRESETS } from '../config/defaults'
 import { fileSystemAPI } from './useFileSystem'
 import { checkFolderPermission, checkAuthToken, checkFlowProjectReady } from '../utils/guards'
@@ -128,7 +129,10 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
 
   // ─── 공통: 이미지 후처리 (업스케일 → 업로드 → 저장 → 상태 업데이트) ───
   // 개별 생성과 배치 비동기 수집 모두에서 사용.
-  const _processAndSaveImage = async (images, index, ref, logPrefix = '[Ref]') => {
+  // genResult: 생성 응답 전체. Flow /characters 경로는 여기에 entityId/workflowId/registered 를 실어온다.
+  //   이걸 카드에 저장해야 Flow 에 캐릭터가 등록된 상태가 되고, '동기화'로 같은 이미지를
+  //   다시 업로드할 필요가 없어진다. entityId 가 없으면(API 모드·scene/style) 기존 동작 그대로.
+  const _processAndSaveImage = async (images, index, ref, logPrefix = '[Ref]', genResult = null) => {
     const firstImage = images[0]
     let imageData = firstImage.base64 || firstImage
 
@@ -195,7 +199,16 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     // R27 review fix: generatedAt 세팅 — references/{name}.png 가 같은 경로를
     // 덮어쓰므로 resolveImageSrc 의 ?v=<version> 캐시 키가 갱신되어야 Chromium
     // 이 이전 디코딩 캐시를 버리고 새 이미지 표시.
-    const donePatch = { name: ref.name || `ref_${index + 1}`, data: savedDataUrl, filePath, dataStorage: filePath ? 'file' : 'base64', mediaId, caption, status: 'done', errorMessage: null, generatedAt: Date.now() }
+    const entityPatch = genResult?.entityId
+      ? applyEntityRegistrationPatch({ ...ref, mediaId }, genResult, true)
+      : null
+    // 서버엔 이름이 등록됐지만 SPA 가 옛 이름('제목 없는 캐릭터')을 캐시한 채면 @멘션이 새 이름을
+    //   못 찾는다. main 이 상세페이지 이름칸 타이핑으로 스토어를 갱신하지 못했을 때만(nameApplied:false)
+    //   기존 방식(프로젝트 나갔다 재진입)으로 폴백한다 — 성공했으면 그 왕복을 통째로 건너뛴다.
+    if (genResult?.entityId && genResult.nameApplied === false) {
+      try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
+    }
+    const donePatch = { name: ref.name || `ref_${index + 1}`, data: savedDataUrl, filePath, dataStorage: filePath ? 'file' : 'base64', mediaId, caption, status: 'done', errorMessage: null, generatedAt: Date.now(), ...(entityPatch || {}) }
     setReferences(prev => prev.map((r, i) => i === index ? { ...r, ...donePatch } : r))
     // 동기 갱신: 같은 batch flow 의 다음 phase(_prepareStyleRefs)가 React 재렌더 전에
     // referencesRef.current 를 읽어도 방금 만든 style 카드의 mediaId 를 보장받게 한다.
@@ -261,12 +274,22 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       return { success: false, authError: true }
     }
 
+    // 재생성은 이 카드가 실제로 쓴 스타일을 따른다 — 그 사이 전역 선택(selectedStyleRefId)이 바뀌거나
+    //   findAutoStyle 의 자동 추정 대상이 달라져도 결과가 흔들리면 안 된다. styleId===null 은
+    //   "무스타일로 생성했다"는 기록이므로 전역으로 새지 않게 값으로 판정한다(undefined = 기억 없음).
+    //   명시적 overrideStyleId 는 그보다 우선(상세 모달의 스타일 지정 재생성).
+    //   스타일 카드에는 스타일을 적용하지 않는다(_prepareStyleRefs 조기 반환) — findAutoStyle 이
+    //   그 카드 자신을 고른 값을 찍으면 "ref:1 로 생성됨"이라는 거짓 기록이 남는다(배치는 null).
+    const effectiveStyleId = isStyleReference(ref)
+      ? null
+      : overrideStyleId ?? (ref.styleId !== undefined ? ref.styleId : _resolveEffectiveStyleId(null))
+
     setGeneratingRefs(prev => prev.includes(index) ? prev : [...prev, index])
-    setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'generating', errorMessage: null, generatingStartedAt: Date.now(), generatingEndedAt: null } : r))
+    // styleId 는 성공 시점이 아니라 시작 시점에 남긴다 — 실패한 카드야말로 같은 스타일로 재생성돼야 한다.
+    setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'generating', styleId: effectiveStyleId, errorMessage: null, generatingStartedAt: Date.now(), generatingEndedAt: null } : r))
 
     try {
       // 스타일 준비 (공통 함수)
-      const effectiveStyleId = _resolveEffectiveStyleId(overrideStyleId)
       const { styledPrompt, styleRefImages } = await _prepareStyleRefs(ref, effectiveStyleId, '[Reference]')
 
       const refSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
@@ -277,7 +300,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       const result = await genAPI.generateImage(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: refSeed, aspectRatio: settings.aspectRatio, model: settings.imageModel, purpose: 'reference', ref: { id: ref.id, name: ref.name, type: ref.type, category: ref.category } })
 
       if (result.success && result.images?.length > 0) {
-        return await _processAndSaveImage(result.images, index, ref, '[Reference]')
+        return await _processAndSaveImage(result.images, index, ref, '[Reference]', result)
       } else if (!result.success) {
         const errorMsg = result.error || ''
         const isAuthError = errorMsg.includes('401') || errorMsg.includes('auth') || errorMsg.includes('token') || errorMsg.includes('login')
@@ -334,7 +357,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       return { success: false, authError: isAuthError, serverError: isServerError, quotaExhausted: isQuota }
     }
 
-    return await _processAndSaveImage(result.images, index, ref, '[AsyncRef]')
+    return await _processAndSaveImage(result.images, index, ref, '[AsyncRef]', result)
   }
 
   // ─── 배치 생성 (비동기 fire-and-forget 방식) ───
@@ -532,9 +555,14 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
           //   동안 refBatchRunning 이 false 가 되어 project/mode 전환이 열린다. prepare 전에 켜두면
           //   busy 가 연속된다(prepare 가 throw 하면 아래 catch 가 index 를 제거).
           setGeneratingRefs(prev => prev.includes(index) ? prev : [...prev, index])
-          const { styledPrompt, styleRefImages } = await _prepareStyleRefs(ref, effectiveStyleId, '[GenerateAllRefs]')
+          // 배치는 위저드에서 고른 스타일이 명시적 의사표시다 — 카드의 이전 기억을 덮어쓴다.
+          //   (스타일 카드 자신은 runPhase(styleIndices, null) 이라 null 이 기록된다.)
+          //   _prepareStyleRefs 는 Flow 스타일 업로드 등 실패할 수 있는 I/O 다. 그 전에 찍어야
+          //   준비 단계에서 죽은 카드도 같은 스타일로 재생성된다.
+          const stampedStyleId = effectiveStyleId ?? null
+          setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'generating', styleId: stampedStyleId, errorMessage: null, generatingStartedAt: Date.now(), generatingEndedAt: null } : r))
 
-          setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'generating', errorMessage: null, generatingStartedAt: Date.now(), generatingEndedAt: null } : r))
+          const { styledPrompt, styleRefImages } = await _prepareStyleRefs(ref, effectiveStyleId, '[GenerateAllRefs]')
 
           const batchSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
             ? settings.seedNo

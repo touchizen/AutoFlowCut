@@ -4,6 +4,25 @@
  */
 import { useState, useCallback, useRef, useEffect } from 'react'
 
+// 로그 라벨 — 알 수 없는 타겟은 '대본'로 폴백(기존 동작 유지).
+const REVIEW_TARGET_LOG_LABEL = { synopsis: '시놉시스', script: '대본', scenes: '씬', prompts: '프롬프트' }
+
+// 검수 진행 한 줄. rejected(점수 게이트가 수정본을 버림)는 에러가 아니지만 info로 묻히면
+// "검수를 돌렸는데 왜 그대로지?"가 설명되지 않는다 — warn으로 폐기 전후 점수까지 남긴다.
+// 폐기된 수정본의 점수는 배지(reviewScores)에 올리지 않으므로 여기가 유일한 노출 지점이다.
+function reviewLogLine(p, prefix) {
+  const round = p.round && p.of ? ` ${p.round}/${p.of}` : ''
+  if (p.phase === 'rejected') {
+    const delta = p.from != null && p.to != null ? ` — 몰입감 ${p.from} → ${p.to}` : ''
+    return { message: `${prefix}: 수정본 폐기${round}${delta}`, level: 'warn' }
+  }
+  const phaseLabel = p.phase === 'revising' ? '수정 중' : p.phase === 'error' ? '검토 중단' : '검토 중'
+  return {
+    message: p.error ? `${prefix}: ${phaseLabel} (${p.error})` : `${prefix}: ${phaseLabel}${round}`,
+    level: p.phase === 'error' ? 'error' : 'info',
+  }
+}
+
 export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }) {
   const [state, setState] = useState(null)
   // Important: scenes.json 파생 데이터(씬 세그먼트/이미지·비디오 프롬프트)는 story.json
@@ -19,12 +38,18 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   const [segmentProgress, setSegmentProgress] = useState({})
   // M3: 대본 검토 루프 진행 — { operationId, round, of, phase:'reviewing'|'revising'|'error', error? } | null.
   const [reviewProgress, setReviewProgress] = useState(null)
+  // 검수 채점(몰입감) — { target, scores: number[] } | null. 라운드 순서대로 쌓아 첫→마지막 변화를
+  // 보여준다. reviewProgress(검토/수정 단계)와 분리한다.
+  const [reviewScores, setReviewScores] = useState(null)
   const [progressLog, setProgressLog] = useState([])
   // 슬라이스4(§3.4): synopsis side action 로컬 상태 — 스트리밍 누적은 대본(streamingText)과
   // 별도 채널/상태(story:synopsis-delta → synopsisStreamingText)로 분리.
   const [synopsisStreamingText, setSynopsisStreamingText] = useState('')
   const [synopsisGenerating, setSynopsisGenerating] = useState(false)
   const [synopsisError, setSynopsisError] = useState(null)
+  // 시놉시스 검수(spec 2026-07-10): generating과 별도 플래그 — generating은 textarea를 스트림 뷰로
+  // 바꿔버려서, 정작 검수 대상인 draft가 가려진다.
+  const [synopsisReviewing, setSynopsisReviewing] = useState(false)
   // hydrate 필드(§v2.9/v2.11): story:state·open 응답의 synopsisText/hasSynopsis/characters/
   // charactersConfirmed. charactersConfirmed는 3-state(undefined=legacy) 그대로 노출.
   const [synopsisText, setSynopsisText] = useState('')
@@ -53,6 +78,12 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   // activeOpRef(story:state running 기반)에 안 잡힌다 — 재사용 금지. started 신호(phase:'started',
   // operationId)로 세팅되고, 그와 다른 op의 delta는 drop(regenerate 시 이전 실행 잔여 방지).
   const synopsisActiveOpRef = useRef(null)
+  // 시놉시스 side action(생성·검수) 공용 소유권 토큰. main이 synopsisController 하나로 둘을
+  // 상호배제하므로 renderer도 같은 불변식을 갖는다. boolean으로는 부족하다 — 이 훅은 App에 살아
+  // 프로젝트 전환에도 재마운트되지 않으므로(StoryView만 key로 remount), 전환 후 도착한 옛 호출의
+  // finally가 새 호출의 상태를 지워버린다. main의 "synopsisController === myController일 때만
+  // 반납"과 대칭.
+  const synopsisOwnerRef = useRef(null)
   // HIGH: projectPath 전환 시 tokenRef 무효화를 useEffect(passive)에만 맡기면 한 프레임 늦는다
   // — rerender로 새 projectPath가 반영된 직후, effect가 아직 실행되기 전 틈에 옛 프로젝트의
   // pushScenes가 도착하면 tokenRef가 여전히 옛 토큰이라 통과하고, onPushRef.current는 이미 새
@@ -87,10 +118,13 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
     setProgressLog([])
     activeOpRef.current = null
     setReviewProgress(null) // M3: 프로젝트 전환 시 검토 배지 정리
+    setReviewScores(null)
     // 슬라이스4: synopsis 로컬 상태·전용 op도 함께 리셋(옛 프로젝트 시놉이 새 화면에 남지 않게).
     synopsisActiveOpRef.current = null
     setSynopsisStreamingText('')
     setSynopsisGenerating(false)
+    setSynopsisReviewing(false)
+    synopsisOwnerRef.current = null
     setSynopsisError(null)
     setSynopsisText('')
     setHasSynopsis(false)
@@ -125,6 +159,22 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   useEffect(() => {
     const api = window.electronAPI
     if (!api?.onStoryEvent) return
+    // 채점 이벤트(phase:'scored') — reviewProgress(검토/수정 단계)는 건드리지 않고 점수만 쌓는다.
+    // 로그창엔 라운드별 점수를 한 줄 남긴다. 타겟이 바뀌면 새로 시작한다.
+    const collectScore = (p, label) => {
+      setReviewScores((prev) => (
+        prev?.target === p.target ? { target: p.target, scores: [...prev.scores, p.score] } : { target: p.target, scores: [p.score] }
+      ))
+      setProgressLog((logs) => [...logs, {
+        id: `${p.operationId || 'op'}-${logs.length}`,
+        operationId: p.operationId || null,
+        step: p.target,
+        phase: 'scored',
+        message: `${label} 검수: 몰입감 ${p.score}/100${p.round ? ` (${p.round}/${p.of})` : ''}`,
+        level: 'info',
+        at: new Date().toISOString(),
+      }].slice(-120))
+    }
     const offs = [
       api.onStoryEvent('story:state', (p) => {
         if (p.projectToken !== tokenRef.current) return
@@ -201,6 +251,25 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
           }
           return
         }
+        // 시놉시스 검수(spec 2026-07-10): side action이라 running step이 없어 아래 activeOpRef
+        // 필터에 걸리면 전부 drop된다 — research-fetch와 동일하게 필터 앞에서 처리하고,
+        // synopsisActiveOpRef(started 신호로 세팅)로 stale을 가른다.
+        if (p.kind === 'review' && p.target === 'synopsis') {
+          if (synopsisActiveOpRef.current && p.operationId !== synopsisActiveOpRef.current) return
+          if (p.phase === 'scored') { collectScore(p, '시놉시스'); return }
+          setReviewProgress({ operationId: p.operationId, target: 'synopsis', round: p.round, of: p.of, phase: p.phase, error: p.error })
+          const line = reviewLogLine(p, '시놉시스 검수')
+          setProgressLog((logs) => [...logs, {
+            id: `${p.operationId || 'op'}-${logs.length}`,
+            operationId: p.operationId || null,
+            step: 'synopsis',
+            phase: p.phase || null,
+            message: line.message,
+            level: line.level,
+            at: new Date().toISOString(),
+          }].slice(-120))
+          return
+        }
         // 진행 중인 op와 다른 operationId의 progress는 drop(늦게 끊긴 이전 실행 잔여 방지).
         if (p.operationId && activeOpRef.current && p.operationId !== activeOpRef.current) return
         if (p.kind === 'step-log') {
@@ -216,20 +285,22 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
         } else if (p.kind === 'audio-segment' && p.segId) {
           setSegmentProgress((m) => ({ ...m, [p.segId]: p.status }))
         } else if (p.kind === 'script-review' || p.kind === 'review') {
-          setReviewProgress({ operationId: p.operationId, target: p.target || 'script', round: p.round, of: p.of, phase: p.phase, error: p.error, critique: p.critique })
+          if (p.phase === 'scored') {
+            // script-review는 legacy 병행 송신이라 중복 수집을 막는다(generic 'review'만 센다).
+            if (p.kind === 'review') collectScore(p, REVIEW_TARGET_LOG_LABEL[p.target] || '대본')
+            return
+          }
+          setReviewProgress({ operationId: p.operationId, target: p.target || 'script', round: p.round, of: p.of, phase: p.phase, error: p.error })
           if (p.kind === 'review') {
-            const targetLabel = p.target === 'scenes' ? '씬 검수' : p.target === 'prompts' ? '프롬프트 검수' : '시나리오 검수'
-            const phaseLabel = p.phase === 'revising' ? '수정 필요' : p.phase === 'passed' ? '통과' : p.phase === 'error' ? '검토 중단' : '검토 중'
-            const roundLabel = p.round ? ` ${p.round}/${p.of}` : ''
-            // 검수가 무엇을 지적했는지(critique)를 그대로 로그에 남긴다 — "무엇을 했는지" 가시화.
-            const detail = p.error ? ` (${p.error})` : p.critique ? ` — ${p.critique}` : ''
+            const targetLabel = `${REVIEW_TARGET_LOG_LABEL[p.target] || '대본'} 검수`
+            const line = reviewLogLine(p, targetLabel)
             setProgressLog((logs) => [...logs, {
               id: `${p.operationId || 'op'}-${logs.length}`,
               operationId: p.operationId || null,
               step: p.target || 'script',
               phase: p.phase || null,
-              message: `${targetLabel}${roundLabel}: ${phaseLabel}${detail}`,
-              level: p.phase === 'error' ? 'error' : p.phase === 'revising' ? 'warn' : 'info',
+              message: line.message,
+              level: line.level,
               at: new Date().toISOString(),
             }].slice(-120))
           }
@@ -304,6 +375,7 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
     setProgressLog([])
     activeOpRef.current = null
     setReviewProgress(null) // M3: 새 실행 시 검토 배지 초기화(이전 error 배지 포함)
+    setReviewScores(null)
     return window.electronAPI.storyStart({ projectToken: tokenRef.current, step, params })
   }, [])
 
@@ -314,21 +386,64 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   // 슬라이스4(§3.4 + §v2.8 M4): 시놉시스 생성 side action. 스트리밍 누적 자체는
   // story:synopsis-delta 구독(started→synopsisActiveOpRef)이 담당하고, 여기선 호출/에러 상태만.
   const generateSynopsis = useCallback(async (params = {}) => {
+    if (synopsisOwnerRef.current) return { error: 'busy' }
+    const myToken = Symbol('synopsis-generate')
+    synopsisOwnerRef.current = myToken
+    const isOwner = () => synopsisOwnerRef.current === myToken
     setSynopsisError(null)
     setSynopsisGenerating(true)
     try {
       const r = await window.electronAPI.storyGenerateSynopsis({ projectToken: tokenRef.current, ...params })
-      // 사용자가 중단(⏹)한 경우 main이 {error:'aborted'}로 응답할 수 있다 — 에러가 아니라 취소이므로 조용히.
-      if (r?.error && !/abort/i.test(String(r.error))) setSynopsisError(r.error)
+      // 사용자가 중단(⏹)하면 main이 {aborted:true}로 resolve한다 — error 키가 없어 배너도 안 뜬다.
+      // await 이후의 공유 상태 쓰기는 소유권 검사로 감싼다: 프로젝트 전환 후 도착한 orphan은
+      // guarded()가 {error:'stale-token'}로 응답하는데, 무방비면 새 프로젝트에 그 배너가 뜬다.
+      if (isOwner() && r?.error) setSynopsisError(r.error)
       return r
     } catch (e) {
+      // 진짜 취소는 resolve로 오므로, 여기 오는 rejection은 전부 실제 에러다. 메시지에 'abort'가
+      // 들었다고 삼키면 "Claude SDK failed: request aborted" 같은 실패가 조용히 묻힌다.
       const msg = String(e?.message || e)
-      // 중단(abort)은 사용자 의도적 취소 — 에러 배너로 띄우지 않는다.
-      if (/abort/i.test(msg)) return { aborted: true }
-      setSynopsisError(msg)
+      if (isOwner()) setSynopsisError(msg)
       return { error: msg }
     } finally {
-      setSynopsisGenerating(false)
+      if (isOwner()) {
+        synopsisOwnerRef.current = null
+        setSynopsisGenerating(false)
+      }
+    }
+  }, [])
+  // 시놉시스 검수(spec 2026-07-10) — generateSynopsis 래퍼 미러. main이 실패를 rethrow하므로
+  // invoke rejection을 여기서 {error}/{aborted}로 정규화한다.
+  // await 이후의 공유 상태 쓰기는 전부 소유권 검사로 감싼다: 프로젝트 전환 후 도착한 orphan은
+  // guarded()가 {error:'stale-token'}로 응답하는데, 무방비면 새 프로젝트에 그 배너가 뜬다.
+  const reviewSynopsis = useCallback(async (params = {}) => {
+    // 재진입/생성과의 충돌 — disabled는 React 커밋 후에야 먹으므로 ref가 유일한 락이다.
+    if (synopsisOwnerRef.current) return { error: 'busy' }
+    const myToken = Symbol('synopsis-review')
+    synopsisOwnerRef.current = myToken
+    const isOwner = () => synopsisOwnerRef.current === myToken
+    setSynopsisError(null)
+    setProgressLog([]) // start() 미러 — 안 지우면 2회차가 1회차 로그 위에서 열린다
+    setReviewProgress(null)
+    setReviewScores(null)
+    setSynopsisReviewing(true)
+    try {
+      const r = await window.electronAPI.storyReviewSynopsis({ projectToken: tokenRef.current, ...params })
+      if (isOwner() && r?.error) setSynopsisError(r.error)
+      return r
+    } catch (e) {
+      // 진짜 취소는 main이 {aborted:true}로 resolve한다 — 여기 오는 rejection은 전부 실제 에러다.
+      // 메시지에 'abort'가 들었다고 삼키면 "Claude SDK failed: request aborted" 같은 실패가
+      // 조용히 묻힌다.
+      const msg = String(e?.message || e)
+      if (isOwner()) setSynopsisError(msg)
+      return { error: msg }
+    } finally {
+      if (isOwner()) {
+        synopsisOwnerRef.current = null
+        setSynopsisReviewing(false)
+        setReviewProgress((rp) => (rp?.phase === 'error' ? rp : null))
+      }
     }
   }, [])
   // 슬라이스4(§v2.8 M1 + §v2.9): 시놉시스 확정 커밋(title·pasted 공통) — main이 speakers 반영
@@ -364,7 +479,7 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   // key로 재마운트되는 StoryView가 setup + 폼 기본값으로 초기화되게 한다(effect가 다음 tick에
   // useState를 정리하기 전 한 프레임의 stale 값 유출 방지).
   if (justSwitched) {
-    return { state: null, scenes: [], streamingText, scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview, segmentProgress: {}, reviewProgress: null, progressLog: [], llmOptions, defaultLlmOption, generateSynopsis, confirmSynopsis, synopsisStreamingText: '', synopsisGenerating: false, synopsisError: null, synopsisText: '', hasSynopsis: false, characters: [], charactersConfirmed: undefined, research: null, researchFetchProgress: {}, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
+    return { state: null, scenes: [], streamingText, scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview, segmentProgress: {}, reviewProgress: null, reviewScores: null, progressLog: [], llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText: '', synopsisGenerating: false, synopsisReviewing: false, synopsisError: null, synopsisText: '', hasSynopsis: false, characters: [], charactersConfirmed: undefined, research: null, researchFetchProgress: {}, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
   }
-  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, segmentProgress, reviewProgress, progressLog, llmOptions, defaultLlmOption, generateSynopsis, confirmSynopsis, synopsisStreamingText, synopsisGenerating, synopsisError, synopsisText, hasSynopsis, characters, charactersConfirmed, research, researchFetchProgress, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
+  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, segmentProgress, reviewProgress, reviewScores, progressLog, llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText, synopsisGenerating, synopsisReviewing, synopsisError, synopsisText, hasSynopsis, characters, charactersConfirmed, research, researchFetchProgress, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
 }

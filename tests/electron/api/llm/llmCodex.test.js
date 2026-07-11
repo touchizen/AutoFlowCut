@@ -102,7 +102,7 @@ describe('llmCodex adapter', () => {
 
   it('reviewScript는 pass/revise 외 verdict를 pass로 정규화한다', async () => {
     const runJson = vi.fn(async () => ({ verdict: 'maybe', critique: 'c' }))
-    await expect(reviewScript('SCRIPT', OPTS, { runJson })).resolves.toEqual({ verdict: 'pass', critique: 'c' })
+    await expect(reviewScript('SCRIPT', OPTS, { runJson })).resolves.toEqual({ verdict: 'pass', critique: 'c', score: null })
   })
 
   it('reviseScript는 Codex text runner 결과를 scriptMd로 반환한다', async () => {

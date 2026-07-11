@@ -1,6 +1,6 @@
 /** 프롬프트 빌더 — Gemini/Claude 두 엔진 공유. (구 llmGemini.js 내부 빌더 이관) */
 
-// §v2.12: Ref 카드 prompt와 동일한 `${ethnicity}, ${appearance}` 조합 규칙(공유 helper) —
+// Ref 카드 prompt와 동일한 `${ethnicity}, ${age}, ${gender}, ${appearance}` 조합 규칙(공유 helper) —
 // electron→src import는 stepMachine의 기존 관례(storyCharacter.js는 순수 모듈, 순환 없음).
 import { characterVisualPrompt } from '../../../src/services/storyCharacter.js'
 
@@ -121,14 +121,12 @@ export function buildSynopsisPrompt(input, opts = {}) {
           `1) 로그라인: 한 줄.`,
           `2) 훅(Hook): 시청자를 초반 3초에 붙잡을 강력한 도입 1~2문장 — 충격·미스터리·강한 공감 중 하나로, 답을 미뤄 궁금증을 남긴다.`,
           `3) 기승전결: 기(인물·상황 설정) → 승(갈등 전개) → 전(반전·최대 위기) → 결(해소·여운)을 각 1~2문장.`,
-          `4) 몰입감 점수: 마지막에 "몰입감 점수: N/100" 형식으로, 후킹·긴장 유지·감정이입을 냉정하게 자기평가하고 한 줄 근거를 붙인다.`,
         ].join('\n')
       : [
           `Write the following in order, each as its own subheading (no dialogue or scene numbers, prose outline):`,
           `1) Logline: one line.`,
           `2) Hook: a 1-2 sentence opening that grabs the viewer in the first 3 seconds (shock, mystery, or deep empathy; leave a question open).`,
           `3) Story arc: setup (characters & situation) → rising conflict → climax/twist → resolution, 1-2 sentences each.`,
-          `4) Immersion score: end with "Immersion score: N/100" and a one-line rationale (judge hook, tension, and empathy honestly).`,
         ].join('\n'),
     opts.genre ? `장르: ${opts.genre}` : '',
     opts.tone ? `톤: ${opts.tone}` : '',
@@ -152,7 +150,7 @@ export function buildCharacterExtractPrompt(pastedScript, opts = {}) {
   ].join('\n')
 }
 
-// 붙여넣기 경로 — 대본을 분석해 시놉시스(로그라인/훅/구조/몰입감 점수)를 역추출하고 등장인물 JSON도 함께
+// 붙여넣기 경로 — 대본을 분석해 시놉시스(로그라인/훅/구조)를 역추출하고 등장인물 JSON도 함께
 // 산출한다(buildSynopsisPrompt 출력 계약과 동일: 줄글 + CHARACTERS_JSON + JSON 배열 → splitSynopsisOutput).
 export function buildSynopsisFromScriptPrompt(pastedScript, opts = {}) {
   const meta = opts.metaPrompt ? `## CUSTOM INSTRUCTIONS\n${opts.metaPrompt}\n` : ''
@@ -168,14 +166,12 @@ export function buildSynopsisFromScriptPrompt(pastedScript, opts = {}) {
           `1) 로그라인: 한 줄.`,
           `2) 훅(Hook): 대본 도입이 시청자를 붙잡는 방식 1~2문장(약하면 보완 제안).`,
           `3) 기승전결: 기·승·전·결로 대본의 흐름을 각 1~2문장 요약.`,
-          `4) 몰입감 점수: 마지막에 "몰입감 점수: N/100" 형식으로, 후킹·긴장 유지·감정이입을 냉정하게 평가하고 한 줄 근거.`,
         ].join('\n')
       : [
           `Write the following in order, each as its own subheading (no dialogue or scene numbers, prose):`,
           `1) Logline: one line.`,
           `2) Hook: how the opening grabs the viewer, 1-2 sentences (suggest an improvement if weak).`,
           `3) Story arc: setup → rising conflict → climax/twist → resolution, summarizing the script, 1-2 sentences each.`,
-          `4) Immersion score: end with "Immersion score: N/100" and a one-line rationale (judge hook, tension, and empathy).`,
         ].join('\n'),
     ko
       ? `그 뒤 마지막에 CHARACTERS_JSON 이라고 한 줄 쓰고, 다음 줄부터 대본 등장인물 전체를 아래 형식의 JSON 배열로만 출력하라(설명·코드펜스 금지):`
@@ -243,6 +239,9 @@ export function buildContinuePrompt(existingScript, opts = {}) {
 }
 
 // M3: 대본 자체검토 — 몰입도/궁금증/기대감 중심 루브릭, verdict(pass/revise)+critique 반환.
+// 검수 채점 — 몰입감 단일 지표. verdict/critique와 독립이라 pass여도 점수는 낸다.
+const SCORE_INSTRUCTION = `score에는 몰입감을 0~100 정수로 담아라 — 후킹·긴장 유지·감정이입을 냉정하게 평가한다(관대한 점수 금지). verdict와 무관하게 항상 채점한다.`
+
 export function buildReviewPrompt(scriptMd, opts = {}) {
   return [
     `당신은 유튜브 스토리 채널의 냉정한 대본 편집자다. 아래 대본을 몰입도 중심으로 검토하라:`,
@@ -254,7 +253,7 @@ export function buildReviewPrompt(scriptMd, opts = {}) {
     opts.genre ? `장르(약한 참고용): ${opts.genre}` : '',
     `심각하게 개선이 필요하면 verdict="revise"와 구체적이고 실행 가능한 critique(무엇을 어떻게 고칠지)를 내라.`,
     `충분히 좋으면 verdict="pass". 사소한 취향 차이나 경미한 문제로 revise를 남발하지 마라.`,
-    `또한 위 5개 기준(궁금증·기대감·추진력·명료성·보상감)을 종합해 몰입감 점수를 0~100 정수로 score 필드에 냉정하게 매겨라.`,
+    SCORE_INSTRUCTION,
     `--- 대본 ---`,
     scriptMd,
   ].filter(Boolean).join('\n')
@@ -270,6 +269,50 @@ export function buildRevisePrompt(scriptMd, critique, opts = {}) {
     `--- 대본 ---`,
     scriptMd,
   ].join('\n')
+}
+
+// 시놉시스 검수(spec 2026-07-10): 산문 다듬기가 아니라 '전제(premise)'를 본다. 등장인물 카드가
+// 본문에서 파생되므로 둘의 정합성도 함께 검토한다.
+export function buildSynopsisReviewPrompt(synopsisMd, characters = [], opts = {}) {
+  return [
+    `당신은 유튜브 스토리 채널의 냉정한 기획 편집자다. 아래 시놉시스를 '이야기 전제'로서 검토하라:`,
+    `- 훅: 전제가 한 편을 끝까지 볼 만한 질문을 만드는가`,
+    `- 스테이크: 누가 무엇을 잃거나 얻는지 분명한가`,
+    `- 구조: 상황만 있는 게 아니라 시작·전환·보상이 있는가`,
+    `- 인물 근거: 등장인물마다 원하는 것이 있고, 시놉시스가 그 존재 이유를 설명하는가`,
+    `- 정합성: 등장인물 카드(이름·외형·성별·역할)가 본문과 일치하는가`,
+    `- 제작 범위: 설정된 분량으로 만들 수 있는가, 3부작짜리 플롯은 아닌가`,
+    opts.genre ? `장르(약한 참고용): ${opts.genre}` : '',
+    `심각하게 개선이 필요하면 verdict="revise"와 구체적이고 실행 가능한 critique를 내라.`,
+    `충분히 좋으면 verdict="pass". 사소한 취향 차이로 revise를 남발하지 마라.`,
+    SCORE_INSTRUCTION,
+    `--- 시놉시스 ---`,
+    synopsisMd,
+    `--- 등장인물 ---`,
+    JSON.stringify(characters),
+  ].filter(Boolean).join('\n')
+}
+
+// 비평 반영 재작성. 출력 계약은 buildSynopsisPrompt와 동일 — 줄거리 + CHARACTERS_JSON 마커 + JSON 배열.
+// (시놉시스는 구조화 스키마가 없다. splitSynopsisOutput이 이 마커로 분해한다.)
+export function buildSynopsisRevisePrompt(synopsisMd, characters = [], critique, opts = {}) {
+  const ko = opts.language !== 'en'
+  return [
+    `아래 시놉시스를 비평(critique)을 반영해 개선하라. 언어·소제목 구성·분량은 그대로 유지한다.`,
+    `본문을 고치면서 등장인물이 달라졌다면 등장인물 배열도 함께 갱신하라.`,
+    `설명이나 머리말 없이 개선된 시놉시스 전체만 출력하라.`,
+    `--- 비평(critique) ---`,
+    critique,
+    `--- 시놉시스 ---`,
+    synopsisMd,
+    `--- 등장인물 ---`,
+    JSON.stringify(characters),
+    ko
+      ? `줄거리를 다 쓴 뒤 마지막에 CHARACTERS_JSON 이라고 한 줄 쓰고, 다음 줄부터 등장인물 전체를 아래 형식의 JSON 배열로만 출력하라(설명·코드펜스 금지):`
+      : `After the synopsis, write CHARACTERS_JSON on its own line, followed by all characters as a JSON array in the format below (no prose, no code fence):`,
+    CHARACTER_JSON_SHAPE,
+    `gender는 male/female/unknown 중 하나만 쓴다. 나레이션(narrator)은 등장인물에 넣지 않는다.`,
+  ].filter(Boolean).join('\n')
 }
 
 export function buildScenesReviewPrompt(scriptMd, scenes, speakers, opts = {}) {
@@ -365,8 +408,8 @@ export function buildFactCheckPrompt(claims = [], opts = {}) {
 export function buildPromptsPrompt(scenes, context, opts) {
   const sceneLines = scenes.map((s) => `${s.sceneNo}. ${s.summary} :: ${(s.segments || []).map((g) => g.text).join(' ')}`)
   // V2: 캐릭터별 정본 외형(appearance)을 컨텍스트로 줘서 씬마다 외형을 새로 지어내지 않고 일관 서술.
-  // §v2.12 FIX(MAJOR): 포함 기준·조합 모두 characterVisualPrompt(ethnicity, appearance 조합,
-  // 빈 쪽 콤마 생략) — ethnicity-only 캐릭터도 Ref 카드와 동일하게 씬 프롬프트에 반영.
+  // §v2.12 FIX(MAJOR): 포함 기준·조합 모두 characterVisualPrompt(ethnicity/age/gender/appearance
+  // 조합, 빈 항목 콤마 생략) — ethnicity-only 캐릭터도 Ref 카드와 동일하게 씬 프롬프트에 반영.
   const charLines = (context.speakers || [])
     .map((sp) => ({ sp, desc: characterVisualPrompt(sp) }))
     .filter(({ sp, desc }) => sp && desc)

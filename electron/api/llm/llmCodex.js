@@ -7,6 +7,8 @@ import {
   buildPromptsPrompt,
   buildReviewPrompt,
   buildRevisePrompt,
+  buildSynopsisReviewPrompt,
+  buildSynopsisRevisePrompt,
   buildScenesReviewPrompt,
   buildScenesRevisePrompt,
   buildPromptsReviewPrompt,
@@ -19,10 +21,10 @@ import {
   buildTitlePrompt,
   buildResearchAnalyzePrompt,
 } from './prompts.js'
-import { runCodexJson, runCodexText } from './codexSdk.js'
+import { runCodexJson, runCodexText } from './codexAppServer.js'
 import { splitSynopsisOutput, parseCharactersJson, createSynopsisDeltaGate } from './synopsisOutput.js'
 import { toOpenAiJsonSchema } from './toJsonSchema.js'
-import { PROMPTS_SCHEMA, REVIEW_SCHEMA, SCENES_SCHEMA, RESEARCH_ANALYSIS_SCHEMA, validateScenesSegments } from './schemas.js'
+import { PROMPTS_SCHEMA, REVIEW_SCHEMA, SCORED_REVIEW_SCHEMA, clampReviewScore, SCENES_SCHEMA, RESEARCH_ANALYSIS_SCHEMA, validateScenesSegments } from './schemas.js'
 import { isNarratorSpeaker as isNarratorTrackSpeaker } from '../../../src/utils/storyNarrationTracks.js'
 
 export const DEFAULT_MODEL = 'gpt-5.5'
@@ -98,7 +100,7 @@ export async function generateScript(input, opts = {}, { onDelta, signal, runTex
 // pasted는 non-streaming 등장인물 역추출만. 마커 없음/JSON 깨짐은 characters=[] 폴백.
 export async function generateSynopsis(input, opts = {}, { onDelta, signal, runText = runCodexText } = {}) {
   if (input?.type === 'pasted') {
-    // 대본에서 시놉시스(로그라인/훅/구조/몰입감)+등장인물을 함께 역추출.
+    // 대본에서 시놉시스(로그라인/훅/구조)+등장인물을 함께 역추출.
     const prompt = guardPrompt(buildSynopsisFromScriptPrompt(input.pastedScript, opts))
     const text = await runText(prompt, runtimeOptions(opts), { signal })
     return splitSynopsisOutput(text)
@@ -132,15 +134,30 @@ export async function splitScenes(scriptMd, opts = {}, { signal, runJson = runCo
 
 export async function reviewScript(scriptMd, opts = {}, { signal, runJson = runCodexJson } = {}) {
   const prompt = guardPrompt(buildReviewPrompt(scriptMd, opts))
-  const out = await runJson(prompt, codexSchema(REVIEW_SCHEMA), runtimeOptions(opts), { signal })
+  const out = await runJson(prompt, codexSchema(SCORED_REVIEW_SCHEMA), runtimeOptions(opts), { signal })
   const verdict = out.verdict === 'revise' ? 'revise' : 'pass'
-  return { verdict, critique: out.critique || '', ...(Number.isFinite(out.score) ? { score: out.score } : {}) }
+  return { verdict, critique: out.critique || '', score: clampReviewScore(out.score) }
 }
 
 export async function reviseScript(scriptMd, critique, opts = {}, { signal, runText = runCodexText } = {}) {
   const prompt = guardPrompt(buildRevisePrompt(scriptMd, critique, opts))
   const revised = await runText(prompt, runtimeOptions(opts), { signal })
   return { scriptMd: revised }
+}
+
+// 시놉시스 검수(spec 2026-07-10) — reviewScript 미러.
+export async function reviewSynopsis(synopsisMd, characters = [], opts = {}, { signal, runJson = runCodexJson } = {}) {
+  const prompt = guardPrompt(buildSynopsisReviewPrompt(synopsisMd, characters, opts))
+  const out = await runJson(prompt, codexSchema(SCORED_REVIEW_SCHEMA), runtimeOptions(opts), { signal })
+  const verdict = out.verdict === 'revise' ? 'revise' : 'pass'
+  return { verdict, critique: out.critique || '', score: clampReviewScore(out.score) }
+}
+
+// 스키마 없음 — CHARACTERS_JSON 마커 텍스트를 splitSynopsisOutput으로 분해(generateSynopsis와 동일 계약).
+export async function reviseSynopsis(synopsisMd, characters = [], critique, opts = {}, { signal, runText = runCodexText } = {}) {
+  const prompt = guardPrompt(buildSynopsisRevisePrompt(synopsisMd, characters, critique, opts))
+  const text = await runText(prompt, runtimeOptions(opts), { signal })
+  return splitSynopsisOutput(text)
 }
 
 export async function reviewScenes(scriptMd, scenes, speakers, opts = {}, { signal, runJson = runCodexJson } = {}) {

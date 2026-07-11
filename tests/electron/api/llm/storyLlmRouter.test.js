@@ -13,6 +13,8 @@ function adapters() {
       continueScript: vi.fn(async () => ({ scriptMd: 'claude continued' })),
       reviewScript: vi.fn(async () => ({ verdict: 'pass', critique: '' })),
       reviseScript: vi.fn(async () => ({ scriptMd: 'claude revised' })),
+      reviewSynopsis: vi.fn(async () => ({ verdict: 'pass', critique: '' })),
+      reviseSynopsis: vi.fn(async () => ({ synopsisMd: 'claude revised synopsis', characters: [] })),
       reviewScenes: vi.fn(async () => ({ verdict: 'pass', critique: '' })),
       reviseScenes: vi.fn(async () => ({ scenes: [], speakers: [] })),
       reviewPrompts: vi.fn(async () => ({ verdict: 'pass', critique: '' })),
@@ -28,6 +30,8 @@ function adapters() {
       continueScript: vi.fn(async () => ({ scriptMd: 'codex continued' })),
       reviewScript: vi.fn(async () => ({ verdict: 'pass', critique: '' })),
       reviseScript: vi.fn(async () => ({ scriptMd: 'codex revised' })),
+      reviewSynopsis: vi.fn(async () => ({ verdict: 'revise', critique: 'codex synopsis fix' })),
+      reviseSynopsis: vi.fn(async () => ({ synopsisMd: 'codex revised synopsis', characters: [{ name: '보라' }] })),
       reviewScenes: vi.fn(async () => ({ verdict: 'revise', critique: 'codex scene fix' })),
       reviseScenes: vi.fn(async () => ({ scenes: [{ sceneNo: 1 }], speakers: [] })),
       reviewPrompts: vi.fn(async () => ({ verdict: 'revise', critique: 'codex prompt fix' })),
@@ -79,6 +83,41 @@ describe('storyLlmRouter', () => {
     expect(a.codex.reviewPrompts).toHaveBeenCalledWith([], {}, expect.objectContaining({ engine: 'codex', model: 'gpt-5.4', reasoningEffort: 'high' }), { signal: 's' })
     expect(a.codex.revisePrompts).toHaveBeenCalledWith([], {}, 'fix', expect.objectContaining({ engine: 'codex', model: 'gpt-5.4', reasoningEffort: 'high' }), { signal: 's' })
     expect(a.claude.reviewScenes).not.toHaveBeenCalled()
+  })
+
+  it('reviewSynopsis(opts index 2) / reviseSynopsis(opts index 3)를 engine 기준으로 라우팅한다', async () => {
+    const a = adapters()
+    const router = createStoryLlmRouter(a)
+    const chars = [{ name: '강리안' }]
+    const opts = { engine: 'codex', model: 'gpt-5.5', reasoningEffort: 'high' }
+
+    await expect(router.reviewSynopsis('SYN', chars, opts, { signal: 's' }))
+      .resolves.toEqual({ verdict: 'revise', critique: 'codex synopsis fix' })
+    await expect(router.reviseSynopsis('SYN', chars, 'fix', opts, { signal: 's' }))
+      .resolves.toEqual({ synopsisMd: 'codex revised synopsis', characters: [{ name: '보라' }] })
+
+    expect(a.codex.reviewSynopsis).toHaveBeenCalledWith('SYN', chars, expect.objectContaining({ engine: 'codex', model: 'gpt-5.5' }), { signal: 's' })
+    expect(a.codex.reviseSynopsis).toHaveBeenCalledWith('SYN', chars, 'fix', expect.objectContaining({ engine: 'codex', model: 'gpt-5.5' }), { signal: 's' })
+    expect(a.claude.reviewSynopsis).not.toHaveBeenCalled()
+    expect(a.claude.reviseSynopsis).not.toHaveBeenCalled()
+  })
+
+  it('engine 미지정 시 reviewSynopsis/reviseSynopsis는 Claude로 라우팅한다', async () => {
+    const a = adapters()
+    const router = createStoryLlmRouter(a)
+    await router.reviewSynopsis('SYN', [], { model: 'claude-opus-4-8' }, {})
+    await router.reviseSynopsis('SYN', [], 'fix', { model: 'claude-opus-4-8' }, {})
+    expect(a.claude.reviewSynopsis).toHaveBeenCalled()
+    expect(a.claude.reviseSynopsis).toHaveBeenCalled()
+    expect(a.codex.reviewSynopsis).not.toHaveBeenCalled()
+  })
+
+  it('reviewSynopsis 미구현 adapter는 명확한 에러로 실패한다', async () => {
+    const a = adapters()
+    delete a.codex.reviewSynopsis
+    const router = createStoryLlmRouter(a)
+    await expect(router.reviewSynopsis('SYN', [], { engine: 'codex', model: 'gpt-5.5' }, {}))
+      .rejects.toThrow(/does not implement reviewSynopsis/)
   })
 
   it('generateSynopsis를 노출하고 opts(index 1) 기준으로 engine dispatch한다', async () => {

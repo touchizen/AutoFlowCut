@@ -139,6 +139,14 @@ export function markFlowAuthFailure(res) {
   return isFlowAuthError(res) ? { ...res, authFailed: true } : res
 }
 
+// Ref 탭 캐릭터 카드는 Flow 의 /characters 컴포저에서 바로 생성한다. 메인 컴포저("모든 미디어")에서
+// 만들면 그냥 미디어일 뿐이라, entity 로 쓰려면 그 이미지를 /characters 에 다시 업로드해야 한다
+// (= Ref 탭 '동기화' 버튼). flowGenerateCharacter 는 생성과 동시에 entityId 를 돌려줘 그 왕복을 없앤다.
+// scene/style ref 는 entity 가 아니라 평범한 미디어이므로 메인 컴포저 경로를 그대로 쓴다.
+export function isCharacterRefCall(callOpts = {}) {
+  return callOpts?.purpose === 'reference' && callOpts?.ref?.type === 'character'
+}
+
 /**
  * useFlowEngine(opts) — Flow 모드 엔진 훅.
  * 21키 계약을 반환. token/projectId는 useState, 메서드는 useCallback으로 안정 참조.
@@ -257,9 +265,22 @@ export function useFlowEngine(opts = {}) {
 
   // --- 이미지 생성 ------------------------------------------------------------
 
+  // 캐릭터 ref 를 /characters 컴포저에서 생성한다. 스타일은 styledPrompt(텍스트)로 이미 반영돼 있고,
+  // 화면비/seed 는 주입해야 한다 — 미주입 시 Flow 기본값(관측상 9:16)으로 나간다.
+  const generateCharacterRef = (prompt, callOpts, pid) => api().flowGenerateCharacter({
+    prompt,
+    displayName: callOpts.ref?.name,
+    projectId: pid,
+    aspectRatio: callOpts.aspectRatio,
+    seed: callOpts.seed,
+    model: callOpts.model,
+  })
+
   const generateImage = useCallback(async (prompt, referenceImages = [], callOpts = {}) => {
     try {
       const pid = effectiveProjectId()
+      // 캐릭터 ref 는 자기 외형 프롬프트라 @멘션 라우팅 대상이 아니다 — 라우팅 전에 가른다.
+      if (isCharacterRefCall(callOpts)) return markAuth(await generateCharacterRef(prompt, callOpts, pid))
       // #R33: 멘션 라우팅을 단일 함수로 위임(멘션없음/scene/미해결폴백/실패).
       const routing = planMentionRouting(prompt, referenceImages, callOpts.references || [])
       if (routing.kind === 'error') return { success: false, error: routing.error }
@@ -311,6 +332,26 @@ export function useFlowEngine(opts = {}) {
   const submitGeneration = useCallback(async (prompt, referenceImages = [], callOpts = {}) => {
     try {
       const pid = effectiveProjectId()
+      // flowGenerateCharacter 는 동기 반환(완성된 images)이다. 배치의 submit→collect 계약에 맞추려고
+      // 동기 씬 폴백과 같은 방식으로 로컬 맵에 담고 generationId 만 돌려준다.
+      if (isCharacterRefCall(callOpts)) {
+        const res = markAuth(await generateCharacterRef(prompt, callOpts, pid))
+        if (!res?.success) return res
+        const images = res.images || []
+        if (images.length === 0) return { success: false, error: res.error || 'Character generation returned no usable image' }
+        localIdCounterRef.current += 1
+        const generationId = `character-${localIdCounterRef.current}`
+        localResultsRef.current.set(generationId, {
+          images,
+          model: callOpts.model,
+          workflowId: res.workflowId,
+          // entity 정보는 collectGeneration 이 그대로 흘려보내 ref 카드에 저장된다.
+          // nameApplied 를 빠뜨리면 배치 캐릭터가 렌더러의 refresh 폴백을 못 탄다 — 이름이 SPA 에
+          //   안 들어간 채 synced 로 마킹되고 멘션 피커엔 옛 이름이 남는다.
+          entity: { entityId: res.entityId, workflowId: res.workflowId, mediaId: res.mediaId, registered: res.registered, nameApplied: res.nameApplied },
+        })
+        return { success: true, generationId }
+      }
       // #R33: 멘션 라우팅 단일 함수 위임(generateImage 와 동일 결정).
       const routing = planMentionRouting(prompt, referenceImages, callOpts.references || [])
       if (routing.kind === 'error') return { success: false, error: routing.error }
@@ -399,7 +440,7 @@ export function useFlowEngine(opts = {}) {
     if (localResultsRef.current.has(generationId)) {
       const stored = localResultsRef.current.get(generationId)
       localResultsRef.current.delete(generationId)
-      return { success: true, images: stored.images }
+      return { success: true, images: stored.images, ...(stored.entity || {}) }
     }
     try {
       return markAuth(await api().flowCollectGeneration({ generationId, token: effectiveToken() }))
