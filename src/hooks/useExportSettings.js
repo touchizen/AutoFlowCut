@@ -17,7 +17,11 @@ const DEFAULT_SETTINGS = {
   kenBurnsScaleMin: 100,
   kenBurnsScaleMax: 130,
   selectedOS: null,  // null이면 자동 감지
-  includeSubtitle: true
+  includeSubtitle: true,
+  // Veo 영상 클립의 오디오 볼륨. Veo 는 오디오를 끌 수 없어(Gemini API 가 generate_audio=false
+  // 거부) 지어낸 대사가 TTS 나레이션 위에 깔린다 → 기본 음소거.
+  // 0 = 음소거 / 0.15 = 앰비언스 / 1 = 원본
+  videoAudioVolume: 0
 }
 
 export function useExportSettings() {

@@ -83,6 +83,7 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
   const [pathCopied, setPathCopied] = useState(false)
   const [scaleMode, setScaleMode] = useState('none')
   const [includeSubtitle, setIncludeSubtitle] = useState(true)
+  const [videoAudioVolume, setVideoAudioVolume] = useState(0)
   const [kenBurns, setKenBurns] = useState(true)
   const [kenBurnsMode, setKenBurnsMode] = useState('random')
   const [kenBurnsCycle, setKenBurnsCycle] = useState(5)
@@ -104,6 +105,8 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
       setKenBurnsCycle(savedSettings.kenBurnsCycle || 5)
       setKenBurnsScaleMin(savedSettings.kenBurnsScaleMin || 100)
       setKenBurnsScaleMax(savedSettings.kenBurnsScaleMax || 130)
+      // 0 이 유효값이라 || 폴백을 쓰면 안 된다 (음소거가 기본값)
+      setVideoAudioVolume(savedSettings.videoAudioVolume ?? 0)
       // pathPreset 로드
       setPathPreset(savedSettings.pathPreset || 'capcut')
     }
@@ -240,7 +243,8 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
     kenBurnsCycle: Number(kenBurnsCycle) || 5,
     kenBurnsScaleMin: Number(kenBurnsScaleMin) / 100 || 1.0,  // % → 비율
     kenBurnsScaleMax: Number(kenBurnsScaleMax) / 100 || 1.15,  // % → 비율
-    subtitleOption: hasSubtitles && includeSubtitle ? 'ko' : 'none'
+    subtitleOption: hasSubtitles && includeSubtitle ? 'ko' : 'none',
+    videoAudioVolume: Number(videoAudioVolume) || 0  // 0=음소거(기본) / 0.15=앰비언스 / 1=원본
   })
 
   const persistOptions = () => {
@@ -253,6 +257,7 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
       kenBurnsCycle: Number(kenBurnsCycle) || 5,
       kenBurnsScaleMin: Number(kenBurnsScaleMin) || 100,
       kenBurnsScaleMax: Number(kenBurnsScaleMax) || 130,
+      videoAudioVolume: Number(videoAudioVolume) || 0,
     })
   }
 
@@ -746,6 +751,27 @@ export const ExportModal = ({ isOpen, onClose, onExport, onExportPremiere, onExp
               {scaleMode === 'fill' && t('exportModal.scaleFillHint')}
               {scaleMode === 'fit' && t('exportModal.scaleFitHint')}
               {scaleMode === 'none' && t('exportModal.scaleNoneHint')}
+            </p>
+          </div>
+
+          {/* Veo 영상 오디오 볼륨 — Veo 는 오디오를 끌 수 없어 기본 음소거 */}
+          <div className="export-option-section">
+            <label className="option-label">
+              🔈 {t('exportModal.videoAudioVolume')}
+            </label>
+            <select
+              value={String(videoAudioVolume)}
+              onChange={(e) => setVideoAudioVolume(Number(e.target.value))}
+              style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #444', background: '#1a1a1a', color: '#fff', fontSize: '0.9rem' }}
+            >
+              <option value="0">🔇 {t('exportModal.videoAudioMute')}</option>
+              <option value="0.15">🔉 {t('exportModal.videoAudioAmbience')}</option>
+              <option value="1">🔊 {t('exportModal.videoAudioOriginal')}</option>
+            </select>
+            <p className="option-hint">
+              {videoAudioVolume === 0 && t('exportModal.videoAudioMuteHint')}
+              {videoAudioVolume === 0.15 && t('exportModal.videoAudioAmbienceHint')}
+              {videoAudioVolume === 1 && t('exportModal.videoAudioOriginalHint')}
             </p>
           </div>
 
