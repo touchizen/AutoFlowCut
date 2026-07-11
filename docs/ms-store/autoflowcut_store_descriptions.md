@@ -27,6 +27,22 @@ server), and you can switch between them anytime from the toggle in the top bar.
 Export writes a ready-to-edit project for CapCut, Adobe Premiere (.prproj), or Vrew (.vrew).
 It can be tested with the 5 free trial exports automatically credited to a new account.
 Create a free account at touchizen.com, or use the test account provided separately.
+
+── Story mode (v3.0.0 — optional, NOT required to certify) ──
+Story mode can write a script for you and then split it into scenes, voices, and prompts.
+The script step runs on an AI coding agent — Claude (Anthropic) or Codex (OpenAI). Both
+command-line tools are BUNDLED INSIDE the package, so there is nothing to install, but
+each needs a one-time sign-in with your own account, performed outside the app:
+  - Claude: run `claude login` in a terminal (requires an Anthropic account).
+  - Codex:  run `codex login` in a terminal and choose "Sign in with ChatGPT"
+            (requires a ChatGPT subscription).
+Without one of these sign-ins, the Script step stops with a "login required" message.
+The Voice (TTS) step additionally uses an ElevenLabs, Typecast, or Gemini key.
+
+None of this blocks certification. Image and video generation (Options A and B above),
+importing your own script, scene splitting, and export all work WITHOUT a Claude or
+ChatGPT account. If you would like to exercise Story mode end to end, contact us and we
+will provide a pre-authenticated test setup.
 ```
 
 ---
@@ -206,7 +222,7 @@ Disclaimer: This app is an independent product developed by Touchizen and is not
 ```
 v3.0.0 — Story mode. From a blank page to a finished video, without leaving the app.
 
-Write the story. Let the AI draft your script (Claude, Codex, or Gemini) — pick a genre, auto-generate a title, and continue where you left off — or paste in your own. Still looking for a subject? Research YouTube topics and check their viral score first.
+Write the story. Let the AI draft your script (Claude or Codex) — pick a genre, auto-generate a title, and continue where you left off — or paste in your own. Still looking for a subject? Research YouTube topics and check their viral score first.
 
 Synopsis, characters, and self-review. Pull a logline, hook, and story arc out of the script along with the full cast. The AI scores immersion and runs its own review-and-revise loop until the story holds up.
 
@@ -420,7 +436,7 @@ Touchizen 제작 — touchizen.com
 ```
 v3.0.0 — Story 모드. 빈 페이지에서 완성된 영상까지, 앱 하나로.
 
-대본 쓰기. AI가 대본을 써줍니다(Claude · Codex · Gemini) — 장르를 고르고, 제목을 자동 생성하고, 이어쓰기까지. 직접 쓴 대본을 붙여넣어도 됩니다. 소재가 아직 없다면 YouTube 리서치로 바이럴 지수와 상세 정보를 먼저 확인하세요.
+대본 쓰기. AI가 대본을 써줍니다(Claude · Codex) — 장르를 고르고, 제목을 자동 생성하고, 이어쓰기까지. 직접 쓴 대본을 붙여넣어도 됩니다. 소재가 아직 없다면 YouTube 리서치로 바이럴 지수와 상세 정보를 먼저 확인하세요.
 
 시놉시스 · 등장인물 · 자체 검수. 대본에서 로그라인, 훅, 기승전결과 등장인물을 통째로 뽑아냅니다. AI가 몰입도 점수를 매기고, 스스로 검토·수정하는 루프를 돌려 완성도를 끌어올립니다.
 
@@ -539,7 +555,7 @@ AI 영상 자동화, 텍스트투비디오, 이미지투비디오, AI 이미지 
 ```
 v3.0.0 — Storyモード。白紙から完成した動画まで、アプリひとつで。
 
-脚本を書く。AIが脚本を書きます（Claude・Codex・Gemini）— ジャンルを選び、タイトルを自動生成し、続きから書き足せます。自分で書いた脚本の貼り付けも可能。題材が決まっていなければ、YouTubeリサーチでバイラル指数と詳細を先に確認できます。
+脚本を書く。AIが脚本を書きます（Claude・Codex）— ジャンルを選び、タイトルを自動生成し、続きから書き足せます。自分で書いた脚本の貼り付けも可能。題材が決まっていなければ、YouTubeリサーチでバイラル指数と詳細を先に確認できます。
 
 シノプシス・登場人物・自己レビュー。脚本からログライン、フック、起承転結と登場人物をまとめて抽出します。AIが没入度をスコア化し、自ら推敲・修正するループを回して完成度を高めます。
 
