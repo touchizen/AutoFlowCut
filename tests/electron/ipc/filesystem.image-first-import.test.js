@@ -1045,5 +1045,39 @@ describe('image-first main-process filesystem transaction', () => {
       expect(durable.fixedScenes).toEqual(oneSlotProject().fixedScenes)
       expect(durable.scenes.map((scene) => scene.id)).toEqual(['scene_lock'])
     })
+
+    it('preserves committed scenes and FixedSceneState when partial flow writers settle before and after commit', async () => {
+      const projectRoot = await stageOne()
+
+      expect(await ipc.invoke('fs:merge-project-data', {
+        workFolder: tmpDir, project: 'P', patch: { flowProjectId: null },
+      })).toEqual({ success: true })
+
+      const commit = await ipc.invoke('fs:commit-image-first-import', {
+        workFolder: tmpDir,
+        project: 'P',
+        data: { ...oneSlotProject(), flowProjectId: null },
+      })
+      expect(commit).toMatchObject({ success: true })
+      const committedFixedBytes = JSON.stringify(commit.fixedSceneState)
+      const committedSceneBytes = JSON.stringify(commit.scenes)
+
+      expect(await ipc.invoke('fs:merge-project-data', {
+        workFolder: tmpDir, project: 'P', patch: { flowProjectId: 'flow-after' },
+      })).toEqual({ success: true })
+
+      const durable = JSON.parse(readFileSync(path.join(projectRoot, 'project.json'), 'utf8'))
+      expect(durable.flowProjectId).toBe('flow-after')
+      expect(JSON.stringify({
+        sceneMode: durable.sceneMode,
+        imageFirstVariant: durable.imageFirstVariant,
+        fixedSceneRevision: durable.fixedSceneRevision,
+        fixedScenes: durable.fixedScenes,
+      })).toBe(committedFixedBytes)
+      expect(JSON.stringify(durable.scenes)).toBe(committedSceneBytes)
+      expect(durable.fixedScenes).toHaveLength(1)
+      expect(durable.fixedScenes.map((slot) => [slot.ordinal, slot.storyId, slot.rendererSceneId]))
+        .toEqual([[1, 'story-lock', 'scene_lock']])
+    })
   })
 })

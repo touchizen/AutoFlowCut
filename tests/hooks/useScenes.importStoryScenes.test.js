@@ -33,6 +33,49 @@ describe('importStoryScenes', () => {
     expect(s.stalePromptAt).toBeTruthy()
   })
 
+  it('fixed import scene with no own prompt takes the first pushed prompt as baseline without stalePrompt', () => {
+    const { result } = renderHook(() => useScenes())
+    act(() => {
+      result.current.setScenes([{
+        id: 'scene_41',
+        storyId: 'fixed-story-1',
+        status: 'done',
+        imagePath: '/P/scenes/scene_41.png',
+      }])
+    })
+
+    act(() => {
+      result.current.importStoryScenes({ scenes: [pushScene('fixed-story-1', { prompt: 'FIRST BASELINE' })] })
+    })
+
+    const scene = result.current.scenes[0]
+    expect(scene.prompt).toBe('FIRST BASELINE')
+    expect(scene.stalePrompt).not.toBe(true)
+    expect(scene.stalePromptAt).toBeUndefined()
+  })
+
+  it('an owned empty-string baseline becomes stale when a later push changes it', () => {
+    const { result } = renderHook(() => useScenes())
+    act(() => {
+      result.current.setScenes([{
+        id: 'scene_42',
+        storyId: 'fixed-story-2',
+        prompt: '',
+        status: 'done',
+        imagePath: '/P/scenes/scene_42.png',
+      }])
+    })
+
+    act(() => {
+      result.current.importStoryScenes({ scenes: [pushScene('fixed-story-2', { prompt: 'LATER' })] })
+    })
+
+    const scene = result.current.scenes[0]
+    expect(scene.prompt).toBe('LATER')
+    expect(scene.stalePrompt).toBe(true)
+    expect(scene.stalePromptAt).toBeTruthy()
+  })
+
   it('재push: videoT2VPrompt 변경 + 기존 비디오 존재 시 staleVideo', () => {
     const { result } = renderHook(() => useScenes())
     act(() => { result.current.importStoryScenes({ scenes: [pushScene('u1')] }) })

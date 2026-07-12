@@ -109,6 +109,22 @@ describe('Header project selector — disabled contract (#R26-2/#R26-3)', () => 
     const btn = screen.getByText('myproj').closest('button')
     expect(btn).not.toBeDisabled()
   })
+
+  it('reactively closes an open project menu so New Project cannot fire after disabled becomes true', async () => {
+    const onNewProject = vi.fn()
+    const props = {
+      onSettings: vi.fn(), authReady: true, onAuthRecovered: vi.fn(),
+      saveMode: 'folder', projectName: 'myproj', onProjectChange: vi.fn(), onNewProject,
+    }
+    const { rerender } = render(<Header {...props} disabled={false} />)
+    fireEvent.click(screen.getByText('myproj').closest('button'))
+    expect(await screen.findByText('settings.createProject')).toBeTruthy()
+
+    rerender(<Header {...props} disabled={true} />)
+
+    expect(screen.queryByText('settings.createProject')).toBeNull()
+    expect(onNewProject).not.toHaveBeenCalled()
+  })
 })
 
 describe('Header auth action — mode-aware (#R5-3 / #R6-9)', () => {

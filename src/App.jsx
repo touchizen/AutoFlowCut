@@ -28,6 +28,7 @@ import { useAvailableModels } from './hooks/useAvailableModels'
 import { computeModelHeal, computeModeSwitch } from './config/genModels'
 import { computeAppClass, flowLayoutForMode } from './utils/appLayout'
 import { useAutoSave } from './hooks/useAutoSave'
+import { useImageFirstImportWindow } from './hooks/useImageFirstImportWindow'
 import { useFlowEvents } from './hooks/useFlowEvents'
 import { useMcpServer } from './hooks/useMcpServer'
 import { useMenuActions } from './hooks/useMenuActions'
@@ -62,6 +63,109 @@ import { isUsableVideoReference } from './utils/videoPromptReferences'
 import { toast } from './components/Toast'
 import { selectUnsyncedMentionedRefs, syncRefToFlow, isRefSynced } from './utils/flowCharacterSync'
 import { getAuthErrorMessage, getAuthRequiredMessage } from './utils/authMessages'
+
+const IMAGE_FIRST_IMPORT_IN_PROGRESS = 'image-first-import-in-progress'
+
+function assertImageFirstImportIdle(isImportingRef) {
+  if (isImportingRef?.current) throw new Error(IMAGE_FIRST_IMPORT_IN_PROGRESS)
+}
+
+/** Testable body of App's queued onPushScenes.run transaction. */
+export async function runStoryScenePush({
+  payload,
+  isImportingRef,
+  assertCurrent,
+  awaitProjectHydration,
+  referencesRef,
+  upsertStoryCharacterRefsFn = upsertStoryCharacterRefs,
+  stripMentionsForNamesFn = stripMentionsForNames,
+  showCollisionWarning,
+  importStoryScenes,
+  saveCurrentProjectWithPayload,
+  setReferences,
+}) {
+  // A queued push can dequeue after the import window has already opened.
+  assertImageFirstImportIdle(isImportingRef)
+  const importEpoch = isImportingRef?.importEpoch ?? 0
+  assertCurrent()
+  if (!(await awaitProjectHydration())) {
+    throw new Error('project not hydrated — story scene push deferred')
+  }
+  assertCurrent()
+  // Hydration is an await boundary. The import window can open while it is pending, so this
+  // second check must remain immediately before the first renderer/reference mutation.
+  assertImageFirstImportIdle(isImportingRef)
+  if ((isImportingRef?.importEpoch ?? 0) !== importEpoch) {
+    throw new Error(IMAGE_FIRST_IMPORT_IN_PROGRESS)
+  }
+
+  let nextReferences
+  let importPayload = payload
+  if (payload.storyCharacters?.length) {
+    const { references: upserted, collisions } = upsertStoryCharacterRefsFn(
+      referencesRef.current,
+      payload.storyCharacters,
+    )
+    if (upserted !== referencesRef.current) nextReferences = upserted
+    if (collisions.length) {
+      importPayload = { ...payload, scenes: payload.scenes.map((scene) => ({
+        ...scene,
+        prompt: stripMentionsForNamesFn(scene.prompt, collisions),
+        videoT2VPrompt: stripMentionsForNamesFn(scene.videoT2VPrompt, collisions),
+      })) }
+      showCollisionWarning(collisions)
+    }
+  }
+
+  const { nextScenes, nextSrtTrack } = importStoryScenes(importPayload)
+  const result = await saveCurrentProjectWithPayload({
+    scenes: nextScenes,
+    srtTrack: nextSrtTrack,
+    references: nextReferences ?? referencesRef.current,
+  })
+  if (!result.ok) throw new Error(result.error || 'project save failed')
+  assertCurrent()
+  if (nextReferences) {
+    referencesRef.current = nextReferences
+    setReferences(nextReferences)
+  }
+}
+
+/** Testable body of App's queued onPushCharacters.run transaction. */
+export async function runStoryCharacterPush({
+  payload,
+  isImportingRef,
+  assertCurrent,
+  awaitProjectHydration,
+  referencesRef,
+  upsertStoryCharacterRefsFn = upsertStoryCharacterRefs,
+  showCollisionWarning,
+  saveCurrentProjectWithPayload,
+  setReferences,
+}) {
+  assertCurrent()
+  if (!payload.storyCharacters?.length) return
+  const importEpoch = isImportingRef?.importEpoch ?? 0
+  if (!(await awaitProjectHydration())) {
+    console.warn('[App] project not hydrated — discarding character push to protect existing refs')
+    return
+  }
+  assertCurrent()
+  // Character pushes have no ack. If an entire import window crossed the hydration await,
+  // drop this delivery; open/getState's maybeSendCharacters remains the resend owner.
+  if (isImportingRef?.current || (isImportingRef?.importEpoch ?? 0) !== importEpoch) return
+  const { references: upserted, collisions } = upsertStoryCharacterRefsFn(
+    referencesRef.current,
+    payload.storyCharacters,
+  )
+  if (collisions.length) showCollisionWarning(collisions)
+  if (upserted === referencesRef.current) return
+  const result = await saveCurrentProjectWithPayload({ references: upserted })
+  if (!result.ok) throw new Error(result.error || 'project save failed')
+  assertCurrent()
+  referencesRef.current = upserted
+  setReferences(upserted)
+}
 
 // Components
 import Header from './components/Header'
@@ -333,7 +437,23 @@ function App() {
     })
   }, [availableModels.imageModels, availableModels.videoModels, availableModels.loading, settings.imageModel, settings.videoModelT2V, settings.videoModelF2V, mode])
   const scenesHook = useScenes()
-  const { scenes, references, parseFromText, parseFromCSV, parseFromSRT, parseReferencesFromCSV, updateReferences, setScenes, setReferences } = scenesHook
+  const { scenes, scenesRef, references, parseFromText, parseFromCSV, parseFromSRT, parseReferencesFromCSV, updateReferences, setScenes, setReferences } = scenesHook
+  const {
+    isImporting: isImageFirstImporting,
+    isImportingRef,
+    beginImageFirstImport,
+    endImageFirstImport,
+    fixedSceneState,
+    fixedSceneStateRef,
+    setFixedSceneState,
+    applyImageFirstImportCommit,
+  } = useImageFirstImportWindow({ setScenes })
+  // Step 6's coordinator will own begin/end and call the single apply boundary. Keeping the
+  // methods here makes App the transaction/window owner without adding ImportModal behavior now.
+  void beginImageFirstImport
+  void endImageFirstImport
+  void fixedSceneStateRef
+  void applyImageFirstImportCommit
   // Step 3: videoScenes 는 scenes 에서 derived. useVideoScenes 가 scenesHook 으로 라우팅.
   const videoScenesHook = useVideoScenes(scenes, scenesHook)
   const { videoScenes, setVideoScenes } = videoScenesHook
@@ -464,6 +584,9 @@ function App() {
     // audioPackage 로드 중(transient null)에 명시적 null로 덮어쓰지 않도록 undefined 유지 —
     // saveCurrentProject가 undefined일 때 localStorage fallback.
     audioFolderPath: audioPackage?.folderPath,
+    fixedSceneState, fixedSceneStateRef, setFixedSceneState,
+    scenesRef,
+    isImportingRef,
     openSettings,
     onAudioSwitch: (audioPath) => audioSwitchRef.current?.(audioPath),
     genAPI,
@@ -508,24 +631,16 @@ function App() {
       const enqueuedPath = storyProjectPathRef.current
       const run = async () => {
         const assertCurrent = () => assertStoryProjectCurrent(storyProjectPathRef.current, enqueuedPath, 'stale story characters discarded (project switched)')
-        assertCurrent()
-        if (!payload.storyCharacters?.length) return
-        // references 가 올라오기 전 upsert 하면 디스크의 카드를 새 카드로 덮어쓴다.
-        if (!(await awaitProjectHydration())) {
-          console.warn('[App] project not hydrated — discarding character push to protect existing refs')
-          return
-        }
-        assertCurrent()
-        const { references: upserted, collisions } = upsertStoryCharacterRefs(referencesRef.current, payload.storyCharacters)
-        if (collisions.length) {
-          toast.warning(t('story.charRef.collision', { names: collisions.join(', ') }))
-        }
-        if (upserted === referencesRef.current) return
-        const r = await saveCurrentProjectWithPayload({ references: upserted })
-        if (!r.ok) throw new Error('project save failed')
-        assertCurrent()
-        referencesRef.current = upserted
-        scenesHook.setReferences(upserted)
+        return runStoryCharacterPush({
+          payload,
+          isImportingRef,
+          assertCurrent,
+          awaitProjectHydration,
+          referencesRef,
+          showCollisionWarning: (collisions) => toast.warning(t('story.charRef.collision', { names: collisions.join(', ') })),
+          saveCurrentProjectWithPayload,
+          setReferences: scenesHook.setReferences,
+        })
       }
       const p = pushQueueRef.current.then(run, run)
       pushQueueRef.current = p.catch(() => {})
@@ -535,51 +650,17 @@ function App() {
       const enqueuedPath = storyProjectPathRef.current
       const run = async () => {
         const assertCurrent = () => assertStoryProjectCurrent(storyProjectPathRef.current, enqueuedPath, 'stale story push discarded (project switched)')
-        // 프로젝트 전환됨 — stale push 폐기. return이 아니라 throw: hook이 ok:true ack로 옛 프로젝트
-        // lastPushedRevision을 잘못 advance(재발신 억제)하지 않도록, ok:false가 나가게 한다(Codex).
-        assertCurrent()
-        // V2: 스토리 캐릭터 → Ref 탭 character 카드 upsert(먼저 — collision을 알아야 씬 멘션을 정리).
-        // push 트랜잭션에서 refs도 함께 영속(autosave 디바운스 전 crash 시 카드 유실 방지).
-        let nextReferences
-        let importPayload = payload
-        // 하이드레이션 전에는 scenesRef/referencesRef 가 비어 있다. 그 위에서 씬을 임포트하고
-        //   saveCurrentProjectWithPayload 로 확정 저장하면 수동 씬과 카드(entityId/이미지 포인터/
-        //   스타일 기억)가 통째로 사라진다. 캐릭터가 없는 푸시(내레이터-온리)도 똑같이 파괴적이라
-        //   storyCharacters 유무와 무관하게 막는다.
-        //   씬만 저장하고 캐릭터 upsert 만 건너뛰는 것도 안 된다 — @멘션이 가리킬 카드가 없는 채로
-        //   확정되고 ok:true ack 때문에 재전송도 안 된다. 통째로 실패시켜 ok:false ack 을 내보낸다.
-        if (!(await awaitProjectHydration())) {
-          throw new Error('project not hydrated — story scene push deferred')
-        }
-        assertCurrent()
-        if (payload.storyCharacters?.length) {
-          const { references: upserted, collisions } = upsertStoryCharacterRefs(referencesRef.current, payload.storyCharacters)
-          if (upserted !== referencesRef.current) {
-            nextReferences = upserted
-          }
-          // Codex: 동명 비-character ref와 충돌해 카드가 없는 이름은 씬 프롬프트의 @멘션을 평문화한다
-          // — 안 그러면 그 @이름이 엉뚱한 타입 ref(scene/style)에 바인딩된다.
-          if (collisions.length) {
-            importPayload = { ...payload, scenes: payload.scenes.map((sc) => ({
-              ...sc,
-              prompt: stripMentionsForNames(sc.prompt, collisions),
-              videoT2VPrompt: stripMentionsForNames(sc.videoT2VPrompt, collisions),
-            })) }
-            toast.warning(t('story.charRef.collision', { names: collisions.join(', ') }))
-          }
-        }
-        const { nextScenes, nextSrtTrack } = scenesHook.importStoryScenes(importPayload)
-        // BUG #1 고침: nextReferences가 undefined(이번 push에서 refs 변경 없음, 예: 직전
-        // onPushCharacters가 이미 반영)면 useProjectData.buildProjectPayload가 undefined를
-        // stale render-closure `references`로 폴백해 방금 추가된 캐릭터 카드가 저장에서
-        // 빠질 수 있다(재로드 시 카드 소실). referencesRef.current(동기 최신 스냅샷)로 대체.
-        const r = await saveCurrentProjectWithPayload({ scenes: nextScenes, srtTrack: nextSrtTrack, references: nextReferences ?? referencesRef.current })
-        if (!r.ok) throw new Error('project save failed')
-        assertCurrent()
-        if (nextReferences) {
-          referencesRef.current = nextReferences
-          scenesHook.setReferences(nextReferences)
-        }
+        return runStoryScenePush({
+          payload,
+          isImportingRef,
+          assertCurrent,
+          awaitProjectHydration,
+          referencesRef,
+          showCollisionWarning: (collisions) => toast.warning(t('story.charRef.collision', { names: collisions.join(', ') })),
+          importStoryScenes: scenesHook.importStoryScenes,
+          saveCurrentProjectWithPayload,
+          setReferences: scenesHook.setReferences,
+        })
       }
       // 직렬화: 이전 push 완료 후 실행(성공/실패 무관). 반환 promise를 훅이 await 후 ack.
       const p = pushQueueRef.current.then(run, run)
@@ -936,8 +1017,9 @@ function App() {
     // B-phase fix: audio 폴더 변경(드롭 등)도 autosave trigger — 그래야 project.json 영속화.
     // useAutoSave는 audio-only 가드용으로 truthy 검사만 하므로 || null 안전.
     audioFolderPath: audioPackage?.folderPath || null,
+    fixedSceneState,
     settings, generatingRefsCount: generatingRefs.length,
-    isRunning, isRestoringRef, saveCurrentProject,
+    isRunning, isRestoringRef, isImportingRef, saveCurrentProject,
     onSaveError: () => toast.error(t('toast.projectSaveFailed'))
   })
 
@@ -1860,7 +1942,7 @@ function App() {
           setPaywallReason('upgrade')
           setShowPaywallModal(true)
         }}
-        disabled={anyRunning || refBatchRunning || videoRetryRunning || !!generatingSceneId || thumbnailGenerating || galleryUploading}
+        disabled={isImageFirstImporting || anyRunning || refBatchRunning || videoRetryRunning || !!generatingSceneId || thumbnailGenerating || galleryUploading}
         modeBusy={isRunning || videoAutomation.isRunning || refBatchRunning || hasPendingBatch || videoRetryRunning || !!generatingSceneId || thumbnailGenerating || galleryUploading}
         storyActive={activeView === 'story'}
         onStoryClick={() => setActiveView(v => v === 'story' ? 'generate' : 'story')}
@@ -2657,6 +2739,8 @@ function App() {
           onProjectChange={handleProjectChange}
           availableModels={availableModels}
           appMode={mode}
+          saveDisabled={isImageFirstImporting}
+          projectActionsDisabled={isImageFirstImporting}
           onSave={async (newSettings) => {
             setSettings(newSettings)
             setShowSettings(false)

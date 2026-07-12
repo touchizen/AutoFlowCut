@@ -28,6 +28,47 @@
 
 import { RESOURCE } from '../config/defaults'
 
+const SCENE_IMAGE_NOT_PNG = 'scene-image-not-png'
+
+/**
+ * Chromium decoder + canvas 기반 기본 PNG encoder.
+ * jsdom에는 실제 decoder/canvas가 없으므로 normalizeSceneImageToPng의 두 번째 인자로
+ * encoder를 주입할 수 있다. production은 이 함수를 사용한다.
+ */
+export async function encodeSceneImageAsPng(data) {
+  if (typeof data !== 'string' || !data) throw new Error(SCENE_IMAGE_NOT_PNG)
+  const image = await new Promise((resolve, reject) => {
+    const element = new Image()
+    element.onload = () => resolve(element)
+    element.onerror = () => reject(new Error(SCENE_IMAGE_NOT_PNG))
+    element.src = data
+  })
+  const width = image.naturalWidth || image.width
+  const height = image.naturalHeight || image.height
+  if (!width || !height) throw new Error(SCENE_IMAGE_NOT_PNG)
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('scene-image-png-encode-failed')
+  context.drawImage(image, 0, 0, width, height)
+  return canvas.toDataURL('image/png')
+}
+
+/**
+ * Scene image의 renderer-side 공통 PNG normalization seam.
+ * encoder 결과도 PNG data URL + magic을 모두 만족해야 IPC로 보낼 수 있다.
+ */
+export async function normalizeSceneImageToPng(data, encoder = encodeSceneImageAsPng) {
+  const normalized = await encoder(data)
+  if (typeof normalized !== 'string'
+    || !normalized.startsWith('data:image/png;base64,')
+    || !normalized.slice(normalized.indexOf(',') + 1).startsWith('iVBOR')) {
+    throw new Error(SCENE_IMAGE_NOT_PNG)
+  }
+  return normalized
+}
+
 export const fileSystemAPI = {
   // ==========================================
   // Folder Selection / Permission
@@ -307,12 +348,16 @@ export const fileSystemAPI = {
         return { success: false, error: 'not_set' }
       }
 
+      const normalizedData = resourceType === RESOURCE.SCENES
+        ? await normalizeSceneImageToPng(data, options.pngEncoder)
+        : data
+
       return await window.electronAPI.saveResource({
         workFolder,
         project: projectName,
         resourceType,
         name,
-        data,
+        data: normalizedData,
         engine,
         metadata,
         historyOnly: options.historyOnly || false
@@ -702,6 +747,50 @@ export const fileSystemAPI = {
       })
     } catch (error) {
       console.error('[FileSystem] Load project data error:', error)
+      return { success: false, error: error.message }
+    }
+  },
+
+  async stageImageFirstImage(projectName, { fixedSceneRevision, rendererSceneId, data }) {
+    try {
+      const workFolder = localStorage.getItem('workFolderPath')
+      if (!workFolder) return { success: false, error: 'not_set' }
+      return await window.electronAPI.stageImageFirstImage({
+        workFolder,
+        project: projectName,
+        fixedSceneRevision,
+        rendererSceneId,
+        data,
+      })
+    } catch (error) {
+      return { success: false, error: error.message }
+    }
+  },
+
+  async abortImageFirstImport(projectName, fixedSceneRevision) {
+    try {
+      const workFolder = localStorage.getItem('workFolderPath')
+      if (!workFolder) return { success: false, error: 'not_set' }
+      return await window.electronAPI.abortImageFirstImport({
+        workFolder,
+        project: projectName,
+        fixedSceneRevision,
+      })
+    } catch (error) {
+      return { success: false, error: error.message }
+    }
+  },
+
+  async commitImageFirstImport(projectName, data) {
+    try {
+      const workFolder = localStorage.getItem('workFolderPath')
+      if (!workFolder) return { success: false, error: 'not_set' }
+      return await window.electronAPI.commitImageFirstImport({
+        workFolder,
+        project: projectName,
+        data,
+      })
+    } catch (error) {
       return { success: false, error: error.message }
     }
   },

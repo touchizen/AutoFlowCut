@@ -58,4 +58,21 @@ describe('SettingsModal.handleSave layout sync', () => {
     expect(window.electronAPI.setLayout).not.toHaveBeenCalled()
     expect(onSave).toHaveBeenCalledWith({ layoutMode: 'split-right', splitRatio: 0.8 })
   })
+
+  it('reactive import lock disables Save and prevents onSave', () => {
+    const onSave = vi.fn()
+    render(
+      <SettingsModal
+        settings={{ saveMode: 'folder' }}
+        onSave={onSave}
+        onClose={() => {}}
+        saveDisabled={true}
+      />
+    )
+
+    const saveButton = screen.getByText('settings.save')
+    expect(saveButton).toBeDisabled()
+    fireEvent.click(saveButton)
+    expect(onSave).not.toHaveBeenCalled()
+  })
 })

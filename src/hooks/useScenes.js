@@ -683,7 +683,7 @@ export function useScenes() {
         return normalizeScene({ ...p, id: allocateSceneId() })
       }
       const merged = { ...prev, ...p, id: prev.id }
-      if (prev.prompt !== p.prompt && (prev.image || prev.imagePath)) {
+      if (Object.hasOwn(prev, 'prompt') && prev.prompt !== p.prompt && (prev.image || prev.imagePath)) {
         merged.stalePrompt = true
         merged.stalePromptAt = now
       }
@@ -720,6 +720,7 @@ export function useScenes() {
   return {
     // State
     scenes,
+    scenesRef,
     references,
     srtTrack,
 

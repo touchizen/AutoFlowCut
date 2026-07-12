@@ -108,6 +108,10 @@ export default function Header({
       loadProjects()
     }
   }, [showProjectDropdown])
+
+  useEffect(() => {
+    if (disabled) setShowProjectDropdown(false)
+  }, [disabled])
   
   // 외부 클릭 시 드롭다운 닫기
   useEffect(() => {
@@ -225,11 +229,13 @@ export default function Header({
   }
   
   const handleProjectSelect = (name) => {
+    if (disabled) return
     onProjectChange(name)
     setShowProjectDropdown(false)
   }
   
   const handleNewProject = () => {
+    if (disabled) return
     setShowProjectDropdown(false)
     onNewProject()
   }

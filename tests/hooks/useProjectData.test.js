@@ -520,26 +520,26 @@ describe('saveCurrentProject — audioFolderPath arg semantics', () => {
 
   it('audioFolderPathArg=undefined + localStorage 있음 → localStorage 값 저장 (fallback)', async () => {
     localStorage.setItem('audioFolderPath', '/cached/audio')
-    await saveCurrentProject(baseSettings, [{ id: 's1' }], [], [], [], null, [], undefined)
+    await saveCurrentProject({ settings: baseSettings, scenes: [{ id: 's1' }], references: [], audioFolderPath: undefined })
     const saved = fileSystemAPI.saveProjectData.mock.calls.at(-1)[1]
     expect(saved.audioFolderPath).toBe('/cached/audio')
   })
 
   it('audioFolderPathArg=null → null 저장 (명시적 제거, localStorage 무시)', async () => {
     localStorage.setItem('audioFolderPath', '/cached/audio')
-    await saveCurrentProject(baseSettings, [{ id: 's1' }], [], [], [], null, [], null)
+    await saveCurrentProject({ settings: baseSettings, scenes: [{ id: 's1' }], references: [], audioFolderPath: null })
     const saved = fileSystemAPI.saveProjectData.mock.calls.at(-1)[1]
     expect(saved.audioFolderPath).toBeNull()
   })
 
   it('audioFolderPathArg=값 → 그 값 저장', async () => {
-    await saveCurrentProject(baseSettings, [{ id: 's1' }], [], [], [], null, [], '/new/audio')
+    await saveCurrentProject({ settings: baseSettings, scenes: [{ id: 's1' }], references: [], audioFolderPath: '/new/audio' })
     const saved = fileSystemAPI.saveProjectData.mock.calls.at(-1)[1]
     expect(saved.audioFolderPath).toBe('/new/audio')
   })
 
   it('audioFolderPathArg=undefined + localStorage 없음 → null 저장', async () => {
-    await saveCurrentProject(baseSettings, [{ id: 's1' }], [], [], [], null, [], undefined)
+    await saveCurrentProject({ settings: baseSettings, scenes: [{ id: 's1' }], references: [], audioFolderPath: undefined })
     const saved = fileSystemAPI.saveProjectData.mock.calls.at(-1)[1]
     expect(saved.audioFolderPath).toBeNull()
   })

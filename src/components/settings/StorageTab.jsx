@@ -12,7 +12,7 @@ import AspectRatioSelector from './AspectRatioSelector'
 // ProjectManager - 프로젝트 관리 컴포넌트
 // ============================================
 
-function ProjectManager({ projectName, aspectRatio = '16:9', onProjectChange, onCreateProject, t }) {
+function ProjectManager({ projectName, aspectRatio = '16:9', onProjectChange, onCreateProject, disabled = false, t }) {
   const [projects, setProjects] = useState([])
   const [loading, setLoading] = useState(true)
   const [newProjectName, setNewProjectName] = useState('')
@@ -45,7 +45,7 @@ function ProjectManager({ projectName, aspectRatio = '16:9', onProjectChange, on
       setProjects(projectList)
 
       // 현재 선택된 프로젝트가 없으면 첫 번째 또는 새로 생성
-      if (!currentProjectName && projectList.length > 0) {
+      if (!disabled && !currentProjectName && projectList.length > 0) {
         onProjectChange(projectList[0])
       }
     }
@@ -53,6 +53,7 @@ function ProjectManager({ projectName, aspectRatio = '16:9', onProjectChange, on
   }
 
   const handleCreateProject = async () => {
+    if (disabled) return
     // 공백 → 언더스코어 변환
     const name = (newProjectName.trim().replace(/\s+/g, '_')) || generateProjectName()
 
@@ -83,6 +84,7 @@ function ProjectManager({ projectName, aspectRatio = '16:9', onProjectChange, on
   }
 
   const handleStartEdit = () => {
+    if (disabled) return
     setEditName(projectName || '')
     setEditMode(true)
   }
@@ -93,6 +95,7 @@ function ProjectManager({ projectName, aspectRatio = '16:9', onProjectChange, on
   }
 
   const handleRename = async () => {
+    if (disabled) return
     // 공백 → 언더스코어 변환
     const newName = editName.trim().replace(/\s+/g, '_')
     if (!newName || newName === projectName) {
@@ -183,6 +186,7 @@ function ProjectManager({ projectName, aspectRatio = '16:9', onProjectChange, on
                 <select
                   value={projectName || ''}
                   onChange={(e) => onProjectChange(e.target.value)}
+                  disabled={disabled}
                 >
                   {projects.length === 0 && (
                     <option value="">{t('settings.noProjects')}</option>
@@ -198,6 +202,7 @@ function ProjectManager({ projectName, aspectRatio = '16:9', onProjectChange, on
                     className="btn-edit-project"
                     onClick={handleStartEdit}
                     title={t('settings.renameProject')}
+                    disabled={disabled}
                   >
                     ✏️
                   </button>
@@ -210,6 +215,7 @@ function ProjectManager({ projectName, aspectRatio = '16:9', onProjectChange, on
                     setShowNewProject(!showNewProject)
                   }}
                   title={t('settings.createProject')}
+                  disabled={disabled}
                 >
                   ➕
                 </button>
@@ -227,7 +233,7 @@ function ProjectManager({ projectName, aspectRatio = '16:9', onProjectChange, on
                   onChange={(e) => setNewProjectName(e.target.value)}
                   placeholder={t('settings.projectNamePlaceholder')}
                 />
-                <button className="btn-primary btn-small" onClick={handleCreateProject}>
+                <button className="btn-primary btn-small" onClick={handleCreateProject} disabled={disabled}>
                   {t('settings.create')}
                 </button>
                 <button className="btn-secondary btn-small" onClick={() => setShowNewProject(false)}>
@@ -262,6 +268,7 @@ export default function StorageTab({
   onSelectFolder,
   onProjectChange,
   highlight,
+  disabled = false,
   t
 }) {
   const showFolderWarning = localSettings.saveMode === 'folder' && !workFolder.name
@@ -349,6 +356,7 @@ export default function StorageTab({
             }
             return res
           }}
+          disabled={disabled}
           t={t}
         />
       )}

@@ -24,7 +24,17 @@ const TABS = [
   { id: 'mcp', icon: '🔌', labelKey: 'settings.tabMcp' }
 ]
 
-export default function SettingsModal({ settings, onSave, onClose, initialTab = null, onProjectChange, availableModels = {}, appMode }) {
+export default function SettingsModal({
+  settings,
+  onSave,
+  onClose,
+  initialTab = null,
+  onProjectChange,
+  availableModels = {},
+  appMode,
+  saveDisabled = false,
+  projectActionsDisabled = false,
+}) {
   const { t } = useI18n()
   // 모델 선택 옵션 — App 에서 라이브 /models 로 채워 내려줌(undefined 면 SceneTab 이 정적 폴백).
   const [activeTab, setActiveTab] = useState(initialTab || 'storage')
@@ -63,6 +73,7 @@ export default function SettingsModal({ settings, onSave, onClose, initialTab = 
   }
 
   const handleSave = () => {
+    if (saveDisabled) return
     // 레이아웃(디스플레이 탭)은 DisplayTab.handleLayout 이 클릭 즉시 라이브로 적용한다
     // (main → layout-changed → Shell). localSettings 에는 기록되지 않으므로 여기서 재전송하지 않는다.
     onSave(localSettings)
@@ -71,7 +82,7 @@ export default function SettingsModal({ settings, onSave, onClose, initialTab = 
   const footer = (
     <>
       <button className="btn-secondary" onClick={onClose}>{t('settings.cancel')}</button>
-      <button className="btn-primary" onClick={handleSave}>{t('settings.save')}</button>
+      <button className="btn-primary" onClick={handleSave} disabled={saveDisabled}>{t('settings.save')}</button>
     </>
   )
 
@@ -105,6 +116,7 @@ export default function SettingsModal({ settings, onSave, onClose, initialTab = 
             onSelectFolder={handleSelectFolder}
             onProjectChange={onProjectChange}
             highlight={highlight}
+            disabled={projectActionsDisabled}
             t={t}
           />
         )}

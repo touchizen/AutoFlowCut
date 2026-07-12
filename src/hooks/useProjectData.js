@@ -13,6 +13,27 @@ import { stripReferencesForSave } from '../utils/projectPersist'
 // 없으면(기능 추가 전 프로젝트 등) 직전 프로젝트 값을 물려받지 않고 이 기본값으로
 // 떨어진다 — 그래야 화면비가 전역처럼 새지 않고 프로젝트별로 결정론적이다.
 const DEFAULT_ASPECT_RATIO = '16:9'
+export const IMAGE_FIRST_IMPORT_IN_PROGRESS = 'image-first-import-in-progress'
+const IMAGE_FIRST_IMPORT_BLOCKED = Object.freeze({
+  ok: false,
+  success: false,
+  error: IMAGE_FIRST_IMPORT_IN_PROGRESS,
+})
+const FIXED_SCENE_KEYS = ['sceneMode', 'imageFirstVariant', 'fixedSceneRevision', 'fixedScenes']
+
+/**
+ * Fixed fields가 전부 없을 때만 legacy audio-first(null)다. 일부만 남은 malformed state는
+ * 그대로 보존해 main consistency owner가 fixed-scenes-stale로 판정할 수 있게 한다.
+ */
+export function pickFixedSceneState(data) {
+  if (!data || !FIXED_SCENE_KEYS.some((key) => Object.hasOwn(data, key))) return null
+  return {
+    sceneMode: data.sceneMode,
+    imageFirstVariant: data.imageFirstVariant,
+    fixedSceneRevision: data.fixedSceneRevision,
+    fixedScenes: data.fixedScenes,
+  }
+}
 
 /**
  * 로드/복원 시 중단된 'generating' 상태를 'pending' 으로 정규화.
@@ -388,6 +409,7 @@ export async function loadProjectWithResources(projectName) {
     // 프로젝트별 화면비 — project.json 의 settings 에 저장됨 (없으면 null → 호출부에서 16:9 기본)
     aspectRatio: result.data.settings?.aspectRatio || null,
     flowProjectId: pickFlowProjectId(result.data),
+    fixedSceneState: pickFixedSceneState(result.data),
   }
 }
 
@@ -395,7 +417,7 @@ export async function loadProjectWithResources(projectName) {
  * project.json 저장 payload 빌드 (순수). flowProjectId 는 truthy 일 때만 포함
  * (빈 값이면 생략 → 기존 저장값 보존, §3.3.1). camelCase canonical 필드.
  */
-export function buildProjectSavePayload({ srtTrack, scenes, references, videoScenes, framePairs, settings, audioFolderPath, selectedStyleRefId, flowProjectId }) {
+export function buildProjectSavePayload({ srtTrack, scenes, references, videoScenes, framePairs, settings, audioFolderPath, selectedStyleRefId, flowProjectId, fixedSceneState = null }) {
   const payload = {
     schemaVersion: 2,
     srtTrack,
@@ -408,6 +430,9 @@ export function buildProjectSavePayload({ srtTrack, scenes, references, videoSce
     selectedStyleRefId,
   }
   if (flowProjectId) payload.flowProjectId = flowProjectId
+  if (fixedSceneState !== null && fixedSceneState !== undefined) {
+    for (const key of FIXED_SCENE_KEYS) payload[key] = fixedSceneState[key]
+  }
   return payload
 }
 
@@ -443,10 +468,28 @@ export function shouldClearFlowMapping(result) {
  *   결과. 저장 대상이 아니면(폴더 모드 아님 / 프로젝트 폴더 없음) undefined.
  */
 // 테스트용 export — hook 통합 없이 직접 호출 가능 (예: audioFolderPath fallback 검증)
-export async function saveCurrentProject(settings, scenes, references, videoScenes = [], framePairs = [], selectedStyleRefId = null, srtTrack = [], audioFolderPathArg = undefined, flowProjectId = null) {
+export async function saveCurrentProject({
+  settings,
+  scenes = [],
+  references = [],
+  videoScenes = [],
+  framePairs = [],
+  selectedStyleRefId = null,
+  srtTrack = [],
+  audioFolderPath: audioFolderPathArg = undefined,
+  flowProjectId = null,
+  fixedSceneState = null,
+  isImportingRef = null,
+} = {}) {
+  if (!settings) return
   if (!settings.projectName || settings.saveMode !== 'folder') return
+  const importEpoch = isImportingRef?.importEpoch ?? 0
+  if (isImportingRef?.current) return IMAGE_FIRST_IMPORT_BLOCKED
   const exists = await fileSystemAPI.projectExists(settings.projectName)
   if (!exists) return
+  if (isImportingRef?.current || (isImportingRef?.importEpoch ?? 0) !== importEpoch) {
+    return IMAGE_FIRST_IMPORT_BLOCKED
+  }
 
   // scenes에서 base64 데이터 제외 (image, videoT2V, videoI2V)
   const scenesWithoutImages = scenes.map(({ image, videoT2V, videoI2V, ...rest }) => rest)
@@ -477,7 +520,17 @@ export async function saveCurrentProject(settings, scenes, references, videoScen
     audioFolderPath,
     selectedStyleRefId,
     flowProjectId,
+    fixedSceneState,
   }))
+}
+
+/**
+ * 모든 renderer whole-file writer가 공유하는 exported choke point.
+ * import window에서는 module saveCurrentProject/buildProjectSavePayload/disk write에 진입하지 않는다.
+ */
+export function buildProjectPayload({ isImportingRef, saveProjectImpl = saveCurrentProject, ...saveOptions }) {
+  if (isImportingRef?.current) return IMAGE_FIRST_IMPORT_BLOCKED
+  return saveProjectImpl({ ...saveOptions, isImportingRef })
 }
 
 export function useProjectData({
@@ -488,6 +541,10 @@ export function useProjectData({
   selectedStyleRefId = null, setSelectedStyleRefId = null,
   srtTrack = [], setSrtTrack = null,
   audioFolderPath = undefined, // React state로 추적된 audio 폴더; undefined면 localStorage fallback
+  fixedSceneState = null, setFixedSceneState = null,
+  scenesRef = null, fixedSceneStateRef = null,
+  isImportingRef = null,
+  saveProjectImpl = saveCurrentProject,
   openSettings,
   onAudioSwitch,
   genAPI = null,
@@ -843,6 +900,7 @@ export function useProjectData({
         setSelectedStyleRefId?.(loaded.selectedStyleRefId || null)
         setSrtTrack?.(loaded.srtTrack || [])
         setFlowProjectId(loaded.flowProjectId || null)
+        setFixedSceneState?.(loaded.fixedSceneState)
         setSettings(s => ({
           ...s,
           projectName: prevProjectName,
@@ -938,7 +996,14 @@ export function useProjectData({
    *   성공 여부. success=false 면 호출부가 optimistic 한 projectName 갱신을 롤백한다.
    */
   const handleProjectChange = async (newProjectName, opts = {}) => {
+    if (isImportingRef?.current) {
+      return { success: false, error: IMAGE_FIRST_IMPORT_IN_PROGRESS }
+    }
     if (newProjectName === settings.projectName) return { aspectRatio: settings.aspectRatio, success: true }
+    const importEpoch = isImportingRef?.importEpoch ?? 0
+    const importWindowCrossed = () => isImportingRef?.current
+      || (isImportingRef?.importEpoch ?? 0) !== importEpoch
+    const importBlockedSwitch = () => ({ success: false, error: IMAGE_FIRST_IMPORT_IN_PROGRESS })
 
     // #R5-2: 에폭 클레임 — BEFORE isRestoringRef(spec 요건: 에폭이 먼저라야 이전 restore 를 supersede).
     const myEpoch = ++loadEpochRef.current
@@ -952,7 +1017,20 @@ export function useProjectData({
     try {
       // 1. 현재 프로젝트 데이터 저장
       // #R4-2: flowProjectId (9th arg) 포함 — 누락 시 프로젝트 전환 때 바인딩이 지워짐
-      const _saveRes = await saveCurrentProject(settings, scenes, references, videoScenes, framePairs, selectedStyleRefId, srtTrack, audioFolderPath, flowProjectId)
+      const _saveRes = await saveProjectImpl({
+        settings,
+        scenes: scenesRef ? scenesRef.current : scenes,
+        references,
+        videoScenes,
+        framePairs,
+        selectedStyleRefId,
+        srtTrack,
+        audioFolderPath,
+        flowProjectId,
+        fixedSceneState: fixedSceneStateRef ? fixedSceneStateRef.current : fixedSceneState,
+        isImportingRef,
+      })
+      if (importWindowCrossed()) return importBlockedSwitch()
       // #R20-6: 현재 프로젝트 저장이 실패했으면 전환을 중단한다 — 그대로 전환하면 미저장 편집이
       //   유실된다. onSaveError 로 알리고 switched=false 로 반환(호출부가 롤백).
       if (_saveRes && _saveRes.success === false) {
@@ -970,10 +1048,12 @@ export function useProjectData({
       let nextAspectRatio = opts.isNewProject ? (opts.aspectRatio || null) : null
       let isFreshProject = false
       const newExists = await fileSystemAPI.projectExists(newProjectName)
+      if (importWindowCrossed()) return importBlockedSwitch()
       // #R5-2: projectExists await 후 확인
       if (superseded()) return { aspectRatio: settings.aspectRatio, success: false }
       if (newExists) {
         const loaded = await loadProjectWithResources(newProjectName)
+        if (importWindowCrossed()) return importBlockedSwitch()
         // #R5-2: 무거운 리소스 로드 후 확인 — 여기가 가장 오래 걸리는 지점
         if (superseded()) return { aspectRatio: settings.aspectRatio, success: false }
         if (loaded) {
@@ -984,6 +1064,7 @@ export function useProjectData({
           setSelectedStyleRefId?.(loaded.selectedStyleRefId || null)
           setSrtTrack?.(loaded.srtTrack || [])
           setFlowProjectId(loaded.flowProjectId || null)
+          setFixedSceneState?.(loaded.fixedSceneState)
           // #R24-1: main 의 startup-hint 도 현재 프로젝트로 동기화한다. 안 그러면 hint 가 앱 시작
           //   시 auto-restore 가 선언한 (이전) 프로젝트에 멈춰 있다가, API 모드에서 프로젝트를
           //   전환한 뒤 처음 Flow 로 들어갈 때 bootstrap 이 stale hint 로 이전 프로젝트를 연다.
@@ -1002,6 +1083,7 @@ export function useProjectData({
             let confirmed = false
             try {
               const r = await window.electronAPI?.openFlowProject?.({ flowProjectId: loaded.flowProjectId })
+              if (importWindowCrossed()) return importBlockedSwitch()
               // #R5-2: openFlowProject await 후 확인
               if (superseded()) return { aspectRatio: settings.aspectRatio, success: false }
               confirmed = await applyOpenResult(r, loaded.flowProjectId, newProjectName, () => !superseded() && modeRef.current === 'flow')
@@ -1031,6 +1113,7 @@ export function useProjectData({
           setSelectedStyleRefId?.(null)
           setSrtTrack?.([])
           setFlowProjectId(null)
+          setFixedSceneState?.(null)
           declareStartup(null)  // #R24-1: hint 를 현재(매핑 없는) 프로젝트로 동기화
           // #R7-2: api → 즉시 true; flow → mode-entry Case B 가 establish 할 때까지 false 유지.
           setFlowProjectReady(modeRef.current !== 'flow')
@@ -1047,6 +1130,7 @@ export function useProjectData({
         // srtTrack 이 새 프로젝트로 누수되어 autosave 가 잘못 영속화함)
         setSrtTrack?.([])
         setFlowProjectId(null)
+        setFixedSceneState?.(null)
         declareStartup(null)  // #R24-1: 새 프로젝트는 아직 Flow 매핑 없음 — hint 도 null 로 동기화
         // #R7-2: api → 즉시 true; flow → mode-entry Case B 가 establish 할 때까지 false 유지.
         setFlowProjectReady(modeRef.current !== 'flow')
@@ -1064,6 +1148,7 @@ export function useProjectData({
       // 프로젝트 값이 아니라 기본값으로 — 화면비가 전역처럼 새는 것을 막는다.
       // #R5-2: step 4 직전 최종 확인 — 여기까지 superseded 되면 상태 업데이트 전체 skip.
       if (superseded()) return { aspectRatio: settings.aspectRatio, success: false }
+      if (importWindowCrossed()) return importBlockedSwitch()
       const resolvedAspectRatio = nextAspectRatio || DEFAULT_ASPECT_RATIO
       setSettings(s => ({ ...s, projectName: newProjectName, aspectRatio: resolvedAspectRatio }))
       switched = true // 여기까지 왔으면 앱은 새 프로젝트로 전환됨
@@ -1076,10 +1161,19 @@ export function useProjectData({
       //    메타 저장만 조용히 실패" 가 된다.
       if (isFreshProject) {
         try {
-          const res = await saveCurrentProject(
-            { ...settings, projectName: newProjectName, aspectRatio: resolvedAspectRatio },
-            [], [], [], [], null, [], null, // 신규 프로젝트 — audio 폴더는 아직 없음
-          )
+          const res = await saveProjectImpl({
+            settings: { ...settings, projectName: newProjectName, aspectRatio: resolvedAspectRatio },
+            scenes: [],
+            references: [],
+            videoScenes: [],
+            framePairs: [],
+            selectedStyleRefId: null,
+            srtTrack: [],
+            audioFolderPath: null, // 신규 프로젝트 — audio 폴더는 아직 없음
+            flowProjectId: null,
+            fixedSceneState: null,
+            isImportingRef,
+          })
           if (res && res.success === false) {
             console.warn('[App] New project save failed:', res.error)
             onSaveError?.(res.error)
@@ -1117,25 +1211,28 @@ export function useProjectData({
   // saveCurrentProject 래퍼와 saveCurrentProjectWithPayload 가 공유하는 내부 헬퍼.
   // scenes/srtTrack(및 settings) 을 명시로 넘기면 그 값을, 안 넘기면(undefined) 현재
   // closure 값(hook 의 최신 render 상태)을 사용해 표준 saveCurrentProject 를 호출한다.
-  const buildProjectPayload = ({ settingsOverride, scenes: scenesArg, srtTrack: srtTrackArg, references: referencesArg } = {}) =>
-    saveCurrentProject(
-      settingsOverride || settings,
-      scenesArg !== undefined ? scenesArg : scenes,
-      referencesArg !== undefined ? referencesArg : references,
+  const buildCurrentProjectPayload = ({ settingsOverride, scenes: scenesArg, srtTrack: srtTrackArg, references: referencesArg } = {}) =>
+    buildProjectPayload({
+      isImportingRef,
+      saveProjectImpl,
+      settings: settingsOverride || settings,
+      scenes: scenesArg !== undefined ? scenesArg : (scenesRef ? scenesRef.current : scenes),
+      references: referencesArg !== undefined ? referencesArg : references,
       videoScenes,
       framePairs,
       selectedStyleRefId,
-      srtTrackArg !== undefined ? srtTrackArg : srtTrack,
+      srtTrack: srtTrackArg !== undefined ? srtTrackArg : srtTrack,
       audioFolderPath,
       flowProjectId,
-    )
+      fixedSceneState: fixedSceneStateRef ? fixedSceneStateRef.current : fixedSceneState,
+    })
 
   return {
     addPendingSave,
     handleProjectChange,
     // settingsOverride: 설정 저장 시점처럼 setSettings 직후(아직 리렌더 전) 호출할 때
     // 최신 settings 를 명시로 넘겨 stale closure 를 피한다.
-    saveCurrentProject: (settingsOverride) => buildProjectPayload({ settingsOverride }),
+    saveCurrentProject: (settingsOverride) => buildCurrentProjectPayload({ settingsOverride }),
     // §4-④: story push 직후처럼, 아직 리렌더 전이라 scenes/srtTrack closure 가 최신
     // 상태를 반영하지 못하는 시점에 명시 payload 로 저장한다 — closure 의 stale 값
     // 대신 인자로 준 scenes/srtTrack 을 저장(나머지 필드는 기존 로직과 동일하게 현재
@@ -1143,8 +1240,9 @@ export function useProjectData({
     // 모드 아님)도 ok:true 로 취급한다. 실패({success:false})면 ok:false, throw 는
     // 그대로 전파(기존 saveCurrentProject 관행과 동일 — 여기서 삼키지 않는다).
     saveCurrentProjectWithPayload: async ({ scenes: scenesArg, srtTrack: srtTrackArg, references: referencesArg } = {}) => {
-      const res = await buildProjectPayload({ scenes: scenesArg, srtTrack: srtTrackArg, references: referencesArg })
-      return { ok: !(res && res.success === false) }
+      const res = await buildCurrentProjectPayload({ scenes: scenesArg, srtTrack: srtTrackArg, references: referencesArg })
+      if (res && res.success === false) return { ok: false, error: res.error }
+      return { ok: true }
     },
     isRestoringRef,  // auto-save 가드용
     projectLoading,  // 로딩 오버레이용

@@ -32,8 +32,9 @@ export function useAutoSave({
   selectedStyleRefId = null,
   srtTrack = EMPTY_SRT_TRACK,
   audioFolderPath = null,
+  fixedSceneState = null,
   settings, generatingRefsCount, isRunning,
-  isRestoringRef, saveCurrentProject, onSaveError = null
+  isRestoringRef, isImportingRef, saveCurrentProject, onSaveError = null
 }) {
   // onSaveError 는 deps 에 넣지 않고 ref 로 최신값을 추적한다 — 콜백이 매 렌더
   // 새 클로저여도 autosave 타이머가 재예약되지 않게.
@@ -50,11 +51,13 @@ export function useAutoSave({
   useEffect(() => {
     if (generatingRefsCount > 0 || isRunning) return
     if (isRestoringRef?.current) return
+    if (isImportingRef?.current) return
     // 빈 프로젝트는 저장 안 함. 단 audioFolderPath만 있어도(audio-only) 저장 대상.
     if (scenes.length === 0 && references.length === 0 && videoScenes.length === 0 && !audioFolderPath) return
     if (settings.saveMode === 'folder' && settings.projectName) {
       const timer = setTimeout(async () => {
         if (isRestoringRef?.current) return
+        if (isImportingRef?.current) return
         const res = await saveCurrentProjectRef.current()
         if (res && res.success === false) {
           // 생성 직후 등 autosave 실패 — 조용히 묻으면 이미지는 있는데 메타가
@@ -75,5 +78,5 @@ export function useAutoSave({
     // 갱신하는 경로가 autosave 안 되면 종료 시 손실.
     // B-phase fix: audioFolderPath도 trigger — mp3 드롭 직후 앱 종료해도 project.json
     // 에 반영되도록.
-  }, [scenes, references, videoScenes, framePairs, selectedStyleRefId, srtTrack, audioFolderPath, settings.projectName, settings.saveMode, settings.aspectRatio, generatingRefsCount, isRunning])
+  }, [scenes, references, videoScenes, framePairs, selectedStyleRefId, srtTrack, audioFolderPath, fixedSceneState, settings.projectName, settings.saveMode, settings.aspectRatio, generatingRefsCount, isRunning])
 }

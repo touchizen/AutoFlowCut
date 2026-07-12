@@ -30,7 +30,7 @@ import { toast } from '../../../src/components/Toast'
 
 const t = (k) => k
 
-function renderStorageTab(onProjectChange = vi.fn()) {
+function renderStorageTab(onProjectChange = vi.fn(), disabled = false) {
   const setLocalSettings = vi.fn()
   render(
     <StorageTab
@@ -40,6 +40,7 @@ function renderStorageTab(onProjectChange = vi.fn()) {
       onSelectFolder={vi.fn()}
       onProjectChange={onProjectChange}
       highlight={false}
+      disabled={disabled}
       t={t}
     />,
   )
@@ -54,6 +55,14 @@ beforeEach(() => {
 })
 
 describe('StorageTab — New Project aspect ratio', () => {
+  it('disables project switch and new-project controls during the import window', async () => {
+    renderStorageTab(vi.fn(), true)
+
+    expect(await screen.findByRole('combobox')).toBeDisabled()
+    expect(screen.getByTitle('settings.createProject')).toBeDisabled()
+    expect(screen.getByTitle('settings.renameProject')).toBeDisabled()
+  })
+
   it('shows the 16:9 / 9:16 selector in the create form', async () => {
     renderStorageTab()
     fireEvent.click(await screen.findByTitle('settings.createProject'))

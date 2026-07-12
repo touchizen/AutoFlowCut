@@ -118,7 +118,7 @@ describe('saveCurrentProjectWithPayload', () => {
       res = await result.current.saveCurrentProjectWithPayload({ scenes: [{ id: 's' }], srtTrack: [] })
     })
 
-    expect(res).toEqual({ ok: false })
+    expect(res).toEqual({ ok: false, error: 'disk full' })
   })
 
   it('does not mutate the existing saveCurrentProject() closure-based behavior', async () => {

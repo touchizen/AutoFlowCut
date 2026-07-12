@@ -88,6 +88,26 @@ describe('useStoryPipeline', () => {
     ))
   })
 
+  it('image-first import gate throw → exact nack reason and never an ok:true ack', async () => {
+    const onPushScenes = vi.fn(async () => { throw new Error('image-first-import-in-progress') })
+    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes }))
+    await act(() => result.current.open())
+
+    await act(() => listeners['story:pushScenes']({
+      projectToken: 'tok1', operationId: 'op-import-race', pushRevision: 7, scenes: [],
+    }))
+
+    expect(window.electronAPI.storyPushAck).toHaveBeenCalledTimes(1)
+    expect(window.electronAPI.storyPushAck).toHaveBeenCalledWith({
+      projectToken: 'tok1',
+      operationId: 'op-import-race',
+      pushRevision: 7,
+      ok: false,
+      reason: 'image-first-import-in-progress',
+    })
+    expect(window.electronAPI.storyPushAck).not.toHaveBeenCalledWith(expect.objectContaining({ ok: true }))
+  })
+
   it('pushCharacters 수신 → onPushCharacters 호출(ack 없음)', async () => {
     const onPushCharacters = vi.fn(async () => {})
     const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: vi.fn(), onPushCharacters }))
