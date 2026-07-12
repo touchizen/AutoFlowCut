@@ -15,6 +15,17 @@ const child = spawn(
   }
 )
 
+// 부모가 죽으면 child 도 죽여야 한다 — spike 는 60~90분짜리 CLI child 를 물고 있어서,
+// supervisor 가 runner PID 만 종료하면 고아 프로세스가 남는다.
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  process.on(sig, () => child.kill(sig))
+}
+
+child.on('error', (err) => {
+  console.error('[run-spike] vitest 를 띄우지 못했다:', err.message)
+  process.exit(1)
+})
+
 child.on('exit', (code, signal) => {
   if (signal) process.kill(process.pid, signal)
   else process.exit(code ?? 1)

@@ -16,11 +16,24 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { readFileSync, writeFileSync, rmSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, rmSync, mkdirSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 const root = resolve(__dirname, '../..')
-const SENTINEL = resolve(root, 'tests/spike/__isolation_sentinel__.test.js')
+const SPIKE_DIR = resolve(root, 'tests/spike')
+
+// 고정 파일명을 쓰면 (a) worker 가 SIGKILL 되면 sentinel 이 남아 다음 spike 실행에 수집되고
+// (b) 두 runner 가 동시에 돌면 서로의 sentinel 을 지운다. PID 로 유일하게 만든다.
+const SENTINEL_PREFIX = '__isolation_sentinel__'
+const SENTINEL_NAME = `${SENTINEL_PREFIX}.${process.pid}.test.js`
+const SENTINEL = resolve(SPIKE_DIR, SENTINEL_NAME)
+
+/** 이전 실행이 crash 로 남긴 sentinel 을 치운다 */
+function sweepStaleSentinels() {
+  for (const f of readdirSync(SPIKE_DIR)) {
+    if (f.startsWith(SENTINEL_PREFIX)) rmSync(resolve(SPIKE_DIR, f), { force: true })
+  }
+}
 
 /**
  * vitest 의 실제 파일 수집 결과 (실행은 안 하고 목록만).
@@ -41,7 +54,8 @@ function discover(config, env = {}) {
 }
 
 beforeAll(() => {
-  mkdirSync(resolve(root, 'tests/spike'), { recursive: true })
+  mkdirSync(SPIKE_DIR, { recursive: true })
+  sweepStaleSentinels()
   // 일부러 `.spike.` 없이 이름을 붙인다 — 이런 파일이 두 suite 모두에서 조용히
   // 사라지면(=false green) 그것 자체가 결함이다.
   writeFileSync(SENTINEL, `import { it, expect } from 'vitest'\nit('isolation sentinel', () => expect(1).toBe(1))\n`)
@@ -52,19 +66,19 @@ afterAll(() => rmSync(SENTINEL, { force: true }))
 describe('M-1: spike 격리', () => {
   it('일반 실행(test:run)은 tests/spike 를 수집하지 않는다', () => {
     const out = discover('vitest.config.js')
-    expect(out).not.toContain('__isolation_sentinel__')
+    expect(out).not.toContain(SENTINEL_PREFIX)
     expect(out).not.toContain('tests/spike/')
   })
 
   it('spike 실행은 그 파일을 수집한다 — `.spike.` 없이 이름 붙여도 사라지지 않는다', () => {
     const out = discover('vitest.spike.config.js', { SPIKE: '1' })
-    expect(out).toContain('__isolation_sentinel__')
+    expect(out).toContain(SENTINEL_NAME)
   })
 
   it('SPIKE=1 이 없으면 spike config 는 실행을 거부한다 (npm script 밖에서도)', () => {
     const out = discover('vitest.spike.config.js', { SPIKE: '' })
     expect(out).toContain('SPIKE=1')
-    expect(out).not.toContain('__isolation_sentinel__')
+    expect(out).not.toContain(SENTINEL_PREFIX)
   })
 
   it('spike timeout 이 75분보다 크다 (10분 approval + 60분 workflow + cleanup)', async () => {

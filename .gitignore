@@ -28,3 +28,8 @@ _models/
 # 내부 개발 문서 (public 미공개 — disk-only)
 docs/plans-archive/
 docs/superpowers/
+
+# Playwright / coverage 산출물 — 검증만 돌려도 트리가 더러워진다
+test-results/
+coverage/
+playwright-report/

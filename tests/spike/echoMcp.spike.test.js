@@ -29,8 +29,11 @@ let transport
 let workDir
 let markerFile
 
-/** gated body 가 실제로 돈 횟수 (child 가 append 한 marker 파일을 부모가 읽는다) */
-const bodyRuns = () => readFileSync(markerFile, 'utf-8').split('\n').filter(Boolean).length
+/**
+ * gated body 가 **무엇에 대해** 돌았는지 (child 가 append 한 marker 파일을 부모가 읽는다).
+ * 줄 수만 세면 앞선 call 의 늦은 append 가 이번 call 의 누락을 가릴 수 있다 — 항목을 본다.
+ */
+const bodyRuns = () => readFileSync(markerFile, 'utf-8').split('\n').filter(Boolean)
 
 /** 다음 elicitation 요청을 이 응답으로 처리한다. holdMs 만큼 **요청을 열어둔 채** 붙잡는다. */
 function respondToElicitation(response, { holdMs = 0 } = {}) {
@@ -90,7 +93,7 @@ describe('M-1: echo MCP fixture (stdio)', () => {
 
     expect(r.isError).toBe(true)
     expect(r.content[0].text).toBe('blocked:decline')
-    expect(bodyRuns()).toBe(0)  // body 를 돌려놓고 blocked 를 반환하는 회귀를 잡는다
+    expect(bodyRuns()).toEqual([])  // body 를 돌려놓고 blocked 를 반환하는 회귀를 잡는다
   })
 
   it('gated accept → result + body 정확히 1회', async () => {
@@ -100,7 +103,7 @@ describe('M-1: echo MCP fixture (stdio)', () => {
 
     expect(r.isError).toBeFalsy()
     expect(r.content[0].text).toBe('approved:yes')
-    expect(bodyRuns()).toBe(1)
+    expect(bodyRuns()).toEqual(['yes'])  // 개수가 아니라 항목 — 다른 call 의 marker 가 섞이면 잡힌다
   })
 
   it('elicitation 요청을 열어둔 채 hold 해도 call 이 살아남는다 (M0-9 의 축소판)', async () => {
@@ -114,6 +117,6 @@ describe('M-1: echo MCP fixture (stdio)', () => {
 
     expect(elapsed).toBeGreaterThanOrEqual(1500)  // hold 가 실제로 요청을 붙잡았다
     expect(r.content[0].text).toBe('approved:held')
-    expect(bodyRuns()).toBe(1)
+    expect(bodyRuns()).toEqual(['held'])
   })
 })
