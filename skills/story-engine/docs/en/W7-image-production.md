@@ -195,20 +195,33 @@ for num, s in errors:
 - `imagePath` — path to generated image
 - `id` — scene unique ID
 
-**CSV export (app data → CSV file):**
+**CSV sync (updated app prompts → existing 13-field CSV):**
+
+The app scene array has already collapsed row-level `speaker` and timing, so it is not a source
+for a new CSV. Read the existing W6 CSV and merge only prompts by `_sceneNum`, preserving authored rows.
 ```bash
 curl -s http://localhost:3210/api/scenes | python3 -c "
 import json, sys, csv, io
 data = json.load(sys.stdin)
-fields = ['prompt', 'prompt_ko', 'subtitle', 'characters', 'scene_tag', 'style_tag', 'shot_type', 'duration', 'start_time', 'end_time', 'parent_scene']
+fields = ['scene', 'prompt', 'prompt_ko', 'subtitle', 'speaker', 'characters', 'scene_tag', 'style_tag', 'shot_type', 'duration', 'start_time', 'end_time', 'parent_scene']
+with open('EXPORT_PATH.csv', newline='', encoding='utf-8-sig') as f:
+    reader = csv.DictReader(f)
+    if reader.fieldnames != fields:
+        raise ValueError(f'expected 13-field storyboard CSV, got: {reader.fieldnames}')
+    existing_rows = list(reader)
+app_by_scene = {str(row.get('_sceneNum') or i + 1): row for i, row in enumerate(data)}
+for row in existing_rows:
+    app_row = app_by_scene.get(str(row['scene']))
+    if app_row and row['prompt'].strip():
+        row['prompt'] = app_row.get('prompt', row['prompt'])
+        row['prompt_ko'] = app_row.get('prompt_ko', row['prompt_ko'])
 output = io.StringIO()
 writer = csv.DictWriter(output, fieldnames=fields, extrasaction='ignore')
 writer.writeheader()
-for row in data:
-    writer.writerow(row)
+writer.writerows(existing_rows)
 with open('EXPORT_PATH.csv', 'w', encoding='utf-8') as f:
     f.write(output.getvalue())
-print(f'CSV saved: {len(data)} scenes')
+print(f'CSV saved: {len(existing_rows)} rows')
 "
 ```
 
@@ -325,5 +338,3 @@ After the gate passes, hand off to W8 (`docs/{lang}/W8-assembly.md`).
 
 ## Wave review summary
 Substeps 7-0 through 7-2b enforce max-5-round review (auto-advance on 0 issues). When the last substep (7-2b image QA, batch × 2 parallel) passes, control enters 7-3 (user gate). User approval completes Wave 7 and hands off to W8.
-
-

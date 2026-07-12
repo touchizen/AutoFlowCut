@@ -79,9 +79,11 @@ AutoFlowCut MCP: get_schema({ type: "prompt-image" }) → prompt-writing guide
 
 | Column | Required | Description |
 |--------|----------|-------------|
+| `scene` | O | Integer ordinal that groups subtitle rows into one image slot |
 | `prompt` | O | English image/video prompt |
 | `prompt_ko` | | (Unused for dark-history) |
 | `subtitle` | | Narration / dialogue subtitle |
+| `speaker` | O when subtitle exists | Use `narrator` for narration, or the ID/name from the timecoded speaker source |
 | `characters` | | Characters appearing (comma-separated) |
 | `scene_tag` | | Place tag (matches scene name in references.csv) |
 | `style_tag` | | Mood tag |
@@ -90,6 +92,9 @@ AutoFlowCut MCP: get_schema({ type: "prompt-image" }) → prompt-writing guide
 | `start_time` | | Start time (seconds) |
 | `end_time` | | End time (seconds) |
 | `parent_scene` | | Scene group ID (S001, S002, ...) |
+
+Write all 13 columns above in exactly this order. `scene` preserves authored scene boundaries,
+and every row with `subtitle` MUST have a non-empty `speaker`.
 
 ### Scene splitting rules
 

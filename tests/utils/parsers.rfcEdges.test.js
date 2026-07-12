@@ -8,12 +8,28 @@
 import { describe, it, expect } from 'vitest'
 import {
   parseCSVToScenes,
+  parseSceneCSVToTracks,
   mergeCSVIntoScenes,
   detectCSVType,
   parseReferencesCSV,
 } from '../../src/utils/parsers'
 
 describe('R10 — legacy parsers handle RFC edge cases', () => {
+  it('mid-field unbalanced quote가 parseCSVToScenes/parseSceneCSVToTracks의 뒤 행을 삼키지 않는다', () => {
+    const csv = `scene,prompt,subtitle
+1,P1,ok
+2,P2,he said " something
+3,P3,three
+4,P4,four`
+
+    expect(parseCSVToScenes(csv)).toHaveLength(4)
+    const collapsed = parseSceneCSVToTracks(csv)
+    expect(collapsed.scenes).toHaveLength(4)
+    expect(collapsed.srtTrack.map((line) => line.text)).toEqual([
+      'ok', 'he said " something', 'three', 'four',
+    ])
+  })
+
   it('parseCSVToScenes — escaped quote in prompt', () => {
     const csv = 'prompt,subtitle\n"He said ""hi""","ok"'
     const result = parseCSVToScenes(csv)

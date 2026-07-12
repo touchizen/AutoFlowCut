@@ -4,7 +4,60 @@
  * Renderer 의 parseSceneCSVToTracks 와 동등한 결과 emit 확인.
  */
 import { describe, it, expect } from 'vitest'
-import { isNewSceneCSVFormat, bundleSceneCSVRows } from '../../mcp-server/lib/csv.js'
+import { parseCSV, isNewSceneCSVFormat, bundleSceneCSVRows } from '../../mcp-server/lib/csv.js'
+
+const bindRows = (grid) => {
+  const [headers, ...rows] = grid
+  return rows.map((values) => Object.fromEntries(headers.map((header, index) => (
+    [header, values[index] ?? '']
+  ))))
+}
+
+describe('parseCSV quote state', () => {
+  it('unquoted field 중간의 홀수 quote를 literal로 보존해 bundle까지 4 scenes를 유지한다', () => {
+    const csv = `scene,speaker,subtitle
+1,narrator,ok
+2,narrator,he said " something
+3,narrator,three
+4,narrator,four`
+    const grid = parseCSV(csv)
+    const result = bundleSceneCSVRows(bindRows(grid))
+
+    expect(grid).toHaveLength(5)
+    expect(result.scenes).toHaveLength(4)
+    expect(result.srtTrack.map((line) => line.text)).toEqual([
+      'ok', 'he said " something', 'three', 'four',
+    ])
+  })
+
+  it('unquoted field 중간의 짝수 quote를 제거하지 않고 literal로 보존한다', () => {
+    expect(parseCSV('subtitle\nHe said "hi" ok')).toEqual([
+      ['subtitle'],
+      ['He said "hi" ok'],
+    ])
+  })
+
+  it('quoted field가 닫히지 않은 채 EOF면 typed parse error를 던진다', () => {
+    let thrown
+    try {
+      parseCSV('scene,subtitle\n1,"never closed')
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toMatchObject({
+      name: 'CSVParseError',
+      code: 'csv-unterminated-quoted-field',
+    })
+  })
+
+  it('정상 quoted field의 comma, newline, escaped quote를 함께 보존한다', () => {
+    expect(parseCSV('scene,subtitle\n1,"comma, newline\nand ""quote"""')).toEqual([
+      ['scene', 'subtitle'],
+      ['1', 'comma, newline\nand "quote"'],
+    ])
+  })
+})
 
 describe('isNewSceneCSVFormat', () => {
   it('scene 컬럼 + 정수값 → true', () => {

@@ -1,5 +1,5 @@
 /**
- * Shared RFC-style CSV parser — review R7 fix.
+ * Shared RFC-style CSV parser.
  *
  * 기존 parsers.js 의 parseCSVLine 은 line-split 후 단순 quote toggle 만 해서
  *   - escaped double quote (`""`) 를 literal `"` 로 처리 못 함
@@ -9,6 +9,14 @@
  * mcp-server/lib/csv.js 의 parseCSV 와 동등한 character-stream RFC parser 를
  * 공통화해서 renderer 의 새 형식 CSV 경로도 같은 동작 보장.
  */
+
+export class CSVParseError extends Error {
+  constructor(code, message) {
+    super(message)
+    this.name = 'CSVParseError'
+    this.code = code
+  }
+}
 
 /**
  * CSV 텍스트를 2차원 배열로 파싱 (RFC 4180 호환).
@@ -22,6 +30,7 @@ export function parseCSVText(text) {
   let fields = []
   let current = ''
   let inQuotes = false
+  let atFieldStart = true
 
   for (let i = 0; i < text.length; i++) {
     const ch = text[i]
@@ -30,23 +39,39 @@ export function parseCSVText(text) {
         // escaped double quote → literal "
         current += '"'
         i++
+      } else if (inQuotes) {
+        inQuotes = false
+      } else if (atFieldStart) {
+        inQuotes = true
+        atFieldStart = false
       } else {
-        inQuotes = !inQuotes
+        // Quote는 field 시작에서만 quoted field를 연다. unquoted text 안의
+        // 대화부호/inch mark는 내용 그대로 보존한다.
+        current += '"'
       }
     } else if (ch === ',' && !inQuotes) {
       fields.push(current)
       current = ''
+      atFieldStart = true
     } else if ((ch === '\n' || ch === '\r') && !inQuotes) {
       if (ch === '\r' && text[i + 1] === '\n') i++ // CRLF
       fields.push(current)
       current = ''
+      atFieldStart = true
       if (fields.length > 0) {
         rows.push(fields)
         fields = []
       }
     } else {
       current += ch
+      atFieldStart = false
     }
+  }
+  if (inQuotes) {
+    throw new CSVParseError(
+      'csv-unterminated-quoted-field',
+      'CSV quoted field is not terminated before EOF',
+    )
   }
   // R23 review fix: 마지막 행 처리 일관성. 옛 로직 `fields.some(f => f.length > 0)`
   // 는 끝 행이 ',,' (모두 빈 컬럼) 일 때 drop 했지만, 동일 내용이 '\n' 으로 끝나면

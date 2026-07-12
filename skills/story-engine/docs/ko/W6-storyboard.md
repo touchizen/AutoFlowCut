@@ -79,9 +79,11 @@ AutoFlowCut MCP: get_schema({ type: "prompt-image" }) → 프롬프트 작성 �
 
 | 컬럼 | 필수 | 설명 |
 |------|------|------|
+| `scene` | O | 같은 숫자의 자막 행을 한 이미지 slot으로 묶는 정수 ordinal |
 | `prompt` | O | 영문 이미지/비디오 프롬프트 |
 | `prompt_ko` | | 한글 프롬프트 요약 |
 | `subtitle` | | 나레이션/대사 자막 |
+| `speaker` | 자막 있을 때 O | 나레이션은 `narrator`, 대사는 timecoded speaker source의 ID/name |
 | `characters` | | 등장 인물 (쉼표 구분) |
 | `scene_tag` | | 장소 태그 (references.csv의 scene name과 매칭) |
 | `style_tag` | | 분위기 태그 |
@@ -90,6 +92,9 @@ AutoFlowCut MCP: get_schema({ type: "prompt-image" }) → 프롬프트 작성 �
 | `start_time` | | 시작 시간 (초) |
 | `end_time` | | 종료 시간 (초) |
 | `parent_scene` | | 씬 그룹 ID (S001, S002...) |
+
+위 13개 컬럼을 표 순서 그대로 모두 작성한다. `scene`은 authored scene 경계를 보존하고,
+모든 `subtitle` 행은 `speaker`를 비워 두지 않는다.
 
 ### 씬 분리 규칙
 

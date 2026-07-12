@@ -4,6 +4,14 @@
 
 import fs from 'fs';
 
+export class CSVParseError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = 'CSVParseError';
+    this.code = code;
+  }
+}
+
 /**
  * CSV 텍스트를 2차원 배열로 파싱 (RFC 4180 호환)
  * @param {string} text - CSV 텍스트
@@ -14,6 +22,7 @@ export function parseCSV(text) {
   let fields = [];
   let current = '';
   let inQuotes = false;
+  let atFieldStart = true;
 
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
@@ -21,23 +30,37 @@ export function parseCSV(text) {
       if (inQuotes && text[i + 1] === '"') {
         current += '"';
         i++;
+      } else if (inQuotes) {
+        inQuotes = false;
+      } else if (atFieldStart) {
+        inQuotes = true;
+        atFieldStart = false;
       } else {
-        inQuotes = !inQuotes;
+        current += '"';
       }
     } else if (ch === ',' && !inQuotes) {
       fields.push(current);
       current = '';
+      atFieldStart = true;
     } else if ((ch === '\n' || ch === '\r') && !inQuotes) {
       if (ch === '\r' && text[i + 1] === '\n') i++;
       fields.push(current);
       current = '';
+      atFieldStart = true;
       if (fields.length > 0) {
         rows.push(fields);
         fields = [];
       }
     } else {
       current += ch;
+      atFieldStart = false;
     }
+  }
+  if (inQuotes) {
+    throw new CSVParseError(
+      'csv-unterminated-quoted-field',
+      'CSV quoted field is not terminated before EOF',
+    );
   }
   // S1 review fix: 끝자리 개행 유무에 따른 빈 행 누락 버그 동기화 (renderer R23
   // 와 동일). 옛 `fields.some(f => f.length > 0)` 은 ',,' 만 있는 마지막 행을

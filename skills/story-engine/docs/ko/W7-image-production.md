@@ -184,20 +184,33 @@ for num, s in errors:
 - `imagePath` — 생성된 이미지 경로
 - `id` — 씬 고유 ID
 
-**CSV 내보내기 (앱 데이터 → CSV 파일):**
+**CSV 동기화 (앱에서 바뀐 prompt → 기존 13-field CSV):**
+
+앱 scene 배열은 row별 `speaker`/timing을 이미 collapse한 값이므로 새 CSV의 source로 쓰지 않는다.
+기존 W6 CSV를 읽고 `_sceneNum`으로 prompt만 병합해 authored row 구조를 보존한다.
 ```bash
 curl -s http://localhost:3210/api/scenes | python3 -c "
 import json, sys, csv, io
 data = json.load(sys.stdin)
-fields = ['prompt', 'prompt_ko', 'subtitle', 'characters', 'scene_tag', 'style_tag', 'shot_type', 'duration', 'start_time', 'end_time', 'parent_scene']
+fields = ['scene', 'prompt', 'prompt_ko', 'subtitle', 'speaker', 'characters', 'scene_tag', 'style_tag', 'shot_type', 'duration', 'start_time', 'end_time', 'parent_scene']
+with open('EXPORT_PATH.csv', newline='', encoding='utf-8-sig') as f:
+    reader = csv.DictReader(f)
+    if reader.fieldnames != fields:
+        raise ValueError(f'expected 13-field storyboard CSV, got: {reader.fieldnames}')
+    existing_rows = list(reader)
+app_by_scene = {str(row.get('_sceneNum') or i + 1): row for i, row in enumerate(data)}
+for row in existing_rows:
+    app_row = app_by_scene.get(str(row['scene']))
+    if app_row and row['prompt'].strip():
+        row['prompt'] = app_row.get('prompt', row['prompt'])
+        row['prompt_ko'] = app_row.get('prompt_ko', row['prompt_ko'])
 output = io.StringIO()
 writer = csv.DictWriter(output, fieldnames=fields, extrasaction='ignore')
 writer.writeheader()
-for row in data:
-    writer.writerow(row)
+writer.writerows(existing_rows)
 with open('EXPORT_PATH.csv', 'w', encoding='utf-8') as f:
     f.write(output.getvalue())
-print(f'CSV saved: {len(data)} scenes')
+print(f'CSV saved: {len(existing_rows)} rows')
 "
 ```
 
@@ -314,5 +327,3 @@ QA는 반드시 이미지를 눈으로 확인한다 (Read 도구로 이미지 �
 
 ## Wave 리뷰 요약
 위 각 서브스텝(7-0 ~ 7-2b)은 최대 5회 리뷰(0 이슈 시 즉시 진행)를 강제한다. 마지막 서브스텝(7-2b 이미지 QA, batch × 2 parallel)의 리뷰가 통과하면 7-3 사용자 게이트로 진입. 사용자 승인 시 Wave 7 완료, W8로 넘김.
-
-

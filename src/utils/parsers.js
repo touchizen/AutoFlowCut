@@ -3,7 +3,7 @@
  */
 
 import { DEFAULTS } from '../config/defaults'
-import { parseCSVTextToRows } from './csvParser'
+import { parseCSVText, parseCSVTextToRows } from './csvParser'
 
 // ============================================================
 // 기본 유틸
@@ -131,6 +131,161 @@ export function parseCSVToScenes(csvText, defaultDuration = DEFAULTS.scene.durat
   })
 
   return scenes
+}
+
+/**
+ * Storyboard CSV를 adapter 이전의 row 단위 입력으로 파싱한다.
+ *
+ * 일반 CSV parser의 계산된 시간은 누락 셀을 기본 3초와 구분할 수 없다. 그래서 이 경로는
+ * 숫자 시간을 만들지 않고 원문 셀과 presence만 보존한다. sourceRowId도 내용이 같은 kept
+ * board row를 합치지 않고 parsed board 순서에서 발급해 이후 exact-once 검증의 근거로 쓴다.
+ * `scene` 컬럼이 없거나 전부 비어 있으면 행마다 ordinal을 발급한다. 컬럼을 사용하면 정수는
+ * 그대로 쓰고 중간 빈 셀은 직전 ordinal을 이어받으며, 선두 빈 셀/비정수는 null로 남겨
+ * validator가 거부한다. carry-forward는 scene-only row를 drop하기 전에 계산한다.
+ *
+ * @param {string} csvText
+ * @returns {{ rows: Array<{
+ *   sourceRowId: string,
+ *   sceneOrdinal: number | null,
+ *   prompt: string,
+ *   prompt_ko: string,
+ *   subtitle: string,
+ *   speaker: string,
+ *   characters: string,
+ *   scene_tag: string,
+ *   style_tag: string,
+ *   shot_type: string,
+ *   parent_scene: string,
+ *   durationRaw: string,
+ *   startTimeRaw: string,
+ *   endTimeRaw: string,
+ *   hasDuration: boolean,
+ *   hasStartTime: boolean,
+ *   hasEndTime: boolean,
+ * }>, duplicateHeaders: string[], unknownHeaders: string[] }}
+ */
+export function parseStoryboardCSVRows(csvText) {
+  const emptyResult = () => ({ rows: [], duplicateHeaders: [], unknownHeaders: [] })
+  if (!csvText || !String(csvText).trim()) return emptyResult()
+  const text = String(csvText)
+  const stripped = text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text
+  const grid = parseCSVText(stripped)
+  if (grid.length === 0) return emptyResult()
+  const headers = grid[0].map((header) => String(header ?? ''))
+  const dataRows = grid.slice(1)
+
+  const headerBindings = new Map([
+    ['scene', 'scene'],
+    ['prompt', 'prompt'],
+    ['prompt_en', 'prompt'],
+    ['prompt_ko', 'prompt_ko'],
+    ['subtitle', 'subtitle'],
+    ['subtitle_ko', 'subtitle'],
+    ['speaker', 'speaker'],
+    ['characters', 'characters'],
+    ['character', 'characters'],
+    ['scene_tag', 'scene_tag'],
+    ['background', 'scene_tag'],
+    ['style_tag', 'style_tag'],
+    ['shot_type', 'shot_type'],
+    ['duration', 'duration'],
+    ['start_time', 'start_time'],
+    ['end_time', 'end_time'],
+    ['parent_scene', 'parent_scene'],
+  ])
+  const headerByField = new Map()
+  const duplicateHeaders = []
+  const unknownHeaders = []
+  for (let index = 0; index < headers.length; index++) {
+    const rawHeader = headers[index]
+    const acceptedSpelling = rawHeader.trim().toLowerCase()
+    if (acceptedSpelling === '') {
+      const carriesContent = dataRows.some((textRow) => String(textRow[index] ?? '').trim() !== '')
+      if (carriesContent) unknownHeaders.push(`(empty column ${index + 1})`)
+      continue
+    }
+    const boundField = headerBindings.get(acceptedSpelling)
+    if (boundField === undefined) {
+      unknownHeaders.push(rawHeader.trim())
+      continue
+    }
+    if (headerByField.has(boundField)) duplicateHeaders.push(boundField)
+    else headerByField.set(boundField, index)
+  }
+  const declaredSceneHeader = headerByField.get('scene')
+  for (const textRow of dataRows) {
+    for (let columnIndex = headers.length; columnIndex < textRow.length; columnIndex++) {
+      if (String(textRow[columnIndex] ?? '').trim() !== '') {
+        unknownHeaders.push(`(missing header column ${columnIndex + 1})`)
+      }
+    }
+  }
+  const headerErrors = {
+    rows: [],
+    duplicateHeaders: [...new Set(duplicateHeaders)],
+    unknownHeaders: [...new Set(unknownHeaders)],
+  }
+  if (headerErrors.duplicateHeaders.length > 0 || headerErrors.unknownHeaders.length > 0) {
+    return headerErrors
+  }
+  if (grid.length < 2) return emptyResult()
+  const sceneHeader = declaredSceneHeader
+  const usesSceneColumn = sceneHeader !== undefined && dataRows.some((textRow) => (
+    String(textRow[sceneHeader] ?? '').trim() !== ''
+  ))
+  let previousSceneOrdinal = null
+  const rowsWithOrdinals = dataRows.map((textRow) => {
+    if (!usesSceneColumn) return { textRow, sceneOrdinal: null, invalidScene: false }
+
+    const trimmedScene = String(textRow[sceneHeader] ?? '').trim()
+    if (/^\d+$/.test(trimmedScene)) {
+      previousSceneOrdinal = Number.parseInt(trimmedScene, 10)
+      return { textRow, sceneOrdinal: previousSceneOrdinal, invalidScene: false }
+    }
+    if (trimmedScene === '') {
+      return { textRow, sceneOrdinal: previousSceneOrdinal, invalidScene: false }
+    }
+    return { textRow, sceneOrdinal: null, invalidScene: true }
+  })
+
+  // `scene`은 grouping metadata라 그것만 적힌 행은 board row가 아니다. ordinal state에는 먼저
+  // 반영하되 물리 blank line과 함께 sourceRowId 발급 전에 제거한다. 단, non-empty non-integer
+  // scene은 validator가 typed rejection을 만들 수 있도록 board content가 없어도 보존한다.
+  const rows = rowsWithOrdinals.filter(({ textRow, invalidScene }) => (
+    invalidScene || headers.some((_header, columnIndex) => (
+      columnIndex !== sceneHeader && String(textRow[columnIndex] ?? '').trim() !== ''
+    ))
+  ))
+
+  const parsedRows = rows.map(({ textRow, sceneOrdinal }, index) => {
+    const getColumn = (field) => {
+      const columnIndex = headerByField.get(field)
+      return columnIndex === undefined ? '' : (textRow[columnIndex] ?? '')
+    }
+    const durationRaw = getColumn('duration')
+    const startTimeRaw = getColumn('start_time')
+    const endTimeRaw = getColumn('end_time')
+    return {
+      sourceRowId: `storyboard-row-${index + 1}`,
+      sceneOrdinal: usesSceneColumn ? sceneOrdinal : index + 1,
+      prompt: getColumn('prompt'),
+      prompt_ko: getColumn('prompt_ko'),
+      subtitle: getColumn('subtitle'),
+      speaker: getColumn('speaker'),
+      characters: getColumn('characters'),
+      scene_tag: getColumn('scene_tag'),
+      style_tag: getColumn('style_tag'),
+      shot_type: getColumn('shot_type'),
+      parent_scene: getColumn('parent_scene'),
+      durationRaw,
+      startTimeRaw,
+      endTimeRaw,
+      hasDuration: durationRaw.trim() !== '',
+      hasStartTime: startTimeRaw.trim() !== '',
+      hasEndTime: endTimeRaw.trim() !== '',
+    }
+  })
+  return { rows: parsedRows, duplicateHeaders: [], unknownHeaders: [] }
 }
 
 /**

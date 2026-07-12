@@ -48,6 +48,52 @@ describe('parseCSVText', () => {
   it('빈 입력 → 빈 결과', () => {
     expect(parseCSVText('')).toEqual([])
   })
+
+  it('unquoted field 중간의 홀수 quote를 literal로 보존하고 다음 행을 삼키지 않는다', () => {
+    const text = `scene,speaker,subtitle
+1,narrator,ok
+2,narrator,he said " something
+3,narrator,three
+4,narrator,four`
+
+    expect(parseCSVText(text)).toEqual([
+      ['scene', 'speaker', 'subtitle'],
+      ['1', 'narrator', 'ok'],
+      ['2', 'narrator', 'he said " something'],
+      ['3', 'narrator', 'three'],
+      ['4', 'narrator', 'four'],
+    ])
+  })
+
+  it('unquoted field 중간의 짝수 quote도 제거하지 않고 literal로 보존한다', () => {
+    expect(parseCSVText('subtitle\nHe said "hi" ok')).toEqual([
+      ['subtitle'],
+      ['He said "hi" ok'],
+    ])
+  })
+
+  it('quoted field가 닫히지 않은 채 EOF면 typed parse error를 던진다', () => {
+    let thrown
+    try {
+      parseCSVText('scene,subtitle\n1,"never closed')
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toMatchObject({
+      name: 'CSVParseError',
+      code: 'csv-unterminated-quoted-field',
+    })
+  })
+
+  it('정상 quoted field의 comma, newline, escaped quote를 함께 보존한다', () => {
+    const text = 'scene,subtitle\n1,"comma, newline\nand ""quote"""'
+
+    expect(parseCSVText(text)).toEqual([
+      ['scene', 'subtitle'],
+      ['1', 'comma, newline\nand "quote"'],
+    ])
+  })
 })
 
 describe('parseCSVTextToRows', () => {
