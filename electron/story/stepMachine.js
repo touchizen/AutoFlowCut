@@ -4,8 +4,10 @@
  */
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
-import { stat } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { createStoryStore } from './storyStore.js'
+import { checkFixedSceneConsistency, validateFixedScenes } from './fixedScenes.js'
+import { buildStoryboardArtifacts, validateStoryboardRows } from './storyboardInput.js'
 import { inheritStoryIds, assertUniqueStoryIds, assignStoryIdsByMembership, inheritSegmentIds } from './sceneIdentity.js'
 import { buildFallbackTimeline, buildSegmentTimeline, buildSrt, srtLineId } from './timing.js'
 import { regroupScenes } from './regroup.js'
@@ -14,6 +16,7 @@ import { normalizeActiveStoryLlmOptions as normalizeStoryLlmOptions } from '../a
 import { validateScenesSegments } from '../api/llm/schemas.js'
 import { isNarratorSpeaker as isNarratorTrackSpeaker } from '../../src/utils/storyNarrationTracks.js'
 import { normalizeStoryCharacter, characterVisualPrompt } from '../../src/services/storyCharacter.js'
+import { parseStoryboardCSVRows } from '../../src/utils/parsers.js'
 
 const DOWNSTREAM = { script: ['scenes', 'audio', 'prompts'], scenes: ['audio', 'prompts'], audio: ['prompts'], prompts: [] }
 
@@ -633,6 +636,14 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     try { return JSON.parse(raw).scenes || [] } catch { return [] }
   }
 
+  async function loadProjectState() {
+    try {
+      return JSON.parse(await readFile(path.join(projectPath, 'project.json'), 'utf-8'))
+    } catch {
+      return null
+    }
+  }
+
   // ---------- 리서치 영속 (§3.8 M6) ----------
   // machine은 story:open마다 재생성되므로(story-api.js) 진행 중 리서치는 research.draft.json,
   // 확정본은 research.json으로 durable 저장한다. 자막 원문은 research/transcripts/<id>.srt(로컬
@@ -1198,6 +1209,90 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // 기존 top-level 필드(steps/speakers/...)는 그대로 접근 가능하도록 spread — story.json에는
       // scenes를 쓰지 않으므로(flush 시 이 반환값이 아니라 내부 state 변수를 저장) 안전하다.
       return { ...state, scenes, scriptText, ...(await hydrateExtras()) }
+    },
+    async stageImageFirst({ fixedSceneRevision, imageFirstVariant, fixedScenes, storyboardCsv } = {}) {
+      if (!state) state = await store.load()
+      const expectedProjectState = {
+        sceneMode: 'image-first',
+        imageFirstVariant,
+        fixedSceneRevision,
+        fixedScenes,
+      }
+      const consistency = checkFixedSceneConsistency(
+        await loadProjectState(),
+        state,
+        { allowCommittedButUnstaged: true, expectedProjectState },
+      )
+      // 이 command는 committed-but-unstaged edge를 한 번만 소비한다. 이미 consistent인 R을
+      // 재수락하면 raw CSV와 deterministic artifacts를 재작성하는 두 번째 consumer가 된다.
+      if (!consistency.success || consistency.status !== 'committed-but-unstaged') {
+        return { success: false, error: 'fixed-scenes-stale' }
+      }
+
+      let scriptMd = ''
+      let deterministicScenes = []
+      let validatedStoryboard = null
+      if (imageFirstVariant === 'storyboard') {
+        const parsed = parseStoryboardCSVRows(storyboardCsv)
+        validatedStoryboard = validateStoryboardRows(parsed, {
+          roster: state.speakers || [],
+          rosterEnforced: false,
+        })
+        if (!validatedStoryboard.success) return validatedStoryboard
+
+        try {
+          ({ scriptMd, scenes: deterministicScenes } = buildStoryboardArtifacts(validatedStoryboard, fixedScenes))
+        } catch {
+          // Adapter precondition failures (notably fixed N mismatch) still cross the public boundary as
+          // the fixed validator's typed surface, never as an unhandled invoke rejection.
+          return validateFixedScenes({
+            scenes: [],
+            fixedScenes,
+            variant: 'storyboard',
+            speakers: validatedStoryboard.speakers,
+            sourceRows: validatedStoryboard.rows,
+            requireTiming: false,
+          })
+        }
+        // Self-promoting stage validates against the row validator's candidate roster. Using only the
+        // old durable roster here would reject every newly discovered CSV speaker before it can be seeded.
+        const fixedValidation = validateFixedScenes({
+          scenes: deterministicScenes,
+          fixedScenes,
+          variant: 'storyboard',
+          speakers: validatedStoryboard.speakers,
+          sourceRows: validatedStoryboard.rows,
+          requireTiming: false,
+        })
+        if (!fixedValidation.success) return fixedValidation
+      }
+
+      state.input = { type: 'storyboard', variant: imageFirstVariant, fixedSceneRevision }
+      state.sceneMode = 'image-first'
+      state.imageFirstVariant = imageFirstVariant
+      state.fixedSceneRevision = fixedSceneRevision
+      state.fixedScenes = fixedScenes
+      state.charactersConfirmed = false
+      state.steps.script = { status: imageFirstVariant === 'storyboard' ? 'done' : 'pending' }
+      state.steps.scenes = { status: imageFirstVariant === 'storyboard' ? 'done' : 'pending' }
+      state.steps.audio = { status: 'pending' }
+      state.steps.prompts = { status: 'pending' }
+
+      if (imageFirstVariant === 'storyboard') {
+        // D24a call-order invariant: both row and fixed validation have returned PASS before this seed.
+        state.speakers = ensureReferencedSpeakers(state.speakers || [], deterministicScenes, state.speakers || [])
+        await store.saveText('storyboard.csv', storyboardCsv)
+        await store.saveText('script.md', scriptMd)
+        await store.saveText('scenes.json', JSON.stringify({ scenes: deterministicScenes }, null, 2))
+      }
+      await flush()
+      send('story:state', {
+        state,
+        scenes: deterministicScenes,
+        scriptText: scriptMd,
+        ...(await hydrateExtras()),
+      })
+      return { success: true }
     },
     // 슬라이스1(세그먼트 단건 테스트): 지정 세그먼트만 합성·저장하고 스텝 상태·push·regroup은
     // 건드리지 않는다. 배치(start('audio'))와 분리된 미리듣기/테스트 경로. 저장 오디오는 배치가 재사용.

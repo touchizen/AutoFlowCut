@@ -79,6 +79,12 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
     return fn(payload)
   }
 
+  // IPC와 이후 agent adapter가 같은 command object를 공유하는 경계. machine은 story:open이 만든
+  // 단일 인스턴스뿐이며 command가 별도 machine/store를 만들지 않는다.
+  const storyCommands = {
+    stageImageFirst: (params) => machine.stageImageFirst(params),
+  }
+
   // 엔진이 보고하는 모델 목록으로 카탈로그를 만든다. CLI 프로세스를 띄우므로 한 번만 하고 캐시한다.
   // 두 엔진을 동시에 조회하고, 실패한 엔진만 정적 목록으로 메운다(다른 엔진까지 되돌리지 않는다).
   let llmCatalogPromise = null
@@ -130,6 +136,17 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
   })
 
   ipcMain.handle('story:get-state', guarded(async () => machine.getState()))
+  ipcMain.handle('story:stage-image-first', guarded(({
+    fixedSceneRevision,
+    imageFirstVariant,
+    fixedScenes,
+    storyboardCsv,
+  }) => storyCommands.stageImageFirst({
+    fixedSceneRevision,
+    imageFirstVariant,
+    fixedScenes,
+    storyboardCsv,
+  })))
   ipcMain.handle('story:start', guarded(({ step, params }) => machine.start(step, params)))
   ipcMain.handle('story:abort', guarded(() => machine.abort()))
   ipcMain.handle('story:push-ack', guarded(({ operationId, pushRevision, ok, reason }) =>

@@ -140,6 +140,13 @@ describe('preload contract', () => {
     expect(preloadKeys.has('storyConfirmSynopsis')).toBe(true)
   })
 
+  it('storyStageImageFirst is exposed on the guarded story channel', () => {
+    const preloadText = fs.readFileSync(preloadPath, 'utf8')
+    const preloadKeys = extractPreloadKeys(preloadText)
+    expect(preloadKeys.has('storyStageImageFirst')).toBe(true)
+    expect(preloadText).toContain("storyStageImageFirst: (params) => ipcRenderer.invoke('story:stage-image-first', params)")
+  })
+
   it('image-first import filesystem wrappers are exposed in preload', () => {
     const preloadText = fs.readFileSync(preloadPath, 'utf8')
     const preloadKeys = extractPreloadKeys(preloadText)

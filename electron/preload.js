@@ -124,6 +124,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // --- Story pipeline ---
   storyOpen: (params) => ipcRenderer.invoke('story:open', params),
   storyGetState: (params) => ipcRenderer.invoke('story:get-state', params),
+  storyStageImageFirst: (params) => ipcRenderer.invoke('story:stage-image-first', params),
   storyStart: (params) => ipcRenderer.invoke('story:start', params),
   storyAbort: (params) => ipcRenderer.invoke('story:abort', params),
   storyPushAck: (params) => ipcRenderer.invoke('story:push-ack', params),

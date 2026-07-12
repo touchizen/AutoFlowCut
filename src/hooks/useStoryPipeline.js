@@ -379,6 +379,9 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
     return window.electronAPI.storyStart({ projectToken: tokenRef.current, step, params })
   }, [])
 
+  const stageImageFirst = useCallback((params = {}) =>
+    window.electronAPI.storyStageImageFirst({ projectToken: tokenRef.current, ...params }), [])
+
   const abort = useCallback(() => window.electronAPI.storyAbort({ projectToken: tokenRef.current }), [])
 
   const generateTitle = useCallback((scriptMd, options = {}) =>
@@ -479,7 +482,7 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   // key로 재마운트되는 StoryView가 setup + 폼 기본값으로 초기화되게 한다(effect가 다음 tick에
   // useState를 정리하기 전 한 프레임의 stale 값 유출 방지).
   if (justSwitched) {
-    return { state: null, scenes: [], streamingText, scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview, segmentProgress: {}, reviewProgress: null, reviewScores: null, progressLog: [], llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText: '', synopsisGenerating: false, synopsisReviewing: false, synopsisError: null, synopsisText: '', hasSynopsis: false, characters: [], charactersConfirmed: undefined, research: null, researchFetchProgress: {}, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
+    return { state: null, scenes: [], streamingText, scriptText: '', open, stageImageFirst, start, abort, openError: null, generateTitle, ttsPreview, segmentProgress: {}, reviewProgress: null, reviewScores: null, progressLog: [], llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText: '', synopsisGenerating: false, synopsisReviewing: false, synopsisError: null, synopsisText: '', hasSynopsis: false, characters: [], charactersConfirmed: undefined, research: null, researchFetchProgress: {}, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
   }
-  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, segmentProgress, reviewProgress, reviewScores, progressLog, llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText, synopsisGenerating, synopsisReviewing, synopsisError, synopsisText, hasSynopsis, characters, charactersConfirmed, research, researchFetchProgress, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
+  return { state, scenes, streamingText, scriptText, open, stageImageFirst, start, abort, openError, generateTitle, ttsPreview, segmentProgress, reviewProgress, reviewScores, progressLog, llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText, synopsisGenerating, synopsisReviewing, synopsisError, synopsisText, hasSynopsis, characters, charactersConfirmed, research, researchFetchProgress, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
 }
