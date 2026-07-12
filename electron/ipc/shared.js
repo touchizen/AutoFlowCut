@@ -685,18 +685,26 @@ export function createSharedHelpers(ctx) {
   //   반증 불가능해진다 — 로그에 'toggle not found' 한 줄뿐이라 마크업 변경/로케일/접힌 뷰포트가
   //   전부 똑같아 보인다. viewBounds 는 프로브가 실제로 어떤 크기의 뷰에서 돌았는지(0×0 여부)를
   //   말해주므로 executeJavaScript 로는 얻을 수 없는 유일한 단서다.
-  async function captureToggleNotFound(flowView, caller) {
+  /**
+   * Agent 토글 처리의 **모든 실패 출구**에서 부른다 — not_found / still_on / 예외 전부.
+   *
+   * 처음엔 not_found 에만 붙였다. 정작 배포에서 터진 건 예외(주입 스크립트가 minify 때문에
+   * ReferenceError)였고 그 경로엔 계측이 없어, 모든 씬이 실패하는 동안 Sentry 에도 진단 파일에도
+   * 아무것도 안 남았다. 의심되는 분기만 계측하는 것은 계측이 아니다.
+   */
+  async function reportAgentToggleFailure(flowView, caller, reason, extra = {}) {
     try {
-      const scan = await flowView.webContents.executeJavaScript(AGENT_TOGGLE_DIAGNOSTIC)
+      const scan = await flowView.webContents.executeJavaScript(AGENT_TOGGLE_DIAGNOSTIC).catch(() => null)
       const diag = {
         caller,
+        reason,
+        ...extra,
         viewBounds: flowView.getBounds(),
-        // findAgentToggle 이 "거부한" 후보들 — 토글 실패에만 있는 단서라 일반 컨텍스트로는 안 나온다.
         candidates: (scan && scan.candidates) || [],
         context: (scan && scan.context) || {},
       }
-      console.warn(`[Flow API] ${caller}: toggle not found — diagnostic:`, JSON.stringify(diag))
-      await onDomFailure?.('agent-toggle', { reason: 'not_found', ...diag })
+      console.warn(`[Flow API] ${caller}: ${reason} — diagnostic:`, JSON.stringify(diag))
+      await onDomFailure?.('agent-toggle', diag)
     } catch (e) {
       console.warn(`[Flow API] ${caller}: diagnostic capture failed:`, e.message)
     }
@@ -717,7 +725,7 @@ export function createSharedHelpers(ctx) {
       }
       if (!probe || !probe.found) {
         console.log('[Flow API] ensureAgentOff: toggle not found (panel close retries exhausted)')
-        await captureToggleNotFound(flowView, 'ensureAgentOff')
+        await reportAgentToggleFailure(flowView, 'ensureAgentOff', 'not_found')
         return { success: false, state: 'not_found' }
       }
       if (!probe.on) {
@@ -730,9 +738,13 @@ export function createSharedHelpers(ctx) {
       probe = await flowView.webContents.executeJavaScript(AGENT_TOGGLE_PROBE)
       const off = !!probe && !probe.on
       console.log('[Flow API] ensureAgentOff: trusted-click', click?.success, '→ nowOn:', probe?.on, off ? '(OFF ✓)' : '(still ON ✗)')
+      if (!off) await reportAgentToggleFailure(flowView, 'ensureAgentOff', 'still_on', { clicked: !!click?.success })
       return { success: off, state: off ? 'turned_off' : 'still_on' }
     } catch (e) {
+      // 배포에서 실제로 터진 자리 — 주입 스크립트의 ReferenceError 가 "Script failed to execute"
+      //   로 올라온다. 여기에 계측이 없어 우리는 눈을 감고 있었다.
       console.warn('[Flow API] ensureAgentOff failed:', e.message)
+      await reportAgentToggleFailure(flowView, 'ensureAgentOff', 'probe_threw', { error: e.message })
       return { success: false, error: e.message }
     }
   }
@@ -758,7 +770,7 @@ export function createSharedHelpers(ctx) {
       }
       if (!probe || !probe.found) {
         console.log('[Flow API] ensureAgentOn: toggle not found (panel close retries exhausted)')
-        await captureToggleNotFound(flowView, 'ensureAgentOn')
+        await reportAgentToggleFailure(flowView, 'ensureAgentOn', 'not_found')
         return { success: false, state: 'not_found' }
       }
       if (probe.on) {
@@ -770,9 +782,11 @@ export function createSharedHelpers(ctx) {
       probe = await flowView.webContents.executeJavaScript(AGENT_TOGGLE_PROBE)
       const on = !!probe && !!probe.on
       console.log('[Flow API] ensureAgentOn: trusted-click', click?.success, '→ nowOn:', probe?.on, on ? '(ON ✓)' : '(still OFF ✗)')
+      if (!on) await reportAgentToggleFailure(flowView, 'ensureAgentOn', 'still_off', { clicked: !!click?.success })
       return { success: on, state: on ? 'turned_on' : 'still_off' }
     } catch (e) {
       console.warn('[Flow API] ensureAgentOn failed:', e.message)
+      await reportAgentToggleFailure(flowView, 'ensureAgentOn', 'probe_threw', { error: e.message })
       return { success: false, error: e.message }
     }
   }
