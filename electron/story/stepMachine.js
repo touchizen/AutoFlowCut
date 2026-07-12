@@ -735,7 +735,16 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       let raw
       try { raw = await store.loadTextStrict('scenes.json') } catch { return }
       if (!raw?.trim()) return // 빈 파일도 heal과 같게 "없음"으로 본다
-      sendPush(JSON.parse(raw).scenes, operationId)
+      try {
+        const consistency = checkFixedSceneConsistency(await loadProjectState(), state)
+        if (!consistency.success) throw new Error(consistency.error)
+        sendPush(JSON.parse(raw).scenes, operationId)
+      } catch {
+        // open/getState resend의 durable consistency/identity 오류는 프로젝트를 못 여는 예외가
+        // 아니다. stale recovery UI가 소비할 marker를 먼저 저장하고 기존 hydrate를 계속한다.
+        state.fixedSceneError = 'fixed-scenes-stale'
+        await flush()
+      }
     }
   }
 
@@ -1336,7 +1345,17 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         await store.saveText('script.md', scriptMd)
         await store.saveText('scenes.json', JSON.stringify({ scenes: deterministicScenes }, null, 2))
       }
-      await flush()
+      // 이 command만 project R의 committed-but-unstaged edge를 실제 story R로 commit한다.
+      // 검증/산출물 저장 실패에서는 marker를 보존하고, 최종 story.json commit에만 함께 지운다.
+      const hadFixedSceneError = Object.prototype.hasOwnProperty.call(state, 'fixedSceneError')
+      const previousFixedSceneError = state.fixedSceneError
+      delete state.fixedSceneError
+      try {
+        await flush()
+      } catch (error) {
+        if (hadFixedSceneError) state.fixedSceneError = previousFixedSceneError
+        throw error
+      }
       send('story:state', {
         state,
         scenes: deterministicScenes,
@@ -1900,6 +1919,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // §3.3(Codex R2 #2): synopsis side action 진행 중에도 busy — step/preview/synopsis 상호배제.
       // 리서치 §5: research side action 진행 중에도 busy(상호배제 대칭).
       if (previewing || synopsisController || researchController || Object.values(state.steps).some((s) => s.status === 'running')) return { error: 'busy' }
+      const fixedSceneConsistency = checkFixedSceneConsistency(await loadProjectState(), state)
+      if (!fixedSceneConsistency.success) return { error: 'fixed-scenes-stale' }
       if (state.sceneMode === 'image-first' && (step === 'script' || step === 'scenes')) {
         return { error: 'fixed-scenes-immutable' }
       }
