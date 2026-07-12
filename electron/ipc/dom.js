@@ -264,7 +264,9 @@ export function registerDomIPC(ipcMain, deps) {
   ipcMain.handle('flow:dom-send-prompt', async (event, { prompt, selectors }) => {
     const flowView = getFlowView()
     const mainWindow = getMainWindow()
-    console.log('[DOM IPC] dom-send-prompt called:', prompt?.substring(0, 40))
+    // 프롬프트 본문은 안 찍는다 — Sentry consoleIntegration 이 main 콘솔을 breadcrumb 으로 걷어가
+    //   사용자 콘텐츠가 그대로 전송된다. 길이만으로 "주입됐는지"는 충분히 진단된다.
+    console.log('[DOM IPC] dom-send-prompt called: promptLen=', prompt?.length ?? 0)
     if (!flowView) return { success: false, error: 'Flow view not ready' }
 
     // document.execCommand 방식이 작동하려면 flowView가 보여야 함 (focus 필요)
@@ -521,7 +523,7 @@ export function registerDomIPC(ipcMain, deps) {
       return null;
     })()`
 
-      const clickResult = await trustedClickOnFlowView(generateBtnSelector)
+      const clickResult = await trustedClickOnFlowView(generateBtnSelector, { required: true, step: 'compose-submit' })
       console.log('[DOM IPC] Generate button click result:', clickResult)
       if (!clickResult.success) {
         return { success: false, error: clickResult.error || 'Generate button click failed', retry: false }

@@ -55,7 +55,15 @@ export default defineConfig(({ command, mode }) => {
                 external: ['electron']
               }
             },
-            esbuild: isProduction ? { drop: ['console', 'debugger'] } : {}
+            // ⚠️ main 프로세스에서는 console 을 지우지 않는다. @sentry/electron 은
+            //   node.consoleIntegration() 을 기본 탑재해 main 의 console 출력을 breadcrumb 으로
+            //   수집하는데, drop 하면 그 재료가 사라져 Sentry 이벤트에 [Flow API]/[TrustedClick]
+            //   로그 트레일이 하나도 안 붙는다 — 사용자에게 로그를 요청하지 않아도 되게 만드는
+            //   바로 그 부분이다. 패키징 앱은 터미널이 없어 main stdout 이 사용자에게 보이지도
+            //   않으므로 지울 이유가 없다. (renderer 는 아래에서 계속 drop 한다 — DevTools 로
+            //   사용자에게 노출되므로.) 프롬프트 등 사용자 콘텐츠는 로그에 찍지 않으며,
+            //   sentry-init 의 beforeBreadcrumb 이 2차 방어선이다.
+            esbuild: isProduction ? { drop: ['debugger'] } : {}
           }
         },
       ]),
