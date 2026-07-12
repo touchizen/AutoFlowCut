@@ -29,6 +29,7 @@ import { computeModelHeal, computeModeSwitch } from './config/genModels'
 import { computeAppClass, flowLayoutForMode } from './utils/appLayout'
 import { useAutoSave } from './hooks/useAutoSave'
 import { useImageFirstImportWindow } from './hooks/useImageFirstImportWindow'
+import { fileSystemAPI, normalizeSceneImageToPng } from './hooks/useFileSystem'
 import { useFlowEvents } from './hooks/useFlowEvents'
 import { useMcpServer } from './hooks/useMcpServer'
 import { useMenuActions } from './hooks/useMenuActions'
@@ -65,6 +66,196 @@ import { selectUnsyncedMentionedRefs, syncRefToFlow, isRefSynced } from './utils
 import { getAuthErrorMessage, getAuthRequiredMessage } from './utils/authMessages'
 
 const IMAGE_FIRST_IMPORT_IN_PROGRESS = 'image-first-import-in-progress'
+
+export function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = () => reject(new Error('scene-image-read-failed'))
+    reader.onabort = () => reject(new Error('image-first-import-cancelled'))
+    reader.readAsDataURL(file)
+  })
+}
+
+function importError(error, fallback = 'image-first-import-failed') {
+  if (typeof error === 'string' && error) return error
+  return error?.error || error?.message || fallback
+}
+
+/**
+ * Dependency-injected body of App's canonical image-first transaction.
+ * The mounted App supplies live hooks; tests observe the ordering without mounting App.
+ */
+export async function runImageFirstImport({
+  projectName,
+  imageRows,
+  imageFirstVariant,
+  storyboardCsv = '',
+  isCancelled = () => false,
+  ensureStoryOpen,
+  recoverStory,
+  beginImageFirstImport,
+  endImageFirstImport,
+  allocateSceneId,
+  createStoryId = () => crypto.randomUUID(),
+  createRevision = () => crypto.randomUUID(),
+  readFileAsDataURL: readDataUrl = readFileAsDataURL,
+  normalizeSceneImageToPng: normalizePng = normalizeSceneImageToPng,
+  stageImageFirstImage,
+  abortImageFirstImport,
+  buildCurrentProjectData,
+  commitImageFirstImport,
+  applyImageFirstImportCommit,
+  stageImageFirst,
+} = {}) {
+  if (!projectName || !Array.isArray(imageRows) || imageRows.length === 0
+    || !['storyboard', 'image-only'].includes(imageFirstVariant)) {
+    return { success: false, error: 'image-first-import-invalid' }
+  }
+
+  let openResult
+  try {
+    openResult = await ensureStoryOpen()
+  } catch (error) {
+    return { success: false, error: importError(error, 'story-open-failed') }
+  }
+  if (!openResult?.projectToken || openResult.error || openResult.success === false) {
+    return { success: false, error: importError(openResult, 'story-open-failed') }
+  }
+
+  beginImageFirstImport()
+  let fixedSceneRevision = null
+  let committed = false
+  let activeFileRowId = null
+  let recoveryAttempted = false
+  const recoverCommittedStory = async () => {
+    if (recoveryAttempted) return
+    recoveryAttempted = true
+    try {
+      await recoverStory()
+    } catch {
+      // project R remains durable and story old remains fail-closed; a later open can hydrate it.
+    }
+  }
+  try {
+    const fixedScenes = imageRows.map((_row, index) => ({
+      rendererSceneId: allocateSceneId(),
+      storyId: createStoryId(),
+      ordinal: index + 1,
+    }))
+    fixedSceneRevision = createRevision()
+
+    for (let index = 0; index < imageRows.length; index++) {
+      const row = imageRows[index]
+      const slot = fixedScenes[index]
+      activeFileRowId = row.id
+      if (isCancelled()) {
+        await abortImageFirstImport(projectName, fixedSceneRevision)
+        return { success: false, error: 'image-first-import-cancelled' }
+      }
+      let data
+      try {
+        data = await normalizePng(await readDataUrl(row.file))
+      } catch (error) {
+        await abortImageFirstImport(projectName, fixedSceneRevision)
+        return {
+          success: false,
+          error: importError(error, 'scene-image-not-png'),
+          fileRowId: activeFileRowId,
+        }
+      }
+      if (isCancelled()) {
+        await abortImageFirstImport(projectName, fixedSceneRevision)
+        return { success: false, error: 'image-first-import-cancelled' }
+      }
+
+      let stageResult
+      try {
+        stageResult = await stageImageFirstImage(projectName, {
+          fixedSceneRevision,
+          rendererSceneId: slot.rendererSceneId,
+          data,
+        })
+      } catch (error) {
+        stageResult = { success: false, error: importError(error) }
+      }
+      if (!stageResult || stageResult.success === false) {
+        await abortImageFirstImport(projectName, fixedSceneRevision)
+        return {
+          success: false,
+          error: importError(stageResult),
+          fileRowId: activeFileRowId,
+        }
+      }
+      if (isCancelled()) {
+        await abortImageFirstImport(projectName, fixedSceneRevision)
+        return { success: false, error: 'image-first-import-cancelled' }
+      }
+    }
+
+    activeFileRowId = null
+    const fixedSceneState = {
+      sceneMode: 'image-first',
+      imageFirstVariant,
+      fixedSceneRevision,
+      fixedScenes,
+    }
+    const projectData = buildCurrentProjectData(fixedSceneState)
+    let commitResult
+    try {
+      commitResult = await commitImageFirstImport(projectName, projectData)
+    } catch (error) {
+      commitResult = { success: false, error: importError(error) }
+    }
+    if (!commitResult || commitResult.success === false) {
+      await abortImageFirstImport(projectName, fixedSceneRevision)
+      return { success: false, error: importError(commitResult) }
+    }
+
+    committed = true
+    applyImageFirstImportCommit({
+      scenes: commitResult.scenes,
+      fixedSceneState: commitResult.fixedSceneState,
+    })
+
+    let storyResult
+    try {
+      storyResult = await stageImageFirst({
+        fixedSceneRevision,
+        imageFirstVariant,
+        fixedScenes,
+        storyboardCsv,
+      })
+    } catch (error) {
+      storyResult = { success: false, error: importError(error) }
+    }
+    if (!storyResult || storyResult.success === false) {
+      await recoverCommittedStory()
+      return {
+        success: false,
+        error: importError(storyResult),
+        ...(Array.isArray(storyResult?.sourceRowIds)
+          ? { sourceRowIds: storyResult.sourceRowIds }
+          : {}),
+        committed: true,
+      }
+    }
+    return { success: true }
+  } catch (error) {
+    if (committed) {
+      await recoverCommittedStory()
+      return { success: false, error: importError(error), committed: true }
+    }
+    if (fixedSceneRevision) await abortImageFirstImport(projectName, fixedSceneRevision)
+    return {
+      success: false,
+      error: importError(error),
+      ...(activeFileRowId ? { fileRowId: activeFileRowId } : {}),
+    }
+  } finally {
+    endImageFirstImport()
+  }
+}
 
 function assertImageFirstImportIdle(isImportingRef) {
   if (isImportingRef?.current) throw new Error(IMAGE_FIRST_IMPORT_IN_PROGRESS)
@@ -448,12 +639,6 @@ function App() {
     setFixedSceneState,
     applyImageFirstImportCommit,
   } = useImageFirstImportWindow({ setScenes })
-  // Step 6's coordinator will own begin/end and call the single apply boundary. Keeping the
-  // methods here makes App the transaction/window owner without adding ImportModal behavior now.
-  void beginImageFirstImport
-  void endImageFirstImport
-  void fixedSceneStateRef
-  void applyImageFirstImportCommit
   // Step 3: videoScenes 는 scenes 에서 derived. useVideoScenes 가 scenesHook 으로 라우팅.
   const videoScenesHook = useVideoScenes(scenes, scenesHook)
   const { videoScenes, setVideoScenes } = videoScenesHook
@@ -573,7 +758,7 @@ function App() {
   })
 
   // Project Data 관리
-  const { addPendingSave, handleProjectChange, saveCurrentProject, saveCurrentProjectWithPayload, isRestoringRef, projectLoading, hydratedRef: projectHydratedRef, flowProjectReady, flowProjectId: _flowProjectId } = useProjectData({
+  const { addPendingSave, handleProjectChange, saveCurrentProject, saveCurrentProjectWithPayload, buildCurrentProjectData, isRestoringRef, projectLoading, hydratedRef: projectHydratedRef, flowProjectReady, flowProjectId: _flowProjectId } = useProjectData({
     settings, setSettings, scenes, references, setScenes, setReferences,
     videoScenes, setVideoScenes,
     framePairs, setFramePairs,
@@ -667,6 +852,22 @@ function App() {
       pushQueueRef.current = p.catch(() => {})
       return p
     },
+  })
+
+  const handleImageFirstImport = (payload) => runImageFirstImport({
+    ...payload,
+    projectName: settings.projectName,
+    ensureStoryOpen: storyPipeline.open,
+    recoverStory: storyPipeline.open,
+    beginImageFirstImport,
+    endImageFirstImport,
+    allocateSceneId: scenesHook.allocateSceneId,
+    stageImageFirstImage: fileSystemAPI.stageImageFirstImage,
+    abortImageFirstImport: fileSystemAPI.abortImageFirstImport,
+    buildCurrentProjectData,
+    commitImageFirstImport: fileSystemAPI.commitImageFirstImport,
+    applyImageFirstImportCommit,
+    stageImageFirst: storyPipeline.stageImageFirst,
   })
 
   // Story 프로젝트 경로가 준비되면 세션을 연다 — 일반 타임라인도 story audio/SFX를
@@ -2770,6 +2971,7 @@ function App() {
         <ImportModal
           onImport={handleImport}
           onImportAudio={handleImportAudio}
+          onImportImageFirst={handleImageFirstImport}
           onClose={() => setShowImport(false)}
         />
       )}

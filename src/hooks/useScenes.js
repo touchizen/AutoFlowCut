@@ -739,6 +739,7 @@ export function useScenes() {
     importStoryScenes,
 
     // Scene actions
+    allocateSceneId,
     updateScene,
     updateSrtLine,
     deleteScene,

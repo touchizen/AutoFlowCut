@@ -2,8 +2,9 @@
  * ImportModal Component - 파일 Import 모달
  */
 
-import { useState, useRef } from 'react'
+import { useMemo, useState, useRef } from 'react'
 import { useI18n } from '../hooks/useI18n'
+import { parseStoryboardCSVRows } from '../utils/parsers'
 import Modal from './Modal'
 
 // 가이드 URL 설정
@@ -12,11 +13,39 @@ const getGuideBaseUrl = (lang) => {
   return `https://touchizen.com/guide/${langCode}/autoflowcut`
 }
 
-export default function ImportModal({ onImport, onImportAudio, onClose }) {
+const errorLocaleKey = (error) => error
+  ? `import.${error.replace(/-([a-z])/g, (_match, letter) => letter.toUpperCase())}`
+  : 'import.imageFirstFailed'
+
+const readTextFile = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader()
+  reader.onload = () => resolve(String(reader.result || ''))
+  reader.onerror = () => reject(new Error('storyboard-file-read-failed'))
+  reader.readAsText(file)
+})
+
+export default function ImportModal({ onImport, onImportAudio, onImportImageFirst, onClose }) {
   const { t, lang } = useI18n()
   const [selectedType, setSelectedType] = useState(null)
   const [importMode, setImportMode] = useState('image') // 'image' | 'video'
+  const [showImageFirst, setShowImageFirst] = useState(false)
+  const [imageRows, setImageRows] = useState([])
+  const [storyboardCsv, setStoryboardCsv] = useState('')
+  const [storyboardFilename, setStoryboardFilename] = useState('')
+  const [fileErrors, setFileErrors] = useState({})
+  const [boardErrors, setBoardErrors] = useState({})
+  const [storyboardFileError, setStoryboardFileError] = useState(null)
+  const [globalError, setGlobalError] = useState(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [confirmed, setConfirmed] = useState(false)
   const fileInputRef = useRef(null)
+  const cancelRequestedRef = useRef(false)
+  const closeAfterCancelRef = useRef(false)
+
+  const parsedStoryboard = useMemo(
+    () => parseStoryboardCSVRows(storyboardCsv),
+    [storyboardCsv],
+  )
 
   const guideBaseUrl = getGuideBaseUrl(lang)
 
@@ -106,6 +135,112 @@ export default function ImportModal({ onImport, onImportAudio, onClose }) {
     setSelectedType(null)
   }
 
+  const releasePreviews = (rows) => {
+    if (typeof URL?.revokeObjectURL !== 'function') return
+    for (const row of rows) {
+      if (row.previewUrl) URL.revokeObjectURL(row.previewUrl)
+    }
+  }
+
+  const handleClose = () => {
+    if (submitting) {
+      cancelRequestedRef.current = true
+      closeAfterCancelRef.current = true
+      return
+    }
+    releasePreviews(imageRows)
+    onClose()
+  }
+
+  const handleImageFiles = (event) => {
+    const files = Array.from(event.target.files || [])
+    releasePreviews(imageRows)
+    setImageRows(files.map((file, index) => ({
+      id: `image-row-${index + 1}`,
+      file,
+      previewUrl: typeof URL?.createObjectURL === 'function' ? URL.createObjectURL(file) : '',
+    })))
+    setFileErrors({})
+    setGlobalError(null)
+    setConfirmed(false)
+    event.target.value = ''
+  }
+
+  const moveImage = (index, direction) => {
+    if (confirmed || submitting) return
+    const target = index + direction
+    if (target < 0 || target >= imageRows.length) return
+    setImageRows((rows) => {
+      const next = [...rows]
+      ;[next[index], next[target]] = [next[target], next[index]]
+      return next
+    })
+  }
+
+  const handleStoryboardFile = async (event) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    try {
+      const text = await readTextFile(file)
+      setStoryboardCsv(text)
+      setStoryboardFilename(file.name)
+      setBoardErrors({})
+      setStoryboardFileError(null)
+      setGlobalError(null)
+    } catch (error) {
+      setStoryboardFileError(error.message)
+    }
+    event.target.value = ''
+  }
+
+  const errorText = (error) => {
+    const translated = t(errorLocaleKey(error))
+    return translated.startsWith('import.') ? error : translated
+  }
+
+  const handleImageFirstConfirm = async () => {
+    if (submitting || imageRows.length === 0) return
+    setSubmitting(true)
+    setConfirmed(true)
+    cancelRequestedRef.current = false
+    closeAfterCancelRef.current = false
+    setFileErrors({})
+    setBoardErrors({})
+    setStoryboardFileError(null)
+    setGlobalError(null)
+    try {
+      const result = await onImportImageFirst?.({
+        imageRows: imageRows.map(({ id, file }) => ({ id, file })),
+        imageFirstVariant: storyboardCsv ? 'storyboard' : 'image-only',
+        storyboardCsv,
+        isCancelled: () => cancelRequestedRef.current,
+      })
+      if (result?.success) {
+        releasePreviews(imageRows)
+        onClose()
+        return
+      }
+      if (result?.error === 'image-first-import-cancelled' && closeAfterCancelRef.current) {
+        releasePreviews(imageRows)
+        onClose()
+        return
+      }
+      if (result?.fileRowId) {
+        setFileErrors({ [result.fileRowId]: result.error })
+      } else if (Array.isArray(result?.sourceRowIds) && result.sourceRowIds.length > 0) {
+        setBoardErrors(Object.fromEntries(result.sourceRowIds.map((id) => [id, result.error])))
+      } else if (String(result?.error || '').startsWith('storyboard-')) {
+        setStoryboardFileError(result.error)
+      } else {
+        setGlobalError(result?.error || 'image-first-import-failed')
+      }
+    } catch (error) {
+      setGlobalError(error.message || 'image-first-import-failed')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
   const openUrl = (url, e) => {
     e.stopPropagation()
     if (window.electronAPI?.openExternal) {
@@ -116,10 +251,119 @@ export default function ImportModal({ onImport, onImportAudio, onClose }) {
   }
 
   return (
-    <Modal onClose={onClose} title={`📂 ${t('import.title')}`} className="import-modal">
-      <p className="import-desc">{t('import.selectFormat')}</p>
+    <Modal onClose={handleClose} title={`📂 ${t('import.title')}`} className="import-modal">
+      {showImageFirst ? (
+        <div className="image-first-import">
+          <div className="image-first-toolbar">
+            <button type="button" className="btn btn-secondary" onClick={() => setShowImageFirst(false)} disabled={submitting}>
+              ← {t('import.imageFirstBack')}
+            </button>
+            <label className="btn btn-secondary">
+              {t('import.imageFirstSelectImages')}
+              <input
+                aria-label="image-first-images"
+                type="file"
+                accept="image/png,image/jpeg,.png,.jpg,.jpeg"
+                multiple
+                onChange={handleImageFiles}
+                disabled={submitting}
+                hidden
+              />
+            </label>
+            <label className="btn btn-secondary">
+              {t('import.imageFirstSelectStoryboard')}
+              <input
+                aria-label="image-first-storyboard"
+                type="file"
+                accept=".csv,text/csv"
+                onChange={handleStoryboardFile}
+                disabled={submitting}
+                hidden
+              />
+            </label>
+          </div>
 
-      <div className="import-options">
+          <p className="import-desc">{t('import.imageFirstOrderHint')}</p>
+          <div className="image-first-file-list">
+            {imageRows.map((row, index) => (
+              <div className="image-first-file-row" data-testid="image-first-file-row" key={row.id}>
+                <span className="image-first-ordinal">{index + 1}</span>
+                {row.previewUrl && <img src={row.previewUrl} alt="" className="image-first-thumb" />}
+                <span className="image-first-filename">{row.file.name}</span>
+                <button
+                  type="button"
+                  aria-label={`Move ${row.file.name} up`}
+                  onClick={() => moveImage(index, -1)}
+                  disabled={confirmed || submitting || index === 0}
+                >↑</button>
+                <button
+                  type="button"
+                  aria-label={`Move ${row.file.name} down`}
+                  onClick={() => moveImage(index, 1)}
+                  disabled={confirmed || submitting || index === imageRows.length - 1}
+                >↓</button>
+                {fileErrors[row.id] && <div role="alert" className="image-first-alert">{errorText(fileErrors[row.id])}</div>}
+              </div>
+            ))}
+          </div>
+
+          {storyboardFilename && <div className="image-first-storyboard-name">{storyboardFilename}</div>}
+          {storyboardFileError && (
+            <div role="alert" data-testid="storyboard-file-alert" className="image-first-alert">
+              {errorText(storyboardFileError)}
+            </div>
+          )}
+          {parsedStoryboard.rows.length > 0 && (
+            <div className="image-first-board-preview">
+              {parsedStoryboard.rows.map((row) => (
+                <div
+                  key={row.sourceRowId}
+                  data-source-row-id={row.sourceRowId}
+                  data-testid={row.sourceRowId}
+                  className="image-first-board-row"
+                >
+                  <span>{row.sceneOrdinal ?? '—'}</span>
+                  <span>{row.prompt || row.prompt_ko || '—'}</span>
+                  <span>{row.subtitle || '—'}</span>
+                  <span>{row.speaker || '—'}</span>
+                  {boardErrors[row.sourceRowId] && (
+                    <div role="alert" className="image-first-alert">{errorText(boardErrors[row.sourceRowId])}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {globalError && <div role="alert" className="image-first-alert">{errorText(globalError)}</div>}
+          <div className="image-first-actions">
+            <button
+              type="button"
+              className="btn btn-primary"
+              aria-label="Confirm image-first import"
+              disabled={submitting || imageRows.length === 0}
+              onClick={handleImageFirstConfirm}
+            >
+              {submitting ? t('import.imageFirstImporting') : t('import.imageFirstConfirm')}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <p className="import-desc">{t('import.selectFormat')}</p>
+
+          <div className="import-options">
+            <div
+              className="import-option"
+              data-testid="image-first-option"
+              onClick={() => setShowImageFirst(true)}
+            >
+              <div className="option-icon">🧩</div>
+              <div className="option-info">
+                <div className="option-title">{t('import.imageFirstTitle')}</div>
+                <div className="option-desc">{t('import.imageFirstDesc')}</div>
+                <div className="option-hint">PNG/JPEG + storyboard CSV</div>
+              </div>
+              <div className="option-arrow">→</div>
+            </div>
         {importOptions.map(option => (
           <div key={option.id} className="import-option-wrapper">
             <div className="import-option" onClick={() => handleOptionClick(option)}>
@@ -192,9 +436,11 @@ export default function ImportModal({ onImport, onImportAudio, onClose }) {
             </div>
           </div>
         )}
-      </div>
+          </div>
 
-      <input type="file" ref={fileInputRef} onChange={handleFileSelect} style={{ display: 'none' }} />
+          <input type="file" ref={fileInputRef} onChange={handleFileSelect} style={{ display: 'none' }} />
+        </>
+      )}
     </Modal>
   )
 }

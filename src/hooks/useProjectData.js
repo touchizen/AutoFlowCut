@@ -436,6 +436,33 @@ export function buildProjectSavePayload({ srtTrack, scenes, references, videoSce
   return payload
 }
 
+/** Media-stripped project.json snapshot used by both normal saves and the image-first fs commit. */
+export function buildProjectDataForSave({
+  srtTrack = [],
+  scenes = [],
+  references = [],
+  videoScenes = [],
+  framePairs = [],
+  settings,
+  audioFolderPath = null,
+  selectedStyleRefId = null,
+  flowProjectId = null,
+  fixedSceneState = null,
+}) {
+  return buildProjectSavePayload({
+    srtTrack,
+    scenes: scenes.map(({ image, videoT2V, videoI2V, ...rest }) => rest),
+    references: stripReferencesForSave(references),
+    videoScenes: videoScenes.map(({ video, ...rest }) => rest),
+    framePairs: framePairs.map(({ base64, video, ...rest }) => rest),
+    settings,
+    audioFolderPath,
+    selectedStyleRefId,
+    flowProjectId,
+    fixedSceneState,
+  })
+}
+
 /** 로드 시 flowProjectId 복원 (없으면 null). §3.3.1 */
 export function pickFlowProjectId(data) {
   return (data && data.flowProjectId) || null
@@ -491,31 +518,18 @@ export async function saveCurrentProject({
     return IMAGE_FIRST_IMPORT_BLOCKED
   }
 
-  // scenes에서 base64 데이터 제외 (image, videoT2V, videoI2V)
-  const scenesWithoutImages = scenes.map(({ image, videoT2V, videoI2V, ...rest }) => rest)
-
-  // references에서 data(base64) 제외 — 단, 디스크 저장된(filePath 있는) ref 만.
-  // 저장 실패로 filePath 없는 ref 는 base64 를 보존해 재오픈 유실 방지 (projectPersist 참고).
-  const refsWithoutData = stripReferencesForSave(references)
-
-  // videoScenes에서 video(base64) 제외
-  const videoScenesWithoutMedia = videoScenes.map(({ video, ...rest }) => rest)
-
-  // framePairs에서 base64/video 제외
-  const framePairsWithoutMedia = framePairs.map(({ base64, video, ...rest }) => rest)
-
   // audioFolderPath: 인자(=React state)가 truth source. legacy 호출자(인자 미전달)는
   // localStorage fallback. 인자가 명시적으로 null이면 null 저장 (예: 프로젝트 전환).
   const audioFolderPath = audioFolderPathArg !== undefined
     ? audioFolderPathArg
     : (localStorage.getItem('audioFolderPath') || null)
 
-  return await fileSystemAPI.saveProjectData(settings.projectName, buildProjectSavePayload({
+  return await fileSystemAPI.saveProjectData(settings.projectName, buildProjectDataForSave({
     srtTrack,
-    scenes: scenesWithoutImages,
-    references: refsWithoutData,
-    videoScenes: videoScenesWithoutMedia,
-    framePairs: framePairsWithoutMedia,
+    scenes,
+    references,
+    videoScenes,
+    framePairs,
     settings,
     audioFolderPath,
     selectedStyleRefId,
@@ -1227,12 +1241,28 @@ export function useProjectData({
       fixedSceneState: fixedSceneStateRef ? fixedSceneStateRef.current : fixedSceneState,
     })
 
+  const buildCurrentProjectData = (fixedSceneStateOverride) => buildProjectDataForSave({
+    settings,
+    scenes: scenesRef ? scenesRef.current : scenes,
+    references,
+    videoScenes,
+    framePairs,
+    selectedStyleRefId,
+    srtTrack,
+    audioFolderPath: audioFolderPath !== undefined
+      ? audioFolderPath
+      : (localStorage.getItem('audioFolderPath') || null),
+    flowProjectId,
+    fixedSceneState: fixedSceneStateOverride,
+  })
+
   return {
     addPendingSave,
     handleProjectChange,
     // settingsOverride: 설정 저장 시점처럼 setSettings 직후(아직 리렌더 전) 호출할 때
     // 최신 settings 를 명시로 넘겨 stale closure 를 피한다.
     saveCurrentProject: (settingsOverride) => buildCurrentProjectPayload({ settingsOverride }),
+    buildCurrentProjectData,
     // §4-④: story push 직후처럼, 아직 리렌더 전이라 scenes/srtTrack closure 가 최신
     // 상태를 반영하지 못하는 시점에 명시 payload 로 저장한다 — closure 의 stale 값
     // 대신 인자로 준 scenes/srtTrack 을 저장(나머지 필드는 기존 로직과 동일하게 현재

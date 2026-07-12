@@ -20,6 +20,7 @@ vi.mock('../../src/services/videoRecovery', () => ({ recoverInFlightVideos: vi.f
 
 import {
   buildProjectSavePayload,
+  buildProjectDataForSave,
   loadProjectWithResources,
   pickFixedSceneState,
   saveCurrentProject,
@@ -107,6 +108,26 @@ beforeEach(() => {
 })
 
 describe('FixedSceneState load/save whitelist', () => {
+  it('builds the import commit snapshot without invoking a project writer', () => {
+    const snapshot = buildProjectDataForSave({
+      ...basePayload,
+      scenes: [{ id: 'scene_old', image: 'large-image', videoT2V: 'large-video' }],
+      references: [{ id: 'ref-1', filePath: '/refs/ref-1.png', data: 'large-ref', syncing: true }],
+      videoScenes: [{ id: 'vscene_1', video: 'large-video' }],
+      framePairs: [{ id: 'fp_1', base64: 'large-video', video: 'large-video' }],
+      fixedSceneState,
+    })
+
+    expect(snapshot).toMatchObject(fixedSceneState)
+    expect(snapshot.scenes[0]).not.toHaveProperty('image')
+    expect(snapshot.scenes[0]).not.toHaveProperty('videoT2V')
+    expect(snapshot.references[0]).not.toHaveProperty('data')
+    expect(snapshot.references[0]).not.toHaveProperty('syncing')
+    expect(snapshot.videoScenes[0]).not.toHaveProperty('video')
+    expect(snapshot.framePairs[0]).not.toHaveProperty('base64')
+    expect(snapshot.framePairs[0]).not.toHaveProperty('video')
+  })
+
   it('writes all four durable fixed-scene fields through the save whitelist', () => {
     expect(buildProjectSavePayload({ ...basePayload, fixedSceneState })).toMatchObject(fixedSceneState)
   })
