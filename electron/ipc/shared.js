@@ -11,6 +11,7 @@ import { aspectRatioTabSuffix } from '../flow-aspect-ratio-ui.js'
 import { buildAgentDefaultsScript, buildListModelsScript } from '../flow-agent-defaults.js'
 import { AGENT_TOGGLE_PROBE, AGENT_TOGGLE_SELECTOR, AGENT_CHAT_CLOSE_SELECTOR, AGENT_SETTINGS_CLOSE_SELECTOR, AGENT_TOGGLE_DIAGNOSTIC } from '../flow-agent-toggle.js'
 import { buildSelectModeScript } from '../flow-mode-tab.js'
+import { FLOW_PAGE_PROBE_JS, isFlowErrorPage } from '../flowOpenRetry.js'
 import { screen } from 'electron'
 import { computeOffscreenBounds } from '../offscreen-bounds.js'
 
@@ -884,6 +885,41 @@ export function createSharedHelpers(ctx) {
    * @param {string|null|undefined} projectId  Bound Flow project UUID, or falsy if unbound.
    * @returns {Promise<{ok:boolean, error?:string}>}
    */
+  /**
+   * 대상 프로젝트 URL 위에 있을 때, 페이지가 진짜 로드됐는지(에러 페이지가 아닌지) 확인한다.
+   * 에러면 flow:open-project 와 동일하게 home(base) 경유로 한 번 복구를 시도한다 — 갤러리 클릭
+   * (앱 셸 로드 후 client-side 네비)과 같은 경로라 대체로 살아난다.
+   *
+   * 프로브를 못 읽으면(null/throw) 통과시킨다 — 판정 불가를 실패로 처리하면 멀쩡한 생성을 막는다.
+   */
+  async function ensureProjectLoaded(flowView, projectId) {
+    const probe = async () => {
+      try { return await flowView.webContents.executeJavaScript(FLOW_PAGE_PROBE_JS) } catch { return null }
+    }
+
+    let page = await probe()
+    if (!page || !isFlowErrorPage(page)) return { ok: true }
+
+    console.warn('[Flow Guard] project URL but page is not loaded (error/landing) — recovering via home')
+    const m = (flowView.webContents.getURL() || '').match(/^(.*\/tools\/flow)(\/|$)/)
+    const base = m ? m[1] : 'https://labs.google/fx/tools/flow'
+    await flowView.webContents.loadURL(base).catch(() => {})
+    await new Promise((r) => setTimeout(r, 1500))
+    await flowView.webContents.loadURL(`${base}/project/${projectId}`).catch(() => {})
+    await new Promise((r) => setTimeout(r, 2000))
+
+    page = await probe()
+    if (!page || !isFlowErrorPage(page)) {
+      console.log('[Flow Guard] project recovered after home re-nav')
+      return { ok: true }
+    }
+
+    await reportDomFailure('project-not-loaded', 'flow_error_page', { projectId, interactiveCount: page.interactiveCount })
+    // 사용자가 읽는 문구 — 진짜 원인을 말한다. "모든 미디어 화면인지 확인하세요"가 제보자를
+    //   (그리고 우리를) 엉뚱한 곳으로 몇 시간 보냈다.
+    return { ok: false, error: 'Flow 프로젝트를 열지 못했습니다. Flow 탭에서 프로젝트가 정상적으로 열리는지 확인한 뒤 다시 시도해주세요.' }
+  }
+
   async function ensureOnProjectComposer(flowView, projectId) {
     if (!flowView) return { ok: false, error: 'Flow view not ready' }
 
@@ -904,7 +940,11 @@ export function createSharedHelpers(ctx) {
       const marker = `/project/${projectId}`
       const idx = currentUrl.indexOf(marker)
       if (idx >= 0 && !/^\/character/.test(currentUrl.slice(idx + marker.length))) {
-        return { ok: true }
+        // ⚠️ URL 만으로는 부족하다. Flow 가 프로젝트를 못 띄우면 "문제가 발생했습니다" 에러 페이지를
+        //   보여주는데, 이때 URL 은 /project/{id} 그대로다. 그대로 통과시키면 컴포저가 없는 페이지에서
+        //   생성이 진행되고, ensureAgentOff 가 토글을 못 찾아 "Agent 를 OFF 로 못 바꿨다"는 엉뚱한
+        //   에러가 사용자에게 뜬다(실제 원인은 프로젝트 미로드). 실제 제보가 이 경로였다.
+        return await ensureProjectLoaded(flowView, projectId)
       }
     }
 
@@ -925,7 +965,8 @@ export function createSharedHelpers(ctx) {
       await new Promise((r) => setTimeout(r, 500))
       if ((flowView.webContents.getURL() || '').includes(`/project/${projectId}`)) {
         console.log('[Flow Guard] Confirmed on target project after navigation')
-        return { ok: true }
+        // URL 만 맞은 것일 수 있다 — 우리가 방금 한 loadURL 도 에러 페이지로 떨어질 수 있다.
+        return await ensureProjectLoaded(flowView, projectId)
       }
     }
 
