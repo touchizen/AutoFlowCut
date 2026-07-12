@@ -48,7 +48,7 @@ function promoteSpeakers(rows) {
   return speakers
 }
 
-function groupRows(rows) {
+export function groupStoryboardRows(rows) {
   const byOrdinal = new Map()
   for (const row of rows) {
     if (!byOrdinal.has(row.sceneOrdinal)) byOrdinal.set(row.sceneOrdinal, [])
@@ -230,7 +230,7 @@ export function validateStoryboardRows(parsed = {}, options = {}) {
     }
   }
 
-  const slots = groupRows(sourceRows)
+  const slots = groupStoryboardRows(sourceRows)
   const ambiguousPromptRows = []
   for (const slot of slots) {
     const promptRows = slot.rows.filter((row) => String(row.prompt || '').trim())
