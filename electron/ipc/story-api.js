@@ -176,8 +176,19 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
     machine.reviewSynopsis({ synopsisMd, characters, options: options || {}, review })))
   // 슬라이스4(§v2.8 M1 + §v2.9): 시놉시스 확정 커밋 채널(title·pasted 공통) — characters→speakers
   // 반영 + charactersConfirmed=true + pushCharacters emit은 machine.confirmSynopsis가 수행.
-  ipcMain.handle('story:confirm-synopsis', guarded(({ synopsisMd, characters }) =>
-    machine.confirmSynopsis({ synopsisMd, characters })))
+  ipcMain.handle('story:confirm-synopsis', guarded(({
+    synopsisMd,
+    characters,
+    sceneMode,
+    imageFirstVariant,
+    fixedSceneRevision,
+  }) => machine.confirmSynopsis({
+    synopsisMd,
+    characters,
+    sceneMode,
+    imageFirstVariant,
+    fixedSceneRevision,
+  })))
   // 슬라이스1: 세그먼트 단건 TTS 테스트(배치와 분리, 스텝 상태 미변경).
   ipcMain.handle('story:tts-preview', guarded(({ segmentIds, speakers, sfxSources }) => machine.synthPreview({ segmentIds, speakers, sfxSources })))
 

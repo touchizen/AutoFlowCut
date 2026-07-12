@@ -16,6 +16,7 @@ import { normalizeActiveStoryLlmOptions as normalizeStoryLlmOptions } from '../a
 import { validateScenesSegments } from '../api/llm/schemas.js'
 import { isNarratorSpeaker as isNarratorTrackSpeaker } from '../../src/utils/storyNarrationTracks.js'
 import { normalizeStoryCharacter, characterVisualPrompt } from '../../src/services/storyCharacter.js'
+import { isRosterGatedInputType } from '../../src/services/storyInputTypes.js'
 import { parseStoryboardCSVRows } from '../../src/utils/parsers.js'
 
 const DOWNSTREAM = { script: ['scenes', 'audio', 'prompts'], scenes: ['audio', 'prompts'], audio: ['prompts'], prompts: [] }
@@ -280,12 +281,12 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   }
 
   // FIX-1 + FIX-7: roster 강제(신규 speaker 금지 + 명단 밖 seg.speaker → narrator 재기록)의 단일 기준.
-  // charactersConfirmed는 phase 판정 마커일 뿐 — 강제는 "확정 + title/pasted 경로"가 성립할 때다.
+  // charactersConfirmed는 phase 판정 마커일 뿐 — 강제는 "확정 + roster-gated input"일 때다.
   // 확정된 빈 명단(나레이션-only)도 강제 대상(FIX-7 — 명단 밖 non-narrator는 narrator로 흡수).
-  // legacy(undefined)·미확정(false)·imported/manual은 자유 모드(FIX-5 auto-add 포함, 현행 유지).
+  // legacy(undefined)·미확정(false)·roster-gated가 아닌 imported/manual은 자유 모드다.
   function rosterEnforced() {
     return state?.charactersConfirmed === true
-      && ['title', 'pasted'].includes(state?.input?.type)
+      && isRosterGatedInputType(state?.input?.type)
   }
 
   // §v2.8 B2/§v2.9 MINOR②: splitScenes/reviseScenes에 주입할 확정 명단(id/name/role).
@@ -1450,7 +1451,9 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       if (previewing || synopsisController || researchController || Object.values(state.steps || {}).some((s) => s.status === 'running')) {
         return { error: 'busy' }
       }
-      const type = params.type === 'pasted' ? 'pasted' : 'title'
+      const imageFirst = state.sceneMode === 'image-first'
+      const requestedType = params.type === 'pasted' ? 'pasted' : 'title'
+      const type = imageFirst ? 'pasted' : requestedType
       const operationId = randomUUID()
       const myController = new AbortController()
       synopsisController = myController
@@ -1486,12 +1489,12 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         // title·pasted 모두 뽑은 시놉시스를 durable 저장 — pasted도 대본에서 역추출한 시놉시스를
         // 리뷰용으로 보여준다(재오픈 hasSynopsis 복원). 게이트 후 script 전 종료에도 유실 방지(Codex #2).
         await store.saveText('synopsis.md', synopsisMd || '')
-        if (type === 'title') {
+        if (!imageFirst && requestedType === 'title') {
           state.input = { type: 'title', title: params.title, options: inputOptions }
         }
         // characters는 state.speakers 단일 저장(m3 — characters.json 없음). 재오픈 hydrate가
         // 여기서 파생하고, 기존 voice 배정은 승계된다. step status는 안 건드림.
-        if (castReadable) state.speakers = speakersFromCharacters(characters)
+        if (!imageFirst && castReadable) state.speakers = speakersFromCharacters(characters)
         await flush()
         // 렌더러 state 미러 동기화 — generateSynopsis 는 state.input(type)·charactersConfirmed 를
         // 바꾸므로 story:state 를 보낸다. 없으면 재오픈 전 세션에서 설정 탭으로 돌아갔을 때
@@ -1522,13 +1525,67 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     // characters→state.speakers 반영(정규화 + narrator 시딩 + voice 보존) + charactersConfirmed=true
     // + flush + story:pushCharacters emit(Ref 카드 생성 시점을 확정으로 앞당김). script는 건드리지
     // 않는다 — title 경로의 재생성은 renderer가 confirm 완료 후 start('script')를 순차 호출(§v2.10).
-    async confirmSynopsis({ synopsisMd, characters = [] } = {}) {
+    async confirmSynopsis({
+      synopsisMd,
+      characters = [],
+      sceneMode,
+      imageFirstVariant,
+      fixedSceneRevision,
+    } = {}) {
       if (!state) state = await store.load()
       if (previewing || synopsisController || researchController || Object.values(state.steps || {}).some((s) => s.status === 'running')) {
         return { error: 'busy' }
       }
+
+      const candidateSpeakers = speakersFromCharacters(characters)
+      let projectFixedState = null
+      if (state.sceneMode === 'image-first') {
+        projectFixedState = await loadProjectState()
+        const payloadMatchesProject = sceneMode === 'image-first'
+          && imageFirstVariant === projectFixedState?.imageFirstVariant
+          && fixedSceneRevision === projectFixedState?.fixedSceneRevision
+        const consistency = checkFixedSceneConsistency(projectFixedState, state)
+        if (!payloadMatchesProject || !consistency.success || consistency.mode !== 'image-first') {
+          return { success: false, error: 'fixed-scenes-stale' }
+        }
+
+        if (projectFixedState.imageFirstVariant === 'storyboard') {
+          const parsed = parseStoryboardCSVRows((await store.loadText('storyboard.csv')) || '')
+          const rosterValidation = validateStoryboardRows(parsed, {
+            roster: candidateSpeakers,
+            rosterEnforced: true,
+          })
+          if (!rosterValidation.success) {
+            if (rosterValidation.error === 'storyboard-speaker-unknown') {
+              return {
+                success: false,
+                error: 'storyboard-roster-incomplete',
+                speakers: rosterValidation.speakers || [],
+              }
+            }
+            return rosterValidation
+          }
+
+          const fixedValidation = validateFixedScenes({
+            scenes: await loadScenesForPayload(),
+            fixedScenes: projectFixedState.fixedScenes,
+            variant: 'storyboard',
+            speakers: candidateSpeakers,
+            sourceRows: rosterValidation.rows,
+            requireTiming: false,
+          })
+          if (!fixedValidation.success) return fixedValidation
+        }
+
+        // Renderer payload에는 fixed list를 받지 않는다. 검증을 통과한 project.json 정본만 복사한다.
+        state.sceneMode = projectFixedState.sceneMode
+        state.imageFirstVariant = projectFixedState.imageFirstVariant
+        state.fixedSceneRevision = projectFixedState.fixedSceneRevision
+        state.fixedScenes = projectFixedState.fixedScenes
+      }
+
       const operationId = randomUUID()
-      state.speakers = speakersFromCharacters(characters)
+      state.speakers = candidateSpeakers
       state.charactersConfirmed = true
       if (typeof synopsisMd === 'string' && synopsisMd.trim()) await store.saveText('synopsis.md', synopsisMd)
       await flush()
@@ -1793,11 +1850,14 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // §3.3(Codex R2 #2): synopsis side action 진행 중에도 busy — step/preview/synopsis 상호배제.
       // 리서치 §5: research side action 진행 중에도 busy(상호배제 대칭).
       if (previewing || synopsisController || researchController || Object.values(state.steps).some((s) => s.status === 'running')) return { error: 'busy' }
-      // FIX-2: 미확정 게이트 — 신규(title/pasted) 프로젝트(charactersConfirmed===false)는 synopsis
+      if (state.sceneMode === 'image-first' && (step === 'script' || step === 'scenes')) {
+        return { error: 'fixed-scenes-immutable' }
+      }
+      // FIX-2: 미확정 게이트 — 신규 roster-gated 프로젝트(charactersConfirmed===false)는 synopsis
       // 확정 전까지 하류(scenes/audio/prompts)를 거부한다(§v2.8 B1/§v2.11 게이트 우회 차단).
       // script(붙여넣기 저장/제목 생성)는 게이트 전 단계라 허용. legacy(undefined)는 미적용(FIX-1).
       if (step !== 'script'
-        && ['title', 'pasted'].includes(state?.input?.type)
+        && isRosterGatedInputType(state?.input?.type)
         && state.charactersConfirmed === false) return { error: 'unconfirmed' }
       // FIX-6: pasted 미확정은 script *재생성*(이어쓰기/다시쓰기/검토)도 게이트 대상 — §v2.8 B1:
       // 확정 전 붙여넣은 script는 건드리지 않는다. 재붙여넣기(pastedScript)는 게이트 전 저장이라 허용.
@@ -1806,6 +1866,9 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         && state?.input?.type === 'pasted'
         && state.charactersConfirmed === false
         && !params.pastedScript) return { error: 'unconfirmed' }
+      if (state.sceneMode === 'image-first'
+        && step === 'prompts'
+        && state.steps.audio?.status !== 'done') return { error: 'fixed-audio-required' }
       const operationId = randomUUID()
       const myController = new AbortController()
       controller = myController

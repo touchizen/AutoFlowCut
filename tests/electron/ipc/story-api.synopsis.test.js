@@ -2,7 +2,7 @@
 // 슬라이스4(§3.4 + §v2.8 M1): story:generate-synopsis / story:confirm-synopsis IPC 배선.
 // generateTitle IPC 테스트 미러 — guarded(projectToken) + machine 메서드 위임 검증.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mkdtemp } from 'node:fs/promises'
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { registerStoryIPC } from '../../../electron/ipc/story-api.js'
@@ -102,6 +102,80 @@ describe('story:confirm-synopsis IPC', () => {
     })
     const gs = await ipc.invoke('story:get-state', { projectToken })
     expect(gs.charactersConfirmed).toBe(true)
+  })
+
+  it('image-first mode/variant/revision payload를 machine confirm gate까지 전달한다', async () => {
+    const fixedScenes = [
+      { ordinal: 1, storyId: 'story-a', rendererSceneId: 'scene_A' },
+      { ordinal: 2, storyId: 'story-b', rendererSceneId: 'scene_B' },
+    ]
+    const fixedState = {
+      sceneMode: 'image-first',
+      imageFirstVariant: 'storyboard',
+      fixedSceneRevision: 'fixed-r-1',
+      fixedScenes,
+    }
+    const storyboardCsv = [
+      'scene,prompt,subtitle,speaker',
+      '10,Wide shot,Hello,Alice',
+      '20,Night street,Good night,Bob',
+    ].join('\n')
+    const scenes = [
+      {
+        storyId: 'story-a', rendererSceneId: 'scene_A', sceneNo: 1, imagePrompt: 'Wide shot',
+        sourceRowIds: ['storyboard-row-1'], plannedMs: null,
+        segments: [{ id: 'sb-1-1', type: 'narration', speaker: 'Alice', text: 'Hello', sourceRowId: 'storyboard-row-1' }],
+      },
+      {
+        storyId: 'story-b', rendererSceneId: 'scene_B', sceneNo: 2, imagePrompt: 'Night street',
+        sourceRowIds: ['storyboard-row-2'], plannedMs: null,
+        segments: [{ id: 'sb-2-1', type: 'narration', speaker: 'Bob', text: 'Good night', sourceRowId: 'storyboard-row-2' }],
+      },
+    ]
+    await mkdir(path.join(dir, 'story'), { recursive: true })
+    await writeFile(path.join(dir, 'project.json'), JSON.stringify(fixedState))
+    await writeFile(path.join(dir, 'story', 'story.json'), JSON.stringify({
+      version: 1,
+      ...fixedState,
+      input: { type: 'storyboard', variant: 'storyboard', fixedSceneRevision: 'fixed-r-1' },
+      charactersConfirmed: false,
+      steps: {
+        script: { status: 'done' }, scenes: { status: 'done' },
+        audio: { status: 'pending' }, prompts: { status: 'pending' },
+      },
+      pendingPushRevision: 0,
+      lastPushedRevision: 0,
+      speakers: [{ id: 'Alice', name: 'Alice' }, { id: 'Bob', name: 'Bob' }],
+    }))
+    await writeFile(path.join(dir, 'story', 'storyboard.csv'), storyboardCsv)
+    await writeFile(path.join(dir, 'story', 'script.md'), '# storyboard')
+    await writeFile(path.join(dir, 'story', 'scenes.json'), JSON.stringify({ scenes }))
+
+    const { projectToken } = await ipc.invoke('story:open', { projectPath: dir })
+    const incomplete = await ipc.invoke('story:confirm-synopsis', {
+      projectToken,
+      synopsisMd: 'must not save',
+      characters: [{ id: 'Alice', name: 'Alice' }],
+      sceneMode: 'image-first',
+      imageFirstVariant: 'storyboard',
+      fixedSceneRevision: 'fixed-r-1',
+    })
+    expect(incomplete).toEqual({
+      success: false,
+      error: 'storyboard-roster-incomplete',
+      speakers: ['Bob'],
+    })
+
+    const result = await ipc.invoke('story:confirm-synopsis', {
+      projectToken,
+      synopsisMd: 'confirmed',
+      characters: [{ id: 'Alice', name: 'Alice' }, { id: 'Bob', name: 'Bob' }],
+      sceneMode: 'image-first',
+      imageFirstVariant: 'storyboard',
+      fixedSceneRevision: 'fixed-r-1',
+    })
+
+    expect(result).toEqual({ ok: true, operationId: expect.any(String) })
   })
 
   it('stale token은 거부한다', async () => {

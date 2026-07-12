@@ -6,6 +6,28 @@ import path from 'node:path'
 
 const writes = vi.hoisted(() => [])
 const storeSpies = vi.hoisted(() => ({ saveText: vi.fn(), save: vi.fn() }))
+const randomUUIDSpy = vi.hoisted(() => vi.fn())
+const fixedValidationSpy = vi.hoisted(() => vi.fn())
+vi.mock('node:crypto', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    randomUUID: (...args) => {
+      randomUUIDSpy()
+      return actual.randomUUID(...args)
+    },
+  }
+})
+vi.mock('../../../electron/story/fixedScenes.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    validateFixedScenes: (...args) => {
+      fixedValidationSpy(...args)
+      return actual.validateFixedScenes(...args)
+    },
+  }
+})
 vi.mock('../../../electron/story/storyStore.js', async (importOriginal) => {
   const actual = await importOriginal()
   return {
@@ -64,17 +86,63 @@ async function writeJson(filePath, value) {
   await writeFile(filePath, JSON.stringify(value, null, 2), 'utf-8')
 }
 
-async function makeMachine({ project = projectFixedState(), story } = {}) {
+const stagedScenes = [
+  {
+    storyId: 'story-a', rendererSceneId: 'scene_A', sceneNo: 1, imagePrompt: 'Wide shot',
+    sourceRowIds: ['storyboard-row-1'], plannedMs: null,
+    segments: [{ id: 'sb-1-1', type: 'narration', speaker: 'Alice', text: 'Hello', sourceRowId: 'storyboard-row-1' }],
+  },
+  {
+    storyId: 'story-b', rendererSceneId: 'scene_B', sceneNo: 2, imagePrompt: 'Night street',
+    sourceRowIds: ['storyboard-row-2'], plannedMs: null,
+    segments: [{ id: 'sb-2-1', type: 'narration', speaker: 'Bob', text: 'Good night', sourceRowId: 'storyboard-row-2' }],
+  },
+]
+
+const imageFirstStory = ({
+  variant = 'storyboard',
+  confirmed = false,
+  audio = { status: 'pending' },
+} = {}) => {
+  const steps = {
+    script: { status: variant === 'storyboard' ? 'done' : 'pending' },
+    scenes: { status: variant === 'storyboard' ? 'done' : 'pending' },
+    prompts: { status: 'pending' },
+  }
+  if (audio !== undefined) steps.audio = audio
+  return {
+    ...defaultStoryState(),
+    ...projectFixedState({ imageFirstVariant: variant }),
+    input: { type: 'storyboard', variant, fixedSceneRevision: revision },
+    charactersConfirmed: confirmed,
+    speakers: [
+      { id: 'Alice', name: 'Alice', voice: { provider: 'typecast', voiceId: 'alice-voice' } },
+      { id: 'Bob', name: 'Bob', role: 'supporting' },
+      { id: 'narrator', name: '나레이션', voice: { provider: 'typecast', voiceId: 'narrator-voice' } },
+    ],
+    steps,
+  }
+}
+
+async function makeMachine({ project = projectFixedState(), story, files = {} } = {}) {
   const projectPath = await mkdtemp(path.join(tmpdir(), 'stage-image-first-'))
   if (project !== null) await writeJson(path.join(projectPath, 'project.json'), project)
   if (story) await writeJson(path.join(projectPath, 'story', 'story.json'), story)
+  for (const [relPath, contents] of Object.entries(files)) {
+    const filePath = path.join(projectPath, 'story', relPath)
+    await mkdir(path.dirname(filePath), { recursive: true })
+    await writeFile(filePath, contents, 'utf-8')
+  }
   const emitted = []
   const llm = {
-    generateScript: vi.fn(),
-    splitScenes: vi.fn(),
+    generateScript: vi.fn(async () => ({ scriptMd: '# generated' })),
+    splitScenes: vi.fn(async () => ({ scenes: stagedScenes, speakers: [] })),
     reviewScenes: vi.fn(),
     reviseScenes: vi.fn(),
-    writePrompts: vi.fn(),
+    writePrompts: vi.fn(async (scenes) => ({ scenes })),
+    generateSynopsis: vi.fn(async () => ({ synopsisMd: 'generated synopsis', characters: [{ id: 'Alice', name: 'Alice' }] })),
+    reviewSynopsis: vi.fn(async () => ({ verdict: 'pass', critique: '', score: 9 })),
+    reviseSynopsis: vi.fn(),
   }
   const machine = createStepMachine({
     projectPath,
@@ -86,8 +154,55 @@ async function makeMachine({ project = projectFixedState(), story } = {}) {
   writes.length = 0
   storeSpies.saveText.mockClear()
   storeSpies.save.mockClear()
+  randomUUIDSpy.mockClear()
+  fixedValidationSpy.mockClear()
   emitted.length = 0
   return { machine, projectPath, emitted, llm }
+}
+
+const storyboardFiles = {
+  'storyboard.csv': storyboardCsv,
+  'script.md': '[VISUAL] Wide shot\n[Alice] Hello\n[VISUAL] Night street\n[Bob] Good night',
+  'scenes.json': JSON.stringify({ scenes: stagedScenes }, null, 2),
+}
+
+function clearObservedSideEffects(ctx) {
+  writes.length = 0
+  storeSpies.saveText.mockClear()
+  storeSpies.save.mockClear()
+  randomUUIDSpy.mockClear()
+  fixedValidationSpy.mockClear()
+  ctx.emitted.length = 0
+  Object.values(ctx.llm).forEach((method) => method?.mockClear?.())
+}
+
+function expectNoObservedSideEffects(ctx) {
+  expect(randomUUIDSpy).toHaveBeenCalledTimes(0)
+  expect(storeSpies.saveText).toHaveBeenCalledTimes(0)
+  expect(storeSpies.save).toHaveBeenCalledTimes(0)
+  expect(writes).toHaveLength(0)
+  expect(ctx.emitted).toHaveLength(0)
+  for (const method of Object.values(ctx.llm)) expect(method).toHaveBeenCalledTimes(0)
+}
+
+async function observeAbortControllerCreations(run) {
+  const NativeAbortController = globalThis.AbortController
+  const creations = vi.fn()
+  globalThis.AbortController = class ObservedAbortController extends NativeAbortController {
+    constructor(...args) {
+      super(...args)
+      creations()
+    }
+  }
+  try {
+    return { result: await run(), creations }
+  } finally {
+    globalThis.AbortController = NativeAbortController
+  }
+}
+
+async function readStoryBytes(projectPath, relPath) {
+  return readFile(path.join(projectPath, 'story', relPath)).catch(() => null)
 }
 
 async function expectZeroSideEffects(ctx, commandPayload, expected) {
@@ -272,5 +387,249 @@ describe('machine.stageImageFirst durable commit', () => {
     })
     const stateEvent = ctx.emitted.find(({ channel }) => channel === 'story:state')
     expect(stateEvent.data).toMatchObject({ scenes: [], scriptText: '', charactersConfirmed: false })
+  })
+})
+
+describe('D24-C6 image-first immutable script/scenes public gate', () => {
+  const paramCases = [
+    ['plain', {}],
+    ['reviewOnly', { reviewOnly: true }],
+    ['pastedScript', { pastedScript: 'replacement' }],
+    ['reviewOnly+pastedScript', { reviewOnly: true, pastedScript: 'replacement' }],
+  ]
+
+  it('storyboard/image-only × confirmed/unconfirmed × all params reject before operation/controller/reset/write/push/LLM', async () => {
+    for (const variant of ['storyboard', 'image-only']) {
+      for (const confirmed of [false, true]) {
+        for (const step of ['script', 'scenes']) {
+          for (const [_paramLabel, params] of paramCases) {
+            const project = projectFixedState({ imageFirstVariant: variant })
+            const story = imageFirstStory({ variant, confirmed })
+            const files = variant === 'storyboard' ? storyboardFiles : {}
+            const ctx = await makeMachine({ project, story, files })
+            const before = await ctx.machine.getState()
+            clearObservedSideEffects(ctx)
+
+            const observed = await observeAbortControllerCreations(() => ctx.machine.start(step, params))
+
+            expect(observed.result).toEqual({ error: 'fixed-scenes-immutable' })
+            expect(observed.creations).toHaveBeenCalledTimes(0)
+            expect(fixedValidationSpy).toHaveBeenCalledTimes(0)
+            expectNoObservedSideEffects(ctx)
+            expect(await ctx.machine.getState()).toEqual(before)
+          }
+        }
+      }
+    }
+  })
+
+  it('busy remains earlier than the immutable gate', async () => {
+    const ctx = await makeMachine({ story: imageFirstStory({ confirmed: true }), files: storyboardFiles })
+    let releaseSynopsis
+    ctx.llm.generateSynopsis.mockImplementationOnce(() => new Promise((resolve) => { releaseSynopsis = resolve }))
+    const generating = ctx.machine.generateSynopsis({ type: 'pasted', pastedScript: '# staged' })
+    await vi.waitFor(() => expect(ctx.llm.generateSynopsis).toHaveBeenCalledTimes(1))
+    clearObservedSideEffects(ctx)
+
+    expect(await ctx.machine.start('script')).toEqual({ error: 'busy' })
+    expectNoObservedSideEffects(ctx)
+
+    releaseSynopsis({ synopsisMd: 'done', characters: [] })
+    await generating
+  })
+})
+
+describe('D24a-11 image-first prompts fixed-audio gate', () => {
+  it.each([
+    ['pending', { status: 'pending' }],
+    ['error', { status: 'error', error: 'tts failed' }],
+    ['absent', undefined],
+  ])('audio %s rejects before operation/controller/reset/validator/write/push/LLM', async (_label, audio) => {
+    const ctx = await makeMachine({
+      story: imageFirstStory({ confirmed: true, audio }),
+      files: storyboardFiles,
+    })
+    const before = await ctx.machine.getState()
+    clearObservedSideEffects(ctx)
+
+    const observed = await observeAbortControllerCreations(() => ctx.machine.start('prompts'))
+
+    expect(observed.result).toEqual({ error: 'fixed-audio-required' })
+    expect(observed.creations).toHaveBeenCalledTimes(0)
+    expect(fixedValidationSpy).toHaveBeenCalledTimes(0)
+    expectNoObservedSideEffects(ctx)
+    expect(await ctx.machine.getState()).toEqual(before)
+  })
+
+  it('storyboard unconfirmed gate remains earlier than fixed-audio-required', async () => {
+    const ctx = await makeMachine({ story: imageFirstStory({ confirmed: false }), files: storyboardFiles })
+    clearObservedSideEffects(ctx)
+
+    expect(await ctx.machine.start('prompts')).toEqual({ error: 'unconfirmed' })
+    expect(fixedValidationSpy).toHaveBeenCalledTimes(0)
+    expectNoObservedSideEffects(ctx)
+  })
+})
+
+describe('D24-C5 legacy mode absence stays audio-first', () => {
+  it('mode-less story/project runs prompts without any fixed gate validator call', async () => {
+    const story = {
+      ...defaultStoryState(),
+      input: { type: 'manual' },
+      steps: {
+        script: { status: 'done' },
+        scenes: { status: 'done' },
+        audio: { status: 'done' },
+        prompts: { status: 'pending' },
+      },
+    }
+    const ctx = await makeMachine({
+      project: {},
+      story,
+      files: {
+        'script.md': '# legacy',
+        'scenes.json': JSON.stringify({ scenes: stagedScenes }, null, 2),
+      },
+    })
+    clearObservedSideEffects(ctx)
+
+    const result = await ctx.machine.start('prompts')
+
+    expect(result).toEqual({ operationId: expect.any(String) })
+    expect(ctx.llm.writePrompts).toHaveBeenCalledTimes(1)
+    expect(fixedValidationSpy).toHaveBeenCalledTimes(0)
+    expect(storeSpies.saveText).toHaveBeenCalled()
+    expect(storeSpies.save).toHaveBeenCalled()
+    expect(ctx.emitted.some(({ channel }) => channel === 'story:pushScenes')).toBe(true)
+  })
+})
+
+describe('D24a-3 image-first synopsis identity/roster pin', () => {
+  it('generate(title) uses pasted input and generate/review A-only casts cannot replace staged identity or roster', async () => {
+    const story = imageFirstStory({ confirmed: false })
+    const ctx = await makeMachine({ story, files: storyboardFiles })
+    const before = await ctx.machine.getState()
+    const inputBytes = JSON.stringify(before.input)
+    const speakersBytes = JSON.stringify(before.speakers)
+    const charactersBytes = JSON.stringify(before.characters)
+    ctx.llm.generateSynopsis.mockResolvedValueOnce({
+      synopsisMd: 'A-only generated synopsis',
+      characters: [{ id: 'Alice', name: 'Alice', role: 'generated-only' }],
+    })
+    ctx.llm.reviewSynopsis
+      .mockResolvedValueOnce({ verdict: 'revise', critique: 'tighten', score: 7 })
+      .mockResolvedValueOnce({ verdict: 'pass', critique: '', score: 8 })
+    ctx.llm.reviseSynopsis.mockResolvedValueOnce({
+      synopsisMd: 'A-only reviewed synopsis',
+      characters: [{ id: 'Alice', name: 'Alice', role: 'review-only' }],
+    })
+
+    const generated = await ctx.machine.generateSynopsis({ type: 'title', title: 'must-not-stick', options: {} })
+    const reviewed = await ctx.machine.reviewSynopsis({
+      synopsisMd: generated.synopsisMd,
+      characters: [{ id: 'Alice', name: 'Alice', role: 'caller-only' }],
+      review: { synopsis: { enabled: true, rounds: 1 } },
+    })
+    const after = await ctx.machine.getState()
+
+    expect(ctx.llm.generateSynopsis).toHaveBeenCalledWith(
+      { type: 'pasted', pastedScript: undefined },
+      expect.anything(),
+      expect.anything(),
+    )
+    expect(generated.characters).toEqual([{ id: 'Alice', name: 'Alice', role: 'generated-only' }])
+    expect(reviewed.synopsisMd).toBe('A-only reviewed synopsis')
+    expect(reviewed.characters).toEqual([{ id: 'Alice', name: 'Alice', role: 'review-only' }])
+    expect(JSON.stringify(after.input)).toBe(inputBytes)
+    expect(JSON.stringify(after.speakers)).toBe(speakersBytes)
+    expect(JSON.stringify(after.characters)).toBe(charactersBytes)
+    expect(after.synopsisText).toBe('A-only generated synopsis')
+  })
+})
+
+describe('D24a-3b storyboard confirm roster membership and fixed-list authority', () => {
+  it('missing image-first payload identity fails closed before validation or mutation', async () => {
+    const ctx = await makeMachine({ story: imageFirstStory({ confirmed: false }), files: storyboardFiles })
+    clearObservedSideEffects(ctx)
+
+    const result = await ctx.machine.confirmSynopsis({
+      synopsisMd: 'must not save',
+      characters: [{ id: 'Alice', name: 'Alice' }, { id: 'Bob', name: 'Bob' }],
+    })
+
+    expect(result).toEqual({ success: false, error: 'fixed-scenes-stale' })
+    expect(fixedValidationSpy).toHaveBeenCalledTimes(0)
+    expectNoObservedSideEffects(ctx)
+  })
+
+  it('missing durable storyboard CSV fails closed before fixed validation or mutation', async () => {
+    const { ['storyboard.csv']: _omitted, ...filesWithoutCsv } = storyboardFiles
+    const ctx = await makeMachine({ story: imageFirstStory({ confirmed: false }), files: filesWithoutCsv })
+    clearObservedSideEffects(ctx)
+
+    const result = await ctx.machine.confirmSynopsis({
+      synopsisMd: 'must not save',
+      characters: [{ id: 'Alice', name: 'Alice' }, { id: 'Bob', name: 'Bob' }],
+      sceneMode: 'image-first',
+      imageFirstVariant: 'storyboard',
+      fixedSceneRevision: revision,
+    })
+
+    expect(result).toEqual({ success: false, error: 'storyboard-scene-invalid', sourceRowIds: [] })
+    expect(fixedValidationSpy).toHaveBeenCalledTimes(0)
+    expectNoObservedSideEffects(ctx)
+  })
+
+  it('missing non-narrator CSV speaker rejects before all state/file/push mutation', async () => {
+    const ctx = await makeMachine({ story: imageFirstStory({ confirmed: false }), files: storyboardFiles })
+    const beforeLiveState = await ctx.machine.getState()
+    const beforeState = await readStoryBytes(ctx.projectPath, 'story.json')
+    const beforeFiles = await Promise.all(
+      ['storyboard.csv', 'script.md', 'scenes.json', 'synopsis.md'].map((relPath) => readStoryBytes(ctx.projectPath, relPath)),
+    )
+    clearObservedSideEffects(ctx)
+
+    const result = await ctx.machine.confirmSynopsis({
+      synopsisMd: 'must not save',
+      characters: [{ id: 'Alice', name: 'Alice' }],
+      sceneMode: 'image-first',
+      imageFirstVariant: 'storyboard',
+      fixedSceneRevision: revision,
+      fixedScenes: [{ ordinal: 1, storyId: 'renderer-lie', rendererSceneId: 'renderer-lie' }],
+    })
+
+    expect(result).toEqual({
+      success: false,
+      error: 'storyboard-roster-incomplete',
+      speakers: ['Bob'],
+    })
+    expect(fixedValidationSpy).toHaveBeenCalledTimes(0)
+    expectNoObservedSideEffects(ctx)
+    expect(await readStoryBytes(ctx.projectPath, 'story.json')).toEqual(beforeState)
+    const afterFiles = await Promise.all(
+      ['storyboard.csv', 'script.md', 'scenes.json', 'synopsis.md'].map((relPath) => readStoryBytes(ctx.projectPath, relPath)),
+    )
+    expect(afterFiles).toEqual(beforeFiles)
+    expect(await ctx.machine.getState()).toEqual(beforeLiveState)
+  })
+
+  it('successful confirm validates/copies project.json fixed list and ignores an extra renderer fixed list', async () => {
+    const ctx = await makeMachine({ story: imageFirstStory({ confirmed: false }), files: storyboardFiles })
+    clearObservedSideEffects(ctx)
+
+    const result = await ctx.machine.confirmSynopsis({
+      synopsisMd: 'confirmed synopsis',
+      characters: [{ id: 'Alice', name: 'Alice' }, { id: 'Bob', name: 'Bob' }],
+      sceneMode: 'image-first',
+      imageFirstVariant: 'storyboard',
+      fixedSceneRevision: revision,
+      fixedScenes: [{ ordinal: 1, storyId: 'renderer-lie', rendererSceneId: 'renderer-lie' }],
+    })
+    const saved = JSON.parse(await readStoryBytes(ctx.projectPath, 'story.json'))
+
+    expect(result).toEqual({ ok: true, operationId: expect.any(String) })
+    expect(saved.fixedScenes).toEqual(fixedScenes)
+    expect(saved.fixedScenes).not.toContainEqual(expect.objectContaining({ storyId: 'renderer-lie' }))
+    expect(fixedValidationSpy).toHaveBeenCalledWith(expect.objectContaining({ fixedScenes }))
   })
 })
