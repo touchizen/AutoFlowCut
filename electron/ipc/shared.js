@@ -9,8 +9,9 @@
 
 import { aspectRatioTabSuffix } from '../flow-aspect-ratio-ui.js'
 import { buildAgentDefaultsScript, buildListModelsScript } from '../flow-agent-defaults.js'
-import { AGENT_TOGGLE_PROBE, AGENT_TOGGLE_SELECTOR, AGENT_CHAT_CLOSE_SELECTOR, AGENT_SETTINGS_CLOSE_SELECTOR } from '../flow-agent-toggle.js'
+import { AGENT_TOGGLE_PROBE, AGENT_TOGGLE_SELECTOR, AGENT_CHAT_CLOSE_SELECTOR, AGENT_SETTINGS_CLOSE_SELECTOR, AGENT_TOGGLE_DIAGNOSTIC } from '../flow-agent-toggle.js'
 import { buildSelectModeScript } from '../flow-mode-tab.js'
+import { FLOW_PAGE_PROBE_JS, isFlowErrorPage } from '../flowOpenRetry.js'
 import { screen } from 'electron'
 import { computeOffscreenBounds } from '../offscreen-bounds.js'
 
@@ -48,7 +49,27 @@ export function agentDefaultsApplied(opts = {}, result = {}) {
  * @returns {object} All helper functions
  */
 export function createSharedHelpers(ctx) {
-  const { getFlowView, getMainWindow, constants } = ctx
+  const { getFlowView, getMainWindow, constants, onDomFailure } = ctx
+
+  // DOM 스텝 실패 보고 — 셀렉터가 깨졌을 때 그 순간의 페이지 컨텍스트를 함께 남긴다.
+  //   'Flow view not ready'(Flow 모드 아님) 같은 정상 상태 체크는 부르지 않는다 — 노이즈가 된다.
+  async function reportDomFailure(step, reason, extra = {}) {
+    if (!onDomFailure) return
+    try {
+      const flowView = getFlowView()
+      const scan = flowView
+        ? await flowView.webContents.executeJavaScript(AGENT_TOGGLE_DIAGNOSTIC).catch(() => null)
+        : null
+      await onDomFailure(step, {
+        reason,
+        ...extra,
+        viewBounds: flowView ? flowView.getBounds() : null,
+        context: (scan && scan.context) || {},
+      })
+    } catch (e) {
+      console.warn(`[Flow Diag] report failed (${step}):`, e.message)
+    }
+  }
   const {
     SESSION_URL, MEDIA_REDIRECT_URL, RECAPTCHA_SITE_KEY, RECAPTCHA_ACTION,
   } = constants
@@ -59,7 +80,15 @@ export function createSharedHelpers(ctx) {
    * b.click()은 isTrusted: false라 Flow 페이지가 무시함 → sendInputEvent 필수
    * sendInputEvent는 viewport가 0x0이면 좌표가 의미없으므로 일시적으로 보이게 해야 함
    */
-  async function trustedClickOnFlowView(jsSelector) {
+  /**
+   * @param {string} jsSelector  page expression returning the element
+   * @param {object} [opts]
+   * @param {boolean} [opts.required]  true ⇒ this button MUST exist; a miss is a broken selector
+   *   and gets reported. Default false: many call sites click "if it's there" (closeAgentPanels
+   *   closes panels that are usually absent), and reporting those would fire on every healthy
+   *   generation and drown the real breakages.
+   */
+  async function trustedClickOnFlowView(jsSelector, opts = {}) {
     const mainWindow = getMainWindow()
     const flowView = getFlowView()
     if (!mainWindow || !flowView) return { success: false, error: 'No flowView' }
@@ -101,6 +130,11 @@ export function createSharedHelpers(ctx) {
 
       if (!coords || coords.width === 0) {
         console.log('[TrustedClick] Button not found or zero-size:', coords)
+        // required 인 클릭만 보고한다 — best-effort 클릭(패널 닫기 등)은 대상이 없는 게 정상이라
+        //   보고하면 정상 생성마다 노이즈가 쌓여 진짜 breakage 를 덮는다.
+        if (opts.required) {
+          await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, coords ? 'zero-size' : 'not-found', { coords: coords || null })
+        }
         return { success: false, error: 'Button not found or zero-size' }
       }
 
@@ -618,6 +652,7 @@ export function createSharedHelpers(ctx) {
       }
     }
 
+    await reportDomFailure('configure-mode', `mode_not_set_after_${maxAttempts}_attempts`, { targetMode })
     return { success: false, error: `Mode ${targetMode} not set after ${maxAttempts} attempts` }
   }
 
@@ -646,6 +681,27 @@ export function createSharedHelpers(ctx) {
     await new Promise(r => setTimeout(r, 350))
   }
 
+  // 토글을 못 찾아 fail-closed 할 때, 그 순간의 페이지를 박제한다. 이게 없으면 사용자 제보가
+  //   반증 불가능해진다 — 로그에 'toggle not found' 한 줄뿐이라 마크업 변경/로케일/접힌 뷰포트가
+  //   전부 똑같아 보인다. viewBounds 는 프로브가 실제로 어떤 크기의 뷰에서 돌았는지(0×0 여부)를
+  //   말해주므로 executeJavaScript 로는 얻을 수 없는 유일한 단서다.
+  async function captureToggleNotFound(flowView, caller) {
+    try {
+      const scan = await flowView.webContents.executeJavaScript(AGENT_TOGGLE_DIAGNOSTIC)
+      const diag = {
+        caller,
+        viewBounds: flowView.getBounds(),
+        // findAgentToggle 이 "거부한" 후보들 — 토글 실패에만 있는 단서라 일반 컨텍스트로는 안 나온다.
+        candidates: (scan && scan.candidates) || [],
+        context: (scan && scan.context) || {},
+      }
+      console.warn(`[Flow API] ${caller}: toggle not found — diagnostic:`, JSON.stringify(diag))
+      await onDomFailure?.('agent-toggle', { reason: 'not_found', ...diag })
+    } catch (e) {
+      console.warn(`[Flow API] ${caller}: diagnostic capture failed:`, e.message)
+    }
+  }
+
   async function ensureAgentOff() {
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'No flowView' }
@@ -661,6 +717,7 @@ export function createSharedHelpers(ctx) {
       }
       if (!probe || !probe.found) {
         console.log('[Flow API] ensureAgentOff: toggle not found (panel close retries exhausted)')
+        await captureToggleNotFound(flowView, 'ensureAgentOff')
         return { success: false, state: 'not_found' }
       }
       if (!probe.on) {
@@ -668,7 +725,7 @@ export function createSharedHelpers(ctx) {
         return { success: true, state: 'already_off' }
       }
       // ON → Flow 의 토글은 synthetic 클릭(isTrusted:false)을 무시하므로 trusted click 으로 끈다.
-      const click = await trustedClickOnFlowView(AGENT_TOGGLE_SELECTOR)
+      const click = await trustedClickOnFlowView(AGENT_TOGGLE_SELECTOR, { required: true, step: 'agent-toggle-click' })
       await new Promise(r => setTimeout(r, 400))
       probe = await flowView.webContents.executeJavaScript(AGENT_TOGGLE_PROBE)
       const off = !!probe && !probe.on
@@ -701,13 +758,14 @@ export function createSharedHelpers(ctx) {
       }
       if (!probe || !probe.found) {
         console.log('[Flow API] ensureAgentOn: toggle not found (panel close retries exhausted)')
+        await captureToggleNotFound(flowView, 'ensureAgentOn')
         return { success: false, state: 'not_found' }
       }
       if (probe.on) {
         console.log('[Flow API] ensureAgentOn: already ON')
         return { success: true, state: 'already_on' }
       }
-      const click = await trustedClickOnFlowView(AGENT_TOGGLE_SELECTOR)
+      const click = await trustedClickOnFlowView(AGENT_TOGGLE_SELECTOR, { required: true, step: 'agent-toggle-click' })
       await new Promise(r => setTimeout(r, 400))
       probe = await flowView.webContents.executeJavaScript(AGENT_TOGGLE_PROBE)
       const on = !!probe && !!probe.on
@@ -827,6 +885,41 @@ export function createSharedHelpers(ctx) {
    * @param {string|null|undefined} projectId  Bound Flow project UUID, or falsy if unbound.
    * @returns {Promise<{ok:boolean, error?:string}>}
    */
+  /**
+   * 대상 프로젝트 URL 위에 있을 때, 페이지가 진짜 로드됐는지(에러 페이지가 아닌지) 확인한다.
+   * 에러면 flow:open-project 와 동일하게 home(base) 경유로 한 번 복구를 시도한다 — 갤러리 클릭
+   * (앱 셸 로드 후 client-side 네비)과 같은 경로라 대체로 살아난다.
+   *
+   * 프로브를 못 읽으면(null/throw) 통과시킨다 — 판정 불가를 실패로 처리하면 멀쩡한 생성을 막는다.
+   */
+  async function ensureProjectLoaded(flowView, projectId) {
+    const probe = async () => {
+      try { return await flowView.webContents.executeJavaScript(FLOW_PAGE_PROBE_JS) } catch { return null }
+    }
+
+    let page = await probe()
+    if (!page || !isFlowErrorPage(page)) return { ok: true }
+
+    console.warn('[Flow Guard] project URL but page is not loaded (error/landing) — recovering via home')
+    const m = (flowView.webContents.getURL() || '').match(/^(.*\/tools\/flow)(\/|$)/)
+    const base = m ? m[1] : 'https://labs.google/fx/tools/flow'
+    await flowView.webContents.loadURL(base).catch(() => {})
+    await new Promise((r) => setTimeout(r, 1500))
+    await flowView.webContents.loadURL(`${base}/project/${projectId}`).catch(() => {})
+    await new Promise((r) => setTimeout(r, 2000))
+
+    page = await probe()
+    if (!page || !isFlowErrorPage(page)) {
+      console.log('[Flow Guard] project recovered after home re-nav')
+      return { ok: true }
+    }
+
+    await reportDomFailure('project-not-loaded', 'flow_error_page', { projectId, interactiveCount: page.interactiveCount })
+    // 사용자가 읽는 문구 — 진짜 원인을 말한다. "모든 미디어 화면인지 확인하세요"가 제보자를
+    //   (그리고 우리를) 엉뚱한 곳으로 몇 시간 보냈다.
+    return { ok: false, error: 'Flow 프로젝트를 열지 못했습니다. Flow 탭에서 프로젝트가 정상적으로 열리는지 확인한 뒤 다시 시도해주세요.' }
+  }
+
   async function ensureOnProjectComposer(flowView, projectId) {
     if (!flowView) return { ok: false, error: 'Flow view not ready' }
 
@@ -847,7 +940,11 @@ export function createSharedHelpers(ctx) {
       const marker = `/project/${projectId}`
       const idx = currentUrl.indexOf(marker)
       if (idx >= 0 && !/^\/character/.test(currentUrl.slice(idx + marker.length))) {
-        return { ok: true }
+        // ⚠️ URL 만으로는 부족하다. Flow 가 프로젝트를 못 띄우면 "문제가 발생했습니다" 에러 페이지를
+        //   보여주는데, 이때 URL 은 /project/{id} 그대로다. 그대로 통과시키면 컴포저가 없는 페이지에서
+        //   생성이 진행되고, ensureAgentOff 가 토글을 못 찾아 "Agent 를 OFF 로 못 바꿨다"는 엉뚱한
+        //   에러가 사용자에게 뜬다(실제 원인은 프로젝트 미로드). 실제 제보가 이 경로였다.
+        return await ensureProjectLoaded(flowView, projectId)
       }
     }
 
@@ -868,7 +965,8 @@ export function createSharedHelpers(ctx) {
       await new Promise((r) => setTimeout(r, 500))
       if ((flowView.webContents.getURL() || '').includes(`/project/${projectId}`)) {
         console.log('[Flow Guard] Confirmed on target project after navigation')
-        return { ok: true }
+        // URL 만 맞은 것일 수 있다 — 우리가 방금 한 loadURL 도 에러 페이지로 떨어질 수 있다.
+        return await ensureProjectLoaded(flowView, projectId)
       }
     }
 

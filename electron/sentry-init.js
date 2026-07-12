@@ -15,6 +15,26 @@ function readAppVersion() {
   }
 }
 
+// @sentry/electron enables node.consoleIntegration() by default, so EVERY main-process
+// console.log becomes a breadcrumb and ships with any captured event. The Flow generation
+// path logs the user's prompt text, so without this their prompts would leave the machine.
+// beforeSend only filters event.extra — it never sees breadcrumbs.
+//
+// Redact the value, keep the line: "prompt: '<lighthouse keeper…>'" tells us nothing we
+// need, but knowing that generate-image ran, and when, is the whole point of the trail.
+const PROMPT_BEARING = [
+  // [Flow API] generate-image: { prompt: '…', model: … }
+  /(prompt:\s*)('[^']*'|"[^"]*"|[^,}]+)/gi,
+  // [DOM IPC] dom-send-prompt called: …
+  /(dom-send-prompt called:\s*)(.*)$/gi,
+]
+
+export function scrubBreadcrumbMessage(message) {
+  let out = String(message)
+  for (const re of PROMPT_BEARING) out = out.replace(re, '$1<redacted>')
+  return out
+}
+
 export function buildSentryOptions({ env = process.env, version } = {}) {
   const dsn = env.SENTRY_DSN || env.VITE_SENTRY_DSN || ''
   const isProd = env.VITE_FUNCTION_ENV === 'prod'
@@ -26,6 +46,12 @@ export function buildSentryOptions({ env = process.env, version } = {}) {
     environment: env.VITE_FUNCTION_ENV || 'development',
     release: `autoflowcut@${version || readAppVersion()}`,
     tracesSampleRate: Number(env.SENTRY_TRACES_SAMPLE_RATE || 0.1),
+    beforeBreadcrumb(breadcrumb) {
+      if (breadcrumb?.category === 'console' && breadcrumb.message) {
+        breadcrumb.message = scrubBreadcrumbMessage(breadcrumb.message)
+      }
+      return breadcrumb
+    },
     beforeSend(event) {
       if (event.user) {
         delete event.user.ip_address

@@ -157,7 +157,7 @@ export function registerCharacterIPC(ipcMain, deps) {
     //   캡처가 다음 batchGenerateImages 응답을 삼킨다. try/catch 로 자기 pending 을 정리한다.
     let click
     try {
-      click = await trustedClickOnFlowView(GENERATE_BTN_SELECTOR)
+      click = await trustedClickOnFlowView(GENERATE_BTN_SELECTOR, { required: true, step: 'character-submit' })
     } catch (e) {
       cleanupOwn()
       return { clickError: e?.message || '생성 버튼 클릭 예외' }
