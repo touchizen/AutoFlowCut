@@ -140,6 +140,17 @@ describe('preload contract', () => {
     expect(preloadKeys.has('storyConfirmSynopsis')).toBe(true)
   })
 
+  it('image-first import filesystem wrappers are exposed in preload', () => {
+    const preloadText = fs.readFileSync(preloadPath, 'utf8')
+    const preloadKeys = extractPreloadKeys(preloadText)
+    expect(preloadKeys.has('stageImageFirstImage')).toBe(true)
+    expect(preloadKeys.has('abortImageFirstImport')).toBe(true)
+    expect(preloadKeys.has('commitImageFirstImport')).toBe(true)
+    expect(preloadText).toContain("stageImageFirstImage: (params) => ipcRenderer.invoke('fs:stage-image-first-image', params)")
+    expect(preloadText).toContain("abortImageFirstImport: (params) => ipcRenderer.invoke('fs:abort-image-first-import', params)")
+    expect(preloadText).toContain("commitImageFirstImport: (params) => ipcRenderer.invoke('fs:commit-image-first-import', params)")
+  })
+
   it('onStoryEvent whitelist includes story:synopsis-delta (and keeps existing channels)', () => {
     const preloadText = fs.readFileSync(preloadPath, 'utf8')
     const m = preloadText.match(/const valid = \[([^\]]*)\]/)

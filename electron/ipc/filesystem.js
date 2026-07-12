@@ -148,6 +148,18 @@ function detectMimeType(base64Data) {
 }
 
 /**
+ * 신규 scene 파일의 실제 PNG 계약을 검사한다.
+ * detectMimeType의 unknown fallback이 PNG이므로 magic과 판정 결과를 둘 다 확인해야 한다.
+ */
+export function isStrictPngPayload(base64Data, mimeDetector = detectMimeType) {
+  if (typeof base64Data !== 'string') return false
+  const clean = base64Data.replace(/^data:[^;]+;base64,/, '')
+  if (!clean.startsWith('iVBOR')) return false
+  const { mimeType, ext } = mimeDetector(base64Data)
+  return mimeType === 'image/png' && ext === 'png'
+}
+
+/**
  * Generate an ISO timestamp formatted for use in filenames.
  * Colons and dots are replaced with dashes.
  * Example: "2026-01-27T14-30-00"
@@ -217,6 +229,197 @@ async function pathExists(p) {
     return true
   } catch {
     return false
+  }
+}
+
+export function isSafeImportPathSegment(value) {
+  return typeof value === 'string'
+    && value.length > 0
+    && value !== '.'
+    && value !== '..'
+    && !value.includes('/')
+    && !value.includes('\\')
+    && !value.includes('\0')
+}
+
+function imageFirstPaths(workFolder, project, fixedSceneRevision) {
+  const projectRoot = path.join(workFolder, project)
+  const scenesRoot = path.join(projectRoot, 'scenes')
+  return {
+    projectRoot,
+    jsonPath: path.join(projectRoot, 'project.json'),
+    scenesRoot,
+    stagingRoot: path.join(scenesRoot, '.image-first-staging'),
+    stagingRevisionPath: path.join(scenesRoot, '.image-first-staging', fixedSceneRevision),
+    journalPath: path.join(projectRoot, '.image-first-import-journal.json'),
+    journalTempPath: path.join(projectRoot, '.image-first-import-journal.tmp'),
+    projectTempPath: path.join(projectRoot, '.image-first-project.tmp'),
+  }
+}
+
+function normalizeFixedSceneState(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null
+  if (data.sceneMode !== 'image-first') return null
+  if (!['storyboard', 'image-only'].includes(data.imageFirstVariant)) return null
+  if (!isSafeImportPathSegment(data.fixedSceneRevision)) return null
+  if (!Array.isArray(data.fixedScenes) || data.fixedScenes.length === 0) return null
+
+  const storyIds = new Set()
+  const rendererIds = new Set()
+  const fixedScenes = []
+  for (let index = 0; index < data.fixedScenes.length; index++) {
+    const slot = data.fixedScenes[index]
+    if (slot?.ordinal !== index + 1
+      || !isSafeImportPathSegment(slot?.storyId)
+      || !isSafeImportPathSegment(slot?.rendererSceneId)
+      || storyIds.has(slot.storyId)
+      || rendererIds.has(slot.rendererSceneId)) return null
+    storyIds.add(slot.storyId)
+    rendererIds.add(slot.rendererSceneId)
+    fixedScenes.push({
+      storyId: slot.storyId,
+      rendererSceneId: slot.rendererSceneId,
+      ordinal: slot.ordinal,
+    })
+  }
+
+  return {
+    sceneMode: 'image-first',
+    imageFirstVariant: data.imageFirstVariant,
+    fixedSceneRevision: data.fixedSceneRevision,
+    fixedScenes,
+  }
+}
+
+function imageFirstRendererScenes(fixedScenes, scenesRoot) {
+  return fixedScenes.map((slot) => ({
+    id: slot.rendererSceneId,
+    storyId: slot.storyId,
+    status: 'done',
+    image: null,
+    imagePath: path.join(scenesRoot, `${slot.rendererSceneId}.png`),
+  }))
+}
+
+function validatedImageFirstJournal(journal, workFolder, project) {
+  if (!journal || typeof journal !== 'object' || journal.version !== 2
+    || !isSafeImportPathSegment(journal.fixedSceneRevision)
+    || !Array.isArray(journal.rendererSceneIds) || journal.rendererSceneIds.length === 0
+    || !Array.isArray(journal.previousRendererSceneIds)) {
+    throw new Error('image-first-journal-invalid')
+  }
+  const paths = imageFirstPaths(workFolder, project, journal.fixedSceneRevision)
+
+  const rendererIds = new Set()
+  for (const rendererSceneId of journal.rendererSceneIds) {
+    if (!isSafeImportPathSegment(rendererSceneId) || rendererIds.has(rendererSceneId)) {
+      throw new Error('image-first-journal-invalid')
+    }
+    rendererIds.add(rendererSceneId)
+  }
+  const previousIds = new Set()
+  for (const rendererSceneId of journal.previousRendererSceneIds) {
+    if (!isSafeImportPathSegment(rendererSceneId)
+      || rendererIds.has(rendererSceneId)
+      || previousIds.has(rendererSceneId)) throw new Error('image-first-journal-invalid')
+    previousIds.add(rendererSceneId)
+  }
+  const entries = journal.rendererSceneIds.map((rendererSceneId) => ({
+    rendererSceneId,
+    stagedPath: path.join(paths.stagingRevisionPath, `${rendererSceneId}.png`),
+    canonicalPath: path.join(paths.scenesRoot, `${rendererSceneId}.png`),
+  }))
+  return { paths, entries }
+}
+
+async function recoverImageFirstImport(workFolder, project) {
+  const basePaths = imageFirstPaths(workFolder, project, 'load-recovery')
+  if (!(await pathExists(basePaths.journalPath))) return
+
+  const journalText = await fs.readFile(basePaths.journalPath, 'utf-8')
+  const journal = JSON.parse(journalText)
+  const { paths, entries } = validatedImageFirstJournal(journal, workFolder, project)
+  let durableRevision = null
+  if (await pathExists(paths.jsonPath)) {
+    try {
+      const projectData = JSON.parse(await fs.readFile(paths.jsonPath, 'utf-8'))
+      durableRevision = projectData?.fixedSceneRevision
+    } catch {
+      // project.json을 R로 증명할 수 없으면 fail-open roll-forward가 아니라 rollback이다.
+    }
+  }
+
+  if (durableRevision === journal.fixedSceneRevision) {
+    for (const entry of entries) {
+      const stagedExists = await pathExists(entry.stagedPath)
+      const canonicalExists = await pathExists(entry.canonicalPath)
+      if (stagedExists && !canonicalExists) {
+        await fs.rename(entry.stagedPath, entry.canonicalPath)
+      } else if (!stagedExists && canonicalExists) {
+        // rename이 이미 끝난 합법적 crash 상태다.
+      } else {
+        // 둘 다 없거나 둘 다 있으면 어떤 파일이 정본인지 증명할 수 없으므로 journal을 보존한다.
+        throw new Error('image-first-recovery-image-state-invalid')
+      }
+    }
+    for (const rendererSceneId of journal.previousRendererSceneIds) {
+      await fs.rm(path.join(paths.scenesRoot, `${rendererSceneId}.png`), { force: true })
+    }
+  } else {
+    // commit preflight가 canonical absence를 journal 전에 증명했으므로 이 목록만 transaction 생성물이다.
+    for (const entry of entries) {
+      await fs.rm(entry.canonicalPath, { force: true })
+      await fs.rm(entry.stagedPath, { force: true })
+    }
+  }
+
+  await fs.rm(paths.stagingRevisionPath, { recursive: true, force: true })
+  await fs.rm(paths.projectTempPath, { force: true })
+  await fs.rm(paths.journalTempPath, { force: true })
+  // cleanup 중 crash가 나도 다음 load가 같은 결정을 반복하도록 journal은 항상 마지막에 지운다.
+  await fs.rm(paths.journalPath, { force: true })
+}
+
+async function quarantineImageFirstJournal(workFolder, project) {
+  const paths = imageFirstPaths(workFolder, project, 'quarantine')
+  if (!(await pathExists(paths.journalPath))) return null
+  const baseName = `.image-first-import-journal.corrupt-${getTimestamp()}`
+  let suffix = 0
+  let quarantinePath
+  do {
+    const suffixPart = suffix === 0 ? '' : `-${suffix}`
+    quarantinePath = path.join(paths.projectRoot, `${baseName}${suffixPart}.json`)
+    suffix += 1
+  } while (await pathExists(quarantinePath))
+  await fs.rename(paths.journalPath, quarantinePath)
+  return quarantinePath
+}
+
+async function sweepUnclaimedImageFirstArtifacts(workFolder, project) {
+  const paths = imageFirstPaths(workFolder, project, 'load-sweep')
+  // Desktop은 한 project에 활성 renderer 하나만 둔다. load-project-data는 reopen 경계라 같은
+  // renderer의 import와 공존하지 않는다. 따라서 journal recovery 뒤 남은 staging은 모두 orphan이다.
+  await fs.rm(paths.stagingRoot, { recursive: true, force: true })
+  await fs.rm(paths.journalTempPath, { force: true })
+  await fs.rm(paths.projectTempPath, { force: true })
+}
+
+async function settleImageFirstRecoveryForLoad(workFolder, project) {
+  try {
+    await recoverImageFirstImport(workFolder, project)
+  } catch (error) {
+    // project.json은 temp+rename으로 이미 old/R 중 하나다. PNG 정리를 증명할 수 없는 journal이
+    // durable project open까지 막지 않도록 forensic copy로 격리하고 fail-closed roll-forward를 포기한다.
+    try {
+      await quarantineImageFirstJournal(workFolder, project)
+    } catch {
+      // read-only/permission failure로 격리조차 못 해도 cleanup metadata가 project open을 막지는 않는다.
+    }
+  }
+  try {
+    await sweepUnclaimedImageFirstArtifacts(workFolder, project)
+  } catch {
+    // staging/temp 정리 실패도 durable project.json read와 분리한다.
   }
 }
 
@@ -382,19 +585,22 @@ export function registerFilesystemIPC(ipcMain) {
   // 3. fs:load-project-data
   // ----------------------------------------------------------
   ipcMain.handle('fs:load-project-data', async (_event, { workFolder, project }) => {
-    try {
-      const jsonPath = path.join(workFolder, project, 'project.json')
+    const jsonPath = path.join(workFolder, project, 'project.json')
+    return withProjectWriteLock(jsonPath, async () => {
+      try {
+        await settleImageFirstRecoveryForLoad(workFolder, project)
 
-      if (!(await pathExists(jsonPath))) {
-        return { success: true, data: null, isNew: true }
+        if (!(await pathExists(jsonPath))) {
+          return { success: true, data: null, isNew: true }
+        }
+
+        const text = await fs.readFile(jsonPath, 'utf-8')
+        const data = JSON.parse(text)
+        return { success: true, data, isNew: false }
+      } catch (error) {
+        return { success: false, error: error.message }
       }
-
-      const text = await fs.readFile(jsonPath, 'utf-8')
-      const data = JSON.parse(text)
-      return { success: true, data, isNew: false }
-    } catch (error) {
-      return { success: false, error: error.message }
-    }
+    })
   })
 
   // ----------------------------------------------------------
@@ -435,6 +641,119 @@ export function registerFilesystemIPC(ipcMain) {
     })
   })
 
+  // 4c. fs:stage-image-first-image — strict PNG만 revision staging에 저장한다.
+  ipcMain.handle('fs:stage-image-first-image', async (_event, {
+    workFolder, project, fixedSceneRevision, rendererSceneId, data,
+  }) => {
+    // D24a: invalid payload는 기존 staging tree까지 byte-for-byte untouched여야 한다.
+    if (!isStrictPngPayload(data)) {
+      return { success: false, error: 'scene-image-not-png' }
+    }
+    if (!isSafeImportPathSegment(fixedSceneRevision) || !isSafeImportPathSegment(rendererSceneId)) {
+      return { success: false, error: 'image-first-import-invalid' }
+    }
+
+    const paths = imageFirstPaths(workFolder, project, fixedSceneRevision)
+    return withProjectWriteLock(paths.jsonPath, async () => {
+      try {
+        await fs.mkdir(paths.stagingRevisionPath, { recursive: true })
+        const stagedPath = path.join(paths.stagingRevisionPath, `${rendererSceneId}.png`)
+        await fs.writeFile(stagedPath, base64ToBuffer(data))
+        return { success: true, path: stagedPath }
+      } catch (error) {
+        return { success: false, error: error.message }
+      }
+    })
+  })
+
+  // 4d. fs:abort-image-first-import — target revision staging만 idempotent하게 제거한다.
+  ipcMain.handle('fs:abort-image-first-import', async (_event, {
+    workFolder, project, fixedSceneRevision,
+  }) => {
+    // 잘못된 segment는 경로 밖을 지우지 않는 no-op으로 취급한다.
+    if (!isSafeImportPathSegment(fixedSceneRevision)) return { success: true }
+    const paths = imageFirstPaths(workFolder, project, fixedSceneRevision)
+    return withProjectWriteLock(paths.jsonPath, async () => {
+      try {
+        await fs.rm(paths.stagingRevisionPath, { recursive: true, force: true })
+        return { success: true }
+      } catch (error) {
+        return { success: false, error: error.message }
+      }
+    })
+  })
+
+  // 4e. fs:commit-image-first-import — journal → PNG rename → project temp+rename.
+  ipcMain.handle('fs:commit-image-first-import', async (_event, { workFolder, project, data }) => {
+    const fixedSceneState = normalizeFixedSceneState(data)
+    if (!fixedSceneState) return { success: false, error: 'image-first-import-invalid' }
+    const paths = imageFirstPaths(workFolder, project, fixedSceneState.fixedSceneRevision)
+
+    return withProjectWriteLock(paths.jsonPath, async () => {
+      try {
+        if (await pathExists(paths.journalPath)) {
+          return { success: false, error: 'image-first-import-in-progress' }
+        }
+
+        const entries = fixedSceneState.fixedScenes.map((slot) => ({
+          rendererSceneId: slot.rendererSceneId,
+          stagedPath: path.join(paths.stagingRevisionPath, `${slot.rendererSceneId}.png`),
+          canonicalPath: path.join(paths.scenesRoot, `${slot.rendererSceneId}.png`),
+        }))
+        for (const entry of entries) {
+          if (!(await pathExists(entry.stagedPath))) {
+            return { success: false, error: 'image-first-staging-missing' }
+          }
+          if (await pathExists(entry.canonicalPath)) {
+            return { success: false, error: 'scene-image-already-exists' }
+          }
+        }
+
+        let previousRendererSceneIds = []
+        if (await pathExists(paths.jsonPath)) {
+          try {
+            const previousData = JSON.parse(await fs.readFile(paths.jsonPath, 'utf-8'))
+            const previousState = normalizeFixedSceneState(previousData)
+            if (previousState) {
+              const nextIds = new Set(fixedSceneState.fixedScenes.map((slot) => slot.rendererSceneId))
+              previousRendererSceneIds = previousState.fixedScenes
+                .map((slot) => slot.rendererSceneId)
+                .filter((rendererSceneId) => !nextIds.has(rendererSceneId))
+            }
+          } catch {
+            // 이전 FixedSceneState를 안전하게 증명할 수 없으면 파일을 추측 삭제하지 않는다.
+          }
+        }
+
+        const scenes = imageFirstRendererScenes(fixedSceneState.fixedScenes, paths.scenesRoot)
+        const projectData = { ...data, ...fixedSceneState, scenes }
+        const journal = {
+          version: 2,
+          fixedSceneRevision: fixedSceneState.fixedSceneRevision,
+          rendererSceneIds: fixedSceneState.fixedScenes.map((slot) => slot.rendererSceneId),
+          previousRendererSceneIds,
+        }
+
+        await fs.writeFile(paths.journalTempPath, JSON.stringify(journal, null, 2), 'utf-8')
+        await fs.rename(paths.journalTempPath, paths.journalPath)
+        for (const entry of entries) {
+          await fs.rename(entry.stagedPath, entry.canonicalPath)
+        }
+        await fs.writeFile(paths.projectTempPath, JSON.stringify(projectData, null, 2), 'utf-8')
+        await fs.rename(paths.projectTempPath, paths.jsonPath)
+        for (const rendererSceneId of previousRendererSceneIds) {
+          await fs.rm(path.join(paths.scenesRoot, `${rendererSceneId}.png`), { force: true })
+        }
+        await fs.rm(paths.stagingRevisionPath, { recursive: true, force: true })
+        await fs.rm(paths.journalPath, { force: true })
+
+        return { success: true, scenes, fixedSceneState }
+      } catch (error) {
+        return { success: false, error: error.message }
+      }
+    })
+  })
+
   // ----------------------------------------------------------
   // 5. fs:save-resource
   // ----------------------------------------------------------
@@ -442,6 +761,11 @@ export function registerFilesystemIPC(ipcMain) {
     workFolder, project, resourceType, name, data, engine = 'flow', metadata = null, historyOnly = false
   }) => {
     try {
+      // D11: scene current/history의 첫 write(mkdir 포함) 전에 실제 PNG를 강제한다.
+      if (resourceType === 'scenes' && !isStrictPngPayload(data)) {
+        return { success: false, error: 'scene-image-not-png' }
+      }
+
       // Detect MIME type and extension
       const { mimeType, ext } = detectMimeType(data)
       const safeName = safeResourceName(name)
