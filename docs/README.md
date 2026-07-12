@@ -24,7 +24,7 @@ MCP 서버의 `get_schema` 도구로도 조회할 수 있습니다.
 
 | 파일 | 설명 |
 |------|------|
-| [scenes_example.csv](./examples/scenes_example.csv) | 씬 CSV 예제 (5개 씬) |
+| [scenes_example.csv](./examples/scenes_example.csv) | 13-field 씬 CSV 예제 (3개 씬) |
 | [references_example.csv](./examples/references_example.csv) | 레퍼런스 CSV 예제 (인물3 + 장소2 + 스타일1) |
 | [subtitle_example.srt](./examples/subtitle_example.srt) | SRT 자막 예제 |
 
@@ -63,7 +63,7 @@ Also accessible via the `get_schema` tool in the MCP server.
 
 | File | Description |
 |------|-------------|
-| [scenes_example.csv](./examples/scenes_example.csv) | Scene CSV example (5 scenes) |
+| [scenes_example.csv](./examples/scenes_example.csv) | 13-field scene CSV example (3 scenes) |
 | [references_example.csv](./examples/references_example.csv) | Reference CSV example (3 chars + 2 scenes + 1 style) |
 | [subtitle_example.srt](./examples/subtitle_example.srt) | SRT subtitle example |
 
