@@ -372,6 +372,14 @@ export default {
       openFailed: 'Could not open the project folder',
       prefix: 'Error',
     },
+    // D24a image-first — the import was aborted/rejected and the project (images) no longer
+    // matches the story (scenes). Only a full re-import can recover it.
+    fixedScene: {
+      staleTitle: 'The image set no longer matches this project',
+      staleDesc: 'The import was cancelled or rejected, so the scenes are only half applied. Re-import the whole image set to continue.',
+      reissue: 'Re-import the image set',
+      cancel: 'Cancel',
+    },
   },
 
   // Frame to Video panel

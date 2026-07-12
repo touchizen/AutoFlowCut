@@ -353,6 +353,13 @@ export default {
       openFailed: '프로젝트 폴더를 열 수 없습니다',
       prefix: '오류',
     },
+    // D24a image-first — 임포트 중단/거절로 project(이미지)와 story(씬)가 어긋난 durable 상태.
+    fixedScene: {
+      staleTitle: '이미지 세트가 프로젝트와 어긋났습니다',
+      staleDesc: '임포트가 중단되거나 거절돼 씬이 반쯤 반영됐습니다. 이미지 세트를 통째로 다시 임포트해야 진행할 수 있습니다.',
+      reissue: '이미지 세트 다시 임포트',
+      cancel: '취소',
+    },
     voicePicker: {
       providerAll: '전체',
       genderAll: '전체',

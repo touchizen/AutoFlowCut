@@ -32,6 +32,7 @@ import { isStoryTtsProvider } from '../../config/storyTtsProviders'
 import { isNarratorSpeaker } from '../../utils/storyNarrationTracks'
 import { clampInt } from '../../utils/clampInt'
 import { normalizeStoryCharacter, resolveCharacterGender } from '../../services/storyCharacter'
+import { isRosterGatedInputType, synopsisModeForInputType } from '../../services/storyInputTypes'
 import CharacterCards from './CharacterCards'
 import ResearchPanel from './ResearchPanel'
 import './StoryView.css'
@@ -340,7 +341,16 @@ function genreLabel(g, t) {
   return t(`story.form.genre.${GENRE_I18N_KEY[g] || g}`, GENRE_FALLBACK[g] || g)
 }
 
-export default function StoryView({ pipeline, voices = [], onClose = null, onTagGender = null, onVoiceSearch = null }) {
+// D24a: image-first에서 start()가 부작용 없이 거절하는 코드들 — 렌더러가 조용히 삼키면
+// "눌러도 아무 일 없는 버튼"이 된다. fixed-scenes-stale은 여기 없다(아래 runStep 주석 참고).
+const IMAGE_FIRST_REFUSALS = ['fixed-scenes-immutable', 'fixed-audio-required']
+
+export default function StoryView({
+  pipeline, voices = [], onClose = null, onTagGender = null, onVoiceSearch = null,
+  // D24a 복구: fixedSceneError(임포트 중단/거절로 project·story 불일치)에서 image-set 전체를
+  // 다시 임포트/취소하는 소유자 콜백. 미주입이면 해당 버튼은 렌더하지 않는다(죽은 버튼 금지).
+  onReissueImageFirst = null, onCancelImageFirst = null,
+}) {
   const t = useSafeT()
   const hasI18n = useHasI18n()
   const isKo = useSafeIsKo()
@@ -355,8 +365,35 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const currentStep = computeCurrentStep(steps)
   const stepData = steps[currentStep] || { status: 'pending' }
   const isRunning = stepData.status === 'running'
+  // D24a image-first — 씬이 임포트한 이미지로 고정(fixed set)된 모드. script/scenes는 불변이고
+  // prompts는 audio done을 선행 요구한다(machine.start가 부작용 없이 거절).
+  const isImageFirst = state?.sceneMode === 'image-first'
+  // D24b image-only: 스토리보드 CSV가 없어 대본(script)이 아직 없다 — roster(등장인물)가 성립하지
+  // 않으므로 script done 전까지 roster-confirm 라우팅과 시놉시스 pill을 모두 막는다.
+  const imageFirstRosterBlocked = isImageFirst
+    && state?.imageFirstVariant === 'image-only'
+    && steps.script?.status !== 'done'
   // 자동 진행 — 스텝별 '자동' 토글(오디오는 TTS 비용이라 기본 off) + '전체 진행'(자동=true 순차실행).
   const [autoSteps, setAutoSteps] = useState({ scenes: true, audio: false, prompts: true })
+  // D24a 교착 방지: image-first는 prompts가 audio done을 요구한다. 기본값(audio:false)을 그대로
+  // 쓰면 nextAutoStep이 prompts를 먼저 골라 fixed-audio-required로 거절당해 [전체 진행]이 교착한다.
+  // 렌더 시점에 덮는다 — useEffect로 setAutoSteps하면 첫 렌더가 옛 맵으로 한 번 돌아 레이스가 난다.
+  const effectiveAutoSteps = isImageFirst ? { ...autoSteps, audio: true } : autoSteps
+
+  // D24a 거절 표면 — 파이프라인 진행(start) 액션의 단일 래퍼. machine이 부작용 없이 거절한
+  // 경우에만 토스트를 띄우고 결과는 그대로 돌려준다(호출측 흐름 불변).
+  // fixed-scenes-stale은 sceneMode 가드 *밖*에 둔다 — committed-but-unstaged(임포트가 project는
+  // 커밋했지만 story는 아직 옛 audio-first)에서 story state.sceneMode는 여전히 audio-first다.
+  // 가드 안에 넣으면 정작 이 케이스에서 영영 안 뜬다.
+  // busy/unconfirmed 등 기존 audio-first 코드는 여기서 조용히 지나간다(기존 의미 보존).
+  const runStep = async (step, params) => {
+    const res = await start(step, params)
+    const refused = res?.error === 'fixed-scenes-stale'
+      || (isImageFirst && IMAGE_FIRST_REFUSALS.includes(res?.error))
+    if (refused) toast.error(`${t('story.error.prefix', '오류')}: ${res.error}`)
+    return res
+  }
+
   const [autoRunning, setAutoRunning] = useState(false)
   // script 패널(대본 스트리밍/편집기·중단)은 "지금 진행 스텝(currentStep)"이 아니라 "script 스텝 자체"의
   // running 여부로 판단해야 한다 — 안 그러면 scenes/prompts running 중 대본 탭에서 빈 스트리밍이 뜬다(F2재검토).
@@ -421,8 +458,13 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
   // 슬라이스5(§v2.8 B1): synopsis 게이트 모드 — setup 시작 시 로컬로 확정(title/pasted),
   // 재오픈 hydrate는 durable input.type에서 파생(로컬 미지정 시 폴백).
+  // D24a: image-first는 로컬 모드를 무시하고 durable input.type(storyboard→pasted)에 고정한다 —
+  // 같은 마운트에서 title 경로를 시작한 뒤 임포트가 도착하면 stale한 'title'이 게이트를 제목
+  // 입력 화면으로 되돌려버린다(등장인물 확정이 사라짐).
   const [synopsisLocalMode, setSynopsisLocalMode] = useState(null)
-  const synopsisMode = synopsisLocalMode ?? (state?.input?.type === 'pasted' ? 'pasted' : 'title')
+  const synopsisMode = isImageFirst
+    ? (synopsisModeForInputType(state?.input?.type) ?? 'pasted')
+    : (synopsisLocalMode ?? synopsisModeForInputType(state?.input?.type) ?? 'title')
 
   // 슬라이스5(§v2.11): 재오픈 hydrate phase 판정(3-state) —
   //   ① input.type∉{title,pasted} → 현행 그대로(synopsis 미적용)
@@ -434,17 +476,25 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   //      초기 phase 규칙이 script done을 editor로 복원한다. synopsis 강제 안 함)
   // hydrate 1회 전용(ref 잠금) — in-session 확정→editor 전이가 늦게 도착한 stale
   // charactersConfirmed=false 이벤트로 되돌려지지 않게 한다.
+  //   ⑤ D24a(image-first storyboard): input.type='storyboard'도 roster-gated다 — script/scenes가
+  //      이미 done(스토리보드가 씬을 고정)이어도 미확정이면 progress step보다 roster 확정이 먼저다.
+  //      D24b(image-only)는 대본이 나오기 전(script≠done)까지 이 route를 막고 ref도 잠그지 않는다
+  //      (나중에 script done이 도착하면 그때 라우팅해야 하므로).
   const synopsisPhaseHydratedRef = useRef(false)
   useEffect(() => {
     if (synopsisPhaseHydratedRef.current) return
     if (pipeline.charactersConfirmed === undefined) return // ④ legacy/미도착 → 기존 규칙 유지
-    synopsisPhaseHydratedRef.current = true
     const type = state?.input?.type
-    if (type !== 'title' && type !== 'pasted') return // ① 현행 유지
+    if (!isRosterGatedInputType(type)) { // ① 현행 유지(imported/continue/manual)
+      synopsisPhaseHydratedRef.current = true
+      return
+    }
+    if (imageFirstRosterBlocked) return // ⑤ D24b: script done 전까지 보류(잠그지 않음)
+    synopsisPhaseHydratedRef.current = true
     if (pipeline.charactersConfirmed === false) {
       setScriptPhase(pipeline.research && !pipeline.research.confirmed ? 'research' : 'synopsis') // ③ (②는 초기값 유지)
     }
-  }, [pipeline.charactersConfirmed, state?.input?.type]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pipeline.charactersConfirmed, state?.input?.type, imageFirstRosterBlocked]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 슬라이스5: 시놉시스 줄거리/등장인물 로컬 편집 상태 — scriptText 단일 상태 패턴 미러(§0.3).
   // main 저장값(synopsisText/characters)이 바뀌면 로컬 편집 상태를 그 값으로 커밋한다.
@@ -486,9 +536,11 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   // 활성(클릭 가능) 조건만 상태로 판단 — 기존 showSynopsis(§v2.10) 조건 그대로:
   // durable input.type ∈ {title,pasted} 신규(charactersConfirmed ≠ undefined — legacy 아님),
   // 또는 지금 게이트 안(scriptPhase='synopsis'). imported/continue/manual·legacy는 회색 비활성.
+  // D24a: storyboard도 roster-gated(isRosterGatedInputType) — 시놉시스 pill이 roster-confirm 입구다.
+  // D24b image-only는 script done 전까지 pill도 비활성(라우팅과 동일 조건).
   const synopsisInputType = state?.input?.type
   const synopsisEnabled = scriptPhase === 'synopsis'
-    || ((synopsisInputType === 'title' || synopsisInputType === 'pasted') && pipeline.charactersConfirmed !== undefined)
+    || (isRosterGatedInputType(synopsisInputType) && pipeline.charactersConfirmed !== undefined && !imageFirstRosterBlocked)
 
   // 리서치 spec §3.6(개정 2026-07-08): 리서치는 ① 첫 실행 스텝(설정 다음·시놉시스 앞)이고
   // 키워드로 검색하므로 제목·[✨ 시작]이 불필요하다 — 신규 title 경로는 setup phase(제목/시작 전)부터
@@ -504,10 +556,10 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     || (synopsisInputType === 'title' && pipeline.charactersConfirmed !== undefined)
     || (synopsisInputType == null && !scriptText.trim())
 
-  // FIX-2(UI 이중 방어): 신규(title/pasted) 미확정(charactersConfirmed===false)이면 synopsis 확정
-  // 전까지 하류(scenes/audio/prompts) 진행 UI를 disable — main start()의 'unconfirmed' 가드와 이중.
-  // legacy(undefined)는 게이트 미적용(FIX-1).
-  const unconfirmedGate = (synopsisInputType === 'title' || synopsisInputType === 'pasted')
+  // FIX-2(UI 이중 방어): 신규 roster-gated(title/pasted/storyboard) 미확정(charactersConfirmed===false)이면
+  // synopsis 확정 전까지 하류(scenes/audio/prompts) 진행 UI를 disable — main start()의 'unconfirmed'
+  // 가드와 이중(같은 판정자 isRosterGatedInputType를 쓴다). legacy(undefined)는 게이트 미적용(FIX-1).
+  const unconfirmedGate = isRosterGatedInputType(synopsisInputType)
     && pipeline.charactersConfirmed === false
 
   const handleStepClick = (key) => {
@@ -663,6 +715,14 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   // 시놉시스는 side action이라 start(step)이 아니라 pipeline.reviewSynopsis를 탄다(spec 2026-07-10).
   // busy({error}) / 중단({aborted}) / 조기반환(undefined) 어느 것도 draft를 덮어쓰면 안 된다 —
   // {aborted:true}에는 error 키가 없어서 r.error만 보면 통과해버린다.
+  // D24a: image-first에서 등장인물 명단은 stage(storyboard)가 시딩한 정본이다 — 시놉시스 재생성/
+  // 검수가 돌려준 characters로 덮으면 fixed scenes의 화자와 어긋나고 confirm이
+  // storyboard-roster-incomplete로 거절된다. 줄거리(synopsisMd)만 받는다.
+  const applyReturnedCharacters = (characters) => {
+    if (isImageFirst) return
+    setCharacterDrafts((characters || []).map(normalizeStoryCharacter))
+  }
+
   const handleSynopsisReview = async () => {
     const r = await pipeline.reviewSynopsis?.({
       synopsisMd: synopsisDraft,
@@ -673,7 +733,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     if (!r || r.error || r.aborted) return
     if (typeof r.synopsisMd !== 'string') return
     setSynopsisDraft(r.synopsisMd)
-    setCharacterDrafts((r.characters || []).map(normalizeStoryCharacter))
+    applyReturnedCharacters(r.characters)
   }
 
   const handleManualReview = (target) => {
@@ -689,6 +749,10 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   }
 
   const renderReviewControl = (target, { manual = false, disabled = false, canReview = true, autoToggle = true } = {}) => {
+    // D24a: image-first에서 script/scenes/prompts 검수는 fixed set을 다시 쓰는 실행이라 machine이
+    // 거절한다(script/scenes=immutable) — 렌더 자체를 하지 않는다(setup의 세 토글 포함).
+    // 시놉시스 검수는 fixed set을 건드리지 않는 side action이라 그대로 둔다.
+    if (isImageFirst && target !== 'synopsis') return null
     const label = t(`story.review.target.${target}`, REVIEW_TARGET_LABEL[target])
     const settings = reviewSettings[target]
     return (
@@ -800,7 +864,10 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   // 성우 바뀐 세그먼트만 재생성. (script/scenes는 파이프라인 진행이라 제외.)
   // 보고 있는 done 스텝을 재실행하는 탭별 액션(하단 primary가 currentStep으로 새지 않게).
   // scenes 포함 — 씬분리 done 탭에서 '씬 재분리'(오디오로 안 샘), audio/prompts는 '다시 생성'.
-  const redoStep = (['scenes', 'audio', 'prompts'].includes(displayStep) && steps[displayStep]?.status === 'done' && !isRunning)
+  // D24a: image-first의 재실행은 audio(다시 생성)만 허용한다 — 씬 재분리는 machine이 거절하고
+  // (fixed-scenes-immutable) 프롬프트 재생성은 고정 씬을 다시 쓰는 액션이라 노출하지 않는다.
+  const redoStep = (['scenes', 'audio', 'prompts'].includes(displayStep) && steps[displayStep]?.status === 'done' && !isRunning
+    && !(isImageFirst && displayStep !== 'audio'))
     ? displayStep : null
   const isAudioRedo = redoStep != null // (닫기 버튼 노출 조건 겸용)
 
@@ -842,9 +909,23 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
       ? t('story.action.setupRestartIcon', '↻ 변경사항으로 다시 시작')
       : t('story.action.setupComplete', '완료됨')
     : t('story.action.setupStartIcon', '✨ 시작')
-  const setupActionDisabled = isRunning || !setupHasSeed || (setupAlreadyApplied && !setupDirty)
+  // D24a: image-first의 setup primary는 어떤 경우에도 실행할 수 없다 — [✨ 시작](script 생성)도
+  // [↻ 변경사항으로 다시 시작](script 재생성)도 fixed-scenes-immutable로 거절된다. setupAlreadyApplied
+  // (=script done) 여부와 무관하다: D24b 커밋 전(script pending)의 [✨ 시작]도 같이 막힌다.
+  const imageFirstSetupBlocked = isImageFirst && isSetupActionView
+  const setupActionDisabled = isRunning || !setupHasSeed || (setupAlreadyApplied && !setupDirty) || imageFirstSetupBlocked
   const showSetupClose = isSetupActionView && setupAlreadyApplied && !!onClose
+  // 하단 primary가 실제로 부를 스텝 — setup 액션이면 'setup'(액션 없음).
+  // image-first에서 합법인 건 audio(생성/재생성)와 아직 안 돈 prompts의 최초 진행뿐이다.
+  // script/scenes(불변) · 이미 done인 prompts의 재생성 · setup은 렌더하지 않는다.
+  const primaryTargetStep = isSetupActionView ? 'setup' : (redoStep ?? currentStep)
+  const imageFirstPrimaryBlocked = isImageFirst && !(
+    primaryTargetStep === 'audio'
+    || (primaryTargetStep === 'prompts' && steps.prompts?.status !== 'done')
+  )
   const showPrimaryAction = !(showSetupClose && !setupDirty)
+    && !imageFirstSetupBlocked
+    && !imageFirstPrimaryBlocked
 
   // M2a-3b: 화자→목소리 매핑을 audio 스텝 params로. state.speakers가 없으면 {} (빈 speakers로
   // 덮어써 state.speakers를 지우는 것 방지 — 미배정은 backend defaultVoice 폴백). 선택 목소리는
@@ -943,7 +1024,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
   const startScriptFromTitle = () => {
     setBaseScript('')
-    start('script', {
+    runStep('script', {
       input: { type: 'title', title },
       options: currentOptions(),
     })
@@ -956,7 +1037,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     const r = await pipeline.generateSynopsis?.(params)
     if (r && !r.error) {
       if (r.synopsisMd !== undefined) setSynopsisDraft(r.synopsisMd || '')
-      if (Array.isArray(r.characters)) setCharacterDrafts(r.characters.map(normalizeStoryCharacter))
+      if (Array.isArray(r.characters)) applyReturnedCharacters(r.characters)
     }
     return r
   }
@@ -970,20 +1051,40 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     runGenerateSynopsis({ type: 'title', title, options: currentOptions() })
   }
 
-  // 확정(§v2.9): confirm-synopsis가 title·pasted 공통 커밋 채널 — 커밋이 재생성보다 선행.
+  // 확정(§v2.9): confirm-synopsis가 title·pasted(D24a storyboard 포함) 공통 커밋 채널 —
+  // 커밋이 재생성보다 선행. D24a: main confirmSynopsis는 payload의 fixed scene 신원이 project.json
+  // 정본과 일치할 때만 커밋한다(불일치 → fixed-scenes-stale) — 안 실으면 roster 확정이 항상 죽는다.
+  const confirmSynopsisParams = () => ({
+    synopsisMd: synopsisDraft,
+    characters: characterDrafts.map(normalizeStoryCharacter),
+    ...(isImageFirst ? {
+      sceneMode: 'image-first',
+      imageFirstVariant: state?.imageFirstVariant,
+      fixedSceneRevision: state?.fixedSceneRevision,
+    } : {}),
+  })
+
+  // 확정 실패 표면(단일) — storyboard roster 미비(storyboard-roster-incomplete)는 어떤 화자가
+  // 빠졌는지 speakers[]로 알려준다. 토스트는 정확히 한 번.
+  const toastConfirmError = (r) => {
+    if (!r?.error) return false
+    const speakers = r.speakers?.join(', ')
+    toast.error(`${t('story.error.prefix', '오류')}: ${r.error}${speakers ? `: ${speakers}` : ''}`)
+    return true
+  }
+
   const handleSynopsisConfirm = async () => {
-    const chars = characterDrafts.map(normalizeStoryCharacter)
     if (synopsisMode === 'pasted') {
-      // pasted [등장인물 확정] — script는 이미 done(재생성 없음, §v2.8 B1). 대본에서 역추출한(편집 가능한)
-      // 시놉시스는 함께 저장한다.
-      const r = await pipeline.confirmSynopsis?.({ synopsisMd: synopsisDraft, characters: chars })
-      if (r?.error) { toast.error(`${t('story.error.prefix', '오류')}: ${r.error}`); return }
+      // pasted/storyboard [등장인물 확정] — script는 이미 done(재생성 없음, §v2.8 B1). 대본에서
+      // 역추출한(편집 가능한) 시놉시스는 함께 저장한다.
+      const r0 = await pipeline.confirmSynopsis?.(confirmSynopsisParams())
+      if (toastConfirmError(r0)) return
       setScriptPhase('editor')
       return
     }
     // title [이 시놉시스로 대본 생성] — confirm(커밋) 완료 후 start('script') 순차 호출(§v2.10).
-    const r = await pipeline.confirmSynopsis?.({ synopsisMd: synopsisDraft, characters: chars })
-    if (r?.error) { toast.error(`${t('story.error.prefix', '오류')}: ${r.error}`); return }
+    const r = await pipeline.confirmSynopsis?.(confirmSynopsisParams())
+    if (toastConfirmError(r)) return
     setBaseScript('')
     // 대본 화면(editor)으로 먼저 전환 — start('script')를 await 하면 생성이 끝날 때까지 화면이 안
     // 바뀌어 "대본 화면이 안 나온다". 전환 후 생성이 스트리밍으로 editor 뷰에 들어온다(§v2.10: confirm→start 순서 유지).
@@ -1047,7 +1148,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
       await handleSplit()
     } else {
       // M2a-3b: audio는 화자→목소리 매핑을 실어 보낸다(그 외 스텝은 params 없음).
-      start(currentStep, buildStepParams(currentStep))
+      runStep(currentStep, buildStepParams(currentStep))
       // §1 — 다음 스텝(분리시작 등)을 실행하면 scriptPhase를 벗고 스텝퍼가 진행한다.
       setScriptPhase(null)
       // 진행 액션은 현재 단계로 화면을 되돌린다 — done 스텝을 보던 중이면 viewedStep이
@@ -1059,7 +1160,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   // B: 현재 보고 있는 done 스텝(audio/prompts)을 재실행. audio는 화자 매핑 반영, prompts는 params 없음.
   const handleStepRedo = () => {
     if (redoStep === 'scenes') { handleSplit(); return } // 씬 재분리(제목 확정+분리, 자체 viewedStep 처리)
-    start(redoStep, buildStepParams(redoStep))
+    runStep(redoStep, buildStepParams(redoStep))
     setViewedStep(null)
   }
 
@@ -1119,7 +1220,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     const resolved = await resolveTitle()
     if (resolved == null) return false // 제목 자동생성 실패 → 실행 안 함(자동 진행이 이걸로 멈춤)
     // resolveTitle이 생성한 title을 main source of truth에 커밋 — 없으면 재오픈 hydrate가 제목을 잃는다.
-    const res = await start('scenes', { scriptOverride: scriptText, options: currentOptions(), title: resolved })
+    const res = await runStep('scenes', { scriptOverride: scriptText, options: currentOptions(), title: resolved })
     // §1 — scenes 실행으로 scriptPhase를 벗고 스텝퍼가 진행한다.
     setScriptPhase(null)
     setViewedStep(null) // 씬 분리 진행 시 현재 단계(scenes) 패널로 화면 이동
@@ -1130,7 +1231,9 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const AUTO_ORDER = ['scenes', 'audio', 'prompts']
   const handleToggleAuto = (step) => setAutoSteps((m) => ({ ...m, [step]: !m[step] }))
   // 다음 실행할 자동 스텝: 순서상 자동=true & 아직 done/running 아닌 첫 스텝(자동=false는 건너뜀).
-  const nextAutoStep = () => AUTO_ORDER.find((s) => autoSteps[s] && steps[s]?.status !== 'done' && steps[s]?.status !== 'running')
+  // image-first는 effectiveAutoSteps(audio 강제 on)를 본다 — raw autoSteps를 보면 prompts가 먼저
+  // 잡혀 fixed-audio-required로 교착한다.
+  const nextAutoStep = () => AUTO_ORDER.find((s) => effectiveAutoSteps[s] && steps[s]?.status !== 'done' && steps[s]?.status !== 'running')
   // 전체 진행 가능: 대본 done + 남은 자동 스텝 존재 + 실행 중 아님 + 미확정 게이트 아님(FIX-2).
   const canRunAll = !unconfirmedGate && steps.script?.status === 'done' && !isRunning && !!nextAutoStep()
   // 스텝을 실행하되 enqueue 실패(제목 실패/busy)면 자동 진행을 멈춘다(stuck 방지, Codex).
@@ -1141,7 +1244,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
       return
     }
     setScriptPhase(null); setViewedStep(null)
-    const res = await start(step, buildStepParams(step))
+    const res = await runStep(step, buildStepParams(step))
     if (res?.error) setAutoRunning(false) // busy 등 상태전이 없음 → 멈춤
   }
   const handleRunAll = () => { if (canRunAll) setAutoRunning(true) }
@@ -1299,13 +1402,39 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   return (
     <div className="story-view">
       <StoryStepper steps={steps} currentStep={currentStep} activeStep={stepperActive} t={t} onStepClick={handleStepClick}
-        autoSteps={autoSteps} onToggleAuto={handleToggleAuto} onRunAll={handleRunAll} canRunAll={canRunAll} autoRunning={autoRunning}
+        autoSteps={effectiveAutoSteps} autoLockedSteps={isImageFirst ? ['audio'] : []}
+        onToggleAuto={handleToggleAuto} onRunAll={handleRunAll} canRunAll={canRunAll} autoRunning={autoRunning}
         synopsisEnabled={synopsisEnabled} researchEnabled={researchEnabled}
         synopsisDone={pipeline.charactersConfirmed === true} researchDone={pipeline.research?.confirmed === true} />
 
       {openError && (
         <div className="story-open-error-banner" role="alert">
           ⚠️ {t('story.error.openFailed', '프로젝트 폴더를 열 수 없습니다')}: {openError}
+        </div>
+      )}
+
+      {/* D24a 복구: 임포트가 중단·거절돼 project(이미지)와 story(씬)가 어긋난 채 durable로 남았다
+          (state.fixedSceneError). 부분 복구는 없다 — image-set 전체를 다시 임포트하거나 취소한다. */}
+      {state?.fixedSceneError && (
+        <div className="story-error-banner story-fixed-scene-alert" role="alert" data-testid="story-fixed-scene-alert">
+          <div>
+            ⚠️ {t('story.fixedScene.staleTitle', '이미지 세트가 프로젝트와 어긋났습니다')}: {state.fixedSceneError}
+          </div>
+          <div className="story-fixed-scene-desc">
+            {t('story.fixedScene.staleDesc', '임포트가 중단되거나 거절돼 씬이 반쯤 반영됐습니다. 이미지 세트를 통째로 다시 임포트해야 진행할 수 있습니다.')}
+          </div>
+          <div className="story-fixed-scene-actions">
+            {onReissueImageFirst && (
+              <button type="button" className="story-btn-primary" onClick={onReissueImageFirst}>
+                {t('story.fixedScene.reissue', '이미지 세트 다시 임포트')}
+              </button>
+            )}
+            {(onCancelImageFirst || onClose) && (
+              <button type="button" className="story-btn-secondary" onClick={onCancelImageFirst || onClose}>
+                {t('story.fixedScene.cancel', '취소')}
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -1472,6 +1601,11 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                     <button type="button" className="story-btn-secondary" onClick={handleAbort} disabled={aborting}>
                       {aborting ? t('story.action.aborting', '⏹ 중단 중…') : t('story.action.abort', '⏹ 중단')}
                     </button>
+                  ) : isImageFirst ? (
+                    // D24a: 대본·씬이 임포트로 고정됐다 — 검수/다시쓰기/이어쓰기/분리시작은 모두
+                    // machine이 거절하는(fixed-scenes-immutable) 액션이라 렌더하지 않는다.
+                    // 진행은 스텝퍼(오디오·프롬프트/전체 진행)가 담당한다.
+                    null
                   ) : (
                     <>
                       {renderReviewControl('script', { manual: true, disabled: isRunning, canReview: !!scriptText.trim() })}
@@ -1626,12 +1760,15 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                   </div>
                 </div>
 
+                {/* D24a: image-first는 script/scenes/prompts 검수가 모두 불법 — 행 전체를 비운다. */}
+                {!isImageFirst && (
                 <div className="story-opt-row story-review-opt-row">
                   <span className="story-opt-label">{t('story.form.reviewLabel', '검수')}</span>
                   <div className="story-review-settings">
                     {REVIEW_TARGET_ORDER.map((target) => renderReviewControl(target, { disabled: isRunning }))}
                   </div>
                 </div>
+                )}
 
                 <div className="story-opt-row">
                   <span className="story-opt-label">{t('story.form.titleLabel', '제목')}</span>
@@ -1697,7 +1834,9 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
               </>
             ) : (
               <>
-                {/* 10번: 씬 분리 탭에 필요한 옵션(씬 분리 단위)만 노출 — 바꾸고 하단 '씬 재분리'로 재분리. */}
+                {/* 10번: 씬 분리 탭에 필요한 옵션(씬 분리 단위)만 노출 — 바꾸고 하단 '씬 재분리'로 재분리.
+                    D24a: image-first는 씬이 고정이라 재분리가 없다 — 재분리 전용 바도 렌더하지 않는다. */}
+                {!isImageFirst && (
                 <div className="story-rerun-bar">
                   <span className="story-opt-label">{t('story.form.granularityLabel', '씬 분리 단위')}</span>
                   <select
@@ -1712,6 +1851,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                   </select>
                   {renderSceneSec()}
                 </div>
+                )}
                 <table className="story-readonly-table">
                   <thead>
                     <tr>

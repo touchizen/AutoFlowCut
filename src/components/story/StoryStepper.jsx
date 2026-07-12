@@ -46,6 +46,9 @@ const onActivateKey = (fn) => (e) => { if (e.key === 'Enter' || e.key === ' ') {
 export default function StoryStepper({
   steps, currentStep, activeStep, t = (key, fallback) => fallback, onStepClick,
   autoSteps = null, onToggleAuto, onRunAll, canRunAll = false, autoRunning = false,
+  // D24a image-first: 자동 오디오는 끌 수 없다(prompts가 audio done을 요구 — 끄면 교착).
+  // 잠긴 스텝은 checked 상태 그대로 disabled로 보여 "왜 못 끄는지"를 자리로 남긴다.
+  autoLockedSteps = [],
   synopsisEnabled = false, researchEnabled = false,
   synopsisDone = false, researchDone = false,
 }) {
@@ -129,6 +132,7 @@ export default function StoryStepper({
                     type="checkbox"
                     aria-label={t('story.auto.for', `${label} 자동`, { step: label })}
                     checked={!!autoSteps[key]}
+                    disabled={autoLockedSteps.includes(key)}
                     onChange={() => onToggleAuto(key)}
                   />
                   <span>{t('story.auto.label', '자동')}</span>

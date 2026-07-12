@@ -2809,6 +2809,13 @@ function App() {
               onTagGender={handleTagGender}
               onVoiceSearch={handleTtsVoiceSearch}
               onClose={() => setActiveView('generate')}
+              // D24a stale recovery: 유일한 해소 경로는 **전체 이미지 세트 재발급**이다.
+              // generate 뷰의 가져오기를 다시 열어 import coordinator 를 처음부터 태운다.
+              // 핸들러를 안 넘기면 패널의 재가져오기 버튼이 dead button 이 된다.
+              onReissueImageFirst={() => {
+                setActiveView('generate')
+                setShowImport(true)
+              }}
             />
           </div>
         ) : (
