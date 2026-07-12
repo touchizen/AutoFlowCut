@@ -36,7 +36,9 @@
     "dist:mac:prod": "npm run bump:build && npm run mcp:install && npm run install:platform-binaries && VITE_FUNCTION_ENV=prod vite build --mode production && npm run build:preloads && electron-builder --mac --x64 --arm64",
     "test": "vitest",
     "test:run": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "test:spike": "SPIKE=1 vitest run -c vitest.spike.config.js",
+    "test:e2e": "playwright test"
   },
   "author": "Touchizen",
   "license": "AGPL-3.0-only",
@@ -59,6 +61,7 @@
   },
   "devDependencies": {
     "@electron/notarize": "^3.1.1",
+    "@playwright/test": "^1.61.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",

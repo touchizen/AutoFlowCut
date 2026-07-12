@@ -14,6 +14,9 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./tests/setup.js'],
     include: ['tests/**/*.test.{js,jsx}'],
+    // 라이브 스파이크(실제 CLI/네트워크/최대 60분)는 일반 실행과 CI 에서 제외한다.
+    // `npm run test:spike` (SPIKE=1 + vitest.spike.config.js) 로만 돈다. (M-1)
+    exclude: ['**/node_modules/**', '**/dist/**', '**/dist-electron/**', 'tests/spike/**', 'tests/e2e/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],
