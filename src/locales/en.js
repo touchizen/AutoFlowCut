@@ -1337,6 +1337,9 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
 
   // Toast messages
   toast: {
+    fixedScenesStale: 'The fixed image set does not match Story. Re-import the full image+CSV set, or open Story and cancel the import.',
+    fixedClockNotReady: 'Export is available after audio and prompt sync finish.',
+    fixedSlotMissing: 'Fixed image slots are not ready: {ordinals}',
     noPrompt: 'No prompt provided.',
     autoMatchNoMatchesPickStyle: 'No scenes match. Pick a style explicitly.',
     allScenesGenerated: 'All scenes already generated. Use regenerate on individual scenes.',

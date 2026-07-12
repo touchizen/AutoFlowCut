@@ -1336,6 +1336,9 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
 
   // Toast 메시지
   toast: {
+    fixedScenesStale: '고정 이미지 세트와 Story가 맞지 않습니다. 가져오기에서 전체 이미지+CSV를 다시 가져오거나 상단 Story에서 가져오기를 취소하세요.',
+    fixedClockNotReady: '오디오와 프롬프트 동기화가 끝난 뒤 내보낼 수 있습니다.',
+    fixedSlotMissing: '내보낼 수 없는 고정 이미지 슬롯: {ordinals}',
     noPrompt: '프롬프트가 없습니다.',
     autoMatchNoMatchesPickStyle: '씬별 매칭이 0개입니다. 스타일을 직접 선택하세요.',
     allScenesGenerated: '모든 씬이 이미 생성되었습니다. 개별 씬에서 재생성하세요.',

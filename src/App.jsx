@@ -892,7 +892,16 @@ function App() {
       setPaywallReason(reason)
       setShowPaywallModal(true)
     },
-    onExportSuccess: storeRating.recordExport
+    onExportSuccess: storeRating.recordExport,
+    // D24a: fixed export admission 은 project(=project.json) 와 story(=story.json) 를 **함께** 봐야
+    // committed-but-unstaged(= fs commit 은 됐는데 story stage 가 실패한) 상태를 잡아낸다.
+    // 한쪽만 넘기면 게이트가 조용히 통과한다.
+    projectSceneMode: fixedSceneState?.sceneMode ?? null,
+    projectFixedSceneRevision: fixedSceneState?.fixedSceneRevision ?? null,
+    projectFixedScenes: fixedSceneState?.fixedScenes ?? null,
+    storySceneMode: storyPipeline.state?.sceneMode ?? null,
+    storyFixedSceneRevision: storyPipeline.state?.fixedSceneRevision ?? null,
+    storySteps: storyPipeline.state?.steps ?? null,
   })
 
   // ── 완성된 비디오 → 씬에 자동 동기화 (세션 내 기존 비디오 반영) ──
