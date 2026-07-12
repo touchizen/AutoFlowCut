@@ -37,7 +37,7 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "test:spike": "SPIKE=1 vitest run -c vitest.spike.config.js",
+    "test:spike": "node scripts/run-spike.mjs",
     "test:e2e": "playwright test"
   },
   "author": "Touchizen",
