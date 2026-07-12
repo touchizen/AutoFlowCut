@@ -15,6 +15,7 @@ import { resolveExportVideos, hasExportableMedia, getExportFilePaths } from '../
 import { pruneSrtTrackToScenes, rebaseSrtTrackToScenes } from '../utils/srtTrack'
 import { isSceneGenerationDone } from '../services/generationStatus'
 import { normalizeExportFormat, EXPORT_FORMATS } from '../utils/exportFormat'
+import { checkFixedSceneConsistency } from '../../electron/story/fixedScenes.js'
 
 function isExportableScene(scene) {
   return isSceneGenerationDone(scene) && hasExportableMedia(scene)
@@ -35,13 +36,9 @@ export function useExport({
   onLoginRequired,
   onPaywallRequired,
   onExportSuccess,
-  // D24a: fixed export admission. project(=project.json) 와 story(=story.json) 양쪽을 함께 받는다 —
-  // 한쪽만 보면 committed-but-unstaged 상태를 정상으로 오판한다.
-  projectSceneMode = null,
-  projectFixedSceneRevision = null,
-  projectFixedScenes = null,
-  storySceneMode = null,
-  storyFixedSceneRevision = null,
+  // D24a: owner가 variant/list identity까지 비교할 수 있도록 project/story full fixed state를 받는다.
+  projectFixedSceneState = null,
+  storyFixedSceneState = null,
   storySteps = null,
 }) {
   const { t } = useI18n()
@@ -62,25 +59,19 @@ export function useExport({
    * 그대로 export 된다 (이미지는 새 fixed set, 오디오/자막은 옛 절대시각 → 통째로 desync).
    *
    * toast 는 이 helper 가 소유한다 — 진입점도 띄우면 두 번 뜬다.
-   * null 반환 = 통과. 그 외에는 그대로 caller 의 반환값이 된다 (legacy MCP wrapper 가
-   * `success === false` 만 보므로 shape 을 유지해야 한다).
+   * null = legacy 통과, success:true = fixed order scene set, success:false = caller가 그대로 반환할 거부.
+   * legacy MCP wrapper가 `success === false`만 보므로 refusal shape은 유지한다.
    */
   const admitFixedExport = () => {
-    const projectImageFirst = projectSceneMode === 'image-first'
-    const storyImageFirst = storySceneMode === 'image-first'
-    // 양쪽 다 image-first 가 아니면 legacy audio-first — 새 게이트를 태우지 않는다.
-    if (!projectImageFirst && !storyImageFirst) return null
-
-    const consistent = projectImageFirst
-      && storyImageFirst
-      && !!projectFixedSceneRevision
-      && projectFixedSceneRevision === storyFixedSceneRevision
-      && Array.isArray(projectFixedScenes)
-      && projectFixedScenes.length > 0
-    if (!consistent) {
+    // 이 owner 호출이 storySteps read보다 반드시 먼저다. mode/revision뿐 아니라 variant와 fixed
+    // count/order/ordinal/storyId/rendererSceneId/duplicates까지 project↔story exact match를 검사한다.
+    const consistency = checkFixedSceneConsistency(projectFixedSceneState, storyFixedSceneState)
+    if (!consistency.success) {
       toast.warning(t('toast.fixedScenesStale'))
       return { success: false, error: 'fixed-scenes-stale' }
     }
+    // 양쪽 다 legacy audio-first면 기존 scenes.filter 경로를 그대로 쓴다.
+    if (consistency.mode === 'audio-first') return null
 
     // consistency PASS 뒤에만 story steps 를 읽는다.
     if (storySteps?.audio?.status !== 'done' || storySteps?.prompts?.status !== 'done') {
@@ -88,31 +79,51 @@ export function useExport({
       return { success: false, error: 'fixed-clock-not-ready' }
     }
 
-    // fixed order 로 renderer scene 을 resolve — 파일명을 ordinal 에서 조립하지 않는다.
-    const byId = new Map(scenes.map((s) => [s.id, s]))
-    const missing = projectFixedScenes
-      .filter((slot) => {
-        const scene = byId.get(slot.rendererSceneId)
-        return !scene || !isExportableScene(scene)
-      })
-      .map((slot) => slot.ordinal)
+    // fixed order로 renderer scene을 resolve한다. id/storyId 어느 한쪽만 맞거나, 어느 index에든
+    // duplicate가 있으면 ambiguous이므로 slot missing이다. 두 index가 가리키는 단 하나의 같은
+    // object만 immutable pair의 renderer scene으로 인정한다.
+    const appendIndex = (index, key, scene) => {
+      if (key === undefined || key === null) return
+      const matches = index.get(key)
+      if (matches) matches.push(scene)
+      else index.set(key, [scene])
+    }
+    const byRendererId = new Map()
+    const byStoryId = new Map()
+    scenes.forEach((scene) => {
+      appendIndex(byRendererId, scene?.id, scene)
+      appendIndex(byStoryId, scene?.storyId, scene)
+    })
+    const fixedRendererScenes = projectFixedSceneState.fixedScenes.map((slot) => {
+      const rendererMatches = byRendererId.get(slot.rendererSceneId) || []
+      const storyMatches = byStoryId.get(slot.storyId) || []
+      if (rendererMatches.length !== 1 || storyMatches.length !== 1) return null
+      return rendererMatches[0] === storyMatches[0] ? rendererMatches[0] : null
+    })
+    const missing = projectFixedSceneState.fixedScenes.flatMap((slot, index) => (
+      fixedRendererScenes[index] && isExportableScene(fixedRendererScenes[index]) ? [] : [slot.ordinal]
+    ))
     if (missing.length > 0) {
       toast.warning(t('toast.fixedSlotMissing', { ordinals: missing.join(', ') }))
       return { success: false, error: 'fixed-slot-missing', ordinals: missing }
     }
-    return null
+    return { success: true, fixedRendererScenes }
   }
+
+  const exportableScenesFor = (admission) => admission?.fixedRendererScenes
+    ? admission.fixedRendererScenes.filter(isExportableScene)
+    : scenes.filter(isExportableScene)
 
   // Handle export button click - open modal.
   // split 드롭다운/본체에서 유효 포맷을 넘기면 기억(없거나 깨진 값이면 기존 유지).
   const handleExportClick = (format) => {
-    const denied = admitFixedExport()
-    if (denied) return denied
+    const admission = admitFixedExport()
+    if (admission?.success === false) return admission
     if (EXPORT_FORMATS.includes(format)) {
       setExportFormat(format)
       try { localStorage.setItem('lastExportFormat', format) } catch {}
     }
-    const validScenes = scenes.filter(isExportableScene)
+    const validScenes = exportableScenesFor(admission)
     if (validScenes.length === 0) {
       toast.warning(t('toast.noGeneratedImages'))
       return
@@ -241,9 +252,9 @@ export function useExport({
 
   // Handle export confirm from modal
   const handleExportConfirm = async ({ capcutProjectNumber, scaleMode, kenBurns, kenBurnsMode, kenBurnsCycle, kenBurnsScaleMin, kenBurnsScaleMax, subtitleOption, subtitleFontSize }) => {
-    const denied = admitFixedExport()
-    if (denied) return denied
-    const validScenes = scenes.filter(isExportableScene)
+    const admission = admitFixedExport()
+    if (admission?.success === false) return admission
+    const validScenes = exportableScenesFor(admission)
     if (validScenes.length === 0) {
       toast.warning(t('toast.noGeneratedImages'))
       setShowExportModal(false)
@@ -350,9 +361,9 @@ export function useExport({
   // capcutProjectNumber 는 .prproj 를 쓸 출력 폴더 경로로 재사용된다.
   // Premiere 자막은 XML 에 embed 되므로 SRT sidecar / 앱 실행 단계는 없다.
   const handleExportPremiere = async ({ capcutProjectNumber, scaleMode, kenBurns, kenBurnsMode, kenBurnsCycle, kenBurnsScaleMin, kenBurnsScaleMax, subtitleOption, subtitleFontSize }) => {
-    const denied = admitFixedExport()
-    if (denied) return denied
-    const validScenes = scenes.filter(isExportableScene)
+    const admission = admitFixedExport()
+    if (admission?.success === false) return admission
+    const validScenes = exportableScenesFor(admission)
     if (validScenes.length === 0) {
       toast.warning(t('toast.noGeneratedImages'))
       setShowExportModal(false)
@@ -444,9 +455,9 @@ export function useExport({
   // Handle Vrew export (local generator + local zip packaging).
   // capcutProjectNumber 는 .vrew 를 쓸 출력 폴더 경로로 재사용된다.
   const handleExportVrew = async ({ capcutProjectNumber, scaleMode, kenBurns, kenBurnsMode, kenBurnsCycle, kenBurnsScaleMin, kenBurnsScaleMax, subtitleOption, subtitleFontSize }) => {
-    const denied = admitFixedExport()
-    if (denied) return denied
-    const validScenes = scenes.filter(isExportableScene)
+    const admission = admitFixedExport()
+    if (admission?.success === false) return admission
+    const validScenes = exportableScenesFor(admission)
     if (validScenes.length === 0) {
       toast.warning(t('toast.noGeneratedImages'))
       setShowExportModal(false)

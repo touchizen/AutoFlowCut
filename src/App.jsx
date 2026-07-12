@@ -894,13 +894,10 @@ function App() {
     },
     onExportSuccess: storeRating.recordExport,
     // D24a: fixed export admission 은 project(=project.json) 와 story(=story.json) 를 **함께** 봐야
-    // committed-but-unstaged(= fs commit 은 됐는데 story stage 가 실패한) 상태를 잡아낸다.
-    // 한쪽만 넘기면 게이트가 조용히 통과한다.
-    projectSceneMode: fixedSceneState?.sceneMode ?? null,
-    projectFixedSceneRevision: fixedSceneState?.fixedSceneRevision ?? null,
-    projectFixedScenes: fixedSceneState?.fixedScenes ?? null,
-    storySceneMode: storyPipeline.state?.sceneMode ?? null,
-    storyFixedSceneRevision: storyPipeline.state?.fixedSceneRevision ?? null,
+    // committed-but-unstaged(= fs commit 은 됐는데 story stage 가 실패한) 상태와 같은 revision의
+    // variant/list drift를 공통 consistency owner가 함께 잡아낸다.
+    projectFixedSceneState: fixedSceneState,
+    storyFixedSceneState: storyPipeline.state,
     storySteps: storyPipeline.state?.steps ?? null,
   })
 
