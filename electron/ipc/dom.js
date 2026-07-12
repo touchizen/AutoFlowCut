@@ -523,7 +523,7 @@ export function registerDomIPC(ipcMain, deps) {
       return null;
     })()`
 
-      const clickResult = await trustedClickOnFlowView(generateBtnSelector)
+      const clickResult = await trustedClickOnFlowView(generateBtnSelector, { required: true, step: 'compose-submit' })
       console.log('[DOM IPC] Generate button click result:', clickResult)
       if (!clickResult.success) {
         return { success: false, error: clickResult.error || 'Generate button click failed', retry: false }

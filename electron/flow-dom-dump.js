@@ -102,9 +102,9 @@ export function buildDomDumpFilename(d = new Date()) {
   return `flow-dom-dump-${stampOf(d)}.json`
 }
 
-/** Timestamped agent-toggle diagnostic filename (written automatically on not_found). */
-export function buildAgentDiagFilename(d = new Date()) {
-  return `flow-agent-diag-${stampOf(d)}.json`
+/** Timestamped filename for the auto-written Flow DOM failure diagnostic. */
+export function buildFlowDiagFilename(d = new Date()) {
+  return `flow-diag-${stampOf(d)}.json`
 }
 
 function stampOf(d) {

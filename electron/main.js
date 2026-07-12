@@ -47,7 +47,7 @@ import { routeReportResponse, isFlowFrameOrigin } from './reportResponseRouter.j
 import { FLOW_PAGE_INJECTION } from './flow-page-injection.js'
 import { FLOW_SETTINGS_DUMPER } from './flow-settings-dumper.js'
 import { FLOW_DOM_DUMP_PROBE, buildDomDumpFilename } from './flow-dom-dump.js'
-import { createAgentDiagWriter, createAgentDiagReporter } from './flow-agent-diag.js'
+import { createFlowDiagSink } from './flow-diag.js'
 import * as Sentry from '@sentry/electron/main'
 import { createMutex } from './asyncMutex.js'
 
@@ -717,20 +717,20 @@ registerLayoutIPC(ipcMain, () => mainWindow, modeController.getFlowView)
 // Agent 토글 not_found 진단 저장기 — 첫 실패 때 만든다. app.getPath 는 whenReady 이후에만
 //   신뢰할 수 있는데 이 모듈 최상단은 그 전에 평가되므로, 여기서 미리 부르면 안 된다.
 //   (실패해도 앱은 안 죽고 진단만 조용히 유실돼 — 정작 필요할 때 파일이 없는 최악의 실패 모드.)
-const reportAgentDiag = createAgentDiagReporter({
-  captureMessage: sentryMain?.initialized ? Sentry.captureMessage : null,
-})
-
-let _agentDiagWriter = null
-function agentDiagWriter() {
-  if (!_agentDiagWriter) {
-    _agentDiagWriter = createAgentDiagWriter({
+// Flow DOM 스텝 실패 싱크 — 첫 실패 때 만든다. app.getPath 는 whenReady 이후에만 신뢰할 수
+//   있는데 이 모듈 최상단은 그 전에 평가되므로, 여기서 미리 부르면 안 된다. (실패해도 앱은 안 죽고
+//   진단만 조용히 유실돼 — 정작 필요할 때 아무것도 없는 최악의 실패 모드.)
+let _flowDiagSink = null
+function flowDiagSink() {
+  if (!_flowDiagSink) {
+    _flowDiagSink = createFlowDiagSink({
+      captureMessage: sentryMain?.initialized ? Sentry.captureMessage : null,
       writeFile: (filePath, body) => fsSync.writeFileSync(filePath, body),
       desktopDir: app.getPath('desktop'),
       userDataDir: app.getPath('userData'),
     })
   }
-  return _agentDiagWriter
+  return _flowDiagSink
 }
 
 // === Shared Flow helpers (trustedClick, fetch, parse, extract, configureFlowMode) ===
@@ -740,14 +740,9 @@ const helpers = createSharedHelpers({
   constants: {
     SESSION_URL, MEDIA_REDIRECT_URL, RECAPTCHA_SITE_KEY, RECAPTCHA_ACTION,
   },
-  onToggleNotFound: async (diag) => {
-    // Sentry 로 자동 보고 — 이 실패는 throw 가 아니라 {success:false} 라 여태 텔레메트리가 0 이었다.
-    //   몇 명이 겪는지조차 몰라 제보 하나에 의존해야 했다.
-    reportAgentDiag(diag)
-    // 파일은 사용자가 직접 보내줄 수 있는 사본 — Sentry 가 꺼진 dev/비prod 에서도 남는다.
-    const p = await agentDiagWriter()(diag)
-    console.warn('[FlowAgentDiag]', p ? `saved → ${p}` : 'no writable location — diagnostic not saved')
-  },
+  // Flow DOM 스텝 실패(셀렉터 깨짐)는 throw 가 아니라 {success:false} 로 반환돼 Sentry 가 여태
+  //   한 번도 못 봤다 — 몇 명이 겪는지조차 몰라 제보 하나에 의존해야 했다. 이제 스스로 보고한다.
+  onDomFailure: (step, detail) => flowDiagSink()(step, detail),
 })
 const {
   trustedClickOnFlowView, parseFlowResponse, sessionFetch, flowPageFetch,

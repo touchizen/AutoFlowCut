@@ -28,19 +28,19 @@ function makeCtx({ probeResult, bounds = { x: 0, y: 0, width: 800, height: 600 }
     setBounds: vi.fn(),
     webContents: { executeJavaScript, getURL: () => 'https://labs.google/fx/tools/flow', sendInputEvent: vi.fn(), focus: vi.fn(), session: null },
   }
-  const onToggleNotFound = vi.fn()
+  const onDomFailure = vi.fn()
   const ctx = {
     getFlowView: () => flowView,
     getMainWindow: () => ({ getContentBounds: () => ({ width: 1280, height: 800 }) }),
     constants: { SESSION_URL: '', MEDIA_REDIRECT_URL: '', RECAPTCHA_SITE_KEY: '', RECAPTCHA_ACTION: '' },
-    onToggleNotFound,
+    onDomFailure,
   }
-  return { ctx, onToggleNotFound }
+  return { ctx, onDomFailure }
 }
 
 describe('ensureAgentOff — not_found diagnostics', () => {
   it('reports the rejected candidates, page context, and view bounds when the toggle is missing', async () => {
-    const { ctx, onToggleNotFound } = makeCtx({
+    const { ctx, onDomFailure } = makeCtx({
       probeResult: { found: false },
       bounds: { x: 0, y: 0, width: 0, height: 0 }, // collapsed — one of the live hypotheses
     })
@@ -49,9 +49,10 @@ describe('ensureAgentOff — not_found diagnostics', () => {
     const res = await ensureAgentOff()
 
     expect(res).toMatchObject({ success: false, state: 'not_found' })
-    expect(onToggleNotFound).toHaveBeenCalledTimes(1)
+    expect(onDomFailure).toHaveBeenCalledTimes(1)
 
-    const diag = onToggleNotFound.mock.calls[0][0]
+    const [step, diag] = onDomFailure.mock.calls[0]
+    expect(step).toBe('agent-toggle')
     // The control findAgentToggle rejected — without this the cause is unfalsifiable.
     expect(diag.candidates[0]).toMatchObject({ text: '에이전트', ariaPressed: null })
     // Page context separates "markup changed" from "page never rendered".
@@ -62,18 +63,18 @@ describe('ensureAgentOff — not_found diagnostics', () => {
   })
 
   it('stays silent on the success path — diagnostics are for failures only', async () => {
-    const { ctx, onToggleNotFound } = makeCtx({ probeResult: { found: true, on: false } })
+    const { ctx, onDomFailure } = makeCtx({ probeResult: { found: true, on: false } })
     const { ensureAgentOff } = createSharedHelpers(ctx)
 
     const res = await ensureAgentOff()
 
     expect(res).toMatchObject({ success: true, state: 'already_off' })
-    expect(onToggleNotFound).not.toHaveBeenCalled()
+    expect(onDomFailure).not.toHaveBeenCalled()
   })
 
   it('does not throw when no sink is wired (deps are optional)', async () => {
     const { ctx } = makeCtx({ probeResult: { found: false } })
-    delete ctx.onToggleNotFound
+    delete ctx.onDomFailure
     const { ensureAgentOff } = createSharedHelpers(ctx)
 
     await expect(ensureAgentOff()).resolves.toMatchObject({ state: 'not_found' })

@@ -48,7 +48,27 @@ export function agentDefaultsApplied(opts = {}, result = {}) {
  * @returns {object} All helper functions
  */
 export function createSharedHelpers(ctx) {
-  const { getFlowView, getMainWindow, constants, onToggleNotFound } = ctx
+  const { getFlowView, getMainWindow, constants, onDomFailure } = ctx
+
+  // DOM 스텝 실패 보고 — 셀렉터가 깨졌을 때 그 순간의 페이지 컨텍스트를 함께 남긴다.
+  //   'Flow view not ready'(Flow 모드 아님) 같은 정상 상태 체크는 부르지 않는다 — 노이즈가 된다.
+  async function reportDomFailure(step, reason, extra = {}) {
+    if (!onDomFailure) return
+    try {
+      const flowView = getFlowView()
+      const scan = flowView
+        ? await flowView.webContents.executeJavaScript(AGENT_TOGGLE_DIAGNOSTIC).catch(() => null)
+        : null
+      await onDomFailure(step, {
+        reason,
+        ...extra,
+        viewBounds: flowView ? flowView.getBounds() : null,
+        context: (scan && scan.context) || {},
+      })
+    } catch (e) {
+      console.warn(`[Flow Diag] report failed (${step}):`, e.message)
+    }
+  }
   const {
     SESSION_URL, MEDIA_REDIRECT_URL, RECAPTCHA_SITE_KEY, RECAPTCHA_ACTION,
   } = constants
@@ -59,7 +79,15 @@ export function createSharedHelpers(ctx) {
    * b.click()은 isTrusted: false라 Flow 페이지가 무시함 → sendInputEvent 필수
    * sendInputEvent는 viewport가 0x0이면 좌표가 의미없으므로 일시적으로 보이게 해야 함
    */
-  async function trustedClickOnFlowView(jsSelector) {
+  /**
+   * @param {string} jsSelector  page expression returning the element
+   * @param {object} [opts]
+   * @param {boolean} [opts.required]  true ⇒ this button MUST exist; a miss is a broken selector
+   *   and gets reported. Default false: many call sites click "if it's there" (closeAgentPanels
+   *   closes panels that are usually absent), and reporting those would fire on every healthy
+   *   generation and drown the real breakages.
+   */
+  async function trustedClickOnFlowView(jsSelector, opts = {}) {
     const mainWindow = getMainWindow()
     const flowView = getFlowView()
     if (!mainWindow || !flowView) return { success: false, error: 'No flowView' }
@@ -101,6 +129,11 @@ export function createSharedHelpers(ctx) {
 
       if (!coords || coords.width === 0) {
         console.log('[TrustedClick] Button not found or zero-size:', coords)
+        // required 인 클릭만 보고한다 — best-effort 클릭(패널 닫기 등)은 대상이 없는 게 정상이라
+        //   보고하면 정상 생성마다 노이즈가 쌓여 진짜 breakage 를 덮는다.
+        if (opts.required) {
+          await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, coords ? 'zero-size' : 'not-found', { coords: coords || null })
+        }
         return { success: false, error: 'Button not found or zero-size' }
       }
 
@@ -618,6 +651,7 @@ export function createSharedHelpers(ctx) {
       }
     }
 
+    await reportDomFailure('configure-mode', `mode_not_set_after_${maxAttempts}_attempts`, { targetMode })
     return { success: false, error: `Mode ${targetMode} not set after ${maxAttempts} attempts` }
   }
 
@@ -651,17 +685,17 @@ export function createSharedHelpers(ctx) {
   //   전부 똑같아 보인다. viewBounds 는 프로브가 실제로 어떤 크기의 뷰에서 돌았는지(0×0 여부)를
   //   말해주므로 executeJavaScript 로는 얻을 수 없는 유일한 단서다.
   async function captureToggleNotFound(flowView, caller) {
-    if (!onToggleNotFound) return
     try {
       const scan = await flowView.webContents.executeJavaScript(AGENT_TOGGLE_DIAGNOSTIC)
       const diag = {
         caller,
         viewBounds: flowView.getBounds(),
+        // findAgentToggle 이 "거부한" 후보들 — 토글 실패에만 있는 단서라 일반 컨텍스트로는 안 나온다.
         candidates: (scan && scan.candidates) || [],
         context: (scan && scan.context) || {},
       }
       console.warn(`[Flow API] ${caller}: toggle not found — diagnostic:`, JSON.stringify(diag))
-      await onToggleNotFound(diag)
+      await onDomFailure?.('agent-toggle', { reason: 'not_found', ...diag })
     } catch (e) {
       console.warn(`[Flow API] ${caller}: diagnostic capture failed:`, e.message)
     }
@@ -690,7 +724,7 @@ export function createSharedHelpers(ctx) {
         return { success: true, state: 'already_off' }
       }
       // ON → Flow 의 토글은 synthetic 클릭(isTrusted:false)을 무시하므로 trusted click 으로 끈다.
-      const click = await trustedClickOnFlowView(AGENT_TOGGLE_SELECTOR)
+      const click = await trustedClickOnFlowView(AGENT_TOGGLE_SELECTOR, { required: true, step: 'agent-toggle-click' })
       await new Promise(r => setTimeout(r, 400))
       probe = await flowView.webContents.executeJavaScript(AGENT_TOGGLE_PROBE)
       const off = !!probe && !probe.on
@@ -730,7 +764,7 @@ export function createSharedHelpers(ctx) {
         console.log('[Flow API] ensureAgentOn: already ON')
         return { success: true, state: 'already_on' }
       }
-      const click = await trustedClickOnFlowView(AGENT_TOGGLE_SELECTOR)
+      const click = await trustedClickOnFlowView(AGENT_TOGGLE_SELECTOR, { required: true, step: 'agent-toggle-click' })
       await new Promise(r => setTimeout(r, 400))
       probe = await flowView.webContents.executeJavaScript(AGENT_TOGGLE_PROBE)
       const on = !!probe && !!probe.on
