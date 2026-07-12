@@ -31,6 +31,44 @@ export function buildSegmentTimeline(segments, { gapMs = 0 } = {}) {
   })
 }
 
+/**
+ * image-first fixed slot clock. Slot identity/order/membership은 그대로 두고 각 slot 시작에서
+ * segment cursor를 다시 앵커한다. 반환한 flat segments가 SRT/manifest의 단일 timing source다.
+ */
+export function buildFixedSlotTimeline(scenes, { variant } = {}) {
+  let sceneStartMs = 0
+  const segments = []
+  const timedScenes = (scenes || []).map((scene) => {
+    const sourceSegments = Array.isArray(scene?.segments) ? scene.segments : []
+    const audioSpanMs = sourceSegments.reduce((sum, segment) => sum + (segment.durationMs || 0), 0)
+    const visualOnly = !sourceSegments.some((segment) => (segment.type || 'narration') === 'narration')
+    const effectiveMs = visualOnly
+      ? scene.plannedMs
+      : variant === 'image-only'
+        ? audioSpanMs + 300
+        : scene.plannedMs == null
+          ? audioSpanMs + 300
+          : Math.max(scene.plannedMs, audioSpanMs + 300)
+
+    let segmentOffsetMs = 0
+    const timedSegments = sourceSegments.map((segment) => {
+      const timed = { ...segment, startMs: sceneStartMs + segmentOffsetMs }
+      segmentOffsetMs += segment.durationMs || 0
+      segments.push(timed)
+      return timed
+    })
+    const timedScene = {
+      ...scene,
+      startSec: sceneStartMs / 1000,
+      endSec: (sceneStartMs + effectiveMs) / 1000,
+      segments: timedSegments,
+    }
+    sceneStartMs += effectiveMs
+    return timedScene
+  })
+  return { scenes: timedScenes, segments }
+}
+
 /** 세그먼트 id → SRT 라인 id (결정론적, 스펙 §7 흐름 A). */
 export function srtLineId(segmentId) {
   return `sub_${segmentId}`

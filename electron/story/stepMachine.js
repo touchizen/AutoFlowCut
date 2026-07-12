@@ -9,7 +9,7 @@ import { createStoryStore } from './storyStore.js'
 import { checkFixedSceneConsistency, validateFixedScenes } from './fixedScenes.js'
 import { buildStoryboardArtifacts, validateStoryboardRows } from './storyboardInput.js'
 import { inheritStoryIds, assertUniqueStoryIds, assignStoryIdsByMembership, inheritSegmentIds } from './sceneIdentity.js'
-import { buildFallbackTimeline, buildSegmentTimeline, buildSrt, srtLineId } from './timing.js'
+import { buildFallbackTimeline, buildFixedSlotTimeline, buildSegmentTimeline, buildSrt, srtLineId } from './timing.js'
 import { regroupScenes } from './regroup.js'
 import { buildManifest } from './manifest.js'
 import { normalizeActiveStoryLlmOptions as normalizeStoryLlmOptions } from '../api/llm/storyLlmCatalog.js'
@@ -1052,37 +1052,53 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         const r = results.get(s.id)
         return { ...s, durationMs: r?.durationMs || 0, audioPath: r?.audioPath || null, status: r ? 'done' : s.status, voiceKey: r ? (r.voiceKey ?? s.voiceKey) : s.voiceKey, sfxKey: r ? (r.sfxKey ?? s.sfxKey) : s.sfxKey, sourceMode: r ? (r.sourceMode ?? s.sourceMode) : s.sourceMode }
       })
-      // 3) 타임라인(startMs) + 4) SRT
-      const timed = buildSegmentTimeline(measured)
-      const srt = buildSrt(timed)
-      // 5) 재그룹 + 6) storyId 발급 (이전 확정 씬은 scenes.json에 segmentIds 있으면 사용)
+      // 3) 타임라인(startMs). audio-first는 기존 flat concat/regroup/ID 발급을 그대로 쓰고,
+      // image-first는 fixed slot 시작에 segment를 재앵커해 N/order/identity/membership을 보존한다.
       const prevScenes = (scenesJson.scenes || []).filter((s) => s.storyId).map((s) => ({ storyId: s.storyId, segmentIds: (s.segments || []).map((g) => g.id) }))
-      const groups = regroupScenes(timed, { minMs: 6000, maxMs: 10000 })
-      const withIds = assignStoryIdsByMembership(prevScenes, groups)
-      // 7) 확정 씬 재구성 (그룹의 segmentIds로 timed 세그먼트를 묶음)
-      // C2: 재그룹 경계는 원래 scenes.json 씬 경계와 다를 수 있어 옛 sceneNo/summary를 그대로
-      // 옮길 수 없다 — prompts 스텝(prompts.js/llmClaude.js/llmGemini.js)이 sceneNo로 프롬프트를
-      // 병합하므로(byNo.get(s.sceneNo)) 여기서 1-based 순번 sceneNo를 새로 발급하고, summary는
-      // 그룹 내 narration 세그먼트 텍스트에서 파생한다(스펙 §7 프롬프트 컨텍스트 제공 취지).
-      const byId = new Map(timed.map((s) => [s.id, s]))
-      const finalScenes = withIds.map((g, i) => {
-        const groupSegments = g.segmentIds.map((id) => byId.get(id))
-        const summaryText = groupSegments
-          .filter((s) => (s.type || 'narration') === 'narration')
-          .map((s) => (s.text || '').trim())
-          .filter(Boolean)
-          .join(' ')
-        const summary = summaryText.length > 200 ? `${summaryText.slice(0, 200)}…` : summaryText
-        return {
-          storyId: g.storyId,
-          sceneNo: i + 1,
-          summary,
-          startSec: g.startMs / 1000,
-          endSec: g.endMs / 1000,
-          segments: groupSegments,
-          // 프롬프트는 audio 단계에서 건드리지 않음 (M2a-2/prompts 소유)
-        }
-      })
+      let timed
+      let finalScenes
+      if (state.sceneMode === 'image-first') {
+        const measuredById = new Map(measured.map((segment) => [segment.id, segment]))
+        const fixedTimeline = buildFixedSlotTimeline(
+          (scenesJson.scenes || []).map((scene) => ({
+            ...scene,
+            segments: (scene.segments || []).map((segment) => measuredById.get(segment.id)),
+          })),
+          { variant: state.imageFirstVariant },
+        )
+        timed = fixedTimeline.segments
+        finalScenes = fixedTimeline.scenes
+      } else {
+        timed = buildSegmentTimeline(measured)
+        const groups = regroupScenes(timed, { minMs: 6000, maxMs: 10000 })
+        const withIds = assignStoryIdsByMembership(prevScenes, groups)
+        // 7) 확정 씬 재구성 (그룹의 segmentIds로 timed 세그먼트를 묶음)
+        // C2: 재그룹 경계는 원래 scenes.json 씬 경계와 다를 수 있어 옛 sceneNo/summary를 그대로
+        // 옮길 수 없다 — prompts 스텝(prompts.js/llmClaude.js/llmGemini.js)이 sceneNo로 프롬프트를
+        // 병합하므로(byNo.get(s.sceneNo)) 여기서 1-based 순번 sceneNo를 새로 발급하고, summary는
+        // 그룹 내 narration 세그먼트 텍스트에서 파생한다(스펙 §7 프롬프트 컨텍스트 제공 취지).
+        const byId = new Map(timed.map((s) => [s.id, s]))
+        finalScenes = withIds.map((g, i) => {
+          const groupSegments = g.segmentIds.map((id) => byId.get(id))
+          const summaryText = groupSegments
+            .filter((s) => (s.type || 'narration') === 'narration')
+            .map((s) => (s.text || '').trim())
+            .filter(Boolean)
+            .join(' ')
+          const summary = summaryText.length > 200 ? `${summaryText.slice(0, 200)}…` : summaryText
+          return {
+            storyId: g.storyId,
+            sceneNo: i + 1,
+            summary,
+            startSec: g.startMs / 1000,
+            endSec: g.endMs / 1000,
+            segments: groupSegments,
+            // 프롬프트는 audio 단계에서 건드리지 않음 (M2a-2/prompts 소유)
+          }
+        })
+      }
+      // 4) SRT. 두 mode 모두 manifest와 동일한 timed flat array를 소비한다.
+      const srt = buildSrt(timed)
       if (signal?.aborted) return
       if (params.speakers) state.speakers = params.speakers
 
@@ -1094,7 +1110,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const prevStoryIds = new Set(prevScenes.map((s) => s.storyId))
       const newStoryIds = new Set(finalScenes.map((s) => s.storyId))
       const membershipUnchanged = prevStoryIds.size === newStoryIds.size && [...newStoryIds].every((id) => prevStoryIds.has(id))
-      const timingOnly = hadPrompts && membershipUnchanged
+      const timingOnly = state.sceneMode !== 'image-first' && hadPrompts && membershipUnchanged
 
       // 최초 정밀/멤버십 변화: manifestRevision null (export 차단 → prompts 재실행이 소유/재스탬프).
       // timing-only: audio가 다음 revision 소유. Codex-M2a-2b HIGH: state(pendingPushRevision/prompts)
@@ -1134,10 +1150,44 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         state.steps.prompts = { status: 'done' } // wrapper DOWNSTREAM 리셋 복원 — 프롬프트 유효(재실행 강제 안 함)
         return { pushScenes: scenesToSave } // wrapper가 flush 후 sendPush — 프롬프트 보존 + 새 timing/srt
       }
+      if (state.sceneMode === 'image-first') return { pushScenes: null }
     },
     async prompts(params, opId, signal) {
       const scenesJson = JSON.parse((await store.loadText('scenes.json')) || 'null')
       if (!scenesJson) throw new Error('scenes.json not found — run scenes step first')
+      if (state.sceneMode === 'image-first') {
+        let source = {}
+        if (state.imageFirstVariant === 'storyboard') {
+          const parsed = parseStoryboardCSVRows((await store.loadText('storyboard.csv')) || '')
+          const validated = validateStoryboardRows(parsed, {
+            roster: state.speakers || [],
+            rosterEnforced: true,
+          })
+          source = { sourceRows: validated.success ? validated.rows : undefined }
+        } else if (state.imageFirstVariant === 'image-only') {
+          source = { sourceNarrationLines: state.input?.sourceNarrationLines }
+        }
+        const manifestRaw = await store.loadText('audio/manifest.json')
+        if (!manifestRaw) throw new Error('audio/manifest.json not found — rerun audio step')
+        const manifest = JSON.parse(manifestRaw)
+        const nextRevision = state.pendingPushRevision + 1
+        if (signal?.aborted) return
+        const fixedValidation = validateFixedScenes({
+          scenes: scenesJson.scenes,
+          fixedScenes: state.fixedScenes,
+          variant: state.imageFirstVariant,
+          speakers: state.speakers || [],
+          ...source,
+          requireTiming: true,
+        })
+        if (!fixedValidation.success) throw new Error(fixedValidation.error)
+        await store.saveText('scenes.json', JSON.stringify({ scenes: scenesJson.scenes }, null, 2))
+        manifest.pushRevision = nextRevision
+        await store.saveText('audio/manifest.json', JSON.stringify(manifest, null, 2))
+        if (signal?.aborted) return
+        state.pendingPushRevision = nextRevision
+        return { pushScenes: scenesJson.scenes }
+      }
       const scriptMd = await store.loadText('script.md')
       const opts = buildLlmOptions(effectiveOptions(params))
       const context = { scriptMd, style: params.style || null, speakers: characterSpeakers() }
