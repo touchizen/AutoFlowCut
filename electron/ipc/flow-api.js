@@ -198,7 +198,8 @@ export function registerFlowAPIIPC(ipcMain, deps) {
     token, prompt, aspectRatio, seed, model, projectId, referenceImages, batchCount,
     asyncMode  // true: 제출만 하고 즉시 반환 (비동기 배치용)
   }) => {
-    console.log('[Flow API] generate-image:', { prompt: prompt?.substring(0, 50), model, aspectRatio, seed: (seed ?? 'random') })
+    // promptLen — 본문은 안 찍는다(Sentry breadcrumb 로 사용자 콘텐츠가 새어나간다).
+    console.log('[Flow API] generate-image:', { promptLen: prompt?.length ?? 0, model, aspectRatio, seed: (seed ?? 'random') })
     if (!prompt) return { success: false, error: 'No prompt' }
     if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R25-4
     const flowView = getFlowView()
