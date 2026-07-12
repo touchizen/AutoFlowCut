@@ -99,9 +99,17 @@ export function scanVideos(doc) {
 
 /** Timestamped dump filename: flow-dom-dump-YYYYMMDD-HHmmss.json (local time). */
 export function buildDomDumpFilename(d = new Date()) {
+  return `flow-dom-dump-${stampOf(d)}.json`
+}
+
+/** Timestamped agent-toggle diagnostic filename (written automatically on not_found). */
+export function buildAgentDiagFilename(d = new Date()) {
+  return `flow-agent-diag-${stampOf(d)}.json`
+}
+
+function stampOf(d) {
   const p = (n) => String(n).padStart(2, '0')
-  const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
-  return `flow-dom-dump-${stamp}.json`
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
 }
 
 /** Page-context expression: scans the live document + a trimmed body HTML snapshot. */

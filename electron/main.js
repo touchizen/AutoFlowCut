@@ -47,6 +47,7 @@ import { routeReportResponse, isFlowFrameOrigin } from './reportResponseRouter.j
 import { FLOW_PAGE_INJECTION } from './flow-page-injection.js'
 import { FLOW_SETTINGS_DUMPER } from './flow-settings-dumper.js'
 import { FLOW_DOM_DUMP_PROBE, buildDomDumpFilename } from './flow-dom-dump.js'
+import { createAgentDiagWriter } from './flow-agent-diag.js'
 import { createMutex } from './asyncMutex.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -712,12 +713,31 @@ modeController.register(ipcMain)
 // Layout, modal, sleep, open-external, show-in-folder IPC.
 registerLayoutIPC(ipcMain, () => mainWindow, modeController.getFlowView)
 
+// Agent 토글 not_found 진단 저장기 — 첫 실패 때 만든다. app.getPath 는 whenReady 이후에만
+//   신뢰할 수 있는데 이 모듈 최상단은 그 전에 평가되므로, 여기서 미리 부르면 안 된다.
+//   (실패해도 앱은 안 죽고 진단만 조용히 유실돼 — 정작 필요할 때 파일이 없는 최악의 실패 모드.)
+let _agentDiagWriter = null
+function agentDiagWriter() {
+  if (!_agentDiagWriter) {
+    _agentDiagWriter = createAgentDiagWriter({
+      writeFile: (filePath, body) => fsSync.writeFileSync(filePath, body),
+      desktopDir: app.getPath('desktop'),
+      userDataDir: app.getPath('userData'),
+    })
+  }
+  return _agentDiagWriter
+}
+
 // === Shared Flow helpers (trustedClick, fetch, parse, extract, configureFlowMode) ===
 const helpers = createSharedHelpers({
   getFlowView: modeController.getFlowView,
   getMainWindow: () => mainWindow,
   constants: {
     SESSION_URL, MEDIA_REDIRECT_URL, RECAPTCHA_SITE_KEY, RECAPTCHA_ACTION,
+  },
+  onToggleNotFound: async (diag) => {
+    const p = await agentDiagWriter()(diag)
+    console.warn('[FlowAgentDiag]', p ? `saved → ${p}` : 'no writable location — diagnostic not saved')
   },
 })
 const {

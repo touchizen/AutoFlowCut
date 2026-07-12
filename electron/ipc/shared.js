@@ -9,7 +9,7 @@
 
 import { aspectRatioTabSuffix } from '../flow-aspect-ratio-ui.js'
 import { buildAgentDefaultsScript, buildListModelsScript } from '../flow-agent-defaults.js'
-import { AGENT_TOGGLE_PROBE, AGENT_TOGGLE_SELECTOR, AGENT_CHAT_CLOSE_SELECTOR, AGENT_SETTINGS_CLOSE_SELECTOR } from '../flow-agent-toggle.js'
+import { AGENT_TOGGLE_PROBE, AGENT_TOGGLE_SELECTOR, AGENT_CHAT_CLOSE_SELECTOR, AGENT_SETTINGS_CLOSE_SELECTOR, AGENT_TOGGLE_DIAGNOSTIC } from '../flow-agent-toggle.js'
 import { buildSelectModeScript } from '../flow-mode-tab.js'
 import { screen } from 'electron'
 import { computeOffscreenBounds } from '../offscreen-bounds.js'
@@ -48,7 +48,7 @@ export function agentDefaultsApplied(opts = {}, result = {}) {
  * @returns {object} All helper functions
  */
 export function createSharedHelpers(ctx) {
-  const { getFlowView, getMainWindow, constants } = ctx
+  const { getFlowView, getMainWindow, constants, onToggleNotFound } = ctx
   const {
     SESSION_URL, MEDIA_REDIRECT_URL, RECAPTCHA_SITE_KEY, RECAPTCHA_ACTION,
   } = constants
@@ -646,6 +646,27 @@ export function createSharedHelpers(ctx) {
     await new Promise(r => setTimeout(r, 350))
   }
 
+  // 토글을 못 찾아 fail-closed 할 때, 그 순간의 페이지를 박제한다. 이게 없으면 사용자 제보가
+  //   반증 불가능해진다 — 로그에 'toggle not found' 한 줄뿐이라 마크업 변경/로케일/접힌 뷰포트가
+  //   전부 똑같아 보인다. viewBounds 는 프로브가 실제로 어떤 크기의 뷰에서 돌았는지(0×0 여부)를
+  //   말해주므로 executeJavaScript 로는 얻을 수 없는 유일한 단서다.
+  async function captureToggleNotFound(flowView, caller) {
+    if (!onToggleNotFound) return
+    try {
+      const scan = await flowView.webContents.executeJavaScript(AGENT_TOGGLE_DIAGNOSTIC)
+      const diag = {
+        caller,
+        viewBounds: flowView.getBounds(),
+        candidates: (scan && scan.candidates) || [],
+        context: (scan && scan.context) || {},
+      }
+      console.warn(`[Flow API] ${caller}: toggle not found — diagnostic:`, JSON.stringify(diag))
+      await onToggleNotFound(diag)
+    } catch (e) {
+      console.warn(`[Flow API] ${caller}: diagnostic capture failed:`, e.message)
+    }
+  }
+
   async function ensureAgentOff() {
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'No flowView' }
@@ -661,6 +682,7 @@ export function createSharedHelpers(ctx) {
       }
       if (!probe || !probe.found) {
         console.log('[Flow API] ensureAgentOff: toggle not found (panel close retries exhausted)')
+        await captureToggleNotFound(flowView, 'ensureAgentOff')
         return { success: false, state: 'not_found' }
       }
       if (!probe.on) {
@@ -701,6 +723,7 @@ export function createSharedHelpers(ctx) {
       }
       if (!probe || !probe.found) {
         console.log('[Flow API] ensureAgentOn: toggle not found (panel close retries exhausted)')
+        await captureToggleNotFound(flowView, 'ensureAgentOn')
         return { success: false, state: 'not_found' }
       }
       if (probe.on) {

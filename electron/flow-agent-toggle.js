@@ -49,6 +49,62 @@ export function findAgentToggle(doc) {
 export const AGENT_TOGGLE_SELECTOR = `(${findAgentToggle.toString()})(document)`
 
 /**
+ * Snapshot every "agent-ish" control plus the page context — for when findAgentToggle
+ * returns null and fails generation closed.
+ *
+ * findAgentToggle only accepts a candidate that carries a toggle attribute
+ * (aria-pressed/aria-checked/role=switch) AND is labelled agent/에이전트. When it
+ * rejects everything we lose the reason, and a user report becomes unfalsifiable —
+ * markup change, locale, and collapsed-viewport all look identical from the log.
+ * This keeps the rejected candidates and the context that separates those causes.
+ */
+export function scanAgentToggleCandidates(doc) {
+  const win = doc.defaultView
+  const cands = Array.from(doc.querySelectorAll('button, [role="switch"], [role="checkbox"], [role="button"], input[type="checkbox"]'))
+    .map((el) => ({
+      el,
+      icons: Array.from(el.querySelectorAll('i, [class*="symbols"], [class*="google-symbols"]')).map((i) => (i.textContent || '').trim()),
+    }))
+    .filter(({ el, icons }) => {
+      const al = el.getAttribute('aria-label') || ''
+      const t = (el.textContent || '').trim()
+      return /agent|에이전트/i.test(al) || /agent|에이전트/i.test(t) || icons.some((i) => /spark/.test(i))
+    })
+    .slice(0, 12)
+    .map(({ el, icons }) => ({
+      tag: el.tagName.toLowerCase(),
+      role: el.getAttribute('role'),
+      text: (el.textContent || '').trim().slice(0, 40),
+      ariaLabel: el.getAttribute('aria-label'),
+      ariaPressed: el.getAttribute('aria-pressed'),
+      ariaChecked: el.getAttribute('aria-checked'),
+      dataState: el.getAttribute('data-state'),
+      icons,
+    }))
+
+  return {
+    candidates: cands,
+    context: {
+      innerWidth: (win && win.innerWidth) || 0,
+      innerHeight: (win && win.innerHeight) || 0,
+      lang: doc.documentElement.lang || null,
+      url: (doc.location && doc.location.href) || null,
+      readyState: doc.readyState || null,
+      // 컴포즈 에디터가 떠 있는지 — 없으면 페이지가 아직 안 그려진 것(하이드레이션/뷰포트 문제)이고,
+      // 있는데도 토글이 없으면 Flow 마크업이 바뀐 것이다. 이 한 줄이 두 원인을 가른다.
+      hasComposeEditor: !!(doc.querySelector("[data-slate-editor='true']")
+        || doc.querySelector("div[role='textbox'][contenteditable='true']")),
+    },
+  }
+}
+
+/** Page expression returning the candidate/context snapshot (for the not_found path). */
+export const AGENT_TOGGLE_DIAGNOSTIC = `(function() {
+  ${scanAgentToggleCandidates.toString()}
+  try { return scanAgentToggleCandidates(document); } catch (e) { return { error: String(e && e.message) }; }
+})()`
+
+/**
  * Locate the agent CHAT panel's header close button (icon 'close' / label '닫기').
  * A prior Agent-ON generation leaves this right-side panel open, covering the main
  * compose bar where the Agent toggle lives — so we close it before probing/toggling.
