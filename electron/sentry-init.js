@@ -29,9 +29,19 @@ const PROMPT_BEARING = [
   /(dom-send-prompt called:\s*)(.*)$/gi,
 ]
 
+// 자격증명/PII — 소스에서 안 찍는 게 1차 방어지만, console.log 하나만 빠뜨려도 자격증명이
+//   Sentry 로 나간다. 실제로 Flow 세션 응답이 access_token 과 이메일을 통째로 찍고 있었다.
+const SECRET_BEARING = [
+  /(["']?access_?token["']?\s*[:=]\s*["']?)[A-Za-z0-9._~+/-]{12,}/gi,
+  /\bya29\.[A-Za-z0-9._~+/-]{8,}/g,                       // Google OAuth 토큰
+  /\bBearer\s+[A-Za-z0-9._~+/-]{12,}/gi,
+  /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g,      // 이메일
+]
+
 export function scrubBreadcrumbMessage(message) {
   let out = String(message)
   for (const re of PROMPT_BEARING) out = out.replace(re, '$1<redacted>')
+  for (const re of SECRET_BEARING) out = out.replace(re, (m, p1) => (p1 ? `${p1}<redacted>` : '<redacted>'))
   return out
 }
 
@@ -86,10 +96,16 @@ export function buildSentryOptions({ env = defaultEnv(), version } = {}) {
   }
 }
 
-export function initSentryMain({ sentry = Sentry, env = process.env } = {}) {
+/**
+ * ⚠️ env 에 기본값을 주지 않는다. `env = process.env` 로 두면 그 런타임 객체가
+ *    buildSentryOptions 의 defaultEnv() 를 덮어써서, 빌드 시점에 인라인된 상수가 무용지물이 된다.
+ *    (패키징 앱의 process.env 엔 아무것도 없다 → 영구 disabled. 실제로 그렇게 죽어 있었다.)
+ *    undefined 를 그대로 넘겨 defaultEnv() 가 살아나게 한다.
+ */
+export function initSentryMain({ sentry = Sentry, env } = {}) {
   const options = buildSentryOptions({ env })
   if (!options.enabled) {
-    console.log(`[Sentry] disabled (env=${env.VITE_FUNCTION_ENV || 'dev'}, prod-only)`)
+    console.log(`[Sentry] disabled (env=${options.environment}, prod-only)`)
     return { initialized: false, options }
   }
   const { enabled, ...initOptions } = options

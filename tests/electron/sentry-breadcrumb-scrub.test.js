@@ -57,6 +57,34 @@ describe('beforeBreadcrumb — console breadcrumbs must not carry prompt text', 
     expect(kept.message).toBe('[Flow API] ensureAgentOff: toggle not found (panel close retries exhausted)')
   })
 
+  it('redacts OAuth access tokens', () => {
+    const { beforeBreadcrumb } = opts()
+
+    // Real line from a packaged run — the Flow session response carries the bearer token.
+    // Re-enabling console in the main bundle is what made this reachable; a source fix
+    // alone is one forgotten console.log away from shipping a credential to Sentry.
+    const out = beforeBreadcrumb({
+      category: 'console',
+      level: 'log',
+      message: '[Flow API] Session: {"access_token":"ya29.a0ARGnu0bK4_CYGQzj4opLWhL-MJl3kNcflKLgvlj7"}',
+    })
+
+    expect(out.message).not.toContain('ya29.a0ARGnu0bK4_CYGQzj4opLWhL')
+    expect(out.message).toContain('[Flow API] Session')
+  })
+
+  it('redacts email addresses', () => {
+    const { beforeBreadcrumb } = opts()
+
+    const out = beforeBreadcrumb({
+      category: 'console',
+      level: 'log',
+      message: '[Flow API] user: {"email":"gordon.ahn@gmail.com"}',
+    })
+
+    expect(out.message).not.toContain('gordon.ahn@gmail.com')
+  })
+
   it('leaves non-console breadcrumbs alone', () => {
     const { beforeBreadcrumb } = opts()
     const crumb = { category: 'navigation', message: 'https://labs.google/fx/tools/flow' }

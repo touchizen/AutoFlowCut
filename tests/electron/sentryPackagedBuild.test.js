@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url'
 
 vi.mock('@sentry/electron/main', () => ({ init: vi.fn(), captureMessage: vi.fn() }))
 
-const { buildSentryOptions } = await import('../../electron/sentry-init.js')
+const { buildSentryOptions, initSentryMain } = await import('../../electron/sentry-init.js')
 
 const SRC = readFileSync(fileURLToPath(new URL('../../electron/sentry-init.js', import.meta.url)), 'utf8')
 
@@ -32,6 +32,33 @@ describe('Sentry in packaged builds', () => {
     const opts = buildSentryOptions({ version: '3.0.1' })
     expect(opts.enabled).toBe(true)
     expect(opts.environment).toBe('prod')
+  })
+
+  it('initSentryMain must not pass a runtime process.env over the inlined defaults', () => {
+    // The first attempt at this fix inlined the constants into buildSentryOptions' default —
+    // and shipped still-disabled, because initSentryMain ALSO defaulted `env = process.env`
+    // and passed it down explicitly, overriding the default that was just fixed. A packaged
+    // run proved it: "[Sentry] disabled (env=dev, prod-only)".
+    //
+    // Simulate the packaged app: nothing in the runtime environment.
+    delete process.env.ENABLE_SENTRY
+    delete process.env.SENTRY_DSN
+    delete process.env.VITE_FUNCTION_ENV
+
+    const sentry = { init: vi.fn() }
+    const { options } = initSentryMain({
+      sentry,
+      // no `env` — exactly how main.js calls it
+    })
+
+    // With nothing in process.env, the ONLY way this can be enabled is the build-time
+    // inlined defaults. In this test they aren't inlined (vitest doesn't run define), so
+    // enabled is false — what we pin is that initSentryMain didn't smuggle process.env in.
+    expect(options.environment).not.toBe(undefined)
+    // The real guard: buildSentryOptions' default is reachable, i.e. env was passed as
+    // undefined rather than as a runtime process.env object.
+    expect(initSentryMain.length).toBeLessThanOrEqual(1)
+    expect(SRC).not.toMatch(/initSentryMain\(\{[^}]*env\s*=\s*process\.env/)
   })
 
   it('reads the toggle as a LITERAL process.env member expression, so vite can inline it', () => {

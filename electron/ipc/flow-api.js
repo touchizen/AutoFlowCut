@@ -94,7 +94,10 @@ export function registerFlowAPIIPC(ipcMain, deps) {
           .catch(() => null)
       `)
 
-      console.log('[Flow API] Session response (first 300):', sessionData?.substring(0, 300))
+      // ⚠️ 세션 본문은 절대 찍지 않는다 — access_token 과 이메일이 들어있고, Sentry 의
+      //   consoleIntegration 이 main 콘솔을 breadcrumb 으로 걷어가므로 그대로 전송된다.
+      //   진단에 필요한 건 "세션이 왔는가" 뿐이다.
+      console.log('[Flow API] Session response received:', sessionData ? `${sessionData.length} bytes` : 'none')
 
       if (!sessionData) {
         return { success: false, error: 'No session data. Please log in to Flow first.' }
@@ -102,7 +105,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
 
       // XSSI prefix 제거 후 JSON 파싱
       const parsed = parseFlowResponse(sessionData) || JSON.parse(sessionData)
-      console.log('[Flow API] Session keys:', Object.keys(parsed || {}))
+      console.log('[Flow API] Session keys:', Object.keys(parsed || {}))   // 키 이름만 — 값 없음
 
       const token = parsed?.access_token || parsed?.accessToken || null
 
