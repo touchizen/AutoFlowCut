@@ -100,8 +100,8 @@ export function scanAgentToggleCandidates(doc) {
 
 /** Page expression returning the candidate/context snapshot (for the not_found path). */
 export const AGENT_TOGGLE_DIAGNOSTIC = `(function() {
-  ${scanAgentToggleCandidates.toString()}
-  try { return scanAgentToggleCandidates(document); } catch (e) { return { error: String(e && e.message) }; }
+  const scan = ${scanAgentToggleCandidates.toString()};
+  try { return scan(document); } catch (e) { return { error: String(e && e.message) }; }
 })()`
 
 /**
@@ -177,15 +177,24 @@ export function findAgentSettingsCloseButton(doc) {
 /** Page expression returning the agent-settings panel close button ELEMENT. */
 export const AGENT_SETTINGS_CLOSE_SELECTOR = `(${findAgentSettingsCloseButton.toString()})(document)`
 
+/**
+ * ⚠️ 주입한 함수는 절대 "이름으로" 호출하지 않는다 — 반드시 const 에 담아 그 변수로 호출한다.
+ *    prod 빌드는 main 번들을 minify 하며 함수 이름을 뭉갠다(findAgentToggle → H$). 그러면
+ *    `${fn.toString()}` 로 주입된 선언은 `function H$(...)` 가 되는데 호출부는 여전히
+ *    `findAgentToggle(...)` 라 ReferenceError 가 난다 → executeJavaScript 거부 →
+ *    "Script failed to execute" → ensureAgentOff catch → fail-closed → 모든 생성 실패.
+ *    dev 는 minify 를 안 해서 멀쩡하므로 이 버그는 패키징된 앱에서만 나타난다.
+ *    (실제 사용자 제보의 원인이었다. tests/electron/flow-agent-toggle-minified.test.js 가 지킨다.)
+ */
 /** Page expression: report the agent toggle's found/on/markup (for diagnostics). */
 export const AGENT_TOGGLE_PROBE = `(function() {
-  ${isToggleOn.toString()}
-  ${findAgentToggle.toString()}
-  const el = findAgentToggle(document);
+  const isOn = ${isToggleOn.toString()};
+  const find = ${findAgentToggle.toString()};
+  const el = find(document);
   if (!el) return { found: false };
   return {
     found: true,
-    on: isToggleOn(el),
+    on: isOn(el),
     role: el.getAttribute('role'),
     ariaLabel: el.getAttribute('aria-label'),
     ariaPressed: el.getAttribute('aria-pressed'),
@@ -201,8 +210,8 @@ export const AGENT_TOGGLE_PROBE = `(function() {
  * Returns { found, wasOn, clicked, candidates }.
  */
 export const AGENT_OFF_SCRIPT = `(function() {
-  ${isToggleOn.toString()}
-  ${findAgentToggle.toString()}
+  const isToggleOn = ${isToggleOn.toString()};
+  const findAgentToggle = ${findAgentToggle.toString()};
   const P = '[autoflowcut Agent]';
   // 진단: 'agent/에이전트/spark' 관련 후보를 전부 로그 (실제 토글 마크업 확인용)
   try {
