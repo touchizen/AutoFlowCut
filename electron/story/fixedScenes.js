@@ -542,11 +542,17 @@ export function checkFixedSceneConsistency(projectState, storyState, options = {
   }
 
   const transitionRequested = options?.allowCommittedButUnstaged === true
-  const storyRevisionAbsent = !nonEmptyString(storyState?.fixedSceneRevision)
+  // story 가 project 의 R 을 아직 안 가진 상태 — 최초 import(revision 부재)와 **전체 세트 교체**
+  // (story 가 옛 R1 을 들고 있는데 fs commit 이 project 를 R2 로 올린 상태)가 모두 여기다.
+  // "revision 이 아예 없을 때"로 좁히면 이미 고정 세트가 있는 프로젝트는 세트를 영영 교체할 수
+  // 없고, 복구 패널의 '이미지 세트 다시 임포트'(=교체)도 같이 죽는다. 스펙 §709 는 전체 교체를
+  // 명시적으로 지원하라고 한다. 같은 R 을 다시 stage 하는 건 위 'consistent' 분기가 먼저 잡는다.
+  const storyLacksProjectRevision =
+    storyState?.fixedSceneRevision !== projectState?.fixedSceneRevision
   if (transitionRequested
     && validImageFirstState(projectState)
     && sameFixedState(projectState, options?.expectedProjectState)
-    && storyRevisionAbsent) {
+    && storyLacksProjectRevision) {
     return {
       success: true,
       mode: 'image-first',

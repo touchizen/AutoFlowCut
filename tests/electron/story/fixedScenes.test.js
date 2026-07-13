@@ -1052,10 +1052,36 @@ describe('checkFixedSceneConsistency committed-but-unstaged transition', () => {
     })).toEqual({ success: false, error: 'fixed-scenes-stale' })
   })
 
-  it('story에 non-empty old revision이 있으면 transition을 허용하지 않는다', () => {
+  // 옛 revision 은 전이를 막는 근거가 아니라 **교체(replacement)** 의 정의다 — fs commit 이
+  // project 를 새 R 로 올렸고 story 는 아직 옛 R 을 들고 있는 상태다. 이걸 막으면 이미 고정
+  // 세트가 있는 프로젝트는 세트를 영영 바꿀 수 없다(스펙 §709).
+  it('story가 옛 revision을 들고 있어도 새 project revision으로 전이한다 (세트 교체)', () => {
     expect(checkFixedSceneConsistency(imageFirstState(), {
       fixedSceneRevision: 'old-revision',
     }, {
+      allowCommittedButUnstaged: true,
+      expectedProjectState: imageFirstState(),
+    })).toMatchObject({ success: true, status: 'committed-but-unstaged' })
+  })
+
+  it('story가 이미 project와 같은 revision이면 전이가 아니라 consistent다 (재stage 금지)', () => {
+    expect(checkFixedSceneConsistency(imageFirstState(), imageFirstState(), {
+      allowCommittedButUnstaged: true,
+      expectedProjectState: imageFirstState(),
+    })).toMatchObject({ success: true, status: 'consistent' })
+  })
+
+  // 같은 revision 을 들고 있는데 fixed list 가 다르면 story 가 손상된 것이다 — 전이로 조용히
+  // 덮어쓰면 안 되고 stale 로 사람이 개입해야 한다. (revision 비교를 빼면 이 케이스가 샌다.)
+  it('story가 같은 revision인데 fixed list가 다르면 전이가 아니라 stale이다', () => {
+    const corruptStory = imageFirstState({
+      fixedScenes: [
+        { storyId: 'other-1', rendererSceneId: 'scene_99', ordinal: 1 },
+        { storyId: 'other-2', rendererSceneId: 'scene_98', ordinal: 2 },
+      ],
+    })
+
+    expect(checkFixedSceneConsistency(imageFirstState(), corruptStory, {
       allowCommittedButUnstaged: true,
       expectedProjectState: imageFirstState(),
     })).toEqual({ success: false, error: 'fixed-scenes-stale' })
@@ -1068,5 +1094,53 @@ describe('checkFixedSceneConsistency committed-but-unstaged transition', () => {
       allowCommittedButUnstaged: true,
       expectedProjectState: imageFirstState(),
     })).toEqual({ success: false, error: 'fixed-scenes-stale' })
+  })
+})
+
+describe('전체 이미지 세트 교체(replacement) — 스펙 §709', () => {
+  // fs commit 이 project@R2 를 durable 하게 만든 뒤 story 는 아직 옛 R1 이다. 이 edge 를
+  // 소비할 수 있는 건 stageImageFirst 하나뿐인데, "story revision 이 아예 없을 때"만
+  // 허용하면 이미 고정 세트를 가진 프로젝트는 세트를 영영 교체할 수 없다. 복구 패널의
+  // '이미지 세트 다시 임포트' 도 교체라서 같이 죽는다.
+  // ordinal 은 반드시 index+1 이다. 세트가 교체되면 rendererSceneId/storyId 만 새로 발급된다.
+  const setOf = (a, b) => [
+    { storyId: `sid-${a}`, rendererSceneId: `scene_${a}`, ordinal: 1 },
+    { storyId: `sid-${b}`, rendererSceneId: `scene_${b}`, ordinal: 2 },
+  ]
+  const stateAt = (rev, slots) => ({
+    sceneMode: 'image-first',
+    imageFirstVariant: 'storyboard',
+    fixedSceneRevision: rev,
+    fixedScenes: slots,
+  })
+
+  it('story 가 옛 revision 을 들고 있어도 새 project revision 으로 전이할 수 있다', () => {
+    const project = stateAt('R2', setOf(4, 5))   // 새 import 가 commit 한 세트
+    const story = stateAt('R1', setOf(1, 2))     // 옛 세트
+
+    const r = checkFixedSceneConsistency(project, story, {
+      allowCommittedButUnstaged: true,
+      expectedProjectState: project,
+    })
+    expect(r).toMatchObject({ success: true, status: 'committed-but-unstaged' })
+  })
+
+  it('story 가 이미 같은 revision 이면 전이가 아니라 consistent 다 (재stage 금지)', () => {
+    const project = stateAt('R2', setOf(4, 5))
+    const r = checkFixedSceneConsistency(project, project, {
+      allowCommittedButUnstaged: true,
+      expectedProjectState: project,
+    })
+    expect(r).toMatchObject({ success: true, status: 'consistent' })
+  })
+
+  it('payload 가 project 와 다르면 옛 story 가 있든 없든 stale 이다', () => {
+    const project = stateAt('R2', setOf(4, 5))
+    const story = stateAt('R1', setOf(1, 2))
+    const r = checkFixedSceneConsistency(project, story, {
+      allowCommittedButUnstaged: true,
+      expectedProjectState: stateAt('R2', [setOf(4, 5)[0]]),   // 다른 리스트
+    })
+    expect(r).toEqual({ success: false, error: 'fixed-scenes-stale' })
   })
 })
