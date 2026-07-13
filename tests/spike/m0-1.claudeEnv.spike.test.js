@@ -31,6 +31,9 @@ const record = (label, data) => {
 }
 
 const INVALID_KEY = 'sk-ant-api03-M0SPIKE-INVALID-DO-NOT-USE'
+// 형식은 진짜 키와 같지만 값이 틀린 sentinel. malformed 키는 CLI 가 형식 검증에서 거를 수 있어
+// "무시됐다"는 결론이 흔들린다 — 형식이 맞는 키로도 무시되는지 확인해야 D23-1 을 접을 수 있다.
+const WELLFORMED_WRONG_KEY = 'sk-ant-api03-' + 'A'.repeat(93) + 'AA'
 
 /** 한 턴짜리 query 를 돌리고 성공/실패와 사유만 관측한다. */
 async function probe({ label, ambientKey, envOption }) {
@@ -94,6 +97,14 @@ describe('M0-1 — Claude env / 로컬 자격증명 생존', () => {
     const keyWon = !r.ok || /auth|api key|401|invalid/i.test(r.streamError || '')
     console.log('  >>> ambient 키가 로컬 자격증명을 이겼는가?', keyWon ? 'YES — D23-1 재현' : 'NO — 무시됨')
     expect(r).toBeTruthy()   // 판정이 아니라 기록이다
+  }, 3 * 60 * 1000)
+
+  // D23-1 의 마지막 구멍: 형식이 **맞는** 키로도 무시되는가. 여기서도 무시되면 D23-1 은 접는다.
+  it('B2: ambient well-formed 오답 키 + env 핀 없음 → 그래도 무시되는가', async () => {
+    const r = await probe({ label: 'B2 (ambient well-formed wrong key, no env pin)', ambientKey: WELLFORMED_WRONG_KEY })
+    const keyWon = !r.ok || /auth|api key|401|invalid|credit/i.test(r.streamError || '')
+    console.log('  >>> well-formed 오답 키가 로컬 자격증명을 이겼는가?', keyWon ? 'YES — D23-1 재현' : 'NO — 무시됨')
+    expect(r).toBeTruthy()
   }, 3 * 60 * 1000)
 
   // 방어책 검증: env 를 명시 핀하면 ambient 무효 키를 **차단**할 수 있는가.
