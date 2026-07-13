@@ -49,7 +49,6 @@ import { FLOW_SETTINGS_DUMPER } from './flow-settings-dumper.js'
 import { FLOW_DOM_DUMP_PROBE, buildDomDumpFilename } from './flow-dom-dump.js'
 import { createFlowDiagSink } from './flow-diag.js'
 import * as Sentry from '@sentry/electron/main'
-import { createMutex } from './asyncMutex.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -605,7 +604,7 @@ function makeFlowView() {
               if (icons.length === 0) textButtons.push(b.textContent.trim().substring(0, 50));
             }
             console.log('[Flow Debug] Icon buttons:', JSON.stringify(iconButtons));
-            console.log('[Flow Debug] Text buttons:', JSON.stringify(textButtons.slice(0, 10)));
+            console.log('[Flow Debug] Text buttons:', textButtons.length);   // 버튼 텍스트는 페이지 콘텐츠 — 개수만
             console.log('[Flow Debug] Total buttons:', allButtons.length);
 
             try {
@@ -1619,9 +1618,11 @@ async function dumpFlowNetToFile() {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
     const filePath = path.join(app.getPath('desktop'), `autoflowcut-net-${stamp}.json`)
     fsSync.writeFileSync(filePath, JSON.stringify(net, null, 2))
-    console.log('[FlowNetDump] wrote', net.length, 'entries →', filePath)
+    console.log('[FlowNetDump] wrote', net.length, 'entries →', path.basename(filePath))
     if (mainWindow) {
-      try { mainWindow.webContents.executeJavaScript(`console.log('[FlowNetDump] saved: ${filePath.replace(/'/g, "\\'")}')`) } catch {}
+      // 렌더러 콘솔에 전체 경로를 주입하면 renderer Sentry 의 breadcrumb 으로 /Users/<계정>/… 이 나간다.
+      //   파일명만 알려준다 — 어차피 바탕화면에 있다.
+      try { mainWindow.webContents.executeJavaScript(`console.log('[FlowNetDump] saved: ${path.basename(filePath).replace(/'/g, "\\'")}')`) } catch {}
     }
   } catch (e) {
     console.warn('[FlowNetDump] dump failed:', e.message)
@@ -1635,9 +1636,11 @@ async function dumpFlowDomToFile() {
     const probe = await flowView.webContents.executeJavaScript(FLOW_DOM_DUMP_PROBE)
     const filePath = path.join(app.getPath('desktop'), buildDomDumpFilename())
     fsSync.writeFileSync(filePath, JSON.stringify(probe, null, 2))
-    console.log('[FlowDomDump] wrote', (probe.elements || []).length, 'elements →', filePath)
+    console.log('[FlowDomDump] wrote', (probe.elements || []).length, 'elements →', path.basename(filePath))
     if (mainWindow) {
-      try { mainWindow.webContents.executeJavaScript(`console.log('[FlowDomDump] saved: ${filePath.replace(/'/g, "\\'")}')`) } catch {}
+      // 렌더러 콘솔에 전체 경로를 주입하면 renderer Sentry 의 breadcrumb 으로 /Users/<계정>/… 이 나간다.
+      //   파일명만 알려준다 — 어차피 바탕화면에 있다.
+      try { mainWindow.webContents.executeJavaScript(`console.log('[FlowDomDump] saved: ${path.basename(filePath).replace(/'/g, "\\'")}')`) } catch {}
     }
   } catch (e) {
     console.warn('[FlowDomDump] dump failed:', e.message)

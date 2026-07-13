@@ -19,8 +19,9 @@ const ID = 'aaaabbbb-1111-2222-3333-ccccddddeeee'
 const URL_ON_PROJECT = `https://labs.google/fx/tools/flow/project/${ID}`
 
 // Real dumps (2026-06-24): error/landing ≈ 7 interactive elements, a loaded project ≈ 63.
-const DEAD_PAGE = { hasComposer: false, interactiveCount: 7 }
-const LIVE_PAGE = { hasComposer: true, interactiveCount: 63 }
+// 실제 probe 는 같은 페이지 컨텍스트에서 url 을 함께 돌려준다(ABA 방지) — 목도 그래야 한다.
+const DEAD_PAGE = { hasComposer: false, interactiveCount: 7, url: URL_ON_PROJECT }
+const LIVE_PAGE = { hasComposer: true, interactiveCount: 63, url: URL_ON_PROJECT }
 
 function makeCtx({ pages }) {
   const seq = [...pages]
@@ -81,10 +82,32 @@ describe('ensureOnProjectComposer — Flow error page', () => {
     expect(flowView.webContents.loadURL).not.toHaveBeenCalled()
   })
 
-  it('proceeds when the page cannot be probed — an unreadable probe must not block generation', async () => {
-    const { ctx, flowView } = makeCtx({ pages: [null] })
+  it('stops when the page cannot be READ at all — a dead renderer is not "unknown, proceed"', async () => {
+    // I originally let an unreadable probe through, reasoning that refusing to judge must not
+    // block generation. But a page whose JS will not run is not ambiguous — it is broken, and
+    // mutating its DOM ends in the same misleading Agent error the user reported. It retries
+    // once (navigation can throw transiently), then fails honestly.
+    const { ctx, flowView } = makeCtx({ pages: [LIVE_PAGE] })
+    flowView.webContents.executeJavaScript = vi.fn(async () => { throw new Error('renderer gone') })
     const { ensureOnProjectComposer } = createSharedHelpers(ctx)
 
-    await expect(ensureOnProjectComposer(flowView, ID)).resolves.toEqual({ ok: true })
+    const res = await ensureOnProjectComposer(flowView, ID)
+
+    expect(res.ok).toBe(false)
+    expect(res.error).toMatch(/읽을 수 없/)
+  })
+
+  it('accepts only the composer path — not a project id hiding in the query string', async () => {
+    const { ctx, flowView } = makeCtx({ pages: [LIVE_PAGE] })
+    flowView.webContents.getURL = () => `https://labs.google/fx/tools/flow/?next=/project/${ID}`
+    const { ensureOnProjectComposer } = createSharedHelpers(ctx)
+
+    // A substring match accepted this as "we are on the project". We are not: it is the Flow
+    // home page with the project id sitting in a query param. The guard must navigate, and — since
+    // this mock never leaves that URL — must then refuse rather than mutate the wrong page.
+    const res = await ensureOnProjectComposer(flowView, ID)
+
+    expect(flowView.webContents.loadURL).toHaveBeenCalled()
+    expect(res.ok).toBe(false)
   })
 })

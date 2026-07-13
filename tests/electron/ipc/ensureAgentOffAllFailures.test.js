@@ -12,6 +12,7 @@ import { createSharedHelpers } from '../../../electron/ipc/shared.js'
 
 function makeCtx({ probe, probeThrows = false }) {
   const executeJavaScript = vi.fn(async (script) => {
+    if (String(script).includes('elementFromPoint')) return { ok: true, why: 'ok' }   // 실제 페이지는 hit-test 결과를 준다
     const s = String(script)
     if (s.includes('scanAgentToggleCandidates') || s.includes('const scan =')) {
       return { candidates: [], context: { lang: 'ko' } }

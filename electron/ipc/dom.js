@@ -6,6 +6,7 @@
  */
 
 import { screen } from 'electron'
+import { updateBounds } from './layout.js'
 import { AGENT_TOGGLE_SELECTOR } from '../flow-agent-toggle.js'
 import { decideFlowOpenAction, isFlowErrorPage, isDeadMappingFailure, FLOW_PAGE_PROBE_JS } from '../flowOpenRetry.js'
 import { computeOffscreenBounds } from '../offscreen-bounds.js'
@@ -69,6 +70,11 @@ export function registerDomIPC(ipcMain, deps) {
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }
     if (!flowProjectId) return { success: false, error: 'No flowProjectId' }
+    // ⚠️ projectId 는 한 경로 세그먼트여야 한다. "abc/characters" 같은 저장값이면 /project/abc/characters
+    //    를 열고 그 캐릭터 페이지를 "정상 로드"로 승인한다(ensureOnProjectComposer 와 같은 함정).
+    if (!/^[A-Za-z0-9._~-]+$/.test(String(flowProjectId))) {
+      return { success: false, error: 'Invalid flowProjectId' }
+    }
     try {
       const cur = flowView.webContents.getURL() || ''
       // 현재 URL 에서 /tools/flow 까지의 base(로케일 포함) 추출, 없으면 기본.
@@ -79,11 +85,21 @@ export function registerDomIPC(ipcMain, deps) {
       // 페이지가 진짜 대상 프로젝트로 로드됐는지 확인 — URL 일치 + 에러 텍스트 없음.
       //   (URL 만 보면 "문제가 발생했습니다" 에러 페이지도 success 로 오판 → false positive.)
       const probe = async () => {
-        const urlNow = flowView.webContents.getURL() || ''
-        const onTargetUrl = urlNow.includes(`/project/${flowProjectId}`)
         let page = { hasComposer: false, interactiveCount: 0 }
         let probeOk = true
         try { page = await flowView.webContents.executeJavaScript(FLOW_PAGE_PROBE_JS) } catch { probeOk = false }
+        // ⚠️ URL 을 probe 전에 따로 읽으면 A→B 로 넘어간 사이 B 의 DOM 을 A 의 URL 과 짝지어 성공이라
+        //    보고한다. probe 가 **같은 페이지 컨텍스트에서** 돌려준 url 을 쓴다(원자적).
+        const urlNow = (probeOk && page && page.url) || flowView.webContents.getURL() || ''
+        // ⚠️ 경로 끝이면서 **컴포저** 여야 한다. (/[^/]*)?$ 로만 두면 /characters·/settings 도 통과해,
+        //    캐릭터 작업 후 그 페이지에 머문 상태를 "프로젝트 열림"으로 승인한다(컴포저는 없는데).
+        //    ensureOnProjectComposer 와 같은 허용 목록을 쓴다.
+        let onTargetUrl = false
+        try {
+          const pn = new URL(urlNow).pathname
+          const m = pn.match(new RegExp(`/tools/flow/project/${flowProjectId}(/[^/]*)?$`))
+          onTargetUrl = !!m && ['', '/', '/all-media'].includes(m[1] || '')
+        } catch { onTargetUrl = false }
         return { urlNow, onTargetUrl, isErrorPage: isFlowErrorPage(page), probeOk, page }
       }
 
@@ -156,7 +172,7 @@ export function registerDomIPC(ipcMain, deps) {
       const preUrl = flowView.webContents.getURL() || ''
       const preMatch = preUrl.match(/\/project\/([0-9a-f-]{36})/)
       const preId = preMatch ? preMatch[1] : null
-      const clickRes = await trustedClickOnFlowView(addBtnSelector)
+      const clickRes = await trustedClickOnFlowView(addBtnSelector, { required: true, step: 'new-project' })
       if (!clickRes?.success) {
         return { success: false, error: 'failed to click new-project button' }
       }
@@ -246,7 +262,7 @@ export function registerDomIPC(ipcMain, deps) {
       return null;
     })()`
 
-      const clickResult = await trustedClickOnFlowView(btnSelector)
+      const clickResult = await trustedClickOnFlowView(btnSelector, { required: true, step: 'enter-tool' })
       if (clickResult.success) {
         deps.setEnterToolClicked(true)
         return { success: true }
@@ -537,7 +553,7 @@ export function registerDomIPC(ipcMain, deps) {
       if (wasHidden) {
         await new Promise(r => setTimeout(r, 500))
         const flowView = getFlowView()
-        if (flowView) flowView.setBounds(currentBounds)
+        if (flowView) updateBounds(getMainWindow(), flowView)
         console.log('[DOM IPC] Restored flowView hidden bounds after prompt')
       }
     }

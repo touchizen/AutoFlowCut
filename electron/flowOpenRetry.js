@@ -25,10 +25,12 @@ export const FLOW_LOADED_MIN_INTERACTIVE = 20
 const INTERACTIVE_SEL = "a, button, select, input, textarea, [role='button'], [role='tab'], [role='menuitem'], [role='option'], [role='combobox'], [contenteditable='true'], [tabindex]"
 
 // 페이지를 검사하는 in-page 스크립트(executeJavaScript 로 평가). 구조적 신호만 반환(문자열 판정 없음).
+// ⚠️ url 을 **같은 페이지 컨텍스트에서** 함께 반환한다. 밖에서 getURL() 을 따로 부르면 probe 가
+//    도는 사이 A→B→A 로 오갈 때 B 의 건강한 결과를 A 의 것으로 오인한다(ABA). 한 번에 읽어야 짝이 맞다.
 export const FLOW_PAGE_PROBE_JS = `(() => {
   const hasComposer = !!(document.querySelector("[data-slate-editor='true']") || document.querySelector("div[role='textbox'][contenteditable='true']") || document.querySelector('textarea'));
   const interactiveCount = document.querySelectorAll("${INTERACTIVE_SEL}").length;
-  return { hasComposer, interactiveCount };
+  return { hasComposer, interactiveCount, url: location.href };
 })()`
 
 /**

@@ -14,6 +14,7 @@
  * 트러스트 클릭/프롬프트 주입 패턴은 flow-api.js 의 flow:generate-image 와 동일(검증된 경로).
  */
 
+import { updateBounds } from './layout.js'
 import {
   buildEntityRegisterBody,
   buildEntityRenameBody,
@@ -220,7 +221,7 @@ export function registerCharacterIPC(ipcMain, deps) {
       }
       const r = await flowView.webContents.executeJavaScript(FLOW_APPLY_NAME_PROBE(displayName))
       if (!(r && r.ok)) {
-        console.warn('[Flow Character] name not applied to SPA:', r && (r.error || r.value))
+        console.warn('[Flow Character] name not applied to SPA:', r && r.error)   // r.value 는 캐릭터 이름 — 안 찍는다
         return false
       }
       // 타이핑만 하고 상세 페이지에 남으면, 다음 동작의 ensureOnCharactersPage 가 loadURL(전체 로드)로
@@ -435,7 +436,7 @@ export function registerCharacterIPC(ipcMain, deps) {
     if (!prompt) return { success: false, error: 'No prompt' }
     const projectId = opts.projectId || projectIdFromUrl() || (getCapturedProjectId && getCapturedProjectId())
     if (!projectId) return { success: false, error: 'No projectId' }
-    console.log('[Flow Character] generate-character projectId:', projectId, 'name:', displayName)
+    console.log('[Flow Character] generate-character projectId:', projectId, 'nameLen:', displayName?.length ?? 0)
 
     // 1) /characters 컴포저 진입 — #R7-14(R4-4 sibling): TARGET projectId 를 넘겨 드리프트한
     //    탭에서 엉뚱한 프로젝트의 characters 페이지에 엔티티를 만드는 것을 막는다(URL 검증+이동).
@@ -460,7 +461,7 @@ export function registerCharacterIPC(ipcMain, deps) {
       console.log('[Flow Character] prompt injection:', JSON.stringify(inj))
       if (!inj.success) return { success: false, error: inj.error || 'prompt injection failed' }
     } finally {
-      if (wasHidden) { flowView.setBounds(bounds); await sleep(200) }
+      if (wasHidden) { updateBounds(getMainWindow(), flowView); await sleep(200) }
     }
 
     // 3) 생성 버튼 enable 대기 (프롬프트 인식됨 확인)
@@ -509,7 +510,8 @@ export function registerCharacterIPC(ipcMain, deps) {
     // HTTP 오류 status 보존 — 안 그러면 401/429/500 이 "entityId/workflowId 없음" 으로 뭉개져
     //   렌더러 quota/auth/server 처리가 안 먹는다(reroll/scene 과 동일 가드).
     if (cap.resp0 && cap.resp0.status >= 400) {
-      console.warn('[Flow Character] generate HTTP', cap.resp0.status, ':', (body || '').slice(0, 160))
+      // 응답 본문은 프롬프트·이름을 되돌려줄 수 있다 — 상태와 길이만.
+      console.warn('[Flow Character] generate HTTP', cap.resp0.status, 'bodyLen=', (body || '').length)
       return { success: false, status: cap.resp0.status, error: 'generate HTTP ' + cap.resp0.status + ': ' + (body || '').slice(0, 160) }
     }
     if (!body) return { success: false, error: '생성 응답 캡처 실패' + (cap.timeout ? '(timeout 120s)' : '') }
@@ -538,7 +540,7 @@ export function registerCharacterIPC(ipcMain, deps) {
           })
           registered = !!regRes.ok
           console.log('[Flow Character] register entities:', regRes.status, registered ? '✓' : '✗')
-          if (!regRes.ok) console.warn('[Flow Character] register body:', (regRes.text || '').slice(0, 200))
+          if (!regRes.ok) console.warn('[Flow Character] register failed: bodyLen=', (regRes.text || '').length)
         } else {
           console.warn('[Flow Character] access token 추출 실패 — 이름 등록 skip')
         }
@@ -591,7 +593,7 @@ export function registerCharacterIPC(ipcMain, deps) {
       console.log('[Flow Character] reroll prompt injection:', JSON.stringify(inj))
       if (!inj.success) return { success: false, error: inj.error || 'prompt injection failed' }
     } finally {
-      if (wasHidden) { flowView.setBounds(bounds); await sleep(200) }
+      if (wasHidden) { updateBounds(getMainWindow(), flowView); await sleep(200) }
     }
 
     let enabled = false
@@ -611,7 +613,7 @@ export function registerCharacterIPC(ipcMain, deps) {
     //    만들고 quota/auth/server 처리를 우회한다. 그 외 4xx/5xx 는 일반 실패로 반환해 렌더러
     //    공통 핸들러(quota-stop/auth/server)가 error/status 로 처리하게 한다.
     if (resp0 && resp0.status >= 400) {
-      console.warn('[Flow Character] reroll HTTP', resp0.status, ':', (body || '').slice(0, 160))
+      console.warn('[Flow Character] reroll HTTP', resp0.status, 'bodyLen=', (body || '').length)
       // 400 중에서도 stale entity(INVALID_ARGUMENT)만 self-heal 폴백. content-policy/validation
       //   류 400 은 stale 아님 → generic 실패로(엉뚱한 새 character 생성 방지).
       if (resp0.status === 400 && isStaleEntityErrorBody(body)) return { success: false, staleEntity: true, status: 400 }
@@ -775,7 +777,7 @@ export function registerCharacterIPC(ipcMain, deps) {
         return { success: false, error: _inj.error, retry: true, ...(_inj.staleMention ? { staleMention: _inj.staleMention } : {}) }
       }
     } finally {
-      if (wasHidden) { flowView.setBounds(bounds); await sleep(200) }
+      if (wasHidden) { updateBounds(getMainWindow(), flowView); await sleep(200) }
     }
 
     // 3) 생성 버튼 enable 대기 → 트러스트 클릭 → batchGenerateImages 응답 캡처.
@@ -795,7 +797,7 @@ export function registerCharacterIPC(ipcMain, deps) {
         const _pre = await flowView.webContents.executeJavaScript(GENERATED_IMG_PROBE)
         if (Array.isArray(_pre)) existingGenMediaIds = _pre.map(i => i && i.mediaId).filter(Boolean)
       } catch {}
-      const aClick = await trustedClickOnFlowView(GENERATE_BTN_SELECTOR)
+      const aClick = await trustedClickOnFlowView(GENERATE_BTN_SELECTOR, { required: true, step: 'character-submit' })
       if (!aClick || !aClick.success) return { success: false, error: aClick?.error || '생성 버튼 클릭 실패', retry: true }
       const col = await collectAgentDomImages({
         scan: () => flowView.webContents.executeJavaScript(GENERATED_IMG_PROBE),
@@ -865,7 +867,7 @@ export function registerCharacterIPC(ipcMain, deps) {
       }
       let aClick
       try {
-        aClick = await trustedClickOnFlowView(GENERATE_BTN_SELECTOR)
+        aClick = await trustedClickOnFlowView(GENERATE_BTN_SELECTOR, { required: true, step: 'character-submit' })
       } catch (e) {
         cleanupPending()
         try { await clearFlowPageInject?.() } catch {}
@@ -876,7 +878,7 @@ export function registerCharacterIPC(ipcMain, deps) {
         try { await clearFlowPageInject?.() } catch {}
         return { success: false, error: aClick?.error || '생성 버튼 클릭 실패', retry: true }
       }
-      console.log('[Flow Scene] [Async] submitted:', generationId, '(promptKey:', JSON.stringify((promptKey || '').slice(0, 40)), ')')
+      console.log('[Flow Scene] [Async] submitted:', generationId, '(promptKeyLen:', (promptKey || '').length, ')')
       // #R35-fix(Codex R1[4]/R2[2]): inject(seed/aspect) 를 clear 하기 전에 요청이 실제로 나갈 시간을
       //   확보한다. trustedClickOnFlowView 는 mouseUp 후 ~200ms 만 대기하므로 즉시 clear 하면 Flow 가
       //   fetch 를 늦게 시작할 때 window.__autoflowcut_inject__ 가 비어 원본 화면비/seed 로 나간다.
@@ -913,7 +915,7 @@ export function registerCharacterIPC(ipcMain, deps) {
         break
       }
       if (resp0 && resp0.status >= 400) {
-        console.warn('[Flow Scene] generate failed (HTTP', resp0.status, '):', (body || '').slice(0, 160))
+        console.warn('[Flow Scene] generate failed (HTTP', resp0.status, ') bodyLen=', (body || '').length)
         // 5xx 는 재시도 소진 후에도 실패면 retry 신호(상위 배치/사용자 재시도 대상).
         return { success: false, error: '장면 생성 실패(HTTP ' + resp0.status + ')', status: resp0.status, retry: resp0.status >= 500 }
       }
@@ -1014,8 +1016,8 @@ export function registerCharacterIPC(ipcMain, deps) {
         headers: { authorization: 'Bearer ' + token },
         body: JSON.stringify(buildEntityRenameBody({ projectId, entityId, displayName })),
       })
-      console.log('[Flow Character] rename entities:', res.status, res.ok ? '✓' : '✗', '(name', displayName + ')')
-      if (!res.ok) console.warn('[Flow Character] rename body:', (res.text || '').slice(0, 200))
+      console.log('[Flow Character] rename entities:', res.status, res.ok ? '✓' : '✗')
+      if (!res.ok) console.warn('[Flow Character] rename failed: bodyLen=', (res.text || '').length)
       // PATCH 가 실패했으면 SPA 를 건드리지 않는다 — 서버와 화면이 어긋나는 게 더 나쁘다.
       if (!res.ok) return { success: false, status: res.status, nameApplied: false }
       const nameApplied = await applyEntityNameToSpa(getFlowView(), { entityId, projectId, displayName })
@@ -1052,7 +1054,7 @@ export function registerCharacterIPC(ipcMain, deps) {
       // 1) 대화상자 방지(input.click noop) → "업로드" 버튼 트러스트 클릭(= character upload 모드 진입).
       const hasInput = await neutralizeFileInputClick(flowView)
       if (!hasInput) return { success: false, error: 'file input 없음(' + A2_FILE_SEL + ')' }
-      const upClick = await trustedClickOnFlowView(A2_UPLOAD_BTN_EXPR)
+      const upClick = await trustedClickOnFlowView(A2_UPLOAD_BTN_EXPR, { required: true, step: 'reference-upload' })
       console.log('[Flow Character] A2 업로드 버튼 trusted click:', JSON.stringify(upClick))
       await sleep(500)
 
@@ -1095,7 +1097,7 @@ export function registerCharacterIPC(ipcMain, deps) {
           })
           registered = !!reg.ok
           console.log('[Flow Character] A2 register entities:', reg.status, registered ? '✓' : '✗')
-          if (!reg.ok) console.warn('[Flow Character] A2 register body:', (reg.text || '').slice(0, 200))
+          if (!reg.ok) console.warn('[Flow Character] A2 register failed: bodyLen=', (reg.text || '').length)
         }
       } catch (e2) {
         console.warn('[Flow Character] A2 register error:', e2.message)

@@ -49,7 +49,7 @@ export async function insertSceneMention(flowView, name) {
     await sleep(250)
     hasDialog = await flowView.webContents.executeJavaScript(`!!document.querySelector("div[role='dialog']")`).catch(() => false)
   }
-  if (!hasDialog) { console.warn('[Flow Compose] mention picker(dialog) 안 열림:', name); return false }
+  if (!hasDialog) { console.warn('[Flow Compose] mention picker(dialog) 안 열림 (nameLen:', name?.length ?? 0, ')'); return false }
 
   // 3) "캐릭터" 탭 클릭 — 기본 "모두" 탭은 이미지가 다수라 가상화로 캐릭터 entity 가 렌더 안 됨.
   await flowView.webContents.executeJavaScript(`(function(){
@@ -92,7 +92,7 @@ export async function insertSceneMention(flowView, name) {
       const allOpts = Array.from((dlg||document).querySelectorAll("[role='option']")).map(o => (o.textContent||'').replace(/\\s+/g,' ').trim().slice(0,40));
       return { hasDialog: !!dlg, tabs, optionCount: allOpts.length, allOptionLabels: allOpts.slice(0,20) };
     })()`).catch((e) => ({ diagError: e.message }))
-    console.warn('[Flow Compose] mention option not found:', name, '— DIAG:', JSON.stringify(diag))
+    console.warn('[Flow Compose] mention option not found (nameLen:', name?.length ?? 0, ')')
     return false
   }
 
@@ -132,13 +132,13 @@ export async function insertSceneMention(flowView, name) {
     const chips = e ? Array.from(e.querySelectorAll("[data-slate-void='true']")) : [];
     const matches = (t) => { const s=strip(t); return s===NAME||s==='@'+NAME||s===NAME+'캐릭터'||s==='@'+NAME+'캐릭터'; };
     return {
-      editorText: (e && (e.innerText||e.textContent)||'').slice(0,80),
+      editorTextLen: (e && (e.innerText||e.textContent)||'').length,
       hasMentionChip: chips.some(c => matches(c.textContent)),
       stillHasDialog: !!document.querySelector("div[role='dialog']"),
     };
   })()`).catch((e) => ({ diagError: e.message }))
   const ok = !!(dialogClosed && post && post.hasMentionChip)
-  if (!ok) console.warn('[Flow Compose] mention select incomplete — DIAG:', JSON.stringify({ dispatched, dialogClosed, ...post }))
+  if (!ok) console.warn('[Flow Compose] mention select incomplete — DIAG:', JSON.stringify({ dispatched, dialogClosed }))
   return ok
 }
 

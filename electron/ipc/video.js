@@ -6,6 +6,7 @@
  */
 
 import { screen } from 'electron'
+import { updateBounds } from './layout.js'
 import { extractServerErrorMessage } from './videoErrorExtractor.js'
 import { computeOffscreenBounds } from '../offscreen-bounds.js'
 import { GENERATED_VIDEO_PROBE } from '../flow-media-collect.js'
@@ -143,7 +144,8 @@ export function registerVideoIPC(ipcMain, deps) {
     let promptWasHidden = false
     let promptBounds = null
 
-    console.log('[Flow Video T2V] Starting DOM-triggered video generation:', prompt?.substring(0, 50), hasUserSeed ? `(seed: ${seed})` : '(seed: random)')
+    // 프롬프트 본문은 안 찍는다 — Sentry consoleIntegration 이 main 콘솔을 breadcrumb 으로 걷어간다.
+    console.log('[Flow Video T2V] Starting DOM-triggered video generation: promptLen=', prompt?.length ?? 0, hasUserSeed ? `(seed: ${seed})` : '(seed: random)')
 
     try {
       // 0. Codex #R4-4: enforce Flow page is on the TARGET project before DOM mutation.
@@ -246,7 +248,7 @@ export function registerVideoIPC(ipcMain, deps) {
       const promptResult = _injSegments
         ? await (async () => {
             const _si = await injectComposeSegments(flowView, _injSegments)
-            console.log('[Flow Video T2V] segments injected (chips):', _segments.filter(s => s.type === 'mention').map(s => s.name).join(','), '→', _si.ok)
+            console.log('[Flow Video T2V] segments injected (chips):', _segments.filter(s => s.type === 'mention').length, '→', _si.ok)
             return _si.ok
               ? { success: true }
               : { success: false, error: _si.error, ...(_si.staleMention ? { staleMention: _si.staleMention } : {}) }
@@ -344,7 +346,7 @@ export function registerVideoIPC(ipcMain, deps) {
       `)
 
       if (promptWasHidden) {
-        flowView.setBounds(promptBounds)
+        updateBounds(getMainWindow(), flowView)
         await new Promise(r => setTimeout(r, 200))
       }
 
@@ -378,7 +380,7 @@ export function registerVideoIPC(ipcMain, deps) {
           const _pre = await flowView.webContents.executeJavaScript(GENERATED_VIDEO_PROBE)
           if (Array.isArray(_pre)) existingGenMediaIds = _pre.map(v => v && v.mediaId).filter(Boolean)
         } catch {}
-        const aClick = await trustedClickOnFlowView(generateBtnSelector)
+        const aClick = await trustedClickOnFlowView(generateBtnSelector, { required: true, step: 'video-submit' })
         if (!aClick?.success) return { success: false, error: aClick?.error || 'Failed to click Generate button' }
         console.log('[Flow Video T2V] (Agent ON) clicked, collecting DOM <video>...')
         const col = await collectAgentDomVideos({
@@ -415,7 +417,7 @@ export function registerVideoIPC(ipcMain, deps) {
         }
       }, VIDEO_RESPONSE_TIMEOUT_MS) // #R36: 초기 ack 캡처(생성/upscale 은 status 폴링)
 
-      const clickResult = await trustedClickOnFlowView(generateBtnSelector)
+      const clickResult = await trustedClickOnFlowView(generateBtnSelector, { required: true, step: 'video-submit' })
       console.log('[Flow Video T2V] Trusted click result:', clickResult)
 
       if (!clickResult?.success) {
@@ -453,7 +455,7 @@ export function registerVideoIPC(ipcMain, deps) {
       if (videoTimeout) clearTimeout(videoTimeout)
       if (videoOwnPending && getPendingVideoGeneration() === videoOwnPending) setPendingVideoGeneration(null)
       // #R7-10: 주입 중 throw 해도 임시로 보인 flowView 를 원복(성공 경로는 이미 hidden → no-op).
-      if (promptWasHidden) { try { flowView.setBounds(promptBounds) } catch {} }
+      if (promptWasHidden) { try { updateBounds(getMainWindow(), flowView) } catch {} }
       // Monkey-patch inject 정리 (항상 실행)
       await clearFlowPageInject?.()
     }
@@ -632,7 +634,7 @@ export function registerVideoIPC(ipcMain, deps) {
       `)
 
       if (promptWasHidden) {
-        flowView.setBounds(promptBounds)
+        updateBounds(getMainWindow(), flowView)
         await new Promise(r => setTimeout(r, 200))
       }
 
@@ -697,7 +699,7 @@ export function registerVideoIPC(ipcMain, deps) {
         }
       }, VIDEO_RESPONSE_TIMEOUT_MS)
 
-      const clickResult = await trustedClickOnFlowView(generateBtnSelector)
+      const clickResult = await trustedClickOnFlowView(generateBtnSelector, { required: true, step: 'video-submit' })
       console.log('[Flow Video I2V] Trusted click result:', clickResult)
 
       if (!clickResult?.success) {
@@ -734,7 +736,7 @@ export function registerVideoIPC(ipcMain, deps) {
       if (videoTimeout) clearTimeout(videoTimeout)
       if (videoOwnPending && getPendingVideoGeneration() === videoOwnPending) setPendingVideoGeneration(null)
       // #R7-10: 주입 중 throw 해도 임시로 보인 flowView 를 원복(성공 경로는 이미 hidden → no-op).
-      if (promptWasHidden) { try { flowView.setBounds(promptBounds) } catch {} }
+      if (promptWasHidden) { try { updateBounds(getMainWindow(), flowView) } catch {} }
       // Monkey-patch inject 정리 (항상 실행)
       await clearFlowPageInject?.()
     }
@@ -777,7 +779,8 @@ export function registerVideoIPC(ipcMain, deps) {
       console.log('[Flow VideoStatus] HTTP', result.status, 'body length:', result.text?.length || 0)
 
       if (!result.ok) {
-        console.warn('[Flow VideoStatus] Error:', result.text?.substring(0, 300))
+        // 응답 본문은 프롬프트·이름을 되돌려줄 수 있다 — 길이만.
+        console.warn('[Flow VideoStatus] Error: bodyLen=', (result.text || '').length)
         return { success: false, error: `HTTP ${result.status}: ${(result.text || '').substring(0, 200)}` }
       }
 
@@ -808,7 +811,7 @@ export function registerVideoIPC(ipcMain, deps) {
               return urls
             }
             const allUrls = findUrls(m, 'media')
-            console.log('[Flow VideoStatus] ✅ URLs in response:', JSON.stringify(allUrls))
+            console.log('[Flow VideoStatus] ✅ URLs in response:', allUrls.length)   // URL 은 사용자 생성물 주소 — 개수만
             console.log('[Flow VideoStatus] ✅ mediaMetadata keys:', JSON.stringify(Object.keys(m?.mediaMetadata || {})))
 
             // AutoFlow: 비디오 URL은 status 응답에서 직접 추출
@@ -827,7 +830,7 @@ export function registerVideoIPC(ipcMain, deps) {
             console.log('[Flow VideoStatus] ✅ Complete! videoUrl:', videoUrl?.substring(0, 80))
             statuses.push({ status: 'complete', mediaId, videoUrl })
           } else if (genStatus.includes('FAILED') || genStatus.includes('ERROR')) {
-            console.warn('[Flow VideoStatus] ❌ FAILED media detail:', JSON.stringify(m).substring(0, 1000))
+            console.warn('[Flow VideoStatus] ❌ FAILED media detail: keys=', Object.keys(m || {}))
             // 실제 실패 사유를 우선 추출 ("Media not found." 등). 구조:
             //   mediaMetadata.mediaStatus.error.message / .failureReasons[0]
             // 이게 stale("Media not found") 자동복구 판정(isStaleVideoStatus)의 입력이므로

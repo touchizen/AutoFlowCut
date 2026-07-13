@@ -14,6 +14,9 @@ import { buildSelectModeScript } from '../flow-mode-tab.js'
 import { FLOW_PAGE_PROBE_JS, isFlowErrorPage } from '../flowOpenRetry.js'
 import { screen } from 'electron'
 import { computeOffscreenBounds } from '../offscreen-bounds.js'
+import { updateBounds } from './layout.js'
+import { createMutex } from '../asyncMutex.js'
+import { sanitizeForSentry } from '../flow-diag.js'
 
 /**
  * #R34-fix: applyAgentDefaults 결과가 "요청한 image/video aspect·model 을 실제로 적용했는지" 판정(순수).
@@ -50,6 +53,10 @@ export function agentDefaultsApplied(opts = {}, result = {}) {
  */
 export function createSharedHelpers(ctx) {
   const { getFlowView, getMainWindow, constants, onDomFailure } = ctx
+
+  // 클릭 직렬화 — 두 클릭이 겹치면 서로의 임시(확대) bounds 를 자기 '원래 값'으로 스냅샷해
+  //   복원이 어긋나고, 마우스 이벤트도 뒤섞인다. 모든 DOM 클릭이 이 병목을 지난다.
+  const clickMutex = createMutex()
 
   // DOM 스텝 실패 보고 — 셀렉터가 깨졌을 때 그 순간의 페이지 컨텍스트를 함께 남긴다.
   //   'Flow view not ready'(Flow 모드 아님) 같은 정상 상태 체크는 부르지 않는다 — 노이즈가 된다.
@@ -88,47 +95,118 @@ export function createSharedHelpers(ctx) {
    *   closes panels that are usually absent), and reporting those would fire on every healthy
    *   generation and drown the real breakages.
    */
+  // 클릭 하나가 붙잡을 수 있는 최대 시간. Flow 렌더러가 먹통이면 executeJavaScript 가 영영
+  //   settle 되지 않고, 그러면 락이 안 풀려 **이후 모든 클릭이 영구 정지**한다(병목이라 앱 전체가 멈춘다).
+  //   측정(≤ 수 초) + 확대 대기 + 클릭 시퀀스 + 복원을 다 합쳐도 넉넉한 값.
+  const CLICK_TIMEOUT_MS = 30_000
+
   async function trustedClickOnFlowView(jsSelector, opts = {}) {
+    const release = await clickMutex.acquire()
+    try {
+      let timer
+      // ⚠️ Promise.race 로 버린 쪽은 계속 살아 있다. 먹통 렌더러가 뒤늦게 응답하면 그 좀비가
+      //    마우스 이벤트를 쏘고 updateBounds 를 불러 **다음 클릭과 겹친다**. abort 플래그를 넘겨
+      //    부작용 직전마다 확인하게 한다.
+      const token = { aborted: false }
+      const timeout = new Promise((_, rej) => {
+        timer = setTimeout(() => { token.aborted = true; rej(new Error('trusted-click timed out')) }, CLICK_TIMEOUT_MS)
+      })
+      try {
+        return await Promise.race([trustedClickLocked(jsSelector, opts, token), timeout])
+      } catch (e) {
+        console.warn('[TrustedClick] aborted:', e.message)
+        // ⚠️ 진단은 페이지를 프로브하지 않는다 — 먹통 렌더러를 다시 await 하면 이 catch 도 안 끝나고
+        //    락이 영영 안 풀린다(병목이라 앱 전체 정지). 컨텍스트 없이 사실만 보고한다.
+        // 좀비가 영영 안 깨어날 수 있으므로 여기서도 복원한다(멱등).
+        try { updateBounds(getMainWindow(), getFlowView()) } catch { /* 뷰가 이미 없을 수 있다 */ }
+        if (opts.required && onDomFailure) {
+          await onDomFailure(`trusted-click:${opts.step || 'unknown'}`, { reason: 'timeout', error: e.message }).catch(() => {})
+        }
+        return { success: false, error: e.message }
+      } finally {
+        clearTimeout(timer)
+      }
+    } finally {
+      release()
+    }
+  }
+
+  async function trustedClickLocked(jsSelector, opts = {}, token = { aborted: false }) {
     const mainWindow = getMainWindow()
     const flowView = getFlowView()
     if (!mainWindow || !flowView) return { success: false, error: 'No flowView' }
 
-    // 1. 현재 bounds 저장
-    const currentBounds = flowView.getBounds()
-    const wasHidden = (currentBounds.width === 0 || currentBounds.height === 0)
+    const startBounds = flowView.getBounds()
+    const wasHidden = (startBounds.width === 0 || startBounds.height === 0)
+    let enlarged = false
 
-    console.log('[TrustedClick] Current bounds:', currentBounds, 'wasHidden:', wasHidden)
+    console.log('[TrustedClick] Current bounds:', startBounds, 'wasHidden:', wasHidden)
 
-    // 2. 숨겨져 있으면 일시적으로 보이게 (화면 밖에 배치해서 사용자가 안 보이게)
-    if (wasHidden) {
+    // 뷰를 창 크기만큼 키워 화면 밖에 배치 — 사용자에겐 안 보이고, 페이지는 정상 폭으로 레이아웃된다.
+    //   (모든 디스플레이 너머로 — 멀티모니터에서 보조 모니터에 안 깜빡이게.)
+    const enlargeOffscreen = async () => {
+      if (token.aborted) return
       const { width, height } = mainWindow.getContentBounds()
-      // 모든 디스플레이 너머로 — 멀티모니터에서 보조 모니터에 안 깜빡이게.
       flowView.setBounds(computeOffscreenBounds(screen.getAllDisplays(), mainWindow.getBounds().x, width, height))
+      enlarged = true
       await new Promise(r => setTimeout(r, 300)) // 레이아웃 업데이트 대기
     }
 
-    try {
-      // 3. 버튼에 focus() 먼저 + 좌표 가져오기
-      const coords = await flowView.webContents.executeJavaScript(`
-        (function() {
-          const el = ${jsSelector};
-          if (!el) return null;
-          // 스크롤 후 좌표 확인
-          el.scrollIntoView({ block: 'center' });
-          const rect = el.getBoundingClientRect();
-          return {
-            x: Math.round(rect.x + rect.width / 2),
-            y: Math.round(rect.y + rect.height / 2),
-            width: rect.width,
-            height: rect.height,
-            tag: el.tagName,
-            disabled: el.disabled || false,
-            visible: rect.width > 0 && rect.height > 0
-          };
-        })()
-      `)
+    const measure = () => flowView.webContents.executeJavaScript(`
+      (function() {
+        const el = ${jsSelector};
+        if (!el) return null;
+        // 스크롤 후 좌표 확인
+        el.scrollIntoView({ block: 'center' });
+        const rect = el.getBoundingClientRect();
+        return {
+          x: Math.round(rect.x + rect.width / 2),
+          y: Math.round(rect.y + rect.height / 2),
+          width: rect.width,
+          height: rect.height,
+          tag: el.tagName,
+          disabled: el.disabled || false,
+          visible: rect.width > 0 && rect.height > 0,
+          url: location.href
+        };
+      })()
+    `)
 
-      if (!coords || coords.width === 0) {
+    // ⚠️ bounds 만 확인하면 부족하다. 측정 후 100ms 사이에 오버레이가 덮이거나 버튼이 이동하면
+    //    좌표는 여전히 뷰 안이지만 **다른 요소**가 이벤트를 받는다 — 그래도 success 를 반환했다.
+    //    누르기 직전에 그 점의 hit target 이 우리 요소(또는 그 자손)인지 확인한다.
+    // ⚠️ measuredUrl 을 넘겨 "측정한 그 페이지" 인지 확인한다. reject 만 막으면 부족하다 — 100ms 사이에
+    //    B 로 **정상 navigate** 되면 executeJavaScript 는 성공하고, B 에도 같은 자리에 같은 버튼이 있으면
+    //    hit-test 를 통과해 **B 의 버튼을 누른다**(B 에 남은 draft 를 잘못 제출할 수도 있다).
+    const hitTest = (x, y, measuredUrl) => flowView.webContents.executeJavaScript(`
+      (function() {
+        if (location.href !== ${JSON.stringify(measuredUrl)}) return { ok: false, why: 'page-changed' };
+        const target = ${jsSelector};
+        if (!target) return { ok: false, why: 'gone' };
+        const hit = document.elementFromPoint(${x}, ${y});
+        if (!hit) return { ok: false, why: 'nothing-at-point' };
+        // hit.contains(target) 은 넣지 않는다 — 큰 부모가 hit 이면 우리 버튼이 이벤트를 못 받는다는 뜻이다.
+        return { ok: target === hit || target.contains(hit), why: 'covered' };
+      })()
+    `).then((r) => (r && typeof r.ok === 'boolean' ? r : { ok: false, why: 'unreadable' }))
+     .catch(() => ({ ok: false, why: 'context-gone' }))
+    // ⚠️ 여기서 fail-open 하면 안 된다. hit-test 가 reject 된다는 건 그 사이 페이지가 navigate 되어
+    //    실행 컨텍스트가 사라졌다는 뜻이고, 그러면 우리가 들고 있는 좌표는 **다른 페이지의 좌표** 다.
+    //    그걸 누르고 success 를 반환하면 오늘 종일 쫓던 "엉뚱한 걸 누르고 성공이라 말하기" 다.
+
+    // 유효 좌표는 0..width-1 / 0..height-1 이다. `>` 로 검사하면 x === width 가 "안"으로 통과해
+    //   뷰 밖을 클릭하고 성공을 반환한다(옛 clamp 도 width-1 로 잘랐다).
+    const outside = (c, b) => c.x < 0 || c.y < 0 || c.x >= b.width || c.y >= b.height
+
+    // 0×0(모달/드래그 중)이면 재보기 전에 키운다 — 그 상태의 좌표는 의미가 없다.
+    if (wasHidden) await enlargeOffscreen()
+
+    try {
+      let coords = await measure()
+
+      // width 만 보면 안 된다 — 높이 0 도 클릭이 안 먹는 요소다. 그런데도 "성공"을 반환하면
+      //   호출부는 제출된 줄 알고 오지 않을 응답을 기다린다(2분 timeout).
+      if (!coords || coords.width === 0 || coords.height === 0) {
         console.log('[TrustedClick] Button not found or zero-size:', coords)
         // required 인 클릭만 보고한다 — best-effort 클릭(패널 닫기 등)은 대상이 없는 게 정상이라
         //   보고하면 정상 생성마다 노이즈가 쌓여 진짜 breakage 를 덮는다.
@@ -138,36 +216,113 @@ export function createSharedHelpers(ctx) {
         return { success: false, error: 'Button not found or zero-size' }
       }
 
-      console.log('[TrustedClick] Button coords:', coords)
-
-      const viewBounds = flowView.getBounds()
-      console.log('[TrustedClick] View bounds during click:', viewBounds)
-
-      // 좌표가 viewBounds 내인지 확인
-      if (coords.x < 0 || coords.y < 0 || coords.x > viewBounds.width || coords.y > viewBounds.height) {
-        console.warn('[TrustedClick] Coords outside view bounds! Adjusting...')
-        // 뷰 범위 내로 클램핑
-        coords.x = Math.max(1, Math.min(coords.x, viewBounds.width - 1))
-        coords.y = Math.max(1, Math.min(coords.y, viewBounds.height - 1))
+      // disabled 를 재놓고 무시하고 있었다. 비활성 버튼을 누르면 아무 일도 안 일어나는데 success 를
+      //   반환하니, 호출부는 제출된 줄 알고 기다리다 timeout 난다. 정직하게 실패한다.
+      if (coords.disabled) {
+        console.warn('[TrustedClick] Button is disabled — refusing to click:', coords)
+        if (opts.required) {
+          await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, 'disabled', { coords })
+        }
+        return { success: false, error: 'Button is disabled' }
       }
 
-      // 4. sendInputEvent로 trusted click (mouseMove → mouseDown → mouseUp)
+      console.log('[TrustedClick] Button coords:', coords)
+
+      // 좌표가 뷰 밖이면 — 사용자가 스플리터로 Flow 패널을 좁혀 컴포즈 바가 가로로 넘친 경우다.
+      //   옛 코드는 좌표를 뷰 가장자리로 "클램핑"해서 눌렀다. 그러면 엉뚱한 요소를 클릭하고도
+      //   success 를 반환한다 → 호출부는 제출된 줄 알고 오지 않을 응답을 2분간 기다린다(timeout).
+      //   잘못된 요소를 누르고 성공이라 말하는 것은 실패보다 나쁘다. 클램핑 대신 뷰를 키워
+      //   진짜 좌표로 누른다(위 wasHidden 경로와 같은 수단).
+      if (outside(coords, flowView.getBounds()) && !enlarged) {
+        console.warn('[TrustedClick] Coords outside view bounds — enlarging view instead of clamping')
+        await enlargeOffscreen()
+        coords = await measure()   // 넓어진 폭에서 재레이아웃 → 좌표가 바뀐다
+        // ⚠️ 재측정 결과도 처음과 똑같이 검사해야 한다. 첫 측정만 zero-size/disabled 를 보고
+        //    두 번째는 안 봐서, 넓힌 뒤 disabled 로 바뀐 버튼을 누르고 success 를 반환했다.
+        if (coords && (coords.height === 0 || coords.disabled)) {
+          console.warn('[TrustedClick] Button unusable after enlarging:', coords)
+          if (opts.required) {
+            await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, coords.disabled ? 'disabled' : 'zero-size', { coords })
+          }
+          return { success: false, error: coords.disabled ? 'Button is disabled' : 'Button not found or zero-size' }
+        }
+      }
+
+      if (!coords || coords.width === 0 || coords.height === 0 || outside(coords, flowView.getBounds())) {
+        console.warn('[TrustedClick] Button unreachable even after enlarging:', coords)
+        if (opts.required) {
+          await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, 'outside-view-bounds', { coords: coords || null })
+        }
+        return { success: false, error: 'Button outside view bounds' }
+      }
+
+      // sendInputEvent로 trusted click (mouseMove → mouseDown → mouseUp)
       // mouseMove 먼저 보내서 hover 상태 생성
+      if (token.aborted) return { success: false, error: 'aborted' }
       flowView.webContents.sendInputEvent({ type: 'mouseMove', x: coords.x, y: coords.y })
       await new Promise(r => setTimeout(r, 100))
+
+      const hit = await hitTest(coords.x, coords.y, coords.url)
+      if (!hit.ok) {
+        console.warn('[TrustedClick] Another element occupies the point — refusing to click it:', hit.why)
+        if (opts.required) {
+          await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, `hit-test:${hit.why}`, { coords })
+        }
+        return { success: false, error: `Target not at point (${hit.why})` }
+      }
+
+      // ⚠️ 좌표는 measure 시점의 bounds 기준이다. 위 100ms 사이에 모달이 열리면 layout 이 뷰를
+      //   0×0 으로 접고(네이티브 뷰라 CSS 로 못 가리니 접는다), mouseDown/Up 은 아무 데도 안 닿는다.
+      //   그런데도 success 를 반환하면 또 "아무것도 안 누르고 성공" 이다. 누르기 직전에 다시 본다.
+      if (outside(coords, flowView.getBounds())) {
+        console.warn('[TrustedClick] View bounds changed mid-click — aborting instead of clicking nowhere')
+        if (opts.required) {
+          await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, 'bounds-changed-mid-click', { coords })
+        }
+        return { success: false, error: 'View bounds changed mid-click' }
+      }
+
+      if (token.aborted) return { success: false, error: 'aborted' }
       flowView.webContents.sendInputEvent({ type: 'mouseDown', x: coords.x, y: coords.y, button: 'left', clickCount: 1 })
       await new Promise(r => setTimeout(r, 80))
+
+      // ⚠️ down 을 보냈으면 up 은 **무조건** 보낸다. 중간에 그냥 return 하면 렌더러에 press 상태가
+      //    남아 drag/selection 이 걸린 채로 다음 동작이 돈다.
       flowView.webContents.sendInputEvent({ type: 'mouseUp', x: coords.x, y: coords.y, button: 'left', clickCount: 1 })
       await new Promise(r => setTimeout(r, 200))
 
+      // down 과 up 사이에 모달이 뷰를 접었다면 클릭은 완성되지 않았다 — 성공이라 말하지 않는다.
+      if (outside(coords, flowView.getBounds())) {
+        console.warn('[TrustedClick] View collapsed mid-click — click did not complete')
+        if (opts.required) {
+          await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, 'bounds-changed-mid-click', { coords })
+        }
+        return { success: false, error: 'View bounds changed mid-click' }
+      }
+
       console.log('[TrustedClick] Click events sent at (' + coords.x + ', ' + coords.y + ')')
       return { success: true, coords }
+    } catch (e) {
+      // executeJavaScript 가 reject 되거나(페이지가 중간에 navigate) sendInputEvent 가 throw 하면
+      //   여기로 온다. 예전엔 호출부로 그대로 던져 아무 기록도 안 남았다 — 오늘 종일 우리 눈을 가린
+      //   것과 정확히 같은 클래스다. 모든 실패 출구가 보고한다.
+      console.warn('[TrustedClick] threw:', e.message)
+      if (opts.required) {
+        await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, 'threw', { error: e.message })
+      }
+      return { success: false, error: e.message }
     } finally {
-      // 5. 원래 bounds 복원
-      if (wasHidden) {
-        await new Promise(r => setTimeout(r, 500)) // 클릭 이벤트 처리 대기
-        flowView.setBounds(currentBounds)
-        console.log('[TrustedClick] Restored hidden bounds')
+      // bounds 복원 — 스냅샷을 되돌리는 게 아니라 레이아웃 상태에서 "다시 계산"한다.
+      //   클릭이 도는 ~1초 사이에 사용자가 모달을 열거나(→ Flow 를 0×0 으로 숨겨야 함) 스플리터를
+      //   드래그했을 수 있다. 스냅샷을 복원하면 그 변경을 덮어써서, 최악의 경우 Flow 네이티브 뷰가
+      //   모달 위에 되살아난다(네이티브라 CSS z-index 로 못 가린다). updateBounds 가 유일한 진실이다.
+      // ⚠️ abort 라고 건너뛰면 안 된다 — 확대해둔 뷰가 **화면 밖에 영구히 남는다**(사용자는 Flow 가
+      //    사라진 걸 본다). abort 야말로 복원이 필요한 순간이다. 좀비의 중복 복원은 아래 outer catch
+      //    에서 한 번 더 부르는 것으로 수렴한다(updateBounds 는 멱등).
+      if (enlarged) {
+        if (!token.aborted) await new Promise(r => setTimeout(r, 500)) // 클릭 이벤트 처리 대기
+        updateBounds(mainWindow, flowView)
+        console.log('[TrustedClick] Restored bounds from layout:', flowView.getBounds())
       }
     }
   }
@@ -703,7 +858,11 @@ export function createSharedHelpers(ctx) {
         candidates: (scan && scan.candidates) || [],
         context: (scan && scan.context) || {},
       }
-      console.warn(`[Flow API] ${caller}: ${reason} — diagnostic:`, JSON.stringify(diag))
+      // ⚠️ diag 를 그대로 찍으면 candidates[].text / ariaLabel(= Flow 페이지 텍스트, 멘션 칩엔
+      //   사용자 캐릭터 이름)이 breadcrumb 으로 나간다. Sentry extra 만 sanitize 하고 콘솔로
+      //   흘리면 옆문을 열어둔 것과 같다. 콘솔에도 sanitize 한 것만 찍는다(전체는 로컬 파일에).
+      // safe-log: sanitizeForSentry 가 text/ariaLabel/url 을 재귀적으로 벗긴 뒤라 콘텐츠가 없다.
+      console.warn(`[Flow API] ${caller}: ${reason} — diagnostic:`, JSON.stringify(sanitizeForSentry(diag)))
       await onDomFailure?.('agent-toggle', diag)
     } catch (e) {
       console.warn(`[Flow API] ${caller}: diagnostic capture failed:`, e.message)
@@ -907,37 +1066,98 @@ export function createSharedHelpers(ctx) {
    * 프로브를 못 읽으면(null/throw) 통과시킨다 — 판정 불가를 실패로 처리하면 멀쩡한 생성을 막는다.
    */
   async function ensureProjectLoaded(flowView, projectId) {
+    // ⚠️ throw 와 "판정 불가" 를 구분한다. 예전엔 둘 다 null 로 뭉개고 null 을 "정상"으로 취급해,
+    //    렌더러가 죽어 페이지를 읽지도 못하는 상태에서 {ok:true} 를 내주고 DOM 조작을 허가했다.
+    //    네비 중엔 일시적으로 throw 할 수 있으니 한 번은 재시도하고, 그래도 못 읽으면 멈춘다.
+    const probeOnce = async () => {
+      try { return { read: true, page: await flowView.webContents.executeJavaScript(FLOW_PAGE_PROBE_JS) } }
+      catch (e) { return { read: false, error: e.message } }
+    }
     const probe = async () => {
-      try { return await flowView.webContents.executeJavaScript(FLOW_PAGE_PROBE_JS) } catch { return null }
+      let r = await probeOnce()
+      if (r.read) return r
+      await new Promise((res) => setTimeout(res, 800))
+      return probeOnce()
     }
 
-    let page = await probe()
+    let r = await probe()
+    if (!r.read) {
+      await reportDomFailure('project-probe-unreadable', 'probe_threw', { projectId, error: r.error })
+      return { ok: false, error: 'Flow 페이지를 읽을 수 없습니다. Flow 탭을 확인한 뒤 다시 시도해주세요.' }
+    }
+    // ⚠️ probe 결과는 **그것이 읽힌 페이지** 에 대해서만 유효하다. 밖에서 getURL() 을 다시 부르면
+    //    A→B→A 로 오간 경우 B 의 결과를 A 의 것으로 오인한다(ABA). probe 가 같은 컨텍스트에서 돌려준
+    //    url 로 짝을 맞춘다.
+    if (!onProjectComposerUrl(r.page?.url || '', projectId)) {
+      return { ok: false, error: 'Flow 프로젝트가 도중에 바뀌었습니다. 다시 시도해주세요.' }
+    }
+    let page = r.page
     if (!page || !isFlowErrorPage(page)) return { ok: true }
 
     console.warn('[Flow Guard] project URL but page is not loaded (error/landing) — recovering via home')
-    const m = (flowView.webContents.getURL() || '').match(/^(.*\/tools\/flow)(\/|$)/)
+    const m = safeUrl(flowView).match(/^(.*\/tools\/flow)(\/|$)/)
     const base = m ? m[1] : 'https://labs.google/fx/tools/flow'
-    await flowView.webContents.loadURL(base).catch(() => {})
+    // loadURL 은 파괴된 webContents 에서 **동기로** throw 한다 — .catch() 는 promise rejection 만 잡는다.
+    const safeLoad = async (u) => { try { await flowView.webContents.loadURL(u) } catch { /* 파괴/중단 */ } }
+    await safeLoad(base)
     await new Promise((r) => setTimeout(r, 1500))
-    await flowView.webContents.loadURL(`${base}/project/${projectId}`).catch(() => {})
+    await safeLoad(`${base}/project/${projectId}`)
     await new Promise((r) => setTimeout(r, 2000))
 
-    page = await probe()
-    if (!page || !isFlowErrorPage(page)) {
+    // ⚠️ 페이지가 "리치"하다는 것만으로 복구를 선언하면 안 된다 — home 화면도 인터랙티브 요소가
+    //   많아 isFlowErrorPage 를 통과한다. target 재진입이 실패해 home 에 머물러 있어도 ok:true 가
+    //   나고, 그다음 DOM 조작이 엉뚱한 페이지에서 돈다. URL 이 대상 프로젝트인지 반드시 다시 본다.
+    r = await probe()
+    page = r.read ? r.page : null
+    const backOnTarget = onProjectComposerUrl(page?.url || '', projectId)   // probe 가 읽은 그 페이지의 url
+    if (backOnTarget && r.read && (!page || !isFlowErrorPage(page))) {
       console.log('[Flow Guard] project recovered after home re-nav')
       return { ok: true }
     }
 
-    await reportDomFailure('project-not-loaded', 'flow_error_page', { projectId, interactiveCount: page.interactiveCount })
+    await reportDomFailure('project-not-loaded', 'flow_error_page', { projectId, interactiveCount: page?.interactiveCount ?? null })
     // 사용자가 읽는 문구 — 진짜 원인을 말한다. "모든 미디어 화면인지 확인하세요"가 제보자를
     //   (그리고 우리를) 엉뚱한 곳으로 몇 시간 보냈다.
     return { ok: false, error: 'Flow 프로젝트를 열지 못했습니다. Flow 탭에서 프로젝트가 정상적으로 열리는지 확인한 뒤 다시 시도해주세요.' }
   }
 
+  /**
+   * URL 이 대상 프로젝트의 **컴포저**인가. #R20-6: /project/{id}/characters · /character/{...} 같은
+   * 하위 라우트는 컴포저가 아니다(거기에 프롬프트를 주입하면 엉뚱한 곳에 들어간다).
+   * ⚠️ 초기 체크에만 이 제외가 있었고 복구·폴링 경로는 단순 includes 라, 대기 중 사용자가
+   *    /characters 로 넘어가면 그 페이지를 "대상 프로젝트"로 승인했다. 한 곳에서 판정한다.
+   */
+  // Flow 컴포저로 인정하는 하위 경로. 그 외(/characters, /settings, 알 수 없는 라우트)는 컴포저가
+  //   아니므로 거기에 프롬프트를 주입하면 안 된다 — 모르면 막고 진단을 남긴다.
+  const COMPOSER_SUBPATHS = new Set(['', '/', '/all-media'])
+
+  function onProjectComposerUrl(url, projectId) {
+    // ⚠️ substring 으로 보면 "…/tools/flow/?next=/project/<id>"(쿼리), "/archive/project/<id>"(다른 라우트),
+    //    "/project/<id>-suffix"(다른 id), 심지어 다른 origin 도 통과한다 — 전부 실측으로 확인됐다.
+    //    origin 과 pathname 을 정확히 본다.
+    // ⚠️ projectId 는 **한 경로 세그먼트** 여야 한다. 저장값에 '/' 가 섞이면("abc/characters")
+    //    /project/abc/characters 가 통째로 id 로 매칭돼 캐릭터 페이지를 컴포저로 승인한다.
+    if (!/^[A-Za-z0-9._~-]+$/.test(String(projectId))) return false
+    let u
+    try { u = new URL(url) } catch { return false }
+    if (u.hostname.toLowerCase() !== 'labs.google') return false
+    // ⚠️ projectId 를 정규식에 그대로 넣으면 저장값이 "[" 같을 때 SyntaxError 로 **던진다** —
+    //    가드가 {ok:false} 를 반환하는 대신 reject 된다. 이스케이프한다.
+    const esc = String(projectId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const m = u.pathname.match(new RegExp(`/tools/flow/project/${esc}(/[^/]*)?$`))
+    if (!m) return false
+    return COMPOSER_SUBPATHS.has(m[1] || '')
+  }
+
+  /** getURL 은 뷰/렌더러가 파괴되면 throw 한다 — 가드가 {ok:false} 대신 reject 되면 안 된다. */
+  function safeUrl(flowView) {
+    try { return flowView.webContents.getURL() || '' } catch { return '' }
+  }
+
   async function ensureOnProjectComposer(flowView, projectId) {
     if (!flowView) return { ok: false, error: 'Flow view not ready' }
 
-    const currentUrl = flowView.webContents.getURL() || ''
+    const currentUrl = safeUrl(flowView)
 
     // Falsy projectId → lenient fallback: any /project/ or /tools/flow/ page is acceptable.
     if (!projectId) {
@@ -951,9 +1171,7 @@ export function createSharedHelpers(ctx) {
     // #R20-6: /project/{id}/characters · /character/{...} 등 하위 라우트는 컴포저가 아니므로 제외
     //   (안 그러면 scene 프롬프트가 엉뚱한 컴포저에 주입된다). base 컴포저 경로만 ok.
     {
-      const marker = `/project/${projectId}`
-      const idx = currentUrl.indexOf(marker)
-      if (idx >= 0 && !/^\/character/.test(currentUrl.slice(idx + marker.length))) {
+      if (onProjectComposerUrl(currentUrl, projectId)) {
         // ⚠️ URL 만으로는 부족하다. Flow 가 프로젝트를 못 띄우면 "문제가 발생했습니다" 에러 페이지를
         //   보여주는데, 이때 URL 은 /project/{id} 그대로다. 그대로 통과시키면 컴포저가 없는 페이지에서
         //   생성이 진행되고, ensureAgentOff 가 토글을 못 찾아 "Agent 를 OFF 로 못 바꿨다"는 엉뚱한
@@ -977,14 +1195,14 @@ export function createSharedHelpers(ctx) {
     // Poll up to 3 s for URL to confirm (6 × 500 ms).
     for (let i = 0; i < 6; i++) {
       await new Promise((r) => setTimeout(r, 500))
-      if ((flowView.webContents.getURL() || '').includes(`/project/${projectId}`)) {
+      if (onProjectComposerUrl(safeUrl(flowView), projectId)) {
         console.log('[Flow Guard] Confirmed on target project after navigation')
         // URL 만 맞은 것일 수 있다 — 우리가 방금 한 loadURL 도 에러 페이지로 떨어질 수 있다.
         return await ensureProjectLoaded(flowView, projectId)
       }
     }
 
-    const finalUrl = flowView.webContents.getURL() || ''
+    const finalUrl = safeUrl(flowView)
     console.warn('[Flow Guard] Failed to reach target project. Current URL:', finalUrl)
     return { ok: false, error: `Flow not on target project ${projectId}` }
   }

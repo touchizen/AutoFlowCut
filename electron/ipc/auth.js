@@ -157,7 +157,8 @@ async function handleRedirect(url, popup, resolve) {
 
     if (!tokenResponse.ok) {
       const text = await tokenResponse.text()
-      console.error('[Auth] Token exchange failed:', text)
+    // 응답 본문엔 토큰이 들어갈 수 있다 — 길이만 남긴다.
+      console.error('[Auth] Token exchange failed: bodyLen=', (text || '').length)
       popup.removeAllListeners('closed')
       popup.close()
       resolve(null)

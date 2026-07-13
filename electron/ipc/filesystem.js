@@ -488,7 +488,8 @@ async function writeWorkFolderConfig(workFolderPath, workFolderName) {
   try {
     const configPath = getConfigPath()
     await fs.writeFile(configPath, JSON.stringify({ path: workFolderPath, name: workFolderName }, null, 2), 'utf-8')
-    console.log('[FS] Work folder config saved:', workFolderPath)
+    // 경로엔 사용자 이름이 들어간다(PII) — 저장 여부만 남긴다.
+    console.log('[FS] Work folder config saved')
   } catch (e) {
     console.warn('[FS] Failed to save work folder config:', e.message)
   }

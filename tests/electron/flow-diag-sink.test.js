@@ -95,6 +95,28 @@ describe('createFlowDiagSink', () => {
     expect(writeFile.mock.calls.at(-1)[1]).toContain('Acme Corp')
   })
 
+  it('strips page text from NESTED fields too — the top-level filter was not enough', async () => {
+    const { sink, captureMessage, writeFile } = makeSink()
+
+    // The candidates are the diagnostic's whole point, but their `text` is Flow page content —
+    // and a compose bar carries @mention chips, i.e. the user's own character names.
+    await sink('agent-toggle', {
+      reason: 'not_found',
+      candidates: [{ tag: 'button', role: null, ariaPressed: null, icons: ['spark'], text: '@홍길동 에이전트', ariaLabel: '홍길동' }],
+      context: { innerWidth: 957, lang: 'ko', url: 'https://labs.google/fx/tools/flow/project/abc?q=secret' },
+    })
+
+    const [, opts] = captureMessage.mock.calls[0]
+    const sent = JSON.stringify(opts)
+    expect(sent).not.toContain('홍길동')
+    // The attributes that actually diagnose the failure must survive.
+    expect(opts.extra.candidates[0]).toMatchObject({ tag: 'button', ariaPressed: null, icons: ['spark'] })
+    expect(opts.extra.context).toMatchObject({ innerWidth: 957, lang: 'ko' })
+
+    // The local file — which the user chooses to send — still has everything.
+    expect(writeFile.mock.calls.at(-1)[1]).toContain('홍길동')
+  })
+
   it('falls back to userData when the Desktop is not writable (AppX sandbox)', async () => {
     const writeFile = vi.fn((p) => { if (p.startsWith('/Desktop')) throw new Error('EPERM') })
     const { sink } = makeSink({ writeFile })

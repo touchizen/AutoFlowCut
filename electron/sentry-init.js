@@ -2,6 +2,7 @@ import * as Sentry from '@sentry/electron/main'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { scrubBreadcrumb, scrubEvent } from './sentry-scrub.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -13,36 +14,6 @@ function readAppVersion() {
   } catch {
     return '0.0.0'
   }
-}
-
-// @sentry/electron enables node.consoleIntegration() by default, so EVERY main-process
-// console.log becomes a breadcrumb and ships with any captured event. The Flow generation
-// path logs the user's prompt text, so without this their prompts would leave the machine.
-// beforeSend only filters event.extra — it never sees breadcrumbs.
-//
-// Redact the value, keep the line: "prompt: '<lighthouse keeper…>'" tells us nothing we
-// need, but knowing that generate-image ran, and when, is the whole point of the trail.
-const PROMPT_BEARING = [
-  // [Flow API] generate-image: { prompt: '…', model: … }
-  /(prompt:\s*)('[^']*'|"[^"]*"|[^,}]+)/gi,
-  // [DOM IPC] dom-send-prompt called: …
-  /(dom-send-prompt called:\s*)(.*)$/gi,
-]
-
-// 자격증명/PII — 소스에서 안 찍는 게 1차 방어지만, console.log 하나만 빠뜨려도 자격증명이
-//   Sentry 로 나간다. 실제로 Flow 세션 응답이 access_token 과 이메일을 통째로 찍고 있었다.
-const SECRET_BEARING = [
-  /(["']?access_?token["']?\s*[:=]\s*["']?)[A-Za-z0-9._~+/-]{12,}/gi,
-  /\bya29\.[A-Za-z0-9._~+/-]{8,}/g,                       // Google OAuth 토큰
-  /\bBearer\s+[A-Za-z0-9._~+/-]{12,}/gi,
-  /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g,      // 이메일
-]
-
-export function scrubBreadcrumbMessage(message) {
-  let out = String(message)
-  for (const re of PROMPT_BEARING) out = out.replace(re, '$1<redacted>')
-  for (const re of SECRET_BEARING) out = out.replace(re, (m, p1) => (p1 ? `${p1}<redacted>` : '<redacted>'))
-  return out
 }
 
 /**
@@ -74,25 +45,16 @@ export function buildSentryOptions({ env = defaultEnv(), version } = {}) {
     environment: env.VITE_FUNCTION_ENV || 'development',
     release: `autoflowcut@${version || readAppVersion()}`,
     tracesSampleRate: Number(env.SENTRY_TRACES_SAMPLE_RATE || 0.1),
-    beforeBreadcrumb(breadcrumb) {
-      if (breadcrumb?.category === 'console' && breadcrumb.message) {
-        breadcrumb.message = scrubBreadcrumbMessage(breadcrumb.message)
-      }
-      return breadcrumb
-    },
-    beforeSend(event) {
-      if (event.user) {
-        delete event.user.ip_address
-        delete event.user.email
-      }
-      if (event.request?.data) delete event.request.data
-      if (event.extra) {
-        for (const k of Object.keys(event.extra)) {
-          if (/prompt|input|filename|path/i.test(k)) delete event.extra[k]
-        }
-      }
-      return event
-    },
+    // ⚠️ 네이티브 크래시 minidump 를 끈다. 그건 **첨부파일**이라 beforeSend/beforeBreadcrumb 이
+    //   손댈 수 없고, 크래시 순간 메모리에 있던 프롬프트·캐릭터 이름·OAuth 토큰이 스택/힙 조각으로
+    //   그대로 실려 나갈 수 있다. 우리가 얻으려는 건 Flow DOM 진단이지 네이티브 크래시가 아니다 —
+    //   씻을 수 없는 채널은 열어두지 않는다.
+    integrations: (defaults) => defaults.filter((i) => i.name !== 'SentryMinidump'),
+    beforeBreadcrumb: scrubBreadcrumb,
+    beforeSend: scrubEvent,
+    // transaction/span 은 일반 beforeSend 를 타지 않는다 — span description·data 에 URL·경로·
+    //   생성 미디어 주소가 그대로 실린다. 같은 스크러버를 따로 건다.
+    beforeSendTransaction: scrubEvent,
   }
 }
 

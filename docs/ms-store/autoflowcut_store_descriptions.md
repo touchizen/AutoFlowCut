@@ -220,6 +220,14 @@ Disclaimer: This app is an independent product developed by Touchizen and is not
 
 ### What's New
 ```
+v3.0.2 — Privacy fix. If you are on 3.0.1, please update.
+
+3.0.1's error reporting was also sending your sign-in token, API key, prompts, character names, and folder paths. All of it is blocked now — we collect only which step failed. Sorry.
+
+Also fixed: narrowing the Flow panel made the submit button unreachable; opening a dialog mid-generation pushed the Flow panel off-screen; and when Flow failed to open a project, the app blamed the Agent toggle.
+
+v3.0.1 — Generation fix. In v3.0.0, image and video generation failed on every scene, and the error blamed the Flow Agent toggle. The toggle was never the cause — the released build broke the check itself. Fixed. AutoFlowCut now also notices when Flow shows its error screen instead of your project, and reloads it automatically.
+
 v3.0.0 — Story mode. From a blank page to a finished video, without leaving the app.
 
 Write the story. Let the AI draft your script (Claude or Codex) — pick a genre, auto-generate a title, and continue where you left off — or paste in your own. Still looking for a subject? Research YouTube topics and check their viral score first.
@@ -434,6 +442,14 @@ Touchizen 제작 — touchizen.com
 
 ### What's New (새로운 기능)
 ```
+v3.0.2 — 프라이버시 수정. 3.0.1을 쓰고 계시다면 업데이트해 주세요.
+
+3.0.1의 오류 리포팅이 로그인 토큰·API 키·프롬프트·캐릭터 이름·폴더 경로를 함께 전송하고 있었습니다. 전부 차단했습니다 — 이제 어느 단계가 실패했는지만 수집합니다. 죄송합니다.
+
+그 밖의 수정: Flow 패널을 좁히면 제출 버튼을 누를 수 없던 문제, 생성 중 대화상자를 열면 Flow 패널이 화면 밖으로 밀려나던 문제, 프로젝트가 열리지 않았을 때 Agent 토글 탓으로 표시하던 문제를 고쳤습니다.
+
+v3.0.1 — 생성 오류 수정. v3.0.0에서는 모든 씬에서 이미지·영상 생성이 실패했고, 오류 메시지는 Flow Agent 토글 탓으로 표시됐습니다. 토글은 원인이 아니었습니다 — 배포 빌드가 그 검사 자체를 깨뜨린 것이었습니다. 수정했습니다. 또한 Flow가 프로젝트 대신 오류 화면을 띄우면 이를 감지해 자동으로 다시 불러옵니다.
+
 v3.0.0 — Story 모드. 빈 페이지에서 완성된 영상까지, 앱 하나로.
 
 대본 쓰기. AI가 대본을 써줍니다(Claude · Codex) — 장르를 고르고, 제목을 자동 생성하고, 이어쓰기까지. 직접 쓴 대본을 붙여넣어도 됩니다. 소재가 아직 없다면 YouTube 리서치로 바이럴 지수와 상세 정보를 먼저 확인하세요.
@@ -553,6 +569,14 @@ AI 영상 자동화, 텍스트투비디오, 이미지투비디오, AI 이미지 
 
 ### What's New
 ```
+v3.0.2 — プライバシーの修正。3.0.1をお使いの方は、アップデートしてください。
+
+3.0.1のエラーレポートが、ログイントークン・APIキー・プロンプト・キャラクター名・フォルダーパスも一緒に送信していました。すべて遮断しました — 現在はどのステップで失敗したかのみを収集します。申し訳ありません。
+
+その他の修正：Flowパネルを狭めると送信ボタンが押せなくなる問題、生成中にダイアログを開くとFlowパネルが画面外へ押し出される問題、プロジェクトが開けなかったときにAgentトグルのせいだと表示していた問題。
+
+v3.0.1 — 生成の不具合を修正。v3.0.0では、すべてのシーンで画像・動画の生成が失敗し、エラーはFlow Agentトグルのせいだと表示していました。トグルは原因ではなく、リリースビルドがそのチェック自体を壊していました。修正済みです。また、Flowがプロジェクトの代わりにエラー画面を表示した場合、それを検知して自動的に再読み込みします。
+
 v3.0.0 — Storyモード。白紙から完成した動画まで、アプリひとつで。
 
 脚本を書く。AIが脚本を書きます（Claude・Codex）— ジャンルを選び、タイトルを自動生成し、続きから書き足せます。自分で書いた脚本の貼り付けも可能。題材が決まっていなければ、YouTubeリサーチでバイラル指数と詳細を先に確認できます。
@@ -667,6 +691,26 @@ Der integrierte MCP-Server (Model Context Protocol) verbindet sich direkt mit Cl
 
 ### What's New
 ```
+v3.0.2 — Datenschutz-Fix. Wenn Sie 3.0.1 verwenden, aktualisieren Sie bitte.
+
+Die Fehlerberichte in 3.0.1 haben auch Ihr Anmelde-Token, Ihren API-Schlüssel, Prompts, Charakternamen und Ordnerpfade mitgesendet. All das ist jetzt blockiert — wir erfassen nur noch, welcher Schritt fehlgeschlagen ist. Entschuldigung.
+
+Außerdem behoben: Beim Verschmälern des Flow-Panels war die Senden-Schaltfläche nicht mehr erreichbar; ein während der Generierung geöffneter Dialog schob das Flow-Panel aus dem Bild; und wenn Flow ein Projekt nicht öffnen konnte, gab die App dem Agent-Umschalter die Schuld.
+
+v3.0.1 — Generierungsfehler behoben. In v3.0.0 schlug die Bild- und Videogenerierung in jeder Szene fehl, und die Fehlermeldung machte den Flow-Agent-Umschalter dafür verantwortlich. Der Umschalter war nie die Ursache — der ausgelieferte Build hatte die Prüfung selbst beschädigt. Behoben. AutoFlowCut erkennt jetzt außerdem, wenn Flow statt Ihres Projekts einen Fehlerbildschirm anzeigt, und lädt es automatisch neu.
+
+v3.0.0 — Story-Modus. Vom leeren Blatt zum fertigen Video, ohne die App zu verlassen.
+
+Die Geschichte schreiben. Lassen Sie die KI Ihr Skript entwerfen (Claude oder Codex) — Genre wählen, Titel automatisch generieren, dort weitermachen, wo Sie aufgehört haben — oder fügen Sie Ihr eigenes Skript ein. Noch kein Thema? Recherchieren Sie YouTube-Themen und prüfen Sie vorab deren Viral-Score.
+
+Synopsis, Charaktere und Selbstprüfung. Logline, Hook und Handlungsbogen werden samt vollständiger Besetzung aus dem Skript herausgezogen. Die KI bewertet die Immersion und durchläuft eine eigene Prüf- und Überarbeitungsschleife, bis die Geschichte trägt.
+
+Szenen und Stimmen. Teilen Sie das Skript satzweise oder nach Dauer in Szenen auf — und jederzeit neu auf. Weisen Sie jeder Sprecherrolle eine Stimme zu (Typecast, ElevenLabs oder Gemini), suchen und probehören Sie Stimmen, versehen Sie Charakterdialoge mit Emotionen und erhalten Sie pro Sprecher eine eigene Erzählspur. Soundeffekte werden aus dem Skript übernommen und für Sie auf den Szenen platziert.
+
+Alles laufen lassen. Setzen Sie „Auto" bei den Schritten, denen Sie vertrauen, drücken Sie „Alle ausführen", und die Pipeline läuft bis zum Ende durch — anschließend mit einem Klick nach CapCut, Premiere oder Vrew exportieren.
+
+Außerdem: Charaktere registrieren sich selbst als Referenzkarten, die Sie per @Mention in jede Szene einfügen können, eine neue Rasteransicht im Ergebnisbereich und ein rund 110 MB kleinerer Download.
+
 v2.1.0 — Zwei Wege zu generieren, drei Wege zu exportieren.
 
 Generierungsmodi. Gratis starten mit einem Google-Flow-Login (kein API-Schlüssel nötig) oder zu Ihrem eigenen Gemini / Veo-Schlüssel für schnelle, nutzungsbasierte Stapelgenerierung wechseln — jederzeit über die obere Leiste umschalten.

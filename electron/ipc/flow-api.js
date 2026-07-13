@@ -6,6 +6,7 @@
  */
 
 import path from 'node:path'
+import { updateBounds } from './layout.js'
 import { net, screen } from 'electron'
 import { computeOffscreenBounds } from '../offscreen-bounds.js'
 import { formatGoogleApiError } from './googleApiError.js'
@@ -727,7 +728,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       } finally {
         // #R6-13: 주입 성공/실패/throw 와 무관하게 임시로 보인 flowView 를 원복.
         if (promptWasHidden) {
-          flowView.setBounds(promptBounds)
+          updateBounds(getMainWindow(), flowView)
           await new Promise(r => setTimeout(r, 200))
         }
       }
@@ -756,13 +757,14 @@ export function registerFlowAPIIPC(ipcMain, deps) {
             })();
             return {
               editorFound: !!ed,
-              editorText: ed ? (ed.value !== undefined ? ed.value : ed.textContent || '').trim().slice(0, 60) : null,
+              editorTextLen: ed ? (ed.value !== undefined ? ed.value : ed.textContent || '').trim().length : 0,
               activeEl: ae ? (ae.tagName.toLowerCase() + (ae.getAttribute && ae.getAttribute('contenteditable') ? '[ce]' : '')) : null,
               editorIsActive: ed === ae,
               fwdDisabled: fwd ? (fwd.disabled || fwd.getAttribute('aria-disabled')==='true') : 'no_fwd',
             };
           })()
         `).catch((e) => ({ error: e.message }))
+        // safe-log: diag 는 editorTextLen(길이)만 담는다 — 본문 없음. (아래 페이지 스크립트 참조)
         console.log('[Flow API] [DOM+Net] Post-inject diag:', JSON.stringify(diag))
       } catch {}
 
@@ -894,7 +896,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       }
 
       // pending arm 직후 클릭 — 클릭이 batchGenerateImages 를 트리거한다(arm 이 먼저라 미스 없음).
-      const clickResult = await trustedClickOnFlowView(generateBtnSelector)
+      const clickResult = await trustedClickOnFlowView(generateBtnSelector, { required: true, step: 'compose-submit' })
       console.log('[Flow API] [DOM+Net] Trusted click result:', clickResult)
       if (!clickResult?.success) {
         clearTimeout(generationTimeout)
@@ -1383,12 +1385,12 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       // Step 1: 다운로드 path 가로채기 (Electron session.will-download — CDP 무관)
       tempDir = path.join(os.tmpdir(), `flow-dl-${Date.now()}`)
       fs.mkdirSync(tempDir, { recursive: true })
-      console.log('[Flow DOMDownload] Download dir:', tempDir)
+      console.log('[Flow DOMDownload] Download dir:', path.basename(tempDir))
 
       willDownloadHandler = (_event, item) => {
         const filename = item.getFilename()
         const savePath = path.join(tempDir, filename)
-        console.log('[Flow DOMDownload] will-download intercept:', filename, '→', savePath)
+        console.log('[Flow DOMDownload] will-download intercept:', filename, '→', path.basename(savePath))
         item.setSavePath(savePath)
       }
       dlSession.on('will-download', willDownloadHandler)
@@ -1722,7 +1724,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       }
 
       // Step 3: temp 디렉토리에서 다운로드 파일 대기 (폴링)
-      console.log('[Flow DOMDownload] Waiting for download file in:', tempDir)
+      console.log('[Flow DOMDownload] Waiting for download file in:', path.basename(tempDir))
       let downloadedFile = null
       const maxWait = VIDEO_DOWNLOAD_TIMEOUT_MS // 5분 (동영상 4K 업스케일 포함)
       const pollInterval = 1000
@@ -1769,7 +1771,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
             for (const btn of buttons) {
               const text = (btn.textContent || '').trim()
               if (text === '닫기' || text === 'Close' || text === '닫 기') {
-                console.log('[DOMDownload] Clicking close button: ' + text)
+                console.log('[DOMDownload] Clicking close button')   // 버튼 텍스트는 페이지 콘텐츠
                 btn.click()
                 break
               }
@@ -1875,7 +1877,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       const mediaId = data?.media?.name || data?.mediaGenerationId || data?.name || null
       const caption = data?.media?.caption || data?.caption || data?.description || null
 
-      console.log('[Flow API] upload-reference result:', { mediaId: mediaId?.substring(0, 36), caption: caption?.substring(0, 30), dataKeys: data ? Object.keys(data) : [] })
+      console.log('[Flow API] upload-reference result:', { mediaId: mediaId?.substring(0, 36), captionLen: caption?.length ?? 0, dataKeys: data ? Object.keys(data) : [] })
 
       if (mediaId) {
         return { success: true, mediaId, caption }
@@ -2142,12 +2144,12 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       // Step 1: 다운로드 path 가로채기 (Electron session.will-download — CDP 무관)
       tempDir = path.join(os.tmpdir(), `flow-img-up-${Date.now()}`)
       fs.mkdirSync(tempDir, { recursive: true })
-      console.log('[Flow Image Upscale] Download dir:', tempDir)
+      console.log('[Flow Image Upscale] Download dir:', path.basename(tempDir))
 
       willDownloadHandler = (_event, item) => {
         const filename = item.getFilename()
         const savePath = path.join(tempDir, filename)
-        console.log('[Flow Image Upscale] will-download intercept:', filename, '→', savePath)
+        console.log('[Flow Image Upscale] will-download intercept:', filename, '→', path.basename(savePath))
         item.setSavePath(savePath)
       }
       dlSession.on('will-download', willDownloadHandler)
@@ -2406,7 +2408,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       }
 
       // Step 3: temp 디렉토리에서 다운로드 파일 대기 (폴링)
-      console.log('[Flow Image Upscale] Waiting for download file in:', tempDir)
+      console.log('[Flow Image Upscale] Waiting for download file in:', path.basename(tempDir))
       let downloadedFile = null
       const maxWait = IMAGE_UPSCALE_TIMEOUT_MS // 2분 (이미지 업스케일)
       const startTime = Date.now()
