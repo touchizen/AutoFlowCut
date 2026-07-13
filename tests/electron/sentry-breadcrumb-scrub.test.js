@@ -85,6 +85,24 @@ describe('beforeBreadcrumb — console breadcrumbs must not carry prompt text', 
     expect(out.message).not.toContain('gordon.ahn@gmail.com')
   })
 
+  it('drops the raw console arguments — scrubbing the message alone is not enough', () => {
+    const { beforeBreadcrumb } = opts()
+
+    // Sentry's console integration keeps the original args in data.arguments, so a redacted
+    // message still shipped the unredacted object. Regexes can never cover free-form content
+    // (character names, captions, folder paths), so the raw args must not leave at all.
+    const out = beforeBreadcrumb({
+      category: 'console',
+      level: 'log',
+      message: '[Flow API] generate-image: <redacted>',
+      data: { arguments: [{ prompt: 'a lonely lighthouse keeper', name: '홍길동' }], logger: 'console' },
+    })
+
+    expect(JSON.stringify(out)).not.toContain('lighthouse keeper')
+    expect(JSON.stringify(out)).not.toContain('홍길동')
+    expect(out.data?.arguments).toBeUndefined()
+  })
+
   it('leaves non-console breadcrumbs alone', () => {
     const { beforeBreadcrumb } = opts()
     const crumb = { category: 'navigation', message: 'https://labs.google/fx/tools/flow' }

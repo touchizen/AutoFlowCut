@@ -143,7 +143,8 @@ export function registerVideoIPC(ipcMain, deps) {
     let promptWasHidden = false
     let promptBounds = null
 
-    console.log('[Flow Video T2V] Starting DOM-triggered video generation:', prompt?.substring(0, 50), hasUserSeed ? `(seed: ${seed})` : '(seed: random)')
+    // 프롬프트 본문은 안 찍는다 — Sentry consoleIntegration 이 main 콘솔을 breadcrumb 으로 걷어간다.
+    console.log('[Flow Video T2V] Starting DOM-triggered video generation: promptLen=', prompt?.length ?? 0, hasUserSeed ? `(seed: ${seed})` : '(seed: random)')
 
     try {
       // 0. Codex #R4-4: enforce Flow page is on the TARGET project before DOM mutation.
@@ -378,7 +379,7 @@ export function registerVideoIPC(ipcMain, deps) {
           const _pre = await flowView.webContents.executeJavaScript(GENERATED_VIDEO_PROBE)
           if (Array.isArray(_pre)) existingGenMediaIds = _pre.map(v => v && v.mediaId).filter(Boolean)
         } catch {}
-        const aClick = await trustedClickOnFlowView(generateBtnSelector)
+        const aClick = await trustedClickOnFlowView(generateBtnSelector, { required: true, step: 'video-submit' })
         if (!aClick?.success) return { success: false, error: aClick?.error || 'Failed to click Generate button' }
         console.log('[Flow Video T2V] (Agent ON) clicked, collecting DOM <video>...')
         const col = await collectAgentDomVideos({
@@ -415,7 +416,7 @@ export function registerVideoIPC(ipcMain, deps) {
         }
       }, VIDEO_RESPONSE_TIMEOUT_MS) // #R36: 초기 ack 캡처(생성/upscale 은 status 폴링)
 
-      const clickResult = await trustedClickOnFlowView(generateBtnSelector)
+      const clickResult = await trustedClickOnFlowView(generateBtnSelector, { required: true, step: 'video-submit' })
       console.log('[Flow Video T2V] Trusted click result:', clickResult)
 
       if (!clickResult?.success) {
@@ -697,7 +698,7 @@ export function registerVideoIPC(ipcMain, deps) {
         }
       }, VIDEO_RESPONSE_TIMEOUT_MS)
 
-      const clickResult = await trustedClickOnFlowView(generateBtnSelector)
+      const clickResult = await trustedClickOnFlowView(generateBtnSelector, { required: true, step: 'video-submit' })
       console.log('[Flow Video I2V] Trusted click result:', clickResult)
 
       if (!clickResult?.success) {

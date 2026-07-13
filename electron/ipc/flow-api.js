@@ -894,7 +894,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       }
 
       // pending arm 직후 클릭 — 클릭이 batchGenerateImages 를 트리거한다(arm 이 먼저라 미스 없음).
-      const clickResult = await trustedClickOnFlowView(generateBtnSelector)
+      const clickResult = await trustedClickOnFlowView(generateBtnSelector, { required: true, step: 'compose-submit' })
       console.log('[Flow API] [DOM+Net] Trusted click result:', clickResult)
       if (!clickResult?.success) {
         clearTimeout(generationTimeout)
@@ -1875,7 +1875,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       const mediaId = data?.media?.name || data?.mediaGenerationId || data?.name || null
       const caption = data?.media?.caption || data?.caption || data?.description || null
 
-      console.log('[Flow API] upload-reference result:', { mediaId: mediaId?.substring(0, 36), caption: caption?.substring(0, 30), dataKeys: data ? Object.keys(data) : [] })
+      console.log('[Flow API] upload-reference result:', { mediaId: mediaId?.substring(0, 36), captionLen: caption?.length ?? 0, dataKeys: data ? Object.keys(data) : [] })
 
       if (mediaId) {
         return { success: true, mediaId, caption }

@@ -49,7 +49,6 @@ import { FLOW_SETTINGS_DUMPER } from './flow-settings-dumper.js'
 import { FLOW_DOM_DUMP_PROBE, buildDomDumpFilename } from './flow-dom-dump.js'
 import { createFlowDiagSink } from './flow-diag.js'
 import * as Sentry from '@sentry/electron/main'
-import { createMutex } from './asyncMutex.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 

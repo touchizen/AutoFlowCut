@@ -435,7 +435,7 @@ export function registerCharacterIPC(ipcMain, deps) {
     if (!prompt) return { success: false, error: 'No prompt' }
     const projectId = opts.projectId || projectIdFromUrl() || (getCapturedProjectId && getCapturedProjectId())
     if (!projectId) return { success: false, error: 'No projectId' }
-    console.log('[Flow Character] generate-character projectId:', projectId, 'name:', displayName)
+    console.log('[Flow Character] generate-character projectId:', projectId, 'nameLen:', displayName?.length ?? 0)
 
     // 1) /characters 컴포저 진입 — #R7-14(R4-4 sibling): TARGET projectId 를 넘겨 드리프트한
     //    탭에서 엉뚱한 프로젝트의 characters 페이지에 엔티티를 만드는 것을 막는다(URL 검증+이동).
@@ -795,7 +795,7 @@ export function registerCharacterIPC(ipcMain, deps) {
         const _pre = await flowView.webContents.executeJavaScript(GENERATED_IMG_PROBE)
         if (Array.isArray(_pre)) existingGenMediaIds = _pre.map(i => i && i.mediaId).filter(Boolean)
       } catch {}
-      const aClick = await trustedClickOnFlowView(GENERATE_BTN_SELECTOR)
+      const aClick = await trustedClickOnFlowView(GENERATE_BTN_SELECTOR, { required: true, step: 'character-submit' })
       if (!aClick || !aClick.success) return { success: false, error: aClick?.error || '생성 버튼 클릭 실패', retry: true }
       const col = await collectAgentDomImages({
         scan: () => flowView.webContents.executeJavaScript(GENERATED_IMG_PROBE),
@@ -865,7 +865,7 @@ export function registerCharacterIPC(ipcMain, deps) {
       }
       let aClick
       try {
-        aClick = await trustedClickOnFlowView(GENERATE_BTN_SELECTOR)
+        aClick = await trustedClickOnFlowView(GENERATE_BTN_SELECTOR, { required: true, step: 'character-submit' })
       } catch (e) {
         cleanupPending()
         try { await clearFlowPageInject?.() } catch {}
@@ -876,7 +876,7 @@ export function registerCharacterIPC(ipcMain, deps) {
         try { await clearFlowPageInject?.() } catch {}
         return { success: false, error: aClick?.error || '생성 버튼 클릭 실패', retry: true }
       }
-      console.log('[Flow Scene] [Async] submitted:', generationId, '(promptKey:', JSON.stringify((promptKey || '').slice(0, 40)), ')')
+      console.log('[Flow Scene] [Async] submitted:', generationId, '(promptKeyLen:', (promptKey || '').length, ')')
       // #R35-fix(Codex R1[4]/R2[2]): inject(seed/aspect) 를 clear 하기 전에 요청이 실제로 나갈 시간을
       //   확보한다. trustedClickOnFlowView 는 mouseUp 후 ~200ms 만 대기하므로 즉시 clear 하면 Flow 가
       //   fetch 를 늦게 시작할 때 window.__autoflowcut_inject__ 가 비어 원본 화면비/seed 로 나간다.
@@ -1014,7 +1014,7 @@ export function registerCharacterIPC(ipcMain, deps) {
         headers: { authorization: 'Bearer ' + token },
         body: JSON.stringify(buildEntityRenameBody({ projectId, entityId, displayName })),
       })
-      console.log('[Flow Character] rename entities:', res.status, res.ok ? '✓' : '✗', '(name', displayName + ')')
+      console.log('[Flow Character] rename entities:', res.status, res.ok ? '✓' : '✗')
       if (!res.ok) console.warn('[Flow Character] rename body:', (res.text || '').slice(0, 200))
       // PATCH 가 실패했으면 SPA 를 건드리지 않는다 — 서버와 화면이 어긋나는 게 더 나쁘다.
       if (!res.ok) return { success: false, status: res.status, nameApplied: false }
@@ -1052,7 +1052,7 @@ export function registerCharacterIPC(ipcMain, deps) {
       // 1) 대화상자 방지(input.click noop) → "업로드" 버튼 트러스트 클릭(= character upload 모드 진입).
       const hasInput = await neutralizeFileInputClick(flowView)
       if (!hasInput) return { success: false, error: 'file input 없음(' + A2_FILE_SEL + ')' }
-      const upClick = await trustedClickOnFlowView(A2_UPLOAD_BTN_EXPR)
+      const upClick = await trustedClickOnFlowView(A2_UPLOAD_BTN_EXPR, { required: true, step: 'reference-upload' })
       console.log('[Flow Character] A2 업로드 버튼 trusted click:', JSON.stringify(upClick))
       await sleep(500)
 

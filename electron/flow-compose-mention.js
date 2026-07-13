@@ -92,7 +92,7 @@ export async function insertSceneMention(flowView, name) {
       const allOpts = Array.from((dlg||document).querySelectorAll("[role='option']")).map(o => (o.textContent||'').replace(/\\s+/g,' ').trim().slice(0,40));
       return { hasDialog: !!dlg, tabs, optionCount: allOpts.length, allOptionLabels: allOpts.slice(0,20) };
     })()`).catch((e) => ({ diagError: e.message }))
-    console.warn('[Flow Compose] mention option not found:', name, '— DIAG:', JSON.stringify(diag))
+    console.warn('[Flow Compose] mention option not found (nameLen:', name?.length ?? 0, ')')
     return false
   }
 
@@ -138,7 +138,7 @@ export async function insertSceneMention(flowView, name) {
     };
   })()`).catch((e) => ({ diagError: e.message }))
   const ok = !!(dialogClosed && post && post.hasMentionChip)
-  if (!ok) console.warn('[Flow Compose] mention select incomplete — DIAG:', JSON.stringify({ dispatched, dialogClosed, ...post }))
+  if (!ok) console.warn('[Flow Compose] mention select incomplete — DIAG:', JSON.stringify({ dispatched, dialogClosed }))
   return ok
 }
 

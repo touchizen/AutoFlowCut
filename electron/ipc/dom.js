@@ -156,7 +156,7 @@ export function registerDomIPC(ipcMain, deps) {
       const preUrl = flowView.webContents.getURL() || ''
       const preMatch = preUrl.match(/\/project\/([0-9a-f-]{36})/)
       const preId = preMatch ? preMatch[1] : null
-      const clickRes = await trustedClickOnFlowView(addBtnSelector)
+      const clickRes = await trustedClickOnFlowView(addBtnSelector, { required: true, step: 'new-project' })
       if (!clickRes?.success) {
         return { success: false, error: 'failed to click new-project button' }
       }
@@ -246,7 +246,7 @@ export function registerDomIPC(ipcMain, deps) {
       return null;
     })()`
 
-      const clickResult = await trustedClickOnFlowView(btnSelector)
+      const clickResult = await trustedClickOnFlowView(btnSelector, { required: true, step: 'enter-tool' })
       if (clickResult.success) {
         deps.setEnterToolClicked(true)
         return { success: true }

@@ -14,6 +14,8 @@ import { buildSelectModeScript } from '../flow-mode-tab.js'
 import { FLOW_PAGE_PROBE_JS, isFlowErrorPage } from '../flowOpenRetry.js'
 import { screen } from 'electron'
 import { computeOffscreenBounds } from '../offscreen-bounds.js'
+import { updateBounds } from './layout.js'
+import { createMutex } from '../asyncMutex.js'
 
 /**
  * #R34-fix: applyAgentDefaults 결과가 "요청한 image/video aspect·model 을 실제로 적용했는지" 판정(순수).
@@ -50,6 +52,10 @@ export function agentDefaultsApplied(opts = {}, result = {}) {
  */
 export function createSharedHelpers(ctx) {
   const { getFlowView, getMainWindow, constants, onDomFailure } = ctx
+
+  // 클릭 직렬화 — 두 클릭이 겹치면 서로의 임시(확대) bounds 를 자기 '원래 값'으로 스냅샷해
+  //   복원이 어긋나고, 마우스 이벤트도 뒤섞인다. 모든 DOM 클릭이 이 병목을 지난다.
+  const clickMutex = createMutex()
 
   // DOM 스텝 실패 보고 — 셀렉터가 깨졌을 때 그 순간의 페이지 컨텍스트를 함께 남긴다.
   //   'Flow view not ready'(Flow 모드 아님) 같은 정상 상태 체크는 부르지 않는다 — 노이즈가 된다.
@@ -89,15 +95,24 @@ export function createSharedHelpers(ctx) {
    *   generation and drown the real breakages.
    */
   async function trustedClickOnFlowView(jsSelector, opts = {}) {
+    const release = await clickMutex.acquire()
+    try {
+      return await trustedClickLocked(jsSelector, opts)
+    } finally {
+      release()
+    }
+  }
+
+  async function trustedClickLocked(jsSelector, opts = {}) {
     const mainWindow = getMainWindow()
     const flowView = getFlowView()
     if (!mainWindow || !flowView) return { success: false, error: 'No flowView' }
 
-    const originalBounds = flowView.getBounds()
-    const wasHidden = (originalBounds.width === 0 || originalBounds.height === 0)
+    const startBounds = flowView.getBounds()
+    const wasHidden = (startBounds.width === 0 || startBounds.height === 0)
     let enlarged = false
 
-    console.log('[TrustedClick] Current bounds:', originalBounds, 'wasHidden:', wasHidden)
+    console.log('[TrustedClick] Current bounds:', startBounds, 'wasHidden:', wasHidden)
 
     // 뷰를 창 크기만큼 키워 화면 밖에 배치 — 사용자에겐 안 보이고, 페이지는 정상 폭으로 레이아웃된다.
     //   (모든 디스플레이 너머로 — 멀티모니터에서 보조 모니터에 안 깜빡이게.)
@@ -127,7 +142,9 @@ export function createSharedHelpers(ctx) {
       })()
     `)
 
-    const outside = (c, b) => c.x < 0 || c.y < 0 || c.x > b.width || c.y > b.height
+    // 유효 좌표는 0..width-1 / 0..height-1 이다. `>` 로 검사하면 x === width 가 "안"으로 통과해
+    //   뷰 밖을 클릭하고 성공을 반환한다(옛 clamp 도 width-1 로 잘랐다).
+    const outside = (c, b) => c.x < 0 || c.y < 0 || c.x >= b.width || c.y >= b.height
 
     // 0×0(모달/드래그 중)이면 재보기 전에 키운다 — 그 상태의 좌표는 의미가 없다.
     if (wasHidden) await enlargeOffscreen()
@@ -177,12 +194,24 @@ export function createSharedHelpers(ctx) {
 
       console.log('[TrustedClick] Click events sent at (' + coords.x + ', ' + coords.y + ')')
       return { success: true, coords }
+    } catch (e) {
+      // executeJavaScript 가 reject 되거나(페이지가 중간에 navigate) sendInputEvent 가 throw 하면
+      //   여기로 온다. 예전엔 호출부로 그대로 던져 아무 기록도 안 남았다 — 오늘 종일 우리 눈을 가린
+      //   것과 정확히 같은 클래스다. 모든 실패 출구가 보고한다.
+      console.warn('[TrustedClick] threw:', e.message)
+      if (opts.required) {
+        await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, 'threw', { error: e.message })
+      }
+      return { success: false, error: e.message }
     } finally {
-      // 원래 bounds 복원 — 사용자가 맞춰둔 패널 폭을 되돌린다.
+      // bounds 복원 — 스냅샷을 되돌리는 게 아니라 레이아웃 상태에서 "다시 계산"한다.
+      //   클릭이 도는 ~1초 사이에 사용자가 모달을 열거나(→ Flow 를 0×0 으로 숨겨야 함) 스플리터를
+      //   드래그했을 수 있다. 스냅샷을 복원하면 그 변경을 덮어써서, 최악의 경우 Flow 네이티브 뷰가
+      //   모달 위에 되살아난다(네이티브라 CSS z-index 로 못 가린다). updateBounds 가 유일한 진실이다.
       if (enlarged) {
         await new Promise(r => setTimeout(r, 500)) // 클릭 이벤트 처리 대기
-        flowView.setBounds(originalBounds)
-        console.log('[TrustedClick] Restored bounds:', originalBounds)
+        updateBounds(mainWindow, flowView)
+        console.log('[TrustedClick] Restored bounds from layout:', flowView.getBounds())
       }
     }
   }
@@ -937,8 +966,12 @@ export function createSharedHelpers(ctx) {
     await flowView.webContents.loadURL(`${base}/project/${projectId}`).catch(() => {})
     await new Promise((r) => setTimeout(r, 2000))
 
+    // ⚠️ 페이지가 "리치"하다는 것만으로 복구를 선언하면 안 된다 — home 화면도 인터랙티브 요소가
+    //   많아 isFlowErrorPage 를 통과한다. target 재진입이 실패해 home 에 머물러 있어도 ok:true 가
+    //   나고, 그다음 DOM 조작이 엉뚱한 페이지에서 돈다. URL 이 대상 프로젝트인지 반드시 다시 본다.
+    const backOnTarget = (flowView.webContents.getURL() || '').includes(`/project/${projectId}`)
     page = await probe()
-    if (!page || !isFlowErrorPage(page)) {
+    if (backOnTarget && (!page || !isFlowErrorPage(page))) {
       console.log('[Flow Guard] project recovered after home re-nav')
       return { ok: true }
     }

@@ -75,8 +75,12 @@ export function buildSentryOptions({ env = defaultEnv(), version } = {}) {
     release: `autoflowcut@${version || readAppVersion()}`,
     tracesSampleRate: Number(env.SENTRY_TRACES_SAMPLE_RATE || 0.1),
     beforeBreadcrumb(breadcrumb) {
-      if (breadcrumb?.category === 'console' && breadcrumb.message) {
-        breadcrumb.message = scrubBreadcrumbMessage(breadcrumb.message)
+      if (breadcrumb?.category === 'console') {
+        if (breadcrumb.message) breadcrumb.message = scrubBreadcrumbMessage(breadcrumb.message)
+        // consoleIntegration 은 원본 인자를 data.arguments 에 그대로 보관한다 — message 만 씻으면
+        //   가려진 텍스트가 인자로 다시 나간다. 그리고 자유 형식 콘텐츠(캐릭터 이름, 캡션, 폴더 경로)는
+        //   정규식으로 못 덮는다. 그래서 원본 인자는 아예 내보내지 않는다. 우리가 읽는 건 message 다.
+        if (breadcrumb.data) delete breadcrumb.data.arguments
       }
       return breadcrumb
     },

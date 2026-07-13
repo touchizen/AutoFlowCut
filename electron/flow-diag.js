@@ -57,10 +57,9 @@ export function createFlowDiagSink({
     // 스텝별 dedupe — 전역 1회로 하면 먼저 터진 실패가 뒤의 다른 실패를 가려버린다(토글이 깨지면
     //   제출 버튼이 깨진 걸 영영 못 본다). 대신 distinct 스텝 수에 상한을 걸어 쿼터를 지킨다.
     if (seen.has(step) || seen.size >= maxSteps) return
-    seen.add(step)
 
     const entry = { step, ...detail }
-    entries.push(entry)
+    let delivered = false
 
     try {
       captureMessage?.(`flow: DOM step failed — ${step}`, {
@@ -70,23 +69,32 @@ export function createFlowDiagSink({
         fingerprint: ['flow-dom-failure', step],
         extra: sanitizeForSentry(entry),
       })
+      if (captureMessage) delivered = true
     } catch {
       // 진단 보고 실패가 생성을 죽여선 안 된다.
     }
 
     // 파일은 세션당 하나에 누적한다 — 실패마다 새 파일을 쓰면 배치가 깨졌을 때 바탕화면이
     //   뒤덮이고, 정작 사용자는 뭘 보내야 할지 모른다.
-    const body = JSON.stringify(entries, null, 2)
+    const body = JSON.stringify([...entries, entry], null, 2)
     const targets = filePath ? [filePath] : [`${desktopDir}/${buildFlowDiagFilename(now())}`, `${userDataDir}/${buildFlowDiagFilename(now())}`]
     for (const target of targets) {
       if (!target) continue
       try {
         await writeFile(target, body)
         filePath = target
+        delivered = true
         break
       } catch {
         // Desktop 이 못 쓰는 경우(AppX 는 AppContainer 라 리다이렉트/거부) userData 로 폴백.
       }
+    }
+
+    // ⚠️ dedupe 는 "전달에 성공했을 때"만 소비한다. Sentry 도 파일도 전부 실패했는데 seen 에 넣으면
+    //   그 스텝은 세션 내내 완전한 침묵이 된다 — 진단을 붙여놓고도 눈이 머는, 오늘 이미 한 번 겪은 실패.
+    if (delivered) {
+      seen.add(step)
+      entries.push(entry)
     }
   }
 }

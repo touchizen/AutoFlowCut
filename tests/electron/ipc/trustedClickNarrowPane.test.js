@@ -13,15 +13,19 @@
 // visible error into a two-minute hang. The function already knows the right move — it
 // temporarily enlarges the view offscreen when the view is hidden. Do that here too, and
 // if the button still cannot be reached, say so.
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 vi.mock('electron', () => ({
   screen: { getAllDisplays: () => [{ bounds: { x: 0, y: 0, width: 1280, height: 1022 } }] },
+  powerSaveBlocker: { start: vi.fn(), stop: vi.fn(), isStarted: () => false },
+  shell: { openExternal: vi.fn(), showItemInFolder: vi.fn() },
 }))
 
 const { createSharedHelpers } = await import('../../../electron/ipc/shared.js')
+const layout = await import('../../../electron/ipc/layout.js')
 
-const NARROW = { x: 0, y: 0, width: 256, height: 1022 }
+// splitRatio 0.2 (하한) on a 1280px window → 1280*0.2 - GAP(3) = 253
+const NARROW = { x: 0, y: 0, width: 253, height: 1022 }
 
 /**
  * @param coordsByCall coords the page reports on each measure() — the second reflects the
@@ -58,6 +62,12 @@ const clicksAt = (flowView) => flowView.webContents.sendInputEvent.mock.calls
   .map(([e]) => ({ x: e.x, y: e.y }))
 
 describe('trustedClickOnFlowView — narrow Flow pane', () => {
+  beforeEach(() => {
+    layout.setLayoutMode('split-left')
+    layout.setSplitRatio(0.2)      // 사용자가 스플리터를 최소로 끌어둔 상태
+    layout.setModalVisible(false)
+  })
+
   it('enlarges the view and clicks the real button instead of clamping to the edge', async () => {
     const { ctx, flowView } = makeCtx({
       // Narrow: the submit button is at x=400, past the 256px edge.
@@ -74,8 +84,8 @@ describe('trustedClickOnFlowView — narrow Flow pane', () => {
     expect(res.success).toBe(true)
     // The old code clicked x=255 — the clamped edge, i.e. some other element entirely.
     expect(clicksAt(flowView)).toEqual([{ x: 900, y: 500 }])
-    // And the user's pane width is put back.
-    expect(flowView.getBounds()).toMatchObject({ width: 256 })
+    // And the user's pane width is put back — recomputed from layout, not a stale snapshot.
+    expect(flowView.getBounds()).toMatchObject({ width: 253 })
   })
 
   it('fails honestly when the button still cannot be reached — never a false success', async () => {
@@ -89,10 +99,11 @@ describe('trustedClickOnFlowView — narrow Flow pane', () => {
     expect(res.success).toBe(false)
     expect(clicksAt(flowView)).toEqual([])          // never click the wrong thing
     expect(onDomFailure).toHaveBeenCalledTimes(1)   // and tell us about it
-    expect(flowView.getBounds()).toMatchObject({ width: 256 })
+    expect(flowView.getBounds()).toMatchObject({ width: 253 })
   })
 
   it('leaves a normal, wide pane alone — no resize, no churn', async () => {
+    layout.setSplitRatio(0.75)   // 넓은 패널: 1280*0.75 - 3 = 957
     const { ctx, flowView } = makeCtx({
       bounds: { x: 0, y: 0, width: 957, height: 1022 },
       coordsByCall: [{ x: 480, y: 500, width: 40, height: 40, visible: true }],
