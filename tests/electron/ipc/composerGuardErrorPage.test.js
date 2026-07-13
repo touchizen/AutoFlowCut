@@ -19,8 +19,9 @@ const ID = 'aaaabbbb-1111-2222-3333-ccccddddeeee'
 const URL_ON_PROJECT = `https://labs.google/fx/tools/flow/project/${ID}`
 
 // Real dumps (2026-06-24): error/landing ≈ 7 interactive elements, a loaded project ≈ 63.
-const DEAD_PAGE = { hasComposer: false, interactiveCount: 7 }
-const LIVE_PAGE = { hasComposer: true, interactiveCount: 63 }
+// 실제 probe 는 같은 페이지 컨텍스트에서 url 을 함께 돌려준다(ABA 방지) — 목도 그래야 한다.
+const DEAD_PAGE = { hasComposer: false, interactiveCount: 7, url: URL_ON_PROJECT }
+const LIVE_PAGE = { hasComposer: true, interactiveCount: 63, url: URL_ON_PROJECT }
 
 function makeCtx({ pages }) {
   const seq = [...pages]

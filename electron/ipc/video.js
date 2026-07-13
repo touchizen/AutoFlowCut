@@ -779,7 +779,8 @@ export function registerVideoIPC(ipcMain, deps) {
       console.log('[Flow VideoStatus] HTTP', result.status, 'body length:', result.text?.length || 0)
 
       if (!result.ok) {
-        console.warn('[Flow VideoStatus] Error:', result.text?.substring(0, 300))
+        // 응답 본문은 프롬프트·이름을 되돌려줄 수 있다 — 길이만.
+        console.warn('[Flow VideoStatus] Error: bodyLen=', (result.text || '').length)
         return { success: false, error: `HTTP ${result.status}: ${(result.text || '').substring(0, 200)}` }
       }
 
@@ -829,7 +830,7 @@ export function registerVideoIPC(ipcMain, deps) {
             console.log('[Flow VideoStatus] ✅ Complete! videoUrl:', videoUrl?.substring(0, 80))
             statuses.push({ status: 'complete', mediaId, videoUrl })
           } else if (genStatus.includes('FAILED') || genStatus.includes('ERROR')) {
-            console.warn('[Flow VideoStatus] ❌ FAILED media detail:', JSON.stringify(m).substring(0, 1000))
+            console.warn('[Flow VideoStatus] ❌ FAILED media detail: keys=', Object.keys(m || {}))
             // 실제 실패 사유를 우선 추출 ("Media not found." 등). 구조:
             //   mediaMetadata.mediaStatus.error.message / .failureReasons[0]
             // 이게 stale("Media not found") 자동복구 판정(isStaleVideoStatus)의 입력이므로

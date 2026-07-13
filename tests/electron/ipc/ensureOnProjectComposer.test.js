@@ -12,7 +12,10 @@ function makeCtx({ getURL = () => '', loadURL = vi.fn() } = {}) {
     webContents: {
       getURL: () => getURL(),
       loadURL,
-      executeJavaScript: vi.fn().mockResolvedValue(null),
+      // probe 는 페이지 컨텍스트에서 url 을 함께 돌려준다.
+      executeJavaScript: vi.fn(async (script) => (String(script).includes('interactiveCount')
+        ? { hasComposer: true, interactiveCount: 63, url: getURL() }
+        : null)),
       sendInputEvent: vi.fn(),
       session: null,
       focus: vi.fn(),

@@ -510,7 +510,8 @@ export function registerCharacterIPC(ipcMain, deps) {
     // HTTP 오류 status 보존 — 안 그러면 401/429/500 이 "entityId/workflowId 없음" 으로 뭉개져
     //   렌더러 quota/auth/server 처리가 안 먹는다(reroll/scene 과 동일 가드).
     if (cap.resp0 && cap.resp0.status >= 400) {
-      console.warn('[Flow Character] generate HTTP', cap.resp0.status, ':', (body || '').slice(0, 160))
+      // 응답 본문은 프롬프트·이름을 되돌려줄 수 있다 — 상태와 길이만.
+      console.warn('[Flow Character] generate HTTP', cap.resp0.status, 'bodyLen=', (body || '').length)
       return { success: false, status: cap.resp0.status, error: 'generate HTTP ' + cap.resp0.status + ': ' + (body || '').slice(0, 160) }
     }
     if (!body) return { success: false, error: '생성 응답 캡처 실패' + (cap.timeout ? '(timeout 120s)' : '') }
@@ -539,7 +540,7 @@ export function registerCharacterIPC(ipcMain, deps) {
           })
           registered = !!regRes.ok
           console.log('[Flow Character] register entities:', regRes.status, registered ? '✓' : '✗')
-          if (!regRes.ok) console.warn('[Flow Character] register body:', (regRes.text || '').slice(0, 200))
+          if (!regRes.ok) console.warn('[Flow Character] register failed: bodyLen=', (regRes.text || '').length)
         } else {
           console.warn('[Flow Character] access token 추출 실패 — 이름 등록 skip')
         }
@@ -612,7 +613,7 @@ export function registerCharacterIPC(ipcMain, deps) {
     //    만들고 quota/auth/server 처리를 우회한다. 그 외 4xx/5xx 는 일반 실패로 반환해 렌더러
     //    공통 핸들러(quota-stop/auth/server)가 error/status 로 처리하게 한다.
     if (resp0 && resp0.status >= 400) {
-      console.warn('[Flow Character] reroll HTTP', resp0.status, ':', (body || '').slice(0, 160))
+      console.warn('[Flow Character] reroll HTTP', resp0.status, 'bodyLen=', (body || '').length)
       // 400 중에서도 stale entity(INVALID_ARGUMENT)만 self-heal 폴백. content-policy/validation
       //   류 400 은 stale 아님 → generic 실패로(엉뚱한 새 character 생성 방지).
       if (resp0.status === 400 && isStaleEntityErrorBody(body)) return { success: false, staleEntity: true, status: 400 }
@@ -914,7 +915,7 @@ export function registerCharacterIPC(ipcMain, deps) {
         break
       }
       if (resp0 && resp0.status >= 400) {
-        console.warn('[Flow Scene] generate failed (HTTP', resp0.status, '):', (body || '').slice(0, 160))
+        console.warn('[Flow Scene] generate failed (HTTP', resp0.status, ') bodyLen=', (body || '').length)
         // 5xx 는 재시도 소진 후에도 실패면 retry 신호(상위 배치/사용자 재시도 대상).
         return { success: false, error: '장면 생성 실패(HTTP ' + resp0.status + ')', status: resp0.status, retry: resp0.status >= 500 }
       }
@@ -1016,7 +1017,7 @@ export function registerCharacterIPC(ipcMain, deps) {
         body: JSON.stringify(buildEntityRenameBody({ projectId, entityId, displayName })),
       })
       console.log('[Flow Character] rename entities:', res.status, res.ok ? '✓' : '✗')
-      if (!res.ok) console.warn('[Flow Character] rename body:', (res.text || '').slice(0, 200))
+      if (!res.ok) console.warn('[Flow Character] rename failed: bodyLen=', (res.text || '').length)
       // PATCH 가 실패했으면 SPA 를 건드리지 않는다 — 서버와 화면이 어긋나는 게 더 나쁘다.
       if (!res.ok) return { success: false, status: res.status, nameApplied: false }
       const nameApplied = await applyEntityNameToSpa(getFlowView(), { entityId, projectId, displayName })
@@ -1096,7 +1097,7 @@ export function registerCharacterIPC(ipcMain, deps) {
           })
           registered = !!reg.ok
           console.log('[Flow Character] A2 register entities:', reg.status, registered ? '✓' : '✗')
-          if (!reg.ok) console.warn('[Flow Character] A2 register body:', (reg.text || '').slice(0, 200))
+          if (!reg.ok) console.warn('[Flow Character] A2 register failed: bodyLen=', (reg.text || '').length)
         }
       } catch (e2) {
         console.warn('[Flow Character] A2 register error:', e2.message)

@@ -117,6 +117,8 @@ export function createSharedHelpers(ctx) {
         console.warn('[TrustedClick] aborted:', e.message)
         // ⚠️ 진단은 페이지를 프로브하지 않는다 — 먹통 렌더러를 다시 await 하면 이 catch 도 안 끝나고
         //    락이 영영 안 풀린다(병목이라 앱 전체 정지). 컨텍스트 없이 사실만 보고한다.
+        // 좀비가 영영 안 깨어날 수 있으므로 여기서도 복원한다(멱등).
+        try { updateBounds(getMainWindow(), getFlowView()) } catch { /* 뷰가 이미 없을 수 있다 */ }
         if (opts.required && onDomFailure) {
           await onDomFailure(`trusted-click:${opts.step || 'unknown'}`, { reason: 'timeout', error: e.message }).catch(() => {})
         }
@@ -143,6 +145,7 @@ export function createSharedHelpers(ctx) {
     // 뷰를 창 크기만큼 키워 화면 밖에 배치 — 사용자에겐 안 보이고, 페이지는 정상 폭으로 레이아웃된다.
     //   (모든 디스플레이 너머로 — 멀티모니터에서 보조 모니터에 안 깜빡이게.)
     const enlargeOffscreen = async () => {
+      if (token.aborted) return
       const { width, height } = mainWindow.getContentBounds()
       flowView.setBounds(computeOffscreenBounds(screen.getAllDisplays(), mainWindow.getBounds().x, width, height))
       enlarged = true
@@ -177,7 +180,8 @@ export function createSharedHelpers(ctx) {
         if (!target) return { ok: false, why: 'gone' };
         const hit = document.elementFromPoint(${x}, ${y});
         if (!hit) return { ok: false, why: 'nothing-at-point' };
-        return { ok: target === hit || target.contains(hit) || hit.contains(target), why: 'covered' };
+        // hit.contains(target) 은 넣지 않는다 — 큰 부모가 hit 이면 우리 버튼이 이벤트를 못 받는다는 뜻이다.
+        return { ok: target === hit || target.contains(hit), why: 'covered' };
       })()
     `).then((r) => (r && typeof r.ok === 'boolean' ? r : { ok: true, why: 'unreadable' }))
      .catch(() => ({ ok: true, why: 'unreadable' }))   // 판정 불가면 막지 않는다 — 클릭은 시도한다
@@ -270,6 +274,7 @@ export function createSharedHelpers(ctx) {
         return { success: false, error: 'View bounds changed mid-click' }
       }
 
+      if (token.aborted) return { success: false, error: 'aborted' }
       flowView.webContents.sendInputEvent({ type: 'mouseDown', x: coords.x, y: coords.y, button: 'left', clickCount: 1 })
       await new Promise(r => setTimeout(r, 80))
 
@@ -303,8 +308,11 @@ export function createSharedHelpers(ctx) {
       //   클릭이 도는 ~1초 사이에 사용자가 모달을 열거나(→ Flow 를 0×0 으로 숨겨야 함) 스플리터를
       //   드래그했을 수 있다. 스냅샷을 복원하면 그 변경을 덮어써서, 최악의 경우 Flow 네이티브 뷰가
       //   모달 위에 되살아난다(네이티브라 CSS z-index 로 못 가린다). updateBounds 가 유일한 진실이다.
-      if (enlarged && !token.aborted) {
-        await new Promise(r => setTimeout(r, 500)) // 클릭 이벤트 처리 대기
+      // ⚠️ abort 라고 건너뛰면 안 된다 — 확대해둔 뷰가 **화면 밖에 영구히 남는다**(사용자는 Flow 가
+      //    사라진 걸 본다). abort 야말로 복원이 필요한 순간이다. 좀비의 중복 복원은 아래 outer catch
+      //    에서 한 번 더 부르는 것으로 수렴한다(updateBounds 는 멱등).
+      if (enlarged) {
+        if (!token.aborted) await new Promise(r => setTimeout(r, 500)) // 클릭 이벤트 처리 대기
         updateBounds(mainWindow, flowView)
         console.log('[TrustedClick] Restored bounds from layout:', flowView.getBounds())
       }
@@ -1069,9 +1077,10 @@ export function createSharedHelpers(ctx) {
       await reportDomFailure('project-probe-unreadable', 'probe_threw', { projectId, error: r.error })
       return { ok: false, error: 'Flow 페이지를 읽을 수 없습니다. Flow 탭을 확인한 뒤 다시 시도해주세요.' }
     }
-    // ⚠️ probe 는 await 다. 그 사이 사용자가 다른 프로젝트로 넘어가면, B 의 건강한 probe 결과를 보고
-    //    "A 맞다" 고 ok:true 를 내준다. probe 결과는 **그 시점의 URL** 에 대해서만 유효하다.
-    if (!onProjectComposerUrl(safeUrl(flowView), projectId)) {
+    // ⚠️ probe 결과는 **그것이 읽힌 페이지** 에 대해서만 유효하다. 밖에서 getURL() 을 다시 부르면
+    //    A→B→A 로 오간 경우 B 의 결과를 A 의 것으로 오인한다(ABA). probe 가 같은 컨텍스트에서 돌려준
+    //    url 로 짝을 맞춘다.
+    if (!onProjectComposerUrl(r.page?.url || '', projectId)) {
       return { ok: false, error: 'Flow 프로젝트가 도중에 바뀌었습니다. 다시 시도해주세요.' }
     }
     let page = r.page
@@ -1092,7 +1101,7 @@ export function createSharedHelpers(ctx) {
     //   나고, 그다음 DOM 조작이 엉뚱한 페이지에서 돈다. URL 이 대상 프로젝트인지 반드시 다시 본다.
     r = await probe()
     page = r.read ? r.page : null
-    const backOnTarget = onProjectComposerUrl(safeUrl(flowView), projectId)   // probe 이후에 확인한다
+    const backOnTarget = onProjectComposerUrl(page?.url || '', projectId)   // probe 가 읽은 그 페이지의 url
     if (backOnTarget && r.read && (!page || !isFlowErrorPage(page))) {
       console.log('[Flow Guard] project recovered after home re-nav')
       return { ok: true }
@@ -1120,8 +1129,11 @@ export function createSharedHelpers(ctx) {
     //    origin 과 pathname 을 정확히 본다.
     let u
     try { u = new URL(url) } catch { return false }
-    if (!/(^|\.)labs\.google$/i.test(u.hostname)) return false
-    const m = u.pathname.match(new RegExp(`/tools/flow/project/${projectId}(/[^/]*)?$`))
+    if (u.hostname.toLowerCase() !== 'labs.google') return false
+    // ⚠️ projectId 를 정규식에 그대로 넣으면 저장값이 "[" 같을 때 SyntaxError 로 **던진다** —
+    //    가드가 {ok:false} 를 반환하는 대신 reject 된다. 이스케이프한다.
+    const esc = String(projectId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const m = u.pathname.match(new RegExp(`/tools/flow/project/${esc}(/[^/]*)?$`))
     if (!m) return false
     return COMPOSER_SUBPATHS.has(m[1] || '')
   }

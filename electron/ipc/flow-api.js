@@ -1771,7 +1771,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
             for (const btn of buttons) {
               const text = (btn.textContent || '').trim()
               if (text === '닫기' || text === 'Close' || text === '닫 기') {
-                console.log('[DOMDownload] Clicking close button: ' + text)
+                console.log('[DOMDownload] Clicking close button')   // 버튼 텍스트는 페이지 콘텐츠
                 btn.click()
                 break
               }

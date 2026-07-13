@@ -263,6 +263,8 @@ export const FLOW_PAGE_INJECTION = /* js */ `
                 : applyOmniDuration(req.videoModelKey, inject.duration)  // OmniFlash 만 효과, 그 외 no-op
             }
             _init = { ..._init, body: JSON.stringify(body) }
+  // 페이지 스크립트의 로그다. main 이 '[Flow Page]' 접두로 포워딩하고, beforeBreadcrumb 이 그
+  //   접두의 breadcrumb 을 통째로 버린다(페이지 = 사용자 콘텐츠). safe-log: Sentry 로 나가지 않는다.
             console.log('[Flow Inject] video', isRef ? 'r2v' : 't2v', ':', body.requests[0] && body.requests[0].videoModelKey, 'seed', inject.seed, 'dur', inject.duration)
           }
         }

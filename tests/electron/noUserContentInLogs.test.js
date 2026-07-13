@@ -35,8 +35,10 @@ const CONTENT_BEARING = new RegExp(
     'prompt', 'promptKey', 'promptText', 'editorText', 'userText', 'narration', 'script', 'srt', 'caption',
     // the user's names — @mentions are characters they created
     'name', 'displayName', 'label', 'title', 'alt', 'placeholder',
-    // page content, and objects that nest it
-    'diag', 'textButtons', 'bodyHtml', 'html', 'value',
+    // page content, raw API bodies, and objects that nest them
+    // ('text' and 'body' are here because Flow echoes prompts and names back in error responses —
+    //  round nine found four logs dumping up to 1000 chars of raw response.)
+    'diag', 'text', 'textButtons', 'body', 'bodyHtml', 'html', 'value',
     // filesystem layout — absolute paths carry the account name
     'path', 'filePath', 'tempDir', 'savePath', 'outputPath', 'workFolder', 'workFolderPath', 'dir',
   ].join('|') + ')\\b',

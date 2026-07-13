@@ -162,21 +162,21 @@ export function scrubEvent(event) {
     }
   }
 
-  const seen = new WeakSet()
-  // transaction 이름·logentry·user.username/ user.data 는 전부 실측으로 그대로 나가고 있었다.
-  for (const f of ['message', 'transaction']) {
-    if (typeof event[f] === 'string') event[f] = scrubSentryString(event[f])
+  // ⚠️ 필드 화이트리스트로 훑으면 반드시 빠진다 — threads · debug_meta · stacktrace 의
+  //    frames[].filename(= /Users/<계정>/…) 이 통째로 새어나갔다(실측). **이벤트 전체**를 값 기준으로 훑는다.
+  scrubDeep(event, new WeakSet(), { keys: false })
+
+  // 그다음 사용자 데이터가 사는 하위 트리만 키 기준으로 한 번 더 — sessionToken · characterName 처럼
+  //   값만 봐선 못 잡는 것들. SDK 메타(sdk.name 등)는 건드리지 않는다.
+  for (const field of ['extra', 'tags', 'request', 'user', 'logentry', 'exception', 'threads', 'breadcrumbs']) {
+    if (event[field]) scrubDeep(event[field], new WeakSet(), { keys: true })
   }
-  if (event.logentry) scrubDeep(event.logentry, seen)
-  if (event.user) scrubDeep(event.user, seen)
-  for (const field of ['request', 'exception', 'extra', 'tags', 'spans']) {
-    if (event[field]) scrubDeep(event[field], seen)
-  }
-  // contexts: SDK 가 만드는 것(os.name, device.name …)에 CONTENT_KEYS 를 걸면 진단만 죽는다.
-  //   반대로 우리가 붙인 커스텀 컨텍스트는 사용자 콘텐츠를 담을 수 있으니 키까지 본다.
+
+  // contexts: SDK 생성값(os.name 등)에 CONTENT 규칙을 걸면 진단만 죽는다. 커스텀 컨텍스트와
+  //   device(= 사용자 컴퓨터 이름)만 키까지 본다.
   if (event.contexts) {
     for (const [name, ctx] of Object.entries(event.contexts)) {
-      scrubDeep(ctx, seen, { keys: !SDK_CONTEXTS.test(name) })
+      scrubDeep(ctx, new WeakSet(), { keys: !SDK_CONTEXTS.test(name) })
     }
   }
   if (Array.isArray(event.breadcrumbs)) event.breadcrumbs = event.breadcrumbs.map(scrubBreadcrumb).filter(Boolean)
