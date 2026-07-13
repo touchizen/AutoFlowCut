@@ -22,7 +22,7 @@
  * `npm run test:spike` (SPIKE=1) 로만 돈다.
  */
 import { describe, it, expect, afterEach } from 'vitest'
-import { spawn, execFileSync } from 'node:child_process'
+import { spawn, spawnSync, execFileSync } from 'node:child_process'
 import { appendFileSync, mkdirSync, mkdtempSync, existsSync, rmSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname, join } from 'node:path'
@@ -234,9 +234,18 @@ describe('M0-13 — PATH 에 node 없이 packaged Electron runtime 으로 adapte
 
     // 🔴 **positive control 을 테스트 안에 넣는다.** 없으면 codex 가 사용자의 진짜 auth 를 찾아 쓰고도
     //    "auth 없이 됐다" 가 **공짜로 통과**한다. (§5: 관측 장치가 실패하면 공짜 PASS)
-    const loginStatus = execFileSync(CODEX_BIN, ['login', 'status'], {
-      env: { PATH: CLEAN_PATH, HOME: emptyHome, CODEX_HOME: emptyHome }, encoding: 'utf-8',
-    }).trim()
+    // ⚠️ `codex login status` 는 **미로그인이면 non-zero 로 종료한다** → execFileSync 가 던진다.
+    //    "프로세스가 돌고 non-zero"(= 미로그인, 우리가 원하는 것)와 "프로세스가 아예 못 뜸"(관측 실패)은 **다른 사건**이다.
+    //    후자를 미로그인으로 읽으면 공짜 PASS 가 난다 → 던진다.
+    const loginStatus = ((() => {
+      const opts = { env: { PATH: CLEAN_PATH, HOME: emptyHome, CODEX_HOME: emptyHome }, encoding: 'utf-8' }
+      try {
+        return execFileSync(CODEX_BIN, ['login', 'status'], opts)
+      } catch (err) {
+        if (typeof err.status !== 'number') throw new Error(`codex login status 를 실행하지 못했다 (${err.code}) — 공짜 PASS 방지`)
+        return `${err.stdout ?? ''}${err.stderr ?? ''}`
+      }
+    })()).trim()
     expect(
       loginStatus,
       `🔴 빈 CODEX_HOME 이 로그인돼 있다(${loginStatus}) — 이 조건에서 handshake 가 돌아도 아무것도 증명 못 한다`,
@@ -421,9 +430,14 @@ describe('M0-13 — PATH 에 node 없이 packaged Electron runtime 으로 adapte
     // 🔴 이 테스트의 **나머지 절반은 모델 루프**라 로그인이 필요하다 (실측: 미인증이면 `401 Unauthorized`).
     //    CI 러너에는 로그인이 없다 — 거기선 **정직하게 skip 하고 raw 에 남긴다.** 조용한 초록은 증거가 아니다.
     //    (플랫폼 리스크는 전부 handshake 쪽에 살고, 그건 위의 무인증 테스트가 로그인 없이 잰다.)
-    const loggedIn = /logged in/i.test(
-      (() => { try { return execFileSync(CODEX_BIN, ['login', 'status'], { env: process.env, encoding: 'utf-8' }) } catch { return '' } })(),
-    )
+    // ⚠️ `codex login status` 는 **stderr 로도 쓴다** — stdout 만 읽으면 로그인돼 있는데도 빈 문자열이 나와
+    //    "미로그인" 으로 오판하고 **criterion 테스트를 조용히 skip 한 채 초록**이 된다. (실제로 한 번 그렇게 났다.)
+    //    제품의 `defaultAuthCheck` 도 stdout+stderr 를 둘 다 합쳐 읽는다 — 같은 방식으로 읽는다.
+    //    그리고 `Not logged in` 도 `/logged in/i` 에 걸리므로 **부정형을 먼저 배제**해야 한다.
+    const auth = spawnSync(CODEX_BIN, ['login', 'status'], { env: process.env, encoding: 'utf-8' })
+    if (auth.error) throw new Error(`codex login status 를 실행하지 못했다 (${auth.error.code}) — 공짜 skip 방지`)
+    const authText = `${auth.stdout ?? ''}${auth.stderr ?? ''}`
+    const loggedIn = !/not logged in/i.test(authText) && /logged in/i.test(authText)
     if (!loggedIn) {
       record('M0-13 codex + Electron-as-node adapter', {
         skipped: 'codex 미로그인 — 모델 루프를 못 돈다 (플랫폼 리스크는 무인증 handshake 테스트가 커버한다)',

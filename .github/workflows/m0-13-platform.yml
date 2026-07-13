@@ -1,0 +1,131 @@
+# M0-13 — 패키징 Codex adapter 를 **win / linux 에서** 잰다.
+#
+# 스펙 criterion: 시스템 PATH 에서 `node` 를 제거하고 **packaged Electron runtime** 으로
+# echo adapter **handshake / tool call** 을 완주한다. FAIL 이면 Codex ship 금지.
+#
+# 🔓 **secret 이 하나도 필요 없다.** 실측(2026-07-14): codex 의 handshake
+# (`initialize` → `thread/start` → `mcpServerStatus/list`)는 **로그인 없이 돈다.**
+# 같은 env 에서 모델 turn 은 `401 Unauthorized` 로 죽는다 — 즉 **모델 루프만** auth-gated 다.
+# 그리고 **플랫폼 리스크는 전부 handshake 쪽에 산다**: 패키징 exe 를 MCP stdio server 로 spawn,
+# 공백 든 설치 경로의 quoting, per-server env 전파, AppImage 의 FUSE mount 경로.
+# 모델 루프는 그냥 HTTPS = 플랫폼 리스크 0 = darwin 실측으로 커버된다.
+# → 그래서 여기선 **로그인 없이** 플랫폼 리스크 전체를 닫는다. ChatGPT auth.json 을 CI secret 에
+#   넣지 않는다 (refresh rotation 으로 썩고 **사용자의 실제 로그인을 깨뜨릴 수 있다**).
+#
+# ⚠️ 여기서 **안 닫히는 것: MSIX(appx)**. 서명 없이는 설치조차 안 된다 (자체서명 + dev mode 필요).
+#    appx 만 hold 하고 NSIS/zip/AppImage/deb 은 이 결과로 판정하라.
+
+name: M0-13 packaged adapter (mac/win/linux)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'tests/spike/m0-13.codexPackagedAdapter.spike.test.js'
+      - 'scripts/afterPack.cjs'
+      - '.github/workflows/m0-13-platform.yml'
+
+jobs:
+  macos:
+    # ⚠️ CI 의 mac 빌드는 **미서명·미공증**이다 (Apple 자격증명을 CI 에 두지 않는다).
+    #    그래서 **darwin 의 정본 측정은 여전히 로컬의 서명+공증된 `.app`** 이다 — 이 job 은 **회귀 가드**다.
+    #    (서명이 패키징된 codex Rust 바이너리를 깨는지는 hardened runtime 서명이 필요해서 여기선 못 잰다.)
+    runs-on: macos-latest          # arm64
+    env:
+      SKIP_NOTARIZE: '1'
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: 'npm' }
+      - run: npm ci
+      - name: Pack (--dir, unsigned)
+        run: npm run pack -- -c.forceCodeSigning=false
+      - name: M0-13 spike
+        run: npm run test:spike -- tests/spike/m0-13.codexPackagedAdapter.spike.test.js
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: m0-13-raw-macos
+          path: docs/superpowers/specs/m0-13-raw.jsonl
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: 'npm' }
+
+      - run: npm ci
+
+      # 서명은 끈다 — 스파이크는 **런타임**을 재지 서명을 재지 않는다.
+      # (repo 는 forceCodeSigning:true + signtoolOptions.certificateSha1 이라 CI 엔 인증서가 없어 죽는다.)
+      - name: Pack (--dir, unsigned)
+        run: npm run pack -- -c.forceCodeSigning=false -c.win.signAndEditExecutable=false
+
+      # 🔴 **공백이 든 경로로 옮긴다.** NSIS 는 `C:\Program Files\...` 같은 데 설치된다 —
+      #    codex 가 그 exe 를 MCP server 로 spawn 할 때 **CreateProcess quoting 이 여기서 깨진다.**
+      #    이걸 안 하면 Windows 의 진짜 리스크를 하나도 안 재는 것이다.
+      - name: Install to a path WITH SPACES
+        shell: pwsh
+        run: |
+          $dest = 'C:\M0 13 spike\AutoFlowCut'
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Copy-Item -Recurse -Force 'release\win-unpacked\*' $dest
+          if (-not (Test-Path "$dest\AutoFlowCut.exe")) { throw 'packaged exe not found' }
+          "M0_13_ELECTRON_BIN=$dest\AutoFlowCut.exe" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "M0_13_APP_DIR=$dest"                      | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "M0_13_RESOURCES=$dest\resources"          | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - name: M0-13 spike
+        run: npm run test:spike -- tests/spike/m0-13.codexPackagedAdapter.spike.test.js
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: m0-13-raw-windows
+          path: docs/superpowers/specs/m0-13-raw.jsonl
+
+  linux-unpacked:
+    # deb 는 설치 레이아웃이 `--dir` 트리와 **동형**이다 → 이건 정당한 대리 측정이다.
+    # (AppImage 는 아니다 — 아래 별도 job 에서 진짜 AppImage 로 잰다.)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: 'npm' }
+      - run: npm ci
+      - run: npm run pack
+      - name: M0-13 spike
+        run: npm run test:spike -- tests/spike/m0-13.codexPackagedAdapter.spike.test.js
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: m0-13-raw-linux-unpacked
+          path: docs/superpowers/specs/m0-13-raw.jsonl
+
+  linux-appimage:
+    # 🔴 AppImage 는 **별개 동물**이다: 실행하면 squashfs 가 `/tmp/.mount_XXXX` 에 FUSE 로 붙고
+    #    `process.execPath` 가 **그 임시 mount 안**이 된다. codex 가 그 경로를 spawn 할 수 있어야 한다.
+    #    `--appimage-extract` 로 풀어서 재면 **mount 리스크를 통째로 안 재는 것**이다 → 진짜로 실행한다.
+    runs-on: ubuntu-22.04          # libfuse2 (AppImage 는 FUSE2 를 쓴다)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: 'npm' }
+      - run: sudo apt-get update && sudo apt-get install -y libfuse2
+      - run: npm ci
+      - name: Build real AppImage
+        run: npm run pack -- --linux AppImage
+      - name: Point the spike at the AppImage itself
+        run: |
+          APPIMAGE=$(ls release/*.AppImage | head -1)
+          chmod +x "$APPIMAGE"
+          echo "M0_13_ELECTRON_BIN=$(realpath "$APPIMAGE")" >> "$GITHUB_ENV"
+      - name: M0-13 spike
+        run: npm run test:spike -- tests/spike/m0-13.codexPackagedAdapter.spike.test.js
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: m0-13-raw-linux-appimage
+          path: docs/superpowers/specs/m0-13-raw.jsonl
