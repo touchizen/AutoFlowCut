@@ -394,7 +394,10 @@ const gatedCall = (r) => {
  *       제품 설계(스펙 §D9 결정2: "adapter process 안에서 elicitInput() form elicitation을 발행")가 이 모양이다 — adapter 의 tool handler 가 elicitInput 을 소유한다.
  *
  *   `'native'` — Codex 가 스스로 만드는 MCP tool-call 승인(#0)을 붙잡는다.
- *       스펙엔 없는 경로지만 **더 강한 게이트**다(MCP 서버 쪽 코드 없이 아무 툴에나 걸린다).
+ *       ⚠️ **(B) 는 2026-07-14 에 기각됐다** (`_meta` 가 비계약 `JsonValue` 고, `tool_title` 이 canonical name 이 아니라
+ *          display title 이라 R/G/B 분류가 불가능하다). 이 테스트는 **native 게이트의 동작을 문서화하는 용도**로 남긴다 —
+ *          제품은 native 를 **UI 없이 auto-accept** 하므로, 그 auto-accept 가 깨지면(=native 가 사람에게 새면)
+ *          여기서 잰 동작이 근거가 된다.
  *       ⚠️ 단 **모든** MCP tool call 에 승인이 뜬다 — plain `echo` 에도. 그래서 스펙의 "read 1개가 UI 없이 실행" 요구 의
  *       *"read 1개는 UI 없이 실행"* 과 충돌한다. 채택하려면 adapter 가 R 툴을 **UI 없이 auto-accept** 해야 한다.
  *       ⚠️ 분류를 `_meta.tool_title` 로 하려 들지 마라 — 생성 타입상 `_meta` 는 그냥 `JsonValue` 라
