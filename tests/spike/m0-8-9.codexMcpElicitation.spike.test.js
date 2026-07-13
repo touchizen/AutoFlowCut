@@ -49,11 +49,12 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { spawn, execFileSync } from 'node:child_process'
-import { appendFileSync, mkdirSync, mkdtempSync, existsSync, readFileSync, copyFileSync, rmSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, existsSync, readFileSync, rmSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { buildCodexClientOptions, resolveCodexExecutablePath } from '../../electron/api/llm/codexSdk.js'
+import { buildCodexClientOptions, resolveCodexExecutablePath, prepareCodexRuntimeHome } from '../../electron/api/llm/codexSdk.js'
+import { buildOrchestratorThreadParams } from '../../electron/api/llm/codexAppServer.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const FIXTURE = resolve(here, 'fixtures/echo-mcp.js')
@@ -106,9 +107,14 @@ beforeEach(() => { workDir = mkdtempSync(join(tmpdir(), 'm0-89-')) })
  * 실측으로 밟았다 — 정상 GREEN run 만으로 70개가 쌓여 있었다. (핸드오프는 "크래시 시 잔존" 만 적어놨지만
  * **정상 종료도 안 지우고 있었다.**) 테스트가 실패해도 반드시 돈다.
  */
-afterEach(() => {
+const runtimeCleanups = []
+afterEach(async () => {
   if (workDir) rmSync(workDir, { recursive: true, force: true })
   workDir = null
+  // 🔴 제품 runtime home 에는 사용자의 **진짜 auth.json** 이 들어 있다. 반드시 지운다.
+  //    (제품은 cleanup 이 `finally` 에만 있어 크래시 시 `/tmp` 에 영구 잔존한다 — D23 항목.
+  //     실측으로 mode 0600 짜리 복사본 3개가 남아 있었다.)
+  while (runtimeCleanups.length) await runtimeCleanups.pop()()
 })
 
 /**
@@ -118,14 +124,15 @@ afterEach(() => {
  * @param onElicitation `mcpServer/elicitation/request` 가 오면 부른다. 반환값이 respond payload.
  *                      **hold 는 여기서 건다** — fixture 가 아니라 responder 쪽이다.
  */
-function runCodexTurn({ prompt, onElicitation, timeoutMs = 25 * 60 * 1000, lockdown = true, elicitTimeoutMs = null }) {
-  return new Promise((resolve_) => {
-    const codexHome = join(workDir, 'codex-home')
-    mkdirSync(codexHome, { recursive: true })
-    // 구독 자격증명만 가져온다 (제품 prepareCodexRuntimeHome 과 같은 규칙).
-    const realAuth = join(process.env.HOME, '.codex', 'auth.json')
-    if (existsSync(realAuth)) copyFileSync(realAuth, join(codexHome, 'auth.json'))
+async function runCodexTurn({ prompt, onElicitation, timeoutMs = 25 * 60 * 1000, lockdown = true, elicitTimeoutMs = null }) {
+  // ⚠️ **runtime home 도 제품 것을 쓴다.** 스펙 M0-8 의 PASS 기준은
+  //    *"client options / **runtime home** / thread profile 을 **모두 통과**"* 다.
+  //    손으로 mkdtemp + auth.json 복사를 하면 셋 중 하나만 측정하는 것이다.
+  const runtime = await prepareCodexRuntimeHome({ env: process.env })
+  runtimeCleanups.push(runtime.cleanup)
+  const codexHome = runtime.codexHome
 
+  return new Promise((resolve_) => {
     const markerPath = join(workDir, 'echo-body-marker')
 
     // ── 제품 client options 를 **그대로** 통과한다 (스펙 M0-8/M0-S06 의 요구) ──
@@ -133,7 +140,7 @@ function runCodexTurn({ prompt, onElicitation, timeoutMs = 25 * 60 * 1000, lockd
     //    스펙 M0-S06 은 *"`mcp_servers:{}` 후처리 … 남으면 RED"* 라고 못박는다.
     //    → `runtimeProfile:'orchestrator'` + `mcpServers` 인자가 정본 경로다 (스펙 §340).
     const opts = buildCodexClientOptions({
-      env: { ...process.env, CODEX_HOME: codexHome },
+      env: runtime.env,                 // 제품 runtime home 이 만든 env (CODEX_HOME 포함)
       runtimeProfile: 'orchestrator',
       mcpServers: {
         echo: {
@@ -160,7 +167,7 @@ function runCodexTurn({ prompt, onElicitation, timeoutMs = 25 * 60 * 1000, lockd
 
     const child = spawn(CODEX_BIN, ['app-server'], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...opts.env, CODEX_HOME: codexHome },
+      env: opts.env,      // SAFE_ENV_KEYS allowlist. CODEX_HOME 은 runtime.env 를 통해 들어온다.
     })
 
     const lines = []
@@ -274,28 +281,11 @@ function runCodexTurn({ prompt, onElicitation, timeoutMs = 25 * 60 * 1000, lockd
 
         if (m.id === 0 && m.result) {
           send({ jsonrpc: '2.0', method: 'initialized', params: {} })
+          // ⚠️ **thread profile 도 제품 것을 쓴다** (스펙 M0-8: client options / runtime home / thread profile 전부).
+          //    `approvalPolicy` 가 급소다 — story 의 `'never'` 는 게이트를 통째로 죽인다.
           send({
             jsonrpc: '2.0', id: 1, method: 'thread/start',
-            params: {
-              cwd: workDir,
-              sandbox: 'read-only',   // ⚠️ 필드명은 `sandbox`. `sandboxMode` 는 없는 키라 조용히 무시된다.
-              // 🎯 M0-9 를 막고 있던 것. `AskForApproval` (0.142.5):
-              //      "untrusted" | "on-failure" | "on-request" | { granular:{…} } | "never"
-              //    `"never"` = 아무것도 묻지 않는다 = **MCP elicitation 도 안 묻는다**
-              //    → 클라이언트 응답을 기다리지 않고 즉시 decline 을 서버에 돌려준다.
-              //      (실측: 우리가 5000ms 붙잡는 동안 tool call 이 9ms 에 끝나고 decline 이 나갔다.)
-              //    granular 는 exec/patch/skill/permission 승인은 끄고 **MCP elicitation 만** 켠다 — D9 그대로.
-              approvalPolicy: {
-                granular: {
-                  sandbox_approval: false,
-                  rules: false,
-                  skill_approval: false,
-                  request_permissions: false,
-                  mcp_elicitations: true,
-                },
-              },
-              config,
-            },
+            params: buildOrchestratorThreadParams({ workingDirectory: workDir, config }),
           })
         }
 

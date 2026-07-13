@@ -114,3 +114,32 @@ describe('listCodexModels', () => {
     expect(await listCodexModels({ spawnImpl: fakeSpawn({ respond: okRespond }), codexPath })).toEqual([])
   })
 })
+
+// ── orchestrator thread profile (스펙 M0-8) ──
+// M0-8 의 PASS 기준은 **client options / runtime home / thread profile 을 모두 통과**하는 것이다.
+// story 용 thread profile(`approvalPolicy:'never'`, `ephemeral:true`)만 있으면 오케스트레이터가
+// 쓸 수 없다 — `'never'` 는 **MCP 승인 게이트를 통째로 죽인다**(응답을 안 기다리고 즉시 decline).
+describe('buildOrchestratorThreadParams', () => {
+  it('MCP elicitation 게이트만 켜고 나머지 승인은 전부 끈다', async () => {
+    const { buildOrchestratorThreadParams } = await import('../../../../electron/api/llm/codexAppServer.js')
+    const params = buildOrchestratorThreadParams({ workingDirectory: '/w', config: { model: 'x' } })
+
+    // 🎯 `'never'` 였다면 게이트가 죽는다 (실측: 우리가 5초 붙잡는 동안 tool call 이 9ms 에 decline 됐다).
+    expect(params.approvalPolicy).toEqual({
+      granular: {
+        sandbox_approval: false,
+        rules: false,
+        skill_approval: false,
+        request_permissions: false,
+        mcp_elicitations: true,
+      },
+    })
+    expect(params.sandbox).toBe('read-only')
+    expect(params.cwd).toBe('/w')
+    expect(params.config).toEqual({ model: 'x' })
+    // 오케스트레이터 thread 는 지속된다 — story 처럼 한 턴 쓰고 버리는 게 아니다.
+    expect(params.ephemeral).toBeUndefined()
+    // story 전용 지시문을 물려받으면 안 된다.
+    expect(params.baseInstructions).toBeUndefined()
+  })
+})

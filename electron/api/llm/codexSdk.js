@@ -58,7 +58,27 @@ const TOOL_FEATURE_OVERRIDES = Object.freeze({
 const TOOLS_TABLE_OVERRIDES = Object.freeze({
   web_search: false,
 })
-const TOOLS_TABLE_DROP = Object.freeze(['experimental_request_user_input'])
+
+/**
+ * ⚠️ **caller config 는 allowlist 다.** 여기 없는 키는 전부 버린다.
+ *
+ * `...callerConfig` 를 spread 하고 아는 키만 덮는 건 **구조적으로 틀렸다** — features 에서 한 번 밟고,
+ * 최상위 config 에서 또 밟았다. 실측으로 새어나간 것들:
+ *   `web_search:'live'`  → native live web search (per-call 승인 없음)
+ *   `tools.future_tool`  → 미지의 tool
+ *   `experimental_use_unified_exec_tool`, 그 밖의 모든 미지 최상위 키
+ *
+ * 여기 있는 건 **모델 튜닝 키뿐이다. tool surface 는 하나도 없다.**
+ */
+const CONFIG_PASSTHROUGH_KEYS = Object.freeze([
+  'model',
+  'model_provider',
+  'model_reasoning_effort',
+  'model_reasoning_summary',
+  'model_verbosity',
+  'service_tier',
+  'personality',
+])
 
 const PLATFORM_PACKAGE_BY_TARGET = {
   'x86_64-unknown-linux-musl': '@openai/codex-linux-x64',
@@ -67,13 +87,6 @@ const PLATFORM_PACKAGE_BY_TARGET = {
   'aarch64-apple-darwin': '@openai/codex-darwin-arm64',
   'x86_64-pc-windows-msvc': '@openai/codex-win32-x64',
   'aarch64-pc-windows-msvc': '@openai/codex-win32-arm64',
-}
-
-/** caller 의 `tools` 테이블에서 tool surface 를 잠근다. 불리언이 아닌 키는 지운다(=기본값=꺼짐). */
-function lockedTools(callerTools) {
-  const tools = { ...plainObject(callerTools), ...TOOLS_TABLE_OVERRIDES }
-  for (const key of TOOLS_TABLE_DROP) delete tools[key]
-  return tools
 }
 
 function plainObject(value) {
@@ -104,23 +117,23 @@ export function buildCodexClientOptions({
     if (env?.[key] != null) safeEnv[key] = String(env[key])
   }
   const callerConfig = plainObject(config)
+  // allowlist. 모델 튜닝 키만 통과한다 — tool surface 는 하나도 안 통과한다.
+  const passthrough = {}
+  for (const key of CONFIG_PASSTHROUGH_KEYS) {
+    if (callerConfig[key] !== undefined) passthrough[key] = callerConfig[key]
+  }
   return {
     env: safeEnv,
     config: {
-      ...callerConfig,
-      // ⚠️ **allowlist 다. caller 의 features 는 통째로 버린다.**
-      //    denylist(=caller features 를 spread 한 뒤 아는 키만 덮기)는 구조적으로 틀렸다 —
-      //    Codex 가 feature 를 추가할 때마다 우리 tool surface 가 조용히 넓어진다.
-      //    실측(0.142.5): `enable_mcp_apps`, `code_mode`, `standalone_web_search`, `sleep_tool`,
-      //    `request_permissions_tool`, `multi_agent_v2` 가 전부 `true` 로 새어나갔다.
-      //    (`enable_mcp_apps` 는 codex_apps — 사용자 계정에 작용하는 툴 31개 — 를 되살릴 수 있는 이름이다.)
+      ...passthrough,
+      // caller 의 features/tools 는 **통째로 버린다.** 우리 잠금만 실린다.
+      // (Codex 가 feature 를 추가할 때마다 tool surface 가 조용히 넓어지던 구멍 — 실측으로
+      //  `enable_mcp_apps`(codex_apps 를 되살리는 이름), `code_mode`, `standalone_web_search`,
+      //  `sleep_tool`, `request_permissions_tool`, `multi_agent_v2` 가 전부 `true` 로 샜다.)
       features: { ...TOOL_FEATURE_OVERRIDES },
-      tools: lockedTools(callerConfig.tools),
+      tools: { ...TOOLS_TABLE_OVERRIDES },
       experimental_use_unified_exec_tool: false,
-      skills: {
-        ...plainObject(callerConfig.skills),
-        include_instructions: false,
-      },
+      skills: { include_instructions: false },
       forced_login_method: 'chatgpt',
       include_permissions_instructions: false,
       include_environment_context: false,

@@ -102,6 +102,39 @@ function buildThreadStartParams({ model, workingDirectory, config }) {
 }
 
 /**
+ * 오케스트레이터(인앱 에이전트) thread profile. story 와 **다른 물건이다.**
+ *
+ * 🎯 `approvalPolicy` 가 급소다. `AskForApproval` 은 5-variant 이고
+ *    (`"untrusted" | "on-failure" | "on-request" | {granular:{…}} | "never"`),
+ *    story 가 쓰는 **`'never'` 는 "아무것도 묻지 않는다" = MCP elicitation 도 안 묻는다.**
+ *    → 클라이언트 응답을 **기다리지 않고 즉시 decline** 을 서버에 돌려준다.
+ *    실측: 우리가 5,000ms 붙잡고 있는 동안 tool call 이 **9ms** 에 끝나고 decline 이 나갔다.
+ *    **게이트를 켜두고 게이트의 스위치를 꺼놓는 셈이다.**
+ *
+ *    `granular` 로 exec/patch/skill/permission 승인은 전부 끄고 **MCP elicitation 만** 켠다 — D9 그대로.
+ *
+ * ⚠️ `granular` 는 `initialize` 의 `capabilities.experimentalApi: true` 없이는 거부된다
+ *    (`-32600 askForApproval.granular requires experimentalApi capability`).
+ */
+export function buildOrchestratorThreadParams({ model, workingDirectory, config }) {
+  return {
+    ...(model ? { model } : {}),
+    cwd: workingDirectory,
+    sandbox: 'read-only',
+    approvalPolicy: {
+      granular: {
+        sandbox_approval: false,
+        rules: false,
+        skill_approval: false,
+        request_permissions: false,
+        mcp_elicitations: true,
+      },
+    },
+    config,
+  }
+}
+
+/**
  * 한 프롬프트 = 한 스레드 = 한 턴. turn/start 는 즉시 반환하므로 turn/completed 알림을 기다린다.
  * 최종 텍스트는 item/completed(agentMessage) 에서만 온다 — turn.items 는 비어 있다(itemsView: notLoaded).
  */

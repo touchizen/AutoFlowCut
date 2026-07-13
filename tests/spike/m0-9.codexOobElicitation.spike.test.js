@@ -24,7 +24,8 @@ import { appendFileSync, mkdirSync, mkdtempSync, existsSync, copyFileSync, readF
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { buildCodexClientOptions, resolveCodexExecutablePath } from '../../electron/api/llm/codexSdk.js'
+import { buildCodexClientOptions, resolveCodexExecutablePath, prepareCodexRuntimeHome } from '../../electron/api/llm/codexSdk.js'
+import { buildOrchestratorThreadParams } from '../../electron/api/llm/codexAppServer.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const FIXTURE = resolve(here, 'fixtures/echo-mcp.js')
@@ -49,18 +50,20 @@ afterEach((ctx) => {
 
 // 🔴 temp CODEX_HOME 에는 사용자의 진짜 auth.json 복사본이 있다. 반드시 지운다.
 const workDirs = []
-afterEach(() => {
+const runtimeCleanups = []
+afterEach(async () => {
   while (workDirs.length) rmSync(workDirs.pop(), { recursive: true, force: true })
+  // 🔴 제품 runtime home 에는 사용자의 진짜 auth.json 이 있다. 반드시 지운다.
+  while (runtimeCleanups.length) await runtimeCleanups.pop()()
 })
 
 describe('M0-9 — out-of-band elicitation (turnId:null)', () => {
   it('handler 밖 elicitation 은 turnId:null 로 오고, respond 뒤에도 세션이 살아 정상 turn 을 완주한다', async () => {
     const workDir = mkdtempSync(join(tmpdir(), 'm0-9-oob-'))
     workDirs.push(workDir)
-    const codexHome = join(workDir, 'codex-home')
-    mkdirSync(codexHome, { recursive: true })
-    const realAuth = join(process.env.HOME, '.codex', 'auth.json')
-    if (existsSync(realAuth)) copyFileSync(realAuth, join(codexHome, 'auth.json'))
+    // 제품 runtime home (스펙 M0-8: client options / runtime home / thread profile 전부 통과)
+    const runtime = await prepareCodexRuntimeHome({ env: process.env })
+    runtimeCleanups.push(runtime.cleanup)
 
     const markerPath = join(workDir, 'echo-body-marker')
     // fixture 의 OOB elicitInput() **promise 가 무엇으로 resolve 됐는지**를 여기에 남긴다.
@@ -68,7 +71,7 @@ describe('M0-9 — out-of-band elicitation (turnId:null)', () => {
     const oobResultPath = join(workDir, 'oob-result.jsonl')
     // 제품 builder 를 **그대로** 통과한다 (우회 금지 — 스펙 M0-S06).
     const opts = buildCodexClientOptions({
-      env: { ...process.env, CODEX_HOME: codexHome },
+      env: runtime.env,
       runtimeProfile: 'orchestrator',
       mcpServers: {
         echo: {
@@ -88,7 +91,7 @@ describe('M0-9 — out-of-band elicitation (turnId:null)', () => {
     const r = await new Promise((resolve_) => {
       const child = spawn(CODEX_BIN, ['app-server'], {
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...opts.env, CODEX_HOME: codexHome },
+        env: opts.env,
       })
       const send = (m) => child.stdin.write(JSON.stringify(m) + '\n')
       const elicitations = []
@@ -127,6 +130,11 @@ describe('M0-9 — out-of-band elicitation (turnId:null)', () => {
             if (m.method === 'mcpServer/elicitation/request') {
               const oob = m.params?._meta?.codex_approval_kind == null && m.params?.turnId == null
               elicitations.push({
+                // ⚠️ **"필드가 null 이다" 와 "필드가 없다" 를 구별해서 기록한다.**
+                //    `?? null` 로 정규화해버리면 스펙이 요구한 `turnId:null` 을 증명한 게 아니라
+                //    "없거나 null 이다" 만 증명한 게 된다.
+                hasTurnIdField: Object.prototype.hasOwnProperty.call(m.params ?? {}, 'turnId'),
+                rawTurnId: m.params?.turnId,
                 turnId: m.params?.turnId ?? null,
                 kind: m.params?._meta?.codex_approval_kind ?? 'fixture',
                 message: m.params?.message ?? null,
@@ -167,17 +175,7 @@ describe('M0-9 — out-of-band elicitation (turnId:null)', () => {
             send({ jsonrpc: '2.0', method: 'initialized', params: {} })
             send({
               jsonrpc: '2.0', id: 1, method: 'thread/start',
-              params: {
-                cwd: workDir,
-                sandbox: 'read-only',
-                approvalPolicy: {
-                  granular: {
-                    sandbox_approval: false, rules: false, skill_approval: false,
-                    request_permissions: false, mcp_elicitations: true,
-                  },
-                },
-                config,
-              },
+              params: buildOrchestratorThreadParams({ workingDirectory: workDir, config }),
             })
           }
           if (m.id === 1) {
@@ -214,7 +212,9 @@ describe('M0-9 — out-of-band elicitation (turnId:null)', () => {
     // (a) turn 없이 열린 elicitation 이 실제로 도착했고, **turnId 가 null 이다**
     const oob = r.elicitations.find((e) => e.message?.startsWith('Out-of-band'))
     expect(oob, `out-of-band elicitation 이 안 왔다 — turnId:null 경로를 측정하지 못했다. elicitations=${JSON.stringify(r.elicitations)}`).toBeTruthy()
-    expect(oob.turnId).toBeNull()
+    // wire 에 **필드가 있고 그 값이 null** 이어야 한다 (필드 누락과 구별한다).
+    expect(oob.hasTurnIdField).toBe(true)
+    expect(oob.rawTurnId).toBeNull()
 
     // (b) **respond 가 정말 완주했다** — MCP 서버 쪽 elicitInput() promise 가 우리 응답으로 resolve 됐다.
     //     ⚠️ 이걸 안 보면 app-server 가 응답을 무시했거나 promise 가 reject 돼도

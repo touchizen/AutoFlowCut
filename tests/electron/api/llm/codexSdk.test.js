@@ -86,6 +86,34 @@ describe('codexSdk helper', () => {
   //      config.experimental_use_unified_exec_tool → 그대로 통과 (exec 툴)
   //    "caller config cannot override Codex auth/isolation defaults" 라는 이름의 테스트가 있었지만
   //    실제 계약은 그보다 좁았다. **이름이 계약을 지켜주지 않는다.**
+  // 🔴 **한 층 위에서 똑같은 실수를 하고 있었다.** builder 가 `...callerConfig` 를 spread 하니
+  //    우리가 열거하지 않은 **최상위 키가 전부 통과**한다. 실측:
+  //      config.web_search = 'live'        → 그대로 통과 (native live web search. per-call 승인 없음)
+  //      config.tools.future_tool = {...}  → 그대로 통과 (미지의 tool)
+  //      config.some_unknown_top = 'x'     → 그대로 통과
+  //    → **config 도 allowlist 로 뒤집는다.** 모델 튜닝 키만 통과시키고 나머지는 버린다.
+  it('config 는 allowlist 다 — 우리가 허용한 키 말고는 전부 버린다', () => {
+    const options = buildCodexClientOptions({
+      config: {
+        model: 'gpt-5.2',                       // ✅ 통과해야 함 (모델 튜닝)
+        model_reasoning_effort: 'high',         // ✅
+        web_search: 'live',                     // ❌ native web search — tool surface 다
+        tools: { future_tool: { enabled: true } }, // ❌ 미지의 tool
+        some_unknown_top: 'x',                  // ❌
+        experimental_use_unified_exec_tool: true,  // ❌
+        mcp_servers: { sneaky: { command: 'x' } }, // ❌ (mcpServers 인자로만 붙는다)
+      },
+    })
+    expect(options.config.model).toBe('gpt-5.2')
+    expect(options.config.model_reasoning_effort).toBe('high')
+
+    expect(options.config).not.toHaveProperty('web_search')
+    expect(options.config).not.toHaveProperty('some_unknown_top')
+    expect(options.config.tools).not.toHaveProperty('future_tool')
+    expect(options.config.experimental_use_unified_exec_tool).toBe(false)
+    expect(options.config.mcp_servers).toEqual({})
+  })
+
   // 🔴 **denylist 는 구조적으로 틀렸다.** builder 가 caller 의 `features` 를 spread 한 뒤 알려진 키만 덮으면,
   //    Codex 가 feature 를 새로 추가할 때마다 우리 tool surface 가 **조용히 넓어진다.**
   //    실측(vendored 0.142.5): `enable_mcp_apps`, `code_mode`, `standalone_web_search`, `sleep_tool`,
