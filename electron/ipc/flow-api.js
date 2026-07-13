@@ -764,6 +764,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
             };
           })()
         `).catch((e) => ({ error: e.message }))
+        // safe-log: diag 는 editorTextLen(길이)만 담는다 — 본문 없음. (아래 페이지 스크립트 참조)
         console.log('[Flow API] [DOM+Net] Post-inject diag:', JSON.stringify(diag))
       } catch {}
 

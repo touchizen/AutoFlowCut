@@ -20,7 +20,12 @@ const ROOT = fileURLToPath(new URL('../../electron', import.meta.url))
 
 // Values that are (or can carry) the user's own words, names, or filesystem layout.
 // `\b` means promptLen / editorTextLen / nameLen / captionLen are fine — those are the fix.
-const CONTENT_BEARING = /\b(prompt|promptKey|promptText|editorText|caption|displayName|narration|script|srt|workFolderPath|userText)\b/
+//
+// `name` and `diag` are here because round three found leaks through exactly those: a bare
+// `name` (an @mention = a character the user created) and a `diag` object whose nested
+// candidates[].text is Flow page content. The guard only stops what it knows about, so when a
+// leak gets past it, the fix is to teach it the name — not just to patch the line.
+const CONTENT_BEARING = /\b(prompt|promptKey|promptText|editorText|caption|displayName|name|narration|script|srt|workFolderPath|userText|diag|label|title|alt|placeholder)\b/
 
 function jsFiles(dir) {
   return readdirSync(dir).flatMap((f) => {
@@ -46,8 +51,11 @@ describe('main-process logs must not carry user content', () => {
     const offenders = []
 
     for (const file of jsFiles(ROOT)) {
-      readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
-        if (line.includes('safe-log:')) return
+      const lines = readFileSync(file, 'utf8').split('\n')
+      lines.forEach((line, i) => {
+        // The escape hatch may sit on the line itself or on the comment line above it, where
+        // the reason belongs.
+        if (line.includes('safe-log:') || (lines[i - 1] || '').includes('safe-log:')) return
         const args = consoleCallArgs(line)
         if (args && CONTENT_BEARING.test(args)) {
           offenders.push(`${file.replace(ROOT, 'electron')}:${i + 1}  ${line.trim().slice(0, 90)}`)

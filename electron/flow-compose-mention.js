@@ -49,7 +49,7 @@ export async function insertSceneMention(flowView, name) {
     await sleep(250)
     hasDialog = await flowView.webContents.executeJavaScript(`!!document.querySelector("div[role='dialog']")`).catch(() => false)
   }
-  if (!hasDialog) { console.warn('[Flow Compose] mention picker(dialog) 안 열림:', name); return false }
+  if (!hasDialog) { console.warn('[Flow Compose] mention picker(dialog) 안 열림 (nameLen:', name?.length ?? 0, ')'); return false }
 
   // 3) "캐릭터" 탭 클릭 — 기본 "모두" 탭은 이미지가 다수라 가상화로 캐릭터 entity 가 렌더 안 됨.
   await flowView.webContents.executeJavaScript(`(function(){

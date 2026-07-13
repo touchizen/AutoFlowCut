@@ -38,7 +38,10 @@ const SECRET_BEARING = [
   /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g,      // 이메일
   // 절대 경로 — 사용자 이름이 들어간다. 소스마다 쫓아다니는 건 수렴하지 않지만(다운로드 폴더, 덤프
   //   파일, 저장 경로…), 모양이 규칙적이라 경계에서 한 번에 막을 수 있다.
-  /(?:\/Users\/|\/home\/|[A-Za-z]:\\Users\\)[^\s'"),]*/g,
+  //   경로엔 공백이 들어갈 수 있고("/Users/Gordon Ahn/…"), Windows 경로는 JSON 안에서
+  //   이스케이프돼 나온다("C:\\Users\\…") — 둘 다 덮는다.
+  /\/(?:Users|home)\/[^"'`,)\]}]*/g,
+  /[A-Za-z]:(?:\\{1,2})Users(?:\\{1,2})[^"'`,)\]}]*/g,
 ]
 
 export function scrubBreadcrumbMessage(message) {

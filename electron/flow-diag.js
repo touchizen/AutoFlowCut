@@ -21,7 +21,9 @@ const DEFAULT_MAX_STEPS = 8
 // Sentry 로 나가면 안 되는 필드 — 페이지/사용자 콘텐츠를 담을 수 있는 키. 로컬 파일에는 남지만
 //   (사용자가 보낼지 스스로 정한다) 자동 전송에는 절대 싣지 않는다. 지금은 아무 호출부도 안 넘기나,
 //   싱크가 ...detail 을 그대로 펼치므로 나중에 누가 넘기는 순간 조용히 새어나간다. 여기서 막는다.
-const CONTENT_KEYS = /prompt|html|content|srt|script|caption|narration|body|^text$|ariaLabel|^url$/i
+// 자동 전송에 실으면 안 되는 키. DOM 덤프가 이 싱크를 타게 되면 alt/title/placeholder/value/src 도
+//   페이지·사용자 콘텐츠를 담는다 — 나중에 붙이는 사람이 이 목록을 다시 발견하게 두지 않는다.
+const CONTENT_KEYS = /prompt|html|content|srt|script|caption|narration|body|ariaLabel|aria-label|placeholder|^text$|^url$|^alt$|^title$|^value$|^src$|^currentSrc$|^poster$|^label$|^name$/i
 
 /**
  * 자동 전송(Sentry)에 실을 수 있게 콘텐츠 필드를 재귀적으로 벗긴다.
@@ -31,13 +33,15 @@ const CONTENT_KEYS = /prompt|html|content|srt|script|caption|narration|body|^tex
  *    진단에 정작 필요한 건 텍스트가 아니라 **속성**(tag/role/aria-pressed/data-state/icons)이다.
  *    텍스트가 필요하면 로컬 파일에 있고, 그 파일은 사용자가 보낼지 스스로 정한다.
  */
-export function sanitizeForSentry(value) {
-  if (Array.isArray(value)) return value.map(sanitizeForSentry)
+export function sanitizeForSentry(value, seen = new WeakSet()) {
+  if (Array.isArray(value)) return value.map((v) => sanitizeForSentry(v, seen))
   if (value && typeof value === 'object') {
+    if (seen.has(value)) return '[circular]'   // 진단 정리 중에 앱이 죽는 일은 없어야 한다
+    seen.add(value)
     const out = {}
     for (const [k, v] of Object.entries(value)) {
       if (CONTENT_KEYS.test(k)) continue
-      out[k] = sanitizeForSentry(v)
+      out[k] = sanitizeForSentry(v, seen)
     }
     return out
   }

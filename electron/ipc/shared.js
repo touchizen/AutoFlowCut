@@ -16,6 +16,7 @@ import { screen } from 'electron'
 import { computeOffscreenBounds } from '../offscreen-bounds.js'
 import { updateBounds } from './layout.js'
 import { createMutex } from '../asyncMutex.js'
+import { sanitizeForSentry } from '../flow-diag.js'
 
 /**
  * #R34-fix: applyAgentDefaults 결과가 "요청한 image/video aspect·model 을 실제로 적용했는지" 판정(순수).
@@ -747,7 +748,11 @@ export function createSharedHelpers(ctx) {
         candidates: (scan && scan.candidates) || [],
         context: (scan && scan.context) || {},
       }
-      console.warn(`[Flow API] ${caller}: ${reason} — diagnostic:`, JSON.stringify(diag))
+      // ⚠️ diag 를 그대로 찍으면 candidates[].text / ariaLabel(= Flow 페이지 텍스트, 멘션 칩엔
+      //   사용자 캐릭터 이름)이 breadcrumb 으로 나간다. Sentry extra 만 sanitize 하고 콘솔로
+      //   흘리면 옆문을 열어둔 것과 같다. 콘솔에도 sanitize 한 것만 찍는다(전체는 로컬 파일에).
+      // safe-log: sanitizeForSentry 가 text/ariaLabel/url 을 재귀적으로 벗긴 뒤라 콘텐츠가 없다.
+      console.warn(`[Flow API] ${caller}: ${reason} — diagnostic:`, JSON.stringify(sanitizeForSentry(diag)))
       await onDomFailure?.('agent-toggle', diag)
     } catch (e) {
       console.warn(`[Flow API] ${caller}: diagnostic capture failed:`, e.message)
