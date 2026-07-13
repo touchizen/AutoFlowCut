@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import {
@@ -255,6 +255,9 @@ describe('codexSdk helper', () => {
       await expect(readFile(path.join(runtime.codexHome, 'config.toml'), 'utf8')).rejects.toThrow()
     } finally {
       await runtime.cleanup()
+      // ⚠️ **source 도 지운다.** 예전엔 runtime home 만 지워서 실행마다 `codex-home-src-*` 가 하나씩 쌓였다
+      //    (실측 384개). 자격증명 잔존 검사에 노이즈를 만들고 디스크를 먹는다.
+      await rm(src, { recursive: true, force: true })
     }
   })
 

@@ -688,7 +688,8 @@ describe('M0-8/9 — Codex disabled profile + MCP elicitation 게이트', () => 
     expect(gated.length, `echo_gated 를 2회 부르게 하려 했는데 ${gated.length}회 불렀다`).toBe(2)
 
     // 핵심: 호출 2회면 native 승인도 **2회** 떠야 한다. 1회면 승인이 암묵적으로 지속된 것이고,
-    // 그건 D9("모든 MCP tool call 은 사람이 승인")가 깨진 것이다.
+    // 그건 D9 가 깨진 것이다 — **G/B tool call 이 사람 결정 없이 실행된다.**
+    // (D9 는 "모든" tool call 이 아니라 R/G/B 다. R 은 UI 없이 통과가 의도된 설계다.)
     const natives = r.elicitations.filter((e) => e.kind === 'mcp_tool_call')
     expect(natives.length).toBe(2)
     expect(r.bodyRuns).toBe(2)
