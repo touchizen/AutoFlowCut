@@ -93,40 +93,47 @@ export function createSharedHelpers(ctx) {
     const flowView = getFlowView()
     if (!mainWindow || !flowView) return { success: false, error: 'No flowView' }
 
-    // 1. 현재 bounds 저장
-    const currentBounds = flowView.getBounds()
-    const wasHidden = (currentBounds.width === 0 || currentBounds.height === 0)
+    const originalBounds = flowView.getBounds()
+    const wasHidden = (originalBounds.width === 0 || originalBounds.height === 0)
+    let enlarged = false
 
-    console.log('[TrustedClick] Current bounds:', currentBounds, 'wasHidden:', wasHidden)
+    console.log('[TrustedClick] Current bounds:', originalBounds, 'wasHidden:', wasHidden)
 
-    // 2. 숨겨져 있으면 일시적으로 보이게 (화면 밖에 배치해서 사용자가 안 보이게)
-    if (wasHidden) {
+    // 뷰를 창 크기만큼 키워 화면 밖에 배치 — 사용자에겐 안 보이고, 페이지는 정상 폭으로 레이아웃된다.
+    //   (모든 디스플레이 너머로 — 멀티모니터에서 보조 모니터에 안 깜빡이게.)
+    const enlargeOffscreen = async () => {
       const { width, height } = mainWindow.getContentBounds()
-      // 모든 디스플레이 너머로 — 멀티모니터에서 보조 모니터에 안 깜빡이게.
       flowView.setBounds(computeOffscreenBounds(screen.getAllDisplays(), mainWindow.getBounds().x, width, height))
+      enlarged = true
       await new Promise(r => setTimeout(r, 300)) // 레이아웃 업데이트 대기
     }
 
+    const measure = () => flowView.webContents.executeJavaScript(`
+      (function() {
+        const el = ${jsSelector};
+        if (!el) return null;
+        // 스크롤 후 좌표 확인
+        el.scrollIntoView({ block: 'center' });
+        const rect = el.getBoundingClientRect();
+        return {
+          x: Math.round(rect.x + rect.width / 2),
+          y: Math.round(rect.y + rect.height / 2),
+          width: rect.width,
+          height: rect.height,
+          tag: el.tagName,
+          disabled: el.disabled || false,
+          visible: rect.width > 0 && rect.height > 0
+        };
+      })()
+    `)
+
+    const outside = (c, b) => c.x < 0 || c.y < 0 || c.x > b.width || c.y > b.height
+
+    // 0×0(모달/드래그 중)이면 재보기 전에 키운다 — 그 상태의 좌표는 의미가 없다.
+    if (wasHidden) await enlargeOffscreen()
+
     try {
-      // 3. 버튼에 focus() 먼저 + 좌표 가져오기
-      const coords = await flowView.webContents.executeJavaScript(`
-        (function() {
-          const el = ${jsSelector};
-          if (!el) return null;
-          // 스크롤 후 좌표 확인
-          el.scrollIntoView({ block: 'center' });
-          const rect = el.getBoundingClientRect();
-          return {
-            x: Math.round(rect.x + rect.width / 2),
-            y: Math.round(rect.y + rect.height / 2),
-            width: rect.width,
-            height: rect.height,
-            tag: el.tagName,
-            disabled: el.disabled || false,
-            visible: rect.width > 0 && rect.height > 0
-          };
-        })()
-      `)
+      let coords = await measure()
 
       if (!coords || coords.width === 0) {
         console.log('[TrustedClick] Button not found or zero-size:', coords)
@@ -140,18 +147,26 @@ export function createSharedHelpers(ctx) {
 
       console.log('[TrustedClick] Button coords:', coords)
 
-      const viewBounds = flowView.getBounds()
-      console.log('[TrustedClick] View bounds during click:', viewBounds)
-
-      // 좌표가 viewBounds 내인지 확인
-      if (coords.x < 0 || coords.y < 0 || coords.x > viewBounds.width || coords.y > viewBounds.height) {
-        console.warn('[TrustedClick] Coords outside view bounds! Adjusting...')
-        // 뷰 범위 내로 클램핑
-        coords.x = Math.max(1, Math.min(coords.x, viewBounds.width - 1))
-        coords.y = Math.max(1, Math.min(coords.y, viewBounds.height - 1))
+      // 좌표가 뷰 밖이면 — 사용자가 스플리터로 Flow 패널을 좁혀 컴포즈 바가 가로로 넘친 경우다.
+      //   옛 코드는 좌표를 뷰 가장자리로 "클램핑"해서 눌렀다. 그러면 엉뚱한 요소를 클릭하고도
+      //   success 를 반환한다 → 호출부는 제출된 줄 알고 오지 않을 응답을 2분간 기다린다(timeout).
+      //   잘못된 요소를 누르고 성공이라 말하는 것은 실패보다 나쁘다. 클램핑 대신 뷰를 키워
+      //   진짜 좌표로 누른다(위 wasHidden 경로와 같은 수단).
+      if (outside(coords, flowView.getBounds()) && !enlarged) {
+        console.warn('[TrustedClick] Coords outside view bounds — enlarging view instead of clamping')
+        await enlargeOffscreen()
+        coords = await measure()   // 넓어진 폭에서 재레이아웃 → 좌표가 바뀐다
       }
 
-      // 4. sendInputEvent로 trusted click (mouseMove → mouseDown → mouseUp)
+      if (!coords || coords.width === 0 || outside(coords, flowView.getBounds())) {
+        console.warn('[TrustedClick] Button unreachable even after enlarging:', coords)
+        if (opts.required) {
+          await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, 'outside-view-bounds', { coords: coords || null })
+        }
+        return { success: false, error: 'Button outside view bounds' }
+      }
+
+      // sendInputEvent로 trusted click (mouseMove → mouseDown → mouseUp)
       // mouseMove 먼저 보내서 hover 상태 생성
       flowView.webContents.sendInputEvent({ type: 'mouseMove', x: coords.x, y: coords.y })
       await new Promise(r => setTimeout(r, 100))
@@ -163,11 +178,11 @@ export function createSharedHelpers(ctx) {
       console.log('[TrustedClick] Click events sent at (' + coords.x + ', ' + coords.y + ')')
       return { success: true, coords }
     } finally {
-      // 5. 원래 bounds 복원
-      if (wasHidden) {
+      // 원래 bounds 복원 — 사용자가 맞춰둔 패널 폭을 되돌린다.
+      if (enlarged) {
         await new Promise(r => setTimeout(r, 500)) // 클릭 이벤트 처리 대기
-        flowView.setBounds(currentBounds)
-        console.log('[TrustedClick] Restored hidden bounds')
+        flowView.setBounds(originalBounds)
+        console.log('[TrustedClick] Restored bounds:', originalBounds)
       }
     }
   }
