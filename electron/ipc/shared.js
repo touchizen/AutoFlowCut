@@ -95,10 +95,29 @@ export function createSharedHelpers(ctx) {
    *   closes panels that are usually absent), and reporting those would fire on every healthy
    *   generation and drown the real breakages.
    */
+  // 클릭 하나가 붙잡을 수 있는 최대 시간. Flow 렌더러가 먹통이면 executeJavaScript 가 영영
+  //   settle 되지 않고, 그러면 락이 안 풀려 **이후 모든 클릭이 영구 정지**한다(병목이라 앱 전체가 멈춘다).
+  //   측정(≤ 수 초) + 확대 대기 + 클릭 시퀀스 + 복원을 다 합쳐도 넉넉한 값.
+  const CLICK_TIMEOUT_MS = 30_000
+
   async function trustedClickOnFlowView(jsSelector, opts = {}) {
     const release = await clickMutex.acquire()
     try {
-      return await trustedClickLocked(jsSelector, opts)
+      let timer
+      const timeout = new Promise((_, rej) => {
+        timer = setTimeout(() => rej(new Error('trusted-click timed out')), CLICK_TIMEOUT_MS)
+      })
+      try {
+        return await Promise.race([trustedClickLocked(jsSelector, opts), timeout])
+      } catch (e) {
+        console.warn('[TrustedClick] aborted:', e.message)
+        if (opts.required) {
+          await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, 'timeout', { error: e.message }).catch(() => {})
+        }
+        return { success: false, error: e.message }
+      } finally {
+        clearTimeout(timer)
+      }
     } finally {
       release()
     }
@@ -186,9 +205,18 @@ export function createSharedHelpers(ctx) {
         console.warn('[TrustedClick] Coords outside view bounds — enlarging view instead of clamping')
         await enlargeOffscreen()
         coords = await measure()   // 넓어진 폭에서 재레이아웃 → 좌표가 바뀐다
+        // ⚠️ 재측정 결과도 처음과 똑같이 검사해야 한다. 첫 측정만 zero-size/disabled 를 보고
+        //    두 번째는 안 봐서, 넓힌 뒤 disabled 로 바뀐 버튼을 누르고 success 를 반환했다.
+        if (coords && (coords.height === 0 || coords.disabled)) {
+          console.warn('[TrustedClick] Button unusable after enlarging:', coords)
+          if (opts.required) {
+            await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, coords.disabled ? 'disabled' : 'zero-size', { coords })
+          }
+          return { success: false, error: coords.disabled ? 'Button is disabled' : 'Button not found or zero-size' }
+        }
       }
 
-      if (!coords || coords.width === 0 || outside(coords, flowView.getBounds())) {
+      if (!coords || coords.width === 0 || coords.height === 0 || outside(coords, flowView.getBounds())) {
         console.warn('[TrustedClick] Button unreachable even after enlarging:', coords)
         if (opts.required) {
           await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, 'outside-view-bounds', { coords: coords || null })
@@ -214,6 +242,14 @@ export function createSharedHelpers(ctx) {
 
       flowView.webContents.sendInputEvent({ type: 'mouseDown', x: coords.x, y: coords.y, button: 'left', clickCount: 1 })
       await new Promise(r => setTimeout(r, 80))
+      // down 과 up 사이에도 모달이 뷰를 접을 수 있다 — up 이 허공에 떨어지면 클릭이 완성되지 않는다.
+      if (outside(coords, flowView.getBounds())) {
+        console.warn('[TrustedClick] View collapsed between down and up — click did not complete')
+        if (opts.required) {
+          await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, 'bounds-changed-mid-click', { coords })
+        }
+        return { success: false, error: 'View bounds changed mid-click' }
+      }
       flowView.webContents.sendInputEvent({ type: 'mouseUp', x: coords.x, y: coords.y, button: 'left', clickCount: 1 })
       await new Promise(r => setTimeout(r, 200))
 
@@ -980,27 +1016,45 @@ export function createSharedHelpers(ctx) {
    * 프로브를 못 읽으면(null/throw) 통과시킨다 — 판정 불가를 실패로 처리하면 멀쩡한 생성을 막는다.
    */
   async function ensureProjectLoaded(flowView, projectId) {
+    // ⚠️ throw 와 "판정 불가" 를 구분한다. 예전엔 둘 다 null 로 뭉개고 null 을 "정상"으로 취급해,
+    //    렌더러가 죽어 페이지를 읽지도 못하는 상태에서 {ok:true} 를 내주고 DOM 조작을 허가했다.
+    //    네비 중엔 일시적으로 throw 할 수 있으니 한 번은 재시도하고, 그래도 못 읽으면 멈춘다.
+    const probeOnce = async () => {
+      try { return { read: true, page: await flowView.webContents.executeJavaScript(FLOW_PAGE_PROBE_JS) } }
+      catch (e) { return { read: false, error: e.message } }
+    }
     const probe = async () => {
-      try { return await flowView.webContents.executeJavaScript(FLOW_PAGE_PROBE_JS) } catch { return null }
+      let r = await probeOnce()
+      if (r.read) return r
+      await new Promise((res) => setTimeout(res, 800))
+      return probeOnce()
     }
 
-    let page = await probe()
+    let r = await probe()
+    if (!r.read) {
+      await reportDomFailure('project-probe-unreadable', 'probe_threw', { projectId, error: r.error })
+      return { ok: false, error: 'Flow 페이지를 읽을 수 없습니다. Flow 탭을 확인한 뒤 다시 시도해주세요.' }
+    }
+    let page = r.page
     if (!page || !isFlowErrorPage(page)) return { ok: true }
 
     console.warn('[Flow Guard] project URL but page is not loaded (error/landing) — recovering via home')
     const m = safeUrl(flowView).match(/^(.*\/tools\/flow)(\/|$)/)
     const base = m ? m[1] : 'https://labs.google/fx/tools/flow'
-    await flowView.webContents.loadURL(base).catch(() => {})
+    // loadURL 은 파괴된 webContents 에서 **동기로** throw 한다 — .catch() 는 promise rejection 만 잡는다.
+    const safeLoad = async (u) => { try { await flowView.webContents.loadURL(u) } catch { /* 파괴/중단 */ } }
+    await safeLoad(base)
     await new Promise((r) => setTimeout(r, 1500))
-    await flowView.webContents.loadURL(`${base}/project/${projectId}`).catch(() => {})
+    await safeLoad(`${base}/project/${projectId}`)
     await new Promise((r) => setTimeout(r, 2000))
 
     // ⚠️ 페이지가 "리치"하다는 것만으로 복구를 선언하면 안 된다 — home 화면도 인터랙티브 요소가
     //   많아 isFlowErrorPage 를 통과한다. target 재진입이 실패해 home 에 머물러 있어도 ok:true 가
     //   나고, 그다음 DOM 조작이 엉뚱한 페이지에서 돈다. URL 이 대상 프로젝트인지 반드시 다시 본다.
     const backOnTarget = onProjectComposerUrl(safeUrl(flowView), projectId)
-    page = await probe()
-    if (backOnTarget && (!page || !isFlowErrorPage(page))) {
+    r = await probe()
+    page = r.read ? r.page : null
+    if (backOnTarget && r.read && (!page || !isFlowErrorPage(page))) {
       console.log('[Flow Guard] project recovered after home re-nav')
       return { ok: true }
     }
@@ -1018,10 +1072,14 @@ export function createSharedHelpers(ctx) {
    *    /characters 로 넘어가면 그 페이지를 "대상 프로젝트"로 승인했다. 한 곳에서 판정한다.
    */
   function onProjectComposerUrl(url, projectId) {
+    // ⚠️ 전체 URL 을 substring 으로 보면 "…/tools/flow/?next=/project/<id>" 도 통과한다(실측).
+    //    쿼리·해시를 떼고 pathname 만 본다.
+    let pathname = ''
+    try { pathname = new URL(url).pathname } catch { pathname = String(url || '').split(/[?#]/)[0] }
     const marker = `/project/${projectId}`
-    const idx = (url || '').indexOf(marker)
+    const idx = pathname.indexOf(marker)
     if (idx < 0) return false
-    return !/^\/character/.test((url || '').slice(idx + marker.length))
+    return !/^\/character/.test(pathname.slice(idx + marker.length))
   }
 
   /** getURL 은 뷰/렌더러가 파괴되면 throw 한다 — 가드가 {ok:false} 대신 reject 되면 안 된다. */

@@ -47,6 +47,9 @@ export function buildSentryOptions({ env = defaultEnv(), version } = {}) {
     tracesSampleRate: Number(env.SENTRY_TRACES_SAMPLE_RATE || 0.1),
     beforeBreadcrumb: scrubBreadcrumb,
     beforeSend: scrubEvent,
+    // transaction/span 은 일반 beforeSend 를 타지 않는다 — span description·data 에 URL·경로·
+    //   생성 미디어 주소가 그대로 실린다. 같은 스크러버를 따로 건다.
+    beforeSendTransaction: scrubEvent,
   }
 }
 

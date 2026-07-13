@@ -17,19 +17,9 @@ export function buildSentryRendererOptions({ env = import.meta.env, version } = 
     //   /Users/<계정>/…)가 그대로 나가고 있었다. 채널이 여럿이면 한 곳에서 막아 전부 통과시킨다.
     beforeBreadcrumb: scrubBreadcrumb,
     beforeSend: scrubEvent,
-    beforeSend(event) {
-      if (event.user) {
-        delete event.user.ip_address
-        delete event.user.email
-      }
-      if (event.request?.data) delete event.request.data
-      if (event.extra) {
-        for (const k of Object.keys(event.extra)) {
-          if (/prompt|input|filename|path/i.test(k)) delete event.extra[k]
-        }
-      }
-      return event
-    },
+    // transaction/span 은 일반 beforeSend 를 타지 않는다 — span description·data 에 URL·경로·
+    //   생성 미디어 주소가 그대로 실린다. 같은 스크러버를 따로 건다.
+    beforeSendTransaction: scrubEvent,
   }
 }
 

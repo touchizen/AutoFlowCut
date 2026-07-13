@@ -16,6 +16,7 @@
 
 import { buildFlowDiagFilename } from './flow-dom-dump.js'
 import { scrubSentryString } from './sentry-scrub.js'
+import { createMutex } from './asyncMutex.js'
 
 const DEFAULT_MAX_STEPS = 8
 
@@ -69,8 +70,16 @@ export function createFlowDiagSink({
   const seen = new Set()
   const entries = []
   let filePath = null
+  // 보고를 직렬화한다 — 서로 다른 스텝의 동시 보고가 각각 빈 entries 를 스냅샷해 같은 파일에
+  //   한 건짜리 본문을 쓰면서 서로를 지웠다(실측: ["b"] 쓴 뒤 ["a"] 로 덮여 b 가 사라짐).
+  const mutex = createMutex()
 
   return async function reportFlowFailure(step, detail = {}) {
+    const release = await mutex.acquire()
+    try { await report(step, detail) } finally { release() }
+  }
+
+  async function report(step, detail) {
     // 스텝별 dedupe — 전역 1회로 하면 먼저 터진 실패가 뒤의 다른 실패를 가려버린다(토글이 깨지면
     //   제출 버튼이 깨진 걸 영영 못 본다). distinct 스텝 수에 상한을 걸어 쿼터를 지킨다.
     // 진입 즉시 예약한다 — 같은 스텝의 동시 보고 둘이 각각 통과해 Sentry 를 두 번 때리고 파일을
@@ -97,9 +106,12 @@ export function createFlowDiagSink({
     // 파일은 세션당 하나에 누적한다 — 실패마다 새 파일을 쓰면 배치가 깨졌을 때 바탕화면이
     //   뒤덮이고, 정작 사용자는 뭘 보내야 할지 모른다.
     // 진단을 정리하다가 앱이 죽는 일은 없어야 한다 — 순환 참조나 BigInt 가 섞이면 stringify 가 던진다.
+    //   (fallback 도 던질 수 있다 — reason 이 BigInt 면 둘 다 실패한다. 최후엔 스텝 이름만 남긴다.)
     let body
-    try { body = JSON.stringify([...entries, entry], null, 2) }
-    catch { body = JSON.stringify([...entries, { step, reason: entry.reason, note: 'detail not serialisable' }], null, 2) }
+    const safeStringify = (v, fallback) => { try { return JSON.stringify(v, null, 2) } catch { return fallback } }
+    body = safeStringify([...entries, entry],
+      safeStringify([...entries, { step, note: 'detail not serialisable' }],
+        JSON.stringify([{ step, note: 'diagnostic not serialisable' }], null, 2)))
     const targets = filePath ? [filePath] : [`${desktopDir}/${buildFlowDiagFilename(now())}`, `${userDataDir}/${buildFlowDiagFilename(now())}`]
     for (const target of targets) {
       if (!target) continue

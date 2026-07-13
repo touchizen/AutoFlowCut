@@ -1,68 +1,100 @@
 /**
  * electron/sentry-scrub.js
  *
- * Sentry 로 나가는 모든 문자열에서 사용자 콘텐츠·자격증명·계정명을 벗긴다. 순수 함수 — Sentry SDK 를
+ * Sentry 로 나가는 모든 것에서 사용자 콘텐츠·자격증명·계정명을 벗긴다. 순수 함수 — Sentry SDK 를
  * import 하지 않으므로 main 과 renderer 가 **같은 것**을 쓴다.
  *
- * ⚠️ 이 파일이 따로 존재하는 이유: 라운드마다 한쪽 채널만 막다가 다른 쪽으로 샜다.
- *    main 의 console 을 막았더니 → http breadcrumb 의 URL 로 API 키가 나갔고,
- *    그걸 막았더니 → renderer Sentry 에는 beforeBreadcrumb 이 아예 없어 경로가 나갔고,
- *    그걸 막았더니 → 이벤트 자체(event.message / exception.value / request.url / extra)는
- *    아무도 안 씻고 있었다. 스크럽은 한 곳에 있고, **모든 채널**이 이걸 통과해야 한다.
+ * ⚠️ 이 파일이 따로 존재하는 이유: 라운드마다 한쪽만 막다가 옆으로 샜다.
+ *    main 의 console → http breadcrumb 의 URL → renderer(스크럽이 아예 없었다) → 이벤트 자체
+ *    (message/exception/request/extra) → 그리고 transaction/span. 스크럽은 한 곳에 있고
+ *    **모든 채널**이 이걸 통과해야 한다.
  *
- * 원칙: 진단은 살리고 사람만 지운다. 경로는 통째로 지우지 않고 계정 이름 세그먼트만 지운다 —
+ * 두 축으로 막는다:
+ *   1) KEY 로 — `Authorization: "Basic dXNlcjpwYXNz"` 는 값만 봐선 자격증명인 줄 모른다. 키가 말해준다.
+ *   2) VALUE 로 — 로그 문자열은 키가 없다. 모양(ya29…, AIza…, /Users/…)으로 잡는다.
+ *
+ * 원칙: 진단은 살리고 사람만 지운다. 경로는 통째로 지우지 않고 계정 세그먼트만 지운다 —
  *       "/Users/<redacted>/Desktop/dump.json" 은 여전히 "어디에 떨어졌나"를 말해준다.
  */
 
-// 프롬프트 — `prompt: '…'` 와 `"prompt":"…"` 두 형태 모두. 값은 지우고 키는 남긴다.
+const REDACTED = '<redacted>'
+
+// ─── KEY 기반 ────────────────────────────────────────────────────────────────
+// 이 키의 값은 내용을 보지 않고 통째로 지운다.
+const SECRET_KEYS = /^(authorization|cookie|set-cookie|x-api-key|api_?key|access_?token|refresh_?token|id_?token|token|password|secret|key)$/i
+// 이 키의 값은 사용자 콘텐츠다(프롬프트·이름·캡션·페이지 텍스트).
+// ⚠️ ^value$ 는 넣지 않는다 — Sentry 의 exception.values[].value 가 곧 에러 메시지다. 통째로
+//    지우면 "ENOENT …" 같은 진단 자체가 사라진다. DOM 속성 value 는 flow-diag 쪽에서 거른다.
+const CONTENT_KEYS = /prompt|caption|narration|^text$|^name$|^label$|^title$|^alt$|^placeholder$|^html$|^body$/i
+
+// ─── VALUE 기반 ──────────────────────────────────────────────────────────────
+// 프롬프트: `prompt: '…'` · `"prompt":"…"` · 따옴표 없는 여러 단어(줄 끝/닫는 괄호까지).
+//   \b 로 시작해 `teleprompt:` 같은 단어를 먹지 않게 한다.
 const PROMPT_BEARING = [
-  /(["']?prompt["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^,}\s]+)/gi,
+  /(\b["']?prompt["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^,}\n]+)/gi,
   /(dom-send-prompt called:\s*)(.*)$/gi,
 ]
 
-// 쿼리스트링·헤더 자격증명 — Gemini TTS 는 ?key=<사용자 API 키>, Flow 토큰 검증은 ?access_token=
-//   을 URL 에 싣고, Sentry 의 http/fetch breadcrumb 은 URL 을 통째로 기록한다.
+// 쿼리스트링·헤더 자격증명. 쿠키는 ';' 로 구분된 각 쌍을 따로 지운다(하나만 지우면 나머지가 남는다).
 const KEYED_SECRETS = [
   /([?&](?:key|access_token|refresh_token|id_token|token|api_?key|password|secret)=)[^&\s"'`]+/gi,
-  /((?:authorization|cookie|set-cookie|x-api-key)\s*[:=]\s*)[^\s,;"'`][^\n,;"'`]*/gi,
+  /((?:authorization|x-api-key)\s*[:=]\s*)[^\n,;"'`]+/gi,
+  /(\b(?:SID|HSID|SSID|refresh|session)\s*=\s*)[^;\s,"'`]+/gi,
   /(["']?(?:access|refresh|id)_token["']?\s*[:=]\s*["']?)[A-Za-z0-9._~+/-]{8,}/gi,
 ]
 
-// 계정 이름 세그먼트만 지운다 — 나머지 경로는 진단에 필요하다.
-//   공백 있는 이름("/Users/Gordon Ahn/…")을 덮되, 다음 '/' 에서 멈춰 뒤 문장을 삼키지 않는다.
+// 계정 이름 세그먼트만 지운다. 공백 있는 이름("/Users/Gordon Ahn/…")은 뒤에 '/' 가 이어질 때만
+//   공백을 포함시킨다 — 안 그러면 "/Users/alice has no home directory" 에서 문장을 통째로 삼킨다.
 const PATH_ACCOUNT = [
-  /(\/(?:Users|home)\/)[^/\n"'`,)\]}]+/g,
-  /([A-Za-z]:(?:\\{1,2})Users(?:\\{1,2}))[^\\/\n"'`,)\]}]+/g,
+  /(\/(?:Users|home)\/)[^/\s"'`,)\]}]+(?:[ ][^/\s"'`,)\]}]+)*(?=\/)/g,
+  /(\/(?:Users|home)\/)[^/\s"'`,)\]}]+/g,
+  /([A-Za-z]:(?:\\{1,2})Users(?:\\{1,2}))[^\\/\s"'`,)\]}]+(?:[ ][^\\/\s"'`,)\]}]+)*(?=\\)/g,
+  /([A-Za-z]:(?:\\{1,2})Users(?:\\{1,2}))[^\\/\s"'`,)\]}]+/g,
 ]
 
-// 값 전체를 지워야 하는 것들.
 const SECRET_BEARING = [
   /\bya29\.[A-Za-z0-9._~+/-]{8,}/g,                       // Google OAuth 토큰
   /\bAIza[A-Za-z0-9._~+/-]{10,}/g,                        // Google API 키
   /\bBearer\s+[A-Za-z0-9._~+/-]{12,}/gi,
-  /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g,      // 이메일
-  // 생성된 미디어 URL — 사용자가 만든 결과물의 주소이고 서명 토큰을 달고 있다.
-  /https?:\/\/[^\s"'`,)\]}]*(?:googleusercontent|ggpht|fife|getMediaUrlRedirect)[^\s"'`,)\]}]*/gi,
+  // ⚠️ local part 를 묶지 않으면(`+`) 매치 실패 시 위치마다 되풀이해 O(n²) 가 된다 —
+  //    20만 자 문자열에서 실측 24초. Sentry 훅은 동기라 그대로 앱이 멈춘다. RFC 상한(64)으로 묶는다.
+  /[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,24}/g,   // 이메일
 ]
+
+// 생성된 미디어 URL — 사용자 결과물의 주소이고 서명 토큰을 달고 있다.
+//   ⚠️ URL 을 먼저 통으로 잡고 콜백에서 호스트를 검사한다. `[^\s]*(?:a|b)[^\s]*` 형태로 쓰면
+//      매치 실패 시 2차 백트래킹이 터진다(실측: 32KB 600ms, 200KB 21초). Sentry 훅은 동기다.
+const ANY_URL = /https?:\/\/[^\s"'`,)\]}]+/g
+const MEDIA_HOST = /googleusercontent|ggpht|fife|getMediaUrlRedirect/i
 
 /** 한 문자열에서 콘텐츠·자격증명·계정명을 벗긴다. */
 export function scrubSentryString(message) {
   let out = String(message)
   // ⚠️ 캡처 그룹이 있는 정규식만 '$1<redacted>' 를 쓸 수 있다. 그룹 없는 정규식에 콜백을 쓰면
   //    두 번째 인자가 캡처가 아니라 offset(숫자)이라 "20<redacted>" 같은 쓰레기가 만들어진다.
-  for (const re of [...PROMPT_BEARING, ...KEYED_SECRETS, ...PATH_ACCOUNT]) out = out.replace(re, '$1<redacted>')
-  for (const re of SECRET_BEARING) out = out.replace(re, '<redacted>')
+  for (const re of [...PROMPT_BEARING, ...KEYED_SECRETS, ...PATH_ACCOUNT]) out = out.replace(re, `$1${REDACTED}`)
+  for (const re of SECRET_BEARING) out = out.replace(re, REDACTED)
+  out = out.replace(ANY_URL, (url) => (MEDIA_HOST.test(url) ? REDACTED : url))
   return out
 }
 
-/** 객체 안의 모든 문자열 값을 재귀적으로 씻는다. 사이클이 있어도 죽지 않는다. */
+/** 객체를 재귀적으로 씻는다 — 키로도 보고 값으로도 본다. 사이클이 있어도 죽지 않는다. */
 function scrubDeep(value, seen = new WeakSet()) {
   if (typeof value === 'string') return scrubSentryString(value)
   if (!value || typeof value !== 'object') return value
   if (seen.has(value)) return value          // 진단 정리 중에 앱이 죽는 일은 없어야 한다
   seen.add(value)
+
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) value[i] = scrubDeep(value[i], seen)
+    return value
+  }
+
   for (const [k, v] of Object.entries(value)) {
-    try { value[k] = scrubDeep(v, seen) } catch { /* getter 가 던져도 무시 */ }
+    try {
+      if (SECRET_KEYS.test(k) || CONTENT_KEYS.test(k)) value[k] = REDACTED   // 키가 말해준다
+      else value[k] = scrubDeep(v, seen)
+    } catch { /* getter 가 던져도 무시 */ }
   }
   return value
 }
@@ -88,10 +120,11 @@ export function scrubBreadcrumb(breadcrumb) {
 }
 
 /**
- * main·renderer 공용 beforeSend.
+ * main·renderer 공용 beforeSend / beforeSendTransaction.
  *
- * breadcrumb 만 씻고 이벤트를 안 씻으면 아무 의미가 없다 — 에러 메시지 하나가
- * "ENOENT: /Users/alice/Desktop/secret.txt" 이면 그대로 나간다.
+ * breadcrumb 만 씻고 이벤트를 안 씻으면 의미가 없다 — 에러 메시지 하나가
+ * "ENOENT: /Users/alice/Desktop/secret.txt" 이면 그대로 나간다. transaction/span 도 마찬가지로
+ * 일반 beforeSend 를 타지 않으므로 같은 함수를 따로 걸어준다.
  */
 export function scrubEvent(event) {
   if (!event) return event
@@ -101,8 +134,8 @@ export function scrubEvent(event) {
   }
   if (event.request?.data) delete event.request.data
 
-  // extra 는 키 이름부터 드러낸다 — 값을 씻는 것과 별개로, 콘텐츠를 담는 키는 통째로 버린다.
-  //   (값 스크럽은 정규식이라 자유 형식 콘텐츠를 다 못 덮는다. 두 방어를 겹친다.)
+  // extra 는 키 이름부터 드러낸다 — 값 스크럽(정규식)은 자유 형식 콘텐츠를 다 못 덮으므로,
+  //   콘텐츠를 담는 키는 통째로 버린다. 두 방어를 겹친다.
   if (event.extra) {
     for (const k of Object.keys(event.extra)) {
       if (/prompt|input|filename|path/i.test(k)) delete event.extra[k]
@@ -111,10 +144,9 @@ export function scrubEvent(event) {
 
   const seen = new WeakSet()
   if (typeof event.message === 'string') event.message = scrubSentryString(event.message)
-  if (event.request) scrubDeep(event.request, seen)
-  if (event.exception) scrubDeep(event.exception, seen)
-  if (event.extra) scrubDeep(event.extra, seen)
-  if (event.contexts) scrubDeep(event.contexts, seen)
+  for (const field of ['request', 'exception', 'extra', 'contexts', 'tags', 'spans']) {
+    if (event[field]) scrubDeep(event[field], seen)
+  }
   if (Array.isArray(event.breadcrumbs)) event.breadcrumbs = event.breadcrumbs.map(scrubBreadcrumb).filter(Boolean)
 
   return event
