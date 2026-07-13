@@ -91,11 +91,14 @@ export function registerDomIPC(ipcMain, deps) {
         // ⚠️ URL 을 probe 전에 따로 읽으면 A→B 로 넘어간 사이 B 의 DOM 을 A 의 URL 과 짝지어 성공이라
         //    보고한다. probe 가 **같은 페이지 컨텍스트에서** 돌려준 url 을 쓴다(원자적).
         const urlNow = (probeOk && page && page.url) || flowView.webContents.getURL() || ''
-        // substring 이 아니라 경로 끝으로 본다 — /project/<id>-suffix 나 다른 라우트가 통과하지 않게.
+        // ⚠️ 경로 끝이면서 **컴포저** 여야 한다. (/[^/]*)?$ 로만 두면 /characters·/settings 도 통과해,
+        //    캐릭터 작업 후 그 페이지에 머문 상태를 "프로젝트 열림"으로 승인한다(컴포저는 없는데).
+        //    ensureOnProjectComposer 와 같은 허용 목록을 쓴다.
         let onTargetUrl = false
         try {
           const pn = new URL(urlNow).pathname
-          onTargetUrl = new RegExp(`/tools/flow/project/${flowProjectId}(/[^/]*)?$`).test(pn)
+          const m = pn.match(new RegExp(`/tools/flow/project/${flowProjectId}(/[^/]*)?$`))
+          onTargetUrl = !!m && ['', '/', '/all-media'].includes(m[1] || '')
         } catch { onTargetUrl = false }
         return { urlNow, onTargetUrl, isErrorPage: isFlowErrorPage(page), probeOk, page }
       }
