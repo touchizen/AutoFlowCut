@@ -70,6 +70,11 @@ export function registerDomIPC(ipcMain, deps) {
     const flowView = getFlowView()
     if (!flowView) return { success: false, error: 'Flow view not ready' }
     if (!flowProjectId) return { success: false, error: 'No flowProjectId' }
+    // ⚠️ projectId 는 한 경로 세그먼트여야 한다. "abc/characters" 같은 저장값이면 /project/abc/characters
+    //    를 열고 그 캐릭터 페이지를 "정상 로드"로 승인한다(ensureOnProjectComposer 와 같은 함정).
+    if (!/^[A-Za-z0-9._~-]+$/.test(String(flowProjectId))) {
+      return { success: false, error: 'Invalid flowProjectId' }
+    }
     try {
       const cur = flowView.webContents.getURL() || ''
       // 현재 URL 에서 /tools/flow 까지의 base(로케일 포함) 추출, 없으면 기본.
@@ -86,7 +91,12 @@ export function registerDomIPC(ipcMain, deps) {
         // ⚠️ URL 을 probe 전에 따로 읽으면 A→B 로 넘어간 사이 B 의 DOM 을 A 의 URL 과 짝지어 성공이라
         //    보고한다. probe 가 **같은 페이지 컨텍스트에서** 돌려준 url 을 쓴다(원자적).
         const urlNow = (probeOk && page && page.url) || flowView.webContents.getURL() || ''
-        const onTargetUrl = urlNow.includes(`/project/${flowProjectId}`)
+        // substring 이 아니라 경로 끝으로 본다 — /project/<id>-suffix 나 다른 라우트가 통과하지 않게.
+        let onTargetUrl = false
+        try {
+          const pn = new URL(urlNow).pathname
+          onTargetUrl = new RegExp(`/tools/flow/project/${flowProjectId}(/[^/]*)?$`).test(pn)
+        } catch { onTargetUrl = false }
         return { urlNow, onTargetUrl, isErrorPage: isFlowErrorPage(page), probeOk, page }
       }
 

@@ -45,6 +45,11 @@ export function buildSentryOptions({ env = defaultEnv(), version } = {}) {
     environment: env.VITE_FUNCTION_ENV || 'development',
     release: `autoflowcut@${version || readAppVersion()}`,
     tracesSampleRate: Number(env.SENTRY_TRACES_SAMPLE_RATE || 0.1),
+    // ⚠️ 네이티브 크래시 minidump 를 끈다. 그건 **첨부파일**이라 beforeSend/beforeBreadcrumb 이
+    //   손댈 수 없고, 크래시 순간 메모리에 있던 프롬프트·캐릭터 이름·OAuth 토큰이 스택/힙 조각으로
+    //   그대로 실려 나갈 수 있다. 우리가 얻으려는 건 Flow DOM 진단이지 네이티브 크래시가 아니다 —
+    //   씻을 수 없는 채널은 열어두지 않는다.
+    integrations: (defaults) => defaults.filter((i) => i.name !== 'SentryMinidump'),
     beforeBreadcrumb: scrubBreadcrumb,
     beforeSend: scrubEvent,
     // transaction/span 은 일반 beforeSend 를 타지 않는다 — span description·data 에 URL·경로·

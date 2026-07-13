@@ -48,7 +48,8 @@ const PROMPT_BEARING = [
 
 // 쿼리스트링·헤더 자격증명. 쿠키는 ';' 로 구분된 각 쌍을 따로 지운다(하나만 지우면 나머지가 남는다).
 const KEYED_SECRETS = [
-  /([?&](?:key|access_token|refresh_token|id_token|token|api_?key|password|secret)=)[^&\s"'`]+/gi,
+  // 'code' = OAuth authorization code(리다이렉트 URL 에 실린다). 이걸 빠뜨려 회귀가 났다.
+  /([?&](?:key|access_token|refresh_token|id_token|token|api_?key|password|secret|code)=)[^&\s"'`]+/gi,
   /((?:authorization|x-api-key)\s*[:=]\s*)[^\n,;"'`]+/gi,
   // Cookie 헤더 — 쿠키 이름은 뭐든 될 수 있다(__Secure-1PSID, NID …). 헤더 전체를 지운다.
   //   ⚠️ "임의의 name=value 를 다 지우는" 폴백은 쓰지 않는다 — projectId=<uuid> 같은 진단 필드까지

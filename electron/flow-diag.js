@@ -84,21 +84,25 @@ export function createFlowDiagSink({
     //   제출 버튼이 깨진 걸 영영 못 본다). distinct 스텝 수에 상한을 걸어 쿼터를 지킨다.
     // 진입 즉시 예약한다 — 같은 스텝의 동시 보고 둘이 각각 통과해 Sentry 를 두 번 때리고 파일을
     //   서로 덮어쓰던 경쟁이 있었다. 전달에 실패하면 아래에서 되돌린다(그래야 다음에 다시 시도).
-    if (seen.has(step) || seen.size >= maxSteps) return
+    if (seen.has(step)) return
+    // ⚠️ 상한은 **Sentry 쿼터**를 지키기 위한 것이다. 예전엔 상한에 걸리면 파일 기록 전에 그냥 return
+    //    해서, 한 세션에서 9번째 스텝이 깨지면 Sentry·파일·경고 어디에도 안 남았다 — 진단을 붙여놓고
+    //    조용히 눈이 머는, 오늘 이미 두 번 겪은 실패. 파일은 언제나 쓴다.
+    const overQuota = seen.size >= maxSteps
     seen.add(step)
 
     const entry = { step, ...detail }
     let delivered = false
 
     try {
-      captureMessage?.(`flow: DOM step failed — ${step}`, {
+      if (!overQuota) captureMessage?.(`flow: DOM step failed — ${step}`, {
         level: 'warning',
         // 스텝별 fingerprint — 하나로 묶으면 "Flow DOM 실패" 이슈 한 개에 전부 뭉개져 어느 셀렉터가
         //   깨졌는지를 알 수 없다. 스텝별로 나눠야 이슈 하나 = 깨진 셀렉터 하나 + 전 사용자 집계.
         fingerprint: ['flow-dom-failure', step],
         extra: sanitizeForSentry(entry),
       })
-      if (captureMessage) delivered = true
+      if (captureMessage && !overQuota) delivered = true
     } catch {
       // 진단 보고 실패가 생성을 죽여선 안 된다.
     }

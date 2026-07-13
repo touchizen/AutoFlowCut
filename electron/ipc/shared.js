@@ -166,7 +166,8 @@ export function createSharedHelpers(ctx) {
           height: rect.height,
           tag: el.tagName,
           disabled: el.disabled || false,
-          visible: rect.width > 0 && rect.height > 0
+          visible: rect.width > 0 && rect.height > 0,
+          url: location.href
         };
       })()
     `)
@@ -174,8 +175,12 @@ export function createSharedHelpers(ctx) {
     // ⚠️ bounds 만 확인하면 부족하다. 측정 후 100ms 사이에 오버레이가 덮이거나 버튼이 이동하면
     //    좌표는 여전히 뷰 안이지만 **다른 요소**가 이벤트를 받는다 — 그래도 success 를 반환했다.
     //    누르기 직전에 그 점의 hit target 이 우리 요소(또는 그 자손)인지 확인한다.
-    const hitTest = (x, y) => flowView.webContents.executeJavaScript(`
+    // ⚠️ measuredUrl 을 넘겨 "측정한 그 페이지" 인지 확인한다. reject 만 막으면 부족하다 — 100ms 사이에
+    //    B 로 **정상 navigate** 되면 executeJavaScript 는 성공하고, B 에도 같은 자리에 같은 버튼이 있으면
+    //    hit-test 를 통과해 **B 의 버튼을 누른다**(B 에 남은 draft 를 잘못 제출할 수도 있다).
+    const hitTest = (x, y, measuredUrl) => flowView.webContents.executeJavaScript(`
       (function() {
+        if (location.href !== ${JSON.stringify(measuredUrl)}) return { ok: false, why: 'page-changed' };
         const target = ${jsSelector};
         if (!target) return { ok: false, why: 'gone' };
         const hit = document.elementFromPoint(${x}, ${y});
@@ -257,7 +262,7 @@ export function createSharedHelpers(ctx) {
       flowView.webContents.sendInputEvent({ type: 'mouseMove', x: coords.x, y: coords.y })
       await new Promise(r => setTimeout(r, 100))
 
-      const hit = await hitTest(coords.x, coords.y)
+      const hit = await hitTest(coords.x, coords.y, coords.url)
       if (!hit.ok) {
         console.warn('[TrustedClick] Another element occupies the point — refusing to click it:', hit.why)
         if (opts.required) {
