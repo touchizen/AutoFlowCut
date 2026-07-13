@@ -88,7 +88,11 @@ function normalizeFilenamesToNFD(dir) {
 exports.default = async function (context) {
   const appOutDir = context.appOutDir
   const sourceNodeModules = path.join(context.packager.projectDir, 'mcp-server', 'node_modules')
-  const targetNodeModules = path.join(appOutDir, 'resources', 'mcp-server', 'node_modules')
+  // 리소스 경로는 플랫폼마다 다르다 (mac 은 `.app/Contents/Resources`, win/linux 는 `resources`).
+  // 하드코딩하면 mac 에서 번들 밖으로 새고, 출하된 앱의 mcp-server 는 의존성 없이 죽는다.
+  const targetNodeModules = path.join(
+    context.packager.getResourcesDir(appOutDir), 'mcp-server', 'node_modules'
+  )
 
   if (fs.existsSync(sourceNodeModules) && !fs.existsSync(targetNodeModules)) {
     console.log('[afterPack] Copying mcp-server/node_modules...')
