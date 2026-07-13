@@ -26,6 +26,35 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { appendFileSync } from 'node:fs'
 import { z } from 'zod'
 
+/**
+ * M0-11 — **adapter 가 실제로 무슨 env 를 보는가**를 부모가 볼 수 있는 곳에 남긴다.
+ *
+ * per-server `mcp_servers.<name>.env` 가 `shell_environment_policy:{inherit:'none'}` 아래에서도
+ * adapter 에 도달하는지, 그리고 **다른 child 로는 안 새는지**를 이걸로 판정한다.
+ * env-gated (기본 off) — 다른 스파이크의 동작을 안 바꾼다.
+ */
+function dumpEnvIfAsked(serverLabel) {
+  const out = process.env.ECHO_ENV_DUMP_FILE
+  if (!out) return
+  appendFileSync(out, JSON.stringify({
+    server: serverLabel,
+    pid: process.pid,
+    // ⚠️ **값을 그대로 적지 않는다.** 토큰이 디스크에 평문으로 남으면 그게 유출이다.
+    //    "보이나 안 보이나" 와 "값이 맞나" 만 알면 된다.
+    sawAgentToken: typeof process.env.AUTOFLOWCUT_AGENT_TOKEN === 'string',
+    agentTokenMatches: process.env.AUTOFLOWCUT_AGENT_TOKEN === process.env.ECHO_EXPECTED_TOKEN,
+    electronRunAsNode: process.env.ELECTRON_RUN_AS_NODE ?? null,
+    // 공급자 비밀 카나리아 — 우리가 **일부러 심은** 가짜 키가 여기까지 오는지 본다.
+    // (ambient 에 진짜 키가 없으면 "안 보인다" 는 아무것도 증명 못 한다.)
+    sawOpenAiKey: typeof process.env.OPENAI_API_KEY === 'string',
+    sawAnthropicKey: typeof process.env.ANTHROPIC_API_KEY === 'string',
+    // F6: **app-server 의 env 가 어떤 키까지 child 로 흘러내리는가** — 목록을 고정한다.
+    //     (`CODEX_HOME` 이 흘러내리면 그건 **복사된 auth.json 이 있는 temp 디렉토리 경로**다.)
+    envKeys: Object.keys(process.env).sort(),
+    envKeyCount: Object.keys(process.env).length,
+  }) + '\n')
+}
+
 export function createEchoMcpServer({ markerFile = process.env.ECHO_GATED_MARKER_FILE } = {}) {
   // ⚠️ fail-closed. marker 가 없으면 recordBodyRun 이 no-op 이 되고, 그러면 body 가 몇 번을 돌든
   // 부모는 항상 bodyRuns=0 을 본다 — **deny 테스트가 공짜로 통과한다.** M0-9 에서 실제로 이걸 밟았다
@@ -98,12 +127,34 @@ export function createEchoMcpServer({ markerFile = process.env.ECHO_GATED_MARKER
     }
   )
 
+  // ── slow_echo (M0-10 전용) ──
+  // turn 이 **in-flight 인 동안** `turn/steer` 를 쏘려면 오래 도는 툴이 하나 필요하다.
+  // ⚠️ **env 로 게이트한다.** 그냥 등록하면 M0-8 의 inventory exact-match(`['echo','echo_gated']`)가 깨진다.
+  const slowMs = Number(process.env.ECHO_SLOW_MS ?? 0)
+  if (slowMs > 0) {
+    server.registerTool(
+      'slow_echo',
+      {
+        title: 'Slow Echo',
+        description: 'Waits, then returns the given text unchanged. Use when asked to call the slow tool.',
+        inputSchema: { text: z.string() },
+      },
+      async ({ text }) => {
+        await new Promise((r) => setTimeout(r, slowMs))
+        return { content: [{ type: 'text', text: `slow:${text}` }] }
+      }
+    )
+  }
+
   return server
 }
 
 // stdio 로 직접 실행될 때만 서버를 띄운다 (import 는 부작용 없음)
 const isDirectRun = process.argv[1] && process.argv[1].endsWith('echo-mcp.js')
 if (isDirectRun) {
+  // M0-11: 이 프로세스(=adapter)가 무슨 env 를 받았는지 먼저 남긴다.
+  dumpEnvIfAsked(process.env.ECHO_SERVER_LABEL ?? 'echo')
+
   const server = createEchoMcpServer()
   await server.connect(new StdioServerTransport())
 

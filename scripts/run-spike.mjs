@@ -5,7 +5,7 @@
  * cross-env 의존성을 새로 들이지 않고 node 로 환경을 세팅해 넘긴다.
  */
 import { spawn } from 'node:child_process'
-import { appendFileSync, mkdirSync } from 'node:fs'
+import { appendFileSync, existsSync } from 'node:fs'
 
 const RUN_ID = `${Date.now().toString(36)}-${process.pid}`
 
@@ -14,14 +14,29 @@ const RUN_ID = `${Date.now().toString(36)}-${process.pid}`
  * 증명할 수 없다 — 마지막 테스트의 `afterEach` 가 verdict 를 쓴 **뒤에** worker/afterAll/runner 가 죽어도
  * verdict 행들은 멀쩡해 보인다.
  */
+const RAW_FILES = [
+  'm0-8-9-raw.jsonl',
+  'm0-10-raw.jsonl',
+  'm0-11-raw.jsonl',
+  'm0-13-raw.jsonl',
+]
+
+/**
+ * ⚠️ **이번 run 이 건드린 raw 전부**에 완료 기록을 남긴다.
+ * 예전엔 `m0-8-9-raw.jsonl` 에만 하드코딩해서, m0-10/11/13 raw 를 보는 감사자는
+ * "이 invocation 이 성공적으로 끝났는가" 를 **그 파일 안에서 확인할 수 없었다.**
+ * (파일 이름만 믿는 감사자는 증거 체인을 못 닫는다.)
+ */
 const recordCompletion = (data) => {
-  try {
-    mkdirSync('docs/superpowers/specs', { recursive: true })
-    appendFileSync(
-      'docs/superpowers/specs/m0-8-9-raw.jsonl',
-      JSON.stringify({ runId: RUN_ID, label: '__run_completed__', ...data }) + '\n',
-    )
-  } catch { /* raw 를 못 써도 러너는 죽지 않는다 */ }
+  const dir = 'docs/superpowers/specs'
+  for (const f of RAW_FILES) {
+    const path = `${dir}/${f}`
+    // 이번 run 이 건드린 파일에만 쓴다 (없는 raw 를 새로 만들지 않는다).
+    if (!existsSync(path)) continue
+    try {
+      appendFileSync(path, JSON.stringify({ runId: RUN_ID, label: '__run_completed__', ...data }) + '\n')
+    } catch { /* raw 를 못 써도 러너는 죽지 않는다 */ }
+  }
 }
 
 const child = spawn(
