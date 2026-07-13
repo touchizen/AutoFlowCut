@@ -499,14 +499,22 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  min-width: min(720px, 78vw);
+  /* min-width 로 모달보다 넓게 강제하면 오른쪽이 잘려 CSV 선택 버튼이 사라진다. */
+  width: 100%;
+  min-width: 0;
 }
 
 .image-first-toolbar,
 .image-first-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+}
+
+/* grid/flex 자식은 기본 min-width:auto 라 축소되지 않는다 — ellipsis 가 먹으려면 0 이어야 한다. */
+.image-first-toolbar > * {
+  min-width: 0;
 }
 
 .image-first-actions {
@@ -522,10 +530,15 @@
   overflow: auto;
 }
 
+.image-first-file-row > *,
+.image-first-board-row > * {
+  min-width: 0;
+}
+
 .image-first-file-row,
 .image-first-board-row {
   display: grid;
-  grid-template-columns: auto auto minmax(120px, 1fr) auto auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 8px;
   padding: 8px;
@@ -534,7 +547,7 @@
 }
 
 .image-first-board-row {
-  grid-template-columns: 48px minmax(140px, 2fr) minmax(120px, 1fr) minmax(80px, 1fr);
+  grid-template-columns: 48px minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr);
 }
 
 .image-first-thumb {

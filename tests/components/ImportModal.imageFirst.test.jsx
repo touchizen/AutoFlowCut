@@ -25,6 +25,14 @@ function setup(overrides = {}) {
   return { ...view, props }
 }
 
+// CSV 는 M1a 필수다 — 확정 버튼은 CSV 없이는 disabled 다.
+async function attachCsv(csv = CSV_WITH_DROPPED_ROWS) {
+  await userEvent.upload(
+    screen.getByLabelText('image-first-storyboard'),
+    new File([csv], 'board.csv', { type: 'text/csv' }),
+  )
+}
+
 async function openImageFirstAndUpload(files) {
   await userEvent.click(screen.getByTestId('image-first-option'))
   const input = screen.getByLabelText('image-first-images')
@@ -95,6 +103,7 @@ describe('ImportModal image-first flow', () => {
       new File(['2'], 'two.png', { type: 'image/png' }),
       new File(['3'], 'three.jpg', { type: 'image/jpeg' }),
     ])
+    await attachCsv()
 
     await userEvent.click(screen.getByRole('button', { name: 'Confirm image-first import' }))
 
@@ -104,16 +113,33 @@ describe('ImportModal image-first flow', () => {
     expect(props.onClose).not.toHaveBeenCalled()
   })
 
-  it('treats an absent storyboard CSV as the legal image-only variant', async () => {
+  // M1a 는 D24a(storyboard) 만 ship 한다. D24b(image-only) 는 M0-S17 blind gate 뒤이고
+  // prompt-sync 가 fail-closed 라, CSV 없이 확정되면 사용자가 빠져나올 수 없는 모드에 갇힌다.
+  it('refuses to confirm without a storyboard CSV — image-only is not shippable in M1a', async () => {
     const onImportImageFirst = vi.fn(async () => ({ success: true }))
     setup({ onImportImageFirst })
     await openImageFirstAndUpload([new File(['1'], 'one.png', { type: 'image/png' })])
 
+    const confirm = screen.getByRole('button', { name: 'Confirm image-first import' })
+    expect(confirm).toBeDisabled()
+
+    await userEvent.click(confirm)
+    expect(onImportImageFirst).not.toHaveBeenCalled()
+  })
+
+  it('always stages the storyboard variant once a CSV is attached', async () => {
+    const onImportImageFirst = vi.fn(async () => ({ success: true }))
+    setup({ onImportImageFirst })
+    await openImageFirstAndUpload([new File(['1'], 'one.png', { type: 'image/png' })])
+    await userEvent.upload(
+      screen.getByLabelText('image-first-storyboard'),
+      new File([CSV_WITH_DROPPED_ROWS], 'board.csv', { type: 'text/csv' }),
+    )
+
     await userEvent.click(screen.getByRole('button', { name: 'Confirm image-first import' }))
 
     await waitFor(() => expect(onImportImageFirst).toHaveBeenCalledWith(expect.objectContaining({
-      imageFirstVariant: 'image-only',
-      storyboardCsv: '',
+      imageFirstVariant: 'storyboard',
     })))
   })
 
@@ -141,6 +167,7 @@ describe('ImportModal image-first flow', () => {
     const onImportImageFirst = vi.fn(() => new Promise((resolve) => { resolveImport = resolve }))
     const { props } = setup({ onImportImageFirst })
     await openImageFirstAndUpload([new File(['1'], 'one.png', { type: 'image/png' })])
+    await attachCsv()
     await userEvent.click(screen.getByRole('button', { name: 'Confirm image-first import' }))
     await waitFor(() => expect(onImportImageFirst).toHaveBeenCalledTimes(1))
 

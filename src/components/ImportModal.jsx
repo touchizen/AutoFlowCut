@@ -211,7 +211,7 @@ export default function ImportModal({ onImport, onImportAudio, onImportImageFirs
     try {
       const result = await onImportImageFirst?.({
         imageRows: imageRows.map(({ id, file }) => ({ id, file })),
-        imageFirstVariant: storyboardCsv ? 'storyboard' : 'image-only',
+        imageFirstVariant: 'storyboard',
         storyboardCsv,
         isCancelled: () => cancelRequestedRef.current,
       })
@@ -339,7 +339,7 @@ export default function ImportModal({ onImport, onImportAudio, onImportImageFirs
               type="button"
               className="btn btn-primary"
               aria-label="Confirm image-first import"
-              disabled={submitting || imageRows.length === 0}
+              disabled={submitting || imageRows.length === 0 || !storyboardCsv}
               onClick={handleImageFirstConfirm}
             >
               {submitting ? t('import.imageFirstImporting') : t('import.imageFirstConfirm')}
