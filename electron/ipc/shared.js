@@ -183,8 +183,11 @@ export function createSharedHelpers(ctx) {
         // hit.contains(target) 은 넣지 않는다 — 큰 부모가 hit 이면 우리 버튼이 이벤트를 못 받는다는 뜻이다.
         return { ok: target === hit || target.contains(hit), why: 'covered' };
       })()
-    `).then((r) => (r && typeof r.ok === 'boolean' ? r : { ok: true, why: 'unreadable' }))
-     .catch(() => ({ ok: true, why: 'unreadable' }))   // 판정 불가면 막지 않는다 — 클릭은 시도한다
+    `).then((r) => (r && typeof r.ok === 'boolean' ? r : { ok: false, why: 'unreadable' }))
+     .catch(() => ({ ok: false, why: 'context-gone' }))
+    // ⚠️ 여기서 fail-open 하면 안 된다. hit-test 가 reject 된다는 건 그 사이 페이지가 navigate 되어
+    //    실행 컨텍스트가 사라졌다는 뜻이고, 그러면 우리가 들고 있는 좌표는 **다른 페이지의 좌표** 다.
+    //    그걸 누르고 success 를 반환하면 오늘 종일 쫓던 "엉뚱한 걸 누르고 성공이라 말하기" 다.
 
     // 유효 좌표는 0..width-1 / 0..height-1 이다. `>` 로 검사하면 x === width 가 "안"으로 통과해
     //   뷰 밖을 클릭하고 성공을 반환한다(옛 clamp 도 width-1 로 잘랐다).
@@ -1127,6 +1130,9 @@ export function createSharedHelpers(ctx) {
     // ⚠️ substring 으로 보면 "…/tools/flow/?next=/project/<id>"(쿼리), "/archive/project/<id>"(다른 라우트),
     //    "/project/<id>-suffix"(다른 id), 심지어 다른 origin 도 통과한다 — 전부 실측으로 확인됐다.
     //    origin 과 pathname 을 정확히 본다.
+    // ⚠️ projectId 는 **한 경로 세그먼트** 여야 한다. 저장값에 '/' 가 섞이면("abc/characters")
+    //    /project/abc/characters 가 통째로 id 로 매칭돼 캐릭터 페이지를 컴포저로 승인한다.
+    if (!/^[A-Za-z0-9._~-]+$/.test(String(projectId))) return false
     let u
     try { u = new URL(url) } catch { return false }
     if (u.hostname.toLowerCase() !== 'labs.google') return false

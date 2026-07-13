@@ -36,6 +36,7 @@ function makeCtx({ coordsByCall, bounds = NARROW }) {
   const seq = [...coordsByCall]
 
   const executeJavaScript = vi.fn(async (script) => {
+    if (String(script).includes('elementFromPoint')) return { ok: true, why: 'ok' }   // 실제 페이지는 hit-test 결과를 준다
     if (String(script).includes('getBoundingClientRect')) return seq.length > 1 ? seq.shift() : seq[0]
     return null
   })

@@ -80,11 +80,13 @@ export function registerDomIPC(ipcMain, deps) {
       // 페이지가 진짜 대상 프로젝트로 로드됐는지 확인 — URL 일치 + 에러 텍스트 없음.
       //   (URL 만 보면 "문제가 발생했습니다" 에러 페이지도 success 로 오판 → false positive.)
       const probe = async () => {
-        const urlNow = flowView.webContents.getURL() || ''
-        const onTargetUrl = urlNow.includes(`/project/${flowProjectId}`)
         let page = { hasComposer: false, interactiveCount: 0 }
         let probeOk = true
         try { page = await flowView.webContents.executeJavaScript(FLOW_PAGE_PROBE_JS) } catch { probeOk = false }
+        // ⚠️ URL 을 probe 전에 따로 읽으면 A→B 로 넘어간 사이 B 의 DOM 을 A 의 URL 과 짝지어 성공이라
+        //    보고한다. probe 가 **같은 페이지 컨텍스트에서** 돌려준 url 을 쓴다(원자적).
+        const urlNow = (probeOk && page && page.url) || flowView.webContents.getURL() || ''
+        const onTargetUrl = urlNow.includes(`/project/${flowProjectId}`)
         return { urlNow, onTargetUrl, isErrorPage: isFlowErrorPage(page), probeOk, page }
       }
 

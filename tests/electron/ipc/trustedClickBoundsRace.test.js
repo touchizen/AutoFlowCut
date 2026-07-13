@@ -33,7 +33,12 @@ function makeCtx({ coordsByCall }) {
     getBounds: vi.fn(() => ({ ...current })),
     setBounds: vi.fn((b) => { current = { ...b } }),
     webContents: {
-      executeJavaScript: vi.fn(async (s) => (String(s).includes('getBoundingClientRect') ? (seq.length > 1 ? seq.shift() : seq[0]) : null)),
+      executeJavaScript: vi.fn(async (s) => {
+        const src = String(s)
+        if (src.includes('elementFromPoint')) return { ok: true, why: 'ok' }   // 실제 페이지는 hit-test 결과를 준다
+        if (src.includes('getBoundingClientRect')) return seq.length > 1 ? seq.shift() : seq[0]
+        return null
+      }),
       sendInputEvent: vi.fn(),
       getURL: () => '',
       focus: vi.fn(),

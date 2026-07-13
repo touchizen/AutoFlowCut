@@ -29,7 +29,8 @@ const SECRET_WORDS = new Set(['auth', 'authorization', 'cookie', 'token', 'secre
 //    지우면 "ENOENT …" 같은 진단 자체가 사라진다. DOM 속성 value 는 flow-diag 쪽에서 거른다.
 // characterName · pageText 같은 합성 키도 단어 분해로 잡힌다. 단, contexts(os.name/device.name 등
 //   SDK 생성값)에는 적용하지 않는다 — 거기 name 을 지우면 진단만 사라진다.
-const CONTENT_WORDS = new Set(['prompt', 'caption', 'narration', 'name', 'text', 'label', 'title', 'placeholder', 'html', 'body', 'content'])
+// 'username'·'nickname' 은 단어 분해로 안 쪼개진다 — 직접 넣는다.
+const CONTENT_WORDS = new Set(['prompt', 'caption', 'narration', 'name', 'username', 'nickname', 'text', 'label', 'title', 'placeholder', 'html', 'body', 'content'])
 
 /** 'characterName' → ['character','name'], 'x-api-key' → ['x','api','key'] */
 function keyWords(key) {
@@ -49,9 +50,10 @@ const PROMPT_BEARING = [
 const KEYED_SECRETS = [
   /([?&](?:key|access_token|refresh_token|id_token|token|api_?key|password|secret)=)[^&\s"'`]+/gi,
   /((?:authorization|x-api-key)\s*[:=]\s*)[^\n,;"'`]+/gi,
-  // Cookie 헤더 문자열 — 쿠키 이름은 뭐든 될 수 있다(__Secure-1PSID, NID …). 각 쌍을 통째로 지운다.
-  /((?:^|[;\s])cookie\s*:\s*)[^\n]+/gi,
-  /(\b[A-Za-z_][A-Za-z0-9_-]*\s*=\s*)[^;\s,"'`]{8,}(?=;|$)/g,
+  // Cookie 헤더 — 쿠키 이름은 뭐든 될 수 있다(__Secure-1PSID, NID …). 헤더 전체를 지운다.
+  //   ⚠️ "임의의 name=value 를 다 지우는" 폴백은 쓰지 않는다 — projectId=<uuid> 같은 진단 필드까지
+  //      지워 로그를 못 읽게 만들었다(실측). 쿠키는 헤더 문맥 안에서만 판단한다.
+  /((?:^|[;\s,])(?:set-)?cookie\s*[:=]\s*)[^\n]+/gi,
   /(["']?(?:access|refresh|id)_token["']?\s*[:=]\s*["']?)[A-Za-z0-9._~+/-]{8,}/gi,
 ]
 
@@ -77,7 +79,8 @@ const SECRET_BEARING = [
 //   ⚠️ URL 을 먼저 통으로 잡고 콜백에서 호스트를 검사한다. `[^\s]*(?:a|b)[^\s]*` 형태로 쓰면
 //      매치 실패 시 2차 백트래킹이 터진다(실측: 32KB 600ms, 200KB 21초). Sentry 훅은 동기다.
 // Sentry SDK 가 채우는 컨텍스트 — 여기 name/text 는 진단이지 사용자 콘텐츠가 아니다.
-const SDK_CONTEXTS = /^(os|device|runtime|app|browser|culture|trace|gpu|cloud_resource|response)$/i
+// device 는 예외에서 뺀다 — device.name 은 사용자의 컴퓨터 이름이고 대개 실명이 들어간다.
+const SDK_CONTEXTS = /^(os|runtime|app|browser|culture|trace|gpu|cloud_resource|response)$/i
 
 const ANY_URL = /https?:\/\/[^\s"'`,)\]}]+/g
 const MEDIA_HOST = /googleusercontent|ggpht|fife|getMediaUrlRedirect/i

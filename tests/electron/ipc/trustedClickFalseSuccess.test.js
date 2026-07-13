@@ -25,7 +25,12 @@ function makeCtx({ coords, onBeforeClick }) {
     getBounds: vi.fn(() => ({ ...current })),
     setBounds: vi.fn((b) => { current = { ...b } }),
     webContents: {
-      executeJavaScript: vi.fn(async (s) => (String(s).includes('getBoundingClientRect') ? coords : null)),
+      executeJavaScript: vi.fn(async (s) => {
+        const src = String(s)
+        if (src.includes('elementFromPoint')) return { ok: true, why: 'ok' }
+        if (src.includes('getBoundingClientRect')) return coords
+        return null
+      }),
       sendInputEvent: vi.fn((e) => { if (e.type === 'mouseMove' && onBeforeClick) onBeforeClick({ collapse: () => { current = { x: 0, y: 0, width: 0, height: 0 } } }) }),
       getURL: () => '',
       focus: vi.fn(),

@@ -112,7 +112,10 @@ export function createFlowDiagSink({
     body = safeStringify([...entries, entry],
       safeStringify([...entries, { step, note: 'detail not serialisable' }],
         JSON.stringify([{ step, note: 'diagnostic not serialisable' }], null, 2)))
-    const targets = filePath ? [filePath] : [`${desktopDir}/${buildFlowDiagFilename(now())}`, `${userDataDir}/${buildFlowDiagFilename(now())}`]
+    // ⚠️ 한 번 성공한 경로만 재시도하면, 그 경로가 이후 못 쓰게 됐을 때(외장 볼륨·권한 변경) 폴백이
+    //    없어 파일이 낡은 채로 멈춘다. 기존 경로를 먼저 쓰되 실패하면 원래 후보들로 다시 내려간다.
+    const fresh = [`${desktopDir}/${buildFlowDiagFilename(now())}`, `${userDataDir}/${buildFlowDiagFilename(now())}`]
+    const targets = filePath ? [filePath, ...fresh] : fresh
     for (const target of targets) {
       if (!target) continue
       try {
