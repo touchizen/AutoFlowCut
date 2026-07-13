@@ -1500,12 +1500,11 @@ export default function StoryView({
                 )}
                 <div className="story-synopsis-characters">
                   <span className="story-opt-label">{t('story.synopsis.charactersTitle', '등장인물')}</span>
-                  {/* narrator 는 나레이션 트랙이라 등장인물에서 제외된다 — 나레이터만 있는 스토리보드는
-                      인물 행이 0개인 게 정상이다. 아무 설명 없이 비면 고장난 줄 알고 멈추므로(실앱 검증에서
-                      실제로 막혔다) 그대로 확정하면 된다고 알려준다. */}
+                  {/* 빈 roster만으로 narrator-only인지 visual-only인지 단정할 수 없다. 등록된 인물이
+                      없다는 확인된 사실만 안내하고, 그대로 확정할 수 있음을 명시한다. */}
                   {characterDrafts.length === 0 && (
                     <p className="story-hint" data-testid="story-roster-empty">
-                      {t('story.synopsis.rosterEmpty', '나레이터만 등장하는 이야기입니다. 등장인물 없이 그대로 확정하고 진행하세요.')}
+                      {t('story.synopsis.rosterEmpty', '등록된 등장인물이 없습니다. 그대로 확정하고 진행하세요.')}
                     </p>
                   )}
                   <CharacterCards characters={characterDrafts} onChange={setCharacterDrafts} disabled={synopsisGenerating || synopsisReviewing} t={t} />

@@ -19,6 +19,7 @@ function fixture(overrides = {}) {
   const lock = { current: false }
   let nextScene = 10
   let nextStory = 1
+  const projectIdentity = { projectPath: '/work/ExistingProject', switchEpoch: 0 }
   const deps = {
     projectName: 'ExistingProject',
     imageRows: [
@@ -27,11 +28,11 @@ function fixture(overrides = {}) {
     ],
     imageFirstVariant: 'storyboard',
     storyboardCsv: 'scene,prompt,duration\n1,First,2\n2,Second,2',
+    getCurrentProjectIdentity: vi.fn(() => projectIdentity),
     ensureStoryOpen: vi.fn(async () => {
       calls.push('storyOpen')
       return { projectToken: 'token-1' }
     }),
-    recoverStory: vi.fn(async () => { calls.push('storyRecoveryOpen') }),
     beginImageFirstImport: vi.fn(() => {
       calls.push('lock:on')
       lock.current = true
@@ -187,6 +188,61 @@ describe('App image-first import coordinator', () => {
     expect(deps.stageImageFirst).not.toHaveBeenCalled()
   })
 
+  // A -> B -> A 로 되돌아오면 projectPath 는 같지만 프로젝트는 리로드됐다(scene counter 등 상태가
+  // 다르다). path 비교만으로는 못 잡고 switchEpoch 만 잡는다 — 이 가드에 테스트가 없었다.
+  it('switching away and back to the SAME project during Story open still aborts (epoch guard)', async () => {
+    const storyOpen = deferred()
+    let currentIdentity = { projectPath: '/work/ExistingProject', switchEpoch: 4 }
+    const { deps } = fixture({
+      ensureStoryOpen: vi.fn(() => storyOpen.promise),
+      getCurrentProjectIdentity: vi.fn(() => currentIdentity),
+    })
+
+    const pending = runImageFirstImport(deps)
+    await vi.waitFor(() => expect(deps.ensureStoryOpen).toHaveBeenCalledTimes(1))
+    // 같은 경로로 돌아왔지만 전환이 일어났다.
+    currentIdentity = { projectPath: '/work/ExistingProject', switchEpoch: 5 }
+    storyOpen.resolve({ projectToken: 'token-for-original-project' })
+
+    await expect(pending).resolves.toEqual({
+      success: false,
+      error: 'image-first-import-stale-project',
+    })
+    expect(deps.beginImageFirstImport).not.toHaveBeenCalled()
+    expect(deps.stageImageFirstImage).not.toHaveBeenCalled()
+    expect(deps.commitImageFirstImport).not.toHaveBeenCalled()
+    expect(deps.applyImageFirstImportCommit).not.toHaveBeenCalled()
+    expect(deps.stageImageFirst).not.toHaveBeenCalled()
+  })
+
+  it('project switch during Story open aborts before the lock and applies nothing to either project', async () => {
+    const storyOpen = deferred()
+    let currentIdentity = { projectPath: '/work/ExistingProject', switchEpoch: 4 }
+    const { deps, calls } = fixture({
+      ensureStoryOpen: vi.fn(() => storyOpen.promise),
+      getCurrentProjectIdentity: vi.fn(() => currentIdentity),
+    })
+
+    const pending = runImageFirstImport(deps)
+    await vi.waitFor(() => expect(deps.ensureStoryOpen).toHaveBeenCalledTimes(1))
+    currentIdentity = { projectPath: '/work/OtherProject', switchEpoch: 5 }
+    storyOpen.resolve({ projectToken: 'token-for-original-project' })
+
+    await expect(pending).resolves.toEqual({
+      success: false,
+      error: 'image-first-import-stale-project',
+    })
+    expect(deps.ensureStoryOpen).toHaveBeenCalledTimes(1)
+    expect(deps.beginImageFirstImport).not.toHaveBeenCalled()
+    expect(deps.allocateSceneId).not.toHaveBeenCalled()
+    expect(deps.stageImageFirstImage).not.toHaveBeenCalled()
+    expect(deps.abortImageFirstImport).not.toHaveBeenCalled()
+    expect(deps.commitImageFirstImport).not.toHaveBeenCalled()
+    expect(deps.applyImageFirstImportCommit).not.toHaveBeenCalled()
+    expect(deps.stageImageFirst).not.toHaveBeenCalled()
+    expect(calls).toEqual([])
+  })
+
   it('aborts on the first mid-stage rejection and returns the exact file row', async () => {
     const { deps } = fixture({
       imageRows: [
@@ -256,8 +312,10 @@ describe('App image-first import coordinator', () => {
     })
   })
 
-  it('keeps committed project R, reopens Story once, and returns sourceRowIds on Story rejection', async () => {
+  it('keeps committed project R, opens Story exactly once, and returns sourceRowIds on Story rejection', async () => {
+    const storyOpen = vi.fn(async () => ({ projectToken: 'token-1' }))
     const { deps, lock } = fixture({
+      ensureStoryOpen: storyOpen,
       stageImageFirst: vi.fn(async () => ({
         success: false,
         error: 'storyboard-speaker-missing',
@@ -274,28 +332,54 @@ describe('App image-first import coordinator', () => {
     expect(deps.commitImageFirstImport).toHaveBeenCalledTimes(1)
     expect(deps.applyImageFirstImportCommit).toHaveBeenCalledTimes(1)
     expect(deps.abortImageFirstImport).not.toHaveBeenCalled()
-    expect(deps.recoverStory).toHaveBeenCalledTimes(1)
+    expect(storyOpen).toHaveBeenCalledTimes(1)
     expect(deps.endImageFirstImport).toHaveBeenCalledTimes(1)
     expect(lock.current).toBe(false)
   })
 
-  it('attempts post-commit recovery exactly once even when recovery open rejects', async () => {
+  it('does not reopen Story when the stage invoke rejects; the initial open remains the only open', async () => {
+    const storyOpen = vi.fn(async () => ({ projectToken: 'token-1' }))
     const { deps } = fixture({
-      stageImageFirst: vi.fn(async () => ({
-        success: false,
-        error: 'storyboard-prompt-missing',
-        sourceRowIds: ['storyboard-row-1'],
-      })),
-      recoverStory: vi.fn(async () => { throw new Error('recovery-open-failed') }),
+      ensureStoryOpen: storyOpen,
+      stageImageFirst: vi.fn(async () => { throw new Error('story-stage-ipc-failed') }),
     })
 
     await expect(runImageFirstImport(deps)).resolves.toMatchObject({
       success: false,
-      error: 'storyboard-prompt-missing',
+      error: 'story-stage-ipc-failed',
       committed: true,
     })
-    expect(deps.recoverStory).toHaveBeenCalledTimes(1)
+    expect(storyOpen).toHaveBeenCalledTimes(1)
     expect(deps.endImageFirstImport).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves validator violations, promotes their row ids, and exposes image/scene counts', async () => {
+    const violations = [
+      {
+        code: 'storyboard-source-slot-mismatch',
+        sourceRowId: 'storyboard-row-3',
+        expected: 2,
+        actual: 3,
+      },
+      { code: 'visual-only-prompt-empty', ordinal: 2 },
+    ]
+    const { deps } = fixture({
+      stageImageFirst: vi.fn(async () => ({
+        success: false,
+        error: 'fixed-scenes-invalid',
+        sourceRowIds: ['storyboard-row-1'],
+        violations,
+      })),
+    })
+
+    await expect(runImageFirstImport(deps)).resolves.toEqual({
+      success: false,
+      error: 'fixed-scenes-invalid',
+      sourceRowIds: ['storyboard-row-1', 'storyboard-row-3'],
+      violations,
+      countMismatch: { imageCount: 2, storyboardSceneCount: 3 },
+      committed: true,
+    })
   })
 
   it('preserves confirmed preview order in ordinals and the commit fixed list', async () => {

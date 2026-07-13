@@ -18,6 +18,8 @@ vi.mock('../../../src/components/Toast', () => ({ toast: { success: vi.fn(), err
 import { toast } from '../../../src/components/Toast'
 
 import StoryView from '../../../src/components/story/StoryView.jsx'
+import en from '../../../src/locales/en.js'
+import ko from '../../../src/locales/ko.js'
 
 const mkSteps = (over) => ({
   script: { status: 'done' },
@@ -454,18 +456,57 @@ describe('image-first ⑤ fixedSceneError 복구 패널', () => {
     render(<StoryView pipeline={pipeline(imageFirstState({ charactersConfirmed: true }))} voices={[]} onClose={vi.fn()} />)
     expect(screen.queryByTestId('story-fixed-scene-alert')).not.toBeInTheDocument()
   })
+
+  it.each([
+    ['brand-new old story', { pendingPushRevision: 0, lastPushedRevision: 0 }],
+    ['fully-synced old story', { pendingPushRevision: 3, lastPushedRevision: 3 }],
+  ])('%s에 파생된 marker도 recovery panel과 re-issue route를 노출한다', async (_label, revisions) => {
+    const st = audioFirstState({
+      ...revisions,
+      fixedSceneError: 'fixed-scenes-stale',
+      charactersConfirmed: undefined,
+    })
+    const onReissueImageFirst = vi.fn()
+    render(
+      <StoryView
+        pipeline={pipeline(st, { charactersConfirmed: undefined })}
+        voices={[]}
+        onClose={vi.fn()}
+        onReissueImageFirst={onReissueImageFirst}
+      />,
+    )
+
+    expect(screen.getByTestId('story-fixed-scene-alert')).toHaveAttribute('role', 'alert')
+    fireEvent.click(screen.getByRole('button', { name: /이미지 세트 다시 임포트/ }))
+    expect(onReissueImageFirst).toHaveBeenCalledTimes(1)
+  })
 })
 
-describe('나레이터만 있는 스토리보드 — 등장인물 0명', () => {
-  // narrator 는 인물이 아니라 나레이션 트랙이라 등장인물 목록에서 제외된다. narrator-only CSV 는
-  // 인물 행이 0개인 게 정상이지만, 아무 설명 없이 텅 비면 사용자는 화면이 고장난 줄 알고 멈춘다.
-  // (실앱 검증에서 실제로 여기서 막혔다. 확정 자체는 통과한다.)
-  it('등장인물이 없으면 그대로 확정하면 된다는 안내를 보여준다', async () => {
+describe('등록된 등장인물 0명', () => {
+  it('ko/en locale도 narrator-only를 주장하지 않는 중립 문구다', () => {
+    expect(ko.story.synopsis.rosterEmpty).toContain('등록된 등장인물이 없습니다')
+    expect(ko.story.synopsis.rosterEmpty).not.toContain('나레이터')
+    expect(en.story.synopsis.rosterEmpty).toContain('No characters are registered')
+    expect(en.story.synopsis.rosterEmpty).not.toContain('Narrator')
+  })
+
+  it('visual-only board도 확인하지 않은 narrator 사실을 주장하지 않고 중립 안내를 보여준다', async () => {
     const st = imageFirstState()
-    render(<StoryView pipeline={pipeline(st, { characters: [] })} voices={[]} onClose={vi.fn()} />)
+    const visualOnlyScenes = [
+      { storyId: 's1', imagePrompt: 'Sunset', videoPrompt: '', segments: [] },
+      { storyId: 's2', imagePrompt: 'Night sky', videoPrompt: '', segments: [] },
+    ]
+    render(
+      <StoryView
+        pipeline={pipeline(st, { characters: [], scenes: visualOnlyScenes })}
+        voices={[]}
+        onClose={vi.fn()}
+      />,
+    )
 
     await waitFor(() => expect(screen.getByTestId('story-synopsis')).toBeInTheDocument())
-    expect(screen.getByTestId('story-roster-empty')).toBeInTheDocument()
+    expect(screen.getByTestId('story-roster-empty')).toHaveTextContent('등록된 등장인물이 없습니다')
+    expect(screen.getByTestId('story-roster-empty')).not.toHaveTextContent('나레이터')
   })
 
   it('등장인물이 있으면 안내를 보여주지 않는다', async () => {

@@ -726,6 +726,35 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   // scenes 재실행 시 LLM speaker를 narrator로 뭉갠다(회귀). "undefined + script done → editor"
   // phase 판정은 renderer(StoryView hydrate ④분기)가 직접 수행한다.
 
+  async function markFixedSceneStale({ emitState = false, operationId } = {}) {
+    if (!state) state = await store.load()
+    if (state.fixedSceneError !== 'fixed-scenes-stale') {
+      state.fixedSceneError = 'fixed-scenes-stale'
+      await flush()
+    }
+    if (emitState) {
+      const scenes = await loadScenesForPayload()
+      const scriptText = (await store.loadText('script.md')) || ''
+      send('story:state', {
+        state,
+        scenes,
+        scriptText,
+        ...(await hydrateExtras()),
+      }, operationId)
+    }
+  }
+
+  async function deriveFixedSceneError({ emitState = false, operationId } = {}) {
+    let consistency
+    try {
+      consistency = checkFixedSceneConsistency(await loadProjectState(), state)
+    } catch {
+      consistency = { success: false, error: 'fixed-scenes-stale' }
+    }
+    if (!consistency.success) await markFixedSceneStale({ emitState, operationId })
+    return consistency
+  }
+
   async function maybeResendPush(operationId) {
     if (!state) state = await store.load()
     if (state.steps.prompts.status === 'done' && state.pendingPushRevision > state.lastPushedRevision) {
@@ -742,8 +771,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       } catch {
         // open/getState resend의 durable consistency/identity 오류는 프로젝트를 못 여는 예외가
         // 아니다. stale recovery UI가 소비할 marker를 먼저 저장하고 기존 hydrate를 계속한다.
-        state.fixedSceneError = 'fixed-scenes-stale'
-        await flush()
+        await markFixedSceneStale()
       }
     }
   }
@@ -1242,6 +1270,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       state = await store.load()
       await healMissingStepArtifacts()
       await healReferencedSpeakers()
+      await deriveFixedSceneError()
       await maybeResendPush()
       maybeSendCharacters()
       const scenes = await loadScenesForPayload()
@@ -1262,6 +1291,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     async getState() {
       if (!state) state = await store.load()
       await healReferencedSpeakers()
+      await deriveFixedSceneError()
       await maybeResendPush()
       maybeSendCharacters()
       const scenes = await loadScenesForPayload()
@@ -1278,15 +1308,28 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         fixedSceneRevision,
         fixedScenes,
       }
+      const committedProjectState = await loadProjectState()
       const consistency = checkFixedSceneConsistency(
-        await loadProjectState(),
+        committedProjectState,
         state,
         { allowCommittedButUnstaged: true, expectedProjectState },
       )
       // 이 command는 committed-but-unstaged edge를 한 번만 소비한다. 이미 consistent인 R을
       // 재수락하면 raw CSV와 deterministic artifacts를 재작성하는 두 번째 consumer가 된다.
       if (!consistency.success || consistency.status !== 'committed-but-unstaged') {
+        const actualEdge = checkFixedSceneConsistency(committedProjectState, state, {
+          allowCommittedButUnstaged: true,
+          expectedProjectState: committedProjectState,
+        })
+        if (actualEdge.success && actualEdge.status === 'committed-but-unstaged') {
+          await markFixedSceneStale({ emitState: true })
+        }
         return { success: false, error: 'fixed-scenes-stale' }
+      }
+
+      const rejectCommittedStage = async (result) => {
+        await markFixedSceneStale({ emitState: true })
+        return result
       }
 
       let scriptMd = ''
@@ -1298,21 +1341,21 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
           roster: state.speakers || [],
           rosterEnforced: false,
         })
-        if (!validatedStoryboard.success) return validatedStoryboard
+        if (!validatedStoryboard.success) return rejectCommittedStage(validatedStoryboard)
 
         try {
           ({ scriptMd, scenes: deterministicScenes } = buildStoryboardArtifacts(validatedStoryboard, fixedScenes))
         } catch {
           // Adapter precondition failures (notably fixed N mismatch) still cross the public boundary as
           // the fixed validator's typed surface, never as an unhandled invoke rejection.
-          return validateFixedScenes({
+          return rejectCommittedStage(validateFixedScenes({
             scenes: [],
             fixedScenes,
             variant: 'storyboard',
             speakers: validatedStoryboard.speakers,
             sourceRows: validatedStoryboard.rows,
             requireTiming: false,
-          })
+          }))
         }
         // Self-promoting stage validates against the row validator's candidate roster. Using only the
         // old durable roster here would reject every newly discovered CSV speaker before it can be seeded.
@@ -1324,7 +1367,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
           sourceRows: validatedStoryboard.rows,
           requireTiming: false,
         })
-        if (!fixedValidation.success) return fixedValidation
+        if (!fixedValidation.success) return rejectCommittedStage(fixedValidation)
       }
 
       state.input = { type: 'storyboard', variant: imageFirstVariant, fixedSceneRevision }

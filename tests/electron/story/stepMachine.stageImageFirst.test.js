@@ -221,6 +221,24 @@ async function expectZeroSideEffects(ctx, commandPayload, expected) {
   expect(await ctx.machine.getState()).toEqual(before)
 }
 
+async function expectRecoveryMarkerOnly(ctx, commandPayload, expected) {
+  writes.length = 0
+  ctx.emitted.length = 0
+
+  const result = await ctx.machine.stageImageFirst(commandPayload)
+
+  expect(result).toEqual(expected)
+  expect(writes.filter(({ relPath }) => relPath !== 'story.json')).toHaveLength(0)
+  expect(storeSpies.saveText).toHaveBeenCalledTimes(0)
+  expect(storeSpies.save).toHaveBeenCalledTimes(0)
+  expect(ctx.emitted).toHaveLength(1)
+  expect(ctx.emitted[0]).toMatchObject({
+    channel: 'story:state',
+    data: { state: { fixedSceneError: 'fixed-scenes-stale' } },
+  })
+  expect((await ctx.machine.getState()).fixedSceneError).toBe('fixed-scenes-stale')
+}
+
 describe('machine.stageImageFirst consistency gate', () => {
   it('project@R + revision 없는 old story만 committed-but-unstaged 전이로 소비한다', async () => {
     const ctx = await makeMachine()
@@ -230,9 +248,9 @@ describe('machine.stageImageFirst consistency gate', () => {
     expect(result).toEqual({ success: true })
   })
 
-  it('project와 다른 payload revision은 stale이며 parser/artifact/state/send side effect가 0회다', async () => {
+  it('project와 다른 payload revision은 stale이며 artifact 없이 recovery marker를 emit한다', async () => {
     const ctx = await makeMachine()
-    await expectZeroSideEffects(ctx, payload({ fixedSceneRevision: 'different-r' }), {
+    await expectRecoveryMarkerOnly(ctx, payload({ fixedSceneRevision: 'different-r' }), {
       success: false,
       error: 'fixed-scenes-stale',
     })
@@ -273,11 +291,11 @@ describe('machine.stageImageFirst storyboard rejection boundary', () => {
     ['duration missing', 'scene,prompt,subtitle,speaker\n1,P,,\n2,Q,T,narrator', 'storyboard-duration-missing', ['storyboard-row-1']],
   ]
 
-  it.each(rowRejections)('%s rejection은 typed shape 그대로이고 story mutation/write/send가 0회다', async (
+  it.each(rowRejections)('%s rejection은 typed shape를 유지하고 artifact 0회 + recovery marker emit이다', async (
     _label, csv, error, sourceRowIds, fields, speakers,
   ) => {
     const ctx = await makeMachine()
-    await expectZeroSideEffects(ctx, payload({ storyboardCsv: csv }), {
+    await expectRecoveryMarkerOnly(ctx, payload({ storyboardCsv: csv }), {
       success: false,
       error,
       ...(speakers ? { speakers } : {}),
@@ -286,10 +304,9 @@ describe('machine.stageImageFirst storyboard rejection boundary', () => {
     })
   })
 
-  it('validated board slot count가 fixed N과 다르면 fixed-scenes-invalid이며 0-side-effect다', async () => {
+  it('validated board slot count가 fixed N과 다르면 fixed-scenes-invalid + recovery marker다', async () => {
     const ctx = await makeMachine()
     const csv = 'scene,prompt,subtitle,speaker\n1,P,S,narrator'
-    const before = await ctx.machine.getState()
     const result = await ctx.machine.stageImageFirst(payload({ storyboardCsv: csv }))
 
     expect(result).toMatchObject({ success: false, error: 'fixed-scenes-invalid' })
@@ -299,8 +316,29 @@ describe('machine.stageImageFirst storyboard rejection boundary', () => {
     expect(writes).toHaveLength(0)
     expect(storeSpies.saveText).toHaveBeenCalledTimes(0)
     expect(storeSpies.save).toHaveBeenCalledTimes(0)
-    expect(ctx.emitted).toHaveLength(0)
-    expect(await ctx.machine.getState()).toEqual(before)
+    expect(ctx.emitted).toHaveLength(1)
+    expect(ctx.emitted[0]).toMatchObject({
+      channel: 'story:state',
+      data: { state: { fixedSceneError: 'fixed-scenes-stale' } },
+    })
+    expect((await ctx.machine.getState()).fixedSceneError).toBe('fixed-scenes-stale')
+  })
+
+  it('committed stage rejection은 old story를 유지하면서 durable stale marker를 저장·emit한다', async () => {
+    const ctx = await makeMachine({ project: {} })
+    await writeJson(path.join(ctx.projectPath, 'project.json'), projectFixedState())
+    const csv = 'scene,prompt,subtitle,speaker\n1,P,S,narrator\n2,Q,Spoken,'
+
+    const result = await ctx.machine.stageImageFirst(payload({ storyboardCsv: csv }))
+
+    expect(result).toMatchObject({ success: false, error: 'storyboard-speaker-missing' })
+    const diskState = JSON.parse(await readFile(path.join(ctx.projectPath, 'story', 'story.json'), 'utf-8'))
+    expect(diskState.fixedSceneError).toBe('fixed-scenes-stale')
+    expect(diskState.sceneMode).toBeUndefined()
+    expect(diskState.input).toBeNull()
+    expect(ctx.emitted.find(({ channel }) => channel === 'story:state')?.data.state.fixedSceneError).toBe('fixed-scenes-stale')
+    expect(writes.map(({ relPath }) => relPath)).toEqual(['story.json'])
+    expect(storeSpies.saveText).not.toHaveBeenCalled()
   })
 
   it('blank/alias validator rejection은 speaker seeding보다 먼저라 roster가 세탁되지 않는다', async () => {

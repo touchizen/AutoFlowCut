@@ -82,6 +82,34 @@ function importError(error, fallback = 'image-first-import-failed') {
   return error?.error || error?.message || fallback
 }
 
+function storyStageFailureDetails(result) {
+  const violations = Array.isArray(result?.violations) ? result.violations : []
+  const sourceRowIds = [...new Set([
+    ...(Array.isArray(result?.sourceRowIds) ? result.sourceRowIds : []),
+    ...violations.map((violation) => violation?.sourceRowId),
+  ].filter((id) => typeof id === 'string' && id.trim()))]
+  const countViolation = violations.find((violation) => (
+    violation?.code === 'storyboard-source-slot-mismatch'
+    && Number.isInteger(violation.expected)
+    && Number.isInteger(violation.actual)
+  )) || violations.find((violation) => (
+    violation?.code === 'scene-count-mismatch'
+    && Number.isInteger(violation.expected)
+    && Number.isInteger(violation.actual)
+  ))
+
+  return {
+    ...(sourceRowIds.length > 0 ? { sourceRowIds } : {}),
+    ...(violations.length > 0 ? { violations } : {}),
+    ...(countViolation ? {
+      countMismatch: {
+        imageCount: countViolation.expected,
+        storyboardSceneCount: countViolation.actual,
+      },
+    } : {}),
+  }
+}
+
 /**
  * Dependency-injected body of App's canonical image-first transaction.
  * The mounted App supplies live hooks; tests observe the ordering without mounting App.
@@ -92,8 +120,8 @@ export async function runImageFirstImport({
   imageFirstVariant,
   storyboardCsv = '',
   isCancelled = () => false,
+  getCurrentProjectIdentity,
   ensureStoryOpen,
-  recoverStory,
   beginImageFirstImport,
   endImageFirstImport,
   allocateSceneId,
@@ -113,6 +141,11 @@ export async function runImageFirstImport({
     return { success: false, error: 'image-first-import-invalid' }
   }
 
+  const initialProjectIdentity = getCurrentProjectIdentity?.()
+  const openedProjectIdentity = initialProjectIdentity && {
+    projectPath: initialProjectIdentity.projectPath,
+    switchEpoch: initialProjectIdentity.switchEpoch,
+  }
   let openResult
   try {
     openResult = await ensureStoryOpen()
@@ -123,20 +156,18 @@ export async function runImageFirstImport({
     return { success: false, error: importError(openResult, 'story-open-failed') }
   }
 
+  const currentProjectIdentity = getCurrentProjectIdentity?.()
+  if (openedProjectIdentity && (
+    currentProjectIdentity?.projectPath !== openedProjectIdentity.projectPath
+    || currentProjectIdentity?.switchEpoch !== openedProjectIdentity.switchEpoch
+  )) {
+    return { success: false, error: 'image-first-import-stale-project' }
+  }
+
   beginImageFirstImport()
   let fixedSceneRevision = null
   let committed = false
   let activeFileRowId = null
-  let recoveryAttempted = false
-  const recoverCommittedStory = async () => {
-    if (recoveryAttempted) return
-    recoveryAttempted = true
-    try {
-      await recoverStory()
-    } catch {
-      // project R remains durable and story old remains fail-closed; a later open can hydrate it.
-    }
-  }
   try {
     const fixedScenes = imageRows.map((_row, index) => ({
       rendererSceneId: allocateSceneId(),
@@ -230,20 +261,16 @@ export async function runImageFirstImport({
       storyResult = { success: false, error: importError(error) }
     }
     if (!storyResult || storyResult.success === false) {
-      await recoverCommittedStory()
       return {
         success: false,
         error: importError(storyResult),
-        ...(Array.isArray(storyResult?.sourceRowIds)
-          ? { sourceRowIds: storyResult.sourceRowIds }
-          : {}),
+        ...storyStageFailureDetails(storyResult),
         committed: true,
       }
     }
     return { success: true }
   } catch (error) {
     if (committed) {
-      await recoverCommittedStory()
       return { success: false, error: importError(error), committed: true }
     }
     if (fixedSceneRevision) await abortImageFirstImport(projectName, fixedSceneRevision)
@@ -810,6 +837,16 @@ function App() {
   // 안 그러면 옛 프로젝트 씬/카드가 새 프로젝트에 유입된다(토큰 무효화는 accept 전 이벤트만 커버).
   const storyProjectPathRef = useRef(storyProjectPath)
   storyProjectPathRef.current = storyProjectPath
+  const storyProjectIdentityRef = useRef({
+    projectPath: storyProjectPath,
+    switchEpoch: 0,
+  })
+  if (storyProjectIdentityRef.current.projectPath !== storyProjectPath) {
+    storyProjectIdentityRef.current = {
+      projectPath: storyProjectPath,
+      switchEpoch: storyProjectIdentityRef.current.switchEpoch + 1,
+    }
+  }
   const storyPipeline = useStoryPipeline({
     projectPath: storyProjectPath,
     onPushCharacters: (payload) => {
@@ -857,8 +894,8 @@ function App() {
   const handleImageFirstImport = (payload) => runImageFirstImport({
     ...payload,
     projectName: settings.projectName,
+    getCurrentProjectIdentity: () => storyProjectIdentityRef.current,
     ensureStoryOpen: storyPipeline.open,
-    recoverStory: storyPipeline.open,
     beginImageFirstImport,
     endImageFirstImport,
     allocateSceneId: scenesHook.allocateSceneId,

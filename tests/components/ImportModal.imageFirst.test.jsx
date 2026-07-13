@@ -162,6 +162,66 @@ describe('ImportModal image-first flow', () => {
     expect(await screen.findByTestId('storyboard-file-alert')).toHaveAttribute('role', 'alert')
   })
 
+  it('marks a violation-promoted parsed row and renders a human-readable image/scene count mismatch', async () => {
+    const csv = [
+      'scene,prompt,duration',
+      '1,Sunrise,3',
+      '2,Noon,3',
+      '3,Sunset,3',
+    ].join('\n')
+    setup({
+      onImportImageFirst: vi.fn(async () => ({
+        success: false,
+        error: 'fixed-scenes-invalid',
+        sourceRowIds: ['storyboard-row-3'],
+        violations: [{
+          code: 'storyboard-source-slot-mismatch',
+          sourceRowId: 'storyboard-row-3',
+          expected: 2,
+          actual: 3,
+        }],
+        countMismatch: { imageCount: 2, storyboardSceneCount: 3 },
+        committed: true,
+      })),
+    })
+    await openImageFirstAndUpload([
+      new File(['1'], 'one.png', { type: 'image/png' }),
+      new File(['2'], 'two.png', { type: 'image/png' }),
+    ])
+    await attachCsv(csv)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm image-first import' }))
+
+    const first = screen.getByTestId('storyboard-row-1')
+    const third = screen.getByTestId('storyboard-row-3')
+    expect(within(first).queryByRole('alert')).not.toBeInTheDocument()
+    expect(await within(third).findByRole('alert')).toHaveTextContent('2 images')
+    expect(within(third).getByRole('alert')).toHaveTextContent('3 storyboard scenes')
+  })
+
+  it('maps an ordinal-only validator violation to the matching parsed scene group', async () => {
+    setup({
+      onImportImageFirst: vi.fn(async () => ({
+        success: false,
+        error: 'fixed-scenes-invalid',
+        violations: [{ code: 'visual-only-prompt-empty', ordinal: 2 }],
+        committed: true,
+      })),
+    })
+    await openImageFirstAndUpload([
+      new File(['1'], 'one.png', { type: 'image/png' }),
+      new File(['2'], 'two.png', { type: 'image/png' }),
+    ])
+    await attachCsv('scene,prompt,duration\n10,Sunrise,3\n20,,3')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm image-first import' }))
+
+    const first = screen.getByTestId('storyboard-row-1')
+    const second = screen.getByTestId('storyboard-row-2')
+    expect(within(first).queryByRole('alert')).not.toBeInTheDocument()
+    expect(await within(second).findByRole('alert')).toHaveTextContent('fixed-scenes-invalid')
+  })
+
   it('turns close during confirm into a cancellation request and closes after rollback', async () => {
     let resolveImport
     const onImportImageFirst = vi.fn(() => new Promise((resolve) => { resolveImport = resolve }))

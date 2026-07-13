@@ -276,13 +276,19 @@ describe('useStoryPipeline', () => {
     window.electronAPI.storyAbort.mockClear()
 
     resolveOpen({ projectToken: 'tok-A-late', state: { steps: { script: { status: 'done' } } } })
-    await act(async () => { await openPromise })
+    let openResult
+    await act(async () => { openResult = await openPromise })
 
     // 늦게 도착한 A의 open 결과가 반영되지 않아야 한다
     expect(result.current.state).toBeNull()
     expect(result.current.scenes).toEqual([])
     // 반환된 토큰으로 즉시 abort 정리를 시도한다
     expect(window.electronAPI.storyAbort).toHaveBeenCalledWith(expect.objectContaining({ projectToken: 'tok-A-late' }))
+    expect(openResult).toEqual({
+      success: false,
+      error: 'story-open-stale-project',
+      aborted: true,
+    })
 
     // 늦은 토큰으로 도착하는 이후 이벤트도 drop 되어야 한다(tokenRef가 갱신되지 않았으므로)
     act(() => listeners['story:state']?.({ projectToken: 'tok-A-late', state: { steps: { script: { status: 'error' } } } }))

@@ -322,7 +322,7 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
       if (r?.projectToken) {
         window.electronAPI?.storyAbort?.({ projectToken: r.projectToken })?.catch?.(() => {})
       }
-      return r
+      return { success: false, error: 'story-open-stale-project', aborted: true }
     }
     if (r?.error) {
       setOpenError(r.error)
@@ -348,7 +348,9 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
     const gs = await window.electronAPI.storyGetState({ projectToken: r.projectToken })
     // storyGetState 대기 중에도 projectPath가 바뀔 수 있다 — 그 경우 렌더 동기 무효화 effect가
     // 이미 tokenRef/state를 정리(및 abort)했으므로, 여기서 stale한 gs 결과로 되살리지 않는다.
-    if (requestedPath !== prevPathRef.current) return r
+    if (requestedPath !== prevPathRef.current) {
+      return { success: false, error: 'story-open-stale-project', aborted: true }
+    }
     if (gs && !gs.error) {
       // 슬라이스4: getState의 hydrate extras(synopsisText 등)도 scenes/scriptText처럼 전용 상태로
       // 분리 — state 객체(story.json 미러)에 섞이지 않게 한다.

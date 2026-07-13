@@ -36,6 +36,7 @@ export default function ImportModal({ onImport, onImportAudio, onImportImageFirs
   const [boardErrors, setBoardErrors] = useState({})
   const [storyboardFileError, setStoryboardFileError] = useState(null)
   const [globalError, setGlobalError] = useState(null)
+  const [countMismatch, setCountMismatch] = useState(null)
   const [submitting, setSubmitting] = useState(false)
   const [confirmed, setConfirmed] = useState(false)
   const fileInputRef = useRef(null)
@@ -162,6 +163,7 @@ export default function ImportModal({ onImport, onImportAudio, onImportImageFirs
     })))
     setFileErrors({})
     setGlobalError(null)
+    setCountMismatch(null)
     setConfirmed(false)
     event.target.value = ''
   }
@@ -187,14 +189,15 @@ export default function ImportModal({ onImport, onImportAudio, onImportImageFirs
       setBoardErrors({})
       setStoryboardFileError(null)
       setGlobalError(null)
+      setCountMismatch(null)
     } catch (error) {
       setStoryboardFileError(error.message)
     }
     event.target.value = ''
   }
 
-  const errorText = (error) => {
-    const translated = t(errorLocaleKey(error))
+  const errorText = (error, params = {}) => {
+    const translated = t(errorLocaleKey(error), params)
     return translated.startsWith('import.') ? error : translated
   }
 
@@ -208,6 +211,7 @@ export default function ImportModal({ onImport, onImportAudio, onImportImageFirs
     setBoardErrors({})
     setStoryboardFileError(null)
     setGlobalError(null)
+    setCountMismatch(null)
     try {
       const result = await onImportImageFirst?.({
         imageRows: imageRows.map(({ id, file }) => ({ id, file })),
@@ -227,12 +231,37 @@ export default function ImportModal({ onImport, onImportAudio, onImportImageFirs
       }
       if (result?.fileRowId) {
         setFileErrors({ [result.fileRowId]: result.error })
-      } else if (Array.isArray(result?.sourceRowIds) && result.sourceRowIds.length > 0) {
-        setBoardErrors(Object.fromEntries(result.sourceRowIds.map((id) => [id, result.error])))
-      } else if (String(result?.error || '').startsWith('storyboard-')) {
-        setStoryboardFileError(result.error)
       } else {
-        setGlobalError(result?.error || 'image-first-import-failed')
+        const mismatch = result?.countMismatch || null
+        const displayError = mismatch ? 'image-first-count-mismatch' : result?.error
+        const sceneGroups = []
+        for (const row of parsedStoryboard.rows) {
+          const previous = sceneGroups[sceneGroups.length - 1]
+          if (!previous || previous.sceneOrdinal !== row.sceneOrdinal) {
+            sceneGroups.push({ sceneOrdinal: row.sceneOrdinal, sourceRowIds: [row.sourceRowId] })
+          } else {
+            previous.sourceRowIds.push(row.sourceRowId)
+          }
+        }
+        const violationRowIds = (Array.isArray(result?.violations) ? result.violations : []).flatMap((violation) => {
+          if (typeof violation?.sourceRowId === 'string' && violation.sourceRowId) return [violation.sourceRowId]
+          if (Number.isInteger(violation?.ordinal) && violation.ordinal > 0) {
+            return sceneGroups[violation.ordinal - 1]?.sourceRowIds || []
+          }
+          return []
+        })
+        const sourceRowIds = [...new Set([
+          ...(Array.isArray(result?.sourceRowIds) ? result.sourceRowIds : []),
+          ...violationRowIds,
+        ])].filter((id) => parsedStoryboard.rows.some((row) => row.sourceRowId === id))
+        setCountMismatch(mismatch)
+        if (sourceRowIds.length > 0) {
+          setBoardErrors(Object.fromEntries(sourceRowIds.map((id) => [id, displayError])))
+        } else if (String(result?.error || '').startsWith('storyboard-')) {
+          setStoryboardFileError(result.error)
+        } else {
+          setGlobalError(displayError || 'image-first-import-failed')
+        }
       }
     } catch (error) {
       setGlobalError(error.message || 'image-first-import-failed')
@@ -327,13 +356,13 @@ export default function ImportModal({ onImport, onImportAudio, onImportImageFirs
                   <span>{row.subtitle || '—'}</span>
                   <span>{row.speaker || '—'}</span>
                   {boardErrors[row.sourceRowId] && (
-                    <div role="alert" className="image-first-alert">{errorText(boardErrors[row.sourceRowId])}</div>
+                    <div role="alert" className="image-first-alert">{errorText(boardErrors[row.sourceRowId], countMismatch || {})}</div>
                   )}
                 </div>
               ))}
             </div>
           )}
-          {globalError && <div role="alert" className="image-first-alert">{errorText(globalError)}</div>}
+          {globalError && <div role="alert" className="image-first-alert">{errorText(globalError, countMismatch || {})}</div>}
           <div className="image-first-actions">
             <button
               type="button"

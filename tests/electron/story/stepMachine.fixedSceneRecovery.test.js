@@ -98,6 +98,35 @@ beforeEach(async () => {
 })
 
 describe('open/getState fixed scene resend recovery', () => {
+  it('fresh story도 resend 조건 없이 project↔story mismatch를 durable marker로 파생한다', async () => {
+    await arrange({
+      project: projectFixedState(),
+      story: defaultStoryState(),
+      sceneList: [],
+    })
+    const { machine, emitted } = makeMachine()
+
+    const opened = await machine.open()
+
+    expect(opened).toMatchObject({ state: { fixedSceneError: 'fixed-scenes-stale' } })
+    expect((await readStory()).fixedSceneError).toBe('fixed-scenes-stale')
+    expect(emitted.find(({ channel }) => channel === 'story:state')?.data.state.fixedSceneError).toBe('fixed-scenes-stale')
+    expect(emitted.filter(({ channel }) => channel === 'story:pushScenes')).toEqual([])
+  })
+
+  it('fully-synced story도 pending===last일 때 project↔story mismatch를 durable marker로 파생한다', async () => {
+    await arrange({
+      project: projectFixedState(),
+      story: resendableStory({ pendingPushRevision: 2, lastPushedRevision: 2 }),
+    })
+    const { machine, emitted } = makeMachine()
+
+    await expect(machine.getState()).resolves.toMatchObject({ fixedSceneError: 'fixed-scenes-stale' })
+
+    expect((await readStory()).fixedSceneError).toBe('fixed-scenes-stale')
+    expect(emitted.filter(({ channel }) => channel === 'story:pushScenes')).toEqual([])
+  })
+
   it('project image-first@R + pending old audio-first story를 열어도 throw/push 없이 stale marker를 durable 기록한다', async () => {
     await arrange({ project: projectFixedState(), story: resendableStory() })
     const { machine, emitted } = makeMachine()
