@@ -21,11 +21,21 @@ const REDACTED = '<redacted>'
 
 // ─── KEY 기반 ────────────────────────────────────────────────────────────────
 // 이 키의 값은 내용을 보지 않고 통째로 지운다.
-const SECRET_KEYS = /^(authorization|cookie|set-cookie|x-api-key|api_?key|access_?token|refresh_?token|id_?token|token|password|secret|key)$/i
+// ⚠️ exact match 로는 sessionToken · clientSecret · x-api-key 가 빠져나가고, 단순 부분일치는
+//    safeContext 의 "…tex t" 를 text 로 오인한다. 키를 camelCase/snake 로 쪼개 **단어 단위**로 본다.
+const SECRET_WORDS = new Set(['auth', 'authorization', 'cookie', 'token', 'secret', 'password', 'credential', 'apikey', 'key'])
 // 이 키의 값은 사용자 콘텐츠다(프롬프트·이름·캡션·페이지 텍스트).
 // ⚠️ ^value$ 는 넣지 않는다 — Sentry 의 exception.values[].value 가 곧 에러 메시지다. 통째로
 //    지우면 "ENOENT …" 같은 진단 자체가 사라진다. DOM 속성 value 는 flow-diag 쪽에서 거른다.
-const CONTENT_KEYS = /prompt|caption|narration|^text$|^name$|^label$|^title$|^alt$|^placeholder$|^html$|^body$/i
+// characterName · pageText 같은 합성 키도 단어 분해로 잡힌다. 단, contexts(os.name/device.name 등
+//   SDK 생성값)에는 적용하지 않는다 — 거기 name 을 지우면 진단만 사라진다.
+const CONTENT_WORDS = new Set(['prompt', 'caption', 'narration', 'name', 'text', 'label', 'title', 'placeholder', 'html', 'body', 'content'])
+
+/** 'characterName' → ['character','name'], 'x-api-key' → ['x','api','key'] */
+function keyWords(key) {
+  return String(key).split(/[_\-\s.]|(?=[A-Z])/).map((w) => w.toLowerCase()).filter(Boolean)
+}
+const hasWord = (key, set) => keyWords(key).some((w) => set.has(w))
 
 // ─── VALUE 기반 ──────────────────────────────────────────────────────────────
 // 프롬프트: `prompt: '…'` · `"prompt":"…"` · 따옴표 없는 여러 단어(줄 끝/닫는 괄호까지).
@@ -39,7 +49,9 @@ const PROMPT_BEARING = [
 const KEYED_SECRETS = [
   /([?&](?:key|access_token|refresh_token|id_token|token|api_?key|password|secret)=)[^&\s"'`]+/gi,
   /((?:authorization|x-api-key)\s*[:=]\s*)[^\n,;"'`]+/gi,
-  /(\b(?:SID|HSID|SSID|refresh|session)\s*=\s*)[^;\s,"'`]+/gi,
+  // Cookie 헤더 문자열 — 쿠키 이름은 뭐든 될 수 있다(__Secure-1PSID, NID …). 각 쌍을 통째로 지운다.
+  /((?:^|[;\s])cookie\s*:\s*)[^\n]+/gi,
+  /(\b[A-Za-z_][A-Za-z0-9_-]*\s*=\s*)[^;\s,"'`]{8,}(?=;|$)/g,
   /(["']?(?:access|refresh|id)_token["']?\s*[:=]\s*["']?)[A-Za-z0-9._~+/-]{8,}/gi,
 ]
 
@@ -64,6 +76,9 @@ const SECRET_BEARING = [
 // 생성된 미디어 URL — 사용자 결과물의 주소이고 서명 토큰을 달고 있다.
 //   ⚠️ URL 을 먼저 통으로 잡고 콜백에서 호스트를 검사한다. `[^\s]*(?:a|b)[^\s]*` 형태로 쓰면
 //      매치 실패 시 2차 백트래킹이 터진다(실측: 32KB 600ms, 200KB 21초). Sentry 훅은 동기다.
+// Sentry SDK 가 채우는 컨텍스트 — 여기 name/text 는 진단이지 사용자 콘텐츠가 아니다.
+const SDK_CONTEXTS = /^(os|device|runtime|app|browser|culture|trace|gpu|cloud_resource|response)$/i
+
 const ANY_URL = /https?:\/\/[^\s"'`,)\]}]+/g
 const MEDIA_HOST = /googleusercontent|ggpht|fife|getMediaUrlRedirect/i
 
@@ -74,26 +89,31 @@ export function scrubSentryString(message) {
   //    두 번째 인자가 캡처가 아니라 offset(숫자)이라 "20<redacted>" 같은 쓰레기가 만들어진다.
   for (const re of [...PROMPT_BEARING, ...KEYED_SECRETS, ...PATH_ACCOUNT]) out = out.replace(re, `$1${REDACTED}`)
   for (const re of SECRET_BEARING) out = out.replace(re, REDACTED)
-  out = out.replace(ANY_URL, (url) => (MEDIA_HOST.test(url) ? REDACTED : url))
+  out = out.replace(ANY_URL, (url) => {
+    let host = ''
+    try { host = new URL(url).hostname } catch { host = url }
+    return MEDIA_HOST.test(host) ? REDACTED : url   // 쿼리스트링이 아니라 host 로 판정한다
+  })
   return out
 }
 
 /** 객체를 재귀적으로 씻는다 — 키로도 보고 값으로도 본다. 사이클이 있어도 죽지 않는다. */
-function scrubDeep(value, seen = new WeakSet()) {
+function scrubDeep(value, seen = new WeakSet(), opts = { keys: true }) {
   if (typeof value === 'string') return scrubSentryString(value)
   if (!value || typeof value !== 'object') return value
   if (seen.has(value)) return value          // 진단 정리 중에 앱이 죽는 일은 없어야 한다
   seen.add(value)
 
   if (Array.isArray(value)) {
-    for (let i = 0; i < value.length; i++) value[i] = scrubDeep(value[i], seen)
+    for (let i = 0; i < value.length; i++) value[i] = scrubDeep(value[i], seen, opts)
     return value
   }
 
   for (const [k, v] of Object.entries(value)) {
     try {
-      if (SECRET_KEYS.test(k) || CONTENT_KEYS.test(k)) value[k] = REDACTED   // 키가 말해준다
-      else value[k] = scrubDeep(v, seen)
+      // 자격증명 키는 어디서든 지운다. 콘텐츠 키는 opts.keys 가 켜진 곳에서만(contexts 제외).
+      if (hasWord(k, SECRET_WORDS) || (opts.keys && hasWord(k, CONTENT_WORDS))) value[k] = REDACTED
+      else value[k] = scrubDeep(v, seen, opts)
     } catch { /* getter 가 던져도 무시 */ }
   }
   return value
@@ -143,9 +163,21 @@ export function scrubEvent(event) {
   }
 
   const seen = new WeakSet()
-  if (typeof event.message === 'string') event.message = scrubSentryString(event.message)
-  for (const field of ['request', 'exception', 'extra', 'contexts', 'tags', 'spans']) {
+  // transaction 이름·logentry·user.username/ user.data 는 전부 실측으로 그대로 나가고 있었다.
+  for (const f of ['message', 'transaction']) {
+    if (typeof event[f] === 'string') event[f] = scrubSentryString(event[f])
+  }
+  if (event.logentry) scrubDeep(event.logentry, seen)
+  if (event.user) scrubDeep(event.user, seen)
+  for (const field of ['request', 'exception', 'extra', 'tags', 'spans']) {
     if (event[field]) scrubDeep(event[field], seen)
+  }
+  // contexts: SDK 가 만드는 것(os.name, device.name …)에 CONTENT_KEYS 를 걸면 진단만 죽는다.
+  //   반대로 우리가 붙인 커스텀 컨텍스트는 사용자 콘텐츠를 담을 수 있으니 키까지 본다.
+  if (event.contexts) {
+    for (const [name, ctx] of Object.entries(event.contexts)) {
+      scrubDeep(ctx, seen, { keys: !SDK_CONTEXTS.test(name) })
+    }
   }
   if (Array.isArray(event.breadcrumbs)) event.breadcrumbs = event.breadcrumbs.map(scrubBreadcrumb).filter(Boolean)
 

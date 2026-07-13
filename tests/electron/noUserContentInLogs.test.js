@@ -16,7 +16,11 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const ROOT = fileURLToPath(new URL('../../electron', import.meta.url))
+// electron/ 만 스캔한다 — prod 에서 console 이 살아남는 곳이 여기뿐이기 때문이다(그래야 Sentry
+//   breadcrumb 이 생긴다). renderer 의 console 은 prod 빌드에서 통째로 제거되므로 breadcrumb 이
+//   되지 않는다. 그 불변식은 vite-console-policy.test.js 가 지킨다 — 거기가 무너지면 renderer 의
+//   로그(캐릭터 이름·이메일·경로)가 전부 살아나므로, 그때 이 스캔을 src/ 로 넓혀야 한다.
+const ROOTS = [fileURLToPath(new URL('../../electron', import.meta.url))]
 
 // Values that are (or can carry) the user's own words, names, or filesystem layout.
 // `\b` means promptLen / editorTextLen / nameLen / captionLen are fine — those are the fix.
@@ -42,7 +46,7 @@ function jsFiles(dir) {
   return readdirSync(dir).flatMap((f) => {
     const p = join(dir, f)
     if (statSync(p).isDirectory()) return jsFiles(p)
-    return f.endsWith('.js') ? [p] : []
+    return /\.jsx?$/.test(f) ? [p] : []
   })
 }
 
@@ -65,7 +69,7 @@ describe('main-process logs must not carry user content', () => {
   it('no console.* in electron/ logs a prompt, name, caption, or user path', () => {
     const offenders = []
 
-    for (const file of jsFiles(ROOT)) {
+    for (const file of ROOTS.flatMap(jsFiles)) {
       const lines = readFileSync(file, 'utf8').split('\n')
       lines.forEach((line, i) => {
         // The escape hatch may sit on the line itself or on the comment line above it, where
@@ -73,7 +77,8 @@ describe('main-process logs must not carry user content', () => {
         if (line.includes('safe-log:') || (lines[i - 1] || '').includes('safe-log:')) return
         const args = consoleCallArgs(line)
         if (args && CONTENT_BEARING.test(args)) {
-          offenders.push(`${file.replace(ROOT, 'electron')}:${i + 1}  ${line.trim().slice(0, 90)}`)
+          const rel = ROOTS.reduce((acc, r) => acc.replace(r, r.endsWith('src') ? 'src' : 'electron'), file)
+          offenders.push(`${rel}:${i + 1}  ${line.trim().slice(0, 90)}`)
         }
       })
     }

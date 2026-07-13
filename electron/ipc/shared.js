@@ -104,15 +104,21 @@ export function createSharedHelpers(ctx) {
     const release = await clickMutex.acquire()
     try {
       let timer
+      // ⚠️ Promise.race 로 버린 쪽은 계속 살아 있다. 먹통 렌더러가 뒤늦게 응답하면 그 좀비가
+      //    마우스 이벤트를 쏘고 updateBounds 를 불러 **다음 클릭과 겹친다**. abort 플래그를 넘겨
+      //    부작용 직전마다 확인하게 한다.
+      const token = { aborted: false }
       const timeout = new Promise((_, rej) => {
-        timer = setTimeout(() => rej(new Error('trusted-click timed out')), CLICK_TIMEOUT_MS)
+        timer = setTimeout(() => { token.aborted = true; rej(new Error('trusted-click timed out')) }, CLICK_TIMEOUT_MS)
       })
       try {
-        return await Promise.race([trustedClickLocked(jsSelector, opts), timeout])
+        return await Promise.race([trustedClickLocked(jsSelector, opts, token), timeout])
       } catch (e) {
         console.warn('[TrustedClick] aborted:', e.message)
-        if (opts.required) {
-          await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, 'timeout', { error: e.message }).catch(() => {})
+        // ⚠️ 진단은 페이지를 프로브하지 않는다 — 먹통 렌더러를 다시 await 하면 이 catch 도 안 끝나고
+        //    락이 영영 안 풀린다(병목이라 앱 전체 정지). 컨텍스트 없이 사실만 보고한다.
+        if (opts.required && onDomFailure) {
+          await onDomFailure(`trusted-click:${opts.step || 'unknown'}`, { reason: 'timeout', error: e.message }).catch(() => {})
         }
         return { success: false, error: e.message }
       } finally {
@@ -123,7 +129,7 @@ export function createSharedHelpers(ctx) {
     }
   }
 
-  async function trustedClickLocked(jsSelector, opts = {}) {
+  async function trustedClickLocked(jsSelector, opts = {}, token = { aborted: false }) {
     const mainWindow = getMainWindow()
     const flowView = getFlowView()
     if (!mainWindow || !flowView) return { success: false, error: 'No flowView' }
@@ -161,6 +167,20 @@ export function createSharedHelpers(ctx) {
         };
       })()
     `)
+
+    // ⚠️ bounds 만 확인하면 부족하다. 측정 후 100ms 사이에 오버레이가 덮이거나 버튼이 이동하면
+    //    좌표는 여전히 뷰 안이지만 **다른 요소**가 이벤트를 받는다 — 그래도 success 를 반환했다.
+    //    누르기 직전에 그 점의 hit target 이 우리 요소(또는 그 자손)인지 확인한다.
+    const hitTest = (x, y) => flowView.webContents.executeJavaScript(`
+      (function() {
+        const target = ${jsSelector};
+        if (!target) return { ok: false, why: 'gone' };
+        const hit = document.elementFromPoint(${x}, ${y});
+        if (!hit) return { ok: false, why: 'nothing-at-point' };
+        return { ok: target === hit || target.contains(hit) || hit.contains(target), why: 'covered' };
+      })()
+    `).then((r) => (r && typeof r.ok === 'boolean' ? r : { ok: true, why: 'unreadable' }))
+     .catch(() => ({ ok: true, why: 'unreadable' }))   // 판정 불가면 막지 않는다 — 클릭은 시도한다
 
     // 유효 좌표는 0..width-1 / 0..height-1 이다. `>` 로 검사하면 x === width 가 "안"으로 통과해
     //   뷰 밖을 클릭하고 성공을 반환한다(옛 clamp 도 width-1 로 잘랐다).
@@ -226,8 +246,18 @@ export function createSharedHelpers(ctx) {
 
       // sendInputEvent로 trusted click (mouseMove → mouseDown → mouseUp)
       // mouseMove 먼저 보내서 hover 상태 생성
+      if (token.aborted) return { success: false, error: 'aborted' }
       flowView.webContents.sendInputEvent({ type: 'mouseMove', x: coords.x, y: coords.y })
       await new Promise(r => setTimeout(r, 100))
+
+      const hit = await hitTest(coords.x, coords.y)
+      if (!hit.ok) {
+        console.warn('[TrustedClick] Another element occupies the point — refusing to click it:', hit.why)
+        if (opts.required) {
+          await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, `hit-test:${hit.why}`, { coords })
+        }
+        return { success: false, error: `Target not at point (${hit.why})` }
+      }
 
       // ⚠️ 좌표는 measure 시점의 bounds 기준이다. 위 100ms 사이에 모달이 열리면 layout 이 뷰를
       //   0×0 으로 접고(네이티브 뷰라 CSS 로 못 가리니 접는다), mouseDown/Up 은 아무 데도 안 닿는다.
@@ -242,16 +272,20 @@ export function createSharedHelpers(ctx) {
 
       flowView.webContents.sendInputEvent({ type: 'mouseDown', x: coords.x, y: coords.y, button: 'left', clickCount: 1 })
       await new Promise(r => setTimeout(r, 80))
-      // down 과 up 사이에도 모달이 뷰를 접을 수 있다 — up 이 허공에 떨어지면 클릭이 완성되지 않는다.
+
+      // ⚠️ down 을 보냈으면 up 은 **무조건** 보낸다. 중간에 그냥 return 하면 렌더러에 press 상태가
+      //    남아 drag/selection 이 걸린 채로 다음 동작이 돈다.
+      flowView.webContents.sendInputEvent({ type: 'mouseUp', x: coords.x, y: coords.y, button: 'left', clickCount: 1 })
+      await new Promise(r => setTimeout(r, 200))
+
+      // down 과 up 사이에 모달이 뷰를 접었다면 클릭은 완성되지 않았다 — 성공이라 말하지 않는다.
       if (outside(coords, flowView.getBounds())) {
-        console.warn('[TrustedClick] View collapsed between down and up — click did not complete')
+        console.warn('[TrustedClick] View collapsed mid-click — click did not complete')
         if (opts.required) {
           await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, 'bounds-changed-mid-click', { coords })
         }
         return { success: false, error: 'View bounds changed mid-click' }
       }
-      flowView.webContents.sendInputEvent({ type: 'mouseUp', x: coords.x, y: coords.y, button: 'left', clickCount: 1 })
-      await new Promise(r => setTimeout(r, 200))
 
       console.log('[TrustedClick] Click events sent at (' + coords.x + ', ' + coords.y + ')')
       return { success: true, coords }
@@ -269,7 +303,7 @@ export function createSharedHelpers(ctx) {
       //   클릭이 도는 ~1초 사이에 사용자가 모달을 열거나(→ Flow 를 0×0 으로 숨겨야 함) 스플리터를
       //   드래그했을 수 있다. 스냅샷을 복원하면 그 변경을 덮어써서, 최악의 경우 Flow 네이티브 뷰가
       //   모달 위에 되살아난다(네이티브라 CSS z-index 로 못 가린다). updateBounds 가 유일한 진실이다.
-      if (enlarged) {
+      if (enlarged && !token.aborted) {
         await new Promise(r => setTimeout(r, 500)) // 클릭 이벤트 처리 대기
         updateBounds(mainWindow, flowView)
         console.log('[TrustedClick] Restored bounds from layout:', flowView.getBounds())
@@ -1035,6 +1069,11 @@ export function createSharedHelpers(ctx) {
       await reportDomFailure('project-probe-unreadable', 'probe_threw', { projectId, error: r.error })
       return { ok: false, error: 'Flow 페이지를 읽을 수 없습니다. Flow 탭을 확인한 뒤 다시 시도해주세요.' }
     }
+    // ⚠️ probe 는 await 다. 그 사이 사용자가 다른 프로젝트로 넘어가면, B 의 건강한 probe 결과를 보고
+    //    "A 맞다" 고 ok:true 를 내준다. probe 결과는 **그 시점의 URL** 에 대해서만 유효하다.
+    if (!onProjectComposerUrl(safeUrl(flowView), projectId)) {
+      return { ok: false, error: 'Flow 프로젝트가 도중에 바뀌었습니다. 다시 시도해주세요.' }
+    }
     let page = r.page
     if (!page || !isFlowErrorPage(page)) return { ok: true }
 
@@ -1051,9 +1090,9 @@ export function createSharedHelpers(ctx) {
     // ⚠️ 페이지가 "리치"하다는 것만으로 복구를 선언하면 안 된다 — home 화면도 인터랙티브 요소가
     //   많아 isFlowErrorPage 를 통과한다. target 재진입이 실패해 home 에 머물러 있어도 ok:true 가
     //   나고, 그다음 DOM 조작이 엉뚱한 페이지에서 돈다. URL 이 대상 프로젝트인지 반드시 다시 본다.
-    const backOnTarget = onProjectComposerUrl(safeUrl(flowView), projectId)
     r = await probe()
     page = r.read ? r.page : null
+    const backOnTarget = onProjectComposerUrl(safeUrl(flowView), projectId)   // probe 이후에 확인한다
     if (backOnTarget && r.read && (!page || !isFlowErrorPage(page))) {
       console.log('[Flow Guard] project recovered after home re-nav')
       return { ok: true }
@@ -1071,15 +1110,20 @@ export function createSharedHelpers(ctx) {
    * ⚠️ 초기 체크에만 이 제외가 있었고 복구·폴링 경로는 단순 includes 라, 대기 중 사용자가
    *    /characters 로 넘어가면 그 페이지를 "대상 프로젝트"로 승인했다. 한 곳에서 판정한다.
    */
+  // Flow 컴포저로 인정하는 하위 경로. 그 외(/characters, /settings, 알 수 없는 라우트)는 컴포저가
+  //   아니므로 거기에 프롬프트를 주입하면 안 된다 — 모르면 막고 진단을 남긴다.
+  const COMPOSER_SUBPATHS = new Set(['', '/', '/all-media'])
+
   function onProjectComposerUrl(url, projectId) {
-    // ⚠️ 전체 URL 을 substring 으로 보면 "…/tools/flow/?next=/project/<id>" 도 통과한다(실측).
-    //    쿼리·해시를 떼고 pathname 만 본다.
-    let pathname = ''
-    try { pathname = new URL(url).pathname } catch { pathname = String(url || '').split(/[?#]/)[0] }
-    const marker = `/project/${projectId}`
-    const idx = pathname.indexOf(marker)
-    if (idx < 0) return false
-    return !/^\/character/.test(pathname.slice(idx + marker.length))
+    // ⚠️ substring 으로 보면 "…/tools/flow/?next=/project/<id>"(쿼리), "/archive/project/<id>"(다른 라우트),
+    //    "/project/<id>-suffix"(다른 id), 심지어 다른 origin 도 통과한다 — 전부 실측으로 확인됐다.
+    //    origin 과 pathname 을 정확히 본다.
+    let u
+    try { u = new URL(url) } catch { return false }
+    if (!/(^|\.)labs\.google$/i.test(u.hostname)) return false
+    const m = u.pathname.match(new RegExp(`/tools/flow/project/${projectId}(/[^/]*)?$`))
+    if (!m) return false
+    return COMPOSER_SUBPATHS.has(m[1] || '')
   }
 
   /** getURL 은 뷰/렌더러가 파괴되면 throw 한다 — 가드가 {ok:false} 대신 reject 되면 안 된다. */
