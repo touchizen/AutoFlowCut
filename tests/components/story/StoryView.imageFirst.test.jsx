@@ -455,3 +455,24 @@ describe('image-first ⑤ fixedSceneError 복구 패널', () => {
     expect(screen.queryByTestId('story-fixed-scene-alert')).not.toBeInTheDocument()
   })
 })
+
+describe('나레이터만 있는 스토리보드 — 등장인물 0명', () => {
+  // narrator 는 인물이 아니라 나레이션 트랙이라 등장인물 목록에서 제외된다. narrator-only CSV 는
+  // 인물 행이 0개인 게 정상이지만, 아무 설명 없이 텅 비면 사용자는 화면이 고장난 줄 알고 멈춘다.
+  // (실앱 검증에서 실제로 여기서 막혔다. 확정 자체는 통과한다.)
+  it('등장인물이 없으면 그대로 확정하면 된다는 안내를 보여준다', async () => {
+    const st = imageFirstState()
+    render(<StoryView pipeline={pipeline(st, { characters: [] })} voices={[]} onClose={vi.fn()} />)
+
+    await waitFor(() => expect(screen.getByTestId('story-synopsis')).toBeInTheDocument())
+    expect(screen.getByTestId('story-roster-empty')).toBeInTheDocument()
+  })
+
+  it('등장인물이 있으면 안내를 보여주지 않는다', async () => {
+    const st = imageFirstState()
+    render(<StoryView pipeline={pipeline(st)} voices={[]} onClose={vi.fn()} />)
+
+    await waitFor(() => expect(screen.getByTestId('story-synopsis')).toBeInTheDocument())
+    expect(screen.queryByTestId('story-roster-empty')).not.toBeInTheDocument()
+  })
+})

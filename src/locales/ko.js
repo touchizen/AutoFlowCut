@@ -198,6 +198,7 @@ export default {
       regenerate: '시놉시스 다시',
       backToSetup: '설정으로',
       charactersTitle: '등장인물',
+      rosterEmpty: '나레이터만 등장하는 이야기입니다. 등장인물 없이 그대로 확정하고 진행하세요.',
       charName: '이름',
       charGender: '성별',
       charEthnicity: '출신',

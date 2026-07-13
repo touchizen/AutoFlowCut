@@ -198,6 +198,7 @@ export default {
       regenerate: 'Regenerate synopsis',
       backToSetup: 'Back to setup',
       charactersTitle: 'Characters',
+      rosterEmpty: 'Narrator only — confirm with no characters and continue.',
       charName: 'Name',
       charGender: 'Gender',
       charEthnicity: 'Ethnicity',
