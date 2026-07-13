@@ -981,7 +981,7 @@ export function createSharedHelpers(ctx) {
       return { ok: true }
     }
 
-    await reportDomFailure('project-not-loaded', 'flow_error_page', { projectId, interactiveCount: page.interactiveCount })
+    await reportDomFailure('project-not-loaded', 'flow_error_page', { projectId, interactiveCount: page?.interactiveCount ?? null })
     // 사용자가 읽는 문구 — 진짜 원인을 말한다. "모든 미디어 화면인지 확인하세요"가 제보자를
     //   (그리고 우리를) 엉뚱한 곳으로 몇 시간 보냈다.
     return { ok: false, error: 'Flow 프로젝트를 열지 못했습니다. Flow 탭에서 프로젝트가 정상적으로 열리는지 확인한 뒤 다시 시도해주세요.' }

@@ -44,11 +44,28 @@ const SECRET_BEARING = [
   /[A-Za-z]:(?:\\{1,2})Users(?:\\{1,2})[^"'`,)\]}]*/g,
 ]
 
+// 쿼리스트링 자격증명 — Gemini TTS 는 ?key=<사용자 API 키>, Flow 토큰 검증은 ?access_token=<OAuth>
+//   를 URL 에 싣는다. Sentry 의 http/fetch breadcrumb 은 URL 을 통째로 기록하므로 console 만
+//   씻어서는 자격증명 채널이 활짝 열려 있는 셈이다.
+const QUERY_SECRETS = /([?&](?:key|access_token|token|api_?key|password|secret)=)[^&\s"'`]+/gi
+
 export function scrubBreadcrumbMessage(message) {
   let out = String(message)
-  for (const re of PROMPT_BEARING) out = out.replace(re, '$1<redacted>')
-  for (const re of SECRET_BEARING) out = out.replace(re, (m, p1) => (p1 ? `${p1}<redacted>` : '<redacted>'))
+  // ⚠️ 캡처 그룹이 있는 정규식만 '$1<redacted>' 를 쓸 수 있다. 그룹 없는 정규식에 콜백을 쓰면
+  //    두 번째 인자가 캡처가 아니라 offset(숫자)이라 "20<redacted>" 같은 쓰레기가 만들어진다.
+  for (const re of [...PROMPT_BEARING, QUERY_SECRETS]) out = out.replace(re, '$1<redacted>')
+  for (const re of SECRET_BEARING) out = out.replace(re, '<redacted>')
   return out
+}
+
+/** URL·문자열 값을 담을 수 있는 breadcrumb.data 필드를 재귀적으로 씻는다. */
+function scrubData(data) {
+  if (!data || typeof data !== 'object') return data
+  for (const [k, v] of Object.entries(data)) {
+    if (typeof v === 'string') data[k] = scrubBreadcrumbMessage(v)
+    else if (v && typeof v === 'object') scrubData(v)
+  }
+  return data
 }
 
 /**
@@ -81,13 +98,26 @@ export function buildSentryOptions({ env = defaultEnv(), version } = {}) {
     release: `autoflowcut@${version || readAppVersion()}`,
     tracesSampleRate: Number(env.SENTRY_TRACES_SAMPLE_RATE || 0.1),
     beforeBreadcrumb(breadcrumb) {
-      if (breadcrumb?.category === 'console') {
-        if (breadcrumb.message) breadcrumb.message = scrubBreadcrumbMessage(breadcrumb.message)
+      if (!breadcrumb) return breadcrumb
+
+      // Flow 페이지의 콘솔은 통째로 버린다. main.js 가 페이지 콘솔을 메인 프로세스로 포워딩하는데,
+      //   페이지 스크립트(설정 덤퍼·DOM 프로브)는 Flow DOM 조각을 그대로 찍는다. 그 페이지는 곧
+      //   사용자의 프로젝트다 — 프롬프트, 미디어, 캐릭터 이름. 어느 것도 우리 것이 아니다.
+      if (typeof breadcrumb.message === 'string' && breadcrumb.message.startsWith('[Flow Page]')) return null
+
+      if (breadcrumb.message) breadcrumb.message = scrubBreadcrumbMessage(breadcrumb.message)
+
+      if (breadcrumb.category === 'console') {
         // consoleIntegration 은 원본 인자를 data.arguments 에 그대로 보관한다 — message 만 씻으면
         //   가려진 텍스트가 인자로 다시 나간다. 그리고 자유 형식 콘텐츠(캐릭터 이름, 캡션, 폴더 경로)는
         //   정규식으로 못 덮는다. 그래서 원본 인자는 아예 내보내지 않는다. 우리가 읽는 건 message 다.
         if (breadcrumb.data) delete breadcrumb.data.arguments
       }
+
+      // ⚠️ console 만 씻으면 안 된다 — http/fetch breadcrumb 은 요청 URL 을 통째로 기록하고,
+      //   그 쿼리스트링에 사용자 Gemini API 키(?key=)와 OAuth 토큰(?access_token=)이 실린다.
+      if (breadcrumb.data) scrubData(breadcrumb.data)
+
       return breadcrumb
     },
     beforeSend(event) {

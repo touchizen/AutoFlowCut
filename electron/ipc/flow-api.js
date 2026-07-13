@@ -1385,12 +1385,12 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       // Step 1: 다운로드 path 가로채기 (Electron session.will-download — CDP 무관)
       tempDir = path.join(os.tmpdir(), `flow-dl-${Date.now()}`)
       fs.mkdirSync(tempDir, { recursive: true })
-      console.log('[Flow DOMDownload] Download dir:', tempDir)
+      console.log('[Flow DOMDownload] Download dir:', path.basename(tempDir))
 
       willDownloadHandler = (_event, item) => {
         const filename = item.getFilename()
         const savePath = path.join(tempDir, filename)
-        console.log('[Flow DOMDownload] will-download intercept:', filename, '→', savePath)
+        console.log('[Flow DOMDownload] will-download intercept:', filename, '→', path.basename(savePath))
         item.setSavePath(savePath)
       }
       dlSession.on('will-download', willDownloadHandler)
@@ -1724,7 +1724,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       }
 
       // Step 3: temp 디렉토리에서 다운로드 파일 대기 (폴링)
-      console.log('[Flow DOMDownload] Waiting for download file in:', tempDir)
+      console.log('[Flow DOMDownload] Waiting for download file in:', path.basename(tempDir))
       let downloadedFile = null
       const maxWait = VIDEO_DOWNLOAD_TIMEOUT_MS // 5분 (동영상 4K 업스케일 포함)
       const pollInterval = 1000
@@ -2144,12 +2144,12 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       // Step 1: 다운로드 path 가로채기 (Electron session.will-download — CDP 무관)
       tempDir = path.join(os.tmpdir(), `flow-img-up-${Date.now()}`)
       fs.mkdirSync(tempDir, { recursive: true })
-      console.log('[Flow Image Upscale] Download dir:', tempDir)
+      console.log('[Flow Image Upscale] Download dir:', path.basename(tempDir))
 
       willDownloadHandler = (_event, item) => {
         const filename = item.getFilename()
         const savePath = path.join(tempDir, filename)
-        console.log('[Flow Image Upscale] will-download intercept:', filename, '→', savePath)
+        console.log('[Flow Image Upscale] will-download intercept:', filename, '→', path.basename(savePath))
         item.setSavePath(savePath)
       }
       dlSession.on('will-download', willDownloadHandler)
@@ -2408,7 +2408,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       }
 
       // Step 3: temp 디렉토리에서 다운로드 파일 대기 (폴링)
-      console.log('[Flow Image Upscale] Waiting for download file in:', tempDir)
+      console.log('[Flow Image Upscale] Waiting for download file in:', path.basename(tempDir))
       let downloadedFile = null
       const maxWait = IMAGE_UPSCALE_TIMEOUT_MS // 2분 (이미지 업스케일)
       const startTime = Date.now()

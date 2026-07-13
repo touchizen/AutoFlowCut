@@ -116,9 +116,44 @@ describe('beforeBreadcrumb — console breadcrumbs must not carry prompt text', 
     expect(win.message).not.toContain('gordon')
   })
 
-  it('leaves non-console breadcrumbs alone', () => {
+  it('redacts credentials from NON-console breadcrumbs — http breadcrumbs carry the URL', () => {
     const { beforeBreadcrumb } = opts()
-    const crumb = { category: 'navigation', message: 'https://labs.google/fx/tools/flow' }
+
+    // Sentry's http integration records the request URL. Gemini TTS puts the user's API key in
+    // the query string; Flow's token check puts the OAuth token there. Scrubbing only console
+    // breadcrumbs left the credential channel wide open.
+    const http = beforeBreadcrumb({
+      category: 'http',
+      type: 'http',
+      data: { url: 'https://generativelanguage.googleapis.com/v1beta/models:x?key=AIzaSyC-REAL-USER-KEY', method: 'POST', status_code: 200 },
+    })
+    expect(JSON.stringify(http)).not.toContain('AIzaSyC-REAL-USER-KEY')
+
+    const tok = beforeBreadcrumb({
+      category: 'fetch',
+      data: { url: 'https://labs.google/fx/api/auth/token?access_token=ya29.a0ARGnu0bK4_CYGQzj' },
+    })
+    expect(JSON.stringify(tok)).not.toContain('ya29.a0ARGnu0bK4_CYGQzj')
+  })
+
+  it('drops Flow page console entirely — the page is the user\'s content', () => {
+    const { beforeBreadcrumb } = opts()
+
+    // main.js forwards the Flow page's console into the main process, so page scripts (the
+    // settings dumper, DOM probes) push whole chunks of Flow's DOM into breadcrumbs. The page
+    // is the user's project: their prompts, media, character names. None of it is ours.
+    const out = beforeBreadcrumb({
+      category: 'console',
+      level: 'log',
+      message: '[Flow Page] [autoflowcut DUMP] panel html: <div>홍길동 캐릭터 · a lonely lighthouse keeper</div>',
+    })
+
+    expect(out).toBeNull()
+  })
+
+  it('keeps non-console breadcrumbs that carry nothing sensitive', () => {
+    const { beforeBreadcrumb } = opts()
+    const crumb = { category: 'navigation', data: { from: '/a', to: '/b' } }
 
     expect(beforeBreadcrumb({ ...crumb })).toMatchObject(crumb)
   })

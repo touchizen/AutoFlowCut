@@ -25,7 +25,18 @@ const ROOT = fileURLToPath(new URL('../../electron', import.meta.url))
 // `name` (an @mention = a character the user created) and a `diag` object whose nested
 // candidates[].text is Flow page content. The guard only stops what it knows about, so when a
 // leak gets past it, the fix is to teach it the name — not just to patch the line.
-const CONTENT_BEARING = /\b(prompt|promptKey|promptText|editorText|caption|displayName|name|narration|script|srt|workFolderPath|userText|diag|label|title|alt|placeholder)\b/
+const CONTENT_BEARING = new RegExp(
+  '\\b(' + [
+    // the user's words
+    'prompt', 'promptKey', 'promptText', 'editorText', 'userText', 'narration', 'script', 'srt', 'caption',
+    // the user's names — @mentions are characters they created
+    'name', 'displayName', 'label', 'title', 'alt', 'placeholder',
+    // page content, and objects that nest it
+    'diag', 'textButtons', 'bodyHtml', 'html', 'value',
+    // filesystem layout — absolute paths carry the account name
+    'path', 'filePath', 'tempDir', 'savePath', 'outputPath', 'workFolder', 'workFolderPath', 'dir',
+  ].join('|') + ')\\b',
+)
 
 function jsFiles(dir) {
   return readdirSync(dir).flatMap((f) => {
@@ -42,8 +53,12 @@ function consoleCallArgs(line) {
   return m[2]
     // A format string mentioning the word "prompt" is not a leak.
     .replace(/'[^']*'/g, "''").replace(/"[^"]*"/g, '""').replace(/`[^`]*`/g, '``')
+    // A trailing // comment is not what gets logged.
+    .replace(/\/\/.*$/, '')
     // Taking a LENGTH of the content is the fix, not the leak: prompt?.length, (promptKey || '').length
     .replace(/[\w$.?()|'"\s]*\.length\b/g, 'LEN')
+    // A basename is the filename without the account-bearing directories — that is the fix too.
+    .replace(/(?:path\.)?basename\([^)]*\)/g, 'BASE')
 }
 
 describe('main-process logs must not carry user content', () => {

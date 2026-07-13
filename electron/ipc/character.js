@@ -221,7 +221,7 @@ export function registerCharacterIPC(ipcMain, deps) {
       }
       const r = await flowView.webContents.executeJavaScript(FLOW_APPLY_NAME_PROBE(displayName))
       if (!(r && r.ok)) {
-        console.warn('[Flow Character] name not applied to SPA:', r && (r.error || r.value))
+        console.warn('[Flow Character] name not applied to SPA:', r && r.error)   // r.value 는 캐릭터 이름 — 안 찍는다
         return false
       }
       // 타이핑만 하고 상세 페이지에 남으면, 다음 동작의 ensureOnCharactersPage 가 loadURL(전체 로드)로

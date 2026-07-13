@@ -604,7 +604,7 @@ function makeFlowView() {
               if (icons.length === 0) textButtons.push(b.textContent.trim().substring(0, 50));
             }
             console.log('[Flow Debug] Icon buttons:', JSON.stringify(iconButtons));
-            console.log('[Flow Debug] Text buttons:', JSON.stringify(textButtons.slice(0, 10)));
+            console.log('[Flow Debug] Text buttons:', textButtons.length);   // 버튼 텍스트는 페이지 콘텐츠 — 개수만
             console.log('[Flow Debug] Total buttons:', allButtons.length);
 
             try {
@@ -1618,7 +1618,7 @@ async function dumpFlowNetToFile() {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
     const filePath = path.join(app.getPath('desktop'), `autoflowcut-net-${stamp}.json`)
     fsSync.writeFileSync(filePath, JSON.stringify(net, null, 2))
-    console.log('[FlowNetDump] wrote', net.length, 'entries →', filePath)
+    console.log('[FlowNetDump] wrote', net.length, 'entries →', path.basename(filePath))
     if (mainWindow) {
       try { mainWindow.webContents.executeJavaScript(`console.log('[FlowNetDump] saved: ${filePath.replace(/'/g, "\\'")}')`) } catch {}
     }
@@ -1634,7 +1634,7 @@ async function dumpFlowDomToFile() {
     const probe = await flowView.webContents.executeJavaScript(FLOW_DOM_DUMP_PROBE)
     const filePath = path.join(app.getPath('desktop'), buildDomDumpFilename())
     fsSync.writeFileSync(filePath, JSON.stringify(probe, null, 2))
-    console.log('[FlowDomDump] wrote', (probe.elements || []).length, 'elements →', filePath)
+    console.log('[FlowDomDump] wrote', (probe.elements || []).length, 'elements →', path.basename(filePath))
     if (mainWindow) {
       try { mainWindow.webContents.executeJavaScript(`console.log('[FlowDomDump] saved: ${filePath.replace(/'/g, "\\'")}')`) } catch {}
     }
