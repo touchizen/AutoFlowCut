@@ -2,7 +2,7 @@ import * as Sentry from '@sentry/electron/main'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { scrubBreadcrumb, scrubSentryString } from './sentry-scrub.js'
+import { scrubBreadcrumb, scrubEvent } from './sentry-scrub.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -46,19 +46,7 @@ export function buildSentryOptions({ env = defaultEnv(), version } = {}) {
     release: `autoflowcut@${version || readAppVersion()}`,
     tracesSampleRate: Number(env.SENTRY_TRACES_SAMPLE_RATE || 0.1),
     beforeBreadcrumb: scrubBreadcrumb,
-    beforeSend(event) {
-      if (event.user) {
-        delete event.user.ip_address
-        delete event.user.email
-      }
-      if (event.request?.data) delete event.request.data
-      if (event.extra) {
-        for (const k of Object.keys(event.extra)) {
-          if (/prompt|input|filename|path/i.test(k)) delete event.extra[k]
-        }
-      }
-      return event
-    },
+    beforeSend: scrubEvent,
   }
 }
 

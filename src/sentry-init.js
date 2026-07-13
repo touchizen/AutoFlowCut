@@ -1,5 +1,5 @@
 import * as Sentry from '@sentry/electron/renderer'
-import { scrubBreadcrumb } from '../electron/sentry-scrub.js'
+import { scrubBreadcrumb, scrubEvent } from '../electron/sentry-scrub.js'
 
 export function buildSentryRendererOptions({ env = import.meta.env, version } = {}) {
   const dsn = env.VITE_SENTRY_DSN || ''
@@ -16,6 +16,7 @@ export function buildSentryRendererOptions({ env = import.meta.env, version } = 
     //   main 만 막고 여기를 안 봐서, main 이 렌더러 콘솔에 찍는 전체 파일 경로(바탕화면 덤프 경로 =
     //   /Users/<계정>/…)가 그대로 나가고 있었다. 채널이 여럿이면 한 곳에서 막아 전부 통과시킨다.
     beforeBreadcrumb: scrubBreadcrumb,
+    beforeSend: scrubEvent,
     beforeSend(event) {
       if (event.user) {
         delete event.user.ip_address

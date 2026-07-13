@@ -153,7 +153,9 @@ export function createSharedHelpers(ctx) {
     try {
       let coords = await measure()
 
-      if (!coords || coords.width === 0) {
+      // width 만 보면 안 된다 — 높이 0 도 클릭이 안 먹는 요소다. 그런데도 "성공"을 반환하면
+      //   호출부는 제출된 줄 알고 오지 않을 응답을 기다린다(2분 timeout).
+      if (!coords || coords.width === 0 || coords.height === 0) {
         console.log('[TrustedClick] Button not found or zero-size:', coords)
         // required 인 클릭만 보고한다 — best-effort 클릭(패널 닫기 등)은 대상이 없는 게 정상이라
         //   보고하면 정상 생성마다 노이즈가 쌓여 진짜 breakage 를 덮는다.
@@ -161,6 +163,16 @@ export function createSharedHelpers(ctx) {
           await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, coords ? 'zero-size' : 'not-found', { coords: coords || null })
         }
         return { success: false, error: 'Button not found or zero-size' }
+      }
+
+      // disabled 를 재놓고 무시하고 있었다. 비활성 버튼을 누르면 아무 일도 안 일어나는데 success 를
+      //   반환하니, 호출부는 제출된 줄 알고 기다리다 timeout 난다. 정직하게 실패한다.
+      if (coords.disabled) {
+        console.warn('[TrustedClick] Button is disabled — refusing to click:', coords)
+        if (opts.required) {
+          await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, 'disabled', { coords })
+        }
+        return { success: false, error: 'Button is disabled' }
       }
 
       console.log('[TrustedClick] Button coords:', coords)
@@ -188,6 +200,18 @@ export function createSharedHelpers(ctx) {
       // mouseMove 먼저 보내서 hover 상태 생성
       flowView.webContents.sendInputEvent({ type: 'mouseMove', x: coords.x, y: coords.y })
       await new Promise(r => setTimeout(r, 100))
+
+      // ⚠️ 좌표는 measure 시점의 bounds 기준이다. 위 100ms 사이에 모달이 열리면 layout 이 뷰를
+      //   0×0 으로 접고(네이티브 뷰라 CSS 로 못 가리니 접는다), mouseDown/Up 은 아무 데도 안 닿는다.
+      //   그런데도 success 를 반환하면 또 "아무것도 안 누르고 성공" 이다. 누르기 직전에 다시 본다.
+      if (outside(coords, flowView.getBounds())) {
+        console.warn('[TrustedClick] View bounds changed mid-click — aborting instead of clicking nowhere')
+        if (opts.required) {
+          await reportDomFailure(`trusted-click:${opts.step || 'unknown'}`, 'bounds-changed-mid-click', { coords })
+        }
+        return { success: false, error: 'View bounds changed mid-click' }
+      }
+
       flowView.webContents.sendInputEvent({ type: 'mouseDown', x: coords.x, y: coords.y, button: 'left', clickCount: 1 })
       await new Promise(r => setTimeout(r, 80))
       flowView.webContents.sendInputEvent({ type: 'mouseUp', x: coords.x, y: coords.y, button: 'left', clickCount: 1 })
@@ -964,7 +988,7 @@ export function createSharedHelpers(ctx) {
     if (!page || !isFlowErrorPage(page)) return { ok: true }
 
     console.warn('[Flow Guard] project URL but page is not loaded (error/landing) — recovering via home')
-    const m = (flowView.webContents.getURL() || '').match(/^(.*\/tools\/flow)(\/|$)/)
+    const m = safeUrl(flowView).match(/^(.*\/tools\/flow)(\/|$)/)
     const base = m ? m[1] : 'https://labs.google/fx/tools/flow'
     await flowView.webContents.loadURL(base).catch(() => {})
     await new Promise((r) => setTimeout(r, 1500))
@@ -974,7 +998,7 @@ export function createSharedHelpers(ctx) {
     // ⚠️ 페이지가 "리치"하다는 것만으로 복구를 선언하면 안 된다 — home 화면도 인터랙티브 요소가
     //   많아 isFlowErrorPage 를 통과한다. target 재진입이 실패해 home 에 머물러 있어도 ok:true 가
     //   나고, 그다음 DOM 조작이 엉뚱한 페이지에서 돈다. URL 이 대상 프로젝트인지 반드시 다시 본다.
-    const backOnTarget = (flowView.webContents.getURL() || '').includes(`/project/${projectId}`)
+    const backOnTarget = onProjectComposerUrl(safeUrl(flowView), projectId)
     page = await probe()
     if (backOnTarget && (!page || !isFlowErrorPage(page))) {
       console.log('[Flow Guard] project recovered after home re-nav')
@@ -987,10 +1011,28 @@ export function createSharedHelpers(ctx) {
     return { ok: false, error: 'Flow 프로젝트를 열지 못했습니다. Flow 탭에서 프로젝트가 정상적으로 열리는지 확인한 뒤 다시 시도해주세요.' }
   }
 
+  /**
+   * URL 이 대상 프로젝트의 **컴포저**인가. #R20-6: /project/{id}/characters · /character/{...} 같은
+   * 하위 라우트는 컴포저가 아니다(거기에 프롬프트를 주입하면 엉뚱한 곳에 들어간다).
+   * ⚠️ 초기 체크에만 이 제외가 있었고 복구·폴링 경로는 단순 includes 라, 대기 중 사용자가
+   *    /characters 로 넘어가면 그 페이지를 "대상 프로젝트"로 승인했다. 한 곳에서 판정한다.
+   */
+  function onProjectComposerUrl(url, projectId) {
+    const marker = `/project/${projectId}`
+    const idx = (url || '').indexOf(marker)
+    if (idx < 0) return false
+    return !/^\/character/.test((url || '').slice(idx + marker.length))
+  }
+
+  /** getURL 은 뷰/렌더러가 파괴되면 throw 한다 — 가드가 {ok:false} 대신 reject 되면 안 된다. */
+  function safeUrl(flowView) {
+    try { return flowView.webContents.getURL() || '' } catch { return '' }
+  }
+
   async function ensureOnProjectComposer(flowView, projectId) {
     if (!flowView) return { ok: false, error: 'Flow view not ready' }
 
-    const currentUrl = flowView.webContents.getURL() || ''
+    const currentUrl = safeUrl(flowView)
 
     // Falsy projectId → lenient fallback: any /project/ or /tools/flow/ page is acceptable.
     if (!projectId) {
@@ -1004,9 +1046,7 @@ export function createSharedHelpers(ctx) {
     // #R20-6: /project/{id}/characters · /character/{...} 등 하위 라우트는 컴포저가 아니므로 제외
     //   (안 그러면 scene 프롬프트가 엉뚱한 컴포저에 주입된다). base 컴포저 경로만 ok.
     {
-      const marker = `/project/${projectId}`
-      const idx = currentUrl.indexOf(marker)
-      if (idx >= 0 && !/^\/character/.test(currentUrl.slice(idx + marker.length))) {
+      if (onProjectComposerUrl(currentUrl, projectId)) {
         // ⚠️ URL 만으로는 부족하다. Flow 가 프로젝트를 못 띄우면 "문제가 발생했습니다" 에러 페이지를
         //   보여주는데, 이때 URL 은 /project/{id} 그대로다. 그대로 통과시키면 컴포저가 없는 페이지에서
         //   생성이 진행되고, ensureAgentOff 가 토글을 못 찾아 "Agent 를 OFF 로 못 바꿨다"는 엉뚱한
@@ -1030,14 +1070,14 @@ export function createSharedHelpers(ctx) {
     // Poll up to 3 s for URL to confirm (6 × 500 ms).
     for (let i = 0; i < 6; i++) {
       await new Promise((r) => setTimeout(r, 500))
-      if ((flowView.webContents.getURL() || '').includes(`/project/${projectId}`)) {
+      if (onProjectComposerUrl(safeUrl(flowView), projectId)) {
         console.log('[Flow Guard] Confirmed on target project after navigation')
         // URL 만 맞은 것일 수 있다 — 우리가 방금 한 loadURL 도 에러 페이지로 떨어질 수 있다.
         return await ensureProjectLoaded(flowView, projectId)
       }
     }
 
-    const finalUrl = flowView.webContents.getURL() || ''
+    const finalUrl = safeUrl(flowView)
     console.warn('[Flow Guard] Failed to reach target project. Current URL:', finalUrl)
     return { ok: false, error: `Flow not on target project ${projectId}` }
   }
