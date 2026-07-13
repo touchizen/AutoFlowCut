@@ -444,7 +444,9 @@ describe('image-first ⑤ fixedSceneError 복구 패널', () => {
     )
     const alert = screen.getByTestId('story-fixed-scene-alert')
     expect(alert).toHaveAttribute('role', 'alert')
-    expect(alert).toHaveTextContent('fixed-scenes-stale')
+    // 사람이 읽는 문구여야 한다 — raw 코드('fixed-scenes-stale')를 사용자에게 보여주지 않는다.
+    expect(alert).toHaveTextContent('이미지 세트가 프로젝트와 어긋났습니다')
+    expect(alert).not.toHaveTextContent('fixed-scenes-stale')
 
     fireEvent.click(screen.getByRole('button', { name: /이미지 세트 다시 임포트/ }))
     expect(onReissueImageFirst).toHaveBeenCalled()

@@ -219,7 +219,10 @@ describe('ImportModal image-first flow', () => {
     const first = screen.getByTestId('storyboard-row-1')
     const second = screen.getByTestId('storyboard-row-2')
     expect(within(first).queryByRole('alert')).not.toBeInTheDocument()
-    expect(await within(second).findByRole('alert')).toHaveTextContent('fixed-scenes-invalid')
+    // raw 코드('fixed-scenes-invalid')가 아니라 사람이 읽는 문구여야 한다.
+    const alert = await within(second).findByRole('alert')
+    expect(alert).toHaveTextContent('The image set and the storyboard do not match.')
+    expect(alert).not.toHaveTextContent('fixed-scenes-invalid')
   })
 
   it('turns close during confirm into a cancellation request and closes after rollback', async () => {
@@ -253,5 +256,42 @@ describe('ImportModal legacy modes', () => {
     fireEvent.change(input, { target: { files: [new File([content], filename)] } })
 
     await waitFor(() => expect(props.onImport).toHaveBeenCalledWith(type, content, 'image'))
+  })
+})
+
+describe('사용자에게 raw 에러코드를 보여주지 않는다', () => {
+  // errorText 는 locale key 가 없으면 원본 코드를 그대로 렌더한다 — 사용자는 'fixed-scenes-invalid'
+  // 같은 걸 보게 된다. t() 를 mock 하는 테스트로는 절대 안 잡히므로 locale 을 직접 검사한다.
+  it('image-first 가 반환할 수 있는 모든 에러 코드에 ko/en 문구가 있다', async () => {
+    const ko = (await import('../../src/locales/ko.js')).default
+    const en = (await import('../../src/locales/en.js')).default
+    const camel = (code) => code.replace(/-([a-z])/g, (_, c) => c.toUpperCase())
+
+    const CODES = [
+      'scene-image-not-png', 'scene-image-read-failed',
+      'fixed-scenes-invalid', 'fixed-scenes-stale',
+      'storyboard-header-duplicate', 'storyboard-header-unknown',
+      'storyboard-scene-invalid', 'storyboard-scene-order-invalid',
+      'storyboard-prompt-ambiguous', 'storyboard-field-ambiguous',
+      'storyboard-prompt-missing', 'storyboard-duration-missing',
+      'storyboard-speaker-missing', 'storyboard-speaker-unknown',
+      'storyboard-speaker-ambiguous', 'storyboard-time-invalid',
+      'image-first-import-failed', 'image-first-import-cancelled',
+      'story-open-failed',
+    ]
+
+    const missing = CODES.filter((c) => !ko.import?.[camel(c)] || !en.import?.[camel(c)])
+    expect(missing).toEqual([])
+  })
+
+  it('한국어 문구에 개발자 용어가 남아 있지 않다', async () => {
+    const ko = (await import('../../src/locales/ko.js')).default
+    const JARGON = ['binding', 'safe integer', 'collapse', 'roster', 'narrator alias', 'visual-only slot', 'storyboard field']
+    const offenders = Object.entries(ko.import || {})
+      .filter(([k]) => k.startsWith('storyboard') || k.startsWith('fixed') || k.startsWith('sceneImage'))
+      .filter(([, v]) => typeof v === 'string' && JARGON.some((j) => v.includes(j)))
+      .map(([k, v]) => `${k}: ${v}`)
+
+    expect(offenders).toEqual([])
   })
 })

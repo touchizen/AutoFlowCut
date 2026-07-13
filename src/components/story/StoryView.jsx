@@ -1418,7 +1418,7 @@ export default function StoryView({
       {state?.fixedSceneError && (
         <div className="story-error-banner story-fixed-scene-alert" role="alert" data-testid="story-fixed-scene-alert">
           <div>
-            ⚠️ {t('story.fixedScene.staleTitle', '이미지 세트가 프로젝트와 어긋났습니다')}: {state.fixedSceneError}
+            ⚠️ {t('story.fixedScene.staleTitle', '이미지 세트가 프로젝트와 어긋났습니다')}
           </div>
           <div className="story-fixed-scene-desc">
             {t('story.fixedScene.staleDesc', '임포트가 중단되거나 거절돼 씬이 반쯤 반영됐습니다. 이미지 세트를 통째로 다시 임포트해야 진행할 수 있습니다.')}
