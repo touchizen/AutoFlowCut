@@ -12,17 +12,32 @@
  * body 실행 횟수는 child 메모리가 아니라 **marker 파일**로 관측한다. 안 그러면
  * "body 를 돌려놓고 blocked 를 반환하는" 회귀가 조용히 통과한다.
  */
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js'
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, appendFileSync, mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const FIXTURE = resolve(here, 'fixtures/echo-mcp.js')
+
+// M0-8/9 와 **같은 raw·같은 invocation id** 에 판정을 남긴다.
+// 안 그러면 "이번 invocation 에서 21개가 전부 pass" 를 raw 로 증명할 수 없다 (이 파일 6개가 빠진다).
+const RESULT_DIR = 'docs/superpowers/specs'
+const RUN_ID = process.env.SPIKE_RUN_ID ?? `nofile-${process.pid}`
+afterEach((ctx) => {
+  mkdirSync(RESULT_DIR, { recursive: true })
+  appendFileSync(
+    `${RESULT_DIR}/m0-8-9-raw.jsonl`,
+    JSON.stringify({
+      runId: RUN_ID, label: '__verdict__',
+      test: ctx?.task?.name ?? '(?)', verdict: ctx?.task?.result?.state ?? 'unknown',
+    }) + '\n',
+  )
+})
 
 let client
 let transport

@@ -86,6 +86,34 @@ describe('codexSdk helper', () => {
   //      config.experimental_use_unified_exec_tool → 그대로 통과 (exec 툴)
   //    "caller config cannot override Codex auth/isolation defaults" 라는 이름의 테스트가 있었지만
   //    실제 계약은 그보다 좁았다. **이름이 계약을 지켜주지 않는다.**
+  // 🔴 **denylist 는 구조적으로 틀렸다.** builder 가 caller 의 `features` 를 spread 한 뒤 알려진 키만 덮으면,
+  //    Codex 가 feature 를 새로 추가할 때마다 우리 tool surface 가 **조용히 넓어진다.**
+  //    실측(vendored 0.142.5): `enable_mcp_apps`, `code_mode`, `standalone_web_search`, `sleep_tool`,
+  //    `request_permissions_tool`, `multi_agent_v2` 가 전부 `true` 로 새어나갔다.
+  //    (`enable_mcp_apps` 는 codex_apps 를 되살릴 수 있는 이름이다 — 그게 31개 계정-작용 툴을 여는 그것이다.)
+  //    → **allowlist 로 뒤집는다: caller 의 features 는 통째로 버린다.**
+  it('caller features 는 통째로 버려진다 — denylist 가 아니라 allowlist 여야 한다', () => {
+    const options = buildCodexClientOptions({
+      config: {
+        features: {
+          enable_mcp_apps: true,
+          code_mode: true,
+          standalone_web_search: true,
+          sleep_tool: true,
+          request_permissions_tool: true,
+          multi_agent_v2: true,
+          // 아직 존재하지도 않는 미래의 feature 도 못 들어와야 한다
+          some_future_tool: true,
+        },
+      },
+    })
+    // 우리가 명시적으로 잠근 것 **말고는 아무것도 없다.**
+    expect(Object.values(options.config.features).every((v) => v === false)).toBe(true)
+    expect(options.config.features).not.toHaveProperty('enable_mcp_apps')
+    expect(options.config.features).not.toHaveProperty('some_future_tool')
+    expect(options.config.features.apps).toBe(false)
+  })
+
   it('caller 가 features 밖의 tool surface 로 격리를 뚫을 수 없다', () => {
     const options = buildCodexClientOptions({
       config: {

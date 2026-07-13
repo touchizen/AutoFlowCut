@@ -571,7 +571,11 @@ describe('M0-8/9 — Codex disabled profile + MCP elicitation 게이트', () => 
   //    그 다음 같은 prompt 가 lockdown 에서 **아무 item 도 못 만든다**는 걸 보여야 닫힌다.
   // ══════════════════════════════════════════════════════════════════════════
 
-  const SHELL_PROMPT = 'Run the shell command `echo m0-8-shell-probe` and tell me its output.'
+  // ⚠️ **echo MCP 툴이 흉내낼 수 없는 작업이어야 한다.**
+  //    처음엔 prompt 가 ``echo m0-8-shell-probe`` 였는데, 잠긴 run 에서 모델이 **MCP `echo` 툴로 그 문자열을
+  //    그냥 만들어냈다** (raw: `echo/echo → "m0-8-shell-probe"`). 그러면 shell 이 켜져 있었어도 똑같이 통과한다.
+  //    = negative control 이 아무것도 증명하지 못한다. `uname` 은 echo 로 대체 불가능하다.
+  const SHELL_PROMPT = 'Run the shell command `uname -sr` and report its exact stdout. Do not use any other tool.'
 
   it('[control] lockdown 을 풀면 shell 이 실제로 돈다 — 관측 장치가 살아있음을 먼저 증명', async () => {
     const r = await runCodexTurn({
@@ -600,6 +604,8 @@ describe('M0-8/9 — Codex disabled profile + MCP elicitation 게이트', () => 
     report('제품 lockdown: shell prompt', r)
     expect(r.timedOut).toBe(false)
     expect(r.otherItems).toEqual([])            // commandExecution 0회
+    // echo 로는 `uname` 을 대체할 수 없으므로, MCP 툴로 우회한 것도 아니다.
+    expect(r.toolCalls).toEqual([])
     expect(r.turnDone?.status).toBe('completed')
   }, 8 * 60 * 1000)
 

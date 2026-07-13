@@ -108,10 +108,13 @@ export function buildCodexClientOptions({
     env: safeEnv,
     config: {
       ...callerConfig,
-      features: {
-        ...plainObject(callerConfig.features),
-        ...TOOL_FEATURE_OVERRIDES,
-      },
+      // ⚠️ **allowlist 다. caller 의 features 는 통째로 버린다.**
+      //    denylist(=caller features 를 spread 한 뒤 아는 키만 덮기)는 구조적으로 틀렸다 —
+      //    Codex 가 feature 를 추가할 때마다 우리 tool surface 가 조용히 넓어진다.
+      //    실측(0.142.5): `enable_mcp_apps`, `code_mode`, `standalone_web_search`, `sleep_tool`,
+      //    `request_permissions_tool`, `multi_agent_v2` 가 전부 `true` 로 새어나갔다.
+      //    (`enable_mcp_apps` 는 codex_apps — 사용자 계정에 작용하는 툴 31개 — 를 되살릴 수 있는 이름이다.)
+      features: { ...TOOL_FEATURE_OVERRIDES },
       tools: lockedTools(callerConfig.tools),
       experimental_use_unified_exec_tool: false,
       skills: {
