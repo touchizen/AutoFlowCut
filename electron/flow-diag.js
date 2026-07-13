@@ -21,14 +21,27 @@ const DEFAULT_MAX_STEPS = 8
 // Sentry 로 나가면 안 되는 필드 — 페이지/사용자 콘텐츠를 담을 수 있는 키. 로컬 파일에는 남지만
 //   (사용자가 보낼지 스스로 정한다) 자동 전송에는 절대 싣지 않는다. 지금은 아무 호출부도 안 넘기나,
 //   싱크가 ...detail 을 그대로 펼치므로 나중에 누가 넘기는 순간 조용히 새어나간다. 여기서 막는다.
-const CONTENT_KEYS = /prompt|html|content|srt|script|caption|narration|body/i
+const CONTENT_KEYS = /prompt|html|content|srt|script|caption|narration|body|^text$|ariaLabel|^url$/i
 
-export function sanitizeForSentry(entry) {
-  const out = {}
-  for (const [k, v] of Object.entries(entry)) {
-    if (!CONTENT_KEYS.test(k)) out[k] = v
+/**
+ * 자동 전송(Sentry)에 실을 수 있게 콘텐츠 필드를 재귀적으로 벗긴다.
+ *
+ * ⚠️ 중첩까지 봐야 한다. 최상위 키만 걸렀더니 `candidates[].text` 와 `ariaLabel` 이 그대로 나갔다 —
+ *    그건 Flow 페이지의 텍스트이고, 컴포즈 바에는 @멘션 칩(= 사용자가 만든 캐릭터 이름)이 들어간다.
+ *    진단에 정작 필요한 건 텍스트가 아니라 **속성**(tag/role/aria-pressed/data-state/icons)이다.
+ *    텍스트가 필요하면 로컬 파일에 있고, 그 파일은 사용자가 보낼지 스스로 정한다.
+ */
+export function sanitizeForSentry(value) {
+  if (Array.isArray(value)) return value.map(sanitizeForSentry)
+  if (value && typeof value === 'object') {
+    const out = {}
+    for (const [k, v] of Object.entries(value)) {
+      if (CONTENT_KEYS.test(k)) continue
+      out[k] = sanitizeForSentry(v)
+    }
+    return out
   }
-  return out
+  return value
 }
 
 /**

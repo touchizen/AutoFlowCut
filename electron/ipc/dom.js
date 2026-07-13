@@ -6,6 +6,7 @@
  */
 
 import { screen } from 'electron'
+import { updateBounds } from './layout.js'
 import { AGENT_TOGGLE_SELECTOR } from '../flow-agent-toggle.js'
 import { decideFlowOpenAction, isFlowErrorPage, isDeadMappingFailure, FLOW_PAGE_PROBE_JS } from '../flowOpenRetry.js'
 import { computeOffscreenBounds } from '../offscreen-bounds.js'
@@ -537,7 +538,7 @@ export function registerDomIPC(ipcMain, deps) {
       if (wasHidden) {
         await new Promise(r => setTimeout(r, 500))
         const flowView = getFlowView()
-        if (flowView) flowView.setBounds(currentBounds)
+        if (flowView) updateBounds(getMainWindow(), flowView)
         console.log('[DOM IPC] Restored flowView hidden bounds after prompt')
       }
     }

@@ -6,6 +6,7 @@
  */
 
 import path from 'node:path'
+import { updateBounds } from './layout.js'
 import { net, screen } from 'electron'
 import { computeOffscreenBounds } from '../offscreen-bounds.js'
 import { formatGoogleApiError } from './googleApiError.js'
@@ -727,7 +728,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
       } finally {
         // #R6-13: 주입 성공/실패/throw 와 무관하게 임시로 보인 flowView 를 원복.
         if (promptWasHidden) {
-          flowView.setBounds(promptBounds)
+          updateBounds(getMainWindow(), flowView)
           await new Promise(r => setTimeout(r, 200))
         }
       }
@@ -756,7 +757,7 @@ export function registerFlowAPIIPC(ipcMain, deps) {
             })();
             return {
               editorFound: !!ed,
-              editorText: ed ? (ed.value !== undefined ? ed.value : ed.textContent || '').trim().slice(0, 60) : null,
+              editorTextLen: ed ? (ed.value !== undefined ? ed.value : ed.textContent || '').trim().length : 0,
               activeEl: ae ? (ae.tagName.toLowerCase() + (ae.getAttribute && ae.getAttribute('contenteditable') ? '[ce]' : '')) : null,
               editorIsActive: ed === ae,
               fwdDisabled: fwd ? (fwd.disabled || fwd.getAttribute('aria-disabled')==='true') : 'no_fwd',

@@ -103,6 +103,19 @@ describe('beforeBreadcrumb — console breadcrumbs must not carry prompt text', 
     expect(out.data?.arguments).toBeUndefined()
   })
 
+  it('redacts absolute filesystem paths — they carry the user name', () => {
+    const { beforeBreadcrumb } = opts()
+
+    // Download dirs, dump files, save paths. Scrubbing these at the source is whack-a-mole;
+    // the shape is regular, so kill it at the boundary.
+    const mac = beforeBreadcrumb({ category: 'console', level: 'log', message: '[FlowDomDump] wrote 63 elements → /Users/gordon/Desktop/flow-dom-dump.json' })
+    expect(mac.message).not.toContain('/Users/gordon')
+    expect(mac.message).toContain('[FlowDomDump] wrote 63 elements')
+
+    const win = beforeBreadcrumb({ category: 'console', level: 'log', message: '[Flow DOMDownload] Download dir: C:\\Users\\gordon\\AppData\\Local\\Temp\\x' })
+    expect(win.message).not.toContain('gordon')
+  })
+
   it('leaves non-console breadcrumbs alone', () => {
     const { beforeBreadcrumb } = opts()
     const crumb = { category: 'navigation', message: 'https://labs.google/fx/tools/flow' }

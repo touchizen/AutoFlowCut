@@ -6,6 +6,7 @@
  */
 
 import { screen } from 'electron'
+import { updateBounds } from './layout.js'
 import { extractServerErrorMessage } from './videoErrorExtractor.js'
 import { computeOffscreenBounds } from '../offscreen-bounds.js'
 import { GENERATED_VIDEO_PROBE } from '../flow-media-collect.js'
@@ -247,7 +248,7 @@ export function registerVideoIPC(ipcMain, deps) {
       const promptResult = _injSegments
         ? await (async () => {
             const _si = await injectComposeSegments(flowView, _injSegments)
-            console.log('[Flow Video T2V] segments injected (chips):', _segments.filter(s => s.type === 'mention').map(s => s.name).join(','), '→', _si.ok)
+            console.log('[Flow Video T2V] segments injected (chips):', _segments.filter(s => s.type === 'mention').length, '→', _si.ok)
             return _si.ok
               ? { success: true }
               : { success: false, error: _si.error, ...(_si.staleMention ? { staleMention: _si.staleMention } : {}) }
@@ -345,7 +346,7 @@ export function registerVideoIPC(ipcMain, deps) {
       `)
 
       if (promptWasHidden) {
-        flowView.setBounds(promptBounds)
+        updateBounds(getMainWindow(), flowView)
         await new Promise(r => setTimeout(r, 200))
       }
 
@@ -454,7 +455,7 @@ export function registerVideoIPC(ipcMain, deps) {
       if (videoTimeout) clearTimeout(videoTimeout)
       if (videoOwnPending && getPendingVideoGeneration() === videoOwnPending) setPendingVideoGeneration(null)
       // #R7-10: 주입 중 throw 해도 임시로 보인 flowView 를 원복(성공 경로는 이미 hidden → no-op).
-      if (promptWasHidden) { try { flowView.setBounds(promptBounds) } catch {} }
+      if (promptWasHidden) { try { updateBounds(getMainWindow(), flowView) } catch {} }
       // Monkey-patch inject 정리 (항상 실행)
       await clearFlowPageInject?.()
     }
@@ -633,7 +634,7 @@ export function registerVideoIPC(ipcMain, deps) {
       `)
 
       if (promptWasHidden) {
-        flowView.setBounds(promptBounds)
+        updateBounds(getMainWindow(), flowView)
         await new Promise(r => setTimeout(r, 200))
       }
 
@@ -735,7 +736,7 @@ export function registerVideoIPC(ipcMain, deps) {
       if (videoTimeout) clearTimeout(videoTimeout)
       if (videoOwnPending && getPendingVideoGeneration() === videoOwnPending) setPendingVideoGeneration(null)
       // #R7-10: 주입 중 throw 해도 임시로 보인 flowView 를 원복(성공 경로는 이미 hidden → no-op).
-      if (promptWasHidden) { try { flowView.setBounds(promptBounds) } catch {} }
+      if (promptWasHidden) { try { updateBounds(getMainWindow(), flowView) } catch {} }
       // Monkey-patch inject 정리 (항상 실행)
       await clearFlowPageInject?.()
     }

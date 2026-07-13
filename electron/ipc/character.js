@@ -14,6 +14,7 @@
  * 트러스트 클릭/프롬프트 주입 패턴은 flow-api.js 의 flow:generate-image 와 동일(검증된 경로).
  */
 
+import { updateBounds } from './layout.js'
 import {
   buildEntityRegisterBody,
   buildEntityRenameBody,
@@ -460,7 +461,7 @@ export function registerCharacterIPC(ipcMain, deps) {
       console.log('[Flow Character] prompt injection:', JSON.stringify(inj))
       if (!inj.success) return { success: false, error: inj.error || 'prompt injection failed' }
     } finally {
-      if (wasHidden) { flowView.setBounds(bounds); await sleep(200) }
+      if (wasHidden) { updateBounds(getMainWindow(), flowView); await sleep(200) }
     }
 
     // 3) 생성 버튼 enable 대기 (프롬프트 인식됨 확인)
@@ -591,7 +592,7 @@ export function registerCharacterIPC(ipcMain, deps) {
       console.log('[Flow Character] reroll prompt injection:', JSON.stringify(inj))
       if (!inj.success) return { success: false, error: inj.error || 'prompt injection failed' }
     } finally {
-      if (wasHidden) { flowView.setBounds(bounds); await sleep(200) }
+      if (wasHidden) { updateBounds(getMainWindow(), flowView); await sleep(200) }
     }
 
     let enabled = false
@@ -775,7 +776,7 @@ export function registerCharacterIPC(ipcMain, deps) {
         return { success: false, error: _inj.error, retry: true, ...(_inj.staleMention ? { staleMention: _inj.staleMention } : {}) }
       }
     } finally {
-      if (wasHidden) { flowView.setBounds(bounds); await sleep(200) }
+      if (wasHidden) { updateBounds(getMainWindow(), flowView); await sleep(200) }
     }
 
     // 3) 생성 버튼 enable 대기 → 트러스트 클릭 → batchGenerateImages 응답 캡처.

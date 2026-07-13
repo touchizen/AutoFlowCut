@@ -36,6 +36,9 @@ const SECRET_BEARING = [
   /\bya29\.[A-Za-z0-9._~+/-]{8,}/g,                       // Google OAuth 토큰
   /\bBearer\s+[A-Za-z0-9._~+/-]{12,}/gi,
   /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g,      // 이메일
+  // 절대 경로 — 사용자 이름이 들어간다. 소스마다 쫓아다니는 건 수렴하지 않지만(다운로드 폴더, 덤프
+  //   파일, 저장 경로…), 모양이 규칙적이라 경계에서 한 번에 막을 수 있다.
+  /(?:\/Users\/|\/home\/|[A-Za-z]:\\Users\\)[^\s'"),]*/g,
 ]
 
 export function scrubBreadcrumbMessage(message) {

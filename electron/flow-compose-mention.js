@@ -132,7 +132,7 @@ export async function insertSceneMention(flowView, name) {
     const chips = e ? Array.from(e.querySelectorAll("[data-slate-void='true']")) : [];
     const matches = (t) => { const s=strip(t); return s===NAME||s==='@'+NAME||s===NAME+'캐릭터'||s==='@'+NAME+'캐릭터'; };
     return {
-      editorText: (e && (e.innerText||e.textContent)||'').slice(0,80),
+      editorTextLen: (e && (e.innerText||e.textContent)||'').length,
       hasMentionChip: chips.some(c => matches(c.textContent)),
       stillHasDialog: !!document.querySelector("div[role='dialog']"),
     };
