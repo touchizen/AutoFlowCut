@@ -58,7 +58,9 @@ describe('APPX tile assets', () => {
   })
 
   test('keeps package versions in sync while enabling APPX build-number bumps', () => {
-    expect(packageJson.version).toBe('3.0.0')
+    // Don't pin the literal version — that breaks on every release and says nothing.
+    // The invariant worth holding is that package.json and the lockfile agree.
+    expect(packageJson.version).toMatch(/^\d+\.\d+\.\d+$/)
     expect(packageLock.version).toBe(packageJson.version)
     expect(packageLock.packages[''].version).toBe(packageJson.version)
     expect(packageJson.build.appx.setBuildNumber).toBe(true)

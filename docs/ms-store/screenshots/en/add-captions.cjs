@@ -7,7 +7,7 @@ const CAPTION_HEIGHT = 120;
 
 const screenshots = [
   { file: '스크린샷 2026-06-06 202752.png', caption: 'Build a full video timeline from AI-generated scenes, audio, and subtitles' },
-  { file: '스크린샷 2026-07-01 201635.png', caption: 'Generate free with a Google login, or go fast with your own API key' },
+  { file: '스크린샷 2026-07-11 192823.png', caption: 'Just give it a title — AI writes the full script with a hook and story arc' },
   { file: '스크린샷 2026-06-06 203401.png', caption: 'Generate up to 100 images in about 2-5 minutes with batch selection' },
   { file: '스크린샷 2026-06-06 203415.png', caption: 'Keep characters consistent with reusable reference images' },
   { file: '스크린샷 2026-07-01 192008.png', caption: 'Type @ to insert character, scene, or style references into any prompt' },

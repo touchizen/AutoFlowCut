@@ -49,6 +49,62 @@ export function findAgentToggle(doc) {
 export const AGENT_TOGGLE_SELECTOR = `(${findAgentToggle.toString()})(document)`
 
 /**
+ * Snapshot every "agent-ish" control plus the page context — for when findAgentToggle
+ * returns null and fails generation closed.
+ *
+ * findAgentToggle only accepts a candidate that carries a toggle attribute
+ * (aria-pressed/aria-checked/role=switch) AND is labelled agent/에이전트. When it
+ * rejects everything we lose the reason, and a user report becomes unfalsifiable —
+ * markup change, locale, and collapsed-viewport all look identical from the log.
+ * This keeps the rejected candidates and the context that separates those causes.
+ */
+export function scanAgentToggleCandidates(doc) {
+  const win = doc.defaultView
+  const cands = Array.from(doc.querySelectorAll('button, [role="switch"], [role="checkbox"], [role="button"], input[type="checkbox"]'))
+    .map((el) => ({
+      el,
+      icons: Array.from(el.querySelectorAll('i, [class*="symbols"], [class*="google-symbols"]')).map((i) => (i.textContent || '').trim()),
+    }))
+    .filter(({ el, icons }) => {
+      const al = el.getAttribute('aria-label') || ''
+      const t = (el.textContent || '').trim()
+      return /agent|에이전트/i.test(al) || /agent|에이전트/i.test(t) || icons.some((i) => /spark/.test(i))
+    })
+    .slice(0, 12)
+    .map(({ el, icons }) => ({
+      tag: el.tagName.toLowerCase(),
+      role: el.getAttribute('role'),
+      text: (el.textContent || '').trim().slice(0, 40),
+      ariaLabel: el.getAttribute('aria-label'),
+      ariaPressed: el.getAttribute('aria-pressed'),
+      ariaChecked: el.getAttribute('aria-checked'),
+      dataState: el.getAttribute('data-state'),
+      icons,
+    }))
+
+  return {
+    candidates: cands,
+    context: {
+      innerWidth: (win && win.innerWidth) || 0,
+      innerHeight: (win && win.innerHeight) || 0,
+      lang: doc.documentElement.lang || null,
+      url: (doc.location && doc.location.href) || null,
+      readyState: doc.readyState || null,
+      // 컴포즈 에디터가 떠 있는지 — 없으면 페이지가 아직 안 그려진 것(하이드레이션/뷰포트 문제)이고,
+      // 있는데도 토글이 없으면 Flow 마크업이 바뀐 것이다. 이 한 줄이 두 원인을 가른다.
+      hasComposeEditor: !!(doc.querySelector("[data-slate-editor='true']")
+        || doc.querySelector("div[role='textbox'][contenteditable='true']")),
+    },
+  }
+}
+
+/** Page expression returning the candidate/context snapshot (for the not_found path). */
+export const AGENT_TOGGLE_DIAGNOSTIC = `(function() {
+  const scan = ${scanAgentToggleCandidates.toString()};
+  try { return scan(document); } catch (e) { return { error: String(e && e.message) }; }
+})()`
+
+/**
  * Locate the agent CHAT panel's header close button (icon 'close' / label '닫기').
  * A prior Agent-ON generation leaves this right-side panel open, covering the main
  * compose bar where the Agent toggle lives — so we close it before probing/toggling.
@@ -121,15 +177,24 @@ export function findAgentSettingsCloseButton(doc) {
 /** Page expression returning the agent-settings panel close button ELEMENT. */
 export const AGENT_SETTINGS_CLOSE_SELECTOR = `(${findAgentSettingsCloseButton.toString()})(document)`
 
+/**
+ * ⚠️ 주입한 함수는 절대 "이름으로" 호출하지 않는다 — 반드시 const 에 담아 그 변수로 호출한다.
+ *    prod 빌드는 main 번들을 minify 하며 함수 이름을 뭉갠다(findAgentToggle → H$). 그러면
+ *    `${fn.toString()}` 로 주입된 선언은 `function H$(...)` 가 되는데 호출부는 여전히
+ *    `findAgentToggle(...)` 라 ReferenceError 가 난다 → executeJavaScript 거부 →
+ *    "Script failed to execute" → ensureAgentOff catch → fail-closed → 모든 생성 실패.
+ *    dev 는 minify 를 안 해서 멀쩡하므로 이 버그는 패키징된 앱에서만 나타난다.
+ *    (실제 사용자 제보의 원인이었다. tests/electron/flow-agent-toggle-minified.test.js 가 지킨다.)
+ */
 /** Page expression: report the agent toggle's found/on/markup (for diagnostics). */
 export const AGENT_TOGGLE_PROBE = `(function() {
-  ${isToggleOn.toString()}
-  ${findAgentToggle.toString()}
-  const el = findAgentToggle(document);
+  const isOn = ${isToggleOn.toString()};
+  const find = ${findAgentToggle.toString()};
+  const el = find(document);
   if (!el) return { found: false };
   return {
     found: true,
-    on: isToggleOn(el),
+    on: isOn(el),
     role: el.getAttribute('role'),
     ariaLabel: el.getAttribute('aria-label'),
     ariaPressed: el.getAttribute('aria-pressed'),
@@ -145,8 +210,8 @@ export const AGENT_TOGGLE_PROBE = `(function() {
  * Returns { found, wasOn, clicked, candidates }.
  */
 export const AGENT_OFF_SCRIPT = `(function() {
-  ${isToggleOn.toString()}
-  ${findAgentToggle.toString()}
+  const isToggleOn = ${isToggleOn.toString()};
+  const findAgentToggle = ${findAgentToggle.toString()};
   const P = '[autoflowcut Agent]';
   // 진단: 'agent/에이전트/spark' 관련 후보를 전부 로그 (실제 토글 마크업 확인용)
   try {
