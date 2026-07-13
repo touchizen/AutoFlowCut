@@ -62,7 +62,7 @@ export function createEchoMcpServer({ markerFile = process.env.ECHO_GATED_MARKER
     },
     async ({ text }) => {
       // ⚠️ 핵심: handler **안에서, 지연 없이** elicitation 을 연다. 이게 MCP SDK 공식 패턴이고,
-      // 스펙 §212 의 제품 설계(adapter 의 tool handler 가 elicitInput 을 소유)와 같은 모양이다.
+      // 스펙 §D9 결정2("adapter process 안에서 elicitInput() form elicitation을 발행")의 제품 설계(adapter 의 tool handler 가 elicitInput 을 소유)와 같은 모양이다.
       // hold 는 responder 가 건다.
       //
       // 🔴 **여기가 함정이다.** MCP SDK 의 `DEFAULT_REQUEST_TIMEOUT_MSEC` 는 **60초**다

@@ -96,7 +96,7 @@ function plainObject(value) {
 /**
  * @param runtimeProfile  `'story'` (기본) — 작가 LLM. 툴 0개. `mcp_servers` 를 지운다.
  *                        `'orchestrator'` — 인앱 에이전트. `mcpServers` 인자로 넘긴 MCP 서버를 **싣는다.**
- *                        (스펙 §340. 이게 없으면 M0-8 이 RED 다 — M0-S06 이 `mcp_servers:{}` 후처리를
+ *                        (스펙 D22 제품 seam("buildCodexClientOptions({runtimeProfile,authProfile})"). 이게 없으면 M0-8 이 RED 다 — M0-S06 이 `mcp_servers:{}` 후처리를
  *                         명시적 RED 조건으로 지목한다.)
  * @param mcpServers      orchestrator 프로필에서만 쓰인다. per-server `env` 포함.
  *                        ⚠️ `config.mcp_servers` 로는 **절대 안 붙는다** — caller config 가 격리를 뚫는 길을

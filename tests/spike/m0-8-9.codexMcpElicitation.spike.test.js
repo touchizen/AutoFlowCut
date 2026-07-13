@@ -37,11 +37,11 @@
  *   #0 native — Codex 가 만든 MCP tool-call 승인.
  *      `_meta.codex_approval_kind:'mcp_tool_call'`, `_meta.persist:['session','always']`, `requestedSchema:{}`
  *      **툴 호출 자체를 막는다.** MCP 서버 쪽 코드가 필요 없다.
- *      ⚠️ 단 **모든** MCP tool call 에 뜬다 — plain `echo` 에도. spec §222 의 *"read 는 UI 없이 실행"* 과
+ *      ⚠️ 단 **모든** MCP tool call 에 뜬다 — plain `echo` 에도. 스펙의 *"read 1개가 UI 없이 실행"* 요구 과
  *         충돌하므로, 채택하려면 adapter 가 R 툴을 UI 없이 auto-accept 해야 한다(설계 결정).
  *         분류 근거로 `_meta.tool_title` 을 믿지 마라 — 생성 타입상 `_meta` 는 `JsonValue` 다.
  *   #1 fixture — handler 안의 `elicitInput()`. **body 가 이미 도는 중**이라야 발화.
- *      **스펙(§212)의 제품 설계가 이 모양이다** — adapter 의 tool handler 가 elicitInput 을 소유한다.
+ *      **스펙의 제품 설계(§D9 결정2: "adapter process 안에서 elicitInput() form elicitation을 발행")가 이 모양이다** — adapter 의 tool handler 가 elicitInput 을 소유한다.
  *
  * body 실행 횟수는 child 메모리가 아니라 **marker 파일**로 관측한다.
  *
@@ -138,7 +138,7 @@ async function runCodexTurn({ prompt, onElicitation, timeoutMs = 25 * 60 * 1000,
     // ── 제품 client options 를 **그대로** 통과한다 (스펙 M0-8/M0-S06 의 요구) ──
     // ⚠️ builder 호출 **뒤에** mcp_servers 를 끼워넣으면 안 된다. 그건 builder 를 우회하는 것이고,
     //    스펙 M0-S06 은 *"`mcp_servers:{}` 후처리 … 남으면 RED"* 라고 못박는다.
-    //    → `runtimeProfile:'orchestrator'` + `mcpServers` 인자가 정본 경로다 (스펙 §340).
+    //    → `runtimeProfile:'orchestrator'` + `mcpServers` 인자가 정본 경로다 (스펙 D22 제품 seam: "buildCodexClientOptions({runtimeProfile,authProfile})").
     const opts = buildCodexClientOptions({
       env: runtime.env,                 // 제품 runtime home 이 만든 env (CODEX_HOME 포함)
       runtimeProfile: 'orchestrator',
@@ -391,11 +391,11 @@ const gatedCall = (r) => {
  *       *"gated echo tool **내부** elicitation 이 `mcpServer/elicitation/request` 를 만든다.
  *         deny/allow 두 run 의 **10분 hold** 중 call/turn/session 생존…"*
  *       native 승인은 즉시 통과시키고, **handler 안에서 열린** elicitation 을 10분 붙잡는다.
- *       제품 설계(spec §212)가 이 모양이다 — adapter 의 tool handler 가 elicitInput 을 소유한다.
+ *       제품 설계(스펙 §D9 결정2: "adapter process 안에서 elicitInput() form elicitation을 발행")가 이 모양이다 — adapter 의 tool handler 가 elicitInput 을 소유한다.
  *
  *   `'native'` — Codex 가 스스로 만드는 MCP tool-call 승인(#0)을 붙잡는다.
  *       스펙엔 없는 경로지만 **더 강한 게이트**다(MCP 서버 쪽 코드 없이 아무 툴에나 걸린다).
- *       ⚠️ 단 **모든** MCP tool call 에 승인이 뜬다 — plain `echo` 에도. 그래서 spec §222 의
+ *       ⚠️ 단 **모든** MCP tool call 에 승인이 뜬다 — plain `echo` 에도. 그래서 스펙의 "read 1개가 UI 없이 실행" 요구 의
  *       *"read 1개는 UI 없이 실행"* 과 충돌한다. 채택하려면 adapter 가 R 툴을 **UI 없이 auto-accept** 해야 한다.
  *       ⚠️ 분류를 `_meta.tool_title` 로 하려 들지 마라 — 생성 타입상 `_meta` 는 그냥 `JsonValue` 라
  *          **계약이 아니다.** tool identity 를 어디서 얻을지가 (B) 채택의 선결 문제다.
@@ -422,7 +422,7 @@ const responder = ({ holdMs, approve, holdWhich = 'fixture' }) => async (params)
 
   // fixture 의 게이트 (#1). body 가 이미 도는 중이라야 여기 온다.
   if (holdWhich === 'fixture') await hold()
-  // 거절은 **`action:'decline'`** 으로 보낸다. 스펙이 쓰는 언어가 그것이고(§212: "decline|cancel, close, abort 는
+  // 거절은 **`action:'decline'`** 으로 보낸다. 스펙이 쓰는 언어가 그것이고(§D9 결정2: "decline|cancel, close, abort 는
   // Tool Core 호출과 side effect 모두 0회"), 사람이 승인 UI 를 거부했을 때 adapter 가 보낼 값이다.
   // (`{action:'accept', content:{approve:false}}` 도 fixture 는 막지만, 그건 "폼을 채워서 아니오" 라는 다른 의미다.)
   return approve
@@ -500,7 +500,7 @@ describe('M0-8/9 — Codex disabled profile + MCP elicitation 게이트', () => 
   // ── 🔴 함정 회귀 테스트 ──
   // MCP SDK 의 요청 timeout 기본값은 **60초**다. adapter 가 elicitInput 에 timeout 을 안 넘기면
   // 사람이 10분을 고민하는 순간 **우리 쪽 SDK 가** 요청을 죽인다. Codex 가 아니라 우리가.
-  // 스펙 §212 의 설계(adapter handler 가 elicitInput 소유)는 이 함정 위에 서 있다.
+  // 스펙 §D9 결정2 의 설계(adapter handler 가 elicitInput 소유)는 이 함정 위에 서 있다.
   it('🔴 elicitInput 에 timeout 을 안 넘기면 **60초**에 죽는다 (M2 가 반드시 넘겨야 하는 이유)', async () => {
     const r = await runCodexTurn({
       prompt: 'Call the echo_gated tool from the echo MCP server with text "timeout-trap". Then reply with the tool result.',
@@ -522,7 +522,7 @@ describe('M0-8/9 — Codex disabled profile + MCP elicitation 게이트', () => 
 
   // ══════════════════════════════════════════════════════════════════════════
   // 보너스: Codex **native** 게이트(#0) — 스펙엔 없지만 더 강하다.
-  // 채택하려면 spec §222("read 는 UI 없이")를 위해 adapter 가 R 툴을 auto-accept 해야 한다.
+  // 채택하려면 스펙의 "read 1개가 UI 없이 실행" 요구("read 는 UI 없이")를 위해 adapter 가 R 툴을 auto-accept 해야 한다.
   // ══════════════════════════════════════════════════════════════════════════
 
   it('native 게이트: deny 하면 tool handler 에 **진입조차 못 한다** (hold 5s)', async () => {
