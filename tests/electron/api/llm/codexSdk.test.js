@@ -80,6 +80,85 @@ describe('codexSdk helper', () => {
     })
   })
 
+  // ⚠️ builder 는 `callerConfig` 를 통째로 spread 한 뒤 **일부 필드만** 덮는다.
+  //    그래서 `features` 밖에 있는 tool surface 는 그대로 샌다 — 실측으로 밟았다:
+  //      config.tools.web_search = true            → 그대로 통과 (웹 검색 툴이 열린다)
+  //      config.experimental_use_unified_exec_tool → 그대로 통과 (exec 툴)
+  //    "caller config cannot override Codex auth/isolation defaults" 라는 이름의 테스트가 있었지만
+  //    실제 계약은 그보다 좁았다. **이름이 계약을 지켜주지 않는다.**
+  it('caller 가 features 밖의 tool surface 로 격리를 뚫을 수 없다', () => {
+    const options = buildCodexClientOptions({
+      config: {
+        tools: { web_search: true, experimental_request_user_input: true },
+        experimental_use_unified_exec_tool: true,
+      },
+    })
+    expect(options.config.tools.web_search).toBe(false)
+    // ⚠️ `experimental_request_user_input` 은 **불리언이 아니라 struct** 다. `false` 로 두면
+    //    Codex 가 설정 로딩을 거부한다(-32600). 끄는 방법은 **키를 없애는 것**이다(=기본값=꺼짐).
+    //    (단위 테스트만으론 못 잡는다 — 실제 codex 를 띄우는 스파이크가 잡았다.)
+    expect(options.config.tools).not.toHaveProperty('experimental_request_user_input')
+    expect(options.config.experimental_use_unified_exec_tool).toBe(false)
+  })
+
+  it('orchestrator 프로필도 features 밖 tool surface 를 막는다', () => {
+    const options = buildCodexClientOptions({
+      runtimeProfile: 'orchestrator',
+      mcpServers: { echo: { command: '/bin/node' } },
+      config: { tools: { web_search: true }, experimental_use_unified_exec_tool: true },
+    })
+    expect(options.config.tools.web_search).toBe(false)
+    expect(options.config.experimental_use_unified_exec_tool).toBe(false)
+    expect(options.config.mcp_servers).toEqual({ echo: { command: '/bin/node' } })
+  })
+
+  // ── runtimeProfile (스펙 §340) ──
+  // story  : 현행 lockdown 유지 — caller 가 mcp_servers 를 넘겨도 지운다 (작가 LLM 은 툴 0개)
+  // orchestrator: caller 의 mcp_servers 를 **지우지 않는다.** shell/browser/plugins/apps 는 여전히 deny.
+  //
+  // ⚠️ 이게 없으면 M0-8 이 RED 다 (스펙 M0-S06: "`mcp_servers:{}` 후처리 … 남으면 RED").
+  //    오케스트레이터 adapter 를 붙일 방법이 없어서, 스파이크가 builder 를 우회할 수밖에 없었다.
+  describe('runtimeProfile', () => {
+    const ECHO = { echo: { command: '/bin/node', args: ['echo.js'], env: { TOKEN: 't' } } }
+
+    it('기본(story): mcp_servers 를 지운다 — 작가 경로의 격리는 그대로', () => {
+      const options = buildCodexClientOptions({ config: { mcp_servers: ECHO } })
+      expect(options.config.mcp_servers).toEqual({})
+    })
+
+    it("orchestrator: mcpServers 를 **그대로 싣는다** (per-server env 포함)", () => {
+      const options = buildCodexClientOptions({
+        runtimeProfile: 'orchestrator',
+        mcpServers: ECHO,
+      })
+      expect(options.config.mcp_servers).toEqual(ECHO)
+    })
+
+    it('orchestrator 여도 tool feature lockdown 은 안 풀린다', () => {
+      const options = buildCodexClientOptions({
+        runtimeProfile: 'orchestrator',
+        mcpServers: ECHO,
+        config: { features: { shell_tool: true, browser_use: true, plugins: true, apps: true } },
+      })
+      expect(options.config.features).toMatchObject({
+        shell_tool: false,
+        browser_use: false,
+        plugins: false,
+        apps: false,          // ← codex_apps(31개 계정-작용 툴)를 막는 그 스위치
+      })
+      expect(options.config.forced_login_method).toBe('chatgpt')
+      expect(options.config.hooks).toEqual({})
+    })
+
+    it('orchestrator 라도 config.mcp_servers 로 몰래 넣는 건 안 된다 — mcpServers 인자로만 붙는다', () => {
+      const options = buildCodexClientOptions({
+        runtimeProfile: 'orchestrator',
+        config: { mcp_servers: ECHO },
+      })
+      expect(options.config.mcp_servers).toEqual({})
+    })
+  })
+
   it('caller config cannot override Codex auth/isolation defaults', () => {
     const options = buildCodexClientOptions({
       config: {

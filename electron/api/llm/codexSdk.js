@@ -43,6 +43,23 @@ const TOOL_FEATURE_OVERRIDES = Object.freeze({
   workspace_dependencies: false,
   tool_suggest: false,
 })
+/**
+ * `features` **밖에** 있는 tool surface 들. 여기를 안 막으면 caller config 가 격리를 뚫는다.
+ * (실측: `config.tools.web_search=true`, `config.experimental_use_unified_exec_tool=true` 가
+ *  builder 를 그대로 통과했다. `TOOL_FEATURE_OVERRIDES` 는 `features` 안만 덮는다.)
+ *
+ * ⚠️ `false` 로 끌 수 있는 것만 여기 넣는다. **불리언이 아닌 키를 `false` 로 두면 Codex 가
+ *    설정 로딩 자체를 거부한다** — 실측:
+ *      `-32600 failed to load configuration: invalid type: boolean 'false',
+ *       expected struct ExperimentalRequestUserInput in 'tools.experimental_request_user_input'`
+ *    (단위 테스트는 통과했다. **실제 codex 를 띄우는 스파이크만 이걸 잡았다.**)
+ *    → 불리언이 아닌 tool 키는 `TOOLS_TABLE_DROP` 으로 **지운다**(= 기본값 = 꺼짐).
+ */
+const TOOLS_TABLE_OVERRIDES = Object.freeze({
+  web_search: false,
+})
+const TOOLS_TABLE_DROP = Object.freeze(['experimental_request_user_input'])
+
 const PLATFORM_PACKAGE_BY_TARGET = {
   'x86_64-unknown-linux-musl': '@openai/codex-linux-x64',
   'aarch64-unknown-linux-musl': '@openai/codex-linux-arm64',
@@ -52,11 +69,36 @@ const PLATFORM_PACKAGE_BY_TARGET = {
   'aarch64-pc-windows-msvc': '@openai/codex-win32-arm64',
 }
 
+/** caller 의 `tools` 테이블에서 tool surface 를 잠근다. 불리언이 아닌 키는 지운다(=기본값=꺼짐). */
+function lockedTools(callerTools) {
+  const tools = { ...plainObject(callerTools), ...TOOLS_TABLE_OVERRIDES }
+  for (const key of TOOLS_TABLE_DROP) delete tools[key]
+  return tools
+}
+
 function plainObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
 }
 
-export function buildCodexClientOptions({ env = process.env, config = {} } = {}) {
+/**
+ * @param runtimeProfile  `'story'` (기본) — 작가 LLM. 툴 0개. `mcp_servers` 를 지운다.
+ *                        `'orchestrator'` — 인앱 에이전트. `mcpServers` 인자로 넘긴 MCP 서버를 **싣는다.**
+ *                        (스펙 §340. 이게 없으면 M0-8 이 RED 다 — M0-S06 이 `mcp_servers:{}` 후처리를
+ *                         명시적 RED 조건으로 지목한다.)
+ * @param mcpServers      orchestrator 프로필에서만 쓰인다. per-server `env` 포함.
+ *                        ⚠️ `config.mcp_servers` 로는 **절대 안 붙는다** — caller config 가 격리를 뚫는 길을
+ *                        열어두지 않기 위해서다. 붙이려면 이 인자를 명시해야 한다.
+ *
+ * tool feature lockdown(shell/browser/plugins/**apps**)은 **어느 프로필에서도 안 풀린다.**
+ * `apps:false` 를 빠뜨리면 내장 `codex_apps` 가 사용자 ChatGPT 계정에 작용하는 툴 31개를
+ * **승인 게이트 없이** 노출한다 (M0-8 실측).
+ */
+export function buildCodexClientOptions({
+  env = process.env,
+  config = {},
+  runtimeProfile = 'story',
+  mcpServers = {},
+} = {}) {
   const safeEnv = {}
   for (const key of SAFE_ENV_KEYS) {
     if (env?.[key] != null) safeEnv[key] = String(env[key])
@@ -70,6 +112,8 @@ export function buildCodexClientOptions({ env = process.env, config = {} } = {})
         ...plainObject(callerConfig.features),
         ...TOOL_FEATURE_OVERRIDES,
       },
+      tools: lockedTools(callerConfig.tools),
+      experimental_use_unified_exec_tool: false,
       skills: {
         ...plainObject(callerConfig.skills),
         include_instructions: false,
@@ -79,7 +123,7 @@ export function buildCodexClientOptions({ env = process.env, config = {} } = {})
       include_environment_context: false,
       include_apps_instructions: false,
       include_collaboration_mode_instructions: false,
-      mcp_servers: {},
+      mcp_servers: runtimeProfile === 'orchestrator' ? plainObject(mcpServers) : {},
       hooks: {},
       sandbox_permissions: [],
       shell_environment_policy: { inherit: 'none' },

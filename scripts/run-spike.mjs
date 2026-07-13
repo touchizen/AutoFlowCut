@@ -11,7 +11,9 @@ const child = spawn(
   ['node_modules/vitest/vitest.mjs', 'run', '-c', 'vitest.spike.config.js', ...process.argv.slice(2)],
   {
     stdio: 'inherit',
-    env: { ...process.env, SPIKE: '1' },
+    // ⚠️ 한 invocation 을 하나의 id 로 묶는다. 파일마다 id 를 만들면 raw 에서 "이 줄들이 같은 run 인가" 를
+    //    증명할 수 없고, 죽은 run 의 fork worker 가 끼어들어도 못 알아챈다 (실제로 밟았다).
+    env: { ...process.env, SPIKE: '1', SPIKE_RUN_ID: `${Date.now().toString(36)}-${process.pid}` },
   }
 )
 
