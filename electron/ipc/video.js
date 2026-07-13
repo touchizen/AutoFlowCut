@@ -810,7 +810,7 @@ export function registerVideoIPC(ipcMain, deps) {
               return urls
             }
             const allUrls = findUrls(m, 'media')
-            console.log('[Flow VideoStatus] ✅ URLs in response:', JSON.stringify(allUrls))
+            console.log('[Flow VideoStatus] ✅ URLs in response:', allUrls.length)   // URL 은 사용자 생성물 주소 — 개수만
             console.log('[Flow VideoStatus] ✅ mediaMetadata keys:', JSON.stringify(Object.keys(m?.mediaMetadata || {})))
 
             // AutoFlow: 비디오 URL은 status 응답에서 직접 추출

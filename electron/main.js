@@ -1620,7 +1620,9 @@ async function dumpFlowNetToFile() {
     fsSync.writeFileSync(filePath, JSON.stringify(net, null, 2))
     console.log('[FlowNetDump] wrote', net.length, 'entries →', path.basename(filePath))
     if (mainWindow) {
-      try { mainWindow.webContents.executeJavaScript(`console.log('[FlowNetDump] saved: ${filePath.replace(/'/g, "\\'")}')`) } catch {}
+      // 렌더러 콘솔에 전체 경로를 주입하면 renderer Sentry 의 breadcrumb 으로 /Users/<계정>/… 이 나간다.
+      //   파일명만 알려준다 — 어차피 바탕화면에 있다.
+      try { mainWindow.webContents.executeJavaScript(`console.log('[FlowNetDump] saved: ${path.basename(filePath).replace(/'/g, "\\'")}')`) } catch {}
     }
   } catch (e) {
     console.warn('[FlowNetDump] dump failed:', e.message)
@@ -1636,7 +1638,9 @@ async function dumpFlowDomToFile() {
     fsSync.writeFileSync(filePath, JSON.stringify(probe, null, 2))
     console.log('[FlowDomDump] wrote', (probe.elements || []).length, 'elements →', path.basename(filePath))
     if (mainWindow) {
-      try { mainWindow.webContents.executeJavaScript(`console.log('[FlowDomDump] saved: ${filePath.replace(/'/g, "\\'")}')`) } catch {}
+      // 렌더러 콘솔에 전체 경로를 주입하면 renderer Sentry 의 breadcrumb 으로 /Users/<계정>/… 이 나간다.
+      //   파일명만 알려준다 — 어차피 바탕화면에 있다.
+      try { mainWindow.webContents.executeJavaScript(`console.log('[FlowDomDump] saved: ${path.basename(filePath).replace(/'/g, "\\'")}')`) } catch {}
     }
   } catch (e) {
     console.warn('[FlowDomDump] dump failed:', e.message)

@@ -2,6 +2,7 @@ import * as Sentry from '@sentry/electron/main'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { scrubBreadcrumb, scrubSentryString } from './sentry-scrub.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -13,59 +14,6 @@ function readAppVersion() {
   } catch {
     return '0.0.0'
   }
-}
-
-// @sentry/electron enables node.consoleIntegration() by default, so EVERY main-process
-// console.log becomes a breadcrumb and ships with any captured event. The Flow generation
-// path logs the user's prompt text, so without this their prompts would leave the machine.
-// beforeSend only filters event.extra — it never sees breadcrumbs.
-//
-// Redact the value, keep the line: "prompt: '<lighthouse keeper…>'" tells us nothing we
-// need, but knowing that generate-image ran, and when, is the whole point of the trail.
-const PROMPT_BEARING = [
-  // [Flow API] generate-image: { prompt: '…', model: … }
-  /(prompt:\s*)('[^']*'|"[^"]*"|[^,}]+)/gi,
-  // [DOM IPC] dom-send-prompt called: …
-  /(dom-send-prompt called:\s*)(.*)$/gi,
-]
-
-// 자격증명/PII — 소스에서 안 찍는 게 1차 방어지만, console.log 하나만 빠뜨려도 자격증명이
-//   Sentry 로 나간다. 실제로 Flow 세션 응답이 access_token 과 이메일을 통째로 찍고 있었다.
-const SECRET_BEARING = [
-  /(["']?access_?token["']?\s*[:=]\s*["']?)[A-Za-z0-9._~+/-]{12,}/gi,
-  /\bya29\.[A-Za-z0-9._~+/-]{8,}/g,                       // Google OAuth 토큰
-  /\bBearer\s+[A-Za-z0-9._~+/-]{12,}/gi,
-  /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g,      // 이메일
-  // 절대 경로 — 사용자 이름이 들어간다. 소스마다 쫓아다니는 건 수렴하지 않지만(다운로드 폴더, 덤프
-  //   파일, 저장 경로…), 모양이 규칙적이라 경계에서 한 번에 막을 수 있다.
-  //   경로엔 공백이 들어갈 수 있고("/Users/Gordon Ahn/…"), Windows 경로는 JSON 안에서
-  //   이스케이프돼 나온다("C:\\Users\\…") — 둘 다 덮는다.
-  /\/(?:Users|home)\/[^"'`,)\]}]*/g,
-  /[A-Za-z]:(?:\\{1,2})Users(?:\\{1,2})[^"'`,)\]}]*/g,
-]
-
-// 쿼리스트링 자격증명 — Gemini TTS 는 ?key=<사용자 API 키>, Flow 토큰 검증은 ?access_token=<OAuth>
-//   를 URL 에 싣는다. Sentry 의 http/fetch breadcrumb 은 URL 을 통째로 기록하므로 console 만
-//   씻어서는 자격증명 채널이 활짝 열려 있는 셈이다.
-const QUERY_SECRETS = /([?&](?:key|access_token|token|api_?key|password|secret)=)[^&\s"'`]+/gi
-
-export function scrubBreadcrumbMessage(message) {
-  let out = String(message)
-  // ⚠️ 캡처 그룹이 있는 정규식만 '$1<redacted>' 를 쓸 수 있다. 그룹 없는 정규식에 콜백을 쓰면
-  //    두 번째 인자가 캡처가 아니라 offset(숫자)이라 "20<redacted>" 같은 쓰레기가 만들어진다.
-  for (const re of [...PROMPT_BEARING, QUERY_SECRETS]) out = out.replace(re, '$1<redacted>')
-  for (const re of SECRET_BEARING) out = out.replace(re, '<redacted>')
-  return out
-}
-
-/** URL·문자열 값을 담을 수 있는 breadcrumb.data 필드를 재귀적으로 씻는다. */
-function scrubData(data) {
-  if (!data || typeof data !== 'object') return data
-  for (const [k, v] of Object.entries(data)) {
-    if (typeof v === 'string') data[k] = scrubBreadcrumbMessage(v)
-    else if (v && typeof v === 'object') scrubData(v)
-  }
-  return data
 }
 
 /**
@@ -97,29 +45,7 @@ export function buildSentryOptions({ env = defaultEnv(), version } = {}) {
     environment: env.VITE_FUNCTION_ENV || 'development',
     release: `autoflowcut@${version || readAppVersion()}`,
     tracesSampleRate: Number(env.SENTRY_TRACES_SAMPLE_RATE || 0.1),
-    beforeBreadcrumb(breadcrumb) {
-      if (!breadcrumb) return breadcrumb
-
-      // Flow 페이지의 콘솔은 통째로 버린다. main.js 가 페이지 콘솔을 메인 프로세스로 포워딩하는데,
-      //   페이지 스크립트(설정 덤퍼·DOM 프로브)는 Flow DOM 조각을 그대로 찍는다. 그 페이지는 곧
-      //   사용자의 프로젝트다 — 프롬프트, 미디어, 캐릭터 이름. 어느 것도 우리 것이 아니다.
-      if (typeof breadcrumb.message === 'string' && breadcrumb.message.startsWith('[Flow Page]')) return null
-
-      if (breadcrumb.message) breadcrumb.message = scrubBreadcrumbMessage(breadcrumb.message)
-
-      if (breadcrumb.category === 'console') {
-        // consoleIntegration 은 원본 인자를 data.arguments 에 그대로 보관한다 — message 만 씻으면
-        //   가려진 텍스트가 인자로 다시 나간다. 그리고 자유 형식 콘텐츠(캐릭터 이름, 캡션, 폴더 경로)는
-        //   정규식으로 못 덮는다. 그래서 원본 인자는 아예 내보내지 않는다. 우리가 읽는 건 message 다.
-        if (breadcrumb.data) delete breadcrumb.data.arguments
-      }
-
-      // ⚠️ console 만 씻으면 안 된다 — http/fetch breadcrumb 은 요청 URL 을 통째로 기록하고,
-      //   그 쿼리스트링에 사용자 Gemini API 키(?key=)와 OAuth 토큰(?access_token=)이 실린다.
-      if (breadcrumb.data) scrubData(breadcrumb.data)
-
-      return breadcrumb
-    },
+    beforeBreadcrumb: scrubBreadcrumb,
     beforeSend(event) {
       if (event.user) {
         delete event.user.ip_address
