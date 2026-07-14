@@ -27,8 +27,8 @@ beforeEach(() => {
 
 const fire = (over = {}) => listeners.forEach((cb) => cb({
   requestId: 'r1',
-  tool: 'generate_videos',
-  message: 'generate_videos\n\n{"items":[1,2]}',
+  tool: 'story_set_speakers',
+  args: { speakers: [{ id: 'narrator', name: 'Narrator' }] },
   ...over,
 }))
 const cancel = (requestId) => cancelListeners.forEach((cb) => cb({ requestId, reason: 'session-closed' }))
@@ -40,13 +40,22 @@ describe('승인 다이얼로그', () => {
   })
 
   it('🔴 요청이 오면 **툴 이름과 인자를 함께** 보여준다 (이름만 보고 누르면 동의가 아니다)', async () => {
-    render(<ApprovalDialog />)
+    const { container } = render(<ApprovalDialog />)
     fire()
 
     expect(await screen.findByRole('dialog')).toBeTruthy()
-    expect(screen.getByText(/generate_videos/)).toBeTruthy()
-    // 인자가 화면에 있어야 한다 — 사용자가 "영상 몇 개"를 볼 수 있어야 한다.
-    expect(screen.getByText(/items/)).toBeTruthy()
+    expect(screen.getByText(/story_set_speakers/)).toBeTruthy()
+    // 인자가 화면에 있어야 한다 — 서술만 보고 누르면 원본과 실행값이 갈릴 수 있다.
+    expect(JSON.parse(container.querySelector('.approval-args').textContent))
+      .toEqual({ speakers: [{ id: 'narrator', name: 'Narrator' }] })
+  })
+
+  it('args가 null이면 모르는 값을 빈 객체로 위장하지 않고 null 원본을 보여준다', async () => {
+    const { container } = render(<ApprovalDialog />)
+    fire({ args: null })
+
+    expect(await screen.findByText('story_set_speakers')).toBeTruthy()
+    expect(container.querySelector('.approval-args').textContent).toBe('null')
   })
 
   it('승인하면 accept 를 같은 requestId 로 보낸다', async () => {
@@ -92,18 +101,44 @@ describe('승인 다이얼로그', () => {
     expect(responses).toHaveLength(1)
   })
 
+  it('presenter가 없는 미지 툴은 전체 raw와 경고를 보이되 승인 버튼을 disabled로 막는다', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<ApprovalDialog />)
+    fire({ tool: 'generate_videos', args: { items: [1, 2] } })
+
+    expect(await screen.findByText('generate_videos')).toBeTruthy()
+    expect(screen.getByRole('alert').textContent).toMatch(/설명할 수 없|cannot explain/i)
+    const raw = container.querySelector('.approval-original-expanded .approval-args')
+    expect(JSON.parse(raw.textContent)).toEqual({ items: [1, 2] })
+    const allow = screen.getByRole('button', { name: /승인|allow|approve/i })
+    expect(allow.disabled).toBe(true)
+
+    await user.click(allow)
+    expect(responses).toEqual([])
+    expect(screen.getByRole('dialog')).toBeTruthy()
+  })
+
+  it('알려진 툴이라도 described 타입이 schema와 다르면 전체 raw와 경고만 보이고 승인할 수 없다', async () => {
+    render(<ApprovalDialog />)
+    fire({ requestId: 'bad-shape', tool: 'story_confirm_synopsis', args: { characters: null } })
+
+    expect(await screen.findByRole('alert')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Approve' }).disabled).toBe(true)
+    expect(screen.getByText(/characters/)).toBeTruthy()
+  })
+
   it('🔴 승인 요청이 **여럿** 오면 하나씩 처리하고 서로 섞이지 않는다 (Codex 는 병렬로 쏜다)', async () => {
     const user = userEvent.setup()
     render(<ApprovalDialog />)
-    fire({ requestId: 'r1', tool: 'story_confirm_synopsis', message: 'story_confirm_synopsis\n\n{}' })
-    fire({ requestId: 'r2', tool: 'generate_videos', message: 'generate_videos\n\n{"items":[1]}' })
+    fire({ requestId: 'r1', tool: 'story_confirm_synopsis', args: {} })
+    fire({ requestId: 'r2', tool: 'story_set_speakers', args: { speakers: [] } })
 
     // 첫 번째를 거부한다.
     await user.click(await screen.findByRole('button', { name: /거부|deny|decline/i }))
     expect(responses[0]).toEqual({ requestId: 'r1', action: 'decline' })
 
     // 그러면 두 번째가 뜬다 — 첫 응답이 두 번째까지 삼키면 안 된다.
-    expect(await screen.findByText(/generate_videos/)).toBeTruthy()
+    expect(await screen.findByText(/story_set_speakers/)).toBeTruthy()
     await user.click(screen.getByRole('button', { name: /승인|allow|approve/i }))
     expect(responses[1]).toEqual({ requestId: 'r2', action: 'accept' })
   })
@@ -112,7 +147,7 @@ describe('승인 다이얼로그', () => {
     render(<ApprovalDialog />)
     act(() => {
       fire({ requestId: 'r1' })
-      fire({ requestId: 'r2', tool: 'story_confirm_synopsis', message: 'story_confirm_synopsis\n\n{}' })
+      fire({ requestId: 'r2', tool: 'story_confirm_synopsis', args: {} })
     })
 
     act(() => cancel('r1'))

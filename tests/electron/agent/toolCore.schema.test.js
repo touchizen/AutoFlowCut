@@ -15,11 +15,12 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import * as adapterEntry from '../../../electron/agent/codexAdapterEntry.js'
 import { createToolCore } from '../../../electron/agent/toolCore.js'
+import { zodFromJson as sharedZodFromJson } from '../../../electron/agent/jsonSchemaToZod.js'
 
 const asSchema = (converted) => (typeof converted?.safeParse === 'function' ? converted : z.object(converted))
 
 const START_STEP_PARAM_KEYS = {
-  script: ['continue', 'input', 'options', 'pastedScript', 'review', 'reviewOnly', 'scriptOverride', 'synopsis'],
+  script: ['continue', 'options', 'pastedScript', 'review', 'reviewOnly', 'scriptOverride', 'synopsis', 'title'],
   scenes: ['options', 'review', 'reviewOnly', 'scriptOverride', 'title'],
   audio: ['regenerate', 'sfxSources'],
   prompts: ['options', 'review', 'reviewOnly', 'style'],
@@ -40,6 +41,33 @@ function arraysWithoutItems(node, schemaPath = '$') {
 }
 
 describe('Tool Core MCP inventory 조립', () => {
+  it('adapter와 main이 같은 JSON-Schema 변환기 함수를 공유한다', () => {
+    expect(adapterEntry.zodFromJson).toBe(sharedZodFromJson)
+  })
+
+  it.each([
+    ['지원하지 않는 integer', { type: 'integer' }],
+    ['오타 type', { type: 'strnig' }],
+    ['type 누락', {}],
+    ['빈 oneOf', { oneOf: [] }],
+  ])('JSON-Schema 변환은 %s 구성을 string으로 강등하지 않고 즉시 거부한다', (_label, schema) => {
+    expect(() => sharedZodFromJson(schema)).toThrow(/지원하지 않는 JSON Schema|unsupported JSON Schema/i)
+  })
+
+  it('실제 Tool Core inventory의 모든 schema는 fail-closed 변환기를 통과한다', () => {
+    for (const tool of createToolCore().list()) {
+      expect(() => sharedZodFromJson(tool.inputSchema), tool.name).not.toThrow()
+      expect(typeof sharedZodFromJson(tool.inputSchema)?.safeParse, tool.name).toBe('function')
+    }
+  })
+
+  it('story_start_step 설명은 input identity의 UI 소유권과 synopsis 주제 전달 경로를 명시한다', () => {
+    const tool = createToolCore().list().find((candidate) => candidate.name === 'story_start_step')
+
+    expect(tool.description).toMatch(/프로젝트 입력 유형\/제목 identity.*앱 UI.*소유/)
+    expect(tool.description).toMatch(/주제.*synopsis.*전달/)
+  })
+
   it('실제 list()의 모든 설명과 인자형 툴의 non-empty zod shape를 adapter까지 보존한다', () => {
     expect(typeof adapterEntry.zodFromJson).toBe('function')
 
@@ -82,7 +110,7 @@ describe('Tool Core MCP inventory 조립', () => {
       wait_batch: { type: 'scene' },
       story_confirm_synopsis: { synopsisMd: '# 확정', characters: [] },
       story_set_speakers: { speakers: [] },
-      story_start_step: { step: 'script', params: { input: { type: 'title', title: 'T' } } },
+      story_start_step: { step: 'script', params: { pastedScript: '붙여넣기', title: 'T' } },
     }
 
     for (const [name, args] of Object.entries(examples)) {
@@ -110,7 +138,7 @@ describe('Tool Core MCP inventory 조립', () => {
     const tool = createToolCore().list().find((candidate) => candidate.name === 'story_start_step')
     const schema = asSchema(adapterEntry.zodFromJson(tool.inputSchema))
 
-    expect(schema.parse({ step: 'script', params: { input: { type: 'title', title: 'T' }, synopsis: '줄거리' } }))
+    expect(schema.parse({ step: 'script', params: { pastedScript: '붙여넣기', title: 'T', synopsis: '줄거리' } }))
       .toMatchObject({ step: 'script' })
     expect(schema.parse({ step: 'audio', params: { regenerate: ['seg-1'], sfxSources: { 'seg-2': 'elevenlabs' } } }))
       .toMatchObject({ step: 'audio' })
@@ -122,6 +150,8 @@ describe('Tool Core MCP inventory 조립', () => {
     expect(() => schema.parse({ step: 'audio', params: { style: 'wrong-step' } }), '다른 step의 키가 섞였다')
       .toThrow()
     expect(() => schema.parse({ step: 'scenes', params: { arbitraryCommand: true } }), '미지 params가 열렸다')
+      .toThrow()
+    expect(() => schema.parse({ step: 'script', params: { input: { type: 'manual' } } }), 'input identity 교체가 열렸다')
       .toThrow()
   })
 

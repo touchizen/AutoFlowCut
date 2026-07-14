@@ -19,6 +19,7 @@
 // 🔴 **decline / cancel 은 Tool Core 호출 0회, side effect 0회.**
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createAdapterHandlers } from '../../../electron/agent/codexMcpAdapter.js'
+import { decodeApprovalPayload, encodeApprovalPayload } from '../../../electron/agent/approvalPayload.js'
 import { hashArgs } from '../../../electron/agent/grantLedger.js'
 
 const TOOLS = [
@@ -66,6 +67,8 @@ describe('adapter — G/B 툴은 승인 뒤에만 (조건 2)', () => {
       tool: 'story_confirm_synopsis',
       argsHash: hashArgs(args),
     })
+    expect(params.message).toBe(encodeApprovalPayload('story_confirm_synopsis', args))
+    expect(decodeApprovalPayload(params.message)).toEqual({ tool: 'story_confirm_synopsis', args })
   })
 
   it('accept 면 **그 nonce 를 제시하며** private RPC 를 1회 부른다', async () => {
@@ -166,11 +169,12 @@ describe('adapter — 승인 문구는 사람이 실제로 볼 수 있어야 한
     await handlers.callTool('story_confirm_synopsis', huge)
 
     const { message } = elicitInput.mock.calls[0][0]
-    expect(message).toBe(`story_confirm_synopsis\n\n${JSON.stringify(huge, null, 2)}`)
+    expect(message).toBe(encodeApprovalPayload('story_confirm_synopsis', huge))
+    expect(decodeApprovalPayload(message)).toEqual({ tool: 'story_confirm_synopsis', args: huge })
     expect(message).not.toMatch(/truncated|잘렸|생략/i)
   })
 
-  it('인자를 여러 줄로 들여써서 읽을 수 있게 한다 — 한 줄 JSON 덩어리는 읽으라는 게 아니다', async () => {
+  it('message는 사람 문장이 아니라 main이 검증할 canonical 데이터 봉투다', async () => {
     const elicitInput = vi.fn(async () => ({ action: 'decline' }))
     const handlers = createAdapterHandlers({
       tools: [{ name: 'story_set_speakers', permission: 'G' }],
@@ -182,8 +186,9 @@ describe('adapter — 승인 문구는 사람이 실제로 볼 수 있어야 한
     await handlers.callTool('story_set_speakers', { speakers: [{ id: 'narrator', name: '나레이션' }] })
 
     const { message } = elicitInput.mock.calls[0][0]
-    const body = message.split('\n\n').slice(1).join('\n\n')
-    expect(body.split('\n').length, '인자가 한 줄로 뭉쳐 있다').toBeGreaterThan(2)
-    expect(body).toMatch(/^\s+"speakers"/m)  // 들여쓰기가 실제로 있다
+    expect(decodeApprovalPayload(message)).toEqual({
+      tool: 'story_set_speakers',
+      args: { speakers: [{ id: 'narrator', name: '나레이션' }] },
+    })
   })
 })

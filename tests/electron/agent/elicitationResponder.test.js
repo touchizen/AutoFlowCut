@@ -16,6 +16,7 @@
 //    out-of-band elicitation 은 실제로 **`turnId: null`** 로 온다 (실측).
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createElicitationResponder } from '../../../electron/agent/elicitationResponder.js'
+import { encodeApprovalPayload } from '../../../electron/agent/approvalPayload.js'
 import { createGrantLedger, hashArgs } from '../../../electron/agent/grantLedger.js'
 
 const OUR_SERVER = 'autoflowcut'
@@ -42,7 +43,7 @@ const native = (over = {}) => ({
 
 const handlerElicit = (args = { synopsisMd: '#' }, over = {}) => ({
   serverName: OUR_SERVER,
-  message: 'Approve story_confirm_synopsis?',
+  message: encodeApprovalPayload('story_confirm_synopsis', args),
   requestedSchema: { type: 'object', properties: {} },
   _meta: { nonce: 'n1', tool: 'story_confirm_synopsis', argsHash: hashArgs(args) },
   ...over,
@@ -112,9 +113,17 @@ describe('🔴 F2 — 설정 하나가 빠지면 게이트가 fail-open 한다',
 describe('handler elicitation — 사람에게 묻는다 (조건 2·4)', () => {
   it('renderer 로 올리고, accept 면 **ledger 에 grant 를 기록**한다', async () => {
     const args = { synopsisMd: '#' }
-    const r = await responder.handle(handlerElicit(args), { requestId: 7, turnId: null })
+    const params = handlerElicit(args)
+    const r = await responder.handle(params, { requestId: 7, turnId: null })
 
     expect(askUser).toHaveBeenCalledOnce()
+    expect(askUser).toHaveBeenCalledWith(params, {
+      requestId: 7,
+      sessionId: 's1',
+      tool: 'story_confirm_synopsis',
+      argsHash: hashArgs(args),
+      args,
+    })
     expect(r.action).toBe('accept')
 
     // adapter 가 제시할 nonce 로 정확히 소비된다.
@@ -156,6 +165,7 @@ describe('handler elicitation — 사람에게 묻는다 (조건 2·4)', () => {
   })
 
   it('🔴 사용자가 accept 해도 **payload 가 망가졌으면** grant 를 만들지 않는다 (nonce/tool/argsHash 필수)', async () => {
+    const grant = vi.spyOn(ledger, 'grant')
     const r = await responder.handle(
       handlerElicit(undefined, { _meta: { nonce: 'n1' } }),   // tool/argsHash 없음
       { requestId: 7 },
@@ -163,6 +173,44 @@ describe('handler elicitation — 사람에게 묻는다 (조건 2·4)', () => {
 
     expect(r.action).not.toBe('accept')
     expect(askUser, '무엇을 승인하는지도 모르면서 사용자에게 물었다').not.toHaveBeenCalled()
+    expect(grant).not.toHaveBeenCalled()
+  })
+
+  it('🔴 message 봉투를 디코드할 수 없으면 묻지 않고 grant 없이 decline 한다', async () => {
+    const grant = vi.spyOn(ledger, 'grant')
+
+    const r = await responder.handle(handlerElicit(undefined, { message: '{broken' }), { requestId: 7 })
+
+    expect(r.action).toBe('decline')
+    expect(askUser).not.toHaveBeenCalled()
+    expect(grant).not.toHaveBeenCalled()
+  })
+
+  it('🔴 message.tool과 `_meta.tool`이 다르면 묻지 않고 grant 없이 decline 한다', async () => {
+    const grant = vi.spyOn(ledger, 'grant')
+    const args = { synopsisMd: '#' }
+    const params = handlerElicit(args, { message: encodeApprovalPayload('story_set_speakers', args) })
+
+    const r = await responder.handle(params, { requestId: 7 })
+
+    expect(r.action).toBe('decline')
+    expect(askUser).not.toHaveBeenCalled()
+    expect(grant).not.toHaveBeenCalled()
+  })
+
+  it('🔴 message.args의 hash와 `_meta.argsHash`가 다르면 묻지 않고 grant 없이 decline 한다', async () => {
+    const grant = vi.spyOn(ledger, 'grant')
+    const original = { synopsisMd: '원본' }
+    const tampered = { synopsisMd: '변조' }
+    const params = handlerElicit(original, {
+      message: encodeApprovalPayload('story_confirm_synopsis', tampered),
+    })
+
+    const r = await responder.handle(params, { requestId: 7 })
+
+    expect(r.action).toBe('decline')
+    expect(askUser).not.toHaveBeenCalled()
+    expect(grant).not.toHaveBeenCalled()
   })
 })
 
@@ -176,18 +224,23 @@ describe('🔴 조건 4 — pending 은 request id 로 잡는다 (turnId 가 아
     const a = { synopsisMd: 'A' }
     const b = { items: [1, 2] }
     const answers = { 7: { action: 'accept' }, 8: { action: 'decline' } }
+    const parallelAskUser = vi.fn(async (_p, ctx) => answers[ctx.requestId])
     const rr = createElicitationResponder({
       grantLedger: ledger, sessionId: 's1', projectToken: 'project-a', adapterServerName: OUR_SERVER,
-      askUser: async (_p, ctx) => answers[ctx.requestId],
+      askUser: parallelAskUser,
     })
 
     const [ra, rb] = await Promise.all([
       rr.handle(handlerElicit(a, { _meta: { nonce: 'na', tool: 'story_confirm_synopsis', argsHash: hashArgs(a) } }), { requestId: 7, turnId: null }),
-      rr.handle(handlerElicit(b, { _meta: { nonce: 'nb', tool: 'generate_videos', argsHash: hashArgs(b) } }), { requestId: 8, turnId: null }),
+      rr.handle(handlerElicit(b, {
+        message: encodeApprovalPayload('generate_videos', b),
+        _meta: { nonce: 'nb', tool: 'generate_videos', argsHash: hashArgs(b) },
+      }), { requestId: 8, turnId: null }),
     ])
 
     expect(ra.action).toBe('accept')
     expect(rb.action).toBe('decline')
+    expect(parallelAskUser).toHaveBeenCalledTimes(2)
     // accept 된 쪽만 grant 가 있다.
     expect(ledger.consume({
       nonce: 'na',

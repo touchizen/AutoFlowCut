@@ -28,6 +28,7 @@ import {
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { resolveCodexExecutablePath } from '../../electron/api/llm/codexSdk.js'
+import { decodeApprovalPayload } from '../../electron/agent/approvalPayload.js'
 import { createApprovalPrompt } from '../../electron/agent/approvalPrompt.js'
 import { createCodexOrchestrator } from '../../electron/agent/codexOrchestrator.js'
 import { AGENT_MCP_SERVER_NAME } from '../../electron/agent/constants.js'
@@ -194,15 +195,9 @@ async function readStory(storyPath) {
 }
 
 function parseDialogMessage(message) {
-  const splitAt = String(message).indexOf('\n\n')
-  if (splitAt < 0) throw new Error(`승인 문구에 tool/args 구분이 없다: ${JSON.stringify(message)}`)
-  const tool = message.slice(0, splitAt)
-  const argsText = message.slice(splitAt + 2)
-  try {
-    return { tool, args: JSON.parse(argsText), argsText }
-  } catch (error) {
-    throw new Error(`승인 문구의 args가 JSON이 아니다: ${argsText} (${error.message})`)
-  }
+  const decoded = decodeApprovalPayload(message)
+  if (!decoded) throw new Error(`승인 payload를 디코드할 수 없다: ${JSON.stringify(message)}`)
+  return decoded
 }
 
 function toolResultFrom(item) {
@@ -401,20 +396,22 @@ function assertGDialog(turn, label, expectedArgs) {
   const dialog = turn.dialogs[0]
   expect(measured(`${label} dialog tool`, dialog?.tool),
     `${label}: 승인 dialog가 실제 G tool identity를 잃었다`).toBe('story_set_speakers')
-  expect(measured(`${label} handler message == renderer message`, {
-    handler: turn.handlerElicitations[0]?.params?.message,
-    renderer: dialog?.message,
-    identical: turn.handlerElicitations[0]?.params?.message === dialog?.message,
-  }), `${label}: handler elicitation이 fake window까지 그대로 도착하지 않았다`).toMatchObject({ identical: true })
-  expect(measured(`${label} dialog message text`, dialog?.message),
-    `${label}: 승인 dialog message가 비었거나 args를 숨겼다`).toContain(JSON.stringify(expectedArgs))
-  const shown = parseDialogMessage(dialog.message)
-  expect(measured(`${label} parsed dialog args`, shown),
-    `${label}: 사람이 본 args와 모델이 요청한 args가 다르다`).toEqual({
+  const shown = parseDialogMessage(turn.handlerElicitations[0]?.params?.message)
+  expect(measured(`${label} decoded handler args`, shown),
+    `${label}: adapter의 canonical payload가 모델 요청 args를 잃었다`).toEqual({
     tool: 'story_set_speakers',
     args: expectedArgs,
-    argsText: JSON.stringify(expectedArgs),
   })
+  expect(measured(`${label} structured dialog args`, dialog?.args),
+    `${label}: main이 검증한 args가 renderer까지 그대로 도착하지 않았다`).toEqual(expectedArgs)
+  expect(measured(`${label} dialog argsHash == grant argsHash`, {
+    shown: hashArgs(dialog.args),
+    grant: turn.handlerElicitations[0]?.params?._meta?.argsHash,
+  }), `${label}: 사람이 본 args와 grant의 argsHash가 다르다`).toMatchObject({
+    shown: hashArgs(expectedArgs),
+    grant: hashArgs(expectedArgs),
+  })
+  expect(dialog).not.toHaveProperty('message')
   return dialog
 }
 

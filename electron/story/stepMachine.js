@@ -19,7 +19,13 @@ import { normalizeStoryCharacter, characterVisualPrompt } from '../../src/servic
 import { isRosterGatedInputType } from '../../src/services/storyInputTypes.js'
 import { parseStoryboardCSVRows } from '../../src/utils/parsers.js'
 
-const DOWNSTREAM = { script: ['scenes', 'audio', 'prompts'], scenes: ['audio', 'prompts'], audio: ['prompts'], prompts: [] }
+export const STORY_STEP_DOWNSTREAM = {
+  script: ['scenes', 'audio', 'prompts'],
+  scenes: ['audio', 'prompts'],
+  audio: ['prompts'],
+  prompts: [],
+}
+const DOWNSTREAM = STORY_STEP_DOWNSTREAM
 
 // M3: 검토 루프 최대 라운드 — Claude는 3회, 그 외(Gemini 등)는 1회(스펙 §124-125).
 // 동적 카탈로그에서 model 은 SDK 별칭('sonnet', 'opus[1m]')이라 접두사로 판별할 수 없다.
@@ -182,10 +188,11 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     return (speakers || []).find((sp) => speakerReferenceKeys(sp).includes(key)) || null
   }
   const nonEmptyString = (v) => (typeof v === 'string' && v.trim()) ? v : undefined
-  // §v2.8 B3: 확정 명단(state.speakers)이 base인 superset 병합 — scenes 스텝이 speakers를
-  // 전체 교체하지 않는다. ①확정 gender/age/role(및 name/id) 보존, ②LLM 참조 인물 voice 승계,
+  // §v2.8 B3: 기존 명단(state.speakers)이 base인 superset 병합 — scenes 스텝이 speakers를
+  // 전체 교체하지 않는다. ①기존 gender/age/role/appearance 보존, ②LLM 참조 인물 voice 승계,
   // ③씬에서 미참조된 확정 인물도 삭제 금지. rosterEnforced(FIX-1) 상태에선 명단 밖 LLM 신규
   // 인물을 추가하지 않는다(§v2.2 "명단에 없는 새 인물 금지" — narrator 시딩만 예외).
+  // 이 병합/보존 계약을 바꾸면 approvalPresenters의 story_set_speakers 문구도 함께 바꿔라.
   function mergeSpeakers(nextSpeakers = [], { preferNewAppearance = false, preferNewVoice = false } = {}) {
     const enforced = rosterEnforced()
     const nextByKey = new Map()
@@ -304,6 +311,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
 
   // characters[] → state.speakers 반영(§v2.2/§v2.8 B3/M2): 정규화(normalizeStoryCharacter) +
   // 기존 speaker의 voice 승계(id/name 매칭) + narrator 시딩(기존 narrator는 voice째 보존).
+  // 중복/narrator 제외를 포함한 전체 교체 roster 구성을 바꾸면 approvalPresenters의
+  // confirm_synopsis 교체/제거/정규화 문구도 바꿔라.
   function speakersFromCharacters(characters = []) {
     const prev = state?.speakers || []
     const out = []
@@ -783,6 +792,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
 
   const steps = {
     async script(params, opId, signal) {
+      // 검수의 LLM 호출/조건부 저장을 바꾸면 approvalPresenters의 review script 비용·덮어쓰기 문구도 바꿔라.
       if (params.reviewOnly) {
         const storedScript = await store.loadText('script.md')
         const scriptMd = typeof params.scriptOverride === 'string' ? params.scriptOverride : storedScript
@@ -799,6 +809,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       }
 
       // 대본 재설계: 이어쓰기 — 편집 중 대본을 받아 LLM이 이어서 완성한 전체 대본을 저장한다.
+      // 이 우선순위/덮어쓰기를 바꾸면 approvalPresenters의 continue 문구도 함께 바꿔라.
       if (params.continue) {
         const opts = buildLlmOptions(params.options)
         const { scriptMd } = await llm.continueScript(params.continue, opts, {
@@ -809,8 +820,10 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         return
       }
       // M1 스펙 §1 2번 경로: 대본을 직접 붙여넣은 경우 LLM 호출 없이 그대로 저장한다.
+      // 이 덮어쓰기를 바꾸면 approvalPresenters의 pastedScript 문구도 함께 바꿔라.
       if (params.pastedScript) {
-        // title 보존 — 재오픈 hydrate가 제목/옵션을 복원하려면 main source of truth에 남겨야 한다.
+        // state.input wholesale 교체 — title/options 생략 시 기존 값 대신 undefined/엔진 기본값이 저장된다.
+        // 이 교체/소거 계약을 바꾸면 approvalPresenters의 pasted input 경고도 함께 바꿔라.
         state.input = { type: 'pasted', title: params.input?.title, options: normalizeLlmOptions(params.options) }
         // §v2.11: 신규 pasted는 등장인물 미확정 마커를 durable로 남긴다 — script done이 되어도
         // 재오픈 시 역추출 게이트(synopsis phase)가 유지된다. undefined(legacy)와 구분되는 false.
@@ -834,6 +847,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       if ('synopsis' in params) {
         const eff = typeof params.synopsis === 'string' ? params.synopsis.trim() : ''
         if (eff) {
+          // 이 덮어쓰기를 바꾸면 approvalPresenters의 script synopsis 문구도 함께 바꿔라.
           await store.saveText('synopsis.md', eff)
           synopsis = eff
         }
@@ -850,6 +864,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         ...(synopsis ? { synopsis } : {}),
         ...(characters.length ? { characters } : {}),
       })
+      // 외부 생성/정본 저장을 바꾸면 approvalPresenters의 generate script 비용·덮어쓰기 문구도 바꿔라.
       const gen = await llm.generateScript(state.input, opts, {
         onDelta: (text) => send('story:delta', { text }, opId), signal,
       })
@@ -867,6 +882,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       }
     },
     async scenes(params, opId, signal) {
+      // 검수의 LLM 호출/조건부 저장을 바꾸면 approvalPresenters의 review scenes 비용·덮어쓰기 문구도 바꿔라.
       if (params.reviewOnly) {
         sendStepLog('scenes', 'review-load', '기존 씬 검수 준비', opId)
         const scriptMd = await store.loadText('script.md')
@@ -902,6 +918,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       }
 
       // 대본 재설계: 편집된 대본으로 씬 분리 — 공백이면 기존 script.md를 보존하고 실패시킨다.
+      // nonblank override 저장 조건을 바꾸면 approvalPresenters의 scenes scriptOverride 문구도 바꿔라.
       if (typeof params.scriptOverride === 'string') {
         if (!params.scriptOverride.trim()) throw new Error('빈 대본으로 씬 분리할 수 없습니다')
         sendStepLog('scenes', 'script-save', '편집 대본 저장', opId)
@@ -919,6 +936,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const roster = confirmedRoster()
       const opts = buildLlmOptions(effectiveOptions(params), roster ? { roster } : {})
       sendStepLog('scenes', 'split-request', 'LLM 씬 분리 요청', opId)
+      // 외부 분리/정본 저장을 바꾸면 approvalPresenters의 generate scenes 비용·덮어쓰기 문구도 바꿔라.
       const { scenes, speakers } = await llm.splitScenes(scriptMd, opts, { signal })
       if (signal?.aborted) return
       sendStepLog('scenes', 'split-response', `씬 ${scenes?.length || 0}개 응답 수신`, opId, { count: scenes?.length || 0 })
@@ -979,6 +997,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // 1) 세그먼트별 TTS 생성 + 실측 (동시성 제한)
       // IP5-a: 이미 status:'done'이고 오디오 파일이 현 프로젝트에 실재하면 재합성하지 않는다
       // (resume/부분재시도). params.regenerate에 든 id는 강제 재합성(re-TTS 트리거).
+      // 강제/조건부 재합성 기준을 바꾸면 approvalPresenters의 audio 비용·재사용 문구도 함께 바꿔라.
       // Codex-M2a-2b MED: audioPath는 절대경로라 프로젝트 이동/복사·파일 삭제 시 stale/타프로젝트를
       // 가리킬 수 있다 — basename을 현 프로젝트 segments 디렉터리 기준으로 재구성 + 실재(stat) 확인.
       const forceRegen = new Set(params.regenerate || [])
@@ -1135,7 +1154,9 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
             startSec: g.startMs / 1000,
             endSec: g.endMs / 1000,
             segments: groupSegments,
-            // 프롬프트는 audio 단계에서 건드리지 않음 (M2a-2/prompts 소유)
+            // 이 재구성 객체에는 imagePrompt/videoPrompt가 없다. 아래 timingOnly 병합이 아니면
+            // scenes.json 저장 시 기존 프롬프트가 빠지고 summary도 재생성된다. 이 조건을 바꾸면
+            // approvalPresenters의 audio scenes.json 소실 가능성 경고도 함께 바꿔라.
           }
         })
       }
@@ -1740,6 +1761,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const operationId = randomUUID()
       state.speakers = candidateSpeakers
       state.charactersConfirmed = true
+      // roster 대입/게이트/synopsis 저장을 바꾸면 approvalPresenters의 confirm_synopsis 문구도 함께 바꿔라.
       if (typeof synopsisMd === 'string' && synopsisMd.trim()) await store.saveText('synopsis.md', synopsisMd)
       await flush()
       sendCharacters(operationId)
@@ -2029,6 +2051,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       controller = myController
       const deferDownstreamReset = params.reviewOnly === true
       // 하류 리셋 — revision은 스펙대로 단조 증가 유지(빈 push 재발신은 maybeResendPush의 prompts-done 가드가 차단)
+      // reset 시점/reviewOnly 예외를 바꾸면 approvalPresenters의 하류 초기화 문구도 함께 바꿔라.
       if (!deferDownstreamReset) {
         for (const d of DOWNSTREAM[step]) state.steps[d] = { status: 'pending' }
       }

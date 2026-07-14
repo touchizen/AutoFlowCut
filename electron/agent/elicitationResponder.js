@@ -1,3 +1,6 @@
+import { decodeApprovalPayload } from './approvalPayload.js'
+import { hashArgs } from './grantLedger.js'
+
 /**
  * Codex 의 `mcpServer/elicitation/request` 를 **main 이** 받아 분류한다 ((A) 채택 조건 3·4).
  *
@@ -62,7 +65,20 @@ export function createElicitationResponder({
       return { action: 'decline', content: {}, _meta: null }
     }
 
-    const answer = await askUser(params, { requestId: ctx.requestId, sessionId, tool, argsHash })
+    // 🔴 사람이 볼 args와 grant가 묶일 hash는 반드시 같은 값이어야 한다. adapter는 별도 프로세스이자
+    // 신뢰 경계 밖이므로 message나 _meta 어느 한쪽도 단독으로 믿지 않고 main에서 둘을 대조한다.
+    const decoded = decodeApprovalPayload(params?.message)
+    if (!decoded || decoded.tool !== tool || hashArgs(decoded.args) !== argsHash) {
+      return { action: 'decline', content: {}, _meta: null }
+    }
+
+    const answer = await askUser(params, {
+      requestId: ctx.requestId,
+      sessionId,
+      tool,
+      argsHash,
+      args: decoded.args,
+    })
 
     if (answer?.action !== 'accept') {
       return { action: answer?.action === 'cancel' ? 'cancel' : 'decline', content: {}, _meta: null }

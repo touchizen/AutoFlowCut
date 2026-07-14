@@ -57,6 +57,33 @@ describe('Tool Core 게이트 — 등급을 스스로 재산출한다', () => {
   })
 
   it.each([
+    ['story_confirm_synopsis', 'confirmSynopsis', { characters: null }, ['characters']],
+    ['story_confirm_synopsis', 'confirmSynopsis', { characters: 'x' }, ['characters']],
+    ['story_set_speakers', 'setSpeakers', { speakers: 'x' }, ['speakers']],
+    ['story_start_step', 'start', { step: 'script', params: [] }, ['params']],
+    ['story_start_step', 'start', { step: 3 }, ['step']],
+    ['story_start_step', 'start', { step: 'script', params: { reviewOnly: 1 } }, ['reviewOnly']],
+    ['story_start_step', 'start', { step: 'script', params: { input: { type: 'manual' } } }, ['input']],
+  ])('%s의 schema 위반은 grant를 소비하기 전에 거부한다', async (name, method, args, params) => {
+    const nonce = `invalid-${name}-${JSON.stringify(args)}`
+    ledger.grant({ nonce, tool: name, argsHash: hashArgs(args), sessionId: 's1', projectToken: PROJECT_TOKEN })
+
+    await expect(core.call(name, args, { nonce }))
+      .resolves.toEqual({ error: 'invalid-params', params })
+    expect(storyCommands[method]).not.toHaveBeenCalled()
+    expect(
+      ledger.consume({ nonce, tool: name, argsHash: hashArgs(args), sessionId: 's1', projectToken: PROJECT_TOKEN }),
+      'invalid args가 승인 grant를 태웠다',
+    ).toBe(true)
+  })
+
+  it('R 툴도 자기 inputSchema 밖 인자를 실행하지 않는다', async () => {
+    await expect(core.call('story_get_state', { invented: true }))
+      .resolves.toEqual({ error: 'invalid-params', params: ['invented'] })
+    expect(storyCommands.getState).not.toHaveBeenCalled()
+  })
+
+  it.each([
     ['story_confirm_synopsis', 'confirmSynopsis', { synopsisMd: '#' }],
     ['story_set_speakers', 'setSpeakers', { speakers: [] }],
     ['story_start_step', 'start', { step: 'script', params: {} }],

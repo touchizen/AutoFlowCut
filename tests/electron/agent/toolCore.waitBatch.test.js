@@ -96,7 +96,7 @@ describe('toolCore wait_batch (slice 13)', () => {
   it('🔴 모르는 type 은 bridge 를 부르지도 않고 거부한다', async () => {
     const bridge = fakeBridge([])
     await expect(core(bridge, fakeClock()).call('wait_batch', { type: 'video' }))
-      .rejects.toThrow(/unknown batch type/i)
+      .resolves.toEqual({ error: 'invalid-params', params: ['type'] })
     expect(bridge.invoke).not.toHaveBeenCalled()
   })
 })

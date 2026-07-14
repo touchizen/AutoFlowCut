@@ -64,7 +64,9 @@ describe('승인 창은 Flow 네이티브 뷰 위로 올라온다', () => {
     expect(setModalVisible, '창이 없을 땐 Flow 를 건드리지 않는다').not.toHaveBeenCalled()
 
     act(() => window.electronAPI.fire('perm', {
-      requestId: 'r1', tool: 'story_set_speakers', message: 'story_set_speakers\n\n{}', sessionId: 's1',
+      requestId: 'r1', tool: 'story_set_speakers',
+      args: { speakers: [{ id: 'narrator', name: 'Narrator', voice: null }] },
+      sessionId: 's1',
     }))
     expect(setModalVisible, 'Flow 를 안 접었다 — 네이티브 뷰가 승인 창을 덮는다')
       .toHaveBeenCalledWith({ visible: true })
@@ -95,7 +97,7 @@ describe('에이전트 UI 는 앱 locale 을 따른다 (D14)', () => {
     act(() => window.electronAPI.fire('perm', {
       requestId: 'r1',
       tool: 'story_set_speakers',
-      message: 'story_set_speakers\n\n{"speakers":[{"id":"narrator"}]}',
+      args: { speakers: [{ id: 'narrator', name: 'Narrator', voice: null }] },
       sessionId: 's1',
     }))
 
@@ -104,13 +106,15 @@ describe('에이전트 UI 는 앱 locale 을 따른다 (D14)', () => {
       // 🔴 인자(message)는 **번역하지 않는다** — 그건 앱이 만든 데이터고, 번역하면 사람이 승인한 것과
       //    실행되는 것이 갈린다. 그래서 UI chrome 만 검사한다.
       .filter((text) => text && HANGUL.test(text))
-    const chrome = [...container.querySelectorAll('button, .approval-header')]
+    const chrome = [...container.querySelectorAll('button, .approval-header, .approval-description, .approval-section-label')]
       .map((el) => el.textContent)
       .filter((text) => text && HANGUL.test(text))
 
     expect([...leaked, ...chrome], `영어 승인 창에 한글이 남았다: ${JSON.stringify([...leaked, ...chrome])}`).toHaveLength(0)
     expect(screen.getByRole('button', { name: 'Approve' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Deny' })).toBeTruthy()
+    expect(container.querySelector('.approval-description').textContent).toMatch(/merge/i)
+    expect(container.querySelector('.approval-description').textContent).toMatch(/kept/i)
 
     // 🔴 `t()` 는 키를 못 찾으면 **키 문자열 자체를 반환한다** — 오타 하나로 승인 창에 `agent.approve`
     //    같은 raw key 가 뜨고, 사람은 무엇을 승인하는지 더더욱 알 수 없다. locale 누락과 오타는
@@ -126,5 +130,21 @@ describe('에이전트 UI 는 앱 locale 을 따른다 (D14)', () => {
     expect(screen.getByRole('button', { name: '보내기' })).toBeTruthy()
     // `agent.send` 같은 **키 문자열이 그대로 화면에 뜨는** 흔한 실패를 막는다.
     expect(document.body.textContent).not.toMatch(/agent\.[a-zA-Z]/)
+  })
+
+  it('lang=ko 승인 문구는 명단 교체·제거·덮어쓰기를 실제 한국어로 말한다', () => {
+    const { container } = renderIn('ko', <ApprovalDialog />)
+    act(() => window.electronAPI.fire('perm', {
+      requestId: 'r-ko',
+      tool: 'story_confirm_synopsis',
+      args: { synopsisMd: '새 시놉시스', characters: [{ name: '김철수' }] },
+      sessionId: 's1',
+    }))
+
+    const text = container.querySelector('.approval-description').textContent
+    expect(text).toMatch(/교체/)
+    expect(text).toMatch(/제거/)
+    expect(text).toMatch(/덮어/)
+    expect(text).not.toMatch(/agent\.[a-zA-Z]/)
   })
 })

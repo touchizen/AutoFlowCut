@@ -3,7 +3,7 @@
 // M2 — **승인 창을 사람에게 띄운다** (D14: `agent:permission-request` / `agent:permission-response`).
 //
 //   main elicitationResponder.askUser
-//        │  webContents.send('agent:permission-request', {requestId, tool, args, message})
+//        │  webContents.send('agent:permission-request', {requestId, tool, args, sessionId})
 //        ▼
 //   ChatPanel (renderer) — 사람이 승인/거부
 //        │  ipcRenderer.send('agent:permission-response', {requestId, action})
@@ -17,6 +17,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { createApprovalPrompt } from '../../../electron/agent/approvalPrompt.js'
+import { encodeApprovalPayload } from '../../../electron/agent/approvalPayload.js'
 
 function fakeWindow() {
   const sent = []
@@ -39,8 +40,12 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers() })
 
 const lastRequest = () => win.sent.filter((s) => s.channel === 'agent:permission-request').at(-1)?.payload
-const params = { message: 'generate_videos\n\n{"items":[1,2]}', _meta: { nonce: 'n1', tool: 'generate_videos', argsHash: 'h' } }
-const ctx = { requestId: 7, sessionId: 's1', tool: 'generate_videos', argsHash: 'h' }
+const args = { items: [1, 2] }
+const params = {
+  message: encodeApprovalPayload('generate_videos', args),
+  _meta: { nonce: 'n1', tool: 'generate_videos', argsHash: 'h' },
+}
+const ctx = { requestId: 7, sessionId: 's1', tool: 'generate_videos', argsHash: 'h', args }
 
 describe('승인 창 — 정상 경로', () => {
   it('renderer 로 승인 요청을 보내고, 사람의 응답을 돌려준다', async () => {
@@ -50,10 +55,20 @@ describe('승인 창 — 정상 경로', () => {
     expect(req.requestId).toBeTruthy()
     expect(req.tool).toBe('generate_videos')
     // 🔴 사람이 **무엇을** 승인하는지 보여야 한다 — 이름만 보고 누르면 동의가 아니다.
-    expect(req.message).toContain('items')
+    expect(req.args).toEqual(args)
+    expect(req).not.toHaveProperty('message')
+    expect(req.sessionId).toBe('s1')
 
     prompt.respond({ requestId: req.requestId, action: 'accept' })
     await expect(p).resolves.toEqual({ action: 'accept' })
+  })
+
+  it('검증된 args가 없으면 빈 객체로 위장하지 않고 null을 보낸다', async () => {
+    const pending = prompt.ask(params, { ...ctx, args: undefined })
+
+    expect(lastRequest().args).toBeNull()
+    prompt.respond({ requestId: lastRequest().requestId, action: 'decline' })
+    await expect(pending).resolves.toEqual({ action: 'decline' })
   })
 
   it('거부하면 decline', async () => {

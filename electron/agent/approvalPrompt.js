@@ -97,8 +97,9 @@ export function createApprovalPrompt({ getWindow, timeoutMs = 10 * 60 * 1000 }) 
         win.webContents.send('agent:permission-request', {
           requestId,
           tool: ctx.tool ?? params?._meta?.tool ?? null,
-          // 🔴 사람은 툴 **이름**이 아니라 **무엇을 하는지** 를 보고 승인해야 한다.
-          message: params?.message ?? '',
+          // responder가 message와 argsHash의 동일성을 검증한 구조화 인자만 renderer로 보낸다.
+          // 없을 때 `{}`로 채우면 모르는 인자를 빈 인자로 위장하므로 null로 정직하게 드러낸다.
+          args: ctx.args ?? null,
           sessionId: ctx.sessionId ?? null,
         })
       })

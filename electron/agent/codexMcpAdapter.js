@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { encodeApprovalPayload } from './approvalPayload.js'
 import { hashArgs } from './grantLedger.js'
 
 /**
@@ -18,19 +19,6 @@ import { hashArgs } from './grantLedger.js'
 const ACCEPT = 'accept'
 // 사람의 명시적 거절은 grant 누락(`unconfirmed`)과 다르다. 재시도 신호로 읽히지 않는 이름을 쓴다.
 const REJECT_REASON = { decline: 'declined-by-user', cancel: 'cancelled' }
-
-/**
- * 승인 창에 띄울 사람용 문장. 인자를 **보여준다** — 안 보여주면 사람은 이름만 보고 누른다.
- *
- * 🔴 **transport에서 자르지 않는다.** main이 이미 잘린 문자열만 받으면 renderer는 나머지를 펼치거나
- *    스크롤할 방법이 없다. grant와 같은 인자 전체를 보내고, 화면 크기 제한은 renderer scroll이 맡는다.
- *
- * 🔴 **여러 줄로 들여쓴다.** 한 줄로 뭉친 JSON 은 "보여줬다"는 알리바이지 읽으라는 게 아니다.
- */
-export function describe(name, args) {
-  const argText = JSON.stringify(args ?? {}, null, 2)
-  return `${name}\n\n${argText}`
-}
 
 export function createAdapterHandlers({ tools, rpc, elicitInput, approvalTimeoutMs, newNonce = randomUUID }) {
   // 🔴 **조건 5**: MCP SDK 의 요청 timeout 기본값은 **60초** (`DEFAULT_REQUEST_TIMEOUT_MSEC`).
@@ -58,11 +46,9 @@ export function createAdapterHandlers({ tools, rpc, elicitInput, approvalTimeout
     try {
       outcome = await elicitInput(
         {
-          // 🔴 **사람은 툴 *이름* 이 아니라 *무엇을 하는지* 를 보고 승인해야 한다.**
-          //    `"Approve generate_videos?"` 로는 영상이 2개인지 8개인지 모른 채 누르게 된다.
-          //    argsHash 가 "승인한 것"과 "실행되는 것"을 묶어주지만, **사람이 본 적 없는 값에 묶는 건
-          //    동의가 아니다.** 인자를 실어 보낸다 — `message` 는 verbatim 도착이 실측됐다.
-          message: describe(name, args),
+          // `message`는 사람 문장이 아니라 main이 검증할 canonical 데이터 봉투다. adapter는 신뢰 경계
+          // 밖이므로 서술을 만들지 않고 raw args 전체를 운반만 한다 (`message` verbatim 도착 실측).
+          message: encodeApprovalPayload(name, args),
           requestedSchema: { type: 'object', properties: {} },
           // 🔴 **실측(2026-07-14)**: 서버가 설정한 `_meta` 는 Codex 를 거쳐 **verbatim 도착한다.**
           //    (반면 `requestedSchema` 의 최상위 커스텀 키는 **삭제된다** — 그쪽에 실었으면 게이트가 죽었다.)

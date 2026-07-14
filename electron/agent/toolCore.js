@@ -14,6 +14,7 @@
  */
 
 import { hashArgs } from './grantLedger.js'
+import { invalidParamNames, zodFromJson } from './jsonSchemaToZod.js'
 import { STORY_TTS_PROVIDERS } from '../../src/config/storyTtsProviders.js'
 
 /** 프로젝트가 안 열렸을 때의 공통 거부 (스펙 §2.1 `get_project_context`, slice 12). */
@@ -81,7 +82,6 @@ const CHARACTER_ITEM_SCHEMA = Object.freeze({
 // Agent가 쓸 수 있는 키를 step별로 고정하고, D16 화자 설정은 story_set_speakers 한 경로만 둔다.
 const START_STEP_PARAM_PROPERTIES = Object.freeze({
   script: Object.freeze({
-    input: { type: 'object' },
     options: { type: 'object' },
     review: { type: 'object' },
     reviewOnly: { type: 'boolean' },
@@ -89,6 +89,8 @@ const START_STEP_PARAM_PROPERTIES = Object.freeze({
     continue: { type: 'string' },
     pastedScript: { type: 'string' },
     synopsis: { type: 'string' },
+    // pastedScript 재오픈 hydrate에 필요한 제목만 연다. input.type 프로젝트 identity는 UI 소유다.
+    title: { type: 'string' },
   }),
   scenes: Object.freeze({
     options: { type: 'object' },
@@ -138,12 +140,11 @@ const START_STEP_INPUT_SCHEMA = Object.freeze({
   },
 })
 
-function invalidStartStepParams({ step, params } = {}) {
-  const properties = START_STEP_PARAM_PROPERTIES[step]
-  if (!properties) return ['step']
-  if (params === undefined) return []
-  if (!params || typeof params !== 'object' || Array.isArray(params)) return ['params']
-  return Object.keys(params).filter((key) => !Object.hasOwn(properties, key)).sort()
+function agentStartStepParams(step, params) {
+  if (step !== 'script' || !params || !Object.hasOwn(params, 'title')) return params
+  const { title, ...safeParams } = params
+  // stepMachine의 pasted 분기는 params.input.title을 보존한다. title만 좁게 어댑트하고 type은 만들지 않는다.
+  return params.pastedScript ? { ...safeParams, input: { title } } : safeParams
 }
 
 /**
@@ -276,12 +277,14 @@ export function createToolCore({
     },
     story_start_step: {
       permission: 'G',              // D9.3 — 모든 `*_start` 는 G
-      description: '사람 승인 뒤 지정한 Story 파이프라인 단계를 시작한다.',
+      description: '사람 승인 뒤 지정한 Story 파이프라인 단계를 시작한다. 프로젝트 입력 유형/제목 identity는 앱 UI가 소유하며, 주제는 synopsis로 전달한다.',
       inputSchema: START_STEP_INPUT_SCHEMA,
       needs: 'storyCommands',
-      run: ({ step, params }) => storyCommands.start(step, params),
+      run: ({ step, params }) => storyCommands.start(step, agentStartStepParams(step, params)),
     },
   }
+  const INPUT_VALIDATORS = new Map(Object.entries(TOOLS)
+    .map(([name, tool]) => [name, zodFromJson(tool.inputSchema)]))
 
   /**
    * 🔴 **G/B 는 grant 를 원자적으로 1회 consume 해야만 실행된다.**
@@ -332,6 +335,12 @@ export function createToolCore({
 
       const tool = TOOLS[name]
       if (!tool) throw new Error(`unknown tool: ${name}`)
+      // adapter는 신뢰 경계 밖 프로세스다. main도 같은 schema 변환기로 원본 args를 검증하되,
+      // hash에 묶인 원본을 parse 결과로 대체하지 않는다. 실패는 grant consume 전에 끝낸다.
+      const validation = INPUT_VALIDATORS.get(name).safeParse(args)
+      if (!validation.success) {
+        return { error: 'invalid-params', params: invalidParamNames(validation.error) }
+      }
       // 툴마다 필요한 것이 다르다. 전부에게 storyCommands 를 요구하면 renderer 만 읽는 툴이 못 돈다.
       if (tool.needs === 'storyCommands' && !storyCommands) {
         throw new Error('toolCore.use(storyCommands) 가 호출되지 않았다')
@@ -348,11 +357,6 @@ export function createToolCore({
       // 있으므로 agent 경로도 세션이 pin한 token을 직접 확인하고, 승인 consume 전에 닫혀야 한다.
       if (tool.needs === 'storyCommands'
         && storyCommands.projectToken !== projectToken) return { error: 'stale-token' }
-      if (name === 'story_start_step') {
-        const invalid = invalidStartStepParams(args)
-        // schema 밖 private RPC 호출도 같은 경계에서 막는다. 승인 grant를 태우기 전에 닫아야 한다.
-        if (invalid.length) return { error: 'invalid-params', params: invalid }
-      }
       // adapter 의 주장이 아니라 **main ledger 의 grant** 를 본다.
       if (tool.permission !== 'R' && !isApproved(name, args, context)) {
         return { status: 'rejected', reason: 'unconfirmed' }

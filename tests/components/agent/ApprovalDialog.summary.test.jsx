@@ -14,7 +14,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { I18nProvider } from '../../../src/hooks/useI18n'
 import { __resetFlowHiddenForTests } from '../../../src/hooks/useModalVisibility'
 import ApprovalDialog from '../../../src/components/agent/ApprovalDialog.jsx'
-import * as codexMcpAdapter from '../../../electron/agent/codexMcpAdapter.js'
 
 let fire
 beforeEach(() => {
@@ -32,66 +31,153 @@ function open(lang, tool, args) {
   const view = render(<I18nProvider><ApprovalDialog /></I18nProvider>)
   act(() => fire({
     requestId: 'r1', tool, sessionId: 's1',
-    // adapter와 renderer의 유일한 인자 채널을 복제하지 않는다. 둘이 실제로 맞물려야 포맷 변화가 잡힌다.
-    message: codexMcpAdapter.describe(tool, args),
+    // main 신뢰 경계에서 검증된 구조화 args를 그대로 받는다. 문자열 프로토콜을 재현하지 않는다.
+    args,
   }))
   return view
 }
 
 describe('승인 창은 무엇을 하는지 사람 말로 알려준다', () => {
-  it('adapter의 실제 승인 문구 계약을 사용한다', () => {
-    expect(typeof codexMcpAdapter.describe).toBe('function')
-  })
-
-  it('화자 설정: 몇 명을 저장하는지 이름과 함께 말한다', () => {
+  it('화자 설정: 기존 명단에 병합하며 누락된 기존 화자는 유지한다고 말한다', () => {
     open('ko', 'story_set_speakers', {
-      speakers: [{ id: 'narrator', name: '나레이션' }, { id: 'kim', name: '김철수' }],
+      speakers: [
+        { id: 'narrator', name: '나레이션' },
+        { id: 'kim', name: '김철수', voice: null, role: '형사' },
+      ],
     })
 
-    const summary = screen.getByTestId('approval-summary').textContent
+    const summary = screen.getByTestId('approval-description').textContent
     expect(summary, '무엇을 하는지 사람 말로 설명하지 않는다').toMatch(/화자/)
     expect(summary, '몇 명인지 안 알려준다').toMatch(/2/)
     expect(summary, '누구인지 안 알려준다').toMatch(/나레이션/)
+    expect(summary).toMatch(/병합/)
+    expect(summary).toMatch(/유지/)
+    expect(summary).toContain('음성: null')
+    expect(summary).toContain('역할: 형사')
+    expect(summary).toMatch(/기존 화자.*이미 설정된.*성별.*나이.*역할.*외모.*덮어써지지 않을 수/)
+    expect(summary).toMatch(/확정 명단 상태에서는.*추가로.*이름 변경.*명단 밖 신규 화자/)
   })
 
-  it('스텝 시작: 어떤 단계를 시작하는지 말한다', () => {
-    open('ko', 'story_start_step', { step: 'audio', params: {} })
-
-    expect(screen.getByTestId('approval-summary').textContent).toMatch(/audio/)
-  })
-
-  it('스텝 시작: 읽지 않은 params가 있으면 안전한 척 요약하지 않는다', () => {
-    open('ko', 'story_start_step', {
+  it('audio regenerate는 서술하고 미래의 모르는 params 키만 residual raw로 남긴다', () => {
+    const { container } = open('ko', 'story_start_step', {
       step: 'audio',
       params: { speakers: [{ id: 'HIJACK', name: 'HIJACK' }], regenerate: ['seg-1'] },
     })
 
-    expect(screen.queryByTestId('approval-summary')).toBeNull()
+    const description = screen.getByTestId('approval-description').textContent
+    expect(description).toMatch(/비용/)
+    expect(description).toMatch(/강제 재합성 1/)
+    expect(description).toContain('seg-1')
+    expect(description).toMatch(/함께 새로 합성/)
+    expect(description).toMatch(/재그룹.*scenes\.json.*재작성.*이미지.*비디오 프롬프트.*씬 요약.*소실될 수/)
+
+    const residual = container.querySelector('.approval-residual-args')
+    expect(residual).toBeTruthy()
+    expect(residual.textContent).toContain('/params/speakers/0/id')
+    expect(residual.textContent).toContain('HIJACK')
+    expect(screen.getByText(/설명되지 않은 인자/)).toBeTruthy()
+
+    // residual이 있으면 전체 원본도 details 안에 숨길 수 없다.
+    expect(container.querySelector('.approval-original-expanded .approval-args')).toBeTruthy()
+    expect(container.querySelector('details.approval-original')).toBeNull()
   })
 
-  it('긴 인자도 adapter에서 dialog까지 전부 도착해 요약과 원본을 함께 보여준다', () => {
+  it('긴 synopsis는 JSON escape 없이 block으로 전부 보이고 원본 JSON도 접근 가능하다', () => {
     const args = { synopsisMd: `BEGIN-${'긴'.repeat(5000)}-END`, characters: [] }
-    open('ko', 'story_confirm_synopsis', args)
+    const { container } = open('ko', 'story_confirm_synopsis', args)
 
-    expect(screen.getByTestId('approval-summary')).toBeTruthy()
-    const raw = screen.getByText(/BEGIN-/).textContent
+    expect(screen.getByTestId('approval-description')).toBeTruthy()
+    const block = container.querySelector('.approval-block-text')
+    expect(block.textContent).toBe(args.synopsisMd)
+    const raw = container.querySelector('.approval-args').textContent
     expect(JSON.parse(raw)).toEqual(args)
     expect(raw).toContain('-END')
+    expect(container.querySelector('details.approval-original')).toBeTruthy()
   })
 
-  it('요약이 원본 인자를 **대체하지 않는다** — 실제 실행되는 값은 그대로 보인다', () => {
-    open('ko', 'story_set_speakers', { speakers: [{ id: 'narrator', name: '나레이션' }] })
+  it('headline을 맨 앞에 두고 그 뒤에 danger, 정보 줄을 놓는다', () => {
+    const { container } = open('ko', 'story_start_step', {
+      step: 'audio', params: { regenerate: ['seg-1'], sfxSources: { 'seg-1': 'library' } },
+    })
 
-    // 요약만 보여주면 "승인한 것"과 "실행되는 것"이 갈린다. 원본이 반드시 함께 있어야 한다.
-    expect(screen.getByText(/"speakers"/), '원본 인자가 사라졌다').toBeTruthy()
+    const lines = [...container.querySelectorAll('.approval-line')]
+    expect(lines[0].textContent).toMatch(/audio.*단계.*시작/)
+    expect(lines[0].classList.contains('approval-line-danger')).toBe(false)
+    const afterHeadline = lines.slice(1)
+    const lastDanger = afterHeadline.map((line) => line.classList.contains('approval-line-danger')).lastIndexOf(true)
+    const firstInfo = afterHeadline.findIndex((line) => !line.classList.contains('approval-line-danger'))
+    expect(lastDanger).toBeLessThan(firstInfo)
   })
 
-  it('모르는 툴이면 지어내지 않고 툴 이름을 그대로 보여준다', () => {
-    open('ko', 'some_future_tool', { x: 1 })
+  // 🔴 경고가 헤드라인을 밀어내면 사람은 "무엇을 하는지"를 마지막에 읽는다. 모든 툴이 같은 계약이다.
+  it('화자 설정도 무엇을 하는지를 경고보다 먼저 보여준다', () => {
+    const { container } = open('ko', 'story_set_speakers', {
+      speakers: [{ id: 'lee', name: '이영희', gender: 'male' }],
+    })
 
-    const summary = screen.queryByTestId('approval-summary')
-    // 모르는 것을 아는 척 요약하면 사람이 잘못된 것을 승인한다. 요약이 없는 게 낫다.
-    expect(summary).toBeNull()
-    expect(screen.getByText('some_future_tool')).toBeTruthy()
+    const lines = [...container.querySelectorAll('.approval-line')]
+    expect(lines[0].textContent, '경고가 "무엇을 하는지"보다 앞에 왔다').toMatch(/병합/)
+    expect(lines[0].classList.contains('approval-line-danger')).toBe(false)
+    expect(lines.some((line) => line.classList.contains('approval-line-danger')), '보존 경고가 사라졌다').toBe(true)
+  })
+
+  it('coverage가 완전해도 전체 원본 인자를 details로 항상 접근할 수 있다', () => {
+    const { container } = open('ko', 'story_set_speakers', {
+      speakers: [{ id: 'narrator', name: '나레이션' }],
+    })
+
+    const original = container.querySelector('details.approval-original')
+    expect(original, '완전 coverage라고 전체 원본을 없앴다').toBeTruthy()
+    expect(JSON.parse(original.querySelector('.approval-args').textContent))
+      .toEqual({ speakers: [{ id: 'narrator', name: '나레이션' }] })
+  })
+
+  it('여러 줄 원문은 문장 안이 아니라 pre block에서 앞뒤 공백까지 verbatim으로 보존한다', () => {
+    const scriptOverride = '  첫 줄\n둘째 줄  '
+    const { container } = open('ko', 'story_start_step', {
+      step: 'scenes', params: { scriptOverride },
+    })
+    const block = container.querySelector('.approval-block-text')
+
+    expect(block.textContent).toBe(scriptOverride)
+    expect([...container.querySelectorAll('.approval-line')].some((line) => line.textContent.includes(scriptOverride))).toBe(false)
+  })
+
+  it('pastedScript의 제출된 제목·옵션 교체값을 danger 문장에 그대로 렌더한다', () => {
+    const { container } = open('ko', 'story_start_step', {
+      step: 'script',
+      params: {
+        pastedScript: '수정 대본',
+        title: '야담 5화',
+        options: { genre: 'yadam', language: 'ko' },
+      },
+    })
+    const danger = [...container.querySelectorAll('.approval-line-danger')]
+      .map((line) => line.textContent).join('\n')
+
+    expect(danger).toMatch(/프로젝트 제목.*"야담 5화".*교체/)
+    expect(danger).toContain('{"genre":"yadam","language":"ko"}')
+    expect(danger).toMatch(/생성 옵션.*교체/)
+  })
+
+  it('pastedScript에서 생략된 제목·옵션이 지워진다는 경고를 렌더한다', () => {
+    const { container } = open('ko', 'story_start_step', {
+      step: 'script', params: { pastedScript: '수정 대본' },
+    })
+    const danger = [...container.querySelectorAll('.approval-line-danger')]
+      .map((line) => line.textContent).join('\n')
+
+    expect(danger).toMatch(/title.*생략.*프로젝트 제목.*지워/)
+    expect(danger).toMatch(/options.*생략.*생성 옵션.*지워/)
+  })
+
+  it('confirm synopsis의 중복·나레이터 제외 경고를 실제 교체 목록과 함께 렌더한다', () => {
+    open('ko', 'story_confirm_synopsis', {
+      characters: [{ name: '나레이션' }, { name: '김철수' }, { name: '김철수' }],
+    })
+    const description = screen.getByTestId('approval-description').textContent
+
+    expect(description).toMatch(/3건.*교체/)
+    expect(description).toMatch(/정규화.*중복.*나레이터.*제외/)
   })
 })

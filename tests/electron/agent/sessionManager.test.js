@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest'
 import { createAgentSessionManager } from '../../../electron/agent/sessionManager.js'
+import { encodeApprovalPayload } from '../../../electron/agent/approvalPayload.js'
 import { createGrantLedger, hashArgs } from '../../../electron/agent/grantLedger.js'
 import { createApprovalPrompt } from '../../../electron/agent/approvalPrompt.js'
 import { AGENT_MCP_SERVER_NAME } from '../../../electron/agent/constants.js'
@@ -241,11 +242,14 @@ describe('AgentSessionManager close drain', () => {
     const h = lifecycleHarness({ approvalPrompt, grantLedger })
     await h.manager.open()
     const responder = h.orchestrators[0].options.elicitationResponder
-    const request = (nonce, requestId) => responder.handle({
-      serverName: AGENT_MCP_SERVER_NAME,
-      message: `approve ${nonce}`,
-      _meta: { nonce, tool: 'generate_videos', argsHash: `hash-${nonce}` },
-    }, { requestId, turnId: null })
+    const request = (nonce, requestId) => {
+      const args = { requestNonce: nonce }
+      return responder.handle({
+        serverName: AGENT_MCP_SERVER_NAME,
+        message: encodeApprovalPayload('generate_videos', args),
+        _meta: { nonce, tool: 'generate_videos', argsHash: hashArgs(args) },
+      }, { requestId, turnId: null })
+    }
     const first = request('n1', 101)
     const second = request('n2', 102)
     expect(approvalPrompt.pendingCount()).toBe(2)
@@ -282,10 +286,11 @@ describe('AgentSessionManager close drain', () => {
 
     await h.manager.open()
     const responder = h.orchestrators[1].options.elicitationResponder
+    const args = { items: [1, 2] }
     const pending = responder.handle({
       serverName: AGENT_MCP_SERVER_NAME,
-      message: 'approve generate_videos',
-      _meta: { nonce: 'n-second', tool: 'generate_videos', argsHash: 'hash-second' },
+      message: encodeApprovalPayload('generate_videos', args),
+      _meta: { nonce: 'n-second', tool: 'generate_videos', argsHash: hashArgs(args) },
     }, { requestId: 201, turnId: null })
 
     // effect 를 본다: 승인 요청이 **실제로 renderer 로 나갔는가.** 값이 decline 인지만 보면
@@ -293,6 +298,7 @@ describe('AgentSessionManager close drain', () => {
     expect(approvalPrompt.pendingCount(), '두 번째 세션의 승인이 즉시 decline 됐다 — 사람에게 묻지도 않았다').toBe(1)
     expect(win.webContents.send).toHaveBeenCalledWith('agent:permission-request', expect.objectContaining({
       tool: 'generate_videos',
+      args,
     }))
 
     approvalPrompt.respond({ requestId: [...win.webContents.send.mock.calls]
