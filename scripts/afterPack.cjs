@@ -94,12 +94,21 @@ exports.default = async function (context) {
     context.packager.getResourcesDir(appOutDir), 'mcp-server', 'node_modules'
   )
 
+  // mcp-server 는 extraResources 로 asar **밖**에 나간다. 그 node_modules 는 electron-builder 가
+  // 안 옮겨주므로 여기서 복사한다. **없으면 조용히 넘어가지 않는다** — 넘어가면 의존성 없는
+  // MCP 서버가 그대로 출하되고, 빌드는 초록인데 사용자 앱에서만 죽는다 (실측으로 그 상태였다).
+  // codex 바이너리 가드와 **같은 강도**로 fail-closed 한다.
+  const shipsMcpServer = fs.existsSync(path.join(context.packager.projectDir, 'mcp-server', 'package.json'))
+  if (shipsMcpServer && !fs.existsSync(sourceNodeModules)) {
+    throw new Error(
+      '[afterPack] mcp-server/node_modules not found — the build would ship an MCP server with no ' +
+      'dependencies. Run "npm run mcp:install" before packaging.'
+    )
+  }
   if (fs.existsSync(sourceNodeModules) && !fs.existsSync(targetNodeModules)) {
     console.log('[afterPack] Copying mcp-server/node_modules...')
     copyRecursive(sourceNodeModules, targetNodeModules)
     console.log('[afterPack] Done.')
-  } else if (!fs.existsSync(sourceNodeModules)) {
-    console.log('[afterPack] mcp-server/node_modules not found, skipping copy')
   }
 
   // Drop the native binaries that don't belong to this arch (~460MB per app).

@@ -25,9 +25,18 @@ permissions:
 on:
   workflow_dispatch:
   push:
+    # ⚠️ 필터가 좁으면 **급소를 바꿔도 CI 가 침묵한다.** M0-13 의 급소는 asar 배치인데,
+    #    그건 `package.json` 의 `build.asarUnpack`/`extraResources` 가 정한다 — 그게 빠져 있었다.
+    #    스파이크가 import 하는 제품 코드와 fixture 도 마찬가지다.
     paths:
       - 'tests/spike/m0-13.codexPackagedAdapter.spike.test.js'
+      - 'tests/spike/fixtures/**'
+      - 'electron/api/llm/codexSdk.js'
+      - 'electron/api/llm/codexAppServer.js'
+      - 'electron/agent/**'          # production adapter 가 생기면 여기다 (M2)
       - 'scripts/afterPack.cjs'
+      - 'scripts/notarize.cjs'
+      - 'package.json'              # 🔴 asarUnpack / extraResources / build 설정
       - '.github/workflows/m0-13-platform.yml'
 
 jobs:

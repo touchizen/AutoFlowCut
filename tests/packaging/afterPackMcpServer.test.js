@@ -27,6 +27,8 @@ function makeContext({ electronPlatformName, getResourcesDir }) {
   const projectDir = path.join(root, 'project')
   fs.mkdirSync(path.join(projectDir, 'mcp-server', 'node_modules', 'zod'), { recursive: true })
   fs.writeFileSync(path.join(projectDir, 'mcp-server', 'node_modules', 'zod', 'index.js'), 'module.exports = {}')
+  // mcp-server 를 **싣는다**는 표시 (extraResources 로 나가는 실제 패키지)
+  fs.writeFileSync(path.join(projectDir, 'mcp-server', 'package.json'), '{"name":"mcp-server"}')
 
   const appOutDir = path.join(root, 'out')
   fs.mkdirSync(getResourcesDir(appOutDir), { recursive: true })
@@ -62,5 +64,22 @@ describe('afterPack: mcp-server/node_modules 를 실제 리소스 디렉토리�
 
     const shipped = path.join(WIN_RESOURCES(ctx.appOutDir), 'mcp-server', 'node_modules', 'zod', 'index.js')
     expect(fs.existsSync(shipped)).toBe(true)
+  })
+
+  // 🔴 fail-open 이 이 버그를 오래 살렸다. 같은 파일이 **codex 바이너리 부재엔 throw** 하면서
+  //    mcp-server 의존성 부재엔 조용히 skip 해서, 의존성 없는 MCP 서버가 그대로 출하됐다.
+  //    "빌드는 초록인데 출하물이 죽어 있다" 는 이 프로젝트가 이미 밟은 함정이다. 여기서 터뜨린다.
+  test('🔴 mcp-server 를 싣는데 그 node_modules 가 없으면 **빌드를 터뜨린다** (조용히 넘어가지 않는다)', async () => {
+    const ctx = makeContext({ electronPlatformName: 'darwin', getResourcesDir: MAC_RESOURCES })
+    fs.rmSync(path.join(ctx.packager.projectDir, 'mcp-server', 'node_modules'), { recursive: true, force: true })
+
+    await expect(afterPack(ctx)).rejects.toThrow(/mcp:install/)
+  })
+
+  test('mcp-server 자체를 안 싣는 프로젝트면 터뜨리지 않는다', async () => {
+    const ctx = makeContext({ electronPlatformName: 'darwin', getResourcesDir: MAC_RESOURCES })
+    fs.rmSync(path.join(ctx.packager.projectDir, 'mcp-server'), { recursive: true, force: true })
+
+    await expect(afterPack(ctx)).resolves.toBeUndefined()
   })
 })

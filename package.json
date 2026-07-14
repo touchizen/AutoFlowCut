@@ -19,7 +19,7 @@
     "preview": "vite preview",
     "make-ico": "node scripts/make-ico.cjs",
     "make-appx-assets": "node scripts/gen-appx-assets.cjs",
-    "pack": "vite build && npm run build:preloads && electron-builder --dir",
+    "pack": "npm run mcp:install && vite build && npm run build:preloads && electron-builder --dir",
     "dist": "npm run bump:build && vite build --mode production && npm run build:preloads && electron-builder",
     "dist:mac": "npm run bump:build && vite build --mode production && npm run build:preloads && electron-builder --mac",
     "dist:win": "npm run bump:build && vite build --mode production && npm run build:preloads && electron-builder --win",
