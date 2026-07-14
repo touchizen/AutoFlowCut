@@ -277,13 +277,14 @@ describe('SRT 입력 유효성', () => {
       expect(scenes).toHaveLength(2)
     })
 
-    it('번호 없는 블록', () => {
-      // SRT 파서는 lines[1]을 타임코드로 기대
+    it('번호 없는 블록도 받는다', () => {
+      // 인덱스 줄은 도구에 따라 생략된다. 옛 파서는 lines[1] 을 타임코드로 "가정"해서 이런 블록을
+      // 통째로 버렸다 — 타임코드 줄을 찾아서 기준으로 삼으면 버릴 이유가 없다.
       const srt = `00:00:00,000 --> 00:00:03,000
 자막`
       const scenes = parseSRTToScenes(srt)
-      // 구조가 맞지 않아 파싱 안됨
-      expect(scenes).toHaveLength(0)
+      expect(scenes).toHaveLength(1)
+      expect(scenes[0].subtitle).toBe('자막')
     })
   })
 
