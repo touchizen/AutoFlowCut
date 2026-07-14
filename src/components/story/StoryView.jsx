@@ -933,11 +933,11 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     try {
       const ap = buildAudioParams()
       const r = await ttsPreview?.({ segmentIds: [segId], speakers: ap.speakers, sfxSources: ap.sfxSources })
-      if (r?.busy) { toast.error(t('story.audio.busy', '진행 중입니다. 잠시 후 다시 시도하세요.')); return }
+      if (r?.busy) { toast.error(t('story.audio.busy')); return }
       const seg = r?.segments?.find((s) => s.id === segId)
       if (seg?.audioPath) playAudio(seg.audioPath)
     } catch (e) {
-      toast.error(t('story.audio.testFailed', `테스트 실패: ${e?.message || e}`, { error: e?.message || e }))
+      toast.error(t('story.audio.testFailed', { error: e?.message || e }))
     } finally {
       setPreviewBusy(false)
     }
@@ -979,13 +979,13 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
       // pasted [등장인물 확정] — script는 이미 done(재생성 없음, §v2.8 B1). 대본에서 역추출한(편집 가능한)
       // 시놉시스는 함께 저장한다.
       const r = await pipeline.confirmSynopsis?.({ synopsisMd: synopsisDraft, characters: chars })
-      if (r?.error) { toast.error(`${t('story.error.prefix', '오류')}: ${r.error}`); return }
+      if (r?.error) { toast.error(`${t('story.error.prefix')}: ${r.error}`); return }
       setScriptPhase('editor')
       return
     }
     // title [이 시놉시스로 대본 생성] — confirm(커밋) 완료 후 start('script') 순차 호출(§v2.10).
     const r = await pipeline.confirmSynopsis?.({ synopsisMd: synopsisDraft, characters: chars })
-    if (r?.error) { toast.error(`${t('story.error.prefix', '오류')}: ${r.error}`); return }
+    if (r?.error) { toast.error(`${t('story.error.prefix')}: ${r.error}`); return }
     setBaseScript('')
     // 대본 화면(editor)으로 먼저 전환 — start('script')를 await 하면 생성이 끝날 때까지 화면이 안
     // 바뀌어 "대본 화면이 안 나온다". 전환 후 생성이 스트리밍으로 editor 뷰에 들어온다(§v2.10: confirm→start 순서 유지).
@@ -1021,7 +1021,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
       ...(adoptedIndices !== undefined ? { adoptedIndices } : {}),
     })
     if (r?.error) {
-      toast.error(`${t('story.error.prefix', '오류')}: ${r.error}`)
+      toast.error(`${t('story.error.prefix')}: ${r.error}`)
       return r
     }
     setScriptPhase('synopsis')
@@ -1031,7 +1031,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const handleResearchSkip = async () => {
     const r = await pipeline.researchSkip?.()
     if (r?.error) {
-      toast.error(`${t('story.error.prefix', '오류')}: ${r.error}`)
+      toast.error(`${t('story.error.prefix')}: ${r.error}`)
       return r
     }
     setUseResearchContext(false)
@@ -1096,7 +1096,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
       setTitle(res.title)
       return res.title
     } catch (err) {
-      toast.error(`${t('story.error.titleGenFailed', '제목 자동생성 실패')}: ${err?.message || err}`)
+      toast.error(`${t('story.error.titleGenFailed')}: ${err?.message || err}`)
       return null
     }
   }

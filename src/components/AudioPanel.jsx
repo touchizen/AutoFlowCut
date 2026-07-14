@@ -145,7 +145,7 @@ export default function AudioPanel({ audioPackage, audioReviews, loading = false
     // mp3가 트랙 위가 아닌 빈 공간에 떨어졌다면 안내 toast
     if (hasMp3) {
       e.preventDefault()
-      toast.info(t('audioTab.dropOnNarrationOrSfx') || 'Narration 또는 SFX 트랙 위에 끌어다 놓으세요')
+      toast.info(t('audioTab.dropOnNarrationOrSfx'))
     }
   }
 

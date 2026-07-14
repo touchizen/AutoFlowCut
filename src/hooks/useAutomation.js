@@ -452,7 +452,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     if (isRunning) return
 
     if (mode === 'flow' && !flowProjectReady) {
-      toast.warning(t('toast.flowProjectNotReady', { defaultValue: 'Flow 프로젝트 로딩 중... 잠시 후 다시 시도해 주세요.' }))
+      toast.warning(t('toast.flowProjectNotReady'))
       return
     }
 
@@ -510,7 +510,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       }
       if (gate.action === 'loading') {
         // subscription 아직 로드 중 / 에러 — 과금 안 함, paywall 모달 없음, 짧은 안내만.
-        toast.warning(t('toast.subscriptionLoading', { defaultValue: '구독 정보를 확인 중입니다. 잠시 후 다시 시도해 주세요.' }))
+        toast.warning(t('toast.subscriptionLoading'))
         setIsRunning(false); setIsPaused(false); setIsStopping(false)
         setStatus('ready'); setStatusMessage(t('status.ready'))
         return
@@ -840,7 +840,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
    */
   const retryErrors = useCallback(async (options = {}) => {
     if (mode === 'flow' && !flowProjectReady) {
-      toast.warning(t('toast.flowProjectNotReady', { defaultValue: 'Flow 프로젝트 로딩 중... 잠시 후 다시 시도해 주세요.' }))
+      toast.warning(t('toast.flowProjectNotReady'))
       return
     }
     if (options && typeof options.preventDefault === 'function') {

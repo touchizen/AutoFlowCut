@@ -157,7 +157,7 @@ export default function StylePicker({
               onContextMenu={(e) => {
                 if (!thumb) return
                 e.preventDefault()
-                if (window.confirm(`"${styleName}" 썸네일을 삭제하시겠습니까?`)) {
+                if (window.confirm(t('reference.deleteThumbnailConfirm', { name: styleName }))) {
                   onDeleteThumbnail?.(style.id)
                 }
               }}

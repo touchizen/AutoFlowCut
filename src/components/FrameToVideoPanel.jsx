@@ -561,7 +561,7 @@ export default function FrameToVideoPanel({
       // 에선 안 보이지만, 행 자체는 시각적으로 즉시 추가됨.
       const newSceneId = onRequestNewScene?.()
       if (!newSceneId) {
-        toast.warning(t('frameToVideo.addRowFail') || '새 씬을 만들지 못했어요')
+        toast.warning(t('frameToVideo.addRowFail'))
         return
       }
       onUpdate([
@@ -578,7 +578,7 @@ export default function FrameToVideoPanel({
           selected: false,
         },
       ])
-      toast.info(t('frameToVideo.addRowNewScene') || '새 씬과 F→V 행 추가됨. 이미지를 생성하면 dropdown에서 시작 이미지를 선택할 수 있어요.')
+      toast.info(t('frameToVideo.addRowNewScene'))
       return
     }
 
@@ -599,7 +599,7 @@ export default function FrameToVideoPanel({
         status: 'waiting',
       },
     ])
-    toast.success(t('frameToVideo.addRowOk') || `F→V 행 추가됨 (씬 #${scenes.findIndex(s => s.id === nextStartId) + 1})`)
+    toast.success(t('frameToVideo.addRowOk'))
   }
 
   // Auto Batch — 아직 배치 안 된 씬 전부를 프레임 페어로 자동 생성
@@ -608,7 +608,7 @@ export default function FrameToVideoPanel({
 
     if (unusedScenes.length === 0) {
       // 모든 씬에 이미 F→V 행이 있음. silently no-op 대신 toast 로 알려줌.
-      toast.info(t('frameToVideo.autoBatchNoop') || '모든 씬에 이미 F→V 행이 있어요. 추가할 것이 없어요.')
+      toast.info(t('frameToVideo.autoBatchNoop'))
       return
     }
 
@@ -630,7 +630,7 @@ export default function FrameToVideoPanel({
     })
 
     onUpdate([...framePairs, ...newPairs])
-    toast.success(t('frameToVideo.autoBatchOk', { count: newPairs.length }) || `⚡ F→V 행 ${newPairs.length}개 자동 추가됨`)
+    toast.success(t('frameToVideo.autoBatchOk', { count: newPairs.length }))
   }
 
   const removeRow = (index) => {
