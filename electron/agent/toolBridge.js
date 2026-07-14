@@ -1,7 +1,19 @@
 import { randomUUID } from 'node:crypto'
 
-/** renderer 에 맡길 수 있는 작업은 D14가 확정한 두 경계로만 닫는다. */
-const ALLOWED_TOOLS = new Set(['video.admit', 'video.status'])
+/**
+ * renderer 에 맡길 수 있는 작업은 **여기 적힌 것뿐**이다. D14 가 확정한 `video.*` 둘에
+ * `batch.status` 를 더했다 — `wait_batch`(§2.3)가 renderer 의 배치 진행을 읽는 유일한 경로이고,
+ * main 엔 배치 상태가 없다 (기존엔 `executeJavaScript` 로 읽었고, D14 가 그 경로를 금지한다).
+ */
+const ALLOWED_TOOLS = new Set(['video.admit', 'video.status', 'batch.status'])
+
+/**
+ * 🔴 **응답이 물어본 그것에 대한 답인지 확인한다.** correlation id 만으로는 부족하다 —
+ *    renderer handler 버그로 **다른 대상**의 상태가 이 요청에 실려 오면, id 는 맞고 내용은 틀리다.
+ *    그래서 요청 인자의 식별자를 응답이 **echo** 하게 하고, 다르거나 **없으면** 거부한다.
+ *    (누락을 통과시키면 fail-open 이다: 아무 대상의 응답이나 통과한다.)
+ */
+const ECHO_KEY_BY_TOOL = { 'video.status': 'operationId', 'batch.status': 'type' }
 const DEFAULT_TIMEOUT_MS = 30_000
 const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key)
 
@@ -107,12 +119,14 @@ export function createToolBridge({ getWindow }) {
         settle(requestId, 'reject', new Error(`tool bridge timeout: ${name}`))
       }, timeoutMs)
 
+      const echoKey = ECHO_KEY_BY_TOOL[name]
       pending.set(requestId, {
         resolve,
         reject,
         timer,
         name,
-        operationId: name === 'video.status' ? args?.operationId : undefined,
+        echoKey,
+        echoValue: echoKey ? args?.[echoKey] : undefined,
       })
 
       try {
@@ -138,13 +152,14 @@ export function createToolBridge({ getWindow }) {
 
     if (hasError) return settle(requestId, 'reject', rendererError(payload.error))
 
-    // 🔴 **누락도 불일치다.** `actualOperationId != null` 을 조건에 넣으면, renderer 가 id 를 빼먹은
-    //    응답이 **무조건 통과**한다 (fail-open). 시나리오: op 두 개가 진행 중인데 renderer 핸들러 버그로
-    //    op-B 용 `{status:'complete'}`(id 없음)가 op-A 의 status 요청에 답한다 → 에이전트는 op-A 가
-    //    끝났다고 믿는다. 물어본 op 의 id 를 **요구**한다.
-    if (entry.name === 'video.status' && entry.operationId
-      && payload.result?.operationId !== entry.operationId) {
-      return settle(requestId, 'reject', new Error('tool bridge operationId mismatch'))
+    // 🔴 **누락도 불일치다.** "값이 있을 때만 비교" 하면 renderer 가 식별자를 빼먹은 응답이 **무조건
+    //    통과**한다 (fail-open). 시나리오: op 두 개가 진행 중인데 renderer 버그로 op-B 용
+    //    `{status:'complete'}`(id 없음)가 op-A 의 status 요청에 답한다 → 에이전트는 op-A 가 끝났다고 믿는다.
+    //    `wait_batch` 도 같다: scene 을 물었는데 ref 상태가 오면 엉뚱한 배치를 완료로 믿는다.
+    //    **물어본 대상의 식별자를 요구한다.**
+    if (entry.echoKey && entry.echoValue !== undefined
+      && payload.result?.[entry.echoKey] !== entry.echoValue) {
+      return settle(requestId, 'reject', new Error(`tool bridge ${entry.echoKey} mismatch`))
     }
 
     return settle(requestId, 'resolve', payload.result)

@@ -125,6 +125,37 @@ describe('toolBridge — correlated invoke (slice 13a)', () => {
     expect(dead.webContents.send, '죽은 window 로 보냈다').not.toHaveBeenCalled()
   })
 
+  // `batch.status` 는 `wait_batch`(§2.3) 가 renderer 의 배치 진행을 읽는 유일한 경로다.
+  // `video.status` 가 operationId 를 echo 하듯, 이쪽은 **`type` 을 echo** 해야 한다 —
+  // scene 을 물었는데 ref 상태가 오면 에이전트는 엉뚱한 배치를 완료로 믿는다.
+  it('🔴 `batch.status` 응답의 type 이 물어본 것과 다르면 거부한다', async () => {
+    const p = bridge.invoke('batch.status', { type: 'scene' })
+    const { requestId } = lastRequest()
+    const rejected = expect(p).rejects.toThrow(/mismatch/i)
+
+    bridge.handleResponse({ requestId, result: { type: 'ref', status: 'complete', done: 1, total: 1 } })
+    await rejected
+    expect(bridge.pendingCount()).toBe(0)
+  })
+
+  it('🔴 `batch.status` 응답에 type 이 **없어도** 거부한다 (누락도 불일치다)', async () => {
+    const p = bridge.invoke('batch.status', { type: 'scene' })
+    const { requestId } = lastRequest()
+    const rejected = expect(p).rejects.toThrow(/mismatch/i)
+
+    bridge.handleResponse({ requestId, result: { status: 'complete', done: 1, total: 1 } })
+    await rejected
+  })
+
+  it('`batch.status` 는 type 이 맞으면 통과한다', async () => {
+    const p = bridge.invoke('batch.status', { type: 'scene' })
+    const { requestId } = lastRequest()
+
+    bridge.handleResponse({ requestId, result: { type: 'scene', status: 'running', done: 1, total: 3, error: 0 } })
+
+    await expect(p).resolves.toMatchObject({ type: 'scene', status: 'running', done: 1, total: 3 })
+  })
+
   it('🔴 allowlist 밖 name 은 renderer 로 **보내지도 않고** 거부한다', async () => {
     await expect(bridge.invoke('rm.-rf', {})).rejects.toThrow(/not allowed/i)
     expect(lastRequest(), 'allowlist 밖인데 renderer 로 보냈다').toBeUndefined()

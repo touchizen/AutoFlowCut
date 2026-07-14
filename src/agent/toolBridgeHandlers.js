@@ -12,7 +12,7 @@
  * 🔴 **모든 실패 출구에서 응답한다.** 이름이 없든 handler 가 throw 하든, 응답을 안 보내면
  *    main 의 pending 은 timeout 까지 매달린다 — 조용한 실패가 30초짜리 행이 된다.
  */
-const ALLOWED = new Set(['video.admit', 'video.status'])
+const ALLOWED = new Set(['video.admit', 'video.status', 'batch.status'])
 
 export function registerToolBridgeHandlers({ api, handlers }) {
   const dispose = api.onToolBridgeRequest(async ({ requestId, name, args } = {}) => {

@@ -301,12 +301,13 @@ const storyCommands = createStoryCommands({
 })
 registerStoryIPC(ipcMain, storyCommands)
 
-const toolCore = createToolCore()
-toolCore.use(storyCommands)
-
 // Tool Core ↔ renderer seam (D14). admission(구독 게이트/크레딧)과 detached 파이프라인이 renderer 에
 // 살지만, 그 **결과값이 main 의 Tool Core 호출자에게 돌아와야** 에이전트가 승인/거부를 안다.
+// 배치 진행 상태도 renderer 가 유일한 진실이라 `wait_batch` 가 이 seam 을 탄다.
 const toolBridge = createToolBridge({ getWindow: () => mainWindow })
+
+const toolCore = createToolCore({ toolBridge })
+toolCore.use(storyCommands)
 ipcMain.on('agent:bridge-response', (_e, payload) => {
   // renderer 가 보낸 것은 신뢰하지 않는다 — 모르는 id/malformed 는 toolBridge 가 거부하고,
   // 여기서 throw 가 새어나가 IPC 를 죽이지 않게 막는다.
