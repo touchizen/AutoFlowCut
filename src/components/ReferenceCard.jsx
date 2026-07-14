@@ -7,7 +7,8 @@ import { REFERENCE_TYPES } from '../config/defaults'
 import { getRatioClass, resolveImageSrc, hasImageData } from '../utils/formatters'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { applyEntityRegistrationPatch } from '../utils/refEntityRegistration'
-import { needsComposerRefresh } from '../utils/flowCharacterSync'
+import { needsComposerRefresh, refBadgeState, isSyncInFlight } from '../utils/flowCharacterSync'
+import { runFlowCharacterOperation } from '../utils/flowCharacterCoordinator'
 import HoverImageBalloon from './HoverImageBalloon'
 import LazyImage from './LazyImage'
 import { StopwatchIcon, ElapsedTime } from './StopwatchIcon'
@@ -25,6 +26,8 @@ export default function ReferenceCard({
   onShowDetail,
   projectName,
   getScopeToken,  // #R34-fix: live 스코프 토큰(부모 ReferencePanel 제공). 업로드 중 프로젝트/모드 전환 감지.
+  appMode,        // 배지 판정용 — Flow 엔티티 동기화는 flow 모드의 character 에만 의미가 있다.
+  flowProjectId = null,
 }) {
   const cardRef = useRef(null)
   const fileInputRef = useRef(null)
@@ -50,26 +53,36 @@ export default function ReferenceCard({
   // 파일 처리 공통 함수
   const processFile = async (file) => {
     if (!file || !file.type.startsWith('image/')) return
+    // #R37: 이 ref 의 동기화/업로드가 이미 진행 중이면 새 업로드를 시작하지 않는다. 진행 중인 캐릭터
+    //   sync 위로 파일을 드롭하거나 빠르게 두 번 드롭하면 /characters 업로드가 겹쳐 Flow 가 동명의
+    //   entity 를 하나 더 만든다(중복의 또 다른 출구). 공유 flowView DOM 충돌(ERR_ABORTED)도 막는다.
+    //   isUploading(로컬 state)만으로는 부족하다 — 패널/게이트가 시작한 flight 는 안 보인다.
+    const startScope = typeof getScopeToken === 'function' ? getScopeToken() : null
+    const flowOperationOpts = { projectId: flowProjectId, scopeToken: startScope, refIndex: index }
+    const isFlowCharacter = appMode === 'flow' && reference.type === 'character'
+    if (isUploading || reference.syncing || (isFlowCharacter && isSyncInFlight(reference, flowOperationOpts))) {
+      console.warn('[ReferenceCard] upload already in flight — ignoring:', reference?.name)
+      return
+    }
 
     setIsUploading(true)
+    const finishUpload = () => { setIsUploading(false) }
     // #R34-fix: 업로드(특히 await onUpload)는 시간이 걸린다. 그 사이 프로젝트/모드가 바뀌면 완료 패치가
     //   현재(새) 프로젝트의 같은 index/id 에 stale 결과를 덮어쓴다(ref id 는 프로젝트별로 1부터 재사용).
     //   시작 스코프를 캡처해 완료 직전 현재 스코프와 다르면 적용을 스킵한다.
-    const startScope = typeof getScopeToken === 'function' ? getScopeToken() : null
     const scopeChanged = () => typeof getScopeToken === 'function' && getScopeToken() !== startScope
 
     const reader = new FileReader()
     // #R34-fix: FileReader 실패/중단 시에도 업로드 상태 고착 방지.
-    reader.onerror = () => { console.warn('[ReferenceCard] FileReader error'); setIsUploading(false) }
-    reader.onabort = () => { setIsUploading(false) }
+    reader.onerror = () => { console.warn('[ReferenceCard] FileReader error'); finishUpload() }
+    reader.onabort = () => { finishUpload() }
     reader.onloadend = async () => {
-     // #R34-fix: onUpload reject/예외 시에도 setIsUploading(false) 보장 + unhandled rejection 방지.
-     try {
+     const uploadAndPublish = async () => {
       const base64 = reader.result
-      if (!base64) { setIsUploading(false); return }
+      if (!base64) return
 
       // 즉시 표시 — #R34-fix: 미리보기 패치도 scope 변경 시(프로젝트 전환) 현재 refs 오염 방지.
-      if (scopeChanged()) { console.warn('[ReferenceCard] scope changed before preview — skipping'); setIsUploading(false); return }
+      if (scopeChanged()) { console.warn('[ReferenceCard] scope changed before preview — skipping'); return }
       onUpdate(index, {
         ...reference,
         data: base64,
@@ -152,7 +165,6 @@ export default function ReferenceCard({
       // #R34-fix: 업로드 도중 프로젝트/모드가 바뀌었으면 결과를 현재(다른) 프로젝트 ref 에 적용하지 않는다.
       if (scopeChanged()) {
         console.warn('[ReferenceCard] scope changed during upload — skipping stale apply')
-        setIsUploading(false)
         return
       }
 
@@ -181,10 +193,24 @@ export default function ReferenceCard({
       // #R33: 캐릭터 entity 등록 직후 'Untitled Character' stale 캐시/멘션 피커 옛 이름 방지(비차단).
       //   main 이 상세페이지 이름칸에 타이핑했으면(nameApplied) 재진입 왕복이 불필요하다.
       if (needsComposerRefresh(reference, uploadResult)) { try { window.electronAPI?.refreshFlowComposer?.() } catch (_e) {} }
+     }
+     // #R34-fix: onUpload reject/예외 시에도 finishUpload() 보장 + unhandled rejection 방지.
+     try {
+       if (isFlowCharacter) {
+         const coordinated = await runFlowCharacterOperation({
+           ref: reference,
+           ...flowOperationOpts,
+           operation: 'replace-upload',
+           task: uploadAndPublish,
+         })
+         if (coordinated?.busy) console.warn('[ReferenceCard] Flow operation already in flight:', reference?.name)
+       } else {
+         await uploadAndPublish()
+       }
      } catch (e) {
        console.warn('[ReferenceCard] upload processing failed:', e?.message || e)
      } finally {
-       setIsUploading(false)
+       finishUpload()
      }
     }
     reader.readAsDataURL(file)
@@ -223,6 +249,9 @@ export default function ReferenceCard({
   // #R34: reference.syncing 은 모달/일괄 동기화가 백그라운드로 업로드 중일 때 카드에 동일한
   //   업로드 스피너(⏳)를 보이게 하는 전이 플래그(완료 시 false 로 해제).
   const isBusy = isUploading || isGenerating || !!reference.syncing
+  // Sync 버튼/생성 게이트와 같은 술어를 쓴다 — 카드가 "성공"이라 하고 배지가 "미동기화"라 하는
+  //   모순이 구조적으로 불가능해진다.
+  const badgeState = refBadgeState(reference, appMode)
   const hasRefImage = hasImageData(reference)
   const refImgSrc = resolveImageSrc(reference)
 
@@ -335,8 +364,11 @@ export default function ReferenceCard({
           </div>
         )}
         
-        {reference.mediaId && (
+        {badgeState === 'ok' && (
           <span className="uploaded-badge" title={t('reference.uploadedToFlow')}>✅</span>
+        )}
+        {badgeState === 'needs-sync' && (
+          <span className="needs-sync-badge" title={t('reference.needsFlowSync')}>⚠️</span>
         )}
       </div>
       

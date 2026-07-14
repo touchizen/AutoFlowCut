@@ -10,6 +10,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { useImageUpload } from '../../src/hooks/useImageUpload'
+import { syncRefToFlow } from '../../src/utils/flowCharacterSync'
 
 // Minimal File stub
 function makeFile(name = 'photo.png', type = 'image/png') {
@@ -220,5 +221,38 @@ describe('useImageUpload — scope guard (#R28-3)', () => {
     await act(async () => { await result.current.processFile(makeFile()) })
 
     expect(onUploadComplete).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('useImageUpload — Flow character coordinator', () => {
+  it('같은 project/ref sync 중인 상세 모달 업로드는 두 번째 entity 업로드를 시작하지 않는다', async () => {
+    const ref = { id: 71, type: 'character', name: 'Zed', data: 'data:image/png;base64,OLD' }
+    let resolveSync
+    const syncPromise = syncRefToFlow(ref, vi.fn(() => new Promise((resolve) => { resolveSync = resolve })), {
+      projectId: 'project-modal-lock',
+    })
+    for (let i = 0; i < 4; i++) await Promise.resolve()
+
+    const modalUpload = vi.fn().mockResolvedValue({ success: true, entityId: 'DUPLICATE' })
+    const onUploadComplete = vi.fn()
+    const onUploadError = vi.fn()
+    const { result } = renderHook(() => useImageUpload({
+      uploadToFlow: modalUpload,
+      uploadMeta: { type: 'character', name: 'Zed', refId: 71 },
+      onUploadComplete,
+      onUploadError,
+      flowOperation: { enabled: true, ref, projectId: 'project-modal-lock', refIndex: 0 },
+    }))
+
+    let uploadResult
+    await act(async () => { uploadResult = await result.current.processFile(makeFile()) })
+
+    expect(modalUpload).not.toHaveBeenCalled()
+    expect(onUploadComplete).not.toHaveBeenCalled()
+    expect(onUploadError).toHaveBeenCalledTimes(1)
+    expect(uploadResult).toBeNull()
+
+    resolveSync({ success: true, entityId: 'e1', workflowId: 'w1', mediaId: 'm1', registered: true })
+    await syncPromise
   })
 })

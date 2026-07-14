@@ -14,7 +14,7 @@ import ReferenceCard from './ReferenceCard'
 import ReferenceDetailModal from './ReferenceDetailModal'
 import StylePicker from './StylePicker'
 import { toast } from './Toast'
-import { selectUnsyncedRefs, syncRefToFlow, needsComposerRefresh } from '../utils/flowCharacterSync'
+import { selectUnsyncedRefs, syncRefToFlow, needsComposerRefresh, resolveSyncTarget } from '../utils/flowCharacterSync'
 import './ReferencePanel.css'
 
 export default function ReferencePanel({
@@ -93,9 +93,14 @@ export default function ReferencePanel({
 
   // #R34: 미동기화 ref 를 Flow 에 일괄(직렬) 동기화. 공유 flowView DOM 자동화라 반드시 1건씩 순차
   //   실행(동시 실행 시 navigation 이 ERR_ABORTED 로 충돌). 끝나면 Flow SPA 1회 새로고침(이름 반영).
+  // #R37: 동기화 루프는 최대 ~120s 직렬 DOM 자동화다. props 의 references 는 그 사이 갱신돼도
+  //   클로저에 갇혀 stale 이므로, 매 렌더 갱신되는 ref 로 live 상태를 읽는다.
+  const referencesRef = useRef(references)
+  referencesRef.current = references
+
   const handleSyncAll = async () => {
     if (syncingAll) return
-    const targets = selectUnsyncedRefs(references)
+    const targets = selectUnsyncedRefs(references).map(ref => ({ ref, index: references.indexOf(ref) }))
     if (targets.length === 0) return
     setSyncingAll(true)
     let ok = 0, fail = 0
@@ -104,19 +109,55 @@ export default function ReferencePanel({
     // #R34-fix: 직렬 동기화 도중 프로젝트/모드가 바뀌면 이후 결과를 현재(새) 프로젝트 refs 에 반영하지 않는다.
     const startScope = getScopeToken()
     try {
-      for (const ref of targets) {
+      for (const item of targets) {
+        const { ref, index: refIndex } = item
         if (getScopeToken() !== startScope) { console.warn('[ReferencePanel] scope changed during sync-all — aborting remaining'); break }
+        // #R37: targets 는 클릭 시점 스냅샷이다. 루프가 도는 동안 모달 Sync 가 같은 ref 를 끝냈을 수
+        //   있으므로 매 회차 live 로 다시 판단한다 — 스냅샷을 넘기면 그 사이 생긴 entityId 를 못 보고
+        //   재업로드로 빠져 Flow 에 중복 entity 가 생긴다.
+        const live = ref.id != null
+          ? referencesRef.current.find(r => r.id === ref.id)
+          : referencesRef.current[refIndex]
+        const decision = resolveSyncTarget(live)
+        if (decision.action === 'skip') {
+          if (decision.reason === 'already-synced') ok++
+          else console.warn('[ReferencePanel] sync-all skip:', ref?.name, decision.reason)
+          continue
+        }
+        const target = decision.ref
+        const patchTarget = (prev, patch) => prev.map((r, i) => (
+          ref.id != null ? r.id === ref.id : i === refIndex
+        ) ? { ...r, ...patch } : r)
         // #R34: 처리 중인 카드에 업로드 스피너(⏳) 표시(직렬이라 1개씩).
-        onUpdate(prev => prev.map(r => r.id === ref.id ? { ...r, syncing: true } : r))
-        const res = await syncRefToFlow(ref, onUpload)
-        if (getScopeToken() !== startScope) { console.warn('[ReferencePanel] scope changed mid-sync — skipping stale apply'); break }
+        onUpdate(prev => patchTarget(prev, { syncing: true }))
+        let published = false
+        const res = await syncRefToFlow(target, onUpload, {
+          projectId: flowProjectId,
+          scopeToken: startScope,
+          refIndex,
+          // result publish 를 flight 안으로 이동 — setter 전에 key 가 풀려 stale ref 로 재업로드되는 창 제거.
+          publishResult: async (syncResult) => {
+            published = true
+            if (getScopeToken() !== startScope) return
+            onUpdate(prev => patchTarget(prev, { ...(syncResult.patch || {}), syncing: false }))
+          },
+        })
+        if (getScopeToken() !== startScope) {
+          // scope 변경 = 다른 프로젝트. 여기서 쓰면 새 프로젝트의 같은 id 카드를 오염시킨다.
+          //   (syncing 은 런타임 플래그라 프로젝트를 다시 열면 사라진다.)
+          console.warn('[ReferencePanel] scope changed mid-sync — skipping stale apply')
+          break
+        }
+        // #R37: patch 는 성공 여부와 무관하게 항상 반영한다(App sync 게이트와 동일 규칙).
+        //   실패해도 entityId/workflowId 를 보존해야 다음 시도가 재업로드 없이 등록만 복구한다.
+        //   버리면 다음 Sync 가 다시 업로드하고 Flow 에 중복 entity 가 쌓인다.
+        // busy/timeout 처럼 task 자체가 시작되지 않으면 publish callback 이 안 불린다 — spinner 만 해제.
+        if (!published) onUpdate(prev => patchTarget(prev, { syncing: false }))
         if (res.ok) {
           ok++
-          if (needsComposerRefresh(ref, res.result)) needsRefresh = true
-          onUpdate(prev => prev.map(r => r.id === ref.id ? { ...r, ...res.patch, syncing: false } : r))
+          if (needsComposerRefresh(target, res.result)) needsRefresh = true
         } else {
           fail++
-          onUpdate(prev => prev.map(r => r.id === ref.id ? { ...r, syncing: false } : r))
           console.warn('[ReferencePanel] sync-all failed for', ref?.name, res.error)
         }
       }
@@ -285,6 +326,8 @@ export default function ReferencePanel({
               onShowDetail={setDetailIndex}
               projectName={projectName}
               getScopeToken={getScopeToken}
+              appMode={appMode}
+              flowProjectId={flowProjectId}
             />
           ))}
           

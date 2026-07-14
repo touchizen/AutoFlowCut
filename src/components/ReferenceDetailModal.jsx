@@ -8,7 +8,7 @@ import { resolveImageSrc, hasImageData } from '../utils/formatters'
 import { useImageUpload } from '../hooks/useImageUpload'
 import { fileSystemAPI } from '../hooks/useFileSystem'
 import { applyEntityRegistrationPatch } from '../utils/refEntityRegistration'
-import { syncRefToFlow, needsComposerRefresh } from '../utils/flowCharacterSync'
+import { syncRefToFlow, needsComposerRefresh, refBadgeState } from '../utils/flowCharacterSync'
 import PromptInput from './PromptInput'
 import { toast } from './Toast'
 import Modal from './Modal'
@@ -83,6 +83,14 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
     // Codex #3: pass type/name/refId so Flow character upload can route to
     // flowUploadCharacterEntity and return entityId/workflowId/registered.
     uploadMeta: { type: editData.type, name: editData.name, refId: editData.id },
+    // #R38: 상세 모달 직접 업로드도 sync/생성과 같은 project-scoped 공유 flowView 조정기를 쓴다.
+    // onUploadComplete 의 부모 state publish 까지 lock 안에서 끝나므로 stale ref 재진입도 막힌다.
+    flowOperation: {
+      enabled: appMode === 'flow' && editData.type === 'character',
+      ref: editData,
+      projectId: flowProjectId,
+      refIndex: index,
+    },
     onUploadComplete: (result) => {
       // R31 review fix: 새 이미지로 교체 시 filePath/dataStorage 도 클리어 해야
       // handleSave 의 `!editData.filePath` 가드가 saveReference 를 새로 호출 →
@@ -388,24 +396,34 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
     onUpdate(idx, { ...editData, syncing: true })
     onClose()
     ;(async () => {
-      const res = await syncRefToFlow(refSnapshot, onUpload)
+      let published = false
+      const res = await syncRefToFlow(refSnapshot, onUpload, {
+        projectId: flowProjectId,
+        scopeToken: startScope,
+        refIndex: idx,
+        // 부모 state publish 까지 single-flight 안에서 끝낸다. setter 뒤 stale snapshot 재진입도 합류한다.
+        publishResult: async (syncResult) => {
+          published = true
+          if (getScopeToken() !== startScope) return
+          onUpdate(idx, { ...refSnapshot, ...(syncResult.patch || {}), syncing: false })
+        },
+      })
       if (getScopeToken() !== startScope) {
+        // scope 변경 = 다른 프로젝트. 여기서 옛 snapshot 을 onUpdate 하면 ref id 가 프로젝트별로
+        //   재사용되므로 새 프로젝트의 같은 id 카드를 옛 값으로 덮어쓴다. 아무것도 쓰지 않는다.
+        //   (syncing 은 런타임 플래그라 프로젝트를 다시 열면 사라진다.)
         console.warn('[ReferenceDetail] scope changed during sync — skipping stale apply')
         return
       }
+      // busy/timeout 은 task/publish callback 이 실행되지 않는다 — 런타임 spinner 만 해제한다.
+      if (!published) onUpdate(idx, { ...refSnapshot, syncing: false })
       if (res.ok) {
-        onUpdate(idx, { ...refSnapshot, ...res.patch, syncing: false })
         // 이름을 SPA 에 못 넣었을 때만 새로고침(나갔다 재진입)한다.
         if (needsComposerRefresh(refSnapshot, res.result)) {
           try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
         }
-        if (refSnapshot.type === 'character' && res.patch.flowNameSyncStatus !== 'synced') {
-          toast.error(isKo ? `${refSnapshot.name}: 등록됐지만 이름 동기화 실패` : `${refSnapshot.name}: registered but name sync failed`)
-        } else {
-          toast.success(isKo ? `Flow 동기화 완료: ${refSnapshot.name}` : `Synced to Flow: ${refSnapshot.name}`)
-        }
+        toast.success(isKo ? `Flow 동기화 완료: ${refSnapshot.name}` : `Synced to Flow: ${refSnapshot.name}`)
       } else {
-        onUpdate(idx, { ...refSnapshot, syncing: false })  // 실패 시 스피너 해제
         toast.error((isKo ? '동기화 실패: ' : 'Sync failed: ') + (res.error || 'unknown'))
       }
     })()
@@ -629,8 +647,9 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
           {/* 상태 정보 */}
           <div className="ref-detail-status">
             {(editData.mediaId || imageSize) && (
-              <span className="status-badge success">
-                {editData.mediaId && `✅ ${t('reference.uploadedToFlow')}`}
+              <span className={`status-badge ${refBadgeState(editData, appMode) === 'needs-sync' ? 'warning' : 'success'}`}>
+                {refBadgeState(editData, appMode) === 'ok' && `✅ ${t('reference.uploadedToFlow')}`}
+                {refBadgeState(editData, appMode) === 'needs-sync' && `⚠️ ${t('reference.needsFlowSync')}`}
                 {editData.mediaId && imageSize && ' · '}
                 {imageSize && `${imageSize.width} × ${imageSize.height}`}
               </span>
@@ -653,7 +672,9 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
                     className="btn-secondary"
                     style={{ padding: '2px 8px', fontSize: '0.75rem' }}
                     onClick={handleSync}
-                    disabled={!hasImageData(editData)}
+                    // #R37: 이미 동기화가 진행 중이면 막는다 — 모달은 닫고 백그라운드로 돌기 때문에
+                    //   다시 눌리면 같은 ref 를 두 번 업로드하고 Flow 가 새 entity 를 또 만든다.
+                    disabled={!hasImageData(editData) || !!reference.syncing}
                     title={isKo ? '동기화 후 모달이 닫히고 백그라운드로 진행(@멘션/레퍼런스 복구)' : 'Closes modal and syncs in background'}
                   >
                     🔄 {isKo ? '동기화' : 'Sync'}

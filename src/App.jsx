@@ -60,7 +60,7 @@ import { frameImageFor, stripOmniEndFrame } from './utils/framePairImages'
 import { saveGalleryFrame } from './utils/galleryUpload'
 import { isUsableVideoReference } from './utils/videoPromptReferences'
 import { toast } from './components/Toast'
-import { selectUnsyncedMentionedRefs, syncRefToFlow, isRefSynced } from './utils/flowCharacterSync'
+import { selectUnsyncedMentionedRefs, syncRefToFlow, isRefSynced, resolveSyncTarget, planSyncGateCompletion } from './utils/flowCharacterSync'
 import { getAuthErrorMessage, getAuthRequiredMessage } from './utils/authMessages'
 
 // Components
@@ -771,7 +771,8 @@ function App() {
 
   // Reference 생성
   const { generatingRefs, stoppingRefs, preparingRefs, handleGenerateRef, handleGenerateAllRefs, stopGenerateAllRefs } = useReferenceGeneration({
-    settings, references, setReferences, genAPI, addPendingSave, openSettings, t, selectedStyleRefId, styleThumbnails, generationQueue, flowProjectReady
+    settings, references, setReferences, genAPI, addPendingSave, openSettings, t, selectedStyleRefId, styleThumbnails, generationQueue, flowProjectReady,
+    flowProjectId: _flowProjectId,
   })
 
   // Scene 재생성
@@ -1726,27 +1727,68 @@ function App() {
     //   tick 에 stale). character 는 업로드 성공이어도 displayName PATCH 실패면 'failed' 라 미동기화 —
     //   patch.flowNameSyncStatus 로 실제 동기화 여부를 판정해 카운트한다(업로드성공=성공으로 오인 금지).
     let patchedRefs = scenesHook.references
+    const syncFlowProjectId = flowProjectIdRef.current
+    const syncScope = `${modeRef.current ?? ''}::${settings.projectName ?? ''}`
+    const gateTargets = syncGate.refs.map((ref) => {
+      const refIndex = ref.id != null
+        ? patchedRefs.findIndex(r => r.id === ref.id)
+        : patchedRefs.findIndex(r => r === ref || (
+          r?.id == null && r?.type === ref.type && r?.name === ref.name
+          && (r?.filePath || r?.imagePath || '') === (ref.filePath || ref.imagePath || '')
+        ))
+      return { ref, refIndex }
+    })
+    const patchAt = (list, ref, refIndex, patch) => list.map((r, i) => (
+      ref.id != null ? r.id === ref.id : i === refIndex
+    ) ? { ...r, ...patch } : r)
     try {
-      for (const ref of syncGate.refs) {
-        const res = await syncRefToFlow(ref, genAPI.uploadReference)
-        if (res.patch) {
-          // 패치(entityId/failed 마킹 포함)는 동기화 성공 여부와 무관하게 항상 반영(재시도 후보 유지).
-          patchedRefs = patchedRefs.map(r => r.id === ref.id ? { ...r, ...res.patch } : r)
-          updateReferences(prev => prev.map(r => r.id === ref.id ? { ...r, ...res.patch } : r))
+      for (const { ref, refIndex } of gateTargets) {
+        // #R37: syncGate.refs 는 모달을 열 때의 스냅샷이다. 루프 매 회차에 live 로 다시 판단한다 —
+        //   스냅샷을 넘기면 그 사이 끝난 sync 의 entityId 를 못 보고 재업로드로 빠져 중복이 생긴다.
+        //   (referencesRef 는 매 렌더 갱신되는 동기 최신값. scenesHook.references 는 이 async 루프에서 stale.)
+        const live = ref.id != null
+          ? referencesRef.current.find(r => r.id === ref.id)
+          : referencesRef.current[refIndex]
+        const decision = resolveSyncTarget(live)
+        if (decision.action === 'skip') {
+          if (decision.reason === 'already-synced') {
+            ok++
+            // ⚠️ live 를 patchedRefs 에 병합해야 한다 — 이 배열이 생성에 넘어가는 authoritative refs 다
+            //   (useAutomation currentRefsOverride). 안 하면 "동기화 성공"이라 보고해놓고 생성에는
+            //   entity 없는 클릭 시점 stale ref 가 넘어가 멘션이 안 붙는다.
+            patchedRefs = patchAt(patchedRefs, ref, refIndex, live)
+          } else {
+            fail++
+            console.warn('[App] sync-gate skip:', ref?.name, decision.reason)
+          }
+          continue
         }
+        const res = await syncRefToFlow(decision.ref, genAPI.uploadReference, {
+          projectId: syncFlowProjectId,
+          scopeToken: syncScope,
+          refIndex,
+          // patch publish 를 flight 안에서 실행 — React setter 전에 같은 stale ref 가 재진입하는 창 제거.
+          publishResult: async (syncResult) => {
+            if (!syncResult.patch) return
+            patchedRefs = patchAt(patchedRefs, ref, refIndex, syncResult.patch)
+            updateReferences(prev => patchAt(prev, ref, refIndex, syncResult.patch))
+          },
+        })
         const synced = res.ok && isRefSynced(res.patch ? { ...ref, ...res.patch } : ref)
         if (synced) ok++
         else { fail++; console.warn('[App] sync-gate sync incomplete for', ref?.name, res.error || res.patch?.flowNameSyncStatus) }
       }
       try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
-      // #R34-fix: 하나도 동기화되지 않았으면(전부 실패) 생성을 시작하지 않는다 — 미동기화 @멘션은
-      //   해석 실패/잘못된 폴백으로 이어져 배치가 무조건 실패한다. 모달을 유지해 재시도/취소하게 둔다.
-      if (ok === 0 && fail > 0) {
-        toast.error(isKo ? `Flow 동기화 실패 (${fail}) — 동기화 전이라 생성을 시작하지 않습니다` : `All ${fail} sync(s) failed — not starting generation`)
+      // required mention sync 는 all-or-nothing. 하나라도 실패하면 혼합 resolved/unresolved 는 하드 에러,
+      // all-unresolved+mediaId 는 plain-image 로 조용히 degrade 하므로 원래 생성을 시작하지 않는다.
+      const completion = planSyncGateCompletion(ok, fail)
+      if (!completion.proceed) {
+        toast.error(isKo
+          ? `Flow 동기화 미완료 (${ok} 성공 · ${fail} 실패) — 생성을 시작하지 않습니다`
+          : `Flow sync incomplete (${ok} synced, ${fail} failed) — generation not started`)
         return
       }
-      if (fail > 0) toast.warning(isKo ? `동기화 ${ok} 성공 · ${fail} 실패 — 생성을 계속합니다` : `Synced ${ok}, ${fail} failed — generating anyway`)
-      else toast.success(isKo ? `Flow 동기화 완료 (${ok}) — 생성 시작` : `Synced ${ok} — generating`)
+      toast.success(isKo ? `Flow 동기화 완료 (${ok}) — 생성 시작` : `Synced ${ok} — generating`)
       const proceed = syncGate.proceed
       setSyncGate(null)
       proceed?.(patchedRefs)

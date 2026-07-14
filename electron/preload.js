@@ -179,6 +179,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   flowClearGenerations: () => ipcRenderer.invoke('flow:clear-generations'),
   flowUploadReference: (payload) => ipcRenderer.invoke('flow:upload-reference', payload),
   flowGenerateCharacter: (payload) => ipcRenderer.invoke('flow:generate-character', payload),
+  flowRerollCharacter: (payload) => ipcRenderer.invoke('flow:reroll-character', payload),
   flowUploadCharacterEntity: (payload) => ipcRenderer.invoke('flow:upload-character-entity', payload),
   flowFetchMedia: (payload) => ipcRenderer.invoke('flow:fetch-media', payload),
   flowGenerateVideoT2V: (payload) => ipcRenderer.invoke('flow:generate-video-t2v', payload),
@@ -193,6 +194,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   flowGenerateScene: (payload) => ipcRenderer.invoke('flow:generate-scene', payload),
   refreshFlowComposer: (payload) => ipcRenderer.invoke('flow:refresh-composer', payload),  // #R33: 등록/동기화 후 SPA 새로고침
   renameFlowCharacter: (payload) => ipcRenderer.invoke('flow:rename-character', payload),  // #R34: 기존 entity displayName 재동기화(이름 변경)
+  flowRegisterCharacterEntity: (payload) => ipcRenderer.invoke('flow:register-character-entity', payload),  // #R37: 재업로드 없이 등록 PATCH 만 복구
   setStartupProject: (params) => ipcRenderer.invoke('flow:set-startup-project', params),
   openFlowProject: (params) => ipcRenderer.invoke('flow:open-project', params),
   newFlowProject: () => ipcRenderer.invoke('flow:new-project'),

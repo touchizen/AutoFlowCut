@@ -86,3 +86,41 @@ export function selectRefsToRegister(references, usedRefIds, mode) {
     return !r.mediaId || needsEntityRegistration(r, mode)
   })
 }
+
+/**
+ * #R37: 새 이미지가 ref 에 들어올 때의 entity 필드 패치(순수).
+ *
+ * fresh entity 가 없으면(API 모드 생성/업로드 등 entity 를 안 만드는 경로) character 의 옛
+ * entityId/workflowId 를 **반드시 비운다**. 안 그러면 이미지만 새것이고 id 는 옛 캐릭터를 가리키는
+ * 상태가 되고, 그 ref 를 Sync 하면 planCharacterSync 가 'repair-registration' 으로 가서 옛 entity 만
+ * 다시 PATCH 한다 — 새 이미지는 영영 업로드되지 않고 @멘션은 옛 얼굴로 생성된다.
+ *
+ * ReferenceCard(#R31-3)/ReferenceDetailModal(#R16-3)이 인라인으로 지키던 정책을 한 곳으로 모은 것.
+ *
+ * @param {object} ref - 새 이미지가 들어갈 ref
+ * @param {object|null} result - 업로드/생성 결과 (entityId 가 있으면 fresh 등록)
+ * @returns {object} ref 에 spread 할 패치. fresh entity 가 없으면 entity 필드를 전부 null 로 비운다.
+ */
+export function entityPatchForNewImage(ref, result) {
+  if (result?.entityId) return applyEntityRegistrationPatch(ref, result, true)
+  // 타입과 무관하게 비운다. character 일 때만 비우면 character→scene→재생성→character 로 되돌렸을 때
+  //   옛 entityId 가 부활한다(타입 변경 UI 는 entity 필드를 보존한다) → 새 이미지가 옛 얼굴로 @멘션된다.
+  //   비-character 는 entity 개념이 없어 null 로 채워도 무해하므로, "새 이미지엔 옛 entity 가 없다" 를
+  //   타입과 상관없는 불변식으로 둔다.
+  return { entityId: null, workflowId: null, registered: null, flowNameSyncStatus: null }
+}
+
+/**
+ * #R37: ref 에서 이미지를 제거할 때 함께 비워야 하는 필드(순수).
+ *
+ * Flow entity 필드까지 비우지 않으면, 이미지가 없는 ref 가 여전히 옛 entityId 를 들고 있어
+ * planCharacterSync 가 'repair-registration' 으로 가서 옛 entity 를 다시 등록한다 —
+ * 사용자는 이미지를 지웠는데 @멘션은 옛 얼굴로 계속 생성된다.
+ * ReferenceCard 의 '이미지 제거' 는 이 정책을 지키고 있었으나 MCP 경로가 빠져 있었다.
+ */
+export function clearedImageFields() {
+  return {
+    data: null, filePath: null, mediaId: null, caption: null, dataStorage: null,
+    entityId: null, workflowId: null, registered: null, flowNameSyncStatus: null,
+  }
+}

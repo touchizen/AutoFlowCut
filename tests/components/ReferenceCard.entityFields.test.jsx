@@ -10,6 +10,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, act } from '@testing-library/react'
+import { syncRefToFlow } from '../../src/utils/flowCharacterSync'
 
 vi.mock('../../src/hooks/useFileSystem', () => ({
   fileSystemAPI: {
@@ -110,6 +111,36 @@ describe('ReferenceCard — entity field propagation (Codex #3)', () => {
     expect(lastCall.workflowId).toBe('wf-001')
     expect(lastCall.flowNameSyncStatus).toBe('synced')
     expect(lastCall.registered).toBe(true)
+  })
+
+  it('같은 Flow project/ref sync 중이면 카드 이미지 교체가 entity 를 추가 업로드하지 않는다', async () => {
+    let resolveSync
+    const syncRef = { ...baseRef, data: 'data:image/png;base64,OLD' }
+    const syncPromise = syncRefToFlow(syncRef, vi.fn(() => new Promise((resolve) => { resolveSync = resolve })), {
+      projectId: 'flow-project-card',
+    })
+    for (let i = 0; i < 4; i++) await Promise.resolve()
+
+    const onUpload = vi.fn().mockResolvedValue({ success: true, entityId: 'duplicate' })
+    const { container } = render(
+      <ReferenceCard
+        reference={baseRef}
+        index={0}
+        onUpdate={vi.fn()}
+        onRemove={vi.fn()}
+        onUpload={onUpload}
+        t={(k) => k}
+        appMode="flow"
+        flowProjectId="flow-project-card"
+      />
+    )
+
+    await triggerUpload(container)
+    expect(onUpload).not.toHaveBeenCalled()
+
+    for (let i = 0; i < 20 && !resolveSync; i++) await Promise.resolve()
+    resolveSync({ success: true, entityId: 'e1', workflowId: 'w1', mediaId: 'm1', registered: true })
+    await syncPromise
   })
 
   it('API/plain upload (no entity fields): onUpdate has mediaId only, no spurious entityId', async () => {

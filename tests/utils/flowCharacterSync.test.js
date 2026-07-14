@@ -7,7 +7,9 @@ vi.mock('../../src/hooks/useFileSystem', () => ({
   fileSystemAPI: { readFileByPath: vi.fn().mockResolvedValue({ success: true, data: 'data:image/png;base64,FROMFILE' }) },
 }))
 
-import { isRefSynced, selectUnsyncedRefs, selectUnsyncedMentionedRefs, syncRefToFlow, needsComposerRefresh } from '../../src/utils/flowCharacterSync'
+import * as flowSync from '../../src/utils/flowCharacterSync'
+
+const { isRefSynced, selectUnsyncedRefs, selectUnsyncedMentionedRefs, syncRefToFlow, needsComposerRefresh } = flowSync
 
 describe('#R34: isRefSynced', () => {
   it('character → entityId + synced', () => {
@@ -51,6 +53,10 @@ describe('#R34: selectUnsyncedMentionedRefs (생성 전 가드)', () => {
   it('한국어 조사 멘션(@king이)도 인식', () => {
     expect(selectUnsyncedMentionedRefs([{ prompt: '@king이 들어온다' }], refs).map(r => r.id)).toEqual([1])
   })
+  it('id 없는 legacy/CSV character 도 생성 전 sync gate 대상에 포함', () => {
+    const legacy = { id: null, type: 'character', name: 'legacyzed', data: 'x', flowNameSyncStatus: 'failed' }
+    expect(selectUnsyncedMentionedRefs([{ prompt: '@legacyzed enters' }], [legacy])).toEqual([legacy])
+  })
 })
 
 describe('#R34: syncRefToFlow', () => {
@@ -93,6 +99,20 @@ describe('#R34: syncRefToFlow', () => {
   it('이름 없으면 ok:false', async () => {
     const res = await syncRefToFlow({ id: 1, type: 'character', name: '', data: 'x' }, vi.fn())
     expect(res.ok).toBe(false)
+  })
+})
+
+describe('planSyncGateCompletion — required mention sync 는 all-or-nothing', () => {
+  const plan = (ok, fail) => flowSync.planSyncGateCompletion?.(ok, fail)
+
+  it('전부 성공하면 생성 진행', () => {
+    expect(plan(2, 0)).toEqual({ proceed: true, outcome: 'complete' })
+  })
+  it('전부 실패하면 생성 차단', () => {
+    expect(plan(0, 2)).toEqual({ proceed: false, outcome: 'incomplete' })
+  })
+  it('부분 성공도 unresolved mention 이 남으므로 생성 차단', () => {
+    expect(plan(1, 1)).toEqual({ proceed: false, outcome: 'incomplete' })
   })
 })
 

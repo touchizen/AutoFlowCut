@@ -3,7 +3,7 @@
  */
 
 import { useState, useRef, useCallback } from 'react'
-import { applyEntityRegistrationPatch } from '../utils/refEntityRegistration'
+import { entityPatchForNewImage } from '../utils/refEntityRegistration'
 import { RESOURCE, STYLE_PRESETS } from '../config/defaults'
 import { fileSystemAPI } from './useFileSystem'
 import { checkFolderPermission, checkAuthToken, checkFlowProjectReady } from '../utils/guards'
@@ -15,6 +15,7 @@ import { isStyleReference } from '../services/styleService'
 import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 import { clampInt } from '../utils/clampInt'
 import { getAuthErrorMessage, getAuthRequiredMessage } from '../utils/authMessages'
+import { runFlowCharacterOperation } from '../utils/flowCharacterCoordinator'
 
 // 1~3초 랜덤 딜레이
 const randomDelay = () => new Promise(r => setTimeout(r, 1000 + Math.random() * 2000))
@@ -36,7 +37,7 @@ async function mapWithConcurrency(items, mapper, concurrency = 5) {
   return results
 }
 
-export function useReferenceGeneration({ settings, references, setReferences, genAPI, addPendingSave, openSettings, pendingSavesCount = 0, t, selectedStyleRefId, styleThumbnails, generationQueue, flowProjectReady = true }) {
+export function useReferenceGeneration({ settings, references, setReferences, genAPI, addPendingSave, openSettings, pendingSavesCount = 0, t, selectedStyleRefId, styleThumbnails, generationQueue, flowProjectReady = true, flowProjectId = null }) {
   const [generatingRefs, setGeneratingRefs] = useState([])
   const [stoppingRefs, setStoppingRefs] = useState(false)
   const [preparingRefs, setPreparingRefs] = useState(false)  // 배치 준비 중 (권한/토큰/썸네일 업로드)
@@ -199,9 +200,10 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     // R27 review fix: generatedAt 세팅 — references/{name}.png 가 같은 경로를
     // 덮어쓰므로 resolveImageSrc 의 ?v=<version> 캐시 키가 갱신되어야 Chromium
     // 이 이전 디코딩 캐시를 버리고 새 이미지 표시.
-    const entityPatch = genResult?.entityId
-      ? applyEntityRegistrationPatch({ ...ref, mediaId }, genResult, true)
-      : null
+    // #R37: fresh entity 가 없으면(API 모드 재생성) character 의 옛 entityId/workflowId 를 비운다 —
+    //   안 그러면 이미지만 새것이고 id 는 옛 캐릭터를 가리켜, 이후 Sync 가 repair 로 빠져 옛 entity 만
+    //   다시 PATCH 하고 새 이미지는 영영 업로드되지 않는다(ReferenceCard #R31-3 와 동일 정책).
+    const entityPatch = entityPatchForNewImage({ ...ref, mediaId }, genResult)
     // 서버엔 이름이 등록됐지만 SPA 가 옛 이름('제목 없는 캐릭터')을 캐시한 채면 @멘션이 새 이름을
     //   못 찾는다. main 이 상세페이지 이름칸 타이핑으로 스토어를 갱신하지 못했을 때만(nameApplied:false)
     //   기존 방식(프로젝트 나갔다 재진입)으로 폴백한다 — 성공했으면 그 왕복을 통째로 건너뛴다.
@@ -295,25 +297,48 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       const refSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
         ? settings.seedNo
         : null
-      // #R32-2: 선택된 이미지 모델(settings.imageModel)을 전달 — 안 넘기면 useGenAPI 가 DEFAULT 로
-      //   폴백해 비-기본 BYOK 모델 선택이 ref 생성에 반영되지 않는다(씬 생성과 동일하게 model 전달).
-      const result = await genAPI.generateImage(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: refSeed, aspectRatio: settings.aspectRatio, model: settings.imageModel, purpose: 'reference', ref: { id: ref.id, name: ref.name, type: ref.type, category: ref.category } })
+      const generateAndPublish = async () => {
+        // #R32-2: 선택된 이미지 모델(settings.imageModel)을 전달 — 안 넘기면 useGenAPI 가 DEFAULT 로
+        //   폴백해 비-기본 BYOK 모델 선택이 ref 생성에 반영되지 않는다(씬 생성과 동일하게 model 전달).
+        const result = await genAPI.generateImage(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: refSeed, aspectRatio: settings.aspectRatio, model: settings.imageModel, purpose: 'reference', ref: { id: ref.id, name: ref.name, type: ref.type, category: ref.category, entityId: ref.entityId, workflowId: ref.workflowId } })
 
-      if (result.success && result.images?.length > 0) {
-        return await _processAndSaveImage(result.images, index, ref, '[Reference]', result)
-      } else if (!result.success) {
-        const errorMsg = result.error || ''
-        const isAuthError = errorMsg.includes('401') || errorMsg.includes('auth') || errorMsg.includes('token') || errorMsg.includes('login')
-        const isServerError = errorMsg.includes('500') || errorMsg.includes('502') || errorMsg.includes('503') || errorMsg.includes('server')
-        const isQuota = _maybeTriggerQuotaStop(errorMsg)
-        if (!isQuota) toast.error(t('toast.generateFailed', { error: result.error || 'Unknown error' }))
+        if (result.success && result.images?.length > 0) {
+          return await _processAndSaveImage(result.images, index, ref, '[Reference]', result)
+        } else if (!result.success) {
+          const errorMsg = result.error || ''
+          const isAuthError = errorMsg.includes('401') || errorMsg.includes('auth') || errorMsg.includes('token') || errorMsg.includes('login')
+          const isServerError = errorMsg.includes('500') || errorMsg.includes('502') || errorMsg.includes('503') || errorMsg.includes('server')
+          const isQuota = _maybeTriggerQuotaStop(errorMsg)
+          if (!isQuota) toast.error(t('toast.generateFailed', { error: result.error || 'Unknown error' }))
+          setGeneratingRefs(prev => prev.filter(i => i !== index))
+          // #R26-5: 단일-ref 경로도 배치 경로(R25-5)와 동일하게 인증 실패를 errorKind:'auth' 로 분류.
+          setReferences(prev => prev.map((r, i) => i === index
+            ? { ...r, status: 'error', errorMessage: result.error || 'Generation failed', ...((result.authFailed || isAuthError) ? { errorKind: 'auth' } : {}) }
+            : r))
+          return { success: false, authError: isAuthError, serverError: isServerError, quotaExhausted: isQuota }
+        }
         setGeneratingRefs(prev => prev.filter(i => i !== index))
-        // #R26-5: 단일-ref 경로도 배치 경로(R25-5)와 동일하게 인증 실패를 errorKind:'auth' 로 분류.
-        setReferences(prev => prev.map((r, i) => i === index
-          ? { ...r, status: 'error', errorMessage: result.error || 'Generation failed', ...((result.authFailed || isAuthError) ? { errorKind: 'auth' } : {}) }
-          : r))
-        return { success: false, authError: isAuthError, serverError: isServerError, quotaExhausted: isQuota }
+        setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: 'Unknown failure' } : r))
+        return { success: false }
       }
+
+      if (genAPI?.mode === 'flow' && ref.type === 'character') {
+        const coordinated = await runFlowCharacterOperation({
+          ref,
+          projectId: flowProjectId,
+          scopeToken: `flow::${settings.projectName ?? ''}`,
+          refIndex: index,
+          operation: 'generate-character',
+          task: generateAndPublish,
+        })
+        if (coordinated?.busy) {
+          setGeneratingRefs(prev => prev.filter(i => i !== index))
+          setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'pending', errorMessage: null } : r))
+          return { success: false, busy: true, error: coordinated.error }
+        }
+        return coordinated
+      }
+      return await generateAndPublish()
     } catch (error) {
       console.error('Reference generation error:', error)
       const errorMsg = error.message || ''
@@ -327,8 +352,6 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       return { success: false, authError: isAuthError, serverError: isServerError }
     }
 
-    setGeneratingRefs(prev => prev.filter(i => i !== index))
-    setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: 'Unknown failure' } : r))
     return { success: false }
   }
 
@@ -550,6 +573,15 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
             console.warn('[GenerateAllRefs] Ref not found at index:', index, '— skipping')
             continue
           }
+          // Flow character submitGeneration 은 내부적으로 동기 DOM 생성인데 결과 publish 는 나중 collect 로
+          // 미뤘다. 그 사이 coordinator key 가 풀리면 모달/MCP 가 같은 ref 를 또 생성할 수 있다.
+          // 단건 경로를 그대로 재사용해 generate→저장→setReferences 전 수명을 한 lock 안에 둔다.
+          if (genAPI?.mode === 'flow' && ref.type === 'character') {
+            const direct = await _executeGenerateRef(index, true, effectiveStyleId, ref)
+            if (!direct?.success && !direct?.busy) submitFailCount++
+            else if (direct?.success) submitFailCount = 0
+            continue
+          }
           // #R28-4: style-ref 업로드(_prepareStyleRefs)도 busy 로 덮는다 — preparingRefs 는 runPhase
           //   직전에 꺼지고 generatingRefs 는 prepare 후에야 켜져, 그 사이 첫 item 의 Flow style upload
           //   동안 refBatchRunning 이 false 가 되어 project/mode 전환이 열린다. prepare 전에 켜두면
@@ -567,7 +599,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
           const batchSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
             ? settings.seedNo
             : null
-          const submitResult = await genAPI.submitGeneration(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: batchSeed, aspectRatio: settings.aspectRatio, model: settings.imageModel, purpose: 'reference', ref: { id: ref.id, name: ref.name, type: ref.type, category: ref.category } })
+          const submitResult = await genAPI.submitGeneration(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: batchSeed, aspectRatio: settings.aspectRatio, model: settings.imageModel, purpose: 'reference', ref: { id: ref.id, name: ref.name, type: ref.type, category: ref.category, entityId: ref.entityId, workflowId: ref.workflowId } })
 
           if (submitResult?.success && submitResult.generationId) {
             pendingQueue.push({ generationId: submitResult.generationId, index, ref })

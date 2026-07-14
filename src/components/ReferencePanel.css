@@ -414,11 +414,17 @@
   font-size: 0.75rem;
 }
 
-.uploaded-badge {
+.uploaded-badge,
+.needs-sync-badge {
   position: absolute;
   top: 4px;
   right: 4px;
   font-size: 0.8rem;
+}
+
+/* 미동기화는 눈에 띄어야 한다 — 이 상태로 생성하면 @멘션이 조용히 안 붙는다. */
+.needs-sync-badge {
+  cursor: help;
 }
 
 .ref-name-input {

@@ -148,6 +148,27 @@ export function isCharacterRefCall(callOpts = {}) {
 }
 
 /**
+ * 캐릭터 재생성을 reroll(기존 entity 재사용)로 보낼지, create(새 entity)로 보낼지 (순수 결정).
+ *
+ * ⚠️ 현재는 항상 'create' 다. reroll 배선은 **의도적으로 꺼둔 상태**다 — 리뷰에서 두 결함이 확인됐다:
+ *
+ *   1) reroll 의 재등록은 buildEntityImageBody(imageReferences 만) 를 쓴다 — **displayName 이 없다**.
+ *      그런데 registered:true 를 돌려주므로 applyEntityRegistrationPatch 가 'synced' 로 마킹한다.
+ *      즉 이름이 서버에 등록된 적 없는 entity 가 "동기화 완료"가 되어 멘션 피커가 이름을 못 찾는다 —
+ *      이 작업이 rename 경로를 금지한 것과 정확히 같은 버그 부류다.
+ *   2) reroll 핸들러는 {entityId, prompt, displayName} 만 받는다 — aspectRatio/seed/model 을 버린다
+ *      (create 경로의 applyAgentDefaults + setFlowPageInject 가 없다).
+ *
+ * 켜려면: (a) 재등록을 buildEntityRegisterBody 로 바꾸고, (b) create 의 arm 블록을 reroll 에도 적용하고,
+ * (c) 실제 Flow 에서 reroll 1회를 눈으로 검증(entity 수가 1로 유지되는지, 이름/화면비가 맞는지)해야 한다.
+ * 그 전까지는 재생성이 새 entity 를 만드는 기존 동작을 유지한다 — 잘못된 이미지/이름으로 조용히
+ * 생성되는 것보다 낫다(중복은 배지가 정직하게 경고한다).
+ */
+export function planCharacterGeneration(_ref) {
+  return 'create'
+}
+
+/**
  * useFlowEngine(opts) — Flow 모드 엔진 훅.
  * 21키 계약을 반환. token/projectId는 useState, 메서드는 useCallback으로 안정 참조.
  *
@@ -267,14 +288,27 @@ export function useFlowEngine(opts = {}) {
 
   // 캐릭터 ref 를 /characters 컴포저에서 생성한다. 스타일은 styledPrompt(텍스트)로 이미 반영돼 있고,
   // 화면비/seed 는 주입해야 한다 — 미주입 시 Flow 기본값(관측상 9:16)으로 나간다.
-  const generateCharacterRef = (prompt, callOpts, pid) => api().flowGenerateCharacter({
-    prompt,
-    displayName: callOpts.ref?.name,
-    projectId: pid,
-    aspectRatio: callOpts.aspectRatio,
-    seed: callOpts.seed,
-    model: callOpts.model,
-  })
+  const generateCharacterRef = async (prompt, callOpts, pid) => {
+    const createPayload = {
+      prompt,
+      displayName: callOpts.ref?.name,
+      projectId: pid,
+      aspectRatio: callOpts.aspectRatio,
+      seed: callOpts.seed,
+      model: callOpts.model,
+    }
+    if (planCharacterGeneration(callOpts.ref) === 'reroll') {
+      const reroll = await api().flowRerollCharacter({
+        ...createPayload,
+        entityId: callOpts.ref.entityId,
+      })
+      // main handler 가 확인한 reroll 400 INVALID_ARGUMENT 만 stale 로 인정한다. 다른 실패에서
+      // create 로 폴백하면 auth/quota/server 오류 때마다 duplicate entity 를 만든다.
+      if (reroll?.staleEntity === true) return api().flowGenerateCharacter(createPayload)
+      return reroll
+    }
+    return api().flowGenerateCharacter(createPayload)
+  }
 
   const generateImage = useCallback(async (prompt, referenceImages = [], callOpts = {}) => {
     try {

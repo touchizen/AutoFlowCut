@@ -23,6 +23,7 @@ import {
   buildCharacterResult,
   downloadFifeAsBase64,
   isStaleEntityErrorBody,
+  isStaleRegistrationResponse,
   parseUploadImageResponse,
   buildCharactersUrl,
 } from '../flow-character-api.js'
@@ -1001,6 +1002,58 @@ export function registerCharacterIPC(ipcMain, deps) {
       return { success: false, error: e.message }
     }
   }
+
+  /**
+   * #R37: 등록 복구 — 이미 만들어진 entity 에 register PATCH 만 다시 친다(재업로드 없음).
+   *
+   * uploadImage 는 부를 때마다 새 entity 를 만든다. 업로드는 성공했는데 등록 PATCH 만 실패한 ref 를
+   * 재업로드로 재시도하면 같은 캐릭터가 Flow 에 계속 쌓인다(실측: 사용자 Flow 에 Zed 4개).
+   * entityId/workflowId 는 이미 손에 있으니 PATCH 만 다시 치면 된다.
+   *
+   * rename 이 아니라 register 를 쓴다: rename 은 displayName 만 쓰지만 register 는
+   * imageReferences[{workflowId}] 까지 함께 쓴다(buildEntityRegisterBody). rename 으로 복구하면
+   * 이미지 레퍼런스가 빈 채로 이름만 붙어 @멘션이 엉뚱하게 생성된다.
+   *
+   * 실패는 삼키지 않는다 — 호출측이 사용자에게 이유를 보여줄 수 있게 status/error 를 돌려준다.
+   */
+  ipcMain.handle('flow:register-character-entity', async (_e, opts = {}) => {
+    const { entityId, workflowId, displayName } = opts
+    if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }
+    if (!entityId || !workflowId || !displayName) {
+      return { success: false, error: 'entityId/workflowId/displayName required' }
+    }
+    const projectId = opts.projectId || projectIdFromUrl() || (getCapturedProjectId && getCapturedProjectId())
+    if (!projectId) return { success: false, error: 'No projectId' }
+    try {
+      const token = await getAccessToken()
+      if (!token) return { success: false, error: 'access token 추출 실패 — Flow 재로그인이 필요합니다' }
+      const res = await flowPageFetch(`${await apiBase()}/flow/entities`, {
+        method: 'PATCH',
+        headers: { authorization: 'Bearer ' + token },
+        body: JSON.stringify(buildEntityRegisterBody({ projectId, entityId, displayName, workflowId })),
+      })
+      console.log('[Flow Character] re-register entities:', res.status, res.ok ? '✓' : '✗')
+      if (!res.ok) {
+        console.warn('[Flow Character] re-register failed: bodyLen=', (res.text || '').length)
+        // entity 가 Flow 에서 지워졌으면(사용자가 라이브러리에서 삭제) 복구가 영원히 404 다.
+        //   stale 을 알려줘야 호출측이 업로드로 self-heal 한다 — 안 그러면 ref 가 벽돌이 된다.
+        const stale = isStaleRegistrationResponse(res)
+        // PATCH 가 실패했으면 SPA 를 건드리지 않는다 — 서버와 화면이 어긋나는 게 더 나쁘다.
+        return {
+          success: false, registered: false, stale, status: res.status, nameApplied: false,
+          error: stale ? 'entity not found (stale)' : `registration PATCH failed (${res.status})`,
+        }
+      }
+      const nameApplied = await applyEntityNameToSpa(getFlowView(), { entityId, projectId, displayName })
+      // entityId 를 반드시 돌려준다 — 호출측 needsComposerRefresh 가 result.entityId 로 판정한다.
+      //   빠뜨리면 nameApplied:false 인데도 SPA 새로고침을 건너뛰고 'synced' 로 굳어, 멘션 피커가
+      //   이름을 모르는 채 생성으로 넘어간다(원래 버그의 재현).
+      return { success: true, registered: true, entityId, workflowId, status: res.status, nameApplied }
+    } catch (e) {
+      console.warn('[Flow Character] re-register error:', e.message)
+      return { success: false, registered: false, error: e.message }
+    }
+  })
 
   ipcMain.handle('flow:rename-character', async (_e, opts = {}) => {
     const { entityId, displayName } = opts

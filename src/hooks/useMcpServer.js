@@ -12,6 +12,7 @@ import { useEffect, useRef } from 'react'
 import { normalizeStyleId, findAutoStyle } from '../services/styleService'
 import { syncExplicitStyleId } from '../services/mcpStyle'
 import { isSceneGenerationDone, isReferenceUploadedDone } from '../services/generationStatus'
+import { clearedImageFields } from '../utils/refEntityRegistration'
 
 /**
  * MCP load_csv(update-references) 병합. CSV 는 prompt/type/category 의 authoritative 소스지만,
@@ -286,16 +287,25 @@ export function useMcpServer({
         setReferences(prev => mergeReferencesPreservingRuntime(prev, data.references))
         console.log('[MCP] References merged via HTTP:', data.references.length)
       } else if (data.type === 'update-reference') {
-        setReferences(prev => prev.map((ref, i) => i === data.index ? { ...prev[i], ...data.fields } : ref))
+        // #R37: fields 가 새 이미지(data/filePath)를 실어오면 옛 Flow entity 를 함께 비운다 —
+        //   안 그러면 이미지는 새것인데 entityId 는 옛 캐릭터를 가리켜, 이후 Sync 가 repair 로 빠져
+        //   새 이미지를 영영 안 올리고 옛 얼굴로 @멘션된다(UI 교체 경로 #R31-3 와 동일 정책).
+        const bringsNewImage = data.fields && ('data' in data.fields || 'filePath' in data.fields)
+        const entityReset = bringsNewImage && !data.fields.entityId
+          ? { entityId: null, workflowId: null, registered: null, flowNameSyncStatus: null }
+          : {}
+        setReferences(prev => prev.map((ref, i) => i === data.index ? { ...prev[i], ...data.fields, ...entityReset } : ref))
         console.log('[MCP] Reference', data.index, 'updated via HTTP')
       } else if (data.type === 'remove-reference') {
         setReferences(prev => prev.filter((_, i) => i !== data.index))
         console.log('[MCP] Reference', data.index, 'removed via HTTP')
       } else if (data.type === 'clear-reference-image') {
-        setReferences(prev => prev.map((ref, i) => i === data.index ? { ...ref, data: null, filePath: null, mediaId: null, caption: null, dataStorage: null } : ref))
+        // #R37: Flow entity 필드도 함께 비운다 — 안 그러면 이미지 없는 ref 가 옛 entityId 를 들고 남아
+        //   Sync 가 옛 entity 를 다시 등록한다(UI 의 '이미지 제거' 와 동일 정책).
+        setReferences(prev => prev.map((ref, i) => i === data.index ? { ...ref, ...clearedImageFields() } : ref))
         console.log('[MCP] Reference', data.index, 'image cleared via HTTP')
       } else if (data.type === 'clear-all-reference-images') {
-        setReferences(prev => prev.map(ref => ({ ...ref, data: null, filePath: null, mediaId: null, caption: null, dataStorage: null })))
+        setReferences(prev => prev.map(ref => ({ ...ref, ...clearedImageFields() })))
         console.log('[MCP] All reference images cleared via HTTP')
       } else if (data.type === 'update-scenes') {
         // Merge incoming CSV/API rows over existing in-memory scenes by id so

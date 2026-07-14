@@ -90,6 +90,34 @@ export function isStaleEntityErrorBody(body) {
 }
 
 /**
+ * #R37: PATCH /flow/entities 응답이 "entity 가 없다(stale)" 인지 판정(순수).
+ *
+ * ⚠️ isStaleEntityErrorBody 를 그대로 쓰면 안 된다 — 그건 **reroll(batchGenerateImages) 400**
+ *   전용이고 INVALID_ARGUMENT 만 본다. 이 PATCH 는 다르다: 위 A2 주석의 캡처 규약대로
+ *   "없는 id 면 404 + NOT_FOUND body" 다. INVALID_ARGUMENT 만 보면 사용자가 Flow 라이브러리에서
+ *   캐릭터를 지웠을 때(중복 정리 시 실제로 일어난다) stale 로 안 잡혀 업로드 self-heal 이 막히고
+ *   ref 가 영구히 복구 불능이 된다.
+ *
+ * ⚠️ INVALID_ARGUMENT 는 stale 로 보지 않는다. 그건 "entity 는 멀쩡한데 workflowId/이름/body 가
+ *   잘못됐다" 일 수도 있다. 오판의 대가가 비대칭이다:
+ *     - stale 인데 아니라고 하면 → 에러 토스트(복구 가능)
+ *     - stale 이 아닌데 stale 이라고 하면 → 업로드 폴백 → **새 entity 생성 = 고치려던 그 버그**
+ *   그래서 "없는 id" 의 구조화된 시그니처(HTTP 404 + error.status NOT_FOUND)만 인정한다.
+ *   bare 404 는 API base/route 가 틀린 경우와 구분할 수 없어 stale 로 보지 않는다 — 그 경우 업로드
+ *   폴백의 대가는 새 entity 생성이라, 복구를 멈추고 에러를 보여주는 쪽이 안전하다.
+ *
+ * @param {{status?: number, text?: string|object}} res - flowPageFetch 응답
+ * @returns {boolean}
+ */
+export function isStaleRegistrationResponse(res) {
+  if (!res) return false
+  let data = res.text
+  if (typeof data === 'string') { try { data = JSON.parse(data) } catch { data = null } }
+  const errStatus = data && data.error && data.error.status
+  return res.status === 404 && errStatus === 'NOT_FOUND'
+}
+
+/**
  * 멘션 피커 옵션 라벨 목록에서 이름에 정확히 매칭되는 라벨 선택(순수).
  *   캐릭터 탭 라벨은 "이름" 또는 "이름캐릭터"(접미 타입) 형태(캡처 확인). prefix fallback 없음 —
  *   "회사원" 이 "회사원3캐릭터" 를 잘못 고르는 것 차단. character.js 의 in-page findOpt 와 동일 규칙(미러).
