@@ -418,6 +418,7 @@ export default function SceneList({
   const previousStatusesRef = useRef(null)
   const [tableHeaderHeight, setTableHeaderHeight] = useState(null)
 
+  const hasScenes = scenes.length > 0
   const shouldVirtualize = scenes.length > VIRTUALIZATION_THRESHOLD
   const scrollMargin = tableHeaderHeight ?? 0
   const srtLineById = useMemo(
@@ -436,10 +437,14 @@ export default function SceneList({
     measureElement: measureSceneRow,
     overscan: VIRTUAL_OVERSCAN,
     scrollMargin,
-    enabled: scenes.length > 0,
+    enabled: hasScenes,
   })
 
   useLayoutEffect(() => {
+    if (!hasScenes) {
+      setTableHeaderHeight(null)
+      return undefined
+    }
     const tableHeader = tableHeaderRef.current
     if (!tableHeader) return undefined
 
@@ -454,7 +459,7 @@ export default function SceneList({
     const resizeObserver = new ResizeObserver(measureTableHeader)
     resizeObserver.observe(tableHeader)
     return () => resizeObserver.disconnect()
-  }, [])
+  }, [hasScenes])
 
   // 같은 업데이트에서 여러 씬이 generating 으로 바뀌면 배열상 마지막 씬을 따른다.
   useEffect(() => {
@@ -464,13 +469,13 @@ export default function SceneList({
     let latestGeneratingIndex = -1
     for (let index = 0; index < scenes.length; index++) {
       const scene = scenes[index]
-      const becameGenerating = previousStatuses
-        ? (
-          previousStatuses.has(scene.id)
-          && previousStatuses.get(scene.id) !== 'generating'
-          && scene.status === 'generating'
-        )
-        : scene.status === 'generating'
+      // 처음 본 generating id도 전환으로 취급한다. 빈 목록 import/새 씬 삽입도
+      // 기존 pending→generating 전환과 똑같이 자동 스크롤해야 한다.
+      const becameGenerating = scene.status === 'generating' && (
+        !previousStatuses
+        || !previousStatuses.has(scene.id)
+        || previousStatuses.get(scene.id) !== 'generating'
+      )
       if (becameGenerating) {
         latestGeneratingIndex = index
       }

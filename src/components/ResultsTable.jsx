@@ -28,6 +28,7 @@ const GRID_MIN_CARD_WIDTH = {
   'ratio-square': 132,
 }
 const EMPTY_RESULTS = []
+const EMPTY_VIRTUAL_ITEMS = Object.freeze([])
 
 function measureResultRow(element) {
   return Math.round(element.getBoundingClientRect().height)
@@ -119,9 +120,14 @@ export default function ResultsTable({
   const previousStatusesRef = useRef(null)
   const pendingScrollIndexRef = useRef(-1)
   const [gridWidth, setGridWidth] = useState(null)
-  const itemsPerRow = shouldVirtualize && layout === 'grid'
+  const measuredItemsPerRow = layout === 'grid'
     ? getGridColumnCount(gridWidth, ratioClass)
     : 0
+  // 작은 grid는 숨겨진 panel/jsdom처럼 폭이 아직 0이어도 기존처럼 즉시 렌더한다.
+  // 큰 grid만 측정 전 0개 mount 원칙을 유지한다.
+  const itemsPerRow = measuredItemsPerRow || (
+    layout === 'grid' && !shouldVirtualize && data.length > 0 ? 1 : 0
+  )
   const gridRowCount = itemsPerRow > 0 ? Math.ceil(data.length / itemsPerRow) : 0
 
   const getTableItemKey = useCallback(
@@ -133,16 +139,16 @@ export default function ResultsTable({
     [data, itemsPerRow]
   )
   const tableVirtualizer = useVirtualizer({
-    count: shouldVirtualize && layout !== 'grid' ? data.length : 0,
+    count: layout !== 'grid' ? data.length : 0,
     getScrollElement: () => tableScrollRef.current,
     estimateSize: () => TABLE_ROW_ESTIMATE,
     getItemKey: getTableItemKey,
     measureElement: measureResultRow,
     overscan: VIRTUAL_OVERSCAN,
-    enabled: shouldVirtualize && layout !== 'grid',
+    enabled: layout !== 'grid' && data.length > 0,
   })
   const gridVirtualizer = useVirtualizer({
-    count: shouldVirtualize && layout === 'grid' ? gridRowCount : 0,
+    count: layout === 'grid' ? gridRowCount : 0,
     getScrollElement: () => gridScrollRef.current,
     estimateSize: () => GRID_ROW_ESTIMATE,
     getItemKey: getGridRowKey,
@@ -150,13 +156,13 @@ export default function ResultsTable({
     overscan: VIRTUAL_OVERSCAN,
     paddingStart: GRID_PADDING,
     paddingEnd: GRID_PADDING,
-    enabled: shouldVirtualize && layout === 'grid' && itemsPerRow > 0,
+    enabled: layout === 'grid' && itemsPerRow > 0,
   })
 
-  // 큰 grid는 열 수를 알기 전 카드를 하나도 mount하지 않는다. 첫 양수 폭은 paint 전 읽고,
-  // 이후 panel resize는 같은 observer로 반영한다.
+  // grid는 threshold 양쪽에서 같은 row 구조를 유지해야 하므로 항상 열 수를 측정한다.
+  // 첫 양수 폭은 paint 전 읽고, 이후 panel resize는 같은 observer로 반영한다.
   useLayoutEffect(() => {
-    if (!shouldVirtualize || layout !== 'grid') {
+    if (layout !== 'grid') {
       setGridWidth(null)
       return
     }
@@ -166,21 +172,33 @@ export default function ResultsTable({
       const normalized = Number.isFinite(nextWidth) && nextWidth > 0 ? nextWidth : null
       setGridWidth(previous => previous === normalized ? previous : normalized)
     }
-    commitWidth(element.getBoundingClientRect().width || element.offsetWidth)
-    const observer = new ResizeObserver((entries) => {
-      const entryWidth = entries[0]?.contentRect?.width
-      commitWidth(entryWidth || element.getBoundingClientRect().width || element.offsetWidth)
+    const readBorderBoxWidth = () => element.getBoundingClientRect().width || element.offsetWidth
+    commitWidth(readBorderBoxWidth())
+    const observer = new ResizeObserver(() => {
+      // 초기 측정과 observer 갱신 모두 border-box를 사용한다. contentRect를 섞으면
+      // 아래 getGridColumnCount가 padding을 두 번 빼 열 수가 흔들린다.
+      commitWidth(readBorderBoxWidth())
     })
     observer.observe(element)
     return () => observer.disconnect()
-  }, [layout, shouldVirtualize])
+  }, [layout])
 
   const tableVirtualItems = shouldVirtualize && layout !== 'grid'
     ? tableVirtualizer.getVirtualItems()
-    : []
+    : EMPTY_VIRTUAL_ITEMS
   const gridVirtualRows = shouldVirtualize && layout === 'grid' && itemsPerRow > 0
     ? gridVirtualizer.getVirtualItems()
-    : []
+    : EMPTY_VIRTUAL_ITEMS
+  const gridRowsToRender = layout === 'grid' && itemsPerRow > 0
+    ? (
+        shouldVirtualize
+          ? gridVirtualRows
+          : Array.from({ length: gridRowCount }, (_, index) => ({
+              index,
+              key: getGridRowKey(index),
+            }))
+      )
+    : EMPTY_VIRTUAL_ITEMS
 
   // 초기 mount와 status 전환 모두 마지막 generating 항목을 따른다. 큰 grid가 아직
   // 미측정이면 index를 보류했다가 열 수가 정해진 직후 해당 virtual row로 이동한다.
@@ -190,6 +208,8 @@ export default function ResultsTable({
     for (let index = 0; index < data.length; index++) {
       const item = data[index]
       if (item.status !== 'generating') continue
+      // 처음 본 generating id도 전환으로 취급한다. import/삽입된 항목도 기존
+      // pending→generating 전환과 똑같이 자동 스크롤해야 한다.
       if (!previousStatuses || (
         !previousStatuses.has(item.id)
         || previousStatuses.get(item.id) !== 'generating'
@@ -573,48 +593,52 @@ export default function ResultsTable({
         )}
         <div
           ref={gridScrollRef}
-          className={`results-grid ${ratioClass}${shouldVirtualize ? ' is-virtualized' : ''}`}
+          className={`results-grid ${ratioClass} has-grid-rows${shouldVirtualize ? ' is-virtualized' : ''}`}
           role="list"
         >
-          {shouldVirtualize ? (itemsPerRow > 0 ? (
-            <>
+          <div
+            key="virtual-spacer-top"
+            data-virtual-spacer="top"
+            role="presentation"
+            aria-hidden="true"
+            style={{
+              height: shouldVirtualize && gridVirtualRows.length > 0
+                ? gridVirtualRows[0].start
+                : 0,
+            }}
+          />
+          {gridRowsToRender.map((row) => {
+            const start = row.index * itemsPerRow
+            const end = Math.min(data.length, start + itemsPerRow)
+            return (
               <div
-                data-virtual-spacer="top"
+                key={row.key}
+                ref={shouldVirtualize ? gridVirtualizer.measureElement : undefined}
+                data-index={row.index}
+                className="results-grid-row"
                 role="presentation"
-                aria-hidden="true"
-                style={{ height: gridVirtualRows.length > 0 ? gridVirtualRows[0].start : 0 }}
-              />
-              {gridVirtualRows.map((row) => {
-                const start = row.index * itemsPerRow
-                const end = Math.min(data.length, start + itemsPerRow)
-                return (
-                  <div
-                    key={row.key}
-                    ref={gridVirtualizer.measureElement}
-                    data-index={row.index}
-                    className="results-grid-row"
-                    role="presentation"
-                    style={{
-                      gridTemplateColumns: `repeat(${itemsPerRow}, minmax(0, 1fr))`,
-                      paddingBottom: row.index < gridRowCount - 1 ? GRID_GAP : 0,
-                    }}
-                  >
-                    {data.slice(start, end).map((item, offset) => renderGridCard(item, start + offset))}
-                  </div>
-                )
-              })}
-              <div
-                data-virtual-spacer="bottom"
-                role="presentation"
-                aria-hidden="true"
                 style={{
-                  height: gridVirtualRows.length > 0
-                    ? Math.max(0, gridVirtualizer.getTotalSize() - gridVirtualRows[gridVirtualRows.length - 1].end)
-                    : 0,
+                  gridTemplateColumns: `repeat(${itemsPerRow}, minmax(0, 1fr))`,
+                  paddingBottom: row.index < gridRowCount - 1 ? GRID_GAP : 0,
                 }}
-              />
-            </>
-          ) : null) : data.map((item, index) => renderGridCard(item, index, true))}
+              >
+                {data.slice(start, end).map((item, offset) => (
+                  renderGridCard(item, start + offset, !shouldVirtualize)
+                ))}
+              </div>
+            )
+          })}
+          <div
+            key="virtual-spacer-bottom"
+            data-virtual-spacer="bottom"
+            role="presentation"
+            aria-hidden="true"
+            style={{
+              height: shouldVirtualize && gridVirtualRows.length > 0
+                ? Math.max(0, gridVirtualizer.getTotalSize() - gridVirtualRows[gridVirtualRows.length - 1].end)
+                : 0,
+            }}
+          />
         </div>
 
         {/* 호버 풍선 프리뷰 */}
@@ -663,33 +687,37 @@ export default function ResultsTable({
       <div ref={tableScrollRef} className="results-table-body">
       <table className="results-table">
         <tbody>
-          {shouldVirtualize ? (
-            <>
-              <tr data-virtual-spacer="top">
-                <td
-                  colSpan={selectable ? 6 : 5}
-                  style={{
-                    height: tableVirtualItems.length > 0 ? tableVirtualItems[0].start : 0,
-                    padding: 0,
-                    border: 0,
-                  }}
-                />
-              </tr>
-              {tableVirtualItems.map(item => renderTableRow(data[item.index], item.index, true))}
-              <tr data-virtual-spacer="bottom">
-                <td
-                  colSpan={selectable ? 6 : 5}
-                  style={{
-                    height: tableVirtualItems.length > 0
-                      ? Math.max(0, tableVirtualizer.getTotalSize() - tableVirtualItems[tableVirtualItems.length - 1].end)
-                      : tableVirtualizer.getTotalSize(),
-                    padding: 0,
-                    border: 0,
-                  }}
-                />
-              </tr>
-            </>
-          ) : data.map((item, index) => renderTableRow(item, index))}
+          <tr key="virtual-spacer-top" data-virtual-spacer="top">
+            <td
+              colSpan={selectable ? 6 : 5}
+              style={{
+                height: shouldVirtualize && tableVirtualItems.length > 0
+                  ? tableVirtualItems[0].start
+                  : 0,
+                padding: 0,
+                border: 0,
+              }}
+            />
+          </tr>
+          {shouldVirtualize
+            ? tableVirtualItems.map(item => renderTableRow(data[item.index], item.index, true))
+            : data.map((item, index) => renderTableRow(item, index))}
+          <tr key="virtual-spacer-bottom" data-virtual-spacer="bottom">
+            <td
+              colSpan={selectable ? 6 : 5}
+              style={{
+                height: shouldVirtualize
+                  ? (
+                      tableVirtualItems.length > 0
+                        ? Math.max(0, tableVirtualizer.getTotalSize() - tableVirtualItems[tableVirtualItems.length - 1].end)
+                        : tableVirtualizer.getTotalSize()
+                    )
+                  : 0,
+                padding: 0,
+                border: 0,
+              }}
+            />
+          </tr>
         </tbody>
       </table>
       </div>

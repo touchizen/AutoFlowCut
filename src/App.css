@@ -1810,6 +1810,11 @@ html, body {
 .results-grid.ratio-portrait  { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); }
 .results-grid.ratio-square    { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); }
 
+/* threshold 양쪽에서 같은 row/card 부모 구조를 유지해 focus와 hover DOM을 보존한다. */
+.results-grid.has-grid-rows {
+  display: block;
+}
+
 /* 큰 결과 grid는 카드가 아니라 측정된 grid row를 세로 virtualize한다. 바깥쪽은
    scroll/spacer만 담당하고 각 .results-grid-row가 기존 column 배치를 재현한다. */
 .results-grid.is-virtualized {

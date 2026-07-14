@@ -63,9 +63,9 @@ const itemsOf = (count, extra = {}) => Array.from(
   (_, index) => itemAt(index, typeof extra === 'function' ? extra(index) : extra)
 )
 
-function notifyResize() {
+function notifyResize(contentWidth = gridWidth) {
   const observer = resizeObservers.find(candidate => String(candidate.callback).includes('commitWidth'))
-  observer.callback([{ target: observer.target, contentRect: rect(gridWidth, 480) }])
+  observer.callback([{ target: observer.target, contentRect: rect(contentWidth, 480) }])
 }
 
 beforeEach(() => {
@@ -178,8 +178,41 @@ describe('ResultsTable virtualization', () => {
   it('renders every table row at the 200-item threshold', () => {
     const { container } = render(<ResultsTable items={itemsOf(200)} mediaType="image" />)
 
-    expect(container.querySelectorAll('.results-table-body tbody > tr')).toHaveLength(200)
-    expect(container.querySelector('[data-virtual-spacer]')).toBeNull()
+    expect(container.querySelectorAll('.results-table-body tbody > tr:not([data-virtual-spacer])')).toHaveLength(200)
+    const spacers = container.querySelectorAll('.results-table-body [data-virtual-spacer] > td')
+    expect(spacers).toHaveLength(2)
+    expect([...spacers].every(cell => cell.style.height === '0px')).toBe(true)
+  })
+
+  it('preserves table prompt focus when crossing from 201 to 200 items', async () => {
+    const items = itemsOf(201)
+    const stableProps = { mediaType: 'image', onPromptEdit: vi.fn() }
+    const view = render(<ResultsTable items={items} {...stableProps} />)
+
+    await waitFor(() => expect(view.container.querySelector('.prompt-edit-input')).toBeTruthy())
+    const input = view.container.querySelector('.prompt-edit-input')
+    input.focus()
+    expect(document.activeElement).toBe(input)
+
+    view.rerender(<ResultsTable items={items.slice(0, 200)} {...stableProps} />)
+
+    expect(view.container.querySelector('.prompt-edit-input')).toBe(input)
+    expect(document.activeElement).toBe(input)
+  })
+
+  it('preserves table prompt focus when crossing from 200 to 201 items', async () => {
+    const items = itemsOf(200)
+    const stableProps = { mediaType: 'image', onPromptEdit: vi.fn() }
+    const view = render(<ResultsTable items={items} {...stableProps} />)
+    const input = view.container.querySelector('.prompt-edit-input')
+    input.focus()
+    expect(document.activeElement).toBe(input)
+
+    view.rerender(<ResultsTable items={[...items, itemAt(200)]} {...stableProps} />)
+
+    await waitFor(() => expect(view.container.querySelector('.prompt-edit-input')).toBeTruthy())
+    expect(view.container.querySelector('.prompt-edit-input')).toBe(input)
+    expect(document.activeElement).toBe(input)
   })
 
   it('does not mount a large grid before width measurement, then mounts a bounded non-empty row window', async () => {
@@ -225,12 +258,74 @@ describe('ResultsTable virtualization', () => {
     })
   })
 
-  it('renders every grid card at the 200-item threshold with the original grid structure', () => {
+  it('keeps grid columns stable when ResizeObserver reports the content-box width', async () => {
+    gridWidth = 860
+    const view = render(<ResultsTable items={itemsOf(5029)} mediaType="image" layout="grid" />)
+
+    await waitFor(() => {
+      expect(view.container.querySelector('.results-grid-row')?.querySelectorAll(':scope > .result-card')).toHaveLength(5)
+    })
+    const firstCard = view.container.querySelector('.result-card')
+
+    act(() => notifyResize(840))
+
+    await waitFor(() => {
+      expect(view.container.querySelector('.results-grid-row')?.querySelectorAll(':scope > .result-card')).toHaveLength(5)
+    })
+    expect(view.container.querySelector('.result-card')).toBe(firstCard)
+  })
+
+  it('renders every grid card at the 200-item threshold with the stable row structure', () => {
     const { container } = render(<ResultsTable items={itemsOf(200)} mediaType="image" layout="grid" />)
 
     expect(container.querySelectorAll('.result-card')).toHaveLength(200)
-    expect(container.querySelector('.results-grid-row')).toBeNull()
-    expect(container.querySelector('[data-virtual-spacer]')).toBeNull()
+    expect(container.querySelector('.results-grid-row')).toBeTruthy()
+    const spacers = container.querySelectorAll('.results-grid > [data-virtual-spacer]')
+    expect(spacers).toHaveLength(2)
+    expect([...spacers].every(spacer => spacer.style.height === '0px')).toBe(true)
+  })
+
+  it('preserves grid checkbox focus when crossing from 201 to 200 items', async () => {
+    const items = itemsOf(201)
+    const stableProps = {
+      mediaType: 'image',
+      layout: 'grid',
+      selectable: true,
+      onToggle: vi.fn(),
+      onToggleAll: vi.fn(),
+    }
+    const view = render(<ResultsTable items={items} {...stableProps} />)
+
+    await waitFor(() => expect(view.container.querySelector('.card-check')).toBeTruthy())
+    const checkbox = view.container.querySelector('.card-check')
+    checkbox.focus()
+    expect(document.activeElement).toBe(checkbox)
+
+    view.rerender(<ResultsTable items={items.slice(0, 200)} {...stableProps} />)
+
+    expect(view.container.querySelector('.card-check')).toBe(checkbox)
+    expect(document.activeElement).toBe(checkbox)
+  })
+
+  it('preserves grid checkbox focus when crossing from 200 to 201 items', async () => {
+    const items = itemsOf(200)
+    const stableProps = {
+      mediaType: 'image',
+      layout: 'grid',
+      selectable: true,
+      onToggle: vi.fn(),
+      onToggleAll: vi.fn(),
+    }
+    const view = render(<ResultsTable items={items} {...stableProps} />)
+    const checkbox = view.container.querySelector('.card-check')
+    checkbox.focus()
+    expect(document.activeElement).toBe(checkbox)
+
+    view.rerender(<ResultsTable items={[...items, itemAt(200)]} {...stableProps} />)
+
+    await waitFor(() => expect(view.container.querySelector('.card-check')).toBeTruthy())
+    expect(view.container.querySelector('.card-check')).toBe(checkbox)
+    expect(document.activeElement).toBe(checkbox)
   })
 
   it('scrolls an offscreen generating table row into the body viewport below the separate header', async () => {

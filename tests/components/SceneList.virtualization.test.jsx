@@ -26,6 +26,8 @@ const HEADER_HEIGHT = 34
 const VIEWPORT_HEIGHT = 480
 const SCROLL_HEIGHT = 5000 * ROW_ESTIMATE + HEADER_HEIGHT
 const scrollTo = vi.fn()
+let headerHeight = HEADER_HEIGHT
+let resizeObservers = []
 
 const sceneAt = (index, extra = {}) => ({
   id: `scene_${index}`,
@@ -65,6 +67,25 @@ const rect = (width, height) => ({
 })
 
 beforeEach(() => {
+  headerHeight = HEADER_HEIGHT
+  resizeObservers = []
+  class ControlledResizeObserver {
+    constructor(callback) {
+      this.callback = callback
+      this.disconnected = false
+      resizeObservers.push(this)
+    }
+    observe(target) {
+      this.target = target
+    }
+    unobserve() {}
+    disconnect() {
+      this.disconnected = true
+    }
+  }
+  window.ResizeObserver = ControlledResizeObserver
+  globalThis.ResizeObserver = ControlledResizeObserver
+
   scrollTo.mockImplementation(function scrollToOffset(options) {
     const top = typeof options === 'number' ? arguments[1] : options?.top
     if (typeof top !== 'number') return
@@ -91,7 +112,7 @@ beforeEach(() => {
   })
   vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function getRect() {
     if (this.classList?.contains('scene-table-wrapper')) return rect(1200, VIEWPORT_HEIGHT)
-    if (this.tagName === 'THEAD') return rect(1200, HEADER_HEIGHT)
+    if (this.tagName === 'THEAD') return rect(1200, headerHeight)
     if (this.classList?.contains('scene-row')) return rect(1200, ROW_ESTIMATE)
     return rect(0, 0)
   })
@@ -140,6 +161,79 @@ describe('SceneList virtualization', () => {
     await waitFor(() => {
       expect(wrapper.scrollTop).toBeGreaterThan(0)
       expect(container.querySelector('.scene-row[data-index="350"]')).toBeTruthy()
+    })
+  })
+
+  it('measures a newly created header and scrolls after an empty mount is populated', async () => {
+    const stableProps = {
+      onUpdate: vi.fn(),
+      onDelete: vi.fn(),
+      onAdd: vi.fn(),
+      defaultDuration: 3,
+      projectName: 'P',
+    }
+    const view = render(<SceneList scenes={[]} {...stableProps} />)
+    const scenes = scenesOf(500)
+    scenes[350] = sceneAt(350, { status: 'generating' })
+
+    view.rerender(<SceneList scenes={scenes} {...stableProps} />)
+
+    const wrapper = view.container.querySelector('.scene-table-wrapper')
+    await waitFor(() => {
+      expect(wrapper.scrollTop).toBeGreaterThan(0)
+      expect(view.container.querySelector('.scene-row[data-index="350"]')).toBeTruthy()
+    })
+  })
+
+  it('disconnects a cleared header observer and remeasures the recreated header', async () => {
+    const stableProps = {
+      onUpdate: vi.fn(),
+      onDelete: vi.fn(),
+      onAdd: vi.fn(),
+      defaultDuration: 3,
+      projectName: 'P',
+    }
+    const view = render(<SceneList scenes={scenesOf(500)} {...stableProps} />)
+    const firstHeader = view.container.querySelector('thead')
+    const firstHeaderObserver = resizeObservers.find(observer => observer.target === firstHeader)
+    expect(firstHeaderObserver).toBeTruthy()
+
+    view.rerender(<SceneList scenes={[]} {...stableProps} />)
+    expect(firstHeaderObserver.disconnected).toBe(true)
+
+    headerHeight = 52
+    const reimportedScenes = scenesOf(500)
+    reimportedScenes[350] = sceneAt(350, { status: 'generating' })
+    view.rerender(<SceneList scenes={reimportedScenes} {...stableProps} />)
+
+    await waitFor(() => {
+      const wrapper = view.container.querySelector('.scene-table-wrapper')
+      expect(wrapper.scrollTop).toBe(((350 + 1) * ROW_ESTIMATE) + headerHeight - VIEWPORT_HEIGHT)
+      const nextHeader = view.container.querySelector('thead')
+      expect(nextHeader).not.toBe(firstHeader)
+      expect(resizeObservers.some(observer => observer.target === nextHeader)).toBe(true)
+    })
+  })
+
+  it('auto-scrolls when a newly inserted scene is already generating', async () => {
+    const scenes = scenesOf(500)
+    const stableProps = {
+      onUpdate: vi.fn(),
+      onDelete: vi.fn(),
+      onAdd: vi.fn(),
+      defaultDuration: 3,
+      projectName: 'P',
+    }
+    const view = render(<SceneList scenes={scenes} {...stableProps} />)
+    const wrapper = view.container.querySelector('.scene-table-wrapper')
+    const nextScenes = [...scenes]
+    nextScenes[350] = sceneAt(350, { id: 'inserted-generating', status: 'generating' })
+
+    view.rerender(<SceneList scenes={nextScenes} {...stableProps} />)
+
+    await waitFor(() => {
+      expect(wrapper.scrollTop).toBeGreaterThan(0)
+      expect(view.container.querySelector('.scene-row[data-index="350"]')).toBeTruthy()
     })
   })
 
