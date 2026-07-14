@@ -17,6 +17,7 @@ import {
   mapCodexError,
   parseCodexJson,
   STORY_INSTRUCTIONS_TEXT,
+  ORCHESTRATOR_INSTRUCTIONS_TEXT,
 } from './codexSdk.js'
 
 const DEFAULT_TIMEOUT_MS = 20 * 1000
@@ -155,6 +156,9 @@ export function buildOrchestratorThreadParams({ model, workingDirectory, config 
         mcp_elicitations: true,
       },
     },
+    // 🔴 없으면 모델이 Codex 기본 페르소나(범용 코딩 에이전트)로 행동한다 — 툴을 쥐고도 "코드를
+    //    붙여달라"고 답한다 (실앱 실측). 자기가 무엇이고 무엇으로 일하는지 말해줘야 한다.
+    baseInstructions: ORCHESTRATOR_INSTRUCTIONS_TEXT,
     config,
   }
 }

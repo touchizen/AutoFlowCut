@@ -221,6 +221,44 @@ describe('ChatPanel — 접기/펼치기 아이콘 버튼', () => {
   })
 })
 
+describe('ChatPanel — 진행 표시', () => {
+  // 🔴 첫 delta 가 오기까지 **수십 초** 걸린다 (실측: 실앱에서 turn/start → 첫 tool call 까지 16초).
+  //    그동안 화면이 완전히 비어 있으면 사용자는 **앱이 죽었다고 생각한다.**
+  it('보낸 직후부터 첫 응답이 오기 전까지 진행 중임을 보여준다', async () => {
+    const user = userEvent.setup()
+    render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+
+    await user.type(screen.getByRole('textbox', { name: 'Message to the agent' }), '뭐든 해줘')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    // 아직 delta 도 tool-call 도 오지 않았다 — 그래도 뭔가 돌고 있다는 게 보여야 한다.
+    expect(screen.getByRole('status'), '보냈는데 화면에 아무 표시가 없다 — 앱이 멈춘 것처럼 보인다').toBeTruthy()
+  })
+
+  it('턴이 끝나면 진행 표시가 사라진다', async () => {
+    const user = userEvent.setup()
+    render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+
+    await user.type(screen.getByRole('textbox', { name: 'Message to the agent' }), '뭐든 해줘')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    window.electronAPI.emitAgent('agent:done', { turnId: 'turn-1', status: 'completed' })
+
+    expect(screen.queryByRole('status'), '턴이 끝났는데 계속 돌고 있는 것처럼 보인다').toBeNull()
+  })
+
+  it('에러로 끝나도 진행 표시가 남지 않는다 — 영원히 도는 것처럼 보이면 안 된다', async () => {
+    const user = userEvent.setup()
+    render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+
+    await user.type(screen.getByRole('textbox', { name: 'Message to the agent' }), '뭐든 해줘')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    window.electronAPI.emitAgent('agent:error', { error: 'agent-limit', limit: 64, used: 64 })
+
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.getByRole('alert')).toBeTruthy()
+  })
+})
+
 describe('ChatPanel — 접었을 때 드래그로 옮기기', () => {
   function drag(el, from, to) {
     act(() => {

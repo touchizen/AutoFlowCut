@@ -396,6 +396,13 @@ export default function ChatPanel({ projectKey = null, batchStatusSources = {} }
               </div>
             ))}
             {errors.map((entry) => <div key={entry.key} className="agent-chat-error" role="alert">{entry.text}</div>)}
+            {/* 🔴 첫 delta 까지 수십 초 걸린다 (실측 16초). 그동안 빈 화면이면 사용자는 앱이 죽은 줄 안다. */}
+            {running && (
+              <div className="agent-chat-thinking" role="status">
+                <span className="agent-chat-dots"><i /><i /><i /></span>
+                {t('agent.thinking')}
+              </div>
+            )}
           </div>
 
           {usage && (

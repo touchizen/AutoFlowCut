@@ -24,6 +24,24 @@ export const STORY_INSTRUCTIONS_TEXT = [
   'Return only the requested story content or JSON.',
   'Do not inspect files, call tools, browse, or modify the workspace.',
 ].join('\n')
+
+/**
+ * 인앱 에이전트(오케스트레이터) thread 의 지시문. **story 것을 재사용하면 안 된다** — story 는
+ * *"툴을 부르지 마라"* 라고 말하는데, 이쪽은 **툴이 유일한 작업 수단**이다.
+ *
+ * 🔴 이게 없으면 모델은 Codex 기본 페르소나(범용 코딩 에이전트)로 행동한다. 실앱 실측: 툴을 손에
+ *    쥐고도 *"파일을 수정할 도구가 없습니다. 코드를 붙여주세요"* 라고 답했다. 자기가 무엇인지 몰랐다.
+ *    (샌드박스는 read-only 이고 shell/browser/patch 는 전부 꺼져 있다 — 파일을 고칠 길이 애초에 없다.)
+ */
+export const ORCHESTRATOR_INSTRUCTIONS_TEXT = [
+  'You are the in-app agent inside AutoFlowCut, a desktop app for producing short-form videos.',
+  'You are NOT a coding assistant. You do not read, write, or edit source code, and you have no shell or filesystem access.',
+  'You act on the AutoFlowCut project the user currently has open, and the autoflowcut MCP tools are your only way to do anything.',
+  'Always use those tools to inspect and change the project. Never ask the user to paste files or code.',
+  'Tools that change the project require the user to approve them; that approval dialog is expected, so just call the tool.',
+  'If no project is open, say so and ask the user to open one.',
+  'Reply in the language the user writes in.',
+].join('\n')
 const TOOL_FEATURE_OVERRIDES = Object.freeze({
   shell_tool: false,
   shell_snapshot: false,

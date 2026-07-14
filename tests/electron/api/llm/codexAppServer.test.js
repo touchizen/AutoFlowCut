@@ -199,7 +199,25 @@ describe('buildOrchestratorThreadParams', () => {
     expect(params.config).toEqual({ model: 'x' })
     // 오케스트레이터 thread 는 지속된다 — story 처럼 한 턴 쓰고 버리는 게 아니다.
     expect(params.ephemeral).toBeUndefined()
-    // story 전용 지시문을 물려받으면 안 된다.
-    expect(params.baseInstructions).toBeUndefined()
+  })
+
+  // 🔴 **baseInstructions 가 없으면 모델은 Codex 기본 페르소나(범용 코딩 에이전트)로 행동한다.**
+  //    실앱 실측: 사용자가 *"화자를 나레이션 한명으로 설정해줘"* 라고 하자, 툴을 손에 쥐고도
+  //    *"파일을 탐색·수정할 도구가 없습니다. 관련 코드를 붙여주세요"* 라고 답했다.
+  //    자기가 **열려 있는 Story 프로젝트를 MCP 툴로 조작하는 인앱 에이전트**라는 걸 몰랐던 것이다.
+  //    (스파이크는 프롬프트에 툴 이름을 명시해서 이 구멍이 안 드러났다 — 자연어로 말하면 즉시 터진다.)
+  it('오케스트레이터 thread 는 자기가 무엇이고 무엇으로 일하는지 지시받는다', async () => {
+    const { buildOrchestratorThreadParams } = await import('../../../../electron/api/llm/codexAppServer.js')
+    const params = buildOrchestratorThreadParams({ workingDirectory: '/w', config: {} })
+
+    expect(typeof params.baseInstructions, 'baseInstructions 가 없다 — 모델이 범용 코딩 에이전트로 행동한다').toBe('string')
+    expect(params.baseInstructions.length).toBeGreaterThan(0)
+    // 코드를 고치는 에이전트가 아니라 **툴로 프로젝트를 조작하는** 에이전트임을 말해야 한다.
+    expect(params.baseInstructions).toMatch(/autoflowcut/i)
+    expect(params.baseInstructions).toMatch(/tool/i)
+    // 🔴 story 지시문을 재사용하면 안 된다 — story 는 *"툴을 부르지 마라"* 라고 말한다. 정반대다.
+    //    (예전 계약은 `baseInstructions` 가 **undefined 여야 한다**고 못박고 있었다. 그래서 모델이
+    //     자기가 무엇인지 모르는 것이 **테스트로 보장된 동작**이었다. 그 계약이 틀렸다.)
+    expect(params.baseInstructions).not.toMatch(/Do not inspect files, call tools/)
   })
 })

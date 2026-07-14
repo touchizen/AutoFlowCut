@@ -42,3 +42,10 @@
 /* 접힌 상태에서만 헤더가 손잡이가 된다. 커서로 "끌 수 있다"를 알린다. */
 .agent-chat-header.is-draggable { cursor: grab; user-select: none; }
 .agent-chat-header.is-draggable:active { cursor: grabbing; }
+/* 진행 표시: 첫 응답까지 수십 초 비어 있으면 앱이 멈춘 것처럼 보인다. */
+.agent-chat-thinking { display: flex; align-items: center; gap: 7px; opacity: 0.7; font-size: 12px; padding: 2px 0; }
+.agent-chat-dots { display: inline-flex; gap: 3px; }
+.agent-chat-dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; animation: agent-blink 1.2s infinite ease-in-out; }
+.agent-chat-dots i:nth-child(2) { animation-delay: 0.2s; }
+.agent-chat-dots i:nth-child(3) { animation-delay: 0.4s; }
+@keyframes agent-blink { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
