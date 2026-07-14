@@ -21,6 +21,7 @@ import { randomUUID } from 'node:crypto'
 import { createGrantLedger } from './agent/grantLedger.js'
 import { createPrivateRpc } from './agent/privateRpc.js'
 import { createElicitationResponder } from './agent/elicitationResponder.js'
+import { createApprovalPrompt } from './agent/approvalPrompt.js'
 import { registerTtsIPC } from './ipc/tts-api.js'
 import * as llmClaude from './api/llm/llmClaude.js'
 import * as llmCodex from './api/llm/llmCodex.js'
@@ -322,15 +323,15 @@ const grantLedger = createGrantLedger({ ttlMs: AGENT_APPROVAL_TTL_MS })
 const toolCore = createToolCore({ toolBridge, grantLedger, sessionId: agentSessionId })
 toolCore.use(storyCommands)
 
-/**
- * 🔴 **승인 UI(ChatPanel)가 아직 없다.** 그래서 지금은 **거부한다.**
- *    여기에 auto-accept 를 넣으면 게이트가 그 자리에서 죽는다 — 사람이 아무것도 못 봤는데
- *    "승인" 이 되니까. UI 가 생기기 전까지 G/B 툴은 못 도는 게 맞다 (fail-closed).
- *    ChatPanel + `agent:permission-request` 는 M2 의 다음 슬라이스다 (D14).
- */
-async function askUserForApproval() {
-  return { action: 'decline' }
-}
+// 승인 창을 사람에게 띄운다 (D14). 🔴 **모든 실패는 decline 이다** — 창이 죽었다고 승인이 될 수는 없다.
+const approvalPrompt = createApprovalPrompt({
+  getWindow: () => mainWindow,
+  timeoutMs: AGENT_APPROVAL_TTL_MS,
+})
+ipcMain.on('agent:permission-response', (_e, payload) => {
+  // renderer 가 보낸 것은 신뢰하지 않는다 — 모르는 id / 모르는 action 은 prompt 가 안전한 쪽으로 닫는다.
+  try { approvalPrompt.respond(payload) } catch (err) { console.error('[approval] bad response:', err.message) }
+})
 
 // Codex 의 elicitation 을 **main 이** 분류한다 (조건 4): native → UI 없이 auto-accept,
 // 우리 adapter 의 승인 창 → 사람에게. accept 순간 여기서 ledger 에 grant 를 기록한다.
@@ -339,7 +340,7 @@ const agentElicitationResponder = createElicitationResponder({
   grantLedger,
   sessionId: agentSessionId,
   adapterServerName: AGENT_MCP_SERVER_NAME,
-  askUser: askUserForApproval,
+  askUser: (params, ctx) => approvalPrompt.ask(params, ctx),
 })
 
 /**
@@ -351,6 +352,7 @@ const agentRpc = createPrivateRpc({ toolCore, sessionId: agentSessionId })
 
 app.on('will-quit', () => {
   grantLedger.closeSession(agentSessionId)
+  approvalPrompt.close()          // 대기 중인 승인은 전부 decline
   agentRpc.close().catch(() => {})
   toolBridge.close()
 })

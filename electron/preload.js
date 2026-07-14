@@ -163,6 +163,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   respondToolBridge: (payload) => ipcRenderer.send('agent:bridge-response', payload),
   emitToolBridgeEvent: (payload) => ipcRenderer.send('agent:bridge-event', payload),
 
+  // 승인 창 (D14). renderer 는 **자기에게 온 요청에만** 답할 수 있다 — pending map 은 main 이 소유한다.
+  onAgentPermissionRequest: (cb) => {
+    const listener = (_e, payload) => cb(payload)
+    ipcRenderer.on('agent:permission-request', listener)
+    return () => ipcRenderer.removeListener('agent:permission-request', listener)
+  },
+  respondAgentPermission: (payload) => ipcRenderer.send('agent:permission-response', payload),
+
   // Auth
   googleSignIn: () => ipcRenderer.invoke('auth:google-sign-in'),
   googleSignOut: () => ipcRenderer.invoke('auth:google-sign-out'),
