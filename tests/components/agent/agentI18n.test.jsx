@@ -14,6 +14,7 @@ import React from 'react'
 import { act, cleanup, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { I18nProvider } from '../../../src/hooks/useI18n'
+import { __resetFlowHiddenForTests } from '../../../src/hooks/useModalVisibility'
 import ChatPanel from '../../../src/components/agent/ChatPanel.jsx'
 import ApprovalDialog from '../../../src/components/agent/ApprovalDialog.jsx'
 
@@ -33,6 +34,7 @@ function agentApi() {
     emitToolBridgeEvent: vi.fn(),
     onAgentPermissionRequest: vi.fn((cb) => { listeners.set('perm', cb); return () => listeners.delete('perm') }),
     respondAgentPermission: vi.fn(),
+    setModalVisible: vi.fn(),
     fire: (channel, payload) => listeners.get(channel)?.(payload),
   }
 }
@@ -47,8 +49,33 @@ function renderIn(lang, ui) {
   return render(<I18nProvider>{ui}</I18nProvider>)
 }
 
-beforeEach(() => { window.electronAPI = agentApi() })
+beforeEach(() => { window.electronAPI = agentApi(); __resetFlowHiddenForTests() })
 afterEach(() => { cleanup(); localStorage.clear(); delete window.electronAPI })
+
+describe('승인 창은 Flow 네이티브 뷰 위로 올라온다', () => {
+  // 🔴 Flow 는 Electron `WebContentsView` — **네이티브 레이어라 CSS z-index 로는 절대 못 가린다.**
+  //    (`useModalVisibility` 주석이 이미 그렇게 적어뒀고, 설정 모달은 그 훅을 쓴다.)
+  //    승인 창만 안 쓰고 있었다 → Flow UI 가 승인 문구를 덮어서 **무엇을 승인하는지 안 보였다** (실앱 실측).
+  //    z-index 를 올리는 건 이 문제를 못 고친다 — 다른 레이어이기 때문이다.
+  it('승인 요청이 뜨면 Flow 뷰를 접고, 답하면 되돌린다', () => {
+    render(<ApprovalDialog />)
+    const setModalVisible = window.electronAPI.setModalVisible
+
+    expect(setModalVisible, '창이 없을 땐 Flow 를 건드리지 않는다').not.toHaveBeenCalled()
+
+    act(() => window.electronAPI.fire('perm', {
+      requestId: 'r1', tool: 'story_set_speakers', message: 'story_set_speakers\n\n{}', sessionId: 's1',
+    }))
+    expect(setModalVisible, 'Flow 를 안 접었다 — 네이티브 뷰가 승인 창을 덮는다')
+      .toHaveBeenCalledWith({ visible: true })
+
+    setModalVisible.mockClear()
+    act(() => screen.getByRole('button', { name: 'Approve' }).click())
+
+    // 답했으면 Flow 를 되돌려야 한다. 안 그러면 Flow 화면이 영영 접힌 채로 남는다.
+    expect(setModalVisible, '답했는데 Flow 가 접힌 채로 남는다').toHaveBeenCalledWith({ visible: false })
+  })
+})
 
 describe('에이전트 UI 는 앱 locale 을 따른다 (D14)', () => {
   it('lang=en 이면 ChatPanel 에 한글이 남지 않는다', () => {

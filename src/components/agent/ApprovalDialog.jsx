@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useOptionalI18n } from '../../hooks/useI18n'
+import { useModalVisibility } from '../../hooks/useModalVisibility'
 import en from '../../locales/en'
 import './ApprovalDialog.css'
 
@@ -36,6 +37,12 @@ export default function ApprovalDialog() {
   const t = useSafeT()
   const [queue, setQueue] = useState([])
   const current = queue[0] ?? null
+
+  // 🔴 **Flow 는 Electron `WebContentsView` — 네이티브 레이어라 CSS z-index 로 절대 못 가린다.**
+  //    실앱 실측: z-index 를 최대로 올려도 Flow UI 가 승인 창을 계속 덮었다. **다른 레이어이기 때문이다.**
+  //    설정 모달은 이미 이 훅으로 Flow 를 접는다. 승인 창만 안 쓰고 있었다.
+  //    가려진 승인 창 = 무엇을 승인하는지 못 보고 누르는 것 → 게이트의 목적이 무너진다.
+  useModalVisibility(!!current)
 
   useEffect(() => {
     const off = window.electronAPI?.onAgentPermissionRequest?.((req) => {
