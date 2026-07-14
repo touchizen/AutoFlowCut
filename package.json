@@ -1,7 +1,7 @@
 {
   "name": "autoflowcut",
   "version": "3.0.3",
-  "buildNumber": 1087,
+  "buildNumber": 1090,
   "description": "AutoFlowCut - Automate AI image and video creation with Google Gemini/Veo APIs for CapCut projects",
   "main": "dist-electron/main.js",
   "type": "module",
