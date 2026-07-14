@@ -146,6 +146,8 @@ describe('resolveCodexAdapterPath', () => {
       isPackaged: false,
       resourcesPath: '/must/not/be/used',
       repoRoot: '/repo/AutoFlowCut',
+      cwd: '/must/not/be/used',
+      existsSyncImpl: () => true,
     })).toBe(path.join('/repo/AutoFlowCut', 'dist-adapter', 'codex-adapter.mjs'))
   })
 
@@ -174,14 +176,32 @@ describe('resolveCodexAdapterPath', () => {
     })).toBe(packaged)
   })
 
+  // 🔴 **번들되면 모듈 위치가 바뀐다.** 소스에선 `electron/agent/` 라 두 단계 위가 repo root 지만,
+  //    vite 가 main 을 `dist-electron/` 하나로 말아넣으면 두 단계 위는 **repo 밖**이다.
+  //    (실측: `/Users/tuxxon/workspace/dist-adapter/...` — `AutoFlowCut` 이 통째로 빠졌다.)
+  //    metaPrompts 가 후보에 "번들 위치 기준"과 `process.cwd()` 를 함께 넣은 이유가 이것이다.
+  it('번들된 dist-electron 에서 실행돼도 cwd 후보로 실제 번들을 찾는다', () => {
+    const real = path.join('/repo/AutoFlowCut', 'dist-adapter', 'codex-adapter.mjs')
+
+    expect(resolveCodexAdapterPath({
+      isPackaged: true,
+      resourcesPath: '/electron/dist/AutoFlowCut.app/Contents/Resources',
+      // 번들 위치(dist-electron)에서 두 단계 올라가면 repo 밖(/repo)으로 나간다
+      repoRoot: '/repo',
+      cwd: '/repo/AutoFlowCut',
+      existsSyncImpl: (candidate) => candidate === real,
+    })).toBe(real)
+  })
+
   it('어느 후보에도 번들이 없으면 마지막 후보를 돌려준다 — doOpen 의 existsSync 가 경로를 찍고 죽는다', () => {
-    const dev = path.join('/repo/AutoFlowCut', 'dist-adapter', 'codex-adapter.mjs')
+    const last = path.join('/cwd/AutoFlowCut', 'dist-adapter', 'codex-adapter.mjs')
     expect(resolveCodexAdapterPath({
       isPackaged: true,
       resourcesPath: '/nope/Resources',
       repoRoot: '/repo/AutoFlowCut',
+      cwd: '/cwd/AutoFlowCut',
       existsSyncImpl: () => false,
-    })).toBe(dev)
+    })).toBe(last)
   })
 })
 
