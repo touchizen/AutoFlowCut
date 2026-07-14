@@ -334,6 +334,12 @@ function App() {
   }, [availableModels.imageModels, availableModels.videoModels, availableModels.loading, settings.imageModel, settings.videoModelT2V, settings.videoModelF2V, mode])
   const scenesHook = useScenes()
   const { scenes, references, parseFromText, parseFromCSV, parseFromSRT, parseReferencesFromCSV, updateReferences, setScenes, setReferences } = scenesHook
+  const latestScenesRef = useRef(scenes)
+  latestScenesRef.current = scenes
+  const handleRequestSceneDelete = useCallback((sceneId, sceneIndex) => {
+    const scene = latestScenesRef.current.find(item => item.id === sceneId)
+    if (scene) setSceneToDelete({ scene, sceneIndex })
+  }, [])
   // Step 3: videoScenes 는 scenes 에서 derived. useVideoScenes 가 scenesHook 으로 라우팅.
   const videoScenesHook = useVideoScenes(scenes, scenesHook)
   const { videoScenes, setVideoScenes } = videoScenesHook
@@ -2118,10 +2124,7 @@ function App() {
               onUpdate={scenesHook.updateScene}
               onUpdateFramePair={(fpId, patch) => setFramePairs(prev => prev.map(p => p.id === fpId ? { ...p, ...patch } : p))}
               onUpdateSrtLine={scenesHook.updateSrtLine}
-              onDelete={(sceneId, sceneIndex) => {
-                const scene = scenes.find(s => s.id === sceneId)
-                if (scene) setSceneToDelete({ scene, sceneIndex })
-              }}
+              onDelete={handleRequestSceneDelete}
               onAdd={scenesHook.addScene}
               onClearAll={() => {
                 // 씬 통째 삭제 = framePairs 도 같이 cascade. 그렇지 않으면 ownerSceneId
