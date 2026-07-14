@@ -39,3 +39,6 @@
 
 /* 아이콘 버튼: 텍스트 버튼과 달리 정사각형으로 잡아야 셰브론이 가운데에 온다. */
 .agent-chat-collapse { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; }
+/* 접힌 상태에서만 헤더가 손잡이가 된다. 커서로 "끌 수 있다"를 알린다. */
+.agent-chat-header.is-draggable { cursor: grab; user-select: none; }
+.agent-chat-header.is-draggable:active { cursor: grabbing; }

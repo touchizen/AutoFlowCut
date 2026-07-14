@@ -65,6 +65,54 @@ function fallbackT(key, params = {}) {
   return value.replace(/\{(\w+)\}/g, (match, name) => (params[name] !== undefined ? params[name] : match))
 }
 
+const clamp = (value, max) => Math.min(Math.max(value, 0), Math.max(max, 0))
+
+/**
+ * 접힌 패널을 헤더로 끌어 옮긴다.
+ *
+ * 🔴 **화면 밖으로 나가면 다시 잡을 수 없다.** 뷰포트 안으로 clamp 한다.
+ * 🔴 **접기 버튼 위에서 시작한 pointerdown 은 드래그가 아니다.** 안 거르면 버튼을 누를 때마다 패널이 튄다.
+ */
+function useCollapsedDrag(enabled) {
+  const [position, setPosition] = useState(null)
+  const panelRef = useRef(null)
+  const dragRef = useRef(null)
+
+  useEffect(() => {
+    if (!enabled) return undefined
+    const onMove = (event) => {
+      const drag = dragRef.current
+      if (!drag) return
+      const panel = panelRef.current
+      const width = panel?.offsetWidth ?? 0
+      const height = panel?.offsetHeight ?? 0
+      setPosition({
+        left: clamp(event.clientX - drag.offsetX, window.innerWidth - width),
+        top: clamp(event.clientY - drag.offsetY, window.innerHeight - height),
+      })
+    }
+    const onUp = () => { dragRef.current = null }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+  }, [enabled])
+
+  const onPointerDown = useCallback((event) => {
+    // 버튼(접기/펼치기) 위에서 시작한 것은 클릭이지 드래그가 아니다.
+    if (!enabled || event.button !== 0 || event.target.closest('button')) return
+    const rect = panelRef.current?.getBoundingClientRect()
+    dragRef.current = {
+      offsetX: event.clientX - (rect?.left ?? 0),
+      offsetY: event.clientY - (rect?.top ?? 0),
+    }
+  }, [enabled])
+
+  return { panelRef, position: enabled ? position : null, onPointerDown }
+}
+
 /**
  * D14 전역 ChatPanel. App의 generate/story 조건부 body 밖에서 한 번만 mount해야 한다.
  * view 전환은 state를 보존하지만 projectKey 전환은 D15에 따라 이전 session을 abort/close한다.
@@ -73,6 +121,7 @@ export default function ChatPanel({ projectKey = null, batchStatusSources = {} }
   const t = useSafeT()
   const api = window.electronAPI
   const [collapsed, setCollapsed] = useState(false)
+  const { panelRef, position, onPointerDown } = useCollapsedDrag(collapsed)
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState([])
   const [toolCalls, setToolCalls] = useState([])
@@ -299,8 +348,17 @@ export default function ChatPanel({ projectKey = null, batchStatusSources = {} }
   }
 
   return (
-    <aside className={`agent-chat-panel ${collapsed ? 'is-collapsed' : ''}`} aria-label={t('agent.panelLabel')}>
-      <div className="agent-chat-header">
+    <aside
+      ref={panelRef}
+      className={`agent-chat-panel ${collapsed ? 'is-collapsed' : ''}`}
+      aria-label={t('agent.panelLabel')}
+      // 옮긴 뒤에는 right/bottom 앵커 대신 left/top 이 이긴다. 안 지우면 두 앵커가 싸워 늘어난다.
+      style={position ? { left: `${position.left}px`, top: `${position.top}px`, right: 'auto', bottom: 'auto' } : undefined}
+    >
+      <div
+        className={`agent-chat-header ${collapsed ? 'is-draggable' : ''}`}
+        onPointerDown={onPointerDown}
+      >
         <strong>{t('agent.title')}</strong>
         <div className="agent-chat-header-actions">
           {running && <span className="agent-chat-running">{t('agent.running')}</span>}

@@ -221,6 +221,87 @@ describe('ChatPanel — 접기/펼치기 아이콘 버튼', () => {
   })
 })
 
+describe('ChatPanel — 접었을 때 드래그로 옮기기', () => {
+  function drag(el, from, to) {
+    act(() => {
+      el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: from.x, clientY: from.y, button: 0 }))
+      window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: to.x, clientY: to.y }))
+      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    })
+  }
+
+  it('접힌 패널은 헤더를 끌면 그만큼 움직인다', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+    await user.click(screen.getByRole('button', { name: 'Collapse' }))
+
+    const panel = container.querySelector('.agent-chat-panel')
+    const header = container.querySelector('.agent-chat-header')
+    drag(header, { x: 500, y: 700 }, { x: 400, y: 300 })
+
+    // 위치가 실제로 인라인 스타일로 반영돼야 한다 — class 만 바뀌면 화면에선 안 움직인다.
+    expect(panel.style.left, '드래그해도 패널이 움직이지 않았다').not.toBe('')
+    expect(panel.style.top).not.toBe('')
+  })
+
+  it('화면 밖으로는 못 나간다 — 잡을 수 없는 패널이 되면 안 된다', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+    await user.click(screen.getByRole('button', { name: 'Collapse' }))
+
+    const panel = container.querySelector('.agent-chat-panel')
+    const header = container.querySelector('.agent-chat-header')
+    drag(header, { x: 500, y: 700 }, { x: -9999, y: -9999 })
+
+    expect(parseFloat(panel.style.left)).toBeGreaterThanOrEqual(0)
+    expect(parseFloat(panel.style.top)).toBeGreaterThanOrEqual(0)
+  })
+
+  it('펼친 상태에서는 헤더를 끌어도 움직이지 않는다', async () => {
+    const { container } = render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+    const panel = container.querySelector('.agent-chat-panel')
+    const header = container.querySelector('.agent-chat-header')
+
+    drag(header, { x: 500, y: 700 }, { x: 100, y: 100 })
+
+    expect(panel.style.left, '펼친 패널이 드래그로 움직였다').toBe('')
+  })
+
+  it('옮긴 뒤 펼치면 기본 자리로 돌아온다 — 큰 패널이 화면 밖에 걸리지 않게', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+    const panel = container.querySelector('.agent-chat-panel')
+
+    await user.click(screen.getByRole('button', { name: 'Collapse' }))
+    drag(container.querySelector('.agent-chat-header'), { x: 500, y: 700 }, { x: 120, y: 90 })
+    expect(panel.style.left).not.toBe('')
+
+    await user.click(screen.getByRole('button', { name: 'Expand' }))
+
+    // 접힌 칩 자리에 640px 짜리 패널을 그대로 펼치면 화면 밖으로 넘칠 수 있다. 앵커로 되돌린다.
+    expect(panel.style.left, '펼쳤는데 드래그 위치가 남아 패널이 화면 밖에 걸릴 수 있다').toBe('')
+  })
+
+  it('접기 버튼을 누른 채 손이 미세하게 움직여도 패널이 튀지 않는다', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+    await user.click(screen.getByRole('button', { name: 'Collapse' }))
+
+    const panel = container.querySelector('.agent-chat-panel')
+    const button = screen.getByRole('button', { name: 'Expand' })
+
+    // 🔴 실제 클릭은 **거의 항상 1~2px 움직인다.** 버튼 위 pointerdown 을 드래그로 삼으면
+    //    접기/펼치기를 누를 때마다 패널이 손끝으로 순간이동한다.
+    act(() => {
+      button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 600, clientY: 700, button: 0 }))
+      window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 602, clientY: 701 }))
+      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    })
+
+    expect(panel.style.left, '버튼을 눌렀는데 드래그로 오해해 패널이 움직였다').toBe('')
+  })
+})
+
 describe('ChatPanel — persistent 수명과 batch.status', () => {
   it('view만 바뀌는 global sibling rerender에서는 stream 메시지가 사라지지 않는다', () => {
     function GlobalShell({ activeView }) {
