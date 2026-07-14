@@ -15,6 +15,9 @@
  */
 
 import { updateBounds } from './layout.js'
+// #R37: 먹통 렌더러에서 executeJavaScript 가 영영 안 끝나 캐릭터 sync 락이 고착되던 문제 —
+//   전 호출을 타임아웃 래퍼로 감싼다.
+import { execJs } from './shared.js'
 import {
   buildEntityRegisterBody,
   buildEntityRenameBody,
@@ -200,7 +203,7 @@ export function registerCharacterIPC(ipcMain, deps) {
     }
     for (let i = 0; i < 30; i++) {
       await sleep(500)
-      const ready = await flowView.webContents.executeJavaScript(COMPOSE_EDITOR_READY).catch(() => false)
+      const ready = await execJs(flowView.webContents, COMPOSE_EDITOR_READY).catch(() => false)
       if (ready) { await sleep(600); return true }
     }
     return false
@@ -220,7 +223,7 @@ export function registerCharacterIPC(ipcMain, deps) {
         console.warn('[Flow Character] character detail page not ready — name left to refresh fallback')
         return false
       }
-      const r = await flowView.webContents.executeJavaScript(FLOW_APPLY_NAME_PROBE(displayName))
+      const r = await execJs(flowView.webContents, FLOW_APPLY_NAME_PROBE(displayName))
       if (!(r && r.ok)) {
         console.warn('[Flow Character] name not applied to SPA:', r && r.error)   // r.value 는 캐릭터 이름 — 안 찍는다
         return false
@@ -271,8 +274,7 @@ export function registerCharacterIPC(ipcMain, deps) {
     // 주입이 실패한다 → COMPOSE_EDITOR_READY(Slate/보이는 contenteditable 만) 로 폴링.
     for (let i = 0; i < 30; i++) {
       await sleep(500)
-      const ready = await flowView.webContents
-        .executeJavaScript(COMPOSE_EDITOR_READY)
+      const ready = await execJs(flowView.webContents, COMPOSE_EDITOR_READY)
         .catch(() => false)
       if (ready) { await sleep(600); return true }  // Slate React fiber attach settle
     }
@@ -289,7 +291,7 @@ export function registerCharacterIPC(ipcMain, deps) {
 
   // 파일 대화상자 방지: file input 의 click 을 noop 으로 막아둔다(업로드 버튼 트러스트 클릭 전).
   async function neutralizeFileInputClick(flowView) {
-    return flowView.webContents.executeJavaScript(`(function(){
+    return execJs(flowView.webContents, `(function(){
       var i=document.querySelector(${JSON.stringify(A2_FILE_SEL)});
       if(!i) return false;
       if(!i.__afOrigClick){ i.__afOrigClick = i.click.bind(i); i.click = function(){}; }
@@ -299,7 +301,7 @@ export function registerCharacterIPC(ipcMain, deps) {
 
   // file input 에 base64 파일을 넣고 change 를 발생(+ click 복구). DataTransfer 로 input.files 세팅.
   async function injectFileToInput(flowView, base64, fileName, mimeType) {
-    return flowView.webContents.executeJavaScript(`(function(){
+    return execJs(flowView.webContents, `(function(){
       try{
         var i=document.querySelector(${JSON.stringify(A2_FILE_SEL)});
         if(!i) return {success:false, error:'file input 없음'};
@@ -323,7 +325,7 @@ export function registerCharacterIPC(ipcMain, deps) {
     const wc = flowView.webContents
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
-      const r = await wc.executeJavaScript(`(function(){
+      const r = await execJs(wc, `(function(){
         var n = window.__autoflowcut_net__ || [];
         for (var i = n.length - 1; i >= 0; i--) {
           var x = n[i];
@@ -342,7 +344,7 @@ export function registerCharacterIPC(ipcMain, deps) {
 
   // 프롬프트를 Slate 에디터에 주입 (React fiber apply → execCommand 폴백). generate-image 와 동일 전략.
   async function injectPrompt(flowView, prompt) {
-    return flowView.webContents.executeJavaScript(`
+    return execJs(flowView.webContents, `
       (async function() {
         const promptText = ${JSON.stringify(prompt)};
         const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -468,8 +470,7 @@ export function registerCharacterIPC(ipcMain, deps) {
     // 3) 생성 버튼 enable 대기 (프롬프트 인식됨 확인)
     let enabled = false
     for (let i = 0; i < 20 && !enabled; i++) {
-      enabled = await flowView.webContents
-        .executeJavaScript(`!!(${GENERATE_BTN_SELECTOR})`)
+      enabled = await execJs(flowView.webContents, `!!(${GENERATE_BTN_SELECTOR})`)
         .catch(() => false)
       if (!enabled) await sleep(1000)
     }
@@ -599,7 +600,7 @@ export function registerCharacterIPC(ipcMain, deps) {
 
     let enabled = false
     for (let i = 0; i < 20 && !enabled; i++) {
-      enabled = await flowView.webContents.executeJavaScript(`!!(${GENERATE_BTN_SELECTOR})`).catch(() => false)
+      enabled = await execJs(flowView.webContents, `!!(${GENERATE_BTN_SELECTOR})`).catch(() => false)
       if (!enabled) await sleep(1000)
     }
     if (!enabled) return { success: false, error: '생성 버튼 enable 안 됨', retry: true }
@@ -698,7 +699,7 @@ export function registerCharacterIPC(ipcMain, deps) {
       let submitState = 'absent'
       let gwaited = 0
       while (gwaited <= SUBMIT_MAX_WAIT) {
-        submitState = await flowView.webContents.executeJavaScript(SUBMIT_PROBE).catch(() => 'error')
+        submitState = await execJs(flowView.webContents, SUBMIT_PROBE).catch(() => 'error')
         if (shouldProceed(submitState)) break
         if (gwaited === 0) console.log('[Flow Scene] (Agent ON) agent not idle (' + submitState + ') — waiting for ready...')
         await sleep(SUBMIT_POLL)
@@ -711,7 +712,7 @@ export function registerCharacterIPC(ipcMain, deps) {
       if (gwaited > 0) console.log('[Flow Scene] (Agent ON) agent idle after', Math.round(gwaited / 1000), 's')
       // idle 인데도 챗 패널이 컴포저를 가리면 닫는다(no-op if 없음).
       for (let i = 0; i < 3; i++) {
-        const r = await flowView.webContents.executeJavaScript(COMPOSE_EDITOR_READY).catch(() => false)
+        const r = await execJs(flowView.webContents, COMPOSE_EDITOR_READY).catch(() => false)
         if (r) break
         await trustedClickOnFlowView(AGENT_CHAT_CLOSE_SELECTOR).catch(() => {})
         await sleep(350)
@@ -722,7 +723,7 @@ export function registerCharacterIPC(ipcMain, deps) {
     let ready = false
     for (let i = 0; i < 30 && !ready; i++) {
       await sleep(500)
-      ready = await flowView.webContents.executeJavaScript(COMPOSE_EDITOR_READY).catch(() => false)
+      ready = await execJs(flowView.webContents, COMPOSE_EDITOR_READY).catch(() => false)
     }
     if (!ready) return { success: false, error: '컴포저 에디터 진입 실패' }
     await sleep(400)
@@ -784,7 +785,7 @@ export function registerCharacterIPC(ipcMain, deps) {
     // 3) 생성 버튼 enable 대기 → 트러스트 클릭 → batchGenerateImages 응답 캡처.
     let enabled = false
     for (let i = 0; i < 20 && !enabled; i++) {
-      enabled = await flowView.webContents.executeJavaScript(`!!(${GENERATE_BTN_SELECTOR})`).catch(() => false)
+      enabled = await execJs(flowView.webContents, `!!(${GENERATE_BTN_SELECTOR})`).catch(() => false)
       if (!enabled) await sleep(1000)
     }
     if (!enabled) return { success: false, error: '생성 버튼 enable 안 됨', retry: true }
@@ -795,13 +796,13 @@ export function registerCharacterIPC(ipcMain, deps) {
     if (getFlowAgentOn && getFlowAgentOn()) {
       let existingGenMediaIds = []
       try {
-        const _pre = await flowView.webContents.executeJavaScript(GENERATED_IMG_PROBE)
+        const _pre = await execJs(flowView.webContents, GENERATED_IMG_PROBE)
         if (Array.isArray(_pre)) existingGenMediaIds = _pre.map(i => i && i.mediaId).filter(Boolean)
       } catch {}
       const aClick = await trustedClickOnFlowView(GENERATE_BTN_SELECTOR, { required: true, step: 'character-submit' })
       if (!aClick || !aClick.success) return { success: false, error: aClick?.error || '생성 버튼 클릭 실패', retry: true }
       const col = await collectAgentDomImages({
-        scan: () => flowView.webContents.executeJavaScript(GENERATED_IMG_PROBE),
+        scan: () => execJs(flowView.webContents, GENERATED_IMG_PROBE),
         sessionFetch, sleep,
         // 제출 전 스냅샷 + 다른 경로(비동기 generate-image)가 이미 수집한 것도 제외 → 결과만.
         existingMediaIds: [...existingGenMediaIds, ...collectedMediaIds], want: 1,
@@ -993,7 +994,7 @@ export function registerCharacterIPC(ipcMain, deps) {
       let ready = false
       for (let i = 0; i < 40 && !ready; i++) {
         await sleep(500)
-        ready = await flowView.webContents.executeJavaScript(COMPOSE_EDITOR_READY).catch(() => false)
+        ready = await execJs(flowView.webContents, COMPOSE_EDITOR_READY).catch(() => false)
       }
       console.log('[Flow Refresh] composer refreshed (leave+reenter), ready:', ready)
       return { success: !!ready }
@@ -1102,7 +1103,7 @@ export function registerCharacterIPC(ipcMain, deps) {
       if (!onPage) return { success: false, error: 'characters 진입 실패(에디터 없음)' }
 
       // 이전 캡처 노이즈 제거 — 이 업로드로 생긴 응답만 보게.
-      await flowView.webContents.executeJavaScript('window.__autoflowcut_net__ = []').catch(() => {})
+      await execJs(flowView.webContents, 'window.__autoflowcut_net__ = []').catch(() => {})
 
       // 1) 대화상자 방지(input.click noop) → "업로드" 버튼 트러스트 클릭(= character upload 모드 진입).
       const hasInput = await neutralizeFileInputClick(flowView)
