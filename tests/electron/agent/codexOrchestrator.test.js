@@ -133,6 +133,7 @@ describe('resolveCodexAdapterPath', () => {
       isPackaged: true,
       resourcesPath: '/Applications/AutoFlowCut.app/Contents/Resources',
       repoRoot: '/must/not/be/used',
+      existsSyncImpl: () => true,          // 실제 packaged: 번들이 resources 에 실려 있다
     })).toBe(path.join(
       '/Applications/AutoFlowCut.app/Contents/Resources',
       'agent-adapter',
@@ -146,6 +147,41 @@ describe('resolveCodexAdapterPath', () => {
       resourcesPath: '/must/not/be/used',
       repoRoot: '/repo/AutoFlowCut',
     })).toBe(path.join('/repo/AutoFlowCut', 'dist-adapter', 'codex-adapter.mjs'))
+  })
+
+  // 🔴 **`app.isPackaged` 는 dev 에서 거짓말을 한다.** `patch-electron-name` 이 electron 바이너리를
+  //    `AutoFlowCut.app` 으로 리네임해서 dev 에서도 `isPackaged === true` 가 되고,
+  //    `process.resourcesPath` 는 **번들이 없는** electron 자기 Resources 를 가리킨다.
+  //    (metaPrompts.js:10-13 이 같은 함정을 이미 실측하고 같은 방식으로 피했다.)
+  //    → 플래그를 믿지 말고 **실제로 존재하는 후보**를 고른다.
+  it('isPackaged 가 true 여도 그 경로에 번들이 없으면 dist-adapter 로 떨어진다 (dev 리네임 함정)', () => {
+    const packaged = path.join('/electron/dist/AutoFlowCut.app/Contents/Resources', 'agent-adapter', 'codex-adapter.mjs')
+    const dev = path.join('/repo/AutoFlowCut', 'dist-adapter', 'codex-adapter.mjs')
+
+    expect(resolveCodexAdapterPath({
+      isPackaged: true,                                   // ← 리네임 탓에 dev 인데 true 다
+      resourcesPath: '/electron/dist/AutoFlowCut.app/Contents/Resources',
+      repoRoot: '/repo/AutoFlowCut',
+      existsSyncImpl: (candidate) => candidate === dev,   // 번들은 dist-adapter 에만 있다
+    })).toBe(dev)
+
+    // 진짜 패키징(둘 다 있을 수 있다)에서는 resources 가 이긴다.
+    expect(resolveCodexAdapterPath({
+      isPackaged: true,
+      resourcesPath: '/electron/dist/AutoFlowCut.app/Contents/Resources',
+      repoRoot: '/repo/AutoFlowCut',
+      existsSyncImpl: () => true,
+    })).toBe(packaged)
+  })
+
+  it('어느 후보에도 번들이 없으면 마지막 후보를 돌려준다 — doOpen 의 existsSync 가 경로를 찍고 죽는다', () => {
+    const dev = path.join('/repo/AutoFlowCut', 'dist-adapter', 'codex-adapter.mjs')
+    expect(resolveCodexAdapterPath({
+      isPackaged: true,
+      resourcesPath: '/nope/Resources',
+      repoRoot: '/repo/AutoFlowCut',
+      existsSyncImpl: () => false,
+    })).toBe(dev)
   })
 })
 

@@ -17,14 +17,32 @@ import {
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url))
 const DEFAULT_REPO_ROOT = path.resolve(MODULE_DIR, '..', '..')
 
+/**
+ * 🔴 **`app.isPackaged` 를 믿지 마라 — dev 에서 거짓말을 한다.**
+ *    `scripts/patch-electron-name.cjs` 가 electron 바이너리를 `AutoFlowCut.app` 으로 리네임하기 때문에
+ *    **dev 에서도 `isPackaged === true`** 가 되고, `process.resourcesPath` 는 번들이 없는
+ *    electron 자기 `Resources/` 를 가리킨다. (실측: `Codex adapter bundle not found:
+ *    node_modules/electron/dist/AutoFlowCut.app/Contents/Resources/agent-adapter/codex-adapter.mjs`)
+ *
+ *    이 저장소는 이 함정을 이미 한 번 밟고 `metaPrompts.js:10-13` 에서 같은 방식으로 피했다:
+ *    **플래그가 아니라 "실제로 번들이 있는 후보"를 고른다.** 진짜 packaged 면 resources 가 이기고,
+ *    dev 면 `dist-adapter/` 가 이긴다.
+ *
+ *    아무 데도 없으면 마지막 후보를 돌려준다 — `doOpen` 의 `existsSync` 가 그 경로를 찍으며 죽는다.
+ *    (조용히 `undefined` 를 넘기면 Codex 가 무엇을 spawn 하려다 실패했는지 알 수 없다.)
+ */
 export function resolveCodexAdapterPath({
   isPackaged = false,
   resourcesPath = process.resourcesPath,
   repoRoot = DEFAULT_REPO_ROOT,
+  existsSyncImpl = existsSync,
 } = {}) {
-  return isPackaged
-    ? path.join(resourcesPath, 'agent-adapter', 'codex-adapter.mjs')
-    : path.join(repoRoot, 'dist-adapter', 'codex-adapter.mjs')
+  const candidates = [
+    isPackaged && resourcesPath && path.join(resourcesPath, 'agent-adapter', 'codex-adapter.mjs'),
+    path.join(repoRoot, 'dist-adapter', 'codex-adapter.mjs'),
+  ].filter(Boolean)
+
+  return candidates.find((candidate) => existsSyncImpl(candidate)) ?? candidates[candidates.length - 1]
 }
 
 const CLIENT_INFO = { name: 'autoflowcut', title: 'AutoFlowCut', version: '0.0.0' }
@@ -193,7 +211,7 @@ export function createCodexOrchestrator({
   async function doOpen() {
     if (closed) throw new Error('Codex orchestrator is closed')
     try {
-      const executable = path.resolve(adapterPath || resolveCodexAdapterPath({ isPackaged, resourcesPath, repoRoot }))
+      const executable = path.resolve(adapterPath || resolveCodexAdapterPath({ isPackaged, resourcesPath, repoRoot, existsSyncImpl }))
       // dev에는 source tree가 있어도 배포 번들이 빠질 수 있다. spawn 오류로 늦게 숨기지 않는다.
       if (!existsSyncImpl(executable)) throw new Error(`Codex adapter bundle not found: ${executable}`)
       work = await workingDirectoryFactory()
