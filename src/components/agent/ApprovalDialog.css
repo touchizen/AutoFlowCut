@@ -1,0 +1,32 @@
+/* 승인 창은 **가려지면 안 된다** — 에이전트가 과금 툴을 부르려는 순간이다. */
+.approval-backdrop {
+  position: fixed; inset: 0; z-index: 9999;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+.approval-dialog {
+  width: min(560px, calc(100vw - 48px));
+  background: var(--panel-bg, #1e1e22);
+  color: var(--text, #eee);
+  border: 1px solid var(--border, #3a3a42);
+  border-radius: 12px;
+  padding: 20px 22px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+.approval-header { font-size: 13px; opacity: 0.7; margin-bottom: 10px; }
+.approval-tool { font-size: 17px; font-weight: 600; margin-bottom: 12px; word-break: break-all; }
+/* 인자는 **그대로** 보여준다 — 요약하면 승인한 것과 실행되는 것이 갈린다. */
+.approval-args {
+  max-height: 240px; overflow: auto;
+  background: var(--code-bg, #131316);
+  border: 1px solid var(--border, #3a3a42);
+  border-radius: 8px; padding: 12px;
+  font-size: 12px; line-height: 1.5;
+  white-space: pre-wrap; word-break: break-all;
+  margin: 0 0 16px;
+}
+.approval-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.approval-actions button { padding: 8px 18px; border-radius: 8px; font-size: 14px; cursor: pointer; border: 1px solid transparent; }
+.approval-deny { background: transparent; border-color: var(--border, #3a3a42); color: var(--text, #eee); }
+.approval-allow { background: var(--accent, #4c8dff); color: #fff; font-weight: 600; }
+.approval-more { margin-top: 12px; font-size: 12px; opacity: 0.6; text-align: right; }

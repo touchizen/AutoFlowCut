@@ -387,6 +387,7 @@ export async function runStoryCharacterPush({
 
 // Components
 import Header from './components/Header'
+import ApprovalDialog from './components/agent/ApprovalDialog'
 import PromptInput from './components/PromptInput'
 import SceneList from './components/SceneList'
 import GenerateMenu from './components/GenerateMenu'
@@ -2166,6 +2167,9 @@ function App() {
           <span>Loading project...</span>
         </div>
       )}
+      {/* 🔴 **전역 sibling 이다** (D14). `activeView` 조건부 본문 *안*에 넣으면 뷰를 바꾸는 순간
+          승인 창이 사라진다 — 에이전트가 과금 툴을 부르려는 그 순간에. Header 처럼 밖에 둔다. */}
+      <ApprovalDialog />
       <Header
         onSettings={(tab) => openSettings(typeof tab === 'string' ? tab : null)}
         onExport={handleExportClick}
