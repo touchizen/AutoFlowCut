@@ -3,7 +3,8 @@
  * Supports mediaType: 'image' | 'video' | 'frame-pair'
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { useI18n } from '../hooks/useI18n'
 import { getRatioClass, resolveImageSrc, hasImageData } from '../utils/formatters'
 import { resolveVideoSrc } from '../utils/videoSrc'
@@ -14,6 +15,34 @@ import InfinityLoader from './InfinityLoader'
 import LazyImage from './LazyImage'
 import HoverImageBalloon from './HoverImageBalloon'
 import { StopwatchIcon, ElapsedTime } from './StopwatchIcon'
+
+const VIRTUALIZATION_THRESHOLD = 200
+const VIRTUAL_OVERSCAN = 8
+const TABLE_ROW_ESTIMATE = 76
+const GRID_ROW_ESTIMATE = 180
+const GRID_GAP = 10
+const GRID_PADDING = 10
+const GRID_MIN_CARD_WIDTH = {
+  'ratio-landscape': 160,
+  'ratio-portrait': 104,
+  'ratio-square': 132,
+}
+const EMPTY_RESULTS = []
+
+function measureResultRow(element) {
+  return Math.round(element.getBoundingClientRect().height)
+}
+
+function measureResultGridRow(element) {
+  return Math.round(element.getBoundingClientRect().height)
+}
+
+function getGridColumnCount(width, ratioClass) {
+  if (!(width > 0)) return 0
+  const contentWidth = Math.max(0, width - (GRID_PADDING * 2))
+  const minCardWidth = GRID_MIN_CARD_WIDTH[ratioClass] || GRID_MIN_CARD_WIDTH['ratio-landscape']
+  return Math.max(1, Math.floor((contentWidth + GRID_GAP) / (minCardWidth + GRID_GAP)))
+}
 
 function VideoPosterThumbnail({ videoSrc, fallbackSrc, alt }) {
   const [posterSrc, setPosterSrc] = useState(null)
@@ -81,21 +110,138 @@ export default function ResultsTable({
   const [hoverPreview, setHoverPreview] = useState(null)
   const [hoveredVideoKey, setHoveredVideoKey] = useState(null)
   const rowRefs = useRef({})
-
-  // 생성 중인 행으로 자동 스크롤 (status 변경 감지)
-  const dataArr = items || scenes || []
-  const generatingIds = dataArr.filter(item => item.status === 'generating').map(item => item.id)
-  const generatingKey = generatingIds.join(',')
-  useEffect(() => {
-    // 마지막 generating 행으로 스크롤
-    const lastId = generatingIds[generatingIds.length - 1]
-    if (lastId && rowRefs.current[lastId]) {
-      rowRefs.current[lastId].scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-    }
-  }, [generatingKey])
-
   // backward compat: accept `scenes` as fallback for `items`
-  const data = items || scenes || []
+  const data = items || scenes || EMPTY_RESULTS
+  const ratioClass = getRatioClass(aspectRatio)
+  const shouldVirtualize = data.length > VIRTUALIZATION_THRESHOLD
+  const tableScrollRef = useRef(null)
+  const gridScrollRef = useRef(null)
+  const previousStatusesRef = useRef(null)
+  const pendingScrollIndexRef = useRef(-1)
+  const [gridWidth, setGridWidth] = useState(null)
+  const itemsPerRow = shouldVirtualize && layout === 'grid'
+    ? getGridColumnCount(gridWidth, ratioClass)
+    : 0
+  const gridRowCount = itemsPerRow > 0 ? Math.ceil(data.length / itemsPerRow) : 0
+
+  const getTableItemKey = useCallback(
+    index => data[index]?.id ?? `row-${index}`,
+    [data]
+  )
+  const getGridRowKey = useCallback(
+    rowIndex => `${itemsPerRow}:${data[rowIndex * itemsPerRow]?.id ?? rowIndex}`,
+    [data, itemsPerRow]
+  )
+  const tableVirtualizer = useVirtualizer({
+    count: shouldVirtualize && layout !== 'grid' ? data.length : 0,
+    getScrollElement: () => tableScrollRef.current,
+    estimateSize: () => TABLE_ROW_ESTIMATE,
+    getItemKey: getTableItemKey,
+    measureElement: measureResultRow,
+    overscan: VIRTUAL_OVERSCAN,
+    enabled: shouldVirtualize && layout !== 'grid',
+  })
+  const gridVirtualizer = useVirtualizer({
+    count: shouldVirtualize && layout === 'grid' ? gridRowCount : 0,
+    getScrollElement: () => gridScrollRef.current,
+    estimateSize: () => GRID_ROW_ESTIMATE,
+    getItemKey: getGridRowKey,
+    measureElement: measureResultGridRow,
+    overscan: VIRTUAL_OVERSCAN,
+    paddingStart: GRID_PADDING,
+    paddingEnd: GRID_PADDING,
+    enabled: shouldVirtualize && layout === 'grid' && itemsPerRow > 0,
+  })
+
+  // 큰 grid는 열 수를 알기 전 카드를 하나도 mount하지 않는다. 첫 양수 폭은 paint 전 읽고,
+  // 이후 panel resize는 같은 observer로 반영한다.
+  useLayoutEffect(() => {
+    if (!shouldVirtualize || layout !== 'grid') {
+      setGridWidth(null)
+      return
+    }
+    const element = gridScrollRef.current
+    if (!element) return
+    const commitWidth = (nextWidth) => {
+      const normalized = Number.isFinite(nextWidth) && nextWidth > 0 ? nextWidth : null
+      setGridWidth(previous => previous === normalized ? previous : normalized)
+    }
+    commitWidth(element.getBoundingClientRect().width || element.offsetWidth)
+    const observer = new ResizeObserver((entries) => {
+      const entryWidth = entries[0]?.contentRect?.width
+      commitWidth(entryWidth || element.getBoundingClientRect().width || element.offsetWidth)
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [layout, shouldVirtualize])
+
+  const tableVirtualItems = shouldVirtualize && layout !== 'grid'
+    ? tableVirtualizer.getVirtualItems()
+    : []
+  const gridVirtualRows = shouldVirtualize && layout === 'grid' && itemsPerRow > 0
+    ? gridVirtualizer.getVirtualItems()
+    : []
+
+  // 초기 mount와 status 전환 모두 마지막 generating 항목을 따른다. 큰 grid가 아직
+  // 미측정이면 index를 보류했다가 열 수가 정해진 직후 해당 virtual row로 이동한다.
+  useEffect(() => {
+    const previousStatuses = previousStatusesRef.current
+    let latestGeneratingIndex = -1
+    for (let index = 0; index < data.length; index++) {
+      const item = data[index]
+      if (item.status !== 'generating') continue
+      if (!previousStatuses || (
+        !previousStatuses.has(item.id)
+        || previousStatuses.get(item.id) !== 'generating'
+      )) {
+        latestGeneratingIndex = index
+      }
+    }
+    previousStatusesRef.current = new Map(data.map(item => [item.id, item.status]))
+    if (latestGeneratingIndex >= 0) pendingScrollIndexRef.current = latestGeneratingIndex
+
+    const pendingIndex = pendingScrollIndexRef.current
+    if (pendingIndex < 0 || !data[pendingIndex]) return
+    if (shouldVirtualize) {
+      if (layout === 'grid') {
+        if (itemsPerRow <= 0) return
+        gridVirtualizer.scrollToIndex(Math.floor(pendingIndex / itemsPerRow), { align: 'auto' })
+      } else {
+        tableVirtualizer.scrollToIndex(pendingIndex, { align: 'auto' })
+      }
+    } else {
+      const key = data[pendingIndex].id ?? `${layout === 'grid' ? 'card' : 'row'}-${pendingIndex}`
+      rowRefs.current[key]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+    pendingScrollIndexRef.current = -1
+  }, [data, gridVirtualizer, itemsPerRow, layout, shouldVirtualize, tableVirtualizer])
+
+  const mountedItemKeys = useMemo(() => {
+    if (!shouldVirtualize) return null
+    const keys = new Set()
+    if (layout === 'grid') {
+      for (const row of gridVirtualRows) {
+        const start = row.index * itemsPerRow
+        const end = Math.min(data.length, start + itemsPerRow)
+        for (let index = start; index < end; index++) {
+          keys.add(data[index]?.id ?? `card-${index}`)
+        }
+      }
+    } else {
+      for (const item of tableVirtualItems) {
+        keys.add(data[item.index]?.id ?? `row-${item.index}`)
+      }
+    }
+    return keys
+  }, [data, gridVirtualRows, itemsPerRow, layout, shouldVirtualize, tableVirtualItems])
+
+  // 부모에 있던 hover state가 virtual row unmount 뒤 남으면 스크롤 복귀 시 비디오가
+  // hover 없이 다시 mount된다. 현재 window에서 빠진 즉시 둘 다 해제한다.
+  useEffect(() => {
+    if (!mountedItemKeys) return
+    if (hoveredVideoKey != null && !mountedItemKeys.has(hoveredVideoKey)) setHoveredVideoKey(null)
+    if (hoverPreview?.itemKey != null && !mountedItemKeys.has(hoverPreview.itemKey)) setHoverPreview(null)
+  }, [hoverPreview, hoveredVideoKey, mountedItemKeys])
 
   if (data.length === 0) {
     return (
@@ -111,8 +257,6 @@ export default function ResultsTable({
   // done statuses: 'done' (image automation) or 'complete' (video automation) both count
   const selectedCount = selectable ? data.filter(s => s.selected !== false).length : 0
   const allSelected = selectable && data.length > 0 && data.every(s => s.selected !== false)
-
-  const ratioClass = getRatioClass(aspectRatio)
 
   // Column header for media
   const mediaHeader = isVideoType
@@ -133,7 +277,7 @@ export default function ResultsTable({
   /**
    * Render the media thumbnail for a given item
    */
-  const renderMedia = (item, index, isVideoHovered = false) => {
+  const renderMedia = (item, index, isVideoHovered = false, itemKey = item.id ?? `item-${index}`) => {
     const itemImgSrc = resolveImageSrc(item)
     const renderLazyVideo = (videoSrc, posterAlt) => (
       <>
@@ -165,6 +309,7 @@ export default function ResultsTable({
           onMouseEnter={(e) => {
             const rect = e.currentTarget.getBoundingClientRect()
             setHoverPreview({
+              itemKey,
               src: itemImgSrc,
               rect: { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }
             })
@@ -262,6 +407,151 @@ export default function ResultsTable({
     return null
   }
 
+  const renderGridCard = (item, index, keepDomRef = false) => {
+    const cardKey = item.id ?? `card-${index}`
+    return (
+      <div
+        key={cardKey}
+        role="listitem"
+        ref={keepDomRef ? (element) => {
+          if (element) rowRefs.current[cardKey] = element
+          else delete rowRefs.current[cardKey]
+        } : undefined}
+        className={`result-card status-${item.status} ${selectable && item.selected === false ? 'deselected' : ''}`}
+        title={item.prompt || ''}
+      >
+        {selectable && (
+          <input
+            className="card-check"
+            type="checkbox"
+            checked={item.selected !== false}
+            onChange={() => onToggle(item.id)}
+            disabled={disabled}
+          />
+        )}
+        <div
+          className={`image-cell ${ratioClass} ${hasMedia(item) ? 'clickable' : ''}`}
+          onMouseEnter={isVideoType && hasMedia(item) ? () => setHoveredVideoKey(cardKey) : undefined}
+          onMouseLeave={isVideoType && hasMedia(item) ? () => setHoveredVideoKey(null) : undefined}
+          onClick={() => onShowDetail && onShowDetail(item)}
+          title={t('headerExtra.clickToDetail')}
+        >
+          {hasMedia(item) ? (
+            <>
+              {renderMedia(item, index, hoveredVideoKey === cardKey, cardKey)}
+              {onClearMedia && !disabled && (
+                <button
+                  className="btn-clear-media"
+                  onClick={(e) => { e.stopPropagation(); if (window.confirm(t('results.confirmClear') || 'Remove this media?')) onClearMedia(item.id) }}
+                  title={t('results.clearMedia') || '미디어 제거'}
+                >✕</button>
+              )}
+            </>
+          ) : item.status === 'generating' ? (
+            <div className="generating-indicator">
+              <InfinityLoader />
+            </div>
+          ) : (
+            <div className="empty-cell">-</div>
+          )}
+        </div>
+        <div className="card-footer">
+          <span className="card-id">#{index + 1}</span>
+          <span className="card-status">{renderStatus(item)}</span>
+        </div>
+        {item.status === 'error' && getDisplayError(item) && (
+          <div className="prompt-error card-error" title={String(getDisplayError(item))}>
+            {String(getDisplayError(item))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  const renderTableRow = (item, index, virtualized = false) => {
+    const rowKey = item.id ?? `row-${index}`
+    return (
+      <tr
+        key={rowKey}
+        ref={virtualized ? tableVirtualizer.measureElement : (element) => {
+          if (element) rowRefs.current[rowKey] = element
+          else delete rowRefs.current[rowKey]
+        }}
+        data-index={virtualized ? index : undefined}
+        className={`status-${item.status} ${selectable && item.selected === false ? 'deselected' : ''}`}
+      >
+        {selectable && (
+          <td className="col-check">
+            <input
+              type="checkbox"
+              checked={item.selected !== false}
+              onChange={() => onToggle(item.id)}
+              disabled={disabled}
+            />
+          </td>
+        )}
+        <td className="col-id">{index + 1}</td>
+
+        <td className="col-img">
+          <div
+            className={`image-cell ${ratioClass} ${hasMedia(item) ? 'clickable' : ''}`}
+            onMouseEnter={isVideoType && hasMedia(item) ? () => setHoveredVideoKey(rowKey) : undefined}
+            onMouseLeave={isVideoType && hasMedia(item) ? () => setHoveredVideoKey(null) : undefined}
+            onClick={() => onShowDetail && onShowDetail(item)}
+            title={t('headerExtra.clickToDetail')}
+          >
+            {hasMedia(item) ? (
+              <>
+                {renderMedia(item, index, hoveredVideoKey === rowKey, rowKey)}
+                {onClearMedia && !disabled && (
+                  <button
+                    className="btn-clear-media"
+                    onClick={(e) => { e.stopPropagation(); if (window.confirm(t('results.confirmClear') || 'Remove this media?')) onClearMedia(item.id) }}
+                    title={t('results.clearMedia') || '미디어 제거'}
+                  >✕</button>
+                )}
+              </>
+            ) : item.status === 'generating' ? (
+              <div className="generating-indicator">
+                <InfinityLoader />
+              </div>
+            ) : (
+              <div className="empty-cell">-</div>
+            )}
+          </div>
+        </td>
+
+        <td className="col-prompt">
+          {onPromptEdit && !disabled ? (
+            <input
+              className="prompt-edit-input"
+              value={item.prompt || ''}
+              onChange={(e) => onPromptEdit(item.id, e.target.value)}
+              disabled={disabled}
+            />
+          ) : (
+            <div className="prompt-preview" title={item.prompt}>
+              {item.prompt || ''}
+            </div>
+          )}
+          {item.status === 'error' && getDisplayError(item) && (
+            <div className="prompt-error" title={String(getDisplayError(item))}>
+              {String(getDisplayError(item))}
+            </div>
+          )}
+        </td>
+
+        <td className="col-model" title={item.model || ''}>
+          {modelLabel(item.model) || '—'}
+        </td>
+
+        <td className="col-status">
+          {renderStatus(item)}
+        </td>
+      </tr>
+    )
+  }
+
   // ── 그리드 레이아웃 ──
   // 테이블과 동일한 데이터/핸들러를 카드형으로 렌더. renderMedia/renderStatus/hasMedia 등
   // 헬퍼를 그대로 재사용 — 호버 비디오/미디어 제거/재시도/체크박스 동작이 결과표와 일치한다.
@@ -281,64 +571,50 @@ export default function ResultsTable({
             </label>
           </div>
         )}
-        <div className={`results-grid ${ratioClass}`} role="list">
-          {data.map((item, index) => {
-            const cardKey = item.id ?? `card-${index}`
-            return (
+        <div
+          ref={gridScrollRef}
+          className={`results-grid ${ratioClass}${shouldVirtualize ? ' is-virtualized' : ''}`}
+          role="list"
+        >
+          {shouldVirtualize ? (itemsPerRow > 0 ? (
+            <>
               <div
-                key={cardKey}
-                role="listitem"
-                ref={el => { if (el) rowRefs.current[cardKey] = el }}
-                className={`result-card status-${item.status} ${selectable && item.selected === false ? 'deselected' : ''}`}
-                title={item.prompt || ''}
-              >
-                {selectable && (
-                  <input
-                    className="card-check"
-                    type="checkbox"
-                    checked={item.selected !== false}
-                    onChange={() => onToggle(item.id)}
-                    disabled={disabled}
-                  />
-                )}
-                <div
-                  className={`image-cell ${ratioClass} ${hasMedia(item) ? 'clickable' : ''}`}
-                  onMouseEnter={isVideoType && hasMedia(item) ? () => setHoveredVideoKey(cardKey) : undefined}
-                  onMouseLeave={isVideoType && hasMedia(item) ? () => setHoveredVideoKey(null) : undefined}
-                  onClick={() => onShowDetail && onShowDetail(item)}
-                  title={t('headerExtra.clickToDetail')}
-                >
-                  {hasMedia(item) ? (
-                    <>
-                      {renderMedia(item, index, hoveredVideoKey === cardKey)}
-                      {onClearMedia && !disabled && (
-                        <button
-                          className="btn-clear-media"
-                          onClick={(e) => { e.stopPropagation(); if (window.confirm(t('results.confirmClear') || 'Remove this media?')) onClearMedia(item.id) }}
-                          title={t('results.clearMedia') || '미디어 제거'}
-                        >✕</button>
-                      )}
-                    </>
-                  ) : item.status === 'generating' ? (
-                    <div className="generating-indicator">
-                      <InfinityLoader />
-                    </div>
-                  ) : (
-                    <div className="empty-cell">-</div>
-                  )}
-                </div>
-                <div className="card-footer">
-                  <span className="card-id">#{index + 1}</span>
-                  <span className="card-status">{renderStatus(item)}</span>
-                </div>
-                {item.status === 'error' && getDisplayError(item) && (
-                  <div className="prompt-error card-error" title={String(getDisplayError(item))}>
-                    {String(getDisplayError(item))}
+                data-virtual-spacer="top"
+                role="presentation"
+                aria-hidden="true"
+                style={{ height: gridVirtualRows.length > 0 ? gridVirtualRows[0].start : 0 }}
+              />
+              {gridVirtualRows.map((row) => {
+                const start = row.index * itemsPerRow
+                const end = Math.min(data.length, start + itemsPerRow)
+                return (
+                  <div
+                    key={row.key}
+                    ref={gridVirtualizer.measureElement}
+                    data-index={row.index}
+                    className="results-grid-row"
+                    role="presentation"
+                    style={{
+                      gridTemplateColumns: `repeat(${itemsPerRow}, minmax(0, 1fr))`,
+                      paddingBottom: row.index < gridRowCount - 1 ? GRID_GAP : 0,
+                    }}
+                  >
+                    {data.slice(start, end).map((item, offset) => renderGridCard(item, start + offset))}
                   </div>
-                )}
-              </div>
-            )
-          })}
+                )
+              })}
+              <div
+                data-virtual-spacer="bottom"
+                role="presentation"
+                aria-hidden="true"
+                style={{
+                  height: gridVirtualRows.length > 0
+                    ? Math.max(0, gridVirtualizer.getTotalSize() - gridVirtualRows[gridVirtualRows.length - 1].end)
+                    : 0,
+                }}
+              />
+            </>
+          ) : null) : data.map((item, index) => renderGridCard(item, index, true))}
         </div>
 
         {/* 호버 풍선 프리뷰 */}
@@ -384,81 +660,36 @@ export default function ResultsTable({
           </thead>
         </table>
       </div>
-      <div className="results-table-body">
+      <div ref={tableScrollRef} className="results-table-body">
       <table className="results-table">
         <tbody>
-          {data.map((item, index) => (
-            <tr key={item.id} ref={el => { if (el) rowRefs.current[item.id] = el }} className={`status-${item.status} ${selectable && item.selected === false ? 'deselected' : ''}`}>
-              {selectable && (
-                <td className="col-check">
-                  <input
-                    type="checkbox"
-                    checked={item.selected !== false}
-                    onChange={() => onToggle(item.id)}
-                    disabled={disabled}
-                  />
-                </td>
-              )}
-              <td className="col-id">{index + 1}</td>
-
-              <td className="col-img">
-                <div
-                  className={`image-cell ${ratioClass} ${hasMedia(item) ? 'clickable' : ''}`}
-                  onMouseEnter={isVideoType && hasMedia(item) ? () => setHoveredVideoKey(item.id ?? `row-${index}`) : undefined}
-                  onMouseLeave={isVideoType && hasMedia(item) ? () => setHoveredVideoKey(null) : undefined}
-                  onClick={() => onShowDetail && onShowDetail(item)}
-                  title={t('headerExtra.clickToDetail')}
-                >
-                  {hasMedia(item) ? (
-                    <>
-                      {renderMedia(item, index, hoveredVideoKey === (item.id ?? `row-${index}`))}
-                      {onClearMedia && !disabled && (
-                        <button
-                          className="btn-clear-media"
-                          onClick={(e) => { e.stopPropagation(); if (window.confirm(t('results.confirmClear') || 'Remove this media?')) onClearMedia(item.id) }}
-                          title={t('results.clearMedia') || '미디어 제거'}
-                        >✕</button>
-                      )}
-                    </>
-                  ) : item.status === 'generating' ? (
-                    <div className="generating-indicator">
-                      <InfinityLoader />
-                    </div>
-                  ) : (
-                    <div className="empty-cell">-</div>
-                  )}
-                </div>
-              </td>
-
-              <td className="col-prompt">
-                {onPromptEdit && !disabled ? (
-                  <input
-                    className="prompt-edit-input"
-                    value={item.prompt || ''}
-                    onChange={(e) => onPromptEdit(item.id, e.target.value)}
-                    disabled={disabled}
-                  />
-                ) : (
-                  <div className="prompt-preview" title={item.prompt}>
-                    {item.prompt || ''}
-                  </div>
-                )}
-                {item.status === 'error' && getDisplayError(item) && (
-                  <div className="prompt-error" title={String(getDisplayError(item))}>
-                    {String(getDisplayError(item))}
-                  </div>
-                )}
-              </td>
-
-              <td className="col-model" title={item.model || ''}>
-                {modelLabel(item.model) || '—'}
-              </td>
-
-              <td className="col-status">
-                {renderStatus(item)}
-              </td>
-            </tr>
-          ))}
+          {shouldVirtualize ? (
+            <>
+              <tr data-virtual-spacer="top">
+                <td
+                  colSpan={selectable ? 6 : 5}
+                  style={{
+                    height: tableVirtualItems.length > 0 ? tableVirtualItems[0].start : 0,
+                    padding: 0,
+                    border: 0,
+                  }}
+                />
+              </tr>
+              {tableVirtualItems.map(item => renderTableRow(data[item.index], item.index, true))}
+              <tr data-virtual-spacer="bottom">
+                <td
+                  colSpan={selectable ? 6 : 5}
+                  style={{
+                    height: tableVirtualItems.length > 0
+                      ? Math.max(0, tableVirtualizer.getTotalSize() - tableVirtualItems[tableVirtualItems.length - 1].end)
+                      : tableVirtualizer.getTotalSize(),
+                    padding: 0,
+                    border: 0,
+                  }}
+                />
+              </tr>
+            </>
+          ) : data.map((item, index) => renderTableRow(item, index))}
         </tbody>
       </table>
       </div>

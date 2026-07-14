@@ -1259,6 +1259,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
                   width={totalWidth}
                   height={getTrackHeight(track)}
                   pxPerMs={pxPerMs}
+                  visibleRangeMs={visibleRangeMs}
                   renderClips={renderClips}
                   onClipClick={onClipClick}
                   onClipDoubleClick={onClipDoubleClick}
