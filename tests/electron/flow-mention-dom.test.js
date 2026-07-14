@@ -21,8 +21,9 @@ import {
   MENTION_PROBE,
 } from '../../electron/flow-mention-dom.js'
 
-// 주입 소스 문자열을 페이지에서와 동일하게 평가한다.
-const run = (expr) => eval(expr) // eslint-disable-line no-eval
+// 주입 소스 문자열을 페이지의 전역 스코프에서 평가한다. direct eval 을 쓰면 이 테스트 모듈의
+// 로컬 바인딩을 실수로 참조한 주입 문자열도 테스트만 통과하고 실제 페이지에서는 깨질 수 있다.
+const run = (expr) => (0, eval)(expr) // eslint-disable-line no-eval
 
 /** 실제 Flow 옵션 구조(콘솔 덤프 기준): 썸네일 + (이름 leaf, 타입라벨 leaf). */
 const option = (name, typeLabel) => `
@@ -33,6 +34,18 @@ const option = (name, typeLabel) => `
       <div>${typeLabel}</div>
     </div>
   </div>`
+
+const splitNameOption = (nameParts, typeLabel, { icon = '', alt = '' } = {}) => `
+  <div role="option" aria-selected="false">
+    ${alt ? `<div><div><img alt="${alt}"></div></div>` : ''}
+    <div>
+      ${icon ? `<span>${icon}</span>` : ''}
+      ${nameParts.map((part) => `<span>${part}</span>`).join('')}
+      <span>${typeLabel}</span>
+    </div>
+  </div>`
+
+const bareOption = (name) => `<div role="option" aria-selected="false">${name}</div>`
 
 /** 탭 텍스트는 "아이콘 리거처 + 라벨" 로 온다: "accessibility_new캐릭터". */
 const tab = (ligature, label) => `<div role="tab">${ligature}${label}</div>`
@@ -63,6 +76,8 @@ const EN = dialog({
 
 beforeEach(() => {
   document.body.innerHTML = ''
+  document.documentElement.lang = ''
+  window.history.replaceState({}, '', '/')
   // jsdom 에 없음 — 주입 소스가 옵션 클릭 전에 호출한다.
   Element.prototype.scrollIntoView = vi.fn()
   // 주입 소스는 MouseEvent 에 view: window 를 넘긴다. jsdom 은 자기 Window 인스턴스만 받는다.
@@ -83,6 +98,64 @@ describe('hasMentionOption (이름 매칭이 로케일에 묶이지 않는다)',
   it('이미지 옵션을 캐릭터로 오인하지 않는다', () => {
     document.body.innerHTML = dialog({ tabs: [], options: [option('Zed2 in dense forest', 'Image')] })
     expect(run(hasMentionOption('Zed2'))).toBe(false)
+  })
+
+  it.each([
+    ['ko', '이미지'],
+    ['en', 'Image'],
+  ])('%s: 캐릭터와 같은 이름의 이미지 옵션도 이름 후보로는 정확히 일치한다 (타입 필터는 탭 책임)', (_locale, typeLabel) => {
+    document.body.innerHTML = dialog({ tabs: [], options: [option('Zed2', typeLabel)] })
+    expect(run(hasMentionOption('Zed2'))).toBe(true)
+  })
+
+  it.each([
+    ['ko', '캐릭터'],
+    ['en', 'Character'],
+  ])('%s: 검색 highlight 가 이름을 여러 leaf 로 나눠도 찾는다', (_locale, typeLabel) => {
+    document.body.innerHTML = dialog({
+      tabs: [],
+      options: [splitNameOption(['Ze', 'd2'], typeLabel)],
+    })
+    expect(run(hasMentionOption('Zed2'))).toBe(true)
+  })
+
+  it.each([
+    ['ko', '캐릭터'],
+    ['en', 'Character'],
+  ])('%s: 아이콘 ligature leaf 가 이름보다 앞서도 찾는다', (_locale, typeLabel) => {
+    document.body.innerHTML = dialog({
+      tabs: [],
+      options: [splitNameOption(['Zed2'], typeLabel, { icon: 'accessibility_new' })],
+    })
+    expect(run(hasMentionOption('Zed2'))).toBe(true)
+  })
+
+  it.each([
+    ['ko', '캐릭터'],
+    ['en', 'Character'],
+  ])('%s: img alt 가 정확한 이름이면 텍스트 leaf 모양과 무관하게 찾는다', (_locale, typeLabel) => {
+    document.body.innerHTML = dialog({
+      tabs: [],
+      options: [splitNameOption(['다른 이름'], typeLabel, { icon: 'accessibility_new', alt: 'Zed2' })],
+    })
+    expect(run(hasMentionOption('Zed2'))).toBe(true)
+  })
+
+  it('이름이 option 의 bare text node 여도 찾는다', () => {
+    document.body.innerHTML = dialog({ tabs: [], options: [bareOption('Zed2')] })
+    expect(run(hasMentionOption('Zed2'))).toBe(true)
+  })
+
+  it.each([
+    ['ko', '캐릭터'],
+    ['en', 'Character'],
+  ])('%s: 공백 run 은 하나로 정규화하되 공백 자체는 보존한다', (_locale, typeLabel) => {
+    document.body.innerHTML = dialog({ tabs: [], options: [option('A B', typeLabel)] })
+    expect(run(hasMentionOption('A   B'))).toBe(true)
+    expect(run(hasMentionOption('AB'))).toBe(false)
+
+    document.body.innerHTML = dialog({ tabs: [], options: [option('AB', typeLabel)] })
+    expect(run(hasMentionOption('A B'))).toBe(false)
   })
 
   it('prefix 로는 매칭하지 않는다 (회사원 이 회사원3 을 고르면 안 된다)', () => {
@@ -112,9 +185,9 @@ describe('CLICK_CHARACTER_TAB (탭도 로케일에 묶이지 않는다)', () => 
     expect(clicked[0]).toContain('accessibility_new')
   })
 
-  it('리거처가 바뀌어도 라벨로 폴백한다', () => {
+  it('로케일 라벨만으로는 캐릭터 탭을 추측하지 않는다', () => {
     document.body.innerHTML = dialog({ tabs: [tab('', 'Characters')], options: [] })
-    expect(run(CLICK_CHARACTER_TAB)).toBe(true)
+    expect(run(CLICK_CHARACTER_TAB)).toBe(false)
   })
 
   it('캐릭터 탭이 없으면 false', () => {
@@ -143,6 +216,22 @@ describe('dispatchMentionOption (옵션 선택)', () => {
     expect(run(dispatchMentionOption('NoSuchName'))).toBe(false)
     expect(spy).not.toHaveBeenCalled()
   })
+
+  it.each([
+    ['ko', '캐릭터'],
+    ['en', 'Character'],
+  ])('%s: highlight 로 나뉜 이름 옵션을 정확히 클릭한다', (_locale, typeLabel) => {
+    document.body.innerHTML = dialog({
+      tabs: [],
+      options: [splitNameOption(['Ze', 'd2'], typeLabel)],
+    })
+    const optionEl = document.querySelector("[role='option']")
+    const clicked = vi.fn()
+    optionEl.addEventListener('click', clicked)
+
+    expect(run(dispatchMentionOption('Zed2'))).toBe(true)
+    expect(clicked).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('chipCheck (삽입 검증)', () => {
@@ -152,6 +241,45 @@ describe('chipCheck (삽입 검증)', () => {
   it('선행 @ 가 붙은 칩을 이름으로 인정한다', () => {
     document.body.innerHTML = editor(`<span data-slate-void="true"><span>@Zed2</span></span>`)
     expect(run(chipCheck(EDITOR, 'Zed2')).hasMentionChip).toBe(true)
+  })
+
+  it.each(['Zed2', '@Zed2', 'Zed2캐릭터', '@Zed2캐릭터'])(
+    'legacy whole-text 칩 "%s"를 계속 인정한다',
+    (wholeText) => {
+      document.body.innerHTML = editor(`<span data-slate-void="true">${wholeText}</span>`)
+      expect(run(chipCheck(EDITOR, 'Zed2')).hasMentionChip).toBe(true)
+    },
+  )
+
+  it.each([
+    ['ko', '캐릭터'],
+    ['en', 'Character'],
+  ])('%s: @ 가 자체 leaf 이고 타입 라벨이 마지막 leaf 인 칩을 인정한다', (_locale, typeLabel) => {
+    document.body.innerHTML = editor(`
+      <span data-slate-void="true"><span>@</span><span>Zed2</span><span>${typeLabel}</span></span>
+    `)
+    expect(run(chipCheck(EDITOR, 'Zed2')).hasMentionChip).toBe(true)
+  })
+
+  it.each([
+    ['ko', '캐릭터'],
+    ['en', 'Character'],
+  ])('%s: 이름이 여러 non-terminal leaf 로 나뉜 칩을 인정한다', (_locale, typeLabel) => {
+    document.body.innerHTML = editor(`
+      <span data-slate-void="true"><span>Ze</span><span>d2</span><span>${typeLabel}</span></span>
+    `)
+    expect(run(chipCheck(EDITOR, 'Zed2')).hasMentionChip).toBe(true)
+  })
+
+  it.each([
+    ['ko', '캐릭터'],
+    ['en', 'Character'],
+  ])('%s: 칩 이름의 유의미한 공백은 삭제하지 않는다', (_locale, typeLabel) => {
+    document.body.innerHTML = editor(`
+      <span data-slate-void="true"><span>@A B</span><span>${typeLabel}</span></span>
+    `)
+    expect(run(chipCheck(EDITOR, 'A   B')).hasMentionChip).toBe(true)
+    expect(run(chipCheck(EDITOR, 'AB')).hasMentionChip).toBe(false)
   })
 
   it('다른 이름의 칩은 인정하지 않는다 (회사원3 칩이 회사원 으로 통과하면 안 된다)', () => {
@@ -169,17 +297,31 @@ describe('chipCheck (삽입 검증)', () => {
 })
 
 describe('MENTION_PROBE (실패 진단 — 사용자 콘텐츠 없이)', () => {
-  it('로케일 판별에 필요한 타입 라벨은 담고, 캐릭터 이름은 길이만 담는다', () => {
+  it('로케일은 문서 lang/path 로 진단하고 캐릭터 이름은 길이만 담는다', () => {
+    document.documentElement.lang = 'en-US'
+    window.history.replaceState({}, '', '/fx/en/tools/flow/project/example')
     document.body.innerHTML = EN
     const probe = run(MENTION_PROBE)
-    expect(probe).toMatchObject({ hasDialog: true, charTabFound: true, tabCount: 3, optionCount: 2 })
-    expect(probe.optionTypes).toEqual(['Image', 'Character']) // ← 이것만 보면 로케일이 드러난다
+    expect(probe).toMatchObject({
+      hasDialog: true,
+      charTabFound: true,
+      tabCount: 3,
+      optionCount: 2,
+      documentLang: 'en-US',
+      pathLocale: 'en',
+    })
+    expect(probe).not.toHaveProperty('optionTypes')
     expect(probe.optionNameLens).toEqual(['Zed2 in dense forest'.length, 'Zed2'.length])
   })
 
-  it('캐릭터 이름 문자열은 프로브 어디에도 들어가지 않는다 (Sentry breadcrumb 유출 방지)', () => {
-    document.body.innerHTML = KO
-    expect(JSON.stringify(run(MENTION_PROBE))).not.toContain('Zed2')
+  it('옵션의 이름과 마지막 leaf 문자열은 프로브 어디에도 들어가지 않는다 (Sentry breadcrumb 유출 방지)', () => {
+    document.body.innerHTML = dialog({
+      tabs: [tab('accessibility_new', 'Characters')],
+      options: [option('Private Zed2', 'Private user-authored suffix')],
+    })
+    const serialized = JSON.stringify(run(MENTION_PROBE))
+    expect(serialized).not.toContain('Private Zed2')
+    expect(serialized).not.toContain('Private user-authored suffix')
   })
 
   it('피커가 안 열렸으면 hasDialog=false', () => {

@@ -251,7 +251,12 @@ export function registerVideoIPC(ipcMain, deps) {
             console.log('[Flow Video T2V] segments injected (chips):', _segments.filter(s => s.type === 'mention').length, '→', _si.ok)
             return _si.ok
               ? { success: true }
-              : { success: false, error: _si.error, ...(_si.staleMention ? { staleMention: _si.staleMention } : {}) }
+              : {
+                  success: false,
+                  error: _si.error,
+                  ...(_si.mentionFailure ? { mentionFailure: _si.mentionFailure } : {}),
+                  ...(_si.staleMention ? { staleMention: _si.staleMention } : {}),
+                }
           })()
         : await flowView.webContents.executeJavaScript(`
         (async function() {
@@ -351,8 +356,15 @@ export function registerVideoIPC(ipcMain, deps) {
       }
 
       if (!promptResult?.success) {
-        // #R36: @멘션 칩 삽입 실패면 staleMention 전파(렌더러 self-heal — ref 를 failed 로 마킹).
-        return { success: false, error: promptResult?.error || 'Prompt injection failed', ...(promptResult?.staleMention ? { staleMention: promptResult.staleMention, retry: true } : {}) }
+        // segment 주입 실패는 모두 재시도 가능하다. staleMention 은 option-not-found 인 경우에만
+        // injectComposeSegments 가 넣으므로, 칩/다이얼로그 실패가 렌더러 재등록 루프로 번지지 않는다.
+        return {
+          success: false,
+          error: promptResult?.error || 'Prompt injection failed',
+          ...(_injSegments ? { retry: true } : {}),
+          ...(promptResult?.mentionFailure ? { mentionFailure: promptResult.mentionFailure } : {}),
+          ...(promptResult?.staleMention ? { staleMention: promptResult.staleMention } : {}),
+        }
       }
       console.log('[Flow Video T2V] Prompt injected successfully')
 

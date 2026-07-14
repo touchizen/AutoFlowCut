@@ -13,7 +13,7 @@
 // 왜 textContent 통짜 비교를 쓰지 않는가 (이 파일이 생긴 이유):
 //   옵션의 textContent 는 "이름 + 타입라벨" 이라 로케일에 묶인다.
 //     ko: "Zed2캐릭터"   en: "Zed2Character"
-//   이름은 자기 leaf 엘리먼트에 따로 들어 있으므로(아래 구조), leaf 를 읽으면 언어와 무관하다.
+//   이름은 img alt / 이름 leaf 들에 따로 있으므로(아래 구조), 후보들을 정확 비교하면 언어와 무관하다.
 //   (2026-07-14 영어 Flow 사용자 리포트 → 한글 '캐릭터' 하드코딩이 원인. 실제 DOM 덤프로 확인.)
 //
 //   [role=option]
@@ -24,23 +24,36 @@
 
 /** 주입 소스 공통 헬퍼. 모든 표현식 앞에 붙인다. */
 const HELPERS = `
-  const __strip = (s) => (s || '').replace(/\\s+/g, '');
+  const __norm = (s) => String(s || '').replace(/\\s+/g, ' ').trim();
   const __dialog = () => document.querySelector("div[role='dialog']");
 
-  // 옵션/칩의 "이름": 자식 없는 leaf 중 텍스트가 있는 첫 번째. 없으면 통짜 textContent 로 폴백.
-  const __leafName = (el) => {
-    if (!el) return '';
-    const leaves = Array.from(el.querySelectorAll('*'))
-      .filter((e) => e.children.length === 0 && (e.textContent || '').trim());
-    return ((leaves[0] || el).textContent || '').trim();
+  const __textLeaves = (el) => el ? Array.from(el.querySelectorAll('*'))
+    .filter((e) => e.children.length === 0 && __norm(e.textContent)) : [];
+
+  // 옵션 이름 후보: 실제 덤프의 img alt, 타입 라벨(마지막 leaf)을 뺀 각 leaf/연결문자열,
+  // 그리고 leaf 없이 bare text node 하나만 있는 단순 DOM. 모두 exact 비교만 한다.
+  const __optionCandidates = (el) => {
+    if (!el) return [];
+    const candidates = Array.from(el.querySelectorAll('img[alt]'))
+      .map((img) => img.getAttribute('alt'));
+    const leaves = __textLeaves(el);
+    if (leaves.length) {
+      const nameLeaves = leaves.length > 1 ? leaves.slice(0, -1) : leaves;
+      candidates.push(...nameLeaves.map((leaf) => leaf.textContent));
+      candidates.push(nameLeaves.map((leaf) => leaf.textContent || '').join(''));
+      if (leaves.length === 1) candidates.push(el.textContent);
+    } else {
+      candidates.push(el.textContent);
+    }
+    return Array.from(new Set(candidates.map(__norm).filter(Boolean)));
   };
 
   // 이름 정확 일치. prefix 매칭은 하지 않는다 — "회사원" 이 "회사원3" 을 잘못 고르는 것 차단.
   const __findOption = (dlg, name) => {
-    const target = __strip(name);
+    const target = __norm(name);
     if (!dlg || !target) return null;
     return Array.from(dlg.querySelectorAll("[role='option']"))
-      .find((o) => __strip(__leafName(o)) === target) || null;
+      .find((o) => __optionCandidates(o).includes(target)) || null;
   };
 
   // 캐릭터 탭: 라벨(캐릭터/Characters)은 로케일마다 다르지만 Material 아이콘 리거처는 불변이다.
@@ -48,9 +61,29 @@ const HELPERS = `
   const __findCharTab = (dlg) => {
     if (!dlg) return null;
     const tabs = Array.from(dlg.querySelectorAll("[role='tab']"));
-    return tabs.find((t) => (t.textContent || '').indexOf('accessibility_new') >= 0)
-      || tabs.find((t) => /캐릭터|character/i.test(t.textContent || ''))
-      || null;
+    return tabs.find((t) => (t.textContent || '').indexOf('accessibility_new') >= 0) || null;
+  };
+
+  const __withoutAt = (s) => __norm(s).replace(/^@\\s*/, '');
+
+  // 칩 검증은 기존 한글 whole-text 네 형태의 strict superset 이다. 추가 허용도 whole/leaf 의
+  // exact 조합뿐이며 prefix/substring 은 쓰지 않는다.
+  const __matchesChip = (chip, name) => {
+    const target = __norm(name);
+    if (!chip || !target) return false;
+    const whole = __norm(chip.textContent);
+    const legacy = [target, '@' + target, target + '캐릭터', '@' + target + '캐릭터'];
+    if (legacy.includes(whole)) return true;
+
+    const withoutAt = __withoutAt(whole);
+    if (withoutAt === target) return true;
+
+    const leaves = __textLeaves(chip);
+    const nonTerminal = leaves.length > 1 ? leaves.slice(0, -1) : leaves;
+    const lastLeaf = leaves.length > 1 ? __norm(leaves[leaves.length - 1].textContent) : '';
+    if (lastLeaf && withoutAt === __norm(target + lastLeaf)) return true;
+    if (nonTerminal.some((leaf) => __norm(leaf.textContent) === target)) return true;
+    return __withoutAt(nonTerminal.map((leaf) => leaf.textContent || '').join('')) === target;
   };
 
   // view: window 를 받아주지 않는 DOM 구현(jsdom)에서는 view 없이 재시도한다.
@@ -94,14 +127,13 @@ export const dispatchMentionOption = (name) => `(function(){
 
 /**
  * 삽입 검증: 에디터 안의 멘션 칩이 이름과 일치하는가.
- * 칩 텍스트는 "@이름"(선행 @) 형태이고, 타입 라벨이 leaf 로 따로 붙어도 __leafName 이 이름만 뽑는다.
+ * 관찰되지 않은 칩 DOM 변화에 대비해 legacy whole-text 형태와 exact leaf 조합을 함께 허용한다.
  */
 export const chipCheck = (editorSelector, name) => `(function(){
   ${HELPERS}
   const e = ${editorSelector};
-  const target = __strip(${JSON.stringify(name)});
   const chips = e ? Array.from(e.querySelectorAll("[data-slate-void='true']")) : [];
-  const hit = chips.some((c) => __strip(__leafName(c)).replace(/^@/, '') === target);
+  const hit = chips.some((c) => __matchesChip(c, ${JSON.stringify(name)}));
   return {
     editorTextLen: ((e && (e.innerText || e.textContent)) || '').length,
     hasMentionChip: hit,
@@ -113,27 +145,22 @@ export const chipCheck = (editorSelector, name) => `(function(){
  * 실패 진단 — 피커가 무엇을 렌더하고 있었는지. **사용자 콘텐츠(캐릭터 이름·프롬프트)는 절대 담지
  * 않는다**: main 프로세스의 console 은 Sentry breadcrumb 이 되므로, 이름을 찍으면 사용자가 만든
  * 캐릭터 이름이 우리 서버로 간다. (tests/electron/noUserContentInLogs.test.js 가 이걸 강제한다.)
- * 그래서 이름은 "길이"만, 타입 라벨(캐릭터/Character)은 Flow 의 UI 문구라 그대로 담는다 —
- * 로케일 문제를 로그만 보고 판별하려면 그게 필요하다.
+ * 그래서 옵션에서는 이름 길이만 담고, 로케일은 사용자 콘텐츠가 아닌 html lang/path segment 로 본다.
  */
 export const MENTION_PROBE = `(function(){
   ${HELPERS}
   const dlg = __dialog();
   const scope = dlg || document;
   const opts = Array.from(scope.querySelectorAll("[role='option']"));
-  const typeSuffix = (o) => {
-    const leaves = Array.from(o.querySelectorAll('*'))
-      .filter((e) => e.children.length === 0 && (e.textContent || '').trim());
-    return leaves.length > 1 ? (leaves[leaves.length - 1].textContent || '').trim().slice(0, 20) : '';
-  };
+  const pathMatch = String(location.pathname || '').match(/^\\/fx\\/([^/]+)\\/tools\\/flow(?:\\/|$)/);
   return {
     hasDialog: !!dlg,
+    documentLang: String(document.documentElement.lang || ''),
+    pathLocale: pathMatch ? pathMatch[1] : '',
     tabCount: scope.querySelectorAll("[role='tab']").length,
     charTabFound: !!__findCharTab(dlg),
     optionCount: opts.length,
-    // 이름은 길이만 — 내용은 사용자 것이다.
-    optionNameLens: opts.slice(0, 20).map((o) => __leafName(o).length),
-    // 타입 라벨은 Flow 의 UI 문구(사용자 콘텐츠 아님) — 로케일 판별용.
-    optionTypes: Array.from(new Set(opts.map(typeSuffix).filter(Boolean))),
+    // 이름 후보의 길이만 — 어떤 leaf 도 내용 자체는 반환하지 않는다.
+    optionNameLens: opts.slice(0, 20).map((o) => (__optionCandidates(o)[0] || '').length),
   };
 })()`

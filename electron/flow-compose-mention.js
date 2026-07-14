@@ -41,7 +41,10 @@ export async function appendSceneText(flowView, text) {
   `).catch(() => false)
 }
 
-/** `@이름` 멘션 한 건 삽입: @ 트러스트 키입력 → 피커 → "캐릭터" 탭 → 이름매칭 option 선택. */
+/**
+ * `@이름` 멘션 한 건 삽입: @ 트러스트 키입력 → 피커 → "캐릭터" 탭 → 이름매칭 option 선택.
+ * @returns {Promise<{ok:true} | {ok:false, reason:'picker-not-opened'|'character-tab-not-found'|'search-input-not-found'|'option-check-failed'|'picker-closed-before-selection'|'option-not-found'|'dialog-not-closed'|'chip-verification-failed'}>}
+ */
 export async function insertSceneMention(flowView, name) {
   // 1) "@" 를 트러스트 키 입력으로 친다 — execCommand 주입은 멘션 피커를 트리거 못 함(isTrusted 필요).
   try {
@@ -57,15 +60,24 @@ export async function insertSceneMention(flowView, name) {
     await sleep(250)
     hasDialog = await flowView.webContents.executeJavaScript(`!!document.querySelector("div[role='dialog']")`).catch(() => false)
   }
-  if (!hasDialog) { console.warn('[Flow Compose] mention picker(dialog) 안 열림 (nameLen:', name?.length ?? 0, ')'); return false }
+  if (!hasDialog) {
+    console.warn('[Flow Compose] mention picker(dialog) 안 열림 (nameLen:', name?.length ?? 0, ')')
+    return { ok: false, reason: 'picker-not-opened' }
+  }
 
   // 3) "캐릭터" 탭 클릭 — 기본 "모두" 탭은 이미지가 다수라 가상화로 캐릭터 entity 가 렌더 안 됨.
   const tabClicked = await flowView.webContents.executeJavaScript(CLICK_CHARACTER_TAB).catch(() => false)
-  if (!tabClicked) console.warn('[Flow Compose] 캐릭터 탭을 못 찾음 — "모두" 탭에서 검색으로 진행')
+  if (!tabClicked) {
+    // 프로브는 이름/옵션 텍스트를 담지 않는다. 타입 필터 없는 All 탭에서 진행하면 같은 이름의
+    // 이미지 asset 을 캐릭터로 오선택할 수 있으므로 반드시 중단한다.
+    const probe = await flowView.webContents.executeJavaScript(MENTION_PROBE).catch((e) => ({ probeError: e.message }))
+    console.warn('[Flow Compose] character tab not found — nameLen:', name?.length ?? 0, 'probe:', JSON.stringify(probe))
+    return { ok: false, reason: 'character-tab-not-found' }
+  }
   await sleep(500)
 
   // 3.5) 검색창에 이름 입력해 필터링(가상화 스크롤 회피). value 직접 set(한글 IME 우회) + input 이벤트.
-  await flowView.webContents.executeJavaScript(`(function(){
+  const searchEntered = await flowView.webContents.executeJavaScript(`(function(){
     const dlg = document.querySelector("div[role='dialog']"); if(!dlg) return false;
     const inp = dlg.querySelector("input[type='text']") || dlg.querySelector("input");
     if(!inp) return false;
@@ -74,20 +86,36 @@ export async function insertSceneMention(flowView, name) {
     inp.dispatchEvent(new Event('input', { bubbles: true }));
     return true;
   })()`).catch(() => false)
+  if (!searchEntered) {
+    const probe = await flowView.webContents.executeJavaScript(MENTION_PROBE).catch((e) => ({ probeError: e.message }))
+    console.warn('[Flow Compose] mention search input unavailable — nameLen:', name?.length ?? 0, 'probe:', JSON.stringify(probe))
+    return { ok: false, reason: 'search-input-not-found' }
+  }
   await sleep(600)
 
   // 4) 이름매칭 option 폴링. 옵션 라벨은 "이름 + 타입라벨"(ko: Zed2캐릭터 / en: Zed2Character)이라
   //    통짜 textContent 로 비교하면 로케일에 묶인다 — 이름 leaf 만 읽는다(flow-mention-dom.js).
   let found = false
+  let optionCheckCompleted = false
   for (let i = 0; i < 16 && !found; i++) {
     await sleep(300)
-    found = await flowView.webContents.executeJavaScript(hasMentionOption(name)).catch(() => false)
+    const optionState = await flowView.webContents.executeJavaScript(hasMentionOption(name)).catch(() => null)
+    if (optionState !== null) optionCheckCompleted = true
+    found = optionState === true
   }
   if (!found) {
     // 프로브는 이름을 담지 않는다(길이만) — main 의 console 은 Sentry breadcrumb 이 된다.
     const probe = await flowView.webContents.executeJavaScript(MENTION_PROBE).catch((e) => ({ probeError: e.message }))
+    if (!optionCheckCompleted) {
+      console.warn('[Flow Compose] mention option check failed — nameLen:', name?.length ?? 0, 'probe:', JSON.stringify(probe))
+      return { ok: false, reason: 'option-check-failed' }
+    }
+    if (!probe?.hasDialog) {
+      console.warn('[Flow Compose] mention picker closed before selection — nameLen:', name?.length ?? 0, 'probe:', JSON.stringify(probe))
+      return { ok: false, reason: 'picker-closed-before-selection' }
+    }
     console.warn('[Flow Compose] mention option not found — nameLen:', name?.length ?? 0, 'probe:', JSON.stringify(probe))
-    return false
+    return { ok: false, reason: 'option-not-found' }
   }
 
   // 5) 매칭 옵션에 pointer/mouse/click 시퀀스 디스패치(Radix onSelect).
@@ -107,14 +135,20 @@ export async function insertSceneMention(flowView, name) {
   // 칩 삽입 검증: 칩 텍스트에 이름이 들어갔는지로 판정(Enter 폴백의 거짓 성공 차단).
   // post 는 길이·불리언만 담는다(chipCheck 참고) — 이름은 nameLen 으로만 찍는다.
   const post = await flowView.webContents.executeJavaScript(chipCheck(EDITOR_SELECTOR, name)).catch((e) => ({ probeError: e.message }))
-  const ok = !!(dialogClosed && post && post.hasMentionChip)
-  if (!ok) console.warn('[Flow Compose] mention select incomplete — nameLen:', name?.length ?? 0, JSON.stringify({ dispatched, dialogClosed, post }))
-  return ok
+  if (!dialogClosed) {
+    console.warn('[Flow Compose] mention picker did not close — nameLen:', name?.length ?? 0, JSON.stringify({ dispatched, dialogClosed, post }))
+    return { ok: false, reason: 'dialog-not-closed' }
+  }
+  if (!post?.hasMentionChip) {
+    console.warn('[Flow Compose] mention chip verification failed — nameLen:', name?.length ?? 0, JSON.stringify({ dispatched, dialogClosed, post }))
+    return { ok: false, reason: 'chip-verification-failed' }
+  }
+  return { ok: true }
 }
 
 /**
  * 컴포저를 비우고 segments(text/mention)를 순서대로 주입한다. 이미지 씬·T2V 공용.
- * @returns {Promise<{ok:true} | {ok:false, error:string, staleMention?:string}>}
+ * @returns {Promise<{ok:true} | {ok:false, error:string, mentionFailure?:string, staleMention?:string}>}
  */
 export async function injectComposeSegments(flowView, segs) {
   // 기존 텍스트 클리어(빈 컴포저에서 시작)
@@ -122,9 +156,17 @@ export async function injectComposeSegments(flowView, segs) {
   await sleep(100)
   for (const seg of segs || []) {
     if (seg.type === 'mention') {
-      const ok = await insertSceneMention(flowView, seg.name)
-      // 멘션 피커에 캐릭터가 없으면(Flow UI 삭제 등) staleMention 신호 → 렌더러가 재등록(self-heal).
-      if (!ok) return { ok: false, error: '멘션 선택 실패: ' + seg.name, staleMention: seg.name }
+      const mentionResult = await insertSceneMention(flowView, seg.name)
+      if (!mentionResult.ok) {
+        // Characters 탭에서 검색까지 성공했는데 option 자체가 없을 때만 등록 stale 증거다.
+        // 피커/탭/다이얼로그/칩 검증 실패는 UI 자동화 재시도 대상이며 재등록을 유발하면 안 된다.
+        return {
+          ok: false,
+          error: '멘션 선택 실패: ' + seg.name,
+          mentionFailure: mentionResult.reason,
+          ...(mentionResult.reason === 'option-not-found' ? { staleMention: seg.name } : {}),
+        }
+      }
     } else if (seg.type === 'text' && seg.text) {
       const ok = await appendSceneText(flowView, seg.text)
       if (!ok) return { ok: false, error: '텍스트 주입 실패' }
