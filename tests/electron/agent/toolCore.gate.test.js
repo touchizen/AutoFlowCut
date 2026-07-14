@@ -99,6 +99,43 @@ describe('Tool Core 게이트 — 등급을 스스로 재산출한다', () => {
     expect(byName.list_scenes).toBe('R')
     expect(byName.story_get_state).toBe('R')
     expect(byName.wait_batch).toBe('R')
-    expect(byName.story_confirm_synopsis).toBe('G')
+  })
+})
+
+// 🔴 **fixture 로 B 를 주장하는 건 B 커버리지가 아니다.**
+//    테스트가 `generate_videos: 'B'` 를 *fixture 배열에* 써놓고 통과하면, **실제 정책표에 B 가 한 줄도
+//    없어도** 초록이다 (실측: `permission !== 'R'` → `=== 'G'` 로 바꿔도 전부 초록이었다).
+//    → **실제 표**를 상대로, D9.3 이 이름을 댄 툴이 전부 게이트에 걸리는지 잰다.
+describe('🔴 D9.3 이 이름을 댄 툴은 전부 G 또는 B 다 (실제 정책표)', () => {
+  const MUST_BE_GATED = ['story_confirm_synopsis', 'story_set_speakers', 'story_start_step', 'generate_videos']
+
+  it.each(MUST_BE_GATED)('%s 는 R 이 아니다', (name) => {
+    const t = core.list().find((x) => x.name === name)
+    expect(t, `${name} 이 정책표에 없다 — 등급 없는 툴은 게이트를 안 탄다`).toBeTruthy()
+    expect(['G', 'B']).toContain(t.permission)
+  })
+
+  it('🔴 **B 툴**은 grant 없이 거부된다 (과금은 사람 승인 뒤에만 — D9.3)', async () => {
+    const bridge = { invoke: vi.fn(async () => ({ accepted: true })) }
+    const c = createToolCore({ grantLedger: ledger, sessionId: 's1', toolBridge: bridge })
+    c.use(storyCommands)
+
+    const r = await c.call('generate_videos', { items: [1, 2] })
+
+    expect(r).toEqual({ status: 'rejected', reason: 'unconfirmed' })
+    expect(bridge.invoke, '🔴 승인 없이 과금 admission 이 실행됐다').not.toHaveBeenCalled()
+  })
+
+  it('B 툴은 grant 를 consume 하면 실행된다', async () => {
+    const bridge = { invoke: vi.fn(async () => ({ accepted: true, operationId: 'op-1' })) }
+    const c = createToolCore({ grantLedger: ledger, sessionId: 's1', toolBridge: bridge })
+    c.use(storyCommands)
+    const args = { items: [1, 2] }
+    ledger.grant({ nonce: 'n1', tool: 'generate_videos', argsHash: hashArgs(args), sessionId: 's1' })
+
+    const r = await c.call('generate_videos', args, { nonce: 'n1' })
+
+    expect(bridge.invoke).toHaveBeenCalledOnce()
+    expect(r).toMatchObject({ accepted: true })
   })
 })

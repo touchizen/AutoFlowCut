@@ -22,6 +22,13 @@
 const NATIVE_KIND = 'mcp_tool_call'
 
 export function createElicitationResponder({ grantLedger, sessionId, adapterServerName, askUser }) {
+  // 🔴 **설정 하나가 빠지면 게이트가 fail-open 한다.** `adapterServerName` 이 undefined 면
+  //    `params.serverName === undefined` 가 **남의 elicitation 에도 true** 가 되어(둘 다 undefined),
+  //    아무 서버의 승인 창이나 auto-accept 되고 grant 까지 발급된다. 여기서 터뜨린다.
+  if (typeof adapterServerName !== 'string' || !adapterServerName) throw new Error('adapterServerName is required')
+  if (!grantLedger?.grant) throw new Error('grantLedger is required')
+  if (typeof askUser !== 'function') throw new Error('askUser is required')
+  if (!sessionId) throw new Error('sessionId is required')
   /**
    * @param params Codex 가 준 elicitation params (`serverName`, `message`, `_meta`, …)
    * @param ctx    `{ requestId, turnId }` — 🔴 **pending 은 `requestId` 로 잡는다. `turnId` 로 잡지 마라** —
@@ -29,7 +36,8 @@ export function createElicitationResponder({ grantLedger, sessionId, adapterServ
    */
   async function handle(params, ctx = {}) {
     const meta = params?._meta
-    const ours = params?.serverName === adapterServerName
+    // 🔴 `serverName` 이 문자열이 아니면 **우리 것이 아니다.** undefined 끼리 같다고 통과시키면 안 된다.
+    const ours = typeof params?.serverName === 'string' && params.serverName === adapterServerName
 
     // ── 1. native 승인: 우리 서버 + 아는 kind 일 때만 즉답 accept ──
     if (meta?.codex_approval_kind !== undefined) {

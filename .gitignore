@@ -33,3 +33,4 @@ docs/superpowers/
 test-results/
 coverage/
 playwright-report/
+dist-adapter/

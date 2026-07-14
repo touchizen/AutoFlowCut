@@ -57,7 +57,11 @@ describe('adapter — G/B 툴은 승인 뒤에만 (조건 2)', () => {
 
     expect(elicitInput).toHaveBeenCalledOnce()
     const params = elicitInput.mock.calls[0][0]
-    expect(params._meta ?? params.meta ?? params).toMatchObject({
+    // ⚠️ `params._meta ?? params.meta ?? params` 로 쓰면 **세 가지 shape 을 다 받아준다** — 그중
+    //    responder 가 읽을 수 있는 건 `_meta` 하나뿐이다. `_meta` → `meta` 로 오타 내도 초록이었다 (실측).
+    //    **실측(2026-07-14)**: 서버가 설정한 `_meta` 는 Codex 를 거쳐 **verbatim 도착한다.**
+    //    (반면 `requestedSchema` 의 최상위 커스텀 키는 **삭제된다** — 그쪽으로 옮겼으면 게이트가 죽었다.)
+    expect(params._meta).toMatchObject({
       nonce: 'n1',
       tool: 'story_confirm_synopsis',
       argsHash: hashArgs(args),

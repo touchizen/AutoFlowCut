@@ -17,6 +17,10 @@ import { registerGenaiIPC } from './ipc/genai-api.js'
 import { createStoryCommands, registerStoryIPC } from './ipc/story-api.js'
 import { createToolCore } from './agent/toolCore.js'
 import { createToolBridge } from './agent/toolBridge.js'
+import { randomUUID } from 'node:crypto'
+import { createGrantLedger } from './agent/grantLedger.js'
+import { createPrivateRpc } from './agent/privateRpc.js'
+import { createElicitationResponder } from './agent/elicitationResponder.js'
 import { registerTtsIPC } from './ipc/tts-api.js'
 import * as llmClaude from './api/llm/llmClaude.js'
 import * as llmCodex from './api/llm/llmCodex.js'
@@ -306,8 +310,50 @@ registerStoryIPC(ipcMain, storyCommands)
 // 배치 진행 상태도 renderer 가 유일한 진실이라 `wait_batch` 가 이 seam 을 탄다.
 const toolBridge = createToolBridge({ getWindow: () => mainWindow })
 
-const toolCore = createToolCore({ toolBridge })
+// 🔴 **승인 게이트** ((A) 채택 조건 1·2). G/B 툴은 **main 이 발급한 grant** 를 원자적으로 1회
+//    consume 해야만 실행된다 — adapter 가 붙인 문자열은 증거가 아니다 (조건 1).
+//    ledger 를 안 넘기면 `toolCore` 가 모든 G/B 를 거부한다 → **배선을 빼먹으면 기능이 죽지,
+//    게이트가 새지 않는다.** 방향이 그쪽이어야 한다.
+const AGENT_MCP_SERVER_NAME = 'autoflowcut'
+const AGENT_APPROVAL_TTL_MS = 10 * 60 * 1000
+const agentSessionId = randomUUID()
+const grantLedger = createGrantLedger({ ttlMs: AGENT_APPROVAL_TTL_MS })
+
+const toolCore = createToolCore({ toolBridge, grantLedger, sessionId: agentSessionId })
 toolCore.use(storyCommands)
+
+/**
+ * 🔴 **승인 UI(ChatPanel)가 아직 없다.** 그래서 지금은 **거부한다.**
+ *    여기에 auto-accept 를 넣으면 게이트가 그 자리에서 죽는다 — 사람이 아무것도 못 봤는데
+ *    "승인" 이 되니까. UI 가 생기기 전까지 G/B 툴은 못 도는 게 맞다 (fail-closed).
+ *    ChatPanel + `agent:permission-request` 는 M2 의 다음 슬라이스다 (D14).
+ */
+async function askUserForApproval() {
+  return { action: 'decline' }
+}
+
+// Codex 의 elicitation 을 **main 이** 분류한다 (조건 4): native → UI 없이 auto-accept,
+// 우리 adapter 의 승인 창 → 사람에게. accept 순간 여기서 ledger 에 grant 를 기록한다.
+// (renderer 가 분류하면 native 가 모든 호출에 뜨는 탓에 **R 툴까지 renderer 생존에 묶인다.**)
+const agentElicitationResponder = createElicitationResponder({
+  grantLedger,
+  sessionId: agentSessionId,
+  adapterServerName: AGENT_MCP_SERVER_NAME,
+  askUser: askUserForApproval,
+})
+
+/**
+ * adapter(별도 프로세스) → main Tool Core 로 가는 **유일한** 통로. loopback + 세션 토큰.
+ * 🔴 부팅 때 열지 않는다 — **세션이 열릴 때** 열고 닫는다. 안 그러면 에이전트를 안 쓰는 사용자의
+ *    머신에도 로컬 포트가 하나 계속 떠 있다.
+ */
+const agentRpc = createPrivateRpc({ toolCore, sessionId: agentSessionId })
+
+app.on('will-quit', () => {
+  grantLedger.closeSession(agentSessionId)
+  agentRpc.close().catch(() => {})
+  toolBridge.close()
+})
 ipcMain.on('agent:bridge-response', (_e, payload) => {
   // renderer 가 보낸 것은 신뢰하지 않는다 — 모르는 id/malformed 는 toolBridge 가 거부하고,
   // 여기서 throw 가 새어나가 IPC 를 죽이지 않게 막는다.
@@ -929,14 +975,19 @@ function startMcpHttpServer(port) {
   }
 
   mcpHttpServer = http.createServer((req, res) => {
-    // CORS: localhost만 허용
-    res.setHeader('Access-Control-Allow-Origin', '*')
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+    // 🔴 **CORS 를 열지 않는다.** 이 서버는 **인증이 없고**, `/api/start-scene-batch`,
+    //    `/api/generate-scene`, `/api/export-*`, `DELETE /api/projects` 를 노출한다.
+    //    와일드카드 CORS 를 켜면 JSON POST 의 preflight 가 통과해서 **사용자가 방문한 아무 웹페이지나**
+    //    그 API 를 부를 수 있다 — 크레딧을 태우고 프로젝트를 지운다.
+    //    (원래 주석은 "localhost만 허용" 이라고 써 있었는데 실제 값은 `'*'` 였다. 주석이 거짓말을 했다.)
+    //    mcp-server 는 Node 프로세스라 CORS 와 무관하다 → 끊어도 안 깨진다.
+    //    ⚠️ 이건 **브라우저 벡터만** 막는다. 같은 머신의 다른 프로세스는 여전히 닿는다 —
+    //       토큰 인증이 남은 숙제다 (신규 `agent/privateRpc.js` 는 처음부터 토큰을 요구한다).
     res.setHeader('Content-Type', 'application/json')
 
     if (req.method === 'OPTIONS') {
-      res.writeHead(200)
+      // preflight 에 답하지 않는다 = 브라우저의 cross-origin 요청이 여기서 끝난다.
+      res.writeHead(405)
       res.end()
       return
     }

@@ -428,6 +428,108 @@ describe('M0-13 — PATH 에 node 없이 packaged Electron runtime 으로 adapte
     expect(info.mcp, '패키징 Electron 이 MCP SDK 를 못 불렀다').toBe(true)
   })
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // 🎯 **criterion 원문** — *"packaged Electron runtime 으로 adapter handshake / tool call 완주"*
+  //
+  // 위 테스트들은 **fixture**(`tests/spike/fixtures/echo-mcp.js`)로 재 왔다. 그건 급소인 **런타임 치환**을
+  // 정직하게 쟀지만 **출하물**은 아니었다. 이제 production adapter 가 있다:
+  //   `dist-adapter/codex-adapter.mjs` — 의존성까지 말아넣은 **단일 ESM 번들**, `extraResources` 로 asar **밖**.
+  //   (번들이라 node_modules 해석 자체가 없다 → M0-13 이 찾은 asar/ESM 함정이 **구조적으로** 사라진다.)
+  //
+  // 여기서 재는 것: **패키징된 Electron 바이너리**가 **출하되는 adapter 번들**을 띄우고,
+  // adapter 가 **private RPC 로 main 의 Tool Core** 를 부르고, 그 결과가 돌아온다 — **PATH 에 node 없이.**
+  // ══════════════════════════════════════════════════════════════════════════
+  it('🎯🎯 **출하되는 production adapter** + 패키징 Electron + private RPC 가 완주한다 (PATH 에 node 없음)', async () => {
+    const pkg = packagedApp()
+    const electron = pkg ? pkg.electron : resolveElectronBinary()
+    const adapter = resolve(process.cwd(), 'dist-adapter/codex-adapter.mjs')
+    if (!existsSync(adapter)) {
+      record('M0-13 production adapter', { skipped: 'adapter 번들이 없다 — `npm run build:agent-adapter` 먼저' })
+      console.log('  (skip: adapter 번들 없음)')
+      return
+    }
+
+    // 진짜 private RPC 를 띄운다 (loopback + 세션 토큰). adapter 는 이걸 통해서만 main 을 부른다.
+    const { createPrivateRpc } = await import('../../electron/agent/privateRpc.js')
+    const calls = []
+    const rpc = createPrivateRpc({
+      toolCore: { call: async (tool, args, ctx) => { calls.push({ tool, args, nonce: ctx?.nonce }); return { scenes: [] } } },
+      sessionId: 'spike',
+    })
+    const ep = await rpc.start()
+    cleanups.push(async () => rpc.close())
+
+    const TOOLS = [{ name: 'list_scenes', permission: 'R', description: 'list scenes' }]
+    const child = spawn(electron, [adapter], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        PATH: CLEAN_PATH,                       // 🔴 node 없음
+        ELECTRON_RUN_AS_NODE: '1',              // 🔴 스펙 D19 — 문자열 `node` 를 쓰지 않는다
+        AUTOFLOWCUT_RPC_URL: `http://127.0.0.1:${ep.port}`,
+        AUTOFLOWCUT_RPC_TOKEN: ep.token,
+        AUTOFLOWCUT_TOOLS: JSON.stringify(TOOLS),
+        AUTOFLOWCUT_APPROVAL_TIMEOUT_MS: '600000',
+      },
+    })
+    cleanups.push(async () => { try { child.kill('SIGTERM') } catch {} })
+    const stderr = []
+    child.stderr.on('data', (d) => stderr.push(d.toString()))
+
+    const r = await new Promise((res) => {
+      let buf = ''
+      const got = {}
+      const timer = setTimeout(() => res({ ...got, timedOut: true }), 3 * 60 * 1000)
+      const send = (m) => child.stdin.write(JSON.stringify(m) + '\n')
+      child.stdout.on('data', (d) => {
+        buf += d.toString()
+        let nl
+        while ((nl = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1)
+          if (!line) continue
+          let m; try { m = JSON.parse(line) } catch { continue }
+          if (m.id === 1) {
+            got.serverName = m.result?.serverInfo?.name
+            send({ jsonrpc: '2.0', method: 'notifications/initialized' })
+            send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })
+          }
+          if (m.id === 2) {
+            got.tools = (m.result?.tools ?? []).map((t) => t.name)
+            send({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'list_scenes', arguments: {} } })
+          }
+          if (m.id === 3) {
+            got.callResult = m.result?.content?.[0]?.text ?? null
+            clearTimeout(timer); res({ ...got, timedOut: false })
+          }
+        }
+      })
+      send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {
+        protocolVersion: '2024-11-05', capabilities: { elicitation: {} },
+        clientInfo: { name: 'autoflowcut-m0-13', version: '0.0.1' },
+      } })
+    })
+
+    record('M0-13 production adapter (출하물)', {
+      usedPackaged: !!pkg, electronBin: electron, adapter, cleanPath: CLEAN_PATH,
+      ...r, rpcCalls: calls, stderr: stderr.join('').slice(0, 400),
+    })
+    console.log('\n===== M0-13 production adapter =====')
+    console.log('  electron :', electron, pkg ? '(패키징 ✅)' : '(dev ⚠️)')
+    console.log('  adapter  :', adapter, '(asar 밖 번들)')
+    console.log('  tools    :', JSON.stringify(r.tools), '| call →', r.callResult)
+    console.log('  RPC 호출 :', JSON.stringify(calls))
+    if (stderr.length) console.log('  stderr   :', stderr.join('').slice(0, 200))
+
+    expect(r.timedOut, 'PATH 에 node 없이 3분 안에 완주하지 못했다').toBe(false)
+    // MCP handshake — **출하되는 번들**이 패키징 Electron 위에서 떴다.
+    expect(r.serverName).toBe('autoflowcut')
+    expect(r.tools).toEqual(['list_scenes'])
+    // tool call 이 **private RPC 를 타고 main 의 Tool Core** 까지 갔다 왔다.
+    expect(calls).toEqual([{ tool: 'list_scenes', args: {}, nonce: undefined }])
+    expect(r.callResult).toContain('scenes')
+    // criterion 은 **packaged Electron runtime** 이다.
+    expect(!!pkg, 'criterion 은 packaged runtime 이다 — `npm run pack` 후 다시 재라').toBe(true)
+  }, 5 * 60 * 1000)
+
   it('🎯 codex 가 **패키징된** Electron-as-node adapter 를 spawn 하고 tool call 이 완주한다 (PATH 에 node 없음)', async () => {
     // ⚠️ **패키징된 `.app` 의 바이너리를 쓴다.** dev 의 `node_modules/electron` 으로 재면
     //    criterion(*"packaged Electron runtime 으로 handshake/tool call"*)을 **합성으로 주장**하는 게 된다.

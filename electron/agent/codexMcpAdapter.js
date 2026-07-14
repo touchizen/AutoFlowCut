@@ -18,6 +18,13 @@ import { hashArgs } from './grantLedger.js'
 const ACCEPT = 'accept'
 const REJECT_REASON = { decline: 'declined', cancel: 'cancelled' }
 
+/** 승인 창에 띄울 사람용 문장. 인자를 **보여준다** — 안 보여주면 사람은 이름만 보고 누른다. */
+function describe(name, args) {
+  const argText = JSON.stringify(args ?? {})
+  const shown = argText.length > 400 ? `${argText.slice(0, 400)}…` : argText
+  return `${name}\n\n${shown}`
+}
+
 export function createAdapterHandlers({ tools, rpc, elicitInput, approvalTimeoutMs, newNonce = randomUUID }) {
   // 🔴 **조건 5**: MCP SDK 의 요청 timeout 기본값은 **60초** (`DEFAULT_REQUEST_TIMEOUT_MSEC`).
   //    명시적으로 안 넘기면 **우리 MCP 서버가** 10분 승인 창을 60초에 죽인다
@@ -44,9 +51,14 @@ export function createAdapterHandlers({ tools, rpc, elicitInput, approvalTimeout
     try {
       outcome = await elicitInput(
         {
-          message: `Approve ${name}?`,
+          // 🔴 **사람은 툴 *이름* 이 아니라 *무엇을 하는지* 를 보고 승인해야 한다.**
+          //    `"Approve generate_videos?"` 로는 영상이 2개인지 8개인지 모른 채 누르게 된다.
+          //    argsHash 가 "승인한 것"과 "실행되는 것"을 묶어주지만, **사람이 본 적 없는 값에 묶는 건
+          //    동의가 아니다.** 인자를 실어 보낸다 — `message` 는 verbatim 도착이 실측됐다.
+          message: describe(name, args),
           requestedSchema: { type: 'object', properties: {} },
-          // main 은 이 payload 를 verbatim 으로 받는다 (M0-8 실측) → accept 순간 ledger 에 기록한다.
+          // 🔴 **실측(2026-07-14)**: 서버가 설정한 `_meta` 는 Codex 를 거쳐 **verbatim 도착한다.**
+          //    (반면 `requestedSchema` 의 최상위 커스텀 키는 **삭제된다** — 그쪽에 실었으면 게이트가 죽었다.)
           _meta: { nonce, tool: name, argsHash: hashArgs(args) },
         },
         { timeout: approvalTimeoutMs },

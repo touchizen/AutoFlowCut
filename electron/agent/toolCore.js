@@ -101,6 +101,22 @@ export function createToolCore({
       needs: 'storyCommands',
       run: (args) => storyCommands.confirmSynopsis(args),
     },
+    story_set_speakers: {
+      permission: 'G',              // D9.3
+      needs: 'storyCommands',
+      run: (args) => storyCommands.setSpeakers(args),
+    },
+    story_start_step: {
+      permission: 'G',              // D9.3 — 모든 `*_start` 는 G
+      needs: 'storyCommands',
+      run: ({ step, params }) => storyCommands.start(step, params),
+    },
+    // 🔴 **B = 과금.** 승인 없이 실행되면 사용자 돈이 나간다. billing admission 은 accept 뒤에만 (D9.3).
+    generate_videos: {
+      permission: 'B',
+      needs: 'toolBridge',
+      run: (args) => toolBridge.invoke('video.admit', args),
+    },
   }
 
   /**

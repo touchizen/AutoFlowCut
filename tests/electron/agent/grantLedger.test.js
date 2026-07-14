@@ -81,14 +81,25 @@ describe('grantLedger — fail-closed', () => {
     expect(l.consume({ nonce: 'n1', tool: G.tool, argsHash: hashArgs(G.args), sessionId: 's1' })).toBe(false)
   })
 
-  it('🔴 **동시에** 같은 nonce 를 소비하면 정확히 하나만 이긴다 (원자적)', () => {
+  // ⚠️ `[l.consume(a), l.consume(a)]` 로 쓰면 **아무것도 증명하지 못한다** — 동기 호출 두 개는
+  //    JS 에서 애초에 interleave 될 수 없다. 그건 위의 replay 테스트를 다시 돌리는 것일 뿐이다.
+  //    (실측: `grants.delete` 를 검증 **뒤로** 옮겨도 그 테스트는 초록이었다.)
+  //
+  //    진짜 계약은 **"조회와 삭제 사이에 다른 코드가 끼어들 수 없다"** 이다.
+  //    지금은 동기라서 성립하지만, 누가 `consume` 안에 `await` 를 하나 넣는 순간(예: grant 를 디스크에
+  //    영속화) **replay 창이 조용히 열린다.** 그걸 잡는다.
+  it('🔴 `consume` 은 **동기적으로** 소비를 확정한다 — await 가 끼면 replay 창이 열린다', () => {
     const l = ledgerAt(clock())
     l.grant(grantFor())
     const args = { nonce: 'n1', tool: G.tool, argsHash: hashArgs(G.args), sessionId: 's1' }
 
-    // Codex 는 tool call 을 **병렬로 쏜다** (M0-8 실측). 같은 승인이 두 호출에 걸리면 안 된다.
-    const results = [l.consume(args), l.consume(args)]
-    expect(results.filter(Boolean)).toHaveLength(1)
+    // Promise 를 돌려주면(= 안에 await 이 생겼다는 뜻) 호출자가 그 사이에 두 번 진입할 수 있다.
+    const r = l.consume(args)
+    expect(typeof r?.then, '🔴 consume 이 비동기가 됐다 — 조회와 삭제 사이가 열렸다').toBe('undefined')
+    expect(r).toBe(true)
+
+    // 그리고 첫 호출이 끝난 **직후** 이미 소비돼 있어야 한다 (지연 삭제 금지).
+    expect(l.consume(args)).toBe(false)
   })
 
   it('세션이 닫히면 그 세션의 grant 는 전부 사라진다', () => {

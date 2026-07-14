@@ -90,6 +90,24 @@ describe('🔴 auto-accept 는 양성 매칭일 때만 — fail-open 금지 (조
   })
 })
 
+describe('🔴 F2 — 설정 하나가 빠지면 게이트가 fail-open 한다', () => {
+  it('`adapterServerName` 없이 생성하면 **터진다** (undefined === undefined 로 남의 것이 우리 것이 된다)', () => {
+    expect(() => createElicitationResponder({ grantLedger: ledger, sessionId: 's1', askUser }))
+      .toThrow(/adapterServerName/)
+  })
+
+  it('serverName 이 **없는** elicitation 은 우리 것이 아니다 (auto-accept 도 grant 도 없다)', async () => {
+    const grant = vi.spyOn(ledger, 'grant')
+
+    const r1 = await responder.handle({ _meta: { codex_approval_kind: 'mcp_tool_call' } }, { requestId: 1 })
+    const r2 = await responder.handle({ _meta: { nonce: 'x', tool: 'generate_videos', argsHash: 'deadbeef' } }, { requestId: 2 })
+
+    expect(r1.action).not.toBe('accept')
+    expect(r2.action).not.toBe('accept')
+    expect(grant, '남의 elicitation 이 과금 툴 grant 를 발급받았다').not.toHaveBeenCalled()
+  })
+})
+
 describe('handler elicitation — 사람에게 묻는다 (조건 2·4)', () => {
   it('renderer 로 올리고, accept 면 **ledger 에 grant 를 기록**한다', async () => {
     const args = { synopsisMd: '#' }
