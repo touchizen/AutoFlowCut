@@ -19,15 +19,26 @@
 // 계약의 급소는 **정확히 한 번**이다. correlation id 로 한 번만 settle 하고,
 // timeout / window destroy / 중복 응답 / allowlist 밖 name / operationId 불일치는 전부 거부한다.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { EventEmitter } from 'node:events'
 import { createToolBridge } from '../../../electron/agent/toolBridge.js'
 
+/**
+ * ⚠️ **`once` 가 없으면 window-destroy 경로를 한 줄도 안 재게 된다.** toolBridge 의 `listenOnce` 는
+ *    `typeof target.once !== 'function'` 이면 **조용히 skip** 한다 → 순진한 fake 로는 listener 가
+ *    아예 안 붙고, `watchWindow` 를 통째로 no-op 으로 만들어도 테스트가 초록이었다 (실측).
+ *    그래서 진짜 EventEmitter 로 만든다.
+ */
 function fakeWindow() {
   const sent = []
-  return {
-    sent,
-    isDestroyed: () => false,
-    webContents: { send: (channel, payload) => sent.push({ channel, payload }) },
-  }
+  const win = new EventEmitter()
+  let destroyed = false
+  win.sent = sent
+  win.isDestroyed = () => destroyed
+  win.webContents = new EventEmitter()
+  win.webContents.send = (channel, payload) => sent.push({ channel, payload })
+  /** 실제 BrowserWindow 처럼: 파괴되면 `closed` 가 뜨고 `isDestroyed()` 가 true 가 된다. */
+  win.destroy = () => { destroyed = true; win.emit('closed') }
+  return win
 }
 
 let win, bridge
@@ -137,6 +148,51 @@ describe('toolBridge — correlated invoke (slice 13a)', () => {
     await expect(p).rejects.toThrow(/malformed/i)
   })
 
+  // 🔴 D14 명문: *"operationId 불일치는 거부한다"* — 이걸 안 박으면 코드만 있고 계약이 없다
+  //    (실측: 해당 블록을 통째로 지워도 테스트가 전부 초록이었다).
+  it('🔴 `video.status` 응답의 operationId 가 물어본 것과 다르면 거부한다', async () => {
+    const p = bridge.invoke('video.status', { operationId: 'op-1' })
+    const { requestId } = lastRequest()
+    const rejected = expect(p).rejects.toThrow(/mismatch/i)
+
+    bridge.handleResponse({ requestId, result: { operationId: 'op-2', status: 'complete' } })
+    await rejected
+    expect(bridge.pendingCount()).toBe(0)
+  })
+
+  it('🔴 operationId **누락**도 불일치다 — 안 그러면 아무 op 의 응답이나 통과한다 (fail-open)', async () => {
+    // 시나리오: op 두 개 진행 중, renderer 버그로 id 없는 `{status:'complete'}` 가 op-1 요청에 답한다.
+    // 통과시키면 에이전트는 op-1 이 끝났다고 믿는다.
+    const p = bridge.invoke('video.status', { operationId: 'op-1' })
+    const { requestId } = lastRequest()
+    const rejected = expect(p).rejects.toThrow(/mismatch/i)
+
+    bridge.handleResponse({ requestId, result: { status: 'complete' } })
+    await rejected
+  })
+
+  // 🔴 slice 13a 명문: *"timeout / **window destroy** / duplicate response 는 정확히 한 번 reject"*
+  //    (실측: `watchWindow` 를 통째로 no-op 으로 만들어도 테스트가 초록이었다 — 커버리지 0 이었다.)
+  it('🔴 **요청이 pending 인 채로** 창이 파괴되면 timeout 을 기다리지 않고 즉시 reject 한다', async () => {
+    const p = bridge.invoke('video.admit', {}, { timeoutMs: 60_000 })
+    const { requestId } = lastRequest()
+    expect(bridge.pendingCount()).toBe(1)
+
+    const rejected = expect(p).rejects.toThrow(/destroy/i)
+    win.destroy()
+    await rejected
+
+    expect(bridge.pendingCount(), '창이 죽었는데 pending 이 남아 있다 = 60초 행').toBe(0)
+    // 죽은 뒤 도착한 응답이 아무것도 되살리지 않는다.
+    expect(bridge.handleResponse({ requestId, result: { accepted: true } })).toBe(false)
+  })
+
+  it('🔴 close() 뒤 invoke 는 renderer 로 보내지 않고 거부한다', async () => {
+    bridge.close()
+    await expect(bridge.invoke('video.admit', {})).rejects.toThrow(/closed/i)
+    expect(lastRequest(), '닫힌 bridge 가 renderer 로 보냈다').toBeUndefined()
+  })
+
   it('close 는 pending 을 전부 reject 하고 정리한다 (세션 종료 시 누수 0)', async () => {
     const a = bridge.invoke('video.admit', {})
     const b = bridge.invoke('video.status', {})
@@ -166,5 +222,15 @@ describe('toolBridge — operation snapshot (slice 13b)', () => {
 
   it('🔴 operationId 없는 event 는 거부한다 — 조용히 삼키지 않는다', () => {
     expect(() => bridge.handleEvent({ status: 'running' })).toThrow(/operationId/i)
+  })
+
+  it('🔴 close() 뒤 늦게 온 event 는 닫힌 세션의 snapshot 을 **되살리지 않는다**', () => {
+    bridge.handleEvent({ operationId: 'op-1', status: 'running', progress: { done: 1, total: 3 } })
+    bridge.close()
+    expect(bridge.getOperation('op-1'), 'close 가 snapshot 을 안 지웠다').toBeNull()
+
+    // 파이프라인이 죽는 중에 마지막 event 가 늦게 도착할 수 있다. 그게 닫힌 세션을 되살리면 안 된다.
+    expect(bridge.handleEvent({ operationId: 'op-1', status: 'complete' })).toBe(false)
+    expect(bridge.getOperation('op-1')).toBeNull()
   })
 })

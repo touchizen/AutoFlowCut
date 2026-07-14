@@ -138,11 +138,12 @@ export function createToolBridge({ getWindow }) {
 
     if (hasError) return settle(requestId, 'reject', rendererError(payload.error))
 
-    const actualOperationId = payload.result?.operationId
-    if (entry.name === 'video.status'
-      && entry.operationId
-      && actualOperationId != null
-      && actualOperationId !== entry.operationId) {
+    // 🔴 **누락도 불일치다.** `actualOperationId != null` 을 조건에 넣으면, renderer 가 id 를 빼먹은
+    //    응답이 **무조건 통과**한다 (fail-open). 시나리오: op 두 개가 진행 중인데 renderer 핸들러 버그로
+    //    op-B 용 `{status:'complete'}`(id 없음)가 op-A 의 status 요청에 답한다 → 에이전트는 op-A 가
+    //    끝났다고 믿는다. 물어본 op 의 id 를 **요구**한다.
+    if (entry.name === 'video.status' && entry.operationId
+      && payload.result?.operationId !== entry.operationId) {
       return settle(requestId, 'reject', new Error('tool bridge operationId mismatch'))
     }
 
@@ -155,7 +156,12 @@ export function createToolBridge({ getWindow }) {
       throw new Error('tool bridge event operationId is required')
     }
 
+    // 🔴 닫힌 bridge 를 다시 채우지 않는다. `close()` 가 `operations.clear()` 한 **직후** 늦게 도착한
+    //    event 가 snapshot 을 되살리면, 세션이 끝났는데 그 세션의 진행상황이 남는다 (D14 "session close 때 cleanup").
+    if (closed) return false
+
     operations.set(operationId, { status: event.status, progress: event.progress })
+    return true
   }
 
   function getOperation(operationId) {

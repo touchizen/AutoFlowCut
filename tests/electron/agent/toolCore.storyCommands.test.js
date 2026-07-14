@@ -57,10 +57,16 @@ describe('M1 — Tool Core ↔ IPC 단일 storyCommands (D7)', () => {
     await ipc.invoke('story:open', { projectPath: dir })
     const a = await toolCore.call('story_get_state', {})
     const b = await toolCore.call('story_get_state', {})
-    const viaIpc = await ipc.invoke('story:get-state', { projectToken: a.projectToken })
 
-    // 토큰이 셋 다 같으면 machine 이 하나다. Tool Core 호출이 machine 을 새로 만들었다면 토큰이 갈렸을 것이다.
-    expect(new Set([a.projectToken, b.projectToken, viaIpc.projectToken ?? a.projectToken]).size).toBe(1)
+    expect(a.projectToken).toBe(b.projectToken)
+
+    // 🔴 **Tool Core 가 본 토큰으로 IPC guard 를 통과하는 것** 자체가 단일 machine 의 증명이다.
+    //    ⚠️ 예전엔 `viaIpc.projectToken ?? a.projectToken` 로 비교했는데, `story:get-state` 는
+    //    애초에 `projectToken` 을 **안 돌려준다** → fallback 이 **항상** 발동해서 첫 토큰을 자기 자신과
+    //    비교하고 있었다. 두 번째 machine 을 주입해도 통과하던 vacuous 단언이었다 (실측).
+    const viaIpc = await ipc.invoke('story:get-state', { projectToken: a.projectToken })
+    expect(viaIpc.error, 'Tool Core 의 토큰이 IPC guard 를 못 통과했다 = machine 이 둘이다').toBeUndefined()
+    expect(viaIpc.steps.script.status).toBe(a.state.steps.script.status)
   })
 
   it('slice 12: 미오픈 `list_scenes` → `{error:\'no-project\'}` (throw 하지 않는다)', async () => {
@@ -91,12 +97,29 @@ describe('M1 slice 10 — 핸들러 계수 불변식 (D7)', () => {
   // 먼저 착지해서** 현재는 21 = 18 guarded + 3 custom 이다. 궤적은 20 → (D24a) 21 → (D24b) 22 다.
   // 🔴 숫자를 맞추려고 D24b `story:commit-image-first-script` 를 **조기 구현하지 마라** —
   //    스펙은 그걸 blind gate 통과 뒤 M3 로 미뤄뒀다. 계수는 현실을 적고, 궤적을 주석으로 남긴다.
-  it('IPC 핸들러는 21개 = 18 guarded + 3 custom 이고, 모두 같은 commands 인스턴스를 쓴다', () => {
-    expect(ipc.handlers.size).toBe(21)
+  // custom 3개 = token guard 를 안 타는 것들.
+  //   list-llm-options: 프로젝트와 무관 / open: 토큰을 **발급하는** 쪽 / load-audio-package: 경로 직독 허용
+  const CUSTOM = ['story:list-llm-options', 'story:open', 'story:load-audio-package']
 
-    // custom 3개 = token guard 를 안 타는 것들
-    const CUSTOM = ['story:list-llm-options', 'story:open', 'story:load-audio-package']
+  it('IPC 핸들러는 21개 = 18 guarded + 3 custom', async () => {
+    expect(ipc.handlers.size).toBe(21)
     for (const ch of CUSTOM) expect(ipc.handlers.has(ch), `custom 핸들러 ${ch} 가 없다`).toBe(true)
     expect(ipc.handlers.size - CUSTOM.length).toBe(18)
+  })
+
+  // 🔴 위 테스트는 **산수 항등식**이다 — `size===21` 을 단언한 뒤 `21-3===18` 을 확인할 뿐,
+  //    그 18개가 **정말 guarded 인지**는 하나도 안 본다. 실측: `story:abort` 와 `story:tts-preview` 의
+  //    `guarded()` 를 벗겨도 electron 테스트 1,920개가 전부 초록이었다.
+  //    → **숫자가 아니라 계약을 잰다: custom 이 아닌 모든 채널은 틀린 토큰을 거부해야 한다.**
+  it('🔴 custom 3개를 뺀 **모든** 채널이 틀린 토큰을 `stale-token` 으로 거부한다', async () => {
+    await ipc.invoke('story:open', { projectPath: dir })
+
+    const guardedChannels = [...ipc.handlers.keys()].filter((ch) => !CUSTOM.includes(ch))
+    expect(guardedChannels).toHaveLength(18)
+
+    for (const ch of guardedChannels) {
+      const r = await ipc.invoke(ch, { projectToken: 'wrong-token' })
+      expect(r, `🔴 ${ch} 가 틀린 토큰을 통과시켰다 — guard 가 없다`).toEqual({ error: 'stale-token' })
+    }
   })
 })
