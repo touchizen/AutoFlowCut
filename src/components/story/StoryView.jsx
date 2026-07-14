@@ -9,6 +9,7 @@
  * 인라인 편집 · autoRun 토글은 M1 범위 밖(버튼 자리만 없음, 다음 마일스톤에서 추가).
  */
 import { useState, useEffect, useRef, useMemo } from 'react'
+import { readTextFile } from '../../utils/decodeTextFile'
 import { useI18n, I18nProvider } from '../../hooks/useI18n'
 import { StopwatchIcon, ElapsedTime } from '../StopwatchIcon'
 import PromptInput from '../PromptInput'
@@ -1177,13 +1178,12 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     if (!file) return
     const name = (file.name || '').toLowerCase()
     if (!name.endsWith('.txt') && !name.endsWith('.md')) return
-    const reader = new FileReader()
-    // onload 는 성공 시에만 온다 — onloadend 를 쓰면 읽기 실패(result=null)에도 불려
-    // 기존 붙여넣은 대본을 빈 문자열로 덮어버린다. null 가드까지 이중 방어.
-    reader.onload = () => {
-      if (reader.result != null) setScriptText(String(reader.result))
-    }
-    reader.readAsText(file)
+    // readAsText 는 인코딩을 안 주면 UTF-8 을 강제한다 — Windows 에서 저장한 대본(CP949/UTF-16)이
+    //   에러 없이 깨진 글자로 들어온다. readTextFile 이 바이트를 보고 인코딩을 고른다.
+    // 읽기 실패 시 기존 붙여넣은 대본을 빈 문자열로 덮지 않는다(옛 onloadend 회귀 방지).
+    readTextFile(file)
+      .then((text) => { if (text != null) setScriptText(String(text)) })
+      .catch(() => {})
   }
   const handleImportDrop = (e) => {
     e.preventDefault()
