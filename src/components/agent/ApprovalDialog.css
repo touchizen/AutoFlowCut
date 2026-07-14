@@ -38,3 +38,5 @@
 .approval-deny { background: transparent; border-color: var(--border, #3a3a42); color: var(--text, #eee); }
 .approval-allow { background: var(--accent, #4c8dff); color: #fff; font-weight: 600; }
 .approval-more { margin-top: 12px; font-size: 12px; opacity: 0.6; text-align: right; }
+/* 사람 말 요약 — 원본 인자보다 먼저, 더 크게. 이게 사용자가 실제로 읽는 줄이다. */
+.approval-summary { font-size: 14px; line-height: 1.5; margin-bottom: 4px; }

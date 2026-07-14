@@ -148,3 +148,43 @@ describe('adapter — fail-closed', () => {
     expect(rpc.call).not.toHaveBeenCalled()
   })
 })
+
+describe('adapter — 승인 문구는 사람이 실제로 볼 수 있어야 한다', () => {
+  // 🔴 **grant 는 인자 *전체* 의 해시에 묶인다.** 그런데 승인 창에 잘린 일부만 보여주면
+  //    사람은 **본 적 없는 것을 승인**하게 된다 — "인자를 보여준다"는 목적이 그 지점에서 무너진다.
+  //    (예전 구현: 400자에서 잘라내고 `…` 하나만 붙였다. 사용자는 그게 전부인 줄 안다.)
+  it('인자를 자를 때는 잘렸다는 사실을 명시한다 — 조용히 자르지 않는다', async () => {
+    const elicitInput = vi.fn(async () => ({ action: 'decline' }))
+    const rpc = { call: vi.fn() }
+    const handlers = createAdapterHandlers({
+      tools: [{ name: 'story_confirm_synopsis', permission: 'G' }],
+      rpc,
+      elicitInput,
+      approvalTimeoutMs: 1000,
+    })
+
+    const huge = { synopsisMd: 'x'.repeat(5000) }
+    await handlers.callTool('story_confirm_synopsis', huge)
+
+    const { message } = elicitInput.mock.calls[0][0]
+    expect(message, '잘렸는데 잘렸다고 말하지 않는다 — 사람은 그게 전부인 줄 안다')
+      .toMatch(/truncated|잘렸|생략/i)
+  })
+
+  it('인자를 여러 줄로 들여써서 읽을 수 있게 한다 — 한 줄 JSON 덩어리는 읽으라는 게 아니다', async () => {
+    const elicitInput = vi.fn(async () => ({ action: 'decline' }))
+    const handlers = createAdapterHandlers({
+      tools: [{ name: 'story_set_speakers', permission: 'G' }],
+      rpc: { call: vi.fn() },
+      elicitInput,
+      approvalTimeoutMs: 1000,
+    })
+
+    await handlers.callTool('story_set_speakers', { speakers: [{ id: 'narrator', name: '나레이션' }] })
+
+    const { message } = elicitInput.mock.calls[0][0]
+    const body = message.split('\n\n').slice(1).join('\n\n')
+    expect(body.split('\n').length, '인자가 한 줄로 뭉쳐 있다').toBeGreaterThan(2)
+    expect(body).toMatch(/^\s+"speakers"/m)  // 들여쓰기가 실제로 있다
+  })
+})

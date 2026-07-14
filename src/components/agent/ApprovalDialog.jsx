@@ -22,6 +22,50 @@ function useSafeT() {
 }
 
 /**
+ * 승인 창의 **사람 말 요약**.
+ *
+ * 🔴 raw JSON 만 보여주는 건 **알리바이지 설명이 아니다** — `{"speakers":[{"id":"narrator",…}]}` 를
+ *    보고 사용자가 무엇을 승인하는지 알 수 없다.
+ * 🔴 **하지만 요약이 원본을 대체하면 안 된다.** grant 는 인자 **전체**에 묶인다. 요약만 보여주면
+ *    "사람이 승인한 것"과 "실제 실행되는 것"이 갈릴 수 있다. **둘 다** 보여준다.
+ * 🔴 **모르는 툴은 지어내지 않는다.** 아는 척 요약하면 사람이 **잘못된 것을 승인**한다.
+ *    요약이 없는 편이 낫다 — 그때는 툴 이름과 원본 인자만 보여준다.
+ *
+ * 요약은 **앱이** 만든다 (모델이 아니라). 모델이 만든 문장을 승인 근거로 쓰면 모델이 거짓말할 수 있다.
+ */
+function summarize(tool, args, t) {
+  if (!args || typeof args !== 'object') return null
+  switch (tool) {
+    case 'story_set_speakers': {
+      const speakers = Array.isArray(args.speakers) ? args.speakers : null
+      if (!speakers) return null
+      const names = speakers.map((s) => s?.name || s?.id).filter(Boolean).join(', ')
+      return t('agent.summarySetSpeakers', { count: speakers.length, names })
+    }
+    case 'story_confirm_synopsis': {
+      const characters = Array.isArray(args.characters) ? args.characters : []
+      return t('agent.summaryConfirmSynopsis', { count: characters.length })
+    }
+    case 'story_start_step': {
+      if (typeof args.step !== 'string') return null
+      return t('agent.summaryStartStep', { step: args.step })
+    }
+    default:
+      return null
+  }
+}
+
+/** 승인 payload 의 인자 부분. 파싱 실패는 **요약 없음**으로 닫는다 — 지어내지 않는다. */
+function parseArgs(body) {
+  try {
+    const value = JSON.parse(body)
+    return value && typeof value === 'object' ? value : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * 에이전트가 위험한 툴(G = 사람 동의 필요 / B = 과금)을 부르려 할 때 뜨는 승인 창 (D14).
  *
  * 🔴 **무엇을 승인하는지 보여준다.** 툴 *이름*만 띄우면 — "generate_videos 를 승인할까요?" —
@@ -71,16 +115,22 @@ export default function ApprovalDialog() {
   if (!current) return null
 
   const [title, ...body] = String(current.message ?? current.tool ?? '').split('\n')
+  const argsText = body.join('\n').trim()
+  const summary = summarize(current.tool ?? title, parseArgs(argsText), t)
 
   return (
     <div className="approval-backdrop" role="dialog" aria-modal="true" aria-label={t('agent.approvalLabel')}>
       <div className="approval-dialog">
         <div className="approval-header">{t('agent.approvalHeader')}</div>
 
+        {/* 사람 말로 무엇을 하는지. 없으면 없는 대로 둔다 — 모르는 툴을 아는 척 요약하지 않는다. */}
+        {summary && <div className="approval-summary" data-testid="approval-summary">{summary}</div>}
+
         <div className="approval-tool">{title || current.tool}</div>
-        {body.join('\n').trim() && (
-          // 인자를 **그대로** 보여준다. 요약하면 사용자가 승인한 것과 실행되는 것이 갈릴 수 있다.
-          <pre className="approval-args">{body.join('\n').trim()}</pre>
+        {argsText && (
+          // 🔴 요약이 있어도 **원본을 반드시 함께** 보여준다. grant 는 인자 전체에 묶인다 —
+          //    요약만 보고 누르면 "승인한 것"과 "실행되는 것"이 갈릴 수 있다.
+          <pre className="approval-args">{argsText}</pre>
         )}
 
         <div className="approval-actions">
