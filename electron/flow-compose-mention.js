@@ -4,6 +4,14 @@
 //   이미지 씬(flow:generate-scene)과 T2V 비디오(flow:generate-video-t2v)가 동일하게 재사용한다.
 //   원래 character.js 안의 클로저였던 것을 순수 함수로 추출(flowView 를 인자로 받음).
 
+import {
+  CLICK_CHARACTER_TAB,
+  hasMentionOption,
+  dispatchMentionOption,
+  chipCheck,
+  MENTION_PROBE,
+} from './flow-mention-dom.js'
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 // Slate 컴포저 에디터 셀렉터 (generate-image 와 동일 우선순위).
@@ -52,12 +60,8 @@ export async function insertSceneMention(flowView, name) {
   if (!hasDialog) { console.warn('[Flow Compose] mention picker(dialog) 안 열림 (nameLen:', name?.length ?? 0, ')'); return false }
 
   // 3) "캐릭터" 탭 클릭 — 기본 "모두" 탭은 이미지가 다수라 가상화로 캐릭터 entity 가 렌더 안 됨.
-  await flowView.webContents.executeJavaScript(`(function(){
-    const dlg = document.querySelector("div[role='dialog']"); if(!dlg) return false;
-    const tabs = dlg.querySelectorAll("[role='tab']");
-    for (const tb of tabs){ if((tb.textContent||'').indexOf('캐릭터')>=0){ tb.click(); return true; } }
-    return false;
-  })()`).catch(() => false)
+  const tabClicked = await flowView.webContents.executeJavaScript(CLICK_CHARACTER_TAB).catch(() => false)
+  if (!tabClicked) console.warn('[Flow Compose] 캐릭터 탭을 못 찾음 — "모두" 탭에서 검색으로 진행')
   await sleep(500)
 
   // 3.5) 검색창에 이름 입력해 필터링(가상화 스크롤 회피). value 직접 set(한글 IME 우회) + input 이벤트.
@@ -72,46 +76,22 @@ export async function insertSceneMention(flowView, name) {
   })()`).catch(() => false)
   await sleep(600)
 
-  // 4) 이름매칭 option 폴링(exact 우선). "이미지" 옵션 제외.
-  const findOpt = `(function(){
-    const dlg = document.querySelector("div[role='dialog']"); if(!dlg) return null;
-    const strip = s => (s||'').replace(/\\s+/g,'');
-    const NAME = strip(${JSON.stringify(name)});
-    const opts = Array.from(dlg.querySelectorAll("[role='option']"));
-    return opts.find(o => { const t=strip(o.textContent); return t===NAME || t===NAME+'캐릭터'; }) || null;
-  })()`
+  // 4) 이름매칭 option 폴링. 옵션 라벨은 "이름 + 타입라벨"(ko: Zed2캐릭터 / en: Zed2Character)이라
+  //    통짜 textContent 로 비교하면 로케일에 묶인다 — 이름 leaf 만 읽는다(flow-mention-dom.js).
   let found = false
   for (let i = 0; i < 16 && !found; i++) {
     await sleep(300)
-    found = await flowView.webContents.executeJavaScript(`!!(${findOpt})`).catch(() => false)
+    found = await flowView.webContents.executeJavaScript(hasMentionOption(name)).catch(() => false)
   }
   if (!found) {
-    const diag = await flowView.webContents.executeJavaScript(`(function(){
-      const dlg = document.querySelector("div[role='dialog']");
-      const tabs = Array.from((dlg||document).querySelectorAll("[role='tab']")).map(t=>(t.textContent||'').replace(/\\s+/g,' ').trim().slice(0,20));
-      const allOpts = Array.from((dlg||document).querySelectorAll("[role='option']")).map(o => (o.textContent||'').replace(/\\s+/g,' ').trim().slice(0,40));
-      return { hasDialog: !!dlg, tabs, optionCount: allOpts.length, allOptionLabels: allOpts.slice(0,20) };
-    })()`).catch((e) => ({ diagError: e.message }))
-    console.warn('[Flow Compose] mention option not found (nameLen:', name?.length ?? 0, ')')
+    // 프로브는 이름을 담지 않는다(길이만) — main 의 console 은 Sentry breadcrumb 이 된다.
+    const probe = await flowView.webContents.executeJavaScript(MENTION_PROBE).catch((e) => ({ probeError: e.message }))
+    console.warn('[Flow Compose] mention option not found — nameLen:', name?.length ?? 0, 'probe:', JSON.stringify(probe))
     return false
   }
 
   // 5) 매칭 옵션에 pointer/mouse/click 시퀀스 디스패치(Radix onSelect).
-  const dispatchOpt = `(function(){
-    const o = ${findOpt};
-    if(!o) return false;
-    o.scrollIntoView({block:'center'});
-    const r=o.getBoundingClientRect();
-    const opt={bubbles:true,cancelable:true,composed:true,clientX:r.left+r.width/2,clientY:r.top+r.height/2,view:window,button:0,pointerId:1};
-    try{ o.dispatchEvent(new PointerEvent('pointerover',opt)); o.dispatchEvent(new PointerEvent('pointerenter',opt)); }catch{}
-    try{ o.dispatchEvent(new PointerEvent('pointerdown',opt)); }catch{}
-    o.dispatchEvent(new MouseEvent('mousedown',opt));
-    try{ o.dispatchEvent(new PointerEvent('pointerup',opt)); }catch{}
-    o.dispatchEvent(new MouseEvent('mouseup',opt));
-    o.dispatchEvent(new MouseEvent('click',opt));
-    return true;
-  })()`
-  const dispatched = await flowView.webContents.executeJavaScript(dispatchOpt).catch(() => false)
+  const dispatched = await flowView.webContents.executeJavaScript(dispatchMentionOption(name)).catch(() => false)
   await sleep(500)
   let dialogClosed = !(await flowView.webContents.executeJavaScript(`!!document.querySelector("div[role='dialog']")`).catch(() => true))
   if (!dialogClosed) {
@@ -125,20 +105,10 @@ export async function insertSceneMention(flowView, name) {
     dialogClosed = !(await flowView.webContents.executeJavaScript(`!!document.querySelector("div[role='dialog']")`).catch(() => true))
   }
   // 칩 삽입 검증: 칩 텍스트에 이름이 들어갔는지로 판정(Enter 폴백의 거짓 성공 차단).
-  const post = await flowView.webContents.executeJavaScript(`(function(){
-    const e = ${EDITOR_SELECTOR};
-    const strip = s => (s||'').replace(/\\s+/g,'');
-    const NAME = strip(${JSON.stringify(name)});
-    const chips = e ? Array.from(e.querySelectorAll("[data-slate-void='true']")) : [];
-    const matches = (t) => { const s=strip(t); return s===NAME||s==='@'+NAME||s===NAME+'캐릭터'||s==='@'+NAME+'캐릭터'; };
-    return {
-      editorTextLen: (e && (e.innerText||e.textContent)||'').length,
-      hasMentionChip: chips.some(c => matches(c.textContent)),
-      stillHasDialog: !!document.querySelector("div[role='dialog']"),
-    };
-  })()`).catch((e) => ({ diagError: e.message }))
+  // post 는 길이·불리언만 담는다(chipCheck 참고) — 이름은 nameLen 으로만 찍는다.
+  const post = await flowView.webContents.executeJavaScript(chipCheck(EDITOR_SELECTOR, name)).catch((e) => ({ probeError: e.message }))
   const ok = !!(dialogClosed && post && post.hasMentionChip)
-  if (!ok) console.warn('[Flow Compose] mention select incomplete — DIAG:', JSON.stringify({ dispatched, dialogClosed }))
+  if (!ok) console.warn('[Flow Compose] mention select incomplete — nameLen:', name?.length ?? 0, JSON.stringify({ dispatched, dialogClosed, post }))
   return ok
 }
 
