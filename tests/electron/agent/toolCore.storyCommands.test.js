@@ -10,22 +10,21 @@
 //    (`story-api.js:51-52`). Tool Core 가 자기 machine 을 따로 만들면 **에이전트와 사람이 서로 다른
 //    프로젝트를 보게 된다** — 같은 앱 안에서 상태가 갈라진다. machine 은 `story:open` 이 만든 하나뿐이어야 한다.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createStoryCommands, registerStoryIPC } from '../../../electron/ipc/story-api.js'
 import { createToolCore } from '../../../electron/agent/toolCore.js'
+import { createGrantLedger, hashArgs } from '../../../electron/agent/grantLedger.js'
+import { createAgentSessionManager } from '../../../electron/agent/sessionManager.js'
 
 function fakeIpcMain() {
   const handlers = new Map()
   return { handle: (ch, fn) => handlers.set(ch, fn), invoke: (ch, payload) => handlers.get(ch)(null, payload), handlers }
 }
 
-let ipc, dir, storyCommands, toolCore
-beforeEach(async () => {
-  dir = await mkdtemp(path.join(tmpdir(), 'toolcore-'))
-  ipc = fakeIpcMain()
-  storyCommands = createStoryCommands({
+function makeStoryCommands() {
+  return createStoryCommands({
     keyStore: { getKey: () => 'k' },
     getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
     llm: {
@@ -37,15 +36,32 @@ beforeEach(async () => {
     listClaudeModels: async () => [],
     listCodexModels: async () => [],
   })
+}
+
+let ipc, dir, storyCommands, toolCore, grantLedger
+function bindToolCore(projectToken = storyCommands.projectToken) {
+  toolCore = createToolCore({
+    grantLedger,
+    sessionId: 'toolcore-story-test',
+    projectToken,
+  })
+  toolCore.use(storyCommands)
+}
+
+beforeEach(async () => {
+  dir = await mkdtemp(path.join(tmpdir(), 'toolcore-'))
+  ipc = fakeIpcMain()
+  storyCommands = makeStoryCommands()
   registerStoryIPC(ipc, storyCommands)      // 🔴 같은 인스턴스
-  toolCore = createToolCore()
-  toolCore.use(storyCommands)               // 🔴 같은 인스턴스
+  grantLedger = createGrantLedger({ now: () => 0, ttlMs: 60_000 })
+  bindToolCore(null)                         // 미오픈 session도 no-project를 값으로 돌려줘야 한다
 })
 
 describe('M1 — Tool Core ↔ IPC 단일 storyCommands (D7)', () => {
   it('slice 9: IPC 로 연 프로젝트를 Tool Core 가 **같은 projectToken/state 로** 본다', async () => {
     const opened = await ipc.invoke('story:open', { projectPath: dir })
     expect(opened.projectToken).toBeTruthy()
+    bindToolCore(opened.projectToken)
 
     const ctx = await toolCore.call('story_get_state', {})
 
@@ -54,7 +70,8 @@ describe('M1 — Tool Core ↔ IPC 단일 storyCommands (D7)', () => {
   })
 
   it('slice 9: machine 은 open 당 **정확히 1개** — Tool Core 가 자기 machine 을 만들지 않는다', async () => {
-    await ipc.invoke('story:open', { projectPath: dir })
+    const opened = await ipc.invoke('story:open', { projectPath: dir })
+    bindToolCore(opened.projectToken)
     const a = await toolCore.call('story_get_state', {})
     const b = await toolCore.call('story_get_state', {})
 
@@ -75,11 +92,35 @@ describe('M1 — Tool Core ↔ IPC 단일 storyCommands (D7)', () => {
   })
 
   it('slice 12: 오픈 뒤 `list_scenes` 는 **요약 문자열이 아니라 JSON** 이다', async () => {
-    await ipc.invoke('story:open', { projectPath: dir })
+    const opened = await ipc.invoke('story:open', { projectPath: dir })
+    bindToolCore(opened.projectToken)
     const r = await toolCore.call('list_scenes', {})
 
     expect(typeof r, 'JSON 이어야 한다 — 요약 문자열은 계약 위반이다').toBe('object')
     expect(Array.isArray(r.scenes)).toBe(true)
+  })
+
+  it('`story_set_speakers`는 실제 shared commands에 화자/음성 설정을 durable 저장한다', async () => {
+    const opened = await ipc.invoke('story:open', { projectPath: dir })
+    bindToolCore(opened.projectToken)
+    const args = {
+      speakers: [{ id: 'narrator', name: '나레이션', voice: { provider: 'typecast', voiceId: 'tc_n' } }],
+    }
+    grantLedger.grant({
+      nonce: 'set-speakers-1',
+      tool: 'story_set_speakers',
+      argsHash: hashArgs(args),
+      sessionId: 'toolcore-story-test',
+      projectToken: opened.projectToken,
+    })
+
+    await expect(toolCore.call('story_set_speakers', args, { nonce: 'set-speakers-1' }))
+      .resolves.toMatchObject({ ok: true })
+
+    // 같은 machine의 메모리를 다시 읽으면 flush가 빠져도 통과한다. 새 machine으로 reopen해 디스크를 검증한다.
+    const reopened = await makeStoryCommands().open(dir)
+    expect(reopened.projectToken).not.toBe(opened.projectToken)
+    expect(reopened.state.speakers).toEqual(args.speakers)
   })
 
   it('미오픈 `story_get_state` → `{error:\'no-project\'}`', async () => {
@@ -89,6 +130,82 @@ describe('M1 — Tool Core ↔ IPC 단일 storyCommands (D7)', () => {
 
   it('🔴 unknown tool 은 **fail-closed** — 조용히 undefined 를 돌려주지 않는다', async () => {
     await expect(toolCore.call('definitely_not_a_tool', {})).rejects.toThrow(/unknown tool/i)
+  })
+})
+
+describe('D15 — agent session의 프로젝트 경계', () => {
+  it('A에서 받은 승인은 B로 전환된 뒤 stale-token이고 B story.json과 grant를 건드리지 않는다', async () => {
+    const projectA = await mkdtemp(path.join(tmpdir(), 'agent-project-a-'))
+    const projectB = await mkdtemp(path.join(tmpdir(), 'agent-project-b-'))
+    const realCommands = makeStoryCommands()
+    const realIpc = fakeIpcMain()
+    registerStoryIPC(realIpc, realCommands)
+    const ledger = createGrantLedger({ now: () => 0, ttlMs: 60_000 })
+    let sessionToolCore
+
+    const openedA = await realIpc.invoke('story:open', { projectPath: projectA })
+    await realCommands.setSpeakers({
+      speakers: [{ id: 'narrator', name: 'A 나레이터', voice: { provider: 'typecast', voiceId: 'v-pA' } }],
+    })
+    const beforeA = await readFile(path.join(projectA, 'story', 'story.json'), 'utf8')
+
+    const manager = createAgentSessionManager({
+      grantLedger: ledger,
+      approvalPrompt: {
+        ask: vi.fn(async () => ({ action: 'decline' })),
+        closeSession: vi.fn(),
+      },
+      toolBridge: {},
+      storyCommands: realCommands,
+      createPrivateRpcImpl: ({ toolCore: core }) => {
+        sessionToolCore = core
+        return { close: vi.fn(async () => {}) }
+      },
+      createCodexOrchestratorImpl: () => ({
+        open: vi.fn(async () => ({ threadId: 'd15-thread' })),
+        send: vi.fn(),
+        steer: vi.fn(),
+        abort: vi.fn(),
+        close: vi.fn(async () => {}),
+      }),
+      randomUUIDImpl: () => 'd15-session',
+    })
+
+    try {
+      await manager.open()
+      const pinnedState = await sessionToolCore.call('story_get_state')
+      expect(pinnedState.projectToken, 'sessionManager.open이 A token을 Tool Core에 pin하지 않았다')
+        .toBe(openedA.projectToken)
+      const args = {
+        speakers: [{ id: 'narrator', name: '에이전트', voice: { provider: 'typecast', voiceId: 'AGENT-WROTE-THIS' } }],
+      }
+      const grantIdentity = {
+        nonce: 'approved-in-a',
+        tool: 'story_set_speakers',
+        argsHash: hashArgs(args),
+        sessionId: 'd15-session',
+        projectToken: openedA.projectToken,
+      }
+      ledger.grant(grantIdentity)
+
+      const openedB = await realIpc.invoke('story:open', { projectPath: projectB })
+      expect(openedB.projectToken).not.toBe(openedA.projectToken)
+      await realCommands.setSpeakers({
+        speakers: [{ id: 'narrator', name: 'B 나레이터', voice: { provider: 'typecast', voiceId: 'v-pB' } }],
+      })
+      const storyBPath = path.join(projectB, 'story', 'story.json')
+      const beforeB = await readFile(storyBPath, 'utf8')
+
+      const result = await sessionToolCore.call('story_set_speakers', args, { nonce: 'approved-in-a' })
+
+      expect(result).toEqual({ error: 'stale-token' })
+      expect(await readFile(storyBPath, 'utf8'), 'B 프로젝트 durable state가 바뀌었다').toBe(beforeB)
+      expect(await readFile(path.join(projectA, 'story', 'story.json'), 'utf8')).toBe(beforeA)
+      // stale 사전조건은 승인 consume보다 앞이어야 한다. 프로젝트 전환만으로 사람 승인을 태우지 않는다.
+      expect(ledger.consume(grantIdentity), 'stale 호출이 A의 승인을 소비했다').toBe(true)
+    } finally {
+      await manager.close()
+    }
   })
 })
 

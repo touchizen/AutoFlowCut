@@ -27,6 +27,7 @@ beforeEach(() => {
   responder = createElicitationResponder({
     grantLedger: ledger,
     sessionId: 's1',
+    projectToken: 'project-a',
     adapterServerName: OUR_SERVER,
     askUser,
   })
@@ -117,7 +118,13 @@ describe('handler elicitation — 사람에게 묻는다 (조건 2·4)', () => {
     expect(r.action).toBe('accept')
 
     // adapter 가 제시할 nonce 로 정확히 소비된다.
-    expect(ledger.consume({ nonce: 'n1', tool: 'story_confirm_synopsis', argsHash: hashArgs(args), sessionId: 's1' })).toBe(true)
+    expect(ledger.consume({
+      nonce: 'n1',
+      tool: 'story_confirm_synopsis',
+      argsHash: hashArgs(args),
+      sessionId: 's1',
+      projectToken: 'project-a',
+    })).toBe(true)
   })
 
   it('🔴 **grant 를 기록한 뒤에** accept 를 응답한다 — 순서가 뒤집히면 adapter 의 RPC 가 먼저 도착해 거부당한다', async () => {
@@ -128,7 +135,7 @@ describe('handler elicitation — 사람에게 묻는다 (조건 2·4)', () => {
       closeSession: vi.fn(),
     }
     const rr = createElicitationResponder({
-      grantLedger: l, sessionId: 's1', adapterServerName: OUR_SERVER,
+      grantLedger: l, sessionId: 's1', projectToken: 'project-a', adapterServerName: OUR_SERVER,
       askUser: async () => { order.push('ask'); return { action: 'accept' } },
     })
 
@@ -170,7 +177,7 @@ describe('🔴 조건 4 — pending 은 request id 로 잡는다 (turnId 가 아
     const b = { items: [1, 2] }
     const answers = { 7: { action: 'accept' }, 8: { action: 'decline' } }
     const rr = createElicitationResponder({
-      grantLedger: ledger, sessionId: 's1', adapterServerName: OUR_SERVER,
+      grantLedger: ledger, sessionId: 's1', projectToken: 'project-a', adapterServerName: OUR_SERVER,
       askUser: async (_p, ctx) => answers[ctx.requestId],
     })
 
@@ -182,7 +189,13 @@ describe('🔴 조건 4 — pending 은 request id 로 잡는다 (turnId 가 아
     expect(ra.action).toBe('accept')
     expect(rb.action).toBe('decline')
     // accept 된 쪽만 grant 가 있다.
-    expect(ledger.consume({ nonce: 'na', tool: 'story_confirm_synopsis', argsHash: hashArgs(a), sessionId: 's1' })).toBe(true)
+    expect(ledger.consume({
+      nonce: 'na',
+      tool: 'story_confirm_synopsis',
+      argsHash: hashArgs(a),
+      sessionId: 's1',
+      projectToken: 'project-a',
+    })).toBe(true)
     expect(ledger.consume({ nonce: 'nb', tool: 'generate_videos', argsHash: hashArgs(b), sessionId: 's1' })).toBe(false)
   })
 })

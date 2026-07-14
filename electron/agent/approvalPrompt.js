@@ -35,6 +35,14 @@ export function createApprovalPrompt({ getWindow, timeoutMs = 10 * 60 * 1000 }) 
     for (const id of [...pending.keys()]) settle(id, DECLINE)
   }
 
+  function closeSession(sessionId) {
+    // prompt와 IPC listener는 앱 수명이다. 여기서 `close()`로 영구 폐쇄하면 두 번째 agent session은
+    // 승인할 수 없으므로, 세션 종료는 그 sessionId의 대기 건만 값(decline)으로 정리한다.
+    for (const [id, entry] of [...pending]) {
+      if (entry.sessionId === sessionId) settle(id, DECLINE)
+    }
+  }
+
   function watch(win) {
     if (watched === win) return
     detach()
@@ -64,7 +72,7 @@ export function createApprovalPrompt({ getWindow, timeoutMs = 10 * 60 * 1000 }) 
       return new Promise((resolve) => {
         const requestId = randomUUID()
         const timer = setTimeout(() => settle(requestId, DECLINE), timeoutMs)
-        pending.set(requestId, { resolve, timer })
+        pending.set(requestId, { resolve, timer, sessionId: ctx.sessionId ?? null })
 
         win.webContents.send('agent:permission-request', {
           requestId,
@@ -83,6 +91,8 @@ export function createApprovalPrompt({ getWindow, timeoutMs = 10 * 60 * 1000 }) 
     },
 
     pendingCount: () => pending.size,
+
+    closeSession,
 
     close() {
       closed = true

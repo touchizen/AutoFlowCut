@@ -11,9 +11,9 @@
 //    handler 가 `elicitInput()` 을 **빠뜨리면 grant 자체가 없다** → 진짜 fail-closed.
 //
 // 계약:
-//   - main responder 가 **UI accept 순간** `grant({nonce, tool, argsHash, sessionId})` 를 기록한다.
+//   - main responder 가 **UI accept 순간** `grant({nonce, tool, argsHash, sessionId, projectToken})` 를 기록한다.
 //   - adapter 의 private RPC 가 nonce 를 제시하면 `consume()` 이 **원자적으로 1회** 소비하고
-//     **tool / argsHash / session 을 대조**한다.
+//     **tool / argsHash / session / project 를 대조**한다.
 //   - 불일치 / 재사용 / 만료 / 없음 → 전부 거부. **side effect 0회.**
 import { describe, it, expect, vi } from 'vitest'
 import { createGrantLedger, hashArgs } from '../../../electron/agent/grantLedger.js'
@@ -21,8 +21,14 @@ import { createGrantLedger, hashArgs } from '../../../electron/agent/grantLedger
 const clock = () => { let t = 0; return { now: () => t, advance: (ms) => { t += ms } } }
 const ledgerAt = (c, ttlMs = 10 * 60 * 1000) => createGrantLedger({ now: c.now, ttlMs })
 
-const G = { tool: 'generate_videos', args: { items: [1, 2] }, sessionId: 's1' }
-const grantFor = (g = G) => ({ nonce: 'n1', tool: g.tool, argsHash: hashArgs(g.args), sessionId: g.sessionId })
+const G = { tool: 'generate_videos', args: { items: [1, 2] }, sessionId: 's1', projectToken: 'project-a' }
+const grantFor = (g = G) => ({
+  nonce: 'n1',
+  tool: g.tool,
+  argsHash: hashArgs(g.args),
+  sessionId: g.sessionId,
+  projectToken: g.projectToken,
+})
 
 describe('grantLedger — 정상 경로', () => {
   it('accept 로 기록된 grant 를 같은 tool/args/session 이 소비한다', () => {
@@ -30,7 +36,7 @@ describe('grantLedger — 정상 경로', () => {
     const l = ledgerAt(c)
     l.grant(grantFor())
 
-    expect(l.consume({ nonce: 'n1', tool: G.tool, argsHash: hashArgs(G.args), sessionId: 's1' })).toBe(true)
+    expect(l.consume(grantFor())).toBe(true)
   })
 })
 
@@ -43,7 +49,7 @@ describe('grantLedger — fail-closed', () => {
   it('🔴 **1회용이다** — 같은 nonce 두 번째는 거부 (replay 차단)', () => {
     const l = ledgerAt(clock())
     l.grant(grantFor())
-    const args = { nonce: 'n1', tool: G.tool, argsHash: hashArgs(G.args), sessionId: 's1' }
+    const args = grantFor()
 
     expect(l.consume(args)).toBe(true)
     expect(l.consume(args), '같은 승인으로 두 번 실행됐다').toBe(false)
@@ -69,7 +75,14 @@ describe('grantLedger — fail-closed', () => {
     const l = ledgerAt(clock())
     l.grant(grantFor())
 
-    expect(l.consume({ nonce: 'n1', tool: G.tool, argsHash: hashArgs(G.args), sessionId: 's2' })).toBe(false)
+    expect(l.consume({ ...grantFor(), sessionId: 's2' })).toBe(false)
+  })
+
+  it('🔴 **다른 프로젝트**의 grant는 못 쓴다 — session guard가 빠져도 프로젝트를 건너지 않는다', () => {
+    const l = ledgerAt(clock())
+    l.grant(grantFor())
+
+    expect(l.consume({ ...grantFor(), projectToken: 'project-b' })).toBe(false)
   })
 
   it('🔴 만료된 grant 는 거부한다', () => {
@@ -91,7 +104,7 @@ describe('grantLedger — fail-closed', () => {
   it('🔴 `consume` 은 **동기적으로** 소비를 확정한다 — await 가 끼면 replay 창이 열린다', () => {
     const l = ledgerAt(clock())
     l.grant(grantFor())
-    const args = { nonce: 'n1', tool: G.tool, argsHash: hashArgs(G.args), sessionId: 's1' }
+    const args = grantFor()
 
     // Promise 를 돌려주면(= 안에 await 이 생겼다는 뜻) 호출자가 그 사이에 두 번 진입할 수 있다.
     const r = l.consume(args)
@@ -107,7 +120,7 @@ describe('grantLedger — fail-closed', () => {
     l.grant(grantFor())
     l.closeSession('s1')
 
-    expect(l.consume({ nonce: 'n1', tool: G.tool, argsHash: hashArgs(G.args), sessionId: 's1' })).toBe(false)
+    expect(l.consume(grantFor())).toBe(false)
   })
 })
 

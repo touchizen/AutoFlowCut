@@ -21,7 +21,13 @@
  */
 const NATIVE_KIND = 'mcp_tool_call'
 
-export function createElicitationResponder({ grantLedger, sessionId, adapterServerName, askUser }) {
+export function createElicitationResponder({
+  grantLedger,
+  sessionId,
+  projectToken = null,
+  adapterServerName,
+  askUser,
+}) {
   // 🔴 **설정 하나가 빠지면 게이트가 fail-open 한다.** `adapterServerName` 이 undefined 면
   //    `params.serverName === undefined` 가 **남의 elicitation 에도 true** 가 되어(둘 다 undefined),
   //    아무 서버의 승인 창이나 auto-accept 되고 grant 까지 발급된다. 여기서 터뜨린다.
@@ -64,7 +70,9 @@ export function createElicitationResponder({ grantLedger, sessionId, adapterServ
 
     // 🔴 **grant 를 기록한 뒤에 accept 를 응답한다.** 순서가 뒤집히면 adapter 의 private RPC 가
     //    ledger 보다 먼저 도착해서, 사용자가 승인했는데도 거부당한다.
-    grantLedger.grant({ nonce, tool, argsHash, sessionId })
+    // 세션만 묶으면 A에서 본 승인 문구가 같은 세션의 B 프로젝트 실행을 허용한다. 사람이 승인한
+    // project identity까지 기록해 Tool Core의 stale guard가 실수로 빠져도 grant 자체가 맞지 않게 한다.
+    grantLedger.grant({ nonce, tool, argsHash, sessionId, projectToken })
 
     return { action: 'accept', content: {}, _meta: null }
   }

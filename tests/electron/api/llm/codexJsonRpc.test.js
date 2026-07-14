@@ -37,9 +37,9 @@ describe('createNdjsonDecoder', () => {
 })
 
 describe('createJsonRpcClient', () => {
-  function harness({ onNotification } = {}) {
+  function harness({ onNotification, onServerRequest } = {}) {
     const writes = []
-    const client = createJsonRpcClient({ write: (s) => writes.push(s), onNotification })
+    const client = createJsonRpcClient({ write: (s) => writes.push(s), onNotification, onServerRequest })
     return { client, writes, sent: () => writes.map((w) => JSON.parse(w)) }
   }
 
@@ -91,6 +91,66 @@ describe('createJsonRpcClient', () => {
     const { client } = harness({ onNotification })
     client.handle({ method: 'item/agentMessage/delta', params: { delta: 'hi' } })
     expect(onNotification).toHaveBeenCalledWith({ method: 'item/agentMessage/delta', params: { delta: 'hi' } })
+  })
+
+  it('id + method 는 알림이 아니라 서버 요청으로 넘긴다', () => {
+    const onServerRequest = vi.fn()
+    const onNotification = vi.fn()
+    const { client } = harness({ onServerRequest, onNotification })
+
+    client.handle({ id: 41, method: 'mcpServer/elicitation/request', params: { turnId: null } })
+
+    expect(onServerRequest).toHaveBeenCalledWith({
+      id: 41,
+      method: 'mcpServer/elicitation/request',
+      params: { turnId: null },
+    })
+    expect(onNotification).not.toHaveBeenCalled()
+  })
+
+  it('response 모양이 method 를 함께 가져도 서버 요청보다 먼저 처리한다', async () => {
+    const onServerRequest = vi.fn()
+    const onNotification = vi.fn()
+    const { client } = harness({ onServerRequest, onNotification })
+    const pending = client.request('a')
+
+    client.handle({ id: 1, method: 'unexpected', result: 'ok' })
+
+    await expect(pending).resolves.toBe('ok')
+    expect(onServerRequest).not.toHaveBeenCalled()
+    expect(onNotification).not.toHaveBeenCalled()
+  })
+
+  it('respond 는 개행으로 끝나는 JSON-RPC result 프레임을 쓴다', () => {
+    const { client, writes, sent } = harness()
+
+    client.respond(41, { action: 'decline' })
+
+    expect(writes).toHaveLength(1)
+    expect(writes[0].endsWith('\n')).toBe(true)
+    expect(sent()[0]).toEqual({ jsonrpc: '2.0', id: 41, result: { action: 'decline' } })
+  })
+
+  it('respondError 는 data 를 보존한 JSON-RPC error 프레임을 쓴다', () => {
+    const { client, sent } = harness()
+
+    client.respondError('req-7', { code: -32601, message: 'Method not found', data: { method: 'future/method' } })
+
+    expect(sent()).toEqual([{
+      jsonrpc: '2.0',
+      id: 'req-7',
+      error: { code: -32601, message: 'Method not found', data: { method: 'future/method' } },
+    }])
+  })
+
+  it('같은 서버 요청 id 에는 respond/respondError를 합쳐 정확히 한 번만 쓴다', () => {
+    const { client, writes, sent } = harness()
+
+    expect(client.respond(41, { action: 'decline' })).toBe(true)
+    expect(client.respondError(41, { code: -32603, message: 'late failure' })).toBe(false)
+
+    expect(writes, '두 번째 응답이 wire 에 쓰이면 Codex request correlation 이 깨진다').toHaveLength(1)
+    expect(sent()[0].result).toEqual({ action: 'decline' })
   })
 
   it('모르는 id 의 응답은 조용히 버린다 (죽지 않는다)', () => {

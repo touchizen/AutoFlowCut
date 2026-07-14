@@ -15,13 +15,12 @@ import { registerVrewIPC } from './ipc/vrew.js'
 import { registerMcpIPC } from './ipc/mcp.js'
 import { registerGenaiIPC } from './ipc/genai-api.js'
 import { createStoryCommands, registerStoryIPC } from './ipc/story-api.js'
-import { createToolCore } from './agent/toolCore.js'
 import { createToolBridge } from './agent/toolBridge.js'
-import { randomUUID } from 'node:crypto'
 import { createGrantLedger } from './agent/grantLedger.js'
-import { createPrivateRpc } from './agent/privateRpc.js'
-import { createElicitationResponder } from './agent/elicitationResponder.js'
 import { createApprovalPrompt } from './agent/approvalPrompt.js'
+import { createAgentSessionManager } from './agent/sessionManager.js'
+import { createAgentEventForwarder, registerAgentIPC } from './ipc/agent-api.js'
+import { AGENT_APPROVAL_WINDOW_MS } from './agent/constants.js'
 import { registerTtsIPC } from './ipc/tts-api.js'
 import * as llmClaude from './api/llm/llmClaude.js'
 import * as llmCodex from './api/llm/llmCodex.js'
@@ -311,49 +310,40 @@ registerStoryIPC(ipcMain, storyCommands)
 // 배치 진행 상태도 renderer 가 유일한 진실이라 `wait_batch` 가 이 seam 을 탄다.
 const toolBridge = createToolBridge({ getWindow: () => mainWindow })
 
-// 🔴 **승인 게이트** ((A) 채택 조건 1·2). G/B 툴은 **main 이 발급한 grant** 를 원자적으로 1회
-//    consume 해야만 실행된다 — adapter 가 붙인 문자열은 증거가 아니다 (조건 1).
-//    ledger 를 안 넘기면 `toolCore` 가 모든 G/B 를 거부한다 → **배선을 빼먹으면 기능이 죽지,
-//    게이트가 새지 않는다.** 방향이 그쪽이어야 한다.
-const AGENT_MCP_SERVER_NAME = 'autoflowcut'
-const AGENT_APPROVAL_TTL_MS = 10 * 60 * 1000
-const agentSessionId = randomUUID()
-const grantLedger = createGrantLedger({ ttlMs: AGENT_APPROVAL_TTL_MS })
-
-const toolCore = createToolCore({ toolBridge, grantLedger, sessionId: agentSessionId })
-toolCore.use(storyCommands)
+// grant는 sessionId로 키가 묶이므로 ledger 자체는 앱 범위에서 공유하고 세션 종료 때 해당 id만 지운다.
+const grantLedger = createGrantLedger({ ttlMs: AGENT_APPROVAL_WINDOW_MS })
 
 // 승인 창을 사람에게 띄운다 (D14). 🔴 **모든 실패는 decline 이다** — 창이 죽었다고 승인이 될 수는 없다.
+// prompt와 renderer 응답 listener는 앱 범위다. 세션마다 만들면 listener가 누적되고, 세션 close에서
+// prompt.close()를 부르면 영구 폐쇄되어 다음 세션 승인이 모두 거부된다.
 const approvalPrompt = createApprovalPrompt({
   getWindow: () => mainWindow,
-  timeoutMs: AGENT_APPROVAL_TTL_MS,
+  timeoutMs: AGENT_APPROVAL_WINDOW_MS,
 })
 ipcMain.on('agent:permission-response', (_e, payload) => {
   // renderer 가 보낸 것은 신뢰하지 않는다 — 모르는 id / 모르는 action 은 prompt 가 안전한 쪽으로 닫는다.
   try { approvalPrompt.respond(payload) } catch (err) { console.error('[approval] bad response:', err.message) }
 })
 
-// Codex 의 elicitation 을 **main 이** 분류한다 (조건 4): native → UI 없이 auto-accept,
-// 우리 adapter 의 승인 창 → 사람에게. accept 순간 여기서 ledger 에 grant 를 기록한다.
-// (renderer 가 분류하면 native 가 모든 호출에 뜨는 탓에 **R 툴까지 renderer 생존에 묶인다.**)
-const agentElicitationResponder = createElicitationResponder({
+// controller만 앱 부팅 때 만든다. sessionId/toolCore/privateRpc/responder/orchestrator는 open() 안에서
+// 함께 만들고 close()에서 버린다. privateRpc.close()가 영구적이고 두 gate 객체가 sessionId를 생성 시
+// 고정하므로 이 실행 묶음을 module singleton으로 재사용하면 두 번째 open 또는 grant identity가 깨진다.
+const agentEvents = createAgentEventForwarder({ getWindow: () => mainWindow })
+const agentSessionManager = createAgentSessionManager({
   grantLedger,
-  sessionId: agentSessionId,
-  adapterServerName: AGENT_MCP_SERVER_NAME,
-  askUser: (params, ctx) => approvalPrompt.ask(params, ctx),
+  approvalPrompt,
+  toolBridge,
+  storyCommands,
+  // dev 기본값에 기대면 패키징에서 app.asar 안의 존재하지 않는 adapter를 찾는다.
+  isPackaged: app.isPackaged,
+  resourcesPath: process.resourcesPath,
+  ...agentEvents,
 })
-
-/**
- * adapter(별도 프로세스) → main Tool Core 로 가는 **유일한** 통로. loopback + 세션 토큰.
- * 🔴 부팅 때 열지 않는다 — **세션이 열릴 때** 열고 닫는다. 안 그러면 에이전트를 안 쓰는 사용자의
- *    머신에도 로컬 포트가 하나 계속 떠 있다.
- */
-const agentRpc = createPrivateRpc({ toolCore, sessionId: agentSessionId })
+registerAgentIPC(ipcMain, { sessionManager: agentSessionManager, getWindow: () => mainWindow })
 
 app.on('will-quit', () => {
-  grantLedger.closeSession(agentSessionId)
-  approvalPrompt.close()          // 대기 중인 승인은 전부 decline
-  agentRpc.close().catch(() => {})
+  agentSessionManager.close().catch(() => {})
+  approvalPrompt.close()          // 앱 종료이므로 다음 세션이 없다. 모든 pending을 영구 decline한다.
   toolBridge.close()
 })
 ipcMain.on('agent:bridge-response', (_e, payload) => {

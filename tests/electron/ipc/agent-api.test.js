@@ -1,0 +1,170 @@
+// @vitest-environment node
+//
+// D14/V1 — ChatPanel 전용 command 6개 중 session 5개와 agent event 6개를 소유한다.
+// permission request/response 한 쌍은 app-scoped approvalPrompt가 이미 한 번만 소유하므로 여기서
+// 다시 등록하지 않는다. 이 테스트는 handler 모양이 아니라 renderer까지 도달하는 효과를 검증한다.
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+async function loadSubject() {
+  return import('../../../electron/ipc/agent-api.js').catch(() => ({}))
+}
+
+function fakeIpcMain() {
+  const handlers = new Map()
+  return {
+    handle: vi.fn((channel, handler) => handlers.set(channel, handler)),
+    on: vi.fn(),
+    removeHandler: vi.fn((channel) => handlers.delete(channel)),
+    invoke(channel, payload) {
+      const handler = handlers.get(channel)
+      if (!handler) throw new Error(`missing handler: ${channel}`)
+      return handler({}, payload)
+    },
+  }
+}
+
+function fakeWindow() {
+  return {
+    isDestroyed: vi.fn(() => false),
+    webContents: {
+      isDestroyed: vi.fn(() => false),
+      send: vi.fn(),
+    },
+  }
+}
+
+function fullSessionManagerDouble() {
+  // 🔴 코드가 호출 가능한 전 surface를 모두 둔다. 빠진 optional method 때문에 위험 경로가
+  // 조용한 no-op이 되는 mock을 다시 만들지 않는다.
+  return {
+    open: vi.fn(async () => ({ sessionId: 'session-1' })),
+    send: vi.fn(async () => ({ turn: { id: 'turn-1' } })),
+    steer: vi.fn(async () => ({ turnId: 'turn-1' })),
+    abort: vi.fn(async () => ({ aborted: true })),
+    close: vi.fn(async () => ({ sessionId: 'session-1' })),
+    status: vi.fn(() => ({ state: 'open', sessionId: 'session-1' })),
+  }
+}
+
+describe('registerAgentIPC — session command 효과', () => {
+  let ipcMain, win, sessionManager
+
+  beforeEach(() => {
+    ipcMain = fakeIpcMain()
+    win = fakeWindow()
+    sessionManager = fullSessionManagerDouble()
+  })
+
+  it('send가 sessionManager에 도달하고 같은 작업의 delta가 renderer agent:delta로 간다', async () => {
+    const subject = await loadSubject()
+    expect(subject.registerAgentIPC).toBeTypeOf('function')
+    expect(subject.createAgentEventForwarder).toBeTypeOf('function')
+    const events = subject.createAgentEventForwarder({ getWindow: () => win })
+    sessionManager.send.mockImplementationOnce(async (text) => {
+      events.onDelta(`응답:${text}`)
+      return { turn: { id: 'turn-1' } }
+    })
+    subject.registerAgentIPC(ipcMain, { sessionManager, getWindow: () => win })
+
+    const result = await ipcMain.invoke('agent:send', { text: '계속해' })
+
+    expect(sessionManager.send).toHaveBeenCalledWith('계속해')
+    expect(result).toEqual({ turn: { id: 'turn-1' } })
+    expect(win.webContents.send).toHaveBeenCalledWith('agent:delta', { delta: '응답:계속해' })
+  })
+
+  it('open/steer/abort/close가 각 manager method를 실제 호출하고 값을 보존한다', async () => {
+    const { registerAgentIPC } = await loadSubject()
+    expect(registerAgentIPC).toBeTypeOf('function')
+    registerAgentIPC(ipcMain, { sessionManager, getWindow: () => win })
+
+    await expect(ipcMain.invoke('agent:session-open', { engine: 'codex' }))
+      .resolves.toEqual({ sessionId: 'session-1' })
+    await expect(ipcMain.invoke('agent:steer', { text: '영상은 빼' }))
+      .resolves.toEqual({ turnId: 'turn-1' })
+    await expect(ipcMain.invoke('agent:abort')).resolves.toEqual({ aborted: true })
+    await expect(ipcMain.invoke('agent:session-close')).resolves.toEqual({ sessionId: 'session-1' })
+
+    expect(sessionManager.open).toHaveBeenCalledOnce()
+    expect(sessionManager.steer).toHaveBeenCalledWith('영상은 빼')
+    expect(sessionManager.abort).toHaveBeenCalledOnce()
+    expect(sessionManager.close).toHaveBeenCalledOnce()
+    expect(ipcMain.on, 'permission-response를 session IPC가 중복 등록했다').not.toHaveBeenCalled()
+  })
+
+  it('manager throw를 rejection으로 새지 않고 agent:error 값과 renderer event로 만든다', async () => {
+    const { registerAgentIPC } = await loadSubject()
+    expect(registerAgentIPC).toBeTypeOf('function')
+    sessionManager.send.mockRejectedValueOnce(new Error('app-server died'))
+    registerAgentIPC(ipcMain, { sessionManager, getWindow: () => win })
+
+    const result = await ipcMain.invoke('agent:send', { text: '계속' })
+
+    expect(result).toMatchObject({ error: 'agent-command-failed', command: 'agent:send', message: 'app-server died' })
+    expect(win.webContents.send).toHaveBeenCalledWith('agent:error', result)
+  })
+})
+
+describe('createAgentEventForwarder — D14 event 효과', () => {
+  it('item/completed(agentMessage)를 확정 text가 든 agent:message로 전달한다', async () => {
+    const { createAgentEventForwarder } = await loadSubject()
+    const win = fakeWindow()
+    const events = createAgentEventForwarder({ getWindow: () => win })
+    const item = { id: 'message-1', type: 'agentMessage', text: '수정된 답' }
+
+    events.onEvent({ method: 'item/completed', params: { turnId: 'turn-1', item } })
+
+    expect(win.webContents.send).toHaveBeenCalledWith('agent:message', {
+      turnId: 'turn-1',
+      item,
+    })
+  })
+
+  it('tool-call/usage/done/error/exit를 story stream이 아닌 agent 채널로만 보낸다', async () => {
+    const { createAgentEventForwarder } = await loadSubject()
+    expect(createAgentEventForwarder).toBeTypeOf('function')
+    const win = fakeWindow()
+    const events = createAgentEventForwarder({ getWindow: () => win })
+    const tool = { id: 'tool-1', type: 'mcpToolCall', tool: 'wait_batch', status: 'completed' }
+
+    events.onEvent({ method: 'item/completed', params: { turnId: 'turn-1', item: tool } })
+    events.onUsage({ sessionId: 's1', turns: 1, toolCalls: 1, elapsedMs: 10 })
+    events.onEvent({ method: 'turn/completed', params: { turn: { id: 'turn-1', status: 'completed' } } })
+    events.onError({ error: 'agent-limit', limit: 64, used: 64 })
+    events.onExit({ code: 23, signal: 'SIGKILL', error: new Error('crashed') })
+
+    expect(win.webContents.send).toHaveBeenCalledWith('agent:tool-call', {
+      turnId: 'turn-1', phase: 'completed', item: tool,
+    })
+    expect(win.webContents.send).toHaveBeenCalledWith('agent:usage', {
+      sessionId: 's1', turns: 1, toolCalls: 1, elapsedMs: 10,
+    })
+    expect(win.webContents.send).toHaveBeenCalledWith('agent:done', {
+      turnId: 'turn-1', status: 'completed', turn: { id: 'turn-1', status: 'completed' },
+    })
+    expect(win.webContents.send).toHaveBeenCalledWith('agent:error', {
+      error: 'agent-limit', limit: 64, used: 64,
+    })
+    expect(win.webContents.send).toHaveBeenCalledWith('agent:error', expect.objectContaining({
+      error: 'agent-exit', message: 'crashed', code: 23, signal: 'SIGKILL',
+    }))
+    expect(win.webContents.send.mock.calls.every(([channel]) => channel.startsWith('agent:'))).toBe(true)
+  })
+
+  it('failed turn은 done으로 위장하지 않고 구조화 agent:error로 보낸다', async () => {
+    const { createAgentEventForwarder } = await loadSubject()
+    expect(createAgentEventForwarder).toBeTypeOf('function')
+    const win = fakeWindow()
+    const events = createAgentEventForwarder({ getWindow: () => win })
+
+    events.onEvent({
+      method: 'turn/completed',
+      params: { turn: { id: 'turn-bad', status: 'failed', error: { message: 'tool failed' } } },
+    })
+
+    expect(win.webContents.send).toHaveBeenCalledWith('agent:error', expect.objectContaining({
+      error: 'agent-turn-failed', message: 'tool failed', turnId: 'turn-bad',
+    }))
+    expect(win.webContents.send).not.toHaveBeenCalledWith('agent:done', expect.anything())
+  })
+})

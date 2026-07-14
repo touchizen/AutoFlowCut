@@ -152,6 +152,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener(channel, listener)
   },
 
+  // 지속 Agent session (D14). permission request/response는 아래 app-scoped 전용 pair가 소유한다.
+  agentSessionOpen: (params) => ipcRenderer.invoke('agent:session-open', params),
+  agentSend: (params) => ipcRenderer.invoke('agent:send', params),
+  agentSteer: (params) => ipcRenderer.invoke('agent:steer', params),
+  agentAbort: (params) => ipcRenderer.invoke('agent:abort', params),
+  agentSessionClose: (params) => ipcRenderer.invoke('agent:session-close', params),
+  onAgentEvent: (channel, cb) => {
+    // 승인 요청은 ApprovalDialog가 별도 listener로 받는다. 여기 섞으면 session 재등록/수명 결합이 쉽다.
+    const valid = ['agent:delta', 'agent:message', 'agent:tool-call', 'agent:usage', 'agent:done', 'agent:error']
+    if (!valid.includes(channel)) return () => {}
+    const listener = (_e, payload) => cb(payload)
+    ipcRenderer.on(channel, listener)
+    return () => ipcRenderer.removeListener(channel, listener)
+  },
+
   // Agent tool bridge (D14) — main ↔ renderer correlated request/response.
   // 🔴 표면은 **셋뿐**이다: request 수신 + 응답 + event. renderer 가 main 의 pending 을 직접
   //    들여다보거나 다른 세션의 요청에 답할 길을 만들지 않는다.

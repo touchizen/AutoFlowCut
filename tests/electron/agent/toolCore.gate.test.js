@@ -15,18 +15,21 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createToolCore } from '../../../electron/agent/toolCore.js'
 import { createGrantLedger, hashArgs } from '../../../electron/agent/grantLedger.js'
 
+const PROJECT_TOKEN = 'pt'
 let ledger, storyCommands, core
 beforeEach(() => {
   ledger = createGrantLedger({ now: () => 0, ttlMs: 60_000 })
   storyCommands = {
     hasProject: () => true,
-    projectToken: 'pt',
+    projectToken: PROJECT_TOKEN,
     getState: vi.fn(async () => ({ steps: {} })),
     listScenes: vi.fn(async () => ({ scenes: [] })),
     // G 툴 — 실제 side effect 를 내는 것들. 승인 전엔 **한 번도 불리면 안 된다.**
     confirmSynopsis: vi.fn(async () => ({ ok: true })),
+    setSpeakers: vi.fn(async () => ({ ok: true })),
+    start: vi.fn(async () => ({ ok: true })),
   }
-  core = createToolCore({ grantLedger: ledger, sessionId: 's1' })
+  core = createToolCore({ grantLedger: ledger, sessionId: 's1', projectToken: PROJECT_TOKEN })
   core.use(storyCommands)
 })
 
@@ -45,12 +48,31 @@ describe('Tool Core 게이트 — 등급을 스스로 재산출한다', () => {
 
   it('G 툴은 grant 를 consume 하면 실행된다', async () => {
     const args = { synopsisMd: '#' }
-    ledger.grant({ nonce: 'n1', tool: 'story_confirm_synopsis', argsHash: hashArgs(args), sessionId: 's1' })
+    ledger.grant({ nonce: 'n1', tool: 'story_confirm_synopsis', argsHash: hashArgs(args), sessionId: 's1', projectToken: PROJECT_TOKEN })
 
     const r = await core.call('story_confirm_synopsis', args, { nonce: 'n1' })
 
     expect(storyCommands.confirmSynopsis).toHaveBeenCalledOnce()
     expect(r).toMatchObject({ ok: true })
+  })
+
+  it.each([
+    ['story_confirm_synopsis', 'confirmSynopsis', { synopsisMd: '#' }],
+    ['story_set_speakers', 'setSpeakers', { speakers: [] }],
+    ['story_start_step', 'start', { step: 'script', params: {} }],
+  ])('미오픈 %s는 grant를 소비하지 않아 open 뒤 같은 승인이 실행된다', async (name, method, args) => {
+    let opened = false
+    storyCommands.hasProject = () => opened
+    ledger.grant({ nonce: `open-${name}`, tool: name, argsHash: hashArgs(args), sessionId: 's1', projectToken: PROJECT_TOKEN })
+
+    await expect(core.call(name, args, { nonce: `open-${name}` }))
+      .resolves.toEqual({ error: 'no-project' })
+    expect(storyCommands[method]).not.toHaveBeenCalled()
+
+    opened = true
+    await expect(core.call(name, args, { nonce: `open-${name}` }))
+      .resolves.toMatchObject({ ok: true })
+    expect(storyCommands[method]).toHaveBeenCalledOnce()
   })
 
   it('🔴 **adapter 가 approvalMode 를 붙여도 통과하지 못한다** — 문자열은 증거가 아니다', async () => {
@@ -65,7 +87,7 @@ describe('Tool Core 게이트 — 등급을 스스로 재산출한다', () => {
 
   it('🔴 같은 grant 를 두 번 쓰면 두 번째는 거부 — side effect 는 정확히 1회', async () => {
     const args = { synopsisMd: '#' }
-    ledger.grant({ nonce: 'n1', tool: 'story_confirm_synopsis', argsHash: hashArgs(args), sessionId: 's1' })
+    ledger.grant({ nonce: 'n1', tool: 'story_confirm_synopsis', argsHash: hashArgs(args), sessionId: 's1', projectToken: PROJECT_TOKEN })
 
     await core.call('story_confirm_synopsis', args, { nonce: 'n1' })
     const second = await core.call('story_confirm_synopsis', args, { nonce: 'n1' })
@@ -76,7 +98,7 @@ describe('Tool Core 게이트 — 등급을 스스로 재산출한다', () => {
 
   it('🔴 승인 뒤 **인자를 바꿔치기**하면 거부 — 사용자가 본 것과 다른 게 실행되지 않는다', async () => {
     const shown = { synopsisMd: '짧은 시놉시스' }
-    ledger.grant({ nonce: 'n1', tool: 'story_confirm_synopsis', argsHash: hashArgs(shown), sessionId: 's1' })
+    ledger.grant({ nonce: 'n1', tool: 'story_confirm_synopsis', argsHash: hashArgs(shown), sessionId: 's1', projectToken: PROJECT_TOKEN })
 
     const r = await core.call('story_confirm_synopsis', { synopsisMd: '전혀 다른 내용' }, { nonce: 'n1' })
 
@@ -86,7 +108,7 @@ describe('Tool Core 게이트 — 등급을 스스로 재산출한다', () => {
 
   it('🔴 **R 툴의 grant 를 G 툴에 재사용**할 수 없다', async () => {
     const args = { synopsisMd: '#' }
-    ledger.grant({ nonce: 'n1', tool: 'list_scenes', argsHash: hashArgs(args), sessionId: 's1' })
+    ledger.grant({ nonce: 'n1', tool: 'list_scenes', argsHash: hashArgs(args), sessionId: 's1', projectToken: PROJECT_TOKEN })
 
     const r = await core.call('story_confirm_synopsis', args, { nonce: 'n1' })
 
@@ -102,12 +124,13 @@ describe('Tool Core 게이트 — 등급을 스스로 재산출한다', () => {
   })
 })
 
-// 🔴 **fixture 로 B 를 주장하는 건 B 커버리지가 아니다.**
-//    테스트가 `generate_videos: 'B'` 를 *fixture 배열에* 써놓고 통과하면, **실제 정책표에 B 가 한 줄도
-//    없어도** 초록이다 (실측: `permission !== 'R'` → `=== 'G'` 로 바꿔도 전부 초록이었다).
-//    → **실제 표**를 상대로, D9.3 이 이름을 댄 툴이 전부 게이트에 걸리는지 잰다.
-describe('🔴 D9.3 이 이름을 댄 툴은 전부 G 또는 B 다 (실제 정책표)', () => {
-  const MUST_BE_GATED = ['story_confirm_synopsis', 'story_set_speakers', 'story_start_step', 'generate_videos']
+// 🔴 **fixture 로 B 를 주장하는 건 shipped B 커버리지가 아니다.**
+//    adapter/grant-ledger의 fixture B 테스트는 M4 게이트 기계를 계속 검증한다. 하지만 실제 Tool Core는
+//    M4의 과금 admission이 오기 전까지 B가 **의도적으로 0개**다. 이 assertion은 누락을 숨기는 게 아니라
+//    현재 제품의 정직한 상태를 pin한다. M4가 `generate_videos`를 다시 넣을 때 반드시 이 테스트를
+//    의식적으로 바꾸고 실제 billing admission 효과 테스트를 함께 추가해야 한다.
+describe('실제 Tool Core 정책표 — M4 전에는 B가 의도적으로 0개다', () => {
+  const MUST_BE_GATED = ['story_confirm_synopsis', 'story_set_speakers', 'story_start_step']
 
   it.each(MUST_BE_GATED)('%s 는 R 이 아니다', (name) => {
     const t = core.list().find((x) => x.name === name)
@@ -115,27 +138,21 @@ describe('🔴 D9.3 이 이름을 댄 툴은 전부 G 또는 B 다 (실제 정�
     expect(['G', 'B']).toContain(t.permission)
   })
 
-  it('🔴 **B 툴**은 grant 없이 거부된다 (과금은 사람 승인 뒤에만 — D9.3)', async () => {
-    const bridge = { invoke: vi.fn(async () => ({ accepted: true })) }
-    const c = createToolCore({ grantLedger: ledger, sessionId: 's1', toolBridge: bridge })
-    c.use(storyCommands)
-
-    const r = await c.call('generate_videos', { items: [1, 2] })
-
-    expect(r).toEqual({ status: 'rejected', reason: 'unconfirmed' })
-    expect(bridge.invoke, '🔴 승인 없이 과금 admission 이 실행됐다').not.toHaveBeenCalled()
+  it('shipped inventory에는 B가 없고 generate_videos도 없다', () => {
+    const tools = core.list()
+    expect(tools.filter((tool) => tool.permission === 'B')).toEqual([])
+    expect(tools.some((tool) => tool.name === 'generate_videos')).toBe(false)
   })
 
-  it('B 툴은 grant 를 consume 하면 실행된다', async () => {
+  it('🔴 generate_videos는 grant가 있어도 video.admit에 도달할 수 없다', async () => {
     const bridge = { invoke: vi.fn(async () => ({ accepted: true, operationId: 'op-1' })) }
-    const c = createToolCore({ grantLedger: ledger, sessionId: 's1', toolBridge: bridge })
+    const c = createToolCore({ grantLedger: ledger, sessionId: 's1', projectToken: PROJECT_TOKEN, toolBridge: bridge })
     c.use(storyCommands)
     const args = { items: [1, 2] }
-    ledger.grant({ nonce: 'n1', tool: 'generate_videos', argsHash: hashArgs(args), sessionId: 's1' })
+    ledger.grant({ nonce: 'n1', tool: 'generate_videos', argsHash: hashArgs(args), sessionId: 's1', projectToken: PROJECT_TOKEN })
 
-    const r = await c.call('generate_videos', args, { nonce: 'n1' })
+    await expect(c.call('generate_videos', args, { nonce: 'n1' })).rejects.toThrow(/unknown tool/i)
 
-    expect(bridge.invoke).toHaveBeenCalledOnce()
-    expect(r).toMatchObject({ accepted: true })
+    expect(bridge.invoke, 'M4 전인데 video.admit이 reachable 하다').not.toHaveBeenCalled()
   })
 })

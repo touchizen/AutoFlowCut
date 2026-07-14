@@ -388,6 +388,7 @@ export async function runStoryCharacterPush({
 // Components
 import Header from './components/Header'
 import ApprovalDialog from './components/agent/ApprovalDialog'
+import ChatPanel from './components/agent/ChatPanel'
 import PromptInput from './components/PromptInput'
 import SceneList from './components/SceneList'
 import GenerateMenu from './components/GenerateMenu'
@@ -2167,9 +2168,19 @@ function App() {
           <span>Loading project...</span>
         </div>
       )}
-      {/* 🔴 **전역 sibling 이다** (D14). `activeView` 조건부 본문 *안*에 넣으면 뷰를 바꾸는 순간
-          승인 창이 사라진다 — 에이전트가 과금 툴을 부르려는 그 순간에. Header 처럼 밖에 둔다. */}
+      {/* 🔴 둘 다 **전역 sibling**이다(D14). `activeView` 조건부 본문 안에 넣으면 뷰 전환 순간
+          승인/error surface와 대화 state가 사라진다. Header처럼 두 view보다 앞에 한 번만 둔다. */}
       <ApprovalDialog />
+      <ChatPanel
+        projectKey={`${settings.saveMode}:${workFolder ?? ''}:${settings.projectName ?? ''}`}
+        batchStatusSources={{
+          automation: { isRunning, status },
+          scenes,
+          references,
+          generatingRefs,
+          refBatchRunning,
+        }}
+      />
       <Header
         onSettings={(tab) => openSettings(typeof tab === 'string' ? tab : null)}
         onExport={handleExportClick}

@@ -25,6 +25,9 @@ const BATCH_TYPES = new Set(['scene', 'ref'])
 /**
  * @param {object} [deps]
  * @param {object} [deps.toolBridge] renderer 를 읽는 seam (D14). 없으면 renderer 를 타는 툴은 못 쓴다.
+ * @param {string|null} [deps.projectToken] sessionManager.open 순간 고정한 Story 프로젝트 identity.
+ * @param {(call:{name:string,args:object,context:object}) => object|null} [deps.admitToolCall]
+ *   실제 Tool Core 호출을 세는 동기 admission seam (D10).
  * @param {() => number} [deps.now] 주입 가능한 시계 — 테스트가 실제로 기다리지 않게.
  * @param {(ms:number) => Promise<void>} [deps.sleep]
  * @param {number} [deps.waitWindowMs] `wait_batch` 의 대기 창 W.
@@ -35,6 +38,8 @@ export function createToolCore({
   toolBridge = null,
   grantLedger = null,
   sessionId = null,
+  projectToken = null,
+  admitToolCall = null,
   now = () => Date.now(),
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
   waitWindowMs = 10 * 60 * 1000,     // 잠정 — legacy 폴링 창과 같게 두되, 측정 뒤 정한다
@@ -76,10 +81,19 @@ export function createToolCore({
    * 🔴 **등급은 Tool Core 가 소유한다** ((A) 채택 조건 1). adapter 가 request context 에 붙인
    *    `approvalMode` 문자열은 **증거가 아니다** — adapter 가 실수로 조기 부착하거나 공통 RPC 가
    *    기본값으로 붙이면 게이트가 조용히 샌다. 여기서 **스스로 다시 산출한다.**
+   *
+   * 🔴 **M4 전에는 B 툴이 의도적으로 0개다.** `generate_videos`의 정직한 구현은 renderer의
+   *    구독/크레딧 admission이 만든 batchId·consumeGate context를 실제 Veo pipeline 끝까지 같은
+   *    identity로 운반해야 한다. 지금 `video.admit` transport만 보고 툴을 선언하면 사람은 유료 작업을
+   *    승인하고 grant까지 소비하지만 renderer handler가 없어 실패한다. 그래서 M4가 실제 billing
+   *    admission을 구현하기 전까지 inventory에서 완전히 제거한다. main-side `video.*` seam은 M4용으로
+   *    남아 있어도 이 표와 `call()`에서 도달할 수 없다.
    */
   const TOOLS = {
     story_get_state: {
       permission: 'R',
+      description: '현재 열린 Story 프로젝트의 전체 상태를 조회한다.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       needs: 'storyCommands',
       run: async () => (storyCommands.hasProject()
         ? { projectToken: storyCommands.projectToken, state: await storyCommands.getState() }
@@ -87,35 +101,67 @@ export function createToolCore({
     },
     list_scenes: {
       permission: 'R',
+      description: '현재 Story 프로젝트의 씬 목록을 JSON으로 조회한다.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       needs: 'storyCommands',
       // 계약: **요약 문자열이 아니라 JSON** (스펙 §2.3).
       run: async () => (storyCommands.hasProject() ? await storyCommands.listScenes() : NO_PROJECT),
     },
     wait_batch: {
       permission: 'R',
+      description: '씬 또는 레퍼런스 이미지 배치가 끝나거나 대기 창이 만료될 때까지 기다린다.',
+      inputSchema: {
+        type: 'object',
+        properties: { type: { type: 'string', enum: ['scene', 'ref'] } },
+        required: ['type'],
+        additionalProperties: false,
+      },
       needs: 'toolBridge',          // story 는 안 쓴다 — renderer 의 배치 상태만 읽는다
       run: (args) => waitBatch(args),
     },
     story_confirm_synopsis: {
       permission: 'G',              // 사람이 확정하는 것 — 에이전트가 혼자 못 한다 (D9)
+      description: '시놉시스와 등장인물 명단을 사람 승인 뒤 Story 프로젝트에 확정한다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          synopsisMd: { type: 'string' },
+          characters: { type: 'array' },
+          sceneMode: { type: 'string' },
+          imageFirstVariant: { type: 'string' },
+          fixedSceneRevision: { type: 'string' },
+        },
+        additionalProperties: false,
+      },
       needs: 'storyCommands',
       run: (args) => storyCommands.confirmSynopsis(args),
     },
     story_set_speakers: {
       permission: 'G',              // D9.3
+      description: 'Story 프로젝트의 화자 목록과 음성 설정을 저장한다.',
+      inputSchema: {
+        type: 'object',
+        properties: { speakers: { type: 'array' } },
+        required: ['speakers'],
+        additionalProperties: false,
+      },
       needs: 'storyCommands',
       run: (args) => storyCommands.setSpeakers(args),
     },
     story_start_step: {
       permission: 'G',              // D9.3 — 모든 `*_start` 는 G
+      description: '사람 승인 뒤 지정한 Story 파이프라인 단계를 시작한다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          step: { type: 'string', enum: ['script', 'scenes', 'audio', 'prompts'] },
+          params: { type: 'object' },
+        },
+        required: ['step'],
+        additionalProperties: false,
+      },
       needs: 'storyCommands',
       run: ({ step, params }) => storyCommands.start(step, params),
-    },
-    // 🔴 **B = 과금.** 승인 없이 실행되면 사용자 돈이 나간다. billing admission 은 accept 뒤에만 (D9.3).
-    generate_videos: {
-      permission: 'B',
-      needs: 'toolBridge',
-      run: (args) => toolBridge.invoke('video.admit', args),
     },
   }
 
@@ -131,17 +177,29 @@ export function createToolCore({
       tool: name,
       argsHash: hashArgs(args),
       sessionId,
+      // 현재 token을 대조해야 주 stale guard가 빠져도 A grant가 B에서 승인으로 인정되지 않는다.
+      projectToken: storyCommands?.projectToken ?? null,
     })
   }
 
   return {
     use(commands) {
+      // 프로젝트 가드가 빠진 설정을 "가드 통과"로 해석하면 모든 story side effect가 fail-open한다.
+      // RPC/child를 열기 전인 주입 경계에서 필수 계약을 확정한다.
+      if (typeof commands?.hasProject !== 'function') {
+        throw new TypeError('storyCommands.hasProject must be a function')
+      }
       storyCommands = commands
     },
 
     /** 툴 목록 — adapter 가 MCP inventory 를 만들 때 쓴다 (M2). */
     list() {
-      return Object.entries(TOOLS).map(([name, t]) => ({ name, permission: t.permission }))
+      return Object.entries(TOOLS).map(([name, t]) => ({
+        name,
+        permission: t.permission,
+        description: t.description,
+        inputSchema: t.inputSchema,
+      }))
     },
 
     /**
@@ -149,6 +207,11 @@ export function createToolCore({
      *    "툴이 아무것도 안 했다" 와 "툴이 없다" 를 구분하지 못한다.
      */
     async call(name, args = {}, context = {}) {
+      // Codex는 병렬 호출을 request id로 나눠 동시에 보낸다. 이벤트/batch를 추측하지 않고 실제
+      // 호출 진입마다 동기로 admission해야 각 호출이 1회고, limit 뒤 side effect도 시작되지 않는다.
+      const refusal = admitToolCall?.({ name, args, context })
+      if (refusal) return refusal
+
       const tool = TOOLS[name]
       if (!tool) throw new Error(`unknown tool: ${name}`)
       // 툴마다 필요한 것이 다르다. 전부에게 storyCommands 를 요구하면 renderer 만 읽는 툴이 못 돈다.
@@ -158,6 +221,15 @@ export function createToolCore({
       if (tool.needs === 'toolBridge' && !toolBridge) {
         throw new Error(`${name} requires toolBridge`)
       }
+      // 프로젝트가 없다는 사실은 승인과 무관하다. grant를 먼저 consume하면 사람이 프로젝트를
+      // 연 뒤 같은 승인으로 재시도할 수 없으므로, 모든 story 도구의 공통 사전조건을 앞에서 막는다.
+      if (tool.needs === 'storyCommands'
+        && typeof storyCommands.hasProject === 'function'
+        && !storyCommands.hasProject()) return NO_PROJECT
+      // renderer guarded()와 같은 계약이다. 프로젝트 전환은 renderer session close보다 먼저 일어날 수
+      // 있으므로 agent 경로도 세션이 pin한 token을 직접 확인하고, 승인 consume 전에 닫혀야 한다.
+      if (tool.needs === 'storyCommands'
+        && storyCommands.projectToken !== projectToken) return { error: 'stale-token' }
       // adapter 의 주장이 아니라 **main ledger 의 grant** 를 본다.
       if (tool.permission !== 'R' && !isApproved(name, args, context)) {
         return { status: 'rejected', reason: 'unconfirmed' }

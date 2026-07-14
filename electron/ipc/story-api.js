@@ -169,6 +169,7 @@ export function createStoryCommands({ keyStore, getWindow, llm = llmGemini, load
     generateSynopsis: (params) => machine.generateSynopsis(params),
     reviewSynopsis: (params) => machine.reviewSynopsis(params),
     confirmSynopsis: (params) => machine.confirmSynopsis(params),
+    setSpeakers: (params) => machine.setSpeakers(params),
     synthPreview: (params) => machine.synthPreview(params),
 
     researchSearch: (params) => machine.researchSearch(params),

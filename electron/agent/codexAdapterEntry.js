@@ -87,13 +87,15 @@ export async function main() {
 }
 
 /** 아주 얕은 JSON-Schema → zod. 툴 표는 우리가 만든다 — 임의 스키마를 받지 않는다. */
-function zodFromJson(schema) {
+export function zodFromJson(schema) {
   const shape = {}
   for (const [key, prop] of Object.entries(schema.properties ?? {})) {
-    let t = prop.type === 'number' ? z.number()
+    // enum을 일반 string으로 접으면 모델이 허용값을 못 보고 잘못된 G 호출에 승인을 소모한다.
+    let t = Array.isArray(prop.enum) && prop.enum.length ? z.enum(prop.enum)
+      : prop.type === 'number' ? z.number()
       : prop.type === 'boolean' ? z.boolean()
         : prop.type === 'array' ? z.array(z.any())
-          : prop.type === 'object' ? z.record(z.any())
+          : prop.type === 'object' ? z.record(z.string(), z.any())
             : z.string()
     if (!(schema.required ?? []).includes(key)) t = t.optional()
     shape[key] = t

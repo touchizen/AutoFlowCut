@@ -32,11 +32,11 @@ export function createGrantLedger({ now = () => Date.now(), ttlMs = DEFAULT_TTL_
 
   const grants = new Map()
 
-  function grant({ nonce, tool, argsHash, sessionId }) {
-    grants.set(nonce, { tool, argsHash, sessionId, expiresAt: now() + ttlMs })
+  function grant({ nonce, tool, argsHash, sessionId, projectToken }) {
+    grants.set(nonce, { tool, argsHash, sessionId, projectToken, expiresAt: now() + ttlMs })
   }
 
-  function consume({ nonce, tool, argsHash, sessionId } = {}) {
+  function consume({ nonce, tool, argsHash, sessionId, projectToken } = {}) {
     const recorded = grants.get(nonce)
     if (!recorded) return false
 
@@ -48,6 +48,7 @@ export function createGrantLedger({ now = () => Date.now(), ttlMs = DEFAULT_TTL_
     return recorded.tool === tool
       && recorded.argsHash === argsHash
       && recorded.sessionId === sessionId
+      && recorded.projectToken === projectToken
   }
 
   function closeSession(sessionId) {

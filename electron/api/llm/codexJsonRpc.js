@@ -28,9 +28,17 @@ export function createNdjsonDecoder() {
  * id 매칭 JSON-RPC 클라이언트. 전송(write)과 수신(handle)은 호출측이 배선한다.
  * app-server 응답에는 jsonrpc 필드가 없으므로 id + result/error 유무로 판별한다.
  */
-export function createJsonRpcClient({ write, onNotification } = {}) {
+export function createJsonRpcClient({ write, onNotification, onServerRequest } = {}) {
   const pending = new Map()
+  const answeredServerRequests = new Set()
   let nextId = 1
+
+  function writeServerResponse(id, payload) {
+    if (answeredServerRequests.has(id)) return false
+    answeredServerRequests.add(id)
+    write(`${JSON.stringify({ jsonrpc: '2.0', id, ...payload })}\n`)
+    return true
+  }
 
   return {
     get pendingCount() {
@@ -45,6 +53,20 @@ export function createJsonRpcClient({ write, onNotification } = {}) {
       return promise
     },
 
+    respond(id, result) {
+      return writeServerResponse(id, { result })
+    },
+
+    respondError(id, { code, message, data } = {}) {
+      return writeServerResponse(id, {
+        error: { code, message, ...(data !== undefined ? { data } : {}) },
+      })
+    },
+
+    clearServerRequestHistory() {
+      answeredServerRequests.clear()
+    },
+
     handle(message) {
       if (!message || typeof message !== 'object') return
       if (message.id != null && (message.error !== undefined || 'result' in message)) {
@@ -53,6 +75,10 @@ export function createJsonRpcClient({ write, onNotification } = {}) {
         pending.delete(message.id)
         if (message.error) entry.reject(new Error(message.error.message || 'Codex app-server JSON-RPC error'))
         else entry.resolve(message.result)
+        return
+      }
+      if (message.id != null && message.method) {
+        onServerRequest?.({ id: message.id, method: message.method, params: message.params })
         return
       }
       if (message.method) onNotification?.(message)

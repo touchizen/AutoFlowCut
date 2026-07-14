@@ -25,10 +25,22 @@ const CLIENT_INFO = { name: 'autoflowcut', title: 'AutoFlowCut', version: '0.0.0
 const KILL_TIMEOUT_MS = 5 * 1000
 
 /** stdout 배선까지 끝난 app-server 프로세스. close() 는 대기 요청을 정리하고 프로세스를 내린다. */
-function openAppServer({ spawnImpl = nodeSpawn, codexPath = resolveCodexExecutablePath, env = process.env, onNotification, killTimeoutMs = KILL_TIMEOUT_MS } = {}) {
+export function openAppServer({
+  spawnImpl = nodeSpawn,
+  codexPath = resolveCodexExecutablePath,
+  env = process.env,
+  onNotification,
+  onServerRequest,
+  onExit,
+  killTimeoutMs = KILL_TIMEOUT_MS,
+} = {}) {
   const executable = typeof codexPath === 'function' ? codexPath() : codexPath
   const child = spawnImpl(executable, ['app-server'], { env, stdio: ['pipe', 'pipe', 'ignore'] })
-  const client = createJsonRpcClient({ write: (line) => child.stdin.write(line), onNotification })
+  const client = createJsonRpcClient({
+    write: (line) => child.stdin.write(line),
+    onNotification,
+    onServerRequest,
+  })
   const decode = createNdjsonDecoder()
   let exited = false
   child.stdout.on('data', (chunk) => {
@@ -36,20 +48,33 @@ function openAppServer({ spawnImpl = nodeSpawn, codexPath = resolveCodexExecutab
   })
   // 프로세스가 죽으면 대기 중인 요청이 영원히 매달린다.
   child.on('error', (err) => client.rejectAll(err))
-  child.on('exit', (code) => { exited = true; client.rejectAll(new Error(`codex app-server exited (${code})`)) })
+  child.on('exit', (code, signal) => {
+    exited = true
+    const error = new Error(`codex app-server exited (${code})`)
+    client.rejectAll(error)
+    try {
+      onExit?.({ code, signal, error })
+    } finally {
+      // 죽은 transport의 응답 id를 session close까지 붙잡아 둘 이유가 없다.
+      client.clearServerRequestHistory()
+    }
+  })
   return {
     client,
     // 자식이 실제로 exit 할 때까지 기다린다 — 안 그러면 아직 임시 CODEX_HOME 에 plugins 를 클론하는
     // 중인 자식과 rm -rf 가 경쟁해 ENOTEMPTY 로 던진다(실 프로세스에서 재현됨).
     async close() {
       client.rejectAll(new Error('codex app-server closed'))
-      if (exited) return
-      await new Promise((resolve) => {
-        const done = () => { clearTimeout(t); resolve() }
-        const t = setTimeout(done, killTimeoutMs) // 안 죽어도 무한 대기하지 않는다
-        child.once('exit', done)
-        try { child.kill() } catch { done() /* 이미 죽음 */ }
-      })
+      if (!exited) {
+        await new Promise((resolve) => {
+          const done = () => { clearTimeout(t); resolve() }
+          const t = setTimeout(done, killTimeoutMs) // 안 죽어도 무한 대기하지 않는다
+          child.once('exit', done)
+          try { child.kill() } catch { done() /* 이미 죽음 */ }
+        })
+      }
+      // transport가 끝난 뒤에만 비운다. 살아 있는 동안 비우면 같은 server request에 두 번 쓴다.
+      client.clearServerRequestHistory()
     },
   }
 }

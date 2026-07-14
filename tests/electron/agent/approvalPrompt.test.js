@@ -100,6 +100,32 @@ describe('🔴 실패는 전부 decline 이다 — 승인은 fail-closed', () =>
     expect(prompt.pendingCount()).toBe(0)
   })
 
+  it('세션 종료는 그 세션의 병렬 승인만 전부 decline하고 다른 세션 응답은 보존한다', async () => {
+    const first = prompt.ask(params, ctx)
+    const second = prompt.ask(params, { ...ctx, requestId: 8 })
+    const laterSession = prompt.ask(params, { ...ctx, requestId: 9, sessionId: 's2' })
+    const requests = win.sent.map(({ payload }) => payload)
+
+    prompt.closeSession('s1')
+
+    await expect(first).resolves.toEqual({ action: 'decline' })
+    await expect(second).resolves.toEqual({ action: 'decline' })
+    expect(prompt.pendingCount()).toBe(1)
+    expect(prompt.respond({ requestId: requests[2].requestId, action: 'accept' })).toBe(true)
+    await expect(laterSession).resolves.toEqual({ action: 'accept' })
+  })
+
+  it('세션 종료 뒤에도 app-scoped prompt는 다음 세션 승인을 받을 수 있다', async () => {
+    const first = prompt.ask(params, ctx)
+    prompt.closeSession('s1')
+    await expect(first).resolves.toEqual({ action: 'decline' })
+
+    const reopened = prompt.ask(params, { ...ctx, requestId: 10, sessionId: 's2' })
+    prompt.respond({ requestId: lastRequest().requestId, action: 'accept' })
+
+    await expect(reopened).resolves.toEqual({ action: 'accept' })
+  })
+
   it('🔴 **모르는 action** 은 decline (renderer 가 이상한 걸 보내도 승인되지 않는다)', async () => {
     const p = prompt.ask(params, ctx)
     prompt.respond({ requestId: lastRequest().requestId, action: 'yes-please' })

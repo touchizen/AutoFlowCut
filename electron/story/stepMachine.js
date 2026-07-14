@@ -186,7 +186,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   // 전체 교체하지 않는다. ①확정 gender/age/role(및 name/id) 보존, ②LLM 참조 인물 voice 승계,
   // ③씬에서 미참조된 확정 인물도 삭제 금지. rosterEnforced(FIX-1) 상태에선 명단 밖 LLM 신규
   // 인물을 추가하지 않는다(§v2.2 "명단에 없는 새 인물 금지" — narrator 시딩만 예외).
-  function mergeSpeakers(nextSpeakers = [], { preferNewAppearance = false } = {}) {
+  function mergeSpeakers(nextSpeakers = [], { preferNewAppearance = false, preferNewVoice = false } = {}) {
     const enforced = rosterEnforced()
     const nextByKey = new Map()
     for (const sp of nextSpeakers || []) {
@@ -196,6 +196,11 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     const pickAppearance = (prev, next) => preferNewAppearance
       ? (nonEmptyString(next?.appearance) ?? nonEmptyString(prev?.appearance) ?? next?.appearance ?? prev?.appearance)
       : (nonEmptyString(prev?.appearance) ?? nonEmptyString(next?.appearance) ?? prev?.appearance ?? next?.appearance)
+    // scenes 병합은 확정 voice를 보존하지만 setSpeakers는 voice 설정 자체가 목적이다. 다만 LLM이
+    // voice 필드를 생략한 부분 항목을 보내도 기존 배정을 지우지 않도록 "명시된 경우"만 새 값을 쓴다.
+    const pickVoice = (prev, next) => preferNewVoice && Object.prototype.hasOwnProperty.call(next || {}, 'voice')
+      ? next.voice
+      : (prev?.voice ?? null)
     const matched = new Set()
     const out = (state.speakers || []).map((prev) => {
       const next = (prev.id && nextByKey.get(`id:${speakerKey(prev.id)}`)) ||
@@ -205,7 +210,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // FIX-3: rosterEnforced면 확정 id/name/gender/age/role을 그대로 보존하고 LLM 출력에서는
       // appearance 보강만 받는다(§v2.9 id=name.trim() 고정 — React key/voice/roster id 안정).
       if (enforced) {
-        return { ...prev, appearance: pickAppearance(prev, next), voice: prev.voice ?? null }
+        return { ...prev, appearance: pickAppearance(prev, next), voice: pickVoice(prev, next) }
       }
       return {
         ...next, // id/name은 LLM 출력 우선(미확정 기존 rename 동작 유지 — ①은 구조화 필드 한정)
@@ -216,7 +221,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         ...(nonEmptyString(prev.ethnicity) ? { ethnicity: prev.ethnicity } : {}), // §v2.12
 
         appearance: pickAppearance(prev, next),
-        voice: prev.voice ?? null, // ② voice 승계
+        voice: pickVoice(prev, next), // ② voice 승계(setSpeakers에서는 명시된 새 배정 우선)
       }
     })
     const seen = new Set(out.flatMap(speakerReferenceKeys))
@@ -1299,6 +1304,42 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // 기존 top-level 필드(steps/speakers/...)는 그대로 접근 가능하도록 spread — story.json에는
       // scenes를 쓰지 않으므로(flush 시 이 반환값이 아니라 내부 state 변수를 저장) 안전하다.
       return { ...state, scenes, scriptText, ...(await hydrateExtras()) }
+    },
+    async setSpeakers({ speakers } = {}) {
+      if (!state) state = await store.load()
+      if (researchBusy()) return { error: 'busy' }
+      if (!Array.isArray(speakers)) throw new Error('speakers must be an array')
+      for (const [index, speaker] of speakers.entries()) {
+        if (typeof speaker?.id !== 'string' || !speaker.id.trim()
+          || typeof speaker?.name !== 'string' || !speaker.name.trim()) {
+          throw new Error(`speakers[${index}].id and name are required`)
+        }
+      }
+
+      // D17: merge가 기존 roster를 살려도, 장면 참조를 빠뜨린 승인 payload를 성공으로 보고하면
+      // 사용자는 완전한 명단을 승인했다고 오해한다. 디스크를 쓰기 전에 요청 roster 자체를 검증한다.
+      const missing = []
+      const missingKeys = new Set()
+      for (const segment of (await loadScenesForPayload()).flatMap((scene) => scene.segments || [])) {
+        if ((segment.type || 'narration') !== 'narration' || isNarratorTrackSpeaker(segment.speaker)) continue
+        const key = referencedSpeakerKey(segment.speaker)
+        if (!key || findSpeakerByRef(speakers, segment.speaker) || missingKeys.has(key)) continue
+        missingKeys.add(key)
+        missing.push(String(segment.speaker).trim())
+      }
+      if (missing.length) return { error: 'roster-incomplete', speakers: missing }
+
+      // audio가 성공 뒤 저장하던 것과 같은 durable 필드다. 여기서는 설정만 저장하고 생성은 시작하지 않는다.
+      const operationId = randomUUID()
+      state.speakers = mergeSpeakers(speakers, { preferNewVoice: true })
+      await flush()
+      send('story:state', {
+        state,
+        scenes: await loadScenesForPayload(),
+        scriptText: (await store.loadText('script.md')) || '',
+        ...(await hydrateExtras()),
+      }, operationId)
+      return { ok: true, operationId }
     },
     async stageImageFirst({ fixedSceneRevision, imageFirstVariant, fixedScenes, storyboardCsv } = {}) {
       if (!state) state = await store.load()
