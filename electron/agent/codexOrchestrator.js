@@ -70,6 +70,7 @@ export function createCodexOrchestrator({
   isPackaged = false,
   resourcesPath = process.resourcesPath,
   repoRoot = DEFAULT_REPO_ROOT,
+  cwd = process.cwd(),
   model,
   onDelta,
   onEvent,

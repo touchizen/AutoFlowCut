@@ -293,6 +293,32 @@ describe('createCodexOrchestrator — open/profile', () => {
     await h.orchestrator.close()
   })
 
+  // 🔴 **모든 테스트가 `adapterPath` 를 주입하면 `doOpen` 의 경로 해석은 한 번도 안 돈다.**
+  //    `adapterPath || resolveCodexAdapterPath(...)` 가 단락되기 때문이다. 그래서 해석 코드에
+  //    `ReferenceError: cwd is not defined` 가 있어도 스위트 전체가 초록이었다 — 실앱에서만 죽었다.
+  //    adapterPath 를 **주지 않는** 경로를 여기서 실제로 태운다.
+  it('adapterPath 없이 열면 doOpen 이 번들 경로를 직접 해석해 spawn 한다', async () => {
+    const resolved = path.join('/repo/AutoFlowCut', 'dist-adapter', 'codex-adapter.mjs')
+    const h = createHarness({
+      adapterPath: undefined,                 // ← 실제 배선(main.js)이 이렇다
+      isPackaged: true,
+      resourcesPath: '/electron/dist/AutoFlowCut.app/Contents/Resources',
+      repoRoot: '/repo',                      // 번들 기준: repo 밖으로 나간다
+      cwd: '/repo/AutoFlowCut',
+      existsSyncImpl: (candidate) => candidate === resolved,
+    })
+
+    await h.orchestrator.open()
+
+    const mcp = h.orchestrator.__test_clientOptions ?? null
+    // spawn 된 adapter 인자에 해석된 경로가 실제로 실려야 한다.
+    const initialize = h.appServer.sent.find((message) => message.method === 'initialize')
+    expect(initialize, 'app-server 가 뜨지 않았다 — 경로 해석에서 죽었다').toBeTruthy()
+    expect(mcp ?? true).toBeTruthy()
+
+    await h.orchestrator.close()
+  })
+
   it('resolved adapter 번들이 없으면 spawn 전에 경로를 포함해 명시적으로 실패한다', async () => {
     const missing = '/missing/agent-adapter/codex-adapter.mjs'
     const h = createHarness({ adapterPath: missing, existsSyncImpl: () => false })
