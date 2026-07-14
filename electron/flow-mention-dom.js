@@ -85,12 +85,20 @@ const HELPERS = `
 `
 
 /** 캐릭터 탭 클릭. (기본 "모두" 탭은 가상화 때문에 캐릭터 entity 가 렌더 안 될 수 있다.) */
-export const CLICK_CHARACTER_TAB = `(function(){
+export const CLICK_CHARACTER_TAB = `(async function(){
   ${HELPERS}
   const t = __findCharTab(__dialog());
   if (!t) return false;
+  const active = (el) => el.getAttribute('aria-selected') === 'true' || el.getAttribute('data-state') === 'active';
+  if (active(t)) return true;
   t.click();
-  return t.getAttribute('aria-selected') === 'true' || t.getAttribute('data-state') === 'active';
+  // Radix/React 는 상태를 비동기로 갱신한다 — 클릭한 틱에 aria-selected 를 읽으면 아직 false 다.
+  //   (2026-07-14: 동기 검증 때문에 탭을 찾아놓고도 하드 실패했다. 실앱 로그 charTabFound:true.)
+  for (let i = 0; i < 20; i++) {
+    await new Promise((r) => setTimeout(r, 100));
+    if (active(t)) return true;
+  }
+  return false;
 })()`
 
 /** 이름과 정확히 일치하는 옵션이 피커에 있는가. */

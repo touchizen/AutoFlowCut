@@ -166,23 +166,38 @@ describe('hasMentionOption (이름 매칭이 로케일에 묶이지 않는다)',
 })
 
 describe('CLICK_CHARACTER_TAB (탭도 로케일에 묶이지 않는다)', () => {
-  it.each([['ko', KO], ['en', EN]])('%s: 아이콘 리거처로 캐릭터 탭을 찾아 클릭한다', (_locale, html) => {
+  /**
+   * Radix/React 는 상태를 **비동기로** 갱신한다 — 클릭한 그 틱에는 aria-selected 가 아직 안 바뀐다.
+   * (2026-07-14 실앱: 동기 검증이라 charTabFound=true 인데도 활성화 확인이 false → 하드 실패.
+   *  그때 이 테스트는 초록이었다 — fixture 가 aria-selected 를 동기로 바꿔줬기 때문이다.)
+   */
+  const asyncActivation = (delay = 30) => {
+    document.querySelectorAll("[role='tab']").forEach((t) => {
+      t.addEventListener('click', () => setTimeout(() => {
+        document.querySelectorAll("[role='tab']").forEach((o) => o.setAttribute('aria-selected', 'false'))
+        t.setAttribute('aria-selected', 'true')
+      }, delay))
+    })
+  }
+
+  it.each([['ko', KO], ['en', EN]])('%s: 아이콘 리거처로 캐릭터 탭을 찾아 클릭한다 (활성화는 다음 렌더에 온다)', async (_locale, html) => {
     document.body.innerHTML = html
     const clicked = []
-    document.querySelectorAll("[role='tab']").forEach((t) => {
-      t.addEventListener('click', () => {
-        document.querySelectorAll("[role='tab']").forEach((other) => other.setAttribute('aria-selected', 'false'))
-        t.setAttribute('aria-selected', 'true')
-        clicked.push(t.textContent)
-      })
-    })
+    document.querySelectorAll("[role='tab']").forEach((t) => t.addEventListener('click', () => clicked.push(t.textContent)))
+    asyncActivation()
 
-    expect(run(CLICK_CHARACTER_TAB)).toBe(true)
+    await expect(run(CLICK_CHARACTER_TAB)).resolves.toBe(true)
     expect(clicked).toHaveLength(1)
     expect(clicked[0]).toContain('accessibility_new')
+    expect(document.querySelector("[role='tab'][aria-selected='true']").textContent).toContain('accessibility_new')
   })
 
-  it('ligature 를 label fallback 보다 먼저 사용해 다른 계정 언어도 지원한다', () => {
+  it('클릭해도 끝내 활성화되지 않으면 실패한다 (All 탭에서 진행하면 같은 이름의 이미지를 집는다)', async () => {
+    document.body.innerHTML = EN // 클릭 리스너 없음 = 활성화 안 됨
+    await expect(run(CLICK_CHARACTER_TAB)).resolves.toBe(false)
+  })
+
+  it('ligature 를 label fallback 보다 먼저 사용해 다른 계정 언어도 지원한다', async () => {
     document.body.innerHTML = dialog({
       tabs: [tab('future_icon', 'Characters'), tab('accessibility_new', 'Personajes')],
       options: [],
@@ -193,30 +208,30 @@ describe('CLICK_CHARACTER_TAB (탭도 로케일에 묶이지 않는다)', () => 
       clicked.push(t.textContent.trim())
     }))
 
-    expect(run(CLICK_CHARACTER_TAB)).toBe(true)
+    await expect(run(CLICK_CHARACTER_TAB)).resolves.toBe(true)
     expect(clicked).toEqual(['accessibility_newPersonajes'])
   })
 
   it.each([
     ['ko', '캐릭터'],
     ['en', 'Characters'],
-  ])('%s: ligature 가 바뀌면 label 을 second-line fallback 으로 사용한다', (_locale, label) => {
+  ])('%s: ligature 가 바뀌면 label 을 second-line fallback 으로 사용한다', async (_locale, label) => {
     document.body.innerHTML = dialog({ tabs: [tab('future_icon', label)], options: [] })
     const target = document.querySelector("[role='tab']")
     target.addEventListener('click', () => target.setAttribute('aria-selected', 'true'))
 
-    expect(run(CLICK_CHARACTER_TAB)).toBe(true)
+    await expect(run(CLICK_CHARACTER_TAB)).resolves.toBe(true)
   })
 
-  it('data-state=active 로 활성화된 탭도 성공으로 판정한다', () => {
+  it('data-state=active 로 활성화된 탭도 성공으로 판정한다', async () => {
     document.body.innerHTML = dialog({ tabs: [tab('accessibility_new', 'الشخصيات')], options: [] })
     const target = document.querySelector("[role='tab']")
     target.addEventListener('click', () => target.setAttribute('data-state', 'active'))
 
-    expect(run(CLICK_CHARACTER_TAB)).toBe(true)
+    await expect(run(CLICK_CHARACTER_TAB)).resolves.toBe(true)
   })
 
-  it('같은 이름의 이미지가 All 탭에 있어도 캐릭터 탭이 활성화되지 않으면 false', () => {
+  it('같은 이름의 이미지가 All 탭에 있어도 캐릭터 탭이 활성화되지 않으면 false', async () => {
     document.body.innerHTML = dialog({
       tabs: [
         tab('dashboard', 'All', { selected: true }),
@@ -227,18 +242,18 @@ describe('CLICK_CHARACTER_TAB (탭도 로케일에 묶이지 않는다)', () => 
 
     // All 탭에서는 타입 구조가 동일한 이미지도 이름 exact-match 후보가 된다.
     expect(run(hasMentionOption('Zed2'))).toBe(true)
-    expect(run(CLICK_CHARACTER_TAB)).toBe(false)
+    await expect(run(CLICK_CHARACTER_TAB)).resolves.toBe(false)
     expect(document.querySelectorAll("[role='tab']")[0].getAttribute('aria-selected')).toBe('true')
   })
 
-  it('label fallback 도 클릭 후 활성화되지 않으면 false', () => {
+  it('label fallback 도 클릭 후 활성화되지 않으면 false', async () => {
     document.body.innerHTML = dialog({ tabs: [tab('future_icon', 'Characters')], options: [] })
-    expect(run(CLICK_CHARACTER_TAB)).toBe(false)
+    await expect(run(CLICK_CHARACTER_TAB)).resolves.toBe(false)
   })
 
-  it('캐릭터 탭이 없으면 false', () => {
+  it('캐릭터 탭이 없으면 false', async () => {
     document.body.innerHTML = dialog({ tabs: [tab('dashboard', 'All')], options: [] })
-    expect(run(CLICK_CHARACTER_TAB)).toBe(false)
+    await expect(run(CLICK_CHARACTER_TAB)).resolves.toBe(false)
   })
 })
 
