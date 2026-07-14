@@ -326,13 +326,22 @@ describe('M0-13 — PATH 에 node 없이 packaged Electron runtime 으로 adapte
     expect(usedPackaged, 'criterion 은 packaged Electron runtime 이다 — 패키징 빌드 후 다시 재라').toBe(true)
   }, 5 * 60 * 1000)
 
-  it('🔴 win/linux 도 `RunAsNode` fuse 가 ENABLE 이다 (정적 판독 — 이 머신에서 닫힌다)', async () => {
+  it('🔴 win/linux 도 `RunAsNode` fuse 가 ENABLE 이다 (mac 에서 정적 판독하는 **우회로**)', async () => {
     // fuse wire 는 **바이너리 파일 안의 sentinel** 이다. 실행할 필요가 없다 → **mac 에서 win/linux 를 잴 수 있다.**
     // 이 레포엔 fuse 설정이 하나도 없으므로(tests/packaging/runAsNodeFuse.test.js 가 그걸 가드한다)
-    // electron-builder 는 아래 stock 바이너리를 **그대로** 싣는다. 즉 이 판독이 곧 출하물의 fuse 다.
+    // electron-builder 는 아래 stock 바이너리를 **그대로** 싣는다.
     //
-    // ⚠️ 이게 닫는 건 M0-13 sub-risk **하나뿐**이다 — spawn/quoting/MSIX 컨테이너/AppImage mount 는
-    //    여전히 **진짜 win/linux 실행**이 필요하다. 이 PASS 로 M0-13 전체를 닫았다고 주장하지 마라.
+    // 🔴 **이건 win/linux 머신이 없을 때 쓰는 우회로다.** CI 는 각 OS 에서 네이티브로 도니까
+    //    위의 tripwire 가 **실제 패키징된 그 OS 의 바이너리**를 직접 읽는다 — 그게 더 강한 증거다.
+    //    그러니 win/linux 에서는 이 우회로를 돌리지 않는다 (stock zip 을 받아 풀 이유가 없다).
+    if (process.platform !== 'darwin') {
+      record('M0-13 win/linux RunAsNode fuse (정적)', {
+        skipped: `${process.platform} 네이티브 — 위 tripwire 가 실제 패키징 바이너리의 fuse 를 직접 읽는다 (더 강한 증거)`,
+      })
+      console.log('  (skip: 네이티브 실행 — tripwire 가 실물로 잰다)')
+      return
+    }
+
     const { downloadArtifact } = await import('@electron/get')
     const { getCurrentFuseWire, FuseV1Options } = await import('@electron/fuses')
     const NAMES = { 48: 'DISABLE', 49: 'ENABLE', 50: 'REMOVED', 114: 'INHERIT' }
