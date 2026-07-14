@@ -14,6 +14,7 @@
  */
 
 import { hashArgs } from './grantLedger.js'
+import { STORY_TTS_PROVIDERS } from '../../src/config/storyTtsProviders.js'
 
 /** 프로젝트가 안 열렸을 때의 공통 거부 (스펙 §2.1 `get_project_context`, slice 12). */
 const NO_PROJECT = Object.freeze({ error: 'no-project' })
@@ -21,6 +22,60 @@ const NO_PROJECT = Object.freeze({ error: 'no-project' })
 /** `wait_batch` 의 종결 상태 — 여기 도달하면 더 기다릴 이유가 없다. */
 const BATCH_TERMINAL = new Set(['complete', 'cancelled-by-user', 'error'])
 const BATCH_TYPES = new Set(['scene', 'ref'])
+
+// 모델이 빈 문자열/공백 문자열을 보내면 setSpeakers의 같은 검증에서 뒤늦게 실패해 승인이 낭비된다.
+// required만으로는 값의 존재만 말하므로, 실제 command가 요구하는 non-empty 계약도 함께 광고한다.
+const NON_EMPTY_STRING_SCHEMA = Object.freeze({ type: 'string', minLength: 1, pattern: '\\S' })
+const GENDER_SCHEMA = Object.freeze({ type: 'string', enum: ['male', 'female', 'unknown'] })
+const SFX_SOURCE_SCHEMA = Object.freeze({ type: 'string', enum: ['elevenlabs', 'library'] })
+
+const VOICE_SCHEMA = Object.freeze({
+  oneOf: [
+    {
+      type: 'object',
+      properties: {
+        provider: { type: 'string', enum: STORY_TTS_PROVIDERS },
+        voiceId: NON_EMPTY_STRING_SCHEMA,
+      },
+      required: ['provider', 'voiceId'],
+      additionalProperties: false,
+    },
+    // `null`은 기본 성우로 되돌리는 실제 UI/Story 계약이다. object만 열면 합법적인 해제가 막힌다.
+    { type: 'null' },
+  ],
+})
+
+const SPEAKER_ITEM_SCHEMA = Object.freeze({
+  type: 'object',
+  properties: {
+    id: NON_EMPTY_STRING_SCHEMA,
+    name: NON_EMPTY_STRING_SCHEMA,
+    voice: VOICE_SCHEMA,
+    role: { type: 'string' },
+    gender: GENDER_SCHEMA,
+    age: { type: 'string' },
+    appearance: { type: 'string' },
+  },
+  required: ['id', 'name'],
+  additionalProperties: false,
+})
+
+// confirmSynopsis는 id를 name.trim()에서 파생하므로 name만 필수다. 나머지는
+// normalizeStoryCharacter가 실제로 소비하는 필드만 열어 모델이 임의 키를 발명하지 않게 한다.
+const CHARACTER_ITEM_SCHEMA = Object.freeze({
+  type: 'object',
+  properties: {
+    id: NON_EMPTY_STRING_SCHEMA,
+    name: NON_EMPTY_STRING_SCHEMA,
+    gender: GENDER_SCHEMA,
+    age: { type: 'string' },
+    role: { type: 'string' },
+    ethnicity: { type: 'string' },
+    appearance: { type: 'string' },
+  },
+  required: ['name'],
+  additionalProperties: false,
+})
 
 // `story_start_step.params`는 IPC의 범용 객체를 그대로 노출하면 사실상 임의 명령 채널이 된다.
 // Agent가 쓸 수 있는 키를 step별로 고정하고, D16 화자 설정은 story_set_speakers 한 경로만 둔다.
@@ -44,7 +99,8 @@ const START_STEP_PARAM_PROPERTIES = Object.freeze({
   }),
   audio: Object.freeze({
     regenerate: { type: 'array', items: { type: 'string' } },
-    sfxSources: { type: 'object' },
+    // key는 segment id라 고정 properties가 아니고, 값만 실제 sfxFor 라우터의 두 provider로 제한한다.
+    sfxSources: { type: 'object', additionalProperties: SFX_SOURCE_SCHEMA },
   }),
   prompts: Object.freeze({
     options: { type: 'object' },
@@ -59,9 +115,15 @@ const START_STEP_INPUT_SCHEMA = Object.freeze({
   properties: {
     step: { type: 'string', enum: Object.keys(START_STEP_PARAM_PROPERTIES) },
     params: {
-      type: 'object',
-      properties: Object.assign({}, ...Object.values(START_STEP_PARAM_PROPERTIES)),
-      additionalProperties: false,
+      // 최상위 union은 MCP SDK가 빈 object로 접는다. params 안의 anyOf는 tools/list에 남고,
+      // branch 설명이 discriminator와 허용 키의 대응을 모델에게 직접 보여 준다.
+      // 모든 params 키가 optional이라 `{}`가 여러 branch와 매치된다. 그래서 oneOf가 아니라 anyOf다.
+      anyOf: Object.entries(START_STEP_PARAM_PROPERTIES).map(([step, properties]) => ({
+        type: 'object',
+        description: `story_start_step.step="${step}"일 때 허용되는 params.`,
+        properties,
+        additionalProperties: false,
+      })),
     },
   },
   required: ['step'],
@@ -188,10 +250,12 @@ export function createToolCore({
         type: 'object',
         properties: {
           synopsisMd: { type: 'string' },
-          characters: { type: 'array' },
-          sceneMode: { type: 'string' },
-          imageFirstVariant: { type: 'string' },
-          fixedSceneRevision: { type: 'string' },
+          characters: { type: 'array', items: CHARACTER_ITEM_SCHEMA },
+          // audio-first에서는 세 필드를 생략한다. image-first 프로젝트에서는 셋을 함께 보내고,
+          // revision의 현재 프로젝트 일치 여부만 상태 의존 검증으로 confirmSynopsis에 남긴다.
+          sceneMode: { type: 'string', enum: ['image-first'] },
+          imageFirstVariant: { type: 'string', enum: ['storyboard', 'image-only'] },
+          fixedSceneRevision: NON_EMPTY_STRING_SCHEMA,
         },
         additionalProperties: false,
       },
@@ -203,7 +267,7 @@ export function createToolCore({
       description: 'Story 프로젝트의 화자 목록과 음성 설정을 저장한다.',
       inputSchema: {
         type: 'object',
-        properties: { speakers: { type: 'array' } },
+        properties: { speakers: { type: 'array', items: SPEAKER_ITEM_SCHEMA } },
         required: ['speakers'],
         additionalProperties: false,
       },

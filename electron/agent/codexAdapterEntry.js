@@ -86,16 +86,28 @@ export async function main() {
   await server.connect(new StdioServerTransport())
 }
 
-/** 툴 표의 JSON-Schema → zod. oneOf/중첩 strict object를 보존해야 step별 경계가 adapter에서 안 풀린다. */
+/** 툴 표의 JSON-Schema → zod. union/중첩 strict object를 보존해야 step별 경계가 adapter에서 안 풀린다. */
 export function zodFromJson(schema) {
+  const describe = (converted, node) => typeof node?.description === 'string'
+    ? converted.describe(node.description)
+    : converted
+
   const convert = (node = {}) => {
-    if (Array.isArray(node.oneOf) && node.oneOf.length) return z.union(node.oneOf.map(convert))
-    if (Object.hasOwn(node, 'const')) return z.literal(node.const)
-    if (Array.isArray(node.enum) && node.enum.length) return z.enum(node.enum)
-    if (node.type === 'number') return z.number()
-    if (node.type === 'boolean') return z.boolean()
-    if (node.type === 'array') return z.array(node.items ? convert(node.items) : z.any())
-    if (node.type !== 'object') return z.string()
+    if (Array.isArray(node.oneOf) && node.oneOf.length) return describe(z.union(node.oneOf.map(convert)), node)
+    if (Array.isArray(node.anyOf) && node.anyOf.length) return describe(z.union(node.anyOf.map(convert)), node)
+    if (Object.hasOwn(node, 'const')) return describe(z.literal(node.const), node)
+    if (Array.isArray(node.enum) && node.enum.length) return describe(z.enum(node.enum), node)
+    if (node.type === 'number') return describe(z.number(), node)
+    if (node.type === 'boolean') return describe(z.boolean(), node)
+    if (node.type === 'null') return describe(z.null(), node)
+    if (node.type === 'array') return describe(z.array(node.items ? convert(node.items) : z.any()), node)
+    if (node.type !== 'object') {
+      let string = z.string()
+      if (Number.isInteger(node.minLength) && node.minLength >= 0) string = string.min(node.minLength)
+      // 툴 표는 우리가 소유한다. pattern을 Zod까지 옮겨야 공백 id/name이 승인 handler에 못 들어간다.
+      if (typeof node.pattern === 'string') string = string.regex(new RegExp(node.pattern))
+      return describe(string, node)
+    }
 
     const shape = {}
     for (const [key, prop] of Object.entries(node.properties ?? {})) {
@@ -103,16 +115,24 @@ export function zodFromJson(schema) {
       if (!(node.required ?? []).includes(key)) child = child.optional()
       shape[key] = child
     }
-    // properties가 없는 legacy object만 record로 둔다. 명시된 whitelist는 unknown key를 거부한다.
+    // segment id 같은 동적 key도 값 schema는 잃으면 안 된다. z.record(valueSchema)로 옮겨야
+    // `sfxSources:{id:'guessed'}`가 승인 handler 전에 거부된다.
     if (!Object.keys(node.properties ?? {}).length && node.additionalProperties !== false) {
-      return z.record(z.string(), z.any())
+      const value = node.additionalProperties && typeof node.additionalProperties === 'object'
+        ? convert(node.additionalProperties)
+        : z.any()
+      return describe(z.record(z.string(), value), node)
     }
-    const object = node.additionalProperties === false ? z.object(shape).strict() : z.object(shape).passthrough()
+    const object = node.additionalProperties === false
+      ? z.object(shape).strict()
+      : node.additionalProperties && typeof node.additionalProperties === 'object'
+        ? z.object(shape).catchall(convert(node.additionalProperties))
+        : z.object(shape).passthrough()
     const rule = node.dependentPropertyWhitelist
-    if (!rule) return object
+    if (!rule) return describe(object, node)
     // 최상위 union은 MCP SDK tools/list에서 `{properties:{}}`로 소실된다. ZodObject를 유지하는
     // refinement로 discriminator와 params의 상관관계를 검증하면 광고 schema와 실행 경계를 둘 다 살린다.
-    return object.superRefine((value, ctx) => {
+    return describe(object.superRefine((value, ctx) => {
       const allowed = rule.allowed?.[value?.[rule.discriminator]]
       const target = value?.[rule.target]
       if (!Array.isArray(allowed) || target === undefined) return
@@ -124,7 +144,7 @@ export function zodFromJson(schema) {
           message: `${key} is not allowed for ${value[rule.discriminator]}`,
         })
       }
-    })
+    }), node)
   }
   return convert(schema)
 }
