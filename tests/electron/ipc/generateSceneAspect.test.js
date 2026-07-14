@@ -21,7 +21,12 @@ function makeIpcMain() {
   }
 }
 
-function makeDeps({ agentOn = false, captureResponses = [] } = {}) {
+function makeDeps({
+  agentOn = false,
+  captureResponses = [],
+  ensureAgentOffResult = { success: true },
+  ensureAgentOnResult = { success: true },
+} = {}) {
   let pending = null
   let generateClicks = 0
   const flowView = {
@@ -42,6 +47,8 @@ function makeDeps({ agentOn = false, captureResponses = [] } = {}) {
     getCurrentMode: () => 'flow',
     getFlowAgentOn: () => agentOn,
     ensureOnProjectComposer: vi.fn(async () => ({ ok: true })),
+    ensureAgentOff: vi.fn(async () => ensureAgentOffResult),
+    ensureAgentOn: vi.fn(async () => ensureAgentOnResult),
     configureFlowMode: vi.fn(async () => ({ success: true })),
     setFlowPageInject: vi.fn(async () => ({ success: true })),
     clearFlowPageInject: vi.fn(async () => {}),
@@ -68,6 +75,46 @@ function makeDeps({ agentOn = false, captureResponses = [] } = {}) {
 const PID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
 
 describe('#R33: flow:generate-scene forces IMAGE mode + injects aspectRatio', () => {
+  it('fails closed before mutation or submit when app Agent is OFF but the page cannot be turned OFF', async () => {
+    const ipc = makeIpcMain()
+    const { deps } = makeDeps({ ensureAgentOffResult: { success: false, state: 'still_on' } })
+    registerCharacterIPC(ipc, deps)
+
+    const result = await ipc.invoke('flow:generate-scene', {
+      prompt: 'a cat',
+      segments: [{ type: 'text', text: 'a cat' }],
+      projectId: PID,
+    })
+
+    expect(result).toMatchObject({ success: false })
+    expect(result.error).toContain('OFF')
+    expect(deps.ensureAgentOff).toHaveBeenCalledTimes(1)
+    expect(deps.ensureAgentOn).not.toHaveBeenCalled()
+    expect(deps.configureFlowMode).not.toHaveBeenCalled()
+    expect(deps.setFlowPageInject).not.toHaveBeenCalled()
+    expect(deps.trustedClickOnFlowView).not.toHaveBeenCalled()
+  })
+
+  it('fails closed before mutation or submit when app Agent is ON but the page cannot be turned ON', async () => {
+    const ipc = makeIpcMain()
+    const { deps } = makeDeps({ agentOn: true, ensureAgentOnResult: { success: false, state: 'still_off' } })
+    registerCharacterIPC(ipc, deps)
+
+    const result = await ipc.invoke('flow:generate-scene', {
+      prompt: 'a cat',
+      segments: [{ type: 'text', text: 'a cat' }],
+      projectId: PID,
+    })
+
+    expect(result).toMatchObject({ success: false })
+    expect(result.error).toContain('ON')
+    expect(deps.ensureAgentOn).toHaveBeenCalledTimes(1)
+    expect(deps.ensureAgentOff).not.toHaveBeenCalled()
+    expect(deps.configureFlowMode).not.toHaveBeenCalled()
+    expect(deps.setFlowPageInject).not.toHaveBeenCalled()
+    expect(deps.trustedClickOnFlowView).not.toHaveBeenCalled()
+  })
+
   it('16:9 → configureFlowMode(IMAGE, 1) + inject LANDSCAPE, then clears inject', async () => {
     const ipc = makeIpcMain()
     const { deps } = makeDeps()
@@ -94,6 +141,8 @@ describe('#R33: flow:generate-scene forces IMAGE mode + injects aspectRatio', ()
     // 순서: 모드 전환 → 주입 → 정리
     expect(deps.configureFlowMode.mock.invocationCallOrder[0])
       .toBeLessThan(deps.setFlowPageInject.mock.invocationCallOrder[0])
+    expect(deps.ensureAgentOff.mock.invocationCallOrder[0])
+      .toBeLessThan(deps.configureFlowMode.mock.invocationCallOrder[0])
     expect(deps.setFlowPageInject.mock.invocationCallOrder[0])
       .toBeLessThan(deps.clearFlowPageInject.mock.invocationCallOrder[0])
   })

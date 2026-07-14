@@ -93,6 +93,7 @@ export function registerCharacterIPC(ipcMain, deps) {
     // #R33: 씬(@멘션) 생성도 generate-image 와 동일하게 이미지 모드 강제 + 화면비 주입에 필요.
     //   안 쓰면 컴포저의 직전 상태(영상/9:16)를 그대로 따라가 영상·잘못된 비율로 생성된다.
     configureFlowMode, setFlowPageInject, clearFlowPageInject, applyAgentDefaults,
+    ensureAgentOff, ensureAgentOn,
     // #R33: entities PATCH 호스트를 region 에 맞춰 동적 해석(없으면 API_BASE fallback).
     getApiBase,
     // #R35: 멘션 씬 비동기 제출용 — flow-api.js async 이미지와 동일한 다중 pending 추적 Map.
@@ -688,11 +689,31 @@ export function registerCharacterIPC(ipcMain, deps) {
     const projectCheck = await ensureOnProjectComposer(flowView, projectId)
     if (!projectCheck.ok) return { success: false, error: projectCheck.error }
 
+    // 앱 설정과 실제 Flow composer 토글을 먼저 일치시킨다. Agent OFF 인데 페이지가 ON 이면
+    // streamChat 으로 제출돼 batchGenerateImages intercept 가 절대 오지 않고, 반대 방향이면
+    // DOM 수집 경로가 비게 된다. 이미 원하는 상태(already_off/on)는 shared helper 가 성공으로
+    // 반환하므로, 토글을 못 찾거나 전환 후 상태 검증에 실패한 경우만 fail-closed 한다.
+    let _agentReady = false
+    try {
+      const _agentResult = _agentOn ? await ensureAgentOn() : await ensureAgentOff()
+      _agentReady = !!(_agentResult && _agentResult.success)
+    } catch (e) {
+      console.warn(`[Flow Scene] ensureAgent${_agentOn ? 'On' : 'Off'} failed:`, e.message)
+    }
+    if (!_agentReady) {
+      return {
+        success: false,
+        error: _agentOn
+          ? 'Flow Agent 를 ON 으로 전환하지 못했습니다. Flow 컴포즈에 Agent 토글이 있는지 확인해주세요.'
+          : 'Flow Agent 를 OFF 로 전환하지 못했습니다. Flow 컴포즈에 Agent 토글이 있는지 확인해주세요.',
+      }
+    }
+
     // Agent ON: 직전 씬 생성이 진행 중이면 제출 버튼이 stop(busy)이고 컴포저 에디터가 잠시
     //   사라진다 → 에디터 없는 상태로 주입하다 '컴포저 에디터 진입 실패'. flow:generate-image
     //   와 동일하게 (1) 에이전트가 idle(arrow_forward enable) 될 때까지 폴링한 뒤, (2) 그래도
     //   챗 패널이 가리면 닫는다.
-    if (getFlowAgentOn && getFlowAgentOn()) {
+    if (_agentOn) {
       const SUBMIT_POLL = 1500
       const SUBMIT_MAX_WAIT = 180000 // 에이전트 생성이 길 수 있어 최대 3분
       let submitState = 'absent'
@@ -798,7 +819,7 @@ export function registerCharacterIPC(ipcMain, deps) {
     // Agent ON(streamChat): batchGenerateImages 가 안 나가 intercept 로 못 받는다 → 제출 전
     //   스냅샷 후 클릭하고 DOM 의 "새" 결과 이미지(media.getMediaUrlRedirect?name=)를 수집한다.
     //   스냅샷이 직전 업로드된 @멘션 캐릭터 이미지를 제외 → 결과만 받는다(공용 헬퍼).
-    if (getFlowAgentOn && getFlowAgentOn()) {
+    if (_agentOn) {
       let existingGenMediaIds = []
       try {
         const _pre = await flowView.webContents.executeJavaScript(GENERATED_IMG_PROBE)

@@ -26,6 +26,10 @@ import { fileURLToPath } from 'node:url'
 import { writeFileSync, mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import {
+  ENGLISH_AGENT_SETTINGS,
+  ENGLISH_COMPOSER,
+} from '../fixtures/flow-live-dom-20260714.js'
 
 const SRC = fileURLToPath(new URL('../../electron/flow-agent-toggle.js', import.meta.url))
 
@@ -44,11 +48,13 @@ async function loadMinified() {
   return import(file)
 }
 
-const REAL_TOGGLE = `<button type="button" aria-pressed="true"><span class="content">에이전트</span></button>`
+const REAL_TOGGLE = ENGLISH_COMPOSER.replace('aria-pressed="false"', 'aria-pressed="true"')
+const JAPANESE_TOGGLE = REAL_TOGGLE.replace('>Agent<', '>エージェント<')
 
 /** Evaluate a page-expression exactly as webContents.executeJavaScript would: inside the page. */
 function runInPage(html, expr) {
   const dom = new JSDOM(`<body>${html}</body>`, { runScripts: 'outside-only' })
+  dom.window.Element.prototype.getBoundingClientRect = () => ({ width: 100, height: 30 })
   return dom.window.eval(expr)
 }
 
@@ -78,6 +84,17 @@ describe('page-injected probes under production minification', () => {
 
   it('the element-returning selectors survive minification (they already did — keep it that way)', () => {
     expect(runInPage(REAL_TOGGLE, mod.AGENT_TOGGLE_SELECTOR)).toBeTruthy()
-    expect(runInPage(REAL_TOGGLE, mod.AGENT_CHAT_CLOSE_SELECTOR)).toBeNull()
+    expect(runInPage('<button type="button">No panel</button>', mod.AGENT_CHAT_CLOSE_SELECTOR)).toBeNull()
+  })
+
+  it('the structural toggle selector stays locale-invariant after minification', () => {
+    const toggle = runInPage(JAPANESE_TOGGLE, mod.AGENT_TOGGLE_SELECTOR)
+    expect(toggle?.textContent.trim()).toBe('エージェント')
+  })
+
+  it('the structural settings close selector stays self-contained after minification', () => {
+    const button = runInPage(ENGLISH_AGENT_SETTINGS, mod.AGENT_SETTINGS_CLOSE_SELECTOR)
+    const icons = [...button.querySelectorAll('i')].map((icon) => icon.textContent.trim())
+    expect(icons).toContain('arrow_back')
   })
 })

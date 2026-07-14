@@ -1,8 +1,8 @@
 /**
  * electron/flow-agent-defaults.js
  *
- * Drives Flow's "에이전트 설정" (Agent Settings) panel to set the IMAGE and
- * VIDEO generation defaults (aspect ratio, batch count, model) and clicks 저장.
+ * Drives Flow's Agent Settings panel to set the IMAGE and VIDEO generation
+ * defaults (aspect ratio, batch count, model) and clicks the save action.
  *
  * Flow moved these defaults out of the old compose-bar popup menu (which the
  * legacy `configureFlowMode` in ipc/shared.js drove) into a persistent settings
@@ -10,19 +10,25 @@
  * targets the new panel.
  *
  * Selector strategy (verified against the live panel via flow-settings-dumper):
- *   - Panel: the container holding both section labels + the Save button.
+ *   - Panel: radiogroup + four tablists + two model menus + one plain action.
  *   - Settings toggle: a button whose icon is the material symbol 'tune'.
- *   - Section: located by its label text ('이미지 생성 기본값' / '동영상 생성 기본값').
+ *   - Section: aspect tablists use Material crop ligatures; crop_landscape marks IMAGE.
  *   - Aspect / count: Radix <Tabs>. The radix id PREFIX is unstable
  *     (radix-:r7a: vs radix-:r71:) but the '-trigger-X' SUFFIX is stable, so we
  *     match on the suffix, never the full id.
  *   - Model: a button[aria-haspopup="menu"] inside the section; clicking it
  *     opens a Radix menu of role="menuitem" options matched by (normalized) text.
- *   - Save: a button whose text is '저장' (or Save).
+ *   - Save: the panel's sole plain action after role/menu/icon controls are excluded.
  *
  * The model labels are matched leniently (emoji/whitespace/case-insensitive) so
  * stored 'Nano Banana 2' matches the live '🍌 Nano Banana 2'.
  */
+
+import {
+  findAgentSettingsPanel,
+  findAgentSettingsSaveButton,
+  findAgentSettingsSections,
+} from './flow-agent-toggle.js'
 
 /** Map a project aspect ratio to Flow's Radix Tabs trigger id suffix. */
 export function aspectSuffix(ratio) {
@@ -50,7 +56,7 @@ export function normalizeModelLabel(s) {
  * @param {object} opts
  * @param {{aspectRatio?:string,count?:number,model?:string}} [opts.image]
  * @param {{aspectRatio?:string,count?:number,model?:string}} [opts.video]
- * @param {boolean} [opts.save=true] - click 저장 after applying
+ * @param {boolean} [opts.save=true] - click the save action after applying
  * @returns {string} JS source to run via webContents.executeJavaScript
  */
 export function buildAgentDefaultsScript(opts = {}) {
@@ -79,8 +85,9 @@ export function buildAgentDefaultsScript(opts = {}) {
   return `
     (async function() {
       const OPTS = ${JSON.stringify(payload)};
-      const IMAGE_LABEL = '이미지 생성 기본값';
-      const VIDEO_LABEL = '동영상 생성 기본값';
+      const locatePanel = ${findAgentSettingsPanel.toString()};
+      const locateSections = ${findAgentSettingsSections.toString()};
+      const locateSave = ${findAgentSettingsSaveButton.toString()};
       const sleep = (ms) => new Promise(r => setTimeout(r, ms));
       const isVis = (el) => {
         if (!el || !el.isConnected) return false;
@@ -115,22 +122,8 @@ export function buildAgentDefaultsScript(opts = {}) {
         } catch { try { el.click(); return true; } catch { return false; } }
       };
 
-      const findPanel = () => {
-        const labels = Array.from(document.querySelectorAll('span, div'))
-          .filter(e => { const t = (e.textContent || '').trim(); return t === IMAGE_LABEL || t === VIDEO_LABEL; });
-        for (const lab of labels) {
-          let p = lab;
-          for (let i = 0; i < 16 && p.parentElement; i++) {
-            p = p.parentElement;
-            const t = p.textContent || '';
-            if (t.includes(IMAGE_LABEL) && t.includes(VIDEO_LABEL) && /저장|save/i.test(t)) return p;
-          }
-        }
-        return null;
-      };
-
       // Step 1: ensure the panel is open (click the 'tune' settings button if not).
-      let panel = findPanel();
+      let panel = locatePanel(document);
       if (!panel) {
         const tuneBtn = Array.from(document.querySelectorAll('button')).filter(isVis).find(b => {
           const icons = Array.from(b.querySelectorAll('i, [class*="material-symbols"], [class*="google-symbols"]'))
@@ -139,22 +132,11 @@ export function buildAgentDefaultsScript(opts = {}) {
         });
         if (tuneBtn) {
           humanClick(tuneBtn);
-          for (let i = 0; i < 30; i++) { await sleep(120); panel = findPanel(); if (panel) break; }
+          for (let i = 0; i < 30; i++) { await sleep(120); panel = locatePanel(document); if (panel) break; }
         }
       }
       if (!panel) return { ok: false, error: 'panel_not_found' };
-
-      const sectionByLabel = (label) => {
-        const span = Array.from(panel.querySelectorAll('span, div'))
-          .find(e => (e.textContent || '').trim() === label);
-        if (!span) return null;
-        let s = span.parentElement;
-        for (let i = 0; i < 4 && s; i++) {
-          if (s.querySelector('[role="tablist"]')) return s;
-          s = s.parentElement;
-        }
-        return span.parentElement;
-      };
+      const sections = locateSections(panel);
 
       const setAspect = (section, suffix) => {
         if (!suffix) return 'skipped';
@@ -215,7 +197,7 @@ export function buildAgentDefaultsScript(opts = {}) {
       }
 
       if (OPTS.image) {
-        const sec = sectionByLabel(IMAGE_LABEL);
+        const sec = sections.image;
         if (!sec) { result.image = { error: 'section_not_found' }; }
         else {
           result.image = {
@@ -227,7 +209,7 @@ export function buildAgentDefaultsScript(opts = {}) {
       }
 
       if (OPTS.video) {
-        const sec = sectionByLabel(VIDEO_LABEL);
+        const sec = sections.video;
         if (!sec) { result.video = { error: 'section_not_found' }; }
         else {
           result.video = {
@@ -239,9 +221,8 @@ export function buildAgentDefaultsScript(opts = {}) {
       }
 
       if (OPTS.save) {
-        const saveBtn = Array.from(panel.querySelectorAll('button')).filter(isVis)
-          .find(b => { const t = (b.textContent || '').trim(); return t === '저장' || /^save$/i.test(t); });
-        if (saveBtn) { humanClick(saveBtn); await sleep(200); result.saved = 'clicked'; }
+        const saveBtn = locateSave(panel);
+        if (saveBtn && isVis(saveBtn)) { humanClick(saveBtn); await sleep(200); result.saved = 'clicked'; }
         else { result.saved = 'save_not_found'; }
       }
 
@@ -273,7 +254,7 @@ function clampCount(n) {
 }
 
 /**
- * Flow "에이전트 설정" 패널의 이미지/비디오 모델 드롭다운 옵션을 동적으로 긁는 page-script.
+ * Flow Agent Settings 패널의 이미지/비디오 모델 드롭다운 옵션을 동적으로 긁는 page-script.
  * 하드코딩 대신 실제 서비스되는 모델만 반환(예: Imagen 제거 자동 반영).
  * 반환: { ok, image:{current,options:[{value,label}]}, video:{...}, error? }
  *   - value = 이모지/arrow 제거한 매칭용 텍스트(예: 'Nano Banana 2'), label = 원문(이모지 포함).
@@ -282,28 +263,22 @@ function clampCount(n) {
 export function buildListModelsScript() {
   return `
     (async function() {
-      const IMAGE_LABEL = '이미지 생성 기본값';
-      const VIDEO_LABEL = '동영상 생성 기본값';
+      const locatePanel = ${findAgentSettingsPanel.toString()};
+      const locateSections = ${findAgentSettingsSections.toString()};
       const sleep = (ms) => new Promise(r => setTimeout(r, ms));
       const isVis = (el) => { if (!el || !el.isConnected) return false; const r = el.getBoundingClientRect && el.getBoundingClientRect(); return !!r && r.width > 2 && r.height > 2; };
       const clean = (s) => (s || '').replace(/arrow_drop_down/gi, '')
         .replace(/[^\\p{L}\\p{N}.\\s-]/gu, ' ').replace(/\\s+/g, ' ').trim();
       const rawLabel = (s) => (s || '').replace(/arrow_drop_down/gi, '').replace(/\\s+/g, ' ').trim();
       const humanClick = (el) => { if (!el) return false; try { const r = el.getBoundingClientRect(); const x = r.left + r.width/2, y = r.top + r.height/2; const c = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y }; try { el.dispatchEvent(new PointerEvent('pointerdown', c)); } catch {} el.dispatchEvent(new MouseEvent('mousedown', c)); try { el.dispatchEvent(new PointerEvent('pointerup', c)); } catch {} el.dispatchEvent(new MouseEvent('mouseup', c)); el.dispatchEvent(new MouseEvent('click', c)); return true; } catch { try { el.click(); return true; } catch { return false; } } };
-      const findPanel = () => {
-        const labels = Array.from(document.querySelectorAll('span, div')).filter(e => { const t = (e.textContent || '').trim(); return t === IMAGE_LABEL || t === VIDEO_LABEL; });
-        for (const lab of labels) { let p = lab; for (let i = 0; i < 16 && p.parentElement; i++) { p = p.parentElement; const t = p.textContent || ''; if (t.includes(IMAGE_LABEL) && t.includes(VIDEO_LABEL) && /저장|save/i.test(t)) return p; } }
-        return null;
-      };
-      let panel = findPanel();
+      let panel = locatePanel(document);
       if (!panel) {
         const tune = Array.from(document.querySelectorAll('button')).filter(isVis).find(b => Array.from(b.querySelectorAll('i,[class*="material-symbols"],[class*="google-symbols"]')).map(i => (i.textContent||'').trim()).includes('tune'));
-        if (tune) { humanClick(tune); for (let i = 0; i < 30; i++) { await sleep(120); panel = findPanel(); if (panel) break; } }
+        if (tune) { humanClick(tune); for (let i = 0; i < 30; i++) { await sleep(120); panel = locatePanel(document); if (panel) break; } }
       }
       if (!panel) return { ok: false, error: 'panel_not_found' };
-      const sectionByLabel = (label) => { const span = Array.from(panel.querySelectorAll('span, div')).find(e => (e.textContent || '').trim() === label); if (!span) return null; let s = span.parentElement; for (let i = 0; i < 4 && s; i++) { if (s.querySelector('[role="tablist"]')) return s; s = s.parentElement; } return span.parentElement; };
-      const readSection = async (label) => {
-        const sec = sectionByLabel(label);
+      const sections = locateSections(panel);
+      const readSection = async (sec) => {
         if (!sec) return { error: 'section_not_found' };
         const trigger = Array.from(sec.querySelectorAll('button[aria-haspopup="menu"]')).filter(isVis)[0];
         if (!trigger) return { error: 'trigger_not_found' };
@@ -321,8 +296,8 @@ export function buildListModelsScript() {
         }
         return { current, options };
       };
-      const image = await readSection(IMAGE_LABEL);
-      const video = await readSection(VIDEO_LABEL);
+      const image = await readSection(sections.image);
+      const video = await readSection(sections.video);
       // 패널 닫기
       for (let i = 0; i < 10; i++) { if (!document.body.contains(panel) || !isVis(panel)) break; try { document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true, composed: true })); } catch {} await sleep(150); }
       return { ok: true, image, video };
