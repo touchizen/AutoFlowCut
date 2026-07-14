@@ -150,7 +150,9 @@ export function registerVideoIPC(ipcMain, deps) {
     try {
       // 0. Codex #R4-4: enforce Flow page is on the TARGET project before DOM mutation.
       const projectCheck = await ensureOnProjectComposer(flowView, projectId)
-      if (!projectCheck.ok) return { success: false, error: projectCheck.error }
+      if (!projectCheck.ok) {
+        return { success: false, errorKind: projectCheck.errorKind, error: projectCheck.error }
+      }
 
       // 1.5. Agent 토글 — flowAgentOn(설정) 이면 ON(autoApprove), 아니면 OFF(직접 API).
       const agentOn = !!(getFlowAgentOn && getFlowAgentOn())
@@ -159,7 +161,13 @@ export function registerVideoIPC(ipcMain, deps) {
       try { const r = await ensureAgentOff(); agentOff = !!(r && r.success) } catch (e) { console.warn('[Flow Video T2V] ensureAgentOff skipped:', e.message) }
       // [P1] Agent OFF 보장 실패 시 중단(fail-closed) — Agent ON 이면 batchAsyncGenerateVideo*
       //   캡처 전제가 깨져 timeout/오동작한다. (already_off 도 success=true 라 정상은 안 막음)
-      if (!agentOff) return { success: false, error: 'Flow Agent 를 OFF 로 전환하지 못했습니다. Flow 가 "모든 미디어" 화면인지 확인한 뒤 다시 시도해주세요. (캐릭터/장면 탭에는 Agent 토글이 없어 실패할 수 있음)' }
+      if (!agentOff) {
+        return {
+          success: false,
+          errorKind: 'flow-agent-off-failed',
+          error: 'Could not turn Flow Agent off',
+        }
+      }
 
       // 1.6. 동영상 모드로 전환 — 이미지/동영상 모드 탭은 컴포즈 하단 칩 팝오버
       //      (button[aria-haspopup='menu'])  안에 있다. configureFlowMode 가 칩을 눌러
@@ -192,7 +200,13 @@ export function registerVideoIPC(ipcMain, deps) {
         // ⚠️ 라이브 검증 필요(셀렉터/타이밍/DOM 수집).
         let onOk = false
         try { const r = await ensureAgentOn(); onOk = !!(r && r.success) } catch (e) { console.warn('[Flow Video T2V] ensureAgentOn skipped:', e.message) }
-        if (!onOk) return { success: false, error: 'Flow Agent 를 ON 으로 전환하지 못했습니다. Flow 컴포즈에 Agent 토글이 있는지 확인해주세요.' }
+        if (!onOk) {
+          return {
+            success: false,
+            errorKind: 'flow-agent-on-failed',
+            error: 'Could not turn Flow Agent on',
+          }
+        }
         if (applyAgentDefaults) {
           // #R33: Agent ON 도 화면비(설정>씬) 적용 — video.aspectRatio 전달. #R34-fix(2): best-effort(warn).
           try {
@@ -253,6 +267,7 @@ export function registerVideoIPC(ipcMain, deps) {
               ? { success: true }
               : {
                   success: false,
+                  errorKind: _si.errorKind,
                   error: _si.error,
                   ...(_si.mentionFailure ? { mentionFailure: _si.mentionFailure } : {}),
                   ...(_si.staleMention ? { staleMention: _si.staleMention } : {}),
@@ -360,6 +375,7 @@ export function registerVideoIPC(ipcMain, deps) {
         // injectComposeSegments 가 넣으므로, 칩/다이얼로그 실패가 렌더러 재등록 루프로 번지지 않는다.
         return {
           success: false,
+          errorKind: promptResult?.errorKind,
           error: promptResult?.error || 'Prompt injection failed',
           ...(_injSegments ? { retry: true } : {}),
           ...(promptResult?.mentionFailure ? { mentionFailure: promptResult.mentionFailure } : {}),
@@ -402,7 +418,9 @@ export function registerVideoIPC(ipcMain, deps) {
           existingMediaIds: [...existingGenMediaIds, ...collectedMediaIds], want: 1,
           markCollected: (mid) => collectedMediaIds.add(mid),
         })
-        if (!col.success) return { success: false, error: col.error, retry: true }
+        if (!col.success) {
+          return { success: false, errorKind: col.errorKind, error: col.error, retry: true }
+        }
         const mediaId = col.videos[0] && col.videos[0].mediaId
         console.log('[Flow Video T2V] (Agent ON) collected video mediaId:', mediaId)
         return { success: true, generationId: mediaId }
@@ -510,7 +528,9 @@ export function registerVideoIPC(ipcMain, deps) {
     try {
       // 0. Codex #R4-4: enforce Flow page is on the TARGET project before DOM mutation.
       const projectCheck = await ensureOnProjectComposer(flowView, projectId)
-      if (!projectCheck.ok) return { success: false, error: projectCheck.error }
+      if (!projectCheck.ok) {
+        return { success: false, errorKind: projectCheck.errorKind, error: projectCheck.error }
+      }
 
       // 1.5. Agent 토글 — i2v 는 시작 이미지(startImageMediaId)를 monkey-patch 로 비디오 요청에
       //   주입하는데, Agent ON(streamChat)은 그 요청 자체를 안 보내 주입 통로가 없다(Agent ON 컴포저에
@@ -522,7 +542,13 @@ export function registerVideoIPC(ipcMain, deps) {
       let agentOff = false
       try { const r = await ensureAgentOff(); agentOff = !!(r && r.success) } catch (e) { console.warn('[Flow Video I2V] ensureAgentOff skipped:', e.message) }
       // [P1] Agent OFF 보장 실패 시 중단(fail-closed) — t2v 와 동일 이유.
-      if (!agentOff) return { success: false, error: 'Flow Agent 를 OFF 로 전환하지 못했습니다. Flow 가 "모든 미디어" 화면인지 확인한 뒤 다시 시도해주세요. (캐릭터/장면 탭에는 Agent 토글이 없어 실패할 수 있음)' }
+      if (!agentOff) {
+        return {
+          success: false,
+          errorKind: 'flow-agent-off-failed',
+          error: 'Could not turn Flow Agent off',
+        }
+      }
 
       // 1.6. 동영상 모드로 전환 — t2v 와 동일하게 configureFlowMode 가 컴포즈 칩 팝오버를
       //      열고 동영상 탭을 클릭한다. [P2] 배치 카운트(videoBatchCount) 전달.

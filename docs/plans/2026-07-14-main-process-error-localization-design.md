@@ -4,14 +4,16 @@
 
 Replace every hardcoded Korean user-facing failure found in the Electron/Flow generation paths with a stable `errorKind`, an English content-free diagnostic fallback, and English/Korean display-time translations. Preserve the existing `errorKind` contract so persisted project data is not tied to the account or app language.
 
-The scope also includes two user-facing failures discovered during inventory outside the originally named files:
+The scope also includes user-facing failures discovered during inventory outside the originally named files:
 
 - Flow T2V reference-image rejection in `src/engine/engineFlow.js`
 - Empty-script scene splitting in `electron/story/stepMachine.js`
+- The unavailable local-SFX adapter error that is persisted into Story step state
+- Native updater dialogs, which use the existing main-process `currentLang`/`menuLabels` path because they do not cross renderer IPC
 
 ## Inventory boundary
 
-The named Electron files contain 39 Korean `error:` literals. Thirty-seven participate in user-facing generation, synchronization, or project-guard results. The remaining two belong to the developer-only `flow:dump-settings` IPC diagnostic and are never rendered by the product UI.
+The named Electron files contain 43 Korean message literals across 42 error-bearing fields. Forty-one literals across 40 fields participate in user-facing generation, synchronization, or project-guard results (the Agent-state ternary contains separate ON and OFF literals). This count includes two `clickError` fallbacks that are copied into final IPC `error` results and were not visible to a simple `error:` search. The remaining two fields belong to the developer-only `flow:dump-settings` IPC diagnostic and are never rendered by the product UI.
 
 Korean console messages and DOM diagnostics remain unchanged because they are not user-facing. Main-process logs continue to carry only fixed diagnostics, counts, IDs, and lengths; character names, prompts, paths, response bodies, and page text must not be added to any log string.
 
@@ -55,8 +57,9 @@ Additional kinds group equivalent failure causes without translating in the main
 - `flow-access-token-unavailable`
 - `character-file-input-unavailable`, `character-file-injection-failed`
 - `character-upload-timeout`, `character-upload-response-invalid`
+- `character-generation-failed`, `character-upload-failed`
 - `flow-t2v-reference-images-unsupported`
-- `story-empty-script`
+- `story-empty-script`, `story-sfx-library-unavailable`
 
 English catalog text is the source voice. Korean entries translate the same action and retain existing guidance, especially opening Flow's All media composer, checking the Agent toggle, signing in again, or syncing a missing character from the Ref tab.
 
@@ -71,7 +74,7 @@ The renderer preserves the kind through:
 - `useVideoAutomation` into T2V/I2V project data
 - reference generation and character synchronization into reference project data
 - immediate synchronization toasts via `resolveDisplayError`
-- Story step state and `StoryView` for the empty-script failure
+- Story step state and `StoryView` for coded Story failures
 
 `ErrorSection` and `ResultsTable` already call `resolveDisplayError` and remain the final display boundary. New immediate-error call sites use the same resolver instead of rendering the English fallback.
 
@@ -81,7 +84,7 @@ New writes persist the stable kind and the English diagnostic fallback. An alrea
 
 ## Guardrail
 
-A new static test scans Electron JavaScript for Korean string literals assigned to an `error:` property. It fails with the file, line, and remediation: return a stable `errorKind` plus an English content-free fallback.
+A new static test scans Electron JavaScript for Korean string literals assigned to an `error:` property, an intermediate error property such as `clickError:`, or thrown through `new Error(...)` into Story state. It fails with the file, line, and remediation: return a stable `errorKind` plus an English content-free fallback.
 
 There is no baseline. The two developer-only `flow:dump-settings` strings use an adjacent `locale-error-ok:` escape comment. The test accepts an escape only when text follows the marker with a stated reason; a bare marker fails.
 

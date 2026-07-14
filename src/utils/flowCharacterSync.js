@@ -249,7 +249,12 @@ async function syncRefToFlowUnlocked(ref, onUpload, deps = {}) {
     //   (사용자가 중복 캐릭터를 정리하다 앱이 들고 있는 entity 를 지우는 게 실제 시나리오다.)
     if (!res?.stale) {
       // 토큰 만료/PATCH 거절은 재업로드로 안 풀리고 entity 만 늘린다 — 이유를 그대로 올린다.
-      return { ok: false, error: res?.error || 'registration failed', status: res?.status }
+      return {
+        ok: false,
+        errorKind: res?.errorKind,
+        error: res?.error || 'registration failed',
+        status: res?.status,
+      }
     }
     console.warn('[flowCharacterSync] entity stale — falling back to upload:', ref?.name)
     // 아래 업로드 경로로 진행(죽은 id 는 uploadReference 응답의 새 id 로 덮인다).
@@ -271,7 +276,9 @@ async function syncRefToFlowUnlocked(ref, onUpload, deps = {}) {
   } catch (e) {
     return { ok: false, error: e?.message || String(e) }
   }
-  if (!result?.success) return { ok: false, error: result?.error || 'upload failed' }
+  if (!result?.success) {
+    return { ok: false, errorKind: result?.errorKind, error: result?.error || 'upload failed' }
+  }
   if (ref.type !== 'character') {
     return { ok: true, patch: { mediaId: result.mediaId ?? ref.mediaId, caption: result.caption ?? ref.caption }, result }
   }
@@ -281,7 +288,10 @@ async function syncRefToFlowUnlocked(ref, onUpload, deps = {}) {
     ok,
     patch,   // 실패해도 id 는 보존 — 다음 시도가 재업로드 없이 복구한다.
     result,
-    ...(ok ? {} : { error: result.error || 'entity registration failed' }),
+    ...(ok ? {} : {
+      errorKind: result.errorKind,
+      error: result.error || 'entity registration failed',
+    }),
   }
 }
 

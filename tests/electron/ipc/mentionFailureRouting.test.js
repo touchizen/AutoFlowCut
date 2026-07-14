@@ -38,7 +38,10 @@ function makeFlowView() {
   }
 }
 
-function commonDeps(flowView) {
+function commonDeps(flowView, {
+  ensureAgentOffResult = { success: true },
+  ensureAgentOnResult = { success: true },
+} = {}) {
   return {
     getFlowView: () => flowView,
     getMainWindow: () => null,
@@ -54,8 +57,8 @@ function commonDeps(flowView) {
     setPendingGeneration: vi.fn(),
     getPendingVideoGeneration: () => null,
     setPendingVideoGeneration: vi.fn(),
-    ensureAgentOff: vi.fn(async () => ({ success: true })),
-    ensureAgentOn: vi.fn(async () => ({ success: true })),
+    ensureAgentOff: vi.fn(async () => ensureAgentOffResult),
+    ensureAgentOn: vi.fn(async () => ensureAgentOnResult),
   }
 }
 
@@ -80,7 +83,8 @@ describe('mention failure routing through IPC callers', () => {
   it('scene keeps chip verification failure retryable without staleMention', async () => {
     composeMocks.injectComposeSegments.mockResolvedValueOnce({
       ok: false,
-      error: '멘션 선택 실패: Zed2',
+      errorKind: 'chip-verification-failed',
+      error: 'Mention selection failed',
       mentionFailure: 'chip-verification-failed',
     })
     const ipc = makeIpcMain()
@@ -96,6 +100,8 @@ describe('mention failure routing through IPC callers', () => {
     expect(result).toMatchObject({
       success: false,
       retry: true,
+      errorKind: 'chip-verification-failed',
+      error: 'Mention selection failed',
       mentionFailure: 'chip-verification-failed',
     })
     expect(result).not.toHaveProperty('staleMention')
@@ -104,7 +110,8 @@ describe('mention failure routing through IPC callers', () => {
   it('T2V keeps chip verification failure retryable without staleMention', async () => {
     composeMocks.injectComposeSegments.mockResolvedValueOnce({
       ok: false,
-      error: '멘션 선택 실패: Zed2',
+      errorKind: 'chip-verification-failed',
+      error: 'Mention selection failed',
       mentionFailure: 'chip-verification-failed',
     })
     const ipc = makeIpcMain()
@@ -120,6 +127,8 @@ describe('mention failure routing through IPC callers', () => {
     expect(result).toMatchObject({
       success: false,
       retry: true,
+      errorKind: 'chip-verification-failed',
+      error: 'Mention selection failed',
       mentionFailure: 'chip-verification-failed',
     })
     expect(result).not.toHaveProperty('staleMention')
@@ -131,7 +140,8 @@ describe('mention failure routing through IPC callers', () => {
   ])('%s forwards staleMention only when option-not-found supplied it', async (_label, register, channel) => {
     composeMocks.injectComposeSegments.mockResolvedValueOnce({
       ok: false,
-      error: '멘션 선택 실패: Zed2',
+      errorKind: 'option-not-found',
+      error: 'Mention selection failed',
       mentionFailure: 'option-not-found',
       staleMention: 'Zed2',
     })
@@ -148,8 +158,31 @@ describe('mention failure routing through IPC callers', () => {
     expect(result).toMatchObject({
       success: false,
       retry: true,
+      errorKind: 'option-not-found',
+      error: 'Mention selection failed',
       mentionFailure: 'option-not-found',
       staleMention: 'Zed2',
     })
+  })
+
+  it('T2V returns a coded Agent OFF failure before composing the prompt', async () => {
+    const ipc = makeIpcMain()
+    const flowView = makeFlowView()
+    registerVideoIPC(ipc, commonDeps(flowView, {
+      ensureAgentOffResult: { success: false, state: 'still_on' },
+    }))
+
+    const result = await settle(ipc.invoke('flow:generate-video-t2v', {
+      prompt: '@Zed2 walks',
+      segments: SEGMENTS,
+      projectId: PID,
+    }))
+
+    expect(result).toMatchObject({
+      success: false,
+      errorKind: 'flow-agent-off-failed',
+      error: 'Could not turn Flow Agent off',
+    })
+    expect(composeMocks.injectComposeSegments).not.toHaveBeenCalled()
   })
 })

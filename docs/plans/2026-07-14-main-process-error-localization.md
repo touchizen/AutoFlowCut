@@ -18,7 +18,7 @@
 
 **Step 1: Write the failing guardrail test**
 
-Scan JavaScript files under `electron/` for a Korean string literal assigned to an `error:` property. Report file and line with a message directing contributors to return an `errorKind` and English content-free fallback. Recognize an adjacent `locale-error-ok: <reason>` marker and reject a bare marker.
+Scan JavaScript files under `electron/` for a Korean string literal assigned to an `error:` property, an intermediate error property such as `clickError:`, or thrown through `new Error(...)`. Report file and line with a message directing contributors to return an `errorKind` and English content-free fallback. Recognize an adjacent `locale-error-ok: <reason>` marker and reject a bare marker.
 
 **Step 2: Run the test and verify RED**
 
@@ -66,7 +66,7 @@ Run the same test and expect PASS.
 - Modify: `tests/electron/flow-agent-collect.test.js`
 - Modify: `tests/electron/ipc/mentionFailureRouting.test.js`
 - Modify: `tests/electron/ipc/generateSceneAspect.test.js`
-- Modify: `tests/electron/ipc/ensureOnProjectComposer.test.js`
+- Modify: `tests/electron/ipc/composerGuardErrorPage.test.js`
 - Modify: `electron/flow-compose-mention.js`
 - Modify: `electron/flow-agent-collect.js`
 - Modify: `electron/ipc/shared.js`
@@ -79,7 +79,7 @@ Assert each of the eight mention reasons is returned verbatim as `errorKind`; on
 
 **Step 2: Run targeted tests and verify RED**
 
-Run: `npx vitest run tests/electron/flow-compose-mention.test.js tests/electron/flow-agent-collect.test.js tests/electron/ipc/mentionFailureRouting.test.js tests/electron/ipc/generateSceneAspect.test.js tests/electron/ipc/ensureOnProjectComposer.test.js`
+Run: `npx vitest run tests/electron/flow-compose-mention.test.js tests/electron/flow-agent-collect.test.js tests/electron/ipc/mentionFailureRouting.test.js tests/electron/ipc/generateSceneAspect.test.js tests/electron/ipc/composerGuardErrorPage.test.js`
 
 Expected: FAIL on missing kinds and Korean fallbacks.
 
@@ -90,6 +90,19 @@ Return `{ errorKind: mentionResult.reason, error: 'Mention selection failed' }` 
 **Step 4: Run and verify GREEN**
 
 Run the same targeted test command and expect PASS.
+
+### Task 6b: Cover additional Story and native-dialog errors
+
+**Files:**
+- Modify: `electron/api/sfx/library.js`
+- Modify: `electron/story/stepMachine.js`
+- Modify: `tests/electron/story/stepMachine.audioSfx.test.js`
+- Modify: `electron/menuLabels.js`
+- Modify: `electron/updater.js`
+- Modify: `tests/electron/menuLabels.test.js`
+- Modify: `tests/electron/updater.test.js`
+
+Codify the local-SFX failure through Story state. Localize native updater dialogs through the existing main-process locale table; these dialogs never enter renderer project data and therefore do not use `errorKind`.
 
 ### Task 4: Codify character and scene IPC failures
 

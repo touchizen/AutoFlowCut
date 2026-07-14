@@ -67,13 +67,13 @@ describe('syncRefToFlow — 복구 경로', () => {
 
   it('복구 PATCH 가 실패하면 ok:false — 업로드로 폴백해 새 entity 를 만들지 않는다', async () => {
     const onUpload = vi.fn()
-    const registerEntity = vi.fn().mockResolvedValue({ success: false, status: 401, error: 'access token 추출 실패' })
+    const registerEntity = vi.fn().mockResolvedValue({ success: false, status: 401, errorKind: 'flow-access-token-unavailable', error: 'Flow access token unavailable' })
 
     const res = await syncRefToFlow(brokenChar, onUpload, { registerEntity })
 
     expect(onUpload).not.toHaveBeenCalled()
     expect(res.ok).toBe(false)
-    expect(res.error).toContain('access token')
+    expect(res.errorKind).toBe('flow-access-token-unavailable')
     expect(res.status).toBe(401)
   })
 

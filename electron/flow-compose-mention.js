@@ -162,14 +162,15 @@ export async function injectComposeSegments(flowView, segs) {
         // 피커/탭/다이얼로그/칩 검증 실패는 UI 자동화 재시도 대상이며 재등록을 유발하면 안 된다.
         return {
           ok: false,
-          error: '멘션 선택 실패: ' + seg.name,
+          errorKind: mentionResult.reason,
+          error: 'Mention selection failed',
           mentionFailure: mentionResult.reason,
           ...(mentionResult.reason === 'option-not-found' ? { staleMention: seg.name } : {}),
         }
       }
     } else if (seg.type === 'text' && seg.text) {
       const ok = await appendSceneText(flowView, seg.text)
-      if (!ok) return { ok: false, error: '텍스트 주입 실패' }
+      if (!ok) return { ok: false, errorKind: 'text-injection-failed', error: 'Text injection failed' }
     }
   }
   return { ok: true }

@@ -17,6 +17,7 @@ import { createStyleResolver } from '../services/styleResolver'
 import { isStyleReference } from '../services/styleService'
 import ErrorSection from './ErrorSection'
 import { StopwatchIcon, ElapsedTime } from './StopwatchIcon'
+import { resolveDisplayError } from '../utils/errorDisplay'
 
 export default function ReferenceDetailModal({ reference, index, onUpdate, onUpload, onClose, onGenerate, isGenerating, t, isKo, projectName, appMode, getScopeToken: getScopeTokenProp, thumbnails = {}, references = [], selectedStyleRefId = null, flowProjectId = null }) {
   const [editData, setEditData] = useState({ ...reference })
@@ -287,7 +288,10 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
             toast.success(isKo ? `Flow 이름 동기화: ${renameSnapshot.name}` : `Renamed in Flow: ${renameSnapshot.name}`)
           } else {
             markFailed()
-            toast.error((isKo ? 'Flow 이름 동기화 실패: ' : 'Flow rename failed: ') + (res?.error || 'unknown'))
+            toast.error(
+              (isKo ? 'Flow 이름 동기화 실패: ' : 'Flow rename failed: ')
+              + resolveDisplayError(t, res?.errorKind, res?.error || 'unknown'),
+            )
           }
         } catch (e) {
           markFailed()
@@ -424,7 +428,10 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
         }
         toast.success(isKo ? `Flow 동기화 완료: ${refSnapshot.name}` : `Synced to Flow: ${refSnapshot.name}`)
       } else {
-        toast.error((isKo ? '동기화 실패: ' : 'Sync failed: ') + (res.error || 'unknown'))
+        toast.error(
+          (isKo ? '동기화 실패: ' : 'Sync failed: ')
+          + resolveDisplayError(t, res.errorKind, res.error || 'unknown'),
+        )
       }
     })()
   }

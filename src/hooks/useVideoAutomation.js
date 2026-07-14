@@ -573,7 +573,11 @@ export function useVideoAutomation(genAPI, t = (key) => key, generationQueue = n
           // 일반 실패 — 이 항목만 error 처리하고 다음 진행. quota 면 batch stop.
           // #R36-fix(Codex R1[3]): @멘션 칩 삽입 실패(staleMention) 를 App 으로 전파 → ref 를 failed 로
           //   마킹(self-heal, 이미지 자동화와 동일). 안 그러면 삭제된 캐릭터로 매번 같은 실패 반복.
-          onItemUpdate?.(item.id, 'error', { error: genResult.error, ...(genResult.staleMention ? { staleMention: genResult.staleMention } : {}) })
+          onItemUpdate?.(item.id, 'error', {
+            error: genResult.error,
+            errorKind: genResult.errorKind ?? null,
+            ...(genResult.staleMention ? { staleMention: genResult.staleMention } : {}),
+          })
           videoErrorCount++
           nextFreshIdx++
           console.warn(`[VideoAutomation] ❌ Submit failed ${i + 1}/${total}:`, genResult.error)

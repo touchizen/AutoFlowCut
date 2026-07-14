@@ -1102,13 +1102,21 @@ export function createSharedHelpers(ctx) {
     let r = await probe()
     if (!r.read) {
       await reportDomFailure('project-probe-unreadable', 'probe_threw', { projectId, error: r.error })
-      return { ok: false, error: 'Flow 페이지를 읽을 수 없습니다. Flow 탭을 확인한 뒤 다시 시도해주세요.' }
+      return {
+        ok: false,
+        errorKind: 'flow-page-unreadable',
+        error: 'Could not read the Flow page',
+      }
     }
     // ⚠️ probe 결과는 **그것이 읽힌 페이지** 에 대해서만 유효하다. 밖에서 getURL() 을 다시 부르면
     //    A→B→A 로 오간 경우 B 의 결과를 A 의 것으로 오인한다(ABA). probe 가 같은 컨텍스트에서 돌려준
     //    url 로 짝을 맞춘다.
     if (!onProjectComposerUrl(r.page?.url || '', projectId)) {
-      return { ok: false, error: 'Flow 프로젝트가 도중에 바뀌었습니다. 다시 시도해주세요.' }
+      return {
+        ok: false,
+        errorKind: 'flow-project-changed',
+        error: 'Flow project changed during generation',
+      }
     }
     let page = r.page
     if (!page || !isFlowErrorPage(page)) return { ok: true }
@@ -1137,7 +1145,11 @@ export function createSharedHelpers(ctx) {
     await reportDomFailure('project-not-loaded', 'flow_error_page', { projectId, interactiveCount: page?.interactiveCount ?? null })
     // 사용자가 읽는 문구 — 진짜 원인을 말한다. "모든 미디어 화면인지 확인하세요"가 제보자를
     //   (그리고 우리를) 엉뚱한 곳으로 몇 시간 보냈다.
-    return { ok: false, error: 'Flow 프로젝트를 열지 못했습니다. Flow 탭에서 프로젝트가 정상적으로 열리는지 확인한 뒤 다시 시도해주세요.' }
+    return {
+      ok: false,
+      errorKind: 'flow-project-open-failed',
+      error: 'Could not open the Flow project',
+    }
   }
 
   /**

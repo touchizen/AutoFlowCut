@@ -221,6 +221,42 @@ describe('useVideoAutomation — auth failure during polling', () => {
 })
 
 describe('useVideoAutomation — auth failure during submit', () => {
+  it('forwards a non-auth main-process error kind to the item state', async () => {
+    const onItemUpdate = vi.fn()
+    const genAPI = {
+      generateVideoT2V: vi.fn().mockResolvedValue({
+        success: false,
+        errorKind: 'flow-agent-off-failed',
+        error: 'Could not turn Flow Agent off',
+      }),
+      generateVideoI2V: vi.fn(),
+      checkVideoStatus: vi.fn(),
+      upscaleVideo: vi.fn(),
+      fetchMedia: vi.fn(),
+      getAccessToken: vi.fn().mockResolvedValue('token'),
+    }
+    const hook = renderHook(() => useVideoAutomation(genAPI, (k) => k, null))
+
+    let startPromise
+    await act(async () => {
+      startPromise = hook.result.current.start({
+        mode: 't2v',
+        scenes: [{ id: 'vscene_1', prompt: 'test' }],
+        projectName: 'p',
+        saveMode: 'folder',
+        onItemUpdate,
+      })
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(100) })
+    await act(async () => { await startPromise })
+
+    expect(onItemUpdate).toHaveBeenCalledWith('vscene_1', 'error', expect.objectContaining({
+      errorKind: 'flow-agent-off-failed',
+      error: 'Could not turn Flow Agent off',
+    }))
+    expect(genAPI.checkVideoStatus).not.toHaveBeenCalled()
+  })
+
   it('marks all items (submitted, failing, remaining) with errorKind:"auth" and skips polling', async () => {
     // Item 1 submits successfully, item 2 gets authFailed, item 3 is yet to submit.
     // Hook must: (a) mark item 2 (failed) and item 3 (remaining) with errorKind:'auth',

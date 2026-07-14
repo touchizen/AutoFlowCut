@@ -28,6 +28,7 @@ function makeFlowView({
   dispatched = true,
   dialogClosed = true,
   chipFound = true,
+  textAppendOk = true,
 } = {}) {
   let dialogChecks = 0
   const executeJavaScript = vi.fn(async (source) => {
@@ -57,6 +58,7 @@ function makeFlowView({
         optionNameLens: optionFound ? [NAME.length] : [],
       }
     }
+    if (source.includes("document.execCommand('insertText'")) return textAppendOk
     return true
   })
 
@@ -156,7 +158,13 @@ describe('injectComposeSegments staleMention routing', () => {
       { type: 'mention', name: NAME },
     ]))
 
-    expect(result).toMatchObject({ ok: false, mentionFailure: reason })
+    expect(result).toMatchObject({
+      ok: false,
+      errorKind: reason,
+      error: 'Mention selection failed',
+      mentionFailure: reason,
+    })
+    expect(result.error).not.toContain(NAME)
     expect(result).not.toHaveProperty('staleMention')
   })
 
@@ -167,9 +175,12 @@ describe('injectComposeSegments staleMention routing', () => {
 
     expect(result).toMatchObject({
       ok: false,
+      errorKind: 'option-not-found',
+      error: 'Mention selection failed',
       mentionFailure: 'option-not-found',
       staleMention: NAME,
     })
+    expect(result.error).not.toContain(NAME)
   })
 
   it('keeps stale registration evidence when the option-not-found diagnostic probe throws', async () => {
@@ -179,8 +190,24 @@ describe('injectComposeSegments staleMention routing', () => {
 
     expect(result).toMatchObject({
       ok: false,
+      errorKind: 'option-not-found',
+      error: 'Mention selection failed',
       mentionFailure: 'option-not-found',
       staleMention: NAME,
     })
+    expect(result.error).not.toContain(NAME)
+  })
+
+  it('returns a coded, content-free error when text injection fails', async () => {
+    const result = await settle(injectComposeSegments(makeFlowView({ textAppendOk: false }), [
+      { type: 'text', text: 'private prompt text' },
+    ]))
+
+    expect(result).toEqual({
+      ok: false,
+      errorKind: 'text-injection-failed',
+      error: 'Text injection failed',
+    })
+    expect(result.error).not.toContain('private prompt text')
   })
 })

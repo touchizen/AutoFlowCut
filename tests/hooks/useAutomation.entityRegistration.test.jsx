@@ -257,7 +257,12 @@ describe('useAutomation — on-demand entity registration (M6 §3.5.3)', () => {
       scenes: [{ id: 's1', prompt: 'hello @Alice', status: 'pending' }],
     })
     const genAPI = makeGenAPI({
-      submitGeneration: vi.fn().mockResolvedValue({ success: false, error: '멘션 선택 실패: Alice', staleMention: 'Alice' }),
+      submitGeneration: vi.fn().mockResolvedValue({
+        success: false,
+        errorKind: 'option-not-found',
+        error: 'Mention selection failed',
+        staleMention: 'Alice',
+      }),
     })
     const t = (k) => k
 
@@ -277,6 +282,32 @@ describe('useAutomation — on-demand entity registration (M6 §3.5.3)', () => {
       .map(fn => fn([characterRef]).find(r => r.id === 'ref1'))
       .filter(Boolean)
     expect(patched.some(r => r.flowNameSyncStatus === 'failed')).toBe(true)
+  }, 30000)
+
+  it('stores a main-process error kind on the failed scene', async () => {
+    const updateScene = vi.fn()
+    const scenesHook = makeScenesHook({ updateScene })
+    const genAPI = makeGenAPI({
+      submitGeneration: vi.fn().mockResolvedValue({
+        success: false,
+        errorKind: 'flow-agent-off-failed',
+        error: 'Could not turn Flow Agent off',
+      }),
+    })
+
+    const { result } = renderHook(() =>
+      useAutomation(genAPI, scenesHook, null, null, null, (k) => k, vi.fn(), null, null, 'api')
+    )
+    let startPromise
+    await act(async () => { startPromise = result.current.start({ projectName: 'p', saveMode: 'folder' }) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+    await act(async () => { await startPromise })
+
+    expect(updateScene).toHaveBeenCalledWith('s1', expect.objectContaining({
+      status: 'error',
+      errorKind: 'flow-agent-off-failed',
+      error: 'Could not turn Flow Agent off',
+    }))
   }, 30000)
 
   it('flow mode: non-character ref (style) — no entity patch', async () => {

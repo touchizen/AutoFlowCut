@@ -197,7 +197,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
               continue
             }
             if (!result.success && isQuotaExhaustedError(result.error)) {
-              updateScene(item.scene.id, { status: 'error', error: result.error, errorKind: null })
+              updateScene(item.scene.id, { status: 'error', error: result.error, errorKind: result.errorKind ?? null })
               errorCountRef.current++
               completedCountRef.current++
               updateProgressMsg(completedCountRef.current)
@@ -332,14 +332,14 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
           break
         }
         if (isQuotaExhaustedError(submitResult.error)) {
-          updateScene(scene.id, { status: 'error', error: submitResult.error, errorKind: null })
+          updateScene(scene.id, { status: 'error', error: submitResult.error, errorKind: submitResult.errorKind ?? null })
           errorCountRef.current++
           completedCountRef.current++
           updateProgressMsg(completedCountRef.current)
           triggerQuotaStop()
           break
         }
-        updateScene(scene.id, { status: 'error', error: submitResult.error, errorKind: null })
+        updateScene(scene.id, { status: 'error', error: submitResult.error, errorKind: submitResult.errorKind ?? null })
         errorCountRef.current++
         completedCountRef.current++
         updateProgressMsg(completedCountRef.current)

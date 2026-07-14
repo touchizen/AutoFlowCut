@@ -7,6 +7,7 @@ import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createStepMachine } from '../../../electron/story/stepMachine.js'
+import { createLibrarySfxAdapter } from '../../../electron/api/sfx/library.js'
 
 async function tmpProject() { return await mkdtemp(path.join(tmpdir(), 'story-sfx-')) }
 
@@ -106,5 +107,26 @@ describe('audio 스텝 — sfx 생성', () => {
     const st = await machine.getState()
     expect(st.steps.audio.status).toBe('error')
     expect(st.steps.audio.error).toMatch(/unsafe segment id/)
+  })
+
+  it('미구현 로컬 SFX 라이브러리는 표시용 kind와 영문 fallback을 보존한다', async () => {
+    await seedScenes(projectPath, [{ id: 's2', type: 'sfx', description: '천둥' }])
+    const machine = createStepMachine({
+      projectPath,
+      llm: {},
+      emit: () => {},
+      getApiKey: () => 'k',
+      sfxFor: () => createLibrarySfxAdapter(),
+      probe: async () => 2000,
+    })
+    await machine.open()
+    await machine.start('audio', { speakers: [], sfxSources: { s2: 'library' } })
+
+    const st = await machine.getState()
+    expect(st.steps.audio).toMatchObject({
+      status: 'error',
+      errorKind: 'story-sfx-library-unavailable',
+      error: 'Local sound-effects library unavailable',
+    })
   })
 })

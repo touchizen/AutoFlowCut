@@ -35,6 +35,10 @@ describe('stepMachine 대본 재설계', () => {
     await m.start('scenes', { scriptOverride: '   ', options: {} })
     const st = await m.getState()
     expect(st.steps.scenes.status).toBe('error')
+    expect(st.steps.scenes).toMatchObject({
+      errorKind: 'story-empty-script',
+      error: 'Scenes cannot be created from an empty script',
+    })
     expect(await readFile(path.join(projectPath, 'story', 'script.md'), 'utf8')).toBe('# 생성') // 보존
   })
   it('script continue 분기는 continueScript를 부른다', async () => {

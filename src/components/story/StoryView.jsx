@@ -32,6 +32,7 @@ import { isStoryTtsProvider } from '../../config/storyTtsProviders'
 import { isNarratorSpeaker } from '../../utils/storyNarrationTracks'
 import { clampInt } from '../../utils/clampInt'
 import { normalizeStoryCharacter, resolveCharacterGender } from '../../services/storyCharacter'
+import { resolveDisplayError } from '../../utils/errorDisplay'
 import CharacterCards from './CharacterCards'
 import ResearchPanel from './ResearchPanel'
 import './StoryView.css'
@@ -1208,6 +1209,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const splitSummary = sceneGranularity === 'segment'
     ? t('story.scenes.summarySegment', '씬 분리 단위: 문장 기준 · 문장마다 씬 · 화자 전환 시 분리 · 짧은 조각 병합 · 10초↑ 분할')
     : `${t('story.scenes.summaryScene', '씬 분리 단위: 씬 기준')} · ${sceneMinSec}~${sceneMaxSec}${t('story.form.sceneSecUnit', '초')}`
+  const stepDisplayError = resolveDisplayError(t, stepData.errorKind, stepData.error)
   // 씬 기준 목표 길이(min~max초) 입력 — 설정 폼과 '씬 재분리' 바에서 공용. segment 모드에선 숨김.
   const renderSceneSec = () => sceneGranularity !== 'scene' ? null : (
     <div className="story-scene-sec">
@@ -1311,7 +1313,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
       {isError && (
         <div className="story-error-banner" role="alert">
-          ⚠️ {t('story.error.prefix', '오류')}: {stepData.error}
+          ⚠️ {t('story.error.prefix', '오류')}: {stepDisplayError}
         </div>
       )}
 

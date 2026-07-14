@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import StoryView from '../../../src/components/story/StoryView.jsx'
+import { I18nProvider } from '../../../src/hooks/useI18n.jsx'
 
 const pipeline = (over = {}) => ({
   state: {
@@ -21,6 +22,20 @@ const pipeline = (over = {}) => ({
 })
 
 describe('StoryView', () => {
+  it('renders a coded step error through the active locale catalog', () => {
+    const p = pipeline()
+    p.state.steps.script = {
+      status: 'error',
+      errorKind: 'story-empty-script',
+      error: 'Legacy raw fallback',
+    }
+
+    render(<I18nProvider><StoryView pipeline={p} /></I18nProvider>)
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Scenes cannot be created from an empty script')
+    expect(screen.getByRole('alert')).not.toHaveTextContent('Legacy raw fallback')
+  })
+
   it('스텝퍼에 4단계와 상태 뱃지를 렌더한다', () => {
     const { container } = render(<StoryView pipeline={pipeline()} />)
     const labels = [...container.querySelectorAll('.story-step-name')].map((el) => el.textContent)

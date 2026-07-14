@@ -37,6 +37,14 @@ function log(...args) {
   try { console.log('[Updater]', ...args) } catch {}
 }
 
+function label(key, params = {}) {
+  let value = getMenuLabels(currentLang)[key] || getMenuLabels('en')[key] || key
+  for (const [name, replacement] of Object.entries(params)) {
+    value = value.replaceAll(`{${name}}`, String(replacement))
+  }
+  return value
+}
+
 function configureAutoUpdater() {
   // Idempotent — listeners must be registered exactly once. Without this guard,
   // each manualCheck() re-attaches handlers and update-downloaded fires the
@@ -57,25 +65,24 @@ function configureAutoUpdater() {
     dialog
       .showMessageBox({
         type: 'question',
-        title: 'AutoFlowCut 업데이트',
-        message: `새 버전 ${info?.version}이(가) 있습니다.`,
-        detail: `현재 버전: ${app.getVersion()}\n\n지금 다운로드하시겠습니까?`,
-        buttons: ['지금 다운로드', '나중에'],
+        title: label('updateTitle'),
+        message: label('updateAvailable', { version: info?.version }),
+        detail: `${label('currentVersion', { version: app.getVersion() })}\n\n${label('downloadPrompt')}`,
+        buttons: [label('downloadNow'), label('later')],
         defaultId: 0,
         cancelId: 1,
       })
       .then(({ response }) => {
         if (response !== 0) return
         updateDownloadInProgress = true
-        autoUpdater.downloadUpdate().catch((err) => {
+        autoUpdater.downloadUpdate().catch(() => {
           updateDownloadInProgress = false
-          log('download failed:', err?.message || err)
+          log('download failed')
           dialog.showMessageBox({
             type: 'error',
             title: 'AutoFlowCut',
-            message: '업데이트 다운로드에 실패했습니다.',
-            detail: String(err?.message || err),
-            buttons: ['확인'],
+            message: label('updateDownloadFailed'),
+            buttons: [label('ok')],
           })
         })
       })
@@ -87,22 +94,21 @@ function configureAutoUpdater() {
       dialog.showMessageBox({
         type: 'info',
         title: 'AutoFlowCut',
-        message: '최신 버전을 사용 중입니다.',
-        detail: `현재 버전: ${app.getVersion()}`,
-        buttons: ['확인'],
+        message: label('latestVersion'),
+        detail: label('currentVersion', { version: app.getVersion() }),
+        buttons: [label('ok')],
       })
     }
   })
-  autoUpdater.on('error', (err) => {
-    log('error:', err?.message || err)
+  autoUpdater.on('error', () => {
+    log('error')
     if (manualCheckInProgress) {
       manualCheckInProgress = false
       dialog.showMessageBox({
         type: 'error',
         title: 'AutoFlowCut',
-        message: '업데이트 확인 중 오류가 발생했습니다.',
-        detail: String(err?.message || err),
-        buttons: ['확인'],
+        message: label('updateCheckFailed'),
+        buttons: [label('ok')],
       })
     }
   })
@@ -117,10 +123,10 @@ function configureAutoUpdater() {
     dialog
       .showMessageBox({
         type: 'question',
-        title: 'AutoFlowCut 업데이트',
-        message: `새 버전 ${info?.version}이(가) 설치 준비되었습니다.`,
-        detail: '지금 재시작하여 설치하시겠습니까?\n("나중에"를 선택하면 다음 앱 종료 시 자동 설치됩니다.)',
-        buttons: ['지금 재시작', '나중에'],
+        title: label('updateTitle'),
+        message: label('updateReady', { version: info?.version }),
+        detail: label('restartInstallPrompt'),
+        buttons: [label('restartNow'), label('later')],
         defaultId: 0,
         cancelId: 1,
       })
@@ -144,7 +150,7 @@ function startAutoCheck() {
   configureAutoUpdater()
   // Small delay so UI is ready before any dialog appears.
   setTimeout(() => {
-    autoUpdater.checkForUpdates().catch((err) => log('initial check failed:', err?.message || err))
+    autoUpdater.checkForUpdates().catch(() => log('initial check failed'))
   }, 3000)
 }
 
@@ -153,9 +159,9 @@ function manualCheck() {
     dialog.showMessageBox({
       type: 'info',
       title: 'AutoFlowCut',
-      message: 'Microsoft Store 버전입니다.',
-      detail: '업데이트는 Microsoft Store에서 자동으로 처리됩니다.',
-      buttons: ['확인'],
+      message: label('storeVersion'),
+      detail: label('storeUpdates'),
+      buttons: [label('ok')],
     })
     return
   }
@@ -163,8 +169,8 @@ function manualCheck() {
     dialog.showMessageBox({
       type: 'info',
       title: 'AutoFlowCut',
-      message: '개발 모드에서는 업데이트 확인을 사용할 수 없습니다.',
-      buttons: ['확인'],
+      message: label('devUpdateUnavailable'),
+      buttons: [label('ok')],
     })
     return
   }
@@ -172,9 +178,9 @@ function manualCheck() {
     dialog
       .showMessageBox({
         type: 'question',
-        title: 'AutoFlowCut 업데이트',
-        message: '업데이트가 이미 다운로드되었습니다. 지금 설치하시겠습니까?',
-        buttons: ['지금 재시작', '나중에'],
+        title: label('updateTitle'),
+        message: label('updateAlreadyDownloaded'),
+        buttons: [label('restartNow'), label('later')],
         defaultId: 0,
         cancelId: 1,
       })
@@ -189,15 +195,14 @@ function manualCheck() {
   }
   manualCheckInProgress = true
   configureAutoUpdater()
-  autoUpdater.checkForUpdates().catch((err) => {
+  autoUpdater.checkForUpdates().catch(() => {
     manualCheckInProgress = false
-    log('manual check failed:', err?.message || err)
+    log('manual check failed')
     dialog.showMessageBox({
       type: 'error',
       title: 'AutoFlowCut',
-      message: '업데이트 확인에 실패했습니다.',
-      detail: String(err?.message || err),
-      buttons: ['확인'],
+      message: label('updateCheckFailed'),
+      buttons: [label('ok')],
     })
   })
 }

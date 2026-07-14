@@ -45,7 +45,12 @@ function makeExecuteJavaScript() {
   })
 }
 
-function makeDeps({ agentOn, pendingGenerations }) {
+function makeDeps({
+  agentOn,
+  pendingGenerations,
+  ensureAgentOffResult = { success: true },
+  ensureAgentOnResult = { success: true },
+}) {
   const flowView = {
     webContents: {
       executeJavaScript: makeExecuteJavaScript(),
@@ -61,8 +66,8 @@ function makeDeps({ agentOn, pendingGenerations }) {
     trustedClickOnFlowView: vi.fn(async () => ({ success: true, coords: { x: 1, y: 1 } })),
     getCurrentMode: () => 'flow',
     getFlowAgentOn: () => agentOn,
-    ensureAgentOn: vi.fn(async () => ({ success: true })),
-    ensureAgentOff: vi.fn(async () => ({ success: true })),
+    ensureAgentOn: vi.fn(async () => ensureAgentOnResult),
+    ensureAgentOff: vi.fn(async () => ensureAgentOffResult),
     applyAgentDefaults: vi.fn(async () => ({ success: true, panelClosed: true })),
     configureFlowMode: vi.fn(async () => ({ success: true })),
     ensureOnProjectComposer: vi.fn(async () => ({ ok: true })),
@@ -95,6 +100,32 @@ async function submitAgent(agentOn, batchCount = 1) {
 }
 
 describe('flow:generate-image async arming — agentOff scope (Agent-ON download regression)', () => {
+  it('returns a coded Agent OFF failure before prompt injection', async () => {
+    const ipc = makeIpcMain()
+    const pendingGenerations = new Map()
+    const deps = makeDeps({
+      agentOn: false,
+      pendingGenerations,
+      ensureAgentOffResult: { success: false, state: 'still_on' },
+    })
+    registerFlowAPIIPC(ipc, deps)
+
+    const result = await ipc.invoke('flow:generate-image', {
+      token: 't',
+      prompt: 'private prompt text',
+      projectId: 'abcdabcd-abcd-abcd-abcd-abcdabcdabcd',
+      batchCount: 1,
+      asyncMode: true,
+    })
+
+    expect(result).toMatchObject({
+      success: false,
+      errorKind: 'flow-agent-off-failed',
+      error: 'Could not turn Flow Agent off',
+    })
+    expect(result.error).not.toContain('private prompt text')
+  })
+
   it('Agent ON async submit succeeds (no "agentOff is not defined") and enables DOM fallback', async () => {
     const { result, pendingGenerations } = await submitAgent(true)
     expect(result.error).not.toBe('agentOff is not defined')
