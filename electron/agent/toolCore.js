@@ -22,6 +22,68 @@ const NO_PROJECT = Object.freeze({ error: 'no-project' })
 const BATCH_TERMINAL = new Set(['complete', 'cancelled-by-user', 'error'])
 const BATCH_TYPES = new Set(['scene', 'ref'])
 
+// `story_start_step.params`는 IPC의 범용 객체를 그대로 노출하면 사실상 임의 명령 채널이 된다.
+// Agent가 쓸 수 있는 키를 step별로 고정하고, D16 화자 설정은 story_set_speakers 한 경로만 둔다.
+const START_STEP_PARAM_PROPERTIES = Object.freeze({
+  script: Object.freeze({
+    input: { type: 'object' },
+    options: { type: 'object' },
+    review: { type: 'object' },
+    reviewOnly: { type: 'boolean' },
+    scriptOverride: { type: 'string' },
+    continue: { type: 'string' },
+    pastedScript: { type: 'string' },
+    synopsis: { type: 'string' },
+  }),
+  scenes: Object.freeze({
+    options: { type: 'object' },
+    review: { type: 'object' },
+    reviewOnly: { type: 'boolean' },
+    scriptOverride: { type: 'string' },
+    title: { type: 'string' },
+  }),
+  audio: Object.freeze({
+    regenerate: { type: 'array', items: { type: 'string' } },
+    sfxSources: { type: 'object' },
+  }),
+  prompts: Object.freeze({
+    options: { type: 'object' },
+    review: { type: 'object' },
+    reviewOnly: { type: 'boolean' },
+    style: { type: 'string' },
+  }),
+})
+
+const START_STEP_INPUT_SCHEMA = Object.freeze({
+  type: 'object',
+  properties: {
+    step: { type: 'string', enum: Object.keys(START_STEP_PARAM_PROPERTIES) },
+    params: {
+      type: 'object',
+      properties: Object.assign({}, ...Object.values(START_STEP_PARAM_PROPERTIES)),
+      additionalProperties: false,
+    },
+  },
+  required: ['step'],
+  additionalProperties: false,
+  // MCP SDK는 최상위 union을 tools/list에서 빈 schema로 광고한다. object shape를 유지한 채 adapter가
+  // 이 규칙을 zod refinement로 붙여 실제 호출에서는 step별 whitelist까지 강제한다.
+  dependentPropertyWhitelist: {
+    discriminator: 'step',
+    target: 'params',
+    allowed: Object.fromEntries(Object.entries(START_STEP_PARAM_PROPERTIES)
+      .map(([step, properties]) => [step, Object.keys(properties)])),
+  },
+})
+
+function invalidStartStepParams({ step, params } = {}) {
+  const properties = START_STEP_PARAM_PROPERTIES[step]
+  if (!properties) return ['step']
+  if (params === undefined) return []
+  if (!params || typeof params !== 'object' || Array.isArray(params)) return ['params']
+  return Object.keys(params).filter((key) => !Object.hasOwn(properties, key)).sort()
+}
+
 /**
  * @param {object} [deps]
  * @param {object} [deps.toolBridge] renderer 를 읽는 seam (D14). 없으면 renderer 를 타는 툴은 못 쓴다.
@@ -151,15 +213,7 @@ export function createToolCore({
     story_start_step: {
       permission: 'G',              // D9.3 — 모든 `*_start` 는 G
       description: '사람 승인 뒤 지정한 Story 파이프라인 단계를 시작한다.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          step: { type: 'string', enum: ['script', 'scenes', 'audio', 'prompts'] },
-          params: { type: 'object' },
-        },
-        required: ['step'],
-        additionalProperties: false,
-      },
+      inputSchema: START_STEP_INPUT_SCHEMA,
       needs: 'storyCommands',
       run: ({ step, params }) => storyCommands.start(step, params),
     },
@@ -230,6 +284,11 @@ export function createToolCore({
       // 있으므로 agent 경로도 세션이 pin한 token을 직접 확인하고, 승인 consume 전에 닫혀야 한다.
       if (tool.needs === 'storyCommands'
         && storyCommands.projectToken !== projectToken) return { error: 'stale-token' }
+      if (name === 'story_start_step') {
+        const invalid = invalidStartStepParams(args)
+        // schema 밖 private RPC 호출도 같은 경계에서 막는다. 승인 grant를 태우기 전에 닫아야 한다.
+        if (invalid.length) return { error: 'invalid-params', params: invalid }
+      }
       // adapter 의 주장이 아니라 **main ledger 의 grant** 를 본다.
       if (tool.permission !== 'R' && !isApproved(name, args, context)) {
         return { status: 'rejected', reason: 'unconfirmed' }

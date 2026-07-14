@@ -38,6 +38,12 @@ export function resolveCodexAdapterPath({
   cwd = process.cwd(),
   existsSyncImpl = existsSync,
 } = {}) {
+  const candidates = codexAdapterPathCandidates({ isPackaged, resourcesPath, repoRoot, cwd })
+
+  return candidates.find((candidate) => existsSyncImpl(candidate)) ?? candidates[candidates.length - 1]
+}
+
+function codexAdapterPathCandidates({ isPackaged, resourcesPath, repoRoot, cwd }) {
   // 🔴 **번들되면 모듈 위치가 바뀐다.** 소스에선 `electron/agent/` 라 두 단계 위가 repo root 지만,
   //    vite 가 main 을 `dist-electron/` 로 말아넣으면 두 단계 위는 **repo 밖**이다
   //    (실측: `/Users/tuxxon/workspace/dist-adapter/...` — `AutoFlowCut` 이 빠졌다).
@@ -47,8 +53,7 @@ export function resolveCodexAdapterPath({
     path.join(repoRoot, 'dist-adapter', 'codex-adapter.mjs'),  // dev: 소스 레이아웃
     cwd && path.join(cwd, 'dist-adapter', 'codex-adapter.mjs'), // dev: 번들 실행 — 프로젝트 루트에서 띄운다
   ].filter(Boolean)
-
-  return candidates.find((candidate) => existsSyncImpl(candidate)) ?? candidates[candidates.length - 1]
+  return candidates
 }
 
 const CLIENT_INFO = { name: 'autoflowcut', title: 'AutoFlowCut', version: '0.0.0' }
@@ -218,9 +223,15 @@ export function createCodexOrchestrator({
   async function doOpen() {
     if (closed) throw new Error('Codex orchestrator is closed')
     try {
-      const executable = path.resolve(adapterPath || resolveCodexAdapterPath({ isPackaged, resourcesPath, repoRoot, existsSyncImpl, cwd }))
+      const searched = adapterPath
+        ? [path.resolve(adapterPath)]
+        : codexAdapterPathCandidates({ isPackaged, resourcesPath, repoRoot, cwd }).map((candidate) => path.resolve(candidate))
+      const executable = searched.find((candidate) => existsSyncImpl(candidate)) ?? searched[searched.length - 1]
       // dev에는 source tree가 있어도 배포 번들이 빠질 수 있다. spawn 오류로 늦게 숨기지 않는다.
-      if (!existsSyncImpl(executable)) throw new Error(`Codex adapter bundle not found: ${executable}`)
+      if (!existsSyncImpl(executable)) {
+        // Finder 실행 cwd(`/`) 같은 마지막 fallback 하나만 찍으면 실제 packaged 후보를 조사했는지 알 수 없다.
+        throw new Error(`Codex adapter bundle not found: ${searched.join(', ')}`)
+      }
       work = await workingDirectoryFactory()
       runtime = await runtimeHomeFactory({ env })
       const endpoint = rpcEndpoint || await privateRpc.start()

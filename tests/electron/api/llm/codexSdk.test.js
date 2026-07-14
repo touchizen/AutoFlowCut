@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import {
   buildCodexClientOptions,
+  ORCHESTRATOR_INSTRUCTIONS_TEXT,
   defaultAuthCheck,
   mapCodexError,
   parseCodexJson,
@@ -29,6 +30,12 @@ class FakeCodex {
 }
 
 describe('codexSdk helper', () => {
+  it('orchestrator는 사용자가 거절한 tool을 재호출하지 않고 대안을 묻는다', () => {
+    expect(ORCHESTRATOR_INSTRUCTIONS_TEXT).toMatch(/declined|rejected/i)
+    expect(ORCHESTRATOR_INSTRUCTIONS_TEXT).toMatch(/do not call it again/i)
+    expect(ORCHESTRATOR_INSTRUCTIONS_TEXT).toMatch(/ask what they want instead/i)
+  })
+
   it('client env는 API key를 제거하고 ChatGPT 로그인 모드 config를 고정한다', () => {
     const options = buildCodexClientOptions({
       env: {

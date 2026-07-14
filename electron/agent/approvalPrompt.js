@@ -21,25 +21,38 @@ export function createApprovalPrompt({ getWindow, timeoutMs = 10 * 60 * 1000 }) 
   let watched = null
   let detach = () => {}
 
-  function settle(requestId, answer) {
+  function settle(requestId, answer, { notifyRenderer = false, reason = 'main-settled' } = {}) {
     const entry = pending.get(requestId)
     if (!entry) return false
     // 먼저 지운다 — 늦게 온 응답이 이미 사람이 내린 결정을 뒤집으면 안 된다.
     pending.delete(requestId)
     clearTimeout(entry.timer)
+    if (notifyRenderer) {
+      // main이 먼저 정산했으면 renderer queue도 같은 requestId를 버려야 ghost modal이 남지 않는다.
+      // webContents가 이미 죽은 경로도 있으므로 전송 실패는 승인 결과를 뒤집지 않고 무시한다.
+      try {
+        entry.webContents?.send?.('agent:permission-cancel', {
+          requestId,
+          sessionId: entry.sessionId,
+          reason,
+        })
+      } catch {}
+    }
     entry.resolve(answer)
     return true
   }
 
-  function declineAll() {
-    for (const id of [...pending.keys()]) settle(id, DECLINE)
+  function declineAll(reason) {
+    for (const id of [...pending.keys()]) settle(id, DECLINE, { notifyRenderer: true, reason })
   }
 
   function closeSession(sessionId) {
     // prompt와 IPC listener는 앱 수명이다. 여기서 `close()`로 영구 폐쇄하면 두 번째 agent session은
     // 승인할 수 없으므로, 세션 종료는 그 sessionId의 대기 건만 값(decline)으로 정리한다.
     for (const [id, entry] of [...pending]) {
-      if (entry.sessionId === sessionId) settle(id, DECLINE)
+      if (entry.sessionId === sessionId) {
+        settle(id, DECLINE, { notifyRenderer: true, reason: 'session-closed' })
+      }
     }
   }
 
@@ -47,7 +60,7 @@ export function createApprovalPrompt({ getWindow, timeoutMs = 10 * 60 * 1000 }) 
     if (watched === win) return
     detach()
     watched = win
-    const onGone = () => { declineAll(); detach(); watched = null }
+    const onGone = () => { declineAll('renderer-gone'); detach(); watched = null }
     const removers = []
     for (const [target, event] of [[win, 'closed'], [win.webContents, 'destroyed']]) {
       if (typeof target?.once !== 'function') continue
@@ -71,8 +84,15 @@ export function createApprovalPrompt({ getWindow, timeoutMs = 10 * 60 * 1000 }) 
 
       return new Promise((resolve) => {
         const requestId = randomUUID()
-        const timer = setTimeout(() => settle(requestId, DECLINE), timeoutMs)
-        pending.set(requestId, { resolve, timer, sessionId: ctx.sessionId ?? null })
+        const timer = setTimeout(() => {
+          settle(requestId, DECLINE, { notifyRenderer: true, reason: 'timeout' })
+        }, timeoutMs)
+        pending.set(requestId, {
+          resolve,
+          timer,
+          sessionId: ctx.sessionId ?? null,
+          webContents: win.webContents,
+        })
 
         win.webContents.send('agent:permission-request', {
           requestId,
@@ -98,7 +118,7 @@ export function createApprovalPrompt({ getWindow, timeoutMs = 10 * 60 * 1000 }) 
       closed = true
       detach()
       watched = null
-      declineAll()
+      declineAll('prompt-closed')
     },
   }
 }

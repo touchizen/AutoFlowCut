@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { I18nProvider } from '../../../src/hooks/useI18n'
 import { __resetFlowHiddenForTests } from '../../../src/hooks/useModalVisibility'
 import ApprovalDialog from '../../../src/components/agent/ApprovalDialog.jsx'
+import * as codexMcpAdapter from '../../../electron/agent/codexMcpAdapter.js'
 
 let fire
 beforeEach(() => {
@@ -31,12 +32,17 @@ function open(lang, tool, args) {
   const view = render(<I18nProvider><ApprovalDialog /></I18nProvider>)
   act(() => fire({
     requestId: 'r1', tool, sessionId: 's1',
-    message: `${tool}\n\n${JSON.stringify(args, null, 2)}`,
+    // adapter와 renderer의 유일한 인자 채널을 복제하지 않는다. 둘이 실제로 맞물려야 포맷 변화가 잡힌다.
+    message: codexMcpAdapter.describe(tool, args),
   }))
   return view
 }
 
 describe('승인 창은 무엇을 하는지 사람 말로 알려준다', () => {
+  it('adapter의 실제 승인 문구 계약을 사용한다', () => {
+    expect(typeof codexMcpAdapter.describe).toBe('function')
+  })
+
   it('화자 설정: 몇 명을 저장하는지 이름과 함께 말한다', () => {
     open('ko', 'story_set_speakers', {
       speakers: [{ id: 'narrator', name: '나레이션' }, { id: 'kim', name: '김철수' }],
@@ -52,6 +58,25 @@ describe('승인 창은 무엇을 하는지 사람 말로 알려준다', () => {
     open('ko', 'story_start_step', { step: 'audio', params: {} })
 
     expect(screen.getByTestId('approval-summary').textContent).toMatch(/audio/)
+  })
+
+  it('스텝 시작: 읽지 않은 params가 있으면 안전한 척 요약하지 않는다', () => {
+    open('ko', 'story_start_step', {
+      step: 'audio',
+      params: { speakers: [{ id: 'HIJACK', name: 'HIJACK' }], regenerate: ['seg-1'] },
+    })
+
+    expect(screen.queryByTestId('approval-summary')).toBeNull()
+  })
+
+  it('긴 인자도 adapter에서 dialog까지 전부 도착해 요약과 원본을 함께 보여준다', () => {
+    const args = { synopsisMd: `BEGIN-${'긴'.repeat(5000)}-END`, characters: [] }
+    open('ko', 'story_confirm_synopsis', args)
+
+    expect(screen.getByTestId('approval-summary')).toBeTruthy()
+    const raw = screen.getByText(/BEGIN-/).textContent
+    expect(JSON.parse(raw)).toEqual(args)
+    expect(raw).toContain('-END')
   })
 
   it('요약이 원본 인자를 **대체하지 않는다** — 실제 실행되는 값은 그대로 보인다', () => {

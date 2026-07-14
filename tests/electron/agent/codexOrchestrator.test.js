@@ -332,6 +332,34 @@ describe('createCodexOrchestrator — open/profile', () => {
     }
   })
 
+  it('해석한 adapter 번들이 없으면 조사한 resources/repo/cwd 후보를 오류에 전부 나열한다', async () => {
+    const resourcesPath = '/Applications/AutoFlowCut.app/Contents/Resources'
+    const repoRoot = '/repo/AutoFlowCut'
+    const cwd = '/'
+    const expected = [
+      path.join(resourcesPath, 'agent-adapter', 'codex-adapter.mjs'),
+      path.join(repoRoot, 'dist-adapter', 'codex-adapter.mjs'),
+      path.join(cwd, 'dist-adapter', 'codex-adapter.mjs'),
+    ]
+    const h = createHarness({
+      adapterPath: undefined,
+      isPackaged: true,
+      resourcesPath,
+      repoRoot,
+      cwd,
+      existsSyncImpl: () => false,
+    })
+
+    try {
+      const opened = h.orchestrator.open()
+      for (const candidate of expected) await expect(opened).rejects.toThrow(candidate)
+      expect(h.privateRpc.start).not.toHaveBeenCalled()
+      expect(h.appServer.spawnImpl).not.toHaveBeenCalled()
+    } finally {
+      await h.orchestrator.close()
+    }
+  })
+
   it('orchestrator profile의 autoflowcut MCP에 Electron-as-node adapter env와 tool table을 싣는다', async () => {
     const h = createHarness()
 

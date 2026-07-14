@@ -184,6 +184,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('agent:permission-request', listener)
     return () => ipcRenderer.removeListener('agent:permission-request', listener)
   },
+  onAgentPermissionCancel: (cb) => {
+    const listener = (_e, payload) => cb(payload)
+    ipcRenderer.on('agent:permission-cancel', listener)
+    return () => ipcRenderer.removeListener('agent:permission-cancel', listener)
+  },
   respondAgentPermission: (payload) => ipcRenderer.send('agent:permission-response', payload),
 
   // Auth

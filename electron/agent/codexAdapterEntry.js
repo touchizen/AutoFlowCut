@@ -86,19 +86,45 @@ export async function main() {
   await server.connect(new StdioServerTransport())
 }
 
-/** 아주 얕은 JSON-Schema → zod. 툴 표는 우리가 만든다 — 임의 스키마를 받지 않는다. */
+/** 툴 표의 JSON-Schema → zod. oneOf/중첩 strict object를 보존해야 step별 경계가 adapter에서 안 풀린다. */
 export function zodFromJson(schema) {
-  const shape = {}
-  for (const [key, prop] of Object.entries(schema.properties ?? {})) {
-    // enum을 일반 string으로 접으면 모델이 허용값을 못 보고 잘못된 G 호출에 승인을 소모한다.
-    let t = Array.isArray(prop.enum) && prop.enum.length ? z.enum(prop.enum)
-      : prop.type === 'number' ? z.number()
-      : prop.type === 'boolean' ? z.boolean()
-        : prop.type === 'array' ? z.array(z.any())
-          : prop.type === 'object' ? z.record(z.string(), z.any())
-            : z.string()
-    if (!(schema.required ?? []).includes(key)) t = t.optional()
-    shape[key] = t
+  const convert = (node = {}) => {
+    if (Array.isArray(node.oneOf) && node.oneOf.length) return z.union(node.oneOf.map(convert))
+    if (Object.hasOwn(node, 'const')) return z.literal(node.const)
+    if (Array.isArray(node.enum) && node.enum.length) return z.enum(node.enum)
+    if (node.type === 'number') return z.number()
+    if (node.type === 'boolean') return z.boolean()
+    if (node.type === 'array') return z.array(node.items ? convert(node.items) : z.any())
+    if (node.type !== 'object') return z.string()
+
+    const shape = {}
+    for (const [key, prop] of Object.entries(node.properties ?? {})) {
+      let child = convert(prop)
+      if (!(node.required ?? []).includes(key)) child = child.optional()
+      shape[key] = child
+    }
+    // properties가 없는 legacy object만 record로 둔다. 명시된 whitelist는 unknown key를 거부한다.
+    if (!Object.keys(node.properties ?? {}).length && node.additionalProperties !== false) {
+      return z.record(z.string(), z.any())
+    }
+    const object = node.additionalProperties === false ? z.object(shape).strict() : z.object(shape).passthrough()
+    const rule = node.dependentPropertyWhitelist
+    if (!rule) return object
+    // 최상위 union은 MCP SDK tools/list에서 `{properties:{}}`로 소실된다. ZodObject를 유지하는
+    // refinement로 discriminator와 params의 상관관계를 검증하면 광고 schema와 실행 경계를 둘 다 살린다.
+    return object.superRefine((value, ctx) => {
+      const allowed = rule.allowed?.[value?.[rule.discriminator]]
+      const target = value?.[rule.target]
+      if (!Array.isArray(allowed) || target === undefined) return
+      for (const key of Object.keys(target)) {
+        if (allowed.includes(key)) continue
+        ctx.addIssue({
+          code: 'custom',
+          path: [rule.target, key],
+          message: `${key} is not allowed for ${value[rule.discriminator]}`,
+        })
+      }
+    })
   }
-  return shape
+  return convert(schema)
 }

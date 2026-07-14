@@ -16,26 +16,20 @@ import { hashArgs } from './grantLedger.js'
  *    프로세스를 띄우지 않고는 못 잰다.
  */
 const ACCEPT = 'accept'
-const REJECT_REASON = { decline: 'declined', cancel: 'cancelled' }
+// 사람의 명시적 거절은 grant 누락(`unconfirmed`)과 다르다. 재시도 신호로 읽히지 않는 이름을 쓴다.
+const REJECT_REASON = { decline: 'declined-by-user', cancel: 'cancelled' }
 
 /**
  * 승인 창에 띄울 사람용 문장. 인자를 **보여준다** — 안 보여주면 사람은 이름만 보고 누른다.
  *
- * 🔴 **조용히 자르지 않는다.** grant 는 인자 **전체**의 해시에 묶이는데 사람에게 잘린 일부만 보여주면
- *    **본 적 없는 것을 승인**하게 된다. 예전엔 400자에서 자르고 `…` 하나만 붙였다 — 사용자는 그게
- *    전부인 줄 안다. 잘라야 한다면 **잘렸다고 말한다.**
+ * 🔴 **transport에서 자르지 않는다.** main이 이미 잘린 문자열만 받으면 renderer는 나머지를 펼치거나
+ *    스크롤할 방법이 없다. grant와 같은 인자 전체를 보내고, 화면 크기 제한은 renderer scroll이 맡는다.
  *
  * 🔴 **여러 줄로 들여쓴다.** 한 줄로 뭉친 JSON 은 "보여줬다"는 알리바이지 읽으라는 게 아니다.
  */
-const MAX_ARG_CHARS = 4000
-
-function describe(name, args) {
+export function describe(name, args) {
   const argText = JSON.stringify(args ?? {}, null, 2)
-  if (argText.length <= MAX_ARG_CHARS) return `${name}\n\n${argText}`
-
-  const shown = argText.slice(0, MAX_ARG_CHARS)
-  const hidden = argText.length - MAX_ARG_CHARS
-  return `${name}\n\n${shown}\n\n… [truncated: ${hidden} more characters — 전체를 확인할 수 없다면 거부하세요]`
+  return `${name}\n\n${argText}`
 }
 
 export function createAdapterHandlers({ tools, rpc, elicitInput, approvalTimeoutMs, newNonce = randomUUID }) {

@@ -100,4 +100,18 @@ describe('preload agent surface — D14 효과', () => {
     expect(channel).toBe('agent:permission-request')
     expect(callback).toHaveBeenCalledWith({ requestId: 'approval-1' })
   })
+
+  it('permission cancel은 app-scoped listener로 전달하고 같은 listener를 cleanup한다', () => {
+    const api = electronDouble.exposed
+    const callback = vi.fn()
+    const off = api.onAgentPermissionCancel(callback)
+    const [channel, listener] = electronDouble.ipcRenderer.on.mock.calls.at(-1)
+
+    listener({}, { requestId: 'approval-1', reason: 'timeout' })
+    off()
+
+    expect(channel).toBe('agent:permission-cancel')
+    expect(callback).toHaveBeenCalledWith({ requestId: 'approval-1', reason: 'timeout' })
+    expect(electronDouble.ipcRenderer.removeListener).toHaveBeenCalledWith(channel, listener)
+  })
 })

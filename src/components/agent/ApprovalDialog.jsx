@@ -48,6 +48,12 @@ function summarize(tool, args, t) {
     }
     case 'story_start_step': {
       if (typeof args.step !== 'string') return null
+      // params를 한 글자도 읽지 않은 채 step만 요약하면 regenerate 과금이나 미래 동작을 숨긴다.
+      // 빈 객체만 기존 문구로 설명하고, 값이 하나라도 있으면 raw JSON만 보여 주는 쪽으로 닫는다.
+      if (args.params !== undefined) {
+        if (!args.params || typeof args.params !== 'object' || Array.isArray(args.params)) return null
+        if (Object.keys(args.params).length) return null
+      }
       return t('agent.summaryStartStep', { step: args.step })
     }
     default:
@@ -89,10 +95,14 @@ export default function ApprovalDialog() {
   useModalVisibility(!!current)
 
   useEffect(() => {
-    const off = window.electronAPI?.onAgentPermissionRequest?.((req) => {
+    const offRequest = window.electronAPI?.onAgentPermissionRequest?.((req) => {
       setQueue((q) => (q.some((x) => x.requestId === req.requestId) ? q : [...q, req]))
     })
-    return () => off?.()
+    const offCancel = window.electronAPI?.onAgentPermissionCancel?.(({ requestId } = {}) => {
+      // cancel은 main이 이미 decline으로 정산한 알림이다. renderer 응답을 다시 보내지 않고 해당 건만 뺀다.
+      if (requestId) setQueue((q) => q.filter((entry) => entry.requestId !== requestId))
+    })
+    return () => { offRequest?.(); offCancel?.() }
   }, [])
 
   const answer = useCallback((action) => {

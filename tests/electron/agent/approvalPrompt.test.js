@@ -67,19 +67,29 @@ describe('승인 창 — 정상 경로', () => {
 describe('🔴 실패는 전부 decline 이다 — 승인은 fail-closed', () => {
   it('🔴 응답이 없으면(사람이 그냥 안 누름) **decline** — accept 로 흐르지 않는다', async () => {
     const p = prompt.ask(params, ctx)
+    const requestId = lastRequest().requestId
 
     await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
 
     await expect(p).resolves.toEqual({ action: 'decline' })
     expect(prompt.pendingCount()).toBe(0)
+    expect(win.sent).toContainEqual({
+      channel: 'agent:permission-cancel',
+      payload: { requestId, sessionId: 's1', reason: 'timeout' },
+    })
   })
 
   it('🔴 **창이 죽으면 decline** — 창이 죽었다고 승인이 될 수는 없다', async () => {
     const p = prompt.ask(params, ctx)
+    const requestId = lastRequest().requestId
     win.destroy()
 
     await expect(p).resolves.toEqual({ action: 'decline' })
     expect(prompt.pendingCount()).toBe(0)
+    expect(win.sent).toContainEqual({
+      channel: 'agent:permission-cancel',
+      payload: { requestId, sessionId: 's1', reason: 'renderer-gone' },
+    })
   })
 
   it('🔴 창이 **아예 없으면** 묻지도 않고 decline (renderer 없이 승인은 없다)', async () => {
@@ -98,6 +108,7 @@ describe('🔴 실패는 전부 decline 이다 — 승인은 fail-closed', () =>
     await expect(a).resolves.toEqual({ action: 'decline' })
     await expect(b).resolves.toEqual({ action: 'decline' })
     expect(prompt.pendingCount()).toBe(0)
+    expect(win.sent.filter((entry) => entry.channel === 'agent:permission-cancel')).toHaveLength(2)
   })
 
   it('세션 종료는 그 세션의 병렬 승인만 전부 decline하고 다른 세션 응답은 보존한다', async () => {
@@ -111,6 +122,12 @@ describe('🔴 실패는 전부 decline 이다 — 승인은 fail-closed', () =>
     await expect(first).resolves.toEqual({ action: 'decline' })
     await expect(second).resolves.toEqual({ action: 'decline' })
     expect(prompt.pendingCount()).toBe(1)
+    expect(win.sent.filter((entry) => entry.channel === 'agent:permission-cancel').map((entry) => entry.payload))
+      .toEqual(requests.slice(0, 2).map((request) => ({
+        requestId: request.requestId,
+        sessionId: 's1',
+        reason: 'session-closed',
+      })))
     expect(prompt.respond({ requestId: requests[2].requestId, action: 'accept' })).toBe(true)
     await expect(laterSession).resolves.toEqual({ action: 'accept' })
   })
@@ -131,6 +148,7 @@ describe('🔴 실패는 전부 decline 이다 — 승인은 fail-closed', () =>
     prompt.respond({ requestId: lastRequest().requestId, action: 'yes-please' })
 
     await expect(p).resolves.toEqual({ action: 'decline' })
+    expect(win.sent.filter((entry) => entry.channel === 'agent:permission-cancel')).toHaveLength(0)
   })
 })
 

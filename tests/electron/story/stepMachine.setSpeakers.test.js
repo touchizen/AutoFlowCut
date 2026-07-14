@@ -6,6 +6,8 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createStepMachine } from '../../../electron/story/stepMachine.js'
+import { createToolCore } from '../../../electron/agent/toolCore.js'
+import { createGrantLedger, hashArgs } from '../../../electron/agent/grantLedger.js'
 
 const narratorVoice = { provider: 'typecast', voiceId: 'tc_narrator' }
 const chulsooVoice = { provider: 'typecast', voiceId: 'tc_chulsoo' }
@@ -65,6 +67,12 @@ beforeEach(async () => {
     llm: {},
     emit: () => {},
     getApiKey: () => 'k',
+    defaultVoice: narratorVoice,
+    tts: {
+      capabilities: () => ({ maxConcurrency: 2 }),
+      synthesize: async () => ({ audio: Buffer.from('audio'), format: 'mp3' }),
+    },
+    probe: async () => 1000,
   })
   await machine.open()
 })
@@ -109,6 +117,35 @@ describe('stepMachine.setSpeakers durable roster 보호', () => {
 
     await expect(machine.setSpeakers({ speakers: [{}] }))
       .rejects.toThrow('speakers[0].id and name are required')
+    expect((await readStory()).speakers).toEqual(before.speakers)
+  })
+})
+
+describe('agent story_start_step은 화자 설정 경계를 우회하지 않는다', () => {
+  it('유효한 grant여도 audio params.speakers를 거부하고 실제 story.json roster를 보존한다', async () => {
+    const args = {
+      step: 'audio',
+      params: { speakers: [{ id: 'HIJACK', name: 'HIJACK' }] },
+    }
+    const ledger = createGrantLedger({ now: () => 0, ttlMs: 60_000 })
+    const core = createToolCore({
+      grantLedger: ledger,
+      sessionId: 'r1-session',
+      projectToken: machine.projectToken,
+    })
+    core.use({ ...machine, hasProject: () => true })
+    ledger.grant({
+      nonce: 'r1-valid-grant',
+      tool: 'story_start_step',
+      argsHash: hashArgs(args),
+      sessionId: 'r1-session',
+      projectToken: machine.projectToken,
+    })
+    const before = await readStory()
+
+    const result = await core.call('story_start_step', args, { nonce: 'r1-valid-grant' })
+
+    expect.soft(result).toEqual({ error: 'invalid-params', params: ['speakers'] })
     expect((await readStory()).speakers).toEqual(before.speakers)
   })
 })

@@ -8,17 +8,19 @@
 //
 // 🔴 **닫기 = 거부.** 사용자가 X 를 누르거나 ESC 를 눌러도 **승인이 되면 안 된다.**
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, cleanup } from '@testing-library/react'
+import { act, render, screen, cleanup } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import ApprovalDialog from '../../../src/components/agent/ApprovalDialog.jsx'
 
-let listeners, responses
+let listeners, cancelListeners, responses
 beforeEach(() => {
   cleanup()
   listeners = []
+  cancelListeners = []
   responses = []
   window.electronAPI = {
     onAgentPermissionRequest: (cb) => { listeners.push(cb); return () => { listeners = listeners.filter((l) => l !== cb) } },
+    onAgentPermissionCancel: (cb) => { cancelListeners.push(cb); return () => { cancelListeners = cancelListeners.filter((l) => l !== cb) } },
     respondAgentPermission: (payload) => responses.push(payload),
   }
 })
@@ -29,6 +31,7 @@ const fire = (over = {}) => listeners.forEach((cb) => cb({
   message: 'generate_videos\n\n{"items":[1,2]}',
   ...over,
 }))
+const cancel = (requestId) => cancelListeners.forEach((cb) => cb({ requestId, reason: 'session-closed' }))
 
 describe('승인 다이얼로그', () => {
   it('요청이 없으면 아무것도 안 보인다', () => {
@@ -103,5 +106,22 @@ describe('승인 다이얼로그', () => {
     expect(await screen.findByText(/generate_videos/)).toBeTruthy()
     await user.click(screen.getByRole('button', { name: /승인|allow|approve/i }))
     expect(responses[1]).toEqual({ requestId: 'r2', action: 'accept' })
+  })
+
+  it('main이 정산한 요청은 queue에서 제거하고 사람 응답을 보내지 않는다', async () => {
+    render(<ApprovalDialog />)
+    act(() => {
+      fire({ requestId: 'r1' })
+      fire({ requestId: 'r2', tool: 'story_confirm_synopsis', message: 'story_confirm_synopsis\n\n{}' })
+    })
+
+    act(() => cancel('r1'))
+
+    expect(await screen.findByText('story_confirm_synopsis')).toBeTruthy()
+    expect(responses).toEqual([])
+
+    act(() => cancel('r2'))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(responses).toEqual([])
   })
 })

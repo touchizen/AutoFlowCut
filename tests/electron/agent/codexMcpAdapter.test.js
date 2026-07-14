@@ -82,7 +82,7 @@ describe('adapter — G/B 툴은 승인 뒤에만 (조건 2)', () => {
     const r = await handlers.callTool('generate_videos', { items: [1, 2] })
 
     expect(rpc.call, '거부했는데 실행됐다').not.toHaveBeenCalled()
-    expect(r).toMatchObject({ status: 'rejected', reason: 'declined' })
+    expect(r).toEqual({ status: 'rejected', reason: 'declined-by-user' })
   })
 
   it('🔴 cancel 이면 Tool Core 호출 **0회**', async () => {
@@ -150,10 +150,9 @@ describe('adapter — fail-closed', () => {
 })
 
 describe('adapter — 승인 문구는 사람이 실제로 볼 수 있어야 한다', () => {
-  // 🔴 **grant 는 인자 *전체* 의 해시에 묶인다.** 그런데 승인 창에 잘린 일부만 보여주면
-  //    사람은 **본 적 없는 것을 승인**하게 된다 — "인자를 보여준다"는 목적이 그 지점에서 무너진다.
-  //    (예전 구현: 400자에서 잘라내고 `…` 하나만 붙였다. 사용자는 그게 전부인 줄 안다.)
-  it('인자를 자를 때는 잘렸다는 사실을 명시한다 — 조용히 자르지 않는다', async () => {
+  // synopsis 같은 긴 G payload는 승인 renderer에 도달하기 전에 잘리면 펼칠 방법 자체가 없다.
+  // display는 scroll이 맡고 transport는 원본 전체를 보존한다.
+  it('긴 인자를 transport에서 자르지 않고 승인 창으로 전부 보낸다', async () => {
     const elicitInput = vi.fn(async () => ({ action: 'decline' }))
     const rpc = { call: vi.fn() }
     const handlers = createAdapterHandlers({
@@ -167,8 +166,8 @@ describe('adapter — 승인 문구는 사람이 실제로 볼 수 있어야 한
     await handlers.callTool('story_confirm_synopsis', huge)
 
     const { message } = elicitInput.mock.calls[0][0]
-    expect(message, '잘렸는데 잘렸다고 말하지 않는다 — 사람은 그게 전부인 줄 안다')
-      .toMatch(/truncated|잘렸|생략/i)
+    expect(message).toBe(`story_confirm_synopsis\n\n${JSON.stringify(huge, null, 2)}`)
+    expect(message).not.toMatch(/truncated|잘렸|생략/i)
   })
 
   it('인자를 여러 줄로 들여써서 읽을 수 있게 한다 — 한 줄 JSON 덩어리는 읽으라는 게 아니다', async () => {
