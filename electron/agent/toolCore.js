@@ -13,6 +13,8 @@
  * nativeImage decode / renderer 를 타는 툴(toolBridge)은 뒤 슬라이스다.
  */
 
+import { hashArgs } from './grantLedger.js'
+
 /** 프로젝트가 안 열렸을 때의 공통 거부 (스펙 §2.1 `get_project_context`, slice 12). */
 const NO_PROJECT = Object.freeze({ error: 'no-project' })
 
@@ -31,6 +33,8 @@ const BATCH_TYPES = new Set(['scene', 'ref'])
  */
 export function createToolCore({
   toolBridge = null,
+  grantLedger = null,
+  sessionId = null,
   now = () => Date.now(),
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
   waitWindowMs = 10 * 60 * 1000,     // 잠정 — legacy 폴링 창과 같게 두되, 측정 뒤 정한다
@@ -67,8 +71,11 @@ export function createToolCore({
   }
 
   /**
-   * 툴 표 (스펙 §2). `permission` 은 R/G/B — 지금은 R 만 있고 게이트는 아직 없다.
-   * 게이트(canUseTool / MCP elicitation)는 M2 다. 여기서 미리 지어내지 않는다.
+   * 툴 표 (스펙 §2). `permission`: **R** = 즉시 실행 / **G** = 사람 승인 필요 / **B** = 과금.
+   *
+   * 🔴 **등급은 Tool Core 가 소유한다** ((A) 채택 조건 1). adapter 가 request context 에 붙인
+   *    `approvalMode` 문자열은 **증거가 아니다** — adapter 가 실수로 조기 부착하거나 공통 RPC 가
+   *    기본값으로 붙이면 게이트가 조용히 샌다. 여기서 **스스로 다시 산출한다.**
    */
   const TOOLS = {
     story_get_state: {
@@ -89,6 +96,26 @@ export function createToolCore({
       needs: 'toolBridge',          // story 는 안 쓴다 — renderer 의 배치 상태만 읽는다
       run: (args) => waitBatch(args),
     },
+    story_confirm_synopsis: {
+      permission: 'G',              // 사람이 확정하는 것 — 에이전트가 혼자 못 한다 (D9)
+      needs: 'storyCommands',
+      run: (args) => storyCommands.confirmSynopsis(args),
+    },
+  }
+
+  /**
+   * 🔴 **G/B 는 grant 를 원자적으로 1회 consume 해야만 실행된다.**
+   *    handler 가 `elicitInput()` 을 빠뜨리면 grant 자체가 없다 → 진짜 fail-closed.
+   *    거부는 D8 정규화: `{status:'rejected', reason:'unconfirmed'}` — **side effect 0회**.
+   */
+  function isApproved(name, args, context) {
+    if (!grantLedger) return false
+    return grantLedger.consume({
+      nonce: context?.nonce,
+      tool: name,
+      argsHash: hashArgs(args),
+      sessionId,
+    })
   }
 
   return {
@@ -105,7 +132,7 @@ export function createToolCore({
      * 🔴 **fail-closed.** 모르는 툴은 던진다 — 조용히 `undefined` 를 돌려주면 에이전트는
      *    "툴이 아무것도 안 했다" 와 "툴이 없다" 를 구분하지 못한다.
      */
-    async call(name, args = {}) {
+    async call(name, args = {}, context = {}) {
       const tool = TOOLS[name]
       if (!tool) throw new Error(`unknown tool: ${name}`)
       // 툴마다 필요한 것이 다르다. 전부에게 storyCommands 를 요구하면 renderer 만 읽는 툴이 못 돈다.
@@ -114,6 +141,10 @@ export function createToolCore({
       }
       if (tool.needs === 'toolBridge' && !toolBridge) {
         throw new Error(`${name} requires toolBridge`)
+      }
+      // adapter 의 주장이 아니라 **main ledger 의 grant** 를 본다.
+      if (tool.permission !== 'R' && !isApproved(name, args, context)) {
+        return { status: 'rejected', reason: 'unconfirmed' }
       }
       return tool.run(args)
     },
