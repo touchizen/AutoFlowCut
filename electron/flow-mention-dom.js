@@ -30,18 +30,16 @@ const HELPERS = `
   const __textLeaves = (el) => el ? Array.from(el.querySelectorAll('*'))
     .filter((e) => e.children.length === 0 && __norm(e.textContent)) : [];
 
-  // 옵션 이름 후보: 실제 덤프의 img alt, 타입 라벨(마지막 leaf)을 뺀 각 leaf/연결문자열,
-  // 그리고 leaf 없이 bare text node 하나만 있는 단순 DOM. 모두 exact 비교만 한다.
+  // 옵션 이름 후보: 실제 덤프의 img alt, 타입 라벨(마지막 leaf)을 뺀 leaf 연결문자열,
+  // 그리고 element leaf 없이 bare text node 만 있는 단순 DOM. 모두 exact 비교만 한다.
   const __optionCandidates = (el) => {
     if (!el) return [];
     const candidates = Array.from(el.querySelectorAll('img[alt]'))
       .map((img) => img.getAttribute('alt'));
     const leaves = __textLeaves(el);
     if (leaves.length) {
-      const nameLeaves = leaves.length > 1 ? leaves.slice(0, -1) : leaves;
-      candidates.push(...nameLeaves.map((leaf) => leaf.textContent));
-      candidates.push(nameLeaves.map((leaf) => leaf.textContent || '').join(''));
-      if (leaves.length === 1) candidates.push(el.textContent);
+      const nameLeaves = leaves.slice(0, -1);
+      if (nameLeaves.length) candidates.push(nameLeaves.map((leaf) => leaf.textContent || '').join(''));
     } else {
       candidates.push(el.textContent);
     }
@@ -56,34 +54,27 @@ const HELPERS = `
       .find((o) => __optionCandidates(o).includes(target)) || null;
   };
 
-  // 캐릭터 탭: 라벨(캐릭터/Characters)은 로케일마다 다르지만 Material 아이콘 리거처는 불변이다.
-  // 탭 textContent 는 "accessibility_new캐릭터" 처럼 리거처가 앞에 붙어 온다.
+  // 캐릭터 탭: 모든 계정 언어에서 공통인 Material ligature 가 primary anchor 다.
+  // 라벨은 ligature 가 바뀐 경우에만 한국어/영어를 위한 second-line fallback 으로 쓴다.
   const __findCharTab = (dlg) => {
     if (!dlg) return null;
     const tabs = Array.from(dlg.querySelectorAll("[role='tab']"));
-    return tabs.find((t) => (t.textContent || '').indexOf('accessibility_new') >= 0) || null;
+    const byLigature = tabs.find((t) => (t.textContent || '').indexOf('accessibility_new') >= 0);
+    if (byLigature) return byLigature;
+    return tabs.find((t) => /캐릭터|characters?/i.test(t.textContent || '')) || null;
   };
 
-  const __withoutAt = (s) => __norm(s).replace(/^@\\s*/, '');
+  const __compact = (s) => String(s || '').replace(/\\s+/g, '');
+  const __chipForms = (target) => [target, '@' + target, target + '캐릭터', '@' + target + '캐릭터'];
 
-  // 칩 검증은 기존 한글 whole-text 네 형태의 strict superset 이다. 추가 허용도 whole/leaf 의
-  // exact 조합뿐이며 prefix/substring 은 쓰지 않는다.
+  // 칩 검증은 whole text 만 exact 비교한다. normalized 비교에 더해 기존 규칙처럼 모든 whitespace
+  // (NBSP/FEFF 포함)를 제거한 비교도 유지한다. prefix/substring/leaf 단위 비교는 쓰지 않는다.
   const __matchesChip = (chip, name) => {
     const target = __norm(name);
     if (!chip || !target) return false;
     const whole = __norm(chip.textContent);
-    const legacy = [target, '@' + target, target + '캐릭터', '@' + target + '캐릭터'];
-    if (legacy.includes(whole)) return true;
-
-    const withoutAt = __withoutAt(whole);
-    if (withoutAt === target) return true;
-
-    const leaves = __textLeaves(chip);
-    const nonTerminal = leaves.length > 1 ? leaves.slice(0, -1) : leaves;
-    const lastLeaf = leaves.length > 1 ? __norm(leaves[leaves.length - 1].textContent) : '';
-    if (lastLeaf && withoutAt === __norm(target + lastLeaf)) return true;
-    if (nonTerminal.some((leaf) => __norm(leaf.textContent) === target)) return true;
-    return __withoutAt(nonTerminal.map((leaf) => leaf.textContent || '').join('')) === target;
+    if (__chipForms(target).includes(whole)) return true;
+    return __chipForms(__compact(name)).includes(__compact(chip.textContent));
   };
 
   // view: window 를 받아주지 않는 DOM 구현(jsdom)에서는 view 없이 재시도한다.
@@ -99,7 +90,7 @@ export const CLICK_CHARACTER_TAB = `(function(){
   const t = __findCharTab(__dialog());
   if (!t) return false;
   t.click();
-  return true;
+  return t.getAttribute('aria-selected') === 'true' || t.getAttribute('data-state') === 'active';
 })()`
 
 /** 이름과 정확히 일치하는 옵션이 피커에 있는가. */
@@ -127,7 +118,7 @@ export const dispatchMentionOption = (name) => `(function(){
 
 /**
  * 삽입 검증: 에디터 안의 멘션 칩이 이름과 일치하는가.
- * 관찰되지 않은 칩 DOM 변화에 대비해 legacy whole-text 형태와 exact leaf 조합을 함께 허용한다.
+ * 실측 칩의 whole text 와 기존 한글 whole-text 형태만 exact 비교한다.
  */
 export const chipCheck = (editorSelector, name) => `(function(){
   ${HELPERS}
@@ -145,18 +136,16 @@ export const chipCheck = (editorSelector, name) => `(function(){
  * 실패 진단 — 피커가 무엇을 렌더하고 있었는지. **사용자 콘텐츠(캐릭터 이름·프롬프트)는 절대 담지
  * 않는다**: main 프로세스의 console 은 Sentry breadcrumb 이 되므로, 이름을 찍으면 사용자가 만든
  * 캐릭터 이름이 우리 서버로 간다. (tests/electron/noUserContentInLogs.test.js 가 이걸 강제한다.)
- * 그래서 옵션에서는 이름 길이만 담고, 로케일은 사용자 콘텐츠가 아닌 html lang/path segment 로 본다.
+ * 그래서 옵션에서는 이름 길이만 담고, 로케일은 사용자 콘텐츠가 아닌 html lang 으로만 본다.
  */
 export const MENTION_PROBE = `(function(){
   ${HELPERS}
   const dlg = __dialog();
   const scope = dlg || document;
   const opts = Array.from(scope.querySelectorAll("[role='option']"));
-  const pathMatch = String(location.pathname || '').match(/^\\/fx\\/([^/]+)\\/tools\\/flow(?:\\/|$)/);
   return {
     hasDialog: !!dlg,
     documentLang: String(document.documentElement.lang || ''),
-    pathLocale: pathMatch ? pathMatch[1] : '',
     tabCount: scope.querySelectorAll("[role='tab']").length,
     charTabFound: !!__findCharTab(dlg),
     optionCount: opts.length,

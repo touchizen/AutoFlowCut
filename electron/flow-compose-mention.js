@@ -110,7 +110,7 @@ export async function insertSceneMention(flowView, name) {
       console.warn('[Flow Compose] mention option check failed — nameLen:', name?.length ?? 0, 'probe:', JSON.stringify(probe))
       return { ok: false, reason: 'option-check-failed' }
     }
-    if (!probe?.hasDialog) {
+    if (probe?.hasDialog === false) {
       console.warn('[Flow Compose] mention picker closed before selection — nameLen:', name?.length ?? 0, 'probe:', JSON.stringify(probe))
       return { ok: false, reason: 'picker-closed-before-selection' }
     }

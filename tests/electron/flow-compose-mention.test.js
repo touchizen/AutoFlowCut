@@ -24,6 +24,7 @@ function makeFlowView({
   searchEntered = true,
   optionFound = true,
   optionCheckThrows = false,
+  probeThrows = false,
   dispatched = true,
   dialogClosed = true,
   chipFound = true,
@@ -46,10 +47,10 @@ function makeFlowView({
       return { editorTextLen: NAME.length, hasMentionChip: chipFound, stillHasDialog: !dialogClosed }
     }
     if (source === MENTION_PROBE) {
+      if (probeThrows) throw new Error('diagnostic probe failed')
       return {
         hasDialog: probeHasDialog,
         documentLang: 'en-US',
-        pathLocale: 'en',
         tabCount: tabClicked ? 3 : 1,
         charTabFound: tabClicked,
         optionCount: optionFound ? 1 : 0,
@@ -89,13 +90,15 @@ describe('insertSceneMention failure contract', () => {
     expect(result).toEqual({ ok: false, reason: 'picker-not-opened' })
   })
 
-  it('hard-fails and probes when the locale-invariant Characters tab cannot be clicked', async () => {
-    const flowView = makeFlowView({ tabClicked: false })
+  it('hard-fails before matching a same-name All-tab image when the Characters tab does not activate', async () => {
+    // optionFound=true models an image row whose caption/alt exactly equals NAME on the All tab.
+    const flowView = makeFlowView({ tabClicked: false, optionFound: true })
     const result = await settle(insertSceneMention(flowView, NAME))
 
     expect(result).toEqual({ ok: false, reason: 'character-tab-not-found' })
     expect(flowView.webContents.executeJavaScript).toHaveBeenCalledWith(MENTION_PROBE)
     expect(flowView.webContents.executeJavaScript).not.toHaveBeenCalledWith(hasMentionOption(NAME))
+    expect(flowView.webContents.executeJavaScript).not.toHaveBeenCalledWith(dispatchMentionOption(NAME))
   })
 
   it('discriminates an option that is absent after the Characters tab filter', async () => {
@@ -111,6 +114,11 @@ describe('insertSceneMention failure contract', () => {
   it('does not classify a picker that vanished during polling as option-not-found', async () => {
     const result = await settle(insertSceneMention(makeFlowView({ optionFound: false, probeHasDialog: false }), NAME))
     expect(result).toEqual({ ok: false, reason: 'picker-closed-before-selection' })
+  })
+
+  it('keeps option-not-found when only its diagnostic probe throws', async () => {
+    const result = await settle(insertSceneMention(makeFlowView({ optionFound: false, probeThrows: true }), NAME))
+    expect(result).toEqual({ ok: false, reason: 'option-not-found' })
   })
 
   it('does not treat a missing picker search input as stale registration evidence', async () => {
@@ -154,6 +162,18 @@ describe('injectComposeSegments staleMention routing', () => {
 
   it('marks only option-not-found as stale registration evidence', async () => {
     const result = await settle(injectComposeSegments(makeFlowView({ optionFound: false }), [
+      { type: 'mention', name: NAME },
+    ]))
+
+    expect(result).toMatchObject({
+      ok: false,
+      mentionFailure: 'option-not-found',
+      staleMention: NAME,
+    })
+  })
+
+  it('keeps stale registration evidence when the option-not-found diagnostic probe throws', async () => {
+    const result = await settle(injectComposeSegments(makeFlowView({ optionFound: false, probeThrows: true }), [
       { type: 'mention', name: NAME },
     ]))
 
