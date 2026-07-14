@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { registerStoryIPC } from '../../../electron/ipc/story-api.js'
+import { createStoryCommands, registerStoryIPC } from '../../../electron/ipc/story-api.js'
 
 function fakeIpcMain() {
   const handlers = new Map()
@@ -32,7 +32,7 @@ beforeEach(async () => {
     fixedScenes,
   }))
   ipc = fakeIpcMain()
-  registerStoryIPC(ipc, {
+  registerStoryIPC(ipc, createStoryCommands({
     keyStore: { getKey: () => 'k' },
     getWindow: () => null,
     llm: {
@@ -40,7 +40,7 @@ beforeEach(async () => {
       splitScenes: vi.fn(),
       writePrompts: vi.fn(),
     },
-  })
+  }))
 })
 
 describe('story:stage-image-first IPC', () => {

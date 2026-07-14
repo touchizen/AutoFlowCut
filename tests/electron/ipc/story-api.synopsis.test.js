@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { registerStoryIPC } from '../../../electron/ipc/story-api.js'
+import { createStoryCommands, registerStoryIPC } from '../../../electron/ipc/story-api.js'
 
 function fakeIpcMain() {
   const handlers = new Map()
@@ -27,11 +27,11 @@ beforeEach(async () => {
       characters: [{ id: '민수', name: '민수', gender: 'male', age: '20대', role: '주인공', appearance: 'young man' }],
     })),
   }
-  registerStoryIPC(ipc, {
+  registerStoryIPC(ipc, createStoryCommands({
     keyStore: { getKey: () => 'k' },
     getWindow: () => ({ webContents: { send: (ch, payload) => sent.push({ ch, payload }) } , isDestroyed: () => false }),
     llm,
-  })
+  }))
 })
 
 describe('story:generate-synopsis IPC', () => {

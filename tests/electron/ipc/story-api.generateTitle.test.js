@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { registerStoryIPC } from '../../../electron/ipc/story-api.js'
+import { createStoryCommands, registerStoryIPC } from '../../../electron/ipc/story-api.js'
 
 function fakeIpcMain() {
   const handlers = new Map()
@@ -20,11 +20,11 @@ beforeEach(async () => {
     writePrompts: vi.fn(async (s) => ({ scenes: s })),
     generateTitle: vi.fn(async () => ({ title: '생성된 제목' })),
   }
-  registerStoryIPC(ipc, {
+  registerStoryIPC(ipc, createStoryCommands({
     keyStore: { getKey: () => 'k' },
     getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
     llm,
-  })
+  }))
 })
 
 describe('story:generate-title IPC', () => {

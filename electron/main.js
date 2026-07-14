@@ -14,7 +14,8 @@ import { registerPremiereIPC } from './ipc/premiere.js'
 import { registerVrewIPC } from './ipc/vrew.js'
 import { registerMcpIPC } from './ipc/mcp.js'
 import { registerGenaiIPC } from './ipc/genai-api.js'
-import { registerStoryIPC } from './ipc/story-api.js'
+import { createStoryCommands, registerStoryIPC } from './ipc/story-api.js'
+import { createToolCore } from './agent/toolCore.js'
 import { registerTtsIPC } from './ipc/tts-api.js'
 import * as llmClaude from './api/llm/llmClaude.js'
 import * as llmCodex from './api/llm/llmCodex.js'
@@ -283,8 +284,11 @@ const sfxFor = (provider) => {
 
 const storyLlm = createStoryLlmRouter({ claude: llmClaude, codex: llmCodex })
 
-// Story pipeline IPC (script/scenes/audio/prompts 스텝 머신 + preload 브릿지).
-registerStoryIPC(ipcMain, {
+// Story pipeline (script/scenes/audio/prompts 스텝 머신).
+//
+// 🔴 **단일 storyCommands** (스펙 D7): IPC(사람)와 Tool Core(에이전트)가 **같은 인스턴스**를 쓴다.
+//    Tool Core 가 자기 machine 을 만들면 둘이 서로 다른 프로젝트를 보게 된다.
+const storyCommands = createStoryCommands({
   keyStore: genaiKeyStore,
   getWindow: () => mainWindow,
   llm: storyLlm,
@@ -294,6 +298,10 @@ registerStoryIPC(ipcMain, {
   ttsFor, // 화자별 provider 라우팅
   sfxFor, // M2b: sfx sourceMode별 라우팅
 })
+registerStoryIPC(ipcMain, storyCommands)
+
+const toolCore = createToolCore()
+toolCore.use(storyCommands)
 
 // Auth IPC (Google OAuth) — opens its own BrowserWindow; no Flow view dependency.
 registerAuthIPC(ipcMain)

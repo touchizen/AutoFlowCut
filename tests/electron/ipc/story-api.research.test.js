@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { registerStoryIPC } from '../../../electron/ipc/story-api.js'
+import { createStoryCommands, registerStoryIPC } from '../../../electron/ipc/story-api.js'
 
 function fakeIpcMain() {
   const handlers = new Map()
@@ -33,11 +33,11 @@ beforeEach(async () => {
     getVideoDetails: vi.fn(async ({ videoId }) => ({ details: { videoId, title: 't', viral: { tier: 'high' } } })),
   }
   factCheck = vi.fn(async () => ({ claims: [{ claim: 'c', verdict: 'supported', evidence: [] }] }))
-  registerStoryIPC(ipc, {
+  registerStoryIPC(ipc, createStoryCommands({
     keyStore: { getKey: () => 'k' },
     getWindow: () => ({ webContents: { send: (ch, payload) => sent.push({ ch, payload }) }, isDestroyed: () => false }),
     llm, youtube, factCheck,
-  })
+  }))
 })
 
 const CHANNELS = ['story:research-search', 'story:research-fetch', 'story:research-analyze', 'story:research-factcheck', 'story:research-commit', 'story:research-skip', 'story:research-select', 'story:research-video-details']

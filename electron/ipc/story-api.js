@@ -47,7 +47,17 @@ function isWithinWorkFolder(projectPath, workFolder) {
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
 }
 
-export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini, loadMetaPrompt, getActiveWorkFolder = () => null, tts, ttsFor, probe, defaultVoice, sfxFor, youtube, factCheck, listClaudeModels = llmClaude.listClaudeModels, listCodexModels = defaultListCodexModels }) {
+/**
+ * 🔴 **단일 storyCommands** (스펙 D7). `machine` 과 `openLock` 의 **유일한 소유자**다.
+ *
+ *     const storyCommands = createStoryCommands(deps)
+ *     registerStoryIPC(ipcMain, storyCommands)
+ *     toolCore.use(storyCommands)
+ *
+ * IPC(사람)와 Tool Core(에이전트)가 **같은 인스턴스**를 쓴다. 별도 Tool Core 가 자기 machine 을
+ * 만들면 둘이 서로 다른 프로젝트를 보게 된다 — 같은 앱 안에서 상태가 갈라진다.
+ */
+export function createStoryCommands({ keyStore, getWindow, llm = llmGemini, loadMetaPrompt, getActiveWorkFolder = () => null, tts, ttsFor, probe, defaultVoice, sfxFor, youtube, factCheck, listClaudeModels = llmClaude.listClaudeModels, listCodexModels = defaultListCodexModels }) {
   let machine = null
   let openLock = Promise.resolve()
 
@@ -74,17 +84,6 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
     if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
   }
 
-  const guarded = (fn) => async (_e, payload = {}) => {
-    if (!machine || payload.projectToken !== machine.projectToken) return { error: 'stale-token' }
-    return fn(payload)
-  }
-
-  // IPC와 이후 agent adapter가 같은 command object를 공유하는 경계. machine은 story:open이 만든
-  // 단일 인스턴스뿐이며 command가 별도 machine/store를 만들지 않는다.
-  const storyCommands = {
-    stageImageFirst: (params) => machine.stageImageFirst(params),
-  }
-
   // 엔진이 보고하는 모델 목록으로 카탈로그를 만든다. CLI 프로세스를 띄우므로 한 번만 하고 캐시한다.
   // 두 엔진을 동시에 조회하고, 실패한 엔진만 정적 목록으로 메운다(다른 엔진까지 되돌리지 않는다).
   let llmCatalogPromise = null
@@ -109,92 +108,125 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
     return llmCatalogPromise
   }
 
-  ipcMain.handle('story:list-llm-options', async () => {
-    const catalog = await loadLlmCatalog()
-    const options = catalog.map((o) => ({ ...o, reasoningEfforts: [...(o.reasoningEfforts || [])] }))
-    return {
-      options,
-      defaultOption: options[0] || { ...DEFAULT_STORY_LLM },
-    }
-  })
+  /**
+   * 툴/IPC 가 공유하는 command 표면. **여기 아래로 `machine` 이 새어나가지 않는다** —
+   * 새어나가면 Tool Core 가 자기 machine 을 만들 길이 생기고, 그게 D7 이 막으려는 버그다.
+   */
+  const commands = {
+    get projectToken() { return machine?.projectToken ?? null },
+    hasProject: () => !!machine,
 
-  ipcMain.handle('story:open', (_e, { projectPath } = {}) => {
-    // 동시 open 레이스 방지 — 직렬화(promise 체인): 이전 open이 끝나야 다음 open이 실행된다
-    const task = openLock.then(async () => {
-      if (!(await validateProjectPath(projectPath))) return { error: 'invalid-project-path' }
-      const activeWorkFolder = getActiveWorkFolder()
-      // activeWorkFolder를 아직 모르면(활성화 전) 기존 검증만 적용 — 하위호환.
-      if (activeWorkFolder && !isWithinWorkFolder(projectPath, activeWorkFolder)) {
-        return { error: 'invalid-project-path' }
-      }
-      if (machine) await machine.abort()
-      machine = createStepMachine({ projectPath, llm, emit, getApiKey: () => keyStore.getKey(), loadMetaPrompt, tts: ttsAdapter, ttsFor, probe: probeFn, defaultVoice: defaultVoiceCfg, sfxFor, youtube: youtubeApi, factCheck: factCheckFn })
-      return machine.open()
-    })
-    openLock = task.then(() => undefined, () => undefined)
-    return task
-  })
+    async listLlmOptions() {
+      const catalog = await loadLlmCatalog()
+      const options = catalog.map((o) => ({ ...o, reasoningEfforts: [...(o.reasoningEfforts || [])] }))
+      return { options, defaultOption: options[0] || { ...DEFAULT_STORY_LLM } }
+    },
 
-  ipcMain.handle('story:get-state', guarded(async () => machine.getState()))
-  ipcMain.handle('story:stage-image-first', guarded(({
-    fixedSceneRevision,
-    imageFirstVariant,
-    fixedScenes,
-    storyboardCsv,
-  }) => storyCommands.stageImageFirst({
-    fixedSceneRevision,
-    imageFirstVariant,
-    fixedScenes,
-    storyboardCsv,
-  })))
-  ipcMain.handle('story:start', guarded(({ step, params }) => machine.start(step, params)))
-  ipcMain.handle('story:abort', guarded(() => machine.abort()))
-  ipcMain.handle('story:push-ack', guarded(({ operationId, pushRevision, ok, reason }) =>
-    machine.ackPush({ operationId, pushRevision, ok, reason })))
-  // M2a-4 IP-A2: export(renderer)가 story 나레이션 배치에 쓸 { manifest, lastPushedRevision }.
-  // guarded 아님 — export 는 현재 열린 프로젝트를 내보내므로 projectToken 없이 그 machine 것을 로드.
-  ipcMain.handle('story:load-audio-package', async (_e, { projectPath } = {}) => {
+    open(projectPath) {
+      // 동시 open 레이스 방지 — 직렬화(promise 체인): 이전 open이 끝나야 다음 open이 실행된다
+      const task = openLock.then(async () => {
+        if (!(await validateProjectPath(projectPath))) return { error: 'invalid-project-path' }
+        const activeWorkFolder = getActiveWorkFolder()
+        // activeWorkFolder를 아직 모르면(활성화 전) 기존 검증만 적용 — 하위호환.
+        if (activeWorkFolder && !isWithinWorkFolder(projectPath, activeWorkFolder)) {
+          return { error: 'invalid-project-path' }
+        }
+        if (machine) await machine.abort()
+        machine = createStepMachine({ projectPath, llm, emit, getApiKey: () => keyStore.getKey(), loadMetaPrompt, tts: ttsAdapter, ttsFor, probe: probeFn, defaultVoice: defaultVoiceCfg, sfxFor, youtube: youtubeApi, factCheck: factCheckFn })
+        return machine.open()
+      })
+      openLock = task.then(() => undefined, () => undefined)
+      return task
+    },
+
+    getState: () => machine.getState(),
+
+    /** 스펙 §2.3 `list_scenes`: **요약 문자열이 아니라 JSON**. */
+    async listScenes() {
+      const { scenes = [] } = await machine.getState()
+      return { scenes }
+    },
+
+    // M2a-4 IP-A2: export(renderer)가 story 나레이션 배치에 쓸 { manifest, lastPushedRevision }.
     // projectPath 가 오면 그 경로 디스크를 직접 읽는다 — fresh session(story view 미진입, machine
-    // 없음)에서도 동작. 경로는 story:open 과 동일하게 검증(절대/traversal/workFolder)해 임의 위치
-    // 읽기를 막는다(Codex round3). projectPath 가 없으면 열린 machine 의 프로젝트(open 시 이미 검증됨).
-    if (projectPath) {
-      if (!(await validateProjectPath(projectPath))) return null
-      const activeWorkFolder = getActiveWorkFolder()
-      if (activeWorkFolder && !isWithinWorkFolder(projectPath, activeWorkFolder)) return null
-      return readAudioPackage(projectPath)
-    }
-    if (!machine) return null
-    return machine.loadAudioPackage()
-  })
-  ipcMain.handle('story:generate-title', guarded(({ scriptMd, options }) => machine.generateTitle(scriptMd, options || {})))
+    // 없음)에서도 동작. 경로는 open 과 동일하게 검증(절대/traversal/workFolder)해 임의 위치 읽기를 막는다.
+    async loadAudioPackage({ projectPath } = {}) {
+      if (projectPath) {
+        if (!(await validateProjectPath(projectPath))) return null
+        const activeWorkFolder = getActiveWorkFolder()
+        if (activeWorkFolder && !isWithinWorkFolder(projectPath, activeWorkFolder)) return null
+        return readAudioPackage(projectPath)
+      }
+      if (!machine) return null
+      return machine.loadAudioPackage()
+    },
+
+    stageImageFirst: (params) => machine.stageImageFirst(params),
+    start: (step, params) => machine.start(step, params),
+    abort: () => machine.abort(),
+    ackPush: (params) => machine.ackPush(params),
+    generateTitle: (scriptMd, options) => machine.generateTitle(scriptMd, options),
+    generateSynopsis: (params) => machine.generateSynopsis(params),
+    reviewSynopsis: (params) => machine.reviewSynopsis(params),
+    confirmSynopsis: (params) => machine.confirmSynopsis(params),
+    synthPreview: (params) => machine.synthPreview(params),
+
+    researchSearch: (params) => machine.researchSearch(params),
+    researchFetchTranscripts: (params) => machine.researchFetchTranscripts(params),
+    researchAnalyze: (params) => machine.researchAnalyze(params),
+    researchFactCheck: (params) => machine.researchFactCheck(params),
+    researchCommit: (params) => machine.researchCommit(params),
+    researchSkip: () => machine.researchSkip(),
+    researchSelect: (params) => machine.researchSelect(params),
+    researchVideoDetails: (params) => machine.researchVideoDetails(params),
+  }
+
+  return commands
+}
+
+/**
+ * IPC 는 **주입받은 단일 commands** 를 쓴다 (스펙 D7). deps 를 받아 자기 commands 를 만들지 않는다 —
+ * 만들 수 있게 두면 main 이 실수로 두 번째 machine 을 띄우고, 에이전트와 사람의 상태가 갈라진다.
+ *
+ * 핸들러 21개 = **18 guarded + 3 custom**. custom 은 token guard 를 안 타는 것들:
+ * `story:list-llm-options`(프로젝트 무관), `story:open`(토큰을 발급하는 쪽), `story:load-audio-package`(경로 직독 허용).
+ * D7 의 궤적: 20 → (D24a `stage-image-first`) **21** → (D24b `commit-image-first-script`) 22.
+ */
+export function registerStoryIPC(ipcMain, commands) {
+  const guarded = (fn) => async (_e, payload = {}) => {
+    if (!commands.hasProject() || payload.projectToken !== commands.projectToken) return { error: 'stale-token' }
+    return fn(payload)
+  }
+
+  ipcMain.handle('story:list-llm-options', () => commands.listLlmOptions())
+  ipcMain.handle('story:open', (_e, { projectPath } = {}) => commands.open(projectPath))
+  ipcMain.handle('story:load-audio-package', (_e, { projectPath } = {}) => commands.loadAudioPackage({ projectPath }))
+
+  ipcMain.handle('story:get-state', guarded(() => commands.getState()))
+  ipcMain.handle('story:stage-image-first', guarded(({ fixedSceneRevision, imageFirstVariant, fixedScenes, storyboardCsv }) =>
+    commands.stageImageFirst({ fixedSceneRevision, imageFirstVariant, fixedScenes, storyboardCsv })))
+  ipcMain.handle('story:start', guarded(({ step, params }) => commands.start(step, params)))
+  ipcMain.handle('story:abort', guarded(() => commands.abort()))
+  ipcMain.handle('story:push-ack', guarded(({ operationId, pushRevision, ok, reason }) =>
+    commands.ackPush({ operationId, pushRevision, ok, reason })))
+  ipcMain.handle('story:generate-title', guarded(({ scriptMd, options }) => commands.generateTitle(scriptMd, options || {})))
   // 슬라이스4(§3.4 + §v2.8 M4): 시놉시스 생성 side action — title/pasted 분기는 machine이 처리.
   // 리서치 §5 M2: 기존 채널에 useResearch 필드 추가(신규 채널 아님) — true일 때만 research.json 주입.
   ipcMain.handle('story:generate-synopsis', guarded(({ type, title, pastedScript, options, useResearch }) =>
-    machine.generateSynopsis({ type, title, pastedScript, useResearch, options: options || {} })))
+    commands.generateSynopsis({ type, title, pastedScript, useResearch, options: options || {} })))
   // 시놉시스 검수(spec 2026-07-10): draft-only — 결과를 돌려줄 뿐 저장하지 않는다.
   ipcMain.handle('story:review-synopsis', guarded(({ synopsisMd, characters, options, review }) =>
-    machine.reviewSynopsis({ synopsisMd, characters, options: options || {}, review })))
-  // 슬라이스4(§v2.8 M1 + §v2.9): 시놉시스 확정 커밋 채널(title·pasted 공통) — characters→speakers
-  // 반영 + charactersConfirmed=true + pushCharacters emit은 machine.confirmSynopsis가 수행.
-  ipcMain.handle('story:confirm-synopsis', guarded(({
-    synopsisMd,
-    characters,
-    sceneMode,
-    imageFirstVariant,
-    fixedSceneRevision,
-  }) => machine.confirmSynopsis({
-    synopsisMd,
-    characters,
-    sceneMode,
-    imageFirstVariant,
-    fixedSceneRevision,
-  })))
+    commands.reviewSynopsis({ synopsisMd, characters, options: options || {}, review })))
+  // 슬라이스4(§v2.8 M1 + §v2.9): 시놉시스 확정 커밋 채널(title·pasted 공통).
+  ipcMain.handle('story:confirm-synopsis', guarded(({ synopsisMd, characters, sceneMode, imageFirstVariant, fixedSceneRevision }) =>
+    commands.confirmSynopsis({ synopsisMd, characters, sceneMode, imageFirstVariant, fixedSceneRevision })))
   // 슬라이스1: 세그먼트 단건 TTS 테스트(배치와 분리, 스텝 상태 미변경).
-  ipcMain.handle('story:tts-preview', guarded(({ segmentIds, speakers, sfxSources }) => machine.synthPreview({ segmentIds, speakers, sfxSources })))
+  ipcMain.handle('story:tts-preview', guarded(({ segmentIds, speakers, sfxSources }) =>
+    commands.synthPreview({ segmentIds, speakers, sfxSources })))
 
   // 리서치(spec §5): story:research-* guarded 핸들러 — machine research side action 위임.
   ipcMain.handle('story:research-search', guarded(({ query, keyword, maxResults, dateFilter }) =>
-    machine.researchSearch({
+    commands.researchSearch({
       keyword: query ?? keyword,
       // m5(R1): maxResults를 1~50으로 클램프 — 과대 pool로 인한 상세조회 폭주/타임아웃 방지.
       ...(maxResults != null ? { maxResults: Math.min(Math.max(1, Math.floor(maxResults)), 50) } : {}),
@@ -203,20 +235,19 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
     })))
   // M4(R1): fetch도 언어 옵션을 받아 자막 1순위 언어를 프로젝트 언어로(analyze/factcheck 미러).
   ipcMain.handle('story:research-fetch', guarded(({ videoIds, options }) =>
-    machine.researchFetchTranscripts({ videoIds: videoIds || [], options: options || {} })))
+    commands.researchFetchTranscripts({ videoIds: videoIds || [], options: options || {} })))
   ipcMain.handle('story:research-analyze', guarded(({ videoIds, options }) =>
-    machine.researchAnalyze({ videoIds, options: options || {} })))
+    commands.researchAnalyze({ videoIds, options: options || {} })))
   ipcMain.handle('story:research-factcheck', guarded(({ options }) =>
-    machine.researchFactCheck({ options: options || {} })))
+    commands.researchFactCheck({ options: options || {} })))
   // 개선4/m3: adoptedIndices — 팩트체크 주장의 수동 채택 인덱스 목록(미전달 시 supported만).
   ipcMain.handle('story:research-commit', guarded(({ analysis, verifiedClaims, adoptedIndices }) =>
-    machine.researchCommit({ analysis, verifiedClaims, adoptedIndices })))
-  ipcMain.handle('story:research-skip', guarded(() => machine.researchSkip()))
+    commands.researchCommit({ analysis, verifiedClaims, adoptedIndices })))
+  ipcMain.handle('story:research-skip', guarded(() => commands.researchSkip()))
   // m5: 수동 URL 카드·fetch 전 선택 영속(draft) — 탭전환/재오픈 유실 방지.
   ipcMain.handle('story:research-select', guarded(({ selectedVideoIds, manualVideos }) =>
-    machine.researchSelect({ selectedVideoIds, manualVideos })))
-  // 상세 모달(2026-07-08): 영상 카드 더블클릭 시 단일 영상 상세 조회(구독자·게시일·바이럴 지수).
-  // 파이프라인 상태 불변 — 온디맨드 읽기 전용.
+    commands.researchSelect({ selectedVideoIds, manualVideos })))
+  // 상세 모달(2026-07-08): 영상 카드 더블클릭 시 단일 영상 상세 조회. 파이프라인 상태 불변 — 온디맨드 읽기 전용.
   ipcMain.handle('story:research-video-details', guarded(({ videoId }) =>
-    machine.researchVideoDetails({ videoId })))
+    commands.researchVideoDetails({ videoId })))
 }

@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { registerStoryIPC } from '../../../electron/ipc/story-api.js'
+import { createStoryCommands, registerStoryIPC } from '../../../electron/ipc/story-api.js'
 import { defaultStoryState } from '../../../electron/story/storyStore.js'
 
 function fakeIpcMain() {
@@ -22,14 +22,14 @@ beforeEach(async () => {
     writePrompts: vi.fn(async (s) => ({ scenes: s })),
     generateTitle: vi.fn(async () => ({ title: '자동제목' })),
   }
-  registerStoryIPC(ipc, {
+  registerStoryIPC(ipc, createStoryCommands({
     keyStore: { getKey: () => 'k' },
     getWindow: () => ({ webContents: { send: (ch, p) => sent.push({ ch, p }) }, isDestroyed: () => false }),
     llm,
     // 실제 CLI/app-server 를 띄우지 않는다. []는 "조회 실패" → 정적 카탈로그 폴백.
     listClaudeModels: async () => [],
     listCodexModels: async () => [],
-  })
+  }))
 })
 
 describe('story IPC', () => {
@@ -132,12 +132,12 @@ describe('story IPC', () => {
     const outsideDir = await mkdtemp(path.join(tmpdir(), 'outside-'))
     const workFolder = await mkdtemp(path.join(tmpdir(), 'work-'))
     const ipc2 = fakeIpcMain()
-    registerStoryIPC(ipc2, {
+    registerStoryIPC(ipc2, createStoryCommands({
       keyStore: { getKey: () => 'k' },
       getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
       llm: { generateScript: vi.fn(), splitScenes: vi.fn(), writePrompts: vi.fn() },
       getActiveWorkFolder: () => workFolder,
-    })
+    }))
     const r = await ipc2.invoke('story:open', { projectPath: outsideDir })
     expect(r.error).toBe('invalid-project-path')
   })
@@ -148,12 +148,12 @@ describe('story IPC', () => {
     const projectDir = path.join(workFolder, 'my-project')
     await mkdir(projectDir)
     const ipc2 = fakeIpcMain()
-    registerStoryIPC(ipc2, {
+    registerStoryIPC(ipc2, createStoryCommands({
       keyStore: { getKey: () => 'k' },
       getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
       llm: { generateScript: vi.fn(), splitScenes: vi.fn(), writePrompts: vi.fn() },
       getActiveWorkFolder: () => workFolder,
-    })
+    }))
     const r = await ipc2.invoke('story:open', { projectPath: projectDir })
     expect(r.error).toBeUndefined()
     expect(r.projectToken).toBeTruthy()
@@ -172,7 +172,7 @@ describe('story IPC', () => {
     const ipc2 = fakeIpcMain()
     const tts = { capabilities: () => ({ maxConcurrency: 2 }), synthesize: async ({ text }) => ({ audio: Buffer.from('A:' + text), format: 'wav' }) }
     const probe = async () => 7000
-    registerStoryIPC(ipc2, {
+    registerStoryIPC(ipc2, createStoryCommands({
       keyStore: { getKey: () => 'k' },
       getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
       llm: {
@@ -185,7 +185,7 @@ describe('story IPC', () => {
       },
       tts,
       probe,
-    })
+    }))
     const { projectToken } = await ipc2.invoke('story:open', { projectPath: dir })
     await ipc2.invoke('story:start', { projectToken, step: 'script', params: { input: { type: 'title', title: 'T' }, options: { language: 'ko' } } })
     await ipc2.invoke('story:start', { projectToken, step: 'scenes', params: {} })
@@ -201,7 +201,7 @@ describe('story IPC', () => {
     const ipc2 = fakeIpcMain()
     const tts = { capabilities: () => ({ maxConcurrency: 2 }), synthesize: async ({ text }) => ({ audio: Buffer.from('A:' + text), format: 'wav' }) }
     const probe = async () => 7000
-    registerStoryIPC(ipc2, {
+    registerStoryIPC(ipc2, createStoryCommands({
       keyStore: { getKey: () => 'k' },
       getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
       llm: {
@@ -215,7 +215,7 @@ describe('story IPC', () => {
       tts,
       probe,
       defaultVoice: { provider: 'typecast', voiceId: 'tc_default' },
-    })
+    }))
     const { projectToken } = await ipc2.invoke('story:open', { projectPath: dir })
     await ipc2.invoke('story:start', { projectToken, step: 'script', params: { input: { type: 'title', title: 'T' }, options: { language: 'ko' } } })
     await ipc2.invoke('story:start', { projectToken, step: 'scenes', params: {} })
@@ -276,12 +276,12 @@ describe('story IPC', () => {
     await writeFile(path.join(outside, 'story', 'story.json'),
       JSON.stringify({ ...defaultStoryState(), lastPushedRevision: 1 }))
     const ipc2 = fakeIpcMain()
-    registerStoryIPC(ipc2, {
+    registerStoryIPC(ipc2, createStoryCommands({
       keyStore: { getKey: () => 'k' },
       getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
       llm: { generateScript: vi.fn(), splitScenes: vi.fn(), writePrompts: vi.fn() },
       getActiveWorkFolder: () => workFolder,
-    })
+    }))
     expect(await ipc2.invoke('story:load-audio-package', { projectPath: outside })).toBeNull()
   })
 
@@ -330,13 +330,13 @@ describe('story:list-llm-options — 동적 카탈로그', () => {
 
   function register(listClaudeModels) {
     const ipc2 = fakeIpcMain()
-    registerStoryIPC(ipc2, {
+    registerStoryIPC(ipc2, createStoryCommands({
       keyStore: { getKey: () => 'k' },
       getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
       llm,
       listClaudeModels,
       listCodexModels: async () => [],
-    })
+    }))
     return ipc2
   }
 
@@ -381,13 +381,13 @@ describe('story:list-llm-options — codex 동적 카탈로그', () => {
 
   function register({ listClaudeModels = async () => [], listCodexModels = async () => [] }) {
     const ipc2 = fakeIpcMain()
-    registerStoryIPC(ipc2, {
+    registerStoryIPC(ipc2, createStoryCommands({
       keyStore: { getKey: () => 'k' },
       getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
       llm,
       listClaudeModels,
       listCodexModels,
-    })
+    }))
     return ipc2
   }
 
