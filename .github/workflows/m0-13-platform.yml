@@ -17,6 +17,11 @@
 
 name: M0-13 packaged adapter (mac/win/linux)
 
+# 🔒 Release 는 만들지 않는다. 토큰 권한을 read 로 잠그고(릴리스 생성 권한 자체가 없다),
+#    electron-builder 에는 `--publish never` 를 명시한다. 산출물은 Actions 아티팩트일 뿐이다.
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
   push:
@@ -39,8 +44,14 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '20', cache: 'npm' }
       - run: npm ci
+      - name: Strip signing from the build config (CI has no certificates)
+        # 🔒 스파이크는 **런타임**을 잰다. 서명/공증/Release 는 전부 로컬 릴리스 빌드의 몫이다.
+        #    CLI 의 `-c.win.signAndEditExecutable=false` 는 electron-builder 가 config **파일 경로**로
+        #    오해해서 죽는다 (실측) → 설정을 직접 지운다. 체크아웃은 러너에서만 산다.
+        run: |
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.build.forceCodeSigning=false;if(p.build.win)delete p.build.win.signtoolOptions;fs.writeFileSync('package.json',JSON.stringify(p,null,2))"
       - name: Pack (--dir, unsigned)
-        run: npm run pack -- -c.forceCodeSigning=false
+        run: npm run pack -- --publish never
       - name: M0-13 spike
         run: npm run test:spike -- tests/spike/m0-13.codexPackagedAdapter.spike.test.js
       - uses: actions/upload-artifact@v4
@@ -60,8 +71,14 @@ jobs:
 
       # 서명은 끈다 — 스파이크는 **런타임**을 재지 서명을 재지 않는다.
       # (repo 는 forceCodeSigning:true + signtoolOptions.certificateSha1 이라 CI 엔 인증서가 없어 죽는다.)
+      - name: Strip signing from the build config (CI has no certificates)
+        # 🔒 스파이크는 **런타임**을 잰다. 서명/공증/Release 는 전부 로컬 릴리스 빌드의 몫이다.
+        #    CLI 의 `-c.win.signAndEditExecutable=false` 는 electron-builder 가 config **파일 경로**로
+        #    오해해서 죽는다 (실측) → 설정을 직접 지운다. 체크아웃은 러너에서만 산다.
+        run: |
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.build.forceCodeSigning=false;if(p.build.win)delete p.build.win.signtoolOptions;fs.writeFileSync('package.json',JSON.stringify(p,null,2))"
       - name: Pack (--dir, unsigned)
-        run: npm run pack -- -c.forceCodeSigning=false -c.win.signAndEditExecutable=false
+        run: npm run pack -- --publish never
 
       # 🔴 **공백이 든 경로로 옮긴다.** NSIS 는 `C:\Program Files\...` 같은 데 설치된다 —
       #    codex 가 그 exe 를 MCP server 로 spawn 할 때 **CreateProcess quoting 이 여기서 깨진다.**
@@ -95,7 +112,14 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '20', cache: 'npm' }
       - run: npm ci
-      - run: npm run pack
+      - name: Strip signing from the build config (CI has no certificates)
+        # 🔒 스파이크는 **런타임**을 잰다. 서명/공증/Release 는 전부 로컬 릴리스 빌드의 몫이다.
+        #    CLI 의 `-c.win.signAndEditExecutable=false` 는 electron-builder 가 config **파일 경로**로
+        #    오해해서 죽는다 (실측) → 설정을 직접 지운다. 체크아웃은 러너에서만 산다.
+        run: |
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.build.forceCodeSigning=false;if(p.build.win)delete p.build.win.signtoolOptions;fs.writeFileSync('package.json',JSON.stringify(p,null,2))"
+      - name: Pack (--dir, unsigned)
+        run: npm run pack -- --publish never
       - name: M0-13 spike
         run: npm run test:spike -- tests/spike/m0-13.codexPackagedAdapter.spike.test.js
       - uses: actions/upload-artifact@v4
@@ -115,8 +139,14 @@ jobs:
         with: { node-version: '20', cache: 'npm' }
       - run: sudo apt-get update && sudo apt-get install -y libfuse2
       - run: npm ci
+      - name: Strip signing from the build config (CI has no certificates)
+        # 🔒 스파이크는 **런타임**을 잰다. 서명/공증/Release 는 전부 로컬 릴리스 빌드의 몫이다.
+        #    CLI 의 `-c.win.signAndEditExecutable=false` 는 electron-builder 가 config **파일 경로**로
+        #    오해해서 죽는다 (실측) → 설정을 직접 지운다. 체크아웃은 러너에서만 산다.
+        run: |
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.build.forceCodeSigning=false;if(p.build.win)delete p.build.win.signtoolOptions;fs.writeFileSync('package.json',JSON.stringify(p,null,2))"
       - name: Build real AppImage
-        run: npm run pack -- --linux AppImage
+        run: npm run pack -- --publish never --linux AppImage
       - name: Point the spike at the AppImage itself
         run: |
           APPIMAGE=$(ls release/*.AppImage | head -1)
