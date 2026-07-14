@@ -212,21 +212,52 @@ function targetTriple({ platform = process.platform, arch = process.arch } = {})
   throw new Error(`Unsupported Codex platform: ${platform} (${arch})`)
 }
 
-export function resolveCodexExecutablePath({ platform = process.platform, arch = process.arch } = {}) {
+/**
+ * 🔴 **`app.asar` 는 디렉토리가 아니라 파일이다.**
+ *
+ *    Electron 은 `fs` 를 asar 투명 처리하지만 **`child_process.spawn` 은 안 한다.**
+ *    `require.resolve` 는 asar **안** 경로를 주므로, 그대로 spawn 하면:
+ *      - `existsSync(경로)` → **true** (가드가 통과한다 — 안심시킨다)
+ *      - `spawn(경로)`      → **ENOTDIR** (app.asar 를 디렉토리로 취급하려다 실패)
+ *
+ *    실앱 실측: **패키징 앱에서만** 에이전트가 `spawn ENOTDIR` 로 죽었다.
+ *    dev 엔 asar 가 없어서 **원리적으로 안 보인다.** (`asarUnpack` 이 바이너리를
+ *    `app.asar.unpacked/` 로 풀어두므로, 실행은 그쪽 경로로 해야 한다.)
+ */
+export function toUnpackedPath(filePath) {
+  return String(filePath).includes(`app.asar${path.sep}`) || String(filePath).includes('app.asar/')
+    ? String(filePath).replace(/app\.asar(?!\.unpacked)/, 'app.asar.unpacked')
+    : String(filePath)
+}
+
+/** 기본 resolver. 테스트가 패키징(asar) 레이아웃을 흉내낼 수 있게 주입 가능하다. */
+function defaultResolvePlatformPackageJson(platformPackage) {
   const require = createRequire(import.meta.url)
-  const triple = targetTriple({ platform, arch })
-  const platformPackage = PLATFORM_PACKAGE_BY_TARGET[triple]
   const codexPackageJson = require.resolve('@openai/codex/package.json')
   const codexRequire = createRequire(codexPackageJson)
-  const platformPackageJson = codexRequire.resolve(`${platformPackage}/package.json`)
-  const executable = path.join(
+  return codexRequire.resolve(`${platformPackage}/package.json`)
+}
+
+export function resolveCodexExecutablePath({
+  platform = process.platform,
+  arch = process.arch,
+  // 🔴 주입 가능해야 한다 — 안 그러면 **패키징(asar) 레이아웃을 테스트에서 재현할 길이 없고**,
+  //    `toUnpackedPath` 를 안 쓰는 뮤턴트가 살아남는다 (실측: 살아남았다).
+  resolvePlatformPackageJson = defaultResolvePlatformPackageJson,
+  existsSyncImpl = existsSync,
+} = {}) {
+  const triple = targetTriple({ platform, arch })
+  const platformPackage = PLATFORM_PACKAGE_BY_TARGET[triple]
+  const platformPackageJson = resolvePlatformPackageJson(platformPackage)
+  // 🔴 spawn 은 asar 를 못 뚫는다 — 실행 경로는 반드시 unpacked 여야 한다.
+  const executable = toUnpackedPath(path.join(
     path.dirname(platformPackageJson),
     'vendor',
     triple,
     'bin',
     platform === 'win32' ? 'codex.exe' : 'codex',
-  )
-  if (!existsSync(executable)) throw new Error(`Codex executable not found: ${executable}`)
+  ))
+  if (!existsSyncImpl(executable)) throw new Error(`Codex executable not found: ${executable}`)
   return executable
 }
 
