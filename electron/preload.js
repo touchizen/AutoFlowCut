@@ -152,6 +152,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener(channel, listener)
   },
 
+  // Agent tool bridge (D14) — main ↔ renderer correlated request/response.
+  // 🔴 표면은 **셋뿐**이다: request 수신 + 응답 + event. renderer 가 main 의 pending 을 직접
+  //    들여다보거나 다른 세션의 요청에 답할 길을 만들지 않는다.
+  onToolBridgeRequest: (cb) => {
+    const listener = (_e, payload) => cb(payload)
+    ipcRenderer.on('agent:bridge-request', listener)
+    return () => ipcRenderer.removeListener('agent:bridge-request', listener)
+  },
+  respondToolBridge: (payload) => ipcRenderer.send('agent:bridge-response', payload),
+  emitToolBridgeEvent: (payload) => ipcRenderer.send('agent:bridge-event', payload),
+
   // Auth
   googleSignIn: () => ipcRenderer.invoke('auth:google-sign-in'),
   googleSignOut: () => ipcRenderer.invoke('auth:google-sign-out'),

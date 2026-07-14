@@ -16,6 +16,7 @@ import { registerMcpIPC } from './ipc/mcp.js'
 import { registerGenaiIPC } from './ipc/genai-api.js'
 import { createStoryCommands, registerStoryIPC } from './ipc/story-api.js'
 import { createToolCore } from './agent/toolCore.js'
+import { createToolBridge } from './agent/toolBridge.js'
 import { registerTtsIPC } from './ipc/tts-api.js'
 import * as llmClaude from './api/llm/llmClaude.js'
 import * as llmCodex from './api/llm/llmCodex.js'
@@ -302,6 +303,18 @@ registerStoryIPC(ipcMain, storyCommands)
 
 const toolCore = createToolCore()
 toolCore.use(storyCommands)
+
+// Tool Core ↔ renderer seam (D14). admission(구독 게이트/크레딧)과 detached 파이프라인이 renderer 에
+// 살지만, 그 **결과값이 main 의 Tool Core 호출자에게 돌아와야** 에이전트가 승인/거부를 안다.
+const toolBridge = createToolBridge({ getWindow: () => mainWindow })
+ipcMain.on('agent:bridge-response', (_e, payload) => {
+  // renderer 가 보낸 것은 신뢰하지 않는다 — 모르는 id/malformed 는 toolBridge 가 거부하고,
+  // 여기서 throw 가 새어나가 IPC 를 죽이지 않게 막는다.
+  try { toolBridge.handleResponse(payload) } catch (err) { console.error('[toolBridge] bad response:', err.message) }
+})
+ipcMain.on('agent:bridge-event', (_e, payload) => {
+  try { toolBridge.handleEvent(payload) } catch (err) { console.error('[toolBridge] bad event:', err.message) }
+})
 
 // Auth IPC (Google OAuth) — opens its own BrowserWindow; no Flow view dependency.
 registerAuthIPC(ipcMain)
