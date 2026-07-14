@@ -38,6 +38,16 @@ import ReferenceDetailModal from '../../src/components/ReferenceDetailModal'
 import { toast } from '../../src/components/Toast'
 import { syncRefToFlow } from '../../src/utils/flowCharacterSync'
 
+// #R37: onUpdate 는 객체 또는 **함수 패치**를 받는다(ReferencePanel.handleUpdateRef 가 live ref 에
+//   적용). 백그라운드 완료가 저장 시점 스냅샷을 통째로 쓰면 그 사이의 새 편집을 덮어쓰므로,
+//   모달은 자기가 소유한 필드만 함수형으로 patch 한다. 테스트도 부모와 동일하게 해석한다.
+const applyPatch = (arg, live) => (typeof arg === 'function' ? arg(live) : arg)
+const lastPatch = (onUpdate, live) => {
+  const calls = onUpdate.mock.calls
+  return applyPatch(calls[calls.length - 1][1], live)
+}
+
+
 const charRef = {
   id: 11,
   name: 'king',
@@ -113,7 +123,7 @@ describe('#R33: ReferenceDetailModal Flow sync button', () => {
     })
     expect(onUpload).toHaveBeenCalledWith('KINGB64', expect.objectContaining({ type: 'scene', name: 'intro' }))
     // #R34: 첫 호출은 syncing:true(스피너), 마지막 호출이 결과 패치.
-    const saved = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][1]
+    const saved = lastPatch(onUpdate, sceneRef)
     expect(saved.mediaId).toBe('scene-media')
     expect(saved.syncing).toBe(false)
     expect(toast.success).toHaveBeenCalled()
@@ -159,8 +169,7 @@ describe('#R33: ReferenceDetailModal Flow sync button', () => {
     expect(window.electronAPI.renameFlowCharacter).toHaveBeenCalled()
     expect(toast.error).toHaveBeenCalled()
     // rename 실패 → 마지막 패치가 미동기화(failed/registered:false) 여야 한다
-    const calls = onUpdate.mock.calls.map(c => c[1])
-    const last = calls[calls.length - 1]
+    const last = lastPatch(onUpdate, syncedChar)
     expect(last.flowNameSyncStatus).toBe('failed')
     expect(last.registered).toBe(false)
   })
@@ -198,8 +207,8 @@ describe('#R33: ReferenceDetailModal Flow sync button', () => {
     expect(onUpload).toHaveBeenCalledWith('KINGB64', expect.objectContaining({
       type: 'character', name: 'king', refId: 11,
     }))
-    // entity 필드가 synced 로 patch 되어 onUpdate
-    expect(onUpdate).toHaveBeenCalledWith(0, expect.objectContaining({
+    // entity 필드가 synced 로 patch 되어 onUpdate (함수 패치 → live 에 적용해 확인)
+    expect(lastPatch(onUpdate, charRef)).toEqual(expect.objectContaining({
       entityId: 'new-ent', mediaId: 'new-media', flowNameSyncStatus: 'synced', registered: true,
     }))
     expect(toast.success).toHaveBeenCalled()
@@ -254,9 +263,10 @@ describe('#R33: ReferenceDetailModal Flow sync button', () => {
     expect(onUpload).toHaveBeenCalled()
     expect(toast.error).toHaveBeenCalled()
     // #R34: onUpdate 는 syncing 플래그(true→false)용으로 호출되지만, 동기화 패치(synced)는 적용 안 됨.
-    const calls = onUpdate.mock.calls.map(c => c[1])
-    expect(calls.every(r => r.flowNameSyncStatus !== 'synced')).toBe(true)
+    // 함수 패치를 live 에 적용해 실제 결과로 검사한다(부모 handleUpdateRef 와 동일).
+    const calls = onUpdate.mock.calls.map(c => applyPatch(c[1], charRef))
     // 마지막 호출은 스피너 해제(syncing:false)
+    expect(calls.every(r => r.flowNameSyncStatus !== 'synced')).toBe(true)
     expect(calls[calls.length - 1].syncing).toBe(false)
   })
 })

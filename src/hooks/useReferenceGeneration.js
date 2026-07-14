@@ -4,6 +4,7 @@
 
 import { useState, useRef, useCallback } from 'react'
 import { entityPatchForNewImage } from '../utils/refEntityRegistration'
+import { runFlowViewOperation } from '../utils/flowCharacterCoordinator'
 import { RESOURCE, STYLE_PRESETS } from '../config/defaults'
 import { fileSystemAPI } from './useFileSystem'
 import { checkFolderPermission, checkAuthToken, checkFlowProjectReady } from '../utils/guards'
@@ -208,7 +209,9 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     //   못 찾는다. main 이 상세페이지 이름칸 타이핑으로 스토어를 갱신하지 못했을 때만(nameApplied:false)
     //   기존 방식(프로젝트 나갔다 재진입)으로 폴백한다 — 성공했으면 그 왕복을 통째로 건너뛴다.
     if (genResult?.entityId && genResult.nameApplied === false) {
-      try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
+      // #R37: 공유 flowView 직렬 큐에 태운다(await 금지 — 여기는 coordinator 태스크 안이라
+      //   큐를 기다리면 자기 자신을 기다려 교착한다). await 없이 넣으면 현재 태스크 뒤에 줄 선다.
+      runFlowViewOperation(() => window.electronAPI?.refreshFlowComposer?.()).catch(() => {})
     }
     const donePatch = { name: ref.name || `ref_${index + 1}`, data: savedDataUrl, filePath, dataStorage: filePath ? 'file' : 'base64', mediaId, caption, status: 'done', errorMessage: null, generatedAt: Date.now(), ...(entityPatch || {}) }
     setReferences(prev => prev.map((r, i) => i === index ? { ...r, ...donePatch } : r))

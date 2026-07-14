@@ -59,3 +59,23 @@ describe('#R37 — API 모드 재생성 후 Sync 가 새 이미지를 올린다'
     expect(planCharacterSync(regenerated)).toBe('upload')
   })
 })
+
+/**
+ * 리뷰 지적: MCP 의 imagePath 감지를 되돌려도 전 테스트가 초록이었다. 배선을 소스로 고정한다.
+ * 이미지 소스는 data / filePath / **imagePath** 세 가지다 — 하나라도 빠지면 그 경로로 갈아낀 새
+ * 이미지가 옛 entity 를 물고 있어, Sync 가 옛 entity 만 재등록하고 씬은 옛 얼굴로 생성된다.
+ */
+describe('#R37 배선 — imagePath 가 이미지 소스로 인정된다', () => {
+  it('MCP update-reference 의 새 이미지 감지가 imagePath 를 포함한다', () => {
+    const src = read('src/hooks/useMcpServer.js')
+    const line = src.split('\n').find(l => l.includes('bringsNewImage'))
+    expect(line).toBeTruthy()
+    for (const f of ['data', 'filePath', 'imagePath']) expect(line).toContain(`'${f}' in data.fields`)
+  })
+
+  it('CSV 머지(mergeReferences)가 이미지 변경 시 entity 를 무효화한다', () => {
+    const src = read('src/utils/parsers.js')
+    expect(src).toContain('imageChanged')
+    expect(src).toMatch(/imageChanged[\s\S]{0,200}entityId: null/)
+  })
+})

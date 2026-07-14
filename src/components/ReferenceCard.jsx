@@ -6,9 +6,9 @@ import { useState, useRef, useEffect } from 'react'
 import { REFERENCE_TYPES } from '../config/defaults'
 import { getRatioClass, resolveImageSrc, hasImageData } from '../utils/formatters'
 import { fileSystemAPI } from '../hooks/useFileSystem'
-import { applyEntityRegistrationPatch } from '../utils/refEntityRegistration'
+import { applyEntityRegistrationPatch, clearedImageFields } from '../utils/refEntityRegistration'
 import { needsComposerRefresh, refBadgeState, isSyncInFlight } from '../utils/flowCharacterSync'
-import { runFlowCharacterOperation } from '../utils/flowCharacterCoordinator'
+import { runFlowCharacterOperation, runFlowViewOperation } from '../utils/flowCharacterCoordinator'
 import HoverImageBalloon from './HoverImageBalloon'
 import LazyImage from './LazyImage'
 import { StopwatchIcon, ElapsedTime } from './StopwatchIcon'
@@ -192,7 +192,13 @@ export default function ReferenceCard({
 
       // #R33: 캐릭터 entity 등록 직후 'Untitled Character' stale 캐시/멘션 피커 옛 이름 방지(비차단).
       //   main 이 상세페이지 이름칸에 타이핑했으면(nameApplied) 재진입 왕복이 불필요하다.
-      if (needsComposerRefresh(reference, uploadResult)) { try { window.electronAPI?.refreshFlowComposer?.() } catch (_e) {} }
+      // #R37: 공유 flowView 직렬 큐에 태운다 — loadURL 재로드가 다른 업로드의 캡처 버퍼를 날리면
+      //   uploadImage 응답을 못 잡고, 재시도가 Flow 에 entity 를 하나 더 만든다.
+      //   ⚠️ await 하면 안 된다. 여기는 coordinator 태스크 안이라, 큐를 기다리면 자기 자신을 기다려
+      //   교착한다. await 없이 넣으면 현재 태스크 뒤에 줄 서서 실행된다(직렬화는 그대로 보장).
+      if (needsComposerRefresh(reference, uploadResult)) {
+        runFlowViewOperation(() => window.electronAPI?.refreshFlowComposer?.()).catch(() => {})
+      }
      }
      // #R34-fix: onUpload reject/예외 시에도 finishUpload() 보장 + unhandled rejection 방지.
      try {
@@ -294,7 +300,7 @@ export default function ReferenceCard({
           </button>
           {showRemoveMenu && (
             <div className="remove-menu" onMouseLeave={() => setShowRemoveMenu(false)}>
-              <button onClick={() => { setShowRemoveMenu(false); onUpdate(index, { ...reference, data: null, filePath: null, mediaId: null, caption: null, dataStorage: null, entityId: null, workflowId: null, registered: null, flowNameSyncStatus: null }) }}>
+              <button onClick={() => { setShowRemoveMenu(false); onUpdate(index, { ...reference, ...clearedImageFields() }) }}>
                 {/* #R29-1: 이미지 제거 시 Flow 캐릭터 엔티티 필드도 비운다 — 안 그러면 sceneMentions 가
                     여전히 mention-eligible 로 보고 @name 이 옛 캐릭터를 주입한다(ReferenceDetailModal 과 동일 정책). */}
                 {t('reference.clearImage') || '이미지만 제거'}

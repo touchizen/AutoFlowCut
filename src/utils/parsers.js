@@ -831,15 +831,30 @@ export function mergeReferences(existing, newRefs, updateExisting = true) {
 
     if (existingIdx !== -1) {
       if (updateExisting) {
-        // 기존 레퍼런스 업데이트 (mediaId 유지, 새 이미지가 있으면 덮어쓰기)
+        const prev = updated[existingIdx]
+        // #R37: 이미지가 **실제로 바뀌면** 옛 Flow entity 를 비운다. 안 비우면 이미지만 새것이고
+        //   entityId 는 옛 캐릭터를 가리켜, 이후 Sync 가 repair 로 빠져 옛 entity 만 재등록하고
+        //   새 이미지는 영영 업로드되지 않는다(씬이 옛 얼굴로 생성). ReferenceCard #R31-3 와 동일 정책.
+        //   ⚠️ 안 바뀌었으면 건드리지 않는다 — 멀쩡한 동기화를 깨면 재업로드가 돌아 중복 entity 가 생긴다.
+        const pathChanged = !!newRef.imagePath && newRef.imagePath !== prev.imagePath
+        const dataChanged = !!newRef.data && newRef.data !== prev.data
+        const imageChanged = pathChanged || dataChanged
+        // #R37: 경로가 바뀌면 옛 base64(data)를 **반드시 비운다.** syncRefToFlow 는 data 를 경로보다
+        //   우선하므로(flowCharacterSync), 안 비우면 새 경로 로드가 실패했을 때 **옛 이미지를 새 entity 로
+        //   업로드**한다 — 이미지는 그대로인데 Flow 에 캐릭터만 하나 더 생긴다.
+        const nextData = dataChanged ? newRef.data : (pathChanged ? null : prev.data)
         updated[existingIdx] = {
-          ...updated[existingIdx],
+          ...prev,
           type: newRef.type,
           category: newRef.category,
           prompt: newRef.prompt,
-          imagePath: newRef.imagePath || updated[existingIdx].imagePath,
-          // 새 레퍼런스에 이미지 데이터가 있으면 사용
-          data: newRef.data || updated[existingIdx].data
+          imagePath: newRef.imagePath || prev.imagePath,
+          data: nextData,
+          // 이미지가 실제로 바뀌었을 때만 옛 entity 를 비운다. 안 바뀌었는데 비우면 멀쩡한 동기화를
+          //   깨고 재업로드가 돌아 **중복 entity** 가 생긴다(고치려는 그 버그).
+          ...(imageChanged
+            ? { mediaId: null, entityId: null, workflowId: null, registered: null, flowNameSyncStatus: null }
+            : {}),
         }
       }
       // updateExisting이 false면 건너뜀

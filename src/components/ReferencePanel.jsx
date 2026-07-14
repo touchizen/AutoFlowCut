@@ -15,6 +15,7 @@ import ReferenceDetailModal from './ReferenceDetailModal'
 import StylePicker from './StylePicker'
 import { toast } from './Toast'
 import { selectUnsyncedRefs, syncRefToFlow, needsComposerRefresh, resolveSyncTarget } from '../utils/flowCharacterSync'
+import { runFlowViewOperation } from '../utils/flowCharacterCoordinator'
 import './ReferencePanel.css'
 
 export default function ReferencePanel({
@@ -162,7 +163,8 @@ export default function ReferencePanel({
         }
       }
       // 이름을 SPA 에 못 넣은 카드가 하나라도 있을 때만 새로고침(나갔다 재진입)한다.
-      if (needsRefresh) { try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {} }
+      // #R37: 공유 flowView 직렬 큐로 — loadURL 재로드가 다른 업로드의 캡처 버퍼를 날려 중복 entity 를 만든다.
+      if (needsRefresh) await runFlowViewOperation(() => window.electronAPI?.refreshFlowComposer?.()).catch(() => {})
       if (fail === 0) toast.success(isKo ? `Flow 동기화 완료 (${ok})` : `Synced ${ok} to Flow`)
       else toast.error(isKo ? `동기화 ${ok} 성공 · ${fail} 실패` : `Synced ${ok}, ${fail} failed`)
     } finally {
@@ -200,14 +202,18 @@ export default function ReferencePanel({
     const targetId = references[index]?.id
     onUpdate(prev => {
       if (!Array.isArray(prev)) return prev
+      // #R37: updatedRef 가 함수면 **live ref 를 받아** 패치를 계산한다. 백그라운드 작업(rename 등)이
+      //   저장 시점 스냅샷을 통째로 쓰면, 그 사이 들어온 새 편집이 옛 상태로 덮인다. 함수형이면
+      //   호출측이 live 를 보고 "아직 내 대상이 맞나" 판단할 수 있다.
+      const resolve = (r) => (typeof updatedRef === 'function' ? updatedRef(r) : updatedRef)
       if (targetId != null) {
         return prev.some(r => r.id === targetId)
-          ? prev.map(r => (r.id === targetId ? updatedRef : r))
+          ? prev.map(r => (r.id === targetId ? resolve(r) : r))
           : prev
       }
       if (prev.length !== references.length) return prev
       const copy = [...prev]
-      copy[index] = updatedRef
+      copy[index] = resolve(copy[index])
       return copy
     })
   }

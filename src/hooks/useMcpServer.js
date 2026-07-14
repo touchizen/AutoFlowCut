@@ -290,7 +290,9 @@ export function useMcpServer({
         // #R37: fields 가 새 이미지(data/filePath)를 실어오면 옛 Flow entity 를 함께 비운다 —
         //   안 그러면 이미지는 새것인데 entityId 는 옛 캐릭터를 가리켜, 이후 Sync 가 repair 로 빠져
         //   새 이미지를 영영 안 올리고 옛 얼굴로 @멘션된다(UI 교체 경로 #R31-3 와 동일 정책).
-        const bringsNewImage = data.fields && ('data' in data.fields || 'filePath' in data.fields)
+        // imagePath 도 이미지 소스다 — 빠뜨리면 imagePath 만 갈아끼웠을 때 옛 entityId 가 살아남아
+        //   repair 가 옛 entity 를 재등록하고 새 이미지는 영영 안 올라간다(씬이 옛 얼굴로 생성).
+        const bringsNewImage = data.fields && ('data' in data.fields || 'filePath' in data.fields || 'imagePath' in data.fields)
         const entityReset = bringsNewImage && !data.fields.entityId
           ? { entityId: null, workflowId: null, registered: null, flowNameSyncStatus: null }
           : {}

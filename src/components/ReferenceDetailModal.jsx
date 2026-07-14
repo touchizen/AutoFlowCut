@@ -7,8 +7,9 @@ import { REFERENCE_TYPES, STYLE_PRESETS, RESOURCE } from '../config/defaults'
 import { resolveImageSrc, hasImageData } from '../utils/formatters'
 import { useImageUpload } from '../hooks/useImageUpload'
 import { fileSystemAPI } from '../hooks/useFileSystem'
-import { applyEntityRegistrationPatch } from '../utils/refEntityRegistration'
+import { applyEntityRegistrationPatch, clearedImageFields } from '../utils/refEntityRegistration'
 import { syncRefToFlow, needsComposerRefresh, refBadgeState } from '../utils/flowCharacterSync'
+import { runFlowViewOperation } from '../utils/flowCharacterCoordinator'
 import PromptInput from './PromptInput'
 import { toast } from './Toast'
 import Modal from './Modal'
@@ -144,7 +145,7 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
       }
       // #R33: 캐릭터 entity 등록(entityId 수신) 직후 Flow SPA 새로고침 — 새 이름이 'Untitled' 로
       //   stale 하게 보이거나 멘션 피커가 옛 이름으로 뜨는 것을 방지(비차단).
-      if (result.entityId) { try { window.electronAPI?.refreshFlowComposer?.() } catch (_e) {} }
+      if (result.entityId) { runFlowViewOperation(() => window.electronAPI?.refreshFlowComposer?.()).catch(() => {}) }
     },
     // #R34: 업로드 시작 → 즉시 모달 닫기(Flow UI 진행 가시화). 결과는 위 onUploadComplete 가
     //   onUpdate 로 부모 ref 에 반영하므로 닫혀도 안전. 스냅샷으로 merge base 보존.
@@ -265,7 +266,13 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
     // #R34-fix: rename 백그라운드 await 동안 프로젝트/모드가 바뀌면 stale index 에 적용 금지.
     const renameStartScope = getScopeToken()
 
-    onUpdate(index, editData)
+    // #R37: Flow rename 이 끝나기 전까지 이 ref 는 **미동기화**다 — Flow 의 멘션 피커는 아직 옛 이름만
+    //   안다. 그런데 여기서 새 이름 + 기존 'synced' 를 그대로 publish 하면, 그 창 동안 배지가 초록으로
+    //   뜨고 생성 게이트도 통과해서 `@새이름` 생성이 조용히 실패한다(고친 거짓 배지의 재발).
+    //   그래서 낙관적 표시를 하지 않는다: rename 이 성공해야 synced 로 돌린다.
+    onUpdate(index, renameSnapshot
+      ? { ...editData, flowNameSyncStatus: 'failed', registered: false }
+      : editData)
     onClose()
 
     if (renameSnapshot) {
@@ -273,17 +280,38 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
         // #R34-fix: rename 실패 시 로컬 ref 를 'failed'/registered:false 로 되돌린다. 안 그러면 앱은
         //   synced 로 오인하는데 Flow picker 엔 옛 이름이 남아 다음 `@새이름` 생성이 무조건 실패한다.
         //   (failed 로 두면 needsEntityRegistration/동기화 버튼이 재시도 후보로 잡는다.)
+        // #R37: 스냅샷을 통째로 쓰지 않는다 — rename 이 도는 동안 사용자가 같은 카드를 또 편집했으면
+        //   그 최신 편집(프롬프트/이미지/타입)이 저장 시점 값으로 되돌아간다. 이 콜백이 소유한 건
+        //   동기화 상태 필드뿐이므로 그것만 patch 한다.
         const markFailed = () => {
           if (getScopeToken() !== renameStartScope) { console.warn('[ReferenceDetail] scope changed during rename — skipping stale failed-mark'); return }
-          onUpdate(renameIdx, { ...renameBase, flowNameSyncStatus: 'failed', registered: false })
+          onUpdate(renameIdx, (live) => (live ? { ...live, flowNameSyncStatus: 'failed', registered: false } : live))
         }
         try {
           // bound projectId 를 넘긴다 — 안 넘기면 main 이 projectIdFromUrl() 로 폴백해, Flow 웹뷰가
           //   다른 프로젝트로 드리프트했을 때 엉뚱한 프로젝트 컨텍스트로 PATCH/navigate 한다.
-          const res = await window.electronAPI?.renameFlowCharacter?.({ entityId: renameSnapshot.entityId, displayName: renameSnapshot.name, projectId: flowProjectId })
+          // #R37: 공유 flowView 직렬 큐로 — rename 은 DOM 자동화를 돌리므로 다른 업로드와 겹치면
+          //   navigation 이 ERR_ABORTED 로 충돌하고 캡처 버퍼가 날아간다.
+          const res = await runFlowViewOperation(() => window.electronAPI?.renameFlowCharacter?.({ entityId: renameSnapshot.entityId, displayName: renameSnapshot.name, projectId: flowProjectId }))
           if (res?.success) {
             // main 이 상세페이지 이름칸에 타이핑했으면(nameApplied) 재진입 왕복이 불필요하다.
-            if (!res.nameApplied) { try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {} }
+            if (!res.nameApplied) { await runFlowViewOperation(() => window.electronAPI?.refreshFlowComposer?.()).catch(() => {}) }
+            // #R37: rename 성공 = **이름만** 등록됐다. buildEntityRenameBody 는 displayName 만 쓰고
+            //   characterInfo.imageReferences 는 건드리지 않는다. 그러므로 rename 전에 이미 제대로
+            //   등록돼 있던(synced) 캐릭터만 synced 로 되돌릴 수 있다. 원래 registered:false 였다면
+            //   이미지 레퍼런스가 여전히 미등록이므로 'failed' 로 두어 Sync(full register)를 유도한다.
+            //   (여기서 synced 로 뒤집으면 이미지 미등록 entity 에 초록 배지가 붙는다 — 고친 그 버그다.)
+            const wasSynced = reference.flowNameSyncStatus === 'synced' && reference.registered !== false
+            // #R37: renameBase 는 저장 시점 스냅샷이다. 그 사이 사용자가 같은 카드를 또 편집했으면
+            //   이걸 통째로 쓰는 순간 최신 편집이 옛 상태로 덮인다. 그래서 통째로 쓰지 않고,
+            //   live ref 가 여전히 이 rename 의 대상일 때만 상태 필드만 갱신한다.
+            if (getScopeToken() === renameStartScope && wasSynced) {
+              onUpdate(renameIdx, (live) => (
+                live && live.entityId === renameSnapshot.entityId && live.name === renameSnapshot.name
+                  ? { ...live, flowNameSyncStatus: 'synced', registered: true }
+                  : live   // 그 사이 다른 편집이 들어왔다 — 건드리지 않는다.
+              ))
+            }
             toast.success(isKo ? `Flow 이름 동기화: ${renameSnapshot.name}` : `Renamed in Flow: ${renameSnapshot.name}`)
           } else {
             markFailed()
@@ -308,9 +336,8 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
       setEditData(prev => ({
         ...prev,
         name: '', prompt: '', description: '',
-        data: null, filePath: null, mediaId: null, caption: null, dataStorage: null,
-        // #R16-3: 미디어/이름 클리어 시 옛 entity 등록도 무효화.
-        entityId: null, workflowId: null, registered: null, flowNameSyncStatus: null,
+        // #R16-3: 미디어/이름 클리어 시 옛 entity 등록도 무효화. #R37: imagePath 포함(정책은 한 곳에).
+        ...clearedImageFields(),
       }))
       return
     }
@@ -405,7 +432,9 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
         publishResult: async (syncResult) => {
           published = true
           if (getScopeToken() !== startScope) return
-          onUpdate(idx, { ...refSnapshot, ...(syncResult.patch || {}), syncing: false })
+          // #R37: refSnapshot 통째 쓰기 금지 — sync 가 도는 동안 사용자가 이미지를 지우거나 카드를
+          //   편집했으면 그게 되살아난다. sync 가 소유한 건 patch + syncing 뿐이다.
+          onUpdate(idx, (live) => (live ? { ...live, ...(syncResult.patch || {}), syncing: false } : live))
         },
       })
       if (getScopeToken() !== startScope) {
@@ -416,11 +445,11 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
         return
       }
       // busy/timeout 은 task/publish callback 이 실행되지 않는다 — 런타임 spinner 만 해제한다.
-      if (!published) onUpdate(idx, { ...refSnapshot, syncing: false })
+      if (!published) onUpdate(idx, (live) => (live ? { ...live, syncing: false } : live))
       if (res.ok) {
         // 이름을 SPA 에 못 넣었을 때만 새로고침(나갔다 재진입)한다.
         if (needsComposerRefresh(refSnapshot, res.result)) {
-          try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
+          await runFlowViewOperation(() => window.electronAPI?.refreshFlowComposer?.()).catch(() => {})
         }
         toast.success(isKo ? `Flow 동기화 완료: ${refSnapshot.name}` : `Synced to Flow: ${refSnapshot.name}`)
       } else {
@@ -535,7 +564,7 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
                       // #R10-8: 이미지 제거도 미저장 로컬 미디어 변경 → dirty(배경 prop 동기화가 되돌리지 않게).
                       mediaDirtyRef.current = true
                       // #R16-3: 이미지 제거 시 옛 entity 등록도 무효화(멘션이 옛 캐릭터를 가리키지 않게).
-                      setEditData(prev => ({ ...prev, data: null, filePath: null, mediaId: null, caption: null, dataStorage: null, entityId: null, workflowId: null, registered: null, flowNameSyncStatus: null }))
+                      setEditData(prev => ({ ...prev, ...clearedImageFields() }))
                       setImageSize(null)
                     }}
                     title={t('reference.clearImage') || '이미지 제거'}

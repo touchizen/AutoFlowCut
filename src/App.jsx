@@ -61,6 +61,7 @@ import { saveGalleryFrame } from './utils/galleryUpload'
 import { isUsableVideoReference } from './utils/videoPromptReferences'
 import { toast } from './components/Toast'
 import { selectUnsyncedMentionedRefs, syncRefToFlow, isRefSynced, resolveSyncTarget, planSyncGateCompletion } from './utils/flowCharacterSync'
+import { runFlowViewOperation } from './utils/flowCharacterCoordinator'
 import { getAuthErrorMessage, getAuthRequiredMessage } from './utils/authMessages'
 
 // Components
@@ -1778,7 +1779,8 @@ function App() {
         if (synced) ok++
         else { fail++; console.warn('[App] sync-gate sync incomplete for', ref?.name, res.error || res.patch?.flowNameSyncStatus) }
       }
-      try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
+      // #R37: 공유 flowView 직렬 큐로 — loadURL 재로드가 다른 업로드의 캡처 버퍼를 날린다.
+      await runFlowViewOperation(() => window.electronAPI?.refreshFlowComposer?.()).catch(() => {})
       // required mention sync 는 all-or-nothing. 하나라도 실패하면 혼합 resolved/unresolved 는 하드 에러,
       // all-unresolved+mediaId 는 plain-image 로 조용히 degrade 하므로 원래 생성을 시작하지 않는다.
       const completion = planSyncGateCompletion(ok, fail)

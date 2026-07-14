@@ -100,3 +100,24 @@ export function runFlowCharacterOperation({ ref, projectId, scopeToken, scope, r
   }).catch(() => {})
   return promise
 }
+
+/**
+ * #R37: flowView 를 건드리지만 특정 ref 에 매이지 않는 작업(컴포저 새로고침, 이름 변경)을
+ *   같은 직렬 큐에 태운다.
+ *
+ * 왜 필요한가: 이 둘은 코디네이터 밖에서 돌고 있었다. refreshFlowComposer 는 loadURL 로 페이지를
+ *   갈아엎는데, 그게 다른 업로드와 겹치면 페이지의 네트워크 캡처 버퍼(window.__autoflowcut_net__)가
+ *   날아간다 → uploadImage 응답을 못 잡음 → 실패로 알고 재시도 → **Flow 에 entity 가 하나 더 생긴다**.
+ *   rename 도 마찬가지로 공유 flowView 에서 DOM 자동화를 돌린다(ERR_ABORTED 충돌).
+ *
+ *   ref 단위 락은 걸지 않는다(특정 ref 의 작업이 아니므로). flowView 직렬화만 보장한다.
+ */
+export function runFlowViewOperation(task) {
+  const previous = flowViewTail.catch(() => {})
+  const inner = (async () => {
+    await previous
+    return Promise.resolve().then(task)
+  })()
+  flowViewTail = inner.catch(() => {})
+  return inner
+}

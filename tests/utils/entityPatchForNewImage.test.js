@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { entityPatchForNewImage, clearedImageFields } from '../../src/utils/refEntityRegistration'
-import { planCharacterSync } from '../../src/utils/flowCharacterSync'
+import { planCharacterSync, selectUnsyncedRefs } from '../../src/utils/flowCharacterSync'
 
 /**
  * #R37 회귀 방지 — 새 이미지가 들어왔는데 fresh entity 가 없으면 옛 entity 필드를 반드시 비운다.
@@ -43,7 +43,8 @@ describe('entityPatchForNewImage', () => {
 describe('clearedImageFields — 이미지 제거 시 entity 도 함께 비운다', () => {
   it('Flow entity 필드까지 null 로 만든다', () => {
     expect(clearedImageFields()).toEqual({
-      data: null, filePath: null, mediaId: null, caption: null, dataStorage: null,
+      // imagePath 포함 — 이미지 소스 세 가지를 모두 비워야 '제거'가 실제로 제거다.
+      data: null, filePath: null, imagePath: null, mediaId: null, caption: null, dataStorage: null,
       entityId: null, workflowId: null, registered: null, flowNameSyncStatus: null,
     })
   })
@@ -54,5 +55,25 @@ describe('clearedImageFields — 이미지 제거 시 entity 도 함께 비운�
     const ref = { id: 1, type: 'character', name: 'Zed', mediaId: 'm', entityId: 'e', workflowId: 'w', flowNameSyncStatus: 'synced' }
     const cleared = { ...ref, ...clearedImageFields() }
     expect(planCharacterSync(cleared)).toBe('upload')
+  })
+})
+
+/**
+ * 리뷰 지적 — imagePath 누락. 이미지 소스는 data / filePath / **imagePath** 세 가지다
+ *   (flowCharacterSync.selectUnsyncedRefs, syncRefToFlow, refEntityRegistration.selectRefsToRegister
+ *    모두 imagePath 를 소스로 인정한다). 그런데 "새 이미지" 판정과 "이미지 제거" 는 앞의 둘만 봤다.
+ *
+ * 결과: imagePath 만 갈아끼우면 옛 entityId 가 살아남아 repair 가 옛 entity 를 재등록하고,
+ *   새 이미지는 영영 업로드되지 않는다(씬이 옛 얼굴로 생성됨). CSV 임포트와 MCP 가 쓰는 실제 경로다.
+ */
+describe('imagePath 도 이미지 소스다 — 누락하면 옛 entity 가 살아남는다', () => {
+  it('clearedImageFields 는 imagePath 도 비운다 (안 그러면 제거 후에도 sync 대상)', () => {
+    expect(clearedImageFields()).toHaveProperty('imagePath', null)
+  })
+
+  it('제거 후 ref 는 더 이상 sync 소스가 아니다', () => {
+    const ref = { id: 1, type: 'character', name: 'Zed', imagePath: '/x.png', mediaId: 'm', entityId: 'e', workflowId: 'w', flowNameSyncStatus: 'synced' }
+    const cleared = { ...ref, ...clearedImageFields() }
+    expect(selectUnsyncedRefs([cleared])).toEqual([])   // 이미지가 없으니 동기화 대상이 아님
   })
 })

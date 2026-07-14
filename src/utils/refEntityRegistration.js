@@ -120,7 +120,9 @@ export function entityPatchForNewImage(ref, result) {
  */
 export function clearedImageFields() {
   return {
-    data: null, filePath: null, mediaId: null, caption: null, dataStorage: null,
+    // 이미지 소스는 data / filePath / **imagePath** 세 가지다(selectUnsyncedRefs·syncRefToFlow 참고).
+    //   imagePath 를 안 지우면 '제거'한 ref 가 여전히 sync 소스로 잡혀 옛 entity 를 재등록한다.
+    data: null, filePath: null, imagePath: null, mediaId: null, caption: null, dataStorage: null,
     entityId: null, workflowId: null, registered: null, flowNameSyncStatus: null,
   }
 }
