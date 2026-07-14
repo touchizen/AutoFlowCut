@@ -22,6 +22,10 @@ vi.mock('../../src/components/HoverImageBalloon', () => ({ default: () => null }
 import SceneList from '../../src/components/SceneList'
 
 const ROW_ESTIMATE = 96
+const HEADER_HEIGHT = 34
+const VIEWPORT_HEIGHT = 480
+const SCROLL_HEIGHT = 5000 * ROW_ESTIMATE + HEADER_HEIGHT
+const scrollTo = vi.fn()
 
 const sceneAt = (index, extra = {}) => ({
   id: `scene_${index}`,
@@ -61,14 +65,33 @@ const rect = (width, height) => ({
 })
 
 beforeEach(() => {
+  scrollTo.mockImplementation(function scrollToOffset(options) {
+    const top = typeof options === 'number' ? arguments[1] : options?.top
+    if (typeof top !== 'number') return
+
+    this.scrollTop = top
+    queueMicrotask(() => this.dispatchEvent(new Event('scroll')))
+  })
+  Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+    configurable: true,
+    writable: true,
+    value: scrollTo,
+  })
   vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function getWidth() {
     return this.classList?.contains('scene-table-wrapper') ? 1200 : 0
   })
   vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function getHeight() {
-    return this.classList?.contains('scene-table-wrapper') ? 480 : 0
+    return this.classList?.contains('scene-table-wrapper') ? VIEWPORT_HEIGHT : 0
+  })
+  vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function getClientHeight() {
+    return this.classList?.contains('scene-table-wrapper') ? VIEWPORT_HEIGHT : 0
+  })
+  vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function getScrollHeight() {
+    return this.classList?.contains('scene-table-wrapper') ? SCROLL_HEIGHT : 0
   })
   vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function getRect() {
-    if (this.classList?.contains('scene-table-wrapper')) return rect(1200, 480)
+    if (this.classList?.contains('scene-table-wrapper')) return rect(1200, VIEWPORT_HEIGHT)
+    if (this.tagName === 'THEAD') return rect(1200, HEADER_HEIGHT)
     if (this.classList?.contains('scene-row')) return rect(1200, ROW_ESTIMATE)
     return rect(0, 0)
   })
@@ -108,11 +131,103 @@ describe('SceneList virtualization', () => {
     expect(accountedHeight).toBe(5000 * ROW_ESTIMATE)
   })
 
+  it('mounts an offscreen row that is already generating on the first render', async () => {
+    const scenes = scenesOf(500)
+    scenes[350] = sceneAt(350, { status: 'generating' })
+    const { container } = renderList(scenes)
+    const wrapper = container.querySelector('.scene-table-wrapper')
+
+    await waitFor(() => {
+      expect(wrapper.scrollTop).toBeGreaterThan(0)
+      expect(container.querySelector('.scene-row[data-index="350"]')).toBeTruthy()
+    })
+  })
+
+  it('includes the sticky table header in real scrollToIndex coordinates', async () => {
+    const scenes = scenesOf(500)
+    const view = renderList(scenes)
+    const wrapper = view.container.querySelector('.scene-table-wrapper')
+    const nextScenes = scenes.map((scene, index) => (
+      index === 350 ? { ...scene, status: 'generating' } : scene
+    ))
+
+    view.rerender(
+      <SceneList
+        scenes={nextScenes}
+        onUpdate={vi.fn()}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+        defaultDuration={3}
+        projectName="P"
+      />
+    )
+
+    await waitFor(() => {
+      expect(wrapper.scrollTop).toBe(((350 + 1) * ROW_ESTIMATE) + HEADER_HEIGHT - VIEWPORT_HEIGHT)
+      expect(view.container.querySelector('.scene-row[data-index="350"]')).toBeTruthy()
+    })
+
+    const firstRow = view.container.querySelector('.scene-row')
+    const topSpacerCell = view.container.querySelector('[data-virtual-spacer="top"] > td')
+    expect(parseFloat(topSpacerCell.style.height)).toBe(
+      Number(firstRow.dataset.index) * ROW_ESTIMATE
+    )
+  })
+
   it('renders every row at the 200-scene threshold', () => {
     const { container } = renderList(scenesOf(200))
 
     expect(container.querySelectorAll('.scene-row')).toHaveLength(200)
-    expect(container.querySelector('[data-virtual-spacer]')).toBeNull()
+    const spacers = container.querySelectorAll('[data-virtual-spacer] > td')
+    expect(spacers).toHaveLength(2)
+    expect([...spacers].every(cell => cell.style.height === '0px')).toBe(true)
+  })
+
+  it('preserves row focus when crossing from 201 to 200 scenes', async () => {
+    const scenes = scenesOf(201)
+    const stableProps = {
+      onUpdate: vi.fn(),
+      onDelete: vi.fn(),
+      onAdd: vi.fn(),
+      defaultDuration: 3,
+      projectName: 'P',
+    }
+    const view = render(<SceneList scenes={scenes} {...stableProps} />)
+
+    await waitFor(() => {
+      expect(view.container.querySelectorAll('.scene-row').length).toBeGreaterThan(0)
+    })
+    const textarea = view.container.querySelector('.scene-row[data-index="0"] textarea')
+    textarea.focus()
+    expect(document.activeElement).toBe(textarea)
+
+    view.rerender(<SceneList scenes={scenes.slice(0, 200)} {...stableProps} />)
+
+    expect(view.container.querySelector('.scene-row[data-index="0"] textarea')).toBe(textarea)
+    expect(document.activeElement).toBe(textarea)
+  })
+
+  it('preserves row focus when crossing from 200 to 201 scenes', async () => {
+    const scenes = scenesOf(200)
+    const stableProps = {
+      onUpdate: vi.fn(),
+      onDelete: vi.fn(),
+      onAdd: vi.fn(),
+      defaultDuration: 3,
+      projectName: 'P',
+    }
+    const view = render(<SceneList scenes={scenes} {...stableProps} />)
+    const textarea = view.container.querySelector('.scene-row[data-index="0"] textarea')
+    textarea.focus()
+    expect(document.activeElement).toBe(textarea)
+
+    view.rerender(<SceneList scenes={[...scenes, sceneAt(200)]} {...stableProps} />)
+
+    await waitFor(() => {
+      expect(view.container.querySelectorAll('.scene-row').length).toBeGreaterThan(0)
+    })
+    expect(view.container.querySelector('.scene-row[data-index="0"] textarea')).toBe(textarea)
+    expect(document.activeElement).toBe(textarea)
   })
 
   it('mounts a visible video only on hover and releases it when its row unmounts', async () => {

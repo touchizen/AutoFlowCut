@@ -54,4 +54,36 @@ describe('SceneList row memoization', () => {
 
     expect(tagInputRender).toHaveBeenCalledTimes(3)
   })
+
+  it('rerenders only the row whose derived SRT subtitle changed', () => {
+    const scenes = [
+      { ...sceneAt(0), srtLineIds: ['sub_0'] },
+      { ...sceneAt(1), srtLineIds: ['sub_1'] },
+    ]
+    const srtTrack = [
+      { id: 'sub_0', text: 'Line 0', startTime: 0, endTime: 1 },
+      { id: 'sub_1', text: 'Line 1', startTime: 1, endTime: 2 },
+    ]
+    const stableProps = {
+      framePairs: [],
+      references: [],
+      styleThumbnails: {},
+      onUpdate: vi.fn(),
+      onDelete: vi.fn(),
+      onAdd: vi.fn(),
+      defaultDuration: 3,
+      projectName: 'P',
+    }
+    const view = render(
+      <SceneList scenes={scenes} srtTrack={srtTrack} {...stableProps} />
+    )
+    tagInputRender.mockClear()
+
+    const nextSrtTrack = [{ ...srtTrack[0], text: 'Changed' }, srtTrack[1]]
+    view.rerender(
+      <SceneList scenes={scenes} srtTrack={nextSrtTrack} {...stableProps} />
+    )
+
+    expect(tagInputRender).toHaveBeenCalledTimes(3)
+  })
 })

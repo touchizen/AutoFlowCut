@@ -2,7 +2,7 @@
  * SceneList Component - 목록 탭 (시간 + 자막 + 미디어 선택 + 히스토리)
  */
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useI18n } from '../hooks/useI18n'
 import { formatTime, getRatioClass, resolveImageSrc, hasImageData } from '../utils/formatters'
@@ -36,7 +36,7 @@ function getSceneSubtitleFromMap(scene, srtLineById) {
   return texts.join('\n')
 }
 
-const SceneRow = memo(function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, onShowDetail, onShowVideoDetail, references, onOpenTag, styleThumbnails = {}, framePairs = [], srtLineById, onUpdateSrtLine = null, measureRef = null, virtualIndex }) {
+const SceneRow = memo(function SceneRow({ scene, index, onUpdate, onDelete, disabled, ratioClass, t, onShowDetail, onShowVideoDetail, references, onOpenTag, styleThumbnails = {}, framePairs = [], srtSubtitle = null, onUpdateSrtLine = null, measureRef = null, virtualIndex }) {
   const [hoverPreview, setHoverPreview] = useState(null)
   // R26 review fix: 비디오 mount 를 hover 시점으로 미룸. duration 캐시 유무와 무관
   // 하게 첫 로드 VRAM burst 차단 ('t2v' | 'i2v' | null).
@@ -158,10 +158,10 @@ const SceneRow = memo(function SceneRow({ scene, index, onUpdate, onDelete, disa
       <td className="col-subtitle">
         {(() => {
           const lineIds = scene.srtLineIds || []
-          const hasLineIds = lineIds.length > 0 && srtLineById.size > 0
+          const hasLineIds = lineIds.length > 0 && srtSubtitle != null
           const isBundled = lineIds.length > 1
           const value = hasLineIds
-            ? getSceneSubtitleFromMap(scene, srtLineById)
+            ? srtSubtitle
             : (scene.subtitle || '')
           return (
             <textarea
@@ -414,9 +414,12 @@ export default function SceneList({
   // tagBatchModal: null | { type: 'character'|'scene'|'style', sceneIndex?: number }
   const [tagBatchModal, setTagBatchModal] = useState(null)
   const scrollElementRef = useRef(null)
+  const tableHeaderRef = useRef(null)
   const previousStatusesRef = useRef(null)
+  const [tableHeaderHeight, setTableHeaderHeight] = useState(null)
 
   const shouldVirtualize = scenes.length > VIRTUALIZATION_THRESHOLD
+  const scrollMargin = tableHeaderHeight ?? 0
   const srtLineById = useMemo(
     () => new Map(srtTrack.map(line => [line.id, line])),
     [srtTrack]
@@ -432,30 +435,51 @@ export default function SceneList({
     getItemKey,
     measureElement: measureSceneRow,
     overscan: VIRTUAL_OVERSCAN,
+    scrollMargin,
     enabled: scenes.length > 0,
   })
 
+  useLayoutEffect(() => {
+    const tableHeader = tableHeaderRef.current
+    if (!tableHeader) return undefined
+
+    const measureTableHeader = () => {
+      const nextHeight = Math.round(tableHeader.getBoundingClientRect().height)
+      setTableHeaderHeight(currentHeight => (
+        currentHeight === nextHeight ? currentHeight : nextHeight
+      ))
+    }
+    measureTableHeader()
+
+    const resizeObserver = new ResizeObserver(measureTableHeader)
+    resizeObserver.observe(tableHeader)
+    return () => resizeObserver.disconnect()
+  }, [])
+
   // 같은 업데이트에서 여러 씬이 generating 으로 바뀌면 배열상 마지막 씬을 따른다.
   useEffect(() => {
+    if (tableHeaderHeight == null) return
+
     const previousStatuses = previousStatusesRef.current
-    if (previousStatuses) {
-      let latestFlippedIndex = -1
-      for (let index = 0; index < scenes.length; index++) {
-        const scene = scenes[index]
-        if (
+    let latestGeneratingIndex = -1
+    for (let index = 0; index < scenes.length; index++) {
+      const scene = scenes[index]
+      const becameGenerating = previousStatuses
+        ? (
           previousStatuses.has(scene.id)
           && previousStatuses.get(scene.id) !== 'generating'
           && scene.status === 'generating'
-        ) {
-          latestFlippedIndex = index
-        }
-      }
-      if (latestFlippedIndex >= 0) {
-        virtualizer.scrollToIndex(latestFlippedIndex, { align: 'auto' })
+        )
+        : scene.status === 'generating'
+      if (becameGenerating) {
+        latestGeneratingIndex = index
       }
     }
+    if (latestGeneratingIndex >= 0) {
+      virtualizer.scrollToIndex(latestGeneratingIndex, { align: 'auto' })
+    }
     previousStatusesRef.current = new Map(scenes.map(scene => [scene.id, scene.status]))
-  }, [scenes, virtualizer])
+  }, [scenes, tableHeaderHeight, virtualizer])
 
   // 태그 적용 (single / batch 공통)
   const handleTagBatchApply = (field, value, startIdx, endIdx) => {
@@ -509,33 +533,48 @@ export default function SceneList({
 
   const ratioClass = getRatioClass(aspectRatio)
   const virtualItems = shouldVirtualize ? virtualizer.getVirtualItems() : []
-  const topSpacerHeight = virtualItems.length > 0 ? virtualItems[0].start : 0
-  const bottomSpacerHeight = virtualItems.length > 0
-    ? Math.max(0, virtualizer.getTotalSize() - virtualItems[virtualItems.length - 1].end)
-    : virtualizer.getTotalSize()
+  const topSpacerHeight = shouldVirtualize && virtualItems.length > 0
+    ? Math.max(0, virtualItems[0].start - scrollMargin)
+    : 0
+  const bottomSpacerHeight = shouldVirtualize
+    ? (
+        virtualItems.length > 0
+          ? Math.max(
+              0,
+              virtualizer.getTotalSize()
+                - (virtualItems[virtualItems.length - 1].end - scrollMargin)
+            )
+          : virtualizer.getTotalSize()
+      )
+    : 0
 
-  const renderSceneRow = (scene, index, virtualIndex) => (
-    <SceneRow
-      key={scene.id}
-      scene={scene}
-      index={index}
-      virtualIndex={virtualIndex}
-      measureRef={virtualIndex == null ? null : virtualizer.measureElement}
-      onUpdate={onUpdate}
-      onUpdateSrtLine={onUpdateSrtLine}
-      onDelete={onDelete}
-      disabled={disabled}
-      ratioClass={ratioClass}
-      framePairs={framePairs}
-      t={t}
-      onShowDetail={handleShowDetail}
-      onShowVideoDetail={handleShowVideoDetail}
-      references={references}
-      onOpenTag={openTag}
-      styleThumbnails={styleThumbnails}
-      srtLineById={srtLineById}
-    />
-  )
+  const renderSceneRow = (scene, index, virtualIndex) => {
+    const srtSubtitle = (scene.srtLineIds?.length ?? 0) > 0 && srtLineById.size > 0
+      ? getSceneSubtitleFromMap(scene, srtLineById)
+      : null
+    return (
+      <SceneRow
+        key={scene.id}
+        scene={scene}
+        index={index}
+        virtualIndex={virtualIndex}
+        measureRef={virtualizer.measureElement}
+        onUpdate={onUpdate}
+        onUpdateSrtLine={onUpdateSrtLine}
+        onDelete={onDelete}
+        disabled={disabled}
+        ratioClass={ratioClass}
+        framePairs={framePairs}
+        t={t}
+        onShowDetail={handleShowDetail}
+        onShowVideoDetail={handleShowVideoDetail}
+        references={references}
+        onOpenTag={openTag}
+        styleThumbnails={styleThumbnails}
+        srtSubtitle={srtSubtitle}
+      />
+    )
+  }
 
   // 현재 선택된 씬의 최신 상태 가져오기
   const currentScene = detailModal.scene
@@ -573,7 +612,7 @@ export default function SceneList({
 
       <div ref={scrollElementRef} className="scene-table-wrapper">
         <table className="scene-table">
-          <thead>
+          <thead ref={tableHeaderRef}>
             <tr>
               <th className="col-id">#</th>
               <th className="col-time">{t('sceneList.time')}</th>
@@ -613,17 +652,15 @@ export default function SceneList({
             </tr>
           </thead>
           <tbody>
-            {shouldVirtualize ? (
-              <>
-                <tr data-virtual-spacer="top">
-                  <td colSpan={6} style={{ height: topSpacerHeight, padding: 0, border: 0 }} />
-                </tr>
-                {virtualItems.map(item => renderSceneRow(scenes[item.index], item.index, item.index))}
-                <tr data-virtual-spacer="bottom">
-                  <td colSpan={6} style={{ height: bottomSpacerHeight, padding: 0, border: 0 }} />
-                </tr>
-              </>
-            ) : scenes.map((scene, index) => renderSceneRow(scene, index, index))}
+            <tr data-virtual-spacer="top">
+              <td colSpan={6} style={{ height: topSpacerHeight, padding: 0, border: 0 }} />
+            </tr>
+            {shouldVirtualize
+              ? virtualItems.map(item => renderSceneRow(scenes[item.index], item.index, item.index))
+              : scenes.map((scene, index) => renderSceneRow(scene, index, index))}
+            <tr data-virtual-spacer="bottom">
+              <td colSpan={6} style={{ height: bottomSpacerHeight, padding: 0, border: 0 }} />
+            </tr>
           </tbody>
         </table>
       </div>
