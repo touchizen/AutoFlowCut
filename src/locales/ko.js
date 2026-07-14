@@ -1487,4 +1487,33 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     never: '다시 묻지 않기',
   },
 
+  // 인앱 에이전트 (D14). 🔴 승인 문구가 사용자 언어가 아니면 **읽지 못하는 것을 승인**하게 된다.
+  agent: {
+    title: '에이전트',
+    panelLabel: '인앱 에이전트',
+    running: '작업 중',
+    collapse: '접기',
+    expand: '펼치기',
+    empty: '프로젝트 작업을 요청해보세요.',
+    inputLabel: '에이전트 메시지',
+    placeholder: '무엇을 도와줄까?',
+    send: '보내기',
+    steer: '방향 수정',
+    stop: '중지',
+    closeSession: '세션 닫기',
+    toolCall: '도구 호출',
+    toolDone: '완료',
+    toolRunning: '실행 중',
+    usage: '턴 {turns} · 툴 {toolCalls}',
+    failed: '에이전트 작업에 실패했습니다.',
+    limitReached: '에이전트 사용 한도에 도달했습니다. 사용 {used} / 한도 {limit}',
+    projectSwitched: '프로젝트가 바뀌어 이전 에이전트 세션을 종료했습니다.',
+    // 승인 창
+    approvalLabel: '에이전트 승인 요청',
+    approvalHeader: '에이전트가 이 작업을 하려고 합니다',
+    approve: '승인',
+    deny: '거부',
+    morePending: '대기 중인 요청 {count}개',
+  },
+
 }

@@ -61,8 +61,8 @@ describe('ChatPanel — 명령과 event의 사용자 효과', () => {
     const user = userEvent.setup()
     render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)
 
-    await user.type(screen.getByRole('textbox', { name: '에이전트 메시지' }), '배치 상태를 확인해줘')
-    await user.click(screen.getByRole('button', { name: '보내기' }))
+    await user.type(screen.getByRole('textbox', { name: 'Message to the agent' }), '배치 상태를 확인해줘')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
 
     expect(window.electronAPI.agentSessionOpen).toHaveBeenCalledOnce()
     expect(window.electronAPI.agentSend).toHaveBeenCalledWith({ text: '배치 상태를 확인해줘' })
@@ -77,20 +77,20 @@ describe('ChatPanel — 명령과 event의 사용자 효과', () => {
 
     expect(screen.getByText('확인하고 있어요.')).toBeTruthy()
     expect(screen.getByText(/wait_batch/)).toBeTruthy()
-    expect(screen.getByText(/턴 1.*툴 1/)).toBeTruthy()
-    expect(screen.getByRole('alert')).toHaveTextContent('에이전트 사용 한도에 도달했습니다. 사용 64 / 한도 64')
+    expect(screen.getByText(/Turns 1.*Tools 1/)).toBeTruthy()
+    expect(screen.getByRole('alert')).toHaveTextContent('Agent usage limit reached. Used 64 / limit 64')
   })
 
   it('active turn에서는 steer와 abort가 실제 command IPC에 도달한다', async () => {
     const user = userEvent.setup()
     render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)
 
-    const input = screen.getByRole('textbox', { name: '에이전트 메시지' })
+    const input = screen.getByRole('textbox', { name: 'Message to the agent' })
     await user.type(input, '시작해')
-    await user.click(screen.getByRole('button', { name: '보내기' }))
+    await user.click(screen.getByRole('button', { name: 'Send' }))
     await user.type(input, '영상은 제외해')
-    await user.click(screen.getByRole('button', { name: '방향 수정' }))
-    await user.click(screen.getByRole('button', { name: '중지' }))
+    await user.click(screen.getByRole('button', { name: 'Steer' }))
+    await user.click(screen.getByRole('button', { name: 'Stop' }))
 
     expect(window.electronAPI.agentSteer).toHaveBeenCalledWith({ text: '영상은 제외해' })
     expect(window.electronAPI.agentAbort).toHaveBeenCalledOnce()
@@ -103,8 +103,8 @@ describe('ChatPanel — 명령과 event의 사용자 효과', () => {
     const user = userEvent.setup()
     render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)
 
-    await user.type(screen.getByRole('textbox', { name: '에이전트 메시지' }), '계속')
-    await user.click(screen.getByRole('button', { name: '보내기' }))
+    await user.type(screen.getByRole('textbox', { name: 'Message to the agent' }), '계속')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('app-server died')
   })
@@ -185,6 +185,42 @@ describe('ChatPanel — agentMessage completion reconciliation', () => {
   })
 })
 
+describe('ChatPanel — 접기/펼치기 아이콘 버튼', () => {
+  // 🔴 텍스트를 아이콘으로 바꾸는 순간 **버튼의 접근 가능한 이름이 사라진다** — 스크린리더는
+  //    "button" 이라고만 읽고, 테스트도 버튼을 못 찾는다. 그래서 이름을 aria-label 로 남긴다.
+  //    (아이콘만 남기고 이름을 안 주는 건 이 프로젝트가 반복해서 밟은 "눈으로만 확인되는 UI" 다.)
+  it('아이콘 버튼이지만 접근 가능한 이름과 툴팁이 상태를 그대로 말한다', async () => {
+    const user = userEvent.setup()
+    render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+
+    const collapse = screen.getByRole('button', { name: 'Collapse' })
+    expect(collapse.getAttribute('title'), '툴팁이 없으면 아이콘이 무엇인지 알 길이 없다').toBe('Collapse')
+    // 아이콘이어야 한다 — 라벨 문자열이 버튼 안에 **보이면** 아이콘으로 바꾼 의미가 없다.
+    expect(collapse.querySelector('svg'), '아이콘(svg)이 없다').toBeTruthy()
+    expect(collapse.textContent.trim()).toBe('')
+
+    await user.click(collapse)
+
+    // 접힌 뒤에는 같은 버튼이 **펼치기**를 뜻해야 한다. 이름이 안 바뀌면 사용자는 상태를 못 읽는다.
+    const expand = screen.getByRole('button', { name: 'Expand' })
+    expect(expand.getAttribute('title')).toBe('Expand')
+    expect(expand.querySelector('svg')).toBeTruthy()
+  })
+
+  it('접으면 대화 로그가 사라지고 펼치면 그대로 돌아온다 — 세션은 유지된다', async () => {
+    const user = userEvent.setup()
+    render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+    window.electronAPI.emitAgent('agent:delta', { delta: '접어도 살아있어야 함' })
+
+    await user.click(screen.getByRole('button', { name: 'Collapse' }))
+    expect(screen.queryByText('접어도 살아있어야 함')).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: 'Expand' }))
+    // 접기는 표시만 바꾼다. 메시지가 사라졌다면 세션 상태를 날린 것이다.
+    expect(screen.getByText('접어도 살아있어야 함')).toBeTruthy()
+  })
+})
+
 describe('ChatPanel — persistent 수명과 batch.status', () => {
   it('view만 바뀌는 global sibling rerender에서는 stream 메시지가 사라지지 않는다', () => {
     function GlobalShell({ activeView }) {
@@ -201,8 +237,8 @@ describe('ChatPanel — persistent 수명과 batch.status', () => {
   it('프로젝트가 바뀌면 열린 session을 abort→close하고 이전 메시지를 격리해 보고한다', async () => {
     const user = userEvent.setup()
     const { rerender } = render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)
-    await user.type(screen.getByRole('textbox', { name: '에이전트 메시지' }), 'A 프로젝트 작업')
-    await user.click(screen.getByRole('button', { name: '보내기' }))
+    await user.type(screen.getByRole('textbox', { name: 'Message to the agent' }), 'A 프로젝트 작업')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
     window.electronAPI.emitAgent('agent:delta', { delta: 'A 응답' })
 
     rerender(<ChatPanel projectKey="project-b" batchStatusSources={batchSources()} />)
@@ -210,7 +246,7 @@ describe('ChatPanel — persistent 수명과 batch.status', () => {
     await waitFor(() => expect(window.electronAPI.agentAbort).toHaveBeenCalledOnce())
     expect(window.electronAPI.agentSessionClose).toHaveBeenCalledOnce()
     expect(screen.queryByText('A 응답')).toBeNull()
-    expect(screen.getByText('프로젝트가 바뀌어 이전 에이전트 세션을 종료했습니다.')).toBeTruthy()
+    expect(screen.getByText('The project changed, so the previous agent session was closed.')).toBeTruthy()
   })
 
   it('session-open 대기 중 프로젝트가 바뀌어도 old 입력을 새 프로젝트 session에 send하지 않는다', async () => {
@@ -218,8 +254,8 @@ describe('ChatPanel — persistent 수명과 batch.status', () => {
     window.electronAPI.agentSessionOpen.mockReturnValueOnce(new Promise((resolve) => { resolveOpen = resolve }))
     const user = userEvent.setup()
     const { rerender } = render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)
-    await user.type(screen.getByRole('textbox', { name: '에이전트 메시지' }), 'A에서만 실행')
-    await user.click(screen.getByRole('button', { name: '보내기' }))
+    await user.type(screen.getByRole('textbox', { name: 'Message to the agent' }), 'A에서만 실행')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
 
     rerender(<ChatPanel projectKey="project-b" batchStatusSources={batchSources()} />)
     await act(async () => { resolveOpen({ sessionId: 'old-session' }) })

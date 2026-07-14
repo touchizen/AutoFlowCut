@@ -1,5 +1,24 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useOptionalI18n } from '../../hooks/useI18n'
+import en from '../../locales/en'
 import './ApprovalDialog.css'
+
+/**
+ * 🔴 **읽을 수 없는 승인은 동의가 아니다.** 기본 언어는 `en` 인데(useI18n DEFAULT_LANG) 이 창의
+ *    문구가 한글로 박혀 있으면, 영어 사용자는 **자기 돈이 나가는 작업**의 승인 문구를 못 읽는다.
+ *    ⚠️ 단 `message`(툴 이름 + 인자)는 **번역하지 않는다** — 그건 앱이 만든 데이터고, 번역하면
+ *    "사람이 승인한 것"과 "실행되는 것"이 갈린다. UI chrome 만 locale 을 따른다.
+ * I18nProvider 없이도 렌더 가능해야 하므로(단위 테스트) provider 가 없으면 기본 locale 로 떨어진다.
+ */
+function useSafeT() {
+  const ctx = useOptionalI18n()
+  return (key, params = {}) => {
+    if (ctx?.t) return ctx.t(key, params)
+    const value = key.split('.').reduce((node, part) => (node && typeof node === 'object' ? node[part] : undefined), en)
+    if (typeof value !== 'string') return key
+    return value.replace(/\{(\w+)\}/g, (match, name) => (params[name] !== undefined ? params[name] : match))
+  }
+}
 
 /**
  * 에이전트가 위험한 툴(G = 사람 동의 필요 / B = 과금)을 부르려 할 때 뜨는 승인 창 (D14).
@@ -14,6 +33,7 @@ import './ApprovalDialog.css'
  * Codex 는 tool call 을 **병렬로 쏜다** → 승인 요청이 여러 개 겹칠 수 있다. 큐로 하나씩 처리한다.
  */
 export default function ApprovalDialog() {
+  const t = useSafeT()
   const [queue, setQueue] = useState([])
   const current = queue[0] ?? null
 
@@ -46,9 +66,9 @@ export default function ApprovalDialog() {
   const [title, ...body] = String(current.message ?? current.tool ?? '').split('\n')
 
   return (
-    <div className="approval-backdrop" role="dialog" aria-modal="true" aria-label="에이전트 승인 요청">
+    <div className="approval-backdrop" role="dialog" aria-modal="true" aria-label={t('agent.approvalLabel')}>
       <div className="approval-dialog">
-        <div className="approval-header">에이전트가 이 작업을 하려고 합니다</div>
+        <div className="approval-header">{t('agent.approvalHeader')}</div>
 
         <div className="approval-tool">{title || current.tool}</div>
         {body.join('\n').trim() && (
@@ -57,12 +77,12 @@ export default function ApprovalDialog() {
         )}
 
         <div className="approval-actions">
-          <button type="button" className="approval-deny" onClick={() => answer('decline')}>거부</button>
-          <button type="button" className="approval-allow" onClick={() => answer('accept')}>승인</button>
+          <button type="button" className="approval-deny" onClick={() => answer('decline')}>{t('agent.deny')}</button>
+          <button type="button" className="approval-allow" onClick={() => answer('accept')}>{t('agent.approve')}</button>
         </div>
 
         {queue.length > 1 && (
-          <div className="approval-more">대기 중인 요청 {queue.length - 1}개</div>
+          <div className="approval-more">{t('agent.morePending', { count: queue.length - 1 })}</div>
         )}
       </div>
     </div>

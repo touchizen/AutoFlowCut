@@ -1,23 +1,68 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { readBatchStatus } from '../../agent/batchStatus.js'
 import { registerToolBridgeHandlers } from '../../agent/toolBridgeHandlers.js'
+import { useOptionalI18n } from '../../hooks/useI18n'
+import en from '../../locales/en'
 import './ChatPanel.css'
 
 const AGENT_EVENTS = ['agent:delta', 'agent:message', 'agent:tool-call', 'agent:usage', 'agent:done', 'agent:error']
 
-function failureText(failure) {
+/**
+ * 접기/펼치기 셰브론.
+ *
+ * 🔴 화살표는 **지금 누르면 패널이 어디로 가는지**를 가리킨다. 패널이 화면 **아래쪽**에 붙어 있으므로:
+ *   - 펼쳐진 상태 → 누르면 **아래로 접힌다** → ∨ (아래 화살표)
+ *   - 접힌 상태   → 누르면 **위로 펼쳐진다** → ∧ (위 화살표)
+ * (반대로 두면 "현재 상태"를 가리키는 것처럼 보여서 사용자가 정반대로 읽는다.)
+ */
+function ChevronIcon({ collapsed }) {
+  return (
+    <svg
+      className="agent-chat-chevron"
+      width="12" height="12" viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="3"
+      strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true" focusable="false"
+    >
+      {collapsed
+        ? <polyline points="6 15 12 9 18 15" />   /* ∧ 펼치기 */
+        : <polyline points="6 9 12 15 18 9" />}   {/* ∨ 접기 */}
+    </svg>
+  )
+}
+
+function failureText(failure, t) {
   if (failure?.error === 'agent-limit') {
-    return `에이전트 사용 한도에 도달했습니다. 사용 ${failure.used} / 한도 ${failure.limit}`
+    // D10: 한도는 **보고**된다. 조용히 멈추지 않는다.
+    return t('agent.limitReached', { used: failure.used, limit: failure.limit })
   }
-  return failure?.message || failure?.error || '에이전트 작업에 실패했습니다.'
+  return failure?.message || failure?.error || t('agent.failed')
 }
 
 function hasFailure(value) {
   return !!(value && typeof value === 'object' && value.error)
 }
 
-function toolName(item = {}) {
-  return item.tool || item.name || item.server || '도구 호출'
+function toolName(item = {}, t) {
+  return item.tool || item.name || item.server || t('agent.toolCall')
+}
+
+/**
+ * I18nProvider 없이도(단위 테스트) 렌더 가능해야 한다 — `useI18n()` 은 provider 가 없으면 throw 한다.
+ * StoryView 가 쓰는 것과 같은 관례다. provider 가 없으면 기본 locale(en) 문자열로 떨어진다.
+ */
+function useSafeT() {
+  const ctx = useOptionalI18n()
+  return useCallback(
+    (key, params) => (ctx?.t ? ctx.t(key, params) : fallbackT(key, params)),
+    [ctx],
+  )
+}
+
+function fallbackT(key, params = {}) {
+  const value = key.split('.').reduce((node, part) => (node && typeof node === 'object' ? node[part] : undefined), en)
+  if (typeof value !== 'string') return key
+  return value.replace(/\{(\w+)\}/g, (match, name) => (params[name] !== undefined ? params[name] : match))
 }
 
 /**
@@ -25,6 +70,7 @@ function toolName(item = {}) {
  * view 전환은 state를 보존하지만 projectKey 전환은 D15에 따라 이전 session을 abort/close한다.
  */
 export default function ChatPanel({ projectKey = null, batchStatusSources = {} }) {
+  const t = useSafeT()
   const api = window.electronAPI
   const [collapsed, setCollapsed] = useState(false)
   const [input, setInput] = useState('')
@@ -43,7 +89,7 @@ export default function ChatPanel({ projectKey = null, batchStatusSources = {} }
   batchSourcesRef.current = batchStatusSources
 
   const pushError = useCallback((failure) => {
-    const text = failureText(failure)
+    const text = failureText(failure, t)
     const key = JSON.stringify([failure?.error, failure?.message, failure?.limit, failure?.used])
     setErrors((current) => (
       current.some((entry) => entry.key === key) ? current : [...current, { key, text }]
@@ -96,7 +142,7 @@ export default function ChatPanel({ projectKey = null, batchStatusSources = {} }
       'agent:message': finalizeMessage,
       'agent:tool-call': (payload) => {
         const item = payload?.item || {}
-        const id = item.id || `${toolName(item)}:${payload?.turnId || 'unknown'}`
+        const id = item.id || `${toolName(item, t)}:${payload?.turnId || 'unknown'}`
         setToolCalls((current) => {
           const next = { id, phase: payload?.phase || 'started', item }
           const index = current.findIndex((entry) => entry.id === id)
@@ -147,7 +193,7 @@ export default function ChatPanel({ projectKey = null, batchStatusSources = {} }
     setUsage(null)
     setErrors([])
     setMessages(hadOpenSession
-      ? [{ id: 'project-switch', role: 'system', text: '프로젝트가 바뀌어 이전 에이전트 세션을 종료했습니다.' }]
+      ? [{ id: 'project-switch', role: 'system', text: t('agent.projectSwitched') }]
       : [])
     if (!hadOpenSession) {
       projectSettleRef.current = Promise.resolve(projectSettleRef.current)
@@ -253,13 +299,22 @@ export default function ChatPanel({ projectKey = null, batchStatusSources = {} }
   }
 
   return (
-    <aside className={`agent-chat-panel ${collapsed ? 'is-collapsed' : ''}`} aria-label="인앱 에이전트">
+    <aside className={`agent-chat-panel ${collapsed ? 'is-collapsed' : ''}`} aria-label={t('agent.panelLabel')}>
       <div className="agent-chat-header">
-        <strong>에이전트</strong>
+        <strong>{t('agent.title')}</strong>
         <div className="agent-chat-header-actions">
-          {running && <span className="agent-chat-running">작업 중</span>}
-          <button type="button" onClick={() => setCollapsed((value) => !value)}>
-            {collapsed ? '열기' : '접기'}
+          {running && <span className="agent-chat-running">{t('agent.running')}</span>}
+          {/* 🔴 아이콘만 두면 버튼의 **이름이 사라진다** — 스크린리더는 "button" 이라고만 읽는다.
+              `aria-label` 로 이름을, `title` 로 풍선 도움말을 준다. 둘 다 상태를 그대로 말한다. */}
+          <button
+            type="button"
+            className="agent-chat-collapse"
+            aria-label={collapsed ? t('agent.expand') : t('agent.collapse')}
+            aria-expanded={!collapsed}
+            title={collapsed ? t('agent.expand') : t('agent.collapse')}
+            onClick={() => setCollapsed((value) => !value)}
+          >
+            <ChevronIcon collapsed={collapsed} />
           </button>
         </div>
       </div>
@@ -267,13 +322,16 @@ export default function ChatPanel({ projectKey = null, batchStatusSources = {} }
       {!collapsed && (
         <>
           <div className="agent-chat-log" aria-live="polite">
-            {messages.length === 0 && <p className="agent-chat-empty">프로젝트 작업을 요청해보세요.</p>}
+            {messages.length === 0 && <p className="agent-chat-empty">{t('agent.empty')}</p>}
             {messages.map((message) => (
               <div key={message.id} className={`agent-chat-message ${message.role}`}>{message.text}</div>
             ))}
             {toolCalls.map(({ id, phase, item }) => (
               <div key={id} className="agent-chat-tool">
-                <div><span>{phase === 'completed' ? '완료' : '실행 중'}</span> · {toolName(item)}</div>
+                <div>
+                  <span>{phase === 'completed' ? t('agent.toolDone') : t('agent.toolRunning')}</span>
+                  {' · '}{toolName(item, t)}
+                </div>
                 {(item.arguments || item.result) && (
                   <pre>{JSON.stringify(item.arguments || item.result, null, 2)}</pre>
                 )}
@@ -284,23 +342,23 @@ export default function ChatPanel({ projectKey = null, batchStatusSources = {} }
 
           {usage && (
             <div className="agent-chat-usage">
-              턴 {usage.turns ?? 0} · 툴 {usage.toolCalls ?? 0}
+              {t('agent.usage', { turns: usage.turns ?? 0, toolCalls: usage.toolCalls ?? 0 })}
             </div>
           )}
 
           <form className="agent-chat-compose" onSubmit={send}>
             <textarea
-              aria-label="에이전트 메시지"
+              aria-label={t('agent.inputLabel')}
               value={input}
               onChange={(event) => setInput(event.target.value)}
-              placeholder="무엇을 도와줄까?"
+              placeholder={t('agent.placeholder')}
               rows={2}
             />
             <div className="agent-chat-actions">
-              <button type="submit" disabled={!input.trim()}>보내기</button>
-              <button type="button" onClick={steer} disabled={!running || !input.trim()}>방향 수정</button>
-              <button type="button" onClick={abort} disabled={!running}>중지</button>
-              <button type="button" onClick={close} disabled={!sessionOpenRef.current}>세션 닫기</button>
+              <button type="submit" disabled={!input.trim()}>{t('agent.send')}</button>
+              <button type="button" onClick={steer} disabled={!running || !input.trim()}>{t('agent.steer')}</button>
+              <button type="button" onClick={abort} disabled={!running}>{t('agent.stop')}</button>
+              <button type="button" onClick={close} disabled={!sessionOpenRef.current}>{t('agent.closeSession')}</button>
             </div>
           </form>
         </>

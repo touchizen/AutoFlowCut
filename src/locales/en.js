@@ -1488,4 +1488,33 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     never: 'Don\'t ask again',
   },
 
+  // In-app agent (D14). 🔴 An approval the user cannot read is not consent.
+  agent: {
+    title: 'Agent',
+    panelLabel: 'In-app agent',
+    running: 'Working',
+    collapse: 'Collapse',
+    expand: 'Expand',
+    empty: 'Ask the agent to work on this project.',
+    inputLabel: 'Message to the agent',
+    placeholder: 'What can I help with?',
+    send: 'Send',
+    steer: 'Steer',
+    stop: 'Stop',
+    closeSession: 'Close session',
+    toolCall: 'Tool call',
+    toolDone: 'Done',
+    toolRunning: 'Running',
+    usage: 'Turns {turns} · Tools {toolCalls}',
+    failed: 'The agent failed to complete the task.',
+    limitReached: 'Agent usage limit reached. Used {used} / limit {limit}',
+    projectSwitched: 'The project changed, so the previous agent session was closed.',
+    // Approval dialog
+    approvalLabel: 'Agent approval request',
+    approvalHeader: 'The agent wants to do this',
+    approve: 'Approve',
+    deny: 'Deny',
+    morePending: '{count} more pending',
+  },
+
 }
