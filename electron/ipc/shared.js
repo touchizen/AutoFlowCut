@@ -21,31 +21,6 @@ import { sanitizeForSentry } from '../flow-diag.js'
 export const FLOW_PAGE_FETCH_TIMEOUT_MS = 120000
 
 /**
- * #R37: 맨 executeJavaScript 는 먹통 렌더러에서 **영영 resolve 되지 않는다**.
- *
- * flowPageFetch(120s)와 trustedClick 은 타임아웃이 있는데 executeJavaScript 만 없었다. 캐릭터
- * 동기화가 그 위에서 돌기 때문에, DOM probe 하나가 매달리면 coordinator 의 작업이 끝나지 않고
- * 그 ref 의 락이 앱 재시작 전까지 안 풀린다(Sync 가 계속 'already in flight' 로 튕김).
- *
- * 버려도 안전하다: executeJavaScript 로 하는 건 SPA 캐시 갱신·DOM probe 같은 **로컬 작업**이다.
- * Flow 를 실제로 바꾸는 단계(uploadImage, 등록 PATCH)는 flowPageFetch 쪽이고 거긴 이미 묶여 있다.
- * (Promise.race 로 버린 executeJavaScript 는 계속 살아 있을 수 있지만, 원격 변경이 없으므로
- *  중복 entity 를 만들지 않는다 — trustedClick 의 좀비 주석과 같은 논리.)
- */
-export const EXEC_JS_TIMEOUT_MS = 20000
-
-export function execJs(wc, code, timeoutMs = EXEC_JS_TIMEOUT_MS) {
-  if (!wc || (typeof wc.isDestroyed === 'function' && wc.isDestroyed())) {
-    return Promise.reject(new Error('flowView webContents unavailable'))
-  }
-  let timer
-  const timeout = new Promise((_, rej) => {
-    timer = setTimeout(() => rej(new Error(`executeJavaScript timed out after ${timeoutMs}ms`)), timeoutMs)
-  })
-  return Promise.race([wc.executeJavaScript(code), timeout]).finally(() => clearTimeout(timer))
-}
-
-/**
  * #R34-fix: applyAgentDefaults 결과가 "요청한 image/video aspect·model 을 실제로 적용했는지" 판정(순수).
  *   buildAgentDefaultsScript 의 result.ok 는 패널을 찾기만 하면 true 라, 탭/옵션 미발견 같은 필드 적용
  *   실패를 잡지 못한다. 그대로 success 처리하면 잘못된 화면비/모델로 생성돼 quota 를 낭비한다.
