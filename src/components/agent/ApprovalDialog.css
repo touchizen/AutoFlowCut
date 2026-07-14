@@ -1,6 +1,14 @@
-/* 승인 창은 **가려지면 안 된다** — 에이전트가 과금 툴을 부르려는 순간이다. */
+/* 승인 창은 **가려지면 안 된다** — 에이전트가 프로젝트를 바꾸거나 과금 툴을 부르려는 순간이다.
+ *
+ * 🔴 예전엔 `z-index: 9999` 였다. 주석은 이렇게 써 있었는데 **앱에서 거의 제일 아래였다** —
+ *    SceneDetailModal(10001) / SceneList(10002) / App·TagInput(10003) / Toast(99999) 가 전부 위에 있었고,
+ *    실제로 씬 이미지 패널에 잘려서 승인 문구가 안 보였다 (실앱 실측).
+ *    **가려진 승인 창은 눈 감고 누르는 것과 같다** — 인자를 보여주려던 목적이 통째로 무너진다.
+ *
+ *    `ApprovalDialog.stacking.test.js` 가 "앱의 모든 z-index 보다 크다"를 불변식으로 못박는다.
+ *    누가 더 높은 값을 새로 넣으면 그 테스트가 터진다. */
 .approval-backdrop {
-  position: fixed; inset: 0; z-index: 9999;
+  position: fixed; inset: 0; z-index: 2147483000;
   display: flex; align-items: center; justify-content: center;
   background: rgba(0, 0, 0, 0.55);
 }
