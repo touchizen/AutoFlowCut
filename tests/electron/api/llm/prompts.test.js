@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt, buildTitlePrompt, buildContinuePrompt, buildReviewPrompt, buildRevisePrompt, buildScenesRevisePrompt, buildSynopsisPrompt, buildSynopsisFromScriptPrompt, buildCharacterExtractPrompt } from '../../../../electron/api/llm/prompts.js'
+import { buildScriptPrompt, buildSplitPrompt, buildPromptsPrompt, buildSrtGroupPrompt, buildTitlePrompt, buildContinuePrompt, buildReviewPrompt, buildRevisePrompt, buildScenesRevisePrompt, buildSynopsisPrompt, buildSynopsisFromScriptPrompt, buildCharacterExtractPrompt } from '../../../../electron/api/llm/prompts.js'
 
 describe('buildScriptPrompt 길이 단위', () => {
   it('min 단위는 "약 N분"', () => {
@@ -58,6 +58,28 @@ describe('buildSplitPrompt / buildPromptsPrompt', () => {
   it('prompts는 씬 요약을 포함', () => {
     const p = buildPromptsPrompt([{ sceneNo: 1, summary: 'S1', segments: [{ text: 'hi' }] }], {}, { language: 'en' })
     expect(p).toContain('1. S1')
+  })
+  it('prompts는 빈 summary와 segments 본문을 계약 형식으로 포함한다', () => {
+    const p = buildPromptsPrompt([{ sceneNo: 7, summary: '', segments: [{ text: '실제 SRT 본문' }] }], {}, {})
+    expect(p).toContain('7.  :: 실제 SRT 본문')
+  })
+})
+
+describe('buildSrtGroupPrompt', () => {
+  it('라인번호와 텍스트만 직렬화하고 타임코드 필드는 절대 포함하지 않는다', () => {
+    const p = buildSrtGroupPrompt([
+      { lineNo: 1, text: '첫 자막', startTime: 'TIMECODE_START_SECRET', endTime: 'TIMECODE_END_SECRET' },
+      { lineNo: 2, text: '둘째 자막', timing: '00:00:10,000 --> 00:00:12,000' },
+    ], { language: 'ko' })
+
+    expect(p).toContain('1. 첫 자막')
+    expect(p).toContain('2. 둘째 자막')
+    expect(p).not.toContain('TIMECODE_START_SECRET')
+    expect(p).not.toContain('TIMECODE_END_SECRET')
+    expect(p).not.toContain('00:00:10,000')
+    expect(p).toContain('fromLine')
+    expect(p).toContain('toLine')
+    expect(p).toContain('summary')
   })
 })
 

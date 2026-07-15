@@ -5,6 +5,7 @@
 import {
   buildContinuePrompt,
   buildPromptsPrompt,
+  buildSrtGroupPrompt,
   buildReviewPrompt,
   buildRevisePrompt,
   buildSynopsisReviewPrompt,
@@ -24,7 +25,8 @@ import {
 import { runCodexJson, runCodexText } from './codexAppServer.js'
 import { splitSynopsisOutput, parseCharactersJson, createSynopsisDeltaGate } from './synopsisOutput.js'
 import { toOpenAiJsonSchema } from './toJsonSchema.js'
-import { PROMPTS_SCHEMA, REVIEW_SCHEMA, SCORED_REVIEW_SCHEMA, clampReviewScore, SCENES_SCHEMA, RESEARCH_ANALYSIS_SCHEMA, validateScenesSegments } from './schemas.js'
+import { GROUPS_SCHEMA, PROMPTS_SCHEMA, REVIEW_SCHEMA, SCORED_REVIEW_SCHEMA, clampReviewScore, SCENES_SCHEMA, RESEARCH_ANALYSIS_SCHEMA, validateScenesSegments } from './schemas.js'
+import { validatePromptScenesExactOnce } from './srtPrompts.js'
 import { isNarratorSpeaker as isNarratorTrackSpeaker } from '../../../src/utils/storyNarrationTracks.js'
 
 export const DEFAULT_MODEL = 'gpt-5.5'
@@ -214,14 +216,8 @@ export async function analyzeResearch(transcripts, opts = {}, { signal, runJson 
 export async function writePrompts(scenes, context, opts = {}, { signal, runJson = runCodexJson } = {}) {
   const prompt = guardPrompt(buildPromptsPrompt(scenes, context, opts))
   const out = await runJson(prompt, codexSchema(PROMPTS_SCHEMA), runtimeOptions(opts), { signal })
-  const byNo = new Map((out.scenes || []).map((s) => [s.sceneNo, s]))
-  for (const s of scenes) {
-    const p = byNo.get(s.sceneNo)
-    if (!p || typeof p.imagePrompt !== 'string' || !p.imagePrompt.trim()
-        || typeof p.videoPrompt !== 'string' || !p.videoPrompt.trim()) {
-      throw new Error(`writePrompts: scene ${s.sceneNo} missing/empty prompt`)
-    }
-  }
+  validatePromptScenesExactOnce(scenes.map((scene) => scene.sceneNo), out.scenes)
+  const byNo = new Map(out.scenes.map((s) => [s.sceneNo, s]))
   return {
     scenes: scenes.map((s) => ({
       ...s,
@@ -229,4 +225,10 @@ export async function writePrompts(scenes, context, opts = {}, { signal, runJson
       videoPrompt: byNo.get(s.sceneNo)?.videoPrompt ?? s.videoPrompt ?? null,
     })),
   }
+}
+
+export async function groupSrtLines(numberedLines, opts = {}, { signal, runJson = runCodexJson } = {}) {
+  const prompt = guardPrompt(buildSrtGroupPrompt(numberedLines, opts))
+  const out = await runJson(prompt, codexSchema(GROUPS_SCHEMA), runtimeOptions(opts), { signal })
+  return { groups: out.groups || [] }
 }

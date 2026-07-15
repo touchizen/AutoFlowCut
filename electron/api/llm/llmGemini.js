@@ -6,7 +6,8 @@
  * 1회 재시도 / 그 외 HTTP 에러(400 등) → 재시도 없이 throw / abort → 즉시 throw.
  * 키는 헤더(x-goog-api-key)로만 전달.
  */
-import { SCENES_SCHEMA, PROMPTS_SCHEMA, REVIEW_SCHEMA, validateScenesSegments } from './schemas.js'
+import { GROUPS_SCHEMA, SCENES_SCHEMA, PROMPTS_SCHEMA, REVIEW_SCHEMA, validateScenesSegments } from './schemas.js'
+import { validatePromptScenesExactOnce } from './srtPrompts.js'
 import { splitSynopsisOutput, parseCharactersJson, createSynopsisDeltaGate } from './synopsisOutput.js'
 import {
   buildScriptPrompt,
@@ -15,6 +16,7 @@ import {
   buildSynopsisFromScriptPrompt,
   buildSplitPrompt,
   buildPromptsPrompt,
+  buildSrtGroupPrompt,
   buildReviewPrompt,
   buildRevisePrompt,
   buildScenesReviewPrompt,
@@ -215,7 +217,8 @@ export async function revisePrompts(scenes, context, critique, opts, ctx = {}) {
 export async function writePrompts(scenes, context, opts, ctx = {}) {
   const prompt = buildPromptsPrompt(scenes, context, opts)
   const out = await structuredCall(prompt, PROMPTS_SCHEMA, opts, ctx)
-  const byNo = new Map((out.scenes || []).map((s) => [s.sceneNo, s]))
+  validatePromptScenesExactOnce(scenes.map((scene) => scene.sceneNo), out.scenes)
+  const byNo = new Map(out.scenes.map((s) => [s.sceneNo, s]))
   return {
     scenes: scenes.map((s) => ({
       ...s,
@@ -223,4 +226,10 @@ export async function writePrompts(scenes, context, opts, ctx = {}) {
       videoPrompt: byNo.get(s.sceneNo)?.videoPrompt ?? s.videoPrompt ?? null,
     })),
   }
+}
+
+export async function groupSrtLines(numberedLines, opts, ctx = {}) {
+  const prompt = buildSrtGroupPrompt(numberedLines, opts)
+  const out = await structuredCall(prompt, GROUPS_SCHEMA, opts, ctx)
+  return { groups: out.groups || [] }
 }

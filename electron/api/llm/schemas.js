@@ -185,3 +185,22 @@ export const PROMPTS_SCHEMA = {
   },
   required: ['scenes'],
 }
+
+export const GROUPS_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    groups: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          fromLine: { type: 'INTEGER' },
+          toLine: { type: 'INTEGER' },
+          summary: { type: 'STRING' },
+        },
+        required: ['fromLine', 'toLine', 'summary'],
+      },
+    },
+  },
+  required: ['groups'],
+}

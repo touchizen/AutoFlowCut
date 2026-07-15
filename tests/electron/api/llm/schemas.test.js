@@ -1,5 +1,28 @@
 import { describe, it, expect } from 'vitest'
-import { SCENES_SCHEMA, validateScenesSegments } from '../../../../electron/api/llm/schemas.js'
+import { GROUPS_SCHEMA, SCENES_SCHEMA, validateScenesSegments } from '../../../../electron/api/llm/schemas.js'
+
+describe('GROUPS_SCHEMA', () => {
+  it('groups의 fromLine/toLine/summary를 모두 required로 정의한다', () => {
+    expect(GROUPS_SCHEMA).toEqual({
+      type: 'OBJECT',
+      properties: {
+        groups: {
+          type: 'ARRAY',
+          items: {
+            type: 'OBJECT',
+            properties: {
+              fromLine: { type: 'INTEGER' },
+              toLine: { type: 'INTEGER' },
+              summary: { type: 'STRING' },
+            },
+            required: ['fromLine', 'toLine', 'summary'],
+          },
+        },
+      },
+      required: ['groups'],
+    })
+  })
+})
 
 describe('SCENES_SCHEMA speakers.appearance (V2 캐릭터 레퍼런스)', () => {
   it('speakers 아이템에 appearance 필드가 있고 required는 id/name만', () => {

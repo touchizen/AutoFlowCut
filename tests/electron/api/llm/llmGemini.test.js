@@ -6,6 +6,7 @@ import {
   generateScript,
   splitScenes,
   writePrompts,
+  groupSrtLines,
   reviewScript,
   reviseScript,
   reviewScenes,
@@ -152,6 +153,48 @@ describe('writePrompts', () => {
     const fetchImpl = vi.fn(async () => jsonResponse({ scenes: [{ sceneNo: 1, imagePrompt: 'IMG', videoPrompt: 'VID' }] }))
     const r = await writePrompts(scenes, { scriptMd: '#', style: null }, OPTS, { fetchImpl })
     expect(r.scenes[0]).toMatchObject({ storyId: 'u1', imagePrompt: 'IMG', videoPrompt: 'VID' })
+  })
+
+  it.each([
+    ['duplicate raw sceneNo', [
+      { sceneNo: 1, imagePrompt: 'IMG1', videoPrompt: 'VID1' },
+      { sceneNo: 1, imagePrompt: 'IMG2', videoPrompt: 'VID2' },
+    ]],
+    ['extra raw sceneNo', [
+      { sceneNo: 1, imagePrompt: 'IMG1', videoPrompt: 'VID1' },
+      { sceneNo: 2, imagePrompt: 'IMG2', videoPrompt: 'VID2' },
+    ]],
+    ['length mismatch/missing', []],
+    ['empty prompt', [{ sceneNo: 1, imagePrompt: '   ', videoPrompt: 'VID' }]],
+    ['non-integer sceneNo', [{ sceneNo: 1.5, imagePrompt: 'IMG', videoPrompt: 'VID' }]],
+    ['zero sceneNo', [{ sceneNo: 0, imagePrompt: 'IMG', videoPrompt: 'VID' }]],
+  ])('Map 전에 %s를 거부한다', async (_label, rawScenes) => {
+    const scenes = [{ storyId: 'u1', sceneNo: 1, segments: [] }]
+    const fetchImpl = vi.fn(async () => jsonResponse({ scenes: rawScenes }))
+    await expect(writePrompts(scenes, {}, OPTS, { fetchImpl })).rejects.toThrow()
+  })
+
+  it('누락 응답을 기존 prompt/null로 조용히 폴백하지 않는다', async () => {
+    const scenes = [{ storyId: 'u1', sceneNo: 1, imagePrompt: 'OLD IMG', videoPrompt: 'OLD VID' }]
+    const fetchImpl = vi.fn(async () => jsonResponse({ scenes: [] }))
+    await expect(writePrompts(scenes, {}, OPTS, { fetchImpl })).rejects.toThrow(/scene 1|length/i)
+  })
+})
+
+describe('groupSrtLines', () => {
+  it('GROUPS structured output을 사용하고 prompt에 lineNo/text만 넣는다', async () => {
+    const numberedLines = [{ lineNo: 1, text: '본문', startTime: 'TIMING_SECRET' }]
+    const fetchImpl = vi.fn(async () => jsonResponse({
+      groups: [{ fromLine: 1, toLine: 1, summary: '요약' }],
+    }))
+
+    await expect(groupSrtLines(numberedLines, OPTS, { fetchImpl })).resolves.toEqual({
+      groups: [{ fromLine: 1, toLine: 1, summary: '요약' }],
+    })
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body)
+    expect(body.contents[0].parts[0].text).toContain('1. 본문')
+    expect(body.contents[0].parts[0].text).not.toContain('TIMING_SECRET')
+    expect(body.generationConfig.responseSchema.properties.groups).toBeTruthy()
   })
 })
 

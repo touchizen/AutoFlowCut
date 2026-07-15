@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import {
   splitScenes,
   writePrompts,
+  groupSrtLines,
   reviewScript,
   reviseScript,
   reviewScenes,
@@ -132,6 +133,45 @@ describe('llmClaude.writePrompts', () => {
     const partial = { scenes: [{ sceneNo: 1, imagePrompt: 'IMG', videoPrompt: 'VID' }] }
     const queryImpl = resultOf({ type: 'result', subtype: 'success', is_error: false, structured_output: partial })
     await expect(writePrompts([{ sceneNo: 1 }, { sceneNo: 2 }], {}, {}, { queryImpl })).rejects.toThrow(/scene 2 missing\/empty prompt/)
+  })
+  it.each([
+    ['duplicate raw sceneNo', [
+      { sceneNo: 1, imagePrompt: 'IMG1', videoPrompt: 'VID1' },
+      { sceneNo: 1, imagePrompt: 'IMG2', videoPrompt: 'VID2' },
+    ]],
+    ['extra raw sceneNo', [
+      { sceneNo: 1, imagePrompt: 'IMG1', videoPrompt: 'VID1' },
+      { sceneNo: 2, imagePrompt: 'IMG2', videoPrompt: 'VID2' },
+    ]],
+    ['length mismatch/missing', []],
+    ['empty prompt', [{ sceneNo: 1, imagePrompt: '', videoPrompt: 'VID' }]],
+    ['zero sceneNo', [{ sceneNo: 0, imagePrompt: 'IMG', videoPrompt: 'VID' }]],
+  ])('Map 전에 %s를 거부한다', async (_label, rawScenes) => {
+    const queryImpl = resultOf({
+      type: 'result', subtype: 'success', is_error: false, structured_output: { scenes: rawScenes },
+    })
+    await expect(writePrompts([{ sceneNo: 1 }], {}, {}, { queryImpl })).rejects.toThrow()
+  })
+})
+
+describe('llmClaude.groupSrtLines', () => {
+  it('GROUPS structured call 결과를 반환한다', async () => {
+    const queryImpl = vi.fn(async function* (args) {
+      expect(args.prompt).toContain('1. 본문')
+      expect(args.prompt).not.toContain('TIMING_SECRET')
+      expect(args.options.outputFormat.schema.properties.groups).toBeTruthy()
+      yield {
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        structured_output: { groups: [{ fromLine: 1, toLine: 1, summary: '요약' }] },
+      }
+    })
+    await expect(groupSrtLines(
+      [{ lineNo: 1, text: '본문', startTime: 'TIMING_SECRET' }],
+      {},
+      { queryImpl },
+    )).resolves.toEqual({ groups: [{ fromLine: 1, toLine: 1, summary: '요약' }] })
   })
 })
 

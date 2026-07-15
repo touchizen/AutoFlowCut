@@ -6,6 +6,7 @@ import {
   buildScriptPrompt,
   buildSplitPrompt,
   buildPromptsPrompt,
+  buildSrtGroupPrompt,
   buildTitlePrompt,
   buildSynopsisPrompt,
   buildCharacterExtractPrompt,
@@ -25,7 +26,8 @@ import {
 import { buildClaudeSdkOptions, extractClaudeSdkResult, bridgeAbortSignal, extractTextDelta, readStructuredResult } from './claudeSdk.js'
 import { splitSynopsisOutput, parseCharactersJson, createSynopsisDeltaGate } from './synopsisOutput.js'
 import { toJsonSchema } from './toJsonSchema.js'
-import { SCENES_SCHEMA, PROMPTS_SCHEMA, REVIEW_SCHEMA, SCORED_REVIEW_SCHEMA, clampReviewScore, RESEARCH_ANALYSIS_SCHEMA, FACTCHECK_SCHEMA, validateScenesSegments } from './schemas.js'
+import { GROUPS_SCHEMA, SCENES_SCHEMA, PROMPTS_SCHEMA, REVIEW_SCHEMA, SCORED_REVIEW_SCHEMA, clampReviewScore, RESEARCH_ANALYSIS_SCHEMA, FACTCHECK_SCHEMA, validateScenesSegments } from './schemas.js'
+import { validatePromptScenesExactOnce } from './srtPrompts.js'
 
 export const DEFAULT_MODEL = 'claude-opus-4-8'
 
@@ -385,15 +387,8 @@ export async function factCheckClaims(claims, opts = {}, { signal, queryImpl } =
 export async function writePrompts(scenes, context, opts = {}, { signal, queryImpl } = {}) {
   const prompt = buildPromptsPrompt(scenes, context, opts)
   const out = await structuredClaudeCall(prompt, PROMPTS_SCHEMA, opts, { signal, queryImpl })
-  const byNo = new Map((out.scenes || []).map((s) => [s.sceneNo, s]))
-  // 계약 검증: 입력 씬 전체가 커버되고 각 프롬프트가 non-empty string인지 (병합 폴백 전에 실패시킴)
-  for (const s of scenes) {
-    const p = byNo.get(s.sceneNo)
-    if (!p || typeof p.imagePrompt !== 'string' || !p.imagePrompt.trim()
-          || typeof p.videoPrompt !== 'string' || !p.videoPrompt.trim()) {
-      throw new Error(`writePrompts: scene ${s.sceneNo} missing/empty prompt`)
-    }
-  }
+  validatePromptScenesExactOnce(scenes.map((scene) => scene.sceneNo), out.scenes)
+  const byNo = new Map(out.scenes.map((s) => [s.sceneNo, s]))
   return {
     scenes: scenes.map((s) => ({
       ...s,
@@ -401,4 +396,10 @@ export async function writePrompts(scenes, context, opts = {}, { signal, queryIm
       videoPrompt: byNo.get(s.sceneNo)?.videoPrompt ?? s.videoPrompt ?? null,
     })),
   }
+}
+
+export async function groupSrtLines(numberedLines, opts = {}, { signal, queryImpl } = {}) {
+  const prompt = buildSrtGroupPrompt(numberedLines, opts)
+  const out = await structuredClaudeCall(prompt, GROUPS_SCHEMA, opts, { signal, queryImpl })
+  return { groups: out.groups || [] }
 }

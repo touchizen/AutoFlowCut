@@ -11,6 +11,7 @@ import {
   revisePrompts,
   splitScenes,
   writePrompts,
+  groupSrtLines,
 } from '../../../../electron/api/llm/llmCodex.js'
 
 const OPTS = { engine: 'codex', model: 'gpt-5.5', reasoningEffort: 'high', language: 'ko' }
@@ -119,6 +120,39 @@ describe('llmCodex adapter', () => {
 
     runJson.mockResolvedValueOnce({ scenes: [] })
     await expect(writePrompts(scenes, { scriptMd: '#' }, OPTS, { runJson })).rejects.toThrow(/scene 1 missing\/empty prompt/)
+  })
+
+  it.each([
+    ['duplicate raw sceneNo', [
+      { sceneNo: 1, imagePrompt: 'IMG1', videoPrompt: 'VID1' },
+      { sceneNo: 1, imagePrompt: 'IMG2', videoPrompt: 'VID2' },
+    ]],
+    ['extra raw sceneNo', [
+      { sceneNo: 1, imagePrompt: 'IMG1', videoPrompt: 'VID1' },
+      { sceneNo: 2, imagePrompt: 'IMG2', videoPrompt: 'VID2' },
+    ]],
+    ['length mismatch/missing', []],
+    ['empty prompt', [{ sceneNo: 1, imagePrompt: 'IMG', videoPrompt: '   ' }]],
+    ['non-integer sceneNo', [{ sceneNo: 1.5, imagePrompt: 'IMG', videoPrompt: 'VID' }]],
+    ['zero sceneNo', [{ sceneNo: 0, imagePrompt: 'IMG', videoPrompt: 'VID' }]],
+  ])('writePrompts는 Map 전에 %s를 거부한다', async (_label, rawScenes) => {
+    const runJson = vi.fn(async () => ({ scenes: rawScenes }))
+    await expect(writePrompts([{ sceneNo: 1 }], {}, OPTS, { runJson })).rejects.toThrow()
+  })
+
+  it('groupSrtLines는 GROUPS schema와 guarded prompt를 사용한다', async () => {
+    const runJson = vi.fn(async () => ({
+      groups: [{ fromLine: 1, toLine: 1, summary: '요약' }],
+    }))
+    await expect(groupSrtLines(
+      [{ lineNo: 1, text: '본문', startTime: 'TIMING_SECRET' }],
+      OPTS,
+      { runJson },
+    )).resolves.toEqual({ groups: [{ fromLine: 1, toLine: 1, summary: '요약' }] })
+    expect(runJson.mock.calls[0][0]).toContain('1. 본문')
+    expect(runJson.mock.calls[0][0]).toContain('Do not inspect local files')
+    expect(runJson.mock.calls[0][0]).not.toContain('TIMING_SECRET')
+    expect(runJson.mock.calls[0][1].properties.groups).toBeTruthy()
   })
 
   it('reviewScenes/reviewPrompts는 Codex JSON runner와 backend guard를 사용한다', async () => {

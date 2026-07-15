@@ -423,3 +423,16 @@ export function buildPromptsPrompt(scenes, context, opts) {
     ...sceneLines,
   ].filter(Boolean).join('\n')
 }
+
+export function buildSrtGroupPrompt(numberedLines, opts = {}) {
+  const summaryLanguage = opts.language === 'en' ? 'English' : 'Korean'
+  const lines = (numberedLines || []).map(({ lineNo, text }) => `${lineNo}. ${String(text ?? '').trim()}`)
+  return [
+    `Group the numbered SRT subtitle lines below into semantically continuous scenes.`,
+    `Cover every line exactly once, in order, without gaps or overlaps.`,
+    `Return groups with fromLine, toLine, and a concise ${summaryLanguage} summary.`,
+    `Do not add any fields other than fromLine, toLine, and summary.`,
+    `--- numbered subtitle lines ---`,
+    ...lines,
+  ].join('\n')
+}
