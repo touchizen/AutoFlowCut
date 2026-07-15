@@ -200,6 +200,33 @@ describe('useSrtPrompts — loop/apply/flush', () => {
     expect(report.status).toBe('completed')
   })
 
+  it('uses summary only from the mode B run-scoped map and forces mode A summary to empty', async () => {
+    const scenesRef = {
+      current: [makeScene('s1', 'one', { summary: 'persisted stale summary' })],
+    }
+    const ctx = setup({ scenesRef })
+
+    await act(async () => {
+      await ctx.result.current.run({ engine: 'claude', mode: 'A' })
+    })
+    expect(ctx.writeChunk.mock.calls[0][0].dtoScenes).toEqual([
+      { sceneNo: 1, summary: '', text: 'one' },
+    ])
+
+    ctx.writeChunk.mockClear()
+    await act(async () => {
+      await ctx.result.current.run({
+        engine: 'claude',
+        mode: 'B',
+        onlyEmpty: false,
+        summaryBySceneId: new Map([['s1', 'current run summary']]),
+      })
+    })
+    expect(ctx.writeChunk.mock.calls[0][0].dtoScenes).toEqual([
+      { sceneNo: 1, summary: 'current run summary', text: 'one' },
+    ])
+  })
+
   it('awaits each explicit flush before starting the next chunk', async () => {
     const events = []
     const firstFlush = deferred()
@@ -230,6 +257,21 @@ describe('useSrtPrompts — loop/apply/flush', () => {
     firstFlush.resolve()
     await act(async () => { await pending })
     expect(events).toEqual(['write-1', 'apply-1', 'flush-0', 'write-2', 'apply-2', 'flush-1'])
+  })
+
+  it('requires apply callbacks to return exactly { nextScenes: Array }', async () => {
+    const flushPromptChunk = vi.fn(async () => ({ ok: true, persisted: true }))
+    const ctx = setup({
+      applyPromptChunk: vi.fn(() => [{ id: 'legacy-array-fallback' }]),
+      flushPromptChunk,
+    })
+
+    let report
+    await act(async () => { report = await ctx.result.current.run({ engine: 'claude' }) })
+
+    expect(report.status).toBe('completed_with_failures')
+    expect(report.failures[0].error).toMatch(/nextScenes/)
+    expect(flushPromptChunk).not.toHaveBeenCalled()
   })
 
   it('short-circuits without IPC when there are no eligible targets', async () => {

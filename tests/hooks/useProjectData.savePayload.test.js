@@ -77,7 +77,7 @@ describe('saveCurrentProjectWithPayload', () => {
       res = await result.current.saveCurrentProjectWithPayload({ scenes: freshScenes, srtTrack: freshSrtTrack })
     })
 
-    expect(res).toEqual({ ok: true })
+    expect(res).toEqual({ ok: true, persisted: true })
     expect(fileSystemAPI.saveProjectData).toHaveBeenCalledTimes(1)
     const [projectName, payload] = fileSystemAPI.saveProjectData.mock.calls[0]
     expect(projectName).toBe('p')
@@ -86,6 +86,40 @@ describe('saveCurrentProjectWithPayload', () => {
     // stale closure 값이 섞여 들어가면 안 된다
     expect(payload.scenes).not.toEqual(staleScenes)
     expect(payload.srtTrack).not.toEqual(staleSrtTrack)
+  })
+
+  it('saves explicit framePairs in the same payload instead of the stale closure value', async () => {
+    const staleFramePairs = [{ id: 'stale-fp', ownerSceneId: 'stale_scene' }]
+    const { result } = setup({ framePairs: staleFramePairs })
+    const freshFramePairs = [{ id: 'gallery-fp', ownerSceneId: null }]
+
+    let res
+    await act(async () => {
+      res = await result.current.saveCurrentProjectWithPayload({
+        scenes: [{ id: 'fresh_scene' }],
+        framePairs: freshFramePairs,
+        srtTrack: [{ id: 'fresh_srt' }],
+      })
+    })
+
+    expect(res).toEqual({ ok: true, persisted: true })
+    const [, payload] = fileSystemAPI.saveProjectData.mock.calls[0]
+    expect(payload.framePairs).toEqual(freshFramePairs)
+    expect(payload.framePairs).not.toEqual(staleFramePairs)
+  })
+
+  it('returns persisted:false when explicit save is skipped outside folder mode', async () => {
+    const { result } = setup({
+      settings: { projectName: 'p', saveMode: 'memory', aspectRatio: '16:9', defaultDuration: 3 },
+    })
+
+    let res
+    await act(async () => {
+      res = await result.current.saveCurrentProjectWithPayload({ scenes: [], framePairs: [], srtTrack: [] })
+    })
+
+    expect(res).toEqual({ ok: true, persisted: false })
+    expect(fileSystemAPI.saveProjectData).not.toHaveBeenCalled()
   })
 
   it('V2: references override를 저장 payload에 반영(stale closure references 아님)', async () => {
@@ -118,7 +152,7 @@ describe('saveCurrentProjectWithPayload', () => {
       res = await result.current.saveCurrentProjectWithPayload({ scenes: [{ id: 's' }], srtTrack: [] })
     })
 
-    expect(res).toEqual({ ok: false, error: 'disk full' })
+    expect(res).toEqual({ ok: false, persisted: false, error: 'disk full' })
   })
 
   it('does not mutate the existing saveCurrentProject() closure-based behavior', async () => {

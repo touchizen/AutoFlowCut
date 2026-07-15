@@ -32,7 +32,8 @@ function normalizeScene(s, i) {
   const rawStart = s.start_time !== undefined ? s.start_time : s.startTime
   const parsedStart = parseTimeToSeconds(rawStart)
   const startTime = !isNaN(parsedStart) ? parsedStart : 0
-  const duration = parseFloat(s.duration) || 3
+  const parsedDuration = parseFloat(s.duration)
+  const duration = Number.isFinite(parsedDuration) ? parsedDuration : 3
   const rawEnd = s.end_time !== undefined ? s.end_time : s.endTime
   const parsedEnd = parseTimeToSeconds(rawEnd)
   const endTime = !isNaN(parsedEnd) ? parsedEnd : (startTime + duration)
@@ -43,8 +44,12 @@ function normalizeScene(s, i) {
     id: s.id || `scene_${i + 1}`,
     startTime,
     endTime,
-    duration: endTime - startTime || duration,
+    duration: endTime - startTime,
   }
+}
+
+function isBlankPrompt(value) {
+  return typeof value !== 'string' || value.trim() === ''
 }
 
 export function useScenes() {
@@ -717,12 +722,58 @@ export function useScenes() {
     return { nextScenes, nextSrtTrack }
   }, [])
 
+  /**
+   * SRT → prompt chunk apply. The patch decision is made against the live scene
+   * snapshot inside the functional setter so a response can never overwrite a
+   * field populated while its LLM request was in flight.
+   */
+  const applySrtPromptChunk = useCallback((prompts, { sceneNoToSceneId, onlyEmpty = true } = {}) => {
+    if (!Array.isArray(prompts) || !(sceneNoToSceneId instanceof Map)) {
+      throw new TypeError('SRT prompt apply requires prompts and sceneNoToSceneId')
+    }
+    const bySceneId = new Map()
+    for (const prompt of prompts) {
+      const sceneId = sceneNoToSceneId.get(prompt?.sceneNo)
+      if (sceneId != null) bySceneId.set(sceneId, prompt)
+    }
+    const now = new Date().toISOString()
+
+    setScenes((prev) => prev.map((scene) => {
+      const generated = bySceneId.get(scene.id)
+      if (!generated) return scene
+
+      const fillImagePrompt = !onlyEmpty || isBlankPrompt(scene.prompt)
+      const fillVideoPrompt = !onlyEmpty || isBlankPrompt(scene.videoT2VPrompt)
+      const imageChanged = fillImagePrompt && scene.prompt !== generated.imagePrompt
+      const videoChanged = fillVideoPrompt && scene.videoT2VPrompt !== generated.videoPrompt
+      if (!imageChanged && !videoChanged) return scene
+
+      const next = {
+        ...scene,
+        ...(imageChanged ? { prompt: generated.imagePrompt } : {}),
+        ...(videoChanged ? { videoT2VPrompt: generated.videoPrompt } : {}),
+      }
+      if (imageChanged && (scene.image || scene.imagePath)) {
+        next.stalePrompt = true
+        next.stalePromptAt = now
+      }
+      if (videoChanged && (scene.videoT2V || scene.videoT2VPath)) {
+        next.staleVideo = true
+        next.staleVideoAt = now
+      }
+      return next
+    }))
+
+    return { nextScenes: scenesRef.current }
+  }, [])
+
   return {
     // State
     scenes,
     scenesRef,
     references,
     srtTrack,
+    srtTrackRef,
 
     // Setters
     setScenes,
@@ -737,6 +788,9 @@ export function useScenes() {
 
     // Story pipeline
     importStoryScenes,
+
+    // SRT → prompt automation
+    applySrtPromptChunk,
 
     // Scene actions
     allocateSceneId,

@@ -32,6 +32,25 @@
   gap: 8px;
 }
 
+.btn-srt-prompts {
+  padding: 4px 8px;
+  border: 1px solid var(--accent-color, #7c5cff);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent-color, #7c5cff) 14%, transparent);
+  color: var(--text-color);
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.btn-srt-prompts:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-color, #7c5cff) 25%, transparent);
+}
+
+.btn-srt-prompts:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .btn-add-scene {
   padding: 4px 8px;
   border: 1px solid var(--border-color);

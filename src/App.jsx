@@ -66,8 +66,214 @@ import { toast } from './components/Toast'
 import { selectUnsyncedMentionedRefs, syncRefToFlow, isRefSynced, resolveSyncTarget, planSyncGateCompletion } from './utils/flowCharacterSync'
 import { getAuthErrorMessage, getAuthRequiredMessage } from './utils/authMessages'
 import { agentVideoScenePatch, resolveAgentVideoScenes } from './agent/videoAdmission'
+import { groupsToScenes, resolveSceneText } from '../electron/api/llm/srtPrompts.js'
+import { stableHash, useSrtPrompts } from './hooks/useSrtPrompts'
 
 const IMAGE_FIRST_IMPORT_IN_PROGRESS = 'image-first-import-in-progress'
+
+export function isSrtPromptModeBBlocked({
+  scenes = [],
+  fixedSceneState = null,
+  projectLoading = false,
+  isImageFirstImporting = false,
+  importProcessing = false,
+  isRunning = false,
+  videoAutomationRunning = false,
+  refBatchRunning = false,
+  hasPendingBatch = false,
+  videoRetryRunning = false,
+  generatingSceneId = null,
+  thumbnailGenerating = false,
+  galleryUploading = false,
+} = {}) {
+  const importInProgress = isImageFirstImporting || importProcessing
+  const fullGenerationBusy = isRunning || videoAutomationRunning || refBatchRunning
+    || hasPendingBatch || videoRetryRunning || Boolean(generatingSceneId)
+    || thumbnailGenerating || galleryUploading
+  return scenes.some((scene) => Boolean(scene?.storyId))
+    || fixedSceneState != null
+    || projectLoading
+    || importInProgress
+    || fullGenerationBusy
+}
+
+export function getSrtPromptTargetCounts({ scenes = [], srtTrack = [] } = {}) {
+  const nonEmptyTrackCount = srtTrack.filter((line) => String(line?.text || '').trim()).length
+  const modeA = scenes.length === 0
+    ? nonEmptyTrackCount
+    : scenes.filter((scene) => Boolean(resolveSceneText(scene, srtTrack))).length
+  const modeB = nonEmptyTrackCount
+  return { modeA, modeB, entry: Math.max(modeA, modeB) }
+}
+
+export function nextSrtPromptProjectIdentity(current, {
+  projectId,
+  projectLoading = false,
+  wasProjectLoading = false,
+} = {}) {
+  const previous = current || { projectId: null, switchEpoch: 0 }
+  const crossedBoundary = previous.projectId !== projectId
+    || (projectLoading && !wasProjectLoading)
+  if (!crossedBoundary) return previous
+  return {
+    projectId,
+    switchEpoch: previous.switchEpoch + 1,
+  }
+}
+
+export function buildSrtPromptHookConfig({
+  scenesRef,
+  srtTrackRef,
+  framePairsRef,
+  getProjectIdentity,
+  applyPromptChunk,
+  saveCurrentProjectWithPayload,
+  isFolderProject,
+}) {
+  return {
+    scenesRef,
+    srtTrackRef,
+    getProjectIdentity,
+    applyPromptChunk,
+    isFolderProject,
+    flushPromptChunk: ({ nextScenes }) => saveCurrentProjectWithPayload({
+      scenes: nextScenes,
+      framePairs: framePairsRef?.current || [],
+      srtTrack: srtTrackRef?.current || [],
+    }),
+  }
+}
+
+function modeBSourceSnapshot(scenes, srtTrack) {
+  return stableHash({
+    scenes: (scenes || []).map((scene) => ({
+      id: scene?.id,
+      subtitle: scene?.subtitle,
+      srtLineIds: scene?.srtLineIds || [],
+    })),
+    srtTrack: (srtTrack || []).map(({ id, text, startTime, endTime }) => ({
+      id,
+      text,
+      startTime,
+      endTime,
+    })),
+  })
+}
+
+/**
+ * App-owned mode B transaction. All state comparisons use synchronously updated
+ * refs; render closures are intentionally absent from this API.
+ */
+export async function runSrtPromptModeBTransaction({
+  blocked = false,
+  isBlocked,
+  engine,
+  context,
+  opts = {},
+  scenesRef,
+  srtTrackRef,
+  framePairsRef,
+  getProjectIdentity,
+  groupSrtLines,
+  allocateSceneId,
+  setScenes,
+  setFramePairs,
+  saveCurrentProjectWithPayload,
+  runPrompts,
+  isFolderProject = false,
+} = {}) {
+  if (blocked || isBlocked?.()) return { status: 'blocked' }
+
+  const capturedScenes = scenesRef?.current || []
+  const capturedTrack = srtTrackRef?.current || []
+  const capturedFramePairs = framePairsRef?.current || []
+  if (capturedTrack.length === 0) return { status: 'empty' }
+  const capturedIdentity = stableHash(getProjectIdentity?.() || {})
+  const capturedSource = modeBSourceSnapshot(capturedScenes, capturedTrack)
+
+  const grouped = await groupSrtLines({
+    engine,
+    numberedLines: capturedTrack.map((line, index) => ({
+      lineNo: index + 1,
+      text: String(line?.text ?? ''),
+    })),
+    opts,
+  })
+
+  if (isBlocked?.()
+    || stableHash(getProjectIdentity?.() || {}) !== capturedIdentity
+    || modeBSourceSnapshot(scenesRef?.current || [], srtTrackRef?.current || []) !== capturedSource
+    || stableHash(framePairsRef?.current || []) !== stableHash(capturedFramePairs)) {
+    return { status: 'stale' }
+  }
+
+  const groups = grouped?.groups || []
+  const nextScenes = groupsToScenes(groups, capturedTrack, { allocateSceneId })
+  const summaryBySceneId = new Map(nextScenes.map((scene, index) => (
+    [scene.id, groups[index].summary]
+  )))
+  // Every non-null owner points at the scene set being replaced (or is already
+  // orphaned). Only gallery-rooted/unowned rows can survive with zero orphans.
+  const nextFramePairs = capturedFramePairs.filter((pair) => pair?.ownerSceneId == null)
+
+  // Both functional setters are invoked in the same synchronous turn. Their App
+  // wrappers update scenesRef/framePairsRef before React schedules a render.
+  setScenes(() => nextScenes)
+  setFramePairs(() => nextFramePairs)
+
+  if (stableHash(scenesRef?.current) !== stableHash(nextScenes)
+    || stableHash(framePairsRef?.current) !== stableHash(nextFramePairs)
+    || stableHash(srtTrackRef?.current) !== stableHash(capturedTrack)
+    || stableHash(getProjectIdentity?.() || {}) !== capturedIdentity) {
+    return { status: 'stale', unsaved: true }
+  }
+
+  let saveResult
+  try {
+    saveResult = await saveCurrentProjectWithPayload({
+      scenes: nextScenes,
+      framePairs: nextFramePairs,
+      srtTrack: capturedTrack,
+    })
+  } catch (error) {
+    return { status: 'unsaved', unsaved: true, notPersisted: true, error: error?.message || String(error) }
+  }
+
+  if (!saveResult?.ok || (isFolderProject && saveResult.persisted !== true)) {
+    return {
+      status: 'unsaved',
+      unsaved: true,
+      notPersisted: saveResult?.persisted !== true,
+      error: saveResult?.error || 'Regrouped project was not persisted',
+    }
+  }
+
+  // The explicit write can yield. Never begin prompt IPC against a project or
+  // state that changed while the regroup payload was being persisted.
+  if (isBlocked?.()
+    || stableHash(getProjectIdentity?.() || {}) !== capturedIdentity
+    || stableHash(scenesRef?.current) !== stableHash(nextScenes)
+    || stableHash(framePairsRef?.current) !== stableHash(nextFramePairs)
+    || stableHash(srtTrackRef?.current) !== stableHash(capturedTrack)) {
+    return { status: 'stale', unsaved: true, notPersisted: saveResult.persisted !== true }
+  }
+
+  const promptReport = await runPrompts({
+    engine,
+    context,
+    opts,
+    onlyEmpty: true,
+    mode: 'B',
+    summaryBySceneId,
+  })
+  const regroupPersisted = saveResult.persisted === true
+  return {
+    ...promptReport,
+    regroupPersisted,
+    unsaved: Boolean(promptReport?.unsaved || !regroupPersisted),
+    notPersisted: Boolean(promptReport?.notPersisted || !regroupPersisted),
+  }
+}
 
 export function readFileAsDataURL(file) {
   return new Promise((resolve, reject) => {
@@ -393,6 +599,7 @@ import ApprovalDialog from './components/agent/ApprovalDialog'
 import ChatPanel from './components/agent/ChatPanel'
 import PromptInput from './components/PromptInput'
 import SceneList from './components/SceneList'
+import SrtPromptModal from './components/SrtPromptModal'
 import GenerateMenu from './components/GenerateMenu'
 import FrameToVideoPanel from './components/FrameToVideoPanel'
 import ReferencePanel from './components/ReferencePanel'
@@ -453,6 +660,10 @@ function App() {
 
   // Flow Login Expired Modal
   const [showApiKeyModal, setShowApiKeyModal] = useState(false)
+  const [showSrtPromptModal, setShowSrtPromptModal] = useState(false)
+  const [srtPromptCapabilities, setSrtPromptCapabilities] = useState({})
+  const [srtPromptCapabilitiesLoading, setSrtPromptCapabilitiesLoading] = useState(false)
+  const [srtPromptFinalReport, setSrtPromptFinalReport] = useState(null)
 
   // Tag Validation Modal
   const [tagValidationErrors, setTagValidationErrors] = useState(null)
@@ -488,7 +699,18 @@ function App() {
   // 뷰 전환: 기존 생성 화면 vs Story 파이프라인 화면. activeTab 과 별개 — Story 는 씬/이미지
   // 생성과 무관한 별도 워크플로우(스텝퍼 + 단계 패널)라 탭 목록에 섞지 않는다.
   const [activeView, setActiveView] = useState('generate') // 'generate' | 'story'
-  const [framePairs, setFramePairs] = useState([])   // Frame to Video 매핑
+  const [framePairs, _setFramePairs] = useState([])   // Frame to Video 매핑
+  // SRT mode B commits scenes + framePairs in one tick. The wrapper makes the
+  // just-committed pairs synchronously readable without a stale render closure.
+  const framePairsRef = useRef(framePairs)
+  framePairsRef.current = framePairs
+  const setFramePairs = useCallback((valueOrFn) => {
+    const prev = framePairsRef.current
+    const next = typeof valueOrFn === 'function' ? valueOrFn(prev) : valueOrFn
+    if (next === prev) return
+    framePairsRef.current = next
+    _setFramePairs(next)
+  }, [])
   const [ftvPromptSource, setFtvPromptSource] = useState('image') // 'image' | 'video' | 'none'
   const [galleryItems, setGalleryItems] = useState([])
   const [galleryUploading, setGalleryUploading] = useState(false)  // #R29-3: F2V 디스크 업로드 중 전환 차단
@@ -826,6 +1048,66 @@ function App() {
   // Story 파이프라인 — projectPath 는 폴더 저장 모드의 프로젝트 루트
   // (workFolder/projectName, useProjectData 의 audio 폴더 경로 계산과 동일 패턴).
   const workFolder = localStorage.getItem('workFolderPath')
+  const srtPromptProjectId = `${settings.saveMode}:${workFolder || ''}:${settings.projectName || ''}`
+  const srtPromptProjectIdentityRef = useRef({ projectId: srtPromptProjectId, switchEpoch: 0 })
+  const previousSrtPromptProjectLoadingRef = useRef(projectLoading)
+  srtPromptProjectIdentityRef.current = nextSrtPromptProjectIdentity(
+    srtPromptProjectIdentityRef.current,
+    {
+      projectId: srtPromptProjectId,
+      projectLoading,
+      wasProjectLoading: previousSrtPromptProjectLoadingRef.current,
+    },
+  )
+  previousSrtPromptProjectLoadingRef.current = projectLoading
+  const srtPrompts = useSrtPrompts(buildSrtPromptHookConfig({
+    scenesRef,
+    srtTrackRef: scenesHook.srtTrackRef,
+    framePairsRef,
+    getProjectIdentity: () => srtPromptProjectIdentityRef.current,
+    applyPromptChunk: scenesHook.applySrtPromptChunk,
+    saveCurrentProjectWithPayload,
+    isFolderProject: () => settings.saveMode === 'folder',
+  }))
+  const srtPromptEligibleScenes = useMemo(
+    () => scenes.filter((scene) => Boolean(resolveSceneText(scene, scenesHook.srtTrack))),
+    [scenes, scenesHook.srtTrack],
+  )
+  const srtPromptTargetCounts = useMemo(
+    () => getSrtPromptTargetCounts({ scenes, srtTrack: scenesHook.srtTrack }),
+    [scenes, scenesHook.srtTrack],
+  )
+  const srtPromptOverwriteImpactCount = srtPromptEligibleScenes.filter((scene) => (
+    String(scene.prompt || '').trim() || String(scene.videoT2VPrompt || '').trim()
+  )).length
+  const srtPromptStyles = useMemo(() => (STYLE_PRESETS?.styles || []).map((style) => ({
+    id: style.id,
+    label: isKo ? style.name_ko : style.name_en,
+  })), [isKo])
+
+  const loadSrtPromptCapabilities = useCallback(async (force = false) => {
+    setSrtPromptCapabilitiesLoading(true)
+    try {
+      const result = await window.electronAPI?.srtPromptsCapabilities?.({ force })
+      setSrtPromptCapabilities(result || {})
+    } catch (error) {
+      const failed = { available: false, reason: 'probe_failed', error: error?.message }
+      setSrtPromptCapabilities({ gemini: failed, claude: failed, codex: failed })
+    } finally {
+      setSrtPromptCapabilitiesLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (showSrtPromptModal) loadSrtPromptCapabilities(false)
+  }, [showSrtPromptModal, loadSrtPromptCapabilities])
+
+  const openSrtPromptModal = useCallback(() => {
+    if (srtPromptTargetCounts.entry <= 0) return
+    setSrtPromptFinalReport(null)
+    setShowSrtPromptModal(true)
+  }, [srtPromptTargetCounts.entry])
+
   const storyProjectPath = settings.saveMode === 'folder' && workFolder && settings.projectName
     ? `${workFolder}/${settings.projectName}`
     : null
@@ -2231,6 +2513,90 @@ function App() {
   // 호출 시 stop-restart 우회하고 동시에 두 batch가 진행되는 회귀 발생.
   const refBatchRunning = preparingRefs || stoppingRefs || generatingRefs.length > 0
 
+  const srtPromptModeBBlocked = isSrtPromptModeBBlocked({
+    scenes,
+    fixedSceneState,
+    projectLoading,
+    isImageFirstImporting,
+    importProcessing,
+    isRunning,
+    videoAutomationRunning: videoAutomation.isRunning,
+    refBatchRunning,
+    hasPendingBatch,
+    videoRetryRunning,
+    generatingSceneId,
+    thumbnailGenerating,
+    galleryUploading,
+  })
+  const srtPromptModeBBlockedRef = useRef(srtPromptModeBBlocked)
+  srtPromptModeBBlockedRef.current = srtPromptModeBBlocked
+
+  const handleGenerateSrtPrompts = async ({ mode: promptMode, engine, style, onlyEmpty }) => {
+    setSrtPromptFinalReport(null)
+    const selectedStyle = (STYLE_PRESETS?.styles || []).find((item) => item.id === style)
+    const context = { style: selectedStyle?.prompt_en || '' }
+    try {
+      let report
+      if (promptMode === 'B') {
+        report = await runSrtPromptModeBTransaction({
+          blocked: srtPromptModeBBlockedRef.current,
+          isBlocked: () => srtPromptModeBBlockedRef.current,
+          engine,
+          context,
+          scenesRef,
+          srtTrackRef: scenesHook.srtTrackRef,
+          framePairsRef,
+          getProjectIdentity: () => srtPromptProjectIdentityRef.current,
+          groupSrtLines: (payload) => window.electronAPI.srtPromptsGroup(payload),
+          allocateSceneId: scenesHook.allocateSceneId,
+          setScenes,
+          setFramePairs,
+          saveCurrentProjectWithPayload,
+          runPrompts: srtPrompts.run,
+          isFolderProject: settings.saveMode === 'folder',
+        })
+      } else {
+        // A can recover a track-only project without raw SRT: create one scene per
+        // persisted line, preserving each absolute time range.
+        if (scenesRef.current.length === 0 && scenesHook.srtTrackRef.current.length > 0) {
+          const track = scenesHook.srtTrackRef.current
+          const groups = track.map((line, index) => ({
+            fromLine: index + 1,
+            toLine: index + 1,
+            summary: String(line?.text || '').trim() || `Scene ${index + 1}`,
+          }))
+          const rebuilt = groupsToScenes(groups, track, { allocateSceneId: scenesHook.allocateSceneId })
+          setScenes(() => rebuilt)
+        }
+        report = await srtPrompts.run({ engine, context, onlyEmpty, mode: 'A' })
+      }
+      setSrtPromptFinalReport(report)
+    } catch (error) {
+      setSrtPromptFinalReport({
+        status: 'error',
+        failures: [{ chunkIndex: 0, error: error?.message || String(error) }],
+        skipped: 0,
+      })
+    }
+  }
+
+  const srtPromptDisplayedReport = ['running', 'cancelling'].includes(srtPrompts.status)
+    ? srtPrompts
+    : (srtPromptFinalReport || srtPrompts)
+
+  const handleRetryFailedSrtPrompts = async () => {
+    setSrtPromptFinalReport(null)
+    try {
+      setSrtPromptFinalReport(await srtPrompts.retryFailed())
+    } catch (error) {
+      setSrtPromptFinalReport({
+        status: 'error',
+        failures: [{ chunkIndex: 0, error: error?.message || String(error) }],
+        skipped: 0,
+      })
+    }
+  }
+
   // Handle stop — 활성 자동화 중지 (scene + video + ref batch 모두 cover).
   // Phase 2: MCP 자동 stop-restart 플로우가 handleStop을 trigger하므로 ref batch도 stop해야 함.
   const handleStop = () => {
@@ -2593,6 +2959,9 @@ function App() {
               generatingSceneId={generatingSceneId}
               references={references}
               styleThumbnails={styleThumbnails}
+              onOpenSrtPrompts={openSrtPromptModal}
+              srtPromptTargetCount={srtPromptTargetCounts.entry}
+              srtPromptDisabled={['running', 'cancelling'].includes(srtPrompts.status)}
             />
           )}
           {activeTab === 'audio' && (
@@ -3156,6 +3525,25 @@ function App() {
       )}
 
       {/* 모달들 */}
+      <SrtPromptModal
+        open={showSrtPromptModal}
+        onClose={() => setShowSrtPromptModal(false)}
+        onGenerate={handleGenerateSrtPrompts}
+        onCancel={srtPrompts.cancel}
+        onRetryFailed={handleRetryFailedSrtPrompts}
+        onRefreshCapabilities={loadSrtPromptCapabilities}
+        capabilities={srtPromptCapabilities}
+        capabilitiesLoading={srtPromptCapabilitiesLoading}
+        modeATargetCount={srtPromptTargetCounts.modeA}
+        modeBTargetCount={srtPromptTargetCounts.modeB}
+        overwriteImpactCount={srtPromptOverwriteImpactCount}
+        modeBBlocked={srtPromptModeBBlocked}
+        hasExistingImages={scenes.some((scene) => Boolean(scene.image || scene.imagePath))}
+        isFolderProject={settings.saveMode === 'folder'}
+        styles={srtPromptStyles}
+        report={srtPromptDisplayedReport}
+      />
+
       {showSettings && (
         <SettingsModal
           settings={settings}

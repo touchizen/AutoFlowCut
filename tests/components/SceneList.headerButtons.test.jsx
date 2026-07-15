@@ -33,6 +33,50 @@ const baseProps = {
 }
 
 describe('SceneList — header batch buttons', () => {
+  it('opens SRT prompt generation from scene-list-actions when targets exist', () => {
+    const onOpenSrtPrompts = vi.fn()
+    render(<SceneList
+      {...baseProps}
+      srtPromptTargetCount={1}
+      onOpenSrtPrompts={onOpenSrtPrompts}
+    />)
+
+    const button = screen.getByRole('button', { name: 'sceneList.generateAiPrompts' })
+    expect(button.closest('.scene-list-actions')).not.toBeNull()
+    fireEvent.click(button)
+    expect(onOpenSrtPrompts).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables and short-circuits the SRT prompt entry when target count is zero', () => {
+    const onOpenSrtPrompts = vi.fn()
+    render(<SceneList
+      {...baseProps}
+      srtPromptTargetCount={0}
+      onOpenSrtPrompts={onOpenSrtPrompts}
+    />)
+
+    const button = screen.getByRole('button', { name: 'sceneList.generateAiPrompts' })
+    expect(button).toBeDisabled()
+    fireEvent.click(button)
+    expect(onOpenSrtPrompts).not.toHaveBeenCalled()
+  })
+
+  it('keeps the SRT prompt entry available for a track-only project with no scenes', () => {
+    const onOpenSrtPrompts = vi.fn()
+    render(<SceneList
+      {...baseProps}
+      scenes={[]}
+      srtTrack={[{ id: 'l1', text: 'track only', startTime: 1, endTime: 2 }]}
+      srtPromptTargetCount={1}
+      onOpenSrtPrompts={onOpenSrtPrompts}
+    />)
+
+    const button = screen.getByRole('button', { name: 'sceneList.generateAiPrompts' })
+    expect(button.closest('.scene-list-actions')).not.toBeNull()
+    fireEvent.click(button)
+    expect(onOpenSrtPrompts).toHaveBeenCalledTimes(1)
+  })
+
   it('does not show character batch button when no character refs exist', () => {
     render(<SceneList {...baseProps} references={[{ id: 1, type: 'style', name: 'noir' }]} />)
     expect(screen.queryByRole('button', { name: /sceneList\.batchCharacterTag/ })).toBeNull()

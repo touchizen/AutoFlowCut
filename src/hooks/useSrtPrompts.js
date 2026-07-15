@@ -122,7 +122,12 @@ function isBlank(value) {
   return typeof value !== 'string' || value.trim() === ''
 }
 
-function createTargets(scenes, srtTrack, { onlyEmpty, sceneIds } = {}) {
+function createTargets(scenes, srtTrack, {
+  onlyEmpty,
+  sceneIds,
+  mode,
+  summaryBySceneId,
+} = {}) {
   const selectedIds = Array.isArray(sceneIds) ? new Set(sceneIds) : null
   const targets = []
   let skipped = 0
@@ -136,7 +141,10 @@ function createTargets(scenes, srtTrack, { onlyEmpty, sceneIds } = {}) {
       continue
     }
     const sceneNo = targets.length + 1
-    const dto = toPromptSceneDTO({ ...scene, sceneNo }, srtTrack)
+    const summary = mode === 'B' && summaryBySceneId instanceof Map
+      ? summaryBySceneId.get(scene.id)
+      : ''
+    const dto = toPromptSceneDTO({ ...scene, sceneNo }, srtTrack, { summary })
     if (!dto) {
       skipped += 1
       continue
@@ -176,6 +184,7 @@ function initialState() {
     unsaved: false,
     notPersisted: false,
     currentChunk: null,
+    currentSceneRange: null,
   }
 }
 
@@ -250,6 +259,8 @@ export function useSrtPrompts(config) {
     const { targets, skipped } = createTargets(scenes, srtTrack, {
       onlyEmpty,
       sceneIds: request.sceneIds,
+      mode: request.mode,
+      summaryBySceneId: request.summaryBySceneId,
     })
     const runState = {
       runId,
@@ -308,6 +319,7 @@ export function useSrtPrompts(config) {
       unsaved,
       notPersisted,
       currentChunk: 0,
+      currentSceneRange: null,
     }
     publish(runId, baseReport)
 
@@ -325,7 +337,17 @@ export function useSrtPrompts(config) {
         return finish(runState, { ...baseReport, status: boundary.status, completedChunks, failures, unsaved, notPersisted, currentChunk: null })
       }
       const chunk = chunks[chunkIndex]
-      publish(runId, { currentChunk: chunkIndex, completedChunks, failures: [...failures], unsaved, notPersisted })
+      publish(runId, {
+        currentChunk: chunkIndex,
+        currentSceneRange: {
+          from: chunk[0]?.sceneNo,
+          to: chunk[chunk.length - 1]?.sceneNo,
+        },
+        completedChunks,
+        failures: [...failures],
+        unsaved,
+        notPersisted,
+      })
 
       let prompts
       try {
@@ -365,6 +387,9 @@ export function useSrtPrompts(config) {
           sceneNoToSceneId,
           onlyEmpty,
         })
+        if (!applyResult || !Array.isArray(applyResult.nextScenes)) {
+          throw new TypeError('SRT prompt apply must return { nextScenes: Array }')
+        }
       } catch (error) {
         failures.push({
           chunkIndex,
@@ -397,7 +422,7 @@ export function useSrtPrompts(config) {
           chunkIndex,
           totalChunks: chunks.length,
           prompts,
-          nextScenes: applyResult?.nextScenes ?? applyResult ?? cfg.scenesRef?.current,
+          nextScenes: applyResult.nextScenes,
         })
       } catch (error) {
         return finish(runState, {

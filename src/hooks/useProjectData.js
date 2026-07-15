@@ -1223,9 +1223,9 @@ export function useProjectData({
   }
 
   // saveCurrentProject 래퍼와 saveCurrentProjectWithPayload 가 공유하는 내부 헬퍼.
-  // scenes/srtTrack(및 settings) 을 명시로 넘기면 그 값을, 안 넘기면(undefined) 현재
-  // closure 값(hook 의 최신 render 상태)을 사용해 표준 saveCurrentProject 를 호출한다.
-  const buildCurrentProjectPayload = ({ settingsOverride, scenes: scenesArg, srtTrack: srtTrackArg, references: referencesArg } = {}) =>
+  // scenes/srtTrack/framePairs(및 settings) 을 명시로 넘기면 그 값을, 안 넘기면
+  // (undefined) 현재 closure 값(hook 의 최신 render 상태)을 사용한다.
+  const buildCurrentProjectPayload = ({ settingsOverride, scenes: scenesArg, srtTrack: srtTrackArg, references: referencesArg, framePairs: framePairsArg } = {}) =>
     buildProjectPayload({
       isImportingRef,
       saveProjectImpl,
@@ -1233,7 +1233,7 @@ export function useProjectData({
       scenes: scenesArg !== undefined ? scenesArg : (scenesRef ? scenesRef.current : scenes),
       references: referencesArg !== undefined ? referencesArg : references,
       videoScenes,
-      framePairs,
+      framePairs: framePairsArg !== undefined ? framePairsArg : framePairs,
       selectedStyleRefId,
       srtTrack: srtTrackArg !== undefined ? srtTrackArg : srtTrack,
       audioFolderPath,
@@ -1265,14 +1265,19 @@ export function useProjectData({
     buildCurrentProjectData,
     // §4-④: story push 직후처럼, 아직 리렌더 전이라 scenes/srtTrack closure 가 최신
     // 상태를 반영하지 못하는 시점에 명시 payload 로 저장한다 — closure 의 stale 값
-    // 대신 인자로 준 scenes/srtTrack 을 저장(나머지 필드는 기존 로직과 동일하게 현재
-    // closure 값 사용). 반환값은 { ok } 로 단순화 — 저장 skip(undefined, 예: 폴더
-    // 모드 아님)도 ok:true 로 취급한다. 실패({success:false})면 ok:false, throw 는
-    // 그대로 전파(기존 saveCurrentProject 관행과 동일 — 여기서 삼키지 않는다).
-    saveCurrentProjectWithPayload: async ({ scenes: scenesArg, srtTrack: srtTrackArg, references: referencesArg } = {}) => {
-      const res = await buildCurrentProjectPayload({ scenes: scenesArg, srtTrack: srtTrackArg, references: referencesArg })
-      if (res && res.success === false) return { ok: false, error: res.error }
-      return { ok: true }
+    // 대신 인자로 준 scenes/srtTrack/framePairs 을 저장(나머지 필드는 기존 로직과
+    // 동일하게 현재 closure 값 사용). 반환값의 persisted 는 실제 write 결과와
+    // skip(undefined, 예: 폴더 모드 아님)을 구분한다. 실패({success:false})면
+    // ok:false, throw 는 그대로 전파(기존 saveCurrentProject 관행과 동일).
+    saveCurrentProjectWithPayload: async ({ scenes: scenesArg, srtTrack: srtTrackArg, references: referencesArg, framePairs: framePairsArg } = {}) => {
+      const res = await buildCurrentProjectPayload({
+        scenes: scenesArg,
+        srtTrack: srtTrackArg,
+        references: referencesArg,
+        framePairs: framePairsArg,
+      })
+      if (res && res.success === false) return { ok: false, persisted: false, error: res.error }
+      return { ok: true, persisted: res !== undefined }
     },
     isRestoringRef,  // auto-save 가드용
     projectLoading,  // 로딩 오버레이용

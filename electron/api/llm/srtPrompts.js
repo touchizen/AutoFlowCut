@@ -15,13 +15,13 @@ export function resolveSceneText(scene, srtTrack = []) {
   return linkedText || cleanText(scene?.subtitle)
 }
 
-export function toPromptSceneDTO(scene, srtTrack = []) {
+export function toPromptSceneDTO(scene, srtTrack = [], { summary = '' } = {}) {
   const text = resolveSceneText(scene, srtTrack)
   if (!text) return null
 
   return {
     sceneNo: scene?.sceneNo,
-    summary: cleanText(scene?.summary),
+    summary: cleanText(summary),
     text,
   }
 }

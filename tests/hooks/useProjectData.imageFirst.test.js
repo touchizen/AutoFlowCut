@@ -284,8 +284,8 @@ describe('image-first renderer writer choke point', () => {
   })
 
   it.each([
-    ['onPushCharacters fixture', (writer) => writer.saveCurrentProjectWithPayload({ references: [{ id: 'new' }] }), { ok: false, error: 'image-first-import-in-progress' }],
-    ['onPushScenes fixture', (writer) => writer.saveCurrentProjectWithPayload({ scenes: [{ id: 'new' }] }), { ok: false, error: 'image-first-import-in-progress' }],
+    ['onPushCharacters fixture', (writer) => writer.saveCurrentProjectWithPayload({ references: [{ id: 'new' }] }), { ok: false, persisted: false, error: 'image-first-import-in-progress' }],
+    ['onPushScenes fixture', (writer) => writer.saveCurrentProjectWithPayload({ scenes: [{ id: 'new' }] }), { ok: false, persisted: false, error: 'image-first-import-in-progress' }],
     ['batch-complete fixture', (writer) => writer.saveCurrentProject(), { ok: false, success: false, error: 'image-first-import-in-progress' }],
     ['SettingsModal onSave fixture', (writer) => writer.saveCurrentProject({ ...settings, aspectRatio: '9:16' }), { ok: false, success: false, error: 'image-first-import-in-progress' }],
   ])('%s is rejected before module save/build/write', async (_label, invoke, expected) => {

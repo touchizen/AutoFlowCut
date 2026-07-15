@@ -48,7 +48,7 @@ describe('SRT prompt DTO mapping', () => {
       duration: 1,
     }
 
-    const dto = toPromptSceneDTO(scene, srtTrack)
+    const dto = toPromptSceneDTO(scene, srtTrack, { summary: '그룹 요약' })
 
     expect(dto).toEqual({ sceneNo: 2, summary: '그룹 요약', text: '첫 줄' })
     expect(Object.keys(dto)).toEqual(['sceneNo', 'summary', 'text'])
@@ -60,6 +60,11 @@ describe('SRT prompt DTO mapping', () => {
 
   it('summary가 없으면 빈 문자열을 사용한다', () => {
     expect(toPromptSceneDTO({ sceneNo: 1, subtitle: '본문' }, []))
+      .toEqual({ sceneNo: 1, summary: '', text: '본문' })
+  })
+
+  it('신 객체에 예전 summary가 남아 있어도 override 없는 모드 A DTO는 빈 summary를 사용한다', () => {
+    expect(toPromptSceneDTO({ sceneNo: 1, subtitle: '본문', summary: '예전 그룹 요약' }, []))
       .toEqual({ sceneNo: 1, summary: '', text: '본문' })
   })
 })

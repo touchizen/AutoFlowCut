@@ -13,6 +13,18 @@ vi.mock('../../src/hooks/useFileSystem', () => ({
 }))
 
 describe('R4 — parseFromSRT cold import 절대 시간 보존', () => {
+  it('명시적인 0초 SRT 씬을 3초 기본값으로 바꾸지 않음', () => {
+    const { result } = renderHook(() => useScenes())
+    act(() => {
+      result.current.setScenes([{
+        id: 'zero', startTime: 5, endTime: 5, duration: 0,
+        prompt: '', videoT2VPrompt: '', videoI2VPrompt: '',
+      }])
+    })
+
+    expect(result.current.scenes[0]).toMatchObject({ startTime: 5, endTime: 5, duration: 0 })
+  })
+
   it('SRT 의 첫 시작 gap (0이 아닌 시작) 보존', () => {
     const srt = `1
 00:00:05,000 --> 00:00:08,000

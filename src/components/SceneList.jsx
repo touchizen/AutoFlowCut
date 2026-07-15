@@ -406,7 +406,10 @@ export default function SceneList({
   onGenerate,
   generatingSceneId,
   references = [],
-  styleThumbnails = {}
+  styleThumbnails = {},
+  onOpenSrtPrompts = null,
+  srtPromptTargetCount = 0,
+  srtPromptDisabled = false,
 }) {
   const { t } = useI18n()
   const [detailModal, setDetailModal] = useState({ open: false, scene: null })
@@ -525,16 +528,35 @@ export default function SceneList({
     }))
   }
 
+  const totalDuration = scenes.reduce((sum, s) => sum + (parseFloat(s.duration) || 0), 0)
+  const srtPromptButton = (
+    <button
+      className="btn-srt-prompts"
+      onClick={() => {
+        if (srtPromptTargetCount > 0) onOpenSrtPrompts?.()
+      }}
+      disabled={disabled || srtPromptDisabled || srtPromptTargetCount <= 0}
+      title={t('sceneList.generateAiPrompts')}
+      aria-label={t('sceneList.generateAiPrompts')}
+    >
+      ✨ {t('sceneList.generateAiPrompts')}
+    </button>
+  )
+
   if (scenes.length === 0) {
     return (
-      <div className="scene-list-empty">
-        <p>{t('sceneList.empty')}</p>
-        <p>{t('sceneList.emptyHint')}</p>
+      <div className="scene-list-container">
+        <div className="scene-list-header">
+          <span>{t('sceneList.total', { count: 0, duration: formatTime(totalDuration) })}</span>
+          <div className="scene-list-actions">{srtPromptButton}</div>
+        </div>
+        <div className="scene-list-empty">
+          <p>{t('sceneList.empty')}</p>
+          <p>{t('sceneList.emptyHint')}</p>
+        </div>
       </div>
     )
   }
-
-  const totalDuration = scenes.reduce((sum, s) => sum + (parseFloat(s.duration) || 0), 0)
 
   const ratioClass = getRatioClass(aspectRatio)
   const virtualItems = shouldVirtualize ? virtualizer.getVirtualItems() : []
@@ -597,6 +619,7 @@ export default function SceneList({
       <div className="scene-list-header">
         <span>{t('sceneList.total', { count: scenes.length, duration: formatTime(totalDuration) })}</span>
         <div className="scene-list-actions">
+          {srtPromptButton}
           <button
             className="btn-clear-all"
             onClick={handleClearAll}
