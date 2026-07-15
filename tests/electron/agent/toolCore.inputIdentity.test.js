@@ -61,7 +61,7 @@ describe('에이전트 story_start_step의 프로젝트 input identity 경계', 
     })
 
     const rejected = await core.call('story_start_step', args, { nonce: 'bad-input' })
-    expect(rejected).toMatchObject({ error: 'invalid-params' })
+    expect(rejected).toMatchObject({ status: 'rejected', reason: 'invalid-params' })
     expect(rejected.params).toContain('input')
     expect(ledger.consume({
       nonce: 'bad-input', tool: 'story_start_step', argsHash: hashArgs(args),

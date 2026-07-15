@@ -533,7 +533,10 @@ describe('D24-C5 legacy mode absence stays audio-first', () => {
 
     const result = await ctx.machine.start('prompts')
 
-    expect(result).toEqual({ operationId: expect.any(String) })
+    expect(result).toEqual({
+      operationId: expect.any(String),
+      outcome: { status: 'done' },
+    })
     expect(ctx.llm.writePrompts).toHaveBeenCalledTimes(1)
     expect(fixedValidationSpy).toHaveBeenCalledTimes(0)
     expect(storeSpies.saveText).toHaveBeenCalled()

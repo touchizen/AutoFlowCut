@@ -131,7 +131,7 @@ describe('인앱 에이전트 승인 경로 — 실제 제품 배선', () => {
 
     await user.click(screen.getByRole('button', { name: /승인|allow|approve/i }))
 
-    await expect(resultPromise).resolves.toEqual({ savedSpeakers: 1 })
+    await expect(resultPromise).resolves.toEqual({ status: 'done', savedSpeakers: 1 })
     expect(commands.setSpeakers).toHaveBeenCalledOnce()
     expect(commands.setSpeakers).toHaveBeenCalledWith(args)
     expect(rpc.call).toHaveBeenCalledOnce()
@@ -155,7 +155,7 @@ describe('인앱 에이전트 승인 경로 — 실제 제품 배선', () => {
     expect(displayedArgs.synopsisMd).toContain('-END')
 
     await user.click(screen.getByRole('button', { name: /승인|allow|approve/i }))
-    await expect(resultPromise).resolves.toEqual({ savedSynopsis: synopsisMd.length })
+    await expect(resultPromise).resolves.toEqual({ status: 'done', savedSynopsis: synopsisMd.length })
     expect(commands.confirmSynopsis).toHaveBeenCalledWith(args)
   })
 
@@ -179,7 +179,7 @@ describe('인앱 에이전트 승인 경로 — 실제 제품 배선', () => {
     expect(displayedArgs).toEqual(args)
     await user.click(screen.getByRole('button', { name: /승인|allow|approve/i }))
 
-    await expect(resultPromise).resolves.toEqual({ started: 'audio', params: args.params })
+    await expect(resultPromise).resolves.toEqual({ status: 'done', started: 'audio', params: args.params })
     expect(commands.start).toHaveBeenCalledWith('audio', args.params)
     expect(rpc.call).toHaveBeenCalledOnce()
     expect(rpc.call.mock.calls[0][0].args).toEqual(displayedArgs)

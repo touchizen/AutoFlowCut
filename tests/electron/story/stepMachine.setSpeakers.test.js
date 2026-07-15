@@ -145,7 +145,11 @@ describe('agent story_start_step은 화자 설정 경계를 우회하지 않는�
 
     const result = await core.call('story_start_step', args, { nonce: 'r1-valid-grant' })
 
-    expect.soft(result).toEqual({ error: 'invalid-params', params: ['speakers'] })
+    expect.soft(result).toEqual({
+      status: 'rejected',
+      reason: 'invalid-params',
+      params: ['speakers'],
+    })
     expect((await readStory()).speakers).toEqual(before.speakers)
   })
 })

@@ -440,7 +440,7 @@ describe('AgentSessionManager D10 app ledger', () => {
     const refused = await core.call('list_scenes')
 
     expect(admitted).toHaveLength(256)
-    expect(refused).toEqual({ error: 'agent-limit', limit: 256, used: 256 })
+    expect(refused).toEqual({ status: 'rejected', reason: 'agent-limit', limit: 256, used: 256 })
     expect(storyCommands.listScenes).toHaveBeenCalledTimes(256)
     expect(onError).toHaveBeenCalledWith({ error: 'agent-limit', limit: 256, used: 256 })
     expect(h.manager.status()).toMatchObject({ turns: 0, toolCalls: 256 })
@@ -461,7 +461,8 @@ describe('AgentSessionManager D10 app ledger', () => {
 
     await expect(core.call('not_a_tool')).rejects.toThrow('unknown tool: not_a_tool')
     await expect(core.call('list_scenes')).resolves.toEqual({
-      error: 'agent-limit',
+      status: 'rejected',
+      reason: 'agent-limit',
       limit: 1,
       used: 1,
     })

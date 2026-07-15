@@ -2066,10 +2066,13 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       }
       await flush(); send('story:state', { state }, operationId)
       let pushScenes = null
+      let outcome = null
       // HIGH: abort()는 controller를 교체하지 않고(같은 controller에 abort 신호만 보냄) running
       // 스텝을 동기적으로 error 마킹한다. 스텝 fn이 signal을 무시하고 뒤늦게 resolve/reject하면
       // `controller === myController`만으로는 늦은 결과가 통과해 abort의 error 마킹을 done/다른
       // error로 덮어쓴다 — signal.aborted를 함께 검사해 abort의 동기 마킹을 정본으로 지킨다.
+      // controller 교체의 유일한 현행 경로는 먼저 signal을 abort한다. abort 없는 교체 경로가 생기면
+      // stale을 aborted로 정규화하는 아래 가정이 깨지므로 새 종결 상태를 함께 설계해야 한다.
       const isStale = () => controller !== myController || myController.signal.aborted
       try {
         const result = await steps[step](params, operationId, myController.signal)
@@ -2079,10 +2082,13 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
           }
           state.steps[step] = { status: 'done', updatedAt: new Date().toISOString() }
           pushScenes = result?.pushScenes || null
+          outcome = { status: 'done' }
         }
       } catch (e) {
         if (!isStale()) {
-          state.steps[step] = { status: 'error', error: String(e.message || e), updatedAt: new Date().toISOString() }
+          const error = String(e?.message || e)
+          state.steps[step] = { status: 'error', error, updatedAt: new Date().toISOString() }
+          outcome = { status: 'error', error }
         }
       }
       if (!isStale()) {
@@ -2092,7 +2098,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         if (pushScenes) sendPush(pushScenes, operationId)
         send('story:state', { state, scenes: await loadScenesForPayload(), scriptText: (await store.loadText('script.md')) || '', ...(await hydrateExtras()) }, operationId)
       }
-      return { operationId }
+      return { operationId, outcome: outcome ?? { status: 'aborted' } }
     },
     async abort() {
       controller?.abort()

@@ -319,6 +319,56 @@ describe('story IPC', () => {
   })
 })
 
+describe('story IPC renderer 결과 계약', () => {
+  it.each([
+    'busy',
+    'fixed-scenes-stale',
+    'fixed-scenes-immutable',
+    'unconfirmed',
+    'fixed-audio-required',
+  ])('story:start의 %s 거부를 top-level error 그대로 통과시킨다', async (error) => {
+    const ipc2 = fakeIpcMain()
+    const commands = {
+      hasProject: () => true,
+      projectToken: 'renderer-contract',
+      start: vi.fn(async () => ({ error })),
+    }
+    registerStoryIPC(ipc2, commands)
+
+    const result = await ipc2.invoke('story:start', {
+      projectToken: commands.projectToken,
+      step: 'script',
+      params: {},
+    })
+
+    // StoryView가 이 키를 직접 읽으므로 IPC가 status/reason shape로 바꾸면 안 된다.
+    expect(result).toEqual({ error })
+  })
+
+  it('story:confirm-synopsis의 error와 speakers를 top-level 그대로 통과시킨다', async () => {
+    const ipc2 = fakeIpcMain()
+    const refusal = {
+      success: false,
+      error: 'storyboard-roster-incomplete',
+      speakers: ['철수', '영희'],
+    }
+    const commands = {
+      hasProject: () => true,
+      projectToken: 'renderer-contract',
+      confirmSynopsis: vi.fn(async () => refusal),
+    }
+    registerStoryIPC(ipc2, commands)
+
+    const result = await ipc2.invoke('story:confirm-synopsis', {
+      projectToken: commands.projectToken,
+      synopsisMd: '줄거리',
+      characters: [],
+    })
+
+    expect(result).toEqual(refusal)
+  })
+})
+
 // 동적 카탈로그 경로: supportedModels() 가 응답하면 그걸로 목록을 만들고, 메인 라우터/스텝머신이
 // 쓰는 활성 카탈로그도 같이 바꿔야 렌더러가 보낸 별칭 model('sonnet')이 검증을 통과한다.
 describe('story:list-llm-options — 동적 카탈로그', () => {

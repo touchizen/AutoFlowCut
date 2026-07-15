@@ -10,13 +10,14 @@
 //    (`story-api.js:51-52`). Tool Core 가 자기 machine 을 따로 만들면 **에이전트와 사람이 서로 다른
 //    프로젝트를 보게 된다** — 같은 앱 안에서 상태가 갈라진다. machine 은 `story:open` 이 만든 하나뿐이어야 한다.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createStoryCommands, registerStoryIPC } from '../../../electron/ipc/story-api.js'
-import { createToolCore } from '../../../electron/agent/toolCore.js'
+import { createToolCore, normalizeToolResult } from '../../../electron/agent/toolCore.js'
 import { createGrantLedger, hashArgs } from '../../../electron/agent/grantLedger.js'
 import { createAgentSessionManager } from '../../../electron/agent/sessionManager.js'
+import { defaultStoryState } from '../../../electron/story/storyStore.js'
 
 function fakeIpcMain() {
   const handlers = new Map()
@@ -86,9 +87,9 @@ describe('M1 — Tool Core ↔ IPC 단일 storyCommands (D7)', () => {
     expect(viaIpc.steps.script.status).toBe(a.state.steps.script.status)
   })
 
-  it('slice 12: 미오픈 `list_scenes` → `{error:\'no-project\'}` (throw 하지 않는다)', async () => {
+  it('slice 12: 미오픈 `list_scenes` → rejected/no-project (throw 하지 않는다)', async () => {
     const r = await toolCore.call('list_scenes', {})
-    expect(r).toEqual({ error: 'no-project' })
+    expect(r).toEqual({ status: 'rejected', reason: 'no-project' })
   })
 
   it('slice 12: 오픈 뒤 `list_scenes` 는 **요약 문자열이 아니라 JSON** 이다', async () => {
@@ -115,7 +116,7 @@ describe('M1 — Tool Core ↔ IPC 단일 storyCommands (D7)', () => {
     })
 
     await expect(toolCore.call('story_set_speakers', args, { nonce: 'set-speakers-1' }))
-      .resolves.toMatchObject({ ok: true })
+      .resolves.toMatchObject({ status: 'done', operationId: expect.any(String) })
 
     // 같은 machine의 메모리를 다시 읽으면 flush가 빠져도 통과한다. 새 machine으로 reopen해 디스크를 검증한다.
     const reopened = await makeStoryCommands().open(dir)
@@ -123,9 +124,9 @@ describe('M1 — Tool Core ↔ IPC 단일 storyCommands (D7)', () => {
     expect(reopened.state.speakers).toEqual(args.speakers)
   })
 
-  it('미오픈 `story_get_state` → `{error:\'no-project\'}`', async () => {
+  it('미오픈 `story_get_state` → rejected/no-project', async () => {
     const r = await toolCore.call('story_get_state', {})
-    expect(r).toEqual({ error: 'no-project' })
+    expect(r).toEqual({ status: 'rejected', reason: 'no-project' })
   })
 
   it('🔴 unknown tool 은 **fail-closed** — 조용히 undefined 를 돌려주지 않는다', async () => {
@@ -198,7 +199,7 @@ describe('D15 — agent session의 프로젝트 경계', () => {
 
       const result = await sessionToolCore.call('story_set_speakers', args, { nonce: 'approved-in-a' })
 
-      expect(result).toEqual({ error: 'stale-token' })
+      expect(result).toEqual({ status: 'rejected', reason: 'stale-token' })
       expect(await readFile(storyBPath, 'utf8'), 'B 프로젝트 durable state가 바뀌었다').toBe(beforeB)
       expect(await readFile(path.join(projectA, 'story', 'story.json'), 'utf8')).toBe(beforeA)
       // stale 사전조건은 승인 consume보다 앞이어야 한다. 프로젝트 전환만으로 사람 승인을 태우지 않는다.
@@ -238,5 +239,399 @@ describe('M1 slice 10 — 핸들러 계수 불변식 (D7)', () => {
       const r = await ipc.invoke(ch, { projectToken: 'wrong-token' })
       expect(r, `🔴 ${ch} 가 틀린 토큰을 통과시켰다 — guard 가 없다`).toEqual({ error: 'stale-token' })
     }
+  })
+})
+
+function makeNormalizationHarness({
+  raw = {},
+  hasProject = true,
+  commandProjectToken = 'normalize-project',
+  sessionProjectToken = commandProjectToken,
+  admitToolCall = null,
+  toolBridge = null,
+} = {}) {
+  const ledger = createGrantLedger({ now: () => 0, ttlMs: 60_000 })
+  const commands = {
+    hasProject: () => hasProject,
+    projectToken: commandProjectToken,
+    getState: vi.fn(async () => raw.getState ?? { steps: {} }),
+    listScenes: vi.fn(async () => raw.listScenes ?? { scenes: [] }),
+    confirmSynopsis: vi.fn(async () => raw.confirmSynopsis ?? { ok: true, operationId: 'confirm-op' }),
+    setSpeakers: vi.fn(async () => raw.setSpeakers ?? { ok: true, operationId: 'speakers-op' }),
+    start: vi.fn(async () => raw.start ?? { operationId: 'start-op', outcome: { status: 'done' } }),
+  }
+  const core = createToolCore({
+    grantLedger: ledger,
+    sessionId: 'normalize-session',
+    projectToken: sessionProjectToken,
+    admitToolCall,
+    toolBridge,
+  })
+  core.use(commands)
+
+  const call = async (name, args = {}) => {
+    const tool = core.list().find((item) => item.name === name)
+    const context = {}
+    if (tool?.permission !== 'R') {
+      context.nonce = `grant-${name}`
+      ledger.grant({
+        nonce: context.nonce,
+        tool: name,
+        argsHash: hashArgs(args),
+        sessionId: 'normalize-session',
+        projectToken: commandProjectToken,
+      })
+    }
+    return core.call(name, args, context)
+  }
+
+  return { core, commands, call }
+}
+
+describe('D8 — Tool Core 결과 정규화 매핑표', () => {
+  it('normalizeToolResult를 producer 밖의 이상 shape로 직접 검증할 수 있다', () => {
+    expect(normalizeToolResult).toBeTypeOf('function')
+  })
+
+  it.each([
+    [{ status: 'running', progress: 0.5 }, 'status'],
+    [{ operationId: 'future-op', outcome: { status: 'unknown-future' } }, 'outcome'],
+    [{ success: true }, 'shape'],
+  ])('알 수 없는 결과 표식 %#은 done을 지어내지 않고 throw한다', (raw, message) => {
+    expect(() => normalizeToolResult('story_start_step', raw)).toThrow(message)
+  })
+
+  it.each([
+    [{ status: 'failed', error: 'x' }, { status: 'rejected', reason: 'x' }],
+    [{ ok: false }, { status: 'rejected', reason: 'unknown' }],
+    [{ success: false }, { status: 'rejected', reason: 'unknown' }],
+    [{ error: '' }, { status: 'rejected', reason: 'unknown' }],
+  ])('명시적 거부 shape %#은 reason이 있는 rejected로 닫는다', (raw, expected) => {
+    expect(normalizeToolResult('story_set_speakers', raw)).toEqual(expected)
+  })
+
+  it('이미 rejected인 결과도 reason 없는 shape를 허용하지 않는다', () => {
+    expect(normalizeToolResult('story_set_speakers', { status: 'rejected' }))
+      .toEqual({ status: 'rejected', reason: 'unknown' })
+  })
+
+  it('ok:true의 도메인 extras는 보존하고 내부 성공 표식은 제거한다', () => {
+    expect(normalizeToolResult('story_set_speakers', {
+      ok: true,
+      success: true,
+      operationId: 'speakers-op',
+      persisted: 3,
+    })).toEqual({ status: 'done', operationId: 'speakers-op', persisted: 3 })
+  })
+
+  it.each([
+    ['busy', 'busy'],
+    ['fixed-scenes-stale', 'fixed-scenes-stale'],
+    ['fixed-scenes-immutable', 'fixed-scenes-immutable'],
+    ['fixed-audio-required', 'fixed-audio-required'],
+    // 같은 legacy 단어라도 start의 roster gate만 별도 어휘로 바뀐다.
+    ['unconfirmed', 'characters-unconfirmed'],
+  ])('story_start_step 선행 거부 %s → rejected/%s', async (legacy, reason) => {
+    const { call } = makeNormalizationHarness({ raw: { start: { error: legacy } } })
+    await expect(call('story_start_step', { step: 'script', params: {} }))
+      .resolves.toEqual({ status: 'rejected', reason })
+  })
+
+  it.each([
+    [{ operationId: 'op-done', outcome: { status: 'done' } }, { status: 'done', operationId: 'op-done' }],
+    [{ operationId: 'op-error', outcome: { status: 'error', error: 'boom' } }, { status: 'error', operationId: 'op-error', error: 'boom' }],
+    [{ operationId: 'op-aborted', outcome: { status: 'aborted' } }, { status: 'aborted', operationId: 'op-aborted' }],
+  ])('story_start_step nested outcome을 D8 terminal shape로 평탄화한다', async (legacy, expected) => {
+    const { call } = makeNormalizationHarness({ raw: { start: legacy } })
+    await expect(call('story_start_step', { step: 'script', params: {} })).resolves.toEqual(expected)
+  })
+
+  it.each([
+    ['story_confirm_synopsis', { synopsisMd: '#' }, 'confirmSynopsis'],
+    ['story_set_speakers', { speakers: [] }, 'setSpeakers'],
+  ])('%s의 {ok:true,operationId} → done', async (name, args, method) => {
+    const operationId = `${method}-op`
+    const { call } = makeNormalizationHarness({ raw: { [method]: { ok: true, operationId } } })
+    await expect(call(name, args)).resolves.toEqual({ status: 'done', operationId })
+  })
+
+  it.each([
+    [
+      'story_confirm_synopsis',
+      { synopsisMd: '#' },
+      { confirmSynopsis: { success: false, error: 'storyboard-scene-invalid', violations: ['row-2'] } },
+      { status: 'rejected', reason: 'storyboard-scene-invalid', violations: ['row-2'] },
+    ],
+    [
+      'story_set_speakers',
+      { speakers: [] },
+      { setSpeakers: { error: 'roster-incomplete', speakers: ['Bob'] } },
+      { status: 'rejected', reason: 'roster-incomplete', speakers: ['Bob'] },
+    ],
+  ])('%s의 도메인 거부 extras를 보존한다', async (name, args, raw, expected) => {
+    const { call } = makeNormalizationHarness({ raw })
+    await expect(call(name, args)).resolves.toEqual(expected)
+  })
+
+  it('R 툴 도메인 payload를 done으로 감싼다', async () => {
+    const { call } = makeNormalizationHarness({
+      raw: {
+        getState: { steps: { script: { status: 'done' } } },
+        listScenes: { scenes: [{ id: 's1' }] },
+      },
+    })
+
+    await expect(call('story_get_state')).resolves.toEqual({
+      status: 'done',
+      projectToken: 'normalize-project',
+      state: { steps: { script: { status: 'done' } } },
+    })
+    await expect(call('list_scenes')).resolves.toEqual({ status: 'done', scenes: [{ id: 's1' }] })
+  })
+
+  it.each(['complete', 'cancelled-by-user', 'error'])('wait_batch %s는 done.batch로 충돌 키를 격리한다', async (status) => {
+    const snapshot = { status, done: 2, total: 3, error: status === 'error' ? 1 : 0 }
+    const toolBridge = { invoke: vi.fn(async () => snapshot) }
+    const { call } = makeNormalizationHarness({ toolBridge })
+
+    await expect(call('wait_batch', { type: 'scene' })).resolves.toEqual({
+      status: 'done',
+      batch: snapshot,
+    })
+  })
+
+  it('wait_batch timeout도 예외나 rejected가 아니라 done.batch 값이다', async () => {
+    let time = 0
+    const toolBridge = { invoke: vi.fn(async () => ({ status: 'running', done: 1, total: 3, error: 0 })) }
+    const core = createToolCore({
+      toolBridge,
+      now: () => time,
+      sleep: async (ms) => { time += ms },
+      waitWindowMs: 5,
+      pollIntervalMs: 5,
+    })
+
+    await expect(core.call('wait_batch', { type: 'scene' })).resolves.toEqual({
+      status: 'done',
+      batch: { status: 'timeout', done: 1, total: 3, error: 0 },
+    })
+  })
+
+  it.each([
+    [
+      'agent-limit',
+      () => makeNormalizationHarness({ admitToolCall: () => ({ error: 'agent-limit', limit: 2, used: 2 }) }).core.call('list_scenes'),
+      { status: 'rejected', reason: 'agent-limit', limit: 2, used: 2 },
+    ],
+    [
+      'invalid-params',
+      () => makeNormalizationHarness().core.call('list_scenes', { invented: true }),
+      { status: 'rejected', reason: 'invalid-params', params: ['invented'] },
+    ],
+    [
+      'no-project',
+      () => makeNormalizationHarness({ hasProject: false }).core.call('list_scenes'),
+      { status: 'rejected', reason: 'no-project' },
+    ],
+    [
+      'stale-token',
+      () => makeNormalizationHarness({ sessionProjectToken: 'old-project' }).core.call('list_scenes'),
+      { status: 'rejected', reason: 'stale-token' },
+    ],
+  ])('%s 사전 거부를 rejected로 정규화한다', async (_label, invoke, expected) => {
+    await expect(invoke()).resolves.toEqual(expected)
+  })
+
+  it('grant 없는 unconfirmed는 characters 어휘로 바꾸지 않는다', async () => {
+    const { core } = makeNormalizationHarness()
+    await expect(core.call('story_confirm_synopsis', { synopsisMd: '#' }))
+      .resolves.toEqual({ status: 'rejected', reason: 'unconfirmed' })
+  })
+})
+
+describe('D8 — 실제 stepMachine 반환을 Tool Core가 정규화한다', () => {
+  async function realCoreWithLlm(realLlm, { project, story } = {}) {
+    if (project !== undefined) await writeFile(path.join(dir, 'project.json'), JSON.stringify(project, null, 2))
+    if (story !== undefined) {
+      await mkdir(path.join(dir, 'story'), { recursive: true })
+      await writeFile(path.join(dir, 'story', 'story.json'), JSON.stringify(story, null, 2))
+    }
+    const commands = createStoryCommands({
+      keyStore: { getKey: () => 'k' },
+      getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
+      llm: realLlm,
+      listClaudeModels: async () => [],
+      listCodexModels: async () => [],
+    })
+    const opened = await commands.open(dir)
+    const ledger = createGrantLedger({ now: () => 0, ttlMs: 60_000 })
+    const core = createToolCore({
+      grantLedger: ledger,
+      sessionId: 'real-step-session',
+      projectToken: opened.projectToken,
+    })
+    core.use(commands)
+    const callStart = (args, nonce) => {
+      ledger.grant({
+        nonce,
+        tool: 'story_start_step',
+        argsHash: hashArgs(args),
+        sessionId: 'real-step-session',
+        projectToken: opened.projectToken,
+      })
+      return core.call('story_start_step', args, { nonce })
+    }
+    return { commands, callStart }
+  }
+
+  const fixedScenes = [{ ordinal: 1, storyId: 'story-1', rendererSceneId: 'scene-1' }]
+  const fixedState = {
+    sceneMode: 'image-first',
+    imageFirstVariant: 'image-only',
+    fixedSceneRevision: 'fixed-r-1',
+    fixedScenes,
+  }
+  const imageFirstStory = (audio = { status: 'pending' }) => ({
+    ...defaultStoryState(),
+    ...fixedState,
+    input: { type: 'storyboard', variant: 'image-only', fixedSceneRevision: 'fixed-r-1' },
+    charactersConfirmed: true,
+    steps: {
+      ...defaultStoryState().steps,
+      audio,
+    },
+  })
+
+  it.each([
+    [
+      'fixed-scenes-stale',
+      { project: fixedState, story: defaultStoryState() },
+      { step: 'script', params: {} },
+    ],
+    [
+      'fixed-scenes-immutable',
+      { project: fixedState, story: imageFirstStory() },
+      { step: 'script', params: {} },
+    ],
+    [
+      'fixed-audio-required',
+      { project: fixedState, story: imageFirstStory({ status: 'pending' }) },
+      { step: 'prompts', params: {} },
+    ],
+  ])('실제 stepMachine 선행 거부 %s를 같은 reason으로 보존한다', async (reason, fixture, args) => {
+    const { callStart } = await realCoreWithLlm({
+      generateScript: vi.fn(async () => ({ scriptMd: '#' })),
+      splitScenes: vi.fn(async () => ({ scenes: [], speakers: [] })),
+      writePrompts: vi.fn(async (scenes) => ({ scenes })),
+    }, fixture)
+
+    await expect(callStart(args, `real-${reason}`)).resolves.toEqual({ status: 'rejected', reason })
+  })
+
+  it('실제 running step의 busy를 선행 거부로 보존한다', async () => {
+    let resolveScript
+    const { commands, callStart } = await realCoreWithLlm({
+      generateScript: vi.fn(() => new Promise((resolve) => { resolveScript = resolve })),
+      splitScenes: vi.fn(async () => ({ scenes: [], speakers: [] })),
+      writePrompts: vi.fn(async (scenes) => ({ scenes })),
+    })
+    const running = commands.start('script', { input: { type: 'title', title: 'T' }, options: {} })
+    await vi.waitFor(() => expect(resolveScript).toBeTypeOf('function'))
+
+    await expect(callStart({ step: 'script', params: {} }, 'real-busy'))
+      .resolves.toEqual({ status: 'rejected', reason: 'busy' })
+
+    resolveScript({ scriptMd: '#' })
+    await running
+  })
+
+  it('실제 완료와 실행 오류를 done/error로 구분한다', async () => {
+    const generateScript = vi.fn()
+      .mockResolvedValueOnce({ scriptMd: '# 성공' })
+      .mockRejectedValueOnce(new Error('fixed-scenes-stale'))
+    const { callStart } = await realCoreWithLlm({
+      generateScript,
+      splitScenes: vi.fn(async () => ({ scenes: [], speakers: [] })),
+      writePrompts: vi.fn(async (scenes) => ({ scenes })),
+    })
+    const args = (title) => ({ step: 'script', params: { options: {}, synopsis: title } })
+
+    await expect(callStart(args('성공'), 'real-done')).resolves.toMatchObject({ status: 'done', operationId: expect.any(String) })
+    // throw 문구가 renderer 거부 토큰과 같아도 nested outcome이라 작업 실패로 남아야 한다.
+    await expect(callStart(args('오류'), 'real-error')).resolves.toMatchObject({
+      status: 'error', operationId: expect.any(String), error: 'fixed-scenes-stale',
+    })
+  })
+
+  it('signal을 무시한 실제 step이 abort 뒤 늦게 끝나도 aborted다', async () => {
+    let resolveScript
+    const { commands, callStart } = await realCoreWithLlm({
+      generateScript: vi.fn(() => new Promise((resolve) => { resolveScript = resolve })),
+      splitScenes: vi.fn(async () => ({ scenes: [], speakers: [] })),
+      writePrompts: vi.fn(async (scenes) => ({ scenes })),
+    })
+    const args = { step: 'script', params: { options: {}, synopsis: '중단' } }
+    const running = callStart(args, 'real-abort')
+    await vi.waitFor(() => expect(resolveScript).toBeTypeOf('function'))
+
+    await commands.abort()
+    resolveScript({ scriptMd: '# 늦은 결과' })
+
+    await expect(running).resolves.toMatchObject({ status: 'aborted', operationId: expect.any(String) })
+  })
+
+  it('실제 roster gate의 unconfirmed만 characters-unconfirmed로 바꾼다', async () => {
+    const { commands, callStart } = await realCoreWithLlm({
+      generateScript: vi.fn(async () => ({ scriptMd: '#' })),
+      splitScenes: vi.fn(async () => ({ scenes: [], speakers: [] })),
+      writePrompts: vi.fn(async (scenes) => ({ scenes })),
+    })
+    await commands.start('script', { pastedScript: '# 붙여넣기', options: {} })
+
+    await expect(callStart({ step: 'scenes', params: {} }, 'real-roster-gate'))
+      .resolves.toEqual({ status: 'rejected', reason: 'characters-unconfirmed' })
+  })
+})
+
+describe('D8 — 전 툴 결과 어휘 불변식과 throw 경계', () => {
+  it('toolCore.list()의 모든 툴은 D8 status를 내고 reason은 rejected에만 있다', async () => {
+    const toolBridge = { invoke: vi.fn(async () => ({ status: 'complete', done: 1, total: 1, error: 0 })) }
+    const { core, call } = makeNormalizationHarness({
+      toolBridge,
+      raw: {
+        confirmSynopsis: { success: false, error: 'validator-refusal', violations: ['v1'] },
+        setSpeakers: { error: 'roster-incomplete', speakers: ['Alice'] },
+        start: { operationId: 'failed-op', outcome: { status: 'error', error: 'step failed' } },
+      },
+    })
+    const args = {
+      story_get_state: {},
+      list_scenes: {},
+      wait_batch: { type: 'scene' },
+      story_confirm_synopsis: { synopsisMd: '#' },
+      story_set_speakers: { speakers: [] },
+      story_start_step: { step: 'script', params: {} },
+    }
+
+    for (const tool of core.list()) {
+      const result = await call(tool.name, args[tool.name])
+      expect(['done', 'error', 'aborted', 'rejected'], tool.name).toContain(result.status)
+      if (result.status === 'rejected') expect(result.reason, tool.name).toBeTypeOf('string')
+      else expect(result, tool.name).not.toHaveProperty('reason')
+    }
+  })
+
+  it('unknown tool/의존성 누락/command throw/bridge throw는 정규화하지 않고 그대로 던진다', async () => {
+    await expect(createToolCore().call('unknown-tool')).rejects.toThrow(/unknown tool/)
+    await expect(createToolCore().call('story_get_state')).rejects.toThrow(/use\(storyCommands\)/)
+
+    const commandError = makeNormalizationHarness()
+    commandError.commands.listScenes.mockRejectedValueOnce(new Error('story bridge died'))
+    await expect(commandError.core.call('list_scenes')).rejects.toThrow('story bridge died')
+
+    const bridgeError = makeNormalizationHarness({
+      toolBridge: { invoke: vi.fn(async () => { throw new Error('renderer bridge died') }) },
+    })
+    await expect(bridgeError.core.call('wait_batch', { type: 'scene' })).rejects.toThrow('renderer bridge died')
   })
 })

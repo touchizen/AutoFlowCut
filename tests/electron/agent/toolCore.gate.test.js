@@ -36,7 +36,7 @@ beforeEach(() => {
 describe('Tool Core 게이트 — 등급을 스스로 재산출한다', () => {
   it('R 툴은 grant 없이 돈다 (승인 UI 0회)', async () => {
     const r = await core.call('list_scenes', {})
-    expect(r).toEqual({ scenes: [] })
+    expect(r).toEqual({ status: 'done', scenes: [] })
   })
 
   it('🔴 G 툴은 grant 가 **없으면** 거부한다 — side effect 0회', async () => {
@@ -53,7 +53,7 @@ describe('Tool Core 게이트 — 등급을 스스로 재산출한다', () => {
     const r = await core.call('story_confirm_synopsis', args, { nonce: 'n1' })
 
     expect(storyCommands.confirmSynopsis).toHaveBeenCalledOnce()
-    expect(r).toMatchObject({ ok: true })
+    expect(r).toMatchObject({ status: 'done' })
   })
 
   it.each([
@@ -69,7 +69,7 @@ describe('Tool Core 게이트 — 등급을 스스로 재산출한다', () => {
     ledger.grant({ nonce, tool: name, argsHash: hashArgs(args), sessionId: 's1', projectToken: PROJECT_TOKEN })
 
     await expect(core.call(name, args, { nonce }))
-      .resolves.toEqual({ error: 'invalid-params', params })
+      .resolves.toEqual({ status: 'rejected', reason: 'invalid-params', params })
     expect(storyCommands[method]).not.toHaveBeenCalled()
     expect(
       ledger.consume({ nonce, tool: name, argsHash: hashArgs(args), sessionId: 's1', projectToken: PROJECT_TOKEN }),
@@ -79,7 +79,7 @@ describe('Tool Core 게이트 — 등급을 스스로 재산출한다', () => {
 
   it('R 툴도 자기 inputSchema 밖 인자를 실행하지 않는다', async () => {
     await expect(core.call('story_get_state', { invented: true }))
-      .resolves.toEqual({ error: 'invalid-params', params: ['invented'] })
+      .resolves.toEqual({ status: 'rejected', reason: 'invalid-params', params: ['invented'] })
     expect(storyCommands.getState).not.toHaveBeenCalled()
   })
 
@@ -93,12 +93,12 @@ describe('Tool Core 게이트 — 등급을 스스로 재산출한다', () => {
     ledger.grant({ nonce: `open-${name}`, tool: name, argsHash: hashArgs(args), sessionId: 's1', projectToken: PROJECT_TOKEN })
 
     await expect(core.call(name, args, { nonce: `open-${name}` }))
-      .resolves.toEqual({ error: 'no-project' })
+      .resolves.toEqual({ status: 'rejected', reason: 'no-project' })
     expect(storyCommands[method]).not.toHaveBeenCalled()
 
     opened = true
     await expect(core.call(name, args, { nonce: `open-${name}` }))
-      .resolves.toMatchObject({ ok: true })
+      .resolves.toMatchObject({ status: 'done' })
     expect(storyCommands[method]).toHaveBeenCalledOnce()
   })
 

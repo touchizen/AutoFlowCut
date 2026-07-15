@@ -22,6 +22,7 @@ const NO_PROJECT = Object.freeze({ error: 'no-project' })
 
 /** `wait_batch` 의 종결 상태 — 여기 도달하면 더 기다릴 이유가 없다. */
 const BATCH_TERMINAL = new Set(['complete', 'cancelled-by-user', 'error'])
+const BATCH_RESULTS = new Set([...BATCH_TERMINAL, 'timeout'])
 const BATCH_TYPES = new Set(['scene', 'ref'])
 
 // 모델이 빈 문자열/공백 문자열을 보내면 setSpeakers의 같은 검증에서 뒤늦게 실패해 승인이 낭비된다.
@@ -145,6 +146,70 @@ function agentStartStepParams(step, params) {
   const { title, ...safeParams } = params
   // stepMachine의 pasted 분기는 params.input.title을 보존한다. title만 좁게 어댑트하고 type은 만들지 않는다.
   return params.pastedScript ? { ...safeParams, input: { title } } : safeParams
+}
+
+const D8_STATUSES = new Set(['done', 'error', 'aborted', 'rejected'])
+
+/** 에이전트 툴 결과만 D8 한 어휘로 바꾼다. renderer IPC는 이 경로를 타지 않는다. */
+export function normalizeToolResult(name, result) {
+  // wait_batch의 status/error는 작업 결과가 아니라 배치 도메인 값이다. 일반 거부/오류 규칙보다
+  // 먼저 격리하지 않으면 batch status='error'와 실패 개수가 D8 작업 오류로 오해된다.
+  if (name === 'wait_batch' && BATCH_RESULTS.has(result?.status)) {
+    return { status: 'done', batch: result }
+  }
+
+  if (result === null || typeof result !== 'object' || Array.isArray(result)) {
+    throw new Error('unknown tool result shape')
+  }
+
+  // grant 부재처럼 이미 D8인 결과는 어휘를 다시 해석하지 않는다. 특히 이 unconfirmed는
+  // 등장인물 미확정이 아니라 사람 승인 부재라 characters-unconfirmed로 바꾸면 안 된다.
+  if (D8_STATUSES.has(result.status)) {
+    return result.status === 'rejected'
+      ? { ...result, status: 'rejected', reason: result.reason || 'unknown' }
+      : result
+  }
+
+  if (Object.hasOwn(result, 'outcome')) {
+    if (!result.outcome || !D8_STATUSES.has(result.outcome.status)) {
+      throw new Error(`unknown tool result outcome: ${String(result.outcome?.status)}`)
+    }
+    const normalized = { status: result.outcome.status }
+    if (result.operationId !== undefined) normalized.operationId = result.operationId
+    if (result.outcome.status === 'error' && result.outcome.error !== undefined) {
+      normalized.error = result.outcome.error
+    }
+    if (result.outcome.status === 'rejected') {
+      normalized.reason = result.outcome.reason || 'unknown'
+    }
+    return normalized
+  }
+
+  if (result.ok === false || result.success === false || Object.hasOwn(result, 'error')) {
+    const { error, success: _success, ok: _ok, ...extras } = result
+    // start의 unconfirmed만 roster gate다. grant 미확정과 같은 단어를 에이전트에게 노출하면
+    // "사람에게 승인 요청"과 "등장인물 확정" 중 어느 복구를 해야 하는지 구분할 수 없다.
+    const mappedReason = name === 'story_start_step' && error === 'unconfirmed'
+      ? 'characters-unconfirmed'
+      : error
+    return { ...extras, status: 'rejected', reason: mappedReason || 'unknown' }
+  }
+
+  if (Object.hasOwn(result, 'status')) {
+    throw new Error(`unknown tool result status: ${String(result.status)}`)
+  }
+
+  if (result.ok === true) {
+    const { ok: _ok, success: _success, ...extras } = result
+    return { ...extras, status: 'done' }
+  }
+
+  if (Object.hasOwn(result, 'ok') || Object.hasOwn(result, 'success')) {
+    throw new Error('unknown tool result shape')
+  }
+
+  // R 툴의 순수 JSON 도메인 payload만 done으로 감싼다. 결과 표식이 있는 미지 shape는 위에서 닫는다.
+  return { ...result, status: 'done' }
 }
 
 /**
@@ -328,40 +393,45 @@ export function createToolCore({
      *    "툴이 아무것도 안 했다" 와 "툴이 없다" 를 구분하지 못한다.
      */
     async call(name, args = {}, context = {}) {
-      // Codex는 병렬 호출을 request id로 나눠 동시에 보낸다. 이벤트/batch를 추측하지 않고 실제
-      // 호출 진입마다 동기로 admission해야 각 호출이 1회고, limit 뒤 side effect도 시작되지 않는다.
-      const refusal = admitToolCall?.({ name, args, context })
-      if (refusal) return refusal
+      const result = await (async () => {
+        // Codex는 병렬 호출을 request id로 나눠 동시에 보낸다. 이벤트/batch를 추측하지 않고 실제
+        // 호출 진입마다 동기로 admission해야 각 호출이 1회고, limit 뒤 side effect도 시작되지 않는다.
+        const refusal = admitToolCall?.({ name, args, context })
+        if (refusal) return refusal
 
-      const tool = TOOLS[name]
-      if (!tool) throw new Error(`unknown tool: ${name}`)
-      // adapter는 신뢰 경계 밖 프로세스다. main도 같은 schema 변환기로 원본 args를 검증하되,
-      // hash에 묶인 원본을 parse 결과로 대체하지 않는다. 실패는 grant consume 전에 끝낸다.
-      const validation = INPUT_VALIDATORS.get(name).safeParse(args)
-      if (!validation.success) {
-        return { error: 'invalid-params', params: invalidParamNames(validation.error) }
-      }
-      // 툴마다 필요한 것이 다르다. 전부에게 storyCommands 를 요구하면 renderer 만 읽는 툴이 못 돈다.
-      if (tool.needs === 'storyCommands' && !storyCommands) {
-        throw new Error('toolCore.use(storyCommands) 가 호출되지 않았다')
-      }
-      if (tool.needs === 'toolBridge' && !toolBridge) {
-        throw new Error(`${name} requires toolBridge`)
-      }
-      // 프로젝트가 없다는 사실은 승인과 무관하다. grant를 먼저 consume하면 사람이 프로젝트를
-      // 연 뒤 같은 승인으로 재시도할 수 없으므로, 모든 story 도구의 공통 사전조건을 앞에서 막는다.
-      if (tool.needs === 'storyCommands'
-        && typeof storyCommands.hasProject === 'function'
-        && !storyCommands.hasProject()) return NO_PROJECT
-      // renderer guarded()와 같은 계약이다. 프로젝트 전환은 renderer session close보다 먼저 일어날 수
-      // 있으므로 agent 경로도 세션이 pin한 token을 직접 확인하고, 승인 consume 전에 닫혀야 한다.
-      if (tool.needs === 'storyCommands'
-        && storyCommands.projectToken !== projectToken) return { error: 'stale-token' }
-      // adapter 의 주장이 아니라 **main ledger 의 grant** 를 본다.
-      if (tool.permission !== 'R' && !isApproved(name, args, context)) {
-        return { status: 'rejected', reason: 'unconfirmed' }
-      }
-      return tool.run(args)
+        const tool = TOOLS[name]
+        if (!tool) throw new Error(`unknown tool: ${name}`)
+        // adapter는 신뢰 경계 밖 프로세스다. main도 같은 schema 변환기로 원본 args를 검증하되,
+        // hash에 묶인 원본을 parse 결과로 대체하지 않는다. 실패는 grant consume 전에 끝낸다.
+        const validation = INPUT_VALIDATORS.get(name).safeParse(args)
+        if (!validation.success) {
+          return { error: 'invalid-params', params: invalidParamNames(validation.error) }
+        }
+        // 툴마다 필요한 것이 다르다. 전부에게 storyCommands 를 요구하면 renderer 만 읽는 툴이 못 돈다.
+        if (tool.needs === 'storyCommands' && !storyCommands) {
+          throw new Error('toolCore.use(storyCommands) 가 호출되지 않았다')
+        }
+        if (tool.needs === 'toolBridge' && !toolBridge) {
+          throw new Error(`${name} requires toolBridge`)
+        }
+        // 프로젝트가 없다는 사실은 승인과 무관하다. grant를 먼저 consume하면 사람이 프로젝트를
+        // 연 뒤 같은 승인으로 재시도할 수 없으므로, 모든 story 도구의 공통 사전조건을 앞에서 막는다.
+        if (tool.needs === 'storyCommands'
+          && typeof storyCommands.hasProject === 'function'
+          && !storyCommands.hasProject()) return NO_PROJECT
+        // renderer guarded()와 같은 계약이다. 프로젝트 전환은 renderer session close보다 먼저 일어날 수
+        // 있으므로 agent 경로도 세션이 pin한 token을 직접 확인하고, 승인 consume 전에 닫혀야 한다.
+        if (tool.needs === 'storyCommands'
+          && storyCommands.projectToken !== projectToken) return { error: 'stale-token' }
+        // adapter 의 주장이 아니라 **main ledger 의 grant** 를 본다.
+        if (tool.permission !== 'R' && !isApproved(name, args, context)) {
+          return { status: 'rejected', reason: 'unconfirmed' }
+        }
+        return tool.run(args)
+      })()
+
+      // 모든 정상 반환은 이 한 지점만 지난다. 위 블록의 throw는 catch하지 않아 MCP isError로 남긴다.
+      return normalizeToolResult(name, result)
     },
   }
 }

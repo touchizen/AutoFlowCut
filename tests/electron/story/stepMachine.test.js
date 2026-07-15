@@ -32,7 +32,11 @@ beforeEach(async () => {
 
 describe('stepMachine', () => {
   it('script 실행: delta 중계 + done + script.md 저장', async () => {
-    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    const result = await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    expect(result).toEqual({
+      operationId: expect.any(String),
+      outcome: { status: 'done' },
+    })
     const state = await machine.getState()
     expect(state.steps.script.status).toBe('done')
     expect(emitted.some((e) => e.ch === 'story:delta' && e.payload.text === '부분')).toBe(true)
@@ -192,10 +196,24 @@ describe('stepMachine', () => {
 
   it('LLM 에러 시 스텝 status=error + 에러 메시지 보존', async () => {
     llm.generateScript.mockRejectedValueOnce(new Error('429'))
-    await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    const result = await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    expect(result).toEqual({
+      operationId: expect.any(String),
+      outcome: { status: 'error', error: '429' },
+    })
     const state = await machine.getState()
     expect(state.steps.script.status).toBe('error')
     expect(state.steps.script.error).toContain('429')
+  })
+
+  it('빈 message Error도 state와 outcome에 Error 문자열을 보존한다', async () => {
+    llm.generateScript.mockRejectedValueOnce(new Error(''))
+
+    const result = await machine.start('script', { input: { type: 'title', title: 'T' }, options: { language: 'ko' } })
+    const state = await machine.getState()
+
+    expect(result.outcome).toEqual({ status: 'error', error: 'Error' })
+    expect(state.steps.script).toMatchObject({ status: 'error', error: 'Error' })
   })
 
   it('prompts 완료 후 ack 없이 scenes 재실행하면 빈 push를 재발신하지 않고, prompts 재실행 후에는 정상 push한다', async () => {
@@ -234,6 +252,48 @@ describe('stepMachine', () => {
 
     const state = await machine.getState()
     expect(state.steps.script.status).toBe('done')
+  })
+
+  it('abort 후 같은 슬롯을 재실행해도 첫 start 반환은 두 번째 done이 아니라 aborted다', async () => {
+    let resolveFirst
+    llm.generateScript
+      // 첫 LLM은 signal을 일부러 무시한다. abort 뒤에도 promise가 살아 있어 같은 슬롯 재사용과 경쟁한다.
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve }))
+      .mockResolvedValueOnce({ scriptMd: '# 2차' })
+
+    const firstStart = machine.start('script', { input: { type: 'title', title: 'T1' }, options: { language: 'ko' } })
+    while (!resolveFirst) { await new Promise((r) => setImmediate(r)) }
+
+    await machine.abort()
+    const secondResult = await machine.start('script', { input: { type: 'title', title: 'T2' }, options: { language: 'ko' } })
+    resolveFirst({ scriptMd: '# 늦은 1차' })
+    const firstResult = await firstStart
+
+    expect(secondResult.outcome).toEqual({ status: 'done' })
+    // 반환 시 전역 slot을 읽으면 두 번째 실행의 done을 첫 실행 결과로 오보한다.
+    expect(firstResult.outcome).toEqual({ status: 'aborted' })
+  })
+
+  it('중단된 실행은 뒤늦게 완료돼도 renderer로 story:state를 재발신하지 않는다', async () => {
+    // 🔴 D8은 abort를 **보존**한다. 반환값이 aborted인 것만으론 부족하다 — 중단된 실행이 flush 가드를
+    //    우회해 이전 operationId로 renderer state를 재발신하면, UI가 중단된 결과를 최신으로 착각한다.
+    let resolveFirst
+    llm.generateScript
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve }))
+      .mockResolvedValueOnce({ scriptMd: '# 2차' })
+
+    const firstStart = machine.start('script', { input: { type: 'title', title: 'T1' }, options: { language: 'ko' } })
+    while (!resolveFirst) { await new Promise((r) => setImmediate(r)) }
+
+    await machine.abort()
+    await machine.start('script', { input: { type: 'title', title: 'T2' }, options: { language: 'ko' } })
+
+    emitted.length = 0        // 두 번째 실행의 정상 emit까지 비우고, 이후엔 늦은 첫 실행만 활동한다.
+    resolveFirst({ scriptMd: '# 늦은 1차' })
+    await firstStart
+
+    const staleEmits = emitted.filter((e) => e.ch === 'story:state')
+    expect(staleEmits, '중단된 실행이 renderer로 state를 재발신했다').toHaveLength(0)
   })
 
   it('하류 리셋 + 늦은 ack 후 prompts 재실행은 새 revision으로 push하고, 유실 시 재발신된다', async () => {

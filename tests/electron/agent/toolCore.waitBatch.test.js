@@ -2,8 +2,8 @@
 //
 // M1 slice 13 — Tool Core `wait_batch` (§2.3).
 //
-//   wait_batch {type:'scene'|'ref'} → { status, done, total, error }
-//   status ∈ 'complete' | 'timeout' | 'cancelled-by-user' | 'error'
+//   wait_batch {type:'scene'|'ref'} → { status:'done', batch:{ status, done, total, error } }
+//   batch.status ∈ 'complete' | 'timeout' | 'cancelled-by-user' | 'error'
 //
 // 🔴 **timeout 은 값이지 예외가 아니다.** 기다리다 창(window W)이 만료된 건 에이전트가 **행동할 수 있는
 //    정상 결과**다 (더 기다릴지, 중간 결과로 갈지). 반면 `toolBridge.invoke` 의 reject 는
@@ -49,7 +49,7 @@ describe('toolCore wait_batch (slice 13)', () => {
     const bridge = fakeBridge([snap('running', 1, 3), snap('running', 2, 3), snap('complete', 3, 3)])
     const r = await core(bridge, fakeClock()).call('wait_batch', { type: 'scene' })
 
-    expect(r).toEqual({ status: 'complete', done: 3, total: 3, error: 0 })
+    expect(r).toEqual({ status: 'done', batch: { status: 'complete', done: 3, total: 3, error: 0 } })
     expect(bridge.invoke).toHaveBeenCalledTimes(3)
     expect(bridge.calls[0]).toEqual({ name: 'batch.status', args: { type: 'scene' } })
   })
@@ -61,21 +61,21 @@ describe('toolCore wait_batch (slice 13)', () => {
       .call('wait_batch', { type: 'scene' })
 
     // 마지막으로 본 카운트를 보존한다 — 에이전트가 "얼마나 됐나" 를 알아야 다음 수를 정한다.
-    expect(r).toEqual({ status: 'timeout', done: 1, total: 3, error: 0 })
+    expect(r).toEqual({ status: 'done', batch: { status: 'timeout', done: 1, total: 3, error: 0 } })
   })
 
   it('사용자가 멈추면 cancelled-by-user (부분 카운트 보존)', async () => {
     const bridge = fakeBridge([snap('running', 1, 3), snap('cancelled-by-user', 1, 3)])
     const r = await core(bridge, fakeClock()).call('wait_batch', { type: 'scene' })
 
-    expect(r).toEqual({ status: 'cancelled-by-user', done: 1, total: 3, error: 0 })
+    expect(r).toEqual({ status: 'done', batch: { status: 'cancelled-by-user', done: 1, total: 3, error: 0 } })
   })
 
   it('🔴 auth 중단(error)은 complete 로 위장하지 않는다 — 안 그러면 죽은 인증으로 재시도 루프를 돈다', async () => {
     const bridge = fakeBridge([snap('error', 1, 3, 1)])
     const r = await core(bridge, fakeClock()).call('wait_batch', { type: 'scene' })
 
-    expect(r).toEqual({ status: 'error', done: 1, total: 3, error: 1 })
+    expect(r).toEqual({ status: 'done', batch: { status: 'error', done: 1, total: 3, error: 1 } })
   })
 
   it('🔴 bridge 가 reject 하면(창 파괴/bridge closed) **던진다** — timeout 으로 위장하지 않는다', async () => {
@@ -90,13 +90,14 @@ describe('toolCore wait_batch (slice 13)', () => {
     const bridge = fakeBridge([snap('complete', 2, 2)])
     const r = await core(bridge, fakeClock()).call('wait_batch', { type: 'scene' })
 
-    expect(Object.keys(r).sort()).toEqual(['done', 'error', 'status', 'total'])
+    expect(Object.keys(r).sort()).toEqual(['batch', 'status'])
+    expect(Object.keys(r.batch).sort()).toEqual(['done', 'error', 'status', 'total'])
   })
 
   it('🔴 모르는 type 은 bridge 를 부르지도 않고 거부한다', async () => {
     const bridge = fakeBridge([])
     await expect(core(bridge, fakeClock()).call('wait_batch', { type: 'video' }))
-      .resolves.toEqual({ error: 'invalid-params', params: ['type'] })
+      .resolves.toEqual({ status: 'rejected', reason: 'invalid-params', params: ['type'] })
     expect(bridge.invoke).not.toHaveBeenCalled()
   })
 })

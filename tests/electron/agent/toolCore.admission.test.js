@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { createToolCore } from '../../../electron/agent/toolCore.js'
 
 const LIMIT = Object.freeze({ error: 'agent-limit', limit: 2, used: 2 })
+const NORMALIZED_LIMIT = Object.freeze({ status: 'rejected', reason: 'agent-limit', limit: 2, used: 2 })
 
 function storyCommands() {
   return {
@@ -20,7 +21,7 @@ describe('Tool Core app ledger admission', () => {
     const core = createToolCore({ admitToolCall, projectToken: commands.projectToken })
     core.use(commands)
 
-    await expect(core.call('list_scenes', {})).resolves.toEqual(LIMIT)
+    await expect(core.call('list_scenes', {})).resolves.toEqual(NORMALIZED_LIMIT)
     expect(admitToolCall).toHaveBeenCalledWith({
       name: 'list_scenes',
       args: {},
@@ -46,7 +47,11 @@ describe('Tool Core app ledger admission', () => {
       core.call('list_scenes'),
     ])
 
-    expect(results).toEqual([{ scenes: [] }, { scenes: [] }, LIMIT])
+    expect(results).toEqual([
+      { status: 'done', scenes: [] },
+      { status: 'done', scenes: [] },
+      NORMALIZED_LIMIT,
+    ])
     expect(admitToolCall).toHaveBeenCalledTimes(3)
     expect(commands.listScenes).toHaveBeenCalledTimes(2)
   })
