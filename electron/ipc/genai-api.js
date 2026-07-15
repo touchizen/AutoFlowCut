@@ -24,7 +24,7 @@ import {
  * @param {Function} [deps.fetchImpl] - 주입용 fetch (테스트). 없으면 엔진이 global fetch 사용.
  */
 export function registerGenaiIPC(ipcMain, deps) {
-  const { keyStore, fetchImpl } = deps
+  const { keyStore, fetchImpl, onKeyChanged } = deps
   // 엔진에 넘길 deps. fetchImpl 없으면 {} → 엔진이 기본 global fetch 사용.
   const engineDeps = fetchImpl ? { fetchImpl } : {}
 
@@ -37,10 +37,18 @@ export function registerGenaiIPC(ipcMain, deps) {
   }))
 
   // 키 저장 (암호화).
-  ipcMain.handle('genai:set-key', async (_e, { apiKey } = {}) => keyStore.setKey(apiKey))
+  ipcMain.handle('genai:set-key', async (_e, { apiKey } = {}) => {
+    const result = await keyStore.setKey(apiKey)
+    if (result?.success) onKeyChanged?.()
+    return result
+  })
 
   // 키 삭제.
-  ipcMain.handle('genai:clear-key', () => keyStore.clearKey())
+  ipcMain.handle('genai:clear-key', async () => {
+    const result = await keyStore.clearKey()
+    if (result?.success) onKeyChanged?.()
+    return result
+  })
 
   // 키 유효성 검증. apiKey 가 주어지면 그 후보를, 없으면 저장된 키를 검증.
   // 생성 quota 를 소비하지 않는 가벼운 호출.

@@ -113,6 +113,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   genaiCheckVideoStatus: (params) => ipcRenderer.invoke('genai:check-video-status', params),
   genaiDownloadVideo: (params) => ipcRenderer.invoke('genai:download-video', params),
 
+  // SRT → prompt automation. Gemini credentials stay in main; these payloads contain only work data/options.
+  srtPromptsWriteChunk: (params) => ipcRenderer.invoke('srt-prompts:write-chunk', params),
+  srtPromptsGroup: (params) => ipcRenderer.invoke('srt-prompts:group', params),
+  srtPromptsCapabilities: (params) => ipcRenderer.invoke('srt-prompts:capabilities', params),
+
   // --- TTS provider keys + voices (M2a-3b) — 평문 키는 renderer로 반환하지 않는다 ---
   keysStatus: (params) => ipcRenderer.invoke('keys:status', params),
   keysSet: (params) => ipcRenderer.invoke('keys:set', params),

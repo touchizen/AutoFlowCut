@@ -14,6 +14,7 @@ import { registerPremiereIPC } from './ipc/premiere.js'
 import { registerVrewIPC } from './ipc/vrew.js'
 import { registerMcpIPC, resolveResourceDir } from './ipc/mcp.js'
 import { registerGenaiIPC } from './ipc/genai-api.js'
+import { registerSrtPromptsIPC } from './ipc/srt-prompts-api.js'
 import { createStoryCommands, registerStoryIPC } from './ipc/story-api.js'
 import { createToolBridge } from './agent/toolBridge.js'
 import { createGrantLedger } from './agent/grantLedger.js'
@@ -26,6 +27,7 @@ import { AGENT_APPROVAL_WINDOW_MS } from './agent/constants.js'
 import { registerTtsIPC } from './ipc/tts-api.js'
 import * as llmClaude from './api/llm/llmClaude.js'
 import * as llmCodex from './api/llm/llmCodex.js'
+import * as llmGemini from './api/llm/llmGemini.js'
 import { createStoryLlmRouter } from './api/llm/storyLlmRouter.js'
 import { loadMetaPrompt } from './api/llm/metaPrompts.js'
 import { createKeyStore } from './api/keyStore.js'
@@ -222,7 +224,14 @@ const genaiKeyStore = createKeyStore({
   filePath: path.join(app.getPath('userData'), 'genai-key.enc'),
   fs: fsSync,
 })
-registerGenaiIPC(ipcMain, { keyStore: genaiKeyStore })
+const srtPromptsIPC = registerSrtPromptsIPC(ipcMain, {
+  keyStore: genaiKeyStore,
+  adapters: { gemini: llmGemini, claude: llmClaude, codex: llmCodex },
+})
+registerGenaiIPC(ipcMain, {
+  keyStore: genaiKeyStore,
+  onKeyChanged: () => srtPromptsIPC.invalidateCapabilities('gemini'),
+})
 
 // TTS provider 멀티 키 저장소 (스펙 §6, M2a-3b) — genai|elevenlabs|typecast|anthropic.
 const multiKeyStore = createMultiKeyStore({

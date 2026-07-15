@@ -74,12 +74,32 @@ describe('genai-api — 키 관리', () => {
     expect(res).toEqual({ success: true })
   })
 
+  it('successful set-key invalidates the Gemini capability cache', async () => {
+    const ipc = makeIpcMain()
+    const onKeyChanged = vi.fn()
+    registerGenaiIPC(ipc, { keyStore: makeKeyStore(), onKeyChanged })
+
+    await ipc.invoke('genai:set-key', { apiKey: 'NEWKEY' })
+
+    expect(onKeyChanged).toHaveBeenCalledTimes(1)
+  })
+
   it('clear-key: 위임', async () => {
     const ipc = makeIpcMain()
     const keyStore = makeKeyStore()
     registerGenaiIPC(ipc, { keyStore })
     await ipc.invoke('genai:clear-key')
     expect(keyStore.clearKey).toHaveBeenCalled()
+  })
+
+  it('successful clear-key invalidates the Gemini capability cache', async () => {
+    const ipc = makeIpcMain()
+    const onKeyChanged = vi.fn()
+    registerGenaiIPC(ipc, { keyStore: makeKeyStore(), onKeyChanged })
+
+    await ipc.invoke('genai:clear-key')
+
+    expect(onKeyChanged).toHaveBeenCalledTimes(1)
   })
 
   it('validate-key: 후보 키 주면 그걸로 검증', async () => {

@@ -132,6 +132,17 @@ describe('preload contract', () => {
     expect(preloadKeys.has('storyListLlmOptions')).toBe(true)
   })
 
+  it('exposes the three explicit SRT prompt bridges', () => {
+    const preloadText = fs.readFileSync(preloadPath, 'utf8')
+    const preloadKeys = extractPreloadKeys(preloadText)
+    expect(preloadKeys.has('srtPromptsWriteChunk')).toBe(true)
+    expect(preloadKeys.has('srtPromptsGroup')).toBe(true)
+    expect(preloadKeys.has('srtPromptsCapabilities')).toBe(true)
+    expect(preloadText).toContain("srtPromptsWriteChunk: (params) => ipcRenderer.invoke('srt-prompts:write-chunk', params)")
+    expect(preloadText).toContain("srtPromptsGroup: (params) => ipcRenderer.invoke('srt-prompts:group', params)")
+    expect(preloadText).toContain("srtPromptsCapabilities: (params) => ipcRenderer.invoke('srt-prompts:capabilities', params)")
+  })
+
   // 슬라이스4(§3.4 + §v2.8 M1): synopsis IPC 브릿지 + 이벤트 화이트리스트
   it('storyGenerateSynopsis / storyConfirmSynopsis are in preload (synopsis IPC bridges)', () => {
     const preloadText = fs.readFileSync(preloadPath, 'utf8')
