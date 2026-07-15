@@ -619,6 +619,8 @@ describe('D8 — 전 툴 결과 어휘 불변식과 throw 경계', () => {
       update_visual_review: { sceneNumbers: [] },
       list_visual_reviews: {},
       list_problem_scenes: {},
+      export_capcut: {},
+      export_premiere: {},
     }
 
     for (const tool of core.list()) {

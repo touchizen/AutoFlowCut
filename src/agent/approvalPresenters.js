@@ -100,6 +100,12 @@ export const APPROVAL_KEY_DECISIONS = Object.freeze({
       ['sceneNumbers'],
     ),
   }),
+  export_capcut: Object.freeze({
+    root: decision(['force'], [], { force: expectedTypes('boolean') }),
+  }),
+  export_premiere: Object.freeze({
+    root: decision(['force'], [], { force: expectedTypes('boolean') }),
+  }),
 })
 
 /**
@@ -644,6 +650,25 @@ function presentUpdateVisualReview(args, t) {
   return { lines, blocks: [] }
 }
 
+function presentExport(args, t, format) {
+  const lines = []
+  // headline — 어떤 도구로 내보내는지.
+  lines.push({
+    text: t(format === 'capcut' ? 'agent.approvalExportCapcut' : 'agent.approvalExportPremiere'),
+    paths: [],
+    headline: true,
+  })
+  if (hasOwn(args, 'force')) {
+    // force=true 는 배치 실행 중에도 강제 export 다 — 사람이 반드시 봐야 할 결정.
+    lines.push({
+      text: t('agent.approvalExportForce', { force: String(args.force) }),
+      paths: ['/force'],
+      danger: args.force === true,
+    })
+  }
+  return { lines, blocks: [] }
+}
+
 /**
  * tool/args만으로 승인 문장을 만드는 순수 함수. 모르는 툴은 fail-closed UI가 처리하도록 null을 준다.
  * @returns {null|{lines: Array<{text:string, paths:string[], danger?:boolean}>, blocks: Array<{label:string, path:string, text:string}>}}
@@ -671,5 +696,7 @@ export function presentApproval(tool, args, t) {
   if (tool === 'update_visual_review') {
     return presentUpdateVisualReview(args, t)
   }
+  if (tool === 'export_capcut') return presentExport(args, t, 'capcut')
+  if (tool === 'export_premiere') return presentExport(args, t, 'premiere')
   return null
 }

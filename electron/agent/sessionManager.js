@@ -27,6 +27,8 @@ export function createAgentSessionManager({
   storyCommands,
   // D11 이미지 decode seam(main nativeImage). get_scene_images 가 쓴다. 없으면 그 툴만 못 돈다.
   imageReader = null,
+  // slice 33 visual review durable store. 없으면 review 툴만 못 돈다.
+  visualReviewStore = null,
   isPackaged = false,
   resourcesPath = process.resourcesPath,
   onDelta,
@@ -142,6 +144,7 @@ export function createAgentSessionManager({
       sessionId,
       projectToken,
       imageReader,
+      visualReviewStore,
       admitToolCall: () => admitToolCall(session),
     })
     toolCore.use(storyCommands)

@@ -422,6 +422,20 @@ export function createToolCore({
   }
 
   /**
+   * D13 — CapCut/Premiere export. renderer 가 실제 export·배치 게이트·fixed-slot completeness·요약을
+   * 소유하고, tool 은 force 를 전달하고 결과를 D8 로 reshape 만 한다.
+   *
+   * 🔴 성공은 `{success:true}` 로 오는데 normalizeToolResult 는 그 shape 를 **throw** 한다. 반드시
+   *    명시적으로 `{status:'done', ...}` 로 바꾼다. 거부 `{success:false,error}` 는 그대로 흘려
+   *    `{status:'rejected', reason}` 로 정규화한다(ordinals 등 extras 보존).
+   */
+  async function exportVia(bridgeName, { force } = {}) {
+    const result = await toolBridge.invoke(bridgeName, { force: !!force })
+    if (result?.success === false) return result
+    return { status: 'done', targetPath: result?.targetPath, sceneSummary: result?.sceneSummary, audioSummary: result?.audioSummary }
+  }
+
+  /**
    * 툴 표 (스펙 §2). `permission`: **R** = 즉시 실행 / **G** = 사람 승인 필요 / **B** = 과금.
    *
    * 🔴 **등급은 Tool Core 가 소유한다** ((A) 채택 조건 1). adapter 가 request context 에 붙인
@@ -521,6 +535,28 @@ export function createToolCore({
       },
       needs: ['storyCommands', 'toolBridge'],
       run: (args) => listProblemScenes(args),
+    },
+    export_capcut: {
+      permission: 'G',              // 사람 승인 — 프로젝트를 외부 도구로 내보낸다
+      description: 'CapCut 프로젝트로 내보낸다. 배치 실행 중이면 거부되며 force:true 로만 우회한다(고정 이미지 완결성은 우회 불가). 미완성은 요약으로 보고한다.',
+      inputSchema: {
+        type: 'object',
+        properties: { force: { type: 'boolean' } },
+        additionalProperties: false,
+      },
+      needs: ['storyCommands', 'toolBridge'],
+      run: (args) => exportVia('export.capcut', args),
+    },
+    export_premiere: {
+      permission: 'G',
+      description: 'Premiere(.prproj) 로 내보낸다. 배치 실행 중이면 거부되며 force:true 로만 우회한다(고정 이미지 완결성은 우회 불가). 미완성은 요약으로 보고한다.',
+      inputSchema: {
+        type: 'object',
+        properties: { force: { type: 'boolean' } },
+        additionalProperties: false,
+      },
+      needs: ['storyCommands', 'toolBridge'],
+      run: (args) => exportVia('export.premiere', args),
     },
     story_confirm_synopsis: {
       permission: 'G',              // 사람이 확정하는 것 — 에이전트가 혼자 못 한다 (D9)

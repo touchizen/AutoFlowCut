@@ -2268,6 +2268,14 @@ function App() {
           scenes,
           sceneMode: fixedSceneState?.sceneMode,
         }}
+        exportBridgeSources={{
+          // 배치 실행 중이면 export 는 force 없이는 거부된다 (D13).
+          running: isRunning,
+          scenes,
+          // 렌더러가 아는 가져온 오디오 트랙 수. story 나레이션은 export 시점에 붙어
+          // 여기서 pre-export 로 세지 않는다 ([M]/debt — audioSummary story 미보고).
+          audioPackageTracks: Array.isArray(audioTracks) ? audioTracks.length : 0,
+        }}
       />
       <Header
         onSettings={(tab) => openSettings(typeof tab === 'string' ? tab : null)}

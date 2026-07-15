@@ -126,6 +126,8 @@ const coverageFixtures = {
     { sceneNumbers: [3], status: 'ok' },
     { sceneNumbers: [5] },
   ],
+  export_capcut: [{ force: true }, { force: false }],
+  export_premiere: [{ force: true }, { force: false }],
 }
 
 const typeMismatchFixtures = [

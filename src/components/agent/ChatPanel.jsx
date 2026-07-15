@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { readBatchStatus } from '../../agent/batchStatus.js'
 import { registerToolBridgeHandlers } from '../../agent/toolBridgeHandlers.js'
 import { sceneSnapshot } from '../../agent/sceneBridge.js'
+import { runAgentExport } from '../../agent/exportBridge.js'
 import { extractVideoFrames } from '../../utils/videoFrames.js'
 import { resolveVideoSrc } from '../../utils/videoSrc.js'
 import { useOptionalI18n } from '../../hooks/useI18n'
@@ -120,7 +121,7 @@ function useCollapsedDrag(enabled) {
  * D14 전역 ChatPanel. App의 generate/story 조건부 body 밖에서 한 번만 mount해야 한다.
  * view 전환은 state를 보존하지만 projectKey 전환은 D15에 따라 이전 session을 abort/close한다.
  */
-export default function ChatPanel({ projectKey = null, batchStatusSources = {}, sceneBridgeSources = {} }) {
+export default function ChatPanel({ projectKey = null, batchStatusSources = {}, sceneBridgeSources = {}, exportBridgeSources = {} }) {
   const t = useSafeT()
   const api = window.electronAPI
   const [collapsed, setCollapsed] = useState(false)
@@ -141,6 +142,8 @@ export default function ChatPanel({ projectKey = null, batchStatusSources = {}, 
   batchSourcesRef.current = batchStatusSources
   const sceneSourcesRef = useRef(sceneBridgeSources)
   sceneSourcesRef.current = sceneBridgeSources
+  const exportSourcesRef = useRef(exportBridgeSources)
+  exportSourcesRef.current = exportBridgeSources
 
   const pushError = useCallback((failure) => {
     const text = failureText(failure, t)
@@ -237,6 +240,15 @@ export default function ChatPanel({ projectKey = null, batchStatusSources = {}, 
         'video.frames': async ({ rendererSceneId, videoPath, n, maxEdge } = {}) => ({
           rendererSceneId,
           frames: await extractVideoFrames(resolveVideoSrc(null, videoPath), { n, maxEdge }),
+        }),
+        // M3 D13: 배치 게이트 + [M]검증된 실제 export(__mcpExport*) 재사용 + 요약 조립.
+        'export.capcut': ({ force } = {}) => runAgentExport({
+          force,
+          sources: { ...exportSourcesRef.current, runExport: () => window.__mcpExportCapcut?.({}) },
+        }),
+        'export.premiere': ({ force } = {}) => runAgentExport({
+          force,
+          sources: { ...exportSourcesRef.current, runExport: () => window.__mcpExportPremiere?.({}) },
         }),
       },
     })
