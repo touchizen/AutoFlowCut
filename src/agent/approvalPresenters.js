@@ -694,6 +694,8 @@ export function presentApproval(tool, args, t) {
     return presentStartStep(args, t)
   }
   if (tool === 'update_visual_review') {
+    // 빈 배열은 resolver 에서 "전체 씬"으로 확장되는 파괴적 shape — 승인창은 fail-closed 한다.
+    if (!Array.isArray(args.sceneNumbers) || args.sceneNumbers.length === 0) return null
     return presentUpdateVisualReview(args, t)
   }
   if (tool === 'export_capcut') return presentExport(args, t, 'capcut')

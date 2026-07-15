@@ -60,4 +60,23 @@ describe('createVisualReviewStore', () => {
     await writeFile(path.join(dir, '.visual_review.json'), '[1,2,3]', 'utf8')
     await expect(store.read()).rejects.toThrow('visual-review-corrupt')
   })
+
+  // MINOR 4 (Fable): reviews 가 배열이면 typeof==='object' 로 통과해 named prop 쓰기가 조용히 유실된다.
+  it('reviews 가 object 가 아니면(배열) corrupt — 조용히 유실하지 않는다', async () => {
+    await writeFile(path.join(dir, '.visual_review.json'), '{"reviews":[1,2]}', 'utf8')
+    await expect(store.read()).rejects.toThrow('visual-review-corrupt')
+    await expect(store.update([{ rendererSceneId: 'x', status: 'ok' }])).rejects.toThrow('visual-review-corrupt')
+    // 원본 배열 파일은 그대로 (덮어쓰지 않았다).
+    expect(await readFile(path.join(dir, '.visual_review.json'), 'utf8')).toBe('{"reviews":[1,2]}')
+  })
+
+  // MINOR 5 (Fable): 병렬 update 는 read-modify-write 라 직렬화 없으면 lost-update.
+  it('동시 update 두 개가 겹쳐도 둘 다 살아남는다 (직렬화)', async () => {
+    await Promise.all([
+      store.update([{ rendererSceneId: 'scene_A', status: 'rejected' }]),
+      store.update([{ rendererSceneId: 'scene_B', status: 'ok' }]),
+    ])
+    const { reviews } = await store.read()
+    expect(Object.keys(reviews).sort()).toEqual(['scene_A', 'scene_B'])
+  })
 })

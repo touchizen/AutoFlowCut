@@ -80,6 +80,14 @@ describe('update_visual_review (G)', () => {
     expect(store.update).toHaveBeenCalledWith([expect.objectContaining({ status: 'rejected' })])
   })
 
+  // MAJOR 2 (Fable): 빈 sceneNumbers 가 "전체 씬 reject" 로 조용히 확장되면 안 된다 (파괴적 G 툴).
+  it('sceneNumbers: [] → invalid-params, 저장 0회', async () => {
+    const args = { sceneNumbers: [] }
+    const r = await core.call('update_visual_review', args, grant('update_visual_review', args))
+    expect(r).toMatchObject({ status: 'rejected', reason: 'invalid-params' })
+    expect(store.update).not.toHaveBeenCalled()
+  })
+
   it('resolve 안 되는 ordinal 은 저장 안 하고 errors 로 보고', async () => {
     const args = { sceneNumbers: [9] }
     const r = await core.call('update_visual_review', args, grant('update_visual_review', args))

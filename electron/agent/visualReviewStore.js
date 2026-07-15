@@ -34,7 +34,12 @@ export function createVisualReviewStore({ projectPath, fs, now = () => new Date(
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       throw new Error('visual-review-corrupt')
     }
-    return { version: 1, reviews: parsed.reviews && typeof parsed.reviews === 'object' ? parsed.reviews : {} }
+    // reviews 가 배열/비객체면 named-prop 쓰기가 조용히 유실된다 (typeof [] === 'object'). corrupt 로 닫는다.
+    if (parsed.reviews !== undefined
+      && (parsed.reviews === null || typeof parsed.reviews !== 'object' || Array.isArray(parsed.reviews))) {
+      throw new Error('visual-review-corrupt')
+    }
+    return { version: 1, reviews: parsed.reviews || {} }
   }
 
   async function writeAtomic(data) {
@@ -44,25 +49,35 @@ export function createVisualReviewStore({ projectPath, fs, now = () => new Date(
     await fs.rename(tmp, file)
   }
 
+  // read-modify-write 직렬화. Codex 는 툴 호출을 병렬로 보내므로, 겹친 update 두 개가 같은 base 를
+  // 읽고 마지막 rename 이 이기면 한쪽 entry 가 유실된다. temp+rename 은 torn-write 만 막고 lost-update 는
+  // 못 막는다. 프로세스 내 promise chain 으로 update 를 직렬화한다 (store 인스턴스가 프로젝트별로 재사용됨).
+  let writeChain = Promise.resolve()
+
   /**
-   * entries 를 rendererSceneId key 로 덮어쓴다(append 아님). read-modify-write.
+   * entries 를 rendererSceneId key 로 덮어쓴다(append 아님). read-modify-write, 직렬 실행.
    * corrupt read 위에서는 write 하지 않는다 (read 가 throw).
    * @param {Array<{rendererSceneId:string, status:'rejected'|'ok', reason?:string, storyId?:string, ordinalAtReview?:number}>} entries
    * @returns {Promise<Array>} 기록된 record 목록.
    */
-  async function update(entries) {
-    const data = await read()
-    const updated = []
-    for (const e of entries) {
-      const record = { status: e.status, updatedAt: now() }
-      if (e.storyId !== undefined) record.storyId = e.storyId
-      if (e.reason !== undefined) record.reason = e.reason
-      if (e.ordinalAtReview !== undefined) record.ordinalAtReview = e.ordinalAtReview
-      data.reviews[e.rendererSceneId] = record
-      updated.push({ rendererSceneId: e.rendererSceneId, ...record })
-    }
-    await writeAtomic(data)
-    return updated
+  function update(entries) {
+    const run = writeChain.then(async () => {
+      const data = await read()
+      const updated = []
+      for (const e of entries) {
+        const record = { status: e.status, updatedAt: now() }
+        if (e.storyId !== undefined) record.storyId = e.storyId
+        if (e.reason !== undefined) record.reason = e.reason
+        if (e.ordinalAtReview !== undefined) record.ordinalAtReview = e.ordinalAtReview
+        data.reviews[e.rendererSceneId] = record
+        updated.push({ rendererSceneId: e.rendererSceneId, ...record })
+      }
+      await writeAtomic(data)
+      return updated
+    })
+    // 한 update 가 실패해도(예: corrupt) chain 은 이어져 다음 update 가 계속 직렬화된다.
+    writeChain = run.then(() => {}, () => {})
+    return run
   }
 
   return { read, update, file }

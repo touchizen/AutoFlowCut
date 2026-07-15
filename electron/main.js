@@ -338,13 +338,19 @@ const agentSessionManager = createAgentSessionManager({
   storyCommands,
   // D11 get_scene_images 의 이미지 decode(main nativeImage). 세션이 열릴 때 Tool Core 에 주입된다.
   imageReader: createNativeImageReader(),
-  // slice 33 visual review store. 매 호출마다 현재 열린 프로젝트 경로로 store 를 만든다 —
+  // slice 33 visual review store. 현재 열린 프로젝트 경로로 store 를 쓰되, **프로젝트별로 캐시**한다 —
+  // store 인스턴스가 update 직렬화 lock(writeChain)을 들고 있으므로 매 호출 새로 만들면 lock 이 무의미해진다.
   // storyCommands 는 앱 범위 단일 인스턴스라 projectPath 가 항상 현재 프로젝트를 가리킨다.
   // review 툴은 needs:storyCommands 게이트로 프로젝트가 없으면 먼저 no-project 를 반환한다.
-  visualReviewStore: {
-    read: () => createVisualReviewStore({ projectPath: storyCommands.projectPath, fs }).read(),
-    update: (entries) => createVisualReviewStore({ projectPath: storyCommands.projectPath, fs }).update(entries),
-  },
+  visualReviewStore: (() => {
+    let cache = { path: null, store: null }
+    const current = () => {
+      const projectPath = storyCommands.projectPath
+      if (cache.path !== projectPath) cache = { path: projectPath, store: createVisualReviewStore({ projectPath, fs }) }
+      return cache.store
+    }
+    return { read: () => current().read(), update: (entries) => current().update(entries) }
+  })(),
   // dev 기본값에 기대면 패키징에서 app.asar 안의 존재하지 않는 adapter를 찾는다.
   isPackaged: app.isPackaged,
   resourcesPath: process.resourcesPath,

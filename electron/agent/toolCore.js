@@ -360,10 +360,22 @@ export function createToolCore({
         frames.push({ ordinal, rendererSceneId, status: 'video-not-found' })
         continue
       }
-      const res = await toolBridge.invoke('video.frames', {
-        rendererSceneId, videoPath, n: VIDEO_FRAMES_PER_SCENE, maxEdge: IMAGE_MAX_EDGE,
-      })
-      const got = res?.frames || []
+      // 🔴 씬별로 격리한다. videoPath 는 절대 경로라 폴더 이동/파일 정리 후 stale 이면 renderer 가
+      //    reject → invoke throw 한다. try 없이 두면 한 씬의 죽은 영상이 이미 뽑은 다른 씬 프레임까지
+      //    버리고 툴 호출 전체를 error 로 만든다. 프레임 0개도 'ok' 로 치지 않는다(영상 멀쩡 오독 방지).
+      let got = null
+      try {
+        const res = await toolBridge.invoke('video.frames', {
+          rendererSceneId, videoPath, n: VIDEO_FRAMES_PER_SCENE, maxEdge: IMAGE_MAX_EDGE,
+        })
+        got = res?.frames || []
+      } catch {
+        got = null
+      }
+      if (!got || got.length === 0) {
+        frames.push({ ordinal, rendererSceneId, source, status: 'frame-extract-failed' })
+        continue
+      }
       for (const f of got) content.push({ type: 'image', data: f.data, mimeType: f.mimeType })
       frames.push({ ordinal, rendererSceneId, source, status: 'ok', count: got.length })
     }
@@ -508,7 +520,8 @@ export function createToolCore({
       inputSchema: {
         type: 'object',
         properties: {
-          sceneNumbers: { type: 'array', items: { type: 'number' } },
+          // minItems 1 — 빈 배열은 resolver 에서 "전체 씬"으로 확장되므로, 파괴적 G 툴에서는 금지한다.
+          sceneNumbers: { type: 'array', items: { type: 'number' }, minItems: 1 },
           status: { type: 'string', enum: ['rejected', 'ok'] },
           reason: { type: 'string' },
         },

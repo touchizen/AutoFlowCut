@@ -14,7 +14,11 @@ export function zodFromJson(schema) {
     if (node.type === 'number') return describe(z.number(), node)
     if (node.type === 'boolean') return describe(z.boolean(), node)
     if (node.type === 'null') return describe(z.null(), node)
-    if (node.type === 'array') return describe(z.array(node.items ? convert(node.items) : z.any()), node)
+    if (node.type === 'array') {
+      let array = z.array(node.items ? convert(node.items) : z.any())
+      if (Number.isInteger(node.minItems) && node.minItems >= 0) array = array.min(node.minItems)
+      return describe(array, node)
+    }
     if (node.type === 'string') {
       let string = z.string()
       if (Number.isInteger(node.minLength) && node.minLength >= 0) string = string.min(node.minLength)

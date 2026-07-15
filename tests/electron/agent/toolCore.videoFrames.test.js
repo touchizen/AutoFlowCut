@@ -67,6 +67,38 @@ describe('get_scene_video_frames', () => {
     expect(r.frames).toContainEqual({ ordinal: 9, status: 'scene-not-found' })
   })
 
+  // MAJOR 3 (Fable): 한 씬의 stale/손상 영상이 이미 뽑은 다른 씬 프레임까지 버리고 툴 전체를 죽이면 안 된다.
+  it('한 씬의 video.frames 실패는 그 씬만 frame-extract-failed 로 격리 (다른 씬 보존)', async () => {
+    toolBridge.invoke = vi.fn(async (name, args) => {
+      if (name === 'scene.snapshot') {
+        return { sceneMode: 'audio-first', scenes: [
+          { id: 'scene_17', storyId: 'a', videoI2VPath: '/ok.mp4' },
+          { id: 'scene_3', storyId: 'b', videoT2VPath: '/stale.mp4' },
+        ] }
+      }
+      if (name === 'video.frames') {
+        if (args.videoPath === '/stale.mp4') throw new Error('video-load-failed')
+        return { rendererSceneId: args.rendererSceneId, frames: [{ timeMs: 3000, data: 'F1', mimeType: 'image/jpeg' }] }
+      }
+      throw new Error(`unexpected ${name}`)
+    })
+    const r = await core.call('get_scene_video_frames', { sceneNumbers: [1, 2] }, {})
+    expect(r.status).toBe('done')
+    expect(r.frames).toContainEqual({ ordinal: 1, rendererSceneId: 'scene_17', source: 'i2v', status: 'ok', count: 1 })
+    expect(r.frames).toContainEqual({ ordinal: 2, rendererSceneId: 'scene_3', source: 't2v', status: 'frame-extract-failed' })
+    expect(r.content).toEqual([{ type: 'image', data: 'F1', mimeType: 'image/jpeg' }])
+  })
+
+  it('프레임 0개는 ok 가 아니라 frame-extract-failed (영상 멀쩡 오독 방지)', async () => {
+    toolBridge.invoke = vi.fn(async (name, args) => {
+      if (name === 'scene.snapshot') return { sceneMode: 'audio-first', scenes: [{ id: 'scene_17', storyId: 'a', videoI2VPath: '/v.mp4' }] }
+      return { rendererSceneId: args.rendererSceneId, frames: [] }
+    })
+    const r = await core.call('get_scene_video_frames', { sceneNumbers: [1] }, {})
+    expect(r.frames[0]).toMatchObject({ ordinal: 1, status: 'frame-extract-failed' })
+    expect(r.content).toEqual([])
+  })
+
   it('mode 불일치 → fixed-scenes-stale', async () => {
     storyCommands.getState = vi.fn(async () => ({ sceneMode: 'image-first', fixedScenes: [
       { ordinal: 1, rendererSceneId: 'scene_17', storyId: 'a' },

@@ -65,7 +65,11 @@ function schemaFixture(schema = {}) {
   if (schema.type === 'string') return schema.enum?.[0] ?? 'fixture'
   if (schema.type === 'boolean') return true
   if (schema.type === 'number' || schema.type === 'integer') return 1
-  if (schema.type === 'array') return []
+  if (schema.type === 'array') {
+    return Number.isInteger(schema.minItems) && schema.minItems > 0
+      ? Array.from({ length: schema.minItems }, () => schemaFixture(schema.items || {}))
+      : []
+  }
   if (schema.type === 'null') return null
   if (schema.type === 'object' || schema.properties) {
     return Object.fromEntries(Object.entries(schema.properties || {}).map(([key, child]) => [key, schemaFixture(child)]))
@@ -133,6 +137,8 @@ const coverageFixtures = {
 const typeMismatchFixtures = [
   ['update_visual_review', { sceneNumbers: 'x' }],
   ['update_visual_review', { sceneNumbers: [1], status: 5 }],
+  // 빈 배열은 "전체 씬"으로 확장되는 파괴적 shape — 승인창은 fail-closed 여야 한다 (MAJOR 2).
+  ['update_visual_review', { sceneNumbers: [] }],
   ['story_confirm_synopsis', { characters: null }],
   ['story_confirm_synopsis', { characters: 'x' }],
   ['story_set_speakers', { speakers: 'x' }],
