@@ -355,7 +355,37 @@ export function createToolCore({
     const snapImageFirst = snapshot?.sceneMode === 'image-first'
     if (storyImageFirst !== snapImageFirst) return { stale: true }
     const fixedScenes = storyImageFirst ? state.fixedScenes : null
-    return { stale: false, ...resolveSceneOrdinals({ sceneNumbers, scenes: snapshot?.scenes || [], fixedScenes }) }
+    return {
+      stale: false,
+      sceneMode: snapshot?.sceneMode ?? 'audio-first',
+      ...resolveSceneOrdinals({ sceneNumbers, scenes: snapshot?.scenes || [], fixedScenes }),
+    }
+  }
+
+  async function listRendererScenes() {
+    const sel = await resolveSceneSelection()
+    if (sel.stale) return { error: 'fixed-scenes-stale' }
+    return {
+      source: 'renderer',
+      sceneMode: sel.sceneMode,
+      scenes: sel.resolved.map(({ ordinal, rendererSceneId, storyId, scene }) => ({
+        ordinal,
+        rendererSceneId,
+        storyId,
+        status: scene?.status,
+        subtitle: scene?.subtitle,
+        prompt: scene?.prompt,
+        videoT2VPrompt: scene?.videoT2VPrompt,
+        videoI2VPrompt: scene?.videoI2VPrompt,
+        hasImage: !!scene?.hasImage,
+        hasVideoT2V: !!scene?.videoT2VPath,
+        hasVideoI2V: !!scene?.videoI2VPath,
+        startTime: scene?.startTime,
+        endTime: scene?.endTime,
+        duration: scene?.duration,
+      })),
+      errors: sel.errors,
+    }
   }
 
   async function admitVideosVia({ sceneNumbers } = {}) {
@@ -530,7 +560,7 @@ export function createToolCore({
   const TOOLS = {
     story_get_state: {
       permission: 'R',
-      description: '현재 열린 Story 프로젝트의 전체 상태를 조회한다.',
+      description: '현재 열린 Story 프로젝트의 파이프라인 진행 상태를 조회한다. 씬 목록과 ordinal의 권위는 list_scenes다.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       needs: 'storyCommands',
       run: async () => (storyCommands.hasProject()
@@ -539,11 +569,10 @@ export function createToolCore({
     },
     list_scenes: {
       permission: 'R',
-      description: '현재 Story 프로젝트의 씬 목록을 JSON으로 조회한다.',
+      description: '현재 프로젝트의 씬 목록과 ordinal을 renderer 기준 JSON으로 조회한다.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-      needs: 'storyCommands',
-      // 계약: **요약 문자열이 아니라 JSON** (스펙 §2.3).
-      run: async () => (storyCommands.hasProject() ? await storyCommands.listScenes() : NO_PROJECT),
+      needs: ['storyCommands', 'toolBridge'],
+      run: () => listRendererScenes(),
     },
     wait_batch: {
       permission: 'R',

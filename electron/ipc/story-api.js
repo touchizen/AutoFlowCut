@@ -145,12 +145,6 @@ export function createStoryCommands({ keyStore, getWindow, llm = llmGemini, load
 
     getState: () => machine.getState(),
 
-    /** 스펙 §2.3 `list_scenes`: **요약 문자열이 아니라 JSON**. */
-    async listScenes() {
-      const { scenes = [] } = await machine.getState()
-      return { scenes }
-    },
-
     // M2a-4 IP-A2: export(renderer)가 story 나레이션 배치에 쓸 { manifest, lastPushedRevision }.
     // projectPath 가 오면 그 경로 디스크를 직접 읽는다 — fresh session(story view 미진입, machine
     // 없음)에서도 동작. 경로는 open 과 동일하게 검증(절대/traversal/workFolder)해 임의 위치 읽기를 막는다.

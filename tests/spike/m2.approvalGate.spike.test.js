@@ -513,6 +513,7 @@ describe('M2 — 실제 Codex approval gate E2E', () => {
     let storyCommands = null
     let approvalPrompt = null
     let d15Switch = null
+    let toolBridge = null
     const permissionRequests = []
     const approvalAsks = []
     const elicitationCalls = []
@@ -524,6 +525,17 @@ describe('M2 — 실제 Codex approval gate E2E', () => {
     let orchestratorOpenCalls = 0
 
     const fakeWindow = createFakeWindow((channel, payload) => {
+      if (channel === 'agent:bridge-request') {
+        // R/list_scenes 는 scene.snapshot 으로 renderer 씬을 읽는다. 이 스파이크는 story-only 라
+        // renderer 씬이 없으므로 빈 audio-first 스냅샷으로 답한다 (permission-request 아님 → dialog 0 유지).
+        if (payload?.name === 'scene.snapshot') {
+          queueMicrotask(() => toolBridge?.handleResponse({
+            requestId: payload.requestId,
+            result: { sceneMode: 'audio-first', scenes: [] },
+          }))
+        }
+        return
+      }
       if (channel !== 'agent:permission-request') return
       const action = activePolicy?.action ?? 'decline'
       const entry = {
@@ -615,7 +627,7 @@ describe('M2 — 실제 Codex approval gate E2E', () => {
       return answer
     }
 
-    const toolBridge = createToolBridge({ getWindow: () => fakeWindow })
+    toolBridge = createToolBridge({ getWindow: () => fakeWindow })
     cleanups.push(() => toolBridge.close())
     const collector = createEventCollector()
     const recordingSpawn = createRecordingSpawn(children)
@@ -841,7 +853,9 @@ describe('M2 — 실제 Codex approval gate E2E', () => {
     expect(measured('R/list_scenes agent:permission-request count', readTurn.dialogs.length),
       `read tool에 renderer dialog가 도착했다: ${JSON.stringify(readTurn.dialogs)}`).toBe(0)
     expect(measured('R/list_scenes tool result object', readTurn.result),
-      'real storyCommands의 scene JSON이 돌아오지 않았다').toEqual({ scenes: [] })
+      'renderer scene 목록 DTO가 돌아오지 않았다').toEqual({
+        status: 'done', source: 'renderer', sceneMode: 'audio-first', scenes: [], errors: [],
+      })
     await closeScenario(readScenario)
 
     // approve는 새 thread에서 G native→handler→human→Tool Core→disk를 완주한다.
@@ -863,7 +877,7 @@ describe('M2 — 실제 Codex approval gate E2E', () => {
     })
     assertGDialog(happyTurn, 'G/approve', HAPPY_ARGS)
     expect(measured('G/approve tool result object', happyTurn.result),
-      '승인 뒤 Tool Core/durable command가 성공하지 않았다').toMatchObject({ ok: true })
+      '승인 뒤 Tool Core/durable command가 성공하지 않았다').toMatchObject({ status: 'done' })
     const afterHappy = await readStory(projectA.storyPath)
     console.log('\n[M2 측정] approve 후 story.json speakers:', JSON.stringify(afterHappy.value.speakers, null, 2))
     expect(measured('G/approve story.json bytes changed', afterHappy.raw !== beforeHappy.raw),
@@ -895,7 +909,7 @@ describe('M2 — 실제 Codex approval gate E2E', () => {
     expect(measured('G/decline tool result object', declineTurn.result),
       'decline이 adapter에서 명시적 거부값으로 닫히지 않았다').toEqual({
       status: 'rejected',
-      reason: 'declined',
+      reason: 'declined-by-user',
     })
     const afterDecline = await readStory(projectA.storyPath)
     console.log('\n[M2 측정] decline 후 story.json speakers:', JSON.stringify(afterDecline.value.speakers, null, 2))
@@ -923,7 +937,7 @@ describe('M2 — 실제 Codex approval gate E2E', () => {
     })
     const replayFirstDialog = assertGDialog(replayFirst, 'G/replay first', HAPPY_ARGS)
     expect(measured('G/replay first tool result object', replayFirst.result),
-      'replay의 첫 승인 호출이 실행되지 않았다').toMatchObject({ ok: true })
+      'replay의 첫 승인 호출이 실행되지 않았다').toMatchObject({ status: 'done' })
     const replayFirstMeta = replayFirst.handlerElicitations[0].params._meta
     const replayFirstGrantStillAvailable = grantLedger.consume({
       nonce: replayFirstMeta.nonce,
@@ -962,7 +976,7 @@ describe('M2 — 실제 Codex approval gate E2E', () => {
       sameSessionId: true,
     })
     expect(measured('G/replay second tool result object', replaySecond.result),
-      '두 번째 새 dialog를 decline했는데 replay가 실행됐다').toEqual({ status: 'rejected', reason: 'declined' })
+      '두 번째 새 dialog를 decline했는데 replay가 실행됐다').toEqual({ status: 'rejected', reason: 'declined-by-user' })
     const afterReplaySecond = await readStory(projectA.storyPath)
     expect(measured('G/replay second decline disk bytes', {
       identical: afterReplaySecond.raw === beforeReplaySecond.raw,
@@ -1013,13 +1027,13 @@ describe('M2 — 실제 Codex approval gate E2E', () => {
       result: d15CoreCall?.result,
     }), 'D15 tool이 B open보다 먼저 착지해 race를 실제로 재지 못했다').toMatchObject({
       projectTokenAtCall: d15Switch.tokenAfterSwitch,
-      result: { error: 'stale-token' },
+      result: { status: 'rejected', reason: 'stale-token' },
     })
     expect(measured('D15 switch completed before Tool Core call',
       d15Switch.switchCompletedSeq < d15CoreCall.startSeq),
     'D15 project switch가 tool call 착지보다 늦었다').toBe(true)
     expect(measured('D15 tool result object', d15Turn.result),
-      'A에 pin된 session이 B의 story_set_speakers를 거부하지 않았다').toEqual({ error: 'stale-token' })
+      'A에 pin된 session이 B의 story_set_speakers를 거부하지 않았다').toEqual({ status: 'rejected', reason: 'stale-token' })
 
     const afterD15B = await readStory(projectB.storyPath)
     console.log('\n[M2 측정] D15 B story.json speakers before:', JSON.stringify(d15Switch.storyBBeforeSpeakers, null, 2))

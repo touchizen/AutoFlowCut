@@ -45,6 +45,12 @@ function bindToolCore(projectToken = storyCommands.projectToken) {
     grantLedger,
     sessionId: 'toolcore-story-test',
     projectToken,
+    toolBridge: {
+      invoke: vi.fn(async (name) => {
+        if (name === 'scene.snapshot') return { sceneMode: 'audio-first', scenes: [] }
+        throw new Error(`unexpected bridge call: ${name}`)
+      }),
+    },
   })
   toolCore.use(storyCommands)
 }
@@ -248,7 +254,12 @@ function makeNormalizationHarness({
   commandProjectToken = 'normalize-project',
   sessionProjectToken = commandProjectToken,
   admitToolCall = null,
-  toolBridge = null,
+  toolBridge = {
+    invoke: vi.fn(async (name) => {
+      if (name === 'scene.snapshot') return { sceneMode: 'audio-first', scenes: [] }
+      throw new Error(`unexpected bridge call: ${name}`)
+    }),
+  },
 } = {}) {
   const ledger = createGrantLedger({ now: () => 0, ttlMs: 60_000 })
   const commands = {
@@ -256,7 +267,6 @@ function makeNormalizationHarness({
     projectToken: commandProjectToken,
     projectPath: '/normalize-proj',
     getState: vi.fn(async () => raw.getState ?? { steps: {} }),
-    listScenes: vi.fn(async () => raw.listScenes ?? { scenes: [] }),
     confirmSynopsis: vi.fn(async () => raw.confirmSynopsis ?? { ok: true, operationId: 'confirm-op' }),
     setSpeakers: vi.fn(async () => raw.setSpeakers ?? { ok: true, operationId: 'speakers-op' }),
     start: vi.fn(async () => raw.start ?? { operationId: 'start-op', outcome: { status: 'done' } }),
@@ -377,19 +387,31 @@ describe('D8 — Tool Core 결과 정규화 매핑표', () => {
   })
 
   it('R 툴 도메인 payload를 done으로 감싼다', async () => {
+    const toolBridge = { invoke: vi.fn(async (name) => {
+      if (name === 'scene.snapshot') {
+        return { sceneMode: 'audio-first', scenes: [{ id: 'renderer-s1', storyId: null }] }
+      }
+      throw new Error(`unexpected bridge call: ${name}`)
+    }) }
     const { call } = makeNormalizationHarness({
+      toolBridge,
       raw: {
-        getState: { steps: { script: { status: 'done' } } },
-        listScenes: { scenes: [{ id: 's1' }] },
+        getState: { sceneMode: 'audio-first', steps: { script: { status: 'done' } } },
       },
     })
 
     await expect(call('story_get_state')).resolves.toEqual({
       status: 'done',
       projectToken: 'normalize-project',
-      state: { steps: { script: { status: 'done' } } },
+      state: { sceneMode: 'audio-first', steps: { script: { status: 'done' } } },
     })
-    await expect(call('list_scenes')).resolves.toEqual({ status: 'done', scenes: [{ id: 's1' }] })
+    await expect(call('list_scenes')).resolves.toMatchObject({
+      status: 'done',
+      source: 'renderer',
+      sceneMode: 'audio-first',
+      scenes: [{ ordinal: 1, rendererSceneId: 'renderer-s1', storyId: null }],
+      errors: [],
+    })
   })
 
   it.each(['complete', 'cancelled-by-user', 'error'])('wait_batch %s는 done.batch로 충돌 키를 격리한다', async (status) => {
@@ -649,12 +671,12 @@ describe('D8 — 전 툴 결과 어휘 불변식과 throw 경계', () => {
     await expect(createToolCore().call('story_get_state')).rejects.toThrow(/use\(storyCommands\)/)
 
     const commandError = makeNormalizationHarness()
-    commandError.commands.listScenes.mockRejectedValueOnce(new Error('story bridge died'))
-    await expect(commandError.core.call('list_scenes')).rejects.toThrow('story bridge died')
+    commandError.commands.getState.mockRejectedValueOnce(new Error('story bridge died'))
+    await expect(commandError.core.call('story_get_state')).rejects.toThrow('story bridge died')
 
     const bridgeError = makeNormalizationHarness({
       toolBridge: { invoke: vi.fn(async () => { throw new Error('renderer bridge died') }) },
     })
-    await expect(bridgeError.core.call('wait_batch', { type: 'scene' })).rejects.toThrow('renderer bridge died')
+    await expect(bridgeError.core.call('list_scenes')).rejects.toThrow('renderer bridge died')
   })
 })

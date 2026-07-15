@@ -27,8 +27,17 @@ function appDeps(overrides = {}) {
       ask: vi.fn(async () => ({ action: 'decline' })),
       closeSession: vi.fn(),
     },
-    toolBridge: {},
-    storyCommands: { hasProject: () => true, projectToken: 'project-token' },
+    toolBridge: {
+      invoke: vi.fn(async (name) => {
+        if (name === 'scene.snapshot') return { sceneMode: 'audio-first', scenes: [] }
+        throw new Error(`unexpected bridge call: ${name}`)
+      }),
+    },
+    storyCommands: {
+      hasProject: () => true,
+      projectToken: 'project-token',
+      getState: vi.fn(async () => ({ sceneMode: 'audio-first' })),
+    },
     ...overrides,
   }
 }
@@ -123,7 +132,7 @@ describe('AgentSessionManager boot lifecycle', () => {
 
   it('hasProject가 없는 storyCommands는 세션 자원을 만들기 전에 fail-closed한다', async () => {
     const h = lifecycleHarness({
-      storyCommands: { listScenes: vi.fn(async () => ({ scenes: [] })) },
+      storyCommands: {},
     })
 
     try {
@@ -362,7 +371,7 @@ describe('AgentSessionManager commands and events', () => {
     const storyCommands = {
       hasProject: () => true,
       projectToken: 'project-token',
-      listScenes: vi.fn(async () => ({ scenes: [] })),
+      getState: vi.fn(async () => ({ sceneMode: 'audio-first' })),
     }
     const h = lifecycleHarness({ onUsage, now: () => 10_000, storyCommands })
     const opened = await h.manager.open()
@@ -438,7 +447,7 @@ describe('AgentSessionManager D10 app ledger', () => {
     const storyCommands = {
       hasProject: () => true,
       projectToken: 'project-token',
-      listScenes: vi.fn(async () => ({ scenes: [] })),
+      getState: vi.fn(async () => ({ sceneMode: 'audio-first' })),
     }
     const h = lifecycleHarness({ storyCommands, onError })
     await h.manager.open()
@@ -451,7 +460,7 @@ describe('AgentSessionManager D10 app ledger', () => {
 
     expect(admitted).toHaveLength(256)
     expect(refused).toEqual({ status: 'rejected', reason: 'agent-limit', limit: 256, used: 256 })
-    expect(storyCommands.listScenes).toHaveBeenCalledTimes(256)
+    expect(storyCommands.getState).toHaveBeenCalledTimes(256)
     expect(onError).toHaveBeenCalledWith({ error: 'agent-limit', limit: 256, used: 256 })
     expect(h.manager.status()).toMatchObject({ turns: 0, toolCalls: 256 })
     await h.manager.close()
@@ -463,7 +472,7 @@ describe('AgentSessionManager D10 app ledger', () => {
       storyCommands: {
         hasProject: () => true,
         projectToken: 'project-token',
-        listScenes: vi.fn(async () => ({ scenes: [] })),
+        getState: vi.fn(async () => ({ sceneMode: 'audio-first' })),
       },
     })
     await h.manager.open()

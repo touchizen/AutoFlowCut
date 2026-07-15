@@ -16,27 +16,36 @@ import { createToolCore } from '../../../electron/agent/toolCore.js'
 import { createGrantLedger, hashArgs } from '../../../electron/agent/grantLedger.js'
 
 const PROJECT_TOKEN = 'pt'
-let ledger, storyCommands, core
+let ledger, storyCommands, toolBridge, core
 beforeEach(() => {
   ledger = createGrantLedger({ now: () => 0, ttlMs: 60_000 })
   storyCommands = {
     hasProject: () => true,
     projectToken: PROJECT_TOKEN,
-    getState: vi.fn(async () => ({ steps: {} })),
-    listScenes: vi.fn(async () => ({ scenes: [] })),
+    getState: vi.fn(async () => ({ sceneMode: 'audio-first', steps: {} })),
     // G 툴 — 실제 side effect 를 내는 것들. 승인 전엔 **한 번도 불리면 안 된다.**
     confirmSynopsis: vi.fn(async () => ({ ok: true })),
     setSpeakers: vi.fn(async () => ({ ok: true })),
     start: vi.fn(async () => ({ ok: true })),
   }
-  core = createToolCore({ grantLedger: ledger, sessionId: 's1', projectToken: PROJECT_TOKEN })
+  toolBridge = { invoke: vi.fn(async (name) => {
+    if (name === 'scene.snapshot') return { sceneMode: 'audio-first', scenes: [] }
+    throw new Error(`unexpected bridge call: ${name}`)
+  }) }
+  core = createToolCore({ grantLedger: ledger, sessionId: 's1', projectToken: PROJECT_TOKEN, toolBridge })
   core.use(storyCommands)
 })
 
 describe('Tool Core 게이트 — 등급을 스스로 재산출한다', () => {
   it('R 툴은 grant 없이 돈다 (승인 UI 0회)', async () => {
     const r = await core.call('list_scenes', {})
-    expect(r).toEqual({ status: 'done', scenes: [] })
+    expect(r).toEqual({
+      status: 'done',
+      source: 'renderer',
+      sceneMode: 'audio-first',
+      scenes: [],
+      errors: [],
+    })
   })
 
   it('🔴 G 툴은 grant 가 **없으면** 거부한다 — side effect 0회', async () => {

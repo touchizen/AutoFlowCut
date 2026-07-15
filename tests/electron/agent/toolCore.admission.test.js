@@ -9,16 +9,21 @@ function storyCommands() {
   return {
     hasProject: () => true,
     projectToken: 'project-token',
-    listScenes: vi.fn(async () => ({ scenes: [] })),
+    getState: vi.fn(async () => ({ sceneMode: 'audio-first' })),
     confirmSynopsis: vi.fn(async () => ({ ok: true })),
   }
+}
+
+function toolBridge() {
+  return { invoke: vi.fn(async () => ({ sceneMode: 'audio-first', scenes: [] })) }
 }
 
 describe('Tool Core app ledger admission', () => {
   it('admission이 거부하면 structured value를 돌려주고 tool side effect를 시작하지 않는다', async () => {
     const commands = storyCommands()
+    const bridge = toolBridge()
     const admitToolCall = vi.fn(() => LIMIT)
-    const core = createToolCore({ admitToolCall, projectToken: commands.projectToken })
+    const core = createToolCore({ admitToolCall, projectToken: commands.projectToken, toolBridge: bridge })
     core.use(commands)
 
     await expect(core.call('list_scenes', {})).resolves.toEqual(NORMALIZED_LIMIT)
@@ -27,18 +32,20 @@ describe('Tool Core app ledger admission', () => {
       args: {},
       context: {},
     })
-    expect(commands.listScenes).not.toHaveBeenCalled()
+    expect(bridge.invoke).not.toHaveBeenCalled()
+    expect(commands.getState).not.toHaveBeenCalled()
   })
 
   it('병렬 tool call은 Tool Core 진입 순서대로 각각 1회 admission한다', async () => {
     const commands = storyCommands()
+    const bridge = toolBridge()
     let used = 0
     const admitToolCall = vi.fn(() => {
       if (used >= 2) return LIMIT
       used += 1
       return null
     })
-    const core = createToolCore({ admitToolCall, projectToken: commands.projectToken })
+    const core = createToolCore({ admitToolCall, projectToken: commands.projectToken, toolBridge: bridge })
     core.use(commands)
 
     const results = await Promise.all([
@@ -48,12 +55,13 @@ describe('Tool Core app ledger admission', () => {
     ])
 
     expect(results).toEqual([
-      { status: 'done', scenes: [] },
-      { status: 'done', scenes: [] },
+      { status: 'done', source: 'renderer', sceneMode: 'audio-first', scenes: [], errors: [] },
+      { status: 'done', source: 'renderer', sceneMode: 'audio-first', scenes: [], errors: [] },
       NORMALIZED_LIMIT,
     ])
     expect(admitToolCall).toHaveBeenCalledTimes(3)
-    expect(commands.listScenes).toHaveBeenCalledTimes(2)
+    expect(bridge.invoke).toHaveBeenCalledTimes(2)
+    expect(commands.getState).toHaveBeenCalledTimes(2)
   })
 
   it('unknown 또는 승인 없는 호출도 agent가 실제 invoke했으므로 admission에 잡힌다', async () => {
