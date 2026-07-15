@@ -131,6 +131,35 @@ describe('genai-api — 이미지 생성', () => {
 })
 
 describe('genai-api — 비디오 생성/폴링/다운로드', () => {
+  it('official API full path: submitVideo → checkVideoOperation → fetchVideoBase64', async () => {
+    const ipc = makeIpcMain()
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonRes({ name: 'operations/full-path' }))
+      .mockResolvedValueOnce(jsonRes({
+        done: true,
+        response: { generateVideoResponse: { generatedSamples: [{ video: { uri: 'https://v/full-path' } }] } },
+      }))
+      .mockResolvedValueOnce(binRes([7, 8, 9]))
+    registerGenaiIPC(ipc, { keyStore: makeKeyStore(), fetchImpl })
+
+    const submitted = await ipc.invoke('genai:generate-video', { prompt: 'official path' })
+    const checked = await ipc.invoke('genai:check-video-status', { generationIds: [submitted.generationId] })
+    const downloaded = await ipc.invoke('genai:download-video', { videoUri: checked.statuses[0].videoUri })
+
+    expect(submitted).toEqual({
+      success: true, generationId: 'operations/full-path', operationName: 'operations/full-path',
+    })
+    expect(checked).toEqual({
+      success: true,
+      statuses: [{ generationId: 'operations/full-path', status: 'completed', videoUri: 'https://v/full-path' }],
+    })
+    expect(downloaded).toMatchObject({
+      success: true,
+      base64: Buffer.from([7, 8, 9]).toString('base64'),
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
+  })
+
   it('generate-video → generationId(=operationName) 반환', async () => {
     const ipc = makeIpcMain()
     const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ name: 'operations/v1' }))

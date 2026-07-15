@@ -151,12 +151,7 @@ describe('Tool Core 게이트 — 등급을 스스로 재산출한다', () => {
   })
 })
 
-// 🔴 **fixture 로 B 를 주장하는 건 shipped B 커버리지가 아니다.**
-//    adapter/grant-ledger의 fixture B 테스트는 M4 게이트 기계를 계속 검증한다. 하지만 실제 Tool Core는
-//    M4의 과금 admission이 오기 전까지 B가 **의도적으로 0개**다. 이 assertion은 누락을 숨기는 게 아니라
-//    현재 제품의 정직한 상태를 pin한다. M4가 `generate_videos`를 다시 넣을 때 반드시 이 테스트를
-//    의식적으로 바꾸고 실제 billing admission 효과 테스트를 함께 추가해야 한다.
-describe('실제 Tool Core 정책표 — M4 전에는 B가 의도적으로 0개다', () => {
+describe('실제 Tool Core 정책표 — M4: B 툴은 generate_videos 하나', () => {
   const MUST_BE_GATED = ['story_confirm_synopsis', 'story_set_speakers', 'story_start_step']
 
   it.each(MUST_BE_GATED)('%s 는 R 이 아니다', (name) => {
@@ -165,21 +160,46 @@ describe('실제 Tool Core 정책표 — M4 전에는 B가 의도적으로 0개�
     expect(['G', 'B']).toContain(t.permission)
   })
 
-  it('shipped inventory에는 B가 없고 generate_videos도 없다', () => {
+  it('shipped inventory의 B는 generate_videos 정확히 하나다', () => {
     const tools = core.list()
-    expect(tools.filter((tool) => tool.permission === 'B')).toEqual([])
-    expect(tools.some((tool) => tool.name === 'generate_videos')).toBe(false)
+    expect(tools.filter((tool) => tool.permission === 'B').map((tool) => tool.name))
+      .toEqual(['generate_videos'])
   })
 
-  it('🔴 generate_videos는 grant가 있어도 video.admit에 도달할 수 없다', async () => {
-    const bridge = { invoke: vi.fn(async () => ({ accepted: true, operationId: 'op-1' })) }
+  it('grant가 있으면 resolver를 거친 items로 video.admit에 도달하고 D8 done으로 정규화한다', async () => {
+    storyCommands.getState.mockResolvedValue({ sceneMode: 'audio-first', steps: {} })
+    const bridge = { invoke: vi.fn(async (name) => {
+      if (name === 'scene.snapshot') {
+        return { sceneMode: 'audio-first', scenes: [{ id: 'resolved-A' }, { id: 'resolved-B' }] }
+      }
+      if (name === 'video.admit') return { accepted: true, operationId: 'op-1' }
+      throw new Error(`unexpected bridge call: ${name}`)
+    }) }
     const c = createToolCore({ grantLedger: ledger, sessionId: 's1', projectToken: PROJECT_TOKEN, toolBridge: bridge })
     c.use(storyCommands)
-    const args = { items: [1, 2] }
+    const args = { sceneNumbers: [2, 1] }
     ledger.grant({ nonce: 'n1', tool: 'generate_videos', argsHash: hashArgs(args), sessionId: 's1', projectToken: PROJECT_TOKEN })
 
-    await expect(c.call('generate_videos', args, { nonce: 'n1' })).rejects.toThrow(/unknown tool/i)
+    await expect(c.call('generate_videos', args, { nonce: 'n1' })).resolves.toEqual({
+      status: 'done', operationId: 'op-1',
+    })
+    expect(bridge.invoke).toHaveBeenCalledWith('video.admit', {
+      items: [
+        { ordinal: 2, rendererSceneId: 'resolved-B' },
+        { ordinal: 1, rendererSceneId: 'resolved-A' },
+      ],
+    })
+  })
 
-    expect(bridge.invoke, 'M4 전인데 video.admit이 reachable 하다').not.toHaveBeenCalled()
+  it('grant가 없으면 rejected이고 resolver/video.admit side effect가 0회다', async () => {
+    const bridge = { invoke: vi.fn() }
+    const c = createToolCore({ grantLedger: ledger, sessionId: 's1', projectToken: PROJECT_TOKEN, toolBridge: bridge })
+    c.use(storyCommands)
+
+    await expect(c.call('generate_videos', { sceneNumbers: [1] })).resolves.toEqual({
+      status: 'rejected', reason: 'unconfirmed',
+    })
+
+    expect(bridge.invoke).not.toHaveBeenCalled()
   })
 })

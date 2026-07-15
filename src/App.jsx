@@ -65,6 +65,7 @@ import { isUsableVideoReference } from './utils/videoPromptReferences'
 import { toast } from './components/Toast'
 import { selectUnsyncedMentionedRefs, syncRefToFlow, isRefSynced, resolveSyncTarget, planSyncGateCompletion } from './utils/flowCharacterSync'
 import { getAuthErrorMessage, getAuthRequiredMessage } from './utils/authMessages'
+import { agentVideoScenePatch, resolveAgentVideoScenes } from './agent/videoAdmission'
 
 const IMAGE_FIRST_IMPORT_IN_PROGRESS = 'image-first-import-in-progress'
 
@@ -1066,6 +1067,68 @@ function App() {
     subscription?.status,   // #5/#8: loading/error 상태 전달
     refreshSubscription     // #6: consume 성공 시 1회 refresh
   )
+
+  const agentVideoProjectKey = `${settings.saveMode}:${workFolder ?? ''}:${settings.projectName ?? ''}`
+  const agentVideoProjectRef = useRef({
+    key: agentVideoProjectKey,
+    projectName: settings.projectName,
+    projectEpoch: 0,
+  })
+  if (agentVideoProjectRef.current.key !== agentVideoProjectKey) {
+    agentVideoProjectRef.current = {
+      key: agentVideoProjectKey,
+      projectName: settings.projectName,
+      projectEpoch: agentVideoProjectRef.current.projectEpoch + 1,
+    }
+  }
+
+  const admitAgentVideos = useCallback((items = []) => {
+    const projectIdentity = { ...agentVideoProjectRef.current }
+    const agentScenes = resolveAgentVideoScenes(items, latestScenesRef.current)
+    return videoAutomation.admitVideoBatch({
+      mode: 't2v',
+      scenes: agentScenes,
+      approvedSceneCount: items.length,
+      projectName: settings.projectName,
+      projectEpoch: projectIdentity.projectEpoch,
+      saveMode: settings.saveMode,
+      videoResolution: settings.videoResolution || '720p',
+      videoModel: settings.videoModelT2V,
+      videoBatchCount: settings.videoBatchCount || 1,
+      concurrency: settings.videoConcurrency || 4,
+      aspectRatio: settings.aspectRatio,
+      generationEngine: genAPI.agentVideoEngine,
+      generationMode: 'api',
+      // strict-agent: isRetry를 전달하지 않는다. renderer가 batch identity를 새로 admission한다.
+      getCurrentProjectIdentity: () => ({ ...agentVideoProjectRef.current }),
+      onItemUpdate: (rendererSceneId, newStatus, result) => {
+        scenesHook.updateScene(rendererSceneId, agentVideoScenePatch(newStatus, result))
+      },
+    })
+  }, [
+    videoAutomation.admitVideoBatch,
+    genAPI.agentVideoEngine,
+    settings.projectName,
+    settings.saveMode,
+    settings.videoResolution,
+    settings.videoModelT2V,
+    settings.videoBatchCount,
+    settings.videoConcurrency,
+    settings.aspectRatio,
+    scenesHook,
+  ])
+
+  const videoAdmissionSources = useMemo(() => ({
+    admit: admitAgentVideos,
+    getStatus: videoAutomation.getVideoStatus,
+    subscribe: videoAutomation.subscribeVideoStatus,
+    abortAndClear: videoAutomation.abortAndClearVideoOperations,
+  }), [
+    admitAgentVideos,
+    videoAutomation.getVideoStatus,
+    videoAutomation.subscribeVideoStatus,
+    videoAutomation.abortAndClearVideoOperations,
+  ])
 
   const { isRunning, isPaused, isStopping, progress, status, statusMessage, start, togglePause, stop, retryErrors } = automation
 
@@ -2257,6 +2320,7 @@ function App() {
       <ApprovalDialog />
       <ChatPanel
         projectKey={`${settings.saveMode}:${workFolder ?? ''}:${settings.projectName ?? ''}`}
+        videoAdmissionSources={videoAdmissionSources}
         batchStatusSources={{
           automation: { isRunning, status },
           scenes,

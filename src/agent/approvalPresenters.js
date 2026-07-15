@@ -100,6 +100,9 @@ export const APPROVAL_KEY_DECISIONS = Object.freeze({
       ['sceneNumbers'],
     ),
   }),
+  generate_videos: Object.freeze({
+    root: decision(['sceneNumbers'], [], { sceneNumbers: expectedTypes('array') }, ['sceneNumbers']),
+  }),
   export_capcut: Object.freeze({
     root: decision(['force'], [], { force: expectedTypes('boolean') }),
   }),
@@ -669,6 +672,27 @@ function presentExport(args, t, format) {
   return { lines, blocks: [] }
 }
 
+function presentGenerateVideos(args, t) {
+  return {
+    lines: [
+      {
+        text: t('agent.approvalGenerateVideos', {
+          count: args.sceneNumbers.length,
+          ordinals: args.sceneNumbers.join(', '),
+        }),
+        paths: ['/sceneNumbers'],
+        headline: true,
+      },
+      {
+        text: t('agent.approvalGenerateVideosCharge'),
+        paths: [],
+        danger: true,
+      },
+    ],
+    blocks: [],
+  }
+}
+
 /**
  * tool/args만으로 승인 문장을 만드는 순수 함수. 모르는 툴은 fail-closed UI가 처리하도록 null을 준다.
  * @returns {null|{lines: Array<{text:string, paths:string[], danger?:boolean}>, blocks: Array<{label:string, path:string, text:string}>}}
@@ -697,6 +721,10 @@ export function presentApproval(tool, args, t) {
     // 빈 배열은 resolver 에서 "전체 씬"으로 확장되는 파괴적 shape — 승인창은 fail-closed 한다.
     if (!Array.isArray(args.sceneNumbers) || args.sceneNumbers.length === 0) return null
     return presentUpdateVisualReview(args, t)
+  }
+  if (tool === 'generate_videos') {
+    if (!Array.isArray(args.sceneNumbers) || args.sceneNumbers.length === 0) return null
+    return presentGenerateVideos(args, t)
   }
   if (tool === 'export_capcut') return presentExport(args, t, 'capcut')
   if (tool === 'export_premiere') return presentExport(args, t, 'premiere')

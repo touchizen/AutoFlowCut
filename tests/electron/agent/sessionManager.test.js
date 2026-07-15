@@ -138,6 +138,16 @@ describe('AgentSessionManager boot lifecycle', () => {
 })
 
 describe('AgentSessionManager per-session ownership', () => {
+  it('session close는 app-scoped tool bridge의 operation snapshots를 다음 session 전에 지운다', async () => {
+    const toolBridge = { clearOperations: vi.fn() }
+    const h = lifecycleHarness({ toolBridge })
+
+    await h.manager.open()
+    await h.manager.close()
+
+    expect(toolBridge.clearOperations).toHaveBeenCalledOnce()
+  })
+
   it('open → close → open은 새 identity와 새 irreversible RPC로 두 번째 session을 실제 시작한다', async () => {
     const h = lifecycleHarness()
 

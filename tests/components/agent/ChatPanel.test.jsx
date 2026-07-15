@@ -405,4 +405,103 @@ describe('ChatPanel — persistent 수명과 batch.status', () => {
       result: { type: 'scene', status: 'running', done: 1, total: 3, error: 1 },
     })
   })
+
+  it('video.admit은 items만 strict-agent source에 넘기고 isRetry를 만들지 않는다', async () => {
+    const admit = vi.fn(async () => ({ accepted: true, operationId: 'video-op-1' }))
+    render(<ChatPanel
+      projectKey="project-a"
+      batchStatusSources={batchSources()}
+      videoAdmissionSources={{ admit }}
+    />)
+
+    const items = [{ ordinal: 2, rendererSceneId: 'renderer-id-from-resolver' }]
+    await window.electronAPI.requestToolBridge({
+      requestId: 'video-admit-1', name: 'video.admit', args: { items },
+    })
+
+    expect(admit).toHaveBeenCalledOnce()
+    expect(admit).toHaveBeenCalledWith(items)
+    expect(admit.mock.calls[0]).toHaveLength(1)
+    expect(window.electronAPI.respondToolBridge).toHaveBeenCalledWith({
+      requestId: 'video-admit-1',
+      result: { accepted: true, operationId: 'video-op-1' },
+    })
+  })
+
+  it('video.status는 operationId를 같은 status store에 조회한다', async () => {
+    const getStatus = vi.fn(() => ({
+      operationId: 'video-op-1',
+      status: 'running',
+      progress: { done: 1, total: 2, failed: 0, phase: 'downloading' },
+    }))
+    render(<ChatPanel
+      projectKey="project-a"
+      batchStatusSources={batchSources()}
+      videoAdmissionSources={{ getStatus }}
+    />)
+
+    await window.electronAPI.requestToolBridge({
+      requestId: 'video-status-1', name: 'video.status', args: { operationId: 'video-op-1' },
+    })
+
+    expect(getStatus).toHaveBeenCalledWith('video-op-1')
+    expect(window.electronAPI.respondToolBridge).toHaveBeenCalledWith({
+      requestId: 'video-status-1',
+      result: {
+        operationId: 'video-op-1',
+        status: 'running',
+        progress: { done: 1, total: 2, failed: 0, phase: 'downloading' },
+      },
+    })
+  })
+
+  it('video snapshot 구독의 phase/terminal 값을 bridge event로 그대로 올린다', () => {
+    let statusListener = null
+    const unsubscribe = vi.fn()
+    const subscribe = vi.fn((listener) => {
+      statusListener = listener
+      return unsubscribe
+    })
+    const { unmount } = render(<ChatPanel
+      projectKey="project-a"
+      batchStatusSources={batchSources()}
+      videoAdmissionSources={{ subscribe }}
+    />)
+
+    const running = {
+      operationId: 'video-op-1', status: 'running',
+      progress: { done: 1, total: 2, failed: 0, phase: 'downloading' },
+    }
+    const terminal = {
+      operationId: 'video-op-1', status: 'error', error: 'paywall',
+      progress: { done: 2, total: 2, failed: 1, phase: 'error' },
+    }
+    act(() => {
+      statusListener(running)
+      statusListener(terminal)
+    })
+
+    expect(window.electronAPI.emitToolBridgeEvent).toHaveBeenNthCalledWith(1, running)
+    expect(window.electronAPI.emitToolBridgeEvent).toHaveBeenNthCalledWith(2, terminal)
+    unmount()
+    expect(unsubscribe).toHaveBeenCalledOnce()
+  })
+
+  it('프로젝트 전환은 detached video pipeline을 abort하고 operation store를 정리한다', async () => {
+    const abortAndClear = vi.fn()
+    const sources = { abortAndClear }
+    const { rerender } = render(<ChatPanel
+      projectKey="project-a"
+      batchStatusSources={batchSources()}
+      videoAdmissionSources={sources}
+    />)
+
+    rerender(<ChatPanel
+      projectKey="project-b"
+      batchStatusSources={batchSources()}
+      videoAdmissionSources={sources}
+    />)
+
+    await waitFor(() => expect(abortAndClear).toHaveBeenCalledOnce())
+  })
 })

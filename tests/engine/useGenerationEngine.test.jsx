@@ -13,6 +13,7 @@ function makeFakeFlowEngine(accessToken = 'raw-bearer-token-abc') {
   const fns = {}
   for (const n of ENGINE_METHODS) fns[n] = vi.fn(() => n)
   fns.submitGeneration = vi.fn(() => 'FLOW')
+  fns.generateVideoT2V = vi.fn(() => 'FLOW_VIDEO')
   return { accessToken, projectId: 'flow-proj-1', ...fns }
 }
 
@@ -70,6 +71,14 @@ describe('useGenerationEngine', () => {
     const { result } = renderHook(() => useGenerationEngine('flow', {}))
     // engineFlow mock's submitGeneration returns 'FLOW' — api mock returns 'submitGeneration'
     expect(result.current.submitGeneration()).toBe('FLOW')
+  })
+
+  it('mode=flow에서도 agentVideoEngine은 official API facade로 고정된다', () => {
+    const { result } = renderHook(() => useGenerationEngine('flow', {}))
+
+    expect(result.current.generateVideoT2V()).toBe('FLOW_VIDEO')
+    expect(result.current.agentVideoEngine.generateVideoT2V()).toBe('generateVideoT2V')
+    expect(result.current.agentVideoEngine.getAccessToken()).toBe('getAccessToken')
   })
 
   it('mode=api routes to engineApi adapter (not flow)', () => {

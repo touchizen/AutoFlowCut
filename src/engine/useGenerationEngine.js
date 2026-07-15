@@ -27,6 +27,9 @@ export function useGenerationEngine(mode, genApiOptions) {
     },
     ready: !!active.accessToken,  // 인증 준비됨(api='byok' truthy, flow=raw bearer truthy, null→false)
     ...active,
+    // M4 agent video는 앱 UI mode와 무관하게 공식 GenAI/BYOK 경로를 쓴다. renderer admission이
+    // 이 참조를 내부 context에만 넣으며 Tool args에는 엔진 선택 표면을 열지 않는다.
+    agentVideoEngine: engineApi,
   }
 }
 

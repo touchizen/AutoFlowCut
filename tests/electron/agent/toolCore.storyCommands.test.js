@@ -598,10 +598,21 @@ describe('D8 — 실제 stepMachine 반환을 Tool Core가 정규화한다', () 
 
 describe('D8 — 전 툴 결과 어휘 불변식과 throw 경계', () => {
   it('toolCore.list()의 모든 툴은 D8 status를 내고 reason은 rejected에만 있다', async () => {
-    const toolBridge = { invoke: vi.fn(async () => ({ status: 'complete', done: 1, total: 1, error: 0 })) }
+    const toolBridge = { invoke: vi.fn(async (name, args) => {
+      if (name === 'batch.status') return { status: 'complete', done: 1, total: 1, error: 0 }
+      if (name === 'video.status') {
+        return { operationId: args.operationId, status: 'done', progress: { done: 1, total: 1, failed: 0, phase: 'done' } }
+      }
+      if (name === 'scene.snapshot') return { sceneMode: 'audio-first', scenes: [{ id: 'renderer-one' }] }
+      if (name === 'video.admit') return { accepted: true, operationId: 'video-op' }
+      if (name === 'video.frames') return { rendererSceneId: args.rendererSceneId, frames: [] }
+      if (name.startsWith('export.')) return { success: true }
+      throw new Error(`unexpected bridge call: ${name}`)
+    }) }
     const { core, call } = makeNormalizationHarness({
       toolBridge,
       raw: {
+        getState: { sceneMode: 'audio-first', steps: {} },
         confirmSynopsis: { success: false, error: 'validator-refusal', violations: ['v1'] },
         setSpeakers: { error: 'roster-incomplete', speakers: ['Alice'] },
         start: { operationId: 'failed-op', outcome: { status: 'error', error: 'step failed' } },
@@ -611,6 +622,8 @@ describe('D8 — 전 툴 결과 어휘 불변식과 throw 경계', () => {
       story_get_state: {},
       list_scenes: {},
       wait_batch: { type: 'scene' },
+      wait_videos: { operationId: 'video-op' },
+      generate_videos: { sceneNumbers: [1] },
       story_confirm_synopsis: { synopsisMd: '#' },
       story_set_speakers: { speakers: [] },
       story_start_step: { step: 'script', params: {} },

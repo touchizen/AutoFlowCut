@@ -254,12 +254,55 @@ describe('toolBridge — operation snapshot (slice 13b)', () => {
     bridge.handleEvent({ operationId: 'op-1', status: 'running', progress: { done: 1, total: 3 } })
     expect(bridge.getOperation('op-1')).toEqual({ status: 'running', progress: { done: 1, total: 3 } })
 
-    bridge.handleEvent({ operationId: 'op-1', status: 'complete', progress: { done: 3, total: 3 } })
-    expect(bridge.getOperation('op-1')).toEqual({ status: 'complete', progress: { done: 3, total: 3 } })
+    bridge.handleEvent({ operationId: 'op-1', status: 'done', progress: { done: 3, total: 3 } })
+    expect(bridge.getOperation('op-1')).toEqual({ status: 'done', progress: { done: 3, total: 3 } })
+  })
+
+  it('terminal error와 허용 progress 필드만 보존하고 video bytes는 버린다', () => {
+    bridge.handleEvent({
+      operationId: 'op-paywall',
+      status: 'error',
+      error: 'paywall',
+      progress: {
+        done: 1,
+        total: 2,
+        failed: 1,
+        phase: 'error',
+        base64: 'VIDEO-BYTES',
+        video: { data: 'MORE-BYTES' },
+        data: 'RAW-BYTES',
+        arbitrary: 'not-public',
+      },
+    })
+
+    expect(bridge.getOperation('op-paywall')).toEqual({
+      status: 'error',
+      error: 'paywall',
+      progress: { done: 1, total: 2, failed: 1, phase: 'error' },
+    })
+    expect(JSON.stringify(bridge.getOperation('op-paywall'))).not.toMatch(/VIDEO-BYTES|MORE-BYTES|RAW-BYTES/)
+  })
+
+  it('알 수 없는 status와 비문자 error는 저장하지 않고 거부한다', () => {
+    expect(() => bridge.handleEvent({ operationId: 'op-1', status: 'complete' })).toThrow(/status/i)
+    expect(() => bridge.handleEvent({ operationId: 'op-2', status: 'error', error: { base64: 'bytes' } }))
+      .toThrow(/error/i)
+    expect(bridge.getOperation('op-1')).toBeNull()
+    expect(bridge.getOperation('op-2')).toBeNull()
   })
 
   it('모르는 operation 조회는 null (지어내지 않는다)', () => {
     expect(bridge.getOperation('nope')).toBeNull()
+  })
+
+  it('session cleanup은 operation snapshots만 지우고 bridge는 다음 session에서 재사용한다', () => {
+    bridge.handleEvent({ operationId: 'old-op', status: 'running', progress: { done: 1, total: 2 } })
+
+    bridge.clearOperations()
+
+    expect(bridge.getOperation('old-op')).toBeNull()
+    expect(bridge.handleEvent({ operationId: 'new-op', status: 'queued' })).toBe(true)
+    expect(bridge.getOperation('new-op')).toEqual({ status: 'queued' })
   })
 
   it('🔴 operationId 없는 event 는 거부한다 — 조용히 삼키지 않는다', () => {

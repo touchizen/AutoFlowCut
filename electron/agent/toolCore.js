@@ -32,6 +32,9 @@ const NO_PROJECT = Object.freeze({ error: 'no-project' })
 const BATCH_TERMINAL = new Set(['complete', 'cancelled-by-user', 'error'])
 const BATCH_RESULTS = new Set([...BATCH_TERMINAL, 'timeout'])
 const BATCH_TYPES = new Set(['scene', 'ref'])
+const VIDEO_TERMINAL = new Set(['done', 'error', 'cancelled'])
+const VIDEO_WAIT_RESULTS = new Set([...VIDEO_TERMINAL, 'queued', 'running', 'timeout'])
+const VIDEO_PROGRESS_KEYS = ['done', 'total', 'failed', 'phase']
 
 // 모델이 빈 문자열/공백 문자열을 보내면 setSpeakers의 같은 검증에서 뒤늦게 실패해 승인이 낭비된다.
 // required만으로는 값의 존재만 말하므로, 실제 command가 요구하는 non-empty 계약도 함께 광고한다.
@@ -158,6 +161,36 @@ function agentStartStepParams(step, params) {
 
 const D8_STATUSES = new Set(['done', 'error', 'aborted', 'rejected'])
 
+function publicVideoProgress(progress) {
+  if (!progress || typeof progress !== 'object' || Array.isArray(progress)) return undefined
+  const clean = {}
+  for (const key of VIDEO_PROGRESS_KEYS) {
+    if (Object.hasOwn(progress, key)) clean[key] = progress[key]
+  }
+  return clean
+}
+
+function normalizeWaitVideos(result) {
+  if (!result || typeof result !== 'object' || Array.isArray(result)
+    || !VIDEO_WAIT_RESULTS.has(result.status)) {
+    throw new Error(`unknown wait_videos result status: ${String(result?.status)}`)
+  }
+  const common = {
+    operationId: result.operationId,
+    ...(publicVideoProgress(result.progress) !== undefined
+      ? { progress: publicVideoProgress(result.progress) }
+      : {}),
+  }
+  if (result.status === 'done') return { status: 'done', done: true, ...common }
+  if (result.status === 'queued' || result.status === 'running' || result.status === 'timeout') {
+    return { status: 'done', done: false, ...common }
+  }
+  if (result.status === 'cancelled' || (result.status === 'error' && result.error === 'stopped')) {
+    return { status: 'aborted', ...common }
+  }
+  return { status: 'error', error: result.error || 'failed', ...common }
+}
+
 /** 에이전트 툴 결과만 D8 한 어휘로 바꾼다. renderer IPC는 이 경로를 타지 않는다. */
 export function normalizeToolResult(name, result) {
   // wait_batch의 status/error는 작업 결과가 아니라 배치 도메인 값이다. 일반 거부/오류 규칙보다
@@ -165,6 +198,9 @@ export function normalizeToolResult(name, result) {
   if (name === 'wait_batch' && BATCH_RESULTS.has(result?.status)) {
     return { status: 'done', batch: result }
   }
+  // video snapshot의 queued/running/timeout/error는 도메인 상태다. generic D8 판정 전에
+  // 격리하지 않으면 timeout/running은 throw되고 stopped는 error로 잘못 노출된다.
+  if (name === 'wait_videos') return normalizeWaitVideos(result)
 
   if (result === null || typeof result !== 'object' || Array.isArray(result)) {
     throw new Error('unknown tool result shape')
@@ -281,6 +317,27 @@ export function createToolCore({
     }
   }
 
+  async function waitVideos({ operationId } = {}) {
+    if (!toolBridge) throw new Error('wait_videos requires toolBridge')
+    const deadline = now() + waitWindowMs
+    let last = null
+
+    for (;;) {
+      const snapshot = await toolBridge.invoke('video.status', { operationId })
+      last = {
+        operationId: snapshot.operationId,
+        status: snapshot.status,
+        ...(snapshot.error !== undefined ? { error: snapshot.error } : {}),
+        ...(publicVideoProgress(snapshot.progress) !== undefined
+          ? { progress: publicVideoProgress(snapshot.progress) }
+          : {}),
+      }
+      if (VIDEO_TERMINAL.has(last.status)) return last
+      if (now() >= deadline) return { ...last, status: 'timeout' }
+      await sleep(pollIntervalMs)
+    }
+  }
+
   /**
    * ordinal 선택을 resolve 하는 공통 경로 (D11/D12 scene 툴이 공유).
    *
@@ -299,6 +356,19 @@ export function createToolCore({
     if (storyImageFirst !== snapImageFirst) return { stale: true }
     const fixedScenes = storyImageFirst ? state.fixedScenes : null
     return { stale: false, ...resolveSceneOrdinals({ sceneNumbers, scenes: snapshot?.scenes || [], fixedScenes }) }
+  }
+
+  async function admitVideosVia({ sceneNumbers } = {}) {
+    const sel = await resolveSceneSelection(sceneNumbers)
+    if (sel.stale) return { error: 'fixed-scenes-stale' }
+    if (sel.errors.length > 0) return { error: sel.errors[0].error }
+    const items = sel.resolved.map(({ ordinal, rendererSceneId }) => ({ ordinal, rendererSceneId }))
+    const admission = await toolBridge.invoke('video.admit', { items })
+    if (admission?.accepted !== true) {
+      if (typeof admission?.error === 'string') return admission
+      return { status: 'rejected', reason: 'admission-failed' }
+    }
+    return { status: 'done', operationId: admission.operationId }
   }
 
   /**
@@ -454,12 +524,8 @@ export function createToolCore({
    *    `approvalMode` 문자열은 **증거가 아니다** — adapter 가 실수로 조기 부착하거나 공통 RPC 가
    *    기본값으로 붙이면 게이트가 조용히 샌다. 여기서 **스스로 다시 산출한다.**
    *
-   * 🔴 **M4 전에는 B 툴이 의도적으로 0개다.** `generate_videos`의 정직한 구현은 renderer의
-   *    구독/크레딧 admission이 만든 batchId·consumeGate context를 실제 Veo pipeline 끝까지 같은
-   *    identity로 운반해야 한다. 지금 `video.admit` transport만 보고 툴을 선언하면 사람은 유료 작업을
-   *    승인하고 grant까지 소비하지만 renderer handler가 없어 실패한다. 그래서 M4가 실제 billing
-   *    admission을 구현하기 전까지 inventory에서 완전히 제거한다. main-side `video.*` seam은 M4용으로
-   *    남아 있어도 이 표와 `call()`에서 도달할 수 없다.
+   * M4 `generate_videos`는 renderer의 strict credit admission만 await하고, detached pipeline/context는
+   * renderer가 소유한다. Tool Core는 operationId와 byte-free status만 다룬다.
    */
   const TOOLS = {
     story_get_state: {
@@ -490,6 +556,30 @@ export function createToolCore({
       },
       needs: 'toolBridge',          // story 는 안 쓴다 — renderer 의 배치 상태만 읽는다
       run: (args) => waitBatch(args),
+    },
+    wait_videos: {
+      permission: 'R',
+      description: '승인된 Veo 영상 배치가 끝나거나 대기 창이 만료될 때까지 기다린다.',
+      inputSchema: {
+        type: 'object',
+        properties: { operationId: NON_EMPTY_STRING_SCHEMA },
+        required: ['operationId'],
+        additionalProperties: false,
+      },
+      needs: 'toolBridge',
+      run: (args) => waitVideos(args),
+    },
+    generate_videos: {
+      permission: 'B',
+      description: '지정한 씬(1-based ordinal)의 T2V 영상을 Veo로 생성한다. 과금 배치.',
+      inputSchema: {
+        type: 'object',
+        properties: { sceneNumbers: { type: 'array', items: { type: 'number' }, minItems: 1 } },
+        required: ['sceneNumbers'],
+        additionalProperties: false,
+      },
+      needs: ['storyCommands', 'toolBridge'],
+      run: (args) => admitVideosVia(args),
     },
     get_scene_images: {
       permission: 'R',              // 읽기 — 에이전트가 자기가 만든 씬 이미지를 본다 (D11)

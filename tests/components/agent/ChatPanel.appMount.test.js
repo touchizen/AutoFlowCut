@@ -22,4 +22,23 @@ describe('App agent surface 배치', () => {
     expect(source.slice(approval, panel)).toMatch(/<ApprovalDialog\s*\/>\s*$/)
     expect(source.match(/<ChatPanel\b/g)).toHaveLength(1)
   })
+
+  it('App은 useVideoAutomation의 admission/status/event/cleanup source를 ChatPanel에 주입한다', () => {
+    const source = fs.readFileSync(path.resolve('src/App.jsx'), 'utf8')
+    const panel = source.slice(source.indexOf('<ChatPanel'), source.indexOf('/>', source.indexOf('<ChatPanel')))
+
+    expect(panel).toContain('videoAdmissionSources={videoAdmissionSources}')
+    expect(source).toContain('videoAutomation.admitVideoBatch')
+    expect(source).toContain('videoAutomation.getVideoStatus')
+    expect(source).toContain('videoAutomation.subscribeVideoStatus')
+    expect(source).toContain('videoAutomation.abortAndClearVideoOperations')
+  })
+
+  it('agent path는 resolved rendererSceneId updater를 쓰고 legacy vscene 변환 두 곳은 characterization으로 고정한다', () => {
+    const source = fs.readFileSync(path.resolve('src/App.jsx'), 'utf8')
+    expect(source).toContain("from './agent/videoAdmission'")
+    expect(source).toContain('scenesHook.updateScene(rendererSceneId, agentVideoScenePatch(newStatus, result))')
+    expect(source).toContain('approvedSceneCount: items.length')
+    expect(source.match(/const sceneId = id\.replace\('vscene_', 'scene_'\)/g)).toHaveLength(2)
+  })
 })

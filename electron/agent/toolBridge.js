@@ -18,6 +18,8 @@ const ALLOWED_TOOLS = new Set(['video.admit', 'video.status', 'batch.status', 's
 const ECHO_KEY_BY_TOOL = { 'video.status': 'operationId', 'batch.status': 'type', 'video.frames': 'rendererSceneId' }
 const DEFAULT_TIMEOUT_MS = 30_000
 const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key)
+const VIDEO_EVENT_STATUSES = new Set(['queued', 'running', 'done', 'error', 'cancelled'])
+const VIDEO_PROGRESS_KEYS = ['done', 'total', 'failed', 'phase']
 
 function rendererError(error) {
   if (error instanceof Error) return error
@@ -177,12 +179,43 @@ export function createToolBridge({ getWindow }) {
     //    event 가 snapshot 을 되살리면, 세션이 끝났는데 그 세션의 진행상황이 남는다 (D14 "session close 때 cleanup").
     if (closed) return false
 
-    operations.set(operationId, { status: event.status, progress: event.progress })
+    if (!VIDEO_EVENT_STATUSES.has(event?.status)) {
+      throw new Error(`tool bridge event status is invalid: ${String(event?.status)}`)
+    }
+    if (hasOwn(event, 'error') && typeof event.error !== 'string') {
+      throw new Error('tool bridge event error must be a string')
+    }
+    let progress
+    if (event.progress !== undefined) {
+      if (!event.progress || typeof event.progress !== 'object' || Array.isArray(event.progress)) {
+        throw new Error('tool bridge event progress must be an object')
+      }
+      progress = {}
+      for (const key of VIDEO_PROGRESS_KEYS) {
+        if (!hasOwn(event.progress, key)) continue
+        const value = event.progress[key]
+        if (key === 'phase') {
+          if (typeof value !== 'string') throw new Error('tool bridge event progress.phase must be a string')
+        } else if (!Number.isFinite(value) || value < 0) {
+          throw new Error(`tool bridge event progress.${key} must be a non-negative number`)
+        }
+        progress[key] = value
+      }
+    }
+    operations.set(operationId, {
+      status: event.status,
+      ...(progress !== undefined ? { progress } : {}),
+      ...(hasOwn(event, 'error') ? { error: event.error } : {}),
+    })
     return true
   }
 
   function getOperation(operationId) {
     return operations.get(operationId) ?? null
+  }
+
+  function clearOperations() {
+    operations.clear()
   }
 
   function close() {
@@ -191,7 +224,7 @@ export function createToolBridge({ getWindow }) {
     detachWindowListeners()
     watchedWindow = null
     rejectAll(new Error('tool bridge closed'))
-    operations.clear()
+    clearOperations()
   }
 
   return {
@@ -199,6 +232,7 @@ export function createToolBridge({ getWindow }) {
     handleResponse,
     handleEvent,
     getOperation,
+    clearOperations,
     pendingCount: () => pending.size,
     close,
   }

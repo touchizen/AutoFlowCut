@@ -198,6 +198,8 @@ export function createAgentSessionManager({
         // orchestrator가 빌린 RPC를 닫지 않는 계약이므로 owner인 manager가 반드시 닫는다.
         session.privateRpc.close(),
       ])
+      // toolBridge는 app-scoped라 close할 수 없지만, operation snapshot은 session 경계를 넘기지 않는다.
+      toolBridge?.clearOperations?.()
       grantLedger?.closeSession?.(session.sessionId)
       if (current === session) current = null
       const failed = results.find((result) => result.status === 'rejected')

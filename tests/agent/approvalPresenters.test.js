@@ -130,6 +130,9 @@ const coverageFixtures = {
     { sceneNumbers: [3], status: 'ok' },
     { sceneNumbers: [5] },
   ],
+  generate_videos: [
+    { sceneNumbers: [1, 4, 7] },
+  ],
   export_capcut: [{ force: true }, { force: false }],
   export_premiere: [{ force: true }, { force: false }],
 }
@@ -139,6 +142,8 @@ const typeMismatchFixtures = [
   ['update_visual_review', { sceneNumbers: [1], status: 5 }],
   // 빈 배열은 "전체 씬"으로 확장되는 파괴적 shape — 승인창은 fail-closed 여야 한다 (MAJOR 2).
   ['update_visual_review', { sceneNumbers: [] }],
+  ['generate_videos', { sceneNumbers: 'x' }],
+  ['generate_videos', { sceneNumbers: [] }],
   ['story_confirm_synopsis', { characters: null }],
   ['story_confirm_synopsis', { characters: 'x' }],
   ['story_set_speakers', { speakers: 'x' }],
@@ -233,7 +238,7 @@ describe('approval presenter 출하·coverage 게이트', () => {
   })
 
   it('모르는 툴은 presenter가 있다고 가장하지 않는다', () => {
-    expect(presentApproval('generate_videos', { items: [1] }, koT)).toBeNull()
+    expect(presentApproval('unknown_billing_tool', { items: [1] }, koT)).toBeNull()
   })
 
   it.each(typeMismatchFixtures)('%s의 described 타입이 schema와 다르면 fail-closed한다', (tool, args) => {
@@ -364,6 +369,21 @@ describe('approval presenter와 Tool Core inputSchema는 함께 바뀐다', () =
 })
 
 describe('stepMachine에서 검증한 실제 효과만 서술한다', () => {
+  it.each([
+    [koT, /씬 3개/, /1, 4, 7/, /크레딧 1건/],
+    [enT, /3 scenes/i, /1, 4, 7/, /1 credit/i],
+  ])('generate_videos는 선택 수량과 ordinal을 보이되 batch credit은 항상 1건으로 말한다', (t, count, ordinals, oneCredit) => {
+    const presentation = presentApproval('generate_videos', { sceneNumbers: [1, 4, 7] }, t)
+    const text = presentation.lines.map((line) => line.text).join('\n')
+
+    expect(presentation.lines[0]).toMatchObject({ paths: ['/sceneNumbers'], headline: true })
+    expect(presentation.lines.at(-1)).toMatchObject({ paths: [], danger: true })
+    expect(text).toMatch(count)
+    expect(text).toMatch(ordinals)
+    expect(text).toMatch(oneCredit)
+    expect(text).not.toMatch(/크레딧 3건|3 credits?/i)
+  })
+
   it('확정 명단 상태의 set_speakers는 필드 변경과 신규 인물이 반영되지 않을 수 있음을 경고한다', () => {
     const text = presentApproval('story_set_speakers', {
       speakers: [{ id: 'kim', name: '김철수', gender: 'male', role: '형사' }],

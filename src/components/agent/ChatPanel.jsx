@@ -121,7 +121,13 @@ function useCollapsedDrag(enabled) {
  * D14 전역 ChatPanel. App의 generate/story 조건부 body 밖에서 한 번만 mount해야 한다.
  * view 전환은 state를 보존하지만 projectKey 전환은 D15에 따라 이전 session을 abort/close한다.
  */
-export default function ChatPanel({ projectKey = null, batchStatusSources = {}, sceneBridgeSources = {}, exportBridgeSources = {} }) {
+export default function ChatPanel({
+  projectKey = null,
+  batchStatusSources = {},
+  sceneBridgeSources = {},
+  exportBridgeSources = {},
+  videoAdmissionSources = {},
+}) {
   const t = useSafeT()
   const api = window.electronAPI
   const [collapsed, setCollapsed] = useState(false)
@@ -144,6 +150,8 @@ export default function ChatPanel({ projectKey = null, batchStatusSources = {}, 
   sceneSourcesRef.current = sceneBridgeSources
   const exportSourcesRef = useRef(exportBridgeSources)
   exportSourcesRef.current = exportBridgeSources
+  const videoAdmissionSourcesRef = useRef(videoAdmissionSources)
+  videoAdmissionSourcesRef.current = videoAdmissionSources
 
   const pushError = useCallback((failure) => {
     const text = failureText(failure, t)
@@ -223,12 +231,13 @@ export default function ChatPanel({ projectKey = null, batchStatusSources = {}, 
   }, [api, appendDelta, finalizeMessage, pushError])
 
   useEffect(() => {
-    // 선택 (b): M4의 실제 구독/크레딧 admission이 오기 전에는 read-only batch.status만 연결한다.
-    // video.admit을 가짜로 연결하면 B 승인을 소비한 뒤 과금도 생성도 못 하는 거짓 성공이 된다.
-    // main의 video.* transport seam은 M4를 위해 남지만 real Tool Core inventory에서 도달할 수 없다.
     const bridge = registerToolBridgeHandlers({
       api,
       handlers: {
+        // M4: agent 경로는 renderer가 확정한 strict admission만 쓴다. items 이외의 isRetry/batchId/
+        // entitlement 정책을 args에서 만들지 않아 모델이 과금 identity를 주장할 표면이 없다.
+        'video.admit': ({ items } = {}) => videoAdmissionSourcesRef.current.admit(items),
+        'video.status': ({ operationId } = {}) => videoAdmissionSourcesRef.current.getStatus(operationId),
         'batch.status': ({ type } = {}) => readBatchStatus({
           ...batchSourcesRef.current,
           type,
@@ -252,13 +261,21 @@ export default function ChatPanel({ projectKey = null, batchStatusSources = {}, 
         }),
       },
     })
-    return () => bridge.dispose()
+    // queued/running phase와 terminal snapshot은 video.status와 같은 훅 store에서 발행한다.
+    const unsubscribeVideo = videoAdmissionSourcesRef.current.subscribe?.(bridge.emitEvent)
+    return () => {
+      unsubscribeVideo?.()
+      bridge.dispose()
+    }
   }, [api])
 
   useEffect(() => {
     if (projectKeyRef.current === projectKey) return
     projectKeyRef.current = projectKey
     sessionEpochRef.current += 1
+    // agent session보다 오래 사는 detached pipeline/context를 먼저 닫는다. old operation이 새
+    // 프로젝트에서 late patch/event를 되살리지 않도록 store cleanup도 같은 경계에서 수행한다.
+    videoAdmissionSourcesRef.current.abortAndClear?.()
     const hadOpenSession = sessionOpenRef.current || !!openPromiseRef.current
     sessionOpenRef.current = false
     openPromiseRef.current = null
@@ -362,6 +379,7 @@ export default function ChatPanel({ projectKey = null, batchStatusSources = {}, 
 
   const close = async () => {
     try {
+      videoAdmissionSourcesRef.current.abortAndClear?.()
       const result = await api.agentSessionClose()
       if (hasFailure(result)) pushError(result)
       else sessionOpenRef.current = false

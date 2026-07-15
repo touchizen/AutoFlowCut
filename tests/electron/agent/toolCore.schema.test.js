@@ -75,6 +75,8 @@ describe('Tool Core MCP inventory 조립', () => {
       story_get_state: [],
       list_scenes: [],
       wait_batch: ['type'],
+      wait_videos: ['operationId'],
+      generate_videos: ['sceneNumbers'],
       story_confirm_synopsis: [
         'characters',
         'fixedSceneRevision',
@@ -108,6 +110,8 @@ describe('Tool Core MCP inventory 조립', () => {
     const tools = Object.fromEntries(createToolCore().list().map((tool) => [tool.name, tool]))
     const examples = {
       wait_batch: { type: 'scene' },
+      wait_videos: { operationId: 'video-op-1' },
+      generate_videos: { sceneNumbers: [1, 3] },
       story_confirm_synopsis: { synopsisMd: '# 확정', characters: [] },
       story_set_speakers: { speakers: [] },
       story_start_step: { step: 'script', params: { pastedScript: '붙여넣기', title: 'T' } },
