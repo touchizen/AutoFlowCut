@@ -88,6 +88,18 @@ export const APPROVAL_KEY_DECISIONS = Object.freeze({
       ),
     }),
   }),
+  update_visual_review: Object.freeze({
+    root: decision(
+      ['sceneNumbers', 'status', 'reason'],
+      [],
+      {
+        sceneNumbers: expectedTypes('array'),
+        status: expectedTypes('string'),
+        reason: expectedTypes('string'),
+      },
+      ['sceneNumbers'],
+    ),
+  }),
 })
 
 /**
@@ -611,6 +623,27 @@ export function presentStartStep(args, t) {
   return presentation
 }
 
+function presentUpdateVisualReview(args, t) {
+  const lines = []
+  const sceneNumbers = args.sceneNumbers
+  // status 생략 시 tool 은 reject 로 기록한다 — 승인창도 그 기본을 그대로 보여 준다.
+  const status = hasOwn(args, 'status') ? args.status : 'rejected'
+  // status 를 실제로 넘겼을 때만 path 를 선언한다 (없는 키를 덮은 척하면 유령 path 다).
+  const paths = hasOwn(args, 'status') ? ['/sceneNumbers', '/status'] : ['/sceneNumbers']
+  // 🔴 headline — 경고보다 "무엇을 하는지"가 먼저다.
+  lines.push({
+    text: t('agent.approvalVisualReview', { ordinals: sceneNumbers.join(', '), status }),
+    paths,
+    headline: true,
+  })
+  if (hasOwn(args, 'reason')) {
+    lines.push({ text: t('agent.approvalVisualReviewReason', { reason: args.reason }), paths: ['/reason'] })
+  }
+  // danger — 프로젝트에 지속되는 상태를 남긴다.
+  lines.push({ text: t('agent.approvalVisualReviewPersist'), paths: [], danger: true })
+  return { lines, blocks: [] }
+}
+
 /**
  * tool/args만으로 승인 문장을 만드는 순수 함수. 모르는 툴은 fail-closed UI가 처리하도록 null을 준다.
  * @returns {null|{lines: Array<{text:string, paths:string[], danger?:boolean}>, blocks: Array<{label:string, path:string, text:string}>}}
@@ -634,6 +667,9 @@ export function presentApproval(tool, args, t) {
     const params = hasOwn(args, 'params') ? args.params : {}
     if (!matchesDecision(params, paramsDecision)) return null
     return presentStartStep(args, t)
+  }
+  if (tool === 'update_visual_review') {
+    return presentUpdateVisualReview(args, t)
   }
   return null
 }

@@ -26,8 +26,8 @@ beforeEach(() => {
     invoke: vi.fn(async (name) => {
       if (name === 'scene.snapshot') {
         return { sceneMode: 'audio-first', scenes: [
-          { id: 'scene_17', storyId: 'story-a' },
-          { id: 'scene_3', storyId: 'story-b' },
+          { id: 'scene_17', storyId: 'story-a', hasImage: true },
+          { id: 'scene_3', storyId: 'story-b', hasImage: true },
         ] }
       }
       throw new Error(`unexpected bridge ${name}`)
@@ -114,6 +114,51 @@ describe('get_scene_images', () => {
     expect(r).toMatchObject({ status: 'rejected', reason: 'stale-token' })
   })
 
+  // MAJOR 1 (Fable): mode 는 같아도 revision 이 드리프트한 set-replacement 크래시에서 getState 가
+  // 이미 state.fixedSceneError='fixed-scenes-stale' 를 계산해 준다 — 툴이 그걸 읽어야 stale 로 닫는다.
+  it('mode 는 같아도 state.fixedSceneError=fixed-scenes-stale 면 stale 로 닫는다', async () => {
+    storyCommands.getState = vi.fn(async () => ({
+      sceneMode: 'image-first',
+      fixedScenes: [{ ordinal: 1, rendererSceneId: 'scene_17', storyId: 'a' }],
+      fixedSceneError: 'fixed-scenes-stale',
+    }))
+    toolBridge.invoke = vi.fn(async () => ({ sceneMode: 'image-first', scenes: [{ id: 'scene_17', storyId: 'a', image: 'x' }] }))
+    const r = await core.call('get_scene_images', { sceneNumbers: [1] }, {})
+    expect(r).toMatchObject({ status: 'rejected', reason: 'fixed-scenes-stale' })
+  })
+
+  // MAJOR 2 (Fable): 삭제된 씬의 유령 디스크 이미지(재사용 id + 잔존 파일) 를 'ok' 로 반환하면 안 된다.
+  // 렌더러가 hasImage:false 로 "이 씬엔 이미지 없다" 하면 디스크 조회 전에 image-not-found.
+  it('snapshot 이 hasImage:false 면 디스크 파일이 있어도 image-not-found, decode/probe 안 함', async () => {
+    toolBridge.invoke = vi.fn(async () => ({ sceneMode: 'audio-first', scenes: [
+      { id: 'scene_17', storyId: 'a', hasImage: false },
+    ] }))
+    imageReader.exists = vi.fn(async () => true) // 유령 파일이 존재해도
+    const r = await core.call('get_scene_images', { sceneNumbers: [1] }, {})
+    expect(r.images).toEqual([{ ordinal: 1, rendererSceneId: 'scene_17', status: 'image-not-found' }])
+    expect(imageReader.exists).not.toHaveBeenCalled()
+    expect(imageReader.decodeFile).not.toHaveBeenCalled()
+  })
+
+  it('hasImage:true 면 정상 조회', async () => {
+    toolBridge.invoke = vi.fn(async () => ({ sceneMode: 'audio-first', scenes: [
+      { id: 'scene_17', storyId: 'a', hasImage: true },
+    ] }))
+    const r = await core.call('get_scene_images', { sceneNumbers: [1] }, {})
+    expect(r.images[0].status).toBe('ok')
+  })
+
+  // MAJOR 3 (Fable): 렌더러가 준 rendererSceneId 를 무검증으로 fs 경로에 조립하면 traversal 이 된다.
+  it('rendererSceneId 가 안전한 path segment 가 아니면(traversal) image-not-found, probe 0회', async () => {
+    toolBridge.invoke = vi.fn(async () => ({ sceneMode: 'audio-first', scenes: [
+      { id: '../../etc/passwd', storyId: 'a', hasImage: true },
+    ] }))
+    imageReader.exists = vi.fn(async () => true)
+    const r = await core.call('get_scene_images', { sceneNumbers: [1] }, {})
+    expect(r.images[0].status).toBe('image-not-found')
+    expect(imageReader.exists).not.toHaveBeenCalled()
+  })
+
   it('mode 불일치(story image-first, snapshot audio-first) → fixed-scenes-stale', async () => {
     storyCommands.getState = vi.fn(async () => ({ sceneMode: 'image-first', fixedScenes: [
       { ordinal: 1, rendererSceneId: 'scene_17', storyId: 'story-a' },
@@ -127,7 +172,7 @@ describe('get_scene_images', () => {
     const slots = [{ ordinal: 1, rendererSceneId: 'scene_17', storyId: 'story-a' }]
     storyCommands.getState = vi.fn(async () => ({ sceneMode: 'image-first', fixedScenes: slots }))
     toolBridge.invoke = vi.fn(async () => ({ sceneMode: 'image-first', scenes: [
-      { id: 'scene_17', storyId: 'story-a' },
+      { id: 'scene_17', storyId: 'story-a', hasImage: true },
     ] }))
     const r = await core.call('get_scene_images', { sceneNumbers: [1] }, {})
     expect(r.images[0]).toMatchObject({ ordinal: 1, rendererSceneId: 'scene_17', status: 'ok' })

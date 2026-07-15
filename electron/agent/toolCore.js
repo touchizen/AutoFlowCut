@@ -243,6 +243,9 @@ export function createToolCore({
   //   imageReader.decodeFile(path) => Promise<{ isEmpty, width, height, toBlock({resize}) => {data, mimeType} }>
   // 주입 안 하면 get_scene_images 는 못 돈다 (createToolCore 는 electron 을 import 하지 않는 순수 노드로 남는다).
   imageReader = null,
+  // visual review 영속 store(main durable dotfile). update/list_visual_reviews/list_problem_scenes 가 쓴다.
+  //   visualReviewStore.read() / .update(entries)
+  visualReviewStore = null,
   now = () => Date.now(),
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
   waitWindowMs = 10 * 60 * 1000,     // 잠정 — legacy 폴링 창과 같게 두되, 측정 뒤 정한다
@@ -288,6 +291,9 @@ export function createToolCore({
   async function resolveSceneSelection(sceneNumbers) {
     const snapshot = await toolBridge.invoke('scene.snapshot', {})
     const state = await storyCommands.getState()
+    // 🔴 mode 비교만으로는 set-replacement 크래시(양쪽 image-first, 슬롯 revision 드리프트)를 못 닫는다.
+    //    getState 가 이미 deriveFixedSceneError 로 정확한 신호를 실어 주므로 그걸 먼저 존중한다.
+    if (state?.fixedSceneError === 'fixed-scenes-stale') return { stale: true }
     const storyImageFirst = state?.sceneMode === 'image-first'
     const snapImageFirst = snapshot?.sceneMode === 'image-first'
     if (storyImageFirst !== snapImageFirst) return { stale: true }
@@ -308,7 +314,13 @@ export function createToolCore({
 
     const images = []
     const content = []
-    for (const { ordinal, rendererSceneId } of resolved) {
+    for (const { ordinal, rendererSceneId, scene } of resolved) {
+      // 🔴 렌더러가 이 씬에 이미지가 없다고 하면(hasImage:false) 디스크를 보지 않는다. 안 그러면
+      //    삭제된 씬의 유령 파일(id 재사용 + 잔존 .png)을 그 씬의 이미지로 오인해 'ok' 로 준다.
+      if (!scene?.hasImage) {
+        images.push({ ordinal, rendererSceneId, status: 'image-not-found' })
+        continue
+      }
       const candidate = await findSceneImageCandidate({ sceneDir, rendererSceneId, exists: imageReader.exists })
       if (!candidate) {
         images.push({ ordinal, rendererSceneId, status: 'image-not-found' })
@@ -357,6 +369,56 @@ export function createToolCore({
     }
     for (const e of errors) frames.push({ ordinal: e.ordinal, status: e.error })
     return { frames, content }
+  }
+
+  /**
+   * slice 33 — visual review 기록 (G). ordinal 을 **write 시점에 재resolve** 한다 (TOCTOU: snapshot 후
+   * 사용자가 씬을 지웠을 수 있다). rendererSceneId 로 저장하고 현재 ordinal 은 metadata(ordinalAtReview).
+   */
+  async function updateVisualReview({ sceneNumbers, status = 'rejected', reason } = {}) {
+    const sel = await resolveSceneSelection(sceneNumbers)
+    if (sel.stale) return { error: 'fixed-scenes-stale' }
+    const entries = sel.resolved.map(({ ordinal, rendererSceneId, storyId }) => ({
+      rendererSceneId,
+      storyId,
+      status,
+      ...(reason !== undefined ? { reason } : {}),
+      ordinalAtReview: ordinal,
+    }))
+    const updated = await visualReviewStore.update(entries)
+    return { updated, errors: sel.errors }
+  }
+
+  /** 저장된 review 에 현재 ordinal 을 재부착한 목록 (R). 사라진 씬은 버리지 않고 ordinal:null,stale. */
+  async function listVisualReviews() {
+    const sel = await resolveSceneSelection()
+    if (sel.stale) return { error: 'fixed-scenes-stale' }
+    const ordinalById = new Map(sel.resolved.map((r) => [r.rendererSceneId, r.ordinal]))
+    const { reviews } = await visualReviewStore.read()
+    const list = Object.entries(reviews).map(([rendererSceneId, rec]) => {
+      const ordinal = ordinalById.has(rendererSceneId) ? ordinalById.get(rendererSceneId) : null
+      return ordinal === null
+        ? { rendererSceneId, ordinal: null, stale: true, ...rec }
+        : { rendererSceneId, ordinal, ...rec }
+    })
+    return { reviews: list }
+  }
+
+  /** 문제 씬(rejected)만 ordinal+rendererSceneId+reason 으로 (R). sceneNumbers 주면 그 ordinal 로 필터. */
+  async function listProblemScenes({ sceneNumbers } = {}) {
+    const sel = await resolveSceneSelection()
+    if (sel.stale) return { error: 'fixed-scenes-stale' }
+    const ordinalById = new Map(sel.resolved.map((r) => [r.rendererSceneId, r.ordinal]))
+    const filter = Array.isArray(sceneNumbers) && sceneNumbers.length > 0 ? new Set(sceneNumbers) : null
+    const { reviews } = await visualReviewStore.read()
+    const scenes = []
+    for (const [rendererSceneId, rec] of Object.entries(reviews)) {
+      if (rec.status !== 'rejected') continue
+      const ordinal = ordinalById.has(rendererSceneId) ? ordinalById.get(rendererSceneId) : null
+      if (filter && !filter.has(ordinal)) continue
+      scenes.push({ ordinal, rendererSceneId, ...(rec.reason !== undefined ? { reason: rec.reason } : {}) })
+    }
+    return { scenes }
   }
 
   /**
@@ -425,6 +487,40 @@ export function createToolCore({
       },
       needs: ['storyCommands', 'toolBridge'],
       run: (args) => getSceneVideoFrames(args),
+    },
+    update_visual_review: {
+      permission: 'G',              // 사람 승인 — 에이전트가 프로젝트에 지속 상태를 남긴다
+      description: '지정한 씬(1-based ordinal)의 시각 리뷰 결과를 프로젝트에 기록한다. status 생략 시 reject.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sceneNumbers: { type: 'array', items: { type: 'number' } },
+          status: { type: 'string', enum: ['rejected', 'ok'] },
+          reason: { type: 'string' },
+        },
+        required: ['sceneNumbers'],
+        additionalProperties: false,
+      },
+      needs: ['storyCommands', 'toolBridge'],
+      run: (args) => updateVisualReview(args),
+    },
+    list_visual_reviews: {
+      permission: 'R',
+      description: '기록된 시각 리뷰를 현재 씬 ordinal 과 함께 조회한다.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      needs: ['storyCommands', 'toolBridge'],
+      run: () => listVisualReviews(),
+    },
+    list_problem_scenes: {
+      permission: 'R',
+      description: '시각 리뷰에서 reject 된 문제 씬을 ordinal 과 이유로 조회한다. sceneNumbers 로 범위 제한 가능.',
+      inputSchema: {
+        type: 'object',
+        properties: { sceneNumbers: { type: 'array', items: { type: 'number' } } },
+        additionalProperties: false,
+      },
+      needs: ['storyCommands', 'toolBridge'],
+      run: (args) => listProblemScenes(args),
     },
     story_confirm_synopsis: {
       permission: 'G',              // 사람이 확정하는 것 — 에이전트가 혼자 못 한다 (D9)

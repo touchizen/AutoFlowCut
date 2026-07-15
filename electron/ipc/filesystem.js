@@ -26,6 +26,7 @@ import path from 'path'
 import { execFile, execSync } from 'child_process'
 import { app, dialog } from 'electron'
 import { parseSfxList } from '../../src/utils/parseSfxList.js'
+import { isSafeImportPathSegment } from '../story/pathSegment.js'
 
 // ============================================================
 // Helper Functions
@@ -232,15 +233,9 @@ async function pathExists(p) {
   }
 }
 
-export function isSafeImportPathSegment(value) {
-  return typeof value === 'string'
-    && value.length > 0
-    && value !== '.'
-    && value !== '..'
-    && !value.includes('/')
-    && !value.includes('\\')
-    && !value.includes('\0')
-}
+// 보안 primitive 는 electron/story/pathSegment.js 한 곳에 산다 (에이전트 이미지 읽기와 공유).
+// 내부 사용 + 기존 export 표면 유지를 위해 import 한 뒤 re-export 한다.
+export { isSafeImportPathSegment }
 
 function imageFirstPaths(workFolder, project, fixedSceneRevision) {
   const projectRoot = path.join(workFolder, project)

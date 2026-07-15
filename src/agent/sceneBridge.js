@@ -8,9 +8,16 @@
  *    (`useMcpServer.__mcpGetScenes` 와 같은 계약). 영상 프레임 추출은 `videoT2VPath`/`videoI2VPath` 로 한다.
  */
 
-/** image/videoT2V/videoI2V 바이트만 제거. 나머지(경로 포함)는 유지. */
+/**
+ * image/videoT2V/videoI2V 바이트는 제거하되, **hasImage 마커를 남긴다**.
+ *
+ * 🔴 바이트를 통째로 지우면 main 의 get_scene_images 는 "이 씬에 이미지가 있나"를 렌더러에게
+ *    물을 길이 없어진다. 그러면 삭제된 씬의 유령 디스크 파일(id 재사용 + 잔존 .png)을 그 씬의
+ *    현재 이미지로 오인해 'ok' 로 반환한다. 렌더러의 image/imagePath 존재를 hasImage 로 실어
+ *    툴이 디스크 조회 전에 게이트하게 한다 (hasExportableMedia 와 같은 기준).
+ */
 export function stripSceneForAgent({ image, videoT2V, videoI2V, ...rest }) {
-  return rest
+  return { ...rest, hasImage: !!(image || rest.imagePath) }
 }
 
 /**

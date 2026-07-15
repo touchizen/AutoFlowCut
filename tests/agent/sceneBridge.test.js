@@ -6,16 +6,20 @@ import { stripSceneForAgent, sceneSnapshot } from '../../src/agent/sceneBridge.j
 // 라이브 scenes 배열(바이트 제거)과 sceneMode 를 준다. 순서 보존.
 
 describe('stripSceneForAgent', () => {
-  it('image/videoT2V/videoI2V 바이트만 제거하고 경로/식별자는 유지한다', () => {
+  it('image/videoT2V/videoI2V 바이트는 제거하되, hasImage 마커를 남긴다 (유령 디스크 이미지 방지)', () => {
     const scene = {
       id: 'scene_7', storyId: 's', prompt: 'p',
       image: 'BIGBYTES', videoT2V: 'V', videoI2V: 'W',
       videoT2VPath: '/a/t2v.mp4', videoI2VPath: '/a/i2v.mp4',
     }
     expect(stripSceneForAgent(scene)).toEqual({
-      id: 'scene_7', storyId: 's', prompt: 'p',
+      id: 'scene_7', storyId: 's', prompt: 'p', hasImage: true,
       videoT2VPath: '/a/t2v.mp4', videoI2VPath: '/a/i2v.mp4',
     })
+  })
+
+  it('image 없으면 hasImage false — imagePath 만 있어도 렌더러 image 바이트가 마커다', () => {
+    expect(stripSceneForAgent({ id: 'scene_1', storyId: 's' })).toEqual({ id: 'scene_1', storyId: 's', hasImage: false })
   })
 })
 
@@ -27,7 +31,7 @@ describe('sceneSnapshot', () => {
     ]
     expect(sceneSnapshot({ scenes, sceneMode: 'image-first' })).toEqual({
       sceneMode: 'image-first',
-      scenes: [{ id: 'scene_7', storyId: 'a' }, { id: 'scene_3', storyId: 'b' }],
+      scenes: [{ id: 'scene_7', storyId: 'a', hasImage: true }, { id: 'scene_3', storyId: 'b', hasImage: true }],
     })
   })
 

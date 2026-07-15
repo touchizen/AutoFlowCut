@@ -121,9 +121,16 @@ const coverageFixtures = {
     { step: 'prompts', params: { options: {}, review: {}, reviewOnly: true, style: '수채화' } },
     { step: 'prompts', params: {} },
   ],
+  update_visual_review: [
+    { sceneNumbers: [1, 2], status: 'rejected', reason: '얼굴 왜곡' },
+    { sceneNumbers: [3], status: 'ok' },
+    { sceneNumbers: [5] },
+  ],
 }
 
 const typeMismatchFixtures = [
+  ['update_visual_review', { sceneNumbers: 'x' }],
+  ['update_visual_review', { sceneNumbers: [1], status: 5 }],
   ['story_confirm_synopsis', { characters: null }],
   ['story_confirm_synopsis', { characters: 'x' }],
   ['story_set_speakers', { speakers: 'x' }],

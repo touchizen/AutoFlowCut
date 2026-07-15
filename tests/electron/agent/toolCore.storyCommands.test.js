@@ -268,6 +268,7 @@ function makeNormalizationHarness({
     admitToolCall,
     toolBridge,
     imageReader: { exists: vi.fn(async () => false), decodeFile: vi.fn() },
+    visualReviewStore: { read: vi.fn(async () => ({ version: 1, reviews: {} })), update: vi.fn(async () => []) },
   })
   core.use(commands)
 
@@ -613,6 +614,11 @@ describe('D8 — 전 툴 결과 어휘 불변식과 throw 경계', () => {
       story_confirm_synopsis: { synopsisMd: '#' },
       story_set_speakers: { speakers: [] },
       story_start_step: { step: 'script', params: {} },
+      get_scene_images: {},
+      get_scene_video_frames: {},
+      update_visual_review: { sceneNumbers: [] },
+      list_visual_reviews: {},
+      list_problem_scenes: {},
     }
 
     for (const tool of core.list()) {
