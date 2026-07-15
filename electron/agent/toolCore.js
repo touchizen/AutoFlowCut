@@ -22,6 +22,8 @@ import { findSceneImageCandidate, resizeSpec } from './sceneImages.js'
 
 // D11: 세로 이미지 긴 변 상한. 값은 스펙 고정(768). 토큰 경제상 하드코딩이 아니라 계약이다.
 const IMAGE_MAX_EDGE = 768
+// D12: 씬당 추출 프레임 수. 스펙에 값이 없어 제품 정책 기본값(양끝 회피 균등 배치).
+const VIDEO_FRAMES_PER_SCENE = 3
 
 /** 프로젝트가 안 열렸을 때의 공통 거부 (스펙 §2.1 `get_project_context`, slice 12). */
 const NO_PROJECT = Object.freeze({ error: 'no-project' })
@@ -277,23 +279,31 @@ export function createToolCore({
   }
 
   /**
-   * D11 — 씬 이미지 읽기 (에이전트의 눈). ordinal 을 단일 resolver 로 rendererSceneId 로 바꾸고,
-   * projectPath 에서 유도한 scene directory 에서 후보를 찾아 주입 codec 으로 decode/resize 한다.
+   * ordinal 선택을 resolve 하는 공통 경로 (D11/D12 scene 툴이 공유).
    *
    * 🔴 **이중 권위 일관성.** `scenes` 는 renderer snapshot, `fixedScenes` 는 story state 다. 두 소스의
-   *    mode 가 어긋나면(committed-but-unstaged 크래시) ordinal 을 엉뚱한 씬으로 매핑해 **다른 씬의
-   *    이미지를 리뷰**하게 된다. mode 불일치는 먼저 `fixed-scenes-stale` 로 닫는다.
+   *    mode 가 어긋나면(committed-but-unstaged 크래시) ordinal 을 엉뚱한 씬으로 매핑해 **다른 씬을
+   *    리뷰**하게 된다. mode 불일치는 먼저 stale 로 닫는다. 가드를 한 곳에 둬 scene 툴마다 재발명하지 않는다.
    */
-  async function getSceneImages({ sceneNumbers } = {}) {
-    if (!imageReader) throw new Error('get_scene_images requires imageReader')
+  async function resolveSceneSelection(sceneNumbers) {
     const snapshot = await toolBridge.invoke('scene.snapshot', {})
     const state = await storyCommands.getState()
     const storyImageFirst = state?.sceneMode === 'image-first'
     const snapImageFirst = snapshot?.sceneMode === 'image-first'
-    if (storyImageFirst !== snapImageFirst) return { error: 'fixed-scenes-stale' }
-
+    if (storyImageFirst !== snapImageFirst) return { stale: true }
     const fixedScenes = storyImageFirst ? state.fixedScenes : null
-    const { resolved, errors } = resolveSceneOrdinals({ sceneNumbers, scenes: snapshot?.scenes || [], fixedScenes })
+    return { stale: false, ...resolveSceneOrdinals({ sceneNumbers, scenes: snapshot?.scenes || [], fixedScenes }) }
+  }
+
+  /**
+   * D11 — 씬 이미지 읽기 (에이전트의 눈). resolve 된 rendererSceneId 로 projectPath 아래 scene
+   * directory 에서 후보를 찾아 주입 codec 으로 decode/resize 한다.
+   */
+  async function getSceneImages({ sceneNumbers } = {}) {
+    if (!imageReader) throw new Error('get_scene_images requires imageReader')
+    const sel = await resolveSceneSelection(sceneNumbers)
+    if (sel.stale) return { error: 'fixed-scenes-stale' }
+    const { resolved, errors } = sel
     const sceneDir = path.join(storyCommands.projectPath, 'scenes')
 
     const images = []
@@ -317,6 +327,36 @@ export function createToolCore({
     // resolve 실패 ordinal 도 per-scene 결과로 섞는다 — 에이전트가 어느 씬이 없는지 안다.
     for (const e of errors) images.push({ ordinal: e.ordinal, status: e.error })
     return { images, content }
+  }
+
+  /**
+   * D12 — 씬 영상 프레임 읽기. resolve 된 씬의 videoI2VPath/videoT2VPath 를 renderer 로 넘겨
+   * 다중 프레임을 뽑는다. decode 는 Chromium 이라 renderer(`video.frames`)가 한다.
+   * i2v(image-to-video)를 t2v 보다 우선한다 — 보통 더 정제된 최종 렌더다.
+   */
+  async function getSceneVideoFrames({ sceneNumbers } = {}) {
+    const sel = await resolveSceneSelection(sceneNumbers)
+    if (sel.stale) return { error: 'fixed-scenes-stale' }
+    const { resolved, errors } = sel
+
+    const frames = []
+    const content = []
+    for (const { ordinal, rendererSceneId, scene } of resolved) {
+      const videoPath = scene.videoI2VPath || scene.videoT2VPath
+      const source = scene.videoI2VPath ? 'i2v' : (scene.videoT2VPath ? 't2v' : null)
+      if (!videoPath) {
+        frames.push({ ordinal, rendererSceneId, status: 'video-not-found' })
+        continue
+      }
+      const res = await toolBridge.invoke('video.frames', {
+        rendererSceneId, videoPath, n: VIDEO_FRAMES_PER_SCENE, maxEdge: IMAGE_MAX_EDGE,
+      })
+      const got = res?.frames || []
+      for (const f of got) content.push({ type: 'image', data: f.data, mimeType: f.mimeType })
+      frames.push({ ordinal, rendererSceneId, source, status: 'ok', count: got.length })
+    }
+    for (const e of errors) frames.push({ ordinal: e.ordinal, status: e.error })
+    return { frames, content }
   }
 
   /**
@@ -374,6 +414,17 @@ export function createToolCore({
       // story state(fixedScenes/projectPath) + renderer snapshot 을 함께 읽는다.
       needs: ['storyCommands', 'toolBridge'],
       run: (args) => getSceneImages(args),
+    },
+    get_scene_video_frames: {
+      permission: 'R',              // 읽기 — 에이전트가 생성 영상의 프레임을 본다 (D12)
+      description: '지정한 씬(1-based ordinal)의 생성 영상에서 여러 프레임을 뽑아 이미지 블록으로 반환한다. 생략 시 전체 씬.',
+      inputSchema: {
+        type: 'object',
+        properties: { sceneNumbers: { type: 'array', items: { type: 'number' } } },
+        additionalProperties: false,
+      },
+      needs: ['storyCommands', 'toolBridge'],
+      run: (args) => getSceneVideoFrames(args),
     },
     story_confirm_synopsis: {
       permission: 'G',              // 사람이 확정하는 것 — 에이전트가 혼자 못 한다 (D9)

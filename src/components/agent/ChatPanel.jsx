@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { readBatchStatus } from '../../agent/batchStatus.js'
 import { registerToolBridgeHandlers } from '../../agent/toolBridgeHandlers.js'
 import { sceneSnapshot } from '../../agent/sceneBridge.js'
+import { extractVideoFrames } from '../../utils/videoFrames.js'
+import { resolveVideoSrc } from '../../utils/videoSrc.js'
 import { useOptionalI18n } from '../../hooks/useI18n'
 import en from '../../locales/en'
 import './ChatPanel.css'
@@ -230,6 +232,12 @@ export default function ChatPanel({ projectKey = null, batchStatusSources = {}, 
         }),
         // M3: main 의 get_scene_images 등이 ordinal 을 resolve 하도록 라이브 씬 배열(바이트 제거)을 준다.
         'scene.snapshot': () => sceneSnapshot(sceneSourcesRef.current),
+        // M3 D12: main 이 resolve 한 씬의 영상 경로를 Chromium video+canvas 로 프레임 추출한다.
+        // rendererSceneId 를 echo 로 되돌려 main 의 오배송 가드를 통과한다.
+        'video.frames': async ({ rendererSceneId, videoPath, n, maxEdge } = {}) => ({
+          rendererSceneId,
+          frames: await extractVideoFrames(resolveVideoSrc(null, videoPath), { n, maxEdge }),
+        }),
       },
     })
     return () => bridge.dispose()
