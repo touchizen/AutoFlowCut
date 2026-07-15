@@ -16,6 +16,7 @@ import { probeDurationMs } from '../story/audioProbe.js'
 import { DEFAULT_STORY_LLM, STORY_LLM_OPTIONS, setActiveStoryLlmCatalog } from '../api/llm/storyLlmCatalog.js'
 import { buildClaudeStoryLlmOptions, buildCodexStoryLlmOptions, resolveStoryLlmCatalog } from '../api/llm/storyLlmDiscovery.js'
 import { listCodexModels as defaultListCodexModels } from '../api/llm/codexAppServer.js'
+import { clampResearchMaxResults } from '../story/researchParams.js'
 
 // HIGH/Codex: renderer가 보낸 projectPath를 무검증으로 받으면 상대경로/traversal 경로로도
 // 스텝 머신이 만들어져 임의 파일시스템 위치에 script.md/scenes.json/story.json을 쓸 수 있다.
@@ -228,7 +229,7 @@ export function registerStoryIPC(ipcMain, commands) {
     commands.researchSearch({
       keyword: query ?? keyword,
       // m5(R1): maxResults를 1~50으로 클램프 — 과대 pool로 인한 상세조회 폭주/타임아웃 방지.
-      ...(maxResults != null ? { maxResults: Math.min(Math.max(1, Math.floor(maxResults)), 50) } : {}),
+      ...(maxResults != null ? { maxResults: clampResearchMaxResults(maxResults) } : {}),
       // 개선2: 일자 필터(none|week|month) — 지정 시에만 전달.
       ...(dateFilter ? { dateFilter } : {}),
     })))

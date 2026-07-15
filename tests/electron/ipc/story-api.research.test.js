@@ -112,12 +112,14 @@ describe('story:research-* IPC (guarded)', () => {
   })
 
   // m5(R1): maxResults는 1~50으로 클램프한다(과대 pool로 인한 상세조회 폭주/타임아웃 방지).
-  it('search(m5): maxResults를 1~50으로 클램프한다', async () => {
+  it('search(m5): maxResults를 floor한 뒤 1~50으로 클램프한다', async () => {
     const { projectToken } = await ipc.invoke('story:open', { projectPath: dir })
     await ipc.invoke('story:research-search', { projectToken, query: 'q', maxResults: 999 })
     expect(youtube.searchVideos).toHaveBeenCalledWith({ query: 'q', maxResults: 50 })
     await ipc.invoke('story:research-search', { projectToken, query: 'q', maxResults: 0 })
     expect(youtube.searchVideos).toHaveBeenCalledWith({ query: 'q', maxResults: 1 })
+    await ipc.invoke('story:research-search', { projectToken, query: 'q', maxResults: 7.9 })
+    expect(youtube.searchVideos).toHaveBeenCalledWith({ query: 'q', maxResults: 7 })
   })
 
   // M4(R1): fetch options(언어)가 machine → fetchTranscript langs까지 흐른다.

@@ -200,6 +200,75 @@ describe('Tool Core MCP inventory 조립', () => {
 //    S2(enum 이 Codex 에 도달 안 함 → 모델이 step 을 추측 → 승인 태움)와 **정확히 같은 부류**다.
 //    스키마가 검증보다 약하면, 그 차이만큼 사람의 승인이 낭비된다.
 describe('스키마는 검증만큼 말해야 한다 — 안 그러면 모델이 추측하고 승인이 탄다', () => {
+  it('research 8개 schema가 converter 지원 문법과 확정된 fail-closed 계약만 사용한다', () => {
+    const research = Object.fromEntries(createToolCore().list()
+      .filter((tool) => tool.name.startsWith('story_research_'))
+      .map((tool) => [tool.name, tool.inputSchema]))
+    const forbidden = []
+    const walk = (node, path = '$') => {
+      if (!node || typeof node !== 'object') return
+      for (const key of ['minimum', 'maximum', 'maxItems', 'minProperties']) {
+        if (Object.hasOwn(node, key)) forbidden.push(`${path}.${key}`)
+      }
+      if (node.type === 'integer') forbidden.push(`${path}.type=integer`)
+      for (const [key, value] of Object.entries(node)) {
+        if (Array.isArray(value)) value.forEach((child, index) => walk(child, `${path}.${key}[${index}]`))
+        else walk(value, `${path}.${key}`)
+      }
+    }
+
+    expect(Object.keys(research).sort()).toEqual([
+      'story_research_analyze',
+      'story_research_commit',
+      'story_research_factcheck',
+      'story_research_fetch_transcripts',
+      'story_research_search',
+      'story_research_select',
+      'story_research_skip',
+      'story_research_video_details',
+    ])
+    for (const [name, schema] of Object.entries(research)) {
+      expect(schema.additionalProperties, name).toBe(false)
+      expect(() => sharedZodFromJson(schema), name).not.toThrow()
+      walk(schema, name)
+    }
+    expect(forbidden).toEqual([])
+
+    expect(research.story_research_search.properties.keyword).toMatchObject({ minLength: 1, pattern: '\\S' })
+    expect(research.story_research_search.properties.maxResults.type).toBe('number')
+    expect(research.story_research_search.properties.dateFilter.enum).toEqual(['none', 'week', 'month'])
+    expect(research.story_research_fetch_transcripts.properties.videoIds.minItems).toBe(1)
+    expect(Object.keys(research.story_research_commit.properties)).toEqual(['adoptedIndices'])
+    expect(research.story_research_skip.properties).toEqual({})
+  })
+
+  it('research video id와 manual card shape가 adapter 뒤에도 그대로 검증된다', () => {
+    const tools = Object.fromEntries(createToolCore().list().map((tool) => [tool.name, tool]))
+    const selectSchema = tools.story_research_select.inputSchema
+    const manual = selectSchema.properties.manualVideos.items
+    const select = asSchema(adapterEntry.zodFromJson(selectSchema))
+    const fetch = asSchema(adapterEntry.zodFromJson(tools.story_research_fetch_transcripts.inputSchema))
+
+    expect(manual.required).toEqual(['videoId'])
+    expect(manual.additionalProperties).toBe(false)
+    expect(Object.keys(manual.properties).sort()).toEqual([
+      'channelTitle', 'durationSec', 'thumbnailUrl', 'title', 'uploadDate', 'videoId', 'viewCount',
+    ])
+    expect(manual.properties.videoId.pattern).toBe('^[A-Za-z0-9_-]+$')
+    expect(select.parse({
+      selectedVideoIds: ['vid_A-1'],
+      manualVideos: [{
+        videoId: 'manual_1', title: '수동', channelTitle: '', viewCount: null,
+        thumbnailUrl: 'https://example.test/t.jpg', durationSec: 0, uploadDate: '',
+      }],
+    })).toMatchObject({ selectedVideoIds: ['vid_A-1'] })
+    expect(fetch.parse({ videoIds: ['vid_A-1'], options: { language: 'ko' } }))
+      .toEqual({ videoIds: ['vid_A-1'], options: { language: 'ko' } })
+    expect(() => select.parse({ selectedVideoIds: ['a;rm -rf'] })).toThrow()
+    expect(() => fetch.parse({ videoIds: [] })).toThrow()
+    expect(() => select.parse({ manualVideos: [{ videoId: 'vidA', invented: true }] })).toThrow()
+  })
+
   it('speakers 배열의 item 이 무엇인지 말한다 — id/name 이 필수임을 모델이 알 수 있어야 한다', () => {
     const tool = createToolCore().list().find((t) => t.name === 'story_set_speakers')
     const speakers = tool.inputSchema.properties.speakers

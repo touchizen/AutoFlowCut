@@ -270,6 +270,14 @@ function makeNormalizationHarness({
     confirmSynopsis: vi.fn(async () => raw.confirmSynopsis ?? { ok: true, operationId: 'confirm-op' }),
     setSpeakers: vi.fn(async () => raw.setSpeakers ?? { ok: true, operationId: 'speakers-op' }),
     start: vi.fn(async () => raw.start ?? { operationId: 'start-op', outcome: { status: 'done' } }),
+    researchSearch: vi.fn(async () => raw.researchSearch ?? { videos: [] }),
+    researchVideoDetails: vi.fn(async () => raw.researchVideoDetails ?? { details: { videoId: 'vidA' } }),
+    researchSelect: vi.fn(async () => raw.researchSelect ?? { ok: true, operationId: 'select-op' }),
+    researchFetchTranscripts: vi.fn(async () => raw.researchFetchTranscripts ?? { transcripts: [] }),
+    researchAnalyze: vi.fn(async () => raw.researchAnalyze ?? { analysis: {} }),
+    researchFactCheck: vi.fn(async () => raw.researchFactCheck ?? { verifiedClaims: [] }),
+    researchCommit: vi.fn(async () => raw.researchCommit ?? { ok: true, operationId: 'commit-op' }),
+    researchSkip: vi.fn(async () => raw.researchSkip ?? { ok: true, operationId: 'skip-op' }),
   }
   const core = createToolCore({
     grantLedger: ledger,
@@ -642,6 +650,14 @@ describe('D8 — 전 툴 결과 어휘 불변식과 throw 경계', () => {
     })
     const args = {
       story_get_state: {},
+      story_research_search: { keyword: 'q' },
+      story_research_video_details: { videoId: 'vidA' },
+      story_research_select: {},
+      story_research_fetch_transcripts: { videoIds: ['vidA'] },
+      story_research_analyze: {},
+      story_research_factcheck: {},
+      story_research_commit: {},
+      story_research_skip: {},
       list_scenes: {},
       wait_batch: { type: 'scene' },
       wait_videos: { operationId: 'video-op' },

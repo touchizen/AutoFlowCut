@@ -19,6 +19,7 @@ import { invalidParamNames, zodFromJson } from './jsonSchemaToZod.js'
 import { STORY_TTS_PROVIDERS } from '../../src/config/storyTtsProviders.js'
 import { resolveSceneOrdinals } from '../story/sceneResolver.js'
 import { findSceneImageCandidate, resizeSpec } from './sceneImages.js'
+import { clampResearchMaxResults, normalizeResearchAdoptedIndices } from '../story/researchParams.js'
 
 // D11: 세로 이미지 긴 변 상한. 값은 스펙 고정(768). 토큰 경제상 하드코딩이 아니라 계약이다.
 const IMAGE_MAX_EDGE = 768
@@ -39,8 +40,31 @@ const VIDEO_PROGRESS_KEYS = ['done', 'total', 'failed', 'phase']
 // 모델이 빈 문자열/공백 문자열을 보내면 setSpeakers의 같은 검증에서 뒤늦게 실패해 승인이 낭비된다.
 // required만으로는 값의 존재만 말하므로, 실제 command가 요구하는 non-empty 계약도 함께 광고한다.
 const NON_EMPTY_STRING_SCHEMA = Object.freeze({ type: 'string', minLength: 1, pattern: '\\S' })
+const VIDEO_ID_SCHEMA = Object.freeze({ type: 'string', pattern: '^[A-Za-z0-9_-]+$' })
 const GENDER_SCHEMA = Object.freeze({ type: 'string', enum: ['male', 'female', 'unknown'] })
 const SFX_SOURCE_SCHEMA = Object.freeze({ type: 'string', enum: ['elevenlabs', 'library'] })
+
+const RESEARCH_OPTIONS_SCHEMA = Object.freeze({
+  type: 'object',
+  properties: { language: { type: 'string' } },
+  additionalProperties: false,
+})
+
+const RESEARCH_MANUAL_VIDEO_SCHEMA = Object.freeze({
+  type: 'object',
+  properties: {
+    videoId: VIDEO_ID_SCHEMA,
+    title: { type: 'string' },
+    channelTitle: { type: 'string' },
+    // ResearchPanel의 수동 URL 카드는 메타 미상 viewCount를 null로 저장한다.
+    viewCount: { oneOf: [{ type: 'number' }, { type: 'null' }] },
+    thumbnailUrl: { type: 'string' },
+    durationSec: { type: 'number' },
+    uploadDate: { type: 'string' },
+  },
+  required: ['videoId'],
+  additionalProperties: false,
+})
 
 const VOICE_SCHEMA = Object.freeze({
   oneOf: [
@@ -160,6 +184,18 @@ function agentStartStepParams(step, params) {
 }
 
 const D8_STATUSES = new Set(['done', 'error', 'aborted', 'rejected'])
+
+// research machine은 abort를 error 또는 부분 결과 flag로 돌려준다. normalizeToolResult는 D8 status를
+// 그대로 통과시키므로, research 도구만 이 공통 어댑터에서 사람 중단을 terminal aborted로 바꾼다.
+const researchRun = (fn) => async (args) => {
+  const r = await fn(args)
+  if (r?.error === 'aborted') return { status: 'aborted' }
+  if (r?.aborted === true) {
+    const { aborted, ...rest } = r
+    return { ...rest, status: 'aborted' }
+  }
+  return r
+}
 
 function publicVideoProgress(progress) {
   if (!progress || typeof progress !== 'object' || Array.isArray(progress)) return undefined
@@ -566,6 +602,113 @@ export function createToolCore({
       run: async () => (storyCommands.hasProject()
         ? { projectToken: storyCommands.projectToken, state: await storyCommands.getState() }
         : NO_PROJECT),
+    },
+    story_research_search: {
+      permission: 'R',
+      description: 'YouTube 영상을 키워드로 검색해 리서치 draft를 시작한다. 새 검색은 이전 선택·분석·팩트체크 draft를 초기화한다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          keyword: NON_EMPTY_STRING_SCHEMA,
+          maxResults: { type: 'number' },
+          dateFilter: { enum: ['none', 'week', 'month'] },
+        },
+        required: ['keyword'],
+        additionalProperties: false,
+      },
+      needs: 'storyCommands',
+      run: researchRun(({ keyword, maxResults, dateFilter }) => storyCommands.researchSearch({
+        keyword,
+        ...(maxResults != null ? { maxResults: clampResearchMaxResults(maxResults) } : {}),
+        ...(dateFilter && dateFilter !== 'none' ? { dateFilter } : {}),
+      })),
+    },
+    story_research_video_details: {
+      permission: 'R',
+      description: 'YouTube 영상 하나의 상세 정보를 온디맨드로 조회한다. 지원하지 않는 환경에서는 unsupported로 거부된다.',
+      inputSchema: {
+        type: 'object',
+        properties: { videoId: VIDEO_ID_SCHEMA },
+        required: ['videoId'],
+        additionalProperties: false,
+      },
+      needs: 'storyCommands',
+      run: researchRun((args) => storyCommands.researchVideoDetails(args)),
+    },
+    story_research_select: {
+      permission: 'R',
+      description: '분석할 YouTube 영상 선택과 수동 URL 카드를 리서치 draft에 저장한다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          selectedVideoIds: { type: 'array', items: VIDEO_ID_SCHEMA },
+          manualVideos: { type: 'array', items: RESEARCH_MANUAL_VIDEO_SCHEMA },
+        },
+        additionalProperties: false,
+      },
+      needs: 'storyCommands',
+      run: researchRun((args) => storyCommands.researchSelect(args)),
+    },
+    story_research_fetch_transcripts: {
+      permission: 'R',
+      description: '선택한 YouTube 영상의 자막을 가져와 리서치 draft에 저장한다. 다른 리서치 작업 중이면 busy로 거부된다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          videoIds: { type: 'array', items: VIDEO_ID_SCHEMA, minItems: 1 },
+          options: RESEARCH_OPTIONS_SCHEMA,
+        },
+        required: ['videoIds'],
+        additionalProperties: false,
+      },
+      needs: 'storyCommands',
+      run: researchRun((args) => storyCommands.researchFetchTranscripts(args)),
+    },
+    story_research_analyze: {
+      permission: 'G',
+      description: '확보한 선택 자막을 외부 LLM으로 구조 분석한다. 선택 자막이 없으면 no-transcripts-selected로 거부된다.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          videoIds: { type: 'array', items: VIDEO_ID_SCHEMA },
+          options: RESEARCH_OPTIONS_SCHEMA,
+        },
+        additionalProperties: false,
+      },
+      needs: 'storyCommands',
+      run: researchRun((args) => storyCommands.researchAnalyze(args)),
+    },
+    story_research_factcheck: {
+      permission: 'G',
+      description: '구조 분석에서 추출한 주장을 외부 LLM으로 팩트체크한다. 주장이 없으면 no-claims로 거부된다.',
+      inputSchema: {
+        type: 'object',
+        properties: { options: RESEARCH_OPTIONS_SCHEMA },
+        additionalProperties: false,
+      },
+      needs: 'storyCommands',
+      run: researchRun((args) => storyCommands.researchFactCheck(args)),
+    },
+    story_research_commit: {
+      permission: 'G',
+      description: '리서치 draft의 분석과 선택한 팩트체크 주장을 research.json에 확정한다. 분석이 없으면 no-analysis로 거부된다.',
+      inputSchema: {
+        type: 'object',
+        properties: { adoptedIndices: { type: 'array', items: { type: 'number' } } },
+        additionalProperties: false,
+      },
+      needs: 'storyCommands',
+      // analysis/verifiedClaims override는 열지 않는다. machine이 현재 draft만 정본으로 사용한다.
+      run: researchRun(({ adoptedIndices }) => storyCommands.researchCommit({
+        adoptedIndices: normalizeResearchAdoptedIndices(adoptedIndices),
+      })),
+    },
+    story_research_skip: {
+      permission: 'G',
+      description: '리서치를 건너뛰고 draft·확정본·자막 파일과 프로젝트 리서치 마커를 정리한다.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      needs: 'storyCommands',
+      run: researchRun(() => storyCommands.researchSkip()),
     },
     list_scenes: {
       permission: 'R',

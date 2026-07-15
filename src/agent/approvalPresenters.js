@@ -1,3 +1,5 @@
+import { normalizeResearchAdoptedIndices } from '../../electron/story/researchParams.js'
+
 function pointerToken(value) {
   return String(value).replace(/~/g, '~0').replace(/\//g, '~1')
 }
@@ -87,6 +89,24 @@ export const APPROVAL_KEY_DECISIONS = Object.freeze({
         { reviewOnly: expectedTypes('boolean'), style: expectedTypes('string') },
       ),
     }),
+  }),
+  story_research_analyze: Object.freeze({
+    root: decision(
+      ['videoIds', 'options'],
+      [],
+      { videoIds: expectedTypes('array'), options: expectedTypes('object') },
+    ),
+    options: decision(['language'], [], { language: expectedTypes('string') }),
+  }),
+  story_research_factcheck: Object.freeze({
+    root: decision(['options'], [], { options: expectedTypes('object') }),
+    options: decision(['language'], [], { language: expectedTypes('string') }),
+  }),
+  story_research_commit: Object.freeze({
+    root: decision(['adoptedIndices'], [], { adoptedIndices: expectedTypes('array') }),
+  }),
+  story_research_skip: Object.freeze({
+    root: decision([], []),
   }),
   update_visual_review: Object.freeze({
     root: decision(
@@ -693,6 +713,70 @@ function presentGenerateVideos(args, t) {
   }
 }
 
+function presentResearchLanguage(lines, args, t) {
+  if (!hasOwn(args, 'options') || !hasOwn(args.options, 'language')) return
+  lines.push({
+    text: t('agent.approvalResearchLanguage', { language: displayValue(args.options.language) }),
+    paths: ['/options/language'],
+  })
+}
+
+function presentResearchAnalyze(args, t) {
+  const lines = []
+  const suppliedIds = hasOwn(args, 'videoIds') && Array.isArray(args.videoIds) && args.videoIds.length > 0
+  lines.push({
+    text: t(suppliedIds ? 'agent.approvalResearchAnalyzeVideos' : 'agent.approvalResearchAnalyzeDraft', {
+      count: suppliedIds ? args.videoIds.length : 0,
+      ids: suppliedIds ? displayValue(args.videoIds) : '',
+    }),
+    paths: suppliedIds ? ['/videoIds'] : [],
+    headline: true,
+  })
+  lines.push({ text: t('agent.approvalResearchAnalyzeCost'), paths: [], danger: true })
+  presentResearchLanguage(lines, args, t)
+  return { lines, blocks: [] }
+}
+
+function presentResearchFactcheck(args, t) {
+  const lines = [
+    { text: t('agent.approvalResearchFactcheck'), paths: [], headline: true },
+    { text: t('agent.approvalResearchFactcheckCost'), paths: [], danger: true },
+  ]
+  presentResearchLanguage(lines, args, t)
+  return { lines, blocks: [] }
+}
+
+function presentResearchCommit(args, t) {
+  const suppliedIndices = hasOwn(args, 'adoptedIndices')
+  const adoptedIndices = suppliedIndices
+    ? normalizeResearchAdoptedIndices(args.adoptedIndices)
+    : undefined
+  return {
+    lines: [
+      {
+        text: t(suppliedIndices ? 'agent.approvalResearchCommitIndices' : 'agent.approvalResearchCommitDefault', {
+          count: suppliedIndices ? adoptedIndices.length : 0,
+          indices: suppliedIndices ? displayValue(adoptedIndices) : '',
+        }),
+        paths: suppliedIndices ? ['/adoptedIndices'] : [],
+        headline: true,
+      },
+      { text: t('agent.approvalResearchCommitPersist'), paths: [], danger: true },
+    ],
+    blocks: [],
+  }
+}
+
+function presentResearchSkip(_args, t) {
+  return {
+    lines: [
+      { text: t('agent.approvalResearchSkip'), paths: [], headline: true },
+      { text: t('agent.approvalResearchSkipDelete'), paths: [], danger: true },
+    ],
+    blocks: [],
+  }
+}
+
 /**
  * tool/args만으로 승인 문장을 만드는 순수 함수. 모르는 툴은 fail-closed UI가 처리하도록 null을 준다.
  * @returns {null|{lines: Array<{text:string, paths:string[], danger?:boolean}>, blocks: Array<{label:string, path:string, text:string}>}}
@@ -726,6 +810,16 @@ export function presentApproval(tool, args, t) {
     if (!Array.isArray(args.sceneNumbers) || args.sceneNumbers.length === 0) return null
     return presentGenerateVideos(args, t)
   }
+  if (tool === 'story_research_analyze') {
+    if (hasOwn(args, 'options') && !matchesDecision(args.options, toolDecision.options)) return null
+    return presentResearchAnalyze(args, t)
+  }
+  if (tool === 'story_research_factcheck') {
+    if (hasOwn(args, 'options') && !matchesDecision(args.options, toolDecision.options)) return null
+    return presentResearchFactcheck(args, t)
+  }
+  if (tool === 'story_research_commit') return presentResearchCommit(args, t)
+  if (tool === 'story_research_skip') return presentResearchSkip(args, t)
   if (tool === 'export_capcut') return presentExport(args, t, 'capcut')
   if (tool === 'export_premiere') return presentExport(args, t, 'premiere')
   return null

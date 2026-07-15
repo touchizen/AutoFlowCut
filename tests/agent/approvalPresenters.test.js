@@ -135,6 +135,13 @@ const coverageFixtures = {
   ],
   export_capcut: [{ force: true }, { force: false }],
   export_premiere: [{ force: true }, { force: false }],
+  story_research_analyze: [
+    { videoIds: ['vidA', 'vidB'], options: { language: 'ko' } },
+    {},
+  ],
+  story_research_factcheck: [{ options: { language: 'ko' } }, {}],
+  story_research_commit: [{ adoptedIndices: [0, 2] }, {}],
+  story_research_skip: [{}],
 }
 
 const typeMismatchFixtures = [
@@ -150,6 +157,12 @@ const typeMismatchFixtures = [
   ['story_start_step', { step: 'script', params: [] }],
   ['story_start_step', { step: 3 }],
   ['story_start_step', { step: 'script', params: { reviewOnly: 1 } }],
+  ['story_research_analyze', { videoIds: null }],
+  ['story_research_analyze', { options: null }],
+  ['story_research_analyze', { options: { language: 7 } }],
+  ['story_research_factcheck', { options: [] }],
+  ['story_research_factcheck', { options: { language: null } }],
+  ['story_research_commit', { adoptedIndices: null }],
   // 🔴 root 만 검사하면 **항목**의 계약 밖 shape 를 아는 척 서술한다. 배열 원소도 fail-closed 여야 한다.
   ['story_set_speakers', { speakers: [{ id: 1, name: '김철수' }] }],
   ['story_set_speakers', { speakers: [{ id: 'kim', name: '김철수', voice: 'typecast' }] }],
@@ -192,6 +205,18 @@ describe('approval presenter JSON path coverage', () => {
 })
 
 describe('approval presenter 출하·coverage 게이트', () => {
+  it.each([
+    ['story_research_analyze', { videoIds: ['vidA'], options: { language: 'ko' } }],
+    ['story_research_factcheck', { options: { language: 'ko' } }],
+    ['story_research_commit', { adoptedIndices: [0, 2] }],
+    ['story_research_skip', {}],
+  ])('%s G tool presenter가 non-null human-readable 요약을 만든다', (tool, args) => {
+    const presentation = presentApproval(tool, args, koT)
+    expect(presentation, `${tool} presenter가 없다`).not.toBeNull()
+    expect(presentation.lines.length).toBeGreaterThan(0)
+    expect(presentation.lines.some((line) => line.headline)).toBe(true)
+  })
+
   it('Tool Core의 모든 G/B 툴에는 presenter가 있다 — 미래 B 툴도 자동으로 이 게이트를 지난다', () => {
     const guarded = createToolCore().list().filter((tool) => tool.permission !== 'R')
 
@@ -369,6 +394,29 @@ describe('approval presenter와 Tool Core inputSchema는 함께 바뀐다', () =
 })
 
 describe('stepMachine에서 검증한 실제 효과만 서술한다', () => {
+  it('research analyze의 빈 videoIds는 machine과 같이 draft 선택 fallback으로 말한다', () => {
+    const presentation = presentApproval('story_research_analyze', { videoIds: [] }, koT)
+
+    expect(presentation.lines[0]).toMatchObject({
+      text: koT('agent.approvalResearchAnalyzeDraft'),
+      paths: [],
+      headline: true,
+    })
+    expect(presentation.lines[0].text).not.toContain('0개')
+  })
+
+  it('research commit은 machine에 전달되는 유효 인덱스만 세어 보여 준다', () => {
+    const presentation = presentApproval('story_research_commit', {
+      adoptedIndices: [1, 2.5, -1, 3],
+    }, koT)
+
+    expect(presentation.lines[0]).toMatchObject({
+      text: koT('agent.approvalResearchCommitIndices', { count: 2, indices: '[1,3]' }),
+      paths: ['/adoptedIndices'],
+      headline: true,
+    })
+  })
+
   it.each([
     [koT, /씬 3개/, /1, 4, 7/, /크레딧 1건/],
     [enT, /3 scenes/i, /1, 4, 7/, /1 credit/i],
