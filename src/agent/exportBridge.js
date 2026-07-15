@@ -14,9 +14,17 @@ export async function runAgentExport({ force, sources } = {}) {
   if (!gate.ok) return { success: false, error: gate.error }
 
   const result = await runExport()
-  // fixed-slot-missing/fixed-scenes-stale/fixed-clock-not-ready 등 실제 export 거부는 그대로 전파.
-  if (result?.success === false) return result
+  // 🔴 성공은 반드시 명시적 success:true 여야 한다. 핸들러 부재(undefined)나 실패({success:false})를
+  //    성공으로 오독하면 "done, targetPath 없음" 이라는 거짓말이 된다. fixed-slot-missing 등 실제 거부는
+  //    그대로 전파하고, 그 외 비-성공은 export-unavailable 로 닫는다.
+  if (result?.success !== true) {
+    return result?.success === false ? result : { success: false, error: 'export-unavailable' }
+  }
 
+  // NOTE(debt): sceneSummary 는 renderer 의 raw scenes 를 센다. image-first 는 exporter 가
+  // pairFixedSlots 부분집합만 내보내지만, fixed-slot completeness 게이트가 성공 시 전량을 보장하므로
+  // (all-or-refused) 성공 요약의 오차는 fixed set 밖 done+image 씬이 있을 때로 한정된다. audioSummary
+  // 는 renderer 가 아는 가져온 오디오만 본다(story 나레이션은 export 시점에 붙어 미집계). 둘 다 [M] 검증.
   return {
     success: true,
     targetPath: result?.path ?? result?.targetPath,

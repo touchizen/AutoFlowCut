@@ -39,6 +39,14 @@ describe('runAgentExport', () => {
     expect(r.audioSummary).toEqual({ source: 'none', tracks: 0 })
   })
 
+  // MINOR (Fable r3): 핸들러 부재(window.__mcpExport* 미등록)로 runExport 가 undefined 를 주면
+  // 성공으로 오독하면 안 된다 — 에이전트에게 "done, targetPath 없음" 이라는 거짓말이 된다.
+  it('runExport 가 성공 표식 없는 값(undefined)을 주면 export-unavailable 실패', async () => {
+    const runExport = vi.fn(async () => undefined)
+    const r = await runAgentExport({ force: false, sources: { running: false, scenes: [], runExport } })
+    expect(r).toEqual({ success: false, error: 'export-unavailable' })
+  })
+
   it('targetPath 는 path 또는 targetPath 어느 쪽이든 취한다', async () => {
     const runExport = vi.fn(async () => ({ success: true, targetPath: '/tp' }))
     const r = await runAgentExport({ force: false, sources: { running: false, scenes: [], runExport } })

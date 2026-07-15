@@ -20,10 +20,16 @@ describe('buildSceneSummary (slice 34)', () => {
     expect(buildSceneSummary(scenes)).toEqual({ total: 2, exported: 1, skippedNoImage: 0, skippedVideoOnly: 1 })
   })
 
-  it('이미지가 있어도 아직 생성 중(in-flight)이면 exported 아님 (done && hasMedia 둘 다 필요)', () => {
-    // 이미지는 있지만 status:'generating' — isSceneGenerationDone false. exporter 는 이걸 안 내보낸다.
+  it('이미지가 있어도 아직 생성 중(in-flight)이면 exported 아님 — 그리고 "이미지 없음"으로도 오라벨하지 않는다', () => {
+    // 이미지는 있지만 status:'generating' — isSceneGenerationDone false. exporter 는 이걸 안 내보내지만,
+    // 이유는 "이미지 없음"이 아니라 "아직 생성 중"이므로 어느 skip 버킷에도 안 들어간다 (정직한 라벨).
     const scenes = [done({ image: 'a' }), { status: 'generating', image: 'x' }]
-    expect(buildSceneSummary(scenes)).toEqual({ total: 2, exported: 1, skippedNoImage: 1, skippedVideoOnly: 0 })
+    expect(buildSceneSummary(scenes)).toEqual({ total: 2, exported: 1, skippedNoImage: 0, skippedVideoOnly: 0 })
+  })
+
+  it('오류 씬(이미지 있음, status:error)도 skippedNoImage 로 오라벨하지 않는다', () => {
+    const scenes = [{ status: 'error', image: 'x' }]
+    expect(buildSceneSummary(scenes)).toEqual({ total: 1, exported: 0, skippedNoImage: 0, skippedVideoOnly: 0 })
   })
 
   it('빈 배열 → 전부 0', () => {
