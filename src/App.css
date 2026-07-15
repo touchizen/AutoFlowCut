@@ -1745,6 +1745,7 @@ html, body {
   color: var(--text-secondary, #9aa0b4);
 }
 .results-table .col-status { width: 90px; }
+.results-table col.col-status { min-width: 0; }
 
 .results-table tr.status-generating {
   animation: gold-glow 1.5s ease-in-out infinite;

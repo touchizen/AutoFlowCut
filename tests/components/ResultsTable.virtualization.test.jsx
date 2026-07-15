@@ -1,5 +1,7 @@
 import { act, fireEvent, render, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 
 const counters = vi.hoisted(() => ({ modelCells: 0, loaders: 0, images: 0 }))
 
@@ -35,9 +37,25 @@ import ResultsTable from '../../src/components/ResultsTable'
 
 const TABLE_ROW_HEIGHT = 76
 const GRID_ROW_HEIGHT = 180
+const appCss = readFileSync(path.resolve(__dirname, '../../src/App.css'), 'utf-8')
+  .replace(/\/\*[\s\S]*?\*\//g, '')
 let gridWidth = 1000
 let resizeObservers = []
 let scrollCalls = []
+
+function cssDeclaration(selector, property) {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const rule = appCss.match(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`))
+  if (!rule) return null
+  const declaration = rule[1].match(new RegExp(`(?:^|;)\\s*${property}\\s*:\\s*([^;]+)`))
+  return declaration ? declaration[1].trim() : null
+}
+
+function resultColumnWidth(className) {
+  if (className === 'col-prompt') return 'auto'
+  const selector = className === 'col-check' ? '.col-check' : `.results-table .${className}`
+  return cssDeclaration(selector, 'width')
+}
 
 const rect = (width, height, top = 0) => ({
   width,
@@ -130,6 +148,53 @@ beforeEach(() => {
 })
 
 describe('ResultsTable virtualization', () => {
+  it.each([
+    {
+      label: 'without selection',
+      selectableProps: {},
+      columns: [
+        ['col-id', '28px'],
+        ['col-img', '72px'],
+        ['col-prompt', 'auto'],
+        ['col-model', '104px'],
+        ['col-status', '90px'],
+      ],
+    },
+    {
+      label: 'with selection',
+      selectableProps: {
+        selectable: true,
+        onToggle: vi.fn(),
+        onToggleAll: vi.fn(),
+      },
+      columns: [
+        ['col-check', '32px'],
+        ['col-id', '28px'],
+        ['col-img', '72px'],
+        ['col-prompt', 'auto'],
+        ['col-model', '104px'],
+        ['col-status', '90px'],
+      ],
+    },
+  ])('defines identical class-driven columns on the header and body tables $label', ({ selectableProps, columns }) => {
+    const { container } = render(
+      <ResultsTable items={itemsOf(2)} mediaType="image" {...selectableProps} />
+    )
+    const tables = [
+      container.querySelector('.results-table-header > table.results-table'),
+      container.querySelector('.results-table-body > table.results-table'),
+    ]
+
+    for (const table of tables) {
+      const colgroup = table.querySelector(':scope > colgroup')
+      expect(table.firstElementChild).toBe(colgroup)
+      const cols = [...colgroup.children]
+      expect(cols.map(col => [col.className, resultColumnWidth(col.className)])).toEqual(columns)
+      expect(cols.every(col => col.style.width === '')).toBe(true)
+      expect(cssDeclaration('.results-table col.col-status', 'min-width')).toBe('0')
+    }
+  })
+
   it('keeps 5,029 table items to a non-empty semantic row window without a transient full render', async () => {
     const { container } = render(<ResultsTable items={itemsOf(5029)} mediaType="image" />)
 
@@ -148,13 +213,18 @@ describe('ResultsTable virtualization', () => {
     expect(spacers).toHaveLength(2)
     for (const spacer of spacers) {
       const cell = spacer.querySelector(':scope > td')
-      expect(cell.colSpan).toBe(5)
+      expect(cell.colSpan).toBe(1)
       expect(cell.style.padding).toBe('0px')
       expect(cell.style.border).toBe('0px')
     }
+    const mountedRows = [...tbody.querySelectorAll(':scope > tr[data-index]')]
+    const firstIndex = Number(mountedRows[0].dataset.index)
+    const lastIndex = Number(mountedRows[mountedRows.length - 1].dataset.index)
+    expect(Number.parseFloat(spacers[0].querySelector('td').style.height)).toBe(firstIndex * TABLE_ROW_HEIGHT)
+    expect(Number.parseFloat(spacers[1].querySelector('td').style.height)).toBe((5029 - lastIndex - 1) * TABLE_ROW_HEIGHT)
   })
 
-  it('uses six-column table spacers when selection is enabled', async () => {
+  it('keeps table spacers to one cell when selection is enabled', async () => {
     const { container } = render(
       <ResultsTable
         items={itemsOf(201)}
@@ -171,7 +241,7 @@ describe('ResultsTable virtualization', () => {
       expect(mountedRows).toBeLessThan(40)
     })
     for (const spacer of container.querySelectorAll('.results-table-body [data-virtual-spacer]')) {
-      expect(spacer.querySelector('td').colSpan).toBe(6)
+      expect(spacer.querySelector('td').colSpan).toBe(1)
     }
   })
 
@@ -181,6 +251,7 @@ describe('ResultsTable virtualization', () => {
     expect(container.querySelectorAll('.results-table-body tbody > tr:not([data-virtual-spacer])')).toHaveLength(200)
     const spacers = container.querySelectorAll('.results-table-body [data-virtual-spacer] > td')
     expect(spacers).toHaveLength(2)
+    expect([...spacers].every(cell => cell.colSpan === 1)).toBe(true)
     expect([...spacers].every(cell => cell.style.height === '0px')).toBe(true)
   })
 
@@ -273,6 +344,35 @@ describe('ResultsTable virtualization', () => {
       expect(view.container.querySelector('.results-grid-row')?.querySelectorAll(':scope > .result-card')).toHaveLength(5)
     })
     expect(view.container.querySelector('.result-card')).toBe(firstCard)
+  })
+
+  it('preserves card identity and focus below the threshold when a resize keeps the column count', async () => {
+    const stableProps = {
+      mediaType: 'image',
+      layout: 'grid',
+      selectable: true,
+      onToggle: vi.fn(),
+      onToggleAll: vi.fn(),
+    }
+    const view = render(<ResultsTable items={itemsOf(200)} {...stableProps} />)
+
+    await waitFor(() => {
+      expect(view.container.querySelector('.results-grid-row')?.querySelectorAll(':scope > .result-card')).toHaveLength(5)
+    })
+    const firstCard = view.container.querySelector('.result-card')
+    const firstCheckbox = firstCard.querySelector('.card-check')
+    firstCheckbox.focus()
+    expect(document.activeElement).toBe(firstCheckbox)
+
+    gridWidth = 900
+    act(() => notifyResize())
+
+    await waitFor(() => {
+      expect(view.container.querySelector('.results-grid-row')?.querySelectorAll(':scope > .result-card')).toHaveLength(5)
+    })
+    expect(view.container.querySelector('.result-card')).toBe(firstCard)
+    expect(view.container.querySelector('.card-check')).toBe(firstCheckbox)
+    expect(document.activeElement).toBe(firstCheckbox)
   })
 
   it('renders every grid card at the 200-item threshold with the stable row structure', () => {

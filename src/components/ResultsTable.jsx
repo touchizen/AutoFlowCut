@@ -30,6 +30,19 @@ const GRID_MIN_CARD_WIDTH = {
 const EMPTY_RESULTS = []
 const EMPTY_VIRTUAL_ITEMS = Object.freeze([])
 
+function ResultTableColgroup({ selectable }) {
+  return (
+    <colgroup>
+      {selectable && <col className="col-check" />}
+      <col className="col-id" />
+      <col className="col-img" />
+      <col className="col-prompt" />
+      <col className="col-model" />
+      <col className="col-status" />
+    </colgroup>
+  )
+}
+
 function measureResultRow(element) {
   return Math.round(element.getBoundingClientRect().height)
 }
@@ -134,6 +147,10 @@ export default function ResultsTable({
     index => data[index]?.id ?? `row-${index}`,
     [data]
   )
+  // Row membership changes with the column count, so itemsPerRow intentionally participates in the
+  // row key. Crossing a column boundary remounts cards, loses focus, and can retain keyed hover/video
+  // state whenever a remounted item stays in-window; below the threshold cleanup is entirely inactive.
+  // This is an accepted row-virtualization tradeoff; same-column resizes preserve card identity.
   const getGridRowKey = useCallback(
     rowIndex => `${itemsPerRow}:${data[rowIndex * itemsPerRow]?.id ?? rowIndex}`,
     [data, itemsPerRow]
@@ -663,6 +680,7 @@ export default function ResultsTable({
 
       <div className="results-table-header">
         <table className="results-table">
+          <ResultTableColgroup selectable={selectable} />
           <thead>
             <tr>
               {selectable && (
@@ -686,10 +704,11 @@ export default function ResultsTable({
       </div>
       <div ref={tableScrollRef} className="results-table-body">
       <table className="results-table">
+        <ResultTableColgroup selectable={selectable} />
         <tbody>
           <tr key="virtual-spacer-top" data-virtual-spacer="top">
             <td
-              colSpan={selectable ? 6 : 5}
+              colSpan={1}
               style={{
                 height: shouldVirtualize && tableVirtualItems.length > 0
                   ? tableVirtualItems[0].start
@@ -704,7 +723,7 @@ export default function ResultsTable({
             : data.map((item, index) => renderTableRow(item, index))}
           <tr key="virtual-spacer-bottom" data-virtual-spacer="bottom">
             <td
-              colSpan={selectable ? 6 : 5}
+              colSpan={1}
               style={{
                 height: shouldVirtualize
                   ? (
