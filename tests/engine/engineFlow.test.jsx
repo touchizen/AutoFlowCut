@@ -17,6 +17,7 @@ const mockFlowCollectGeneration = vi.fn()
 const mockFlowClearGenerations = vi.fn()
 const mockFlowUploadReference = vi.fn()
 const mockFlowGenerateCharacter = vi.fn()
+const mockFlowRerollCharacter = vi.fn()
 const mockFlowUploadCharacterEntity = vi.fn()
 const mockFlowFetchMedia = vi.fn()
 const mockFlowGenerateVideoT2V = vi.fn()
@@ -42,6 +43,7 @@ beforeEach(() => {
     flowClearGenerations: mockFlowClearGenerations,
     flowUploadReference: mockFlowUploadReference,
     flowGenerateCharacter: mockFlowGenerateCharacter,
+    flowRerollCharacter: mockFlowRerollCharacter,
     flowUploadCharacterEntity: mockFlowUploadCharacterEntity,
     flowFetchMedia: mockFlowFetchMedia,
     flowGenerateVideoT2V: mockFlowGenerateVideoT2V,
@@ -58,7 +60,7 @@ beforeEach(() => {
 })
 
 // Import after mocks are set up in beforeEach
-import { useFlowEngine, resolveEffectiveProjectId, isFlowAuthError, markFlowAuthFailure, planMentionRouting, planUnresolvedMentionFallback } from '../../src/engine/engineFlow'
+import { useFlowEngine, resolveEffectiveProjectId, isFlowAuthError, markFlowAuthFailure, planMentionRouting, planUnresolvedMentionFallback, planCharacterGeneration } from '../../src/engine/engineFlow'
 
 // #R8-11: Flow auth-error sentinel — pure unit tests
 describe('isFlowAuthError / markFlowAuthFailure (#R8-11)', () => {
@@ -1191,24 +1193,26 @@ describe('useFlowEngine (#R33) — staleMention propagation', () => {
   const synced = { id: 1, name: 'king', type: 'character', entityId: 'e1', flowNameSyncStatus: 'synced', mediaId: 'm1' }
 
   it('submitGeneration: flowGenerateScene staleMention → propagated on the failed result', async () => {
-    mockFlowGenerateScene.mockResolvedValue({ success: false, error: '멘션 선택 실패: king', retry: true, staleMention: 'king' })
+    mockFlowGenerateScene.mockResolvedValue({ success: false, errorKind: 'option-not-found', error: 'Mention selection failed', retry: true, staleMention: 'king' })
     const { result } = renderHook(() => useFlowEngine())
     let res
     await act(async () => {
       res = await result.current.submitGeneration('@king walks', [], { references: [synced] })
     })
     expect(res.success).toBe(false)
+    expect(res.errorKind).toBe('option-not-found')
     expect(res.staleMention).toBe('king')
   })
 
   it('generateImage: flowGenerateScene staleMention → propagated', async () => {
-    mockFlowGenerateScene.mockResolvedValue({ success: false, error: '멘션 선택 실패: king', retry: true, staleMention: 'king' })
+    mockFlowGenerateScene.mockResolvedValue({ success: false, errorKind: 'option-not-found', error: 'Mention selection failed', retry: true, staleMention: 'king' })
     const { result } = renderHook(() => useFlowEngine())
     let res
     await act(async () => {
       res = await result.current.generateImage('@king walks', [], { references: [synced] })
     })
     expect(res.success).toBe(false)
+    expect(res.errorKind).toBe('option-not-found')
     expect(res.staleMention).toBe('king')
   })
 })
@@ -1387,7 +1391,10 @@ describe('useFlowEngine — #R36 T2V @멘션 segments', () => {
       res = await result.current.generateVideoT2V('hero walks', 'veo', '16:9', 6, null, '720p', [{ mediaId: 'm1' }], {})
     })
     expect(res.success).toBe(false)
-    expect(res.error).toMatch(/레퍼런스 이미지를 지원하지 않습니다/)
+    expect(res).toMatchObject({
+      errorKind: 'flow-t2v-reference-images-unsupported',
+      error: 'Flow text-to-video does not support reference images',
+    })
     expect(mockFlowGenerateVideoT2V).not.toHaveBeenCalled()
   })
 
@@ -1428,6 +1435,26 @@ describe('useFlowEngine — 캐릭터 ref 는 /characters 에서 생성한다', 
     expect(call.seed).toBe(42)
     expect(call.model).toBe('Nano Banana 2') // 선택된 이미지 모델은 캐릭터 경로도 따라야 한다
     expect(res).toMatchObject({ success: true, entityId: 'e-1', workflowId: 'w-1', registered: true })
+  })
+
+  // #R37: reroll 배선은 **의도적으로 꺼져 있다**. 리뷰에서 두 결함이 확인됐다:
+  //   (1) reroll 재등록은 buildEntityImageBody(imageReferences 만)를 써서 displayName 을 등록하지
+  //       않는데도 registered:true 를 돌려준다 → 이름 없는 entity 가 'synced' 로 마킹되고 멘션 피커가
+  //       이름을 못 찾는다. 이 작업이 rename 경로를 금지한 것과 같은 버그 부류다.
+  //   (2) reroll 핸들러는 aspectRatio/seed/model 을 버린다(create 의 arm 블록이 없다).
+  // 이 테스트는 "무심코 다시 켜는 것"을 막는다. 켜려면 위 둘을 고치고 실앱에서 눈으로 검증할 것.
+  it('캐릭터 재생성은 항상 create 로 간다 — reroll 은 결함이 남아 꺼져 있다', async () => {
+    const existingOpts = { ...charOpts, ref: { ...charOpts.ref, entityId: 'e-existing', workflowId: 'w-old' } }
+    const { result } = renderHook(() => useFlowEngine())
+    await act(async () => { await result.current.generateImage('new look', [], existingOpts) })
+
+    expect(mockFlowRerollCharacter).not.toHaveBeenCalled()
+    expect(mockFlowGenerateCharacter).toHaveBeenCalled()
+  })
+
+  it('planCharacterGeneration 은 entityId 가 있어도 create 를 고른다', () => {
+    expect(planCharacterGeneration({ entityId: 'e1', workflowId: 'w1' })).toBe('create')
+    expect(planCharacterGeneration({})).toBe('create')
   })
 
   it('scene/style ref 는 그대로 메인 컴포저(flowGenerateImage)로 간다', async () => {

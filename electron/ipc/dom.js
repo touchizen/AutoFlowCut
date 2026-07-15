@@ -208,9 +208,11 @@ export function registerDomIPC(ipcMain, deps) {
   // 메인 창 콘솔에서 `await window.electronAPI.dumpFlowSettings()` 로 호출. (flow-settings-dumper 주입본 실행)
   ipcMain.handle('flow:dump-settings', async () => {
     const flowView = getFlowView()
+    // locale-error-ok: Developer-only flow:dump-settings output is read in DevTools and never rendered in the product UI.
     if (!flowView) return { error: 'Flow view not ready (flow 모드로 전환했는지 확인)' }
     try {
       return await flowView.webContents.executeJavaScript(
+        // locale-error-ok: Developer-only flow:dump-settings output is read in DevTools and never rendered in the product UI.
         'typeof __autoflowcut_dump_settings__ === "function" ? __autoflowcut_dump_settings__() : { error: "dumper 미주입 — Flow 페이지 로드 후 다시" }'
       )
     } catch (e) {

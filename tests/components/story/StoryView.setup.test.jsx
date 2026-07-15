@@ -406,27 +406,32 @@ describe('StoryView 설정 화면(setup)', () => {
   })
 
   it('파일 읽기 실패 시 기존 scriptText 를 지우지 않는다', async () => {
-    // FileReader 가 실패하면 onload 없이 onerror/onloadend(result=null)만 온다 —
-    // 붙여넣어 둔 대본이 빈 문자열로 날아가면 안 된다.
-    const RealFileReader = globalThis.FileReader
-    class FailingFileReader {
-      readAsText() {
-        this.result = null
-        this.onerror?.(new Error('read-fail'))
-        this.onloadend?.()
-      }
-    }
-    globalThis.FileReader = FailingFileReader
-    try {
-      render(<StoryView pipeline={pipeline()} />)
-      const drop = screen.getByTestId('story-import-drop')
-      fireEvent.change(drop.querySelector('textarea'), { target: { value: '기존 붙여넣은 대본' } })
-      const file = new File(['x'], 'script.txt', { type: 'text/plain' })
-      fireEvent.drop(drop, { dataTransfer: { files: [file] } })
-      await new Promise((r) => setTimeout(r, 0))
-      expect(drop.querySelector('textarea')).toHaveValue('기존 붙여넣은 대본')
-    } finally {
-      globalThis.FileReader = RealFileReader
-    }
+    // 읽기가 실패해도 붙여넣어 둔 대본이 날아가면 안 된다.
+    //   (읽기는 이제 FileReader 가 아니라 file.arrayBuffer() → 인코딩 감지 경로다. Windows 에서
+    //    저장한 CP949/UTF-16 대본이 UTF-8 로 강제 해석돼 깨지던 것을 고치면서 바뀌었다.)
+    render(<StoryView pipeline={pipeline()} />)
+    const drop = screen.getByTestId('story-import-drop')
+    fireEvent.change(drop.querySelector('textarea'), { target: { value: '기존 붙여넣은 대본' } })
+
+    const file = new File(['x'], 'script.txt', { type: 'text/plain' })
+    file.arrayBuffer = () => Promise.reject(new Error('read-fail'))
+    fireEvent.drop(drop, { dataTransfer: { files: [file] } })
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(drop.querySelector('textarea')).toHaveValue('기존 붙여넣은 대본')
+  })
+
+  it('Windows 에서 저장한 CP949 대본도 깨지지 않고 들어온다', async () => {
+    render(<StoryView pipeline={pipeline()} />)
+    const drop = screen.getByTestId('story-import-drop')
+
+    // "안녕하세요" (CP949) — UTF-8 로 읽으면 깨진 글자가 된다.
+    const cp949 = Uint8Array.from([0xbe, 0xc8, 0xb3, 0xe7, 0xc7, 0xcf, 0xbc, 0xbc, 0xbf, 0xe4])
+    const file = new File(['ignored'], 'script.txt', { type: 'text/plain' })
+    file.arrayBuffer = () => Promise.resolve(cp949.buffer)
+    fireEvent.drop(drop, { dataTransfer: { files: [file] } })
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(drop.querySelector('textarea')).toHaveValue('안녕하세요')
   })
 })

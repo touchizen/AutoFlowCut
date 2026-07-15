@@ -409,7 +409,7 @@ export function createToolCore({
         }
         // 툴마다 필요한 것이 다르다. 전부에게 storyCommands 를 요구하면 renderer 만 읽는 툴이 못 돈다.
         if (tool.needs === 'storyCommands' && !storyCommands) {
-          throw new Error('toolCore.use(storyCommands) 가 호출되지 않았다')
+          throw new Error('toolCore.use(storyCommands) was not called')
         }
         if (tool.needs === 'toolBridge' && !toolBridge) {
           throw new Error(`${name} requires toolBridge`)

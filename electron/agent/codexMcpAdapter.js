@@ -26,7 +26,8 @@ export function createAdapterHandlers({ tools, rpc, elicitInput, approvalTimeout
   //    (실측: 60,013ms 에 `-32001 Request timed out`). Codex 가 죽인 게 아니다.
   //    → 기본값에 기대지 않는다. 안 주면 여기서 터진다.
   if (!Number.isFinite(approvalTimeoutMs) || approvalTimeoutMs <= 0) {
-    throw new Error('approvalTimeoutMs is required — MCP SDK 기본 60초가 승인 창을 죽인다')
+    // 영어로 둔다 — electron 에러는 IPC 로 새면 영어 사용자가 한글을 본다. (MCP SDK 기본 60초가 승인 창을 죽인다.)
+    throw new Error('approvalTimeoutMs is required — the MCP SDK default of 60s would kill the approval dialog')
   }
 
   const permissionByName = new Map(tools.map((t) => [t.name, t.permission]))

@@ -58,8 +58,11 @@ describe('collectAgentDomImages', () => {
     const r = await collectAgentDomImages({
       scan, sessionFetch, sleep: noSleep, existingMediaIds: ['char'], pollMs: 1, maxWaitMs: 5,
     })
-    expect(r.success).toBe(false)
-    expect(r.error).toMatch(/timeout/i)
+    expect(r).toMatchObject({
+      success: false,
+      errorKind: 'agent-image-result-timeout',
+      error: 'Agent image result timed out',
+    })
     expect(sessionFetch).not.toHaveBeenCalled()
   })
 
@@ -112,7 +115,10 @@ describe('collectAgentDomVideos', () => {
     const r = await collectAgentDomVideos({
       scan, sleep: noSleep, existingMediaIds: ['old'], pollMs: 1, maxWaitMs: 5,
     })
-    expect(r.success).toBe(false)
-    expect(r.error).toMatch(/timeout/i)
+    expect(r).toMatchObject({
+      success: false,
+      errorKind: 'agent-video-result-timeout',
+      error: 'Agent video result timed out',
+    })
   })
 })

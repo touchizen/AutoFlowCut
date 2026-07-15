@@ -5,6 +5,8 @@
  * 원본 오디오 컷 구간 계산, 음성 중앙 정렬 등을 처리.
  */
 
+import { normalizeSrtText } from './parsers'
+
 /**
  * 파일명에서 타임코드(ms) 추출
  * - 4자리: `소은_01_0159` → 01:59 (1분 59초)
@@ -58,7 +60,8 @@ export function parseSrtTimecode(timecode) {
  */
 export function parseSRT(srtText) {
   const entries = []
-  const blocks = srtText.trim().split(/\n\s*\n/)
+  // Windows SRT 는 CRLF 다 — \r 을 남기면 자막 텍스트 끝에 붙어 들어온다.
+  const blocks = normalizeSrtText(srtText).trim().split(/\n\s*\n/)
 
   for (const block of blocks) {
     const lines = block.trim().split('\n')

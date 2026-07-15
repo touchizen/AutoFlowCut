@@ -11,6 +11,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, act } from '@testing-library/react'
+import { syncRefToFlow } from '../../src/utils/flowCharacterSync'
 
 vi.mock('../../src/hooks/useFileSystem', () => ({
   fileSystemAPI: {
@@ -123,6 +124,37 @@ describe('ReferenceDetailModal — entity field propagation (Codex #3)', () => {
     )
     // #R34: 업로드 시작 시 모달은 즉시 닫힌다(Flow UI 진행 가시화).
     expect(baseProps.onClose).toHaveBeenCalled()
+  })
+
+  it('같은 Flow project/ref sync 중이면 상세 모달 이미지 교체가 entity 를 추가 업로드하지 않는다', async () => {
+    let resolveSync
+    const syncRef = { ...baseRef, data: 'data:image/png;base64,OLD' }
+    const syncPromise = syncRefToFlow(syncRef, vi.fn(() => new Promise((resolve) => { resolveSync = resolve })), {
+      projectId: 'flow-project-modal', scopeToken: 'flow::',
+    })
+    for (let i = 0; i < 4; i++) await Promise.resolve()
+
+    const onUpload = vi.fn().mockResolvedValue({ success: true, entityId: 'duplicate' })
+    const onUpdate = vi.fn()
+    const { container } = render(
+      <ReferenceDetailModal
+        {...baseProps}
+        reference={baseRef}
+        appMode="flow"
+        flowProjectId="flow-project-modal"
+        onUpload={onUpload}
+        onUpdate={onUpdate}
+      />
+    )
+
+    await triggerDropZoneUpload(container)
+
+    expect(onUpload).not.toHaveBeenCalled()
+    expect(onUpdate).toHaveBeenCalledWith(0, expect.objectContaining({ syncing: false }))
+
+    for (let i = 0; i < 20 && !resolveSync; i++) await Promise.resolve()
+    resolveSync({ success: true, entityId: 'e1', workflowId: 'w1', mediaId: 'm1', registered: true })
+    await syncPromise
   })
 
   it('#R34: 이름이 빈 ref 모달 업로드 → 파일명(hero)으로 Flow 등록 + onUpdate name=hero', async () => {

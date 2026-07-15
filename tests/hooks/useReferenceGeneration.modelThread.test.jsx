@@ -27,7 +27,7 @@ vi.mock('../../src/utils/urls', () => ({ cleanBase64: vi.fn((s) => s), toDataURL
 
 import { useReferenceGeneration } from '../../src/hooks/useReferenceGeneration'
 
-function makeHook(mode) {
+function makeHook(mode, refOverrides = {}) {
   const genAPI = {
     getAccessToken: vi.fn().mockResolvedValue('token'),
     mode,
@@ -36,7 +36,7 @@ function makeHook(mode) {
   }
   const { result } = renderHook(() => useReferenceGeneration({
     settings: { saveMode: 'folder', projectName: 'proj', imageBatchCount: 1, imageModel: 'gemini-3-custom', aspectRatio: '16:9' },
-    references: [{ id: 1, prompt: 'a hero', type: 'character', status: 'pending' }],
+    references: [{ id: 1, prompt: 'a hero', type: 'character', status: 'pending', ...refOverrides }],
     setReferences: vi.fn(), genAPI,
     addPendingSave: vi.fn(), openSettings: vi.fn(), t: (k) => k, generationQueue: null,
   }))
@@ -52,6 +52,15 @@ describe('useReferenceGeneration — model threading + engine label', () => {
     expect(genAPI.generateImage).toHaveBeenCalledWith(
       expect.any(String), expect.anything(),
       expect.objectContaining({ model: 'gemini-3-custom' })
+    )
+  })
+
+  it('Flow character 재생성은 기존 entityId/workflowId 를 engine 에 전달한다', async () => {
+    const { result, genAPI } = makeHook('flow', { entityId: 'e-existing', workflowId: 'w-old' })
+    await act(async () => { await result.current.handleGenerateRef(0) })
+    expect(genAPI.generateImage).toHaveBeenCalledWith(
+      expect.any(String), expect.anything(),
+      expect.objectContaining({ ref: expect.objectContaining({ entityId: 'e-existing', workflowId: 'w-old' }) })
     )
   })
 

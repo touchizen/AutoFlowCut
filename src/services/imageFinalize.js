@@ -50,7 +50,7 @@ export async function finalizeGeneratedImage({
       sceneUpdate: {
         status: 'error',
         error: result.error || 'No images',
-        errorKind: result.authFailed ? 'auth' : null,
+        errorKind: result.authFailed ? 'auth' : (result.errorKind ?? null),
       },
     }
   }

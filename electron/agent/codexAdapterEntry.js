@@ -29,7 +29,8 @@ export { zodFromJson } from './jsonSchemaToZod.js'
 /** env 하나라도 없으면 **뜨지 않는다.** 반쯤 설정된 채 뜨면 게이트가 어디서 새는지 알 수 없다. */
 function requiredEnv(name) {
   const v = process.env[name]
-  if (!v) throw new Error(`${name} is required — adapter 는 반쯤 설정된 채로 뜨지 않는다`)
+  // 영어로 둔다 — electron 에러는 IPC 로 renderer 에 새면 영어 사용자가 한글을 본다. (adapter 는 반쯤 설정된 채로 뜨지 않는다.)
+  if (!v) throw new Error(`${name} is required — the adapter must not start half-configured`)
   return v
 }
 

@@ -21,7 +21,13 @@ function makeIpcMain() {
   }
 }
 
-function makeDeps({ agentOn = false, captureResponses = [] } = {}) {
+function makeDeps({
+  agentOn = false,
+  captureResponses = [],
+  ensureAgentOffResult = { success: true },
+  ensureAgentOnResult = { success: true },
+  clickResult = { success: true },
+} = {}) {
   let pending = null
   let generateClicks = 0
   const flowView = {
@@ -42,17 +48,20 @@ function makeDeps({ agentOn = false, captureResponses = [] } = {}) {
     getCurrentMode: () => 'flow',
     getFlowAgentOn: () => agentOn,
     ensureOnProjectComposer: vi.fn(async () => ({ ok: true })),
+    ensureAgentOff: vi.fn(async () => ensureAgentOffResult),
+    ensureAgentOn: vi.fn(async () => ensureAgentOnResult),
     configureFlowMode: vi.fn(async () => ({ success: true })),
     setFlowPageInject: vi.fn(async () => ({ success: true })),
     clearFlowPageInject: vi.fn(async () => {}),
     trustedClickOnFlowView: vi.fn(async () => {
+      if (!clickResult.success) return clickResult
       // 생성 버튼 클릭 시점에 arm 된 pending 을 즉시 resolve → clickAndCaptureGeneration 이
       //   genPromise 로 바로 빠진다(120s timeout 우회). captureResponses 로 응답 상태 제어.
       if (pending && typeof pending.resolve === 'function') {
         generateClicks++
         pending.resolve({ responses: captureResponses })
       }
-      return { success: true }
+      return clickResult
     }),
     getPendingGeneration: () => pending,
     setPendingGeneration: (v) => { pending = v },
@@ -68,6 +77,52 @@ function makeDeps({ agentOn = false, captureResponses = [] } = {}) {
 const PID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
 
 describe('#R33: flow:generate-scene forces IMAGE mode + injects aspectRatio', () => {
+  it('fails closed before mutation or submit when app Agent is OFF but the page cannot be turned OFF', async () => {
+    const ipc = makeIpcMain()
+    const { deps } = makeDeps({ ensureAgentOffResult: { success: false, state: 'still_on' } })
+    registerCharacterIPC(ipc, deps)
+
+    const result = await ipc.invoke('flow:generate-scene', {
+      prompt: 'a cat',
+      segments: [{ type: 'text', text: 'a cat' }],
+      projectId: PID,
+    })
+
+    expect(result).toMatchObject({
+      success: false,
+      errorKind: 'flow-agent-off-failed',
+      error: 'Could not turn Flow Agent off',
+    })
+    expect(deps.ensureAgentOff).toHaveBeenCalledTimes(1)
+    expect(deps.ensureAgentOn).not.toHaveBeenCalled()
+    expect(deps.configureFlowMode).not.toHaveBeenCalled()
+    expect(deps.setFlowPageInject).not.toHaveBeenCalled()
+    expect(deps.trustedClickOnFlowView).not.toHaveBeenCalled()
+  })
+
+  it('fails closed before mutation or submit when app Agent is ON but the page cannot be turned ON', async () => {
+    const ipc = makeIpcMain()
+    const { deps } = makeDeps({ agentOn: true, ensureAgentOnResult: { success: false, state: 'still_off' } })
+    registerCharacterIPC(ipc, deps)
+
+    const result = await ipc.invoke('flow:generate-scene', {
+      prompt: 'a cat',
+      segments: [{ type: 'text', text: 'a cat' }],
+      projectId: PID,
+    })
+
+    expect(result).toMatchObject({
+      success: false,
+      errorKind: 'flow-agent-on-failed',
+      error: 'Could not turn Flow Agent on',
+    })
+    expect(deps.ensureAgentOn).toHaveBeenCalledTimes(1)
+    expect(deps.ensureAgentOff).not.toHaveBeenCalled()
+    expect(deps.configureFlowMode).not.toHaveBeenCalled()
+    expect(deps.setFlowPageInject).not.toHaveBeenCalled()
+    expect(deps.trustedClickOnFlowView).not.toHaveBeenCalled()
+  })
+
   it('16:9 → configureFlowMode(IMAGE, 1) + inject LANDSCAPE, then clears inject', async () => {
     const ipc = makeIpcMain()
     const { deps } = makeDeps()
@@ -94,6 +149,8 @@ describe('#R33: flow:generate-scene forces IMAGE mode + injects aspectRatio', ()
     // 순서: 모드 전환 → 주입 → 정리
     expect(deps.configureFlowMode.mock.invocationCallOrder[0])
       .toBeLessThan(deps.setFlowPageInject.mock.invocationCallOrder[0])
+    expect(deps.ensureAgentOff.mock.invocationCallOrder[0])
+      .toBeLessThan(deps.configureFlowMode.mock.invocationCallOrder[0])
     expect(deps.setFlowPageInject.mock.invocationCallOrder[0])
       .toBeLessThan(deps.clearFlowPageInject.mock.invocationCallOrder[0])
   })
@@ -131,6 +188,27 @@ describe('#R33: flow:generate-scene forces IMAGE mode + injects aspectRatio', ()
 })
 
 describe('#R33: flow:generate-scene 5xx (HTTP 500) transient retry', () => {
+  it('returns a coded, content-free Generate click failure', async () => {
+    const ipc = makeIpcMain()
+    const { deps } = makeDeps({
+      clickResult: { success: false, error: '사용자 캐릭터 Zed 버튼 클릭 실패' },
+    })
+    registerCharacterIPC(ipc, deps)
+
+    const res = await ipc.invoke('flow:generate-scene', {
+      segments: [{ type: 'text', text: 'private prompt' }],
+      projectId: PID,
+    })
+
+    expect(res).toMatchObject({
+      success: false,
+      errorKind: 'generate-button-click-failed',
+      error: 'Could not click Generate',
+    })
+    expect(res.error).not.toContain('Zed')
+    expect(res.error).not.toContain('private prompt')
+  })
+
   it('retries once on 500 then returns retry:true; inject cleared', async () => {
     const ipc = makeIpcMain()
     // 캡처 응답이 항상 500 → 1회 재시도 후에도 500 → 실패(retry:true)
@@ -144,6 +222,10 @@ describe('#R33: flow:generate-scene 5xx (HTTP 500) transient retry', () => {
     })
 
     expect(res.success).toBe(false)
+    expect(res).toMatchObject({
+      errorKind: 'scene-generation-failed',
+      error: 'Scene generation failed',
+    })
     expect(res.status).toBe(500)
     expect(res.retry).toBe(true)            // 5xx → 상위 재시도 신호
     expect(getGenerateClicks()).toBe(2)     // 최초 + 1 재시도
@@ -161,6 +243,10 @@ describe('#R33: flow:generate-scene 5xx (HTTP 500) transient retry', () => {
     })
 
     expect(res.success).toBe(false)
+    expect(res).toMatchObject({
+      errorKind: 'scene-generation-failed',
+      error: 'Scene generation failed',
+    })
     expect(res.status).toBe(400)
     expect(res.retry).toBeFalsy()
     expect(getGenerateClicks()).toBe(1)     // 4xx → 재시도 없음

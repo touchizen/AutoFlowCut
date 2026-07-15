@@ -24,48 +24,71 @@ export function isToggleOn(el) {
   return false
 }
 
-/** Locate the compose Agent toggle by role/label/text heuristics. */
+/**
+ * Locate the compose Agent toggle from its untranslated state attributes.
+ *
+ * Live English/Korean dumps contain exactly one button[aria-pressed] in the
+ * composer. Scope from the Slate editor instead of searching the page so an
+ * unrelated pressed button elsewhere cannot be trusted-clicked. Translated
+ * Agent text is only a second-line disambiguator when the scope has >1 state
+ * control; ambiguity fails closed.
+ */
 export function findAgentToggle(doc) {
-  const cands = Array.from(doc.querySelectorAll('button, [role="switch"], [role="checkbox"], [role="button"], input[type="checkbox"]'))
-  const hasToggleAttr = (el) => el.getAttribute('role') === 'switch' || el.getAttribute('role') === 'checkbox'
-    || el.hasAttribute('aria-pressed') || el.hasAttribute('aria-checked')
-  // 1) Strongest signal: a real toggle (aria-pressed/checked or role=switch) labelled Agent.
-  //    The confirmed markup is <button aria-pressed><span class="content">에이전트</span>.
-  //    This also rejects the adjacent aria-haspopup="dialog" "에이전트 요청" button (no toggle attr).
-  for (const el of cands) {
-    if (!hasToggleAttr(el)) continue
-    const t = (el.textContent || '').trim()
-    const al = el.getAttribute('aria-label') || ''
-    if (/agent|에이전트/i.test(t) || /agent|에이전트/i.test(al)) return el
+  const editor = doc.querySelector("[data-slate-editor='true']")
+  if (!editor) return null
+  const STATE_SELECTOR = 'button[aria-pressed], [role="switch"][aria-checked], [role="checkbox"][aria-checked]'
+  let candidates = []
+  for (let scope = editor.parentElement; scope && scope !== doc.body && scope !== doc.documentElement; scope = scope.parentElement) {
+    candidates = Array.from(scope.querySelectorAll(STATE_SELECTOR))
+    if (candidates.length > 0) break
   }
-  // 2) Fallback: a button whose text is exactly Agent / 에이전트.
-  for (const el of cands) {
-    if (/^(agent|에이전트)$/i.test((el.textContent || '').trim())) return el
-  }
-  return null
+  if (candidates.length === 1) return candidates[0]
+  if (candidates.length === 0) return null
+  const named = candidates.filter((el) => {
+    const text = (el.textContent || '').trim()
+    const ariaLabel = el.getAttribute('aria-label') || ''
+    return /agent|에이전트/i.test(text) || /agent|에이전트/i.test(ariaLabel)
+  })
+  return named.length === 1 ? named[0] : null
 }
 
 /** Page expression returning the agent toggle ELEMENT (for trustedClickOnFlowView). */
-export const AGENT_TOGGLE_SELECTOR = `(${findAgentToggle.toString()})(document)`
+export const AGENT_TOGGLE_SELECTOR = `(function() {
+  const find = ${findAgentToggle.toString()};
+  return find(document);
+})()`
 
 /**
  * Snapshot every "agent-ish" control plus the page context — for when findAgentToggle
  * returns null and fails generation closed.
  *
- * findAgentToggle only accepts a candidate that carries a toggle attribute
- * (aria-pressed/aria-checked/role=switch) AND is labelled agent/에이전트. When it
- * rejects everything we lose the reason, and a user report becomes unfalsifiable —
- * markup change, locale, and collapsed-viewport all look identical from the log.
- * This keeps the rejected candidates and the context that separates those causes.
+ * findAgentToggle scopes state-bearing controls from the Slate composer and fails
+ * closed when more than one remains after its second-line text disambiguation.
+ * When it rejects everything we lose the reason, and a user report becomes
+ * unfalsifiable — markup change, ambiguity, and collapsed viewport otherwise look
+ * identical. Keep every scoped state candidate plus the surrounding page context.
  */
 export function scanAgentToggleCandidates(doc) {
   const win = doc.defaultView
-  const cands = Array.from(doc.querySelectorAll('button, [role="switch"], [role="checkbox"], [role="button"], input[type="checkbox"]'))
+  const STATE_SELECTOR = 'button[aria-pressed], [role="switch"][aria-checked], [role="checkbox"][aria-checked]'
+  const editor = doc.querySelector("[data-slate-editor='true']")
+  let scoped = []
+  if (editor) {
+    for (let scope = editor.parentElement; scope && scope !== doc.body && scope !== doc.documentElement; scope = scope.parentElement) {
+      scoped = Array.from(scope.querySelectorAll(STATE_SELECTOR))
+      if (scoped.length > 0) break
+    }
+  }
+  const diagnosticCandidates = scoped.length > 0
+    ? scoped
+    : Array.from(doc.querySelectorAll('button, [role="switch"], [role="checkbox"], [role="button"], input[type="checkbox"]'))
+  const cands = diagnosticCandidates
     .map((el) => ({
       el,
       icons: Array.from(el.querySelectorAll('i, [class*="symbols"], [class*="google-symbols"]')).map((i) => (i.textContent || '').trim()),
     }))
     .filter(({ el, icons }) => {
+      if (scoped.length > 0) return true
       const al = el.getAttribute('aria-label') || ''
       const t = (el.textContent || '').trim()
       return /agent|에이전트/i.test(al) || /agent|에이전트/i.test(t) || icons.some((i) => /spark/.test(i))
@@ -90,6 +113,7 @@ export function scanAgentToggleCandidates(doc) {
       lang: doc.documentElement.lang || null,
       url: (doc.location && doc.location.href) || null,
       readyState: doc.readyState || null,
+      scopedToggleCount: scoped.length,
       // 컴포즈 에디터가 떠 있는지 — 없으면 페이지가 아직 안 그려진 것(하이드레이션/뷰포트 문제)이고,
       // 있는데도 토글이 없으면 Flow 마크업이 바뀐 것이다. 이 한 줄이 두 원인을 가른다.
       hasComposeEditor: !!(doc.querySelector("[data-slate-editor='true']")
@@ -144,38 +168,104 @@ export function findAgentChatCloseButton(doc) {
 export const AGENT_CHAT_CLOSE_SELECTOR = `(${findAgentChatCloseButton.toString()})(document)`
 
 /**
- * Locate the "에이전트 설정"(agent settings / defaults) panel's close/back button.
- * 이 패널은 '이미지 생성 기본값'·'동영상 생성 기본값' 라벨을 갖고 컴포즈 바의 Agent 토글을
- * 가릴 수 있다 → 토글 전에 헤더 X / 뒤로가기 버튼으로 닫는다. (ensureAgentOn 의 인라인
- * CLOSE_PANEL 셀렉터를 추출 — ensureAgentOff 와 공유.)
+ * Locate the settings content from untranslated roles/states and Material icons.
+ * The live panel contains one radio group, two aspect tablists, two count
+ * tablists, two model-menu triggers, and one plain save action.
  */
-export function findAgentSettingsCloseButton(doc) {
-  const isVis = (e) => { if (!e) return false; const r = e.getBoundingClientRect(); const s = getComputedStyle(e); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none' }
-  const CLOSE_ICONS = ['close', 'arrow_back', 'arrow_back_ios', 'arrow_back_ios_new', 'chevron_left', 'keyboard_backspace', 'west', 'keyboard_arrow_left']
-  const isClose = (b) => {
-    if (Array.from(b.querySelectorAll('i,[class*="symbols"]')).some(i => CLOSE_ICONS.includes((i.textContent || '').trim()))) return true
-    return /close|닫기|back|뒤로/i.test(b.getAttribute('aria-label') || '')
-  }
-  const IMG = '이미지 생성 기본값', VID = '동영상 생성 기본값'
-  let panel = null
-  const labels = Array.from(doc.querySelectorAll('span,div')).filter(e => { const t = (e.textContent || '').trim(); return t === IMG || t === VID })
-  for (const lab of labels) {
-    let p = lab
-    for (let i = 0; i < 16 && p.parentElement; i++) { p = p.parentElement; const t = p.textContent || ''; if (t.includes(IMG) && t.includes(VID)) { panel = p; break } }
-    if (panel) break
-  }
-  if (!panel) return null
-  let scope = panel
-  for (let up = 0; up < 5 && scope; up++) {
-    const btn = Array.from(scope.querySelectorAll('button')).filter(isVis).find(isClose)
-    if (btn) return btn
-    scope = scope.parentElement
+export function findAgentSettingsPanel(doc) {
+  const iconTexts = (el) => Array.from(el.querySelectorAll('i, [class*="symbols"], [class*="google-symbols"]'))
+    .map((i) => (i.textContent || '').trim())
+  const groups = Array.from(doc.querySelectorAll('[role="radiogroup"]'))
+  for (const group of groups) {
+    if (group.querySelectorAll('[role="radio"]').length < 2) continue
+    for (let panel = group.parentElement; panel && panel !== doc.body && panel !== doc.documentElement; panel = panel.parentElement) {
+      const tablists = Array.from(panel.querySelectorAll('[role="tablist"]'))
+      const aspectLists = tablists.filter((list) => iconTexts(list).includes('crop_16_9'))
+      const menuTriggers = panel.querySelectorAll('button[aria-haspopup="menu"]')
+      const plainActions = Array.from(panel.querySelectorAll('button')).filter((button) => (
+        !button.hasAttribute('role')
+        && !button.hasAttribute('aria-haspopup')
+        && iconTexts(button).length === 0
+      ))
+      if (tablists.length >= 4 && aspectLists.length === 2 && menuTriggers.length >= 2 && plainActions.length === 1) {
+        return panel
+      }
+    }
   }
   return null
 }
 
+/** Return the image/video settings sections within a located settings panel. */
+export function findAgentSettingsSections(panel) {
+  if (!panel) return { image: null, video: null }
+  const iconTexts = (el) => Array.from(el.querySelectorAll('i, [class*="symbols"], [class*="google-symbols"]'))
+    .map((i) => (i.textContent || '').trim())
+  const aspectLists = Array.from(panel.querySelectorAll('[role="tablist"]'))
+    .filter((list) => iconTexts(list).includes('crop_16_9'))
+  const imageLists = aspectLists.filter((list) => (
+    iconTexts(list).includes('crop_landscape')
+    || Array.from(list.querySelectorAll('[role="tab"]')).some((tab) => (tab.id || '').endsWith('-trigger-LANDSCAPE_4_3'))
+  ))
+  const videoLists = aspectLists.filter((list) => !imageLists.includes(list))
+  const sectionFor = (list) => {
+    if (!list) return null
+    for (let section = list.parentElement; section && section !== panel; section = section.parentElement) {
+      if (section.querySelectorAll('[role="tablist"]').length >= 2
+        && section.querySelectorAll('button[aria-haspopup="menu"]').length === 1) return section
+    }
+    return null
+  }
+  return {
+    image: imageLists.length === 1 ? sectionFor(imageLists[0]) : null,
+    video: videoLists.length === 1 ? sectionFor(videoLists[0]) : null,
+  }
+}
+
+/** Locate the one plain action button (Save) in the settings content. */
+export function findAgentSettingsSaveButton(panel) {
+  if (!panel) return null
+  const iconTexts = (el) => Array.from(el.querySelectorAll('i, [class*="symbols"], [class*="google-symbols"]'))
+    .map((i) => (i.textContent || '').trim())
+  const actions = Array.from(panel.querySelectorAll('button')).filter((button) => (
+    !button.hasAttribute('role')
+    && !button.hasAttribute('aria-haspopup')
+    && iconTexts(button).length === 0
+  ))
+  return actions.length === 1 ? actions[0] : null
+}
+
+function findAgentSettingsCloseButtonInPanel(doc, panel) {
+  if (!panel) return null
+  const win = doc.defaultView
+  const isVisible = (el) => {
+    if (!el) return false
+    const rect = el.getBoundingClientRect()
+    const style = win && win.getComputedStyle ? win.getComputedStyle(el) : null
+    return rect.width > 0 && rect.height > 0
+      && (!style || (style.visibility !== 'hidden' && style.display !== 'none'))
+  }
+  const BACK_ICONS = ['arrow_back', 'arrow_back_ios', 'arrow_back_ios_new', 'chevron_left', 'keyboard_backspace', 'west', 'keyboard_arrow_left']
+  const isBack = (button) => Array.from(button.querySelectorAll('i, [class*="symbols"], [class*="google-symbols"]'))
+    .some((icon) => BACK_ICONS.includes((icon.textContent || '').trim()))
+  for (let scope = panel; scope && scope !== doc.body && scope !== doc.documentElement; scope = scope.parentElement) {
+    const matches = Array.from(scope.querySelectorAll('button')).filter((button) => isVisible(button) && isBack(button))
+    if (matches.length === 1) return matches[0]
+    if (matches.length > 1) return null
+  }
+  return null
+}
+
+/** Locate the settings panel's locale-invariant arrow-back close control. */
+export function findAgentSettingsCloseButton(doc) {
+  return findAgentSettingsCloseButtonInPanel(doc, findAgentSettingsPanel(doc))
+}
+
 /** Page expression returning the agent-settings panel close button ELEMENT. */
-export const AGENT_SETTINGS_CLOSE_SELECTOR = `(${findAgentSettingsCloseButton.toString()})(document)`
+export const AGENT_SETTINGS_CLOSE_SELECTOR = `(function() {
+  const findPanel = ${findAgentSettingsPanel.toString()};
+  const findClose = ${findAgentSettingsCloseButtonInPanel.toString()};
+  return findClose(document, findPanel(document));
+})()`
 
 /**
  * ⚠️ 주입한 함수는 절대 "이름으로" 호출하지 않는다 — 반드시 const 에 담아 그 변수로 호출한다.

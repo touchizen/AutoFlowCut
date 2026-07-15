@@ -51,11 +51,13 @@ describe('ensureOnProjectComposer — Flow error page', () => {
 
     const res = await ensureOnProjectComposer(flowView, ID)
 
-    expect(res.ok).toBe(false)
+    expect(res).toMatchObject({
+      ok: false,
+      errorKind: 'flow-project-open-failed',
+      error: 'Could not open the Flow project',
+    })
     // The message the user actually reads must name the real problem. "Check that Flow is on
     // the 모든 미디어 screen" is what sent the reporter looking in the wrong place.
-    expect(res.error).toMatch(/프로젝트/)
-    expect(res.error).not.toMatch(/모든 미디어/)
   })
 
   it('recovers via home like flow:open-project does, and proceeds once the project loads', async () => {
@@ -93,8 +95,11 @@ describe('ensureOnProjectComposer — Flow error page', () => {
 
     const res = await ensureOnProjectComposer(flowView, ID)
 
-    expect(res.ok).toBe(false)
-    expect(res.error).toMatch(/읽을 수 없/)
+    expect(res).toMatchObject({
+      ok: false,
+      errorKind: 'flow-page-unreadable',
+      error: 'Could not read the Flow page',
+    })
   })
 
   it('accepts only the composer path — not a project id hiding in the query string', async () => {

@@ -24,15 +24,23 @@ function makeIpcMain() {
   return { handle: (c, fn) => handlers.set(c, fn), invoke: (c, p) => handlers.get(c)({}, p) }
 }
 
-function makeDeps({ captureResponses = [{ status: 200, body: OK_BODY }], applyNameResult = { ok: true, value: '준호' } } = {}) {
+function makeDeps({
+  captureResponses = [{ status: 200, body: OK_BODY }],
+  applyNameResult = { ok: true, value: '준호' },
+  uploadResponse = null,
+  clickResult = { success: true },
+} = {}) {
   let pending = null
   const flowView = {
     webContents: {
       // 에디터 ready 폴링/버튼 enable 은 truthy 면 되고, injectPrompt 는 {success:true} 를 기대한다.
       //   이름 적용 스크립트(FLOW_APPLY_NAME_PROBE)는 {ok, value} 계약이라 따로 응답한다.
-      executeJavaScript: vi.fn(async (script) => (
-        String(script).includes('name input not found') ? applyNameResult : { success: true }
-      )),
+      executeJavaScript: vi.fn(async (script) => {
+        const source = String(script)
+        if (source.includes('name input not found')) return applyNameResult
+        if (uploadResponse && source.includes('/flow/uploadImage')) return uploadResponse
+        return { success: true }
+      }),
       focus: vi.fn(),
       sendInputEvent: vi.fn(),
       loadURL: vi.fn(async () => {}),
@@ -52,8 +60,9 @@ function makeDeps({ captureResponses = [{ status: 200, body: OK_BODY }], applyNa
     setFlowPageInject: vi.fn(async () => ({ success: true })),
     clearFlowPageInject: vi.fn(async () => {}),
     trustedClickOnFlowView: vi.fn(async () => {
+      if (!clickResult.success) return clickResult
       if (pending && typeof pending.resolve === 'function') pending.resolve({ responses: captureResponses })
-      return { success: true }
+      return clickResult
     }),
     getPendingGeneration: () => pending,
     setPendingGeneration: (v) => { pending = v },
@@ -145,7 +154,40 @@ describe('flow:generate-character injects aspectRatio/seed', () => {
     const res = await ipc.invoke('flow:generate-character', { prompt: 'p', projectId: PID, aspectRatio: '16:9' })
     expect(res.success).toBe(false)
     expect(res.status).toBe(400)
+    expect(res).toMatchObject({
+      errorKind: 'character-generation-failed',
+      error: 'Character generation failed',
+    })
+    expect(res.error).not.toContain('bad')
     expect(deps.clearFlowPageInject).toHaveBeenCalledTimes(1)
+  })
+
+  it('응답 본문이 없으면 generation-response-timeout kind를 반환한다', async () => {
+    const ipc = makeIpcMain()
+    const { deps } = makeDeps({ captureResponses: [] })
+    registerCharacterIPC(ipc, deps)
+
+    const res = await ipc.invoke('flow:generate-character', { prompt: 'p', projectId: PID })
+
+    expect(res).toMatchObject({
+      success: false,
+      errorKind: 'generation-response-timeout',
+      error: 'Generation response timed out',
+    })
+  })
+
+  it('응답을 해석할 수 없으면 generation-response-invalid kind를 반환한다', async () => {
+    const ipc = makeIpcMain()
+    const { deps } = makeDeps({ captureResponses: [{ status: 200, body: '{}' }] })
+    registerCharacterIPC(ipc, deps)
+
+    const res = await ipc.invoke('flow:generate-character', { prompt: 'p', projectId: PID })
+
+    expect(res).toMatchObject({
+      success: false,
+      errorKind: 'generation-response-invalid',
+      error: 'Generation response was invalid',
+    })
   })
 
   it('arm 실패면 생성하지 않고 best-effort clear 후 retry 신호를 준다', async () => {
@@ -158,6 +200,82 @@ describe('flow:generate-character injects aspectRatio/seed', () => {
     expect(res.retry).toBe(true)
     expect(deps.trustedClickOnFlowView).not.toHaveBeenCalledWith(expect.stringContaining('arrow_forward'))
     expect(deps.clearFlowPageInject).toHaveBeenCalled()
+  })
+})
+
+describe('flow character IPC coded failure responses', () => {
+  it.each([
+    ['flow:generate-character', { prompt: 'private prompt', projectId: PID }],
+    ['flow:reroll-character', { entityId: 'entity-1', prompt: 'private prompt', projectId: PID }],
+  ])('%s returns a coded, content-free Generate click failure', async (channel, payload) => {
+    const ipc = makeIpcMain()
+    const { deps } = makeDeps({
+      clickResult: { success: false, error: '사용자 캐릭터 Zed 버튼 클릭 실패' },
+    })
+    registerCharacterIPC(ipc, deps)
+
+    const res = await ipc.invoke(channel, payload)
+
+    expect(res).toMatchObject({
+      success: false,
+      errorKind: 'generate-button-click-failed',
+      error: 'Could not click Generate',
+    })
+    expect(res.error).not.toContain('Zed')
+    expect(res.error).not.toContain('사용자')
+  })
+
+  it('reroll preserves an invalid-response kind', async () => {
+    const ipc = makeIpcMain()
+    const { deps } = makeDeps({ captureResponses: [{ status: 200, body: '{}' }] })
+    registerCharacterIPC(ipc, deps)
+
+    const res = await ipc.invoke('flow:reroll-character', {
+      entityId: 'entity-1', prompt: 'p', projectId: PID,
+    })
+
+    expect(res).toMatchObject({
+      success: false,
+      errorKind: 'generation-response-invalid',
+      error: 'Generation response was invalid',
+    })
+  })
+
+  it.each([
+    ['flow:register-character-entity', { entityId: 'e', workflowId: 'w', displayName: 'private name' }],
+    ['flow:rename-character', { entityId: 'e', displayName: 'private name' }],
+  ])('%s returns a coded missing-session failure', async (channel, payload) => {
+    const ipc = makeIpcMain()
+    const { deps } = makeDeps()
+    registerCharacterIPC(ipc, deps)
+
+    const res = await ipc.invoke(channel, { ...payload, projectId: PID })
+
+    expect(res).toMatchObject({
+      success: false,
+      errorKind: 'flow-access-token-unavailable',
+      error: 'Flow access token unavailable',
+    })
+    expect(res.error).not.toContain('private name')
+  })
+
+  it('upload returns a coded invalid-response failure without the response body', async () => {
+    const ipc = makeIpcMain()
+    const { deps } = makeDeps({
+      uploadResponse: { status: 200, respBody: '{"privateName":"Zed"}' },
+    })
+    registerCharacterIPC(ipc, deps)
+
+    const res = await ipc.invoke('flow:upload-character-entity', {
+      base64: 'data:image/png;base64,AA==', displayName: 'Zed', projectId: PID,
+    })
+
+    expect(res).toMatchObject({
+      success: false,
+      errorKind: 'character-upload-response-invalid',
+      error: 'Character upload response was invalid',
+    })
+    expect(res.error).not.toContain('Zed')
   })
 })
 

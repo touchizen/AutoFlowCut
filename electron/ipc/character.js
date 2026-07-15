@@ -23,6 +23,7 @@ import {
   buildCharacterResult,
   downloadFifeAsBase64,
   isStaleEntityErrorBody,
+  isStaleRegistrationResponse,
   parseUploadImageResponse,
   buildCharactersUrl,
 } from '../flow-character-api.js'
@@ -92,6 +93,7 @@ export function registerCharacterIPC(ipcMain, deps) {
     // #R33: 씬(@멘션) 생성도 generate-image 와 동일하게 이미지 모드 강제 + 화면비 주입에 필요.
     //   안 쓰면 컴포저의 직전 상태(영상/9:16)를 그대로 따라가 영상·잘못된 비율로 생성된다.
     configureFlowMode, setFlowPageInject, clearFlowPageInject, applyAgentDefaults,
+    ensureAgentOff, ensureAgentOn,
     // #R33: entities PATCH 호스트를 region 에 맞춰 동적 해석(없으면 API_BASE fallback).
     getApiBase,
     // #R35: 멘션 씬 비동기 제출용 — flow-api.js async 이미지와 동일한 다중 pending 추적 Map.
@@ -130,7 +132,7 @@ export function registerCharacterIPC(ipcMain, deps) {
   //   P2-1: pendingGeneration 을 클릭 "직전"에 arm 한다 — 클릭 후 arm 하면 매우 빠른 400/실패
   //   응답이 arm 전에 도착해 main 의 report-response 가 버릴 수 있다(미스). setAt -2s fudge 와
   //   함께 클릭 직후 시작되는 요청을 안정적으로 잡는다.
-  //   반환: { clickError?, timeout?, resp0, body, status } (resp0 = responses[0]).
+  //   반환: { clickError?, clickErrorKind?, timeout?, resp0, body, status } (resp0 = responses[0]).
   async function clickAndCaptureGeneration(flowView, { timeoutMs = 120000 } = {}) {
     let timeout = null
     let ownPending = null
@@ -161,11 +163,20 @@ export function registerCharacterIPC(ipcMain, deps) {
       click = await trustedClickOnFlowView(GENERATE_BTN_SELECTOR, { required: true, step: 'character-submit' })
     } catch (e) {
       cleanupOwn()
-      return { clickError: e?.message || '생성 버튼 클릭 예외' }
+      return {
+        clickErrorKind: 'generate-button-click-failed',
+        clickError: 'Could not click Generate',
+      }
     }
     // R7-P2: 클릭 실패 시 timeout 도 반드시 clear — 안 하면 120초 뒤 콜백이 그때 살아있는 다른
     //   pendingGeneration 을 지운다(arm 한 pending 삭제 + 타이머 정리).
-    if (!click || !click.success) { cleanupOwn(); return { clickError: click?.error || '생성 버튼 클릭 실패' } }
+    if (!click || !click.success) {
+      cleanupOwn()
+      return {
+        clickErrorKind: 'generate-button-click-failed',
+        clickError: 'Could not click Generate',
+      }
+    }
     const genResult = await genPromise
     const resp0 = genResult && !genResult.error && genResult.responses && genResult.responses[0]
     return { timeout: !!(genResult && genResult.timeout), resp0, body: resp0 && resp0.body, status: resp0 && resp0.status }
@@ -301,7 +312,7 @@ export function registerCharacterIPC(ipcMain, deps) {
     return flowView.webContents.executeJavaScript(`(function(){
       try{
         var i=document.querySelector(${JSON.stringify(A2_FILE_SEL)});
-        if(!i) return {success:false, error:'file input 없음'};
+        if(!i) return {success:false, error:'File input not found'};
         if(i.__afOrigClick){ try{ i.click=i.__afOrigClick }catch(_){}; try{ delete i.__afOrigClick }catch(_){} }
         var bin=atob(${JSON.stringify(base64)}); var by=new Uint8Array(bin.length);
         for(var k=0;k<bin.length;k++) by[k]=bin.charCodeAt(k);
@@ -441,7 +452,11 @@ export function registerCharacterIPC(ipcMain, deps) {
     // 1) /characters 컴포저 진입 — #R7-14(R4-4 sibling): TARGET projectId 를 넘겨 드리프트한
     //    탭에서 엉뚱한 프로젝트의 characters 페이지에 엔티티를 만드는 것을 막는다(URL 검증+이동).
     const onPage = await ensureOnCharactersPage(flowView, projectId)
-    if (!onPage) return { success: false, error: 'characters 컴포저 진입 실패(에디터 없음)' }
+    if (!onPage) return {
+      success: false,
+      errorKind: 'character-composer-unavailable',
+      error: 'Character composer unavailable',
+    }
 
     // 2) 프롬프트 주입 — execCommand 동작 위해 flowView 를 일시적으로 보이게 + 포커스 + 에디터 trusted click.
     const mainWindow = getMainWindow && getMainWindow()
@@ -472,7 +487,12 @@ export function registerCharacterIPC(ipcMain, deps) {
         .catch(() => false)
       if (!enabled) await sleep(1000)
     }
-    if (!enabled) return { success: false, error: '생성 버튼 enable 안 됨(프롬프트 미인식)', retry: true }
+    if (!enabled) return {
+      success: false,
+      errorKind: 'generate-button-unavailable',
+      error: 'Generate button unavailable',
+      retry: true,
+    }
 
     // 3.5) 선택된 이미지 모델 적용 — 에이전트 설정 패널 경유(generate-image 와 동일 best-effort).
     //   패널 미발견/미적용은 생성을 막지 않는다(경고만). arm 전에 호출해야 패널 개폐가 주입을 가리지 않는다.
@@ -505,21 +525,36 @@ export function registerCharacterIPC(ipcMain, deps) {
   //   arm/clear 는 호출부(finally)가 책임진다.
   async function _generateCharacterAfterArm(flowView, { projectId, displayName }) {
     const cap = await clickAndCaptureGeneration(flowView)
-    if (cap.clickError) return { success: false, error: cap.clickError }
+    if (cap.clickError) {
+      return { success: false, errorKind: cap.clickErrorKind, error: cap.clickError }
+    }
     const body = cap.resp0 && cap.resp0.body
     // HTTP 오류 status 보존 — 안 그러면 401/429/500 이 "entityId/workflowId 없음" 으로 뭉개져
     //   렌더러 quota/auth/server 처리가 안 먹는다(reroll/scene 과 동일 가드).
     if (cap.resp0 && cap.resp0.status >= 400) {
       // 응답 본문은 프롬프트·이름을 되돌려줄 수 있다 — 상태와 길이만.
       console.warn('[Flow Character] generate HTTP', cap.resp0.status, 'bodyLen=', (body || '').length)
-      return { success: false, status: cap.resp0.status, error: 'generate HTTP ' + cap.resp0.status + ': ' + (body || '').slice(0, 160) }
+      return {
+        success: false,
+        status: cap.resp0.status,
+        errorKind: 'character-generation-failed',
+        error: 'Character generation failed',
+      }
     }
-    if (!body) return { success: false, error: '생성 응답 캡처 실패' + (cap.timeout ? '(timeout 120s)' : '') }
+    if (!body) return {
+      success: false,
+      errorKind: 'generation-response-timeout',
+      error: 'Generation response timed out',
+    }
 
     // 5) 응답 파싱 — entityId(workflows[].parentEntityId) + workflowId/mediaId/fifeUrl
     const parsed = parseCharacterGenerateResponse(body)
     if (!parsed || !parsed.entityId || !parsed.workflowId) {
-      return { success: false, error: '응답 파싱 실패(entityId/workflowId 없음): ' + (body || '').slice(0, 160) }
+      return {
+        success: false,
+        errorKind: 'generation-response-invalid',
+        error: 'Generation response was invalid',
+      }
     }
     console.log('[Flow Character] generated entityId:', parsed.entityId, 'workflowId:', parsed.workflowId)
 
@@ -572,7 +607,11 @@ export function registerCharacterIPC(ipcMain, deps) {
     console.log('[Flow Character] reroll entityId:', entityId)
 
     const onPage = await ensureOnCharacterDetailPage(flowView, entityId, projectId) // #R20-5: projectId 전달
-    if (!onPage) return { success: false, error: 'character 상세페이지 진입 실패(에디터 없음)' }
+    if (!onPage) return {
+      success: false,
+      errorKind: 'character-detail-composer-unavailable',
+      error: 'Character editor unavailable',
+    }
 
     // 프롬프트 주입 — execCommand 동작 위해 flowView 를 일시적으로 보이게 + 포커스 + 에디터 trusted click.
     const mainWindow = getMainWindow && getMainWindow()
@@ -601,10 +640,17 @@ export function registerCharacterIPC(ipcMain, deps) {
       enabled = await flowView.webContents.executeJavaScript(`!!(${GENERATE_BTN_SELECTOR})`).catch(() => false)
       if (!enabled) await sleep(1000)
     }
-    if (!enabled) return { success: false, error: '생성 버튼 enable 안 됨', retry: true }
+    if (!enabled) return {
+      success: false,
+      errorKind: 'generate-button-unavailable',
+      error: 'Generate button unavailable',
+      retry: true,
+    }
 
     const cap = await clickAndCaptureGeneration(flowView)
-    if (cap.clickError) return { success: false, error: cap.clickError }
+    if (cap.clickError) {
+      return { success: false, errorKind: cap.clickErrorKind, error: cap.clickError }
+    }
     const resp0 = cap.resp0
     const body = cap.body
     // §2 staleEntity: entity 가 현재 Flow 프로젝트에 없으면(legacy/A0 격리) batchGenerateImages 가
@@ -617,12 +663,25 @@ export function registerCharacterIPC(ipcMain, deps) {
       // 400 중에서도 stale entity(INVALID_ARGUMENT)만 self-heal 폴백. content-policy/validation
       //   류 400 은 stale 아님 → generic 실패로(엉뚱한 새 character 생성 방지).
       if (resp0.status === 400 && isStaleEntityErrorBody(body)) return { success: false, staleEntity: true, status: 400 }
-      return { success: false, status: resp0.status, error: 'reroll HTTP ' + resp0.status + ': ' + (body || '').slice(0, 160) }
+      return {
+        success: false,
+        status: resp0.status,
+        errorKind: 'character-generation-failed',
+        error: 'Character generation failed',
+      }
     }
-    if (!body) return { success: false, error: '생성 응답 캡처 실패' + (cap.timeout ? '(timeout 120s)' : '') }
+    if (!body) return {
+      success: false,
+      errorKind: 'generation-response-timeout',
+      error: 'Generation response timed out',
+    }
 
     const parsed = parseCharacterGenerateResponse(body)
-    if (!parsed || !parsed.workflowId) return { success: false, error: '응답 파싱 실패: ' + (body || '').slice(0, 160) }
+    if (!parsed || !parsed.workflowId) return {
+      success: false,
+      errorKind: 'generation-response-invalid',
+      error: 'Generation response was invalid',
+    }
     console.log('[Flow Character] reroll new workflowId:', parsed.workflowId, 'parentEntityId:', parsed.entityId)
 
     const base64Image = await downloadFifeAsBase64(sessionFetch, parsed.fifeUrl)
@@ -685,13 +744,34 @@ export function registerCharacterIPC(ipcMain, deps) {
 
     // Codex #R4-4: enforce Flow page is on the TARGET project before DOM mutation.
     const projectCheck = await ensureOnProjectComposer(flowView, projectId)
-    if (!projectCheck.ok) return { success: false, error: projectCheck.error }
+    if (!projectCheck.ok) {
+      return { success: false, errorKind: projectCheck.errorKind, error: projectCheck.error }
+    }
+
+    // 앱 설정과 실제 Flow composer 토글을 먼저 일치시킨다. Agent OFF 인데 페이지가 ON 이면
+    // streamChat 으로 제출돼 batchGenerateImages intercept 가 절대 오지 않고, 반대 방향이면
+    // DOM 수집 경로가 비게 된다. 이미 원하는 상태(already_off/on)는 shared helper 가 성공으로
+    // 반환하므로, 토글을 못 찾거나 전환 후 상태 검증에 실패한 경우만 fail-closed 한다.
+    let _agentReady = false
+    try {
+      const _agentResult = _agentOn ? await ensureAgentOn() : await ensureAgentOff()
+      _agentReady = !!(_agentResult && _agentResult.success)
+    } catch (e) {
+      console.warn(`[Flow Scene] ensureAgent${_agentOn ? 'On' : 'Off'} failed:`, e.message)
+    }
+    if (!_agentReady) {
+      return {
+        success: false,
+        errorKind: _agentOn ? 'flow-agent-on-failed' : 'flow-agent-off-failed',
+        error: _agentOn ? 'Could not turn Flow Agent on' : 'Could not turn Flow Agent off',
+      }
+    }
 
     // Agent ON: 직전 씬 생성이 진행 중이면 제출 버튼이 stop(busy)이고 컴포저 에디터가 잠시
     //   사라진다 → 에디터 없는 상태로 주입하다 '컴포저 에디터 진입 실패'. flow:generate-image
     //   와 동일하게 (1) 에이전트가 idle(arrow_forward enable) 될 때까지 폴링한 뒤, (2) 그래도
     //   챗 패널이 가리면 닫는다.
-    if (getFlowAgentOn && getFlowAgentOn()) {
+    if (_agentOn) {
       const SUBMIT_POLL = 1500
       const SUBMIT_MAX_WAIT = 180000 // 에이전트 생성이 길 수 있어 최대 3분
       let submitState = 'absent'
@@ -723,7 +803,11 @@ export function registerCharacterIPC(ipcMain, deps) {
       await sleep(500)
       ready = await flowView.webContents.executeJavaScript(COMPOSE_EDITOR_READY).catch(() => false)
     }
-    if (!ready) return { success: false, error: '컴포저 에디터 진입 실패' }
+    if (!ready) return {
+      success: false,
+      errorKind: 'text-injection-failed',
+      error: 'Text injection failed',
+    }
     await sleep(400)
 
     // 1.5) 이미지 모드 강제 — generate-image(flow-api.js #R30-1)와 동일. 컴포저가 직전에 영상
@@ -771,10 +855,17 @@ export function registerCharacterIPC(ipcMain, deps) {
       await trustedClickOnFlowView(EDITOR_SELECTOR)
       await sleep(150)
       // #R36: 컴포저 클리어 + segments(칩/텍스트) 주입 — 공용 헬퍼(injectComposeSegments)로 T2V 와 공유.
-      //   멘션 실패 시 staleMention 을 실어 렌더러가 flowNameSyncStatus='failed' 로 마킹(self-heal).
+      //   Characters 탭에서 option 이 없을 때만 staleMention 이 온다. 다른 멘션 실패는 재등록 없이 재시도.
       const _inj = await injectComposeSegments(flowView, segs)
       if (!_inj.ok) {
-        return { success: false, error: _inj.error, retry: true, ...(_inj.staleMention ? { staleMention: _inj.staleMention } : {}) }
+        return {
+          success: false,
+          errorKind: _inj.errorKind,
+          error: _inj.error,
+          retry: true,
+          ...(_inj.mentionFailure ? { mentionFailure: _inj.mentionFailure } : {}),
+          ...(_inj.staleMention ? { staleMention: _inj.staleMention } : {}),
+        }
       }
     } finally {
       if (wasHidden) { updateBounds(getMainWindow(), flowView); await sleep(200) }
@@ -786,19 +877,29 @@ export function registerCharacterIPC(ipcMain, deps) {
       enabled = await flowView.webContents.executeJavaScript(`!!(${GENERATE_BTN_SELECTOR})`).catch(() => false)
       if (!enabled) await sleep(1000)
     }
-    if (!enabled) return { success: false, error: '생성 버튼 enable 안 됨', retry: true }
+    if (!enabled) return {
+      success: false,
+      errorKind: 'generate-button-unavailable',
+      error: 'Generate button unavailable',
+      retry: true,
+    }
 
     // Agent ON(streamChat): batchGenerateImages 가 안 나가 intercept 로 못 받는다 → 제출 전
     //   스냅샷 후 클릭하고 DOM 의 "새" 결과 이미지(media.getMediaUrlRedirect?name=)를 수집한다.
     //   스냅샷이 직전 업로드된 @멘션 캐릭터 이미지를 제외 → 결과만 받는다(공용 헬퍼).
-    if (getFlowAgentOn && getFlowAgentOn()) {
+    if (_agentOn) {
       let existingGenMediaIds = []
       try {
         const _pre = await flowView.webContents.executeJavaScript(GENERATED_IMG_PROBE)
         if (Array.isArray(_pre)) existingGenMediaIds = _pre.map(i => i && i.mediaId).filter(Boolean)
       } catch {}
       const aClick = await trustedClickOnFlowView(GENERATE_BTN_SELECTOR, { required: true, step: 'character-submit' })
-      if (!aClick || !aClick.success) return { success: false, error: aClick?.error || '생성 버튼 클릭 실패', retry: true }
+      if (!aClick || !aClick.success) return {
+        success: false,
+        errorKind: 'generate-button-click-failed',
+        error: 'Could not click Generate',
+        retry: true,
+      }
       const col = await collectAgentDomImages({
         scan: () => flowView.webContents.executeJavaScript(GENERATED_IMG_PROBE),
         sessionFetch, sleep,
@@ -808,7 +909,9 @@ export function registerCharacterIPC(ipcMain, deps) {
         markCollected: (mid) => collectedMediaIds.add(mid),
         logPrefix: '[Flow Scene] (Agent ON)', warn: (m) => console.warn(m),
       })
-      if (!col.success) return { success: false, error: col.error, retry: true }
+      if (!col.success) {
+        return { success: false, errorKind: col.errorKind, error: col.error, retry: true }
+      }
       console.log('[Flow Scene] (Agent ON) collected', col.images.length, 'image(s) from DOM')
       return { success: true, images: col.images, mediaId: col.images[0] && col.images[0].mediaId }
     }
@@ -871,12 +974,22 @@ export function registerCharacterIPC(ipcMain, deps) {
       } catch (e) {
         cleanupPending()
         try { await clearFlowPageInject?.() } catch {}
-        return { success: false, error: e?.message || '생성 버튼 클릭 예외', retry: true }
+        return {
+          success: false,
+          errorKind: 'generate-button-click-failed',
+          error: 'Could not click Generate',
+          retry: true,
+        }
       }
       if (!aClick || !aClick.success) {
         cleanupPending()
         try { await clearFlowPageInject?.() } catch {}
-        return { success: false, error: aClick?.error || '생성 버튼 클릭 실패', retry: true }
+        return {
+          success: false,
+          errorKind: 'generate-button-click-failed',
+          error: 'Could not click Generate',
+          retry: true,
+        }
       }
       console.log('[Flow Scene] [Async] submitted:', generationId, '(promptKeyLen:', (promptKey || '').length, ')')
       // #R35-fix(Codex R1[4]/R2[2]): inject(seed/aspect) 를 clear 하기 전에 요청이 실제로 나갈 시간을
@@ -904,7 +1017,9 @@ export function registerCharacterIPC(ipcMain, deps) {
       let cap, resp0, body
       for (let attempt = 0; ; attempt++) {
         cap = await clickAndCaptureGeneration(flowView)
-        if (cap.clickError) return { success: false, error: cap.clickError }
+        if (cap.clickError) {
+          return { success: false, errorKind: cap.clickErrorKind, error: cap.clickError }
+        }
         resp0 = cap.resp0
         body = cap.body
         if (resp0 && resp0.status >= 500 && attempt < SCENE_5XX_RETRIES) {
@@ -917,12 +1032,26 @@ export function registerCharacterIPC(ipcMain, deps) {
       if (resp0 && resp0.status >= 400) {
         console.warn('[Flow Scene] generate failed (HTTP', resp0.status, ') bodyLen=', (body || '').length)
         // 5xx 는 재시도 소진 후에도 실패면 retry 신호(상위 배치/사용자 재시도 대상).
-        return { success: false, error: '장면 생성 실패(HTTP ' + resp0.status + ')', status: resp0.status, retry: resp0.status >= 500 }
+        return {
+          success: false,
+          errorKind: 'scene-generation-failed',
+          error: 'Scene generation failed',
+          status: resp0.status,
+          retry: resp0.status >= 500,
+        }
       }
-      if (!body) return { success: false, error: '생성 응답 캡처 실패' + (cap.timeout ? '(timeout 120s)' : '') }
+      if (!body) return {
+        success: false,
+        errorKind: 'generation-response-timeout',
+        error: 'Generation response timed out',
+      }
 
       const parsed = parseCharacterGenerateResponse(body)
-      if (!parsed || !parsed.workflowId) return { success: false, error: '응답 파싱 실패: ' + (body || '').slice(0, 160) }
+      if (!parsed || !parsed.workflowId) return {
+        success: false,
+        errorKind: 'generation-response-invalid',
+        error: 'Generation response was invalid',
+      }
       console.log('[Flow Scene] generated workflowId:', parsed.workflowId, 'mediaId:', parsed.mediaId)
 
       // fifeUrl → base64 (generateImageDOM 과 동일 images 형태로 반환해 ref 저장 흐름 재사용)
@@ -1002,6 +1131,62 @@ export function registerCharacterIPC(ipcMain, deps) {
     }
   }
 
+  /**
+   * #R37: 등록 복구 — 이미 만들어진 entity 에 register PATCH 만 다시 친다(재업로드 없음).
+   *
+   * uploadImage 는 부를 때마다 새 entity 를 만든다. 업로드는 성공했는데 등록 PATCH 만 실패한 ref 를
+   * 재업로드로 재시도하면 같은 캐릭터가 Flow 에 계속 쌓인다(실측: 사용자 Flow 에 Zed 4개).
+   * entityId/workflowId 는 이미 손에 있으니 PATCH 만 다시 치면 된다.
+   *
+   * rename 이 아니라 register 를 쓴다: rename 은 displayName 만 쓰지만 register 는
+   * imageReferences[{workflowId}] 까지 함께 쓴다(buildEntityRegisterBody). rename 으로 복구하면
+   * 이미지 레퍼런스가 빈 채로 이름만 붙어 @멘션이 엉뚱하게 생성된다.
+   *
+   * 실패는 삼키지 않는다 — 호출측이 사용자에게 이유를 보여줄 수 있게 status/error 를 돌려준다.
+   */
+  ipcMain.handle('flow:register-character-entity', async (_e, opts = {}) => {
+    const { entityId, workflowId, displayName } = opts
+    if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }
+    if (!entityId || !workflowId || !displayName) {
+      return { success: false, error: 'entityId/workflowId/displayName required' }
+    }
+    const projectId = opts.projectId || projectIdFromUrl() || (getCapturedProjectId && getCapturedProjectId())
+    if (!projectId) return { success: false, error: 'No projectId' }
+    try {
+      const token = await getAccessToken()
+      if (!token) return {
+        success: false,
+        errorKind: 'flow-access-token-unavailable',
+        error: 'Flow access token unavailable',
+      }
+      const res = await flowPageFetch(`${await apiBase()}/flow/entities`, {
+        method: 'PATCH',
+        headers: { authorization: 'Bearer ' + token },
+        body: JSON.stringify(buildEntityRegisterBody({ projectId, entityId, displayName, workflowId })),
+      })
+      console.log('[Flow Character] re-register entities:', res.status, res.ok ? '✓' : '✗')
+      if (!res.ok) {
+        console.warn('[Flow Character] re-register failed: bodyLen=', (res.text || '').length)
+        // entity 가 Flow 에서 지워졌으면(사용자가 라이브러리에서 삭제) 복구가 영원히 404 다.
+        //   stale 을 알려줘야 호출측이 업로드로 self-heal 한다 — 안 그러면 ref 가 벽돌이 된다.
+        const stale = isStaleRegistrationResponse(res)
+        // PATCH 가 실패했으면 SPA 를 건드리지 않는다 — 서버와 화면이 어긋나는 게 더 나쁘다.
+        return {
+          success: false, registered: false, stale, status: res.status, nameApplied: false,
+          error: stale ? 'entity not found (stale)' : `registration PATCH failed (${res.status})`,
+        }
+      }
+      const nameApplied = await applyEntityNameToSpa(getFlowView(), { entityId, projectId, displayName })
+      // entityId 를 반드시 돌려준다 — 호출측 needsComposerRefresh 가 result.entityId 로 판정한다.
+      //   빠뜨리면 nameApplied:false 인데도 SPA 새로고침을 건너뛰고 'synced' 로 굳어, 멘션 피커가
+      //   이름을 모르는 채 생성으로 넘어간다(원래 버그의 재현).
+      return { success: true, registered: true, entityId, workflowId, status: res.status, nameApplied }
+    } catch (e) {
+      console.warn('[Flow Character] re-register error:', e.message)
+      return { success: false, registered: false, error: e.message }
+    }
+  })
+
   ipcMain.handle('flow:rename-character', async (_e, opts = {}) => {
     const { entityId, displayName } = opts
     if (!flowActive()) return { success: false, error: 'Flow inactive (API mode)' }  // #R26-1
@@ -1010,7 +1195,11 @@ export function registerCharacterIPC(ipcMain, deps) {
     if (!projectId) return { success: false, error: 'No projectId' }
     try {
       const token = await getAccessToken()
-      if (!token) return { success: false, error: 'access token 추출 실패' }
+      if (!token) return {
+        success: false,
+        errorKind: 'flow-access-token-unavailable',
+        error: 'Flow access token unavailable',
+      }
       const res = await flowPageFetch(`${await apiBase()}/flow/entities`, {
         method: 'PATCH',
         headers: { authorization: 'Bearer ' + token },
@@ -1046,21 +1235,33 @@ export function registerCharacterIPC(ipcMain, deps) {
       // P1: bound projectId 의 /characters 로 강제 — Flow 탭이 다른 프로젝트에 있어도 거기에 entity 가
       //   생기지 않게(local ref 에 잘못된 entityId 저장 방지).
       const onPage = await ensureOnCharactersPage(flowView, projectId)
-      if (!onPage) return { success: false, error: 'characters 진입 실패(에디터 없음)' }
+      if (!onPage) return {
+        success: false,
+        errorKind: 'character-composer-unavailable',
+        error: 'Character composer unavailable',
+      }
 
       // 이전 캡처 노이즈 제거 — 이 업로드로 생긴 응답만 보게.
       await flowView.webContents.executeJavaScript('window.__autoflowcut_net__ = []').catch(() => {})
 
       // 1) 대화상자 방지(input.click noop) → "업로드" 버튼 트러스트 클릭(= character upload 모드 진입).
       const hasInput = await neutralizeFileInputClick(flowView)
-      if (!hasInput) return { success: false, error: 'file input 없음(' + A2_FILE_SEL + ')' }
+      if (!hasInput) return {
+        success: false,
+        errorKind: 'character-file-input-unavailable',
+        error: 'Character file input unavailable',
+      }
       const upClick = await trustedClickOnFlowView(A2_UPLOAD_BTN_EXPR, { required: true, step: 'reference-upload' })
       console.log('[Flow Character] A2 업로드 버튼 trusted click:', JSON.stringify(upClick))
       await sleep(500)
 
       // 2) file input 에 파일 주입(synthetic change — onChange 가 읽음).
       const inj = await injectFileToInput(flowView, b64, fileName, mimeType)
-      if (!inj || !inj.success) return { success: false, error: 'file 주입 실패: ' + (inj && inj.error) }
+      if (!inj || !inj.success) return {
+        success: false,
+        errorKind: 'character-file-injection-failed',
+        error: 'Character file injection failed',
+      }
       console.log('[Flow Character] A2 file injected')
       await sleep(800)
 
@@ -1074,14 +1275,27 @@ export function registerCharacterIPC(ipcMain, deps) {
       // SPA 가 보낸 uploadImage 응답을 네트워크 버퍼에서 회수(성공 200 또는 4xx/5xx 실패 즉시).
       // #R33: 타임아웃을 CHARACTER_UPLOAD_TIMEOUT_MS(120s)로 — 60s 는 짧아 등록 실패 고착을 유발했다.
       const resp = await waitForUploadImageResponse(flowView, CHARACTER_UPLOAD_TIMEOUT_MS)
-      if (!resp) return { success: false, error: `uploadImage 응답 타임아웃(${Math.round(CHARACTER_UPLOAD_TIMEOUT_MS / 1000)}s)` }
+      if (!resp) return {
+        success: false,
+        errorKind: 'character-upload-timeout',
+        error: 'Character upload timed out',
+      }
       if (resp.status >= 400) {
-        console.warn('[Flow Character] A2 uploadImage HTTP', resp.status, ':', (resp.respBody || '').slice(0, 160))
-        return { success: false, status: resp.status, error: 'uploadImage HTTP ' + resp.status + ': ' + (resp.respBody || '').slice(0, 160) }
+        console.warn('[Flow Character] A2 uploadImage HTTP', resp.status, 'bodyLen=', (resp.respBody || '').length)
+        return {
+          success: false,
+          status: resp.status,
+          errorKind: 'character-upload-failed',
+          error: 'Character upload failed',
+        }
       }
       const parsed = parseUploadImageResponse(resp.respBody)
       if (!parsed || !parsed.entityId || !parsed.workflowId) {
-        return { success: false, error: '업로드 응답 파싱 실패(entityId/workflowId 없음): ' + (resp.respBody || '').slice(0, 160) }
+        return {
+          success: false,
+          errorKind: 'character-upload-response-invalid',
+          error: 'Character upload response was invalid',
+        }
       }
       console.log('[Flow Character] A2 uploaded mediaId:', parsed.mediaId, 'workflowId:', parsed.workflowId, 'entityId:', parsed.entityId)
 

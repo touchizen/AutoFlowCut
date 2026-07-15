@@ -6,6 +6,7 @@
 
 import { useState, useRef, useCallback } from 'react'
 import { cleanBase64 } from '../utils/urls'
+import { runFlowCharacterOperation } from '../utils/flowCharacterCoordinator'
 
 export function useImageUpload(options = {}) {
   const {
@@ -22,6 +23,9 @@ export function useImageUpload(options = {}) {
     //   업로드 await 동안 mode/project 가 바뀌면 토큰이 달라져, stale Flow 결과(mediaId/entity)를
     //   새 프로젝트/모드의 ref 에 적용하는 것을 막는다. 미지정 시 가드 없음(기존 동작).
     getScopeToken,
+    // Flow character 상세 모달의 직접 업로드를 sync/생성 경로와 같은 공유 flowView 락에 넣는다.
+    // task 안에 onUploadComplete(state publish)까지 포함해 stale mirror 재진입 창을 없앤다.
+    flowOperation,
   } = options
   
   const [isUploading, setIsUploading] = useState(false)
@@ -67,36 +71,57 @@ export function useImageUpload(options = {}) {
         flowNameSyncStatus: null,
       }
 
-      // Flow에 업로드 (함수가 있으면)
-      if (uploadToFlow) {
-        try {
-          const uploadResult = await uploadToFlow(cleanB64, { category, ...uploadMeta, name: metaName })
-          if (uploadResult.success) {
-            result.mediaId = uploadResult.mediaId
-            result.caption = uploadResult.caption || null
-            // Propagate entity fields when Flow character upload returns them
-            // (API mode returns none → these remain null → no behavior change)
-            if (uploadResult.entityId != null) result.entityId = uploadResult.entityId
-            if (uploadResult.workflowId != null) result.workflowId = uploadResult.workflowId
-            if (uploadResult.registered != null) result.registered = uploadResult.registered
-            if (uploadResult.flowNameSyncStatus != null) result.flowNameSyncStatus = uploadResult.flowNameSyncStatus
+      const uploadAndPublish = async () => {
+        // Flow에 업로드 (함수가 있으면)
+        if (uploadToFlow) {
+          try {
+            const uploadResult = await uploadToFlow(cleanB64, { category, ...uploadMeta, name: metaName })
+            if (uploadResult.success) {
+              result.mediaId = uploadResult.mediaId
+              result.caption = uploadResult.caption || null
+              // Propagate entity fields when Flow character upload returns them
+              // (API mode returns none → these remain null → no behavior change)
+              if (uploadResult.entityId != null) result.entityId = uploadResult.entityId
+              if (uploadResult.workflowId != null) result.workflowId = uploadResult.workflowId
+              if (uploadResult.registered != null) result.registered = uploadResult.registered
+              if (uploadResult.flowNameSyncStatus != null) result.flowNameSyncStatus = uploadResult.flowNameSyncStatus
+            }
+          } catch (e) {
+            console.warn('Flow upload failed:', e)
           }
-        } catch (e) {
-          console.warn('Flow upload failed:', e)
         }
-      }
-      
-      // 완료 콜백 — #R28-3: 업로드 도중 mode/project 가 바뀌었으면 stale 결과를 적용하지 않는다.
-      if (onUploadComplete) {
-        const endScope = typeof getScopeToken === 'function' ? getScopeToken() : null
-        if (startScope !== endScope) {
-          console.warn('[useImageUpload] scope changed during upload — skipping stale onUploadComplete')
-        } else {
-          onUploadComplete(result)
+
+        // 완료 콜백 — #R28-3: 업로드 도중 mode/project 가 바뀌었으면 stale 결과를 적용하지 않는다.
+        if (onUploadComplete) {
+          const endScope = typeof getScopeToken === 'function' ? getScopeToken() : null
+          if (startScope !== endScope) {
+            console.warn('[useImageUpload] scope changed during upload — skipping stale onUploadComplete')
+          } else {
+            await onUploadComplete(result)
+          }
         }
+        return result
       }
 
-      return result
+      if (flowOperation?.enabled) {
+        const coordinated = await runFlowCharacterOperation({
+          ref: flowOperation.ref || uploadMeta,
+          projectId: flowOperation.projectId,
+          scopeToken: flowOperation.scopeToken ?? startScope,
+          refIndex: flowOperation.refIndex,
+          operation: 'replace-upload',
+          timeoutMs: flowOperation.timeoutMs,
+          task: uploadAndPublish,
+        })
+        if (coordinated?.busy) {
+          const busyError = new Error(coordinated.error)
+          if (onUploadError) await onUploadError(busyError)
+          return null
+        }
+        return coordinated
+      }
+
+      return await uploadAndPublish()
 
     } catch (error) {
       console.error('File processing error:', error)
@@ -114,7 +139,7 @@ export function useImageUpload(options = {}) {
     } finally {
       setIsUploading(false)
     }
-  }, [uploadToFlow, category, uploadMeta, onUploadComplete, onUploadStart, onUploadError, getScopeToken])
+  }, [uploadToFlow, category, uploadMeta, onUploadComplete, onUploadStart, onUploadError, getScopeToken, flowOperation])
   
   // 파일 선택 핸들러
   const handleFileSelect = useCallback((e) => {

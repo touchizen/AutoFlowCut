@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, vi } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
+import { syncRefToFlow } from '../../src/utils/flowCharacterSync'
 
 vi.mock('../../src/utils/guards', () => ({
   checkAuthToken: vi.fn().mockResolvedValue(true),
@@ -29,7 +30,7 @@ import { useReferenceGeneration } from '../../src/hooks/useReferenceGeneration'
 
 const CHAR = { id: 2, name: '준호', type: 'character', prompt: '한국인, 40대 초, male', status: 'pending' }
 
-function setupHook({ references, genOverrides = {} }) {
+function setupHook({ references, genOverrides = {}, flowProjectId = null, projectName = null }) {
   let liveRefs = references
   const patches = []
   const setReferences = vi.fn((updater) => {
@@ -49,9 +50,10 @@ function setupHook({ references, genOverrides = {} }) {
     ...genOverrides,
   }
   const { result } = renderHook(() => useReferenceGeneration({
-    settings: { saveMode: 'project', imageBatchCount: 1 },
+    settings: { saveMode: 'project', imageBatchCount: 1, projectName },
     references: liveRefs, setReferences, genAPI,
     addPendingSave: vi.fn(), openSettings: vi.fn(), t: (k) => k, generationQueue: null,
+    flowProjectId,
   }))
   // 마지막으로 카드에 반영된 상태
   const finalRef = (id) => patches.length ? patches[patches.length - 1].find(r => r.id === id) : null
@@ -121,6 +123,27 @@ describe('이름이 SPA 에 반영되지 않았을 때만 refresh 로 폴백한�
 })
 
 describe('캐릭터 ref 생성 결과의 entity 정보 저장', () => {
+  it('생성 실패 kind를 카드에 저장해 ErrorSection이 현재 locale로 표시하게 한다', async () => {
+    const { result, finalRef } = setupHook({
+      references: [CHAR],
+      genOverrides: {
+        generateImage: vi.fn().mockResolvedValue({
+          success: false,
+          errorKind: 'flow-agent-off-failed',
+          error: 'Could not turn Flow Agent off',
+        }),
+      },
+    })
+
+    await act(async () => { await result.current.handleGenerateRef(0) })
+
+    expect(finalRef(2)).toMatchObject({
+      status: 'error',
+      errorKind: 'flow-agent-off-failed',
+      errorMessage: 'Could not turn Flow Agent off',
+    })
+  })
+
   it('단건 생성: entityId/workflowId 와 synced 상태를 카드에 남긴다', async () => {
     const { result, finalRef } = setupHook({
       references: [CHAR],
@@ -138,6 +161,30 @@ describe('캐릭터 ref 생성 결과의 entity 정보 저장', () => {
     })
   })
 
+  it('같은 project/ref sync 중이면 단건 캐릭터 생성이 두 번째 entity 작업을 시작하지 않는다', async () => {
+    const lockedRef = { ...CHAR, data: 'data:image/png;base64,OLD' }
+    let resolveSync
+    const syncPromise = syncRefToFlow(lockedRef, vi.fn(() => new Promise((resolve) => { resolveSync = resolve })), {
+      projectId: 'flow-project-gen-lock', scopeToken: 'flow::local-gen-lock',
+    })
+    for (let i = 0; i < 4; i++) await Promise.resolve()
+
+    const { result, genAPI } = setupHook({
+      references: [lockedRef],
+      flowProjectId: 'flow-project-gen-lock',
+      projectName: 'local-gen-lock',
+    })
+    let generationResult
+    await act(async () => { generationResult = await result.current.handleGenerateRef(0) })
+
+    expect(genAPI.generateImage).not.toHaveBeenCalled()
+    expect(generationResult).toMatchObject({ success: false, busy: true })
+
+    for (let i = 0; i < 20 && !resolveSync; i++) await Promise.resolve()
+    resolveSync({ success: true, entityId: 'e1', workflowId: 'w1', mediaId: 'm1', registered: true })
+    await syncPromise
+  })
+
   it('이름 등록(PATCH)이 실패하면 synced 로 표시하지 않는다', async () => {
     const { result, finalRef } = setupHook({
       references: [CHAR],
@@ -152,11 +199,11 @@ describe('캐릭터 ref 생성 결과의 entity 정보 저장', () => {
     expect(finalRef(2)).toMatchObject({ status: 'done', flowNameSyncStatus: 'failed' })
   })
 
-  it('배치 생성: collect 가 실어준 entity 정보도 카드에 남는다', async () => {
-    const { result, finalRef } = setupHook({
+  it('Flow 캐릭터 배치는 동기 generate+publish 로 처리해 coordinator lifetime 을 유지한다', async () => {
+    const { result, finalRef, genAPI } = setupHook({
       references: [CHAR],
       genOverrides: {
-        collectGeneration: vi.fn().mockResolvedValue({
+        generateImage: vi.fn().mockResolvedValue({
           success: true, images: [{ base64: 'img', mediaId: 'm-char' }],
           entityId: 'e-2', workflowId: 'w-2', registered: true,
         }),
@@ -164,16 +211,41 @@ describe('캐릭터 ref 생성 결과의 entity 정보 저장', () => {
     })
     await runBatch(result)
     expect(finalRef(2)).toMatchObject({ entityId: 'e-2', flowNameSyncStatus: 'synced' })
+    expect(genAPI.generateImage).toHaveBeenCalledTimes(1)
+    expect(genAPI.submitGeneration).not.toHaveBeenCalled()
   })
 
-  it('entity 정보가 없는 응답(API 모드·style 카드)은 기존 동작 그대로 — entityId 를 만들지 않는다', async () => {
+  // #R37: entity 정보가 없는 응답(API 모드·style 카드)은 entityId 를 **지어내지 않는다**.
+  //   단, 이제는 undefined 로 두는 게 아니라 명시적 null 로 비운다 — "새 이미지에는 옛 entity 가
+  //   없다" 를 불변식으로 만들기 위해서다(entityPatchForNewImage). 안 그러면 character→scene→재생성
+  //   →character 왕복 시 옛 entityId 가 살아남아 새 이미지가 옛 얼굴로 @멘션된다.
+  //   앱 판정은 모두 falsy 검사(isRefSynced / planCharacterSync)라 null 과 undefined 는 동치다.
+  it('entity 정보가 없는 응답(API 모드·style 카드)은 entityId 를 만들지 않는다 (명시적으로 비움)', async () => {
     const { result, finalRef } = setupHook({
       references: [{ id: 1, name: 's', type: 'style', prompt: 'a style', status: 'pending' }],
     })
     await act(async () => { await result.current.handleGenerateRef(0) })
     const r = finalRef(1)
     expect(r).toMatchObject({ status: 'done', mediaId: 'm-char' })
-    expect(r.entityId).toBeUndefined()
-    expect(r.flowNameSyncStatus).toBeUndefined()
+    expect(r.entityId).toBeFalsy()
+    expect(r.flowNameSyncStatus).toBeFalsy()
+  })
+
+  // #R37 회귀 방지: 옛 entityId 를 든 ref 를 fresh entity 없이 재생성하면 반드시 비워야 한다.
+  //   안 비우면 이미지만 새것이고 id 는 옛 캐릭터를 가리켜, 이후 Sync 가 repair 로 빠져 옛 entity 만
+  //   다시 PATCH 하고 새 이미지는 영영 업로드되지 않는다.
+  it('옛 entity 를 든 캐릭터를 API 모드로 재생성하면 옛 entityId 를 비운다', async () => {
+    const { result, finalRef } = setupHook({
+      references: [{
+        id: 1, name: 'Zed', type: 'character', prompt: 'a knight', status: 'pending',
+        entityId: 'OLD', workflowId: 'OLDW', registered: true, flowNameSyncStatus: 'synced',
+      }],
+    })
+    await act(async () => { await result.current.handleGenerateRef(0) })
+    const r = finalRef(1)
+    expect(r).toMatchObject({ status: 'done', mediaId: 'm-char' })
+    expect(r.entityId).toBeFalsy()
+    expect(r.workflowId).toBeFalsy()
+    expect(r.flowNameSyncStatus).toBeFalsy()
   })
 })

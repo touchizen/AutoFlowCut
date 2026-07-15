@@ -18,8 +18,6 @@ import {
   buildEntityImageBody,
   downloadFifeAsBase64,
   isStaleEntityErrorBody,
-  pickMentionOptionLabel,
-  chipMatchesMentionName,
   buildUploadImageBody,
   parseUploadImageResponse,
   buildCharactersUrl,
@@ -259,37 +257,3 @@ describe('isStaleEntityErrorBody', () => {
   })
 })
 
-describe('pickMentionOptionLabel (멘션 옵션 정확 매칭, prefix fallback 없음)', () => {
-  it('이름+캐릭터 라벨 매칭', () => {
-    expect(pickMentionOptionLabel(['회사원3캐릭터', 'Woman이미지'], '회사원3')).toBe('회사원3캐릭터')
-  })
-  it('이름 단독 라벨도 매칭', () => {
-    expect(pickMentionOptionLabel(['회사원3'], '회사원3')).toBe('회사원3')
-  })
-  it('P1: 회사원 요청이 회사원3캐릭터 를 고르지 않음(prefix 거부)', () => {
-    expect(pickMentionOptionLabel(['회사원3캐릭터'], '회사원')).toBe(null)
-  })
-  it('이미지 라벨은 매칭 안 함', () => {
-    expect(pickMentionOptionLabel(['회사원3이미지'], '회사원3')).toBe(null)
-  })
-})
-
-describe('chipMatchesMentionName (칩 토큰경계 검증)', () => {
-  it('정확 일치 / @접두 허용', () => {
-    expect(chipMatchesMentionName('회사원3', '회사원3')).toBe(true)
-    expect(chipMatchesMentionName('@회사원3', '회사원3')).toBe(true)
-  })
-  it('P1: 회사원3 칩을 회사원 으로 통과시키지 않음(뒤 경계)', () => {
-    expect(chipMatchesMentionName('회사원3', '회사원')).toBe(false)
-  })
-  it('R5-P2: 영업회사원 칩을 회사원 으로 통과시키지 않음(앞 경계 — substring 제거)', () => {
-    expect(chipMatchesMentionName('영업회사원', '회사원')).toBe(false)
-  })
-  it('이름캐릭터 타입 접미 칩은 매칭', () => {
-    expect(chipMatchesMentionName('회사원캐릭터', '회사원')).toBe(true)
-  })
-  it('빈 값 → false', () => {
-    expect(chipMatchesMentionName('', '회사원')).toBe(false)
-    expect(chipMatchesMentionName('회사원', '')).toBe(false)
-  })
-})

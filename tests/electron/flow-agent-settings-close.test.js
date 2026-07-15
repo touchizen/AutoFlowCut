@@ -6,7 +6,11 @@
 // must close it via its header close(X)/back button. This mirrors findAgentChatCloseButton
 // but targets the settings panel. Markup below is shaped after a real flow-dom-dump.
 import { describe, it, expect, beforeEach } from 'vitest'
-import { findAgentSettingsCloseButton } from '../../electron/flow-agent-toggle.js'
+import {
+  AGENT_SETTINGS_CLOSE_SELECTOR,
+  findAgentSettingsCloseButton,
+} from '../../electron/flow-agent-toggle.js'
+import { ENGLISH_AGENT_SETTINGS } from '../fixtures/flow-live-dom-20260714.js'
 
 beforeEach(() => {
   // jsdom 은 레이아웃이 없어 getBoundingClientRect 가 0 → isVis 가 항상 false 가 된다.
@@ -15,31 +19,15 @@ beforeEach(() => {
 })
 
 describe('findAgentSettingsCloseButton', () => {
-  it('finds the close button of the 에이전트 설정(기본값) panel', () => {
-    document.body.innerHTML = `
-      <div class="settings-panel">
-        <div class="header">
-          <span>에이전트 설정</span>
-          <button aria-label="닫기"><i class="google-symbols">close</i></button>
-        </div>
-        <div><span>이미지 생성 기본값</span></div>
-        <div><span>동영상 생성 기본값</span></div>
-      </div>`
-    const btn = findAgentSettingsCloseButton(document)
-    expect(btn).toBeTruthy()
-    expect(btn.tagName).toBe('BUTTON')
-  })
+  it('finds the arrow_back control in the real English settings panel', () => {
+    document.body.innerHTML = ENGLISH_AGENT_SETTINGS
 
-  it('also accepts a back-arrow icon as the close affordance', () => {
-    document.body.innerHTML = `
-      <div class="settings-panel">
-        <button><i class="google-symbols">arrow_back</i></button>
-        <span>이미지 생성 기본값</span>
-        <span>동영상 생성 기본값</span>
-      </div>`
     const btn = findAgentSettingsCloseButton(document)
+    const injected = window.eval(AGENT_SETTINGS_CLOSE_SELECTOR)
+
     expect(btn).toBeTruthy()
-    expect(btn.querySelector('i').textContent).toBe('arrow_back')
+    expect(injected).toBe(btn)
+    expect([...btn.querySelectorAll('i')].map((i) => i.textContent.trim())).toContain('arrow_back')
   })
 
   it('returns null when the settings panel is not open (only the toggle visible)', () => {
@@ -48,7 +36,7 @@ describe('findAgentSettingsCloseButton', () => {
     expect(findAgentSettingsCloseButton(document)).toBeNull()
   })
 
-  it('returns null when only one of the two label markers is present (not the panel)', () => {
+  it('returns null for a translated-label lookalike without the settings roles and state controls', () => {
     document.body.innerHTML = `
       <div><span>이미지 생성 기본값</span><button aria-label="닫기"><i>close</i></button></div>`
     expect(findAgentSettingsCloseButton(document)).toBeNull()

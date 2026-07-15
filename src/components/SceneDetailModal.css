@@ -716,6 +716,12 @@
   color: var(--success-color);
 }
 
+/* #R37: 미동기화 경고가 .success 안에 렌더돼 초록으로 보였다 — 실패를 성공색으로 칠하는 건
+   이 버그가 고치려던 바로 그 부류다. */
+.status-badge.warning {
+  color: var(--warning-color, #e0a800);
+}
+
 .status-info {
   color: var(--text-secondary);
   font-style: italic;

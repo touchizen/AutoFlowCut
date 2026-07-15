@@ -203,12 +203,12 @@ export default function Header({
         if (layout) await window.electronAPI?.setLayout?.(layout)
       } catch (e) {
         console.warn('[Header] flow re-attach failed:', e?.message)
-        toast.error?.(t?.('toast.flowReattachFailed') || 'Flow 창 재연결에 실패했습니다. 다시 시도해 주세요.')
+        toast.error?.(t('toast.flowReattachFailed'))
         return
       }
       // #R15-2: await 동안 모드 전환/언마운트됐으면 안내/폴링을 시작하지 않는다(stale flow polling 방지).
       if (!mountedRef.current || modeRef.current !== 'flow') return
-      toast.info(t?.('toast.flowLoginHint') || 'Flow 창에서 Google 계정으로 로그인하세요.')
+      toast.info(t('toast.flowLoginHint'))
       // #R7-16: 재연결 후 인증 상태를 능동적으로 폴링 — flow-status 이벤트가 안 와도
       //   사용자가 Flow 창에서 로그인 완료하면 배지가 🟢 로 회복되도록.
       startAuthPolling()
@@ -260,7 +260,7 @@ export default function Header({
         }
       }
     } else {
-      alert(`삭제 실패: ${result.error || 'Unknown error'}`)
+      alert(t('header.projectDeleteFailed', { error: result.error || 'Unknown error' }))
     }
     setDeleteTarget(null)
     setShowProjectDropdown(false)

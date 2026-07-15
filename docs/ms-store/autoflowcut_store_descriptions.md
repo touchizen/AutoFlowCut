@@ -220,6 +220,14 @@ Disclaimer: This app is an independent product developed by Touchizen and is not
 
 ### What's New
 ```
+v3.0.3 — Character reference sync fix. If you use character references in Flow mode, please update.
+
+The green check on a character card was lying. It meant only that the image had uploaded, not that the character had been registered with Flow — so a character you could not @mention still carried a success mark. Unsynced characters now show a warning instead. Pressing Sync again also created a duplicate character every time, because Flow makes a new one for each upload it receives; an already-uploaded character now retries only the registration.
+
+Also fixed: a failed registration no longer reports "Synced to Flow"; replacing or regenerating a reference image no longer leaves it pointing at the old Flow character (new image, old face in your scenes); syncs started from the panel, the detail view, the card and the generation gate can no longer collide; generation no longer starts when a character it needs failed to sync; and Flow requests can no longer hang indefinitely.
+
+Privacy — correcting the 3.0.2 note. We said error reports collect "only which step failed". That was inaccurate. Reports are sent via Sentry; sign-in tokens, API keys, prompts and character names are stripped, but file paths are included with only your account name redacted, and reports are not limited to step failures.
+
 v3.0.2 — Privacy fix. If you are on 3.0.1, please update.
 
 3.0.1's error reporting was also sending your sign-in token, API key, prompts, character names, and folder paths. All of it is blocked now — we collect only which step failed. Sorry.
@@ -442,6 +450,14 @@ Touchizen 제작 — touchizen.com
 
 ### What's New (새로운 기능)
 ```
+v3.0.3 — 캐릭터 레퍼런스 동기화 수정. Flow 모드에서 캐릭터 레퍼런스를 쓰신다면 업데이트해 주세요.
+
+캐릭터 카드의 녹색 체크는 거짓말을 하고 있었습니다. 이미지가 업로드됐다는 뜻일 뿐 Flow에 등록됐다는 뜻이 아니어서, @멘션이 되지 않는 캐릭터에도 성공 표시가 떴습니다. 이제 미동기화 캐릭터에는 경고가 표시됩니다. Sync를 다시 누를 때마다 캐릭터가 중복 생성되던 문제도 고쳤습니다 — Flow는 업로드를 받을 때마다 새 캐릭터를 만들기 때문이었고, 이미 업로드된 캐릭터는 이제 등록만 재시도합니다.
+
+그 밖의 수정: 등록에 실패했는데 "Flow 동기화 완료"로 표시되던 문제, 레퍼런스 이미지를 교체·재생성해도 옛 Flow 캐릭터를 계속 가리키던 문제(새 이미지인데 씬은 옛 얼굴로 생성), 패널·상세·카드·생성 게이트의 동기화가 서로 충돌하던 문제, 필요한 캐릭터의 동기화가 실패했는데도 생성이 시작되던 문제, Flow 요청이 무한정 대기하던 문제.
+
+프라이버시 — 3.0.2 노트 정정. 오류 리포트가 "어느 단계가 실패했는지만 수집한다"고 안내했으나 정확하지 않았습니다. 리포트는 Sentry로 전송되며, 로그인 토큰·API 키·프롬프트·캐릭터 이름이 제거되는 것은 맞습니다. 다만 파일 경로는 계정 이름만 가려진 채 포함되며, 단계 실패에만 한정되지 않습니다.
+
 v3.0.2 — 프라이버시 수정. 3.0.1을 쓰고 계시다면 업데이트해 주세요.
 
 3.0.1의 오류 리포팅이 로그인 토큰·API 키·프롬프트·캐릭터 이름·폴더 경로를 함께 전송하고 있었습니다. 전부 차단했습니다 — 이제 어느 단계가 실패했는지만 수집합니다. 죄송합니다.
@@ -569,6 +585,14 @@ AI 영상 자동화, 텍스트투비디오, 이미지투비디오, AI 이미지 
 
 ### What's New
 ```
+v3.0.3 — キャラクターリファレンスの同期を修正。Flowモードでキャラクターリファレンスをお使いの方は、アップデートしてください。
+
+キャラクターカードの緑のチェックは正しくありませんでした。画像がアップロードされたことを示すだけで、Flowに登録されたことを意味していなかったため、@メンションできないキャラクターにも成功マークが表示されていました。未同期のキャラクターには警告が表示されるようになりました。Syncを押し直すたびにキャラクターが重複生成される問題も修正しました — アップロードのたびにFlowが新しいキャラクターを作成するためで、すでにアップロード済みのキャラクターは登録のみを再試行します。
+
+その他の修正：登録に失敗したのに「Flowに同期済み」と表示される問題、リファレンス画像を差し替え・再生成しても古いFlowキャラクターを参照し続ける問題（新しい画像なのにシーンには古い顔）、パネル・詳細・カード・生成ゲートからの同期が競合する問題、必要なキャラクターの同期に失敗しても生成が始まる問題、Flowリクエストが無限に待機する問題。
+
+プライバシー — 3.0.2のノートの訂正。エラーレポートは「どのステップで失敗したかのみを収集する」とお伝えしましたが、正確ではありませんでした。レポートはSentryで送信され、ログイントークン・APIキー・プロンプト・キャラクター名が除去されるのは事実です。ただし、ファイルパスはアカウント名のみを伏せた状態で含まれ、ステップの失敗に限定されません。
+
 v3.0.2 — プライバシーの修正。3.0.1をお使いの方は、アップデートしてください。
 
 3.0.1のエラーレポートが、ログイントークン・APIキー・プロンプト・キャラクター名・フォルダーパスも一緒に送信していました。すべて遮断しました — 現在はどのステップで失敗したかのみを収集します。申し訳ありません。
@@ -691,6 +715,14 @@ Der integrierte MCP-Server (Model Context Protocol) verbindet sich direkt mit Cl
 
 ### What's New
 ```
+v3.0.3 — Fix für die Synchronisierung von Charakter-Referenzen. Wenn Sie Charakter-Referenzen im Flow-Modus nutzen, aktualisieren Sie bitte.
+
+Das grüne Häkchen auf einer Charakterkarte war irreführend. Es bedeutete nur, dass das Bild hochgeladen wurde — nicht, dass der Charakter bei Flow registriert war. So trug auch ein Charakter, den Sie nicht per @Mention einfügen konnten, eine Erfolgsmarkierung. Nicht synchronisierte Charaktere zeigen jetzt stattdessen eine Warnung. Ebenfalls behoben: Erneutes Drücken von „Sync" legte jedes Mal einen doppelten Charakter an, weil Flow bei jedem eingehenden Upload einen neuen Charakter erstellt. Ein bereits hochgeladener Charakter wiederholt nun nur noch die Registrierung.
+
+Außerdem behoben: Eine fehlgeschlagene Registrierung meldet nicht mehr „Mit Flow synchronisiert"; ein ersetztes oder neu generiertes Referenzbild verweist nicht mehr auf den alten Flow-Charakter (neues Bild, altes Gesicht in Ihren Szenen); Synchronisierungen aus Panel, Detailansicht, Karte und Generierungs-Gate können nicht mehr kollidieren; die Generierung startet nicht mehr, wenn ein benötigter Charakter nicht synchronisiert werden konnte; und Flow-Anfragen hängen nicht mehr endlos.
+
+Datenschutz — Korrektur der Hinweise zu 3.0.2. Wir schrieben, Fehlerberichte erfassten „nur, welcher Schritt fehlgeschlagen ist". Das war ungenau. Die Berichte werden über Sentry gesendet; Anmelde-Token, API-Schlüssel, Prompts und Charakternamen werden entfernt, aber Dateipfade sind enthalten — lediglich Ihr Kontoname wird unkenntlich gemacht — und die Berichte beschränken sich nicht auf fehlgeschlagene Schritte.
+
 v3.0.2 — Datenschutz-Fix. Wenn Sie 3.0.1 verwenden, aktualisieren Sie bitte.
 
 Die Fehlerberichte in 3.0.1 haben auch Ihr Anmelde-Token, Ihren API-Schlüssel, Prompts, Charakternamen und Ordnerpfade mitgesendet. All das ist jetzt blockiert — wir erfassen nur noch, welcher Schritt fehlgeschlagen ist. Entschuldigung.

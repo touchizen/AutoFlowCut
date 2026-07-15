@@ -36,6 +36,7 @@ vi.mock('../../src/components/ErrorSection', () => ({ default: () => null }))
 
 import ReferenceDetailModal from '../../src/components/ReferenceDetailModal'
 import { toast } from '../../src/components/Toast'
+import { syncRefToFlow } from '../../src/utils/flowCharacterSync'
 
 const charRef = {
   id: 11,
@@ -206,6 +207,38 @@ describe('#R33: ReferenceDetailModal Flow sync button', () => {
     expect(window.electronAPI.refreshFlowComposer).toHaveBeenCalled()
     // #R34: 동기화 클릭 시 모달은 즉시 닫히고 백그라운드로 진행
     expect(baseProps.onClose).toHaveBeenCalled()
+  })
+
+  it('결과 state publish 중 같은 stale ref sync 가 재진입해도 업로드를 한 번만 한다', async () => {
+    const onUpload = vi.fn().mockResolvedValue({
+      success: true, mediaId: 'new-media', entityId: 'new-ent', workflowId: 'new-wf', registered: true,
+    })
+    let nestedSync = null
+    const onUpdate = vi.fn((_index, next) => {
+      if (next?.syncing === false && !nestedSync) {
+        nestedSync = syncRefToFlow(charRef, onUpload, {
+          projectId: 'flow-project-detail-publish', scopeToken: 'flow::',
+        })
+      }
+    })
+    const { container } = render(
+      <ReferenceDetailModal
+        {...baseProps}
+        reference={charRef}
+        appMode="flow"
+        flowProjectId="flow-project-detail-publish"
+        onUpdate={onUpdate}
+        onUpload={onUpload}
+      />
+    )
+
+    await act(async () => {
+      getSyncButton(container).click()
+      for (let i = 0; i < 20; i++) await Promise.resolve()
+    })
+    if (nestedSync) await nestedSync
+
+    expect(onUpload).toHaveBeenCalledTimes(1)
   })
 
   it('sync failure → toast error, no synced patch', async () => {

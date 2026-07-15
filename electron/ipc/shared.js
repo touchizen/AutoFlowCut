@@ -18,6 +18,8 @@ import { updateBounds } from './layout.js'
 import { createMutex } from '../asyncMutex.js'
 import { sanitizeForSentry } from '../flow-diag.js'
 
+export const FLOW_PAGE_FETCH_TIMEOUT_MS = 120000
+
 /**
  * #R34-fix: applyAgentDefaults 결과가 "요청한 image/video aspect·model 을 실제로 적용했는지" 판정(순수).
  *   buildAgentDefaultsScript 의 result.ok 는 패널을 찾기만 하면 true 라, 탭/옵션 미발견 같은 필드 적용
@@ -53,6 +55,7 @@ export function agentDefaultsApplied(opts = {}, result = {}) {
  */
 export function createSharedHelpers(ctx) {
   const { getFlowView, getMainWindow, constants, onDomFailure } = ctx
+  const flowPageFetchTimeoutMs = ctx.flowPageFetchTimeoutMs ?? FLOW_PAGE_FETCH_TIMEOUT_MS
 
   // 클릭 직렬화 — 두 클릭이 겹치면 서로의 임시(확대) bounds 를 자기 '원래 값'으로 스냅샷해
   //   복원이 어긋나고, 마우스 이벤트도 뒤섞인다. 모든 DOM 클릭이 이 병목을 지난다.
@@ -381,14 +384,17 @@ export function createSharedHelpers(ctx) {
     if (!flowView) throw new Error('Flow view not ready')
 
     // AutoFlow과 동일: fetch.call(window, ...) 패턴
-    const result = await flowView.webContents.executeJavaScript(`
+    const pagePromise = flowView.webContents.executeJavaScript(`
       (async function() {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), ${JSON.stringify(flowPageFetchTimeoutMs)});
         try {
           const _fetch = window.__afNativeFetch || window.__autoFlowNativeFetch || window.fetch;
           const init = {
             method: ${JSON.stringify(method)},
             headers: ${JSON.stringify(headers)},
-            body: ${JSON.stringify(body)}
+            body: ${JSON.stringify(body)},
+            signal: controller.signal
           };
           ${redirect ? `init.redirect = ${JSON.stringify(redirect)};` : ''}
           const resp = await _fetch.call(window, ${JSON.stringify(url)}, init);
@@ -406,9 +412,22 @@ export function createSharedHelpers(ctx) {
           };
         } catch (e) {
           return { ok: false, status: 0, text: e.message };
+        } finally {
+          clearTimeout(timeoutId);
         }
       })()
     `)
+
+    // renderer/WebContents invoke 자체가 응답하지 않는 경우 페이지 안 AbortController 도 실행할 수 없다.
+    // main 쪽 제한도 함께 둬 IPC caller/coordinator key 가 reload 전까지 영구 고착되지 않게 한다.
+    let timeoutId
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutId = setTimeout(
+        () => reject(new Error(`Flow page fetch timed out after ${flowPageFetchTimeoutMs}ms`)),
+        flowPageFetchTimeoutMs,
+      )
+    })
+    const result = await Promise.race([pagePromise, timeoutPromise]).finally(() => clearTimeout(timeoutId))
 
     return result
   }
@@ -1083,13 +1102,21 @@ export function createSharedHelpers(ctx) {
     let r = await probe()
     if (!r.read) {
       await reportDomFailure('project-probe-unreadable', 'probe_threw', { projectId, error: r.error })
-      return { ok: false, error: 'Flow 페이지를 읽을 수 없습니다. Flow 탭을 확인한 뒤 다시 시도해주세요.' }
+      return {
+        ok: false,
+        errorKind: 'flow-page-unreadable',
+        error: 'Could not read the Flow page',
+      }
     }
     // ⚠️ probe 결과는 **그것이 읽힌 페이지** 에 대해서만 유효하다. 밖에서 getURL() 을 다시 부르면
     //    A→B→A 로 오간 경우 B 의 결과를 A 의 것으로 오인한다(ABA). probe 가 같은 컨텍스트에서 돌려준
     //    url 로 짝을 맞춘다.
     if (!onProjectComposerUrl(r.page?.url || '', projectId)) {
-      return { ok: false, error: 'Flow 프로젝트가 도중에 바뀌었습니다. 다시 시도해주세요.' }
+      return {
+        ok: false,
+        errorKind: 'flow-project-changed',
+        error: 'Flow project changed during generation',
+      }
     }
     let page = r.page
     if (!page || !isFlowErrorPage(page)) return { ok: true }
@@ -1118,7 +1145,11 @@ export function createSharedHelpers(ctx) {
     await reportDomFailure('project-not-loaded', 'flow_error_page', { projectId, interactiveCount: page?.interactiveCount ?? null })
     // 사용자가 읽는 문구 — 진짜 원인을 말한다. "모든 미디어 화면인지 확인하세요"가 제보자를
     //   (그리고 우리를) 엉뚱한 곳으로 몇 시간 보냈다.
-    return { ok: false, error: 'Flow 프로젝트를 열지 못했습니다. Flow 탭에서 프로젝트가 정상적으로 열리는지 확인한 뒤 다시 시도해주세요.' }
+    return {
+      ok: false,
+      errorKind: 'flow-project-open-failed',
+      error: 'Could not open the Flow project',
+    }
   }
 
   /**

@@ -212,7 +212,9 @@ export function registerFlowAPIIPC(ipcMain, deps) {
 
     // Codex #R4-4: enforce Flow page is on the TARGET project before DOM mutation.
     const projectCheck = await ensureOnProjectComposer(flowView, projectId)
-    if (!projectCheck.ok) return { success: false, error: projectCheck.error }
+    if (!projectCheck.ok) {
+      return { success: false, errorKind: projectCheck.errorKind, error: projectCheck.error }
+    }
 
     // Seed / aspectRatio / references → set in page via monkey-patch inject
     const _seedValue = typeof seed === 'number' && Number.isFinite(seed) ? seed : null
@@ -451,7 +453,11 @@ export function registerFlowAPIIPC(ipcMain, deps) {
         // R8-P1: 이 시점엔 아직 타이머를 만들지 않았으므로(arm 직후 생성) generationTimeout 은 null —
         //   방어적으로 정리만 한다(no-op). 타이머가 arm 후로 미뤄져 옛 R7-P2 오삭제 위험은 사라졌다.
         if (generationTimeout) clearTimeout(generationTimeout)
-        return { success: false, error: 'Flow Agent 를 OFF 로 전환하지 못했습니다. Flow 가 "모든 미디어" 화면인지 확인한 뒤 다시 시도해주세요. (캐릭터/장면 탭에는 Agent 토글이 없어 실패할 수 있음)' }
+        return {
+          success: false,
+          errorKind: 'flow-agent-off-failed',
+          error: 'Could not turn Flow Agent off',
+        }
       }
       // 0.82. 이미지 모드로 전환 — 비디오와 동일하게 configureFlowMode 가 컴포즈 칩 팝오버를
       //      열고 이미지 탭을 클릭한다 (모드 탭은 컴포즈 칩 팝오버 안에 있다). 이미지 모드를
@@ -478,7 +484,11 @@ export function registerFlowAPIIPC(ipcMain, deps) {
         try { const _r = await ensureAgentOn(); onOk = !!(_r && _r.success) } catch (e) { console.warn('[Flow API] ensureAgentOn skipped:', e.message) }
         if (!onOk) {
           if (generationTimeout) clearTimeout(generationTimeout)
-          return { success: false, error: 'Flow Agent 를 ON 으로 전환하지 못했습니다. Flow 컴포즈에 Agent 토글이 있는지 확인해주세요.' }
+          return {
+            success: false,
+            errorKind: 'flow-agent-on-failed',
+            error: 'Could not turn Flow Agent on',
+          }
         }
         // 장수(count)+화면비도 함께 적용 — 안 넘기면 패널 기존값으로 생성된다.
         // #R33: Agent ON 은 streamChat 경로라 monkey-patch inject(imageAspectRatio)가 안 먹는다 →
@@ -1022,7 +1032,12 @@ export function registerFlowAPIIPC(ipcMain, deps) {
         clearTimeout(generationTimeout)
         if (getPendingGeneration() === syncOwnPending) setPendingGeneration(null)
         console.warn('[Flow API] (Agent ON sync) no fresh result image after', Math.round(MAX_WAIT / 1000), 's (fresh seen:', lastFresh.length, ')')
-        return { success: false, error: 'Agent 생성 결과 이미지를 찾지 못했습니다 (타임아웃).', retry: true }
+        return {
+          success: false,
+          errorKind: 'agent-image-result-timeout',
+          error: 'Agent image result timed out',
+          retry: true,
+        }
       }
 
       // 4. 네트워크 응답 대기

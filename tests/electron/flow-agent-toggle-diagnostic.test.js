@@ -9,7 +9,75 @@
 // every agent-ish control plus the attributes the matcher keys on — together with
 // the page context (viewport size, lang, url), so a single dump decides the cause.
 import { describe, it, expect } from 'vitest'
-import { scanAgentToggleCandidates, findAgentToggle } from '../../electron/flow-agent-toggle.js'
+import {
+  AGENT_TOGGLE_DIAGNOSTIC,
+  AGENT_TOGGLE_SELECTOR,
+  scanAgentToggleCandidates,
+  findAgentToggle,
+} from '../../electron/flow-agent-toggle.js'
+import {
+  ENGLISH_COMPOSER,
+  KOREAN_COMPOSER,
+} from '../fixtures/flow-live-dom-20260714.js'
+
+function run(expr) {
+  return window.eval(expr)
+}
+
+function japaneseComposer() {
+  return ENGLISH_COMPOSER.replace('>Agent<', '>エージェント<')
+}
+
+function appendToggle(label) {
+  const composer = document.body.firstElementChild
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.setAttribute('aria-pressed', 'false')
+  button.innerHTML = `<span class="content">${label}</span>`
+  composer.appendChild(button)
+  return button
+}
+
+describe('findAgentToggle — live composer structure', () => {
+  it.each([
+    ['English', ENGLISH_COMPOSER, 'Agent'],
+    ['Korean', KOREAN_COMPOSER, '에이전트'],
+  ])('finds the one aria-pressed button in the real %s composer', (_locale, html, label) => {
+    document.body.innerHTML = html
+
+    const toggle = findAgentToggle(document)
+
+    expect(toggle?.textContent.trim()).toBe(label)
+    expect(run(AGENT_TOGGLE_SELECTOR)).toBe(toggle)
+  })
+
+  it('finds a Japanese toggle from composer structure without translated text knowledge', () => {
+    document.body.innerHTML = japaneseComposer()
+
+    const toggle = findAgentToggle(document)
+
+    expect(toggle?.textContent.trim()).toBe('エージェント')
+    expect(run(AGENT_TOGGLE_SELECTOR)).toBe(toggle)
+  })
+
+  it('uses Agent text only to disambiguate multiple state controls in the composer scope', () => {
+    document.body.innerHTML = ENGLISH_COMPOSER
+    appendToggle('Pin controls')
+
+    expect(findAgentToggle(document)?.textContent.trim()).toBe('Agent')
+  })
+
+  it('returns null and diagnoses every candidate when multiple state controls remain ambiguous', () => {
+    document.body.innerHTML = japaneseComposer()
+    appendToggle('固定')
+
+    expect(findAgentToggle(document)).toBeNull()
+    expect(run(AGENT_TOGGLE_SELECTOR)).toBeNull()
+    const diagnostic = run(AGENT_TOGGLE_DIAGNOSTIC)
+    expect(diagnostic.candidates).toHaveLength(2)
+    expect(diagnostic.context.scopedToggleCount).toBe(2)
+  })
+})
 
 describe('scanAgentToggleCandidates', () => {
   it('captures an agent control that findAgentToggle rejects for lacking a toggle attribute', () => {
@@ -46,8 +114,8 @@ describe('scanAgentToggleCandidates', () => {
   })
 
   it('still captures the toggle when it IS found, so a dump proves the probe saw it', () => {
-    document.body.innerHTML = `
-      <button type="button" aria-pressed="true"><span class="content">에이전트</span></button>`
+    document.body.innerHTML = KOREAN_COMPOSER
+    document.querySelector('button[aria-pressed]').setAttribute('aria-pressed', 'true')
 
     expect(findAgentToggle(document)).toBeTruthy()
 

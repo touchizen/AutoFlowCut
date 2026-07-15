@@ -133,6 +133,37 @@ export function parseCSVToScenes(csvText, defaultDuration = DEFAULTS.scene.durat
   return scenes
 }
 
+/** SRT 타임코드 라인: 00:00:00,000 --> 00:00:03,000 (쉼표/마침표 둘 다 허용) */
+const SRT_TIME_RE = /(\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})/
+
+/**
+ * SRT 텍스트를 파싱 가능한 형태로 정규화한다.
+ *   - CRLF(\r\n) / CR(\r) → LF: **Windows 에서 만든 SRT 는 CRLF 다.** 블록 구분자가 "\r\n\r\n" 이라
+ *     /\n\n+/ 로는 한 번도 안 걸려서, 파일 전체가 블록 하나가 된다(= 씬 1개로 임포트되던 버그).
+ *   - BOM 제거: 첫 블록의 인덱스 줄이 "﻿1" 이 되어 깨진다.
+ */
+export function normalizeSrtText(srtText) {
+  return String(srtText || '').replace(/^﻿/, '').replace(/\r\n?/g, '\n')
+}
+
+/**
+ * SRT 를 블록 단위로 쪼개, 각 블록에서 {startTime, endTime, text} 를 뽑는다(순수).
+ * 인덱스 줄은 있어도 되고 없어도 된다 — 타임코드 줄을 **찾아서** 기준으로 삼는다(도구마다 다르다).
+ */
+export function parseSRTBlocks(srtText) {
+  const out = []
+  for (const block of normalizeSrtText(srtText).trim().split(/\n\s*\n+/)) {
+    const lines = block.split('\n').map((l) => l.trim()).filter(Boolean)
+    const timeIdx = lines.findIndex((l) => SRT_TIME_RE.test(l))
+    if (timeIdx === -1) continue
+
+    const [, start, end] = lines[timeIdx].match(SRT_TIME_RE)
+    const text = lines.slice(timeIdx + 1).join('\n').trim()
+    out.push({ startTime: parseSRTTime(start), endTime: parseSRTTime(end), text })
+  }
+  return out
+}
+
 /**
  * Storyboard CSV를 adapter 이전의 row 단위 입력으로 파싱한다.
  *
@@ -294,25 +325,10 @@ export function parseStoryboardCSVRows(csvText) {
  * @returns {Array} 씬 배열
  */
 export function parseSRTToScenes(srtText) {
-  const blocks = srtText.trim().split(/\n\n+/)
   const scenes = []
-  
-  for (const block of blocks) {
-    const lines = block.trim().split('\n')
-    if (lines.length < 3) continue
-    
-    // 시간 라인 파싱: 00:00:00,000 --> 00:00:03,000
-    const timeLine = lines[1]
-    const timeMatch = timeLine.match(/(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,\.]\d{3})/)
-    
-    if (!timeMatch) continue
-    
-    const startTime = parseSRTTime(timeMatch[1])
-    const endTime = parseSRTTime(timeMatch[2])
-    
-    // 자막 텍스트 (3번째 줄 이후)
-    const subtitle = lines.slice(2).join('\n').trim()
-    
+
+  for (const { startTime, endTime, text: subtitle } of parseSRTBlocks(srtText)) {
+
     scenes.push({
       id: `scene_${scenes.length + 1}`,
       startTime,
@@ -496,21 +512,10 @@ export function parseSceneCSVToTracks(csvText, options = {}) {
  */
 export function parseSRTToTrack(srtText, options = {}) {
   if (!srtText || !String(srtText).trim()) return { srtTrack: [], scenes: [] }
-  const blocks = srtText.trim().split(/\n\n+/)
   const srtTrack = []
   const scenes = []
 
-  for (const block of blocks) {
-    const lines = block.trim().split('\n')
-    if (lines.length < 3) continue
-    const timeLine = lines[1]
-    const timeMatch = timeLine.match(/(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,\.]\d{3})/)
-    if (!timeMatch) continue
-
-    const startTime = parseSRTTime(timeMatch[1])
-    const endTime = parseSRTTime(timeMatch[2])
-    const text = lines.slice(2).join('\n').trim()
-
+  for (const { startTime, endTime, text } of parseSRTBlocks(srtText)) {
     const lineId = `sub_${srtTrack.length + 1}`
     srtTrack.push({ id: lineId, startTime, endTime, text })
 
@@ -687,23 +692,12 @@ export function mergeTextIntoScenes(existing, text, defaultDuration = DEFAULTS.s
  * - 입력 블록 수 ↔ 기존 씬 수 정책은 mergeTextIntoScenes와 동일 (입력이 길이 결정)
  */
 export function mergeSRTIntoScenes(existing, srtText, options = {}) {
-  const blocks = srtText.trim().split(/\n\n+/)
-  const parsed = []
-
-  for (const block of blocks) {
-    const lines = block.trim().split('\n')
-    if (lines.length < 3) continue
-
-    const timeLine = lines[1]
-    const timeMatch = timeLine.match(/(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,\.]\d{3})/)
-    if (!timeMatch) continue
-
-    const startTime = parseSRTTime(timeMatch[1])
-    const endTime = parseSRTTime(timeMatch[2])
-    const subtitle = lines.slice(2).join('\n').trim()
-
-    parsed.push({ startTime, endTime, duration: endTime - startTime, subtitle })
-  }
+  const parsed = parseSRTBlocks(srtText).map(({ startTime, endTime, text }) => ({
+    startTime,
+    endTime,
+    duration: endTime - startTime,
+    subtitle: text,
+  }))
 
   const maxLen = Math.max(existing.length, parsed.length)
   return Array.from({ length: maxLen }, (_, i) => {

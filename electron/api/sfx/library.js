@@ -8,7 +8,9 @@ export function createLibrarySfxAdapter() {
       return { outputFormats: ['mp3', 'wav'], maxConcurrency: 4 }
     },
     async generate() {
-      throw new Error('library SFX source not configured (M2b MVP stub — 라이브러리 매칭 미구현)')
+      const error = new Error('Local sound-effects library unavailable')
+      error.errorKind = 'story-sfx-library-unavailable'
+      throw error
     },
   }
 }

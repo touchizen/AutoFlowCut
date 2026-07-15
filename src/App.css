@@ -1745,6 +1745,7 @@ html, body {
   color: var(--text-secondary, #9aa0b4);
 }
 .results-table .col-status { width: 90px; }
+.results-table col.col-status { min-width: 0; }
 
 .results-table tr.status-generating {
   animation: gold-glow 1.5s ease-in-out infinite;
@@ -1809,6 +1810,24 @@ html, body {
 .results-grid.ratio-landscape { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
 .results-grid.ratio-portrait  { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); }
 .results-grid.ratio-square    { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); }
+
+/* threshold 양쪽에서 같은 row/card 부모 구조를 유지해 focus와 hover DOM을 보존한다. */
+.results-grid.has-grid-rows {
+  display: block;
+}
+
+/* 큰 결과 grid는 카드가 아니라 측정된 grid row를 세로 virtualize한다. 바깥쪽은
+   scroll/spacer만 담당하고 각 .results-grid-row가 기존 column 배치를 재현한다. */
+.results-grid.is-virtualized {
+  display: block;
+  padding: 0 10px;
+}
+
+.results-grid-row {
+  display: grid;
+  gap: 10px;
+  align-items: stretch;
+}
 
 .result-card {
   position: relative;
@@ -2004,6 +2023,56 @@ html, body {
   align-items: center;
   justify-content: center;
   z-index: 1000;
+}
+
+/* Import work mounts and paints this compositor layer before synchronous parsing begins.
+   Fast imports remove it before the delayed reveal, so they never flash a spinner. */
+.import-processing-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 11000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  pointer-events: none;
+  will-change: opacity;
+  animation: import-processing-reveal 1ms step-end 150ms forwards;
+}
+
+.import-processing-overlay.is-visible {
+  opacity: 1;
+  animation: none;
+}
+
+.import-processing-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 22px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+
+.import-processing-spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid rgba(255, 255, 255, 0.25);
+  border-top-color: var(--primary-color);
+  border-radius: 50%;
+  animation: import-processing-spin 0.8s linear infinite;
+}
+
+@keyframes import-processing-reveal {
+  to { opacity: 1; }
+}
+
+@keyframes import-processing-spin {
+  to { transform: rotate(360deg); }
 }
 
 .modal {

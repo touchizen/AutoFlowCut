@@ -65,7 +65,7 @@ export async function checkAuthToken(genAPI, t) {
  */
 export function checkFlowProjectReady(flowProjectReady, t) {
   if (!flowProjectReady) {
-    toast.warning(t('toast.flowProjectNotReady', { defaultValue: 'Flow 프로젝트 로딩 중... 잠시 후 다시 시도해 주세요.' }))
+    toast.warning(t('toast.flowProjectNotReady'))
     return { ok: false }
   }
   return { ok: true }
