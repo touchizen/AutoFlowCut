@@ -2264,6 +2264,10 @@ function App() {
           generatingRefs,
           refBatchRunning,
         }}
+        sceneBridgeSources={{
+          scenes,
+          sceneMode: fixedSceneState?.sceneMode,
+        }}
       />
       <Header
         onSettings={(tab) => openSettings(typeof tab === 'string' ? tab : null)}

@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto'
  * `batch.status` 를 더했다 — `wait_batch`(§2.3)가 renderer 의 배치 진행을 읽는 유일한 경로이고,
  * main 엔 배치 상태가 없다 (기존엔 `executeJavaScript` 로 읽었고, D14 가 그 경로를 금지한다).
  */
-const ALLOWED_TOOLS = new Set(['video.admit', 'video.status', 'batch.status'])
+const ALLOWED_TOOLS = new Set(['video.admit', 'video.status', 'batch.status', 'scene.snapshot', 'video.frames', 'export.capcut', 'export.premiere'])
 
 /**
  * 🔴 **응답이 물어본 그것에 대한 답인지 확인한다.** correlation id 만으로는 부족하다 —
@@ -13,7 +13,9 @@ const ALLOWED_TOOLS = new Set(['video.admit', 'video.status', 'batch.status'])
  *    그래서 요청 인자의 식별자를 응답이 **echo** 하게 하고, 다르거나 **없으면** 거부한다.
  *    (누락을 통과시키면 fail-open 이다: 아무 대상의 응답이나 통과한다.)
  */
-const ECHO_KEY_BY_TOOL = { 'video.status': 'operationId', 'batch.status': 'type' }
+// scene.snapshot / export.* 는 식별 인자가 없어 echo 없이 그대로 통과한다 (video.admit 과 같은 부류).
+// video.frames 는 대상 씬을 물으므로 rendererSceneId 를 echo 로 요구한다 (다른 씬 프레임 오배송 방지).
+const ECHO_KEY_BY_TOOL = { 'video.status': 'operationId', 'batch.status': 'type', 'video.frames': 'rendererSceneId' }
 const DEFAULT_TIMEOUT_MS = 30_000
 const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key)
 

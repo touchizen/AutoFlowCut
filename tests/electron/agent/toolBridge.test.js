@@ -156,6 +156,17 @@ describe('toolBridge — correlated invoke (slice 13a)', () => {
     await expect(p).resolves.toMatchObject({ type: 'scene', status: 'running', done: 1, total: 3 })
   })
 
+  // M3: `scene.snapshot` 은 renderer 의 라이브 scenes 배열 + sceneMode 를 읽는다. 식별 인자가 없어
+  // (video.admit 처럼) echo key 가 없다 — renderer 결과를 그대로 통과시킨다.
+  it('`scene.snapshot` 은 허용되고 renderer 의 scenes/sceneMode 를 그대로 돌려준다', async () => {
+    const p = bridge.invoke('scene.snapshot', {})
+    const { requestId, name } = lastRequest()
+    expect(name).toBe('scene.snapshot')
+    const snapshot = { sceneMode: 'audio-first', scenes: [{ id: 'scene_7', storyId: 's' }] }
+    bridge.handleResponse({ requestId, result: snapshot })
+    await expect(p).resolves.toEqual(snapshot)
+  })
+
   it('🔴 allowlist 밖 name 은 renderer 로 **보내지도 않고** 거부한다', async () => {
     await expect(bridge.invoke('rm.-rf', {})).rejects.toThrow(/not allowed/i)
     expect(lastRequest(), 'allowlist 밖인데 renderer 로 보냈다').toBeUndefined()

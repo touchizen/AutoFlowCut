@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { readBatchStatus } from '../../agent/batchStatus.js'
 import { registerToolBridgeHandlers } from '../../agent/toolBridgeHandlers.js'
+import { sceneSnapshot } from '../../agent/sceneBridge.js'
 import { useOptionalI18n } from '../../hooks/useI18n'
 import en from '../../locales/en'
 import './ChatPanel.css'
@@ -117,7 +118,7 @@ function useCollapsedDrag(enabled) {
  * D14 전역 ChatPanel. App의 generate/story 조건부 body 밖에서 한 번만 mount해야 한다.
  * view 전환은 state를 보존하지만 projectKey 전환은 D15에 따라 이전 session을 abort/close한다.
  */
-export default function ChatPanel({ projectKey = null, batchStatusSources = {} }) {
+export default function ChatPanel({ projectKey = null, batchStatusSources = {}, sceneBridgeSources = {} }) {
   const t = useSafeT()
   const api = window.electronAPI
   const [collapsed, setCollapsed] = useState(false)
@@ -136,6 +137,8 @@ export default function ChatPanel({ projectKey = null, batchStatusSources = {} }
   const messageIdRef = useRef(0)
   const batchSourcesRef = useRef(batchStatusSources)
   batchSourcesRef.current = batchStatusSources
+  const sceneSourcesRef = useRef(sceneBridgeSources)
+  sceneSourcesRef.current = sceneBridgeSources
 
   const pushError = useCallback((failure) => {
     const text = failureText(failure, t)
@@ -225,6 +228,8 @@ export default function ChatPanel({ projectKey = null, batchStatusSources = {} }
           ...batchSourcesRef.current,
           type,
         }),
+        // M3: main 의 get_scene_images 등이 ordinal 을 resolve 하도록 라이브 씬 배열(바이트 제거)을 준다.
+        'scene.snapshot': () => sceneSnapshot(sceneSourcesRef.current),
       },
     })
     return () => bridge.dispose()

@@ -19,6 +19,7 @@ import { createToolBridge } from './agent/toolBridge.js'
 import { createGrantLedger } from './agent/grantLedger.js'
 import { createApprovalPrompt } from './agent/approvalPrompt.js'
 import { createAgentSessionManager } from './agent/sessionManager.js'
+import { createNativeImageReader } from './agent/nativeImageReader.js'
 import { createAgentEventForwarder, registerAgentIPC } from './ipc/agent-api.js'
 import { AGENT_APPROVAL_WINDOW_MS } from './agent/constants.js'
 import { registerTtsIPC } from './ipc/tts-api.js'
@@ -334,6 +335,8 @@ const agentSessionManager = createAgentSessionManager({
   approvalPrompt,
   toolBridge,
   storyCommands,
+  // D11 get_scene_images 의 이미지 decode(main nativeImage). 세션이 열릴 때 Tool Core 에 주입된다.
+  imageReader: createNativeImageReader(),
   // dev 기본값에 기대면 패키징에서 app.asar 안의 존재하지 않는 adapter를 찾는다.
   isPackaged: app.isPackaged,
   resourcesPath: process.resourcesPath,

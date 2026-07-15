@@ -13,9 +13,15 @@
  * nativeImage decode / renderer 를 타는 툴(toolBridge)은 뒤 슬라이스다.
  */
 
+import path from 'node:path'
 import { hashArgs } from './grantLedger.js'
 import { invalidParamNames, zodFromJson } from './jsonSchemaToZod.js'
 import { STORY_TTS_PROVIDERS } from '../../src/config/storyTtsProviders.js'
+import { resolveSceneOrdinals } from '../story/sceneResolver.js'
+import { findSceneImageCandidate, resizeSpec } from './sceneImages.js'
+
+// D11: 세로 이미지 긴 변 상한. 값은 스펙 고정(768). 토큰 경제상 하드코딩이 아니라 계약이다.
+const IMAGE_MAX_EDGE = 768
 
 /** 프로젝트가 안 열렸을 때의 공통 거부 (스펙 §2.1 `get_project_context`, slice 12). */
 const NO_PROJECT = Object.freeze({ error: 'no-project' })
@@ -230,6 +236,11 @@ export function createToolCore({
   sessionId = null,
   projectToken = null,
   admitToolCall = null,
+  // D11 이미지 decode seam. main 에서만 nativeImage 를 감싸 주입한다 (electron/main.js).
+  //   imageReader.exists(path) => Promise<boolean>
+  //   imageReader.decodeFile(path) => Promise<{ isEmpty, width, height, toBlock({resize}) => {data, mimeType} }>
+  // 주입 안 하면 get_scene_images 는 못 돈다 (createToolCore 는 electron 을 import 하지 않는 순수 노드로 남는다).
+  imageReader = null,
   now = () => Date.now(),
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
   waitWindowMs = 10 * 60 * 1000,     // 잠정 — legacy 폴링 창과 같게 두되, 측정 뒤 정한다
@@ -263,6 +274,49 @@ export function createToolCore({
 
       await sleep(pollIntervalMs)
     }
+  }
+
+  /**
+   * D11 — 씬 이미지 읽기 (에이전트의 눈). ordinal 을 단일 resolver 로 rendererSceneId 로 바꾸고,
+   * projectPath 에서 유도한 scene directory 에서 후보를 찾아 주입 codec 으로 decode/resize 한다.
+   *
+   * 🔴 **이중 권위 일관성.** `scenes` 는 renderer snapshot, `fixedScenes` 는 story state 다. 두 소스의
+   *    mode 가 어긋나면(committed-but-unstaged 크래시) ordinal 을 엉뚱한 씬으로 매핑해 **다른 씬의
+   *    이미지를 리뷰**하게 된다. mode 불일치는 먼저 `fixed-scenes-stale` 로 닫는다.
+   */
+  async function getSceneImages({ sceneNumbers } = {}) {
+    if (!imageReader) throw new Error('get_scene_images requires imageReader')
+    const snapshot = await toolBridge.invoke('scene.snapshot', {})
+    const state = await storyCommands.getState()
+    const storyImageFirst = state?.sceneMode === 'image-first'
+    const snapImageFirst = snapshot?.sceneMode === 'image-first'
+    if (storyImageFirst !== snapImageFirst) return { error: 'fixed-scenes-stale' }
+
+    const fixedScenes = storyImageFirst ? state.fixedScenes : null
+    const { resolved, errors } = resolveSceneOrdinals({ sceneNumbers, scenes: snapshot?.scenes || [], fixedScenes })
+    const sceneDir = path.join(storyCommands.projectPath, 'scenes')
+
+    const images = []
+    const content = []
+    for (const { ordinal, rendererSceneId } of resolved) {
+      const candidate = await findSceneImageCandidate({ sceneDir, rendererSceneId, exists: imageReader.exists })
+      if (!candidate) {
+        images.push({ ordinal, rendererSceneId, status: 'image-not-found' })
+        continue
+      }
+      const img = await imageReader.decodeFile(candidate)
+      // Electron 36 nativeImage 는 유효 WebP/GIF 를 결정적으로 empty 로 준다 — missing 과 분리 (D11).
+      if (img.isEmpty) {
+        images.push({ ordinal, rendererSceneId, status: 'unsupported-image-format' })
+        continue
+      }
+      const block = img.toBlock({ resize: resizeSpec(img.width, img.height, IMAGE_MAX_EDGE) })
+      images.push({ ordinal, rendererSceneId, status: 'ok', mimeType: block.mimeType })
+      content.push({ type: 'image', data: block.data, mimeType: block.mimeType })
+    }
+    // resolve 실패 ordinal 도 per-scene 결과로 섞는다 — 에이전트가 어느 씬이 없는지 안다.
+    for (const e of errors) images.push({ ordinal: e.ordinal, status: e.error })
+    return { images, content }
   }
 
   /**
@@ -308,6 +362,18 @@ export function createToolCore({
       },
       needs: 'toolBridge',          // story 는 안 쓴다 — renderer 의 배치 상태만 읽는다
       run: (args) => waitBatch(args),
+    },
+    get_scene_images: {
+      permission: 'R',              // 읽기 — 에이전트가 자기가 만든 씬 이미지를 본다 (D11)
+      description: '지정한 씬(1-based ordinal)의 생성 이미지를 읽어 리사이즈한 이미지 블록으로 반환한다. 생략 시 전체 씬.',
+      inputSchema: {
+        type: 'object',
+        properties: { sceneNumbers: { type: 'array', items: { type: 'number' } } },
+        additionalProperties: false,
+      },
+      // story state(fixedScenes/projectPath) + renderer snapshot 을 함께 읽는다.
+      needs: ['storyCommands', 'toolBridge'],
+      run: (args) => getSceneImages(args),
     },
     story_confirm_synopsis: {
       permission: 'G',              // 사람이 확정하는 것 — 에이전트가 혼자 못 한다 (D9)
@@ -407,21 +473,25 @@ export function createToolCore({
         if (!validation.success) {
           return { error: 'invalid-params', params: invalidParamNames(validation.error) }
         }
-        // 툴마다 필요한 것이 다르다. 전부에게 storyCommands 를 요구하면 renderer 만 읽는 툴이 못 돈다.
-        if (tool.needs === 'storyCommands' && !storyCommands) {
+        // 툴마다 필요한 것이 다르다. M3 이미지/영상 툴은 두 seam(storyCommands+toolBridge)을 함께
+        // 요구하므로 needs 는 문자열 또는 배열이다. 각 seam 게이트는 membership 으로 판단한다.
+        const needs = Array.isArray(tool.needs) ? tool.needs : (tool.needs ? [tool.needs] : [])
+        const needsStory = needs.includes('storyCommands')
+        const needsBridge = needs.includes('toolBridge')
+        if (needsStory && !storyCommands) {
           throw new Error('toolCore.use(storyCommands) was not called')
         }
-        if (tool.needs === 'toolBridge' && !toolBridge) {
+        if (needsBridge && !toolBridge) {
           throw new Error(`${name} requires toolBridge`)
         }
         // 프로젝트가 없다는 사실은 승인과 무관하다. grant를 먼저 consume하면 사람이 프로젝트를
         // 연 뒤 같은 승인으로 재시도할 수 없으므로, 모든 story 도구의 공통 사전조건을 앞에서 막는다.
-        if (tool.needs === 'storyCommands'
+        if (needsStory
           && typeof storyCommands.hasProject === 'function'
           && !storyCommands.hasProject()) return NO_PROJECT
         // renderer guarded()와 같은 계약이다. 프로젝트 전환은 renderer session close보다 먼저 일어날 수
         // 있으므로 agent 경로도 세션이 pin한 token을 직접 확인하고, 승인 consume 전에 닫혀야 한다.
-        if (tool.needs === 'storyCommands'
+        if (needsStory
           && storyCommands.projectToken !== projectToken) return { error: 'stale-token' }
         // adapter 의 주장이 아니라 **main ledger 의 grant** 를 본다.
         if (tool.permission !== 'R' && !isApproved(name, args, context)) {

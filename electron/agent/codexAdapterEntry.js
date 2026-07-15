@@ -26,6 +26,27 @@ import { zodFromJson } from './jsonSchemaToZod.js'
 
 export { zodFromJson } from './jsonSchemaToZod.js'
 
+/**
+ * D8 툴 결과 → MCP content 배열 (M3).
+ *
+ * 🔴 **image block 을 살린다.** get_scene_images/get_scene_video_frames 는 `content:[{type:'image',...}]`
+ *    를 담아 온다. 전부 JSON.stringify 하면 에이전트는 픽셀 대신 base64 문자열 덩어리를 텍스트로 받아
+ *    "본다"고 착각한다 — "에이전트의 눈"이 안 뜬다. content 는 실제 MCP image block 으로 내보내고,
+ *    나머지 metadata(어느 ordinal 이 ok/누락인지)만 text 로 함께 싣는다.
+ */
+export function toMcpContent(result) {
+  if (result && typeof result === 'object' && Array.isArray(result.content)) {
+    const { content, ...metadata } = result
+    const blocks = content.map((block) => (
+      block?.type === 'image'
+        ? { type: 'image', data: block.data, mimeType: block.mimeType }
+        : { type: 'text', text: JSON.stringify(block) }
+    ))
+    return [{ type: 'text', text: JSON.stringify(metadata) }, ...blocks]
+  }
+  return [{ type: 'text', text: JSON.stringify(result) }]
+}
+
 /** env 하나라도 없으면 **뜨지 않는다.** 반쯤 설정된 채 뜨면 게이트가 어디서 새는지 알 수 없다. */
 function requiredEnv(name) {
   const v = process.env[name]
@@ -81,7 +102,7 @@ export async function main() {
       },
       async (args) => {
         const result = await handlers.callTool(tool.name, args ?? {})
-        return { content: [{ type: 'text', text: JSON.stringify(result) }] }
+        return { content: toMcpContent(result) }
       },
     )
   }

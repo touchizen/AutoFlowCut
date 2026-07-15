@@ -254,6 +254,7 @@ function makeNormalizationHarness({
   const commands = {
     hasProject: () => hasProject,
     projectToken: commandProjectToken,
+    projectPath: '/normalize-proj',
     getState: vi.fn(async () => raw.getState ?? { steps: {} }),
     listScenes: vi.fn(async () => raw.listScenes ?? { scenes: [] }),
     confirmSynopsis: vi.fn(async () => raw.confirmSynopsis ?? { ok: true, operationId: 'confirm-op' }),
@@ -266,6 +267,7 @@ function makeNormalizationHarness({
     projectToken: sessionProjectToken,
     admitToolCall,
     toolBridge,
+    imageReader: { exists: vi.fn(async () => false), decodeFile: vi.fn() },
   })
   core.use(commands)
 

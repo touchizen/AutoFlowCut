@@ -25,6 +25,8 @@ export function createAgentSessionManager({
   approvalPrompt,
   toolBridge,
   storyCommands,
+  // D11 이미지 decode seam(main nativeImage). get_scene_images 가 쓴다. 없으면 그 툴만 못 돈다.
+  imageReader = null,
   isPackaged = false,
   resourcesPath = process.resourcesPath,
   onDelta,
@@ -139,6 +141,7 @@ export function createAgentSessionManager({
       grantLedger,
       sessionId,
       projectToken,
+      imageReader,
       admitToolCall: () => admitToolCall(session),
     })
     toolCore.use(storyCommands)
