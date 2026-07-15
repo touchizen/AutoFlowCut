@@ -163,8 +163,8 @@ export default function ReferencePanel({
       }
       // 이름을 SPA 에 못 넣은 카드가 하나라도 있을 때만 새로고침(나갔다 재진입)한다.
       if (needsRefresh) { try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {} }
-      if (fail === 0) toast.success(isKo ? `Flow 동기화 완료 (${ok})` : `Synced ${ok} to Flow`)
-      else toast.error(isKo ? `동기화 ${ok} 성공 · ${fail} 실패` : `Synced ${ok}, ${fail} failed`)
+      if (fail === 0) toast.success(t('reference.flowSyncAllSuccess', { ok }))
+      else toast.error(t('reference.flowSyncAllFailed', { ok, fail }))
     } finally {
       setSyncingAll(false)
     }

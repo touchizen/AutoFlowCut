@@ -123,6 +123,27 @@ describe('이름이 SPA 에 반영되지 않았을 때만 refresh 로 폴백한�
 })
 
 describe('캐릭터 ref 생성 결과의 entity 정보 저장', () => {
+  it('생성 실패 kind를 카드에 저장해 ErrorSection이 현재 locale로 표시하게 한다', async () => {
+    const { result, finalRef } = setupHook({
+      references: [CHAR],
+      genOverrides: {
+        generateImage: vi.fn().mockResolvedValue({
+          success: false,
+          errorKind: 'flow-agent-off-failed',
+          error: 'Could not turn Flow Agent off',
+        }),
+      },
+    })
+
+    await act(async () => { await result.current.handleGenerateRef(0) })
+
+    expect(finalRef(2)).toMatchObject({
+      status: 'error',
+      errorKind: 'flow-agent-off-failed',
+      errorMessage: 'Could not turn Flow Agent off',
+    })
+  })
+
   it('단건 생성: entityId/workflowId 와 synced 상태를 카드에 남긴다', async () => {
     const { result, finalRef } = setupHook({
       references: [CHAR],

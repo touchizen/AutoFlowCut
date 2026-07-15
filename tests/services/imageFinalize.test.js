@@ -88,6 +88,28 @@ describe('finalizeGeneratedImage — errorKind cleanup', () => {
     })
   })
 
+  it('preserves a coded main-process error for display-time localization', async () => {
+    const res = await finalizeGeneratedImage({
+      result: {
+        success: false,
+        errorKind: 'flow-agent-off-failed',
+        error: 'Could not turn Flow Agent off',
+        images: [],
+      },
+      genAPI: {},
+      saveMode: 'folder',
+      projectName: 'ep6',
+      sceneId: 'scene_1',
+      prompt: 'a cat',
+    })
+
+    expect(res.sceneUpdate).toMatchObject({
+      status: 'error',
+      errorKind: 'flow-agent-off-failed',
+      error: 'Could not turn Flow Agent off',
+    })
+  })
+
   it('failure path (save error): sceneUpdate sets errorKind: null', async () => {
     fileSystemAPI.saveImage.mockResolvedValue({ success: false, error: 'Disk full' })
 

@@ -1,16 +1,42 @@
+import { useCallback, useMemo, useState } from 'react'
 import Clip from './Clip'
 import { TRACK_H, SUB_TRACK_H } from './constants'
 
 const AUDIO_EXT_RE = /\.(mp3|wav|m4a)$/i
 const SRT_EXT_RE = /\.srt$/i
+const CLIP_VIRTUALIZATION_THRESHOLD = 200
+const CLIP_VIEWPORT_MARGIN_MS = 10_000
 
 export default function TrackLane({
   track, width, height, pxPerMs, renderClips = true,
   onClipClick, onClipDoubleClick, onClipDrag, totalDurationMs, playingClipIds, onSceneHover, onFlag, isFlagged, onToggleVideo,
+  visibleRangeMs = null,
   // 드래그앤드롭 (Phase 2)
   onTrackDrop, onTrackDragOver, onTrackDragLeave, dragOverTrackId,
 }) {
   const h = height ?? (track.isSubTrack ? SUB_TRACK_H : TRACK_H)
+  const clips = track.clips || []
+  const [interactingClipId, setInteractingClipId] = useState(null)
+
+  const handleClipInteractionChange = useCallback((clipId, active) => {
+    setInteractingClipId(current => active ? clipId : (current === clipId ? null : current))
+  }, [])
+
+  const clipsToRender = useMemo(() => {
+    if (!renderClips) return []
+    if (clips.length <= CLIP_VIRTUALIZATION_THRESHOLD) return clips
+    if (!visibleRangeMs) {
+      return interactingClipId == null
+        ? []
+        : clips.filter(clip => clip.id === interactingClipId)
+    }
+    const minMs = Math.max(0, visibleRangeMs.startMs - CLIP_VIEWPORT_MARGIN_MS)
+    const maxMs = visibleRangeMs.endMs + CLIP_VIEWPORT_MARGIN_MS
+    return clips.filter(clip => (
+      clip.id === interactingClipId
+      || (clip.endMs >= minMs && clip.startMs <= maxMs)
+    ))
+  }, [clips, interactingClipId, renderClips, visibleRangeMs])
 
   // narration/sfx 라인만 mp3 드롭 accept. 그 외 라인은 패널 레벨로 bubbling.
   const acceptsAudioDrop = track.acceptsDrop === 'audio'
@@ -67,7 +93,7 @@ export default function TrackLane({
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {renderClips && (track.clips || []).map(clip => (
+      {clipsToRender.map(clip => (
         <Clip
           key={clip.id}
           clip={clip}
@@ -83,6 +109,7 @@ export default function TrackLane({
           onFlag={onFlag}
           isFlagged={isFlagged}
           onToggleVideo={onToggleVideo}
+          onInteractionChange={handleClipInteractionChange}
         />
       ))}
     </div>

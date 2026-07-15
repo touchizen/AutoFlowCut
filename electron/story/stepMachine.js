@@ -849,7 +849,11 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
 
       // 대본 재설계: 편집된 대본으로 씬 분리 — 공백이면 기존 script.md를 보존하고 실패시킨다.
       if (typeof params.scriptOverride === 'string') {
-        if (!params.scriptOverride.trim()) throw new Error('빈 대본으로 씬 분리할 수 없습니다')
+        if (!params.scriptOverride.trim()) {
+          const error = new Error('Scenes cannot be created from an empty script')
+          error.errorKind = 'story-empty-script'
+          throw error
+        }
         sendStepLog('scenes', 'script-save', '편집 대본 저장', opId)
         await store.saveText('script.md', params.scriptOverride)
         const inputOptions = normalizeLlmOptions(params.options || state.input?.options)
@@ -951,6 +955,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const results = new Map()
       const errored = new Set()
       const errorMsgs = new Map() // 세그먼트별 실패 사유(인증/설정 등) — generic retry로 묻지 않기 위함
+      const errorKinds = new Map()
       const toSynth = []
       for (const seg of narration) {
         if (await canReuse(seg)) results.set(seg.id, { audioPath: reusePathOf(seg), durationMs: seg.durationMs, voiceKey: seg.voiceKey })
@@ -974,7 +979,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
             results.set(seg.id, { audioPath: path.join(projectPath, 'story', rel), durationMs, voiceKey: ttsVoiceKey(voice, effectiveEmotion(seg)) })
             send('story:progress', { kind: 'audio-segment', segId: seg.id, status: 'done' }, opId)
           } catch (e) {
-            if (!signal?.aborted) { errored.add(seg.id); errorMsgs.set(seg.id, e?.message || String(e)); send('story:progress', { kind: 'audio-segment', segId: seg.id, status: 'error' }, opId) } // 개별 실패 — 사유 보존(부분재시도)
+            if (!signal?.aborted) { errored.add(seg.id); errorMsgs.set(seg.id, e?.message || String(e)); if (e?.errorKind) errorKinds.set(seg.id, e.errorKind); send('story:progress', { kind: 'audio-segment', segId: seg.id, status: 'error' }, opId) } // 개별 실패 — 사유 보존(부분재시도)
           }
         }))
         if (signal?.aborted) return
@@ -1003,7 +1008,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
             results.set(seg.id, { audioPath: path.join(projectPath, 'story', rel), durationMs, sfxKey: sfxKeyOf(seg), sourceMode: source })
             send('story:progress', { kind: 'audio-segment', segId: seg.id, status: 'done' }, opId)
           } catch (e) {
-            if (!signal?.aborted) { errored.add(seg.id); errorMsgs.set(seg.id, e?.message || String(e)); send('story:progress', { kind: 'audio-segment', segId: seg.id, status: 'error' }, opId) }
+            if (!signal?.aborted) { errored.add(seg.id); errorMsgs.set(seg.id, e?.message || String(e)); if (e?.errorKind) errorKinds.set(seg.id, e.errorKind); send('story:progress', { kind: 'audio-segment', segId: seg.id, status: 'error' }, opId) }
           }
         }))
         if (signal?.aborted) return
@@ -1031,7 +1036,13 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         // 인증/설정 등 실제 예외 사유가 있으면 보존(예: "No Typecast API key" → UI가 키 설정 안내).
         // probe=0(측정 실패)은 예외가 아니라 사유 없음 → generic retry.
         const detail = errorMsgs.get(firstFail.id)
-        throw new Error(detail ? `audio failed for segment ${firstFail.id}: ${detail}` : `audio failed for segment ${firstFail.id} — retry`)
+        const failure = new Error(
+          errorKinds.has(firstFail.id)
+            ? detail
+            : (detail ? `audio failed for segment ${firstFail.id}: ${detail}` : `audio failed for segment ${firstFail.id} — retry`),
+        )
+        failure.errorKind = errorKinds.get(firstFail.id)
+        throw failure
       }
 
       // 2) 세그먼트에 실측 durationMs·audioPath 병합 (원 순서 보존). IP5-a: narration은 status:'done'
@@ -1746,7 +1757,12 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         }
       } catch (e) {
         if (!isStale()) {
-          state.steps[step] = { status: 'error', error: String(e.message || e), updatedAt: new Date().toISOString() }
+          state.steps[step] = {
+            status: 'error',
+            errorKind: e?.errorKind,
+            error: String(e.message || e),
+            updatedAt: new Date().toISOString(),
+          }
         }
       }
       if (!isStale()) {

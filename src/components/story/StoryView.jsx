@@ -9,6 +9,7 @@
  * 인라인 편집 · autoRun 토글은 M1 범위 밖(버튼 자리만 없음, 다음 마일스톤에서 추가).
  */
 import { useState, useEffect, useRef, useMemo } from 'react'
+import { readTextFile } from '../../utils/decodeTextFile'
 import { useI18n, I18nProvider } from '../../hooks/useI18n'
 import { StopwatchIcon, ElapsedTime } from '../StopwatchIcon'
 import PromptInput from '../PromptInput'
@@ -32,6 +33,7 @@ import { isStoryTtsProvider } from '../../config/storyTtsProviders'
 import { isNarratorSpeaker } from '../../utils/storyNarrationTracks'
 import { clampInt } from '../../utils/clampInt'
 import { normalizeStoryCharacter, resolveCharacterGender } from '../../services/storyCharacter'
+import { resolveDisplayError } from '../../utils/errorDisplay'
 import CharacterCards from './CharacterCards'
 import ResearchPanel from './ResearchPanel'
 import './StoryView.css'
@@ -931,11 +933,11 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     try {
       const ap = buildAudioParams()
       const r = await ttsPreview?.({ segmentIds: [segId], speakers: ap.speakers, sfxSources: ap.sfxSources })
-      if (r?.busy) { toast.error(t('story.audio.busy', '진행 중입니다. 잠시 후 다시 시도하세요.')); return }
+      if (r?.busy) { toast.error(t('story.audio.busy')); return }
       const seg = r?.segments?.find((s) => s.id === segId)
       if (seg?.audioPath) playAudio(seg.audioPath)
     } catch (e) {
-      toast.error(t('story.audio.testFailed', `테스트 실패: ${e?.message || e}`, { error: e?.message || e }))
+      toast.error(t('story.audio.testFailed', { error: e?.message || e }))
     } finally {
       setPreviewBusy(false)
     }
@@ -977,13 +979,13 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
       // pasted [등장인물 확정] — script는 이미 done(재생성 없음, §v2.8 B1). 대본에서 역추출한(편집 가능한)
       // 시놉시스는 함께 저장한다.
       const r = await pipeline.confirmSynopsis?.({ synopsisMd: synopsisDraft, characters: chars })
-      if (r?.error) { toast.error(`${t('story.error.prefix', '오류')}: ${r.error}`); return }
+      if (r?.error) { toast.error(`${t('story.error.prefix')}: ${r.error}`); return }
       setScriptPhase('editor')
       return
     }
     // title [이 시놉시스로 대본 생성] — confirm(커밋) 완료 후 start('script') 순차 호출(§v2.10).
     const r = await pipeline.confirmSynopsis?.({ synopsisMd: synopsisDraft, characters: chars })
-    if (r?.error) { toast.error(`${t('story.error.prefix', '오류')}: ${r.error}`); return }
+    if (r?.error) { toast.error(`${t('story.error.prefix')}: ${r.error}`); return }
     setBaseScript('')
     // 대본 화면(editor)으로 먼저 전환 — start('script')를 await 하면 생성이 끝날 때까지 화면이 안
     // 바뀌어 "대본 화면이 안 나온다". 전환 후 생성이 스트리밍으로 editor 뷰에 들어온다(§v2.10: confirm→start 순서 유지).
@@ -1019,7 +1021,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
       ...(adoptedIndices !== undefined ? { adoptedIndices } : {}),
     })
     if (r?.error) {
-      toast.error(`${t('story.error.prefix', '오류')}: ${r.error}`)
+      toast.error(`${t('story.error.prefix')}: ${r.error}`)
       return r
     }
     setScriptPhase('synopsis')
@@ -1029,7 +1031,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const handleResearchSkip = async () => {
     const r = await pipeline.researchSkip?.()
     if (r?.error) {
-      toast.error(`${t('story.error.prefix', '오류')}: ${r.error}`)
+      toast.error(`${t('story.error.prefix')}: ${r.error}`)
       return r
     }
     setUseResearchContext(false)
@@ -1094,7 +1096,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
       setTitle(res.title)
       return res.title
     } catch (err) {
-      toast.error(`${t('story.error.titleGenFailed', '제목 자동생성 실패')}: ${err?.message || err}`)
+      toast.error(`${t('story.error.titleGenFailed')}: ${err?.message || err}`)
       return null
     }
   }
@@ -1176,13 +1178,12 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     if (!file) return
     const name = (file.name || '').toLowerCase()
     if (!name.endsWith('.txt') && !name.endsWith('.md')) return
-    const reader = new FileReader()
-    // onload 는 성공 시에만 온다 — onloadend 를 쓰면 읽기 실패(result=null)에도 불려
-    // 기존 붙여넣은 대본을 빈 문자열로 덮어버린다. null 가드까지 이중 방어.
-    reader.onload = () => {
-      if (reader.result != null) setScriptText(String(reader.result))
-    }
-    reader.readAsText(file)
+    // readAsText 는 인코딩을 안 주면 UTF-8 을 강제한다 — Windows 에서 저장한 대본(CP949/UTF-16)이
+    //   에러 없이 깨진 글자로 들어온다. readTextFile 이 바이트를 보고 인코딩을 고른다.
+    // 읽기 실패 시 기존 붙여넣은 대본을 빈 문자열로 덮지 않는다(옛 onloadend 회귀 방지).
+    readTextFile(file)
+      .then((text) => { if (text != null) setScriptText(String(text)) })
+      .catch(() => {})
   }
   const handleImportDrop = (e) => {
     e.preventDefault()
@@ -1208,6 +1209,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const splitSummary = sceneGranularity === 'segment'
     ? t('story.scenes.summarySegment', '씬 분리 단위: 문장 기준 · 문장마다 씬 · 화자 전환 시 분리 · 짧은 조각 병합 · 10초↑ 분할')
     : `${t('story.scenes.summaryScene', '씬 분리 단위: 씬 기준')} · ${sceneMinSec}~${sceneMaxSec}${t('story.form.sceneSecUnit', '초')}`
+  const stepDisplayError = resolveDisplayError(t, stepData.errorKind, stepData.error)
   // 씬 기준 목표 길이(min~max초) 입력 — 설정 폼과 '씬 재분리' 바에서 공용. segment 모드에선 숨김.
   const renderSceneSec = () => sceneGranularity !== 'scene' ? null : (
     <div className="story-scene-sec">
@@ -1311,7 +1313,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
       {isError && (
         <div className="story-error-banner" role="alert">
-          ⚠️ {t('story.error.prefix', '오류')}: {stepData.error}
+          ⚠️ {t('story.error.prefix', '오류')}: {stepDisplayError}
         </div>
       )}
 

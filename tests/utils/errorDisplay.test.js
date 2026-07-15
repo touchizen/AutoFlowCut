@@ -12,6 +12,44 @@
 
 import { describe, it, expect } from 'vitest'
 import { resolveDisplayError } from '../../src/utils/errorDisplay'
+import en from '../../src/locales/en'
+import ko from '../../src/locales/ko'
+
+const INTRODUCED_ERROR_KINDS = [
+  'picker-not-opened',
+  'character-tab-not-found',
+  'search-input-not-found',
+  'option-check-failed',
+  'picker-closed-before-selection',
+  'option-not-found',
+  'dialog-not-closed',
+  'chip-verification-failed',
+  'text-injection-failed',
+  'flow-agent-off-failed',
+  'flow-agent-on-failed',
+  'agent-image-result-timeout',
+  'agent-video-result-timeout',
+  'flow-page-unreadable',
+  'flow-project-changed',
+  'flow-project-open-failed',
+  'character-composer-unavailable',
+  'character-detail-composer-unavailable',
+  'generate-button-unavailable',
+  'generate-button-click-failed',
+  'generation-response-timeout',
+  'generation-response-invalid',
+  'scene-generation-failed',
+  'flow-access-token-unavailable',
+  'character-file-input-unavailable',
+  'character-file-injection-failed',
+  'character-upload-timeout',
+  'character-upload-response-invalid',
+  'flow-t2v-reference-images-unsupported',
+  'story-empty-script',
+  'story-sfx-library-unavailable',
+  'character-generation-failed',
+  'character-upload-failed',
+]
 
 // fake t() that mimics useI18n: returns the value at the dot-path or the key itself if missing
 function makeT(strings) {
@@ -34,6 +72,25 @@ const T_EN = makeT({
 })
 
 describe('resolveDisplayError', () => {
+  it('keeps the real English and Korean error-kind catalogs in exact parity', () => {
+    expect(Object.keys(en.errorSection.kind).sort()).toEqual(Object.keys(ko.errorSection.kind).sort())
+  })
+
+  it.each([
+    ['en', en],
+    ['ko', ko],
+  ])('resolves every introduced kind in the %s catalog', (_lang, catalog) => {
+    const t = makeT(catalog)
+    for (const kind of INTRODUCED_ERROR_KINDS) {
+      const key = `errorSection.kind.${kind}`
+      const resolved = resolveDisplayError(t, kind, 'diagnostic fallback')
+      expect(catalog.errorSection.kind[kind], `${kind} is missing`).toBeTypeOf('string')
+      expect(resolved).toBe(catalog.errorSection.kind[kind])
+      expect(resolved).not.toBe(key)
+      expect(resolved).not.toBe('diagnostic fallback')
+    }
+  })
+
   it('translates known errorKind via t(`errorSection.kind.<kind>`)', () => {
     expect(resolveDisplayError(T_EN, 'image-missing', null)).toBe(
       'Image file not found — please regenerate',

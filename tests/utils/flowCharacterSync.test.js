@@ -90,10 +90,13 @@ describe('#R34: syncRefToFlow', () => {
   })
 
   it('업로드 실패 → ok:false', async () => {
-    const onUpload = vi.fn().mockResolvedValue({ success: false, error: 'boom' })
+    const onUpload = vi.fn().mockResolvedValue({ success: false, errorKind: 'character-upload-timeout', error: 'Character upload timed out' })
     const res = await syncRefToFlow({ id: 1, type: 'character', name: 'king', data: 'data:image/png;base64,X' }, onUpload)
     expect(res.ok).toBe(false)
-    expect(res.error).toBe('boom')
+    expect(res).toMatchObject({
+      errorKind: 'character-upload-timeout',
+      error: 'Character upload timed out',
+    })
   })
 
   it('이름 없으면 ok:false', async () => {

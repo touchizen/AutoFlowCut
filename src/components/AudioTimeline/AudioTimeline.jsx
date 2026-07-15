@@ -1208,7 +1208,12 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
           {/* wrapper: Playhead의 containing block을 viewport가 아닌 content 전체 높이로 만듦
               (이게 없으면 세로 스크롤 시 playhead가 viewport 밖 영역까지 못 닿음) */}
           <div className="atl-content" style={{ width: totalWidth }}>
-          <TimeRuler totalMs={data.totalDurationMs} pxPerMs={pxPerMs} width={totalWidth} />
+          <TimeRuler
+            totalMs={data.totalDurationMs}
+            pxPerMs={pxPerMs}
+            width={totalWidth}
+            visibleRangeMs={visibleRangeMs}
+          />
           <div className="atl-tracks" style={{ width: totalWidth }}>
             {visibleTracks.map((track, i) => {
               // 파일 항목은 lane 없이 작은 빈 row (vertical 정렬)
@@ -1259,6 +1264,7 @@ export default function AudioTimeline({ audioPackage, scenes, srtEntries, onClip
                   width={totalWidth}
                   height={getTrackHeight(track)}
                   pxPerMs={pxPerMs}
+                  visibleRangeMs={visibleRangeMs}
                   renderClips={renderClips}
                   onClipClick={onClipClick}
                   onClipDoubleClick={onClipDoubleClick}

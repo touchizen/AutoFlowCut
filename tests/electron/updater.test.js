@@ -134,6 +134,10 @@ describe('update-available — download confirmation', () => {
     onAvailable({ version: '1.0.1' })
 
     expect(dialogMock.showMessageBox).toHaveBeenCalledTimes(1)
+    expect(dialogMock.showMessageBox).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'A new version, 1.0.1, is available.',
+      buttons: ['Download Now', 'Later'],
+    }))
     expect(autoUpdaterMock.downloadUpdate).not.toHaveBeenCalled()
 
     resolveDialog({ response: 0 })
@@ -156,6 +160,19 @@ describe('update-available — download confirmation', () => {
     await flushAsync()
 
     expect(autoUpdaterMock.downloadUpdate).not.toHaveBeenCalled()
+  })
+
+  it('현재 locale이 ko면 업데이트 다이얼로그를 한국어로 표시', async () => {
+    const updater = await import('../../electron/updater.js')
+    updater.setupAppMenuAndUpdater()
+    updater.setMenuLocale('ko')
+
+    handlers.get('update-available')({ version: '1.0.1' })
+
+    expect(dialogMock.showMessageBox).toHaveBeenCalledWith(expect.objectContaining({
+      message: '새 버전 1.0.1이(가) 있습니다.',
+      buttons: ['지금 다운로드', '나중에'],
+    }))
   })
 
   it('이미 다운로드 중이면 update-available 다이얼로그 띄우지 않음 (중복 가드)', async () => {

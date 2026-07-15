@@ -6,8 +6,10 @@
  * Flow's agent model streams the result image inside flowCreationAgent:streamChat
  * (SSE) — NO separate batchGenerateImages request fires — so the legacy
  * response-interception collection never completes. Each generated result instead
- * renders as:
- *   <img alt="생성된 이미지" src=".../media.getMediaUrlRedirect?name=<UUID>">
+ * renders as a project edit card:
+ *   <a href=".../tools/flow/project/<id>/edit/<id>">
+ *     <img src=".../media.getMediaUrlRedirect?name=<UUID>">
+ *   </a>
  * The `name` UUID IS the mediaId; the src is a cookie-auth fetchable URL.
  *
  * scanGeneratedImages(doc) is pure (tested with jsdom) and is also injected into
@@ -33,9 +35,9 @@ export function scanGeneratedImages(doc) {
     const src = im.currentSrc || im.src || ''
     const m = src.match(/[?&]name=([a-f0-9-]{36})/)
     if (!m) continue
-    const r = im.getBoundingClientRect ? im.getBoundingClientRect() : { width: 0, height: 0 }
-    const isResult = (im.getAttribute('alt') || '').indexOf('생성') !== -1 || (r.width >= 120 && r.height >= 120)
-    if (isResult) out.push({ mediaId: m[1], src })
+    const link = im.closest && im.closest('a[href]')
+    const href = (link && link.getAttribute('href')) || ''
+    if (/\/tools\/flow\/project\/[^/]+\/edit\//.test(href)) out.push({ mediaId: m[1], src })
   }
   return out
 }

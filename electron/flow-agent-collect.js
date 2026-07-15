@@ -64,7 +64,11 @@ export async function collectAgentDomImages({
     }
     if (out.length > 0) return { success: true, images: out }
   }
-  return { success: false, error: 'Agent 생성 결과 이미지를 찾지 못했습니다 (timeout).' }
+  return {
+    success: false,
+    errorKind: 'agent-image-result-timeout',
+    error: 'Agent image result timed out',
+  }
 }
 
 /**
@@ -106,5 +110,9 @@ export async function collectAgentDomVideos({
     })
     return { success: true, videos: out }
   }
-  return { success: false, error: 'Agent 생성 결과 비디오를 찾지 못했습니다 (timeout).' }
+  return {
+    success: false,
+    errorKind: 'agent-video-result-timeout',
+    error: 'Agent video result timed out',
+  }
 }

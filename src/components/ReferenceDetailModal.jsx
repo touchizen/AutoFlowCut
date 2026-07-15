@@ -17,6 +17,7 @@ import { createStyleResolver } from '../services/styleResolver'
 import { isStyleReference } from '../services/styleService'
 import ErrorSection from './ErrorSection'
 import { StopwatchIcon, ElapsedTime } from './StopwatchIcon'
+import { resolveDisplayError } from '../utils/errorDisplay'
 
 export default function ReferenceDetailModal({ reference, index, onUpdate, onUpload, onClose, onGenerate, isGenerating, t, isKo, projectName, appMode, getScopeToken: getScopeTokenProp, thumbnails = {}, references = [], selectedStyleRefId = null, flowProjectId = null }) {
   const [editData, setEditData] = useState({ ...reference })
@@ -284,14 +285,16 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
           if (res?.success) {
             // main 이 상세페이지 이름칸에 타이핑했으면(nameApplied) 재진입 왕복이 불필요하다.
             if (!res.nameApplied) { try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {} }
-            toast.success(isKo ? `Flow 이름 동기화: ${renameSnapshot.name}` : `Renamed in Flow: ${renameSnapshot.name}`)
+            toast.success(t('reference.flowRenameSuccess', { name: renameSnapshot.name }))
           } else {
             markFailed()
-            toast.error((isKo ? 'Flow 이름 동기화 실패: ' : 'Flow rename failed: ') + (res?.error || 'unknown'))
+            toast.error(t('reference.flowRenameFailed', {
+              error: resolveDisplayError(t, res?.errorKind, res?.error || 'unknown'),
+            }))
           }
         } catch (e) {
           markFailed()
-          toast.error((isKo ? 'Flow 이름 동기화 오류: ' : 'Flow rename error: ') + (e?.message || String(e)))
+          toast.error(t('reference.flowRenameError', { error: e?.message || String(e) }))
         }
       })()
     }
@@ -384,8 +387,8 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
   //     안 될 때 복구. - scene 등: 일반 ref 업로드 → mediaId 재발급. (둘 다 이미지는 그대로 유지.)
   const handleSync = () => {
     if (!onUpload) return
-    if (!hasImageData(editData)) { toast.error(isKo ? '이미지가 없습니다' : 'No image to sync'); return }
-    if (!editData.name?.trim()) { toast.error(isKo ? '이름을 먼저 입력하세요' : 'Name required'); return }
+    if (!hasImageData(editData)) { toast.error(t('reference.syncNoImage')); return }
+    if (!editData.name?.trim()) { toast.error(t('reference.syncNameRequired')); return }
     const refSnapshot = { ...editData }
     const idx = index
     // #R34-fix: 동기화는 백그라운드(모달 닫힘)로 진행되며 최대 ~120초 걸릴 수 있다. 그 사이 프로젝트/
@@ -422,9 +425,11 @@ export default function ReferenceDetailModal({ reference, index, onUpdate, onUpl
         if (needsComposerRefresh(refSnapshot, res.result)) {
           try { await window.electronAPI?.refreshFlowComposer?.() } catch (_e) {}
         }
-        toast.success(isKo ? `Flow 동기화 완료: ${refSnapshot.name}` : `Synced to Flow: ${refSnapshot.name}`)
+        toast.success(t('reference.flowSyncSuccess', { name: refSnapshot.name }))
       } else {
-        toast.error((isKo ? '동기화 실패: ' : 'Sync failed: ') + (res.error || 'unknown'))
+        toast.error(t('reference.flowSyncFailed', {
+          error: resolveDisplayError(t, res.errorKind, res.error || 'unknown'),
+        }))
       }
     })()
   }

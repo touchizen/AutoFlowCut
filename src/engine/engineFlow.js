@@ -336,11 +336,16 @@ export function useFlowEngine(opts = {}) {
         //   실제 이미지 데이터를 기대해 깨진다. success:true + 빈 이미지로 'No images' 도 막는다.
         const imgs = res?.images || []
         if (res?.success && imgs.length === 0) {
-          return { success: false, error: res?.error || 'Scene generation returned no usable image' }
+          return {
+            success: false,
+            errorKind: res?.errorKind,
+            error: res?.error || 'Scene generation returned no usable image',
+          }
         }
         return markAuth({
           success: !!res?.success,
           images: imgs,
+          errorKind: res?.errorKind,
           error: res?.error || undefined,
           // #R33: 멘션 피커 누락(Flow 삭제) 신호 전파 → 호출측이 ref 를 'failed' 로 마킹(self-heal).
           staleMention: res?.staleMention,
@@ -410,7 +415,12 @@ export function useFlowEngine(opts = {}) {
         if (!res?.success) {
           // #R8-11: 인증 에러면 authFailed 센티넬 부여(배치 즉시 중단).
           // #R33: 멘션 피커 누락(Flow 삭제) 신호 전파 → 호출측이 ref 를 'failed' 로 마킹(self-heal).
-          return markAuth({ success: false, error: res?.error || 'Scene generation failed', staleMention: res?.staleMention })
+          return markAuth({
+            success: false,
+            errorKind: res?.errorKind,
+            error: res?.error || 'Scene generation failed',
+            staleMention: res?.staleMention,
+          })
         }
 
         // #R35: Agent OFF 비동기 제출 → 서버 수집용 generationId 를 그대로 반환. checkGeneration/
@@ -424,7 +434,11 @@ export function useFlowEngine(opts = {}) {
         // #R22-2: base64 이미지가 없으면 fail-closed(조용한 빈 success 방지).
         const images = res.images || []
         if (images.length === 0) {
-          return { success: false, error: res.error || 'Scene generation returned no usable image' }
+          return {
+            success: false,
+            errorKind: res.errorKind,
+            error: res.error || 'Scene generation returned no usable image',
+          }
         }
 
         // #R6-1: store result in local map so check/collectGeneration can find it
@@ -540,7 +554,11 @@ export function useFlowEngine(opts = {}) {
       // #R17-10: Flow DOM T2V 는 reference image 주입 미지원. segments(chip) 도 아닌 실제 ref 이미지가
       //   넘어오면 잘못된(레퍼런스 없는) 영상 방지 위해 fail-fast.
       if (!_segments && Array.isArray(_referenceImages) && _referenceImages.length > 0) {
-        return { success: false, error: 'Flow 모드 T2V 는 레퍼런스 이미지를 지원하지 않습니다. I2V(프레임)로 생성하거나 레퍼런스를 제거해 주세요.' }
+        return {
+          success: false,
+          errorKind: 'flow-t2v-reference-images-unsupported',
+          error: 'Flow text-to-video does not support reference images',
+        }
       }
       return markAuth(await api().flowGenerateVideoT2V({
         token: effectiveToken(),

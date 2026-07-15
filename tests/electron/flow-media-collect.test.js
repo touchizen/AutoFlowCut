@@ -12,19 +12,31 @@
 
 import { describe, it, expect, beforeEach } from 'vitest'
 import { extractMediaName, scanGeneratedImages, GENERATED_IMG_PROBE, planDomImageAssignments, clampImageBatchCount, scanGeneratedVideos, GENERATED_VIDEO_PROBE } from '../../electron/flow-media-collect.js'
+import {
+  ENGLISH_CHARACTER_PREVIEW,
+  ENGLISH_GENERATED_CARD,
+  ENGLISH_LIBRARY_CARD,
+  KOREAN_CHARACTER_PREVIEW,
+  KOREAN_GENERATED_CARD,
+  KOREAN_LIBRARY_CARD,
+} from '../fixtures/flow-live-dom-20260714.js'
 
 const REDIRECT = (uuid) => `https://labs.google/fx/api/trpc/media.getMediaUrlRedirect?name=${uuid}`
 const U1 = '0670a4e9-febb-4016-8ab8-624f6717ab44'
 const U2 = '11111111-2222-3333-4444-555555555555'
+const LIVE_RESULT = '1b746fb5-8ebb-456b-93f7-f5e3cc274c92'
 
 // jsdom has no layout → getBoundingClientRect returns 0. Force a size so the
 // "real generated image" size filter passes.
-function img(uuid, { alt = '생성된 이미지', w = 689, h = 388 } = {}) {
+function generatedCard(uuid, { alt = 'Generated image', w = 689, h = 388 } = {}) {
   const el = document.createElement('img')
   el.setAttribute('src', REDIRECT(uuid))
   el.setAttribute('alt', alt)
   el.getBoundingClientRect = () => ({ width: w, height: h })
-  return el
+  const link = document.createElement('a')
+  link.setAttribute('href', `https://labs.google/fx/tools/flow/project/project-id/edit/${uuid}`)
+  link.appendChild(el)
+  return link
 }
 
 beforeEach(() => { document.body.innerHTML = '' })
@@ -42,8 +54,8 @@ describe('extractMediaName', () => {
 
 describe('scanGeneratedImages', () => {
   it('returns generated images in DOM (submission) order with their mediaId', () => {
-    document.body.appendChild(img(U1))
-    document.body.appendChild(img(U2))
+    document.body.appendChild(generatedCard(U1))
+    document.body.appendChild(generatedCard(U2))
     const out = scanGeneratedImages(document)
     expect(out.map(i => i.mediaId)).toEqual([U1, U2])
     expect(out[0].src).toContain(U1)
@@ -54,13 +66,25 @@ describe('scanGeneratedImages', () => {
     icon.setAttribute('src', 'https://lh3.googleusercontent.com/a/avatar=s96-c')
     icon.getBoundingClientRect = () => ({ width: 32, height: 32 })
     document.body.appendChild(icon)
-    document.body.appendChild(img(U1))
+    document.body.appendChild(generatedCard(U1))
     expect(scanGeneratedImages(document).map(i => i.mediaId)).toEqual([U1])
   })
 
-  it('accepts a generated image by alt text even if size is unknown', () => {
-    document.body.appendChild(img(U1, { w: 0, h: 0 }))
+  it('accepts a generated project edit card even if alt and size are unknown', () => {
+    document.body.appendChild(generatedCard(U1, { alt: 'エージェントの結果', w: 0, h: 0 }))
     expect(scanGeneratedImages(document).map(i => i.mediaId)).toEqual([U1])
+  })
+
+  it.each([
+    ['English', ENGLISH_GENERATED_CARD, ENGLISH_LIBRARY_CARD, ENGLISH_CHARACTER_PREVIEW],
+    ['Korean', KOREAN_GENERATED_CARD, KOREAN_LIBRARY_CARD, KOREAN_CHARACTER_PREVIEW],
+  ])('keeps only the real %s generated card beside large reference and preview images', (_locale, result, library, preview) => {
+    document.body.innerHTML = result + library + preview
+    for (const image of document.querySelectorAll('img')) {
+      image.getBoundingClientRect = () => ({ width: 689, height: 388 })
+    }
+
+    expect(scanGeneratedImages(document).map((item) => item.mediaId)).toEqual([LIVE_RESULT])
   })
 })
 
@@ -69,6 +93,15 @@ describe('GENERATED_IMG_PROBE', () => {
     expect(typeof GENERATED_IMG_PROBE).toBe('string')
     expect(GENERATED_IMG_PROBE).toContain('document')
     expect(GENERATED_IMG_PROBE).toContain('name=')
+  })
+
+  it('applies the same edit-card contract to the real English dump fixture', () => {
+    document.body.innerHTML = ENGLISH_GENERATED_CARD + ENGLISH_LIBRARY_CARD + ENGLISH_CHARACTER_PREVIEW
+    for (const image of document.querySelectorAll('img')) {
+      image.getBoundingClientRect = () => ({ width: 689, height: 388 })
+    }
+
+    expect(window.eval(GENERATED_IMG_PROBE).map((item) => item.mediaId)).toEqual([LIVE_RESULT])
   })
 })
 

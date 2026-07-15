@@ -1193,24 +1193,26 @@ describe('useFlowEngine (#R33) — staleMention propagation', () => {
   const synced = { id: 1, name: 'king', type: 'character', entityId: 'e1', flowNameSyncStatus: 'synced', mediaId: 'm1' }
 
   it('submitGeneration: flowGenerateScene staleMention → propagated on the failed result', async () => {
-    mockFlowGenerateScene.mockResolvedValue({ success: false, error: '멘션 선택 실패: king', retry: true, staleMention: 'king' })
+    mockFlowGenerateScene.mockResolvedValue({ success: false, errorKind: 'option-not-found', error: 'Mention selection failed', retry: true, staleMention: 'king' })
     const { result } = renderHook(() => useFlowEngine())
     let res
     await act(async () => {
       res = await result.current.submitGeneration('@king walks', [], { references: [synced] })
     })
     expect(res.success).toBe(false)
+    expect(res.errorKind).toBe('option-not-found')
     expect(res.staleMention).toBe('king')
   })
 
   it('generateImage: flowGenerateScene staleMention → propagated', async () => {
-    mockFlowGenerateScene.mockResolvedValue({ success: false, error: '멘션 선택 실패: king', retry: true, staleMention: 'king' })
+    mockFlowGenerateScene.mockResolvedValue({ success: false, errorKind: 'option-not-found', error: 'Mention selection failed', retry: true, staleMention: 'king' })
     const { result } = renderHook(() => useFlowEngine())
     let res
     await act(async () => {
       res = await result.current.generateImage('@king walks', [], { references: [synced] })
     })
     expect(res.success).toBe(false)
+    expect(res.errorKind).toBe('option-not-found')
     expect(res.staleMention).toBe('king')
   })
 })
@@ -1389,7 +1391,10 @@ describe('useFlowEngine — #R36 T2V @멘션 segments', () => {
       res = await result.current.generateVideoT2V('hero walks', 'veo', '16:9', 6, null, '720p', [{ mediaId: 'm1' }], {})
     })
     expect(res.success).toBe(false)
-    expect(res.error).toMatch(/레퍼런스 이미지를 지원하지 않습니다/)
+    expect(res).toMatchObject({
+      errorKind: 'flow-t2v-reference-images-unsupported',
+      error: 'Flow text-to-video does not support reference images',
+    })
     expect(mockFlowGenerateVideoT2V).not.toHaveBeenCalled()
   })
 

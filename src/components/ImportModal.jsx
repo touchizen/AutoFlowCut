@@ -4,6 +4,7 @@
 
 import { useState, useRef } from 'react'
 import { useI18n } from '../hooks/useI18n'
+import { readTextFile } from '../utils/decodeTextFile'
 import Modal from './Modal'
 
 // 가이드 URL 설정
@@ -89,7 +90,7 @@ export default function ImportModal({ onImport, onImportAudio, onClose }) {
     fileInputRef.current.click()
   }
 
-  const handleFileSelect = (e) => {
+  const handleFileSelect = async (e) => {
     const file = e.target.files?.[0]
     if (!file || !selectedType) return
 
@@ -98,12 +99,13 @@ export default function ImportModal({ onImport, onImportAudio, onClose }) {
     const supportsModeToggle = selectedType === 'text' || selectedType === 'csv'
     const effectiveMode = supportsModeToggle ? importMode : 'image'
 
-    const reader = new FileReader()
-    reader.onloadend = () => onImport(selectedType, reader.result, effectiveMode)
-    reader.readAsText(file)
-
     e.target.value = ''
     setSelectedType(null)
+
+    // readAsText 는 인코딩을 안 주면 UTF-8 을 강제한다 — Windows 의 UTF-16/CP949 자막이
+    //   에러 없이 깨진 글자로 들어온다. 바이트를 보고 인코딩을 고른다.
+    const text = await readTextFile(file)
+    onImport(selectedType, text, effectiveMode)
   }
 
   const openUrl = (url, e) => {

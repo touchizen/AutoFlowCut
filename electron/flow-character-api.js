@@ -117,33 +117,10 @@ export function isStaleRegistrationResponse(res) {
   return res.status === 404 && errStatus === 'NOT_FOUND'
 }
 
-/**
- * 멘션 피커 옵션 라벨 목록에서 이름에 정확히 매칭되는 라벨 선택(순수).
- *   캐릭터 탭 라벨은 "이름" 또는 "이름캐릭터"(접미 타입) 형태(캡처 확인). prefix fallback 없음 —
- *   "회사원" 이 "회사원3캐릭터" 를 잘못 고르는 것 차단. character.js 의 in-page findOpt 와 동일 규칙(미러).
- * @returns {string|null} 매칭 라벨(원본) 또는 null
- */
-export function pickMentionOptionLabel(labels, name) {
-  const strip = (s) => (s || '').replace(/\s+/g, '')
-  const target = strip(name)
-  if (!target) return null
-  return (labels || []).find(l => { const t = strip(l); return t === target || t === target + '캐릭터' }) || null
-}
-
-/**
- * 삽입된 멘션 칩 텍스트가 이름과 일치하는지(순수, 토큰경계).
- *   substring 이면 "회사원" 이 "회사원3" 칩을 통과시키므로, 이름 뒤 글자가 또 이름글자면 거부.
- *   character.js 의 in-page 칩 검증과 동일 규칙(미러).
- */
-export function chipMatchesMentionName(chipText, name) {
-  const strip = (s) => (s || '').replace(/\s+/g, '')
-  const s = strip(chipText)
-  const target = strip(name)
-  if (!target) return false
-  // R5-P2: 정확 일치 또는 "@이름"/"이름캐릭터"(타입 접미)만 — substring fallback 제거.
-  //   ("영업회사원" 칩이 target "회사원" 으로 통과하던 앞쪽 경계 누락 차단.)
-  return s === target || s === '@' + target || s === target + '캐릭터' || s === '@' + target + '캐릭터'
-}
+// 멘션 옵션/칩 매칭 규칙은 electron/flow-mention-dom.js 로 옮겼다.
+//   여기 있던 pickMentionOptionLabel / chipMatchesMentionName 는 in-page 로직의 "미러"였는데
+//   아무도 import 하지 않는 죽은 코드였다 — 테스트만 초록불이고 앱은 안 고쳐지는 상태를 만들었다.
+//   (실제 버그: 통짜 textContent 비교가 한글 타입 라벨 '캐릭터' 에 묶여 영어 Flow 에서 100% 실패.)
 
 /** generate-character IPC 의 최종 반환 객체 빌더(순수) — 렌더러 generateImageDOM 과 동일한 images 형태. */
 export function buildCharacterResult(parsed, base64Image, { displayName = null, registered = false, nameApplied = false } = {}) {

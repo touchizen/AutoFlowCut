@@ -16,6 +16,7 @@ import { isQuotaExhaustedError, emitQuotaStop } from '../utils/quotaStop'
 import { clampInt } from '../utils/clampInt'
 import { getAuthErrorMessage, getAuthRequiredMessage } from '../utils/authMessages'
 import { runFlowCharacterOperation } from '../utils/flowCharacterCoordinator'
+import { resolveDisplayError } from '../utils/errorDisplay'
 
 // 1~3초 랜덤 딜레이
 const randomDelay = () => new Promise(r => setTimeout(r, 1000 + Math.random() * 2000))
@@ -48,6 +49,12 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
   const authStoppedRef = useRef(false)
   const authErrorMessage = () => getAuthErrorMessage(genAPI?.mode, t)
   const authRequiredMessage = () => getAuthRequiredMessage(genAPI?.mode, t)
+  const resultErrorKind = (result) => result?.authFailed ? 'auth' : (result?.errorKind ?? null)
+  const displayResultError = (result, fallback) => resolveDisplayError(
+    t,
+    resultErrorKind(result),
+    result?.error || fallback,
+  )
 
   // quota stop 공통 모듈 위임 — queue clear 는 useGenerationQueue 가 직접 subscribe 함.
   const _maybeTriggerQuotaStop = (err) => {
@@ -288,7 +295,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
 
     setGeneratingRefs(prev => prev.includes(index) ? prev : [...prev, index])
     // styleId 는 성공 시점이 아니라 시작 시점에 남긴다 — 실패한 카드야말로 같은 스타일로 재생성돼야 한다.
-    setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'generating', styleId: effectiveStyleId, errorMessage: null, generatingStartedAt: Date.now(), generatingEndedAt: null } : r))
+    setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'generating', styleId: effectiveStyleId, errorMessage: null, errorKind: null, generatingStartedAt: Date.now(), generatingEndedAt: null } : r))
 
     try {
       // 스타일 준비 (공통 함수)
@@ -309,11 +316,16 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
           const isAuthError = errorMsg.includes('401') || errorMsg.includes('auth') || errorMsg.includes('token') || errorMsg.includes('login')
           const isServerError = errorMsg.includes('500') || errorMsg.includes('502') || errorMsg.includes('503') || errorMsg.includes('server')
           const isQuota = _maybeTriggerQuotaStop(errorMsg)
-          if (!isQuota) toast.error(t('toast.generateFailed', { error: result.error || 'Unknown error' }))
+          if (!isQuota) toast.error(t('toast.generateFailed', { error: displayResultError(result, 'Unknown error') }))
           setGeneratingRefs(prev => prev.filter(i => i !== index))
           // #R26-5: 단일-ref 경로도 배치 경로(R25-5)와 동일하게 인증 실패를 errorKind:'auth' 로 분류.
           setReferences(prev => prev.map((r, i) => i === index
-            ? { ...r, status: 'error', errorMessage: result.error || 'Generation failed', ...((result.authFailed || isAuthError) ? { errorKind: 'auth' } : {}) }
+            ? {
+                ...r,
+                status: 'error',
+                errorMessage: result.error || 'Generation failed',
+                errorKind: (result.authFailed || isAuthError) ? 'auth' : (result.errorKind ?? null),
+              }
             : r))
           return { success: false, authError: isAuthError, serverError: isServerError, quotaExhausted: isQuota }
         }
@@ -370,12 +382,17 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       const isAuthError = errorMsg.includes('401') || errorMsg.includes('auth') || errorMsg.includes('token')
       const isServerError = errorMsg.includes('500') || errorMsg.includes('502') || errorMsg.includes('503')
       const isQuota = _maybeTriggerQuotaStop(errorMsg)
-      if (!isQuota) toast.error(t('toast.generateFailed', { error: result.error || 'Unknown error' }))
+      if (!isQuota) toast.error(t('toast.generateFailed', { error: displayResultError(result, 'Unknown error') }))
       setGeneratingRefs(prev => prev.filter(i => i !== index))
       // #R25-5: authFailed 면 errorKind:'auth' 도 같이 남긴다 — cleanup 은 pendingQueue 항목에만
       //   auth 마커를 붙이므로, 실제 인증 실패를 맞은 이 ref 가 안정적 auth 표식을 놓치지 않게 한다.
       setReferences(prev => prev.map((r, i) => i === index
-        ? { ...r, status: 'error', errorMessage: result.error || 'Generation failed', ...(result.authFailed ? { errorKind: 'auth' } : {}) }
+        ? {
+            ...r,
+            status: 'error',
+            errorMessage: result.error || 'Generation failed',
+            errorKind: resultErrorKind(result),
+          }
         : r))
       return { success: false, authError: isAuthError, serverError: isServerError, quotaExhausted: isQuota }
     }
@@ -616,7 +633,12 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
             setGeneratingRefs(prev => prev.filter(i => i !== index))
             // #R25-5: authFailed 면 errorKind:'auth' 도 남겨 안정적 auth 표식 유지.
             setReferences(prev => prev.map((r, i) => i === index
-              ? { ...r, status: 'error', errorMessage: submitResult?.error || 'Submit failed', ...(submitResult?.authFailed ? { errorKind: 'auth' } : {}) }
+              ? {
+                  ...r,
+                  status: 'error',
+                  errorMessage: submitResult?.error || 'Submit failed',
+                  errorKind: resultErrorKind(submitResult),
+                }
               : r))
 
             if (_maybeTriggerQuotaStop(submitResult?.error)) {

@@ -18,7 +18,7 @@ function ClipGeneratingTimer({ startedAt, endedAt }) {
 // 클립 — click vs drag 자동 구분, draggable이면 드래그로 timecode 보정
 // onFlag(audioPath, filename, event): hover ⚠️ 버튼 클릭 시 호출 (audioPath 있고 onFlag 전달된 경우만)
 // isFlagged(filePath): bool — flagged 시각 표시
-export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDoubleClickClip, onDragClip, totalDurationMs, isPlaying, onSceneHover, onFlag, isFlagged, onToggleVideo }) {
+export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDoubleClickClip, onDragClip, totalDurationMs, isPlaying, onSceneHover, onFlag, isFlagged, onToggleVideo, onInteractionChange }) {
   const [dragOffsetMs, setDragOffsetMs] = useState(null)
   const isDragging = dragOffsetMs !== null
   const flagged = !!(isFlagged && clip.audioPath && isFlagged(clip.audioPath))
@@ -92,6 +92,8 @@ export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDo
     e.stopPropagation() // 스크럽 트리거 차단
     // 이전 드래그가 살아있다면 먼저 정리
     dragCleanupRef.current?.()
+    onInteractionChange?.(clip.id, true)
+    let interactionActive = true
     const startX = e.clientX
     let lastDx = 0
     let didDrag = false
@@ -113,6 +115,10 @@ export default function Clip({ clip, variant, pxPerMs, height, onClickClip, onDo
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       dragCleanupRef.current = null
+      if (interactionActive) {
+        interactionActive = false
+        onInteractionChange?.(clip.id, false)
+      }
     }
     const onUp = () => {
       cleanup()

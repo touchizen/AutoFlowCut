@@ -22,6 +22,17 @@ if (typeof window !== 'undefined' && !window.matchMedia) {
   })
 }
 
+// jsdom 미지원 API 폴리필 — TanStack Virtual 이 element/row 관찰에 사용한다.
+if (typeof window !== 'undefined' && !window.ResizeObserver) {
+  class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  window.ResizeObserver = ResizeObserver
+  globalThis.ResizeObserver = ResizeObserver
+}
+
 // 각 테스트 후 cleanup — node-env 테스트는 DOM/localStorage 없음.
 afterEach(() => {
   if (typeof document !== 'undefined') cleanup()

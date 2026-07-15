@@ -51,6 +51,7 @@ import { videoClearPatch, buildFramePairVideoPatch, buildVideoRestorePatch, reso
 import { detectFileType, detectCSVType, parseCSVToScenes, parseSRTToScenes, csvPromptToVideoT2V } from './utils/parsers'
 import { getSceneDuration, resolveAudioSrtEntries } from './utils/srtTrack'
 import { tabAfterImport } from './utils/importTabRouting'
+import { runSceneImportWithConfirmation } from './utils/importInspection'
 import { checkFolderPermission, checkFlowProjectReady } from './utils/guards'
 import { shouldApplyModeScopedUpdate } from './utils/modeSwitchGuard'
 import { collectTagErrors } from './utils/tagMatch'
@@ -100,10 +101,12 @@ import StylePicker from './components/StylePicker'
 import Modal from './components/Modal'
 import DeleteSceneConfirmModal from './components/DeleteSceneConfirmModal'
 import SrtImportConflictModal from './components/SrtImportConflictModal'
+import ImportProcessingOverlay from './components/ImportProcessingOverlay'
 import { useAuth } from './contexts/AuthContext'
+import { useImportProcessing } from './hooks/useImportProcessing'
 
 function App() {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const isKo = t('common.cancel') === '취소'  // 간단한 언어 감지 (ReferencePanel 과 동일)
   // #R34: 생성 전 미동기화 @멘션 캐릭터 가드 모달 상태 — { refs, proceed } | null
   const [syncGate, setSyncGate] = useState(null)
@@ -171,6 +174,7 @@ function App() {
   // SRT 가져오기 충돌 모달: 기존 scenes/srtTrack 있을 때 사용자에게 대체/병합/취소 묻는 상태.
   // null = 미요청. { content, framePairs } 객체가 들어있으면 모달 띄움.
   const [srtImportPending, setSrtImportPending] = useState(null)
+  const { processing: importProcessing, spinnerVisible: importSpinnerVisible, runImportProcessing } = useImportProcessing()
   const [showAudioResult, setShowAudioResult] = useState(false)
   const [showReferences, setShowReferences] = useState(false)
   const [authReady, setAuthReady] = useState(false)
@@ -334,6 +338,12 @@ function App() {
   }, [availableModels.imageModels, availableModels.videoModels, availableModels.loading, settings.imageModel, settings.videoModelT2V, settings.videoModelF2V, mode])
   const scenesHook = useScenes()
   const { scenes, references, parseFromText, parseFromCSV, parseFromSRT, parseReferencesFromCSV, updateReferences, setScenes, setReferences } = scenesHook
+  const latestScenesRef = useRef(scenes)
+  latestScenesRef.current = scenes
+  const handleRequestSceneDelete = useCallback((sceneId, sceneIndex) => {
+    const scene = latestScenesRef.current.find(item => item.id === sceneId)
+    if (scene) setSceneToDelete({ scene, sceneIndex })
+  }, [])
   // Step 3: videoScenes 는 scenes 에서 derived. useVideoScenes 가 scenesHook 으로 라우팅.
   const videoScenesHook = useVideoScenes(scenes, scenesHook)
   const { videoScenes, setVideoScenes } = videoScenesHook
@@ -1014,6 +1024,8 @@ function App() {
       videoScenesHook.parseFromText(text, settings.defaultDuration, framePairs)
     }
 
+    const hasExistingSrt = (scenesHook.srtTrack || []).length > 0
+
     // 타입별 실행 액션
     const actions = {
       text: () => isVideo
@@ -1030,7 +1042,6 @@ function App() {
       // srtTrack 없이 scenes 만 있는 케이스 (text/CSV import 이후 첫 SRT) 는
       // 모달 약속과 어긋남 → silent 로 wholesale index merge (기존 동작) 유지.
       srt: () => {
-        const hasExistingSrt = (scenesHook.srtTrack || []).length > 0
         if (hasExistingSrt) {
           setSrtImportPending({ content, framePairs })
           return  // conflict — 모달 resolve(replace/merge)가 list 전환 담당
@@ -1052,30 +1063,60 @@ function App() {
       reference: 'import.wrongTypeReference'
     }
 
+    // Wrong-type와 large-import 모두 같은 catalog-key → window.confirm 경로를 쓴다.
+    const requestConfirmation = (confirmKey, params = {}) => window.confirm(t(confirmKey, params))
+
+    const executeAction = async (effectiveType) => {
+      const action = actions[effectiveType]
+      if (!action) return
+      // 기존 SRT가 있으면 여기서는 conflict modal만 연다. 실제 parse/commit은
+      // modal의 replace/merge 선택 시 같은 processing controller로 감싼다.
+      if (effectiveType === 'srt' && hasExistingSrt) return action()
+      return runImportProcessing(action)
+    }
+
     // import한 데이터를 보거나 편집할 수 있는 탭으로 자동 전환.
     //   text/csv 는 tabForType (이미지→text / 비디오→video-text).
     //   srt 는 actions.srt / 모달이 list 전환을 직접 담당, reference 는 Ref 패널.
 
     // 타입 불일치 시 확인 후 감지된 타입으로 실행
+    let effectiveType = type
     if (detectedType && detectedType !== type) {
       const confirmKey = confirmKeys[detectedType]
-      let didImport = false
-      if (confirmKey && window.confirm(t(confirmKey))) {
-        await actions[detectedType]?.()
-        didImport = true
+      if (!confirmKey || !requestConfirmation(confirmKey)) {
+        setShowImport(false)
+        return
       }
-      setShowImport(false)
-      // Cancel(didImport=false)이면 action 미실행 → 탭 전환 안 함
-      const tab = tabAfterImport({ didImport, type: detectedType, isVideo })
-      if (tab) setActiveTab(tab)
-      return
+      effectiveType = detectedType
     }
 
-    // 정상 처리
-    await actions[type]?.()
+    // count-only preflight는 parser 결과를 버리고 state setter를 전혀 호출하지 않는다.
+    // confirm 이후에만 action이 processing controller 안에서 실제 state를 commit한다.
+    const { didImport } = await runSceneImportWithConfirmation({
+      type: effectiveType,
+      content,
+      locale: lang === 'ko' ? 'ko-KR' : 'en-US',
+      requestConfirmation,
+      action: () => executeAction(effectiveType),
+    })
+
     setShowImport(false)
-    const tab = tabAfterImport({ didImport: true, type, isVideo })
+    const tab = tabAfterImport({ didImport, type: effectiveType, isVideo })
     if (tab) setActiveTab(tab)
+  }
+
+  const resolveSrtImport = async (mode) => {
+    if (!srtImportPending) return
+    const pending = srtImportPending
+    await runImportProcessing(() => {
+      parseFromSRT(
+        pending.content,
+        pending.framePairs,
+        mode === 'replace' ? { mode: 'replace' } : undefined,
+      )
+    })
+    setSrtImportPending(null)
+    setActiveTab('list')
   }
 
   // Handle start — 활성 탭에 따라 이미지/비디오 생성 모드 분기
@@ -1447,9 +1488,7 @@ function App() {
         //   chip/ref 없이 raw "@name" 텍스트로 나가 잘못된 영상+quota 낭비 → 시작을 막는다. sync gate
         //   proceed 후 재빌드에도 동일 적용(이 클로저를 재사용하므로).
         if (mode === 'flow' && Array.isArray(videoTextMissing) && videoTextMissing.length > 0) {
-          toast.error(isKo
-            ? `동기화되지 않았거나 알 수 없는 캐릭터 멘션: @${videoTextMissing.join(', @')} — Ref 탭에서 캐릭터를 확인/동기화한 뒤 다시 시도하세요.`
-            : `Unsynced or unknown @mention(s): @${videoTextMissing.join(', @')} — verify/sync the character in the Ref tab and retry.`)
+          toast.error(t('toast.videoUnknownMentions', { names: `@${videoTextMissing.join(', @')}` }))
           return
         }
 
@@ -1783,12 +1822,10 @@ function App() {
       // all-unresolved+mediaId 는 plain-image 로 조용히 degrade 하므로 원래 생성을 시작하지 않는다.
       const completion = planSyncGateCompletion(ok, fail)
       if (!completion.proceed) {
-        toast.error(isKo
-          ? `Flow 동기화 미완료 (${ok} 성공 · ${fail} 실패) — 생성을 시작하지 않습니다`
-          : `Flow sync incomplete (${ok} synced, ${fail} failed) — generation not started`)
+        toast.error(t('toast.flowSyncIncomplete', { ok, fail }))
         return
       }
-      toast.success(isKo ? `Flow 동기화 완료 (${ok}) — 생성 시작` : `Synced ${ok} — generating`)
+      toast.success(t('toast.flowSyncGenerationStarting', { ok }))
       const proceed = syncGate.proceed
       setSyncGate(null)
       proceed?.(patchedRefs)
@@ -1876,6 +1913,11 @@ function App() {
   return (
     <div className={computeAppClass(mode)}>
       <QAProgressBanner />
+      <ImportProcessingOverlay
+        processing={importProcessing}
+        spinnerVisible={importSpinnerVisible}
+        label={t('import.processing')}
+      />
       {projectLoading && (
         <div className="project-loading-overlay">
           <div className="project-loading-spinner" />
@@ -2118,10 +2160,7 @@ function App() {
               onUpdate={scenesHook.updateScene}
               onUpdateFramePair={(fpId, patch) => setFramePairs(prev => prev.map(p => p.id === fpId ? { ...p, ...patch } : p))}
               onUpdateSrtLine={scenesHook.updateSrtLine}
-              onDelete={(sceneId, sceneIndex) => {
-                const scene = scenes.find(s => s.id === sceneId)
-                if (scene) setSceneToDelete({ scene, sceneIndex })
-              }}
+              onDelete={handleRequestSceneDelete}
               onAdd={scenesHook.addScene}
               onClearAll={() => {
                 // 씬 통째 삭제 = framePairs 도 같이 cascade. 그렇지 않으면 ownerSceneId
@@ -2912,20 +2951,8 @@ function App() {
         isOpen={!!srtImportPending}
         existingSceneCount={(scenesHook.scenes || []).length}
         existingSrtLineCount={(scenesHook.srtTrack || []).length}
-        onReplace={() => {
-          if (!srtImportPending) return
-          // replace 모드는 자막만 새 SRT 로 인덱스 1:1 교체 — scene ID/prompt/이미지/비디오는
-          // 보존되므로 framePairs.ownerSceneId 도 그대로 살아있음. 추가 cleanup 불필요.
-          parseFromSRT(srtImportPending.content, srtImportPending.framePairs, { mode: 'replace' })
-          setSrtImportPending(null)
-          setActiveTab('list')  // 자막 결과를 씬 목록에서 확인
-        }}
-        onMerge={() => {
-          if (!srtImportPending) return
-          parseFromSRT(srtImportPending.content, srtImportPending.framePairs)
-          setSrtImportPending(null)
-          setActiveTab('list')  // 자막 결과를 씬 목록에서 확인
-        }}
+        onReplace={() => resolveSrtImport('replace')}
+        onMerge={() => resolveSrtImport('merge')}
         onCancel={() => setSrtImportPending(null)}
         t={t}
       />
