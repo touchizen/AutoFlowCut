@@ -2,20 +2,24 @@
  * D13 — export 는 미완성을 **탐지·보고**한다(기본 차단 아님). 에이전트가 무엇이 빠졌는지 알도록
  * sceneSummary/audioSummary 를 낸다. 순수 함수 — 렌더러 export 핸들러가 계산에 쓴다.
  */
-import { hasExportableMedia, resolveExportVideos } from './sceneMedia.js'
+import { resolveExportVideos } from './sceneMedia.js'
 import { isSceneGenerationDone } from '../services/generationStatus.js'
 
 /**
  * @returns {{total,exported,skippedNoImage,skippedVideoOnly}}
  * exporter 는 이미지를 메인 트랙으로 쓰므로 이미지 없는 씬은 drop 된다. 영상만 있으면 skippedVideoOnly,
  * 아무것도 없으면 skippedNoImage 로 구분 보고한다.
+ *
+ * exported = useExport 의 isExportableScene 과 같은 판정. `isSceneGenerationDone` 이 in-flight 배제 +
+ * `!!(image||imagePath)`(=hasExportableMedia)를 모두 담으므로 그 하나로 충분하다 — 별도 hasExportableMedia
+ * 재검사는 중복이라 두지 않는다.
  */
 export function buildSceneSummary(scenes = []) {
   let exported = 0
   let skippedNoImage = 0
   let skippedVideoOnly = 0
   for (const scene of scenes) {
-    if (isSceneGenerationDone(scene) && hasExportableMedia(scene)) {
+    if (isSceneGenerationDone(scene)) {
       exported++
     } else if (resolveExportVideos(scene).length > 0) {
       skippedVideoOnly++

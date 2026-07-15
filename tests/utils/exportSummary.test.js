@@ -20,6 +20,12 @@ describe('buildSceneSummary (slice 34)', () => {
     expect(buildSceneSummary(scenes)).toEqual({ total: 2, exported: 1, skippedNoImage: 0, skippedVideoOnly: 1 })
   })
 
+  it('이미지가 있어도 아직 생성 중(in-flight)이면 exported 아님 (done && hasMedia 둘 다 필요)', () => {
+    // 이미지는 있지만 status:'generating' — isSceneGenerationDone false. exporter 는 이걸 안 내보낸다.
+    const scenes = [done({ image: 'a' }), { status: 'generating', image: 'x' }]
+    expect(buildSceneSummary(scenes)).toEqual({ total: 2, exported: 1, skippedNoImage: 1, skippedVideoOnly: 0 })
+  })
+
   it('빈 배열 → 전부 0', () => {
     expect(buildSceneSummary([])).toEqual({ total: 0, exported: 0, skippedNoImage: 0, skippedVideoOnly: 0 })
   })
