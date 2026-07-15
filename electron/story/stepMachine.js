@@ -1303,6 +1303,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
 
   return {
     projectToken,
+    // M3 slice 32: story-api commands가 scene directory 유도용으로 읽는다. 생성 시 검증된 값 고정.
+    projectPath,
     async open() {
       state = await store.load()
       await healMissingStepArtifacts()

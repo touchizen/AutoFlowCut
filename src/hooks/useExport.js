@@ -16,6 +16,7 @@ import { pruneSrtTrackToScenes, rebaseSrtTrackToScenes } from '../utils/srtTrack
 import { isSceneGenerationDone } from '../services/generationStatus'
 import { normalizeExportFormat, EXPORT_FORMATS } from '../utils/exportFormat'
 import { checkFixedSceneConsistency } from '../../electron/story/fixedScenes.js'
+import { pairFixedSlots } from '../../electron/story/sceneResolver.js'
 
 function isExportableScene(scene) {
   return isSceneGenerationDone(scene) && hasExportableMedia(scene)
@@ -79,27 +80,10 @@ export function useExport({
       return { success: false, error: 'fixed-clock-not-ready' }
     }
 
-    // fixed order로 renderer scene을 resolve한다. id/storyId 어느 한쪽만 맞거나, 어느 index에든
-    // duplicate가 있으면 ambiguous이므로 slot missing이다. 두 index가 가리키는 단 하나의 같은
-    // object만 immutable pair의 renderer scene으로 인정한다.
-    const appendIndex = (index, key, scene) => {
-      if (key === undefined || key === null) return
-      const matches = index.get(key)
-      if (matches) matches.push(scene)
-      else index.set(key, [scene])
-    }
-    const byRendererId = new Map()
-    const byStoryId = new Map()
-    scenes.forEach((scene) => {
-      appendIndex(byRendererId, scene?.id, scene)
-      appendIndex(byStoryId, scene?.storyId, scene)
-    })
-    const fixedRendererScenes = projectFixedSceneState.fixedScenes.map((slot) => {
-      const rendererMatches = byRendererId.get(slot.rendererSceneId) || []
-      const storyMatches = byStoryId.get(slot.storyId) || []
-      if (rendererMatches.length !== 1 || storyMatches.length !== 1) return null
-      return rendererMatches[0] === storyMatches[0] ? rendererMatches[0] : null
-    })
+    // fixed order로 renderer scene을 resolve한다. dual-index unique-pair 로직은 agent scene 툴과
+    // 공유하는 sceneResolver.pairFixedSlots가 소유한다 — 두 경로가 따로 진화하면 "agent는 OK,
+    // export는 slot-missing" 발산이 생긴다 (스펙 §2.4 단일 resolver 계약).
+    const fixedRendererScenes = pairFixedSlots(projectFixedSceneState.fixedScenes, scenes)
     const missing = projectFixedSceneState.fixedScenes.flatMap((slot, index) => (
       fixedRendererScenes[index] && isExportableScene(fixedRendererScenes[index]) ? [] : [slot.ordinal]
     ))

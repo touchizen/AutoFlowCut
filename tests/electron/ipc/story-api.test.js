@@ -70,6 +70,21 @@ describe('story IPC', () => {
     expect(stateEvents.length).toBeGreaterThan(0)
     expect(stateEvents[0].p.projectToken).toBe(projectToken)
   })
+  // M3 I1: Tool Core가 scene directory를 유도할 수 있게 검증된 projectPath를 command 표면에 노출한다.
+  // machine을 새지 않고(getter만) open()이 검증한 절대경로만 반환한다 (D7-safe, slice 32).
+  it('projectPath getter는 open 전 null, open 후 검증된 절대경로다', async () => {
+    const commands = createStoryCommands({
+      keyStore: { getKey: () => 'k' },
+      getWindow: () => ({ webContents: { send: () => {} }, isDestroyed: () => false }),
+      llm,
+      listClaudeModels: async () => [],
+      listCodexModels: async () => [],
+    })
+    expect(commands.projectPath).toBeNull()
+    await commands.open(dir)
+    expect(commands.projectPath).toBe(dir)
+  })
+
   it('재open 시 새 토큰 발급 (이전 토큰 무효)', async () => {
     const a = await ipc.invoke('story:open', { projectPath: dir })
     const b = await ipc.invoke('story:open', { projectPath: dir })

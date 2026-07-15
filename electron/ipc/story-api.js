@@ -114,6 +114,10 @@ export function createStoryCommands({ keyStore, getWindow, llm = llmGemini, load
    */
   const commands = {
     get projectToken() { return machine?.projectToken ?? null },
+    // M3 slice 32: Tool Core가 scene directory(`<projectPath>/scenes`)를 유도하는 유일한 소스.
+    // open()이 절대/traversal/workFolder 검증을 통과한 값만 machine에 실리므로 여기 read-only로 노출한다.
+    // machine 자체는 새지 않는다 — Tool Core가 자기 machine을 만들 길을 열지 않기 위함(D7).
+    get projectPath() { return machine?.projectPath ?? null },
     hasProject: () => !!machine,
 
     async listLlmOptions() {
