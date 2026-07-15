@@ -14,11 +14,33 @@ function getClaudeConfigPath() {
   return path.join(os.homedir(), '.claude.json')
 }
 
+/**
+ * 🔴 **`app.isPackaged` 를 믿지 마라 — dev 에서 거짓말을 한다.**
+ *    `scripts/patch-electron-name.cjs` 가 electron 바이너리를 `AutoFlowCut.app` 으로 리네임해서
+ *    **dev 에서도 `isPackaged === true`** 가 되고, `process.resourcesPath` 는 번들이 없는 electron
+ *    자기 `Resources/` 를 가리킨다 (실측 에러: `MCP server not found at:
+ *    node_modules/electron/dist/AutoFlowCut.app/Contents/Resources/mcp-server/index.js`).
+ *    `resolveCodexAdapterPath` / `metaPrompts` 와 같은 방식으로 **플래그가 아니라 실재하는 후보**를
+ *    고른다. 진짜 packaged 면 resources 가 이기고, dev 면 appPath 가 이긴다. 아무 데도 없으면
+ *    플래그 기준 후보를 돌려줘 caller 의 에러 메시지가 의미 있는 경로를 찍게 한다.
+ */
+export function resolveResourceDir({
+  name,
+  resourcesPath = process.resourcesPath,
+  appPath,
+  isPackaged = false,
+  existsSyncImpl = fsSync.existsSync,
+} = {}) {
+  const packagedCandidate = resourcesPath ? path.join(resourcesPath, name) : null
+  const devCandidate = appPath ? path.join(appPath, name) : null
+  const candidates = [packagedCandidate, devCandidate].filter(Boolean)
+  const found = candidates.find((candidate) => existsSyncImpl(candidate))
+  if (found) return found
+  return isPackaged ? (packagedCandidate ?? devCandidate) : (devCandidate ?? packagedCandidate)
+}
+
 function getResourceDir(name) {
-  if (app.isPackaged) {
-    return path.join(process.resourcesPath, name)
-  }
-  return path.join(app.getAppPath(), name)
+  return resolveResourceDir({ name, appPath: app.getAppPath(), isPackaged: app.isPackaged })
 }
 
 function getMcpServerPath() {

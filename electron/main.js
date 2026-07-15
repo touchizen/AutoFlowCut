@@ -12,7 +12,7 @@ import { registerAuthIPC } from './ipc/auth.js'
 import { registerCapcutIPC } from './ipc/capcut.js'
 import { registerPremiereIPC } from './ipc/premiere.js'
 import { registerVrewIPC } from './ipc/vrew.js'
-import { registerMcpIPC } from './ipc/mcp.js'
+import { registerMcpIPC, resolveResourceDir } from './ipc/mcp.js'
 import { registerGenaiIPC } from './ipc/genai-api.js'
 import { createStoryCommands, registerStoryIPC } from './ipc/story-api.js'
 import { createToolBridge } from './agent/toolBridge.js'
@@ -1610,7 +1610,8 @@ function autoSetupSkills() {
     return // Claude Code 없음 → 스킬 설치 불필요
   }
 
-  const skillsSource = path.join(process.resourcesPath, 'skills')
+  // 🔴 dev 에서 app.isPackaged 가 거짓말한다(patch-electron-name). 실재 후보를 고른다(resolveResourceDir).
+  const skillsSource = resolveResourceDir({ name: 'skills', appPath: app.getAppPath(), isPackaged: app.isPackaged })
   const skillsDest = path.join(os.homedir(), '.claude', 'skills')
   const markerFile = path.join(skillsDest, '.autoflowcut-installed')
 
@@ -1633,7 +1634,7 @@ function autoSetupSkills() {
   }
 
   // MCP 서버 등록
-  const mcpPath = path.join(process.resourcesPath, 'mcp-server', 'index.js')
+  const mcpPath = path.join(resolveResourceDir({ name: 'mcp-server', appPath: app.getAppPath(), isPackaged: app.isPackaged }), 'index.js')
   try {
     execSyncRaw(`claude mcp add --scope user --transport stdio autoflowcut -- node "${mcpPath}"`, {
       stdio: 'pipe', timeout: 10000
