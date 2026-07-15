@@ -490,6 +490,25 @@ Goodbye world`
       return result
     }
 
+    it('uses trim + lowercase normalization for both tag and ref names', () => {
+      const { result } = renderHook(() => useScenes())
+
+      act(() => {
+        result.current.updateReferences([
+          { id: 1, name: '  HeRo  ', type: 'character' },
+          { id: 2, name: 'Red  Fox', type: 'scene' },
+        ])
+      })
+
+      const matched = result.current.getMatchingReferences({
+        characters: ' HERO ',
+        scene_tag: ' red  fox ',
+        style_tag: '',
+      })
+
+      expect(matched.map((ref) => ref.id)).toEqual([1, 2])
+    })
+
     it('matches character tags (case-insensitive)', () => {
       const result = setupWithRefs()
 

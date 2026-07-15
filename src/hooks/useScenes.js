@@ -23,7 +23,7 @@ import { createSrtTrackFromScenes, pruneSrtTrackToScenes } from '../utils/srtTra
 import { matchSrtLines } from '../utils/srtLineMatcher'
 import { trimTrailingEmptyScenes } from '../utils/sceneTrim'
 import { fileSystemAPI } from './useFileSystem'
-import { splitTags } from '../utils/tagMatch'
+import { normalizeTagKey, splitTags } from '../utils/tagMatch'
 import { resolveMentions } from '../utils/mentionParser'
 import { isStyleReference } from '../services/styleService'
 
@@ -603,7 +603,7 @@ export function useScenes() {
     if (scene.characters) {
       const charTags = splitTags(scene.characters)
       for (const ref of references) {
-        if (ref.type === 'character' && charTags.includes(ref.name.toLowerCase())) {
+        if (ref.type === 'character' && charTags.includes(normalizeTagKey(ref.name))) {
           matched.push(ref)
         }
       }
@@ -613,7 +613,7 @@ export function useScenes() {
     if (scene.scene_tag) {
       const sceneTags = splitTags(scene.scene_tag)
       for (const ref of references) {
-        if (ref.type === 'scene' && sceneTags.includes(ref.name.toLowerCase())) {
+        if (ref.type === 'scene' && sceneTags.includes(normalizeTagKey(ref.name))) {
           matched.push(ref)
         }
       }
@@ -623,7 +623,7 @@ export function useScenes() {
     if (scene.style_tag) {
       const styleTags = splitTags(scene.style_tag)
       for (const ref of references) {
-        const refName = ref.name?.toLowerCase()
+        const refName = normalizeTagKey(ref.name)
         if (isStyleReference(ref) && refName && styleTags.includes(refName)) {
           matched.push(ref)
         }
