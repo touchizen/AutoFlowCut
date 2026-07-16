@@ -323,7 +323,14 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
   // overrideRef: 호출 측에서 최신 ref 객체를 직접 넘길 때 사용. ReferenceDetailModal의
   // 재생성 버튼처럼 onUpdate 직후 호출되는 경로에서, React state commit 이전이라
   // referencesRef.current가 아직 갱신 안 된 race를 회피한다.
-  const _executeGenerateRef = async (index, skipPermissionCheck = false, overrideStyleId = null, overrideRef = null, guardKey = null) => {
+  const _executeGenerateRef = async (
+    index,
+    skipPermissionCheck = false,
+    overrideStyleId = null,
+    overrideRef = null,
+    guardKey = null,
+    batchBusy = false,
+  ) => {
     const ref = overrideRef || referencesRef.current[index]
     if (!ref?.prompt) {
       toast.warning(t('toast.noPrompt'))
@@ -338,6 +345,14 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     if (trackPreflightBusy) setGeneratingRefs(prev => prev.includes(index) ? prev : [...prev, index])
     const releasePreflightBusy = () => {
       if (trackPreflightBusy) setGeneratingRefs(prev => prev.filter(i => i !== index))
+    }
+    const addGeneratingBusy = () => {
+      if (batchBusy) addBatchGeneratingRef(index)
+      else setGeneratingRefs(prev => prev.includes(index) ? prev : [...prev, index])
+    }
+    const releaseGeneratingBusy = () => {
+      if (batchBusy) removeBatchGeneratingRef(index)
+      else setGeneratingRefs(prev => prev.filter(i => i !== index))
     }
 
     // 폴더 설정 + Flow 프로젝트 준비 + 토큰 확인 (배치 모드에서는 권한 체크 스킵)
@@ -369,7 +384,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       ? null
       : overrideStyleId ?? (ref.styleId !== undefined ? ref.styleId : _resolveEffectiveStyleId(null))
 
-    setGeneratingRefs(prev => prev.includes(index) ? prev : [...prev, index])
+    addGeneratingBusy()
     // styleId 는 성공 시점이 아니라 시작 시점에 남긴다 — 실패한 카드야말로 같은 스타일로 재생성돼야 한다.
     setReferences(prev => patchReferenceByIdentity(
       prev,
@@ -392,7 +407,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
           guardKey
         )
         if (submitIndex < 0) {
-          setGeneratingRefs(prev => prev.filter(i => i !== index))
+          releaseGeneratingBusy()
           return { success: false, skipped: true, skipStage: 'not-found' }
         }
         const submitRef = guardKey
@@ -411,6 +426,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
             result,
             guardKey,
             index,
+            batchBusy,
           )
         } else if (!result.success) {
           const errorMsg = result.error || ''
@@ -418,7 +434,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
           const isServerError = errorMsg.includes('500') || errorMsg.includes('502') || errorMsg.includes('503') || errorMsg.includes('server')
           const isQuota = _maybeTriggerQuotaStop(errorMsg)
           if (!isQuota) toast.error(t('toast.generateFailed', { error: displayResultError(result, 'Unknown error') }))
-          setGeneratingRefs(prev => prev.filter(i => i !== index))
+          releaseGeneratingBusy()
           // #R26-5: 단일-ref 경로도 배치 경로(R25-5)와 동일하게 인증 실패를 errorKind:'auth' 로 분류.
           setReferences(prev => patchReferenceByIdentity(
             prev,
@@ -433,7 +449,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
           ))
           return { success: false, authError: isAuthError, serverError: isServerError, quotaExhausted: isQuota }
         }
-        setGeneratingRefs(prev => prev.filter(i => i !== index))
+        releaseGeneratingBusy()
         setReferences(prev => patchReferenceByIdentity(
           prev,
           submitIndex,
@@ -453,7 +469,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
           task: generateAndPublish,
         })
         if (coordinated?.busy) {
-          setGeneratingRefs(prev => prev.filter(i => i !== index))
+          releaseGeneratingBusy()
           setReferences(prev => patchReferenceByIdentity(
             prev,
             index,
@@ -471,7 +487,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       const isAuthError = errorMsg.includes('401') || errorMsg.includes('auth') || errorMsg.includes('token') || errorMsg.includes('login')
       const isServerError = errorMsg.includes('500') || errorMsg.includes('502') || errorMsg.includes('503') || errorMsg.includes('server')
       toast.error(t('toast.generateError', { error: error.message }))
-      setGeneratingRefs(prev => prev.filter(i => i !== index))
+      releaseGeneratingBusy()
       setReferences(prev => patchReferenceByIdentity(
         prev,
         index,
@@ -917,7 +933,8 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
               true,
               effectiveStyleId,
               ref,
-              isTargeted ? target.key : null
+              isTargeted ? target.key : null,
+              true,
             )
             if (direct?.skipped) {
               recordSkip(target.key, direct.skipStage || 'not-found')

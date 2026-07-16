@@ -876,6 +876,110 @@ describe('useReferenceGeneration — structured batch result', () => {
     }
   })
 
+  it('Flow 혼합 batch에서 delete로 direct character와 충돌해도 async sibling marker를 유지한다', async () => {
+    const directFinished = deferred()
+    const firstSiblingCheck = deferred()
+    let siblingDone = false
+    let checkNo = 0
+    coordinatorMocks.runFlowCharacterOperation.mockImplementationOnce(async ({ task }) => {
+      const directResult = await task()
+      directFinished.resolve()
+      return directResult
+    })
+    const {
+      result,
+      genAPI,
+      getLiveRefs,
+      replaceLiveRefs,
+    } = setupHook({
+      references: [
+        {
+          id: 'outside',
+          type: 'scene',
+          prompt: 'outside prompt',
+          data: 'keep-image',
+          mediaId: 'keep-media',
+          status: 'done',
+        },
+        { id: 'sibling', type: 'scene', prompt: 'sibling prompt', status: 'pending' },
+        { id: 'character', type: 'character', prompt: 'character prompt', status: 'pending' },
+      ],
+      settingsOverrides: { concurrency: 2 },
+      genOverrides: {
+        mode: 'flow',
+        submitGeneration: vi.fn().mockResolvedValue({
+          success: true,
+          generationId: 'g-sibling',
+        }),
+        checkGeneration: vi.fn(() => {
+          checkNo += 1
+          if (checkNo === 1) return firstSiblingCheck.promise
+          return Promise.resolve({ success: true, completed: siblingDone })
+        }),
+        generateImage: vi.fn().mockResolvedValue({
+          success: true,
+          images: [{
+            base64: 'character-image',
+            mediaId: 'character-media',
+          }],
+        }),
+        collectGeneration: vi.fn().mockResolvedValue({
+          success: true,
+          images: [{
+            base64: 'sibling-image',
+            mediaId: 'sibling-media',
+          }],
+        }),
+      },
+    })
+
+    vi.useFakeTimers()
+    let batchPromise
+    try {
+      await act(async () => {
+        batchPromise = result.current.handleGenerateAllRefs(null, {
+          targetRefKeys: ['id:sibling', 'id:character'],
+        })
+        for (let i = 0; i < 15; i++) await Promise.resolve()
+      })
+      expect(genAPI.checkGeneration).toHaveBeenCalledTimes(1)
+      expect(result.current.generatingRefs).toEqual([1])
+
+      await act(async () => {
+        const [, sibling, character] = getLiveRefs()
+        replaceLiveRefs([sibling, character])
+      })
+      await act(async () => {
+        firstSiblingCheck.resolve({ success: true, completed: false })
+        await directFinished.promise
+      })
+
+      expect(genAPI.submitGeneration).toHaveBeenCalledTimes(1)
+      expect(genAPI.generateImage).toHaveBeenCalledTimes(1)
+      expect(coordinatorMocks.runFlowCharacterOperation.mock.calls[0][0].refIndex).toBe(1)
+      expect(result.current.generatingRefs).toEqual([1])
+
+      siblingDone = true
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4000)
+        await batchPromise
+      })
+      expect(result.current.generatingRefs).toEqual([])
+    } finally {
+      siblingDone = true
+      firstSiblingCheck.resolve({ success: true, completed: false })
+      if (batchPromise) {
+        try {
+          await act(async () => {
+            await vi.advanceTimersByTimeAsync(4000)
+            await batchPromise
+          })
+        } catch (_error) {}
+      }
+      vi.useRealTimers()
+    }
+  })
+
   it('20) submit 성공 후 후처리 중 삭제된 target은 succeeded가 아니라 not-found이며 이동한 카드를 건드리지 않는다', async () => {
     const outside = {
       id: 'outside',
