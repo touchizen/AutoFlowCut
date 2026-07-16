@@ -19,6 +19,11 @@ const RAW_FILES = [
   'm0-10-raw.jsonl',
   'm0-11-raw.jsonl',
   'm0-13-raw.jsonl',
+  // 🔴 새 raw 를 여기 안 넣으면 그 raw 를 보는 감사자는 "이 invocation 이 끝까지 갔는가" 를
+  //    **그 파일 안에서 확인할 수 없다** (위 주석의 이유 그대로). 실제로 m0-14/15 를 빠뜨렸다가
+  //    교차 리뷰(Codex)에 잡혔다 — 증거 체인이 안 닫힌 raw 였다.
+  'm0-14-raw.jsonl',
+  'm0-15-raw.jsonl',
 ]
 
 /**

@@ -29,16 +29,37 @@
  * `npm run test:spike -- tests/spike/m0-15.claudeOrchestratorContract.spike.test.js` 로만 돈다.
  * 실제 Claude CLI 자격증명(구독)을 쓴다. ⚠️ 유효한 API 키를 넣지 않는다(m0-1 의 D23-1 참고).
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, afterEach } from 'vitest'
 import { z } from 'zod'
 import { appendFileSync, mkdirSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 
 const RESULT_DIR = 'docs/superpowers/specs'
+
+// provenance 스탬프 — 이유는 m0-14 의 같은 블록 주석 참고 (뮤턴트 run 과 진짜 run 이 raw 에서 구분돼야 한다).
+const gitSha = (() => {
+  try { return execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf-8' }).trim() } catch { return null }
+})()
+const gitDirty = (() => {
+  try { return execFileSync('git', ['status', '--porcelain'], { encoding: 'utf-8' }).trim().length > 0 } catch { return null }
+})()
+
 const record = (label, data) => {
   mkdirSync(RESULT_DIR, { recursive: true })
-  appendFileSync(`${RESULT_DIR}/m0-15-raw.jsonl`, JSON.stringify({ runId: process.env.SPIKE_RUN_ID ?? null, label, ...data }) + '\n')
+  appendFileSync(`${RESULT_DIR}/m0-15-raw.jsonl`, JSON.stringify({
+    runId: process.env.SPIKE_RUN_ID ?? null,
+    gitSha,
+    gitDirty,
+    mutant: process.env.SPIKE_MUTANT ?? null,
+    label,
+    ...data,
+  }) + '\n')
 }
+
+afterEach((ctx) => {
+  record('__verdict__', { test: ctx?.task?.name ?? '(?)', verdict: ctx?.task?.result?.state ?? 'unknown' })
+})
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 // 값이 확연히 다른 두 모델을 쓴다 — resolvedModel 이 달라야 "바뀌었다" 를 말할 수 있다.
@@ -139,8 +160,17 @@ describe('M0-15 — Claude Agent SDK orchestrator 계약 (Q2/Q5/Q6)', () => {
       ],
     })
 
+    // 🔴 두 번째 user message 가 **반드시** 필요하다.
+    //    "in-flight 턴이 A 로 유지된다"(측정됨) 와 "그 setModel 이 다음 턴에 적용된다"(별개 명제)는 다르다.
+    //    후자를 안 재면 **"in-flight 중 부른 setModel 은 통째로 drop 된다"** 는 대안 가설을 못 배제한다.
+    //    drop 이면 계약은 반대 방향으로 깨진다(사용자가 바꿨는데 다음 턴도 옛 모델, 에러 없음)
+    //    → 그때는 pendingModel/경계 재호출 장치가 **필요하다.** 즉 이 두 번째 턴이 설계를 가른다.
+    let pushTurn2
+    const gate = new Promise((r) => { pushTurn2 = r })
     async function* prompts() {
       yield { type: 'user', message: { role: 'user', content: 'Call the slow_echo tool with text "ping". After you get the result, reply with the tool result text only.' } }
+      await gate
+      yield { type: 'user', message: { role: 'user', content: 'Reply with exactly: SECOND_TURN' } }
     }
 
     let q
@@ -161,19 +191,37 @@ describe('M0-15 — Claude Agent SDK orchestrator 계약 (Q2/Q5/Q6)', () => {
       },
     })
 
+    let turn = 1
     for await (const msg of q) {
-      if (msg.type !== 'assistant') continue
-      const blocks = msg.message?.content ?? []
-      assistants.push({
-        model: msg.message?.model ?? null,
-        hasToolUse: blocks.some((b) => b?.type === 'tool_use'),
-        text: blocks.filter((b) => b?.type === 'text').map((b) => b.text).join('').slice(0, 60),
-      })
+      if (msg.type === 'assistant') {
+        const blocks = msg.message?.content ?? []
+        assistants.push({
+          turn,
+          model: msg.message?.model ?? null,
+          hasToolUse: blocks.some((b) => b?.type === 'tool_use'),
+          text: blocks.filter((b) => b?.type === 'text').map((b) => b.text).join('').slice(0, 60),
+        })
+        continue
+      }
+      // 턴 경계는 result (Q2 에서 배운 것 — assistant 로 세면 빈 프레임에 속는다)
+      if (msg.type === 'result' && turn === 1) { turn = 2; pushTurn2(); continue }
+      if (msg.type === 'result' && turn === 2) break
     }
-    const beforeTool = assistants.find((a) => a.hasToolUse)
-    const afterTool = assistants.filter((a) => !a.hasToolUse).pop()
+    const t1 = assistants.filter((a) => a.turn === 1)
+    const beforeTool = t1.find((a) => a.hasToolUse)
+    const afterTool = t1.filter((a) => !a.hasToolUse).pop()
     const switchedMidTurn = isA(beforeTool?.model) && isB(afterTool?.model)
-    record('Q2-b setModel-mid-turn', { setModelAt, assistants, beforeToolModel: beforeTool?.model ?? null, afterToolModel: afterTool?.model ?? null, switchedMidTurn })
+    // 🎯 F1: mid-turn 에 부른 setModel 이 **다음 턴에 적용되는가** (drop 되는가)
+    const nextTurn = [...assistants].reverse().find((a) => a.turn === 2 && a.text.trim())
+    const appliedNextTurn = isB(nextTurn?.model)
+    record('Q2-b setModel-mid-turn', {
+      setModelAt, assistants,
+      beforeToolModel: beforeTool?.model ?? null,
+      afterToolModel: afterTool?.model ?? null,
+      switchedMidTurn,
+      nextTurnModel: nextTurn?.model ?? null,
+      appliedNextTurn,
+    })
 
     // 전제: 툴 호출을 낸 요청은 A 여야 한다 (setModel 이 그 뒤에 불렸으므로).
     expect(isA(beforeTool?.model), `tool_use 요청은 ${MODEL_A} 여야 한다 (실측: ${beforeTool?.model})`).toBe(true)
@@ -186,13 +234,27 @@ describe('M0-15 — Claude Agent SDK orchestrator 계약 (Q2/Q5/Q6)', () => {
     //    **positive control** 이다. 둘이 같이 있어야 "in-flight 턴은 안 바뀐다" 가 의미를 갖는다.
     //    (Q2 가 red 로 바뀌면 이 테스트의 green 은 즉시 무의미해진다 — 그때 같이 보라.)
     //
-    // 설계 함의: Claude 의 setModel 은 session 단위지만 **경계 의미론이 우리 UX 계약과 일치한다**
-    //          ("진행 중 턴은 그대로, 다음 턴부터 적용"). → pendingModel 지연 적용 장치가 **불필요**하다.
     expect(isA(afterTool?.model), `in-flight 턴은 모델을 갈아타지 않아야 한다 (실측: ${afterTool?.model})`).toBe(true)
     expect(switchedMidTurn).toBe(false)
+
+    // 🔴 F1 (적대 리뷰가 잡은 구멍): 위 두 assertion 만으로는 설계 결론을 낼 수 없다.
+    //    "in-flight 턴 유지" 와 "그 setModel 이 다음 턴에 적용" 은 **다른 명제**이고,
+    //    후자를 안 재면 "mid-turn setModel 은 drop 된다" 가 살아남는다.
+    //      - 다음 턴이 B  → 지연 적용됨. 계약 일치 → pendingModel 장치 불필요.
+    //      - 다음 턴이 A  → **drop**. 사용자가 바꿨는데 조용히 무시됨 → 경계 재호출 장치 **필요**.
+    expect(nextTurn?.model, '다음 턴의 모델이 관측돼야 한다').toBeTruthy()
+    expect(appliedNextTurn, `mid-turn setModel 이 다음 턴에 적용되는가 (실측: ${nextTurn?.model})`).toBe(true)
   }, 5 * 60 * 1000)
 
-  it('Q5 🎯 interrupt() 후 세션이 살아있는가 — 후속 user message 가 답을 받는가', async () => {
+  /**
+   * Q5 — abort 의미론. 핸드오프 질문은 **두 개**다: (1) 진행 중 턴이 중단되는가 (2) 중단 후 세션이 사는가.
+   *
+   * 🔵 **여기서 측정된 것은 (2) 뿐이다.** (1)은 **미측정** — 아래 `it.skip` 참조.
+   *    나눠 놓은 이유: 한 테스트가 둘을 같이 주장하면, (2)의 green 이 (1)까지 증명한 것처럼 읽힌다.
+   *    실제로 1차 버전이 정확히 그 상태였다(적대 리뷰 F6 이 잡음): "세션이 살아있다" 만 재놓고
+   *    제목은 'abort 의미론' 이었다 — **interrupt 가 no-op 이어도 통과**하는 테스트였다.
+   */
+  it('Q5 🎯 interrupt() 는 receipt 를 주고, **세션이 죽지 않는다** (후속 턴이 답한다)', async () => {
     const events = []
     let interrupted = null
     let afterInterruptAnswered = null
@@ -201,7 +263,7 @@ describe('M0-15 — Claude Agent SDK orchestrator 계약 (Q2/Q5/Q6)', () => {
 
     const gate = new Promise((r) => { pushNext = r })
     async function* prompts() {
-      yield { type: 'user', message: { role: 'user', content: 'Count slowly from 1 to 100, one number per line, with a short pause between each.' } }
+      yield { type: 'user', message: { role: 'user', content: 'Count slowly from 1 to 100, one number per line.' } }
       await gate
       yield { type: 'user', message: { role: 'user', content: 'Reply with exactly: AFTER_INTERRUPT_OK' } }
     }
@@ -228,11 +290,32 @@ describe('M0-15 — Claude Agent SDK orchestrator 계약 (Q2/Q5/Q6)', () => {
       interrupted, afterInterruptAnswered, streamError,
       eventTypes: events.map((e) => e.type),
     })
-    // 🎯 실측(2026-07-16): interrupt() 는 **receipt** 를 준다 (`{still_queued: []}` — CLI 가
-    //    `interrupt_receipt_v1` 을 광고한다는 뜻) 그리고 **세션이 죽지 않는다** — 이어서 민 user
-    //    message 가 정상 응답을 받았다. Codex 의 turn/interrupt + 살아있는 thread 와 같은 성질이다.
+    // 🎯 실측: receipt `{still_queued: []}` (CLI 가 `interrupt_receipt_v1` 광고) + 세션 생존.
+    //    Codex 의 turn/interrupt 후 thread 가 살아있는 것과 같은 성질 → close/reopen 없이 Stop 후 계속 가능.
     expect(interrupted, 'interrupt() 호출 자체는 되어야 한다').toBeTruthy()
     expect(streamError, 'interrupt 가 stream 을 에러로 죽이면 안 된다').toBeNull()
     expect(afterInterruptAnswered, 'interrupt 후에도 세션이 살아 후속 턴에 답해야 한다').toBe(true)
+    // ⚠️ 여기서 "턴이 잘렸다" 는 **주장하지 않는다.** 아래 skip 이 그 이유다.
   }, 5 * 60 * 1000)
+
+  /**
+   * 🔴 **미측정 (핸드오프 §2.3 Q5 의 절반). 스펙에서 "중단된다" 고 단정하지 말 것.**
+   *
+   * 두 번 시도했고 둘 다 **관측에 실패**했다 (같은 함정을 다시 파지 않도록 기록):
+   *   1) "1..100 세게 하고 100 미만이면 잘린 것" →
+   *      (a) 빈 assistant 프레임을 보고 끊어 `countedTo:null` = **관측 실패가 green** 이 됐다.
+   *      (b) 고쳤더니 `countedTo:100` — 모델이 1..100 을 **한 assistant 메시지에 통째로** 보낸다.
+   *          우리가 그 메시지를 볼 땐 이미 텍스트가 끝났다 → 이 설계로는 mid-turn 을 못 끊는다.
+   *   2) "툴 6회 호출 중 Stop → 나머지 호출이 안 난다" → interrupt 후 스트림이 후속 턴을 내지 않아
+   *      **10분 타임아웃**. record 도 못 남겼다.
+   *
+   * 다음 시도 후보: `includePartialMessages: true` 로 **partial stream event** 를 받아 스트리밍
+   * 도중에 끊고, 그 턴의 최종 텍스트/`result` 가 잘렸는지 본다. (SDKResultMessage 에는 'interrupted'
+   * 전용 subtype 이 없어 보인다 — success/error 뿐이라 subtype 만으론 판정이 안 된다.)
+   *
+   * 제품 영향: Stop 버튼의 **"진행 중 턴이 실제로 멈춘다"** 는 Claude 경로에서 아직 **증명 안 됨**.
+   * (Codex 경로는 m0-10/m2 에서 turn/interrupt 로 확인됨.) 세션 생존만 확인됐다.
+   */
+  it.skip('🔴 [미측정] interrupt() 가 진행 중 턴을 실제로 절단하는가 (관측 방법 미확립)', () => {})
+
 })

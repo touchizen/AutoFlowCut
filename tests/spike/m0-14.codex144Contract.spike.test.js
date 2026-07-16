@@ -25,7 +25,7 @@
  * `npm run test:spike -- tests/spike/m0-14.codex144Contract.spike.test.js` 로만 돈다.
  * 실제 Codex 자격증명(ChatGPT 구독)을 쓰고 실호출이 나간다.
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, afterEach } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs'
 import { openAppServer, buildOrchestratorThreadParams } from '../../electron/api/llm/codexAppServer.js'
@@ -38,10 +38,43 @@ import {
 
 const RESULT_DIR = 'docs/superpowers/specs'
 const RAW = `${RESULT_DIR}/m0-14-raw.jsonl`
+
+/**
+ * 🔴 **provenance 스탬프.** 없으면 raw 가 "어떤 코드가 낸 결과인지" 를 말하지 못한다.
+ *
+ * 실제로 물렸다 (적대 리뷰가 잡음): 이 파일의 raw 에 `granular-tripwire rejected:false` 인 run 이
+ * 하나 있는데, 그건 **내가 일부러 돌린 뮤테이션 run**(experimentalApi 를 강제로 켠)이다. 그런데
+ * 기록만 봐서는 **뮤턴트 run 과 진짜 run 을 구분할 수 없다** — 감사자에겐 "계약이 깨진 증거" 로 보인다.
+ * 커밋 SHA + dirty 여부 + `SPIKE_MUTANT` 마커를 박아 그 구분을 raw 안에서 닫는다.
+ * (이 repo 는 이미 `*-PRE-RUNID-CONTAMINATED.jsonl` 로 같은 병을 한 번 앓았다.)
+ */
+const gitSha = (() => {
+  try { return execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf-8' }).trim() } catch { return null }
+})()
+const gitDirty = (() => {
+  try { return execFileSync('git', ['status', '--porcelain'], { encoding: 'utf-8' }).trim().length > 0 } catch { return null }
+})()
+
 const record = (label, data) => {
   mkdirSync(RESULT_DIR, { recursive: true })
-  appendFileSync(RAW, JSON.stringify({ runId: process.env.SPIKE_RUN_ID ?? null, label, ...data }) + '\n')
+  appendFileSync(RAW, JSON.stringify({
+    runId: process.env.SPIKE_RUN_ID ?? null,
+    gitSha,
+    gitDirty,
+    // 뮤테이션 검증 중이면 `SPIKE_MUTANT=<설명>` 을 주고 돌린다 → raw 가 스스로 밝힌다.
+    mutant: process.env.SPIKE_MUTANT ?? null,
+    label,
+    ...data,
+  }) + '\n')
 }
+
+/**
+ * ⚠️ record() 는 assertion **전에** 찍힌다 → raw 행만으로는 그 run 이 PASS 였는지 알 수 없다.
+ * m0-8-9 가 이미 쓰는 규율을 그대로 따른다(안 따랐다가 교차 리뷰에 잡혔다).
+ */
+afterEach((ctx) => {
+  record('__verdict__', { test: ctx?.task?.name ?? '(?)', verdict: ctx?.task?.result?.state ?? 'unknown' })
+})
 
 const CLIENT_INFO = { name: 'autoflowcut', title: 'AutoFlowCut', version: '0.0.0' }
 const PINNED = '0.144.5'
@@ -230,7 +263,12 @@ describe('M0-14 — Codex 0.144.5 계약 스모크', () => {
         cliVersion: s.started?.thread?.cliVersion ?? null,
       })
       // "에러가 안 났다" 는 약한 증거다 — 서버가 모르는 필드를 무시해도 조용하다.
-      // 서버가 우리 정책을 그대로 반사해야 **받아서 적용했다**고 말할 수 있다.
+      // 서버가 우리 정책을 반사하면 **파싱하고 보존했다**는 증거가 된다.
+      // ⚠️ 다만 이건 **'적용'의 증거는 아니다** (적대 리뷰 지적, 수용). 응답은 verbatim echo 도 아니다 —
+      //    `sandbox:'read-only'` 가 `{type:'readOnly'}` 로 정규화돼 돌아온다.
+      //    granular 하위 플래그 중 **행동으로 확인된 건 `mcp_elicitations:true` 뿐**이고,
+      //    그 증거는 여기가 아니라 **m0-8-9** 에 있다(5s/10분 hold 에서 실제 elicitation 발화).
+      //    나머지 false 4종은 0.144.5 에서 행동 재검증 안 됨 — shell 이 config 로 죽어 표면이 작다.
       expect(s.started?.approvalPolicy).toEqual({
         granular: {
           sandbox_approval: false,
@@ -252,8 +290,14 @@ describe('M0-14 — Codex 0.144.5 계약 스모크', () => {
    * `turn/completed` 는 model 을 안 돌려준다 → per-turn model 은 **서버의 rollout 기록**으로만
    * 양성 확인이 된다. 그리고 확인해 보니 계약이 우리 가정과 **다르다**:
    *
-   *   turn/start.model 은 per-turn 이 아니라 **sticky** 다 — 한 번 주면 thread 의 모델이 **바뀐다.**
-   *   → model 을 **생략하면 app-server 기본으로 안 돌아가고 직전 모델이 그대로 붙는다.**
+   *   turn/start.model 은 per-turn 스코프가 아니라 **sticky inheritance** 다 —
+   *   → model 을 **생략하면 app-server 기본으로 안 돌아가고 직전에 명시한 모델을 상속한다.**
+   *
+   * 메커니즘(실측): 다른 모델로 turn/start 를 하면 서버가 **`thread/settings/updated`** 를 쏜다
+   * (raw `all-events`: turn1 completed → **thread/settings/updated** → turn2 started).
+   * 즉 turn 파라미터가 **thread 설정을 갱신**하고, 이후 턴이 그걸 물려받는다.
+   * (교차 리뷰 2건이 여기서 갈렸다 — "상속만 관측됐다" vs "thread 변이가 메커니즘". raw 를 열어보니
+   *  후자가 맞다. 이름만 읽지 말고 이벤트를 열어볼 것.)
    *
    * 제품 영향: `AgentModelSelector` 의 '기본'(DEFAULT_OPTION `value:null`)은 model 키를 **생략**한다
    * (`ChatPanel.jsx` snapshot → `codexOrchestrator.send` 의 `...(model ? {model} : {})`).

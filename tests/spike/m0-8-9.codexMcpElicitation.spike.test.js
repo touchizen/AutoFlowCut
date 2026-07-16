@@ -641,6 +641,12 @@ describe('M0-8/9 — Codex disabled profile + MCP elicitation 게이트', () => 
     })
     report('as-shipped: lockdown + orchestrator 지시문', r)
     expect(r.timedOut).toBe(false)
+    // 🔴 빈 배열만 보면 **vacuous green** 이 된다 (교차 리뷰 지적, 수용):
+    //    spawn 실패 / thread/start 거부 / 턴 조기 실패도 전부 otherItems=[] toolCalls=[] 를 남긴다.
+    //    → "턴이 실제로 끝까지 갔는데도 실행이 0" 이어야 방어를 증명한 것이다. 형제 arm 과 같은 규율.
+    expect(r.spawnError ?? null).toBeNull()
+    expect(r.threadError ?? null).toBeNull()
+    expect(r.turnDone?.status).toBe('completed')
     expect(r.otherItems).toEqual([])
     expect(r.toolCalls).toEqual([])
   }, 8 * 60 * 1000)
