@@ -6,9 +6,13 @@
  * 라 실버전 RPC 변화를 원리적으로 못 잡는다.
  *
  * 🔴 이 스파이크가 **제품 코드를 통해서만** 말하게 한다:
- *    - 바이너리: `resolveCodexExecutablePath()` (제품 resolver). 절대 PATH 의 `codex` 가 아니다.
- *      **실측 드리프트**: PATH 의 `codex` 는 0.144.1, 제품 resolver 는 0.144.5 다. m0-12 는 bare
- *      `codex` 를 spawn 해서 **엉뚱한 바이너리를 재고 있었다.**
+ *    - 바이너리: `resolveCodexExecutablePath()` (제품 resolver). bare `codex` 가 아니다.
+ *      ⚠️ 실측된 함정: **로그인 셸의 `codex` 는 0.144.1**(전역 nvm 설치), 제품 resolver 는
+ *      `node_modules` 의 **0.144.5** 다. m0-12 는 bare `codex` 를 spawn 하지만 `npm run` 이
+ *      `node_modules/.bin` 을 PATH 앞에 꽂아주는 **덕분에** 지금은 0.144.5 를 잡는다
+ *      (실측: npm script 안에서 `which codex` → `node_modules/.bin/codex`).
+ *      즉 **틀린 게 아니라 우연히 맞는 상태**다 — npm 의 PATH 주입에 의존하므로, 러너를 바꾸거나
+ *      셸에서 직접 돌리면 조용히 **전역 0.144.1** 을 재게 된다. 여기서는 그 우연에 기대지 않는다.
  *    - thread 파라미터: `buildOrchestratorThreadParams()` (제품). 여기서 파라미터를 재구현하면
  *      스파이크는 제품이 아니라 **스파이크 자신을 측정**한다.
  *
@@ -189,8 +193,11 @@ describe('M0-14 — Codex 0.144.5 계약 스모크', () => {
       await opened?.cleanup?.()
     }
     record('granular-tripwire', { rejected: Boolean(error), message: error?.message ?? null })
-    // 0.142.5 실측: -32600 askForApproval.granular requires experimentalApi capability
-    expect(error, 'experimentalApi 없이도 granular 가 통과했다면 승인 게이트 전제가 무너진 것이다').toBeTruthy()
+    // 🔴 toBeTruthy() 로는 부족하다 — auth 실패/네트워크 오류**어떤 에러든** green 이 된다
+    //    (= tripwire 가 아니라 false-green 발생기). 거부 **사유**를 봐야 계약을 잰 것이다.
+    //    0.142.5 실측: -32600 askForApproval.granular requires experimentalApi capability
+    expect(error?.message ?? '', 'experimentalApi 없이도 granular 가 통과했다면 승인 게이트 전제가 무너진 것이다')
+      .toMatch(/granular requires experimentalApi/i)
   })
 
   it('🔴 tripwire: 존재하지 않는 model 은 **에러**다 (= turn/start.model 이 읽힌다는 증거)', async () => {
@@ -204,7 +211,13 @@ describe('M0-14 — Codex 0.144.5 계약 스모크', () => {
       await s.cleanup()
     }
     record('bogus-model-tripwire', { rejected: Boolean(error), message: error?.message ?? null })
-    expect(error, 'bogus model 이 통과했다면 turn/start.model 은 조용히 무시되는 것이다 — per-turn model UX 전제가 무너진다').toBeTruthy()
+    // 🔴 사유를 본다. 아무 에러나 green 이면 tripwire 가 아니다(위 granular tripwire 와 같은 이유).
+    //    **에러가 bogus 이름을 지목해야** 그 문자열이 backend 까지 갔다는 증거다.
+    //    실측: 400 invalid_request_error — "The '<bogus>' model is not supported when using Codex
+    //    with a ChatGPT account." → thread 는 유효 모델(A)로 열렸으므로, 이 400 은 **turn/start.model
+    //    이 thread 모델을 override 했다**는 뜻이다.
+    expect(error?.message ?? '', 'bogus model 이 통과했다면 turn/start.model 은 조용히 무시되는 것이다 — per-turn model UX 전제가 무너진다')
+      .toContain('definitely-not-a-real-model-m0-14')
   })
 
   it('🎯 thread/start 응답이 granular 승인 정책을 **되돌려준다** (= 0.144.5 가 받아 적용했다는 양성 증거)', async () => {
