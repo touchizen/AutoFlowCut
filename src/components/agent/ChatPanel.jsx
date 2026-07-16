@@ -534,10 +534,10 @@ export default function ChatPanel({
             <AgentIconButton
               className="agent-chat-mode-toggle"
               label={t('agent.modeToggle')}
-              tooltip={effectiveMode === 'slide' ? t('agent.switchToFloating') : t('agent.switchToSlide')}
-              pressed={effectiveMode === 'slide'}
+              tooltip={effectiveMode === 'docked' ? t('agent.switchToFloating') : t('agent.switchToSlide')}
+              pressed={effectiveMode === 'docked'}
               disabled={appMode === 'flow'}
-              onClick={() => onAgentPanelModeChange(effectiveMode === 'slide' ? 'floating' : 'slide')}
+              onClick={() => onAgentPanelModeChange(effectiveMode === 'docked' ? 'floating' : 'docked')}
             >
               <AgentControlIcon name="mode" />
             </AgentIconButton>

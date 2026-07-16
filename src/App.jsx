@@ -597,6 +597,7 @@ export async function runStoryCharacterPush({
 import Header from './components/Header'
 import ApprovalDialog from './components/agent/ApprovalDialog'
 import ChatPanel from './components/agent/ChatPanel'
+import { effectiveAgentPanelMode } from './components/agent/agentPanelLayout'
 import PromptInput from './components/PromptInput'
 import SceneList from './components/SceneList'
 import SrtPromptModal from './components/SrtPromptModal'
@@ -2654,6 +2655,8 @@ function App() {
   const currentProgress = showVideoAutomation ? videoAutomation.progress : progress
   const currentStatus = showVideoAutomation ? videoAutomation.status : status
   const currentStatusMessage = showVideoAutomation ? videoAutomation.statusMessage : statusMessage
+  const isAgentDocked = agentPanelOpen
+    && effectiveAgentPanelMode(mode, settings.agentPanelMode) === 'docked'
 
   // #R7-18: mp3 드롭 → 나레이션/SFX 트랙 import. 메인(하단 패널) 타임라인이 공유하는 핸들러.
   const handleTrackDrop = async ({ trackRole, files, timecodeMs }) => {
@@ -2669,7 +2672,10 @@ function App() {
   }
 
   return (
-    <div className={computeAppClass(mode)}>
+    <div
+      className={`${computeAppClass(mode)}${isAgentDocked ? ' agent-docked' : ''}`}
+      style={{ '--agent-dock-w': '400px' }}
+    >
       <QAProgressBanner />
       <ImportProcessingOverlay
         processing={importProcessing}

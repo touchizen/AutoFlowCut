@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { DEFAULTS, UI } from '../config/defaults'
 import { generateProjectName } from '../utils/formatters'
 import { DEFAULT_IMAGE_MODEL_ID, DEFAULT_VIDEO_MODEL_ID } from '../config/genModels'
+import { normalizeAgentPanelMode } from '../components/agent/agentPanelLayout'
 
 const STORAGE_KEY = 'autoflowcut_settings'
 
@@ -48,9 +49,7 @@ function loadSettings() {
       parsed.seedNo = defaults.seedNo
     }
     const merged = { ...defaults, ...parsed }
-    if (!['floating', 'slide'].includes(merged.agentPanelMode)) {
-      merged.agentPanelMode = 'floating'
-    }
+    merged.agentPanelMode = normalizeAgentPanelMode(merged.agentPanelMode)
     // 옛 Flow(none) 저장 모드 폐기 — 공식 API 는 base64 만 오므로 작업폴더 저장이 필수.
     // 'none'/legacy 값은 'folder' 로 강제 (설정 UI 의 저장 방식 토글도 제거됨).
     if (merged.saveMode !== 'folder') merged.saveMode = 'folder'

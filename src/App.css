@@ -127,6 +127,10 @@ html, body {
   position: relative;
 }
 
+.app.agent-docked {
+  padding-right: var(--agent-dock-w, 400px);
+}
+
 /* ============================================
    Flow mode split-view layout (§3.4)
    Flow WebContentsView occupies the RIGHT 50%.

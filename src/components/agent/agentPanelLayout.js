@@ -1,8 +1,9 @@
-export const AGENT_PANEL_MODES = Object.freeze(['floating', 'slide'])
+export const AGENT_PANEL_MODES = Object.freeze(['floating', 'docked'])
 
 const clamp = (value, max) => Math.min(Math.max(value, 0), Math.max(max, 0))
 
 export function normalizeAgentPanelMode(value) {
+  if (value === 'slide') return 'docked'
   return AGENT_PANEL_MODES.includes(value) ? value : 'floating'
 }
 

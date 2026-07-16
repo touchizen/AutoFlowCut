@@ -429,28 +429,28 @@ describe('ChatPanel — agentMessage completion reconciliation', () => {
 })
 
 describe('ChatPanel — effective panel mode', () => {
-  it('저장 slide는 Flow 진입 때 floating으로 파생되고 Flow 해제 때 slide로 자동 복귀한다', () => {
+  it('저장 docked는 Flow 진입 때 floating으로 파생되고 Flow 해제 때 docked로 자동 복귀한다', () => {
     const onAgentPanelModeChange = vi.fn()
     const { container, rerender } = render(
       <ChatPanel
         open
         appMode="api"
-        agentPanelMode="slide"
+        agentPanelMode="docked"
         onAgentPanelModeChange={onAgentPanelModeChange}
         projectKey="p"
         batchStatusSources={batchSources()}
       />,
     )
     const panel = container.querySelector('.agent-chat-panel')
-    const toggle = screen.getByRole('button', { name: 'Slide panel mode' })
-    expect(panel).toHaveClass('mode-slide')
+    const toggle = screen.getByRole('button', { name: 'Dock panel mode' })
+    expect(panel).toHaveClass('mode-docked')
     expect(toggle).toHaveAttribute('aria-pressed', 'true')
 
     rerender(
       <ChatPanel
         open
         appMode="flow"
-        agentPanelMode="slide"
+        agentPanelMode="docked"
         onAgentPanelModeChange={onAgentPanelModeChange}
         projectKey="p"
         batchStatusSources={batchSources()}
@@ -466,17 +466,17 @@ describe('ChatPanel — effective panel mode', () => {
       <ChatPanel
         open
         appMode="api"
-        agentPanelMode="slide"
+        agentPanelMode="docked"
         onAgentPanelModeChange={onAgentPanelModeChange}
         projectKey="p"
         batchStatusSources={batchSources()}
       />,
     )
-    expect(panel).toHaveClass('mode-slide')
+    expect(panel).toHaveClass('mode-docked')
     expect(toggle).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('API mode toggle은 저장 callback에 다음 preference만 전달한다', async () => {
+  it('API mode toggle은 floating에서 docked preference를 전달한다', async () => {
     const user = userEvent.setup()
     const onAgentPanelModeChange = vi.fn()
     render(
@@ -490,8 +490,28 @@ describe('ChatPanel — effective panel mode', () => {
       />,
     )
 
-    await user.click(screen.getByRole('button', { name: 'Slide panel mode' }))
-    expect(onAgentPanelModeChange).toHaveBeenCalledWith('slide')
+    await user.click(screen.getByRole('button', { name: 'Dock panel mode' }))
+    expect(onAgentPanelModeChange).toHaveBeenCalledWith('docked')
+  })
+
+  it('API mode toggle은 docked에서 floating preference를 전달한다', async () => {
+    const user = userEvent.setup()
+    const onAgentPanelModeChange = vi.fn()
+    render(
+      <ChatPanel
+        open
+        appMode="api"
+        agentPanelMode="docked"
+        onAgentPanelModeChange={onAgentPanelModeChange}
+        projectKey="p"
+        batchStatusSources={batchSources()}
+      />,
+    )
+
+    const toggle = screen.getByRole('button', { name: 'Dock panel mode' })
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    await user.click(toggle)
+    expect(onAgentPanelModeChange).toHaveBeenCalledWith('floating')
   })
 })
 
@@ -617,7 +637,7 @@ describe('ChatPanel — open floating container drag', () => {
 
   it.each([
     { open: false, mode: 'floating' },
-    { open: true, mode: 'slide' },
+    { open: true, mode: 'docked' },
   ])('open=$open mode=$mode에서는 drag position을 쓰지 않는다', ({ open, mode }) => {
     const { container } = render(
       <div className="app">

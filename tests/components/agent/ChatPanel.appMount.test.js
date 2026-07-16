@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest'
 describe('App agent surface 배치', () => {
   it('ChatPanel을 activeView 분기보다 앞선 전역 sibling으로 정확히 한 번 mount한다', () => {
     const source = fs.readFileSync(path.resolve('src/App.jsx'), 'utf8')
-    const appRoot = source.indexOf('<div className={computeAppClass(mode)}>')
+    const appRoot = source.indexOf("className={`${computeAppClass(mode)}${isAgentDocked ? ' agent-docked' : ''}`}")
     const panel = source.indexOf('<ChatPanel', appRoot)
     const generateBranch = source.indexOf("{activeView === 'generate' && (", appRoot)
     const storyBranch = source.indexOf("{activeView === 'story' && (", appRoot)
@@ -29,6 +29,19 @@ describe('App agent surface 배치', () => {
     expect(panelProps).toContain('appMode={mode}')
     expect(panelProps).toContain('agentPanelMode={settings.agentPanelMode}')
     expect(panelProps).toContain("onAgentPanelModeChange={(nextMode) => updateSetting('agentPanelMode', nextMode)}")
+  })
+
+  it('API docked panel이 열려 있을 때만 App container에 reserve class와 width를 건다', () => {
+    const source = fs.readFileSync(path.resolve('src/App.jsx'), 'utf8')
+
+    expect(source).toContain("import { effectiveAgentPanelMode } from './components/agent/agentPanelLayout'")
+    expect(source).toMatch(
+      /const isAgentDocked = agentPanelOpen\s*&& effectiveAgentPanelMode\(mode, settings\.agentPanelMode\) === 'docked'/,
+    )
+    expect(source).toContain(
+      "className={`${computeAppClass(mode)}${isAgentDocked ? ' agent-docked' : ''}`}",
+    )
+    expect(source).toContain("style={{ '--agent-dock-w': '400px' }}")
   })
 
   it('App은 useVideoAutomation의 admission/status/event/cleanup source를 ChatPanel에 주입한다', () => {

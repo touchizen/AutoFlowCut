@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  AGENT_PANEL_MODES,
   clampAgentPanelPosition,
   effectiveAgentPanelMode,
   floatingPanelBox,
@@ -8,18 +9,23 @@ import {
 } from '../../../src/components/agent/agentPanelLayout.js'
 
 describe('agentPanelLayout', () => {
-  it('stored slide는 API에서 slide, Flow에서 floating이며 저장값 객체를 바꾸지 않는다', () => {
-    const preference = { value: 'slide' }
-
-    expect(effectiveAgentPanelMode('api', preference.value)).toBe('slide')
-    expect(effectiveAgentPanelMode('flow', preference.value)).toBe('floating')
-    expect(effectiveAgentPanelMode('api', preference.value)).toBe('slide')
-    expect(preference).toEqual({ value: 'slide' })
+  it('지원 모드는 floating과 docked뿐이다', () => {
+    expect(AGENT_PANEL_MODES).toEqual(['floating', 'docked'])
   })
 
-  it('invalid stored mode만 floating으로 정규화한다', () => {
+  it('stored docked는 API에서 docked, Flow에서 floating이며 저장값 객체를 바꾸지 않는다', () => {
+    const preference = { value: 'docked' }
+
+    expect(effectiveAgentPanelMode('api', preference.value)).toBe('docked')
+    expect(effectiveAgentPanelMode('flow', preference.value)).toBe('floating')
+    expect(effectiveAgentPanelMode('api', preference.value)).toBe('docked')
+    expect(preference).toEqual({ value: 'docked' })
+  })
+
+  it('legacy slide를 docked로 마이그레이션하고 invalid mode는 floating으로 정규화한다', () => {
     expect(normalizeAgentPanelMode('floating')).toBe('floating')
-    expect(normalizeAgentPanelMode('slide')).toBe('slide')
+    expect(normalizeAgentPanelMode('docked')).toBe('docked')
+    expect(normalizeAgentPanelMode('slide')).toBe('docked')
     expect(normalizeAgentPanelMode('drawer')).toBe('floating')
     expect(normalizeAgentPanelMode(null)).toBe('floating')
   })

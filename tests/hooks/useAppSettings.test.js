@@ -100,10 +100,16 @@ describe('useAppSettings — agentPanelMode', () => {
     expect(result.current.settings.agentPanelMode).toBe('floating')
   })
 
-  it('저장된 slide 선호를 그대로 보존한다', () => {
+  it('저장된 docked 선호를 그대로 보존한다', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ agentPanelMode: 'docked' }))
+    const { result } = renderHook(() => useAppSettings())
+    expect(result.current.settings.agentPanelMode).toBe('docked')
+  })
+
+  it('저장된 legacy slide 선호를 docked로 마이그레이션한다', () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ agentPanelMode: 'slide' }))
     const { result } = renderHook(() => useAppSettings())
-    expect(result.current.settings.agentPanelMode).toBe('slide')
+    expect(result.current.settings.agentPanelMode).toBe('docked')
   })
 
   it('알 수 없는 저장값만 floating으로 정규화한다', () => {
