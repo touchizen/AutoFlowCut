@@ -2,6 +2,7 @@ import { act, renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   buildEmptyRefGateDeps,
+  nonInteractiveGateView,
   runEmptyRefGateFlow,
 } from '../../src/services/emptyRefGate'
 import { useAppSettings } from '../../src/hooks/useAppSettings'
@@ -85,6 +86,48 @@ describe('buildEmptyRefGateDeps — liveness 배선', () => {
       targetRefKeys: ['id:ghost'],
       reason: 'm2-empty-reference-gate',
     })
+  })
+
+  it('MCP source의 미동기화 mention은 사람 sync gate를 열지 않고 자동 취소해 latch를 해제한다', async () => {
+    const humanSyncGate = vi.fn(async () => ({
+      proceeded: false,
+      patchedRefs: null,
+    }))
+    let latch = false
+    const startScenes = vi.fn(async () => {})
+    const unsynced = {
+      id: 'sync-me',
+      name: 'SyncMe',
+      type: 'character',
+      filePath: '/sync-me.png',
+    }
+    const deps = buildEmptyRefGateDeps(makeArgs({
+      source: 'mcp',
+      scenesRef: {
+        current: [{ id: 's1', prompt: '@SyncMe', status: 'pending' }],
+      },
+      referencesRef: { current: [unsynced] },
+      getMatchingReferences: (scene, pool) => (
+        (pool || []).filter(ref => scene.prompt.includes(`@${ref.name}`))
+      ),
+      setPendingLatch: vi.fn(on => { latch = on }),
+      openSyncGate: humanSyncGate,
+      automationStartRef: { current: startScenes },
+      gateView: nonInteractiveGateView,
+    }))
+
+    const outcome = await runEmptyRefGateFlow({
+      startMode: 'flow',
+      projectName: 'P',
+      force: false,
+      initialTargetSceneIds: ['s1'],
+      startOptionsWithoutSceneIds: {},
+    }, deps)
+
+    expect(humanSyncGate).not.toHaveBeenCalled()
+    expect(startScenes).not.toHaveBeenCalled()
+    expect(outcome).toEqual({ started: false, reason: 'sync-cancelled' })
+    expect(latch).toBe(false)
   })
 })
 

@@ -85,6 +85,7 @@ export function EmptyReferenceGateModal({
   failure = null,
   onChoose = () => {},
   onAcknowledge = () => {},
+  onStop = () => {},
 }) {
   const { t } = useI18n()
 
@@ -135,6 +136,15 @@ export function EmptyReferenceGateModal({
       >
         {t('emptyRefGate.cancel')}
       </button>
+      {busy && (
+        <button
+          type="button"
+          className="btn-danger"
+          onClick={onStop}
+        >
+          {t('emptyRefGate.stopGeneration')}
+        </button>
+      )}
     </div>
   )
 

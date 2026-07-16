@@ -154,6 +154,27 @@ describe('EmptyReferenceGateModal', () => {
     expect(onChoose).toHaveBeenCalledTimes(1)
   })
 
+  it('busy의 생성 중지는 선택 promise를 닫지 않고 onStop만 호출한다', () => {
+    const onChoose = vi.fn()
+    const onAcknowledge = vi.fn()
+    const onStop = vi.fn()
+    renderModal({
+      phase: 'busy',
+      onChoose,
+      onAcknowledge,
+      onStop,
+    })
+
+    const stopButton = screen.getByRole('button', { name: '생성 중지' })
+    expect(stopButton).toBeEnabled()
+    fireEvent.click(stopButton)
+
+    expect(onStop).toHaveBeenCalledTimes(1)
+    expect(onChoose).not.toHaveBeenCalled()
+    expect(onAcknowledge).not.toHaveBeenCalled()
+    expect(screen.getByText('레퍼런스 생성 중...')).toBeInTheDocument()
+  })
+
   it('failure에서 카드별 stage와 원인, 씬 미시작 안내와 확인 버튼을 표시한다', () => {
     renderModal({
       phase: 'failure',

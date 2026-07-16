@@ -37,6 +37,10 @@ const flowBlockContainingCoordinator = (text) => {
 }
 
 const handleStartImpl = sliceBetween('const handleStartImpl', 'const handleStart =')
+const emptyRefDepsFactory = sliceBetween(
+  'const getEmptyRefGateDeps',
+  'const handleStartImpl'
+)
 const directImageCases = sliceBetween(
   "case 'text':",
   "case 'video-text':",
@@ -51,6 +55,10 @@ const syncProceed = sliceBetween(
   'const handleSyncGateCancel'
 )
 const stylePicker = sliceBetween('<StylePicker', '{showAudioResult &&')
+const emptyRefModal = sliceBetween(
+  '{emptyRefGate && (',
+  '{/* #R34: 생성 전 미동기화'
+)
 
 describe('App empty reference gate wiring', () => {
   it('direct 이미지 시작과 tag-proceed가 모두 같은 coordinator를 호출한다', () => {
@@ -113,6 +121,9 @@ describe('App empty reference gate wiring', () => {
     expect(source).toContain(
       "gateView: source === 'mcp' ? nonInteractiveGateView : emptyRefGateView"
     )
+    expect(emptyRefDepsFactory).toMatch(
+      /buildEmptyRefGateDeps\(\{\s*source,/
+    )
     expect(handleStartImpl).toContain("const { force = false, source = 'ui' } = options")
     expect(handleStartImpl).toContain('getEmptyRefGateDeps(source)')
     expect(tagProceed).toContain('getEmptyRefGateDeps(__startSource)')
@@ -126,5 +137,9 @@ describe('App empty reference gate wiring', () => {
       'handleStart(null, { force: pendingStyleForceRef.current })'
     )
     expect(stylePicker).not.toContain('automationStartRef.current(')
+  })
+
+  it('busy empty-ref modal의 stop은 ref batch stop callback에 직접 연결된다', () => {
+    expect(emptyRefModal).toContain('onStop={stopGenerateAllRefs}')
   })
 })

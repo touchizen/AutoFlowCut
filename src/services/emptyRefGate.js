@@ -16,9 +16,18 @@ export const nonInteractiveGateView = {
   close: () => {},
 }
 
+// M2 이전에도 미동기화 mention은 사람 sync modal에서 return해 batch를 시작하지 않았다.
+// MCP는 그 modal을 누를 사람이 없으므로 auto-proceed 대신 즉시 취소해 latch jam과 degraded 생성을 막는다.
+// 장기적으로는 MCP용 headless auto-sync가 낫지만, sync loop의 비대화식 실행은 이번 범위 밖이다.
+export const nonInteractiveSyncGate = async () => ({
+  proceeded: false,
+  patchedRefs: null,
+})
+
 // React wiring 경계. scenes/refs/mode/start는 모달 대기 뒤에도 최신이어야 하므로 값이나
 // 렌더 closure를 캡처하지 않고 호출 시점의 ref.current를 읽는다.
 export function buildEmptyRefGateDeps({
+  source = 'ui',
   scenesRef,
   referencesRef,
   modeRef,
@@ -45,7 +54,9 @@ export function buildEmptyRefGateDeps({
       targetRefKeys: keys,
       reason: 'm2-empty-reference-gate',
     }),
-    openSyncGate,
+    openSyncGate: source === 'mcp'
+      ? nonInteractiveSyncGate
+      : openSyncGate,
     startScenes: opts => automationStartRef.current(opts),
     toastM1Exclusions,
     gateView,

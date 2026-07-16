@@ -1371,6 +1371,7 @@ function App() {
   //   tag-validation Proceed 가 공유.
   const startInFlightRef = useRef(false)
   const getEmptyRefGateDeps = (source = 'ui') => buildEmptyRefGateDeps({
+    source,
     scenesRef: scenesHook.scenesRef,
     referencesRef,
     modeRef,
@@ -2958,6 +2959,7 @@ function App() {
           failure={emptyRefGate.failure}
           onChoose={emptyRefGate.resolve}
           onAcknowledge={emptyRefGate.resolve}
+          onStop={stopGenerateAllRefs}
         />
       )}
 

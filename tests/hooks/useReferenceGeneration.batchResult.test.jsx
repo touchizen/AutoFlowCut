@@ -49,6 +49,7 @@ import {
   checkFlowProjectReady,
 } from '../../src/utils/guards'
 import { fileSystemAPI } from '../../src/hooks/useFileSystem'
+import { tryUpscaleImage } from '../../src/utils/imageProcessing'
 import { useReferenceGeneration } from '../../src/hooks/useReferenceGeneration'
 
 function setupHook({
@@ -88,7 +89,7 @@ function setupHook({
     ...genOverrides,
   }
 
-  const { result } = renderHook(() => useReferenceGeneration({
+  const { result, rerender } = renderHook(() => useReferenceGeneration({
     settings: {
       saveMode: 'project',
       imageBatchCount: 1,
@@ -111,6 +112,10 @@ function setupHook({
     result,
     genAPI,
     getLiveRefs: () => liveRefs,
+    replaceLiveRefs: nextRefs => {
+      liveRefs = nextRefs.map(ref => ({ ...ref }))
+      rerender()
+    },
   }
 }
 
@@ -502,6 +507,209 @@ describe('useReferenceGeneration — structured batch result', () => {
       mediaId: 'character-media',
       entityId: 'entity-ghost',
       workflowId: 'workflow-ghost',
+    })
+  })
+
+  it('15) 앞 target이 삭제돼 index가 당겨져도 non-target을 제출/덮어쓰지 않고 삭제 target을 not-found로 남긴다', async () => {
+    let replaceLiveRefs
+    let deleted = false
+    const { result, genAPI, getLiveRefs, replaceLiveRefs: replace } = setupHook({
+      references: [
+        { id: 'vanished', type: 'scene', prompt: 'vanished prompt', status: 'pending' },
+        { id: 'survivor', type: 'scene', prompt: 'survivor prompt', status: 'pending' },
+        { id: 'outside', type: 'scene', prompt: 'outside prompt', data: 'keep-image', mediaId: 'keep-media', status: 'done' },
+      ],
+      settingsOverrides: { concurrency: 1 },
+      genOverrides: {
+        checkGeneration: vi.fn(async generationId => {
+          if (!deleted && generationId === 'g-1') {
+            deleted = true
+            replaceLiveRefs([
+              { id: 'survivor', type: 'scene', prompt: 'survivor prompt', status: 'pending' },
+              { id: 'outside', type: 'scene', prompt: 'outside prompt', data: 'keep-image', mediaId: 'keep-media', status: 'done' },
+            ])
+          }
+          return { success: true, completed: true }
+        }),
+        collectGeneration: vi.fn(async generationId => ({
+          success: true,
+          images: [{
+            base64: `${generationId}-image`,
+            mediaId: `${generationId}-media`,
+          }],
+        })),
+      },
+    })
+    replaceLiveRefs = replace
+
+    const batchResult = await runTimedBatch(result, ['id:vanished', 'id:survivor'])
+
+    expect(genAPI.submitGeneration.mock.calls.map(([, , opts]) => opts.ref.id))
+      .toEqual(['vanished', 'survivor'])
+    expect(batchResult).toMatchObject({
+      ok: true,
+      outcome: 'completed',
+      requestedKeys: ['id:vanished', 'id:survivor'],
+      attemptedKeys: ['id:vanished', 'id:survivor'],
+      succeededKeys: ['id:survivor'],
+      skipped: [{ key: 'id:vanished', stage: 'not-found' }],
+      failed: [],
+    })
+    expect(getLiveRefs()).toEqual([
+      expect.objectContaining({
+        id: 'survivor',
+        data: 'g-2-image',
+        mediaId: 'g-2-media',
+        status: 'done',
+      }),
+      expect.objectContaining({
+        id: 'outside',
+        data: 'keep-image',
+        mediaId: 'keep-media',
+        status: 'done',
+      }),
+    ])
+  })
+
+  it('16) batch 중 reorder돼도 pending 결과와 다음 submit을 각각 target key의 현재 index로 해석한다', async () => {
+    let replaceLiveRefs
+    let reordered = false
+    const { result, genAPI, getLiveRefs, replaceLiveRefs: replace } = setupHook({
+      references: [
+        { id: 'first', type: 'scene', prompt: 'first prompt', status: 'pending' },
+        { id: 'second', type: 'scene', prompt: 'second prompt', status: 'pending' },
+        { id: 'outside', type: 'scene', prompt: 'outside prompt', data: 'keep-image', mediaId: 'keep-media', status: 'done' },
+      ],
+      settingsOverrides: { concurrency: 1 },
+      genOverrides: {
+        checkGeneration: vi.fn(async generationId => {
+          if (!reordered && generationId === 'g-1') {
+            reordered = true
+            replaceLiveRefs([
+              { id: 'second', type: 'scene', prompt: 'second prompt', status: 'pending' },
+              { id: 'outside', type: 'scene', prompt: 'outside prompt', data: 'keep-image', mediaId: 'keep-media', status: 'done' },
+              { id: 'first', type: 'scene', prompt: 'first prompt', status: 'generating' },
+            ])
+          }
+          return { success: true, completed: true }
+        }),
+        collectGeneration: vi.fn(async generationId => ({
+          success: true,
+          images: [{
+            base64: `${generationId}-image`,
+            mediaId: `${generationId}-media`,
+          }],
+        })),
+      },
+    })
+    replaceLiveRefs = replace
+
+    const batchResult = await runTimedBatch(result, ['id:first', 'id:second'])
+
+    expect(genAPI.submitGeneration.mock.calls.map(([, , opts]) => opts.ref.id))
+      .toEqual(['first', 'second'])
+    expect(batchResult).toMatchObject({
+      ok: true,
+      outcome: 'completed',
+      attemptedKeys: ['id:first', 'id:second'],
+      succeededKeys: ['id:first', 'id:second'],
+      skipped: [],
+      failed: [],
+    })
+    expect(getLiveRefs()).toEqual([
+      expect.objectContaining({
+        id: 'second',
+        data: 'g-2-image',
+        mediaId: 'g-2-media',
+      }),
+      expect.objectContaining({
+        id: 'outside',
+        data: 'keep-image',
+        mediaId: 'keep-media',
+      }),
+      expect.objectContaining({
+        id: 'first',
+        data: 'g-1-image',
+        mediaId: 'g-1-media',
+      }),
+    ])
+  })
+
+  it('17) submit 성공 후 후처리 중 삭제된 target은 succeeded가 아니라 not-found이며 이동한 카드를 건드리지 않는다', async () => {
+    const outside = {
+      id: 'outside',
+      type: 'scene',
+      prompt: 'outside prompt',
+      data: 'keep-image',
+      mediaId: 'keep-media',
+      status: 'done',
+    }
+    const { result, genAPI, getLiveRefs, replaceLiveRefs } = setupHook({
+      references: [
+        { id: 'vanished', type: 'scene', prompt: 'vanished prompt', status: 'pending' },
+        outside,
+      ],
+      settingsOverrides: { concurrency: 1 },
+      genOverrides: {
+        collectGeneration: vi.fn().mockResolvedValue({
+          success: true,
+          images: [{
+            base64: 'vanished-image',
+            mediaId: 'vanished-media',
+          }],
+        }),
+      },
+    })
+    let releaseUpscale
+    tryUpscaleImage.mockImplementationOnce(() => new Promise(resolve => {
+      releaseUpscale = resolve
+    }))
+
+    vi.useFakeTimers()
+    let batchPromise
+    let batchResult
+    try {
+      await act(async () => {
+        batchPromise = result.current.handleGenerateAllRefs(null, {
+          targetRefKeys: ['id:vanished'],
+        })
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000)
+      })
+      expect(tryUpscaleImage).toHaveBeenCalledTimes(1)
+
+      await act(async () => {
+        replaceLiveRefs([outside])
+      })
+      await act(async () => {
+        releaseUpscale(null)
+        await Promise.resolve()
+      })
+      for (let i = 0; i < 20; i++) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(16000)
+        })
+      }
+      await act(async () => {
+        batchResult = await batchPromise
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+
+    expect(genAPI.submitGeneration).toHaveBeenCalledTimes(1)
+    expect(genAPI.collectGeneration).toHaveBeenCalledTimes(1)
+    expect(getLiveRefs()).toEqual([outside])
+    expect(batchResult.currentRefs).toEqual([outside])
+    expect(batchResult).toMatchObject({
+      ok: true,
+      outcome: 'completed',
+      requestedKeys: ['id:vanished'],
+      attemptedKeys: ['id:vanished'],
+      succeededKeys: [],
+      skipped: [{ key: 'id:vanished', stage: 'not-found' }],
+      failed: [],
     })
   })
 
