@@ -3,24 +3,38 @@
   right: 18px;
   bottom: 18px;
   z-index: 3200;
-  width: min(420px, calc(100vw - 36px));
-  max-height: min(640px, calc(100vh - 90px));
+  width: min(420px, calc(100% - 36px));
+  max-height: min(640px, calc(100% - 36px));
   display: flex;
   flex-direction: column;
+  min-height: 0;
   color: var(--text, #eee);
   background: var(--panel-bg, #1e1e22);
   border: 1px solid var(--border, #3a3a42);
   border-radius: 12px;
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.42);
   overflow: hidden;
+  transition: transform 0.22s ease, opacity 0.18s ease, visibility 0.18s ease;
 }
-
-.agent-chat-panel.is-dismissed {
-  visibility: hidden;
-  opacity: 0;
-  pointer-events: none;
+.agent-chat-panel.mode-floating.is-dismissed { transform: translateY(12px) scale(0.98); }
+.agent-chat-panel.mode-slide {
+  top: 0; right: 0; bottom: 0;
+  width: min(420px, 100%); height: 100%; max-height: 100%;
+  border-top-right-radius: 0; border-bottom-right-radius: 0;
+  transform: translateX(100%);
 }
+.agent-chat-panel.mode-slide.is-open { transform: translateX(0); }
+.agent-chat-panel.mode-slide.is-dismissed { transform: translateX(100%); }
+.agent-chat-panel.is-dismissed { visibility: hidden; opacity: 0; pointer-events: none; }
 .agent-chat-panel.is-open { visibility: visible; opacity: 1; }
+.agent-chat-header { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 11px 13px; border-bottom: 1px solid var(--border, #3a3a42); }
+.agent-chat-header-actions, .agent-chat-actions { display: flex; align-items: center; gap: 6px; }
+.agent-chat-log { flex: 1 1 auto; min-height: 0; max-height: none; padding: 12px; overflow-y: auto; }
+.agent-chat-compose { flex: 0 0 auto; padding: 10px 12px 12px; border-top: 1px solid var(--border, #3a3a42); }
+.agent-chat-header.is-draggable { cursor: grab; user-select: none; }
+.agent-chat-header.is-draggable:active { cursor: grabbing; }
+.agent-chat-flow-notice { max-width: 150px; font-size: 10px; line-height: 1.2; color: #e9bd68; }
+
 .agent-chat-fab {
   position: absolute; right: 18px; bottom: 18px; z-index: 3200;
   display: grid; place-items: center; width: 72px; height: 72px; padding: 12px;
@@ -34,17 +48,13 @@
 .agent-chat-fab.is-hidden { visibility: hidden; opacity: 0; pointer-events: none; }
 .agent-chat-fab img { display: block; width: 100%; height: 100%; }
 
-.agent-chat-panel.is-collapsed { width: 190px; }
-.agent-chat-header { display: flex; align-items: center; justify-content: space-between; padding: 11px 13px; border-bottom: 1px solid var(--border, #3a3a42); }
 .agent-chat-heading { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .agent-chat-heading strong { flex: 0 0 auto; }
 .agent-chat-heading .agent-model-selector { flex: 1 1 160px; min-width: 112px; }
-.agent-chat-header-actions, .agent-chat-actions { display: flex; align-items: center; gap: 6px; }
 .agent-chat-header button, .agent-chat-actions button { border: 1px solid var(--border, #3a3a42); border-radius: 7px; padding: 5px 9px; color: inherit; background: transparent; cursor: pointer; }
 .agent-chat-actions button[type='submit'] { color: #fff; background: var(--accent, #4c8dff); border-color: transparent; }
 .agent-chat-header button:disabled, .agent-chat-actions button:disabled { cursor: default; opacity: 0.42; }
 .agent-chat-running { font-size: 11px; color: #78b0ff; }
-.agent-chat-log { min-height: 150px; max-height: 370px; padding: 12px; overflow-y: auto; }
 .agent-chat-empty { margin: 24px 0; text-align: center; font-size: 13px; opacity: 0.55; }
 .agent-chat-message, .agent-chat-tool, .agent-chat-error { margin-bottom: 8px; padding: 8px 10px; border-radius: 8px; white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.45; }
 .agent-chat-message.user { margin-left: 42px; background: rgba(76, 141, 255, 0.18); }
@@ -55,15 +65,9 @@
 .agent-chat-tool pre { max-height: 120px; margin: 6px 0 0; overflow: auto; font-size: 11px; white-space: pre-wrap; }
 .agent-chat-error { color: #ffd2d2; border: 1px solid rgba(255, 92, 92, 0.5); background: rgba(255, 72, 72, 0.13); }
 .agent-chat-usage { padding: 0 12px 9px; text-align: right; font-size: 11px; opacity: 0.65; }
-.agent-chat-compose { padding: 10px 12px 12px; border-top: 1px solid var(--border, #3a3a42); }
 .agent-chat-compose textarea { box-sizing: border-box; width: 100%; resize: vertical; min-height: 54px; margin-bottom: 8px; padding: 8px 10px; color: inherit; background: var(--code-bg, #131316); border: 1px solid var(--border, #3a3a42); border-radius: 8px; font: inherit; }
 .agent-chat-actions { justify-content: flex-end; flex-wrap: wrap; }
 
-/* 아이콘 버튼: 텍스트 버튼과 달리 정사각형으로 잡아야 셰브론이 가운데에 온다. */
-.agent-chat-collapse { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; }
-/* 접힌 상태에서만 헤더가 손잡이가 된다. 커서로 "끌 수 있다"를 알린다. */
-.agent-chat-header.is-draggable { cursor: grab; user-select: none; }
-.agent-chat-header.is-draggable:active { cursor: grabbing; }
 /* 진행 표시: 첫 응답까지 수십 초 비어 있으면 앱이 멈춘 것처럼 보인다. */
 .agent-chat-thinking { display: flex; align-items: center; gap: 7px; opacity: 0.7; font-size: 12px; padding: 2px 0; }
 .agent-chat-dots { display: inline-flex; gap: 3px; }

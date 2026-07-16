@@ -16,7 +16,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, act } from '@testing-library/react'
 import { useEffect } from 'react'
+import { readFileSync } from 'node:fs'
 import { computeAppClass, flowLayoutForMode, isHorizontalSplit, clampSplitRatio, ratioFromDrag, splitAppStyle, splitFlowStyle, splitResizerStyle } from '../../src/utils/appLayout'
+import { floatingPanelBox } from '../../src/components/agent/agentPanelLayout.js'
 
 /**
  * ModeEffectProbe: minimal component that calls the REAL flowLayoutForMode helper
@@ -115,6 +117,31 @@ describe('split layout pure helpers (Flow split resizer 복원)', () => {
     expect(splitFlowStyle('split-right', 0.4)).toMatchObject({ left: '60%', width: '40%' })
     // App 박스와 상보: splitAppStyle(left=flow%, width=app%) 의 반대
     expect(splitFlowStyle('split-left', 0.4).width).toBe(splitAppStyle('split-left', 0.4).left)
+  })
+})
+
+describe('agent floating/FAB stay inside four-way App split', () => {
+  it.each(['split-left', 'split-right', 'split-top', 'split-bottom'])(
+    '%s ratio 0.8에서 panel과 72px FAB가 App 영역을 넘지 않는다',
+    (layoutMode) => {
+      const horizontal = isHorizontalSplit(layoutMode)
+      const app = {
+        width: horizontal ? 1440 * 0.2 : 1440,
+        height: horizontal ? 900 : 900 * 0.2,
+      }
+      const panel = floatingPanelBox(app)
+      expect(panel.width).toBeLessThanOrEqual(app.width)
+      expect(panel.maxHeight).toBeLessThanOrEqual(app.height)
+      expect(72 + 36).toBeLessThanOrEqual(horizontal ? app.width : app.height)
+      expect(splitAppStyle(layoutMode, 0.8).position).toBe('absolute')
+    },
+  )
+
+  it('production CSS가 viewport 단위가 아닌 App container 단위를 쓴다', () => {
+    const css = readFileSync('src/components/agent/ChatPanel.css', 'utf8')
+    expect(css).toContain('width: min(420px, calc(100% - 36px))')
+    expect(css).toContain('max-height: min(640px, calc(100% - 36px))')
+    expect(css).not.toMatch(/agent-chat-panel[\s\S]*?100v[wh]/)
   })
 })
 

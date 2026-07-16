@@ -2689,6 +2689,9 @@ function App() {
         open={agentPanelOpen}
         onOpen={() => setAgentPanelOpen(true)}
         onDismiss={() => setAgentPanelOpen(false)}
+        appMode={mode}
+        agentPanelMode={settings.agentPanelMode}
+        onAgentPanelModeChange={(nextMode) => updateSetting('agentPanelMode', nextMode)}
         projectKey={`${settings.saveMode}:${workFolder ?? ''}:${settings.projectName ?? ''}`}
         videoAdmissionSources={videoAdmissionSources}
         batchStatusSources={{

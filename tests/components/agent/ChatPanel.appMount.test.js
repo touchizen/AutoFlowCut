@@ -26,6 +26,9 @@ describe('App agent surface 배치', () => {
     expect(panelProps).toContain('open={agentPanelOpen}')
     expect(panelProps).toContain('onOpen={() => setAgentPanelOpen(true)}')
     expect(panelProps).toContain('onDismiss={() => setAgentPanelOpen(false)}')
+    expect(panelProps).toContain('appMode={mode}')
+    expect(panelProps).toContain('agentPanelMode={settings.agentPanelMode}')
+    expect(panelProps).toContain("onAgentPanelModeChange={(nextMode) => updateSetting('agentPanelMode', nextMode)}")
   })
 
   it('App은 useVideoAutomation의 admission/status/event/cleanup source를 ChatPanel에 주입한다', () => {

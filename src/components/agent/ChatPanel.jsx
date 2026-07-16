@@ -9,33 +9,10 @@ import { useOptionalI18n } from '../../hooks/useI18n'
 import en from '../../locales/en'
 import AgentModelSelector from './AgentModelSelector.jsx'
 import robotUrl from '../../assets/Robot.svg'
+import { clampAgentPanelPosition, effectiveAgentPanelMode } from './agentPanelLayout.js'
 import './ChatPanel.css'
 
 const AGENT_EVENTS = ['agent:delta', 'agent:message', 'agent:tool-call', 'agent:usage', 'agent:done', 'agent:error']
-
-/**
- * 접기/펼치기 셰브론.
- *
- * 🔴 화살표는 **지금 누르면 패널이 어디로 가는지**를 가리킨다. 패널이 화면 **아래쪽**에 붙어 있으므로:
- *   - 펼쳐진 상태 → 누르면 **아래로 접힌다** → ∨ (아래 화살표)
- *   - 접힌 상태   → 누르면 **위로 펼쳐진다** → ∧ (위 화살표)
- * (반대로 두면 "현재 상태"를 가리키는 것처럼 보여서 사용자가 정반대로 읽는다.)
- */
-function ChevronIcon({ collapsed }) {
-  return (
-    <svg
-      className="agent-chat-chevron"
-      width="12" height="12" viewBox="0 0 24 24"
-      fill="none" stroke="currentColor" strokeWidth="3"
-      strokeLinecap="round" strokeLinejoin="round"
-      aria-hidden="true" focusable="false"
-    >
-      {collapsed
-        ? <polyline points="6 15 12 9 18 15" />   /* ∧ 펼치기 */
-        : <polyline points="6 9 12 15 18 9" />}   {/* ∨ 접기 */}
-    </svg>
-  )
-}
 
 function failureText(failure, t) {
   if (failure?.error === 'agent-limit') {
@@ -71,15 +48,13 @@ function fallbackT(key, params = {}) {
   return value.replace(/\{(\w+)\}/g, (match, name) => (params[name] !== undefined ? params[name] : match))
 }
 
-const clamp = (value, max) => Math.min(Math.max(value, 0), Math.max(max, 0))
-
 /**
- * 접힌 패널을 헤더로 끌어 옮긴다.
+ * floating 패널을 헤더로 끌어 App container 안에서 옮긴다.
  *
- * 🔴 **화면 밖으로 나가면 다시 잡을 수 없다.** 뷰포트 안으로 clamp 한다.
- * 🔴 **접기 버튼 위에서 시작한 pointerdown 은 드래그가 아니다.** 안 거르면 버튼을 누를 때마다 패널이 튄다.
+ * 🔴 **App 밖으로 나가면 다시 잡을 수 없다.** positioned container 안으로 clamp 한다.
+ * 🔴 **버튼 위에서 시작한 pointerdown 은 드래그가 아니다.** 안 거르면 버튼을 누를 때마다 패널이 튄다.
  */
-function useCollapsedDrag(enabled) {
+function useFloatingDrag(enabled) {
   const [position, setPosition] = useState(null)
   const panelRef = useRef(null)
   const dragRef = useRef(null)
@@ -90,12 +65,16 @@ function useCollapsedDrag(enabled) {
       const drag = dragRef.current
       if (!drag) return
       const panel = panelRef.current
-      const width = panel?.offsetWidth ?? 0
-      const height = panel?.offsetHeight ?? 0
-      setPosition({
-        left: clamp(event.clientX - drag.offsetX, window.innerWidth - width),
-        top: clamp(event.clientY - drag.offsetY, window.innerHeight - height),
-      })
+      const container = panel?.closest('.app') || panel?.parentElement
+      if (!panel || !container) return
+      setPosition(clampAgentPanelPosition({
+        clientX: event.clientX,
+        clientY: event.clientY,
+        offsetX: drag.offsetX,
+        offsetY: drag.offsetY,
+        containerRect: container.getBoundingClientRect(),
+        panelRect: panel.getBoundingClientRect(),
+      }))
     }
     const onUp = () => { dragRef.current = null }
     window.addEventListener('pointermove', onMove)
@@ -107,7 +86,7 @@ function useCollapsedDrag(enabled) {
   }, [enabled])
 
   const onPointerDown = useCallback((event) => {
-    // 버튼(접기/펼치기) 위에서 시작한 것은 클릭이지 드래그가 아니다.
+    // 버튼 위에서 시작한 것은 클릭이지 드래그가 아니다.
     if (!enabled || event.button !== 0 || event.target.closest('button')) return
     const rect = panelRef.current?.getBoundingClientRect()
     dragRef.current = {
@@ -127,6 +106,9 @@ export default function ChatPanel({
   open = true,
   onOpen = () => {},
   onDismiss = () => {},
+  appMode = 'api',
+  agentPanelMode = 'floating',
+  onAgentPanelModeChange = () => {},
   projectKey = null,
   batchStatusSources = {},
   sceneBridgeSources = {},
@@ -135,8 +117,9 @@ export default function ChatPanel({
 }) {
   const t = useSafeT()
   const api = window.electronAPI
-  const [collapsed, setCollapsed] = useState(false)
-  const { panelRef, position, onPointerDown } = useCollapsedDrag(collapsed)
+  const effectiveMode = effectiveAgentPanelMode(appMode, agentPanelMode)
+  const dragEnabled = open && effectiveMode === 'floating'
+  const { panelRef, position, onPointerDown } = useFloatingDrag(dragEnabled)
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState([])
   const [toolCalls, setToolCalls] = useState([])
@@ -440,14 +423,17 @@ export default function ChatPanel({
       </button>
       <aside
         ref={panelRef}
-        className={`agent-chat-panel ${open ? 'is-open' : 'is-dismissed'} ${collapsed ? 'is-collapsed' : ''}`}
+        className={`agent-chat-panel ${open ? 'is-open' : 'is-dismissed'} mode-${effectiveMode}`}
         aria-label={t('agent.panelLabel')}
         aria-hidden={!open}
+        data-effective-mode={effectiveMode}
         // 옮긴 뒤에는 right/bottom 앵커 대신 left/top 이 이긴다. 안 지우면 두 앵커가 싸워 늘어난다.
-        style={position ? { left: `${position.left}px`, top: `${position.top}px`, right: 'auto', bottom: 'auto' } : undefined}
+        style={dragEnabled && position
+          ? { left: `${position.left}px`, top: `${position.top}px`, right: 'auto', bottom: 'auto' }
+          : undefined}
       >
         <div
-          className={`agent-chat-header ${collapsed ? 'is-draggable' : ''}`}
+          className={`agent-chat-header ${dragEnabled ? 'is-draggable' : ''}`}
           onPointerDown={onPointerDown}
         >
           <div className="agent-chat-heading">
@@ -466,6 +452,20 @@ export default function ChatPanel({
           </div>
           <div className="agent-chat-header-actions">
             {running && <span className="agent-chat-running">{t('agent.running')}</span>}
+            {appMode === 'flow' && (
+              <span className="agent-chat-flow-notice">{t('agent.flowFloatingOnly')}</span>
+            )}
+            <button
+              type="button"
+              className="agent-chat-mode-toggle"
+              aria-label={t('agent.modeToggle')}
+              aria-pressed={effectiveMode === 'slide'}
+              title={effectiveMode === 'slide' ? t('agent.switchToFloating') : t('agent.switchToSlide')}
+              disabled={appMode === 'flow'}
+              onClick={() => onAgentPanelModeChange(effectiveMode === 'slide' ? 'floating' : 'slide')}
+            >
+              <span aria-hidden="true">⇥</span>
+            </button>
             <button
               type="button"
               className="agent-chat-dismiss"
@@ -475,72 +475,56 @@ export default function ChatPanel({
             >
               <span aria-hidden="true">×</span>
             </button>
-            {/* 🔴 아이콘만 두면 버튼의 **이름이 사라진다** — 스크린리더는 "button" 이라고만 읽는다.
-                `aria-label` 로 이름을, `title` 로 풍선 도움말을 준다. 둘 다 상태를 그대로 말한다. */}
-            <button
-              type="button"
-              className="agent-chat-collapse"
-              aria-label={collapsed ? t('agent.expand') : t('agent.collapse')}
-              aria-expanded={!collapsed}
-              title={collapsed ? t('agent.expand') : t('agent.collapse')}
-              onClick={() => setCollapsed((value) => !value)}
-            >
-              <ChevronIcon collapsed={collapsed} />
-            </button>
           </div>
         </div>
 
-        {!collapsed && (
-          <>
-            <div className="agent-chat-log" aria-live="polite">
-              {messages.length === 0 && <p className="agent-chat-empty">{t('agent.empty')}</p>}
-              {messages.map((message) => (
-                <div key={message.id} className={`agent-chat-message ${message.role}`}>{message.text}</div>
-              ))}
-              {toolCalls.map(({ id, phase, item }) => (
-                <div key={id} className="agent-chat-tool">
-                  <div>
-                    <span>{phase === 'completed' ? t('agent.toolDone') : t('agent.toolRunning')}</span>
-                    {' · '}{toolName(item, t)}
-                  </div>
-                  {(item.arguments || item.result) && (
-                    <pre>{JSON.stringify(item.arguments || item.result, null, 2)}</pre>
-                  )}
-                </div>
-              ))}
-              {errors.map((entry) => <div key={entry.key} className="agent-chat-error" role="alert">{entry.text}</div>)}
-              {/* 🔴 첫 delta 까지 수십 초 걸린다 (실측 16초). 그동안 빈 화면이면 사용자는 앱이 죽은 줄 안다. */}
-              {running && (
-                <div className="agent-chat-thinking" role="status">
-                  <span className="agent-chat-dots"><i /><i /><i /></span>
-                  {t('agent.thinking')}
-                </div>
+        <div className="agent-chat-log" aria-live="polite">
+          {messages.length === 0 && <p className="agent-chat-empty">{t('agent.empty')}</p>}
+          {messages.map((message) => (
+            <div key={message.id} className={`agent-chat-message ${message.role}`}>{message.text}</div>
+          ))}
+          {toolCalls.map(({ id, phase, item }) => (
+            <div key={id} className="agent-chat-tool">
+              <div>
+                <span>{phase === 'completed' ? t('agent.toolDone') : t('agent.toolRunning')}</span>
+                {' · '}{toolName(item, t)}
+              </div>
+              {(item.arguments || item.result) && (
+                <pre>{JSON.stringify(item.arguments || item.result, null, 2)}</pre>
               )}
             </div>
+          ))}
+          {errors.map((entry) => <div key={entry.key} className="agent-chat-error" role="alert">{entry.text}</div>)}
+          {/* 🔴 첫 delta 까지 수십 초 걸린다 (실측 16초). 그동안 빈 화면이면 사용자는 앱이 죽은 줄 안다. */}
+          {running && (
+            <div className="agent-chat-thinking" role="status">
+              <span className="agent-chat-dots"><i /><i /><i /></span>
+              {t('agent.thinking')}
+            </div>
+          )}
+        </div>
 
-            {usage && (
-              <div className="agent-chat-usage">
-                {t('agent.usage', { turns: usage.turns ?? 0, toolCalls: usage.toolCalls ?? 0 })}
-              </div>
-            )}
-
-            <form className="agent-chat-compose" onSubmit={send}>
-              <textarea
-                aria-label={t('agent.inputLabel')}
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-                placeholder={t('agent.placeholder')}
-                rows={2}
-              />
-              <div className="agent-chat-actions">
-                <button type="submit" disabled={running || !input.trim()}>{t('agent.send')}</button>
-                <button type="button" onClick={steer} disabled={!running || !input.trim()}>{t('agent.steer')}</button>
-                <button type="button" onClick={abort} disabled={!running}>{t('agent.stop')}</button>
-                <button type="button" onClick={close} disabled={!sessionOpenRef.current}>{t('agent.closeSession')}</button>
-              </div>
-            </form>
-          </>
+        {usage && (
+          <div className="agent-chat-usage">
+            {t('agent.usage', { turns: usage.turns ?? 0, toolCalls: usage.toolCalls ?? 0 })}
+          </div>
         )}
+
+        <form className="agent-chat-compose" onSubmit={send}>
+          <textarea
+            aria-label={t('agent.inputLabel')}
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            placeholder={t('agent.placeholder')}
+            rows={2}
+          />
+          <div className="agent-chat-actions">
+            <button type="submit" disabled={running || !input.trim()}>{t('agent.send')}</button>
+            <button type="button" onClick={steer} disabled={!running || !input.trim()}>{t('agent.steer')}</button>
+            <button type="button" onClick={abort} disabled={!running}>{t('agent.stop')}</button>
+            <button type="button" onClick={close} disabled={!sessionOpenRef.current}>{t('agent.closeSession')}</button>
+          </div>
+        </form>
       </aside>
     </>
   )

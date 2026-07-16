@@ -323,39 +323,70 @@ describe('ChatPanel — agentMessage completion reconciliation', () => {
   })
 })
 
-describe('ChatPanel — 접기/펼치기 아이콘 버튼', () => {
-  // 🔴 텍스트를 아이콘으로 바꾸는 순간 **버튼의 접근 가능한 이름이 사라진다** — 스크린리더는
-  //    "button" 이라고만 읽고, 테스트도 버튼을 못 찾는다. 그래서 이름을 aria-label 로 남긴다.
-  //    (아이콘만 남기고 이름을 안 주는 건 이 프로젝트가 반복해서 밟은 "눈으로만 확인되는 UI" 다.)
-  it('아이콘 버튼이지만 접근 가능한 이름과 툴팁이 상태를 그대로 말한다', async () => {
-    const user = userEvent.setup()
-    render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+describe('ChatPanel — effective panel mode', () => {
+  it('저장 slide는 Flow 진입 때 floating으로 파생되고 Flow 해제 때 slide로 자동 복귀한다', () => {
+    const onAgentPanelModeChange = vi.fn()
+    const { container, rerender } = render(
+      <ChatPanel
+        open
+        appMode="api"
+        agentPanelMode="slide"
+        onAgentPanelModeChange={onAgentPanelModeChange}
+        projectKey="p"
+        batchStatusSources={batchSources()}
+      />,
+    )
+    const panel = container.querySelector('.agent-chat-panel')
+    const toggle = screen.getByRole('button', { name: 'Slide panel mode' })
+    expect(panel).toHaveClass('mode-slide')
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
 
-    const collapse = screen.getByRole('button', { name: 'Collapse' })
-    expect(collapse.getAttribute('title'), '툴팁이 없으면 아이콘이 무엇인지 알 길이 없다').toBe('Collapse')
-    // 아이콘이어야 한다 — 라벨 문자열이 버튼 안에 **보이면** 아이콘으로 바꾼 의미가 없다.
-    expect(collapse.querySelector('svg'), '아이콘(svg)이 없다').toBeTruthy()
-    expect(collapse.textContent.trim()).toBe('')
+    rerender(
+      <ChatPanel
+        open
+        appMode="flow"
+        agentPanelMode="slide"
+        onAgentPanelModeChange={onAgentPanelModeChange}
+        projectKey="p"
+        batchStatusSources={batchSources()}
+      />,
+    )
+    expect(panel).toHaveClass('mode-floating')
+    expect(toggle).toBeDisabled()
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByText('The agent stays floating while Flow is active.')).toBeTruthy()
+    expect(onAgentPanelModeChange).not.toHaveBeenCalled()
 
-    await user.click(collapse)
-
-    // 접힌 뒤에는 같은 버튼이 **펼치기**를 뜻해야 한다. 이름이 안 바뀌면 사용자는 상태를 못 읽는다.
-    const expand = screen.getByRole('button', { name: 'Expand' })
-    expect(expand.getAttribute('title')).toBe('Expand')
-    expect(expand.querySelector('svg')).toBeTruthy()
+    rerender(
+      <ChatPanel
+        open
+        appMode="api"
+        agentPanelMode="slide"
+        onAgentPanelModeChange={onAgentPanelModeChange}
+        projectKey="p"
+        batchStatusSources={batchSources()}
+      />,
+    )
+    expect(panel).toHaveClass('mode-slide')
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('접으면 대화 로그가 사라지고 펼치면 그대로 돌아온다 — 세션은 유지된다', async () => {
+  it('API mode toggle은 저장 callback에 다음 preference만 전달한다', async () => {
     const user = userEvent.setup()
-    render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
-    window.electronAPI.emitAgent('agent:delta', { delta: '접어도 살아있어야 함' })
+    const onAgentPanelModeChange = vi.fn()
+    render(
+      <ChatPanel
+        open
+        appMode="api"
+        agentPanelMode="floating"
+        onAgentPanelModeChange={onAgentPanelModeChange}
+        projectKey="p"
+        batchStatusSources={batchSources()}
+      />,
+    )
 
-    await user.click(screen.getByRole('button', { name: 'Collapse' }))
-    expect(screen.queryByText('접어도 살아있어야 함')).toBeNull()
-
-    await user.click(screen.getByRole('button', { name: 'Expand' }))
-    // 접기는 표시만 바꾼다. 메시지가 사라졌다면 세션 상태를 날린 것이다.
-    expect(screen.getByText('접어도 살아있어야 함')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Slide panel mode' }))
+    expect(onAgentPanelModeChange).toHaveBeenCalledWith('slide')
   })
 })
 
@@ -397,84 +428,49 @@ describe('ChatPanel — 진행 표시', () => {
   })
 })
 
-describe('ChatPanel — 접었을 때 드래그로 옮기기', () => {
+describe('ChatPanel — open floating container drag', () => {
   function drag(el, from, to) {
     act(() => {
-      el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: from.x, clientY: from.y, button: 0 }))
-      window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: to.x, clientY: to.y }))
+      el.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true, clientX: from.x, clientY: from.y, button: 0,
+      }))
+      window.dispatchEvent(new PointerEvent('pointermove', {
+        bubbles: true, clientX: to.x, clientY: to.y,
+      }))
       window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
     })
   }
 
-  it('접힌 패널은 헤더를 끌면 그만큼 움직인다', async () => {
-    const user = userEvent.setup()
-    const { container } = render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
-    await user.click(screen.getByRole('button', { name: 'Collapse' }))
-
+  it('open+floating만 drag되고 offset container의 우하단 bounds에서 clamp된다', () => {
+    const { container } = render(
+      <div className="app">
+        <ChatPanel open appMode="api" agentPanelMode="floating" projectKey="p" batchStatusSources={batchSources()} />
+      </div>,
+    )
+    const app = container.querySelector('.app')
     const panel = container.querySelector('.agent-chat-panel')
     const header = container.querySelector('.agent-chat-header')
-    drag(header, { x: 500, y: 700 }, { x: 400, y: 300 })
+    app.getBoundingClientRect = () => ({ left: 100, top: 50, width: 300, height: 200, right: 400, bottom: 250 })
+    panel.getBoundingClientRect = () => ({ left: 118, top: 68, width: 252, height: 140, right: 370, bottom: 208 })
 
-    // 위치가 실제로 인라인 스타일로 반영돼야 한다 — class 만 바뀌면 화면에선 안 움직인다.
-    expect(panel.style.left, '드래그해도 패널이 움직이지 않았다').not.toBe('')
-    expect(panel.style.top).not.toBe('')
+    drag(header, { x: 130, y: 78 }, { x: 999, y: 999 })
+
+    expect(panel.style.left).toBe('48px')
+    expect(panel.style.top).toBe('60px')
   })
 
-  it('화면 밖으로는 못 나간다 — 잡을 수 없는 패널이 되면 안 된다', async () => {
-    const user = userEvent.setup()
-    const { container } = render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
-    await user.click(screen.getByRole('button', { name: 'Collapse' }))
-
-    const panel = container.querySelector('.agent-chat-panel')
+  it.each([
+    { open: false, mode: 'floating' },
+    { open: true, mode: 'slide' },
+  ])('open=$open mode=$mode에서는 drag position을 쓰지 않는다', ({ open, mode }) => {
+    const { container } = render(
+      <div className="app">
+        <ChatPanel open={open} appMode="api" agentPanelMode={mode} projectKey="p" batchStatusSources={batchSources()} />
+      </div>,
+    )
     const header = container.querySelector('.agent-chat-header')
-    drag(header, { x: 500, y: 700 }, { x: -9999, y: -9999 })
-
-    expect(parseFloat(panel.style.left)).toBeGreaterThanOrEqual(0)
-    expect(parseFloat(panel.style.top)).toBeGreaterThanOrEqual(0)
-  })
-
-  it('펼친 상태에서는 헤더를 끌어도 움직이지 않는다', async () => {
-    const { container } = render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
-    const panel = container.querySelector('.agent-chat-panel')
-    const header = container.querySelector('.agent-chat-header')
-
-    drag(header, { x: 500, y: 700 }, { x: 100, y: 100 })
-
-    expect(panel.style.left, '펼친 패널이 드래그로 움직였다').toBe('')
-  })
-
-  it('옮긴 뒤 펼치면 기본 자리로 돌아온다 — 큰 패널이 화면 밖에 걸리지 않게', async () => {
-    const user = userEvent.setup()
-    const { container } = render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
-    const panel = container.querySelector('.agent-chat-panel')
-
-    await user.click(screen.getByRole('button', { name: 'Collapse' }))
-    drag(container.querySelector('.agent-chat-header'), { x: 500, y: 700 }, { x: 120, y: 90 })
-    expect(panel.style.left).not.toBe('')
-
-    await user.click(screen.getByRole('button', { name: 'Expand' }))
-
-    // 접힌 칩 자리에 640px 짜리 패널을 그대로 펼치면 화면 밖으로 넘칠 수 있다. 앵커로 되돌린다.
-    expect(panel.style.left, '펼쳤는데 드래그 위치가 남아 패널이 화면 밖에 걸릴 수 있다').toBe('')
-  })
-
-  it('접기 버튼을 누른 채 손이 미세하게 움직여도 패널이 튀지 않는다', async () => {
-    const user = userEvent.setup()
-    const { container } = render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
-    await user.click(screen.getByRole('button', { name: 'Collapse' }))
-
-    const panel = container.querySelector('.agent-chat-panel')
-    const button = screen.getByRole('button', { name: 'Expand' })
-
-    // 🔴 실제 클릭은 **거의 항상 1~2px 움직인다.** 버튼 위 pointerdown 을 드래그로 삼으면
-    //    접기/펼치기를 누를 때마다 패널이 손끝으로 순간이동한다.
-    act(() => {
-      button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 600, clientY: 700, button: 0 }))
-      window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 602, clientY: 701 }))
-      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
-    })
-
-    expect(panel.style.left, '버튼을 눌렀는데 드래그로 오해해 패널이 움직였다').toBe('')
+    drag(header, { x: 130, y: 78 }, { x: 220, y: 150 })
+    expect(container.querySelector('.agent-chat-panel').style.left).toBe('')
   })
 })
 
