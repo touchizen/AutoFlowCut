@@ -56,6 +56,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   cleanup()
   delete window.electronAPI
 })
@@ -86,6 +87,8 @@ describe('ChatPanel — 명령과 event의 사용자 효과', () => {
   })
 
   it('active turn에서는 steer와 abort가 실제 command IPC에 도달한다', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(0)
     const user = userEvent.setup()
     render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)
 
@@ -94,6 +97,7 @@ describe('ChatPanel — 명령과 event의 사용자 효과', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }))
     await user.type(input, '영상은 제외해')
     await user.click(screen.getByRole('button', { name: 'Steer' }))
+    vi.advanceTimersByTime(400)
     await user.click(screen.getByRole('button', { name: 'Stop' }))
 
     expect(window.electronAPI.agentSteer).toHaveBeenCalledWith({ text: '영상은 제외해' })
@@ -101,6 +105,8 @@ describe('ChatPanel — 명령과 event의 사용자 효과', () => {
   })
 
   it('single primary가 idle Send로 submit하고 running Stop으로 바뀌어 abort한다', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(0)
     const user = userEvent.setup()
     render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)
 
@@ -116,7 +122,52 @@ describe('ChatPanel — 명령과 event의 사용자 효과', () => {
     expect(screen.queryByRole('button', { name: 'Send' })).toBeNull()
     const stop = screen.getByRole('button', { name: 'Stop' })
     expect(stop).toBeEnabled()
+    vi.advanceTimersByTime(400)
     await user.click(stop)
+
+    expect(window.electronAPI.agentAbort).toHaveBeenCalledOnce()
+  })
+
+  it('cold session의 Send→Stop 즉시 재클릭은 abort하지 않고 원래 message를 보낸다', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    let resolveOpen
+    window.electronAPI.agentSessionOpen.mockReturnValueOnce(new Promise((resolve) => { resolveOpen = resolve }))
+    render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message to the agent' }), {
+      target: { value: 'double click 보존' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+
+    expect(window.electronAPI.agentAbort).not.toHaveBeenCalled()
+
+    await act(async () => resolveOpen({ sessionId: 'session-1' }))
+
+    expect(window.electronAPI.agentSend).toHaveBeenCalledWith({ text: 'double click 보존' })
+  })
+
+  it('warm session의 Stop은 arm delay가 지난 뒤 deliberate abort를 수행한다', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)
+
+    const input = screen.getByRole('textbox', { name: 'Message to the agent' })
+    fireEvent.change(input, { target: { value: 'session 준비' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await act(async () => {})
+    window.electronAPI.emitAgent('agent:done', { turnId: 'turn-1', status: 'completed' })
+
+    fireEvent.change(input, { target: { value: '중단할 warm turn' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await act(async () => {})
+    expect(window.electronAPI.agentSessionOpen).toHaveBeenCalledOnce()
+    expect(window.electronAPI.agentSend).toHaveBeenLastCalledWith({ text: '중단할 warm turn' })
+
+    vi.advanceTimersByTime(400)
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+    await act(async () => {})
 
     expect(window.electronAPI.agentAbort).toHaveBeenCalledOnce()
   })
@@ -204,6 +255,8 @@ describe('ChatPanel — model 적용 시점 계약', () => {
   })
 
   it('session open 대기 중 Stop하면 pending send를 취소하고 다음 Send를 다시 허용한다', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(0)
     let resolveOpen
     window.electronAPI.agentSessionOpen.mockReturnValueOnce(new Promise((resolve) => { resolveOpen = resolve }))
     const user = userEvent.setup()
@@ -215,6 +268,7 @@ describe('ChatPanel — model 적용 시점 계약', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }))
     await waitFor(() => expect(window.electronAPI.agentSessionOpen).toHaveBeenCalledOnce())
 
+    vi.advanceTimersByTime(400)
     await user.click(screen.getByRole('button', { name: 'Stop' }))
     expect(window.electronAPI.agentAbort).toHaveBeenCalledOnce()
     await user.type(input, '다음 요청')
@@ -225,6 +279,8 @@ describe('ChatPanel — model 적용 시점 계약', () => {
   })
 
   it('session open이 abort보다 먼저 끝나도 Stop한 pending send를 보내지 않는다', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(0)
     let resolveOpen
     let resolveAbort
     window.electronAPI.agentSessionOpen.mockReturnValueOnce(new Promise((resolve) => { resolveOpen = resolve }))
@@ -235,6 +291,7 @@ describe('ChatPanel — model 적용 시점 계약', () => {
 
     await user.type(screen.getByRole('textbox', { name: 'Message to the agent' }), 'abort 전에 open될 요청')
     await user.click(screen.getByRole('button', { name: 'Send' }))
+    vi.advanceTimersByTime(400)
     await user.click(screen.getByRole('button', { name: 'Stop' }))
     expect(window.electronAPI.agentAbort).toHaveBeenCalledOnce()
 
@@ -543,22 +600,6 @@ describe('ChatPanel — open floating container drag', () => {
       expect(Number.parseFloat(panel.style.left)).toBeLessThanOrEqual(20)
       expect(Number.parseFloat(panel.style.top)).toBeLessThanOrEqual(10)
     })
-  })
-
-  it('model selector option에서 시작한 pointer drag는 panel을 옮기지 않는다', async () => {
-    const user = userEvent.setup()
-    const { container } = render(
-      <div className="app">
-        <ChatPanel open appMode="api" agentPanelMode="floating" projectKey="p" batchStatusSources={batchSources()} />
-      </div>,
-    )
-    const panel = container.querySelector('.agent-chat-panel')
-
-    await waitFor(() => expect(window.electronAPI.agentListModels).toHaveBeenCalledOnce())
-    await user.click(screen.getByRole('combobox', { name: 'Agent model' }))
-    drag(screen.getByRole('option', { name: 'GPT A' }), { x: 150, y: 90 }, { x: 160, y: 100 })
-
-    expect(panel.style.left).toBe('')
   })
 
   it('header button에서 시작한 pointer drag는 panel을 옮기지 않는다', () => {

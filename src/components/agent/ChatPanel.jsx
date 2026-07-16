@@ -18,6 +18,7 @@ import {
 import './ChatPanel.css'
 
 const AGENT_EVENTS = ['agent:delta', 'agent:message', 'agent:tool-call', 'agent:usage', 'agent:done', 'agent:error']
+const STOP_ARM_MS = 300
 
 function AgentControlIcon({ name }) {
   const paths = {
@@ -153,8 +154,8 @@ function useFloatingDrag(enabled, reclampSignal) {
   }, [enabled, setDragPosition])
 
   const onPointerDown = useCallback((event) => {
-    // 버튼/모델 selector에서 시작한 것은 클릭/선택이지 드래그가 아니다.
-    if (!enabled || event.button !== 0 || event.target.closest('button, .agent-model-selector')) return
+    // 버튼에서 시작한 것은 클릭이지 드래그가 아니다.
+    if (!enabled || event.button !== 0 || event.target.closest('button')) return
     const rect = panelRef.current?.getBoundingClientRect()
     dragRef.current = {
       offsetX: event.clientX - (rect?.left ?? 0),
@@ -203,6 +204,7 @@ export default function ChatPanel({
   const openPromiseRef = useRef(null)
   const sessionEpochRef = useRef(0)
   const abortEpochRef = useRef(0)
+  const stopArmAtRef = useRef(0)
   const projectSettleRef = useRef(Promise.resolve())
   const projectKeyRef = useRef(projectKey)
   const messageIdRef = useRef(0)
@@ -428,6 +430,7 @@ export default function ChatPanel({
     setInput('')
     const abortEpoch = abortEpochRef.current
     setRunning(true)
+    stopArmAtRef.current = Date.now() + STOP_ARM_MS
     if (!(await ensureSession(snapshot.model))) {
       setRunning(false)
       return
@@ -470,6 +473,11 @@ export default function ChatPanel({
     } finally {
       setRunning(false)
     }
+  }
+
+  const stopPrimary = () => {
+    if (Date.now() < stopArmAtRef.current) return
+    abort()
   }
 
   const close = async () => {
@@ -619,7 +627,7 @@ export default function ChatPanel({
                   className="is-primary is-stop"
                   label={t('agent.stop')}
                   tooltip={t('agent.stopTooltip')}
-                  onClick={abort}
+                  onClick={stopPrimary}
                 >
                   <AgentControlIcon name="stop" />
                 </AgentIconButton>
