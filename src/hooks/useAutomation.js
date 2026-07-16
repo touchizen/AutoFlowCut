@@ -458,6 +458,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       saveMode = 'folder',
       sceneIndices = null,
       sceneIds = null,  // 선호 — queue 지연 후에도 안정적으로 id 로 resolve (index staleness 회피)
+      batchIntent = null,
       imageBatchCount = 1,
       imageUpscale = 'off',
       aspectRatio = '16:9',
@@ -472,6 +473,12 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       m1ExcludedMentionNamesBySceneId = {},
     } = options
     const selectedStyleRefId = (_selectedStyleRefId != null && typeof _selectedStyleRefId !== 'string') ? String(_selectedStyleRefId) : _selectedStyleRefId
+    // #M2: sceneIds 는 membership 고정용이지 partial retry 의미가 아니다. 호출자가 batchIntent 로
+    //   명시하면 그 의미가 우선하고, 미전달이면 기존 sceneIds/sceneIndices 추론을 보존한다.
+    const inferredPartialRetry = !!(sceneIds || sceneIndices)
+    const isPartialRetry =
+      batchIntent === 'retry' ||
+      (batchIntent == null && inferredPartialRetry)
 
     if (isRunning) return
 
@@ -518,7 +525,7 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
       // #5: 부분 retry(sceneIds/sceneIndices)로 이 프로젝트의 기존 batchId 를 재사용하면 paywall 스킵
       //   (서버 멱등 no-op/거부에 위임). 이 프로젝트에 기존 id 가 없으면(첫 실행/재로드) 새 배치 → paywall 적용.
       //   프로젝트별 키라 다른 프로젝트의 과금된 id 에는 무임승차 불가.
-      const isReusingBatch = !!((sceneIds || sceneIndices) && batchIdByProjectRef.current.get(projectName))
+      const isReusingBatch = !!(isPartialRetry && batchIdByProjectRef.current.get(projectName))
       const gate = batchStartGate({ subscriptionBatch, isAuthenticated, subscriptionStatus, isReusingBatch })
       if (gate.action === 'login') {
         onLoginRequired?.()
@@ -733,7 +740,6 @@ export function useAutomation(genAPI, scenesHook, addToHistory, onOpenSettings =
     // (배치 구독 게이트는 위 preflight 이전으로 이동 — 로그인/paywall 우선)
     // batchId: full start 면 이 프로젝트에 새 배치(새 id), retry/partial(sceneIds/sceneIndices) 이면
     // 이 프로젝트의 직전 배치 재사용. 재사용 시 서버 consume 가 멱등 no-op → 재시도가 이중과금되지 않는다.
-    const isPartialRetry = !!(sceneIds || sceneIndices)
     const { batchId } = resolveProjectBatchId(batchIdByProjectRef.current, projectName, isPartialRetry)
     // #6: charged 성공 시 refreshSubscription 1회 호출 — Firestore mirror stale 방지.
     const consumeGate = makeBatchConsumeGate(batchId, 'image', (a) => consumeBatchDownload(a), () => {
