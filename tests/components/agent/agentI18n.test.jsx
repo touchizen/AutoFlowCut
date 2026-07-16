@@ -37,6 +37,7 @@ function agentApi() {
     agentSteer: vi.fn(async () => ({})),
     agentAbort: vi.fn(async () => ({})),
     agentSessionClose: vi.fn(async () => ({})),
+    agentListModels: vi.fn(async () => []),
     onAgentEvent: vi.fn((channel, cb) => { listeners.set(channel, cb); return () => listeners.delete(channel) }),
     onToolBridgeRequest: vi.fn(() => () => {}),
     respondToolBridge: vi.fn(),

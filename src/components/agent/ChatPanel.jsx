@@ -7,6 +7,7 @@ import { extractVideoFrames } from '../../utils/videoFrames.js'
 import { resolveVideoSrc } from '../../utils/videoSrc.js'
 import { useOptionalI18n } from '../../hooks/useI18n'
 import en from '../../locales/en'
+import AgentModelSelector from './AgentModelSelector.jsx'
 import './ChatPanel.css'
 
 const AGENT_EVENTS = ['agent:delta', 'agent:message', 'agent:tool-call', 'agent:usage', 'agent:done', 'agent:error']
@@ -138,6 +139,9 @@ export default function ChatPanel({
   const [usage, setUsage] = useState(null)
   const [errors, setErrors] = useState([])
   const [running, setRunning] = useState(false)
+  const [models, setModels] = useState([])
+  const [modelsLoading, setModelsLoading] = useState(true)
+  const [selectedModel, setSelectedModel] = useState(null)
   const sessionOpenRef = useRef(false)
   const openPromiseRef = useRef(null)
   const sessionEpochRef = useRef(0)
@@ -152,6 +156,22 @@ export default function ChatPanel({
   exportSourcesRef.current = exportBridgeSources
   const videoAdmissionSourcesRef = useRef(videoAdmissionSources)
   videoAdmissionSourcesRef.current = videoAdmissionSources
+
+  useEffect(() => {
+    let cancelled = false
+    setModelsLoading(true)
+    Promise.resolve(api.agentListModels?.() ?? [])
+      .then((result) => {
+        if (!cancelled) setModels(Array.isArray(result) ? result : [])
+      })
+      .catch(() => {
+        if (!cancelled) setModels([])
+      })
+      .finally(() => {
+        if (!cancelled) setModelsLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [api])
 
   const pushError = useCallback((failure) => {
     const text = failureText(failure, t)
@@ -301,13 +321,13 @@ export default function ChatPanel({
       .catch((error) => pushError({ error: 'agent-close-failed', message: error?.message }))
   }, [api, projectKey, pushError])
 
-  const ensureSession = useCallback(async () => {
+  const ensureSession = useCallback(async (model) => {
     await projectSettleRef.current
     if (sessionOpenRef.current) return true
     if (!openPromiseRef.current) {
       const openingEpoch = sessionEpochRef.current
       let trackedOpen
-      trackedOpen = Promise.resolve(api.agentSessionOpen())
+      trackedOpen = Promise.resolve(api.agentSessionOpen(model ? { model } : {}))
         .then((result) => {
           // project switch가 open await를 가로질렀으면 old caller는 절대 send admission을 받지 못한다.
           if (openingEpoch !== sessionEpochRef.current) return false
@@ -333,17 +353,23 @@ export default function ChatPanel({
 
   const send = async (event) => {
     event.preventDefault()
-    const text = input.trim()
-    if (!text) return
+    const snapshot = { text: input.trim(), model: selectedModel || undefined }
+    if (!snapshot.text || running) return
     messageIdRef.current += 1
     setMessages((current) => [...current, {
-      id: `user-${messageIdRef.current}`, role: 'user', text, streaming: false,
+      id: `user-${messageIdRef.current}`, role: 'user', text: snapshot.text, streaming: false,
     }])
     setInput('')
-    if (!(await ensureSession())) return
     setRunning(true)
+    if (!(await ensureSession(snapshot.model))) {
+      setRunning(false)
+      return
+    }
     try {
-      const result = await api.agentSend({ text })
+      const payload = snapshot.model
+        ? { text: snapshot.text, model: snapshot.model }
+        : { text: snapshot.text }
+      const result = await api.agentSend(payload)
       if (hasFailure(result)) {
         setRunning(false)
         pushError(result)
@@ -402,7 +428,20 @@ export default function ChatPanel({
         className={`agent-chat-header ${collapsed ? 'is-draggable' : ''}`}
         onPointerDown={onPointerDown}
       >
-        <strong>{t('agent.title')}</strong>
+        <div className="agent-chat-heading">
+          <strong>{t('agent.title')}</strong>
+          <AgentModelSelector
+            models={models}
+            value={selectedModel}
+            loading={modelsLoading}
+            onChange={setSelectedModel}
+            label={t('agent.modelLabel')}
+            defaultLabel={t('agent.modelDefault')}
+            codexLabel={t('agent.codexProvider')}
+            claudeLabel={t('agent.claudeProvider')}
+            comingSoonLabel={t('agent.comingSoon')}
+          />
+        </div>
         <div className="agent-chat-header-actions">
           {running && <span className="agent-chat-running">{t('agent.running')}</span>}
           {/* 🔴 아이콘만 두면 버튼의 **이름이 사라진다** — 스크린리더는 "button" 이라고만 읽는다.
@@ -463,7 +502,7 @@ export default function ChatPanel({
               rows={2}
             />
             <div className="agent-chat-actions">
-              <button type="submit" disabled={!input.trim()}>{t('agent.send')}</button>
+              <button type="submit" disabled={running || !input.trim()}>{t('agent.send')}</button>
               <button type="button" onClick={steer} disabled={!running || !input.trim()}>{t('agent.steer')}</button>
               <button type="button" onClick={abort} disabled={!running}>{t('agent.stop')}</button>
               <button type="button" onClick={close} disabled={!sessionOpenRef.current}>{t('agent.closeSession')}</button>

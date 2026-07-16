@@ -17,6 +17,9 @@
 
 .agent-chat-panel.is-collapsed { width: 190px; }
 .agent-chat-header { display: flex; align-items: center; justify-content: space-between; padding: 11px 13px; border-bottom: 1px solid var(--border, #3a3a42); }
+.agent-chat-heading { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.agent-chat-heading strong { flex: 0 0 auto; }
+.agent-chat-heading .agent-model-selector { flex: 1 1 160px; min-width: 112px; }
 .agent-chat-header-actions, .agent-chat-actions { display: flex; align-items: center; gap: 6px; }
 .agent-chat-header button, .agent-chat-actions button { border: 1px solid var(--border, #3a3a42); border-radius: 7px; padding: 5px 9px; color: inherit; background: transparent; cursor: pointer; }
 .agent-chat-actions button[type='submit'] { color: #fff; background: var(--accent, #4c8dff); border-color: transparent; }

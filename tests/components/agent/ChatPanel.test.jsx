@@ -16,6 +16,10 @@ function createFullAgentApi() {
     agentSteer: vi.fn(async () => ({ turnId: 'turn-1' })),
     agentAbort: vi.fn(async () => ({ aborted: true })),
     agentSessionClose: vi.fn(async () => ({ sessionId: 'session-1' })),
+    agentListModels: vi.fn(async () => [
+      { id: 'gpt-a', displayName: 'GPT A', hidden: false },
+      { id: 'gpt-b', displayName: 'GPT B', hidden: false },
+    ]),
     onAgentEvent: vi.fn((channel, callback) => {
       eventListeners.set(channel, callback)
       return () => eventListeners.delete(channel)
@@ -107,6 +111,83 @@ describe('ChatPanel — 명령과 event의 사용자 효과', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('app-server died')
+  })
+})
+
+describe('ChatPanel — model 적용 시점 계약', () => {
+  it('session open 전 모델을 로드하고 선택값을 초기 thread와 새 turn에 함께 보낸다', async () => {
+    const user = userEvent.setup()
+    render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+
+    await waitFor(() => expect(window.electronAPI.agentListModels).toHaveBeenCalledOnce())
+    expect(window.electronAPI.agentSessionOpen).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('combobox', { name: 'Agent model' }))
+    await user.click(screen.getByRole('option', { name: 'GPT A' }))
+    await user.type(screen.getByRole('textbox', { name: 'Message to the agent' }), '첫 요청')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    expect(window.electronAPI.agentSessionOpen).toHaveBeenCalledWith({ model: 'gpt-a' })
+    expect(window.electronAPI.agentSend).toHaveBeenCalledWith({ text: '첫 요청', model: 'gpt-a' })
+  })
+
+  it('ensureSession await 중 selector가 바뀌어도 submit 순간 model을 쓰고 다음 turn부터 새 model을 쓴다', async () => {
+    let resolveOpen
+    window.electronAPI.agentSessionOpen.mockReturnValueOnce(new Promise((resolve) => { resolveOpen = resolve }))
+    const user = userEvent.setup()
+    render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+    await waitFor(() => expect(window.electronAPI.agentListModels).toHaveBeenCalledOnce())
+
+    await user.click(screen.getByRole('combobox', { name: 'Agent model' }))
+    await user.click(screen.getByRole('option', { name: 'GPT A' }))
+    await user.type(screen.getByRole('textbox', { name: 'Message to the agent' }), 'A snapshot')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() => expect(window.electronAPI.agentSessionOpen).toHaveBeenCalledWith({ model: 'gpt-a' }))
+
+    await user.click(screen.getByRole('combobox', { name: 'Agent model' }))
+    await user.click(screen.getByRole('option', { name: 'GPT B' }))
+    await act(async () => resolveOpen({ sessionId: 'session-1' }))
+    await waitFor(() => expect(window.electronAPI.agentSend)
+      .toHaveBeenNthCalledWith(1, { text: 'A snapshot', model: 'gpt-a' }))
+
+    window.electronAPI.emitAgent('agent:done', { turnId: 'turn-1', status: 'completed' })
+    await user.type(screen.getByRole('textbox', { name: 'Message to the agent' }), 'B next turn')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    expect(window.electronAPI.agentSend)
+      .toHaveBeenNthCalledWith(2, { text: 'B next turn', model: 'gpt-b' })
+  })
+
+  it('running 중 Send는 disabled지만 Steer는 입력이 있으면 유지되고 model을 싣지 않는다', async () => {
+    const user = userEvent.setup()
+    render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+    const input = screen.getByRole('textbox', { name: 'Message to the agent' })
+
+    await user.type(input, '새 turn')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled()
+
+    await user.click(screen.getByRole('combobox', { name: 'Agent model' }))
+    await user.click(screen.getByRole('option', { name: 'GPT B' }))
+    await user.type(input, '진행 방향 수정')
+    // 입력이 채워진 상태 → Send가 여전히 disabled면 그건 오직 running 때문(입력-빈 조건과 분리)
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled()
+    const steer = screen.getByRole('button', { name: 'Steer' })
+    expect(steer).toBeEnabled()
+    await user.click(steer)
+    expect(window.electronAPI.agentSteer).toHaveBeenCalledWith({ text: '진행 방향 수정' })
+  })
+
+  it('목록 실패 fallback []에서는 Default로 보내며 model을 생략하고 Send를 막지 않는다', async () => {
+    window.electronAPI.agentListModels.mockResolvedValueOnce([])
+    const user = userEvent.setup()
+    render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+
+    await waitFor(() => expect(window.electronAPI.agentListModels).toHaveBeenCalledOnce())
+    expect(screen.getByRole('combobox', { name: 'Agent model' })).toHaveTextContent('Default')
+    await user.type(screen.getByRole('textbox', { name: 'Message to the agent' }), '기본으로 실행')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    expect(window.electronAPI.agentSessionOpen).toHaveBeenCalledWith({})
+    expect(window.electronAPI.agentSend).toHaveBeenCalledWith({ text: '기본으로 실행' })
   })
 })
 
