@@ -85,11 +85,15 @@ export function EmptyReferenceGateModal({
   failure = null,
   onChoose = () => {},
   onAcknowledge = () => {},
-  onStop = () => {},
 }) {
   const { t } = useI18n()
 
-  const busy = phase === 'busy'
+  // busy 동안엔 아무것도 렌더하지 않는다. 모달이 열려 있으면 layout.js 가 Flow WebContentsView 를
+  // 0×0 으로 줄이는데(네이티브 레이어라 CSS 로 못 가림), Flow 생성은 그 뷰에 sendInputEvent 로
+  // 좌표를 찍어 DOM 을 태운다 — 뷰가 0×0 이면 자동화가 죽어 자기가 기다리는 생성을 자기가 막는
+  // 데드락이 된다. 진행 상황은 레퍼런스 카드의 기존 spinner 가, 중지는 앱의 Stop 버튼이 담당한다.
+  if (phase === 'busy') return null
+
   const failed = phase === 'failure'
   const hasGeneratableCard = items.some(item => item.hasPrompt)
   const title = failed
@@ -97,11 +101,9 @@ export function EmptyReferenceGateModal({
       ? 'emptyRefGate.failureStopped'
       : 'emptyRefGate.failureTitle')
     : t('emptyRefGate.title')
-  const onClose = busy
-    ? undefined
-    : failed
-      ? onAcknowledge
-      : () => onChoose('cancel')
+  // 닫기는 반드시 coordinator 의 promise 를 resolve 해야 한다 — resolve 없이 닫히면
+  // coordinator 가 latch 를 쥔 채 영원히 매달려 Start 가 영구 비활성이 된다.
+  const onClose = failed ? onAcknowledge : () => onChoose('cancel')
   const footer = failed ? (
     <button
       type="button"
@@ -116,7 +118,7 @@ export function EmptyReferenceGateModal({
         type="button"
         className="btn-primary"
         onClick={() => onChoose('generate-first')}
-        disabled={busy || !hasGeneratableCard}
+        disabled={!hasGeneratableCard}
       >
         {t('emptyRefGate.generateFirst')}
       </button>
@@ -124,7 +126,6 @@ export function EmptyReferenceGateModal({
         type="button"
         className="btn-secondary"
         onClick={() => onChoose('exclude')}
-        disabled={busy}
       >
         {t('emptyRefGate.excludeAndStart')}
       </button>
@@ -132,19 +133,9 @@ export function EmptyReferenceGateModal({
         type="button"
         className="btn-secondary"
         onClick={() => onChoose('cancel')}
-        disabled={busy}
       >
         {t('emptyRefGate.cancel')}
       </button>
-      {busy && (
-        <button
-          type="button"
-          className="btn-danger"
-          onClick={onStop}
-        >
-          {t('emptyRefGate.stopGeneration')}
-        </button>
-      )}
     </div>
   )
 
@@ -184,17 +175,6 @@ export function EmptyReferenceGateModal({
             <p className="empty-reference-gate-guidance">
               {t('emptyRefGate.noneGeneratable')}
             </p>
-          )}
-
-          {busy && (
-            <div
-              className="empty-reference-gate-busy"
-              role="status"
-              aria-live="polite"
-            >
-              <span className="empty-reference-gate-spinner" aria-hidden="true" />
-              {t('emptyRefGate.busy')}
-            </div>
           )}
         </>
       )}

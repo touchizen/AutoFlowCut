@@ -60,6 +60,39 @@ function dismissThroughSharedModal(affordance) {
   fireEvent.click(overlay)
 }
 
+describe('EmptyReferenceGateModal — busy 는 Flow 뷰를 가리면 안 된다', () => {
+  // Flow 생성은 WebContentsView 의 DOM 을 sendInputEvent 로 태워서 동작한다. 그런데 모달이
+  // 열리면 electron/ipc/layout.js:25-27 이 Flow 뷰를 0×0 으로 줄인다 — 찍을 좌표가 사라져
+  // 자동화가 죽는다. busy 모달을 띄우면 자기가 기다리는 생성을 자기가 막는 데드락이 되고,
+  // Stop 도 Flow 드라이버 안에 매달린 await 를 깨지 못해 무반응이 된다.
+  // 그래서 busy 동안엔 아무것도 렌더하지 않는다 — 진행 상황은 레퍼런스 카드가, 중지는 앱의
+  // Stop 버튼이 담당한다. (jsdom 엔 WebContentsView 가 없어 실앱 눈검증에서만 드러났다.)
+  it('busy 에서는 모달을 렌더하지 않는다', () => {
+    renderModal({ phase: 'busy' })
+
+    expect(document.body.querySelector('.modal-overlay')).toBeNull()
+  })
+
+  it('busy 에서는 Flow 뷰 숨김을 획득하지 않는다', () => {
+    const setModalVisible = vi.fn()
+    window.electronAPI.setModalVisible = setModalVisible
+
+    renderModal({ phase: 'busy' })
+
+    expect(setModalVisible).not.toHaveBeenCalledWith({ visible: true })
+  })
+
+  it('confirm 과 failure 는 정상적으로 렌더된다 (그때는 자동화가 안 돌아 숨겨도 안전)', () => {
+    const setModalVisible = vi.fn()
+    window.electronAPI.setModalVisible = setModalVisible
+
+    renderModal({ phase: 'confirm' })
+
+    expect(document.body.querySelector('.modal-overlay')).not.toBeNull()
+    expect(setModalVisible).toHaveBeenCalledWith({ visible: true })
+  })
+})
+
 describe('EmptyReferenceGateModal', () => {
   it('confirm에서 coordinator 카드의 이름, 타입, ID와 참조 씬 번호를 표시한다', () => {
     renderModal()
@@ -105,74 +138,6 @@ describe('EmptyReferenceGateModal', () => {
       'exclude',
       'cancel',
     ])
-  })
-
-  it('busy에서는 세 선택 버튼을 모두 비활성화한다', () => {
-    renderModal({ phase: 'busy' })
-
-    const buttons = [
-      screen.getByRole('button', { name: '빈카드 먼저 생성 → 씬 생성' }),
-      screen.getByRole('button', { name: '제외하고 씬만 생성' }),
-      screen.getByRole('button', { name: '취소' }),
-    ]
-    for (const button of buttons) {
-      expect(button).toBeDisabled()
-    }
-  })
-
-  it('busy에서 연속 클릭해도 onChoose를 추가 호출하지 않는다', () => {
-    const onChoose = vi.fn()
-    const { rerender } = renderModal({ onChoose })
-
-    fireEvent.click(screen.getByRole('button', {
-      name: '빈카드 먼저 생성 → 씬 생성',
-    }))
-    expect(onChoose).toHaveBeenCalledTimes(1)
-
-    rerender(
-      <I18nProvider>
-        <EmptyReferenceGateModal
-          phase="busy"
-          items={cards}
-          failure={null}
-          onChoose={onChoose}
-          onAcknowledge={vi.fn()}
-        />
-      </I18nProvider>
-    )
-
-    const buttons = [
-      screen.getByRole('button', { name: '빈카드 먼저 생성 → 씬 생성' }),
-      screen.getByRole('button', { name: '제외하고 씬만 생성' }),
-      screen.getByRole('button', { name: '취소' }),
-    ]
-    for (const button of buttons) {
-      fireEvent.click(button)
-      fireEvent.click(button)
-    }
-
-    expect(onChoose).toHaveBeenCalledTimes(1)
-  })
-
-  it('busy의 생성 중지는 선택 promise를 닫지 않고 onStop만 호출한다', () => {
-    const onChoose = vi.fn()
-    const onAcknowledge = vi.fn()
-    const onStop = vi.fn()
-    renderModal({
-      phase: 'busy',
-      onChoose,
-      onAcknowledge,
-      onStop,
-    })
-
-    const stopButton = screen.getByRole('button', { name: '생성 중지' })
-    expect(stopButton).toBeEnabled()
-    fireEvent.click(stopButton)
-
-    expect(onStop).toHaveBeenCalledTimes(1)
-    expect(onChoose).not.toHaveBeenCalled()
-    expect(onAcknowledge).not.toHaveBeenCalled()
-    expect(screen.getByText('레퍼런스 생성 중...')).toBeInTheDocument()
   })
 
   it('failure에서 카드별 stage와 원인, 씬 미시작 안내와 확인 버튼을 표시한다', () => {
@@ -250,27 +215,6 @@ describe('EmptyReferenceGateModal', () => {
       expect(onAcknowledge).not.toHaveBeenCalled()
     }
   )
-
-  // busy 는 ref 배치가 in-flight 라 coordinator 에게 돌려줄 안전한 답이 없다 → 닫기 자체를 없앤다.
-  // ✕ 를 그려놓고 무반응으로 두면(공용 Modal 의 옛 동작) 사용자는 앱이 멈춘 줄 안다.
-  it('busy에는 닫기(✕)가 아예 없다 — 눌러도 반응 없는 죽은 컨트롤을 두지 않는다', () => {
-    renderModal({ phase: 'busy' })
-
-    expect(screen.queryByText('✕')).not.toBeInTheDocument()
-    expect(screen.getByText('레퍼런스 생성 중...')).toBeInTheDocument()
-  })
-
-  it('busy의 오버레이 클릭은 coordinator promise를 잘못 resolve하지 않는다', () => {
-    const onChoose = vi.fn()
-    const onAcknowledge = vi.fn()
-    renderModal({ phase: 'busy', onChoose, onAcknowledge })
-
-    dismissThroughSharedModal('오버레이')
-
-    expect(onChoose).not.toHaveBeenCalled()
-    expect(onAcknowledge).not.toHaveBeenCalled()
-    expect(screen.getByText('레퍼런스 생성 중...')).toBeInTheDocument()
-  })
 
   it.each(closeAffordances)(
     'failure의 %s 닫기는 coordinator failure promise를 acknowledge해 latch 데드락을 막는다',

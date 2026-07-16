@@ -2959,7 +2959,6 @@ function App() {
           failure={emptyRefGate.failure}
           onChoose={emptyRefGate.resolve}
           onAcknowledge={emptyRefGate.resolve}
-          onStop={stopGenerateAllRefs}
         />
       )}
 

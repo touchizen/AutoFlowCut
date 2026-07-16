@@ -139,7 +139,11 @@ describe('App empty reference gate wiring', () => {
     expect(stylePicker).not.toContain('automationStartRef.current(')
   })
 
-  it('busy empty-ref modal의 stop은 ref batch stop callback에 직접 연결된다', () => {
-    expect(emptyRefModal).toContain('onStop={stopGenerateAllRefs}')
+  // busy 에는 모달 자체가 없다 — 모달이 열려 있으면 layout.js 가 Flow WebContentsView 를 0×0 으로
+  // 줄여 sendInputEvent 기반 DOM 자동화가 죽는다(자기가 기다리는 생성을 자기가 막는 데드락).
+  // 그래서 중지는 모달 안의 버튼이 아니라 오버레이가 사라져 다시 보이는 앱의 Stop 이 담당한다.
+  it('ref batch 중지는 앱의 handleStop 이 담당한다 (모달 전용 stop 버튼 없음)', () => {
+    expect(emptyRefModal).not.toContain('onStop=')
+    expect(source).toContain('if (refBatchRunning) stopGenerateAllRefs()')
   })
 })

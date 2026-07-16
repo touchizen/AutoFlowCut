@@ -10,8 +10,6 @@ const TEXT_KEYS = [
   'cancel',
   'noPrompt',
   'noneGeneratable',
-  'busy',
-  'stopGeneration',
   'failureTitle',
   'failureStopped',
   'sceneBatchNotStarted',
