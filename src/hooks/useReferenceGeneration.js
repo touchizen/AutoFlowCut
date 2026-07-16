@@ -395,7 +395,13 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
             errorKind: resultErrorKind(result),
           }
         : r))
-      return { success: false, authError: isAuthError, serverError: isServerError, quotaExhausted: isQuota }
+      return {
+        success: false,
+        error: result.error || 'Generation failed',
+        authError: isAuthError,
+        serverError: isServerError,
+        quotaExhausted: isQuota,
+      }
     }
 
     return await _processAndSaveImage(result.images, index, ref, '[AsyncRef]', result)
@@ -418,19 +424,6 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     const isTargeted = targetKeySet !== null
     const requestedKeys = targetRefKeys == null ? [] : [...targetRefKeys]
 
-    // Task 5에서 per-key stage를 채운다. Task 4는 fail-closed 호출자가 항상 같은
-    // shape를 읽을 수 있도록 lifecycle 결과의 최소 골격만 보장한다.
-    const buildBatchResult = (ok, outcome, failed = []) => ({
-      ok,
-      outcome,
-      requestedKeys,
-      attemptedKeys: [],
-      succeededKeys: [],
-      skipped: [],
-      failed,
-      currentRefs: referencesRef.current,
-    })
-
     // 타입 predicate 로 인덱스 선택 — style / non-style 을 분리 추출.
     const pickIndices = (refMatches) => referencesRef.current
       .map((ref, index) => {
@@ -450,10 +443,89 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     const nonStyleIndices = pickIndices(ref => !isStyleReference(ref))
     const allIndices = [...styleIndices, ...nonStyleIndices]
 
+    // 구조화 결과 accumulator — 기존 setReferences 상태 갱신은 그대로 두고,
+    // fail-closed 호출자가 읽을 lifecycle 결과만 별도로 집계한다.
+    const succeededKeys = new Set()
+    const attemptedKeys = new Set()
+    const failedByKey = new Map()
+    const skippedByKey = new Map()
+    const keyAt = (index, fallbackRef = null) => {
+      const ref = fallbackRef || referencesRef.current[index]
+      return ref ? referenceGuardKey(ref) : null
+    }
+    const recordFail = (key, stage, error) => {
+      if (!failedByKey.has(key)) {
+        failedByKey.set(key, { key, stage, error: error ?? null })
+      }
+    }
+    const recordSkip = (key, stage) => {
+      if (!skippedByKey.has(key)) skippedByKey.set(key, { key, stage })
+    }
+
+    // targeted 선택에서 실행 시점에 탈락한 요청을 원인별로 명시한다.
+    // status는 이미지 존재 증거가 아니며, force면 이미 채워진 카드도 생성 대상이다.
+    if (isTargeted) {
+      const refsByKey = new Map(
+        referencesRef.current.map(ref => [referenceGuardKey(ref), ref])
+      )
+      for (const key of requestedKeys) {
+        const ref = refsByKey.get(key)
+        if (!ref) {
+          recordSkip(key, 'not-found')
+        } else if (!ref.prompt) {
+          recordSkip(key, 'missing-prompt')
+        } else if (!force && !isReferenceImageEmpty(ref)) {
+          recordSkip(key, 'already-filled')
+        }
+      }
+    }
+
+    const buildResult = () => {
+      // 선택 뒤 pool에서 삭제된 target도 실제 존재 여부를 다시 확인해 not-found로 남긴다.
+      // 존재하지만 stop/연속 실패로 아직 시도되지 않은 target을 not-found로 오분류하지 않는다.
+      if (isTargeted) {
+        const liveKeys = new Set(
+          referencesRef.current.map(ref => referenceGuardKey(ref))
+        )
+        for (const key of requestedKeys) {
+          if (
+            !liveKeys.has(key) &&
+            !succeededKeys.has(key) &&
+            !failedByKey.has(key) &&
+            !skippedByKey.has(key)
+          ) {
+            recordSkip(key, 'not-found')
+          }
+        }
+      }
+
+      const stopped = allIndices.length > 0 &&
+        (stopRequestedRef.current || authStoppedRef.current)
+      const failed = [...failedByKey.values()]
+      const outcome = stopped
+        ? 'stopped'
+        : failed.length > 0
+          ? 'failed'
+          : attemptedKeys.size === 0 && succeededKeys.size === 0
+            ? 'noop'
+            : 'completed'
+
+      return {
+        ok: !stopped && failed.length === 0,
+        outcome,
+        requestedKeys,
+        attemptedKeys: [...attemptedKeys],
+        succeededKeys: [...succeededKeys],
+        skipped: [...skippedByKey.values()],
+        failed,
+        currentRefs: referencesRef.current,
+      }
+    }
+
     if (allIndices.length === 0) {
       // targeted 정상 noop은 전체 Ref 배치가 끝났다는 인상을 주면 안 된다.
       if (!isTargeted) toast.info(t('toast.allRefsGenerated'))
-      return buildBatchResult(true, 'noop')
+      return buildResult()
     }
 
     // #R22-3: force 리셋은 permission/auth/flowProjectReady 게이트 통과 후로 이동(아래 gate 뒤).
@@ -478,17 +550,24 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       const permission = await fileSystemAPI.ensurePermission()
       if (permission.error === 'not_set') {
         openSettings('storage')
-        return buildBatchResult(false, 'failed')
+        recordFail(null, 'permission', permission.error)
+        return buildResult()
       }
       if (permission.error === 'folder_deleted') {
         toast.error(t('toast.folderDeleted'))
         openSettings('storage')
-        return buildBatchResult(false, 'failed')
+        recordFail(null, 'permission', permission.error)
+        return buildResult()
       }
       if (!permission.hasPermission) {
         toast.warning(t('toast.folderPermissionNeeded'))
         openSettings('storage')
-        return buildBatchResult(false, 'failed')
+        recordFail(
+          null,
+          'permission',
+          permission.error || t('toast.folderPermissionNeeded')
+        )
+        return buildResult()
       }
       console.log('[GenerateAllRefs] Permission granted:', permission.name)
     }
@@ -496,12 +575,20 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     // 토큰 확인
     if (!(await checkAuthToken(genAPI, t))) {
       toast.warning(authRequiredMessage())
-      return buildBatchResult(false, 'failed')
+      recordFail(null, 'auth', authRequiredMessage())
+      return buildResult()
     }
 
     // Flow 프로젝트 준비 확인
     const readyCheck = checkFlowProjectReady(flowProjectReady, t)
-    if (!readyCheck.ok) return buildBatchResult(false, 'failed')
+    if (!readyCheck.ok) {
+      recordFail(
+        null,
+        'flow-ready',
+        readyCheck.error || t('toast.flowProjectNotReady')
+      )
+      return buildResult()
+    }
 
     // #R22-3: 모든 게이트 통과 후에만 force 리셋(done/error → pending). 게이트가 막으면 리셋 안 함.
     if (force) {
@@ -581,9 +668,17 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
             console.log('[GenerateAllRefs] Collecting completed gen:', pending.generationId, 'index:', pending.index)
             const result = await processAsyncResult(pending.generationId, pending.index, pending.ref)
             if (result?.savedToMemory) hasPendingSaves = true
+            const key = keyAt(pending.index, pending.ref)
+            if (result?.success) succeededKeys.add(key)
+            else recordFail(key, 'collect', result?.error || 'Collect failed')
             succeeded.add(pending)
           } catch (e) {
             console.error('[GenerateAllRefs] Post-processing failed for gen:', pending.generationId, e?.message || e)
+            recordFail(
+              keyAt(pending.index, pending.ref),
+              'collect',
+              e?.message || String(e)
+            )
           }
         }, 5)
 
@@ -629,8 +724,16 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
           // 단건 경로를 그대로 재사용해 generate→저장→setReferences 전 수명을 한 lock 안에 둔다.
           if (genAPI?.mode === 'flow' && ref.type === 'character') {
             const direct = await _executeGenerateRef(index, true, effectiveStyleId, ref)
-            if (!direct?.success && !direct?.busy) submitFailCount++
-            else if (direct?.success) submitFailCount = 0
+            const key = keyAt(index, ref)
+            if (direct?.busy) {
+              recordFail(key, 'busy', direct.error)
+            } else if (direct?.success) {
+              succeededKeys.add(key)
+              submitFailCount = 0
+            } else {
+              recordFail(key, 'submit', direct?.error || 'Generation failed')
+              submitFailCount++
+            }
             continue
           }
           // #R28-4: style-ref 업로드(_prepareStyleRefs)도 busy 로 덮는다 — preparingRefs 는 runPhase
@@ -653,11 +756,17 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
           const submitResult = await genAPI.submitGeneration(styledPrompt, styleRefImages, { batchCount: settings.imageBatchCount, seed: batchSeed, aspectRatio: settings.aspectRatio, model: settings.imageModel, purpose: 'reference', ref: { id: ref.id, name: ref.name, type: ref.type, category: ref.category, entityId: ref.entityId, workflowId: ref.workflowId } })
 
           if (submitResult?.success && submitResult.generationId) {
+            attemptedKeys.add(keyAt(index, ref))
             pendingQueue.push({ generationId: submitResult.generationId, index, ref })
             console.log('[GenerateAllRefs] Submitted index:', index, 'gen:', submitResult.generationId)
             submitFailCount = 0
           } else {
             console.warn('[GenerateAllRefs] Submit failed for index:', index, submitResult?.error)
+            recordFail(
+              keyAt(index, ref),
+              'submit',
+              submitResult?.error || 'Submit failed'
+            )
             // #R21-1: authFailed → 죽은 인증, 배치 즉시 중단.
             if (submitResult?.authFailed) {
               stopRequestedRef.current = true
@@ -688,6 +797,11 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
 
         } catch (err) {
           console.error('[GenerateAllRefs] Error processing index:', index, err)
+          recordFail(
+            keyAt(index),
+            'exception',
+            err?.message || String(err)
+          )
           setGeneratingRefs(prev => prev.filter(i => i !== index))
           setReferences(prev => prev.map((r, i) => i === index ? { ...r, status: 'error', errorMessage: err.message || 'Unexpected error' } : r))
           submitFailCount++
@@ -726,6 +840,13 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
           console.warn('[GenerateAllRefs] Timed out waiting for', pendingQueue.length, 'generations')
         }
         for (const pending of pendingQueue) {
+          if (!userStopped) {
+            recordFail(
+              keyAt(pending.index, pending.ref),
+              'timeout',
+              'Timed out'
+            )
+          }
           setGeneratingRefs(prev => prev.filter(i => i !== pending.index))
           setReferences(prev => prev.map((r, i) => {
             if (i !== pending.index) return r
@@ -765,8 +886,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       openSettings('storage')
     }
 
-    const stopped = stopRequestedRef.current || authStoppedRef.current
-    return buildBatchResult(!stopped, stopped ? 'stopped' : 'completed')
+    return buildResult()
 
     } finally {
       // P2 v3: 정상 종료 / early return / throw 어느 경로에서도 flag 정리 (P1 + P2 통합 fix).
