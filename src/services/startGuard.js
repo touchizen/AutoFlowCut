@@ -1,3 +1,9 @@
+// handleStart 초입 guard — hasPendingBatch는 M2 failure 모달이 열린 동안 유지되어 MCP
+// stop-restart의 scene start 재호출을 막는 latch다.
+export function isStartBlocked({ isRunning, videoRunning, hasPendingBatch, retryInFlight }) {
+  return !!(isRunning || videoRunning || hasPendingBatch || retryInFlight)
+}
+
 /**
  * handleStart의 requireStyle 가드 보조 — auto 매칭 가능 여부 계산.
  *

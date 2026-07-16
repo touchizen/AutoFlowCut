@@ -31,6 +31,7 @@ import { useAutoSave } from './hooks/useAutoSave'
 import { useFlowEvents } from './hooks/useFlowEvents'
 import { useMcpServer } from './hooks/useMcpServer'
 import { useMenuActions } from './hooks/useMenuActions'
+import { batchStartGate } from './hooks/batchStartGate'
 import { upsertStoryCharacterRefs, assertStoryProjectCurrent } from './utils/storyCharacterRefs'
 import { waitUntil } from './utils/waitUntil'
 import { voiceKey } from './utils/voiceKey'
@@ -39,7 +40,12 @@ import { syncVideosIntoScenes } from './services/mediaSync'
 import { retryVideoDownload } from './services/videoRecovery'
 import { isStyleReference, previewStyleMatching } from './services/styleService'
 import { isSceneGenerationDone } from './services/generationStatus'
-import { computeGuardAvailable } from './services/startGuard'
+import { computeGuardAvailable, isStartBlocked } from './services/startGuard'
+import {
+  buildEmptyRefGateDeps,
+  nonInteractiveGateView,
+  runEmptyRefGateFlow,
+} from './services/emptyRefGate'
 import { shouldSkipStaleF0Gender } from './services/genderGuard'
 import { createStyleResolver } from './services/styleResolver'
 import { buildVideoTextStartPayload } from './services/videoTextStart'
@@ -57,10 +63,7 @@ import { shouldApplyModeScopedUpdate } from './utils/modeSwitchGuard'
 import { collectTagErrors } from './utils/tagMatch'
 import { planMentionTagMerges } from './utils/mentionTagMerge'
 import {
-  applyM1MentionExclusions,
   buildM1FlowReferenceExclusionToast,
-  collectM1FlowReferenceExclusions,
-  flowSyncable,
 } from './utils/refImageGuard'
 import { getFramePairEffectivePrompt } from './utils/framePairPrompt'
 import { buildI2VScenePatch } from './utils/i2vScenePatch'
@@ -92,6 +95,7 @@ import ExportSplitButton from './components/ExportSplitButton'
 import { AuthModal } from './components/AuthModal'
 import { PaywallModal } from './components/PaywallModal'
 import TagValidationModal from './components/TagValidationModal'
+import EmptyReferenceGateModal from './components/EmptyReferenceGateModal'
 import StoreRatingModal from './components/StoreRatingModal'
 import AudioResultModal from './components/AudioResultModal'
 import QAProgressBanner from './components/QAProgressBanner'
@@ -118,6 +122,40 @@ function App() {
   // #R34: 생성 전 미동기화 @멘션 캐릭터 가드 모달 상태 — { refs, proceed } | null
   const [syncGate, setSyncGate] = useState(null)
   const [syncGateBusy, setSyncGateBusy] = useState(false)
+  const [emptyRefGate, setEmptyRefGate] = useState(null)
+  // #M2: coordinator가 폴링/effect chain 없이 사용자 선택을 await하도록 resolver를 state에 둔다.
+  // failure 확인 resolver는 확인 즉시 모달도 닫아 coordinator finally가 latch를 풀 수 있게 한다.
+  const emptyRefGateView = useMemo(() => ({
+    confirm: items => new Promise(resolve => {
+      setEmptyRefGate({ phase: 'confirm', items, failure: null, resolve })
+    }),
+    setBusy: () => setEmptyRefGate(prev => (
+      prev ? { ...prev, phase: 'busy' } : prev
+    )),
+    failure: info => new Promise(resolve => {
+      setEmptyRefGate(prev => ({
+        ...(prev || {}),
+        phase: 'failure',
+        failure: info,
+        resolve: () => {
+          // coordinator의 failure 종료 경로는 close()를 호출하지 않으므로 확인 resolver가 직접 닫는다.
+          setEmptyRefGate(null)
+          resolve()
+        },
+      }))
+    }),
+    close: () => setEmptyRefGate(null),
+  }), [])
+  const openEmptyRefSyncGate = useCallback(({ refs }) => new Promise(resolve => {
+    setSyncGate({
+      refs,
+      proceed: patchedRefs => resolve({
+        proceeded: true,
+        patchedRefs: patchedRefs ?? null,
+      }),
+      onCancel: () => resolve({ proceeded: false, patchedRefs: null }),
+    })
+  }), [])
   const { isAuthenticated, subscription, refreshSubscription } = useAuth()
   // 두 자동화 훅(useAutomation, useVideoAutomation)에 동일한 안정 레퍼런스를 전달.
   // 인라인 객체 리터럴은 매 렌더마다 새 참조를 만들어 useCallback deps 를 불필요하게 갱신함.
@@ -135,6 +173,23 @@ function App() {
 
   // Flow Login Expired Modal
   const [showApiKeyModal, setShowApiKeyModal] = useState(false)
+  const emptyRefSubscriptionPreGate = useCallback(async () => {
+    const gate = batchStartGate({
+      subscriptionBatch,
+      isAuthenticated,
+      subscriptionStatus: subscription?.status,
+      isReusingBatch: false,
+    })
+    if (gate.action === 'login') {
+      setShowAuthModal(true)
+    } else if (gate.action === 'paywall') {
+      setPaywallReason('upgrade')
+      setShowPaywallModal(true)
+    } else if (gate.action === 'loading') {
+      toast.warning(t('toast.subscriptionLoading'))
+    }
+    return gate.action
+  }, [isAuthenticated, subscription?.status, subscriptionBatch, t])
 
   // Tag Validation Modal
   const [tagValidationErrors, setTagValidationErrors] = useState(null)
@@ -754,6 +809,9 @@ function App() {
   )
 
   const { isRunning, isPaused, isStopping, progress, status, statusMessage, start, togglePause, stop, retryErrors } = automation
+  // #M2: 모달/ref batch 대기 뒤 scene launch가 과거 render의 start closure를 부르지 않게 한다.
+  const automationStartRef = useRef(start)
+  automationStartRef.current = start
 
   // 자동화가 끝나면 Stop 버튼용 running snapshot 정리.
   // Transition-based: 실행 → 종료 전이일 때만 clear. 큐로 대기 중일 때는 deps가 변하지 않아
@@ -1304,26 +1362,45 @@ function App() {
   //   null: 자동 모드 강제 (StylePicker 자동 카드 클릭) → UI 선택값 무시
   //   'ref:*' / 'preset:*': 그 스타일 강제 적용
   //
-  // options = { force?: boolean } (선택, MCP 전용):
+  // options = { force?: boolean, source?: 'ui' | 'mcp' } (선택):
   //   - force=true: 완료된 씬도 포함해 재생성 대상에 (필터 우회)
+  //   - source='mcp': M2 질문을 M1 의미(exclude)로 자동 응답
   //   - 기본 false: 기존 동작 (pending/error만)
   // #R10-4: 동기 latch — 같은 tick 의 중복 Start/Proceed 가 isRunning/hasPendingBatch state 가
   //   반영되기 전(await 구간)에 둘 다 통과해 배치를 두 번 enqueue 하는 것을 막는다. handleStart 와
   //   tag-validation Proceed 가 공유.
   const startInFlightRef = useRef(false)
+  const getEmptyRefGateDeps = (source = 'ui') => buildEmptyRefGateDeps({
+    scenesRef: scenesHook.scenesRef,
+    referencesRef,
+    modeRef,
+    getProjectName: ensureProjectName,
+    getMatchingReferences: scenesHook.getMatchingReferences,
+    subscriptionPreGate: emptyRefSubscriptionPreGate,
+    setPendingLatch: setHasPendingBatch,
+    handleGenerateAllRefs,
+    openSyncGate: openEmptyRefSyncGate,
+    automationStartRef,
+    toastM1Exclusions: exclusions => {
+      const warning = buildM1FlowReferenceExclusionToast(exclusions)
+      if (warning) toast.warning(t(warning.key, warning.params))
+    },
+    gateView: source === 'mcp' ? nonInteractiveGateView : emptyRefGateView,
+  })
   const handleStartImpl = async (overrideStyleId = undefined, options = {}) => {
-    const { force = false } = options
+    const { force = false, source = 'ui' } = options
     // 이미 실행 중이거나 큐에 batch가 대기 중이면 무시 (중지는 별도 버튼)
     // #R12-11: 다운로드-only 비디오 retry 진행 중에도 Start 차단(같은 아이템 경합 방지).
-    if (isRunning || videoAutomation.isRunning || hasPendingBatch || videoRetryInFlightRef.current) return
+    if (isStartBlocked({
+      isRunning,
+      videoRunning: videoAutomation.isRunning,
+      hasPendingBatch,
+      retryInFlight: videoRetryInFlightRef.current,
+    })) return
     const isImageBatchStart = activeTab === 'text' || activeTab === 'list'
     const imageTargetScenes = isImageBatchStart
       ? (force ? scenes.filter(scene => scene.prompt) : filterPendingScenes(scenes))
       : []
-    let m1FlowGuard = {
-      exclusions: [],
-      mentionNamesBySceneId: {},
-    }
 
     if (imageTargetScenes.length > 0) {
       const imageTargetIds = new Set(imageTargetScenes.map(scene => scene.id))
@@ -1337,16 +1414,6 @@ function App() {
 
       for (const patch of mentionMergePlan.patches) {
         scenesHook.updateScene(patch.sceneId, { characters: patch.characters })
-      }
-
-      if (modeRef.current === 'flow') {
-        m1FlowGuard = collectM1FlowReferenceExclusions(
-          scenes,
-          scenesHook.getMatchingReferences,
-          {
-            filter: scene => imageTargetIds.has(scene.id),
-          }
-        )
       }
     }
     // #R7-5: 비동기 preflight(getAccessToken/폴더확인) 동안 모드가 바뀌면 캡처한 엔진/모드가
@@ -1440,8 +1507,6 @@ function App() {
           }
         }
 
-        const exclusionToast = buildM1FlowReferenceExclusionToast(m1FlowGuard.exclusions)
-
         // seedLocked && seedNo 가 숫자일 때만 고정 seed 사용, 그 외엔 Flow 랜덤
         const effectiveSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
           ? settings.seedNo
@@ -1457,7 +1522,6 @@ function App() {
           selectedStyleRefId: effectiveStyleId,
           seed: effectiveSeed,
           force,
-          m1ExcludedMentionNamesBySceneId: m1FlowGuard.mentionNamesBySceneId,
         }
 
         // 태그 검증: 이미지 생성 대상 씬만 검사. 단 sceneIndex 는 원본 scenes 배열의 인덱스로
@@ -1472,46 +1536,26 @@ function App() {
           setPendingStartOptions({
             ...startOptions,
             __startMode: startMode,
-            __m1ExclusionToast: exclusionToast,
+            __startSource: source,
           })
           return
         }
 
-        if (exclusionToast) {
-          toast.warning(t(exclusionToast.key, exclusionToast.params))
-        }
-
-        // #R34: 생성 전 미동기화 @멘션 캐릭터 가드 — Flow 모드에서 멘션된 캐릭터 중 동기화 안 된 게
-        //   있으면 모달로 안내하고, '동기화 후 생성' 시 자동 일괄(직렬) 동기화 후 진행한다.
-        //   (캐릭터 동기화는 생성 배치에서 분리됐으므로 여기서 사전 점검한다.)
-        if (mode === 'flow') {
-          const syncCandidateScenes = targetScenes.map(scene =>
-            applyM1MentionExclusions(
-              scene,
-              m1FlowGuard.mentionNamesBySceneId
-            )
-          )
-          const unsyncedMentioned = selectUnsyncedMentionedRefs(
-            syncCandidateScenes,
-            scenesHook.references
-          ).filter(flowSyncable)
-          if (unsyncedMentioned.length > 0) {
-            setSyncGate({
-              refs: unsyncedMentioned,
-              // #R34-fix: 게이트에서 방금 동기화한 entity 패치를 첫 생성에 반영한다. start() 는 flow 모드에서
-              //   character 를 재등록하지 않으므로(생성 배치 분리), 패치된 refs 를 currentRefs 로 넘기지 않으면
-              //   첫 배치가 stale(미동기화) ref 로 @멘션을 해석해 폴백/실패한다. (start 는 currentRefs 옵션 지원.)
-              proceed: (currentRefs) => {
-                setRunningStyle({ styleId: effectiveStyleId, label: styleResolver.resolveLabelForId(effectiveStyleId), applies: true })
-                setHasPendingBatch(true)
-                start(currentRefs ? { ...startOptions, currentRefs } : startOptions).finally(() => setHasPendingBatch(false))
-              },
-            })
-            return
-          }
-        }
         // Stop 버튼이 현재 돌고 있는 스타일을 표시할 수 있도록 id + 라벨 모두 시작 시점 snapshot
         setRunningStyle({ styleId: effectiveStyleId, label: styleResolver.resolveLabelForId(effectiveStyleId), applies: true })
+        if (modeRef.current === 'flow') {
+          const { force: _force, ...startOptionsWithoutSceneIds } = startOptions
+          await runEmptyRefGateFlow({
+            startMode,
+            projectName,
+            force,
+            initialTargetSceneIds: targetScenes.map(scene => scene.id),
+            selectedStyleRefId: effectiveStyleId,
+            startOptionsWithoutSceneIds,
+          }, getEmptyRefGateDeps(source))
+          break
+        }
+        // API 모드는 M2 미노출 — 기존 scene start 경로를 그대로 유지한다(§11.12).
         setHasPendingBatch(true)
         start(startOptions).finally(() => setHasPendingBatch(false))
         break
@@ -1747,7 +1791,7 @@ function App() {
     if (startInFlightRef.current) return
     startInFlightRef.current = true
     try {
-      const { __startMode, __m1ExclusionToast, ...opts } = pendingStartOptions
+      const { __startMode, __startSource = 'ui', ...opts } = pendingStartOptions
       // 이 경로는 handleStart 의 preflight(stale-mode/projectName/auth/flow-ready)를 우회하므로 재검증한다.
       // #R8-6: 모달이 열린 동안 모드가 바뀌었으면 중단.
       if (__startMode && modeRef.current !== __startMode) {
@@ -1782,42 +1826,29 @@ function App() {
         const readyCheck = checkFlowProjectReady(flowProjectReady, t)
         if (!readyCheck.ok) { setPendingStartOptions(null); return }
       }
-      if (__m1ExclusionToast) {
-        toast.warning(t(__m1ExclusionToast.key, __m1ExclusionToast.params))
-      }
       // 시작 시점 snapshot — 사용자가 modal 띄운 사이 스타일 변경해도 startOptions에 들어간 게 진실
       const sid = opts.selectedStyleRefId
-      // #R34-fix: 태그검증 proceed 경로도 미동기화 @멘션 가드를 재적용한다. handleStartImpl 은 태그
-      //   오류가 있으면 sync 게이트 전에 return 하므로, 태그경고+미동기화 캐릭터가 같이 있는 씬은 이
-      //   경로로 동기화 모달 없이 생성되던 우회가 있었다. 여기서 동일 게이트를 다시 통과시킨다.
-      if (modeRef.current === 'flow') {
-        const targetScenes = opts.force
-          ? scenes.filter(scene => scene.prompt)
-          : filterPendingScenes(scenes)
-        const syncCandidateScenes = targetScenes.map(scene =>
-          applyM1MentionExclusions(
-            scene,
-            opts.m1ExcludedMentionNamesBySceneId
-          )
-        )
-        const unsyncedMentioned = selectUnsyncedMentionedRefs(
-          syncCandidateScenes,
-          scenesHook.references
-        ).filter(flowSyncable)
-        if (unsyncedMentioned.length > 0) {
-          setSyncGate({
-            refs: unsyncedMentioned,
-            proceed: (currentRefs) => {
-              setRunningStyle({ styleId: sid, label: styleResolver.resolveLabelForId(sid), applies: true })
-              setHasPendingBatch(true)
-              start(currentRefs ? { ...opts, currentRefs } : opts).finally(() => setHasPendingBatch(false))
-            },
-          })
-          setPendingStartOptions(null)
-          return
-        }
-      }
       setRunningStyle({ styleId: sid, label: styleResolver.resolveLabelForId(sid), applies: true })
+      if (modeRef.current === 'flow') {
+        // #M2: tag modal 대기 중 바뀐 scene 상태를 useScenes의 동기 ref에서 다시 읽어 최초 의도 ID를
+        // 새로 만든다. pendingStartOptions에는 설정만 남기고 과거 scene/M1 판정은 재사용하지 않는다.
+        const liveScenes = scenesHook.scenesRef.current
+        const liveTargetScenes = opts.force
+          ? liveScenes.filter(scene => scene.prompt)
+          : filterPendingScenes(liveScenes)
+        const { force = false, ...startOptionsWithoutSceneIds } = opts
+        setPendingStartOptions(null)
+        await runEmptyRefGateFlow({
+          startMode: __startMode,
+          projectName: opts.projectName,
+          force,
+          initialTargetSceneIds: liveTargetScenes.map(scene => scene.id),
+          selectedStyleRefId: sid,
+          startOptionsWithoutSceneIds,
+        }, getEmptyRefGateDeps(__startSource))
+        return
+      }
+      // API 모드는 M2 미노출 — 기존 tag proceed 직접 시작을 유지한다(§11.12).
       setHasPendingBatch(true)
       start(opts).finally(() => setHasPendingBatch(false))
       setPendingStartOptions(null)
@@ -1839,7 +1870,7 @@ function App() {
     // #R34-fix: 패치를 로컬 배열에 누적해 첫 생성(start)에 currentRefs 로 넘긴다(React state 는 같은
     //   tick 에 stale). character 는 업로드 성공이어도 displayName PATCH 실패면 'failed' 라 미동기화 —
     //   patch.flowNameSyncStatus 로 실제 동기화 여부를 판정해 카운트한다(업로드성공=성공으로 오인 금지).
-    let patchedRefs = scenesHook.references
+    let patchedRefs = referencesRef.current
     const syncFlowProjectId = flowProjectIdRef.current
     const syncScope = `${modeRef.current ?? ''}::${settings.projectName ?? ''}`
     const gateTargets = syncGate.refs.map((ref) => {
@@ -1907,7 +1938,11 @@ function App() {
       setSyncGateBusy(false)
     }
   }
-  const handleSyncGateCancel = () => { if (!syncGateBusy) setSyncGate(null) }
+  const handleSyncGateCancel = () => {
+    if (syncGateBusy) return
+    syncGate?.onCancel?.()
+    setSyncGate(null)
+  }
 
   // ref batch는 generatingRefs.length만으로 부족 — preparingRefs(폴더/토큰 체크 ~ 첫 submit 사이)와
   // stoppingRefs(중지 진행 중)도 "실행 중"에 포함해야 한다. 안 그러면 그 구간에 MCP가 batch 다시
@@ -2905,6 +2940,16 @@ function App() {
           onProceed={handleTagValidationProceed}
           onCancel={handleTagValidationCancel}
           t={t}
+        />
+      )}
+
+      {emptyRefGate && (
+        <EmptyReferenceGateModal
+          phase={emptyRefGate.phase}
+          items={emptyRefGate.items}
+          failure={emptyRefGate.failure}
+          onChoose={emptyRefGate.resolve}
+          onAcknowledge={emptyRefGate.resolve}
         />
       )}
 

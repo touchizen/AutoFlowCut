@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { runEmptyRefGateFlow } from '../../src/services/emptyRefGate'
+import {
+  nonInteractiveGateView,
+  runEmptyRefGateFlow,
+} from '../../src/services/emptyRefGate'
 
 const deferred = () => {
   let resolve
@@ -177,6 +180,48 @@ describe('불변 2: failure 모달 중 latch 유지 (MCP stop-restart 차단)', 
     )
     expect(deps.startScenes).not.toHaveBeenCalled()
     expect(result.started).toBe(false)
+  })
+})
+
+describe('MCP non-interactive gate view (§2.1)', () => {
+  it('confirm 모달 없이 exclude를 선택해 최종 M1 제외를 적용하고 씬 배치를 시작한다', async () => {
+    const deps = makeDeps({ gateView: nonInteractiveGateView })
+
+    const result = await runEmptyRefGateFlow(baseContext(), deps)
+
+    expect(deps.__calls).not.toContain('confirm')
+    expect(deps.generateRefs).not.toHaveBeenCalled()
+    expect(deps.startScenes).toHaveBeenCalledTimes(1)
+    expect(deps.startScenes.mock.calls[0][0].m1ExcludedMentionNamesBySceneId)
+      .toEqual({ s1: ['Ghost'] })
+    expect(deps.toastM1Exclusions).toHaveBeenCalledTimes(1)
+    expect(deps.setPendingLatch).toHaveBeenLastCalledWith(false)
+    expect(result).toEqual({ started: true, reason: 'started' })
+  })
+
+  it('batch failure를 기다리지 않고 resolve해 latch를 해제한다', async () => {
+    const deps = makeDeps({
+      generateRefs: vi.fn(async () => ({
+        ok: false,
+        outcome: 'failed',
+        requestedKeys: ['id:ghost'],
+        attemptedKeys: ['id:ghost'],
+        succeededKeys: [],
+        skipped: [],
+        failed: [{ key: 'id:ghost', stage: 'submit', error: 'boom' }],
+        currentRefs: [emptyGhost],
+      })),
+      gateView: {
+        ...nonInteractiveGateView,
+        confirm: vi.fn(async () => 'generate-first'),
+      },
+    })
+
+    const result = await runEmptyRefGateFlow(baseContext(), deps)
+
+    expect(result).toEqual({ started: false, reason: 'batch-failed' })
+    expect(deps.startScenes).not.toHaveBeenCalled()
+    expect(deps.setPendingLatch).toHaveBeenLastCalledWith(false)
   })
 })
 

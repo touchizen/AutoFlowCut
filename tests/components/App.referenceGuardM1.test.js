@@ -6,9 +6,26 @@ const source = fs.readFileSync(
   new URL('../../src/App.jsx', import.meta.url),
   'utf8'
 )
+const coordinatorSource = fs.readFileSync(
+  new URL('../../src/services/emptyRefGate.js', import.meta.url),
+  'utf8'
+)
 const implStart = source.indexOf('const handleStartImpl')
 const implEnd = source.indexOf('const handleStart =', implStart)
 const handleStartImpl = source.slice(implStart, implEnd)
+const tagProceedStart = source.indexOf('const handleTagValidationProceed')
+const tagProceedEnd = source.indexOf(
+  'const handleTagValidationCancel',
+  tagProceedStart
+)
+const tagProceed = source.slice(tagProceedStart, tagProceedEnd)
+const depsStart = source.indexOf('const getEmptyRefGateDeps')
+const depsEnd = source.indexOf('const handleStartImpl', depsStart)
+const depsWiring = source.slice(depsStart, depsEnd)
+const coordinatorStart = coordinatorSource.indexOf(
+  'export async function runEmptyRefGateFlow'
+)
+const coordinator = coordinatorSource.slice(coordinatorStart)
 
 describe('App handleStart M1 reference guard wiring', () => {
   it('persists mention tag merges before auth and other asynchronous preflight', () => {
@@ -23,40 +40,33 @@ describe('App handleStart M1 reference guard wiring', () => {
     )
   })
 
-  it('uses the existing matcher and carries run-local mention exclusions into startOptions', () => {
-    expect(handleStartImpl).toContain(
+  it('wires the existing matcher and coordinator carries run-local mention exclusions into final startOptions', () => {
+    expect(depsWiring).toContain(
+      'getMatchingReferences: scenesHook.getMatchingReferences'
+    )
+    expect(coordinator).toContain(
       'collectM1FlowReferenceExclusions('
     )
-    expect(handleStartImpl).toContain(
-      'scenesHook.getMatchingReferences'
-    )
-    expect(handleStartImpl).toContain(
-      'm1ExcludedMentionNamesBySceneId: m1FlowGuard.mentionNamesBySceneId'
+    expect(coordinator).toContain(
+      'm1ExcludedMentionNamesBySceneId: m1Result.mentionNamesBySceneId'
     )
   })
 
-  it('shows one primary warning from the M1 exclusion summary', () => {
-    expect(handleStartImpl).toContain(
-      'buildM1FlowReferenceExclusionToast(m1FlowGuard.exclusions)'
+  it('coordinator emits one final M1 exclusion event and App renders its primary warning', () => {
+    expect(coordinator.match(/deps\.toastM1Exclusions\(m1Result\.exclusions\)/g))
+      .toHaveLength(1)
+    expect(depsWiring).toContain(
+      'buildM1FlowReferenceExclusionToast(exclusions)'
     )
-    expect(handleStartImpl).toContain(
-      'toast.warning(t(exclusionToast.key, exclusionToast.params))'
+    expect(depsWiring).toContain(
+      'toast.warning(t(warning.key, warning.params))'
     )
   })
 
-  it('strips excluded mentions before direct and tag-proceed sync selection', () => {
-    const tagProceedStart = source.indexOf(
-      'const handleTagValidationProceed'
-    )
-    const tagProceedEnd = source.indexOf(
-      'const handleTagValidationCancel',
-      tagProceedStart
-    )
-    const tagProceed = source.slice(tagProceedStart, tagProceedEnd)
-
-    expect(handleStartImpl).toContain('applyM1MentionExclusions(')
-    expect(handleStartImpl).toContain('.filter(flowSyncable)')
-    expect(tagProceed).toContain('applyM1MentionExclusions(')
-    expect(tagProceed).toContain('.filter(flowSyncable)')
+  it('both direct and tag-proceed delegate to the coordinator that strips M1 mentions before sync selection', () => {
+    expect(handleStartImpl).toContain('runEmptyRefGateFlow(')
+    expect(tagProceed).toContain('runEmptyRefGateFlow(')
+    expect(coordinator).toContain('applyM1MentionExclusions(')
+    expect(coordinator).toContain('.filter(flowSyncable)')
   })
 })

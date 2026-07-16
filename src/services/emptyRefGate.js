@@ -7,6 +7,51 @@ import {
 import { selectUnsyncedMentionedRefs } from '../utils/flowCharacterSync'
 import { filterPendingScenes } from '../utils/sceneFilters'
 
+// MCP 가 시작한 배치엔 사람이 없다 — 모달을 띄우면 아무도 안 눌러 배치가 영영 시작 안 되고
+// latch 만 잡힌 채 남는다. 모달 대신 M1 의미(제외하고 진행)로 자동 응답한다(§2.1).
+export const nonInteractiveGateView = {
+  confirm: async () => 'exclude',
+  setBusy: () => {},
+  failure: async () => {},
+  close: () => {},
+}
+
+// React wiring 경계. scenes/refs/mode/start는 모달 대기 뒤에도 최신이어야 하므로 값이나
+// 렌더 closure를 캡처하지 않고 호출 시점의 ref.current를 읽는다.
+export function buildEmptyRefGateDeps({
+  scenesRef,
+  referencesRef,
+  modeRef,
+  getProjectName,
+  getMatchingReferences,
+  subscriptionPreGate,
+  setPendingLatch,
+  handleGenerateAllRefs,
+  openSyncGate,
+  automationStartRef,
+  toastM1Exclusions,
+  gateView,
+}) {
+  return {
+    getLiveScenes: () => scenesRef.current,
+    getLiveRefs: () => referencesRef.current,
+    getMode: () => modeRef.current,
+    getProjectName,
+    matchRefs: getMatchingReferences,
+    subscriptionPreGate,
+    setPendingLatch,
+    generateRefs: keys => handleGenerateAllRefs(null, {
+      force: false,
+      targetRefKeys: keys,
+      reason: 'm2-empty-reference-gate',
+    }),
+    openSyncGate,
+    startScenes: opts => automationStartRef.current(opts),
+    toastM1Exclusions,
+    gateView,
+  }
+}
+
 // 스캔 집합과 최종 생성 집합의 단일 출처(§6.3). 최초 Start 의도(initialTargetSceneIds)를 membership
 // 경계로 잠그고, 실행 시점 live scenes 로 force/pending 을 재적용한다.
 export function resolveLiveTargetScenes(context, liveScenes = []) {
