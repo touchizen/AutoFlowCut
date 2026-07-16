@@ -1,7 +1,25 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 const DEFAULT_OPTION = Object.freeze({ id: 'default', value: null, labelKey: 'default' })
 const CLAUDE_OPTION = Object.freeze({ id: 'claude-coming-soon', value: 'claude', disabled: true })
+const EDGE = 8
+const GAP = 6
+const MIN_LISTBOX_WIDTH = 220
+
+const clamp = (value, min, max) => Math.min(Math.max(value, min), Math.max(min, max))
+
+export function listboxPosition(anchorRect, listboxRect, viewport, gap = GAP) {
+  const width = Math.max(anchorRect.width, MIN_LISTBOX_WIDTH)
+  const left = clamp(anchorRect.left, EDGE, viewport.width - width - EDGE)
+  const belowTop = anchorRect.bottom + gap
+  const placement = belowTop + listboxRect.height > viewport.height - EDGE ? 'top' : 'bottom'
+  const rawTop = placement === 'top'
+    ? anchorRect.top - listboxRect.height - gap
+    : belowTop
+  const top = clamp(rawTop, EDGE, viewport.height - listboxRect.height - EDGE)
+  return { left, top, width, placement }
+}
 
 function optionId(listboxId, option) {
   return `${listboxId}-option-${option.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`
@@ -30,8 +48,10 @@ export default function AgentModelSelector({
   const listboxId = `${id}-listbox`
   const rootRef = useRef(null)
   const triggerRef = useRef(null)
+  const listboxRef = useRef(null)
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
+  const [position, setPosition] = useState(null)
 
   const options = useMemo(() => [
     { ...DEFAULT_OPTION, label: defaultLabel },
@@ -49,11 +69,37 @@ export default function AgentModelSelector({
     if (!open) return undefined
     setActiveIndex(selectedIndex)
     const onPointerDown = (event) => {
-      if (!rootRef.current?.contains(event.target)) setOpen(false)
+      if (
+        !rootRef.current?.contains(event.target)
+        && !listboxRef.current?.contains(event.target)
+      ) {
+        setOpen(false)
+      }
     }
     document.addEventListener('pointerdown', onPointerDown)
     return () => document.removeEventListener('pointerdown', onPointerDown)
   }, [open, selectedIndex])
+
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current || !listboxRef.current) return undefined
+    const update = () => {
+      const anchorRect = triggerRef.current.getBoundingClientRect()
+      const width = Math.max(anchorRect.width, MIN_LISTBOX_WIDTH)
+      listboxRef.current.style.width = `${width}px`
+      setPosition(listboxPosition(
+        anchorRect,
+        listboxRef.current.getBoundingClientRect(),
+        { width: window.innerWidth, height: window.innerHeight },
+      ))
+    }
+    update()
+    window.addEventListener('resize', update)
+    window.addEventListener('scroll', update, true)
+    return () => {
+      window.removeEventListener('resize', update)
+      window.removeEventListener('scroll', update, true)
+    }
+  }, [codexLabel, comingSoonLabel, open, options])
 
   const closeAndFocus = () => {
     setOpen(false)
@@ -97,27 +143,45 @@ export default function AgentModelSelector({
   }
 
   return (
-    <div className="agent-model-selector" ref={rootRef}>
-      <button
-        ref={triggerRef}
-        type="button"
-        className="agent-model-combobox"
-        role="combobox"
-        aria-label={label}
-        aria-expanded={open}
-        aria-controls={listboxId}
-        aria-activedescendant={open && active ? optionId(listboxId, active) : undefined}
-        aria-haspopup="listbox"
-        data-loading={loading ? 'true' : 'false'}
-        onClick={() => setOpen((current) => !current)}
-        onKeyDown={onKeyDown}
-      >
-        <span>{selected?.label || defaultLabel}</span>
-        <span aria-hidden="true">▾</span>
-      </button>
+    <>
+      <div className="agent-model-selector" ref={rootRef}>
+        <button
+          ref={triggerRef}
+          type="button"
+          className="agent-model-combobox"
+          role="combobox"
+          aria-label={label}
+          aria-expanded={open}
+          aria-controls={listboxId}
+          aria-activedescendant={open && active ? optionId(listboxId, active) : undefined}
+          aria-haspopup="listbox"
+          data-loading={loading ? 'true' : 'false'}
+          onClick={() => setOpen((current) => !current)}
+          onKeyDown={onKeyDown}
+        >
+          <span>{selected?.label || defaultLabel}</span>
+          <span aria-hidden="true">▾</span>
+        </button>
+      </div>
 
-      {open && (
-        <div className="agent-model-listbox" id={listboxId} role="listbox" aria-label={label}>
+      {open && createPortal(
+        <div
+          ref={listboxRef}
+          className="agent-model-listbox"
+          id={listboxId}
+          role="listbox"
+          aria-label={label}
+          data-placement={position?.placement || 'bottom'}
+          onPointerDown={(event) => event.stopPropagation()}
+          style={{
+            position: 'fixed',
+            zIndex: 4000,
+            left: position ? `${position.left}px` : '0px',
+            top: position ? `${position.top}px` : '0px',
+            width: `${position?.width || MIN_LISTBOX_WIDTH}px`,
+            visibility: position ? 'visible' : 'hidden',
+          }}
+        >
           <div className="agent-model-provider" role="presentation">{codexLabel}</div>
           {options.slice(0, -1).map((option, index) => (
             <div
@@ -144,8 +208,9 @@ export default function AgentModelSelector({
             <span>{claudeLabel}</span>
             <span className="agent-model-badge">{comingSoonLabel}</span>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
-    </div>
+    </>
   )
 }
