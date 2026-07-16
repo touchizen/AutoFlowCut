@@ -517,23 +517,12 @@ export default function ChatPanel({
         >
           <div className="agent-chat-heading">
             <strong>{t('agent.title')}</strong>
-            <AgentModelSelector
-              models={models}
-              value={selectedModel}
-              loading={modelsLoading}
-              onChange={setSelectedModel}
-              label={t('agent.modelLabel')}
-              defaultLabel={t('agent.modelDefault')}
-              codexLabel={t('agent.codexProvider')}
-              claudeLabel={t('agent.claudeProvider')}
-              comingSoonLabel={t('agent.comingSoon')}
-            />
-          </div>
-          <div className="agent-chat-header-actions">
             {running && <span className="agent-chat-running">{t('agent.running')}</span>}
             {appMode === 'flow' && (
               <span className="agent-chat-flow-notice">{t('agent.flowFloatingOnly')}</span>
             )}
+          </div>
+          <div className="agent-chat-header-actions">
             <AgentIconButton
               className="agent-chat-mode-toggle"
               label={t('agent.modeToggle')}
@@ -543,6 +532,14 @@ export default function ChatPanel({
               onClick={() => onAgentPanelModeChange(effectiveMode === 'slide' ? 'floating' : 'slide')}
             >
               <AgentControlIcon name="mode" />
+            </AgentIconButton>
+            <AgentIconButton
+              label={t('agent.closeSession')}
+              tooltip={t('agent.closeSessionTooltip')}
+              onClick={close}
+              disabled={!sessionOpenRef.current}
+            >
+              <AgentControlIcon name="close" />
             </AgentIconButton>
             <AgentIconButton
               className="agent-chat-dismiss"
@@ -596,40 +593,48 @@ export default function ChatPanel({
             placeholder={t('agent.placeholder')}
             rows={2}
           />
-          <div className="agent-chat-actions">
-            <AgentIconButton
-              type="submit"
-              className="is-primary"
-              label={t('agent.send')}
-              tooltip={t('agent.sendTooltip')}
-              disabled={running || !input.trim()}
-            >
-              <AgentControlIcon name="send" />
-            </AgentIconButton>
-            <AgentIconButton
-              label={t('agent.steer')}
-              tooltip={t('agent.steerTooltip')}
-              onClick={steer}
-              disabled={!running || !input.trim()}
-            >
-              <AgentControlIcon name="steer" />
-            </AgentIconButton>
-            <AgentIconButton
-              label={t('agent.stop')}
-              tooltip={t('agent.stopTooltip')}
-              onClick={abort}
-              disabled={!running}
-            >
-              <AgentControlIcon name="stop" />
-            </AgentIconButton>
-            <AgentIconButton
-              label={t('agent.closeSession')}
-              tooltip={t('agent.closeSessionTooltip')}
-              onClick={close}
-              disabled={!sessionOpenRef.current}
-            >
-              <AgentControlIcon name="close" />
-            </AgentIconButton>
+          <div className="agent-chat-toolbar">
+            <AgentModelSelector
+              models={models}
+              value={selectedModel}
+              loading={modelsLoading}
+              onChange={setSelectedModel}
+              label={t('agent.modelLabel')}
+              defaultLabel={t('agent.modelDefault')}
+              codexLabel={t('agent.codexProvider')}
+              claudeLabel={t('agent.claudeProvider')}
+              comingSoonLabel={t('agent.comingSoon')}
+            />
+            <div className="agent-chat-toolbar-actions">
+              <AgentIconButton
+                label={t('agent.steer')}
+                tooltip={t('agent.steerTooltip')}
+                onClick={steer}
+                disabled={!running || !input.trim()}
+              >
+                <AgentControlIcon name="steer" />
+              </AgentIconButton>
+              {running ? (
+                <AgentIconButton
+                  className="is-primary is-stop"
+                  label={t('agent.stop')}
+                  tooltip={t('agent.stopTooltip')}
+                  onClick={abort}
+                >
+                  <AgentControlIcon name="stop" />
+                </AgentIconButton>
+              ) : (
+                <AgentIconButton
+                  type="submit"
+                  className="is-primary"
+                  label={t('agent.send')}
+                  tooltip={t('agent.sendTooltip')}
+                  disabled={!input.trim()}
+                >
+                  <AgentControlIcon name="send" />
+                </AgentIconButton>
+              )}
+            </div>
           </div>
         </form>
       </aside>

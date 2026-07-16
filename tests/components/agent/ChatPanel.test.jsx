@@ -100,6 +100,27 @@ describe('ChatPanel — 명령과 event의 사용자 효과', () => {
     expect(window.electronAPI.agentAbort).toHaveBeenCalledOnce()
   })
 
+  it('single primary가 idle Send로 submit하고 running Stop으로 바뀌어 abort한다', async () => {
+    const user = userEvent.setup()
+    render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)
+
+    const input = screen.getByRole('textbox', { name: 'Message to the agent' })
+    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull()
+    await user.type(input, 'primary 전환 확인')
+
+    const send = screen.getByRole('button', { name: 'Send' })
+    expect(send).toBeEnabled()
+    await user.click(send)
+
+    expect(window.electronAPI.agentSend).toHaveBeenCalledWith({ text: 'primary 전환 확인' })
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull()
+    const stop = screen.getByRole('button', { name: 'Stop' })
+    expect(stop).toBeEnabled()
+    await user.click(stop)
+
+    expect(window.electronAPI.agentAbort).toHaveBeenCalledOnce()
+  })
+
   it('command가 error 값을 반환해도 조용히 삼키지 않고 화면에 표시한다', async () => {
     window.electronAPI.agentSend.mockResolvedValueOnce({
       error: 'agent-command-failed', message: 'app-server died', command: 'agent:send',
@@ -119,7 +140,14 @@ describe('ChatPanel — 명령과 event의 사용자 효과', () => {
     const input = screen.getByRole('textbox', { name: 'Message to the agent' })
     await user.type(input, '툴팁 확인')
 
-    for (const name of ['Send', 'Steer', 'Stop', 'Close session']) {
+    const header = container.querySelector('.agent-chat-header')
+    const toolbar = container.querySelector('.agent-chat-toolbar')
+    const modelSelector = screen.getByRole('combobox', { name: 'Agent model' })
+    expect(header).toContainElement(screen.getByRole('button', { name: 'Close session' }))
+    expect(toolbar).toContainElement(modelSelector)
+    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull()
+
+    for (const name of ['Send', 'Steer', 'Close session']) {
       const button = screen.getByRole('button', { name })
       expect(button.querySelector('svg'), `${name} icon`).toBeTruthy()
       expect(button.textContent.trim()).toBe('')
@@ -232,20 +260,21 @@ describe('ChatPanel — model 적용 시점 계약', () => {
     expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled()
   })
 
-  it('running 중 Send는 disabled지만 Steer는 입력이 있으면 유지되고 model을 싣지 않는다', async () => {
+  it('running 중 primary는 enabled Stop이고 Send는 없으며 Steer는 model을 싣지 않는다', async () => {
     const user = userEvent.setup()
     render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
     const input = screen.getByRole('textbox', { name: 'Message to the agent' })
 
     await user.type(input, '새 turn')
     await user.click(screen.getByRole('button', { name: 'Send' }))
-    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled()
 
     await user.click(screen.getByRole('combobox', { name: 'Agent model' }))
     await user.click(screen.getByRole('option', { name: 'GPT B' }))
     await user.type(input, '진행 방향 수정')
-    // 입력이 채워진 상태 → Send가 여전히 disabled면 그건 오직 running 때문(입력-빈 조건과 분리)
-    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled()
     const steer = screen.getByRole('button', { name: 'Steer' })
     expect(steer).toBeEnabled()
     await user.click(steer)

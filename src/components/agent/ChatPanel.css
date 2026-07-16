@@ -28,9 +28,23 @@
 .agent-chat-panel.is-dismissed { visibility: hidden; opacity: 0; pointer-events: none; }
 .agent-chat-panel.is-open { visibility: visible; opacity: 1; }
 .agent-chat-header { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 11px 13px; border-bottom: 1px solid var(--border, #3a3a42); }
-.agent-chat-header-actions, .agent-chat-actions { display: flex; align-items: center; gap: 6px; }
+.agent-chat-header-actions, .agent-chat-toolbar-actions { display: flex; align-items: center; gap: 6px; }
 .agent-chat-log { flex: 1 1 auto; min-height: 0; max-height: none; padding: 12px; overflow-y: auto; }
-.agent-chat-compose { flex: 0 0 auto; padding: 10px 12px 12px; border-top: 1px solid var(--border, #3a3a42); }
+.agent-chat-compose {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 8px 10px 10px;
+  padding: 8px;
+  background: var(--code-bg, #131316);
+  border: 1px solid var(--border, #3a3a42);
+  border-radius: 12px;
+}
+.agent-chat-compose:focus-within {
+  border-color: color-mix(in srgb, var(--accent, #4c8dff) 72%, var(--border, #3a3a42));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #4c8dff) 18%, transparent);
+}
 .agent-chat-header.is-draggable { cursor: grab; user-select: none; }
 .agent-chat-header.is-draggable:active { cursor: grabbing; }
 .agent-chat-flow-notice { max-width: 150px; font-size: 10px; line-height: 1.2; color: #e9bd68; }
@@ -48,11 +62,9 @@
 .agent-chat-fab.is-hidden { visibility: hidden; opacity: 0; pointer-events: none; }
 .agent-chat-fab img { display: block; width: 100%; height: 100%; }
 
-.agent-chat-heading { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.agent-chat-heading { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 auto; }
 .agent-chat-heading strong { flex: 0 0 auto; }
-.agent-chat-heading .agent-model-selector { flex: 1 1 160px; min-width: 112px; }
-.agent-chat-header button, .agent-chat-actions button { border: 1px solid var(--border, #3a3a42); border-radius: 7px; padding: 5px 9px; color: inherit; background: transparent; cursor: pointer; }
-.agent-chat-header button:disabled, .agent-chat-actions button:disabled { cursor: default; opacity: 0.42; }
+.agent-chat-header-actions { flex: 0 0 auto; }
 .agent-chat-running { font-size: 11px; color: #78b0ff; }
 .agent-chat-empty { margin: 24px 0; text-align: center; font-size: 13px; opacity: 0.55; }
 .agent-chat-message, .agent-chat-tool, .agent-chat-error { margin-bottom: 8px; padding: 8px 10px; border-radius: 8px; white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.45; }
@@ -64,8 +76,35 @@
 .agent-chat-tool pre { max-height: 120px; margin: 6px 0 0; overflow: auto; font-size: 11px; white-space: pre-wrap; }
 .agent-chat-error { color: #ffd2d2; border: 1px solid rgba(255, 92, 92, 0.5); background: rgba(255, 72, 72, 0.13); }
 .agent-chat-usage { padding: 0 12px 9px; text-align: right; font-size: 11px; opacity: 0.65; }
-.agent-chat-compose textarea { box-sizing: border-box; width: 100%; resize: vertical; min-height: 54px; margin-bottom: 8px; padding: 8px 10px; color: inherit; background: var(--code-bg, #131316); border: 1px solid var(--border, #3a3a42); border-radius: 8px; font: inherit; }
-.agent-chat-actions { justify-content: flex-end; flex-wrap: wrap; }
+.agent-chat-compose textarea {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  min-height: 48px;
+  max-height: 160px;
+  margin: 0;
+  padding: 4px 5px 8px;
+  resize: vertical;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  font: inherit;
+}
+.agent-chat-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding-top: 6px;
+}
+.agent-chat-toolbar .agent-model-selector {
+  flex: 1 1 160px;
+  min-width: 120px;
+  max-width: 180px;
+}
+.agent-chat-toolbar-actions { flex: 0 0 auto; }
 
 /* 진행 표시: 첫 응답까지 수십 초 비어 있으면 앱이 멈춘 것처럼 보인다. */
 .agent-chat-thinking { display: flex; align-items: center; gap: 7px; opacity: 0.7; font-size: 12px; padding: 2px 0; }
@@ -101,17 +140,13 @@
   color: inherit; background: transparent;
   border: 1px solid var(--border, #3a3a42); border-radius: 7px; cursor: pointer;
 }
-.agent-chat-actions .agent-icon-button,
+.agent-chat-toolbar-actions .agent-icon-button,
 .agent-chat-header .agent-icon-button { padding: 0; }
-.agent-chat-compose {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end; gap: 8px; padding: 8px;
-}
-.agent-chat-compose textarea { min-height: 44px; margin-bottom: 0; }
-.agent-chat-actions { flex-wrap: nowrap; }
 .agent-icon-button.is-primary { color: #fff; background: var(--accent, #4c8dff); border-color: transparent; }
+.agent-icon-button.is-primary.is-stop { background: var(--error-color, #f56565); }
 .agent-icon-button:hover:not(:disabled) { background-color: rgba(255, 255, 255, 0.1); }
 .agent-icon-button.is-primary:hover:not(:disabled) { background-color: color-mix(in srgb, var(--accent, #4c8dff) 82%, white); }
+.agent-icon-button.is-primary.is-stop:hover:not(:disabled) { background-color: color-mix(in srgb, var(--error-color, #f56565) 82%, white); }
 .agent-icon-button:focus-visible { outline: 2px solid #9ec5ff; outline-offset: 2px; }
 .agent-icon-button:disabled { cursor: default; opacity: 0.42; }
 .agent-portal-tooltip {
