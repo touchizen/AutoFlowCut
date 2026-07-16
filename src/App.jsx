@@ -847,7 +847,7 @@ function App() {
   // Reference 생성
   const { generatingRefs, stoppingRefs, preparingRefs, handleGenerateRef, handleGenerateAllRefs, stopGenerateAllRefs } = useReferenceGeneration({
     settings, references, setReferences, genAPI, addPendingSave, openSettings, t, selectedStyleRefId, styleThumbnails, generationQueue, flowProjectReady,
-    flowProjectId: _flowProjectId,
+    flowProjectId: _flowProjectId, projectNameRef,
   })
 
   // Scene 재생성

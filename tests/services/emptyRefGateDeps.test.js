@@ -110,6 +110,7 @@ describe('buildEmptyRefGateDeps — liveness 배선', () => {
       getMatchingReferences: (scene, pool) => (
         (pool || []).filter(ref => scene.prompt.includes(`@${ref.name}`))
       ),
+      subscriptionPreGate: vi.fn(async () => 'proceed'),
       setPendingLatch: vi.fn(on => { latch = on }),
       openSyncGate: humanSyncGate,
       automationStartRef: { current: startScenes },
@@ -127,6 +128,63 @@ describe('buildEmptyRefGateDeps — liveness 배선', () => {
     expect(humanSyncGate).not.toHaveBeenCalled()
     expect(startScenes).not.toHaveBeenCalled()
     expect(outcome).toEqual({ started: false, reason: 'sync-cancelled' })
+    expect(latch).toBe(false)
+  })
+
+  it('MCP source의 headless batch failure는 사람 resolver 없이 batch-failed로 끝난다', async () => {
+    let latch = false
+    const failure = vi.fn(async () => {})
+    const startScenes = vi.fn(async () => {})
+    const emptyRef = {
+      id: 'ghost',
+      name: 'Ghost',
+      type: 'character',
+      prompt: 'a ghost portrait',
+      status: 'pending',
+    }
+    const deps = buildEmptyRefGateDeps(makeArgs({
+      source: 'mcp',
+      scenesRef: {
+        current: [{ id: 's1', prompt: '@Ghost', status: 'pending' }],
+      },
+      referencesRef: { current: [emptyRef] },
+      getMatchingReferences: (scene, pool) => (
+        (pool || []).filter(ref => scene.prompt.includes(`@${ref.name}`))
+      ),
+      subscriptionPreGate: vi.fn(async () => 'proceed'),
+      setPendingLatch: vi.fn(on => { latch = on }),
+      handleGenerateAllRefs: vi.fn(async () => ({
+        ok: false,
+        outcome: 'failed',
+        requestedKeys: ['id:ghost'],
+        attemptedKeys: ['id:ghost'],
+        succeededKeys: [],
+        skipped: [],
+        failed: [{ key: 'id:ghost', stage: 'submit', error: 'boom' }],
+        currentRefs: [emptyRef],
+      })),
+      automationStartRef: { current: startScenes },
+      gateView: {
+        ...nonInteractiveGateView,
+        confirm: vi.fn(async () => 'generate-first'),
+        failure,
+      },
+    }))
+
+    const outcome = await runEmptyRefGateFlow({
+      startMode: 'flow',
+      projectName: 'P',
+      force: false,
+      initialTargetSceneIds: ['s1'],
+      startOptionsWithoutSceneIds: {},
+    }, deps)
+
+    expect(outcome).toEqual({ started: false, reason: 'batch-failed' })
+    expect(failure).toHaveBeenCalledWith({
+      outcome: 'failed',
+      failures: [{ key: 'id:ghost', stage: 'submit', error: 'boom' }],
+    })
+    expect(startScenes).not.toHaveBeenCalled()
     expect(latch).toBe(false)
   })
 })

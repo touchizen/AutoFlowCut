@@ -39,12 +39,14 @@ async function mapWithConcurrency(items, mapper, concurrency = 5) {
   return results
 }
 
-export function useReferenceGeneration({ settings, references, setReferences, genAPI, addPendingSave, openSettings, pendingSavesCount = 0, t, selectedStyleRefId, styleThumbnails, generationQueue, flowProjectReady = true, flowProjectId = null }) {
+export function useReferenceGeneration({ settings, references, setReferences, genAPI, addPendingSave, openSettings, pendingSavesCount = 0, t, selectedStyleRefId, styleThumbnails, generationQueue, flowProjectReady = true, flowProjectId = null, projectNameRef = null }) {
   const [generatingRefs, setGeneratingRefs] = useState([])
   const [stoppingRefs, setStoppingRefs] = useState(false)
   const [preparingRefs, setPreparingRefs] = useState(false)  // 배치 준비 중 (권한/토큰/썸네일 업로드)
   const [saveFailedOnce, setSaveFailedOnce] = useState(false)  // 배치 중 저장 실패 알림 1회만
   const stopRequestedRef = useRef(false)
+  const stopRequestVersionRef = useRef(0)
+  const pendingRefBatchCallsRef = useRef(0)
   // #R24-4: 배치가 '인증 실패'로 멈췄는지 구분. user-stop 정리는 pending(재실행 가능)으로
   //   되돌리지만, auth-stop 은 죽은 인증을 숨긴 채 재시도 루프가 돌지 않도록 error(auth)로 남긴다.
   const authStoppedRef = useRef(false)
@@ -60,11 +62,29 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
   // quota stop 공통 모듈 위임 — queue clear 는 useGenerationQueue 가 직접 subscribe 함.
   const _maybeTriggerQuotaStop = (err) => {
     if (!isQuotaExhaustedError(err)) return false
+    stopRequestVersionRef.current += 1
     emitQuotaStop({ stopRequestedRef, scope: 'GenerateRef' })
     return true
   }
   const referencesRef = useRef(references)
   referencesRef.current = references  // 매 렌더마다 최신 상태 반영
+  const getLiveProjectName = () => projectNameRef?.current ?? settings.projectName
+  const batchGeneratingRefCountsRef = useRef(new Map())
+  const addBatchGeneratingRef = (index) => {
+    const counts = batchGeneratingRefCountsRef.current
+    counts.set(index, (counts.get(index) || 0) + 1)
+    setGeneratingRefs(prev => prev.includes(index) ? prev : [...prev, index])
+  }
+  const removeBatchGeneratingRef = (index) => {
+    const counts = batchGeneratingRefCountsRef.current
+    const nextCount = (counts.get(index) || 0) - 1
+    if (nextCount > 0) {
+      counts.set(index, nextCount)
+      return
+    }
+    counts.delete(index)
+    setGeneratingRefs(prev => prev.filter(i => i !== index))
+  }
 
   // Targeted batch는 MCP가 배열을 delete/reorder하는 동안에도 같은 카드를 따라가야 한다.
   // index는 UI 표시용 힌트일 뿐이고, guardKey가 있으면 매 patch 직전에 stable key로 다시 찾는다.
@@ -82,8 +102,9 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
   }
 
   const stopGenerateAllRefs = useCallback(() => {
+    stopRequestVersionRef.current += 1
     stopRequestedRef.current = true
-    setStoppingRefs(true)
+    setStoppingRefs(pendingRefBatchCallsRef.current > 0)
   }, [])
 
   // ─── 공통: 스타일 레퍼런스 준비 ───
@@ -156,7 +177,20 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
   // genResult: 생성 응답 전체. Flow /characters 경로는 여기에 entityId/workflowId/registered 를 실어온다.
   //   이걸 카드에 저장해야 Flow 에 캐릭터가 등록된 상태가 되고, '동기화'로 같은 이미지를
   //   다시 업로드할 필요가 없어진다. entityId 가 없으면(API 모드·scene/style) 기존 동작 그대로.
-  const _processAndSaveImage = async (images, index, ref, logPrefix = '[Ref]', genResult = null, guardKey = null) => {
+  const _processAndSaveImage = async (
+    images,
+    index,
+    ref,
+    logPrefix = '[Ref]',
+    genResult = null,
+    guardKey = null,
+    busyIndex = index,
+    batchBusy = false,
+  ) => {
+    const releaseBusy = () => {
+      if (batchBusy) removeBatchGeneratingRef(busyIndex)
+      else setGeneratingRefs(prev => prev.filter(i => i !== busyIndex))
+    }
     const firstImage = images[0]
     let imageData = firstImage.base64 || firstImage
 
@@ -179,12 +213,13 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     let filePath = null
     let savedDataUrl = displayUrl
     if (settings.saveMode === 'folder') {
-      // projectName 누락 방지: 호출 전에 App.jsx의 ensureProjectName()로 settings.projectName이
-      // 채워져 있어야 한다. 여기서는 방어적 폴백만 수행('Untitled'), 새 타임스탬프 폴더는 만들지 않음.
-      if (!settings.projectName) {
-        console.warn('[useReferenceGeneration] settings.projectName missing — falling back to "Untitled"')
+      // ensureProjectName은 같은 tick에 backing ref를 먼저 갱신한다. render closure의 settings보다
+      // 그 live authority를 읽어 방금 mint한 프로젝트명이 Untitled로 갈라지지 않게 한다.
+      const liveProjectName = getLiveProjectName()
+      if (!liveProjectName) {
+        console.warn('[useReferenceGeneration] projectName missing — falling back to "Untitled"')
       }
-      const projectName = settings.projectName || 'Untitled'
+      const projectName = liveProjectName || 'Untitled'
       const refName = ref.name || `ref_${index + 1}`
       // #R32-3: 엔진 라벨/provenance 를 실제 모드로 — API(BYOK) ref 를 'flow' 로 잘못 라벨하던 것을 고친다.
       //   Flow 모드는 'flow', API 모드는 선택된 이미지 모델 id(없으면 'api'). model 도 메타에 기록.
@@ -240,7 +275,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     )
     if (resolvedIndex < 0) {
       // 생성 도중 target이 삭제됐으면 결과는 폐기한다. stale index를 패치하면 이동한 다른 카드가 오염된다.
-      setGeneratingRefs(prev => prev.filter(i => i !== index))
+      releaseBusy()
       return { success: false, skipped: true, skipStage: 'not-found' }
     }
     const donePatch = { name: ref.name || `ref_${index + 1}`, data: savedDataUrl, filePath, dataStorage: filePath ? 'file' : 'base64', mediaId, caption, status: 'done', errorMessage: null, generatedAt: Date.now(), ...(entityPatch || {}) }
@@ -258,7 +293,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       guardKey,
       current => ({ ...current, ...donePatch })
     )
-    setGeneratingRefs(prev => prev.filter(i => i !== index && i !== resolvedIndex))
+    releaseBusy()
     return { success: true, savedToMemory: filePath === null && settings.saveMode === 'folder' }
   }
 
@@ -374,7 +409,8 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
             submitRef,
             '[Reference]',
             result,
-            guardKey
+            guardKey,
+            index,
           )
         } else if (!result.success) {
           const errorMsg = result.error || ''
@@ -382,7 +418,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
           const isServerError = errorMsg.includes('500') || errorMsg.includes('502') || errorMsg.includes('503') || errorMsg.includes('server')
           const isQuota = _maybeTriggerQuotaStop(errorMsg)
           if (!isQuota) toast.error(t('toast.generateFailed', { error: displayResultError(result, 'Unknown error') }))
-          setGeneratingRefs(prev => prev.filter(i => i !== index && i !== submitIndex))
+          setGeneratingRefs(prev => prev.filter(i => i !== index))
           // #R26-5: 단일-ref 경로도 배치 경로(R25-5)와 동일하게 인증 실패를 errorKind:'auth' 로 분류.
           setReferences(prev => patchReferenceByIdentity(
             prev,
@@ -397,7 +433,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
           ))
           return { success: false, authError: isAuthError, serverError: isServerError, quotaExhausted: isQuota }
         }
-        setGeneratingRefs(prev => prev.filter(i => i !== index && i !== submitIndex))
+        setGeneratingRefs(prev => prev.filter(i => i !== index))
         setReferences(prev => patchReferenceByIdentity(
           prev,
           submitIndex,
@@ -411,7 +447,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
         const coordinated = await runFlowCharacterOperation({
           ref,
           projectId: flowProjectId,
-          scopeToken: `flow::${settings.projectName ?? ''}`,
+          scopeToken: `flow::${getLiveProjectName() ?? ''}`,
           refIndex: index,
           operation: 'generate-character',
           task: generateAndPublish,
@@ -452,7 +488,13 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
   }
 
   // ─── 비동기 결과 수집 + 후처리 (배치용) ───
-  const processAsyncResult = async (generationId, index, ref, guardKey = null) => {
+  const processAsyncResult = async (
+    generationId,
+    index,
+    ref,
+    guardKey = null,
+    busyIndex = index,
+  ) => {
     const result = await genAPI.collectGeneration(generationId)
 
     if (!result.success || !result.images?.length) {
@@ -467,12 +509,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       const isServerError = errorMsg.includes('500') || errorMsg.includes('502') || errorMsg.includes('503')
       const isQuota = _maybeTriggerQuotaStop(errorMsg)
       if (!isQuota) toast.error(t('toast.generateFailed', { error: displayResultError(result, 'Unknown error') }))
-      const resolvedIndex = resolveReferenceIndex(
-        referencesRef.current,
-        index,
-        guardKey
-      )
-      setGeneratingRefs(prev => prev.filter(i => i !== index && i !== resolvedIndex))
+      removeBatchGeneratingRef(busyIndex)
       // #R25-5: authFailed 면 errorKind:'auth' 도 같이 남긴다 — cleanup 은 pendingQueue 항목에만
       //   auth 마커를 붙이므로, 실제 인증 실패를 맞은 이 ref 가 안정적 auth 표식을 놓치지 않게 한다.
       setReferences(prev => patchReferenceByIdentity(
@@ -501,7 +538,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       guardKey
     )
     if (resolvedIndex < 0) {
-      setGeneratingRefs(prev => prev.filter(i => i !== index))
+      removeBatchGeneratingRef(busyIndex)
       return { success: false, skipped: true, skipStage: 'not-found' }
     }
     const resolvedRef = guardKey
@@ -513,7 +550,9 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       resolvedRef,
       '[AsyncRef]',
       result,
-      guardKey
+      guardKey,
+      busyIndex,
+      true,
     )
   }
 
@@ -528,7 +567,11 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
   //   targetRefKeys == null : 기존 Ref 탭 전체 배치 / MCP 전체 배치 (pending 의미 그대로)
   //   targetRefKeys: string[] : 그 key 의 ref 만 대상 (M2 targeted). [] 면 정상 noop.
   //   reason 은 호출 출처 식별자일 뿐 생성 의미나 스타일 해석을 바꾸지 않는다.
-  const _executeBatchRefs = async (overrideStyleId = null, options = {}) => {
+  const _executeBatchRefs = async (
+    overrideStyleId = null,
+    options = {},
+    stopVersionAtEnqueue = stopRequestVersionRef.current,
+  ) => {
     const { force = false, targetRefKeys = null } = options
     const targetKeySet = targetRefKeys == null ? null : new Set(targetRefKeys)
     const isTargeted = targetKeySet !== null
@@ -630,19 +673,16 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       }
     }
 
-    if (allTargets.length === 0) {
-      // targeted 정상 noop은 전체 Ref 배치가 끝났다는 인상을 주면 안 된다.
-      if (!isTargeted) toast.info(t('toast.allRefsGenerated'))
-      return buildResult()
-    }
-
     // #R22-3: force 리셋은 permission/auth/flowProjectReady 게이트 통과 후로 이동(아래 gate 뒤).
     //   게이트가 막으면 done/error ref 가 pending 으로 리셋된 채 생성이 안 돼 영구 pending 으로 stuck.
 
-    // 배치 시작 - 플래그 리셋. quota block 상태는 모달 dismiss 시점에 별도 해제됨.
-    stopRequestedRef.current = false
+    // enqueue 이후 stop version이 바뀐 경우만 이 batch의 queued Stop이다.
+    // enqueue 전에 개별 생성/quota가 남긴 stale flag는 기존 동작대로 새 batch 시작 시 버린다.
+    const queuedStopRequested =
+      stopRequestVersionRef.current !== stopVersionAtEnqueue
+    stopRequestedRef.current = queuedStopRequested
+    if (!queuedStopRequested) setStoppingRefs(false)
     authStoppedRef.current = false
-    setStoppingRefs(false)
     setPreparingRefs(true)
     let hasPendingSaves = false
     setSaveFailedOnce(false)
@@ -652,6 +692,18 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     // batch loop의 예상 못한 throw (IPC reject 등)에선 flag가 stuck → refBatchRunning이 영구 true,
     // 다음 MCP 호출이 waitForStopped 30s timeout 회귀.
     try {
+
+    if (allTargets.length === 0) {
+      // targeted 정상 noop은 전체 Ref 배치가 끝났다는 인상을 주면 안 된다.
+      if (!isTargeted) toast.info(t('toast.allRefsGenerated'))
+      return buildResult()
+    }
+
+    // individual job 뒤에 대기하던 동안 들어온 Stop은 이 batch가 소비한다.
+    // preflight/submit까지 진행하지 않고 구조화 stopped 결과로 즉시 끝낸다.
+    if (stopRequestedRef.current) {
+      return buildResult()
+    }
 
     // 폴더 모드 권한 확인
     if (settings.saveMode === 'folder') {
@@ -798,7 +850,8 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
               pending.generationId,
               pending.index,
               pending.ref,
-              isTargeted ? pending.key : null
+              isTargeted ? pending.key : null,
+              pending.busyIndex,
             )
             if (result?.savedToMemory) hasPendingSaves = true
             if (result?.skipped) {
@@ -837,6 +890,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
           break
         }
 
+        let busyIndex = null
         try {
           // 기회적 수집 (quota 감지 + 완료분 즉시 드레인)
           await collectCompleted()
@@ -883,7 +937,8 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
           //   직전에 꺼지고 generatingRefs 는 prepare 후에야 켜져, 그 사이 첫 item 의 Flow style upload
           //   동안 refBatchRunning 이 false 가 되어 project/mode 전환이 열린다. prepare 전에 켜두면
           //   busy 가 연속된다(prepare 가 throw 하면 아래 catch 가 index 를 제거).
-          setGeneratingRefs(prev => prev.includes(index) ? prev : [...prev, index])
+          busyIndex = index
+          addBatchGeneratingRef(busyIndex)
           // 배치는 위저드에서 고른 스타일이 명시적 의사표시다 — 카드의 이전 기억을 덮어쓴다.
           //   (스타일 카드 자신은 runPhase(styleIndices, null) 이라 null 이 기록된다.)
           //   _prepareStyleRefs 는 Flow 스타일 업로드 등 실패할 수 있는 I/O 다. 그 전에 찍어야
@@ -904,7 +959,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
           // prepare/동시성 대기 사이 MCP delete/reorder가 가능하므로 실제 submit 바로 앞에서 다시 찾는다.
           currentTarget = resolveBatchTarget(target, index)
           if (!currentTarget) {
-            setGeneratingRefs(prev => prev.filter(i => i !== index))
+            removeBatchGeneratingRef(busyIndex)
             continue
           }
           ;({ index, ref } = currentTarget)
@@ -915,6 +970,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
             pendingQueue.push({
               generationId: submitResult.generationId,
               index,
+              busyIndex,
               ref,
               key: target.key,
             })
@@ -933,7 +989,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
               authStoppedRef.current = true
               window.dispatchEvent(new CustomEvent('flow-login-expired'))
             }
-            setGeneratingRefs(prev => prev.filter(i => i !== index))
+            removeBatchGeneratingRef(busyIndex)
             // #R25-5: authFailed 면 errorKind:'auth' 도 남겨 안정적 auth 표식 유지.
             setReferences(prev => patchReferenceByIdentity(
               prev,
@@ -965,12 +1021,9 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
             'exception',
             err?.message || String(err)
           )
-          const errorIndex = resolveReferenceIndex(
-            referencesRef.current,
-            target.index,
-            isTargeted ? target.key : null
-          )
-          setGeneratingRefs(prev => prev.filter(i => i !== target.index && i !== errorIndex))
+          if (busyIndex !== null) {
+            removeBatchGeneratingRef(busyIndex)
+          }
           setReferences(prev => patchReferenceByIdentity(
             prev,
             target.index,
@@ -1020,7 +1073,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
           )
           if (cleanupIndex < 0) {
             recordSkip(pending.key, 'not-found')
-            setGeneratingRefs(prev => prev.filter(i => i !== pending.index))
+            removeBatchGeneratingRef(pending.busyIndex)
             continue
           }
           if (!userStopped) {
@@ -1030,7 +1083,7 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
               'Timed out'
             )
           }
-          setGeneratingRefs(prev => prev.filter(i => i !== pending.index && i !== cleanupIndex))
+          removeBatchGeneratingRef(pending.busyIndex)
           setReferences(prev => patchReferenceByIdentity(
             prev,
             cleanupIndex,
@@ -1078,6 +1131,8 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     } finally {
       // P2 v3: 정상 종료 / early return / throw 어느 경로에서도 flag 정리 (P1 + P2 통합 fix).
       // 안 그러면 refBatchRunning이 stuck 되어 MCP stop-restart가 30s timeout.
+      stopRequestedRef.current = false
+      authStoppedRef.current = false
       setPreparingRefs(false)
       setStoppingRefs(false)
     }
@@ -1107,30 +1162,52 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
   // #M2: 결과를 반드시 return 한다 — fail-closed가 batchResult.ok를 읽으므로 예전처럼
   //   queue 경로에서 await만 하고 버리면 조용히 undefined가 되어 씬 배치 판단이 깨진다.
   const handleGenerateAllRefs = async (overrideStyleId = null, options = {}) => {
-    if (!generationQueue) {
-      return _executeBatchRefs(overrideStyleId, options)
-    }
+    const stopVersionAtEnqueue = stopRequestVersionRef.current
+    pendingRefBatchCallsRef.current += 1
     try {
-      return await generationQueue.enqueue({
-        type: 'reference_batch',
-        label: 'Batch References',
-        execute: () => _executeBatchRefs(overrideStyleId, options)
-      })
-    } catch (err) {
-      console.warn('[RefGen] Batch queue rejected:', err.message)
-      return {
-        ok: false,
-        outcome: 'failed',
-        requestedKeys: options.targetRefKeys == null ? [] : [...options.targetRefKeys],
-        attemptedKeys: [],
-        succeededKeys: [],
-        skipped: [],
-        failed: [{
-          key: null,
-          stage: 'exception',
-          error: err?.message || String(err),
-        }],
-        currentRefs: referencesRef.current,
+      if (!generationQueue) {
+        return await _executeBatchRefs(
+          overrideStyleId,
+          options,
+          stopVersionAtEnqueue,
+        )
+      }
+      try {
+        return await generationQueue.enqueue({
+          type: 'reference_batch',
+          label: 'Batch References',
+          execute: () => _executeBatchRefs(
+            overrideStyleId,
+            options,
+            stopVersionAtEnqueue,
+          )
+        })
+      } catch (err) {
+        console.warn('[RefGen] Batch queue rejected:', err.message)
+        return {
+          ok: false,
+          outcome: 'failed',
+          requestedKeys: options.targetRefKeys == null ? [] : [...options.targetRefKeys],
+          attemptedKeys: [],
+          succeededKeys: [],
+          skipped: [],
+          failed: [{
+            key: null,
+            stage: 'exception',
+            error: err?.message || String(err),
+          }],
+          currentRefs: referencesRef.current,
+        }
+      }
+    } finally {
+      pendingRefBatchCallsRef.current = Math.max(
+        0,
+        pendingRefBatchCallsRef.current - 1,
+      )
+      if (pendingRefBatchCallsRef.current === 0) {
+        stopRequestedRef.current = false
+        authStoppedRef.current = false
+        setStoppingRefs(false)
       }
     }
   }

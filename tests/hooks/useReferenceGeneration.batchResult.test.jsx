@@ -127,6 +127,12 @@ async function callBatch(result, targetRefKeys) {
   return batchResult
 }
 
+const deferred = () => {
+  let resolve
+  const promise = new Promise(r => { resolve = r })
+  return { promise, resolve }
+}
+
 async function runTimedBatch(result, targetRefKeys) {
   vi.useFakeTimers()
   let batchPromise
@@ -635,7 +641,242 @@ describe('useReferenceGeneration — structured batch result', () => {
     ])
   })
 
-  it('17) submit 성공 후 후처리 중 삭제된 target은 succeeded가 아니라 not-found이며 이동한 카드를 건드리지 않는다', async () => {
+  it('17) batch 중 reorder된 target 결과 정리가 아직 생성 중인 sibling의 submit marker를 지우지 않는다', async () => {
+    let firstDone = false
+    let siblingDone = false
+    let reordered = false
+    const { result, genAPI, replaceLiveRefs } = setupHook({
+      references: [
+        { id: 'first', type: 'scene', prompt: 'first prompt', status: 'pending' },
+        { id: 'second', type: 'scene', prompt: 'second prompt', status: 'pending' },
+      ],
+      settingsOverrides: { concurrency: 2 },
+      genOverrides: {
+        checkGeneration: vi.fn(async generationId => {
+          if (genAPI.submitGeneration.mock.calls.length < 2) {
+            return { success: true, completed: false }
+          }
+          if (!reordered) {
+            reordered = true
+            replaceLiveRefs([
+              { id: 'second', type: 'scene', prompt: 'second prompt', status: 'generating' },
+              { id: 'first', type: 'scene', prompt: 'first prompt', status: 'generating' },
+            ])
+          }
+          if (generationId === 'g-1') {
+            return { success: true, completed: firstDone }
+          }
+          return { success: true, completed: siblingDone }
+        }),
+        collectGeneration: vi.fn(async generationId => ({
+          success: true,
+          images: [{
+            base64: `${generationId}-image`,
+            mediaId: `${generationId}-media`,
+          }],
+        })),
+      },
+    })
+
+    vi.useFakeTimers()
+    let batchPromise
+    try {
+      await act(async () => {
+        batchPromise = result.current.handleGenerateAllRefs(null, {
+          targetRefKeys: ['id:first', 'id:second'],
+        })
+      })
+      expect(result.current.generatingRefs).toEqual([0, 1])
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000)
+      })
+      expect(result.current.generatingRefs).toEqual([0, 1])
+
+      firstDone = true
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000)
+      })
+      expect(result.current.generatingRefs).toEqual([1])
+
+      await act(async () => {
+        siblingDone = true
+        await vi.advanceTimersByTimeAsync(3000)
+        await batchPromise
+      })
+    } finally {
+      siblingDone = true
+      vi.useRealTimers()
+    }
+  })
+
+  it('18) style prepare 중 reorder돼 submit index가 바뀌어도 marker를 추가한 index만 정리한다', async () => {
+    const secondStyleUpload = deferred()
+    let uploadNo = 0
+    let submitNo = 0
+    const { result, genAPI, getLiveRefs, replaceLiveRefs } = setupHook({
+      references: [
+        { id: 'first', type: 'scene', prompt: 'first prompt', status: 'pending' },
+        { id: 'second', type: 'scene', prompt: 'second prompt', status: 'pending' },
+        {
+          id: 'look',
+          type: 'style',
+          name: 'Look',
+          prompt: 'look prompt',
+          data: 'style-image',
+          status: 'done',
+        },
+      ],
+      settingsOverrides: { concurrency: 2 },
+      genOverrides: {
+        mode: 'flow',
+        uploadReference: vi.fn(async () => {
+          uploadNo += 1
+          if (uploadNo === 1) {
+            return { success: false, error: 'first upload skipped' }
+          }
+          return secondStyleUpload.promise
+        }),
+        submitGeneration: vi.fn(async () => {
+          submitNo += 1
+          return submitNo === 1
+            ? { success: true, generationId: 'g-1' }
+            : { success: false, error: 'second submit failed' }
+        }),
+        checkGeneration: vi.fn().mockResolvedValue({
+          success: true,
+          completed: false,
+        }),
+      },
+    })
+
+    vi.useFakeTimers()
+    let batchPromise
+    try {
+      await act(async () => {
+        batchPromise = result.current.handleGenerateAllRefs('ref:look', {
+          targetRefKeys: ['id:first', 'id:second'],
+        })
+        for (let i = 0; i < 10; i++) await Promise.resolve()
+      })
+      expect(genAPI.uploadReference).toHaveBeenCalledTimes(2)
+      expect(result.current.generatingRefs).toEqual([0, 1])
+
+      await act(async () => {
+        const [first, second, look] = getLiveRefs()
+        replaceLiveRefs([second, first, look])
+      })
+      await act(async () => {
+        secondStyleUpload.resolve({
+          success: true,
+          mediaId: 'style-media',
+          caption: '',
+        })
+        for (let i = 0; i < 10; i++) await Promise.resolve()
+      })
+
+      expect(genAPI.submitGeneration).toHaveBeenCalledTimes(2)
+      expect(result.current.generatingRefs).toEqual([0])
+
+      await act(async () => {
+        result.current.stopGenerateAllRefs()
+        await vi.advanceTimersByTimeAsync(4000)
+        await batchPromise
+      })
+    } finally {
+      secondStyleUpload.resolve({
+        success: true,
+        mediaId: 'style-media',
+        caption: '',
+      })
+      vi.useRealTimers()
+    }
+  })
+
+  it('19) reorder로 두 in-flight target이 같은 busy index를 공유해도 먼저 끝난 target이 marker를 지우지 않는다', async () => {
+    const firstStyleUpload = deferred()
+    let uploadNo = 0
+    let submitNo = 0
+    const { result, genAPI, getLiveRefs, replaceLiveRefs } = setupHook({
+      references: [
+        { id: 'first', type: 'scene', prompt: 'first prompt', status: 'pending' },
+        { id: 'second', type: 'scene', prompt: 'second prompt', status: 'pending' },
+        {
+          id: 'look',
+          type: 'style',
+          name: 'Look',
+          prompt: 'look prompt',
+          data: 'style-image',
+          status: 'done',
+        },
+      ],
+      settingsOverrides: { concurrency: 2 },
+      genOverrides: {
+        mode: 'flow',
+        uploadReference: vi.fn(async () => {
+          uploadNo += 1
+          if (uploadNo === 1) return firstStyleUpload.promise
+          return {
+            success: true,
+            mediaId: 'style-media',
+            caption: '',
+          }
+        }),
+        submitGeneration: vi.fn(async () => {
+          submitNo += 1
+          return submitNo === 1
+            ? { success: true, generationId: 'g-1' }
+            : { success: false, error: 'second submit failed' }
+        }),
+        checkGeneration: vi.fn().mockResolvedValue({
+          success: true,
+          completed: false,
+        }),
+      },
+    })
+
+    vi.useFakeTimers()
+    let batchPromise
+    try {
+      await act(async () => {
+        batchPromise = result.current.handleGenerateAllRefs('ref:look', {
+          targetRefKeys: ['id:first', 'id:second'],
+        })
+        for (let i = 0; i < 5; i++) await Promise.resolve()
+      })
+      expect(genAPI.uploadReference).toHaveBeenCalledTimes(1)
+      expect(result.current.generatingRefs).toEqual([0])
+
+      await act(async () => {
+        const [first, second, look] = getLiveRefs()
+        replaceLiveRefs([second, first, look])
+      })
+      await act(async () => {
+        firstStyleUpload.resolve({
+          success: false,
+          error: 'first upload skipped',
+        })
+        for (let i = 0; i < 15; i++) await Promise.resolve()
+      })
+
+      expect(genAPI.submitGeneration).toHaveBeenCalledTimes(2)
+      expect(result.current.generatingRefs).toEqual([0])
+
+      await act(async () => {
+        result.current.stopGenerateAllRefs()
+        await vi.advanceTimersByTimeAsync(4000)
+        await batchPromise
+      })
+    } finally {
+      firstStyleUpload.resolve({
+        success: false,
+        error: 'first upload skipped',
+      })
+      vi.useRealTimers()
+    }
+  })
+
+  it('20) submit 성공 후 후처리 중 삭제된 target은 succeeded가 아니라 not-found이며 이동한 카드를 건드리지 않는다', async () => {
     const outside = {
       id: 'outside',
       type: 'scene',
