@@ -687,6 +687,13 @@ function App() {
 
   // Settings (초기화 + localStorage 동기화)
   const { settings, setSettings, updateSetting, ensureProjectName } = useAppSettings()
+  const [agentDockWidth, setAgentDockWidth] = useState(settings.agentDockWidth)
+  useEffect(() => {
+    setAgentDockWidth(settings.agentDockWidth)
+  }, [settings.agentDockWidth])
+  const commitAgentDockWidth = useCallback((width) => {
+    updateSetting('agentDockWidth', width)
+  }, [updateSetting])
 
   // Start 버튼 반응형 라벨 — 버튼 폭(flex:1, 콘텐츠 무관)을 측정해 full/short/icon 으로 축약.
   const [startBtnRef, startBtnWidth] = useElementWidth()
@@ -2674,7 +2681,7 @@ function App() {
   return (
     <div
       className={`${computeAppClass(mode)}${isAgentDocked ? ' agent-docked' : ''}`}
-      style={{ '--agent-dock-w': '400px' }}
+      style={{ '--agent-dock-w': `${agentDockWidth}px` }}
     >
       <QAProgressBanner />
       <ImportProcessingOverlay
@@ -2698,6 +2705,9 @@ function App() {
         appMode={mode}
         agentPanelMode={settings.agentPanelMode}
         onAgentPanelModeChange={(nextMode) => updateSetting('agentPanelMode', nextMode)}
+        agentDockWidth={agentDockWidth}
+        onAgentDockWidthChange={setAgentDockWidth}
+        onAgentDockWidthCommit={commitAgentDockWidth}
         projectKey={`${settings.saveMode}:${workFolder ?? ''}:${settings.projectName ?? ''}`}
         videoAdmissionSources={videoAdmissionSources}
         batchStatusSources={{

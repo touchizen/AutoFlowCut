@@ -29,6 +29,9 @@ describe('App agent surface 배치', () => {
     expect(panelProps).toContain('appMode={mode}')
     expect(panelProps).toContain('agentPanelMode={settings.agentPanelMode}')
     expect(panelProps).toContain("onAgentPanelModeChange={(nextMode) => updateSetting('agentPanelMode', nextMode)}")
+    expect(panelProps).toContain('agentDockWidth={agentDockWidth}')
+    expect(panelProps).toContain('onAgentDockWidthChange={setAgentDockWidth}')
+    expect(panelProps).toContain('onAgentDockWidthCommit={commitAgentDockWidth}')
   })
 
   it('API docked panel이 열려 있을 때만 App container에 reserve class와 width를 건다', () => {
@@ -41,7 +44,9 @@ describe('App agent surface 배치', () => {
     expect(source).toContain(
       "className={`${computeAppClass(mode)}${isAgentDocked ? ' agent-docked' : ''}`}",
     )
-    expect(source).toContain("style={{ '--agent-dock-w': '400px' }}")
+    expect(source).toContain("style={{ '--agent-dock-w': `${agentDockWidth}px` }}")
+    expect(source).toContain('const [agentDockWidth, setAgentDockWidth] = useState(settings.agentDockWidth)')
+    expect(source).toContain("updateSetting('agentDockWidth', width)")
   })
 
   it('App은 useVideoAutomation의 admission/status/event/cleanup source를 ChatPanel에 주입한다', () => {

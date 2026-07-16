@@ -1,6 +1,24 @@
 export const AGENT_PANEL_MODES = Object.freeze(['floating', 'docked'])
+export const DEFAULT_AGENT_DOCK_WIDTH = 400
+export const MIN_AGENT_DOCK_WIDTH = 280
+export const MAX_AGENT_DOCK_WIDTH = 720
+export const MAX_AGENT_DOCK_RATIO = 0.6
 
 const clamp = (value, max) => Math.min(Math.max(value, 0), Math.max(max, 0))
+
+export function clampAgentDockWidth(desiredPx, containerWidthPx) {
+  const desired = typeof desiredPx === 'number' && Number.isFinite(desiredPx)
+    ? desiredPx
+    : DEFAULT_AGENT_DOCK_WIDTH
+  const containerWidth = typeof containerWidthPx === 'number' && Number.isFinite(containerWidthPx)
+    ? Math.max(0, containerWidthPx)
+    : Number.POSITIVE_INFINITY
+  const maxWidth = Math.max(
+    MIN_AGENT_DOCK_WIDTH,
+    Math.min(MAX_AGENT_DOCK_WIDTH, containerWidth * MAX_AGENT_DOCK_RATIO),
+  )
+  return Math.min(maxWidth, Math.max(MIN_AGENT_DOCK_WIDTH, desired))
+}
 
 export function normalizeAgentPanelMode(value) {
   if (value === 'slide') return 'docked'

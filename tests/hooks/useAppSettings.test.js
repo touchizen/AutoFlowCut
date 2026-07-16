@@ -119,6 +119,30 @@ describe('useAppSettings — agentPanelMode', () => {
   })
 })
 
+describe('useAppSettings — agentDockWidth', () => {
+  it('fresh install 기본값은 400px이다', () => {
+    const { result } = renderHook(() => useAppSettings())
+    expect(result.current.settings.agentDockWidth).toBe(400)
+  })
+
+  it('저장된 유효 폭 500px을 보존한다', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ agentDockWidth: 500 }))
+    const { result } = renderHook(() => useAppSettings())
+    expect(result.current.settings.agentDockWidth).toBe(500)
+  })
+
+  it.each([
+    ['문자열', 'garbage', 400],
+    ['NaN', Number.NaN, 400],
+    ['최소 미만', 120, 280],
+    ['최대 초과', 900, 720],
+  ])('저장된 %s 폭을 로드 시 정규화한다', (_label, stored, expected) => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ agentDockWidth: stored }))
+    const { result } = renderHook(() => useAppSettings())
+    expect(result.current.settings.agentDockWidth).toBe(expected)
+  })
+})
+
 describe('useAppSettings — videoConcurrency', () => {
   it('fresh install 기본값은 videoConcurrency 4', () => {
     const { result } = renderHook(() => useAppSettings())

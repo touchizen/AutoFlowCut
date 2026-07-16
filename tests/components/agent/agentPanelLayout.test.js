@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   AGENT_PANEL_MODES,
+  clampAgentDockWidth,
   clampAgentPanelPosition,
   effectiveAgentPanelMode,
   floatingPanelBox,
@@ -9,6 +10,30 @@ import {
 } from '../../../src/components/agent/agentPanelLayout.js'
 
 describe('agentPanelLayout', () => {
+  describe('clampAgentDockWidth', () => {
+    it('최소 280px 아래로 줄지 않는다', () => {
+      expect(clampAgentDockWidth(120, 1200)).toBe(280)
+    })
+
+    it('절대 최대 폭은 720px이다', () => {
+      expect(clampAgentDockWidth(900, 1600)).toBe(720)
+    })
+
+    it('container 폭의 60%를 동적 최대 폭으로 쓴다', () => {
+      expect(clampAgentDockWidth(700, 1000)).toBe(600)
+      expect(clampAgentDockWidth(500, 1000)).toBe(500)
+    })
+
+    it('아주 좁은 container에서도 280px 최소 폭을 깨지 않는다', () => {
+      expect(clampAgentDockWidth(400, 400)).toBe(280)
+    })
+
+    it('NaN이나 숫자가 아닌 값은 기본 400px로 복구한다', () => {
+      expect(clampAgentDockWidth(Number.NaN, 1200)).toBe(400)
+      expect(clampAgentDockWidth('garbage', 1200)).toBe(400)
+    })
+  })
+
   it('지원 모드는 floating과 docked뿐이다', () => {
     expect(AGENT_PANEL_MODES).toEqual(['floating', 'docked'])
   })

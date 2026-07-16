@@ -11,14 +11,19 @@ import AgentIconButton from './AgentIconButton.jsx'
 import AgentModelSelector from './AgentModelSelector.jsx'
 import robotUrl from '../../assets/Robot.svg'
 import {
+  clampAgentDockWidth,
   clampAgentPanelPosition,
+  DEFAULT_AGENT_DOCK_WIDTH,
   effectiveAgentPanelMode,
+  MAX_AGENT_DOCK_WIDTH,
+  MIN_AGENT_DOCK_WIDTH,
   reclampAgentPanelPosition,
 } from './agentPanelLayout.js'
 import './ChatPanel.css'
 
 const AGENT_EVENTS = ['agent:delta', 'agent:message', 'agent:tool-call', 'agent:usage', 'agent:done', 'agent:error']
 const STOP_ARM_MS = 300
+const DOCK_KEYBOARD_STEP_PX = 16
 
 function AgentControlIcon({ name }) {
   const paths = {
@@ -166,6 +171,104 @@ function useFloatingDrag(enabled, reclampSignal) {
   return { panelRef, position: enabled ? position : null, onPointerDown }
 }
 
+function useDockResize({
+  enabled,
+  width,
+  panelRef,
+  onWidthChange,
+  onWidthCommit,
+}) {
+  const dragRef = useRef(null)
+  const latestWidthRef = useRef(width)
+  const [maxWidth, setMaxWidth] = useState(MAX_AGENT_DOCK_WIDTH)
+  latestWidthRef.current = width
+
+  const readContainerWidth = useCallback(() => {
+    const panel = panelRef.current
+    const container = panel?.closest('.app') || panel?.parentElement
+    const measured = container?.getBoundingClientRect().width
+    return typeof measured === 'number' && measured > 0
+      ? measured
+      : Number.POSITIVE_INFINITY
+  }, [panelRef])
+
+  const resizeTo = useCallback((desired, commit = false) => {
+    const containerWidth = readContainerWidth()
+    if (Number.isFinite(containerWidth)) {
+      setMaxWidth(clampAgentDockWidth(MAX_AGENT_DOCK_WIDTH, containerWidth))
+    }
+    const next = clampAgentDockWidth(desired, containerWidth)
+    const changed = next !== latestWidthRef.current
+    latestWidthRef.current = next
+    if (changed) onWidthChange(next)
+    if (commit) onWidthCommit(next)
+    return next
+  }, [onWidthChange, onWidthCommit, readContainerWidth])
+
+  useEffect(() => {
+    if (!enabled) return undefined
+    const panel = panelRef.current
+    const container = panel?.closest('.app') || panel?.parentElement
+    if (!container) return undefined
+
+    const reclamp = () => {
+      const containerWidth = container.getBoundingClientRect().width
+      if (!(containerWidth > 0)) return
+      setMaxWidth(clampAgentDockWidth(MAX_AGENT_DOCK_WIDTH, containerWidth))
+      const next = clampAgentDockWidth(latestWidthRef.current, containerWidth)
+      if (next === latestWidthRef.current) return
+      latestWidthRef.current = next
+      onWidthChange(next)
+    }
+    reclamp()
+    if (typeof ResizeObserver === 'undefined') return undefined
+    const observer = new ResizeObserver(reclamp)
+    observer.observe(container)
+    return () => observer.disconnect()
+  }, [enabled, onWidthChange, panelRef])
+
+  useEffect(() => {
+    if (!enabled) return undefined
+    const onMove = (event) => {
+      const drag = dragRef.current
+      if (!drag) return
+      resizeTo(drag.startWidth + drag.startX - event.clientX)
+    }
+    const onUp = () => {
+      if (!dragRef.current) return
+      dragRef.current = null
+      onWidthCommit(latestWidthRef.current)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      dragRef.current = null
+    }
+  }, [enabled, onWidthCommit, resizeTo])
+
+  const onPointerDown = useCallback((event) => {
+    if (!enabled || event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    const startWidth = resizeTo(latestWidthRef.current)
+    dragRef.current = {
+      startX: event.clientX,
+      startWidth,
+    }
+  }, [enabled, resizeTo])
+
+  const onKeyDown = useCallback((event) => {
+    if (!enabled || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return
+    event.preventDefault()
+    const delta = event.key === 'ArrowLeft' ? DOCK_KEYBOARD_STEP_PX : -DOCK_KEYBOARD_STEP_PX
+    resizeTo(latestWidthRef.current + delta, true)
+  }, [enabled, resizeTo])
+
+  return { maxWidth, onPointerDown, onKeyDown }
+}
+
 /**
  * D14 전역 ChatPanel. App의 generate/story 조건부 body 밖에서 한 번만 mount해야 한다.
  * view 전환은 state를 보존하지만 projectKey 전환은 D15에 따라 이전 session을 abort/close한다.
@@ -177,6 +280,9 @@ export default function ChatPanel({
   appMode = 'api',
   agentPanelMode = 'floating',
   onAgentPanelModeChange = () => {},
+  agentDockWidth = DEFAULT_AGENT_DOCK_WIDTH,
+  onAgentDockWidthChange = () => {},
+  onAgentDockWidthCommit = () => {},
   projectKey = null,
   batchStatusSources = {},
   sceneBridgeSources = {},
@@ -188,6 +294,14 @@ export default function ChatPanel({
   const effectiveMode = effectiveAgentPanelMode(appMode, agentPanelMode)
   const dragEnabled = open && effectiveMode === 'floating'
   const { panelRef, position, onPointerDown } = useFloatingDrag(dragEnabled, appMode)
+  const dockResizeEnabled = open && effectiveMode === 'docked'
+  const dockResize = useDockResize({
+    enabled: dockResizeEnabled,
+    width: agentDockWidth,
+    panelRef,
+    onWidthChange: onAgentDockWidthChange,
+    onWidthCommit: onAgentDockWidthCommit,
+  })
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState([])
   const [toolCalls, setToolCalls] = useState([])
@@ -519,6 +633,22 @@ export default function ChatPanel({
           ? { left: `${position.left}px`, top: `${position.top}px`, right: 'auto', bottom: 'auto' }
           : undefined}
       >
+        {dockResizeEnabled && (
+          <div
+            className="agent-chat-resizer"
+            role="separator"
+            aria-label={t('agent.resizeDock')}
+            aria-orientation="vertical"
+            aria-valuenow={agentDockWidth}
+            aria-valuemin={MIN_AGENT_DOCK_WIDTH}
+            aria-valuemax={dockResize.maxWidth}
+            tabIndex={0}
+            onPointerDown={dockResize.onPointerDown}
+            onKeyDown={dockResize.onKeyDown}
+          >
+            <div className="agent-chat-resizer-handle" />
+          </div>
+        )}
         <div
           className={`agent-chat-header ${dragEnabled ? 'is-draggable' : ''}`}
           onPointerDown={onPointerDown}
