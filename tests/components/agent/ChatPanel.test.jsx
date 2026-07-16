@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // D14 persistent ChatPanel + 실제 batch.status renderer seam.
 import React from 'react'
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ChatPanel from '../../../src/components/agent/ChatPanel.jsx'
@@ -111,6 +111,25 @@ describe('ChatPanel — 명령과 event의 사용자 효과', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('app-server died')
+  })
+
+  it('icon action bar가 기존 accessible names를 보존하고 tooltip은 panel overflow 밖 body에 뜬다', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+    const input = screen.getByRole('textbox', { name: 'Message to the agent' })
+    await user.type(input, '툴팁 확인')
+
+    for (const name of ['Send', 'Steer', 'Stop', 'Close session']) {
+      const button = screen.getByRole('button', { name })
+      expect(button.querySelector('svg'), `${name} icon`).toBeTruthy()
+      expect(button.textContent.trim()).toBe('')
+    }
+
+    fireEvent.mouseEnter(screen.getByRole('button', { name: 'Send' }))
+    const tooltip = await screen.findByRole('tooltip')
+    expect(tooltip).toHaveTextContent('Send a new turn')
+    expect(tooltip.parentElement).toBe(document.body)
+    expect(container.querySelector('.agent-chat-panel')?.contains(tooltip)).toBe(false)
   })
 })
 

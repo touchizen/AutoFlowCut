@@ -141,7 +141,10 @@ describe('agent floating/FAB stay inside four-way App split', () => {
     const css = readFileSync('src/components/agent/ChatPanel.css', 'utf8')
     expect(css).toContain('width: min(420px, calc(100% - 36px))')
     expect(css).toContain('max-height: min(640px, calc(100% - 36px))')
-    expect(css).not.toMatch(/agent-chat-panel[\s\S]*?100v[wh]/)
+    // 패널 sizing rule 자체에 viewport 단위가 없어야 한다(컨테이너 축소 시 안 잘리게).
+    // portal tooltip(.agent-portal-tooltip)은 body에 position:fixed라 100vw clamp가 정당하므로 패널 rule 블록만 검사한다.
+    // [^{]*로 .mode-slide 등 variant selector까지 포함해 검사하되 rule 블록 경계({,})는 안 넘어 tooltip false-positive는 피한다.
+    expect(css).not.toMatch(/\.agent-chat-panel[^{]*\{[^}]*100v[wh]/)
   })
 })
 

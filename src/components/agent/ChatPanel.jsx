@@ -7,6 +7,7 @@ import { extractVideoFrames } from '../../utils/videoFrames.js'
 import { resolveVideoSrc } from '../../utils/videoSrc.js'
 import { useOptionalI18n } from '../../hooks/useI18n'
 import en from '../../locales/en'
+import AgentIconButton from './AgentIconButton.jsx'
 import AgentModelSelector from './AgentModelSelector.jsx'
 import robotUrl from '../../assets/Robot.svg'
 import {
@@ -17,6 +18,33 @@ import {
 import './ChatPanel.css'
 
 const AGENT_EVENTS = ['agent:delta', 'agent:message', 'agent:tool-call', 'agent:usage', 'agent:done', 'agent:error']
+
+function AgentControlIcon({ name }) {
+  const paths = {
+    send: <path d="M4 4l16 8-16 8 3-8-3-8zm3.4 8h7.6" />,
+    steer: <path d="M5 19V7m0 0l-3 3m3-3l3 3m4 7V5m0 12l-3-3m3 3l3-3m4 5V9m0 0l-3 3m3-3l3 3" />,
+    stop: <rect x="6" y="6" width="12" height="12" rx="2" />,
+    close: <path d="M5 5l14 14M19 5L5 19" />,
+    dismiss: <path d="M6 6l12 12M18 6L6 18" />,
+    mode: <path d="M4 5h6v14H4V5zm10 0h6v14h-6V5z" />,
+  }
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {paths[name]}
+    </svg>
+  )
+}
 
 function failureText(failure, t) {
   if (failure?.error === 'agent-limit') {
@@ -494,26 +522,24 @@ export default function ChatPanel({
             {appMode === 'flow' && (
               <span className="agent-chat-flow-notice">{t('agent.flowFloatingOnly')}</span>
             )}
-            <button
-              type="button"
+            <AgentIconButton
               className="agent-chat-mode-toggle"
-              aria-label={t('agent.modeToggle')}
-              aria-pressed={effectiveMode === 'slide'}
-              title={effectiveMode === 'slide' ? t('agent.switchToFloating') : t('agent.switchToSlide')}
+              label={t('agent.modeToggle')}
+              tooltip={effectiveMode === 'slide' ? t('agent.switchToFloating') : t('agent.switchToSlide')}
+              pressed={effectiveMode === 'slide'}
               disabled={appMode === 'flow'}
               onClick={() => onAgentPanelModeChange(effectiveMode === 'slide' ? 'floating' : 'slide')}
             >
-              <span aria-hidden="true">⇥</span>
-            </button>
-            <button
-              type="button"
+              <AgentControlIcon name="mode" />
+            </AgentIconButton>
+            <AgentIconButton
               className="agent-chat-dismiss"
-              aria-label={t('agent.dismissPanel')}
-              title={t('agent.dismissPanel')}
+              label={t('agent.dismissPanel')}
+              tooltip={t('agent.dismissPanel')}
               onClick={onDismiss}
             >
-              <span aria-hidden="true">×</span>
-            </button>
+              <AgentControlIcon name="dismiss" />
+            </AgentIconButton>
           </div>
         </div>
 
@@ -558,10 +584,39 @@ export default function ChatPanel({
             rows={2}
           />
           <div className="agent-chat-actions">
-            <button type="submit" disabled={running || !input.trim()}>{t('agent.send')}</button>
-            <button type="button" onClick={steer} disabled={!running || !input.trim()}>{t('agent.steer')}</button>
-            <button type="button" onClick={abort} disabled={!running}>{t('agent.stop')}</button>
-            <button type="button" onClick={close} disabled={!sessionOpenRef.current}>{t('agent.closeSession')}</button>
+            <AgentIconButton
+              type="submit"
+              className="is-primary"
+              label={t('agent.send')}
+              tooltip={t('agent.sendTooltip')}
+              disabled={running || !input.trim()}
+            >
+              <AgentControlIcon name="send" />
+            </AgentIconButton>
+            <AgentIconButton
+              label={t('agent.steer')}
+              tooltip={t('agent.steerTooltip')}
+              onClick={steer}
+              disabled={!running || !input.trim()}
+            >
+              <AgentControlIcon name="steer" />
+            </AgentIconButton>
+            <AgentIconButton
+              label={t('agent.stop')}
+              tooltip={t('agent.stopTooltip')}
+              onClick={abort}
+              disabled={!running}
+            >
+              <AgentControlIcon name="stop" />
+            </AgentIconButton>
+            <AgentIconButton
+              label={t('agent.closeSession')}
+              tooltip={t('agent.closeSessionTooltip')}
+              onClick={close}
+              disabled={!sessionOpenRef.current}
+            >
+              <AgentControlIcon name="close" />
+            </AgentIconButton>
           </div>
         </form>
       </aside>
