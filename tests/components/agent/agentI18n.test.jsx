@@ -17,8 +17,17 @@ import { I18nProvider } from '../../../src/hooks/useI18n'
 import { __resetFlowHiddenForTests } from '../../../src/hooks/useModalVisibility'
 import ChatPanel from '../../../src/components/agent/ChatPanel.jsx'
 import ApprovalDialog from '../../../src/components/agent/ApprovalDialog.jsx'
+import en from '../../../src/locales/en.js'
+import ko from '../../../src/locales/ko.js'
 
 const HANGUL = /[가-힣]/
+
+const REDESIGN_KEYS = [
+  'openPanel', 'dismissPanel', 'modelLabel', 'modelDefault', 'codexProvider',
+  'claudeProvider', 'comingSoon', 'slideMode', 'floatingMode', 'modeToggle',
+  'switchToSlide', 'switchToFloating', 'flowFloatingOnly', 'sendTooltip',
+  'steerTooltip', 'stopTooltip', 'closeSessionTooltip',
+]
 
 function agentApi() {
   const listeners = new Map()
@@ -146,5 +155,18 @@ describe('에이전트 UI 는 앱 locale 을 따른다 (D14)', () => {
     expect(text).toMatch(/제거/)
     expect(text).toMatch(/덮어/)
     expect(text).not.toMatch(/agent\.[a-zA-Z]/)
+  })
+})
+
+describe('에이전트 UI 재설계 locale 계약', () => {
+  it('ko/en에 같은 새 키가 있고 빈 문자열이나 raw key가 없다', () => {
+    for (const key of REDESIGN_KEYS) {
+      expect(en.agent[key], `en.agent.${key}`).toBeTypeOf('string')
+      expect(ko.agent[key], `ko.agent.${key}`).toBeTypeOf('string')
+      expect(en.agent[key].trim()).not.toBe('')
+      expect(ko.agent[key].trim()).not.toBe('')
+      expect(en.agent[key]).not.toBe(`agent.${key}`)
+      expect(ko.agent[key]).not.toBe(`agent.${key}`)
+    }
   })
 })
