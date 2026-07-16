@@ -114,7 +114,7 @@ export function createAgentSessionManager({
     return null
   }
 
-  async function open() {
+  async function open(model) {
     // close 정산 전에 예전 openPromise를 재사용하면 닫힌 identity를 새 세션처럼 돌려준다.
     // 닫기 실패는 closeSession이 current를 비운 뒤 전파하므로, 여기서는 정산만 기다리고 새 open을 계속한다.
     if (current?.closePromise) await current.closePromise.catch(() => {})
@@ -158,6 +158,7 @@ export function createAgentSessionManager({
     })
     const orchestrator = createCodexOrchestratorImpl({
       ...orchestratorOptions,
+      ...(model ? { model } : {}),
       elicitationResponder,
       privateRpc,
       toolCore,
@@ -222,10 +223,11 @@ export function createAgentSessionManager({
     return run(session)
   }
 
-  function send(text) {
+  function send(text, model) {
     return withOpenSession((session) => {
       const refusal = admitTurn(session)
-      return refusal || session.orchestrator.send(text)
+      if (refusal) return refusal
+      return model ? session.orchestrator.send(text, model) : session.orchestrator.send(text)
     })
   }
 

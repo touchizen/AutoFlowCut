@@ -118,8 +118,10 @@ export function registerAgentIPC(ipcMain, { sessionManager, getWindow } = {}) {
 
   const emit = createEmitter(getWindow)
   const registrations = [
-    ['agent:session-open', 'open', () => []],
-    ['agent:send', 'send', (payload) => [payload?.text]],
+    ['agent:session-open', 'open', (payload) => (payload?.model ? [payload.model] : [])],
+    ['agent:send', 'send', (payload) => (payload?.model
+      ? [payload?.text, payload.model]
+      : [payload?.text])],
     ['agent:steer', 'steer', (payload) => [payload?.text]],
     ['agent:abort', 'abort', () => []],
     ['agent:session-close', 'close', () => []],

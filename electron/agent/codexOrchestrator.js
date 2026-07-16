@@ -76,7 +76,7 @@ export function createCodexOrchestrator({
   resourcesPath = process.resourcesPath,
   repoRoot = DEFAULT_REPO_ROOT,
   cwd = process.cwd(),
-  model,
+  model: initialModel,
   onDelta,
   onEvent,
   onExit,
@@ -270,7 +270,7 @@ export function createCodexOrchestrator({
         capabilities: { experimentalApi: true },
       })
       const started = await session.client.request('thread/start', buildOrchestratorThreadParams({
-        model,
+        model: initialModel,
         workingDirectory: work.workingDirectory,
         config: clientOptions.config,
       }))
@@ -290,7 +290,7 @@ export function createCodexOrchestrator({
     return openPromise
   }
 
-  async function send(text) {
+  async function send(text, model) {
     await open()
     if (turnStartPending) {
       throw new Error('Codex orchestrator turn start is already in flight; use steer instead')
@@ -300,6 +300,7 @@ export function createCodexOrchestrator({
     try {
       const result = await session.client.request('turn/start', {
         threadId,
+        ...(model ? { model } : {}),
         input: [{ type: 'text', text }],
       })
       const startedTurnId = result?.turn?.id ?? null
