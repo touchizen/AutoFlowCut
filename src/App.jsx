@@ -55,6 +55,13 @@ import { runSceneImportWithConfirmation } from './utils/importInspection'
 import { checkFolderPermission, checkFlowProjectReady } from './utils/guards'
 import { shouldApplyModeScopedUpdate } from './utils/modeSwitchGuard'
 import { collectTagErrors } from './utils/tagMatch'
+import { planMentionTagMerges } from './utils/mentionTagMerge'
+import {
+  applyM1MentionExclusions,
+  buildM1FlowReferenceExclusionToast,
+  collectM1FlowReferenceExclusions,
+  flowSyncable,
+} from './utils/refImageGuard'
 import { getFramePairEffectivePrompt } from './utils/framePairPrompt'
 import { buildI2VScenePatch } from './utils/i2vScenePatch'
 import { frameImageFor, stripOmniEndFrame } from './utils/framePairImages'
@@ -1309,6 +1316,39 @@ function App() {
     // 이미 실행 중이거나 큐에 batch가 대기 중이면 무시 (중지는 별도 버튼)
     // #R12-11: 다운로드-only 비디오 retry 진행 중에도 Start 차단(같은 아이템 경합 방지).
     if (isRunning || videoAutomation.isRunning || hasPendingBatch || videoRetryInFlightRef.current) return
+    const isImageBatchStart = activeTab === 'text' || activeTab === 'list'
+    const imageTargetScenes = isImageBatchStart
+      ? (force ? scenes.filter(scene => scene.prompt) : filterPendingScenes(scenes))
+      : []
+    let m1FlowGuard = {
+      exclusions: [],
+      mentionNamesBySceneId: {},
+    }
+
+    if (imageTargetScenes.length > 0) {
+      const imageTargetIds = new Set(imageTargetScenes.map(scene => scene.id))
+      const mentionMergePlan = planMentionTagMerges(
+        scenes,
+        scenesHook.references,
+        {
+          filter: scene => imageTargetIds.has(scene.id),
+        }
+      )
+
+      for (const patch of mentionMergePlan.patches) {
+        scenesHook.updateScene(patch.sceneId, { characters: patch.characters })
+      }
+
+      if (modeRef.current === 'flow') {
+        m1FlowGuard = collectM1FlowReferenceExclusions(
+          scenes,
+          scenesHook.getMatchingReferences,
+          {
+            filter: scene => imageTargetIds.has(scene.id),
+          }
+        )
+      }
+    }
     // #R7-5: 비동기 preflight(getAccessToken/폴더확인) 동안 모드가 바뀌면 캡처한 엔진/모드가
     //   stale 해진다 — 시작 모드를 잠그고, 디스패치 직전 바뀌었으면 중단.
     const startMode = modeRef.current
@@ -1373,7 +1413,7 @@ function App() {
         // 이미지 생성 — 가드 순서: (1) 생성 대상 0개면 즉시 안내 (스타일 선택 요구하지 않음),
         // (2) 스타일 필수 검증. 순서가 반대면 "이미 다 생성됐는데 스타일 골라달라" 어색함.
         // force=true: 완료 씬 포함 강제 재생성 → "이미 다 생성됐다" 가드 우회 (prompt 있는 씬이 1개라도 있으면 진행).
-        const targetScenes = force ? scenes.filter(s => s.prompt) : filterPendingScenes(scenes)
+        const targetScenes = imageTargetScenes
         if (targetScenes.length === 0) {
           toast.warning(t('toast.allScenesGenerated'))
           return
@@ -1400,6 +1440,8 @@ function App() {
           }
         }
 
+        const exclusionToast = buildM1FlowReferenceExclusionToast(m1FlowGuard.exclusions)
+
         // seedLocked && seedNo 가 숫자일 때만 고정 seed 사용, 그 외엔 Flow 랜덤
         const effectiveSeed = settings.seedLocked && typeof settings.seedNo === 'number' && Number.isFinite(settings.seedNo)
           ? settings.seedNo
@@ -1415,6 +1457,7 @@ function App() {
           selectedStyleRefId: effectiveStyleId,
           seed: effectiveSeed,
           force,
+          m1ExcludedMentionNamesBySceneId: m1FlowGuard.mentionNamesBySceneId,
         }
 
         // 태그 검증: 이미지 생성 대상 씬만 검사. 단 sceneIndex 는 원본 scenes 배열의 인덱스로
@@ -1426,15 +1469,32 @@ function App() {
         if (errors.length > 0) {
           setTagValidationErrors(errors)
           // #R8-6: 모달 열린 동안 모드가 바뀌면 Proceed 가 가드를 우회하므로 시작 모드를 함께 보관.
-          setPendingStartOptions({ ...startOptions, __startMode: startMode })
+          setPendingStartOptions({
+            ...startOptions,
+            __startMode: startMode,
+            __m1ExclusionToast: exclusionToast,
+          })
           return
+        }
+
+        if (exclusionToast) {
+          toast.warning(t(exclusionToast.key, exclusionToast.params))
         }
 
         // #R34: 생성 전 미동기화 @멘션 캐릭터 가드 — Flow 모드에서 멘션된 캐릭터 중 동기화 안 된 게
         //   있으면 모달로 안내하고, '동기화 후 생성' 시 자동 일괄(직렬) 동기화 후 진행한다.
         //   (캐릭터 동기화는 생성 배치에서 분리됐으므로 여기서 사전 점검한다.)
         if (mode === 'flow') {
-          const unsyncedMentioned = selectUnsyncedMentionedRefs(targetScenes, scenesHook.references)
+          const syncCandidateScenes = targetScenes.map(scene =>
+            applyM1MentionExclusions(
+              scene,
+              m1FlowGuard.mentionNamesBySceneId
+            )
+          )
+          const unsyncedMentioned = selectUnsyncedMentionedRefs(
+            syncCandidateScenes,
+            scenesHook.references
+          ).filter(flowSyncable)
           if (unsyncedMentioned.length > 0) {
             setSyncGate({
               refs: unsyncedMentioned,
@@ -1687,7 +1747,7 @@ function App() {
     if (startInFlightRef.current) return
     startInFlightRef.current = true
     try {
-      const { __startMode, ...opts } = pendingStartOptions
+      const { __startMode, __m1ExclusionToast, ...opts } = pendingStartOptions
       // 이 경로는 handleStart 의 preflight(stale-mode/projectName/auth/flow-ready)를 우회하므로 재검증한다.
       // #R8-6: 모달이 열린 동안 모드가 바뀌었으면 중단.
       if (__startMode && modeRef.current !== __startMode) {
@@ -1722,14 +1782,28 @@ function App() {
         const readyCheck = checkFlowProjectReady(flowProjectReady, t)
         if (!readyCheck.ok) { setPendingStartOptions(null); return }
       }
+      if (__m1ExclusionToast) {
+        toast.warning(t(__m1ExclusionToast.key, __m1ExclusionToast.params))
+      }
       // 시작 시점 snapshot — 사용자가 modal 띄운 사이 스타일 변경해도 startOptions에 들어간 게 진실
       const sid = opts.selectedStyleRefId
       // #R34-fix: 태그검증 proceed 경로도 미동기화 @멘션 가드를 재적용한다. handleStartImpl 은 태그
       //   오류가 있으면 sync 게이트 전에 return 하므로, 태그경고+미동기화 캐릭터가 같이 있는 씬은 이
       //   경로로 동기화 모달 없이 생성되던 우회가 있었다. 여기서 동일 게이트를 다시 통과시킨다.
       if (modeRef.current === 'flow') {
-        const targetScenes = opts.force ? scenes.filter(s => s.prompt) : filterPendingScenes(scenes)
-        const unsyncedMentioned = selectUnsyncedMentionedRefs(targetScenes, scenesHook.references)
+        const targetScenes = opts.force
+          ? scenes.filter(scene => scene.prompt)
+          : filterPendingScenes(scenes)
+        const syncCandidateScenes = targetScenes.map(scene =>
+          applyM1MentionExclusions(
+            scene,
+            opts.m1ExcludedMentionNamesBySceneId
+          )
+        )
+        const unsyncedMentioned = selectUnsyncedMentionedRefs(
+          syncCandidateScenes,
+          scenesHook.references
+        ).filter(flowSyncable)
         if (unsyncedMentioned.length > 0) {
           setSyncGate({
             refs: unsyncedMentioned,
