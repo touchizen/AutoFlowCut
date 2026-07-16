@@ -3,6 +3,8 @@ export const DEFAULT_AGENT_DOCK_WIDTH = 400
 export const MIN_AGENT_DOCK_WIDTH = 280
 export const MAX_AGENT_DOCK_WIDTH = 720
 export const MAX_AGENT_DOCK_RATIO = 0.6
+export const MIN_AGENT_DOCK_CONTAINER_WIDTH = 600
+export const MIN_AGENT_DOCK_CONTAINER_HEIGHT = 420
 
 const clamp = (value, max) => Math.min(Math.max(value, 0), Math.max(max, 0))
 
@@ -25,8 +27,17 @@ export function normalizeAgentPanelMode(value) {
   return AGENT_PANEL_MODES.includes(value) ? value : 'floating'
 }
 
-export function effectiveAgentPanelMode(appMode, storedMode) {
-  return appMode === 'flow' ? 'floating' : normalizeAgentPanelMode(storedMode)
+export function effectiveAgentPanelMode(_appMode, storedMode) {
+  return normalizeAgentPanelMode(storedMode)
+}
+
+export function canDockInContainer(containerSize) {
+  const width = containerSize?.width
+  const height = containerSize?.height
+  return Number.isFinite(width)
+    && Number.isFinite(height)
+    && width >= MIN_AGENT_DOCK_CONTAINER_WIDTH
+    && height >= MIN_AGENT_DOCK_CONTAINER_HEIGHT
 }
 
 export function clampAgentPanelPosition({

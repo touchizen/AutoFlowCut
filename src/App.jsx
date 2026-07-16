@@ -597,7 +597,6 @@ export async function runStoryCharacterPush({
 import Header from './components/Header'
 import ApprovalDialog from './components/agent/ApprovalDialog'
 import ChatPanel from './components/agent/ChatPanel'
-import { effectiveAgentPanelMode } from './components/agent/agentPanelLayout'
 import PromptInput from './components/PromptInput'
 import SceneList from './components/SceneList'
 import SrtPromptModal from './components/SrtPromptModal'
@@ -687,6 +686,7 @@ function App() {
 
   // Settings (초기화 + localStorage 동기화)
   const { settings, setSettings, updateSetting, ensureProjectName } = useAppSettings()
+  const [agentEffectivePanelMode, setAgentEffectivePanelMode] = useState('floating')
   const [agentDockWidth, setAgentDockWidth] = useState(settings.agentDockWidth)
   useEffect(() => {
     setAgentDockWidth(settings.agentDockWidth)
@@ -2663,7 +2663,7 @@ function App() {
   const currentStatus = showVideoAutomation ? videoAutomation.status : status
   const currentStatusMessage = showVideoAutomation ? videoAutomation.statusMessage : statusMessage
   const isAgentDocked = agentPanelOpen
-    && effectiveAgentPanelMode(mode, settings.agentPanelMode) === 'docked'
+    && agentEffectivePanelMode === 'docked'
 
   // #R7-18: mp3 드롭 → 나레이션/SFX 트랙 import. 메인(하단 패널) 타임라인이 공유하는 핸들러.
   const handleTrackDrop = async ({ trackRole, files, timecodeMs }) => {
@@ -2705,6 +2705,7 @@ function App() {
         appMode={mode}
         agentPanelMode={settings.agentPanelMode}
         onAgentPanelModeChange={(nextMode) => updateSetting('agentPanelMode', nextMode)}
+        onEffectiveModeChange={setAgentEffectivePanelMode}
         agentDockWidth={agentDockWidth}
         onAgentDockWidthChange={setAgentDockWidth}
         onAgentDockWidthCommit={commitAgentDockWidth}

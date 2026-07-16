@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   AGENT_PANEL_MODES,
+  canDockInContainer,
   clampAgentDockWidth,
   clampAgentPanelPosition,
   effectiveAgentPanelMode,
@@ -38,13 +39,29 @@ describe('agentPanelLayout', () => {
     expect(AGENT_PANEL_MODES).toEqual(['floating', 'docked'])
   })
 
-  it('stored docked는 API에서 docked, Flow에서 floating이며 저장값 객체를 바꾸지 않는다', () => {
+  it('stored docked는 appMode와 무관하게 docked이며 저장값 객체를 바꾸지 않는다', () => {
     const preference = { value: 'docked' }
 
     expect(effectiveAgentPanelMode('api', preference.value)).toBe('docked')
-    expect(effectiveAgentPanelMode('flow', preference.value)).toBe('floating')
+    expect(effectiveAgentPanelMode('flow', preference.value)).toBe('docked')
     expect(effectiveAgentPanelMode('api', preference.value)).toBe('docked')
     expect(preference).toEqual({ value: 'docked' })
+  })
+
+  describe('canDockInContainer', () => {
+    it('600×420 이상에서만 dock을 허용한다', () => {
+      expect(canDockInContainer({ width: 600, height: 420 })).toBe(true)
+      expect(canDockInContainer({ width: 601, height: 421 })).toBe(true)
+      expect(canDockInContainer({ width: 599, height: 420 })).toBe(false)
+      expect(canDockInContainer({ width: 600, height: 419 })).toBe(false)
+    })
+
+    it('누락되거나 유한하지 않은 크기는 dock 불가로 처리한다', () => {
+      expect(canDockInContainer()).toBe(false)
+      expect(canDockInContainer({})).toBe(false)
+      expect(canDockInContainer({ width: Number.NaN, height: 420 })).toBe(false)
+      expect(canDockInContainer({ width: 600, height: Number.POSITIVE_INFINITY })).toBe(false)
+    })
   })
 
   it('legacy slide를 docked로 마이그레이션하고 invalid mode는 floating으로 정규화한다', () => {

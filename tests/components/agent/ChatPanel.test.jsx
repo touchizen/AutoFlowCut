@@ -51,13 +51,33 @@ function batchSources(overrides = {}) {
   }
 }
 
+const largeAppRect = {
+  left: 0,
+  top: 0,
+  width: 1000,
+  height: 800,
+  right: 1000,
+  bottom: 800,
+}
+let currentAppRect
+let originalResizeObserver
+
 beforeEach(() => {
+  currentAppRect = largeAppRect
+  originalResizeObserver = globalThis.ResizeObserver
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function rect() {
+    if (this.classList.contains('app')) return currentAppRect
+    return { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 }
+  })
   window.electronAPI = createFullAgentApi()
 })
 
 afterEach(() => {
   vi.useRealTimers()
   cleanup()
+  vi.restoreAllMocks()
+  if (originalResizeObserver === undefined) delete globalThis.ResizeObserver
+  else globalThis.ResizeObserver = originalResizeObserver
   delete window.electronAPI
 })
 
@@ -429,17 +449,21 @@ describe('ChatPanel — agentMessage completion reconciliation', () => {
 })
 
 describe('ChatPanel — effective panel mode', () => {
-  it('저장 docked는 Flow 진입 때 floating으로 파생되고 Flow 해제 때 docked로 자동 복귀한다', () => {
+  it('충분한 App에서는 Flow도 docked를 유지하고 toggle이 활성화되며 옛 notice가 없다', () => {
     const onAgentPanelModeChange = vi.fn()
+    const onEffectiveModeChange = vi.fn()
     const { container, rerender } = render(
-      <ChatPanel
-        open
-        appMode="api"
-        agentPanelMode="docked"
-        onAgentPanelModeChange={onAgentPanelModeChange}
-        projectKey="p"
-        batchStatusSources={batchSources()}
-      />,
+      <div className="app">
+        <ChatPanel
+          open
+          appMode="api"
+          agentPanelMode="docked"
+          onAgentPanelModeChange={onAgentPanelModeChange}
+          onEffectiveModeChange={onEffectiveModeChange}
+          projectKey="p"
+          batchStatusSources={batchSources()}
+        />
+      </div>,
     )
     const panel = container.querySelector('.agent-chat-panel')
     const toggle = screen.getByRole('button', { name: 'Dock panel mode' })
@@ -447,33 +471,75 @@ describe('ChatPanel — effective panel mode', () => {
     expect(toggle).toHaveAttribute('aria-pressed', 'true')
 
     rerender(
-      <ChatPanel
-        open
-        appMode="flow"
-        agentPanelMode="docked"
-        onAgentPanelModeChange={onAgentPanelModeChange}
-        projectKey="p"
-        batchStatusSources={batchSources()}
-      />,
-    )
-    expect(panel).toHaveClass('mode-floating')
-    expect(toggle).toBeDisabled()
-    expect(toggle).toHaveAttribute('aria-pressed', 'false')
-    expect(screen.getByText('The agent stays floating while Flow is active.')).toBeTruthy()
-    expect(onAgentPanelModeChange).not.toHaveBeenCalled()
-
-    rerender(
-      <ChatPanel
-        open
-        appMode="api"
-        agentPanelMode="docked"
-        onAgentPanelModeChange={onAgentPanelModeChange}
-        projectKey="p"
-        batchStatusSources={batchSources()}
-      />,
+      <div className="app">
+        <ChatPanel
+          open
+          appMode="flow"
+          agentPanelMode="docked"
+          onAgentPanelModeChange={onAgentPanelModeChange}
+          onEffectiveModeChange={onEffectiveModeChange}
+          projectKey="p"
+          batchStatusSources={batchSources()}
+        />
+      </div>,
     )
     expect(panel).toHaveClass('mode-docked')
+    expect(toggle).toBeEnabled()
     expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByText('The agent stays floating while Flow is active.')).toBeNull()
+    expect(onAgentPanelModeChange).not.toHaveBeenCalled()
+    expect(onEffectiveModeChange).toHaveBeenLastCalledWith('docked')
+  })
+
+  it('작은 App에서는 저장 docked를 건드리지 않고 floating으로 파생하며 resize 뒤 자동 복귀한다', async () => {
+    const resizeCallbacks = []
+    globalThis.ResizeObserver = class ResizeObserver {
+      constructor(callback) { resizeCallbacks.push(callback) }
+      observe() {}
+      disconnect() {}
+    }
+    currentAppRect = {
+      left: 600,
+      top: 0,
+      width: 599,
+      height: 419,
+      right: 1199,
+      bottom: 419,
+    }
+    const onAgentPanelModeChange = vi.fn()
+    const onEffectiveModeChange = vi.fn()
+    const { container } = render(
+      <div className="app">
+        <ChatPanel
+          open
+          appMode="flow"
+          agentPanelMode="docked"
+          onAgentPanelModeChange={onAgentPanelModeChange}
+          onEffectiveModeChange={onEffectiveModeChange}
+          projectKey="p"
+          batchStatusSources={batchSources()}
+        />
+      </div>,
+    )
+    const panel = container.querySelector('.agent-chat-panel')
+
+    await waitFor(() => expect(panel).toHaveClass('mode-floating'))
+    expect(screen.queryByRole('separator', { name: 'Resize agent dock' })).toBeNull()
+    expect(onAgentPanelModeChange).not.toHaveBeenCalled()
+    expect(onEffectiveModeChange).toHaveBeenLastCalledWith('floating')
+
+    currentAppRect = {
+      left: 600,
+      top: 0,
+      width: 600,
+      height: 420,
+      right: 1200,
+      bottom: 420,
+    }
+    act(() => resizeCallbacks.forEach((callback) => callback()))
+
+    await waitFor(() => expect(panel).toHaveClass('mode-docked'))
+    expect(onEffectiveModeChange).toHaveBeenLastCalledWith('docked')
   })
 
   it('API mode toggle은 floating에서 docked preference를 전달한다', async () => {
@@ -498,14 +564,16 @@ describe('ChatPanel — effective panel mode', () => {
     const user = userEvent.setup()
     const onAgentPanelModeChange = vi.fn()
     render(
-      <ChatPanel
-        open
-        appMode="api"
-        agentPanelMode="docked"
-        onAgentPanelModeChange={onAgentPanelModeChange}
-        projectKey="p"
-        batchStatusSources={batchSources()}
-      />,
+      <div className="app">
+        <ChatPanel
+          open
+          appMode="api"
+          agentPanelMode="docked"
+          onAgentPanelModeChange={onAgentPanelModeChange}
+          projectKey="p"
+          batchStatusSources={batchSources()}
+        />
+      </div>,
     )
 
     const toggle = screen.getByRole('button', { name: 'Dock panel mode' })

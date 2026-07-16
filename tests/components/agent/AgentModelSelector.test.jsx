@@ -3,17 +3,17 @@ import React from 'react'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import AgentModelSelector from '../../../src/components/agent/AgentModelSelector.jsx'
+import AgentModelSelector, { listboxPosition } from '../../../src/components/agent/AgentModelSelector.jsx'
 
 const models = [
   { id: 'gpt-a', displayName: 'GPT A', hidden: false },
   { id: 'gpt-b', displayName: 'GPT B', hidden: false },
 ]
 
-function renderSelector(props = {}) {
+function renderSelector(props = {}, { appContainer = false } = {}) {
   const onChange = vi.fn()
   const result = render(
-    <div>
+    <div className={appContainer ? 'app' : undefined}>
       <AgentModelSelector
         models={models}
         value={null}
@@ -41,6 +41,14 @@ afterEach(() => {
 })
 
 describe('AgentModelSelector', () => {
+  it('순수 위치 함수는 offset App container의 좌우·상하 경계 안으로 clamp한다', () => {
+    expect(listboxPosition(
+      { left: 1170, top: 850, right: 1190, bottom: 878, width: 20, height: 28 },
+      { left: 0, top: 0, right: 220, bottom: 120, width: 220, height: 120 },
+      { left: 600, top: 0, right: 1200, bottom: 900, width: 600, height: 900 },
+    )).toEqual({ left: 972, top: 724, width: 220, placement: 'top' })
+  })
+
   it('combobox/listbox/option ARIA와 Claude disabled badge를 완전하게 노출한다', async () => {
     const user = userEvent.setup()
     renderSelector()
@@ -134,12 +142,15 @@ describe('AgentModelSelector', () => {
     expect(screen.queryByRole('option', { name: 'GPT Hidden' })).toBeNull()
   })
 
-  it('listbox를 document.body portal에 렌더하고 viewport edge에서 위로 flip한다', async () => {
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 300 })
-    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 240 })
+  it('listbox body portal을 offset App container 안에 두고 아래 공간이 없으면 위로 flip한다', async () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1400 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 })
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function rect() {
+      if (this.classList.contains('app')) {
+        return { left: 600, top: 0, right: 1200, bottom: 900, width: 600, height: 900 }
+      }
       if (this.classList.contains('agent-model-combobox')) {
-        return { left: 260, top: 210, right: 340, bottom: 238, width: 80, height: 28 }
+        return { left: 1170, top: 850, right: 1190, bottom: 878, width: 20, height: 28 }
       }
       if (this.classList.contains('agent-model-listbox')) {
         return { left: 0, top: 0, right: 220, bottom: 120, width: 220, height: 120 }
@@ -147,17 +158,17 @@ describe('AgentModelSelector', () => {
       return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }
     })
     const user = userEvent.setup()
-    const { container } = renderSelector()
+    const { container } = renderSelector({}, { appContainer: true })
 
     await user.click(screen.getByRole('combobox', { name: 'Agent model' }))
     const listbox = screen.getByRole('listbox', { name: 'Agent model' })
-    await waitFor(() => expect(listbox.style.left).toBe('72px'))
+    await waitFor(() => expect(listbox.style.left).toBe('972px'))
 
     expect(listbox.parentElement).toBe(document.body)
     expect(container.querySelector('.agent-model-selector').contains(listbox)).toBe(false)
     expect(listbox.style.position).toBe('fixed')
     expect(listbox.style.width).toBe('220px')
-    expect(listbox.style.top).toBe('84px')
+    expect(listbox.style.top).toBe('724px')
   })
 
   it('portaled listbox의 마지막 option으로 disabled Claude coming soon을 보존한다', async () => {

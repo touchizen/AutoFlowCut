@@ -21,20 +21,23 @@ describe('AgentIconButton portal tooltip', () => {
     expect(button).toHaveTextContent('')
   })
 
-  it('overflow hidden 조상 밖 document.body portal에 렌더하고 우상단 edge에서 안 잘린다', async () => {
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
-    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 768 })
+  it('body portal을 유지하면서 offset App container의 우상단 edge 안으로 clamp한다', async () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1400 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 })
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function rect() {
+      if (this.classList.contains('app')) {
+        return { left: 600, top: 0, right: 1200, bottom: 900, width: 600, height: 900 }
+      }
       if (this.classList.contains('agent-portal-tooltip')) {
         return { left: 0, top: 0, right: 200, bottom: 30, width: 200, height: 30 }
       }
       if (this.tagName === 'BUTTON') {
-        return { left: 990, top: 2, right: 1010, bottom: 34, width: 20, height: 32 }
+        return { left: 1170, top: 2, right: 1190, bottom: 34, width: 20, height: 32 }
       }
       return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }
     })
     const { container } = render(
-      <div style={{ overflow: 'hidden', width: 40, height: 40 }}>
+      <div className="app" style={{ overflow: 'hidden', width: 600, height: 900 }}>
         <AgentIconButton label="Close session" tooltip="Close the agent session">
           <svg aria-hidden="true" />
         </AgentIconButton>
@@ -43,7 +46,7 @@ describe('AgentIconButton portal tooltip', () => {
 
     fireEvent.mouseEnter(screen.getByRole('button', { name: 'Close session' }))
     const tooltip = await screen.findByRole('tooltip')
-    await waitFor(() => expect(tooltip.style.left).toBe('816px'))
+    await waitFor(() => expect(tooltip.style.left).toBe('992px'))
 
     expect(tooltip.parentElement).toBe(document.body)
     expect(container.contains(tooltip)).toBe(false)
@@ -62,5 +65,13 @@ describe('AgentIconButton portal tooltip', () => {
       { width: 80, height: 24 },
       { width: 320, height: 240 },
     ).left).toBe(8)
+  })
+
+  it('순수 위치 함수는 viewport 원점이 아니라 offset App container 박스 안으로 clamp한다', () => {
+    expect(tooltipPosition(
+      { left: 1170, right: 1190, top: 100, bottom: 132 },
+      { width: 200, height: 30 },
+      { left: 600, top: 0, right: 1200, bottom: 900, width: 600, height: 900 },
+    )).toEqual({ left: 992, top: 62, placement: 'top' })
   })
 })

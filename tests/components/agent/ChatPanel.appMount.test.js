@@ -32,14 +32,18 @@ describe('App agent surface 배치', () => {
     expect(panelProps).toContain('agentDockWidth={agentDockWidth}')
     expect(panelProps).toContain('onAgentDockWidthChange={setAgentDockWidth}')
     expect(panelProps).toContain('onAgentDockWidthCommit={commitAgentDockWidth}')
+    expect(panelProps).toContain('onEffectiveModeChange={setAgentEffectivePanelMode}')
   })
 
-  it('API docked panel이 열려 있을 때만 App container에 reserve class와 width를 건다', () => {
+  it('ChatPanel이 보고한 실제 docked mode로만 App container reserve class와 width를 건다', () => {
     const source = fs.readFileSync(path.resolve('src/App.jsx'), 'utf8')
 
-    expect(source).toContain("import { effectiveAgentPanelMode } from './components/agent/agentPanelLayout'")
+    expect(source).not.toContain("import { effectiveAgentPanelMode } from './components/agent/agentPanelLayout'")
+    expect(source).toContain(
+      "const [agentEffectivePanelMode, setAgentEffectivePanelMode] = useState('floating')",
+    )
     expect(source).toMatch(
-      /const isAgentDocked = agentPanelOpen\s*&& effectiveAgentPanelMode\(mode, settings\.agentPanelMode\) === 'docked'/,
+      /const isAgentDocked = agentPanelOpen\s*&& agentEffectivePanelMode === 'docked'/,
     )
     expect(source).toContain(
       "className={`${computeAppClass(mode)}${isAgentDocked ? ' agent-docked' : ''}`}",

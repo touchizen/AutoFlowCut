@@ -10,14 +10,22 @@ const MIN_LISTBOX_WIDTH = 220
 const clamp = (value, min, max) => Math.min(Math.max(value, min), Math.max(min, max))
 
 export function listboxPosition(anchorRect, listboxRect, viewport, gap = GAP) {
+  const boundsLeft = Number.isFinite(viewport.left) ? viewport.left : 0
+  const boundsTop = Number.isFinite(viewport.top) ? viewport.top : 0
+  const boundsRight = Number.isFinite(viewport.right)
+    ? viewport.right
+    : boundsLeft + viewport.width
+  const boundsBottom = Number.isFinite(viewport.bottom)
+    ? viewport.bottom
+    : boundsTop + viewport.height
   const width = Math.max(anchorRect.width, MIN_LISTBOX_WIDTH)
-  const left = clamp(anchorRect.left, EDGE, viewport.width - width - EDGE)
+  const left = clamp(anchorRect.left, boundsLeft + EDGE, boundsRight - width - EDGE)
   const belowTop = anchorRect.bottom + gap
-  const placement = belowTop + listboxRect.height > viewport.height - EDGE ? 'top' : 'bottom'
+  const placement = belowTop + listboxRect.height > boundsBottom - EDGE ? 'top' : 'bottom'
   const rawTop = placement === 'top'
     ? anchorRect.top - listboxRect.height - gap
     : belowTop
-  const top = clamp(rawTop, EDGE, viewport.height - listboxRect.height - EDGE)
+  const top = clamp(rawTop, boundsTop + EDGE, boundsBottom - listboxRect.height - EDGE)
   return { left, top, width, placement }
 }
 
@@ -89,7 +97,14 @@ export default function AgentModelSelector({
       setPosition(listboxPosition(
         anchorRect,
         listboxRef.current.getBoundingClientRect(),
-        { width: window.innerWidth, height: window.innerHeight },
+        triggerRef.current.closest('.app')?.getBoundingClientRect() || {
+          left: 0,
+          top: 0,
+          right: window.innerWidth,
+          bottom: window.innerHeight,
+          width: window.innerWidth,
+          height: window.innerHeight,
+        },
       ))
     }
     update()

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { readBatchStatus } from '../../agent/batchStatus.js'
 import { registerToolBridgeHandlers } from '../../agent/toolBridgeHandlers.js'
 import { sceneSnapshot } from '../../agent/sceneBridge.js'
@@ -11,6 +11,7 @@ import AgentIconButton from './AgentIconButton.jsx'
 import AgentModelSelector from './AgentModelSelector.jsx'
 import robotUrl from '../../assets/Robot.svg'
 import {
+  canDockInContainer,
   clampAgentDockWidth,
   clampAgentPanelPosition,
   DEFAULT_AGENT_DOCK_WIDTH,
@@ -92,10 +93,9 @@ function fallbackT(key, params = {}) {
  * 🔴 **App 밖으로 나가면 다시 잡을 수 없다.** positioned container 안으로 clamp 한다.
  * 🔴 **버튼 위에서 시작한 pointerdown 은 드래그가 아니다.** 안 거르면 버튼을 누를 때마다 패널이 튄다.
  */
-function useFloatingDrag(enabled, reclampSignal) {
+function useFloatingDrag(enabled, reclampSignal, panelRef) {
   const [position, setPosition] = useState(null)
   const positionRef = useRef(null)
-  const panelRef = useRef(null)
   const dragRef = useRef(null)
 
   const setDragPosition = useCallback((nextPosition) => {
@@ -168,7 +168,45 @@ function useFloatingDrag(enabled, reclampSignal) {
     }
   }, [enabled])
 
-  return { panelRef, position: enabled ? position : null, onPointerDown }
+  return { position: enabled ? position : null, onPointerDown }
+}
+
+function useContainerAwarePanelMode({
+  appMode,
+  panelRef,
+  preferredMode,
+  onEffectiveModeChange,
+}) {
+  const [renderedMode, setRenderedMode] = useState(preferredMode)
+  const onEffectiveModeChangeRef = useRef(onEffectiveModeChange)
+  onEffectiveModeChangeRef.current = onEffectiveModeChange
+
+  const updateMode = useCallback(() => {
+    const panel = panelRef.current
+    const container = panel?.closest('.app') || panel?.parentElement
+    const nextMode = preferredMode === 'docked'
+      && !canDockInContainer(container?.getBoundingClientRect())
+      ? 'floating'
+      : preferredMode
+    setRenderedMode((current) => (current === nextMode ? current : nextMode))
+    onEffectiveModeChangeRef.current(nextMode)
+  }, [panelRef, preferredMode])
+
+  useLayoutEffect(() => {
+    updateMode()
+  }, [appMode, updateMode])
+
+  useEffect(() => {
+    if (typeof ResizeObserver === 'undefined') return undefined
+    const panel = panelRef.current
+    const container = panel?.closest('.app') || panel?.parentElement
+    if (!container) return undefined
+    const observer = new ResizeObserver(updateMode)
+    observer.observe(container)
+    return () => observer.disconnect()
+  }, [panelRef, updateMode])
+
+  return renderedMode
 }
 
 function useDockResize({
@@ -280,6 +318,7 @@ export default function ChatPanel({
   appMode = 'api',
   agentPanelMode = 'floating',
   onAgentPanelModeChange = () => {},
+  onEffectiveModeChange = () => {},
   agentDockWidth = DEFAULT_AGENT_DOCK_WIDTH,
   onAgentDockWidthChange = () => {},
   onAgentDockWidthCommit = () => {},
@@ -291,9 +330,16 @@ export default function ChatPanel({
 }) {
   const t = useSafeT()
   const api = window.electronAPI
-  const effectiveMode = effectiveAgentPanelMode(appMode, agentPanelMode)
+  const preferredMode = effectiveAgentPanelMode(appMode, agentPanelMode)
+  const panelRef = useRef(null)
+  const effectiveMode = useContainerAwarePanelMode({
+    appMode,
+    panelRef,
+    preferredMode,
+    onEffectiveModeChange,
+  })
   const dragEnabled = open && effectiveMode === 'floating'
-  const { panelRef, position, onPointerDown } = useFloatingDrag(dragEnabled, appMode)
+  const { position, onPointerDown } = useFloatingDrag(dragEnabled, appMode, panelRef)
   const dockResizeEnabled = open && effectiveMode === 'docked'
   const dockResize = useDockResize({
     enabled: dockResizeEnabled,
@@ -656,9 +702,6 @@ export default function ChatPanel({
           <div className="agent-chat-heading">
             <strong>{t('agent.title')}</strong>
             {running && <span className="agent-chat-running">{t('agent.running')}</span>}
-            {appMode === 'flow' && (
-              <span className="agent-chat-flow-notice">{t('agent.flowFloatingOnly')}</span>
-            )}
           </div>
           <div className="agent-chat-header-actions">
             <AgentIconButton
@@ -666,7 +709,6 @@ export default function ChatPanel({
               label={t('agent.modeToggle')}
               tooltip={effectiveMode === 'docked' ? t('agent.switchToFloating') : t('agent.switchToSlide')}
               pressed={effectiveMode === 'docked'}
-              disabled={appMode === 'flow'}
               onClick={() => onAgentPanelModeChange(effectiveMode === 'docked' ? 'floating' : 'docked')}
             >
               <AgentControlIcon name="mode" />
