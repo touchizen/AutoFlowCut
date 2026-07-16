@@ -1,10 +1,43 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <!-- 얼굴은 계속 살아있어야 한다: 깜빡임 + 좌우 시선 + 안테나 펄스.
+       이 SVG 는 <img src> 로 로드되므로 바깥 CSS 가 내부에 닿지 않는다 → 애니메이션을 파일 안에 둔다. -->
+  <style>
+    .eyes { animation: robot-look 6s ease-in-out infinite; }
+    .eye {
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: robot-blink 4.2s ease-in-out infinite;
+    }
+    .antenna {
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: robot-pulse 2s ease-in-out infinite;
+    }
+    @keyframes robot-blink {
+      0%, 91%, 100% { transform: scaleY(1); }
+      94%, 96% { transform: scaleY(0.12); }
+    }
+    @keyframes robot-look {
+      0%, 22%, 100% { transform: translateX(0); }
+      36%, 46% { transform: translateX(2.4px); }
+      62%, 72% { transform: translateX(-2.4px); }
+    }
+    @keyframes robot-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.45; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .eyes, .eye, .antenna { animation: none; }
+    }
+  </style>
   <rect x="13" y="17" width="38" height="34" rx="12" fill="#F7FAFF"/>
   <rect x="17" y="21" width="30" height="22" rx="8" fill="#172033"/>
-  <circle cx="26" cy="32" r="4" fill="#79B4FF"/>
-  <circle cx="38" cy="32" r="4" fill="#79B4FF"/>
+  <g class="eyes">
+    <circle class="eye" cx="26" cy="32" r="4" fill="#79B4FF"/>
+    <circle class="eye" cx="38" cy="32" r="4" fill="#79B4FF"/>
+  </g>
   <path d="M25 40c2.2 1.8 4.5 2.7 7 2.7s4.8-.9 7-2.7" stroke="#79B4FF" stroke-width="2.5" stroke-linecap="round"/>
   <path d="M32 17V10" stroke="#F7FAFF" stroke-width="4" stroke-linecap="round"/>
-  <circle cx="32" cy="8" r="4" fill="#79B4FF"/>
+  <circle class="antenna" cx="32" cy="8" r="4" fill="#79B4FF"/>
   <path d="M13 29H8v12h5M51 29h5v12h-5" stroke="#F7FAFF" stroke-width="4" stroke-linejoin="round"/>
 </svg>
