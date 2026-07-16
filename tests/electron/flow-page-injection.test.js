@@ -9,8 +9,57 @@
  *   i2v: videoModelKey "abra_i2v_8s" (startImage 만, endImage 미지원)
  */
 import { describe, it, expect } from 'vitest'
-import { toI2VModelKey, applyOmniDuration, omniFlashKey } from '../../electron/flow-page-injection.js'
+import vm from 'node:vm'
+import {
+  FLOW_PAGE_INJECTION,
+  toI2VModelKey,
+  applyOmniDuration,
+  omniFlashKey,
+} from '../../electron/flow-page-injection.js'
 import { isOmniFlashModel } from '../../electron/video-model-rules.js'
+
+async function runImageReferenceInjection(references) {
+  const calls = []
+  const response = {
+    status: 200,
+    clone: () => ({
+      text: () => Promise.resolve('{}'),
+    }),
+  }
+  const originalFetch = (input, init) => {
+    calls.push({ input, init })
+    return Promise.resolve(response)
+  }
+  const windowObject = { fetch: originalFetch }
+  const context = vm.createContext({
+    window: windowObject,
+    console: { log() {}, warn() {}, error() {} },
+    setTimeout: () => 0,
+    Date,
+    URL,
+    location: { href: 'https://labs.google/fx/tools/flow' },
+  })
+
+  vm.runInContext(FLOW_PAGE_INJECTION, context)
+  windowObject.__autoflowcut_inject__.references = references
+
+  await windowObject.fetch(
+    'https://aisandbox.googleapis.com/v1/batchGenerateImages',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        requests: [{
+          imageInputs: [{
+            imageInputType: 'IMAGE_INPUT_TYPE_REFERENCE',
+            name: 'existing-media',
+          }],
+        }],
+      }),
+    }
+  )
+
+  return JSON.parse(calls[0].init.body)
+}
 
 describe('isOmniFlashModel — 앱 모델이 OmniFlash 인지', () => {
   it('OmniFlash 표시 이름/키 감지', () => {
@@ -77,5 +126,27 @@ describe('applyOmniDuration — OmniFlash 길이 접미사 최적화', () => {
     expect(applyOmniDuration('abra_t2v_8s', undefined)).toBe('abra_t2v_8s')
     expect(applyOmniDuration('abra_t2v_8s', null)).toBe('abra_t2v_8s')
     expect(applyOmniDuration('abra_t2v_8s', NaN)).toBe('abra_t2v_8s')
+  })
+})
+
+describe('FLOW_PAGE_INJECTION M1 image reference guard', () => {
+  it('preserves existing inputs and pushes only non-empty mediaIds', async () => {
+    const body = await runImageReferenceInjection([
+      { mediaId: null },
+      { mediaId: undefined },
+      { mediaId: '' },
+      { mediaId: 'media-ok' },
+    ])
+
+    expect(body.requests[0].imageInputs).toEqual([
+      {
+        imageInputType: 'IMAGE_INPUT_TYPE_REFERENCE',
+        name: 'existing-media',
+      },
+      {
+        imageInputType: 'IMAGE_INPUT_TYPE_REFERENCE',
+        name: 'media-ok',
+      },
+    ])
   })
 })

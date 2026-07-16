@@ -115,7 +115,11 @@ export const FLOW_PAGE_INJECTION = /* js */ `
       if (inject.references && inject.references.length > 0) {
         if (!req.imageInputs) req.imageInputs = []
         for (const ref of inject.references) {
-          req.imageInputs.push({ imageInputType: 'IMAGE_INPUT_TYPE_REFERENCE', name: ref.mediaId })
+          if (!ref?.mediaId) continue
+          req.imageInputs.push({
+            imageInputType: 'IMAGE_INPUT_TYPE_REFERENCE',
+            name: ref.mediaId,
+          })
         }
         modified = true
       }
