@@ -7,6 +7,7 @@ import os from 'node:os'
 import { execSync as execSyncRaw } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import dotenv from 'dotenv'
+import { shouldCreateWindowOnActivate } from './appActivation.js'
 import { registerFilesystemIPC } from './ipc/filesystem.js'
 import { registerAuthIPC } from './ipc/auth.js'
 import { registerCapcutIPC } from './ipc/capcut.js'
@@ -1656,7 +1657,9 @@ app.on('window-all-closed', () => {
 })
 
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
+  // #sentry: macOS 의 'activate' 는 app.whenReady 전에도 발생할 수 있다 — 그때 창을 만들면
+  //   "Cannot create BrowserWindow before app is ready" 로 크래시한다. ready 가드를 순수 함수로 둔다.
+  if (shouldCreateWindowOnActivate({ isReady: app.isReady(), openWindowCount: BrowserWindow.getAllWindows().length })) {
     createWindow()
   }
 })
