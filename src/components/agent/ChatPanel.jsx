@@ -196,6 +196,9 @@ export default function ChatPanel({
   const [models, setModels] = useState([])
   const [modelsLoading, setModelsLoading] = useState(true)
   const [selectedModel, setSelectedModel] = useState(null)
+  const fabRef = useRef(null)
+  const inputRef = useRef(null)
+  const prevOpenRef = useRef(open)
   const sessionOpenRef = useRef(false)
   const openPromiseRef = useRef(null)
   const sessionEpochRef = useRef(0)
@@ -211,6 +214,14 @@ export default function ChatPanel({
   exportSourcesRef.current = exportBridgeSources
   const videoAdmissionSourcesRef = useRef(videoAdmissionSources)
   videoAdmissionSourcesRef.current = videoAdmissionSources
+
+  useEffect(() => {
+    const wasOpen = prevOpenRef.current
+    prevOpenRef.current = open
+    if (wasOpen === open) return
+    if (open) inputRef.current?.focus()
+    else fabRef.current?.focus()
+  }, [open])
 
   useEffect(() => {
     let cancelled = false
@@ -478,6 +489,7 @@ export default function ChatPanel({
   return (
     <>
       <button
+        ref={fabRef}
         type="button"
         className={`agent-chat-fab ${open ? 'is-hidden' : ''}`}
         aria-label={t('agent.openPanel')}
@@ -577,6 +589,7 @@ export default function ChatPanel({
 
         <form className="agent-chat-compose" onSubmit={send}>
           <textarea
+            ref={inputRef}
             aria-label={t('agent.inputLabel')}
             value={input}
             onChange={(event) => setInput(event.target.value)}

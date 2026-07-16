@@ -561,21 +561,48 @@ describe('ChatPanel — open floating container drag', () => {
 })
 
 describe('ChatPanel — persistent 수명과 batch.status', () => {
+  function VisibilityHarness() {
+    const [open, setOpen] = React.useState(false)
+    return (
+      <ChatPanel
+        open={open}
+        onOpen={() => setOpen(true)}
+        onDismiss={() => setOpen(false)}
+        projectKey="same-project"
+        batchStatusSources={batchSources()}
+      />
+    )
+  }
+
+  it('FAB로 panel을 열면 message textarea로 focus를 옮긴다', async () => {
+    const user = userEvent.setup()
+    render(<VisibilityHarness />)
+
+    await user.click(screen.getByRole('button', { name: 'Open agent' }))
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(
+        screen.getByRole('textbox', { name: 'Message to the agent' }),
+      )
+    })
+  })
+
+  it('panel을 dismiss하면 FAB로 focus를 옮긴다', async () => {
+    const user = userEvent.setup()
+    render(<VisibilityHarness />)
+
+    await user.click(screen.getByRole('button', { name: 'Open agent' }))
+    await user.click(screen.getByRole('button', { name: 'Dismiss agent' }))
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(
+        screen.getByRole('button', { name: 'Open agent' }),
+      )
+    })
+  })
+
   it('dismiss/FAB 왕복은 같은 panel과 bridge를 유지하고 session close를 호출하지 않는다', async () => {
     const user = userEvent.setup()
-    function VisibilityHarness() {
-      const [open, setOpen] = React.useState(false)
-      return (
-        <ChatPanel
-          open={open}
-          onOpen={() => setOpen(true)}
-          onDismiss={() => setOpen(false)}
-          projectKey="same-project"
-          batchStatusSources={batchSources()}
-        />
-      )
-    }
-
     const { container } = render(<VisibilityHarness />)
     const panel = container.querySelector('.agent-chat-panel')
     expect(panel).toHaveClass('is-dismissed')
