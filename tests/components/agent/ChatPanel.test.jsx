@@ -156,6 +156,43 @@ describe('ChatPanel — model 적용 시점 계약', () => {
       .toHaveBeenNthCalledWith(2, { text: 'B next turn', model: 'gpt-b' })
   })
 
+  it('session open 대기 중 Stop하면 pending send를 취소하고 다음 Send를 다시 허용한다', async () => {
+    let resolveOpen
+    window.electronAPI.agentSessionOpen.mockReturnValueOnce(new Promise((resolve) => { resolveOpen = resolve }))
+    const user = userEvent.setup()
+    render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+    await waitFor(() => expect(window.electronAPI.agentListModels).toHaveBeenCalledOnce())
+
+    const input = screen.getByRole('textbox', { name: 'Message to the agent' })
+    await user.type(input, 'open 중 취소할 요청')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() => expect(window.electronAPI.agentSessionOpen).toHaveBeenCalledOnce())
+
+    await user.click(screen.getByRole('button', { name: 'Stop' }))
+    expect(window.electronAPI.agentAbort).toHaveBeenCalledOnce()
+    await user.type(input, '다음 요청')
+
+    await act(async () => resolveOpen({ sessionId: 'session-1' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled())
+    expect(window.electronAPI.agentSend).not.toHaveBeenCalled()
+  })
+
+  it('session open 실패 뒤 running을 해제해 다음 Send를 다시 허용한다', async () => {
+    window.electronAPI.agentSessionOpen.mockRejectedValueOnce(new Error('spawn failed'))
+    const user = userEvent.setup()
+    render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+    await waitFor(() => expect(window.electronAPI.agentListModels).toHaveBeenCalledOnce())
+
+    const input = screen.getByRole('textbox', { name: 'Message to the agent' })
+    await user.type(input, '실패할 요청')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('spawn failed'))
+    expect(window.electronAPI.agentSend).not.toHaveBeenCalled()
+    await user.type(input, '재시도')
+    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled()
+  })
+
   it('running 중 Send는 disabled지만 Steer는 입력이 있으면 유지되고 model을 싣지 않는다', async () => {
     const user = userEvent.setup()
     render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)

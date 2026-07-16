@@ -145,6 +145,7 @@ export default function ChatPanel({
   const sessionOpenRef = useRef(false)
   const openPromiseRef = useRef(null)
   const sessionEpochRef = useRef(0)
+  const abortEpochRef = useRef(0)
   const projectSettleRef = useRef(Promise.resolve())
   const projectKeyRef = useRef(projectKey)
   const messageIdRef = useRef(0)
@@ -360,11 +361,13 @@ export default function ChatPanel({
       id: `user-${messageIdRef.current}`, role: 'user', text: snapshot.text, streaming: false,
     }])
     setInput('')
+    const abortEpoch = abortEpochRef.current
     setRunning(true)
     if (!(await ensureSession(snapshot.model))) {
       setRunning(false)
       return
     }
+    if (abortEpochRef.current !== abortEpoch) return
     try {
       const payload = snapshot.model
         ? { text: snapshot.text, model: snapshot.model }
@@ -399,6 +402,7 @@ export default function ChatPanel({
     } catch (error) {
       pushError({ error: 'agent-abort-failed', message: error?.message })
     } finally {
+      abortEpochRef.current += 1
       setRunning(false)
     }
   }
@@ -412,6 +416,7 @@ export default function ChatPanel({
     } catch (error) {
       pushError({ error: 'agent-close-failed', message: error?.message })
     } finally {
+      abortEpochRef.current += 1
       setRunning(false)
     }
   }
