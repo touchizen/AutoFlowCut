@@ -459,6 +459,73 @@ describe('ChatPanel — open floating container drag', () => {
     expect(panel.style.top).toBe('60px')
   })
 
+  it('appMode 전환으로 container가 줄면 저장 위치를 새 bounds로 다시 clamp한다', async () => {
+    const { container, rerender } = render(
+      <div className="app">
+        <ChatPanel open appMode="api" agentPanelMode="floating" projectKey="p" batchStatusSources={batchSources()} />
+      </div>,
+    )
+    const app = container.querySelector('.app')
+    const panel = container.querySelector('.agent-chat-panel')
+    const header = container.querySelector('.agent-chat-header')
+    app.getBoundingClientRect = () => ({
+      left: 100, top: 50, width: 300, height: 200, right: 400, bottom: 250,
+    })
+    panel.getBoundingClientRect = () => ({
+      left: 118, top: 68, width: 252, height: 140, right: 370, bottom: 208,
+    })
+
+    drag(header, { x: 130, y: 78 }, { x: 999, y: 999 })
+    expect(panel.style.left).toBe('48px')
+    expect(panel.style.top).toBe('60px')
+
+    app.getBoundingClientRect = () => ({
+      left: 100, top: 50, width: 120, height: 90, right: 220, bottom: 140,
+    })
+    panel.getBoundingClientRect = () => ({
+      left: 148, top: 110, width: 100, height: 80, right: 248, bottom: 190,
+    })
+    rerender(
+      <div className="app">
+        <ChatPanel open appMode="flow" agentPanelMode="floating" projectKey="p" batchStatusSources={batchSources()} />
+      </div>,
+    )
+
+    await waitFor(() => {
+      expect(Number.parseFloat(panel.style.left)).toBeLessThanOrEqual(20)
+      expect(Number.parseFloat(panel.style.top)).toBeLessThanOrEqual(10)
+    })
+  })
+
+  it('model selector option에서 시작한 pointer drag는 panel을 옮기지 않는다', async () => {
+    const user = userEvent.setup()
+    const { container } = render(
+      <div className="app">
+        <ChatPanel open appMode="api" agentPanelMode="floating" projectKey="p" batchStatusSources={batchSources()} />
+      </div>,
+    )
+    const panel = container.querySelector('.agent-chat-panel')
+
+    await waitFor(() => expect(window.electronAPI.agentListModels).toHaveBeenCalledOnce())
+    await user.click(screen.getByRole('combobox', { name: 'Agent model' }))
+    drag(screen.getByRole('option', { name: 'GPT A' }), { x: 150, y: 90 }, { x: 160, y: 100 })
+
+    expect(panel.style.left).toBe('')
+  })
+
+  it('header button에서 시작한 pointer drag는 panel을 옮기지 않는다', () => {
+    const { container } = render(
+      <div className="app">
+        <ChatPanel open appMode="api" agentPanelMode="floating" projectKey="p" batchStatusSources={batchSources()} />
+      </div>,
+    )
+    const panel = container.querySelector('.agent-chat-panel')
+
+    drag(screen.getByRole('button', { name: 'Dismiss agent' }), { x: 260, y: 78 }, { x: 264, y: 82 })
+
+    expect(panel.style.left).toBe('')
+  })
+
   it.each([
     { open: false, mode: 'floating' },
     { open: true, mode: 'slide' },

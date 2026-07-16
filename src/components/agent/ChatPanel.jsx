@@ -9,7 +9,11 @@ import { useOptionalI18n } from '../../hooks/useI18n'
 import en from '../../locales/en'
 import AgentModelSelector from './AgentModelSelector.jsx'
 import robotUrl from '../../assets/Robot.svg'
-import { clampAgentPanelPosition, effectiveAgentPanelMode } from './agentPanelLayout.js'
+import {
+  clampAgentPanelPosition,
+  effectiveAgentPanelMode,
+  reclampAgentPanelPosition,
+} from './agentPanelLayout.js'
 import './ChatPanel.css'
 
 const AGENT_EVENTS = ['agent:delta', 'agent:message', 'agent:tool-call', 'agent:usage', 'agent:done', 'agent:error']
@@ -54,10 +58,45 @@ function fallbackT(key, params = {}) {
  * 🔴 **App 밖으로 나가면 다시 잡을 수 없다.** positioned container 안으로 clamp 한다.
  * 🔴 **버튼 위에서 시작한 pointerdown 은 드래그가 아니다.** 안 거르면 버튼을 누를 때마다 패널이 튄다.
  */
-function useFloatingDrag(enabled) {
+function useFloatingDrag(enabled, reclampSignal) {
   const [position, setPosition] = useState(null)
+  const positionRef = useRef(null)
   const panelRef = useRef(null)
   const dragRef = useRef(null)
+
+  const setDragPosition = useCallback((nextPosition) => {
+    positionRef.current = nextPosition
+    setPosition(nextPosition)
+  }, [])
+
+  const reclampPosition = useCallback(() => {
+    const current = positionRef.current
+    if (!current) return
+    const panel = panelRef.current
+    const container = panel?.closest('.app') || panel?.parentElement
+    if (!panel || !container) return
+    const next = reclampAgentPanelPosition({
+      position: current,
+      containerRect: container.getBoundingClientRect(),
+      panelRect: panel.getBoundingClientRect(),
+    })
+    if (next.left === current.left && next.top === current.top) return
+    setDragPosition(next)
+  }, [setDragPosition])
+
+  useEffect(() => {
+    reclampPosition()
+  }, [reclampPosition, reclampSignal])
+
+  useEffect(() => {
+    if (typeof ResizeObserver === 'undefined') return undefined
+    const panel = panelRef.current
+    const container = panel?.closest('.app') || panel?.parentElement
+    if (!panel || !container) return undefined
+    const observer = new ResizeObserver(reclampPosition)
+    observer.observe(container)
+    return () => observer.disconnect()
+  }, [reclampPosition])
 
   useEffect(() => {
     if (!enabled) return undefined
@@ -67,7 +106,7 @@ function useFloatingDrag(enabled) {
       const panel = panelRef.current
       const container = panel?.closest('.app') || panel?.parentElement
       if (!panel || !container) return
-      setPosition(clampAgentPanelPosition({
+      setDragPosition(clampAgentPanelPosition({
         clientX: event.clientX,
         clientY: event.clientY,
         offsetX: drag.offsetX,
@@ -83,11 +122,11 @@ function useFloatingDrag(enabled) {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
     }
-  }, [enabled])
+  }, [enabled, setDragPosition])
 
   const onPointerDown = useCallback((event) => {
-    // 버튼 위에서 시작한 것은 클릭이지 드래그가 아니다.
-    if (!enabled || event.button !== 0 || event.target.closest('button')) return
+    // 버튼/모델 selector에서 시작한 것은 클릭/선택이지 드래그가 아니다.
+    if (!enabled || event.button !== 0 || event.target.closest('button, .agent-model-selector')) return
     const rect = panelRef.current?.getBoundingClientRect()
     dragRef.current = {
       offsetX: event.clientX - (rect?.left ?? 0),
@@ -119,7 +158,7 @@ export default function ChatPanel({
   const api = window.electronAPI
   const effectiveMode = effectiveAgentPanelMode(appMode, agentPanelMode)
   const dragEnabled = open && effectiveMode === 'floating'
-  const { panelRef, position, onPointerDown } = useFloatingDrag(dragEnabled)
+  const { panelRef, position, onPointerDown } = useFloatingDrag(dragEnabled, appMode)
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState([])
   const [toolCalls, setToolCalls] = useState([])

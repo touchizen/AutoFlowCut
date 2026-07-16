@@ -4,6 +4,7 @@ import {
   effectiveAgentPanelMode,
   floatingPanelBox,
   normalizeAgentPanelMode,
+  reclampAgentPanelPosition,
 } from '../../../src/components/agent/agentPanelLayout.js'
 
 describe('agentPanelLayout', () => {
@@ -35,6 +36,23 @@ describe('agentPanelLayout', () => {
       .toEqual({ left: 0, top: 0 })
     expect(clampAgentPanelPosition({ ...base, clientX: 999, clientY: 999 }))
       .toEqual({ left: 48, top: 60 })
+  })
+
+  it('저장된 위치를 현재 container bounds로 다시 clamp하고 null은 유지한다', () => {
+    const bounds = {
+      containerRect: { width: 120, height: 90 },
+      panelRect: { width: 100, height: 80 },
+    }
+
+    expect(reclampAgentPanelPosition({
+      position: { left: 48, top: 60 },
+      ...bounds,
+    })).toEqual({ left: 20, top: 10 })
+    expect(reclampAgentPanelPosition({
+      position: { left: 12, top: 8 },
+      ...bounds,
+    })).toEqual({ left: 12, top: 8 })
+    expect(reclampAgentPanelPosition({ position: null, ...bounds })).toBeNull()
   })
 
   it('288×180 App container에서 panel box가 양축을 넘지 않는다', () => {
