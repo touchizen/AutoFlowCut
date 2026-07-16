@@ -1374,6 +1374,10 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
   // Toast 메시지
   toast: {
     noPrompt: '프롬프트가 없습니다.',
+    unusableRefsExcluded:
+      '이번 생성에서 사용할 수 없는 레퍼런스 사용 {count}건을 제외했습니다: {details}',
+    unusableRefsExcludedMore:
+      '이번 생성에서 사용할 수 없는 레퍼런스 사용 {count}건을 제외했습니다: {details} 외 {more}건',
     autoMatchNoMatchesPickStyle: '씬별 매칭이 0개입니다. 스타일을 직접 선택하세요.',
     allScenesGenerated: '모든 씬이 이미 생성되었습니다. 개별 씬에서 재생성하세요.',
     allRefsGenerated: '모든 레퍼런스가 이미 생성되었습니다.',
