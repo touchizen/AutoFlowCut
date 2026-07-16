@@ -27,9 +27,54 @@ export function flowTagCharacterNeedsSync(ref) {
   return !flowImageInjectable(ref) && sourceAvailable(ref)
 }
 
-function m1RefKey(ref) {
+// M1/M2 공통 stable key. 배열 index 는 MCP merge/reorder 로 바뀌므로 외부 계약에 쓰지 않는다.
+export function referenceGuardKey(ref) {
   if (ref?.id != null) return `id:${String(ref.id)}`
   return `${ref?.type || ''}:${normalizeTagKey(ref?.name)}`
+}
+
+// 빈카드 = 실제 이미지 소스가 전혀 없는 ref. status/entityId 는 판정에 쓰지 않는다(§2.2).
+export function isReferenceImageEmpty(ref) {
+  return !sourceAvailable(ref) && !flowImageInjectable(ref)
+}
+
+export function collectReferencedEmptyCards(
+  scenes = [],
+  getMatchingReferences = () => [],
+  options = {}
+) {
+  const filter = options.filter || (() => true)
+  const byKey = new Map()
+
+  for (let sceneIndex = 0; sceneIndex < scenes.length; sceneIndex++) {
+    const scene = scenes[sceneIndex]
+    if (!filter(scene, sceneIndex)) continue
+
+    const matchedRefs = getMatchingReferences(scene) || []
+    const seenInScene = new Set()
+
+    for (const ref of matchedRefs) {
+      if (!ref || !isReferenceImageEmpty(ref)) continue
+      const key = referenceGuardKey(ref)
+      // 같은 씬에서 mention+tag 로 두 번 잡혀도 occurrence 는 1회.
+      if (seenInScene.has(key)) continue
+      seenInScene.add(key)
+
+      let card = byKey.get(key)
+      if (!card) {
+        card = { key, ref, hasPrompt: !!ref.prompt, occurrences: [] }
+        byKey.set(key, card)
+      }
+      card.occurrences.push({ sceneId: scene.id, sceneIndex })
+    }
+  }
+
+  const cards = [...byKey.values()]
+  return {
+    cards,
+    generatableCards: cards.filter(card => card.hasPrompt),
+    missingPromptCards: cards.filter(card => !card.hasPrompt),
+  }
 }
 
 export function collectM1FlowReferenceExclusions(
@@ -56,7 +101,7 @@ export function collectM1FlowReferenceExclusions(
 
     for (const ref of matchedRefs) {
       if (!ref) continue
-      const refKey = m1RefKey(ref)
+      const refKey = referenceGuardKey(ref)
       if (seen.has(refKey)) continue
       seen.add(refKey)
 
