@@ -1,5 +1,10 @@
-import { describe, expect, it, vi } from 'vitest'
-import { buildEmptyRefGateDeps } from '../../src/services/emptyRefGate'
+import { act, renderHook } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  buildEmptyRefGateDeps,
+  runEmptyRefGateFlow,
+} from '../../src/services/emptyRefGate'
+import { useAppSettings } from '../../src/hooks/useAppSettings'
 
 const makeArgs = (overrides = {}) => ({
   scenesRef: { current: [{ id: 's1' }] },
@@ -15,6 +20,11 @@ const makeArgs = (overrides = {}) => ({
   toastM1Exclusions: vi.fn(),
   gateView: {},
   ...overrides,
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+  localStorage.clear()
 })
 
 describe('buildEmptyRefGateDeps — liveness 배선', () => {
@@ -38,6 +48,17 @@ describe('buildEmptyRefGateDeps — liveness 배선', () => {
     expect(deps.getLiveRefs()).toBe(referencesRef.current)
     expect(deps.getLiveRefs().map(ref => ref.id)).toEqual(['r2', 'r3'])
     expect(deps.getMode()).toBe('api')
+  })
+
+  it('getProjectName도 backing ref를 호출 시점에 읽는다', () => {
+    const projectNameRef = { current: 'P' }
+    const deps = buildEmptyRefGateDeps(makeArgs({
+      getProjectName: () => projectNameRef.current,
+    }))
+
+    projectNameRef.current = 'Q'
+
+    expect(deps.getProjectName()).toBe('Q')
   })
 
   it('startScenes는 automationStartRef.current를 호출 시점에 읽는다 (stale start closure 금지)', () => {
@@ -64,5 +85,47 @@ describe('buildEmptyRefGateDeps — liveness 배선', () => {
       targetRefKeys: ['id:ghost'],
       reason: 'm2-empty-reference-gate',
     })
+  })
+})
+
+describe('buildEmptyRefGateDeps — unnamed project coordinator wiring', () => {
+  it('빈 프로젝트에서 확정한 이름을 entry invariant가 project-changed로 오인하지 않는다', async () => {
+    localStorage.setItem('autoflowcut_settings', JSON.stringify({ projectName: '' }))
+    vi.spyOn(Date, 'now')
+      .mockReturnValueOnce(1000)
+      .mockReturnValueOnce(2000)
+    const { result: settingsHook } = renderHook(() => useAppSettings())
+    const capturedEnsureProjectName = settingsHook.current.ensureProjectName
+    let projectName
+    act(() => {
+      projectName = capturedEnsureProjectName()
+    })
+
+    const startScenes = vi.fn(async () => {})
+    const deps = buildEmptyRefGateDeps(makeArgs({
+      scenesRef: {
+        current: [{ id: 's1', prompt: 'scene prompt', status: 'pending' }],
+      },
+      getProjectName: capturedEnsureProjectName,
+      getMatchingReferences: () => [],
+      automationStartRef: { current: startScenes },
+      gateView: {
+        confirm: vi.fn(async () => 'exclude'),
+        setBusy: vi.fn(),
+        failure: vi.fn(async () => {}),
+        close: vi.fn(),
+      },
+    }))
+
+    const outcome = await runEmptyRefGateFlow({
+      startMode: 'flow',
+      projectName,
+      force: false,
+      initialTargetSceneIds: ['s1'],
+      startOptionsWithoutSceneIds: {},
+    }, deps)
+
+    expect(outcome).toEqual({ started: true, reason: 'no-empty-cards' })
+    expect(startScenes).toHaveBeenCalledTimes(1)
   })
 })

@@ -6,8 +6,8 @@
  * 16:9 for fresh installs and survive a localStorage round-trip.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest'
-import { renderHook } from '@testing-library/react'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { act, renderHook } from '@testing-library/react'
 import { useAppSettings } from '../../src/hooks/useAppSettings'
 import { DEFAULT_IMAGE_MODEL_ID, DEFAULT_VIDEO_MODEL_ID } from '../../src/config/genModels'
 
@@ -15,6 +15,10 @@ const STORAGE_KEY = 'autoflowcut_settings'
 
 beforeEach(() => {
   localStorage.clear()
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 describe('useAppSettings — aspectRatio', () => {
@@ -104,5 +108,38 @@ describe('useAppSettings — videoConcurrency', () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ videoConcurrency: 4 }))
     const { result } = renderHook(() => useAppSettings())
     expect(result.current.settings.videoConcurrency).toBe(4)
+  })
+})
+
+describe('useAppSettings — live projectName', () => {
+  it('빈 프로젝트에서 ensureProjectName을 연속 호출해도 같은 이름을 반환한다', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ projectName: '' }))
+    vi.spyOn(Date, 'now')
+      .mockReturnValueOnce(1000)
+      .mockReturnValueOnce(2000)
+    const { result } = renderHook(() => useAppSettings())
+
+    let first
+    let second
+    act(() => {
+      first = result.current.ensureProjectName()
+      second = result.current.ensureProjectName()
+    })
+
+    expect(first).toBe('autoflowcut_1000')
+    expect(second).toBe(first)
+  })
+
+  it('stable ensureProjectName과 projectNameRef가 프로젝트명 변경을 즉시 반영한다', () => {
+    const { result } = renderHook(() => useAppSettings())
+    const initialEnsureProjectName = result.current.ensureProjectName
+
+    act(() => {
+      result.current.updateSetting('projectName', 'Project Q')
+    })
+
+    expect(result.current.ensureProjectName).toBe(initialEnsureProjectName)
+    expect(result.current.projectNameRef.current).toBe('Project Q')
+    expect(initialEnsureProjectName()).toBe('Project Q')
   })
 })

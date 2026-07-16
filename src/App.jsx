@@ -211,7 +211,7 @@ function App() {
   const [hasPendingBatch, setHasPendingBatch] = useState(false)
 
   // Settings (초기화 + localStorage 동기화)
-  const { settings, setSettings, updateSetting, ensureProjectName } = useAppSettings()
+  const { settings, setSettings, updateSetting, ensureProjectName, projectNameRef } = useAppSettings()
 
   // Start 버튼 반응형 라벨 — 버튼 폭(flex:1, 콘텐츠 무관)을 측정해 full/short/icon 으로 축약.
   const [startBtnRef, startBtnWidth] = useElementWidth()
@@ -1374,7 +1374,7 @@ function App() {
     scenesRef: scenesHook.scenesRef,
     referencesRef,
     modeRef,
-    getProjectName: ensureProjectName,
+    getProjectName: () => projectNameRef.current,
     getMatchingReferences: scenesHook.getMatchingReferences,
     subscriptionPreGate: emptyRefSubscriptionPreGate,
     setPendingLatch: setHasPendingBatch,
@@ -1545,7 +1545,7 @@ function App() {
         setRunningStyle({ styleId: effectiveStyleId, label: styleResolver.resolveLabelForId(effectiveStyleId), applies: true })
         if (modeRef.current === 'flow') {
           const { force: _force, ...startOptionsWithoutSceneIds } = startOptions
-          await runEmptyRefGateFlow({
+          const gateResult = await runEmptyRefGateFlow({
             startMode,
             projectName,
             force,
@@ -1553,6 +1553,10 @@ function App() {
             selectedStyleRefId: effectiveStyleId,
             startOptionsWithoutSceneIds,
           }, getEmptyRefGateDeps(source))
+          // 모달 대기 중 다른 경로가 대상 씬을 모두 완료했으면 기존 완료 안내를 재사용한다.
+          if (gateResult.reason === 'no-live-targets') {
+            toast.warning(t('toast.allScenesGenerated'))
+          }
           break
         }
         // API 모드는 M2 미노출 — 기존 scene start 경로를 그대로 유지한다(§11.12).
@@ -1838,7 +1842,7 @@ function App() {
           : filterPendingScenes(liveScenes)
         const { force = false, ...startOptionsWithoutSceneIds } = opts
         setPendingStartOptions(null)
-        await runEmptyRefGateFlow({
+        const gateResult = await runEmptyRefGateFlow({
           startMode: __startMode,
           projectName: opts.projectName,
           force,
@@ -1846,6 +1850,10 @@ function App() {
           selectedStyleRefId: sid,
           startOptionsWithoutSceneIds,
         }, getEmptyRefGateDeps(__startSource))
+        // 태그 모달까지 기다리는 동안 대상이 사라진 경우도 direct Start와 같은 안내를 낸다.
+        if (gateResult.reason === 'no-live-targets') {
+          toast.warning(t('toast.allScenesGenerated'))
+        }
         return
       }
       // API 모드는 M2 미노출 — 기존 tag proceed 직접 시작을 유지한다(§11.12).
