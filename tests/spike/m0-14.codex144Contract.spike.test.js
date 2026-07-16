@@ -323,6 +323,41 @@ describe('M0-14 — Codex 0.144.5 계약 스모크', () => {
     }
   })
 
+  /**
+   * 🔴 이 테스트는 **적대 리뷰가 앵커 드리프트를 잡아서** 생겼다.
+   *
+   * 나는 "thread/start 에서 model 생략은 안전하다 — 새 thread 는 서버 기본으로 시작한다,
+   * m0-14 turn1 이 그 증거" 라고 주석·테스트·커밋 메시지 **세 군데**에 적었다. **거짓 인용이었다.**
+   * 이 파일의 세션은 전부 `openOrchestratorSession({ model: MODEL_A })` 로 열려서
+   * **thread/start 에 model 이 늘 명시돼 있었다.** turn1 도 명시 gpt-5.5 였다.
+   * 즉 "생략한 thread/start" 는 **한 번도 측정된 적이 없다.**
+   *
+   * 제품이 그 위에 서 있다: `agent:session-open` 은 생략을 그대로 통과시킨다(agent-api.js).
+   * 그러니 추론("앞선 모델이 없으니 기본일 수밖에")으로 때우지 말고 **잰다.**
+   */
+  it('🎯 thread/start 에서 model 을 **생략**하면 새 thread 는 서버 기본으로 시작한다 (인용만 하던 것을 실측)', async () => {
+    const s = await openOrchestratorSession({})   // ← model 생략 = 제품의 open 경로
+    try {
+      const models = await s.session.client.request('model/list', {})
+      const serverDefault = (Array.isArray(models?.data) ? models.data : [])
+        .find((m) => m?.isDefault === true && m?.hidden !== true)?.id ?? null
+
+      await runTurn(s, { text: 'Reply with exactly: OK' })   // turn 도 생략
+      await s.session.close()
+
+      const used = turnContextModels(s.ref.rolloutPath)
+      record('omitted-thread-start', { serverDefault, turnContextModels: used, threadStartModel: s.started?.model ?? null })
+
+      expect(serverDefault, 'model/list 가 isDefault 를 줘야 이 테스트가 의미를 갖는다').toBeTruthy()
+      // 🎯 생략한 thread + 생략한 turn → 서버 기본. (제품의 '카탈로그 없음' 폴백이 안전한 이유가 여기 있다.)
+      expect(used[0], `생략 시 서버 기본(${serverDefault})으로 시작해야 한다`).toBe(serverDefault)
+      // thread/start 응답도 같은 것을 반사해야 한다 (두 경로가 어긋나면 뭔가 잘못된 것).
+      expect(s.started?.model).toBe(serverDefault)
+    } finally {
+      await s.cleanup()
+    }
+  })
+
   it('🎯 persistent thread + per-turn model: 같은 thread 에서 A→B 로 바꿔도 맥락이 유지된다', async () => {
     const token = 'ACK-7731'
     const s = await openOrchestratorSession({ model: MODEL_A })

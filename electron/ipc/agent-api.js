@@ -10,17 +10,26 @@ import { listCodexModels } from '../api/llm/codexAppServer.js'
 
 export function createAgentModelCatalog({ listModels = listCodexModels } = {}) {
   let cached = null
+  let cachedDefaultId = null
   let inFlight = null
 
-  const visibleModels = async () => {
+  const fetchModels = async () => {
     try {
       const models = await listModels()
-      if (!Array.isArray(models)) return []
-      return models.filter((model) => model && typeof model.id === 'string' && model.hidden !== true)
+      return Array.isArray(models) ? models : []
     } catch {
       return []
     }
   }
+  const visibleOf = (models) => models.filter((model) => model && typeof model.id === 'string' && model.hidden !== true)
+  /**
+   * 🔴 기본 모델 id 는 **hidden 필터 전 원본**에서 뽑는다.
+   *    `hidden` 은 *"선택지에 보이지 않는다"* 이지 *"서버 기본이 아니다"* 가 아니다.
+   *    필터 뒤에서 찾으면 **hidden 인 기본 모델**을 놓치고 → `defaultModelId()` 가 null →
+   *    '기본' send 가 다시 생략으로 떨어져 **sticky 버그가 조용히 부활한다**
+   *    (적대 리뷰가 잡은 구멍: 카탈로그는 안 비었는데 기본만 없는 부분집합).
+   */
+  const defaultIdOf = (models) => models.find((model) => model?.isDefault === true && typeof model?.id === 'string')?.id ?? null
 
   return {
     /**
@@ -28,20 +37,30 @@ export function createAgentModelCatalog({ listModels = listCodexModels } = {}) {
      *
      * 🔴 **동기이고 fetch 를 유발하지 않는다.** `list()` 를 기다리면 cold send 가 최대
      *    20s(app-server timeout) × 2회(1-retry) 블로킹된다 — Send 를 그렇게 막을 수 없다.
-     *    캐시가 비어 있으면 null 을 주고 호출측이 생략으로 폴백한다(그 경우는 안전하다:
-     *    카탈로그가 뜬 적 없으면 사용자가 비-기본 모델을 고를 수도 없었으므로 sticky 가 성립 불가).
+     *
+     * null 이면 호출측이 **생략으로 폴백**한다. 그 안전성의 범위는 정확히 이렇다:
+     *  - ✅ **카탈로그가 아직/영영 안 뜬 경우**: 사용자가 비-기본 모델을 고를 수도 없었으므로
+     *       thread 는 서버 기본에 있다 → 생략이 안전하다.
+     *       (실측: 생략한 thread/start + 생략한 turn → 서버 기본으로 시작한다. m0-14 `omitted-thread-start`.)
+     *  - ⚠️ **카탈로그는 떴는데 `isDefault` 가 하나도 없는 경우**(서버 이상): 사용자는 모델을 고를 수
+     *       **있으므로** '기본' 이 생략으로 떨어져 **sticky 버그가 부활한다.** 현재 실측된 codex 는
+     *       늘 `isDefault` 를 주므로 잠복 상태다. 이 불변식을 "카탈로그 없으면 안전" 으로 **넓게 말하지 마라**
+     *       — 그 서술은 이 부분집합에서 거짓이다.
      */
     defaultModelId() {
-      if (!cached) return null
-      return cached.find((model) => model?.isDefault === true)?.id ?? null
+      return cachedDefaultId
     },
     list() {
       if (cached) return Promise.resolve(cached.map((model) => ({ ...model })))
       if (inFlight) return inFlight
       inFlight = (async () => {
-        const first = await visibleModels()
-        const models = first.length > 0 ? first : await visibleModels()
-        if (models.length > 0) cached = models.map((model) => ({ ...model }))
+        const firstRaw = await fetchModels()
+        const raw = visibleOf(firstRaw).length > 0 ? firstRaw : await fetchModels()
+        const models = visibleOf(raw)
+        if (models.length > 0) {
+          cached = models.map((model) => ({ ...model }))
+          cachedDefaultId = defaultIdOf(raw)   // ← 필터 전 원본에서
+        }
         return models.map((model) => ({ ...model }))
       })().finally(() => { inFlight = null })
       return inFlight
@@ -164,6 +183,10 @@ export function registerAgentIPC(ipcMain, {
   if (!ipcMain || typeof ipcMain.handle !== 'function') throw new TypeError('ipcMain.handle is required')
   if (!sessionManager) throw new TypeError('sessionManager is required')
   if (typeof modelCatalog?.list !== 'function') throw new TypeError('modelCatalog.list is required')
+  // 🔴 `agent:send` 의 계약이 이제 여기에 의존한다. 없으면 옵셔널 호출이 **조용히 생략 폴백**으로
+  //    무너져 sticky 버그가 되살아난다(테스트가 list-only 카탈로그를 주입하면 아무도 못 알아챈다).
+  //    계약이면 계약답게 막는다.
+  if (typeof modelCatalog?.defaultModelId !== 'function') throw new TypeError('modelCatalog.defaultModelId is required')
   if (typeof getWindow !== 'function') throw new TypeError('getWindow must be a function')
 
   const emit = createEmitter(getWindow)

@@ -49,6 +49,9 @@ function fullSessionManagerDouble() {
 function fullModelCatalogDouble() {
   return {
     list: vi.fn(async () => [{ id: 'gpt-visible', displayName: 'GPT Visible', hidden: false }]),
+    // `agent:send` 계약이 이걸 요구한다 (registerAgentIPC 가 가드한다).
+    // 기본은 "아직 캐시 없음" = null → 생략 폴백. 개별 테스트가 필요하면 덮어쓴다.
+    defaultModelId: vi.fn(() => null),
   }
 }
 
@@ -152,6 +155,19 @@ describe('agent:list-models catalog', () => {
    * `models[0]` 로 바꾼 뮤턴트와 `'gpt-5.5'` 하드코딩 뮤턴트가 **둘 다 살아남았다**
    * (배선 테스트는 전부 green). 그래서 여기 좁은 단위 테스트가 따로 필요하다.
    */
+  /**
+   * 가드가 없으면 `defaultModelId?.()` 옵셔널 호출이 **조용히 생략 폴백**으로 무너진다 = sticky 버그 부활.
+   * (뮤테이션으로 실증: 가드를 지워도 아무 테스트도 안 죽었다 → 이 테스트를 추가했다.)
+   */
+  it('defaultModelId 없는 catalog를 주입하면 registerAgentIPC가 거부한다 (조용한 폴백 금지)', async () => {
+    const { registerAgentIPC } = await loadSubject()
+    expect(() => registerAgentIPC(fakeIpcMain(), {
+      sessionManager: fullSessionManagerDouble(),
+      modelCatalog: { list: async () => [] },   // ← list 만 있는 옛 계약
+      getWindow: () => fakeWindow(),
+    })).toThrow(/defaultModelId/)
+  })
+
   it('defaultModelId가 isDefault 모델을 고른다 (첫 번째도, 하드코딩도 아니다)', async () => {
     const { createAgentModelCatalog } = await loadSubject()
     // ⚠️ 기본을 **첫 번째가 아닌 자리**에 두고 id 도 실제 codex id 를 안 쓴다 →
@@ -186,7 +202,14 @@ describe('agent:list-models catalog', () => {
     expect(catalog.defaultModelId()).toBeNull()
   })
 
-  it('hidden 모델은 기본이 될 수 없다 (list가 이미 걸러내므로 캐시에 없다)', async () => {
+  /**
+   * 🔴 이 테스트는 **뒤집힌 것**이다. 원래 나는 "hidden 모델은 기본이 될 수 없다" 를 의도로 핀했는데,
+   *    적대 리뷰가 그게 **구멍**임을 보였다: `hidden` 은 *"선택지에 안 보인다"* 이지
+   *    *"서버 기본이 아니다"* 가 아니다. 기본이 hidden 이면 카탈로그는 **안 비어 있는데**
+   *    defaultModelId 만 null → 사용자는 다른 모델을 고를 수 **있고** → '기본' → 생략 →
+   *    **sticky 버그 부활**. ("카탈로그 없으면 sticky 불가" 불변식이 이 부분집합을 커버 못 했다.)
+   */
+  it('기본 모델이 hidden 이어도 기본으로 쓴다 (선택지에서 감춘 것 ≠ 서버 기본이 아닌 것)', async () => {
     const { createAgentModelCatalog } = await loadSubject()
     const listModels = vi.fn().mockResolvedValue([
       { id: 'hidden-default', isDefault: true, hidden: true },
@@ -195,7 +218,10 @@ describe('agent:list-models catalog', () => {
     const catalog = createAgentModelCatalog({ listModels })
 
     await catalog.list()
-    expect(catalog.defaultModelId()).toBeNull()
+    // 목록(선택지)에는 안 나오지만
+    await expect(catalog.list()).resolves.toEqual([{ id: 'visible', isDefault: false }])
+    // 와이어에는 명시된다 → 생략으로 떨어지지 않는다
+    expect(catalog.defaultModelId()).toBe('hidden-default')
   })
 
   it('agent:list-models handler가 catalog 값을 그대로 renderer에 돌려준다', async () => {
