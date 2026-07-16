@@ -6,6 +6,39 @@
  * listener를 만들면 listener가 누적되고, prompt 수명을 세션 수명으로 잘못 닫을 길이 생긴다.
  */
 
+import { listCodexModels } from '../api/llm/codexAppServer.js'
+
+export function createAgentModelCatalog({ listModels = listCodexModels } = {}) {
+  let cached = null
+  let inFlight = null
+
+  const visibleModels = async () => {
+    try {
+      const models = await listModels()
+      if (!Array.isArray(models)) return []
+      return models.filter((model) => model && typeof model.id === 'string' && model.hidden !== true)
+    } catch {
+      return []
+    }
+  }
+
+  return {
+    list() {
+      if (cached) return Promise.resolve(cached.map((model) => ({ ...model })))
+      if (inFlight) return inFlight
+      inFlight = (async () => {
+        const first = await visibleModels()
+        const models = first.length > 0 ? first : await visibleModels()
+        if (models.length > 0) cached = models.map((model) => ({ ...model }))
+        return models.map((model) => ({ ...model }))
+      })().finally(() => { inFlight = null })
+      return inFlight
+    },
+  }
+}
+
+const defaultModelCatalog = createAgentModelCatalog()
+
 function isWindowAlive(window) {
   if (!window || typeof window.isDestroyed !== 'function' || window.isDestroyed()) return false
   if (!window.webContents || typeof window.webContents.send !== 'function') return false
@@ -111,9 +144,14 @@ export function createAgentEventForwarder({ getWindow } = {}) {
  * session command 5개만 등록한다. `agent:permission-response`는 main의 app-scoped listener가
  * 여섯 번째 command로 이미 한 번 등록돼 있다.
  */
-export function registerAgentIPC(ipcMain, { sessionManager, getWindow } = {}) {
+export function registerAgentIPC(ipcMain, {
+  sessionManager,
+  modelCatalog = defaultModelCatalog,
+  getWindow,
+} = {}) {
   if (!ipcMain || typeof ipcMain.handle !== 'function') throw new TypeError('ipcMain.handle is required')
   if (!sessionManager) throw new TypeError('sessionManager is required')
+  if (typeof modelCatalog?.list !== 'function') throw new TypeError('modelCatalog.list is required')
   if (typeof getWindow !== 'function') throw new TypeError('getWindow must be a function')
 
   const emit = createEmitter(getWindow)
@@ -126,6 +164,10 @@ export function registerAgentIPC(ipcMain, { sessionManager, getWindow } = {}) {
     ['agent:abort', 'abort', () => []],
     ['agent:session-close', 'close', () => []],
   ]
+  const channels = registrations.map(([channel]) => channel)
+  channels.push('agent:list-models')
+
+  ipcMain.handle('agent:list-models', async () => modelCatalog.list())
 
   for (const [channel, method, argsFor] of registrations) {
     if (typeof sessionManager[method] !== 'function') {
@@ -149,7 +191,7 @@ export function registerAgentIPC(ipcMain, { sessionManager, getWindow } = {}) {
 
   return () => {
     if (typeof ipcMain.removeHandler !== 'function') return
-    for (const [channel] of registrations) ipcMain.removeHandler(channel)
+    for (const channel of channels) ipcMain.removeHandler(channel)
   }
 }
 

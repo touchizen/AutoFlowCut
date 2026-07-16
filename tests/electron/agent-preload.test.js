@@ -35,21 +35,23 @@ beforeEach(() => {
 })
 
 describe('preload agent surface — D14 효과', () => {
-  it('5개 session command가 각각 전용 agent IPC를 invoke한다', async () => {
+  it('session command와 model catalog가 각각 전용 agent IPC를 invoke한다', async () => {
     const api = electronDouble.exposed
 
-    await api.agentSessionOpen()
-    await api.agentSend({ text: '계속' })
+    await api.agentSessionOpen({ model: 'gpt-thread' })
+    await api.agentSend({ text: '계속', model: 'gpt-turn' })
     await api.agentSteer({ text: '영상은 빼' })
     await api.agentAbort()
     await api.agentSessionClose()
+    await api.agentListModels()
 
     expect(electronDouble.ipcRenderer.invoke.mock.calls).toEqual([
-      ['agent:session-open', undefined],
-      ['agent:send', { text: '계속' }],
+      ['agent:session-open', { model: 'gpt-thread' }],
+      ['agent:send', { text: '계속', model: 'gpt-turn' }],
       ['agent:steer', { text: '영상은 빼' }],
       ['agent:abort', undefined],
       ['agent:session-close', undefined],
+      ['agent:list-models'],
     ])
   })
 
