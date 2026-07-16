@@ -396,18 +396,19 @@ export default function ChatPanel({
   }
 
   const abort = async () => {
+    abortEpochRef.current += 1
     try {
       const result = await api.agentAbort()
       if (hasFailure(result)) pushError(result)
     } catch (error) {
       pushError({ error: 'agent-abort-failed', message: error?.message })
     } finally {
-      abortEpochRef.current += 1
       setRunning(false)
     }
   }
 
   const close = async () => {
+    abortEpochRef.current += 1
     try {
       videoAdmissionSourcesRef.current.abortAndClear?.()
       const result = await api.agentSessionClose()
@@ -416,7 +417,6 @@ export default function ChatPanel({
     } catch (error) {
       pushError({ error: 'agent-close-failed', message: error?.message })
     } finally {
-      abortEpochRef.current += 1
       setRunning(false)
     }
   }

@@ -177,6 +177,26 @@ describe('ChatPanel — model 적용 시점 계약', () => {
     expect(window.electronAPI.agentSend).not.toHaveBeenCalled()
   })
 
+  it('session open이 abort보다 먼저 끝나도 Stop한 pending send를 보내지 않는다', async () => {
+    let resolveOpen
+    let resolveAbort
+    window.electronAPI.agentSessionOpen.mockReturnValueOnce(new Promise((resolve) => { resolveOpen = resolve }))
+    window.electronAPI.agentAbort.mockReturnValueOnce(new Promise((resolve) => { resolveAbort = resolve }))
+    const user = userEvent.setup()
+    render(<ChatPanel projectKey="p" batchStatusSources={batchSources()} />)
+    await waitFor(() => expect(window.electronAPI.agentListModels).toHaveBeenCalledOnce())
+
+    await user.type(screen.getByRole('textbox', { name: 'Message to the agent' }), 'abort 전에 open될 요청')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await user.click(screen.getByRole('button', { name: 'Stop' }))
+    expect(window.electronAPI.agentAbort).toHaveBeenCalledOnce()
+
+    await act(async () => resolveOpen({ sessionId: 'session-1' }))
+    await act(async () => resolveAbort({ aborted: true }))
+
+    expect(window.electronAPI.agentSend).not.toHaveBeenCalled()
+  })
+
   it('session open 실패 뒤 running을 해제해 다음 Send를 다시 허용한다', async () => {
     window.electronAPI.agentSessionOpen.mockRejectedValueOnce(new Error('spawn failed'))
     const user = userEvent.setup()
