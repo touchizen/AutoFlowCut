@@ -17,6 +17,7 @@ import { clampInt } from '../utils/clampInt'
 import { getAuthErrorMessage, getAuthRequiredMessage } from '../utils/authMessages'
 import { runFlowCharacterOperation } from '../utils/flowCharacterCoordinator'
 import { resolveDisplayError } from '../utils/errorDisplay'
+import { isReferenceImageEmpty, referenceGuardKey } from '../utils/refImageGuard'
 
 // 1~3초 랜덤 딜레이
 const randomDelay = () => new Promise(r => setTimeout(r, 1000 + Math.random() * 2000))
@@ -404,15 +405,44 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
   // 제출 → 동시성 게이트 → 다음 제출, 결과는 별도 수집
   //
   // force=true (MCP 전용): 이미 완료된(image/filePath/status=done) ref도 재생성 대상에 포함.
-  //                       prompt 있고 style 이 아닌 모든 ref가 대상.
+  //                       prompt 있는 모든 ref가 대상.
   // force=false (기본): 기존 동작 — image 없고 pending/error/idle 상태인 ref만.
-  const _executeBatchRefs = async (overrideStyleId = null, force = false) => {
+  //
+  // options = { force?, targetRefKeys?, reason? }
+  //   targetRefKeys == null : 기존 Ref 탭 전체 배치 / MCP 전체 배치 (pending 의미 그대로)
+  //   targetRefKeys: string[] : 그 key 의 ref 만 대상 (M2 targeted). [] 면 정상 noop.
+  //   reason 은 호출 출처 식별자일 뿐 생성 의미나 스타일 해석을 바꾸지 않는다.
+  const _executeBatchRefs = async (overrideStyleId = null, options = {}) => {
+    const { force = false, targetRefKeys = null } = options
+    const targetKeySet = targetRefKeys == null ? null : new Set(targetRefKeys)
+    const isTargeted = targetKeySet !== null
+    const requestedKeys = targetRefKeys == null ? [] : [...targetRefKeys]
+
+    // Task 5에서 per-key stage를 채운다. Task 4는 fail-closed 호출자가 항상 같은
+    // shape를 읽을 수 있도록 lifecycle 결과의 최소 골격만 보장한다.
+    const buildBatchResult = (ok, outcome, failed = []) => ({
+      ok,
+      outcome,
+      requestedKeys,
+      attemptedKeys: [],
+      succeededKeys: [],
+      skipped: [],
+      failed,
+      currentRefs: referencesRef.current,
+    })
+
     // 타입 predicate 로 인덱스 선택 — style / non-style 을 분리 추출.
     const pickIndices = (refMatches) => referencesRef.current
       .map((ref, index) => {
         if (!ref.prompt || !refMatches(ref)) return -1
+        if (isTargeted && !targetKeySet.has(referenceGuardKey(ref))) return -1
         if (force) return index
-        return (!ref.data && !ref.filePath && ref.status !== 'done') ? index : -1
+        // targeted: 실제 이미지 4필드만 본다. status=done 같은 workflow 표식은
+        // 이미지 존재 증거가 아니므로 M2 빈카드 생성 대상을 막지 않는다.
+        // global: Ref 탭/MCP의 기존 pending 의미를 그대로 둬 회귀를 막는다.
+        return isTargeted
+          ? (isReferenceImageEmpty(ref) ? index : -1)
+          : ((!ref.data && !ref.filePath && ref.status !== 'done') ? index : -1)
       })
       .filter(i => i !== -1)
 
@@ -421,8 +451,9 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     const allIndices = [...styleIndices, ...nonStyleIndices]
 
     if (allIndices.length === 0) {
-      toast.info(t('toast.allRefsGenerated'))
-      return
+      // targeted 정상 noop은 전체 Ref 배치가 끝났다는 인상을 주면 안 된다.
+      if (!isTargeted) toast.info(t('toast.allRefsGenerated'))
+      return buildBatchResult(true, 'noop')
     }
 
     // #R22-3: force 리셋은 permission/auth/flowProjectReady 게이트 통과 후로 이동(아래 gate 뒤).
@@ -445,16 +476,19 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     // 폴더 모드 권한 확인
     if (settings.saveMode === 'folder') {
       const permission = await fileSystemAPI.ensurePermission()
-      if (permission.error === 'not_set') { openSettings('storage'); return }
+      if (permission.error === 'not_set') {
+        openSettings('storage')
+        return buildBatchResult(false, 'failed')
+      }
       if (permission.error === 'folder_deleted') {
         toast.error(t('toast.folderDeleted'))
         openSettings('storage')
-        return
+        return buildBatchResult(false, 'failed')
       }
       if (!permission.hasPermission) {
         toast.warning(t('toast.folderPermissionNeeded'))
         openSettings('storage')
-        return
+        return buildBatchResult(false, 'failed')
       }
       console.log('[GenerateAllRefs] Permission granted:', permission.name)
     }
@@ -462,12 +496,12 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     // 토큰 확인
     if (!(await checkAuthToken(genAPI, t))) {
       toast.warning(authRequiredMessage())
-      return
+      return buildBatchResult(false, 'failed')
     }
 
     // Flow 프로젝트 준비 확인
     const readyCheck = checkFlowProjectReady(flowProjectReady, t)
-    if (!readyCheck.ok) return
+    if (!readyCheck.ok) return buildBatchResult(false, 'failed')
 
     // #R22-3: 모든 게이트 통과 후에만 force 리셋(done/error → pending). 게이트가 막으면 리셋 안 함.
     if (force) {
@@ -731,6 +765,9 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
       openSettings('storage')
     }
 
+    const stopped = stopRequestedRef.current || authStoppedRef.current
+    return buildBatchResult(!stopped, stopped ? 'stopped' : 'completed')
+
     } finally {
       // P2 v3: 정상 종료 / early return / throw 어느 경로에서도 flag 정리 (P1 + P2 통합 fix).
       // 안 그러면 refBatchRunning이 stuck 되어 MCP stop-restart가 30s timeout.
@@ -758,21 +795,36 @@ export function useReferenceGeneration({ settings, references, setReferences, ge
     }
   }
 
-  // 큐를 통한 배치 생성. options = { force?: boolean }.
+  // 큐를 통한 배치 생성. options = { force?, targetRefKeys?, reason? }.
   // force=true (MCP 전용): 이미 완료된 ref도 재생성 대상에 포함.
+  // #M2: 결과를 반드시 return 한다 — fail-closed가 batchResult.ok를 읽으므로 예전처럼
+  //   queue 경로에서 await만 하고 버리면 조용히 undefined가 되어 씬 배치 판단이 깨진다.
   const handleGenerateAllRefs = async (overrideStyleId = null, options = {}) => {
-    const { force = false } = options
     if (!generationQueue) {
-      return _executeBatchRefs(overrideStyleId, force)
+      return _executeBatchRefs(overrideStyleId, options)
     }
     try {
-      await generationQueue.enqueue({
+      return await generationQueue.enqueue({
         type: 'reference_batch',
         label: 'Batch References',
-        execute: () => _executeBatchRefs(overrideStyleId, force)
+        execute: () => _executeBatchRefs(overrideStyleId, options)
       })
     } catch (err) {
       console.warn('[RefGen] Batch queue rejected:', err.message)
+      return {
+        ok: false,
+        outcome: 'failed',
+        requestedKeys: options.targetRefKeys == null ? [] : [...options.targetRefKeys],
+        attemptedKeys: [],
+        succeededKeys: [],
+        skipped: [],
+        failed: [{
+          key: null,
+          stage: 'exception',
+          error: err?.message || String(err),
+        }],
+        currentRefs: referencesRef.current,
+      }
     }
   }
 
