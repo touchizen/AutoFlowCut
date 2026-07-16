@@ -94,6 +94,25 @@ describe('useAppSettings — 모델 id 보존 (동적 /models 모델 지원)', (
   })
 })
 
+describe('useAppSettings — agentPanelMode', () => {
+  it('fresh install 기본값은 floating', () => {
+    const { result } = renderHook(() => useAppSettings())
+    expect(result.current.settings.agentPanelMode).toBe('floating')
+  })
+
+  it('저장된 slide 선호를 그대로 보존한다', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ agentPanelMode: 'slide' }))
+    const { result } = renderHook(() => useAppSettings())
+    expect(result.current.settings.agentPanelMode).toBe('slide')
+  })
+
+  it('알 수 없는 저장값만 floating으로 정규화한다', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ agentPanelMode: 'drawer' }))
+    const { result } = renderHook(() => useAppSettings())
+    expect(result.current.settings.agentPanelMode).toBe('floating')
+  })
+})
+
 describe('useAppSettings — videoConcurrency', () => {
   it('fresh install 기본값은 videoConcurrency 4', () => {
     const { result } = renderHook(() => useAppSettings())
