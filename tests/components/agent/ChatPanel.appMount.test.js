@@ -21,6 +21,11 @@ describe('App agent surface 배치', () => {
     const approval = source.lastIndexOf('<ApprovalDialog', panel)
     expect(source.slice(approval, panel)).toMatch(/<ApprovalDialog\s*\/>\s*$/)
     expect(source.match(/<ChatPanel\b/g)).toHaveLength(1)
+    expect(source).toContain('const [agentPanelOpen, setAgentPanelOpen] = useState(false)')
+    const panelProps = source.slice(panel, source.indexOf('/>', panel))
+    expect(panelProps).toContain('open={agentPanelOpen}')
+    expect(panelProps).toContain('onOpen={() => setAgentPanelOpen(true)}')
+    expect(panelProps).toContain('onDismiss={() => setAgentPanelOpen(false)}')
   })
 
   it('App은 useVideoAutomation의 admission/status/event/cleanup source를 ChatPanel에 주입한다', () => {

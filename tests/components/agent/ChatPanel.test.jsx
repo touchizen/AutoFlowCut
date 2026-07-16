@@ -479,6 +479,50 @@ describe('ChatPanel — 접었을 때 드래그로 옮기기', () => {
 })
 
 describe('ChatPanel — persistent 수명과 batch.status', () => {
+  it('dismiss/FAB 왕복은 같은 panel과 bridge를 유지하고 session close를 호출하지 않는다', async () => {
+    const user = userEvent.setup()
+    function VisibilityHarness() {
+      const [open, setOpen] = React.useState(false)
+      return (
+        <ChatPanel
+          open={open}
+          onOpen={() => setOpen(true)}
+          onDismiss={() => setOpen(false)}
+          projectKey="same-project"
+          batchStatusSources={batchSources()}
+        />
+      )
+    }
+
+    const { container } = render(<VisibilityHarness />)
+    const panel = container.querySelector('.agent-chat-panel')
+    expect(panel).toHaveClass('is-dismissed')
+    expect(screen.getByRole('button', { name: 'Open agent' })).toBeTruthy()
+
+    await user.click(screen.getByRole('button', { name: 'Open agent' }))
+    expect(panel).toHaveClass('is-open')
+    window.electronAPI.emitAgent('agent:delta', { delta: '숨겨도 보존할 메시지' })
+    await user.click(screen.getByRole('button', { name: 'Dismiss agent' }))
+
+    expect(container.querySelector('.agent-chat-panel')).toBe(panel)
+    expect(panel).toHaveClass('is-dismissed')
+    expect(panel).toHaveTextContent('숨겨도 보존할 메시지')
+    expect(window.electronAPI.agentSessionClose).not.toHaveBeenCalled()
+    expect(window.electronAPI.onToolBridgeRequest).toHaveBeenCalledOnce()
+
+    await window.electronAPI.requestToolBridge({
+      requestId: 'hidden-bridge', name: 'batch.status', args: { type: 'scene' },
+    })
+    expect(window.electronAPI.respondToolBridge).toHaveBeenCalledWith({
+      requestId: 'hidden-bridge',
+      result: { type: 'scene', status: 'complete', done: 0, total: 0, error: 0 },
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Open agent' }))
+    expect(container.querySelector('.agent-chat-panel')).toBe(panel)
+    expect(screen.getByText('숨겨도 보존할 메시지')).toBeTruthy()
+  })
+
   it('view만 바뀌는 global sibling rerender에서는 stream 메시지가 사라지지 않는다', () => {
     function GlobalShell({ activeView }) {
       return <div><main>{activeView}</main><ChatPanel projectKey="same-project" batchStatusSources={batchSources()} /></div>

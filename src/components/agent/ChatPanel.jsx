@@ -8,6 +8,7 @@ import { resolveVideoSrc } from '../../utils/videoSrc.js'
 import { useOptionalI18n } from '../../hooks/useI18n'
 import en from '../../locales/en'
 import AgentModelSelector from './AgentModelSelector.jsx'
+import robotUrl from '../../assets/Robot.svg'
 import './ChatPanel.css'
 
 const AGENT_EVENTS = ['agent:delta', 'agent:message', 'agent:tool-call', 'agent:usage', 'agent:done', 'agent:error']
@@ -123,6 +124,9 @@ function useCollapsedDrag(enabled) {
  * view 전환은 state를 보존하지만 projectKey 전환은 D15에 따라 이전 session을 abort/close한다.
  */
 export default function ChatPanel({
+  open = true,
+  onOpen = () => {},
+  onDismiss = () => {},
   projectKey = null,
   batchStatusSources = {},
   sceneBridgeSources = {},
@@ -422,99 +426,122 @@ export default function ChatPanel({
   }
 
   return (
-    <aside
-      ref={panelRef}
-      className={`agent-chat-panel ${collapsed ? 'is-collapsed' : ''}`}
-      aria-label={t('agent.panelLabel')}
-      // 옮긴 뒤에는 right/bottom 앵커 대신 left/top 이 이긴다. 안 지우면 두 앵커가 싸워 늘어난다.
-      style={position ? { left: `${position.left}px`, top: `${position.top}px`, right: 'auto', bottom: 'auto' } : undefined}
-    >
-      <div
-        className={`agent-chat-header ${collapsed ? 'is-draggable' : ''}`}
-        onPointerDown={onPointerDown}
+    <>
+      <button
+        type="button"
+        className={`agent-chat-fab ${open ? 'is-hidden' : ''}`}
+        aria-label={t('agent.openPanel')}
+        aria-hidden={open}
+        tabIndex={open ? -1 : 0}
+        title={t('agent.openPanel')}
+        onClick={onOpen}
       >
-        <div className="agent-chat-heading">
-          <strong>{t('agent.title')}</strong>
-          <AgentModelSelector
-            models={models}
-            value={selectedModel}
-            loading={modelsLoading}
-            onChange={setSelectedModel}
-            label={t('agent.modelLabel')}
-            defaultLabel={t('agent.modelDefault')}
-            codexLabel={t('agent.codexProvider')}
-            claudeLabel={t('agent.claudeProvider')}
-            comingSoonLabel={t('agent.comingSoon')}
-          />
+        <img src={robotUrl} alt="" aria-hidden="true" />
+      </button>
+      <aside
+        ref={panelRef}
+        className={`agent-chat-panel ${open ? 'is-open' : 'is-dismissed'} ${collapsed ? 'is-collapsed' : ''}`}
+        aria-label={t('agent.panelLabel')}
+        aria-hidden={!open}
+        // 옮긴 뒤에는 right/bottom 앵커 대신 left/top 이 이긴다. 안 지우면 두 앵커가 싸워 늘어난다.
+        style={position ? { left: `${position.left}px`, top: `${position.top}px`, right: 'auto', bottom: 'auto' } : undefined}
+      >
+        <div
+          className={`agent-chat-header ${collapsed ? 'is-draggable' : ''}`}
+          onPointerDown={onPointerDown}
+        >
+          <div className="agent-chat-heading">
+            <strong>{t('agent.title')}</strong>
+            <AgentModelSelector
+              models={models}
+              value={selectedModel}
+              loading={modelsLoading}
+              onChange={setSelectedModel}
+              label={t('agent.modelLabel')}
+              defaultLabel={t('agent.modelDefault')}
+              codexLabel={t('agent.codexProvider')}
+              claudeLabel={t('agent.claudeProvider')}
+              comingSoonLabel={t('agent.comingSoon')}
+            />
+          </div>
+          <div className="agent-chat-header-actions">
+            {running && <span className="agent-chat-running">{t('agent.running')}</span>}
+            <button
+              type="button"
+              className="agent-chat-dismiss"
+              aria-label={t('agent.dismissPanel')}
+              title={t('agent.dismissPanel')}
+              onClick={onDismiss}
+            >
+              <span aria-hidden="true">×</span>
+            </button>
+            {/* 🔴 아이콘만 두면 버튼의 **이름이 사라진다** — 스크린리더는 "button" 이라고만 읽는다.
+                `aria-label` 로 이름을, `title` 로 풍선 도움말을 준다. 둘 다 상태를 그대로 말한다. */}
+            <button
+              type="button"
+              className="agent-chat-collapse"
+              aria-label={collapsed ? t('agent.expand') : t('agent.collapse')}
+              aria-expanded={!collapsed}
+              title={collapsed ? t('agent.expand') : t('agent.collapse')}
+              onClick={() => setCollapsed((value) => !value)}
+            >
+              <ChevronIcon collapsed={collapsed} />
+            </button>
+          </div>
         </div>
-        <div className="agent-chat-header-actions">
-          {running && <span className="agent-chat-running">{t('agent.running')}</span>}
-          {/* 🔴 아이콘만 두면 버튼의 **이름이 사라진다** — 스크린리더는 "button" 이라고만 읽는다.
-              `aria-label` 로 이름을, `title` 로 풍선 도움말을 준다. 둘 다 상태를 그대로 말한다. */}
-          <button
-            type="button"
-            className="agent-chat-collapse"
-            aria-label={collapsed ? t('agent.expand') : t('agent.collapse')}
-            aria-expanded={!collapsed}
-            title={collapsed ? t('agent.expand') : t('agent.collapse')}
-            onClick={() => setCollapsed((value) => !value)}
-          >
-            <ChevronIcon collapsed={collapsed} />
-          </button>
-        </div>
-      </div>
 
-      {!collapsed && (
-        <>
-          <div className="agent-chat-log" aria-live="polite">
-            {messages.length === 0 && <p className="agent-chat-empty">{t('agent.empty')}</p>}
-            {messages.map((message) => (
-              <div key={message.id} className={`agent-chat-message ${message.role}`}>{message.text}</div>
-            ))}
-            {toolCalls.map(({ id, phase, item }) => (
-              <div key={id} className="agent-chat-tool">
-                <div>
-                  <span>{phase === 'completed' ? t('agent.toolDone') : t('agent.toolRunning')}</span>
-                  {' · '}{toolName(item, t)}
+        {!collapsed && (
+          <>
+            <div className="agent-chat-log" aria-live="polite">
+              {messages.length === 0 && <p className="agent-chat-empty">{t('agent.empty')}</p>}
+              {messages.map((message) => (
+                <div key={message.id} className={`agent-chat-message ${message.role}`}>{message.text}</div>
+              ))}
+              {toolCalls.map(({ id, phase, item }) => (
+                <div key={id} className="agent-chat-tool">
+                  <div>
+                    <span>{phase === 'completed' ? t('agent.toolDone') : t('agent.toolRunning')}</span>
+                    {' · '}{toolName(item, t)}
+                  </div>
+                  {(item.arguments || item.result) && (
+                    <pre>{JSON.stringify(item.arguments || item.result, null, 2)}</pre>
+                  )}
                 </div>
-                {(item.arguments || item.result) && (
-                  <pre>{JSON.stringify(item.arguments || item.result, null, 2)}</pre>
-                )}
-              </div>
-            ))}
-            {errors.map((entry) => <div key={entry.key} className="agent-chat-error" role="alert">{entry.text}</div>)}
-            {/* 🔴 첫 delta 까지 수십 초 걸린다 (실측 16초). 그동안 빈 화면이면 사용자는 앱이 죽은 줄 안다. */}
-            {running && (
-              <div className="agent-chat-thinking" role="status">
-                <span className="agent-chat-dots"><i /><i /><i /></span>
-                {t('agent.thinking')}
+              ))}
+              {errors.map((entry) => <div key={entry.key} className="agent-chat-error" role="alert">{entry.text}</div>)}
+              {/* 🔴 첫 delta 까지 수십 초 걸린다 (실측 16초). 그동안 빈 화면이면 사용자는 앱이 죽은 줄 안다. */}
+              {running && (
+                <div className="agent-chat-thinking" role="status">
+                  <span className="agent-chat-dots"><i /><i /><i /></span>
+                  {t('agent.thinking')}
+                </div>
+              )}
+            </div>
+
+            {usage && (
+              <div className="agent-chat-usage">
+                {t('agent.usage', { turns: usage.turns ?? 0, toolCalls: usage.toolCalls ?? 0 })}
               </div>
             )}
-          </div>
 
-          {usage && (
-            <div className="agent-chat-usage">
-              {t('agent.usage', { turns: usage.turns ?? 0, toolCalls: usage.toolCalls ?? 0 })}
-            </div>
-          )}
-
-          <form className="agent-chat-compose" onSubmit={send}>
-            <textarea
-              aria-label={t('agent.inputLabel')}
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              placeholder={t('agent.placeholder')}
-              rows={2}
-            />
-            <div className="agent-chat-actions">
-              <button type="submit" disabled={running || !input.trim()}>{t('agent.send')}</button>
-              <button type="button" onClick={steer} disabled={!running || !input.trim()}>{t('agent.steer')}</button>
-              <button type="button" onClick={abort} disabled={!running}>{t('agent.stop')}</button>
-              <button type="button" onClick={close} disabled={!sessionOpenRef.current}>{t('agent.closeSession')}</button>
-            </div>
-          </form>
-        </>
-      )}
-    </aside>
+            <form className="agent-chat-compose" onSubmit={send}>
+              <textarea
+                aria-label={t('agent.inputLabel')}
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                placeholder={t('agent.placeholder')}
+                rows={2}
+              />
+              <div className="agent-chat-actions">
+                <button type="submit" disabled={running || !input.trim()}>{t('agent.send')}</button>
+                <button type="button" onClick={steer} disabled={!running || !input.trim()}>{t('agent.steer')}</button>
+                <button type="button" onClick={abort} disabled={!running}>{t('agent.stop')}</button>
+                <button type="button" onClick={close} disabled={!sessionOpenRef.current}>{t('agent.closeSession')}</button>
+              </div>
+            </form>
+          </>
+        )}
+      </aside>
+    </>
   )
 }

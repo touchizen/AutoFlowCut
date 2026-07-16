@@ -718,6 +718,7 @@ function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [settingsTab, setSettingsTab] = useState(null) // 설정 모달 초기 탭
   const [showImport, setShowImport] = useState(false)
+  const [agentPanelOpen, setAgentPanelOpen] = useState(false)
   // SRT 가져오기 충돌 모달: 기존 scenes/srtTrack 있을 때 사용자에게 대체/병합/취소 묻는 상태.
   // null = 미요청. { content, framePairs } 객체가 들어있으면 모달 띄움.
   const [srtImportPending, setSrtImportPending] = useState(null)
@@ -2685,6 +2686,9 @@ function App() {
           승인/error surface와 대화 state가 사라진다. Header처럼 두 view보다 앞에 한 번만 둔다. */}
       <ApprovalDialog />
       <ChatPanel
+        open={agentPanelOpen}
+        onOpen={() => setAgentPanelOpen(true)}
+        onDismiss={() => setAgentPanelOpen(false)}
         projectKey={`${settings.saveMode}:${workFolder ?? ''}:${settings.projectName ?? ''}`}
         videoAdmissionSources={videoAdmissionSources}
         batchStatusSources={{
