@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 import React from 'react'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import AgentModelSelector, { listboxPosition } from '../../../src/components/agent/AgentModelSelector.jsx'
+
+const originalResizeObserver = globalThis.ResizeObserver
 
 const models = [
   { id: 'gpt-a', displayName: 'GPT A', hidden: false },
@@ -35,6 +37,7 @@ function renderSelector(props = {}, { appContainer = false } = {}) {
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  globalThis.ResizeObserver = originalResizeObserver
   // innerWidth/innerHeight는 spy가 아니라 defineProperty라 restoreAllMocks로 안 돌아온다 → 다음 테스트 오염 방지 위해 jsdom 기본값 복원.
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
   Object.defineProperty(window, 'innerHeight', { configurable: true, value: 768 })
@@ -242,5 +245,48 @@ describe('AgentModelSelector', () => {
     triggerLeft = 80
     fireEvent.resize(window)
     await waitFor(() => expect(listbox.style.left).toBe('80px'))
+  })
+
+  it('open listbox는 App container ResizeObserver 알림으로 위치를 다시 계산한다', async () => {
+    const observers = []
+    globalThis.ResizeObserver = class ResizeObserver {
+      constructor(callback) {
+        this.callback = callback
+        this.targets = []
+        observers.push(this)
+      }
+      observe(target) { this.targets.push(target) }
+      disconnect() {}
+    }
+    let appRight = 1200
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function rect() {
+      if (this.classList.contains('app')) {
+        return {
+          left: 600, top: 0, right: appRight, bottom: 900,
+          width: appRight - 600, height: 900,
+        }
+      }
+      if (this.classList.contains('agent-model-combobox')) {
+        return { left: 1170, top: 100, right: 1190, bottom: 128, width: 20, height: 28 }
+      }
+      if (this.classList.contains('agent-model-listbox')) {
+        return { left: 0, top: 0, right: 220, bottom: 180, width: 220, height: 180 }
+      }
+      return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }
+    })
+    const user = userEvent.setup()
+    const { container } = renderSelector({}, { appContainer: true })
+    const app = container.querySelector('.app')
+
+    await user.click(screen.getByRole('combobox', { name: 'Agent model' }))
+    const listbox = screen.getByRole('listbox', { name: 'Agent model' })
+    await waitFor(() => expect(listbox.style.left).toBe('972px'))
+    const observer = observers.find((item) => item.targets.includes(app))
+    expect(observer).toBeTruthy()
+
+    appRight = 1000
+    act(() => observer.callback())
+
+    await waitFor(() => expect(listbox.style.left).toBe('772px'))
   })
 })

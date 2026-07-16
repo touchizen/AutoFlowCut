@@ -1,12 +1,15 @@
 // @vitest-environment jsdom
 import React from 'react'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import AgentIconButton, { tooltipPosition } from '../../../src/components/agent/AgentIconButton.jsx'
+
+const originalResizeObserver = globalThis.ResizeObserver
 
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  globalThis.ResizeObserver = originalResizeObserver
 })
 
 describe('AgentIconButton portal tooltip', () => {
@@ -52,6 +55,54 @@ describe('AgentIconButton portal tooltip', () => {
     expect(container.contains(tooltip)).toBe(false)
     expect(tooltip.style.top).toBe('42px')
     expect(tooltip.dataset.placement).toBe('bottom')
+  })
+
+  it('open tooltip은 App container ResizeObserver 알림으로 위치를 다시 계산한다', async () => {
+    const observers = []
+    globalThis.ResizeObserver = class ResizeObserver {
+      constructor(callback) {
+        this.callback = callback
+        this.targets = []
+        observers.push(this)
+      }
+      observe(target) { this.targets.push(target) }
+      disconnect() {}
+    }
+    let appRight = 1200
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function rect() {
+      if (this.classList.contains('app')) {
+        return {
+          left: 600, top: 0, right: appRight, bottom: 900,
+          width: appRight - 600, height: 900,
+        }
+      }
+      if (this.classList.contains('agent-portal-tooltip')) {
+        return { left: 0, top: 0, right: 200, bottom: 30, width: 200, height: 30 }
+      }
+      if (this.tagName === 'BUTTON') {
+        return { left: 1170, top: 100, right: 1190, bottom: 132, width: 20, height: 32 }
+      }
+      return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }
+    })
+    const { container } = render(
+      <div className="app">
+        <AgentIconButton label="Close session" tooltip="Close the agent session">
+          <svg aria-hidden="true" />
+        </AgentIconButton>
+      </div>,
+    )
+    const app = container.querySelector('.app')
+
+    fireEvent.mouseEnter(screen.getByRole('button', { name: 'Close session' }))
+    const tooltip = await screen.findByRole('tooltip')
+    await waitFor(() => expect(tooltip.style.left).toBe('992px'))
+    const observer = observers.find((item) => item.targets.includes(app))
+    expect(observer).toBeTruthy()
+
+    appRight = 1000
+    act(() => observer.callback())
+
+    await waitFor(() => expect(tooltip.style.left).toBe('792px'))
   })
 
   it('순수 위치 함수는 좌우 clamp와 위쪽 우선 배치를 지킨다', () => {

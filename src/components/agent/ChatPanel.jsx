@@ -152,9 +152,11 @@ function useFloatingDrag(enabled, reclampSignal, panelRef) {
     const onUp = () => { dragRef.current = null }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
     return () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
     }
   }, [enabled, setDragPosition])
 
@@ -211,100 +213,136 @@ function useContainerAwarePanelMode({
 
 function useDockResize({
   enabled,
-  width,
+  preference,
+  appMode,
   panelRef,
-  onWidthChange,
   onWidthCommit,
 }) {
   const dragRef = useRef(null)
-  const latestWidthRef = useRef(width)
+  const keyboardResizeRef = useRef(false)
+  const preferenceRef = useRef(preference)
+  const initialWidth = clampAgentDockWidth(preference, Number.POSITIVE_INFINITY)
+  const latestWidthRef = useRef(initialWidth)
+  const [appliedWidth, setAppliedWidth] = useState(initialWidth)
   const [maxWidth, setMaxWidth] = useState(MAX_AGENT_DOCK_WIDTH)
-  latestWidthRef.current = width
+  preferenceRef.current = preference
 
-  const readContainerWidth = useCallback(() => {
+  const readContainer = useCallback(() => {
     const panel = panelRef.current
-    const container = panel?.closest('.app') || panel?.parentElement
-    const measured = container?.getBoundingClientRect().width
-    return typeof measured === 'number' && measured > 0
-      ? measured
-      : Number.POSITIVE_INFINITY
+    return panel?.closest('.app') || panel?.parentElement || null
   }, [panelRef])
 
-  const resizeTo = useCallback((desired, commit = false) => {
-    const containerWidth = readContainerWidth()
-    if (Number.isFinite(containerWidth)) {
-      setMaxWidth(clampAgentDockWidth(MAX_AGENT_DOCK_WIDTH, containerWidth))
-    }
+  const applyWidth = useCallback((desired) => {
+    const container = readContainer()
+    const measured = container?.getBoundingClientRect().width
+    const containerWidth = typeof measured === 'number' && measured > 0
+      ? measured
+      : Number.POSITIVE_INFINITY
+    const nextMaxWidth = clampAgentDockWidth(MAX_AGENT_DOCK_WIDTH, containerWidth)
     const next = clampAgentDockWidth(desired, containerWidth)
-    const changed = next !== latestWidthRef.current
+    container?.style.setProperty('--agent-dock-w', `${next}px`)
     latestWidthRef.current = next
-    if (changed) onWidthChange(next)
-    if (commit) onWidthCommit(next)
+    setAppliedWidth((current) => (current === next ? current : next))
+    setMaxWidth((current) => (current === nextMaxWidth ? current : nextMaxWidth))
     return next
-  }, [onWidthChange, onWidthCommit, readContainerWidth])
+  }, [readContainer])
 
-  useEffect(() => {
-    if (!enabled) return undefined
-    const panel = panelRef.current
-    const container = panel?.closest('.app') || panel?.parentElement
+  const deriveAppliedWidth = useCallback(() => {
+    const drag = dragRef.current
+    if (drag) {
+      return applyWidth(drag.startWidth + drag.startX - drag.lastClientX)
+    }
+    return applyWidth(preferenceRef.current)
+  }, [applyWidth])
+
+  useLayoutEffect(() => {
+    const container = readContainer()
     if (!container) return undefined
 
-    const reclamp = () => {
-      const containerWidth = container.getBoundingClientRect().width
-      if (!(containerWidth > 0)) return
-      setMaxWidth(clampAgentDockWidth(MAX_AGENT_DOCK_WIDTH, containerWidth))
-      const next = clampAgentDockWidth(latestWidthRef.current, containerWidth)
-      if (next === latestWidthRef.current) return
-      latestWidthRef.current = next
-      onWidthChange(next)
+    if (!enabled) {
+      dragRef.current = null
+      keyboardResizeRef.current = false
     }
-    reclamp()
+    deriveAppliedWidth()
     if (typeof ResizeObserver === 'undefined') return undefined
-    const observer = new ResizeObserver(reclamp)
+    const observer = new ResizeObserver(deriveAppliedWidth)
     observer.observe(container)
     return () => observer.disconnect()
-  }, [enabled, onWidthChange, panelRef])
+  }, [appMode, deriveAppliedWidth, enabled, preference, readContainer])
 
   useEffect(() => {
     if (!enabled) return undefined
     const onMove = (event) => {
       const drag = dragRef.current
       if (!drag) return
-      resizeTo(drag.startWidth + drag.startX - event.clientX)
+      if (drag.pointerId !== undefined && event.pointerId !== drag.pointerId) return
+      drag.lastClientX = event.clientX
+      applyWidth(drag.startWidth + drag.startX - event.clientX)
     }
-    const onUp = () => {
-      if (!dragRef.current) return
+    const finishDrag = (event) => {
+      const drag = dragRef.current
+      if (!drag) return
+      if (
+        drag.pointerId !== undefined
+        && event?.pointerId !== undefined
+        && event.pointerId !== drag.pointerId
+      ) return
       dragRef.current = null
+      if (drag.pointerId !== undefined && drag.target?.hasPointerCapture?.(drag.pointerId)) {
+        drag.target.releasePointerCapture(drag.pointerId)
+      }
       onWidthCommit(latestWidthRef.current)
     }
     window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointerup', finishDrag)
+    window.addEventListener('pointercancel', finishDrag)
     return () => {
       window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointerup', finishDrag)
+      window.removeEventListener('pointercancel', finishDrag)
       dragRef.current = null
     }
-  }, [enabled, onWidthCommit, resizeTo])
+  }, [applyWidth, enabled, onWidthCommit])
 
   const onPointerDown = useCallback((event) => {
     if (!enabled || event.button !== 0) return
     event.preventDefault()
     event.stopPropagation()
-    const startWidth = resizeTo(latestWidthRef.current)
+    const startWidth = applyWidth(latestWidthRef.current)
+    event.currentTarget.setPointerCapture?.(event.pointerId)
     dragRef.current = {
+      pointerId: event.pointerId,
+      target: event.currentTarget,
       startX: event.clientX,
       startWidth,
+      lastClientX: event.clientX,
     }
-  }, [enabled, resizeTo])
+  }, [applyWidth, enabled])
 
   const onKeyDown = useCallback((event) => {
     if (!enabled || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return
     event.preventDefault()
     const delta = event.key === 'ArrowLeft' ? DOCK_KEYBOARD_STEP_PX : -DOCK_KEYBOARD_STEP_PX
-    resizeTo(latestWidthRef.current + delta, true)
-  }, [enabled, resizeTo])
+    keyboardResizeRef.current = true
+    applyWidth(latestWidthRef.current + delta)
+  }, [applyWidth, enabled])
 
-  return { maxWidth, onPointerDown, onKeyDown }
+  const commitKeyboardResize = useCallback((event) => {
+    if (!keyboardResizeRef.current) return
+    if (event?.type === 'keyup' && !['ArrowLeft', 'ArrowRight'].includes(event.key)) return
+    event?.preventDefault()
+    keyboardResizeRef.current = false
+    onWidthCommit(latestWidthRef.current)
+  }, [onWidthCommit])
+
+  return {
+    appliedWidth,
+    maxWidth,
+    onPointerDown,
+    onKeyDown,
+    onKeyUp: commitKeyboardResize,
+    onBlur: commitKeyboardResize,
+  }
 }
 
 /**
@@ -320,7 +358,6 @@ export default function ChatPanel({
   onAgentPanelModeChange = () => {},
   onEffectiveModeChange = () => {},
   agentDockWidth = DEFAULT_AGENT_DOCK_WIDTH,
-  onAgentDockWidthChange = () => {},
   onAgentDockWidthCommit = () => {},
   projectKey = null,
   batchStatusSources = {},
@@ -343,9 +380,9 @@ export default function ChatPanel({
   const dockResizeEnabled = open && effectiveMode === 'docked'
   const dockResize = useDockResize({
     enabled: dockResizeEnabled,
-    width: agentDockWidth,
+    preference: agentDockWidth,
+    appMode,
     panelRef,
-    onWidthChange: onAgentDockWidthChange,
     onWidthCommit: onAgentDockWidthCommit,
   })
   const [input, setInput] = useState('')
@@ -685,12 +722,14 @@ export default function ChatPanel({
             role="separator"
             aria-label={t('agent.resizeDock')}
             aria-orientation="vertical"
-            aria-valuenow={agentDockWidth}
+            aria-valuenow={dockResize.appliedWidth}
             aria-valuemin={MIN_AGENT_DOCK_WIDTH}
             aria-valuemax={dockResize.maxWidth}
             tabIndex={0}
             onPointerDown={dockResize.onPointerDown}
             onKeyDown={dockResize.onKeyDown}
+            onKeyUp={dockResize.onKeyUp}
+            onBlur={dockResize.onBlur}
           >
             <div className="agent-chat-resizer-handle" />
           </div>

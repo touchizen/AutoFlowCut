@@ -703,6 +703,34 @@ describe('ChatPanel — open floating container drag', () => {
     expect(panel.style.left).toBe('')
   })
 
+  it('floating drag도 pointercancel 뒤 hover pointermove를 무시한다', () => {
+    const { container } = render(
+      <div className="app">
+        <ChatPanel open appMode="api" agentPanelMode="floating" projectKey="p" batchStatusSources={batchSources()} />
+      </div>,
+    )
+    const app = container.querySelector('.app')
+    const panel = container.querySelector('.agent-chat-panel')
+    const header = container.querySelector('.agent-chat-header')
+    app.getBoundingClientRect = () => ({
+      left: 0, top: 0, width: 500, height: 400, right: 500, bottom: 400,
+    })
+    panel.getBoundingClientRect = () => ({
+      left: 20, top: 20, width: 300, height: 200, right: 320, bottom: 220,
+    })
+
+    fireEvent.pointerDown(header, { button: 0, clientX: 40, clientY: 40 })
+    fireEvent.pointerMove(window, { clientX: 80, clientY: 80 })
+    expect(panel.style.left).toBe('60px')
+    expect(panel.style.top).toBe('60px')
+
+    fireEvent.pointerCancel(window)
+    fireEvent.pointerMove(window, { clientX: 160, clientY: 160 })
+
+    expect(panel.style.left).toBe('60px')
+    expect(panel.style.top).toBe('60px')
+  })
+
   it.each([
     { open: false, mode: 'floating' },
     { open: true, mode: 'docked' },
@@ -719,17 +747,30 @@ describe('ChatPanel — open floating container drag', () => {
 })
 
 describe('ChatPanel — dock resize', () => {
-  function DockResizeHarness({ open = true, mode = 'docked', onCommit = () => {} }) {
-    const [width, setWidth] = React.useState(400)
+  function DockResizeHarness({
+    open = true,
+    mode = 'docked',
+    initialPreference = 400,
+    onCommit = () => {},
+    onLayout = () => {},
+  }) {
+    const [preference, setPreference] = React.useState(initialPreference)
+    const appRef = React.useRef(null)
+    React.useLayoutEffect(() => {
+      onLayout(appRef.current)
+    })
+    const commit = (width) => {
+      onCommit(width)
+      setPreference(width)
+    }
     return (
-      <div className="app" style={{ '--agent-dock-w': `${width}px` }}>
+      <div ref={appRef} className="app" data-agent-dock-preference={preference}>
         <ChatPanel
           open={open}
           appMode="api"
           agentPanelMode={mode}
-          agentDockWidth={width}
-          onAgentDockWidthChange={setWidth}
-          onAgentDockWidthCommit={onCommit}
+          agentDockWidth={preference}
+          onAgentDockWidthCommit={commit}
           projectKey="p"
           batchStatusSources={batchSources()}
         />
@@ -737,7 +778,52 @@ describe('ChatPanel — dock resize', () => {
     )
   }
 
-  it('docked+open에서 왼쪽 edge drag로 live 폭을 바꾸고 pointerup에 한 번 commit한다', () => {
+  it('저장 preference를 건드리지 않고 좁은 container에 적용한 뒤 container가 커지면 preference 폭으로 복귀한다', () => {
+    const resizeCallbacks = []
+    globalThis.ResizeObserver = class ResizeObserver {
+      constructor(callback) { resizeCallbacks.push(callback) }
+      observe() {}
+      disconnect() {}
+    }
+    currentAppRect = {
+      left: 0, top: 0, width: 800, height: 800, right: 800, bottom: 800,
+    }
+    const { container } = render(<DockResizeHarness initialPreference={700} />)
+    const app = container.querySelector('.app')
+
+    expect(app.style.getPropertyValue('--agent-dock-w')).toBe('480px')
+    expect(app.dataset.agentDockPreference).toBe('700')
+
+    currentAppRect = {
+      left: 0, top: 0, width: 1400, height: 800, right: 1400, bottom: 800,
+    }
+    act(() => resizeCallbacks.forEach((callback) => callback()))
+
+    expect(app.style.getPropertyValue('--agent-dock-w')).toBe('700px')
+    expect(app.dataset.agentDockPreference).toBe('700')
+  })
+
+  it('첫 layout commit에서 persisted preference를 container 폭으로 clamp하고 유효한 ARIA를 노출한다', () => {
+    currentAppRect = {
+      left: 0, top: 0, width: 800, height: 800, right: 800, bottom: 800,
+    }
+    const layoutWidths = []
+    const { container } = render(
+      <DockResizeHarness
+        initialPreference={700}
+        onLayout={(app) => layoutWidths.push(app.style.getPropertyValue('--agent-dock-w'))}
+      />,
+    )
+    const app = container.querySelector('.app')
+    const handle = screen.getByRole('separator', { name: 'Resize agent dock' })
+
+    expect(layoutWidths[0]).toBe('480px')
+    expect(app.style.getPropertyValue('--agent-dock-w')).toBe('480px')
+    expect(Number(handle.getAttribute('aria-valuenow')))
+      .toBeLessThanOrEqual(Number(handle.getAttribute('aria-valuemax')))
+  })
+
+  it('docked+open에서 App state를 거치지 않고 live 폭을 바꾸며 pointerup에 한 번 commit한다', () => {
     const onCommit = vi.fn()
     const { container } = render(<DockResizeHarness onCommit={onCommit} />)
     const app = container.querySelector('.app')
@@ -753,19 +839,46 @@ describe('ChatPanel — dock resize', () => {
       window.dispatchEvent(new PointerEvent('pointermove', {
         bubbles: true, clientX: 600, clientY: 100,
       }))
+      window.dispatchEvent(new PointerEvent('pointermove', {
+        bubbles: true, clientX: 580, clientY: 100,
+      }))
     })
 
-    expect(app.style.getPropertyValue('--agent-dock-w')).toBe('500px')
+    expect(app.style.getPropertyValue('--agent-dock-w')).toBe('520px')
+    expect(app.dataset.agentDockPreference).toBe('400')
     expect(onCommit).not.toHaveBeenCalled()
 
     act(() => {
       window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
     })
     expect(onCommit).toHaveBeenCalledOnce()
-    expect(onCommit).toHaveBeenCalledWith(500)
+    expect(onCommit).toHaveBeenCalledWith(520)
+    expect(app.dataset.agentDockPreference).toBe('520')
   })
 
-  it('separator keyboard 조작은 16px 단위이며 현재 clamp 범위를 ARIA로 노출한다', () => {
+  it('pointercancel 뒤 hover pointermove가 resize를 재개하지 않는다', () => {
+    const onCommit = vi.fn()
+    const { container } = render(<DockResizeHarness onCommit={onCommit} />)
+    const app = container.querySelector('.app')
+    const handle = screen.getByRole('separator', { name: 'Resize agent dock' })
+    app.getBoundingClientRect = () => ({
+      left: 0, top: 0, width: 1000, height: 800, right: 1000, bottom: 800,
+    })
+
+    fireEvent.pointerDown(handle, { button: 0, clientX: 700, clientY: 100 })
+    fireEvent.pointerMove(window, { clientX: 650, clientY: 100 })
+    expect(app.style.getPropertyValue('--agent-dock-w')).toBe('450px')
+
+    fireEvent.pointerCancel(window)
+    const cancelledWidth = app.style.getPropertyValue('--agent-dock-w')
+    fireEvent.pointerMove(window, { clientX: 500, clientY: 100 })
+
+    expect(app.style.getPropertyValue('--agent-dock-w')).toBe(cancelledWidth)
+    expect(onCommit).toHaveBeenCalledOnce()
+    expect(onCommit).toHaveBeenCalledWith(450)
+  })
+
+  it('separator keyboard auto-repeat은 live만 바꾸고 keyup에 한 번 commit한다', () => {
     const onCommit = vi.fn()
     const { container } = render(<DockResizeHarness onCommit={onCommit} />)
     const app = container.querySelector('.app')
@@ -775,16 +888,38 @@ describe('ChatPanel — dock resize', () => {
     })
 
     fireEvent.keyDown(handle, { key: 'ArrowLeft' })
+    fireEvent.keyDown(handle, { key: 'ArrowLeft', repeat: true })
+    fireEvent.keyDown(handle, { key: 'ArrowLeft', repeat: true })
 
-    expect(app.style.getPropertyValue('--agent-dock-w')).toBe('416px')
-    expect(onCommit).toHaveBeenLastCalledWith(416)
-    expect(handle).toHaveAttribute('aria-valuenow', '416')
+    expect(app.style.getPropertyValue('--agent-dock-w')).toBe('448px')
+    expect(onCommit).not.toHaveBeenCalled()
+    expect(handle).toHaveAttribute('aria-valuenow', '448')
     expect(handle).toHaveAttribute('aria-valuemin', '280')
     expect(handle).toHaveAttribute('aria-valuemax', '600')
 
-    fireEvent.keyDown(handle, { key: 'ArrowRight' })
+    fireEvent.keyUp(handle, { key: 'ArrowLeft' })
+    expect(onCommit).toHaveBeenCalledOnce()
+    expect(onCommit).toHaveBeenCalledWith(448)
+  })
+
+  it('commit 전 resize 중 panel이 비활성화되면 transient 폭을 버리고 preference 폭으로 복귀한다', () => {
+    const onCommit = vi.fn()
+    const { container, rerender } = render(<DockResizeHarness onCommit={onCommit} />)
+    const app = container.querySelector('.app')
+    const handle = screen.getByRole('separator', { name: 'Resize agent dock' })
+    app.getBoundingClientRect = () => ({
+      left: 0, top: 0, width: 1000, height: 800, right: 1000, bottom: 800,
+    })
+
+    fireEvent.keyDown(handle, { key: 'ArrowLeft' })
+    expect(app.style.getPropertyValue('--agent-dock-w')).toBe('416px')
+    expect(onCommit).not.toHaveBeenCalled()
+
+    rerender(<DockResizeHarness open={false} onCommit={onCommit} />)
+
     expect(app.style.getPropertyValue('--agent-dock-w')).toBe('400px')
-    expect(onCommit).toHaveBeenLastCalledWith(400)
+    expect(app.dataset.agentDockPreference).toBe('400')
+    expect(onCommit).not.toHaveBeenCalled()
   })
 
   it('좁은 container에서도 separator의 폭과 ARIA 범위가 280px 아래로 역전되지 않는다', () => {

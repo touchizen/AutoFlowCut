@@ -29,8 +29,8 @@ describe('App agent surface 배치', () => {
     expect(panelProps).toContain('appMode={mode}')
     expect(panelProps).toContain('agentPanelMode={settings.agentPanelMode}')
     expect(panelProps).toContain("onAgentPanelModeChange={(nextMode) => updateSetting('agentPanelMode', nextMode)}")
-    expect(panelProps).toContain('agentDockWidth={agentDockWidth}')
-    expect(panelProps).toContain('onAgentDockWidthChange={setAgentDockWidth}')
+    expect(panelProps).toContain('agentDockWidth={settings.agentDockWidth}')
+    expect(panelProps).not.toContain('onAgentDockWidthChange=')
     expect(panelProps).toContain('onAgentDockWidthCommit={commitAgentDockWidth}')
     expect(panelProps).toContain('onEffectiveModeChange={setAgentEffectivePanelMode}')
   })
@@ -48,8 +48,8 @@ describe('App agent surface 배치', () => {
     expect(source).toContain(
       "className={`${computeAppClass(mode)}${isAgentDocked ? ' agent-docked' : ''}`}",
     )
-    expect(source).toContain("style={{ '--agent-dock-w': `${agentDockWidth}px` }}")
-    expect(source).toContain('const [agentDockWidth, setAgentDockWidth] = useState(settings.agentDockWidth)')
+    expect(source).not.toContain("style={{ '--agent-dock-w'")
+    expect(source).not.toContain('const [agentDockWidth, setAgentDockWidth]')
     expect(source).toContain("updateSetting('agentDockWidth', width)")
   })
 

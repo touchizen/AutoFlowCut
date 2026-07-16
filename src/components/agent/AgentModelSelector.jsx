@@ -90,6 +90,7 @@ export default function AgentModelSelector({
 
   useLayoutEffect(() => {
     if (!open || !triggerRef.current || !listboxRef.current) return undefined
+    const container = triggerRef.current.closest('.app')
     const update = () => {
       const anchorRect = triggerRef.current.getBoundingClientRect()
       const width = Math.max(anchorRect.width, MIN_LISTBOX_WIDTH)
@@ -97,7 +98,7 @@ export default function AgentModelSelector({
       setPosition(listboxPosition(
         anchorRect,
         listboxRef.current.getBoundingClientRect(),
-        triggerRef.current.closest('.app')?.getBoundingClientRect() || {
+        container?.getBoundingClientRect() || {
           left: 0,
           top: 0,
           right: window.innerWidth,
@@ -110,9 +111,14 @@ export default function AgentModelSelector({
     update()
     window.addEventListener('resize', update)
     window.addEventListener('scroll', update, true)
+    const observer = typeof ResizeObserver !== 'undefined' && container
+      ? new ResizeObserver(update)
+      : null
+    observer?.observe(container)
     return () => {
       window.removeEventListener('resize', update)
       window.removeEventListener('scroll', update, true)
+      observer?.disconnect()
     }
   }, [codexLabel, comingSoonLabel, open, options])
 

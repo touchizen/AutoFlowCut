@@ -29,10 +29,11 @@ function PortalTooltip({ id, anchorRef, text, open }) {
 
   useLayoutEffect(() => {
     if (!open || !anchorRef.current || !tooltipRef.current) return undefined
+    const container = anchorRef.current.closest('.app')
     const update = () => setPosition(tooltipPosition(
       anchorRef.current.getBoundingClientRect(),
       tooltipRef.current.getBoundingClientRect(),
-      anchorRef.current.closest('.app')?.getBoundingClientRect() || {
+      container?.getBoundingClientRect() || {
         left: 0,
         top: 0,
         right: window.innerWidth,
@@ -44,9 +45,14 @@ function PortalTooltip({ id, anchorRef, text, open }) {
     update()
     window.addEventListener('resize', update)
     window.addEventListener('scroll', update, true)
+    const observer = typeof ResizeObserver !== 'undefined' && container
+      ? new ResizeObserver(update)
+      : null
+    observer?.observe(container)
     return () => {
       window.removeEventListener('resize', update)
       window.removeEventListener('scroll', update, true)
+      observer?.disconnect()
     }
   }, [anchorRef, open, text])
 

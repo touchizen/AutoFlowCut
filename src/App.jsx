@@ -687,10 +687,6 @@ function App() {
   // Settings (초기화 + localStorage 동기화)
   const { settings, setSettings, updateSetting, ensureProjectName } = useAppSettings()
   const [agentEffectivePanelMode, setAgentEffectivePanelMode] = useState('floating')
-  const [agentDockWidth, setAgentDockWidth] = useState(settings.agentDockWidth)
-  useEffect(() => {
-    setAgentDockWidth(settings.agentDockWidth)
-  }, [settings.agentDockWidth])
   const commitAgentDockWidth = useCallback((width) => {
     updateSetting('agentDockWidth', width)
   }, [updateSetting])
@@ -2681,7 +2677,6 @@ function App() {
   return (
     <div
       className={`${computeAppClass(mode)}${isAgentDocked ? ' agent-docked' : ''}`}
-      style={{ '--agent-dock-w': `${agentDockWidth}px` }}
     >
       <QAProgressBanner />
       <ImportProcessingOverlay
@@ -2706,8 +2701,7 @@ function App() {
         agentPanelMode={settings.agentPanelMode}
         onAgentPanelModeChange={(nextMode) => updateSetting('agentPanelMode', nextMode)}
         onEffectiveModeChange={setAgentEffectivePanelMode}
-        agentDockWidth={agentDockWidth}
-        onAgentDockWidthChange={setAgentDockWidth}
+        agentDockWidth={settings.agentDockWidth}
         onAgentDockWidthCommit={commitAgentDockWidth}
         projectKey={`${settings.saveMode}:${workFolder ?? ''}:${settings.projectName ?? ''}`}
         videoAdmissionSources={videoAdmissionSources}
