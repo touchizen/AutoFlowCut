@@ -220,6 +220,8 @@ Disclaimer: This app is an independent product developed by Touchizen and is not
 
 ### What's New
 ```
+v3.0.4 — Non-Korean locale fixes, Windows subtitles, big projects. If your Google account isn't Korean, please update. Flow character mentions now work on any account language, error messages follow your app language, Windows .srt files (CRLF, CP949/UTF-16) import and split correctly, and very long projects no longer freeze the app.
+
 v3.0.3 — Character reference sync fix. If you use character references in Flow mode, please update.
 
 The green check on a character card was lying. It meant only that the image had uploaded, not that the character had been registered with Flow — so a character you could not @mention still carried a success mark. Unsynced characters now show a warning instead. Pressing Sync again also created a duplicate character every time, because Flow makes a new one for each upload it receives; an already-uploaded character now retries only the registration.
@@ -450,6 +452,8 @@ Touchizen 제작 — touchizen.com
 
 ### What's New (새로운 기능)
 ```
+v3.0.4 — 한국어 외 계정, Windows 자막, 대용량 프로젝트 수정. 구글 계정 언어가 한국어가 아니라면 업데이트해 주세요. 이제 계정 언어와 무관하게 Flow 캐릭터 멘션이 동작하고, 에러 메시지가 앱 언어를 따르며, Windows에서 저장한 .srt 파일(CRLF, CP949/UTF-16)이 올바르게 분할되어 들어오고, 아주 긴 프로젝트에서도 앱이 멈추지 않습니다.
+
 v3.0.3 — 캐릭터 레퍼런스 동기화 수정. Flow 모드에서 캐릭터 레퍼런스를 쓰신다면 업데이트해 주세요.
 
 캐릭터 카드의 녹색 체크는 거짓말을 하고 있었습니다. 이미지가 업로드됐다는 뜻일 뿐 Flow에 등록됐다는 뜻이 아니어서, @멘션이 되지 않는 캐릭터에도 성공 표시가 떴습니다. 이제 미동기화 캐릭터에는 경고가 표시됩니다. Sync를 다시 누를 때마다 캐릭터가 중복 생성되던 문제도 고쳤습니다 — Flow는 업로드를 받을 때마다 새 캐릭터를 만들기 때문이었고, 이미 업로드된 캐릭터는 이제 등록만 재시도합니다.
@@ -585,6 +589,8 @@ AI 영상 자동화, 텍스트투비디오, 이미지투비디오, AI 이미지 
 
 ### What's New
 ```
+v3.0.4 — 韓国語以外のアカウント、Windows字幕、大規模プロジェクトの修正。Googleアカウントの言語が韓国語でない方は、アップデートしてください。アカウントの言語に関係なくFlowのキャラクターメンションが動作し、エラーメッセージがアプリの言語に従い、Windowsで保存した.srtファイル（CRLF、CP949/UTF-16）が正しく分割して読み込まれ、非常に長いプロジェクトでもアプリが固まらなくなりました。
+
 v3.0.3 — キャラクターリファレンスの同期を修正。Flowモードでキャラクターリファレンスをお使いの方は、アップデートしてください。
 
 キャラクターカードの緑のチェックは正しくありませんでした。画像がアップロードされたことを示すだけで、Flowに登録されたことを意味していなかったため、@メンションできないキャラクターにも成功マークが表示されていました。未同期のキャラクターには警告が表示されるようになりました。Syncを押し直すたびにキャラクターが重複生成される問題も修正しました — アップロードのたびにFlowが新しいキャラクターを作成するためで、すでにアップロード済みのキャラクターは登録のみを再試行します。
@@ -715,6 +721,8 @@ Der integrierte MCP-Server (Model Context Protocol) verbindet sich direkt mit Cl
 
 ### What's New
 ```
+v3.0.4 — Korrekturen für nicht-koreanische Konten, Windows-Untertitel, große Projekte. Wenn Ihr Google-Konto nicht auf Koreanisch eingestellt ist, aktualisieren Sie bitte. Flow-Charakter-Mentions funktionieren jetzt unabhängig von der Kontosprache, Fehlermeldungen folgen Ihrer App-Sprache, unter Windows gespeicherte .srt-Dateien (CRLF, CP949/UTF-16) werden korrekt eingelesen und aufgeteilt, und sehr lange Projekte lassen die App nicht mehr einfrieren.
+
 v3.0.3 — Fix für die Synchronisierung von Charakter-Referenzen. Wenn Sie Charakter-Referenzen im Flow-Modus nutzen, aktualisieren Sie bitte.
 
 Das grüne Häkchen auf einer Charakterkarte war irreführend. Es bedeutete nur, dass das Bild hochgeladen wurde — nicht, dass der Charakter bei Flow registriert war. So trug auch ein Charakter, den Sie nicht per @Mention einfügen konnten, eine Erfolgsmarkierung. Nicht synchronisierte Charaktere zeigen jetzt stattdessen eine Warnung. Ebenfalls behoben: Erneutes Drücken von „Sync" legte jedes Mal einen doppelten Charakter an, weil Flow bei jedem eingehenden Upload einen neuen Charakter erstellt. Ein bereits hochgeladener Charakter wiederholt nun nur noch die Registrierung.
