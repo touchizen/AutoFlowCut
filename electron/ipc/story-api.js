@@ -164,6 +164,29 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
   // 슬라이스1: 세그먼트 단건 TTS 테스트(배치와 분리, 스텝 상태 미변경).
   ipcMain.handle('story:tts-preview', guarded(({ segmentIds, speakers, sfxSources }) => machine.synthPreview({ segmentIds, speakers, sfxSources })))
 
+  // ── 화자별 오디오 출처 (mp3+SRT 가져오기) ──
+  // 출처 자체는 speaker.voice = {provider:'import', mp3Path, srtPath}로 들어가므로 별도 채널이
+  // 없다 — 기존 화자 배정(start('audio', {speakers}))이 그대로 나른다. 여기 있는 건 파일 선택뿐.
+  //
+  // 파일 선택 — renderer가 절대경로를 직접 만들 수 없으므로(그리고 만들게 하면 안 되므로) main이
+  // 다이얼로그를 띄우고 사용자가 고른 경로만 돌려준다.
+  // electron은 여기서 지연 import한다 — 이 모듈의 기존 테스트들은 electron을 mock하지 않으므로
+  // top-level import를 넣으면 그쪽이 깨진다(다이얼로그는 실제로 열 때만 필요하다).
+  // 다이얼로그 문구는 renderer가 실어 보낸다 — main은 useI18n을 부를 수 없어서, 여기에 문자열을
+  // 박아두면 영어 사용자에게 한국어 창이 뜬다. 미지정이면 영어 기본값(이웃 다이얼로그와 같은 관행).
+  ipcMain.handle('story:pick-audio-import-file', async (_e, { kind, title, filterName } = {}) => {
+    const { dialog } = await import('electron')
+    const spec = kind === 'srt'
+      ? { title: title || 'Select subtitles (SRT)', filters: [{ name: filterName || 'SubRip subtitles', extensions: ['srt'] }] }
+      : { title: title || 'Select narration audio', filters: [{ name: filterName || 'Audio', extensions: ['mp3'] }] }
+    const win = getWindow?.()
+    const result = win
+      ? await dialog.showOpenDialog(win, { properties: ['openFile'], ...spec })
+      : await dialog.showOpenDialog({ properties: ['openFile'], ...spec })
+    if (result.canceled || !result.filePaths.length) return { canceled: true }
+    return { canceled: false, filePath: result.filePaths[0] }
+  })
+
   // 리서치(spec §5): story:research-* guarded 핸들러 — machine research side action 위임.
   ipcMain.handle('story:research-search', guarded(({ query, keyword, maxResults, dateFilter }) =>
     machine.researchSearch({

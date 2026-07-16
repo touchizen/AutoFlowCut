@@ -4,8 +4,10 @@
  */
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
-import { stat } from 'node:fs/promises'
+import { stat, readFile } from 'node:fs/promises'
 import { createStoryStore } from './storyStore.js'
+import { parseSrtCues, validateCues, cueCoverage, alignSegmentsToSource, isImportProvider, isImportedSegment } from './srtImport.js'
+import { cutMp3ToWavSegments } from './audioCut.js'
 import { inheritStoryIds, assertUniqueStoryIds, assignStoryIdsByMembership, inheritSegmentIds } from './sceneIdentity.js'
 import { buildFallbackTimeline, buildSegmentTimeline, buildSrt, srtLineId } from './timing.js'
 import { regroupScenes } from './regroup.js'
@@ -13,6 +15,8 @@ import { buildManifest } from './manifest.js'
 import { normalizeActiveStoryLlmOptions as normalizeStoryLlmOptions } from '../api/llm/storyLlmCatalog.js'
 import { validateScenesSegments } from '../api/llm/schemas.js'
 import { isNarratorSpeaker as isNarratorTrackSpeaker } from '../../src/utils/storyNarrationTracks.js'
+// 순수 함수(TextDecoder만 사용) — renderer 전용 의존성이 없어 main에서도 그대로 쓴다.
+import { decodeTextBytes } from '../../src/utils/decodeTextFile.js'
 import { normalizeStoryCharacter, characterVisualPrompt } from '../../src/services/storyCharacter.js'
 
 const DOWNSTREAM = { script: ['scenes', 'audio', 'prompts'], scenes: ['audio', 'prompts'], audio: ['prompts'], prompts: [] }
@@ -83,13 +87,55 @@ export async function readAudioPackage(projectPath) {
   return { manifest, lastPushedRevision: st.lastPushedRevision ?? 0 }
 }
 
-export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt, tts, ttsFor, probe, defaultVoice = null, sfxFor = null, youtube = null, factCheck = null }) {
+export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaPrompt, tts, ttsFor, probe, defaultVoice = null, sfxFor = null, youtube = null, factCheck = null, cutAudio = cutMp3ToWavSegments }) {
   const store = createStoryStore(projectPath)
   // 화자별 엔진(슬라이스2): voice.provider별로 어댑터 선택. ttsFor 미주입(기존 단일 tts)이면 tts 사용.
   const resolveTts = (provider) => (ttsFor ? ttsFor(provider) : tts)
   // 세그먼트 오디오의 합성 지문 — provider/voiceId/emotion. 재사용 시 현재 배정과 일치해야 함
   // (Codex-TTS HIGH: 화자 voice/엔진을 바꿔도 옛 오디오가 재사용되던 버그 방지).
   const ttsVoiceKey = (voice, emotion) => (voice?.voiceId ? `${voice.provider || 'typecast'}:${voice.voiceId}:${emotion || 'normal'}` : '')
+  // 파일에서 가져온 세그먼트의 지문 — 출처 파일의 신원과 잘라낸 구간. ttsVoiceKey와 같은
+  // 자리(voiceKey)에 들어가 canReuse가 그대로 판정한다.
+  // 파일 신원(크기|mtime)을 넣는 게 핵심: 경로만 넣으면 같은 경로에 다른 mp3를 덮어써도 지문이
+  // 같아 옛 조각을 영영 재사용한다(조용히 틀린 오디오 — 가장 나쁜 실패 모드).
+  const importVoiceKey = (sourceId, seg) => (sourceId ? `import:${sourceId}:${seg.srcStartMs}-${seg.srcEndMs}` : '')
+
+  function audioImportMissing() {
+    // 파일이 사라졌으면(다운로드 폴더에서 고른 뒤 몇 주 뒤 프로젝트를 다시 여는 흔한 흐름) 날것의
+    // ENOENT가 올라가는데, 그 메시지엔 전체 경로가 실려 있고 errorKind가 없어 번역도 안 된다 —
+    // errorKind 계약으로 바꿔 잡는다(noKoreanIpcErrors: 경로를 오류에 싣지 않는다).
+    const err = new Error('audio import: source SRT or mp3 is missing or unreadable')
+    err.errorKind = 'story-audio-import-missing'
+    return err
+  }
+  /**
+   * voice에 실린 경로를 신뢰하지 않는다 — renderer/영속 state에서 온 값이다. 숫자를 넘기면
+   * readFile(fd)가 임의 파일 디스크립터를 읽고, 상대경로/'..'는 예상 밖 위치를 읽는다.
+   * workFolder로 가두지는 않는다(다운로드 폴더 등에서 고르는 게 정상적인 사용이다).
+   */
+  const okImportPath = (p, ext) => typeof p === 'string' && path.isAbsolute(p)
+    && !p.split(/[\\/]/).includes('..')
+    && new RegExp(`\\.${ext}$`, 'i').test(p)
+  function assertImportVoicePaths(voice) {
+    if (!okImportPath(voice?.mp3Path, 'mp3') || !okImportPath(voice?.srtPath, 'srt')) {
+      const err = new Error('audio import: invalid source path')
+      err.errorKind = 'story-audio-import-invalid-path'
+      throw err
+    }
+  }
+  async function readImportFile(p) {
+    try { return await readFile(p) } catch { throw audioImportMissing() }
+  }
+  /** mp3와 SRT **둘 다**의 신원. SRT가 바뀌면 구간이 달라지므로 잘라둔 조각도 전부 무효다. */
+  async function importSourceId(voice) {
+    let m, s
+    try {
+      ;[m, s] = await Promise.all([stat(voice.mp3Path), stat(voice.srtPath)])
+    } catch {
+      throw audioImportMissing()
+    }
+    return `${voice.mp3Path}|${m.size}|${Math.round(m.mtimeMs)}::${voice.srtPath}|${s.size}|${Math.round(s.mtimeMs)}`
+  }
   // 감정은 화자(대사)만 — narrator는 normal로 고정(나레이션에 감정 안 실림). TTS·reuse 지문에 공통.
   const effectiveEmotion = (seg) => (isNarratorTrackSpeaker(seg?.speaker) ? 'normal' : seg?.emotion)
   const projectToken = randomUUID()
@@ -863,6 +909,7 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         // 분리시작이 넘긴 title(자동생성 포함)을 보존 — 재오픈 hydrate가 제목을 복원하려면 필요.
         if (params.title) state.input.title = params.title
       }
+
       const scriptMd = await store.loadText('script.md')
       if (!scriptMd) throw new Error('script.md not found — run script step first')
       // §v2.8 B2: 확정 명단을 분리/검토 프롬프트에 주입 — 배정을 명단에 묶는다(새 인물 생성 금지).
@@ -910,7 +957,71 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       const voiceOf = (spk) => findSpeakerByRef(speakers, spk)?.voice || defaultVoice || null
       // 모든 씬의 세그먼트를 순서대로 평탄화
       const segments = scenesJson.scenes.flatMap((sc) => sc.segments || [])
-      const narration = segments.filter((s) => (s.type || 'narration') === 'narration')
+      const allNarration = segments.filter((s) => (s.type || 'narration') === 'narration')
+
+      // ── 화자별 오디오 출처 해석 ──
+      // voice가 {provider:'import', mp3Path, srtPath}인 화자는 TTS로 만들지 않고 그 파일에서
+      // 잘라 쓴다. 여기서 각 출처의 SRT를 읽어 그 화자의 세그먼트에 mp3 구간(srcStartMs/srcEndMs)을
+      // 붙인다 — ④는 이 일에 관여하지 않으므로(평소대로 LLM 분리) 정렬은 매번 여기서 한다.
+      // 결정론적이고 싸다(문자열 매칭).
+      const importSpeakers = [...new Set(allNarration.map((s) => s.speaker))].filter((spk) => isImportProvider(voiceOf(spk)))
+      let workScenes = scenesJson.scenes
+      const importSources = new Map() // speaker → { voice, sourceId }
+      for (const spk of importSpeakers) {
+        const voice = voiceOf(spk)
+        assertImportVoicePaths(voice)
+        const sourceId = await importSourceId(voice)
+        const cues = parseSrtCues(decodeTextBytes(await readImportFile(voice.srtPath)))
+        const audioDurationMs = await probe(voice.mp3Path)
+        if (!(audioDurationMs > 0)) {
+          const err = new Error('audio import: source mp3 could not be read')
+          err.errorKind = 'story-audio-import-unreadable'
+          throw err
+        }
+        const errors = validateCues(cues, { audioDurationMs })
+        if (errors.length) {
+          const err = new Error(`audio import: subtitle validation failed (${errors[0].kind})`)
+          err.errorKind = errors[0].kind
+          throw err
+        }
+        const r = alignSegmentsToSource(workScenes, cues, { belongsToSource: (seg) => seg.speaker === spk })
+        workScenes = r.scenes
+        importSources.set(spk, { voice, sourceId })
+        sendStepLog('audio', 'import-align', `${spk}: 자막에서 ${r.aligned}/${r.total}개 구간 찾음`, opId, { count: r.aligned })
+        // 자막에서 못 찾은 세그먼트는 이 mp3에서 못 자른다. 조용히 TTS로 흘려보내면 사용자가
+        // "파일에서 가져오기"를 골랐는데 일부만 몰래 합성돼 목소리가 섞인다 — 드러나야 한다.
+        if (r.missed) {
+          // 사용자에게 보이는 오류는 errorKind로 번역되면서 이 진단문이 버려진다(errorDisplay.js) —
+          // 그러니 진단은 **로그로** 흘려보내야 실제로 도달한다. 세그먼트 id만(자막 내용은 금지).
+          const eg = r.missedIds.length ? ` (${r.missedIds.join(', ')})` : ''
+          sendStepLog('audio', 'import-unmatched', `${spk}: 자막에서 못 찾은 세그먼트 ${r.missed}/${r.total}개${eg}`, opId, { level: 'error' })
+          const err = new Error(`audio import: ${r.missed}/${r.total} segment(s) not found in the subtitles${eg}`)
+          err.errorKind = 'story-audio-import-unmatched'
+          throw err
+        }
+        // divergent = 남의 세그먼트 일부만 자막에 있다. 정상이라면 전부 있거나(나레이터 mp3) 전부
+        // 없다(인물 mp3) — 섞였다는 건 자막과 대본이 어긋났다는 뜻이고, 그러면 커서가 밀리지 않아
+        // 뒤따르는 내 세그먼트가 남의 구간 오디오를 물어올 수 있다(missed는 0인 채로).
+        if (r.divergent) {
+          // 어디가 구멍인지 알려준다 — 첫 미소비 구간의 시각. "몇 글자 남았다"만으론 못 고친다.
+          // 오류 메시지는 번역되며 버려지므로 로그로도 남긴다(자막 내용은 금지 — id/시각만).
+          const at = r.firstHole ? ` (first unclaimed subtitle at ${(r.firstHole.atMs / 1000).toFixed(1)}s)` : ''
+          sendStepLog('audio', 'import-unmatched', `${spk}: 대본이 안 가져간 자막 ${r.skipped}자${r.firstHole ? ` — 첫 위치 ${(r.firstHole.atMs / 1000).toFixed(1)}초` : ''}`, opId, { level: 'error' })
+          const err = new Error(`audio import: ${r.skipped} subtitle char(s) claimed by no segment${at}`)
+          err.errorKind = 'story-audio-import-unmatched'
+          throw err
+        }
+        const cov = cueCoverage(cues, { audioDurationMs })
+        if (cov.gapMs > 0) sendStepLog('audio', 'import-gaps', `${spk}: 자막 사이 간격 ${(cov.gapMs / 1000).toFixed(1)}초`, opId)
+      }
+      // 정렬 결과를 반영한 세그먼트로 갈아끼운다(원본 scenesJson.scenes는 불변).
+      const workSegments = workScenes.flatMap((sc) => sc.segments || [])
+      const byWorkId = new Map(workSegments.map((s) => [s.id, s]))
+      const imported = allNarration.map((s) => byWorkId.get(s.id) || s).filter(isImportedSegment)
+      const importedIds = new Set(imported.map((s) => s.id))
+      // 남은 것 = TTS 대상. 사전 검증과 배치 루프 *앞에서* 갈라낸다 — 여기서 안 빼면 미배정 검증이
+      // import 화자에 voiceId가 없다며 막거나, resolveTts('import')가 undefined라 TypeError로 죽는다.
+      const narration = allNarration.filter((s) => !importedIds.has(s.id))
       // M2b: sfx 세그먼트(효과음) — narration과 같은 시퀀스 자리를 차지, sfxFor로 생성.
       const sfxSegs = sfxFor ? segments.filter((s) => s.type === 'sfx') : []
 
@@ -951,11 +1062,73 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         try { return (await stat(reusePathOf(seg))).isFile() } catch { return false }
       }
       // 동시성: 기본 tts(단일) 또는 첫 세그먼트 화자 어댑터에서. 없으면 2.
-      const conc = (tts?.capabilities?.()?.maxConcurrency) || (resolveTts(voiceOf(narration[0]?.speaker)?.provider)?.capabilities?.()?.maxConcurrency) || 2
+      // SRT 가져오기 전용 프로젝트는 narration이 비어 화자 어댑터를 물을 대상이 없다 — 그때
+      // resolveTts(undefined)까지 가지 않도록 막는다(TTS를 안 쓰는데 어댑터 조회로 죽으면 안 된다).
+      const conc = (tts?.capabilities?.()?.maxConcurrency)
+        || (narration.length ? resolveTts(voiceOf(narration[0]?.speaker)?.provider)?.capabilities?.()?.maxConcurrency : 0)
+        || 2
       const results = new Map()
       const errored = new Set()
       const errorMsgs = new Map() // 세그먼트별 실패 사유(인증/설정 등) — generic retry로 묻지 않기 위함
       const errorKinds = new Map()
+
+      // 0.5) 파일에서 가져오는 화자: 출처 mp3를 세그먼트 구간별로 잘라 TTS 결과와 **같은 모양**으로
+      // 채운다(audio/segments/{id}.wav + 실측 durationMs). 아래 파이프라인(타임라인·SRT·재그룹·
+      // manifest·export)은 이게 TTS 산출물인지 잘라낸 오디오인지 구분하지 않는다 — 그래서 GCF도
+      // 안 건드린다. 화자마다 자기 mp3가 있을 수 있으므로 출처별로 한 번씩 훑는다.
+      for (const [spk, { voice, sourceId }] of importSources) {
+        const mine = imported.filter((s) => s.speaker === spk)
+        const toCut = []
+        for (const seg of mine) {
+          const key = importVoiceKey(sourceId, seg)
+          // canReuse와 같은 판정: 지문 일치 + 파일 실재. 출처 파일이 바뀌면 sourceId가 달라져 자동 무효화.
+          if (!forceRegen.has(seg.id) && seg.status === 'done' && seg.audioPath && (seg.durationMs || 0) > 0 && seg.voiceKey === key) {
+            try {
+              if ((await stat(reusePathOf(seg))).isFile()) {
+                results.set(seg.id, { audioPath: reusePathOf(seg), durationMs: seg.durationMs, voiceKey: key })
+                continue
+              }
+            } catch { /* 파일이 없으면 다시 자른다 */ }
+          }
+          toCut.push(seg)
+        }
+        if (!toCut.length) continue
+        sendStepLog('audio', 'import-cut', `${spk}: ${toCut.length}개 구간 잘라내는 중`, opId, { count: toCut.length })
+        for (const seg of toCut) send('story:progress', { kind: 'audio-segment', segId: seg.id, status: 'running' }, opId)
+        // 출처를 한 번만 훑으며 구간이 준비되는 즉시 파일로 흘려보낸다(스트리밍) — 18분짜리를
+        // 통째로 디코드하면 Float32로 424MB지만 이렇게 하면 상주 메모리가 수 MB에 머문다.
+        await cutAudio({
+          mp3: voice.mp3Path,
+          ranges: toCut.map((s) => ({ id: s.id, startMs: s.srcStartMs, endMs: s.srcEndMs })),
+          signal,
+          onSegment: async ({ id, wav }) => {
+            const rel = `audio/segments/${id}.wav`
+            await store.saveBinary(rel, wav)
+            const seg = toCut.find((s) => s.id === id)
+            // TTS 경로와 동일하게 파일을 실측한다 — 계산값을 믿지 않는다(I2와 같은 취지).
+            const measured = await probe(path.join(projectPath, 'story', rel))
+            if (measured <= 0) {
+              errored.add(id)
+              errorMsgs.set(id, 'sliced audio unreadable')
+              send('story:progress', { kind: 'audio-segment', segId: id, status: 'error' }, opId)
+              return
+            }
+            results.set(id, { audioPath: path.join(projectPath, 'story', rel), durationMs: measured, voiceKey: importVoiceKey(sourceId, seg) })
+            send('story:progress', { kind: 'audio-segment', segId: id, status: 'done' }, opId)
+          },
+        })
+        if (signal?.aborted) return
+        // 정렬(위)과 cutAudio의 실제 파일 읽기 사이에 출처가 갈릴 수 있다(같은 파일명으로 다음 화를
+        // 작업하는 흐름). 그 창으로 새 mp3를 옛 구간에 자르면 지문(voiceKey)까지 옛 sourceId로 맞아
+        // 떨어져 오류 없이 커밋·push·export까지 간다. 커밋 전에 한 번 더 대조해 창을 닫는다.
+        if (await importSourceId(voice) !== sourceId) {
+          const err = new Error('audio import: source files changed while cutting')
+          err.errorKind = 'story-audio-import-stale'
+          throw err
+        }
+      }
+      if (signal?.aborted) return
+
       const toSynth = []
       for (const seg of narration) {
         if (await canReuse(seg)) results.set(seg.id, { audioPath: reusePathOf(seg), durationMs: seg.durationMs, voiceKey: seg.voiceKey })
@@ -1018,8 +1191,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       // Codex-M2a-2b MED/스펙 §5 부분재시도: 일부 세그먼트가 실패해도 M2a-1처럼 전체를 버리지
       // 않는다 — 성공분은 status:'done', 실패분은 status:'error'로 원 씬 구조에 영속(재그룹 없이)한
       // 뒤 실패시킨다. 다음 실행이 done을 재사용하고 error/pending만 재합성한다.
-      // 오디오 보유 세그먼트(narration+sfx) 중 하나라도 실패면 부분재시도(성공분 done 영속 후 실패).
-      const audioBearing = [...narration, ...sfxSegs]
+      // 오디오 보유 세그먼트(narration+가져오기+sfx) 중 하나라도 실패면 부분재시도(성공분 done 영속 후 실패).
+      const audioBearing = [...narration, ...imported, ...sfxSegs]
       const anyFailed = audioBearing.some((seg) => !results.has(seg.id))
       if (anyFailed) {
         const updated = (scenesJson.scenes || []).map((sc) => ({
@@ -1226,7 +1399,9 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         const spks = speakers || state?.speakers || []
         const voiceOf = (spk) => findSpeakerByRef(spks, spk)?.voice || defaultVoice || null
         const allTargets = scenesJson.scenes.flatMap((sc) => sc.segments || []).filter((s) => ids.has(s.id))
-        const targets = allTargets.filter((s) => (s.type || 'narration') === 'narration')
+        // 파일에서 가져오는 화자는 합성 대상이 아니다 — 여기 남으면 resolveTts('import')가
+        // undefined라 .synthesize로 죽는다. ⑤가 잘라둔 오디오를 UI가 audioPath로 재생하면 된다.
+        const targets = allTargets.filter((s) => (s.type || 'narration') === 'narration' && !isImportProvider(voiceOf(s.speaker)))
         // M2b: sfx 세그먼트도 단건 테스트(배치 audio와 동일 계약 — sfxFor로 생성, sfxKey/sourceMode 영속).
         const sfxTargets = sfxFor ? allTargets.filter((s) => s.type === 'sfx') : []
         const results = new Map()
