@@ -26,18 +26,49 @@ import { buildClaudeSdkOptions, extractClaudeSdkResult, bridgeAbortSignal, extra
 import { splitSynopsisOutput, parseCharactersJson, createSynopsisDeltaGate } from './synopsisOutput.js'
 import { toJsonSchema } from './toJsonSchema.js'
 import { SCENES_SCHEMA, PROMPTS_SCHEMA, REVIEW_SCHEMA, SCORED_REVIEW_SCHEMA, clampReviewScore, RESEARCH_ANALYSIS_SCHEMA, FACTCHECK_SCHEMA, validateScenesSegments } from './schemas.js'
+import { createRequire } from 'node:module'
+import path from 'node:path'
+
+const require = createRequire(import.meta.url)
 
 export const DEFAULT_MODEL = 'claude-opus-4-8'
 
+// 패키지된 Electron 앱에서 SDK는 app.asar 내부의 claude 바이너리를 spawn하려다 실패한다
+// (아카이브 내부 실행파일은 spawn 불가). 실제 파일은 asarUnpack로 app.asar.unpacked에 풀려 있으므로
+// 그 경로를 pathToClaudeCodeExecutable로 명시한다. dev/미해석 시 null → SDK 기본 해석에 위임.
+let cachedClaudePath
+function claudeExecutablePath() {
+  if (cachedClaudePath !== undefined) return cachedClaudePath
+  try {
+    const pkg = `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}`
+    const bin = process.platform === 'win32' ? 'claude.exe' : 'claude'
+    const dir = path.dirname(require.resolve(`${pkg}/package.json`))
+    let p = path.join(dir, bin)
+    if (p.includes(`app.asar${path.sep}`)) {
+      p = p.replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`)
+    }
+    cachedClaudePath = p
+  } catch {
+    cachedClaudePath = null
+  }
+  return cachedClaudePath
+}
+
+function withClaudePath(args) {
+  const exe = claudeExecutablePath()
+  if (!exe || args?.options?.pathToClaudeCodeExecutable) return args
+  return { ...args, options: { ...args.options, pathToClaudeCodeExecutable: exe } }
+}
+
 async function* defaultQuery(args) {
   const { query } = await import('@anthropic-ai/claude-agent-sdk')
-  yield* query(args)
+  yield* query(withClaudePath(args))
 }
 
 // defaultQuery는 async generator라 Query 객체(=supportedModels 보유)를 잃는다. 조회는 직접 부른다.
 async function rawQuery(args) {
   const { query } = await import('@anthropic-ai/claude-agent-sdk')
-  return query(args)
+  return query(withClaudePath(args))
 }
 
 /**
