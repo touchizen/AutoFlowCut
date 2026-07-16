@@ -19,6 +19,7 @@ import { useStickToBottom } from '../../hooks/useStickToBottom'
 import { useStoryVoiceSelection } from '../../hooks/useStoryVoiceSelection'
 import StoryStepper, { STEP_META } from './StoryStepper'
 import VoicePicker from './VoicePicker'
+import SpeakerAudioSource from './SpeakerAudioSource'
 import Modal from '../Modal'
 import LiveTimeline from '../LiveTimeline'
 import { buildStoryAudioPackage, buildStorySrtEntries } from '../../utils/storyAudioPackage'
@@ -465,6 +466,25 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   // M2a-3b/슬라이스3, Task 11: 화자별 엔진(provider)·목소리 선택 + VoicePicker 모달 상태.
   // useStoryVoiceSelection 훅으로 분리(순수 리팩터) — src/hooks/useStoryVoiceSelection.js 참고.
   const voiceSel = useStoryVoiceSelection({ speakers: state?.speakers || [], voices, onTagGender })
+  /**
+   * 이 화자의 오디오를 파일에서 가져오는가 — main의 isImportProvider와 같은 기준(화자로 판정).
+   *
+   * 세그먼트의 srcStartMs로 보면 안 된다: 그 구간은 ⑤가 매 실행마다 계산하고 영속하지 않아
+   * renderer엔 절대 오지 않는다(= 항상 false인 죽은 판정이 된다).
+   *
+   * 화자 참조는 main의 findSpeakerByRef와 **같은 정규화**로 푼다 — id 완전일치로 보면 안 된다:
+   * seg.speaker는 id가 아니라 이름이나 별칭일 수 있고(나레이터는 {id:'narrator', name:'나레이션'}로
+   * 시딩된다), 그러면 주 화자에서 바로 어긋나 판정이 죽는다.
+   */
+  const refKey = (v) => (isNarratorSpeaker(v) ? 'narrator' : String(v || '').replace(/\s/g, '').toLowerCase())
+  const isImportSpeaker = (speakerRef) => {
+    const key = refKey(speakerRef)
+    if (!key) return false
+    const sp = (state?.speakers || []).find((s) => [s.id, s.name].filter(Boolean).map(refKey).includes(key))
+    if (!sp) return false
+    const src = voiceSel.importForSpeaker(sp)
+    return !!(src?.mp3Path && src?.srtPath)
+  }
   // M2b-5: sfx 세그먼트별 소스(로컬 오버라이드). 기본은 세그먼트 영속값(seg.sourceMode) > elevenlabs.
   const [sourceModeBySegment, setSourceModeBySegment] = useState({})
   // M2a-3c: 세그먼트 오디오 미리듣기(단일 재생 토글).
@@ -871,6 +891,10 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     const sps = state?.speakers || []
     if (sps.length) {
       params.speakers = sps.map((sp) => {
+        // 오디오 출처(mp3+SRT)를 지정한 화자는 TTS로 만들지 않는다 — ⑤가 자막에서 구간을 찾아
+        // 그 파일을 잘라 쓴다. 성우 선택보다 우선한다(출처를 고른 건 명시적 의사표시다).
+        const src = voiceSel.importForSpeaker(sp)
+        if (src?.mp3Path && src?.srtPath) return { ...sp, voice: { provider: 'import', mp3Path: src.mp3Path, srtPath: src.srtPath } }
         const vid = voiceSel.voiceIdForSpeaker(sp)
         if (!vid) return { ...sp, voice: null } // '기본 성우' → backend defaultVoice 폴백
         return { ...sp, voice: { provider: voiceSel.providerForSpeaker(sp), voiceId: vid } }
@@ -1243,6 +1267,8 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const scenesProgressLog = progressLog.filter((entry) => !entry.step || entry.step === 'scenes')
   const scriptProgressLog = progressLog.filter((entry) => entry.step === 'script')
   const promptsProgressLog = progressLog.filter((entry) => entry.step === 'prompts')
+  // ⑤ 오디오 로그 — 파일 가져오기의 진단(화자별 정렬 결과, 자막이 안 맞는 위치)이 여기로 온다.
+  const audioProgressLog = progressLog.filter((entry) => entry.step === 'audio')
   // 해당 타겟의 검수 점수만 — 다른 스텝 점수가 새지 않게.
   const scoresFor = (target) => (reviewScores?.target === target ? reviewScores.scores : [])
   // 검수 진행 표시 — 시놉시스 패널과 같은 모양(콘텐츠는 그대로 두고 하단에 시계+로그창).
@@ -1745,12 +1771,33 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
         {displayStep === 'audio' && (
           <div className="story-audio-panel">
-            {/* D: 생성 중엔 전체 진행(초시계) + 아래 세그먼트 목록을 함께 보여준다(실시간 진행). */}
+            {/* D: 생성 중엔 전체 진행(초시계) + 아래 세그먼트 목록을 함께 보여준다(실시간 진행).
+                로그를 함께 넘긴다 — 파일 가져오기의 진단(정렬 결과, 자막이 안 맞는 위치)이 여기로
+                온다. 안 넘기면 그 정보가 어디에도 안 보인다(오류 배너는 errorKind로 번역되면서
+                상세 메시지를 버린다 — errorDisplay.js). */}
             {steps.audio?.status === 'running' && (
               <StoryRunning
                 label={t('story.audio.running', '오디오 생성 중')}
                 startedAt={Date.parse(steps.audio.updatedAt)}
+                log={audioProgressLog}
               />
+            )}
+            {/* 실패했을 때도 로그를 남겨 둔다 — "자막이 안 맞는다"는 배너만 보고는 어디를 고칠지 모른다.
+                로그가 비었으면(앱을 껐다 켠 뒤: 오류는 story.json에 영속되지만 progressLog는 메모리라
+                open 시 비워진다) 영속된 원문 진단을 대신 보여준다 — 배너의 번역문은 상세를 버린다
+                (errorDisplay.js). 안 그러면 "진행 로그를 보라"는 안내가 없는 로그를 가리킨다. */}
+            {steps.audio?.status === 'error' && (audioProgressLog.length > 0 || steps.audio.error) && (
+              <div className="story-progress-log" role="log" data-testid="audio-progress-log">
+                {(audioProgressLog.length > 0
+                  ? audioProgressLog
+                  : [{ id: 'audio-error', level: 'error', at: steps.audio.updatedAt, message: steps.audio.error }]
+                ).map((entry, i) => (
+                  <div key={entry.id || `audio-log-${i}`} className={`story-progress-log-row ${entry.level || 'info'}`}>
+                    <span className="story-progress-log-time">{formatProgressLogTime(entry.at)}</span>
+                    <span className="story-progress-log-message">{entry.message}</span>
+                  </div>
+                ))}
+              </div>
             )}
             {/* 화자 매핑은 생성 중이 아닐 때만 노출(생성 중 변경 방지) */}
             {steps.audio?.status !== 'running' && (state?.speakers || []).length > 0 && (
@@ -1775,6 +1822,9 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                       const charGender = resolveCharacterGender(sp)
                       // 캐릭터·성우 성별이 둘 다 확실하고 서로 다르면 불일치 경고.
                       const genderMismatch = charGender && selectedVoiceObj?.gender && charGender !== selectedVoiceObj.gender
+                      // 이 화자의 오디오 출처(mp3+SRT). 짝이 다 맞아야 실제로 쓰인다.
+                      const src = voiceSel.importForSpeaker(sp)
+                      const hasSrc = !!(src?.mp3Path && src?.srtPath)
                       return (
                         <div key={sp.id} className="story-voice-row">
                           <div className="story-voice-info">
@@ -1794,15 +1844,19 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                               <span className="story-voice-appearance">{sp.appearance}</span>
                             )}
                           </div>
-                          {/* Task 11: 드롭다운 3종(엔진/검색/목소리) → 버튼 1개 + VoicePicker 모달 */}
+                          {/* Task 11: 드롭다운 3종(엔진/검색/목소리) → 버튼 1개 + VoicePicker 모달.
+                              출처(mp3+SRT)를 지정한 화자는 TTS를 안 쓰므로 성우 선택을 잠근다 —
+                              열어두면 고른 성우가 무시되는데 그 이유가 화면에 안 보인다. */}
                           <button
                             type="button"
                             className="story-input story-voice-picker-btn"
                             aria-label={t('story.audio.voiceFor', `${sp.name || sp.id} 목소리`, { speaker: sp.name || sp.id })}
                             onClick={() => voiceSel.openVoicePicker(sp)}
+                            disabled={hasSrc}
+                            title={hasSrc ? t('story.audio.source.voiceLocked', 'mp3에서 가져오는 중 — 성우 TTS를 쓰지 않습니다') : undefined}
                           >
-                            🎙 {voiceLabel}
-                            {genderMismatch && (
+                            🎙 {hasSrc ? t('story.audio.source.fromFile', '파일에서') : voiceLabel}
+                            {!hasSrc && genderMismatch && (
                               <span
                                 className="story-voice-gender-warn"
                                 title={t('story.audio.genderMismatch', '캐릭터 성별과 성우 성별이 다릅니다')}
@@ -1811,6 +1865,14 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                               </span>
                             )}
                           </button>
+                          {/* 화자별 오디오 출처 — 이 영역(행)에 mp3/SRT를 끌어다 놓아도 된다. */}
+                          <SpeakerAudioSource
+                            source={src}
+                            disabled={isRunning}
+                            onPick={pipeline.pickAudioImportFile}
+                            onChange={(next) => voiceSel.setImportForSpeaker(sp.id, next)}
+                            t={t}
+                          />
                         </div>
                       )
                     })}
@@ -1896,16 +1958,23 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                           </td>
                           <td className="story-audio-actions-cell">
                             <div className="story-audio-actions">
-                              {/* 세그먼트 단건 테스트(배치와 분리) — narration은 TTS, sfx는 sfxFor로 단건 생성 */}
-                              <button
-                                type="button"
-                                className="story-seg-btn"
-                                aria-label={t('story.audio.test', `${seg.id} 테스트`, { id: seg.id })}
-                                onClick={() => testSegment(seg.id)}
-                                disabled={isRunning || previewBusy}
-                              >
-                                ▶{t('story.audio.testLabel', '테스트')}
-                              </button>
+                              {/* 세그먼트 단건 테스트(배치와 분리) — narration은 TTS, sfx는 sfxFor로 단건 생성.
+                                  파일에서 가져오는 화자의 세그먼트엔 안 띄운다: 합성 대상이 아니라 main이
+                                  걸러내고 빈 결과를 돌려주므로, 눌러도 소리도 안 나고 알림도 없어 고장난
+                                  버튼이 된다. 그 세그먼트는 ⑤가 mp3를 잘라 채운다.
+                                  판정은 **화자**로 한다 — main과 같은 기준(isImportProvider). 세그먼트의
+                                  src 구간으로 보면 안 된다: 그 필드는 영속되지 않아 renderer엔 절대 안 온다. */}
+                              {!isImportSpeaker(seg.speaker) && (
+                                <button
+                                  type="button"
+                                  className="story-seg-btn"
+                                  aria-label={t('story.audio.test', `${seg.id} 테스트`, { id: seg.id })}
+                                  onClick={() => testSegment(seg.id)}
+                                  disabled={isRunning || previewBusy}
+                                >
+                                  ▶{t('story.audio.testLabel', '테스트')}
+                                </button>
+                              )}
                               {/* M2a-3c 미리듣기 (오디오 있을 때) */}
                               {seg.audioPath && (
                                 <button

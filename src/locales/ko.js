@@ -105,6 +105,14 @@ export default {
       audio: '오디오',
       prompts: '프롬프트',
     },
+    // 화자별 오디오 출처 — 성우 TTS로 만드는 대신 (mp3, SRT)에서 그 화자의 구간을 잘라 쓴다.
+    audioImport: {
+      // 파일 선택 다이얼로그 문구 — main은 useI18n을 못 부르므로 renderer가 실어 보낸다.
+      pickSrt: '자막(SRT) 선택',
+      srtFilter: 'SubRip 자막',
+      pickMp3: '오디오(mp3) 선택',
+      mp3Filter: '오디오',
+    },
     research: {
       tosNotice: '참고·재구성 용도입니다. 타인 자막의 무단 복제·재배포는 저작권 침해가 될 수 있습니다.',
       keywordLabel: '검색 키워드',
@@ -324,6 +332,18 @@ export default {
       engineFor: '{speaker} 엔진',
       voiceFor: '{speaker} 목소리',
       voiceDefault: '기본 성우',
+      // 화자별 오디오 출처 — 성우 TTS 대신 (mp3, SRT)에서 그 화자 구간을 잘라 쓴다.
+      source: {
+        addMp3: '＋ mp3',
+        addSrt: '＋ SRT',
+        clear: '가져오기 해제 — TTS로 생성',
+        fromFile: '파일에서',
+        voiceLocked: 'mp3에서 가져오는 중 — 성우 TTS를 쓰지 않습니다',
+        needSrt: 'SRT도 필요합니다 (어느 구간인지 알아야 자릅니다)',
+        needMp3: 'mp3도 필요합니다',
+        errKind: 'mp3와 SRT 파일만 놓을 수 있습니다.',
+        errPath: '파일 경로를 읽지 못했습니다. 버튼으로 직접 선택해주세요.',
+      },
       voiceUnloaded: '저장된 성우 (미로드) · {id}',
       genderFemale: '여성',
       genderMale: '남성',
@@ -1317,6 +1337,14 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
       'flow-t2v-reference-images-unsupported': 'Flow 텍스트-비디오는 레퍼런스 이미지를 지원하지 않습니다. 프레임을 사용하는 이미지-비디오로 생성하거나 레퍼런스를 제거해주세요.',
       'story-empty-script': '빈 대본으로는 장면을 만들 수 없습니다. 대본을 입력한 뒤 다시 시도해주세요.',
       'story-sfx-library-unavailable': '로컬 효과음 라이브러리는 아직 사용할 수 없습니다. 효과음 소스를 ElevenLabs로 선택한 뒤 다시 시도해주세요.',
+      'story-audio-import-stale': '가져오기 파일(mp3/SRT)이 작업 도중에 바뀌었습니다. 오디오를 다시 실행해주세요.',
+      'story-audio-import-unreadable': '나레이션 mp3를 읽을 수 없습니다. 파일이 온전한지 확인한 뒤 다시 선택해주세요.',
+      'story-audio-import-missing': '가져오기로 지정한 SRT 또는 mp3를 찾을 수 없습니다. 파일이 옮겨졌거나 지워졌는지 확인한 뒤 다시 선택해주세요.',
+      'story-audio-import-invalid-path': '가져오기 파일 경로가 올바르지 않습니다. mp3와 SRT를 다시 지정해주세요.',
+      'story-audio-import-unmatched': '대본과 자막이 맞지 않습니다. 같은 회차의 mp3/SRT인지, 그리고 자막에 대본에 없는 내용(제목·크레딧·[음악] 등)이 섞여 있지 않은지 확인해주세요. 자세한 위치는 진행 로그에 있습니다.',
+      'story-srt-no-cues': 'SRT에 자막이 없습니다. 다른 자막 파일을 선택해주세요.',
+      'story-srt-cues-overlap': 'SRT의 자막 구간이 서로 겹칩니다. 겹치는 구간이 있으면 오디오를 나눌 수 없습니다.',
+      'story-srt-longer-than-audio': 'SRT가 mp3보다 깁니다. 두 파일이 같은 회차의 짝이 맞는지 확인해주세요.',
     },
   },
 
