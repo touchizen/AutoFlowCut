@@ -23,6 +23,18 @@ export function createAgentModelCatalog({ listModels = listCodexModels } = {}) {
   }
 
   return {
+    /**
+     * 캐시된 **기본 모델 id** (`model/list` 의 `isDefault:true`). 없으면 null.
+     *
+     * 🔴 **동기이고 fetch 를 유발하지 않는다.** `list()` 를 기다리면 cold send 가 최대
+     *    20s(app-server timeout) × 2회(1-retry) 블로킹된다 — Send 를 그렇게 막을 수 없다.
+     *    캐시가 비어 있으면 null 을 주고 호출측이 생략으로 폴백한다(그 경우는 안전하다:
+     *    카탈로그가 뜬 적 없으면 사용자가 비-기본 모델을 고를 수도 없었으므로 sticky 가 성립 불가).
+     */
+    defaultModelId() {
+      if (!cached) return null
+      return cached.find((model) => model?.isDefault === true)?.id ?? null
+    },
     list() {
       if (cached) return Promise.resolve(cached.map((model) => ({ ...model })))
       if (inFlight) return inFlight
@@ -156,10 +168,26 @@ export function registerAgentIPC(ipcMain, {
 
   const emit = createEmitter(getWindow)
   const registrations = [
+    // thread/start 의 model 생략은 **실측상 안전**하다 — 새 thread 는 서버 기본으로 시작한다(m0-14 turn1).
+    // 그래서 open 은 통과만 시킨다. 계약을 필요 이상으로 넓히지 않는다.
     ['agent:session-open', 'open', (payload) => (payload?.model ? [payload.model] : [])],
-    ['agent:send', 'send', (payload) => (payload?.model
-      ? [payload?.text, payload.model]
-      : [payload?.text])],
+    // 🔴 `agent:send` 에서 model 이 없으면 **기본 모델 id 를 명시해서** 내려보낸다.
+    //
+    //    이유(실측 m0-14, codex app-server 0.144.5): `turn/start.model` 은 **sticky inheritance** 다.
+    //    생략은 "기본으로" 가 아니라 "직전 모델 유지" 로 동작한다(턴 사이에 `thread/settings/updated`
+    //    가 뜬다 = turn 파라미터가 thread 설정을 갱신한다). 그래서 사용자가 '기본' 을 골라도 안 돌아왔다.
+    //
+    //    ⚠️ 여기(main)에서 푸는 이유: 렌더러에서 풀면 **ChatPanel 이 remount** 될 때 구멍이 난다 —
+    //    main 세션(=thread)은 살아있는데 `selectedModel` 은 null 로 리셋되고 `models` 는 아직 로딩 중이라,
+    //    그 창에서 send 하면 **사용자가 selector 를 건드리지도 않았는데** 직전 sticky 모델로 나간다.
+    //    카탈로그 캐시는 main 에 있으므로 렌더러 수명과 무관하게 일관된다.
+    //
+    //    → 이 채널의 계약: **model 생략 = 앱 기본(카탈로그 isDefault)**. "thread 의 현재 모델을 물려받기"는
+    //      이 경계에서 **표현 불가능**해야 한다. 그게 바로 위 버그이기 때문이다.
+    ['agent:send', 'send', (payload) => {
+      const model = payload?.model || modelCatalog.defaultModelId?.() || null
+      return model ? [payload?.text, model] : [payload?.text]
+    }],
     ['agent:steer', 'steer', (payload) => [payload?.text]],
     ['agent:abort', 'abort', () => []],
     ['agent:session-close', 'close', () => []],
