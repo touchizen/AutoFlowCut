@@ -52,6 +52,11 @@ const RESULT_DIR = 'docs/superpowers/specs'
 const RAW = `${RESULT_DIR}/m0-16-raw.jsonl`
 const TOOL_NAME = 'mcp__m0-16-steer__sequence_step'
 const QUEUED_TURN_GAP_MS = 5_000
+// 🔴 이 값은 it() 의 타임아웃(8분)보다 **작아야** 한다. 그래야 우리 deadline 이 먼저 걸려
+//    timedOut:true 와 그때까지의 관측을 raw 에 남기고 끝난다. 러너가 먼저 죽으면 아무 증거도
+//    안 남고 "측정 실패" 를 "결과" 로 오독하게 된다.
+//    5분은 `priority:'now'` arm 에 부족했다 — 그 arm 은 48초 thinking + 3턴 + 5초 gap 을 지난다.
+const MEASUREMENT_DEADLINE_MS = 7 * 60 * 1000
 const TRANSCRIPT_SETTLE_MS = 250
 const SDK_DTS = readFileSync(
   new URL('../../node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts', import.meta.url),
@@ -366,7 +371,7 @@ async function measureMidTurnInjection({ priority }) {
     stopPromptInput()
     releaseFirstTool?.()
     q.close()
-  }, 5 * 60 * 1000)
+  }, MEASUREMENT_DEADLINE_MS)
 
   let turn = 1
   try {
