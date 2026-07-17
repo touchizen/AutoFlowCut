@@ -40,7 +40,7 @@ import { syncVideosIntoScenes } from './services/mediaSync'
 import { retryVideoDownload } from './services/videoRecovery'
 import { isStyleReference, previewStyleMatching } from './services/styleService'
 import { isSceneGenerationDone } from './services/generationStatus'
-import { computeGuardAvailable, isStartBlocked } from './services/startGuard'
+import { computeGuardAvailable, isStartBlocked, shouldStopRefWork } from './services/startGuard'
 import {
   buildEmptyRefGateDeps,
   nonInteractiveGateView,
@@ -1963,7 +1963,7 @@ function App() {
   const handleStop = () => {
     if (isRunning) stop()
     if (videoAutomation.isRunning) videoAutomation.stop()
-    if (refBatchRunning || emptyRefGate?.phase === 'busy') stopGenerateAllRefs()
+    if (shouldStopRefWork({ refBatchRunning, gatePhase: emptyRefGate?.phase })) stopGenerateAllRefs()
   }
 
   // MCP HTTP 서버 (시작/중지, 글로벌 접근자, 업데이트 수신, 배치 핸들러)
