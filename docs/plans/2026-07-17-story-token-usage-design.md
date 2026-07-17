@@ -1,7 +1,9 @@
 # Story 토큰 사용량 표시 — 설계 v2 (2026-07-17)
 
-**상태**: v1 승인 취소됨. Codex(gpt-5.6-sol) + Fable 5 병렬 리뷰에서 MAJOR 3건.
-v2 는 그 반영본. **codex payload 스파이크 전까지 구현 착수 금지.**
+**상태**: v1 승인 취소됨. Codex(gpt-5.6-sol) + Fable 5 병렬 리뷰에서 MAJOR 3건 → v2 반영본.
+codex payload 미결은 `generate-ts --experimental` 실측으로 **종결됨** → **구현 착수 가능.**
+**전제**: `@openai/codex` **0.144.5** (2026-07-17 에 0.142.5 에서 올림. llm 테스트 420/420 통과,
+`codexAppServer.js` 가 쓰는 method 4종 전부 존속 확인).
 **범위**: 이번 실행의 누적 토큰을 도는 동안 보여준다. 그뿐이다.
 
 ---
@@ -82,23 +84,36 @@ Codex·Fable 이 각각 `stepMachine.js` 의 `llm.*` 호출을 전수 확인. **
 
 ---
 
-## 🚧 미해결 — 스파이크 없이는 구현 금지
+## ✅ 해결됨 — codex payload 는 실측으로 확정 (스파이크 불필요)
 
-### codex `thread/tokenUsage/updated` 페이로드 실측
+리뷰어 둘이 **정면충돌**했고(Codex: 중첩·blocking / Fable: 코스메틱), 나도 `strings` 로는 확정 못 했다.
+**바이너리가 자기 Rust 타입에서 스키마를 생성해준다** — 런타임 캡처 없이 종결됐다:
 
-리뷰어 둘이 **정면충돌**했고 나도 확정 못 했다:
+```sh
+node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex \
+  app-server generate-ts --experimental -o <dir>     # → <dir>/v2/*.ts
+```
 
-- **Codex 주장**: `params.tokenUsage = { total:{...}, last:{...}, modelContextWindow }` 중첩.
-  `total` 은 누적, `last` 는 delta (upstream `append_last_usage` 인용). 평면으로 읽으면 `undefined`.
-- **Fable 주장**: 필드 목록은 맞고 타입명만 틀림 — 코스메틱.
-- **내 대조 결과**: 0.142.5 바이너리 `strings` 에 `"total"`/`"last"` 중첩 흔적 **안 나옴**. 확정 불가.
-- **결정적 문제**: Codex 가 인용한 소스는 **upstream 0.144.1**, 우리는 **0.142.5**.
+```ts
+// v2/ThreadTokenUsageUpdatedNotification.ts
+type ThreadTokenUsageUpdatedNotification = { threadId: string, turnId: string, tokenUsage: ThreadTokenUsage }
+// v2/ThreadTokenUsage.ts
+type ThreadTokenUsage = { total: TokenUsageBreakdown, last: TokenUsageBreakdown, modelContextWindow: number|null }
+// v2/TokenUsageBreakdown.ts
+type TokenUsageBreakdown = { totalTokens, inputTokens, cachedInputTokens, outputTokens, reasoningOutputTokens }
+```
 
-→ **스파이크**: 0.142.5 로 실제 turn 을 돌려 `thread/tokenUsage/updated` NDJSON 원문을 찍는다.
-`params` 를 통째로 로그. 이 결과 없이 누산 로직을 쓰면 뻥튀기(가산) 또는 축소(last 교체)가 된다.
+**판정: Codex 가 맞았다. Fable 의 "코스메틱"은 틀렸다** — 중첩이므로 `params.tokenUsage.inputTokens` 는
+`undefined` 다. blocking 이 맞다. v1 의 평면 5필드 주장도 거짓.
 
-부수 확인: codex 는 호출당 새 ephemeral thread(`codexAppServer.js:105`)이고 재시도 루프가 없다 →
-서로 다른 threadId 는 **합산**이 맞다. 같은 threadId 재수신만 교체.
+**결정**:
+- `params.tokenUsage.total` 을 읽는다 (누적). `last` 는 delta 이므로 교체하면 축소된다.
+- threadId 별 **교체**(latest wins). 알림에 `turnId` 도 있으므로 run 스코핑에 쓸 수 있다.
+- codex 는 호출당 새 ephemeral thread(`codexAppServer.js:105`)이고 재시도 루프가 없다 →
+  서로 다른 threadId 는 **합산**이 맞다. 같은 threadId 재수신만 교체.
+
+> **교훈**: 리뷰어 합의도, 리뷰어 충돌도 실측을 대신하지 못한다. 여기선 `generate-ts --experimental`
+> 한 줄이 두 리뷰어가 며칠 논쟁할 것을 끝냈다. **스키마를 뽑을 수 있으면 추론하지 마라.**
 
 ### gemini 는 범위에서 제외
 
@@ -169,6 +184,9 @@ Codex(gpt-5.6-sol, xhigh) + Fable 5 병렬 1라운드 → MAJOR 3 + MEDIUM 5.
 두 리뷰어가 서로를 보완했다: 둘 다 `readStructuredResult` 를 독립 발견했고, Fable 이 TDD 자체모순과
 항진명제를, Codex 가 cache 필드 누락과 버전 오류를 잡았다.
 
-**둘 다 틀린 것도 있었다** — Fable 의 "0.144.1 실 바이너리로 재확인"은 거짓(실제 0.142.5),
-Codex 의 payload 중첩은 upstream 버전 기준이라 우리 버전에 미확정.
-**리뷰어 합의도 실측을 대신하지 못한다.**
+**둘 다 틀린 것도 있었다**:
+- Fable 의 "0.144.1 실 바이너리로 재확인"은 **거짓** — vendored 는 0.142.5 였다(v1 의 거짓 주장을 받아쓴 것으로 보인다).
+- Fable 은 payload 중첩을 "코스메틱"이라 했으나 **blocking 이었다**.
+- Codex 의 중첩 주장은 맞았으나 근거가 **upstream 다른 버전** 소스였다 — 결론이 맞은 건 운이 섞였다.
+
+**리뷰어 합의도, 충돌도 실측을 대신하지 못한다.** 종결한 건 `generate-ts --experimental` 한 줄이었다.
