@@ -115,12 +115,21 @@ function buildThreadStartParams({ model, workingDirectory, config }) {
  * @internal export 는 테스트가 실제 알림 모양을 고정하기 위한 것이다.
  */
 export function handleUsageNotification(method, params, onUsage) {
-  if (method !== 'thread/tokenUsage/updated' || !onUsage) return
+  const sink = onUsage || codexUsageSink
+  if (method !== 'thread/tokenUsage/updated' || !sink) return
   try {
     const u = codexNotifToUsage(params)
-    if (u) onUsage(u)
+    if (u) sink(u)
   } catch { /* best-effort */ }
 }
+
+// claude 쪽 setClaudeUsageSink 와 대칭. machine 이 자기 tracker 를 물린다.
+// machine 은 동시에 1개고(story-api.js: `let machine = null`), 전환 전에 abort() 가
+// 진행 중 호출을 전부 취소하므로(제목 생성 포함) 뒤늦은 알림이 새 tracker 를 오염시키지 않는다.
+let codexUsageSink = null
+
+/** main 이 tracker 를 물린다. null 로 해제. */
+export function setCodexUsageSink(fn) { codexUsageSink = fn }
 
 /**
  * 한 프롬프트 = 한 스레드 = 한 턴. turn/start 는 즉시 반환하므로 turn/completed 알림을 기다린다.

@@ -42,6 +42,10 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   // 보여준다. reviewProgress(검토/수정 단계)와 분리한다.
   const [reviewScores, setReviewScores] = useState(null)
   const [progressLog, setProgressLog] = useState([])
+  // 이번 실행 누적 토큰 { input, output } | null. main 의 tracker snapshot 이 emit 마다 실려온다.
+  // progressLog 와 달리 start() 마다 비우지 않는다 — 자동 진행은 start() 연쇄라 비우면
+  // 앞 스텝 합계가 사라지고, main 에 tracker 를 둔 의미가 없어진다.
+  const [usage, setUsage] = useState(null)
   // 슬라이스4(§3.4): synopsis side action 로컬 상태 — 스트리밍 누적은 대본(streamingText)과
   // 별도 채널/상태(story:synopsis-delta → synopsisStreamingText)로 분리.
   const [synopsisStreamingText, setSynopsisStreamingText] = useState('')
@@ -118,6 +122,9 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
     setScriptText('')
     setSegmentProgress({})
     setProgressLog([])
+    // 프로젝트 전환에서만 usage 를 리셋한다 — start() 마다가 아니다(아래 start/open 미러에
+    // 넣으면 자동 진행 연쇄에서 앞 스텝 합계가 사라진다). main 의 tracker 도 machine 과 함께 죽는다.
+    setUsage(null)
     activeOpRef.current = null
     setReviewProgress(null) // M3: 프로젝트 전환 시 검토 배지 정리
     setReviewScores(null)
@@ -177,8 +184,13 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
         at: new Date().toISOString(),
       }].slice(-120))
     }
+    // main 의 모든 emit 에 이번 실행 누적 usage 가 실려온다. 어느 채널로 오든 최신값을 잡는다.
+    // **progressLog 처럼 start() 마다 비우면 안 된다** — 그러면 main 에 tracker 를 둔 게
+    // 무의미해지고 숫자가 렌더러에서 똑같이 죽는다. 프로젝트 전환(projectPath 변경)에서만 리셋된다.
+    const takeUsage = (p) => { if (p?.usage && p.projectToken === tokenRef.current) setUsage(p.usage) }
     const offs = [
       api.onStoryEvent('story:state', (p) => {
+        takeUsage(p)
         if (p.projectToken !== tokenRef.current) return
         const anyRunning = p.state?.steps && Object.values(p.state.steps).some((s) => s?.status === 'running')
         if (anyRunning && p.operationId) activeOpRef.current = p.operationId
@@ -486,5 +498,5 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   if (justSwitched) {
     return { state: null, scenes: [], streamingText: '', scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview, pickAudioImportFile, segmentProgress: {}, reviewProgress: null, reviewScores: null, progressLog: [], llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText: '', synopsisGenerating: false, synopsisReviewing: false, synopsisError: null, synopsisText: '', hasSynopsis: false, characters: [], charactersConfirmed: undefined, research: null, researchFetchProgress: {}, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
   }
-  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, pickAudioImportFile, segmentProgress, reviewProgress, reviewScores, progressLog, llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText, synopsisGenerating, synopsisReviewing, synopsisError, synopsisText, hasSynopsis, characters, charactersConfirmed, research, researchFetchProgress, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
+  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, pickAudioImportFile, segmentProgress, reviewProgress, reviewScores, progressLog, usage, llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText, synopsisGenerating, synopsisReviewing, synopsisError, synopsisText, hasSynopsis, characters, charactersConfirmed, research, researchFetchProgress, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
 }

@@ -18,6 +18,7 @@ import { useAudioPlayback } from '../../hooks/useAudioPlayback'
 import { useStickToBottom } from '../../hooks/useStickToBottom'
 import { useStoryVoiceSelection } from '../../hooks/useStoryVoiceSelection'
 import StoryStepper, { STEP_META } from './StoryStepper'
+import StoryTokenUsage from './StoryTokenUsage'
 import VoicePicker from './VoicePicker'
 import SpeakerAudioSource from './SpeakerAudioSource'
 import Modal from '../Modal'
@@ -348,7 +349,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const hasI18n = useHasI18n()
   const isKo = useSafeIsKo()
   const {
-    state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {}, reviewProgress = null, reviewScores = null, progressLog = [],
+    state, streamingText, start, abort, scenes = [], openError, ttsPreview, segmentProgress = {}, reviewProgress = null, reviewScores = null, progressLog = [], usage = null,
     // 슬라이스5(§v2.5): synopsis 게이트 상태 — useStoryPipeline(S4)이 공급.
     synopsisStreamingText = '', synopsisGenerating = false, synopsisError = null,
     // 시놉시스 검수(spec 2026-07-10) — generating과 분리(스트림 뷰 전환 방지).
@@ -1408,6 +1409,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
   return (
     <div className="story-view">
+      <StoryTokenUsage usage={usage} />
       <StoryStepper steps={steps} currentStep={currentStep} activeStep={stepperActive} t={t} onStepClick={handleStepClick}
         autoSteps={autoSteps} onToggleAuto={handleToggleAuto} onRunAll={handleRunAll} canRunAll={canRunAll} autoRunning={autoRunning}
         synopsisEnabled={synopsisEnabled} researchEnabled={researchEnabled}

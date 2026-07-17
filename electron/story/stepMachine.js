@@ -13,6 +13,9 @@ import { buildFallbackTimeline, buildSegmentTimeline, buildSrt, srtLineId } from
 import { regroupScenes } from './regroup.js'
 import { buildManifest } from './manifest.js'
 import { normalizeActiveStoryLlmOptions as normalizeStoryLlmOptions } from '../api/llm/storyLlmCatalog.js'
+import { createUsageTracker } from '../api/llm/usageTracker.js'
+import { setClaudeUsageSink } from '../api/llm/llmClaude.js'
+import { setCodexUsageSink } from '../api/llm/codexAppServer.js'
 import { validateScenesSegments } from '../api/llm/schemas.js'
 import { isNarratorSpeaker as isNarratorTrackSpeaker } from '../../src/utils/storyNarrationTracks.js'
 // 순수 함수(TextDecoder만 사용) — renderer 전용 의존성이 없어 main에서도 그대로 쓴다.
@@ -262,8 +265,22 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   // 넘겨받지 않도록). synopsisController 패턴 미러.
   let titleController = null
 
+  // 이번 실행의 토큰 누산기. **모듈 싱글톤이 아니라 machine 인스턴스 소유** — 프로젝트 전환 시
+  // machine 과 함께 죽어야 A 의 토큰이 B 에 안 뜬다.
+  // provider sink 는 전역이지만 machine 은 동시에 1개고(story-api.js: `let machine = null`),
+  // 전환 전 abort() 가 진행 중 호출을 전부 취소하므로(제목 생성 포함) 뒤늦은 보고가 없다.
+  const usageTracker = createUsageTracker()
+  setClaudeUsageSink((u) => usageTracker.addDelta(u)) // claude: 호출당 delta → 가산
+  setCodexUsageSink((u) => usageTracker.setCumulative(u)) // codex: thread 누적 → key 별 교체
+
+  // 모든 emit 에 이번 실행 누적을 싣는다 — 렌더러가 progress/state 어느 쪽을 받든 최신값을 본다.
   const send = (ch, payload, operationId) =>
-    emit(ch, { projectToken, operationId: operationId || randomUUID(), ...payload })
+    emit(ch, {
+      projectToken,
+      operationId: operationId || randomUUID(),
+      usage: usageTracker.snapshot(),
+      ...payload,
+    })
 
   async function flush() { await store.save(state) }
 
@@ -1630,6 +1647,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
 
   return {
     projectToken,
+    // 이 machine 의 토큰 누산기. provider tap 이 전역 sink 를 통해 여기에 기록한다.
+    usageTracker,
     async open() {
       state = await store.load()
       await healMissingStepArtifacts()

@@ -1333,3 +1333,16 @@
 .story-voice-picker-btn { grid-area: voice; }
 .story-speaker-run-btn { grid-area: run; }
 .story-voice-source { grid-area: source; min-width: 0; }
+
+/* 이번 실행 누적 토큰 — 스텝퍼 위 얇은 한 줄. 눈에 띄되 작업을 가리지 않는다. */
+.story-token-usage {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary, #8a8a8a);
+}
+.story-token-usage__sep { opacity: 0.4; }
