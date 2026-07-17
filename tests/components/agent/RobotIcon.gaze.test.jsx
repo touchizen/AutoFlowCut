@@ -238,6 +238,24 @@ describe('RobotIcon motion CSS contract', () => {
     }
   })
 
+  // 머리에도 transition 금지가 필요하다. 없으면 base 의 320ms transition 이 살아나
+  // 매 프레임의 var 쓰기를 재타게팅해 머리가 포인터 뒤에서 고무줄처럼 늘어진다.
+  // 눈 쪽만 핀돼 있어 이 뮤턴트가 전 스위트를 초록으로 통과했다.
+  it('forbids transition on the head while gazing or hovering, not just on the eyes', () => {
+    for (const state of ['gazing', 'hover']) {
+      expect(ruleBody(robotCss, `.robot-icon[data-motion-state="${state}"]`)).toMatch(
+        /transition:\s*none/,
+      )
+    }
+  })
+
+  // 생산자(@keyframes)만 핀하면 소비 선언을 통째로 지워도 아무 테스트도 안 죽는다 —
+  // idle 에서 로봇이 영원히 정지하는데 스위트는 초록. 소비자를 직접 핀한다.
+  it('consumes the idle animations, not just declares their keyframes', () => {
+    expect(ruleBody(robotCss, '.robot-icon')).toMatch(/animation:\s*robot-turn\s/)
+    expect(ruleBody(robotCss, '.robot-icon .robot-icon-eyes')).toMatch(/animation:\s*robot-look\s/)
+  })
+
   it('uses one return-duration var for head and eyes with delay and fill-mode none', () => {
     expect(robotCss.match(/animation-delay:\s*var\(--robot-return-duration\)/g)).toHaveLength(2)
     expect(robotCss.match(/animation-fill-mode:\s*none/g)).toHaveLength(2)

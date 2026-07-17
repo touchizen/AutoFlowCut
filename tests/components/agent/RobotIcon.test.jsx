@@ -66,6 +66,10 @@ describe('RobotIcon structure', () => {
     expect(rootCss).toMatch(/overflow:\s*visible/)
     expect(rootCss).not.toMatch(/overflow:\s*hidden/)
     expect(rootCss).not.toMatch(/(?:^|;)\s*(?:opacity|filter|clip-path|contain)\s*:/)
+    // will-change 는 grouping property 가 아니라서 transform 이면 preserve-3d 를 안 죽인다.
+    // 그러나 opacity/filter 로 바뀌는 순간 3D 가 조용히 평면화되고 위의 금지 목록은
+    // will-change 를 안 본다 → 값을 직접 핀한다.
+    expect(rootCss).toMatch(/will-change:\s*transform\s*;/)
   })
 
   it('ports all six gradient definitions through a visible paint-server holder and uses each one', () => {
