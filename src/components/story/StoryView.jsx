@@ -1410,7 +1410,6 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
 
   return (
     <div className="story-view">
-      <StoryTokenUsage usage={usage} />
       <StoryStepper steps={steps} currentStep={currentStep} activeStep={stepperActive} t={t} onStepClick={handleStepClick}
         autoSteps={autoSteps} onToggleAuto={handleToggleAuto} onRunAll={handleRunAll} canRunAll={canRunAll} autoRunning={autoRunning}
         synopsisEnabled={synopsisEnabled} researchEnabled={researchEnabled}
@@ -2247,6 +2246,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
           )}
         </div>
       )}
+      <StoryTokenUsage usage={usage} />
     </div>
   )
 }

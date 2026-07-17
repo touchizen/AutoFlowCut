@@ -1334,15 +1334,19 @@
 .story-speaker-run-btn { grid-area: run; }
 .story-voice-source { grid-area: source; min-width: 0; }
 
-/* 이번 실행 누적 토큰 — 스텝퍼 위 얇은 한 줄. 눈에 띄되 작업을 가리지 않는다. */
+/* 이 프로젝트 세션 누적 토큰 — story-view(flex column, overflow:hidden) 의 마지막 고정 자식.
+   flex-shrink:0 으로 하단에 항상 남고, margin-top:auto 로 위 패널과 사이를 벌린다. */
 .story-token-usage {
+  flex-shrink: 0;
+  margin-top: auto;
   display: flex;
   gap: 6px;
   justify-content: flex-end;
   align-items: center;
-  padding: 2px 8px;
-  font-size: 11px;
+  padding: 4px 12px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
   color: var(--text-secondary, #8a8a8a);
+  border-top: 1px solid var(--border, rgba(255, 255, 255, 0.08));
 }
 .story-token-usage__sep { opacity: 0.4; }
