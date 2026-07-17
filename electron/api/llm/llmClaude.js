@@ -2,6 +2,7 @@
  * Claude Agent SDK 대본 엔진 — llmGemini와 동일 시그니처. 대본은 스트리밍,
  * 씬분리/프롬프트는 outputFormat structured(다음 Task). 인증은 로컬 Claude 로그인.
  */
+import { claudeResultToUsage } from './usageTokens.js'
 import {
   buildScriptPrompt,
   buildSplitPrompt,
@@ -60,9 +61,38 @@ function withClaudePath(args) {
   return { ...args, options: { ...args.options, pathToClaudeCodeExecutable: exe } }
 }
 
+// --- token usage tap --------------------------------------------------------
+// 이 파일에는 `for await (const m of queryImpl(...))` 루프가 11개 있다(122,151,160,185,201,
+// 255,272,310,337 …). result 파서를 찌르면 11곳을 봐야 하고 12번째 루프가 추가되면 조용히
+// 샌다 — 조용히 틀린 합계가 이 기능의 유일한 실패 모드다. 그 11개가 전부 여기를 지난다.
+// structuredClaudeCall 의 1차/폴백도 둘 다 지나므로 재시도 양쪽 과금이 자동 포함되고,
+// 실패 result 도 파서가 throw 하기 전에 지나간다.
+let claudeUsageSink = null
+
+/** main 이 tracker 를 물린다. null 로 해제. */
+export function setClaudeUsageSink(fn) { claudeUsageSink = fn }
+
+function tapQuery(makeStream) {
+  return async function* (args) {
+    for await (const m of makeStream(args)) {
+      // 계측 실패가 생성을 죽이면 안 된다.
+      if (claudeUsageSink) {
+        try {
+          const u = claudeResultToUsage(m)
+          if (u) claudeUsageSink(u)
+        } catch { /* best-effort */ }
+      }
+      yield m
+    }
+  }
+}
+
+/** @internal 테스트 전용 — 실제 SDK 없이 tap 동작을 고정한다. */
+export const __tapQueryForTest = tapQuery
+
 async function* defaultQuery(args) {
   const { query } = await import('@anthropic-ai/claude-agent-sdk')
-  yield* query(withClaudePath(args))
+  yield* tapQuery((a) => query(withClaudePath(a)))(args)
 }
 
 // defaultQuery는 async generator라 Query 객체(=supportedModels 보유)를 잃는다. 조회는 직접 부른다.
