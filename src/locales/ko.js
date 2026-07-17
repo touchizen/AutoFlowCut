@@ -1202,6 +1202,35 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     termsNotice: '로그인하면 서비스 이용약관에 동의하는 것으로 간주됩니다.',
   },
 
+  // 빈 레퍼런스 카드 게이트 — 씬 배치보다 먼저 사용자 선택을 받아야 fail-closed 순서를 지킬 수 있다.
+  emptyRefGate: {
+    title: '빈 레퍼런스 카드가 있습니다',
+    description: '생성할 씬이 이미지 없는 레퍼런스를 참조합니다. 어떻게 할까요?',
+    generateFirst: '빈카드 먼저 생성 → 씬 생성',
+    excludeAndStart: '제외하고 씬만 생성',
+    cancel: '취소',
+    noPrompt: '⚠ 프롬프트 없음 — 자동 생성 제외',
+    noneGeneratable: '자동 생성 가능한 빈카드가 없습니다. 프롬프트를 추가하거나 "제외하고 씬만 생성"을 선택하세요.',
+    failureTitle: '레퍼런스 생성 실패',
+    failureStopped: '레퍼런스 생성이 중단되었습니다',
+    sceneBatchNotStarted: '씬 배치는 시작되지 않았습니다.',
+    confirm: '확인',
+    referencedScenes: '참조 씬: {scenes}',
+    stage: {
+      permission: '권한',
+      auth: '인증',
+      'flow-ready': 'Flow 준비',
+      prepare: '준비',
+      submit: '제출',
+      collect: '결과 수집',
+      save: '저장',
+      timeout: '시간 초과',
+      busy: '생성기 사용 중',
+      exception: '예외',
+      postcondition: '후속 검증',
+    },
+  },
+
   // 사이드 드로워
   drawer: {
     resources: '리소스',
@@ -1374,6 +1403,10 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
   // Toast 메시지
   toast: {
     noPrompt: '프롬프트가 없습니다.',
+    unusableRefsExcluded:
+      '이번 생성에서 사용할 수 없는 레퍼런스 사용 {count}건을 제외했습니다: {details}',
+    unusableRefsExcludedMore:
+      '이번 생성에서 사용할 수 없는 레퍼런스 사용 {count}건을 제외했습니다: {details} 외 {more}건',
     autoMatchNoMatchesPickStyle: '씬별 매칭이 0개입니다. 스타일을 직접 선택하세요.',
     allScenesGenerated: '모든 씬이 이미 생성되었습니다. 개별 씬에서 재생성하세요.',
     allRefsGenerated: '모든 레퍼런스가 이미 생성되었습니다.',

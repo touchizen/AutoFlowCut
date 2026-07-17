@@ -25,4 +25,14 @@ describe('App sync gate — coordinator publish lifetime wiring', () => {
     expect(handler).not.toContain('generating anyway')
     expect(handler).not.toContain('생성을 계속합니다')
   })
+
+  it('취소는 coordinator promise를 먼저 resolve한 뒤 sync gate를 닫는다', () => {
+    const start = source.indexOf('const handleSyncGateCancel')
+    const end = source.indexOf('// ref batch는', start)
+    const handler = source.slice(start, end)
+
+    expect(handler).toContain('syncGate?.onCancel?.()')
+    expect(handler.indexOf('syncGate?.onCancel?.()'))
+      .toBeLessThan(handler.indexOf('setSyncGate(null)'))
+  })
 })

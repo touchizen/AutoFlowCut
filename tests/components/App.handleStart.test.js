@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest'
-import { computeGuardAvailable } from '../../src/services/startGuard'
+import { computeGuardAvailable, isStartBlocked } from '../../src/services/startGuard'
 
 describe('computeGuardAvailable — handleStart requireStyle 가드 헬퍼 (P3)', () => {
   // App.jsx case 'text'/'list'의 가드 분기를 재현하는 wrapper.
@@ -155,5 +155,31 @@ describe('computeGuardAvailable — pure function direct tests', () => {
     const references = [{ id: 'x', type: 'style' }]
     expect(computeGuardAvailable({ force: true, targetScenes, references, autoAvailable: false, previewStyleMatchingFn: fn })).toBe(true)
     expect(fn).toHaveBeenCalledWith(targetScenes, references)
+  })
+})
+
+describe('isStartBlocked — handleStart entry guard', () => {
+  it.each([
+    ['scene automation', { isRunning: true }],
+    ['video automation', { videoRunning: true }],
+    ['pending batch latch', { hasPendingBatch: true }],
+    ['video retry', { retryInFlight: true }],
+  ])('%s가 진행 중이면 시작을 차단한다', (_label, overrides) => {
+    expect(isStartBlocked({
+      isRunning: false,
+      videoRunning: false,
+      hasPendingBatch: false,
+      retryInFlight: false,
+      ...overrides,
+    })).toBe(true)
+  })
+
+  it('모든 실행/latch 신호가 false면 통과한다', () => {
+    expect(isStartBlocked({
+      isRunning: false,
+      videoRunning: false,
+      hasPendingBatch: false,
+      retryInFlight: false,
+    })).toBe(false)
   })
 })

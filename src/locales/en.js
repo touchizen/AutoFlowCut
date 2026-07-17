@@ -1203,6 +1203,35 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
     termsNotice: 'By logging in, you agree to our Terms of Service.',
   },
 
+  // 빈 레퍼런스 카드 게이트 — 씬 시작 전 선택을 받아 실패 시 fail-closed 순서를 유지한다.
+  emptyRefGate: {
+    title: 'Empty reference cards found',
+    description: 'Some scenes you are about to generate reference cards that have no images. What would you like to do?',
+    generateFirst: 'Generate empty cards first → Generate scenes',
+    excludeAndStart: 'Exclude them and generate scenes only',
+    cancel: 'Cancel',
+    noPrompt: '⚠ No prompt — excluded from auto-generation',
+    noneGeneratable: 'There are no empty cards that can be generated automatically. Add prompts or choose "Exclude them and generate scenes only."',
+    failureTitle: 'Reference generation failed',
+    failureStopped: 'Reference generation was stopped',
+    sceneBatchNotStarted: 'Scene batch generation was not started.',
+    confirm: 'OK',
+    referencedScenes: 'Referenced scenes: {scenes}',
+    stage: {
+      permission: 'Permission',
+      auth: 'Authentication',
+      'flow-ready': 'Flow readiness',
+      prepare: 'Preparation',
+      submit: 'Submission',
+      collect: 'Result collection',
+      save: 'Save',
+      timeout: 'Timeout',
+      busy: 'Generator busy',
+      exception: 'Exception',
+      postcondition: 'Postcondition check',
+    },
+  },
+
   // Side Drawer
   drawer: {
     resources: 'Resources',
@@ -1375,6 +1404,10 @@ Ocean waves crashing against a lighthouse during a dramatic storm`,
   // Toast messages
   toast: {
     noPrompt: 'No prompt provided.',
+    unusableRefsExcluded:
+      'Excluded {count} unusable reference use(s) from this generation: {details}',
+    unusableRefsExcludedMore:
+      'Excluded {count} unusable reference use(s) from this generation: {details}, plus {more} more',
     autoMatchNoMatchesPickStyle: 'No scenes match. Pick a style explicitly.',
     allScenesGenerated: 'All scenes already generated. Use regenerate on individual scenes.',
     allRefsGenerated: 'All references already generated.',

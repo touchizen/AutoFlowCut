@@ -1512,3 +1512,73 @@ describe('useFlowEngine — 캐릭터 ref 는 /characters 에서 생성한다', 
     expect(res.error).toContain('400')
   })
 })
+
+describe('useFlowEngine M1 final image reference guard', () => {
+  const dirtyReferences = [
+    { mediaId: null },
+    { mediaId: undefined },
+    { mediaId: '' },
+    { mediaId: 'media-ok' },
+  ]
+
+  it('filters invalid mediaIds before synchronous flowGenerateImage IPC', async () => {
+    mockFlowGenerateImage.mockClear()
+    mockFlowGenerateImage.mockResolvedValue({
+      success: true,
+      images: [{ base64: 'image' }],
+    })
+    const { result } = renderHook(() => useFlowEngine())
+
+    await act(async () => {
+      await result.current.generateImage('plain prompt', dirtyReferences)
+    })
+
+    expect(mockFlowGenerateImage.mock.calls[0][0].referenceImages).toEqual([
+      { mediaId: 'media-ok' },
+    ])
+  })
+
+  it('filters invalid mediaIds before async flowGenerateImage IPC', async () => {
+    mockFlowGenerateImage.mockClear()
+    mockFlowGenerateImage.mockResolvedValue({
+      success: true,
+      generationId: 'generation-1',
+    })
+    const { result } = renderHook(() => useFlowEngine())
+
+    await act(async () => {
+      await result.current.submitGeneration('plain prompt', dirtyReferences)
+    })
+
+    expect(mockFlowGenerateImage.mock.calls[0][0].referenceImages).toEqual([
+      { mediaId: 'media-ok' },
+    ])
+  })
+
+  it('keeps an entity-only synced mention on the scene route', async () => {
+    mockFlowGenerateImage.mockClear()
+    mockFlowGenerateScene.mockClear()
+    mockFlowGenerateScene.mockResolvedValue({
+      success: true,
+      images: [{ base64: 'scene-image' }],
+    })
+    const entityOnlyReference = {
+      id: 'entity-only',
+      name: 'EntityOnly',
+      type: 'character',
+      entityId: 'entity-1',
+      flowNameSyncStatus: 'synced',
+      mediaId: null,
+    }
+    const { result } = renderHook(() => useFlowEngine())
+
+    await act(async () => {
+      await result.current.generateImage('@EntityOnly appears', [], {
+        references: [entityOnlyReference],
+      })
+    })
+
+    expect(mockFlowGenerateScene).toHaveBeenCalledTimes(1)
+    expect(mockFlowGenerateImage).not.toHaveBeenCalled()
+  })
+})

@@ -30,6 +30,7 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { FLOW_MODELS } from './flowModels'
 import { parseSceneMentions } from '../utils/sceneMentions'
 import { resolveMentionPrefix, stripMentionPrefixes } from '../utils/mentionParser'
+import { flowImageInjectable } from '../utils/refImageGuard'
 
 const api = () => window.electronAPI
 
@@ -359,7 +360,7 @@ export function useFlowEngine(opts = {}) {
         seed: callOpts.seed,
         model: callOpts.model,
         projectId: pid,
-        referenceImages: routing.referenceImages,
+        referenceImages: (routing.referenceImages || []).filter(flowImageInjectable),
         batchCount: callOpts.batchCount,
         asyncMode: false,
       }))
@@ -461,7 +462,7 @@ export function useFlowEngine(opts = {}) {
         seed: callOpts.seed,
         model: callOpts.model,
         projectId: pid,
-        referenceImages: routing.referenceImages,
+        referenceImages: (routing.referenceImages || []).filter(flowImageInjectable),
         batchCount: callOpts.batchCount,
         asyncMode: true,
       }))

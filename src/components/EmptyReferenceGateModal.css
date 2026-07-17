@@ -1,0 +1,125 @@
+.empty-reference-gate-modal {
+  max-width: 560px;
+  max-height: min(760px, calc(100vh - 48px));
+}
+
+.empty-reference-gate-description {
+  margin-bottom: 20px;
+  color: #a7a7b5;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.empty-reference-gate-list {
+  display: grid;
+  gap: 10px;
+  max-height: 330px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.empty-reference-gate-list li {
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+}
+
+.empty-reference-gate-card-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.empty-reference-gate-card-heading strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #fff;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.empty-reference-gate-card-heading span {
+  flex: 0 0 auto;
+  color: #9292a2;
+  font-size: 12px;
+}
+
+.empty-reference-gate-scenes {
+  margin-top: 6px;
+  color: #b7b7c4;
+  font-size: 12px;
+}
+
+.empty-reference-gate-warning {
+  margin-top: 8px;
+  color: #fbbf24;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.empty-reference-gate-guidance,
+.empty-reference-gate-not-started {
+  margin: 14px 0 0;
+  padding: 12px;
+  color: #fbbf24;
+  font-size: 13px;
+  line-height: 1.5;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  border-radius: 8px;
+}
+
+.empty-reference-gate-actions {
+  display: grid;
+  gap: 9px;
+  width: 100%;
+}
+
+.empty-reference-gate-failures {
+  max-height: 380px;
+}
+
+.empty-reference-gate-failure-detail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.empty-reference-gate-failure-detail span {
+  padding: 3px 7px;
+  color: #fecaca;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(239, 68, 68, 0.16);
+  border-radius: 999px;
+}
+
+.empty-reference-gate-failure-detail code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #fca5a5;
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.empty-reference-gate-acknowledge {
+  width: 100%;
+}
+
+@media (max-width: 600px) {
+  .empty-reference-gate-modal {
+    max-height: calc(100vh - 28px);
+  }
+
+  .empty-reference-gate-card-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+}

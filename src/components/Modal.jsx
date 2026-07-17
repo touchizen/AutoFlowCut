@@ -29,7 +29,9 @@ export default function Modal({
       >
         <div className="modal-header">
           <h3>{title}</h3>
-          <button className="btn-close" onClick={onClose}>✕</button>
+          {/* onClose 를 안 준 모달은 닫을 수 없는 모달이다 — ✕ 를 그려두면 눌러도 반응이
+              없어 앱이 멈춘 것처럼 보인다. 핸들러가 있을 때만 닫기를 노출한다. */}
+          {onClose && <button className="btn-close" onClick={onClose}>✕</button>}
         </div>
 
         <div className="modal-body">
