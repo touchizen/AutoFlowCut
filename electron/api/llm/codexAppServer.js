@@ -7,6 +7,7 @@
  */
 import { spawn as nodeSpawn } from 'node:child_process'
 import { createNdjsonDecoder, createJsonRpcClient } from './codexJsonRpc.js'
+import { codexNotifToUsage } from './usageTokens.js'
 import {
   resolveCodexExecutablePath,
   prepareCodexRuntimeHome,
@@ -102,12 +103,33 @@ function buildThreadStartParams({ model, workingDirectory, config }) {
 }
 
 /**
+ * `thread/tokenUsage/updated` 알림 → onUsage. 다른 method 는 통과.
+ *
+ * payload 는 중첩이다 — `params.tokenUsage.inputTokens` 로 읽으면 undefined 다.
+ * 0.144.5 실측 스키마(`codex app-server generate-ts --experimental` → v2/):
+ *   { threadId, turnId, tokenUsage: { total: TokenUsageBreakdown, last: ..., modelContextWindow } }
+ * total 이 thread 누적치이므로 그걸 읽고 threadId 로 교체한다(가산하면 뻥튀기).
+ *
+ * 이 함수는 stdout 이벤트 핸들러 안에서 돈다 — 여기서 던지면 uncaught 가 되고 턴 정리(finally)를
+ * 건너뛴다. 계측 실패가 생성을 죽이면 안 되므로 전부 삼킨다.
+ * @internal export 는 테스트가 실제 알림 모양을 고정하기 위한 것이다.
+ */
+export function handleUsageNotification(method, params, onUsage) {
+  if (method !== 'thread/tokenUsage/updated' || !onUsage) return
+  try {
+    const u = codexNotifToUsage(params)
+    if (u) onUsage(u)
+  } catch { /* best-effort */ }
+}
+
+/**
  * 한 프롬프트 = 한 스레드 = 한 턴. turn/start 는 즉시 반환하므로 turn/completed 알림을 기다린다.
  * 최종 텍스트는 item/completed(agentMessage) 에서만 온다 — turn.items 는 비어 있다(itemsView: notLoaded).
  */
 async function runCodexTurn(prompt, opts = {}, {
   outputSchema,
   onDelta,
+  onUsage,
   signal,
   spawnImpl,
   codexPath,
@@ -163,6 +185,7 @@ async function runCodexTurn(prompt, opts = {}, {
       onNotification: (message) => {
         try {
           const { method, params } = message
+          handleUsageNotification(method, params, onUsage)
           if (method === 'item/agentMessage/delta') {
             if (!params?.delta) return
             const id = params.itemId ?? ANONYMOUS
