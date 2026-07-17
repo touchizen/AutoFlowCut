@@ -39,12 +39,13 @@ describe('generateTitle abort 대칭', () => {
     await machine.open()
 
     const p = machine.generateTitle('# 대본')
-    p.catch(() => {}) // unhandled rejection 방지
+    p.catch(() => {}) // 안전용 — 이제 reject 가 아니라 { aborted: true } 로 끝난다
     await Promise.resolve()
     await machine.abort()
 
+    // signal 은 실제로 전파됐고(controller 가 붙었다), 취소는 실패가 아니라 { aborted: true } 다.
     expect(captured?.aborted).toBe(true)
-    await expect(p).rejects.toThrow(/Aborted/)
+    await expect(p).resolves.toEqual({ aborted: true })
   })
 
   it('끝난 뒤엔 controller 를 놓는다 — 다음 abort 가 죽은 호출을 붙들면 안 된다', async () => {
@@ -54,5 +55,23 @@ describe('generateTitle abort 대칭', () => {
 
     await machine.generateTitle('# 대본')
     await expect(machine.abort()).resolves.not.toThrow()
+  })
+
+  // 겹친 호출: 두 번째가 첫 번째를 abort 한다. 첫 번째는 reject 가 아니라 { aborted: true } 로
+  // 끝나야 한다 — 안 그러면 renderer 가 "제목 생성 실패" toast 를 띄운다(의도한 취소인데).
+  it('abort 로 취소된 호출은 throw 가 아니라 { aborted: true } 를 반환한다', async () => {
+    const llm = {
+      generateTitle: vi.fn((_s, _o, injected) => new Promise((resolve, reject) => {
+        injected.signal.addEventListener('abort', () => reject(new Error('Aborted')), { once: true })
+      })),
+    }
+    const machine = createStepMachine({ projectPath: await tmpProject(), llm, emit: () => {}, getApiKey: () => null })
+    await machine.open()
+
+    const first = machine.generateTitle('# 대본')
+    await Promise.resolve()
+    machine.abort()
+
+    await expect(first).resolves.toEqual({ aborted: true })
   })
 })

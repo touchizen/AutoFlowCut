@@ -72,14 +72,13 @@ let claudeUsageSink = null
 /** main 이 tracker 를 물린다. null 로 해제. */
 export function setClaudeUsageSink(fn) { claudeUsageSink = fn }
 
-function tapQuery(makeStream) {
+// sink 는 **호출 시작의 동기 지점에서** 캡처해 여기로 넘긴다 — 메시지마다 전역을 다시 읽거나,
+// async 경계(dynamic import) 뒤에 읽으면 안 된다. abort() 는 취소만 하고 드레인하지 않는다:
+// 프로젝트 전환은 abort 직후 새 machine 을 만들며 전역 sink 를 B 로 바꾸고, A 의 SDK 는 graceful
+// close 동안 버퍼된 result 를 더 뱉는다. 캡처가 늦으면(예: `await import` 뒤) 그 늦은 보고가 B 의
+// 합계에 들어간다 — 조용히 틀린 합계. 캡처된 sink 로 넘기면 늦은 보고는 죽은 A 의 tracker 로 간다.
+function tapQuery(makeStream, sink) {
   return async function* (args) {
-    // **호출 시작 시점의 sink 를 캡처한다** — 메시지마다 전역을 다시 읽으면 안 된다.
-    // abort() 는 취소만 하고 드레인하지 않는다. 프로젝트 전환은 abort 직후 새 machine 을 만들며
-    // 전역 sink 를 B 로 바꾸는데, A 의 SDK 는 graceful close 동안 버퍼된 result 를 더 뱉을 수 있다.
-    // live 로 읽으면 그 늦은 보고가 B 의 합계에 들어간다 — 조용히 틀린 합계.
-    // 캡처하면 늦은 보고는 이미 죽은 A 의 tracker 로 가고(무해), B 는 깨끗하다.
-    const sink = claudeUsageSink
     for await (const m of makeStream(args)) {
       // 계측 실패가 생성을 죽이면 안 된다.
       if (sink) {
@@ -93,12 +92,16 @@ function tapQuery(makeStream) {
   }
 }
 
-/** @internal 테스트 전용 — 실제 SDK 없이 tap 동작을 고정한다. */
-export const __tapQueryForTest = tapQuery
+/** @internal 테스트 전용 — 현재 전역 sink 로 tap 한다(실제 SDK 없이 동작 고정). */
+export const __tapQueryForTest = (makeStream) => tapQuery(makeStream, claudeUsageSink)
 
 async function* defaultQuery(args) {
+  // 이 첫 줄은 generator 의 첫 next() 에서 실행되고, 그 시점은 아직 호출자(A) 스택 안이다.
+  // dynamic import 는 이벤트 루프를 양보하므로 그 뒤에 잡으면 B 로 바뀌어 있을 수 있다 —
+  // 반드시 import 전에 잡는다.
+  const sink = claudeUsageSink
   const { query } = await import('@anthropic-ai/claude-agent-sdk')
-  yield* tapQuery((a) => query(withClaudePath(a)))(args)
+  yield* tapQuery((a) => query(withClaudePath(a)), sink)(args)
 }
 
 // defaultQuery는 async generator라 Query 객체(=supportedModels 보유)를 잃는다. 조회는 직접 부른다.

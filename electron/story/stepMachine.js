@@ -1761,6 +1761,11 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       try {
         const opts = buildLlmOptions({ ...(state?.input?.options || {}), ...(options || {}) })
         return await llm.generateTitle(scriptMd, opts, { signal: myController.signal })
+      } catch (err) {
+        // 겹친 호출이 이 호출을 abort 했으면 실패가 아니다 — 조용한 취소다.
+        // throw 하면 renderer 가 "제목 생성 실패" toast 를 띄운다(의도한 취소인데).
+        if (myController.signal.aborted) return { aborted: true }
+        throw err
       } finally {
         // 신원 확인 — 늦게 끝난 이전 호출의 finally 가 새 controller 를 지우면 안 된다.
         if (titleController === myController) titleController = null

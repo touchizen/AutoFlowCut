@@ -1172,6 +1172,7 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     if (title.trim() || !scriptText.trim()) return title
     try {
       const res = await pipeline.generateTitle(scriptText, currentOptions())
+      if (res?.aborted) return null // 겹친 호출/프로젝트 전환이 취소함 — toast 없이 조용히
       if (!res?.title) throw new Error(res?.error || 'empty-title')
       setTitle(res.title)
       return res.title
