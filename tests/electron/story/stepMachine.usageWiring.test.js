@@ -7,13 +7,16 @@ import { __tapQueryForTest } from '../../../electron/api/llm/llmClaude.js'
 import { __getCodexUsageSinkForTest } from '../../../electron/api/llm/codexAppServer.js'
 
 /**
- * **배선 테스트** — provider tap → 전역 sink → machine tracker → emit payload 까지 실제로 흐르는지.
+ * **machine 배선 테스트** — 전역 sink → machine tracker → emit payload 까지 흐르는지.
  *
- * 이게 없으면 다음 세 뮤테이션이 전부 통과한다(Fable 5 리뷰에서 실측으로 증명됨, 6307개 전부 초록):
- *   1. stepMachine 의 addDelta ↔ setCumulative 맞바꾸기 (= 조용히 틀린 합계 그 자체)
- *   2. llmClaude 의 defaultQuery 에서 tap 제거
- *   3. codexAppServer 의 handleUsageNotification 호출 제거
- * 기존 usage 테스트들은 m.usageTracker 를 직접 조작해 sink 를 안 지났기 때문이다.
+ * 이 파일이 죽이는 뮤테이션은 **하나**다: stepMachine 의 `setClaudeUsageSink/setCodexUsageSink`
+ * 콜백에서 addDelta ↔ setCumulative 를 맞바꾸는 것(= 조용히 틀린 합계 그 자체).
+ * 나머지 두 배선 링크는 **각각 다른 파일**이 커버한다(1라운드 리뷰에서 여기 주석이 셋을 다
+ * 이 파일 공로로 돌린 게 거짓임이 실측으로 드러났다 — 이 파일은 __getCodexUsageSinkForTest 로
+ * sink 를 직접 부르고 __tapQueryForTest 로 tap 헬퍼를 직접 부르므로, transport/제너레이터를
+ * 안 지난다):
+ *   - claude tap → defaultQuery 가 tap 을 쓰는지: `llmClaude.defaultQueryTap.test.js`
+ *   - codex transport → onNotification 이 handleUsageNotification 을 부르는지: `codexAppServer.usageRun.test.js`
  */
 const tmpProject = () => mkdtemp(path.join(os.tmpdir(), 'proj-'))
 
