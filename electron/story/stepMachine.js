@@ -258,6 +258,9 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   // 리서치 §3.1/§5: research side action 전용 controller — step/preview/synopsis/confirm과
   // 상호배제(MINOR 5), abort 대칭. generateSynopsis 패턴 미러.
   let researchController = null
+  // 제목 생성 side action 전용 controller — abort 대칭(프로젝트 전환이 진행 중 제목 생성을
+  // 넘겨받지 않도록). synopsisController 패턴 미러.
+  let titleController = null
 
   const send = (ch, payload, operationId) =>
     emit(ch, { projectToken, operationId: operationId || randomUUID(), ...payload })
@@ -1725,9 +1728,19 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
         previewing = false
       }
     },
+    // 제목 생성 side action — synopsis/research 와 같은 controller 패턴.
+    // signal 이 없으면 abort() 가 이 호출을 멈추지도 기다리지도 못해, 프로젝트 전환
+    // (story:open 의 `await machine.abort()`) 을 넘어 살아남는다.
     async generateTitle(scriptMd, options = {}) {
-      const opts = buildLlmOptions({ ...(state?.input?.options || {}), ...(options || {}) })
-      return llm.generateTitle(scriptMd, opts, {})
+      const myController = new AbortController()
+      titleController = myController
+      try {
+        const opts = buildLlmOptions({ ...(state?.input?.options || {}), ...(options || {}) })
+        return await llm.generateTitle(scriptMd, opts, { signal: myController.signal })
+      } finally {
+        // 신원 확인 — 늦게 끝난 이전 호출의 finally 가 새 controller 를 지우면 안 된다.
+        if (titleController === myController) titleController = null
+      }
     },
     // 시놉시스 검수 side action (spec 2026-07-10) — generateSynopsis 미러.
     // 시놉시스는 실행 스텝이 아닌 게이트라 reviewOnly 스텝 경로를 못 쓴다. steps.* 불변.
@@ -2265,6 +2278,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       controller?.abort()
       // §3.3: synopsis side action도 대칭 중단 — 프로젝트 전환/open cleanup 경로 공용.
       synopsisController?.abort()
+      // 제목 생성도 대칭 중단 — 없으면 프로젝트 전환 후에도 이전 프로젝트의 호출이 살아남는다.
+      titleController?.abort()
       // 리서치 §5: research side action도 대칭 중단(진행 중 fetch/analyze 등).
       researchController?.abort()
       // 중단 시점에 running인 스텝은 동기적으로 terminal 마킹 — 이후 다른 스텝 시작으로

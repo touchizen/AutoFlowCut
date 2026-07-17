@@ -69,7 +69,13 @@ describe('story IPC', () => {
     const options = { engine: 'codex', model: 'gpt-5.5', reasoningEffort: 'xhigh', language: 'ko' }
     const r = await ipc.invoke('story:generate-title', { projectToken, scriptMd: '대본', options })
     expect(r).toEqual({ title: '자동제목' })
-    expect(llm.generateTitle).toHaveBeenCalledWith('대본', expect.objectContaining(options), {})
+    // 세 번째 인자는 DI seam — signal 이 실려야 abort() 가 이 호출을 잡는다. 예전엔 `{}` 였고,
+    // 그래서 프로젝트 전환이 진행 중 제목 생성을 넘겨받았다.
+    expect(llm.generateTitle).toHaveBeenCalledWith(
+      '대본',
+      expect.objectContaining(options),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
   })
   it('start 실행 시 story:state 이벤트가 window로 발신된다', async () => {
     const { projectToken } = await ipc.invoke('story:open', { projectPath: dir })
