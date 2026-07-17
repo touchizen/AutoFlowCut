@@ -1059,14 +1059,14 @@
   margin-bottom: 12px;
 }
 .story-voice-row {
-  display: flex;
+  /* [화자 | 성우 | 출처] 3열 고정 그리드.
+     flex로 두면 appearance(인물 특징) 텍스트 길이가 남는 폭을 제각각 먹어 성우 버튼 x좌표와
+     출처 칩 폭이 행마다 달라진다(나레이션 행은 appearance가 없어 출처가 넓어 칩이 1줄, 인물
+     행은 좁아 2줄로 갈라졌다). 열 폭을 고정하면 모든 행에서 정확히 같은 자리에 정렬된다. */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 200px) 300px;
   align-items: center;
-  /* 설명 텍스트와 성우 버튼 사이 여백 — 설명이 행 전체를 채우므로 gap이 유일한 분리선이다. */
   gap: 16px;
-  /* wrap이면 flexbox가 축소보다 줄바꿈을 먼저 택한다: 긴 appearance의 max-content 폭이
-     행을 넘기는 순간 버튼이 아래 줄로 떨어져 인물마다 위치가 달라 보인다. 한 줄에 묶어두고
-     설명이 여러 줄로 늘어나게 둔다(행 높이는 늘어나도 된다). */
-  flex-wrap: nowrap;
   padding: 6px 8px;
   border-radius: var(--border-radius);
 }
@@ -1074,24 +1074,50 @@
 .story-voice-row:nth-child(even) {
   background: var(--bg-secondary);
 }
+/* 드래그가 행 위에 올라왔을 때 — 행 전체가 드롭 타깃임을 드러낸다(칩만이 아니다). */
+.story-voice-row.drag-over {
+  outline: 1px dashed var(--accent-color, #6aa9ff);
+  outline-offset: -2px;
+  background: rgba(106, 169, 255, 0.1);
+}
 .story-voice-info {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  min-width: 96px;
-  /* 성우 버튼이 안 먹는 남는 가로 공간을 인물 설명이 차지 → 설명이 넓게 표시된다. */
-  flex: 1 1 auto;
+  /* 그리드 1열. min-width:0이라야 긴 appearance가 열 안에서 줄바꿈되지 성우/출처 열을 밀지 않는다. */
+  min-width: 0;
 }
 .story-voice-speaker {
   font-weight: 600;
   font-size: 0.85rem;
 }
-/* A1: 캐릭터 특징(appearance) — 표시 전용, 이름 아래 회색 작은 글씨 */
+/* A1: 캐릭터 특징(appearance) — 표시 전용, 이름 아래 회색 작은 글씨.
+   열 폭 안에서 여러 줄로 접힌다(행 높이는 늘어나도 됨). 긴 무공백 텍스트도 열을 안 넘기게 wrap. */
 .story-voice-appearance {
   font-size: 0.72rem;
   color: var(--text-secondary, #8a8a8a);
   line-height: 1.3;
+  overflow-wrap: anywhere;
 }
+/* 화자별 진행 카운터(예: 227/230) — 이름 아래 작은 배지. 전체 초시계에 더한 화자 단위 진행. */
+.story-voice-progress {
+  align-self: flex-start;
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary, #8a8a8a);
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text-secondary, #8a8a8a) 14%, transparent);
+}
+.story-voice-progress.done {
+  color: #3fae6b;
+  background: color-mix(in srgb, #3fae6b 16%, transparent);
+}
+.story-voice-progress.has-error {
+  color: #e05c5c;
+  background: color-mix(in srgb, #e05c5c 16%, transparent);
+}
+
 /* C: 캐릭터 성별 배지 + 성우 성별 불일치 경고 */
 .story-voice-gender {
   margin-left: 6px;
@@ -1105,10 +1131,10 @@
 }
 /* Task 11: 드롭다운 3종(엔진/검색/목소리) → [성우 선택] 버튼(모달 오픈) */
 .story-voice-picker-btn {
-  /* .story-input의 flex:1 1 160px을 덮어써 행 전체로 늘어나지 않게. 내용폭 + 상한만.
-     shrink=0: 축소는 전부 설명 텍스트가 흡수한다 — 버튼 폭이 인물마다 달라지면 안 된다. */
-  flex: 0 0 auto;
-  max-width: 240px;
+  /* 그리드 2열을 채운다 — 모든 행에서 좌우 가장자리가 같은 x에 정렬된다.
+     .story-input의 flex:1 1 160px은 그리드 아이템이라 무시된다. */
+  width: 100%;
+  min-width: 0;
   text-align: left;
   cursor: pointer;
 }

@@ -487,6 +487,11 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   }
   // M2b-5: sfx 세그먼트별 소스(로컬 오버라이드). 기본은 세그먼트 영속값(seg.sourceMode) > elevenlabs.
   const [sourceModeBySegment, setSourceModeBySegment] = useState({})
+  // 화자별 오디오 출처 — 성우 행 전체가 드롭 타깃이다(칩 영역만 노리면 좁다). 행에 놓인 파일을
+  // 그 화자의 SpeakerAudioSource(takeFiles)로 위임한다. 화자 id → 위젯 핸들.
+  const srcDropHandles = useRef(new Map())
+  // 지금 드래그가 올라온 성우 행 id(하나만 하이라이트). 놓거나 벗어나면 null.
+  const [dragVoiceRowId, setDragVoiceRowId] = useState(null)
   // M2a-3c: 세그먼트 오디오 미리듣기(단일 재생 토글).
   const { playingFile, playAudio, stopAudio } = useAudioPlayback()
   // §1 표시 라우팅 (R3-1) — scriptPhase가 남아 있는 동안(setup/editor)은 script done이어도
@@ -1269,6 +1274,24 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
   const promptsProgressLog = progressLog.filter((entry) => entry.step === 'prompts')
   // ⑤ 오디오 로그 — 파일 가져오기의 진단(화자별 정렬 결과, 자막이 안 맞는 위치)이 여기로 온다.
   const audioProgressLog = progressLog.filter((entry) => entry.step === 'audio')
+  // 화자별 진행 — 행마다 "227/230"처럼 얼마나 완성됐는지. 하단 전체 초시계에 더해 화자 단위로 본다.
+  // 상태 판정은 목록과 같은 규칙: 실시간(segmentProgress) > 영속(seg.status) > pending.
+  // segId별로 오는 audio-segment 진행을 화자로 접어 카운트한다. sfx는 화자 오디오가 아니라 뺀다.
+  const speakerSegProgress = useMemo(() => {
+    const m = new Map() // 화자 id → { total, done, error }
+    for (const sc of scenes) {
+      for (const seg of sc.segments || []) {
+        if ((seg.type || 'narration') === 'sfx' || !seg.speaker) continue
+        const cur = m.get(seg.speaker) || { total: 0, done: 0, error: 0 }
+        cur.total += 1
+        const st = segmentProgress[seg.id] || seg.status || 'pending'
+        if (st === 'done') cur.done += 1
+        else if (st === 'error') cur.error += 1
+        m.set(seg.speaker, cur)
+      }
+    }
+    return m
+  }, [scenes, segmentProgress])
   // 해당 타겟의 검수 점수만 — 다른 스텝 점수가 새지 않게.
   const scoresFor = (target) => (reviewScores?.target === target ? reviewScores.scores : [])
   // 검수 진행 표시 — 시놉시스 패널과 같은 모양(콘텐츠는 그대로 두고 하단에 시계+로그창).
@@ -1826,7 +1849,20 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                       const src = voiceSel.importForSpeaker(sp)
                       const hasSrc = !!(src?.mp3Path && src?.srtPath)
                       return (
-                        <div key={sp.id} className="story-voice-row">
+                        <div
+                          key={sp.id}
+                          className={`story-voice-row${dragVoiceRowId === sp.id ? ' drag-over' : ''}`}
+                          // 행 전체가 드롭 타깃 — 위젯 칩만이 아니라 이름·설명·성우 버튼 위에 놓아도 된다.
+                          onDragOver={(e) => { if (isRunning) return; e.preventDefault(); setDragVoiceRowId(sp.id) }}
+                          onDragLeave={(e) => { if (e.currentTarget.contains(e.relatedTarget)) return; setDragVoiceRowId((id) => (id === sp.id ? null : id)) }}
+                          onDrop={(e) => {
+                            if (isRunning) return
+                            e.preventDefault()
+                            setDragVoiceRowId(null)
+                            // 위젯에 직접 놓았으면 그쪽이 stopPropagation으로 처리하고 여긴 안 온다.
+                            srcDropHandles.current.get(sp.id)?.takeFiles(Array.from(e.dataTransfer?.files || []))
+                          }}
+                        >
                           <div className="story-voice-info">
                             <span className="story-voice-speaker">
                               {sp.name || sp.id}
@@ -1843,6 +1879,22 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                             {sp.appearance && (
                               <span className="story-voice-appearance">{sp.appearance}</span>
                             )}
+                            {/* 화자별 진행 — 오디오가 돌았을 때만(그 전엔 0/N이 소음). 예: 227/230, 미완은 강조. */}
+                            {(() => {
+                              const prog = speakerSegProgress.get(sp.id)
+                              if (!prog || !prog.total || !(steps.audio?.status === 'done' || prog.done > 0)) return null
+                              const complete = prog.done === prog.total
+                              return (
+                                <span
+                                  className={`story-voice-progress${complete ? ' done' : ''}${prog.error ? ' has-error' : ''}`}
+                                  data-testid={`voice-progress-${sp.id}`}
+                                  title={t('story.audio.speakerProgress', `${prog.done}/${prog.total}개 세그먼트 완성`, { done: prog.done, total: prog.total })}
+                                >
+                                  {prog.done}/{prog.total}
+                                  {prog.error ? ` (⚠${prog.error})` : ''}
+                                </span>
+                              )
+                            })()}
                           </div>
                           {/* Task 11: 드롭다운 3종(엔진/검색/목소리) → 버튼 1개 + VoicePicker 모달.
                               출처(mp3+SRT)를 지정한 화자는 TTS를 안 쓰므로 성우 선택을 잠근다 —
@@ -1865,8 +1917,9 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                               </span>
                             )}
                           </button>
-                          {/* 화자별 오디오 출처 — 이 영역(행)에 mp3/SRT를 끌어다 놓아도 된다. */}
+                          {/* 화자별 오디오 출처 — 위젯 자체도 드롭을 받지만, 위 행 전체가 위임한다. */}
                           <SpeakerAudioSource
+                            ref={(h) => { if (h) srcDropHandles.current.set(sp.id, h); else srcDropHandles.current.delete(sp.id) }}
                             source={src}
                             disabled={isRunning}
                             onPick={pipeline.pickAudioImportFile}

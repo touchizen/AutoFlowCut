@@ -999,17 +999,29 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
           err.errorKind = 'story-audio-import-unmatched'
           throw err
         }
-        // divergent = 남의 세그먼트 일부만 자막에 있다. 정상이라면 전부 있거나(나레이터 mp3) 전부
-        // 없다(인물 mp3) — 섞였다는 건 자막과 대본이 어긋났다는 뜻이고, 그러면 커서가 밀리지 않아
-        // 뒤따르는 내 세그먼트가 남의 구간 오디오를 물어올 수 있다(missed는 0인 채로).
-        if (r.divergent) {
-          // 어디가 구멍인지 알려준다 — 첫 미소비 구간의 시각. "몇 글자 남았다"만으론 못 고친다.
-          // 오류 메시지는 번역되며 버려지므로 로그로도 남긴다(자막 내용은 금지 — id/시각만).
-          const at = r.firstHole ? ` (first unclaimed subtitle at ${(r.firstHole.atMs / 1000).toFixed(1)}s)` : ''
-          sendStepLog('audio', 'import-unmatched', `${spk}: 대본이 안 가져간 자막 ${r.skipped}자${r.firstHole ? ` — 첫 위치 ${(r.firstHole.atMs / 1000).toFixed(1)}초` : ''}`, opId, { level: 'error' })
-          const err = new Error(`audio import: ${r.skipped} subtitle char(s) claimed by no segment${at}`)
-          err.errorKind = 'story-audio-import-unmatched'
-          throw err
+        // 안 가져간 자막이 있을 때(divergent) — 위험한 경우만 막고, 정상 애드리브는 알리고 넘긴다.
+        //
+        // ── 막는 경우: 남의 대사가 자막에 있는데 일부가 어긋남(otherMiss>0 && skipped>0) ──
+        // 자막이 남의 대사까지 담은 나레이터 mp3인데(otherHit>0…) 그중 하나가 대본과 달라 매칭에
+        // 실패하면 커서가 안 밀린다. 그러면 뒤따르는 내 세그먼트가 그 미소비 구간에서 자기 텍스트를
+        // 찾아 **남의 구간 오디오를 물어온다**(missed는 0인 채로 — 조용하다). 이건 막아야 한다.
+        //
+        // ── 넘기는 경우: 안 가져간 자막이 있지만 남의 대사는 다 맞음(otherMiss===0) ──
+        // 모든 세그먼트(내 것·남의 것)가 순서대로 잡혔다는 뜻이라, 안 가져간 자막은 대본에 없는
+        // 나레이터 애드리브·의성어(SFX: "컹컹", "다닥다닥")·아웃트로다. 실측(무한야담2): 91자 전부가
+        // 그런 것들이었다. 내 세그먼트는 전부 제자리를 찾았으니(missed=0) 그 오디오는 그냥 버리면
+        // 된다 — 목소리가 섞이지 않는다. 다만 조용히 넘기지 않고 warn 로그로 남겨 사용자가 안다.
+        if (r.skipped > 0) {
+          // 오류/경고 메시지는 로케일로 번역되며 버려지므로 로그로도 남긴다(자막 내용은 금지 — 시각만).
+          const where = r.firstHole ? ` — 첫 위치 ${(r.firstHole.atMs / 1000).toFixed(1)}초` : ''
+          if (r.otherMiss > 0) {
+            sendStepLog('audio', 'import-unmatched', `${spk}: 대본이 안 가져간 자막 ${r.skipped}자${where}`, opId, { level: 'error' })
+            const at = r.firstHole ? ` (first unclaimed subtitle at ${(r.firstHole.atMs / 1000).toFixed(1)}s)` : ''
+            const err = new Error(`audio import: ${r.skipped} subtitle char(s) claimed by no segment${at}`)
+            err.errorKind = 'story-audio-import-unmatched'
+            throw err
+          }
+          sendStepLog('audio', 'import-extra', `${spk}: 대본에 없는 자막 ${r.skipped}자(애드리브/효과음)는 버림${where}`, opId, { level: 'warn' })
         }
         const cov = cueCoverage(cues, { audioDurationMs })
         if (cov.gapMs > 0) sendStepLog('audio', 'import-gaps', `${spk}: 자막 사이 간격 ${(cov.gapMs / 1000).toFixed(1)}초`, opId)

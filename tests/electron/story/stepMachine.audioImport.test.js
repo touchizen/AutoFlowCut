@@ -220,19 +220,41 @@ describe('화자별 오디오 출처 — ⑤ 오디오', () => {
     expect(log.message).toContain('n1') // 못 찾은 세그먼트 id
   })
 
-  it('자막에만 있는 구간(크레딧/음악)이 있으면 위치를 로그로 알려준다', async () => {
+  // 대본에 없는 자막(애드리브/의성어/아웃트로)이 있어도, 내 세그먼트가 전부 제자리를 찾고
+  // 남의 대사도 다 맞으면(otherMiss=0) 그 자막은 그냥 버리면 된다 — 막지 않고 warn으로 알린다.
+  // 실측(무한야담2): 나레이터가 대본에 없는 "컹컹"·"다닥다닥" 같은 의성어를 덧읽어 91자가 남았다.
+  it('대본에 없는 자막(애드리브/효과음)은 막지 않고 위치를 warn 로그로 알린다', async () => {
     const srt = [
       '1', '00:00:00,000 --> 00:00:04,000', '사내는 눈을 떴습니다', '',
       '2', '00:00:04,000 --> 00:00:08,000', '"일어나게"', '',
-      '3', '00:00:08,000 --> 00:00:10,000', '구독과 좋아요', '', // 대본에 없다
+      '3', '00:00:08,000 --> 00:00:10,000', '구독과 좋아요', '', // 대본에 없다 — 버린다
       '4', '00:00:10,000 --> 00:00:12,000', '마님이 말했습니다', '',
+    ].join('\n')
+    const { srtPath, mp3Path } = await fixtures(projectPath, { srt })
+    const { machine, logs, cuts } = makeMachine(projectPath)
+    await machine.open()
+    await step(machine, 'audio', { speakers: speakersWith(srtPath, mp3Path) }) // 막히지 않는다
+    expect(cuts.map((c) => c.id)).toEqual(['n1', 'n2']) // 두 나레이터 세그먼트는 제자리에 잘렸다
+    const log = logs.find((l) => l.phase === 'import-extra')
+    expect(log, '버려진 자막을 알리는 로그가 있어야 한다').toBeTruthy()
+    expect(log.level).toBe('warn') // 오류가 아니다 — 진행은 된다
+    expect(log.message).toContain('8.0초') // 버린 자막이 시작하는 지점
+  })
+
+  // 위험한 어긋남은 여전히 막는다 — 남의 대사가 대본과 달라 매칭 실패(otherMiss>0)하면 커서가
+  // 안 밀리고, 뒤 나레이터가 그 미소비 구간에서 자기 텍스트를 찾아 남의 오디오를 물어올 수 있다.
+  it('남의 대사가 자막과 어긋나면(otherMiss>0) 막는다 — 조용히 남의 오디오를 물어오면 안 된다', async () => {
+    const srt = [
+      '1', '00:00:00,000 --> 00:00:04,000', '사내는 눈을 떴습니다', '',
+      '2', '00:00:04,000 --> 00:00:08,000', '완전히 다른 대사가 녹음됨', '', // d1과 안 맞음
+      '3', '00:00:08,000 --> 00:00:12,000', '마님이 말했습니다', '',
     ].join('\n')
     const { srtPath, mp3Path } = await fixtures(projectPath, { srt })
     const { machine, logs } = makeMachine(projectPath)
     await machine.open()
     await expectKind(machine, 'audio', 'story-audio-import-unmatched', { speakers: speakersWith(srtPath, mp3Path) })
     const log = logs.find((l) => l.phase === 'import-unmatched')
-    expect(log.message).toContain('8.0초') // 안 가져간 자막이 시작하는 지점
+    expect(log.level).toBe('error')
   })
 
   it('정상 실행에선 화자별 정렬 결과를 로그로 남긴다', async () => {

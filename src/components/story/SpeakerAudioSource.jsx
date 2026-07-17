@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, forwardRef, useImperativeHandle } from 'react'
 import './SpeakerAudioSource.css'
 
 /**
@@ -13,15 +13,18 @@ import './SpeakerAudioSource.css'
  *
  * 드롭은 파일 두 개를 한 번에 받아도 되고 하나씩 받아도 된다. Electron 36에서 File.path가
  * 없어져 경로는 webUtils(preload의 getPathForFile)로만 얻을 수 있다 — 주입 가능하게 열어둔다.
+ *
+ * 위젯 자체도 드롭을 받지만, 부모(성우 행 전체)가 더 넓은 타깃으로 드롭을 위임할 수 있게 ref로
+ * takeFiles를 노출한다 — 행 아무 데나 놓아도 이 화자의 출처가 되도록(좁은 칩 영역만 노리지 않게).
  */
-export default function SpeakerAudioSource({
+function SpeakerAudioSource({
   source,
   disabled = false,
   onPick,
   onChange,
   t = (_k, fallback) => fallback,
   resolvePath = (f) => window.electronAPI?.getPathForFile?.(f) || f?.path || '',
-}) {
+}, ref) {
   const [dragOver, setDragOver] = useState(false)
   const [draft, setDraft] = useState({})
   const [error, setError] = useState('')
@@ -63,6 +66,10 @@ export default function SpeakerAudioSource({
     commit(next)
   }
 
+  // 부모(성우 행)가 넓은 드롭 타깃에서 이 화자의 출처로 파일을 위임할 수 있게 노출한다.
+  // disabled면 위젯 자체 드롭과 똑같이 무시한다(실행 중 교체 방지).
+  useImperativeHandle(ref, () => ({ takeFiles: (files) => { if (!disabled) takeFiles(files) } }))
+
   const pick = async (kind) => {
     setError('')
     const res = await onPick(kind === 'srt'
@@ -87,6 +94,9 @@ export default function SpeakerAudioSource({
       onDrop={(e) => {
         if (disabled) return
         e.preventDefault()
+        // 위젯에 직접 놓은 드롭은 여기서 처리하고 부모(행)까지 올리지 않는다 — 안 그러면 행이
+        // 위임으로 한 번 더 처리해 같은 파일을 두 번 먹는다.
+        e.stopPropagation()
         setDragOver(false)
         takeFiles(Array.from(e.dataTransfer?.files || []))
       }}
@@ -124,3 +134,5 @@ export default function SpeakerAudioSource({
     </div>
   )
 }
+
+export default forwardRef(SpeakerAudioSource)

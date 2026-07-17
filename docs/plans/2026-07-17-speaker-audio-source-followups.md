@@ -1,6 +1,38 @@
 # 화자별 오디오 출처(mp3+SRT 가져오기) — 남은 작업
 
-**상태**: 기능 동작함. 커밋 없음(전부 워킹 트리). 아래 4건 남음.
+**상태**: 4건 모두 처리됨(2026-07-17). 워킹 트리. story 테스트 894개 통과.
+**실측 재검증**: 무한야담2에서 narrator **230/230 정렬**(오탐 3건 해소). 남은 91자(의성어·애드리브)는
+차단이 아니라 warn 로그로 처리.
+
+**후속(문서만)**: "이 화자만 생성" — 진행 버튼이 전 화자를 한꺼번에 돌려 나레이터 하나만 확인할
+수 없다는 요구. 설계는 `2026-07-17-per-speaker-audio-run.md` 참조(구현 대기).
+
+---
+
+## ✅ 처리 결과 요약
+
+1. **오탐 해소** — 원인은 자막(오디오)이 대본보다 글자가 많은 것이었다. 나레이터가 대본에 없는
+   토막("컹컹", "한 번", "몽둥이를 늘어뜨린 채")을 세그먼트 중간에 덧읽어, 세그먼트 텍스트가
+   통째로 자막 안에 있는데 갈라져 `indexOf`가 실패했다. → `srtImport.js`에 **삽입 허용 매칭**
+   (`matchSegment`) 추가: 정확 매칭 실패 시 앞머리 4글자 앵커 + 삽입 예산(maxGap) 안에서 건너뛰며
+   맞춘다. 삽입된 오디오는 그 세그먼트 구간에 포함(그 자리 소리가 맞다). 대본 글자가 자막에서
+   빠지는 진짜 어긋남은 여전히 missed. **정책 변경**: `divergent`(안 가져간 자막)를 무조건 막지
+   않고, 남의 대사가 어긋난 위험한 경우(`otherMiss>0 && skipped>0`)만 막고, 그 외(의성어·애드리브)는
+   warn 로그로 알리고 진행(`stepMachine.js`).
+2. **열 정렬** — `.story-voice-row`를 flex → **3열 그리드**[화자|성우|출처]로 고정(`StoryView.css`,
+   `SpeakerAudioSource.css`). appearance 길이가 열 폭을 흔들지 못한다.
+3. **드롭 타깃 = 행 전체** — `SpeakerAudioSource`가 ref로 `takeFiles`를 노출(`forwardRef`), 행이
+   위임(`StoryView.jsx`). 위젯 직접 드롭은 stopPropagation으로 중복 방지. 행 전체 하이라이트.
+4. **화자별 진행** — 세그먼트→화자 카운트(`speakerSegProgress`)로 행마다 `227/230` 배지(오디오
+   완료/진행 시). sfx 제외, 오류 수 표시. 상태 판정은 목록과 동일(segmentProgress > seg.status).
+
+관련 테스트: `srtImport.test.js`, `stepMachine.audioImport.test.js`, `SpeakerAudioSource.test.jsx`,
+`StoryView.voiceRowLayout.test.jsx`, `StoryView.speakerProgress.test.jsx`에 추가/갱신.
+
+---
+
+<details><summary>원래 계획(참고용)</summary>
+
 **실측 검증 완료**: 실제 무한야담2 프로젝트에서 narrator 227/230 정렬(98.7%).
 
 ---
@@ -94,3 +126,5 @@ speaker.voice = { provider: 'import', mp3Path, srtPath } → ⑤가 그 파일�
   그 자리의 mp3 오디오는 **버리고** 인물 TTS가 채운다.
 - 잘라낸 조각은 TTS 산출물과 같은 모양(`audio/segments/{id}.wav` + 실측 durationMs)이라
   하류(타임라인·manifest·export·**GCF**)는 아무것도 안 바뀐다.
+
+</details>

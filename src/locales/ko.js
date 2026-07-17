@@ -348,6 +348,7 @@ export default {
       genderFemale: '여성',
       genderMale: '남성',
       genderMismatch: '캐릭터 성별과 성우 성별이 다릅니다',
+      speakerProgress: '{done}/{total}개 세그먼트 완성',
       voicePickerTitle: '{speaker} 성우 선택',
       no: '#',
       speaker: '화자',

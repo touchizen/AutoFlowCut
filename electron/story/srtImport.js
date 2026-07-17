@@ -165,6 +165,46 @@ function buildCueStream(cues) {
 }
 
 /**
+ * 세그먼트를 스트림에서 찾는다 — 먼저 정확히, 안 되면 **자막에 낀 삽입을 건너뛰며** 맞춘다.
+ *
+ * 흔한 오탐의 정체: 자막(=오디오)이 대본보다 글자가 더 많다. 나레이터가 대본에 없는 토막을
+ * 덧읽는다(무한야담2 실측: "짖었지요 [컹컹] 두 번", "머리를 [한 번] 흔들고", "제 부하 넷과
+ * [몽둥이를 늘어뜨린 채] 다가오는"). 세그먼트 텍스트가 통째로 자막 안에 있는데 중간이 갈라져
+ * indexOf가 실패하고, 227/230이 맞았는데 3개 때문에 전체가 막힌다.
+ *
+ * 삽입된 오디오는 그 세그먼트가 실제로 소리 낸 부분이라 잘라낼 구간에 **포함**되는 게 맞다
+ * (rangeOf가 [at,end)를 통으로 주므로 자동으로 들어간다). 대본 글자는 하나도 빠짐없이 순서대로
+ * 자막에 있어야 한다 — 오디오에만 덧붙는 건 허용하되, 대본에 있는데 오디오에서 빠지는 건 불허한다
+ * (그건 LLM이 문장을 바꾼 진짜 어긋남이라 missed로 남겨 사용자에게 드러나야 한다).
+ *
+ * 안전장치 — 우연 일치로 엉뚱한 곳을 잡지 않게:
+ *   - 시작 앵커: 커서 이후에서 세그먼트 앞머리(anchor 글자)가 **연속으로** 맞는 첫 위치에서만 시작.
+ *   - 삽입 예산(maxGap): 이만큼까지만 건너뛴다. 넘으면 실패(진짜 다른 텍스트).
+ *
+ * @returns {{at:number, end:number}|null} at=시작 인덱스, end=끝(삽입 포함, 배타적). 못 맞추면 null.
+ */
+function matchSegment(stream, n, cursor) {
+  const exact = stream.indexOf(n, cursor)
+  if (exact >= 0) return { at: exact, end: exact + n.length }
+  // 앵커를 세울 만큼 길지 않으면 정확 매칭만 신뢰한다 — 짧은 텍스트는 우연 일치가 너무 쉽다.
+  const anchor = Math.min(n.length, 4)
+  if (anchor < 4) return null
+  const at = stream.indexOf(n.slice(0, anchor), cursor)
+  if (at < 0) return null
+
+  const maxGap = Math.max(12, Math.ceil(n.length * 0.5))
+  let i = anchor // 앵커 글자는 indexOf가 이미 연속 확인
+  let j = at + anchor
+  let gap = 0
+  while (i < n.length && j < stream.length) {
+    if (stream[j] === n[i]) { i += 1; j += 1 } // 대본 글자 소비
+    else { j += 1; gap += 1; if (gap > maxGap) return null } // 자막에만 있는 삽입을 건너뜀
+  }
+  if (i < n.length) return null // 대본 글자가 자막에서 빠짐 — 진짜 어긋남, missed로 남긴다
+  return { at, end: j }
+}
+
+/**
  * 어떤 화자의 (mp3, SRT) 출처에 대해, **그 화자의 세그먼트가 mp3의 몇 초~몇 초인지** 찾는다.
  *
  * 씬 구조·화자·SFX·감정은 건드리지 않는다. ⑤가 이 구간으로 mp3를 잘라 그 화자의 오디오를 만들고,
@@ -214,17 +254,18 @@ export function alignSegmentsToSource(scenes, cues, { belongsToSource }) {
       // 오류로 막힌다(이 모듈이 isImportProvider 라우팅으로 없애려던 바로 그 혼란).
       if (!n) { if (mine) missed += 1; return seg }
 
-      const at = stream.indexOf(n, cursor)
-      if (at < 0) {
+      const m = matchSegment(stream, n, cursor)
+      if (!m) {
         // 이 출처의 자막에 없는 텍스트 — 커서는 그대로 둔다(다른 화자 mp3면 정상이다).
         if (mine) { missed += 1; if (!missedIds.length || missedIds.length < 5) missedIds.push(seg.id) }
         else otherMiss += 1
         return seg
       }
+      const { at, end } = m
       if (at > cursor && firstHole === null) firstHole = { atMs: Math.round(rangeOf(cursor, at).startMs), text: stream.slice(cursor, Math.min(at, cursor + 24)) }
       skipped += at - cursor // 이 매칭 앞에 아무도 안 가져간 자막 구간
-      const { startMs, endMs } = rangeOf(at, at + n.length)
-      cursor = at + n.length
+      const { startMs, endMs } = rangeOf(at, end)
+      cursor = end
       if (!mine) { otherHit += 1; return seg } // 자리는 소비했지만 이 출처의 오디오는 안 쓴다
       const s = Math.round(startMs)
       const e = Math.round(endMs)

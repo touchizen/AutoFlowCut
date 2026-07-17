@@ -4,7 +4,11 @@
   display: flex;
   align-items: center;
   gap: 4px;
+  /* 성우 행의 고정 3열 그리드(StoryView.css)에서 이 위젯은 폭이 일정한 마지막 열이다. 칩 두 개 +
+     해제 버튼이 그 폭에 한 줄로 들어간다(칩 max-width 120 → 240+여백 < 300). 아주 긴 파일명만
+     둘째 줄로 접힌다. min-width:0이라야 칩이 열 안에서 줄어들며 ellipsis가 먹는다. */
   flex-wrap: wrap;
+  min-width: 0;
   padding: 2px;
   border-radius: 6px;
   border: 1px dashed transparent;
@@ -18,7 +22,8 @@
 }
 
 .story-src-chip {
-  max-width: 130px;
+  max-width: 120px;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

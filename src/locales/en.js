@@ -348,6 +348,7 @@ export default {
       genderFemale: 'Female',
       genderMale: 'Male',
       genderMismatch: "Character gender differs from the voice's gender",
+      speakerProgress: '{done}/{total} segments done',
       voicePickerTitle: '{speaker} voice picker',
       no: '#',
       speaker: 'Speaker',

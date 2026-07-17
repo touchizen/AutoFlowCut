@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { createRef } from 'react'
 import SpeakerAudioSource from '../../../src/components/story/SpeakerAudioSource'
 
 const MP3 = 'C:\\a\\무한야담2.mp3'
@@ -76,6 +77,23 @@ describe('SpeakerAudioSource', () => {
   it('실행 중이면 드롭을 무시한다', () => {
     const { onChange } = setup({ disabled: true })
     drop(screen.getByTestId('speaker-audio-source'), [fileOf('무한야담2.mp3'), fileOf('무한야담2.srt')])
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  // ── 행 위임(ref) — 성우 행 전체를 드롭 타깃으로 쓰려고 부모가 takeFiles를 부른다 ──
+  it('ref.takeFiles로 파일을 위임받는다 — 넓은 드롭 타깃(행)을 위해', () => {
+    const ref = createRef()
+    const onChange = vi.fn()
+    render(<SpeakerAudioSource ref={ref} source={null} onPick={vi.fn()} onChange={onChange} resolvePath={resolvePath} />)
+    ref.current.takeFiles([fileOf('무한야담2.mp3'), fileOf('무한야담2.srt')])
+    expect(onChange).toHaveBeenCalledWith({ mp3Path: MP3, srtPath: SRT })
+  })
+
+  it('disabled면 ref 위임도 무시한다 — 실행 중 교체 방지', () => {
+    const ref = createRef()
+    const onChange = vi.fn()
+    render(<SpeakerAudioSource ref={ref} source={null} disabled onPick={vi.fn()} onChange={onChange} resolvePath={resolvePath} />)
+    ref.current.takeFiles([fileOf('무한야담2.mp3'), fileOf('무한야담2.srt')])
     expect(onChange).not.toHaveBeenCalled()
   })
 

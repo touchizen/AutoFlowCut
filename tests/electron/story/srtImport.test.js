@@ -180,6 +180,41 @@ describe('alignSegmentsToSource', () => {
     expect(segsOf(alignSegmentsToSource(sc, cues, byNarrator))[0].srcStartMs).toBe(0)
   })
 
+  // 실측(무한야담2): 자막(오디오)이 대본보다 글자가 더 많다 — 나레이터가 대본에 없는 "컹컹",
+  // "한 번", "몽둥이를 늘어뜨린 채" 같은 토막을 세그먼트 중간에 덧읽는다. 세그먼트 텍스트가 통째로
+  // 자막 안에 있는데 갈라져 indexOf가 실패해 227/230이 맞고도 3개 때문에 전체가 막혔다.
+  describe('자막에 낀 삽입을 건너뛰며 맞춘다 (오탐 해결)', () => {
+    it('세그먼트 중간에 낀 삽입("컹컹")을 건너뛰고 맞춘다 — 삽입 오디오는 구간에 포함', () => {
+      const cues = [{ startMs: 0, endMs: 2200, text: '이웃집 개가 짖었지요 컹컹 두 번 짖고' }] // 22글자
+      const sc = [{ segments: [{ id: 'x', type: 'narration', speaker: 'narrator', text: '이웃집 개가 짖었지요. 두 번 짖고.' }] }]
+      const seg = segsOf(alignSegmentsToSource(sc, cues, byNarrator))[0]
+      expect([seg.srcStartMs, seg.srcEndMs]).toEqual([0, 2200]) // 앞머리부터 끝까지(삽입 포함) 통으로
+    })
+
+    it('앞머리(4글자)조차 안 맞으면 삽입 매칭을 시도하지 않는다 — missed', () => {
+      const cues = [{ startMs: 0, endMs: 1000, text: '완전히 다른 자막입니다' }]
+      const sc = [{ segments: [{ id: 'x', type: 'narration', speaker: 'narrator', text: '이웃집 개가 짖었지요' }] }]
+      const r = alignSegmentsToSource(sc, cues, byNarrator)
+      expect(r).toMatchObject({ aligned: 0, missed: 1 })
+    })
+
+    it('대본 글자가 자막에서 빠지면(오디오가 덜 읽음) 맞추지 않는다 — 진짜 어긋남은 missed', () => {
+      // 자막에 "짖었지요"가 없다(오디오가 대본보다 짧다) — 삽입이 아니라 삭제라 맞춰선 안 된다.
+      const cues = [{ startMs: 0, endMs: 1000, text: '이웃집 개가 두 번' }]
+      const sc = [{ segments: [{ id: 'x', type: 'narration', speaker: 'narrator', text: '이웃집 개가 짖었지요 두 번 짖고 그쳤다' }] }]
+      const r = alignSegmentsToSource(sc, cues, byNarrator)
+      expect(r).toMatchObject({ aligned: 0, missed: 1 })
+    })
+
+    it('삽입이 예산(maxGap)을 넘으면 맞추지 않는다 — 우연 일치로 먼 구간을 삼키지 않게', () => {
+      const filler = '가나다라마바사아자차카타파하가나다라마바사' // 20자 삽입 > maxGap(짧은 n에선 12)
+      const cues = [{ startMs: 0, endMs: 1000, text: `이웃집개가 ${filler} 짖었지요` }]
+      const sc = [{ segments: [{ id: 'x', type: 'narration', speaker: 'narrator', text: '이웃집개가 짖었지요' }] }]
+      const r = alignSegmentsToSource(sc, cues, byNarrator)
+      expect(r).toMatchObject({ aligned: 0, missed: 1 })
+    })
+  })
+
   it('씬 구조·화자·감정을 건드리지 않는다 (원본 불변)', () => {
     const before = JSON.parse(JSON.stringify(scenes))
     const r = alignSegmentsToSource(scenes, narratorCues, byNarrator)
