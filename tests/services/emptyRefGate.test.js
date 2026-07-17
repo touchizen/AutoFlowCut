@@ -240,12 +240,16 @@ describe('불변 3: postcondition이 close보다 먼저 (ok:true로 충분하지
     )
   })
 
-  it('성공 경로의 호출 순서: generateRefs → close → startScenes', async () => {
+  // setBusy 가 generateRefs 보다 먼저여야 한다 — 두 가지가 여기 달려 있다.
+  //   (1) 모달이 먼저 사라져야 Flow 뷰가 0×0 에서 풀려 DOM 자동화가 돈다.
+  //   (2) 큐 대기 중에도 phase 가 'busy' 여야 앱 Stop 이 도달한다(handleStop 가드).
+  // 순서만 뒤집으면 둘 다 조용히 깨지므로 'busy' 를 순서 단언에 포함한다.
+  it('성공 경로의 호출 순서: busy → generateRefs → close → startScenes', async () => {
     const deps = makeDeps()
     await runEmptyRefGateFlow(baseContext(), deps)
 
-    const order = deps.__calls.filter(c => ['generateRefs', 'close', 'startScenes'].includes(c))
-    expect(order).toEqual(['generateRefs', 'close', 'startScenes'])
+    const order = deps.__calls.filter(c => ['busy', 'generateRefs', 'close', 'startScenes'].includes(c))
+    expect(order).toEqual(['busy', 'generateRefs', 'close', 'startScenes'])
   })
 })
 

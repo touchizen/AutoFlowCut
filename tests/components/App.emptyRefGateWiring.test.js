@@ -152,8 +152,13 @@ describe('App empty reference gate wiring', () => {
   // 큐 대기/아이템 preflight 에서는 refBatchRunning 이 잠시 false 여도 gate phase 는 계속 busy 다.
   it('gate busy 중지는 ref batch lifecycle flag의 빈틈에서도 앱 Stop으로 도달한다', () => {
     expect(emptyRefModal).not.toContain('onStop=')
-    expect(handleStopImpl).toContain("emptyRefGate?.phase === 'busy'")
-    expect(handleStopImpl).toContain('stopGenerateAllRefs()')
+    // 두 조건이 "있다"만 보면 부족하다 — || 를 && 로 바꾼 뮤턴트가 두 문자열을 그대로 남긴 채
+    // 전체 스위트를 통과한다(실측). 그 뮤턴트가 정확히 원래 버그(빈틈에서 Stop 무반응)라
+    // 논리 연산자까지 통째로 고정한다.
+    expect(handleStopImpl).toContain(
+      "if (refBatchRunning || emptyRefGate?.phase === 'busy') stopGenerateAllRefs()"
+    )
+    expect(handleStopImpl).not.toContain("refBatchRunning && emptyRefGate")
   })
 
   it('gate pending latch를 ReferencePanel 진입점 비활성화에 전달한다', () => {
