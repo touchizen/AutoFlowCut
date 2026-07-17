@@ -1,5 +1,5 @@
 /**
- * M0-17 — Claude Agent SDK direct interrupt 계약 (Q8).
+ * M0-17 — Claude Agent SDK direct interrupt / resume 계약 (Q8/Q9).
  *
  * **코드 저작이 아니라 측정이다.** 결과가 나중의 claudeOrchestrator 설계를 정한다.
  * 제품 코드(`src/`, `electron/`)는 이 파일에서 import 하거나 변경하지 않는다.
@@ -18,6 +18,17 @@
  *   3) 같은 session 의 fresh turn 에서 in-process MCP tool 세 번이 실제로 다시 동작하는가
  *   4) 잘린 turn 의 **전체 result surface** 는 무엇인가
  *   5) `interrupt()` receipt 전체 surface 는 무엇인가
+ *
+ * 🎯 Q9는 Q8이 `bridgeAfterInterrupt:'dead'`로 닫힌 경우에만 이어서 잰다:
+ *   1) dead query를 `close()`한 뒤 5초 gap을 둔다.
+ *   2) 같은 session_id를 `resume`하는 **새 Query**와 **새 createSdkMcpServer instance**를 만든다.
+ *   3) resume가 대화 memory token과 ungated MCP bridge를 각각 복원하는지 독립적으로 기록한다.
+ * Q8 precondition이 dead가 아니면 `precondition-not-met`/`precondition-undetermined`를 기록하고
+ * resume를 시작하지 않는다. `forkSession`/`resumeSessionAt`은 이 arm의 측정 대상이 아니다.
+ * Q9의 context와 bridge는 같은 resumed query의 **서로 다른 turn**에서 잰다. memory-only result 뒤
+ * 5초 gap을 닫고 tool-only turn을 시작하므로 dead tool 결과가 context 회수를 막지 않는다. resumed
+ * tool은 gate가 전혀 없고, body + non-error marker tool_result가 있어야 alive다. context는 prompt에
+ * token을 다시 쓰지 않으며 token 회수 또는 명시적 `MEMORY:NOT_FOUND`만 survived/lost 증거로 쓴다.
  *
  * 🔴 m0-16의 초기 "Stream closed" 관측에 있던 gate confound를 Q3에서 제거한다:
  *   - 첫 turn 의 첫 tool body만 test-owned promise로 gate한다. body **안에서** 시작을 신호하므로
@@ -55,10 +66,16 @@ import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 const RESULT_DIR = 'docs/superpowers/specs'
 const RAW = `${RESULT_DIR}/m0-17-raw.jsonl`
 const TOOL_NAME = 'mcp__m0-17-interrupt__sequence_step'
+const RESUMED_TOOL_NAME = 'mcp__m0-17-resumed__resume_probe'
 const MCP_TOOL_TIMEOUT_MS = 30 * 60 * 1000
 const FRESH_TURN_GAP_MS = 5_000
+const RESUME_QUERY_GAP_MS = 5_000
+const RESUMED_TURN_GAP_MS = 5_000
 // 반드시 it()의 8분 timeout보다 작아야 timeout도 raw observation으로 닫힌다.
 const MEASUREMENT_DEADLINE_MS = 7 * 60 * 1000
+const RESUMED_QUERY_DEADLINE_MS = 7 * 60 * 1000
+// Q9 최악 창 = Q8 precondition 7분 + gap 5초 + resumed query 7분. test timeout이 먼저 끝나면 안 된다.
+const Q9_IT_TIMEOUT_MS = 16 * 60 * 1000
 const SDK_VERSION = JSON.parse(readFileSync(
   new URL('../../node_modules/@anthropic-ai/claude-agent-sdk/package.json', import.meta.url),
   'utf-8',
@@ -114,7 +131,7 @@ const snapshot = (value) => {
 const sortedSteps = (items, stepOf) => items.map(stepOf).sort((a, b) => a - b)
 const isExpectedSteps = (steps) => JSON.stringify(steps) === JSON.stringify([1, 2, 3])
 
-async function measureDirectInterrupt() {
+async function measureDirectInterrupt({ memoryToken = null } = {}) {
   const startedAt = Date.now()
   const at = () => Date.now() - startedAt
   const cutCompletionToken = `M0_17_CUT_COMPLETED_${randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase()}`
@@ -142,6 +159,9 @@ async function measureDirectInterrupt() {
   let streamError = null
   let timedOut = false
   let queryClosedByDeadline = false
+  let queryCloseCalledAt = null
+  let queryCloseReturnedAt = null
+  let queryCloseError = null
 
   let signalFirstToolStarted
   const firstToolStarted = new Promise((resolve) => { signalFirstToolStarted = resolve })
@@ -228,7 +248,10 @@ async function measureDirectInterrupt() {
       message: {
         role: 'user',
         content:
-          `Call ${TOOL_NAME} exactly three times sequentially. `
+          (memoryToken
+            ? `Remember this unique token for a later turn: ${memoryToken}. Do not repeat it now. `
+            : '')
+          + `Call ${TOOL_NAME} exactly three times sequentially. `
           + 'Use {"phase":"cut","step":1}, then step 2, then step 3, and wait for each result before the next call. '
           + `After all three results, reply with exactly ${cutCompletionToken} and nothing else.`,
       },
@@ -421,7 +444,13 @@ async function measureDirectInterrupt() {
     if (deadline) clearTimeout(deadline)
     stopPromptInput()
     releaseFirstTool()
-    q?.close()
+    queryCloseCalledAt = at()
+    try {
+      q?.close()
+      queryCloseReturnedAt = at()
+    } catch (error) {
+      queryCloseError = errorSurface(error)
+    }
     if (interruptTask) await Promise.race([interruptTask, sleep(1_000)])
 
     if (previousMcpToolTimeout == null) delete process.env.MCP_TOOL_TIMEOUT
@@ -618,6 +647,8 @@ async function measureDirectInterrupt() {
   }
 
   return {
+    memoryToken,
+    memoryTokenPlantedBeforeInterrupt: memoryToken != null,
     cutCompletionToken,
     freshEchoToken,
     timing: {
@@ -718,6 +749,11 @@ async function measureDirectInterrupt() {
     },
     timedOut,
     queryClosedByDeadline,
+    queryLifecycle: {
+      closeCalledAt: queryCloseCalledAt,
+      closeReturnedAt: queryCloseReturnedAt,
+      closeError: queryCloseError,
+    },
     streamError,
     toolCalls,
     terminalToolResults,
@@ -727,7 +763,640 @@ async function measureDirectInterrupt() {
   }
 }
 
-describe('M0-17 — Claude Agent SDK direct interrupt 계약 (Q8)', () => {
+async function measureResumeAfterDeadBridge() {
+  const startedAt = Date.now()
+  const at = () => Date.now() - startedAt
+  const memoryToken = `M0_17_MEMORY_${randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase()}`
+  const resumedBridgeMarker = `M0_17_RESUMED_BRIDGE_${randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase()}`
+  const contextNotFoundSentinel = 'MEMORY:NOT_FOUND'
+
+  const preconditionStartedAt = at()
+  const precondition = await measureDirectInterrupt({ memoryToken })
+  const preconditionEndedAt = at()
+  const originalSessionIds = precondition.bridgeAfterInterruptEvidence?.cutSessionIds ?? []
+  const originalSessionId = originalSessionIds.length === 1 ? originalSessionIds[0] : null
+  const bridgeDeathPreconditionMet = (
+    precondition.q3Trust?.apparatusTrustworthy === true
+    && precondition.turnCutFate === 'cut'
+    && precondition.bridgeAfterInterrupt === 'dead'
+  )
+  const deadQueryClosed = precondition.queryLifecycle?.closeReturnedAt != null
+    && precondition.queryLifecycle?.closeError == null
+  const preconditionMet = bridgeDeathPreconditionMet
+    && precondition.memoryTokenPlantedBeforeInterrupt === true
+    && Boolean(originalSessionId)
+    && deadQueryClosed
+  const preconditionStatus = preconditionMet
+    ? 'met'
+    : bridgeDeathPreconditionMet
+      ? 'precondition-undetermined'
+      : precondition.q3Trust?.apparatusTrustworthy === true
+        ? 'precondition-not-met'
+        : 'precondition-undetermined'
+  const preconditionReasons = []
+  if (precondition.turnCutFate !== 'cut') {
+    preconditionReasons.push(`turnCutFate was ${precondition.turnCutFate}`)
+  }
+  if (precondition.bridgeAfterInterrupt !== 'dead') {
+    preconditionReasons.push(`bridgeAfterInterrupt was ${precondition.bridgeAfterInterrupt}`)
+  }
+  if (precondition.q3Trust?.apparatusTrustworthy !== true) {
+    preconditionReasons.push(...(precondition.q3Trust?.failures ?? ['Q8/Q3 apparatus was not trustworthy']))
+  }
+  if (precondition.memoryTokenPlantedBeforeInterrupt !== true) {
+    preconditionReasons.push('memory token was not planted before interrupt')
+  }
+  if (!originalSessionId) preconditionReasons.push('original session_id was not observed exactly once')
+  if (precondition.queryLifecycle?.closeReturnedAt == null) {
+    preconditionReasons.push('dead query close() return was not observed')
+  }
+  if (precondition.queryLifecycle?.closeError) {
+    preconditionReasons.push('dead query close() threw')
+  }
+
+  if (!preconditionMet) {
+    return {
+      status: preconditionStatus,
+      memoryToken,
+      resumedBridgeMarker,
+      preconditionStartedAt,
+      preconditionEndedAt,
+      precondition,
+      bridgeDeathPreconditionMet,
+      deadQueryClosed,
+      preconditionMet: false,
+      preconditionReasons,
+      originalSessionId,
+      resumedSessionId: null,
+      sessionIdRelation: 'unobserved',
+      resumedBridge: 'undetermined',
+      resumedContext: 'undetermined',
+      contextTokenRecovered: false,
+      contextReportedNotFound: false,
+      resumedResultFullSurface: null,
+      resumedError: null,
+      timedOut: precondition.timedOut === true,
+      q9Trust: {
+        apparatusTrustworthy: false,
+        failures: [`Q9 ${preconditionStatus}`, ...preconditionReasons],
+        commonFailures: [`Q9 ${preconditionStatus}`, ...preconditionReasons],
+        bridgeTrustworthy: false,
+        bridgeFailures: [`Q9 ${preconditionStatus}`, ...preconditionReasons],
+        contextTrustworthy: false,
+        contextFailures: [`Q9 ${preconditionStatus}`, ...preconditionReasons],
+        uncontrolledVariable:
+          'Developer personal ~/.claude is used; a SessionStart hook injects content and there is no Claude equivalent of Codex CODEX_HOME isolation.',
+      },
+    }
+  }
+
+  // dead Query.close()가 반환한 뒤 새 Query를 만들기 전 독립 gap. active query가 없으므로 gap activity는 없다.
+  const resumeGapStartedAt = at()
+  await sleep(RESUME_QUERY_GAP_MS)
+  const resumeGapEndedAt = at()
+  const resumeGapDurationMs = resumeGapEndedAt - resumeGapStartedAt
+
+  const resumedToolCalls = []
+  const resumedAssistants = []
+  const resumedToolResults = []
+  const resumedResults = []
+  const resumedEvents = []
+  let resumedContextPromptYieldedAt = null
+  let resumedContextPromptWrittenAt = null
+  let resumedContextToBridgeGapStartedAt = null
+  let resumedContextToBridgeGapEndedAt = null
+  let resumedContextToBridgeGapStartedEventIndex = null
+  let resumedContextToBridgeGapEndedEventIndex = null
+  let resumedBridgePromptYieldedAt = null
+  let resumedBridgePromptWrittenAt = null
+  let resumedQueryCreateCalledAt = null
+  let resumedQueryCreatedAt = null
+  let resumedServerConstructedAt = null
+  let resumedStreamEndedAt = null
+  let resumedQueryCloseCalledAt = null
+  let resumedQueryCloseReturnedAt = null
+  let resumedQueryCloseError = null
+  let resumedQueryCreationError = null
+  let resumedStreamError = null
+  let resumedTimedOut = false
+  let resumedQueryClosedByDeadline = false
+  let signalResumedContextTurnEnded
+  const resumedContextTurnEnded = new Promise((resolve) => { signalResumedContextTurnEnded = resolve })
+  let stopResumedPromptInput
+  const resumedPromptInputStopped = new Promise((resolve) => { stopResumedPromptInput = resolve })
+
+  const resumedContextPromptText =
+    'Reply with exactly the unique memory token I asked you to remember earlier. '
+    + `If you cannot recall it, reply with exactly ${contextNotFoundSentinel}.`
+  const resumedBridgePromptText =
+    `Call ${RESUMED_TOOL_NAME} once with {"probe":"resume-bridge"}. `
+    + 'After the tool result, reply with exactly the tool result text.'
+  const resumedPromptContainsMemoryToken = resumedContextPromptText.includes(memoryToken)
+    || resumedBridgePromptText.includes(memoryToken)
+
+  const resumedServer = createSdkMcpServer({
+    name: 'm0-17-resumed',
+    version: '0.0.1',
+    tools: [
+      tool(
+        'resume_probe',
+        'Returns a side-effect-free text marker for measuring a resumed tool bridge.',
+        { probe: z.literal('resume-bridge') },
+        async ({ probe }) => {
+          const call = {
+            ordinal: resumedToolCalls.length + 1,
+            turn: resumedTurn,
+            probe,
+            startedAt: at(),
+            endedAt: null,
+            gateWaited: false,
+            bodyOutcome: 'running',
+            bodyError: null,
+          }
+          resumedToolCalls.push(call)
+          try {
+            call.bodyOutcome = 'returned'
+            return { content: [{ type: 'text', text: `M0_17_RESUMED_TOOL_OK:${resumedBridgeMarker}` }] }
+          } catch (error) {
+            call.bodyOutcome = 'threw'
+            call.bodyError = errorSurface(error)
+            throw error
+          } finally {
+            call.endedAt = at()
+          }
+        },
+        { alwaysLoad: true },
+      ),
+    ],
+  })
+  resumedServerConstructedAt = at()
+
+  async function* resumedPrompts() {
+    resumedContextPromptYieldedAt = at()
+    yield { type: 'user', message: { role: 'user', content: resumedContextPromptText } }
+    resumedContextPromptWrittenAt = at()
+
+    const contextOutcome = await Promise.race([
+      resumedContextTurnEnded.then(() => 'context-ended'),
+      resumedPromptInputStopped.then(() => 'input-stopped'),
+    ])
+    if (contextOutcome === 'input-stopped') return
+
+    // context result와 bridge prompt를 같은 tick에 두지 않는다. 두 Q9 축도 서로 오염시키지 않는다.
+    resumedContextToBridgeGapStartedAt = at()
+    resumedContextToBridgeGapStartedEventIndex = resumedEvents.length
+    const gapOutcome = await Promise.race([
+      sleep(RESUMED_TURN_GAP_MS).then(() => 'gap-elapsed'),
+      resumedPromptInputStopped.then(() => 'input-stopped'),
+    ])
+    if (gapOutcome === 'input-stopped') return
+    resumedContextToBridgeGapEndedAt = at()
+    resumedContextToBridgeGapEndedEventIndex = resumedEvents.length
+
+    resumedBridgePromptYieldedAt = at()
+    yield { type: 'user', message: { role: 'user', content: resumedBridgePromptText } }
+    resumedBridgePromptWrittenAt = at()
+  }
+
+  const previousMcpToolTimeout = Object.hasOwn(process.env, 'MCP_TOOL_TIMEOUT')
+    ? process.env.MCP_TOOL_TIMEOUT
+    : null
+  process.env.MCP_TOOL_TIMEOUT = String(MCP_TOOL_TIMEOUT_MS)
+  let restoredMcpToolTimeout = null
+  let mcpToolTimeoutRestored = false
+  let resumedQuery = null
+  let resumedDeadline = null
+  let resumedTurn = 1
+
+  try {
+    resumedQueryCreateCalledAt = at()
+    resumedQuery = query({
+      prompt: resumedPrompts(),
+      options: {
+        resume: originalSessionId,
+        mcpServers: { 'm0-17-resumed': resumedServer },
+        tools: [RESUMED_TOOL_NAME],
+        allowedTools: [RESUMED_TOOL_NAME],
+        permissionMode: 'bypassPermissions',
+        allowDangerouslySkipPermissions: true,
+        maxTurns: 8,
+        model: 'sonnet',
+      },
+    })
+    resumedQueryCreatedAt = at()
+
+    resumedDeadline = setTimeout(() => {
+      resumedTimedOut = true
+      resumedQueryClosedByDeadline = true
+      stopResumedPromptInput()
+      resumedQuery.close()
+    }, RESUMED_QUERY_DEADLINE_MS)
+
+    for await (const msg of resumedQuery) {
+      const event = {
+        at: at(),
+        turn: resumedTurn,
+        type: msg.type,
+        subtype: msg.subtype ?? null,
+        uuid: msg.uuid ?? null,
+        sessionId: msg.session_id ?? null,
+      }
+
+      if (msg.type === 'assistant') {
+        const blocks = msg.message?.content ?? []
+        const assistant = {
+          at: event.at,
+          turn: resumedTurn,
+          uuid: msg.uuid ?? null,
+          model: msg.message?.model ?? null,
+          sessionId: msg.session_id ?? null,
+          text: textOf(blocks),
+          stopReason: msg.message?.stop_reason ?? msg.stop_reason ?? null,
+          toolUses: blocks
+            .filter((block) => block?.type === 'tool_use')
+            .map((block) => ({ id: block.id, name: block.name, input: snapshot(block.input) })),
+        }
+        resumedAssistants.push(assistant)
+        event.text = assistant.text
+        event.stopReason = assistant.stopReason
+        event.toolUses = assistant.toolUses
+      }
+
+      const blocks = msg?.message?.content
+      if (Array.isArray(blocks)) {
+        event.toolResults = []
+        for (const block of blocks) {
+          if (block?.type !== 'tool_result') continue
+          const text = JSON.stringify(block.content) ?? ''
+          const terminal = {
+            at: event.at,
+            turn: resumedTurn,
+            sessionId: msg.session_id ?? null,
+            toolUseId: block.tool_use_id ?? null,
+            isError: block.is_error === true,
+            content: snapshot(block.content),
+            text,
+            isStreamClosed: /Stream closed/i.test(text),
+            fullSurface: snapshot(block),
+          }
+          resumedToolResults.push(terminal)
+          event.toolResults.push(terminal)
+        }
+      }
+
+      if (msg.type === 'result') {
+        const result = {
+          at: event.at,
+          turn: resumedTurn,
+          sessionId: msg.session_id ?? null,
+          keys: Object.keys(msg),
+          fullSurface: snapshot(msg),
+        }
+        resumedResults.push(result)
+        event.result = result.fullSurface
+        resumedEvents.push(event)
+        if (resumedTurn === 1) signalResumedContextTurnEnded()
+        resumedTurn += 1
+        if (resumedTurn > 2) break
+        continue
+      }
+      resumedEvents.push(event)
+    }
+    resumedStreamEndedAt = at()
+  } catch (error) {
+    if (resumedQueryCreatedAt == null) resumedQueryCreationError = errorSurface(error)
+    else resumedStreamError = errorSurface(error)
+    stopResumedPromptInput()
+  } finally {
+    if (resumedDeadline) clearTimeout(resumedDeadline)
+    stopResumedPromptInput()
+    resumedQueryCloseCalledAt = at()
+    try {
+      resumedQuery?.close()
+      resumedQueryCloseReturnedAt = at()
+    } catch (error) {
+      resumedQueryCloseError = errorSurface(error)
+    }
+
+    if (previousMcpToolTimeout == null) delete process.env.MCP_TOOL_TIMEOUT
+    else process.env.MCP_TOOL_TIMEOUT = previousMcpToolTimeout
+    restoredMcpToolTimeout = Object.hasOwn(process.env, 'MCP_TOOL_TIMEOUT')
+      ? process.env.MCP_TOOL_TIMEOUT
+      : null
+    mcpToolTimeoutRestored = restoredMcpToolTimeout === previousMcpToolTimeout
+  }
+
+  const resumedContextResult = resumedResults.find((result) => result.turn === 1) ?? null
+  const resumedBridgeResult = resumedResults.find((result) => result.turn === 2) ?? null
+  const resumedContextAssistants = resumedAssistants.filter((assistant) => assistant.turn === 1)
+  const resumedBridgeAssistants = resumedAssistants.filter((assistant) => assistant.turn === 2)
+  const resumedContextToolUses = resumedContextAssistants.flatMap((assistant) => assistant.toolUses)
+  const resumedContextToolResults = resumedToolResults.filter((result) => result.turn === 1)
+  const resumedBridgeToolCalls = resumedToolCalls.filter((call) => call.turn === 2)
+  const resumedBridgeToolResults = resumedToolResults.filter((result) => result.turn === 2)
+  const resumedToolUses = resumedBridgeAssistants
+    .flatMap((assistant) => assistant.toolUses)
+    .filter((use) => use.name === RESUMED_TOOL_NAME)
+  const resumedRoundTrips = resumedToolUses.map((use) => {
+    const bodyCall = resumedBridgeToolCalls.find((call) => call.probe === use.input?.probe) ?? null
+    const terminalToolResult = resumedBridgeToolResults.find((result) => result.toolUseId === use.id) ?? null
+    const expectedMarker = `M0_17_RESUMED_TOOL_OK:${resumedBridgeMarker}`
+    return {
+      toolUse: use,
+      bodyCall,
+      terminalToolResult,
+      bodyRan: Boolean(bodyCall),
+      expectedMarker,
+      markerReturned: terminalToolResult?.text.includes(expectedMarker) === true,
+      successful: Boolean(
+        use.input?.probe === 'resume-bridge'
+        && bodyCall
+        && terminalToolResult?.isError === false
+        && terminalToolResult.text.includes(expectedMarker),
+      ),
+      streamClosed: terminalToolResult?.isError === true && terminalToolResult.isStreamClosed === true,
+    }
+  })
+  const successfulResumedRoundTrips = resumedRoundTrips.filter((roundTrip) => roundTrip.successful)
+  const allIssuedResumedUsesTargetProbe = resumedRoundTrips.length > 0
+    && resumedRoundTrips.every((roundTrip) => roundTrip.toolUse.input?.probe === 'resume-bridge')
+  const everyIssuedResumedUseWasStreamClosed = resumedRoundTrips.length > 0
+    && resumedRoundTrips.every((roundTrip) => roundTrip.streamClosed)
+  const resumedGateWaitCount = resumedBridgeToolCalls.filter((call) => call.gateWaited).length
+  const resumedToolsUngatedByConstruction = true
+
+  const resumedContextToBridgeGapDurationMs = (
+    resumedContextToBridgeGapStartedAt != null && resumedContextToBridgeGapEndedAt != null
+  )
+    ? resumedContextToBridgeGapEndedAt - resumedContextToBridgeGapStartedAt
+    : null
+  const resumedContextToBridgeGapEvents = Number.isInteger(resumedContextToBridgeGapStartedEventIndex)
+    && Number.isInteger(resumedContextToBridgeGapEndedEventIndex)
+    ? resumedEvents.slice(resumedContextToBridgeGapStartedEventIndex, resumedContextToBridgeGapEndedEventIndex)
+    : []
+  const substantiveResumedContextToBridgeGapEvents = resumedContextToBridgeGapEvents.filter((event) => (
+    event.type === 'assistant' || event.type === 'user' || event.type === 'result'
+  ))
+
+  const observedResumedSessionIds = [...new Set(resumedEvents
+    .map((event) => event.sessionId)
+    .filter(Boolean))]
+  const resumedSessionId = observedResumedSessionIds.length === 1 ? observedResumedSessionIds[0] : null
+  const sessionIdRelation = !originalSessionId || !resumedSessionId
+    ? 'unobserved'
+    : originalSessionId === resumedSessionId
+      ? 'same'
+      : 'new'
+
+  const resumedAssistantMessages = resumedContextAssistants.map((assistant) => ({
+    at: assistant.at,
+    uuid: assistant.uuid,
+    text: assistant.text,
+    stopReason: assistant.stopReason,
+  }))
+  const resumedAssistantText = resumedContextAssistants.map((assistant) => assistant.text).join('')
+  const resumedResultText = typeof resumedContextResult?.fullSurface?.result === 'string'
+    ? resumedContextResult.fullSurface.result
+    : ''
+  const resumedModelOutputText = [resumedAssistantText, resumedResultText].filter(Boolean).join('\n')
+  const contextTokenRecovered = resumedAssistantText.includes(memoryToken)
+    || resumedResultText.includes(memoryToken)
+  const contextReportedNotFound = resumedModelOutputText
+    .split('\n')
+    .map((line) => line.trim())
+    .includes(contextNotFoundSentinel)
+  const resumedBridgeAssistantMessages = resumedBridgeAssistants.map((assistant) => ({
+    at: assistant.at,
+    uuid: assistant.uuid,
+    text: assistant.text,
+    stopReason: assistant.stopReason,
+  }))
+  const resumedBridgeAssistantText = resumedBridgeAssistants.map((assistant) => assistant.text).join('')
+  const resumedBridgeResultText = typeof resumedBridgeResult?.fullSurface?.result === 'string'
+    ? resumedBridgeResult.fullSurface.result
+    : ''
+
+  const q9CommonTrustFailures = []
+  if (!preconditionMet) q9CommonTrustFailures.push('interrupt-killed bridge precondition was not met')
+  if (precondition.memoryTokenPlantedBeforeInterrupt !== true) q9CommonTrustFailures.push('memory token was not planted before interrupt')
+  if (!originalSessionId) q9CommonTrustFailures.push('original session_id was not observed')
+  if (precondition.queryLifecycle?.closeReturnedAt == null) q9CommonTrustFailures.push('dead query close() did not return')
+  if (precondition.queryLifecycle?.closeError) q9CommonTrustFailures.push('dead query close() threw')
+  if (resumeGapDurationMs < RESUME_QUERY_GAP_MS) q9CommonTrustFailures.push('resume gap was shorter than configured')
+  if (resumedServerConstructedAt == null) q9CommonTrustFailures.push('fresh resumed MCP server was not constructed')
+  if (resumedQueryCreatedAt == null) q9CommonTrustFailures.push('resumed query was not created')
+  if (!resumedSessionId) q9CommonTrustFailures.push('resumed session_id was not observed exactly once')
+  if (!['same', 'new'].includes(sessionIdRelation)) q9CommonTrustFailures.push('same-or-new resumed session relation was not observed')
+  if (resumedContextToolUses.length > 0 || resumedContextToolResults.length > 0) {
+    q9CommonTrustFailures.push('memory-only resumed turn unexpectedly used a tool')
+  }
+  if (!precondition.mcpToolTimeout?.restored) q9CommonTrustFailures.push('precondition MCP_TOOL_TIMEOUT was not restored')
+  if (!mcpToolTimeoutRestored) q9CommonTrustFailures.push('resumed MCP_TOOL_TIMEOUT was not restored')
+  if (resumedQueryCreationError) q9CommonTrustFailures.push('resumed query creation threw')
+
+  const q9ContextTrustFailures = [...q9CommonTrustFailures]
+  if (resumedContextPromptWrittenAt == null) q9ContextTrustFailures.push('resumed context prompt transport.write completion was not observed')
+  if (resumedPromptContainsMemoryToken) q9ContextTrustFailures.push('resumed prompt leaked the memory token')
+  if (!resumedContextResult) q9ContextTrustFailures.push('resumed context result boundary was not observed')
+
+  const q9BridgeTrustFailures = [...q9CommonTrustFailures]
+  if (!resumedContextResult) q9BridgeTrustFailures.push('context result boundary needed before bridge turn was not observed')
+  if (resumedContextToBridgeGapStartedAt == null) q9BridgeTrustFailures.push('context-to-bridge gap did not start')
+  if (resumedContextToBridgeGapEndedAt == null) q9BridgeTrustFailures.push('context-to-bridge gap did not close')
+  if (
+    resumedContextToBridgeGapDurationMs != null
+    && resumedContextToBridgeGapDurationMs < RESUMED_TURN_GAP_MS
+  ) {
+    q9BridgeTrustFailures.push('context-to-bridge gap was shorter than configured')
+  }
+  if (substantiveResumedContextToBridgeGapEvents.length > 0) {
+    q9BridgeTrustFailures.push('assistant/user/result activity occurred inside the isolated context-to-bridge gap')
+  }
+  if (resumedBridgePromptWrittenAt == null) q9BridgeTrustFailures.push('resumed bridge prompt transport.write completion was not observed')
+  if (!resumedBridgeResult) q9BridgeTrustFailures.push('resumed bridge result boundary was not observed')
+  if (!resumedToolsUngatedByConstruction || resumedGateWaitCount !== 0) {
+    q9BridgeTrustFailures.push('a resumed tool body was gated by the test')
+  }
+  if (resumedTimedOut) q9BridgeTrustFailures.push('resumed query timed out; timeout is not a bridge result')
+  if (resumedStreamError) q9BridgeTrustFailures.push('resumed query stream threw')
+  if (resumedQueryCloseReturnedAt == null) q9BridgeTrustFailures.push('resumed query close() did not return')
+  if (resumedQueryCloseError) q9BridgeTrustFailures.push('resumed query close() threw')
+
+  const q9ContextTrustworthy = q9ContextTrustFailures.length === 0
+  const q9BridgeTrustworthy = q9BridgeTrustFailures.length === 0
+  const q9TrustFailures = [...new Set([...q9ContextTrustFailures, ...q9BridgeTrustFailures])]
+  const q9ApparatusTrustworthy = q9ContextTrustworthy && q9BridgeTrustworthy
+  const resumedBridgeAliveEvidence = q9BridgeTrustworthy && successfulResumedRoundTrips.length >= 1
+  const resumedBridgeDeadEvidence = q9BridgeTrustworthy
+    && resumedRoundTrips.length >= 1
+    && successfulResumedRoundTrips.length === 0
+    && allIssuedResumedUsesTargetProbe
+    && everyIssuedResumedUseWasStreamClosed
+    && resumedToolsUngatedByConstruction
+  const resumedBridge = resumedBridgeAliveEvidence
+    ? 'alive'
+    : resumedBridgeDeadEvidence
+      ? 'dead'
+      : 'undetermined'
+  const resumedContext = !q9ContextTrustworthy
+    ? 'undetermined'
+    : contextTokenRecovered
+      ? 'survived'
+      : contextReportedNotFound
+        ? 'lost'
+        : 'undetermined'
+
+  return {
+    status: 'measured',
+    memoryToken,
+    resumedBridgeMarker,
+    contextNotFoundSentinel,
+    preconditionStartedAt,
+    preconditionEndedAt,
+    precondition,
+    bridgeDeathPreconditionMet,
+    deadQueryClosed,
+    preconditionMet,
+    preconditionStatus,
+    preconditionReasons,
+    originalSessionId,
+    resumedSessionId,
+    observedResumedSessionIds,
+    sessionIdRelation,
+    resumeGap: {
+      configuredMs: RESUME_QUERY_GAP_MS,
+      startedAt: resumeGapStartedAt,
+      endedAt: resumeGapEndedAt,
+      durationMs: resumeGapDurationMs,
+      activity: [],
+      note: 'The dead query was closed before this gap; no query stream was active to emit events.',
+    },
+    timing: {
+      resumedServerConstructedAt,
+      resumedQueryCreateCalledAt,
+      resumedQueryCreatedAt,
+      resumedContextPromptYieldedAt,
+      resumedContextPromptWrittenAt,
+      resumedContextResultAt: resumedContextResult?.at ?? null,
+      resumedContextToBridgeGapStartedAt,
+      resumedContextToBridgeGapEndedAt,
+      resumedBridgePromptYieldedAt,
+      resumedBridgePromptWrittenAt,
+      resumedBridgeResultAt: resumedBridgeResult?.at ?? null,
+      resumedStreamEndedAt,
+      resumedQueryCloseCalledAt,
+      resumedQueryCloseReturnedAt,
+    },
+    resumeOptions: {
+      resume: originalSessionId,
+      forkSession: null,
+      forkSessionOptionOmitted: true,
+      resumeSessionAt: null,
+      resumeSessionAtOptionOmitted: true,
+      freshMcpServerName: 'm0-17-resumed',
+      toolName: RESUMED_TOOL_NAME,
+    },
+    resumedPrompts: {
+      context: resumedContextPromptText,
+      bridge: resumedBridgePromptText,
+      containsMemoryToken: resumedPromptContainsMemoryToken,
+    },
+    resumedTurnGap: {
+      configuredMs: RESUMED_TURN_GAP_MS,
+      startedAt: resumedContextToBridgeGapStartedAt,
+      endedAt: resumedContextToBridgeGapEndedAt,
+      durationMs: resumedContextToBridgeGapDurationMs,
+      startedEventIndex: resumedContextToBridgeGapStartedEventIndex,
+      endedEventIndex: resumedContextToBridgeGapEndedEventIndex,
+      events: resumedContextToBridgeGapEvents,
+      substantiveEvents: substantiveResumedContextToBridgeGapEvents,
+    },
+    resumedBridge,
+    resumedBridgeEvidence: {
+      resumedToolsUngatedByConstruction,
+      resumedGateWaitCount,
+      toolUseCount: resumedToolUses.length,
+      bodyCallCount: resumedBridgeToolCalls.length,
+      toolResultCount: resumedBridgeToolResults.length,
+      streamClosedCount: resumedBridgeToolResults.filter((result) => result.isStreamClosed).length,
+      successfulRoundTripCount: successfulResumedRoundTrips.length,
+      resumedRoundTrips,
+      allIssuedResumedUsesTargetProbe,
+      everyIssuedResumedUseWasStreamClosed,
+      aliveEvidence: resumedBridgeAliveEvidence,
+      deadEvidence: resumedBridgeDeadEvidence,
+      everyToolResult: resumedBridgeToolResults,
+      assistantMessages: resumedBridgeAssistantMessages,
+      assistantText: resumedBridgeAssistantText,
+      resultText: resumedBridgeResultText,
+      stopReasons: [
+        ...resumedBridgeAssistants.map((assistant) => assistant.stopReason),
+        resumedBridgeResult?.fullSurface?.stop_reason ?? null,
+      ].filter((reason) => reason != null),
+    },
+    resumedContext,
+    resumedContextEvidence: {
+      promptContainsMemoryToken: resumedPromptContainsMemoryToken,
+      contextTokenRecovered,
+      contextReportedNotFound,
+      unexpectedToolUses: resumedContextToolUses,
+      unexpectedToolResults: resumedContextToolResults,
+      assistantMessages: resumedAssistantMessages,
+      assistantText: resumedAssistantText,
+      resultText: resumedResultText,
+      modelOutputText: resumedModelOutputText,
+      stopReasons: [
+        ...resumedContextAssistants.map((assistant) => assistant.stopReason),
+        resumedContextResult?.fullSurface?.stop_reason ?? null,
+      ].filter((reason) => reason != null),
+    },
+    resumedContextResultFullSurface: resumedContextResult?.fullSurface ?? null,
+    resumedResultFullSurface: resumedBridgeResult?.fullSurface ?? null,
+    resumedResultFullSurfaces: resumedResults.map((result) => ({
+      turn: result.turn,
+      fullSurface: result.fullSurface,
+    })),
+    resumedError: {
+      queryCreation: resumedQueryCreationError,
+      stream: resumedStreamError,
+      close: resumedQueryCloseError,
+    },
+    resumedEvents,
+    resumedToolCalls,
+    resumedAssistants,
+    resumedToolResults,
+    resumedResults,
+    mcpToolTimeout: {
+      setToMs: MCP_TOOL_TIMEOUT_MS,
+      setToValue: String(MCP_TOOL_TIMEOUT_MS),
+      previousValue: previousMcpToolTimeout,
+      restoredValue: restoredMcpToolTimeout,
+      restored: mcpToolTimeoutRestored,
+      preconditionRestored: precondition.mcpToolTimeout?.restored === true,
+    },
+    timedOut: precondition.timedOut === true || resumedTimedOut,
+    resumedTimedOut,
+    resumedQueryClosedByDeadline,
+    deadlines: {
+      preconditionMs: MEASUREMENT_DEADLINE_MS,
+      resumedQueryMs: RESUMED_QUERY_DEADLINE_MS,
+      itTimeoutMs: Q9_IT_TIMEOUT_MS,
+    },
+    q9Trust: {
+      apparatusTrustworthy: q9ApparatusTrustworthy,
+      failures: q9TrustFailures,
+      commonFailures: q9CommonTrustFailures,
+      bridgeTrustworthy: q9BridgeTrustworthy,
+      bridgeFailures: q9BridgeTrustFailures,
+      contextTrustworthy: q9ContextTrustworthy,
+      contextFailures: q9ContextTrustFailures,
+      uncontrolledVariable:
+        'Developer personal ~/.claude is used; a SessionStart hook injects content and there is no Claude equivalent of Codex CODEX_HOME isolation.',
+    },
+  }
+}
+
+describe('M0-17 — Claude Agent SDK direct interrupt / resume 계약 (Q8/Q9)', () => {
   it('Q8: direct interrupt가 in-flight turn을 자르고 같은 session의 fresh MCP bridge는 살아 있는가', async () => {
     const observation = await measureDirectInterrupt()
     record('Q8 direct interrupt + fresh MCP bridge', observation)
@@ -771,4 +1440,64 @@ describe('M0-17 — Claude Agent SDK direct interrupt 계약 (Q8)', () => {
     ).not.toBeNull()
     expect(observation.mcpToolTimeout.restored, 'MCP_TOOL_TIMEOUT을 원복하지 못했다').toBe(true)
   }, 8 * 60 * 1000)
+
+  it('Q9: dead query를 close한 뒤 resume하면 context와 fresh MCP bridge가 복원되는가', async () => {
+    const observation = await measureResumeAfterDeadBridge()
+    record('Q9 resume after interrupt-killed MCP bridge', observation)
+
+    expect([
+      'measured',
+      'precondition-not-met',
+      'precondition-undetermined',
+    ]).toContain(observation.status)
+
+    // Q8/Q3가 dead로 재현되지 않으면 false premise에서 resume를 측정하지 않고 raw만 닫는다.
+    if (observation.status !== 'measured') return
+
+    // resume/context semantics는 assertion하지 않는다. 아래는 Q9 관측 장치가 닫혔는지만 확인한다.
+    expect(observation.preconditionMet, 'interrupt-killed bridge precondition이 충족되지 않았다').toBe(true)
+    expect(observation.timedOut, 'Q9 measurement deadline이 먼저 끝났다').toBe(false)
+    expect(
+      observation.precondition.queryLifecycle.closeReturnedAt,
+      'dead query close() 반환을 관측하지 못했다',
+    ).not.toBeNull()
+    expect(observation.resumeGap.durationMs, 'dead query close 뒤 resume gap이 너무 짧았다')
+      .toBeGreaterThanOrEqual(RESUME_QUERY_GAP_MS)
+    expect(
+      observation.timing.resumedServerConstructedAt,
+      'fresh createSdkMcpServer instance 생성을 관측하지 못했다',
+    ).not.toBeNull()
+    expect(observation.timing.resumedQueryCreatedAt, 'resume query 생성을 관측하지 못했다').not.toBeNull()
+    expect(
+      observation.timing.resumedContextPromptWrittenAt,
+      'resume context prompt transport.write를 관측하지 못했다',
+    ).not.toBeNull()
+    expect(observation.resumedContextResultFullSurface, 'resumed context result 경계를 관측하지 못했다').not.toBeNull()
+    expect(observation.resumedTurnGap.durationMs, 'context result 뒤 bridge prompt gap이 너무 짧았다')
+      .toBeGreaterThanOrEqual(RESUMED_TURN_GAP_MS)
+    expect(
+      observation.timing.resumedBridgePromptWrittenAt,
+      'resume bridge prompt transport.write를 관측하지 못했다',
+    ).not.toBeNull()
+    expect(observation.originalSessionId, 'original session_id가 없다').toBeTruthy()
+    expect(observation.resumedSessionId, 'resumed session_id가 없다').toBeTruthy()
+    expect(['same', 'new']).toContain(observation.sessionIdRelation)
+    expect(observation.resumedResultFullSurface, 'resumed bridge result 경계를 관측하지 못했다').not.toBeNull()
+    expect(
+      observation.timing.resumedQueryCloseReturnedAt,
+      'resumed query close() 반환을 관측하지 못했다',
+    ).not.toBeNull()
+    expect(
+      observation.resumedBridgeEvidence.resumedToolsUngatedByConstruction,
+      'resumed tool path에 test-owned gate가 구성됐다',
+    ).toBe(true)
+    expect(observation.resumedBridgeEvidence.resumedGateWaitCount, 'resumed tool body가 gate를 기다렸다').toBe(0)
+    expect(
+      observation.resumedContextEvidence.promptContainsMemoryToken,
+      'resume prompt가 memory token을 다시 노출했다',
+    ).toBe(false)
+    expect(observation.mcpToolTimeout.preconditionRestored, 'precondition MCP_TOOL_TIMEOUT이 원복되지 않았다').toBe(true)
+    expect(observation.mcpToolTimeout.restored, 'resumed MCP_TOOL_TIMEOUT이 원복되지 않았다').toBe(true)
+    expect(observation.q9Trust.failures, 'Q9 apparatus trust condition이 닫히지 않았다').toEqual([])
+  }, Q9_IT_TIMEOUT_MS)
 })
