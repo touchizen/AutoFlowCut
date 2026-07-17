@@ -48,10 +48,9 @@ describe('defaultQuery 가 usage tap 을 통과한다', () => {
   // 소비가 시작된 뒤(query 본문 실행 중) 전역 sink 가 B 로 바뀌어도 usage 는 A 로 간다.
   // tapQuery 가 sink 를 파라미터로 받아 고정하기 때문 — 메시지마다 전역을 다시 읽지 않는다.
   //
-  // 주의: 이건 "소비 중" 교체만 재현한다. Codex 2R-MEDIUM 이 지적한 진짜 창은 `await import`
-  // 가 suspend 된 동안의 교체인데, mock 에선 import 가 즉시 resolve 되고 dynamic-import 타이밍은
-  // 단위로 제어할 수 없어 재현 불가다. 코드는 import **전** 동기 지점에서 캡처해 그 창까지 닫았고
-  // (llmClaude.js defaultQuery), 이 테스트는 그중 재현 가능한 절반만 고정한다.
+  // 이건 "소비 중" 교체만 재현한다. `await import` 가 suspend 된 동안의 교체(진짜 dynamic-import
+  // 창)는 gated vi.mock factory 로 재현하며, 별도 파일 `llmClaude.importRace.test.js` 가 그
+  // MUTATION-D(캡처를 import 뒤로) 를 죽인다. (2R 때 "재현 불가"라 적었으나 거짓이었다 — Fable 3R)
   it('소비 중 전역 sink 가 바뀌어도 캡처된 sink 로 간다', async () => {
     const a = []
     const b = []

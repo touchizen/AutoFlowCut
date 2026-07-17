@@ -199,14 +199,20 @@ v1 은 `reset() // 실행 시작 시` 라고만 썼다. 이 코드베이스에 "
 - renderer 이벤트에 `projectToken` 을 싣고, 4개 story 채널 전부에서 usage 를 읽는다
   (`story:state`/`research-state`/`synopsis-delta`/`delta` — 1R MINOR-5).
 
-### 배선
+### 배선 (구현 결과 — v2 설계에서 또 바뀐 것)
 
-provider 반환 shape 불변 → **호출부 무변경**. 각 provider ctx 에 선택적 `onUsage` 콜백 주입.
+provider 반환 shape 불변 → **호출부 무변경**. claude 는 **전역 sink**(`setClaudeUsageSink`), codex 는
+**onUsage 파라미터 + 전역 폴백**을 쓴다. machine 이 자기 tracker 를 sink 로 물린다.
 
-| 파일 | 넣을 곳 |
+| 파일 | 실제 삽입 지점 |
 |---|---|
-| `claudeSdk.js` | result 메시지 소비 지점 (`:62` extract + `:84` readStructured **둘 다**) |
-| `codexAppServer.js` | `onNotification` 에 `thread/tokenUsage/updated` 분기 (현재 method 3개만 처리: `:163~184`) |
+| `llmClaude.js` | `defaultQuery` 의 `tapQuery` — **제너레이터 레벨**. 파서(`claudeSdk.js:62`/`:84`)를 찌르지 **않는다** — 그 위에 `for await (const m of queryImpl(...))` 루프가 11개고 12번째가 추가되면 조용히 샌다(주석 `llmClaude.js:64~`). sink 는 `await import` **전** 동기 지점에서 캡처(dynamic-import 창 — 2R Codex/Fable) |
+| `codexAppServer.js` | `onNotification` 에 `handleUsageNotification` 분기 + `runCodexTurn` 진입에서 `onUsage \|\| codexUsageSink` 캡처 |
+| `stepMachine.js` | machine 인스턴스가 `usageTracker` 소유 → 두 sink 를 자기 tracker 로 물림 → sink 발화마다 `story:usage` emit(실패 side action 도 즉시 반영 — 3R Codex) |
+
+> **왜 파서가 아니라 제너레이터인가**: v2 설계 표는 "파서 둘 다"였는데, 구현 중 파서 위 루프가 11개임이
+> 드러나 단일 통로인 `defaultQuery` 로 내렸다. 이것이 구조화 재시도(두 query)와 실패 result 까지
+> 자동으로 잡는다. (Task 3 커밋 메시지 참고)
 
 ### 표시
 
