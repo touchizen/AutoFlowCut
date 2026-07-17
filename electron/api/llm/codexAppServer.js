@@ -115,7 +115,7 @@ function buildThreadStartParams({ model, workingDirectory, config }) {
  * @internal export 는 테스트가 실제 알림 모양을 고정하기 위한 것이다.
  */
 export function handleUsageNotification(method, params, onUsage) {
-  const sink = onUsage || codexUsageSink
+  const sink = onUsage
   if (method !== 'thread/tokenUsage/updated' || !sink) return
   try {
     const u = codexNotifToUsage(params)
@@ -130,6 +130,13 @@ let codexUsageSink = null
 
 /** main 이 tracker 를 물린다. null 로 해제. */
 export function setCodexUsageSink(fn) { codexUsageSink = fn }
+
+/**
+ * @internal 테스트 전용 — machine 이 sink 를 실제로 물렸는지, 그게 tracker 의 어느 메서드로
+ * 가는지를 배선 테스트가 확인한다. 이게 없으면 "machine 생성 → setCodexUsageSink" 배선이
+ * 통째로 지워져도 테스트가 전부 통과한다(실측으로 확인된 구멍).
+ */
+export function __getCodexUsageSinkForTest() { return codexUsageSink }
 
 /**
  * 한 프롬프트 = 한 스레드 = 한 턴. turn/start 는 즉시 반환하므로 turn/completed 알림을 기다린다.
@@ -149,6 +156,12 @@ async function runCodexTurn(prompt, opts = {}, {
   runtimeHomeFactory = prepareCodexRuntimeHome,
   workingDirectoryFactory = prepareCodexWorkingDirectory,
 } = {}) {
+  // **호출 시작 시점의 sink 를 캡처한다** — 알림마다 전역을 다시 읽으면 안 된다.
+  // abort() 는 취소만 하고 드레인하지 않는다: `turn/interrupt` 는 fire-and-forget 이고 자식
+  // 프로세스는 killTimeoutMs 유예를 두고 죽는다. 그동안 stdout 알림은 계속 흐르는데, 그 시점의
+  // 전역 sink 는 이미 새 프로젝트(B)의 것이다 — A 의 threadId 가 B 에 새 key 로 가산된다.
+  // 캡처하면 늦은 알림은 죽은 A 의 tracker 로 가고(무해), B 는 깨끗하다.
+  const usageSink = onUsage || codexUsageSink
   const runSignal = createRunSignal(signal, opts.timeoutMs)
   let runtime = null
   let work = null
@@ -194,7 +207,7 @@ async function runCodexTurn(prompt, opts = {}, {
       onNotification: (message) => {
         try {
           const { method, params } = message
-          handleUsageNotification(method, params, onUsage)
+          handleUsageNotification(method, params, usageSink)
           if (method === 'item/agentMessage/delta') {
             if (!params?.delta) return
             const id = params.itemId ?? ANONYMOUS

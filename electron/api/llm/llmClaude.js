@@ -74,12 +74,18 @@ export function setClaudeUsageSink(fn) { claudeUsageSink = fn }
 
 function tapQuery(makeStream) {
   return async function* (args) {
+    // **호출 시작 시점의 sink 를 캡처한다** — 메시지마다 전역을 다시 읽으면 안 된다.
+    // abort() 는 취소만 하고 드레인하지 않는다. 프로젝트 전환은 abort 직후 새 machine 을 만들며
+    // 전역 sink 를 B 로 바꾸는데, A 의 SDK 는 graceful close 동안 버퍼된 result 를 더 뱉을 수 있다.
+    // live 로 읽으면 그 늦은 보고가 B 의 합계에 들어간다 — 조용히 틀린 합계.
+    // 캡처하면 늦은 보고는 이미 죽은 A 의 tracker 로 가고(무해), B 는 깨끗하다.
+    const sink = claudeUsageSink
     for await (const m of makeStream(args)) {
       // 계측 실패가 생성을 죽이면 안 된다.
-      if (claudeUsageSink) {
+      if (sink) {
         try {
           const u = claudeResultToUsage(m)
-          if (u) claudeUsageSink(u)
+          if (u) sink(u)
         } catch { /* best-effort */ }
       }
       yield m

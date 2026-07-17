@@ -1751,6 +1751,11 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
     // signal 이 없으면 abort() 가 이 호출을 멈추지도 기다리지도 못해, 프로젝트 전환
     // (story:open 의 `await machine.abort()`) 을 넘어 살아남는다.
     async generateTitle(scriptMd, options = {}) {
+      // 자기 자신과의 상호배제 — 겹쳐 불리면 이전 controller 가 고아가 되어 abort() 가 그 호출을
+      // 영영 못 잡고, 프로젝트 전환을 넘어 살아남는다(IPC story:generate-title 은 게이트가 없고
+      // UI 도 제목 생성 중 버튼을 안 잠근다 — 더블클릭이면 재현된다).
+      // anyRunning() 에는 넣지 않는다 — 그건 "제목 생성 중 스텝 시작 불가"라는 UX 변경이다.
+      titleController?.abort()
       const myController = new AbortController()
       titleController = myController
       try {

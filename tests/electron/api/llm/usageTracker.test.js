@@ -33,38 +33,9 @@ describe('createUsageTracker', () => {
     expect(t.snapshot()).toEqual({ input: 265, output: 93 }) // 15+250, 3+90
   })
 
-  it('beginRun 은 epoch 를 올리고 합계를 0 으로 되돌린다', () => {
-    const t = createUsageTracker()
-    t.addDelta({ input: 10, output: 5 })
-    const e1 = t.currentEpoch()
-    const e2 = t.beginRun()
-    expect(e2).toBeGreaterThan(e1)
-    expect(t.snapshot()).toEqual({ input: 0, output: 0 })
-  })
 
-  it('beginRun 은 codex key 도 지운다 — 이전 실행 thread 가 새 합계에 남으면 안 된다', () => {
-    const t = createUsageTracker()
-    t.setCumulative({ key: 't1', input: 100, output: 40 })
-    t.beginRun()
-    expect(t.snapshot()).toEqual({ input: 0, output: 0 })
-  })
 
-  // 늦게 끝난 이전 실행이 새 실행을 오염시키면 안 된다.
-  it('지난 epoch 의 기록은 무시한다', () => {
-    const t = createUsageTracker()
-    const stale = t.currentEpoch()
-    t.beginRun()
-    t.addDelta({ input: 999, output: 999 }, stale)
-    t.setCumulative({ key: 't9', input: 999, output: 999 }, stale)
-    expect(t.snapshot()).toEqual({ input: 0, output: 0 })
-  })
 
-  it('현재 epoch 를 명시해 기록하면 반영된다', () => {
-    const t = createUsageTracker()
-    const e = t.currentEpoch()
-    t.addDelta({ input: 4, output: 1 }, e)
-    expect(t.snapshot()).toEqual({ input: 4, output: 1 })
-  })
 
   it('null/빈 기록은 무시한다', () => {
     const t = createUsageTracker()

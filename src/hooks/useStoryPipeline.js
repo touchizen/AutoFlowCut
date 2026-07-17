@@ -42,9 +42,9 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   // 보여준다. reviewProgress(검토/수정 단계)와 분리한다.
   const [reviewScores, setReviewScores] = useState(null)
   const [progressLog, setProgressLog] = useState([])
-  // 이번 실행 누적 토큰 { input, output } | null. main 의 tracker snapshot 이 emit 마다 실려온다.
+  // 이 프로젝트 세션의 누적 토큰 { input, output } | null. main tracker snapshot 이 emit 마다 온다.
   // progressLog 와 달리 start() 마다 비우지 않는다 — 자동 진행은 start() 연쇄라 비우면
-  // 앞 스텝 합계가 사라지고, main 에 tracker 를 둔 의미가 없어진다.
+  // 앞 스텝 합계가 사라지고, main 에 tracker 를 둔 의미가 없어진다. 리셋은 프로젝트 전환뿐.
   const [usage, setUsage] = useState(null)
   // 슬라이스4(§3.4): synopsis side action 로컬 상태 — 스트리밍 누적은 대본(streamingText)과
   // 별도 채널/상태(story:synopsis-delta → synopsisStreamingText)로 분리.
@@ -211,11 +211,13 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
       }),
       // 리서치(§5): hydrate/복원용 신규 채널 — research side action 완료 시 main이 최신 상태를 push.
       api.onStoryEvent('story:research-state', (p) => {
+        takeUsage(p)
         if (p.projectToken !== tokenRef.current) return
         if (p.research !== undefined) setResearch(p.research)
       }),
       // 슬라이스4(§3.3 op lifecycle): started 신호로 전용 op 세팅 + 누적 리셋, 그 op의 delta만 누적.
       api.onStoryEvent('story:synopsis-delta', (p) => {
+        takeUsage(p)
         if (p.projectToken !== tokenRef.current) return
         if (p.phase === 'started') {
           synopsisActiveOpRef.current = p.operationId || null
@@ -226,6 +228,7 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
         setSynopsisStreamingText((t) => t + (p.text || ''))
       }),
       api.onStoryEvent('story:delta', (p) => {
+        takeUsage(p)
         if (p.projectToken !== tokenRef.current) return
         if (activeOpRef.current && p.operationId !== activeOpRef.current) return
         setStreamingText((t) => t + p.text)
@@ -249,6 +252,7 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
       }),
       // D: audio 세그먼트별 실시간 진행 — segId→status로 누적해 목록이 생성 상태를 실시간 표시한다.
       api.onStoryEvent('story:progress', (p) => {
+        takeUsage(p)
         if (p.projectToken !== tokenRef.current) return
         // 리서치(§3.6): research side action은 running step을 만들지 않아 activeOpRef(step 기반)에
         // 안 잡힌다 — op 필터 전에 처리(synopsisActiveOpRef 분리와 동일 이유). 맵 리셋은
