@@ -1,134 +1,174 @@
-# Story 스텝퍼 토큰 사용량 표시 — 설계 (2026-07-17)
+# Story 토큰 사용량 표시 — 설계 v2 (2026-07-17)
 
-**상태**: 설계 승인됨, 구현 전
-**범위**: Story 파이프라인이 LLM 을 쓸 때 이번 실행의 누적 토큰을 보여준다. 그뿐이다.
-
----
-
-## 무엇을 만드나
-
-Story 뷰에 **이번 실행 누적** 토큰을 `in 8.1k / out 4.2k` 로 표시한다.
-
-## 무엇을 안 만드나 (명시적 비목표)
-
-- **영속 없음** — 앱을 끄면 사라진다. 사용자 요구가 "도는 동안만"이었다.
-- **비용($) 추정 없음** — 모델별 단가표를 들고 있어야 하고, 틀리면 없느니만 못하다.
-- **스텝별 표시 없음** — 누적 합계 하나만. 스텝퍼 행은 건드리지 않는다.
+**상태**: v1 승인 취소됨. Codex(gpt-5.6-sol) + Fable 5 병렬 리뷰에서 MAJOR 3건.
+v2 는 그 반영본. **codex payload 스파이크 전까지 구현 착수 금지.**
+**범위**: 이번 실행의 누적 토큰을 도는 동안 보여준다. 그뿐이다.
 
 ---
 
-## 사전 조사 결과 (전부 코드/바이너리로 확인함, 추측 아님)
+## 무엇을 / 무엇을 안 만드나
 
-### 세 엔진 모두 usage 를 준다 — 지금은 전부 버려지고 있다
+만든다: Story 뷰에 **이번 실행 누적** `in 8.1k / out 4.2k`.
 
-| 엔진 | 어디에 오나 | 현재 |
+안 만든다 (명시적 비목표): **영속 없음**(앱 끄면 사라짐) · **비용($) 추정 없음** · **스텝별 표시 없음**.
+
+---
+
+## ⚠️ 유일한 진짜 실패 모드 — 조용히 틀린 합계
+
+숫자가 안 보이면 사용자가 안다. **틀린 건 모른다.** 그러면 없느니만 못하다.
+아래 모든 결정은 이 하나를 막기 위한 것이다.
+
+---
+
+## v1 이 틀렸던 것 (리뷰로 밝혀짐 — 같은 실수 반복 금지)
+
+| v1 주장 | 실제 | 잡은 쪽 |
 |---|---|---|
-| claude-sdk | SDK `result` 메시지의 `usage` | `extractClaudeSdkResult` 가 `message.result` 문자열만 꺼내고 버림 (claudeSdk.js:60) |
-| gemini | 응답 JSON 의 `usageMetadata` | 응답 파싱 4곳이 `candidates[0].content.parts[0].text` 만 꺼내고 버림 (llmGemini.js:98·125·169) |
-| codex | `thread/tokenUsage/updated` 알림 | `onNotification` 이 그 method 를 아예 안 받음 (codexAppServer.js:166~) |
+| claude 는 `extractClaudeSdkResult` 만 찌르면 된다 | **거짓.** 파서가 둘이고 주 경로는 `readStructuredResult` | Codex + Fable 독립 발견 |
+| claude 는 thinking 분리 **불가** | **거짓.** `usage.output_tokens_details.thinking_tokens` 존재 | Codex |
+| node_modules codex 는 0.144.1 | **거짓.** 0.142.5 (PATH 의 별도 설치본이 0.144.1) | Codex |
+| `ThreadTokenUsage = {5개 필드}` | **거짓.** 그 5개는 `TokenUsageBreakdown` | Codex + Fable |
+| `progressLog` 는 stepMachine 에 있다 | **거짓.** 렌더러 `useStoryPipeline.js:44` | Codex + Fable |
+| gemini 도 대상 | **프로덕션 미배선** — 라우터는 claude/codex 뿐 | Codex + Fable |
 
-codex 프로토콜 타입 (바이너리 `strings` 로 확인, codex-cli 0.144.1):
-
-```
-ThreadTokenUsage = {
-  totalTokens, inputTokens, cachedInputTokens,
-  outputTokens, reasoningOutputTokens
-}
-```
+**교훈**: v1 은 `strings` 덤프와 파일 이름만 보고 썼다. 파서가 둘인 걸 못 봤고, 버전 라벨을
+다른 바이너리에서 가져왔다. **앵커는 열어야 하고, 버전은 그 바이너리에서 찍어야 한다.**
 
 ---
 
-## ⚠️ 이 기능의 유일한 진짜 실패 모드
+## 확인된 사실 (전부 코드로 대조함)
 
-**조용히 틀린 합계.** 숫자가 안 보이는 건 사용자가 안다. 숫자가 **틀린 건 모른다** — 그러면 없느니만 못하다.
-아래 두 함정이 정확히 그걸 만든다.
+### 수집 지점 — claude 는 **두 파서 모두** 찔러야 한다
 
-### 함정 1 — codex 는 누적, claude/gemini 는 호출당
+```
+llmClaude.js:247  structuredClaudeCall
+  ├─ 주 경로   → claudeSdk.js:84  readStructuredResult   ← v1 이 놓친 곳
+  └─ 폴백(:274) → claudeSdk.js:62  extractClaudeSdkResult ← v1 이 유일하게 지정한 곳
+```
 
-`ThreadTokenUsage` 는 이름 그대로 **thread 누적치**다. 알림이 올 때마다 더하면 중복 합산으로 뻥튀기된다.
+주 경로를 타는 메서드: `splitScenes`, `reviewScript`, `reviewSynopsis`, `reviewScenes`,
+`reviseScenes`, `reviewPrompts`, `revisePrompts`, `writePrompts`, `analyzeResearch`,
+**`factCheckClaims`** — 파이프라인 LLM 호출의 과반.
 
-| 엔진 | 누산 방식 |
-|---|---|
-| codex | **교체** (latest wins, thread 단위) |
-| claude / gemini | **가산** (호출당 delta) |
+> **v1 의 자기모순**: provider 레벨로 내려간 유일한 명분이 "factCheckClaims 가 라우터를
+> 우회하니까"였는데, 그 factCheckClaims 가 `structuredClaudeCall` 을 써서 v1 표대로면 **여전히
+> 안 잡힌다.** v1 의 TDD 4번은 v1 표대로 구현하면 **통과 자체가 불가능**했다. (Fable)
 
-누산기는 엔진별로 다르게 동작해야 한다. 같은 `record()` 에 넣고 전부 더하면 틀린다.
+**결정**: `m.type === 'result'` 메시지를 **소비하기 전에** 한 번 기록한다. extract 함수 안이 아니라.
+- 실패 result 도 `usage` 를 갖는다(`SDKResultError.usage` 필수) — 실제 과금이므로 포함.
+- 구조화 1차 실패 → 폴백 재시도는 **두 query 모두** 과금 → 둘 다 기록.
 
-### 함정 2 — thinking 분리 가능 여부가 엔진마다 다르다
+### 라우터 우회는 factCheck 하나뿐 (전수조사 완료)
 
-| 엔진 | thinking |
-|---|---|
-| codex | `reasoningOutputTokens` 로 분리됨 |
-| gemini | `thoughtsTokenCount` 로 분리됨 |
-| claude | `output_tokens` 에 **포함 — 분리 불가** |
+Codex·Fable 이 각각 `stepMachine.js` 의 `llm.*` 호출을 전수 확인. **factCheck 외 우회 없음.**
+주석 실재: `storyLlmRouter.js:21`. 주입: `story-api.js:55` → `stepMachine.js:2058`.
 
-**결정: 셋 다 thinking 을 out 에 포함한다.** 분리 가능한 쪽(codex/gemini)을 굳이 빼지 않는다.
-안 그러면 같은 "out" 이 엔진마다 다른 걸 세게 되고, 그게 바로 조용히 틀린 합계다.
+### 엔진별 필드 매핑 — 이게 안 맞으면 엔진마다 다른 걸 센다
 
-### 함정 3 — progressLog 에 얹으면 안 된다
+| | claude (BetaUsage) | codex (TokenUsageBreakdown) |
+|---|---|---|
+| in | `input_tokens` + `cache_creation_input_tokens` + `cache_read_input_tokens` | `inputTokens` (cached **이미 포함** — 다시 더하지 말 것) |
+| out | `output_tokens` (thinking 포함) | `outputTokens` (reasoning 포함) |
+| thinking | `output_tokens_details.thinking_tokens` (**nullable**) | `reasoningOutputTokens` |
 
-`progressLog` 는 메모리이고 `start()` 마다 지워진다. 전체 실행은 audio done 직후 prompts 를 시작하므로
-숫자가 몇 초 만에 사라진다. (2026-07-17 화자 오디오 핸드오프 문서에 기록된 함정과 동일)
+- claude 의 `input_tokens` 는 캐시를 **제외**한다(별도 필드). agent SDK 는 캐시 리드가 입력의
+  대부분이라 그것만 세면 심하게 과소. **셋 다 더한다.**
+- codex 의 `inputTokens` 는 cached 를 **포함**한다. `cachedInputTokens` 를 더하면 중복.
 
-→ 누산기는 **`start()` 가 건드리지 않는 별도 인메모리 스토어**여야 한다.
+**결정 — in**: 두 엔진 모두 "캐시 포함 총 입력".
+**결정 — out**: 두 엔진 모두 thinking **포함**(inclusive). 분리 가능하지만 **굳이 빼지 않는다** —
+빼면 같은 "out" 이 엔진마다 다른 걸 세게 된다. (v1 은 이 결정이 맞았으나 근거("분리 불가")가 거짓이었다)
+
+---
+
+## 🚧 미해결 — 스파이크 없이는 구현 금지
+
+### codex `thread/tokenUsage/updated` 페이로드 실측
+
+리뷰어 둘이 **정면충돌**했고 나도 확정 못 했다:
+
+- **Codex 주장**: `params.tokenUsage = { total:{...}, last:{...}, modelContextWindow }` 중첩.
+  `total` 은 누적, `last` 는 delta (upstream `append_last_usage` 인용). 평면으로 읽으면 `undefined`.
+- **Fable 주장**: 필드 목록은 맞고 타입명만 틀림 — 코스메틱.
+- **내 대조 결과**: 0.142.5 바이너리 `strings` 에 `"total"`/`"last"` 중첩 흔적 **안 나옴**. 확정 불가.
+- **결정적 문제**: Codex 가 인용한 소스는 **upstream 0.144.1**, 우리는 **0.142.5**.
+
+→ **스파이크**: 0.142.5 로 실제 turn 을 돌려 `thread/tokenUsage/updated` NDJSON 원문을 찍는다.
+`params` 를 통째로 로그. 이 결과 없이 누산 로직을 쓰면 뻥튀기(가산) 또는 축소(last 교체)가 된다.
+
+부수 확인: codex 는 호출당 새 ephemeral thread(`codexAppServer.js:105`)이고 재시도 루프가 없다 →
+서로 다른 threadId 는 **합산**이 맞다. 같은 threadId 재수신만 교체.
+
+### gemini 는 범위에서 제외
+
+gemini 는 프로덕션 라우터에 없다(`main.js:285` = {claude, codex}).
+`story-api.js:50` 의 `llm = llmGemini` 기본값은 **테스트 DI 전용 죽은 코드**.
+**결정: 이번 범위에서 제외.** 계측 가치 0. 되살릴 때 다시 판단.
+(따라서 `thoughtsTokenCount ⊂ candidatesTokenCount` 열린 질문도 함께 보류)
 
 ---
 
 ## 설계
 
-### 수집 지점 — 라우터가 아니라 provider
+### run 경계 — v1 이 통째로 빠뜨린 것
 
-`storyLlmRouter.js` 는 완전한 통로가 **아니다**. 그 파일 주석이 직접 말한다:
+v1 은 `reset() // 실행 시작 시` 라고만 썼다. 이 코드베이스에 "실행 시작"이라는 단일 이벤트는 **없다**:
+자동 진행은 `scenes → prompts` 를 각각 별도 `start()` 로 호출한다(`StoryView.jsx:362`; audio 는 기본 off).
+게다가 `generateTitle`(:1730), 시놉시스(:1845), research(:2034), factCheck(:2058) 은 `start()` 밖이고
+`generateTitle` 은 `anyRunning()` 검사도 abort signal 도 없다.
 
-> `factCheckClaims` 는 라우터에 넣지 않는다(M1 — Claude 강제, machine 에 factCheck deps 로 직접 주입)
+모듈 전역 싱글톤이면 전부 깨진다:
+- 프로젝트 전환 시 machine 은 재생성되나(`story-api.js:125`) sink 는 살아남음 → **A 의 토큰이 B 에 뜬다**
+- `start()` 마다 reset → 연쇄 중 앞 합계 소멸 (v1 이 스스로 금지한 함정)
+- reset 안 함 → 세션 누적인데 라벨은 "이번 실행" = **조용히 틀린 합계**
 
-라우터에서만 걷으면 팩트체크 토큰이 통째로 빠진다 → 함정 1과 같은 병(조용히 틀린 합계).
-그래서 provider 레벨에서 찌른다. 반환 shape 을 안 바꾸므로 **호출부는 한 줄도 안 바뀐다.**
+**결정**:
+- tracker 를 **`createStepMachine` 안의 인스턴스**로 둔다 (모듈 싱글톤 금지). 프로젝트 전환 시 함께 죽는다.
+- `runEpoch` 를 둔다. 사용자가 새 실행을 **승인한 시점**에 증가 + reset. `start()` 마다가 **아니다**.
+- provider 콜백은 **자신이 캡처한 epoch == 현재 epoch** 일 때만 반영 → 늦게 끝난 이전 실행이 오염 못 시킴.
+- renderer 이벤트에 `projectToken` + `runId` 를 싣는다 (기존 progress send 가 이미 하는 것 — `stepMachine.js:262`).
+
+### 배선
+
+provider 반환 shape 불변 → **호출부 무변경**. 각 provider ctx 에 선택적 `onUsage` 콜백 주입.
 
 | 파일 | 넣을 곳 |
 |---|---|
-| `electron/api/llm/claudeSdk.js` | `extractClaudeSdkResult` — `message.usage` 를 가산 record |
-| `electron/api/llm/llmGemini.js` | 응답 파싱 4곳 — `data.usageMetadata` 를 가산 record |
-| `electron/api/llm/codexAppServer.js` | `onNotification` 에 `thread/tokenUsage/updated` 분기 — 교체 record |
-
-### 새 모듈: `electron/api/llm/usageSink.js` (~40줄)
-
-```js
-recordDelta({ engine, input, output })        // claude, gemini — 가산
-recordCumulative({ engine, key, input, output }) // codex — key(threadId) 단위 교체
-snapshot()   // { input, output }
-reset()      // 실행 시작 시
-```
-
-- 세션 스코프 인메모리. `start()` 가 안 건드린다.
-- codex 는 `key` = threadId. 같은 key 재수신 시 **교체**, 서로 다른 key 는 합산.
+| `claudeSdk.js` | result 메시지 소비 지점 (`:62` extract + `:84` readStructured **둘 다**) |
+| `codexAppServer.js` | `onNotification` 에 `thread/tokenUsage/updated` 분기 (현재 method 3개만 처리: `:163~184`) |
 
 ### 표시
 
-- main → renderer 로 snapshot 전달 (기존 progress IPC 채널 재사용 검토)
-- Story 뷰에 `in 8.1k / out 4.2k` 누적 1줄
+- Story 뷰에 `in 8.1k / out 4.2k` 누적 1줄.
+- **주의**: sink 를 main 에 둬도 **렌더러 상태가 `start()` 마다 비워지면 똑같이 죽는다**
+  (`useStoryPipeline.js:378` 의 `setProgressLog([])` 패턴). usage 상태는 그 패턴을 따르면 안 된다.
 
 ---
 
 ## 검증 (TDD — 테스트 먼저)
 
-우선순위 순. 위 두 개가 이 기능의 존재 이유다.
+1. **codex 누적 중복 합산 안 함** — 같은 threadId 로 두 번 오면 합계는 **교체값**. 스파이크로 확정한
+   실제 payload 모양의 fixture 를 쓴다. 축약 객체(`{total:100}`)로 sink 만 시험하면 제품 경로를 안 지난다.
+2. **claude 구조화 경로 토큰이 잡힌다** — `structuredClaudeCall` 주 경로(`readStructuredResult`)로
+   성공하는 호출의 usage 가 합계에 든다. **v1 이라면 이 테스트가 실패한다** — 그게 이 테스트의 존재 이유.
+3. **엔진 혼합 합산** — codex(교체) + claude(가산) 이 한 실행에 섞여도 맞다.
+4. **start 연쇄 후 합계 단조 증가** — scenes→prompts 연쇄에서 앞 합계가 안 지워진다.
+   (v1 의 "start() 가 누산기를 안 지운다"는 start() 가 참조조차 안 하는 모듈에 대한 **준-항진명제**였다 — Fable)
+5. **epoch 격리** — 이전 실행의 늦은 콜백이 새 실행 합계를 오염시키지 않는다.
+6. **프로젝트 전환 격리** — A 의 토큰이 B 에 안 뜬다.
+7. claude 실패 result 의 usage 도 포함된다.
 
-1. **codex 누적 중복 합산 안 함** — 같은 threadId 로 `{total:100}` → `{total:250}` 이 연달아 오면
-   합계는 **250 이지 350 이 아니다**. 이걸 못 잡으면 기능이 거짓말을 한다.
-2. **엔진 혼합 합산** — codex(교체) + claude(가산) + gemini(가산) 이 한 실행에 섞여도 합계가 맞다.
-3. `start()` 가 누산기를 지우지 않는다 (progressLog 함정 회귀).
-4. 라우터를 우회하는 `factCheckClaims` 경로의 토큰도 잡힌다.
-5. usageSink 단위 테스트 (가산/교체/reset/snapshot).
-
-**뮤테이션 관점**: 함정 1의 테스트는 "교체"를 "가산"으로 바꿨을 때 반드시 죽어야 한다.
-안 죽으면 테스트가 제품이 가는 길을 안 지나간 것이다.
+**뮤테이션**: 1번은 교체→가산으로 바꿨을 때, 2번은 수집 지점을 v1 표로 되돌렸을 때 반드시 죽어야 한다.
 
 ---
 
-## 열린 질문 (구현 시 확인)
+## 리뷰 기록
 
-- `thread/tokenUsage/updated` 가 turn 마다 오나, 더 잦나? (잦으면 렌더 스로틀 필요)
-- gemini `thoughtsTokenCount` 가 `candidatesTokenCount` 에 포함인가 별도인가
-  → 별도면 out = candidates + thoughts 로 더해야 함. 포함이면 그대로.
-- claude SDK `result` 메시지의 usage 필드명 실측 (`input_tokens` / `output_tokens` / cache 계열)
+Codex(gpt-5.6-sol, xhigh) + Fable 5 병렬 1라운드 → MAJOR 3 + MEDIUM 5.
+두 리뷰어가 서로를 보완했다: 둘 다 `readStructuredResult` 를 독립 발견했고, Fable 이 TDD 자체모순과
+항진명제를, Codex 가 cache 필드 누락과 버전 오류를 잡았다.
+
+**둘 다 틀린 것도 있었다** — Fable 의 "0.144.1 실 바이너리로 재확인"은 거짓(실제 0.142.5),
+Codex 의 payload 중첩은 upstream 버전 기준이라 우리 버전에 미확정.
+**리뷰어 합의도 실측을 대신하지 못한다.**
