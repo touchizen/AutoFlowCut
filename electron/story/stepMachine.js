@@ -270,10 +270,8 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
   // provider sink 는 전역이지만 machine 은 동시에 1개고(story-api.js: `let machine = null`),
   // 전환 전 abort() 가 진행 중 호출을 전부 취소하므로(제목 생성 포함) 뒤늦은 보고가 없다.
   const usageTracker = createUsageTracker()
-  setClaudeUsageSink((u) => usageTracker.addDelta(u)) // claude: 호출당 delta → 가산
-  setCodexUsageSink((u) => usageTracker.setCumulative(u)) // codex: thread 누적 → key 별 교체
 
-  // 모든 emit 에 이번 실행 누적을 싣는다 — 렌더러가 progress/state 어느 쪽을 받든 최신값을 본다.
+  // 모든 emit 에 이 세션 누적을 싣는다 — 렌더러가 progress/state 어느 쪽을 받든 최신값을 본다.
   const send = (ch, payload, operationId) =>
     emit(ch, {
       projectToken,
@@ -281,6 +279,14 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       usage: usageTracker.snapshot(),
       ...payload,
     })
+
+  // sink 가 불릴 때마다 usage 전용 이벤트를 쏜다. 실패한 side action(generateTitle/synopsis/
+  // research)은 별도 state emit 을 안 하므로, 이게 없으면 실패로 쓴 토큰이 다음 성공 emit 까지
+  // 화면에 안 뜬다 — tracker 는 맞아도 화면이 낮게 남는 조용히 틀린 합계(3R Codex). tokenUsage 는
+  // result/알림에만 오므로(스트리밍 텍스트 델타와 다름) 빈도가 낮아 emit 비용도 작다.
+  const emitUsage = () => send('story:usage', {})
+  setClaudeUsageSink((u) => { usageTracker.addDelta(u); emitUsage() }) // claude: 호출당 delta → 가산
+  setCodexUsageSink((u) => { usageTracker.setCumulative(u); emitUsage() }) // codex: thread 누적 → key 별 교체
 
   async function flush() { await store.save(state) }
 
@@ -1760,7 +1766,11 @@ export function createStepMachine({ projectPath, llm, emit, getApiKey, loadMetaP
       titleController = myController
       try {
         const opts = buildLlmOptions({ ...(state?.input?.options || {}), ...(options || {}) })
-        return await llm.generateTitle(scriptMd, opts, { signal: myController.signal })
+        const res = await llm.generateTitle(scriptMd, opts, { signal: myController.signal })
+        // provider 가 abort 를 무시하고 버퍼된 result 로 resolve 했을 수 있다 — 그래도 취소는 취소다.
+        // resolve 경로도 검사하지 않으면 renderer 가 취소된 옛 제목으로 진행한다.
+        if (myController.signal.aborted) return { aborted: true }
+        return res
       } catch (err) {
         // 겹친 호출이 이 호출을 abort 했으면 실패가 아니다 — 조용한 취소다.
         // throw 하면 renderer 가 "제목 생성 실패" toast 를 띄운다(의도한 취소인데).

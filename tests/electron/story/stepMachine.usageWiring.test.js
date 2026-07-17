@@ -81,6 +81,33 @@ describe('토큰 배선 — provider tap → machine tracker → emit', () => {
     expect((await lastEmit(m, seen)).usage).toEqual({ input: 260, output: 91 })
   })
 
+  // 실패한 side action 도 화면에 반영되려면 sink 발화 자체가 emit 을 유발해야 한다.
+  // 이게 없으면 실패로 쓴 토큰이 다음 성공 emit 까지 안 보인다(3R Codex MEDIUM).
+  it('claude sink 가 story:usage 이벤트를 쏜다 — 실패 경로도 즉시 반영', async () => {
+    const events = []
+    const m = await mkMachine((ch, p) => events.push([ch, p]))
+    events.length = 0
+
+    const tapped = __tapQueryForTest(() => results({ type: 'result', usage: { input_tokens: 12, output_tokens: 3 } }))
+    for await (const _m of tapped({})) { /* drain */ }
+
+    const usageEvents = events.filter(([ch]) => ch === 'story:usage')
+    expect(usageEvents).toHaveLength(1)
+    expect(usageEvents[0][1].usage).toEqual({ input: 12, output: 3 })
+  })
+
+  it('codex sink 도 story:usage 이벤트를 쏜다', async () => {
+    const events = []
+    const m = await mkMachine((ch, p) => events.push([ch, p]))
+    events.length = 0
+
+    __getCodexUsageSinkForTest()({ key: 't1', input: 50, output: 20 })
+
+    const usageEvents = events.filter(([ch]) => ch === 'story:usage')
+    expect(usageEvents).toHaveLength(1)
+    expect(usageEvents[0][1].usage).toEqual({ input: 50, output: 20 })
+  })
+
   // sink 핸드오프 — 새 machine 이 생기면 전역 sink 는 B 로 간다.
   it('나중에 만든 machine 이 sink 를 가져간다 — A 는 오염되지 않는다', async () => {
     const seenA = []

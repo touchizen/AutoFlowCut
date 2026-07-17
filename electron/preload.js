@@ -143,7 +143,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   storyResearchSelect: (params) => ipcRenderer.invoke('story:research-select', params),
   storyResearchVideoDetails: (params) => ipcRenderer.invoke('story:research-video-details', params),
   onStoryEvent: (channel, cb) => {
-    const valid = ['story:state', 'story:delta', 'story:progress', 'story:pushScenes', 'story:pushCharacters', 'story:synopsis-delta', 'story:research-state']
+    const valid = ['story:state', 'story:delta', 'story:progress', 'story:pushScenes', 'story:pushCharacters', 'story:synopsis-delta', 'story:research-state', 'story:usage']
     if (!valid.includes(channel)) return () => {}
     const listener = (_e, payload) => cb(payload)
     ipcRenderer.on(channel, listener)

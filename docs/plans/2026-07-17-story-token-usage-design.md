@@ -127,8 +127,9 @@ gemini 는 프로덕션 라우터에 없다(`main.js:285` = {claude, codex}).
 ## ✅ Task 5 블로커 — 해결됨 (generateTitle 에 abort 대칭 부여)
 
 **해결**: `generateTitle` 에 `titleController` 를 줬다(`synopsisController` 패턴 미러). 이제
-`abort()` 가 이 호출을 취소하고, 취소된 호출은 result 메시지를 안 뱉으므로 **뒤늦은 tap 자체가
-사라진다** — 전역 sink 문제가 원천에서 없어진다.
+`abort()` 가 이 호출을 취소한다. **단, 취소가 늦은 tap 을 없애는 건 아니다** — provider 는 abort 후에도
+버퍼된 result 를 뱉을 수 있다(2R Codex). 늦은 보고의 진짜 안전장치는 **provider tap 의 호출-시작
+sink 캡처**이고(아래), abort 대칭은 그와 별개로 필요한 기존 버그 수정이다.
 
 이건 계측용 우회가 아니라 **리뷰가 이미 지적한 기존 버그의 정면 수정**이다("generateTitle 은
 anyRunning() 검사도 abort 도 없이 실행"). 기존 테스트 2개가 세 번째 인자를 `{}` 로 핀해
@@ -181,8 +182,8 @@ projectToken 은 없다. 검토한 선택지 전부 깨끗하지 않다:
 
 v1 은 `reset() // 실행 시작 시` 라고만 썼다. 이 코드베이스에 "실행 시작"이라는 단일 이벤트는 **없다**:
 자동 진행은 `scenes → prompts` 를 각각 별도 `start()` 로 호출한다(`StoryView.jsx:362`; audio 는 기본 off).
-게다가 `generateTitle`(:1730), 시놉시스(:1845), research(:2034), factCheck(:2058) 은 `start()` 밖이고
-`generateTitle` 은 `anyRunning()` 검사도 abort signal 도 없다.
+게다가 `generateTitle`(:1730), 시놉시스(:1845), research(:2034), factCheck(:2058) 은 `start()` 밖이다.
+(발견 당시 `generateTitle` 은 abort signal 이 없었다 — 구현에서 titleController 로 추가함. 위 "Task 5 블로커" 참고.)
 
 모듈 전역 싱글톤이면 전부 깨진다:
 - 프로젝트 전환 시 machine 은 재생성되나(`story-api.js:125`) sink 는 살아남음 → **A 의 토큰이 B 에 뜬다**

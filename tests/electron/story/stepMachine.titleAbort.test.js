@@ -57,6 +57,24 @@ describe('generateTitle abort 대칭', () => {
     await expect(machine.abort()).resolves.not.toThrow()
   })
 
+  // provider 가 abort 를 무시하고 버퍼된 result 로 resolve 해도, 취소된 호출은 { aborted: true } 다.
+  // reject 만 검사하면(2R 대응) 이 경로가 새어 renderer 가 취소된 옛 제목으로 진행한다(3R Codex).
+  it('abort 후 provider 가 무시하고 resolve 해도 { aborted: true }', async () => {
+    const llm = {
+      generateTitle: vi.fn((_s, _o, injected) => new Promise((resolve) => {
+        injected.signal.addEventListener('abort', () => resolve({ title: '늦은 제목' }), { once: true })
+      })),
+    }
+    const machine = createStepMachine({ projectPath: await tmpProject(), llm, emit: () => {}, getApiKey: () => null })
+    await machine.open()
+
+    const first = machine.generateTitle('# 대본')
+    await Promise.resolve()
+    machine.abort()
+
+    await expect(first).resolves.toEqual({ aborted: true }) // { title: '늦은 제목' } 이 아니다
+  })
+
   // 겹친 호출: 두 번째가 첫 번째를 abort 한다. 첫 번째는 reject 가 아니라 { aborted: true } 로
   // 끝나야 한다 — 안 그러면 renderer 가 "제목 생성 실패" toast 를 띄운다(의도한 취소인데).
   it('abort 로 취소된 호출은 throw 가 아니라 { aborted: true } 를 반환한다', async () => {

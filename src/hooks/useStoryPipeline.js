@@ -189,6 +189,8 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
     // 무의미해지고 숫자가 렌더러에서 똑같이 죽는다. 프로젝트 전환(projectPath 변경)에서만 리셋된다.
     const takeUsage = (p) => { if (p?.usage && p.projectToken === tokenRef.current) setUsage(p.usage) }
     const offs = [
+      // sink 가 불릴 때마다 오는 usage 전용 이벤트 — 실패한 side action 의 토큰도 즉시 화면에 반영.
+      api.onStoryEvent('story:usage', takeUsage),
       api.onStoryEvent('story:state', (p) => {
         takeUsage(p)
         if (p.projectToken !== tokenRef.current) return
