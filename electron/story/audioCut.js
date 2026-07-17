@@ -76,6 +76,13 @@ function toInt16Mono(channelData, n) {
 /**
  * mp3를 구간별로 잘라 WAV로 낸다. 구간은 startMs 오름차순이어야 하고 겹치면 안 된다.
  *
+ * ── 메모리 ──
+ * 피하는 건 **디코드된 PCM**이다: 18분을 통째로 디코드하면 Float32로 424MB지만, 프레임을 훑으며
+ * 구간이 끝나는 즉시 onSegment로 흘려보내 그건 안 쌓인다.
+ * 다만 **압축 원본은 상주한다** — 경로를 주면 readFile로 통째 올린다(스트리밍 디코드가 아니다).
+ * 실측 소스(무한야담2, 18분)가 17.7MB라 상주분은 그 정도다. 원본 크기에 선형이므로 몇 시간짜리
+ * 소스를 넣을 일이 생기면 그때 청크 급전을 검토한다 — 지금 유스케이스(숏폼 나레이션)엔 없다.
+ *
  * @param {object} o
  * @param {Buffer|string} o.mp3  mp3 버퍼 또는 파일 경로
  * @param {Array<{id:string, startMs:number, endMs:number}>} o.ranges

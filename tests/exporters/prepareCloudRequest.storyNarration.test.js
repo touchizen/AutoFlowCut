@@ -181,6 +181,15 @@ describe('prepareCloudRequest — story_narration 분기', () => {
     await expect(prepareCloudRequest(project, { storyAudio })).rejects.toThrow(/sync|정합|pushRevision/i)
   })
 
+  // 차단 자체는 맞지만 사유가 사용자에게 **영문 내부 문구**로 뜬다 — errorKind 를 달아야
+  // renderer(useExport) 가 로케일 문구로 바꾼다. resolveDisplayError 는 kind 가 없으면 원문을 쓴다.
+  it('정합 불일치 오류에 errorKind 를 단다 — 한국어 UI에 영문이 뜨면 안 된다', async () => {
+    const project = { name: 'p', scenes: [sceneBase] }
+    const storyAudio = { manifest: manifest(5, [narrSeg('s001-1', 0, 1000)]), lastPushedRevision: 4 }
+    await expect(prepareCloudRequest(project, { storyAudio }))
+      .rejects.toMatchObject({ errorKind: 'story-audio-out-of-sync' })
+  })
+
   it('pushRevision null(미ack) 이면 export 차단(throw)', async () => {
     const project = { name: 'p', scenes: [sceneBase] }
     const storyAudio = { manifest: manifest(null, [narrSeg('s001-1', 0, 1000)]), lastPushedRevision: 3 }

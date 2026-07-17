@@ -35,6 +35,50 @@ describe('StoryView — 화자별 진행 카운터', () => {
     expect(screen.getByTestId('voice-progress-narrator')).toHaveTextContent('3/3')
   })
 
+  // seg.speaker는 id가 아니라 **이름/별칭**일 수 있다(나레이터는 {id:'narrator', name:'나레이션'}로
+  // 시딩된다). 진행 Map을 원시 seg.speaker로 키잉하고 sp.id로 조회하면 주 화자에서 바로 어긋나
+  // 전 세그먼트가 done인데도 배지가 통째로 사라진다. main의 findSpeakerByRef와 같은 정규화로 푼다.
+  it('세그먼트가 화자를 이름으로 참조해도 배지가 나온다 — id 완전일치로 보면 안 된다', () => {
+    const p = pipeline({
+      scenes: [{ storyId: 'a', segments: [seg('s1', '나레이션'), seg('s2', '나레이션')] }],
+      segmentProgress: { s1: 'done', s2: 'done' },
+    })
+    render(<StoryView pipeline={p} voices={[]} />)
+    openAudioPanel()
+    expect(screen.getByTestId('voice-progress-narrator')).toHaveTextContent('2/2')
+  })
+
+  it('이름 참조와 id 참조가 섞여도 한 화자로 합산한다', () => {
+    const p = pipeline({
+      scenes: [{ storyId: 'a', segments: [seg('s1', 'narrator'), seg('s2', '나레이션')] }],
+      segmentProgress: { s1: 'done', s2: 'done' },
+    })
+    render(<StoryView pipeline={p} voices={[]} />)
+    openAudioPanel()
+    expect(screen.getByTestId('voice-progress-narrator')).toHaveTextContent('2/2')
+  })
+
+  // refKey 는 공백뿐인 참조를 'narrator' 로 접는다(화자 미지정 = 나레이터). 그래서 name 이 '   ' 인
+  // 인물이 나레이터 별칭을 갖게 되고, 목록에서 나레이터보다 앞이면 **나레이터 세그먼트가 그 인물
+  // 진행률로** 합쳐진다. main 의 speakerReferenceKeys 와 같은 방어가 renderer 에도 있어야 한다.
+  it('이름이 공백뿐인 인물이 나레이터 세그먼트를 가로채지 않는다', () => {
+    const p = pipeline({
+      state: {
+        steps: {
+          script: { status: 'done' }, scenes: { status: 'done' },
+          audio: { status: 'done', updatedAt: new Date(0).toISOString() }, prompts: { status: 'pending' },
+        },
+        speakers: [{ id: 'char', name: '   ' }, { id: 'narrator', name: '나레이션' }], // 인물이 앞
+      },
+      scenes: [{ storyId: 'a', segments: [seg('s1', 'narrator'), seg('s2', 'narrator')] }],
+      segmentProgress: { s1: 'done', s2: 'done' },
+    })
+    render(<StoryView pipeline={p} voices={[]} />)
+    openAudioPanel()
+    expect(screen.getByTestId('voice-progress-narrator')).toHaveTextContent('2/2')
+    expect(screen.queryByTestId('voice-progress-char')).toBeNull() // 인물이 가로채면 안 된다
+  })
+
   it('일부만 완성됐으면(미완/오류) 숫자와 오류 표시가 함께 나온다', () => {
     const p = pipeline({ segmentProgress: { s1: 'done', s2: 'done', s3: 'error' } })
     render(<StoryView pipeline={p} voices={[]} />)

@@ -181,6 +181,13 @@ function buildCueStream(cues) {
  *   - 시작 앵커: 커서 이후에서 세그먼트 앞머리(anchor 글자)가 **연속으로** 맞는 첫 위치에서만 시작.
  *   - 삽입 예산(maxGap): 이만큼까지만 건너뛴다. 넘으면 실패(진짜 다른 텍스트).
  *
+ * 예산은 **대본 길이에 비례한다 — 고정 하한을 두지 않는다.** 한때 `Math.max(12, …)`였는데,
+ * 그러면 5글자 세그먼트가 자막 12글자를 삼킨다: 대본 `문을 열었다`가 자막
+ * `문을 열었지만 들어가지는 않았다`에 붙어 **의미가 반대인 5초를 조용히 가져갔다**(divergent도 false).
+ * 하한을 없애도 잃는 게 없다는 건 실측이다 — ep02 나레이터 237 세그먼트가 **전부 exact**로 붙어
+ * 삽입 매칭이 한 번도 안 쓰였다(애드리브는 세그먼트 사이로 떨어져 skipped로 처리된다).
+ * 즉 이 경로는 드물게 쓰이는 추측이므로, 싸게 얻는 이득보다 조용한 오매칭이 비싸다.
+ *
  * @returns {{at:number, end:number}|null} at=시작 인덱스, end=끝(삽입 포함, 배타적). 못 맞추면 null.
  */
 function matchSegment(stream, n, cursor) {
@@ -192,7 +199,7 @@ function matchSegment(stream, n, cursor) {
   const at = stream.indexOf(n.slice(0, anchor), cursor)
   if (at < 0) return null
 
-  const maxGap = Math.max(12, Math.ceil(n.length * 0.5))
+  const maxGap = Math.ceil(n.length * 0.5)
   let i = anchor // 앵커 글자는 indexOf가 이미 연속 확인
   let j = at + anchor
   let gap = 0
@@ -224,10 +231,13 @@ function matchSegment(stream, n, cursor) {
  * @param {Array} scenes 씬 (segments[].{type,speaker,text,...}) — 불변
  * @param {Array} cues 이 출처의 parseSrtCues 결과
  * @param {(seg:object)=>boolean} belongsToSource 이 세그먼트가 이 출처 담당인지 (보통 화자 일치)
+ * @param {boolean} [coversOtherSpeakers] 이 출처의 자막이 **남의 대사까지** 덮는가(나레이터 mp3).
+ *   dangerous 판정에만 쓴다 — 아래 "두 신호를 구분한다" 참고. 호출측이 안다: 이 모듈의 모델상
+ *   나레이터 mp3는 대본 전체를, 인물 mp3는 그 인물 대사만 덮는다(위 "커서를 미는 규칙").
  * @returns {{scenes: Array, aligned: number, missed: number, total: number}}
  *   missed = 이 출처 담당인데 자막에서 못 찾은 세그먼트 수(호출측이 정책을 정한다).
  */
-export function alignSegmentsToSource(scenes, cues, { belongsToSource }) {
+export function alignSegmentsToSource(scenes, cues, { belongsToSource, coversOtherSpeakers = false }) {
   const { stream, rangeOf } = buildCueStream(cues)
   let cursor = 0
   let aligned = 0
@@ -241,63 +251,184 @@ export function alignSegmentsToSource(scenes, cues, { belongsToSource }) {
   // 진단용 — 개수만 주면 사용자가 어디를 봐야 할지 모른다. 첫 구멍의 시각/내용과 못 찾은 id 몇 개.
   let firstHole = null
   const missedIds = []
+  // 삽입을 건너뛰며 맞춘 세그먼트 — exact와 달리 **추측**이다. 예산 안이라 통과시키되 조용하면
+  // 안 된다: 맞을 수도, 의미가 다른 문장을 삼킨 것일 수도 있고 구분할 방법이 여기엔 없다.
+  let gapped = 0
+  const gappedIds = []
+  // 남의 대사가 어긋난 **직후**의 내 세그먼트 — 커서가 안 밀린 채라 그 자리(남의 구간)를 물어온다.
+  // 의심 대상은 그것뿐이다. 화자 전체를 의심하면 무고한 조각에 거짓 경고가 붙는다.
+  // missed의 대략적인 자리를 정하려면 뒤쪽 매칭까지 알아야 한다. 1패스 결과를 순서대로 남겨
+  // exact 경로는 그대로 두고, 아래 2패스에서 비어 있는 내 세그먼트만 채운다.
+  const alignmentRecords = []
 
-  const next = (scenes || []).map((sc) => ({
+  const next = (scenes || []).map((sc, sceneIndex) => ({
     ...sc,
-    segments: (sc.segments || []).map((seg) => {
+    segments: (sc.segments || []).map((seg, segmentIndex) => {
       if ((seg.type || 'narration') !== 'narration') return seg // sfx 등은 자막에 없다
       const mine = belongsToSource(seg)
       if (mine) total += 1
+      // 이 자막이 남의 대사를 안 덮는다면(인물 mp3) 남의 세그먼트는 **이 스트림 소관이 아니다** —
+      // 아예 건드리지 않는다. "남의 텍스트는 스트림에 없으니 매칭이 안 돼 커서도 안 움직인다"에
+      // 기대면 안 된다: 남이 우연히 같은 말을 하면(인사·추임새는 흔하다) 그 세그먼트가 **내 자막을
+      // 먹고** 커서를 밀어, 뒤따르는 내 대사가 제자리를 못 찾고 missed가 된다 → 멀쩡한 import가
+      // 통째로 차단된다. 나레이터 mp3(coversOtherSpeakers)는 반대다 — 남의 대사도 이 자막에 있으니
+      // 소비해야 뒤가 안 밀린다(위 "커서를 미는 규칙").
+      if (!mine && !coversOtherSpeakers) return seg
       const n = normalizeForAlign(seg.text)
+      const record = { sceneIndex, segmentIndex, mine, weight: Math.max(1, n.length), match: null }
+      alignmentRecords.push(record)
       // 글자가 없는 세그먼트(예: "……")는 스트림에서 찾을 수 없다. 이 출처 담당이면 못 자른다는
       // 뜻이므로 missed로 센다 — 안 그러면 TTS 목록으로 흘러가 "성우 미배정"이라는 엉뚱한
       // 오류로 막힌다(이 모듈이 isImportProvider 라우팅으로 없애려던 바로 그 혼란).
-      if (!n) { if (mine) missed += 1; return seg }
+      if (!n) {
+        if (mine) { missed += 1; if (missedIds.length < 5) missedIds.push(seg.id) }
+        return seg
+      }
 
       const m = matchSegment(stream, n, cursor)
       if (!m) {
         // 이 출처의 자막에 없는 텍스트 — 커서는 그대로 둔다(다른 화자 mp3면 정상이다).
-        if (mine) { missed += 1; if (!missedIds.length || missedIds.length < 5) missedIds.push(seg.id) }
+        if (mine) { missed += 1; if (missedIds.length < 5) missedIds.push(seg.id) }
         else otherMiss += 1
         return seg
       }
       const { at, end } = m
+      // 덮은 자막이 대본보다 길면 삽입을 건너뛰며 맞춘 것 — 추측이므로 호출측이 알아야 한다.
+      if (mine && end - at > n.length) { gapped += 1; if (gappedIds.length < 5) gappedIds.push(seg.id) }
       if (at > cursor && firstHole === null) firstHole = { atMs: Math.round(rangeOf(cursor, at).startMs), text: stream.slice(cursor, Math.min(at, cursor + 24)) }
       skipped += at - cursor // 이 매칭 앞에 아무도 안 가져간 자막 구간
       const { startMs, endMs } = rangeOf(at, end)
       cursor = end
-      if (!mine) { otherHit += 1; return seg } // 자리는 소비했지만 이 출처의 오디오는 안 쓴다
       const s = Math.round(startMs)
       const e = Math.round(endMs)
-      if (!(e > s)) { missed += 1; return seg } // 반올림 후 폭이 0이면 자를 수 없다
+      if (!mine) {
+        record.match = { startMs: s, endMs: e }
+        otherHit += 1
+        return seg // 자리는 소비했지만 이 출처의 오디오는 안 쓴다
+      }
+      if (!(e > s)) {
+        missed += 1
+        if (missedIds.length < 5) missedIds.push(seg.id)
+        return seg // 반올림 후 폭이 0이면 자를 수 없다
+      }
+      record.match = { startMs: s, endMs: e }
       aligned += 1
-      return { ...seg, srcStartMs: s, srcEndMs: e }
+      const exact = { ...seg, srcStartMs: s, srcEndMs: e }
+      delete exact.approx
+      return exact
     }),
   }))
 
-  // ── 어긋남 감지 ──
-  // 신호는 **아무 세그먼트도 안 가져간 자막 구간(skipped)**이다. 정상인 두 경우는 둘 다 0이다:
-  //   - 나레이터 mp3: 모든 세그먼트(남의 대사 포함)가 순서대로 매칭돼 스트림을 빈틈없이 소비한다.
-  //   - 인물 mp3: 자막에 그 인물 대사만 있고 내 세그먼트가 그걸 순서대로 다 가져간다. 남의
-  //     세그먼트는 애초에 매칭이 안 돼 커서를 안 건드린다.
-  // 어긋나야만 구멍이 생긴다.
+  // 안 쓰인 **꼬리**도 아무도 안 가져간 자막이다 — 커서 앞의 구멍만 세면 놓친다.
+  skipped += stream.length - cursor
+
+  // ── missed 보간 ──
+  // 주어진 import 출처를 고른 사용자의 의도를 지키려면 TTS로 새게 하지 않고 실제 SRT 시각을
+  // 붙여야 한다. 정확히 잡힌 내/남의 세그먼트를 앵커로 두고, 그 사이의 빈 구간을 내 missed끼리
+  // 대본 글자 수 비례로 나눈다.
   //
-  // ── 한계 (divergent === false를 보장으로 읽지 말 것) ──
-  // 완벽한 감지가 아니다. 어긋난 남의 자막이 **뒤따르는 내 세그먼트의 텍스트를 커서 위치에서
-  // 통째로 포함**하면, 그 세그먼트는 남의 큐 안에 딱 붙어버려 구멍이 안 생긴다(skipped=0).
-  // 탐욕적 최초매칭의 본질적 한계라 소비량 기반 신호로는 못 잡는다 — 커서 자리의 글자가 실제로
-  // 같기 때문이다. 피해는 제한적이다(같은 나레이터 목소리로 거의 같은 말을 읽은 구간). 잡으려면
-  // 길이/속도 같은 직교 신호가 필요한데, 그 값어치가 알고리즘을 뒤엎을 만큼 크지 않다고 봤다.
+  // 앵커가 **하나도 없으면 보간하지 않는다.** 보간의 근거는 앞뒤로 잡힌 이웃이다 — 그 사이라면
+  // "비슷한 그 근처"가 맞다. 하나도 안 잡혔다는 건 대략 맞는 파일이 아니라 **다른 회차 파일**이라는
+  // 뜻이고, 그때 SRT 전체를 글자 수로 쪼개 붙이면 완전히 엉뚱한 오디오가 들어간다.
+  // "대략 잘라 놓고 경고" 정책은 *비슷한 게 있을 때* 성립한다 — 없으면 짝이 틀린 입력이라
+  // 호출측이 막아야 한다(unpaired).
+  // 보간 구간의 경계는 **잡힌 세그먼트 아무거나**(남의 것 포함)가 준다 — 순서가 보장되므로 남의
+  // 매칭도 유효한 위치 기준이다.
+  const anchorIndexes = alignmentRecords
+    .map((record, index) => (record.match ? index : -1))
+    .filter((index) => index >= 0)
+  // 다만 "붙일 근거가 있나"는 **내 매칭**으로 판정한다(aligned). 남의 대사가 우연히 맞았다고 내
+  // 세그먼트를 보간할 근거가 생기는 게 아니다 — 내 오디오가 이 자막에 하나도 없다는 뜻이니까.
+  // 남의 매칭만 보고 보간하면 내 세그먼트 전부가 **남의 자리**를 물어오고, 사이 폭이 0이라
+  // 서로 겹치기까지 한다(실측: 나레이터 2개가 똑같이 과부 구간 0-3000을 받았다).
+  const unpaired = aligned === 0 && total > 0
+  const whole = stream.length
+    ? rangeOf(0, stream.length)
+    : { startMs: cues?.[0]?.startMs || 0, endMs: cues?.[cues.length - 1]?.endMs || 0 }
+  const sourceStartMs = Math.round(whole.startMs)
+  const sourceEndMs = Math.round(whole.endMs)
+  const approximateRanges = new Map()
+  let approximated = 0
+  const approximatedIds = []
+  let previousAnchorIndex = -1
+  for (let ai = 0; !unpaired && ai <= anchorIndexes.length; ai++) {
+    const nextAnchorIndex = ai < anchorIndexes.length ? anchorIndexes[ai] : alignmentRecords.length
+    const run = alignmentRecords
+      .slice(previousAnchorIndex + 1, nextAnchorIndex)
+      .filter((record) => record.mine && !record.match)
+    if (run.length) {
+      const previous = previousAnchorIndex >= 0 ? alignmentRecords[previousAnchorIndex].match : null
+      const following = nextAnchorIndex < alignmentRecords.length ? alignmentRecords[nextAnchorIndex].match : null
+      const startMs = previous ? previous.endMs : sourceStartMs
+      const endMs = following ? following.startMs : sourceEndMs
+      // 폭이 0이면 **그 줄의 오디오가 존재하지 않는다** — 앵커가 맞닿았다는 건 나레이터가 그 줄을
+      // 안 읽고 넘어갔다는 뜻이다. 구간을 주지 않는다.
+      //
+      // 한때 "폭 0이면 인접 앵커까지 넓혀 겹침을 허용"했는데 두 가지로 틀렸다:
+      //   1) cutAudio가 겹치는 range를 throw한다(audioCut.js) — 나레이터 자막은 **연속 큐가 기본**이라
+      //      "대본 한 줄 안 읽음"(missed의 전형)이 곧 폭 0이다. 이 정책이 구하려던 바로 그 케이스에서
+      //      절단기가 죽었다. 그것도 errorKind 없는 내부 영문으로.
+      //   2) 의미도 틀렸다 — 이웃 구간을 갖다 붙이면 앞뒤 대사가 **두 번 들린다**. "가장 맞는 부분"이
+      //      아니라 엉뚱한 것이다. 없는 건 없다고 두고 호출측이 경고한다(missed에 남는다).
+      if (endMs > startMs) {
+        const totalWeight = run.reduce((sum, record) => sum + record.weight, 0)
+        let consumedWeight = 0
+        for (const record of run) {
+          const s = Math.round(startMs + ((endMs - startMs) * consumedWeight) / totalWeight)
+          consumedWeight += record.weight
+          const e = Math.round(startMs + ((endMs - startMs) * consumedWeight) / totalWeight)
+          // ms 폭보다 세그먼트가 많으면 비례 분할만으로 0폭이 생긴다(예: 5개를 2ms에). 그 조각은
+          // 자를 게 없으므로 건너뛴다 — 한때 여기서 같은 범위를 겹쳐 썼는데, 그러면 cutAudio가
+          // 겹침으로 throw해 실행 전체가 죽는다. 못 준 건 missed로 남아 호출측이 경고한다.
+          if (!(e > s)) continue
+          approximateRanges.set(`${record.sceneIndex}:${record.segmentIndex}`, { startMs: s, endMs: e })
+          approximated += 1
+          const id = next[record.sceneIndex]?.segments?.[record.segmentIndex]?.id
+          if (approximatedIds.length < 5) approximatedIds.push(id)
+        }
+      }
+    }
+    previousAnchorIndex = nextAnchorIndex
+  }
+  const withApproximations = next.map((sc, sceneIndex) => ({
+    ...sc,
+    segments: (sc.segments || []).map((seg, segmentIndex) => {
+      const range = approximateRanges.get(`${sceneIndex}:${segmentIndex}`)
+      return range ? { ...seg, srcStartMs: range.startMs, srcEndMs: range.endMs, approx: true } : seg
+    }),
+  }))
+
+  // ── 두 신호를 구분한다 ──
   //
-  // 왜 이게 중요한가: 매칭 못 한 남의 세그먼트는 커서를 안 민다. 그러면 뒤따르는 내 세그먼트가
-  // 그 미소비 구간에서 자기 텍스트를 찾아 **남의 오디오를 물어온다** — 짧거나 반복되는
-  // 텍스트("어제……")면 실제로 걸리고, missed는 0이라 오류도 안 난다(다른 목소리가 영상에
-  // 들어가는데 조용하다). skipped>0이면 그 상태일 수 있으니 호출측이 세운다.
+  // divergent(=skipped>0): "대본이 안 가져간 자막이 있다". 대부분 정상이다 — 나레이터 애드리브,
+  //   의성어, 아웃트로. 그 오디오는 그냥 버리면 되므로 **경고**용이다(실측 ep02: 60자 전부 그런
+  //   것). 이걸 차단 신호로 쓰면 안 된다.
   //
-  // (otherHit/otherMiss만으로는 못 잡는다: 대사가 하나뿐인데 그게 어긋나면 otherHit=0,
-  //  otherMiss=1이라 "깨끗한 인물 전용 자막"과 구분되지 않는다.)
+  // dangerous: 내 세그먼트가 **남의 자리 오디오를 물어왔을 수 있다**. 이 자막이 남의 대사를
+  //   덮는데(그게 전제다) 그중 하나가 대본과 어긋나 매칭에 실패하면 커서가 안 밀린다 → 뒤따르는
+  //   내 세그먼트가 그 미소비 구간에서 자기 텍스트를 찾아 남의 자리를 물어온다. missed는 0인 채라
+  //   조용하다. 그래서 otherMiss>0 + "이 자막이 남의 대사를 덮는다"가 조건이다.
+  //
+  //   덮는지는 **호출측이 안다**(coversOtherSpeakers): 나레이터 mp3는 대본 전체를 읽었고 인물
+  //   mp3는 그 인물 대사만 덮는다. 그게 이 모듈의 모델이다.
+  //
+  //   한때 `|| otherHit > 0`을 얹어 "호출측이 안 알려줘도 증거로 선다"고 했는데 뺐다. 알려주는
+  //   호출자가 유일하니 얻는 게 없고, otherHit은 증거로도 부실하다: 인물 전용 SRT의 애드리브가
+  //   남의 짧은 대사와 **우연히 일치**하면 otherHit=1이 서서, 정확히 false로 알려준 호출측 정보를
+  //   뒤집고 멀쩡한 import를 막는다.
+  //
+  // 왜 skipped를 차단 조건에서 뺐나: 인물 전용 mp3에선 otherMiss>0이 **기본값**이다(나레이터
+  // 세그먼트는 애초에 이 자막에 없다). 거기에 애드리브가 하나라도 섞이면 skipped>0이 되어,
+  // 옛 조건 `otherMiss>0 && skipped>0`은 **멀쩡한 인물 mp3를 통째로 막았다** — 두 정상 현상의
+  // 곱을 위험으로 읽은 것이다.
+  //
+  // ── 한계 (dangerous === false를 보장으로 읽지 말 것) ──
+  // 어긋난 남의 자막이 뒤따르는 내 세그먼트 텍스트를 커서 위치에서 통째로 포함하면 흔적이 안
+  // 남는다 — 탐욕적 최초매칭의 본질적 한계다. 피해는 제한적이다(같은 나레이터 목소리로 거의 같은
+  // 말을 읽은 구간).
   const divergent = skipped > 0
-  return { scenes: next, aligned, missed, total, otherHit, otherMiss, skipped, divergent, firstHole, missedIds }
+  const dangerous = coversOtherSpeakers && otherMiss > 0
+  return { scenes: withApproximations, aligned, missed, approximated, total, otherHit, otherMiss, skipped, divergent, dangerous, unpaired, firstHole, missedIds, approximatedIds, gapped, gappedIds }
 }
 
 /**

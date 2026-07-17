@@ -152,8 +152,8 @@ describe('SpeakerAudioSource', () => {
     expect(onChange).toHaveBeenCalledWith({ mp3Path: 'C:\\b\\ep3.mp3', srtPath: 'C:\\b\\ep3.srt' })
   })
 
-  // 한쪽만 바꾸는 건 정당한 사용이다(오디오만 다시 뽑고 자막은 그대로). 짝이 안 맞으면 ⑤가
-  // story-audio-import-unmatched로 시끄럽게 막으므로 조용히 틀리진 않는다.
+  // 한쪽만 바꾸는 건 정당한 사용이다(오디오만 다시 뽑고 자막은 그대로). 짝이 어긋나면 ⑤가
+  // 최선 구간으로 자르고 경고하므로 사용자가 결과를 확인할 수 있다.
   it('mp3만 놓으면 기존 SRT와 짝지어 올린다 — 한쪽만 교체하는 것도 정당하다', () => {
     const onChange = vi.fn()
     const r2 = (f) => (f.name === 'ep3.mp3' ? 'C:\\b\\ep3.mp3' : '')

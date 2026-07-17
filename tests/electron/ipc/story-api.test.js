@@ -6,6 +6,14 @@ import path from 'node:path'
 import { registerStoryIPC } from '../../../electron/ipc/story-api.js'
 import { defaultStoryState } from '../../../electron/story/storyStore.js'
 
+// manifest 를 심는 픽스처는 audio 스텝이 성공한 상태여야 현실과 맞는다 — manifest 는 조립
+// (전체 성공) 경로에서만 쓰인다. done 이 아닌데 manifest 가 남은 경우는 옛 실행의 잔재라
+// readAudioPackage 가 export 를 막는다(stepMachine.loadAudioPackage.test.js 가 그쪽을 본다).
+const audioDoneState = (lastPushedRevision) => {
+  const base = defaultStoryState()
+  return { ...base, lastPushedRevision, steps: { ...base.steps, audio: { ...base.steps.audio, status: 'done' } } }
+}
+
 function fakeIpcMain() {
   const handlers = new Map()
   return { handle: (ch, fn) => handlers.set(ch, fn), invoke: (ch, payload) => handlers.get(ch)(null, payload), handlers }
@@ -230,14 +238,39 @@ describe('story IPC', () => {
     const { mkdir, writeFile } = await import('node:fs/promises')
     await mkdir(path.join(dir, 'story', 'audio'), { recursive: true })
     await writeFile(path.join(dir, 'story', 'audio', 'manifest.json'),
-      JSON.stringify({ version: 1, pushRevision: 2, segments: [{ id: 's1', type: 'narration', startMs: 0, durationMs: 500 }] }))
+      JSON.stringify({ version: 1, pushRevision: 2, segments: [{ id: 's1', type: 'narration', audioPath: '/p/story/audio/segments/s1.wav', startMs: 0, durationMs: 500 }] }))
     await writeFile(path.join(dir, 'story', 'story.json'),
-      JSON.stringify({ ...defaultStoryState(), lastPushedRevision: 2 }))
+      JSON.stringify(audioDoneState(2)))
     await ipc.invoke('story:open', { projectPath: dir })
     const pkg = await ipc.invoke('story:load-audio-package', {})
     expect(pkg.manifest.pushRevision).toBe(2)
     expect(pkg.lastPushedRevision).toBe(2)
     expect(pkg.manifest.segments).toHaveLength(1)
+  })
+
+  // readAudioPackage 는 stale/손상 manifest 를 throw 로 알린다. 그 throw 가 ipcRenderer.invoke 를
+  // 그냥 건너가면 errorKind 가 소실되고(Electron 은 message 만 직렬화한다) renderer 는 번역할 게
+  // 없어 한국어 UI에도 내부 영문 문구가 뜬다. 이 파일의 관습대로 { error: kind } 로 넘긴다.
+  it('story:load-audio-package — stale manifest 는 errorKind 를 실어 보낸다(영문 생메시지 금지)', async () => {
+    const { mkdir, writeFile } = await import('node:fs/promises')
+    await mkdir(path.join(dir, 'story', 'audio'), { recursive: true })
+    await writeFile(path.join(dir, 'story', 'audio', 'manifest.json'),
+      JSON.stringify({ version: 1, pushRevision: 2, segments: [] }))
+    // audio 가 done 이 아닌데 manifest 가 남아 있다(③/④ 재실행 또는 절단 실패 후).
+    await writeFile(path.join(dir, 'story', 'story.json'), JSON.stringify(defaultStoryState()))
+    await ipc.invoke('story:open', { projectPath: dir })
+    const r = await ipc.invoke('story:load-audio-package', {})
+    expect(r).toEqual({ error: 'story-audio-stale-manifest' })
+  })
+
+  it('story:load-audio-package — 손상 manifest 도 errorKind 로 넘긴다', async () => {
+    const { mkdir, writeFile } = await import('node:fs/promises')
+    await mkdir(path.join(dir, 'story', 'audio'), { recursive: true })
+    await writeFile(path.join(dir, 'story', 'audio', 'manifest.json'), '{ not valid json ')
+    await writeFile(path.join(dir, 'story', 'story.json'), JSON.stringify(audioDoneState(1)))
+    await ipc.invoke('story:open', { projectPath: dir })
+    const r = await ipc.invoke('story:load-audio-package', {})
+    expect(r).toEqual({ error: 'story-audio-manifest-corrupt' })
   })
 
   it('story:load-audio-package — projectPath 없고 machine 도 없으면 null', async () => {
@@ -253,7 +286,7 @@ describe('story IPC', () => {
     await writeFile(path.join(dir, 'story', 'audio', 'manifest.json'),
       JSON.stringify({ version: 1, pushRevision: 4, segments: [] }))
     await writeFile(path.join(dir, 'story', 'story.json'),
-      JSON.stringify({ ...defaultStoryState(), lastPushedRevision: 4 }))
+      JSON.stringify(audioDoneState(4)))
     // open 하지 않음(machine null)
     const pkg = await ipc.invoke('story:load-audio-package', { projectPath: dir })
     expect(pkg.manifest.pushRevision).toBe(4)
@@ -274,7 +307,7 @@ describe('story IPC', () => {
     await writeFile(path.join(outside, 'story', 'audio', 'manifest.json'),
       JSON.stringify({ version: 1, pushRevision: 1, segments: [] }))
     await writeFile(path.join(outside, 'story', 'story.json'),
-      JSON.stringify({ ...defaultStoryState(), lastPushedRevision: 1 }))
+      JSON.stringify(audioDoneState(1)))
     const ipc2 = fakeIpcMain()
     registerStoryIPC(ipc2, {
       keyStore: { getKey: () => 'k' },
@@ -292,9 +325,9 @@ describe('story IPC', () => {
     const other = await mkdtemp(path.join(tmpdir(), 'ipc-other-'))
     await mkdir(path.join(other, 'story', 'audio'), { recursive: true })
     await writeFile(path.join(other, 'story', 'audio', 'manifest.json'),
-      JSON.stringify({ version: 1, pushRevision: 7, segments: [{ id: 'x', type: 'narration', startMs: 0, durationMs: 1 }] }))
+      JSON.stringify({ version: 1, pushRevision: 7, segments: [{ id: 'x', type: 'narration', audioPath: '/p/story/audio/segments/x.wav', startMs: 0, durationMs: 1 }] }))
     await writeFile(path.join(other, 'story', 'story.json'),
-      JSON.stringify({ ...defaultStoryState(), lastPushedRevision: 7 }))
+      JSON.stringify(audioDoneState(7)))
     // machine 은 dir(A) 로 열고, other(B) manifest 를 요청
     await ipc.invoke('story:open', { projectPath: dir })
     const pkg = await ipc.invoke('story:load-audio-package', { projectPath: other })

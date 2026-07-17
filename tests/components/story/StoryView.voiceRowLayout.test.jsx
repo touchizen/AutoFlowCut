@@ -39,10 +39,25 @@ describe('.story-voice-row', () => {
     expect(tracks).toHaveLength(3)
   })
 
-  it('열 사이에 간격을 둔다', () => {
+  // gap 은 `<행> <열>` 두 값을 쓸 수 있다 — 한 값만 파싱하면 행 간격을 열 간격으로 착각한다.
+  it('열 사이에 간격을 둔다 — 붙으면 성우/생성 버튼이 한 덩어리로 보인다', () => {
     const gap = decl('.story-voice-row', 'gap')
     expect(gap).toBeTruthy()
-    expect(parseInt(gap, 10)).toBeGreaterThanOrEqual(12)
+    const parts = gap.split(/\s+/).filter(Boolean).map((v) => parseInt(v, 10))
+    const columnGap = parts.length > 1 ? parts[1] : parts[0] // 두 값이면 뒤가 열 간격
+    expect(columnGap).toBeGreaterThanOrEqual(12)
+  })
+
+  // 출처(mp3/SRT)를 같은 줄에 두면 300px 열이 필요해 appearance 가 230px 로 쥐어짜였다
+  // (실측 스크린샷: 인물 설명이 6줄로 접힘). 아랫줄로 내려 그 폭을 설명에 돌려준다.
+  it('출처(mp3/SRT)는 아랫줄에 둔다 — 같은 줄이면 설명 칸을 잡아먹는다', () => {
+    const areas = decl('.story-voice-row', 'grid-template-areas')
+    expect(areas, 'grid-template-areas 로 자리를 명시해야 한다').toBeTruthy()
+    const rows = areas.match(/"[^"]*"/g).map((r) => r.replace(/"/g, '').trim().split(/\s+/))
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toEqual(['speaker', 'voice', 'run']) // 윗줄: 화자 | 성우 | 생성
+    expect(rows[1]).toContain('source') // 아랫줄: 출처
+    expect(rows[0]).not.toContain('source')
   })
 })
 

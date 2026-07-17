@@ -477,10 +477,22 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
    * 시딩된다), 그러면 주 화자에서 바로 어긋나 판정이 죽는다.
    */
   const refKey = (v) => (isNarratorSpeaker(v) ? 'narrator' : String(v || '').replace(/\s/g, '').toLowerCase())
-  const isImportSpeaker = (speakerRef) => {
+  /**
+   * 세그먼트의 화자 참조(id·이름·별칭) → 화자 객체. main의 findSpeakerByRef와 **같은 정규화**여야
+   * 한다 — 어긋나면 같은 세그먼트를 main은 A에, UI는 B에 붙인다.
+   *
+   * 공백뿐인 참조는 뺀다(main과 같은 이유): refKey는 그걸 'narrator'로 접으므로, name이 '   '인
+   * 인물이 나레이터 별칭을 갖게 되고 목록에서 나레이터보다 앞이면 **나레이터 세그먼트가 그 인물
+   * 것으로** 잡힌다(진행 배지가 합쳐지고 나레이터 성우 버튼이 사라진다). 스키마가 공백 이름을 허용한다.
+   */
+  const speakerByRef = (speakerRef) => {
     const key = refKey(speakerRef)
-    if (!key) return false
-    const sp = (state?.speakers || []).find((s) => [s.id, s.name].filter(Boolean).map(refKey).includes(key))
+    if (!key) return null
+    const keysOf = (s) => [s.id, s.name].filter((v) => String(v || '').trim()).map(refKey)
+    return (state?.speakers || []).find((s) => keysOf(s).includes(key)) || null
+  }
+  const isImportSpeaker = (speakerRef) => {
+    const sp = speakerByRef(speakerRef)
     if (!sp) return false
     const src = voiceSel.importForSpeaker(sp)
     return !!(src?.mp3Path && src?.srtPath)
@@ -926,14 +938,32 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     return {}
   }
 
+  /**
+   * 확인이 필요한 조각 표식. 진행 로그로는 부족하다 — 메모리라 start() 마다 지워지고(전체 실행은
+   * audio 완료 직후 prompts 를 시작한다) 재오픈하면 없다. 영속된 사실을 목록에 띄운다.
+   *
+   * 두 사유는 **다른 사실**이라 문구를 나눈다 — 합치면 툴팁이 거짓말이 된다:
+   *   approx      — 자막에서 정확한 자리를 못 찾아 이웃 사이로 보간해 잘랐다.
+   *   needsReview — 남의 대사가 어긋나 이 출처의 오디오가 남의 자리를 물어왔을 수 있다.
+   */
+  const renderSegmentMark = (seg) => {
+    const hint = seg.approx
+      ? t('story.audio.approxHint', '자막에서 정확한 자리를 못 찾아 근처로 잘랐습니다 — 들어보고 조정하세요')
+      : seg.needsReview
+        ? t('story.audio.needsReviewHint', '자막의 다른 화자 대사가 대본과 어긋나, 이 조각이 남의 자리 오디오일 수 있습니다 — 들어보세요')
+        : null
+    if (!hint) return null
+    return <span className="story-seg-approx" data-testid={`seg-mark-${seg.id}`} title={hint}>≈</span>
+  }
+
   // 세그먼트 셀 — 윗줄 대화. 감정은 화자(대사)만 아랫줄 (감정)으로, 나레이터는 제외.
   // 감정은 TTS·프롬프트 작성에도 쓰인다.
   const renderNarrationCell = (seg) => {
-    if (isNarratorSpeaker(seg.speaker)) return seg.text
+    if (isNarratorSpeaker(seg.speaker)) return <>{renderSegmentMark(seg)}{seg.text}</>
     const emo = seg.emotion || 'normal'
     return (
       <div className="story-seg-cell">
-        <div className="story-seg-text">{seg.text}</div>
+        <div className="story-seg-text">{renderSegmentMark(seg)}{seg.text}</div>
         <div className="story-seg-emotion">({t(`story.emotion.${emo}`, EMOTION_LABEL[emo] || EMOTION_LABEL.normal)})</div>
       </div>
     )
@@ -946,8 +976,28 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     setViewedStep(null)
   }
 
+  const runSpeakerAudio = async (sp) => {
+    const result = await start('audio', { ...buildAudioParams(), onlySpeaker: sp.id })
+    // main 의 거절(대사 없는 화자 등)은 **사전검사라 스텝 상태를 일부러 안 건드린다**(완료 프로젝트의
+    // done 을 지키려고). 그래서 오류 배너도 안 뜬다 — 여기서 안 띄우면 버튼이 무반응으로 보인다.
+    // busy 는 뺀다: 실행 중엔 화자 맵 자체가 안 보이므로 사용자가 만든 상황이 아니다.
+    if (result?.error && result.error !== 'busy') {
+      toast.error(resolveDisplayError(t, result.error, result.error))
+      return
+    }
+    if (result?.partialAudioRun) {
+      const speaker = sp.name || sp.id
+      toast.success(t(
+        'story.audio.runThisSpeakerDone',
+        '{speaker} generated — run the full step to complete the timeline',
+        { speaker },
+      ))
+    }
+  }
+
   // audio 타임라인 프리뷰 — story 세그먼트를 화자별 voices audioPackage로 변환해 기존 AudioTimeline
-  // (LiveTimeline)에 넘긴다(디스크 재배치 없이 메모리 변환). audio done일 때만 렌더.
+  // (LiveTimeline)에 넘긴다(디스크 재배치 없이 메모리 변환). 만들어진 오디오가 있으면 렌더 —
+  // done 을 기다리면 부분 실행("이 화자만 생성")이 영영 확인이 안 된다.
   const storyAudioPkg = useMemo(() => buildStoryAudioPackage(scenes), [scenes])
   const storySrtEntries = useMemo(() => buildStorySrtEntries(scenes), [scenes])
   // Codex-Low: sfx만 있는 story(narration 없음)도 타임라인에 나오도록 sfx도 포함해 판정.
@@ -1150,11 +1200,16 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     const resolved = await resolveTitle()
     if (resolved == null) return false // 제목 자동생성 실패 → 실행 안 함(자동 진행이 이걸로 멈춤)
     // resolveTitle이 생성한 title을 main source of truth에 커밋 — 없으면 재오픈 hydrate가 제목을 잃는다.
-    const res = await start('scenes', { scriptOverride: scriptText, options: currentOptions(), title: resolved })
-    // §1 — scenes 실행으로 scriptPhase를 벗고 스텝퍼가 진행한다.
     setScriptPhase(null)
-    setViewedStep(null) // 씬 분리 진행 시 현재 단계(scenes) 패널로 화면 이동
-    return !res?.error // busy 등 enqueue 실패면 false
+    // 재분리에서는 currentStep이 audio 이후일 수 있어 null로 비우면 그 패널로 튄다.
+    setViewedStep('scenes')
+    try {
+      const res = await start('scenes', { scriptOverride: scriptText, options: currentOptions(), title: resolved })
+      setViewedStep(null)
+      return !res?.error // busy 등 enqueue 실패면 false
+    } catch {
+      return false
+    }
   }
 
   // ── 자동 진행 오케스트레이션 ──────────────────────────────────────────────
@@ -1282,12 +1337,16 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
     for (const sc of scenes) {
       for (const seg of sc.segments || []) {
         if ((seg.type || 'narration') === 'sfx' || !seg.speaker) continue
-        const cur = m.get(seg.speaker) || { total: 0, done: 0, error: 0 }
+        // seg.speaker는 id가 아니라 이름/별칭일 수 있다 — 조회는 sp.id로 하므로 여기서 id로 접는다.
+        // 원시값으로 키잉하면 나레이터({id:'narrator', name:'나레이션'})부터 어긋나 배지가 사라진다.
+        const spId = speakerByRef(seg.speaker)?.id
+        if (!spId) continue
+        const cur = m.get(spId) || { total: 0, done: 0, error: 0 }
         cur.total += 1
         const st = segmentProgress[seg.id] || seg.status || 'pending'
         if (st === 'done') cur.done += 1
         else if (st === 'error') cur.error += 1
-        m.set(seg.speaker, cur)
+        m.set(spId, cur)
       }
     }
     return m
@@ -1808,8 +1867,15 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
             {/* 실패했을 때도 로그를 남겨 둔다 — "자막이 안 맞는다"는 배너만 보고는 어디를 고칠지 모른다.
                 로그가 비었으면(앱을 껐다 켠 뒤: 오류는 story.json에 영속되지만 progressLog는 메모리라
                 open 시 비워진다) 영속된 원문 진단을 대신 보여준다 — 배너의 번역문은 상세를 버린다
-                (errorDisplay.js). 안 그러면 "진행 로그를 보라"는 안내가 없는 로그를 가리킨다. */}
-            {steps.audio?.status === 'error' && (audioProgressLog.length > 0 || steps.audio.error) && (
+                (errorDisplay.js). 안 그러면 "진행 로그를 보라"는 안내가 없는 로그를 가리킨다.
+
+                **성공(done)했어도 경고가 있으면 남긴다.** 가져오기는 안 맞아도 막지 않고 대략 잘라
+                놓고 경고하는 정책이라(사용자 결정), 그 실행은 done으로 끝난다 — 여기서 안 띄우면
+                "어느 조각이 보간됐나 / 남의 자리를 물어왔나"가 완료되는 순간 사라져 확인할 방법이
+                없어진다. 경고 없는 깨끗한 실행(ep02 실측: 237/237 exact)엔 안 띄운다 — 정상에
+                소음을 얹으면 경고가 경고로 안 읽힌다. */}
+            {(steps.audio?.status === 'error' || audioProgressLog.some((e) => e.level === 'warn' || e.level === 'error'))
+              && (audioProgressLog.length > 0 || steps.audio?.error) && (
               <div className="story-progress-log" role="log" data-testid="audio-progress-log">
                 {(audioProgressLog.length > 0
                   ? audioProgressLog
@@ -1917,15 +1983,35 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                               </span>
                             )}
                           </button>
-                          {/* 화자별 오디오 출처 — 위젯 자체도 드롭을 받지만, 위 행 전체가 위임한다. */}
-                          <SpeakerAudioSource
-                            ref={(h) => { if (h) srcDropHandles.current.set(sp.id, h); else srcDropHandles.current.delete(sp.id) }}
-                            source={src}
-                            disabled={isRunning}
-                            onPick={pipeline.pickAudioImportFile}
-                            onChange={(next) => voiceSel.setImportForSpeaker(sp.id, next)}
-                            t={t}
-                          />
+                          {/* 아이콘 하나로 — 라벨("이 화자만 생성"/"Generate this speaker")을 그대로 두면
+                              열을 통째로 먹어 인물 특징 텍스트가 좁아진다. ✨는 이 앱이 이미 "생성"에
+                              쓰는 기호다(시작 버튼). 설명은 툴팁으로, 이름은 aria-label로 남긴다 —
+                              아이콘만 두면 스크린리더와 테스트가 버튼을 못 읽는다. */}
+                          <button
+                            type="button"
+                            className="story-speaker-run-btn"
+                            onClick={() => runSpeakerAudio(sp)}
+                            // ✨ 가 보이는데 다른 작업이 도는 상태가 둘 있다: 미리듣기 중(steps.audio 가
+                            // running 이 아니다)과 audio:done + 다른 스텝 running(완료된 탭을 다시 열 수
+                            // 있다). 누르면 start() 가 invoke 전에 segmentProgress/progressLog 를 비워
+                            // **돌던 작업의 진행·경고가 증발**하고, main 의 busy 는 조용히 무시된다.
+                            disabled={isRunning || previewBusy}
+                            aria-label={t('story.audio.runThisSpeakerFor', `${sp.name || sp.id}만 생성`, { speaker: sp.name || sp.id })}
+                            title={t('story.audio.runThisSpeakerHint', '이 화자 세그먼트만 생성합니다. 나머지 화자는 그대로 두고, 결과를 먼저 확인할 수 있습니다.')}
+                          >
+                            ✨
+                          </button>
+                          <div className="story-voice-source">
+                            {/* 화자별 오디오 출처 — 위젯 자체도 드롭을 받지만, 위 행 전체가 위임한다. */}
+                            <SpeakerAudioSource
+                              ref={(h) => { if (h) srcDropHandles.current.set(sp.id, h); else srcDropHandles.current.delete(sp.id) }}
+                              source={src}
+                              disabled={isRunning}
+                              onPick={pipeline.pickAudioImportFile}
+                              onChange={(next) => voiceSel.setImportForSpeaker(sp.id, next)}
+                              t={t}
+                            />
+                          </div>
                         </div>
                       )
                     })}
@@ -1958,7 +2044,14 @@ export default function StoryView({ pipeline, voices = [], onClose = null, onTag
                     </Modal>
                   )
                 })()}
-                {steps.audio?.status === 'done' && hasStoryAudio && (
+                {/* done 게이트를 걷어냈다 — **일부라도 만들어졌으면 보여야 확인할 수 있다.**
+                    "이 화자만 생성"은 설계상 조립을 건너뛰고 done 을 안 찍는다(반쪽 타임라인·manifest 가
+                    생기면 안 되므로). done 을 요구하면 그 기능이 영영 타임라인을 못 봐 "나레이터만 먼저
+                    확인"이라는 목적 자체가 무너진다. 부분재시도(다른 화자 TTS 실패)도 같다 —
+                    실측(무한야담ep02): 나레이터 237개가 잘려 있는데 audio 는 pending 이라 화면이 비었다.
+                    export 는 audio.status==='done' 을 따로 요구하므로(readAudioPackage) 미완성 타임라인이
+                    결과물로 새지 않는다. hasStoryAudio 가 "만들어진 게 있나"를 판정한다. */}
+                {hasStoryAudio && (
                   <div className="story-audio-timeline">
                     <LiveTimeline audioPackage={storyAudioPkg} scenes={[]} srtEntries={storySrtEntries} />
                   </div>

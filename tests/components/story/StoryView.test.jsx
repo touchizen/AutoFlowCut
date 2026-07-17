@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+// LiveTimeline 은 무거운 AudioTimeline(I18nProvider 필요)을 끌고 온다 — 이 파일은 세그먼트 목록만
+// 보므로 stub 한다. 타임라인 자체는 StoryView.audioTimeline.test.jsx 가 본다.
+vi.mock('../../../src/components/LiveTimeline', () => ({ default: () => <div data-testid="lt" /> }))
+
 import StoryView from '../../../src/components/story/StoryView.jsx'
 import { I18nProvider } from '../../../src/hooks/useI18n.jsx'
 

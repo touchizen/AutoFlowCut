@@ -246,9 +246,13 @@ export async function prepareCloudRequest(project, options = {}) {
     const { manifest, lastPushedRevision } = storyAudio;
     const pushRevision = manifest?.pushRevision;
     if (pushRevision == null || pushRevision !== lastPushedRevision) {
-      throw new Error(
+      // errorKind 를 단다 — 없으면 useExport 의 resolveDisplayError 가 원문을 그대로 쓰고,
+      // 한국어 UI에도 이 영문 진단문이 토스트로 뜬다. 숫자는 진단용이라 메시지에만 남긴다.
+      const err = new Error(
         `story audio out of sync: manifest.pushRevision(${pushRevision}) !== lastPushedRevision(${lastPushedRevision}) — export blocked`
       );
+      err.errorKind = 'story-audio-out-of-sync';
+      throw err;
     }
     const trackIndexForSpeaker = createNarrationTrackFallbackResolver(manifest.segments || []);
     for (const seg of (manifest.segments || [])) {

@@ -1059,14 +1059,21 @@
   margin-bottom: 12px;
 }
 .story-voice-row {
-  /* [화자 | 성우 | 출처] 3열 고정 그리드.
+  /* [화자 | 성우 | ✨] 3열 고정 그리드 + 출처(mp3/SRT)는 **아랫줄**.
      flex로 두면 appearance(인물 특징) 텍스트 길이가 남는 폭을 제각각 먹어 성우 버튼 x좌표와
      출처 칩 폭이 행마다 달라진다(나레이션 행은 appearance가 없어 출처가 넓어 칩이 1줄, 인물
-     행은 좁아 2줄로 갈라졌다). 열 폭을 고정하면 모든 행에서 정확히 같은 자리에 정렬된다. */
+     행은 좁아 2줄로 갈라졌다). 열 폭을 고정하면 모든 행에서 정확히 같은 자리에 정렬된다.
+
+     출처를 같은 줄에 두면 300px짜리 열이 통째로 필요해 appearance가 230px까지 쥐어짜였다(실측
+     스크린샷: 인물 설명이 6줄로 접힘). 아랫줄로 내려 그 폭을 appearance에 돌려준다. 화자 칸은
+     두 줄에 걸쳐(speaker/speaker) 설명이 세로로 자랄 자리를 갖는다. */
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(150px, 200px) 300px;
+  grid-template-columns: minmax(0, 1fr) minmax(110px, 150px) max-content;
+  grid-template-areas:
+    "speaker voice run"
+    "speaker source source";
   align-items: center;
-  gap: 16px;
+  gap: 8px 12px;
   padding: 6px 8px;
   border-radius: var(--border-radius);
 }
@@ -1137,6 +1144,29 @@
   min-width: 0;
   text-align: left;
   cursor: pointer;
+}
+.story-speaker-run-btn {
+  /* 아이콘 하나짜리 정사각 — 라벨 버튼이던 시절의 padding 을 남기면 출처 칩을 다시 밀어낸다. */
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  background: transparent;
+  color: var(--text-color);
+  font-size: 0.75rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.story-speaker-run-btn:hover {
+  border-color: var(--accent-color, #6aa9ff);
+  color: var(--accent-color, #6aa9ff);
 }
 
 /* ── 세그먼트 미리듣기/재생성 액션 (M2a-3c/3d) ── */
@@ -1287,3 +1317,19 @@
   padding: 2px 8px;
   font-size: inherit;
 }
+
+/* 자막에서 정확한 자리를 못 찾아 근처로 잘라낸 조각 — 들어보고 조정해야 한다.
+   경고 로그는 지워지지만 이 표시는 scenes.json 에 영속돼 재오픈해도 남는다. */
+.story-seg-approx {
+  display: inline-block;
+  margin-right: 4px;
+  color: #d97706;
+  font-weight: 700;
+  cursor: help;
+}
+
+/* 그리드 자리 배정 — 출처만 아랫줄이다(위 .story-voice-row 주석 참고). */
+.story-voice-info { grid-area: speaker; align-self: start; }
+.story-voice-picker-btn { grid-area: voice; }
+.story-speaker-run-btn { grid-area: run; }
+.story-voice-source { grid-area: source; min-width: 0; }
