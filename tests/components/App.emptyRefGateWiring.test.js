@@ -59,6 +59,14 @@ const emptyRefModal = sliceBetween(
   '{emptyRefGate && (',
   '{/* #R34: 생성 전 미동기화'
 )
+const handleStopImpl = sliceBetween(
+  'const handleStop =',
+  '// MCP HTTP 서버'
+)
+const referencePanel = sliceBetween(
+  '<ReferencePanel',
+  '<PreviewMonitor'
+)
 
 describe('App empty reference gate wiring', () => {
   it('direct 이미지 시작과 tag-proceed가 모두 같은 coordinator를 호출한다', () => {
@@ -141,9 +149,14 @@ describe('App empty reference gate wiring', () => {
 
   // busy 에는 모달 자체가 없다 — 모달이 열려 있으면 layout.js 가 Flow WebContentsView 를 0×0 으로
   // 줄여 sendInputEvent 기반 DOM 자동화가 죽는다(자기가 기다리는 생성을 자기가 막는 데드락).
-  // 그래서 중지는 모달 안의 버튼이 아니라 오버레이가 사라져 다시 보이는 앱의 Stop 이 담당한다.
-  it('ref batch 중지는 앱의 handleStop 이 담당한다 (모달 전용 stop 버튼 없음)', () => {
+  // 큐 대기/아이템 preflight 에서는 refBatchRunning 이 잠시 false 여도 gate phase 는 계속 busy 다.
+  it('gate busy 중지는 ref batch lifecycle flag의 빈틈에서도 앱 Stop으로 도달한다', () => {
     expect(emptyRefModal).not.toContain('onStop=')
-    expect(source).toContain('if (refBatchRunning) stopGenerateAllRefs()')
+    expect(handleStopImpl).toContain("emptyRefGate?.phase === 'busy'")
+    expect(handleStopImpl).toContain('stopGenerateAllRefs()')
+  })
+
+  it('gate pending latch를 ReferencePanel 진입점 비활성화에 전달한다', () => {
+    expect(referencePanel).toContain('hasPendingBatch={hasPendingBatch}')
   })
 })

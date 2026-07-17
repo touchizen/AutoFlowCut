@@ -275,8 +275,14 @@ describe('useReferenceGeneration — queued batch stop semantics', () => {
         targetRefKeys: ['id:second'],
       })
       await Promise.resolve()
-      result.current.stopGenerateAllRefs()
     })
+
+    // Batch execute는 앞선 individual job 뒤에 대기 중이라 lifecycle state가 아직 비어 있다.
+    // 이 창에서도 외부(App gate busy) Stop이 callback에 도달하면 queued stop version이 소비돼야 한다.
+    expect(result.current.preparingRefs).toBe(false)
+    expect(result.current.generatingRefs).toEqual([0])
+
+    act(() => result.current.stopGenerateAllRefs())
     expect(result.current.stoppingRefs).toBe(true)
 
     await act(async () => {
@@ -297,6 +303,87 @@ describe('useReferenceGeneration — queued batch stop semantics', () => {
       ok: false,
       outcome: 'stopped',
       requestedKeys: ['id:second'],
+      attemptedKeys: [],
+      succeededKeys: [],
+      failed: [],
+    })
+    expect(result.current.stoppingRefs).toBe(false)
+  })
+
+  it('scene job 뒤에 queued된 batch는 lifecycle flags가 비어 있어도 gate Stop으로 stopped 된다', async () => {
+    const sceneResult = deferred()
+    const refs = [{
+      id: 'queued-ref',
+      prompt: 'queued portrait',
+      type: 'scene',
+      status: 'pending',
+    }]
+    const genAPI = {
+      mode: 'api',
+      getAccessToken: vi.fn().mockResolvedValue('token'),
+      clearTokenCache: vi.fn(),
+      submitGeneration: vi.fn().mockResolvedValue({
+        success: false,
+        error: 'queued batch should not submit',
+      }),
+      clearGenerations: vi.fn().mockResolvedValue(undefined),
+    }
+    const { result } = renderHook(() => {
+      const generationQueue = useGenerationQueue()
+      const refGeneration = useReferenceGeneration({
+        settings: { saveMode: 'project', imageBatchCount: 1 },
+        references: refs,
+        setReferences: vi.fn(),
+        genAPI,
+        addPendingSave: vi.fn(),
+        openSettings: vi.fn(),
+        t: key => key,
+        generationQueue,
+      })
+      return { ...refGeneration, generationQueue }
+    })
+
+    let scenePromise
+    await act(async () => {
+      scenePromise = result.current.generationQueue.enqueue({
+        type: 'image',
+        label: 'Scene regeneration',
+        execute: () => sceneResult.promise,
+      })
+      await Promise.resolve()
+    })
+
+    let batchPromise
+    await act(async () => {
+      batchPromise = result.current.handleGenerateAllRefs(null, {
+        targetRefKeys: ['id:queued-ref'],
+      })
+      await Promise.resolve()
+    })
+
+    // 실제 회귀 창: scene job만 실행 중이라 ref batch lifecycle state는 아직 하나도 켜지지 않는다.
+    expect(result.current.preparingRefs).toBe(false)
+    expect(result.current.generatingRefs).toEqual([])
+    expect(result.current.stoppingRefs).toBe(false)
+
+    act(() => result.current.stopGenerateAllRefs())
+    expect(result.current.stoppingRefs).toBe(true)
+
+    await act(async () => {
+      sceneResult.resolve({ success: true })
+      await scenePromise
+    })
+
+    let batchResult
+    await act(async () => {
+      batchResult = await batchPromise
+    })
+
+    expect(genAPI.submitGeneration).not.toHaveBeenCalled()
+    expect(batchResult).toMatchObject({
+      ok: false,
+      outcome: 'stopped',
+      requestedKeys: ['id:queued-ref'],
       attemptedKeys: [],
       succeededKeys: [],
       failed: [],

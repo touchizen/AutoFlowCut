@@ -1963,7 +1963,7 @@ function App() {
   const handleStop = () => {
     if (isRunning) stop()
     if (videoAutomation.isRunning) videoAutomation.stop()
-    if (refBatchRunning) stopGenerateAllRefs()
+    if (refBatchRunning || emptyRefGate?.phase === 'busy') stopGenerateAllRefs()
   }
 
   // MCP HTTP 서버 (시작/중지, 글로벌 접근자, 업데이트 수신, 배치 핸들러)
@@ -2170,6 +2170,7 @@ function App() {
             generatingRefs={generatingRefs}
             stoppingRefs={stoppingRefs}
             preparingRefs={preparingRefs}
+            hasPendingBatch={hasPendingBatch}
             selectedStyleRefId={selectedStyleRefId}
             onStyleRefChange={setSelectedStyleRefId}
             flowProjectId={_flowProjectId}

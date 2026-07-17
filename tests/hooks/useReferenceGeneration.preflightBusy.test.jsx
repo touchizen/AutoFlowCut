@@ -76,6 +76,51 @@ describe('#R27-2: single-ref preflight is busy', () => {
     expect(genAPI.generateImage).not.toHaveBeenCalled()
   })
 
+  it('gate Stop issued during Flow character item auth preflight ends the batch stopped', async () => {
+    let resolveItemAuth
+    guards.checkAuthToken
+      .mockResolvedValueOnce(true) // batch-level auth preflight
+      .mockReturnValueOnce(new Promise((resolve) => { resolveItemAuth = resolve }))
+
+    const refs = [{ id: 1, prompt: 'a portrait', type: 'character', status: 'pending' }]
+    const genAPI = {
+      mode: 'flow',
+      getAccessToken: vi.fn().mockResolvedValue('token'),
+      clearTokenCache: vi.fn(),
+      generateImage: vi.fn().mockResolvedValue({ success: false, error: 'after preflight' }),
+      clearGenerations: vi.fn().mockResolvedValue(undefined),
+    }
+    const { result } = renderHook(() => useReferenceGeneration({
+      settings: { saveMode: 'memory', imageBatchCount: 1 },
+      references: refs, setReferences: vi.fn(), genAPI,
+      addPendingSave: vi.fn(), openSettings: vi.fn(), t: (k) => k, generationQueue: null,
+    }))
+
+    let batchPromise
+    await act(async () => {
+      batchPromise = result.current.handleGenerateAllRefs(null, {
+        targetRefKeys: ['id:1'],
+      })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(guards.checkAuthToken).toHaveBeenCalledTimes(2)
+    expect(result.current.preparingRefs).toBe(false)
+    expect(result.current.generatingRefs).toEqual([])
+
+    act(() => result.current.stopGenerateAllRefs())
+    expect(result.current.stoppingRefs).toBe(true)
+
+    let batchResult
+    await act(async () => {
+      resolveItemAuth(true)
+      batchResult = await batchPromise
+    })
+
+    expect(batchResult.outcome).toBe('stopped')
+    expect(result.current.stoppingRefs).toBe(false)
+  })
+
   // #R28-4: batch — generatingRefs must already be set DURING the style-ref prepare upload, so
   //   refBatchRunning stays true across the window between preparingRefs=false and submit.
   it('batch sets generatingRefs during the style-ref prepare upload (no busy gap)', async () => {

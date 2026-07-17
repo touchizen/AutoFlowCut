@@ -29,6 +29,7 @@ export default function ReferencePanel({
   generatingRefs = [],
   stoppingRefs = false,
   preparingRefs = false,
+  hasPendingBatch = false,
   selectedStyleRefId,
   onStyleRefChange,
   projectName,
@@ -262,7 +263,7 @@ export default function ReferencePanel({
               <button
                 className="btn-sync-all"
                 onClick={handleSyncAll}
-                disabled={syncingAll || isGenerating}
+                disabled={syncingAll || isGenerating || hasPendingBatch}
                 title={isKo ? '동기화 안 된 캐릭터/씬을 Flow 에 일괄 등록(@멘션 복구)' : 'Sync all unsynced refs to Flow'}
               >
                 {syncingAll
@@ -275,7 +276,7 @@ export default function ReferencePanel({
               <button
                 className="btn-clear-refs"
                 onClick={handleClearAll}
-                disabled={isGenerating}
+                disabled={isGenerating || hasPendingBatch}
                 title={t('reference.clearAll')}
               >
                 🗑️
@@ -301,6 +302,7 @@ export default function ReferencePanel({
               <button
                 className="btn-generate-all"
                 onClick={() => setShowBatchWizard(true)}
+                disabled={hasPendingBatch}
               >
                 🎨 {t('reference.generateAll')} ({generatableRefs.length})
               </button>

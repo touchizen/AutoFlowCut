@@ -278,6 +278,10 @@ export async function runEmptyRefGateFlow(context, deps) {
       const liveEmpty = collectReferencedEmptyCards(liveTargetScenes, matchWithRefs)
       const targetRefKeys = liveEmpty.generatableCards.map(card => card.key)
 
+      // setBusy 뒤 첫 Flow 조작 전에는 checkAuthToken의 token 추출/검증/project-id IPC가 있어
+      // React commit이 실행될 yield와 같은 renderer→main IPC 순서가 보장된다. 그래도 shared/dom/character
+      // driver는 wasHidden(0×0)을 감지해 view를 offscreen 크기로 복구한다. 새 fast path/driver도
+      // "최소 1회 IPC round-trip + wasHidden 복구" 둘 다 유지해야 하며, 아니면 명시적 visibility barrier가 필요하다.
       deps.gateView.setBusy()
       const batchResult = await deps.generateRefs(targetRefKeys)
 
