@@ -23,18 +23,21 @@
  *   - 첫 turn 의 첫 tool body만 test-owned promise로 gate한다. body **안에서** 시작을 신호하므로
  *     interrupt가 실제 body 실행과 겹쳤다는 것을 안다.
  *   - `interrupt()`가 settle하면 gate를 즉시 풀고, 그 첫 body가 완전히 종료된 뒤에만 fresh turn을 쓴다.
+ *   - cut turn result 뒤 FRESH_TURN_GAP_MS 동안 input을 쓰지 않고 그 사이 activity를 따로 기록한다.
+ *     result와 fresh write가 같은 millisecond였던 첫 run의 timing confound를 반복하지 않는다.
  *   - fresh turn의 tool body 세 개는 전부 **UNGATED**다. `oldBodySettledBeforeFreshTurn`과 각 call의
  *     `gateWaited:false`를 raw에 남긴다. 따라서 fresh call 실패를 fresh-side test gate로 설명할 수 없다.
  *
  * 🔴 vacuous answer / timeout 오독 방지:
- *   - "throw하지 않았다"는 alive 증거가 아니다. fresh turn은 고유 token을 모델 출력으로 echo해야 하고,
- *     tool_use 세 개 및 대응 tool_result 세 개를 실제로 관측해야 `bridgeAfterInterrupt:'alive'`다.
- *   - tool_use 세 개 모두의 tool_result가 "Stream closed"일 때만 `dead`다. 그 밖의 불완전/혼합 표면은
- *     `mixed` 또는 `undetermined`로 남긴다.
+ *   - "throw하지 않았다"는 alive 증거가 아니다. fresh tool_use 하나라도 그 body가 실제 실행되고
+ *     고유 token을 담은 non-error tool_result로 왕복하면 `bridgeAfterInterrupt:'alive'`다. 3회 요청의
+ *     완료 수와 모델의 final token echo는 별도 기록하되, 모델 재량으로 bridge 양성 증거를 veto하지 않는다.
+ *   - 발행된 fresh tool_use 전부가 "Stream closed" terminal result로 끝나고 성공 왕복이 0일 때 `dead`다.
+ *     tool_use 없이 fresh result가 끝나면 `model-declined-no-tool-use`, 장치가 안 닫히면 `undetermined`다.
  *   - MEASUREMENT_DEADLINE_MS는 it() timeout보다 작다. deadline이면 `timedOut:true`와 중간 관측을
  *     먼저 raw에 쓴다. timeout은 Q8의 답이 아니므로 fate는 `undetermined`다.
  *   - assertion은 SDK semantics가 아니라 관측 장치가 닫혔는지만 확인한다. cut/not-cut 및
- *     alive/dead는 모두 유효한 측정 결과다.
+ *     alive/dead/model-declined/mixed는 모두 유효한 측정 결과다.
  *
  * ⚠️ 이 스파이크는 개발자 개인 `~/.claude`를 그대로 쓴다. SessionStart hook이 content를 주입하는
  * 것이 이미 관측됐고, Codex-side CODEX_HOME 격리에 대응하는 Claude 격리 수단은 없다. 개인 hook은
@@ -53,6 +56,7 @@ const RESULT_DIR = 'docs/superpowers/specs'
 const RAW = `${RESULT_DIR}/m0-17-raw.jsonl`
 const TOOL_NAME = 'mcp__m0-17-interrupt__sequence_step'
 const MCP_TOOL_TIMEOUT_MS = 30 * 60 * 1000
+const FRESH_TURN_GAP_MS = 5_000
 // 반드시 it()의 8분 timeout보다 작아야 timeout도 raw observation으로 닫힌다.
 const MEASUREMENT_DEADLINE_MS = 7 * 60 * 1000
 const SDK_VERSION = JSON.parse(readFileSync(
@@ -128,6 +132,10 @@ async function measureDirectInterrupt() {
   let interruptSettledAt = null
   let interruptReceipt = null
   let interruptError = null
+  let freshTurnGapStartedAt = null
+  let freshTurnGapEndedAt = null
+  let freshTurnGapStartedEventIndex = null
+  let freshTurnGapEndedEventIndex = null
   let freshTurnYieldedAt = null
   let freshTurnWrittenAt = null
   let streamEndedAt = null
@@ -152,7 +160,7 @@ async function measureDirectInterrupt() {
     tools: [
       tool(
         'sequence_step',
-        'Runs one numbered step. Call it exactly as many times and with the phase requested by the user.',
+        'Returns a side-effect-free text marker for one numbered step. Call it exactly as requested by the user.',
         { phase: z.enum(['cut', 'fresh']), step: z.number().int().min(1).max(3) },
         async ({ phase, step }, extra) => {
           const phaseOrdinal = toolCalls.filter((call) => call.phase === phase).length + 1
@@ -239,15 +247,28 @@ async function measureDirectInterrupt() {
     ])
     if (bodyOutcome === 'input-stopped') return
 
+    // result와 fresh write를 같은 tick에 두지 않는다. index 경계는 timestamp 동률이어도 gap event를 구분한다.
+    freshTurnGapStartedAt = at()
+    freshTurnGapStartedEventIndex = events.length
+    const gapOutcome = await Promise.race([
+      sleep(FRESH_TURN_GAP_MS).then(() => 'gap-elapsed'),
+      promptInputStopped.then(() => 'input-stopped'),
+    ])
+    if (gapOutcome === 'input-stopped') return
+    freshTurnGapEndedAt = at()
+    freshTurnGapEndedEventIndex = events.length
+
     freshTurnYieldedAt = at()
     yield {
       type: 'user',
       message: {
         role: 'user',
         content:
-          `Fresh turn. In one assistant response, issue exactly three ${TOOL_NAME} tool calls so all three attempts exist before any result is interpreted. `
-          + 'Use {"phase":"fresh","step":1}, {"phase":"fresh","step":2}, and {"phase":"fresh","step":3}. '
-          + `Every fresh tool body is ungated. After all three tool results, reply with exactly ${freshEchoToken} and nothing else.`,
+          'This is a new user request. The earlier tool use was cancelled by a system interrupt; the user did not refuse '
+          + 'tool use, and that cancellation does not apply to this turn. This tool only returns a side-effect-free text marker, '
+          + `so calling it now is expected. Call ${TOOL_NAME} exactly three times with `
+          + '{"phase":"fresh","step":1}, {"phase":"fresh","step":2}, and {"phase":"fresh","step":3}. '
+          + `After the tool results, reply with exactly ${freshEchoToken} and nothing else.`,
       },
     }
     // async generator resume = Query.streamInput이 위 message의 transport.write를 끝내고 다음 item을 요청함.
@@ -327,12 +348,14 @@ async function measureDirectInterrupt() {
           model: msg.message?.model ?? null,
           sessionId: msg.session_id ?? null,
           text: textOf(blocks),
+          stopReason: msg.message?.stop_reason ?? msg.stop_reason ?? null,
           toolUses: blocks
             .filter((block) => block?.type === 'tool_use')
             .map((block) => ({ id: block.id, name: block.name, input: snapshot(block.input) })),
         }
         assistants.push(assistant)
         event.text = assistant.text
+        event.stopReason = assistant.stopReason
         event.toolUses = assistant.toolUses
       }
 
@@ -467,10 +490,73 @@ async function measureDirectInterrupt() {
   const freshStreamClosedToolResults = freshToolResults.filter((result) => (
     result.isError && result.isStreamClosed
   ))
+  const freshAssistants = assistants.filter((assistant) => assistant.turn === 2)
+  const freshAssistantMessages = freshAssistants.map((assistant) => ({
+    at: assistant.at,
+    uuid: assistant.uuid,
+    text: assistant.text,
+    stopReason: assistant.stopReason,
+  }))
+  const freshAssistantCombinedText = freshAssistants.map((assistant) => assistant.text).join('')
+  const freshResultText = typeof freshResult?.fullSurface?.result === 'string'
+    ? freshResult.fullSurface.result
+    : ''
+  const freshModelOutputText = freshAssistantCombinedText || freshResultText
+  const freshResultSucceeded = freshResult?.fullSurface?.subtype === 'success'
+    && freshResult.fullSurface.is_error === false
+  const freshStopReasons = [
+    ...freshAssistants.map((assistant) => assistant.stopReason),
+    freshResult?.fullSurface?.stop_reason ?? null,
+  ].filter((reason) => reason != null)
   const freshTokenEchoedByModel = assistants
     .filter((assistant) => assistant.turn === 2)
     .some((assistant) => assistant.text.includes(freshEchoToken))
-    || String(freshResult?.fullSurface?.result ?? '').includes(freshEchoToken)
+    || freshResultText.includes(freshEchoToken)
+
+  // tool_use id → 실제 body 실행 → 같은 id의 terminal marker를 한 묶음으로 기록한다.
+  // 모델이 나머지 두 call을 생략해도 성공 round-trip 하나면 bridge가 살아 있다는 양성 증거다.
+  const freshRoundTrips = freshToolUses.map((use) => {
+    const phase = use.input?.phase ?? null
+    const step = use.input?.step ?? null
+    const bodyCall = freshToolCalls.find((call) => call.phase === phase && call.step === step) ?? null
+    const terminalToolResult = freshToolResults.find((result) => result.toolUseId === use.id) ?? null
+    const expectedMarker = `M0_17_TOOL_OK:fresh:${step}:${freshEchoToken}`
+    return {
+      toolUse: use,
+      bodyCall,
+      terminalToolResult,
+      bodyRan: Boolean(bodyCall),
+      nonErrorTerminalResult: terminalToolResult?.isError === false,
+      expectedMarker,
+      markerReturned: terminalToolResult?.text.includes(expectedMarker) === true,
+      successful: Boolean(
+        phase === 'fresh'
+        && bodyCall
+        && terminalToolResult?.isError === false
+        && terminalToolResult.text.includes(expectedMarker),
+      ),
+      streamClosed: terminalToolResult?.isError === true && terminalToolResult.isStreamClosed === true,
+    }
+  })
+  const successfulFreshRoundTrips = freshRoundTrips.filter((roundTrip) => roundTrip.successful)
+  const allIssuedFreshUsesTargetFreshPhase = freshRoundTrips.length > 0
+    && freshRoundTrips.every((roundTrip) => roundTrip.toolUse.input?.phase === 'fresh')
+  const everyIssuedFreshUseWasStreamClosed = freshRoundTrips.length > 0
+    && freshRoundTrips.every((roundTrip) => roundTrip.streamClosed)
+
+  const freshTurnGapDurationMs = freshTurnGapStartedAt != null && freshTurnGapEndedAt != null
+    ? freshTurnGapEndedAt - freshTurnGapStartedAt
+    : null
+  const freshTurnDelayAfterCutResultMs = cutResult?.at != null && freshTurnYieldedAt != null
+    ? freshTurnYieldedAt - cutResult.at
+    : null
+  const freshTurnGapEvents = Number.isInteger(freshTurnGapStartedEventIndex)
+    && Number.isInteger(freshTurnGapEndedEventIndex)
+    ? events.slice(freshTurnGapStartedEventIndex, freshTurnGapEndedEventIndex)
+    : []
+  const substantiveFreshTurnGapEvents = freshTurnGapEvents.filter((event) => (
+    event.type === 'assistant' || event.type === 'user' || event.type === 'result'
+  ))
 
   const sessionIdsByTurn = (wantedTurn) => [...new Set(events
     .filter((event) => event.turn === wantedTurn && event.sessionId)
@@ -481,32 +567,6 @@ async function measureDirectInterrupt() {
     && freshSessionIds.length === 1
     && cutSessionIds[0] === freshSessionIds[0]
 
-  const aliveEvidence = (
-    sameSession
-    && freshTurnWrittenAt != null
-    && isExpectedSteps(freshUseSteps)
-    && isExpectedSteps(freshSteps)
-    && freshSuccessfulToolResults.length === 3
-    && freshStreamClosedToolResults.length === 0
-    && freshTokenEchoedByModel
-    && Boolean(freshResult)
-    && observedFreshCallsAllUngated
-  )
-  const deadEvidence = (
-    sameSession
-    && isExpectedSteps(freshUseSteps)
-    && freshToolResults.length === 3
-    && freshStreamClosedToolResults.length === 3
-    && freshSuccessfulToolResults.length === 0
-    && Boolean(freshResult)
-    && freshToolsUngatedByConstruction
-  )
-
-  let bridgeAfterInterrupt = 'undetermined'
-  if (!timedOut && aliveEvidence) bridgeAfterInterrupt = 'alive'
-  else if (!timedOut && deadEvidence) bridgeAfterInterrupt = 'dead'
-  else if (!timedOut && freshToolResults.length > 0) bridgeAfterInterrupt = 'mixed'
-
   const q3TrustFailures = []
   if (timedOut) q3TrustFailures.push('measurement timed out; timeout is not a bridge result')
   if (!interruptOverlappedFirstTool) q3TrustFailures.push('direct interrupt did not overlap a running first tool body')
@@ -514,12 +574,40 @@ async function measureDirectInterrupt() {
   if (interruptReceipt == null) q3TrustFailures.push('interrupt() receipt was not observed')
   if (!cutResult) q3TrustFailures.push('cut turn result boundary was not observed')
   if (!oldBodySettledBeforeFreshTurn) q3TrustFailures.push('old gated body was not proven settled before fresh turn')
+  if (freshTurnGapStartedAt == null) q3TrustFailures.push('post-result fresh-turn gap did not start')
+  if (freshTurnGapEndedAt == null) q3TrustFailures.push('post-result fresh-turn gap did not close')
+  if (freshTurnGapDurationMs != null && freshTurnGapDurationMs < FRESH_TURN_GAP_MS) {
+    q3TrustFailures.push('post-result fresh-turn gap was shorter than configured')
+  }
+  if (substantiveFreshTurnGapEvents.length > 0) {
+    q3TrustFailures.push('assistant/user/result activity occurred inside the isolated fresh-turn gap')
+  }
   if (freshTurnWrittenAt == null) q3TrustFailures.push('fresh turn transport.write completion was not observed')
   if (!sameSession) q3TrustFailures.push('fresh turn was not proven to use the same non-null session_id')
-  if (!isExpectedSteps(freshUseSteps)) q3TrustFailures.push('model did not issue all three requested fresh tool_use blocks')
   if (!observedFreshCallsAllUngated) q3TrustFailures.push('an entered fresh tool body unexpectedly waited on a gate')
   if (!freshResult) q3TrustFailures.push('fresh turn result boundary was not observed')
   if (!mcpToolTimeoutRestored) q3TrustFailures.push('MCP_TOOL_TIMEOUT was not restored')
+
+  const apparatusTrustworthy = q3TrustFailures.length === 0
+  const aliveEvidence = apparatusTrustworthy && successfulFreshRoundTrips.length >= 1
+  const deadEvidence = apparatusTrustworthy
+    && freshRoundTrips.length >= 1
+    && successfulFreshRoundTrips.length === 0
+    && allIssuedFreshUsesTargetFreshPhase
+    && everyIssuedFreshUseWasStreamClosed
+    && freshToolsUngatedByConstruction
+  const modelDeclinedNoToolUse = apparatusTrustworthy
+    && freshToolUses.length === 0
+    && freshResultSucceeded
+    && freshModelOutputText.trim().length > 0
+
+  let bridgeAfterInterrupt = 'undetermined'
+  if (aliveEvidence) bridgeAfterInterrupt = 'alive'
+  else if (deadEvidence) bridgeAfterInterrupt = 'dead'
+  else if (modelDeclinedNoToolUse) bridgeAfterInterrupt = 'model-declined-no-tool-use'
+  else if (apparatusTrustworthy) {
+    bridgeAfterInterrupt = 'mixed'
+  }
 
   return {
     cutCompletionToken,
@@ -530,6 +618,11 @@ async function measureDirectInterrupt() {
       interruptSettledAt,
       firstToolGateReleasedAt,
       firstToolBodySettledAt,
+      freshTurnGapStartedAt,
+      freshTurnGapEndedAt,
+      freshTurnGapMs: FRESH_TURN_GAP_MS,
+      freshTurnGapDurationMs,
+      freshTurnDelayAfterCutResultMs,
       freshTurnYieldedAt,
       freshTurnWrittenAt,
       streamEndedAt,
@@ -573,21 +666,44 @@ async function measureDirectInterrupt() {
       observedFreshCallCount: freshToolCalls.length,
       freshGateWaitCount,
       observedFreshCallsAllUngated,
+      freshTurnGap: {
+        configuredMs: FRESH_TURN_GAP_MS,
+        startedAt: freshTurnGapStartedAt,
+        endedAt: freshTurnGapEndedAt,
+        durationMs: freshTurnGapDurationMs,
+        delayAfterCutResultMs: freshTurnDelayAfterCutResultMs,
+        startedEventIndex: freshTurnGapStartedEventIndex,
+        endedEventIndex: freshTurnGapEndedEventIndex,
+        events: freshTurnGapEvents,
+        substantiveEvents: substantiveFreshTurnGapEvents,
+      },
       freshTurnWrittenAt,
+      freshToolUseCount: freshToolUses.length,
       freshToolUseSteps: freshUseSteps,
       freshToolCallSteps: freshSteps,
       freshToolResultCount: freshToolResults.length,
       freshSuccessfulToolResultCount: freshSuccessfulToolResults.length,
+      successfulFreshRoundTripCount: successfulFreshRoundTrips.length,
+      freshRoundTrips,
+      allIssuedFreshUsesTargetFreshPhase,
+      everyIssuedFreshUseWasStreamClosed,
       freshStreamClosedCount: freshStreamClosedToolResults.length,
       freshAnyStreamClosed: freshStreamClosedToolResults.length > 0,
       everyFreshToolResult: freshToolResults,
+      freshAssistantMessages,
+      freshAssistantCombinedText,
+      freshResultText,
+      freshModelOutputText,
+      freshResultSucceeded,
+      freshStopReasons,
       freshTokenEchoedByModel,
       freshResultFullSurface: freshResult?.fullSurface ?? null,
       aliveEvidence,
       deadEvidence,
+      modelDeclinedNoToolUse,
     },
     q3Trust: {
-      apparatusTrustworthy: q3TrustFailures.length === 0,
+      apparatusTrustworthy,
       failures: q3TrustFailures,
       uncontrolledVariable:
         'Developer personal ~/.claude is used; a SessionStart hook injects content and there is no Claude equivalent of Codex CODEX_HOME isolation.',
@@ -619,12 +735,24 @@ describe('M0-17 — Claude Agent SDK direct interrupt 계약 (Q8)', () => {
       observation.bridgeAfterInterruptEvidence.oldBodySettledBeforeFreshTurn,
       'old gated body가 끝나기 전에 fresh turn이 시작돼 Q3가 confound됐다',
     ).toBe(true)
+    expect(
+      observation.bridgeAfterInterruptEvidence.freshTurnGap.startedAt,
+      'cut result 뒤 fresh-turn gap을 시작하지 못했다',
+    ).not.toBeNull()
+    expect(
+      observation.bridgeAfterInterruptEvidence.freshTurnGap.endedAt,
+      'cut result 뒤 fresh-turn gap을 닫지 못했다',
+    ).not.toBeNull()
+    expect(
+      observation.bridgeAfterInterruptEvidence.freshTurnGap.durationMs,
+      'fresh-turn gap이 설정값보다 짧았다',
+    ).toBeGreaterThanOrEqual(FRESH_TURN_GAP_MS)
+    expect(
+      observation.bridgeAfterInterruptEvidence.freshTurnGap.delayAfterCutResultMs,
+      'fresh turn이 cut result 뒤 충분히 떨어지지 않았다',
+    ).toBeGreaterThanOrEqual(FRESH_TURN_GAP_MS)
     expect(observation.bridgeAfterInterruptEvidence.freshTurnWrittenAt, 'fresh turn transport.write를 관측하지 못했다').not.toBeNull()
     expect(observation.bridgeAfterInterruptEvidence.sameSession, 'fresh turn의 동일 session_id를 증명하지 못했다').toBe(true)
-    expect(
-      observation.bridgeAfterInterruptEvidence.freshToolUseSteps,
-      'fresh turn이 요청한 tool_use 세 개를 모두 내지 않았다',
-    ).toEqual([1, 2, 3])
     expect(
       observation.bridgeAfterInterruptEvidence.freshGateWaitCount,
       '실행된 fresh tool body 중 test-owned gate를 기다린 호출이 있다',
