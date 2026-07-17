@@ -9,7 +9,7 @@ import { useOptionalI18n } from '../../hooks/useI18n'
 import en from '../../locales/en'
 import AgentIconButton from './AgentIconButton.jsx'
 import AgentModelSelector from './AgentModelSelector.jsx'
-import robotUrl from '../../assets/Robot.svg'
+import RobotIcon from './RobotIcon.jsx'
 import {
   canDockInContainer,
   clampAgentDockWidth,
@@ -703,7 +703,7 @@ export default function ChatPanel({
         title={t('agent.openPanel')}
         onClick={onOpen}
       >
-        <img src={robotUrl} alt="" aria-hidden="true" />
+        <RobotIcon hostRef={fabRef} active={!open} />
       </button>
       <aside
         ref={panelRef}

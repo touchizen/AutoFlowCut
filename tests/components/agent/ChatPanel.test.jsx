@@ -82,6 +82,23 @@ afterEach(() => {
 })
 
 describe('ChatPanel — 명령과 event의 사용자 효과', () => {
+  it('FAB가 calibrated inline perspective 아래 layered RobotIcon을 활성 상태와 함께 렌더한다', () => {
+    const { container, rerender } = render(
+      <ChatPanel open={false} projectKey="project-a" batchStatusSources={batchSources()} />,
+    )
+    const fab = container.querySelector('.agent-chat-fab')
+
+    expect(fab.querySelector('.robot-icon')).toBeTruthy()
+    expect(fab.querySelector('img')).toBeNull()
+    expect(fab.style.perspective).toBe('150px')
+    expect(fab.style.perspectiveOrigin).toBe('50% 50%')
+    expect(fab.querySelector('.robot-icon').dataset.active).toBe('true')
+
+    rerender(<ChatPanel open projectKey="project-a" batchStatusSources={batchSources()} />)
+    expect(fab.querySelector('.robot-icon').dataset.active).toBe('false')
+    expect(fab.querySelector('.robot-icon').dataset.motionState).toBe('idle')
+  })
+
   it('send를 sessionManager IPC까지 보내고 delta/tool/usage/limit를 모두 화면에 남긴다', async () => {
     const user = userEvent.setup()
     render(<ChatPanel projectKey="project-a" batchStatusSources={batchSources()} />)

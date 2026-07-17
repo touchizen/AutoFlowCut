@@ -88,25 +88,11 @@
 .agent-chat-fab:hover { transform: translateY(-2px) scale(1.03); }
 .agent-chat-fab:focus-visible { outline: 3px solid #b9d5ff; outline-offset: 3px; }
 .agent-chat-fab.is-hidden { visibility: hidden; opacity: 0; pointer-events: none; }
-/* 🔴 로봇 3D: SVG **내부** 요소의 preserve-3d 는 브라우저 지원이 부실하다 → 내부를 쪼개 세우지 않고
-   <img> 요소 자체를 원근 공간에서 돌린다. 볼륨은 SVG 안 그라디언트 명암이 만든다(Robot.svg).
-   perspective 는 부모(FAB)에 걸어야 자식의 rotateY 가 원근으로 보인다. */
-.agent-chat-fab { perspective: 220px; perspective-origin: 50% 45%; }
-.agent-chat-fab img {
-  display: block; width: 100%; height: 100%;
-  transform-style: preserve-3d;
-  animation: robot-turn 7s ease-in-out infinite;
-}
 @keyframes robot-turn {
   0%, 100% { transform: rotateY(0deg) rotateX(0deg); }
   28% { transform: rotateY(24deg) rotateX(-5deg); }
   50% { transform: rotateY(0deg) rotateX(3deg); }
   76% { transform: rotateY(-24deg) rotateX(-4deg); }
-}
-/* hover 는 살짝 들면서 정면으로 — 누르려는 대상이 흔들리면 안 된다. */
-.agent-chat-fab:hover img { animation-play-state: paused; transform: rotateY(0deg) rotateX(0deg); }
-@media (prefers-reduced-motion: reduce) {
-  .agent-chat-fab img { animation: none; transform: none; }
 }
 
 .agent-chat-heading { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 auto; }

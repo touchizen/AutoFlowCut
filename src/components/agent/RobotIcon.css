@@ -1,0 +1,114 @@
+.robot-icon-definitions {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.robot-icon {
+  --robot-return-duration: 320ms;
+  position: relative;
+  display: block;
+  width: 48px;
+  height: 48px;
+  overflow: visible;
+  transform: rotateY(0deg) rotateX(0deg);
+  transform-origin: 50% 50%;
+  transform-style: preserve-3d;
+  will-change: transform;
+  animation: robot-turn 7s ease-in-out infinite;
+  animation-delay: var(--robot-return-duration);
+  animation-fill-mode: none;
+  transition: transform var(--robot-return-duration) ease-out;
+  pointer-events: none;
+}
+
+.robot-icon > .robot-icon-layer {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  backface-visibility: visible;
+}
+
+.robot-icon > .layer-ground { transform: translateZ(var(--z-ground)); }
+.robot-icon > .layer-limbs { transform: translateZ(var(--z-limb)); }
+.robot-icon > .extrusion-slice { transform: translateZ(var(--slice-z)); }
+.robot-icon > .shell-face { transform: translateZ(var(--z-face)); }
+.robot-icon > .screen-face { transform: translateZ(var(--z-screen)); }
+.robot-icon > .face-details { transform: translateZ(var(--z-eyes)); }
+.robot-icon > .glass-highlight { transform: translateZ(var(--z-glass)); }
+.robot-icon > .layer-bulb { transform: translateZ(var(--z-limb)); }
+
+.robot-icon .robot-icon-eyes {
+  transform: translate(var(--eye-x, 0px), var(--eye-y, 0px));
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: robot-look 6s ease-in-out infinite;
+  animation-delay: var(--robot-return-duration);
+  animation-fill-mode: none;
+  transition: transform var(--robot-return-duration) ease-out;
+}
+
+.robot-icon .robot-icon-eye {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: robot-blink 4.2s ease-in-out infinite;
+}
+
+.robot-icon .robot-icon-bulb {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: robot-pulse 2s ease-in-out infinite;
+}
+
+.robot-icon[data-motion-state="gazing"] {
+  animation: none;
+  transform: rotateY(var(--robot-yaw, 0deg)) rotateX(var(--robot-pitch, 0deg));
+  transition: none;
+}
+
+.robot-icon[data-motion-state="gazing"] .robot-icon-eyes,
+.robot-icon[data-motion-state="hover"] .robot-icon-eyes {
+  animation: none;
+  transform: translate(var(--eye-x, 0px), var(--eye-y, 0px));
+  transition: none;
+}
+
+.robot-icon[data-motion-state="hover"] {
+  animation: none;
+  transform: rotateY(0deg) rotateX(0deg);
+  transition: none;
+}
+
+.robot-icon[data-motion-state="reduced"] {
+  animation: none;
+  transform: rotateY(0deg) rotateX(0deg);
+  transition: none;
+}
+
+.robot-icon[data-motion-state="reduced"] .robot-icon-eyes,
+.robot-icon[data-motion-state="reduced"] .robot-icon-eye,
+.robot-icon[data-motion-state="reduced"] .robot-icon-bulb {
+  animation: none;
+}
+
+@keyframes robot-look {
+  0%, 22%, 100% { transform: translateX(0); }
+  36%, 46% { transform: translateX(2.4px); }
+  62%, 72% { transform: translateX(-2.4px); }
+}
+
+@keyframes robot-blink {
+  0%, 91%, 100% { transform: scaleY(1); }
+  94%, 96% { transform: scaleY(0.12); }
+}
+
+@keyframes robot-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
