@@ -156,7 +156,10 @@ describe('App empty reference gate wiring', () => {
   // 의미가 같은 정상 리팩터에도 깨져서 사람을 느슨하게 풀도록 훈련시킨다.
   it('handleStop 은 중단 판정을 shouldStopRefWork 에 위임하고 gate phase 를 넘긴다', () => {
     expect(emptyRefModal).not.toContain('onStop=')
-    expect(handleStopImpl).toContain('shouldStopRefWork(')
+    // `shouldStopRefWork(` 만 보면 술어를 호출해놓고 결과를 버린 채 옛 가드로 되돌린
+    // 뮤턴트가 살아남는다. 결과가 실제 분기 조건이라는 것까지 핀한다 — 피연산자 순서나
+    // 인자 포맷, 술어 내부 리팩터에는 여전히 관대하다.
+    expect(handleStopImpl).toContain('if (shouldStopRefWork(')
     expect(handleStopImpl).toContain('gatePhase: emptyRefGate?.phase')
     expect(handleStopImpl).toContain('stopGenerateAllRefs()')
   })
