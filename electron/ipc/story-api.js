@@ -140,14 +140,24 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
     // projectPath 가 오면 그 경로 디스크를 직접 읽는다 — fresh session(story view 미진입, machine
     // 없음)에서도 동작. 경로는 story:open 과 동일하게 검증(절대/traversal/workFolder)해 임의 위치
     // 읽기를 막는다(Codex round3). projectPath 가 없으면 열린 machine 의 프로젝트(open 시 이미 검증됨).
+    // readAudioPackage 는 stale/손상 manifest 를 throw 로 알린다. 그 throw 를 그대로 두면
+    // ipcRenderer.invoke 가 message 만 직렬화해 **errorKind 가 소실된다** — renderer 는 번역할
+    // 코드가 없어 한국어 UI에도 내부 영문 진단문을 띄운다. 이 파일의 관습대로 { error: kind } 로
+    // 넘긴다(stale-token 과 같은 모양). errorKind 없는 예외는 버그이므로 그대로 던져 드러낸다.
+    const asKind = async (fn) => {
+      try { return await fn() } catch (e) {
+        if (!e?.errorKind) throw e
+        return { error: e.errorKind }
+      }
+    }
     if (projectPath) {
       if (!(await validateProjectPath(projectPath))) return null
       const activeWorkFolder = getActiveWorkFolder()
       if (activeWorkFolder && !isWithinWorkFolder(projectPath, activeWorkFolder)) return null
-      return readAudioPackage(projectPath)
+      return asKind(() => readAudioPackage(projectPath))
     }
     if (!machine) return null
-    return machine.loadAudioPackage()
+    return asKind(() => machine.loadAudioPackage())
   })
   ipcMain.handle('story:generate-title', guarded(({ scriptMd, options }) => machine.generateTitle(scriptMd, options || {})))
   // 슬라이스4(§3.4 + §v2.8 M4): 시놉시스 생성 side action — title/pasted 분기는 machine이 처리.
@@ -163,6 +173,29 @@ export function registerStoryIPC(ipcMain, { keyStore, getWindow, llm = llmGemini
     machine.confirmSynopsis({ synopsisMd, characters })))
   // 슬라이스1: 세그먼트 단건 TTS 테스트(배치와 분리, 스텝 상태 미변경).
   ipcMain.handle('story:tts-preview', guarded(({ segmentIds, speakers, sfxSources }) => machine.synthPreview({ segmentIds, speakers, sfxSources })))
+
+  // ── 화자별 오디오 출처 (mp3+SRT 가져오기) ──
+  // 출처 자체는 speaker.voice = {provider:'import', mp3Path, srtPath}로 들어가므로 별도 채널이
+  // 없다 — 기존 화자 배정(start('audio', {speakers}))이 그대로 나른다. 여기 있는 건 파일 선택뿐.
+  //
+  // 파일 선택 — renderer가 절대경로를 직접 만들 수 없으므로(그리고 만들게 하면 안 되므로) main이
+  // 다이얼로그를 띄우고 사용자가 고른 경로만 돌려준다.
+  // electron은 여기서 지연 import한다 — 이 모듈의 기존 테스트들은 electron을 mock하지 않으므로
+  // top-level import를 넣으면 그쪽이 깨진다(다이얼로그는 실제로 열 때만 필요하다).
+  // 다이얼로그 문구는 renderer가 실어 보낸다 — main은 useI18n을 부를 수 없어서, 여기에 문자열을
+  // 박아두면 영어 사용자에게 한국어 창이 뜬다. 미지정이면 영어 기본값(이웃 다이얼로그와 같은 관행).
+  ipcMain.handle('story:pick-audio-import-file', async (_e, { kind, title, filterName } = {}) => {
+    const { dialog } = await import('electron')
+    const spec = kind === 'srt'
+      ? { title: title || 'Select subtitles (SRT)', filters: [{ name: filterName || 'SubRip subtitles', extensions: ['srt'] }] }
+      : { title: title || 'Select narration audio', filters: [{ name: filterName || 'Audio', extensions: ['mp3'] }] }
+    const win = getWindow?.()
+    const result = win
+      ? await dialog.showOpenDialog(win, { properties: ['openFile'], ...spec })
+      : await dialog.showOpenDialog({ properties: ['openFile'], ...spec })
+    if (result.canceled || !result.filePaths.length) return { canceled: true }
+    return { canceled: false, filePath: result.filePaths[0] }
+  })
 
   // 리서치(spec §5): story:research-* guarded 핸들러 — machine research side action 위임.
   ipcMain.handle('story:research-search', guarded(({ query, keyword, maxResults, dateFilter }) =>

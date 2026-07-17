@@ -54,6 +54,7 @@
     "flag-icons": "^7.5.0",
     "lexical": "^0.45.0",
     "lexical-beautiful-mentions": "^0.1.48",
+    "mpg123-decoder": "^1.0.3",
     "music-metadata": "^11.13.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

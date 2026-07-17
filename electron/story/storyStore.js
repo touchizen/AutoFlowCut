@@ -21,6 +21,8 @@ export function defaultStoryState() {
     pushedAt: null,
     pendingPushRevision: 0,
     lastPushedRevision: 0,
+    // 화자별 배정. voice가 {provider:'typecast'|..., voiceId}면 ⑤가 TTS로 만들고,
+    // {provider:'import', mp3Path, srtPath}면 그 파일에서 잘라 쓴다(electron/story/srtImport.js).
     speakers: [],
   }
 }

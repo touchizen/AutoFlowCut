@@ -10,6 +10,9 @@ export function useStoryVoiceSelection({ speakers, voices, onTagGender }) {
   // 화자별 엔진(provider)·목소리 선택(로컬). 초기값은 speakers[].voice.
   const [voiceBySpeaker, setVoiceBySpeaker] = useState({})
   const [providerBySpeaker, setProviderBySpeaker] = useState({})
+  // 화자별 오디오 출처(로컬 오버라이드). {mp3Path, srtPath}면 TTS 대신 그 파일에서 잘라 쓴다.
+  // null을 명시적으로 담으면 "해제"(영속된 import voice를 무시) — undefined(미설정)와 구분된다.
+  const [importBySpeaker, setImportBySpeaker] = useState({})
   // Task 11: 드롭다운 대신 모달 — 어떤 화자의 VoicePicker가 열려 있는지(speaker id|null)와
   // 확정 전 임시 선택값. 취소 시 providerBySpeaker/voiceBySpeaker는 건드리지 않는다.
   const [voicePickerSpeaker, setVoicePickerSpeaker] = useState(null)
@@ -38,6 +41,14 @@ export function useStoryVoiceSelection({ speakers, voices, onTagGender }) {
     return sp.voice?.provider === providerForSpeaker(sp) ? (sp.voice?.voiceId ?? '') : ''
   }
 
+  // 화자의 오디오 출처: 로컬 오버라이드(null 포함) > 영속된 import voice > 없음(=TTS로 생성).
+  const importForSpeaker = (sp) => {
+    if (Object.prototype.hasOwnProperty.call(importBySpeaker, sp.id)) return importBySpeaker[sp.id]
+    return sp.voice?.provider === 'import' ? { mp3Path: sp.voice.mp3Path, srtPath: sp.voice.srtPath } : null
+  }
+  /** src가 {mp3Path,srtPath}면 지정, null이면 해제(TTS로 되돌림). */
+  const setImportForSpeaker = (spId, src) => setImportBySpeaker((m) => ({ ...m, [spId]: src || null }))
+
   // Task 11: [성우 선택] 버튼 → 해당 화자의 현재 provider/voiceId를 임시 선택값으로 채우고 모달 오픈.
   const openVoicePicker = (sp) => {
     setPickerSelection({ provider: providerForSpeaker(sp), voiceId: voiceIdForSpeaker(sp) })
@@ -63,6 +74,8 @@ export function useStoryVoiceSelection({ speakers, voices, onTagGender }) {
   return {
     providerForSpeaker,
     voiceIdForSpeaker,
+    importForSpeaker,
+    setImportForSpeaker,
     voicePickerSpeaker,
     pickerSelection,
     setPickerSelection,

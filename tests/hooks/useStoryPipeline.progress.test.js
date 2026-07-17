@@ -80,6 +80,18 @@ describe('useStoryPipeline — segmentProgress(story:progress)', () => {
     expect(result.current.segmentProgress).toEqual({ s1: 'done', s2: 'running' })
   })
 
+  it('audio start()는 이전 실행의 segmentProgress를 초기화한다', async () => {
+    const handlers = installApi()
+    const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: async () => {} }))
+    await act(async () => { await result.current.open() })
+    act(() => handlers['story:progress']({ projectToken: 'TOK', kind: 'audio-segment', segId: 's1-1', status: 'done' }))
+    expect(result.current.segmentProgress).toEqual({ 's1-1': 'done' })
+
+    await act(async () => { await result.current.start('audio', {}) })
+
+    expect(result.current.segmentProgress).toEqual({})
+  })
+
   it('다른 projectToken의 progress는 무시', async () => {
     const handlers = installApi()
     const { result } = renderHook(() => useStoryPipeline({ projectPath: '/p', onPushScenes: async () => {} }))

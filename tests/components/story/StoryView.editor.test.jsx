@@ -152,6 +152,70 @@ describe('StoryView 이어쓰기 (§4)', () => {
 })
 
 describe('StoryView 분리시작 (§2/§0.4)', () => {
+  it('대본 탭에서 분리시작하면 start가 pending이어도 즉시 scenes 패널로 전환한다', async () => {
+    let resolveStart
+    const pendingStart = new Promise((resolve) => { resolveStart = resolve })
+    const p = pipeline({
+      start: vi.fn(() => pendingStart),
+      scenes: [{ storyId: 's1', segments: [{ speaker: '나레이션', text: '어느 날' }] }],
+    })
+    p.state.input = { type: 'title', title: '기존 제목' }
+    p.state.steps.script.status = 'done'
+    render(<StoryView pipeline={p} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '대본' }))
+    expect(screen.getByTestId('story-editor')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '분리시작' }))
+
+    await waitFor(() => expect(p.start).toHaveBeenCalledWith('scenes', {
+      scriptOverride: '대본 본문', options: defaultOptions, title: '기존 제목',
+    }))
+    expect(resolveStart).toBeTypeOf('function')
+    expect(screen.queryByTestId('story-editor')).toBeNull()
+    expect(screen.getByText('화자')).toBeTruthy()
+  })
+
+  it('start가 실패해도 scenes 패널에 남아 분리를 다시 실행할 수 있다', async () => {
+    const p = pipeline({
+      start: vi.fn().mockRejectedValue(new Error('boom')),
+      scenes: [{ storyId: 's1', segments: [{ speaker: '나레이션', text: '어느 날' }] }],
+    })
+    p.state.input = { type: 'title', title: '기존 제목' }
+    p.state.steps.script.status = 'done'
+    render(<StoryView pipeline={p} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '대본' }))
+    fireEvent.click(screen.getByRole('button', { name: '분리시작' }))
+
+    await waitFor(() => expect(p.start).toHaveBeenCalled())
+    expect(screen.queryByTestId('story-editor')).toBeNull()
+    expect(screen.getByText('화자')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '씬 분리 실행' })).toBeEnabled()
+  })
+
+  // 위 테스트는 최초 분리(scenes=pending)라 currentStep 이 이미 'scenes' 다 — viewedStep 이 뭐든
+  // scenes 패널이 나온다. 즉 catch 가 viewedStep='scenes' 를 **유지**하는지는 안 고정된다.
+  // 그게 중요한 건 **재분리**다: scenes/audio 가 done 이면 currentStep 이 그 뒤라, 실패 후
+  // viewedStep 을 놓으면 사용자가 엉뚱한 패널로 튕긴다. 'scenes' 를 고른 이유가 바로 이거다.
+  it('재분리에서 start가 실패하면 뒤 패널로 튕기지 않고 scenes 에 남는다', async () => {
+    const p = pipeline({
+      start: vi.fn().mockRejectedValue(new Error('boom')),
+      scenes: [{ storyId: 's1', segments: [{ speaker: '나레이션', text: '어느 날' }] }],
+    })
+    p.state.input = { type: 'title', title: '기존 제목' }
+    p.state.steps.script.status = 'done'
+    p.state.steps.scenes.status = 'done'
+    p.state.steps.audio.status = 'done' // currentStep 은 prompts — viewedStep 을 놓으면 그리로 튄다
+    render(<StoryView pipeline={p} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '대본' }))
+    fireEvent.click(screen.getByRole('button', { name: '분리시작' }))
+
+    await waitFor(() => expect(p.start).toHaveBeenCalled())
+    expect(screen.queryByTestId('story-editor')).toBeNull()
+    expect(screen.getByText('화자'), 'scenes 패널에 남아야 한다').toBeTruthy()
+  })
+
   it('제목이 있으면 generateTitle 없이 start("scenes", {scriptOverride, options}) + editor 해제', async () => {
     const p = pipeline({
       scenes: [{ storyId: 's1', segments: [{ speaker: '나레이션', text: '어느 날' }] }],

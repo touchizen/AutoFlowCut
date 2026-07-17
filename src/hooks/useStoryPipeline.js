@@ -113,8 +113,10 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
     pendingResetRef.current = null
     setState(null)
     setScenes([])
+    setOpenError(null)
     setStreamingText('')
     setScriptText('')
+    setSegmentProgress({})
     setProgressLog([])
     activeOpRef.current = null
     setReviewProgress(null) // M3: 프로젝트 전환 시 검토 배지 정리
@@ -372,6 +374,7 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
 
   const start = useCallback(async (step, params) => {
     setStreamingText('')
+    setSegmentProgress({})
     setProgressLog([])
     activeOpRef.current = null
     setReviewProgress(null) // M3: 새 실행 시 검토 배지 초기화(이전 error 배지 포함)
@@ -453,6 +456,8 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
     window.electronAPI.storyConfirmSynopsis({ projectToken: tokenRef.current, ...params }), [])
   // 슬라이스1: 세그먼트 단건 TTS 테스트(배치 진행버튼과 분리). 저장된 오디오는 story:state로 반영.
   const ttsPreview = useCallback((params) => window.electronAPI.storyTtsPreview({ projectToken: tokenRef.current, ...params }), [])
+  // SRT 가져오기 — main이 state를 story:state로 되쏘므로 여기서 setState 하지 않는다(단일 진실원).
+  const pickAudioImportFile = useCallback((params) => window.electronAPI.storyPickAudioImportFile(params), [])
   // 리서치 side actions(spec §3.1/§5) — machine 위임. 상태 갱신은 story:research-state 구독이 담당.
   const researchSearch = useCallback((params = {}) =>
     window.electronAPI.storyResearchSearch({ projectToken: tokenRef.current, ...params }), [])
@@ -479,7 +484,7 @@ export function useStoryPipeline({ projectPath, onPushScenes, onPushCharacters }
   // key로 재마운트되는 StoryView가 setup + 폼 기본값으로 초기화되게 한다(effect가 다음 tick에
   // useState를 정리하기 전 한 프레임의 stale 값 유출 방지).
   if (justSwitched) {
-    return { state: null, scenes: [], streamingText, scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview, segmentProgress: {}, reviewProgress: null, reviewScores: null, progressLog: [], llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText: '', synopsisGenerating: false, synopsisReviewing: false, synopsisError: null, synopsisText: '', hasSynopsis: false, characters: [], charactersConfirmed: undefined, research: null, researchFetchProgress: {}, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
+    return { state: null, scenes: [], streamingText: '', scriptText: '', open, start, abort, openError: null, generateTitle, ttsPreview, pickAudioImportFile, segmentProgress: {}, reviewProgress: null, reviewScores: null, progressLog: [], llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText: '', synopsisGenerating: false, synopsisReviewing: false, synopsisError: null, synopsisText: '', hasSynopsis: false, characters: [], charactersConfirmed: undefined, research: null, researchFetchProgress: {}, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
   }
-  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, segmentProgress, reviewProgress, reviewScores, progressLog, llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText, synopsisGenerating, synopsisReviewing, synopsisError, synopsisText, hasSynopsis, characters, charactersConfirmed, research, researchFetchProgress, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
+  return { state, scenes, streamingText, scriptText, open, start, abort, openError, generateTitle, ttsPreview, pickAudioImportFile, segmentProgress, reviewProgress, reviewScores, progressLog, llmOptions, defaultLlmOption, generateSynopsis, reviewSynopsis, confirmSynopsis, synopsisStreamingText, synopsisGenerating, synopsisReviewing, synopsisError, synopsisText, hasSynopsis, characters, charactersConfirmed, research, researchFetchProgress, researchSearch, researchFetchTranscripts, researchAnalyze, researchFactCheck, researchCommit, researchSkip, researchSelect, researchVideoDetails }
 }
