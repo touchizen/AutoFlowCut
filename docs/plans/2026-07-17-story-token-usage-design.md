@@ -124,6 +124,42 @@ gemini 는 프로덕션 라우터에 없다(`main.js:285` = {claude, codex}).
 
 ---
 
+## 🚧 Task 5 블로커 — 전역 sink vs 인스턴스 tracker (구현 중 발견, 미해결)
+
+**증상**: 프로젝트 A→B 전환 시 A 의 토큰이 B 의 합계에 들어갈 수 있다. 조용히 틀린 합계 = 이 기능의
+존재 이유를 정면으로 배신한다.
+
+**확인된 사실** (전부 코드 대조):
+- machine 은 **동시에 1개**다 — `story-api.js:51` 은 `let machine = null`, 단일 변수.
+- 전환 시 `story-api.js:124` 가 `await machine.abort()` 를 **먼저** 한다. 대부분의 경로는 여기서 닫힌다.
+- 그런데 `abort()`(`stepMachine.js:2263`)가 중단하는 건 `controller` / `synopsisController` /
+  `researchController` 뿐이다.
+- `generateTitle`(`stepMachine.js:1728`)은 `llm.generateTitle(scriptMd, opts, {})` — **세 번째 인자가
+  비어 있다. signal 도 controller 도 없다.** 따라서 abort 가 못 멈추고, `await` 도 안 기다린다.
+
+**경로**: A 에서 제목 생성 중 → B 로 전환(abort 는 generateTitle 을 못 잡음) → B 의 machine 이
+`setClaudeUsageSink(B tracker)` → A 의 호출이 뒤늦게 끝나며 tap 발화 → **B 의 tracker 에 A 의 토큰**.
+
+**왜 epoch 로 못 막나**: epoch 는 *같은* tracker 안의 세대 구분이다. 여기선 tracker 자체가 다른
+인스턴스라 무의미하다. Task 2 의 "인스턴스끼리 격리된다" 테스트는 **거짓 안심을 준다** — tracker 는
+격리되는데 정작 공유되는 건 sink 다.
+
+**근본 원인**: **tap 이 호출의 주인을 모른다.** tap 은 SDK 메시지 스트림만 보고, 그 스트림에
+projectToken 은 없다. 검토한 선택지 전부 깨끗하지 않다:
+- sink 를 null 로 떼기 → B 의 `open()` 이 곧바로 다시 물리므로 경합이 남는다.
+- 호출 단위 sink → `queryImpl` 을 매 호출 주입해야 하고, 11개 루프 문제로 되돌아간다.
+- sink 에 projectToken 싣기 → tap 이 프로젝트를 알아야 하는데 알 방법이 없다.
+
+**가장 유망한 방향(미검증)**: `generateTitle` 에 signal 을 준다. 그러면 `await machine.abort()` 가
+진짜로 드레인되고 전역 sink 가 안전해진다. **부수 효과로 기존 버그도 고쳐진다** — 리뷰가 지적한
+"generateTitle 은 `anyRunning()` 검사도 abort 도 없다"가 바로 이것이다. 다만 이건 계측이 아니라
+**제품 동작 변경**이라 별도 결정이 필요하다.
+
+**현재 상태는 안전하다**: 수집 계층(Task 1–4)은 완성·커밋됐지만 **아직 아무 데도 안 물려 있다.**
+숫자를 안 보여주므로 틀린 숫자를 보여줄 수도 없다. 이 블로커를 풀기 전에 Task 5 를 넣으면 안 된다.
+
+---
+
 ## 설계
 
 ### run 경계 — v1 이 통째로 빠뜨린 것
