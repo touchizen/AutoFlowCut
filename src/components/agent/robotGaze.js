@@ -16,9 +16,11 @@ export function computeRobotGaze({ fabCenter, pointer, radius, maxYaw, maxPitch,
 
   return {
     engaged: true,
-    yaw: dx === 0 ? 0 : horizontal * maxYaw,
-    pitch: dy === 0 ? 0 : -vertical * maxPitch,
-    eyeX: dx === 0 ? 0 : horizontal * maxEye,
-    eyeY: dy === 0 ? 0 : vertical * maxEye,
+    yaw: horizontal * maxYaw,
+    // pitch 만 가드가 필요하다: 단항 마이너스 때문에 vertical=0 이면 -0 이 나오고,
+    // -0 은 Object.is 상 0 이 아니라 toBe(0) 이 실패한다. 다른 셋은 -0 을 못 만든다.
+    pitch: vertical === 0 ? 0 : -vertical * maxPitch,
+    eyeX: horizontal * maxEye,
+    eyeY: vertical * maxEye,
   }
 }
